@@ -238,8 +238,10 @@ export function spawnSupply(
 /**
  * Spawn the boss. Fields carry its fight state: `phase` (0/1/2), `timer` (phase
  * transition/animation countdown, 0 = fighting), `cooldown` (next pattern),
- * `iframes` (overheat window — takes double damage while > 0). `enemyType`
- * tags render variant.
+ * `iframes` (overheat window — takes double damage while > 0), `dashCooldown`
+ * (overheat re-arm timer — the boss never dashes, so the field gates how often
+ * the overheat window may re-open; see src/sim/boss.ts). `enemyType` tags render
+ * variant.
  */
 export function spawnBoss(sink: EntitySink, x: number, y: number, hp: number, radius: number): Entity {
   const b = blankEntity('boss');

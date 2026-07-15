@@ -47,7 +47,15 @@ export type BossAttack =
 export interface BossPhaseDef {
   /** Ticks between pattern casts within the phase. */
   readonly patternCooldown: number;
-  /** Attacks cast in round-robin order. */
+  /**
+   * Minimum ticks between successive overheat-window *openings* in this phase.
+   * The overheat window is 5s (BOSS_OVERHEAT_TICKS = 300); this must be strictly
+   * larger so the window closes for `overheatInterval - 300` ticks between
+   * openings — that closed gap is what makes the "5s vulnerable window" a
+   * readable open/close rhythm rather than a permanent double-damage state.
+   */
+  readonly overheatInterval: number;
+  /** Attacks cast in round-robin order. Index 0 is the phase's signature cast. */
   readonly attacks: readonly BossAttack[];
 }
 
@@ -63,31 +71,43 @@ export interface BossDef {
 
 export const LAVA_FORTRESS: BossDef = {
   id: 'kargon-lava-fortress',
-  hp: 2200,
+  // HP raised from 2200 → 3600 alongside the overheat-window fix. The old value
+  // was tuned while the boss was overheated ~99.7% of the fight (permanent 2x
+  // damage) — trivially easy. With the overheat window now a real 5s open / ~5s
+  // closed rhythm (avg damage multiplier ~1.5x instead of ~2x), each phase lasts
+  // long enough to actually exhibit a cool interval. Still M1 prototype tuning.
+  hp: 3600,
   radius: 64,
   contactDamage: 20,
   moveSpeed: 70,
   phases: [
-    // P1 — signature: slow, readable radial bursts.
+    // P1 — signature: slow, readable radial bursts. Overheat opens ~every 10s
+    // after the signature ring: 5s hot, 5s cool.
     {
       patternCooldown: 96,
+      overheatInterval: 600,
       attacks: [
         { kind: 'ring', count: 14, speed: 300, damage: 8, bulletRadius: 7, bulletLife: 140 },
         { kind: 'ring', count: 18, speed: 340, damage: 8, bulletRadius: 7, bulletLife: 140 },
       ],
     },
     // P2 — variation + terrain: rings interleaved with lava pillar lines.
+    // Overheat opens ~every 9.5s: 5s hot, ~4.5s cool.
     {
       patternCooldown: 84,
+      overheatInterval: 570,
       attacks: [
         { kind: 'ring', count: 20, speed: 360, damage: 9, bulletRadius: 7, bulletLife: 150 },
         { kind: 'lavaLine', pillars: 7, windup: 48, activeTicks: 100, radius: 52, damage: 10 },
         { kind: 'spiral', count: 10, speed: 380, damage: 9, bulletRadius: 6, bulletLife: 150, turn: 0.5 },
       ],
     },
-    // P3 — desperation: dense spirals, faster cadence.
+    // P3 — desperation: dense spirals, faster cadence. Overheat opens ~every 9s
+    // (5s hot, ~4s cool) — slightly tighter so the desperation phase keeps a
+    // punishing attack window without dragging the kill out.
     {
       patternCooldown: 60,
+      overheatInterval: 540,
       attacks: [
         { kind: 'spiral', count: 14, speed: 400, damage: 10, bulletRadius: 6, bulletLife: 160, turn: 0.62 },
         { kind: 'ring', count: 24, speed: 420, damage: 10, bulletRadius: 7, bulletLife: 160 },

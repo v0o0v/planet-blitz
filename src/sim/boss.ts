@@ -10,6 +10,10 @@
  *   - `iframes` : OVERHEAT window remaining — the boss takes DOUBLE damage while
  *                 this is > 0 (spec: 5s after casting a pattern)
  *   - `pierce`  : round-robin index into the current phase's attack list
+ *   - `dashCooldown`: OVERHEAT re-arm timer — ticks until the window may open
+ *                 again. Repurposed generic field (the boss never dashes); keeps
+ *                 the overheat window from re-opening on every cast, so the 5s
+ *                 window has a closed gap between openings (see BossPhaseDef).
  *
  * On crossing an HP threshold (70% / 35%) the boss enters a 2s transition that
  * freezes it and CLEARS every enemy bullet on screen (spec). The transition is
@@ -41,6 +45,12 @@ export function updateBoss(state: WorldState, boss: Entity, player: Entity): voi
   }
 
   // Threshold crossing → advance phase, freeze, clear the screen of enemy fire.
+  // Overkill policy: if a single tick's damage crosses BOTH thresholds at once
+  // (e.g. 80% → 20%), `targetPhase` is the final phase (2) and the boss jumps
+  // straight there, playing ONE transition (the intermediate phase 1 and its
+  // transition are skipped). This is intentional — a burst that big has earned
+  // the skip, and we never want two 2s freezes stacked on one tick. Phase index
+  // therefore only ever moves forward, one resolve per tick.
   const frac = boss.maxHp > 0 ? boss.hp / boss.maxHp : 0;
   const targetPhase = frac > 0.7 ? 0 : frac > 0.35 ? 1 : 2;
   if (targetPhase > boss.phase) {
@@ -48,6 +58,7 @@ export function updateBoss(state: WorldState, boss: Entity, player: Entity): voi
     boss.timer = BOSS_PHASE_TRANSITION_TICKS;
     boss.iframes = 0;
     boss.cooldown = 0;
+    boss.dashCooldown = 0; // re-arm overheat for the new phase's first signature
     clearEnemyBullets(state);
     return;
   }
@@ -55,6 +66,7 @@ export function updateBoss(state: WorldState, boss: Entity, player: Entity): voi
   moveBoss(state, boss, player);
 
   if (boss.iframes > 0) boss.iframes--;
+  if (boss.dashCooldown > 0) boss.dashCooldown--;
 
   if (boss.cooldown > 0) {
     boss.cooldown--;
@@ -62,12 +74,19 @@ export function updateBoss(state: WorldState, boss: Entity, player: Entity): voi
   }
   const phase = LAVA_FORTRESS.phases[boss.phase];
   if (phase === undefined) return;
-  const attack = phase.attacks[boss.pierce % phase.attacks.length];
+  const attackIndex = boss.pierce % phase.attacks.length;
+  const attack = phase.attacks[attackIndex];
   if (attack !== undefined) executeAttack(state, boss, player, attack);
   boss.pierce++;
   boss.cooldown = phase.patternCooldown;
-  // Casting exposes the boss: the overheat window opens (spec).
-  boss.iframes = BOSS_OVERHEAT_TICKS;
+  // The overheat window opens only after the phase's SIGNATURE cast (attack
+  // index 0), and only once its re-arm timer has elapsed. That gives the 5s
+  // vulnerable window a genuine closed gap (overheatInterval - 300 ticks)
+  // instead of resetting on every cast — restoring the spec's open/close rhythm.
+  if (attackIndex === 0 && boss.dashCooldown === 0) {
+    boss.iframes = BOSS_OVERHEAT_TICKS;
+    boss.dashCooldown = phase.overheatInterval;
+  }
 }
 
 /** Slow hover in the upper arena, tracking the player horizontally. */
