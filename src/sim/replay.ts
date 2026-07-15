@@ -100,7 +100,18 @@ export function hashWorld(state: WorldState): number {
   h = hashU32(h, state.waveRng.getState());
   h = hashU32(h, state.powerupRng.getState());
   h = hashU32(h, state.supplyRng.getState());
-  // Weapon stats (mutated by Phase 3 powerups).
+  // World config (arena size, movement/dash/i-frame tuning). Two runs with
+  // different configs must hash apart even before any entity diverges.
+  const cfg = state.config;
+  h = hashFloat(h, cfg.arenaWidth);
+  h = hashFloat(h, cfg.arenaHeight);
+  h = hashFloat(h, cfg.playerSpeed);
+  h = hashFloat(h, cfg.dashSpeed);
+  h = hashU32(h, cfg.dashCooldownTicks >>> 0);
+  h = hashU32(h, cfg.dashIframes >>> 0);
+  h = hashU32(h, cfg.hitIframes >>> 0);
+  h = hashFloat(h, cfg.playerHp);
+  // Weapon stats (mutated by Phase 3 powerups) — every amplification hook.
   const w = state.weapon;
   h = hashU32(h, w.fireCooldown >>> 0);
   h = hashFloat(h, w.bulletSpeed);
@@ -108,6 +119,9 @@ export function hashWorld(state: WorldState): number {
   h = hashU32(h, w.bulletCount >>> 0);
   h = hashFloat(h, w.spread);
   h = hashU32(h, w.pierce >>> 0);
+  h = hashFloat(h, w.bulletRadius);
+  h = hashFloat(h, w.range);
+  h = hashU32(h, w.bulletLife >>> 0);
   // Wave runtime.
   h = hashU32(h, state.wave.segmentIndex >>> 0);
   h = hashU32(h, state.wave.segmentTimer >>> 0);
