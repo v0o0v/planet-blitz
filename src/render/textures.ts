@@ -20,6 +20,10 @@ export interface PlaceholderTextures {
   gem: Texture;
   /** Enemy textures indexed by role typeIndex (0 charger .. 3 support). */
   enemy: Texture[];
+  /** Boss (large lava-fortress hexagon). */
+  boss: Texture;
+  /** Supply raider transport. */
+  supply: Texture;
 }
 
 /** Per-role colour + base radius (matches data/enemies typeIndex order). */
@@ -103,18 +107,35 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
   const gemG = new Graphics();
   drawDiamond(gemG, 8, 0x66ff88);
 
+  // Boss: large lava-fortress hexagon, dark-red body with a molten outline.
+  const bossG = new Graphics();
+  drawHex(bossG, 64, 0x7a1410);
+  drawHex(bossG, 40, 0xff5a1e);
+
+  // Supply raider: a wide neutral transport (amber outline, dark hull).
+  const supplyG = new Graphics();
+  supplyG
+    .roundRect(-46, -26, 92, 52, 8)
+    .fill({ color: 0x2a3550 })
+    .stroke({ color: 0xffcc44, width: 3, alignment: 0 });
+  supplyG.rect(-30, -12, 60, 24).fill({ color: 0x4a5a80 });
+
   const textures: PlaceholderTextures = {
     player: renderer.generateTexture(playerG),
     bullet: renderer.generateTexture(bulletG),
     enemyBullet: renderer.generateTexture(enemyBulletG),
     gem: renderer.generateTexture(gemG),
     enemy: ENEMY_STYLE.map((s) => enemyTexture(renderer, s)),
+    boss: renderer.generateTexture(bossG),
+    supply: renderer.generateTexture(supplyG),
   };
 
   playerG.destroy();
   bulletG.destroy();
   enemyBulletG.destroy();
   gemG.destroy();
+  bossG.destroy();
+  supplyG.destroy();
 
   return textures;
 }

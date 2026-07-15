@@ -44,6 +44,10 @@ export class EntityRenderer {
         return this.textures.enemyBullet;
       case 'gem':
         return this.textures.gem;
+      case 'boss':
+        return this.textures.boss;
+      case 'supply':
+        return this.textures.supply;
       case 'enemy': {
         const arr = this.textures.enemy;
         const idx = e.enemyType >= 0 && e.enemyType < arr.length ? e.enemyType : 0;
@@ -76,8 +80,23 @@ export class EntityRenderer {
       const p = prevById.get(e.id) ?? e;
       tracked.sprite.x = p.x + (e.x - p.x) * alpha;
       tracked.sprite.y = p.y + (e.y - p.y) * alpha;
-      // Gems do not rotate; everything else faces its travel/aim angle.
-      tracked.sprite.rotation = e.kind === 'gem' ? 0 : e.angle;
+      // Gems, boss and supply keep a fixed facing; others face travel/aim angle.
+      const fixedFacing = e.kind === 'gem' || e.kind === 'boss' || e.kind === 'supply';
+      tracked.sprite.rotation = fixedFacing ? 0 : e.angle;
+
+      if (e.kind === 'boss') {
+        // Phase transition = white flash; overheat = bright red pulse (spec).
+        if (e.flash) {
+          tracked.sprite.tint = (this.frameTick >> 2) % 2 === 0 ? 0xffffff : 0xff8080;
+        } else if (e.active) {
+          const pulse = 0.5 + 0.5 * Math.sin(this.frameTick * 0.4);
+          tracked.sprite.tint = 0xff4020;
+          tracked.sprite.alpha = 0.8 + 0.2 * pulse;
+        } else {
+          tracked.sprite.tint = 0xffffff;
+          tracked.sprite.alpha = 1;
+        }
+      }
     }
 
     for (const [id, tracked] of this.sprites) {

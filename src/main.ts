@@ -15,7 +15,10 @@ import { EntityRenderer } from './render/entityRenderer.js';
 import { FpsMeter } from './render/fpsMeter.js';
 import { InputController } from './input/controller.js';
 import { Hud } from './ui/hud.js';
-import { createWorld, stepWorld, DT } from './sim/world.js';
+import type { BossHudState } from './ui/hud.js';
+import { PowerupOverlay } from './ui/powerupOverlay.js';
+import { ResultOverlay } from './ui/resultOverlay.js';
+import { createWorld, stepWorld, DT, xpToNext, comboMultiplier } from './sim/world.js';
 import { snapshotWorld } from './sim/snapshot.js';
 import { ReplayRecorder, hashWorld } from './sim/replay.js';
 import { runBench } from './bench/bench.js';
@@ -32,6 +35,8 @@ async function main(): Promise<void> {
 
   const gameApp = await createGameApp(mount);
   const hud = new Hud();
+  const powerupOverlay = new PowerupOverlay();
+  const resultOverlay = new ResultOverlay();
   const textures = createPlaceholderTextures(gameApp.app.renderer);
   const entityRenderer = new EntityRenderer(textures);
   gameApp.stage.addChild(entityRenderer.layer);
@@ -54,6 +59,11 @@ async function main(): Promise<void> {
     if (frame > 0.25) frame = 0.25; // clamp to avoid spiral-of-death after stalls
     accumulator += frame;
 
+    const runOver = world.gameOver || world.victory;
+    if (runOver) {
+      accumulator = 0; // sim is inert; stop stepping (settlement is showing)
+    }
+
     while (accumulator >= DT) {
       const player = world.entities[0];
       const input = controller.sample(player?.x ?? 0, player?.y ?? 0);
@@ -67,22 +77,73 @@ async function main(): Promise<void> {
     const alpha = accumulator / DT;
     entityRenderer.render(prevSnap, currSnap, alpha);
 
+    // Level-up: freeze is handled in the sim; show the pick overlay (render is
+    // still live underneath). Picking queues a SPECIAL_POWERUP_PICK input.
+    if (world.pendingLevelUp && !powerupOverlay.visible && !resultOverlay.visible) {
+      powerupOverlay.show([...world.powerupChoices], (offerIndex) => {
+        controller.queuePowerupPick(offerIndex);
+      });
+    }
+
+    // Settlement screen on death or clear.
+    if (runOver && !resultOverlay.visible) {
+      if (powerupOverlay.visible) powerupOverlay.hide();
+      resultOverlay.show(
+        {
+          victory: world.victory,
+          seed,
+          xpTotal: world.xpTotal,
+          kills: world.kills,
+          maxCombo: world.maxCombo,
+          resources: world.resources,
+          level: world.level,
+          timeSec: world.tick / 60,
+        },
+        () => window.location.reload(),
+      );
+    }
+
+    // --- HUD ---
     const f = fps.tick(frame);
     const p = world.entities[0];
     frameCount++;
     let enemyN = 0;
     let bulletN = 0;
+    let bossEnt: (typeof world.entities)[number] | undefined;
+    let supplyActive = false;
     for (const e of world.entities) {
       if (e.kind === 'enemy') enemyN++;
       else if (e.kind === 'enemyBullet' || e.kind === 'bullet') bulletN++;
+      else if (e.kind === 'boss') bossEnt = e;
+      else if (e.kind === 'supply') supplyActive = true;
     }
+    const boss: BossHudState | undefined =
+      bossEnt !== undefined
+        ? {
+            hp: bossEnt.hp,
+            maxHp: bossEnt.maxHp,
+            phase: bossEnt.phase,
+            overheat: bossEnt.iframes > 0,
+            transitioning: bossEnt.timer > 0,
+          }
+        : undefined;
+    hud.update({
+      hp: p?.hp ?? 0,
+      maxHp: p?.maxHp ?? 0,
+      xp: world.xp,
+      xpNeed: xpToNext(world.level),
+      level: world.level,
+      timeSec: world.tick / 60,
+      combo: world.combo,
+      multiplier: comboMultiplier(world.combo),
+      boss,
+      supplyActive,
+    });
+
     const seg = world.wave.segmentIndex + 1;
-    const bossTag = world.wave.boss ? '  [BOSS — Phase 3]' : '';
+    const bossTag = world.wave.boss ? '  [BOSS]' : '';
     hud.set(
-      `Planet Blitz — M1 combat prototype\n` +
-        `WASD/arrows move · mouse aim · Space dash · auto-fire\n` +
-        `seed ${seed}  tick ${world.tick}  segment ${seg}/6${bossTag}\n` +
-        `HP ${Math.max(0, p?.hp ?? 0).toFixed(0)}/${p?.maxHp ?? 0}  kills ${world.kills}  gems ${world.gems}\n` +
+      `Planet Blitz — M1  ·  seed ${seed}  tick ${world.tick}  seg ${seg}/6${bossTag}\n` +
         `enemies ${enemyN}  bullets ${bulletN}/${world.bulletCap}  entities ${world.entities.length}\n` +
         `hash ${hashWorld(world).toString(16).padStart(8, '0')}  FPS ${f.toFixed(1)}`,
     );
@@ -96,6 +157,10 @@ async function main(): Promise<void> {
       gameApp,
       controller,
       entityRenderer,
+      world,
+      hud,
+      powerupOverlay,
+      resultOverlay,
       injectInput(input: Partial<import('./sim/world.js').InputFrame>) {
         const merged = { moveX: 0, moveY: 0, aim: 0, dash: false, special: 0, ...input };
         stepWorld(world, merged);

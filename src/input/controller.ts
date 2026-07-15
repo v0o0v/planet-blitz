@@ -7,6 +7,7 @@
  */
 
 import type { InputFrame } from '../sim/world.js';
+import { packPowerupPick } from '../sim/world.js';
 import { atan2 } from '../sim/math.js';
 import type { GameApp } from '../render/app.js';
 
@@ -15,6 +16,8 @@ export class InputController {
   private mouseClientX = 0;
   private mouseClientY = 0;
   private dashQueued = false;
+  /** Pending powerup pick (offer index 0..2), consumed by the next sample. */
+  private powerupPick: number | null = null;
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     this.keys.add(e.code);
@@ -37,9 +40,15 @@ export class InputController {
     window.addEventListener('mousemove', this.onMouseMove);
   }
 
+  /** Queue a powerup pick (offer index 0..2). Consumed by the next sample. */
+  queuePowerupPick(index: number): void {
+    this.powerupPick = index;
+  }
+
   /**
    * Sample the current input for one sim tick. Consumes the queued dash so a
-   * single Space press maps to exactly one dash request.
+   * single Space press maps to exactly one dash request, and any queued powerup
+   * pick (packed into `special` for the replay log).
    */
   sample(playerX: number, playerY: number): InputFrame {
     let moveX = 0;
@@ -55,7 +64,13 @@ export class InputController {
     const dash = this.dashQueued;
     this.dashQueued = false;
 
-    return { moveX, moveY, aim, dash, special: 0 };
+    let special = 0;
+    if (this.powerupPick !== null) {
+      special = packPowerupPick(this.powerupPick);
+      this.powerupPick = null;
+    }
+
+    return { moveX, moveY, aim, dash, special };
   }
 
   destroy(): void {
