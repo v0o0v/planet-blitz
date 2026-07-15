@@ -16,6 +16,7 @@ import { Container, Graphics, Sprite } from 'pixi.js';
 import type { WorldSnapshot, EntitySnapshot } from '../sim/snapshot.js';
 import type { EntityKind } from '../sim/entities.js';
 import type { PlaceholderTextures } from './textures.js';
+import { DESIGN_WIDTH, DESIGN_HEIGHT } from './app.js';
 
 interface TrackedSprite {
   sprite: Sprite;
@@ -64,6 +65,16 @@ export class EntityRenderer {
         return this.textures.boss;
       case 'supply':
         return this.textures.supply;
+      case 'wall':
+        return this.textures.wall;
+      case 'destructible':
+        return this.textures.destructible;
+      case 'magnetEmitter':
+        return this.textures.magnetEmitter;
+      case 'bombDevice':
+        return this.textures.bombDevice;
+      case 'turretPickup':
+        return this.textures.turretPickup;
       case 'enemy': {
         const arr = this.textures.enemy;
         const idx = e.enemyType >= 0 && e.enemyType < arr.length ? e.enemyType : 0;
@@ -76,6 +87,12 @@ export class EntityRenderer {
 
   render(prev: WorldSnapshot, curr: WorldSnapshot, alpha: number): void {
     this.frameTick++;
+    // Camera follow: pan the whole layer so the interpolated camera (= player)
+    // sits at the viewport centre. Sprites keep their absolute world coordinates;
+    // only the layer is translated (vampire-survivors-style scrolling).
+    const camX = prev.cameraX + (curr.cameraX - prev.cameraX) * alpha;
+    const camY = prev.cameraY + (curr.cameraY - prev.cameraY) * alpha;
+    this.layer.position.set(DESIGN_WIDTH / 2 - camX, DESIGN_HEIGHT / 2 - camY);
     this.drawOverlay(curr);
     this.updateEffects();
 
@@ -88,10 +105,17 @@ export class EntityRenderer {
       if (tracked === undefined) {
         const sprite = new Sprite(this.textureFor(e));
         sprite.anchor.set(0.5);
-        // Real sprites are 64/128px; scale to the sim hitbox so art matches
-        // collisions (player r16 → 48px, matching the GDD ship size).
-        const size = e.radius * 2 * ART_SCALE;
-        sprite.setSize(size, size);
+        if (e.kind === 'wall') {
+          // Walls render at their EXACT AABB (radius = half-width, aabbH =
+          // half-height) — no ART_SCALE, so the cover the player sees matches the
+          // collision box exactly.
+          sprite.setSize(e.radius * 2, e.aabbH * 2);
+        } else {
+          // Real sprites are 64/128px; scale to the sim hitbox so art matches
+          // collisions (player r16 → 48px, matching the GDD ship size).
+          const size = e.radius * 2 * ART_SCALE;
+          sprite.setSize(size, size);
+        }
         this.spriteLayer.addChild(sprite);
         tracked = { sprite, seenTick: this.frameTick, kind: e.kind };
         this.sprites.set(e.id, tracked);
@@ -101,8 +125,17 @@ export class EntityRenderer {
       const p = prevById.get(e.id) ?? e;
       tracked.sprite.x = p.x + (e.x - p.x) * alpha;
       tracked.sprite.y = p.y + (e.y - p.y) * alpha;
-      // Gems, boss and supply keep a fixed facing; others face travel/aim angle.
-      const fixedFacing = e.kind === 'gem' || e.kind === 'boss' || e.kind === 'supply';
+      // Gems, boss, supply and the static gimmicks keep a fixed facing; others
+      // face their travel/aim angle.
+      const fixedFacing =
+        e.kind === 'gem' ||
+        e.kind === 'boss' ||
+        e.kind === 'supply' ||
+        e.kind === 'wall' ||
+        e.kind === 'destructible' ||
+        e.kind === 'magnetEmitter' ||
+        e.kind === 'bombDevice' ||
+        e.kind === 'turretPickup';
       tracked.sprite.rotation = fixedFacing ? 0 : e.angle;
 
       if (e.kind === 'boss') {

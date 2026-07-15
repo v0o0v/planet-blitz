@@ -22,36 +22,46 @@ export interface Spatial {
 
 export class SpatialHash<T extends Spatial> {
   private readonly cellSize: number;
-  private readonly cols: number;
-  private readonly rows: number;
-  private readonly cells: (T[] | undefined)[];
+  /**
+   * Sparse bucket map keyed by an integer cell key. Unbounded (infinite map):
+   * only occupied cells are allocated, so the grid tracks entities at any
+   * coordinate without a fixed extent. The map is NEVER iterated directly —
+   * cell keys are computed arithmetically and cells are visited in a fixed
+   * (cy, cx) order (see `query`), preserving the determinism contract above.
+   */
+  private readonly cells = new Map<number, T[]>();
 
-  constructor(width: number, height: number, cellSize: number) {
+  constructor(cellSize: number) {
     this.cellSize = cellSize;
-    this.cols = Math.max(1, Math.ceil(width / cellSize) + 1);
-    this.rows = Math.max(1, Math.ceil(height / cellSize) + 1);
-    this.cells = new Array<T[] | undefined>(this.cols * this.rows);
   }
 
   clear(): void {
-    this.cells.fill(undefined);
+    this.cells.clear();
   }
 
-  private cellIndex(cx: number, cy: number): number {
-    const col = cx < 0 ? 0 : cx >= this.cols ? this.cols - 1 : cx;
-    const row = cy < 0 ? 0 : cy >= this.rows ? this.rows - 1 : cy;
-    return row * this.cols + col;
+  /**
+   * Deterministic non-negative integer key for a signed cell (cx, cy). Each
+   * axis is first folded into the naturals with Szudzik's pairing
+   * (`z >= 0 ? 2z : -2z - 1`) so negative coordinates cannot collide with their
+   * positive mirror, then the two folds are mixed with the classic large-prime
+   * multiply/XOR and masked to a uint32. Pure integer arithmetic — identical on
+   * every platform.
+   */
+  private cellKey(cx: number, cy: number): number {
+    const a = cx >= 0 ? 2 * cx : -2 * cx - 1;
+    const b = cy >= 0 ? 2 * cy : -2 * cy - 1;
+    return ((a * 73856093) ^ (b * 19349663)) >>> 0;
   }
 
-  /** Insert an entity at its current position (clamped into the grid). */
+  /** Insert an entity into the cell containing its current position. */
   insert(entity: T): void {
     const cx = Math.floor(entity.x / this.cellSize);
     const cy = Math.floor(entity.y / this.cellSize);
-    const idx = this.cellIndex(cx, cy);
-    let bucket = this.cells[idx];
+    const key = this.cellKey(cx, cy);
+    let bucket = this.cells.get(key);
     if (bucket === undefined) {
       bucket = [];
-      this.cells[idx] = bucket;
+      this.cells.set(key, bucket);
     }
     bucket.push(entity);
   }
@@ -60,7 +70,8 @@ export class SpatialHash<T extends Spatial> {
    * Visit every inserted entity whose cell overlaps the circle (x, y, radius).
    * The callback may be invoked for entities slightly outside the circle (the
    * grid is broad-phase only) — callers do the exact distance test. Iteration
-   * order is deterministic.
+   * order is deterministic: cells in a fixed (cy, cx) nested order, entities
+   * within a cell in insertion order.
    */
   query(x: number, y: number, radius: number, cb: (entity: T) => void): void {
     const minCx = Math.floor((x - radius) / this.cellSize);
@@ -69,7 +80,7 @@ export class SpatialHash<T extends Spatial> {
     const maxCy = Math.floor((y + radius) / this.cellSize);
     for (let cy = minCy; cy <= maxCy; cy++) {
       for (let cx = minCx; cx <= maxCx; cx++) {
-        const bucket = this.cells[this.cellIndex(cx, cy)];
+        const bucket = this.cells.get(this.cellKey(cx, cy));
         if (bucket === undefined) continue;
         for (const entity of bucket) {
           cb(entity);

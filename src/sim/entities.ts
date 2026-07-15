@@ -19,11 +19,18 @@ export type EntityKind =
   | 'hazard'
   | 'gem'
   | 'supply'
-  | 'boss';
+  | 'boss'
+  // --- Scroll-map gimmicks (plan Phase E/F) ---
+  | 'wall' // 이동 차단 + 양측 탄 차단 + LOS 가림 직사각(AABB) 엄폐물
+  | 'destructible' // 부수면 젬 드랍하는 파괴 가능 오브젝트(이동은 통과)
+  | 'magnetEmitter' // 접촉 시 젬 자석 반경 배율 버프
+  | 'bombDevice' // 접촉 시 반경 내 적 피해 + 적탄 소거
+  | 'turretPickup'; // 접촉 시 일정 시간 자동 사격하는 아군 포탑으로 활성화
 
 /**
  * Stable integer per kind, folded into the state hash. Never renumber existing
- * codes — a run recorded under old codes must re-verify identically.
+ * codes — a run recorded under old codes must re-verify identically. New kinds
+ * are APPENDED (codes 9+) so existing recordings hash unchanged.
  */
 export const KIND_CODE: Record<EntityKind, number> = {
   player: 1,
@@ -34,6 +41,12 @@ export const KIND_CODE: Record<EntityKind, number> = {
   gem: 6,
   supply: 7,
   boss: 8,
+  // Appended for the scroll-map gimmicks (never renumber 1..8).
+  wall: 9,
+  destructible: 10,
+  magnetEmitter: 11,
+  bombDevice: 12,
+  turretPickup: 13,
 };
 
 export interface Entity {
@@ -203,7 +216,7 @@ export function spawnGem(sink: EntitySink, x: number, y: number, xpValue: number
   const g = blankEntity('gem');
   g.x = x;
   g.y = y;
-  g.radius = 10;
+  g.radius = 20; // 2x scale (plan D1): 10 -> 20
   g.hp = 1;
   g.damage = xpValue;
   return addEntity(sink, g);
@@ -227,12 +240,75 @@ export function spawnSupply(
   s.x = x;
   s.y = y;
   s.vx = vx;
-  s.radius = 46;
+  s.radius = 92; // 2x scale (plan D1): 46 -> 92
   s.hp = hp;
   s.maxHp = hp;
   s.life = lifeTicks;
   s.enemyType = 0;
   return addEntity(sink, s);
+}
+
+// ---------------------------------------------------------------------------
+// Scroll-map gimmicks (plan Phase E/F). All reuse the flat Entity struct — no
+// new hash fields. The wall AABB is the single field-mapping source of truth
+// (plan E1): both the movement-slide resolver and the LOS segment test read it.
+// ---------------------------------------------------------------------------
+
+/**
+ * Spawn a rectangular cover wall (AABB).
+ *
+ * FIELD MAPPING — SINGLE SOURCE OF TRUTH (plan E1, do not redefine elsewhere):
+ *   - `radius`  = half-WIDTH  (halfW) of the axis-aligned box
+ *   - `targetX` = half-HEIGHT (halfH) of the axis-aligned box
+ * A square wall is `targetX === radius`. Both the circle-vs-AABB movement slide
+ * (src/sim/los.ts) and the segment-vs-AABB LOS test read exactly these two
+ * fields — never introduce a parallel half-extent field.
+ */
+export function spawnWall(sink: EntitySink, x: number, y: number, halfW: number, halfH: number): Entity {
+  const w = blankEntity('wall');
+  w.x = x;
+  w.y = y;
+  w.radius = halfW; // half-width  (single source — see mapping above)
+  w.targetX = halfH; // half-height (single source — see mapping above)
+  return addEntity(sink, w);
+}
+
+/** Spawn a destructible object: `hp` > 0, drops a gem worth `xpValue` when broken. */
+export function spawnDestructible(
+  sink: EntitySink,
+  x: number,
+  y: number,
+  radius: number,
+  hp: number,
+  xpValue: number,
+): Entity {
+  const d = blankEntity('destructible');
+  d.x = x;
+  d.y = y;
+  d.radius = radius;
+  d.hp = hp;
+  d.maxHp = hp;
+  d.damage = xpValue; // gem XP granted on destruction (mirrors spawnGem's slot use)
+  return addEntity(sink, d);
+}
+
+/**
+ * Spawn a proximity event object (magnet emitter / bomb device / turret pickup).
+ * `radius` is the proximity trigger radius. Turret pickups use `phase` (0 =
+ * dormant pickup, 1 = active turret) and `life` (active turret lifetime).
+ */
+export function spawnEventObject(
+  sink: EntitySink,
+  kind: 'magnetEmitter' | 'bombDevice' | 'turretPickup',
+  x: number,
+  y: number,
+  radius: number,
+): Entity {
+  const e = blankEntity(kind);
+  e.x = x;
+  e.y = y;
+  e.radius = radius;
+  return addEntity(sink, e);
 }
 
 /**

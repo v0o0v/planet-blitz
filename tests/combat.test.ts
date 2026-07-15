@@ -102,18 +102,21 @@ describe('combat determinism (ADR-0005, enemies + bullets + waves)', () => {
     expect(state.entities.some((e) => e.kind === 'gem') || state.gems > 0).toBe(true);
   });
 
-  it('charger sprays fragment bullets on wall impact', () => {
+  it('charger sprays fragment bullets in open space when its cadence is ready', () => {
+    // Infinite map: there are no arena walls to bounce off, so the charger's
+    // fragments fire from the secondary periodic trigger (fireCooldown ready).
     const state = createWorld(3);
-    // Charger pressed against the left wall, already moving into it, ready to fire.
+    const player = state.entities[0]!;
+    // A charger charging in open space, well clear of the player, cadence ready.
     const charger = blankEntity('enemy');
-    charger.x = 18;
-    charger.y = 300;
-    charger.vx = -150;
-    charger.radius = 18;
+    charger.x = player.x + 600;
+    charger.y = player.y + 200;
+    charger.vx = -300;
+    charger.radius = 36;
     charger.hp = 100;
     charger.maxHp = 100;
-    charger.enemyType = 0; // charger -> fragments-on-wall
-    charger.cooldown = 0;
+    charger.enemyType = 0; // charger -> fragments
+    charger.cooldown = 0; // fire this tick
     addEntity(state, charger);
 
     stepWorld(state, { moveX: 0, moveY: 0, aim: 0, dash: false, special: 0 });

@@ -77,9 +77,10 @@ export const LAVA_FORTRESS: BossDef = {
   // closed rhythm (avg damage multiplier ~1.5x instead of ~2x), each phase lasts
   // long enough to actually exhibit a cool interval. Still M1 prototype tuning.
   hp: 3600,
-  radius: 64,
+  // 2x hitbox scale (plan D1): 64 -> 128. Move speed doubled for the 2x world.
+  radius: 128,
   contactDamage: 20,
-  moveSpeed: 70,
+  moveSpeed: 140,
   phases: [
     // P1 — signature: slow, readable radial bursts. Overheat opens ~every 10s
     // after the signature ring: 5s hot, 5s cool.
@@ -87,8 +88,8 @@ export const LAVA_FORTRESS: BossDef = {
       patternCooldown: 96,
       overheatInterval: 600,
       attacks: [
-        { kind: 'ring', count: 14, speed: 300, damage: 8, bulletRadius: 7, bulletLife: 140 },
-        { kind: 'ring', count: 18, speed: 340, damage: 8, bulletRadius: 7, bulletLife: 140 },
+        { kind: 'ring', count: 14, speed: 600, damage: 8, bulletRadius: 7, bulletLife: 140 },
+        { kind: 'ring', count: 18, speed: 680, damage: 8, bulletRadius: 7, bulletLife: 140 },
       ],
     },
     // P2 — variation + terrain: rings interleaved with lava pillar lines.
@@ -97,9 +98,9 @@ export const LAVA_FORTRESS: BossDef = {
       patternCooldown: 84,
       overheatInterval: 570,
       attacks: [
-        { kind: 'ring', count: 20, speed: 360, damage: 9, bulletRadius: 7, bulletLife: 150 },
-        { kind: 'lavaLine', pillars: 7, windup: 48, activeTicks: 100, radius: 52, damage: 10 },
-        { kind: 'spiral', count: 10, speed: 380, damage: 9, bulletRadius: 6, bulletLife: 150, turn: 0.5 },
+        { kind: 'ring', count: 20, speed: 720, damage: 9, bulletRadius: 7, bulletLife: 150 },
+        { kind: 'lavaLine', pillars: 7, windup: 48, activeTicks: 100, radius: 104, damage: 10 },
+        { kind: 'spiral', count: 10, speed: 760, damage: 9, bulletRadius: 6, bulletLife: 150, turn: 0.5 },
       ],
     },
     // P3 — desperation: dense spirals, faster cadence. Overheat opens ~every 9s
@@ -109,9 +110,9 @@ export const LAVA_FORTRESS: BossDef = {
       patternCooldown: 60,
       overheatInterval: 540,
       attacks: [
-        { kind: 'spiral', count: 14, speed: 400, damage: 10, bulletRadius: 6, bulletLife: 160, turn: 0.62 },
-        { kind: 'ring', count: 24, speed: 420, damage: 10, bulletRadius: 7, bulletLife: 160 },
-        { kind: 'spiral', count: 14, speed: 400, damage: 10, bulletRadius: 6, bulletLife: 160, turn: -0.62 },
+        { kind: 'spiral', count: 14, speed: 800, damage: 10, bulletRadius: 6, bulletLife: 160, turn: 0.62 },
+        { kind: 'ring', count: 24, speed: 840, damage: 10, bulletRadius: 7, bulletLife: 160 },
+        { kind: 'spiral', count: 14, speed: 800, damage: 10, bulletRadius: 6, bulletLife: 160, turn: -0.62 },
       ],
     },
   ],

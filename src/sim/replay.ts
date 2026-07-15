@@ -100,6 +100,7 @@ export function hashWorld(state: WorldState): number {
   h = hashU32(h, state.waveRng.getState());
   h = hashU32(h, state.powerupRng.getState());
   h = hashU32(h, state.supplyRng.getState());
+  h = hashU32(h, state.worldRng.getState());
   // World config (arena size, movement/dash/i-frame tuning). Two runs with
   // different configs must hash apart even before any entity diverges.
   const cfg = state.config;
@@ -138,6 +139,7 @@ export function hashWorld(state: WorldState): number {
   h = hashU32(h, state.comboTimer >>> 0);
   h = hashU32(h, state.maxCombo >>> 0);
   h = hashFloat(h, state.magnetRadius);
+  h = hashU32(h, state.magnetBuffTicks >>> 0);
   h = hashU32(h, state.resources >>> 0);
   h = hashU32(h, state.pendingLevelUp ? 1 : 0);
   h = hashU32(h, state.powerupChoices.length >>> 0);
