@@ -12,6 +12,7 @@
  */
 
 import { PLANETS, TIERS, planetById } from '../../data/planets.js';
+import { canEnterTier, ANNIHILATION_UNLOCK_LEVEL } from '../../data/waves.js';
 import { ANOMALY_GRAVITY, ANOMALY_SWARM, ANOMALY_NEBULA, ANOMALY_NONE } from '../sim/anomaly.js';
 
 /** What the player chose on the star map. */
@@ -44,6 +45,7 @@ const STYLE = `
 #pb-planet .pb-seg { display:flex; gap:8px; }
 #pb-planet .pb-seg button { pointer-events:auto; cursor:pointer; padding:8px 18px; font-size:14px; font-weight:700; color:#aab6d6; background:rgba(12,16,30,.7); border:1px solid #2a3552; border-radius:10px; transition:all .1s ease; }
 #pb-planet .pb-seg button.sel { color:#04121a; background:linear-gradient(90deg,#4cd7ff,#7affea); border-color:transparent; }
+#pb-planet .pb-seg button.locked { opacity:.45; cursor:not-allowed; border-style:dashed; }
 #pb-planet .pb-tierdesc { color:#8896b8; font-size:12px; min-height:16px; }
 #pb-planet .pb-anomaly { display:flex; flex-direction:column; align-items:center; gap:8px; background:rgba(40,16,50,.5); border:1px solid #6a3a7a; border-radius:14px; padding:14px 22px; }
 #pb-planet .pb-anomaly .pb-atitle { color:#e6a8ff; font-weight:800; letter-spacing:1px; }
@@ -56,14 +58,20 @@ const STYLE = `
 #pb-planet .pb-inv-btn:hover { border-color:#4cd7ff; color:#fff; }
 `;
 
+/** Active-ship level required for the 섬멸 tier (surfaced as a lock reason). */
+const ANNIHILATION_LEVEL = ANNIHILATION_UNLOCK_LEVEL;
+
 export class PlanetSelect {
   private readonly root: HTMLElement;
   private planet = 0;
   private tier = 0;
   private anomalyKind = ANOMALY_NONE;
   private anomalyAccepted = false;
+  /** Active-ship level — gates the 섬멸 tier (canEnterTier). */
+  private level = 1;
   private onLaunch: ((sel: LaunchSelection) => void) | null = null;
   private onInventory: (() => void) | null = null;
+  private onBack: (() => void) | null = null;
 
   constructor() {
     const style = document.createElement('style');
@@ -88,14 +96,22 @@ export class PlanetSelect {
     opts: {
       anomalyOffered: number;
       meta: string;
+      /** Active-ship level (gates the 섬멸 tier). Defaults to 1 when omitted. */
+      level?: number;
       onLaunch: (sel: LaunchSelection) => void;
       onInventory: () => void;
+      /** Optional "back to base map" affordance (plan D1 왕복 동선). */
+      onBack?: () => void;
     },
   ): void {
     this.anomalyKind = opts.anomalyOffered;
     this.anomalyAccepted = false;
+    this.level = opts.level ?? 1;
+    // Keep the selected tier valid for this level (a demotion clamps 섬멸 away).
+    if (!canEnterTier(this.tier, this.level)) this.tier = 0;
     this.onLaunch = opts.onLaunch;
     this.onInventory = opts.onInventory;
+    this.onBack = opts.onBack ?? null;
     this.render(opts.meta);
     this.root.style.display = 'flex';
   }
@@ -104,6 +120,7 @@ export class PlanetSelect {
     this.root.style.display = 'none';
     this.onLaunch = null;
     this.onInventory = null;
+    this.onBack = null;
   }
 
   private render(meta: string): void {
@@ -153,10 +170,12 @@ export class PlanetSelect {
     const seg = document.createElement('div');
     seg.className = 'pb-seg';
     for (const t of TIERS) {
+      const unlocked = canEnterTier(t.id, this.level);
       const b = document.createElement('button');
-      b.className = t.id === this.tier ? 'sel' : '';
-      b.textContent = t.name;
+      b.className = `${t.id === this.tier ? 'sel' : ''}${unlocked ? '' : ' locked'}`.trim();
+      b.textContent = unlocked ? t.name : `🔒 ${t.name}`;
       b.addEventListener('click', () => {
+        if (!canEnterTier(t.id, this.level)) return; // locked: keep current selection
         this.tier = t.id;
         this.render(meta);
       });
@@ -167,7 +186,13 @@ export class PlanetSelect {
     this.root.appendChild(tierRow);
     const tierDesc = document.createElement('div');
     tierDesc.className = 'pb-tierdesc';
-    tierDesc.textContent = TIERS.find((t) => t.id === this.tier)?.desc ?? '';
+    const selTier = TIERS.find((t) => t.id === this.tier);
+    // Show the lock reason for any tier that is gated at the current level.
+    const lockedTier = TIERS.find((t) => !canEnterTier(t.id, this.level));
+    tierDesc.textContent =
+      lockedTier !== undefined
+        ? `${selTier?.desc ?? ''}   ·   🔒 ${lockedTier.name}: 기체 Lv ${ANNIHILATION_LEVEL} 필요 (현재 Lv ${this.level})`
+        : (selTier?.desc ?? '');
     this.root.appendChild(tierDesc);
 
     // Anomaly offer (only when the seed rolled one).
@@ -208,6 +233,17 @@ export class PlanetSelect {
     // Actions.
     const actions = document.createElement('div');
     actions.className = 'pb-row';
+    if (this.onBack !== null) {
+      const backBtn = document.createElement('button');
+      backBtn.className = 'pb-inv-btn';
+      backBtn.textContent = '◀ 기지로';
+      backBtn.addEventListener('click', () => {
+        const cb = this.onBack;
+        this.hide();
+        cb?.();
+      });
+      actions.appendChild(backBtn);
+    }
     const invBtn = document.createElement('button');
     invBtn.className = 'pb-inv-btn';
     invBtn.textContent = '🛠 장비 정비';

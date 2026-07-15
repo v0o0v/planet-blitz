@@ -28,7 +28,7 @@ import type { Item } from '../items/types.js';
 import type { LootRecord } from '../sim/world.js';
 import { xpToNext } from '../sim/world.js';
 import type { Profile, Ship } from './profile.js';
-import { INVENTORY_CAP, activeShip, stashCapacity } from './profile.js';
+import { INVENTORY_CAP, activeShip, stashCapacity, recordPlanetClear } from './profile.js';
 
 /** What the sim reports at run end (all plain numbers/records — no sim types). */
 export interface RunResult {
@@ -39,6 +39,10 @@ export interface RunResult {
   xpTotal: number;
   /** Raid resources earned (finalState.resources) → credits. */
   resources: number;
+  /** Planet index the run took place on (records a clear on victory, plan E2). */
+  planet?: number;
+  /** Tier index the run took place on (records a clear on victory, plan E2). */
+  tier?: number;
 }
 
 /** Summary of what a run added to the profile (for the result overlay). */
@@ -81,6 +85,11 @@ export function settleRun(profile: Profile, result: RunResult): SettlementOutcom
   // 4. Resources → credits.
   const creditsGained = Math.max(0, Math.floor(result.resources));
   profile.credits += creditsGained;
+
+  // 5. On victory, record the planet clear (drives 정제소 unlock + tier gating).
+  if (result.victory && result.planet !== undefined && result.tier !== undefined) {
+    recordPlanetClear(profile, result.planet, result.tier);
+  }
 
   return { itemsGained, levelsGained, skillPointsGained, creditsGained, overflow };
 }

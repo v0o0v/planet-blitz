@@ -24,6 +24,9 @@ import { SKILLS, SKILL_NODE_COUNT } from '../../data/skills.js';
 /** Credit cost of one skill respec, per active-ship level (plan A3). */
 export const RESPEC_COST_PER_LEVEL = 100;
 
+/** Active-ship level at which the research lab (skill tree) unlocks (GDD §7). */
+export const RESEARCH_UNLOCK_LEVEL = 3;
+
 /** Inventory capacity — 48 slots (6×8 grid, plan D1). */
 export const INVENTORY_CAP = 48;
 /** Base stash capacity before any expansion. */
@@ -87,6 +90,28 @@ export interface Profile {
    * `computeLoadoutStats(equipped, skillInvest)` at run start.
    */
   skillInvest: number[];
+  /**
+   * Whether the forced first-run tutorial (FTUE, plan E1/E2) has been completed.
+   * A fresh profile starts `false` (new pilots are dropped straight into the
+   * tutorial run); once it finishes, the base map replaces the tutorial as the
+   * hub and the run becomes skippable (OQ-M3-7). Migrated pre-v3 saves are
+   * stamped `true` — they were already playing before the FTUE existed.
+   */
+  tutorialDone: boolean;
+}
+
+/** Which base-map buildings are currently unlocked (derived, GDD §7 / plan E2). */
+export interface BaseUnlocks {
+  /** 격납고 — always available once the base is revealed. */
+  hangar: boolean;
+  /** 연구소(스킬트리) — unlocks at active-ship Lv3. */
+  research: boolean;
+  /** 정제소(리롤) — unlocks after clearing any planet at least once. */
+  refinery: boolean;
+  /** 방어 사령부 — M4 content ("준비 중"). */
+  defenseCommand: boolean;
+  /** 관제탑 — M4 content ("준비 중"). */
+  controlTower: boolean;
 }
 
 /** A minimal synchronous key/value store (localStorage-compatible subset). */
@@ -123,12 +148,48 @@ export function defaultProfile(): Profile {
     minerals: 0,
     skillPoints: 0,
     skillInvest: zeroSkillInvest(),
+    tutorialDone: false,
   };
 }
 
 /** The active ship (falls back to the first, then a fresh default). */
 export function activeShip(profile: Profile): Ship {
   return profile.ships[profile.activeShipIndex] ?? profile.ships[0] ?? defaultShip();
+}
+
+// ---------------------------------------------------------------------------
+// Base-map unlocks + planet-clear progress (M3 plan E2, GDD §7)
+// ---------------------------------------------------------------------------
+
+/** Derive which base buildings are unlocked from the profile's live state. The
+ *  unlock order (격납고 → Lv3 연구소 → 행성 1클리어 정제소 → M4 방어 사령부·관제탑)
+ *  is surfaced by the base map as lock overlays (GDD §7). */
+export function computeUnlocks(profile: Profile): BaseUnlocks {
+  const level = activeShip(profile).level;
+  let anyClear = false;
+  for (const p of Object.values(profile.planetProgress)) {
+    if (p.bestTierCleared >= 0) {
+      anyClear = true;
+      break;
+    }
+  }
+  return {
+    hangar: true,
+    research: level >= RESEARCH_UNLOCK_LEVEL,
+    refinery: anyClear,
+    defenseCommand: false, // M4
+    controlTower: false, // M4
+  };
+}
+
+/** Record a planet clear, keeping the highest tier ever cleared there. Drives the
+ *  정제소 unlock and star-map tier gating (plan E2). No-op if `tier` is lower than
+ *  the recorded best. */
+export function recordPlanetClear(profile: Profile, planet: number, tier: number): void {
+  const cur = profile.planetProgress[planet];
+  if (cur === undefined || tier > cur.bestTierCleared) {
+    profile.planetProgress[planet] = { bestTierCleared: tier };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +299,7 @@ export function migrate(raw: unknown): Profile {
   const version = typeof data.saveVersion === 'number' ? data.saveVersion : 0;
   if (version < 1) data = migrateV0toV1(data);
   if (version < 2) data = migrateV1toV2(data);
+  if (version < 3) data = migrateV2toV3(data);
   return normalizeProfile(data);
 }
 
@@ -266,6 +328,16 @@ function migrateV0toV1(v0: Record<string, unknown>): Record<string, unknown> {
  */
 function migrateV1toV2(v1: Record<string, unknown>): Record<string, unknown> {
   return { ...v1, saveVersion: 2 };
+}
+
+/**
+ * v2 → v3: the FTUE (plan E2) adds `tutorialDone`. Any existing v2 save belongs to
+ * a pilot who was already playing before the tutorial gate existed, so it is
+ * stamped `true` (they are not force-marched back through the tutorial). A brand-
+ * new profile comes from {@link defaultProfile} with `false`.
+ */
+function migrateV2toV3(v2: Record<string, unknown>): Record<string, unknown> {
+  return { ...v2, saveVersion: 3, tutorialDone: true };
 }
 
 /**
@@ -302,6 +374,7 @@ function normalizeProfile(d: Record<string, unknown>): Profile {
     minerals: numOr(d.minerals, 0),
     skillPoints: numOr(d.skillPoints, 0),
     skillInvest: normalizeSkillInvest(d.skillInvest),
+    tutorialDone: d.tutorialDone === true,
   };
 }
 

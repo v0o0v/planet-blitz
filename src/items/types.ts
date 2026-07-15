@@ -12,8 +12,10 @@
 
 /** Save-schema version stamped onto serialized profiles (plan A1 / C1). Bump on
  *  any breaking layout change so the migration path can key off it.
- *  v2 (M3): adds the `skillInvest` vector (60-node skill tree). */
-export const SAVE_VERSION = 2;
+ *  v2 (M3): adds the `skillInvest` vector (60-node skill tree).
+ *  v3 (M3 Phase E2): adds the `tutorialDone` flag (FTUE gate + base-building
+ *  unlocks); existing saves migrate with it pre-set (they already played). */
+export const SAVE_VERSION = 3;
 
 // ---------------------------------------------------------------------------
 // Rarity
