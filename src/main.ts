@@ -170,6 +170,11 @@ async function main(): Promise<void> {
       powerupOverlay,
       resultOverlay,
       injectInput(input: Partial<import('./sim/world.js').InputFrame>) {
+        // NOTE: this DEV-only hook deliberately bypasses `recorder` — frames it
+        // injects are NOT written to the replay log, so a replay captured while
+        // tooling drove frames this way would not reproduce them. It exists only
+        // to step the sim for inspection when rAF is throttled; real play goes
+        // through the ticker loop above, which does record every frame.
         const merged = { moveX: 0, moveY: 0, aim: 0, dash: false, special: 0, ...input };
         stepWorld(world, merged);
         prevSnap = currSnap;
