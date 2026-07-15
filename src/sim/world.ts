@@ -30,14 +30,41 @@ import {
   spawnWall,
   spawnDestructible,
   spawnEventObject,
+  spawnLoot,
 } from './entities.js';
+import type { AnomalyState } from './anomaly.js';
+import { rollAnomaly, enemyBulletSpeedMult } from './anomaly.js';
+import { isElite, eliteAffix, eliteSpeedMult, spawnEliteDeathFx } from './elite.js';
+import { rollEliteDrop, rollBossDrop } from './drops.js';
+import {
+  hasUnique,
+  overheatCooldown,
+  UQ_OVERHEAT_DRUM,
+  UQ_SPLIT_CORE,
+  UQ_PIERCE_GYRO,
+  UQ_DRONE_BAY,
+  UQ_PHASE_ARMOR,
+  OVERHEAT_MAX_STACK,
+  GYRO_DAMAGE_AMP,
+  SPLIT_FRAGMENTS,
+  SPLIT_SPREAD,
+  SPLIT_FRAGMENT_SPEED,
+  SPLIT_FRAGMENT_LIFE,
+  SPLIT_FRAGMENT_RADIUS,
+  SPLIT_FRAGMENT_MARK,
+  DRONE_INTERVAL,
+  DRONE_SPAWN_OFFSET,
+  DRONE_MARK,
+  PHASE_ARMOR_BONUS_IFRAMES,
+  PHASE_ARMOR_DASH_CD_MULT,
+} from './uniques.js';
 import { SpatialHash, circlesOverlap } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
 import { updateBoss } from './boss.js';
 import { drawPowerupChoices, applyPowerup } from './powerups.js';
 import type { WaveRuntime } from './waves.js';
 import { createWaveRuntime, updateWaves, enemyDefFor } from './waves.js';
-import { LAVA_FORTRESS } from '../../data/boss.js';
+import { planetContent } from '../../data/planets/index.js';
 import {
   CHUNK_SIZE,
   CHUNK_GEN_RADIUS,
@@ -151,6 +178,12 @@ export interface WeaponStats {
   range: number;
   /** Bullet lifetime in ticks. */
   bulletLife: number;
+  /**
+   * Primary weapon firing archetype (M2 plan B2): 0 = 발칸 (fanned volley), 1 =
+   * 스프레드 (wide multi-pellet), 2 = 레일건 (single fast piercing shot). Seeded
+   * from the equipped main weapon's loadout; drives the autoAttack branch.
+   */
+  weaponType: number;
 }
 
 export const DEFAULT_WEAPON: WeaponStats = {
@@ -165,6 +198,7 @@ export const DEFAULT_WEAPON: WeaponStats = {
   bulletRadius: 5,
   range: 0,
   bulletLife: 55,
+  weaponType: 0,
 };
 
 /**
@@ -188,6 +222,38 @@ export function emptyInput(): InputFrame {
   return { moveX: 0, moveY: 0, aim: 0, dash: false, special: SPECIAL_NONE };
 }
 
+/**
+ * Loadout-derived stat block (M2 plan A4/B1). Produced OUTSIDE the sim by
+ * `computeLoadoutStats` (src/items/loadout.ts) and injected via WorldConfig so
+ * the sim never imports the item layer. Applied once at createWorld; carried in
+ * `Replay.config` and folded into the state hash so the verification server
+ * reproduces the exact run. All fields are plain deterministic numbers.
+ */
+export interface LoadoutConfig {
+  /** Main weapon archetype (mirrors WeaponStats.weaponType). */
+  weaponType: number;
+  /** Sub weapon variant: -1 none, else 0.. (drives the independent subWeapon fire). */
+  subWeaponType: number;
+  damageMult: number;
+  /** Fire-cooldown multiplier (< 1 faster, > 1 slower). */
+  fireRateMult: number;
+  bulletCountAdd: number;
+  pierceAdd: number;
+  bulletSpeedMult: number;
+  /** Extra fan angle (radians) added to the base spread. */
+  spreadAdd: number;
+  rangeAdd: number;
+  moveSpeedMult: number;
+  maxHpAdd: number;
+  /** Dash-cooldown multiplier (< 1 = recharges faster). */
+  dashCdMult: number;
+  magnetMult: number;
+  /** XP-gain multiplier (affix 경험치+%). */
+  xpMult: number;
+  /** Bitmask of active unique effects (Lane 3 hooks). */
+  uniqueMask: number;
+}
+
 export interface WorldConfig {
   arenaWidth: number;
   arenaHeight: number;
@@ -198,6 +264,15 @@ export interface WorldConfig {
   /** Invulnerability granted after taking damage (ticks). */
   hitIframes: number;
   playerHp: number;
+  // --- M2 farming loop (all optional; absent = M1 behaviour) ---
+  /** Source planet index (0 = 카르곤, 1 = 베르단). Stamped onto drops. */
+  planet?: number;
+  /** Difficulty tier (0 = 정찰, 1 = 교전). Gates elite affixes + drop odds. */
+  tier?: number;
+  /** Player accepted the offered anomaly (OQ-M2-3 pre-run flag). */
+  anomalyAccepted?: boolean;
+  /** Loadout-derived stats; absent = neutral (no equipment). */
+  loadout?: LoadoutConfig;
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {
@@ -212,6 +287,18 @@ export const DEFAULT_CONFIG: WorldConfig = {
   hitIframes: 40,
   playerHp: 100,
 };
+
+/** A single collected loot drop (drop seed + rarity code + provenance). */
+export interface LootRecord {
+  /** Drop seed the item is rolled from (rollItem). */
+  seed: number;
+  /** Rarity code (0 normal .. 3 unique). */
+  rarity: number;
+  /** Source planet index (from config). */
+  planet: number;
+  /** Source tier index (from config). */
+  tier: number;
+}
 
 export interface WorldState {
   tick: number;
@@ -230,6 +317,23 @@ export interface WorldState {
    * into the hash for symmetry with the other streams.
    */
   worldRng: SeededRng;
+  /** Drop-determination stream (rng.fork('drops')) — elite/boss loot rarity+seed. */
+  dropRng: SeededRng;
+  /** Elite-affix stream (rng.fork('elite'), OQ-M2-4) — independent of wave draws. */
+  eliteRng: SeededRng;
+  /**
+   * Anomaly stream (rng.fork('anomaly')). Advanced ONCE at creation to roll the
+   * offer; its resting state is folded into the hash for symmetry.
+   */
+  anomalyRng: SeededRng;
+  /** Resolved run anomaly (offer + acceptance). */
+  anomaly: AnomalyState;
+  /**
+   * Loot picked up this run (drop seed + rarity + source). Consumed at settlement
+   * (Lane 2) where `rollItem` confirms each item. Folded into the hash so replay
+   * verification sees the same collected sequence.
+   */
+  loot: LootRecord[];
   weapon: WeaponStats;
   wave: WaveRuntime;
   entities: Entity[];
@@ -309,6 +413,27 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   const entities: Entity[] = [];
   let nextEntityId = 1;
 
+  // Loadout-derived stats (plan B1): apply once here so the run starts strengthened
+  // and the effect is captured in the initial weapon/config/player/magnet — all of
+  // which are already hashed. The loadout block itself is folded into the hash too.
+  const weapon: WeaponStats = { ...DEFAULT_WEAPON };
+  let magnetRadius = BASE_MAGNET_RADIUS;
+  const lo = cfg.loadout;
+  if (lo !== undefined) {
+    weapon.weaponType = lo.weaponType;
+    weapon.damage = Math.round(weapon.damage * lo.damageMult * 100) / 100;
+    weapon.fireCooldown = Math.max(2, Math.round(weapon.fireCooldown * lo.fireRateMult));
+    weapon.bulletCount += lo.bulletCountAdd;
+    weapon.pierce += lo.pierceAdd;
+    weapon.bulletSpeed = Math.round(weapon.bulletSpeed * lo.bulletSpeedMult * 100) / 100;
+    weapon.spread += lo.spreadAdd;
+    weapon.range += lo.rangeAdd;
+    cfg.playerSpeed = Math.round(cfg.playerSpeed * lo.moveSpeedMult);
+    cfg.dashCooldownTicks = Math.max(12, Math.round(cfg.dashCooldownTicks * lo.dashCdMult));
+    cfg.playerHp += lo.maxHpAdd;
+    magnetRadius = Math.round(magnetRadius * lo.magnetMult);
+  }
+
   const player = blankEntity('player');
   player.id = nextEntityId++;
   // Infinite map: the player begins at the natural world origin (0,0). The
@@ -321,6 +446,10 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   player.maxHp = cfg.playerHp;
   entities.push(player);
 
+  // Anomaly: roll the seed-only offer, gate it on the config acceptance flag.
+  const anomalyRng = rng.fork('anomaly');
+  const anomaly = rollAnomaly(anomalyRng, cfg.anomalyAccepted ?? false);
+
   return {
     tick: 0,
     config: cfg,
@@ -329,7 +458,12 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     powerupRng: rng.fork('powerups'),
     supplyRng: rng.fork('supply'),
     worldRng: rng.fork('world'),
-    weapon: { ...DEFAULT_WEAPON },
+    dropRng: rng.fork('drops'),
+    eliteRng: rng.fork('elite'),
+    anomalyRng,
+    anomaly,
+    loot: [],
+    weapon,
     wave: createWaveRuntime(),
     entities,
     nextEntityId,
@@ -344,7 +478,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     combo: 0,
     comboTimer: 0,
     maxCombo: 0,
-    magnetRadius: BASE_MAGNET_RADIUS,
+    magnetRadius,
     magnetBuffTicks: 0,
     resources: 0,
     pendingLevelUp: false,
@@ -406,6 +540,8 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   stepEnemies(state, player);
   stepBoss(state, player);
   autoAttack(state, player);
+  subWeapon(state, player);
+  droneBay(state, player);
   stepTurrets(state, player);
   stepProjectiles(state, player);
   stepGems(state, player);
@@ -425,14 +561,17 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
 // ---------------------------------------------------------------------------
 
 /** True for any chunk-placed gimmick entity (terrain hazards are gimmicks only
- *  when permanent — life < 0 — so enemy mortar/lava hazards are never culled). */
+ *  when permanent — life < 0 — so enemy mortar/lava hazards are never culled).
+ *  드론 베이가 소환한 유니크 포탑(ownerId === DRONE_MARK)은 청크 기믹이 아니라
+ *  플레이어 소환물이므로 제외한다 — MAX_ACTIVE_GIMMICKS 카운트·청크 컬링을 받지 않고
+ *  TURRET_LIFE_TICKS 수명만 따른다. */
 function isGimmick(e: Entity): boolean {
   return (
     e.kind === 'wall' ||
     e.kind === 'destructible' ||
     e.kind === 'magnetEmitter' ||
     e.kind === 'bombDevice' ||
-    e.kind === 'turretPickup' ||
+    (e.kind === 'turretPickup' && e.ownerId !== DRONE_MARK) ||
     (e.kind === 'hazard' && e.life < 0)
   );
 }
@@ -601,8 +740,15 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     }
     player.vx += dx * config.dashSpeed;
     player.vy += dy * config.dashSpeed;
-    player.dashCooldown = config.dashCooldownTicks;
-    player.iframes = config.dashIframes;
+    // ⑤ 위상 장갑: 대시 직후 무적 프레임 연장 + 대시 쿨다운 감소(장착 시).
+    const mask = config.loadout?.uniqueMask ?? 0;
+    if (hasUnique(mask, UQ_PHASE_ARMOR)) {
+      player.dashCooldown = Math.round(config.dashCooldownTicks * PHASE_ARMOR_DASH_CD_MULT);
+      player.iframes = config.dashIframes + PHASE_ARMOR_BONUS_IFRAMES;
+    } else {
+      player.dashCooldown = config.dashCooldownTicks;
+      player.iframes = config.dashIframes;
+    }
   }
 
   player.x += player.vx * DT;
@@ -628,8 +774,13 @@ function stepEnemies(state: WorldState, player: Entity): void {
   const enemies: Entity[] = [];
   for (const e of state.entities) if (e.kind === 'enemy') enemies.push(e);
   for (const e of enemies) {
-    const def = enemyDefFor(e);
-    if (def !== undefined) updateEnemy(state, e, def, player);
+    let def = enemyDefFor(e);
+    if (def === undefined) continue;
+    // 가속하는 elite: run the same behaviour with a boosted speed (clone the def,
+    // never mutate the shared data row). No-op (mult 1) for everything else.
+    const sm = eliteSpeedMult(e);
+    if (sm !== 1) def = { ...def, speed: def.speed * sm };
+    updateEnemy(state, e, def, player);
   }
 }
 
@@ -641,14 +792,18 @@ function stepBoss(state: WorldState, player: Entity): void {
   if (state.wave.boss && !state.bossSpawned) {
     // Infinite map: spawn the boss just off-screen above the player rather than
     // at an absolute arena position. moveBoss then hovers it relative to the player.
+    // 행성별 보스 선택(카르곤 용암 요새 / 베르단 여왕). enemyType에 행성 인덱스를
+    // 태깅해 렌더가 보스 스프라이트를 분화할 수 있게 한다(카르곤=0 유지 → 해시 불변).
+    const bossDef = planetContent(state.config.planet).boss;
     const boss = spawnBoss(
       state,
       player.x,
       player.y - VIEW_HEIGHT * 0.55,
-      LAVA_FORTRESS.hp,
-      LAVA_FORTRESS.radius,
+      bossDef.hp,
+      bossDef.radius,
     );
-    boss.damage = LAVA_FORTRESS.contactDamage;
+    boss.damage = bossDef.contactDamage;
+    boss.enemyType = state.config.planet ?? 0;
     state.bossSpawned = true;
   }
   for (const e of state.entities) {
@@ -660,6 +815,9 @@ function stepBoss(state: WorldState, player: Entity): void {
 // Player auto-attack (vulcan): target nearest enemy/boss, fire a fanned volley.
 // ---------------------------------------------------------------------------
 
+/** Railgun weapon type (single fast piercing shot). Shared code with loadout. */
+const WEAPON_TYPE_RAILGUN = 2;
+
 function autoAttack(state: WorldState, player: Entity): void {
   const w = state.weapon;
   if (player.cooldown > 0) player.cooldown--;
@@ -668,7 +826,38 @@ function autoAttack(state: WorldState, player: Entity): void {
   const target = nearestTarget(state, player, w.range);
   if (target === undefined) return;
 
+  // ① 과열 드럼: 연속 명중 스택(player.phase)만큼 발사 쿨다운 단축. 미장착 시
+  //    스택은 항상 0이라 base 그대로(거동 불변).
+  const mask = state.config.loadout?.uniqueMask ?? 0;
+  const fireCd = hasUnique(mask, UQ_OVERHEAT_DRUM)
+    ? overheatCooldown(w.fireCooldown, player.phase)
+    : w.fireCooldown;
+
   const baseAngle = atan2(target.y - player.y, target.x - player.x);
+  // M2 plan B2 — three firing archetypes off `weaponType`:
+  //   2 = 레일건: one shot straight at the target, its (loadout-boosted) pierce
+  //       and bullet speed doing the work — ignores the fan entirely.
+  //   0/1 = 발칸 / 스프레드: fanned volley of `bulletCount` across `spread`. The
+  //       two differ only by their loadout baseline (spread = more pellets, wider
+  //       arc), so one code path serves both.
+  if (w.weaponType === WEAPON_TYPE_RAILGUN) {
+    spawnBullet(
+      state,
+      player.x,
+      player.y,
+      baseAngle,
+      w.bulletSpeed,
+      w.damage,
+      w.pierce,
+      w.bulletRadius,
+      w.bulletLife,
+      cos(baseAngle),
+      sin(baseAngle),
+    );
+    player.cooldown = fireCd;
+    return;
+  }
+
   const n = w.bulletCount;
   const start = n > 1 ? baseAngle - w.spread / 2 : baseAngle;
   const stepA = n > 1 ? w.spread / (n - 1) : 0;
@@ -688,7 +877,75 @@ function autoAttack(state: WorldState, player: Entity): void {
       sin(ang),
     );
   }
-  player.cooldown = w.fireCooldown;
+  player.cooldown = fireCd;
+}
+
+// --- Sub-weapon (M2 plan B2, OQ-M2-2 default: independent fire slot) ---------
+/** Ticks between sub-weapon shots. */
+const SUB_WEAPON_COOLDOWN = 24;
+/** Sub-weapon targeting range. */
+const SUB_WEAPON_RANGE = 900;
+const SUB_BULLET_SPEED = 1500;
+const SUB_BULLET_DAMAGE = 6;
+const SUB_BULLET_RADIUS = 5;
+const SUB_BULLET_LIFE = 60;
+/** Side-splay for the twin sub variant (radians). */
+const SUB_TWIN_SPLAY = 0.16;
+
+/**
+ * Independent sub-weapon fire (plan B2 / OQ-M2-2). Fires on its own cadence,
+ * tracked on the player's otherwise-unused `timer` field (already hashed), so it
+ * never competes with the primary weapon's cooldown. `subWeaponType`: 0 = single
+ * rapid bolt, 1 = twin side bolts. -1 (no sub equipped) is a no-op.
+ */
+function subWeapon(state: WorldState, player: Entity): void {
+  const lo = state.config.loadout;
+  const subType = lo?.subWeaponType ?? -1;
+  if (subType < 0) return;
+  if (player.timer > 0) {
+    player.timer--;
+    return;
+  }
+  const target = nearestTarget(state, player, SUB_WEAPON_RANGE);
+  if (target === undefined) return;
+  const baseAngle = atan2(target.y - player.y, target.x - player.x);
+  const angles = subType === 1 ? [baseAngle - SUB_TWIN_SPLAY, baseAngle + SUB_TWIN_SPLAY] : [baseAngle];
+  for (const ang of angles) {
+    spawnBullet(
+      state,
+      player.x,
+      player.y,
+      ang,
+      SUB_BULLET_SPEED,
+      SUB_BULLET_DAMAGE,
+      0,
+      SUB_BULLET_RADIUS,
+      SUB_BULLET_LIFE,
+      cos(ang),
+      sin(ang),
+    );
+  }
+  player.timer = SUB_WEAPON_COOLDOWN;
+}
+
+/**
+ * ④ 자율 드론 베이(plan F1, OQ-M2-6 #4): 장착 시 주기적으로 임시 포탑(드론)을
+ * 플레이어 곁에 소환한다. scroll-map turretPickup 로직 재사용(spawnEventObject +
+ * activateTurret) — 소환된 포탑은 stepTurrets가 자동 사격/수명 처리한다. 소환 주기는
+ * player.ownerId(플레이어 미사용 필드, 이미 해시됨)에 카운트다운으로 실어 신규
+ * WorldState 필드·해시 변경 없이 결정론 유지. 미장착 시 ownerId는 항상 0(거동 불변).
+ */
+function droneBay(state: WorldState, player: Entity): void {
+  const mask = state.config.loadout?.uniqueMask ?? 0;
+  if (!hasUnique(mask, UQ_DRONE_BAY)) return;
+  if (player.ownerId > 0) {
+    player.ownerId--;
+    return;
+  }
+  const drone = spawnEventObject(state, 'turretPickup', player.x + DRONE_SPAWN_OFFSET, player.y, 44);
+  drone.ownerId = DRONE_MARK; // 청크 기믹과 구분(isGimmick 제외 → 컬링·상한 비대상)
+  activateTurret(drone); // 즉시 활성 포탑(TURRET_LIFE_TICKS 동안 자동 사격)
+  player.ownerId = DRONE_INTERVAL;
 }
 
 /** Max candidates LOS-tested per aim (nearest few); bounds the wall raycast cost. */
@@ -803,10 +1060,14 @@ function stepProjectiles(state: WorldState, player: Entity): void {
   // forever off-screen (see tests/projectiles.test.ts).
   const cullR2 = PROJECTILE_CULL_RADIUS * PROJECTILE_CULL_RADIUS;
   const walls = state.activeWalls;
+  // 중력 폭풍 변칙: enemy bullets travel slower (single application point so no
+  // emitter needs touching). Friendly bullets are unaffected (mult = 1).
+  const enemyBulletMult = enemyBulletSpeedMult(state.anomaly);
   for (const e of state.entities) {
     if (e.kind !== 'bullet' && e.kind !== 'enemyBullet') continue;
-    e.x += e.vx * DT;
-    e.y += e.vy * DT;
+    const m = e.kind === 'enemyBullet' ? enemyBulletMult : 1;
+    e.x += e.vx * DT * m;
+    e.y += e.vy * DT * m;
     if (e.life > 0) e.life--;
     const dx = e.x - player.x;
     const dy = e.y - player.y;
@@ -926,13 +1187,22 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       e.kind === 'destructible' ||
       e.kind === 'magnetEmitter' ||
       e.kind === 'bombDevice' ||
-      e.kind === 'turretPickup'
+      e.kind === 'turretPickup' ||
+      e.kind === 'loot'
     ) {
       grid.insert(e);
     }
   }
 
   // Friendly bullets vs enemies / boss / supply raiders / destructibles.
+  // 유니크 게이트(장착 시에만 분기): ① 과열 드럼(명중 스택), ② 분열 코어(명중 파편),
+  // ③ 관통 자이로(무한 관통 + 관통당 피해 증폭). 미장착 시 아래 분기는 전부 no-op.
+  const uMask = state.config.loadout?.uniqueMask ?? 0;
+  const overheatOn = hasUnique(uMask, UQ_OVERHEAT_DRUM);
+  const splitOn = hasUnique(uMask, UQ_SPLIT_CORE);
+  const gyroOn = hasUnique(uMask, UQ_PIERCE_GYRO);
+  // 분열 파편은 그리드 순회 중 엔티티 배열을 건드리지 않도록 좌표만 모아 루프 뒤 스폰.
+  const splitSpawns: { x: number; y: number; angle: number }[] = [];
   for (const b of state.entities) {
     if (b.kind !== 'bullet' || b.dead) continue;
     grid.query(b.x, b.y, b.radius, (t) => {
@@ -942,11 +1212,48 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       if (!circlesOverlap(b.x, b.y, b.radius, t.x, t.y, t.radius)) return;
       // Boss takes double damage while overheated (iframes > 0), spec.
       const mult = t.kind === 'boss' && t.iframes > 0 ? 2 : 1;
-      t.hp -= b.damage * mult;
+      // ③ 관통 자이로: bullet.phase = 지금까지 관통한 횟수 → 관통당 피해 증폭.
+      const gyroAmp = gyroOn ? 1 + b.phase * GYRO_DAMAGE_AMP : 1;
+      t.hp -= b.damage * mult * gyroAmp;
       if (t.hp <= 0) t.dead = true;
-      if (b.pierce > 0) b.pierce--;
-      else b.dead = true;
+      // ① 과열 드럼: 적/보스 명중마다 스택 +1(상한). 피격 시 아래에서 리셋.
+      if (overheatOn && (t.kind === 'enemy' || t.kind === 'boss')) {
+        if (player.phase < OVERHEAT_MAX_STACK) player.phase++;
+      }
+      // ② 분열 코어: 원본 아군탄(마커 없는)이 명중하면 파편 2발 예약(무한 연쇄 방지).
+      if (splitOn && b.ownerId !== SPLIT_FRAGMENT_MARK) {
+        splitSpawns.push({ x: b.x, y: b.y, angle: b.angle });
+      }
+      // 관통 처리: 자이로는 무한 관통(수명으로만 소멸), 그 외는 기존 규칙.
+      if (gyroOn) {
+        b.phase++;
+      } else if (b.pierce > 0) {
+        b.pierce--;
+      } else {
+        b.dead = true;
+      }
     });
+  }
+  // ② 분열 파편 스폰(진행 방향 ± SPLIT_SPREAD). 파편은 마커를 달아 재분열하지 않는다.
+  for (const s of splitSpawns) {
+    for (let i = 0; i < SPLIT_FRAGMENTS; i++) {
+      const off = SPLIT_FRAGMENTS > 1 ? -SPLIT_SPREAD + (2 * SPLIT_SPREAD * i) / (SPLIT_FRAGMENTS - 1) : 0;
+      const ang = s.angle + off;
+      const frag = spawnBullet(
+        state,
+        s.x,
+        s.y,
+        ang,
+        SPLIT_FRAGMENT_SPEED,
+        state.weapon.damage,
+        0,
+        SPLIT_FRAGMENT_RADIUS,
+        SPLIT_FRAGMENT_LIFE,
+        cos(ang),
+        sin(ang),
+      );
+      frag.ownerId = SPLIT_FRAGMENT_MARK; // 재분열 방지 마커
+    }
   }
 
   // Player vs enemies / enemy bullets / hazards / gems / boss.
@@ -957,6 +1264,12 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     if (!circlesOverlap(player.x, player.y, player.radius, t.x, t.y, t.radius)) return;
     if (t.kind === 'gem') {
       collectGem(state, t);
+      return;
+    }
+    // Floor loot: auto-collect on contact (OQ-M2-1 default). Record the drop seed
+    // + rarity + provenance for settlement (Lane 2 confirms the item via rollItem).
+    if (t.kind === 'loot') {
+      collectLoot(state, t);
       return;
     }
     // Proximity event objects fire on contact (deterministic, no input). Consumed
@@ -990,10 +1303,12 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     player.hp -= dmg;
     if (player.hp < 0) player.hp = 0;
     player.iframes = state.config.hitIframes;
+    // ① 과열 드럼: 피격 시 연속 명중 스택 리셋(장착 시에만 phase가 비0).
+    if (overheatOn) player.phase = 0;
   }
 }
 
-/** Collect a gem: bump the combo, award XP scaled by the combo multiplier. */
+/** Collect a gem: bump the combo, award XP scaled by combo × loadout XP mult. */
 function collectGem(state: WorldState, gem: Entity): void {
   gem.dead = true;
   state.gems++;
@@ -1001,9 +1316,21 @@ function collectGem(state: WorldState, gem: Entity): void {
   state.comboTimer = COMBO_WINDOW_TICKS;
   if (state.combo > state.maxCombo) state.maxCombo = state.combo;
   const baseXp = gem.damage; // gem carries its XP value in `damage`
-  const gained = Math.floor(baseXp * comboMultiplier(state.combo));
+  const xpMult = state.config.loadout?.xpMult ?? 1; // affix 경험치+%
+  const gained = Math.floor(baseXp * comboMultiplier(state.combo) * xpMult);
   state.xp += gained;
   state.xpTotal += gained;
+}
+
+/** Collect a loot drop: record its seed + rarity + provenance for settlement. */
+function collectLoot(state: WorldState, loot: Entity): void {
+  loot.dead = true;
+  state.loot.push({
+    seed: loot.damage >>> 0, // drop seed stored in `damage`
+    rarity: loot.enemyType, // rarity code stored in `enemyType`
+    planet: state.config.planet ?? 0,
+    tier: state.config.tier ?? 0,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1014,6 +1341,18 @@ function compact(state: WorldState): void {
   const survivors: Entity[] = [];
   const drops: { x: number; y: number; xp: number }[] = [];
   const supplyDrops: { x: number; y: number }[] = [];
+  // Loot drops (elite/boss) + split-elite death fragments, spawned AFTER the
+  // survivor array is rebuilt so we never mutate `state.entities` mid-iteration.
+  const lootDrops: { x: number; y: number; seed: number; rarity: number }[] = [];
+  const splitElites: Entity[] = [];
+  const tier = state.config.tier ?? 0;
+  const planet = state.config.planet ?? 0;
+  // 이 compact에서 보스가 죽어 승리가 확정됐는지. 승리 tick에는 다음 stepWorld가
+  // 즉시 return(gameOver/victory 가드)하므로 collectLoot(resolveCollisions 내부)가
+  // 다시 실행되지 않는다 → 이 tick에 바닥 스폰된 loot는 영영 수거되지 않아 유실된다.
+  let bossKilled = false;
+  // 행성별 드랍 테이블(rarity 기준 확률)을 엘리트/보스 드랍 판정에 넘긴다(E3).
+  const dropOdds = planetContent(state.config.planet).dropTable;
   for (const e of state.entities) {
     if (!e.dead) {
       survivors.push(e);
@@ -1023,6 +1362,13 @@ function compact(state: WorldState): void {
       state.kills++;
       const def = enemyDefFor(e);
       drops.push({ x: e.x, y: e.y, xp: def?.xpValue ?? 1 });
+      // Elites are the only rank-and-file loot source (GDD §3). They always drop
+      // one item; a 분열하는 elite additionally bursts fragments on death (B4).
+      if (isElite(e)) {
+        const roll = rollEliteDrop(state.dropRng, tier, state.anomaly, dropOdds);
+        lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
+        if (eliteAffix(e) === 0) splitElites.push(e);
+      }
     } else if (e.kind === 'supply' && e.hp <= 0) {
       // Shot down (vs. escaped with hp > 0): grant the raid reward.
       state.resources++;
@@ -1032,10 +1378,25 @@ function compact(state: WorldState): void {
       drops.push({ x: e.x, y: e.y, xp: e.damage });
     } else if (e.kind === 'boss') {
       state.victory = true;
+      bossKilled = true;
+      // Boss guaranteed rare+ drop (GDD §3, plan B3). 승리 tick이라 바닥 스폰→접촉 수거가
+      // 불가능하므로 state.loot에 직접 기록해 정산에 포함시킨다(해시 포함, replay.ts).
+      const roll = rollBossDrop(state.dropRng, tier, state.anomaly, dropOdds);
+      state.loot.push({ seed: roll.seed >>> 0, rarity: roll.rarityCode, planet, tier });
     }
   }
   state.entities = survivors;
   for (const d of drops) spawnGem(state, d.x, d.y, d.xp);
+  if (bossKilled) {
+    // 보스와 같은 tick에 죽은 엘리트 loot도 승리 tick이라 바닥에서 수거될 수 없다.
+    // 보스 드랍과 동일하게 state.loot에 직접 기록해 유실을 막는다(결정론: 배열 순서 고정).
+    for (const d of lootDrops) {
+      state.loot.push({ seed: d.seed >>> 0, rarity: d.rarity, planet, tier });
+    }
+  } else {
+    for (const d of lootDrops) spawnLoot(state, d.x, d.y, d.seed, d.rarity);
+  }
+  for (const e of splitElites) spawnEliteDeathFx(state, e);
   for (const d of supplyDrops) {
     for (let i = 0; i < SUPPLY_REWARD_GEMS; i++) {
       const ang = (i * 6.283185307179586) / SUPPLY_REWARD_GEMS;

@@ -13,6 +13,8 @@
  * not these numbers). Expected to move during the fun-gate loop.
  */
 
+import type { EnemyRole } from '../src/sim/patterns/types.js';
+
 export type BossAttack =
   /** Even radial burst of `count` bullets. */
   | {
@@ -42,6 +44,28 @@ export type BossAttack =
       readonly activeTicks: number;
       readonly radius: number;
       readonly damage: number;
+    }
+  /**
+   * 여왕 보스 소환(plan E2): 무리개체를 보스 주변 링에 즉시 스폰. `role`은 현재
+   * 행성 로스터에서 뽑을 잡몹 역할, `count`는 마리 수. 결정론(고정 각도, RNG 없음).
+   */
+  | {
+      readonly kind: 'summon';
+      readonly role: EnemyRole;
+      readonly count: number;
+    }
+  /**
+   * 과열 창(plan E2): 플레이어를 향해 조준된 좁은 부채꼴 고속 탄막(포위/창격). `arc`
+   * 0이면 단일 직선 창, >0이면 그 각도폭에 `count`발을 부채꼴로 발사.
+   */
+  | {
+      readonly kind: 'aimedBurst';
+      readonly count: number;
+      readonly arc: number;
+      readonly speed: number;
+      readonly damage: number;
+      readonly bulletRadius: number;
+      readonly bulletLife: number;
     };
 
 export interface BossPhaseDef {

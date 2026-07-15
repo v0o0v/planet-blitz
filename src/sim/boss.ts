@@ -25,9 +25,10 @@ import type { Entity } from './entities.js';
 import { spawnEnemyBullet, spawnHazard } from './entities.js';
 import { HAZARD_LAVA } from './patterns/types.js';
 import { cos, sin, atan2, TWO_PI, clamp } from './math.js';
-import { DT, VIEW_HEIGHT, HAZARD_LINE_SPAN } from './constants.js';
-import { LAVA_FORTRESS } from '../../data/boss.js';
-import type { BossAttack } from '../../data/boss.js';
+import { DT, VIEW_HEIGHT, HAZARD_LINE_SPAN, SPAWN_RING_RADIUS } from './constants.js';
+import type { BossAttack, BossDef } from '../../data/boss.js';
+import { planetContent } from '../../data/planets/index.js';
+import { summonEnemy } from './waves.js';
 
 /** Phase-transition animation length: 2 seconds (spec). */
 export const BOSS_PHASE_TRANSITION_TICKS = 120;
@@ -36,6 +37,8 @@ export const BOSS_OVERHEAT_TICKS = 300;
 
 /** Advance the boss by one tick: transitions, movement, overheat, patterns. */
 export function updateBoss(state: WorldState, boss: Entity, player: Entity): void {
+  // 행성별 보스 정의(카르곤 용암 요새 / 베르단 여왕). 3페이즈·과열 리듬 골격은 공유.
+  const bossDef = planetContent(state.config.planet).boss;
   // Phase-transition animation: frozen, no fire, no overheat decay.
   if (boss.timer > 0) {
     boss.timer--;
@@ -63,7 +66,7 @@ export function updateBoss(state: WorldState, boss: Entity, player: Entity): voi
     return;
   }
 
-  moveBoss(boss, player);
+  moveBoss(boss, player, bossDef);
 
   if (boss.iframes > 0) boss.iframes--;
   if (boss.dashCooldown > 0) boss.dashCooldown--;
@@ -72,7 +75,7 @@ export function updateBoss(state: WorldState, boss: Entity, player: Entity): voi
     boss.cooldown--;
     return;
   }
-  const phase = LAVA_FORTRESS.phases[boss.phase];
+  const phase = bossDef.phases[boss.phase];
   if (phase === undefined) return;
   const attackIndex = boss.pierce % phase.attacks.length;
   const attack = phase.attacks[attackIndex];
@@ -91,8 +94,8 @@ export function updateBoss(state: WorldState, boss: Entity, player: Entity): voi
 
 /** Slow hover above the player, tracking them horizontally (infinite map:
  *  hover point is player-relative, no arena clamp). */
-function moveBoss(boss: Entity, player: Entity): void {
-  const sp = LAVA_FORTRESS.moveSpeed;
+function moveBoss(boss: Entity, player: Entity, bossDef: BossDef): void {
+  const sp = bossDef.moveSpeed;
   const stepMax = sp * DT;
   const targetY = player.y - VIEW_HEIGHT * 0.28;
   const dy = targetY - boss.y;
@@ -162,6 +165,43 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
           true,
           boss.id,
         );
+      }
+      break;
+    }
+    case 'summon': {
+      // 무리개체 소환(plan E2): 현재 행성 로스터에서 역할을 뽑아 보스 주변 링에
+      // 즉시 스폰. 고정 각도(RNG 미소비) — 결정론. 정의되지 않은 역할이면 무시.
+      const def = planetContent(state.config.planet).roster[atk.role];
+      if (def === undefined) break;
+      const ringR = SPAWN_RING_RADIUS * 0.5;
+      for (let i = 0; i < atk.count; i++) {
+        const ang = (i * TWO_PI) / atk.count;
+        summonEnemy(state, def, boss.x + cos(ang) * ringR, boss.y + sin(ang) * ringR);
+      }
+      break;
+    }
+    case 'aimedBurst': {
+      // 과열 창/포위(plan E2): 플레이어를 향해 조준된 부채꼴 고속탄. arc=0이면 단일
+      // 직선 창. 세그먼트 탄 상한을 존중한다(결정론, 조준각은 위치의 함수).
+      const aim = atan2(player.y - boss.y, player.x - boss.x);
+      const n = atk.count;
+      const start = n > 1 ? aim - atk.arc / 2 : aim;
+      const stepA = n > 1 ? atk.arc / (n - 1) : 0;
+      for (let i = 0; i < n; i++) {
+        if (state.enemyBulletCount >= state.bulletCap) break;
+        const ang = start + stepA * i;
+        spawnEnemyBullet(
+          state,
+          boss.x,
+          boss.y,
+          cos(ang) * atk.speed,
+          sin(ang) * atk.speed,
+          ang,
+          atk.damage,
+          atk.bulletRadius,
+          atk.bulletLife,
+        );
+        state.enemyBulletCount++;
       }
       break;
     }

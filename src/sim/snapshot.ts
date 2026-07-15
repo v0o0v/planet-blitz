@@ -9,6 +9,7 @@
 
 import type { WorldState } from './world.js';
 import type { EntityKind } from './entities.js';
+import { eliteAffix } from './elite.js';
 
 export interface EntitySnapshot {
   id: number;
@@ -30,6 +31,12 @@ export interface EntitySnapshot {
   active: boolean;
   /** Boss phase-transition animation in progress (screen-clear flash). */
   flash: boolean;
+  /**
+   * Elite affix code (0..3) for an elite enemy, else -1. Drives the nameplate /
+   * outline (render only — never part of the hash). For `loot` entities the
+   * rarity code lives in `enemyType`.
+   */
+  elite: number;
 }
 
 /** A support heal beam, for render only. */
@@ -84,6 +91,7 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
             ? e.iframes > 0
             : false,
       flash: e.kind === 'boss' && e.timer > 0,
+      elite: eliteAffix(e),
     });
     if (e.kind === 'enemy' && e.enemyType === SUPPORT_TYPE && e.phase === 1) {
       beams.push({ x1: e.x, y1: e.y, x2: e.targetX, y2: e.targetY });

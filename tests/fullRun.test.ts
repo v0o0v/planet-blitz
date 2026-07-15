@@ -56,6 +56,16 @@ describe('full run to victory (task 15, e2e)', () => {
     expect(state.level).toBeGreaterThan(1);
   });
 
+  it('records the boss guaranteed rare+ drop into finalState.loot on victory (리뷰 HIGH)', () => {
+    // 회귀: 승리 tick에는 다음 stepWorld가 즉시 return해 바닥 loot가 수거되지 않는다.
+    // 보스 확정 드랍은 compact에서 state.loot에 직접 기록돼야 정산에서 유실되지 않는다.
+    const { state } = playToEnd(0x50c1a1, durable);
+    expect(state.victory).toBe(true);
+    // rare(2) 이상 엔트리가 최소 1개(보스 확정 드랍) 존재해야 한다.
+    const rarePlus = state.loot.filter((r) => r.rarity >= 2);
+    expect(rarePlus.length).toBeGreaterThanOrEqual(1);
+  });
+
   it('the winning run replays deterministically to the same victory', () => {
     const { inputs } = playToEnd(0x50c1a1, durable);
     const a = runReplay({ seed: 0x50c1a1, config: durable, inputs });

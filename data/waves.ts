@@ -15,10 +15,20 @@ import type { EnemyRole } from '../src/sim/patterns/types.js';
 
 export type Formation = 'ring' | 'line' | 'edges' | 'cluster';
 
+/**
+ * One spawn group in a wave card. Either a ROLE spawn (resolved against the
+ * planet's role roster) or an ELITE spawn (resolved against the planet's elite
+ * list by index). The elite variant is optional/additive so existing role-only
+ * cards (카르곤) are unchanged; 베르단 cards use it to seed its 엘리트 2종.
+ */
+export type WaveSpawn =
+  | { readonly role: EnemyRole; readonly count: number }
+  | { readonly elite: number; readonly count: number };
+
 export interface WaveCard {
   readonly id: string;
   readonly formation: Formation;
-  readonly spawns: readonly { readonly role: EnemyRole; readonly count: number }[];
+  readonly spawns: readonly WaveSpawn[];
 }
 
 export interface WaveSegment {

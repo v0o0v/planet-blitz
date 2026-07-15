@@ -25,7 +25,9 @@ export type EntityKind =
   | 'destructible' // 부수면 젬 드랍하는 파괴 가능 오브젝트(이동은 통과)
   | 'magnetEmitter' // 접촉 시 젬 자석 반경 배율 버프
   | 'bombDevice' // 접촉 시 반경 내 적 피해 + 적탄 소거
-  | 'turretPickup'; // 접촉 시 일정 시간 자동 사격하는 아군 포탑으로 활성화
+  | 'turretPickup' // 접촉 시 일정 시간 자동 사격하는 아군 포탑으로 활성화
+  // --- M2 파밍 루프 (plan Phase B3) ---
+  | 'loot'; // 엘리트·보스가 바닥에 떨군 장비 드랍(접촉 자동 획득). damage=드랍시드, enemyType=rarity 코드
 
 /**
  * Stable integer per kind, folded into the state hash. Never renumber existing
@@ -47,6 +49,8 @@ export const KIND_CODE: Record<EntityKind, number> = {
   magnetEmitter: 11,
   bombDevice: 12,
   turretPickup: 13,
+  // Appended for the M2 farming loop (never renumber 1..13).
+  loot: 14,
 };
 
 export interface Entity {
@@ -329,4 +333,29 @@ export function spawnBoss(sink: EntitySink, x: number, y: number, hp: number, ra
   b.phase = 0;
   b.enemyType = 0;
   return addEntity(sink, b);
+}
+
+/**
+ * Spawn a floor loot drop (M2 plan B3). The sim never carries the item itself —
+ * only the DROP SEED (u32) it stands for, from which `rollItem` reconstructs the
+ * item at settlement (ADR-0005, plan §2 ①A). Field mapping:
+ *   - `damage`    = drop seed (exact integer < 2^53, folded into the hash)
+ *   - `enemyType` = rarity code (0 normal .. 3 unique; drives the beam colour)
+ *   - `radius`    = pickup radius (contact auto-collect, OQ-M2-1 default)
+ */
+export function spawnLoot(
+  sink: EntitySink,
+  x: number,
+  y: number,
+  dropSeed: number,
+  rarityCode: number,
+): Entity {
+  const l = blankEntity('loot');
+  l.x = x;
+  l.y = y;
+  l.radius = 44; // generous pickup radius (2x scale)
+  l.hp = 1;
+  l.damage = dropSeed >>> 0;
+  l.enemyType = rarityCode;
+  return addEntity(sink, l);
 }
