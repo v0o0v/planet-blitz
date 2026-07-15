@@ -1,24 +1,35 @@
 /**
- * Level-up powerup pool (M1 reduced set — plan task 13).
+ * Level-up powerup pool (M3 Phase C2 — plan §4, AC9).
  *
- * Eight powerups: 4 vulcan derivatives, 2 movement/dash, 2 utility. Each is a
- * pure state mutation applied at the exact tick the player's pick input arrives,
- * so a recorded [seed + input log] — where the pick index is packed into the
- * input frame's `special` bits — reproduces the same build deterministically.
+ * 24 powerups: the original M1 eight (indices 0..7, NEVER reordered — the index
+ * is the wire value packed into the pick input frame) plus 16 M3 additions
+ * (8..23) covering every main-weapon archetype and each skill tree. Each entry
+ * carries a build TAG (weaponType / tree / universal); `drawPowerupChoices`
+ * soft-weights the offer by the run's loadout + skill investment (OQ-M3-1
+ * default): universal powerups are always viable candidates, build-matched ones
+ * are weighted up, and off-build ones stay possible but rare — so the offer feels
+ * derived from the player's build without ever hard-excluding a choice.
  *
- * `apply` mutates only sim state (weapon stats, config, player entity, world
- * fields). It draws no RNG and reads no wall-clock time, so it is safe under the
- * sim-core lint rules. The display metadata (name/desc) lives here too so the UI
- * layer can render the 3-choice cards without duplicating the table.
+ * Each `apply` is a pure state mutation (weapon/config/player/magnet only) — no
+ * RNG, no wall-clock — so a recorded [seed + input log] reproduces the same build
+ * deterministically. The weighting reads only run-start config (loadout weapon
+ * type + skill vector), which is fixed for the whole run, so the draw stream stays
+ * deterministic too.
  */
 
 import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
+import { SKILL_TREES, NODES_PER_TREE } from '../../data/skills.js';
+import type { SkillTree } from '../../data/skills.js';
 
 export interface PowerupDef {
   readonly id: string;
   readonly name: string;
   readonly desc: string;
+  /** Build tag (drives the soft weighting). Exactly one of the three is set. */
+  readonly weaponType?: number;
+  readonly tree?: SkillTree;
+  readonly universal?: boolean;
   /** Applies the effect to the world (deterministic, no RNG). */
   readonly apply: (state: WorldState) => void;
 }
@@ -29,14 +40,15 @@ function player(state: WorldState): Entity | undefined {
 
 /**
  * The pool. Index is stable and used as the wire value for the pick input, so
- * never reorder existing entries without bumping a replay format version.
+ * never reorder existing entries — new powerups are APPENDED (indices 8+).
  */
 export const POWERUPS: readonly PowerupDef[] = [
-  // --- Vulcan derivatives (4) ---
+  // --- 0..7: original M1 eight (indices frozen — replay wire values) ---
   {
     id: 'rapid-fire',
     name: '고속 연사',
     desc: '발칸 발사 간격 -18%',
+    weaponType: 0,
     apply: (s) => {
       s.weapon.fireCooldown = Math.max(2, Math.round(s.weapon.fireCooldown * 0.82));
     },
@@ -45,6 +57,7 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'twin-shot',
     name: '증설 포신',
     desc: '탄환 +1 (부채꼴 확산)',
+    universal: true,
     apply: (s) => {
       s.weapon.bulletCount += 1;
       s.weapon.spread = Math.min(1.2, s.weapon.spread + 0.06);
@@ -54,6 +67,7 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'heavy-rounds',
     name: '고폭탄',
     desc: '탄환 데미지 +35%',
+    universal: true,
     apply: (s) => {
       s.weapon.damage = Math.round(s.weapon.damage * 1.35 * 100) / 100;
     },
@@ -62,15 +76,16 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'piercing-rounds',
     name: '관통탄',
     desc: '관통 +1 (적을 뚫고 지나감)',
+    universal: true,
     apply: (s) => {
       s.weapon.pierce += 1;
     },
   },
-  // --- Movement / dash (2) ---
   {
     id: 'thrusters',
     name: '추진기 증강',
     desc: '이동 속도 +12%',
+    tree: 'mobility',
     apply: (s) => {
       s.config.playerSpeed = Math.round(s.config.playerSpeed * 1.12);
     },
@@ -79,15 +94,16 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'dash-coils',
     name: '대시 코일',
     desc: '대시 재충전 -20%',
+    tree: 'mobility',
     apply: (s) => {
       s.config.dashCooldownTicks = Math.max(12, Math.round(s.config.dashCooldownTicks * 0.8));
     },
   },
-  // --- Utility (2) ---
   {
     id: 'reinforced-hull',
     name: '강화 장갑',
     desc: '최대 HP +25, 즉시 회복',
+    tree: 'survival',
     apply: (s) => {
       const p = player(s);
       if (p !== undefined) {
@@ -101,26 +117,241 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'gem-magnet',
     name: '자기장 코일',
     desc: '젬 흡수 반경 +40%',
+    tree: 'mobility',
     apply: (s) => {
       s.magnetRadius = Math.round(s.magnetRadius * 1.4);
     },
   },
+  // --- 8..15: main-weapon archetype derivatives (2 per non-vulcan type) ---
+  {
+    id: 'spread-pellets',
+    name: '산탄 증설',
+    desc: '탄환 +1, 확산 폭 증가 (스프레드)',
+    weaponType: 1,
+    apply: (s) => {
+      s.weapon.bulletCount += 1;
+      s.weapon.spread = Math.min(1.4, s.weapon.spread + 0.08);
+    },
+  },
+  {
+    id: 'spread-choke',
+    name: '초크 개조',
+    desc: '탄환 데미지 +22% (스프레드)',
+    weaponType: 1,
+    apply: (s) => {
+      s.weapon.damage = Math.round(s.weapon.damage * 1.22 * 100) / 100;
+    },
+  },
+  {
+    id: 'rail-penetrator',
+    name: '관통 강화 코어',
+    desc: '관통 +2 (레일건)',
+    weaponType: 2,
+    apply: (s) => {
+      s.weapon.pierce += 2;
+    },
+  },
+  {
+    id: 'rail-overcharge',
+    name: '과충전 코일',
+    desc: '탄환 데미지 +45%, 탄속 +15% (레일건)',
+    weaponType: 2,
+    apply: (s) => {
+      s.weapon.damage = Math.round(s.weapon.damage * 1.45 * 100) / 100;
+      s.weapon.bulletSpeed = Math.round(s.weapon.bulletSpeed * 1.15 * 100) / 100;
+    },
+  },
+  {
+    id: 'missile-salvo',
+    name: '연장 발사관',
+    desc: '미사일 +1 (유도)',
+    weaponType: 3,
+    apply: (s) => {
+      s.weapon.bulletCount += 1;
+    },
+  },
+  {
+    id: 'missile-warhead',
+    name: '고폭 탄두',
+    desc: '탄환 데미지 +30% (미사일)',
+    weaponType: 3,
+    apply: (s) => {
+      s.weapon.damage = Math.round(s.weapon.damage * 1.3 * 100) / 100;
+    },
+  },
+  {
+    id: 'beam-intensifier',
+    name: '빔 증폭기',
+    desc: '탄환 데미지 +28% (빔)',
+    weaponType: 4,
+    apply: (s) => {
+      s.weapon.damage = Math.round(s.weapon.damage * 1.28 * 100) / 100;
+    },
+  },
+  {
+    id: 'beam-focuser',
+    name: '집속 렌즈',
+    desc: '사거리 +320 (빔 세그먼트 연장)',
+    weaponType: 4,
+    apply: (s) => {
+      s.weapon.range += 320;
+    },
+  },
+  // --- 16..21: skill-tree derived (2 per tree) ---
+  {
+    id: 'fp-focus',
+    name: '화력 집중',
+    desc: '탄환 데미지 +20%',
+    tree: 'firepower',
+    apply: (s) => {
+      s.weapon.damage = Math.round(s.weapon.damage * 1.2 * 100) / 100;
+    },
+  },
+  {
+    id: 'fp-cadence',
+    name: '속사 조율',
+    desc: '발사 간격 -15%',
+    tree: 'firepower',
+    apply: (s) => {
+      s.weapon.fireCooldown = Math.max(2, Math.round(s.weapon.fireCooldown * 0.85));
+    },
+  },
+  {
+    id: 'sv-plating',
+    name: '보강 도금',
+    desc: '최대 HP +30, 즉시 회복',
+    tree: 'survival',
+    apply: (s) => {
+      const p = player(s);
+      if (p !== undefined) {
+        p.maxHp += 30;
+        p.hp = Math.min(p.maxHp, p.hp + 30);
+      }
+      s.config.playerHp += 30;
+    },
+  },
+  {
+    id: 'sv-evasion',
+    name: '회피 부스터',
+    desc: '대시 재충전 -15%',
+    tree: 'survival',
+    apply: (s) => {
+      s.config.dashCooldownTicks = Math.max(12, Math.round(s.config.dashCooldownTicks * 0.85));
+    },
+  },
+  {
+    id: 'mb-overdrive',
+    name: '기동 오버드라이브',
+    desc: '이동 속도 +10%',
+    tree: 'mobility',
+    apply: (s) => {
+      s.config.playerSpeed = Math.round(s.config.playerSpeed * 1.1);
+    },
+  },
+  {
+    id: 'mb-collector',
+    name: '수집 증폭',
+    desc: '젬 흡수 반경 +30%',
+    tree: 'mobility',
+    apply: (s) => {
+      s.magnetRadius = Math.round(s.magnetRadius * 1.3);
+    },
+  },
+  // --- 22..23: universal ---
+  {
+    id: 'muzzle-velocity',
+    name: '고속 사출',
+    desc: '탄속 +20%',
+    universal: true,
+    apply: (s) => {
+      s.weapon.bulletSpeed = Math.round(s.weapon.bulletSpeed * 1.2 * 100) / 100;
+    },
+  },
+  {
+    id: 'field-medkit',
+    name: '야전 응급팩',
+    desc: '최대 HP +15, 즉시 회복',
+    universal: true,
+    apply: (s) => {
+      const p = player(s);
+      if (p !== undefined) {
+        p.maxHp += 15;
+        p.hp = Math.min(p.maxHp, p.hp + 15);
+      }
+      s.config.playerHp += 15;
+    },
+  },
 ];
 
+// --- Soft-weighting tuning (integer weights → deterministic weighted draw) -----
+const WEIGHT_UNIVERSAL = 10;
+const WEIGHT_WEAPON_MATCH = 28;
+const WEIGHT_WEAPON_OFFBUILD = 2;
+const WEIGHT_TREE_BASE = 4;
+/** Points invested in a tree per +1 weight (fully-fed tree ≈ +20 weight). */
+const TREE_POINTS_PER_WEIGHT = 4;
+
+/** Total points invested in one tree (contiguous block of the skill vector). */
+function investedInTree(invest: readonly number[] | undefined, tree: SkillTree): number {
+  if (invest === undefined) return 0;
+  const t = SKILL_TREES.indexOf(tree);
+  if (t < 0) return 0;
+  const start = t * NODES_PER_TREE;
+  let sum = 0;
+  for (let i = start; i < start + NODES_PER_TREE; i++) sum += invest[i] ?? 0;
+  return sum;
+}
+
+/** Soft weight of a powerup given the run's build (always ≥ 1). */
+function powerupWeight(def: PowerupDef, state: WorldState): number {
+  if (def.universal) return WEIGHT_UNIVERSAL;
+  if (def.weaponType !== undefined) {
+    return def.weaponType === state.weapon.weaponType
+      ? WEIGHT_WEAPON_MATCH
+      : WEIGHT_WEAPON_OFFBUILD;
+  }
+  if (def.tree !== undefined) {
+    const invested = investedInTree(state.config.skillInvest, def.tree);
+    return WEIGHT_TREE_BASE + Math.floor(invested / TREE_POINTS_PER_WEIGHT);
+  }
+  return 1;
+}
+
 /**
- * Draw `count` distinct powerup indices from the pool using the powerup RNG
- * stream (deterministic — same seed & level history yields the same offer).
+ * Draw `count` distinct powerup indices, soft-weighted by the run's build. The
+ * powerup RNG stream drives a weighted pick without replacement — deterministic:
+ * same seed, level history and (fixed) build yield the same offer. Weights are
+ * integers so the draw uses only `int` (no float threshold), keeping the stream
+ * bit-identical across platforms.
  */
 export function drawPowerupChoices(state: WorldState, count: number): number[] {
   const pool: number[] = [];
-  for (let i = 0; i < POWERUPS.length; i++) pool.push(i);
+  const weights: number[] = [];
+  for (let i = 0; i < POWERUPS.length; i++) {
+    const def = POWERUPS[i];
+    if (def === undefined) continue;
+    pool.push(i);
+    weights.push(powerupWeight(def, state));
+  }
   const chosen: number[] = [];
   const n = Math.min(count, pool.length);
   for (let k = 0; k < n; k++) {
-    const j = state.powerupRng.int(0, pool.length - 1);
-    const picked = pool[j];
-    if (picked !== undefined) chosen.push(picked);
-    pool.splice(j, 1);
+    let total = 0;
+    for (const w of weights) total += w;
+    if (total <= 0) break;
+    let r = state.powerupRng.int(0, total - 1);
+    let pick = 0;
+    for (let j = 0; j < pool.length; j++) {
+      r -= weights[j] as number;
+      if (r < 0) {
+        pick = j;
+        break;
+      }
+    }
+    const idx = pool[pick];
+    if (idx !== undefined) chosen.push(idx);
+    pool.splice(pick, 1);
+    weights.splice(pick, 1);
   }
   return chosen;
 }

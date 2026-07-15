@@ -18,7 +18,7 @@
  */
 
 import { SeededRng } from './rng.js';
-import { cos, sin, atan2, length } from './math.js';
+import { cos, sin, atan2, length, TWO_PI, wrapAngle } from './math.js';
 import { DT, VIEW_WIDTH, VIEW_HEIGHT, OFFSCREEN_X } from './constants.js';
 import type { Entity } from './entities.js';
 import {
@@ -34,7 +34,16 @@ import {
 } from './entities.js';
 import type { AnomalyState } from './anomaly.js';
 import { rollAnomaly, enemyBulletSpeedMult } from './anomaly.js';
-import { isElite, eliteAffix, eliteSpeedMult, spawnEliteDeathFx } from './elite.js';
+import {
+  isElite,
+  eliteAffix,
+  eliteSpeedMult,
+  eliteDamageTakenMult,
+  applyEliteRegen,
+  spawnEliteDeathFx,
+  ELITE_SPLIT,
+  ELITE_VOLATILE,
+} from './elite.js';
 import { rollEliteDrop, rollBossDrop } from './drops.js';
 import {
   hasUnique,
@@ -57,6 +66,40 @@ import {
   DRONE_MARK,
   PHASE_ARMOR_BONUS_IFRAMES,
   PHASE_ARMOR_DASH_CD_MULT,
+  UQ_SINGULARITY,
+  UQ_REACTIVE_ARMOR,
+  UQ_PHASE_MEMBRANE,
+  UQ_AFTERIMAGE,
+  UQ_GREED_HEART,
+  UQ_RELIC_AMP,
+  UQ_HIVE_SWARM,
+  UQ_CONVERGE_PRISM,
+  UQ_TWIN_STAR,
+  UQ_GAMBLER_CHIP,
+  HIVE_MICRO_COUNT,
+  HIVE_MICRO_SPEED,
+  HIVE_MICRO_LIFE,
+  HIVE_MICRO_RADIUS,
+  HIVE_MICRO_DAMAGE_FRAC,
+  HIVE_MICRO_MARK,
+  PRISM_DAMAGE_AMP,
+  TWIN_STAR_DAMAGE_MULT,
+  GAMBLER_EXTRA_CHOICES,
+  SINGULARITY_RADIUS,
+  SINGULARITY_PULL_SPEED,
+  REACTIVE_PULSE_COUNT,
+  REACTIVE_PULSE_SPEED,
+  REACTIVE_PULSE_DAMAGE,
+  REACTIVE_PULSE_RADIUS,
+  REACTIVE_PULSE_LIFE,
+  PHASE_MEMBRANE_HP_FRAC,
+  PHASE_MEMBRANE_COOLDOWN,
+  PHASE_MEMBRANE_HEAL_FRAC,
+  GREED_COMBO_BONUS_TICKS,
+  GREED_MAGNET_STEP,
+  GREED_MAGNET_CAP,
+  RELIC_XP_MULT,
+  AFTERIMAGE_RADIUS,
 } from './uniques.js';
 import { SpatialHash, circlesOverlap } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
@@ -73,6 +116,18 @@ import {
   chunkPlacements,
 } from './chunks.js';
 import { circleOverlapsWall, slideCircleWalls, segmentBlocked } from './los.js';
+import { HAZARD_SLOW } from './patterns/types.js';
+import {
+  applyBurn,
+  applySlow,
+  tickEnemyStatus,
+  applyChain,
+  enemyStatusSlowMult,
+  PLAYER_SLOW_MULT,
+  PLAYER_SLOW_DURATION,
+  FIRE_DURATION,
+  COLD_DURATION,
+} from './status.js';
 import {
   triggerMagnetEmitter,
   triggerBombDevice,
@@ -252,6 +307,13 @@ export interface LoadoutConfig {
   xpMult: number;
   /** Bitmask of active unique effects (Lane 3 hooks). */
   uniqueMask: number;
+  // --- M3 원소 어픽스(상태이상) 파생 (plan B4, AC6; APPEND-ONLY) ---
+  /** 화염 어픽스 총합 → 명중 시 적에게 거는 지속피해 틱당 피해(정수, 0 = 없음). */
+  fireDmg: number;
+  /** 냉기 어픽스 총합 → 명중 시 적 감속 부여 강도(> 0 = 감속 활성). */
+  coldSlow: number;
+  /** 전격 어픽스 총합 → 명중 시 인접 적 연쇄 피해(정수, 0 = 없음). */
+  lightning: number;
 }
 
 export interface WorldConfig {
@@ -273,6 +335,13 @@ export interface WorldConfig {
   anomalyAccepted?: boolean;
   /** Loadout-derived stats; absent = neutral (no equipment). */
   loadout?: LoadoutConfig;
+  /**
+   * Skill investment snapshot (M3 plan A2). The 60-length vector is already
+   * folded into `loadout` at config-build time, so it does not re-apply to the
+   * sim; it is carried for the verification server (Replay.config) and read by
+   * the powerup-pool soft weighting (C2, drawPowerupChoices). Absent = no skills.
+   */
+  skillInvest?: number[];
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {
@@ -365,6 +434,11 @@ export interface WorldState {
    * radius while > 0). Folded into the hash (deterministic gimmick state).
    */
   magnetBuffTicks: number;
+  /**
+   * 플레이어 감속 잔여 틱(니플헤임 유령 기함 '감속 지대', plan B1). > 0인 동안 이동
+   * 속도에 PLAYER_SLOW_MULT를 곱한다. 결정론 스칼라 — hashWorld에 append-only로 접힌다.
+   */
+  playerSlowTicks: number;
   /** Supply-raid reward currency (M1 placeholder). */
   resources: number;
   /** World frozen awaiting a powerup pick (sim tick stall, not a pause). */
@@ -480,6 +554,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     maxCombo: 0,
     magnetRadius,
     magnetBuffTicks: 0,
+    playerSlowTicks: 0,
     resources: 0,
     pendingLevelUp: false,
     powerupChoices: [],
@@ -724,12 +799,19 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     mx /= mlen;
     my /= mlen;
   }
-  player.vx = mx * config.playerSpeed;
-  player.vy = my * config.playerSpeed;
+  // 감속 지대(plan B1): 잔여 틱 동안 이동 속도를 배율로 낮춘다(대시 임펄스에는
+  // 미적용 — 아래 dash는 별도 가산). 매 틱 1 감소.
+  const slowMult = state.playerSlowTicks > 0 ? PLAYER_SLOW_MULT : 1;
+  if (state.playerSlowTicks > 0) state.playerSlowTicks--;
+  player.vx = mx * config.playerSpeed * slowMult;
+  player.vy = my * config.playerSpeed * slowMult;
   player.angle = input.aim;
 
   if (player.dashCooldown > 0) player.dashCooldown--;
   if (player.iframes > 0) player.iframes--;
+  // ⑩ 위상 전환막 내부 쿨다운(plan B4): player.targetY에 카운트다운으로 실어 매 틱 감소
+  // (신규 필드 없이 관리; 미장착 시 항상 0이라 거동 불변).
+  if (player.targetY > 0) player.targetY--;
 
   if (input.dash && player.dashCooldown === 0) {
     let dx = mx;
@@ -748,6 +830,15 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     } else {
       player.dashCooldown = config.dashCooldownTicks;
       player.iframes = config.dashIframes;
+    }
+    // ⑪ 잔상 추진기: 대시 순간 주변 적탄 소거(장착 시).
+    if (hasUnique(mask, UQ_AFTERIMAGE)) {
+      for (const t of state.entities) {
+        if (t.kind !== 'enemyBullet' || t.dead) continue;
+        const ex = t.x - player.x;
+        const ey = t.y - player.y;
+        if (ex * ex + ey * ey <= AFTERIMAGE_RADIUS * AFTERIMAGE_RADIUS) t.dead = true;
+      }
     }
   }
 
@@ -771,17 +862,38 @@ function stepEnemies(state: WorldState, player: Entity): void {
   // Snapshot the enemy set so bullets/hazards emitted this tick are not treated
   // as enemies, and count live enemy bullets for the per-segment cap.
   state.enemyBulletCount = countKind(state, 'enemyBullet');
+  // ⑧ 특이점 발생기(plan B4): 장착 시 반경 안 적을 매 틱 플레이어 쪽으로 흡인. 미장착
+  // 이면 no-op.
+  const singularityOn = hasUnique(state.config.loadout?.uniqueMask ?? 0, UQ_SINGULARITY);
   const enemies: Entity[] = [];
   for (const e of state.entities) if (e.kind === 'enemy') enemies.push(e);
   for (const e of enemies) {
+    // 원소 상태이상 진행(화염 지속피해·냉기/전격 타이머). 상태이상 없는 적은 세 재활용
+    // 필드가 모두 0이라 no-op(거동 불변). 화염으로 처치되면 dead 표시 후 스킵.
+    tickEnemyStatus(e);
+    if (e.dead) continue;
+    // 재생하는 엘리트: 매 틱 HP 회복(그 외 no-op).
+    applyEliteRegen(e);
     let def = enemyDefFor(e);
     if (def === undefined) continue;
-    // 가속하는 elite: run the same behaviour with a boosted speed (clone the def,
-    // never mutate the shared data row). No-op (mult 1) for everything else.
-    const sm = eliteSpeedMult(e);
+    // 가속하는 elite(×1.6) × 냉기 감속(<1)을 곱해 이동 속도를 조정한다(공유 데이터
+    // 행은 절대 변형하지 않고 def를 복제). 둘 다 없으면 mult 1(거동 불변).
+    const sm = eliteSpeedMult(e) * enemyStatusSlowMult(e);
     if (sm !== 1) def = { ...def, speed: def.speed * sm };
     updateEnemy(state, e, def, player);
+    if (singularityOn) applySingularityPull(e, player);
   }
+}
+
+/** ⑧ 특이점 발생기: 반경 안 적을 플레이어 쪽으로 결정론적으로 당긴다(RNG 미소비). */
+function applySingularityPull(e: Entity, player: Entity): void {
+  const dx = player.x - e.x;
+  const dy = player.y - e.y;
+  const d = length(dx, dy);
+  if (d <= 1 || d >= SINGULARITY_RADIUS) return;
+  const step = Math.min(SINGULARITY_PULL_SPEED * DT, d);
+  e.x += (dx / d) * step;
+  e.y += (dy / d) * step;
 }
 
 // ---------------------------------------------------------------------------
@@ -815,8 +927,29 @@ function stepBoss(state: WorldState, player: Entity): void {
 // Player auto-attack (vulcan): target nearest enemy/boss, fire a fanned volley.
 // ---------------------------------------------------------------------------
 
-/** Railgun weapon type (single fast piercing shot). Shared code with loadout. */
+/** Weapon archetype codes (shared with src/items/loadout.ts). */
+const WEAPON_TYPE_SPREAD = 1;
 const WEAPON_TYPE_RAILGUN = 2;
+const WEAPON_TYPE_MISSILE = 3;
+const WEAPON_TYPE_BEAM = 4;
+
+/**
+ * Homing-missile marker on a friendly bullet's `ownerId` (already hashed). A
+ * bullet carrying it re-steers toward the nearest target each tick in
+ * stepProjectiles, clamped to MISSILE_TURN_RATE (limited turn — OQ-M3-4). Chosen
+ * distinct from SPLIT_FRAGMENT_MARK / DRONE_MARK so the marks never alias. */
+const MISSILE_MARK = 0x3155110;
+/** Max radians a missile turns toward its target per tick (evadable, GDD §10). */
+const MISSILE_TURN_RATE = 0.09;
+/** Beam segment count cap and spacing (매틱 짧은 수명 세그먼트 판정 — OQ-M3-3). */
+const BEAM_MAX_SEGMENTS = 16;
+const BEAM_SEGMENT_SPACING = 90;
+/** Beam segment radius (tiles the line with slight overlap for a continuous hit). */
+const BEAM_SEGMENT_RADIUS = 52;
+/** Beam segment lifetime (ticks): a brief static hit line, re-laid each fire. */
+const BEAM_SEGMENT_LIFE = 2;
+/** Beam range used when the weapon's range is unbounded (0). */
+const BEAM_DEFAULT_RANGE = 1200;
 
 function autoAttack(state: WorldState, player: Entity): void {
   const w = state.weapon;
@@ -834,12 +967,11 @@ function autoAttack(state: WorldState, player: Entity): void {
     : w.fireCooldown;
 
   const baseAngle = atan2(target.y - player.y, target.x - player.x);
-  // M2 plan B2 — three firing archetypes off `weaponType`:
-  //   2 = 레일건: one shot straight at the target, its (loadout-boosted) pierce
-  //       and bullet speed doing the work — ignores the fan entirely.
-  //   0/1 = 발칸 / 스프레드: fanned volley of `bulletCount` across `spread`. The
-  //       two differ only by their loadout baseline (spread = more pellets, wider
-  //       arc), so one code path serves both.
+  // Firing archetypes off `weaponType` (M2 B2 + M3 C1):
+  //   2 = 레일건: one shot straight at the target (pierce/speed do the work).
+  //   3 = 미사일: `bulletCount` homing missiles — slow, hard, limited turn.
+  //   4 = 빔: a line of short-life static segments covering the aim (매틱 판정).
+  //   0/1 = 발칸 / 스프레드: fanned volley (differ only by loadout baseline).
   if (w.weaponType === WEAPON_TYPE_RAILGUN) {
     spawnBullet(
       state,
@@ -858,7 +990,68 @@ function autoAttack(state: WorldState, player: Entity): void {
     return;
   }
 
-  const n = w.bulletCount;
+  if (w.weaponType === WEAPON_TYPE_MISSILE) {
+    const n = w.bulletCount < 1 ? 1 : w.bulletCount;
+    const start = n > 1 ? baseAngle - w.spread / 2 : baseAngle;
+    const stepA = n > 1 ? w.spread / (n - 1) : 0;
+    for (let i = 0; i < n; i++) {
+      const ang = start + stepA * i;
+      const m = spawnBullet(
+        state,
+        player.x,
+        player.y,
+        ang,
+        w.bulletSpeed,
+        w.damage,
+        w.pierce,
+        w.bulletRadius,
+        w.bulletLife,
+        cos(ang),
+        sin(ang),
+      );
+      m.ownerId = MISSILE_MARK; // 유도 마커: stepProjectiles가 매 틱 제한 선회.
+    }
+    player.cooldown = fireCd;
+    return;
+  }
+
+  if (w.weaponType === WEAPON_TYPE_BEAM) {
+    const range = w.range > 0 ? w.range : BEAM_DEFAULT_RANGE;
+    let segs = Math.floor(range / BEAM_SEGMENT_SPACING);
+    if (segs < 1) segs = 1;
+    if (segs > BEAM_MAX_SEGMENTS) segs = BEAM_MAX_SEGMENTS;
+    const ca = cos(baseAngle);
+    const sa = sin(baseAngle);
+    for (let i = 1; i <= segs; i++) {
+      const dist = i * BEAM_SEGMENT_SPACING;
+      // Static segment (speed 0): a brief hit point along the beam line. High
+      // pierce so it damages every enemy overlapping it; short life re-laid each
+      // fire so a fast cadence reads as a continuous line.
+      spawnBullet(
+        state,
+        player.x + ca * dist,
+        player.y + sa * dist,
+        baseAngle,
+        0,
+        w.damage,
+        9999,
+        BEAM_SEGMENT_RADIUS,
+        BEAM_SEGMENT_LIFE,
+        ca,
+        sa,
+      );
+    }
+    player.cooldown = fireCd;
+    return;
+  }
+
+  // ⑦ 쌍둥이 항성: 부채꼴 발사체 2배 + 발당 피해 ×TWIN_STAR_DAMAGE_MULT. 미장착 시
+  //    n·dmg 그대로(거동 불변). 스프레드(weaponType 1) 파생 유니크이므로 스프레드
+  //    무기에서만 발화(리뷰 MED-1 이중 게이트 — roll.ts 페어링과 정합). 발칸 등 타
+  //    무기에 롤될 수 없고, 설령 실려도 no-op.
+  const twinOn = hasUnique(mask, UQ_TWIN_STAR) && w.weaponType === WEAPON_TYPE_SPREAD;
+  const n = twinOn ? w.bulletCount * 2 : w.bulletCount;
+  const dmg = twinOn ? w.damage * TWIN_STAR_DAMAGE_MULT : w.damage;
   const start = n > 1 ? baseAngle - w.spread / 2 : baseAngle;
   const stepA = n > 1 ? w.spread / (n - 1) : 0;
   for (let i = 0; i < n; i++) {
@@ -869,7 +1062,7 @@ function autoAttack(state: WorldState, player: Entity): void {
       player.y,
       ang,
       w.bulletSpeed,
-      w.damage,
+      dmg,
       w.pierce,
       w.bulletRadius,
       w.bulletLife,
@@ -1053,6 +1246,45 @@ function stepTurrets(state: WorldState, _player: Entity): void {
 // Projectiles, gems & supply raiders
 // ---------------------------------------------------------------------------
 
+/**
+ * Steer a homing missile (weaponType 3) toward the nearest hostile with a capped
+ * per-tick turn (MISSILE_TURN_RATE), preserving its speed. Nearest scan ignores
+ * walls (missiles curve around), uses only deterministic trig. No target → the
+ * missile flies straight (its current heading is unchanged).
+ *
+ * 성능(리뷰 MED-2 재검토): 이 함수는 미사일마다 전 엔티티를 한 번 훑는다(O(미사일×N)).
+ * 브로드페이즈 그리드로 대체하는 방안을 벤치로 검증했으나, ①유도 미사일 수가 대개 한 자리
+ * 라 스캔 총량이 작고 ②미사일 단계엔 갓 만든 그리드가 없어 매 틱 전용 그리드를 새로
+ * 채워야 하며(O(N) 삽입) ③Map 조회·클로저 호출 상수가 촘촘한 배열 순회보다 커서, 실측상
+ * 오히려 40%가량 느려졌다(107→151ms/1500t·200적). 따라서 결정론·단순성을 지키는 이 직접
+ * 스캔을 유지한다(전역 최근접·배열 순서 tie-break도 함께 보존).
+ */
+function homeMissile(state: WorldState, e: Entity): void {
+  const speed = length(e.vx, e.vy);
+  if (speed === 0) return;
+  let best: Entity | undefined;
+  let bestD = Infinity;
+  for (const t of state.entities) {
+    if (t.dead) continue;
+    if (t.kind !== 'enemy' && t.kind !== 'boss' && t.kind !== 'supply') continue;
+    const dx = t.x - e.x;
+    const dy = t.y - e.y;
+    const d = dx * dx + dy * dy;
+    if (d < bestD) {
+      bestD = d;
+      best = t;
+    }
+  }
+  if (best === undefined) return;
+  const desired = atan2(best.y - e.y, best.x - e.x);
+  let delta = wrapAngle(desired - e.angle);
+  if (delta > MISSILE_TURN_RATE) delta = MISSILE_TURN_RATE;
+  else if (delta < -MISSILE_TURN_RATE) delta = -MISSILE_TURN_RATE;
+  e.angle += delta;
+  e.vx = cos(e.angle) * speed;
+  e.vy = sin(e.angle) * speed;
+}
+
 function stepProjectiles(state: WorldState, player: Entity): void {
   // Infinite map: there is no arena edge to despawn against. A projectile dies
   // when its lifetime elapses OR it drifts beyond the player-relative cull
@@ -1065,6 +1297,8 @@ function stepProjectiles(state: WorldState, player: Entity): void {
   const enemyBulletMult = enemyBulletSpeedMult(state.anomaly);
   for (const e of state.entities) {
     if (e.kind !== 'bullet' && e.kind !== 'enemyBullet') continue;
+    // 유도 미사일(제한 선회, OQ-M3-4): 위치 적분 전에 최근접 적으로 각도를 소폭 튼다.
+    if (e.kind === 'bullet' && e.ownerId === MISSILE_MARK) homeMissile(state, e);
     const m = e.kind === 'enemyBullet' ? enemyBulletMult : 1;
     e.x += e.vx * DT * m;
     e.y += e.vy * DT * m;
@@ -1201,8 +1435,26 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   const overheatOn = hasUnique(uMask, UQ_OVERHEAT_DRUM);
   const splitOn = hasUnique(uMask, UQ_SPLIT_CORE);
   const gyroOn = hasUnique(uMask, UQ_PIERCE_GYRO);
+  // M3 통합 신규 훅: ⑤ 군집 벌통(미사일 격추 시 마이크로탄 방사), ⑥ 수렴 프리즘(빔이
+  // 관통한 적 수만큼 피해 증폭). 미장착 시 no-op. ⑤⑥⑦은 모두 주무기 슬롯이라 상호 배타.
+  // weaponType 이중 게이트(리뷰 MED-1): 군집 벌통=미사일(3)·수렴 프리즘=빔(4) 전용.
+  // roll.ts 페어링이 1차 방어, 여기가 2차 방어 — 비대응 무기엔 no-op(프리즘이 전 무기
+  // 관통탄에 새던 결함 차단). 벌통은 트리거가 이미 MISSILE_MARK지만 명시적으로 게이트.
+  const weaponType = state.weapon.weaponType;
+  const hiveOn = hasUnique(uMask, UQ_HIVE_SWARM) && weaponType === WEAPON_TYPE_MISSILE;
+  const prismOn = hasUnique(uMask, UQ_CONVERGE_PRISM) && weaponType === WEAPON_TYPE_BEAM;
+  // M3 원소 어픽스(상태이상, plan B4): 명중 시 적에게 화염(지속피해)·냉기(감속)·전격
+  // (연쇄)을 건다. 미장착(값 0)이면 아래 분기는 no-op. enemy에만 적용(보스 재활용 필드
+  // 충돌 방지).
+  const lo = state.config.loadout;
+  const fireDmg = lo?.fireDmg ?? 0;
+  const coldSlow = lo?.coldSlow ?? 0;
+  const lightning = lo?.lightning ?? 0;
+  const elementalOn = fireDmg > 0 || coldSlow > 0 || lightning > 0;
   // 분열 파편은 그리드 순회 중 엔티티 배열을 건드리지 않도록 좌표만 모아 루프 뒤 스폰.
   const splitSpawns: { x: number; y: number; angle: number }[] = [];
+  // ⑤ 군집 벌통: 미사일 격추 위치를 모아 루프 뒤 방사 스폰(엔티티 배열 순회 중 안전).
+  const hiveSpawns: { x: number; y: number }[] = [];
   for (const b of state.entities) {
     if (b.kind !== 'bullet' || b.dead) continue;
     grid.query(b.x, b.y, b.radius, (t) => {
@@ -1214,8 +1466,23 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       const mult = t.kind === 'boss' && t.iframes > 0 ? 2 : 1;
       // ③ 관통 자이로: bullet.phase = 지금까지 관통한 횟수 → 관통당 피해 증폭.
       const gyroAmp = gyroOn ? 1 + b.phase * GYRO_DAMAGE_AMP : 1;
-      t.hp -= b.damage * mult * gyroAmp;
-      if (t.hp <= 0) t.dead = true;
+      // ⑥ 수렴 프리즘: 빔 세그먼트가 관통한 적 수(phase)만큼 피해 증폭(자이로와 배타).
+      const prismAmp = prismOn ? 1 + b.phase * PRISM_DAMAGE_AMP : 1;
+      // 보호막의 엘리트: 받는 피해 절반(그 외 1).
+      t.hp -= b.damage * mult * gyroAmp * prismAmp * eliteDamageTakenMult(t);
+      if (t.hp <= 0) {
+        t.dead = true;
+        // ⑤ 군집 벌통: 미사일 원본(MISSILE_MARK)이 적/보스를 격추하면 마이크로탄 방사 예약.
+        if (hiveOn && b.ownerId === MISSILE_MARK && (t.kind === 'enemy' || t.kind === 'boss')) {
+          hiveSpawns.push({ x: t.x, y: t.y });
+        }
+      }
+      // M3 원소 상태이상(plan B4): 적 명중 시 화염/냉기/전격 부여(장착 시에만).
+      if (elementalOn && t.kind === 'enemy') {
+        if (fireDmg > 0) applyBurn(t, fireDmg, FIRE_DURATION);
+        if (coldSlow > 0) applySlow(t, COLD_DURATION);
+        if (lightning > 0) applyChain(state, t, lightning);
+      }
       // ① 과열 드럼: 적/보스 명중마다 스택 +1(상한). 피격 시 아래에서 리셋.
       if (overheatOn && (t.kind === 'enemy' || t.kind === 'boss')) {
         if (player.phase < OVERHEAT_MAX_STACK) player.phase++;
@@ -1224,9 +1491,15 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       if (splitOn && b.ownerId !== SPLIT_FRAGMENT_MARK) {
         splitSpawns.push({ x: b.x, y: b.y, angle: b.angle });
       }
-      // 관통 처리: 자이로는 무한 관통(수명으로만 소멸), 그 외는 기존 규칙.
+      // 관통 처리: 자이로는 무한 관통(수명으로만 소멸). 프리즘은 관통 카운트를 위해
+      // phase를 올리되 세그먼트의 기존 pierce 예산(9999)을 소비 → 짧은 수명으로 소멸.
+      // 그 외는 기존 규칙.
       if (gyroOn) {
         b.phase++;
+      } else if (prismOn) {
+        b.phase++;
+        if (b.pierce > 0) b.pierce--;
+        else b.dead = true;
       } else if (b.pierce > 0) {
         b.pierce--;
       } else {
@@ -1253,6 +1526,30 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         sin(ang),
       );
       frag.ownerId = SPLIT_FRAGMENT_MARK; // 재분열 방지 마커
+    }
+  }
+  // ⑤ 군집 벌통 마이크로 미사일 방사: 격추 위치에서 HIVE_MICRO_COUNT발을 균등 방사.
+  //    HIVE_MICRO_MARK를 달아 유도(MISSILE_MARK) 제외 + 재분열 트리거 제외 → 무한 연쇄 방지.
+  if (hiveSpawns.length > 0) {
+    const microDmg = state.weapon.damage * HIVE_MICRO_DAMAGE_FRAC;
+    for (const h of hiveSpawns) {
+      for (let i = 0; i < HIVE_MICRO_COUNT; i++) {
+        const ang = (TWO_PI * i) / HIVE_MICRO_COUNT;
+        const micro = spawnBullet(
+          state,
+          h.x,
+          h.y,
+          ang,
+          HIVE_MICRO_SPEED,
+          microDmg,
+          0,
+          HIVE_MICRO_RADIUS,
+          HIVE_MICRO_LIFE,
+          cos(ang),
+          sin(ang),
+        );
+        micro.ownerId = HIVE_MICRO_MARK;
+      }
     }
   }
 
@@ -1288,6 +1585,11 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       if (t.phase === 0) activateTurret(t); // dormant → active turret in place
       return;
     }
+    // 감속 지대(plan B1): 활성 HAZARD_SLOW 장판에 닿으면 감속 부여(무적 여부와 무관 —
+    // 이동 디버프이지 피해가 아니다). 소량 피해는 아래 일반 hazard 분기가 처리한다.
+    if (t.kind === 'hazard' && t.enemyType === HAZARD_SLOW && hazardActive(t)) {
+      state.playerSlowTicks = PLAYER_SLOW_DURATION;
+    }
     if (invulnerable) return;
     if (t.kind === 'enemyBullet') {
       if (t.damage > dmg) dmg = t.damage;
@@ -1305,6 +1607,37 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     player.iframes = state.config.hitIframes;
     // ① 과열 드럼: 피격 시 연속 명중 스택 리셋(장착 시에만 phase가 비0).
     if (overheatOn) player.phase = 0;
+    // ⑨ 반응 장갑(plan B4): 피격 시 방사형 반격 펄스(아군탄) 방출.
+    if (hasUnique(uMask, UQ_REACTIVE_ARMOR)) {
+      for (let i = 0; i < REACTIVE_PULSE_COUNT; i++) {
+        const ang = (i * TWO_PI) / REACTIVE_PULSE_COUNT;
+        spawnBullet(
+          state,
+          player.x,
+          player.y,
+          ang,
+          REACTIVE_PULSE_SPEED,
+          REACTIVE_PULSE_DAMAGE,
+          0,
+          REACTIVE_PULSE_RADIUS,
+          REACTIVE_PULSE_LIFE,
+          cos(ang),
+          sin(ang),
+        );
+      }
+    }
+    // ⑩ 위상 전환막(plan B4): 저체력 진입 + 내부 쿨다운 준비 시 광역 폭발(적탄 소거) +
+    // 최대 체력 절반 회복. targetY에 쿨다운을 실어 재발동을 막는다.
+    if (
+      hasUnique(uMask, UQ_PHASE_MEMBRANE) &&
+      player.targetY === 0 &&
+      player.hp > 0 &&
+      player.hp <= player.maxHp * PHASE_MEMBRANE_HP_FRAC
+    ) {
+      for (const t of state.entities) if (t.kind === 'enemyBullet') t.dead = true;
+      player.hp = Math.min(player.maxHp, player.hp + Math.round(player.maxHp * PHASE_MEMBRANE_HEAL_FRAC));
+      player.targetY = PHASE_MEMBRANE_COOLDOWN;
+    }
   }
 }
 
@@ -1315,9 +1648,17 @@ function collectGem(state: WorldState, gem: Entity): void {
   state.combo++;
   state.comboTimer = COMBO_WINDOW_TICKS;
   if (state.combo > state.maxCombo) state.maxCombo = state.combo;
+  const mask = state.config.loadout?.uniqueMask ?? 0;
+  // ⑫ 탐욕의 심장(plan B4): 젬 획득마다 콤보 지속을 연장하고 자석 반경을 상한까지 스택.
+  if (hasUnique(mask, UQ_GREED_HEART)) {
+    state.comboTimer += GREED_COMBO_BONUS_TICKS;
+    state.magnetRadius = Math.min(GREED_MAGNET_CAP, state.magnetRadius + GREED_MAGNET_STEP);
+  }
   const baseXp = gem.damage; // gem carries its XP value in `damage`
   const xpMult = state.config.loadout?.xpMult ?? 1; // affix 경험치+%
-  const gained = Math.floor(baseXp * comboMultiplier(state.combo) * xpMult);
+  let gained = Math.floor(baseXp * comboMultiplier(state.combo) * xpMult);
+  // ⑭ 유물 증폭기(plan B4): 경험치 소폭↑(광물·유니크 드랍률은 정산 메타에서 처리).
+  if (hasUnique(mask, UQ_RELIC_AMP)) gained = Math.floor(gained * RELIC_XP_MULT);
   state.xp += gained;
   state.xpTotal += gained;
 }
@@ -1367,7 +1708,9 @@ function compact(state: WorldState): void {
       if (isElite(e)) {
         const roll = rollEliteDrop(state.dropRng, tier, state.anomaly, dropOdds);
         lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
-        if (eliteAffix(e) === 0) splitElites.push(e);
+        // 분열하는·폭발성의 엘리트는 사망 시 방사 폭발을 남긴다(spawnEliteDeathFx).
+        const ea = eliteAffix(e);
+        if (ea === ELITE_SPLIT || ea === ELITE_VOLATILE) splitElites.push(e);
       }
     } else if (e.kind === 'supply' && e.hp <= 0) {
       // Shot down (vs. escaped with hp > 0): grant the raid reward.
@@ -1423,7 +1766,11 @@ function checkLevelUp(state: WorldState): void {
   if (state.xp < need) return;
   state.xp -= need;
   state.level++;
-  state.powerupChoices = drawPowerupChoices(state, 3);
+  // ⑬ 도박사의 칩: 파워업 선택지 +GAMBLER_EXTRA_CHOICES(로드아웃 고정 → 결정론적).
+  //    선택 입력 프레임은 2비트(0~3)라 4번째 선택지까지 와이어 호환(stepWorld).
+  const gambleOn = hasUnique(state.config.loadout?.uniqueMask ?? 0, UQ_GAMBLER_CHIP);
+  const choiceCount = gambleOn ? 3 + GAMBLER_EXTRA_CHOICES : 3;
+  state.powerupChoices = drawPowerupChoices(state, choiceCount);
   state.pendingLevelUp = true;
 }
 

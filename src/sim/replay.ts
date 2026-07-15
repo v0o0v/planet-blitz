@@ -185,6 +185,10 @@ export function hashWorld(state: WorldState): number {
     h = hashFloat(h, lo.magnetMult);
     h = hashFloat(h, lo.xpMult);
     h = hashU32(h, lo.uniqueMask >>> 0);
+    // M3 원소 어픽스 파생(상태이상) — loadout 블록 뒤에 append-only.
+    h = hashU32(h, lo.fireDmg >>> 0);
+    h = hashU32(h, lo.coldSlow >>> 0);
+    h = hashU32(h, lo.lightning >>> 0);
   }
   h = hashU32(h, state.loot.length >>> 0);
   for (const r of state.loot) {
@@ -192,6 +196,19 @@ export function hashWorld(state: WorldState): number {
     h = hashU32(h, r.rarity >>> 0);
     h = hashU32(h, r.planet >>> 0);
     h = hashU32(h, r.tier >>> 0);
+  }
+  // --- M3 (APPEND-ONLY; never reorder the folds below or above) ---
+  // 통합 시 확정한 순서: (1) Lane2 감속 잔여 틱 → (2) Lane1 스킬 투자 스냅샷.
+  // 이 순서는 이후 절대 변경 금지. 신규 M3 필드는 아래 (2) 뒤에만 append.
+  // (1) 플레이어 감속 잔여 틱(감속 지대). 결정론 입력이므로 접는다.
+  h = hashU32(h, state.playerSlowTicks >>> 0);
+  // (2) 스킬 투자 스냅샷: 빌드 시점에 cfg.loadout에 이미 접혔지만, 재현/감사용으로
+  // 접는다 — 스킬 유/무 런이 발산 전에도 해시가 갈리고, 서버가 벡터를 정확히 재도출.
+  // 길이 프리픽스로 미존재/빈 벡터를 구분.
+  const invest = state.config.skillInvest;
+  h = hashU32(h, (invest?.length ?? 0) >>> 0);
+  if (invest !== undefined) {
+    for (const v of invest) h = hashU32(h, v >>> 0);
   }
   return h >>> 0;
 }

@@ -11,8 +11,11 @@
  */
 
 /** Save-schema version stamped onto serialized profiles (plan A1 / C1). Bump on
- *  any breaking layout change so the migration path can key off it. */
-export const SAVE_VERSION = 1;
+ *  any breaking layout change so the migration path can key off it.
+ *  v2 (M3): adds the `skillInvest` vector (60-node skill tree).
+ *  v3 (M3 Phase E2): adds the `tutorialDone` flag (FTUE gate + base-building
+ *  unlocks); existing saves migrate with it pre-set (they already played). */
+export const SAVE_VERSION = 3;
 
 // ---------------------------------------------------------------------------
 // Rarity
@@ -79,9 +82,10 @@ export type EquipSlotId = (typeof EQUIP_SLOTS)[number];
  * derived weapon/config/world modifier. Percent keys are stored as integers
  * (e.g. `10` = +10%); flat keys are absolute additions.
  *
- * M2 ships the 21-affix pool (9 prefix + 12 suffix). The three elemental affixes
- * (fire/cold/lightning) arrive in M3 with the status-effect system (OQ-M2-6) —
- * they are NOT keys here yet.
+ * M2 shipped the 21-affix pool (9 prefix + 12 suffix). M3 adds the three elemental
+ * prefixes (fire/cold/lightning) with the status-effect system (OQ-M3-5), completing
+ * the 24-affix pool. Each elemental key feeds a status effect via the loadout →
+ * LoadoutConfig elemental block (fireDmg / coldSlow / lightning).
  */
 export type StatKey =
   // --- Prefix (offence) ---
@@ -91,6 +95,10 @@ export type StatKey =
   | 'pierce'
   | 'bulletSpeedPct'
   | 'rangeFlat'
+  // --- Prefix (M3 원소 — 상태이상) ---
+  | 'fireDmg' // 화염: 명중 시 지속피해(틱당 피해)
+  | 'coldSlow' // 냉기: 명중 시 적 감속
+  | 'lightning' // 전격: 명중 시 인접 적 연쇄 피해
   // --- Suffix (utility / survival) ---
   | 'moveSpeedPct'
   | 'maxHpFlat'

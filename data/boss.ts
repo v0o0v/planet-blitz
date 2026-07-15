@@ -66,6 +66,49 @@ export type BossAttack =
       readonly damage: number;
       readonly bulletRadius: number;
       readonly bulletLife: number;
+    }
+  /**
+   * 레이저 그물(plan B1, 유령 기함): 플레이어 영역을 가로지르는 격자형 고속 탄막.
+   * `lines`개의 수직 열(아래로) + `lines`개의 수평 행(오른쪽으로)을 뷰포트 폭
+   * (HAZARD_LINE_SPAN) 위에 균등 배치해 그물망을 만든다. 고정 간격·방향(RNG 미소비)
+   * — 결정론. 세그먼트 탄 상한을 존중한다.
+   */
+  | {
+      readonly kind: 'laserNet';
+      readonly lines: number;
+      readonly speed: number;
+      readonly damage: number;
+      readonly bulletRadius: number;
+      readonly bulletLife: number;
+    }
+  /**
+   * 감속 지대(plan B1, 유령 기함): 플레이어 주변에 서리 감속 장판(HAZARD_SLOW)을
+   * `zones`개 융기시킨다. 장판에 닿으면 플레이어가 일정 시간 감속되고 소량 피해를
+   * 받는다. 고정 배치(RNG 미소비) — 결정론.
+   */
+  | {
+      readonly kind: 'slowField';
+      readonly zones: number;
+      readonly windup: number;
+      readonly activeTicks: number;
+      readonly radius: number;
+      readonly damage: number;
+    }
+  /**
+   * 기하학 회전 탄막(plan B2, 수호자 오벨리스크): `sides`각형의 각 변 방향으로 `perSide`
+   * 발씩 부채꼴을 쏘고, 매 캐스트마다 기준각을 `turn`만큼 돌려 회전 다각형 탄막을
+   * 그린다(spiral과 동일하게 boss.targetX에 기준각 누적). 결정론(위치·누산 각도만).
+   */
+  | {
+      readonly kind: 'polygonSpin';
+      readonly sides: number;
+      readonly perSide: number;
+      readonly spread: number;
+      readonly speed: number;
+      readonly damage: number;
+      readonly bulletRadius: number;
+      readonly bulletLife: number;
+      readonly turn: number;
     };
 
 export interface BossPhaseDef {

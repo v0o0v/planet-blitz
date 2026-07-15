@@ -48,7 +48,7 @@ describe('rollItem — pure item roller (AC1)', () => {
       expect(SLOT_KINDS).toContain(item.slot);
       if (item.slot === 'main') {
         expect(item.weaponType).toBeGreaterThanOrEqual(0);
-        expect(item.weaponType).toBeLessThanOrEqual(2);
+        expect(item.weaponType).toBeLessThanOrEqual(4); // M3 C1: 5 main-weapon types
       } else if (item.slot === 'sub') {
         expect(item.weaponType).toBeGreaterThanOrEqual(0);
         expect(item.weaponType).toBeLessThanOrEqual(1);
@@ -65,11 +65,13 @@ describe('rollItem — pure item roller (AC1)', () => {
     expect(item.id).toBe('it-555');
   });
 
-  it('unique rarity produces a valid item (uniqueId undefined until Lane 3)', () => {
+  it('unique rarity produces a valid item with a registered uniqueId (M3: 전 슬롯 커버)', () => {
+    // M3에서 유니크 15점이 7개 슬롯 종류를 모두 커버하므로, 어떤 슬롯을 롤하든 유니크
+    // rarity면 등록된 uniqueId가 반드시 부여된다.
     const item = rollItem(999, 'unique', SRC);
     expect(item.rarity).toBe('unique');
     expect(item.affixes.length).toBeGreaterThanOrEqual(3);
-    expect(item.uniqueId).toBeUndefined();
+    expect(item.uniqueId).toBeDefined();
   });
 });
 

@@ -23,8 +23,8 @@
 import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
 import { spawnEnemyBullet, spawnHazard } from './entities.js';
-import { HAZARD_LAVA } from './patterns/types.js';
-import { cos, sin, atan2, TWO_PI, clamp } from './math.js';
+import { HAZARD_LAVA, HAZARD_SLOW } from './patterns/types.js';
+import { cos, sin, atan2, TWO_PI, HALF_PI, clamp } from './math.js';
 import { DT, VIEW_HEIGHT, HAZARD_LINE_SPAN, SPAWN_RING_RADIUS } from './constants.js';
 import type { BossAttack, BossDef } from '../../data/boss.js';
 import { planetContent } from '../../data/planets/index.js';
@@ -203,6 +203,94 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
         );
         state.enemyBulletCount++;
       }
+      break;
+    }
+    case 'laserNet': {
+      // 레이저 그물(plan B1): 뷰포트 폭 위에 균등 배치한 수직 열(아래로) + 수평 행
+      // (오른쪽으로)으로 격자를 만든다. 고정 간격·방향(RNG 미소비) — 결정론.
+      const span = HAZARD_LINE_SPAN;
+      const step = span / (atk.lines + 1);
+      // 수직 열: 플레이어 위쪽에서 아래로.
+      for (let i = 1; i <= atk.lines; i++) {
+        if (state.enemyBulletCount >= state.bulletCap) break;
+        spawnEnemyBullet(
+          state,
+          player.x - span / 2 + step * i,
+          player.y - span / 2,
+          0,
+          atk.speed,
+          HALF_PI,
+          atk.damage,
+          atk.bulletRadius,
+          atk.bulletLife,
+        );
+        state.enemyBulletCount++;
+      }
+      // 수평 행: 플레이어 왼쪽에서 오른쪽으로.
+      for (let i = 1; i <= atk.lines; i++) {
+        if (state.enemyBulletCount >= state.bulletCap) break;
+        spawnEnemyBullet(
+          state,
+          player.x - span / 2,
+          player.y - span / 2 + step * i,
+          atk.speed,
+          0,
+          0,
+          atk.damage,
+          atk.bulletRadius,
+          atk.bulletLife,
+        );
+        state.enemyBulletCount++;
+      }
+      break;
+    }
+    case 'slowField': {
+      // 감속 지대(plan B1): 플레이어 주변 뷰포트 폭에 HAZARD_SLOW 장판을 균등 융기.
+      const step = HAZARD_LINE_SPAN / (atk.zones + 1);
+      const startX = player.x - HAZARD_LINE_SPAN / 2;
+      for (let i = 1; i <= atk.zones; i++) {
+        spawnHazard(
+          state,
+          HAZARD_SLOW,
+          startX + step * i,
+          player.y,
+          atk.radius,
+          atk.windup,
+          atk.activeTicks,
+          atk.damage,
+          true,
+          boss.id,
+        );
+      }
+      break;
+    }
+    case 'polygonSpin': {
+      // 기하학 회전 다각형 탄막(plan B2): sides각형 각 변 방향으로 perSide 발 부채꼴을
+      // 쏘고, 기준각(boss.targetX)을 turn만큼 돌려 회전시킨다. 결정론(누산 각도만).
+      const base = boss.targetX;
+      for (let s = 0; s < atk.sides; s++) {
+        const sideAngle = base + (s * TWO_PI) / atk.sides;
+        const n = atk.perSide;
+        const start = n > 1 ? sideAngle - atk.spread / 2 : sideAngle;
+        const stepA = n > 1 ? atk.spread / (n - 1) : 0;
+        for (let i = 0; i < n; i++) {
+          if (state.enemyBulletCount >= state.bulletCap) break;
+          const ang = start + stepA * i;
+          spawnEnemyBullet(
+            state,
+            boss.x,
+            boss.y,
+            cos(ang) * atk.speed,
+            sin(ang) * atk.speed,
+            ang,
+            atk.damage,
+            atk.bulletRadius,
+            atk.bulletLife,
+          );
+          state.enemyBulletCount++;
+        }
+      }
+      boss.targetX = base + atk.turn;
       break;
     }
   }

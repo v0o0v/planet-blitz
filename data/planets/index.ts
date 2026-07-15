@@ -19,6 +19,10 @@ import { CARD_POOL } from '../waves.js';
 import { LAVA_FORTRESS } from '../boss.js';
 import { BERDAN_ROSTER, BERDAN_ELITES, BERDAN_CARD_POOL } from './berdan.js';
 import { BERDAN_QUEEN } from '../bosses/berdan-queen.js';
+import { NIFLHEIM_ROSTER, NIFLHEIM_ELITES, NIFLHEIM_CARD_POOL } from './niflheim.js';
+import { NIFLHEIM_FLAGSHIP } from '../bosses/niflheim-flagship.js';
+import { ARKE_ROSTER, ARKE_ELITES, ARKE_CARD_POOL } from './arke.js';
+import { ARKE_OBELISK } from '../bosses/arke-obelisk.js';
 
 /** 행성×티어 드랍 rarity 기준 확률(src/sim/drops.ts가 소비). */
 export interface PlanetDropTable {
@@ -88,8 +92,42 @@ export const BERDAN: PlanetContent = {
   ],
 };
 
+/** 니플헤임(2) — M3 빙설·유령 함대 행성. 그물·감속 압박·유령 기함. */
+export const NIFLHEIM: PlanetContent = {
+  index: 2,
+  id: 'niflheim',
+  name: '니플헤임',
+  roster: NIFLHEIM_ROSTER,
+  elites: NIFLHEIM_ELITES,
+  cardPool: NIFLHEIM_CARD_POOL,
+  boss: NIFLHEIM_FLAGSHIP,
+  // 서리 행성: 레어는 베르단과 비슷하되 유니크가 살짝 더 후하다(심층 파밍 유인).
+  dropTable: { eliteRareBase: 0.28, eliteUniqueBase: 0.05, bossUniqueBase: 0.2 },
+  minerals: [
+    { id: 'niflheim-rime-crystal', name: '서리 결정' },
+    { id: 'niflheim-ghost-alloy', name: '유령 합금' },
+  ],
+};
+
+/** 아르케(3) — M3 고대 기계 행성. 정밀 포격·기하학 탄막·수호자 오벨리스크. */
+export const ARKE: PlanetContent = {
+  index: 3,
+  id: 'arke',
+  name: '아르케',
+  roster: ARKE_ROSTER,
+  elites: ARKE_ELITES,
+  cardPool: ARKE_CARD_POOL,
+  boss: ARKE_OBELISK,
+  // 심층 행성: 최고 난도인 만큼 레어·유니크 확률이 가장 높다.
+  dropTable: { eliteRareBase: 0.3, eliteUniqueBase: 0.06, bossUniqueBase: 0.22 },
+  minerals: [
+    { id: 'arke-ancient-core', name: '고대 코어' },
+    { id: 'arke-relic-plating', name: '유물 장갑판' },
+  ],
+};
+
 /** 행성 레지스트리(index 순). 새 행성은 여기에 append. */
-export const PLANETS: readonly PlanetContent[] = [KARGON, BERDAN];
+export const PLANETS: readonly PlanetContent[] = [KARGON, BERDAN, NIFLHEIM, ARKE];
 
 /** planet index → 콘텐츠. 범위를 벗어나면 카르곤(0)으로 안전 폴백. */
 export function planetContent(index: number | undefined): PlanetContent {

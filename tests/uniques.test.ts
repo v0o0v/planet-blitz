@@ -22,7 +22,7 @@ import {
 } from '../src/items/loadout.js';
 import { rollItem } from '../src/items/roll.js';
 import { runReplay } from '../src/sim/replay.js';
-import { M2_UNIQUES } from '../data/uniques.js';
+import { M2_UNIQUES, M3_UNIQUES } from '../data/uniques.js';
 import {
   UQ_OVERHEAT_DRUM,
   UQ_SPLIT_CORE,
@@ -165,7 +165,8 @@ describe('유니크 레지스트리 + 로드아웃 배선 (AC7)', () => {
   });
 
   it('rollItem이 main 슬롯 유니크에 등록된 uniqueId를 부여한다', () => {
-    const ids = new Set(M2_UNIQUES.map((u) => u.id));
+    // M3에서 등록된 전체 15점(M2 5 + M3 10) 기준으로 검증한다.
+    const ids = new Set([...M2_UNIQUES, ...M3_UNIQUES].map((u) => u.id));
     let found = false;
     for (let s = 1; s < 500 && !found; s++) {
       const item = rollItem(s, 'unique', { planet: 1, tier: 1 });
@@ -175,6 +176,26 @@ describe('유니크 레지스트리 + 로드아웃 배선 (AC7)', () => {
       }
     }
     expect(found).toBe(true);
+  });
+
+  it('main 슬롯 유니크는 아이템 weaponType과 페어링된 것만 롤된다 (리뷰 MED-1)', () => {
+    // 등록된 유니크 id → 요구 weaponType(주무기 파생만 지정). 롤된 main 유니크의
+    // weaponType이 아이템 weaponType과 어긋나면 실패한다.
+    const wtById = new Map<string, number | undefined>(
+      [...M2_UNIQUES, ...M3_UNIQUES].map((u) => [u.id, u.weaponType]),
+    );
+    let checked = 0;
+    for (let s = 1; s < 4000; s++) {
+      const item = rollItem(s, 'unique', { planet: 1, tier: 1 });
+      if (item.slot !== 'main' || item.uniqueId === undefined) continue;
+      const wt = wtById.get(item.uniqueId);
+      // 주무기 유니크는 반드시 weaponType이 지정돼 있고 아이템과 일치해야 한다.
+      expect(wt).toBeDefined();
+      expect(wt).toBe(item.weaponType);
+      checked++;
+    }
+    // 다섯 무기타입 전부에 걸쳐 충분히 검증됐는지(공허 통과 방지).
+    expect(checked).toBeGreaterThan(20);
   });
 });
 

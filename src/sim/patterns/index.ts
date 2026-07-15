@@ -15,6 +15,7 @@ import { spawnEnemyBullet, spawnHazard } from '../entities.js';
 import { cos, sin, atan2, length, TWO_PI, HALF_PI } from '../math.js';
 import { DT, HAZARD_LINE_SPAN } from '../constants.js';
 import { slideCircleWalls } from '../los.js';
+import { tierParams } from '../../../data/waves.js';
 
 /** Advance one enemy: steer, then fire if its cadence is ready. */
 export function updateEnemy(state: WorldState, e: Entity, def: EnemyDef, player: Entity): void {
@@ -167,6 +168,27 @@ function runAttack(state: WorldState, e: Entity, def: EnemyDef, player: Entity):
         false,
         e.id,
       );
+      // 섬멸 티어 패턴 변형(plan B3): 사수형이 포격과 함께 방사형 견제탄(서브탄)을 흩뿌린다.
+      // 정찰/교전은 subBullets 0이라 no-op(거동 불변).
+      const sub = tierParams(state.config.tier).subBullets;
+      const shardSpeed = 460;
+      const shardDamage = Math.max(4, Math.round(def.attack.damage * 0.5));
+      for (let i = 0; i < sub; i++) {
+        if (state.enemyBulletCount >= state.bulletCap) break;
+        const ang = (i * TWO_PI) / sub;
+        spawnEnemyBullet(
+          state,
+          e.x,
+          e.y,
+          cos(ang) * shardSpeed,
+          sin(ang) * shardSpeed,
+          ang,
+          shardDamage,
+          5,
+          70,
+        );
+        state.enemyBulletCount++;
+      }
       break;
     }
     case 'lava': {
@@ -217,10 +239,13 @@ function sprayFragments(
   e: Entity,
   atk: Extract<EnemyDef['attack'], { kind: 'fragments' }>,
 ): void {
-  for (let i = 0; i < atk.count; i++) {
+  // 섬멸 티어 패턴 변형(plan B3): 서브탄 수만큼 파편 부채를 더 촘촘히 만든다(데이터
+  // 주도). 정찰/교전은 subBullets 0이라 atk.count 그대로(거동 불변).
+  const count = atk.count + tierParams(state.config.tier).subBullets;
+  for (let i = 0; i < count; i++) {
     // Respect the segment's simultaneous enemy-bullet cap (perf + fairness).
     if (state.enemyBulletCount >= state.bulletCap) break;
-    const ang = (i * TWO_PI) / atk.count;
+    const ang = (i * TWO_PI) / count;
     spawnEnemyBullet(
       state,
       e.x,

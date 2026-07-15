@@ -15,6 +15,59 @@ import type { EnemyRole } from '../src/sim/patterns/types.js';
 
 export type Formation = 'ring' | 'line' | 'edges' | 'cluster';
 
+// ---------------------------------------------------------------------------
+// 난도 티어 (plan B3, 갈림길 ③A: 티어 파라미터 데이터 주입, AC5)
+// ---------------------------------------------------------------------------
+
+/** 정찰(0): 기본. */
+export const TIER_RECON = 0;
+/** 교전(1): M2 완성분 — 카드당 정예 1 승격(수치·패턴 M2와 동일 보존). */
+export const TIER_ENGAGE = 1;
+/** 섬멸(2): 패턴 변형(서브탄)+밀도↑+정예 2 + HP 완만 상향(×4.5). */
+export const TIER_ANNIHILATION = 2;
+
+/** 레벨 캡(plan §3). */
+export const LEVEL_CAP = 100;
+/** 섬멸 티어 진입 게이트 레벨(plan B3, 게이트 ④). */
+export const ANNIHILATION_UNLOCK_LEVEL = 60;
+
+/**
+ * 티어 파라미터 — 패턴 엔진·웨이브 디렉터에 데이터로 주입(갈림길 ③A). "수치만 다른
+ * 티어" 금지(원칙4): 섬멸은 서브탄(패턴 변형)+밀도↑가 본질이고 HP는 완만하게만 오른다.
+ *
+ * 정찰(0)·교전(1)은 M2 거동을 그대로 보존한다(hpMult 1·subBullets 0·densityMult 1 →
+ * 기존 스폰/패턴/해시 불변). 엔진지먼트 HP ×2.2는 밸런스 튜닝 항목으로 재미 게이트
+ * 루프에서 조정 예정이라 여기서는 1로 둔다(회귀 방지). 섬멸(2)만 신규 수치를 싣는다.
+ */
+export interface TierParams {
+  /** 적 스폰 HP 배율(완만). */
+  readonly hpMult: number;
+  /** 온스크린 적 상한 배율(밀도↑). */
+  readonly densityMult: number;
+  /** 카드당 정예 승격 수. */
+  readonly eliteCount: number;
+  /** 패턴 변형: 적 공격당 추가 서브탄 수(fragments 밀도↑ / mortar 방사 추가). */
+  readonly subBullets: number;
+}
+
+/** 티어별 파라미터(index = 티어). 새 티어는 append. */
+export const TIER_PARAMS: readonly TierParams[] = [
+  { hpMult: 1, densityMult: 1, eliteCount: 0, subBullets: 0 }, // 정찰
+  { hpMult: 1, densityMult: 1, eliteCount: 1, subBullets: 0 }, // 교전(M2 보존)
+  { hpMult: 4.5, densityMult: 1.5, eliteCount: 2, subBullets: 3 }, // 섬멸
+];
+
+/** 티어 파라미터 조회(범위 밖은 정찰로 폴백). */
+export function tierParams(tier: number | undefined): TierParams {
+  return TIER_PARAMS[tier ?? 0] ?? (TIER_PARAMS[0] as TierParams);
+}
+
+/** 티어 진입 게이트: 섬멸은 레벨 60+ 요구, 그 외는 항상 허용(plan B3). */
+export function canEnterTier(tier: number, level: number): boolean {
+  if (tier >= TIER_ANNIHILATION) return level >= ANNIHILATION_UNLOCK_LEVEL;
+  return true;
+}
+
 /**
  * One spawn group in a wave card. Either a ROLE spawn (resolved against the
  * planet's role roster) or an ELITE spawn (resolved against the planet's elite

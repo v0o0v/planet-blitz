@@ -93,6 +93,9 @@ describe('loadout + tier + anomaly determinism (AC2 extension)', () => {
         magnetMult: 1.3,
         xpMult: 1.25,
         uniqueMask: 0,
+        fireDmg: 0,
+        coldSlow: 0,
+        lightning: 0,
       },
     };
     const inputs = idleInputs(60 * 20);
@@ -133,6 +136,9 @@ describe('loadout + tier + anomaly determinism (AC2 extension)', () => {
           magnetMult: 1,
           xpMult: 1,
           uniqueMask: 0,
+          fireDmg: 0,
+          coldSlow: 0,
+          lightning: 0,
         },
       },
       inputs,

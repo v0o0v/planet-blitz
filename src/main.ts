@@ -31,6 +31,17 @@ import { ResultOverlay } from './ui/resultOverlay.js';
 import { PlanetSelect } from './ui/planetSelect.js';
 import type { LaunchSelection } from './ui/planetSelect.js';
 import { InventoryOverlay } from './ui/inventory.js';
+import { BaseMap } from './ui/baseMap.js';
+import { ResearchLab } from './ui/researchLab.js';
+import { Refinery } from './ui/refinery.js';
+import {
+  TitleScreen,
+  TutorialOverlay,
+  FtueTracker,
+  TUTORIAL_SEED,
+  TUTORIAL_PLANET,
+  TUTORIAL_TIER,
+} from './ui/tutorial.js';
 import { createWorld, stepWorld, DT, xpToNext, comboMultiplier, DEFAULT_CONFIG } from './sim/world.js';
 import type { WorldState, WorldConfig } from './sim/world.js';
 import { snapshotWorld } from './sim/snapshot.js';
@@ -80,6 +91,14 @@ async function main(): Promise<void> {
   // --- Persistent meta state (M2) ---
   const profile = loadProfile();
   const inventory = new InventoryOverlay(profile);
+  // M3 base-map hub + building screens + FTUE (Phase D/E).
+  const baseMap = new BaseMap();
+  const researchLab = new ResearchLab(profile);
+  const refinery = new Refinery(profile);
+  const titleScreen = new TitleScreen();
+  const tutorialOverlay = new TutorialOverlay();
+  const ftue = new FtueTracker();
+  let tutorialActive = false;
 
   // An empty snapshot rendered on menu frames clears the arena behind overlays.
   const emptySnap: WorldSnapshot = {
@@ -116,13 +135,56 @@ async function main(): Promise<void> {
     return `크레딧 ${profile.credits} · 광물 ${profile.minerals} · 기체 Lv ${ship.level} · 스킬 ${profile.skillPoints}`;
   }
 
-  /** Show the star map for the next run (world cleared while it is up). */
-  function openStarMap(): void {
+  /** Clear the live run + all menu overlays (called before every screen swap). */
+  function clearToMenu(): void {
     world = null;
     recorder = null;
     prevSnap = emptySnap;
     currSnap = emptySnap;
     accumulator = 0;
+    tutorialOverlay.hide();
+    resultOverlay.hide();
+    baseMap.hide();
+    titleScreen.hide();
+  }
+
+  /** Title screen — first launch forces the tutorial; afterwards it enters base. */
+  function openTitle(): void {
+    clearToMenu();
+    titleScreen.show({
+      firstRun: !profile.tutorialDone,
+      onStart: () => {
+        // The start click is the FTUE input (the 60s / 4min clock starts here).
+        ftue.markInput();
+        if (!profile.tutorialDone) startTutorial();
+        else openBaseMap();
+      },
+    });
+  }
+
+  /** Base map hub — the meta home. Buildings gate by unlock (plan D1/E2). */
+  function openBaseMap(): void {
+    clearToMenu();
+    baseMap.show(profile, {
+      onHangar: () => {
+        baseMap.hide();
+        inventory.show(profile, () => openBaseMap());
+      },
+      onResearch: () => {
+        baseMap.hide();
+        researchLab.show(profile, () => openBaseMap());
+      },
+      onRefinery: () => {
+        baseMap.hide();
+        refinery.show(profile, () => openBaseMap());
+      },
+      onStarMap: () => openStarMap(),
+    });
+  }
+
+  /** Show the star map for the next run (world cleared while it is up). */
+  function openStarMap(): void {
+    clearToMenu();
     const seed = nextSeed();
     // Pre-compute the anomaly the seed offers (same fork the sim uses) so the
     // player can accept/reject it before the run (OQ-M2-3).
@@ -130,29 +192,48 @@ async function main(): Promise<void> {
     planetSelect.show({
       anomalyOffered: offer.kind,
       meta: metaLine(),
+      level: activeShip(profile).level,
       onLaunch: (sel) => startRun(seed, sel),
       onInventory: () => {
         planetSelect.hide();
         inventory.show(profile, () => openStarMap());
       },
+      onBack: () => openBaseMap(),
     });
+  }
+
+  /** Build the tutorial run: homeworld orbit, fixed seed, current loadout. */
+  function startTutorial(): void {
+    startRun(TUTORIAL_SEED, {
+      planet: TUTORIAL_PLANET,
+      tier: TUTORIAL_TIER,
+      anomalyAccepted: false,
+    });
+    tutorialActive = true; // startRun cleared it; mark this run as the tutorial.
+    ftue.markCombat();
+    tutorialOverlay.show();
   }
 
   /** Assemble the run config from the selection + active loadout, then start. */
   function startRun(seed: number, sel: LaunchSelection): void {
+    tutorialActive = false; // normal run unless startTutorial re-flags it
     const ship = activeShip(profile);
     const equipped: Item[] = [];
     for (const id of EQUIP_SLOTS) {
       const it = ship.equipped[id];
       if (it !== undefined) equipped.push(it);
     }
-    const { loadout } = computeLoadoutStats(equipped);
+    // Skill investment (account-wide) folds into the loadout block and is carried
+    // in the config as a snapshot (Replay.config) + read by the powerup weighting.
+    const skillInvest = profile.skillInvest.slice();
+    const { loadout } = computeLoadoutStats(equipped, skillInvest);
     const config: WorldConfig = {
       ...DEFAULT_CONFIG,
       planet: sel.planet,
       tier: sel.tier,
       anomalyAccepted: sel.anomalyAccepted,
       loadout,
+      skillInvest,
     };
     currentSeed = seed;
     world = createWorld(seed, config);
@@ -175,9 +256,15 @@ async function main(): Promise<void> {
         loot: w.loot,
         xpTotal: w.xpTotal,
         resources: w.resources,
+        planet: w.config.planet ?? 0,
+        tier: w.config.tier ?? 0,
       });
+      // Completing the tutorial (win or lose) reveals the base and makes the run
+      // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.
+      if (tutorialActive) profile.tutorialDone = true;
       saveProfile(profile);
     }
+    tutorialOverlay.hide();
     if (powerupOverlay.visible) powerupOverlay.hide();
     const o = lastOutcome;
     resultOverlay.show(
@@ -202,16 +289,16 @@ async function main(): Promise<void> {
             }
           : {}),
       },
-      () => openStarMap(),
+      () => openBaseMap(),
       () => {
         resultOverlay.hide();
-        inventory.show(profile, () => openStarMap());
+        inventory.show(profile, () => openBaseMap());
       },
     );
   }
 
-  // Kick off at the star map.
-  openStarMap();
+  // Kick off at the title screen (first launch forces the tutorial → base map).
+  openTitle();
 
   gameApp.app.ticker.add((ticker) => {
     let frame = ticker.deltaMS / 1000;
@@ -239,6 +326,13 @@ async function main(): Promise<void> {
       }
     } else {
       accumulator = 0; // menus / settled run: sim is inert
+    }
+
+    // Tutorial: advance the scripted hint + instrument the first drop (FTUE, AC8).
+    if (tutorialActive && w !== null) {
+      const hasDrop = w.loot.length > 0;
+      if (hasDrop) ftue.markFirstDrop();
+      tutorialOverlay.update(w.tick, hasDrop);
     }
 
     // --- Render ---
