@@ -22,6 +22,7 @@ import { createGameApp, DESIGN_WIDTH, DESIGN_HEIGHT } from './render/app.js';
 import { loadGameTextures } from './render/textures.js';
 import { EntityRenderer } from './render/entityRenderer.js';
 import { FpsMeter } from './render/fpsMeter.js';
+import { UniqueCeremony } from './render/ceremony.js';
 import { InputController } from './input/controller.js';
 import { Hud } from './ui/hud.js';
 import type { BossHudState } from './ui/hud.js';
@@ -73,6 +74,8 @@ async function main(): Promise<void> {
 
   const controller = new InputController(gameApp);
   const fps = new FpsMeter();
+  // 유니크 드랍 세리머니(렌더 전용): 슬로모 + 금빛 플래시. 시뮬 결과 무영향.
+  const ceremony = new UniqueCeremony();
 
   // --- Persistent meta state (M2) ---
   const profile = loadProfile();
@@ -158,6 +161,7 @@ async function main(): Promise<void> {
     currSnap = prevSnap;
     accumulator = 0;
     settled = false;
+    ceremony.reset();
     lastOutcome = null;
     resultOverlay.hide();
   }
@@ -218,7 +222,10 @@ async function main(): Promise<void> {
 
     // Step the sim only while a live run is in progress and not yet over.
     if (w !== null && !runOver) {
-      accumulator += frame;
+      // 유니크 세리머니 슬로모: 게임 루프 dt에 배율만 곱한다(hit-stop). 입력 로그는 매
+      // 틱 그대로 기록되므로 리플레이/해시는 불변(렌더 페이싱만 늘어짐).
+      const timeScale = ceremony.update(frame);
+      accumulator += frame * timeScale;
       while (accumulator >= DT) {
         const player = w.entities[0];
         const input = controller.sample(player?.x ?? 0, player?.y ?? 0);
@@ -227,6 +234,8 @@ async function main(): Promise<void> {
         prevSnap = currSnap;
         currSnap = snapshotWorld(w);
         accumulator -= DT;
+        // 새 유니크 loot가 나타나면 세리머니 발동(렌더 전용, 같은 loot는 한 번만).
+        ceremony.notice(currSnap);
       }
     } else {
       accumulator = 0; // menus / settled run: sim is inert

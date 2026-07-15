@@ -26,26 +26,43 @@ export interface DropRoll {
   rarityCode: number;
 }
 
-// Base elite drop odds (tier 정찰). Engagement tier and anomalies shift these.
-const ELITE_UNIQUE_BASE = 0.03;
-const ELITE_RARE_BASE = 0.25;
+/**
+ * Planet×tier rarity 기준 확률(data/planets/index.ts PlanetDropTable와 동형). sim
+ * 코어가 item 레이어에 런타임 의존하지 않도록 여기서 최소 형태만 정의한다.
+ */
+export interface DropOdds {
+  readonly eliteRareBase: number;
+  readonly eliteUniqueBase: number;
+  readonly bossUniqueBase: number;
+}
+
+/** 기본 드랍 확률(카르곤 = M1 기존 상수). 테이블 미지정 시 폴백. */
+export const DEFAULT_DROP_ODDS: DropOdds = {
+  eliteRareBase: 0.25,
+  eliteUniqueBase: 0.03,
+  bossUniqueBase: 0.15,
+};
+
 // Engagement tier (1) upgrade multipliers on rare/unique odds.
 const ENGAGE_RARE_MULT = 1.6;
 const ENGAGE_UNIQUE_MULT = 1.5;
 
-// Boss guaranteed rare+; this is its unique odds (the rest is rare).
-const BOSS_UNIQUE_BASE = 0.15;
-
 /**
  * Roll an elite's drop (always drops — elites yield equipment, GDD §3). Draws the
  * rarity tier first, then the seed, so the sequence is fixed per RNG position.
+ * `odds`(행성 드랍 테이블) 미지정 시 카르곤 기본값을 쓴다(하위 호환).
  */
-export function rollEliteDrop(dropRng: SeededRng, tier: number, anomaly: AnomalyState): DropRoll {
+export function rollEliteDrop(
+  dropRng: SeededRng,
+  tier: number,
+  anomaly: AnomalyState,
+  odds: DropOdds = DEFAULT_DROP_ODDS,
+): DropRoll {
   const boost = dropRateMult(anomaly); // 중력 폭풍: better rarity odds
   const tierRareMult = tier >= 1 ? ENGAGE_RARE_MULT : 1;
   const tierUniqueMult = tier >= 1 ? ENGAGE_UNIQUE_MULT : 1;
-  const uniqueChance = ELITE_UNIQUE_BASE * tierUniqueMult * boost * uniqueChanceMult(anomaly);
-  const rareChance = ELITE_RARE_BASE * tierRareMult * boost;
+  const uniqueChance = odds.eliteUniqueBase * tierUniqueMult * boost * uniqueChanceMult(anomaly);
+  const rareChance = odds.eliteRareBase * tierRareMult * boost;
   const r = dropRng.nextFloat();
   const seed = dropRng.nextU32();
   let rarityCode = RARITY_MAGIC;
@@ -58,9 +75,14 @@ export function rollEliteDrop(dropRng: SeededRng, tier: number, anomaly: Anomaly
  * Roll the boss's guaranteed drop: always rare, occasionally unique. Elevated
  * unique odds vs elites; engagement tier and 암흑 성운 push them higher still.
  */
-export function rollBossDrop(dropRng: SeededRng, tier: number, anomaly: AnomalyState): DropRoll {
+export function rollBossDrop(
+  dropRng: SeededRng,
+  tier: number,
+  anomaly: AnomalyState,
+  odds: DropOdds = DEFAULT_DROP_ODDS,
+): DropRoll {
   const tierUniqueMult = tier >= 1 ? ENGAGE_UNIQUE_MULT : 1;
-  const uniqueChance = BOSS_UNIQUE_BASE * tierUniqueMult * uniqueChanceMult(anomaly);
+  const uniqueChance = odds.bossUniqueBase * tierUniqueMult * uniqueChanceMult(anomaly);
   const r = dropRng.nextFloat();
   const seed = dropRng.nextU32();
   const rarityCode = r < uniqueChance ? RARITY_UNIQUE : RARITY_RARE;

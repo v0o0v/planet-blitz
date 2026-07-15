@@ -17,6 +17,8 @@ import type { AffixDef, AffixRoll, Item, ItemSource, Rarity, SlotKind } from './
 import { SLOT_KINDS } from './types.js';
 import { AFFIXES } from '../../data/affixes.js';
 import { uniquesForSlot } from './uniques.js';
+// side-effect: M2 유니크 5점을 레지스트리에 등록(rarity=unique 롤이 슬롯별로 선택).
+import '../../data/uniques.js';
 
 /** Number of sub-weapon variants a `sub` item can roll (0..N-1). */
 const SUB_WEAPON_VARIANTS = 2;

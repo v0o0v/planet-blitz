@@ -36,13 +36,34 @@ import type { AnomalyState } from './anomaly.js';
 import { rollAnomaly, enemyBulletSpeedMult } from './anomaly.js';
 import { isElite, eliteAffix, eliteSpeedMult, spawnEliteDeathFx } from './elite.js';
 import { rollEliteDrop, rollBossDrop } from './drops.js';
+import {
+  hasUnique,
+  overheatCooldown,
+  UQ_OVERHEAT_DRUM,
+  UQ_SPLIT_CORE,
+  UQ_PIERCE_GYRO,
+  UQ_DRONE_BAY,
+  UQ_PHASE_ARMOR,
+  OVERHEAT_MAX_STACK,
+  GYRO_DAMAGE_AMP,
+  SPLIT_FRAGMENTS,
+  SPLIT_SPREAD,
+  SPLIT_FRAGMENT_SPEED,
+  SPLIT_FRAGMENT_LIFE,
+  SPLIT_FRAGMENT_RADIUS,
+  SPLIT_FRAGMENT_MARK,
+  DRONE_INTERVAL,
+  DRONE_SPAWN_OFFSET,
+  PHASE_ARMOR_BONUS_IFRAMES,
+  PHASE_ARMOR_DASH_CD_MULT,
+} from './uniques.js';
 import { SpatialHash, circlesOverlap } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
 import { updateBoss } from './boss.js';
 import { drawPowerupChoices, applyPowerup } from './powerups.js';
 import type { WaveRuntime } from './waves.js';
 import { createWaveRuntime, updateWaves, enemyDefFor } from './waves.js';
-import { LAVA_FORTRESS } from '../../data/boss.js';
+import { planetContent } from '../../data/planets/index.js';
 import {
   CHUNK_SIZE,
   CHUNK_GEN_RADIUS,
@@ -519,6 +540,7 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   stepBoss(state, player);
   autoAttack(state, player);
   subWeapon(state, player);
+  droneBay(state, player);
   stepTurrets(state, player);
   stepProjectiles(state, player);
   stepGems(state, player);
@@ -714,8 +736,15 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     }
     player.vx += dx * config.dashSpeed;
     player.vy += dy * config.dashSpeed;
-    player.dashCooldown = config.dashCooldownTicks;
-    player.iframes = config.dashIframes;
+    // ⑤ 위상 장갑: 대시 직후 무적 프레임 연장 + 대시 쿨다운 감소(장착 시).
+    const mask = config.loadout?.uniqueMask ?? 0;
+    if (hasUnique(mask, UQ_PHASE_ARMOR)) {
+      player.dashCooldown = Math.round(config.dashCooldownTicks * PHASE_ARMOR_DASH_CD_MULT);
+      player.iframes = config.dashIframes + PHASE_ARMOR_BONUS_IFRAMES;
+    } else {
+      player.dashCooldown = config.dashCooldownTicks;
+      player.iframes = config.dashIframes;
+    }
   }
 
   player.x += player.vx * DT;
@@ -759,14 +788,18 @@ function stepBoss(state: WorldState, player: Entity): void {
   if (state.wave.boss && !state.bossSpawned) {
     // Infinite map: spawn the boss just off-screen above the player rather than
     // at an absolute arena position. moveBoss then hovers it relative to the player.
+    // 행성별 보스 선택(카르곤 용암 요새 / 베르단 여왕). enemyType에 행성 인덱스를
+    // 태깅해 렌더가 보스 스프라이트를 분화할 수 있게 한다(카르곤=0 유지 → 해시 불변).
+    const bossDef = planetContent(state.config.planet).boss;
     const boss = spawnBoss(
       state,
       player.x,
       player.y - VIEW_HEIGHT * 0.55,
-      LAVA_FORTRESS.hp,
-      LAVA_FORTRESS.radius,
+      bossDef.hp,
+      bossDef.radius,
     );
-    boss.damage = LAVA_FORTRESS.contactDamage;
+    boss.damage = bossDef.contactDamage;
+    boss.enemyType = state.config.planet ?? 0;
     state.bossSpawned = true;
   }
   for (const e of state.entities) {
@@ -789,6 +822,13 @@ function autoAttack(state: WorldState, player: Entity): void {
   const target = nearestTarget(state, player, w.range);
   if (target === undefined) return;
 
+  // ① 과열 드럼: 연속 명중 스택(player.phase)만큼 발사 쿨다운 단축. 미장착 시
+  //    스택은 항상 0이라 base 그대로(거동 불변).
+  const mask = state.config.loadout?.uniqueMask ?? 0;
+  const fireCd = hasUnique(mask, UQ_OVERHEAT_DRUM)
+    ? overheatCooldown(w.fireCooldown, player.phase)
+    : w.fireCooldown;
+
   const baseAngle = atan2(target.y - player.y, target.x - player.x);
   // M2 plan B2 — three firing archetypes off `weaponType`:
   //   2 = 레일건: one shot straight at the target, its (loadout-boosted) pierce
@@ -810,7 +850,7 @@ function autoAttack(state: WorldState, player: Entity): void {
       cos(baseAngle),
       sin(baseAngle),
     );
-    player.cooldown = w.fireCooldown;
+    player.cooldown = fireCd;
     return;
   }
 
@@ -833,7 +873,7 @@ function autoAttack(state: WorldState, player: Entity): void {
       sin(ang),
     );
   }
-  player.cooldown = w.fireCooldown;
+  player.cooldown = fireCd;
 }
 
 // --- Sub-weapon (M2 plan B2, OQ-M2-2 default: independent fire slot) ---------
@@ -882,6 +922,25 @@ function subWeapon(state: WorldState, player: Entity): void {
     );
   }
   player.timer = SUB_WEAPON_COOLDOWN;
+}
+
+/**
+ * ④ 자율 드론 베이(plan F1, OQ-M2-6 #4): 장착 시 주기적으로 임시 포탑(드론)을
+ * 플레이어 곁에 소환한다. scroll-map turretPickup 로직 재사용(spawnEventObject +
+ * activateTurret) — 소환된 포탑은 stepTurrets가 자동 사격/수명 처리한다. 소환 주기는
+ * player.ownerId(플레이어 미사용 필드, 이미 해시됨)에 카운트다운으로 실어 신규
+ * WorldState 필드·해시 변경 없이 결정론 유지. 미장착 시 ownerId는 항상 0(거동 불변).
+ */
+function droneBay(state: WorldState, player: Entity): void {
+  const mask = state.config.loadout?.uniqueMask ?? 0;
+  if (!hasUnique(mask, UQ_DRONE_BAY)) return;
+  if (player.ownerId > 0) {
+    player.ownerId--;
+    return;
+  }
+  const drone = spawnEventObject(state, 'turretPickup', player.x + DRONE_SPAWN_OFFSET, player.y, 44);
+  activateTurret(drone); // 즉시 활성 포탑(TURRET_LIFE_TICKS 동안 자동 사격)
+  player.ownerId = DRONE_INTERVAL;
 }
 
 /** Max candidates LOS-tested per aim (nearest few); bounds the wall raycast cost. */
@@ -1131,6 +1190,14 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   }
 
   // Friendly bullets vs enemies / boss / supply raiders / destructibles.
+  // 유니크 게이트(장착 시에만 분기): ① 과열 드럼(명중 스택), ② 분열 코어(명중 파편),
+  // ③ 관통 자이로(무한 관통 + 관통당 피해 증폭). 미장착 시 아래 분기는 전부 no-op.
+  const uMask = state.config.loadout?.uniqueMask ?? 0;
+  const overheatOn = hasUnique(uMask, UQ_OVERHEAT_DRUM);
+  const splitOn = hasUnique(uMask, UQ_SPLIT_CORE);
+  const gyroOn = hasUnique(uMask, UQ_PIERCE_GYRO);
+  // 분열 파편은 그리드 순회 중 엔티티 배열을 건드리지 않도록 좌표만 모아 루프 뒤 스폰.
+  const splitSpawns: { x: number; y: number; angle: number }[] = [];
   for (const b of state.entities) {
     if (b.kind !== 'bullet' || b.dead) continue;
     grid.query(b.x, b.y, b.radius, (t) => {
@@ -1140,11 +1207,48 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       if (!circlesOverlap(b.x, b.y, b.radius, t.x, t.y, t.radius)) return;
       // Boss takes double damage while overheated (iframes > 0), spec.
       const mult = t.kind === 'boss' && t.iframes > 0 ? 2 : 1;
-      t.hp -= b.damage * mult;
+      // ③ 관통 자이로: bullet.phase = 지금까지 관통한 횟수 → 관통당 피해 증폭.
+      const gyroAmp = gyroOn ? 1 + b.phase * GYRO_DAMAGE_AMP : 1;
+      t.hp -= b.damage * mult * gyroAmp;
       if (t.hp <= 0) t.dead = true;
-      if (b.pierce > 0) b.pierce--;
-      else b.dead = true;
+      // ① 과열 드럼: 적/보스 명중마다 스택 +1(상한). 피격 시 아래에서 리셋.
+      if (overheatOn && (t.kind === 'enemy' || t.kind === 'boss')) {
+        if (player.phase < OVERHEAT_MAX_STACK) player.phase++;
+      }
+      // ② 분열 코어: 원본 아군탄(마커 없는)이 명중하면 파편 2발 예약(무한 연쇄 방지).
+      if (splitOn && b.ownerId !== SPLIT_FRAGMENT_MARK) {
+        splitSpawns.push({ x: b.x, y: b.y, angle: b.angle });
+      }
+      // 관통 처리: 자이로는 무한 관통(수명으로만 소멸), 그 외는 기존 규칙.
+      if (gyroOn) {
+        b.phase++;
+      } else if (b.pierce > 0) {
+        b.pierce--;
+      } else {
+        b.dead = true;
+      }
     });
+  }
+  // ② 분열 파편 스폰(진행 방향 ± SPLIT_SPREAD). 파편은 마커를 달아 재분열하지 않는다.
+  for (const s of splitSpawns) {
+    for (let i = 0; i < SPLIT_FRAGMENTS; i++) {
+      const off = SPLIT_FRAGMENTS > 1 ? -SPLIT_SPREAD + (2 * SPLIT_SPREAD * i) / (SPLIT_FRAGMENTS - 1) : 0;
+      const ang = s.angle + off;
+      const frag = spawnBullet(
+        state,
+        s.x,
+        s.y,
+        ang,
+        SPLIT_FRAGMENT_SPEED,
+        state.weapon.damage,
+        0,
+        SPLIT_FRAGMENT_RADIUS,
+        SPLIT_FRAGMENT_LIFE,
+        cos(ang),
+        sin(ang),
+      );
+      frag.ownerId = SPLIT_FRAGMENT_MARK; // 재분열 방지 마커
+    }
   }
 
   // Player vs enemies / enemy bullets / hazards / gems / boss.
@@ -1194,6 +1298,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     player.hp -= dmg;
     if (player.hp < 0) player.hp = 0;
     player.iframes = state.config.hitIframes;
+    // ① 과열 드럼: 피격 시 연속 명중 스택 리셋(장착 시에만 phase가 비0).
+    if (overheatOn) player.phase = 0;
   }
 }
 
@@ -1235,6 +1341,8 @@ function compact(state: WorldState): void {
   const lootDrops: { x: number; y: number; seed: number; rarity: number }[] = [];
   const splitElites: Entity[] = [];
   const tier = state.config.tier ?? 0;
+  // 행성별 드랍 테이블(rarity 기준 확률)을 엘리트/보스 드랍 판정에 넘긴다(E3).
+  const dropOdds = planetContent(state.config.planet).dropTable;
   for (const e of state.entities) {
     if (!e.dead) {
       survivors.push(e);
@@ -1247,7 +1355,7 @@ function compact(state: WorldState): void {
       // Elites are the only rank-and-file loot source (GDD §3). They always drop
       // one item; a 분열하는 elite additionally bursts fragments on death (B4).
       if (isElite(e)) {
-        const roll = rollEliteDrop(state.dropRng, tier, state.anomaly);
+        const roll = rollEliteDrop(state.dropRng, tier, state.anomaly, dropOdds);
         lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
         if (eliteAffix(e) === 0) splitElites.push(e);
       }
@@ -1261,7 +1369,7 @@ function compact(state: WorldState): void {
     } else if (e.kind === 'boss') {
       state.victory = true;
       // Boss guaranteed rare+ drop (GDD §3, plan B3).
-      const roll = rollBossDrop(state.dropRng, tier, state.anomaly);
+      const roll = rollBossDrop(state.dropRng, tier, state.anomaly, dropOdds);
       lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
     }
   }
