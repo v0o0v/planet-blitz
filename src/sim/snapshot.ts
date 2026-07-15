@@ -7,7 +7,8 @@
  * them to decouple the fixed 60 Hz sim from the variable display refresh rate.
  */
 
-import type { WorldState, EntityKind } from './world.js';
+import type { WorldState } from './world.js';
+import type { EntityKind } from './entities.js';
 
 export interface EntitySnapshot {
   id: number;
@@ -16,7 +17,20 @@ export interface EntitySnapshot {
   y: number;
   angle: number;
   radius: number;
+  /** Enemy role / hazard subtype code (drives render colour); -1 if unused. */
+  enemyType: number;
   hp: number;
+  maxHp: number;
+  /** Hazard is in its damaging window (vs. still telegraphing); false otherwise. */
+  active: boolean;
+}
+
+/** A support heal beam, for render only. */
+export interface Beam {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
 }
 
 export interface WorldSnapshot {
@@ -24,23 +38,37 @@ export interface WorldSnapshot {
   arenaWidth: number;
   arenaHeight: number;
   entities: EntitySnapshot[];
+  beams: Beam[];
 }
+
+const SUPPORT_TYPE = 3;
 
 /** Capture an immutable snapshot of the current world for rendering. */
 export function snapshotWorld(state: WorldState): WorldSnapshot {
-  const entities: EntitySnapshot[] = state.entities.map((e) => ({
-    id: e.id,
-    kind: e.kind,
-    x: e.x,
-    y: e.y,
-    angle: e.angle,
-    radius: e.radius,
-    hp: e.hp,
-  }));
+  const entities: EntitySnapshot[] = [];
+  const beams: Beam[] = [];
+  for (const e of state.entities) {
+    entities.push({
+      id: e.id,
+      kind: e.kind,
+      x: e.x,
+      y: e.y,
+      angle: e.angle,
+      radius: e.radius,
+      enemyType: e.enemyType,
+      hp: e.hp,
+      maxHp: e.maxHp,
+      active: e.kind === 'hazard' ? e.timer <= 0 && e.life > 0 : false,
+    });
+    if (e.kind === 'enemy' && e.enemyType === SUPPORT_TYPE && e.phase === 1) {
+      beams.push({ x1: e.x, y1: e.y, x2: e.targetX, y2: e.targetY });
+    }
+  }
   return {
     tick: state.tick,
     arenaWidth: state.config.arenaWidth,
     arenaHeight: state.config.arenaHeight,
     entities,
+    beams,
   };
 }

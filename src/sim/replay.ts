@@ -12,8 +12,10 @@
  * double is bit-identical — the strongest possible determinism check.
  */
 
-import type { InputFrame, WorldState, WorldConfig, Entity } from './world.js';
+import type { InputFrame, WorldState, WorldConfig } from './world.js';
 import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } from './world.js';
+import type { Entity } from './entities.js';
+import { KIND_CODE } from './entities.js';
 
 /** A recorded run: everything needed to deterministically reproduce it. */
 export interface Replay {
@@ -62,8 +64,7 @@ function hashU32(hash: number, value: number): number {
 function hashEntity(hash: number, e: Entity): number {
   let h = hash;
   h = hashU32(h, e.id);
-  // Kind as a small stable code.
-  h = hashU32(h, e.kind === 'player' ? 1 : 2);
+  h = hashU32(h, KIND_CODE[e.kind]);
   h = hashFloat(h, e.x);
   h = hashFloat(h, e.y);
   h = hashFloat(h, e.vx);
@@ -71,21 +72,48 @@ function hashEntity(hash: number, e: Entity): number {
   h = hashFloat(h, e.angle);
   h = hashFloat(h, e.radius);
   h = hashFloat(h, e.hp);
+  h = hashFloat(h, e.maxHp);
   h = hashU32(h, e.timer >>> 0);
   h = hashU32(h, e.dashCooldown >>> 0);
   h = hashU32(h, e.iframes >>> 0);
+  h = hashU32(h, e.enemyType >>> 0);
+  h = hashU32(h, e.cooldown >>> 0);
+  h = hashU32(h, e.phase >>> 0);
+  h = hashU32(h, e.life >>> 0);
+  h = hashFloat(h, e.damage);
+  h = hashU32(h, e.pierce >>> 0);
+  h = hashFloat(h, e.targetX);
+  h = hashFloat(h, e.targetY);
+  h = hashU32(h, e.ownerId >>> 0);
+  // `dead` is transient (always false at hash time) and is deliberately omitted.
   return h;
 }
 
 /**
- * Deterministic 32-bit hash of a world state. Captures tick, RNG stream states
- * and every entity field (floats by exact bit pattern).
+ * Deterministic 32-bit hash of a world state. Captures tick, RNG stream states,
+ * weapon/wave runtime and every entity field (floats by exact bit pattern).
  */
 export function hashWorld(state: WorldState): number {
   let h = FNV_OFFSET;
   h = hashU32(h, state.tick >>> 0);
   h = hashU32(h, state.rng.getState());
-  h = hashU32(h, state.wanderRng.getState());
+  h = hashU32(h, state.waveRng.getState());
+  // Weapon stats (mutated by Phase 3 powerups).
+  const w = state.weapon;
+  h = hashU32(h, w.fireCooldown >>> 0);
+  h = hashFloat(h, w.bulletSpeed);
+  h = hashFloat(h, w.damage);
+  h = hashU32(h, w.bulletCount >>> 0);
+  h = hashFloat(h, w.spread);
+  h = hashU32(h, w.pierce >>> 0);
+  // Wave runtime.
+  h = hashU32(h, state.wave.segmentIndex >>> 0);
+  h = hashU32(h, state.wave.segmentTimer >>> 0);
+  h = hashU32(h, state.wave.cardTimer >>> 0);
+  h = hashU32(h, state.wave.boss ? 1 : 0);
+  h = hashU32(h, state.wave.done ? 1 : 0);
+  h = hashU32(h, state.kills >>> 0);
+  h = hashU32(h, state.gems >>> 0);
   h = hashU32(h, state.entities.length >>> 0);
   for (const e of state.entities) {
     h = hashEntity(h, e);
