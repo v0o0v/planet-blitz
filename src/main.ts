@@ -146,13 +146,17 @@ async function main(): Promise<void> {
       const it = ship.equipped[id];
       if (it !== undefined) equipped.push(it);
     }
-    const { loadout } = computeLoadoutStats(equipped);
+    // Skill investment (account-wide) folds into the loadout block and is carried
+    // in the config as a snapshot (Replay.config) + read by the powerup weighting.
+    const skillInvest = profile.skillInvest.slice();
+    const { loadout } = computeLoadoutStats(equipped, skillInvest);
     const config: WorldConfig = {
       ...DEFAULT_CONFIG,
       planet: sel.planet,
       tier: sel.tier,
       anomalyAccepted: sel.anomalyAccepted,
       loadout,
+      skillInvest,
     };
     currentSeed = seed;
     world = createWorld(seed, config);

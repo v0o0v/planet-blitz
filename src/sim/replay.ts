@@ -193,6 +193,16 @@ export function hashWorld(state: WorldState): number {
     h = hashU32(h, r.planet >>> 0);
     h = hashU32(h, r.tier >>> 0);
   }
+  // --- M3 progression (APPEND-ONLY; never reorder the folds above) ---
+  // Skill investment snapshot: already folded into cfg.loadout at build time, so
+  // this is a reproducibility/audit fold — captured so a run with skills hashes
+  // apart from one without even before divergence, and the server re-derives the
+  // exact vector. Length-prefixed so absent/empty vectors stay distinct.
+  const invest = state.config.skillInvest;
+  h = hashU32(h, (invest?.length ?? 0) >>> 0);
+  if (invest !== undefined) {
+    for (const v of invest) h = hashU32(h, v >>> 0);
+  }
   return h >>> 0;
 }
 

@@ -18,7 +18,7 @@
  */
 
 import { SeededRng } from './rng.js';
-import { cos, sin, atan2, length } from './math.js';
+import { cos, sin, atan2, length, wrapAngle } from './math.js';
 import { DT, VIEW_WIDTH, VIEW_HEIGHT, OFFSCREEN_X } from './constants.js';
 import type { Entity } from './entities.js';
 import {
@@ -273,6 +273,13 @@ export interface WorldConfig {
   anomalyAccepted?: boolean;
   /** Loadout-derived stats; absent = neutral (no equipment). */
   loadout?: LoadoutConfig;
+  /**
+   * Skill investment snapshot (M3 plan A2). The 60-length vector is already
+   * folded into `loadout` at config-build time, so it does not re-apply to the
+   * sim; it is carried for the verification server (Replay.config) and read by
+   * the powerup-pool soft weighting (C2, drawPowerupChoices). Absent = no skills.
+   */
+  skillInvest?: number[];
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {
@@ -815,8 +822,28 @@ function stepBoss(state: WorldState, player: Entity): void {
 // Player auto-attack (vulcan): target nearest enemy/boss, fire a fanned volley.
 // ---------------------------------------------------------------------------
 
-/** Railgun weapon type (single fast piercing shot). Shared code with loadout. */
+/** Weapon archetype codes (shared with src/items/loadout.ts). */
 const WEAPON_TYPE_RAILGUN = 2;
+const WEAPON_TYPE_MISSILE = 3;
+const WEAPON_TYPE_BEAM = 4;
+
+/**
+ * Homing-missile marker on a friendly bullet's `ownerId` (already hashed). A
+ * bullet carrying it re-steers toward the nearest target each tick in
+ * stepProjectiles, clamped to MISSILE_TURN_RATE (limited turn — OQ-M3-4). Chosen
+ * distinct from SPLIT_FRAGMENT_MARK / DRONE_MARK so the marks never alias. */
+const MISSILE_MARK = 0x3155110;
+/** Max radians a missile turns toward its target per tick (evadable, GDD §10). */
+const MISSILE_TURN_RATE = 0.09;
+/** Beam segment count cap and spacing (매틱 짧은 수명 세그먼트 판정 — OQ-M3-3). */
+const BEAM_MAX_SEGMENTS = 16;
+const BEAM_SEGMENT_SPACING = 90;
+/** Beam segment radius (tiles the line with slight overlap for a continuous hit). */
+const BEAM_SEGMENT_RADIUS = 52;
+/** Beam segment lifetime (ticks): a brief static hit line, re-laid each fire. */
+const BEAM_SEGMENT_LIFE = 2;
+/** Beam range used when the weapon's range is unbounded (0). */
+const BEAM_DEFAULT_RANGE = 1200;
 
 function autoAttack(state: WorldState, player: Entity): void {
   const w = state.weapon;
@@ -834,12 +861,11 @@ function autoAttack(state: WorldState, player: Entity): void {
     : w.fireCooldown;
 
   const baseAngle = atan2(target.y - player.y, target.x - player.x);
-  // M2 plan B2 — three firing archetypes off `weaponType`:
-  //   2 = 레일건: one shot straight at the target, its (loadout-boosted) pierce
-  //       and bullet speed doing the work — ignores the fan entirely.
-  //   0/1 = 발칸 / 스프레드: fanned volley of `bulletCount` across `spread`. The
-  //       two differ only by their loadout baseline (spread = more pellets, wider
-  //       arc), so one code path serves both.
+  // Firing archetypes off `weaponType` (M2 B2 + M3 C1):
+  //   2 = 레일건: one shot straight at the target (pierce/speed do the work).
+  //   3 = 미사일: `bulletCount` homing missiles — slow, hard, limited turn.
+  //   4 = 빔: a line of short-life static segments covering the aim (매틱 판정).
+  //   0/1 = 발칸 / 스프레드: fanned volley (differ only by loadout baseline).
   if (w.weaponType === WEAPON_TYPE_RAILGUN) {
     spawnBullet(
       state,
@@ -854,6 +880,61 @@ function autoAttack(state: WorldState, player: Entity): void {
       cos(baseAngle),
       sin(baseAngle),
     );
+    player.cooldown = fireCd;
+    return;
+  }
+
+  if (w.weaponType === WEAPON_TYPE_MISSILE) {
+    const n = w.bulletCount < 1 ? 1 : w.bulletCount;
+    const start = n > 1 ? baseAngle - w.spread / 2 : baseAngle;
+    const stepA = n > 1 ? w.spread / (n - 1) : 0;
+    for (let i = 0; i < n; i++) {
+      const ang = start + stepA * i;
+      const m = spawnBullet(
+        state,
+        player.x,
+        player.y,
+        ang,
+        w.bulletSpeed,
+        w.damage,
+        w.pierce,
+        w.bulletRadius,
+        w.bulletLife,
+        cos(ang),
+        sin(ang),
+      );
+      m.ownerId = MISSILE_MARK; // 유도 마커: stepProjectiles가 매 틱 제한 선회.
+    }
+    player.cooldown = fireCd;
+    return;
+  }
+
+  if (w.weaponType === WEAPON_TYPE_BEAM) {
+    const range = w.range > 0 ? w.range : BEAM_DEFAULT_RANGE;
+    let segs = Math.floor(range / BEAM_SEGMENT_SPACING);
+    if (segs < 1) segs = 1;
+    if (segs > BEAM_MAX_SEGMENTS) segs = BEAM_MAX_SEGMENTS;
+    const ca = cos(baseAngle);
+    const sa = sin(baseAngle);
+    for (let i = 1; i <= segs; i++) {
+      const dist = i * BEAM_SEGMENT_SPACING;
+      // Static segment (speed 0): a brief hit point along the beam line. High
+      // pierce so it damages every enemy overlapping it; short life re-laid each
+      // fire so a fast cadence reads as a continuous line.
+      spawnBullet(
+        state,
+        player.x + ca * dist,
+        player.y + sa * dist,
+        baseAngle,
+        0,
+        w.damage,
+        9999,
+        BEAM_SEGMENT_RADIUS,
+        BEAM_SEGMENT_LIFE,
+        ca,
+        sa,
+      );
+    }
     player.cooldown = fireCd;
     return;
   }
@@ -1053,6 +1134,38 @@ function stepTurrets(state: WorldState, _player: Entity): void {
 // Projectiles, gems & supply raiders
 // ---------------------------------------------------------------------------
 
+/**
+ * Steer a homing missile (weaponType 3) toward the nearest hostile with a capped
+ * per-tick turn (MISSILE_TURN_RATE), preserving its speed. Nearest scan ignores
+ * walls (missiles curve around), uses only deterministic trig. No target → the
+ * missile flies straight (its current heading is unchanged).
+ */
+function homeMissile(state: WorldState, e: Entity): void {
+  const speed = length(e.vx, e.vy);
+  if (speed === 0) return;
+  let best: Entity | undefined;
+  let bestD = Infinity;
+  for (const t of state.entities) {
+    if (t.dead) continue;
+    if (t.kind !== 'enemy' && t.kind !== 'boss' && t.kind !== 'supply') continue;
+    const dx = t.x - e.x;
+    const dy = t.y - e.y;
+    const d = dx * dx + dy * dy;
+    if (d < bestD) {
+      bestD = d;
+      best = t;
+    }
+  }
+  if (best === undefined) return;
+  const desired = atan2(best.y - e.y, best.x - e.x);
+  let delta = wrapAngle(desired - e.angle);
+  if (delta > MISSILE_TURN_RATE) delta = MISSILE_TURN_RATE;
+  else if (delta < -MISSILE_TURN_RATE) delta = -MISSILE_TURN_RATE;
+  e.angle += delta;
+  e.vx = cos(e.angle) * speed;
+  e.vy = sin(e.angle) * speed;
+}
+
 function stepProjectiles(state: WorldState, player: Entity): void {
   // Infinite map: there is no arena edge to despawn against. A projectile dies
   // when its lifetime elapses OR it drifts beyond the player-relative cull
@@ -1065,6 +1178,8 @@ function stepProjectiles(state: WorldState, player: Entity): void {
   const enemyBulletMult = enemyBulletSpeedMult(state.anomaly);
   for (const e of state.entities) {
     if (e.kind !== 'bullet' && e.kind !== 'enemyBullet') continue;
+    // 유도 미사일(제한 선회, OQ-M3-4): 위치 적분 전에 최근접 적으로 각도를 소폭 튼다.
+    if (e.kind === 'bullet' && e.ownerId === MISSILE_MARK) homeMissile(state, e);
     const m = e.kind === 'enemyBullet' ? enemyBulletMult : 1;
     e.x += e.vx * DT * m;
     e.y += e.vy * DT * m;

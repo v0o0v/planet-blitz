@@ -14,6 +14,7 @@
 import type { Item, StatKey } from './types.js';
 import type { LoadoutConfig } from '../sim/world.js';
 import { UNIQUE_REGISTRY } from './uniques.js';
+import { computeSkillStats } from './skills.js';
 // side-effect: M2 유니크 5점을 레지스트리에 등록(장착 유니크의 bit → uniqueMask).
 import '../../data/uniques.js';
 
@@ -21,6 +22,8 @@ import '../../data/uniques.js';
 export const WEAPON_VULCAN = 0;
 export const WEAPON_SPREAD = 1;
 export const WEAPON_RAILGUN = 2;
+export const WEAPON_MISSILE = 3;
+export const WEAPON_BEAM = 4;
 
 /** No sub-weapon equipped. */
 export const SUB_WEAPON_NONE = -1;
@@ -76,7 +79,39 @@ function applyWeaponTypeBase(lo: LoadoutConfig, weaponType: number): void {
     lo.bulletSpeedMult *= 1.6;
     lo.fireRateMult *= 2.0;
     lo.damageMult *= 2.4;
+  } else if (weaponType === WEAPON_MISSILE) {
+    // 미사일: 느린 연사 · 강한 단발 · 유도(제한 선회, autoAttack에서 처리). 탄속은
+    // 낮춰 선회가 눈에 보이게 한다(OQ-M3-4 제한 선회).
+    lo.damageMult *= 2.2;
+    lo.fireRateMult *= 2.6;
+    lo.bulletSpeedMult *= 0.7;
+  } else if (weaponType === WEAPON_BEAM) {
+    // 빔: 빠른 연사 · 짧은 수명 세그먼트 판정(OQ-M3-3). 세그먼트 하나당 피해는 작고
+    // 사거리 라인을 촘촘히 덮는다. 넓은 사거리 기본 부여.
+    lo.damageMult *= 0.42;
+    lo.fireRateMult *= 0.6;
+    lo.rangeAdd += 300;
   }
+}
+
+/**
+ * Fold a per-`StatKey` integer/float sum into a loadout block (shared by the
+ * gear-affix pass and the skill-derived pass). Percent stats become
+ * multipliers, flat stats become adds. `mineralFindPct` is deliberately ignored
+ * here — it is meta-only and handled by the caller for `worldMods`.
+ */
+function applyStatSums(lo: LoadoutConfig, sums: Record<StatKey, number>): void {
+  lo.damageMult *= 1 + sums.damagePct / 100;
+  lo.fireRateMult *= 1 - sums.fireRatePct / 100; // higher % = shorter cooldown
+  lo.bulletCountAdd += sums.bulletCount;
+  lo.pierceAdd += sums.pierce;
+  lo.bulletSpeedMult *= 1 + sums.bulletSpeedPct / 100;
+  lo.rangeAdd += sums.rangeFlat;
+  lo.moveSpeedMult *= 1 + sums.moveSpeedPct / 100;
+  lo.maxHpAdd += sums.maxHpFlat + Math.round((BASE_HP_REF * sums.maxHpPct) / 100);
+  lo.dashCdMult *= 1 - sums.dashCdPct / 100;
+  lo.magnetMult *= 1 + sums.magnetPct / 100;
+  lo.xpMult *= 1 + sums.xpPct / 100;
 }
 
 /** Accumulate one affix's contribution into per-stat integer sums. */
@@ -103,10 +138,17 @@ function zeroSums(): Record<StatKey, number> {
 }
 
 /**
- * Fold the equipped items into a derived stat block + meta mods. Order of the
- * items does not matter (all contributions are summed).
+ * Fold the equipped items (and optional skill investment) into a derived stat
+ * block + meta mods. Order of the items does not matter (all contributions are
+ * summed). When `invest` is supplied, the skill-derived stats stack on top of
+ * the gear pass (multiplicatively across the two sources — standard ARPG stack),
+ * so a deep build strengthens the run through the same block gear does. Absent /
+ * empty `invest` reproduces the M2 gear-only result exactly (backward compat).
  */
-export function computeLoadoutStats(equipped: readonly Item[]): ComputedLoadout {
+export function computeLoadoutStats(
+  equipped: readonly Item[],
+  invest?: readonly number[],
+): ComputedLoadout {
   const lo = neutralLoadout();
 
   // Weapon / sub-weapon type from the equipped main/sub items.
@@ -127,18 +169,10 @@ export function computeLoadoutStats(equipped: readonly Item[]): ComputedLoadout 
     }
   }
 
-  // Convert integer percent/flat sums into multipliers/adds.
-  lo.damageMult *= 1 + sums.damagePct / 100;
-  lo.fireRateMult *= 1 - sums.fireRatePct / 100; // higher % = shorter cooldown
-  lo.bulletCountAdd += sums.bulletCount;
-  lo.pierceAdd += sums.pierce;
-  lo.bulletSpeedMult *= 1 + sums.bulletSpeedPct / 100;
-  lo.rangeAdd += sums.rangeFlat;
-  lo.moveSpeedMult *= 1 + sums.moveSpeedPct / 100;
-  lo.maxHpAdd += sums.maxHpFlat + Math.round((BASE_HP_REF * sums.maxHpPct) / 100);
-  lo.dashCdMult *= 1 - sums.dashCdPct / 100;
-  lo.magnetMult *= 1 + sums.magnetPct / 100;
-  lo.xpMult *= 1 + sums.xpPct / 100;
+  // Gear pass: convert integer percent/flat affix sums into multipliers/adds.
+  applyStatSums(lo, sums);
+  // Skill pass: fold skill-derived stats on top (synergy applied in skills.ts).
+  if (invest !== undefined) applyStatSums(lo, computeSkillStats(invest));
   lo.uniqueMask = uniqueMask;
 
   const worldMods: WorldMods = {

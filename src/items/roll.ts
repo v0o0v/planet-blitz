@@ -73,9 +73,12 @@ export function rollItem(dropSeed: number, rarity: Rarity, source: ItemSource): 
 
   const slot = SLOT_KINDS[rng.int(0, SLOT_KINDS.length - 1)] as SlotKind;
 
-  // Weapon variant: main → 0..2 (발칸/스프레드/레일건), sub → 0..1 sub variant.
+  // Weapon variant: main → 0..4 (발칸/스프레드/레일건/미사일/빔), sub → 0..1 sub
+  // variant. `int` consumes one nextU32 regardless of span, so widening the main
+  // range from 0..2 to 0..4 does NOT shift any later draw (RNG stream shape is
+  // preserved) — only the resolved main weapon value changes (M3 C1: 5 types).
   let weaponType: number | undefined;
-  if (slot === 'main') weaponType = rng.int(0, 2);
+  if (slot === 'main') weaponType = rng.int(0, 4);
   else if (slot === 'sub') weaponType = rng.int(0, SUB_WEAPON_VARIANTS - 1);
 
   const affixes = rollAffixes(rng, affixCountFor(rarity, rng));
@@ -105,4 +108,63 @@ export function rollItem(dropSeed: number, rarity: Rarity, source: ItemSource): 
     ...(weaponType !== undefined ? { weaponType } : {}),
     ...(uniqueId !== undefined ? { uniqueId } : {}),
   };
+}
+
+/**
+ * Reforge an item's affixes at the refinery (M3 Phase A4 — plan §4, AC3). PURE in
+ * (`item`'s affix shape, `rerollSeed`, `lockedIndex`): a local RNG seeded from
+ * `rerollSeed` redraws every affix EXCEPT the one at `lockedIndex` (locked-reroll,
+ * the 광물 3배 option — cost is meta, handled by the caller). The locked affix is
+ * preserved in place and excluded from the redraw pool so it is never duplicated.
+ * The affix COUNT is preserved (a reroll reforges, it does not add/remove slots).
+ *
+ * Everything else (id, slot, rarity, weaponType, uniqueId, source) is carried
+ * unchanged — it is the same item, reforged. Deterministic: same inputs → same
+ * result on the client and the verification Edge Function alike (ADR-0005).
+ */
+export function rerollAffixes(item: Item, rerollSeed: number, lockedIndex?: number): Item {
+  const count = item.affixes.length;
+  const hasLock =
+    lockedIndex !== undefined &&
+    lockedIndex >= 0 &&
+    lockedIndex < count &&
+    item.affixes[lockedIndex] !== undefined;
+  // Nothing to reroll (0 affixes, or a single locked affix): return an identical
+  // copy so the call is still a pure, side-effect-free reforge.
+  if (count === 0 || (hasLock && count === 1)) {
+    return { ...item, affixes: item.affixes.slice() };
+  }
+
+  const rng = new SeededRng(rerollSeed >>> 0);
+  const locked = hasLock ? item.affixes[lockedIndex as number] : undefined;
+
+  // Redraw pool excludes the locked affix's def so it is never re-rolled onto
+  // another slot (distinctness across the whole item is preserved).
+  const pool: AffixDef[] = AFFIXES.filter((d) => d.id !== locked?.id);
+  const needed = count - (hasLock ? 1 : 0);
+  const fresh: AffixRoll[] = [];
+  const n = needed < pool.length ? needed : pool.length;
+  for (let k = 0; k < n; k++) {
+    const j = rng.int(0, pool.length - 1);
+    const def = pool[j];
+    pool.splice(j, 1);
+    if (def === undefined) continue;
+    const value = rng.int(def.min, def.max);
+    fresh.push({ id: def.id, stat: def.stat, value });
+  }
+
+  // Reassemble: keep the locked affix at its index, fill the rest in order.
+  const out: AffixRoll[] = new Array<AffixRoll>(count);
+  let f = 0;
+  for (let i = 0; i < count; i++) {
+    if (hasLock && i === lockedIndex && locked !== undefined) {
+      out[i] = locked;
+    } else {
+      const r = fresh[f++];
+      // Pool smaller than needed (only with an exhausted affix table): fall back
+      // to the original affix at this slot rather than leaving a hole.
+      out[i] = r ?? (item.affixes[i] as AffixRoll);
+    }
+  }
+  return { ...item, affixes: out };
 }
