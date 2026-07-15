@@ -98,4 +98,26 @@ export async function runBench(mount: HTMLElement): Promise<void> {
   setInterval(() => {
     console.log(`[bench] fps=${fps.fps.toFixed(1)} bullets=${BULLET_COUNT} enemies=${ENEMY_COUNT}`);
   }, 1000);
+
+  // DEV hook: preview tabs throttle rAF when hidden, which stalls the on-screen
+  // FPS meter. `step()` runs one full update+render synchronously so tooling can
+  // time the per-frame cost against the 16.6 ms budget regardless of throttling.
+  if (import.meta.env.DEV) {
+    (window as unknown as { __bench: unknown }).__bench = {
+      bulletCount: BULLET_COUNT,
+      enemyCount: ENEMY_COUNT,
+      step(dt = 1 / 60): void {
+        for (const b of bullets) {
+          b.particle.x = wrap(b.particle.x + b.vx * dt, DESIGN_WIDTH);
+          b.particle.y = wrap(b.particle.y + b.vy * dt, DESIGN_HEIGHT);
+        }
+        bulletContainer.update();
+        for (const e of enemies) {
+          e.sprite.x = wrap(e.sprite.x + e.vx * dt, DESIGN_WIDTH);
+          e.sprite.y = wrap(e.sprite.y + e.vy * dt, DESIGN_HEIGHT);
+        }
+        gameApp.app.renderer.render(gameApp.app.stage);
+      },
+    };
+  }
 }
