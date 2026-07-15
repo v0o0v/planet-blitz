@@ -54,25 +54,38 @@ export interface SlideResult {
  * M1 cover). Walls are visited in array order (deterministic); overlapping walls
  * resolve sequentially. Returns the corrected position and whether anything was
  * hit (used to trigger the charger's wall-impact fragments burst).
+ *
+ * 다중 벽 코너 보강: 한 벽 밖으로 밀면 인접 벽 안으로 들어갈 수 있어 단일 패스로는
+ * 1틱 잔여 겹침이 남을 수 있다. 고정 순회 순서(배열 순서 × 고정 패스 수)로
+ * SLIDE_PASSES회 반복해 대부분의 코너를 즉시 해소한다. 반복은 결정론을 유지하며,
+ * SLIDE_PASSES 패스 후에도 남는 극단적 잔여 겹침은 다음 틱에 해소된다.
  */
+const SLIDE_PASSES = 2;
+
 export function slideCircleWalls(x: number, y: number, r: number, walls: readonly Entity[]): SlideResult {
   let hit = false;
-  for (const w of walls) {
-    const hw = w.radius + r; // Minkowski-expanded half-extents
-    const hh = w.targetX + r;
-    const dx = x - w.x;
-    const dy = y - w.y;
-    if (dx > -hw && dx < hw && dy > -hh && dy < hh) {
-      // Overlapping: push out along the axis of least penetration.
-      const penX = hw - (dx < 0 ? -dx : dx);
-      const penY = hh - (dy < 0 ? -dy : dy);
-      if (penX < penY) {
-        x = w.x + (dx >= 0 ? hw : -hw);
-      } else {
-        y = w.y + (dy >= 0 ? hh : -hh);
+  for (let pass = 0; pass < SLIDE_PASSES; pass++) {
+    let pushed = false;
+    for (const w of walls) {
+      const hw = w.radius + r; // Minkowski-expanded half-extents
+      const hh = w.targetX + r;
+      const dx = x - w.x;
+      const dy = y - w.y;
+      if (dx > -hw && dx < hw && dy > -hh && dy < hh) {
+        // Overlapping: push out along the axis of least penetration.
+        const penX = hw - (dx < 0 ? -dx : dx);
+        const penY = hh - (dy < 0 ? -dy : dy);
+        if (penX < penY) {
+          x = w.x + (dx >= 0 ? hw : -hw);
+        } else {
+          y = w.y + (dy >= 0 ? hh : -hh);
+        }
+        hit = true;
+        pushed = true;
       }
-      hit = true;
     }
+    // 이번 패스에서 아무 벽과도 겹치지 않았으면 조기 종료(추가 패스 불필요).
+    if (!pushed) break;
   }
   return { x, y, hit };
 }

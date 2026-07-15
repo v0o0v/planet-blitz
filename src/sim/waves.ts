@@ -94,8 +94,54 @@ function spawnCard(state: WorldState, card: WaveCard, maxEnemies: number, player
     const def = defs[i];
     const pos = positions[i];
     if (def === undefined || pos === undefined) continue;
-    spawnEnemy(state, def, pos.x, pos.y);
+    // 활성 벽에 끼인 채 스폰되지 않도록 결정론적으로 벽 밖으로 밀어낸다(C1).
+    const adj = avoidWalls(state.activeWalls, pos.x, pos.y, def.radius);
+    spawnEnemy(state, def, adj.x, adj.y);
   }
+}
+
+/** 벽 면에서 스폰 좌표를 살짝 떨어뜨릴 여유(px). */
+const SPAWN_WALL_MARGIN = 4;
+/** 벽 밖으로 밀어내는 최대 반복 횟수(다중 벽 코너 대비). 초과분은 슬라이드에 위임. */
+const MAX_SPAWN_WALL_TRIES = 4;
+
+/**
+ * 스폰 좌표(반경 r)가 활성 벽 AABB(적 반경 마진 포함)와 겹치면 결정론적으로 벽
+ * 밖으로 밀어낸다. 매 시도마다 겹친 벽을 배열 순서로 훑어 최소 관통 축을 따라
+ * Minkowski 확장 면 바깥(+SPAWN_WALL_MARGIN)으로 옮긴다. 다중 벽 코너는 최대
+ * MAX_SPAWN_WALL_TRIES회 반복으로 완화하고, 그래도 남는 겹침은 그대로 두어 이동
+ * 슬라이드(slideCircleWalls)에 맡긴다. RNG를 쓰지 않고 입력이 위치+벽 기하만의
+ * 함수이므로 결정론(시드·해시 스트림 불변).
+ */
+export function avoidWalls(
+  walls: readonly Entity[],
+  x: number,
+  y: number,
+  r: number,
+): { x: number; y: number } {
+  if (walls.length === 0) return { x, y };
+  for (let attempt = 0; attempt < MAX_SPAWN_WALL_TRIES; attempt++) {
+    let pushed = false;
+    for (const w of walls) {
+      const hw = w.radius + r; // Minkowski 확장 half-extents
+      const hh = w.targetX + r;
+      const dx = x - w.x;
+      const dy = y - w.y;
+      if (dx > -hw && dx < hw && dy > -hh && dy < hh) {
+        // 최소 관통 축으로 벽 밖(+마진)에 재배치.
+        const penX = hw - (dx < 0 ? -dx : dx);
+        const penY = hh - (dy < 0 ? -dy : dy);
+        if (penX < penY) {
+          x = w.x + (dx >= 0 ? hw + SPAWN_WALL_MARGIN : -(hw + SPAWN_WALL_MARGIN));
+        } else {
+          y = w.y + (dy >= 0 ? hh + SPAWN_WALL_MARGIN : -(hh + SPAWN_WALL_MARGIN));
+        }
+        pushed = true;
+      }
+    }
+    if (!pushed) break;
+  }
+  return { x, y };
 }
 
 function spawnEnemy(state: WorldState, def: EnemyDef, x: number, y: number): Entity {

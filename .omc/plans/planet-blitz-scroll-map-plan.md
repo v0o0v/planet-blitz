@@ -133,7 +133,7 @@ M1의 고정 `1920×1080` 아레나(`src/sim/constants.ts:13-14`)를 **무한 �
 - **C1. 웨이브 포메이션 플레이어 상대화** — `src/sim/waves.ts:123-190` (`formationPositions`)
   - `ring`(현 `w/2,h/2` 중심 → **플레이어 중심 + 화면 밖 링 반경**), `line`/`edges`(현 아레나 가장자리 → **플레이어 기준 화면 밖 가장자리**), `cluster`(이미 player 상대, 상수만 스케일). 스폰 링 반경 상수화(뷰포트 대각선/2 + 여유).
   - `clampIn`(`waves.ts:151-153,181-182,192-194`) 아레나 클램프 제거(무한).
-  - ⚠️ **스폰 벽 겹침 방지**: 스폰 링/포메이션 위치가 활성 벽 AABB와 겹치면 적이 벽에 끼여 슬라이드로 밀려나거나 즉시 갇힌다. 스폰 좌표 산출 시 활성 벽과의 겹침을 검사해 겹치면 결정론적으로 오프셋(예 링 각도 다음 슬롯) 하거나 해당 슬롯 스킵. 검사는 활성 벽 배열(F1) 재사용.
+  - ⚠️ **스폰 벽 겹침 방지**: 스폰 링/포메이션 위치가 활성 벽 AABB와 겹치면 적이 벽에 끼여 슬라이드로 밀려나거나 즉시 갇힌다. 스폰 좌표 산출 시 활성 벽과의 겹침을 검사해 겹치면 결정론적으로 오프셋(예 링 각도 다음 슬롯) 하거나 해당 슬롯 스킵. 검사는 활성 벽 배열(F1) 재사용. — **결정론적 오프셋 구현됨(후속 PR, fix/scroll-map-review-lows)**: `avoidWalls`(waves.ts)가 최소 관통 축으로 벽 밖(+마진)으로 최대 4회 밀고 잔여는 슬라이드에 위임(RNG 미사용).
 - **C2. 보스 스폰 플레이어 근처로** — `src/sim/world.ts:387-402` (`stepBoss`)
   - `arenaWidth/2, arenaHeight*0.18` 절대 스폰 → **플레이어 기준 상대 오프셋**(예 위쪽 화면 밖). `moveBoss`(`boss.ts:92-103`)의 `arenaHeight*0.24` targetY, `clamp(...arenaWidth...)` → 플레이어 상대 hover로 치환.
 - **C3. 보급선 상대 경로 횡단** — `src/sim/world.ts:499-525` (`stepSupply`,`maybeSpawnSupply`)
@@ -304,3 +304,4 @@ M1의 고정 `1920×1080` 아레나(`src/sim/constants.ts:13-14`)를 **무한 �
   4. **F1c LOS 상위 k 정렬 tie-break** — 동거리 시 `entityId` 오름차순 2차 키 명시.
   5. **F1c 벽 AABB 필드 해석 확정** — E1을 "반너비=`radius`, 반높이=`targetX`" 단일 소스로 못박고, F1c LOS 세그먼트-AABB 판정이 동일 필드를 재사용함을 명시(E1 재해석 정의와 일치).
   - 상태: `pending approval` → `pending approval (consensus approved)`.
+- 2026-07-15 PR#2 리뷰 LOW 5건 반영 (fix/scroll-map-review-lows): C1 스폰-벽 결정론 오프셋(`avoidWalls`) 구현, `slideCircleWalls` 2패스 코너 보강, `nearestTarget` slow-path 스크래치 재사용, 탄-벽 스윕·chunk marker prune 가드 주석(+prune 여유 1청크). 단위 테스트 2건 추가.
