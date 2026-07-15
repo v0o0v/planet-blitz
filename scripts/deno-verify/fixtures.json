@@ -1,0 +1,728 @@
+{
+  "meta": {
+    "generatedBy": "tests/denoFixture.test.ts (Node/vitest)",
+    "node": "v24.13.0",
+    "scenarioCount": 4
+  },
+  "mathProbe": 793092539,
+  "scenarios": [
+    {
+      "name": "① 카르곤 정찰 기본(로밍)",
+      "seed": 27161,
+      "ticks": 14056,
+      "inputsHash": 2069491745,
+      "checkpoints": [
+        {
+          "tick": 600,
+          "hash": 2687284171
+        },
+        {
+          "tick": 1200,
+          "hash": 1989425868
+        },
+        {
+          "tick": 1800,
+          "hash": 3406554589
+        },
+        {
+          "tick": 2400,
+          "hash": 1225043033
+        },
+        {
+          "tick": 3000,
+          "hash": 2171338736
+        },
+        {
+          "tick": 3600,
+          "hash": 2063255685
+        },
+        {
+          "tick": 4200,
+          "hash": 3310387765
+        },
+        {
+          "tick": 4800,
+          "hash": 1692280057
+        },
+        {
+          "tick": 5400,
+          "hash": 2964266796
+        },
+        {
+          "tick": 6000,
+          "hash": 273968134
+        },
+        {
+          "tick": 6600,
+          "hash": 2970782846
+        },
+        {
+          "tick": 7200,
+          "hash": 2326689100
+        },
+        {
+          "tick": 7800,
+          "hash": 1787893946
+        },
+        {
+          "tick": 8400,
+          "hash": 943124101
+        },
+        {
+          "tick": 9000,
+          "hash": 760168981
+        },
+        {
+          "tick": 9600,
+          "hash": 2625597331
+        },
+        {
+          "tick": 10200,
+          "hash": 1451286883
+        },
+        {
+          "tick": 10800,
+          "hash": 1871040255
+        },
+        {
+          "tick": 11400,
+          "hash": 490209919
+        },
+        {
+          "tick": 12000,
+          "hash": 929254298
+        },
+        {
+          "tick": 12600,
+          "hash": 1985757559
+        },
+        {
+          "tick": 13200,
+          "hash": 1737911558
+        },
+        {
+          "tick": 13800,
+          "hash": 1695923531
+        }
+      ],
+      "finalHash": 932067480,
+      "loot": [
+        {
+          "seed": 328084127,
+          "rarity": 2,
+          "planet": 0,
+          "tier": 0
+        }
+      ],
+      "rolls": [
+        {
+          "id": "it-6953217",
+          "slot": "main",
+          "rarity": "normal",
+          "weaponType": 2,
+          "uniqueId": null,
+          "affixes": []
+        },
+        {
+          "id": "it-6953218",
+          "slot": "module",
+          "rarity": "magic",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "of-learning",
+              "stat": "xpPct",
+              "value": 7
+            }
+          ]
+        },
+        {
+          "id": "it-6953219",
+          "slot": "armor",
+          "rarity": "rare",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "rapid",
+              "stat": "fireRatePct",
+              "value": 8
+            },
+            {
+              "id": "of-swiftness",
+              "stat": "moveSpeedPct",
+              "value": 4
+            },
+            {
+              "id": "of-celerity",
+              "stat": "moveSpeedPct",
+              "value": 11
+            },
+            {
+              "id": "of-magnetism",
+              "stat": "magnetPct",
+              "value": 8
+            },
+            {
+              "id": "ranging",
+              "stat": "rangeFlat",
+              "value": 335
+            }
+          ]
+        }
+      ],
+      "summary": {
+        "victory": true,
+        "gameOver": false,
+        "kills": 310,
+        "level": 9,
+        "bossSpawned": true,
+        "entityCount": 296
+      }
+    },
+    {
+      "name": "② 베르단 교전 + 로드아웃 + 엘리트 어픽스",
+      "seed": 53477,
+      "ticks": 14400,
+      "inputsHash": 2537788351,
+      "checkpoints": [
+        {
+          "tick": 600,
+          "hash": 1754882128
+        },
+        {
+          "tick": 1200,
+          "hash": 1990681263
+        },
+        {
+          "tick": 1800,
+          "hash": 3540181817
+        },
+        {
+          "tick": 2400,
+          "hash": 601324131
+        },
+        {
+          "tick": 3000,
+          "hash": 917814483
+        },
+        {
+          "tick": 3600,
+          "hash": 1482476973
+        },
+        {
+          "tick": 4200,
+          "hash": 1421218171
+        },
+        {
+          "tick": 4800,
+          "hash": 216066592
+        },
+        {
+          "tick": 5400,
+          "hash": 904978992
+        },
+        {
+          "tick": 6000,
+          "hash": 3231037793
+        },
+        {
+          "tick": 6600,
+          "hash": 1782050922
+        },
+        {
+          "tick": 7200,
+          "hash": 1852855058
+        },
+        {
+          "tick": 7800,
+          "hash": 290674489
+        },
+        {
+          "tick": 8400,
+          "hash": 3855893994
+        },
+        {
+          "tick": 9000,
+          "hash": 1314044146
+        },
+        {
+          "tick": 9600,
+          "hash": 4072539119
+        },
+        {
+          "tick": 10200,
+          "hash": 596563777
+        },
+        {
+          "tick": 10800,
+          "hash": 2863153100
+        },
+        {
+          "tick": 11400,
+          "hash": 1616378436
+        },
+        {
+          "tick": 12000,
+          "hash": 3225287003
+        },
+        {
+          "tick": 12600,
+          "hash": 331817840
+        },
+        {
+          "tick": 13200,
+          "hash": 2858109516
+        },
+        {
+          "tick": 13800,
+          "hash": 952852774
+        },
+        {
+          "tick": 14400,
+          "hash": 952852774
+        }
+      ],
+      "finalHash": 952852774,
+      "loot": [
+        {
+          "seed": 1809613204,
+          "rarity": 1,
+          "planet": 1,
+          "tier": 1
+        },
+        {
+          "seed": 1443545022,
+          "rarity": 1,
+          "planet": 1,
+          "tier": 1
+        },
+        {
+          "seed": 3003630397,
+          "rarity": 1,
+          "planet": 1,
+          "tier": 1
+        },
+        {
+          "seed": 867029225,
+          "rarity": 1,
+          "planet": 1,
+          "tier": 1
+        },
+        {
+          "seed": 3348502548,
+          "rarity": 1,
+          "planet": 1,
+          "tier": 1
+        },
+        {
+          "seed": 1990079039,
+          "rarity": 2,
+          "planet": 1,
+          "tier": 1
+        },
+        {
+          "seed": 1062874227,
+          "rarity": 2,
+          "planet": 1,
+          "tier": 1
+        },
+        {
+          "seed": 3986620298,
+          "rarity": 2,
+          "planet": 1,
+          "tier": 1
+        }
+      ],
+      "rolls": [
+        {
+          "id": "it-13690129",
+          "slot": "sub",
+          "rarity": "rare",
+          "weaponType": 1,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "sharp",
+              "stat": "damagePct",
+              "value": 9
+            },
+            {
+              "id": "of-prospecting",
+              "stat": "mineralFindPct",
+              "value": 21
+            },
+            {
+              "id": "of-vitality",
+              "stat": "maxHpFlat",
+              "value": 17
+            }
+          ]
+        },
+        {
+          "id": "it-13690130",
+          "slot": "armor",
+          "rarity": "unique",
+          "weaponType": null,
+          "uniqueId": "phase-armor",
+          "affixes": [
+            {
+              "id": "of-learning",
+              "stat": "xpPct",
+              "value": 8
+            },
+            {
+              "id": "of-swiftness",
+              "stat": "moveSpeedPct",
+              "value": 4
+            },
+            {
+              "id": "multibarrel",
+              "stat": "bulletCount",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "id": "it-13690131",
+          "slot": "shield",
+          "rarity": "rare",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "of-fortitude",
+              "stat": "maxHpFlat",
+              "value": 50
+            },
+            {
+              "id": "of-prospecting",
+              "stat": "mineralFindPct",
+              "value": 22
+            },
+            {
+              "id": "of-warding",
+              "stat": "maxHpPct",
+              "value": 5
+            },
+            {
+              "id": "of-magnetism",
+              "stat": "magnetPct",
+              "value": 10
+            },
+            {
+              "id": "overclocked",
+              "stat": "fireRatePct",
+              "value": 13
+            },
+            {
+              "id": "velocity",
+              "stat": "bulletSpeedPct",
+              "value": 11
+            }
+          ]
+        }
+      ],
+      "summary": {
+        "victory": true,
+        "gameOver": false,
+        "kills": 359,
+        "level": 25,
+        "bossSpawned": true,
+        "entityCount": 173
+      }
+    },
+    {
+      "name": "③ 변칙(이상현상) 수락 런",
+      "seed": 1,
+      "ticks": 2400,
+      "inputsHash": 1122280067,
+      "checkpoints": [
+        {
+          "tick": 600,
+          "hash": 2242089765
+        },
+        {
+          "tick": 1200,
+          "hash": 1427475243
+        },
+        {
+          "tick": 1800,
+          "hash": 3186414056
+        },
+        {
+          "tick": 2400,
+          "hash": 152774742
+        }
+      ],
+      "finalHash": 152774742,
+      "loot": [],
+      "rolls": [
+        {
+          "id": "it-40993",
+          "slot": "sub",
+          "rarity": "magic",
+          "weaponType": 0,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "of-prospecting",
+              "stat": "mineralFindPct",
+              "value": 25
+            }
+          ]
+        },
+        {
+          "id": "it-40994",
+          "slot": "module",
+          "rarity": "unique",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "of-learning",
+              "stat": "xpPct",
+              "value": 10
+            },
+            {
+              "id": "overclocked",
+              "stat": "fireRatePct",
+              "value": 13
+            },
+            {
+              "id": "deadly",
+              "stat": "damagePct",
+              "value": 29
+            }
+          ]
+        }
+      ],
+      "summary": {
+        "victory": false,
+        "gameOver": false,
+        "kills": 18,
+        "level": 2,
+        "bossSpawned": false,
+        "entityCount": 59
+      }
+    },
+    {
+      "name": "④ 유니크 장착 런(과열 드럼 / 관통 자이로)",
+      "seed": 40471,
+      "ticks": 14400,
+      "inputsHash": 3629763762,
+      "checkpoints": [
+        {
+          "tick": 600,
+          "hash": 428506040
+        },
+        {
+          "tick": 1200,
+          "hash": 940760190
+        },
+        {
+          "tick": 1800,
+          "hash": 4127074160
+        },
+        {
+          "tick": 2400,
+          "hash": 1467034824
+        },
+        {
+          "tick": 3000,
+          "hash": 496990505
+        },
+        {
+          "tick": 3600,
+          "hash": 2641914081
+        },
+        {
+          "tick": 4200,
+          "hash": 1733282286
+        },
+        {
+          "tick": 4800,
+          "hash": 1970860148
+        },
+        {
+          "tick": 5400,
+          "hash": 2627579131
+        },
+        {
+          "tick": 6000,
+          "hash": 3749663611
+        },
+        {
+          "tick": 6600,
+          "hash": 91250376
+        },
+        {
+          "tick": 7200,
+          "hash": 2383680720
+        },
+        {
+          "tick": 7800,
+          "hash": 1639946950
+        },
+        {
+          "tick": 8400,
+          "hash": 3577680190
+        },
+        {
+          "tick": 9000,
+          "hash": 3120049636
+        },
+        {
+          "tick": 9600,
+          "hash": 3796213949
+        },
+        {
+          "tick": 10200,
+          "hash": 2909909692
+        },
+        {
+          "tick": 10800,
+          "hash": 1278756764
+        },
+        {
+          "tick": 11400,
+          "hash": 1879081238
+        },
+        {
+          "tick": 12000,
+          "hash": 1586240718
+        },
+        {
+          "tick": 12600,
+          "hash": 1734285952
+        },
+        {
+          "tick": 13200,
+          "hash": 1666687413
+        },
+        {
+          "tick": 13800,
+          "hash": 1498721294
+        },
+        {
+          "tick": 14400,
+          "hash": 1498721294
+        }
+      ],
+      "finalHash": 1498721294,
+      "loot": [
+        {
+          "seed": 2187900594,
+          "rarity": 1,
+          "planet": 1,
+          "tier": 1
+        },
+        {
+          "seed": 1658089678,
+          "rarity": 2,
+          "planet": 1,
+          "tier": 1
+        },
+        {
+          "seed": 3944375188,
+          "rarity": 2,
+          "planet": 1,
+          "tier": 1
+        }
+      ],
+      "rolls": [
+        {
+          "id": "it-10360625",
+          "slot": "sub",
+          "rarity": "unique",
+          "weaponType": 1,
+          "uniqueId": "drone-bay",
+          "affixes": [
+            {
+              "id": "of-magnetism",
+              "stat": "magnetPct",
+              "value": 8
+            },
+            {
+              "id": "of-celerity",
+              "stat": "moveSpeedPct",
+              "value": 14
+            },
+            {
+              "id": "deadly",
+              "stat": "damagePct",
+              "value": 29
+            },
+            {
+              "id": "of-fortune",
+              "stat": "mineralFindPct",
+              "value": 27
+            },
+            {
+              "id": "piercing",
+              "stat": "pierce",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "id": "it-10360626",
+          "slot": "engine",
+          "rarity": "rare",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "ranging",
+              "stat": "rangeFlat",
+              "value": 205
+            },
+            {
+              "id": "of-greed",
+              "stat": "magnetPct",
+              "value": 26
+            },
+            {
+              "id": "of-fortune",
+              "stat": "mineralFindPct",
+              "value": 45
+            }
+          ]
+        },
+        {
+          "id": "it-10360627",
+          "slot": "armor",
+          "rarity": "unique",
+          "weaponType": null,
+          "uniqueId": "phase-armor",
+          "affixes": [
+            {
+              "id": "velocity",
+              "stat": "bulletSpeedPct",
+              "value": 8
+            },
+            {
+              "id": "of-the-dash",
+              "stat": "dashCdPct",
+              "value": 11
+            },
+            {
+              "id": "of-swiftness",
+              "stat": "moveSpeedPct",
+              "value": 6
+            }
+          ]
+        }
+      ],
+      "summary": {
+        "victory": true,
+        "gameOver": false,
+        "kills": 384,
+        "level": 19,
+        "bossSpawned": true,
+        "entityCount": 287
+      }
+    }
+  ]
+}
