@@ -14,24 +14,40 @@
 
 import { Container, Graphics, Sprite } from 'pixi.js';
 import type { WorldSnapshot, EntitySnapshot } from '../sim/snapshot.js';
+import type { EntityKind } from '../sim/entities.js';
 import type { PlaceholderTextures } from './textures.js';
 
 interface TrackedSprite {
   sprite: Sprite;
   seenTick: number;
+  kind: EntityKind;
+}
+
+interface DeathEffect {
+  sprite: Sprite;
+  life: number;
 }
 
 const HAZARD_MORTAR = 0;
+/** Sprite display diameter relative to the sim hitbox (art reads a bit larger). */
+const ART_SCALE = 1.5;
+/** Frames a death burst stays alive (render-only, not sim time). */
+const EFFECT_LIFE = 24;
 
 export class EntityRenderer {
   readonly layer = new Container();
   private readonly sprites = new Map<number, TrackedSprite>();
+  private readonly spriteLayer = new Container();
+  private readonly effectLayer = new Container();
+  private readonly effects: DeathEffect[] = [];
   private readonly overlay = new Graphics();
   private frameTick = 0;
 
   constructor(private readonly textures: PlaceholderTextures) {
-    // Hazards/beams draw beneath the sprites so ships stay legible on top.
+    // Draw order (bottom → top): hazard/beam overlay, entity sprites, death bursts.
     this.layer.addChild(this.overlay);
+    this.layer.addChild(this.spriteLayer);
+    this.layer.addChild(this.effectLayer);
   }
 
   private textureFor(e: EntitySnapshot) {
@@ -61,6 +77,7 @@ export class EntityRenderer {
   render(prev: WorldSnapshot, curr: WorldSnapshot, alpha: number): void {
     this.frameTick++;
     this.drawOverlay(curr);
+    this.updateEffects();
 
     const prevById = new Map<number, EntitySnapshot>();
     for (const e of prev.entities) prevById.set(e.id, e);
@@ -71,8 +88,12 @@ export class EntityRenderer {
       if (tracked === undefined) {
         const sprite = new Sprite(this.textureFor(e));
         sprite.anchor.set(0.5);
-        this.layer.addChild(sprite);
-        tracked = { sprite, seenTick: this.frameTick };
+        // Real sprites are 64/128px; scale to the sim hitbox so art matches
+        // collisions (player r16 → 48px, matching the GDD ship size).
+        const size = e.radius * 2 * ART_SCALE;
+        sprite.setSize(size, size);
+        this.spriteLayer.addChild(sprite);
+        tracked = { sprite, seenTick: this.frameTick, kind: e.kind };
         this.sprites.set(e.id, tracked);
       }
       tracked.seenTick = this.frameTick;
@@ -101,9 +122,39 @@ export class EntityRenderer {
 
     for (const [id, tracked] of this.sprites) {
       if (tracked.seenTick !== this.frameTick) {
+        // A combat unit vanishing = a kill: leave a brief death burst behind.
+        if (tracked.kind === 'enemy' || tracked.kind === 'boss') {
+          this.spawnExplosion(tracked.sprite.x, tracked.sprite.y, tracked.kind === 'boss' ? 3 : 1);
+        }
         tracked.sprite.destroy();
         this.sprites.delete(id);
       }
+    }
+  }
+
+  private spawnExplosion(x: number, y: number, scale: number): void {
+    const sprite = new Sprite(this.textures.explosion);
+    sprite.anchor.set(0.5);
+    sprite.x = x;
+    sprite.y = y;
+    sprite.setSize(46 * scale, 46 * scale);
+    this.effectLayer.addChild(sprite);
+    this.effects.push({ sprite, life: EFFECT_LIFE });
+  }
+
+  private updateEffects(): void {
+    for (let i = this.effects.length - 1; i >= 0; i--) {
+      const fx = this.effects[i];
+      if (fx === undefined) continue;
+      fx.life--;
+      if (fx.life <= 0) {
+        fx.sprite.destroy();
+        this.effects.splice(i, 1);
+        continue;
+      }
+      const t = fx.life / EFFECT_LIFE; // 1 → 0
+      fx.sprite.alpha = t;
+      fx.sprite.scale.set(fx.sprite.scale.x * (1 + 0.04 * (1 - t)));
     }
   }
 
@@ -129,6 +180,8 @@ export class EntityRenderer {
   destroy(): void {
     for (const { sprite } of this.sprites.values()) sprite.destroy();
     this.sprites.clear();
+    for (const { sprite } of this.effects) sprite.destroy();
+    this.effects.length = 0;
     this.overlay.destroy();
     this.layer.destroy({ children: true });
   }

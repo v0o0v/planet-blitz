@@ -1,17 +1,24 @@
 /**
- * Placeholder textures generated from PixiJS Graphics.
+ * Game textures: real pixel-art sprites with a procedural fallback.
  *
- * M1 uses primitive shapes so gameplay can be validated before real pixel-art
- * assets exist (they are swapped in during Phase 4). Textures are generated once
- * and reused; the bullet textures in particular are shared by thousands of
- * sprites/particles.
+ * Phase 4 swapped the primitive-shape placeholders for PixelLab-generated
+ * sprites in `assets/`. `loadGameTextures` builds the procedural set first, then
+ * overrides each slot with the real PNG when it loads — so a missing or corrupt
+ * asset silently falls back to its placeholder and the game never dies (task 18
+ * requirement). `createPlaceholderTextures` remains the synchronous, dependency
+ * free path used by the bench harness.
  *
- * Readability rule (spec): bullets are a WHITE CORE with a coloured OUTLINE —
+ * The directional sprites (ship, enemies) are authored pointing +x (east) to
+ * match the renderer's `rotation = angle` convention; PixelLab's north-facing
+ * output was rotated 90° CW at asset-prep time.
+ *
+ * Readability rule (spec): bullets stay a WHITE CORE with a coloured OUTLINE —
  * friendly bullets outline cyan, enemy bullets outline hot-red — so hostile fire
- * stays legible against the arena at bullet-hell density.
+ * stays legible at bullet-hell density. Bullets are therefore kept procedural on
+ * purpose (a textured bullet would undermine the readability contract).
  */
 
-import { Graphics, type Renderer, type Texture } from 'pixi.js';
+import { Assets, Graphics, type Renderer, type Texture } from 'pixi.js';
 
 export interface PlaceholderTextures {
   player: Texture;
@@ -20,10 +27,14 @@ export interface PlaceholderTextures {
   gem: Texture;
   /** Enemy textures indexed by role typeIndex (0 charger .. 3 support). */
   enemy: Texture[];
-  /** Boss (large lava-fortress hexagon). */
+  /** Boss (large lava-fortress). */
   boss: Texture;
   /** Supply raider transport. */
   supply: Texture;
+  /** Death burst effect (render-only juice). */
+  explosion: Texture;
+  /** Tileable volcanic arena backdrop. */
+  background: Texture;
 }
 
 /** Per-role colour + base radius (matches data/enemies typeIndex order). */
@@ -89,6 +100,49 @@ function enemyTexture(renderer: Renderer, style: (typeof ENEMY_STYLE)[number]): 
   return tex;
 }
 
+/** Procedural volcanic backdrop tile: dark basalt with a few molten cracks. */
+function backgroundTexture(renderer: Renderer): Texture {
+  const S = 256;
+  const g = new Graphics();
+  g.rect(0, 0, S, S).fill({ color: 0x0d0a12 });
+  // Fixed (non-random) molten crack polylines for a seam-tolerant volcanic look.
+  const cracks: [number, number][][] = [
+    [[20, 0], [60, 70], [40, 140], [90, 210], [70, 256]],
+    [[180, 0], [150, 60], [200, 120], [170, 200], [210, 256]],
+    [[0, 120], [80, 150], [140, 110], [220, 160], [256, 130]],
+  ];
+  for (const line of cracks) {
+    const [first, ...rest] = line;
+    if (first === undefined) continue;
+    g.moveTo(first[0], first[1]);
+    for (const [x, y] of rest) g.lineTo(x, y);
+    g.stroke({ color: 0x4a1608, width: 4, alpha: 0.9 });
+    g.moveTo(first[0], first[1]);
+    for (const [x, y] of rest) g.lineTo(x, y);
+    g.stroke({ color: 0xff5a1e, width: 1.5, alpha: 0.7 });
+  }
+  // Scattered embers (fixed positions).
+  const embers: [number, number][] = [
+    [45, 40], [120, 80], [200, 50], [30, 190], [160, 170], [230, 220], [90, 130], [180, 240],
+  ];
+  for (const [x, y] of embers) g.circle(x, y, 1.5).fill({ color: 0xffb020, alpha: 0.6 });
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+/** Procedural death burst fallback: layered orange radial flare. */
+function explosionTexture(renderer: Renderer): Texture {
+  const g = new Graphics();
+  g.circle(0, 0, 22).fill({ color: 0xff7a1a, alpha: 0.35 });
+  g.circle(0, 0, 14).fill({ color: 0xffb020, alpha: 0.7 });
+  g.circle(0, 0, 6).fill({ color: 0xffffff, alpha: 0.9 });
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+/** Synchronous procedural texture set — bullets, fallbacks, and the bench path. */
 export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextures {
   const playerG = new Graphics();
   drawTriangle(playerG, 18, 0x39d0ff); // cyan — friendly (readability rule)
@@ -128,6 +182,8 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
     enemy: ENEMY_STYLE.map((s) => enemyTexture(renderer, s)),
     boss: renderer.generateTexture(bossG),
     supply: renderer.generateTexture(supplyG),
+    explosion: explosionTexture(renderer),
+    background: backgroundTexture(renderer),
   };
 
   playerG.destroy();
@@ -138,4 +194,65 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
   supplyG.destroy();
 
   return textures;
+}
+
+// Eagerly resolve URLs for whatever PNGs actually exist in assets/. Missing
+// files simply do not appear here, so unfilled slots keep their placeholder.
+const ASSET_URLS = import.meta.glob('../../assets/*.png', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>;
+
+function assetUrl(basename: string): string | undefined {
+  for (const key in ASSET_URLS) {
+    if (key.endsWith(`/${basename}`)) return ASSET_URLS[key];
+  }
+  return undefined;
+}
+
+/** Load one PNG as a nearest-filtered texture; null on any failure (graceful). */
+async function tryLoad(basename: string): Promise<Texture | null> {
+  const url = assetUrl(basename);
+  if (url === undefined) return null;
+  try {
+    const tex = await Assets.load<Texture>(url);
+    tex.source.scaleMode = 'nearest';
+    return tex;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build the full texture set, overriding placeholder slots with real sprites
+ * where the asset loads. Any load failure keeps the procedural placeholder.
+ */
+export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderTextures> {
+  const tex = createPlaceholderTextures(renderer);
+
+  const enemyFiles = [
+    'enemy_charger.png',
+    'enemy_mortar.png',
+    'enemy_lavaspring.png',
+    'enemy_support.png',
+  ];
+
+  const [player, boss, gem, explosion, ...enemies] = await Promise.all([
+    tryLoad('player.png'),
+    tryLoad('boss.png'),
+    tryLoad('gem.png'),
+    tryLoad('fx_explosion.png'),
+    ...enemyFiles.map((f) => tryLoad(f)),
+  ]);
+
+  if (player !== null) tex.player = player;
+  if (boss !== null) tex.boss = boss;
+  if (gem !== null) tex.gem = gem;
+  if (explosion !== null) tex.explosion = explosion;
+  enemies.forEach((t, i) => {
+    if (t !== null) tex.enemy[i] = t;
+  });
+
+  return tex;
 }

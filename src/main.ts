@@ -9,8 +9,9 @@
  * `?bench=1` launches the performance bench scene instead (Phase 4 harness).
  */
 
-import { createGameApp } from './render/app.js';
-import { createPlaceholderTextures } from './render/textures.js';
+import { TilingSprite } from 'pixi.js';
+import { createGameApp, DESIGN_WIDTH, DESIGN_HEIGHT } from './render/app.js';
+import { loadGameTextures } from './render/textures.js';
 import { EntityRenderer } from './render/entityRenderer.js';
 import { FpsMeter } from './render/fpsMeter.js';
 import { InputController } from './input/controller.js';
@@ -37,7 +38,14 @@ async function main(): Promise<void> {
   const hud = new Hud();
   const powerupOverlay = new PowerupOverlay();
   const resultOverlay = new ResultOverlay();
-  const textures = createPlaceholderTextures(gameApp.app.renderer);
+  const textures = await loadGameTextures(gameApp.app.renderer);
+  // Volcanic arena backdrop tiled beneath the entities (Kargon world theme).
+  const background = new TilingSprite({
+    texture: textures.background,
+    width: DESIGN_WIDTH,
+    height: DESIGN_HEIGHT,
+  });
+  gameApp.stage.addChild(background);
   const entityRenderer = new EntityRenderer(textures);
   gameApp.stage.addChild(entityRenderer.layer);
 
