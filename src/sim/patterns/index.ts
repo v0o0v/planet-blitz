@@ -13,7 +13,7 @@ import type { EnemyDef } from './types.js';
 import { HAZARD_MORTAR, HAZARD_LAVA } from './types.js';
 import { spawnEnemyBullet, spawnHazard } from '../entities.js';
 import { cos, sin, atan2, length, TWO_PI, HALF_PI } from '../math.js';
-import { DT } from '../constants.js';
+import { DT, HAZARD_LINE_SPAN } from '../constants.js';
 
 /** Advance one enemy: steer, then fire if its cadence is ready. */
 export function updateEnemy(state: WorldState, e: Entity, def: EnemyDef, player: Entity): void {
@@ -22,7 +22,8 @@ export function updateEnemy(state: WorldState, e: Entity, def: EnemyDef, player:
   if (e.cooldown > 0) {
     e.cooldown--;
   }
-  // Fragments fire on wall impact (handled in movement), not on cadence.
+  // Fragments fire from the movement step (periodic cadence burst + wall-impact
+  // hook), never from the generic cadence path below.
   if (def.attack.kind !== 'fragments' && e.cooldown <= 0) {
     runAttack(state, e, def, player);
     e.cooldown = def.fireCooldown;
@@ -49,7 +50,17 @@ function applyMovement(state: WorldState, e: Entity, def: EnemyDef, player: Enti
   }
 }
 
-/** Straight rush; on wall impact reflect, re-aim at the player, spray fragments. */
+/**
+ * Straight rush on the infinite map. There are no arena walls to bounce off, so
+ * the charger drives straight in the direction it aimed at spawn. Its fragments
+ * attack is re-hooked (plan C5c) with two deterministic triggers:
+ *   - PRIMARY (Phase F1a, follow-up worker): the moment it slides against a
+ *     gimmick wall — call {@link chargerHitWall} from the wall-slide resolver.
+ *   - SECONDARY (here): a periodic burst gated by `fireCooldown` so its threat
+ *     never vanishes on open terrain where walls are sparse. It also re-aims at
+ *     the player after overshooting, to circle back and re-engage.
+ * Purely position/timer driven — no RNG — so replays stay bit-identical.
+ */
 function moveCharge(state: WorldState, e: Entity, def: EnemyDef, player: Entity): void {
   // Establish heading on the first tick after spawn (velocity still zero).
   if (e.vx === 0 && e.vy === 0) {
@@ -58,30 +69,37 @@ function moveCharge(state: WorldState, e: Entity, def: EnemyDef, player: Entity)
   e.x += e.vx * DT;
   e.y += e.vy * DT;
 
-  const cfg = state.config;
-  let bounced = false;
-  if (e.x < e.radius) {
-    e.x = e.radius;
-    bounced = true;
-  } else if (e.x > cfg.arenaWidth - e.radius) {
-    e.x = cfg.arenaWidth - e.radius;
-    bounced = true;
-  }
-  if (e.y < e.radius) {
-    e.y = e.radius;
-    bounced = true;
-  } else if (e.y > cfg.arenaHeight - e.radius) {
-    e.y = cfg.arenaHeight - e.radius;
-    bounced = true;
-  }
-  if (bounced) {
-    if (def.attack.kind === 'fragments' && e.cooldown <= 0) {
-      sprayFragments(state, e, def.attack);
-      e.cooldown = def.fireCooldown;
-    }
+  // Secondary fragments trigger: fire on the fire-cadence timer (open terrain),
+  // re-aiming at the player so the charger keeps pressing after each burst.
+  if (def.attack.kind === 'fragments' && e.cooldown <= 0) {
+    sprayFragments(state, e, def.attack);
+    e.cooldown = def.fireCooldown;
     aimAt(e, def.speed, player.x, player.y);
+  } else {
+    // Between bursts, re-aim once the charger has overshot the player so it turns
+    // back instead of receding forever (heading points away from the target).
+    const dx = player.x - e.x;
+    const dy = player.y - e.y;
+    if (e.vx * dx + e.vy * dy < 0) {
+      aimAt(e, def.speed, player.x, player.y);
+    }
   }
   e.angle = atan2(e.vy, e.vx);
+}
+
+/**
+ * Charger wall-impact reaction — the PRIMARY fragments trigger (plan C5c/F1a).
+ * A follow-up worker calls this the instant a charging enemy slides against a
+ * gimmick-wall AABB (Phase F1a): spray fragments (respecting the fire cadence)
+ * and re-aim at the player, reproducing the M1 "hit a wall, burst" feel on the
+ * infinite map. Deterministic (position/timer only, no RNG).
+ */
+export function chargerHitWall(state: WorldState, e: Entity, def: EnemyDef, player: Entity): void {
+  if (def.attack.kind === 'fragments' && e.cooldown <= 0) {
+    sprayFragments(state, e, def.attack);
+    e.cooldown = def.fireCooldown;
+  }
+  aimAt(e, def.speed, player.x, player.y);
 }
 
 function moveStandoff(e: Entity, def: EnemyDef, player: Entity): void {
@@ -142,14 +160,16 @@ function runAttack(state: WorldState, e: Entity, def: EnemyDef, player: Entity):
       break;
     }
     case 'lava': {
-      // Raise a horizontal line of pillars across the arena at the player's y.
+      // Raise a horizontal line of pillars centred on the player (infinite map:
+      // a fixed viewport-width span replaces the old absolute arena span).
       const a = def.attack;
-      const step = state.config.arenaWidth / (a.pillars + 1);
+      const step = HAZARD_LINE_SPAN / (a.pillars + 1);
+      const startX = player.x - HAZARD_LINE_SPAN / 2;
       for (let i = 1; i <= a.pillars; i++) {
         spawnHazard(
           state,
           HAZARD_LAVA,
-          step * i,
+          startX + step * i,
           player.y,
           a.radius,
           a.windup,
@@ -229,12 +249,9 @@ function aimAt(e: Entity, speed: number, tx: number, ty: number): void {
   e.vy = sin(ang) * speed;
 }
 
-function integrate(state: WorldState, e: Entity): void {
+function integrate(_state: WorldState, e: Entity): void {
+  // Infinite map: no arena box to clamp against — enemies move freely. Movement
+  // obstruction is now solely the job of gimmick walls (Phase F).
   e.x += e.vx * DT;
   e.y += e.vy * DT;
-  const cfg = state.config;
-  if (e.x < e.radius) e.x = e.radius;
-  else if (e.x > cfg.arenaWidth - e.radius) e.x = cfg.arenaWidth - e.radius;
-  if (e.y < e.radius) e.y = e.radius;
-  else if (e.y > cfg.arenaHeight - e.radius) e.y = cfg.arenaHeight - e.radius;
 }

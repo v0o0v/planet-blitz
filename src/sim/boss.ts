@@ -25,7 +25,7 @@ import type { Entity } from './entities.js';
 import { spawnEnemyBullet, spawnHazard } from './entities.js';
 import { HAZARD_LAVA } from './patterns/types.js';
 import { cos, sin, atan2, TWO_PI, clamp } from './math.js';
-import { DT } from './constants.js';
+import { DT, VIEW_HEIGHT, HAZARD_LINE_SPAN } from './constants.js';
 import { LAVA_FORTRESS } from '../../data/boss.js';
 import type { BossAttack } from '../../data/boss.js';
 
@@ -63,7 +63,7 @@ export function updateBoss(state: WorldState, boss: Entity, player: Entity): voi
     return;
   }
 
-  moveBoss(state, boss, player);
+  moveBoss(boss, player);
 
   if (boss.iframes > 0) boss.iframes--;
   if (boss.dashCooldown > 0) boss.dashCooldown--;
@@ -89,16 +89,16 @@ export function updateBoss(state: WorldState, boss: Entity, player: Entity): voi
   }
 }
 
-/** Slow hover in the upper arena, tracking the player horizontally. */
-function moveBoss(state: WorldState, boss: Entity, player: Entity): void {
-  const targetY = state.config.arenaHeight * 0.24;
+/** Slow hover above the player, tracking them horizontally (infinite map:
+ *  hover point is player-relative, no arena clamp). */
+function moveBoss(boss: Entity, player: Entity): void {
   const sp = LAVA_FORTRESS.moveSpeed;
   const stepMax = sp * DT;
+  const targetY = player.y - VIEW_HEIGHT * 0.28;
   const dy = targetY - boss.y;
   boss.y += clamp(dy, -stepMax, stepMax);
   const dx = player.x - boss.x;
   boss.x += clamp(dx, -stepMax, stepMax);
-  boss.x = clamp(boss.x, boss.radius, state.config.arenaWidth - boss.radius);
   boss.angle = atan2(player.y - boss.y, player.x - boss.x);
 }
 
@@ -146,12 +146,14 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
       break;
     }
     case 'lavaLine': {
-      const step = state.config.arenaWidth / (atk.pillars + 1);
+      // Fixed viewport-width pillar span centred on the player (infinite map).
+      const step = HAZARD_LINE_SPAN / (atk.pillars + 1);
+      const startX = player.x - HAZARD_LINE_SPAN / 2;
       for (let i = 1; i <= atk.pillars; i++) {
         spawnHazard(
           state,
           HAZARD_LAVA,
-          step * i,
+          startX + step * i,
           player.y,
           atk.radius,
           atk.windup,

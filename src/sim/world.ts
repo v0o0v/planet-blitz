@@ -19,7 +19,7 @@
 
 import { SeededRng } from './rng.js';
 import { cos, sin, atan2, length } from './math.js';
-import { DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
+import { DT, VIEW_WIDTH, VIEW_HEIGHT, OFFSCREEN_X } from './constants.js';
 import type { Entity } from './entities.js';
 import { blankEntity, spawnBullet, spawnGem, spawnSupply, spawnBoss } from './entities.js';
 import { SpatialHash, circlesOverlap } from './collision.js';
@@ -60,16 +60,18 @@ const COMBO_WINDOW_TICKS = 120;
 const COMBO_STEP = 0.05;
 /** Stacks at which the multiplier reaches its x1.5 cap (spec). */
 const COMBO_MAX_STACK = 10;
-/** Gem magnet speed once inside the radius (units/second). */
-const MAGNET_SPEED = 760;
-/** Base gem magnet radius (units); grown by the gem-magnet powerup. */
-const BASE_MAGNET_RADIUS = 210;
+/** Gem magnet speed once inside the radius (units/second). Raised for the 2x
+ *  scale so gems close the larger distances at a comparable feel. */
+const MAGNET_SPEED = 1520;
+/** Base gem magnet radius (units); grown by the gem-magnet powerup. Doubled for
+ *  the 2x scale so collection convenience keeps pace with the bigger map. */
+const BASE_MAGNET_RADIUS = 420;
 /** Supply raider hit points. */
 const SUPPLY_HP = 420;
 /** Supply raider on-screen window: 20 seconds (spec). */
 const SUPPLY_LIFE_TICKS = 1200;
-/** Supply raider crossing speed (units/second). */
-const SUPPLY_SPEED = 190;
+/** Supply raider crossing speed (units/second). Doubled for the 2x scale. */
+const SUPPLY_SPEED = 380;
 /** Gems dropped when a supply raider is shot down. */
 const SUPPLY_REWARD_GEMS = 14;
 /** XP value of each supply-drop gem. */
@@ -113,7 +115,9 @@ export interface WeaponStats {
 
 export const DEFAULT_WEAPON: WeaponStats = {
   fireCooldown: 6,
-  bulletSpeed: 900,
+  // Bullet speed doubled for the 2x-scale world so shots feel as fast relative to
+  // the larger entities and distances.
+  bulletSpeed: 1800,
   damage: 8,
   bulletCount: 1,
   spread: 0.18,
@@ -159,8 +163,10 @@ export interface WorldConfig {
 export const DEFAULT_CONFIG: WorldConfig = {
   arenaWidth: VIEW_WIDTH,
   arenaHeight: VIEW_HEIGHT,
-  playerSpeed: 360,
-  dashSpeed: 1400,
+  // Movement speeds doubled for the 2x-scale world (units feel slow relative to
+  // the enlarged entities/distances otherwise).
+  playerSpeed: 720,
+  dashSpeed: 2800,
   dashCooldownTicks: 42,
   dashIframes: 10,
   hitIframes: 40,
@@ -243,7 +249,8 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   // camera follows the player, so the starting frame looks the same regardless.
   player.x = 0;
   player.y = 0;
-  player.radius = 16;
+  // 2x hitbox scale (plan D1): 16 -> 32. Render doubles again via ART_SCALE.
+  player.radius = 32;
   player.hp = cfg.playerHp;
   player.maxHp = cfg.playerHp;
   entities.push(player);
@@ -398,10 +405,12 @@ function stepEnemies(state: WorldState, player: Entity): void {
 
 function stepBoss(state: WorldState, player: Entity): void {
   if (state.wave.boss && !state.bossSpawned) {
+    // Infinite map: spawn the boss just off-screen above the player rather than
+    // at an absolute arena position. moveBoss then hovers it relative to the player.
     const boss = spawnBoss(
       state,
-      state.config.arenaWidth / 2,
-      state.config.arenaHeight * 0.18,
+      player.x,
+      player.y - VIEW_HEIGHT * 0.55,
       LAVA_FORTRESS.hp,
       LAVA_FORTRESS.radius,
     );
@@ -512,29 +521,29 @@ function stepGems(state: WorldState, player: Entity): void {
   }
 }
 
-/** Supply raiders cross the arena; despawn when their window elapses. */
-function stepSupply(state: WorldState, _player: Entity): void {
-  maybeSpawnSupply(state);
-  const margin = 80;
-  const w = state.config.arenaWidth;
+/** Supply raiders cross the player's view; despawn when their window elapses. */
+function stepSupply(state: WorldState, player: Entity): void {
+  maybeSpawnSupply(state, player);
+  // Despawn once the raider has passed a full off-screen span beyond the player
+  // (fully crossed the view) or its time window elapses. hp stays > 0, so
+  // compaction treats it as an escape (no reward).
+  const despawnDist = OFFSCREEN_X + 120;
   for (const e of state.entities) {
     if (e.kind !== 'supply') continue;
     e.x += e.vx * DT;
     if (e.life > 0) e.life--;
-    // Left the run: window elapsed or fully crossed the arena. hp stays > 0, so
-    // compaction treats it as an escape (no reward).
-    if (e.life === 0 || e.x < -margin || e.x > w + margin) e.dead = true;
+    if (e.life === 0 || Math.abs(e.x - player.x) > despawnDist) e.dead = true;
   }
 }
 
-function maybeSpawnSupply(state: WorldState): void {
+function maybeSpawnSupply(state: WorldState, player: Entity): void {
   const nextTick = SUPPLY_SPAWN_TICKS[state.supplyNextIndex];
   if (nextTick === undefined || state.tick < nextTick) return;
-  const h = state.config.arenaHeight;
-  const w = state.config.arenaWidth;
+  // Infinite map: enter from an off-screen side relative to the player and cross
+  // horizontally through the view.
   const fromLeft = state.supplyRng.chance(0.5);
-  const y = state.supplyRng.range(h * 0.2, h * 0.8);
-  const x = fromLeft ? -40 : w + 40;
+  const y = player.y + state.supplyRng.range(-VIEW_HEIGHT * 0.3, VIEW_HEIGHT * 0.3);
+  const x = player.x + (fromLeft ? -OFFSCREEN_X : OFFSCREEN_X);
   const vx = (fromLeft ? 1 : -1) * SUPPLY_SPEED;
   spawnSupply(state, x, y, vx, SUPPLY_HP, SUPPLY_LIFE_TICKS);
   state.supplyNextIndex++;

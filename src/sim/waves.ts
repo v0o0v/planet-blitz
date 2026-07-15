@@ -17,6 +17,7 @@ import { KARGON_ROSTER, ENEMY_BY_TYPE } from '../../data/enemies.js';
 import { SEGMENTS, CARD_POOL } from '../../data/waves.js';
 import type { WaveCard, Formation } from '../../data/waves.js';
 import { cos, sin, PI, TWO_PI } from './math.js';
+import { OFFSCREEN_X, OFFSCREEN_Y, SPAWN_RING_RADIUS, VIEW_HEIGHT } from './constants.js';
 
 export interface WaveRuntime {
   segmentIndex: number;
@@ -126,69 +127,70 @@ function formationPositions(
   count: number,
   player: Entity,
 ): { x: number; y: number }[] {
-  const cfg = state.config;
-  const w = cfg.arenaWidth;
-  const h = cfg.arenaHeight;
+  // Infinite map: every formation is placed RELATIVE to the player, just outside
+  // the on-screen viewport (off-screen ring / edges). No arena clamps — the world
+  // is unbounded, so enemies stream in from beyond the visible frame in any
+  // direction. Placement stays a pure function of the wave RNG + player position.
   const rng = state.waveRng;
   const out: { x: number; y: number }[] = [];
 
   switch (formation) {
     case 'ring': {
-      const cx = w / 2;
-      const cy = h / 2;
-      const rad = Math.min(w, h) * 0.42;
+      // A ring centred on the player, sized so it sits fully off-screen.
       const start = rng.range(-PI, PI);
       for (let i = 0; i < count; i++) {
         const ang = start + (i * TWO_PI) / count;
-        out.push({ x: cx + cos(ang) * rad, y: cy + sin(ang) * rad });
+        out.push({
+          x: player.x + cos(ang) * SPAWN_RING_RADIUS,
+          y: player.y + sin(ang) * SPAWN_RING_RADIUS,
+        });
       }
       break;
     }
     case 'line': {
-      // A column entering from a random horizontal edge.
+      // A column entering from a random off-screen side of the viewport.
       const fromLeft = rng.chance(0.5);
-      const x = fromLeft ? 80 : w - 80;
-      const y0 = rng.range(h * 0.2, h * 0.8);
+      const x0 = player.x + (fromLeft ? -OFFSCREEN_X : OFFSCREEN_X);
+      const y0 = player.y + rng.range(-VIEW_HEIGHT * 0.3, VIEW_HEIGHT * 0.3);
       for (let i = 0; i < count; i++) {
-        out.push({ x: x + (fromLeft ? -1 : 1) * i * 46, y: clampIn(y0 + i * 20, 60, h - 60) });
+        // Formation spacing doubled for the 2x-scale entities (line 46 -> 92).
+        out.push({ x: x0 + (fromLeft ? -1 : 1) * i * 92, y: y0 + i * 40 });
       }
       break;
     }
     case 'edges': {
+      // Each enemy spawns along one of the four off-screen viewport edges.
       for (let i = 0; i < count; i++) {
         const side = rng.int(0, 3);
-        let x = 0;
-        let y = 0;
+        let x = player.x;
+        let y = player.y;
         if (side === 0) {
-          x = rng.range(80, w - 80);
-          y = 70;
+          x = player.x + rng.range(-OFFSCREEN_X, OFFSCREEN_X);
+          y = player.y - OFFSCREEN_Y;
         } else if (side === 1) {
-          x = rng.range(80, w - 80);
-          y = h - 70;
+          x = player.x + rng.range(-OFFSCREEN_X, OFFSCREEN_X);
+          y = player.y + OFFSCREEN_Y;
         } else if (side === 2) {
-          x = 70;
-          y = rng.range(80, h - 80);
+          x = player.x - OFFSCREEN_X;
+          y = player.y + rng.range(-OFFSCREEN_Y, OFFSCREEN_Y);
         } else {
-          x = w - 70;
-          y = rng.range(80, h - 80);
+          x = player.x + OFFSCREEN_X;
+          y = player.y + rng.range(-OFFSCREEN_Y, OFFSCREEN_Y);
         }
         out.push({ x, y });
       }
       break;
     }
     case 'cluster': {
-      // A blob offset from the player so it is not on top of them.
-      const cx = clampIn(player.x + rng.range(-1, 1) * 500 + 260, 200, w - 200);
-      const cy = clampIn(player.y + rng.range(-1, 1) * 400 - 200, 200, h - 200);
+      // A blob offset from the player so it is not on top of them. Offsets and
+      // spread doubled for the 2x-scale entities (spread +/-90 -> +/-180).
+      const cx = player.x + rng.range(-1, 1) * 1000 + 520;
+      const cy = player.y + rng.range(-1, 1) * 800 - 400;
       for (let i = 0; i < count; i++) {
-        out.push({ x: cx + rng.range(-90, 90), y: cy + rng.range(-90, 90) });
+        out.push({ x: cx + rng.range(-180, 180), y: cy + rng.range(-180, 180) });
       }
       break;
     }
   }
   return out;
-}
-
-function clampIn(v: number, min: number, max: number): number {
-  return v < min ? min : v > max ? max : v;
 }

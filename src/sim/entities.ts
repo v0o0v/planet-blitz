@@ -203,7 +203,7 @@ export function spawnGem(sink: EntitySink, x: number, y: number, xpValue: number
   const g = blankEntity('gem');
   g.x = x;
   g.y = y;
-  g.radius = 10;
+  g.radius = 20; // 2x scale (plan D1): 10 -> 20
   g.hp = 1;
   g.damage = xpValue;
   return addEntity(sink, g);
@@ -227,7 +227,7 @@ export function spawnSupply(
   s.x = x;
   s.y = y;
   s.vx = vx;
-  s.radius = 46;
+  s.radius = 92; // 2x scale (plan D1): 46 -> 92
   s.hp = hp;
   s.maxHp = hp;
   s.life = lifeTicks;

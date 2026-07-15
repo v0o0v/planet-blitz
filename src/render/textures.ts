@@ -38,11 +38,13 @@ export interface PlaceholderTextures {
 }
 
 /** Per-role colour + base radius (matches data/enemies typeIndex order). */
+// Radii match the 2x-scale sim hitboxes (plan D1) so shape placeholders line up
+// with the enlarged entities when no PixelLab asset is present.
 const ENEMY_STYLE: { color: number; radius: number; shape: 'tri' | 'square' | 'diamond' | 'hex' }[] = [
-  { color: 0xff5533, radius: 18, shape: 'tri' }, // 0 charger — aggressive dart
-  { color: 0xffb020, radius: 16, shape: 'square' }, // 1 gunner
-  { color: 0xff3300, radius: 22, shape: 'diamond' }, // 2 lava spring
-  { color: 0x33ffcc, radius: 15, shape: 'hex' }, // 3 support
+  { color: 0xff5533, radius: 36, shape: 'tri' }, // 0 charger — aggressive dart
+  { color: 0xffb020, radius: 32, shape: 'square' }, // 1 gunner
+  { color: 0xff3300, radius: 44, shape: 'diamond' }, // 2 lava spring
+  { color: 0x33ffcc, radius: 30, shape: 'hex' }, // 3 support
 ];
 
 function drawTriangle(g: Graphics, r: number, color: number): void {
@@ -145,7 +147,7 @@ function explosionTexture(renderer: Renderer): Texture {
 /** Synchronous procedural texture set — bullets, fallbacks, and the bench path. */
 export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextures {
   const playerG = new Graphics();
-  drawTriangle(playerG, 18, 0x39d0ff); // cyan — friendly (readability rule)
+  drawTriangle(playerG, 36, 0x39d0ff); // cyan — friendly (readability rule); 2x scale
 
   // Friendly bullet: white core + cyan outline.
   const bulletG = new Graphics();
@@ -159,20 +161,20 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
     .stroke({ color: 0xff2233, width: 2, alignment: 0 });
 
   const gemG = new Graphics();
-  drawDiamond(gemG, 8, 0x66ff88);
+  drawDiamond(gemG, 16, 0x66ff88); // 2x scale
 
-  // Boss: large lava-fortress hexagon, dark-red body with a molten outline.
+  // Boss: large lava-fortress hexagon, dark-red body with a molten outline (2x).
   const bossG = new Graphics();
-  drawHex(bossG, 64, 0x7a1410);
-  drawHex(bossG, 40, 0xff5a1e);
+  drawHex(bossG, 128, 0x7a1410);
+  drawHex(bossG, 80, 0xff5a1e);
 
-  // Supply raider: a wide neutral transport (amber outline, dark hull).
+  // Supply raider: a wide neutral transport (amber outline, dark hull); 2x scale.
   const supplyG = new Graphics();
   supplyG
-    .roundRect(-46, -26, 92, 52, 8)
+    .roundRect(-92, -52, 184, 104, 16)
     .fill({ color: 0x2a3550 })
     .stroke({ color: 0xffcc44, width: 3, alignment: 0 });
-  supplyG.rect(-30, -12, 60, 24).fill({ color: 0x4a5a80 });
+  supplyG.rect(-60, -24, 120, 48).fill({ color: 0x4a5a80 });
 
   const textures: PlaceholderTextures = {
     player: renderer.generateTexture(playerG),
