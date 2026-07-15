@@ -185,6 +185,10 @@ export function hashWorld(state: WorldState): number {
     h = hashFloat(h, lo.magnetMult);
     h = hashFloat(h, lo.xpMult);
     h = hashU32(h, lo.uniqueMask >>> 0);
+    // M3 원소 어픽스 파생(상태이상) — loadout 블록 뒤에 append-only.
+    h = hashU32(h, lo.fireDmg >>> 0);
+    h = hashU32(h, lo.coldSlow >>> 0);
+    h = hashU32(h, lo.lightning >>> 0);
   }
   h = hashU32(h, state.loot.length >>> 0);
   for (const r of state.loot) {
@@ -193,6 +197,9 @@ export function hashWorld(state: WorldState): number {
     h = hashU32(h, r.planet >>> 0);
     h = hashU32(h, r.tier >>> 0);
   }
+  // --- M3 (APPEND-ONLY; never reorder the folds above) ---
+  // 플레이어 감속 잔여 틱(감속 지대). 결정론 입력이므로 접는다.
+  h = hashU32(h, state.playerSlowTicks >>> 0);
   return h >>> 0;
 }
 

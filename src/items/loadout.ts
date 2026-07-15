@@ -58,6 +58,9 @@ export function neutralLoadout(): LoadoutConfig {
     magnetMult: 1,
     xpMult: 1,
     uniqueMask: 0,
+    fireDmg: 0,
+    coldSlow: 0,
+    lightning: 0,
   };
 }
 
@@ -99,6 +102,9 @@ function zeroSums(): Record<StatKey, number> {
     magnetPct: 0,
     xpPct: 0,
     mineralFindPct: 0,
+    fireDmg: 0,
+    coldSlow: 0,
+    lightning: 0,
   };
 }
 
@@ -140,6 +146,10 @@ export function computeLoadoutStats(equipped: readonly Item[]): ComputedLoadout 
   lo.magnetMult *= 1 + sums.magnetPct / 100;
   lo.xpMult *= 1 + sums.xpPct / 100;
   lo.uniqueMask = uniqueMask;
+  // M3 원소 어픽스(상태이상): 정수 강도 합산을 그대로 실어 sim이 명중 시 소비한다.
+  lo.fireDmg += sums.fireDmg;
+  lo.coldSlow += sums.coldSlow;
+  lo.lightning += sums.lightning;
 
   const worldMods: WorldMods = {
     mineralFindMult: 1 + sums.mineralFindPct / 100,

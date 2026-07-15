@@ -22,7 +22,7 @@ import {
 } from '../src/items/loadout.js';
 import { rollItem } from '../src/items/roll.js';
 import { runReplay } from '../src/sim/replay.js';
-import { M2_UNIQUES } from '../data/uniques.js';
+import { M2_UNIQUES, M3_UNIQUES } from '../data/uniques.js';
 import {
   UQ_OVERHEAT_DRUM,
   UQ_SPLIT_CORE,
@@ -165,7 +165,8 @@ describe('유니크 레지스트리 + 로드아웃 배선 (AC7)', () => {
   });
 
   it('rollItem이 main 슬롯 유니크에 등록된 uniqueId를 부여한다', () => {
-    const ids = new Set(M2_UNIQUES.map((u) => u.id));
+    // M3에서 등록된 전체 15점(M2 5 + M3 10) 기준으로 검증한다.
+    const ids = new Set([...M2_UNIQUES, ...M3_UNIQUES].map((u) => u.id));
     let found = false;
     for (let s = 1; s < 500 && !found; s++) {
       const item = rollItem(s, 'unique', { planet: 1, tier: 1 });

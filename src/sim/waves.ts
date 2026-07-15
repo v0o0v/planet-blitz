@@ -14,7 +14,7 @@ import type { Entity } from './entities.js';
 import { blankEntity, addEntity } from './entities.js';
 import type { EnemyDef } from './patterns/types.js';
 import { ENEMY_BY_TYPE } from '../../data/enemies.js';
-import { SEGMENTS } from '../../data/waves.js';
+import { SEGMENTS, tierParams } from '../../data/waves.js';
 import type { WaveCard, Formation } from '../../data/waves.js';
 import { planetContent } from '../../data/planets/index.js';
 import { cos, sin, PI, TWO_PI } from './math.js';
@@ -62,8 +62,10 @@ export function updateWaves(state: WorldState, player: Entity): void {
   }
   state.bulletCap = seg.bulletCap;
 
-  // 군체 대발생 변칙: raise the onscreen enemy cap (weaker enemies, spawnEnemy).
-  const maxEnemies = Math.round(seg.maxEnemies * maxEnemiesMult(state.anomaly));
+  // 군체 대발생 변칙 × 섬멸 티어 밀도↑: raise the onscreen enemy cap. 티어 밀도는
+  // 데이터 주도(TIER_PARAMS.densityMult) — 정찰/교전은 1(거동 불변), 섬멸은 ×1.5.
+  const tp = tierParams(state.config.tier);
+  const maxEnemies = Math.round(seg.maxEnemies * maxEnemiesMult(state.anomaly) * tp.densityMult);
 
   if (seg.boss) {
     w.boss = true; // Phase 3 hook: boss encounter begins here.
@@ -103,7 +105,7 @@ function spawnCard(state: WorldState, card: WaveCard, maxEnemies: number, player
   const positions = formationPositions(state, card.formation, defs.length, player);
   const room = maxEnemies - countEnemies(state);
   const spawnN = Math.min(defs.length, room);
-  let firstSpawned: Entity | undefined;
+  const spawned: Entity[] = [];
   for (let i = 0; i < spawnN; i++) {
     const def = defs[i];
     const pos = positions[i];
@@ -111,15 +113,16 @@ function spawnCard(state: WorldState, card: WaveCard, maxEnemies: number, player
     // 활성 벽에 끼인 채 스폰되지 않도록 결정론적으로 벽 밖으로 밀어낸다(C1).
     const adj = avoidWalls(state.activeWalls, pos.x, pos.y, def.radius);
     const e = spawnEnemy(state, def, adj.x, adj.y);
-    if (firstSpawned === undefined) firstSpawned = e;
+    spawned.push(e);
   }
-  // Engagement tier (교전): promote one enemy per card into an elite carrying a
-  // single affix, drawn from the dedicated elite stream (OQ-M2-4). Applied after
-  // spawnEnemy so anomaly HP scaling is already baked in.
-  const tier = state.config.tier ?? 0;
-  if (tier >= 1 && firstSpawned !== undefined) {
+  // 티어별 정예 승격(교전=1 / 섬멸=2, TIER_PARAMS.eliteCount). 카드에서 먼저 스폰된
+  // eliteCount마리를 전용 스트림(OQ-M2-4)에서 뽑은 어픽스로 엘리트화한다. spawnEnemy
+  // 뒤라 변칙/티어 HP 배율이 이미 반영된 상태에서 승격된다. 정찰(0)은 승격 없음(불변).
+  const eliteCount = tierParams(state.config.tier).eliteCount;
+  const promote = eliteCount < spawned.length ? eliteCount : spawned.length;
+  for (let i = 0; i < promote; i++) {
     const affix = state.eliteRng.int(0, ELITE_AFFIX_COUNT - 1);
-    makeElite(firstSpawned, affix);
+    makeElite(spawned[i] as Entity, affix);
   }
 }
 
@@ -172,8 +175,8 @@ function spawnEnemy(state: WorldState, def: EnemyDef, x: number, y: number): Ent
   e.x = x;
   e.y = y;
   e.radius = def.radius;
-  // 군체 대발생 변칙: weaker enemies to offset the doubled cap (plan B5).
-  const hp = Math.round(def.hp * enemyHpMult(state.anomaly));
+  // 군체 대발생 변칙 × 섬멸 티어 HP 배율(완만). 정찰/교전은 ×1(거동 불변), 섬멸 ×4.5.
+  const hp = Math.round(def.hp * enemyHpMult(state.anomaly) * tierParams(state.config.tier).hpMult);
   e.hp = hp;
   e.maxHp = hp;
   e.damage = def.contactDamage;
@@ -198,7 +201,7 @@ export function summonEnemy(state: WorldState, def: EnemyDef, x: number, y: numb
   e.x = x;
   e.y = y;
   e.radius = def.radius;
-  const hp = Math.round(def.hp * enemyHpMult(state.anomaly));
+  const hp = Math.round(def.hp * enemyHpMult(state.anomaly) * tierParams(state.config.tier).hpMult);
   e.hp = hp;
   e.maxHp = hp;
   e.damage = def.contactDamage;

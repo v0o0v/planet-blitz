@@ -1,20 +1,21 @@
 /**
- * Affix pool — M2 start set (plan A2, GDD §5).
+ * Affix pool — 24종 완성 (plan B4, GDD §5, OQ-M3-5 확정).
  *
- * 21 affixes: 9 prefixes (offence) + 12 suffixes (utility / survival). The three
- * elemental prefixes (화염·냉기·전격) are deliberately excluded — they ship in M3
- * with the status-effect system (OQ-M2-6), completing the 24-affix pool.
+ * 12 prefixes (offence, 원소 3종 포함) + 12 suffixes (utility / survival) = 24. M2는
+ * 원소 3종을 뺀 21종으로 시작했고, M3에서 원소 프리픽스(화염·냉기·전격)를 상태이상
+ * 시스템(src/sim/status.ts)과 함께 투입해 24종을 완성한다.
  *
  * Data only: each affix names a `StatKey` the loadout pipeline (src/items/
  * loadout.ts) sums into a derived modifier, plus an inclusive integer roll range
  * [min, max]. Percent stats store the integer percent (10 = +10%); flat stats
- * store the absolute add. Balance numbers are M2 first-pass tuning (spec §5),
- * expected to move during the fun-gate loop.
+ * store the absolute add. 원소 프리픽스는 명중 시 상태이상을 거는 강도를 정수로 담는다
+ * (fireDmg = 틱당 피해, coldSlow = 감속 강도, lightning = 연쇄 피해). Balance numbers
+ * are first-pass tuning (spec §5), expected to move during the fun-gate loop.
  */
 
 import type { AffixDef } from '../src/items/types.js';
 
-/** 9 offence prefixes. */
+/** 12 offence prefixes (원소 3종 포함). */
 export const PREFIXES: readonly AffixDef[] = [
   { id: 'sharp', name: '예리한', kind: 'prefix', stat: 'damagePct', min: 5, max: 10 },
   { id: 'brutal', name: '잔혹한', kind: 'prefix', stat: 'damagePct', min: 11, max: 20 },
@@ -25,6 +26,10 @@ export const PREFIXES: readonly AffixDef[] = [
   { id: 'overclocked', name: '과부하된', kind: 'prefix', stat: 'fireRatePct', min: 13, max: 22 },
   { id: 'velocity', name: '고속의', kind: 'prefix', stat: 'bulletSpeedPct', min: 8, max: 18 },
   { id: 'ranging', name: '장거리의', kind: 'prefix', stat: 'rangeFlat', min: 120, max: 360 },
+  // 원소 3종(M3, 상태이상): 화염=지속피해, 냉기=감속, 전격=연쇄.
+  { id: 'flaming', name: '작열의', kind: 'prefix', stat: 'fireDmg', min: 2, max: 5 },
+  { id: 'freezing', name: '빙결의', kind: 'prefix', stat: 'coldSlow', min: 1, max: 1 },
+  { id: 'shocking', name: '방전의', kind: 'prefix', stat: 'lightning', min: 4, max: 10 },
 ];
 
 /** 12 utility / survival suffixes. */
@@ -43,7 +48,7 @@ export const SUFFIXES: readonly AffixDef[] = [
   { id: 'of-fortune', name: '행운의', kind: 'suffix', stat: 'mineralFindPct', min: 26, max: 50 },
 ];
 
-/** The full 21-affix M2 pool (prefixes then suffixes). */
+/** The full 24-affix pool (prefixes then suffixes). */
 export const AFFIXES: readonly AffixDef[] = [...PREFIXES, ...SUFFIXES];
 
 /** Lookup an affix def by id (undefined if unknown). */

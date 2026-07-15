@@ -18,7 +18,7 @@
  */
 
 import { SeededRng } from './rng.js';
-import { cos, sin, atan2, length } from './math.js';
+import { cos, sin, atan2, length, TWO_PI } from './math.js';
 import { DT, VIEW_WIDTH, VIEW_HEIGHT, OFFSCREEN_X } from './constants.js';
 import type { Entity } from './entities.js';
 import {
@@ -34,7 +34,16 @@ import {
 } from './entities.js';
 import type { AnomalyState } from './anomaly.js';
 import { rollAnomaly, enemyBulletSpeedMult } from './anomaly.js';
-import { isElite, eliteAffix, eliteSpeedMult, spawnEliteDeathFx } from './elite.js';
+import {
+  isElite,
+  eliteAffix,
+  eliteSpeedMult,
+  eliteDamageTakenMult,
+  applyEliteRegen,
+  spawnEliteDeathFx,
+  ELITE_SPLIT,
+  ELITE_VOLATILE,
+} from './elite.js';
 import { rollEliteDrop, rollBossDrop } from './drops.js';
 import {
   hasUnique,
@@ -57,6 +66,27 @@ import {
   DRONE_MARK,
   PHASE_ARMOR_BONUS_IFRAMES,
   PHASE_ARMOR_DASH_CD_MULT,
+  UQ_SINGULARITY,
+  UQ_REACTIVE_ARMOR,
+  UQ_PHASE_MEMBRANE,
+  UQ_AFTERIMAGE,
+  UQ_GREED_HEART,
+  UQ_RELIC_AMP,
+  SINGULARITY_RADIUS,
+  SINGULARITY_PULL_SPEED,
+  REACTIVE_PULSE_COUNT,
+  REACTIVE_PULSE_SPEED,
+  REACTIVE_PULSE_DAMAGE,
+  REACTIVE_PULSE_RADIUS,
+  REACTIVE_PULSE_LIFE,
+  PHASE_MEMBRANE_HP_FRAC,
+  PHASE_MEMBRANE_COOLDOWN,
+  PHASE_MEMBRANE_HEAL_FRAC,
+  GREED_COMBO_BONUS_TICKS,
+  GREED_MAGNET_STEP,
+  GREED_MAGNET_CAP,
+  RELIC_XP_MULT,
+  AFTERIMAGE_RADIUS,
 } from './uniques.js';
 import { SpatialHash, circlesOverlap } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
@@ -73,6 +103,18 @@ import {
   chunkPlacements,
 } from './chunks.js';
 import { circleOverlapsWall, slideCircleWalls, segmentBlocked } from './los.js';
+import { HAZARD_SLOW } from './patterns/types.js';
+import {
+  applyBurn,
+  applySlow,
+  tickEnemyStatus,
+  applyChain,
+  enemyStatusSlowMult,
+  PLAYER_SLOW_MULT,
+  PLAYER_SLOW_DURATION,
+  FIRE_DURATION,
+  COLD_DURATION,
+} from './status.js';
 import {
   triggerMagnetEmitter,
   triggerBombDevice,
@@ -252,6 +294,13 @@ export interface LoadoutConfig {
   xpMult: number;
   /** Bitmask of active unique effects (Lane 3 hooks). */
   uniqueMask: number;
+  // --- M3 원소 어픽스(상태이상) 파생 (plan B4, AC6; APPEND-ONLY) ---
+  /** 화염 어픽스 총합 → 명중 시 적에게 거는 지속피해 틱당 피해(정수, 0 = 없음). */
+  fireDmg: number;
+  /** 냉기 어픽스 총합 → 명중 시 적 감속 부여 강도(> 0 = 감속 활성). */
+  coldSlow: number;
+  /** 전격 어픽스 총합 → 명중 시 인접 적 연쇄 피해(정수, 0 = 없음). */
+  lightning: number;
 }
 
 export interface WorldConfig {
@@ -365,6 +414,11 @@ export interface WorldState {
    * radius while > 0). Folded into the hash (deterministic gimmick state).
    */
   magnetBuffTicks: number;
+  /**
+   * 플레이어 감속 잔여 틱(니플헤임 유령 기함 '감속 지대', plan B1). > 0인 동안 이동
+   * 속도에 PLAYER_SLOW_MULT를 곱한다. 결정론 스칼라 — hashWorld에 append-only로 접힌다.
+   */
+  playerSlowTicks: number;
   /** Supply-raid reward currency (M1 placeholder). */
   resources: number;
   /** World frozen awaiting a powerup pick (sim tick stall, not a pause). */
@@ -480,6 +534,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     maxCombo: 0,
     magnetRadius,
     magnetBuffTicks: 0,
+    playerSlowTicks: 0,
     resources: 0,
     pendingLevelUp: false,
     powerupChoices: [],
@@ -724,12 +779,19 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     mx /= mlen;
     my /= mlen;
   }
-  player.vx = mx * config.playerSpeed;
-  player.vy = my * config.playerSpeed;
+  // 감속 지대(plan B1): 잔여 틱 동안 이동 속도를 배율로 낮춘다(대시 임펄스에는
+  // 미적용 — 아래 dash는 별도 가산). 매 틱 1 감소.
+  const slowMult = state.playerSlowTicks > 0 ? PLAYER_SLOW_MULT : 1;
+  if (state.playerSlowTicks > 0) state.playerSlowTicks--;
+  player.vx = mx * config.playerSpeed * slowMult;
+  player.vy = my * config.playerSpeed * slowMult;
   player.angle = input.aim;
 
   if (player.dashCooldown > 0) player.dashCooldown--;
   if (player.iframes > 0) player.iframes--;
+  // ⑩ 위상 전환막 내부 쿨다운(plan B4): player.targetY에 카운트다운으로 실어 매 틱 감소
+  // (신규 필드 없이 관리; 미장착 시 항상 0이라 거동 불변).
+  if (player.targetY > 0) player.targetY--;
 
   if (input.dash && player.dashCooldown === 0) {
     let dx = mx;
@@ -748,6 +810,15 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     } else {
       player.dashCooldown = config.dashCooldownTicks;
       player.iframes = config.dashIframes;
+    }
+    // ⑪ 잔상 추진기: 대시 순간 주변 적탄 소거(장착 시).
+    if (hasUnique(mask, UQ_AFTERIMAGE)) {
+      for (const t of state.entities) {
+        if (t.kind !== 'enemyBullet' || t.dead) continue;
+        const ex = t.x - player.x;
+        const ey = t.y - player.y;
+        if (ex * ex + ey * ey <= AFTERIMAGE_RADIUS * AFTERIMAGE_RADIUS) t.dead = true;
+      }
     }
   }
 
@@ -771,17 +842,38 @@ function stepEnemies(state: WorldState, player: Entity): void {
   // Snapshot the enemy set so bullets/hazards emitted this tick are not treated
   // as enemies, and count live enemy bullets for the per-segment cap.
   state.enemyBulletCount = countKind(state, 'enemyBullet');
+  // ⑧ 특이점 발생기(plan B4): 장착 시 반경 안 적을 매 틱 플레이어 쪽으로 흡인. 미장착
+  // 이면 no-op.
+  const singularityOn = hasUnique(state.config.loadout?.uniqueMask ?? 0, UQ_SINGULARITY);
   const enemies: Entity[] = [];
   for (const e of state.entities) if (e.kind === 'enemy') enemies.push(e);
   for (const e of enemies) {
+    // 원소 상태이상 진행(화염 지속피해·냉기/전격 타이머). 상태이상 없는 적은 세 재활용
+    // 필드가 모두 0이라 no-op(거동 불변). 화염으로 처치되면 dead 표시 후 스킵.
+    tickEnemyStatus(e);
+    if (e.dead) continue;
+    // 재생하는 엘리트: 매 틱 HP 회복(그 외 no-op).
+    applyEliteRegen(e);
     let def = enemyDefFor(e);
     if (def === undefined) continue;
-    // 가속하는 elite: run the same behaviour with a boosted speed (clone the def,
-    // never mutate the shared data row). No-op (mult 1) for everything else.
-    const sm = eliteSpeedMult(e);
+    // 가속하는 elite(×1.6) × 냉기 감속(<1)을 곱해 이동 속도를 조정한다(공유 데이터
+    // 행은 절대 변형하지 않고 def를 복제). 둘 다 없으면 mult 1(거동 불변).
+    const sm = eliteSpeedMult(e) * enemyStatusSlowMult(e);
     if (sm !== 1) def = { ...def, speed: def.speed * sm };
     updateEnemy(state, e, def, player);
+    if (singularityOn) applySingularityPull(e, player);
   }
+}
+
+/** ⑧ 특이점 발생기: 반경 안 적을 플레이어 쪽으로 결정론적으로 당긴다(RNG 미소비). */
+function applySingularityPull(e: Entity, player: Entity): void {
+  const dx = player.x - e.x;
+  const dy = player.y - e.y;
+  const d = length(dx, dy);
+  if (d <= 1 || d >= SINGULARITY_RADIUS) return;
+  const step = Math.min(SINGULARITY_PULL_SPEED * DT, d);
+  e.x += (dx / d) * step;
+  e.y += (dy / d) * step;
 }
 
 // ---------------------------------------------------------------------------
@@ -1201,6 +1293,14 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   const overheatOn = hasUnique(uMask, UQ_OVERHEAT_DRUM);
   const splitOn = hasUnique(uMask, UQ_SPLIT_CORE);
   const gyroOn = hasUnique(uMask, UQ_PIERCE_GYRO);
+  // M3 원소 어픽스(상태이상, plan B4): 명중 시 적에게 화염(지속피해)·냉기(감속)·전격
+  // (연쇄)을 건다. 미장착(값 0)이면 아래 분기는 no-op. enemy에만 적용(보스 재활용 필드
+  // 충돌 방지).
+  const lo = state.config.loadout;
+  const fireDmg = lo?.fireDmg ?? 0;
+  const coldSlow = lo?.coldSlow ?? 0;
+  const lightning = lo?.lightning ?? 0;
+  const elementalOn = fireDmg > 0 || coldSlow > 0 || lightning > 0;
   // 분열 파편은 그리드 순회 중 엔티티 배열을 건드리지 않도록 좌표만 모아 루프 뒤 스폰.
   const splitSpawns: { x: number; y: number; angle: number }[] = [];
   for (const b of state.entities) {
@@ -1214,8 +1314,15 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       const mult = t.kind === 'boss' && t.iframes > 0 ? 2 : 1;
       // ③ 관통 자이로: bullet.phase = 지금까지 관통한 횟수 → 관통당 피해 증폭.
       const gyroAmp = gyroOn ? 1 + b.phase * GYRO_DAMAGE_AMP : 1;
-      t.hp -= b.damage * mult * gyroAmp;
+      // 보호막의 엘리트: 받는 피해 절반(그 외 1).
+      t.hp -= b.damage * mult * gyroAmp * eliteDamageTakenMult(t);
       if (t.hp <= 0) t.dead = true;
+      // M3 원소 상태이상(plan B4): 적 명중 시 화염/냉기/전격 부여(장착 시에만).
+      if (elementalOn && t.kind === 'enemy') {
+        if (fireDmg > 0) applyBurn(t, fireDmg, FIRE_DURATION);
+        if (coldSlow > 0) applySlow(t, COLD_DURATION);
+        if (lightning > 0) applyChain(state, t, lightning);
+      }
       // ① 과열 드럼: 적/보스 명중마다 스택 +1(상한). 피격 시 아래에서 리셋.
       if (overheatOn && (t.kind === 'enemy' || t.kind === 'boss')) {
         if (player.phase < OVERHEAT_MAX_STACK) player.phase++;
@@ -1288,6 +1395,11 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       if (t.phase === 0) activateTurret(t); // dormant → active turret in place
       return;
     }
+    // 감속 지대(plan B1): 활성 HAZARD_SLOW 장판에 닿으면 감속 부여(무적 여부와 무관 —
+    // 이동 디버프이지 피해가 아니다). 소량 피해는 아래 일반 hazard 분기가 처리한다.
+    if (t.kind === 'hazard' && t.enemyType === HAZARD_SLOW && hazardActive(t)) {
+      state.playerSlowTicks = PLAYER_SLOW_DURATION;
+    }
     if (invulnerable) return;
     if (t.kind === 'enemyBullet') {
       if (t.damage > dmg) dmg = t.damage;
@@ -1305,6 +1417,37 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     player.iframes = state.config.hitIframes;
     // ① 과열 드럼: 피격 시 연속 명중 스택 리셋(장착 시에만 phase가 비0).
     if (overheatOn) player.phase = 0;
+    // ⑨ 반응 장갑(plan B4): 피격 시 방사형 반격 펄스(아군탄) 방출.
+    if (hasUnique(uMask, UQ_REACTIVE_ARMOR)) {
+      for (let i = 0; i < REACTIVE_PULSE_COUNT; i++) {
+        const ang = (i * TWO_PI) / REACTIVE_PULSE_COUNT;
+        spawnBullet(
+          state,
+          player.x,
+          player.y,
+          ang,
+          REACTIVE_PULSE_SPEED,
+          REACTIVE_PULSE_DAMAGE,
+          0,
+          REACTIVE_PULSE_RADIUS,
+          REACTIVE_PULSE_LIFE,
+          cos(ang),
+          sin(ang),
+        );
+      }
+    }
+    // ⑩ 위상 전환막(plan B4): 저체력 진입 + 내부 쿨다운 준비 시 광역 폭발(적탄 소거) +
+    // 최대 체력 절반 회복. targetY에 쿨다운을 실어 재발동을 막는다.
+    if (
+      hasUnique(uMask, UQ_PHASE_MEMBRANE) &&
+      player.targetY === 0 &&
+      player.hp > 0 &&
+      player.hp <= player.maxHp * PHASE_MEMBRANE_HP_FRAC
+    ) {
+      for (const t of state.entities) if (t.kind === 'enemyBullet') t.dead = true;
+      player.hp = Math.min(player.maxHp, player.hp + Math.round(player.maxHp * PHASE_MEMBRANE_HEAL_FRAC));
+      player.targetY = PHASE_MEMBRANE_COOLDOWN;
+    }
   }
 }
 
@@ -1315,9 +1458,17 @@ function collectGem(state: WorldState, gem: Entity): void {
   state.combo++;
   state.comboTimer = COMBO_WINDOW_TICKS;
   if (state.combo > state.maxCombo) state.maxCombo = state.combo;
+  const mask = state.config.loadout?.uniqueMask ?? 0;
+  // ⑫ 탐욕의 심장(plan B4): 젬 획득마다 콤보 지속을 연장하고 자석 반경을 상한까지 스택.
+  if (hasUnique(mask, UQ_GREED_HEART)) {
+    state.comboTimer += GREED_COMBO_BONUS_TICKS;
+    state.magnetRadius = Math.min(GREED_MAGNET_CAP, state.magnetRadius + GREED_MAGNET_STEP);
+  }
   const baseXp = gem.damage; // gem carries its XP value in `damage`
   const xpMult = state.config.loadout?.xpMult ?? 1; // affix 경험치+%
-  const gained = Math.floor(baseXp * comboMultiplier(state.combo) * xpMult);
+  let gained = Math.floor(baseXp * comboMultiplier(state.combo) * xpMult);
+  // ⑭ 유물 증폭기(plan B4): 경험치 소폭↑(광물·유니크 드랍률은 정산 메타에서 처리).
+  if (hasUnique(mask, UQ_RELIC_AMP)) gained = Math.floor(gained * RELIC_XP_MULT);
   state.xp += gained;
   state.xpTotal += gained;
 }
@@ -1367,7 +1518,9 @@ function compact(state: WorldState): void {
       if (isElite(e)) {
         const roll = rollEliteDrop(state.dropRng, tier, state.anomaly, dropOdds);
         lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
-        if (eliteAffix(e) === 0) splitElites.push(e);
+        // 분열하는·폭발성의 엘리트는 사망 시 방사 폭발을 남긴다(spawnEliteDeathFx).
+        const ea = eliteAffix(e);
+        if (ea === ELITE_SPLIT || ea === ELITE_VOLATILE) splitElites.push(e);
       }
     } else if (e.kind === 'supply' && e.hp <= 0) {
       // Shot down (vs. escaped with hp > 0): grant the raid reward.

@@ -27,6 +27,11 @@ export type MovementKind =
 /** Hazard subtype codes (also used as render/hash tags on hazard entities). */
 export const HAZARD_MORTAR = 0;
 export const HAZARD_LAVA = 1;
+/**
+ * 감속 지대(plan B1, 니플헤임 유령 기함). 활성 상태에서 플레이어가 닿으면 소량 피해 +
+ * 일정 시간 감속(state.playerSlowTicks). 서브타입 코드는 append-only(재번호 금지).
+ */
+export const HAZARD_SLOW = 2;
 
 export type AttackDef =
   /** Charger: no periodic fire; emits fragments on wall impact (see movement). */
