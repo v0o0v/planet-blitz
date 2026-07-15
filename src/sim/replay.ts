@@ -152,6 +152,47 @@ export function hashWorld(state: WorldState): number {
   for (const e of state.entities) {
     h = hashEntity(h, e);
   }
+  // --- M2 farming loop (APPEND-ONLY; never reorder the folds above) ---
+  // Weapon archetype, the new RNG streams, the resolved anomaly, the loadout-
+  // derived config block and the collected loot are all determinism inputs, so
+  // they must be captured. Appended at the very end so M1's field order is
+  // untouched (a format bump vs recorded M1 hashes is accepted, plan §2/§6).
+  h = hashU32(h, state.weapon.weaponType >>> 0);
+  h = hashU32(h, state.dropRng.getState());
+  h = hashU32(h, state.eliteRng.getState());
+  h = hashU32(h, state.anomalyRng.getState());
+  h = hashU32(h, (state.anomaly.kind & 0xffff) >>> 0);
+  h = hashU32(h, state.anomaly.active ? 1 : 0);
+  const cfg2 = state.config;
+  h = hashU32(h, (cfg2.planet ?? 0) >>> 0);
+  h = hashU32(h, (cfg2.tier ?? 0) >>> 0);
+  h = hashU32(h, cfg2.anomalyAccepted ? 1 : 0);
+  const lo = cfg2.loadout;
+  h = hashU32(h, lo ? 1 : 0);
+  if (lo !== undefined) {
+    h = hashU32(h, lo.weaponType >>> 0);
+    h = hashU32(h, lo.subWeaponType >>> 0);
+    h = hashFloat(h, lo.damageMult);
+    h = hashFloat(h, lo.fireRateMult);
+    h = hashU32(h, lo.bulletCountAdd >>> 0);
+    h = hashU32(h, lo.pierceAdd >>> 0);
+    h = hashFloat(h, lo.bulletSpeedMult);
+    h = hashFloat(h, lo.spreadAdd);
+    h = hashFloat(h, lo.rangeAdd);
+    h = hashFloat(h, lo.moveSpeedMult);
+    h = hashFloat(h, lo.maxHpAdd);
+    h = hashFloat(h, lo.dashCdMult);
+    h = hashFloat(h, lo.magnetMult);
+    h = hashFloat(h, lo.xpMult);
+    h = hashU32(h, lo.uniqueMask >>> 0);
+  }
+  h = hashU32(h, state.loot.length >>> 0);
+  for (const r of state.loot) {
+    h = hashFloat(h, r.seed);
+    h = hashU32(h, r.rarity >>> 0);
+    h = hashU32(h, r.planet >>> 0);
+    h = hashU32(h, r.tier >>> 0);
+  }
   return h >>> 0;
 }
 

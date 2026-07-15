@@ -30,7 +30,12 @@ import {
   spawnWall,
   spawnDestructible,
   spawnEventObject,
+  spawnLoot,
 } from './entities.js';
+import type { AnomalyState } from './anomaly.js';
+import { rollAnomaly, enemyBulletSpeedMult } from './anomaly.js';
+import { isElite, eliteAffix, eliteSpeedMult, spawnEliteDeathFx } from './elite.js';
+import { rollEliteDrop, rollBossDrop } from './drops.js';
 import { SpatialHash, circlesOverlap } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
 import { updateBoss } from './boss.js';
@@ -151,6 +156,12 @@ export interface WeaponStats {
   range: number;
   /** Bullet lifetime in ticks. */
   bulletLife: number;
+  /**
+   * Primary weapon firing archetype (M2 plan B2): 0 = 발칸 (fanned volley), 1 =
+   * 스프레드 (wide multi-pellet), 2 = 레일건 (single fast piercing shot). Seeded
+   * from the equipped main weapon's loadout; drives the autoAttack branch.
+   */
+  weaponType: number;
 }
 
 export const DEFAULT_WEAPON: WeaponStats = {
@@ -165,6 +176,7 @@ export const DEFAULT_WEAPON: WeaponStats = {
   bulletRadius: 5,
   range: 0,
   bulletLife: 55,
+  weaponType: 0,
 };
 
 /**
@@ -188,6 +200,38 @@ export function emptyInput(): InputFrame {
   return { moveX: 0, moveY: 0, aim: 0, dash: false, special: SPECIAL_NONE };
 }
 
+/**
+ * Loadout-derived stat block (M2 plan A4/B1). Produced OUTSIDE the sim by
+ * `computeLoadoutStats` (src/items/loadout.ts) and injected via WorldConfig so
+ * the sim never imports the item layer. Applied once at createWorld; carried in
+ * `Replay.config` and folded into the state hash so the verification server
+ * reproduces the exact run. All fields are plain deterministic numbers.
+ */
+export interface LoadoutConfig {
+  /** Main weapon archetype (mirrors WeaponStats.weaponType). */
+  weaponType: number;
+  /** Sub weapon variant: -1 none, else 0.. (drives the independent subWeapon fire). */
+  subWeaponType: number;
+  damageMult: number;
+  /** Fire-cooldown multiplier (< 1 faster, > 1 slower). */
+  fireRateMult: number;
+  bulletCountAdd: number;
+  pierceAdd: number;
+  bulletSpeedMult: number;
+  /** Extra fan angle (radians) added to the base spread. */
+  spreadAdd: number;
+  rangeAdd: number;
+  moveSpeedMult: number;
+  maxHpAdd: number;
+  /** Dash-cooldown multiplier (< 1 = recharges faster). */
+  dashCdMult: number;
+  magnetMult: number;
+  /** XP-gain multiplier (affix 경험치+%). */
+  xpMult: number;
+  /** Bitmask of active unique effects (Lane 3 hooks). */
+  uniqueMask: number;
+}
+
 export interface WorldConfig {
   arenaWidth: number;
   arenaHeight: number;
@@ -198,6 +242,15 @@ export interface WorldConfig {
   /** Invulnerability granted after taking damage (ticks). */
   hitIframes: number;
   playerHp: number;
+  // --- M2 farming loop (all optional; absent = M1 behaviour) ---
+  /** Source planet index (0 = 카르곤, 1 = 베르단). Stamped onto drops. */
+  planet?: number;
+  /** Difficulty tier (0 = 정찰, 1 = 교전). Gates elite affixes + drop odds. */
+  tier?: number;
+  /** Player accepted the offered anomaly (OQ-M2-3 pre-run flag). */
+  anomalyAccepted?: boolean;
+  /** Loadout-derived stats; absent = neutral (no equipment). */
+  loadout?: LoadoutConfig;
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {
@@ -212,6 +265,18 @@ export const DEFAULT_CONFIG: WorldConfig = {
   hitIframes: 40,
   playerHp: 100,
 };
+
+/** A single collected loot drop (drop seed + rarity code + provenance). */
+export interface LootRecord {
+  /** Drop seed the item is rolled from (rollItem). */
+  seed: number;
+  /** Rarity code (0 normal .. 3 unique). */
+  rarity: number;
+  /** Source planet index (from config). */
+  planet: number;
+  /** Source tier index (from config). */
+  tier: number;
+}
 
 export interface WorldState {
   tick: number;
@@ -230,6 +295,23 @@ export interface WorldState {
    * into the hash for symmetry with the other streams.
    */
   worldRng: SeededRng;
+  /** Drop-determination stream (rng.fork('drops')) — elite/boss loot rarity+seed. */
+  dropRng: SeededRng;
+  /** Elite-affix stream (rng.fork('elite'), OQ-M2-4) — independent of wave draws. */
+  eliteRng: SeededRng;
+  /**
+   * Anomaly stream (rng.fork('anomaly')). Advanced ONCE at creation to roll the
+   * offer; its resting state is folded into the hash for symmetry.
+   */
+  anomalyRng: SeededRng;
+  /** Resolved run anomaly (offer + acceptance). */
+  anomaly: AnomalyState;
+  /**
+   * Loot picked up this run (drop seed + rarity + source). Consumed at settlement
+   * (Lane 2) where `rollItem` confirms each item. Folded into the hash so replay
+   * verification sees the same collected sequence.
+   */
+  loot: LootRecord[];
   weapon: WeaponStats;
   wave: WaveRuntime;
   entities: Entity[];
@@ -309,6 +391,27 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   const entities: Entity[] = [];
   let nextEntityId = 1;
 
+  // Loadout-derived stats (plan B1): apply once here so the run starts strengthened
+  // and the effect is captured in the initial weapon/config/player/magnet — all of
+  // which are already hashed. The loadout block itself is folded into the hash too.
+  const weapon: WeaponStats = { ...DEFAULT_WEAPON };
+  let magnetRadius = BASE_MAGNET_RADIUS;
+  const lo = cfg.loadout;
+  if (lo !== undefined) {
+    weapon.weaponType = lo.weaponType;
+    weapon.damage = Math.round(weapon.damage * lo.damageMult * 100) / 100;
+    weapon.fireCooldown = Math.max(2, Math.round(weapon.fireCooldown * lo.fireRateMult));
+    weapon.bulletCount += lo.bulletCountAdd;
+    weapon.pierce += lo.pierceAdd;
+    weapon.bulletSpeed = Math.round(weapon.bulletSpeed * lo.bulletSpeedMult * 100) / 100;
+    weapon.spread += lo.spreadAdd;
+    weapon.range += lo.rangeAdd;
+    cfg.playerSpeed = Math.round(cfg.playerSpeed * lo.moveSpeedMult);
+    cfg.dashCooldownTicks = Math.max(12, Math.round(cfg.dashCooldownTicks * lo.dashCdMult));
+    cfg.playerHp += lo.maxHpAdd;
+    magnetRadius = Math.round(magnetRadius * lo.magnetMult);
+  }
+
   const player = blankEntity('player');
   player.id = nextEntityId++;
   // Infinite map: the player begins at the natural world origin (0,0). The
@@ -321,6 +424,10 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   player.maxHp = cfg.playerHp;
   entities.push(player);
 
+  // Anomaly: roll the seed-only offer, gate it on the config acceptance flag.
+  const anomalyRng = rng.fork('anomaly');
+  const anomaly = rollAnomaly(anomalyRng, cfg.anomalyAccepted ?? false);
+
   return {
     tick: 0,
     config: cfg,
@@ -329,7 +436,12 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     powerupRng: rng.fork('powerups'),
     supplyRng: rng.fork('supply'),
     worldRng: rng.fork('world'),
-    weapon: { ...DEFAULT_WEAPON },
+    dropRng: rng.fork('drops'),
+    eliteRng: rng.fork('elite'),
+    anomalyRng,
+    anomaly,
+    loot: [],
+    weapon,
     wave: createWaveRuntime(),
     entities,
     nextEntityId,
@@ -344,7 +456,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     combo: 0,
     comboTimer: 0,
     maxCombo: 0,
-    magnetRadius: BASE_MAGNET_RADIUS,
+    magnetRadius,
     magnetBuffTicks: 0,
     resources: 0,
     pendingLevelUp: false,
@@ -406,6 +518,7 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   stepEnemies(state, player);
   stepBoss(state, player);
   autoAttack(state, player);
+  subWeapon(state, player);
   stepTurrets(state, player);
   stepProjectiles(state, player);
   stepGems(state, player);
@@ -628,8 +741,13 @@ function stepEnemies(state: WorldState, player: Entity): void {
   const enemies: Entity[] = [];
   for (const e of state.entities) if (e.kind === 'enemy') enemies.push(e);
   for (const e of enemies) {
-    const def = enemyDefFor(e);
-    if (def !== undefined) updateEnemy(state, e, def, player);
+    let def = enemyDefFor(e);
+    if (def === undefined) continue;
+    // 가속하는 elite: run the same behaviour with a boosted speed (clone the def,
+    // never mutate the shared data row). No-op (mult 1) for everything else.
+    const sm = eliteSpeedMult(e);
+    if (sm !== 1) def = { ...def, speed: def.speed * sm };
+    updateEnemy(state, e, def, player);
   }
 }
 
@@ -660,6 +778,9 @@ function stepBoss(state: WorldState, player: Entity): void {
 // Player auto-attack (vulcan): target nearest enemy/boss, fire a fanned volley.
 // ---------------------------------------------------------------------------
 
+/** Railgun weapon type (single fast piercing shot). Shared code with loadout. */
+const WEAPON_TYPE_RAILGUN = 2;
+
 function autoAttack(state: WorldState, player: Entity): void {
   const w = state.weapon;
   if (player.cooldown > 0) player.cooldown--;
@@ -669,6 +790,30 @@ function autoAttack(state: WorldState, player: Entity): void {
   if (target === undefined) return;
 
   const baseAngle = atan2(target.y - player.y, target.x - player.x);
+  // M2 plan B2 — three firing archetypes off `weaponType`:
+  //   2 = 레일건: one shot straight at the target, its (loadout-boosted) pierce
+  //       and bullet speed doing the work — ignores the fan entirely.
+  //   0/1 = 발칸 / 스프레드: fanned volley of `bulletCount` across `spread`. The
+  //       two differ only by their loadout baseline (spread = more pellets, wider
+  //       arc), so one code path serves both.
+  if (w.weaponType === WEAPON_TYPE_RAILGUN) {
+    spawnBullet(
+      state,
+      player.x,
+      player.y,
+      baseAngle,
+      w.bulletSpeed,
+      w.damage,
+      w.pierce,
+      w.bulletRadius,
+      w.bulletLife,
+      cos(baseAngle),
+      sin(baseAngle),
+    );
+    player.cooldown = w.fireCooldown;
+    return;
+  }
+
   const n = w.bulletCount;
   const start = n > 1 ? baseAngle - w.spread / 2 : baseAngle;
   const stepA = n > 1 ? w.spread / (n - 1) : 0;
@@ -689,6 +834,54 @@ function autoAttack(state: WorldState, player: Entity): void {
     );
   }
   player.cooldown = w.fireCooldown;
+}
+
+// --- Sub-weapon (M2 plan B2, OQ-M2-2 default: independent fire slot) ---------
+/** Ticks between sub-weapon shots. */
+const SUB_WEAPON_COOLDOWN = 24;
+/** Sub-weapon targeting range. */
+const SUB_WEAPON_RANGE = 900;
+const SUB_BULLET_SPEED = 1500;
+const SUB_BULLET_DAMAGE = 6;
+const SUB_BULLET_RADIUS = 5;
+const SUB_BULLET_LIFE = 60;
+/** Side-splay for the twin sub variant (radians). */
+const SUB_TWIN_SPLAY = 0.16;
+
+/**
+ * Independent sub-weapon fire (plan B2 / OQ-M2-2). Fires on its own cadence,
+ * tracked on the player's otherwise-unused `timer` field (already hashed), so it
+ * never competes with the primary weapon's cooldown. `subWeaponType`: 0 = single
+ * rapid bolt, 1 = twin side bolts. -1 (no sub equipped) is a no-op.
+ */
+function subWeapon(state: WorldState, player: Entity): void {
+  const lo = state.config.loadout;
+  const subType = lo?.subWeaponType ?? -1;
+  if (subType < 0) return;
+  if (player.timer > 0) {
+    player.timer--;
+    return;
+  }
+  const target = nearestTarget(state, player, SUB_WEAPON_RANGE);
+  if (target === undefined) return;
+  const baseAngle = atan2(target.y - player.y, target.x - player.x);
+  const angles = subType === 1 ? [baseAngle - SUB_TWIN_SPLAY, baseAngle + SUB_TWIN_SPLAY] : [baseAngle];
+  for (const ang of angles) {
+    spawnBullet(
+      state,
+      player.x,
+      player.y,
+      ang,
+      SUB_BULLET_SPEED,
+      SUB_BULLET_DAMAGE,
+      0,
+      SUB_BULLET_RADIUS,
+      SUB_BULLET_LIFE,
+      cos(ang),
+      sin(ang),
+    );
+  }
+  player.timer = SUB_WEAPON_COOLDOWN;
 }
 
 /** Max candidates LOS-tested per aim (nearest few); bounds the wall raycast cost. */
@@ -803,10 +996,14 @@ function stepProjectiles(state: WorldState, player: Entity): void {
   // forever off-screen (see tests/projectiles.test.ts).
   const cullR2 = PROJECTILE_CULL_RADIUS * PROJECTILE_CULL_RADIUS;
   const walls = state.activeWalls;
+  // 중력 폭풍 변칙: enemy bullets travel slower (single application point so no
+  // emitter needs touching). Friendly bullets are unaffected (mult = 1).
+  const enemyBulletMult = enemyBulletSpeedMult(state.anomaly);
   for (const e of state.entities) {
     if (e.kind !== 'bullet' && e.kind !== 'enemyBullet') continue;
-    e.x += e.vx * DT;
-    e.y += e.vy * DT;
+    const m = e.kind === 'enemyBullet' ? enemyBulletMult : 1;
+    e.x += e.vx * DT * m;
+    e.y += e.vy * DT * m;
     if (e.life > 0) e.life--;
     const dx = e.x - player.x;
     const dy = e.y - player.y;
@@ -926,7 +1123,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       e.kind === 'destructible' ||
       e.kind === 'magnetEmitter' ||
       e.kind === 'bombDevice' ||
-      e.kind === 'turretPickup'
+      e.kind === 'turretPickup' ||
+      e.kind === 'loot'
     ) {
       grid.insert(e);
     }
@@ -957,6 +1155,12 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     if (!circlesOverlap(player.x, player.y, player.radius, t.x, t.y, t.radius)) return;
     if (t.kind === 'gem') {
       collectGem(state, t);
+      return;
+    }
+    // Floor loot: auto-collect on contact (OQ-M2-1 default). Record the drop seed
+    // + rarity + provenance for settlement (Lane 2 confirms the item via rollItem).
+    if (t.kind === 'loot') {
+      collectLoot(state, t);
       return;
     }
     // Proximity event objects fire on contact (deterministic, no input). Consumed
@@ -993,7 +1197,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   }
 }
 
-/** Collect a gem: bump the combo, award XP scaled by the combo multiplier. */
+/** Collect a gem: bump the combo, award XP scaled by combo × loadout XP mult. */
 function collectGem(state: WorldState, gem: Entity): void {
   gem.dead = true;
   state.gems++;
@@ -1001,9 +1205,21 @@ function collectGem(state: WorldState, gem: Entity): void {
   state.comboTimer = COMBO_WINDOW_TICKS;
   if (state.combo > state.maxCombo) state.maxCombo = state.combo;
   const baseXp = gem.damage; // gem carries its XP value in `damage`
-  const gained = Math.floor(baseXp * comboMultiplier(state.combo));
+  const xpMult = state.config.loadout?.xpMult ?? 1; // affix 경험치+%
+  const gained = Math.floor(baseXp * comboMultiplier(state.combo) * xpMult);
   state.xp += gained;
   state.xpTotal += gained;
+}
+
+/** Collect a loot drop: record its seed + rarity + provenance for settlement. */
+function collectLoot(state: WorldState, loot: Entity): void {
+  loot.dead = true;
+  state.loot.push({
+    seed: loot.damage >>> 0, // drop seed stored in `damage`
+    rarity: loot.enemyType, // rarity code stored in `enemyType`
+    planet: state.config.planet ?? 0,
+    tier: state.config.tier ?? 0,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1014,6 +1230,11 @@ function compact(state: WorldState): void {
   const survivors: Entity[] = [];
   const drops: { x: number; y: number; xp: number }[] = [];
   const supplyDrops: { x: number; y: number }[] = [];
+  // Loot drops (elite/boss) + split-elite death fragments, spawned AFTER the
+  // survivor array is rebuilt so we never mutate `state.entities` mid-iteration.
+  const lootDrops: { x: number; y: number; seed: number; rarity: number }[] = [];
+  const splitElites: Entity[] = [];
+  const tier = state.config.tier ?? 0;
   for (const e of state.entities) {
     if (!e.dead) {
       survivors.push(e);
@@ -1023,6 +1244,13 @@ function compact(state: WorldState): void {
       state.kills++;
       const def = enemyDefFor(e);
       drops.push({ x: e.x, y: e.y, xp: def?.xpValue ?? 1 });
+      // Elites are the only rank-and-file loot source (GDD §3). They always drop
+      // one item; a 분열하는 elite additionally bursts fragments on death (B4).
+      if (isElite(e)) {
+        const roll = rollEliteDrop(state.dropRng, tier, state.anomaly);
+        lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
+        if (eliteAffix(e) === 0) splitElites.push(e);
+      }
     } else if (e.kind === 'supply' && e.hp <= 0) {
       // Shot down (vs. escaped with hp > 0): grant the raid reward.
       state.resources++;
@@ -1032,10 +1260,15 @@ function compact(state: WorldState): void {
       drops.push({ x: e.x, y: e.y, xp: e.damage });
     } else if (e.kind === 'boss') {
       state.victory = true;
+      // Boss guaranteed rare+ drop (GDD §3, plan B3).
+      const roll = rollBossDrop(state.dropRng, tier, state.anomaly);
+      lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
     }
   }
   state.entities = survivors;
   for (const d of drops) spawnGem(state, d.x, d.y, d.xp);
+  for (const d of lootDrops) spawnLoot(state, d.x, d.y, d.seed, d.rarity);
+  for (const e of splitElites) spawnEliteDeathFx(state, e);
   for (const d of supplyDrops) {
     for (let i = 0; i < SUPPLY_REWARD_GEMS; i++) {
       const ang = (i * 6.283185307179586) / SUPPLY_REWARD_GEMS;
