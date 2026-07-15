@@ -188,7 +188,7 @@ export function hashWorld(state: WorldState): number {
   }
   h = hashU32(h, state.loot.length >>> 0);
   for (const r of state.loot) {
-    h = hashFloat(h, r.seed);
+    h = hashU32(h, r.seed >>> 0);
     h = hashU32(h, r.rarity >>> 0);
     h = hashU32(h, r.planet >>> 0);
     h = hashU32(h, r.tier >>> 0);

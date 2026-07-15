@@ -69,6 +69,13 @@ export const GYRO_DAMAGE_AMP = 0.25;
 export const DRONE_INTERVAL = 480;
 /** 플레이어로부터 드론 스폰 오프셋(월드 유닛). */
 export const DRONE_SPAWN_OFFSET = 120;
+/**
+ * 드론(유니크 소환 포탑) 마커: 드론 엔티티의 ownerId에 저장해 청크 기믹(turretPickup)과
+ * 구분한다. 청크 배치 포탑의 ownerId는 항상 0이므로, isGimmick이 이 마커를 가진
+ * turretPickup을 기믹 분류에서 제외 → MAX_ACTIVE_GIMMICKS 카운트·청크 컬링 대상에서 빠지고
+ * TURRET_LIFE_TICKS 수명만 따른다. 큰 상수라 실제 엔티티 id와 충돌하지 않는다(이미 해시됨).
+ */
+export const DRONE_MARK = 0xd4090e;
 
 // --- ⑤ 위상 장갑 ------------------------------------------------------------
 /** 대시 무적 프레임 보너스(기본 dashIframes에 가산). */

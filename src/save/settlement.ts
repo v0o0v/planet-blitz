@@ -139,14 +139,16 @@ export function salvageItems(
 ): SalvageYield {
   let credits = 0;
   let minerals = 0;
-  const remove = new Set(items);
+  // 참조 동일성이 아니라 item.id로 매칭한다: 정산에서 롤한 Item과 인벤토리에 보관된
+  // Item이 서로 다른 객체 인스턴스여도(직렬화·복원 등) 동일 아이템으로 제거되도록.
+  const removeIds = new Set(items.map((it) => it.id));
   for (const it of items) {
     const y = salvageValue(it, mineralFindMult);
     credits += y.credits;
     minerals += y.minerals;
   }
-  profile.inventory = profile.inventory.filter((it) => !remove.has(it));
-  profile.stash = profile.stash.filter((it) => !remove.has(it));
+  profile.inventory = profile.inventory.filter((it) => !removeIds.has(it.id));
+  profile.stash = profile.stash.filter((it) => !removeIds.has(it.id));
   profile.credits += credits;
   profile.minerals += minerals;
   return { credits, minerals };

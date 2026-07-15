@@ -54,6 +54,7 @@ import {
   SPLIT_FRAGMENT_MARK,
   DRONE_INTERVAL,
   DRONE_SPAWN_OFFSET,
+  DRONE_MARK,
   PHASE_ARMOR_BONUS_IFRAMES,
   PHASE_ARMOR_DASH_CD_MULT,
 } from './uniques.js';
@@ -560,14 +561,17 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
 // ---------------------------------------------------------------------------
 
 /** True for any chunk-placed gimmick entity (terrain hazards are gimmicks only
- *  when permanent — life < 0 — so enemy mortar/lava hazards are never culled). */
+ *  when permanent — life < 0 — so enemy mortar/lava hazards are never culled).
+ *  드론 베이가 소환한 유니크 포탑(ownerId === DRONE_MARK)은 청크 기믹이 아니라
+ *  플레이어 소환물이므로 제외한다 — MAX_ACTIVE_GIMMICKS 카운트·청크 컬링을 받지 않고
+ *  TURRET_LIFE_TICKS 수명만 따른다. */
 function isGimmick(e: Entity): boolean {
   return (
     e.kind === 'wall' ||
     e.kind === 'destructible' ||
     e.kind === 'magnetEmitter' ||
     e.kind === 'bombDevice' ||
-    e.kind === 'turretPickup' ||
+    (e.kind === 'turretPickup' && e.ownerId !== DRONE_MARK) ||
     (e.kind === 'hazard' && e.life < 0)
   );
 }
@@ -939,6 +943,7 @@ function droneBay(state: WorldState, player: Entity): void {
     return;
   }
   const drone = spawnEventObject(state, 'turretPickup', player.x + DRONE_SPAWN_OFFSET, player.y, 44);
+  drone.ownerId = DRONE_MARK; // 청크 기믹과 구분(isGimmick 제외 → 컬링·상한 비대상)
   activateTurret(drone); // 즉시 활성 포탑(TURRET_LIFE_TICKS 동안 자동 사격)
   player.ownerId = DRONE_INTERVAL;
 }
@@ -1341,6 +1346,11 @@ function compact(state: WorldState): void {
   const lootDrops: { x: number; y: number; seed: number; rarity: number }[] = [];
   const splitElites: Entity[] = [];
   const tier = state.config.tier ?? 0;
+  const planet = state.config.planet ?? 0;
+  // 이 compact에서 보스가 죽어 승리가 확정됐는지. 승리 tick에는 다음 stepWorld가
+  // 즉시 return(gameOver/victory 가드)하므로 collectLoot(resolveCollisions 내부)가
+  // 다시 실행되지 않는다 → 이 tick에 바닥 스폰된 loot는 영영 수거되지 않아 유실된다.
+  let bossKilled = false;
   // 행성별 드랍 테이블(rarity 기준 확률)을 엘리트/보스 드랍 판정에 넘긴다(E3).
   const dropOdds = planetContent(state.config.planet).dropTable;
   for (const e of state.entities) {
@@ -1368,14 +1378,24 @@ function compact(state: WorldState): void {
       drops.push({ x: e.x, y: e.y, xp: e.damage });
     } else if (e.kind === 'boss') {
       state.victory = true;
-      // Boss guaranteed rare+ drop (GDD §3, plan B3).
+      bossKilled = true;
+      // Boss guaranteed rare+ drop (GDD §3, plan B3). 승리 tick이라 바닥 스폰→접촉 수거가
+      // 불가능하므로 state.loot에 직접 기록해 정산에 포함시킨다(해시 포함, replay.ts).
       const roll = rollBossDrop(state.dropRng, tier, state.anomaly, dropOdds);
-      lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
+      state.loot.push({ seed: roll.seed >>> 0, rarity: roll.rarityCode, planet, tier });
     }
   }
   state.entities = survivors;
   for (const d of drops) spawnGem(state, d.x, d.y, d.xp);
-  for (const d of lootDrops) spawnLoot(state, d.x, d.y, d.seed, d.rarity);
+  if (bossKilled) {
+    // 보스와 같은 tick에 죽은 엘리트 loot도 승리 tick이라 바닥에서 수거될 수 없다.
+    // 보스 드랍과 동일하게 state.loot에 직접 기록해 유실을 막는다(결정론: 배열 순서 고정).
+    for (const d of lootDrops) {
+      state.loot.push({ seed: d.seed >>> 0, rarity: d.rarity, planet, tier });
+    }
+  } else {
+    for (const d of lootDrops) spawnLoot(state, d.x, d.y, d.seed, d.rarity);
+  }
   for (const e of splitElites) spawnEliteDeathFx(state, e);
   for (const d of supplyDrops) {
     for (let i = 0; i < SUPPLY_REWARD_GEMS; i++) {

@@ -197,4 +197,19 @@ describe('salvage — bulk disenchant (AC6)', () => {
     expect(p.credits).toBe(2);
     expect(p.minerals).toBe(3);
   });
+
+  it('matches salvage targets by item.id, not reference identity (리뷰 LOW-3)', () => {
+    // 인벤토리에 보관된 인스턴스와, 정산에서 다시 롤한(직렬화·복원 등) 동일 아이템이
+    // 서로 다른 객체여도 같은 id면 제거돼야 한다.
+    const p: Profile = defaultProfile();
+    const stored = rollItem(2, 'rare', { planet: 0, tier: 0 });
+    p.inventory.push(stored);
+    // 동일 seed/rarity/source로 다시 롤 → 값은 같지만 참조는 다른 새 인스턴스.
+    const reRolled = rollItem(2, 'rare', { planet: 0, tier: 0 });
+    expect(reRolled).not.toBe(stored);
+    expect(reRolled.id).toBe(stored.id);
+    const y = salvageItems(p, [reRolled]);
+    expect(y.minerals).toBe(3);
+    expect(p.inventory).toHaveLength(0); // 참조가 달라도 id로 매칭돼 제거됨
+  });
 });

@@ -86,9 +86,12 @@ export function rollItem(dropSeed: number, rarity: Rarity, source: ItemSource): 
   let uniqueId: string | undefined;
   if (rarity === 'unique') {
     const candidates = uniquesForSlot(slot);
+    // RNG 스트림 형태를 레지스트리 population과 무관하게 유지: unique면 무조건 draw 1회
+    // (int은 span과 상관없이 nextU32 1회 소비 — rng.ts), 빈 레지스트리면 결과만 버린다.
+    // 이렇게 해야 Lane 3가 유니크를 채워도 이후 아이템의 롤이 밀리지 않는다(결정론).
+    const idx = rng.int(0, Math.max(0, candidates.length - 1));
     if (candidates.length > 0) {
-      const pick = candidates[rng.int(0, candidates.length - 1)];
-      uniqueId = pick?.id;
+      uniqueId = candidates[idx]?.id;
     }
   }
 
