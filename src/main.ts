@@ -14,6 +14,7 @@ import { createGameApp, DESIGN_WIDTH, DESIGN_HEIGHT } from './render/app.js';
 import { loadGameTextures } from './render/textures.js';
 import { EntityRenderer } from './render/entityRenderer.js';
 import { FpsMeter } from './render/fpsMeter.js';
+import { UniqueCeremony } from './render/ceremony.js';
 import { InputController } from './input/controller.js';
 import { Hud } from './ui/hud.js';
 import type { BossHudState } from './ui/hud.js';
@@ -56,6 +57,8 @@ async function main(): Promise<void> {
   const recorder = new ReplayRecorder(seed, world.config);
   const controller = new InputController(gameApp);
   const fps = new FpsMeter();
+  // 유니크 드랍 세리머니(렌더 전용): 슬로모 + 금빛 플래시. 시뮬 결과 무영향.
+  const ceremony = new UniqueCeremony();
 
   let prevSnap = snapshotWorld(world);
   let currSnap = prevSnap;
@@ -65,7 +68,10 @@ async function main(): Promise<void> {
   gameApp.app.ticker.add((ticker) => {
     let frame = ticker.deltaMS / 1000;
     if (frame > 0.25) frame = 0.25; // clamp to avoid spiral-of-death after stalls
-    accumulator += frame;
+    // 유니크 세리머니 슬로모: 게임 루프 dt에 배율만 곱한다(hit-stop). 입력 로그는 매
+    // 틱 그대로 기록되므로 리플레이/해시는 불변(렌더 페이싱만 늘어짐).
+    const timeScale = ceremony.update(frame);
+    accumulator += frame * timeScale;
 
     const runOver = world.gameOver || world.victory;
     if (runOver) {
@@ -80,6 +86,8 @@ async function main(): Promise<void> {
       prevSnap = currSnap;
       currSnap = snapshotWorld(world);
       accumulator -= DT;
+      // 새 유니크 loot가 나타나면 세리머니 발동(렌더 전용, 같은 loot는 한 번만).
+      ceremony.notice(currSnap);
     }
 
     const alpha = accumulator / DT;
