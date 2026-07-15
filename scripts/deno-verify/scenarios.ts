@@ -25,9 +25,15 @@ import {
 } from '../../src/sim/world.js';
 import type { WorldConfig, WorldState, InputFrame } from '../../src/sim/world.js';
 import { neutralLoadout } from '../../src/items/loadout.js';
-import { UQ_OVERHEAT_DRUM, UQ_PIERCE_GYRO } from '../../src/sim/uniques.js';
+import {
+  UQ_OVERHEAT_DRUM,
+  UQ_PIERCE_GYRO,
+  UQ_CONVERGE_PRISM,
+  UQ_GREED_HEART,
+} from '../../src/sim/uniques.js';
 import { atan2, length } from '../../src/sim/math.js';
 import { SeededRng } from '../../src/sim/rng.js';
+import { SKILL_NODE_COUNT } from '../../data/skills.js';
 import type { Rarity, ItemSource } from '../../src/items/types.js';
 
 /** rollItem 결정론을 교차 검증하기 위한 단일 롤 스펙. */
@@ -178,7 +184,69 @@ const UNIQUE_RUN: WorldConfig = {
   loadout: UNIQUE_LOADOUT,
 };
 
-/** 4종 대표 시나리오. */
+/** 몇 노드에만 투자한 길이 SKILL_NODE_COUNT 스킬 벡터(파워업 가중·결정론 필드 자극). */
+function sampleSkillInvest(): number[] {
+  const v = Array<number>(SKILL_NODE_COUNT).fill(0);
+  v[0] = 3; // firepower tier0
+  v[20] = 2; // survival tier0
+  v[40] = 4; // mobility tier0
+  return v;
+}
+
+// --- 시나리오 ⑤: 니플헤임 섬멸 + 미사일 + 원소 어픽스 + 스킬투자 (M3 표면) ---------
+// 미사일(weaponType 3) 유도 발사 + 화염·냉기·전격 상태이상 + 스킬 벡터(파워업 가중)를
+// 한 런에 실어 M3 신규 표면을 크로스 검증한다.
+const NIFLHEIM_LOADOUT = {
+  ...neutralLoadout(),
+  weaponType: 3, // 미사일 — homeMissile 유도 + 섬멸 티어 밀집 표적.
+  damageMult: 1.3,
+  fireRateMult: 0.95,
+  pierceAdd: 1,
+  bulletSpeedMult: 1.1,
+  rangeAdd: 150,
+  moveSpeedMult: 1.1,
+  maxHpAdd: 60,
+  dashCdMult: 0.9,
+  fireDmg: 5, // 화염(지속피해)
+  coldSlow: 1, // 냉기(불리언 게이트)
+  lightning: 8, // 전격(연쇄)
+};
+
+const NIFLHEIM_ANNIHILATION: WorldConfig = {
+  ...DEFAULT_CONFIG,
+  planet: 2, // 니플헤임(신규 행성)
+  tier: 2, // 섬멸(엘리트 2개·파워업 가중)
+  playerHp: DURABLE,
+  loadout: NIFLHEIM_LOADOUT,
+  skillInvest: sampleSkillInvest(),
+};
+
+// --- 시나리오 ⑥: 아르케 교전 + 빔 + M3 유니크(수렴 프리즘 + 탐욕의 심장) -----------
+// 빔(weaponType 4) 세그먼트 판정 + 관통 적 수 비례 증폭(수렴 프리즘) + 젬 획득 콤보/자석
+// 스택(탐욕의 심장)을 실어 M3 유니크 훅을 크로스 검증한다. 프리즘은 빔과 페어링(MED-1).
+const ARKE_BEAM_LOADOUT = {
+  ...neutralLoadout(),
+  weaponType: 4, // 빔 — 수렴 프리즘(빔 전용) 페어링.
+  uniqueMask: (1 << UQ_CONVERGE_PRISM) | (1 << UQ_GREED_HEART),
+  damageMult: 1.25,
+  fireRateMult: 0.9,
+  rangeAdd: 200,
+  bulletSpeedMult: 1.1,
+  moveSpeedMult: 1.05,
+  maxHpAdd: 40,
+  magnetMult: 1.4,
+  xpMult: 1.2,
+};
+
+const ARKE_ENGAGE: WorldConfig = {
+  ...DEFAULT_CONFIG,
+  planet: 3, // 아르케(신규 행성)
+  tier: 1, // 교전
+  playerHp: DURABLE,
+  loadout: ARKE_BEAM_LOADOUT,
+};
+
+/** 6종 대표 시나리오(M2 4 + M3 표면 2). */
 export const SCENARIOS: readonly Scenario[] = [
   {
     name: '① 카르곤 정찰 기본(로밍)',
@@ -236,6 +304,35 @@ export const SCENARIOS: readonly Scenario[] = [
         source: { planet: 1, tier: 1 },
         reroll: { rerollSeed: 0x1234abc },
       },
+    ],
+  },
+  {
+    name: '⑤ 니플헤임 섬멸 + 미사일 + 원소 어픽스 + 스킬투자',
+    seed: 0x51a1,
+    config: NIFLHEIM_ANNIHILATION,
+    checkpointInterval: 600,
+    buildInputs: () => driveDurable(0x51a1, NIFLHEIM_ANNIHILATION, MAX_RUN_TICKS),
+    rolls: [
+      { dropSeed: 0x51a1_51, rarity: 'rare', source: { planet: 2, tier: 2 } },
+      { dropSeed: 0x51a1_52, rarity: 'unique', source: { planet: 2, tier: 2 } },
+      {
+        dropSeed: 0x51a1_53,
+        rarity: 'rare',
+        source: { planet: 2, tier: 2 },
+        reroll: { rerollSeed: 0x5150c0, lockedIndex: 0 },
+      },
+    ],
+  },
+  {
+    name: '⑥ 아르케 교전 + 빔 + M3 유니크(수렴 프리즘 / 탐욕의 심장)',
+    seed: 0x7e2e,
+    config: ARKE_ENGAGE,
+    checkpointInterval: 600,
+    buildInputs: () => driveDurable(0x7e2e, ARKE_ENGAGE, MAX_RUN_TICKS),
+    rolls: [
+      { dropSeed: 0x7e2e_61, rarity: 'unique', source: { planet: 3, tier: 1 } },
+      { dropSeed: 0x7e2e_62, rarity: 'rare', source: { planet: 3, tier: 1 } },
+      { dropSeed: 0x7e2e_63, rarity: 'unique', source: { planet: 3, tier: 1 } },
     ],
   },
 ];

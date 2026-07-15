@@ -88,7 +88,10 @@ export function rollItem(dropSeed: number, rarity: Rarity, source: ItemSource): 
   // undefined (item behaves as a high rare until Lane 3 wires the effect).
   let uniqueId: string | undefined;
   if (rarity === 'unique') {
-    const candidates = uniquesForSlot(slot);
+    // main 슬롯은 아이템 weaponType과 일치하는(또는 무기타입 무관인) 유니크만 후보로
+    // 삼는다(리뷰 MED-1: 페어링 보장). 후보 LIST만 좁힐 뿐 아래 draw는 항상 1회이므로
+    // RNG 스트림 형태는 불변이다.
+    const candidates = uniquesForSlot(slot, slot === 'main' ? weaponType : undefined);
     // RNG 스트림 형태를 레지스트리 population과 무관하게 유지: unique면 무조건 draw 1회
     // (int은 span과 상관없이 nextU32 1회 소비 — rng.ts), 빈 레지스트리면 결과만 버린다.
     // 이렇게 해야 Lane 3가 유니크를 채워도 이후 아이템의 롤이 밀리지 않는다(결정론).

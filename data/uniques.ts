@@ -31,11 +31,15 @@ import {
   UQ_RELIC_AMP,
 } from '../src/sim/uniques.js';
 
-/** M2 유니크 5점(이름은 조정 가능, 효과 골자·슬롯·비트는 고정). */
+/**
+ * M2 유니크 5점(이름은 조정 가능, 효과 골자·슬롯·비트는 고정).
+ * 주무기 파생은 weaponType으로 페어링(리뷰 MED-1): 과열 드럼=발칸(0)·분열 코어=스프레드(1)·
+ * 관통 자이로=레일건(2). 무기타입 코드는 src/items/loadout.ts(WEAPON_*)와 일치.
+ */
 export const M2_UNIQUES: readonly UniqueDef[] = [
-  { id: 'overheat-drum', name: '과열 드럼', slot: 'main', bit: UQ_OVERHEAT_DRUM },
-  { id: 'split-core', name: '분열 코어', slot: 'main', bit: UQ_SPLIT_CORE },
-  { id: 'pierce-gyro', name: '관통 자이로', slot: 'main', bit: UQ_PIERCE_GYRO },
+  { id: 'overheat-drum', name: '과열 드럼', slot: 'main', bit: UQ_OVERHEAT_DRUM, weaponType: 0 },
+  { id: 'split-core', name: '분열 코어', slot: 'main', bit: UQ_SPLIT_CORE, weaponType: 1 },
+  { id: 'pierce-gyro', name: '관통 자이로', slot: 'main', bit: UQ_PIERCE_GYRO, weaponType: 2 },
   { id: 'drone-bay', name: '자율 드론 베이', slot: 'sub', bit: UQ_DRONE_BAY },
   { id: 'phase-armor', name: '위상 장갑', slot: 'armor', bit: UQ_PHASE_ARMOR },
 ];
@@ -47,9 +51,9 @@ export const M2_UNIQUES: readonly UniqueDef[] = [
  * 만 확정해 롤·장착 시 uniqueMask에 실린다.
  */
 export const M3_UNIQUES: readonly UniqueDef[] = [
-  { id: 'hive-swarm', name: '군집 벌통', slot: 'main', bit: UQ_HIVE_SWARM },
-  { id: 'converge-prism', name: '수렴 프리즘', slot: 'main', bit: UQ_CONVERGE_PRISM },
-  { id: 'twin-star', name: '쌍둥이 항성', slot: 'main', bit: UQ_TWIN_STAR },
+  { id: 'hive-swarm', name: '군집 벌통', slot: 'main', bit: UQ_HIVE_SWARM, weaponType: 3 },
+  { id: 'converge-prism', name: '수렴 프리즘', slot: 'main', bit: UQ_CONVERGE_PRISM, weaponType: 4 },
+  { id: 'twin-star', name: '쌍둥이 항성', slot: 'main', bit: UQ_TWIN_STAR, weaponType: 1 },
   { id: 'singularity', name: '특이점 발생기', slot: 'sub', bit: UQ_SINGULARITY },
   { id: 'reactive-armor', name: '반응 장갑', slot: 'armor', bit: UQ_REACTIVE_ARMOR },
   { id: 'phase-membrane', name: '위상 전환막', slot: 'shield', bit: UQ_PHASE_MEMBRANE },

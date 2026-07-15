@@ -55,7 +55,15 @@ export function applyBurn(e: Entity, dmgPerTick: number, ticks: number): void {
   if (dmgPerTick > e.dashCooldown) e.dashCooldown = dmgPerTick;
 }
 
-/** 적에게 냉기 감속을 부여(더 긴 지속으로 갱신). ownerId = 남은 감속 틱. */
+/**
+ * 적에게 냉기 감속을 부여(더 긴 지속으로 갱신). ownerId = 남은 감속 틱.
+ *
+ * 냉기 어픽스(coldSlow)는 **불리언 게이트**다(리뷰 LOW): 호출부(world.ts)는
+ * `coldSlow > 0`일 때 고정 지속 COLD_DURATION으로만 이 함수를 부른다. 감속 강도는
+ * COLD_SLOW_MULT 상수 하나로 고정이라 어픽스 값(항상 1)은 지속·강도에 관여하지 않는다.
+ * 감속을 강도화하려면 여기에 배율/지속 파라미터를 받고 data/affixes.ts freezing 범위를
+ * 넓혀야 한다.
+ */
 export function applySlow(e: Entity, ticks: number): void {
   if (ticks > e.ownerId) e.ownerId = ticks;
 }
@@ -83,6 +91,12 @@ export function tickEnemyStatus(e: Entity): void {
  * 전격 연쇄: 방금 맞은 적(origin) 주변 CHAIN_RADIUS 안의 다른 적에게 즉시 피해를
  * 준다(최대 CHAIN_MAX_TARGETS마리, 엔티티 배열 순서로 결정론 선택). 즉발이라 잔존
  * 상태가 없다. HP가 0 이하가 된 적은 dead로 표시(compact가 처리).
+ *
+ * 성능(리뷰 MED-2 재검토): CHAIN_MAX_TARGETS(3)에 도달하면 즉시 break하므로 밀집한
+ * 적(연쇄가 실제로 발화하는 상황)에서는 사실상 O(3)이다. 브로드페이즈 그리드 반경 질의로
+ * 바꾸는 방안을 벤치했으나 Map 조회·클로저 상수가 이 촘촘한 배열 조기-break 루프보다
+ * 커서 실측이 오히려 느렸다(107→127ms/1500t·200적). 결정론 단순성을 지키는 직접 스캔을
+ * 유지한다(배열 순서 tie-break도 함께 보존).
  */
 export function applyChain(state: WorldState, origin: Entity, chainDmg: number): void {
   if (chainDmg <= 0) return;

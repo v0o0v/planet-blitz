@@ -37,8 +37,8 @@ describe('Deno 교차 검증 픽스처 (M4 스파이크)', () => {
     };
     writeFileSync(FIXTURE_PATH, JSON.stringify(fixture, null, 2) + '\n', 'utf8');
 
-    // 최소 4종 시나리오, 각자 최종 해시가 존재하고 유효 u32.
-    expect(scenarios.length).toBe(4);
+    // 6종 시나리오(M2 4 + M3 표면 2), 각자 최종 해시가 존재하고 유효 u32.
+    expect(scenarios.length).toBe(6);
     for (const s of scenarios) {
       expect(Number.isInteger(s.finalHash)).toBe(true);
       expect(s.finalHash).toBeGreaterThanOrEqual(0);

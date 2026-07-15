@@ -27,6 +27,12 @@ export const PREFIXES: readonly AffixDef[] = [
   { id: 'velocity', name: '고속의', kind: 'prefix', stat: 'bulletSpeedPct', min: 8, max: 18 },
   { id: 'ranging', name: '장거리의', kind: 'prefix', stat: 'rangeFlat', min: 120, max: 360 },
   // 원소 3종(M3, 상태이상): 화염=지속피해, 냉기=감속, 전격=연쇄.
+  //   화염(fireDmg)·전격(lightning)은 값이 곧 강도(틱당 피해 / 연쇄 피해)라 범위가 의미
+  //   있다. 냉기(coldSlow)는 **의도적 불리언 게이트**: 감속 배율·지속은 전역 상수
+  //   (status.ts COLD_SLOW_MULT / COLD_DURATION)로 고정이고, 소비부(world.ts
+  //   resolveCollisions)는 `coldSlow > 0` 여부만 본다 → 값 자체는 켜짐 표식(1)이다.
+  //   그래서 min=max=1로 고정한다(퇴화가 아니라 플래그 — 리뷰 LOW). 냉기를 강도화하려면
+  //   COLD_* 상수를 티어로 바꾸고 applySlow 소비부를 함께 고쳐야 하며, 그때 이 범위를 넓힌다.
   { id: 'flaming', name: '작열의', kind: 'prefix', stat: 'fireDmg', min: 2, max: 5 },
   { id: 'freezing', name: '빙결의', kind: 'prefix', stat: 'coldSlow', min: 1, max: 1 },
   { id: 'shocking', name: '방전의', kind: 'prefix', stat: 'lightning', min: 4, max: 10 },

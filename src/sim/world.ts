@@ -928,6 +928,7 @@ function stepBoss(state: WorldState, player: Entity): void {
 // ---------------------------------------------------------------------------
 
 /** Weapon archetype codes (shared with src/items/loadout.ts). */
+const WEAPON_TYPE_SPREAD = 1;
 const WEAPON_TYPE_RAILGUN = 2;
 const WEAPON_TYPE_MISSILE = 3;
 const WEAPON_TYPE_BEAM = 4;
@@ -1045,8 +1046,10 @@ function autoAttack(state: WorldState, player: Entity): void {
   }
 
   // ⑦ 쌍둥이 항성: 부채꼴 발사체 2배 + 발당 피해 ×TWIN_STAR_DAMAGE_MULT. 미장착 시
-  //    n·dmg 그대로(거동 불변). 스프레드 대표 유니크지만 발칸에도 동일 적용된다.
-  const twinOn = hasUnique(mask, UQ_TWIN_STAR);
+  //    n·dmg 그대로(거동 불변). 스프레드(weaponType 1) 파생 유니크이므로 스프레드
+  //    무기에서만 발화(리뷰 MED-1 이중 게이트 — roll.ts 페어링과 정합). 발칸 등 타
+  //    무기에 롤될 수 없고, 설령 실려도 no-op.
+  const twinOn = hasUnique(mask, UQ_TWIN_STAR) && w.weaponType === WEAPON_TYPE_SPREAD;
   const n = twinOn ? w.bulletCount * 2 : w.bulletCount;
   const dmg = twinOn ? w.damage * TWIN_STAR_DAMAGE_MULT : w.damage;
   const start = n > 1 ? baseAngle - w.spread / 2 : baseAngle;
@@ -1248,6 +1251,13 @@ function stepTurrets(state: WorldState, _player: Entity): void {
  * per-tick turn (MISSILE_TURN_RATE), preserving its speed. Nearest scan ignores
  * walls (missiles curve around), uses only deterministic trig. No target → the
  * missile flies straight (its current heading is unchanged).
+ *
+ * 성능(리뷰 MED-2 재검토): 이 함수는 미사일마다 전 엔티티를 한 번 훑는다(O(미사일×N)).
+ * 브로드페이즈 그리드로 대체하는 방안을 벤치로 검증했으나, ①유도 미사일 수가 대개 한 자리
+ * 라 스캔 총량이 작고 ②미사일 단계엔 갓 만든 그리드가 없어 매 틱 전용 그리드를 새로
+ * 채워야 하며(O(N) 삽입) ③Map 조회·클로저 호출 상수가 촘촘한 배열 순회보다 커서, 실측상
+ * 오히려 40%가량 느려졌다(107→151ms/1500t·200적). 따라서 결정론·단순성을 지키는 이 직접
+ * 스캔을 유지한다(전역 최근접·배열 순서 tie-break도 함께 보존).
  */
 function homeMissile(state: WorldState, e: Entity): void {
   const speed = length(e.vx, e.vy);
@@ -1427,8 +1437,12 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   const gyroOn = hasUnique(uMask, UQ_PIERCE_GYRO);
   // M3 통합 신규 훅: ⑤ 군집 벌통(미사일 격추 시 마이크로탄 방사), ⑥ 수렴 프리즘(빔이
   // 관통한 적 수만큼 피해 증폭). 미장착 시 no-op. ⑤⑥⑦은 모두 주무기 슬롯이라 상호 배타.
-  const hiveOn = hasUnique(uMask, UQ_HIVE_SWARM);
-  const prismOn = hasUnique(uMask, UQ_CONVERGE_PRISM);
+  // weaponType 이중 게이트(리뷰 MED-1): 군집 벌통=미사일(3)·수렴 프리즘=빔(4) 전용.
+  // roll.ts 페어링이 1차 방어, 여기가 2차 방어 — 비대응 무기엔 no-op(프리즘이 전 무기
+  // 관통탄에 새던 결함 차단). 벌통은 트리거가 이미 MISSILE_MARK지만 명시적으로 게이트.
+  const weaponType = state.weapon.weaponType;
+  const hiveOn = hasUnique(uMask, UQ_HIVE_SWARM) && weaponType === WEAPON_TYPE_MISSILE;
+  const prismOn = hasUnique(uMask, UQ_CONVERGE_PRISM) && weaponType === WEAPON_TYPE_BEAM;
   // M3 원소 어픽스(상태이상, plan B4): 명중 시 적에게 화염(지속피해)·냉기(감속)·전격
   // (연쇄)을 건다. 미장착(값 0)이면 아래 분기는 no-op. enemy에만 적용(보스 재활용 필드
   // 충돌 방지).

@@ -2,7 +2,7 @@
   "meta": {
     "generatedBy": "tests/denoFixture.test.ts (Node/vitest)",
     "node": "v24.13.0",
-    "scenarioCount": 4
+    "scenarioCount": 6
   },
   "mathProbe": 793092539,
   "scenarios": [
@@ -722,6 +722,794 @@
         "level": 19,
         "bossSpawned": true,
         "entityCount": 291
+      }
+    },
+    {
+      "name": "⑤ 니플헤임 섬멸 + 미사일 + 원소 어픽스 + 스킬투자",
+      "seed": 20897,
+      "ticks": 14400,
+      "inputsHash": 2227232023,
+      "checkpoints": [
+        {
+          "tick": 600,
+          "hash": 2844896495
+        },
+        {
+          "tick": 1200,
+          "hash": 1289290179
+        },
+        {
+          "tick": 1800,
+          "hash": 916468532
+        },
+        {
+          "tick": 2400,
+          "hash": 697073526
+        },
+        {
+          "tick": 3000,
+          "hash": 200250684
+        },
+        {
+          "tick": 3600,
+          "hash": 2878667799
+        },
+        {
+          "tick": 4200,
+          "hash": 2438259200
+        },
+        {
+          "tick": 4800,
+          "hash": 1333320185
+        },
+        {
+          "tick": 5400,
+          "hash": 373681486
+        },
+        {
+          "tick": 6000,
+          "hash": 4214417955
+        },
+        {
+          "tick": 6600,
+          "hash": 177750887
+        },
+        {
+          "tick": 7200,
+          "hash": 4168800213
+        },
+        {
+          "tick": 7800,
+          "hash": 2943577945
+        },
+        {
+          "tick": 8400,
+          "hash": 860037201
+        },
+        {
+          "tick": 9000,
+          "hash": 3609459324
+        },
+        {
+          "tick": 9600,
+          "hash": 578413475
+        },
+        {
+          "tick": 10200,
+          "hash": 3299396505
+        },
+        {
+          "tick": 10800,
+          "hash": 2510789135
+        },
+        {
+          "tick": 11400,
+          "hash": 1824537762
+        },
+        {
+          "tick": 12000,
+          "hash": 799069503
+        },
+        {
+          "tick": 12600,
+          "hash": 1755731047
+        },
+        {
+          "tick": 13200,
+          "hash": 3302413321
+        },
+        {
+          "tick": 13800,
+          "hash": 1968524860
+        },
+        {
+          "tick": 14400,
+          "hash": 1968524860
+        }
+      ],
+      "finalHash": 1968524860,
+      "loot": [
+        {
+          "seed": 3291617364,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 1092343974,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 232444852,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 2107921432,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 2659477725,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 3820504707,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 3126199211,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 2543079164,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 1454696156,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 172123966,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 3766179748,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 3785126252,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 878854059,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 2550315623,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 4068629033,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 738079855,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 4137657057,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 3729399148,
+          "rarity": 3,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 2744427579,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 2220652391,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 260988467,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 440158657,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 274252862,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 2205700299,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 1466232063,
+          "rarity": 3,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 2007879444,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 1680818370,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 2737617674,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 2405639984,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 473643576,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 3892374895,
+          "rarity": 3,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 3957004447,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 2791953737,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 2988717403,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 1801380302,
+          "rarity": 3,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 2473957079,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 576441956,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 59485200,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 1727180314,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 36035476,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 197241939,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 1097962681,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 1246103366,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 1443621823,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 1723169648,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 2
+        },
+        {
+          "seed": 699945404,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 2
+        }
+      ],
+      "rolls": [
+        {
+          "id": "it-5349713",
+          "slot": "sub",
+          "rarity": "rare",
+          "weaponType": 0,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "brutal",
+              "stat": "damagePct",
+              "value": 19
+            },
+            {
+              "id": "of-vitality",
+              "stat": "maxHpFlat",
+              "value": 24
+            },
+            {
+              "id": "of-magnetism",
+              "stat": "magnetPct",
+              "value": 18
+            },
+            {
+              "id": "ranging",
+              "stat": "rangeFlat",
+              "value": 205
+            },
+            {
+              "id": "of-learning",
+              "stat": "xpPct",
+              "value": 7
+            }
+          ]
+        },
+        {
+          "id": "it-5349714",
+          "slot": "main",
+          "rarity": "unique",
+          "weaponType": 4,
+          "uniqueId": "converge-prism",
+          "affixes": [
+            {
+              "id": "multibarrel",
+              "stat": "bulletCount",
+              "value": 1
+            },
+            {
+              "id": "of-wisdom",
+              "stat": "xpPct",
+              "value": 16
+            },
+            {
+              "id": "of-prospecting",
+              "stat": "mineralFindPct",
+              "value": 25
+            },
+            {
+              "id": "flaming",
+              "stat": "fireDmg",
+              "value": 4
+            }
+          ]
+        },
+        {
+          "id": "it-5349715",
+          "slot": "engine",
+          "rarity": "rare",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "flaming",
+              "stat": "fireDmg",
+              "value": 5
+            },
+            {
+              "id": "ranging",
+              "stat": "rangeFlat",
+              "value": 211
+            },
+            {
+              "id": "brutal",
+              "stat": "damagePct",
+              "value": 12
+            },
+            {
+              "id": "of-swiftness",
+              "stat": "moveSpeedPct",
+              "value": 8
+            }
+          ]
+        }
+      ],
+      "summary": {
+        "victory": true,
+        "gameOver": false,
+        "kills": 350,
+        "level": 23,
+        "bossSpawned": true,
+        "entityCount": 227
+      }
+    },
+    {
+      "name": "⑥ 아르케 교전 + 빔 + M3 유니크(수렴 프리즘 / 탐욕의 심장)",
+      "seed": 32302,
+      "ticks": 14400,
+      "inputsHash": 575179467,
+      "checkpoints": [
+        {
+          "tick": 600,
+          "hash": 950457359
+        },
+        {
+          "tick": 1200,
+          "hash": 3225037201
+        },
+        {
+          "tick": 1800,
+          "hash": 3776172148
+        },
+        {
+          "tick": 2400,
+          "hash": 1892512006
+        },
+        {
+          "tick": 3000,
+          "hash": 2916193238
+        },
+        {
+          "tick": 3600,
+          "hash": 1603258963
+        },
+        {
+          "tick": 4200,
+          "hash": 3586908215
+        },
+        {
+          "tick": 4800,
+          "hash": 2322804528
+        },
+        {
+          "tick": 5400,
+          "hash": 263939081
+        },
+        {
+          "tick": 6000,
+          "hash": 1713984715
+        },
+        {
+          "tick": 6600,
+          "hash": 1863975608
+        },
+        {
+          "tick": 7200,
+          "hash": 1642763285
+        },
+        {
+          "tick": 7800,
+          "hash": 142897129
+        },
+        {
+          "tick": 8400,
+          "hash": 2814877470
+        },
+        {
+          "tick": 9000,
+          "hash": 1444256518
+        },
+        {
+          "tick": 9600,
+          "hash": 2244405915
+        },
+        {
+          "tick": 10200,
+          "hash": 1392958240
+        },
+        {
+          "tick": 10800,
+          "hash": 1591658543
+        },
+        {
+          "tick": 11400,
+          "hash": 1933875507
+        },
+        {
+          "tick": 12000,
+          "hash": 229473594
+        },
+        {
+          "tick": 12600,
+          "hash": 3191606286
+        },
+        {
+          "tick": 13200,
+          "hash": 1824520858
+        },
+        {
+          "tick": 13800,
+          "hash": 602147288
+        },
+        {
+          "tick": 14400,
+          "hash": 602147288
+        }
+      ],
+      "finalHash": 602147288,
+      "loot": [
+        {
+          "seed": 588397186,
+          "rarity": 2,
+          "planet": 3,
+          "tier": 1
+        },
+        {
+          "seed": 4136655881,
+          "rarity": 1,
+          "planet": 3,
+          "tier": 1
+        },
+        {
+          "seed": 2887464438,
+          "rarity": 1,
+          "planet": 3,
+          "tier": 1
+        },
+        {
+          "seed": 232916765,
+          "rarity": 1,
+          "planet": 3,
+          "tier": 1
+        },
+        {
+          "seed": 520193411,
+          "rarity": 2,
+          "planet": 3,
+          "tier": 1
+        },
+        {
+          "seed": 2565009236,
+          "rarity": 2,
+          "planet": 3,
+          "tier": 1
+        },
+        {
+          "seed": 2914299474,
+          "rarity": 1,
+          "planet": 3,
+          "tier": 1
+        },
+        {
+          "seed": 3589507437,
+          "rarity": 1,
+          "planet": 3,
+          "tier": 1
+        },
+        {
+          "seed": 3045816770,
+          "rarity": 2,
+          "planet": 3,
+          "tier": 1
+        },
+        {
+          "seed": 3956522130,
+          "rarity": 1,
+          "planet": 3,
+          "tier": 1
+        },
+        {
+          "seed": 1255269489,
+          "rarity": 2,
+          "planet": 3,
+          "tier": 1
+        },
+        {
+          "seed": 1142569843,
+          "rarity": 1,
+          "planet": 3,
+          "tier": 1
+        },
+        {
+          "seed": 3663744473,
+          "rarity": 1,
+          "planet": 3,
+          "tier": 1
+        },
+        {
+          "seed": 1517146275,
+          "rarity": 3,
+          "planet": 3,
+          "tier": 1
+        }
+      ],
+      "rolls": [
+        {
+          "id": "it-8269409",
+          "slot": "main",
+          "rarity": "unique",
+          "weaponType": 3,
+          "uniqueId": "hive-swarm",
+          "affixes": [
+            {
+              "id": "velocity",
+              "stat": "bulletSpeedPct",
+              "value": 15
+            },
+            {
+              "id": "of-prospecting",
+              "stat": "mineralFindPct",
+              "value": 17
+            },
+            {
+              "id": "deadly",
+              "stat": "damagePct",
+              "value": 28
+            },
+            {
+              "id": "ranging",
+              "stat": "rangeFlat",
+              "value": 286
+            },
+            {
+              "id": "overclocked",
+              "stat": "fireRatePct",
+              "value": 20
+            }
+          ]
+        },
+        {
+          "id": "it-8269410",
+          "slot": "armor",
+          "rarity": "rare",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "of-warding",
+              "stat": "maxHpPct",
+              "value": 9
+            },
+            {
+              "id": "of-wisdom",
+              "stat": "xpPct",
+              "value": 18
+            },
+            {
+              "id": "of-magnetism",
+              "stat": "magnetPct",
+              "value": 8
+            },
+            {
+              "id": "piercing",
+              "stat": "pierce",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "id": "it-8269411",
+          "slot": "armor",
+          "rarity": "unique",
+          "weaponType": null,
+          "uniqueId": "reactive-armor",
+          "affixes": [
+            {
+              "id": "of-fortune",
+              "stat": "mineralFindPct",
+              "value": 41
+            },
+            {
+              "id": "of-greed",
+              "stat": "magnetPct",
+              "value": 31
+            },
+            {
+              "id": "rapid",
+              "stat": "fireRatePct",
+              "value": 11
+            },
+            {
+              "id": "of-the-dash",
+              "stat": "dashCdPct",
+              "value": 7
+            },
+            {
+              "id": "of-wisdom",
+              "stat": "xpPct",
+              "value": 21
+            },
+            {
+              "id": "of-learning",
+              "stat": "xpPct",
+              "value": 12
+            }
+          ]
+        }
+      ],
+      "summary": {
+        "victory": true,
+        "gameOver": false,
+        "kills": 78,
+        "level": 13,
+        "bossSpawned": true,
+        "entityCount": 180
       }
     }
   ]
