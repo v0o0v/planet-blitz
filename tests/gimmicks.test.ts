@@ -3,6 +3,7 @@ import { createWorld, stepWorld } from '../src/sim/world.js';
 import type { WorldState } from '../src/sim/world.js';
 import { blankEntity, addEntity, spawnDestructible, spawnEventObject } from '../src/sim/entities.js';
 import { MAGNET_BUFF_TICKS, TURRET_LIFE_TICKS, BOMB_DAMAGE } from '../src/sim/events.js';
+import { HAZARD_TERRAIN, TERRAIN_HAZARD_DAMAGE, TERRAIN_HAZARD_RADIUS } from '../src/sim/chunks.js';
 
 /** Phase F3/F4 — destructible drops and the three proximity event objects. */
 
@@ -47,6 +48,49 @@ describe('destructible objects (plan F3)', () => {
     for (let i = 0; i < 40; i++) stepWorld(state, { ...idle, moveX: 1 });
     // The player walked past the destructible's centre (it is not a wall).
     expect(player.x).toBeGreaterThan(150);
+  });
+});
+
+/** Build a permanent chunk-placed terrain hazard (mirrors world.spawnPlacement). */
+function spawnTerrainHazard(state: WorldState, x: number, y: number): ReturnType<typeof blankEntity> {
+  const h = blankEntity('hazard');
+  h.enemyType = HAZARD_TERRAIN;
+  h.x = x;
+  h.y = y;
+  h.radius = TERRAIN_HAZARD_RADIUS;
+  h.timer = 0;
+  h.life = -1; // permanent — no telegraph, never expires
+  h.damage = TERRAIN_HAZARD_DAMAGE;
+  h.phase = 1;
+  addEntity(state, h);
+  return h;
+}
+
+describe('terrain hazard (plan F2, AC6)', () => {
+  it('damages the player who stands in it, and persists (life < 0)', () => {
+    const state = createWorld(1);
+    quietWaves(state);
+    const player = state.entities[0]!;
+    const hpBefore = player.hp;
+    const hazard = spawnTerrainHazard(state, player.x, player.y);
+
+    stepWorld(state, idle);
+    expect(player.hp).toBe(hpBefore - TERRAIN_HAZARD_DAMAGE);
+    // Permanent: it is still alive after the tick (unlike a timed hazard window).
+    expect(state.entities.includes(hazard)).toBe(true);
+    expect(hazard.life).toBeLessThan(0);
+  });
+
+  it('does not damage a player standing clear of it', () => {
+    const state = createWorld(1);
+    quietWaves(state);
+    const player = state.entities[0]!;
+    const hpBefore = player.hp;
+    // Well outside the hazard radius + player radius.
+    spawnTerrainHazard(state, player.x + TERRAIN_HAZARD_RADIUS + player.radius + 200, player.y);
+
+    stepWorld(state, idle);
+    expect(player.hp).toBe(hpBefore);
   });
 });
 

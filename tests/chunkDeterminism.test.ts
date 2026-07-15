@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { createWorld, stepWorld } from '../src/sim/world.js';
 import type { WorldState } from '../src/sim/world.js';
-import { chunkPlacements } from '../src/sim/chunks.js';
+import { chunkPlacements, CHUNK_SIZE } from '../src/sim/chunks.js';
 import type { GimmickPlacement } from '../src/sim/chunks.js';
+import type { Entity } from '../src/sim/entities.js';
 import { runReplay } from '../src/sim/replay.js';
 import type { Replay } from '../src/sim/replay.js';
 import type { InputFrame } from '../src/sim/world.js';
@@ -84,6 +85,61 @@ describe('chunk placement determinism (plan E, AC3)', () => {
     const b = runReplay(replay);
     expect(a.hashes).toEqual(b.hashes);
     expect(a.finalHash).toBe(b.finalHash);
+  });
+
+  it('reaching the same chunk by different paths yields the identical placement digest', () => {
+    // AC3 formal check: drive two worlds (same seed) along DIFFERENT movement
+    // paths, then compare the sorted (kind, x, y) placement digest per chunk for
+    // every chunk both worlds have active. Digest excludes entityId/insertion
+    // order — path independence must hold on coordinates + kind alone.
+    const GIMMICK_KINDS = ['wall', 'destructible', 'magnetEmitter', 'bombDevice', 'turretPickup'];
+    const isGimmick = (e: Entity): boolean =>
+      GIMMICK_KINDS.includes(e.kind) || (e.kind === 'hazard' && e.life < 0);
+
+    /** Map<chunkKey, sorted (kind,x,y) digest of that chunk's live gimmicks>. */
+    function digestByChunk(legs: readonly { mx: number; my: number; ticks: number }[]): Map<string, string> {
+      const state: WorldState = createWorld(0x2468);
+      state.wave.done = true; // silence waves; only chunk gimmicks matter
+      for (const leg of legs) {
+        for (let t = 0; t < leg.ticks; t++) {
+          stepWorld(state, { moveX: leg.mx, moveY: leg.my, aim: 0, dash: false, special: 0 });
+        }
+      }
+      const byChunk = new Map<string, string[]>();
+      for (const e of state.entities) {
+        if (e.dead || !isGimmick(e)) continue;
+        const cx = Math.floor(e.x / CHUNK_SIZE);
+        const cy = Math.floor(e.y / CHUNK_SIZE);
+        const ckey = `${cx},${cy}`;
+        const arr = byChunk.get(ckey) ?? [];
+        arr.push(`${e.kind}:${e.x}:${e.y}:${e.radius}:${e.targetX}`);
+        byChunk.set(ckey, arr);
+      }
+      const out = new Map<string, string>();
+      for (const [ckey, arr] of byChunk) out.set(ckey, arr.sort().join('|'));
+      return out;
+    }
+
+    // Path A: right, then up. Path B: up, then right. Both cover an overlapping
+    // region so many chunks are active in both worlds.
+    const a = digestByChunk([
+      { mx: 1, my: 0, ticks: 260 },
+      { mx: 0, my: -1, ticks: 260 },
+    ]);
+    const b = digestByChunk([
+      { mx: 0, my: -1, ticks: 260 },
+      { mx: 1, my: 0, ticks: 260 },
+    ]);
+
+    let shared = 0;
+    for (const [ckey, digestA] of a) {
+      const digestB = b.get(ckey);
+      if (digestB === undefined) continue;
+      shared++;
+      expect(digestB).toBe(digestA);
+    }
+    // The two paths must genuinely overlap (otherwise the assertion is vacuous).
+    expect(shared).toBeGreaterThan(3);
   });
 
   it('actually generates gimmick entities once the player leaves the safe zone', () => {

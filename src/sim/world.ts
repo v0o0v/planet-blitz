@@ -71,6 +71,16 @@ export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
  * evaluated once at load, so this constant is bit-identical on every platform.
  */
 const PROJECTILE_CULL_RADIUS = Math.sqrt(VIEW_WIDTH * VIEW_WIDTH + VIEW_HEIGHT * VIEW_HEIGHT) * 1.5;
+
+/**
+ * Broad-phase grid cell size (world units). Larger cells mean fewer buckets to
+ * visit per query but more candidates per bucket; smaller cells the reverse. For
+ * the 2x-scale world (entity radii ~20..128), 256 measured faster than 128 in
+ * the headless sim bench (G3, src/bench/simBench.ts) at the 2,000-projectile
+ * stress load, so 256 is adopted. Grid is broad-phase only (exact distance is
+ * re-checked) and rebuilt every tick, so this value never affects the sim hash.
+ */
+export const GRID_CELL_SIZE = 256;
 export type { Entity, EntityKind } from './entities.js';
 
 /** Special-event bit flags packed into `InputFrame.special`. */
@@ -343,7 +353,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     bossSpawned: false,
     gameOver: false,
     victory: false,
-    grid: new SpatialHash<Entity>(128),
+    grid: new SpatialHash<Entity>(GRID_CELL_SIZE),
     generatedChunks: new Map<number, true>(),
     activeWalls: [],
   };

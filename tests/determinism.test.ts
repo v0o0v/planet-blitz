@@ -35,6 +35,41 @@ describe('deterministic replay (ADR-0005)', () => {
     expect(a.hashes.length).toBe(600);
   });
 
+  it('produces identical per-tick hashes across a long roaming run (gimmicks/walls/LOS/chunks)', () => {
+    // G2 determinism gate: idle/near-origin logs never leave the safe zone, so
+    // they don't exercise chunk generation, wall slides, bullet-vs-wall or LOS.
+    // This log drifts far off the origin (dashing) so walls, hazards, events and
+    // chunk cull/regen all fire — the whole scroll-map surface under one hash.
+    const gen = new SeededRng(0x1357);
+    const ticks = 60 * 40; // 40 seconds
+    const inputs: InputFrame[] = [];
+    for (let t = 0; t < ticks; t++) {
+      // Outward drift (diagonal) plus noise so the player genuinely roams into
+      // gimmick territory instead of random-walking in place.
+      inputs.push({
+        moveX: 0.7 + gen.range(-0.5, 0.5),
+        moveY: -0.7 + gen.range(-0.5, 0.5),
+        aim: gen.range(-Math.PI, Math.PI),
+        dash: gen.chance(0.06),
+        special: 0,
+      });
+    }
+    const replay: Replay = { seed: 0xbeef, inputs };
+    const a = runReplay(replay);
+    const b = runReplay(replay);
+    expect(a.hashes).toEqual(b.hashes);
+    expect(a.finalHash).toBe(b.finalHash);
+    expect(a.hashes.length).toBe(ticks);
+    // Sanity: the run really left the safe zone and materialised gimmicks.
+    const player = a.finalState.entities[0]!;
+    expect(Math.hypot(player.x, player.y)).toBeGreaterThan(2000);
+    const gimmicks = a.finalState.entities.filter((e) =>
+      ['wall', 'destructible', 'magnetEmitter', 'bombDevice', 'turretPickup'].includes(e.kind) ||
+      (e.kind === 'hazard' && e.life < 0),
+    );
+    expect(gimmicks.length).toBeGreaterThan(0);
+  });
+
   it('produces identical per-tick hashes across two runs (active input)', () => {
     const replay: Replay = { seed: 0xdecaf, inputs: makeInputLog(777, 60 * 8) };
     const a = runReplay(replay);

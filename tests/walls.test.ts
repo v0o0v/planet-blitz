@@ -85,6 +85,44 @@ describe('cover walls (plan F1)', () => {
     expect(countKind(state, 'bullet')).toBe(0);
   });
 
+  it('LOS: skips the occluded nearest and fires at the next-nearest visible enemy', () => {
+    // Semantics (plan F1c): "filter blocked candidates, then nearest" — NOT
+    // "nearest, else none". The closest enemy is hidden behind a wall; a farther
+    // enemy in the open must still be targeted.
+    const state = createWorld(4);
+    quietWaves(state);
+    const player = state.entities[0]!;
+    player.cooldown = 0;
+    // Tall wall directly to the right, occluding the near enemy at (400,0).
+    spawnWall(state, 150, 0, 40, 400);
+    const near = blankEntity('enemy'); // closer (d=400) but hidden
+    near.x = 400;
+    near.y = 0;
+    near.radius = 32;
+    near.hp = 1000;
+    near.maxHp = 1000;
+    near.enemyType = 1;
+    addEntity(state, near);
+    const far = blankEntity('enemy'); // farther (d=600) but in the open, straight down
+    far.x = 0;
+    far.y = 600;
+    far.radius = 32;
+    far.hp = 1000;
+    far.maxHp = 1000;
+    far.enemyType = 1;
+    addEntity(state, far);
+
+    stepWorld(state, idle);
+    const shots = state.entities.filter((e) => e.kind === 'bullet');
+    // It fired (did not give up), and every shot aims at the visible far enemy
+    // (downward, +y) rather than the blocked near enemy (rightward, +x).
+    expect(shots.length).toBeGreaterThan(0);
+    for (const b of shots) {
+      expect(b.vy).toBeGreaterThan(0);
+      expect(Math.abs(b.vy)).toBeGreaterThan(Math.abs(b.vx));
+    }
+  });
+
   it('LOS: fires at the same enemy when no wall occludes it', () => {
     const state = createWorld(2);
     quietWaves(state);
