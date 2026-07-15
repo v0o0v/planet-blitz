@@ -6,9 +6,13 @@
  * by `alpha` (the fractional progress toward the next tick), so motion looks
  * smooth regardless of monitor refresh. The sim itself is never touched here —
  * render reads immutable snapshots only (sim/render separation, ADR-0005).
+ *
+ * Sprites cover point-like entities (player, enemies, bullets, gems). Hazards
+ * (telegraphed zones) and support heal beams have per-frame variable geometry,
+ * so they are drawn into a Graphics overlay from the current snapshot each frame.
  */
 
-import { Container, Sprite } from 'pixi.js';
+import { Container, Graphics, Sprite } from 'pixi.js';
 import type { WorldSnapshot, EntitySnapshot } from '../sim/snapshot.js';
 import type { PlaceholderTextures } from './textures.js';
 
@@ -17,30 +21,51 @@ interface TrackedSprite {
   seenTick: number;
 }
 
+const HAZARD_MORTAR = 0;
+
 export class EntityRenderer {
   readonly layer = new Container();
   private readonly sprites = new Map<number, TrackedSprite>();
+  private readonly overlay = new Graphics();
   private frameTick = 0;
 
-  constructor(private readonly textures: PlaceholderTextures) {}
-
-  private textureFor(kind: EntitySnapshot['kind']) {
-    return kind === 'player' ? this.textures.player : this.textures.dummy;
+  constructor(private readonly textures: PlaceholderTextures) {
+    // Hazards/beams draw beneath the sprites so ships stay legible on top.
+    this.layer.addChild(this.overlay);
   }
 
-  /**
-   * Draw the world, interpolating each entity between `prev` and `curr` by
-   * `alpha` in [0, 1]. Entities absent from `curr` are removed.
-   */
+  private textureFor(e: EntitySnapshot) {
+    switch (e.kind) {
+      case 'player':
+        return this.textures.player;
+      case 'bullet':
+        return this.textures.bullet;
+      case 'enemyBullet':
+        return this.textures.enemyBullet;
+      case 'gem':
+        return this.textures.gem;
+      case 'enemy': {
+        const arr = this.textures.enemy;
+        const idx = e.enemyType >= 0 && e.enemyType < arr.length ? e.enemyType : 0;
+        return arr[idx] ?? this.textures.player;
+      }
+      default:
+        return this.textures.player;
+    }
+  }
+
   render(prev: WorldSnapshot, curr: WorldSnapshot, alpha: number): void {
     this.frameTick++;
+    this.drawOverlay(curr);
+
     const prevById = new Map<number, EntitySnapshot>();
     for (const e of prev.entities) prevById.set(e.id, e);
 
     for (const e of curr.entities) {
+      if (e.kind === 'hazard') continue; // drawn in the overlay
       let tracked = this.sprites.get(e.id);
       if (tracked === undefined) {
-        const sprite = new Sprite(this.textureFor(e.kind));
+        const sprite = new Sprite(this.textureFor(e));
         sprite.anchor.set(0.5);
         this.layer.addChild(sprite);
         tracked = { sprite, seenTick: this.frameTick };
@@ -51,10 +76,10 @@ export class EntityRenderer {
       const p = prevById.get(e.id) ?? e;
       tracked.sprite.x = p.x + (e.x - p.x) * alpha;
       tracked.sprite.y = p.y + (e.y - p.y) * alpha;
-      tracked.sprite.rotation = e.angle;
+      // Gems do not rotate; everything else faces its travel/aim angle.
+      tracked.sprite.rotation = e.kind === 'gem' ? 0 : e.angle;
     }
 
-    // Remove sprites for entities no longer present.
     for (const [id, tracked] of this.sprites) {
       if (tracked.seenTick !== this.frameTick) {
         tracked.sprite.destroy();
@@ -63,9 +88,29 @@ export class EntityRenderer {
     }
   }
 
+  private drawOverlay(curr: WorldSnapshot): void {
+    const g = this.overlay;
+    g.clear();
+    // Support heal beams.
+    for (const b of curr.beams) {
+      g.moveTo(b.x1, b.y1).lineTo(b.x2, b.y2).stroke({ color: 0x33ffcc, width: 3, alpha: 0.5 });
+    }
+    // Hazard zones: telegraph = outlined warning ring; active = filled danger.
+    for (const e of curr.entities) {
+      if (e.kind !== 'hazard') continue;
+      const color = e.enemyType === HAZARD_MORTAR ? 0xff3355 : 0xff7a1a;
+      if (e.active) {
+        g.circle(e.x, e.y, e.radius).fill({ color, alpha: 0.4 }).stroke({ color, width: 2, alpha: 0.9 });
+      } else {
+        g.circle(e.x, e.y, e.radius).stroke({ color, width: 2, alpha: 0.85 });
+      }
+    }
+  }
+
   destroy(): void {
     for (const { sprite } of this.sprites.values()) sprite.destroy();
     this.sprites.clear();
+    this.overlay.destroy();
     this.layer.destroy({ children: true });
   }
 }

@@ -70,13 +70,21 @@ async function main(): Promise<void> {
     const f = fps.tick(frame);
     const p = world.entities[0];
     frameCount++;
+    let enemyN = 0;
+    let bulletN = 0;
+    for (const e of world.entities) {
+      if (e.kind === 'enemy') enemyN++;
+      else if (e.kind === 'enemyBullet' || e.kind === 'bullet') bulletN++;
+    }
+    const seg = world.wave.segmentIndex + 1;
+    const bossTag = world.wave.boss ? '  [BOSS — Phase 3]' : '';
     hud.set(
       `Planet Blitz — M1 combat prototype\n` +
-        `WASD/arrows move · mouse aim · Space dash\n` +
-        `seed ${seed}  tick ${world.tick}\n` +
-        `player (${(p?.x ?? 0).toFixed(1)}, ${(p?.y ?? 0).toFixed(1)})\n` +
-        `entities ${world.entities.length}  hash ${hashWorld(world).toString(16).padStart(8, '0')}\n` +
-        `FPS ${f.toFixed(1)}`,
+        `WASD/arrows move · mouse aim · Space dash · auto-fire\n` +
+        `seed ${seed}  tick ${world.tick}  segment ${seg}/6${bossTag}\n` +
+        `HP ${Math.max(0, p?.hp ?? 0).toFixed(0)}/${p?.maxHp ?? 0}  kills ${world.kills}  gems ${world.gems}\n` +
+        `enemies ${enemyN}  bullets ${bulletN}/${world.bulletCap}  entities ${world.entities.length}\n` +
+        `hash ${hashWorld(world).toString(16).padStart(8, '0')}  FPS ${f.toFixed(1)}`,
     );
   });
 
@@ -87,14 +95,18 @@ async function main(): Promise<void> {
     (window as unknown as { __pb: unknown }).__pb = {
       gameApp,
       controller,
+      entityRenderer,
       injectInput(input: Partial<import('./sim/world.js').InputFrame>) {
         const merged = { moveX: 0, moveY: 0, aim: 0, dash: false, special: 0, ...input };
         stepWorld(world, merged);
         prevSnap = currSnap;
         currSnap = snapshotWorld(world);
+        // Also render so tooling that drives frames sees the same visuals as play.
+        entityRenderer.render(prevSnap, currSnap, 1);
+        gameApp.app.renderer.render(gameApp.app.stage);
       },
       get state() {
-        return { tick: world.tick, frameCount, entities: currSnap.entities };
+        return { tick: world.tick, frameCount, entities: currSnap.entities, kills: world.kills };
       },
     };
   }

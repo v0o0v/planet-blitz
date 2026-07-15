@@ -65,7 +65,7 @@ export async function runBench(mount: HTMLElement): Promise<void> {
   gameApp.stage.addChild(enemyLayer);
   const enemies: EnemyState[] = [];
   for (let i = 0; i < ENEMY_COUNT; i++) {
-    const sprite = new Sprite(textures.enemy);
+    const sprite = new Sprite(textures.enemy[i % textures.enemy.length] ?? textures.bullet);
     sprite.anchor.set(0.5);
     sprite.x = rand(0, DESIGN_WIDTH);
     sprite.y = rand(0, DESIGN_HEIGHT);
