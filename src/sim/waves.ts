@@ -13,9 +13,10 @@ import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
 import { blankEntity, addEntity } from './entities.js';
 import type { EnemyDef } from './patterns/types.js';
-import { KARGON_ROSTER, ENEMY_BY_TYPE } from '../../data/enemies.js';
-import { SEGMENTS, CARD_POOL } from '../../data/waves.js';
+import { ENEMY_BY_TYPE } from '../../data/enemies.js';
+import { SEGMENTS } from '../../data/waves.js';
 import type { WaveCard, Formation } from '../../data/waves.js';
+import { planetContent } from '../../data/planets/index.js';
 import { cos, sin, PI, TWO_PI } from './math.js';
 import { OFFSCREEN_X, OFFSCREEN_Y, SPAWN_RING_RADIUS, VIEW_HEIGHT } from './constants.js';
 import { maxEnemiesMult, enemyHpMult } from './anomaly.js';
@@ -69,8 +70,11 @@ export function updateWaves(state: WorldState, player: Entity): void {
   } else {
     if (w.cardTimer > 0) w.cardTimer--;
     if (w.cardTimer <= 0 && countEnemies(state) < maxEnemies) {
-      const cardIndex = state.waveRng.int(0, CARD_POOL.length - 1);
-      const card = CARD_POOL[cardIndex];
+      // 행성별 카드 풀에서 추첨(카르곤/베르단). 풀 길이가 달라도 waveRng 소비는 카드
+      // 인덱스 1회로 동일하므로 스트림 분리 규율 유지.
+      const cardPool = planetContent(state.config.planet).cardPool;
+      const cardIndex = state.waveRng.int(0, cardPool.length - 1);
+      const card = cardPool[cardIndex];
       if (card !== undefined) spawnCard(state, card, maxEnemies, player);
       w.cardTimer = seg.cardInterval;
     }
@@ -87,9 +91,13 @@ export function updateWaves(state: WorldState, player: Entity): void {
 
 function spawnCard(state: WorldState, card: WaveCard, maxEnemies: number, player: Entity): void {
   // Flatten the card into an ordered list of defs, then place by formation.
+  // 스폰 그룹은 role(역할 로스터) 또는 elite(정예 인덱스)로 대상을 지정한다(WaveSpawn
+  // 판별 유니온). 행성 콘텐츠에서 해당 행성의 로스터·엘리트를 조회한다.
+  const planet = planetContent(state.config.planet);
   const defs: EnemyDef[] = [];
   for (const s of card.spawns) {
-    const def = KARGON_ROSTER[s.role];
+    const def = 'elite' in s ? planet.elites[s.elite] : planet.roster[s.role];
+    if (def === undefined) continue; // 정의되지 않은 정예 인덱스는 무시(안전).
     for (let i = 0; i < s.count; i++) defs.push(def);
   }
   const positions = formationPositions(state, card.formation, defs.length, player);
@@ -178,6 +186,25 @@ function spawnEnemy(state: WorldState, def: EnemyDef, x: number, y: number): Ent
 /** Look up the behaviour definition backing a live enemy entity. */
 export function enemyDefFor(e: Entity): EnemyDef | undefined {
   return ENEMY_BY_TYPE[e.enemyType];
+}
+
+/**
+ * 보스 소환(plan E2)용 결정론 잡몹 스폰. spawnEnemy와 달리 RNG(waveRng)를 소비하지
+ * 않고 첫 발사 쿨다운을 정의값으로 고정해, 보스 공격 컴포넌트가 스트림 분리 규율을
+ * 깨지 않고 무리개체를 부를 수 있게 한다. 변칙 HP 배율은 동일하게 적용한다.
+ */
+export function summonEnemy(state: WorldState, def: EnemyDef, x: number, y: number): Entity {
+  const e = blankEntity('enemy');
+  e.x = x;
+  e.y = y;
+  e.radius = def.radius;
+  const hp = Math.round(def.hp * enemyHpMult(state.anomaly));
+  e.hp = hp;
+  e.maxHp = hp;
+  e.damage = def.contactDamage;
+  e.enemyType = def.typeIndex;
+  e.cooldown = def.fireCooldown; // 고정 쿨다운(결정론, RNG 미소비)
+  return addEntity(state, e);
 }
 
 // ---------------------------------------------------------------------------

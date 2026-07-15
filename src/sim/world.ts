@@ -42,7 +42,7 @@ import { updateBoss } from './boss.js';
 import { drawPowerupChoices, applyPowerup } from './powerups.js';
 import type { WaveRuntime } from './waves.js';
 import { createWaveRuntime, updateWaves, enemyDefFor } from './waves.js';
-import { LAVA_FORTRESS } from '../../data/boss.js';
+import { planetContent } from '../../data/planets/index.js';
 import {
   CHUNK_SIZE,
   CHUNK_GEN_RADIUS,
@@ -759,14 +759,18 @@ function stepBoss(state: WorldState, player: Entity): void {
   if (state.wave.boss && !state.bossSpawned) {
     // Infinite map: spawn the boss just off-screen above the player rather than
     // at an absolute arena position. moveBoss then hovers it relative to the player.
+    // 행성별 보스 선택(카르곤 용암 요새 / 베르단 여왕). enemyType에 행성 인덱스를
+    // 태깅해 렌더가 보스 스프라이트를 분화할 수 있게 한다(카르곤=0 유지 → 해시 불변).
+    const bossDef = planetContent(state.config.planet).boss;
     const boss = spawnBoss(
       state,
       player.x,
       player.y - VIEW_HEIGHT * 0.55,
-      LAVA_FORTRESS.hp,
-      LAVA_FORTRESS.radius,
+      bossDef.hp,
+      bossDef.radius,
     );
-    boss.damage = LAVA_FORTRESS.contactDamage;
+    boss.damage = bossDef.contactDamage;
+    boss.enemyType = state.config.planet ?? 0;
     state.bossSpawned = true;
   }
   for (const e of state.entities) {
@@ -1235,6 +1239,8 @@ function compact(state: WorldState): void {
   const lootDrops: { x: number; y: number; seed: number; rarity: number }[] = [];
   const splitElites: Entity[] = [];
   const tier = state.config.tier ?? 0;
+  // 행성별 드랍 테이블(rarity 기준 확률)을 엘리트/보스 드랍 판정에 넘긴다(E3).
+  const dropOdds = planetContent(state.config.planet).dropTable;
   for (const e of state.entities) {
     if (!e.dead) {
       survivors.push(e);
@@ -1247,7 +1253,7 @@ function compact(state: WorldState): void {
       // Elites are the only rank-and-file loot source (GDD §3). They always drop
       // one item; a 분열하는 elite additionally bursts fragments on death (B4).
       if (isElite(e)) {
-        const roll = rollEliteDrop(state.dropRng, tier, state.anomaly);
+        const roll = rollEliteDrop(state.dropRng, tier, state.anomaly, dropOdds);
         lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
         if (eliteAffix(e) === 0) splitElites.push(e);
       }
@@ -1261,7 +1267,7 @@ function compact(state: WorldState): void {
     } else if (e.kind === 'boss') {
       state.victory = true;
       // Boss guaranteed rare+ drop (GDD §3, plan B3).
-      const roll = rollBossDrop(state.dropRng, tier, state.anomaly);
+      const roll = rollBossDrop(state.dropRng, tier, state.anomaly, dropOdds);
       lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
     }
   }

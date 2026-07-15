@@ -13,6 +13,7 @@
 
 import type { EnemyDef } from '../src/sim/patterns/types.js';
 import { HAZARD_LAVA } from '../src/sim/patterns/types.js';
+import { BERDAN_DEFS } from './planets/berdan.js';
 
 /** 파쇄차 — 돌격형: slow straight rush, sprays 4 fragments on wall impact. */
 export const CHARGER: EnemyDef = {
@@ -85,5 +86,15 @@ export const KARGON_ROSTER = {
   support: REPAIR_DRONE,
 } as const;
 
-/** Lookup by stable typeIndex (used when reconstructing behaviour from state). */
-export const ENEMY_BY_TYPE: readonly EnemyDef[] = [CHARGER, GUNNER, LAVA_SPRING, REPAIR_DRONE];
+/**
+ * Lookup by stable typeIndex (used when reconstructing behaviour from state).
+ * 카르곤 0~3 뒤에 베르단 4~9(BERDAN_DEFS)를 append — typeIndex는 전역 고유하며
+ * entity.enemyType이 이 배열의 인덱스이므로 절대 재정렬/재번호 금지(해시 불변).
+ */
+export const ENEMY_BY_TYPE: readonly EnemyDef[] = [
+  CHARGER,
+  GUNNER,
+  LAVA_SPRING,
+  REPAIR_DRONE,
+  ...BERDAN_DEFS,
+];
