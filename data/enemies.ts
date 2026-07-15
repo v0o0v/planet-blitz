@@ -26,6 +26,7 @@ export const CHARGER: EnemyDef = {
   movement: 'chargeStraight',
   attack: { kind: 'fragments', count: 4, speed: 260, damage: 6, bulletRadius: 6, bulletLife: 70 },
   fireCooldown: 40,
+  xpValue: 3,
 };
 
 /** 박격포 — 사수형: keeps range, telegraphs an impact zone then bursts. */
@@ -40,6 +41,7 @@ export const GUNNER: EnemyDef = {
   movement: 'standoff',
   attack: { kind: 'mortar', windup: 48, radius: 70, damage: 16 },
   fireCooldown: 130,
+  xpValue: 4,
 };
 
 /** 용암샘 — 특수형: rooted, periodically raises a line of lava pillars. */
@@ -54,6 +56,7 @@ export const LAVA_SPRING: EnemyDef = {
   movement: 'stationary',
   attack: { kind: 'lava', windup: 54, activeTicks: 90, pillars: 6, radius: 46, damage: 8 },
   fireCooldown: 200,
+  xpValue: 8,
 };
 
 /** 수리드론 — 지원형: drifts to wounded allies and heals them (priority kill). */
@@ -68,6 +71,7 @@ export const REPAIR_DRONE: EnemyDef = {
   movement: 'seekWounded',
   attack: { kind: 'heal', range: 220, healPerTick: 3 },
   fireCooldown: 12,
+  xpValue: 5,
 };
 
 /** Hazard subtype re-export so the world hazard resolver can tag lava damage. */

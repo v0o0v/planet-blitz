@@ -11,7 +11,15 @@
  * both the world loop and the pattern engine can depend on it without cycles.
  */
 
-export type EntityKind = 'player' | 'enemy' | 'bullet' | 'enemyBullet' | 'hazard' | 'gem';
+export type EntityKind =
+  | 'player'
+  | 'enemy'
+  | 'bullet'
+  | 'enemyBullet'
+  | 'hazard'
+  | 'gem'
+  | 'supply'
+  | 'boss';
 
 /**
  * Stable integer per kind, folded into the state hash. Never renumber existing
@@ -24,6 +32,8 @@ export const KIND_CODE: Record<EntityKind, number> = {
   enemyBullet: 4,
   hazard: 5,
   gem: 6,
+  supply: 7,
+  boss: 8,
 };
 
 export interface Entity {
@@ -184,12 +194,61 @@ export function spawnHazard(
   return addEntity(sink, h);
 }
 
-/** Spawn an experience gem dropped by a slain enemy (Phase 3 gives it value). */
-export function spawnGem(sink: EntitySink, x: number, y: number): Entity {
+/**
+ * Spawn an experience gem dropped by a slain enemy. `xpValue` (enemy-dependent)
+ * is stored in the `damage` field — gems never deal damage, so the slot is free
+ * and is already folded into the state hash.
+ */
+export function spawnGem(sink: EntitySink, x: number, y: number, xpValue: number): Entity {
   const g = blankEntity('gem');
   g.x = x;
   g.y = y;
   g.radius = 10;
   g.hp = 1;
+  g.damage = xpValue;
   return addEntity(sink, g);
+}
+
+/**
+ * Spawn a supply raider — a high-HP transport that crosses the arena without
+ * firing. `life` counts down its time window (despawns on expiry); shooting it
+ * down before then yields the reward. `vx` carries it across; `enemyType` tags
+ * the render.
+ */
+export function spawnSupply(
+  sink: EntitySink,
+  x: number,
+  y: number,
+  vx: number,
+  hp: number,
+  lifeTicks: number,
+): Entity {
+  const s = blankEntity('supply');
+  s.x = x;
+  s.y = y;
+  s.vx = vx;
+  s.radius = 46;
+  s.hp = hp;
+  s.maxHp = hp;
+  s.life = lifeTicks;
+  s.enemyType = 0;
+  return addEntity(sink, s);
+}
+
+/**
+ * Spawn the boss. Fields carry its fight state: `phase` (0/1/2), `timer` (phase
+ * transition/animation countdown, 0 = fighting), `cooldown` (next pattern),
+ * `iframes` (overheat window — takes double damage while > 0). `enemyType`
+ * tags render variant.
+ */
+export function spawnBoss(sink: EntitySink, x: number, y: number, hp: number, radius: number): Entity {
+  const b = blankEntity('boss');
+  b.x = x;
+  b.y = y;
+  b.radius = radius;
+  b.hp = hp;
+  b.maxHp = hp;
+  b.phase = 0;
+  b.enemyType = 0;
+  return addEntity(sink, b);
 }

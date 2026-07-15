@@ -21,8 +21,13 @@ export interface EntitySnapshot {
   enemyType: number;
   hp: number;
   maxHp: number;
-  /** Hazard is in its damaging window (vs. still telegraphing); false otherwise. */
+  /**
+   * Hazard: in its damaging window (vs. telegraphing). Boss: overheated (taking
+   * double damage). False otherwise.
+   */
   active: boolean;
+  /** Boss phase-transition animation in progress (screen-clear flash). */
+  flash: boolean;
 }
 
 /** A support heal beam, for render only. */
@@ -58,7 +63,13 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
       enemyType: e.enemyType,
       hp: e.hp,
       maxHp: e.maxHp,
-      active: e.kind === 'hazard' ? e.timer <= 0 && e.life > 0 : false,
+      active:
+        e.kind === 'hazard'
+          ? e.timer <= 0 && e.life > 0
+          : e.kind === 'boss'
+            ? e.iframes > 0
+            : false,
+      flash: e.kind === 'boss' && e.timer > 0,
     });
     if (e.kind === 'enemy' && e.enemyType === SUPPORT_TYPE && e.phase === 1) {
       beams.push({ x1: e.x, y1: e.y, x2: e.targetX, y2: e.targetY });

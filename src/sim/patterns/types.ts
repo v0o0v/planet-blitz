@@ -54,4 +54,6 @@ export interface EnemyDef {
   readonly attack: AttackDef;
   /** Ticks between attack activations. */
   readonly fireCooldown: number;
+  /** Experience granted by the gem this enemy drops when slain. */
+  readonly xpValue: number;
 }

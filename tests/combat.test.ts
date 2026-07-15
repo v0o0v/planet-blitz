@@ -98,7 +98,8 @@ describe('combat determinism (ADR-0005, enemies + bullets + waves)', () => {
       stepWorld(state, { moveX: 0, moveY: 0, aim: 0, dash: false, special: 0 });
     }
     expect(state.kills).toBeGreaterThan(kills0);
-    expect(state.entities.some((e) => e.kind === 'gem')).toBe(true);
+    // A gem dropped: still on the field, or already magnet-collected (gems > 0).
+    expect(state.entities.some((e) => e.kind === 'gem') || state.gems > 0).toBe(true);
   });
 
   it('charger sprays fragment bullets on wall impact', () => {

@@ -98,6 +98,8 @@ export function hashWorld(state: WorldState): number {
   h = hashU32(h, state.tick >>> 0);
   h = hashU32(h, state.rng.getState());
   h = hashU32(h, state.waveRng.getState());
+  h = hashU32(h, state.powerupRng.getState());
+  h = hashU32(h, state.supplyRng.getState());
   // Weapon stats (mutated by Phase 3 powerups).
   const w = state.weapon;
   h = hashU32(h, w.fireCooldown >>> 0);
@@ -114,6 +116,22 @@ export function hashWorld(state: WorldState): number {
   h = hashU32(h, state.wave.done ? 1 : 0);
   h = hashU32(h, state.kills >>> 0);
   h = hashU32(h, state.gems >>> 0);
+  // Progression (Phase 3).
+  h = hashU32(h, state.xp >>> 0);
+  h = hashU32(h, state.xpTotal >>> 0);
+  h = hashU32(h, state.level >>> 0);
+  h = hashU32(h, state.combo >>> 0);
+  h = hashU32(h, state.comboTimer >>> 0);
+  h = hashU32(h, state.maxCombo >>> 0);
+  h = hashFloat(h, state.magnetRadius);
+  h = hashU32(h, state.resources >>> 0);
+  h = hashU32(h, state.pendingLevelUp ? 1 : 0);
+  h = hashU32(h, state.powerupChoices.length >>> 0);
+  for (const c of state.powerupChoices) h = hashU32(h, c >>> 0);
+  h = hashU32(h, state.supplyNextIndex >>> 0);
+  h = hashU32(h, state.bossSpawned ? 1 : 0);
+  h = hashU32(h, state.gameOver ? 1 : 0);
+  h = hashU32(h, state.victory ? 1 : 0);
   h = hashU32(h, state.entities.length >>> 0);
   for (const e of state.entities) {
     h = hashEntity(h, e);

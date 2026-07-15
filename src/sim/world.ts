@@ -7,48 +7,75 @@
  * — no wall-clock time, no `Math.random`, no platform trig. Running the same
  * [seed + input frames] therefore reproduces the exact same tick-by-tick state.
  *
- * M1 Phase 2 scope: full core combat. Per tick the loop resolves, in a FIXED
- * order (order changes the state hash): player movement/dash → wave spawns →
- * enemy behaviour (pattern engine) → player auto-attack → projectile & hazard
- * integration → spatial-hash collision resolution → dead-entity compaction.
+ * M1 Phase 3 scope: full run loop. Per tick, in a FIXED order (order changes the
+ * state hash): player movement/dash → wave spawns → enemy behaviour → boss →
+ * player auto-attack → projectile/gem/supply integration → hazards → collisions
+ * → dead-entity compaction → combo decay → level-up check → game-over check.
+ *
+ * The level-up powerup pick freezes the world (spec: sim ticks stall, not a
+ * pause) and is resolved by a `SPECIAL_POWERUP_PICK` input frame carrying the
+ * chosen index in its high bits — so a recorded run reproduces the same build.
  */
 
 import { SeededRng } from './rng.js';
 import { cos, sin, atan2, length, clamp } from './math.js';
 import { DT, ARENA_WIDTH, ARENA_HEIGHT } from './constants.js';
 import type { Entity } from './entities.js';
-import { blankEntity, spawnBullet, spawnGem } from './entities.js';
+import { blankEntity, spawnBullet, spawnGem, spawnSupply, spawnBoss } from './entities.js';
 import { SpatialHash, circlesOverlap } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
+import { updateBoss } from './boss.js';
+import { drawPowerupChoices, applyPowerup } from './powerups.js';
 import type { WaveRuntime } from './waves.js';
 import { createWaveRuntime, updateWaves, enemyDefFor } from './waves.js';
+import { LAVA_FORTRESS } from '../../data/boss.js';
 
 export { TICK_RATE, DT, ARENA_WIDTH, ARENA_HEIGHT } from './constants.js';
 export type { Entity, EntityKind } from './entities.js';
 
 /** Special-event bit flags packed into `InputFrame.special`. */
 export const SPECIAL_NONE = 0;
-export const SPECIAL_POWERUP_PICK = 1 << 0; // reserved for Phase 3 powerup selection
+export const SPECIAL_POWERUP_PICK = 1 << 0;
 
-/**
- * Per-tick input. This is the ONLY external influence on the simulation, and it
- * is what gets recorded into the replay log.
- */
-export interface InputFrame {
-  /** Movement axis X in [-1, 1]. */
-  moveX: number;
-  /** Movement axis Y in [-1, 1]. */
-  moveY: number;
-  /** Aim angle in radians (world space, atan2 convention). */
-  aim: number;
-  /** Dash requested this tick. */
-  dash: boolean;
-  /** Bit flags for discrete events (powerup pick, etc.). 0 = none. */
-  special: number;
+/** Pack a powerup pick (index 0..2) into an input `special` value. */
+export function packPowerupPick(index: number): number {
+  return SPECIAL_POWERUP_PICK | ((index & 0x3) << 1);
 }
 
-export function emptyInput(): InputFrame {
-  return { moveX: 0, moveY: 0, aim: 0, dash: false, special: SPECIAL_NONE };
+// --- Progression / feel tuning (M1 prototype values; spec fixes only the
+//     structure — combo cap x1.5, 20s supply window, boss 3-phase/overheat). ---
+/** Ticks a combo survives without a pickup before it resets. */
+const COMBO_WINDOW_TICKS = 120;
+/** Multiplier gained per stacked pickup. */
+const COMBO_STEP = 0.05;
+/** Stacks at which the multiplier reaches its x1.5 cap (spec). */
+const COMBO_MAX_STACK = 10;
+/** Gem magnet speed once inside the radius (units/second). */
+const MAGNET_SPEED = 760;
+/** Base gem magnet radius (units); grown by the gem-magnet powerup. */
+const BASE_MAGNET_RADIUS = 210;
+/** Supply raider hit points. */
+const SUPPLY_HP = 420;
+/** Supply raider on-screen window: 20 seconds (spec). */
+const SUPPLY_LIFE_TICKS = 1200;
+/** Supply raider crossing speed (units/second). */
+const SUPPLY_SPEED = 190;
+/** Gems dropped when a supply raider is shot down. */
+const SUPPLY_REWARD_GEMS = 14;
+/** XP value of each supply-drop gem. */
+const SUPPLY_GEM_XP = 6;
+/** Ticks at which a supply raider enters the run (once each). */
+const SUPPLY_SPAWN_TICKS: readonly number[] = [1800, 6000];
+
+/** XP required to reach the next level from the current one. */
+export function xpToNext(level: number): number {
+  return 10 + level * 6;
+}
+
+/** Combo multiplier for the current stack, capped at x1.5 (spec). */
+export function comboMultiplier(combo: number): number {
+  const stacks = combo < COMBO_MAX_STACK ? combo : COMBO_MAX_STACK;
+  return 1 + stacks * COMBO_STEP;
 }
 
 /**
@@ -86,6 +113,27 @@ export const DEFAULT_WEAPON: WeaponStats = {
   bulletLife: 55,
 };
 
+/**
+ * Per-tick input. This is the ONLY external influence on the simulation, and it
+ * is what gets recorded into the replay log.
+ */
+export interface InputFrame {
+  /** Movement axis X in [-1, 1]. */
+  moveX: number;
+  /** Movement axis Y in [-1, 1]. */
+  moveY: number;
+  /** Aim angle in radians (world space, atan2 convention). */
+  aim: number;
+  /** Dash requested this tick. */
+  dash: boolean;
+  /** Bit flags for discrete events (powerup pick, etc.). 0 = none. */
+  special: number;
+}
+
+export function emptyInput(): InputFrame {
+  return { moveX: 0, moveY: 0, aim: 0, dash: false, special: SPECIAL_NONE };
+}
+
 export interface WorldConfig {
   arenaWidth: number;
   arenaHeight: number;
@@ -116,6 +164,10 @@ export interface WorldState {
   rng: SeededRng;
   /** Wave director stream (spec: rng.fork('waves')). */
   waveRng: SeededRng;
+  /** Powerup-offer stream (spec: rng.fork('powerups')). */
+  powerupRng: SeededRng;
+  /** Supply-raider placement stream. */
+  supplyRng: SeededRng;
   weapon: WeaponStats;
   wave: WaveRuntime;
   entities: Entity[];
@@ -128,6 +180,34 @@ export interface WorldState {
   enemyBulletCount: number;
   kills: number;
   gems: number;
+  // --- Progression (Phase 3) ---
+  /** XP toward the next level (resets on level-up). */
+  xp: number;
+  /** Total XP earned this run (settlement screen). */
+  xpTotal: number;
+  level: number;
+  /** Current gem combo stack. */
+  combo: number;
+  /** Ticks left before the combo resets. */
+  comboTimer: number;
+  /** Highest combo reached this run (settlement screen). */
+  maxCombo: number;
+  /** Gem magnet radius (grown by the gem-magnet powerup). */
+  magnetRadius: number;
+  /** Supply-raid reward currency (M1 placeholder). */
+  resources: number;
+  /** World frozen awaiting a powerup pick (sim tick stall, not a pause). */
+  pendingLevelUp: boolean;
+  /** Powerup pool indices offered for the pending level-up. */
+  powerupChoices: number[];
+  /** Index into SUPPLY_SPAWN_TICKS of the next raider to spawn. */
+  supplyNextIndex: number;
+  /** Boss has been spawned for the boss segment. */
+  bossSpawned: boolean;
+  /** Player died (HP 0). */
+  gameOver: boolean;
+  /** Boss defeated — run cleared. */
+  victory: boolean;
 }
 
 /**
@@ -136,24 +216,27 @@ export interface WorldState {
  * card is drawn (tick 0). Everything is a pure function of the seed.
  */
 export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG): WorldState {
+  const cfg = { ...config };
   const rng = new SeededRng(seed);
   const entities: Entity[] = [];
   let nextEntityId = 1;
 
   const player = blankEntity('player');
   player.id = nextEntityId++;
-  player.x = config.arenaWidth / 2;
-  player.y = config.arenaHeight / 2;
+  player.x = cfg.arenaWidth / 2;
+  player.y = cfg.arenaHeight / 2;
   player.radius = 16;
-  player.hp = config.playerHp;
-  player.maxHp = config.playerHp;
+  player.hp = cfg.playerHp;
+  player.maxHp = cfg.playerHp;
   entities.push(player);
 
   return {
     tick: 0,
-    config,
+    config: cfg,
     rng,
     waveRng: rng.fork('waves'),
+    powerupRng: rng.fork('powerups'),
+    supplyRng: rng.fork('supply'),
     weapon: { ...DEFAULT_WEAPON },
     wave: createWaveRuntime(),
     entities,
@@ -163,6 +246,20 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     enemyBulletCount: 0,
     kills: 0,
     gems: 0,
+    xp: 0,
+    xpTotal: 0,
+    level: 1,
+    combo: 0,
+    comboTimer: 0,
+    maxCombo: 0,
+    magnetRadius: BASE_MAGNET_RADIUS,
+    resources: 0,
+    pendingLevelUp: false,
+    powerupChoices: [],
+    supplyNextIndex: 0,
+    bossSpawned: false,
+    gameOver: false,
+    victory: false,
   };
 }
 
@@ -178,16 +275,40 @@ function getPlayer(state: WorldState): Entity {
  * Advance the world by exactly one tick. Deterministic in (state, input).
  */
 export function stepWorld(state: WorldState, input: InputFrame): void {
+  // Run is over — the world is inert (settlement screen is showing).
+  if (state.gameOver || state.victory) return;
+
+  // Level-up freeze: the world stalls until a pick arrives. The pick is applied
+  // on the exact tick its input frame carries SPECIAL_POWERUP_PICK, keeping the
+  // choice reproducible from the replay log.
+  if (state.pendingLevelUp) {
+    if ((input.special & SPECIAL_POWERUP_PICK) !== 0) {
+      const idxOffered = (input.special >> 1) & 0x3;
+      const poolIndex = state.powerupChoices[idxOffered];
+      if (poolIndex !== undefined) applyPowerup(state, poolIndex);
+      state.pendingLevelUp = false;
+      state.powerupChoices = [];
+    }
+    state.tick++;
+    return;
+  }
+
   const player = getPlayer(state);
 
   stepPlayer(state, player, input);
   updateWaves(state, player);
   stepEnemies(state, player);
+  stepBoss(state, player);
   autoAttack(state, player);
   stepProjectiles(state);
+  stepGems(state, player);
+  stepSupply(state, player);
   stepHazards(state);
   resolveCollisions(state, player);
   compact(state);
+  updateCombo(state);
+  checkLevelUp(state);
+  checkGameOver(state, player);
 
   state.tick++;
 }
@@ -248,7 +369,28 @@ function stepEnemies(state: WorldState, player: Entity): void {
 }
 
 // ---------------------------------------------------------------------------
-// Player auto-attack (vulcan): target nearest enemy, fire a fanned volley.
+// Boss (spawned once the wave director reaches the boss segment).
+// ---------------------------------------------------------------------------
+
+function stepBoss(state: WorldState, player: Entity): void {
+  if (state.wave.boss && !state.bossSpawned) {
+    const boss = spawnBoss(
+      state,
+      state.config.arenaWidth / 2,
+      state.config.arenaHeight * 0.18,
+      LAVA_FORTRESS.hp,
+      LAVA_FORTRESS.radius,
+    );
+    boss.damage = LAVA_FORTRESS.contactDamage;
+    state.bossSpawned = true;
+  }
+  for (const e of state.entities) {
+    if (e.kind === 'boss') updateBoss(state, e, player);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Player auto-attack (vulcan): target nearest enemy/boss, fire a fanned volley.
 // ---------------------------------------------------------------------------
 
 function autoAttack(state: WorldState, player: Entity): void {
@@ -256,7 +398,7 @@ function autoAttack(state: WorldState, player: Entity): void {
   if (player.cooldown > 0) player.cooldown--;
   if (player.cooldown > 0) return;
 
-  const target = nearestEnemy(state, player, w.range);
+  const target = nearestTarget(state, player, w.range);
   if (target === undefined) return;
 
   const baseAngle = atan2(target.y - player.y, target.x - player.x);
@@ -282,12 +424,14 @@ function autoAttack(state: WorldState, player: Entity): void {
   player.cooldown = w.fireCooldown;
 }
 
-function nearestEnemy(state: WorldState, from: Entity, range: number): Entity | undefined {
+/** Nearest hostile the vulcan can target: any enemy, boss, or supply raider. */
+function nearestTarget(state: WorldState, from: Entity, range: number): Entity | undefined {
   const maxD2 = range > 0 ? range * range : Infinity;
   let best: Entity | undefined;
   let bestD = maxD2;
   for (const e of state.entities) {
-    if (e.kind !== 'enemy' || e.dead) continue;
+    if (e.dead) continue;
+    if (e.kind !== 'enemy' && e.kind !== 'boss' && e.kind !== 'supply') continue;
     const dx = e.x - from.x;
     const dy = e.y - from.y;
     const d = dx * dx + dy * dy;
@@ -300,7 +444,7 @@ function nearestEnemy(state: WorldState, from: Entity, range: number): Entity | 
 }
 
 // ---------------------------------------------------------------------------
-// Projectiles & hazards
+// Projectiles, gems & supply raiders
 // ---------------------------------------------------------------------------
 
 function stepProjectiles(state: WorldState): void {
@@ -312,16 +456,60 @@ function stepProjectiles(state: WorldState): void {
     e.x += e.vx * DT;
     e.y += e.vy * DT;
     if (e.life > 0) e.life--;
-    if (
-      e.life === 0 ||
-      e.x < -margin ||
-      e.x > w + margin ||
-      e.y < -margin ||
-      e.y > h + margin
-    ) {
+    if (e.life === 0 || e.x < -margin || e.x > w + margin || e.y < -margin || e.y > h + margin) {
       e.dead = true;
     }
   }
+}
+
+/** Gems drift toward the player once inside the magnet radius (deterministic). */
+function stepGems(state: WorldState, player: Entity): void {
+  const r = state.magnetRadius;
+  const r2 = r * r;
+  for (const e of state.entities) {
+    if (e.kind !== 'gem') continue;
+    const dx = player.x - e.x;
+    const dy = player.y - e.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 <= r2 && d2 > 0.0001) {
+      const d = length(dx, dy);
+      e.vx = (dx / d) * MAGNET_SPEED;
+      e.vy = (dy / d) * MAGNET_SPEED;
+    } else {
+      e.vx = 0;
+      e.vy = 0;
+    }
+    e.x += e.vx * DT;
+    e.y += e.vy * DT;
+  }
+}
+
+/** Supply raiders cross the arena; despawn when their window elapses. */
+function stepSupply(state: WorldState, _player: Entity): void {
+  maybeSpawnSupply(state);
+  const margin = 80;
+  const w = state.config.arenaWidth;
+  for (const e of state.entities) {
+    if (e.kind !== 'supply') continue;
+    e.x += e.vx * DT;
+    if (e.life > 0) e.life--;
+    // Left the run: window elapsed or fully crossed the arena. hp stays > 0, so
+    // compaction treats it as an escape (no reward).
+    if (e.life === 0 || e.x < -margin || e.x > w + margin) e.dead = true;
+  }
+}
+
+function maybeSpawnSupply(state: WorldState): void {
+  const nextTick = SUPPLY_SPAWN_TICKS[state.supplyNextIndex];
+  if (nextTick === undefined || state.tick < nextTick) return;
+  const h = state.config.arenaHeight;
+  const w = state.config.arenaWidth;
+  const fromLeft = state.supplyRng.chance(0.5);
+  const y = state.supplyRng.range(h * 0.2, h * 0.8);
+  const x = fromLeft ? -40 : w + 40;
+  const vx = (fromLeft ? 1 : -1) * SUPPLY_SPEED;
+  spawnSupply(state, x, y, vx, SUPPLY_HP, SUPPLY_LIFE_TICKS);
+  state.supplyNextIndex++;
 }
 
 function stepHazards(state: WorldState): void {
@@ -350,44 +538,54 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   const grid = new SpatialHash<Entity>(state.config.arenaWidth, state.config.arenaHeight, 128);
   // Insert everything the player or friendly bullets can interact with.
   for (const e of state.entities) {
-    if (e.kind === 'enemy' || e.kind === 'enemyBullet' || e.kind === 'hazard' || e.kind === 'gem') {
+    if (
+      e.kind === 'enemy' ||
+      e.kind === 'enemyBullet' ||
+      e.kind === 'hazard' ||
+      e.kind === 'gem' ||
+      e.kind === 'supply' ||
+      e.kind === 'boss'
+    ) {
       grid.insert(e);
     }
   }
 
-  // Friendly bullets vs enemies.
+  // Friendly bullets vs enemies / boss / supply raiders.
   for (const b of state.entities) {
     if (b.kind !== 'bullet' || b.dead) continue;
     grid.query(b.x, b.y, b.radius, (t) => {
-      if (b.dead || t.kind !== 'enemy' || t.dead) return;
+      if (b.dead || t.dead) return;
+      if (t.kind !== 'enemy' && t.kind !== 'boss' && t.kind !== 'supply') return;
       if (!circlesOverlap(b.x, b.y, b.radius, t.x, t.y, t.radius)) return;
-      t.hp -= b.damage;
+      // Boss takes double damage while overheated (iframes > 0), spec.
+      const mult = t.kind === 'boss' && t.iframes > 0 ? 2 : 1;
+      t.hp -= b.damage * mult;
       if (t.hp <= 0) t.dead = true;
       if (b.pierce > 0) b.pierce--;
       else b.dead = true;
     });
   }
 
-  // Player vs enemies / enemy bullets / hazards / gems.
+  // Player vs enemies / enemy bullets / hazards / gems / boss.
   let dmg = 0;
   const invulnerable = player.iframes > 0;
   grid.query(player.x, player.y, player.radius, (t) => {
     if (t.dead) return;
     if (!circlesOverlap(player.x, player.y, player.radius, t.x, t.y, t.radius)) return;
     if (t.kind === 'gem') {
-      t.dead = true;
-      state.gems++;
+      collectGem(state, t);
       return;
     }
     if (invulnerable) return;
     if (t.kind === 'enemyBullet') {
       if (t.damage > dmg) dmg = t.damage;
       t.dead = true;
-    } else if (t.kind === 'enemy') {
+    } else if (t.kind === 'enemy' || t.kind === 'boss') {
       if (t.damage > dmg) dmg = t.damage;
     } else if (t.kind === 'hazard' && hazardActive(t)) {
       if (t.damage > dmg) dmg = t.damage;
     }
+    // Supply raiders never harm the player (they do not attack).
   });
   if (dmg > 0 && !invulnerable) {
     player.hp -= dmg;
@@ -396,13 +594,27 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   }
 }
 
+/** Collect a gem: bump the combo, award XP scaled by the combo multiplier. */
+function collectGem(state: WorldState, gem: Entity): void {
+  gem.dead = true;
+  state.gems++;
+  state.combo++;
+  state.comboTimer = COMBO_WINDOW_TICKS;
+  if (state.combo > state.maxCombo) state.maxCombo = state.combo;
+  const baseXp = gem.damage; // gem carries its XP value in `damage`
+  const gained = Math.floor(baseXp * comboMultiplier(state.combo));
+  state.xp += gained;
+  state.xpTotal += gained;
+}
+
 // ---------------------------------------------------------------------------
 // Dead-entity compaction (order-preserving; player stays at index 0).
 // ---------------------------------------------------------------------------
 
 function compact(state: WorldState): void {
   const survivors: Entity[] = [];
-  const drops: { x: number; y: number }[] = [];
+  const drops: { x: number; y: number; xp: number }[] = [];
+  const supplyDrops: { x: number; y: number }[] = [];
   for (const e of state.entities) {
     if (!e.dead) {
       survivors.push(e);
@@ -410,12 +622,50 @@ function compact(state: WorldState): void {
     }
     if (e.kind === 'enemy') {
       state.kills++;
-      drops.push({ x: e.x, y: e.y });
+      const def = enemyDefFor(e);
+      drops.push({ x: e.x, y: e.y, xp: def?.xpValue ?? 1 });
+    } else if (e.kind === 'supply' && e.hp <= 0) {
+      // Shot down (vs. escaped with hp > 0): grant the raid reward.
+      state.resources++;
+      supplyDrops.push({ x: e.x, y: e.y });
+    } else if (e.kind === 'boss') {
+      state.victory = true;
     }
   }
   state.entities = survivors;
-  // Slain enemies drop an XP gem (Phase 3 adds magnet + combo value).
-  for (const d of drops) spawnGem(state, d.x, d.y);
+  for (const d of drops) spawnGem(state, d.x, d.y, d.xp);
+  for (const d of supplyDrops) {
+    for (let i = 0; i < SUPPLY_REWARD_GEMS; i++) {
+      const ang = (i * 6.283185307179586) / SUPPLY_REWARD_GEMS;
+      spawnGem(state, d.x + cos(ang) * 40, d.y + sin(ang) * 40, SUPPLY_GEM_XP);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Progression bookkeeping
+// ---------------------------------------------------------------------------
+
+function updateCombo(state: WorldState): void {
+  if (state.comboTimer > 0) {
+    state.comboTimer--;
+    if (state.comboTimer === 0) state.combo = 0;
+  }
+}
+
+/** Level up when XP crosses the threshold; opens the powerup pick (one level). */
+function checkLevelUp(state: WorldState): void {
+  if (state.pendingLevelUp) return;
+  const need = xpToNext(state.level);
+  if (state.xp < need) return;
+  state.xp -= need;
+  state.level++;
+  state.powerupChoices = drawPowerupChoices(state, 3);
+  state.pendingLevelUp = true;
+}
+
+function checkGameOver(state: WorldState, player: Entity): void {
+  if (player.hp <= 0) state.gameOver = true;
 }
 
 function countKind(state: WorldState, kind: Entity['kind']): number {
