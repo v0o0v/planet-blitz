@@ -288,7 +288,7 @@ export interface WorldState {
    * ENTITIES are hashed instead, which is sufficient. A culled chunk is removed
    * so re-entry regenerates it identically (pure placement, OQ1 default (a)).
    */
-  generatedChunks: Map<number, true>;
+  generatedChunks: Map<string, true>;
   /**
    * Active cover walls, rebuilt every tick in entity-array order (same
    * determinism discipline as the grid). Walls are NOT inserted into the spatial
@@ -354,7 +354,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     gameOver: false,
     victory: false,
     grid: new SpatialHash<Entity>(GRID_CELL_SIZE),
-    generatedChunks: new Map<number, true>(),
+    generatedChunks: new Map<string, true>(),
     activeWalls: [],
   };
 }
@@ -437,12 +437,12 @@ function isGimmick(e: Entity): boolean {
   );
 }
 
-/** Fold a signed chunk coordinate pair into a unique non-negative integer key
- *  (Szudzik fold per axis, then large-prime mix — matches collision.ts style). */
-function chunkKey(cx: number, cy: number): number {
-  const a = cx >= 0 ? 2 * cx : -2 * cx - 1;
-  const b = cy >= 0 ? 2 * cy : -2 * cy - 1;
-  return ((a * 73856093) ^ (b * 19349663)) >>> 0;
+/** Loss-free chunk identity key. SpatialHash-style uint32 mixing is fine for
+ *  broad-phase (collisions get re-checked) but here the key IS the chunk's
+ *  identity — a collision would silently mark a distinct chunk as generated
+ *  and drop its gimmicks, so use the exact coordinate pair. */
+function chunkKey(cx: number, cy: number): string {
+  return cx + ',' + cy;
 }
 
 /**
@@ -474,10 +474,13 @@ function activateChunks(state: WorldState, player: Entity): void {
       const dx = ccx - player.x;
       const dy = ccy - player.y;
       if (dx * dx + dy * dy > genR2) continue;
-      if (activeGimmicks >= MAX_ACTIVE_GIMMICKS) continue; // defer (retry next tick)
+      // Chunks are atomic: spawn a chunk's placements all-or-nothing so the
+      // live gimmick set of a generated chunk is always the full pure-function
+      // layout (AC3 path independence). If the cap can't fit the whole chunk,
+      // defer it — marker stays unset and generation retries next tick.
       const placements = chunkPlacements(state.worldRng, cx, cy);
+      if (activeGimmicks + placements.length > MAX_ACTIVE_GIMMICKS) continue;
       for (const g of placements) {
-        if (activeGimmicks >= MAX_ACTIVE_GIMMICKS) break;
         spawnPlacement(state, g);
         activeGimmicks++;
       }
