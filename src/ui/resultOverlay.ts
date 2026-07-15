@@ -7,6 +7,15 @@
  * kills, max combo and resources so a run is legible, plus a restart button.
  */
 
+/** Settlement summary (M2 — what the run added to the profile). */
+export interface SettlementSummary {
+  itemsGained: number;
+  levelsGained: number;
+  skillPointsGained: number;
+  creditsGained: number;
+  overflow: number;
+}
+
 export interface ResultState {
   victory: boolean;
   seed: number;
@@ -16,6 +25,8 @@ export interface ResultState {
   resources: number;
   level: number;
   timeSec: number;
+  /** Present once the run has been settled into the profile (M2). */
+  settlement?: SettlementSummary;
 }
 
 const STYLE = `
@@ -65,7 +76,7 @@ export class ResultOverlay {
     return this.shown;
   }
 
-  show(s: ResultState, onRestart: () => void): void {
+  show(s: ResultState, onRestart: () => void, onInventory?: () => void): void {
     if (this.shown) return;
     this.shown = true;
     this.root.innerHTML = '';
@@ -107,10 +118,34 @@ export class ResultOverlay {
     stats.appendChild(row('시드', `${s.seed}`));
     this.root.appendChild(stats);
 
+    if (s.settlement !== undefined) {
+      const st = s.settlement;
+      const loot = document.createElement('div');
+      loot.className = 'pb-stats';
+      loot.style.marginTop = '12px';
+      loot.appendChild(row('획득 장비', `${st.itemsGained}개`));
+      loot.appendChild(row('기체 레벨업', `+${st.levelsGained}`));
+      loot.appendChild(row('스킬 포인트', `+${st.skillPointsGained}`));
+      loot.appendChild(row('크레딧', `+${st.creditsGained}`));
+      if (st.overflow > 0) loot.appendChild(row('보관 실패', `${st.overflow}개 (공간 부족)`));
+      this.root.appendChild(loot);
+    }
+
+    const buttons = document.createElement('div');
+    buttons.style.display = 'flex';
+    buttons.style.gap = '12px';
+    if (onInventory !== undefined) {
+      const invBtn = document.createElement('button');
+      invBtn.textContent = '🛠 장비 정비';
+      invBtn.style.background = 'linear-gradient(90deg,#8896b8,#aab6d6)';
+      invBtn.addEventListener('click', onInventory);
+      buttons.appendChild(invBtn);
+    }
     const btn = document.createElement('button');
     btn.textContent = '다시 출격';
     btn.addEventListener('click', onRestart);
-    this.root.appendChild(btn);
+    buttons.appendChild(btn);
+    this.root.appendChild(buttons);
 
     this.root.style.display = 'flex';
   }

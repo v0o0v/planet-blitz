@@ -1,0 +1,462 @@
+/**
+ * Inventory / equip overlay (DOM — M2 Phase D1+D2, plan §4, AC6).
+ *
+ * A pure DOM meta screen (no sim involvement): the eight equip positions, a 48-
+ * slot inventory grid, a 96-slot stash (base 32 + two credit expansions), item
+ * tooltips (rarity colour + affix list), a live compare against the currently-
+ * equipped item, a derived-stat preview via `computeLoadoutStats`, and bulk
+ * disenchant (normal/magic → credits, rare+ → minerals).
+ *
+ * It mutates the passed `Profile` in place and persists after every change, so
+ * the next run's loadout reflects what the player equipped here.
+ */
+
+import type { Item, EquipSlotId, SlotKind, Rarity } from '../items/types.js';
+import { EQUIP_SLOTS } from '../items/types.js';
+import { AFFIX_BY_ID } from '../../data/affixes.js';
+import { computeLoadoutStats } from '../items/loadout.js';
+import {
+  saveProfile,
+  activeShip,
+  stashCapacity,
+  INVENTORY_CAP,
+  MAX_STASH_EXPANSIONS,
+  type KeyValueStore,
+  type Profile,
+} from '../save/profile.js';
+import { salvageItems } from '../save/settlement.js';
+
+/** Credit cost of the next stash expansion. */
+export const STASH_EXPANSION_COST = 200;
+
+/** Rarity → display colour (shared with tooltips/borders). */
+const RARITY_COLOR: Record<Rarity, string> = {
+  normal: '#b8c2d8',
+  magic: '#6aa0ff',
+  rare: '#ffd24c',
+  unique: '#ff8a3c',
+};
+
+/** Korean slot labels for the equip row. */
+const SLOT_LABEL: Record<SlotKind, string> = {
+  main: '주무기',
+  sub: '보조무기',
+  armor: '장갑',
+  shield: '실드',
+  engine: '엔진',
+  core: '코어',
+  module: '모듈',
+};
+
+/** Weapon-type labels for `main` items. */
+const WEAPON_LABEL = ['발칸', '스프레드', '레일건'];
+
+/** Which SlotKind an equip position accepts. */
+function slotKindOf(id: EquipSlotId): SlotKind {
+  return (id === 'module0' || id === 'module1' ? 'module' : id) as SlotKind;
+}
+
+const STYLE = `
+#pb-inv { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; gap:14px; padding:24px 16px; box-sizing:border-box; background:rgba(3,5,12,.92); backdrop-filter:blur(3px); font-family:'Segoe UI',system-ui,sans-serif; z-index:28; overflow:auto; }
+#pb-inv h1 { margin:0; color:#7affea; font-size:24px; font-weight:900; letter-spacing:2px; }
+#pb-inv .pb-cols { display:flex; gap:22px; align-items:flex-start; flex-wrap:wrap; justify-content:center; }
+#pb-inv .pb-panel { background:rgba(12,16,30,.7); border:1px solid #2a3552; border-radius:14px; padding:16px; }
+#pb-inv .pb-panel h2 { margin:0 0 10px; color:#aab6d6; font-size:14px; font-weight:700; letter-spacing:1px; }
+#pb-inv .pb-equip { display:grid; grid-template-columns:repeat(4,58px); gap:10px; }
+#pb-inv .pb-eslot { position:relative; width:58px; height:58px; border-radius:10px; border:2px dashed #33405f; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+#pb-inv .pb-eslot .pb-elabel { position:absolute; top:-15px; left:0; right:0; text-align:center; font-size:10px; color:#68789c; }
+#pb-inv .pb-grid { display:grid; grid-template-columns:repeat(8,42px); gap:6px; }
+#pb-inv .pb-stashgrid { display:grid; grid-template-columns:repeat(8,42px); gap:6px; max-height:300px; overflow:auto; }
+#pb-inv .pb-cell { width:42px; height:42px; border-radius:8px; background:rgba(20,26,44,.8); border:1px solid #2a3552; display:flex; align-items:center; justify-content:center; }
+#pb-inv .pb-item { width:100%; height:100%; border-radius:7px; border:2px solid; display:flex; align-items:center; justify-content:center; font-size:18px; cursor:pointer; box-sizing:border-box; }
+#pb-inv .pb-item.sel { outline:2px solid #ff6a7a; outline-offset:1px; }
+#pb-inv .pb-stats { min-width:210px; }
+#pb-inv .pb-statrow { display:flex; justify-content:space-between; gap:16px; font-size:13px; padding:3px 0; border-bottom:1px solid rgba(255,255,255,.05); }
+#pb-inv .pb-statrow .k { color:#8896b8; } #pb-inv .pb-statrow .v { color:#fff; font-weight:700; }
+#pb-inv .pb-currency { display:flex; gap:18px; color:#e8ecff; font-size:14px; font-weight:700; }
+#pb-inv .pb-currency .m { color:#ffd24c; }
+#pb-inv .pb-actions { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
+#pb-inv button.pb-act { pointer-events:auto; cursor:pointer; padding:9px 16px; font-size:13px; font-weight:700; color:#aab6d6; background:rgba(20,26,44,.9); border:1px solid #2a3552; border-radius:10px; }
+#pb-inv button.pb-act:hover { border-color:#4cd7ff; color:#fff; }
+#pb-inv button.pb-act:disabled { opacity:.4; cursor:default; }
+#pb-inv button.pb-close { color:#04121a; background:linear-gradient(90deg,#4cd7ff,#7affea); border:none; font-weight:800; }
+#pb-inv .pb-hint { color:#ff9a7a; font-size:12px; min-height:14px; }
+#pb-inv-tip { position:fixed; z-index:40; pointer-events:none; max-width:260px; background:#0b0f1c; border:1px solid #33405f; border-radius:10px; padding:10px 12px; font-family:'Segoe UI',sans-serif; box-shadow:0 8px 24px rgba(0,0,0,.6); display:none; }
+#pb-inv-tip .t-name { font-size:14px; font-weight:800; margin-bottom:4px; }
+#pb-inv-tip .t-slot { font-size:11px; color:#8896b8; margin-bottom:6px; }
+#pb-inv-tip .t-affix { font-size:12px; color:#c9d3ea; }
+#pb-inv-tip .t-cmp { margin-top:8px; padding-top:6px; border-top:1px solid #33405f; font-size:11px; color:#8896b8; }
+`;
+
+export class InventoryOverlay {
+  private readonly root: HTMLElement;
+  private readonly tip: HTMLElement;
+  private profile: Profile;
+  private store: KeyValueStore | null;
+  private onClose: (() => void) | null = null;
+  private hint = '';
+
+  constructor(profile: Profile, store: KeyValueStore | null = null) {
+    this.profile = profile;
+    this.store = store;
+    const style = document.createElement('style');
+    style.textContent = STYLE;
+    document.head.appendChild(style);
+    this.root = document.createElement('div');
+    this.root.id = 'pb-inv';
+    this.root.style.display = 'none';
+    document.body.appendChild(this.root);
+    this.tip = document.createElement('div');
+    this.tip.id = 'pb-inv-tip';
+    document.body.appendChild(this.tip);
+  }
+
+  get visible(): boolean {
+    return this.root.style.display !== 'none';
+  }
+
+  /** Open the inventory. `profile` is re-bound so it always reflects live state. */
+  show(profile: Profile, onClose: () => void): void {
+    this.profile = profile;
+    this.onClose = onClose;
+    this.hint = '';
+    this.render();
+    this.root.style.display = 'flex';
+  }
+
+  hide(): void {
+    this.root.style.display = 'none';
+    this.tip.style.display = 'none';
+    this.onClose = null;
+  }
+
+  private persist(): void {
+    saveProfile(this.profile, this.store);
+  }
+
+  // --- Equip / unequip -----------------------------------------------------
+
+  private equip(item: Item): void {
+    const ship = activeShip(this.profile);
+    const kind = item.slot;
+    // Pick the target equip position (module → first empty of the two, else 0).
+    let target: EquipSlotId;
+    if (kind === 'module') {
+      target = ship.equipped.module0 === undefined ? 'module0'
+        : ship.equipped.module1 === undefined ? 'module1' : 'module0';
+    } else {
+      target = kind as EquipSlotId;
+    }
+    // Remove from inventory.
+    const idx = this.profile.inventory.indexOf(item);
+    if (idx >= 0) this.profile.inventory.splice(idx, 1);
+    // Return any displaced item to the inventory.
+    const displaced = ship.equipped[target];
+    if (displaced !== undefined) this.profile.inventory.push(displaced);
+    ship.equipped[target] = item;
+    this.persist();
+    this.render();
+  }
+
+  private unequip(id: EquipSlotId): void {
+    const ship = activeShip(this.profile);
+    const item = ship.equipped[id];
+    if (item === undefined) return;
+    if (this.profile.inventory.length >= INVENTORY_CAP) {
+      this.hint = '인벤토리가 가득 찼습니다. 먼저 분해하거나 창고를 확장하세요.';
+      this.render();
+      return;
+    }
+    delete ship.equipped[id];
+    this.profile.inventory.push(item);
+    this.persist();
+    this.render();
+  }
+
+  // --- Salvage / stash -----------------------------------------------------
+
+  private salvageByRarities(rarities: readonly Rarity[]): void {
+    const set = new Set(rarities);
+    const targets = this.profile.inventory.filter((it) => set.has(it.rarity));
+    if (targets.length === 0) {
+      this.hint = '분해할 아이템이 없습니다.';
+      this.render();
+      return;
+    }
+    const mineralFindMult = computeLoadoutStats(this.equippedItems()).worldMods.mineralFindMult;
+    const y = salvageItems(this.profile, targets, mineralFindMult);
+    this.hint = `${targets.length}개 분해 → 크레딧 +${y.credits}, 광물 +${y.minerals}`;
+    this.persist();
+    this.render();
+  }
+
+  private expandStash(): void {
+    if (this.profile.stashExpansions >= MAX_STASH_EXPANSIONS) {
+      this.hint = '창고를 최대까지 확장했습니다.';
+      this.render();
+      return;
+    }
+    if (this.profile.credits < STASH_EXPANSION_COST) {
+      this.hint = `크레딧이 부족합니다 (필요 ${STASH_EXPANSION_COST}).`;
+      this.render();
+      return;
+    }
+    this.profile.credits -= STASH_EXPANSION_COST;
+    this.profile.stashExpansions++;
+    this.hint = '창고를 확장했습니다.';
+    this.persist();
+    this.render();
+  }
+
+  private equippedItems(): Item[] {
+    const ship = activeShip(this.profile);
+    const out: Item[] = [];
+    for (const id of EQUIP_SLOTS) {
+      const it = ship.equipped[id];
+      if (it !== undefined) out.push(it);
+    }
+    return out;
+  }
+
+  // --- Tooltip -------------------------------------------------------------
+
+  private showTip(item: Item, ev: MouseEvent, compareTo?: Item): void {
+    this.tip.innerHTML = '';
+    const name = document.createElement('div');
+    name.className = 't-name';
+    name.style.color = RARITY_COLOR[item.rarity];
+    name.textContent = this.itemName(item);
+    const slot = document.createElement('div');
+    slot.className = 't-slot';
+    slot.textContent = `${SLOT_LABEL[item.slot]} · ${item.rarity}`;
+    this.tip.appendChild(name);
+    this.tip.appendChild(slot);
+    for (const a of item.affixes) {
+      const def = AFFIX_BY_ID.get(a.id);
+      const row = document.createElement('div');
+      row.className = 't-affix';
+      row.textContent = def !== undefined ? `${def.name} (${a.stat} +${a.value})` : `${a.stat} +${a.value}`;
+      this.tip.appendChild(row);
+    }
+    if (compareTo !== undefined && compareTo !== item) {
+      const cmp = document.createElement('div');
+      cmp.className = 't-cmp';
+      cmp.textContent = `장착 중: ${this.itemName(compareTo)} (어픽스 ${compareTo.affixes.length}개)`;
+      this.tip.appendChild(cmp);
+    }
+    this.tip.style.display = 'block';
+    this.moveTip(ev);
+  }
+
+  private moveTip(ev: MouseEvent): void {
+    const pad = 14;
+    let x = ev.clientX + pad;
+    let y = ev.clientY + pad;
+    const w = this.tip.offsetWidth;
+    const h = this.tip.offsetHeight;
+    if (x + w > window.innerWidth) x = ev.clientX - w - pad;
+    if (y + h > window.innerHeight) y = ev.clientY - h - pad;
+    this.tip.style.left = `${x}px`;
+    this.tip.style.top = `${y}px`;
+  }
+
+  private hideTip(): void {
+    this.tip.style.display = 'none';
+  }
+
+  private itemName(item: Item): string {
+    if (item.slot === 'main' && item.weaponType !== undefined) {
+      return `${SLOT_LABEL.main} · ${WEAPON_LABEL[item.weaponType] ?? '?'}`;
+    }
+    return SLOT_LABEL[item.slot];
+  }
+
+  // --- Render --------------------------------------------------------------
+
+  private cell(item: Item | undefined, onClick: () => void, compareTo?: Item): HTMLElement {
+    const cell = document.createElement('div');
+    cell.className = 'pb-cell';
+    if (item !== undefined) {
+      const el = document.createElement('div');
+      el.className = 'pb-item';
+      el.style.borderColor = RARITY_COLOR[item.rarity];
+      el.style.color = RARITY_COLOR[item.rarity];
+      el.textContent = item.slot === 'main' ? '✷' : item.slot === 'sub' ? '❋' : '◈';
+      el.addEventListener('click', onClick);
+      el.addEventListener('mouseenter', (e) => this.showTip(item, e, compareTo));
+      el.addEventListener('mousemove', (e) => this.moveTip(e));
+      el.addEventListener('mouseleave', () => this.hideTip());
+      cell.appendChild(el);
+    }
+    return cell;
+  }
+
+  private render(): void {
+    this.root.innerHTML = '';
+
+    const h1 = document.createElement('h1');
+    h1.textContent = '장비 정비';
+    this.root.appendChild(h1);
+
+    const currency = document.createElement('div');
+    currency.className = 'pb-currency';
+    const ship = activeShip(this.profile);
+    currency.innerHTML =
+      `<span>크레딧 <b>${this.profile.credits}</b></span>` +
+      `<span class="m">광물 <b>${this.profile.minerals}</b></span>` +
+      `<span>스킬 포인트 <b>${this.profile.skillPoints}</b></span>` +
+      `<span>기체 Lv <b>${ship.level}</b></span>`;
+    this.root.appendChild(currency);
+
+    const cols = document.createElement('div');
+    cols.className = 'pb-cols';
+
+    // --- Equip panel ---
+    const equipPanel = document.createElement('div');
+    equipPanel.className = 'pb-panel';
+    const eqH = document.createElement('h2');
+    eqH.textContent = '장착';
+    equipPanel.appendChild(eqH);
+    const equipGrid = document.createElement('div');
+    equipGrid.className = 'pb-equip';
+    for (const id of EQUIP_SLOTS) {
+      const slotEl = document.createElement('div');
+      slotEl.className = 'pb-eslot';
+      const lbl = document.createElement('div');
+      lbl.className = 'pb-elabel';
+      lbl.textContent = id === 'module0' ? '모듈1' : id === 'module1' ? '모듈2' : SLOT_LABEL[slotKindOf(id)];
+      slotEl.appendChild(lbl);
+      const item = ship.equipped[id];
+      if (item !== undefined) {
+        const el = document.createElement('div');
+        el.className = 'pb-item';
+        el.style.borderColor = RARITY_COLOR[item.rarity];
+        el.style.color = RARITY_COLOR[item.rarity];
+        el.textContent = item.slot === 'main' ? '✷' : item.slot === 'sub' ? '❋' : '◈';
+        el.addEventListener('click', () => this.unequip(id));
+        el.addEventListener('mouseenter', (e) => this.showTip(item, e));
+        el.addEventListener('mousemove', (e) => this.moveTip(e));
+        el.addEventListener('mouseleave', () => this.hideTip());
+        slotEl.appendChild(el);
+      }
+      equipGrid.appendChild(slotEl);
+    }
+    equipPanel.appendChild(equipGrid);
+    cols.appendChild(equipPanel);
+
+    // --- Derived-stat preview ---
+    cols.appendChild(this.statsPanel());
+
+    // --- Inventory panel ---
+    const invPanel = document.createElement('div');
+    invPanel.className = 'pb-panel';
+    const invH = document.createElement('h2');
+    invH.textContent = `인벤토리 (${this.profile.inventory.length}/${INVENTORY_CAP})`;
+    invPanel.appendChild(invH);
+    const invGrid = document.createElement('div');
+    invGrid.className = 'pb-grid';
+    for (let i = 0; i < INVENTORY_CAP; i++) {
+      const item = this.profile.inventory[i];
+      const compareTo = item !== undefined ? this.equippedFor(item.slot) : undefined;
+      invGrid.appendChild(this.cell(item, item !== undefined ? () => this.equip(item) : () => {}, compareTo));
+    }
+    invPanel.appendChild(invGrid);
+    cols.appendChild(invPanel);
+
+    // --- Stash panel ---
+    const stashPanel = document.createElement('div');
+    stashPanel.className = 'pb-panel';
+    const cap = stashCapacity(this.profile.stashExpansions);
+    const stashH = document.createElement('h2');
+    stashH.textContent = `창고 (${this.profile.stash.length}/${cap})`;
+    stashPanel.appendChild(stashH);
+    const stashGrid = document.createElement('div');
+    stashGrid.className = 'pb-stashgrid';
+    for (let i = 0; i < cap; i++) {
+      const item = this.profile.stash[i];
+      stashGrid.appendChild(this.cell(item, () => {}));
+    }
+    stashPanel.appendChild(stashGrid);
+    cols.appendChild(stashPanel);
+
+    this.root.appendChild(cols);
+
+    // --- Actions ---
+    const actions = document.createElement('div');
+    actions.className = 'pb-actions';
+    actions.appendChild(this.actionBtn('노말·매직 일괄 분해', () => this.salvageByRarities(['normal', 'magic'])));
+    actions.appendChild(this.actionBtn('레어 이상 일괄 분해', () => this.salvageByRarities(['rare', 'unique'])));
+    const expandBtn = this.actionBtn(
+      `창고 확장 (${STASH_EXPANSION_COST} 크레딧)`,
+      () => this.expandStash(),
+    );
+    if (this.profile.stashExpansions >= MAX_STASH_EXPANSIONS) {
+      expandBtn.disabled = true;
+      expandBtn.textContent = '창고 최대 확장됨';
+    }
+    actions.appendChild(expandBtn);
+    const closeBtn = this.actionBtn('◀ 성계 지도로', () => {
+      const cb = this.onClose;
+      this.hide();
+      cb?.();
+    });
+    closeBtn.classList.add('pb-close');
+    actions.appendChild(closeBtn);
+    this.root.appendChild(actions);
+
+    const hintEl = document.createElement('div');
+    hintEl.className = 'pb-hint';
+    hintEl.textContent = this.hint;
+    this.root.appendChild(hintEl);
+  }
+
+  /** The equipped item that a given slot-kind item would compare against. */
+  private equippedFor(kind: SlotKind): Item | undefined {
+    const ship = activeShip(this.profile);
+    if (kind === 'module') return ship.equipped.module0 ?? ship.equipped.module1;
+    return ship.equipped[kind as EquipSlotId];
+  }
+
+  private statsPanel(): HTMLElement {
+    const panel = document.createElement('div');
+    panel.className = 'pb-panel pb-stats';
+    const h = document.createElement('h2');
+    h.textContent = '로드아웃 스탯';
+    panel.appendChild(h);
+    const { loadout, worldMods } = computeLoadoutStats(this.equippedItems());
+    const rows: [string, string][] = [
+      ['주무기', WEAPON_LABEL[loadout.weaponType] ?? '발칸'],
+      ['피해', `×${loadout.damageMult.toFixed(2)}`],
+      ['발사 속도', `×${(1 / loadout.fireRateMult).toFixed(2)}`],
+      ['탄 수', `+${loadout.bulletCountAdd}`],
+      ['관통', `+${loadout.pierceAdd}`],
+      ['이동 속도', `×${loadout.moveSpeedMult.toFixed(2)}`],
+      ['추가 HP', `+${loadout.maxHpAdd}`],
+      ['자석', `×${loadout.magnetMult.toFixed(2)}`],
+      ['경험치', `×${loadout.xpMult.toFixed(2)}`],
+      ['광물 발견', `×${worldMods.mineralFindMult.toFixed(2)}`],
+    ];
+    for (const [k, v] of rows) {
+      const row = document.createElement('div');
+      row.className = 'pb-statrow';
+      const kEl = document.createElement('span');
+      kEl.className = 'k';
+      kEl.textContent = k;
+      const vEl = document.createElement('span');
+      vEl.className = 'v';
+      vEl.textContent = v;
+      row.appendChild(kEl);
+      row.appendChild(vEl);
+      panel.appendChild(row);
+    }
+    return panel;
+  }
+
+  private actionBtn(text: string, onClick: () => void): HTMLButtonElement {
+    const b = document.createElement('button');
+    b.className = 'pb-act';
+    b.textContent = text;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+}
