@@ -11,8 +11,9 @@
  */
 
 /** Save-schema version stamped onto serialized profiles (plan A1 / C1). Bump on
- *  any breaking layout change so the migration path can key off it. */
-export const SAVE_VERSION = 1;
+ *  any breaking layout change so the migration path can key off it.
+ *  v2 (M3): adds the `skillInvest` vector (60-node skill tree). */
+export const SAVE_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // Rarity

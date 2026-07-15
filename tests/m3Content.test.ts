@@ -54,11 +54,40 @@ import {
   UQ_REACTIVE_ARMOR,
   UQ_AFTERIMAGE,
   UQ_GREED_HEART,
+  UQ_HIVE_SWARM,
+  UQ_CONVERGE_PRISM,
+  UQ_TWIN_STAR,
+  UQ_GAMBLER_CHIP,
+  HIVE_MICRO_MARK,
 } from '../src/sim/uniques.js';
+import {
+  WEAPON_SPREAD,
+  WEAPON_MISSILE,
+  WEAPON_BEAM,
+} from '../src/items/loadout.js';
+import { SKILL_NODE_COUNT } from '../data/skills.js';
 
 /** uniqueMask 비트만 세운 로드아웃 config. */
 function uniqueCfg(bit: number): WorldConfig {
   return { ...DEFAULT_CONFIG, loadout: { ...neutralLoadout(), uniqueMask: 1 << bit } };
+}
+
+/** 무기타입 + uniqueMask를 함께 세운 로드아웃 config(무기타입 의존 유니크용). */
+function weaponUniqueCfg(weaponType: number, mask: number, extra: Partial<WorldConfig> = {}): WorldConfig {
+  return {
+    ...DEFAULT_CONFIG,
+    ...extra,
+    loadout: { ...neutralLoadout(), weaponType, uniqueMask: mask },
+  };
+}
+
+/** 몇 개 노드에만 투자한 길이 60 스킬 벡터(Lane1 결정론 필드 자극용). */
+function sampleSkillInvest(): number[] {
+  const v = Array<number>(SKILL_NODE_COUNT).fill(0);
+  v[0] = 3; // firepower tier0
+  v[20] = 2; // survival tier0
+  v[40] = 4; // mobility tier0
+  return v;
 }
 
 /** 플레이어 근처에 정지 표적 적을 둔다. */
@@ -334,6 +363,58 @@ describe('유니크 15점 완성 (B4, AC6)', () => {
     expect(state.combo).toBeGreaterThan(0);
     expect(state.magnetRadius).toBeGreaterThan(magnet0);
   });
+
+  it('쌍둥이 항성(스프레드): 부채꼴 발사체를 2배로 늘린다', () => {
+    // 동일 스프레드 무기에서 유니크 유/무만 다르게 두고 한 tick 발사체 수를 비교.
+    const plain = createWorld(1, weaponUniqueCfg(WEAPON_SPREAD, 0));
+    const twin = createWorld(1, weaponUniqueCfg(WEAPON_SPREAD, 1 << UQ_TWIN_STAR));
+    for (const s of [plain, twin]) addEnemy(s, 200, 0);
+    stepWorld(plain, emptyInput());
+    stepWorld(twin, emptyInput());
+    const nPlain = plain.entities.filter((e) => e.kind === 'bullet').length;
+    const nTwin = twin.entities.filter((e) => e.kind === 'bullet').length;
+    expect(nPlain).toBeGreaterThan(0);
+    expect(nTwin).toBe(nPlain * 2);
+  });
+
+  it('군집 벌통(미사일): 미사일이 적을 격추하면 마이크로 미사일을 방사한다', () => {
+    const state = createWorld(1, weaponUniqueCfg(WEAPON_MISSILE, 1 << UQ_HIVE_SWARM));
+    addEnemy(state, 70, 0, 1); // 근접·저체력 → 첫 미사일이 격추
+    let micros = 0;
+    for (let t = 0; t < 20 && micros === 0; t++) {
+      stepWorld(state, emptyInput());
+      micros = state.entities.filter((e) => e.kind === 'bullet' && e.ownerId === HIVE_MICRO_MARK).length;
+    }
+    expect(micros).toBeGreaterThan(0);
+  });
+
+  it('수렴 프리즘(빔): 관통한 적 수만큼 피해가 증폭된다', () => {
+    // 첫 빔 세그먼트(dist 90) 위에 적 2기를 겹쳐 두면, 프리즘 런은 2번째 명중분이
+    // 증폭돼 총 피해가 무-프리즘 런보다 크다(관통 순서 무관하게 총합은 결정론).
+    const HP = 1_000_000;
+    const plain = createWorld(1, weaponUniqueCfg(WEAPON_BEAM, 0));
+    const prism = createWorld(1, weaponUniqueCfg(WEAPON_BEAM, 1 << UQ_CONVERGE_PRISM));
+    const removed = (s: WorldState) => {
+      const a = addEnemy(s, 90, 0, HP);
+      const b = addEnemy(s, 90, 20, HP);
+      stepWorld(s, emptyInput());
+      return HP - a.hp + (HP - b.hp);
+    };
+    const dPlain = removed(plain);
+    const dPrism = removed(prism);
+    expect(dPlain).toBeGreaterThan(0);
+    expect(dPrism).toBeGreaterThan(dPlain);
+  });
+
+  it('도박사의 칩(모듈): 레벨업 파워업 선택지를 1개 더 제시한다', () => {
+    const withChip = createWorld(1, uniqueCfg(UQ_GAMBLER_CHIP));
+    const plain = createWorld(1);
+    for (const s of [withChip, plain]) s.xp = 1_000_000; // 즉시 레벨업 유도
+    stepWorld(withChip, emptyInput());
+    stepWorld(plain, emptyInput());
+    expect(plain.powerupChoices.length).toBe(3);
+    expect(withChip.powerupChoices.length).toBe(4);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -358,5 +439,71 @@ describe('M3 콘텐츠 결정론 (AC2)', () => {
     const a = runReplay({ seed: 0x3131, config: cfg, inputs });
     const b = runReplay({ seed: 0x3131, config: cfg, inputs });
     expect(a.hashes).toEqual(b.hashes);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC2 — Lane1+Lane2 통합 결정론
+//   [시드+입력+로드아웃+스킬투자+변칙]에 신규 행성·섬멸 티어·원소 상태이상·5무기
+//   (미사일/빔)·무기타입 의존 유니크를 함께 실어 2회 실행 해시 일치를 확인한다.
+// ---------------------------------------------------------------------------
+
+describe('M3 Lane1+Lane2 통합 결정론 (AC2)', () => {
+  it('니플헤임 섬멸 + 빔 + 수렴 프리즘 + 원소 + 스킬투자 런이 동일 해시로 재현된다', () => {
+    const cfg: WorldConfig = {
+      ...DEFAULT_CONFIG,
+      planet: 2, // 니플헤임(신규 행성)
+      tier: 2, // 섬멸(파워업 가중·엘리트 2개)
+      anomalyAccepted: true, // 변칙 수락
+      loadout: {
+        ...neutralLoadout(),
+        weaponType: WEAPON_BEAM,
+        uniqueMask: 1 << UQ_CONVERGE_PRISM,
+        fireDmg: 5,
+        coldSlow: 2,
+        lightning: 6,
+      },
+      skillInvest: sampleSkillInvest(),
+    };
+    const inputs = Array.from({ length: 420 }, (_, i) => ({ ...emptyInput(), moveX: i % 3 === 0 ? 1 : 0 }));
+    const a = runReplay({ seed: 0x51a1, config: cfg, inputs });
+    const b = runReplay({ seed: 0x51a1, config: cfg, inputs });
+    expect(a.hashes).toEqual(b.hashes);
+  });
+
+  it('아르케 섬멸 + 미사일 + 군집 벌통 + 도박사의 칩 + 스킬투자 런이 동일 해시로 재현된다', () => {
+    const cfg: WorldConfig = {
+      ...DEFAULT_CONFIG,
+      planet: 3, // 아르케(신규 행성)
+      tier: 2, // 섬멸
+      loadout: {
+        ...neutralLoadout(),
+        weaponType: WEAPON_MISSILE,
+        uniqueMask: (1 << UQ_HIVE_SWARM) | (1 << UQ_GAMBLER_CHIP),
+        fireDmg: 3,
+      },
+      skillInvest: sampleSkillInvest(),
+    };
+    const inputs = Array.from({ length: 420 }, (_, i) => ({ ...emptyInput(), moveY: i % 4 === 0 ? 1 : 0 }));
+    const a = runReplay({ seed: 0x7e2e, config: cfg, inputs });
+    const b = runReplay({ seed: 0x7e2e, config: cfg, inputs });
+    expect(a.hashes).toEqual(b.hashes);
+  });
+
+  it('무기타입 의존 유니크가 실제로 거동을 바꾼다(해시가 무-유니크 런과 갈린다)', () => {
+    const base: WorldConfig = {
+      ...DEFAULT_CONFIG,
+      planet: 2,
+      tier: 1,
+      loadout: { ...neutralLoadout(), weaponType: WEAPON_BEAM },
+    };
+    const withPrism: WorldConfig = {
+      ...base,
+      loadout: { ...neutralLoadout(), weaponType: WEAPON_BEAM, uniqueMask: 1 << UQ_CONVERGE_PRISM },
+    };
+    const inputs = Array.from({ length: 360 }, () => emptyInput());
+    const plain = runReplay({ seed: 0x9c9c, config: base, inputs });
+    const prism = runReplay({ seed: 0x9c9c, config: withPrism, inputs });
+    expect(prism.hashes).not.toEqual(plain.hashes);
   });
 });

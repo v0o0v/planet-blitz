@@ -104,6 +104,40 @@ export const PHASE_ARMOR_BONUS_IFRAMES = 16;
 /** 대시 쿨다운 배율(< 1 = 더 빨리 충전). */
 export const PHASE_ARMOR_DASH_CD_MULT = 0.7;
 
+// --- ⑤ 군집 벌통(주무기·미사일) --------------------------------------------
+// 미사일(weaponType 3)이 적을 격추하는 순간 격추 위치에서 마이크로 미사일을 방사한다.
+// M3 통합(Lane1 미사일 실재)에서 시뮬 훅 연결. 마이크로탄은 유도하지 않고(HIVE_MICRO_MARK
+// ≠ MISSILE_MARK) 재분열도 하지 않아(트리거는 MISSILE_MARK 원본만) 무한 연쇄가 없다.
+/** 격추 1회당 방사하는 마이크로 미사일 수. */
+export const HIVE_MICRO_COUNT = 4;
+export const HIVE_MICRO_SPEED = 900;
+export const HIVE_MICRO_LIFE = 22;
+export const HIVE_MICRO_RADIUS = 4;
+/** 마이크로 미사일 피해 = 주무기 피해 × 이 비율. */
+export const HIVE_MICRO_DAMAGE_FRAC = 0.4;
+/**
+ * 마이크로 미사일 마커(bullet.ownerId). MISSILE_MARK/SPLIT_FRAGMENT_MARK/DRONE_MARK/
+ * 어느 것과도 겹치지 않는 큰 상수 → 유도 로직·재분열 트리거에서 자연히 제외되고 실제
+ * 엔티티 id와도 충돌하지 않는다(이미 해시되는 필드 재활용, hashWorld 레이아웃 불변).
+ */
+export const HIVE_MICRO_MARK = 0x81ce77;
+
+// --- ⑥ 수렴 프리즘(주무기·빔) ----------------------------------------------
+// 빔(weaponType 4) 세그먼트가 관통한 적 수(bullet.phase)에 비례해 피해가 증폭된다.
+// 관통 자이로(③)와 동일한 phase-누적 재활용 패턴 — 둘 다 주무기 슬롯이라 동시 장착 불가.
+/** 빔 세그먼트가 관통한 적 1기당 누적 피해 증가율. */
+export const PRISM_DAMAGE_AMP = 0.2;
+
+// --- ⑦ 쌍둥이 항성(주무기·스프레드) ----------------------------------------
+// 부채꼴 발사(발칸/스프레드) 시 발사체 수를 2배로 늘리고 발당 피해를 낮춘다.
+/** 발사체 2배에 대응하는 발당 피해 배율(총 DPS는 순증, 분산↑). */
+export const TWIN_STAR_DAMAGE_MULT = 0.7;
+
+// --- ⑬ 도박사의 칩(모듈) ----------------------------------------------------
+// 레벨업 파워업 선택지를 늘린다. 로드아웃 고정값이라 런 내내 결정론적으로 같은 수를 뽑는다.
+/** 레벨업 시 추가로 제시하는 파워업 선택지 수. */
+export const GAMBLER_EXTRA_CHOICES = 1;
+
 // --- ⑧ 특이점 발생기 --------------------------------------------------------
 /** 중력장 흡인 반경(월드 유닛). */
 export const SINGULARITY_RADIUS = 460;

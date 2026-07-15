@@ -18,7 +18,7 @@
  */
 
 import { SeededRng } from './rng.js';
-import { cos, sin, atan2, length, TWO_PI } from './math.js';
+import { cos, sin, atan2, length, TWO_PI, wrapAngle } from './math.js';
 import { DT, VIEW_WIDTH, VIEW_HEIGHT, OFFSCREEN_X } from './constants.js';
 import type { Entity } from './entities.js';
 import {
@@ -72,6 +72,19 @@ import {
   UQ_AFTERIMAGE,
   UQ_GREED_HEART,
   UQ_RELIC_AMP,
+  UQ_HIVE_SWARM,
+  UQ_CONVERGE_PRISM,
+  UQ_TWIN_STAR,
+  UQ_GAMBLER_CHIP,
+  HIVE_MICRO_COUNT,
+  HIVE_MICRO_SPEED,
+  HIVE_MICRO_LIFE,
+  HIVE_MICRO_RADIUS,
+  HIVE_MICRO_DAMAGE_FRAC,
+  HIVE_MICRO_MARK,
+  PRISM_DAMAGE_AMP,
+  TWIN_STAR_DAMAGE_MULT,
+  GAMBLER_EXTRA_CHOICES,
   SINGULARITY_RADIUS,
   SINGULARITY_PULL_SPEED,
   REACTIVE_PULSE_COUNT,
@@ -322,6 +335,13 @@ export interface WorldConfig {
   anomalyAccepted?: boolean;
   /** Loadout-derived stats; absent = neutral (no equipment). */
   loadout?: LoadoutConfig;
+  /**
+   * Skill investment snapshot (M3 plan A2). The 60-length vector is already
+   * folded into `loadout` at config-build time, so it does not re-apply to the
+   * sim; it is carried for the verification server (Replay.config) and read by
+   * the powerup-pool soft weighting (C2, drawPowerupChoices). Absent = no skills.
+   */
+  skillInvest?: number[];
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {
@@ -907,8 +927,28 @@ function stepBoss(state: WorldState, player: Entity): void {
 // Player auto-attack (vulcan): target nearest enemy/boss, fire a fanned volley.
 // ---------------------------------------------------------------------------
 
-/** Railgun weapon type (single fast piercing shot). Shared code with loadout. */
+/** Weapon archetype codes (shared with src/items/loadout.ts). */
 const WEAPON_TYPE_RAILGUN = 2;
+const WEAPON_TYPE_MISSILE = 3;
+const WEAPON_TYPE_BEAM = 4;
+
+/**
+ * Homing-missile marker on a friendly bullet's `ownerId` (already hashed). A
+ * bullet carrying it re-steers toward the nearest target each tick in
+ * stepProjectiles, clamped to MISSILE_TURN_RATE (limited turn — OQ-M3-4). Chosen
+ * distinct from SPLIT_FRAGMENT_MARK / DRONE_MARK so the marks never alias. */
+const MISSILE_MARK = 0x3155110;
+/** Max radians a missile turns toward its target per tick (evadable, GDD §10). */
+const MISSILE_TURN_RATE = 0.09;
+/** Beam segment count cap and spacing (매틱 짧은 수명 세그먼트 판정 — OQ-M3-3). */
+const BEAM_MAX_SEGMENTS = 16;
+const BEAM_SEGMENT_SPACING = 90;
+/** Beam segment radius (tiles the line with slight overlap for a continuous hit). */
+const BEAM_SEGMENT_RADIUS = 52;
+/** Beam segment lifetime (ticks): a brief static hit line, re-laid each fire. */
+const BEAM_SEGMENT_LIFE = 2;
+/** Beam range used when the weapon's range is unbounded (0). */
+const BEAM_DEFAULT_RANGE = 1200;
 
 function autoAttack(state: WorldState, player: Entity): void {
   const w = state.weapon;
@@ -926,12 +966,11 @@ function autoAttack(state: WorldState, player: Entity): void {
     : w.fireCooldown;
 
   const baseAngle = atan2(target.y - player.y, target.x - player.x);
-  // M2 plan B2 — three firing archetypes off `weaponType`:
-  //   2 = 레일건: one shot straight at the target, its (loadout-boosted) pierce
-  //       and bullet speed doing the work — ignores the fan entirely.
-  //   0/1 = 발칸 / 스프레드: fanned volley of `bulletCount` across `spread`. The
-  //       two differ only by their loadout baseline (spread = more pellets, wider
-  //       arc), so one code path serves both.
+  // Firing archetypes off `weaponType` (M2 B2 + M3 C1):
+  //   2 = 레일건: one shot straight at the target (pierce/speed do the work).
+  //   3 = 미사일: `bulletCount` homing missiles — slow, hard, limited turn.
+  //   4 = 빔: a line of short-life static segments covering the aim (매틱 판정).
+  //   0/1 = 발칸 / 스프레드: fanned volley (differ only by loadout baseline).
   if (w.weaponType === WEAPON_TYPE_RAILGUN) {
     spawnBullet(
       state,
@@ -950,7 +989,66 @@ function autoAttack(state: WorldState, player: Entity): void {
     return;
   }
 
-  const n = w.bulletCount;
+  if (w.weaponType === WEAPON_TYPE_MISSILE) {
+    const n = w.bulletCount < 1 ? 1 : w.bulletCount;
+    const start = n > 1 ? baseAngle - w.spread / 2 : baseAngle;
+    const stepA = n > 1 ? w.spread / (n - 1) : 0;
+    for (let i = 0; i < n; i++) {
+      const ang = start + stepA * i;
+      const m = spawnBullet(
+        state,
+        player.x,
+        player.y,
+        ang,
+        w.bulletSpeed,
+        w.damage,
+        w.pierce,
+        w.bulletRadius,
+        w.bulletLife,
+        cos(ang),
+        sin(ang),
+      );
+      m.ownerId = MISSILE_MARK; // 유도 마커: stepProjectiles가 매 틱 제한 선회.
+    }
+    player.cooldown = fireCd;
+    return;
+  }
+
+  if (w.weaponType === WEAPON_TYPE_BEAM) {
+    const range = w.range > 0 ? w.range : BEAM_DEFAULT_RANGE;
+    let segs = Math.floor(range / BEAM_SEGMENT_SPACING);
+    if (segs < 1) segs = 1;
+    if (segs > BEAM_MAX_SEGMENTS) segs = BEAM_MAX_SEGMENTS;
+    const ca = cos(baseAngle);
+    const sa = sin(baseAngle);
+    for (let i = 1; i <= segs; i++) {
+      const dist = i * BEAM_SEGMENT_SPACING;
+      // Static segment (speed 0): a brief hit point along the beam line. High
+      // pierce so it damages every enemy overlapping it; short life re-laid each
+      // fire so a fast cadence reads as a continuous line.
+      spawnBullet(
+        state,
+        player.x + ca * dist,
+        player.y + sa * dist,
+        baseAngle,
+        0,
+        w.damage,
+        9999,
+        BEAM_SEGMENT_RADIUS,
+        BEAM_SEGMENT_LIFE,
+        ca,
+        sa,
+      );
+    }
+    player.cooldown = fireCd;
+    return;
+  }
+
+  // ⑦ 쌍둥이 항성: 부채꼴 발사체 2배 + 발당 피해 ×TWIN_STAR_DAMAGE_MULT. 미장착 시
+  //    n·dmg 그대로(거동 불변). 스프레드 대표 유니크지만 발칸에도 동일 적용된다.
+  const twinOn = hasUnique(mask, UQ_TWIN_STAR);
+  const n = twinOn ? w.bulletCount * 2 : w.bulletCount;
+  const dmg = twinOn ? w.damage * TWIN_STAR_DAMAGE_MULT : w.damage;
   const start = n > 1 ? baseAngle - w.spread / 2 : baseAngle;
   const stepA = n > 1 ? w.spread / (n - 1) : 0;
   for (let i = 0; i < n; i++) {
@@ -961,7 +1059,7 @@ function autoAttack(state: WorldState, player: Entity): void {
       player.y,
       ang,
       w.bulletSpeed,
-      w.damage,
+      dmg,
       w.pierce,
       w.bulletRadius,
       w.bulletLife,
@@ -1145,6 +1243,38 @@ function stepTurrets(state: WorldState, _player: Entity): void {
 // Projectiles, gems & supply raiders
 // ---------------------------------------------------------------------------
 
+/**
+ * Steer a homing missile (weaponType 3) toward the nearest hostile with a capped
+ * per-tick turn (MISSILE_TURN_RATE), preserving its speed. Nearest scan ignores
+ * walls (missiles curve around), uses only deterministic trig. No target → the
+ * missile flies straight (its current heading is unchanged).
+ */
+function homeMissile(state: WorldState, e: Entity): void {
+  const speed = length(e.vx, e.vy);
+  if (speed === 0) return;
+  let best: Entity | undefined;
+  let bestD = Infinity;
+  for (const t of state.entities) {
+    if (t.dead) continue;
+    if (t.kind !== 'enemy' && t.kind !== 'boss' && t.kind !== 'supply') continue;
+    const dx = t.x - e.x;
+    const dy = t.y - e.y;
+    const d = dx * dx + dy * dy;
+    if (d < bestD) {
+      bestD = d;
+      best = t;
+    }
+  }
+  if (best === undefined) return;
+  const desired = atan2(best.y - e.y, best.x - e.x);
+  let delta = wrapAngle(desired - e.angle);
+  if (delta > MISSILE_TURN_RATE) delta = MISSILE_TURN_RATE;
+  else if (delta < -MISSILE_TURN_RATE) delta = -MISSILE_TURN_RATE;
+  e.angle += delta;
+  e.vx = cos(e.angle) * speed;
+  e.vy = sin(e.angle) * speed;
+}
+
 function stepProjectiles(state: WorldState, player: Entity): void {
   // Infinite map: there is no arena edge to despawn against. A projectile dies
   // when its lifetime elapses OR it drifts beyond the player-relative cull
@@ -1157,6 +1287,8 @@ function stepProjectiles(state: WorldState, player: Entity): void {
   const enemyBulletMult = enemyBulletSpeedMult(state.anomaly);
   for (const e of state.entities) {
     if (e.kind !== 'bullet' && e.kind !== 'enemyBullet') continue;
+    // 유도 미사일(제한 선회, OQ-M3-4): 위치 적분 전에 최근접 적으로 각도를 소폭 튼다.
+    if (e.kind === 'bullet' && e.ownerId === MISSILE_MARK) homeMissile(state, e);
     const m = e.kind === 'enemyBullet' ? enemyBulletMult : 1;
     e.x += e.vx * DT * m;
     e.y += e.vy * DT * m;
@@ -1293,6 +1425,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   const overheatOn = hasUnique(uMask, UQ_OVERHEAT_DRUM);
   const splitOn = hasUnique(uMask, UQ_SPLIT_CORE);
   const gyroOn = hasUnique(uMask, UQ_PIERCE_GYRO);
+  // M3 통합 신규 훅: ⑤ 군집 벌통(미사일 격추 시 마이크로탄 방사), ⑥ 수렴 프리즘(빔이
+  // 관통한 적 수만큼 피해 증폭). 미장착 시 no-op. ⑤⑥⑦은 모두 주무기 슬롯이라 상호 배타.
+  const hiveOn = hasUnique(uMask, UQ_HIVE_SWARM);
+  const prismOn = hasUnique(uMask, UQ_CONVERGE_PRISM);
   // M3 원소 어픽스(상태이상, plan B4): 명중 시 적에게 화염(지속피해)·냉기(감속)·전격
   // (연쇄)을 건다. 미장착(값 0)이면 아래 분기는 no-op. enemy에만 적용(보스 재활용 필드
   // 충돌 방지).
@@ -1303,6 +1439,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   const elementalOn = fireDmg > 0 || coldSlow > 0 || lightning > 0;
   // 분열 파편은 그리드 순회 중 엔티티 배열을 건드리지 않도록 좌표만 모아 루프 뒤 스폰.
   const splitSpawns: { x: number; y: number; angle: number }[] = [];
+  // ⑤ 군집 벌통: 미사일 격추 위치를 모아 루프 뒤 방사 스폰(엔티티 배열 순회 중 안전).
+  const hiveSpawns: { x: number; y: number }[] = [];
   for (const b of state.entities) {
     if (b.kind !== 'bullet' || b.dead) continue;
     grid.query(b.x, b.y, b.radius, (t) => {
@@ -1314,9 +1452,17 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       const mult = t.kind === 'boss' && t.iframes > 0 ? 2 : 1;
       // ③ 관통 자이로: bullet.phase = 지금까지 관통한 횟수 → 관통당 피해 증폭.
       const gyroAmp = gyroOn ? 1 + b.phase * GYRO_DAMAGE_AMP : 1;
+      // ⑥ 수렴 프리즘: 빔 세그먼트가 관통한 적 수(phase)만큼 피해 증폭(자이로와 배타).
+      const prismAmp = prismOn ? 1 + b.phase * PRISM_DAMAGE_AMP : 1;
       // 보호막의 엘리트: 받는 피해 절반(그 외 1).
-      t.hp -= b.damage * mult * gyroAmp * eliteDamageTakenMult(t);
-      if (t.hp <= 0) t.dead = true;
+      t.hp -= b.damage * mult * gyroAmp * prismAmp * eliteDamageTakenMult(t);
+      if (t.hp <= 0) {
+        t.dead = true;
+        // ⑤ 군집 벌통: 미사일 원본(MISSILE_MARK)이 적/보스를 격추하면 마이크로탄 방사 예약.
+        if (hiveOn && b.ownerId === MISSILE_MARK && (t.kind === 'enemy' || t.kind === 'boss')) {
+          hiveSpawns.push({ x: t.x, y: t.y });
+        }
+      }
       // M3 원소 상태이상(plan B4): 적 명중 시 화염/냉기/전격 부여(장착 시에만).
       if (elementalOn && t.kind === 'enemy') {
         if (fireDmg > 0) applyBurn(t, fireDmg, FIRE_DURATION);
@@ -1331,9 +1477,15 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       if (splitOn && b.ownerId !== SPLIT_FRAGMENT_MARK) {
         splitSpawns.push({ x: b.x, y: b.y, angle: b.angle });
       }
-      // 관통 처리: 자이로는 무한 관통(수명으로만 소멸), 그 외는 기존 규칙.
+      // 관통 처리: 자이로는 무한 관통(수명으로만 소멸). 프리즘은 관통 카운트를 위해
+      // phase를 올리되 세그먼트의 기존 pierce 예산(9999)을 소비 → 짧은 수명으로 소멸.
+      // 그 외는 기존 규칙.
       if (gyroOn) {
         b.phase++;
+      } else if (prismOn) {
+        b.phase++;
+        if (b.pierce > 0) b.pierce--;
+        else b.dead = true;
       } else if (b.pierce > 0) {
         b.pierce--;
       } else {
@@ -1360,6 +1512,30 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         sin(ang),
       );
       frag.ownerId = SPLIT_FRAGMENT_MARK; // 재분열 방지 마커
+    }
+  }
+  // ⑤ 군집 벌통 마이크로 미사일 방사: 격추 위치에서 HIVE_MICRO_COUNT발을 균등 방사.
+  //    HIVE_MICRO_MARK를 달아 유도(MISSILE_MARK) 제외 + 재분열 트리거 제외 → 무한 연쇄 방지.
+  if (hiveSpawns.length > 0) {
+    const microDmg = state.weapon.damage * HIVE_MICRO_DAMAGE_FRAC;
+    for (const h of hiveSpawns) {
+      for (let i = 0; i < HIVE_MICRO_COUNT; i++) {
+        const ang = (TWO_PI * i) / HIVE_MICRO_COUNT;
+        const micro = spawnBullet(
+          state,
+          h.x,
+          h.y,
+          ang,
+          HIVE_MICRO_SPEED,
+          microDmg,
+          0,
+          HIVE_MICRO_RADIUS,
+          HIVE_MICRO_LIFE,
+          cos(ang),
+          sin(ang),
+        );
+        micro.ownerId = HIVE_MICRO_MARK;
+      }
     }
   }
 
@@ -1576,7 +1752,11 @@ function checkLevelUp(state: WorldState): void {
   if (state.xp < need) return;
   state.xp -= need;
   state.level++;
-  state.powerupChoices = drawPowerupChoices(state, 3);
+  // ⑬ 도박사의 칩: 파워업 선택지 +GAMBLER_EXTRA_CHOICES(로드아웃 고정 → 결정론적).
+  //    선택 입력 프레임은 2비트(0~3)라 4번째 선택지까지 와이어 호환(stepWorld).
+  const gambleOn = hasUnique(state.config.loadout?.uniqueMask ?? 0, UQ_GAMBLER_CHIP);
+  const choiceCount = gambleOn ? 3 + GAMBLER_EXTRA_CHOICES : 3;
+  state.powerupChoices = drawPowerupChoices(state, choiceCount);
   state.pendingLevelUp = true;
 }
 

@@ -19,6 +19,10 @@
 
 import { SAVE_VERSION, SLOT_KINDS, RARITY_BY_CODE } from '../items/types.js';
 import type { Item, EquipSlotId } from '../items/types.js';
+import { SKILLS, SKILL_NODE_COUNT } from '../../data/skills.js';
+
+/** Credit cost of one skill respec, per active-ship level (plan A3). */
+export const RESPEC_COST_PER_LEVEL = 100;
 
 /** Inventory capacity — 48 slots (6×8 grid, plan D1). */
 export const INVENTORY_CAP = 48;
@@ -76,6 +80,13 @@ export interface Profile {
   minerals: number;
   /** Banked skill points (M3 spends them; M2 only accrues, OQ-M2-7). */
   skillPoints: number;
+  /**
+   * Per-node skill investment (M3 plan A3). Length === SKILL_NODE_COUNT (60);
+   * `skillInvest[i]` is the points put into `SKILLS[i]` (0..node.maxPoints).
+   * Account-wide (research lab is a base building, not per-ship). Fed to
+   * `computeLoadoutStats(equipped, skillInvest)` at run start.
+   */
+  skillInvest: number[];
 }
 
 /** A minimal synchronous key/value store (localStorage-compatible subset). */
@@ -93,6 +104,11 @@ function defaultShip(): Ship {
   return { id: 'ship-0', name: '초기 전투기', level: 1, xp: 0, equipped: {} };
 }
 
+/** A zeroed skill-investment vector (length === SKILL_NODE_COUNT). */
+export function zeroSkillInvest(): number[] {
+  return new Array<number>(SKILL_NODE_COUNT).fill(0);
+}
+
 /** A fresh profile — one starter ship, empty everything. */
 export function defaultProfile(): Profile {
   return {
@@ -106,12 +122,61 @@ export function defaultProfile(): Profile {
     credits: 0,
     minerals: 0,
     skillPoints: 0,
+    skillInvest: zeroSkillInvest(),
   };
 }
 
 /** The active ship (falls back to the first, then a fresh default). */
 export function activeShip(profile: Profile): Ship {
   return profile.ships[profile.activeShipIndex] ?? profile.ships[0] ?? defaultShip();
+}
+
+// ---------------------------------------------------------------------------
+// Skill investment + respec (M3 plan A3)
+// ---------------------------------------------------------------------------
+
+/** Total points currently invested across all skill nodes. */
+export function totalInvested(profile: Profile): number {
+  let n = 0;
+  for (const v of profile.skillInvest) n += v;
+  return n;
+}
+
+/**
+ * Spend one banked skill point into node `index`. No-ops (returns false) when the
+ * index is out of range, the node is already maxed, or no points are banked.
+ */
+export function investSkill(profile: Profile, index: number): boolean {
+  const node = SKILLS[index];
+  if (node === undefined) return false;
+  if (profile.skillPoints <= 0) return false;
+  const cur = profile.skillInvest[index] ?? 0;
+  if (cur >= node.maxPoints) return false;
+  profile.skillInvest[index] = cur + 1;
+  profile.skillPoints -= 1;
+  return true;
+}
+
+/** Credit cost to respec the tree, scaled by the active ship's level (plan A3). */
+export function respecCost(profile: Profile): number {
+  return activeShip(profile).level * RESPEC_COST_PER_LEVEL;
+}
+
+/**
+ * Refund every invested point back to the banked pool and zero the tree, charging
+ * `respecCost` credits. No-ops (returns false) when nothing is invested or the
+ * player cannot afford the cost. Skill points are conserved (refunded == spent),
+ * so a respec never creates or destroys progression.
+ */
+export function respecSkills(profile: Profile): boolean {
+  const invested = totalInvested(profile);
+  if (invested === 0) return false;
+  const cost = respecCost(profile);
+  if (profile.credits < cost) return false;
+  profile.credits -= cost;
+  profile.skillPoints += invested;
+  profile.skillInvest = zeroSkillInvest();
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +237,7 @@ export function migrate(raw: unknown): Profile {
   let data = raw as Record<string, unknown>;
   const version = typeof data.saveVersion === 'number' ? data.saveVersion : 0;
   if (version < 1) data = migrateV0toV1(data);
+  if (version < 2) data = migrateV1toV2(data);
   return normalizeProfile(data);
 }
 
@@ -193,6 +259,31 @@ function migrateV0toV1(v0: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
+/**
+ * v1 → v2: the M3 schema adds the account-wide `skillInvest` vector. A v1 blob
+ * simply lacks it; {@link normalizeProfile} fills a zeroed vector, so this step
+ * only bumps the stamp. Banked `skillPoints` from v1 carry over untouched.
+ */
+function migrateV1toV2(v1: Record<string, unknown>): Record<string, unknown> {
+  return { ...v1, saveVersion: 2 };
+}
+
+/**
+ * Normalize a stored skill vector to exactly SKILL_NODE_COUNT entries, each an
+ * integer clamped to its node's [0, maxPoints]. Missing/extra/corrupt entries
+ * recover to 0 so a partial save never over-invests.
+ */
+function normalizeSkillInvest(v: unknown): number[] {
+  const out = zeroSkillInvest();
+  if (!Array.isArray(v)) return out;
+  for (let i = 0; i < SKILL_NODE_COUNT; i++) {
+    const node = SKILLS[i];
+    const max = node?.maxPoints ?? 0;
+    out[i] = clampInt(v[i], 0, max, 0);
+  }
+  return out;
+}
+
 function normalizeProfile(d: Record<string, unknown>): Profile {
   const base = defaultProfile();
   const ships = Array.isArray(d.ships)
@@ -210,6 +301,7 @@ function normalizeProfile(d: Record<string, unknown>): Profile {
     credits: numOr(d.credits, 0),
     minerals: numOr(d.minerals, 0),
     skillPoints: numOr(d.skillPoints, 0),
+    skillInvest: normalizeSkillInvest(d.skillInvest),
   };
 }
 

@@ -20,6 +20,8 @@ import {
 import { rollItem } from '../src/items/roll.js';
 import { xpToNext } from '../src/sim/world.js';
 import type { LootRecord } from '../src/sim/world.js';
+import { SAVE_VERSION } from '../src/items/types.js';
+import { SKILL_NODE_COUNT } from '../data/skills.js';
 
 /** In-memory KeyValueStore so tests run under the `node` vitest environment. */
 function memStore(seed?: Record<string, string>): KeyValueStore {
@@ -106,11 +108,15 @@ describe('profile — migration v0 → v1 (AC5)', () => {
       gold: 250,
     };
     const p = migrate(v0);
-    expect(p.saveVersion).toBe(1);
+    // The migration chain (v0→v1→v2) normalizes to the current schema version.
+    expect(p.saveVersion).toBe(SAVE_VERSION);
     expect(p.ships).toHaveLength(1);
     expect(p.ships[0]?.level).toBe(5);
     expect(p.credits).toBe(250);
     expect(activeShip(p).name).toBe('초기 전투기');
+    // v2 fills a zeroed skill vector for a pre-M3 blob.
+    expect(p.skillInvest).toHaveLength(SKILL_NODE_COUNT);
+    expect(p.skillInvest.every((v) => v === 0)).toBe(true);
   });
 });
 

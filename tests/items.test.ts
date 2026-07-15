@@ -48,7 +48,7 @@ describe('rollItem — pure item roller (AC1)', () => {
       expect(SLOT_KINDS).toContain(item.slot);
       if (item.slot === 'main') {
         expect(item.weaponType).toBeGreaterThanOrEqual(0);
-        expect(item.weaponType).toBeLessThanOrEqual(2);
+        expect(item.weaponType).toBeLessThanOrEqual(4); // M3 C1: 5 main-weapon types
       } else if (item.slot === 'sub') {
         expect(item.weaponType).toBeGreaterThanOrEqual(0);
         expect(item.weaponType).toBeLessThanOrEqual(1);
