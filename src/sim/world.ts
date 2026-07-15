@@ -208,6 +208,12 @@ export interface WorldState {
   gameOver: boolean;
   /** Boss defeated — run cleared. */
   victory: boolean;
+  /**
+   * Reused broad-phase collision grid (cleared and refilled each tick instead of
+   * reallocated). NOT part of the state hash — it is scratch space rebuilt from
+   * scratch every tick, so it never influences determinism.
+   */
+  grid: SpatialHash<Entity>;
 }
 
 /**
@@ -260,6 +266,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     bossSpawned: false,
     gameOver: false,
     victory: false,
+    grid: new SpatialHash<Entity>(cfg.arenaWidth, cfg.arenaHeight, 128),
   };
 }
 
@@ -284,10 +291,15 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   if (state.pendingLevelUp) {
     if ((input.special & SPECIAL_POWERUP_PICK) !== 0) {
       const idxOffered = (input.special >> 1) & 0x3;
-      const poolIndex = state.powerupChoices[idxOffered];
-      if (poolIndex !== undefined) applyPowerup(state, poolIndex);
-      state.pendingLevelUp = false;
-      state.powerupChoices = [];
+      // Ignore an out-of-range offer index (fewer than 4 choices were offered):
+      // keep the level-up pending rather than silently consuming it with no
+      // powerup applied, so a malformed frame cannot skip a build choice.
+      if (idxOffered < state.powerupChoices.length) {
+        const poolIndex = state.powerupChoices[idxOffered];
+        if (poolIndex !== undefined) applyPowerup(state, poolIndex);
+        state.pendingLevelUp = false;
+        state.powerupChoices = [];
+      }
     }
     state.tick++;
     return;
@@ -535,7 +547,10 @@ function hazardActive(h: Entity): boolean {
 // ---------------------------------------------------------------------------
 
 function resolveCollisions(state: WorldState, player: Entity): void {
-  const grid = new SpatialHash<Entity>(state.config.arenaWidth, state.config.arenaHeight, 128);
+  // Reuse the per-world grid (cleared, not reallocated) — pure perf, no effect on
+  // determinism since the grid is rebuilt from the entity array every tick.
+  const grid = state.grid;
+  grid.clear();
   // Insert everything the player or friendly bullets can interact with.
   for (const e of state.entities) {
     if (
