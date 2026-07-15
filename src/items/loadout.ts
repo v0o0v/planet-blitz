@@ -14,6 +14,8 @@
 import type { Item, StatKey } from './types.js';
 import type { LoadoutConfig } from '../sim/world.js';
 import { UNIQUE_REGISTRY } from './uniques.js';
+// side-effect: M2 유니크 5점을 레지스트리에 등록(장착 유니크의 bit → uniqueMask).
+import '../../data/uniques.js';
 
 /** Main-weapon types (shared numeric codes with the sim's autoAttack branch). */
 export const WEAPON_VULCAN = 0;
