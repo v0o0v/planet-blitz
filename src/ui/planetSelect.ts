@@ -40,7 +40,6 @@ const STYLE = `
 #pb-planet .pb-orb { width:88px; height:88px; margin:0 auto 12px; border-radius:50%; box-shadow:0 0 30px 4px rgba(0,0,0,.5) inset, 0 0 22px 2px currentColor; }
 #pb-planet .pb-planet-name { color:#fff; font-size:20px; font-weight:800; }
 #pb-planet .pb-planet-sub { color:#aab6d6; font-size:13px; margin-top:6px; }
-#pb-planet .pb-wip { display:inline-block; margin-top:8px; font-size:11px; color:#ffcc66; border:1px solid #6a5a2a; border-radius:8px; padding:2px 8px; }
 #pb-planet .pb-row { display:flex; gap:10px; align-items:center; }
 #pb-planet .pb-seg { display:flex; gap:8px; }
 #pb-planet .pb-seg button { pointer-events:auto; cursor:pointer; padding:8px 18px; font-size:14px; font-weight:700; color:#aab6d6; background:rgba(12,16,30,.7); border:1px solid #2a3552; border-radius:10px; transition:all .1s ease; }
@@ -137,12 +136,6 @@ export class PlanetSelect {
       card.appendChild(orb);
       card.appendChild(name);
       card.appendChild(psub);
-      if (!p.contentReady) {
-        const wip = document.createElement('div');
-        wip.className = 'pb-wip';
-        wip.textContent = '콘텐츠 준비 중 (카르곤 로스터로 진행)';
-        card.appendChild(wip);
-      }
       card.addEventListener('click', () => {
         this.planet = p.id;
         this.render(meta);
