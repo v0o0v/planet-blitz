@@ -38,3 +38,6 @@ Thumbs.db
 # Temp
 tmp/
 temp/
+
+# OMC harness session state
+.omc/state/
