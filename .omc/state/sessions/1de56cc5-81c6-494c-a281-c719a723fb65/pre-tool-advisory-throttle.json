@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "entries": {
+    "79a93d4a2f8f50b95f852280616242fee1855dc99a3c75211917f55e72e95fae": {
+      "last_emitted_at_ms": 1784105474788,
+      "message": "Use parallel execution for independent tasks. Use run_in_background for long operations (npm install, builds, tests)."
+    },
+    "445ed27a3872b681d98190bae61ccb84954e1bc4e140df5370be958dee776b3a": {
+      "last_emitted_at_ms": 1784105403818,
+      "message": "Verify changes work after editing. Test functionality before marking complete."
+    },
+    "3eb8e73e380f0f5b4d937284533ac8b1dd66bc1cb09de45a0442d182a3a3cd20": {
+      "last_emitted_at_ms": 1784105027963,
+      "message": "Spawning agent: oh-my-claudecode:executor (opus) | Task: M1 Phase 0+1 스캐폴드+결정론 코어"
+    },
+    "459c54e5f35d6a58dcd90d2aecc21fa6d1f35d241bc5b134c506f87dc7b6d67b": {
+      "last_emitted_at_ms": 1784104969562,
+      "message": "Combine searches in parallel when investigating multiple patterns."
+    },
+    "1bb6914bc42b891c26d46c8ae2fd4f44071f59862e89dc550f4c82877b700216": {
+      "last_emitted_at_ms": 1784104908171,
+      "message": "The boulder never stops. Continue until all tasks complete."
+    },
+    "466399dafa2d20f60587180bad0a07358eb7f2bce724df0ff682f038ad33f5ad": {
+      "last_emitted_at_ms": 1784104897584,
+      "message": "Read multiple files in parallel when possible for faster analysis."
+    }
+  },
+  "updated_at": "2026-07-15T08:51:14.788Z"
+}
