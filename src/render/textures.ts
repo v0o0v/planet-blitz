@@ -35,6 +35,17 @@ export interface PlaceholderTextures {
   explosion: Texture;
   /** Tileable volcanic arena backdrop. */
   background: Texture;
+  // --- Scroll-map gimmicks (plan Phase E/F) ---
+  /** Cover wall — a unit square stretched to the AABB by the renderer. */
+  wall: Texture;
+  /** Destructible object (drops a gem when broken). */
+  destructible: Texture;
+  /** Magnet emitter event object. */
+  magnetEmitter: Texture;
+  /** Bomb device event object. */
+  bombDevice: Texture;
+  /** Turret pickup event object. */
+  turretPickup: Texture;
 }
 
 /** Per-role colour + base radius (matches data/enemies typeIndex order). */
@@ -176,6 +187,54 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
     .stroke({ color: 0xffcc44, width: 3, alignment: 0 });
   supplyG.rect(-60, -24, 120, 48).fill({ color: 0x4a5a80 });
 
+  // Cover wall: a 64x64 basalt tile with a lighter rim. Drawn as a unit square
+  // (the renderer stretches it to each wall's exact AABB), so a border reads on
+  // any size. Solid, opaque — visually distinct from the darker backdrop.
+  const wallG = new Graphics();
+  wallG
+    .rect(-32, -32, 64, 64)
+    .fill({ color: 0x565b6e })
+    .stroke({ color: 0x9aa2bd, width: 4, alignment: 0 });
+
+  // Destructible: an amber crate with a cross brace (reads as "shootable").
+  const destructibleG = new Graphics();
+  destructibleG
+    .rect(-40, -40, 80, 80)
+    .fill({ color: 0x8a5a1e })
+    .stroke({ color: 0xffcc55, width: 4, alignment: 0 });
+  destructibleG.moveTo(-40, -40).lineTo(40, 40).moveTo(40, -40).lineTo(-40, 40).stroke({
+    color: 0xffcc55,
+    width: 3,
+  });
+
+  // Magnet emitter: cyan concentric rings (evokes an attraction field).
+  const magnetG = new Graphics();
+  magnetG.circle(0, 0, 40).stroke({ color: 0x39d0ff, width: 5, alignment: 0 });
+  magnetG.circle(0, 0, 24).stroke({ color: 0x8ae7ff, width: 4, alignment: 0 });
+  magnetG.circle(0, 0, 8).fill({ color: 0x39d0ff });
+
+  // Bomb device: red core with a spiked warning ring.
+  const bombG = new Graphics();
+  bombG.circle(0, 0, 40).fill({ color: 0x2a0e0e }).stroke({ color: 0xff3322, width: 5, alignment: 0 });
+  for (let i = 0; i < 8; i++) {
+    const a = (i * Math.PI) / 4;
+    bombG.moveTo(Math.cos(a) * 40, Math.sin(a) * 40).lineTo(Math.cos(a) * 54, Math.sin(a) * 54);
+  }
+  bombG.stroke({ color: 0xffb020, width: 4 });
+  bombG.circle(0, 0, 14).fill({ color: 0xff5522 });
+
+  // Turret pickup: green hex with a barrel nub (reads as a deployable ally).
+  const turretG = new Graphics();
+  for (let i = 0; i < 6; i++) {
+    const a = (i * Math.PI) / 3;
+    const x = Math.cos(a) * 38;
+    const y = Math.sin(a) * 38;
+    if (i === 0) turretG.moveTo(x, y);
+    else turretG.lineTo(x, y);
+  }
+  turretG.closePath().fill({ color: 0x1f7a4a }).stroke({ color: 0x66ffaa, width: 4, alignment: 0 });
+  turretG.rect(-6, -46, 12, 20).fill({ color: 0x66ffaa });
+
   const textures: PlaceholderTextures = {
     player: renderer.generateTexture(playerG),
     bullet: renderer.generateTexture(bulletG),
@@ -186,6 +245,11 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
     supply: renderer.generateTexture(supplyG),
     explosion: explosionTexture(renderer),
     background: backgroundTexture(renderer),
+    wall: renderer.generateTexture(wallG),
+    destructible: renderer.generateTexture(destructibleG),
+    magnetEmitter: renderer.generateTexture(magnetG),
+    bombDevice: renderer.generateTexture(bombG),
+    turretPickup: renderer.generateTexture(turretG),
   };
 
   playerG.destroy();
@@ -194,6 +258,11 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
   gemG.destroy();
   bossG.destroy();
   supplyG.destroy();
+  wallG.destroy();
+  destructibleG.destroy();
+  magnetG.destroy();
+  bombG.destroy();
+  turretG.destroy();
 
   return textures;
 }

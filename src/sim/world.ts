@@ -21,7 +21,16 @@ import { SeededRng } from './rng.js';
 import { cos, sin, atan2, length } from './math.js';
 import { DT, VIEW_WIDTH, VIEW_HEIGHT, OFFSCREEN_X } from './constants.js';
 import type { Entity } from './entities.js';
-import { blankEntity, spawnBullet, spawnGem, spawnSupply, spawnBoss } from './entities.js';
+import {
+  blankEntity,
+  spawnBullet,
+  spawnGem,
+  spawnSupply,
+  spawnBoss,
+  spawnWall,
+  spawnDestructible,
+  spawnEventObject,
+} from './entities.js';
 import { SpatialHash, circlesOverlap } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
 import { updateBoss } from './boss.js';
@@ -29,6 +38,27 @@ import { drawPowerupChoices, applyPowerup } from './powerups.js';
 import type { WaveRuntime } from './waves.js';
 import { createWaveRuntime, updateWaves, enemyDefFor } from './waves.js';
 import { LAVA_FORTRESS } from '../../data/boss.js';
+import {
+  CHUNK_SIZE,
+  CHUNK_GEN_RADIUS,
+  CHUNK_CULL_RADIUS,
+  MAX_ACTIVE_GIMMICKS,
+  chunkPlacements,
+} from './chunks.js';
+import { circleOverlapsWall, slideCircleWalls, segmentBlocked } from './los.js';
+import {
+  triggerMagnetEmitter,
+  triggerBombDevice,
+  activateTurret,
+  isActiveTurret,
+  MAGNET_BUFF_MULT,
+  TURRET_FIRE_COOLDOWN,
+  TURRET_RANGE,
+  TURRET_BULLET_SPEED,
+  TURRET_BULLET_DAMAGE,
+  TURRET_BULLET_RADIUS,
+  TURRET_BULLET_LIFE,
+} from './events.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -184,6 +214,12 @@ export interface WorldState {
   powerupRng: SeededRng;
   /** Supply-raider placement stream. */
   supplyRng: SeededRng;
+  /**
+   * Chunk-placement stream (rng.fork('world')). NEVER advanced — chunk RNGs are
+   * forked from it by coordinate, so its state is constant across a run. Folded
+   * into the hash for symmetry with the other streams.
+   */
+  worldRng: SeededRng;
   weapon: WeaponStats;
   wave: WaveRuntime;
   entities: Entity[];
@@ -210,6 +246,11 @@ export interface WorldState {
   maxCombo: number;
   /** Gem magnet radius (grown by the gem-magnet powerup). */
   magnetRadius: number;
+  /**
+   * Ticks remaining on a magnet-emitter buff (multiplies the effective magnet
+   * radius while > 0). Folded into the hash (deterministic gimmick state).
+   */
+  magnetBuffTicks: number;
   /** Supply-raid reward currency (M1 placeholder). */
   resources: number;
   /** World frozen awaiting a powerup pick (sim tick stall, not a pause). */
@@ -230,6 +271,21 @@ export interface WorldState {
    * scratch every tick, so it never influences determinism.
    */
   grid: SpatialHash<Entity>;
+  /**
+   * Which chunk coordinates have already had their gimmicks generated, keyed by
+   * a folded integer chunk key. SCRATCH (like `grid`) — excluded from the hash
+   * (its Map iteration order is not a determinism input). The generated gimmick
+   * ENTITIES are hashed instead, which is sufficient. A culled chunk is removed
+   * so re-entry regenerates it identically (pure placement, OQ1 default (a)).
+   */
+  generatedChunks: Map<number, true>;
+  /**
+   * Active cover walls, rebuilt every tick in entity-array order (same
+   * determinism discipline as the grid). Walls are NOT inserted into the spatial
+   * hash — they can exceed a cell, so movement/bullet/LOS checks iterate this
+   * array directly. Scratch — not hashed (the wall entities themselves are).
+   */
+  activeWalls: Entity[];
 }
 
 /**
@@ -262,6 +318,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     waveRng: rng.fork('waves'),
     powerupRng: rng.fork('powerups'),
     supplyRng: rng.fork('supply'),
+    worldRng: rng.fork('world'),
     weapon: { ...DEFAULT_WEAPON },
     wave: createWaveRuntime(),
     entities,
@@ -278,6 +335,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     comboTimer: 0,
     maxCombo: 0,
     magnetRadius: BASE_MAGNET_RADIUS,
+    magnetBuffTicks: 0,
     resources: 0,
     pendingLevelUp: false,
     powerupChoices: [],
@@ -286,6 +344,8 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     gameOver: false,
     victory: false,
     grid: new SpatialHash<Entity>(128),
+    generatedChunks: new Map<number, true>(),
+    activeWalls: [],
   };
 }
 
@@ -326,11 +386,17 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
 
   const player = getPlayer(state);
 
+  // Materialise/cull scroll-map gimmicks around the player, then rebuild the
+  // active-wall list (both before movement so walls obstruct this tick).
+  activateChunks(state, player);
+  rebuildActiveWalls(state);
+
   stepPlayer(state, player, input);
   updateWaves(state, player);
   stepEnemies(state, player);
   stepBoss(state, player);
   autoAttack(state, player);
+  stepTurrets(state, player);
   stepProjectiles(state, player);
   stepGems(state, player);
   stepSupply(state, player);
@@ -342,6 +408,147 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   checkGameOver(state, player);
 
   state.tick++;
+}
+
+// ---------------------------------------------------------------------------
+// Scroll-map chunks (deterministic procedural gimmicks)
+// ---------------------------------------------------------------------------
+
+/** True for any chunk-placed gimmick entity (terrain hazards are gimmicks only
+ *  when permanent — life < 0 — so enemy mortar/lava hazards are never culled). */
+function isGimmick(e: Entity): boolean {
+  return (
+    e.kind === 'wall' ||
+    e.kind === 'destructible' ||
+    e.kind === 'magnetEmitter' ||
+    e.kind === 'bombDevice' ||
+    e.kind === 'turretPickup' ||
+    (e.kind === 'hazard' && e.life < 0)
+  );
+}
+
+/** Fold a signed chunk coordinate pair into a unique non-negative integer key
+ *  (Szudzik fold per axis, then large-prime mix — matches collision.ts style). */
+function chunkKey(cx: number, cy: number): number {
+  const a = cx >= 0 ? 2 * cx : -2 * cx - 1;
+  const b = cy >= 0 ? 2 * cy : -2 * cy - 1;
+  return ((a * 73856093) ^ (b * 19349663)) >>> 0;
+}
+
+/**
+ * Generate not-yet-visited chunks within the generation radius and cull gimmicks
+ * (and their chunk markers) beyond the cull radius. Deterministic:
+ *  - generation scans a fixed (cy outer, cx inner) box and draws from the pure
+ *    per-coordinate chunk RNG, so arrival order never changes a chunk's layout;
+ *  - the active-gimmick cap defers far chunks in scan order when reached;
+ *  - culling marks entities dead (order-independent) and prunes markers so a
+ *    revisited chunk regenerates identically.
+ */
+function activateChunks(state: WorldState, player: Entity): void {
+  const pcx = Math.floor(player.x / CHUNK_SIZE);
+  const pcy = Math.floor(player.y / CHUNK_SIZE);
+
+  // Count currently-live gimmicks to honour the active-region cap.
+  let activeGimmicks = 0;
+  for (const e of state.entities) if (isGimmick(e)) activeGimmicks++;
+
+  const genR2 = CHUNK_GEN_RADIUS * CHUNK_GEN_RADIUS;
+  const genChunkR = Math.ceil(CHUNK_GEN_RADIUS / CHUNK_SIZE) + 1;
+  for (let cy = pcy - genChunkR; cy <= pcy + genChunkR; cy++) {
+    for (let cx = pcx - genChunkR; cx <= pcx + genChunkR; cx++) {
+      const key = chunkKey(cx, cy);
+      if (state.generatedChunks.has(key)) continue;
+      // Generate once the chunk centre is within the generation radius.
+      const ccx = (cx + 0.5) * CHUNK_SIZE;
+      const ccy = (cy + 0.5) * CHUNK_SIZE;
+      const dx = ccx - player.x;
+      const dy = ccy - player.y;
+      if (dx * dx + dy * dy > genR2) continue;
+      if (activeGimmicks >= MAX_ACTIVE_GIMMICKS) continue; // defer (retry next tick)
+      const placements = chunkPlacements(state.worldRng, cx, cy);
+      for (const g of placements) {
+        if (activeGimmicks >= MAX_ACTIVE_GIMMICKS) break;
+        spawnPlacement(state, g);
+        activeGimmicks++;
+      }
+      state.generatedChunks.set(key, true);
+    }
+  }
+
+  // Cull gimmicks whose chunk centre has drifted beyond the cull radius. Using
+  // the chunk CENTRE (not the gimmick position) means every gimmick in a chunk
+  // culls together on the same tick — no partial-chunk regeneration.
+  const cullR2 = CHUNK_CULL_RADIUS * CHUNK_CULL_RADIUS;
+  for (const e of state.entities) {
+    if (!isGimmick(e)) continue;
+    const cx = Math.floor(e.x / CHUNK_SIZE);
+    const cy = Math.floor(e.y / CHUNK_SIZE);
+    const ccx = (cx + 0.5) * CHUNK_SIZE;
+    const ccy = (cy + 0.5) * CHUNK_SIZE;
+    const dx = ccx - player.x;
+    const dy = ccy - player.y;
+    if (dx * dx + dy * dy > cullR2) e.dead = true;
+  }
+  // Prune chunk markers (including empty chunks) beyond the cull radius so the
+  // map stays bounded and revisits regenerate. Fixed box scan (no Map iteration).
+  const cullChunkR = Math.ceil(CHUNK_CULL_RADIUS / CHUNK_SIZE) + 1;
+  for (let cy = pcy - cullChunkR; cy <= pcy + cullChunkR; cy++) {
+    for (let cx = pcx - cullChunkR; cx <= pcx + cullChunkR; cx++) {
+      const ccx = (cx + 0.5) * CHUNK_SIZE;
+      const ccy = (cy + 0.5) * CHUNK_SIZE;
+      const dx = ccx - player.x;
+      const dy = ccy - player.y;
+      if (dx * dx + dy * dy > cullR2) state.generatedChunks.delete(chunkKey(cx, cy));
+    }
+  }
+}
+
+/** Turn one placement descriptor into its entity. */
+function spawnPlacement(state: WorldState, g: ReturnType<typeof chunkPlacements>[number]): void {
+  switch (g.kind) {
+    case 'wall':
+      spawnWall(state, g.x, g.y, g.radius, g.halfH);
+      break;
+    case 'destructible':
+      spawnDestructible(state, g.x, g.y, g.radius, g.hp, g.value);
+      break;
+    case 'hazard': {
+      // Permanent terrain hazard: no telegraph (timer 0), never expires
+      // (life = -1). stepHazards keeps life < 0 alive; hazardActive treats it as
+      // continuously damaging.
+      const h = blankEntity('hazard');
+      h.enemyType = g.sub;
+      h.x = g.x;
+      h.y = g.y;
+      h.radius = g.radius;
+      h.timer = 0;
+      h.life = -1;
+      h.damage = g.value;
+      h.phase = 1; // continuous damage
+      addEntityTo(state, h);
+      break;
+    }
+    case 'magnetEmitter':
+    case 'bombDevice':
+    case 'turretPickup':
+      spawnEventObject(state, g.kind, g.x, g.y, g.radius);
+      break;
+  }
+}
+
+/** Append an entity, assigning the next id (mirrors entities.addEntity). */
+function addEntityTo(state: WorldState, e: Entity): void {
+  e.id = state.nextEntityId++;
+  state.entities.push(e);
+}
+
+/** Rebuild the active-wall list in entity-array order (deterministic). */
+function rebuildActiveWalls(state: WorldState): void {
+  const walls = state.activeWalls;
+  walls.length = 0;
+  for (const e of state.entities) {
+    if (e.kind === 'wall' && !e.dead) walls.push(e);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -379,8 +586,14 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
 
   player.x += player.vx * DT;
   player.y += player.vy * DT;
-  // Infinite map: no arena clamp — the player may travel in any direction
-  // without bound. Movement obstruction is now the job of gimmick walls (Phase F).
+  // Infinite map: no arena clamp. Movement obstruction is the job of gimmick
+  // walls — slide out of any overlapped wall (dash included; the max dash step
+  // ~59u/tick is far below a wall's minimum full width 120u, so no tunnelling).
+  if (state.activeWalls.length > 0) {
+    const slid = slideCircleWalls(player.x, player.y, player.radius, state.activeWalls);
+    player.x = slid.x;
+    player.y = slid.y;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -457,23 +670,96 @@ function autoAttack(state: WorldState, player: Entity): void {
   player.cooldown = w.fireCooldown;
 }
 
-/** Nearest hostile the vulcan can target: any enemy, boss, or supply raider. */
+/** Max candidates LOS-tested per aim (nearest few); bounds the wall raycast cost. */
+const LOS_MAX_CANDIDATES = 6;
+
+/**
+ * Nearest hostile the vulcan can target: any enemy, boss, or supply raider.
+ *
+ * LOS (plan F1c): a candidate hidden behind a wall is skipped and the NEXT
+ * nearest visible candidate is chosen ("filter blocked, then nearest" — not
+ * "nearest, else none"). When there are no active walls this collapses to the
+ * plain nearest scan (no allocation, identical to the pre-gimmick behaviour).
+ */
 function nearestTarget(state: WorldState, from: Entity, range: number): Entity | undefined {
   const maxD2 = range > 0 ? range * range : Infinity;
-  let best: Entity | undefined;
-  let bestD = maxD2;
+
+  // Fast path: no walls → nearest candidate, nothing to occlude.
+  if (state.activeWalls.length === 0) {
+    let best: Entity | undefined;
+    let bestD = maxD2;
+    for (const e of state.entities) {
+      if (e.dead) continue;
+      if (e.kind !== 'enemy' && e.kind !== 'boss' && e.kind !== 'supply') continue;
+      const dx = e.x - from.x;
+      const dy = e.y - from.y;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  // Collect in-range candidates, sort by distance (tie-break: entityId ascending
+  // so the order never depends on the platform's sort stability), then return
+  // the first whose sightline to the player is unobstructed. Only the nearest
+  // LOS_MAX_CANDIDATES are ray-tested to bound cost.
+  const cands: { e: Entity; d: number }[] = [];
   for (const e of state.entities) {
     if (e.dead) continue;
     if (e.kind !== 'enemy' && e.kind !== 'boss' && e.kind !== 'supply') continue;
     const dx = e.x - from.x;
     const dy = e.y - from.y;
     const d = dx * dx + dy * dy;
-    if (d < bestD) {
-      bestD = d;
-      best = e;
-    }
+    if (d < maxD2) cands.push({ e, d });
   }
-  return best;
+  cands.sort((a, b) => (a.d !== b.d ? a.d - b.d : a.e.id - b.e.id));
+  const k = cands.length < LOS_MAX_CANDIDATES ? cands.length : LOS_MAX_CANDIDATES;
+  for (let i = 0; i < k; i++) {
+    const c = cands[i];
+    if (c === undefined) continue;
+    if (!segmentBlocked(from.x, from.y, c.e.x, c.e.y, state.activeWalls)) return c.e;
+  }
+  return undefined;
+}
+
+/**
+ * Advance any active turret pickups (plan F4c): each fires a friendly bullet at
+ * its nearest LOS target on its cadence, reusing the vulcan targeting/bullet
+ * path, until its lifetime elapses. Deterministic (position/timer only).
+ */
+function stepTurrets(state: WorldState, _player: Entity): void {
+  for (const t of state.entities) {
+    if (!isActiveTurret(t) || t.dead) continue;
+    if (t.life > 0) t.life--;
+    if (t.life === 0) {
+      t.dead = true;
+      continue;
+    }
+    if (t.cooldown > 0) {
+      t.cooldown--;
+      continue;
+    }
+    const target = nearestTarget(state, t, TURRET_RANGE);
+    if (target === undefined) continue;
+    const ang = atan2(target.y - t.y, target.x - t.x);
+    spawnBullet(
+      state,
+      t.x,
+      t.y,
+      ang,
+      TURRET_BULLET_SPEED,
+      TURRET_BULLET_DAMAGE,
+      0,
+      TURRET_BULLET_RADIUS,
+      TURRET_BULLET_LIFE,
+      cos(ang),
+      sin(ang),
+    );
+    t.cooldown = TURRET_FIRE_COOLDOWN;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -486,6 +772,7 @@ function stepProjectiles(state: WorldState, player: Entity): void {
   // radius. Both conditions are checked so a bullet can never accumulate
   // forever off-screen (see tests/projectiles.test.ts).
   const cullR2 = PROJECTILE_CULL_RADIUS * PROJECTILE_CULL_RADIUS;
+  const walls = state.activeWalls;
   for (const e of state.entities) {
     if (e.kind !== 'bullet' && e.kind !== 'enemyBullet') continue;
     e.x += e.vx * DT;
@@ -495,13 +782,24 @@ function stepProjectiles(state: WorldState, player: Entity): void {
     const dy = e.y - player.y;
     if (e.life === 0 || dx * dx + dy * dy > cullR2) {
       e.dead = true;
+      continue;
+    }
+    // Both factions' bullets are stopped by walls (activeWalls direct sweep —
+    // walls are never in the spatial hash). First overlap kills the bullet.
+    for (const w of walls) {
+      if (circleOverlapsWall(e.x, e.y, e.radius, w)) {
+        e.dead = true;
+        break;
+      }
     }
   }
 }
 
 /** Gems drift toward the player once inside the magnet radius (deterministic). */
 function stepGems(state: WorldState, player: Entity): void {
-  const r = state.magnetRadius;
+  if (state.magnetBuffTicks > 0) state.magnetBuffTicks--;
+  // Magnet-emitter buff multiplies the (powerup-grown) base radius transiently.
+  const r = state.magnetBuffTicks > 0 ? state.magnetRadius * MAGNET_BUFF_MULT : state.magnetRadius;
   const r2 = r * r;
   for (const e of state.entities) {
     if (e.kind !== 'gem') continue;
@@ -557,14 +855,19 @@ function stepHazards(state: WorldState): void {
     } else if (e.life > 0) {
       e.life--; // active window ticking down
       if (e.life === 0) e.dead = true;
+    } else if (e.life < 0) {
+      // Permanent terrain hazard (chunk-placed, plan F2): never expires. Its
+      // lifetime is bounded only by chunk culling, not by this timer.
     } else {
-      e.dead = true;
+      e.dead = true; // life === 0: expired
     }
   }
 }
 
 function hazardActive(h: Entity): boolean {
-  return h.timer <= 0 && h.life > 0;
+  // Damaging once its telegraph (if any) is done and it has not expired. life<0
+  // marks a permanent terrain hazard (always active); life>0 a timed window.
+  return h.timer <= 0 && h.life !== 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -576,7 +879,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   // determinism since the grid is rebuilt from the entity array every tick.
   const grid = state.grid;
   grid.clear();
-  // Insert everything the player or friendly bullets can interact with.
+  // Insert everything the player or friendly bullets can interact with. Walls
+  // are intentionally excluded (they can exceed a cell — handled via activeWalls).
   for (const e of state.entities) {
     if (
       e.kind === 'enemy' ||
@@ -584,18 +888,23 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       e.kind === 'hazard' ||
       e.kind === 'gem' ||
       e.kind === 'supply' ||
-      e.kind === 'boss'
+      e.kind === 'boss' ||
+      e.kind === 'destructible' ||
+      e.kind === 'magnetEmitter' ||
+      e.kind === 'bombDevice' ||
+      e.kind === 'turretPickup'
     ) {
       grid.insert(e);
     }
   }
 
-  // Friendly bullets vs enemies / boss / supply raiders.
+  // Friendly bullets vs enemies / boss / supply raiders / destructibles.
   for (const b of state.entities) {
     if (b.kind !== 'bullet' || b.dead) continue;
     grid.query(b.x, b.y, b.radius, (t) => {
       if (b.dead || t.dead) return;
-      if (t.kind !== 'enemy' && t.kind !== 'boss' && t.kind !== 'supply') return;
+      if (t.kind !== 'enemy' && t.kind !== 'boss' && t.kind !== 'supply' && t.kind !== 'destructible')
+        return;
       if (!circlesOverlap(b.x, b.y, b.radius, t.x, t.y, t.radius)) return;
       // Boss takes double damage while overheated (iframes > 0), spec.
       const mult = t.kind === 'boss' && t.iframes > 0 ? 2 : 1;
@@ -614,6 +923,22 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     if (!circlesOverlap(player.x, player.y, player.radius, t.x, t.y, t.radius)) return;
     if (t.kind === 'gem') {
       collectGem(state, t);
+      return;
+    }
+    // Proximity event objects fire on contact (deterministic, no input). Consumed
+    // objects are marked dead; a picked-up turret converts in place (stays alive).
+    if (t.kind === 'magnetEmitter') {
+      triggerMagnetEmitter(state);
+      t.dead = true;
+      return;
+    }
+    if (t.kind === 'bombDevice') {
+      triggerBombDevice(state, t.x, t.y);
+      t.dead = true;
+      return;
+    }
+    if (t.kind === 'turretPickup') {
+      if (t.phase === 0) activateTurret(t); // dormant → active turret in place
       return;
     }
     if (invulnerable) return;
@@ -668,6 +993,9 @@ function compact(state: WorldState): void {
       // Shot down (vs. escaped with hp > 0): grant the raid reward.
       state.resources++;
       supplyDrops.push({ x: e.x, y: e.y });
+    } else if (e.kind === 'destructible' && e.hp <= 0) {
+      // Broken (vs. culled with hp > 0): drop a gem worth its stored XP value.
+      drops.push({ x: e.x, y: e.y, xp: e.damage });
     } else if (e.kind === 'boss') {
       state.victory = true;
     }

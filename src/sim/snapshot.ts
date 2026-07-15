@@ -17,6 +17,8 @@ export interface EntitySnapshot {
   y: number;
   angle: number;
   radius: number;
+  /** Wall half-height (targetX); 0 for non-walls. `radius` is the wall half-width. */
+  aabbH: number;
   /** Enemy role / hazard subtype code (drives render colour); -1 if unused. */
   enemyType: number;
   hp: number;
@@ -71,12 +73,13 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
       y: e.y,
       angle: e.angle,
       radius: e.radius,
+      aabbH: e.kind === 'wall' ? e.targetX : 0,
       enemyType: e.enemyType,
       hp: e.hp,
       maxHp: e.maxHp,
       active:
         e.kind === 'hazard'
-          ? e.timer <= 0 && e.life > 0
+          ? e.timer <= 0 && e.life !== 0 // life<0 permanent terrain hazard is active
           : e.kind === 'boss'
             ? e.iframes > 0
             : false,

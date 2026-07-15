@@ -14,6 +14,7 @@ import { HAZARD_MORTAR, HAZARD_LAVA } from './types.js';
 import { spawnEnemyBullet, spawnHazard } from '../entities.js';
 import { cos, sin, atan2, length, TWO_PI, HALF_PI } from '../math.js';
 import { DT, HAZARD_LINE_SPAN } from '../constants.js';
+import { slideCircleWalls } from '../los.js';
 
 /** Advance one enemy: steer, then fire if its cadence is ready. */
 export function updateEnemy(state: WorldState, e: Entity, def: EnemyDef, player: Entity): void {
@@ -68,6 +69,15 @@ function moveCharge(state: WorldState, e: Entity, def: EnemyDef, player: Entity)
   }
   e.x += e.vx * DT;
   e.y += e.vy * DT;
+
+  // PRIMARY fragments trigger: sliding against a gimmick wall bursts fragments
+  // (plan C5c/F1a). Slide out of any overlapped wall first, then react on hit.
+  if (state.activeWalls.length > 0) {
+    const slid = slideCircleWalls(e.x, e.y, e.radius, state.activeWalls);
+    e.x = slid.x;
+    e.y = slid.y;
+    if (slid.hit) chargerHitWall(state, e, def, player);
+  }
 
   // Secondary fragments trigger: fire on the fire-cadence timer (open terrain),
   // re-aiming at the player so the charger keeps pressing after each burst.
@@ -249,9 +259,15 @@ function aimAt(e: Entity, speed: number, tx: number, ty: number): void {
   e.vy = sin(ang) * speed;
 }
 
-function integrate(_state: WorldState, e: Entity): void {
+function integrate(state: WorldState, e: Entity): void {
   // Infinite map: no arena box to clamp against — enemies move freely. Movement
-  // obstruction is now solely the job of gimmick walls (Phase F).
+  // obstruction is solely the job of gimmick walls (Phase F): slide out of any
+  // overlapped wall so enemies cannot pass through cover.
   e.x += e.vx * DT;
   e.y += e.vy * DT;
+  if (state.activeWalls.length > 0) {
+    const slid = slideCircleWalls(e.x, e.y, e.radius, state.activeWalls);
+    e.x = slid.x;
+    e.y = slid.y;
+  }
 }
