@@ -85,6 +85,17 @@ async function main(): Promise<void> {
     const alpha = accumulator / DT;
     entityRenderer.render(prevSnap, currSnap, alpha);
 
+    // Seamless background scroll: the tiling sprite stays fixed over the viewport
+    // and only its tile offset moves with the interpolated camera. The camera can
+    // grow large, so take the f64 modulo by the tile size BEFORE handing a small
+    // value to the renderer — this avoids f32 UV precision "swim" in PIXI. This is
+    // a render-only concern; the sim keeps full-precision f64 world coordinates.
+    const camX = prevSnap.cameraX + (currSnap.cameraX - prevSnap.cameraX) * alpha;
+    const camY = prevSnap.cameraY + (currSnap.cameraY - prevSnap.cameraY) * alpha;
+    const tileW = background.texture.width;
+    const tileH = background.texture.height;
+    background.tilePosition.set((-camX) % tileW, (-camY) % tileH);
+
     // Level-up: freeze is handled in the sim; show the pick overlay (render is
     // still live underneath). Picking queues a SPECIAL_POWERUP_PICK input.
     if (world.pendingLevelUp && !powerupOverlay.visible && !resultOverlay.visible) {

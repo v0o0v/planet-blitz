@@ -10,7 +10,7 @@ interface P {
 
 describe('SpatialHash', () => {
   it('returns candidates near a probe and skips far cells', () => {
-    const grid = new SpatialHash<P>(1920, 1080, 128);
+    const grid = new SpatialHash<P>(128);
     const near: P = { x: 100, y: 100, radius: 8, id: 1 };
     const far: P = { x: 1800, y: 1000, radius: 8, id: 2 };
     grid.insert(near);
@@ -23,7 +23,7 @@ describe('SpatialHash', () => {
   });
 
   it('iterates candidates in deterministic insertion order', () => {
-    const grid = new SpatialHash<P>(512, 512, 64);
+    const grid = new SpatialHash<P>(64);
     // Same cell, inserted in a known order.
     for (let i = 0; i < 5; i++) grid.insert({ x: 40, y: 40, radius: 4, id: i });
     const seen: number[] = [];
@@ -32,7 +32,7 @@ describe('SpatialHash', () => {
   });
 
   it('clear empties the grid', () => {
-    const grid = new SpatialHash<P>(256, 256, 64);
+    const grid = new SpatialHash<P>(64);
     grid.insert({ x: 10, y: 10, radius: 4, id: 7 });
     grid.clear();
     const seen: number[] = [];
@@ -40,8 +40,34 @@ describe('SpatialHash', () => {
     expect(seen).toEqual([]);
   });
 
+  it('buckets negative coordinates without colliding with their mirror', () => {
+    // Infinite map: cells at (-cx,-cy) must not fold onto (+cx,+cy).
+    const grid = new SpatialHash<P>(128);
+    const neg: P = { x: -500, y: -500, radius: 8, id: 1 };
+    const pos: P = { x: 500, y: 500, radius: 8, id: 2 };
+    grid.insert(neg);
+    grid.insert(pos);
+    const negHits: number[] = [];
+    grid.query(-500, -500, 20, (e) => negHits.push(e.id));
+    expect(negHits).toContain(1);
+    expect(negHits).not.toContain(2);
+    const posHits: number[] = [];
+    grid.query(500, 500, 20, (e) => posHits.push(e.id));
+    expect(posHits).toContain(2);
+    expect(posHits).not.toContain(1);
+  });
+
+  it('handles entities far from the origin (unbounded grid)', () => {
+    const grid = new SpatialHash<P>(128);
+    const far: P = { x: 250_000, y: -180_000, radius: 8, id: 42 };
+    grid.insert(far);
+    const hits: number[] = [];
+    grid.query(250_000, -180_000, 20, (e) => hits.push(e.id));
+    expect(hits).toEqual([42]);
+  });
+
   it('finds entities across adjacent cell boundaries', () => {
-    const grid = new SpatialHash<P>(512, 512, 64);
+    const grid = new SpatialHash<P>(64);
     // Straddle the 64px cell boundary at x=64.
     const a: P = { x: 60, y: 60, radius: 8, id: 1 };
     const b: P = { x: 68, y: 60, radius: 8, id: 2 };

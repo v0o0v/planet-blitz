@@ -35,13 +35,41 @@ function playWithPicks(
     if (state.pendingLevelUp) {
       frame = { ...emptyInput(), special: packPowerupPick(pickStrategy(state)) };
     } else {
-      frame = {
-        moveX: gen.range(-1, 1),
-        moveY: gen.range(-1, 1),
-        aim: gen.range(-Math.PI, Math.PI),
-        dash: gen.chance(0.03),
-        special: 0,
-      };
+      // Steer toward the nearest hostile so the pilot actually engages the fight
+      // and picks up the gems it drops. On the infinite map the player starts at
+      // the origin, so a purely random walk anchored there would rarely reach the
+      // action and never level up. Steering is a pure function of the world state,
+      // so the recorded log still replays identically.
+      const player = state.entities[0]!;
+      let tx = 0;
+      let ty = 0;
+      let bestD = Infinity;
+      let found = false;
+      for (const e of state.entities) {
+        if (e.dead) continue;
+        if (e.kind !== 'enemy' && e.kind !== 'boss' && e.kind !== 'supply') continue;
+        const dx = e.x - player.x;
+        const dy = e.y - player.y;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) {
+          bestD = d;
+          tx = dx;
+          ty = dy;
+          found = true;
+        }
+      }
+      if (found) {
+        const len = Math.sqrt(tx * tx + ty * ty) || 1;
+        frame = { moveX: tx / len, moveY: ty / len, aim: Math.atan2(ty, tx), dash: gen.chance(0.03), special: 0 };
+      } else {
+        frame = {
+          moveX: gen.range(-1, 1),
+          moveY: gen.range(-1, 1),
+          aim: gen.range(-Math.PI, Math.PI),
+          dash: gen.chance(0.03),
+          special: 0,
+        };
+      }
     }
     inputs.push(frame);
     if (state.gameOver || state.victory) break;

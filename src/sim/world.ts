@@ -18,8 +18,8 @@
  */
 
 import { SeededRng } from './rng.js';
-import { cos, sin, atan2, length, clamp } from './math.js';
-import { DT, ARENA_WIDTH, ARENA_HEIGHT } from './constants.js';
+import { cos, sin, atan2, length } from './math.js';
+import { DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 import type { Entity } from './entities.js';
 import { blankEntity, spawnBullet, spawnGem, spawnSupply, spawnBoss } from './entities.js';
 import { SpatialHash, circlesOverlap } from './collision.js';
@@ -30,7 +30,17 @@ import type { WaveRuntime } from './waves.js';
 import { createWaveRuntime, updateWaves, enemyDefFor } from './waves.js';
 import { LAVA_FORTRESS } from '../../data/boss.js';
 
-export { TICK_RATE, DT, ARENA_WIDTH, ARENA_HEIGHT } from './constants.js';
+export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
+
+/**
+ * Projectile cull radius (world units): bullets/enemy bullets farther than this
+ * from the player despawn regardless of remaining lifetime. Sized at the
+ * viewport diagonal x1.5 so a projectile is culled only well beyond the visible
+ * frame — comfortably larger than any spawn ring, so no bullet is removed
+ * before it can enter the screen. `Math.sqrt` is IEEE-754 correctly rounded and
+ * evaluated once at load, so this constant is bit-identical on every platform.
+ */
+const PROJECTILE_CULL_RADIUS = Math.sqrt(VIEW_WIDTH * VIEW_WIDTH + VIEW_HEIGHT * VIEW_HEIGHT) * 1.5;
 export type { Entity, EntityKind } from './entities.js';
 
 /** Special-event bit flags packed into `InputFrame.special`. */
@@ -147,8 +157,8 @@ export interface WorldConfig {
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {
-  arenaWidth: ARENA_WIDTH,
-  arenaHeight: ARENA_HEIGHT,
+  arenaWidth: VIEW_WIDTH,
+  arenaHeight: VIEW_HEIGHT,
   playerSpeed: 360,
   dashSpeed: 1400,
   dashCooldownTicks: 42,
@@ -229,8 +239,10 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
 
   const player = blankEntity('player');
   player.id = nextEntityId++;
-  player.x = cfg.arenaWidth / 2;
-  player.y = cfg.arenaHeight / 2;
+  // Infinite map: the player begins at the natural world origin (0,0). The
+  // camera follows the player, so the starting frame looks the same regardless.
+  player.x = 0;
+  player.y = 0;
   player.radius = 16;
   player.hp = cfg.playerHp;
   player.maxHp = cfg.playerHp;
@@ -266,7 +278,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     bossSpawned: false,
     gameOver: false,
     victory: false,
-    grid: new SpatialHash<Entity>(cfg.arenaWidth, cfg.arenaHeight, 128),
+    grid: new SpatialHash<Entity>(128),
   };
 }
 
@@ -312,7 +324,7 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   stepEnemies(state, player);
   stepBoss(state, player);
   autoAttack(state, player);
-  stepProjectiles(state);
+  stepProjectiles(state, player);
   stepGems(state, player);
   stepSupply(state, player);
   stepHazards(state);
@@ -360,8 +372,8 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
 
   player.x += player.vx * DT;
   player.y += player.vy * DT;
-  player.x = clamp(player.x, player.radius, config.arenaWidth - player.radius);
-  player.y = clamp(player.y, player.radius, config.arenaHeight - player.radius);
+  // Infinite map: no arena clamp — the player may travel in any direction
+  // without bound. Movement obstruction is now the job of gimmick walls (Phase F).
 }
 
 // ---------------------------------------------------------------------------
@@ -459,16 +471,20 @@ function nearestTarget(state: WorldState, from: Entity, range: number): Entity |
 // Projectiles, gems & supply raiders
 // ---------------------------------------------------------------------------
 
-function stepProjectiles(state: WorldState): void {
-  const w = state.config.arenaWidth;
-  const h = state.config.arenaHeight;
-  const margin = 40;
+function stepProjectiles(state: WorldState, player: Entity): void {
+  // Infinite map: there is no arena edge to despawn against. A projectile dies
+  // when its lifetime elapses OR it drifts beyond the player-relative cull
+  // radius. Both conditions are checked so a bullet can never accumulate
+  // forever off-screen (see tests/projectiles.test.ts).
+  const cullR2 = PROJECTILE_CULL_RADIUS * PROJECTILE_CULL_RADIUS;
   for (const e of state.entities) {
     if (e.kind !== 'bullet' && e.kind !== 'enemyBullet') continue;
     e.x += e.vx * DT;
     e.y += e.vy * DT;
     if (e.life > 0) e.life--;
-    if (e.life === 0 || e.x < -margin || e.x > w + margin || e.y < -margin || e.y > h + margin) {
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    if (e.life === 0 || dx * dx + dy * dy > cullR2) {
       e.dead = true;
     }
   }

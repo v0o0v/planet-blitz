@@ -16,6 +16,7 @@ import { Container, Graphics, Sprite } from 'pixi.js';
 import type { WorldSnapshot, EntitySnapshot } from '../sim/snapshot.js';
 import type { EntityKind } from '../sim/entities.js';
 import type { PlaceholderTextures } from './textures.js';
+import { DESIGN_WIDTH, DESIGN_HEIGHT } from './app.js';
 
 interface TrackedSprite {
   sprite: Sprite;
@@ -76,6 +77,12 @@ export class EntityRenderer {
 
   render(prev: WorldSnapshot, curr: WorldSnapshot, alpha: number): void {
     this.frameTick++;
+    // Camera follow: pan the whole layer so the interpolated camera (= player)
+    // sits at the viewport centre. Sprites keep their absolute world coordinates;
+    // only the layer is translated (vampire-survivors-style scrolling).
+    const camX = prev.cameraX + (curr.cameraX - prev.cameraX) * alpha;
+    const camY = prev.cameraY + (curr.cameraY - prev.cameraY) * alpha;
+    this.layer.position.set(DESIGN_WIDTH / 2 - camX, DESIGN_HEIGHT / 2 - camY);
     this.drawOverlay(curr);
     this.updateEffects();
 

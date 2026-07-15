@@ -10,6 +10,7 @@ import type { InputFrame } from '../sim/world.js';
 import { packPowerupPick } from '../sim/world.js';
 import { atan2 } from '../sim/math.js';
 import type { GameApp } from '../render/app.js';
+import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../render/app.js';
 
 export class InputController {
   private readonly keys = new Set<string>();
@@ -58,8 +59,15 @@ export class InputController {
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) moveX -= 1;
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) moveX += 1;
 
+    // Mouse → world coordinates. `clientToDesign` maps the cursor into the fixed
+    // 1920x1080 design viewport; the camera (= player) sits at the viewport
+    // centre, so undo that offset to recover where the cursor points in the
+    // infinite world. Aim is then a world-space angle, keeping auto-aim and dash
+    // consistent with the scrolled camera.
     const design = this.gameApp.clientToDesign(this.mouseClientX, this.mouseClientY);
-    const aim = atan2(design.y - playerY, design.x - playerX);
+    const worldX = design.x - DESIGN_WIDTH / 2 + playerX;
+    const worldY = design.y - DESIGN_HEIGHT / 2 + playerY;
+    const aim = atan2(worldY - playerY, worldX - playerX);
 
     const dash = this.dashQueued;
     this.dashQueued = false;
