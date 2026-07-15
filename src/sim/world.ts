@@ -504,7 +504,15 @@ function activateChunks(state: WorldState, player: Entity): void {
   }
   // Prune chunk markers (including empty chunks) beyond the cull radius so the
   // map stays bounded and revisits regenerate. Fixed box scan (no Map iteration).
-  const cullChunkR = Math.ceil(CHUNK_CULL_RADIUS / CHUNK_SIZE) + 1;
+  //
+  // 불변식(암묵 가정): 이 스캔 박스는 "1틱 이동량 ≪ CHUNK_SIZE"를 전제로 현재
+  // 플레이어 청크 주변만 훑는다. 한 틱에 스캔 박스 폭보다 멀리 이동하면 컬 반경 밖
+  // marker가 스캔에서 누락돼 잔존할 수 있다. 최대 1틱 이동(dashSpeed 임펄스 + 기본
+  // 속도, DT=1/60)은 CHUNK_SIZE(1024)의 수십 분의 1 수준이라 안전하며, 여기에
+  // 여유 +1 청크(총 +2)를 더해 경계 청크까지 확실히 커버한다. dashSpeed·CHUNK_SIZE
+  // 변경 시 이 여유가 여전히 1틱 이동을 덮는지 재확인할 것. 여유 확대는 스캔 순서
+  // (cy 외곽·cx 내곽 고정)와 marker 삭제(위치만의 함수)를 바꾸지 않아 결정론 불변.
+  const cullChunkR = Math.ceil(CHUNK_CULL_RADIUS / CHUNK_SIZE) + 2;
   for (let cy = pcy - cullChunkR; cy <= pcy + cullChunkR; cy++) {
     for (let cx = pcx - cullChunkR; cx <= pcx + cullChunkR; cx++) {
       const ccx = (cx + 0.5) * CHUNK_SIZE;
@@ -687,6 +695,14 @@ function autoAttack(state: WorldState, player: Entity): void {
 const LOS_MAX_CANDIDATES = 6;
 
 /**
+ * nearestTarget slow-path 후보 스크래치(모듈 레벨 재사용). 매 조준마다 배열을 새로
+ * 할당하지 않아 GC 압력을 줄인다. 매 호출 시작에 length=0으로 리셋하고 처음부터 다시
+ * 채우므로 이전 호출의 잔존 데이터를 참조하지 않는다(내용은 매번 재계산 — 결정론 유지).
+ * WorldState가 아니라 모듈 스크래치이므로 hashWorld 대상에 포함되지 않는다.
+ */
+const losCands: { e: Entity; d: number }[] = [];
+
+/**
  * Nearest hostile the vulcan can target: any enemy, boss, or supply raider.
  *
  * LOS (plan F1c): a candidate hidden behind a wall is skipped and the NEXT
@@ -719,7 +735,8 @@ function nearestTarget(state: WorldState, from: Entity, range: number): Entity |
   // so the order never depends on the platform's sort stability), then return
   // the first whose sightline to the player is unobstructed. Only the nearest
   // LOS_MAX_CANDIDATES are ray-tested to bound cost.
-  const cands: { e: Entity; d: number }[] = [];
+  const cands = losCands;
+  cands.length = 0; // 재사용 스크래치 리셋(할당 회피).
   for (const e of state.entities) {
     if (e.dead) continue;
     if (e.kind !== 'enemy' && e.kind !== 'boss' && e.kind !== 'supply') continue;
@@ -799,6 +816,10 @@ function stepProjectiles(state: WorldState, player: Entity): void {
     }
     // Both factions' bullets are stopped by walls (activeWalls direct sweep —
     // walls are never in the spatial hash). First overlap kills the bullet.
+    // 성능 가드: 이 스윕은 O(투사체 × 활성 벽). 활성 벽은 청크 활성 영역 상한
+    // (MAX_ACTIVE_GIMMICKS, 실측 ≤~19벽)에 묶여 있고 탄은 bulletCap(≤~2000)이라
+    // 현 스케일에선 안전하다. 활성 벽 수가 이 전제를 크게 넘어서면(예: 벽 밀집
+    // 청크·상한 상향) 벽에도 broad-phase(공간 격자/스윕-프룬)가 필요하다.
     for (const w of walls) {
       if (circleOverlapsWall(e.x, e.y, e.radius, w)) {
         e.dead = true;
