@@ -17,6 +17,7 @@ import type { WorldSnapshot, EntitySnapshot } from '../sim/snapshot.js';
 import type { EntityKind } from '../sim/entities.js';
 import type { PlaceholderTextures } from './textures.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from './app.js';
+import { shipFacing } from './shipFacing.js';
 
 interface TrackedSprite {
   sprite: Sprite;
@@ -51,6 +52,8 @@ export class EntityRenderer {
   private frameTick = 0;
   /** Active planet index (from the current snapshot) — selects boss art. */
   private planet = 0;
+  /** 기체가 마지막으로 향한 각도(대상·이동이 없을 때 유지). shipFacing 참조. */
+  private lastPlayerAngle = 0;
 
   constructor(private readonly textures: PlaceholderTextures) {
     // Draw order (bottom → top): hazard/beam overlay, entity sprites, death bursts.
@@ -153,19 +156,27 @@ export class EntityRenderer {
       const p = prevById.get(e.id) ?? e;
       tracked.sprite.x = p.x + (e.x - p.x) * alpha;
       tracked.sprite.y = p.y + (e.y - p.y) * alpha;
-      // Gems, boss, supply and the static gimmicks keep a fixed facing; others
-      // face their travel/aim angle.
-      const fixedFacing =
-        e.kind === 'gem' ||
-        e.kind === 'boss' ||
-        e.kind === 'supply' ||
-        e.kind === 'wall' ||
-        e.kind === 'destructible' ||
-        e.kind === 'magnetEmitter' ||
-        e.kind === 'bombDevice' ||
-        e.kind === 'turretPickup' ||
-        e.kind === 'loot';
-      tracked.sprite.rotation = fixedFacing ? 0 : e.angle;
+      // 플레이어 기체는 마우스 조준각(e.angle)이 아니라 실제 사격 방향(최근접
+      // 적/보스/보급 = autoAttack 대상군)을 향한다. 렌더 전용 계산(sim 불변).
+      if (e.kind === 'player') {
+        const facing = shipFacing(e.x, e.y, curr.entities, e.x - p.x, e.y - p.y, this.lastPlayerAngle);
+        this.lastPlayerAngle = facing;
+        tracked.sprite.rotation = facing;
+      } else {
+        // Gems, boss, supply and the static gimmicks keep a fixed facing; others
+        // face their travel/aim angle.
+        const fixedFacing =
+          e.kind === 'gem' ||
+          e.kind === 'boss' ||
+          e.kind === 'supply' ||
+          e.kind === 'wall' ||
+          e.kind === 'destructible' ||
+          e.kind === 'magnetEmitter' ||
+          e.kind === 'bombDevice' ||
+          e.kind === 'turretPickup' ||
+          e.kind === 'loot';
+        tracked.sprite.rotation = fixedFacing ? 0 : e.angle;
+      }
 
       if (e.kind === 'boss') {
         // Phase transition = white flash; overheat = bright red pulse (spec).
