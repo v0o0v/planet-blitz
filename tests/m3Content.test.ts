@@ -170,10 +170,11 @@ describe('감속 지대 (B1 유령 기함, AC4)', () => {
 // ---------------------------------------------------------------------------
 
 describe('섬멸 티어 파라미터 (B3, AC5)', () => {
-  it('3티어 파라미터가 정의되고 정찰/교전은 M2 거동을 보존한다', () => {
+  it('3티어 파라미터가 정의되고 정찰은 M2 거동 보존, 교전은 HP ×2.2 튜닝을 싣는다', () => {
     expect(TIER_PARAMS.length).toBe(3);
     expect(tierParams(0)).toMatchObject({ hpMult: 1, densityMult: 1, eliteCount: 0, subBullets: 0 });
-    expect(tierParams(1)).toMatchObject({ hpMult: 1, densityMult: 1, eliteCount: 1, subBullets: 0 });
+    // 교전 HP ×2.2 = plan 밸런스 표(재미 게이트 루프 반영). 패턴·밀도·정예는 M2 보존.
+    expect(tierParams(1)).toMatchObject({ hpMult: 2.2, densityMult: 1, eliteCount: 1, subBullets: 0 });
   });
 
   it('섬멸은 패턴 변형(서브탄)+밀도↑+정예 2 + 완만한 HP(×4.5)를 싣는다', () => {

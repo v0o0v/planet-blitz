@@ -342,6 +342,12 @@ export interface WorldConfig {
    * the powerup-pool soft weighting (C2, drawPowerupChoices). Absent = no skills.
    */
   skillInvest?: number[];
+  /**
+   * 튜토리얼 단축판(M3 후속): 보스 이전 일반 세그먼트 수 상한. 이 수만큼 일반
+   * 세그먼트를 소화하면 곧장 보스 세그먼트로 점프한다. absent = 풀 런(거동 불변).
+   * append-only 규율: WorldConfig 신규 필드는 항상 이 아래에만 추가.
+   */
+  maxSegments?: number;
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {

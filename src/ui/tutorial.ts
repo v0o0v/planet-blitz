@@ -19,6 +19,11 @@ export const TUTORIAL_SEED = 0x7b1a2c3d;
 /** Tutorial content: homeworld orbit (카르곤) at the standard 정찰 tier. */
 export const TUTORIAL_PLANET = 0;
 export const TUTORIAL_TIER = 0;
+/**
+ * 튜토리얼 단축판(GDD §12 "3~4분 단축판"): 일반 세그먼트 3개(45s×3) 후 곧장 보스
+ * 세그먼트로 점프 — 보스전 포함 약 3~4분. sim의 config.maxSegments로 전달된다.
+ */
+export const TUTORIAL_MAX_SEGMENTS = 3;
 
 // ---------------------------------------------------------------------------
 // FTUE instrumentation (AC8, 게이트 ①)

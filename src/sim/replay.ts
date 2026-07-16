@@ -210,6 +210,10 @@ export function hashWorld(state: WorldState): number {
   if (invest !== undefined) {
     for (const v of invest) h = hashU32(h, v >>> 0);
   }
+  // (3) 튜토리얼 단축판 세그먼트 상한(결정론 입력). 미존재(풀 런)=0, 존재=값+1로
+  // 접어 undefined와 0을 구분한다. 신규 필드는 이 아래에만 append.
+  const maxSeg = state.config.maxSegments;
+  h = hashU32(h, (maxSeg === undefined ? 0 : maxSeg + 1) >>> 0);
   return h >>> 0;
 }
 
