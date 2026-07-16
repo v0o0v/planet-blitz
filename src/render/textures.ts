@@ -428,12 +428,33 @@ export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderT
   const bossFiles = ['boss.png', 'boss_berdan.png', 'boss_niflheim.png', 'boss_arke.png'];
   const bgFiles = ['bg_kargon.png', 'bg_berdan.png', 'bg_niflheim.png', 'bg_arke.png'];
 
-  const [player, gem, explosion, loot, parachute, bosses, backgrounds, enemies] = await Promise.all([
+  const [
+    player,
+    gem,
+    explosion,
+    loot,
+    parachute,
+    supply,
+    wall,
+    destructible,
+    magnetEmitter,
+    bombDevice,
+    turretPickup,
+    bosses,
+    backgrounds,
+    enemies,
+  ] = await Promise.all([
     tryLoad('player.png'),
     tryLoad('gem.png'),
     tryLoad('fx_explosion.png'),
     tryLoad('loot.png'),
     tryLoad('fx_parachute.png'),
+    tryLoad('supply.png'),
+    tryLoad('wall.png'),
+    tryLoad('destructible.png'),
+    tryLoad('magnet_emitter.png'),
+    tryLoad('bomb_device.png'),
+    tryLoad('turret_pickup.png'),
     Promise.all(bossFiles.map((f) => tryLoad(f))),
     Promise.all(bgFiles.map((f) => tryLoad(f))),
     Promise.all(enemyFiles.map((f) => tryLoad(f))),
@@ -444,6 +465,15 @@ export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderT
   if (explosion !== null) tex.explosion = explosion;
   if (loot !== null) tex.loot = loot;
   if (parachute !== null) tex.parachute = parachute;
+  // Scroll-map gimmicks: PNG overrides the shape placeholder; missing file keeps
+  // the procedural fallback (regression 0). All render fixedFacing (no rotation);
+  // wall stretches to its AABB unit-square, supply keeps the fx_parachute child.
+  if (supply !== null) tex.supply = supply;
+  if (wall !== null) tex.wall = wall;
+  if (destructible !== null) tex.destructible = destructible;
+  if (magnetEmitter !== null) tex.magnetEmitter = magnetEmitter;
+  if (bombDevice !== null) tex.bombDevice = bombDevice;
+  if (turretPickup !== null) tex.turretPickup = turretPickup;
   bosses.forEach((t, i) => {
     if (t !== null) tex.boss[i] = t;
   });
