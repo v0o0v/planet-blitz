@@ -24,6 +24,13 @@ export interface PlaceholderTextures {
   player: Texture;
   bullet: Texture;
   enemyBullet: Texture;
+  /**
+   * 적탄 거동별 텍스처(시각 문법, 탄막 다양성 Lane 1): index = 거동 코드(BK_*,
+   * 0 가속 / 1 유도 / 2 곡사 / 3 분열). 색(아웃라인) = 거동 종류(주 시그널). 흰 코어 +
+   * 유색 아웃라인 규칙은 유지해 고밀도에서도 가독성을 지킨다. 거동 없는 적탄(BK_NONE,
+   * enemyType -1)은 기본 `enemyBullet`(hot-red)로 렌더한다. sim에는 이 색이 살지 않는다.
+   */
+  enemyBulletBehaviors: Texture[];
   gem: Texture;
   /**
    * Enemy textures indexed by global typeIndex (0..21): 카르곤 0~3, 베르단 4~9,
@@ -102,6 +109,22 @@ const ENEMY_STYLE: { color: number; radius: number; shape: 'tri' | 'square' | 'd
   { color: 0xf0c268, radius: 48, shape: 'square' }, // 20 elite gunner
   { color: 0xf0c268, radius: 54, shape: 'tri' }, // 21 elite charger
 ];
+
+/**
+ * 적탄 거동별 아웃라인 색(시각 문법: 색 = 거동 종류). index = 거동 코드(BK_*).
+ * 친근한 시안(아군탄)·젬 그린과 겹치지 않는 밝은 warm/hostile 계열로 구분한다.
+ *   0 가속 = 앰버, 1 유도 = 마젠타, 2 곡사 = 옐로, 3 분열 = 퍼플.
+ */
+const ENEMY_BULLET_BEHAVIOR_OUTLINE: readonly number[] = [0xff8a20, 0xff33cc, 0xffe033, 0xb060ff];
+
+/** 적탄 텍스처: 흰 코어 + 지정 아웃라인(가독성 규칙 유지). */
+function enemyBulletTexture(renderer: Renderer, outline: number): Texture {
+  const g = new Graphics();
+  g.circle(0, 0, 5).fill({ color: 0xffffff }).stroke({ color: outline, width: 2, alignment: 0 });
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
 
 function drawTriangle(g: Graphics, r: number, color: number): void {
   g.moveTo(r, 0)
@@ -330,6 +353,7 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
     player: renderer.generateTexture(playerG),
     bullet: renderer.generateTexture(bulletG),
     enemyBullet: renderer.generateTexture(enemyBulletG),
+    enemyBulletBehaviors: ENEMY_BULLET_BEHAVIOR_OUTLINE.map((c) => enemyBulletTexture(renderer, c)),
     gem: renderer.generateTexture(gemG),
     enemy: ENEMY_STYLE.map((s) => enemyTexture(renderer, s)),
     boss: BOSS_PALETTES.map(([hull, core]) => bossTexture(renderer, hull, core)),

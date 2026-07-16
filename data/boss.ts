@@ -155,8 +155,10 @@ export const LAVA_FORTRESS: BossDef = {
       patternCooldown: 96,
       overheatInterval: 600,
       attacks: [
-        { kind: 'ring', count: 14, speed: 600, damage: 8, bulletRadius: 7, bulletLife: 140 },
-        { kind: 'ring', count: 18, speed: 680, damage: 8, bulletRadius: 7, bulletLife: 140 },
+        // 판정점(ADR-0010) 도입으로 회피 여유가 커진 만큼 링 밀도를 공격적으로 상향
+        // (14→20, 18→26). 링 탄은 가속 직진 시그니처라 밖으로 갈수록 회피 창이 좁아진다.
+        { kind: 'ring', count: 20, speed: 600, damage: 8, bulletRadius: 7, bulletLife: 140 },
+        { kind: 'ring', count: 26, speed: 680, damage: 8, bulletRadius: 7, bulletLife: 140 },
       ],
     },
     // P2 — variation + terrain: rings interleaved with lava pillar lines.
@@ -165,9 +167,11 @@ export const LAVA_FORTRESS: BossDef = {
       patternCooldown: 84,
       overheatInterval: 570,
       attacks: [
-        { kind: 'ring', count: 20, speed: 720, damage: 9, bulletRadius: 7, bulletLife: 150 },
+        // 링 20→28 상향. 나선은 분열 산탄 시그니처(탄마다 자탄 2발)라 밀도가 이미
+        // 배가되므로 raw count는 10→12로 절제 상향한다.
+        { kind: 'ring', count: 28, speed: 720, damage: 9, bulletRadius: 7, bulletLife: 150 },
         { kind: 'lavaLine', pillars: 7, windup: 48, activeTicks: 100, radius: 104, damage: 10 },
-        { kind: 'spiral', count: 10, speed: 760, damage: 9, bulletRadius: 6, bulletLife: 150, turn: 0.5 },
+        { kind: 'spiral', count: 12, speed: 760, damage: 9, bulletRadius: 6, bulletLife: 150, turn: 0.5 },
       ],
     },
     // P3 — desperation: dense spirals, faster cadence. Overheat opens ~every 9s
@@ -177,9 +181,10 @@ export const LAVA_FORTRESS: BossDef = {
       patternCooldown: 60,
       overheatInterval: 540,
       attacks: [
-        { kind: 'spiral', count: 14, speed: 800, damage: 10, bulletRadius: 6, bulletLife: 160, turn: 0.62 },
-        { kind: 'ring', count: 24, speed: 840, damage: 10, bulletRadius: 7, bulletLife: 160 },
-        { kind: 'spiral', count: 14, speed: 800, damage: 10, bulletRadius: 6, bulletLife: 160, turn: -0.62 },
+        // 발악 페이즈: 링 24→32로 공격적 상향. 나선은 분열 배가를 감안해 14→16 절제 상향.
+        { kind: 'spiral', count: 16, speed: 800, damage: 10, bulletRadius: 6, bulletLife: 160, turn: 0.62 },
+        { kind: 'ring', count: 32, speed: 840, damage: 10, bulletRadius: 7, bulletLife: 160 },
+        { kind: 'spiral', count: 16, speed: 800, damage: 10, bulletRadius: 6, bulletLife: 160, turn: -0.62 },
       ],
     },
   ],

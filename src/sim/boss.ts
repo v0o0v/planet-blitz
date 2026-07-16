@@ -29,6 +29,22 @@ import { DT, VIEW_HEIGHT, HAZARD_LINE_SPAN, SPAWN_RING_RADIUS } from './constant
 import type { BossAttack, BossDef } from '../../data/boss.js';
 import { planetContent } from '../../data/planets/index.js';
 import { summonEnemy } from './waves.js';
+import { applyBehavior, accelBehavior, splitBehavior, homingBehavior } from './bullets.js';
+
+/**
+ * 보스 탄 시그니처 거동(탄막 다양성 Lane 1). 밀도·거동 다양성을 보스에 집중한다
+ * (CONTEXT.md: "탄 밀도는 보스·엘리트에 집중"). 판정점(ADR-0010)이 작아 이 밀도가
+ * 공정해진다 — 빽빽해 보여도 판정점으로 틈을 빠져나가는 "피하는 맛".
+ *   - ring        → 가속 직진: 링이 밖으로 갈수록 빨라져 회피 창을 좁힌다.
+ *   - spiral      → 분열 산탄: 나선 탄이 퓨즈 뒤 자탄으로 갈라져 2차 위협(밀도 집중).
+ *   - aimedBurst  → 유도 호밍(락 만료): 조준 창격이 잠깐 따라오다 직진(회피 가능).
+ */
+const BOSS_RING_ACCEL = 620; // units/second²
+const BOSS_SPIRAL_FUSE = 40; // 분열 퓨즈(틱)
+const BOSS_SPIRAL_CHILDREN = 2; // 자탄 수(절제 — 상한 gate와 함께 폭주 방지)
+const BOSS_SPIRAL_CHILD_SPEED_MULT = 0.62;
+const BOSS_HOMING_LOCK = 48; // 유도 락 지속(틱) ≈ 0.8s
+const BOSS_HOMING_TURN = 0.055; // rad/tick 선회 상한(회피 가능한 완만함)
 
 /** Phase-transition animation length: 2 seconds (spec). */
 export const BOSS_PHASE_TRANSITION_TICKS = 120;
@@ -111,7 +127,7 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
       for (let i = 0; i < atk.count; i++) {
         if (state.enemyBulletCount >= state.bulletCap) break;
         const ang = (i * TWO_PI) / atk.count;
-        spawnEnemyBullet(
+        const b = spawnEnemyBullet(
           state,
           boss.x,
           boss.y,
@@ -122,6 +138,8 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
           atk.bulletRadius,
           atk.bulletLife,
         );
+        // 시그니처: 가속 직진.
+        applyBehavior(b, accelBehavior(atk.speed, BOSS_RING_ACCEL));
         state.enemyBulletCount++;
       }
       break;
@@ -132,7 +150,7 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
       for (let i = 0; i < atk.count; i++) {
         if (state.enemyBulletCount >= state.bulletCap) break;
         const ang = base + (i * TWO_PI) / atk.count;
-        spawnEnemyBullet(
+        const b = spawnEnemyBullet(
           state,
           boss.x,
           boss.y,
@@ -142,6 +160,16 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
           atk.damage,
           atk.bulletRadius,
           atk.bulletLife,
+        );
+        // 시그니처: 분열 산탄(퓨즈 뒤 자탄 방사). 밀도를 보스에 집중.
+        applyBehavior(
+          b,
+          splitBehavior(
+            atk.speed,
+            BOSS_SPIRAL_FUSE,
+            BOSS_SPIRAL_CHILDREN,
+            atk.speed * BOSS_SPIRAL_CHILD_SPEED_MULT,
+          ),
         );
         state.enemyBulletCount++;
       }
@@ -190,7 +218,7 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
       for (let i = 0; i < n; i++) {
         if (state.enemyBulletCount >= state.bulletCap) break;
         const ang = start + stepA * i;
-        spawnEnemyBullet(
+        const b = spawnEnemyBullet(
           state,
           boss.x,
           boss.y,
@@ -201,6 +229,8 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
           atk.bulletRadius,
           atk.bulletLife,
         );
+        // 시그니처: 유도 호밍(락 만료 후 직진 — 회피 가능한 조준 창격).
+        applyBehavior(b, homingBehavior(atk.speed, BOSS_HOMING_LOCK, BOSS_HOMING_TURN));
         state.enemyBulletCount++;
       }
       break;

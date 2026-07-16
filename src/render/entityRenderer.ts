@@ -68,8 +68,14 @@ export class EntityRenderer {
         return this.textures.player;
       case 'bullet':
         return this.textures.bullet;
-      case 'enemyBullet':
-        return this.textures.enemyBullet;
+      case 'enemyBullet': {
+        // 시각 문법(탄막 다양성 Lane 1): 색 = 거동 종류. enemyType(거동 코드 BK_*)로
+        // 거동별 텍스처를 고르고, 거동 없는 적탄(-1)은 기본 hot-red 텍스처로 렌더한다.
+        const bv = this.textures.enemyBulletBehaviors;
+        return e.enemyType >= 0 && e.enemyType < bv.length
+          ? (bv[e.enemyType] ?? this.textures.enemyBullet)
+          : this.textures.enemyBullet;
+      }
       case 'gem':
         return this.textures.gem;
       case 'boss':
