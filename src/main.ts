@@ -29,6 +29,7 @@ import { InputController } from './input/controller.js';
 import { Hud } from './ui/hud.js';
 import type { BossHudState } from './ui/hud.js';
 import { PowerupOverlay } from './ui/powerupOverlay.js';
+import { levelUpOverlayAction, readBuildStatus } from './ui/buildStatus.js';
 import { ResultOverlay } from './ui/resultOverlay.js';
 import { PlanetSelect } from './ui/planetSelect.js';
 import type { LaunchSelection } from './ui/planetSelect.js';
@@ -121,6 +122,8 @@ async function main(): Promise<void> {
   const tutorialOverlay = new TutorialOverlay();
   const ftue = new FtueTracker();
   let tutorialActive = false;
+  // 렌더 루프가 현재 오버레이에 띄운 파워업 오퍼(멀티 레벨업 시 오퍼 교체 감지용).
+  let shownChoices: number[] = [];
 
   // An empty snapshot rendered on menu frames clears the arena behind overlays.
   const emptySnap: WorldSnapshot = {
@@ -241,6 +244,7 @@ async function main(): Promise<void> {
   /** Assemble the run config from the selection + active loadout, then start. */
   function startRun(seed: number, sel: LaunchSelection): void {
     tutorialActive = false; // normal run unless startTutorial re-flags it
+    shownChoices = []; // 새 런: 레벨업 오버레이 표시 상태 초기화
     const ship = activeShip(profile);
     const equipped: Item[] = [];
     for (const id of EQUIP_SLOTS) {
@@ -299,6 +303,7 @@ async function main(): Promise<void> {
     }
     tutorialOverlay.hide();
     if (powerupOverlay.visible) powerupOverlay.hide();
+    shownChoices = []; // 정산 화면 진입: 오버레이 표시 상태 초기화
     const o = lastOutcome;
     resultOverlay.show(
       {
@@ -387,17 +392,26 @@ async function main(): Promise<void> {
       background.tilePosition.set(-camX % tileW, -camY % tileH);
     }
 
-    // Level-up: freeze is handled in the sim; show the pick overlay (render is
-    // still live underneath). Picking queues a SPECIAL_POWERUP_PICK input.
-    if (
-      w !== null &&
-      w.pendingLevelUp &&
-      !powerupOverlay.visible &&
-      !resultOverlay.visible
-    ) {
-      powerupOverlay.show([...w.powerupChoices], (offerIndex) => {
-        controller.queuePowerupPick(offerIndex);
-      });
+    // Level-up: freeze is handled in the sim. 오버레이 표시/숨김은 sim의
+    // pendingLevelUp을 근거로 순수 결정한다(levelUpOverlayAction). 클릭으로 낙관적
+    // 숨김을 하지 않으므로, 픽이 소비되기 전 프레임에 오버레이가 재표시되며 뒤에서
+    // 게임이 진행되던 레이스가 사라진다. 픽은 SPECIAL_POWERUP_PICK 입력으로 큐잉된다.
+    if (w !== null && !resultOverlay.visible) {
+      const action = levelUpOverlayAction(
+        w.pendingLevelUp,
+        w.powerupChoices,
+        powerupOverlay.visible,
+        shownChoices,
+      );
+      if (action === 'show') {
+        shownChoices = [...w.powerupChoices];
+        powerupOverlay.show(shownChoices, readBuildStatus(w), (offerIndex) => {
+          controller.queuePowerupPick(offerIndex);
+        });
+      } else if (action === 'hide') {
+        shownChoices = [];
+        powerupOverlay.hide();
+      }
     }
 
     // Settlement screen on death or clear.
