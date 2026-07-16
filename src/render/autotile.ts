@@ -167,25 +167,51 @@ export class AutotileBackground {
   readonly layer = new Container();
   private tiles: WangTiles | null = null;
   private seed = 0;
-  private readonly cols: number;
-  private readonly rows: number;
+  private readonly displayTile: number;
+  private cols = 0;
+  private rows = 0;
   private readonly pool: Sprite[] = [];
   // Sentinels that force a full re-tile on the first update after a swap.
   private lastBaseTx = Number.NaN;
   private lastBaseTy = Number.NaN;
   private dirty = true;
 
-  constructor() {
-    this.cols = Math.ceil(DESIGN_WIDTH / DISPLAY_TILE) + MARGIN * 2;
-    this.rows = Math.ceil(DESIGN_HEIGHT / DISPLAY_TILE) + MARGIN * 2;
-    for (let i = 0; i < this.cols * this.rows; i++) {
+  /** `displayTile`: on-screen tile edge px (default 64 = 32px source ×2). Lower
+   *  values zoom the terrain out (more, finer tiles); render-only tuning. */
+  constructor(displayTile: number = DISPLAY_TILE) {
+    this.displayTile = displayTile;
+    // Initial coverage for the nominal design viewport; `ensureCoverage` grows
+    // the pool when the real window's visible area is larger (aspect overscan).
+    this.ensureCoverage(DESIGN_WIDTH, DESIGN_HEIGHT);
+    this.layer.visible = false;
+  }
+
+  /**
+   * Grow the sprite pool so it covers a `viewW`×`viewH` design-space viewport
+   * plus a MARGIN tile ring. Call on window resize: when the window aspect is
+   * not 16:9, `fitToWindow` leaves the visible design area larger than
+   * DESIGN_WIDTH/HEIGHT (letterbox overscan), and the floor must still fill it —
+   * otherwise the right/bottom edges show the bare app background. Grows only
+   * (never shrinks) so laid tiles keep their pool slots; forces a full re-tile.
+   */
+  ensureCoverage(viewW: number, viewH: number): void {
+    const cols = Math.ceil(viewW / this.displayTile) + MARGIN * 2;
+    const rows = Math.ceil(viewH / this.displayTile) + MARGIN * 2;
+    if (cols <= this.cols && rows <= this.rows) return;
+    this.cols = Math.max(cols, this.cols);
+    this.rows = Math.max(rows, this.rows);
+    const need = this.cols * this.rows;
+    for (let i = this.pool.length; i < need; i++) {
       const s = new Sprite();
-      s.setSize(DISPLAY_TILE, DISPLAY_TILE);
+      // NOTE: scale is intentionally NOT set here. `setSize` on the 1px
+      // placeholder texture would leave scale = displayTile (real 32px tile is
+      // assigned in `update`), drawing every tile 32× oversized. `update` sets
+      // the correct scale right after assigning the texture.
       s.visible = false;
       this.pool.push(s);
       this.layer.addChild(s);
     }
-    this.layer.visible = false;
+    this.dirty = true;
   }
 
   /** True when a Wang tileset is active (caller then hides its TilingSprite). */
@@ -217,18 +243,34 @@ export class AutotileBackground {
   }
 
   /**
-   * Pan the layer to the interpolated camera (mirrors EntityRenderer so the
-   * floor scrolls in lockstep with entities) and re-texture the pool only when
-   * the camera crosses into a new base tile.
+   * Pan the layer to the interpolated camera (mirrors EntityRenderer so the floor
+   * scrolls in lockstep with entities) and lay tiles across the VISIBLE design
+   * rect `[viewMinX..viewMaxX] × [viewMinY..viewMaxY]`. The caller derives that
+   * rect from the stage's inverse transform of the screen, so the floor fills the
+   * whole window at any DPR / aspect / letterbox — not just the nominal 1920×1080
+   * design area. Re-textures the pool only when the camera crosses a base tile.
    */
-  update(camX: number, camY: number): void {
+  update(
+    camX: number,
+    camY: number,
+    viewMinX: number,
+    viewMinY: number,
+    viewMaxX: number,
+    viewMaxY: number,
+  ): void {
     const tiles = this.tiles;
     if (tiles === null) return;
+    this.ensureCoverage(viewMaxX - viewMinX, viewMaxY - viewMinY);
     // Same mapping as EntityRenderer: world point (wx,wy) → wx - camX + W/2.
-    this.layer.position.set(DESIGN_WIDTH / 2 - camX, DESIGN_HEIGHT / 2 - camY);
+    const offX = DESIGN_WIDTH / 2 - camX;
+    const offY = DESIGN_HEIGHT / 2 - camY;
+    this.layer.position.set(offX, offY);
 
-    const baseTx = Math.floor((camX - DESIGN_WIDTH / 2) / DISPLAY_TILE) - MARGIN;
-    const baseTy = Math.floor((camY - DESIGN_HEIGHT / 2) / DISPLAY_TILE) - MARGIN;
+    // A tile at index tx draws at stage-local x = tx*displayTile + offX. Start
+    // MARGIN tiles before the top-left of the visible rect; the pool (sized to the
+    // rect + 2*MARGIN by ensureCoverage) then reaches past the bottom-right.
+    const baseTx = Math.floor((viewMinX - offX) / this.displayTile) - MARGIN;
+    const baseTy = Math.floor((viewMinY - offY) / this.displayTile) - MARGIN;
     if (!this.dirty && baseTx === this.lastBaseTx && baseTy === this.lastBaseTy) {
       return; // sub-tile scroll — layer.position already moved, nothing to re-tile
     }
@@ -245,7 +287,11 @@ export class AutotileBackground {
         const tex = tiles[this.keyAt(tx, ty)];
         if (tex === undefined) continue;
         sprite.texture = tex;
-        sprite.position.set(tx * DISPLAY_TILE, ty * DISPLAY_TILE);
+        // Scale the real (32px) tile down/up to the on-screen tile edge. Must be
+        // set AFTER the texture — v8 does not recompute scale on texture swap, so
+        // relying on a ctor `setSize` (1px placeholder) leaves tiles 32× too big.
+        sprite.scale.set(this.displayTile / tex.frame.width);
+        sprite.position.set(tx * this.displayTile, ty * this.displayTile);
         sprite.visible = true;
       }
     }
