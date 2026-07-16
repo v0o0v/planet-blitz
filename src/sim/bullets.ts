@@ -136,6 +136,8 @@ export function stepEnemyBulletBehavior(e: Entity, player: Entity, splits: Bulle
     case BK_SPLIT: {
       // ④ 분열 산탄: 퓨즈(timer) 만료 틱에 자탄 phase발을 균등 방사 예약 후 소멸.
       // 퓨즈 전에는 발사 당시 속도로 직진(vx/vy 불변). 자탄은 거동 없는 순수 직진(재분열 방지).
+      // 경계 계약: fuse=0으로 각인하면 timer=0이라 영원히 분열하지 않는다(즉시 분열 아님).
+      // 즉시 분열이 필요하면 fuse=1을 쓸 것.
       if (e.timer > 0) {
         e.timer--;
         if (e.timer === 0) {

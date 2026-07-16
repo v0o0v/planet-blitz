@@ -1365,6 +1365,9 @@ function stepProjectiles(state: WorldState, player: Entity): void {
   // BK_SPLIT 자탄 방사(퓨즈 만료 위치에서 균등 각도로). 자탄은 거동 없는 순수 직진탄
   // (enemyType 기본 -1)이라 재분열하지 않는다. 세그먼트 탄 상한(bulletCap)을 존중해
   // 폭주를 막는다 — 상한 도달 시 남은 자탄은 버린다(결정론: 배열 순서 고정 소비).
+  // 상한 계수는 발사 경로의 enemyBulletCount(틱 시작 재계산)와 달리 countKind(라이브 스캔)를
+  // 쓴다 — 이번 틱 dead 표시분까지 세어 과대계상될 수 있으나, 자탄 스폰이 상한보다 보수적으로
+  // 나올 뿐이며 결정론에는 무해하다. 부모 탄 소멸분을 즉시 반영하려는 의도적 선택.
   if (bulletSplits.length > 0) {
     let live = countKind(state, 'enemyBullet');
     for (const s of bulletSplits) {
