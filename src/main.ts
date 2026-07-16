@@ -458,8 +458,13 @@ async function main(): Promise<void> {
     const camX = prevSnap.cameraX + (currSnap.cameraX - prevSnap.cameraX) * alpha;
     const camY = prevSnap.cameraY + (currSnap.cameraY - prevSnap.cameraY) * alpha;
     if (autotile.active) {
+      // 실제 보이는 design 사각형 = 화면(logical px) 네 모서리를 stage 역변환한 것.
+      // DPR·비율·레터박스와 무관하게 창 전체를 덮게 하여 가장자리 빈 곳을 없앤다.
+      const scr = gameApp.app.renderer.screen;
+      const vTL = gameApp.stage.toLocal({ x: scr.x, y: scr.y });
+      const vBR = gameApp.stage.toLocal({ x: scr.x + scr.width, y: scr.y + scr.height });
       // Wang floor scrolls by panning its layer + re-tiling on boundary crossings.
-      autotile.update(camX, camY);
+      autotile.update(camX, camY, vTL.x, vTL.y, vBR.x, vBR.y);
     } else {
       const tileW = background.texture.width;
       const tileH = background.texture.height;
