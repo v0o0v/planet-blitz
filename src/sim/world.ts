@@ -480,6 +480,21 @@ export interface WorldState {
    * array directly. Scratch — not hashed (the wall entities themselves are).
    */
   activeWalls: Entity[];
+  /**
+   * 오염 런 표시(ADR-0008). 치트·하네스 개입이 한 번이라도 일어난 런에 `markTainted`로
+   * 세운다. 순수 DEV 메타데이터 — 시뮬레이션 거동과 `hashWorld` 출력 모두에 영향이 없다
+   * (hashWorld는 이 필드를 접지 않는다). 정산·리플레이 제출에서 오염 런을 제외하는 데만
+   * 쓰인다.
+   */
+  tainted: boolean;
+}
+
+/**
+ * 현재 런을 오염 런으로 표시한다(ADR-0008). 치트나 하네스 개입이 감지되면 호출한다.
+ * 시뮬레이션 상태·해시에는 영향이 없고, 정산/리플레이 제출 경로에서만 이 플래그를 읽는다.
+ */
+export function markTainted(world: WorldState): void {
+  world.tainted = true;
 }
 
 /**
@@ -571,6 +586,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     grid: new SpatialHash<Entity>(GRID_CELL_SIZE),
     generatedChunks: new Map<string, true>(),
     activeWalls: [],
+    tainted: false,
   };
 }
 

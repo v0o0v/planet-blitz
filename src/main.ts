@@ -47,8 +47,19 @@ import {
   TUTORIAL_TIER,
   TUTORIAL_MAX_SEGMENTS,
 } from './ui/tutorial.js';
-import { createWorld, stepWorld, DT, xpToNext, comboMultiplier, DEFAULT_CONFIG } from './sim/world.js';
-import type { WorldState, WorldConfig } from './sim/world.js';
+import {
+  createWorld,
+  stepWorld,
+  markTainted,
+  DT,
+  xpToNext,
+  comboMultiplier,
+  DEFAULT_CONFIG,
+} from './sim/world.js';
+import type { WorldState, WorldConfig, InputFrame } from './sim/world.js';
+// DEV 하네스: 타입만 정적 import(런타임 값은 아래 import.meta.env.DEV 블록에서 동적
+// import 하므로 프로덕션 번들에서 완전히 제거된다). 타입 import는 컴파일 시 소거됨.
+import type { Harness, HarnessScreen } from './harness/core.js';
 import { snapshotWorld } from './sim/snapshot.js';
 import type { WorldSnapshot } from './sim/snapshot.js';
 import { ReplayRecorder, hashWorld } from './sim/replay.js';
@@ -70,6 +81,16 @@ async function main(): Promise<void> {
   if (params.get('bench') === '1') {
     await runBench(mount);
     return;
+  }
+
+  // DEV 하네스 프로필 활성화(ADR-0008): `?harness=1`이면 프로필 I/O를 격리된 하네스
+  // 슬롯으로 리다이렉트한다 — 반드시 loadProfile 이전에 오버라이드를 걸어야 본 세이브
+  // 대신 하네스 슬롯을 읽는다. 프로덕션에서는 import.meta.env.DEV가 정적으로 false라
+  // 이 블록·동적 import가 통째로 제거된다.
+  const harnessActive = import.meta.env.DEV && params.get('harness') === '1';
+  if (harnessActive) {
+    const core = await import('./harness/core.js');
+    core.setProfileStoreOverride(core.harnessProfileStore());
   }
 
   const gameApp = await createGameApp(mount);
@@ -149,6 +170,21 @@ async function main(): Promise<void> {
   let accumulator = 0;
   let frameCount = 0;
 
+  // --- DEV 하네스 훅 상태(프로덕션에서는 harness가 항상 null → 분기 사문화·제거) ---
+  let harness: Harness | null = null;
+  /** 실시간 배속(치트 패널 setSpeed). 기본 1. */
+  let harnessSpeed = 1;
+  /** 하네스 일시정지(ticker 스텝 동결). */
+  let harnessPaused = false;
+  /** 스냅샷/이벤트용 현재 스크린 이름. */
+  let currentScreenName = 'title';
+
+  /** 스크린 전환 시 하네스에 통지(스냅샷 screen + screenChange 이벤트). */
+  function setScreen(name: string): void {
+    currentScreenName = name;
+    harness?.observeScreen(name);
+  }
+
   /** Seed for the next run: pinned by ?seed, else fresh random (UI layer). */
   function nextSeed(): number {
     const p = params.get('seed');
@@ -178,6 +214,7 @@ async function main(): Promise<void> {
   /** Title screen — first launch forces the tutorial; afterwards it enters base. */
   function openTitle(): void {
     clearToMenu();
+    setScreen('title');
     titleScreen.show({
       firstRun: !profile.tutorialDone,
       onStart: () => {
@@ -192,6 +229,7 @@ async function main(): Promise<void> {
   /** Base map hub — the meta home. Buildings gate by unlock (plan D1/E2). */
   function openBaseMap(): void {
     clearToMenu();
+    setScreen('base');
     baseMap.show(profile, {
       onHangar: () => {
         baseMap.hide();
@@ -212,6 +250,7 @@ async function main(): Promise<void> {
   /** Show the star map for the next run (world cleared while it is up). */
   function openStarMap(): void {
     clearToMenu();
+    setScreen('starMap');
     const seed = nextSeed();
     // Pre-compute the anomaly the seed offers (same fork the sim uses) so the
     // player can accept/reject it before the run (OQ-M2-3).
@@ -283,28 +322,52 @@ async function main(): Promise<void> {
     ceremony.reset();
     lastOutcome = null;
     resultOverlay.hide();
+    setScreen('run');
+  }
+
+  /**
+   * Advance the live world by exactly one tick with `input`, through the record +
+   * snapshot path the real ticker uses. Factored out so the DEV 하네스(fast-forward
+   * / single-step)가 실제 루프와 비트 동일하게 스텝하도록(리플레이 재현 보존) 공유한다.
+   * 하네스가 없으면(프로덕션) 호출부는 ticker 하나뿐이라 사문화되지 않는다.
+   */
+  function stepOnce(input: InputFrame): void {
+    const w = world;
+    if (w === null) return;
+    recorder?.record(input);
+    stepWorld(w, input);
+    prevSnap = currSnap;
+    currSnap = snapshotWorld(w);
+    harness?.observe(w);
   }
 
   /** Settle a finished run into the profile once, then show the result screen. */
   function endRun(w: WorldState): void {
     if (!settled) {
       settled = true;
-      lastOutcome = settleRun(profile, {
-        victory: w.victory,
-        loot: w.loot,
-        xpTotal: w.xpTotal,
-        resources: w.resources,
-        planet: w.config.planet ?? 0,
-        tier: w.config.tier ?? 0,
-      });
-      // Completing the tutorial (win or lose) reveals the base and makes the run
-      // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.
-      if (tutorialActive) profile.tutorialDone = true;
-      saveProfile(profile);
+      // 오염 런(ADR-0008): 하네스/치트 개입이 있었던 런은 정산하지 않는다 — 전리품·XP·
+      // 튜토리얼 완료 플래그 모두 프로필에 반영되지 않고, 리플레이도 제출 대상에서
+      // 빠진다(리플레이는 아직 어디에도 제출되지 않으므로 recorder 결과를 그냥 버린다).
+      // 결과 화면은 정보 표시용으로 그대로 띄우되 settlement 블록만 생략한다.
+      if (!w.tainted) {
+        lastOutcome = settleRun(profile, {
+          victory: w.victory,
+          loot: w.loot,
+          xpTotal: w.xpTotal,
+          resources: w.resources,
+          planet: w.config.planet ?? 0,
+          tier: w.config.tier ?? 0,
+        });
+        // Completing the tutorial (win or lose) reveals the base and makes the run
+        // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.
+        if (tutorialActive) profile.tutorialDone = true;
+        saveProfile(profile);
+      }
     }
     tutorialOverlay.hide();
     if (powerupOverlay.visible) powerupOverlay.hide();
     shownLevel = 0; // 정산 화면 진입: 오버레이 표시 상태 초기화
+    setScreen('result');
     const o = lastOutcome;
     resultOverlay.show(
       {
@@ -346,25 +409,25 @@ async function main(): Promise<void> {
     const w = world;
     const runOver = w !== null && (w.gameOver || w.victory);
 
-    // Step the sim only while a live run is in progress and not yet over.
-    if (w !== null && !runOver) {
+    // Step the sim only while a live run is in progress and not yet over. DEV
+    // 하네스가 일시정지 중이면 스텝을 건너뛰고(치트 패널 pause/step), 배속(harnessSpeed)
+    // 은 accumulator 유입만 스케일한다(기본 1 → 거동 불변). 스텝 본체는 stepOnce로
+    // 공유해 fast-forward/single-step과 비트 동일.
+    if (w !== null && !runOver && !harnessPaused) {
       // 유니크 세리머니 슬로모: 게임 루프 dt에 배율만 곱한다(hit-stop). 입력 로그는 매
       // 틱 그대로 기록되므로 리플레이/해시는 불변(렌더 페이싱만 늘어짐).
       const timeScale = ceremony.update(frame);
-      accumulator += frame * timeScale;
+      accumulator += frame * timeScale * harnessSpeed;
       while (accumulator >= DT) {
         const player = w.entities[0];
         const input = controller.sample(player?.x ?? 0, player?.y ?? 0);
-        recorder?.record(input);
-        stepWorld(w, input);
-        prevSnap = currSnap;
-        currSnap = snapshotWorld(w);
+        stepOnce(input);
         accumulator -= DT;
         // 새 유니크 loot가 나타나면 세리머니 발동(렌더 전용, 같은 loot는 한 번만).
         ceremony.notice(currSnap);
       }
-    } else {
-      accumulator = 0; // menus / settled run: sim is inert
+    } else if (w === null || runOver) {
+      accumulator = 0; // menus / settled run: sim is inert (일시정지 런은 유지)
     }
 
     // Tutorial: advance the scripted hint + instrument the first drop (FTUE, AC8).
@@ -476,6 +539,118 @@ async function main(): Promise<void> {
   // the tab is throttled (background preview) and rAF is paused. Never bundled
   // into production builds (import.meta.env.DEV is statically false there).
   if (import.meta.env.DEV) {
+    // 하네스 코어는 동적 import(값 참조)라 프로덕션 번들에서 완전히 제거된다. 하네스는
+    // sim을 직접 스텝하지 않고 main의 루프 클로저(stepOnce/renderOnce/open* 등)를
+    // HarnessHost로 주입받아 실제 게임을 구동한다(리플레이 재현 보존).
+    const core = await import('./harness/core.js');
+
+    /** DEV 하네스: 메뉴 스크린 점프(main의 open* 함수 재사용). */
+    function harnessGoto(screen: HarnessScreen): void {
+      switch (screen) {
+        case 'title':
+          openTitle();
+          break;
+        case 'base':
+          openBaseMap();
+          break;
+        case 'starMap':
+          openStarMap();
+          break;
+        case 'inventory':
+          planetSelect.hide();
+          clearToMenu();
+          setScreen('inventory');
+          inventory.show(profile, () => openBaseMap());
+          break;
+        case 'research':
+          planetSelect.hide();
+          clearToMenu();
+          setScreen('research');
+          researchLab.show(profile, () => openBaseMap());
+          break;
+        case 'refinery':
+          planetSelect.hide();
+          clearToMenu();
+          setScreen('refinery');
+          refinery.show(profile, () => openBaseMap());
+          break;
+      }
+    }
+
+    /** DEV 하네스: 변경된 프로필 기준으로 현재 메뉴 스크린을 다시 그린다. */
+    function harnessRefreshScreen(): void {
+      switch (currentScreenName) {
+        case 'title':
+          openTitle();
+          break;
+        case 'starMap':
+          openStarMap();
+          break;
+        case 'inventory':
+        case 'research':
+        case 'refinery':
+          harnessGoto(currentScreenName);
+          break;
+        case 'base':
+        default:
+          // 런/정산 화면은 프로필 재주입으로 다시 그릴 필요가 없다 → base로 안전 복귀.
+          if (world === null) openBaseMap();
+          break;
+      }
+    }
+
+    const host: import('./harness/core.js').HarnessHost = {
+      getWorld: () => world,
+      getCurrentSeed: () => currentSeed,
+      stepOnce: (input) => stepOnce(input),
+      sampleInput: () => {
+        const p = world?.entities[0];
+        return controller.sample(p?.x ?? 0, p?.y ?? 0);
+      },
+      renderOnce: () => {
+        entityRenderer.render(prevSnap, currSnap, 1);
+        gameApp.app.renderer.render(gameApp.app.stage);
+      },
+      setSpeedFactor: (mult) => {
+        harnessSpeed = mult;
+      },
+      setPaused: (paused) => {
+        harnessPaused = paused;
+      },
+      isPaused: () => harnessPaused,
+      goto: (screen) => harnessGoto(screen),
+      startRun: (opts) => {
+        startRun(opts.seed, {
+          planet: opts.planet,
+          tier: opts.tier,
+          anomalyAccepted: opts.anomaly,
+          ...(opts.maxSegments !== undefined ? { maxSegments: opts.maxSegments } : {}),
+        });
+      },
+      nextSeed: () => nextSeed(),
+      activateHarnessProfile: () => {
+        core.setProfileStoreOverride(core.harnessProfileStore());
+      },
+      applyProfile: (p) => {
+        Object.assign(profile, p);
+        saveProfile(profile);
+      },
+      refreshScreen: () => harnessRefreshScreen(),
+      getProfileSummary: () => ({
+        credits: profile.credits,
+        minerals: profile.minerals,
+        shipLevel: activeShip(profile).level,
+      }),
+      markTaintedIfLive: () => {
+        const w = world;
+        if (w !== null && !w.gameOver && !w.victory) markTainted(w);
+      },
+      isTainted: () => world?.tainted ?? false,
+      currentScreen: () => currentScreenName,
+    };
+
+    harness = core.createHarness(host);
+
     (window as unknown as { __pb: unknown }).__pb = {
       gameApp,
       controller,
@@ -486,12 +661,15 @@ async function main(): Promise<void> {
       resultOverlay,
       planetSelect,
       inventory,
+      // 하네스 API 표면(개발 도구): goto/startRun/ff/setSpeed/pause/resume/step/
+      // preset/snapshot/events/cheat. 프로덕션 미포함.
+      harness,
       get world() {
         return world;
       },
       startRun,
       openStarMap,
-      injectInput(input: Partial<import('./sim/world.js').InputFrame>) {
+      injectInput(input: Partial<InputFrame>) {
         // NOTE: DEV-only; injected frames are NOT written to the replay log, so a
         // replay captured while tooling drove frames would not reproduce them. It
         // exists only to step the sim for inspection when rAF is throttled.
@@ -513,6 +691,39 @@ async function main(): Promise<void> {
         };
       },
     };
+
+    // DEV 치트 패널(개발 도구): 하네스를 구동하는 우하단 접이식 오버레이(백틱 ` 토글).
+    // 동적 import라 프로덕션 번들에서 완전히 제거된다(import.meta.env.DEV 정적 false).
+    const cheatPanel = await import('./harness/cheatPanel.js');
+    const panel = cheatPanel.createCheatPanel({
+      harness,
+      getEntities: () => currSnap.entities,
+      getProfile: () => profile,
+      saveProfile: () => saveProfile(profile),
+      refreshScreen: () => harnessRefreshScreen(),
+      activateHarnessProfile: () => {
+        core.setProfileStoreOverride(core.harnessProfileStore());
+      },
+    });
+    // HMR로 main()이 재실행되면 이전 패널(스타일·인터벌·리스너)을 정리해 중복을
+    // 막는다(리뷰 LOW). 프로덕션에서는 이 블록 전체가 DCE로 제거된다.
+    import.meta.hot?.dispose(() => panel.destroy());
+
+    // URL 딥링크(DEV): ?screen=starMap 등으로 부팅 후 해당 스크린으로 점프.
+    const screenParam = params.get('screen');
+    if (screenParam !== null) {
+      const valid: readonly HarnessScreen[] = [
+        'title',
+        'base',
+        'starMap',
+        'inventory',
+        'research',
+        'refinery',
+      ];
+      if ((valid as readonly string[]).includes(screenParam)) {
+        harnessGoto(screenParam as HarnessScreen);
+      }
+    }
   }
 }
 
