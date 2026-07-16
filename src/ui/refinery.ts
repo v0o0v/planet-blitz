@@ -16,6 +16,7 @@ import type { Item, Rarity } from '../items/types.js';
 import { AFFIX_BY_ID, AFFIXES } from '../../data/affixes.js';
 import { rerollAffixes } from '../items/roll.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../save/profile.js';
+import { UI_LOCK_URL, UI_UNLOCK_URL, pixelIcon } from './uiIcons.js';
 
 /** Minerals for a standard reroll; a locked reroll costs 3× (plan AC3). */
 export const REFINERY_REROLL_COST = 12;
@@ -316,7 +317,7 @@ export class Refinery {
       txt.textContent = this.affixText(item, i);
       const lockBtn = document.createElement('button');
       lockBtn.className = 'lockbtn';
-      lockBtn.textContent = isLocked ? '🔒' : '🔓';
+      lockBtn.appendChild(pixelIcon(isLocked ? UI_LOCK_URL : UI_UNLOCK_URL, 16, isLocked ? '잠김' : '열림'));
       lockBtn.title = isLocked ? '잠금 해제' : '이 어픽스 잠금(리롤에서 보존, 광물 3배)';
       lockBtn.addEventListener('click', () => this.toggleLock(i));
       rowEl.appendChild(txt);

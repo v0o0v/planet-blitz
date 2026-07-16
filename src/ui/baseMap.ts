@@ -16,6 +16,14 @@
  */
 
 import { computeUnlocks, activeShip, RESEARCH_UNLOCK_LEVEL, type Profile } from '../save/profile.js';
+import { UI_LOCK_URL, pixelIcon } from './uiIcons.js';
+
+// 기지 건물 픽셀아트(PixelLab 생성, 64px side view — 이모지 폴백 대체).
+import hangarPng from '../../assets/ui_bld_hangar.png';
+import researchPng from '../../assets/ui_bld_research.png';
+import refineryPng from '../../assets/ui_bld_refinery.png';
+import defensePng from '../../assets/ui_bld_defense.png';
+import controlPng from '../../assets/ui_bld_control.png';
 
 /** A building tile on the base map. */
 interface Building {
@@ -27,11 +35,11 @@ interface Building {
 }
 
 const BUILDINGS: readonly Building[] = [
-  { key: 'hangar', name: '격납고', icon: '🛠', desc: '장비 · 인벤토리 · 분해', accent: '#4cd7ff' },
-  { key: 'research', name: '연구소', icon: '🔬', desc: '스킬 트리 · 리스펙', accent: '#ff7a4c' },
-  { key: 'refinery', name: '정제소', icon: '🎰', desc: '어픽스 리롤 · 잠금 리롤', accent: '#ffd24c' },
-  { key: 'defense', name: '방어 사령부', icon: '🛡', desc: '방어 배치 · 정비', accent: '#8fd94c' },
-  { key: 'control', name: '관제탑', icon: '📡', desc: '래더 · 침공 · 리플레이', accent: '#c86aff' },
+  { key: 'hangar', name: '격납고', icon: hangarPng, desc: '장비 · 인벤토리 · 분해', accent: '#4cd7ff' },
+  { key: 'research', name: '연구소', icon: researchPng, desc: '스킬 트리 · 리스펙', accent: '#ff7a4c' },
+  { key: 'refinery', name: '정제소', icon: refineryPng, desc: '어픽스 리롤 · 잠금 리롤', accent: '#ffd24c' },
+  { key: 'defense', name: '방어 사령부', icon: defensePng, desc: '방어 배치 · 정비', accent: '#8fd94c' },
+  { key: 'control', name: '관제탑', icon: controlPng, desc: '래더 · 침공 · 리플레이', accent: '#c86aff' },
 ];
 
 const STYLE = `
@@ -142,7 +150,7 @@ export class BaseMap {
 
       const ic = document.createElement('div');
       ic.className = 'ic';
-      ic.textContent = b.icon;
+      ic.appendChild(pixelIcon(b.icon, 56, b.name));
       const nm = document.createElement('div');
       nm.className = 'nm';
       nm.textContent = b.name;
@@ -158,7 +166,7 @@ export class BaseMap {
         ov.className = 'lockov';
         const lk = document.createElement('div');
         lk.className = 'lk';
-        lk.textContent = '🔒';
+        lk.appendChild(pixelIcon(UI_LOCK_URL, 26, '잠김'));
         const rs = document.createElement('div');
         rs.className = 'rs';
         rs.textContent = reason;
