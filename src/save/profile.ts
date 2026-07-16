@@ -244,8 +244,24 @@ export function respecSkills(profile: Profile): boolean {
 // Persistence
 // ---------------------------------------------------------------------------
 
+/**
+ * DEV 하네스 전용 기본 스토어 오버라이드(ADR-0008). When set, every default-store
+ * `loadProfile`/`saveProfile` (including the ones the building overlays call
+ * internally) is redirected here — so activating the 하네스 프로필 slot isolates
+ * ALL profile I/O to a separate localStorage key, never touching the real save.
+ * `undefined` = no override (production behaviour). Never set outside DEV.
+ */
+let defaultStoreOverride: KeyValueStore | null | undefined;
+
+/** DEV 하네스 전용: redirect all default-store profile I/O (see above). Pass
+ *  `undefined` to clear the override and restore the real localStorage default. */
+export function setProfileStoreOverride(store: KeyValueStore | null | undefined): void {
+  defaultStoreOverride = store;
+}
+
 /** Resolve the ambient `localStorage`, or null when unavailable/blocked. */
 function defaultStore(): KeyValueStore | null {
+  if (defaultStoreOverride !== undefined) return defaultStoreOverride;
   try {
     if (typeof localStorage !== 'undefined') return localStorage;
   } catch {
