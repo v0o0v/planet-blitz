@@ -30,6 +30,7 @@ import { Hud } from './ui/hud.js';
 import type { BossHudState } from './ui/hud.js';
 import { PowerupOverlay } from './ui/powerupOverlay.js';
 import { levelUpOverlayAction, readBuildStatus } from './ui/buildStatus.js';
+import { shouldEnterSettlement } from './ui/runFlow.js';
 import { ResultOverlay } from './ui/resultOverlay.js';
 import { PlanetSelect } from './ui/planetSelect.js';
 import type { LaunchSelection } from './ui/planetSelect.js';
@@ -414,8 +415,10 @@ async function main(): Promise<void> {
       }
     }
 
-    // Settlement screen on death or clear.
-    if (runOver && w !== null && !resultOverlay.visible) {
+    // Settlement screen on death or clear. `settled`로 게이트한다(런 종료당 정확히 1회
+    // — shouldEnterSettlement 참조). `!resultOverlay.visible`로 게이트하면 '장비 정비'가
+    // 오버레이를 숨긴 뒤 endRun이 재호출되어 결과 화면이 인벤토리 위로 다시 뜬다.
+    if (w !== null && shouldEnterSettlement(runOver, settled)) {
       endRun(w);
     }
 
