@@ -92,4 +92,13 @@ export default tseslint.config(
     files: ['src/sim/**/*.ts'],
     rules: simCoreRestrictions,
   },
+  {
+    // Build-time Node scripts (asset prep) run on Node, not in the browser.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { Buffer: 'readonly', process: 'readonly', console: 'readonly' },
+    },
+  },
 );

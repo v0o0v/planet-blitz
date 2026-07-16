@@ -73,9 +73,15 @@ async function main(): Promise<void> {
   const resultOverlay = new ResultOverlay();
   const planetSelect = new PlanetSelect();
   const textures = await loadGameTextures(gameApp.app.renderer);
-  // Volcanic arena backdrop tiled beneath the entities (Kargon world theme).
+  // Planet backdrop by index, with a guaranteed non-undefined fallback (the
+  // array always holds 4 entries; the extra `?? gem` only satisfies the strict
+  // index type — it is never reached at runtime).
+  const planetBackground = (i: number) =>
+    textures.background[i] ?? textures.background[0] ?? textures.gem;
+  // Arena backdrop tiled beneath the entities. Starts on the Kargon theme
+  // (slot 0); `startRun` swaps in the launched planet's backdrop each run.
   const background = new TilingSprite({
-    texture: textures.background,
+    texture: planetBackground(0),
     width: DESIGN_WIDTH,
     height: DESIGN_HEIGHT,
   });
@@ -107,6 +113,7 @@ async function main(): Promise<void> {
     arenaHeight: DEFAULT_CONFIG.arenaHeight,
     cameraX: 0,
     cameraY: 0,
+    planet: 0,
     entities: [],
     beams: [],
   };
@@ -235,6 +242,8 @@ async function main(): Promise<void> {
       loadout,
       skillInvest,
     };
+    // Swap the arena backdrop to the launched planet's theme (render-only).
+    background.texture = planetBackground(sel.planet);
     currentSeed = seed;
     world = createWorld(seed, config);
     recorder = new ReplayRecorder(seed, world.config);
