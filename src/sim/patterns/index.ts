@@ -16,6 +16,16 @@ import { cos, sin, atan2, length, TWO_PI, HALF_PI } from '../math.js';
 import { DT, HAZARD_LINE_SPAN } from '../constants.js';
 import { slideCircleWalls } from '../los.js';
 import { tierParams } from '../../../data/waves.js';
+import { applyBehavior, curveBehavior, accelBehavior } from '../bullets.js';
+
+/**
+ * 잡몹 시그니처 탄 거동(탄막 다양성 Lane 1). 몹 정체성을 데이터로 못박되 밀도는 절제
+ * (탄 수를 늘리지 않는 거동만 잡몹에 배정 — 밀도는 보스·엘리트에 집중, CONTEXT.md).
+ *   - 돌격형(파편) → 곡사: 발사 수 그대로, 파편이 완만히 휘어 "흩뿌리는 파쇄" 정체성.
+ *   - 사수형(섬멸 서브탄) → 가속 직진: 조준 견제탄이 뒤로 갈수록 빨라지는 압박.
+ */
+const CHARGER_FRAGMENT_CURVE_W = 0.045; // rad/tick 곡률(완만)
+const GUNNER_SHARD_ACCEL = 850; // units/second² 가속
 
 /** Advance one enemy: steer, then fire if its cadence is ready. */
 export function updateEnemy(state: WorldState, e: Entity, def: EnemyDef, player: Entity): void {
@@ -176,7 +186,7 @@ function runAttack(state: WorldState, e: Entity, def: EnemyDef, player: Entity):
       for (let i = 0; i < sub; i++) {
         if (state.enemyBulletCount >= state.bulletCap) break;
         const ang = (i * TWO_PI) / sub;
-        spawnEnemyBullet(
+        const shard = spawnEnemyBullet(
           state,
           e.x,
           e.y,
@@ -187,6 +197,8 @@ function runAttack(state: WorldState, e: Entity, def: EnemyDef, player: Entity):
           5,
           70,
         );
+        // 사수형 시그니처: 가속 직진(조준 견제탄).
+        applyBehavior(shard, accelBehavior(shardSpeed, GUNNER_SHARD_ACCEL));
         state.enemyBulletCount++;
       }
       break;
@@ -246,7 +258,7 @@ function sprayFragments(
     // Respect the segment's simultaneous enemy-bullet cap (perf + fairness).
     if (state.enemyBulletCount >= state.bulletCap) break;
     const ang = (i * TWO_PI) / count;
-    spawnEnemyBullet(
+    const frag = spawnEnemyBullet(
       state,
       e.x,
       e.y,
@@ -257,6 +269,8 @@ function sprayFragments(
       atk.bulletRadius,
       atk.bulletLife,
     );
+    // 돌격형 시그니처: 곡사(파편이 완만히 휨). 발사 수는 그대로 — 밀도 절제.
+    applyBehavior(frag, curveBehavior(atk.speed, CHARGER_FRAGMENT_CURVE_W));
     state.enemyBulletCount++;
   }
 }

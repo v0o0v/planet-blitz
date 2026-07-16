@@ -24,6 +24,7 @@ import type { Entity } from './entities.js';
 import {
   blankEntity,
   spawnBullet,
+  spawnEnemyBullet,
   spawnGem,
   spawnSupply,
   spawnBoss,
@@ -117,6 +118,7 @@ import {
 } from './chunks.js';
 import { circleOverlapsWall, slideCircleWalls, segmentBlocked } from './los.js';
 import { HAZARD_SLOW } from './patterns/types.js';
+import { stepEnemyBulletBehavior, BK_NONE, type BulletSplit } from './bullets.js';
 import {
   applyBurn,
   applySlow,
@@ -200,6 +202,15 @@ const SUPPLY_REWARD_GEMS = 14;
 const SUPPLY_GEM_XP = 6;
 /** Ticks at which a supply raider enters the run (once each). */
 const SUPPLY_SPAWN_TICKS: readonly number[] = [1800, 6000];
+
+/**
+ * 판정점 반지름(ADR-0010): 플레이어 피격 판정에 쓰는, 기체 반지름(32)보다 훨씬 작은
+ * 중심 원. 적탄·적 접촉·해저드 피해와 감속 장판 판정에만 쓴다. 젬·전리품·기믹 픽업 등
+ * 이로운 접촉은 여전히 관대한 기체 반지름(player.radius)으로 판정한다. 화면에 표시하지
+ * 않는다 — 관대한 회피를 명시적 UI 없이 체감으로 전달(억울한 피격 대신 "아슬아슬").
+ * 이 값이 작아야 고밀도 탄막(보스·엘리트)이 공정해지므로 탄 수를 공격적으로 올릴 수 있다.
+ */
+export const PLAYER_HIT_RADIUS = 8;
 
 /** XP required to reach the next level from the current one. */
 export function xpToNext(level: number): number {
@@ -1317,10 +1328,17 @@ function stepProjectiles(state: WorldState, player: Entity): void {
   // 중력 폭풍 변칙: enemy bullets travel slower (single application point so no
   // emitter needs touching). Friendly bullets are unaffected (mult = 1).
   const enemyBulletMult = enemyBulletSpeedMult(state.anomaly);
+  // 적탄 거동(탄막 다양성 Lane 1): BK_SPLIT 만료 시 방사할 자탄을 모아 루프 뒤 스폰
+  // (엔티티 배열 순회 중 push 회피). 거동 없는 적탄(enemyType === BK_NONE)은 no-op.
+  const bulletSplits: BulletSplit[] = [];
   for (const e of state.entities) {
     if (e.kind !== 'bullet' && e.kind !== 'enemyBullet') continue;
     // 유도 미사일(제한 선회, OQ-M3-4): 위치 적분 전에 최근접 적으로 각도를 소폭 튼다.
     if (e.kind === 'bullet' && e.ownerId === MISSILE_MARK) homeMissile(state, e);
+    // 적탄 거동 갱신(위치 적분 전 vx/vy/angle 재구성). 분열로 소멸하면 이번 틱 스킵.
+    if (e.kind === 'enemyBullet' && e.enemyType !== BK_NONE) {
+      if (stepEnemyBulletBehavior(e, player, bulletSplits)) continue;
+    }
     const m = e.kind === 'enemyBullet' ? enemyBulletMult : 1;
     e.x += e.vx * DT * m;
     e.y += e.vy * DT * m;
@@ -1341,6 +1359,30 @@ function stepProjectiles(state: WorldState, player: Entity): void {
       if (circleOverlapsWall(e.x, e.y, e.radius, w)) {
         e.dead = true;
         break;
+      }
+    }
+  }
+  // BK_SPLIT 자탄 방사(퓨즈 만료 위치에서 균등 각도로). 자탄은 거동 없는 순수 직진탄
+  // (enemyType 기본 -1)이라 재분열하지 않는다. 세그먼트 탄 상한(bulletCap)을 존중해
+  // 폭주를 막는다 — 상한 도달 시 남은 자탄은 버린다(결정론: 배열 순서 고정 소비).
+  if (bulletSplits.length > 0) {
+    let live = countKind(state, 'enemyBullet');
+    for (const s of bulletSplits) {
+      for (let i = 0; i < s.count; i++) {
+        if (live >= state.bulletCap) break;
+        const ang = s.baseAngle + (i * TWO_PI) / s.count;
+        spawnEnemyBullet(
+          state,
+          s.x,
+          s.y,
+          cos(ang) * s.speed,
+          sin(ang) * s.speed,
+          ang,
+          s.damage,
+          s.radius,
+          70,
+        );
+        live++;
       }
     }
   }
@@ -1576,37 +1618,51 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   }
 
   // Player vs enemies / enemy bullets / hazards / gems / boss.
+  //
+  // 판정점(ADR-0010): 이로운 픽업(젬·전리품·기믹)은 관대한 기체 반지름으로, 해로운
+  // 접촉(적탄·적·해저드·감속 장판)은 훨씬 작은 판정점(PLAYER_HIT_RADIUS)으로 판정한다.
+  // 브로드페이즈 검색은 기존대로 기체 반지름(player.radius)으로 훑고(픽업 후보 누락 방지),
+  // 좁은 판정은 콜백 안에서 종류별로 나눠 정확 거리 테스트한다.
   let dmg = 0;
   const invulnerable = player.iframes > 0;
-  grid.query(player.x, player.y, player.radius, (t) => {
+  const px = player.x;
+  const py = player.y;
+  const pickR = player.radius; // 관대한 픽업 반경
+  const hitR = PLAYER_HIT_RADIUS; // 좁은 피격 판정점
+  grid.query(px, py, pickR, (t) => {
     if (t.dead) return;
-    if (!circlesOverlap(player.x, player.y, player.radius, t.x, t.y, t.radius)) return;
     if (t.kind === 'gem') {
-      collectGem(state, t);
+      if (circlesOverlap(px, py, pickR, t.x, t.y, t.radius)) collectGem(state, t);
       return;
     }
     // Floor loot: auto-collect on contact (OQ-M2-1 default). Record the drop seed
     // + rarity + provenance for settlement (Lane 2 confirms the item via rollItem).
     if (t.kind === 'loot') {
-      collectLoot(state, t);
+      if (circlesOverlap(px, py, pickR, t.x, t.y, t.radius)) collectLoot(state, t);
       return;
     }
     // Proximity event objects fire on contact (deterministic, no input). Consumed
     // objects are marked dead; a picked-up turret converts in place (stays alive).
     if (t.kind === 'magnetEmitter') {
-      triggerMagnetEmitter(state);
-      t.dead = true;
+      if (circlesOverlap(px, py, pickR, t.x, t.y, t.radius)) {
+        triggerMagnetEmitter(state);
+        t.dead = true;
+      }
       return;
     }
     if (t.kind === 'bombDevice') {
-      triggerBombDevice(state, t.x, t.y);
-      t.dead = true;
+      if (circlesOverlap(px, py, pickR, t.x, t.y, t.radius)) {
+        triggerBombDevice(state, t.x, t.y);
+        t.dead = true;
+      }
       return;
     }
     if (t.kind === 'turretPickup') {
-      if (t.phase === 0) activateTurret(t); // dormant → active turret in place
+      if (t.phase === 0 && circlesOverlap(px, py, pickR, t.x, t.y, t.radius)) activateTurret(t);
       return;
     }
+    // 이하 해로운 접촉: 판정점(hitR)으로만 판정 — 기체를 스쳐도 판정점에 안 닿으면 무해.
+    if (!circlesOverlap(px, py, hitR, t.x, t.y, t.radius)) return;
     // 감속 지대(plan B1): 활성 HAZARD_SLOW 장판에 닿으면 감속 부여(무적 여부와 무관 —
     // 이동 디버프이지 피해가 아니다). 소량 피해는 아래 일반 hazard 분기가 처리한다.
     if (t.kind === 'hazard' && t.enemyType === HAZARD_SLOW && hazardActive(t)) {
