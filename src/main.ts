@@ -704,6 +704,10 @@ async function main(): Promise<void> {
       activateHarnessProfile: () => {
         core.setProfileStoreOverride(core.harnessProfileStore());
       },
+      // 씬 런처의 튜토리얼 버튼: 정식 튜토리얼 흐름(고정 시드 런 + 힌트 오버레이 +
+      // FTUE 계측)을 그대로 태운다. 하네스 공개 API로는 오버레이·tutorialActive에
+      // 닿지 않으므로 main의 startTutorial을 최소 위임으로 노출한다.
+      startTutorial: () => startTutorial(),
     });
     // HMR로 main()이 재실행되면 이전 패널(스타일·인터벌·리스너)을 정리해 중복을
     // 막는다(리뷰 LOW). 프로덕션에서는 이 블록 전체가 DCE로 제거된다.
