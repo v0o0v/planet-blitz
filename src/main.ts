@@ -24,6 +24,7 @@ import { EntityRenderer } from './render/entityRenderer.js';
 import { AutotileBackground, loadWangTiles } from './render/autotile.js';
 import type { WangTiles } from './render/autotile.js';
 import { FpsMeter } from './render/fpsMeter.js';
+import { Radar } from './render/radar.js';
 import { UniqueCeremony } from './render/ceremony.js';
 import { InputController } from './input/controller.js';
 import { Hud } from './ui/hud.js';
@@ -127,6 +128,13 @@ async function main(): Promise<void> {
   ]);
   const entityRenderer = new EntityRenderer(textures);
   gameApp.stage.addChild(entityRenderer.layer);
+
+  // 우상단 플레이어 중심 레이더(렌더 전용, ADR-0009). entityRenderer.layer는 카메라를
+  // 따라 팬되지만 레이더는 stage에 직접 붙여 화면 고정 HUD로 둔다. 하단-좌 HUD·상단-중
+  // 보스바·하단-우 치트 패널과 겹치지 않는 우상단에 배치.
+  const radar = new Radar();
+  radar.layer.position.set(DESIGN_WIDTH - 24 - radar.radiusPx, 24 + radar.radiusPx);
+  gameApp.stage.addChild(radar.layer);
 
   const controller = new InputController(gameApp);
   const fps = new FpsMeter();
@@ -440,6 +448,8 @@ async function main(): Promise<void> {
     // --- Render ---
     const alpha = accumulator / DT;
     entityRenderer.render(prevSnap, currSnap, alpha);
+    // 우상단 레이더(렌더 전용): 현재 스냅샷만 읽어 보스·엘리트·드랍·기믹·해저드를 표시.
+    radar.render(currSnap);
 
     // Seamless background scroll: the tiling sprite stays fixed over the viewport
     // and only its tile offset moves with the interpolated camera. Take the f64
@@ -609,6 +619,7 @@ async function main(): Promise<void> {
       },
       renderOnce: () => {
         entityRenderer.render(prevSnap, currSnap, 1);
+        radar.render(currSnap);
         gameApp.app.renderer.render(gameApp.app.stage);
       },
       setSpeedFactor: (mult) => {
@@ -689,6 +700,7 @@ async function main(): Promise<void> {
         prevSnap = currSnap;
         currSnap = snapshotWorld(w);
         entityRenderer.render(prevSnap, currSnap, 1);
+        radar.render(currSnap);
         gameApp.app.renderer.render(gameApp.app.stage);
       },
       get state() {
