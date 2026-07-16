@@ -39,5 +39,8 @@ Thumbs.db
 tmp/
 temp/
 
+# Asset-prep raw inputs (PixelLab north-facing originals; prepped into assets/*.png)
+assets/_raw/
+
 # OMC harness session state
 .omc/state/
