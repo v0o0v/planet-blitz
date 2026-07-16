@@ -58,6 +58,12 @@ export interface WorldSnapshot {
    */
   cameraX: number;
   cameraY: number;
+  /**
+   * Active planet index (config.planet). Render-only — drives per-planet boss /
+   * backdrop art selection. NEVER part of the state hash (hashing reads
+   * WorldState, not this snapshot), so it is safe to expose here.
+   */
+  planet: number;
   entities: EntitySnapshot[];
   beams: Beam[];
 }
@@ -103,6 +109,7 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
     arenaHeight: state.config.arenaHeight,
     cameraX,
     cameraY,
+    planet: state.config.planet ?? 0,
     entities,
     beams,
   };

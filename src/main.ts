@@ -21,6 +21,8 @@ import { TilingSprite } from 'pixi.js';
 import { createGameApp, DESIGN_WIDTH, DESIGN_HEIGHT } from './render/app.js';
 import { loadGameTextures } from './render/textures.js';
 import { EntityRenderer } from './render/entityRenderer.js';
+import { AutotileBackground, loadWangTiles } from './render/autotile.js';
+import type { WangTiles } from './render/autotile.js';
 import { FpsMeter } from './render/fpsMeter.js';
 import { UniqueCeremony } from './render/ceremony.js';
 import { InputController } from './input/controller.js';
@@ -73,13 +75,32 @@ async function main(): Promise<void> {
   const resultOverlay = new ResultOverlay();
   const planetSelect = new PlanetSelect();
   const textures = await loadGameTextures(gameApp.app.renderer);
-  // Volcanic arena backdrop tiled beneath the entities (Kargon world theme).
+  // Planet backdrop by index, with a guaranteed non-undefined fallback (the
+  // array always holds 4 entries; the extra `?? gem` only satisfies the strict
+  // index type — it is never reached at runtime).
+  const planetBackground = (i: number) =>
+    textures.background[i] ?? textures.background[0] ?? textures.gem;
+  // Arena backdrop tiled beneath the entities. Starts on the Kargon theme
+  // (slot 0); `startRun` swaps in the launched planet's backdrop each run.
   const background = new TilingSprite({
-    texture: textures.background,
+    texture: planetBackground(0),
     width: DESIGN_WIDTH,
     height: DESIGN_HEIGHT,
   });
   gameApp.stage.addChild(background);
+  // Wang autotile terrain floor (render-only). Sits above the flat TilingSprite
+  // fallback and below entities. Each run's planet tileset + seed is applied in
+  // `startRun`; a planet with no bundled tileset keeps the TilingSprite backdrop.
+  const autotile = new AutotileBackground();
+  gameApp.stage.addChild(autotile.layer);
+  // Load all four planet Wang tilesets up front (missing ones resolve to null →
+  // that planet falls back to the procedural TilingSprite, regression 0).
+  const wangTiles: (WangTiles | null)[] = await Promise.all([
+    loadWangTiles(0),
+    loadWangTiles(1),
+    loadWangTiles(2),
+    loadWangTiles(3),
+  ]);
   const entityRenderer = new EntityRenderer(textures);
   gameApp.stage.addChild(entityRenderer.layer);
 
@@ -107,6 +128,7 @@ async function main(): Promise<void> {
     arenaHeight: DEFAULT_CONFIG.arenaHeight,
     cameraX: 0,
     cameraY: 0,
+    planet: 0,
     entities: [],
     beams: [],
   };
@@ -235,6 +257,13 @@ async function main(): Promise<void> {
       loadout,
       skillInvest,
     };
+    // Swap the arena backdrop to the launched planet's theme (render-only). The
+    // Wang autotile floor takes over when the planet has a tileset; otherwise the
+    // flat TilingSprite stays visible as the fallback.
+    background.texture = planetBackground(sel.planet);
+    const tiles = wangTiles[sel.planet] ?? null;
+    autotile.configure(tiles, seed);
+    background.visible = !autotile.active;
     currentSeed = seed;
     world = createWorld(seed, config);
     recorder = new ReplayRecorder(seed, world.config);
@@ -345,9 +374,14 @@ async function main(): Promise<void> {
     // avoid f32 UV precision "swim" in PIXI. Render-only; the sim keeps full f64.
     const camX = prevSnap.cameraX + (currSnap.cameraX - prevSnap.cameraX) * alpha;
     const camY = prevSnap.cameraY + (currSnap.cameraY - prevSnap.cameraY) * alpha;
-    const tileW = background.texture.width;
-    const tileH = background.texture.height;
-    background.tilePosition.set(-camX % tileW, -camY % tileH);
+    if (autotile.active) {
+      // Wang floor scrolls by panning its layer + re-tiling on boundary crossings.
+      autotile.update(camX, camY);
+    } else {
+      const tileW = background.texture.width;
+      const tileH = background.texture.height;
+      background.tilePosition.set(-camX % tileW, -camY % tileH);
+    }
 
     // Level-up: freeze is handled in the sim; show the pick overlay (render is
     // still live underneath). Picking queues a SPECIAL_POWERUP_PICK input.
@@ -425,6 +459,7 @@ async function main(): Promise<void> {
       gameApp,
       controller,
       entityRenderer,
+      autotile,
       hud,
       powerupOverlay,
       resultOverlay,

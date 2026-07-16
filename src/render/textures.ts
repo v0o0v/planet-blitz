@@ -25,16 +25,32 @@ export interface PlaceholderTextures {
   bullet: Texture;
   enemyBullet: Texture;
   gem: Texture;
-  /** Enemy textures indexed by role typeIndex (0 charger .. 3 support). */
+  /**
+   * Enemy textures indexed by global typeIndex (0..21): 카르곤 0~3, 베르단 4~9,
+   * 니플헤임 10~15, 아르케 16~21 (data/enemies ENEMY_BY_TYPE 순서와 1:1).
+   */
   enemy: Texture[];
-  /** Boss (large lava-fortress). */
-  boss: Texture;
+  /**
+   * Boss textures indexed by planetIndex (0 카르곤 요새 .. 3 아르케 오벨리스크).
+   * A missing per-planet PNG falls back to the Kargon boss (slot 0).
+   */
+  boss: Texture[];
   /** Supply raider transport. */
   supply: Texture;
+  /**
+   * Parachute canopy for the supply drop (render-only decoration). `null` when
+   * no `fx_parachute.png` is present — the supply then renders unchanged.
+   */
+  parachute: Texture | null;
+  /** Floor loot pickup (neutral gold glyph; renderer tints by rarity code). */
+  loot: Texture;
   /** Death burst effect (render-only juice). */
   explosion: Texture;
-  /** Tileable volcanic arena backdrop. */
-  background: Texture;
+  /**
+   * Tileable arena backdrop indexed by planetIndex (0 카르곤 화산 .. 3 아르케).
+   * A missing per-planet PNG falls back to the Kargon backdrop (slot 0).
+   */
+  background: Texture[];
   // --- Scroll-map gimmicks (plan Phase E/F) ---
   /** Cover wall — a unit square stretched to the AABB by the renderer. */
   wall: Texture;
@@ -48,14 +64,43 @@ export interface PlaceholderTextures {
   turretPickup: Texture;
 }
 
-/** Per-role colour + base radius (matches data/enemies typeIndex order). */
-// Radii match the 2x-scale sim hitboxes (plan D1) so shape placeholders line up
-// with the enlarged entities when no PixelLab asset is present.
+/**
+ * Per-typeIndex colour + base radius + shape, covering ALL 22 enemies
+ * (ENEMY_BY_TYPE order). Radii match the 2x-scale sim hitboxes (plan D1) so the
+ * shape placeholders line up with the enlarged entities when no PixelLab asset
+ * is present. Role reads from the SHAPE (tri charger / square gunner / diamond
+ * special / hex support; elites reuse the gunner/charger shape one size up), and
+ * PLANET reads from the palette — 카르곤 화염 red/amber, 베르단 산성 green,
+ * 니플헤임 서리 ice-blue, 아르케 고대기계 bronze — so the fallback still tells the
+ * four planets apart (task Phase F ①).
+ */
 const ENEMY_STYLE: { color: number; radius: number; shape: 'tri' | 'square' | 'diamond' | 'hex' }[] = [
+  // 카르곤 0~3 (M1 원본 유지)
   { color: 0xff5533, radius: 36, shape: 'tri' }, // 0 charger — aggressive dart
   { color: 0xffb020, radius: 32, shape: 'square' }, // 1 gunner
   { color: 0xff3300, radius: 44, shape: 'diamond' }, // 2 lava spring
   { color: 0x33ffcc, radius: 30, shape: 'hex' }, // 3 support
+  // 베르단 4~9 — 산성 그린
+  { color: 0x7ec53a, radius: 32, shape: 'tri' }, // 4 charger
+  { color: 0x9bd94a, radius: 30, shape: 'square' }, // 5 gunner
+  { color: 0x5fa82c, radius: 42, shape: 'diamond' }, // 6 special
+  { color: 0xb6e86a, radius: 28, shape: 'hex' }, // 7 support
+  { color: 0xcfff70, radius: 44, shape: 'square' }, // 8 elite gunner
+  { color: 0xcfff70, radius: 50, shape: 'tri' }, // 9 elite charger
+  // 니플헤임 10~15 — 서리 아이스블루
+  { color: 0x5cc4f2, radius: 30, shape: 'tri' }, // 10 charger
+  { color: 0x7ad3f7, radius: 32, shape: 'square' }, // 11 gunner
+  { color: 0x3f9dd0, radius: 44, shape: 'diamond' }, // 12 special
+  { color: 0xa6e6ff, radius: 28, shape: 'hex' }, // 13 support
+  { color: 0xd0f4ff, radius: 46, shape: 'square' }, // 14 elite gunner
+  { color: 0xd0f4ff, radius: 52, shape: 'tri' }, // 15 elite charger
+  // 아르케 16~21 — 고대기계 브론즈
+  { color: 0xc07a28, radius: 38, shape: 'tri' }, // 16 charger
+  { color: 0xd6923a, radius: 34, shape: 'square' }, // 17 gunner
+  { color: 0x9a5f1e, radius: 46, shape: 'diamond' }, // 18 special
+  { color: 0xe0ad5a, radius: 30, shape: 'hex' }, // 19 support
+  { color: 0xf0c268, radius: 48, shape: 'square' }, // 20 elite gunner
+  { color: 0xf0c268, radius: 54, shape: 'tri' }, // 21 elite charger
 ];
 
 function drawTriangle(g: Graphics, r: number, color: number): void {
@@ -113,12 +158,32 @@ function enemyTexture(renderer: Renderer, style: (typeof ENEMY_STYLE)[number]): 
   return tex;
 }
 
-/** Procedural volcanic backdrop tile: dark basalt with a few molten cracks. */
-function backgroundTexture(renderer: Renderer): Texture {
+/** Per-planet backdrop palette (base fill, crack under/over, ember). */
+interface BackdropPalette {
+  base: number;
+  crackUnder: number;
+  crackOver: number;
+  ember: number;
+}
+
+// One palette per planetIndex. Slot 0 = the original M1 volcanic look (unchanged
+// values), so the Kargon backdrop is byte-identical to before (no regression).
+const BACKDROP_PALETTES: readonly BackdropPalette[] = [
+  { base: 0x0d0a12, crackUnder: 0x4a1608, crackOver: 0xff5a1e, ember: 0xffb020 }, // 0 카르곤 화산
+  { base: 0x0a1207, crackUnder: 0x24401a, crackOver: 0x7ec53a, ember: 0xb6e86a }, // 1 베르단 산성 습지
+  { base: 0x081018, crackUnder: 0x1a3a52, crackOver: 0x5cc4f2, ember: 0xa6e6ff }, // 2 니플헤임 빙원
+  { base: 0x120e08, crackUnder: 0x4a3418, crackOver: 0xc07a28, ember: 0xe0ad5a }, // 3 아르케 유적
+];
+
+/**
+ * Procedural tiled backdrop: a dark base with a few seam-tolerant cracks and
+ * embers. The crack/ember geometry is fixed (non-random) so tiles seam cleanly;
+ * only the palette changes per planet.
+ */
+function backgroundTexture(renderer: Renderer, pal: BackdropPalette): Texture {
   const S = 256;
   const g = new Graphics();
-  g.rect(0, 0, S, S).fill({ color: 0x0d0a12 });
-  // Fixed (non-random) molten crack polylines for a seam-tolerant volcanic look.
+  g.rect(0, 0, S, S).fill({ color: pal.base });
   const cracks: [number, number][][] = [
     [[20, 0], [60, 70], [40, 140], [90, 210], [70, 256]],
     [[180, 0], [150, 60], [200, 120], [170, 200], [210, 256]],
@@ -129,16 +194,47 @@ function backgroundTexture(renderer: Renderer): Texture {
     if (first === undefined) continue;
     g.moveTo(first[0], first[1]);
     for (const [x, y] of rest) g.lineTo(x, y);
-    g.stroke({ color: 0x4a1608, width: 4, alpha: 0.9 });
+    g.stroke({ color: pal.crackUnder, width: 4, alpha: 0.9 });
     g.moveTo(first[0], first[1]);
     for (const [x, y] of rest) g.lineTo(x, y);
-    g.stroke({ color: 0xff5a1e, width: 1.5, alpha: 0.7 });
+    g.stroke({ color: pal.crackOver, width: 1.5, alpha: 0.7 });
   }
-  // Scattered embers (fixed positions).
   const embers: [number, number][] = [
     [45, 40], [120, 80], [200, 50], [30, 190], [160, 170], [230, 220], [90, 130], [180, 240],
   ];
-  for (const [x, y] of embers) g.circle(x, y, 1.5).fill({ color: 0xffb020, alpha: 0.6 });
+  for (const [x, y] of embers) g.circle(x, y, 1.5).fill({ color: pal.ember, alpha: 0.6 });
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+/** Per-planet boss placeholder palette (dark hull + molten/energy core). */
+const BOSS_PALETTES: readonly [number, number][] = [
+  [0x7a1410, 0xff5a1e], // 0 카르곤 용암 요새
+  [0x1f5a12, 0x9bd94a], // 1 베르단 여왕
+  [0x123a5a, 0x7ad3f7], // 2 니플헤임 기함
+  [0x5a3a12, 0xf0c268], // 3 아르케 오벨리스크
+];
+
+/** Large hexagonal boss placeholder — dark hull ring + bright inner core (2x). */
+function bossTexture(renderer: Renderer, hull: number, core: number): Texture {
+  const g = new Graphics();
+  drawHex(g, 128, hull);
+  drawHex(g, 80, core);
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+/**
+ * Floor loot placeholder — a neutral gold diamond glyph with a bright rim. The
+ * renderer tints this by rarity code, so the sprite itself stays rarity-neutral
+ * (a real `loot.png` overrides it and is tinted the same way).
+ */
+function lootTexture(renderer: Renderer): Texture {
+  const g = new Graphics();
+  drawDiamond(g, 22, 0xffcf4a);
+  g.circle(0, 0, 6).fill({ color: 0xffffff, alpha: 0.85 });
   const tex = renderer.generateTexture(g);
   g.destroy();
   return tex;
@@ -173,11 +269,6 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
 
   const gemG = new Graphics();
   drawDiamond(gemG, 16, 0x66ff88); // 2x scale
-
-  // Boss: large lava-fortress hexagon, dark-red body with a molten outline (2x).
-  const bossG = new Graphics();
-  drawHex(bossG, 128, 0x7a1410);
-  drawHex(bossG, 80, 0xff5a1e);
 
   // Supply raider: a wide neutral transport (amber outline, dark hull); 2x scale.
   const supplyG = new Graphics();
@@ -241,10 +332,12 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
     enemyBullet: renderer.generateTexture(enemyBulletG),
     gem: renderer.generateTexture(gemG),
     enemy: ENEMY_STYLE.map((s) => enemyTexture(renderer, s)),
-    boss: renderer.generateTexture(bossG),
+    boss: BOSS_PALETTES.map(([hull, core]) => bossTexture(renderer, hull, core)),
     supply: renderer.generateTexture(supplyG),
+    parachute: null, // only populated when fx_parachute.png loads (loadGameTextures)
+    loot: lootTexture(renderer),
     explosion: explosionTexture(renderer),
-    background: backgroundTexture(renderer),
+    background: BACKDROP_PALETTES.map((p) => backgroundTexture(renderer, p)),
     wall: renderer.generateTexture(wallG),
     destructible: renderer.generateTexture(destructibleG),
     magnetEmitter: renderer.generateTexture(magnetG),
@@ -256,7 +349,6 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
   bulletG.destroy();
   enemyBulletG.destroy();
   gemG.destroy();
-  bossG.destroy();
   supplyG.destroy();
   wallG.destroy();
   destructibleG.destroy();
@@ -302,25 +394,92 @@ async function tryLoad(basename: string): Promise<Texture | null> {
 export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderTextures> {
   const tex = createPlaceholderTextures(renderer);
 
+  // Enemy filenames by global typeIndex (0..21). 0~3 keep the M1 names; 4~21
+  // follow the planet/role contract `enemy_<planet>_<role>` with elites tagged
+  // `elite_<role>` (see data/planets — order == ENEMY_BY_TYPE). Any missing file
+  // silently keeps its planet-tinted shape placeholder.
   const enemyFiles = [
-    'enemy_charger.png',
-    'enemy_mortar.png',
-    'enemy_lavaspring.png',
-    'enemy_support.png',
+    'enemy_charger.png', // 0
+    'enemy_mortar.png', // 1
+    'enemy_lavaspring.png', // 2
+    'enemy_support.png', // 3
+    'enemy_berdan_charger.png', // 4
+    'enemy_berdan_gunner.png', // 5
+    'enemy_berdan_special.png', // 6
+    'enemy_berdan_support.png', // 7
+    'enemy_berdan_elite_gunner.png', // 8
+    'enemy_berdan_elite_charger.png', // 9
+    'enemy_niflheim_charger.png', // 10
+    'enemy_niflheim_gunner.png', // 11
+    'enemy_niflheim_special.png', // 12
+    'enemy_niflheim_support.png', // 13
+    'enemy_niflheim_elite_gunner.png', // 14
+    'enemy_niflheim_elite_charger.png', // 15
+    'enemy_arke_charger.png', // 16
+    'enemy_arke_gunner.png', // 17
+    'enemy_arke_special.png', // 18
+    'enemy_arke_support.png', // 19
+    'enemy_arke_elite_gunner.png', // 20
+    'enemy_arke_elite_charger.png', // 21
   ];
 
-  const [player, boss, gem, explosion, ...enemies] = await Promise.all([
+  // Boss + backdrop by planetIndex (0 카르곤 .. 3 아르케). Slot 0 keeps the M1
+  // filenames (`boss.png`, `bg_kargon.png`); others follow the planet contract.
+  const bossFiles = ['boss.png', 'boss_berdan.png', 'boss_niflheim.png', 'boss_arke.png'];
+  const bgFiles = ['bg_kargon.png', 'bg_berdan.png', 'bg_niflheim.png', 'bg_arke.png'];
+
+  const [
+    player,
+    gem,
+    explosion,
+    loot,
+    parachute,
+    supply,
+    wall,
+    destructible,
+    magnetEmitter,
+    bombDevice,
+    turretPickup,
+    bosses,
+    backgrounds,
+    enemies,
+  ] = await Promise.all([
     tryLoad('player.png'),
-    tryLoad('boss.png'),
     tryLoad('gem.png'),
     tryLoad('fx_explosion.png'),
-    ...enemyFiles.map((f) => tryLoad(f)),
+    tryLoad('loot.png'),
+    tryLoad('fx_parachute.png'),
+    tryLoad('supply.png'),
+    tryLoad('wall.png'),
+    tryLoad('destructible.png'),
+    tryLoad('magnet_emitter.png'),
+    tryLoad('bomb_device.png'),
+    tryLoad('turret_pickup.png'),
+    Promise.all(bossFiles.map((f) => tryLoad(f))),
+    Promise.all(bgFiles.map((f) => tryLoad(f))),
+    Promise.all(enemyFiles.map((f) => tryLoad(f))),
   ]);
 
   if (player !== null) tex.player = player;
-  if (boss !== null) tex.boss = boss;
   if (gem !== null) tex.gem = gem;
   if (explosion !== null) tex.explosion = explosion;
+  if (loot !== null) tex.loot = loot;
+  if (parachute !== null) tex.parachute = parachute;
+  // Scroll-map gimmicks: PNG overrides the shape placeholder; missing file keeps
+  // the procedural fallback (regression 0). All render fixedFacing (no rotation);
+  // wall stretches to its AABB unit-square, supply keeps the fx_parachute child.
+  if (supply !== null) tex.supply = supply;
+  if (wall !== null) tex.wall = wall;
+  if (destructible !== null) tex.destructible = destructible;
+  if (magnetEmitter !== null) tex.magnetEmitter = magnetEmitter;
+  if (bombDevice !== null) tex.bombDevice = bombDevice;
+  if (turretPickup !== null) tex.turretPickup = turretPickup;
+  bosses.forEach((t, i) => {
+    if (t !== null) tex.boss[i] = t;
+  });
+  backgrounds.forEach((t, i) => {
+    if (t !== null) tex.background[i] = t;
+  });
   enemies.forEach((t, i) => {
     if (t !== null) tex.enemy[i] = t;
   });

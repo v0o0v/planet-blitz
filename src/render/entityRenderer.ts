@@ -34,6 +34,12 @@ const HAZARD_MORTAR = 0;
 const ART_SCALE = 1.5;
 /** Frames a death burst stays alive (render-only, not sim time). */
 const EFFECT_LIFE = 24;
+/** Fixed on-screen size (px) of a floor loot glyph — the sim `radius` is the
+ *  pickup range (44), far larger than the icon should read. */
+const LOOT_SIZE = 48;
+/** Rarity → tint for loot (render-only): normal grey, magic blue, rare gold,
+ *  unique orange. Indexed by the rarity code carried in `enemyType`. */
+const LOOT_TINT = [0xcfd6e0, 0x5aa0ff, 0xffd24a, 0xff8a2a];
 
 export class EntityRenderer {
   readonly layer = new Container();
@@ -43,6 +49,8 @@ export class EntityRenderer {
   private readonly effects: DeathEffect[] = [];
   private readonly overlay = new Graphics();
   private frameTick = 0;
+  /** Active planet index (from the current snapshot) — selects boss art. */
+  private planet = 0;
 
   constructor(private readonly textures: PlaceholderTextures) {
     // Draw order (bottom → top): hazard/beam overlay, entity sprites, death bursts.
@@ -62,9 +70,11 @@ export class EntityRenderer {
       case 'gem':
         return this.textures.gem;
       case 'boss':
-        return this.textures.boss;
+        return this.textures.boss[this.planet] ?? this.textures.boss[0] ?? this.textures.player;
       case 'supply':
         return this.textures.supply;
+      case 'loot':
+        return this.textures.loot;
       case 'wall':
         return this.textures.wall;
       case 'destructible':
@@ -87,6 +97,7 @@ export class EntityRenderer {
 
   render(prev: WorldSnapshot, curr: WorldSnapshot, alpha: number): void {
     this.frameTick++;
+    this.planet = curr.planet;
     // Camera follow: pan the whole layer so the interpolated camera (= player)
     // sits at the viewport centre. Sprites keep their absolute world coordinates;
     // only the layer is translated (vampire-survivors-style scrolling).
@@ -110,11 +121,28 @@ export class EntityRenderer {
           // half-height) — no ART_SCALE, so the cover the player sees matches the
           // collision box exactly.
           sprite.setSize(e.radius * 2, e.aabbH * 2);
+        } else if (e.kind === 'loot') {
+          // Loot: fixed icon size (sim radius is the large pickup range, not the
+          // glyph). Tint by rarity so the drop's grade always reads — whether the
+          // sprite is the placeholder diamond or a neutral gold loot.png.
+          sprite.setSize(LOOT_SIZE, LOOT_SIZE);
+          sprite.tint = LOOT_TINT[e.enemyType] ?? LOOT_TINT[0] ?? 0xffffff;
         } else {
           // Real sprites are 64/128px; scale to the sim hitbox so art matches
           // collisions (player r16 → 48px, matching the GDD ship size).
           const size = e.radius * 2 * ART_SCALE;
           sprite.setSize(size, size);
+        }
+        // Supply drop: pin a parachute canopy above the transport when the
+        // fx_parachute.png asset is present (render-only; no PNG → unchanged).
+        if (e.kind === 'supply' && this.textures.parachute !== null) {
+          const tw = sprite.texture.width;
+          const th = sprite.texture.height;
+          const chute = new Sprite(this.textures.parachute);
+          chute.anchor.set(0.5, 1);
+          chute.setSize(tw * 0.95, tw * 0.95);
+          chute.position.set(0, -th * 0.35);
+          sprite.addChild(chute);
         }
         this.spriteLayer.addChild(sprite);
         tracked = { sprite, seenTick: this.frameTick, kind: e.kind };
@@ -135,7 +163,8 @@ export class EntityRenderer {
         e.kind === 'destructible' ||
         e.kind === 'magnetEmitter' ||
         e.kind === 'bombDevice' ||
-        e.kind === 'turretPickup';
+        e.kind === 'turretPickup' ||
+        e.kind === 'loot';
       tracked.sprite.rotation = fixedFacing ? 0 : e.angle;
 
       if (e.kind === 'boss') {
