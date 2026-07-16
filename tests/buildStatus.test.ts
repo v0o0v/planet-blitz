@@ -18,31 +18,38 @@ import { createWorld, stepWorld, emptyInput, packPowerupPick, DEFAULT_CONFIG } f
 import type { WorldState } from '../src/sim/world.js';
 
 describe('levelUpOverlayAction — 표시/숨김 결정(레이스 회귀 가드)', () => {
+  // 인자: (pendingLevelUp, level, overlayVisible, shownLevel)
   it('레벨업 발생 + 미표시 → show', () => {
-    expect(levelUpOverlayAction(true, [1, 2, 3], false, [])).toBe('show');
+    expect(levelUpOverlayAction(true, 2, false, 0)).toBe('show');
   });
 
-  it('표시 중 + 동일 오퍼 → none (선택 대기 유지, 매 프레임 재표시 안 함)', () => {
-    expect(levelUpOverlayAction(true, [1, 2, 3], true, [1, 2, 3])).toBe('none');
+  it('표시 중 + 동일 레벨 → none (선택 대기 유지, 매 프레임 재표시 안 함)', () => {
+    expect(levelUpOverlayAction(true, 2, true, 2)).toBe('none');
   });
 
-  it('멀티 레벨업: 표시 중이나 오퍼가 교체됨 → show (새 카드로 갱신)', () => {
-    expect(levelUpOverlayAction(true, [4, 5, 6], true, [1, 2, 3])).toBe('show');
+  it('멀티 레벨업: 표시 중이나 레벨이 올라감 → show (새 카드로 갱신)', () => {
+    expect(levelUpOverlayAction(true, 3, true, 2)).toBe('show');
   });
 
   it('픽 소비로 pendingLevelUp 하강 + 표시 중 → hide', () => {
-    expect(levelUpOverlayAction(false, [], true, [1, 2, 3])).toBe('hide');
+    expect(levelUpOverlayAction(false, 2, true, 2)).toBe('hide');
   });
 
   it('레벨업 아님 + 미표시 → none', () => {
-    expect(levelUpOverlayAction(false, [], false, [])).toBe('none');
+    expect(levelUpOverlayAction(false, 2, false, 0)).toBe('none');
   });
 
-  it('회귀: 픽 직후 pendingLevelUp이 아직 참인 프레임에도 재표시(show)만 하고, 하강 시 정확히 hide로 종결된다', () => {
-    // 픽 큐잉 시점(오버레이는 아직 표시 중, 동일 오퍼) → none: 낙관적 숨김 없음.
-    expect(levelUpOverlayAction(true, [7, 8, 9], true, [7, 8, 9])).toBe('none');
+  it('소프트락 회귀: 멀티 레벨업에서 오퍼가 우연히 같은 순서여도 레벨이 다르면 show로 갱신된다', () => {
+    // 오퍼 배열 동등성으로 판정하던 옛 로직은 이 경우 'none'을 반환해 오버레이가
+    // picked 가드에 고정 → sim 영구 프리즈(소프트락). level 기준이면 항상 구분된다.
+    expect(levelUpOverlayAction(true, 6, true, 5)).toBe('show');
+  });
+
+  it('회귀: 픽 직후 pendingLevelUp이 아직 참인 프레임엔 재표시하지 않고(none), 하강 시 정확히 hide로 종결된다', () => {
+    // 픽 큐잉 시점(오버레이 표시 중, 동일 레벨) → none: 낙관적 숨김 없음.
+    expect(levelUpOverlayAction(true, 4, true, 4)).toBe('none');
     // 픽 소비 후(pendingLevelUp=false) → hide: 오버레이가 고아로 남지 않는다.
-    expect(levelUpOverlayAction(false, [], true, [7, 8, 9])).toBe('hide');
+    expect(levelUpOverlayAction(false, 4, true, 4)).toBe('hide');
   });
 });
 
@@ -127,20 +134,19 @@ describe('통합: 레벨업 → 픽 소비 사이클이 오버레이를 고아�
   it('레벨업 프레임엔 show, 픽 입력 소비 후 프레임엔 hide로 수렴한다', () => {
     const state = worldAtLevelUp();
     expect(state.pendingLevelUp).toBe(true);
-    const choices = state.powerupChoices.slice();
 
-    // 렌더 루프 1: 미표시 → show. shownChoices를 오퍼로 세팅.
-    expect(levelUpOverlayAction(state.pendingLevelUp, state.powerupChoices, false, [])).toBe('show');
-    const shown = choices.slice();
+    // 렌더 루프 1: 미표시 → show. shownLevel을 현재 레벨로 세팅.
+    expect(levelUpOverlayAction(state.pendingLevelUp, state.level, false, 0)).toBe('show');
+    const shown = state.level;
 
-    // 픽 큐잉(오버레이 표시 중, 동일 오퍼) → none: 낙관적 숨김 없음.
-    expect(levelUpOverlayAction(state.pendingLevelUp, state.powerupChoices, true, shown)).toBe('none');
+    // 픽 큐잉(오버레이 표시 중, 동일 레벨) → none: 낙관적 숨김 없음.
+    expect(levelUpOverlayAction(state.pendingLevelUp, state.level, true, shown)).toBe('none');
 
     // 픽 입력을 sim이 소비 → pendingLevelUp 하강.
     stepWorld(state, { ...emptyInput(), special: packPowerupPick(0) });
     expect(state.pendingLevelUp).toBe(false);
 
     // 렌더 루프: 표시 중이나 pendingLevelUp=false → hide.
-    expect(levelUpOverlayAction(state.pendingLevelUp, state.powerupChoices, true, shown)).toBe('hide');
+    expect(levelUpOverlayAction(state.pendingLevelUp, state.level, true, shown)).toBe('hide');
   });
 });

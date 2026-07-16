@@ -44,6 +44,7 @@ export class PowerupOverlay {
   private readonly root: HTMLElement;
   private readonly statusBar: HTMLElement;
   private readonly cards: HTMLElement;
+  private readonly hint: HTMLElement;
   private onPick: ((offerIndex: number) => void) | null = null;
   private offered: number[] = [];
   /** 이번 표시에서 이미 선택이 이뤄졌는지(중복 픽·재표시 전 추가 클릭 차단). */
@@ -63,13 +64,13 @@ export class PowerupOverlay {
     this.statusBar.className = 'pb-status';
     this.cards = document.createElement('div');
     this.cards.className = 'pb-cards';
-    const hint = document.createElement('div');
-    hint.className = 'pb-hint';
-    hint.textContent = '클릭 또는 1 / 2 / 3 키';
+    this.hint = document.createElement('div');
+    this.hint.className = 'pb-hint';
+    this.hint.textContent = '클릭 또는 숫자 키';
     this.root.appendChild(title);
     this.root.appendChild(this.statusBar);
     this.root.appendChild(this.cards);
-    this.root.appendChild(hint);
+    this.root.appendChild(this.hint);
     document.body.appendChild(this.root);
 
     window.addEventListener('keydown', this.onKeyDown);
@@ -81,7 +82,11 @@ export class PowerupOverlay {
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (!this.visible || this.picked) return;
-    const map: Record<string, number> = { Digit1: 0, Digit2: 1, Digit3: 2, Numpad1: 0, Numpad2: 1, Numpad3: 2 };
+    // 도박사 칩(오퍼 4장)까지 커버하도록 4번 키도 매핑(offered.length로 게이트).
+    const map: Record<string, number> = {
+      Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3,
+      Numpad1: 0, Numpad2: 1, Numpad3: 2, Numpad4: 3,
+    };
     const idx = map[e.code];
     if (idx !== undefined && idx < this.offered.length) {
       e.preventDefault();
@@ -116,6 +121,9 @@ export class PowerupOverlay {
       const rel = choiceRelevance(poolIndex, status.weaponType);
       const card = document.createElement('div');
       card.className = `pb-card${rel.matchesWeapon ? ' match' : ''}`;
+      // 최소 접근성: 스크린리더가 카드를 버튼으로 인식하고 이름을 읽도록.
+      card.setAttribute('role', 'button');
+      card.setAttribute('aria-label', `${offerIndex + 1}번 강화: ${def?.name ?? ''} — ${def?.desc ?? ''}`);
 
       if (rel.label !== '') {
         const badge = document.createElement('div');
@@ -139,6 +147,9 @@ export class PowerupOverlay {
       card.addEventListener('click', () => this.pick(offerIndex));
       this.cards.appendChild(card);
     });
+    // 힌트를 오퍼 수에 맞춰 갱신(도박사 칩 4장 대응).
+    const keys = choices.map((_, i) => String(i + 1)).join(' / ');
+    this.hint.textContent = `클릭 또는 ${keys} 키`;
     this.root.style.display = 'flex';
   }
 
@@ -153,6 +164,7 @@ export class PowerupOverlay {
       { label: '관통', value: String(s.pierce) },
       { label: '확산', value: `${s.spreadDeg}°` },
       { label: '이동', value: String(s.moveSpeed) },
+      { label: '대시', value: `${(s.dashCooldownTicks / 60).toFixed(1)}s` },
       { label: 'HP', value: `${s.hp}/${s.maxHp}` },
       { label: '자석', value: String(s.magnetRadius) },
     ];

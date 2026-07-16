@@ -104,26 +104,26 @@ export function choiceRelevance(poolIndex: number, currentWeaponType: number): C
  * `pendingLevelUp`이 아직 참인 프레임에 재표시되며 오버레이가 고아로 남는 레이스를
  * 없앤다. 픽은 다음 sim 틱에서 소비되어 `pendingLevelUp`을 내리고, 그 시점에만 숨는다.
  *
+ * "신규 레벨업" 판정은 **단조 증가하는 `state.level`**로 한다(레벨업마다 level++ 후
+ * pendingLevelUp=true). 오퍼 배열 동등성으로 판정하면, 멀티 레벨업에서 재추첨 결과가
+ * 우연히 같은 순서일 때 프레임당 다중 틱(픽 소비→재레벨업이 hide 프레임을 건너뜀)과
+ * 겹쳐 오버레이가 picked 가드에 고정돼 새 픽을 못 넣고 sim이 영구 프리즈되는
+ * 소프트락이 났다. level은 서로 다른 레벨업을 항상 구분하므로 이 충돌을 원천 차단한다.
+ *
  * - `pendingLevelUp` 참 + 미표시 → 'show'(신규 레벨업)
- * - `pendingLevelUp` 참 + 표시 중이나 오퍼가 바뀜 → 'show'(멀티 레벨업: 갱신)
- * - `pendingLevelUp` 참 + 표시 중 + 동일 오퍼 → 'none'(선택 대기 유지)
+ * - `pendingLevelUp` 참 + 표시 중이나 level이 바뀜 → 'show'(멀티 레벨업: 갱신)
+ * - `pendingLevelUp` 참 + 표시 중 + 동일 level → 'none'(선택 대기 유지)
  * - `pendingLevelUp` 거짓 + 표시 중 → 'hide'(픽 소비 완료)
  */
 export function levelUpOverlayAction(
   pendingLevelUp: boolean,
-  choices: readonly number[],
+  level: number,
   overlayVisible: boolean,
-  shownChoices: readonly number[],
+  shownLevel: number,
 ): 'show' | 'hide' | 'none' {
   if (pendingLevelUp) {
     if (!overlayVisible) return 'show';
-    return sameChoices(choices, shownChoices) ? 'none' : 'show';
+    return level === shownLevel ? 'none' : 'show';
   }
   return overlayVisible ? 'hide' : 'none';
-}
-
-function sameChoices(a: readonly number[], b: readonly number[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
 }

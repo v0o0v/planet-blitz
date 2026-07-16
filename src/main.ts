@@ -122,8 +122,8 @@ async function main(): Promise<void> {
   const tutorialOverlay = new TutorialOverlay();
   const ftue = new FtueTracker();
   let tutorialActive = false;
-  // 렌더 루프가 현재 오버레이에 띄운 파워업 오퍼(멀티 레벨업 시 오퍼 교체 감지용).
-  let shownChoices: number[] = [];
+  // 현재 오버레이가 띄운 레벨업의 기체 레벨(멀티 레벨업 시 신규 레벨업 감지용). 0 = 미표시.
+  let shownLevel = 0;
 
   // An empty snapshot rendered on menu frames clears the arena behind overlays.
   const emptySnap: WorldSnapshot = {
@@ -244,7 +244,7 @@ async function main(): Promise<void> {
   /** Assemble the run config from the selection + active loadout, then start. */
   function startRun(seed: number, sel: LaunchSelection): void {
     tutorialActive = false; // normal run unless startTutorial re-flags it
-    shownChoices = []; // 새 런: 레벨업 오버레이 표시 상태 초기화
+    shownLevel = 0; // 새 런: 레벨업 오버레이 표시 상태 초기화
     const ship = activeShip(profile);
     const equipped: Item[] = [];
     for (const id of EQUIP_SLOTS) {
@@ -303,7 +303,7 @@ async function main(): Promise<void> {
     }
     tutorialOverlay.hide();
     if (powerupOverlay.visible) powerupOverlay.hide();
-    shownChoices = []; // 정산 화면 진입: 오버레이 표시 상태 초기화
+    shownLevel = 0; // 정산 화면 진입: 오버레이 표시 상태 초기화
     const o = lastOutcome;
     resultOverlay.show(
       {
@@ -399,17 +399,17 @@ async function main(): Promise<void> {
     if (w !== null && !resultOverlay.visible) {
       const action = levelUpOverlayAction(
         w.pendingLevelUp,
-        w.powerupChoices,
+        w.level,
         powerupOverlay.visible,
-        shownChoices,
+        shownLevel,
       );
       if (action === 'show') {
-        shownChoices = [...w.powerupChoices];
-        powerupOverlay.show(shownChoices, readBuildStatus(w), (offerIndex) => {
+        shownLevel = w.level;
+        powerupOverlay.show([...w.powerupChoices], readBuildStatus(w), (offerIndex) => {
           controller.queuePowerupPick(offerIndex);
         });
       } else if (action === 'hide') {
-        shownChoices = [];
+        shownLevel = 0;
         powerupOverlay.hide();
       }
     }
