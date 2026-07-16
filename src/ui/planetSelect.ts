@@ -14,6 +14,7 @@
 import { PLANETS, TIERS, planetById } from '../../data/planets.js';
 import { canEnterTier, ANNIHILATION_UNLOCK_LEVEL } from '../../data/waves.js';
 import { ANOMALY_GRAVITY, ANOMALY_SWARM, ANOMALY_NEBULA, ANOMALY_NONE } from '../sim/anomaly.js';
+import { UI_LOCK_URL, pixelIcon } from './uiIcons.js';
 
 /** What the player chose on the star map. */
 export interface LaunchSelection {
@@ -175,7 +176,13 @@ export class PlanetSelect {
       const unlocked = canEnterTier(t.id, this.level);
       const b = document.createElement('button');
       b.className = `${t.id === this.tier ? 'sel' : ''}${unlocked ? '' : ' locked'}`.trim();
-      b.textContent = unlocked ? t.name : `🔒 ${t.name}`;
+      if (unlocked) {
+        b.textContent = t.name;
+      } else {
+        // 잠금 티어: 픽셀 자물쇠 아이콘 + 이름(이모지 폴백 대체).
+        b.appendChild(pixelIcon(UI_LOCK_URL, 12, '잠김'));
+        b.appendChild(document.createTextNode(` ${t.name}`));
+      }
       b.addEventListener('click', () => {
         if (!canEnterTier(t.id, this.level)) return; // locked: keep current selection
         this.tier = t.id;
