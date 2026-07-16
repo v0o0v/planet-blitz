@@ -21,6 +21,8 @@ export interface LaunchSelection {
   tier: number;
   /** Whether the offered anomaly was accepted (false when none offered). */
   anomalyAccepted: boolean;
+  /** 보스 이전 일반 세그먼트 수 상한(튜토리얼 단축판). absent = 풀 런. */
+  maxSegments?: number;
 }
 
 /** Human-readable anomaly labels (render-only). */

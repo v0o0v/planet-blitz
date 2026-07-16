@@ -85,6 +85,13 @@ export function updateWaves(state: WorldState, player: Entity): void {
   if (w.segmentTimer > 0) w.segmentTimer--;
   if (w.segmentTimer <= 0 && w.segmentIndex < SEGMENTS.length - 1) {
     w.segmentIndex++;
+    // 튜토리얼 단축판(config.maxSegments): 일반 세그먼트를 상한만큼 소화했으면 곧장
+    // 보스 세그먼트로 점프한다. RNG 미소비·순수 인덱스 연산이라 결정론 불변이고,
+    // 필드 부재 시 아래 분기가 죽어 기존 풀 런 거동이 byte-identical로 보존된다.
+    const cap = state.config.maxSegments;
+    if (cap !== undefined && w.segmentIndex >= cap && !seg.boss) {
+      w.segmentIndex = SEGMENTS.length - 1;
+    }
     const next = SEGMENTS[w.segmentIndex];
     w.segmentTimer = next ? next.durationTicks : 0;
     w.cardTimer = 0;
@@ -175,7 +182,7 @@ function spawnEnemy(state: WorldState, def: EnemyDef, x: number, y: number): Ent
   e.x = x;
   e.y = y;
   e.radius = def.radius;
-  // 군체 대발생 변칙 × 섬멸 티어 HP 배율(완만). 정찰/교전은 ×1(거동 불변), 섬멸 ×4.5.
+  // 군체 대발생 변칙 × 티어 HP 배율. 정찰 ×1(불변), 교전 ×2.2(밸런스 표), 섬멸 ×4.5.
   const hp = Math.round(def.hp * enemyHpMult(state.anomaly) * tierParams(state.config.tier).hpMult);
   e.hp = hp;
   e.maxHp = hp;

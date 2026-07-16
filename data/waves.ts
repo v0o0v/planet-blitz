@@ -21,7 +21,7 @@ export type Formation = 'ring' | 'line' | 'edges' | 'cluster';
 
 /** 정찰(0): 기본. */
 export const TIER_RECON = 0;
-/** 교전(1): M2 완성분 — 카드당 정예 1 승격(수치·패턴 M2와 동일 보존). */
+/** 교전(1): 카드당 정예 1 승격 + HP ×2.2(plan 밸런스 표 — 패턴은 M2와 동일). */
 export const TIER_ENGAGE = 1;
 /** 섬멸(2): 패턴 변형(서브탄)+밀도↑+정예 2 + HP 완만 상향(×4.5). */
 export const TIER_ANNIHILATION = 2;
@@ -35,9 +35,9 @@ export const ANNIHILATION_UNLOCK_LEVEL = 60;
  * 티어 파라미터 — 패턴 엔진·웨이브 디렉터에 데이터로 주입(갈림길 ③A). "수치만 다른
  * 티어" 금지(원칙4): 섬멸은 서브탄(패턴 변형)+밀도↑가 본질이고 HP는 완만하게만 오른다.
  *
- * 정찰(0)·교전(1)은 M2 거동을 그대로 보존한다(hpMult 1·subBullets 0·densityMult 1 →
- * 기존 스폰/패턴/해시 불변). 엔진지먼트 HP ×2.2는 밸런스 튜닝 항목으로 재미 게이트
- * 루프에서 조정 예정이라 여기서는 1로 둔다(회귀 방지). 섬멸(2)만 신규 수치를 싣는다.
+ * 정찰(0)은 M2 거동을 그대로 보존한다(hpMult 1·subBullets 0·densityMult 1 →
+ * 기존 스폰/패턴/해시 불변). 교전(1)은 plan 밸런스 표의 HP ×2.2를 싣는다(패턴·밀도·
+ * 정예 승격은 M2와 동일). 섬멸(2)만 패턴 변형까지 포함한 신규 수치를 싣는다.
  */
 export interface TierParams {
   /** 적 스폰 HP 배율(완만). */
@@ -53,7 +53,7 @@ export interface TierParams {
 /** 티어별 파라미터(index = 티어). 새 티어는 append. */
 export const TIER_PARAMS: readonly TierParams[] = [
   { hpMult: 1, densityMult: 1, eliteCount: 0, subBullets: 0 }, // 정찰
-  { hpMult: 1, densityMult: 1, eliteCount: 1, subBullets: 0 }, // 교전(M2 보존)
+  { hpMult: 2.2, densityMult: 1, eliteCount: 1, subBullets: 0 }, // 교전(plan 밸런스 표 ×2.2)
   { hpMult: 4.5, densityMult: 1.5, eliteCount: 2, subBullets: 3 }, // 섬멸
 ];
 

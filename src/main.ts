@@ -43,6 +43,7 @@ import {
   TUTORIAL_SEED,
   TUTORIAL_PLANET,
   TUTORIAL_TIER,
+  TUTORIAL_MAX_SEGMENTS,
 } from './ui/tutorial.js';
 import { createWorld, stepWorld, DT, xpToNext, comboMultiplier, DEFAULT_CONFIG } from './sim/world.js';
 import type { WorldState, WorldConfig } from './sim/world.js';
@@ -230,6 +231,7 @@ async function main(): Promise<void> {
       planet: TUTORIAL_PLANET,
       tier: TUTORIAL_TIER,
       anomalyAccepted: false,
+      maxSegments: TUTORIAL_MAX_SEGMENTS,
     });
     tutorialActive = true; // startRun cleared it; mark this run as the tutorial.
     ftue.markCombat();
@@ -257,6 +259,8 @@ async function main(): Promise<void> {
       loadout,
       skillInvest,
     };
+    // 튜토리얼 단축판: 상한이 지정된 런(startTutorial)만 세그먼트를 제한한다.
+    if (sel.maxSegments !== undefined) config.maxSegments = sel.maxSegments;
     // Swap the arena backdrop to the launched planet's theme (render-only). The
     // Wang autotile floor takes over when the planet has a tileset; otherwise the
     // flat TilingSprite stays visible as the fallback.
