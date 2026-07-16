@@ -35,18 +35,21 @@ function segmentTrace(config: WorldConfig, ticks: number): number[] {
 }
 
 describe('튜토리얼 단축판 (maxSegments)', () => {
-  // 일반 세그먼트 3개 분량 + 여유 1세그. durationTicks는 데이터에서 직접 합산.
-  const seg = (i: number): number => SEGMENTS[i]?.durationTicks ?? 0;
-  const threeSegTicks = seg(0) + seg(1) + seg(2) + seg(3);
+  // 처치 할당 게이트(ADR-0011): 세그먼트는 시간이 아니라 처치 수로 넘어간다. 내구
+  // 파일럿(무입력, 오토어택은 자동 사격)이 3개 세그먼트 분량 처치 할당을 채우고 곧장
+  // 보스로 점프하기에 넉넉한 틱 예산. 고정 타이머 폐지로 정확한 합산이 불가하므로 상한
+  // 여유를 크게 준다(궤적은 처치 진행에 따라 창발).
+  const ampleTicks = 60 * 200; // 여유 상한 — 실제 점프는 처치 할당 달성 시 발생.
 
   it('상한 3이면 세그먼트 0→1→2 후 곧장 보스 세그먼트로 점프한다', () => {
-    const trace = segmentTrace({ ...DURABLE, maxSegments: 3 }, threeSegTicks);
+    const trace = segmentTrace({ ...DURABLE, maxSegments: 3 }, ampleTicks);
     expect(trace).toEqual([0, 1, 2, BOSS_INDEX]);
   });
 
-  it('필드 부재 시 풀 런 순서(0→1→2→3…)가 보존된다(회귀 0)', () => {
-    const trace = segmentTrace({ ...DURABLE }, threeSegTicks);
-    expect(trace).toEqual([0, 1, 2, 3]);
+  it('필드 부재 시 풀 런 순서(0→1→2→3→4→보스)가 보존된다(회귀 0)', () => {
+    const trace = segmentTrace({ ...DURABLE }, ampleTicks);
+    // 상한 부재 → 조기 보스 점프 없이 5개 일반 세그먼트를 순서대로 소화 후 보스.
+    expect(trace).toEqual([0, 1, 2, 3, 4, BOSS_INDEX]);
   });
 
   it('단축 런은 동일 시드·입력으로 per-tick 해시가 재현된다(ADR-0005)', () => {

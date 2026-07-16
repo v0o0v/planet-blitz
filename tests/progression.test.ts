@@ -245,7 +245,6 @@ describe('boss fight (task 15)', () => {
     const state = createWorld(4);
     // Jump the wave director to the boss segment.
     state.wave.segmentIndex = SEGMENTS.length - 1;
-    state.wave.segmentTimer = 999999;
     // Step until the boss spawns.
     for (let t = 0; t < 5 && !state.bossSpawned; t++) stepWorld(state, emptyInput());
     const boss = state.entities.find((e) => e.kind === 'boss');
@@ -272,7 +271,6 @@ describe('boss fight (task 15)', () => {
   it('boss takes double damage while overheated', () => {
     const state = createWorld(6);
     state.wave.segmentIndex = SEGMENTS.length - 1;
-    state.wave.segmentTimer = 999999;
     for (let t = 0; t < 5 && !state.bossSpawned; t++) stepWorld(state, emptyInput());
     const boss = state.entities.find((e) => e.kind === 'boss')!;
     boss.iframes = 300; // overheated
@@ -293,7 +291,6 @@ describe('boss fight (task 15)', () => {
   it('defeating the boss sets victory', () => {
     const state = createWorld(6);
     state.wave.segmentIndex = SEGMENTS.length - 1;
-    state.wave.segmentTimer = 999999;
     for (let t = 0; t < 5 && !state.bossSpawned; t++) stepWorld(state, emptyInput());
     const boss = state.entities.find((e) => e.kind === 'boss')!;
     boss.hp = 1;

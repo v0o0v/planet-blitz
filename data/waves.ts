@@ -9,6 +9,11 @@
  *
  * Budget values (enemy cap 12→20→28→36→44, bullet cap 300→600→900→1,200→1,600
  * →2,000) are taken directly from the spec's 구간 예산표.
+ *
+ * 런 길이 창발(ADR-0011): 세그먼트 진행은 고정 타이머가 아니라 **처치 할당**(killGoal)
+ * 게이트로 넘어간다. 채우지 못한 동안 **급행 소환**(RUSH_* 램프)이 유효 적 상한을 올리고
+ * 카드 간격을 좁혀 압박을 누적한다 — 강하면 빨리 채워 짧게, 약하면 몹이 쌓여 길게(또는
+ * 사망)로 런 길이가 창발한다. 기준 시간(par) ≈ 2분(웨이브 약 1분 + 보스 약 1분).
  */
 
 import type { EnemyRole } from '../src/sim/patterns/types.js';
@@ -86,7 +91,13 @@ export interface WaveCard {
 
 export interface WaveSegment {
   readonly index: number;
-  readonly durationTicks: number;
+  /**
+   * 처치 할당(ADR-0011): 이 세그먼트를 넘어가기 위해 필요한 처치 수. 고정 타이머
+   * (구 durationTicks)를 폐지하고 이 목표를 채워야 다음 세그먼트로 진행한다 — 강하면
+   * 빨리 채워 짧게, 약하면 오래 걸린다(창발). 보스 세그먼트는 보스 처치(victory)로만
+   * 끝나므로 이 값을 게이트에 쓰지 않는다(0).
+   */
+  readonly killGoal: number;
   /** Max enemies allowed onscreen (spawns pause when reached). */
   readonly maxEnemies: number;
   /** Simultaneous enemy-bullet cap (perf + fairness bound). */
@@ -96,14 +107,40 @@ export interface WaveSegment {
   readonly boss: boolean;
 }
 
-/** 6 segments; last is the boss slot (Phase 3 fills the fight). */
+/**
+ * 급행 소환 램프(ADR-0011). 세그먼트에 오래 머물수록(=처치 할당을 못 채울수록) 유효 적
+ * 상한을 올리고 카드 간격을 좁혀 압박을 누적한다 — "진행이 늦을수록 화면이 빽빽해지는"
+ * 자연 난이도 곡선. 정수 연산·RNG 미소비라 결정론(ADR-0005) 불변. 보스 세그먼트에도
+ * 동일하게 돌아, 화력이 부족하면 몹이 쌓여 자연 사망으로 긴 꼬리가 캡된다.
+ */
+/** 램프 1스텝 간격(틱). ~4s마다 압박이 한 단계 오른다. */
+export const RUSH_RAMP_TICKS = 240;
+/** 스텝당 유효 적 상한 증가분. */
+export const RUSH_ENEMY_STEP = 3;
+/** 유효 적 상한 증가분 누적 상한(밀도 폭주·perf 방지). */
+export const RUSH_ENEMY_MAX = 30;
+/** 스텝당 카드 간격 단축분(틱). */
+export const RUSH_INTERVAL_STEP = 8;
+/** 카드 간격 하한(틱) — 급행이 최고조여도 이보다 자주 뽑지 않는다. */
+export const RUSH_MIN_INTERVAL = 45;
+
+/**
+ * 6 segments; last is the boss slot (Phase 3 fills the fight).
+ *
+ * killGoal 튜닝(ADR-0011): 적정 레벨·적정 티어(정찰·기본 로드아웃) 오토파일럿 실측으로
+ * 5개 일반 세그먼트 합계 ≈ 60초(웨이브 par)에 맞춘 값. 합계 80처치 = [10,14,16,18,22].
+ * 후반일수록 적 상한↑(밀도↑)으로 처치가 빨라지므로 목표를 완만히만 올린다. 강한 빌드는
+ * 이보다 빨리 채워 런이 짧아지고(창발), 약하면 급행 소환으로 몹이 쌓여 길어진다.
+ */
 export const SEGMENTS: readonly WaveSegment[] = [
-  { index: 0, durationTicks: 2700, maxEnemies: 12, bulletCap: 300, cardInterval: 220, boss: false },
-  { index: 1, durationTicks: 2700, maxEnemies: 20, bulletCap: 600, cardInterval: 200, boss: false },
-  { index: 2, durationTicks: 2700, maxEnemies: 28, bulletCap: 900, cardInterval: 180, boss: false },
-  { index: 3, durationTicks: 2700, maxEnemies: 36, bulletCap: 1200, cardInterval: 160, boss: false },
-  { index: 4, durationTicks: 2700, maxEnemies: 44, bulletCap: 1600, cardInterval: 150, boss: false },
-  { index: 5, durationTicks: 3600, maxEnemies: 8, bulletCap: 2000, cardInterval: 9999, boss: true },
+  { index: 0, killGoal: 10, maxEnemies: 12, bulletCap: 300, cardInterval: 220, boss: false },
+  { index: 1, killGoal: 14, maxEnemies: 20, bulletCap: 600, cardInterval: 200, boss: false },
+  { index: 2, killGoal: 16, maxEnemies: 28, bulletCap: 900, cardInterval: 180, boss: false },
+  { index: 3, killGoal: 18, maxEnemies: 36, bulletCap: 1200, cardInterval: 160, boss: false },
+  { index: 4, killGoal: 22, maxEnemies: 44, bulletCap: 1600, cardInterval: 150, boss: false },
+  // 보스 세그먼트: killGoal 0(보스 처치로만 종료). cardInterval을 실제 값으로 낮춰
+  // 보스전에도 일반몹이 계속 등장한다(급행 소환 램프가 여기서도 돌아 긴 꼬리를 캡).
+  { index: 5, killGoal: 0, maxEnemies: 14, bulletCap: 2000, cardInterval: 200, boss: true },
 ];
 
 /** 8-card spawn pool drawn from throughout a run (spec 웨이브 카드 풀 초안). */

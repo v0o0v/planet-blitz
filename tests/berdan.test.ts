@@ -11,13 +11,12 @@ import {
   createWorld,
   stepWorld,
   emptyInput,
-  packPowerupPick,
   DEFAULT_CONFIG,
 } from '../src/sim/world.js';
 import type { WorldConfig, WorldState, InputFrame } from '../src/sim/world.js';
 import { spawnBoss } from '../src/sim/entities.js';
 import { updateBoss } from '../src/sim/boss.js';
-import { atan2, length } from '../src/sim/math.js';
+import { autopilotInput } from '../src/sim/autopilot.js';
 import { runReplay } from '../src/sim/replay.js';
 import { planetContent, BERDAN } from '../data/planets/index.js';
 
@@ -98,25 +97,21 @@ describe('여왕 보스 (AC8, E2)', () => {
   });
 });
 
-/** 내구 파일럿으로 런을 끝까지 진행(보스 세그먼트 도달 보장). */
+/**
+ * 내구 파일럿으로 런을 끝까지 진행(보스 세그먼트 도달 보장).
+ *
+ * 처치 할당 게이트(ADR-0011)에서는 세그먼트가 처치 수로 넘어가므로, 무입력으로 서 있는
+ * 파일럿은 사거리 밖 원거리 몹을 못 잡아 진행이 정체된다. 또 보스전에도 일반몹이 계속
+ * 등장하는데(특히 여왕은 무리개체를 보스 주변에 소환) 보스에 붙어 있으면 오토어택이
+ * 최근접인 소환 몹만 때려 보스를 못 죽인다. 따라서 카이팅으로 몹과 보스를 함께 정리하는
+ * 정규 오토파일럿(순수 상태 함수 → 리플레이 재현)으로 구동한다.
+ */
 function playToEnd(seed: number, config: WorldConfig): { state: WorldState; inputs: InputFrame[] } {
   const state = createWorld(seed, config);
   const inputs: InputFrame[] = [];
   const maxTicks = 60 * 600;
   for (let t = 0; t < maxTicks; t++) {
-    const player = state.entities[0]!;
-    const boss = state.entities.find((e) => e.kind === 'boss');
-    let frame: InputFrame;
-    if (state.pendingLevelUp) {
-      frame = { ...emptyInput(), special: packPowerupPick(0) };
-    } else if (boss !== undefined) {
-      const dx = boss.x - player.x;
-      const dy = boss.y - player.y;
-      const len = length(dx, dy) || 1;
-      frame = { moveX: dx / len, moveY: dy / len, aim: atan2(dy, dx), dash: false, special: 0 };
-    } else {
-      frame = emptyInput();
-    }
+    const frame = autopilotInput(state);
     inputs.push(frame);
     stepWorld(state, frame);
     if (state.gameOver || state.victory) break;
