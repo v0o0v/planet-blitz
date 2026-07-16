@@ -10,9 +10,11 @@
 
 import { atan2 } from '../sim/math.js';
 import type { EntitySnapshot } from '../sim/snapshot.js';
+import type { EntityKind } from '../sim/entities.js';
 
-/** 자동 조준 대상군(sim nearestTarget과 동일: 적·보스·보급 습격선). */
-const HOSTILE_KINDS: ReadonlySet<string> = new Set(['enemy', 'boss', 'supply']);
+/** 자동 조준 대상군(sim nearestTarget과 동일: 적·보스·보급 습격선). EntityKind로
+ *  좁혀 대상군 문자열 오타를 컴파일 타임에 잡는다. */
+const HOSTILE_KINDS: ReadonlySet<EntityKind> = new Set<EntityKind>(['enemy', 'boss', 'supply']);
 
 /** 이동 방향으로 간주할 최소 프레임 이동량(px). 정지 미세 흔들림 무시. */
 const MOVE_EPS = 0.5;
