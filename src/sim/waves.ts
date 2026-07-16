@@ -14,7 +14,15 @@ import type { Entity } from './entities.js';
 import { blankEntity, addEntity } from './entities.js';
 import type { EnemyDef } from './patterns/types.js';
 import { ENEMY_BY_TYPE } from '../../data/enemies.js';
-import { SEGMENTS, tierParams } from '../../data/waves.js';
+import {
+  SEGMENTS,
+  tierParams,
+  RUSH_RAMP_TICKS,
+  RUSH_ENEMY_STEP,
+  RUSH_ENEMY_MAX,
+  RUSH_INTERVAL_STEP,
+  RUSH_MIN_INTERVAL,
+} from '../../data/waves.js';
 import type { WaveCard, Formation } from '../../data/waves.js';
 import { planetContent } from '../../data/planets/index.js';
 import { cos, sin, PI, TWO_PI } from './math.js';
@@ -24,22 +32,35 @@ import { makeElite, ELITE_AFFIX_COUNT } from './elite.js';
 
 export interface WaveRuntime {
   segmentIndex: number;
-  segmentTimer: number;
+  /**
+   * 현재 세그먼트에 머문 틱 수(구 segmentTimer 대체, ADR-0011). 카운트다운이 아니라
+   * 진입 시 0에서 매 틱 증가하며 급행 소환 램프의 입력이 된다 — 오래 머물수록 압박↑.
+   */
+  segmentElapsed: number;
   cardTimer: number;
   /** Boss segment reached — Phase 3 spawns the fight; Phase 2 just flags it. */
   boss: boolean;
   /** Run fully complete (all segments elapsed). */
   done: boolean;
+  /**
+   * 처치 할당 게이트(ADR-0011): 세그먼트 진입 시점의 state.kills 스냅샷. 진행도 =
+   * state.kills - segmentBaseKills 로, 이 값이 segmentKillGoal에 도달하면 다음으로 넘어간다.
+   */
+  segmentBaseKills: number;
+  /** 현재 세그먼트를 넘어가기 위한 처치 수(현재 세그먼트 데이터의 killGoal). */
+  segmentKillGoal: number;
 }
 
 export function createWaveRuntime(): WaveRuntime {
   const first = SEGMENTS[0];
   return {
     segmentIndex: 0,
-    segmentTimer: first ? first.durationTicks : 0,
+    segmentElapsed: 0,
     cardTimer: 0, // draw the opening card immediately
     boss: false,
     done: false,
+    segmentBaseKills: 0,
+    segmentKillGoal: first ? first.killGoal : 0,
   };
 }
 
@@ -62,39 +83,58 @@ export function updateWaves(state: WorldState, player: Entity): void {
   }
   state.bulletCap = seg.bulletCap;
 
+  if (seg.boss) {
+    w.boss = true; // Phase 3 hook: boss encounter begins here.
+  }
+
+  // 급행 소환 램프(ADR-0011): 세그먼트에 오래 머물수록(=처치 할당 미달) 유효 적 상한↑·
+  // 카드 간격↓ 으로 압박을 누적한다. 정수 연산·RNG 미소비라 결정론 불변. 단 보스 세그먼트
+  // 에는 램프를 적용하지 않는다(rushSteps=0) — 보스전에도 일반몹은 계속 등장하되(아래 카드
+  // 추첨은 보스 포함 매 세그먼트 실행), 완만한 고정 간격이라 화력이 충분하면 보스에 집중
+  // 가능하고 부족하면 몹이 서서히 쌓여 자연 사망으로 긴 꼬리가 캡된다(별도 enrage 없음).
+  const rushSteps = seg.boss ? 0 : Math.floor(w.segmentElapsed / RUSH_RAMP_TICKS);
+  const rushEnemyBonus = Math.min(rushSteps * RUSH_ENEMY_STEP, RUSH_ENEMY_MAX);
   // 군체 대발생 변칙 × 섬멸 티어 밀도↑: raise the onscreen enemy cap. 티어 밀도는
   // 데이터 주도(TIER_PARAMS.densityMult) — 정찰/교전은 1(거동 불변), 섬멸은 ×1.5.
   const tp = tierParams(state.config.tier);
-  const maxEnemies = Math.round(seg.maxEnemies * maxEnemiesMult(state.anomaly) * tp.densityMult);
+  const maxEnemies = Math.round(
+    (seg.maxEnemies + rushEnemyBonus) * maxEnemiesMult(state.anomaly) * tp.densityMult,
+  );
+  const cardInterval = Math.max(RUSH_MIN_INTERVAL, seg.cardInterval - rushSteps * RUSH_INTERVAL_STEP);
 
-  if (seg.boss) {
-    w.boss = true; // Phase 3 hook: boss encounter begins here.
-  } else {
-    if (w.cardTimer > 0) w.cardTimer--;
-    if (w.cardTimer <= 0 && countEnemies(state) < maxEnemies) {
-      // 행성별 카드 풀에서 추첨(카르곤/베르단). 풀 길이가 달라도 waveRng 소비는 카드
-      // 인덱스 1회로 동일하므로 스트림 분리 규율 유지.
-      const cardPool = planetContent(state.config.planet).cardPool;
-      const cardIndex = state.waveRng.int(0, cardPool.length - 1);
-      const card = cardPool[cardIndex];
-      if (card !== undefined) spawnCard(state, card, maxEnemies, player);
-      w.cardTimer = seg.cardInterval;
-    }
+  if (w.cardTimer > 0) w.cardTimer--;
+  if (w.cardTimer <= 0 && countEnemies(state) < maxEnemies) {
+    // 행성별 카드 풀에서 추첨(카르곤/베르단). 풀 길이가 달라도 waveRng 소비는 카드
+    // 인덱스 1회로 동일하므로 스트림 분리 규율 유지.
+    const cardPool = planetContent(state.config.planet).cardPool;
+    const cardIndex = state.waveRng.int(0, cardPool.length - 1);
+    const card = cardPool[cardIndex];
+    if (card !== undefined) spawnCard(state, card, maxEnemies, player);
+    w.cardTimer = cardInterval;
   }
 
-  if (w.segmentTimer > 0) w.segmentTimer--;
-  if (w.segmentTimer <= 0 && w.segmentIndex < SEGMENTS.length - 1) {
-    w.segmentIndex++;
-    // 튜토리얼 단축판(config.maxSegments): 일반 세그먼트를 상한만큼 소화했으면 곧장
-    // 보스 세그먼트로 점프한다. RNG 미소비·순수 인덱스 연산이라 결정론 불변이고,
-    // 필드 부재 시 아래 분기가 죽어 기존 풀 런 거동이 byte-identical로 보존된다.
-    const cap = state.config.maxSegments;
-    if (cap !== undefined && w.segmentIndex >= cap && !seg.boss) {
-      w.segmentIndex = SEGMENTS.length - 1;
+  w.segmentElapsed++;
+
+  // 처치 할당 게이트(ADR-0011): 고정 타이머 대신 목표 처치 수를 채우면 다음 세그먼트로.
+  // 적을 다 쓸어도 기다리지 않으므로 강한 빌드는 런이 짧아진다(창발). 보스 세그먼트는
+  // 보스 처치(victory)로만 끝나므로 이 게이트를 타지 않는다.
+  if (!seg.boss && w.segmentIndex < SEGMENTS.length - 1) {
+    const cleared = state.kills - w.segmentBaseKills >= w.segmentKillGoal;
+    if (cleared) {
+      w.segmentIndex++;
+      // 튜토리얼 단축판(config.maxSegments): 일반 세그먼트를 상한만큼 소화했으면 곧장
+      // 보스 세그먼트로 점프한다. RNG 미소비·순수 인덱스 연산이라 결정론 불변이고,
+      // 필드 부재 시 아래 분기가 죽어 기존 풀 런 거동이 보존된다.
+      const cap = state.config.maxSegments;
+      if (cap !== undefined && w.segmentIndex >= cap) {
+        w.segmentIndex = SEGMENTS.length - 1;
+      }
+      const next = SEGMENTS[w.segmentIndex];
+      w.segmentElapsed = 0;
+      w.cardTimer = 0;
+      w.segmentBaseKills = state.kills;
+      w.segmentKillGoal = next ? next.killGoal : 0;
     }
-    const next = SEGMENTS[w.segmentIndex];
-    w.segmentTimer = next ? next.durationTicks : 0;
-    w.cardTimer = 0;
   }
 }
 

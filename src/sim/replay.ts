@@ -123,9 +123,9 @@ export function hashWorld(state: WorldState): number {
   h = hashFloat(h, w.bulletRadius);
   h = hashFloat(h, w.range);
   h = hashU32(h, w.bulletLife >>> 0);
-  // Wave runtime.
+  // Wave runtime. (구 segmentTimer 위치를 segmentElapsed가 그대로 승계 — 폴드 순서 불변.)
   h = hashU32(h, state.wave.segmentIndex >>> 0);
-  h = hashU32(h, state.wave.segmentTimer >>> 0);
+  h = hashU32(h, state.wave.segmentElapsed >>> 0);
   h = hashU32(h, state.wave.cardTimer >>> 0);
   h = hashU32(h, state.wave.boss ? 1 : 0);
   h = hashU32(h, state.wave.done ? 1 : 0);
@@ -214,6 +214,11 @@ export function hashWorld(state: WorldState): number {
   // 접어 undefined와 0을 구분한다. 신규 필드는 이 아래에만 append.
   const maxSeg = state.config.maxSegments;
   h = hashU32(h, (maxSeg === undefined ? 0 : maxSeg + 1) >>> 0);
+  // (4) 처치 할당 게이트 상태(ADR-0011): 세그먼트 진입 시 kills 스냅샷 + 현재 세그먼트
+  // 목표 처치 수. 결정론 상태이므로 접는다(급행 소환 램프의 segmentElapsed는 위 wave
+  // runtime 블록에서 이미 접힘). 신규 필드는 이 아래에만 append.
+  h = hashU32(h, state.wave.segmentBaseKills >>> 0);
+  h = hashU32(h, state.wave.segmentKillGoal >>> 0);
   return h >>> 0;
 }
 

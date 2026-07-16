@@ -534,9 +534,13 @@ async function main(): Promise<void> {
       });
 
       const seg = w.wave.segmentIndex + 1;
-      const bossTag = w.wave.boss ? '  [BOSS]' : '';
+      // 처치 할당 진행(ADR-0011): 세그먼트는 시간이 아니라 처치 수로 넘어간다. 보스
+      // 세그먼트는 보스 처치로 끝나므로 할당 대신 [BOSS]만 표시.
+      const quotaTag = w.wave.boss
+        ? '  [BOSS]'
+        : `  kills ${Math.min(w.kills - w.wave.segmentBaseKills, w.wave.segmentKillGoal)}/${w.wave.segmentKillGoal}`;
       hud.set(
-        `Planet Blitz — M2  ·  seed ${currentSeed}  tick ${w.tick}  seg ${seg}/6${bossTag}\n` +
+        `Planet Blitz — M2  ·  seed ${currentSeed}  tick ${w.tick}  seg ${seg}/6${quotaTag}\n` +
           `enemies ${enemyN}  bullets ${bulletN}/${w.bulletCap}  entities ${w.entities.length}\n` +
           `hash ${hashWorld(w).toString(16).padStart(8, '0')}  FPS ${f.toFixed(1)}`,
       );

@@ -286,7 +286,12 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     harness.cheat((w) => {
       const idx = n - 1;
       w.wave.segmentIndex = idx;
-      w.wave.segmentTimer = SEGMENTS[idx]?.durationTicks ?? 1;
+      // 처치 할당 게이트로 점프(ADR-0011): 진입 상태를 세그먼트 시작값으로 리셋 —
+      // 급행 램프 0, 처치 스냅샷=현재 kills, 목표=해당 세그먼트 killGoal.
+      w.wave.segmentElapsed = 0;
+      w.wave.cardTimer = 0;
+      w.wave.segmentBaseKills = w.kills;
+      w.wave.segmentKillGoal = SEGMENTS[idx]?.killGoal ?? 0;
       w.wave.done = false;
       w.wave.boss = false;
       const p = w.entities[0];
@@ -301,7 +306,10 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     stageRun();
     harness.cheat((w) => {
       w.wave.segmentIndex = SEGMENTS.length - 1;
-      w.wave.segmentTimer = 1;
+      w.wave.segmentElapsed = 0;
+      w.wave.cardTimer = 0;
+      w.wave.segmentBaseKills = w.kills;
+      w.wave.segmentKillGoal = SEGMENTS[SEGMENTS.length - 1]?.killGoal ?? 0;
       w.wave.done = false;
       const p = w.entities[0];
       if (p !== undefined) p.hp = p.maxHp;
