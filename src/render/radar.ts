@@ -97,7 +97,7 @@ export function projectBlip(dx: number, dy: number, cfg: RadarConfig): { x: numb
   const ry = dy * scale;
   const angle = atan2(dy, dx);
   const dist = Math.hypot(rx, ry);
-  if (dist <= cfg.radius || dist === 0) {
+  if (dist <= cfg.radius) {
     return { x: rx, y: ry, edge: false, angle };
   }
   const inv = cfg.radius / dist; // dist > radius > 0
