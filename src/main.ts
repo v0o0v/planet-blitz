@@ -620,6 +620,15 @@ async function main(): Promise<void> {
       isPaused: () => harnessPaused,
       goto: (screen) => harnessGoto(screen),
       startRun: (opts) => {
+        // 게임 내부 startRun은 성도 화면에서 호출되는 전제라 메뉴 오버레이를 숨기지
+        // 않는다(성도가 자기 자신을 숨기고 넘어옴). 하네스 경유 시작은 어느 스크린에서든
+        // 가능하므로, 켜져 있을 수 있는 모든 메뉴를 먼저 내린다 — 안 그러면 런이 뒤에서
+        // 도는데 타이틀/기지 화면이 위에 남아 "화면이 안 바뀌는" 증상이 된다.
+        planetSelect.hide();
+        inventory.hide();
+        researchLab.hide();
+        refinery.hide();
+        clearToMenu();
         startRun(opts.seed, {
           planet: opts.planet,
           tier: opts.tier,
@@ -707,7 +716,16 @@ async function main(): Promise<void> {
       // 씬 런처의 튜토리얼 버튼: 정식 튜토리얼 흐름(고정 시드 런 + 힌트 오버레이 +
       // FTUE 계측)을 그대로 태운다. 하네스 공개 API로는 오버레이·tutorialActive에
       // 닿지 않으므로 main의 startTutorial을 최소 위임으로 노출한다.
-      startTutorial: () => startTutorial(),
+      startTutorial: () => {
+        // 정식 흐름은 타이틀 '시작' 클릭이 titleScreen을 self-hide한 뒤 진입한다.
+        // 하네스 경유는 그 클릭이 없으므로 동일하게 메뉴를 먼저 내린다(위 startRun 참조).
+        planetSelect.hide();
+        inventory.hide();
+        researchLab.hide();
+        refinery.hide();
+        clearToMenu();
+        startTutorial();
+      },
     });
     // HMR로 main()이 재실행되면 이전 패널(스타일·인터벌·리스너)을 정리해 중복을
     // 막는다(리뷰 LOW). 프로덕션에서는 이 블록 전체가 DCE로 제거된다.
