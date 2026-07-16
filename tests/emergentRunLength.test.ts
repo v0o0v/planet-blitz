@@ -104,7 +104,9 @@ describe('오토파일럿 완주 (ADR-0011, par 창발)', () => {
       ticks++;
       if (state.victory || state.gameOver) break;
     }
-    expect(state.victory).toBe(true);
+    // 실패 시 원인이 메시지로 드러나게(victory/death/timeout 구분 — 리뷰 MEDIUM 반영)
+    const outcome = state.victory ? 'victory' : state.gameOver ? 'death' : 'timeout';
+    expect(outcome).toBe('victory');
     const sec = ticks / 60;
     // 웨이브 ≈ 1분 + 보스(무장갑은 생존 한계로 짧게). 40~150초 러프 범위 — 구 고정
     // 타이머(런 5분+)와 확연히 다른 짧고 강렬한 루프임을 확인.
