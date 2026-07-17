@@ -14,6 +14,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Profile } from '../save/profile.js';
 import type { ServerProfile } from './profileSync.js';
 import type { SupabaseConfig } from './config.js';
+import type { Replay } from '../sim/replay.js';
+import type { PveRunResult } from './pveRun.js';
 
 /** 프로필 이관 오케스트레이션이 의존하는 서버 IO(테스트에서 fake 로 주입). */
 export interface ServerGateway {
@@ -23,6 +25,12 @@ export interface ServerGateway {
   fetchProfile(uid: string): Promise<ServerProfile | null>;
   /** uid 의 profiles 행을 업서트한다. 실패 시 throw. */
   upsertProfile(uid: string, payload: { save: Profile; save_version: number }): Promise<void>;
+  /**
+   * PvE 런을 `pve_runs` 에 pending 증거로 insert 한다(리플레이 재실행 샘플링 대상).
+   * 실패 시 throw. 구현이 없는 게이트웨이(구버전)면 `undefined` — 호출부(index.recordPveRun)가
+   * no-op 으로 처리한다.
+   */
+  insertPveRun?(uid: string, payload: { replay: Replay; clientResult: PveRunResult }): Promise<void>;
 }
 
 /** Supabase 로 구현한 실 게이트웨이. */
@@ -66,6 +74,18 @@ export class SupabaseGateway implements ServerGateway {
     const { error } = await this.client
       .from('profiles')
       .upsert({ id: uid, save: payload.save, save_version: payload.save_version });
+    if (error !== null) throw error;
+  }
+
+  async insertPveRun(
+    uid: string,
+    payload: { replay: Replay; clientResult: PveRunResult },
+  ): Promise<void> {
+    // pending 증거 insert. RLS with_check(auth.uid()=profile_id) + 가드 트리거가
+    // verified_* 를 강제로 비운다(서버 권위). 결과 확정은 verify-pve-sample EF(service_role).
+    const { error } = await this.client
+      .from('pve_runs')
+      .insert({ profile_id: uid, replay: payload.replay, client_result: payload.clientResult });
     if (error !== null) throw error;
   }
 }

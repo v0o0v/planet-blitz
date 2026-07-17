@@ -5,6 +5,7 @@
   "tasks": {
     "verify": "deno run --allow-read verify.ts",
     "verify-run": "deno run --allow-read verifyRun.ts",
-    "verify-invasion": "deno run --allow-read verifyInvasion.ts"
+    "verify-invasion": "deno run --allow-read verifyInvasion.ts",
+    "verify-pve": "deno run --allow-read verifyPveSample.ts"
   }
 }

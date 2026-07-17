@@ -44,3 +44,6 @@ assets/_raw/
 
 # OMC harness session state
 .omc/state/
+
+# Edge Function 자립 번들 산출물(deno task bundle) — 소스 index.ts가 원본, 커밋 금지
+supabase/functions/**/dist.index.js
