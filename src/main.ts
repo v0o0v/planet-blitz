@@ -74,6 +74,9 @@ import { computeLoadoutStats } from './items/loadout.js';
 import { loadProfile, saveProfile, activeShip } from './save/profile.js';
 import { settleRun } from './save/settlement.js';
 import type { SettlementOutcome } from './save/settlement.js';
+// M4 네트워크 계층(Phase B3): Supabase 미설정 시 완전 no-op, 절대 throw 안 함.
+// 정산 시점에서만 fire-and-forget 로 호출 — sim/게임루프와 무관(결정론·오프라인 우선).
+import { migrateLocalProfileToServer, recordPveRunResult } from './net/index.js';
 
 async function main(): Promise<void> {
   const mount = document.getElementById('app');
@@ -144,6 +147,8 @@ async function main(): Promise<void> {
 
   // --- Persistent meta state (M2) ---
   const profile = loadProfile();
+  // 로컬 세이브 → 서버 1회 이관(멱등, 무손실). 미설정이면 no-op. 비차단.
+  void migrateLocalProfileToServer(profile);
   const inventory = new InventoryOverlay(profile);
   // M3 base-map hub + building screens + FTUE (Phase D/E).
   const baseMap = new BaseMap();
@@ -378,6 +383,9 @@ async function main(): Promise<void> {
         // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.
         if (tutorialActive) profile.tutorialDone = true;
         saveProfile(profile);
+        // PvE 런 결과(정산된 메타)를 서버에 기록. 미설정이면 no-op, 실패 시 로컬
+        // 대기 슬롯에 남아 재시도(오프라인 우선). 비차단 fire-and-forget.
+        void recordPveRunResult(profile);
       }
     }
     tutorialOverlay.hide();
