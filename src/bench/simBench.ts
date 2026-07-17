@@ -14,10 +14,23 @@
  */
 
 import { createWorld, stepWorld, emptyInput, GRID_CELL_SIZE } from '../sim/world.js';
-import type { WorldState } from '../sim/world.js';
+import type { WorldState, WorldConfig } from '../sim/world.js';
 import { blankEntity, addEntity } from '../sim/entities.js';
 import { SpatialHash } from '../sim/collision.js';
 import type { Entity } from '../sim/entities.js';
+import {
+  DEFAULT_TIME_LIMIT_TICKS,
+  TURRET_VULCAN,
+  TURRET_MISSILE,
+  TURRET_TESLA,
+} from '../sim/defense.js';
+import type { DefenseLayout, InvasionConfig } from '../sim/defense.js';
+import {
+  GUARDIAN_TITAN,
+  GUARDIAN_INTERCEPTOR,
+  PERFORMANCE_FULL,
+  makeGuardianSnapshot,
+} from '../../data/guardian.js';
 
 // Inject a little over 2,000 so that after warmup drain (some drift beyond the
 // cull radius / are swept by walls) the SUSTAINED live count stays >= 2,000 (AC4).
@@ -105,6 +118,108 @@ function measure(cellSize: number): { avgMs: number; projectiles: number; walls:
   return { avgMs: elapsedMs / MEASURE_TICKS, projectiles, walls };
 }
 
+/**
+ * 수호 포함 방어전(침공 런) 최악 부하 시나리오 (M5 Phase D1, AC9).
+ *
+ * `buildStressWorld`(무한 맵 PvE)와 달리, 이쪽은 **침공 방어전 config**를 구성한다: 수호 2기
+ * (타이탄+인터셉터, 완전 성능) + 포탑 6기(발사체 방출) + 코어. 여기에 2,000발 스트레스 로드를
+ * 얹어, 수호 AI(추적·조준·발사)와 포탑 발사가 함께 도는 tick 비용을 측정한다. 이것이 M5에서
+ * 새로 추가된 sim 부하 경로다(M4 침공 런 + 수호 엔티티). 발사체 damage=0 으로 코어·플레이어를
+ * 살려 인구를 안정 유지하고, 제한 시간(3분=10800틱) 안에서 측정해 조기 종료를 피한다. */
+function buildGuardianStressWorld(seed: number): WorldState {
+  const cx = 900;
+  const layout: DefenseLayout = {
+    core: { x: cx, y: 0 },
+    turrets: [
+      { type: TURRET_VULCAN, x: cx - 200, y: -150 },
+      { type: TURRET_VULCAN, x: cx - 200, y: 150 },
+      { type: TURRET_MISSILE, x: cx + 150, y: -180 },
+      { type: TURRET_MISSILE, x: cx + 150, y: 180 },
+      { type: TURRET_TESLA, x: cx, y: -260 },
+      { type: TURRET_TESLA, x: cx, y: 260 },
+    ],
+    obstacles: [
+      { x: cx - 60, y: 0, halfW: 40, halfH: 220 },
+      { x: cx + 320, y: -300, halfW: 30, halfH: 30 },
+    ],
+    guardians: [
+      { x: 350, y: -120, snapshot: makeGuardianSnapshot(GUARDIAN_TITAN, 400), performanceCP: PERFORMANCE_FULL, lineageBonusBp: 5000 },
+      { x: 350, y: 120, snapshot: makeGuardianSnapshot(GUARDIAN_INTERCEPTOR, 400), performanceCP: PERFORMANCE_FULL, lineageBonusBp: 5000 },
+    ],
+  };
+  const inv: InvasionConfig = { layout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
+  const cfg: WorldConfig = {
+    arenaWidth: 1920,
+    arenaHeight: 1080,
+    playerSpeed: 720,
+    dashSpeed: 2800,
+    dashCooldownTicks: 42,
+    dashIframes: 10,
+    hitIframes: 40,
+    playerHp: 1e9,
+    invasion: inv,
+  };
+  const state = createWorld(seed, cfg);
+  const player = state.entities[0]!;
+  player.hp = 1e9;
+  player.maxHp = 1e9;
+  // 수호·포탑이 붙도록 몇 틱 굴려 엔티티를 활성화한 뒤 스트레스 발사체를 얹는다.
+  for (let t = 0; t < 30; t++) stepWorld(state, { moveX: 1, moveY: 0, aim: 0, dash: false, special: 0 });
+
+  const px = player.x;
+  const py = player.y;
+  let s = 0x9e3779b9 ^ seed;
+  const next = (): number => {
+    s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0;
+    return s / 0xffffffff;
+  };
+  const spread = 1600;
+  for (let i = 0; i < PROJECTILES; i++) {
+    const b = blankEntity('enemyBullet');
+    b.x = px + (next() - 0.5) * spread;
+    b.y = py + (next() - 0.5) * spread;
+    const ang = next() * Math.PI * 2;
+    const sp = 60 + next() * 180;
+    b.vx = Math.cos(ang) * sp;
+    b.vy = Math.sin(ang) * sp;
+    b.radius = 5;
+    b.damage = 0;
+    b.life = 100000;
+    addEntity(state, b);
+  }
+  return state;
+}
+
+function countGuardians(state: WorldState): number {
+  let n = 0;
+  for (const e of state.entities) if (e.kind === 'guardian' && !e.dead) n++;
+  return n;
+}
+function countTurrets(state: WorldState): number {
+  let n = 0;
+  for (const e of state.entities) if (e.kind === 'defenseTurret' && !e.dead) n++;
+  return n;
+}
+
+function measureGuardian(): {
+  avgMs: number;
+  projectiles: number;
+  guardians: number;
+  turrets: number;
+} {
+  const state = buildGuardianStressWorld(0x5121);
+  const idle = emptyInput();
+  for (let t = 0; t < WARMUP_TICKS; t++) stepWorld(state, idle);
+  const projectiles = countProjectiles(state);
+  const guardians = countGuardians(state);
+  const turrets = countTurrets(state);
+  if (state.gameOver || state.victory) throw new Error('guardian bench world ended before measuring — check load setup');
+  const start = performance.now();
+  for (let t = 0; t < MEASURE_TICKS; t++) stepWorld(state, idle);
+  const elapsedMs = performance.now() - start;
+  return { avgMs: elapsedMs / MEASURE_TICKS, projectiles, guardians, turrets };
+}
+
 function main(): void {
   const budget = 1000 / 60;
   console.log(`[simBench] load: ${PROJECTILES} enemy bullets + ${ENEMIES} enemies, scroll map active`);
@@ -136,6 +251,25 @@ function main(): void {
     winner.avgMs <= budget
       ? `[simBench] PASS: ${winner.avgMs.toFixed(3)} ms <= ${budget.toFixed(2)} ms budget (AC4 60fps).`
       : `[simBench] FAIL: ${winner.avgMs.toFixed(3)} ms > ${budget.toFixed(2)} ms budget.`,
+  );
+
+  // --- M5 Phase D1: 수호 포함 방어전 시나리오 ---
+  console.log('\n[simBench] --- 수호 포함 방어전(침공 런) 시나리오 ---');
+  let gBest = Infinity;
+  let gLast = { avgMs: 0, projectiles: 0, guardians: 0, turrets: 0 };
+  for (let r = 0; r < 3; r++) {
+    gLast = measureGuardian();
+    if (gLast.avgMs < gBest) gBest = gLast.avgMs;
+  }
+  console.log(
+    `[simBench] guardian scenario: ${gBest.toFixed(3)} ms/tick  ` +
+      `(${(budget / gBest).toFixed(1)}x budget headroom, ` +
+      `${gLast.projectiles} projectiles + ${gLast.guardians} guardians + ${gLast.turrets} turrets)`,
+  );
+  console.log(
+    gBest <= budget
+      ? `[simBench] PASS: ${gBest.toFixed(3)} ms <= ${budget.toFixed(2)} ms budget (AC9 수호 포함 60fps).`
+      : `[simBench] FAIL: ${gBest.toFixed(3)} ms > ${budget.toFixed(2)} ms budget.`,
   );
 }
 

@@ -7,6 +7,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { EN, KO } from '../src/i18n/catalog.js';
 import { t, setLocale, getLocale, pickInitialLocale, isLocale } from '../src/i18n/index.js';
+import { STICKERS } from '../data/stickers.js';
 
 afterEach(() => {
   setLocale('en'); // 다른 테스트에 로케일 누수 방지.
@@ -24,14 +25,13 @@ describe('카탈로그 완전성', () => {
     for (const v of Object.values(KO)) expect(v.length).toBeGreaterThan(0);
   });
 
-  it('도발 스티커 12종 키가 EN·KO 양쪽에 존재한다', () => {
-    const ids = [
-      'good-game', 'nice-try', 'galaxy-small', 'lock-door', 'five-stars', 'maintenance',
-      'sightseeing', 'turret-regards', 'take-a-seat', 'rematch-anytime', 'core-walk', 'safe-travels',
-    ];
-    for (const id of ids) {
-      expect(EN).toHaveProperty(`sticker.${id}`);
-      expect(KO).toHaveProperty(`sticker.${id}`);
+  it('도발 스티커 전종(STICKERS) 키가 EN·KO 양쪽에 존재한다', () => {
+    // stickerPicker.stickerTextKey 는 `sticker.<id>` 로 무검증 캐스팅하므로, 신규 id 추가 시
+    // i18n 키 누락을 이 테스트가 잡도록 하드코딩 목록이 아닌 STICKERS 정본에서 파생한다(LOW#2).
+    expect(STICKERS.length).toBeGreaterThan(0);
+    for (const s of STICKERS) {
+      expect(EN, `EN missing sticker.${s.id}`).toHaveProperty(`sticker.${s.id}`);
+      expect(KO, `KO missing sticker.${s.id}`).toHaveProperty(`sticker.${s.id}`);
     }
   });
 });
