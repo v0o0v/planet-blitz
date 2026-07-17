@@ -239,12 +239,18 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json({ status: 'rejected', reason: 'apply-failed', detail: applyErr.message, attackerWon, ladder: null, loot: [] }, 500);
   }
 
-  // apply_invasion_result 반환: { swapped, attacker_rank, defender_rank, loot, note? }.
+  // apply_invasion_result 반환: { swapped, attacker_rank, defender_rank, loot,
+  //   is_revenge, bonus_minerals, note? }. is_revenge/bonus_minerals 는 Phase F(F1
+  //   복수전) 추가분 — 복수 침공이 자리 탈환에 성공하면 보너스 광물이 서버 save.minerals
+  //   에 이미 가산됐고, 클라는 이 값으로 "복수 성공 +N 광물" 배너를 띄운다(additive 필드,
+  //   기존 클라 무시해도 안전).
   const res = (applied ?? {}) as {
     swapped?: boolean;
     attacker_rank?: number | null;
     defender_rank?: number | null;
     loot?: unknown[];
+    is_revenge?: boolean;
+    bonus_minerals?: number;
     note?: string;
   };
   // (리뷰 HIGH-2) 제출 경로 쿨다운 위반: apply_invasion_result 가 확정 직전에 최근
@@ -261,7 +267,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
       ? { attackerRank: res.attacker_rank ?? null, defenderRank: res.defender_rank ?? null }
       : null;
   return json(
-    { status: 'verified', attackerWon, ladder, loot: res.loot ?? [] },
+    {
+      status: 'verified',
+      attackerWon,
+      ladder,
+      loot: res.loot ?? [],
+      revenge: res.is_revenge === true,
+      bonusMinerals: res.bonus_minerals ?? 0,
+    },
     200,
   );
 });

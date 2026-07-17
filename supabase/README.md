@@ -513,3 +513,157 @@ RAISE 자동 롤백 → 잔류 0). 요약:
   최초 5 verified NPC 매치로 승수를 센다. 6매치 이상 플레이해도 첫 5개 기준(배치전 정의).
 - **[LOW] 밸런스 상수 튜닝 대상**(계획 §5): 정비 비용률 5·침하폭 3·배치 rank/win 계수 2·
   풍화 -5%p 는 초기 추정값. M5 밸런싱 패스에서 확정.
+
+## Phase F — 복수전·도발 스티커·PvE 샘플링(축소) (계획 §4 Phase F · AC6·AC11·AC12, 2026-07-17)
+
+재미 요소 서버층. 침공당해 순위를 잃은 방어자의 **24h 복수전**(쿨다운·격차30 가드 예외),
+**도발 스티커**(사전 세트 12종 인덱스, 1회 불변), **PvE 통계 이상치 플래그**(리플레이 미보유로
+축소 범위)를 붙인다. 서버 lane(f-server) 산출. 클라 lane(f-client)과 정합: 스티커 **문구 정본은
+클라 `data/stickers.ts` `STICKERS[0..11]`**, **인덱스·저장·서버권위는 서버**(smallint). 복수 판정은
+클라 신뢰 없이 **서버가 invasions 이력으로 자동 판정**.
+
+### 마이그레이션 목록 (Phase F 추가분)
+
+| 파일 | 내용 | 원격 적용 |
+|---|---|---|
+| `20260717140000_m4_phase_f_revenge_sticker.sql` | invasions 4컬럼(attacker_sticker·defender_sticker·caused_swap·is_revenge) · guard 트리거 개정(insert 봉인 + update 불변) · `set_invasion_sticker` · `get_incoming_invasions` · `revenge_targets_for`+`get_revenge_targets` · `apply_invasion_result` v3(복수전) | ✅ `m4_phase_f_revenge_sticker` — T-F1~T-F5 실측 통과 |
+| `20260717150000_m4_phase_f_pve_sampling.sql` | `flag_pve_anomalies`(통계 이상치 계정 플래그) + pg_cron 일 1회 스케줄 | ✅ `m4_phase_f_pve_sampling` — T-F6 실측 통과, cron 잡 active |
+| `20260717160000_m4_phase_f_review_fixes.sql` | 리뷰 반영 — self-invasion insert raise 복원(HIGH 회귀) · `set_invasion_sticker` 승자 한정(MED) | ✅ `m4_phase_f_review_fixes` — T-F7/T-F8 실측 통과, `pg_get_functiondef` 라이브 정의 4항목 검증 |
+
+### 1. 복수전 (F1 · AC6)
+
+- **판정 근거 = `invasions.caused_swap`**: `apply_invasion_result` 가 실제 래더 스왑을 일으킬
+  때만 이 불변 플래그를 true 로 기록한다. 시간이 지나 순위가 바뀌어도 "당시 스왑으로 순위를
+  빼앗겼다"는 사실을 이 플래그가 보존해 복수 대상 판정의 권위 근거가 된다(단순 패배·미배치
+  침공·격차30 초과로 스왑 안 된 승리는 caused_swap=false 라 복수권을 만들지 않는다).
+- **`revenge_targets_for(p_player)`**(내부 helper, service_role): p_player 가 방어자로서 24h
+  내 caused_swap=true 로 순위를 잃은 침공의 공격자들 — 상대별 최근 1건, 그 손실 이후 아직
+  되받지(그 상대를 스왑으로 이김) 못한 것만(소비 시 소멸). `revenge_invasion_id` = 나를 스왑한
+  그 침공.
+- **`get_revenge_targets()`**(definer, authenticated): 위를 클라 관제탑용으로 감싼다. 반환 =
+  `get_invasion_targets` 의 InvasionTarget shape `{profile_id, rank, display_name, ship_summary,
+  defense_id, layout, maintenance}` + `{revenge_invasion_id, expires_at, seconds_remaining,
+  can_ignore_cooldown(항상 true)}`. **실측 T-F2**: 대상 1건·seconds_remaining≈23h·cooldown 무시.
+- **`apply_invasion_result` v3 복수 통합**: 진입부에서 `v_is_revenge` 를 서버가 직접 판정
+  (현재 방어자가 공격자의 유효 복수 대상인가 = `revenge_targets_for` 멤버십). 그 결과로만:
+  - **쿨다운 예외**: 복수 침공은 1시간 재도전 쿨다운을 건너뛴다(GDD §8).
+  - **격차30 예외**: 스왑 조건 `(v_att.rank - v_def.rank) <= 30` 을 **복수 침공만** 면제.
+    ★ **Phase D HIGH 리뷰(랭크 리프프로그) 재개방 아님**: 예외는 오직 서버가 "나를 직접
+    스왑으로 이긴 상대"로 검증한 대상에게만 적용된다 — 각 대상은 나에게서 순위를 직접 빼앗은
+    자라 되받는 스왑은 리프프로그가 아니라 자리 탈환이다. 임의 상위권 격차30 우회는 여전히
+    불가(비복수 경로는 종전 ≤30 강제). **실측 T-F3**: 비복수 격차40 승리 → 스왑 없음·순위
+    불변·caused_swap=false / 정상 격차20 → 스왑·caused_swap=true(회귀).
+  - **자리 탈환 + 보너스 광물**: 복수 스왑 성공 시 공격자 `profiles.save.minerals` 에 서버가
+    `REVENGE_BONUS_MINERALS`(=50, 튜닝 대상 — 계획 §5) 가산(repair_defense 크레딧 차감과 동일
+    jsonb_set + 프로필 행 잠금 패턴). caused_swap·is_revenge 기록. **실측 T-F2**: 격차40 복수
+    스왑 성사·minerals 100→150·플래그 기록·복수 소비(T-F4: 되받은 뒤 대상 목록에서 사라짐).
+  - 배치전·비복수·정상 PvP 경로는 Phase E 동작 **완전 동일**(회귀 T-F3 정상 스왑).
+- **EF verify-invasion 배선**(additive): apply 반환의 `is_revenge`·`bonus_minerals` 를 EF
+  응답에 `{ revenge: boolean, bonusMinerals: number }` 로 얹었다(기존 필드 불변, 구 클라 무시
+  해도 안전). `dist.index.js` 재번들 완료(36모듈·70.64KB, check 통과) — **재배포는 리드**.
+
+### 2. 도발 스티커 (F2 · AC12 · f-client 합의)
+
+- **채택 = 2컬럼**(계약 §2 "문서화된 대안"): `invasions.attacker_sticker`·`defender_sticker`
+  (각 `smallint NULL CHECK 0..11`). 근거: 비동기 PvP 라 방어자는 사후에 단다(GDD §8 line122
+  "침공/**방어** 성공 시") — 단일 컬럼은 방어자 도발을 담지 못한다. 자유 텍스트 불가(smallint,
+  인덱스만). 문구 정본은 클라 `data/stickers.ts` `STICKERS[0..11]`(서버는 의미 모름·범위만 강제).
+- **`set_invasion_sticker(p_invasion_id, p_sticker)`**(definer, authenticated): `auth.uid()` 로
+  호출자가 이 침공의 공격자인지 방어자인지 **서버가 판정**해 해당 컬럼만 설정. 참여자 아님 →
+  예외. 재설정 시도 → `{ok:false, note:'already-set'}`(1회 불변). 범위 밖 → 예외. 반환
+  `{ ok, side('attacker'|'defender'), sticker, note }`. SECURITY DEFINER 라 invasions UPDATE
+  정책 부재(클라 직접 update 봉인)를 우회해 설정하되 자기 once-check 로 불변 보장.
+- **불변 3중**: ① invasions 에 client UPDATE 정책 없음(RLS 기본 거부), ②
+  `trg_invasions_guard_update`(비 service_role update 시 이미 설정된 스티커·서버 필드 고정),
+  ③ RPC 자체 once-check. **실측 T-F1**: 공격자 설정→재설정 거부, 방어자 설정, 비참여자 거부,
+  범위 12 거부, 최종 (attacker=3, defender=7).
+- **전달 = 폴링** `get_incoming_invasions(p_since default null, p_limit default 50)`(definer,
+  authenticated): 내가 defender 인 verified 침공을 최근순(verified_at desc)으로. 반환 `{invasion_id,
+  attacker_id, attacker_name, attacker_won, is_revenge, created_at, verified_at, attacker_sticker,
+  defender_sticker}`. p_since 주면 verified_at 이후만. "마지막 확인 시각"은 클라 로컬 저장(realtime
+  아님). **실측 T-F5**: 필드·스티커·since 필터·공격자 조회 0건.
+
+### 3. PvE 샘플링 검증 — 축소 범위: 통계 이상치 플래그만 (F4 · AC11 · 계약 4 조건 분기)
+
+- **범위 결정 = 통계 이상치 플래그만, 리플레이 재실행 샘플링은 착수 조건으로 이월**. 근거를
+  먼저 실측 확인: **profileSync(`src/net/profileSync.ts`)가 서버에 남기는 PvE 데이터는 집계
+  세이브(profiles.save: credits/minerals/ships/inventory) 한 벌뿐**이다(`serializeProfile` →
+  전체 Profile 통짜 업로드, last-write-wins 단일 슬롯). **개별 PvE 런 기록도 리플레이 blob 도
+  서버에 존재하지 않는다** → 재실행할 리플레이가 없어 상위 N%·랜덤 1% 재실행은 성립 불가,
+  "적발 시 런 무효"도 런 단위 기록이 없어 불가. 따라서 계약 4 의 조건 분기대로 **계정 플래그
+  (profiles.flagged)만** 세팅한다.
+- **`flag_pve_anomalies(p_hourly_cap=100000, p_min_age_hours=1, p_min_total=50000)`**(definer,
+  service_role): 계정 수명(now-created_at) 대비 총 보유 자원(credits+minerals) 획득률이 시간당
+  상한을 초과하는 **명백한 이상치**를 `profiles.flagged=true` 로 표기(기존 서버 전용 가드
+  `guard_profiles_client_write` 활용 — definer 소유자 컨텍스트라 flagged 직접 갱신). 오탐 방어:
+  최소 나이(1h)·최소 총자원(50000) 미만 계정 제외, `is_npc`·이미 플래그된 계정 제외. 상수는
+  밸런스 미확정(M5)이라 잠정값. **실측 T-F6**: 이상치(600000/2h=300000/h) flagged, 정상
+  (2000/h)·신규(나이<1h)·NPC 전부 clean.
+- **pg_cron**: `planet-blitz-flag-pve-anomalies` 일 1회(01:00 UTC), Phase E pg_cron(1.6.4)
+  재사용. 실측: 잡 active.
+- ⚠️ 이는 "명백한 불가능 획득률"만 잡는 보수적 1차 방어선이다(ADR-0005 수용 트레이드오프).
+  정교 슬로우핵·부분 치트는 집계만으로 못 잡는다.
+
+### 리플레이 재실행 샘플링 — 착수 조건 (F4 완전판, 이번 범위 밖)
+
+아래가 갖춰지면 EF `verify-pve-sample` + pg_cron 으로 상위 N%·랜덤 1% 리플레이 재실행 검증을
+붙인다(계획 §4 F4 원안 · OQ-M4-2 기본안 상위 5%+상한+랜덤 1%). 현재 미충족:
+1. **PvE 런 서버 기록**: profileSync 는 집계 세이브만 올린다. PvE 런 단위 결과(시드·입력·해시·
+   획득 자원)를 서버 테이블(예: `pve_runs`)에 남기는 배선 필요 — 리플레이 blob 업로드 여부는
+   용량·빈도 트레이드오프라 **리드/사용자 판단**(별도 결정, `src/**` 변경 필요 = f-server 범위 밖).
+2. **재실행 인프라**: verify-run EF(Phase A) 결정론 재실행을 PvE 런에 재사용.
+3. **적발 처리**: 재실행 불일치 시 해당 런 무효(런 기록 존재 전제) + `flag_pve_anomalies` 의
+   플래그 경로 재사용.
+
+### 코드리뷰 REQUEST_CHANGES 반영 (2026-07-17, 마이그레이션 `20260717160000`)
+
+1. **[HIGH·회귀] self-invasion insert 가드 복원**: Phase D `20260717030000` 이
+   `guard_invasions_client_insert()` 최상단에 넣은 self-invasion raise(역할 무관,
+   CRITICAL 수정)를, Phase F `20260717140000` 이 같은 함수를 create or replace 하며
+   빠뜨려 insert 층 차단이 회귀했다(apply 3차 가드가 남아 경제 악용은 불가했으나 다층
+   방어의 한 층 소실). Phase D 원문 블록을 그대로 최상단에 복원 + Phase F 서버 필드
+   봉인 유지. **재발 방지**: 마이그레이션 주석에 "이 함수를 재정의할 때는 self-invasion
+   블록 필수 유지" 명시(160000 · 140000 양쪽), 회귀 테스트 **T-F7** 추가 — 이 함수를
+   재정의하는 마이그레이션이 생기면 반드시 T-F7 재실행.
+2. **[MED] `set_invasion_sticker` 승자 한정**: GDD §8 "침공/방어 **성공 시**" — 종전판은
+   참여자면 승패 무관 설정 허용(패자 도발 가능, 사양 밖). `attacker_won` 을 확인해
+   공격자는 true·방어자는 false 일 때만 허용, 아니면 `{ok:false, note:'not-winner'}`
+   (미확정 pending/null 도 not-winner — `is distinct from` 으로 null 안전). 테스트 **T-F8**.
+
+f-client 영향: `not-winner` 는 새 note 값(additive) — 클라 승자 UI 만 스티커 선택을 띄우면
+정상 경로에서 만나지 않는다. EF 는 이번 수정과 무관(SQL 전용) — 재번들 불필요 확인.
+
+### 원격 실측·통합 테스트 (2026-07-17, `qxgbxwyccbxokdgwxcuw`)
+
+`supabase/tests/phase_f_verification.sql` 에 T-F1~T-F8 재현 스크립트 보존(각 DO 블록 최종 RAISE
+자동 롤백 → 잔류 0, 사후 leaked_profiles/invasions/users/flagged 전부 0 실측). 요약:
+
+- T-F1 스티커(승자 한정 개정판): 승리 공격자 설정→재설정 거부(불변)·방어 성공 방어자 설정·
+  비참여자 거부·범위12 거부·최종(win.a=3, lose.d=7) ✅
+- T-F2 복수 판정·탈환: get_revenge_targets 1건(sec≈23h·cooldown 무시)·apply 격차40 복수 스왑
+  성사·bonus 50·minerals 100→150·caused_swap/is_revenge 기록 ✅
+- T-F3 리프프로그 가드: 비복수 격차40 → 스왑 없음·순위 불변·caused_swap=false / 정상 격차20 →
+  스왑·caused_swap=true ✅
+- T-F4 복수 소비: 되받은 뒤 revenge_targets_for 에서 대상 소멸 ✅
+- T-F5 폴링: get_incoming_invasions 필드·스티커·since 필터·공격자 0건 ✅
+- T-F6 PvE 이상치: 이상치 flagged·정상/신규/NPC clean ✅
+- T-F7 self insert 거부(HIGH 회귀 테스트): attacker=defender insert → check_violation
+  raise(역할 무관 — 서버 컨텍스트에서도) ✅
+- T-F8 스티커 승자 한정(MED): 승리 공격자 set·패배 공격자 not-winner·방어 실패 방어자
+  not-winner·방어 성공 방어자 set·미확정(pending) 양측 not-winner·승자 게이트 뒤 불변 유지 ✅
+- 라이브 정의 검증(`pg_get_functiondef`): guard self raise 복원=true·Phase F 봉인 유지=true·
+  sticker not-winner=true·null 안전(is distinct from)=true ✅
+- `get_advisors(security)` 재점검: 신규 WARN 은 `get_incoming_invasions`·`get_revenge_targets`·
+  `set_invasion_sticker` 3건뿐이며 전부 **의도**(authenticated 가 auth.uid() 스코프로 호출하는
+  SECURITY DEFINER RPC — get_invasion_targets·placement·repair 와 동일 성격). `apply_invasion_result`·
+  `flag_pve_anomalies`·`revenge_targets_for` 는 목록에 없음(service 전용 EXECUTE 봉인 확인).
+  **ERROR 없음.**
+
+### 남은 리스크
+- **[LOW] 복수 보너스 광물·이상치 임계 튜닝**(계획 §5): `REVENGE_BONUS_MINERALS`=50,
+  `flag_pve_anomalies` 상한 100000/h·최소나이 1h·최소총자원 50000 은 밸런스 미확정 잠정값.
+  M5 밸런싱·운영 지표로 조정.
+- **[LOW] 방어자 사후 스티커 UX**: `defender_sticker` 컬럼·RPC 는 준비됐으나, 방어자가 침공
+  결과를 폴링으로 본 뒤 언제 스티커를 다는지(관제탑 알림에서 답장)는 f-client UX 결정.
+- **[MEDIUM→이월] PvE 정교 치트**: 통계 플래그는 명백한 이상치만 잡음. 완전 방어는 위
+  "리플레이 재실행 샘플링 착수 조건"(PvE 런 서버 기록 = `src/**` 배선) 충족 후 가능.

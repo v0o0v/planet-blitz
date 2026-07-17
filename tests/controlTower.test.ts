@@ -16,9 +16,18 @@ import {
   computeInvadeState,
   resultBannerText,
   previewCells,
+  revengeCardState,
+  incomingBannerText,
+  incomingRowText,
   type InvasionResultView,
 } from '../src/ui/controlTower.js';
-import { INVASION_COOLDOWN_MS, type InvasionTarget } from '../src/net/invasion.js';
+import {
+  INVASION_COOLDOWN_MS,
+  REVENGE_WINDOW_MS,
+  type InvasionTarget,
+  type RevengeTarget,
+  type IncomingInvasion,
+} from '../src/net/invasion.js';
 import { SPAWN_COL, SPAWN_ROW, worldToCell, cellToWorld } from '../src/ui/defenseCommand.js';
 import { TURRET_VULCAN, type DefenseLayout } from '../src/sim/defense.js';
 
@@ -128,6 +137,91 @@ describe('resultBannerText — 서버 권위 문구', () => {
     expect(t).toContain('확정 중');
     expect(t).not.toContain('실패');
     expect(t).not.toContain('방어 성공');
+  });
+});
+
+describe('resultBannerText — 복수전(F1)', () => {
+  it('복수 성공 — 자리 탈환 + 보너스 광물', () => {
+    const v: InvasionResultView = {
+      attackerWon: true,
+      submitted: true,
+      status: 'verified',
+      revenge: true,
+      bonusMinerals: 40,
+      ladder: { attackerRank: 4, defenderRank: 5 },
+      targetName: '숙적',
+    };
+    const t = resultBannerText(v);
+    expect(t).toContain('복수 성공');
+    expect(t).toContain('자리 탈환');
+    expect(t).toContain('보너스 광물 40');
+  });
+
+  it('비복수 승리는 기존 문구(코어 파괴) 유지', () => {
+    const v: InvasionResultView = { attackerWon: true, submitted: true, status: 'verified' };
+    expect(resultBannerText(v)).toContain('코어 파괴');
+    expect(resultBannerText(v)).not.toContain('복수');
+  });
+});
+
+describe('revengeCardState — 복수 카드(순수)', () => {
+  const base: RevengeTarget = {
+    profileId: 'atk',
+    rank: 5,
+    displayName: '숙적',
+    shipSummary: { name: '레이븐', level: 20 },
+    defenseId: 'd',
+    layout: VALID_LAYOUT,
+    maintenance: 80,
+    revengeInvasionId: 'inv-lost',
+    expiresAtMs: 1000 + REVENGE_WINDOW_MS,
+  };
+
+  it('창이 남아 있고 배치 유효 → 복수 가능(만료 아님·layout 채움)', () => {
+    const st = revengeCardState(base, 1000);
+    expect(st.expired).toBe(false);
+    expect(st.remainingLabel).toContain('복수 가능');
+    expect(st.layout).not.toBeNull();
+  });
+
+  it('24h 지나면 만료(라벨 빈 문자열)', () => {
+    const st = revengeCardState(base, 1000 + REVENGE_WINDOW_MS + 1);
+    expect(st.expired).toBe(true);
+    expect(st.remainingLabel).toBe('');
+  });
+
+  it('배치 손상/없음이면 layout=null(복수 불가 근거)', () => {
+    const st = revengeCardState({ ...base, layout: null }, 1000);
+    expect(st.layout).toBeNull();
+  });
+});
+
+describe('알림 배너·행 문구(순수)', () => {
+  const inv: IncomingInvasion = {
+    invasionId: 'inv-1',
+    attackerName: '감마',
+    attackerWon: true,
+    createdAtMs: 5000,
+    sticker: 0,
+    defenderSticker: null,
+    isRevenge: false,
+  };
+
+  it('incomingBannerText: 0 이면 빈 문자열, n 이면 건수', () => {
+    expect(incomingBannerText(0)).toBe('');
+    expect(incomingBannerText(3)).toContain('3건');
+  });
+
+  it('incomingRowText: 함락/방어 + 도발 스티커 표시', () => {
+    expect(incomingRowText(inv)).toContain('기지 함락');
+    expect(incomingRowText(inv)).toContain('도발');
+    const held = incomingRowText({ ...inv, attackerWon: false, sticker: null });
+    expect(held).toContain('방어 성공');
+    expect(held).not.toContain('도발');
+  });
+
+  it('incomingRowText: 복수 침공이면 [복수] 프리픽스', () => {
+    expect(incomingRowText({ ...inv, isRevenge: true })).toContain('[복수]');
   });
 });
 

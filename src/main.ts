@@ -80,10 +80,21 @@ import type { SettlementOutcome } from './save/settlement.js';
 // 정산 시점에서만 fire-and-forget 로 호출 — sim/게임루프와 무관(결정론·오프라인 우선).
 import { migrateLocalProfileToServer, recordPveRunResult } from './net/index.js';
 // M4 침공(비동기 PvP) 제출: 미설정 시 submitInvasion 은 null(잠정 결과만 표시).
-import { submitInvasion, buildClientResult, maintenanceToCenti } from './net/invasion.js';
+import {
+  submitInvasion,
+  buildClientResult,
+  maintenanceToCenti,
+  fetchInvasionReplay,
+  setInvasionSticker,
+} from './net/invasion.js';
 import type { InvasionTarget } from './net/invasion.js';
 import { DEFAULT_TIME_LIMIT_TICKS } from './sim/defense.js';
 import type { InvasionConfig, DefenseLayout } from './sim/defense.js';
+// M4 Phase F: 리플레이 관전(F3) + 도발 스티커(F2).
+import { SpectateOverlay, isPlayableReplay, nextSpectateSpeed } from './ui/replaySpectate.js';
+import type { SpectateSpeed } from './ui/replaySpectate.js';
+import { StickerPicker } from './ui/stickerPicker.js';
+import type { Replay } from './sim/replay.js';
 
 async function main(): Promise<void> {
   const mount = document.getElementById('app');
@@ -163,6 +174,9 @@ async function main(): Promise<void> {
   const refinery = new Refinery(profile);
   const defenseCommand = new DefenseCommand(profile);
   const controlTower = new ControlTower();
+  // M4 Phase F: 관전 컨트롤 오버레이(F3) + 도발 스티커 선택(F2).
+  const spectateOverlay = new SpectateOverlay();
+  const stickerPicker = new StickerPicker();
   const titleScreen = new TitleScreen();
   const tutorialOverlay = new TutorialOverlay();
   const ftue = new FtueTracker();
@@ -198,6 +212,15 @@ async function main(): Promise<void> {
   // 제출로 분기한다. pendingInvasionResult 는 다음에 관제탑을 열 때 표시할 결과 배너.
   let invasionTarget: InvasionTarget | null = null;
   let pendingInvasionResult: InvasionResultView | null = null;
+
+  // --- 리플레이 관전(F3) 상태 ---
+  // spectateReplay !== null 이면 현재 화면은 관전 재생이다 → ticker 가 리플레이 입력을
+  // 주입하고, 정산/레벨업 오버레이/제출 경로를 모두 건너뛴다(월드는 markTainted 됨).
+  let spectateReplay: Replay | null = null;
+  let spectateCursor = 0;
+  let spectatePlaying = false;
+  let spectateSpeed: SpectateSpeed = 1;
+  let spectateName = '';
 
   // --- DEV 하네스 훅 상태(프로덕션에서는 harness가 항상 null → 분기 사문화·제거) ---
   let harness: Harness | null = null;
@@ -239,6 +262,9 @@ async function main(): Promise<void> {
     baseMap.hide();
     defenseCommand.hide();
     controlTower.hide();
+    spectateOverlay.hide();
+    stickerPicker.hide();
+    spectateReplay = null; // 관전 종료(화면 전환 시 항상 해제)
     titleScreen.hide();
   }
 
@@ -304,10 +330,95 @@ async function main(): Promise<void> {
       profile,
       {
         onInvade: (target, layout) => startInvasionRun(target, layout),
+        onSpectate: (invasionId, attackerName) => void startSpectate(invasionId, attackerName),
+        onSticker: (invasionId, attackerName) => promptSticker(invasionId, '방어 성공! 도발 스티커를 남기시겠어요?', attackerName),
         onBack: () => openBaseMap(),
       },
       showOpts,
     );
+  }
+
+  /**
+   * 도발 스티커 선택 UI 를 띄우고, 선택 시 서버에 설정한 뒤 관제탑을 다시 연다(F2).
+   * 스티커는 재미 요소라 실패해도 게임 진행 무영향(setInvasionSticker 은 절대 throw 안 함).
+   */
+  function promptSticker(invasionId: string, title: string, otherName: string): void {
+    stickerPicker.show(
+      {
+        onPick: (index) => {
+          void setInvasionSticker(invasionId, index);
+          openControlTower();
+        },
+        onSkip: () => openControlTower(),
+      },
+      { title, ...(otherName.length > 0 ? { subtitle: `${otherName} 에게 한 마디` } : {}) },
+    );
+  }
+
+  /**
+   * 리플레이 관전(F3): 침공 리플레이를 로드해 렌더와 함께 실시간 재생한다. 월드는 진입 즉시
+   * markTainted 되어 정산·제출 대상에서 빠진다(렌더 전용). 로드 실패/손상이면 관제탑 유지.
+   */
+  async function startSpectate(invasionId: string, attackerName: string): Promise<void> {
+    const replay = await fetchInvasionReplay(invasionId);
+    if (replay === null || !isPlayableReplay(replay)) {
+      // 로드 불가(미설정/오프라인/부재/손상) — 관제탑을 다시 열어 안내 상태로 둔다.
+      openControlTower();
+      return;
+    }
+    beginSpectate(replay, attackerName);
+  }
+
+  /** 관전 월드를 세팅하고 컨트롤 오버레이를 띄운다(재생 상태 초기화). */
+  function beginSpectate(replay: Replay, attackerName: string): void {
+    clearToMenu();
+    setScreen('spectate');
+    spectateReplay = replay;
+    spectateName = attackerName;
+    spectateCursor = 0;
+    spectatePlaying = true;
+    spectateSpeed = 1;
+    const seed = replay.seed >>> 0;
+    currentSeed = seed;
+    world = createWorld(seed, replay.config ?? DEFAULT_CONFIG);
+    markTainted(world); // 렌더 전용 — 정산/제출 오염 차단(ADR-0008 패턴)
+    recorder = null;
+    prevSnap = snapshotWorld(world);
+    currSnap = prevSnap;
+    accumulator = 0;
+    settled = false;
+    ceremony.reset();
+    // 관전 아레나 배경(침공 아레나와 동일 규칙 — 기본 배경, autotile 없음).
+    const planet = world.config.planet ?? 0;
+    background.texture = planetBackground(planet);
+    autotile.configure(null, seed);
+    background.visible = true;
+    spectateOverlay.show(
+      {
+        onTogglePlay: () => toggleSpectatePlay(),
+        onCycleSpeed: () => {
+          spectateSpeed = nextSpectateSpeed(spectateSpeed);
+        },
+        onExit: () => {
+          spectateReplay = null;
+          spectateOverlay.hide();
+          openControlTower();
+        },
+      },
+      { total: replay.inputs.length, targetName: attackerName },
+    );
+  }
+
+  /** 재생/일시정지 토글. 재생이 끝난 상태(cursor 소진)면 처음부터 다시 재생한다. */
+  function toggleSpectatePlay(): void {
+    const replay = spectateReplay;
+    if (replay === null) return;
+    if (spectateCursor >= replay.inputs.length) {
+      // 끝났으면 재시작(월드 재생성 — 결정론이라 동일 재현).
+      beginSpectate(replay, spectateName);
+      return;
+    }
+    spectatePlaying = !spectatePlaying;
   }
 
   /**
@@ -416,7 +527,22 @@ async function main(): Promise<void> {
         ladder: verdict.ladder,
         lootCount: verdict.loot.length,
         targetName: target.displayName,
+        ...(verdict.revenge !== undefined ? { revenge: verdict.revenge } : {}),
+        ...(verdict.bonusMinerals !== undefined ? { bonusMinerals: verdict.bonusMinerals } : {}),
       };
+    }
+    // 침공 성공(서버 확정)이면 도발 스티커 선택 UI 를 먼저 띄운다(F2). 선택/건너뛰기 후
+    // 관제탑을 결과 배너와 함께 연다. invasionId 가 있어야 서버 설정이 가능하다.
+    const invId = verdict?.invasionId;
+    if (
+      verdict !== null &&
+      verdict.status === 'verified' &&
+      verdict.attackerWon === true &&
+      invId !== undefined &&
+      invId.length > 0
+    ) {
+      promptSticker(invId, '침공 성공! 도발 스티커를 남기시겠어요?', target.displayName);
+      return;
     }
     // 관제탑이 아직 이 화면이면 결과 배너로 다시 그린다(사이에 사용자가 나갔으면 스킵).
     if (currentScreenName === 'controlTower') openControlTower();
@@ -593,12 +719,32 @@ async function main(): Promise<void> {
 
     const w = world;
     const runOver = w !== null && (w.gameOver || w.victory);
+    const spectating = spectateReplay !== null;
 
-    // Step the sim only while a live run is in progress and not yet over. DEV
-    // 하네스가 일시정지 중이면 스텝을 건너뛰고(치트 패널 pause/step), 배속(harnessSpeed)
-    // 은 accumulator 유입만 스케일한다(기본 1 → 거동 불변). 스텝 본체는 stepOnce로
-    // 공유해 fast-forward/single-step과 비트 동일.
-    if (w !== null && !runOver && !harnessPaused) {
+    // 리플레이 관전(F3): 리플레이 입력을 고정 timestep 으로 주입해 실시간 재생한다. 정산·
+    // 레벨업 오버레이·제출 경로는 모두 건너뛴다(월드는 markTainted). stepOnce 재사용으로
+    // 재생도 원본 런과 비트 동일(결정론). 배속은 accumulator 유입만 스케일.
+    if (spectating && w !== null && spectateReplay !== null) {
+      const total = spectateReplay.inputs.length;
+      if (spectatePlaying && spectateCursor < total) {
+        accumulator += frame * spectateSpeed;
+        while (accumulator >= DT && spectateCursor < total) {
+          const input = spectateReplay.inputs[spectateCursor];
+          spectateCursor++;
+          if (input !== undefined) stepOnce(input);
+          accumulator -= DT;
+        }
+        if (spectateCursor >= total) spectatePlaying = false; // 재생 종료
+      } else {
+        accumulator = 0;
+      }
+      spectateOverlay.update({
+        tick: spectateCursor,
+        playing: spectatePlaying,
+        speed: spectateSpeed,
+        ended: spectateCursor >= total,
+      });
+    } else if (w !== null && !runOver && !harnessPaused) {
       // 유니크 세리머니 슬로모: 게임 루프 dt에 배율만 곱한다(hit-stop). 입력 로그는 매
       // 틱 그대로 기록되므로 리플레이/해시는 불변(렌더 페이싱만 늘어짐).
       const timeScale = ceremony.update(frame);
@@ -616,7 +762,7 @@ async function main(): Promise<void> {
     }
 
     // Tutorial: advance the scripted hint + instrument the first drop (FTUE, AC8).
-    if (tutorialActive && w !== null) {
+    if (!spectating && tutorialActive && w !== null) {
       const hasDrop = w.loot.length > 0;
       if (hasDrop) ftue.markFirstDrop();
       tutorialOverlay.update(w.tick, hasDrop);
@@ -652,7 +798,7 @@ async function main(): Promise<void> {
     // pendingLevelUp을 근거로 순수 결정한다(levelUpOverlayAction). 클릭으로 낙관적
     // 숨김을 하지 않으므로, 픽이 소비되기 전 프레임에 오버레이가 재표시되며 뒤에서
     // 게임이 진행되던 레이스가 사라진다. 픽은 SPECIAL_POWERUP_PICK 입력으로 큐잉된다.
-    if (w !== null && !resultOverlay.visible) {
+    if (!spectating && w !== null && !resultOverlay.visible) {
       const action = levelUpOverlayAction(
         w.pendingLevelUp,
         w.level,
@@ -673,7 +819,7 @@ async function main(): Promise<void> {
     // Settlement screen on death or clear. `settled`로 게이트한다(런 종료당 정확히 1회
     // — shouldEnterSettlement 참조). `!resultOverlay.visible`로 게이트하면 '장비 정비'가
     // 오버레이를 숨긴 뒤 endRun이 재호출되어 결과 화면이 인벤토리 위로 다시 뜬다.
-    if (w !== null && shouldEnterSettlement(runOver, settled)) {
+    if (!spectating && w !== null && shouldEnterSettlement(runOver, settled)) {
       endRun(w);
     }
 
