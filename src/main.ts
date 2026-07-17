@@ -922,6 +922,8 @@ async function main(): Promise<void> {
         resources: w.resources,
         hasBoss: bossEnt !== undefined,
         bulletCount: playerBulletN,
+        gameOver: w.gameOver,
+        victory: w.victory,
       });
       const boss: BossHudState | undefined =
         bossEnt !== undefined
