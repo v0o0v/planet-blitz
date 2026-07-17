@@ -12,8 +12,10 @@
  */
 
 import type { Profile, KeyValueStore } from '../save/profile.js';
+import type { Replay } from '../sim/replay.js';
 import { readSupabaseConfig, type SupabaseConfig } from './config.js';
 import type { ServerGateway } from './gateway.js';
+import { buildPveRunResult } from './pveRun.js';
 import {
   serializeProfile,
   deserializeProfile,
@@ -103,6 +105,28 @@ export async function recordPveRunResult(profile: Profile, deps: NetDeps = {}): 
   if (store === null) return;
   stashPendingProfile(store, profile);
   await flushPendingSync({ ...deps, gateway, store });
+}
+
+/**
+ * PvE 런 리플레이(시드·입력 스트림·해시)를 서버 `pve_runs` 에 기록한다(계획 §4 F4 착수
+ * 조건 이행 — 리플레이 재실행 샘플링 대상 확보). 집계 세이브 동기화({@link recordPveRunResult})와
+ * 별개로, 개별 런 단위 증거를 남겨 서버가 표본을 전수 재실행 검증할 수 있게 한다.
+ *
+ * 규율: 미설정(env 부재)/게이트웨이 미구현/오프라인/오류면 완전 no-op(절대 throw 안 함).
+ * 비차단 fire-and-forget — 정산 직후 호출하되 게임 진행을 막지 않는다. 리플레이 재실행으로
+ * 해시 스트림을 만드는 비용은 결정론이라 정확하며(서버 대조와 동일), 오염 런(ADR-0008)은
+ * 호출부(main.endRun)가 애초에 이 함수를 부르지 않는다.
+ */
+export async function recordPveRun(replay: Replay, deps: NetDeps = {}): Promise<void> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.insertPveRun === undefined) return;
+  try {
+    const uid = await gateway.getUserId();
+    const clientResult = buildPveRunResult(replay);
+    await gateway.insertPveRun(uid, { replay, clientResult });
+  } catch {
+    // 오프라인/일시 오류 — PvE 런 기록은 best-effort(집계 세이브가 별도로 진행도를 보존).
+  }
 }
 
 /**

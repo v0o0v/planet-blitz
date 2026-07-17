@@ -667,3 +667,76 @@ f-client 영향: `not-winner` 는 새 note 값(additive) — 클라 승자 UI �
   결과를 폴링으로 본 뒤 언제 스티커를 다는지(관제탑 알림에서 답장)는 f-client UX 결정.
 - **[MEDIUM→이월] PvE 정교 치트**: 통계 플래그는 명백한 이상치만 잡음. 완전 방어는 위
   "리플레이 재실행 샘플링 착수 조건"(PvE 런 서버 기록 = `src/**` 배선) 충족 후 가능.
+  → **이 착수 조건은 아래 "PvE 런 서버 기록 + 리플레이 재실행 샘플링"에서 이행됨.**
+
+## PvE 런 서버 기록 + 리플레이 재실행 샘플링 (계획 §4 F4 완전판, 2026-07-18)
+
+Phase F(`20260717150000_m4_phase_f_pve_sampling.sql`) "리플레이 재실행 샘플링 착수 조건"
+3건(①PvE 런 서버 기록 ②재실행 인프라 ③적발 처리)을 배선해, 통계 이상치 플래그(집계 기반)만
+있던 PvE 검증에 **개별 런 리플레이 전수 재실행**을 더한다. ADR-0005(결정론 재실행) 유지 —
+`src/sim` 무수정, sim 은 변경하지 않고 순수 net/서버 배선만 추가했다.
+
+### 1. PvE 런 서버 기록 (착수 조건 ①)
+
+- **마이그레이션 `20260718000000_m4_pve_runs.sql`**: `pve_runs` 테이블 신설.
+  - 컬럼: `id·profile_id·replay(jsonb)·client_result(jsonb)·verified_status(pending|verified|
+    rejected)·verified_result·created_at·verified_at`. invasions 와 동일한 서버 권위 규율.
+  - RLS: 본인 런 **insert(pending 증거)·본인 select 만**. update/delete 정책 없음(결과 확정은
+    service_role). 가드 트리거 `trg_pve_runs_guard_insert` 가 클라 insert 의 verified_* 를 강제로
+    비운다(조작된 `verified` 제출 원천 차단 — invasions 가드와 동형).
+  - 인덱스: `(profile_id, created_at desc)` + pending 부분 인덱스(샘플 스캔 저비용).
+- **클라 배선(`src/net`)**: 기존 net 패턴(env 미설정 시 완전 no-op·동적 import·fire-and-forget)
+  준수.
+  - `src/net/pveRun.ts`(순수): `buildPveRunResult(replay)` — 리플레이를 재실행해 `{victory,
+    gameOver, finalTick, finalHash, hashStream}` 생성. **침공 제출과 동일한 hashStream 계약**
+    (틱별 uint32 상태 해시). PvE 는 승리·게임오버가 독립이라(둘 다 false 가능 — 세그먼트 상한
+    등) 두 플래그를 모두 담아 재실행 outcome 대조가 정직 런을 오거부하지 않게 한다.
+  - `src/net/gateway.ts`: `ServerGateway.insertPveRun?`(optional — 구버전 게이트웨이 no-op) +
+    `SupabaseGateway` 구현(pve_runs insert).
+  - `src/net/index.ts`: `recordPveRun(replay, deps)` — 미설정/미구현/오프라인이면 no-op, 절대
+    throw 안 함. `src/main.ts endRun` 이 **비오염 PvE 런 정산 직후**(ADR-0008 tainted 런은
+    제외) `recordPveRun(recorder.toReplay())` 를 fire-and-forget 호출.
+  - vitest: `tests/pveRun.test.ts`(6건) — 결정론·hashStream 계약·no-op 3경로.
+
+### 2. 리플레이 재실행 샘플링 검증 (착수 조건 ②·③)
+
+- **Edge Function `verify-pve-sample`**: Phase A verify-run 검증 코어(`verifyRun`)를 **재사용**한다
+  (PvE 런은 방어자·래더가 없어 "제출된 [seed+config+inputs] 가 주장 결과를 내적 재현하는가"만
+  증명하면 되고, 이는 verify-run 코어가 정확히 하는 일).
+  - `verifyPveCore.ts`(순수·플랫폼 전역 무참조): `verifyPveRun(row)` — 저장 행을 verify-run
+    `RunSubmission` 으로 사상해 `verifyRun` 호출. 조작 해시→`final-hash-mismatch`, 변조/트림
+    입력→`hash-stream-divergence`/`hash-stream-length-mismatch`, 승패 조작→`outcome-mismatch`.
+  - `index.ts`(Deno.serve): **service_role 키 보유자(서버/스케줄러)만** 트리거(Bearer==service
+    key, 불일치 401). `sample_pve_runs` 로 대상 선정 → 배치 재실행 → `apply_pve_verification`
+    으로 확정(+불일치 시 계정 플래그). 한 요청 최대 `MAX_BATCH`(200)건(시간예산 방어).
+  - `deno.json`: `check`/`bundle` 태스크(verify-invasion 과 동일 패턴). 배포용 자립 번들
+    `dist.index.js`(36모듈·65KB, `/* eslint-disable */` 헤더) 워킹트리 유지 — **재배포는 리드**.
+- **선정·확정 RPC**(마이그레이션 `20260718000000`, 둘 다 security definer·**service_role EXECUTE
+  만**):
+  - `sample_pve_runs(p_limit)`: pending 런을 **이상치 플래그(`profiles.flagged`) 계정 우선 +
+    랜덤**(상위 N%·랜덤 소수 근사)으로 반환. `flag_pve_anomalies`(01:00 UTC)가 먼저 이상 계정을
+    플래그하면 이 잡이 그 계정 런을 우선 재실행 → 확률적 적발 완성.
+  - `apply_pve_verification(p_run_id, p_status, p_verified_result, p_flag_profile)`: pending 런만
+    확정(멱등) + `p_flag_profile` 시 계정 `flagged=true`(적발 처리 — flag_pve_anomalies 플래그
+    경로 재사용). 반환 `{finalized, flagged}`.
+- **deno 테스트**: `scripts/deno-verify/verifyPveSample.ts` + `deno task verify-pve`. 대표 리플레이
+  6종 정직 재현 accept + 위조 4대(해시·입력·트림·승패) 100% reject 실측(로컬 통과).
+
+### 원격 적용·배포 (리드 몫 — 이 워커는 파일만 커밋)
+
+- 원격 DB 미적용. `apply_migration('m4_pve_runs', <20260718000000 내용>)` 후 검증: `pve_runs`
+  7컬럼·RLS true·정책 2개(insert_own/select_own)·가드 트리거 1개·RPC 2개(service_role EXECUTE
+  만)·`get_advisors(security)` 신규 WARN 이 있으면 `sample_pve_runs`/`apply_pve_verification`
+  는 service_role 전용이라 목록에 없어야 함(있으면 EXECUTE 회수 재확인).
+- EF 배포: `deploy_edge_function('verify-pve-sample', files=[{name:'index.ts', content:<dist.index.js>}],
+  verify_jwt=false)`. verify_jwt=false 는 사용자 JWT 흐름이 아니기 때문(EF 내부에서 Bearer==
+  service key 자체 검사). 스모크: service key 로 `POST {limit:1}` → `{checked,verified,rejected,
+  flagged}` 확인, 위조 런 심은 뒤 재호출해 rejected+flagged e2e.
+- 주기 실행: 마이그레이션 말미 주석의 pg_cron+pg_net(vault 시크릿) 또는 외부 스케줄러(01:30 UTC
+  권장 — 이상치 플래그 01:00 뒤).
+
+### 남은 리스크 (PvE 샘플링)
+- **[LOW] 배치 상한·샘플률 튜닝**: `MAX_BATCH`=200·flagged 우선+random 은 잠정. 런 볼륨·재실행
+  비용 실측 후 상위 N%·랜덤 비율을 정교화(OQ-M4-2 원안).
+- **[LOW] 리플레이 blob 용량**: `pve_runs.replay` 는 입력 로그 전량을 담아 장기 런에서 커질 수
+  있다. 보존 기간·압축·검증 완료분 정리(cron)는 운영 지표 확인 후 별도 결정.

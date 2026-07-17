@@ -78,7 +78,7 @@ import { settleRun } from './save/settlement.js';
 import type { SettlementOutcome } from './save/settlement.js';
 // M4 네트워크 계층(Phase B3): Supabase 미설정 시 완전 no-op, 절대 throw 안 함.
 // 정산 시점에서만 fire-and-forget 로 호출 — sim/게임루프와 무관(결정론·오프라인 우선).
-import { migrateLocalProfileToServer, recordPveRunResult } from './net/index.js';
+import { migrateLocalProfileToServer, recordPveRunResult, recordPveRun } from './net/index.js';
 // M4 침공(비동기 PvP) 제출: 미설정 시 submitInvasion 은 null(잠정 결과만 표시).
 import {
   submitInvasion,
@@ -673,6 +673,10 @@ async function main(): Promise<void> {
         // PvE 런 결과(정산된 메타)를 서버에 기록. 미설정이면 no-op, 실패 시 로컬
         // 대기 슬롯에 남아 재시도(오프라인 우선). 비차단 fire-and-forget.
         void recordPveRunResult(profile);
+        // 개별 PvE 런 리플레이(시드·입력·해시)를 pve_runs 에 기록 → 서버 표본 재실행
+        // 검증 대상 확보(계획 §4 F4). 오염 런은 이 블록에 들어오지 않으므로 제출 안전.
+        // 미설정/오프라인이면 no-op. recorder 는 startRun 에서 항상 세팅되나 방어적으로 확인.
+        if (recorder !== null) void recordPveRun(recorder.toReplay());
       }
     }
     tutorialOverlay.hide();
