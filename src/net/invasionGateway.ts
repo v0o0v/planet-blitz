@@ -11,6 +11,7 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { SupabaseConfig } from './config.js';
+import type { Replay } from '../sim/replay.js';
 import type {
   InvasionGateway,
   InvasionTarget,
@@ -20,6 +21,8 @@ import type {
   LootItem,
   PlacementStatus,
   PlacementResult,
+  RevengeTarget,
+  IncomingInvasion,
 } from './invasion.js';
 
 /** RPC/셀렉트가 돌려주는 raw 행에서 안전하게 값을 뽑는 헬퍼. */
@@ -31,6 +34,19 @@ function asString(v: unknown, fallback = ''): string {
 }
 function asNumber(v: unknown, fallback = 0): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+}
+/** timestamptz(ISO 문자열) 또는 epoch ms(number) → epoch ms. 파싱 실패 시 fallback. */
+function asEpochMs(v: unknown, fallback = 0): number {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const t = Date.parse(v);
+    if (Number.isFinite(t)) return t;
+  }
+  return fallback;
+}
+/** 스티커 인덱스 정규화: 정수 0..11 만 통과, 그 외(null/손상/범위밖)는 null. */
+function asStickerIndex(v: unknown): number | null {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 11 ? v : null;
 }
 
 /** RPC `get_invasion_targets()` 한 행 → InvasionTarget(계약 정규화). */
@@ -83,6 +99,9 @@ export function normalizeVerdict(raw: unknown): InvasionVerdict {
     attackerWon: typeof r.attackerWon === 'boolean' ? r.attackerWon : null,
     ladder,
     loot,
+    // EF additive(계약 §F1) — 복수 판정·보너스 광물. 미제공이면 기본값(비복수·0).
+    revenge: r.revenge === true,
+    bonusMinerals: asNumber(r.bonusMinerals),
   };
 }
 
@@ -150,6 +169,75 @@ export class SupabaseInvasionGateway implements InvasionGateway {
     };
   }
 
+  async getRevengeTargets(): Promise<RevengeTarget[]> {
+    // 복수 대상(24h 창) — get_invasion_targets 와 동일 행 shape + 복수 메타(계약 §F1).
+    // 24h·쿨다운 무시·격차 예외는 서버 RPC 가 강제(클라이언트는 표시만).
+    const { data, error } = await this.client.rpc('get_revenge_targets');
+    if (error !== null) throw error;
+    const rows = Array.isArray(data) ? data : [];
+    return rows.map((raw) => {
+      const base = rowToTarget(raw);
+      const r = asRecord(raw);
+      return {
+        ...base,
+        revengeInvasionId: asString(r.revenge_invasion_id),
+        expiresAtMs: asEpochMs(r.expires_at),
+      };
+    });
+  }
+
+  async getIncomingInvasions(sinceMs: number, limit: number): Promise<IncomingInvasion[]> {
+    // 내가 당한 최근 침공(알림용) — 폴링 전용(계약 §5). p_since 는 ISO timestamptz.
+    const since = new Date(Number.isFinite(sinceMs) && sinceMs > 0 ? sinceMs : 0).toISOString();
+    const { data, error } = await this.client.rpc('get_incoming_invasions', {
+      p_since: since,
+      p_limit: limit,
+    });
+    if (error !== null) throw error;
+    const rows = Array.isArray(data) ? data : [];
+    return rows.map((raw) => {
+      const r = asRecord(raw);
+      // 나에게 온 도발 = 공격자 스티커. 서버가 단일 sticker 로 줄 수도 있어 둘 다 흡수.
+      const stickerRaw = r.attacker_sticker !== undefined ? r.attacker_sticker : r.sticker;
+      // "마지막 확인 시각" 커서와 정합하도록 verified_at 우선(서버가 verified_at 로 필터).
+      return {
+        invasionId: asString(r.invasion_id),
+        attackerName: asString(r.attacker_name, '무명 파일럿'),
+        attackerWon: r.attacker_won === true,
+        createdAtMs: asEpochMs(r.verified_at ?? r.created_at),
+        sticker: asStickerIndex(stickerRaw),
+        defenderSticker: asStickerIndex(r.defender_sticker),
+        isRevenge: r.is_revenge === true,
+      };
+    });
+  }
+
+  async setInvasionSticker(invasionId: string, index: number): Promise<boolean> {
+    // 도발 스티커 설정(계약 §F2) — 역할(공/수) 판정·1회 불변은 서버. 반환 성공 여부.
+    const { data, error } = await this.client.rpc('set_invasion_sticker', {
+      p_invasion_id: invasionId,
+      p_sticker: index,
+    });
+    if (error !== null) throw error;
+    // RPC 가 boolean 또는 { ok } 를 돌려줄 수 있어 방어적으로 판정.
+    if (typeof data === 'boolean') return data;
+    const r = asRecord(data);
+    return r.ok === true || r.success === true;
+  }
+
+  async getInvasionReplay(invasionId: string): Promise<Replay | null> {
+    // 관전용 리플레이 로드(계약 §F3) — 방어자/공격자만 RLS select 로 읽는다. 검증된 침공의
+    // 리플레이라 신뢰하되, 소비 측(main)이 재실행 전 shape 를 재확인한다(렌더 전용·tainted).
+    const { data, error } = await this.client
+      .from('invasions')
+      .select('replay')
+      .eq('id', invasionId)
+      .single();
+    if (error !== null) throw error;
+    const replay = asRecord(data).replay;
+    return typeof replay === 'object' && replay !== null ? (replay as Replay) : null;
+  }
+
   async fetchLadder(limit: number): Promise<LadderEntry[]> {
     // 순위표는 서버 RPC `get_ladder_top(p_limit, p_offset)`(security definer)로 조회한다 —
     // 타인 display_name 을 노출하는 유일한 경로(직접 ladder select 는 profiles RLS 로
@@ -187,6 +275,7 @@ export class SupabaseInvasionGateway implements InvasionGateway {
       { body: { invasion_id: invasionId } },
     );
     if (verifyError !== null) throw verifyError;
-    return normalizeVerdict(verifyData);
+    // 도발 스티커 설정에 필요한 invasionId 를 판정에 실어 준다(EF 가 안 돌려줘도 클라가 앎).
+    return { ...normalizeVerdict(verifyData), invasionId };
   }
 }

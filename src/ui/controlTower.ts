@@ -26,18 +26,28 @@ import {
   fetchLadder,
   fetchPlacementStatus,
   fetchPlacementTargets,
+  fetchRevengeTargets,
+  fetchIncomingInvasions,
   applyPlacementResult,
   placementPhase,
   placementProgressLabel,
   placementRemaining,
   readInvasionCooldowns,
   cooldownRemainingMs,
+  revengeRemainingMs,
+  formatRevengeRemaining,
+  readInvasionsSeenAt,
+  writeInvasionsSeenAt,
+  countUnseenInvasions,
   type InvasionTarget,
   type LadderEntry,
   type ShipSummary,
   type PlacementStatus,
   type PlacementResult,
+  type RevengeTarget,
+  type IncomingInvasion,
 } from '../net/invasion.js';
+import { stickerLabel } from '../../data/stickers.js';
 import { seedBaseByProfileId } from '../../data/seedBases.js';
 import {
   GRID_COLS,
@@ -146,6 +156,53 @@ export function placementTargetName(target: InvasionTarget): string {
   return meta !== null ? meta.name : target.displayName;
 }
 
+// ---------------------------------------------------------------------------
+// 복수전 카드 표시 로직 (순수 · 테스트 대상) — 계약 §F1/AC6
+// ---------------------------------------------------------------------------
+
+/** 복수 대상 카드 1장의 표시 상태(순수). */
+export interface RevengeCardState {
+  /** 24h 창이 만료됐는지(만료면 복수 불가 — 서버도 제외하지만 UI 이중 방어). */
+  expired: boolean;
+  /** 잔여시간 라벨("복수 가능 N시간 남음"). 만료면 빈 문자열. */
+  remainingLabel: string;
+  /** 방어 배치 정규화 결과(복수 침공 런 config). 배치 없음/손상이면 null. */
+  layout: DefenseLayout | null;
+}
+
+/**
+ * 복수 대상 카드 상태(순수). 24h 창 잔여 + 배치 정규화. 쿨다운은 **무시**한다(계약 §F1 —
+ * 복수는 쿨다운 예외, 서버가 격차·쿨다운 예외를 강제). 만료됐거나 배치가 없으면 복수 불가.
+ */
+export function revengeCardState(target: RevengeTarget, nowMs: number): RevengeCardState {
+  const remaining = revengeRemainingMs(target.expiresAtMs, nowMs);
+  const layout = normalizeLayout(target.layout);
+  return {
+    expired: remaining <= 0,
+    remainingLabel: formatRevengeRemaining(remaining),
+    layout,
+  };
+}
+
+/** 알림 배너 문구(순수). 미확인 0 이면 빈 문자열(배너 숨김). */
+export function incomingBannerText(unseenCount: number): string {
+  if (unseenCount <= 0) return '';
+  return `새 침공 결과 ${unseenCount}건 — 기지가 공격받았습니다`;
+}
+
+/**
+ * 알림 한 행 문구(순수). 공격자 이름 + 결과(함락/방어) + 상대 도발 스티커(있으면).
+ * 복수 침공이면 앞에 "[복수]" 를 붙여 강조한다.
+ */
+export function incomingRowText(inv: IncomingInvasion): string {
+  const who = inv.attackerName.length > 0 ? inv.attackerName : '무명 파일럿';
+  const outcome = inv.attackerWon ? '기지 함락' : '방어 성공';
+  const prefix = inv.isRevenge ? '[복수] ' : '';
+  const taunt = stickerLabel(inv.sticker);
+  const tauntText = taunt.length > 0 ? ` · 도발: ${taunt}` : '';
+  return `${prefix}${who} — ${outcome}${tauntText}`;
+}
+
 /** 침공 결과 배너에 표시할 요약(main 이 서버 판정/잠정 결과로 채운다). */
 export interface InvasionResultView {
   /** 최종(서버) 또는 잠정(클라) 승패. null = 서버가 실값을 아직 안 줌(판정 확정 중). */
@@ -160,6 +217,10 @@ export interface InvasionResultView {
   lootCount?: number;
   /** 대상 이름(배너 문구용). */
   targetName?: string;
+  /** 복수전 판정(서버 EF). 복수 성공 시 자리 탈환 + 보너스 광물 강조. */
+  revenge?: boolean;
+  /** 복수 성공 보너스 광물(서버 지급분). */
+  bonusMinerals?: number;
 }
 
 /** 결과 배너 문구(순수). 서버 권위: 제출된 경우 status 를 최종으로 반영. */
@@ -181,7 +242,12 @@ export function resultBannerText(view: InvasionResultView): string {
     const rankText =
       view.ladder != null ? ` · 새 순위 ${view.ladder.attackerRank}위` : '';
     const lootText = view.lootCount !== undefined && view.lootCount > 0 ? ` · 전리품 ${view.lootCount}개` : '';
-    return `${who}침공 성공 — 코어 파괴(서버 확정)${rankText}${lootText}`;
+    const bonusText =
+      view.revenge === true && view.bonusMinerals !== undefined && view.bonusMinerals > 0
+        ? ` · 보너스 광물 ${view.bonusMinerals}`
+        : '';
+    const head = view.revenge === true ? '복수 성공 — 자리 탈환' : '침공 성공 — 코어 파괴';
+    return `${who}${head}(서버 확정)${rankText}${lootText}${bonusText}`;
   }
   return `${who}침공 실패 — 방어 성공(서버 확정)`;
 }
@@ -266,12 +332,34 @@ const STYLE = `
 #pb-ctl .pb-pgseg.done { background:linear-gradient(90deg,#c86aff,#7affea); border-color:#7affea; }
 #pb-ctl .pb-actions { display:flex; gap:10px; }
 #pb-ctl button.pb-ghost { pointer-events:auto; cursor:pointer; padding:10px 18px; font-size:14px; font-weight:700; color:#aab6d6; background:rgba(20,24,44,.9); border:1px solid #2a3552; border-radius:10px; }
+#pb-ctl .pb-notif { width:100%; max-width:640px; background:rgba(28,20,44,.72); border:1px solid #6a4c8a; border-radius:12px; padding:10px 14px; box-sizing:border-box; }
+#pb-ctl .pb-notif h3 { margin:0 0 8px; color:#e0b3ff; font-size:13px; font-weight:800; }
+#pb-ctl .pb-notif-row { display:flex; align-items:center; gap:10px; padding:6px 4px; border-top:1px solid rgba(255,255,255,.06); font-size:12px; color:#dfe6ff; }
+#pb-ctl .pb-notif-row:first-of-type { border-top:none; }
+#pb-ctl .pb-notif-row .txt { flex:1; min-width:0; }
+#pb-ctl .pb-notif-row.lost .txt { color:#ff9a9a; }
+#pb-ctl .pb-notif-row.held .txt { color:#8fe08f; }
+#pb-ctl button.pb-spec-btn { pointer-events:auto; cursor:pointer; padding:5px 12px; font-size:12px; font-weight:800; color:#150a24; background:linear-gradient(90deg,#7affea,#c86aff); border:none; border-radius:7px; white-space:nowrap; }
+#pb-ctl .pb-rev { width:100%; max-width:640px; background:rgba(44,16,20,.6); border:1px solid #8a3d3d; border-radius:12px; padding:10px 14px; box-sizing:border-box; }
+#pb-ctl .pb-rev h3 { margin:0 0 8px; color:#ff9a9a; font-size:13px; font-weight:800; }
+#pb-ctl .pb-rev-card { display:flex; align-items:center; gap:10px; padding:8px 6px; border-top:1px solid rgba(255,255,255,.06); }
+#pb-ctl .pb-rev-card:first-of-type { border-top:none; }
+#pb-ctl .pb-rev-card .info { flex:1; min-width:0; }
+#pb-ctl .pb-rev-card .nm { color:#fff; font-size:13px; font-weight:800; }
+#pb-ctl .pb-rev-card .rem { color:#ffd24c; font-size:11px; font-weight:700; }
+#pb-ctl .pb-badge { display:inline-block; padding:1px 7px; margin-left:6px; font-size:10px; font-weight:800; color:#150a24; background:#ffd24c; border-radius:6px; vertical-align:middle; }
+#pb-ctl button.pb-rev-btn { pointer-events:auto; cursor:pointer; padding:7px 14px; font-size:12px; font-weight:800; color:#fff; background:linear-gradient(90deg,#ff5a7a,#ff9a4c); border:none; border-radius:8px; white-space:nowrap; }
+#pb-ctl button.pb-rev-btn:disabled { opacity:.4; cursor:default; filter:grayscale(.4); }
 `;
 
 /** 관제탑 콜백(main 이 침공 런/뒤로가기를 구동). */
 export interface ControlTowerCallbacks {
   /** 침공 시작 — 정규화된 방어 배치를 침공 런 config 로 넘긴다(normalizeLayout 완료본). */
   onInvade: (target: InvasionTarget, layout: DefenseLayout) => void;
+  /** 리플레이 관전 진입 — invasionId 로 리플레이를 로드해 재생한다(F3). */
+  onSpectate: (invasionId: string, attackerName: string) => void;
+  /** 방어 성공한 침공에 도발 스티커 달기(F2 방어자 몫) — 스티커 선택 UI 를 연다. */
+  onSticker: (invasionId: string, attackerName: string) => void;
   /** 기지로 돌아가기. */
   onBack: () => void;
 }
@@ -287,6 +375,8 @@ export interface ControlTowerShowOpts {
 export class ControlTower {
   private readonly root: HTMLElement;
   private onInvade: ControlTowerCallbacks['onInvade'] | null = null;
+  private onSpectate: ControlTowerCallbacks['onSpectate'] | null = null;
+  private onSticker: ControlTowerCallbacks['onSticker'] | null = null;
   private onBack: (() => void) | null = null;
 
   private targets: InvasionTarget[] | null = null; // null = 미로딩/미설정
@@ -296,6 +386,11 @@ export class ControlTower {
   private loading = true;
   private loadToken = 0;
   private opts: ControlTowerShowOpts = {};
+
+  // 복수전(F1)·알림(계약 5) 상태 — 서버 권위. null = 미설정/미구현(→ 해당 UI 숨김).
+  private revengeTargets: RevengeTarget[] | null = null;
+  private incoming: IncomingInvasion[] | null = null;
+  private unseenCount = 0;
 
   // 배치전(AC4) 상태 — 서버 권위. null = 미설정/미배치정보없음(→ 일반 침공만).
   private placement: PlacementStatus | null = null;
@@ -319,6 +414,8 @@ export class ControlTower {
 
   show(_profile: Profile, cb: ControlTowerCallbacks, opts: ControlTowerShowOpts = {}): void {
     this.onInvade = cb.onInvade;
+    this.onSpectate = cb.onSpectate;
+    this.onSticker = cb.onSticker;
     this.onBack = cb.onBack;
     this.opts = opts;
     this.selectedId = null;
@@ -329,6 +426,9 @@ export class ControlTower {
     this.placementTargets = null;
     this.placementResult = null;
     this.applying = false;
+    this.revengeTargets = null;
+    this.incoming = null;
+    this.unseenCount = 0;
     this.render();
     this.root.style.display = 'flex';
     void this.load();
@@ -337,6 +437,8 @@ export class ControlTower {
   hide(): void {
     this.root.style.display = 'none';
     this.onInvade = null;
+    this.onSpectate = null;
+    this.onSticker = null;
     this.onBack = null;
   }
 
@@ -348,15 +450,39 @@ export class ControlTower {
     } catch {
       this.cooldowns = {};
     }
-    const [targets, ladder, placement] = await Promise.all([
+    // 알림은 마지막 확인 시각 이후의 결과만 서버가 필터해 준다(폴링 전용, 계약 5).
+    let seenAt = 0;
+    try {
+      if (typeof localStorage !== 'undefined') seenAt = readInvasionsSeenAt(localStorage);
+    } catch {
+      seenAt = 0;
+    }
+    const [targets, ladder, placement, revenge, incoming] = await Promise.all([
       fetchInvasionTargets(),
       fetchLadder(20),
       fetchPlacementStatus(),
+      fetchRevengeTargets(),
+      fetchIncomingInvasions(seenAt, 20),
     ]);
     if (token !== this.loadToken || !this.visible) return; // 낡은 로드 무시
     this.targets = targets;
     this.ladder = ladder;
     this.placement = placement;
+    this.revengeTargets = revenge;
+    this.incoming = incoming;
+    // 미확인 수 계산 후, 확인 시각을 최신 결과 시각으로 갱신한다(다음 방문부터 새 것만 카운트).
+    if (incoming !== null && incoming.length > 0) {
+      this.unseenCount = countUnseenInvasions(incoming, seenAt);
+      let maxAt = seenAt;
+      for (const inv of incoming) if (inv.createdAtMs > maxAt) maxAt = inv.createdAtMs;
+      try {
+        if (typeof localStorage !== 'undefined') writeInvasionsSeenAt(localStorage, maxAt);
+      } catch {
+        // 저장 실패 무해(다음 방문에 같은 결과가 다시 새 것으로 셀 뿐).
+      }
+    } else {
+      this.unseenCount = 0;
+    }
     // 배치전 진행 중이면 NPC 시드 기지 목록도 로드(쿨다운 무시 제안).
     if (placement !== null && placementPhase(placement) === 'placement') {
       const pts = await fetchPlacementTargets();
@@ -434,6 +560,14 @@ export class ControlTower {
       v.textContent = '서버 검증 중… (전수 재실행으로 결과를 확정합니다)';
       this.root.appendChild(v);
     }
+
+    // 알림(계약 5): 새 침공 결과 배너 + 관전 진입. 서버 결과가 있을 때만.
+    const notif = this.notificationsPanel();
+    if (notif !== null) this.root.appendChild(notif);
+
+    // 복수전(F1): 24h 창 복수 대상 카드. 대상이 있을 때만.
+    const revenge = this.revengePanel();
+    if (revenge !== null) this.root.appendChild(revenge);
 
     // 배치전 진행/완료/순위 진입 연출(서버 상태가 있을 때만).
     const placementPanel = this.placementPanel();
@@ -622,6 +756,115 @@ export class ControlTower {
     hint.textContent = 'PvP 첫 관문 — NPC 시드 기지 상대로 5회를 치르면 성적에 따라 초기 순위가 잡힙니다(기존 순위 불변).';
     wrap.appendChild(hint);
     return wrap;
+  }
+
+  /**
+   * 알림 패널(계약 5): 내가 당한 최근 침공 결과 목록 + 관전 진입. 결과가 없거나 서버
+   * 미설정이면 null(아무것도 안 그림). 상대 도발 스티커도 함께 표시한다.
+   */
+  private notificationsPanel(): HTMLElement | null {
+    const incoming = this.incoming;
+    if (incoming === null || incoming.length === 0) return null;
+
+    const panel = document.createElement('div');
+    panel.className = 'pb-notif';
+    const h3 = document.createElement('h3');
+    const bannerText = incomingBannerText(this.unseenCount);
+    h3.textContent = bannerText.length > 0 ? bannerText : '최근 침공 결과';
+    panel.appendChild(h3);
+
+    for (const inv of incoming) {
+      const row = document.createElement('div');
+      row.className = `pb-notif-row ${inv.attackerWon ? 'lost' : 'held'}`;
+      const txt = document.createElement('div');
+      txt.className = 'txt';
+      // 내가 이미 이 침공에 도발을 남겼으면 함께 표시(방어 성공 회신).
+      const myTaunt = stickerLabel(inv.defenderSticker);
+      txt.textContent =
+        myTaunt.length > 0 ? `${incomingRowText(inv)} · 내 도발: ${myTaunt}` : incomingRowText(inv);
+      row.appendChild(txt);
+      // 방어 성공(격퇴)했고 아직 회신 도발이 없으면 "도발" 버튼(F2 방어자 몫).
+      if (inv.invasionId.length > 0 && !inv.attackerWon && inv.defenderSticker === null) {
+        const taunt = document.createElement('button');
+        taunt.className = 'pb-spec-btn';
+        taunt.textContent = '도발';
+        taunt.title = '격퇴한 상대에게 도발 스티커를 남깁니다.';
+        taunt.addEventListener('click', () => {
+          const cb = this.onSticker;
+          cb?.(inv.invasionId, inv.attackerName);
+        });
+        row.appendChild(taunt);
+      }
+      // 관전(F3): 침공당한 리플레이 재생. invasionId 가 있어야 로드 가능.
+      if (inv.invasionId.length > 0) {
+        const spec = document.createElement('button');
+        spec.className = 'pb-spec-btn';
+        spec.textContent = '관전';
+        spec.title = '이 침공 리플레이를 재생합니다(렌더 전용).';
+        spec.addEventListener('click', () => {
+          const cb = this.onSpectate;
+          cb?.(inv.invasionId, inv.attackerName);
+        });
+        row.appendChild(spec);
+      }
+      panel.appendChild(row);
+    }
+    return panel;
+  }
+
+  /**
+   * 복수전 패널(F1): 24h 창 안의 복수 대상 카드. 대상이 없거나 서버 미설정/미구현이면 null.
+   * 쿨다운 무시 배지·잔여시간을 표시하고, 복수 침공은 기존 침공 런 경로(onInvade)를 탄다
+   * (서버가 이력으로 복수를 자동 판정 — 계약 §F1).
+   */
+  private revengePanel(): HTMLElement | null {
+    const list = this.revengeTargets;
+    if (list === null || list.length === 0) return null;
+    const now = Date.now();
+
+    const panel = document.createElement('div');
+    panel.className = 'pb-rev';
+    const h3 = document.createElement('h3');
+    h3.textContent = '복수전 — 24시간 내 되갚아라 (쿨다운 무시)';
+    panel.appendChild(h3);
+
+    for (const t of list) {
+      const st = revengeCardState(t, now);
+      const card = document.createElement('div');
+      card.className = 'pb-rev-card';
+
+      const info = document.createElement('div');
+      info.className = 'info';
+      const nm = document.createElement('div');
+      nm.className = 'nm';
+      nm.textContent = t.displayName.length > 0 ? t.displayName : '무명 파일럿';
+      const badge = document.createElement('span');
+      badge.className = 'pb-badge';
+      badge.textContent = '쿨다운 무시';
+      nm.appendChild(badge);
+      const rem = document.createElement('div');
+      rem.className = 'rem';
+      rem.textContent = st.expired
+        ? '복수 기한 만료'
+        : `${st.remainingLabel} · ${shipSummaryText(t.shipSummary)}`;
+      info.append(nm, rem);
+
+      const btn = document.createElement('button');
+      btn.className = 'pb-rev-btn';
+      const canRevenge = !st.expired && st.layout !== null;
+      btn.textContent = st.expired ? '만료' : st.layout === null ? '기지 없음' : '복수 침공';
+      btn.disabled = !canRevenge;
+      btn.addEventListener('click', () => {
+        if (!canRevenge || st.layout === null) return;
+        const cb = this.onInvade;
+        this.hide();
+        cb?.(t, st.layout);
+      });
+
+      card.append(info, btn);
+      panel.appendChild(card);
+    }
+    return panel;
   }
 
   private sidePanel(): HTMLElement {

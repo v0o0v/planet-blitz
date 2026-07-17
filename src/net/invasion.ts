@@ -107,6 +107,41 @@ export interface LootItem {
 }
 
 /**
+ * 복수 대상 1건(RPC `get_revenge_targets()` — 계약 §F1/AC6, f-server 합의).
+ *
+ * 나를 이겨 순위를 뺏은 직전 공격자에 대한 24h 복수권. `get_invasion_targets` 와 동일한
+ * {@link InvasionTarget} shape 에 복수 메타를 얹는다. 격차 가드·재도전 쿨다운 무시는 서버가
+ * `apply_invasion_result` 에서 강제하며(원칙2), 클라이언트는 배지·잔여시간을 **표시만** 한다.
+ */
+export interface RevengeTarget extends InvasionTarget {
+  /** 복수 근거가 된 원래 침공(내가 당한 verified invasion) id. */
+  revengeInvasionId: string;
+  /** 복수권 만료 시각(epoch ms) — 원 침공 확정 +24h. 지나면 서버가 복수 대상에서 제외. */
+  expiresAtMs: number;
+}
+
+/**
+ * 알림 배너용 "내가 당한 최근 침공" 1건(RPC `get_incoming_invasions()` — 계약 §5).
+ * 폴링 전용(realtime 금지). 관제탑 진입 시 마지막 확인 시각 이후 결과를 배너로 요약한다.
+ */
+export interface IncomingInvasion {
+  /** invasions 행 id. */
+  invasionId: string;
+  /** 공격자 표시명(RPC security definer 로 노출). 미상이면 '무명 파일럿'. */
+  attackerName: string;
+  /** 공격자 승리(내 기지 함락) 여부 — 서버 확정값. */
+  attackerWon: boolean;
+  /** 침공 확정 시각(epoch ms, 서버 verified_at) — 미확인 카운트·정렬 기준. */
+  createdAtMs: number;
+  /** 공격자가 남긴 도발 스티커 인덱스(0..11) — 나에게 온 도발. 미설정/손상이면 null. */
+  sticker: number | null;
+  /** 내(방어자)가 이 침공에 남긴 도발 스티커 인덱스(0..11). 미설정이면 null(→ 도발 버튼 노출). */
+  defenderSticker: number | null;
+  /** 이 침공이 복수전이었는지(서버 is_revenge). 배너 문구 강조용. */
+  isRevenge: boolean;
+}
+
+/**
  * Edge Function `verify-invasion` 응답(서버 전수 재실행 판정 — 최종 권위).
  * 클라이언트의 잠정 결과와 다를 수 있으며, 이 값이 최종이다.
  *
@@ -119,6 +154,12 @@ export interface InvasionVerdict {
   attackerWon: boolean | null;
   ladder: { attackerRank: number; defenderRank: number } | null;
   loot: LootItem[];
+  /** 이 침공이 복수전으로 판정됐는지(EF additive, 계약 §F1). 미제공이면 false. */
+  revenge?: boolean;
+  /** 복수 성공 시 지급된 보너스 광물(EF additive). 미제공/비복수면 0. */
+  bonusMinerals?: number;
+  /** 제출된 침공 행 id(게이트웨이가 채운다 — 도발 스티커 설정에 필요). 미설정이면 undefined. */
+  invasionId?: string;
 }
 
 /**
@@ -172,6 +213,26 @@ export interface InvasionGateway {
    * throw. 구현이 없으면 `undefined`(no-op). 미완료 상태에서 호출하면 서버가 placed=false.
    */
   applyPlacementResult?(): Promise<PlacementResult>;
+  /**
+   * 복수 대상 목록 — RPC `get_revenge_targets()`(계약 §F1). 실패 시 throw. 구현이 없으면
+   * `undefined`(no-op → 복수전 UI 숨김). 24h·쿨다운 무시·격차 예외는 서버가 강제한다.
+   */
+  getRevengeTargets?(): Promise<RevengeTarget[]>;
+  /**
+   * 내가 당한 최근 침공(알림용) — RPC `get_incoming_invasions(sinceMs, limit)`(계약 §5).
+   * 실패 시 throw. 구현이 없으면 `undefined`(no-op → 알림 배너 없음). 폴링 전용.
+   */
+  getIncomingInvasions?(sinceMs: number, limit: number): Promise<IncomingInvasion[]>;
+  /**
+   * 도발 스티커 설정 — RPC `set_invasion_sticker(invasionId, index)`(계약 §F2). 성공 여부
+   * 반환. 실패 시 throw. 구현이 없으면 `undefined`(no-op). 역할(공/수) 판정·1회 불변은 서버.
+   */
+  setInvasionSticker?(invasionId: string, index: number): Promise<boolean>;
+  /**
+   * 관전용 리플레이 로드 — `invasions.replay` select(계약 §F3). 방어자/공격자만 RLS 로 읽는다.
+   * 실패/부재 시 `null`(→ 관전 진입 불가 안내). 구현이 없으면 `undefined`(no-op).
+   */
+  getInvasionReplay?(invasionId: string): Promise<Replay | null>;
 }
 
 /** 주입 가능한 의존성(테스트에서 gateway/config/store 대체). */
@@ -274,6 +335,78 @@ export async function applyPlacementResult(deps: InvasionDeps = {}): Promise<Pla
   if (gateway === null || gateway.applyPlacementResult === undefined) return null;
   try {
     return await gateway.applyPlacementResult();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 복수 대상(24h 창) 목록을 받는다(계약 §F1). 미설정/오프라인/오류/게이트웨이 미구현이면
+ * `null`(→ 관제탑 복수전 카드 숨김). 서버 권위 — 24h·쿨다운 무시·격차 예외는 서버 강제.
+ */
+export async function fetchRevengeTargets(deps: InvasionDeps = {}): Promise<RevengeTarget[] | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.getRevengeTargets === undefined) return null;
+  try {
+    return await gateway.getRevengeTargets();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 내가 당한 최근 침공(알림용)을 받는다(계약 §5). `sinceMs` 이후만 서버가 필터하며, 클라이언트는
+ * 로컬 "마지막 확인 시각"({@link readInvasionsSeenAt})을 넘긴다. 미설정/오프라인/오류/미구현이면
+ * `null`(→ 알림 배너 없음). 폴링 전용.
+ */
+export async function fetchIncomingInvasions(
+  sinceMs: number,
+  limit = 20,
+  deps: InvasionDeps = {},
+): Promise<IncomingInvasion[] | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.getIncomingInvasions === undefined) return null;
+  try {
+    return await gateway.getIncomingInvasions(sinceMs, limit);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 도발 스티커를 서버에 설정한다(계약 §F2). 성공하면 true, 미설정/오프라인/오류/미구현/거부면
+ * false(호출부는 조용히 넘어감 — 스티커는 재미 요소라 실패해도 게임 진행 무영향). 인덱스가
+ * 사전 세트(0..11) 밖이면 서버를 만지지 않고 false. 역할 판정·1회 불변은 서버 권위.
+ */
+export async function setInvasionSticker(
+  invasionId: string,
+  index: number,
+  deps: InvasionDeps = {},
+): Promise<boolean> {
+  if (!Number.isInteger(index) || index < 0 || index > 11 || invasionId.length === 0) return false;
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.setInvasionSticker === undefined) return false;
+  try {
+    return await gateway.setInvasionSticker(invasionId, index);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 관전용 리플레이(`invasions.replay`)를 로드한다(계약 §F3). 미설정/오프라인/오류/부재/미구현이면
+ * `null`(→ 관전 진입 불가 안내). 반환된 리플레이는 소비 전 shape 재확인 후 render-only·tainted
+ * 로만 재생한다(정산·제출 오염 없음).
+ */
+export async function fetchInvasionReplay(
+  invasionId: string,
+  deps: InvasionDeps = {},
+): Promise<Replay | null> {
+  if (invasionId.length === 0) return null;
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.getInvasionReplay === undefined) return null;
+  try {
+    return await gateway.getInvasionReplay(invasionId);
   } catch {
     return null;
   }
@@ -476,4 +609,70 @@ export function canInvadeTarget(
   cooldownMs: number = INVASION_COOLDOWN_MS,
 ): boolean {
   return cooldownRemainingMs(cooldowns, defenderId, nowMs, cooldownMs) === 0;
+}
+
+// ---------------------------------------------------------------------------
+// 복수전 잔여시간 (순수 · 테스트 대상) — 계약 §F1/AC6
+// ---------------------------------------------------------------------------
+
+/** 복수권 창(24h) — GDD §8. 서버 expires_at 의 근거값(표시·검증 정합용 상수). */
+export const REVENGE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** 복수권 만료까지 남은 시간(ms). 만료됐으면 0(음수 안 나옴). */
+export function revengeRemainingMs(expiresAtMs: number, nowMs: number): number {
+  if (!Number.isFinite(expiresAtMs)) return 0;
+  const remaining = expiresAtMs - nowMs;
+  return remaining > 0 ? remaining : 0;
+}
+
+/**
+ * 복수권 남은시간(ms) → 사람이 읽는 라벨("복수 가능 N시간"/"N분"). 만료면 빈 문자열.
+ * 1시간 이상은 시간 단위, 그 미만은 올림한 분 단위로 절박함을 표시한다.
+ */
+export function formatRevengeRemaining(remainingMs: number): string {
+  if (remainingMs <= 0) return '';
+  const totalMin = Math.ceil(remainingMs / 60000);
+  if (totalMin >= 60) {
+    const h = Math.floor(totalMin / 60);
+    return `복수 가능 ${h}시간 남음`;
+  }
+  return `복수 가능 ${totalMin}분 남음`;
+}
+
+// ---------------------------------------------------------------------------
+// 알림 "마지막 확인 시각" 로컬 저장 + 미확인 카운트 (순수 · 테스트 대상) — 계약 §5
+// ---------------------------------------------------------------------------
+// 서버는 상태를 안 갖고, 클라이언트가 관제탑에서 침공 결과를 마지막으로 본 시각을
+// 로컬에 저장한다. 다음 진입 때 그 시각 이후의 결과 수를 "새 침공 결과 n건"으로 센다.
+
+/** 마지막 확인 시각 저장 키(epoch ms 문자열). */
+const SEEN_AT_KEY = 'planet-blitz:net:invasionsSeenAt';
+
+/** 저장된 마지막 확인 시각(epoch ms)을 읽는다. 부재/손상이면 0(=전부 새 결과로 간주). */
+export function readInvasionsSeenAt(store: KeyValueStore): number {
+  let raw: string | null;
+  try {
+    raw = store.getItem(SEEN_AT_KEY);
+  } catch {
+    return 0;
+  }
+  if (raw === null) return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/** 마지막 확인 시각을 기록한다(관제탑에서 알림을 소비한 직후 호출). */
+export function writeInvasionsSeenAt(store: KeyValueStore, atMs: number): void {
+  try {
+    store.setItem(SEEN_AT_KEY, String(Math.floor(atMs)));
+  } catch {
+    // 저장 실패는 무해(다음에 같은 결과가 다시 새 것으로 셀 뿐).
+  }
+}
+
+/** `sinceMs` 이후 생성된(미확인) 침공 결과 수(순수). 서버가 이미 필터해도 이중 방어. */
+export function countUnseenInvasions(incoming: readonly IncomingInvasion[], sinceMs: number): number {
+  let n = 0;
+  for (const inv of incoming) if (inv.createdAtMs > sinceMs) n++;
+  return n;
 }
