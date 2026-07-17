@@ -20,6 +20,7 @@ import {
   TURRET_SHOTGUN,
 } from '../src/sim/defense.js';
 import type { DefenseLayout } from '../src/sim/defense.js';
+import { GUARDIAN_TITAN, GUARDIAN_INTERCEPTOR, makeGuardianSnapshot, PERFORMANCE_FULL } from '../data/guardian.js';
 
 const SERVER_LAYOUT: DefenseLayout = {
   core: { x: 900, y: 0 },
@@ -200,5 +201,54 @@ describe('verify-invasion — 위조 4대 시나리오 거부 (AC2)', () => {
       CTX,
     );
     expect(res).toMatchObject({ verdict: 'reject', reason: 'outcome-mismatch' });
+  });
+});
+
+describe('verify-invasion — M5 수호 기체 (AC2 서버 재현)', () => {
+  const GUARDIAN_LAYOUT: DefenseLayout = {
+    ...SERVER_LAYOUT,
+    guardians: [
+      { x: 350, y: -100, snapshot: makeGuardianSnapshot(GUARDIAN_TITAN, 140), performanceCP: PERFORMANCE_FULL, lineageBonusBp: 1200 },
+      { x: 400, y: 150, snapshot: makeGuardianSnapshot(GUARDIAN_INTERCEPTOR, 90), performanceCP: 7500, lineageBonusBp: 800 },
+    ],
+  };
+  const gCtx: InvasionServerContext = { layout: GUARDIAN_LAYOUT, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
+  const gCfg = invasionConfig(GUARDIAN_LAYOUT);
+
+  it('수호 포함 배치를 서버 권위로 정직 제출하면 accept', () => {
+    const res = verifyInvasion(honest(SEED, gCfg, INPUTS), gCtx);
+    expect(res.verdict).toBe('accept');
+    expect(res.reason).toBe('verified');
+  });
+
+  it('수호 성능 위조(방치 수호를 신선하다 주장)는 defense-mismatch', () => {
+    // 서버는 성능 7500(풍화)인데 제출은 10000(신선)이라 주장 → 대조 불일치.
+    const forged: DefenseLayout = {
+      ...GUARDIAN_LAYOUT,
+      guardians: [
+        GUARDIAN_LAYOUT.guardians![0]!,
+        { ...GUARDIAN_LAYOUT.guardians![1]!, performanceCP: PERFORMANCE_FULL },
+      ],
+    };
+    const res = verifyInvasion(honest(SEED, invasionConfig(forged), INPUTS), gCtx);
+    expect(res).toMatchObject({ verdict: 'reject', reason: 'defense-mismatch' });
+  });
+
+  it('수호 스냅샷 강화 위조(전투력 부풀리기)는 defense-mismatch', () => {
+    const forged: DefenseLayout = {
+      ...GUARDIAN_LAYOUT,
+      guardians: [
+        { ...GUARDIAN_LAYOUT.guardians![0]!, snapshot: makeGuardianSnapshot(GUARDIAN_TITAN, 400) },
+        GUARDIAN_LAYOUT.guardians![1]!,
+      ],
+    };
+    const res = verifyInvasion(honest(SEED, invasionConfig(forged), INPUTS), gCtx);
+    expect(res).toMatchObject({ verdict: 'reject', reason: 'defense-mismatch' });
+  });
+
+  it('수호 추가 위조(서버엔 없는 수호를 제출)는 defense-mismatch', () => {
+    // 서버 배치엔 수호가 없는데 제출엔 수호가 있다.
+    const res = verifyInvasion(honest(SEED, gCfg, INPUTS), CTX);
+    expect(res).toMatchObject({ verdict: 'reject', reason: 'defense-mismatch' });
   });
 });

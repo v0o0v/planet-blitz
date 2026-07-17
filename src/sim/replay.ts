@@ -250,6 +250,35 @@ export function hashWorld(state: WorldState): number {
     // (예: 방치 기지를 100% 라 주장)하면 서버가 권위 정비도로 재실행 → 발사 간격이 달라져
     // 엔티티 상태부터 발산하고, 이 폴드로 config 자체도 봉인된다. 신규 침공 필드는 이 아래.
     h = hashU32(h, normalizeMaintenance(inv.maintenance) >>> 0);
+    // --- M5 수호 기체(APPEND-ONLY, 이중 조건부) ---
+    // guardians 필드가 없거나 빈 배열이면 이 블록을 통째로 건너뛴다 → **수호 미포함 침공/PvE
+    // 런의 해시가 바이트 단위로 완전 불변**(기존 M4 fixtures 회귀 0). 수호 포함 런만 스냅샷·
+    // 성능%·계보 보너스·좌표를 결정론 입력으로 접어, 서버가 권위 값으로 재현했는지 봉인한다
+    // (수호 엔티티 스폰으로 이미 발산하지만 config 자체도 함께 봉인 — 정비도 폴드와 동일 철학).
+    // 신규 수호 필드는 이 스냅샷 폴드 최후미에만 append.
+    const gs = lay.guardians;
+    if (gs !== undefined && gs.length > 0) {
+      h = hashU32(h, gs.length >>> 0);
+      for (const g of gs) {
+        h = hashFloat(h, g.x);
+        h = hashFloat(h, g.y);
+        h = hashU32(h, (g.performanceCP ?? 0) >>> 0);
+        h = hashU32(h, (g.lineageBonusBp ?? 0) >>> 0);
+        const s = g.snapshot;
+        h = hashU32(h, s.preset >>> 0);
+        h = hashFloat(h, s.radius);
+        h = hashFloat(h, s.hp);
+        h = hashFloat(h, s.contactDamage);
+        h = hashU32(h, s.fireCooldown >>> 0);
+        h = hashFloat(h, s.bulletDamage);
+        h = hashFloat(h, s.bulletSpeed);
+        h = hashFloat(h, s.bulletRadius);
+        h = hashU32(h, s.bulletLife >>> 0);
+        h = hashFloat(h, s.range);
+        h = hashFloat(h, s.moveSpeed);
+        h = hashFloat(h, s.standoff);
+      }
+    }
   }
   return h >>> 0;
 }

@@ -37,7 +37,10 @@ import type {
   InvasionConfig,
   TurretPlacement,
   ObstaclePlacement,
+  GuardianPlacement,
 } from '../../../src/sim/defense.js';
+import { MAX_GUARDIAN_SLOTS, GUARDIAN_PRESET_COUNT } from '../../../data/guardian.js';
+import type { GuardianSnapshot } from '../../../data/guardian.js';
 
 /**
  * 침공 전용 거부 사유(verify-run의 RejectReason에 더해지는 코드). 기계 판독용이라
@@ -98,6 +101,82 @@ function numEq(a: number, b: number): boolean {
   return Object.is(a, b);
 }
 
+/** 수호 스냅샷의 결정론 정수 필드 이름(대조·정규화 공통 순회). */
+const GUARDIAN_SNAPSHOT_KEYS: readonly (keyof GuardianSnapshot)[] = [
+  'preset',
+  'radius',
+  'hp',
+  'contactDamage',
+  'fireCooldown',
+  'bulletDamage',
+  'bulletSpeed',
+  'bulletRadius',
+  'bulletLife',
+  'range',
+  'moveSpeed',
+  'standoff',
+];
+
+/**
+ * DB layout 의 수호 배열을 검증·정규화한다(M5). 각 항목은 좌표(x/y)·성능%·계보 보너스·스냅샷
+ * (12개 정수 필드)이 모두 유한해야 한다. 하나라도 손상이면 전체 무효(null)로 본다 — 수호는
+ * 방어전 결과를 바꾸는 결정론 입력이라, 손상 데이터로 조용히 스킵하면 재현이 갈린다. 상한
+ * (MAX_GUARDIAN_SLOTS) 초과분은 sim spawn 이 자르므로 서버 정규화도 동일하게 자른다.
+ * guardians 자체가 없으면(구 배치·수호 미보유) undefined 반환 → layout 에 필드 미포함.
+ */
+function normalizeGuardians(raw: unknown): GuardianPlacement[] | undefined | null {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return null;
+  const out: GuardianPlacement[] = [];
+  const n = raw.length < MAX_GUARDIAN_SLOTS ? raw.length : MAX_GUARDIAN_SLOTS;
+  for (let i = 0; i < n; i++) {
+    const g = raw[i];
+    if (typeof g !== 'object' || g === null) return null;
+    const gg = g as Record<string, unknown>;
+    if (!isFiniteNumber(gg.x) || !isFiniteNumber(gg.y)) return null;
+    if (!isFiniteNumber(gg.performanceCP) || !isFiniteNumber(gg.lineageBonusBp)) return null;
+    const snapRaw = gg.snapshot;
+    if (typeof snapRaw !== 'object' || snapRaw === null) return null;
+    const sr = snapRaw as Record<string, unknown>;
+    const snap: Record<string, number> = {};
+    for (const k of GUARDIAN_SNAPSHOT_KEYS) {
+      const v = sr[k];
+      if (!isFiniteNumber(v)) return null;
+      snap[k] = v;
+    }
+    const preset = snap.preset ?? -1;
+    if (preset < 0 || preset >= GUARDIAN_PRESET_COUNT) return null;
+    out.push({
+      x: gg.x,
+      y: gg.y,
+      performanceCP: gg.performanceCP,
+      lineageBonusBp: gg.lineageBonusBp,
+      snapshot: snap as unknown as GuardianSnapshot,
+    });
+  }
+  return out;
+}
+
+/** 제출 수호 배열이 서버 권위 배열과 완전히 동일한지 대조(순서·전 필드 raw 비트). */
+function guardiansEqual(
+  sub: GuardianPlacement[] | undefined,
+  srv: GuardianPlacement[] | undefined,
+): boolean {
+  const a = sub ?? [];
+  const b = srv ?? [];
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < b.length; i++) {
+    const x = a[i]!;
+    const y = b[i]!;
+    if (!numEq(x.x, y.x) || !numEq(x.y, y.y)) return false;
+    if (x.performanceCP !== y.performanceCP || x.lineageBonusBp !== y.lineageBonusBp) return false;
+    for (const k of GUARDIAN_SNAPSHOT_KEYS) {
+      if (!numEq(x.snapshot[k], y.snapshot[k])) return false;
+    }
+  }
+  return true;
+}
+
 /**
  * 제출된 방어 배치가 서버 권위 배치와 완전히 동일한지 대조한다. 순서까지 동일해야
  * 한다(hashWorld가 turrets/obstacles를 배열 순서대로 접으므로 순서가 결정론 입력이다).
@@ -124,6 +203,8 @@ function layoutEquals(sub: DefenseLayout, srv: DefenseLayout): boolean {
       return false;
     }
   }
+  // M5 수호 기체 대조(순서·전 스냅샷 필드). 서버 권위 배열이 진실 — 제출이 다르면 거부.
+  if (!guardiansEqual(sub.guardians, srv.guardians)) return false;
   return true;
 }
 
@@ -172,7 +253,13 @@ export function normalizeServerLayout(raw: unknown): DefenseLayout | null {
     }
   }
 
-  return { core: { x: cx, y: cy }, turrets, obstacles };
+  // M5 수호 기체 정규화(손상 데이터는 전체 무효 → server-layout-invalid). 없으면 필드 미포함.
+  const guardians = normalizeGuardians(d.guardians);
+  if (guardians === null) return null;
+
+  const layout: DefenseLayout = { core: { x: cx, y: cy }, turrets, obstacles };
+  if (guardians !== undefined) layout.guardians = guardians;
+  return layout;
 }
 
 /** 신뢰 불가 값이 DefenseLayout 구조를 만족하는지(대조 전에 형태 검증). */
@@ -200,6 +287,9 @@ function isValidLayout(v: unknown): v is DefenseLayout {
       return false;
     }
   }
+  // M5 수호 기체(있으면) 구조 검증: 배열이며 각 항목이 좌표·성능·보너스·스냅샷 정수를 갖춰야
+  // 한다. normalizeGuardians 와 동일 규칙을 형태 검증으로만 재사용(값 대조는 layoutEquals).
+  if (l.guardians !== undefined && normalizeGuardians(l.guardians) === null) return false;
   return true;
 }
 
