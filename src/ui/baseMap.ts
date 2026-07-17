@@ -67,6 +67,7 @@ export interface BaseMapCallbacks {
   onResearch: () => void;
   onRefinery: () => void;
   onDefense: () => void;
+  onControl: () => void;
   onStarMap: () => void;
 }
 
@@ -109,7 +110,9 @@ export class BaseMap {
       case 'defense':
         return u.defenseCommand ? null : '행성 1회 클리어 필요';
       case 'control':
-        return '준비 중 (M4)';
+        // 관제탑(침공·래더) — 방어 사령부와 동일 해금 조건(행성 1회 클리어)으로 활성화.
+        // (computeUnlocks.controlTower 는 save 계층 소유라, 해금 판정은 여기서 미러한다.)
+        return u.defenseCommand ? null : '행성 1회 클리어 필요';
       default:
         return null;
     }
@@ -129,7 +132,9 @@ export class BaseMap {
       case 'defense':
         cb.onDefense();
         break;
-      // control (관제탑) is still locked — no entry.
+      case 'control':
+        cb.onControl();
+        break;
     }
   }
 

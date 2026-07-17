@@ -11,6 +11,9 @@ M4 PvP(침공·래더·치트 방어)의 서버 스키마와 적용 절차. 근�
 | 파일 | 내용 | 원격 적용 |
 |---|---|---|
 | `20260717000000_m4_initial_schema.sql` | 7테이블(profiles·ships·items·ladder·defenses·invasions·guardians) + RLS 정책 + 인덱스 + 서버 권위 가드 트리거 | ✅ 2026-07-17 (`m4_initial_schema`) — 7테이블·RLS 전부 true·정책 13개·트리거 9개 실측 확인, Advisor 는 익명 Auth 설계상 예상되는 WARN(anonymous access)만 |
+| `20260717010000_m4_phase_d.sql` | Phase D — `apply_invasion_result`(래더 스왑+복제 약탈, security definer)·`get_invasion_targets`(매치메이킹 RPC)·`defense_layout_cost`+예산 게이트·`caller_is_service_role`·정찰 3정책 폐기·`ladder.rank` DEFERRABLE | ✅ 2026-07-17 (`m4_phase_d`) — 함수 4개·트리거 이벤트(INSERT+UPDATE)·정책 폐기·DEFERRABLE·EXECUTE 권한 전부 실측 확인(아래 "Phase D 실측 결과") |
+| `20260717020000_m4_ladder_public_view.sql` | `get_ladder_top`(순위표 공개 조회 RPC, security definer — 정합 #1) | ✅ 2026-07-17 (`m4_ladder_public_view`) — 빈 래더 0행·authenticated EXECUTE=true/anon=false 실측 |
+| `20260717030000_m4_phase_d_review_fixes.sql` | 코드리뷰 반영 — 자기 침공 3중 차단(트리거·EF·apply)·제출 경로 쿨다운 1h/랭크 윈도우 ≤30 강제·복제 약탈 인벤 상한 200 | ✅ 2026-07-17 (`m4_phase_d_review_fixes`) — 원격 DB 통합 테스트 5건 전부 통과(아래 "코드리뷰 반영" 실측) |
 
 ## 테이블 요약
 
@@ -142,3 +145,203 @@ Supabase MCP(`supabase-planet-blitz`)로 인증한 세션에서:
 
 > pg_cron(풍화 -5%p/주·비활성 침하)은 Phase E 범위라 본 마이그레이션에 없음. `defenses.maintenance`
 > · `guardians.performance` 필드만 선반영(감쇠 로직 없음).
+
+## Phase D — 침공 검증·래더 스왑·매치메이킹 (계획 §4, 2026-07-17)
+
+Phase A(verify-run)의 결정론 재실행 검증을 침공(PvP)에 배선하고, 검증 통과 시
+래더 스왑·복제 약탈을 서버 권위로 원자 처리하며, 정찰 조회를 매치메이킹 RPC 로
+좁힌다. `verify-run/README.md` "Phase D 착수 조건" 3건과 본 문서 "Phase D 착수 조건"
+2개 섹션을 모두 이행한다.
+
+### Edge Function `verify-invasion`
+
+| 파일 | 역할 | 플랫폼 전역 참조 |
+|---|---|---|
+| `functions/verify-invasion/verifyInvasionCore.ts` | 순수 침공 검증 `verifyInvasion(raw, server): InvasionVerifyResult` | 없음(vitest/Deno 테스트 대상) |
+| `functions/verify-invasion/index.ts` | `Deno.serve` HTTP·Auth·DB I/O 배선 | `Deno` |
+| `functions/verify-invasion/deno.json` | sloppy-imports + `check`/`bundle` 태스크 | — |
+
+> 배포용 자립 번들 `dist.index.js`(36모듈·70KB)는 `deno task bundle`로 생성하며
+> **워킹트리에 유지한다**(배포 담당 인수용 — 리드 지시). 파일 머리의
+> `/* eslint-disable */` 헤더가 `eslint .` 게이트 오염을 막는다(생성 태스크 후 수동
+> 재부착 필요 없음 — 재생성 시 헤더를 다시 붙일 것). `@generated` 주석 참조.
+
+방어 배치 대조 범위: EF 의 `defense-mismatch` 대조(`layoutEquals`)와 `hashWorld` 침공
+블록(replay.ts)은 **`core`·`turrets`·`obstacles`만** 접고 비교한다. `DefenseLayout.
+guardianSlots`(M5 자리)는 양쪽 모두 대조·해시 대상이 아니므로, 클라 `normalizeLayout`이
+`guardianSlots`를 드롭해도(또는 stored layout 에 빈 배열로 있어도) defense-mismatch·
+해시에 무해하다(M4 비활성 슬롯).
+
+계약(핸드오프 team-plan.md §D-1, worker-d-client 확인):
+- 요청: `POST { invasion_id: string }` (verify_jwt=true, 호출자 = 공격자 본인).
+- 응답: `{ status: 'verified'|'rejected', attackerWon, ladder: {attackerRank,defenderRank}|null, loot: LootItem[], reason? }`.
+- 클라 `invasions.client_result` shape: `{ attackerWon, coreDestroyed, finalTick, finalHash, hashStream }`.
+  `index.ts`가 이를 검증 코어의 `RunClaim`(Phase A shape)으로 사상한다 —
+  `outcome = { victory: attackerWon, gameOver: !attackerWon }`(침공은 승리/게임오버로
+  수렴하므로 유효). **래더 판정 attacker_won 은 클라 주장이 아니라 서버 재실행
+  victory** 로 확정한다.
+
+침공 게이트(verify-run README 착수 조건 이행):
+1. **config 정당성** — 클라 제출 `config.invasion.layout`·`timeLimitTicks`를 서버가
+   DB(`defenses`)에서 로드한 권위 배치와 정확히(raw IEEE-754 비트) 대조. 불일치는
+   `defense-mismatch`. 재실행은 **서버 권위 배치로 오버라이드**해 돌리므로 config
+   조작은 hashStream 발산으로도 잡힌다. (⚠️ 잔여: 공격자 자신의 로드아웃 legitimacy
+   는 미대조 — 방어 약화 조작만 막고, 자기 강화 축은 후속 게이트로 문서화.)
+2. **hashStream 필수화** — 부재 시 `hash-stream-required`(Phase A 선택 → 침공 필수).
+3. **재실행 시간예산** — 입력 길이를 `DEFAULT_TIME_LIMIT_TICKS`(10800틱) 이내로 상한
+   (`invasion-inputs-too-long`). 동기 재실행은 AbortSignal 로 중단 불가하므로 1차 DoS
+   방어선은 이 입력 길이 상한이다(벽시계 초과는 사후 경고 로그만).
+
+위조 거부(AC2): 조작 해시 `final-hash-mismatch` / 변조 입력 `hash-stream-divergence` /
+트림 로그 `hash-stream-length-mismatch` / 승패 뒤집기 `outcome-mismatch`.
+
+### Postgres 함수
+
+- **`apply_invasion_result(p_invasion_id, p_verified_result, p_attacker_won)`**
+  (security definer, 단일 트랜잭션): verified_* 확정 + (공격자 승 & 양측 placed &
+  공격자.rank>방어자.rank) 래더 스왑(ADR-0004) + 복제 약탈(ADR-0003)을 원자 처리.
+  멱등(pending 아니면 no-op). **EXECUTE 는 service_role 만**(anon/authenticated 회수).
+  - 복제 약탈: 방어자 `inventory` 아이템을 `item_id` 오름차순 최대 3개 복제해 공격자에게
+    지급(원본 무손실, item_id 에 `-loot-<inv8>` 접미사로 유니크 회피, `on conflict do
+    nothing`). 기본안 OQ-M4-5(양은 튜닝 대상).
+  - 엣지 케이스: 래더 행 없음/`placed=false`(배치전 미완료) → 스왑 없음(카운터만). 공격자
+    순위가 이미 방어자보다 높음 → 스왑 없음. 정상 매치메이킹은 방어자.rank<공격자.rank.
+- **`get_invasion_targets()`** (security definer, authenticated 호출): 내 바로 위 3명 +
+  (내 순위-30)~(내 순위-1) 랜덤 1명(시간별 안정 의사난수) 제안. 활성 방어 있는 대상만,
+  **재도전 쿨다운 1시간 서버 강제**(최근 1시간 내 공격 대상 제외). 반환 shape 고정:
+  `{ profile_id, rank, display_name, ship_summary(jsonb), defense_id, layout(jsonb), maintenance }`.
+- **`defense_layout_cost(layout)`**: `layout` 의 포탑(유형별 비용)·장애물 비용 합산.
+  비용표는 `src/sim/defense.ts` `TURRET_SPECS[].cost`·`OBSTACLE_COST` 와 일치
+  (발칸1·저격3·산탄2·감속2·미사일3·전격2·장애물1).
+- **`caller_is_service_role()`**: `request.jwt.claims` 의 role 을 읽어 SECURITY DEFINER
+  안에서도 실제 호출자를 판정(아래 "SECURITY DEFINER 주의" 참조).
+
+### Phase D 착수 조건 이행
+
+- **정찰 전면 공개 3정책 폐기(착수 조건 ①)**: `ships_select_others`·`defenses_select_others`·
+  `guardians_select_others`(모두 `using(true)`)를 **DROP**. 이제 타인 방어·기체 정찰은
+  `get_invasion_targets()` RPC(security definer) 경유로만, "현재 제안된 상대"만 조회
+  가능하다. 본인 행(`*_rw_own`)·침공 참여자(`invasions_select_participant`, 리플레이
+  관전 F3)는 유지.
+- **defenses INSERT/UPDATE 예산 게이트(착수 조건 ②)**: `guard_defenses_client_write`를
+  **BEFORE INSERT OR UPDATE** 로 확장. 클라이언트 경로에서 `budget_spent`를 서버가
+  `defense_layout_cost(layout)`로 **직접 산출**(자가 신고 불가)하고 기본 예산 20 초과
+  시 거부. UPDATE 는 `maintenance` 자가회복도 계속 차단(HIGH-2 승계), INSERT 는
+  `maintenance`를 100 으로 강제. (⚠️ DELETE→재생성 정비도 리셋 우회는 Phase E cron
+  설계 몫으로 잔존 — 기존 착수 조건 ②-2 문서 유지.)
+
+### SECURITY DEFINER 주의 (설계 반영)
+
+`is_service_role()`(= `current_user` 검사)는 **SECURITY DEFINER 함수 안에서
+current_user 가 소유자(postgres)로 바뀌어 항상 true** 가 된다. 따라서 definer 함수의
+호출자 권위 판정에는 쓰지 않는다. 대신 (a) **EXECUTE 권한**(apply_invasion_result 는
+service_role 만)과 (b) `request.jwt.claims` role 을 읽는 `caller_is_service_role()`
+(definer 무관하게 실제 호출자 반영)로 이중 게이트한다. 반면 스키마 가드 트리거들
+(guard_*)은 SECURITY INVOKER 라 `is_service_role()` 이 정상 동작(current_user =
+실제 실행 role).
+
+### Phase D 실측 결과 (원격 `qxgbxwyccbxokdgwxcuw`, 2026-07-17)
+
+`apply_migration`(`m4_phase_d`) 적용 후 MCP `execute_sql` 로 실측:
+
+- 함수 4개 존재·security 유형: `apply_invasion_result`(definer)·`get_invasion_targets`
+  (definer)·`caller_is_service_role`(invoker)·`defense_layout_cost`(invoker) ✅.
+- 정찰 3정책(`ships/defenses/guardians_select_others`) 조회 0건 = 폐기 확인 ✅.
+- `ladder_rank_key` 제약 `condeferrable=true, condeferred=true` ✅(순위 교차 갱신 안전).
+- `trg_defenses_guard` on_insert=true·on_update=true ✅(예산 게이트가 INSERT 도 커버).
+- EXECUTE 권한: service_role→apply=true, authenticated→apply=**false**,
+  authenticated→targets=true, anon→targets=false, service_role BYPASSRLS=true ✅.
+- **확증 4(is_service_role EF 컨텍스트)**: `set local role service_role; select
+  current_user, public.is_service_role();` → `current_user='service_role',
+  is_service_role()=true` **실측 확인** ✅. definer 함수 안에서는 소유자로 바뀌므로
+  이 판정은 스키마 가드 트리거(invoker)에만 쓰고, EF→apply_invasion_result 경로는
+  `caller_is_service_role()`+EXECUTE 권한으로 판정한다(위 SECURITY DEFINER 주의).
+  - 방법 주석: 이 프로젝트에서 EF 를 직접 invoke 하려면 유효한 사용자 JWT 가 필요해
+    본 세션에서는 role 시뮬레이션(SET LOCAL ROLE)으로 함수 거동을 확증했다. 잔여
+    가정은 "EF service client 가 실제로 service_role 로 PostgREST 연결을 맺는다"는
+    Supabase 문서 보장(service_role 키 → role 클레임 service_role)이며, `defense_layout_cost`·
+    권한·스왑 로직은 아래 검증 항목으로 별도 실측했다.
+- `defense_layout_cost` 산출 실측: 발칸1+저격3+산탄2+장애물2 = **8** / 빈 layout=0 /
+  키 누락 layout=0 ✅.
+- `get_advisors(security)`: 신규 WARN 은 `get_invasion_targets` 의 "authenticated 가
+  SECURITY DEFINER 실행 가능" **1건뿐이며 의도된 설계**(매치메이킹 RPC 는 authenticated
+  가 자기 기준으로 호출, auth.uid()로 스코프). `apply_invasion_result` 는 목록에 없음
+  = authenticated EXECUTE 회수가 실효(래더 쓰기 경로 봉인) 확인. 나머지는 익명 Auth
+  설계상 기존 WARN(anonymous access).
+
+### 코드리뷰 REQUEST_CHANGES 반영 (2026-07-17, 마이그레이션 `20260717030000`)
+
+1. **[CRITICAL] 자기 침공 3중 차단**: 매치메이킹 우회 직접 insert 로 자기(빈) 방어에
+   승리해 복제 약탈을 무한 파밍하는 경로를 3계층에서 차단 —
+   ① `guard_invasions_client_insert` 트리거: `attacker_id = defender_id` insert 를
+   raise(역할 무관 — 서버 경로에도 정당한 자기 침공 없음),
+   ② EF `index.ts`: inv 로드 직후 self 면 rejected 확정 + 400(`self-invasion`),
+   ③ `apply_invasion_result` 진입부: self 확정 시도 raise(심층 방어).
+2. **[HIGH] 제출 경로 쿨다운·랭크 윈도우 강제**: `get_invasion_targets` 제안 규칙을
+   확정 지점(`apply_invasion_result`)에 복제 — ⓐ이 침공보다 먼저 생성된 동일
+   (attacker,defender) 침공이 1시간 내 존재하면(결과 불문 — GDD §8 재도전 쿨다운)
+   rejected 확정 + `note: cooldown-violation`(EF 가 `reason: cooldown-violation` 으로
+   응답), ⓑ순위 스왑은 격차 `v_att.rank - v_def.rank <= 30` 이내만(우회 침공으로
+   30위 밖 상위권 순위를 못 뺏음 — 승패 카운터·약탈만 적용).
+3. **[MED] layout 대조 대칭화**: 검증 코어에 `normalizeServerLayout`(클라이언트
+   `normalizeLayout`(src/ui/defenseCommand.ts:293)과 자구 동일 규칙: 범위 밖 유형·
+   비유한 좌표·halfW/halfH≤0 필터, guardianSlots 드롭) 추가. DB layout 을 정규화한
+   본으로 대조·재실행하므로 클라가 정규화 본으로 런·제출해도 오거부되지 않는다.
+   정규화 불능(코어 손상)은 `server-layout-invalid` 거부. EF 는 재실행을 try/catch 로
+   감싸 예외도 500 이 아니라 `server-layout-invalid` rejected 로 수렴.
+4. **[MED] 복제 약탈 상한**: 공격자 `inventory` 총량 200 이상이면 약탈 skip(잠정값,
+   Phase E 밸런스 튜닝 전 무한 팽창 방지 — 원본 무손실 원칙 불변).
+5. **[LOW] 확정 침공 재조회 응답**: 이미 확정된 침공을 재호출하면 `attackerWon: null`
+   이 아니라 **확정된 `attacker_won` 값**을 반환(클라 결과 배너 오표시 방지).
+
+**원격 재적용·DB 통합 실측** (`m4_phase_d_review_fixes` 적용 후, 원격에서 트랜잭션
+롤백 방식으로 실행 — 잔류 데이터 0):
+- T1 자기 침공 insert → 트리거 raise ✅
+- T2 30분 전 동일 대상 침공 존재 → apply = `cooldown-violation` + rejected 확정 ✅
+- T3 격차 40(>30) 승리 → 스왑 없음·순위 불변 ✅
+- T4 격차 2 승리 → 스왑(3↔5)·복제 약탈 2건·방어자 원본 무손실·공격자 지급 ✅
+- T5 공격자 인벤 200개 → 약탈 skip·인벤 불변 ✅
+
+### 리드/클라 정합 포인트 반영 (2026-07-17)
+
+- **순위표 display_name(정합 #1)**: `get_ladder_top(p_limit=50, p_offset=0)` (security
+  definer, authenticated) 추가(`20260717020000_m4_ladder_public_view.sql`). 순위표에
+  필요한 최소 컬럼 `{profile_id, rank, display_name, wins, losses, placed}`만 페이지네이션
+  (상한 200)으로 노출한다. profiles 전면 select 정책은 열지 않는다(민감 컬럼 보호).
+  실측: 빈 래더 0행 정상, authenticated EXECUTE=true·anon=false ✅.
+- **`ladder.defense_id`(정합 #2)**: Phase D 에서 **미사용**. `get_invasion_targets`는
+  `defenses`(active) 를 직접 조인하고, verify-invasion EF 는 **`invasions.defense_id`**
+  (클라가 침공 insert 시 채우는 스냅샷 ref)로 방어 배치를 로드한다. `ladder.defense_id`
+  는 초기 스키마 주석대로 **Phase E 풍화 앵커**(defenses.id 대신 이 컬럼 기준으로 방어자
+  식별 시 DELETE→재생성 우회 완화)용 예약 컬럼이며, service_role 백필 배선은 Phase E 로
+  이월. 지금은 아무도 읽지 않으므로 미채움이 정상.
+- **defenses 비활성 잔여 행(정합 #3)**: 클라가 활성 행 없을 때 새 active 행 INSERT(이력
+  보존)하는 패턴은 `defenses_one_active_idx`(active 부분 유니크)와 정합. 비활성 행은
+  매치메이킹(`d.active` 조인)·EF(active fallback)에서 **완전히 무시**되는 불활성 데이터라
+  Phase D 서버 정리 정책 불필요. (DELETE→재생성 정비도 리셋 우회는 위 착수 조건 ②-2 대로
+  Phase E cron 설계 몫으로 잔존.)
+- **budget_spent 비용표 일치(리드 확인 요청)**: 클라 `defenseLayoutCost`(발칸1·저격3·
+  산탄2·감속2·미사일3·전격2·장애물1·범위밖→발칸)와 서버 `defense_layout_cost` SQL 이
+  동일 매핑임을 확인. 게다가 서버 트리거가 클라 신고값을 **무시하고 layout 에서 재산출**해
+  덮어쓰므로(자가 신고 불가) 양측 표가 어긋나도 서버 값이 진실이다. ⚠️ 단 **예산 상한
+  20** 은 양측 합의값이어야 한다 — 클라 에디터가 20 초과 배치를 허용하면 서버 INSERT/UPDATE
+  가 `check_violation`으로 거부한다.
+
+### 배포 (핸드오프 — deploy 자격 필요)
+
+verify-invasion 은 `src/sim` 전체 그래프를 import 하고 배포 경로는 sloppy-imports 를
+못 쓰므로 **자립 번들**로 배포한다. `deno task bundle`(functions/verify-invasion 에서)이
+`dist.index.js`(36모듈·70KB, Supabase 런타임 jsr import 는 external 유지)를 산출하며,
+로컬에서 `deno check`·`deno bundle` 통과·Deno/vitest 로 검증 코어 동형 확인을 마쳤다.
+
+원격 배포는 deploy 자격이 필요해(이 워커 환경엔 CLI 액세스 토큰 없음, EF invoke 는
+사용자 JWT 필요) 리드/사용자 몫으로 남긴다. 방법 중 하나:
+
+- MCP: `deploy_edge_function(name='verify-invasion', entrypoint_path='index.ts',
+  verify_jwt=true, files=[{name:'index.ts', content:<dist.index.js 내용>}])`.
+- CLI(로그인 후): `supabase functions deploy verify-invasion --project-ref
+  qxgbxwyccbxokdgwxcuw`(단, CLI 번들러가 부모 경로 import 를 포함하도록 dist 번들을
+  entrypoint 로 지정하거나 사전 번들 사용).
+
+배포 후 스모크: 유효 사용자 JWT 로 `POST {invasion_id}` → 정직 제출 accept·위조 reject
+확인, `apply_invasion_result` 스왑·복제 약탈 e2e(AC3).

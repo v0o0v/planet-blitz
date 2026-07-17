@@ -39,6 +39,7 @@ import {
   type WorldConfig,
 } from '../sim/world.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../save/profile.js';
+import { uploadDefenseLayout } from '../net/defenseSync.js';
 
 // ---------------------------------------------------------------------------
 // 격자 기하 (순수 · 테스트 대상)
@@ -568,13 +569,32 @@ export class DefenseCommand {
       this.render();
       return;
     }
-    // TODO(M4 Phase B 후속): Supabase `defenses` 테이블에 배치 JSON + 정비도 업서트.
-    // 지금은 프로필(로컬 세이브)에만 저장한다(계약: defenses.layout = DefenseLayout).
+    // 로컬 세이브(계약: defenses.layout = DefenseLayout)는 항상 즉시 저장 — 이것이 최종.
     this.profile.defenseLayout = layout;
     this.persist();
     this.hint = '';
     this.tip = '배치를 저장했습니다.';
     this.render();
+    // 서버 업로드(M4 Phase D): Supabase `defenses` 에 활성 방어로 업서트해 타인이 나를
+    // 침공 대상으로 매치메이킹할 수 있게 한다(AC6). env 미설정 시 완전 no-op(로컬 저장만).
+    // fire-and-forget — 게임루프 비차단, 실패해도 로컬 저장은 유효.
+    this.uploadToServer(layout);
+  }
+
+  /**
+   * 저장된 배치를 서버에 fire-and-forget 로 업로드하고, 성공하면 토스트만 승격한다.
+   * no-op(미설정)·오프라인·오류면 `null` 이 돌아와 조용히 로컬 저장 상태를 유지한다.
+   * 사용자가 그 사이 다른 안내(hint)를 띄웠으면 덮어쓰지 않는다.
+   */
+  private uploadToServer(layout: DefenseLayout): void {
+    void uploadDefenseLayout(layout).then((result) => {
+      if (result === null || !this.visible || this.hint !== '') return;
+      this.tip =
+        result === 'inserted'
+          ? '배치를 저장하고 서버에 등록했습니다.'
+          : '배치를 저장하고 서버에 반영했습니다.';
+      this.render();
+    });
   }
 
   private test(): void {
