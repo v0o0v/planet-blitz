@@ -81,10 +81,17 @@ alter table public.profiles
 alter table public.profiles
   add column if not exists lineage_guardian_level integer not null default 0 check (lineage_guardian_level >= 0);
 
--- 서버 권위: flagged 가드(guard_profiles_client_write)에 계보 3컬럼을 추가로 고정한다.
--- 계보 포인트·레벨은 순환 재화(리스펙 없음)라 클라 직접 쓰기를 열면 경제가 무너진다
--- (retire_ship/dismiss_guardian/invest_lineage RPC 만 갱신). create or replace 로 기존 함수를
--- 재정의하되 **기존 flagged 가드 블록을 반드시 유지**한다(PR#29 회귀 교훈).
+-- 퇴역 레이트리밋(HIGH-3 대응)용 쿨다운 타임스탬프. retire_ship 이 호출마다 갱신하고,
+-- 다음 호출은 최소 간격(RETIRE_COOLDOWN_SECONDS) 전이면 거부한다 — 반복 호출로 계보
+-- 포인트를 무한 채굴하는 루프를 봉쇄한다(리뷰 HIGH-3 옵션② 레이트리밋).
+alter table public.profiles
+  add column if not exists lineage_last_retired_at timestamptz;
+
+-- 서버 권위: flagged 가드(guard_profiles_client_write)에 계보 3컬럼 + 쿨다운 타임스탬프를
+-- 추가로 고정한다. 계보 포인트·레벨은 순환 재화(리스펙 없음)라 클라 직접 쓰기를 열면 경제가
+-- 무너진다(retire_ship/dismiss_guardian/invest_lineage RPC 만 갱신). create or replace 로
+-- 기존 함수를 재정의하되 **기존 flagged·is_npc 가드 블록을 반드시 유지**한다(PR#29 회귀 교훈 —
+-- M5 최초 초안에서 is_npc 고정이 실수로 빠졌던 것을 리뷰에서 재발 확인 후 복원).
 create or replace function public.guard_profiles_client_write()
 returns trigger
 language plpgsql
@@ -93,9 +100,11 @@ as $$
 begin
   if not public.is_service_role() then
     new.flagged := old.flagged;
+    new.is_npc := old.is_npc;  -- Phase E: NPC 마커 위장 차단(20260717080000). M5 재정의에서도 유지.
     new.lineage_points := old.lineage_points;
     new.lineage_ship_level := old.lineage_ship_level;
     new.lineage_guardian_level := old.lineage_guardian_level;
+    new.lineage_last_retired_at := old.lineage_last_retired_at;
   end if;
   return new;
 end;
@@ -109,6 +118,17 @@ $$;
 --   performance=100 으로 생성하고 계보 포인트 +RETIRE_GRANT(=50)를 지급한다. 원자 트랜잭션.
 -- 장비 원본 자동 창고 반환(ADR-0007)은 클라 save(items) 정본에서 처리 — 서버는 미러라 여기서
 --   강제하지 않는다(items 미러 동기화는 profileSync 경로).
+--
+-- 무한 발행 방지(리뷰 HIGH-3): 진짜 "만렙 기체 소비"를 서버가 검증할 별도 인프라(퇴역
+-- 토큰·ships 행 삭제 트랜잭션 등)가 아직 없다 — ships/items 는 이 게임에서 이미 클라이언트
+-- 정본 미러(ships_rw_own FOR ALL)라 여기서만 새 소비 검증 계층을 두면 다른 미러와 신뢰
+-- 경계가 어긋난다. 대신 반복 호출 채굴을 실질적으로 봉쇄하는 두 방어를 조합한다(옵션②+③):
+--   ② 레이트리밋 — profiles.lineage_last_retired_at 쿨다운(최소 간격, 반복 루프 차단).
+--   ③ p_combat_score 서버측 상한 클램프 — 1회 호출의 지급 상한을 bound(다만 RETIRE_GRANT
+--      자체는 combat_score 무관 고정값이므로, 진짜 위협은 "쿨다운 없는 무한 호출"이며 ②가
+--      1차 방어. ③은 combat_score 로 파생되는 소멸 포인트(dismiss_guardian)의 상한도 겸한다).
+-- 완전한 소비 검증(예: 서버가 ships 행을 직접 삭제)은 클라-서버 ships 동기화 설계 변경이 필요한
+-- 별도 작업으로 이월한다(README carry-forward).
 create or replace function public.retire_ship(
   p_preset integer,
   p_combat_score integer,
@@ -120,11 +140,14 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_me    uuid := auth.uid();
-  v_gid   uuid;
-  v_grant constant integer := 50;  -- RETIRE_LINEAGE_GRANT (data/lineage.ts)
-  v_score integer := greatest(1, coalesce(p_combat_score, 1));
-  v_preset integer := case when coalesce(p_preset, 0) between 0 and 1 then p_preset else 0 end;
+  v_me       uuid := auth.uid();
+  v_gid      uuid;
+  v_grant    constant integer := 50;  -- RETIRE_LINEAGE_GRANT (data/lineage.ts)
+  v_max_score constant integer := 5000;  -- p_combat_score 서버측 상한(HIGH-3 옵션③)
+  v_cooldown constant interval := interval '30 seconds';  -- 최소 재퇴역 간격(HIGH-3 옵션②)
+  v_score    integer;
+  v_preset   integer := case when coalesce(p_preset, 0) between 0 and 1 then p_preset else 0 end;
+  v_last     timestamptz;
 begin
   if v_me is null then
     raise exception 'retire_ship: 로그인 필요';
@@ -132,13 +155,29 @@ begin
   if p_snapshot is null or jsonb_typeof(p_snapshot) <> 'object' then
     raise exception 'retire_ship: 스냅샷 필요';
   end if;
+  v_score := least(v_max_score, greatest(1, coalesce(p_combat_score, 1)));
+
+  -- 행 잠금 + 쿨다운 확인을 한 트랜잭션에서(레이스로 동시 두 호출이 쿨다운을 동시 통과 못함).
+  select lineage_last_retired_at into v_last
+    from public.profiles where id = v_me
+    for update;
+  if not found then
+    raise exception 'retire_ship: 프로필 없음';
+  end if;
+  if v_last is not null and now() < v_last + v_cooldown then
+    return jsonb_build_object(
+      'retired', false, 'note', 'cooldown',
+      'retry_after', extract(epoch from (v_last + v_cooldown - now()))
+    );
+  end if;
 
   insert into public.guardians (profile_id, data, performance, retired, combat_score, preset)
     values (v_me, p_snapshot, 100.00, false, v_score, v_preset)
     returning id into v_gid;
 
   update public.profiles
-    set lineage_points = lineage_points + v_grant
+    set lineage_points = lineage_points + v_grant,
+        lineage_last_retired_at = now()
     where id = v_me;
 
   return jsonb_build_object(
@@ -156,6 +195,12 @@ grant execute on function public.retire_ship(integer, integer, jsonb) to authent
 -- -----------------------------------------------------------------------------
 -- 회수 포인트 = floor(combat_score × performance / 100)(data/guardian.ts dismissPoints 동일
 --   정수식). 이미 소멸(retired)이면 no-op. 자동 소멸 없음 — 이 RPC(유저 행동)로만 소멸한다.
+--
+-- 이중 회수 레이스 방지(리뷰 HIGH-2): 최초 select 에 `for update` 로 행을 잠가 동시 두 호출이
+-- 같은 v_g 스냅샷을 읽지 못하게 하고, update 문 자체에도 `and retired = false` 를 걸어
+-- **update 시점**에도 이미 소멸된 행이면 0행 갱신되도록 이중 방어한다. `get diagnostics` 로
+-- 실제 갱신된 행 수를 확인해, 갱신이 일어난 경우에만 포인트를 지급한다(포인트 지급이 실제
+-- retired 전이와 항상 원자적으로 묶이도록 — invest_lineage 의 for update 패턴과 동일 규율).
 create or replace function public.dismiss_guardian(p_guardian_id uuid)
 returns jsonb
 language plpgsql
@@ -166,13 +211,15 @@ declare
   v_me     uuid := auth.uid();
   v_g      public.guardians%rowtype;
   v_points integer;
+  v_n      integer;
 begin
   if v_me is null then
     raise exception 'dismiss_guardian: 로그인 필요';
   end if;
 
   select * into v_g from public.guardians
-    where id = p_guardian_id and profile_id = v_me;
+    where id = p_guardian_id and profile_id = v_me
+    for update;
   if not found then
     return jsonb_build_object('dismissed', false, 'note', 'not-found');
   end if;
@@ -183,7 +230,14 @@ begin
   -- floor(combat_score × performance / 100). performance 는 numeric(5,2) — trunc 로 정수화.
   v_points := floor(v_g.combat_score * v_g.performance / 100.0)::integer;
 
-  update public.guardians set retired = true where id = v_g.id;
+  update public.guardians set retired = true
+    where id = v_g.id and retired = false;
+  get diagnostics v_n = row_count;
+  if v_n = 0 then
+    -- for update 잠금 하에서는 이론상 도달 불가하지만, 방어적으로 이중 방어를 완결한다.
+    return jsonb_build_object('dismissed', false, 'note', 'already-dismissed');
+  end if;
+
   update public.profiles set lineage_points = lineage_points + v_points where id = v_me;
 
   return jsonb_build_object(

@@ -797,7 +797,24 @@ Phase F(`20260717150000_m4_phase_f_pve_sampling.sql`) "리플레이 재실행 �
   `preset` 컬럼·`trg_guardians_guard` 트리거, profiles 계보 3컬럼, RPC 3종 EXECUTE(anon 없음),
   RLS 재분해(guardians INSERT/DELETE 정책 부재) 확인. `get_advisors(security)` 신규 WARN 점검.
 - **트랜잭션 순서 주의**: `guard_profiles_client_write` 를 create or replace 로 재정의하므로,
-  적용 시 기존 flagged 고정이 유지되는지(마이그레이션 본문에 flagged 라인 포함됨) 재확인.
+  적용 시 기존 flagged·**is_npc** 고정이 유지되는지(마이그레이션 본문에 두 라인 모두 포함됨,
+  PR#35 리뷰 HIGH-1 수정으로 is_npc 복원) 재확인.
+
+### 리뷰 HIGH 수정 이력 (PR#35, 원격 미적용 상태에서 SQL 파일 직접 수정)
+- **[HIGH-1 수정] is_npc 봉인 유실 회복**: M5 최초 초안이 `guard_profiles_client_write` 를 재정의
+  하며 Phase E(`20260717080000`)가 넣은 `new.is_npc := old.is_npc;` 를 실수로 빠뜨렸다(PR#29 와
+  같은 유형의 회귀). `if not is_service_role()` 블록에 복원 — 유저가 자신을 NPC 로 위장해 침공
+  대상 풀을 교란하는 구멍을 막는다.
+- **[HIGH-2 수정] dismiss_guardian 이중 회수 레이스**: 최초 select 에 `for update` 잠금을 추가하고,
+  update 문에도 `and retired = false` 조건 + `get diagnostics` 로 실제 갱신 행 수를 확인해, 갱신이
+  일어난 경우에만 포인트를 지급하도록 고쳤다(invest_lineage 의 for update 패턴과 동일 규율). 동시
+  2회 호출로 포인트가 2배 지급되는 경로를 닫는다.
+- **[HIGH-3 수정] retire_ship 무한 포인트 발행**: 진짜 "만렙 기체 소비" 서버 검증은 ships/items 가
+  이미 클라 정본 미러(`ships_rw_own` FOR ALL)인 이 게임의 신뢰 모델과 충돌해 별도 인프라(퇴역
+  토큰·ships 행 삭제 트랜잭션)가 필요 — 이번 수정에서는 두지 않고 이월(아래 문서화). 대신 반복
+  호출 채굴을 실질 봉쇄하는 두 방어를 추가했다: ② `profiles.lineage_last_retired_at` 쿨다운(최소
+  30초 간격, `for update` 잠금 하에 확인해 동시 호출도 쿨다운을 함께 통과 못함) ③ `p_combat_score`
+  서버측 상한 클램프(5000 — dismiss_guardian 회수 포인트의 상한도 겸함).
 
 ### 신뢰 경계 (문서화된 한계 — carry-forward)
 - **[MED] EF index.ts 권위 수호 로딩**: `verifyInvasionCore` 는 서버 `server.layout.guardians` 를
@@ -808,3 +825,5 @@ Phase F(`20260717150000_m4_phase_f_pve_sampling.sql`) "리플레이 재실행 �
 - **[문서화] combat_score·snapshot 신뢰 경계**: 이 두 값은 클라이언트 빌드 파생이라 클라가 주장한다
   (items/save 가 이 게임에서 클라 정본인 것과 동일 축 — verifyInvasionCore 헤더 "공격자 로드아웃
   미대조" 한계와 같은 등급). PvP 결정에 직결되는 **풍화(performance)** 축만 서버 권위로 봉인한다.
+  리뷰 HIGH-3 수정으로 반복 채굴은 쿨다운+상한 클램프로 실질 봉쇄했으나, "진짜 만렙 기체 소비"의
+  완전한 서버 검증(ships 행 직접 삭제 등 설계 변경)은 별도 작업으로 남아 있다.
