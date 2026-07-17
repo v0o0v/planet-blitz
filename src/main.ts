@@ -40,6 +40,8 @@ import { BaseMap } from './ui/baseMap.js';
 import { ResearchLab } from './ui/researchLab.js';
 import { Refinery } from './ui/refinery.js';
 import { DefenseCommand } from './ui/defenseCommand.js';
+import { ControlTower } from './ui/controlTower.js';
+import type { ControlTowerShowOpts, InvasionResultView } from './ui/controlTower.js';
 import {
   TitleScreen,
   TutorialOverlay,
@@ -77,6 +79,11 @@ import type { SettlementOutcome } from './save/settlement.js';
 // M4 네트워크 계층(Phase B3): Supabase 미설정 시 완전 no-op, 절대 throw 안 함.
 // 정산 시점에서만 fire-and-forget 로 호출 — sim/게임루프와 무관(결정론·오프라인 우선).
 import { migrateLocalProfileToServer, recordPveRunResult } from './net/index.js';
+// M4 침공(비동기 PvP) 제출: 미설정 시 submitInvasion 은 null(잠정 결과만 표시).
+import { submitInvasion, buildClientResult } from './net/invasion.js';
+import type { InvasionTarget } from './net/invasion.js';
+import { DEFAULT_TIME_LIMIT_TICKS } from './sim/defense.js';
+import type { InvasionConfig, DefenseLayout } from './sim/defense.js';
 
 async function main(): Promise<void> {
   const mount = document.getElementById('app');
@@ -155,6 +162,7 @@ async function main(): Promise<void> {
   const researchLab = new ResearchLab(profile);
   const refinery = new Refinery(profile);
   const defenseCommand = new DefenseCommand(profile);
+  const controlTower = new ControlTower();
   const titleScreen = new TitleScreen();
   const tutorialOverlay = new TutorialOverlay();
   const ftue = new FtueTracker();
@@ -184,6 +192,12 @@ async function main(): Promise<void> {
   let currSnap: WorldSnapshot = emptySnap;
   let accumulator = 0;
   let frameCount = 0;
+
+  // --- 침공(비동기 PvP) 런 상태 ---
+  // invasionTarget !== null 이면 현재 런은 침공 런이다 → endRun 이 PvE 정산 대신 서버
+  // 제출로 분기한다. pendingInvasionResult 는 다음에 관제탑을 열 때 표시할 결과 배너.
+  let invasionTarget: InvasionTarget | null = null;
+  let pendingInvasionResult: InvasionResultView | null = null;
 
   // --- DEV 하네스 훅 상태(프로덕션에서는 harness가 항상 null → 분기 사문화·제거) ---
   let harness: Harness | null = null;
@@ -224,6 +238,7 @@ async function main(): Promise<void> {
     resultOverlay.hide();
     baseMap.hide();
     defenseCommand.hide();
+    controlTower.hide();
     titleScreen.hide();
   }
 
@@ -264,8 +279,140 @@ async function main(): Promise<void> {
         setScreen('defense');
         defenseCommand.show(profile, () => openBaseMap());
       },
+      onControl: () => {
+        baseMap.hide();
+        openControlTower();
+      },
       onStarMap: () => openStarMap(),
     });
+  }
+
+  /**
+   * 관제탑(침공 사령) 화면. 타깃·순위표는 net 계층이 비동기 로드한다(미설정이면 비활성
+   * 안내). `pendingInvasionResult` 가 있으면 결과 배너로 소비한다(침공 런 종료 직후).
+   */
+  function openControlTower(opts: { verifying?: boolean } = {}): void {
+    clearToMenu();
+    setScreen('controlTower');
+    const showOpts: ControlTowerShowOpts = {};
+    if (pendingInvasionResult !== null) {
+      showOpts.result = pendingInvasionResult;
+      pendingInvasionResult = null;
+    }
+    if (opts.verifying === true) showOpts.verifying = true;
+    controlTower.show(
+      profile,
+      {
+        onInvade: (target, layout) => startInvasionRun(target, layout),
+        onBack: () => openBaseMap(),
+      },
+      showOpts,
+    );
+  }
+
+  /**
+   * 침공 런 시작. 대상의 방어 배치(normalizeLayout 완료본)를 침공 config 로 넣어
+   * 결정론 런을 돌린다(갈림길③A). 승리=코어 파괴, 패배=시간초과/격추. 런 종료 시
+   * endRun 이 invasionTarget 을 보고 서버 제출로 분기한다.
+   */
+  function startInvasionRun(target: InvasionTarget, layout: DefenseLayout): void {
+    // 관제탑 경유 시작 — 켜져 있을 수 있는 메뉴를 먼저 내린다(harness startRun 참조).
+    planetSelect.hide();
+    inventory.hide();
+    researchLab.hide();
+    refinery.hide();
+    clearToMenu();
+    tutorialActive = false;
+    shownLevel = 0;
+    const seed = nextSeed();
+    const ship = activeShip(profile);
+    const equipped: Item[] = [];
+    for (const id of EQUIP_SLOTS) {
+      const it = ship.equipped[id];
+      if (it !== undefined) equipped.push(it);
+    }
+    const skillInvest = profile.skillInvest.slice();
+    const { loadout } = computeLoadoutStats(equipped, skillInvest);
+    const invasion: InvasionConfig = { layout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
+    const config: WorldConfig = {
+      ...DEFAULT_CONFIG,
+      planet: 0,
+      tier: 0,
+      anomalyAccepted: false,
+      loadout,
+      skillInvest,
+      invasion,
+    };
+    // 침공 아레나는 기본 배경(타일셋 없음) — 방어 배치가 무대다.
+    background.texture = planetBackground(0);
+    autotile.configure(null, seed);
+    background.visible = true;
+    currentSeed = seed;
+    world = createWorld(seed, config);
+    recorder = new ReplayRecorder(seed, world.config);
+    prevSnap = snapshotWorld(world);
+    currSnap = prevSnap;
+    accumulator = 0;
+    settled = false;
+    ceremony.reset();
+    lastOutcome = null;
+    resultOverlay.hide();
+    invasionTarget = target;
+    setScreen('run');
+  }
+
+  /**
+   * 침공 런 종료 처리: 리플레이+클라이언트 결과(해시 스트림)를 서버에 제출하고 판정을
+   * 결과 배너로 표시한다. 서버 응답이 최종(서버 권위) — 클라 결과는 잠정이다. 오염 런/
+   * 미설정/오프라인이면 제출하지 않고 잠정 결과만 안내한다.
+   */
+  async function finishInvasionRun(w: WorldState): Promise<void> {
+    if (settled) return;
+    settled = true;
+    const target = invasionTarget;
+    const rec = recorder;
+    invasionTarget = null;
+    tutorialOverlay.hide();
+    if (powerupOverlay.visible) powerupOverlay.hide();
+    shownLevel = 0;
+    if (target === null) {
+      openBaseMap();
+      return;
+    }
+    // 오염 런(ADR-0008) 또는 리플레이 부재 → 제출하지 않는다(잠정 결과만).
+    if (w.tainted || rec === null) {
+      pendingInvasionResult = {
+        attackerWon: w.victory,
+        submitted: false,
+        targetName: target.displayName,
+      };
+      openControlTower();
+      return;
+    }
+    const replay = rec.toReplay();
+    const clientResult = buildClientResult(replay);
+    // 먼저 "서버 검증 중" 상태로 관제탑을 연다(사용자 대기 안내).
+    openControlTower({ verifying: true });
+    const verdict = await submitInvasion({ target, replay, clientResult });
+    if (verdict === null) {
+      // 미설정/오프라인 — 잠정 결과만.
+      pendingInvasionResult = {
+        attackerWon: clientResult.attackerWon,
+        submitted: false,
+        targetName: target.displayName,
+      };
+    } else {
+      pendingInvasionResult = {
+        attackerWon: verdict.attackerWon,
+        status: verdict.status,
+        submitted: true,
+        ladder: verdict.ladder,
+        lootCount: verdict.loot.length,
+        targetName: target.displayName,
+      };
+    }
+    // 관제탑이 아직 이 화면이면 결과 배너로 다시 그린다(사이에 사용자가 나갔으면 스킵).
+    if (currentScreenName === 'controlTower') openControlTower();
   }
 
   /** Show the star map for the next run (world cleared while it is up). */
@@ -305,6 +452,7 @@ async function main(): Promise<void> {
   /** Assemble the run config from the selection + active loadout, then start. */
   function startRun(seed: number, sel: LaunchSelection): void {
     tutorialActive = false; // normal run unless startTutorial re-flags it
+    invasionTarget = null; // PvE 런: 침공 컨텍스트 해제(endRun 이 정산 경로로 분기)
     shownLevel = 0; // 새 런: 레벨업 오버레이 표시 상태 초기화
     const ship = activeShip(profile);
     const equipped: Item[] = [];
@@ -364,6 +512,12 @@ async function main(): Promise<void> {
 
   /** Settle a finished run into the profile once, then show the result screen. */
   function endRun(w: WorldState): void {
+    // 침공 런은 PvE 정산이 아니라 서버 제출로 분기한다(서버 권위). finishInvasionRun 이
+    // settled 를 즉시 세워 프레임당 재진입을 막는다.
+    if (invasionTarget !== null) {
+      void finishInvasionRun(w);
+      return;
+    }
     if (!settled) {
       settled = true;
       // 오염 런(ADR-0008): 하네스/치트 개입이 있었던 런은 정산하지 않는다 — 전리품·XP·
@@ -615,6 +769,11 @@ async function main(): Promise<void> {
           setScreen('defense');
           defenseCommand.show(profile, () => openBaseMap());
           break;
+        case 'controlTower':
+          planetSelect.hide();
+          clearToMenu();
+          openControlTower();
+          break;
       }
     }
 
@@ -631,6 +790,7 @@ async function main(): Promise<void> {
         case 'research':
         case 'refinery':
         case 'defense':
+        case 'controlTower':
           harnessGoto(currentScreenName);
           break;
         case 'base':
@@ -786,6 +946,7 @@ async function main(): Promise<void> {
         'research',
         'refinery',
         'defense',
+        'controlTower',
       ];
       if ((valid as readonly string[]).includes(screenParam)) {
         harnessGoto(screenParam as HarnessScreen);
