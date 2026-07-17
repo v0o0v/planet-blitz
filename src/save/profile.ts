@@ -104,6 +104,13 @@ export interface Profile {
    * 데이터가 된다. 미배치 = `undefined`. 지금은 로컬 세이브에만 두고, Supabase `defenses`
    * 테이블 연동은 M4 Phase B 후속(append-only 필드 — 깊은 검증은 UI의 normalizeLayout이
    * 로드 시 수행하므로 여기선 얕은 형태만 보존한다).
+   *
+   * ⚠️ 이 값은 {@link normalizeStoredLayout}의 얕은 검증(core/turrets/obstacles 존재 여부)만
+   * 거친다 — 침공 배선(profile.defenseLayout → WorldConfig.invasion) 시에는 반드시
+   * `src/ui/defenseCommand.ts`의 `normalizeLayout()`으로 깊은 정규화(포탑 유형 범위·좌표
+   * 유한성·장애물 반폭/반높이 양수 등)를 거쳐 InvasionConfig를 구성할 것. 여기서 직접
+   * WorldConfig.invasion.layout에 흘려 넣지 말 것 — NaN/손상 좌표가 그대로 sim에 들어가면
+   * hashFloat 등 결정론 해시 계산에 도달해 재현성이 붕괴한다(ADR-0005).
    */
   defenseLayout?: DefenseLayout;
 }

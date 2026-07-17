@@ -49,3 +49,26 @@ interface InvasionConfig {
 
 - `hashWorld`는 **조건부 append**: invasion 존재 시에만 제한시간·배치를 접는다 → PvE fixtures 해시 **바이트 불변**(검증됨: `fixtures.json` diff 없음).
 - 방어 거동은 전부 결정론(RNG 미소비, 위치·타이머·엔티티 순서·벽 LOS만). 침공 런 2회 해시 일치 테스트 통과(AC13).
+
+## 6. Phase D 서버 검증 필수 항목 (Lane C 리뷰 carry-forward)
+
+Lane C(C1+C2+C3) 코드리뷰 APPROVE 시점에 확인된, Phase D(서버 재실행 검증) 착수 전 반드시
+짚어야 할 잔여 항목. 전부 sim/에디터 자체의 결함이 아니라 **서버 신뢰 경계**·**밸런스** 성격의
+후속 확인 사항이다.
+
+1. **서버측 예산 재검증 필수** — C3 에디터의 배치 포인트 예산제는 **클라이언트(에디터) 책임**
+   이고 `src/sim/defense.ts`의 sim은 예산을 강제하지 않는다(계약 §3). 즉 변조된 클라이언트가
+   예산을 초과한 `DefenseLayout`을 그대로 제출하면 sim은 순순히 스폰한다. Phase D의 Edge
+   Function 재실행 경로는 제출된 layout을 실행 전에 **`TURRET_SPECS[type].cost` 합산으로
+   재검증**해 예산 초과 배치를 거부(또는 서버 표준 예산으로 클램프)해야 한다.
+2. **침공 시나리오 fixtures 교차 런타임 잠금** — 기존 `denoFixture.test.ts`는 M1~M3 대표
+   시나리오만 Deno 교차 검증한다. 침공 런(포탑 6종·코어·장애물 조합)은 아직 그 픽스처 세트에
+   없다 — Phase D 착수 시 대표 침공 시나리오(예: 6종 포탑 전부 배치 + 장애물 혼합)를
+   fixtures.json에 추가해 Node/Deno 양쪽 bit-identical을 잠가야 한다(AC13는 Node 내부 2회
+   실행만 검증했고, 교차 런타임까지는 아직).
+3. **감속 포탑의 LOS 무시(밸런스 검토 항목)** — `fireTurret`의 TURRET_FROST 분기는 냉기
+   장판을 플레이어의 **현재 위치**에 직접 융기시키며, `stepDefenseTurrets`의 사거리 게이트를
+   통과하면 `spec.hazardRadius === 0` 조건 때문에 벽 LOS 차단 검사를 건너뛴다(다른 포탑은
+   장애물 뒤에 숨으면 발사가 보류되지만 감속 포탑은 엄폐로 회피 불가). 의도적 설계일 수
+   있으나(장판형 무기는 탄도가 없어 LOS 개념이 안 맞을 수 있음), 방어자가 감속 포탑만으로
+   엄폐 불가 구간을 만드는 것이 밸런스상 허용 범위인지는 M5 밸런싱 패스에서 검토 필요.

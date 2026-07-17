@@ -279,11 +279,16 @@ export interface InvasionConfig {
 // ---------------------------------------------------------------------------
 /** 방어 포탑 1기를 스폰(유형별 스펙으로 내구도·반지름·초기 발사 지연 세팅). */
 export function spawnDefenseTurret(sink: EntitySink, type: number, x: number, y: number): Entity {
-  const spec = TURRET_SPECS[type] ?? TURRET_SPECS[TURRET_VULCAN]!;
+  // 범위 밖 type(정상 경로에서는 도달 불가 — 배치 데이터는 항상 검증된 유형만 담는다)은
+  // 발칸으로 폴백한다. spec뿐 아니라 저장하는 유형 코드도 함께 폴백해야 한다 — 그러지
+  // 않으면 spec은 발칸인데 enemyType은 원래의 잘못된 값으로 남아, stepDefenseTurrets가
+  // `TURRET_SPECS[t.enemyType]`을 다시 조회할 때 undefined를 만나 영구 무발사 엔티티가 된다.
+  const validType = TURRET_SPECS[type] !== undefined ? type : TURRET_VULCAN;
+  const spec = TURRET_SPECS[validType]!;
   const t = blankEntity('defenseTurret');
   t.x = x;
   t.y = y;
-  t.enemyType = type; // 유형 코드(렌더 분화 + 스텝 디스패치)
+  t.enemyType = validType; // 유형 코드(렌더 분화 + 스텝 디스패치) — spec과 항상 일치
   t.radius = spec.radius;
   t.hp = spec.hp;
   t.maxHp = spec.hp;
