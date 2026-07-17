@@ -16,6 +16,7 @@
 
 import { POWERUPS } from '../sim/powerups.js';
 import { choiceRelevance, type BuildStatus } from './buildStatus.js';
+import { t } from '../i18n/index.js';
 
 const STYLE = `
 #pb-powerup { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; background:rgba(4,6,14,.72); backdrop-filter:blur(2px); font-family:'Segoe UI',system-ui,sans-serif; z-index:20; }
@@ -59,14 +60,14 @@ export class PowerupOverlay {
     this.root.id = 'pb-powerup';
     this.root.style.display = 'none';
     const title = document.createElement('h2');
-    title.textContent = '레벨 업! — 강화를 선택하라';
+    title.textContent = t('powerup.title');
     this.statusBar = document.createElement('div');
     this.statusBar.className = 'pb-status';
     this.cards = document.createElement('div');
     this.cards.className = 'pb-cards';
     this.hint = document.createElement('div');
     this.hint.className = 'pb-hint';
-    this.hint.textContent = '클릭 또는 숫자 키';
+    this.hint.textContent = t('powerup.hint', { keys: '1 / 2 / 3' });
     this.root.appendChild(title);
     this.root.appendChild(this.statusBar);
     this.root.appendChild(this.cards);
@@ -123,7 +124,10 @@ export class PowerupOverlay {
       card.className = `pb-card${rel.matchesWeapon ? ' match' : ''}`;
       // 최소 접근성: 스크린리더가 카드를 버튼으로 인식하고 이름을 읽도록.
       card.setAttribute('role', 'button');
-      card.setAttribute('aria-label', `${offerIndex + 1}번 강화: ${def?.name ?? ''} — ${def?.desc ?? ''}`);
+      card.setAttribute(
+        'aria-label',
+        t('powerup.aria', { n: offerIndex + 1, name: def?.name ?? '', desc: def?.desc ?? '' }),
+      );
 
       if (rel.label !== '') {
         const badge = document.createElement('div');
@@ -149,24 +153,24 @@ export class PowerupOverlay {
     });
     // 힌트를 오퍼 수에 맞춰 갱신(도박사 칩 4장 대응).
     const keys = choices.map((_, i) => String(i + 1)).join(' / ');
-    this.hint.textContent = `클릭 또는 ${keys} 키`;
+    this.hint.textContent = t('powerup.hint', { keys });
     this.root.style.display = 'flex';
   }
 
   /** 현재 빌드 상태 바를 렌더(레벨업 선택 판단용, 표시 전용). */
   private renderStatus(s: BuildStatus): void {
     const items: { label: string; value: string; cls?: string }[] = [
-      { label: '무기', value: s.weaponName, cls: 'wpn' },
-      { label: 'Lv', value: String(s.level) },
-      { label: '데미지', value: String(s.damage) },
-      { label: '탄환', value: String(s.bulletCount) },
-      { label: '연사', value: `${s.shotsPerSec}/s` },
-      { label: '관통', value: String(s.pierce) },
-      { label: '확산', value: `${s.spreadDeg}°` },
-      { label: '이동', value: String(s.moveSpeed) },
-      { label: '대시', value: `${(s.dashCooldownTicks / 60).toFixed(1)}s` },
-      { label: 'HP', value: `${s.hp}/${s.maxHp}` },
-      { label: '자석', value: String(s.magnetRadius) },
+      { label: t('powerup.stat.weapon'), value: s.weaponName, cls: 'wpn' },
+      { label: t('powerup.stat.level'), value: String(s.level) },
+      { label: t('powerup.stat.damage'), value: String(s.damage) },
+      { label: t('powerup.stat.bullets'), value: String(s.bulletCount) },
+      { label: t('powerup.stat.fire'), value: `${s.shotsPerSec}/s` },
+      { label: t('powerup.stat.pierce'), value: String(s.pierce) },
+      { label: t('powerup.stat.spread'), value: `${s.spreadDeg}°` },
+      { label: t('powerup.stat.move'), value: String(s.moveSpeed) },
+      { label: t('powerup.stat.dash'), value: `${(s.dashCooldownTicks / 60).toFixed(1)}s` },
+      { label: t('powerup.stat.hp'), value: `${s.hp}/${s.maxHp}` },
+      { label: t('powerup.stat.magnet'), value: String(s.magnetRadius) },
     ];
     this.statusBar.innerHTML = '';
     for (const it of items) {

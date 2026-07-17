@@ -15,6 +15,7 @@ import { PLANETS, TIERS, planetById } from '../../data/planets.js';
 import { canEnterTier, ANNIHILATION_UNLOCK_LEVEL } from '../../data/waves.js';
 import { ANOMALY_GRAVITY, ANOMALY_SWARM, ANOMALY_NEBULA, ANOMALY_NONE } from '../sim/anomaly.js';
 import { UI_LOCK_URL, pixelIcon } from './uiIcons.js';
+import { t, type MessageKey } from '../i18n/index.js';
 
 /** What the player chose on the star map. */
 export interface LaunchSelection {
@@ -26,11 +27,11 @@ export interface LaunchSelection {
   maxSegments?: number;
 }
 
-/** Human-readable anomaly labels (render-only). */
-const ANOMALY_LABEL: Record<number, { name: string; desc: string }> = {
-  [ANOMALY_GRAVITY]: { name: '중력 폭풍', desc: '적 탄속 ↓ · 드랍률 +50%' },
-  [ANOMALY_SWARM]: { name: '군체 대발생', desc: '적 수 ×2 · 개체 약화' },
-  [ANOMALY_NEBULA]: { name: '암흑 성운', desc: '시야 ↓ · 유니크 드랍 ×2' },
+/** Anomaly kind → i18n 키(render-only, 로케일화). */
+const ANOMALY_LABEL: Record<number, { nameKey: MessageKey; descKey: MessageKey }> = {
+  [ANOMALY_GRAVITY]: { nameKey: 'anomaly.gravity.name', descKey: 'anomaly.gravity.desc' },
+  [ANOMALY_SWARM]: { nameKey: 'anomaly.swarm.name', descKey: 'anomaly.swarm.desc' },
+  [ANOMALY_NEBULA]: { nameKey: 'anomaly.nebula.name', descKey: 'anomaly.nebula.desc' },
 };
 
 const STYLE = `
@@ -130,11 +131,11 @@ export class PlanetSelect {
     this.root.innerHTML = '';
 
     const h1 = document.createElement('h1');
-    h1.textContent = '성계 지도 — 출격 준비';
+    h1.textContent = t('planet.title');
     this.root.appendChild(h1);
     const sub = document.createElement('div');
     sub.className = 'pb-subtitle';
-    sub.textContent = '행성과 작전 강도를 선택하라.';
+    sub.textContent = t('planet.sub');
     this.root.appendChild(sub);
 
     // Planet cards.
@@ -169,23 +170,23 @@ export class PlanetSelect {
     tierRow.className = 'pb-row';
     const tierLabel = document.createElement('span');
     tierLabel.className = 'pb-meta';
-    tierLabel.textContent = '작전 강도';
+    tierLabel.textContent = t('planet.tierLabel');
     const seg = document.createElement('div');
     seg.className = 'pb-seg';
-    for (const t of TIERS) {
-      const unlocked = canEnterTier(t.id, this.level);
+    for (const tm of TIERS) {
+      const unlocked = canEnterTier(tm.id, this.level);
       const b = document.createElement('button');
-      b.className = `${t.id === this.tier ? 'sel' : ''}${unlocked ? '' : ' locked'}`.trim();
+      b.className = `${tm.id === this.tier ? 'sel' : ''}${unlocked ? '' : ' locked'}`.trim();
       if (unlocked) {
-        b.textContent = t.name;
+        b.textContent = tm.name;
       } else {
         // 잠금 티어: 픽셀 자물쇠 아이콘 + 이름(이모지 폴백 대체).
-        b.appendChild(pixelIcon(UI_LOCK_URL, 12, '잠김'));
-        b.appendChild(document.createTextNode(` ${t.name}`));
+        b.appendChild(pixelIcon(UI_LOCK_URL, 12, t('base.locked')));
+        b.appendChild(document.createTextNode(` ${tm.name}`));
       }
       b.addEventListener('click', () => {
-        if (!canEnterTier(t.id, this.level)) return; // locked: keep current selection
-        this.tier = t.id;
+        if (!canEnterTier(tm.id, this.level)) return; // locked: keep current selection
+        this.tier = tm.id;
         this.render(meta);
       });
       seg.appendChild(b);
@@ -200,7 +201,7 @@ export class PlanetSelect {
     const lockedTier = TIERS.find((t) => !canEnterTier(t.id, this.level));
     tierDesc.textContent =
       lockedTier !== undefined
-        ? `${selTier?.desc ?? ''}   ·   🔒 ${lockedTier.name}: 기체 Lv ${ANNIHILATION_LEVEL} 필요 (현재 Lv ${this.level})`
+        ? `${selTier?.desc ?? ''}   ·   ${t('planet.lock', { tier: lockedTier.name, lvl: ANNIHILATION_LEVEL, cur: this.level })}`
         : (selTier?.desc ?? '');
     this.root.appendChild(tierDesc);
 
@@ -211,22 +212,23 @@ export class PlanetSelect {
       box.className = 'pb-anomaly';
       const atitle = document.createElement('div');
       atitle.className = 'pb-atitle';
-      atitle.textContent = `⚠ 변칙 경보: ${info?.name ?? '알 수 없음'}`;
+      const anomalyName = info !== undefined ? t(info.nameKey) : t('planet.anomaly.unknown');
+      atitle.textContent = t('planet.anomaly.title', { name: anomalyName });
       const adesc = document.createElement('div');
       adesc.className = 'pb-adesc';
-      adesc.textContent = info?.desc ?? '';
+      adesc.textContent = info !== undefined ? t(info.descKey) : '';
       const achoice = document.createElement('div');
       achoice.className = 'pb-seg';
       const accept = document.createElement('button');
       accept.className = this.anomalyAccepted ? 'sel' : '';
-      accept.textContent = '수락';
+      accept.textContent = t('planet.anomaly.accept');
       accept.addEventListener('click', () => {
         this.anomalyAccepted = true;
         this.render(meta);
       });
       const reject = document.createElement('button');
       reject.className = !this.anomalyAccepted ? 'sel' : '';
-      reject.textContent = '거부';
+      reject.textContent = t('planet.anomaly.reject');
       reject.addEventListener('click', () => {
         this.anomalyAccepted = false;
         this.render(meta);
@@ -245,7 +247,7 @@ export class PlanetSelect {
     if (this.onBack !== null) {
       const backBtn = document.createElement('button');
       backBtn.className = 'pb-inv-btn';
-      backBtn.textContent = '◀ 기지로';
+      backBtn.textContent = t('planet.back');
       backBtn.addEventListener('click', () => {
         const cb = this.onBack;
         this.hide();
@@ -255,11 +257,11 @@ export class PlanetSelect {
     }
     const invBtn = document.createElement('button');
     invBtn.className = 'pb-inv-btn';
-    invBtn.textContent = '🛠 장비 정비';
+    invBtn.textContent = t('planet.inventory');
     invBtn.addEventListener('click', () => this.onInventory?.());
     const launch = document.createElement('button');
     launch.className = 'pb-launch';
-    launch.textContent = `▶ ${planetById(this.planet).name} 출격`;
+    launch.textContent = t('planet.launch', { name: planetById(this.planet).name });
     launch.addEventListener('click', () => {
       const cb = this.onLaunch;
       this.hide();

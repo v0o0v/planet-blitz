@@ -95,6 +95,13 @@ import { SpectateOverlay, isPlayableReplay, nextSpectateSpeed } from './ui/repla
 import type { SpectateSpeed } from './ui/replaySpectate.js';
 import { StickerPicker } from './ui/stickerPicker.js';
 import type { Replay } from './sim/replay.js';
+// M5 Phase C: 사운드(C1)·정산 완성판(C2)·로컬라이즈(C3). 전부 render/UI 레이어(sim 무수정).
+import { GameAudio } from './render/audio.js';
+import { RunSoundObserver } from './render/soundScape.js';
+import { SettingsPanel } from './ui/settingsPanel.js';
+import { t } from './i18n/index.js';
+import { totalCombatPower } from './save/combatPower.js';
+import type { ResultDrop } from './ui/resultOverlay.js';
 
 async function main(): Promise<void> {
   const mount = document.getElementById('app');
@@ -180,6 +187,20 @@ async function main(): Promise<void> {
   const titleScreen = new TitleScreen();
   const tutorialOverlay = new TutorialOverlay();
   const ftue = new FtueTracker();
+  // M5 C1: 절차 합성 사운드 + 런 사운드 관찰자(sim 스냅샷 델타 → SFX, 단방향 render).
+  const audio = new GameAudio();
+  const soundObserver = new RunSoundObserver(audio);
+  // 자동재생 정책: 아무 첫 사용자 제스처에서 오디오 컨텍스트를 잠금 해제한다.
+  const unlockAudioOnce = (): void => {
+    audio.unlock();
+    window.removeEventListener('pointerdown', unlockAudioOnce);
+    window.removeEventListener('keydown', unlockAudioOnce);
+  };
+  window.addEventListener('pointerdown', unlockAudioOnce);
+  window.addEventListener('keydown', unlockAudioOnce);
+  // M5 C1/C3: 좌상단 설정 패널(음소거·볼륨·언어). 생성만으로 DOM 에 자기 등록하므로 참조를
+  // 따로 보관하지 않는다. 언어 전환 시 현재 메뉴 화면을 다시 그린다.
+  new SettingsPanel(audio, () => rerenderCurrentScreen());
   let tutorialActive = false;
   // 현재 오버레이가 띄운 레벨업의 기체 레벨(멀티 레벨업 시 신규 레벨업 감지용). 0 = 미표시.
   let shownLevel = 0;
@@ -247,7 +268,39 @@ async function main(): Promise<void> {
   /** Meta status line for the star map / no gameplay numbers. */
   function metaLine(): string {
     const ship = activeShip(profile);
-    return `크레딧 ${profile.credits} · 광물 ${profile.minerals} · 기체 Lv ${ship.level} · 스킬 ${profile.skillPoints}`;
+    return t('meta.line', {
+      c: profile.credits,
+      m: profile.minerals,
+      lv: ship.level,
+      sp: profile.skillPoints,
+    });
+  }
+
+  /**
+   * 현재 메뉴 화면을 다시 그린다(M5 C3 언어 전환용). 런/정산/관전 중에는 안전하게 무시한다
+   * — 사운드/사이드이펙트 재실행 없이 순수 메뉴 UI 만 새 로케일로 재구성한다. controlTower/
+   * defenseCommand 등 아직 미로케일화된 화면도 안전하게 재오픈된다(문자열만 그대로).
+   */
+  function rerenderCurrentScreen(): void {
+    if (world !== null) return; // 런/관전 중에는 재렌더하지 않는다(HUD 는 다음 프레임 반영).
+    switch (currentScreenName) {
+      case 'title':
+        openTitle();
+        break;
+      case 'base':
+        openBaseMap();
+        break;
+      case 'starMap':
+        openStarMap();
+        break;
+      case 'controlTower':
+        openControlTower();
+        break;
+      // inventory/research/refinery/defense 는 각 오버레이가 자체 콜백으로 기지 복귀하므로
+      // 언어 전환 즉시 반영은 다음 진입 때 이뤄진다(안전한 기본 동작).
+      default:
+        break;
+    }
   }
 
   /** Clear the live run + all menu overlays (called before every screen swap). */
@@ -331,7 +384,7 @@ async function main(): Promise<void> {
       {
         onInvade: (target, layout) => startInvasionRun(target, layout),
         onSpectate: (invasionId, attackerName) => void startSpectate(invasionId, attackerName),
-        onSticker: (invasionId, attackerName) => promptSticker(invasionId, '방어 성공! 도발 스티커를 남기시겠어요?', attackerName),
+        onSticker: (invasionId, attackerName) => promptSticker(invasionId, t('sticker.prompt.defend'), attackerName),
         onBack: () => openBaseMap(),
       },
       showOpts,
@@ -351,7 +404,7 @@ async function main(): Promise<void> {
         },
         onSkip: () => openControlTower(),
       },
-      { title, ...(otherName.length > 0 ? { subtitle: `${otherName} 에게 한 마디` } : {}) },
+      { title, ...(otherName.length > 0 ? { subtitle: t('sticker.subtitle', { name: otherName }) } : {}) },
     );
   }
 
@@ -388,6 +441,7 @@ async function main(): Promise<void> {
     accumulator = 0;
     settled = false;
     ceremony.reset();
+    soundObserver.reset();
     // 관전 아레나 배경(침공 아레나와 동일 규칙 — 기본 배경, autotile 없음).
     const planet = world.config.planet ?? 0;
     background.texture = planetBackground(planet);
@@ -473,6 +527,7 @@ async function main(): Promise<void> {
     accumulator = 0;
     settled = false;
     ceremony.reset();
+    soundObserver.reset();
     lastOutcome = null;
     resultOverlay.hide();
     invasionTarget = target;
@@ -541,7 +596,7 @@ async function main(): Promise<void> {
       invId !== undefined &&
       invId.length > 0
     ) {
-      promptSticker(invId, '침공 성공! 도발 스티커를 남기시겠어요?', target.displayName);
+      promptSticker(invId, t('sticker.prompt.invade'), target.displayName);
       return;
     }
     // 관제탑이 아직 이 화면이면 결과 배너로 다시 그린다(사이에 사용자가 나갔으면 스킵).
@@ -622,6 +677,7 @@ async function main(): Promise<void> {
     accumulator = 0;
     settled = false;
     ceremony.reset();
+    soundObserver.reset();
     lastOutcome = null;
     resultOverlay.hide();
     setScreen('run');
@@ -653,6 +709,9 @@ async function main(): Promise<void> {
     }
     if (!settled) {
       settled = true;
+      // M5 C1: 승/패 연출 사운드(런당 1회). 격추 사출음(eject)은 피격 관찰에서 이미 났으므로
+      // 여기서는 결과 팡파레/하강음만 낸다.
+      audio.play(w.victory ? 'victory' : 'defeat');
       // 오염 런(ADR-0008): 하네스/치트 개입이 있었던 런은 정산하지 않는다 — 전리품·XP·
       // 튜토리얼 완료 플래그 모두 프로필에 반영되지 않고, 리플레이도 제출 대상에서
       // 빠진다(리플레이는 아직 어디에도 제출되지 않으므로 recorder 결과를 그냥 버린다).
@@ -702,6 +761,15 @@ async function main(): Promise<void> {
                 skillPointsGained: o.skillPointsGained,
                 creditsGained: o.creditsGained,
                 overflow: o.overflow,
+                // M5 C2: 획득 전투력 합계 + 등급별 장비 칩 목록(정산 완성판).
+                combatPower: totalCombatPower(o.itemsGained),
+                drops: o.itemsGained.map(
+                  (it): ResultDrop => ({
+                    rarity: it.rarity,
+                    slot: it.slot,
+                    ...(it.weaponType !== undefined ? { weaponType: it.weaponType } : {}),
+                  }),
+                ),
               },
             }
           : {}),
@@ -834,14 +902,27 @@ async function main(): Promise<void> {
       const p = w.entities[0];
       let enemyN = 0;
       let bulletN = 0;
+      let playerBulletN = 0;
       let bossEnt: (typeof w.entities)[number] | undefined;
       let supplyActive = false;
       for (const e of w.entities) {
         if (e.kind === 'enemy') enemyN++;
-        else if (e.kind === 'enemyBullet' || e.kind === 'bullet') bulletN++;
-        else if (e.kind === 'boss') bossEnt = e;
+        else if (e.kind === 'enemyBullet' || e.kind === 'bullet') {
+          bulletN++;
+          if (e.kind === 'bullet') playerBulletN++;
+        } else if (e.kind === 'boss') bossEnt = e;
         else if (e.kind === 'supply') supplyActive = true;
       }
+      // M5 C1: 사운드 트리거 파생(render 관찰, sim 무수정). 프레임당 1회 — 처치·레벨업·
+      // 피격·픽업·보스 등장·발사 델타를 감지해 SFX 를 낸다. 세리머니와 동일 관찰 패턴.
+      soundObserver.observe({
+        kills: w.kills,
+        level: w.level,
+        playerHp: p?.hp ?? 0,
+        resources: w.resources,
+        hasBoss: bossEnt !== undefined,
+        bulletCount: playerBulletN,
+      });
       const boss: BossHudState | undefined =
         bossEnt !== undefined
           ? {
