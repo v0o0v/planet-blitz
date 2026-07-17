@@ -93,3 +93,23 @@ Supabase 프로젝트는 아직 없다. **배포하지 않는다.** 검증 코�
   고정하고, 업그레이드 시 이 검증을 회귀 게이트로 재실행.
 - config 신뢰: Phase A는 config를 그대로 재실행한다. 침공 검증(Phase D)에서 방어
   배치·로드아웃이 서버 저장본과 일치하는지 별도 대조가 필요하다.
+
+## Phase D 착수 조건 (carry-forward 게이트, 리뷰 반영)
+
+Phase A의 `verifyRun`은 "제출된 [seed+config+inputs]가 주장된 결과를 내적으로
+재현하는가"만 증명한다. 침공/래더처럼 결과가 순위에 직결되는 흐름(Phase D 전수
+검증)에 배선하려면, 아래 3건을 **먼저** 게이트해야 한다 — 지금 상태로는 배선 금지:
+
+1. **config 정당성 대조.** 클라이언트가 보낸 `config`(방어 배치·로드아웃 등)를
+   서버가 정의/보유한 값(DB에 저장된 `defenses`·인벤토리 등)과 대조하는 별도
+   단계가 필요하다. 지금은 제출된 config를 그대로 믿고 재실행할 뿐이라, config
+   자체를 조작해 제출하면 내적으로는 일관된(=accept되는) 위조가 가능하다.
+2. **침공 제출은 `hashStream` 필수화.** Phase A에서는 `hashStream`이 선택
+   필드였다(최종 해시만으로도 accept). 침공처럼 무결성이 최우선인 제출은
+   `hashStream` 부재를 그 자체로 reject하는 정책으로 좁혀, 중간 발산 지점(위조
+   추적 근거)을 항상 확보해야 한다.
+3. **배포 시 재실행 시간예산/AbortSignal.timeout 가드.** Edge Function은 CPU
+   wall-clock 상한이 있다(§6-4 스파이크 문서). 장기 리플레이(최대
+   `MAX_INPUT_TICKS`)의 재실행이 상한을 넘지 않는지 실측하고, `AbortSignal.timeout`
+   등으로 초과 시 명시적으로 실패(=reject, DoS 방지)하도록 `index.ts`에 가드를
+   추가해야 한다. 지금은 무제한 대기다.

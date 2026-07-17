@@ -26,6 +26,11 @@ function json(body: unknown, status: number): Response {
 
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method !== 'POST') {
+    // 'method-not-allowed'는 verifyCore.ts의 ReasonCode 유니온 밖이다(의도적) — 이
+    // 값은 검증 코어가 재실행 전에 내리는 판정이 아니라, HTTP 배선 계층(이 파일)이
+    // 요청 자체를 코어에 넘기기도 전에 거절한 전송 계층 사유다. ReasonCode에 섞으면
+    // "재실행 결과에 대한 판정"과 "요청이 검증 대상조차 못 됐다"는 서로 다른 층위가
+    // 뒤섞여 클라이언트 분기가 애매해지므로 문자열 그대로 둔다(리뷰 권고, 최소 수정).
     return json({ verdict: 'reject', reason: 'method-not-allowed' }, 405);
   }
 
@@ -33,6 +38,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
   try {
     body = await req.json();
   } catch {
+    // 'invalid-json'도 위와 동일한 이유로 ReasonCode 밖의 전송 계층 사유다 — 파싱
+    // 자체가 실패해 verifyRun 호출까지 가지 못했다는 뜻.
     return json({ verdict: 'reject', reason: 'invalid-json' }, 400);
   }
 
