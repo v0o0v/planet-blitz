@@ -24,12 +24,21 @@ import type { DefenseLayout } from '../sim/defense.js';
 import {
   fetchInvasionTargets,
   fetchLadder,
+  fetchPlacementStatus,
+  fetchPlacementTargets,
+  applyPlacementResult,
+  placementPhase,
+  placementProgressLabel,
+  placementRemaining,
   readInvasionCooldowns,
   cooldownRemainingMs,
   type InvasionTarget,
   type LadderEntry,
   type ShipSummary,
+  type PlacementStatus,
+  type PlacementResult,
 } from '../net/invasion.js';
+import { seedBaseByProfileId } from '../../data/seedBases.js';
 import {
   GRID_COLS,
   GRID_ROWS,
@@ -113,6 +122,28 @@ export function computeInvadeState(
     return { canInvade: false, reason: formatCooldown(remaining), layout };
   }
   return { canInvade: true, reason: '', layout };
+}
+
+/**
+ * 배치전 대상의 침공 버튼 상태(순수). 일반 침공과 달리 **재도전 쿨다운을 무시**한다
+ * (계약 §2 — 배치전은 NPC 전용·쿨다운 없음). 배치 layout 정규화만 검사한다.
+ */
+export function computePlacementInvadeState(target: InvasionTarget): InvadeState {
+  const layout = normalizeLayout(target.layout);
+  if (layout === null) {
+    return { canInvade: false, reason: '방어 기지 없음', layout: null };
+  }
+  return { canInvade: true, reason: '', layout };
+}
+
+/**
+ * 배치전 대상 표시명을 시드 메타로 보강한다(순수). 서버가 display_name 을 주면 그대로,
+ * 없으면 seedBases 메타의 한글 이름으로 대체한다("난이도밴드 · 이름" 형태 라벨도 제공).
+ */
+export function placementTargetName(target: InvasionTarget): string {
+  if (target.displayName.length > 0 && target.displayName !== '무명 파일럿') return target.displayName;
+  const meta = seedBaseByProfileId(target.profileId);
+  return meta !== null ? meta.name : target.displayName;
 }
 
 /** 침공 결과 배너에 표시할 요약(main 이 서버 판정/잠정 결과로 채운다). */
@@ -230,6 +261,9 @@ const STYLE = `
 #pb-ctl table.pb-lad td { color:#c3cdea; padding:3px 6px; border-bottom:1px solid rgba(255,255,255,.05); }
 #pb-ctl table.pb-lad td.rk { color:#ffd24c; font-weight:800; }
 #pb-ctl .pb-note { color:#8896b8; font-size:11px; max-width:640px; text-align:center; }
+#pb-ctl .pb-pgbar { display:flex; gap:5px; justify-content:center; }
+#pb-ctl .pb-pgseg { width:38px; height:9px; border-radius:5px; background:rgba(80,90,130,.4); border:1px solid #2a3552; }
+#pb-ctl .pb-pgseg.done { background:linear-gradient(90deg,#c86aff,#7affea); border-color:#7affea; }
 #pb-ctl .pb-actions { display:flex; gap:10px; }
 #pb-ctl button.pb-ghost { pointer-events:auto; cursor:pointer; padding:10px 18px; font-size:14px; font-weight:700; color:#aab6d6; background:rgba(20,24,44,.9); border:1px solid #2a3552; border-radius:10px; }
 `;
@@ -263,6 +297,12 @@ export class ControlTower {
   private loadToken = 0;
   private opts: ControlTowerShowOpts = {};
 
+  // 배치전(AC4) 상태 — 서버 권위. null = 미설정/미배치정보없음(→ 일반 침공만).
+  private placement: PlacementStatus | null = null;
+  private placementTargets: InvasionTarget[] | null = null;
+  private placementResult: PlacementResult | null = null;
+  private applying = false;
+
   constructor() {
     const style = document.createElement('style');
     style.textContent = STYLE;
@@ -285,6 +325,10 @@ export class ControlTower {
     this.loading = true;
     this.targets = null;
     this.ladder = null;
+    this.placement = null;
+    this.placementTargets = null;
+    this.placementResult = null;
+    this.applying = false;
     this.render();
     this.root.style.display = 'flex';
     void this.load();
@@ -304,12 +348,43 @@ export class ControlTower {
     } catch {
       this.cooldowns = {};
     }
-    const [targets, ladder] = await Promise.all([fetchInvasionTargets(), fetchLadder(20)]);
+    const [targets, ladder, placement] = await Promise.all([
+      fetchInvasionTargets(),
+      fetchLadder(20),
+      fetchPlacementStatus(),
+    ]);
     if (token !== this.loadToken || !this.visible) return; // 낡은 로드 무시
     this.targets = targets;
     this.ladder = ladder;
+    this.placement = placement;
+    // 배치전 진행 중이면 NPC 시드 기지 목록도 로드(쿨다운 무시 제안).
+    if (placement !== null && placementPhase(placement) === 'placement') {
+      const pts = await fetchPlacementTargets();
+      if (token !== this.loadToken || !this.visible) return;
+      this.placementTargets = pts;
+    }
     this.loading = false;
     this.render();
+  }
+
+  /** 배치전 5회 완료 후 순위 삽입을 서버에 요청하고 연출 상태로 재렌더한다. */
+  private async applyPlacement(): Promise<void> {
+    if (this.applying) return;
+    this.applying = true;
+    this.render();
+    const result = await applyPlacementResult();
+    if (!this.visible) return;
+    this.applying = false;
+    this.placementResult = result;
+    if (result !== null && result.placed) {
+      // 순위 진입 — 배치전 종료. 상태를 placed 로 갱신하고 순위표를 새로 로드한다.
+      this.placement = this.placement !== null
+        ? { ...this.placement, placed: true }
+        : { completed: 0, won: 0, total: 0, placed: true };
+      void this.load();
+    } else {
+      this.render();
+    }
   }
 
   private selectTarget(id: string): void {
@@ -317,8 +392,21 @@ export class ControlTower {
     this.render();
   }
 
+  /** 배치전 진행 단계인지(NPC 시드 기지 제안·쿨다운 무시). */
+  private inPlacement(): boolean {
+    return this.placement !== null && placementPhase(this.placement) === 'placement';
+  }
+
+  /** 배치전 5회를 다 치렀으나 아직 순위 삽입 전(연출 대상)인지. */
+  private isCompleting(): boolean {
+    return this.placement !== null && placementPhase(this.placement) === 'completing';
+  }
+
   private invade(target: InvasionTarget): void {
-    const st = computeInvadeState(target, this.cooldowns, Date.now());
+    // 배치전 대상은 쿨다운을 무시(computePlacementInvadeState), 일반 침공은 쿨다운 미러 적용.
+    const st = this.inPlacement()
+      ? computePlacementInvadeState(target)
+      : computeInvadeState(target, this.cooldowns, Date.now());
     if (!st.canInvade || st.layout === null) return;
     const cb = this.onInvade;
     // 침공 런으로 넘어가면 이 화면은 내려간다(런 종료 후 main 이 다시 연다).
@@ -346,6 +434,10 @@ export class ControlTower {
       v.textContent = '서버 검증 중… (전수 재실행으로 결과를 확정합니다)';
       this.root.appendChild(v);
     }
+
+    // 배치전 진행/완료/순위 진입 연출(서버 상태가 있을 때만).
+    const placementPanel = this.placementPanel();
+    if (placementPanel !== null) this.root.appendChild(placementPanel);
 
     const cols = document.createElement('div');
     cols.className = 'pb-cols';
@@ -388,62 +480,148 @@ export class ControlTower {
   }
 
   private targetsPanel(): HTMLElement {
+    const placementMode = this.inPlacement();
     const panel = document.createElement('div');
     panel.className = 'pb-panel pb-targets';
     const h2 = document.createElement('h2');
-    h2.textContent = '침공 대상 제안';
+    h2.textContent = placementMode ? '배치전 상대 (NPC 시드 기지)' : '침공 대상 제안';
     panel.appendChild(h2);
 
     if (this.loading) {
       panel.appendChild(this.msg('대상을 불러오는 중…'));
       return panel;
     }
-    if (this.targets === null) {
-      panel.appendChild(this.msg('서버 미설정 또는 오프라인 — 침공이 비활성입니다. (로컬 플레이는 정상)'));
+    // 배치전이 아직 안 끝났으나 순위 삽입 대기(completing)면 목록 대신 안내.
+    if (this.isCompleting()) {
+      panel.appendChild(this.msg('배치전 5회를 모두 마쳤습니다. 위의 순위 진입 버튼으로 초기 순위를 확정하세요.'));
       return panel;
     }
-    if (this.targets.length === 0) {
-      panel.appendChild(this.msg('제안할 침공 대상이 없습니다. 배치전을 마치면 순위가 잡힙니다.'));
+
+    const list = placementMode ? this.placementTargets : this.targets;
+    if (list === null) {
+      panel.appendChild(
+        this.msg(
+          placementMode
+            ? '배치전 상대를 불러오지 못했습니다 — 서버 미설정 또는 오프라인. (로컬 플레이는 정상)'
+            : '서버 미설정 또는 오프라인 — 침공이 비활성입니다. (로컬 플레이는 정상)',
+        ),
+      );
+      return panel;
+    }
+    if (list.length === 0) {
+      panel.appendChild(
+        this.msg(
+          placementMode
+            ? '배치전 상대가 없습니다. 잠시 후 다시 시도하세요.'
+            : '제안할 침공 대상이 없습니다. 배치전을 마치면 순위가 잡힙니다.',
+        ),
+      );
       return panel;
     }
 
     const now = Date.now();
-    for (const t of this.targets) {
-      const st = computeInvadeState(t, this.cooldowns, now);
-      const row = document.createElement('div');
-      row.className = `pb-tgt${this.selectedId === t.profileId ? ' sel' : ''}`;
-      row.addEventListener('click', () => this.selectTarget(t.profileId));
-
-      const rk = document.createElement('div');
-      rk.className = 'rk';
-      rk.textContent = `#${t.rank}`;
-      const info = document.createElement('div');
-      info.className = 'info';
-      const nm = document.createElement('div');
-      nm.className = 'nm';
-      nm.textContent = t.displayName;
-      const ds = document.createElement('div');
-      ds.className = 'ds';
-      ds.textContent = shipSummaryText(t.shipSummary);
-      info.append(nm, ds);
-      const mt = document.createElement('div');
-      mt.className = 'mt';
-      mt.textContent = maintenanceLabel(t.maintenance);
-
-      const btn = document.createElement('button');
-      btn.className = 'pb-inv';
-      btn.textContent = st.canInvade ? '침공' : st.reason;
-      btn.disabled = !st.canInvade;
-      btn.title = st.canInvade ? '침공 런 시작' : st.reason;
-      btn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        this.invade(t);
-      });
-
-      row.append(rk, info, mt, btn);
-      panel.appendChild(row);
+    for (const t of list) {
+      panel.appendChild(this.targetRow(t, placementMode, now));
     }
     return panel;
+  }
+
+  /** 대상 1행(일반/배치전 공통). 배치전은 쿨다운 무시 + 시드 이름·난이도 밴드 표시. */
+  private targetRow(t: InvasionTarget, placementMode: boolean, now: number): HTMLElement {
+    const st = placementMode
+      ? computePlacementInvadeState(t)
+      : computeInvadeState(t, this.cooldowns, now);
+    const meta = placementMode ? seedBaseByProfileId(t.profileId) : null;
+
+    const row = document.createElement('div');
+    row.className = `pb-tgt${this.selectedId === t.profileId ? ' sel' : ''}`;
+    row.addEventListener('click', () => this.selectTarget(t.profileId));
+
+    const rk = document.createElement('div');
+    rk.className = 'rk';
+    rk.textContent = `#${t.rank}`;
+    const info = document.createElement('div');
+    info.className = 'info';
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.textContent = placementMode ? placementTargetName(t) : t.displayName;
+    const ds = document.createElement('div');
+    ds.className = 'ds';
+    // 배치전이면 난이도 밴드 + 기체 요약, 일반이면 기체 요약.
+    ds.textContent =
+      meta !== null ? `난이도 ${meta.difficultyBand} · ${shipSummaryText(t.shipSummary)}` : shipSummaryText(t.shipSummary);
+    info.append(nm, ds);
+    const mt = document.createElement('div');
+    mt.className = 'mt';
+    mt.textContent = maintenanceLabel(t.maintenance);
+
+    const btn = document.createElement('button');
+    btn.className = 'pb-inv';
+    btn.textContent = st.canInvade ? (placementMode ? '배치전' : '침공') : st.reason;
+    btn.disabled = !st.canInvade;
+    btn.title = st.canInvade ? (placementMode ? '배치전 런 시작' : '침공 런 시작') : st.reason;
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      this.invade(t);
+    });
+
+    row.append(rk, info, mt, btn);
+    return row;
+  }
+
+  /**
+   * 배치전 진행/완료 패널(순위 진입 연출 포함). 배치전 상태가 없으면(일반 침공 단계 또는
+   * 서버 미설정) null 을 돌려 아무것도 그리지 않는다.
+   */
+  private placementPanel(): HTMLElement | null {
+    // 방금 순위에 진입한 직후 연출(placementResult.placed)은 status.placed 여도 1회 표시.
+    if (this.placementResult !== null && this.placementResult.placed) {
+      const el = document.createElement('div');
+      el.className = 'pb-banner win';
+      el.textContent = `순위 진입! 배치전 성적으로 ${this.placementResult.rank}위에 배치됐습니다 (배치전 ${this.placementResult.matchesWon}승). 이제 상위 랭커에 침공할 수 있습니다.`;
+      return el;
+    }
+    const status = this.placement;
+    if (status === null) return null;
+    const phase = placementPhase(status);
+    if (phase === 'ranked') return null; // 일반 침공 단계 — 배치전 UI 없음
+
+    const wrap = document.createElement('div');
+    wrap.className = 'pb-banner info';
+
+    if (phase === 'completing') {
+      const line = document.createElement('div');
+      line.textContent = `배치전 완료 — ${status.total}전 ${status.won}승. 순위 진입 준비 완료.`;
+      line.style.marginBottom = '8px';
+      wrap.appendChild(line);
+      const btn = document.createElement('button');
+      btn.className = 'pb-inv';
+      btn.textContent = this.applying ? '순위 확정 중…' : '순위 진입';
+      btn.disabled = this.applying;
+      btn.addEventListener('click', () => void this.applyPlacement());
+      wrap.appendChild(btn);
+      return wrap;
+    }
+
+    // 진행 중 — 진행바 + 남은 횟수.
+    const label = document.createElement('div');
+    label.textContent = `${placementProgressLabel(status)} · 남은 배치전 ${placementRemaining(status)}회`;
+    label.style.marginBottom = '6px';
+    wrap.appendChild(label);
+    const bar = document.createElement('div');
+    bar.className = 'pb-pgbar';
+    for (let i = 0; i < status.total; i++) {
+      const seg = document.createElement('span');
+      seg.className = `pb-pgseg${i < status.completed ? ' done' : ''}`;
+      bar.appendChild(seg);
+    }
+    wrap.appendChild(bar);
+    const hint = document.createElement('div');
+    hint.className = 'pb-note';
+    hint.style.marginTop = '6px';
+    hint.textContent = 'PvP 첫 관문 — NPC 시드 기지 상대로 5회를 치르면 성적에 따라 초기 순위가 잡힙니다(기존 순위 불변).';
+    wrap.appendChild(hint);
+    return wrap;
   }
 
   private sidePanel(): HTMLElement {
@@ -461,7 +639,10 @@ export class ControlTower {
     h2.textContent = '기지 정찰';
     panel.appendChild(h2);
 
-    const target = this.targets?.find((t) => t.profileId === this.selectedId) ?? null;
+    // 선택 대상은 일반/배치전 두 목록 중 하나에 있다.
+    const inList = (list: InvasionTarget[] | null): InvasionTarget | null =>
+      list?.find((t) => t.profileId === this.selectedId) ?? null;
+    const target = inList(this.targets) ?? inList(this.placementTargets);
     if (target === null) {
       panel.appendChild(this.msg('대상을 선택하면 방어 배치를 미리봅니다.'));
       return panel;

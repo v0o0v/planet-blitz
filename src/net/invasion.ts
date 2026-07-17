@@ -54,6 +54,40 @@ export interface InvasionTarget {
   maintenance: number;
 }
 
+/**
+ * 배치전(AC4·GDD §8) 진행 상태. PvP 해금 후 첫 {@link PLACEMENT_TOTAL}회는 NPC 시드 기지를
+ * 상대로 치르고, 완료 시 서버가 성적으로 초기 순위를 삽입한다(`apply_placement_result`).
+ * `placed`는 이미 순위에 든 상태(배치전 종료). 서버 권위 — 클라이언트는 표시만 한다.
+ */
+export interface PlacementStatus {
+  /** 완료한(=verified) 배치전 횟수(0~total). 서버 matches_played. */
+  completed: number;
+  /** 그 중 승리 횟수(연출·성적 표시). 서버 matches_won. */
+  won: number;
+  /** 총 배치전 횟수(기본 {@link PLACEMENT_TOTAL}=5). 서버 required. */
+  total: number;
+  /** 배치전을 마치고 순위에 삽입됐는지(true면 일반 침공 단계). */
+  placed: boolean;
+}
+
+/** 배치전 총 횟수(GDD §8: PvP 해금 첫 5회). */
+export const PLACEMENT_TOTAL = 5;
+
+/**
+ * 배치전 완료 삽입 결과(RPC `apply_placement_result()` — 성적으로 초기 rank 삽입).
+ * 기존 유저 상대 순서 불변(삽입점 이하 rank+1 shift 허용, 계약 §2). 서버 권위.
+ */
+export interface PlacementResult {
+  /** 순위에 삽입됐는지(true면 순위 진입 연출). */
+  placed: boolean;
+  /** 삽입된 초기 rank. */
+  rank: number;
+  /** 배치전 승리 횟수(성적). */
+  matchesWon: number;
+  /** 서버 메모(디버그·안내). */
+  note: string;
+}
+
 /** 관제탑 순위표 한 행(`ladder` select). */
 export interface LadderEntry {
   profileId: string;
@@ -123,6 +157,21 @@ export interface InvasionGateway {
   fetchLadder(limit: number): Promise<LadderEntry[]>;
   /** invasions insert(pending) → verify-invasion invoke → 판정 반환. 실패 시 throw. */
   submitInvasion(input: InvasionSubmitInput): Promise<InvasionVerdict>;
+  /**
+   * 배치전 대상(NPC 시드 기지) 목록 — RPC `get_placement_targets()`. 쿨다운 무시(계약 §2).
+   * 구현이 없는 게이트웨이(구버전)면 `undefined` — 공개 함수가 no-op(null)로 처리한다.
+   */
+  getPlacementTargets?(): Promise<InvasionTarget[]>;
+  /**
+   * 배치전 진행 상태 — RPC `get_placement_status()`(또는 ladder 파생). 실패 시 throw.
+   * 구현이 없으면 `undefined`(no-op).
+   */
+  getPlacementStatus?(): Promise<PlacementStatus>;
+  /**
+   * 배치전 5회 완료 후 성적으로 초기 rank 삽입 — RPC `apply_placement_result()`. 실패 시
+   * throw. 구현이 없으면 `undefined`(no-op). 미완료 상태에서 호출하면 서버가 placed=false.
+   */
+  applyPlacementResult?(): Promise<PlacementResult>;
 }
 
 /** 주입 가능한 의존성(테스트에서 gateway/config/store 대체). */
@@ -182,6 +231,49 @@ export async function fetchInvasionTargets(deps: InvasionDeps = {}): Promise<Inv
   if (gateway === null) return null;
   try {
     return await gateway.getInvasionTargets();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 배치전 대상(NPC 시드 기지) 목록을 받는다. 미설정/오프라인/오류/게이트웨이 미구현이면
+ * `null`. 배치전 단계에서만 관제탑이 이 목록을 제안한다(쿨다운 무시 — 서버 §2).
+ */
+export async function fetchPlacementTargets(deps: InvasionDeps = {}): Promise<InvasionTarget[] | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.getPlacementTargets === undefined) return null;
+  try {
+    return await gateway.getPlacementTargets();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 배치전 진행 상태를 받는다. 미설정/오프라인/오류/게이트웨이 미구현이면 `null`(→ 관제탑은
+ * 배치전 UI 를 숨기고 일반 침공만 표시). 서버 권위 — 클라이언트는 이 값을 표시만 한다.
+ */
+export async function fetchPlacementStatus(deps: InvasionDeps = {}): Promise<PlacementStatus | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.getPlacementStatus === undefined) return null;
+  try {
+    return normalizePlacementStatus(await gateway.getPlacementStatus());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 배치전 5회 완료 후 초기 rank 삽입을 서버에 요청하고 결과를 받는다(서버 권위 — 기존 유저
+ * 순서 불변). 미설정/오프라인/오류/게이트웨이 미구현이면 `null`. 관제탑은 placed=true 응답에
+ * 순위 진입 연출을 띄운다.
+ */
+export async function applyPlacementResult(deps: InvasionDeps = {}): Promise<PlacementResult | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.applyPlacementResult === undefined) return null;
+  try {
+    return await gateway.applyPlacementResult();
   } catch {
     return null;
   }
@@ -252,6 +344,67 @@ export function buildClientResult(replay: Replay): ClientResult {
     finalHash: res.finalHash,
     hashStream: res.hashes,
   };
+}
+
+// ---------------------------------------------------------------------------
+// 정비도 → 침공 config 변환 (순수 · 테스트 대상 — ADR-0006 sim 소비 배선)
+// ---------------------------------------------------------------------------
+
+/**
+ * DB `defenses.maintenance`(numeric(5,2), 0~100) → sim `InvasionConfig.maintenance`
+ * (정수 centi-percent, 0..10000). **공식은 `Math.round(dbMaintenance * 100)` 고정** —
+ * 서버 EF(verify-invasion)가 동일 공식으로 재실행 config 를 구성하므로, 여기가 어긋나면
+ * 정직한 런이 hashStream 발산으로 오거부된다(리드 계약 2026-07-17).
+ *
+ * 미지정/비유한(NaN/Infinity)은 `undefined` 를 돌려 config 필드를 아예 싣지 않는다 —
+ * sim `normalizeMaintenance` 가 undefined 를 완전 정비(10000)로 정규화하므로 기존 침공
+ * 런과 거동·해시가 동일하다(append-only 안전).
+ */
+export function maintenanceToCenti(dbMaintenance: number | undefined): number | undefined {
+  if (dbMaintenance === undefined || !Number.isFinite(dbMaintenance)) return undefined;
+  return Math.round(dbMaintenance * 100);
+}
+
+// ---------------------------------------------------------------------------
+// 배치전 상태 파생 (순수 · 테스트 대상)
+// ---------------------------------------------------------------------------
+
+/** 배치전 단계 구분. */
+export type PlacementPhase =
+  /** 배치전 진행 중(완료 < 총, 미배치). */
+  | 'placement'
+  /** 배치전 5회 다 치렀으나 아직 순위 삽입 전(연출 대상). */
+  | 'completing'
+  /** 순위에 삽입 완료(일반 침공 단계). */
+  | 'ranked';
+
+/** 서버 응답을 방어적으로 정규화(음수·초과·비정수 클램프). */
+export function normalizePlacementStatus(raw: PlacementStatus): PlacementStatus {
+  const total = Number.isFinite(raw.total) && raw.total > 0 ? Math.trunc(raw.total) : PLACEMENT_TOTAL;
+  const rawDone = Number.isFinite(raw.completed) ? Math.trunc(raw.completed) : 0;
+  const completed = Math.max(0, Math.min(total, rawDone));
+  const rawWon = Number.isFinite(raw.won) ? Math.trunc(raw.won) : 0;
+  const won = Math.max(0, Math.min(completed, rawWon));
+  return { completed, won, total, placed: raw.placed === true };
+}
+
+/** 현재 배치전 단계(순수). placed면 ranked, 5회 다 채웠으면 completing, 그 외 placement. */
+export function placementPhase(status: PlacementStatus): PlacementPhase {
+  if (status.placed) return 'ranked';
+  if (status.completed >= status.total) return 'completing';
+  return 'placement';
+}
+
+/** 남은 배치전 횟수(0 이하로 내려가지 않음). */
+export function placementRemaining(status: PlacementStatus): number {
+  const r = status.total - status.completed;
+  return r > 0 ? r : 0;
+}
+
+/** 배치전 진행 라벨("배치전 3 / 5"). */
+export function placementProgressLabel(status: PlacementStatus): string {
+  const s = normalizePlacementStatus(status);
+  return `배치전 ${s.completed} / ${s.total}`;
 }
 
 // ---------------------------------------------------------------------------

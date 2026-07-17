@@ -272,13 +272,74 @@ export interface InvasionConfig {
   layout: DefenseLayout;
   /** 제한 시간(틱). 기본 {@link DEFAULT_TIME_LIMIT_TICKS}(3분). */
   timeLimitTicks: number;
+  /**
+   * 방어 정비도(풍화, ADR-0006) — **정수 centi-percent**(0..{@link MAINTENANCE_FULL}=10000).
+   * 10000 = 100.00%(완전 정비), 0 = 0.00%(완전 방치). DB `defenses.maintenance`(numeric(5,2),
+   * 0~100)를 ×100 정수로 실어 f64 오차 원천을 차단한다(정수 basis-point 표현). 미지정 시
+   * {@link MAINTENANCE_FULL}(완전 정비)로 정규화 → 이 필드가 없던 기존 침공 런과 거동·해시가
+   * 완전히 동일하다(append-only 안전). 정비도가 낮을수록 포탑 성능(발사 빈도)이 떨어진다:
+   * 100%→성능 100%, 0%→성능 50%(선형). {@link scaleFireCooldown} 참조.
+   */
+  maintenance?: number;
+}
+
+// ---------------------------------------------------------------------------
+// 정비도(풍화, ADR-0006) — 결정론 정수 표현 + 포탑 성능 스케일
+// ---------------------------------------------------------------------------
+/**
+ * 완전 정비 = 100.00% 를 나타내는 정수 centi-percent 상한. DB numeric(5,2) 를 ×100 한
+ * 정수 도메인이라 f64 누적 오차가 없다(플랫폼 무관 결정론).
+ */
+export const MAINTENANCE_FULL = 10000;
+
+/**
+ * 정비도 값을 결정론 정수 도메인[0, {@link MAINTENANCE_FULL}]으로 정규화한다. 미지정·비유한
+ * (undefined/NaN/Infinity)은 완전 정비로 본다. EF 가 DB numeric×100 정수를 주입하는 것이
+ * 정상 경로지만, 소수·범위 밖 값이 흘러들어도 여기서 정수화·클램프해 sim 과 hashWorld 가
+ * **동일한** 정규값을 쓰도록 강제한다(거동 ↔ 해시 정합). 정수화는 Math.trunc(내림이 아니라
+ * 0 방향 절삭 — 음수는 어차피 0으로 클램프되므로 결과 동일).
+ */
+export function normalizeMaintenance(maintenance: number | undefined): number {
+  if (maintenance === undefined || !Number.isFinite(maintenance)) return MAINTENANCE_FULL;
+  const i = Math.trunc(maintenance);
+  if (i <= 0) return 0;
+  if (i >= MAINTENANCE_FULL) return MAINTENANCE_FULL;
+  return i;
+}
+
+/**
+ * 정비도 → 포탑 실효 발사 간격(틱). ADR-0006: 정비 100%→성능 100%, 0%→성능 50%(선형).
+ * "성능"은 발사 빈도로 구현한다 — 성능 50%면 발사 간격이 2배(연사 절반)라 DPS 가 절반이 된다.
+ * 다른 스칼라(피해)는 충돌 판정 f64 산술에 섞여 오차 위험이 있어 건드리지 않고, **정수 연산만**
+ * 쓰는 발사 간격 하나로 성능을 균일하게 스케일한다(모든 포탑 유형에 일괄 적용, 감속 장판 포탑의
+ * 재융기 주기까지 포함).
+ *
+ * 결정론: 성능 분수 = (10000 + m) / 20000 (m=10000→1.0, m=0→0.5). 실효 간격 = round(base / perf)
+ * = round(base × 20000 / (10000 + m)). 분자·분모 모두 정확한 정수(2^53 미만: base≤수백,
+ * base×20000≤수백만)이고, 나눗셈은 IEEE-754 correctly-rounded 단일 연산 + Math.round 뿐이라
+ * Node(클라)·Deno(서버) V8 에서 비트 동일하다. 완전 정비(m=10000)는 base 를 그대로 반환해
+ * 정비도 필드가 없던 기존 침공 런과 완전히 동일한 간격을 낸다(회귀 0).
+ */
+export function scaleFireCooldown(baseCooldown: number, maintenance: number): number {
+  const m = normalizeMaintenance(maintenance);
+  if (m === MAINTENANCE_FULL) return baseCooldown;
+  return Math.round((baseCooldown * 20000) / (10000 + m));
 }
 
 // ---------------------------------------------------------------------------
 // 스폰
 // ---------------------------------------------------------------------------
-/** 방어 포탑 1기를 스폰(유형별 스펙으로 내구도·반지름·초기 발사 지연 세팅). */
-export function spawnDefenseTurret(sink: EntitySink, type: number, x: number, y: number): Entity {
+/**
+ * 방어 포탑 1기를 스폰(유형별 스펙으로 내구도·반지름·초기 발사 지연 세팅). 초기 발사 지연
+ * (스폰 즉발 방지)도 정비도로 스케일해, 방치된 기지는 첫 발사부터 느려진다(성능 저하 일관).
+ */
+export function spawnDefenseTurret(
+  sink: EntitySink,
+  type: number,
+  x: number,
+  y: number,
+  maintenance: number = MAINTENANCE_FULL,
+): Entity {
   // 범위 밖 type(정상 경로에서는 도달 불가 — 배치 데이터는 항상 검증된 유형만 담는다)은
   // 발칸으로 폴백한다. spec뿐 아니라 저장하는 유형 코드도 함께 폴백해야 한다 — 그러지
   // 않으면 spec은 발칸인데 enemyType은 원래의 잘못된 값으로 남아, stepDefenseTurrets가
@@ -292,7 +353,8 @@ export function spawnDefenseTurret(sink: EntitySink, type: number, x: number, y:
   t.radius = spec.radius;
   t.hp = spec.hp;
   t.maxHp = spec.hp;
-  t.cooldown = spec.fireCooldown; // 초기 발사 지연(스폰 즉발 방지)
+  // 초기 발사 지연(스폰 즉발 방지)을 정비도로 스케일. 완전 정비면 spec 그대로(회귀 0).
+  t.cooldown = scaleFireCooldown(spec.fireCooldown, maintenance);
   return addEntity(sink, t);
 }
 
@@ -312,9 +374,13 @@ export function spawnCore(sink: EntitySink, x: number, y: number): Entity {
  * 결정되므로 재현이 자명하다. 플레이어는 호출 전에 이미 index 0에 있어야 한다(hashWorld는
  * index 0에 player가 있음을 불변식으로 가정).
  */
-export function spawnInvasionLayout(sink: EntitySink, layout: DefenseLayout): void {
+export function spawnInvasionLayout(
+  sink: EntitySink,
+  layout: DefenseLayout,
+  maintenance: number = MAINTENANCE_FULL,
+): void {
   spawnCore(sink, layout.core.x, layout.core.y);
-  for (const t of layout.turrets) spawnDefenseTurret(sink, t.type, t.x, t.y);
+  for (const t of layout.turrets) spawnDefenseTurret(sink, t.type, t.x, t.y, maintenance);
   for (const o of layout.obstacles) spawnWall(sink, o.x, o.y, o.halfW, o.halfH);
 }
 
@@ -327,6 +393,10 @@ export function spawnInvasionLayout(sink: EntitySink, layout: DefenseLayout): vo
  * {@link fireTurret}가 디스패치한다.
  */
 export function stepDefenseTurrets(state: WorldState, player: Entity): void {
+  // 정비도(풍화, ADR-0006): 매 발사 후 쿨다운을 정비도로 스케일해 성능(발사 빈도)을 낮춘다.
+  // 침공 경로에서만 호출되므로 config.invasion 은 항상 존재하지만, 방어적으로 옵셔널 체인 +
+  // 정규화한다(미지정=완전 정비=무변화). 루프 밖에서 1회 계산(정비도는 런 내 상수).
+  const maintenance = normalizeMaintenance(state.config.invasion?.maintenance);
   for (const t of state.entities) {
     if (t.kind !== 'defenseTurret' || t.dead) continue;
     if (t.cooldown > 0) {
@@ -348,7 +418,7 @@ export function stepDefenseTurrets(state: WorldState, player: Entity): void {
       continue;
     }
     fireTurret(state, t, spec, player);
-    t.cooldown = spec.fireCooldown;
+    t.cooldown = scaleFireCooldown(spec.fireCooldown, maintenance);
   }
 }
 

@@ -80,7 +80,7 @@ import type { SettlementOutcome } from './save/settlement.js';
 // 정산 시점에서만 fire-and-forget 로 호출 — sim/게임루프와 무관(결정론·오프라인 우선).
 import { migrateLocalProfileToServer, recordPveRunResult } from './net/index.js';
 // M4 침공(비동기 PvP) 제출: 미설정 시 submitInvasion 은 null(잠정 결과만 표시).
-import { submitInvasion, buildClientResult } from './net/invasion.js';
+import { submitInvasion, buildClientResult, maintenanceToCenti } from './net/invasion.js';
 import type { InvasionTarget } from './net/invasion.js';
 import { DEFAULT_TIME_LIMIT_TICKS } from './sim/defense.js';
 import type { InvasionConfig, DefenseLayout } from './sim/defense.js';
@@ -333,7 +333,14 @@ async function main(): Promise<void> {
     }
     const skillInvest = profile.skillInvest.slice();
     const { loadout } = computeLoadoutStats(equipped, skillInvest);
-    const invasion: InvasionConfig = { layout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
+    // 방어 정비도(풍화, ADR-0006)를 sim centi-percent 로 변환해 config 에 싣는다.
+    // 공식 Math.round(db*100)은 서버 EF 재실행과 동일해야 한다(어긋나면 해시 발산 오거부).
+    const maintenance = maintenanceToCenti(target.maintenance);
+    const invasion: InvasionConfig = {
+      layout,
+      timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
+      ...(maintenance !== undefined ? { maintenance } : {}),
+    };
     const config: WorldConfig = {
       ...DEFAULT_CONFIG,
       planet: 0,

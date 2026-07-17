@@ -26,7 +26,7 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { verifyInvasion } from './verifyInvasionCore.ts';
 import type { InvasionVerifyResult } from './verifyInvasionCore.ts';
-import { DEFAULT_TIME_LIMIT_TICKS } from '../../../src/sim/defense.ts';
+import { DEFAULT_TIME_LIMIT_TICKS, MAINTENANCE_FULL } from '../../../src/sim/defense.ts';
 
 /** 재실행 벽시계 소프트 예산(ms). 초과 시 결과는 반환하되 경고 로그(중단은 불가). */
 const SOFT_RERUN_BUDGET_MS = 8_000;
@@ -130,26 +130,39 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // raw jsonb 그대로 넘긴다 — 정규화·형태 검증은 검증 코어(normalizeServerLayout)가
   // 클라이언트와 동일 규칙으로 수행한다(리뷰 MED-3 대칭화).
   let layout: unknown = null;
+  let maintenanceDb: unknown = null;
   if (inv.defense_id !== null) {
     const { data: def } = await service
       .from('defenses')
-      .select('layout')
+      .select('layout, maintenance')
       .eq('id', inv.defense_id)
       .maybeSingle();
-    if (def !== null) layout = def.layout;
+    if (def !== null) {
+      layout = def.layout;
+      maintenanceDb = def.maintenance;
+    }
   }
   if (layout === null) {
     const { data: def } = await service
       .from('defenses')
-      .select('layout')
+      .select('layout, maintenance')
       .eq('profile_id', inv.defender_id)
       .eq('active', true)
       .maybeSingle();
-    if (def !== null) layout = def.layout;
+    if (def !== null) {
+      layout = def.layout;
+      maintenanceDb = def.maintenance;
+    }
   }
   if (layout === null) {
     return json({ status: 'rejected', reason: 'defender-defense-missing', attackerWon: false, ladder: null, loot: [] }, 409);
   }
+
+  // 방어 정비도(풍화, ADR-0006): DB numeric(5,2) 0~100 → 정수 centi-percent(0..10000).
+  // 변환 공식은 클라이언트와 반드시 동일(Math.round(db*100)) — 어긋나면 정직 런이 오거부.
+  // 로드 실패·비수치는 완전 정비(MAINTENANCE_FULL)로 폴백(기존 거동 보존).
+  const maintNum = typeof maintenanceDb === 'number' ? maintenanceDb : Number(maintenanceDb);
+  const maintenance = Number.isFinite(maintNum) ? Math.round(maintNum * 100) : MAINTENANCE_FULL;
 
   // (4) 제출(리플레이 + 클라이언트 주장)을 RunSubmission 형태로 조립.
   //
@@ -187,7 +200,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const startedAt = Date.now();
   let verdict: InvasionVerifyResult;
   try {
-    verdict = verifyInvasion(submission, { layout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS });
+    verdict = verifyInvasion(submission, { layout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS, maintenance });
   } catch (e) {
     console.error(`verify-invasion 재실행 예외 (invasion=${invasionId}):`, e);
     verdict = { verdict: 'reject', reason: 'server-layout-invalid' };

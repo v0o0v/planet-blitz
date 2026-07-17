@@ -71,6 +71,15 @@ export interface InvasionServerContext {
   layout: unknown;
   /** 서버가 인정하는 제한 시간(틱). 기본 3분(DEFAULT_TIME_LIMIT_TICKS). */
   timeLimitTicks: number;
+  /**
+   * 방어 정비도(풍화, ADR-0006) — **정수 centi-percent**(0..MAINTENANCE_FULL=10000).
+   * DB `defenses.maintenance`(numeric(5,2), 0~100)를 배선 계층(index.ts)이 `Math.round(db*100)`
+   * 로 변환해 싣는다(클라이언트 변환 공식과 반드시 동일 — 어긋나면 정직한 런이 오거부된다).
+   * 서버 재실행은 이 값으로 포탑 발사 간격을 스케일(0%→2배 느림, ADR-0006 "0%→성능 50%")한다.
+   * **미지정(undefined)이면 완전 정비**로 취급(sim `normalizeMaintenance` 가 MAINTENANCE_FULL
+   * 로 정규화) → 이 필드가 없던 기존 침공 검증과 거동·해시 100% 불변(하위호환).
+   */
+  maintenance?: number;
 }
 
 function reject(reason: InvasionRejectReason, computed?: ComputedFacts): InvasionVerifyResult {
@@ -246,10 +255,14 @@ export function verifyInvasion(raw: unknown, server: InvasionServerContext): Inv
   // 서버 권위 config로 재실행하도록 오버라이드(제출 config의 다른 필드—공격자 로드아웃—는
   // 보존하되 invasion 블록만 서버 값으로 교체). verifyRun이 구조 재검증·재실행·해시/결과
   // 대조를 수행한다. hashStream이 이미 존재하므로 verifyRun이 매 틱 대조를 강제한다.
-  const authoritativeInvasion: InvasionConfig = {
-    layout: serverLayout,
-    timeLimitTicks: server.timeLimitTicks,
-  };
+  // 서버 권위 정비도로 재실행(풍화 반영). undefined 면 sim 이 완전 정비로 정규화(하위호환) →
+  // maintenance 대조는 layoutEquals 에 불필요(서버 override + hashStream 재실행이 정비도
+  // 불일치 위조를 hash-stream-divergence 로 잡는다). exactOptionalPropertyTypes 하에서
+  // optional 필드에 undefined 명시 대입이 금지되므로, 정의된 경우에만 필드를 포함한다.
+  const authoritativeInvasion: InvasionConfig =
+    server.maintenance === undefined
+      ? { layout: serverLayout, timeLimitTicks: server.timeLimitTicks }
+      : { layout: serverLayout, timeLimitTicks: server.timeLimitTicks, maintenance: server.maintenance };
   const authoritativeConfig: WorldConfig = {
     ...(sub.config as WorldConfig),
     invasion: authoritativeInvasion,

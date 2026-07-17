@@ -39,7 +39,16 @@ import {
   type WorldConfig,
 } from '../sim/world.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../save/profile.js';
-import { uploadDefenseLayout } from '../net/defenseSync.js';
+import { refreshPendingProfile } from '../net/profileSync.js';
+import {
+  uploadDefenseLayout,
+  fetchDefenseStatus,
+  repairDefense,
+  maintenanceWarningLevel,
+  weatheringForecastText,
+  repairButtonState,
+  type DefenseStatus,
+} from '../net/defenseSync.js';
 
 // ---------------------------------------------------------------------------
 // 격자 기하 (순수 · 테스트 대상)
@@ -481,6 +490,19 @@ const STYLE = `
 #pb-def button.pb-act { pointer-events:auto; cursor:pointer; padding:10px 18px; font-size:14px; font-weight:700; color:#04121a; background:linear-gradient(90deg,#7affea,#8fd94c); border:none; border-radius:10px; }
 #pb-def button.pb-act:disabled { opacity:.4; cursor:default; filter:grayscale(.5); }
 #pb-def button.pb-ghost { pointer-events:auto; cursor:pointer; padding:10px 18px; font-size:14px; font-weight:700; color:#aab6d6; background:rgba(20,26,44,.9); border:1px solid #2a3552; border-radius:10px; }
+#pb-def .pb-maint { display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center; max-width:820px; padding:8px 14px; border-radius:10px; background:rgba(12,16,30,.7); border:1px solid #2a3552; }
+#pb-def .pb-maint .pb-mlabel { font-size:13px; font-weight:800; color:#8fd94c; }
+#pb-def .pb-maint .pb-mlabel.lv-warn { color:#ffd24c; }
+#pb-def .pb-maint .pb-mlabel.lv-critical { color:#ff6a6a; }
+#pb-def .pb-maint .pb-mmeter { width:120px; height:10px; border-radius:6px; background:rgba(80,90,130,.35); border:1px solid #2a3552; overflow:hidden; }
+#pb-def .pb-maint .pb-mfill { height:100%; background:#8fd94c; }
+#pb-def .pb-maint .pb-mfill.lv-warn { background:#ffd24c; }
+#pb-def .pb-maint .pb-mfill.lv-critical { background:#ff6a6a; }
+#pb-def .pb-maint .pb-mforecast { font-size:11px; color:#aab6d6; }
+#pb-def .pb-maint .pb-mforecast.lv-critical { color:#ff9a9a; }
+#pb-def .pb-maint .pb-mcredits { font-size:11px; color:#8896b8; }
+#pb-def .pb-maint button.pb-mrepair { pointer-events:auto; cursor:pointer; padding:7px 14px; font-size:12px; font-weight:800; color:#04121a; background:linear-gradient(90deg,#7affea,#8fd94c); border:none; border-radius:8px; }
+#pb-def .pb-maint button.pb-mrepair:disabled { opacity:.4; cursor:default; filter:grayscale(.5); color:#c3cdea; background:rgba(30,36,60,.9); }
 `;
 
 export class DefenseCommand {
@@ -494,6 +516,11 @@ export class DefenseCommand {
   private tool: Tool = { kind: 'turret', turretType: 0 };
   private tip = '';
   private hint = '';
+  // 정비(E3) 상태 — 서버 권위. null = 미로딩/미설정(정비 UI 비활성 안내).
+  private defenseStatus: DefenseStatus | null = null;
+  private statusLoading = false;
+  private repairing = false;
+  private statusToken = 0;
 
   constructor(profile: Profile, store: KeyValueStore | null = null) {
     this.profile = profile;
@@ -524,8 +551,11 @@ export class DefenseCommand {
     this.tool = { kind: 'turret', turretType: 0 };
     this.tip = '';
     this.hint = '';
+    this.defenseStatus = null;
+    this.repairing = false;
     this.render();
     this.root.style.display = 'flex';
+    void this.loadStatus();
   }
 
   hide(): void {
@@ -533,8 +563,68 @@ export class DefenseCommand {
     this.onClose = null;
   }
 
+  /** 정비 상태(정비도·크레딧·비용)를 서버에서 비동기 로드하고 정비 패널만 재렌더. */
+  private async loadStatus(): Promise<void> {
+    const token = ++this.statusToken;
+    this.statusLoading = true;
+    const status = await fetchDefenseStatus();
+    if (token !== this.statusToken || !this.visible) return; // 낡은 로드 무시
+    this.statusLoading = false;
+    this.defenseStatus = status;
+    this.render();
+  }
+
+  /** 정비 실행: repair_defense RPC 호출 후 상태를 다시 로드한다(서버 권위). */
+  private async repair(): Promise<void> {
+    if (this.repairing) return;
+    const status = this.defenseStatus;
+    if (status === null || status.maintenance === null) return;
+    const rb = repairButtonState(status.maintenance, status.credits, status.repairCost);
+    if (!rb.canRepair) return;
+    this.repairing = true;
+    this.render();
+    const result = await repairDefense();
+    if (!this.visible) return;
+    this.repairing = false;
+    if (result !== null) {
+      // 서버가 크레딧을 차감했으므로 로컬 프로필 크레딧도 맞춘다(정비 직후 표시 정합).
+      this.profile.credits = result.credits;
+      // 즉시 영속(Phase E 리뷰 MED): persist 없이는 재로드 시 localStorage 의 정비 전
+      // stale-high 크레딧이 살아나고, 다음 PvE 정산 push(progressScore 가 credits 포함)가
+      // 그 값을 서버로 되밀어 차감을 복구시킨다.
+      this.persist();
+      // 대기 슬롯에 정비 전 스냅샷이 남아 있으면(PvE 정산 미전송 잔존) 다음 flush 가
+      // 정비 전 크레딧을 되밀므로, 정비 후 상태로 교체한다(최소 방어 — 슬롯 last-write-wins).
+      const pendingStore = this.pendingStore();
+      if (pendingStore !== null) refreshPendingProfile(pendingStore, this.profile);
+      this.tip = `정비 완료 — 정비도 ${Math.round(result.maintenance)}% 회복(잔여 크레딧 ${result.credits}).`;
+      this.hint = '';
+    } else {
+      this.hint = '정비에 실패했습니다(크레딧 부족 또는 서버 미설정). 상태를 다시 확인하세요.';
+    }
+    void this.loadStatus();
+  }
+
   private persist(): void {
-    saveProfile(this.profile, this.store);
+    // 주입 store 가 없으면(=main 의 프로덕션 경로) ambient 기본 스토어로 폴백한다 —
+    // `saveProfile(p, null)` 은 명시적 null 로 early-return 하므로 null 을 그대로 넘기면
+    // 영속이 조용히 무시된다(Phase E 리뷰 MED 의 근본 원인). `undefined` 를 넘겨 기본
+    // 파라미터(defaultStore() — 하네스 프로필 오버라이드 존중)를 타게 한다.
+    saveProfile(this.profile, this.store ?? undefined);
+  }
+
+  /**
+   * net 대기 슬롯이 사는 스토어. 주입 store 가 있으면 그걸(테스트), 없으면 ambient
+   * localStorage(net 계층 defaultNetStore 와 동일 위치 — 같은 슬롯을 봐야 교체가 성립).
+   */
+  private pendingStore(): KeyValueStore | null {
+    if (this.store !== null) return this.store;
+    try {
+      if (typeof localStorage !== 'undefined') return localStorage;
+    } catch {
+      // 사생활 모드 등 — 접근 자체가 throw 할 수 있음.
+    }
+    return null;
   }
 
   private onCellClick(col: number, row: number): void {
@@ -624,6 +714,7 @@ export class DefenseCommand {
     this.root.appendChild(sub);
 
     this.root.appendChild(this.budgetBar());
+    this.root.appendChild(this.maintenanceBar());
 
     const cols = document.createElement('div');
     cols.className = 'pb-cols';
@@ -648,6 +739,69 @@ export class DefenseCommand {
       `<span class="pt${over ? ' over' : ''}">배치 포인트 <b>${spent} / ${this.budget}</b></span>` +
       `<span>잔여 <b>${this.budget - spent}</b></span>` +
       `<span>포탑 <b>${this.state.turrets.length}</b> · 장애물 <b>${this.state.obstacles.length}</b> · 코어 <b>${this.state.core !== null ? 1 : 0}</b></span>`;
+    return bar;
+  }
+
+  /**
+   * 정비 바(E3): 정비도(풍화 경고 — 낮을수록 강조) + 하락 예고 + 정비 버튼(크레딧 잔액).
+   * 서버 미설정/오프라인이면 비활성 안내(로컬 배치 편집은 정상). 정비도가 낮을수록 색으로
+   * 강조하고, 다음 풍화 예고를 함께 표시한다(관제탑/사령부 진입 시 알림 — 계약 §3).
+   */
+  private maintenanceBar(): HTMLElement {
+    const bar = document.createElement('div');
+    bar.className = 'pb-maint';
+
+    if (this.statusLoading && this.defenseStatus === null) {
+      bar.innerHTML = `<span class="pb-mlabel">정비 상태 확인 중…</span>`;
+      return bar;
+    }
+    const status = this.defenseStatus;
+    if (status === null) {
+      bar.innerHTML =
+        `<span class="pb-mlabel">정비: 서버 미설정 또는 오프라인 — 풍화·정비는 서버 연결 시 활성화됩니다.</span>`;
+      return bar;
+    }
+    if (status.maintenance === null) {
+      bar.innerHTML =
+        `<span class="pb-mlabel">아직 서버에 등록된 활성 방어가 없습니다. 배치를 저장하면 정비 대상이 됩니다.</span>`;
+      return bar;
+    }
+
+    const m = Math.max(0, Math.min(100, Math.round(status.maintenance)));
+    const level = maintenanceWarningLevel(m);
+
+    const label = document.createElement('span');
+    label.className = `pb-mlabel lv-${level}`;
+    label.textContent = `정비도 ${m}%${level === 'critical' ? ' ⚠ 위험' : level === 'warn' ? ' 주의' : ''}`;
+    bar.appendChild(label);
+
+    const meter = document.createElement('div');
+    meter.className = 'pb-mmeter';
+    const fill = document.createElement('div');
+    fill.className = `pb-mfill lv-${level}`;
+    fill.style.width = `${m}%`;
+    meter.appendChild(fill);
+    bar.appendChild(meter);
+
+    const forecast = document.createElement('span');
+    forecast.className = `pb-mforecast lv-${level}`;
+    forecast.textContent = weatheringForecastText(m);
+    bar.appendChild(forecast);
+
+    const credits = document.createElement('span');
+    credits.className = 'pb-mcredits';
+    credits.textContent = `크레딧 ${status.credits} · 정비 비용 ${status.repairCost}`;
+    bar.appendChild(credits);
+
+    const rb = repairButtonState(m, status.credits, status.repairCost);
+    const btn = document.createElement('button');
+    btn.className = 'pb-mrepair';
+    btn.textContent = this.repairing ? '정비 중…' : '🛠 정비';
+    btn.disabled = this.repairing || !rb.canRepair;
+    btn.title = rb.canRepair ? '크레딧으로 정비도 100% 회복' : rb.reason;
+    btn.addEventListener('click', () => void this.repair());
+    bar.appendChild(btn);
+
     return bar;
   }
 
