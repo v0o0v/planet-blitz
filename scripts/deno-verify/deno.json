@@ -3,6 +3,7 @@
   "unstable": ["sloppy-imports"],
   "lock": false,
   "tasks": {
-    "verify": "deno run --allow-read verify.ts"
+    "verify": "deno run --allow-read verify.ts",
+    "verify-run": "deno run --allow-read verifyRun.ts"
   }
 }
