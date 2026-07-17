@@ -14,6 +14,8 @@
  * gate can be measured from the console.
  */
 
+import { t } from '../i18n/index.js';
+
 /** Fixed tutorial run seed — deterministic first impression (ADR-0005 spirit). */
 export const TUTORIAL_SEED = 0x7b1a2c3d;
 /** Tutorial content: homeworld orbit (카르곤) at the standard 정찰 tier. */
@@ -102,12 +104,12 @@ export class TitleScreen {
     this.root.appendChild(logo);
     const tag = document.createElement('div');
     tag.className = 'pb-tag';
-    tag.textContent = '행성을 침략해 파밍하고, 더 높은 랭커의 기지를 뚫어라.';
+    tag.textContent = t('title.tag');
     this.root.appendChild(tag);
 
     const btn = document.createElement('button');
     btn.className = 'pb-start';
-    btn.textContent = opts.firstRun ? '▶ 튜토리얼 시작' : '▶ 기지로 진입';
+    btn.textContent = opts.firstRun ? t('title.startTutorial') : t('title.enterBase');
     btn.addEventListener('click', () => {
       this.hide();
       opts.onStart();
@@ -117,7 +119,7 @@ export class TitleScreen {
     if (opts.firstRun) {
       const note = document.createElement('div');
       note.className = 'pb-note';
-      note.textContent = '홈월드 궤도에서 기초 조작을 익힙니다 (약 3~4분).';
+      note.textContent = t('title.note');
       this.root.appendChild(note);
     }
 
@@ -133,15 +135,13 @@ export class TitleScreen {
 // Tutorial hint overlay (render-only, layered over the live run)
 // ---------------------------------------------------------------------------
 
-/** Scripted hints keyed to the run's elapsed seconds (render-only). */
-const HINTS: readonly { fromSec: number; text: string }[] = [
-  { fromSec: 0, text: '이동하며 적을 조준하세요 — 사격은 자동입니다.' },
-  { fromSec: 6, text: '적을 처치해 경험치 젬을 모으세요. 레벨업하면 파워업을 고를 수 있습니다.' },
-  { fromSec: 14, text: '대시로 적탄을 회피하세요. 밀집한 탄막은 피하는 게 상책입니다.' },
-  { fromSec: 24, text: '첫 장비를 획득하면 기지가 공개됩니다. 계속 밀어붙이세요!' },
+/** Scripted hints keyed to the run's elapsed seconds (render-only, i18n key). */
+const HINTS: readonly { fromSec: number; key: 'tutorial.hint0' | 'tutorial.hint1' | 'tutorial.hint2' | 'tutorial.hint3' }[] = [
+  { fromSec: 0, key: 'tutorial.hint0' },
+  { fromSec: 6, key: 'tutorial.hint1' },
+  { fromSec: 14, key: 'tutorial.hint2' },
+  { fromSec: 24, key: 'tutorial.hint3' },
 ];
-
-const HINT_DROP = '장비 획득! 이 런을 마치면 기지에서 정비할 수 있습니다.';
 
 const TUT_STYLE = `
 #pb-tut { position:absolute; left:50%; top:18px; transform:translateX(-50%); z-index:23; pointer-events:none; max-width:560px; padding:12px 22px; background:rgba(6,10,22,.82); border:1px solid #33507a; border-radius:12px; box-shadow:0 6px 24px rgba(0,0,0,.5); font-family:'Segoe UI',system-ui,sans-serif; text-align:center; }
@@ -164,7 +164,7 @@ export class TutorialOverlay {
     this.root.style.display = 'none';
     this.title = document.createElement('div');
     this.title.className = 'pb-th';
-    this.title.textContent = '튜토리얼';
+    this.title.textContent = t('tutorial.label');
     this.body = document.createElement('div');
     this.body.className = 'pb-tt';
     this.root.appendChild(this.title);
@@ -178,7 +178,7 @@ export class TutorialOverlay {
 
   show(): void {
     this.dropSeen = false;
-    this.body.textContent = HINTS[0]?.text ?? '';
+    this.body.textContent = HINTS[0] !== undefined ? t(HINTS[0].key) : '';
     this.root.style.display = 'block';
   }
 
@@ -191,13 +191,13 @@ export class TutorialOverlay {
     if (!this.visible) return;
     if (hasDrop) this.dropSeen = true;
     if (this.dropSeen) {
-      this.body.textContent = HINT_DROP;
+      this.body.textContent = t('tutorial.drop');
       return;
     }
     const sec = tick / 60;
-    let text = HINTS[0]?.text ?? '';
+    let text = HINTS[0] !== undefined ? t(HINTS[0].key) : '';
     for (const h of HINTS) {
-      if (sec >= h.fromSec) text = h.text;
+      if (sec >= h.fromSec) text = t(h.key);
     }
     this.body.textContent = text;
   }

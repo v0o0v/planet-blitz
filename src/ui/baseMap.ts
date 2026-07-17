@@ -17,6 +17,7 @@
 
 import { computeUnlocks, activeShip, RESEARCH_UNLOCK_LEVEL, type Profile } from '../save/profile.js';
 import { UI_LOCK_URL, pixelIcon } from './uiIcons.js';
+import { t, type MessageKey } from '../i18n/index.js';
 
 // 기지 건물 픽셀아트(PixelLab 생성, 64px side view — 이모지 폴백 대체).
 import hangarPng from '../../assets/ui_bld_hangar.png';
@@ -25,21 +26,21 @@ import refineryPng from '../../assets/ui_bld_refinery.png';
 import defensePng from '../../assets/ui_bld_defense.png';
 import controlPng from '../../assets/ui_bld_control.png';
 
-/** A building tile on the base map. */
+/** A building tile on the base map. 이름/설명은 i18n 키로 지연 로케일화. */
 interface Building {
   key: 'hangar' | 'research' | 'refinery' | 'defense' | 'control';
-  name: string;
+  nameKey: MessageKey;
   icon: string;
-  desc: string;
+  descKey: MessageKey;
   accent: string;
 }
 
 const BUILDINGS: readonly Building[] = [
-  { key: 'hangar', name: '격납고', icon: hangarPng, desc: '장비 · 인벤토리 · 분해', accent: '#4cd7ff' },
-  { key: 'research', name: '연구소', icon: researchPng, desc: '스킬 트리 · 리스펙', accent: '#ff7a4c' },
-  { key: 'refinery', name: '정제소', icon: refineryPng, desc: '어픽스 리롤 · 잠금 리롤', accent: '#ffd24c' },
-  { key: 'defense', name: '방어 사령부', icon: defensePng, desc: '방어 배치 · 정비', accent: '#8fd94c' },
-  { key: 'control', name: '관제탑', icon: controlPng, desc: '래더 · 침공 · 리플레이', accent: '#c86aff' },
+  { key: 'hangar', nameKey: 'base.bld.hangar.name', icon: hangarPng, descKey: 'base.bld.hangar.desc', accent: '#4cd7ff' },
+  { key: 'research', nameKey: 'base.bld.research.name', icon: researchPng, descKey: 'base.bld.research.desc', accent: '#ff7a4c' },
+  { key: 'refinery', nameKey: 'base.bld.refinery.name', icon: refineryPng, descKey: 'base.bld.refinery.desc', accent: '#ffd24c' },
+  { key: 'defense', nameKey: 'base.bld.defense.name', icon: defensePng, descKey: 'base.bld.defense.desc', accent: '#8fd94c' },
+  { key: 'control', nameKey: 'base.bld.control.name', icon: controlPng, descKey: 'base.bld.control.desc', accent: '#c86aff' },
 ];
 
 const STYLE = `
@@ -102,17 +103,17 @@ export class BaseMap {
     const u = computeUnlocks(profile);
     switch (key) {
       case 'hangar':
-        return u.hangar ? null : '해금 전';
+        return u.hangar ? null : t('base.lock.pre');
       case 'research':
-        return u.research ? null : `기체 Lv ${RESEARCH_UNLOCK_LEVEL} 필요`;
+        return u.research ? null : t('base.lock.level', { lvl: RESEARCH_UNLOCK_LEVEL });
       case 'refinery':
-        return u.refinery ? null : '행성 1회 클리어 필요';
+        return u.refinery ? null : t('base.lock.clear');
       case 'defense':
-        return u.defenseCommand ? null : '행성 1회 클리어 필요';
+        return u.defenseCommand ? null : t('base.lock.clear');
       case 'control':
         // 관제탑(침공·래더) — 방어 사령부와 동일 해금 조건(행성 1회 클리어)으로 활성화.
         // (computeUnlocks.controlTower 는 save 계층 소유라, 해금 판정은 여기서 미러한다.)
-        return u.defenseCommand ? null : '행성 1회 클리어 필요';
+        return u.defenseCommand ? null : t('base.lock.clear');
       default:
         return null;
     }
@@ -142,11 +143,11 @@ export class BaseMap {
     this.root.innerHTML = '';
 
     const h1 = document.createElement('h1');
-    h1.textContent = '기지';
+    h1.textContent = t('base.title');
     this.root.appendChild(h1);
     const sub = document.createElement('div');
     sub.className = 'pb-sub';
-    sub.textContent = '건물을 선택해 정비하거나, 출격해 행성을 침략하라.';
+    sub.textContent = t('base.sub');
     this.root.appendChild(sub);
 
     const grid = document.createElement('div');
@@ -158,15 +159,16 @@ export class BaseMap {
       tile.className = `pb-bld${locked ? ' locked' : ''}`;
       tile.style.borderColor = locked ? '#2a3552' : b.accent;
 
+      const bname = t(b.nameKey);
       const ic = document.createElement('div');
       ic.className = 'ic';
-      ic.appendChild(pixelIcon(b.icon, 56, b.name));
+      ic.appendChild(pixelIcon(b.icon, 56, bname));
       const nm = document.createElement('div');
       nm.className = 'nm';
-      nm.textContent = b.name;
+      nm.textContent = bname;
       const ds = document.createElement('div');
       ds.className = 'ds';
-      ds.textContent = b.desc;
+      ds.textContent = t(b.descKey);
       tile.appendChild(ic);
       tile.appendChild(nm);
       tile.appendChild(ds);
@@ -176,7 +178,7 @@ export class BaseMap {
         ov.className = 'lockov';
         const lk = document.createElement('div');
         lk.className = 'lk';
-        lk.appendChild(pixelIcon(UI_LOCK_URL, 26, '잠김'));
+        lk.appendChild(pixelIcon(UI_LOCK_URL, 26, t('base.locked')));
         const rs = document.createElement('div');
         rs.className = 'rs';
         rs.textContent = reason;
@@ -192,14 +194,19 @@ export class BaseMap {
 
     const launch = document.createElement('button');
     launch.className = 'pb-launch';
-    launch.textContent = '▶ 성계 지도 (출격)';
+    launch.textContent = t('base.launch');
     launch.addEventListener('click', () => cb.onStarMap());
     this.root.appendChild(launch);
 
     const ship = activeShip(profile);
     const meta = document.createElement('div');
     meta.className = 'pb-meta';
-    meta.textContent = `크레딧 ${profile.credits} · 광물 ${profile.minerals} · 기체 Lv ${ship.level} · 스킬 ${profile.skillPoints}`;
+    meta.textContent = t('meta.line', {
+      c: profile.credits,
+      m: profile.minerals,
+      lv: ship.level,
+      sp: profile.skillPoints,
+    });
     this.root.appendChild(meta);
   }
 }

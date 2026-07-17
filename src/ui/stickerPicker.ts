@@ -7,6 +7,12 @@
  */
 
 import { STICKERS } from '../../data/stickers.js';
+import { t, type MessageKey } from '../i18n/index.js';
+
+/** 스티커 id → 카탈로그 키(`sticker.<id>`). 인덱스 계약과 무관한 표시 문구만 로케일화. */
+function stickerTextKey(id: string): MessageKey {
+  return `sticker.${id}` as MessageKey;
+}
 
 const STYLE = `
 #pb-stk { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px; box-sizing:border-box; background:rgba(4,3,10,.78); backdrop-filter:blur(4px); z-index:33; font-family:'Segoe UI',system-ui,sans-serif; }
@@ -77,10 +83,11 @@ export class StickerPicker {
       const em = document.createElement('span');
       em.className = 'em';
       em.textContent = sticker.emoji;
+      const label = t(stickerTextKey(sticker.id));
       const txt = document.createElement('span');
-      txt.textContent = sticker.text;
+      txt.textContent = label;
       item.append(em, txt);
-      item.title = sticker.text;
+      item.title = label;
       item.addEventListener('click', () => {
         const cbk = this.cb;
         this.hide();
@@ -93,7 +100,7 @@ export class StickerPicker {
     const skip = document.createElement('button');
     skip.className = 'pb-stk-skip';
     skip.type = 'button';
-    skip.textContent = '스티커 없이 넘어가기';
+    skip.textContent = t('sticker.skip');
     skip.addEventListener('click', () => {
       const cbk = this.cb;
       this.hide();
