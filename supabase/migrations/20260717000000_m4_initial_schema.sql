@@ -152,6 +152,7 @@ create policy ships_rw_own
 -- Edge Function RPC/전용 뷰로 교체 예정 — 그때 이 정책은 폐기(또는 select 자체를
 -- 제거)하고 RPC 경유로 강제한다. equipped(장착 아이템) 노출도 그 시점에 필드 단위로
 -- 재검토(정찰에 어디까지 보여줄지 밸런싱 이슈, 계획 §1-5).
+drop policy if exists ships_select_others on public.ships;
 create policy ships_select_others
   on public.ships for select
   to authenticated

@@ -8,9 +8,9 @@ M4 PvP(침공·래더·치트 방어)의 서버 스키마와 적용 절차. 근�
 
 ## 마이그레이션 목록
 
-| 파일 | 내용 |
-|---|---|
-| `20260717000000_m4_initial_schema.sql` | 7테이블(profiles·ships·items·ladder·defenses·invasions·guardians) + RLS 정책 + 인덱스 + 서버 권위 가드 트리거 |
+| 파일 | 내용 | 원격 적용 |
+|---|---|---|
+| `20260717000000_m4_initial_schema.sql` | 7테이블(profiles·ships·items·ladder·defenses·invasions·guardians) + RLS 정책 + 인덱스 + 서버 권위 가드 트리거 | ✅ 2026-07-17 (`m4_initial_schema`) — 7테이블·RLS 전부 true·정책 13개·트리거 9개 실측 확인, Advisor 는 익명 Auth 설계상 예상되는 WARN(anonymous access)만 |
 
 ## 테이블 요약
 
@@ -80,9 +80,9 @@ Phase D(침공 검증·래더 스왑, 계획 §4)에서 매치메이킹 RPC 를 
    - `list_tables` 로 7테이블 실체(컬럼·타입) 가 이 마이그레이션과 일치하는지.
    - `select relname, relrowsecurity from pg_class where relname in (...)` 전부
      `true`, `pg_policies` 정책 수가 이 문서의 표와 일치하는지(테이블당 정책 수 확인).
-   - `pg_trigger` 로 5개 가드/updated_at 트리거(`trg_profiles_guard`,
-     `trg_defenses_guard`, `trg_invasions_guard_insert`, 그리고 7개 `*_updated_at`)
-     가 실제로 걸려 있는지.
+   - `pg_trigger` 로 가드 트리거 3개(`trg_profiles_guard`, `trg_defenses_guard`,
+     `trg_invasions_guard_insert`)와 `*_updated_at` 6개(invasions 는 `updated_at`
+     컬럼이 없어 제외)가 실제로 걸려 있는지.
    - **Edge Function 컨텍스트에서 `select current_user, public.is_service_role();`
      을 실행해 `current_user = 'service_role'` 이고 `is_service_role() = true` 가
      나오는지 실측** — 이 문서의 서버 권위 설계 전체(가드 트리거들의 "not
