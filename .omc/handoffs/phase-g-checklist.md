@@ -2,27 +2,31 @@
 
 계획 §4 Phase G + 마스터 §4 게이트. 각 항목은 "실행 증거"가 있어야 통과(주장 금지).
 
-## 게이트① 위조 100% 거부 (AC2)
-- [ ] `deno task verify-invasion` 전 시나리오(조작 해시·트림 입력·config 위조·self·쿨다운·랭크 윈도우) 거부 확인
-- [ ] 원격 EF에 위조 페이로드 제출 스모크(실 JWT 2계정) — rejected 확인
+> **검증 완료(worker-g, 2026-07-17)** — 게이트 5종 + 회귀 전부 PASS. 상세 증거:
+> `.omc/handoffs/phase-g-results.md`. 산출물: `scripts/e2e/invasionE2E.ts`·`probe.ts`.
 
-## 게이트② 침공 e2e (AC3)
-- [ ] 실 계정 2개(익명 Auth)로: A 방어 업로드 → B 관제탑 제안 → B 침공 런 → 제출 → EF 재실행 verified → 래더 스왑·약탈 반영 확인(원격 DB 조회)
-- [ ] 하네스 딥링크로 실플레이(수동 or 오토파일럿) — 브라우저 검증은 `/harness` + `__pb.harness.ff`
+## 게이트① 위조 100% 거부 (AC2) — PASS
+- [x] `deno task verify-invasion` 전 시나리오(조작 해시·트림 입력·config 위조·self·쿨다운·랭크 윈도우) 거부 확인
+- [x] 원격 EF 위조 제출 스모크(실 JWT 2계정) — rejected(final-hash-mismatch·outcome-mismatch·self insert 트리거 거부)
 
-## 게이트③ 배치전 삽입 무변동 (AC4)
-- [ ] 신규 계정 배치전 5회 → 삽입 전후 기존 유저 rank 상대 순서 불변 쿼리 증거(Phase E 통합테스트 재실행)
+## 게이트② 침공 e2e (AC3) — PASS
+- [x] 실 계정 2개(익명 Auth): A 방어 업로드 → B 매치메이킹 제안 → B 침공 → EF verified → 래더 스왑·복제약탈 원격 DB 실측
+- [ ] 하네스 딥링크 실플레이 — **사람 실플레이 잔여**(사용자 몫). 기술 경로는 e2e로 전수 검증됨.
 
-## 게이트④ 풍화 무결 (AC5)
-- [ ] cron 함수 수동 1회 실행 → defenses.maintenance만 -5, profiles.save·items·ladder 전 컬럼 diff 0 증거
+## 게이트③ 배치전 삽입 무변동 (AC4) — PASS
+- [x] T-E3 재실행: 4승→rank13 삽입, existing_order_preserved=t, total=21(기존 상대 순서 불변)
 
-## 게이트⑤ 상호 침공·복수전 (AC6)
-- [ ] 두 계정 상호 침공 + 복수전(24h 창·쿨다운 무시·탈환+보너스) e2e — **사람 실플레이 권장 구간**(사용자 안내)
+## 게이트④ 풍화 무결 (AC5) — PASS
+- [x] weather_defenses 1회: maintenance만 -5(2000→1900), profiles·items·ladder·layout+budget diff 0 (T-E2 재실행)
 
-## 회귀·결정론 (AC13)
-- [ ] `npm test`+`tsc`+eslint 전체, `deno task verify`(parity)·`verify-run`·`verify-invasion` 전부 녹색
-- [ ] src/sim 금지 심볼 lint 0, PvE fixtures 해시 불변
-- [ ] `get_advisors` security/performance 재점검(신규 경고 0 또는 의도 문서화)
+## 게이트⑤ 상호 침공·복수전 (AC6) — PASS(스크립트 e2e)
+- [x] 두 계정 상호 침공 + 복수전(24h·쿨다운 무시·탈환+보너스 광물 +50) 원격 DB 실측
+- [ ] **사람 실플레이 권장 구간**(사용자 안내) — UX 게이트 잔여.
+
+## 회귀·결정론 (AC13) — PASS
+- [x] `npm test`(512 tests)+`tsc`+eslint 전체, `deno task verify`·`verify-run`·`verify-invasion` 전부 녹색
+- [x] src/sim 금지 심볼 lint 0(eslint clean), PvE fixtures 해시 불변
+- [x] `get_advisors` security/performance — ERROR 0, WARN 전부 의도(문서화)
 
 ## 마감
-- [ ] supabase/README.md·계획 문서 AC 체크박스 갱신, 프로젝트 메모리 갱신, /oh-my-claudecode:cancel
+- [x] phase-g-results.md 기록·checklist 갱신. README·계획 AC 체크박스·프로젝트 메모리·/cancel 은 리드 몫.
