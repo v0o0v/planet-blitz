@@ -47,6 +47,51 @@ Phase D(침공 검증·래더 스왑, 계획 §4)에서 매치메이킹 RPC 를 
 지금 단계에서 미리 좁히는 구현은 하지 않는다(대상 기준 자체가 Phase D 산출물이라 조기
 구현은 재작업 위험이 크다) — 이 SQL 주석과 표가 후속 작업자를 위한 착수 조건 기록이다.
 
+### Phase D 착수 조건 — defenses INSERT/DELETE 경로 서버 권위(재리뷰 잔여 MEDIUM)
+
+`guard_defenses_client_write`(HIGH-2 수정)는 **UPDATE 경로**에서만 `maintenance`/
+`budget_spent` 를 서버 전용으로 고정한다. INSERT/DELETE 경로는 아직 다음 구멍이 남아
+있고, 둘 다 Phase C(방어 에디터)·Phase D(침공 검증)·Phase E(풍화)가 실제 붙기 전에는
+악용해도 게임에 영향이 없어(래더 스왑·정비 회복 로직 자체가 없음) M4 Phase B 범위 밖으로
+남겨둔다. 후속 단계 착수 조건으로 기록한다:
+
+1. **INSERT 시 budget_spent 자가 신고**: `defenses_rw_own` 은 INSERT 도 허용하므로, 클라
+   이언트가 `layout` 은 예산을 초과해 채워놓고 `budget_spent` 는 낮게 신고해 삽입할 수
+   있다. Phase C(방어 에디터 저장)·Phase D(침공 검증) 시점에 다음 중 하나로 게이트해야
+   한다: ① 방어 저장을 클라이언트 직접 INSERT 가 아니라 service_role Edge Function
+   RPC 로만 받고 `layout` 에서 `budget_spent` 를 서버가 직접 산출/검증, 또는 ② INSERT
+   트리거로 `layout` 을 파싱해 포탑·장애물 비용 합계와 `budget_spent` 가 일치하는지
+   검증(불일치 시 reject). 예산 계산 규칙이 아직 Phase C 산출물(포탑 6종 비용표)에
+   달려 있어 이번 마이그레이션에서는 스키마의 `check (budget_spent >= 0)` 이상을 걸지
+   않는다.
+2. **DELETE→재생성으로 정비도 리셋**: `defenses_rw_own` 은 DELETE 도 허용하므로, 풍화
+   (Phase E)로 `maintenance` 가 낮아진 행을 클라이언트가 지우고 `maintenance` 기본값
+   100.00 인 새 행을 다시 INSERT 해 풍화를 무력화할 수 있다. `defenses_one_active_idx`
+   (프로필당 활성 방어 1개) 는 이 우회를 막지 못한다 — 삭제 후 재삽입이면 유니크 위반이
+   나지 않는다. Phase E(풍화 pg_cron) 설계 시 다음을 함께 고려해야 한다: 방어자 식별을
+   `defenses.id` 가 아니라 `ladder.defense_id`(공격자가 실제로 침공 판정에 쓰는 앵커)
+   기준으로 하면, 방어자가 재생성한 새 `defenses.id` 는 `ladder.defense_id` 가 자동으로
+   가리키지 않으므로(수동 재배치 필요) 이 우회의 실효성이 줄어든다 — 다만 재배치 UX 를
+   막지 않는 한 완전 차단은 아니므로, DELETE 를 service_role 전용으로 제한하거나 DELETE
+   시 `ladder.defense_id` 를 함께 null 화하는 트리거가 최종적으로 필요할 수 있다.
+3. **적용 시점 확증 항목(리드 담당, 원격 적용 후)**: 이 문서의 서버 권위 주장은 로컬
+   Docker 부재로 실행 검증되지 않았다. 실제 `apply_migration` 직후 다음을 MCP 로
+   실측 확인할 것:
+   - `list_tables` 로 7테이블 실체(컬럼·타입) 가 이 마이그레이션과 일치하는지.
+   - `select relname, relrowsecurity from pg_class where relname in (...)` 전부
+     `true`, `pg_policies` 정책 수가 이 문서의 표와 일치하는지(테이블당 정책 수 확인).
+   - `pg_trigger` 로 5개 가드/updated_at 트리거(`trg_profiles_guard`,
+     `trg_defenses_guard`, `trg_invasions_guard_insert`, 그리고 7개 `*_updated_at`)
+     가 실제로 걸려 있는지.
+   - **Edge Function 컨텍스트에서 `select current_user, public.is_service_role();`
+     을 실행해 `current_user = 'service_role'` 이고 `is_service_role() = true` 가
+     나오는지 실측** — 이 문서의 서버 권위 설계 전체(가드 트리거들의 "not
+     is_service_role()" 분기)가 이 가정 위에 서 있으므로, Edge Function 이 실제로
+     `service_role` 컨텍스트에서 PostgREST/DB 연결을 맺는지(그렇지 않고 예컨대 별도
+     서비스 계정 role 이름을 쓴다면 `is_service_role()` 정의를 그 role 이름을 포함
+     하도록 갱신해야 함) 코드로 가정만 하지 말고 원격 적용 후 한 번은 직접 찍어봐야
+     한다.
+
 ## 원격 적용 절차 (리드가 MCP 인증 후 실행)
 
 Supabase MCP(`supabase-planet-blitz`)로 인증한 세션에서:
