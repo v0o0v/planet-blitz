@@ -27,8 +27,11 @@ import type { Entity, EntitySink } from './entities.js';
 import { blankEntity, addEntity, spawnEnemyBullet, spawnHazard, spawnWall } from './entities.js';
 import { applyBehavior, homingBehavior } from './bullets.js';
 import { HAZARD_SLOW } from './patterns/types.js';
-import { atan2, cos, sin } from './math.js';
+import { atan2, cos, sin, length } from './math.js';
 import { segmentBlocked } from './los.js';
+import { DT } from './constants.js';
+import { resolveGuardianStats, normalizeGuardianPreset, MAX_GUARDIAN_SLOTS } from '../../data/guardian.js';
+import type { GuardianSnapshot, GuardianStats } from '../../data/guardian.js';
 
 // ---------------------------------------------------------------------------
 // 포탑 유형 코드 (defenseTurret.enemyType 에 저장; 절대 재번호 금지 — 배치 JSON 계약)
@@ -257,11 +260,34 @@ export interface CorePlacement {
  * 방어 배치 전체(직렬화 JSON). `defenses.layout` 컬럼과 C3 에디터가 주고받는 계약이다.
  * `guardianSlots`는 M5 수호 기체 슬롯 자리(OQ-M4-4 — 이번 마일스톤 비활성, 계약 안정용 예약).
  */
+/**
+ * 방어 배치 수호 기체 1기(M5 plan A1, ADR-0007). 방어전 config 에 **스냅샷 + 남은 성능% +
+ * 계보 보너스**를 실어(갈림길①A), 클라이언트와 서버가 동일 결정론 함수(resolveGuardianStats)로
+ * 비트 동일한 실효 스탯을 재현한다. 좌표(x/y)는 배치 위치(포탑처럼 방어자가 정한다). 위조 방어는
+ * 서버가 권위 스냅샷·성능·보너스로 재해석해 hashStream 이 갈려 거부한다(EF 배선 계층 책임).
+ */
+export interface GuardianPlacement {
+  x: number;
+  y: number;
+  /** 퇴역 복사 스냅샷(기본 전투 스탯). */
+  snapshot: GuardianSnapshot;
+  /** 남은 성능%(centi-percent, 풍화 반영). 미지정 = 완전 성능. */
+  performanceCP: number;
+  /** 계보 수호 가지 보너스(basis-point, 0..5000). 미지정 = 0. */
+  lineageBonusBp: number;
+}
+
 export interface DefenseLayout {
   core: CorePlacement;
   turrets: TurretPlacement[];
   obstacles: ObstaclePlacement[];
-  /** M5 수호 기체 슬롯(비활성 — 스키마·에디터 자리만, 시뮬 미참여). */
+  /**
+   * M5 수호 기체(동시 최대 {@link MAX_GUARDIAN_SLOTS}기, ADR-0007). 존재하고 비어있지 않을 때만
+   * 방어전에 참전한다 → 이 필드가 없거나 빈 배열인 기존 침공/PvE 런은 거동·해시가 완전히 불변
+   * (append-only 안전, hashWorld 조건부 접기). 상한 초과분은 스폰에서 잘린다.
+   */
+  guardians?: GuardianPlacement[];
+  /** (구) M5 수호 기체 슬롯 예약 자리 — guardians 로 대체됨. 서버 정규화가 드롭한다. */
   guardianSlots?: unknown[];
 }
 /**
@@ -382,6 +408,96 @@ export function spawnInvasionLayout(
   spawnCore(sink, layout.core.x, layout.core.y);
   for (const t of layout.turrets) spawnDefenseTurret(sink, t.type, t.x, t.y, maintenance);
   for (const o of layout.obstacles) spawnWall(sink, o.x, o.y, o.halfW, o.halfH);
+  // M5 수호 기체(동시 최대 MAX_GUARDIAN_SLOTS): 코어·포탑·장애물 뒤에 스폰(배열 순서 = 결정론
+  // 입력). 없거나 빈 배열이면 아무것도 안 함 → 기존 런 거동·해시 불변. 상한 초과분은 자른다.
+  const guardians = layout.guardians;
+  if (guardians !== undefined) {
+    const n = guardians.length < MAX_GUARDIAN_SLOTS ? guardians.length : MAX_GUARDIAN_SLOTS;
+    for (let i = 0; i < n; i++) spawnGuardian(sink, guardians[i]!, i);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 수호 기체(M5 plan A1, ADR-0007) — 추적형 요격 유닛(결정론)
+// ---------------------------------------------------------------------------
+/**
+ * 수호 기체 1기 스폰. 실효 스탯을 스냅샷 × 성능 × 계보 보너스로 해석(resolveGuardianStats)해
+ * 내구도·반지름·접촉피해를 세팅한다. 발사 스탯(탄피해·간격 등)은 스텝에서 매 틱 동일 함수로
+ * 재해석하므로 여기선 초기 발사 지연만 실효 간격으로 준다(스폰 즉발 방지·성능 저하 일관).
+ *
+ * 필드 재활용(플랫 Entity 구조 — 신규 hash 필드 없음):
+ *   - enemyType = 프리셋(0 타이탄/1 인터셉터, 렌더 분화)
+ *   - pierce    = 슬롯 인덱스(layout.guardians 조회 키; 스텝이 성능·보너스 재해석에 사용)
+ *   - hp/maxHp/radius/damage(접촉) = 스폰 시 해석값, angle = 조준각(스텝에서 갱신)
+ */
+export function spawnGuardian(sink: EntitySink, p: GuardianPlacement, slotIndex: number): Entity {
+  const stats = resolveGuardianStats(p.snapshot, p.performanceCP, p.lineageBonusBp);
+  const g = blankEntity('guardian');
+  g.x = p.x;
+  g.y = p.y;
+  g.enemyType = normalizeGuardianPreset(p.snapshot.preset);
+  g.pierce = slotIndex; // layout.guardians 조회 키(스텝에서 동일 스탯 재해석)
+  g.radius = stats.radius;
+  g.hp = stats.hp;
+  g.maxHp = stats.hp;
+  g.damage = stats.contactDamage;
+  g.cooldown = stats.fireCooldown; // 초기 발사 지연(즉발 방지)
+  return addEntity(sink, g);
+}
+
+/**
+ * 수호 기체를 1틱 진행: 유지 거리 밖이면 플레이어를 향해 결정론적으로 추적 이동하고, 사거리·LOS
+ * 를 확인해 플레이어를 향해 적탄(플레이어에 유해)을 발사한다. 순수·결정론(위치·타이머·배열 순서·
+ * 벽 LOS·정수 스탯 함수만, RNG 미소비). 침공 방어전에서만 호출된다(수호 없으면 조기 반환).
+ *
+ * 추적: 유지 거리(standoff)보다 멀면 정규 벡터 × 이동속도 × DT 로 접근(gems/특이점 흡인과 동일
+ * f64 규율), 이내면 정지 사격(요격 유닛 거동). 벽은 이동에서 통과(비행 요격기)하되 사격 LOS 는
+ * 존중한다(segmentBlocked) — 단순·결정론 유지.
+ */
+export function stepGuardians(state: WorldState, player: Entity): void {
+  const guardians = state.config.invasion?.layout.guardians;
+  if (guardians === undefined || guardians.length === 0) return;
+  for (const g of state.entities) {
+    if (g.kind !== 'guardian' || g.dead) continue;
+    const p = guardians[g.pierce];
+    if (p === undefined) continue;
+    const stats: GuardianStats = resolveGuardianStats(p.snapshot, p.performanceCP, p.lineageBonusBp);
+    const dx = player.x - g.x;
+    const dy = player.y - g.y;
+    const dist = length(dx, dy);
+    // 추적: 유지 거리보다 멀면 접근(정규 벡터 × 속도 × DT). 이동 거리는 남은 간격으로 클램프.
+    if (dist > stats.standoff && dist > 1) {
+      const stepDist = Math.min(stats.moveSpeed * DT, dist - stats.standoff);
+      g.x += (dx / dist) * stepDist;
+      g.y += (dy / dist) * stepDist;
+    }
+    g.angle = atan2(dy, dx);
+    // 발사: 쿨다운·사거리·LOS 게이트(포탑과 동일 규율). 사거리 밖이면 쿨다운 유지(진입 시 즉발).
+    if (g.cooldown > 0) {
+      g.cooldown--;
+      continue;
+    }
+    if (dx * dx + dy * dy > stats.range * stats.range) continue;
+    if (
+      state.activeWalls.length > 0 &&
+      segmentBlocked(g.x, g.y, player.x, player.y, state.activeWalls)
+    ) {
+      continue;
+    }
+    const ang = atan2(dy, dx);
+    spawnEnemyBullet(
+      state,
+      g.x,
+      g.y,
+      cos(ang) * stats.bulletSpeed,
+      sin(ang) * stats.bulletSpeed,
+      ang,
+      stats.bulletDamage,
+      stats.bulletRadius,
+      stats.bulletLife,
+    );
+    g.cooldown = stats.fireCooldown;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -30,7 +30,9 @@ export type EntityKind =
   | 'loot' // 엘리트·보스가 바닥에 떨군 장비 드랍(접촉 자동 획득). damage=드랍시드, enemyType=rarity 코드
   // --- M4 침공 방어 배치 (plan Phase C1) ---
   | 'defenseTurret' // 방어 포탑 6종(enemyType=포탑 유형 0..5). 플레이어를 조준·발사, 결정론 거동
-  | 'core'; // 방어 코어(침공 목표). 파괴 시 침공 승리(compact가 victory 판정)
+  | 'core' // 방어 코어(침공 목표). 파괴 시 침공 승리(compact가 victory 판정)
+  // --- M5 수호 기체 (plan Phase A1, ADR-0007) ---
+  | 'guardian'; // 퇴역 기체의 방어 AI(추적형 요격 유닛). 침공 방어전에 참전, 플레이어를 추적·사격
 
 /**
  * Stable integer per kind, folded into the state hash. Never renumber existing
@@ -57,6 +59,9 @@ export const KIND_CODE: Record<EntityKind, number> = {
   // Appended for the M4 침공 방어 배치 (never renumber 1..14).
   defenseTurret: 15,
   core: 16,
+  // Appended for the M5 수호 기체 (never renumber 1..16). PvE·수호 미포함 침공 런에는
+  // guardian 엔티티가 없어 이 코드가 해시에 등장하지 않는다 → 기존 fixtures 바이트 불변.
+  guardian: 17,
 };
 
 export interface Entity {

@@ -144,7 +144,7 @@ import {
   TURRET_BULLET_LIFE,
 } from './events.js';
 import type { InvasionConfig } from './defense.js';
-import { spawnInvasionLayout, stepDefenseTurrets } from './defense.js';
+import { spawnInvasionLayout, stepDefenseTurrets, stepGuardians } from './defense.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -675,6 +675,8 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   droneBay(state, player);
   stepTurrets(state, player);
   if (invasion !== undefined) stepDefenseTurrets(state, player);
+  // 수호 기체(M5 plan A1): 방어전에서만 추적·사격. 수호 없으면 조기 반환(거동·해시 불변).
+  if (invasion !== undefined) stepGuardians(state, player);
   stepProjectiles(state, player);
   stepGems(state, player);
   if (invasion === undefined) stepSupply(state, player);
@@ -1241,7 +1243,8 @@ function isPlayerTargetable(e: Entity): boolean {
     e.kind === 'boss' ||
     e.kind === 'supply' ||
     e.kind === 'defenseTurret' ||
-    e.kind === 'core'
+    e.kind === 'core' ||
+    e.kind === 'guardian'
   );
 }
 
@@ -1543,7 +1546,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       e.kind === 'turretPickup' ||
       e.kind === 'loot' ||
       e.kind === 'defenseTurret' ||
-      e.kind === 'core'
+      e.kind === 'core' ||
+      e.kind === 'guardian'
     ) {
       grid.insert(e);
     }
@@ -1586,7 +1590,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         t.kind !== 'supply' &&
         t.kind !== 'destructible' &&
         t.kind !== 'defenseTurret' &&
-        t.kind !== 'core'
+        t.kind !== 'core' &&
+        t.kind !== 'guardian'
       )
         return;
       if (!circlesOverlap(b.x, b.y, b.radius, t.x, t.y, t.radius)) return;
@@ -1736,7 +1741,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     if (t.kind === 'enemyBullet') {
       if (t.damage > dmg) dmg = t.damage;
       t.dead = true;
-    } else if (t.kind === 'enemy' || t.kind === 'boss') {
+    } else if (t.kind === 'enemy' || t.kind === 'boss' || t.kind === 'guardian') {
+      // 수호 기체(M5)는 추적형 요격 유닛 — 접촉(램) 피해를 준다(방어전에만 존재).
       if (t.damage > dmg) dmg = t.damage;
     } else if (t.kind === 'hazard' && hazardActive(t)) {
       if (t.damage > dmg) dmg = t.damage;
