@@ -759,3 +759,52 @@ Phase F(`20260717150000_m4_phase_f_pve_sampling.sql`) "리플레이 재실행 �
   비용 실측 후 상위 N%·랜덤 비율을 정교화(OQ-M4-2 원안).
 - **[LOW] 리플레이 blob 용량**: `pve_runs.replay` 는 입력 로그 전량을 담아 장기 런에서 커질 수
   있다. 보존 기간·압축·검증 완료분 정리(cron)는 운영 지표 확인 후 별도 결정.
+
+---
+
+## M5 Phase A — 퇴역·수호 기체·계보 (worker-c, `20260718100000_m5_guardian_lineage`)
+
+수호 기체 생애주기(ADR-0007)를 sim·서버 양면에 얹었다. 결정론 sim 코어는 이미 통과(테스트로
+증명)했고, DB 는 서버 권위 생애주기 RPC + 계보 경제를 담는다.
+
+### sim·검증 (원격 DB 무관 — 이미 커밋·통과)
+- **수호 엔티티**(`src/sim/entities.ts` `guardian` kind 17 append, `src/sim/defense.ts`
+  `spawnGuardian`/`stepGuardians`): 추적형 요격 유닛. 스탯 = 스냅샷 × 남은 성능% × 계보 보너스
+  (`data/guardian.ts resolveGuardianStats`, 순수 결정론 정수). 방어 배치 config 에 [스냅샷+성능%+
+  보너스]를 실어(갈림길①A) 클라·서버가 동일 함수로 실효 스탯을 재현.
+- **해시 불변**: `hashWorld` 수호 폴드는 **이중 조건부**(invasion 존재 && guardians 비어있지 않음)
+  → **PvE·수호 미포함 침공 런 해시 바이트 불변**(fixtures.json diff 0 실증, `tests/guardian.test.ts`).
+- **AC2 서버 재현**: `verifyInvasionCore` 가 수호 배치를 정규화·구조검증·권위 대조(layoutEquals).
+  성능·스냅샷 위조는 `defense-mismatch`. Node↔Deno bit-identical(`deno task verify-invasion` —
+  "수호 기체 포함 정직 침공" PASS).
+
+### DB (원격 미적용 — 리드가 `apply_migration('m5_guardian_lineage', …)`)
+- **guardians 확장**: `combat_score`·`preset` 컬럼 + `guard_guardians_client_write`(클라 update 에서
+  `performance`/`combat_score`/`retired` 이전 값 고정 — 풍화·회수가치 위조 차단). RLS 를 select/
+  update own 으로 분해, **INSERT/DELETE 정책 제거**(생성=retire_ship, 소멸=dismiss_guardian).
+- **profiles 계보 컬럼**: `lineage_points`·`lineage_ship_level`·`lineage_guardian_level` + 기존
+  `guard_profiles_client_write` 에 3컬럼 서버 고정 추가(**기존 flagged 가드 블록 유지** — PR#29 회귀
+  교훈). 계보는 순환 재화(리스펙 없음)라 클라 직접 쓰기 금지, RPC 만 갱신.
+- **RPC 3종**(security definer, authenticated+service_role EXECUTE):
+  - `retire_ship(p_preset, p_combat_score, p_snapshot)`: 수호 생성(performance=100) + 계보 +50pt.
+  - `dismiss_guardian(p_guardian_id)`: 전투력×남은성능 → 계보 포인트 회수(자동 소멸 없음).
+  - `invest_lineage(p_branch)`: 계보 1레벨 투자(비용 40+level×10, 포인트 차감, 단조 증가).
+- **A4 풍화**: 기존 `weather_guardians()`(주 5%p·바닥 50%·회복 불가) + pg_cron 이 이미 배선됨
+  (`20260717110000`/`120000`). retire_ship 이 만든 수호(retired=false)가 자동으로 잡 대상이 된다.
+
+### 원격 적용·검증 (리드 몫)
+- `apply_migration('m5_guardian_lineage', <20260718100000 내용>)` 후: guardians `combat_score`·
+  `preset` 컬럼·`trg_guardians_guard` 트리거, profiles 계보 3컬럼, RPC 3종 EXECUTE(anon 없음),
+  RLS 재분해(guardians INSERT/DELETE 정책 부재) 확인. `get_advisors(security)` 신규 WARN 점검.
+- **트랜잭션 순서 주의**: `guard_profiles_client_write` 를 create or replace 로 재정의하므로,
+  적용 시 기존 flagged 고정이 유지되는지(마이그레이션 본문에 flagged 라인 포함됨) 재확인.
+
+### 신뢰 경계 (문서화된 한계 — carry-forward)
+- **[MED] EF index.ts 권위 수호 로딩**: `verifyInvasionCore` 는 서버 `server.layout.guardians` 를
+  진실로 재실행·대조한다. 이 배열의 **성능(performanceCP)·계보 보너스(lineageBonusBp)를 방어자
+  guardians 테이블(서버 풍화)·lineage 컬럼에서 권위 로딩해 주입**하는 것은 EF 배선(index.ts)의
+  몫이다(maintenance 주입과 동일 패턴). 이 워커는 코어 대조·재실행 지원까지 완성했고, index.ts
+  배선은 verify-invasion 배포 phase 로 이월한다.
+- **[문서화] combat_score·snapshot 신뢰 경계**: 이 두 값은 클라이언트 빌드 파생이라 클라가 주장한다
+  (items/save 가 이 게임에서 클라 정본인 것과 동일 축 — verifyInvasionCore 헤더 "공격자 로드아웃
+  미대조" 한계와 같은 등급). PvP 결정에 직결되는 **풍화(performance)** 축만 서버 권위로 봉인한다.

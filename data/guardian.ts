@@ -233,25 +233,6 @@ export function dismissPoints(combatScore: number, perfCP: number): number {
   return Math.floor((score * p) / PERFORMANCE_FULL);
 }
 
-/**
- * 전투력 점수 산식(OQ-M5-2 기본안): 장비 등급·어픽스 가치 + 스킬 빌드 깊이 종합. 순수 정수 —
- * 퇴역 시점 빌드 파생 스칼라(computeLoadoutStats 결과 등)에서 뽑은 요약값을 받아 합산한다.
- * 가중치는 밸런싱 패스에서 튜닝(계획 §5). 최소 1(공허 방지).
- *   - gearRating: 장비 등급·아이템 레벨 합(정수).
- *   - affixValue: 어픽스 가치 합(정수).
- *   - buildDepth: 스킬 투자 깊이(투자 노드 수 등, 정수).
- *   - uniqueCount: 장착 유니크 수(정수) — 질적 강도 가중.
- */
-export function computeCombatScore(parts: {
-  gearRating: number;
-  affixValue: number;
-  buildDepth: number;
-  uniqueCount: number;
-}): number {
-  const g = Math.max(0, Math.trunc(parts.gearRating));
-  const a = Math.max(0, Math.trunc(parts.affixValue));
-  const d = Math.max(0, Math.trunc(parts.buildDepth));
-  const u = Math.max(0, Math.trunc(parts.uniqueCount));
-  const score = g + a * 2 + d * 3 + u * 25;
-  return score < 1 ? 1 : score;
-}
+// 전투력 점수 산식은 src/save/combatPower.ts(totalCombatPower — 장비 등급·어픽스 가치)를
+// 단일 정본으로 재사용한다. 퇴역 전투력은 그 값 + 스킬 빌드 깊이를 src/save/guardianLifecycle.ts
+// 가 합산한다(빌드 종합, OQ-M5-2). 여기 data/ 층은 순수 스탯 해석만 담아 중복을 피한다.

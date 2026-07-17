@@ -26,7 +26,6 @@ import {
   makeGuardianSnapshot,
   resolveGuardianStats,
   dismissPoints,
-  computeCombatScore,
   normalizePerformance,
   normalizeLineageBonus,
 } from '../data/guardian.js';
@@ -276,11 +275,6 @@ describe('data/guardian.ts — 스탯 해석 (결정론 정수)', () => {
     expect(dismissPoints(0, PERFORMANCE_FULL)).toBe(0);
   });
 
-  it('computeCombatScore: 결정론 합산·최소 1', () => {
-    const s = computeCombatScore({ gearRating: 120, affixValue: 30, buildDepth: 8, uniqueCount: 2 });
-    expect(s).toBe(120 + 30 * 2 + 8 * 3 + 2 * 25);
-    expect(computeCombatScore({ gearRating: 0, affixValue: 0, buildDepth: 0, uniqueCount: 0 })).toBe(1);
-  });
 });
 
 describe('data/lineage.ts — 로그 점근 계보 (AC4)', () => {

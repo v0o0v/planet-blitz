@@ -33,6 +33,8 @@ import type { Item, Rarity, SlotKind, EquipSlotId } from '../items/types.js';
 import { EQUIP_SLOTS, RARITY_CODE } from '../items/types.js';
 import { activeShip } from '../save/profile.js';
 import type { Profile } from '../save/profile.js';
+import { retireActiveShip, bulkDismissGuardians, investLineageBranch } from '../save/guardianLifecycle.js';
+import { GUARDIAN_TITAN, GUARDIAN_INTERCEPTOR } from '../../data/guardian.js';
 
 /**
  * main.ts가 주입하는 치트 패널 호스트. 하네스 공개 API로는 닿지 않는 프로필 지급·
@@ -186,6 +188,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   // 접이식 섹션(개입·인스펙터) 펼침 상태 — 자동 갱신 재렌더를 넘어 보존.
   let openIntervene = false;
   let openInspector = false;
+  let openGuardian = false;
   // 런 식별 추적: 새 런이 시작되면 런 스코프 치트 상태(무적)를 리셋한다.
   // 무적은 일회성 world 변형이라 런을 넘어가면 실제 효과가 없는데 UI만 ON으로
   // 남고, OFF 시 이전 런의 savedMaxHp를 새 런에 덮어쓰는 desync가 생긴다(리뷰 LOW).
@@ -660,6 +663,78 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         }),
       );
       s.appendChild(ffRow);
+      body.appendChild(s);
+    }
+
+    // 2.5) 수호·계보 (M5 Phase A — 퇴역 1사이클 딥링크: AC1/AC3/AC4 흐름 검증)
+    {
+      const s = collapsible(
+        '수호·계보 (M5)',
+        () => openGuardian,
+        (v) => {
+          openGuardian = v;
+        },
+      );
+
+      const status = document.createElement('div');
+      status.className = 'pb-c-lbl';
+      const refreshStatus = (): void => {
+        const p = host.getProfile();
+        const active = p.guardians.filter((g) => !g.retired).length;
+        status.textContent =
+          `수호 ${active}기(활성)/${p.guardians.length}(총) · 계보 pt ${p.lineage.available} · ` +
+          `기체Lv ${p.lineage.shipLevel}·수호Lv ${p.lineage.guardianLevel}`;
+      };
+      refreshStatus();
+
+      const retireRow = document.createElement('div');
+      retireRow.className = 'pb-c-row';
+      retireRow.appendChild(
+        btn('퇴역 · 타이탄', () => {
+          const r = retireActiveShip(host.getProfile(), GUARDIAN_TITAN);
+          host.saveProfile();
+          refreshStatus();
+          setHint(`퇴역(타이탄) → 수호 생성 전투력 ${r.guardian.combatScore}, 계보 +${r.granted}pt`);
+        }, '만렙 퇴역 → 타이탄형 수호 기체 생성 + 계보 지급'),
+      );
+      retireRow.appendChild(
+        btn('퇴역 · 인터셉터', () => {
+          const r = retireActiveShip(host.getProfile(), GUARDIAN_INTERCEPTOR);
+          host.saveProfile();
+          refreshStatus();
+          setHint(`퇴역(인터셉터) → 수호 생성 전투력 ${r.guardian.combatScore}, 계보 +${r.granted}pt`);
+        }, '만렙 퇴역 → 인터셉터형 수호 기체 생성 + 계보 지급'),
+      );
+      s.appendChild(retireRow);
+
+      const dismissRow = document.createElement('div');
+      dismissRow.className = 'pb-c-row';
+      dismissRow.appendChild(
+        btn('일괄 소멸', () => {
+          const r = bulkDismissGuardians(host.getProfile());
+          host.saveProfile();
+          refreshStatus();
+          setHint(`수호 ${r.count}기 소멸 → 계보 +${r.points}pt 회수`);
+        }, '활성 수호 전체 소멸 → 계보 포인트 회수(ADR-0007)'),
+      );
+      dismissRow.appendChild(
+        btn('계보 투자 · 수호', () => {
+          const ok = investLineageBranch(host.getProfile(), 'guardian');
+          host.saveProfile();
+          refreshStatus();
+          setHint(ok ? '수호 가지 +1레벨(모든 수호 강화)' : '포인트 부족');
+        }, '수호 가지 1레벨 투자(로그 점근 +50%)'),
+      );
+      dismissRow.appendChild(
+        btn('계보 투자 · 기체', () => {
+          const ok = investLineageBranch(host.getProfile(), 'ship');
+          host.saveProfile();
+          refreshStatus();
+          setHint(ok ? '기체 가지 +1레벨(내 기체 강화)' : '포인트 부족');
+        }, '기체 가지 1레벨 투자'),
+      );
+      s.appendChild(dismissRow);
+      s.appendChild(status);
       body.appendChild(s);
     }
 

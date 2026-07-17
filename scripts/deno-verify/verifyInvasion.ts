@@ -23,6 +23,12 @@ import {
   TURRET_SHOTGUN,
 } from '../../src/sim/defense.ts';
 import type { DefenseLayout } from '../../src/sim/defense.ts';
+import {
+  GUARDIAN_TITAN,
+  GUARDIAN_INTERCEPTOR,
+  PERFORMANCE_FULL,
+  makeGuardianSnapshot,
+} from '../../data/guardian.ts';
 
 const RESET = '\x1b[0m';
 const GREEN = '\x1b[32m';
@@ -209,6 +215,26 @@ function main(): number {
     timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
     maintenance: MAINTENANCE_FULL,
   });
+
+  // --- 게이트 3.8: M5 수호 기체(AC2 서버 재현·Node↔Deno 결정론) ---
+  // 수호 2기 포함 방어전을 서버 권위 배치로 정직 제출 → accept(수호 AI 추적·사격이 Deno
+  // 에서도 Node 와 bit-identical 재현). 위조(성능·스냅샷)는 defense-mismatch.
+  const guardianLayout: DefenseLayout = {
+    ...SERVER_LAYOUT,
+    guardians: [
+      { x: 350, y: -100, snapshot: makeGuardianSnapshot(GUARDIAN_TITAN, 140), performanceCP: PERFORMANCE_FULL, lineageBonusBp: 1200 },
+      { x: 400, y: 150, snapshot: makeGuardianSnapshot(GUARDIAN_INTERCEPTOR, 90), performanceCP: 7500, lineageBonusBp: 800 },
+    ],
+  };
+  const gCtx: InvasionServerContext = { layout: guardianLayout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
+  const gSub = honest(seed, invasionConfig(guardianLayout), inputs);
+  expectAccept('수호 기체 포함 정직 침공(Node↔Deno)', gSub, gCtx);
+  // 성능 위조(방치 수호를 신선하다 주장).
+  const forgedPerf: DefenseLayout = {
+    ...guardianLayout,
+    guardians: [guardianLayout.guardians![0]!, { ...guardianLayout.guardians![1]!, performanceCP: PERFORMANCE_FULL }],
+  };
+  expectReject('수호 성능 위조', honest(seed, invasionConfig(forgedPerf), inputs), ['defense-mismatch'], gCtx);
 
   // --- 게이트 4: 입력 길이 상한(제한 시간 초과) ---
   const shortCtx: InvasionServerContext = { layout: SERVER_LAYOUT, timeLimitTicks: 200 };

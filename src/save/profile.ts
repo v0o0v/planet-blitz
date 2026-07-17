@@ -21,6 +21,10 @@ import { SAVE_VERSION, SLOT_KINDS, RARITY_BY_CODE } from '../items/types.js';
 import type { Item, EquipSlotId } from '../items/types.js';
 import { SKILLS, SKILL_NODE_COUNT } from '../../data/skills.js';
 import type { DefenseLayout } from '../sim/defense.js';
+import { emptyLineage } from '../../data/lineage.js';
+import type { LineageState } from '../../data/lineage.js';
+import { normalizeGuardianPreset, normalizePerformance, PERFORMANCE_FULL } from '../../data/guardian.js';
+import type { GuardianSnapshot } from '../../data/guardian.js';
 
 /** Credit cost of one skill respec, per active-ship level (plan A3). */
 export const RESPEC_COST_PER_LEVEL = 100;
@@ -113,6 +117,34 @@ export interface Profile {
    * hashFloat 등 결정론 해시 계산에 도달해 재현성이 붕괴한다(ADR-0005).
    */
   defenseLayout?: DefenseLayout;
+  /**
+   * 계보 상태(M5 Phase A5, ADR-0007) — 기체 가지·수호 가지 누적 레벨 + 미사용/누적 포인트.
+   * 서버 정본은 profiles.lineage_* 컬럼(RPC 만 갱신). 로컬은 오프라인 표시·즉시 반영용 미러다.
+   * 리스펙 없음(순환 재화). 미존재 세이브는 normalizeProfile 이 빈 계보로 채운다.
+   */
+  lineage: LineageState;
+  /**
+   * 수호 기체 레코드(M5 Phase A1/A2, ADR-0007) — 서버 guardians 테이블의 로컬 미러. 퇴역으로
+   * 생성, 풍화로 감쇠, 소멸(retired)로 계보 포인트化. 방어 배치 수호 슬롯은 이 중 미소멸분에서
+   * 고른다. 서버 정본은 guardians 테이블(performance·retired 는 서버 권위).
+   */
+  guardians: GuardianRecord[];
+}
+
+/** 로컬 세이브의 수호 기체 레코드(서버 guardians 미러, ADR-0007). */
+export interface GuardianRecord {
+  /** 식별자(서버 guardians.id 또는 로컬 생성 id). */
+  id: string;
+  /** 퇴역 복사 스냅샷(기본 전투 스탯). */
+  snapshot: GuardianSnapshot;
+  /** 남은 성능%(centi-percent, 풍화 반영 — 서버 권위). */
+  performanceCP: number;
+  /** 전투력 점수(회수가치·강도 기준). */
+  combatScore: number;
+  /** 프리셋(0 타이탄/1 인터셉터). */
+  preset: number;
+  /** 소멸됨(계보 포인트로 회수 완료). true 면 방어 참전·재소멸 불가. */
+  retired: boolean;
 }
 
 /** Which base-map buildings are currently unlocked (derived, GDD §7 / plan E2). */
@@ -164,6 +196,8 @@ export function defaultProfile(): Profile {
     skillPoints: 0,
     skillInvest: zeroSkillInvest(),
     tutorialDone: false,
+    lineage: emptyLineage(),
+    guardians: [],
   };
 }
 
@@ -408,8 +442,62 @@ function normalizeProfile(d: Record<string, unknown>): Profile {
     skillPoints: numOr(d.skillPoints, 0),
     skillInvest: normalizeSkillInvest(d.skillInvest),
     tutorialDone: d.tutorialDone === true,
+    lineage: normalizeLineage(d.lineage),
+    guardians: normalizeGuardianRecords(d.guardians),
     ...normalizeStoredLayout(d.defenseLayout),
   };
+}
+
+/** 저장된 계보 상태를 안전 정규화(손상·부분 세이브는 빈 계보로 복구, 음수는 0). */
+function normalizeLineage(v: unknown): LineageState {
+  if (typeof v !== 'object' || v === null) return emptyLineage();
+  const d = v as Record<string, unknown>;
+  return {
+    shipLevel: clampInt(d.shipLevel, 0, Number.MAX_SAFE_INTEGER, 0),
+    guardianLevel: clampInt(d.guardianLevel, 0, Number.MAX_SAFE_INTEGER, 0),
+    available: clampInt(d.available, 0, Number.MAX_SAFE_INTEGER, 0),
+    spent: clampInt(d.spent, 0, Number.MAX_SAFE_INTEGER, 0),
+  };
+}
+
+/** 저장된 수호 기체 스냅샷 1개를 정규화(모든 전투 스탯 숫자 필수, 손상이면 null). */
+function normalizeGuardianSnapshot(v: unknown): GuardianSnapshot | null {
+  if (typeof v !== 'object' || v === null) return null;
+  const d = v as Record<string, unknown>;
+  const num = (k: string): number | null => (typeof d[k] === 'number' && Number.isFinite(d[k]) ? (d[k] as number) : null);
+  const fields = [
+    'radius', 'hp', 'contactDamage', 'fireCooldown', 'bulletDamage',
+    'bulletSpeed', 'bulletRadius', 'bulletLife', 'range', 'moveSpeed', 'standoff',
+  ] as const;
+  const out: Record<string, number> = { preset: normalizeGuardianPreset(numOr(d.preset, 0)) };
+  for (const f of fields) {
+    const n = num(f);
+    if (n === null) return null;
+    out[f] = n;
+  }
+  return out as unknown as GuardianSnapshot;
+}
+
+/** 저장된 수호 기체 레코드 배열을 정규화(손상 항목은 스킵). */
+function normalizeGuardianRecords(v: unknown): GuardianRecord[] {
+  if (!Array.isArray(v)) return [];
+  const out: GuardianRecord[] = [];
+  for (const raw of v) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const d = raw as Record<string, unknown>;
+    const snapshot = normalizeGuardianSnapshot(d.snapshot);
+    if (snapshot === null) continue;
+    const id = typeof d.id === 'string' && d.id.length > 0 ? d.id : `g-${out.length}`;
+    out.push({
+      id,
+      snapshot,
+      performanceCP: normalizePerformance(numOr(d.performanceCP, PERFORMANCE_FULL)),
+      combatScore: clampInt(d.combatScore, 0, Number.MAX_SAFE_INTEGER, 0),
+      preset: normalizeGuardianPreset(numOr(d.preset, snapshot.preset)),
+      retired: d.retired === true,
+    });
+  }
+  return out;
 }
 
 /**
