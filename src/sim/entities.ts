@@ -27,7 +27,10 @@ export type EntityKind =
   | 'bombDevice' // 접촉 시 반경 내 적 피해 + 적탄 소거
   | 'turretPickup' // 접촉 시 일정 시간 자동 사격하는 아군 포탑으로 활성화
   // --- M2 파밍 루프 (plan Phase B3) ---
-  | 'loot'; // 엘리트·보스가 바닥에 떨군 장비 드랍(접촉 자동 획득). damage=드랍시드, enemyType=rarity 코드
+  | 'loot' // 엘리트·보스가 바닥에 떨군 장비 드랍(접촉 자동 획득). damage=드랍시드, enemyType=rarity 코드
+  // --- M4 침공 방어 배치 (plan Phase C1) ---
+  | 'defenseTurret' // 방어 포탑 6종(enemyType=포탑 유형 0..5). 플레이어를 조준·발사, 결정론 거동
+  | 'core'; // 방어 코어(침공 목표). 파괴 시 침공 승리(compact가 victory 판정)
 
 /**
  * Stable integer per kind, folded into the state hash. Never renumber existing
@@ -51,6 +54,9 @@ export const KIND_CODE: Record<EntityKind, number> = {
   turretPickup: 13,
   // Appended for the M2 farming loop (never renumber 1..13).
   loot: 14,
+  // Appended for the M4 침공 방어 배치 (never renumber 1..14).
+  defenseTurret: 15,
+  core: 16,
 };
 
 export interface Entity {

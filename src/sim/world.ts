@@ -143,6 +143,8 @@ import {
   TURRET_BULLET_RADIUS,
   TURRET_BULLET_LIFE,
 } from './events.js';
+import type { InvasionConfig } from './defense.js';
+import { spawnInvasionLayout, stepDefenseTurrets } from './defense.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -359,6 +361,13 @@ export interface WorldConfig {
    * append-only 규율: WorldConfig 신규 필드는 항상 이 아래에만 추가.
    */
   maxSegments?: number;
+  /**
+   * 침공 런 설정(M4 plan Phase C2, 갈림길③A). 존재하면 침공 런: createWorld가 방어 배치
+   * (코어·포탑 6종·장애물)를 정적 스폰하고, 웨이브·청크 기믹·보급 등 절차 생성 시스템을
+   * 끈다. 승리 = 코어 파괴, 실패 = 제한 시간 초과/격추. absent = 기존 PvE 런(거동·해시
+   * 100% 불변). append-only 규율: 신규 필드는 항상 이 아래에만 추가.
+   */
+  invasion?: InvasionConfig;
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {
@@ -552,6 +561,15 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   player.maxHp = cfg.playerHp;
   entities.push(player);
 
+  // 침공 런(M4 plan C2, 갈림길③A): 방어 배치를 정적 스폰(코어 → 포탑 → 장애물). 순수 데이터
+  // 구동이라 재현이 자명하다. player가 index 0에 자리한 뒤 스폰해 hashWorld 불변식을 지킨다.
+  // sink로 지역 entities/nextEntityId를 넘겨 id 할당을 위임하고, 소비된 nextEntityId를 회수한다.
+  if (cfg.invasion !== undefined) {
+    const sink = { entities, nextEntityId };
+    spawnInvasionLayout(sink, cfg.invasion.layout);
+    nextEntityId = sink.nextEntityId;
+  }
+
   // Anomaly: roll the seed-only offer, gate it on the config acceptance flag.
   const anomalyRng = rng.fork('anomaly');
   const anomaly = rollAnomaly(anomalyRng, cfg.anomalyAccepted ?? false);
@@ -638,30 +656,49 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
 
   const player = getPlayer(state);
 
+  // 침공 런(M4 plan C2)은 설계된 방어 기지만 상대한다 — 절차 생성 시스템(청크 기믹·웨이브
+  // 적·보급 습격)을 끈다. 정적 배치 장애물(wall)이 청크 컬링에 잘려나가지 않게 하는 것도
+  // 겸한다(activateChunks 미실행). rebuildActiveWalls는 방어 장애물이 wall kind라 유지한다.
+  const invasion = state.config.invasion;
+
   // Materialise/cull scroll-map gimmicks around the player, then rebuild the
   // active-wall list (both before movement so walls obstruct this tick).
-  activateChunks(state, player);
+  if (invasion === undefined) activateChunks(state, player);
   rebuildActiveWalls(state);
 
   stepPlayer(state, player, input);
-  updateWaves(state, player);
+  if (invasion === undefined) updateWaves(state, player);
   stepEnemies(state, player);
   stepBoss(state, player);
   autoAttack(state, player);
   subWeapon(state, player);
   droneBay(state, player);
   stepTurrets(state, player);
+  if (invasion !== undefined) stepDefenseTurrets(state, player);
   stepProjectiles(state, player);
   stepGems(state, player);
-  stepSupply(state, player);
+  if (invasion === undefined) stepSupply(state, player);
   stepHazards(state);
   resolveCollisions(state, player);
   compact(state);
   updateCombo(state);
   checkLevelUp(state);
   checkGameOver(state, player);
+  // 침공 제한 시간(3분): 코어 미파괴로 시간 초과 시 격추와 동일하게 패배(gameOver).
+  if (invasion !== undefined) checkInvasionTimeout(state, invasion);
 
   state.tick++;
+}
+
+/**
+ * 침공 제한 시간 판정(M4 plan C2). 코어 파괴(victory)가 이미 확정됐으면 무시한다. 현재 틱
+ * 처리를 끝내며 누적 틱 수가 제한(timeLimitTicks)에 도달하면 gameOver로 확정한다. 결정론:
+ * state.tick(해시 포함)과 config의 제한 틱(해시 포함)만으로 판정 — wall-clock 미사용.
+ */
+function checkInvasionTimeout(state: WorldState, invasion: InvasionConfig): void {
+  if (state.victory || state.gameOver) return;
+  // 이 시점 state.tick은 아직 증가 전(현재 틱 인덱스). 이 틱을 끝내면 tick+1개를 소화한 것.
+  if (state.tick + 1 >= invasion.timeLimitTicks) state.gameOver = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1193,6 +1230,21 @@ const losCands: { e: Entity; d: number }[] = [];
  * "nearest, else none"). When there are no active walls this collapses to the
  * plain nearest scan (no allocation, identical to the pre-gimmick behaviour).
  */
+/**
+ * 플레이어(및 아군 포탑·유도탄)가 조준·타격할 수 있는 적성 대상인가. 기존 PvE 적성
+ * (enemy·boss·supply)에 M4 침공 방어 엔티티(defenseTurret·core)를 더한다. PvE 런에는 방어
+ * 엔티티가 존재하지 않으므로 이 확장은 기존 거동·해시에 영향이 없다(순수 추가 대상).
+ */
+function isPlayerTargetable(e: Entity): boolean {
+  return (
+    e.kind === 'enemy' ||
+    e.kind === 'boss' ||
+    e.kind === 'supply' ||
+    e.kind === 'defenseTurret' ||
+    e.kind === 'core'
+  );
+}
+
 function nearestTarget(state: WorldState, from: Entity, range: number): Entity | undefined {
   const maxD2 = range > 0 ? range * range : Infinity;
 
@@ -1202,7 +1254,7 @@ function nearestTarget(state: WorldState, from: Entity, range: number): Entity |
     let bestD = maxD2;
     for (const e of state.entities) {
       if (e.dead) continue;
-      if (e.kind !== 'enemy' && e.kind !== 'boss' && e.kind !== 'supply') continue;
+      if (!isPlayerTargetable(e)) continue;
       const dx = e.x - from.x;
       const dy = e.y - from.y;
       const d = dx * dx + dy * dy;
@@ -1222,7 +1274,7 @@ function nearestTarget(state: WorldState, from: Entity, range: number): Entity |
   cands.length = 0; // 재사용 스크래치 리셋(할당 회피).
   for (const e of state.entities) {
     if (e.dead) continue;
-    if (e.kind !== 'enemy' && e.kind !== 'boss' && e.kind !== 'supply') continue;
+    if (!isPlayerTargetable(e)) continue;
     const dx = e.x - from.x;
     const dy = e.y - from.y;
     const d = dx * dx + dy * dy;
@@ -1299,7 +1351,7 @@ function homeMissile(state: WorldState, e: Entity): void {
   let bestD = Infinity;
   for (const t of state.entities) {
     if (t.dead) continue;
-    if (t.kind !== 'enemy' && t.kind !== 'boss' && t.kind !== 'supply') continue;
+    if (!isPlayerTargetable(t)) continue;
     const dx = t.x - e.x;
     const dy = t.y - e.y;
     const d = dx * dx + dy * dy;
@@ -1489,7 +1541,9 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       e.kind === 'magnetEmitter' ||
       e.kind === 'bombDevice' ||
       e.kind === 'turretPickup' ||
-      e.kind === 'loot'
+      e.kind === 'loot' ||
+      e.kind === 'defenseTurret' ||
+      e.kind === 'core'
     ) {
       grid.insert(e);
     }
@@ -1526,7 +1580,14 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     if (b.kind !== 'bullet' || b.dead) continue;
     grid.query(b.x, b.y, b.radius, (t) => {
       if (b.dead || t.dead) return;
-      if (t.kind !== 'enemy' && t.kind !== 'boss' && t.kind !== 'supply' && t.kind !== 'destructible')
+      if (
+        t.kind !== 'enemy' &&
+        t.kind !== 'boss' &&
+        t.kind !== 'supply' &&
+        t.kind !== 'destructible' &&
+        t.kind !== 'defenseTurret' &&
+        t.kind !== 'core'
+      )
         return;
       if (!circlesOverlap(b.x, b.y, b.radius, t.x, t.y, t.radius)) return;
       // Boss takes double damage while overheated (iframes > 0), spec.
@@ -1800,6 +1861,10 @@ function compact(state: WorldState): void {
     } else if (e.kind === 'destructible' && e.hp <= 0) {
       // Broken (vs. culled with hp > 0): drop a gem worth its stored XP value.
       drops.push({ x: e.x, y: e.y, xp: e.damage });
+    } else if (e.kind === 'core') {
+      // 침공 승리(M4 plan C2): 코어 파괴 = 침공 성공. 보스와 달리 드랍은 없다(침공 보상은
+      // 래더 스왑·복제 약탈로 서버가 처리 — Phase D). 승리 확정만 세운다.
+      state.victory = true;
     } else if (e.kind === 'boss') {
       state.victory = true;
       bossKilled = true;

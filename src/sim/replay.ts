@@ -219,6 +219,32 @@ export function hashWorld(state: WorldState): number {
   // runtime 블록에서 이미 접힘). 신규 필드는 이 아래에만 append.
   h = hashU32(h, state.wave.segmentBaseKills >>> 0);
   h = hashU32(h, state.wave.segmentKillGoal >>> 0);
+  // --- M4 침공 방어 배치(APPEND-ONLY, 조건부) ---
+  // PvE 런은 config.invasion이 undefined라 이 블록을 통째로 건너뛴다 → 기존 fixtures 해시가
+  // 바이트 단위로 완전 불변(방어 엔티티도 PvE엔 없어 위 엔티티 루프도 불변). 침공 런만 제한
+  // 시간·배치(코어·포탑 유형/좌표·장애물 AABB)를 결정론 입력으로 접어, 서버가 정확한 config로
+  // 재현했는지 검증한다(방어 엔티티 스폰으로 이미 발산하지만 config 자체도 봉인). 신규 침공
+  // 필드는 이 블록 안 최후미에만 append.
+  const inv = state.config.invasion;
+  if (inv !== undefined) {
+    h = hashU32(h, inv.timeLimitTicks >>> 0);
+    const lay = inv.layout;
+    h = hashFloat(h, lay.core.x);
+    h = hashFloat(h, lay.core.y);
+    h = hashU32(h, lay.turrets.length >>> 0);
+    for (const t of lay.turrets) {
+      h = hashU32(h, t.type >>> 0);
+      h = hashFloat(h, t.x);
+      h = hashFloat(h, t.y);
+    }
+    h = hashU32(h, lay.obstacles.length >>> 0);
+    for (const o of lay.obstacles) {
+      h = hashFloat(h, o.x);
+      h = hashFloat(h, o.y);
+      h = hashFloat(h, o.halfW);
+      h = hashFloat(h, o.halfH);
+    }
+  }
   return h >>> 0;
 }
 
