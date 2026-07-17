@@ -261,6 +261,19 @@ service_role 만)과 (b) `request.jwt.claims` role 을 읽는 `caller_is_service
     가정은 "EF service client 가 실제로 service_role 로 PostgREST 연결을 맺는다"는
     Supabase 문서 보장(service_role 키 → role 클레임 service_role)이며, `defense_layout_cost`·
     권한·스왑 로직은 아래 검증 항목으로 별도 실측했다.
+  - **재확증(2026-07-18, `fix/m4-low-carryforward`, MCP `supabase-planet-blitz`)**: 대상
+    프로젝트 `get_project_url` = `https://qxgbxwyccbxokdgwxcuw.supabase.co`(의도한 ref 일치).
+    `select current_user, public.is_service_role()` → `current_user='postgres',
+    is_service_role()=true`(MCP 는 `postgres` 관리 role 로 접속하며 이 role 도 헬퍼의
+    화이트리스트 `('service_role','supabase_admin','postgres')` 에 포함돼 true). 이어
+    `begin; set local role service_role; select current_user, public.is_service_role();
+    rollback;` → `service_role, true` 재확인. **결론**: 스키마 가드 트리거(SECURITY INVOKER)
+    가 의존하는 `is_service_role()` 게이트는 실제 서버/마이그레이션 컨텍스트(`service_role`·
+    `postgres`)에서 의도대로 true 를 반환한다. 한편 SECURITY DEFINER 함수(`apply_invasion_result`
+    등)는 소유자(postgres)로 current_user 가 바뀌어 `is_service_role()` 이 항상 true 가 되므로
+    호출자 판정에는 쓰지 않고, `caller_is_service_role()`(`request.jwt.claims` role 판독)+
+    EXECUTE 권한(service_role 전용)으로 이중 게이트함을 그대로 유지(위 "SECURITY DEFINER
+    주의" 설계 불변). EF 를 유효 JWT 로 실제 invoke 하는 종단 확증은 여전히 리드/사용자 몫.
 - `defense_layout_cost` 산출 실측: 발칸1+저격3+산탄2+장애물2 = **8** / 빈 layout=0 /
   키 누락 layout=0 ✅.
 - `get_advisors(security)`: 신규 WARN 은 `get_invasion_targets` 의 "authenticated 가
@@ -663,7 +676,13 @@ f-client 영향: `not-winner` 는 새 note 값(additive) — 클라 승자 UI �
 - **[LOW] 복수 보너스 광물·이상치 임계 튜닝**(계획 §5): `REVENGE_BONUS_MINERALS`=50,
   `flag_pve_anomalies` 상한 100000/h·최소나이 1h·최소총자원 50000 은 밸런스 미확정 잠정값.
   M5 밸런싱·운영 지표로 조정.
-- **[LOW] 방어자 사후 스티커 UX**: `defender_sticker` 컬럼·RPC 는 준비됐으나, 방어자가 침공
-  결과를 폴링으로 본 뒤 언제 스티커를 다는지(관제탑 알림에서 답장)는 f-client UX 결정.
+- **[LOW·해소] 방어자 사후 스티커 UX**: `defender_sticker` 컬럼·RPC(`set_invasion_sticker`,
+  승자 한정·1회 불변 서버 강제)에 클라 UX 배선 완료(2026-07-18, `fix/m4-low-carryforward`).
+  관제탑 알림 패널(`src/ui/controlTower.ts` `notificationsPanel`)이 **방어 성공(`!attackerWon`)
+  이고 아직 회신 도발이 없는(`defenderSticker === null`)** 침공 행에만 "도발" 버튼을 노출하고,
+  클릭 시 `onSticker` → `main.ts` `promptSticker` → `StickerPicker`(`src/ui/stickerPicker.ts`,
+  12종 그리드) → `setInvasionSticker(invasionId, index)` 로 서버 RPC 를 호출한다. 클라는
+  호출·표시만 하고 승자 한정·1회 불변은 서버 RPC 가 강제(참여자·승패·중복은 서버 판정).
+  이미 남긴 도발은 알림 행에 "내 도발: …" 로 표시한다.
 - **[MEDIUM→이월] PvE 정교 치트**: 통계 플래그는 명백한 이상치만 잡음. 완전 방어는 위
   "리플레이 재실행 샘플링 착수 조건"(PvE 런 서버 기록 = `src/**` 배선) 충족 후 가능.
