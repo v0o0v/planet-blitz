@@ -20,7 +20,7 @@ M4 PvP(침공·래더·치트 방어)의 서버 스키마와 적용 절차. 근�
 | `ships` | 기체 미러(래더·정찰 표시) | 본인 rw, 타인 select(정찰) |
 | `items` | 인벤/보관함 미러(사적) | 본인 rw만. 복제 약탈은 service_role |
 | `ladder` | 영구 순위표(ADR-0004) | **select만**. 순위 스왑·삽입·침하는 service_role/pg_cron 전용 |
-| `defenses` | 방어 배치(DefenseLayout JSON) + 정비도(풍화) | 본인 rw, 타인 select(정찰) |
+| `defenses` | 방어 배치(DefenseLayout JSON) + 정비도(풍화) | 본인 rw(단 `maintenance`/`budget_spent`는 트리거로 서버 전용), 타인 select(정찰) |
 | `invasions` | 침공 리플레이 blob·결과·검증상태 | **insert(pending 증거)·본인 관련 select만**. 결과 확정 update 는 service_role |
 | `guardians` | 수호 기체 M5 자리(최소 스키마) | 본인 rw, 타인 select |
 
@@ -28,8 +28,24 @@ M4 PvP(침공·래더·치트 방어)의 서버 스키마와 적용 절차. 근�
 - `ladder`: 쓰기 정책을 만들지 않아 RLS 기본 거부 → 클라이언트 직접 순위 조작 불가.
 - `invasions`: `trg_invasions_guard_insert` 가 클라이언트 insert 를 `pending`·결과 null 로 강제. update 정책 없음 → 결과 못 바꿈.
 - `profiles.flagged`: `trg_profiles_guard` 가 클라이언트 update 시 이전 값 유지 강제.
-- `service_role`(Edge Function) 키는 RLS 를 우회(BYPASSRLS)하므로 서버 로직만 순위/결과를 쓴다.
-- 역할 판정 헬퍼 `public.is_service_role()`은 `current_user in ('service_role','supabase_admin','postgres')` 로 서버/마이그레이션 컨텍스트를 식별한다.
+- `defenses.maintenance`/`defenses.budget_spent`: `trg_defenses_guard` 가 클라이언트 update 시 이전 값 유지 강제(코드리뷰 HIGH-2 수정) — `defenses_rw_own` 정책 자체는 전 컬럼 update 를 허용하므로, 이 트리거가 없으면 클라이언트가 `maintenance:=100`(풍화 자가회복)이나 `budget_spent:=0`(배치 예산 우회)을 직접 제출할 수 있었다. 정비 회복·예산 검증은 Phase C/E 의 service_role 트랜잭션만 갱신한다.
+- `service_role`(Edge Function) 키는 RLS 를 우회(BYPASSRLS)하므로 서버 로직만 순위/결과/정비도를 쓴다.
+- 역할 판정 헬퍼 `public.is_service_role()`은 `current_user in ('service_role','supabase_admin','postgres')` 로 서버/마이그레이션 컨텍스트를 식별하며, `search_path = ''` 로 고정해 함수 하이재킹(Supabase linter "function search path mutable" 경고) 여지를 없앤다.
+
+### Phase D 착수 조건 — 정찰 전면 공개는 임시(코드리뷰 MED-5)
+`ships_select_others`·`defenses_select_others`·`guardians_select_others` 는 현재 모두
+`using (true)`(로그인 유저 전체가 타인 행을 읽을 수 있음)다. 이는 **M4 착수 단계의 의도된
+임시 상태**다 — Phase C(방어 에디터)가 아직 없어 정찰 UI 도 없고, 매치메이킹(관제탑 상위
+3명+30위 랜덤 제안) 대상이 정해지지 않아 "누구를 볼 수 있어야 하는가"를 좁힐 기준이 없다.
+
+Phase D(침공 검증·래더 스왑, 계획 §4)에서 매치메이킹 RPC 를 붙이는 시점에:
+- 위 세 정책을 폐기(또는 `select` 를 제거)하고, "현재 나에게 제안된 상대만" 조회 가능한
+  Edge Function RPC 또는 `security definer` 뷰로 교체한다.
+- `ships.equipped`(장착 아이템 노출)는 정찰에서 얼마나 보여줄지 밸런싱 이슈이므로 그때
+  필드 단위로 재검토한다(전량 노출 vs 슬롯 존재만 노출 등).
+
+지금 단계에서 미리 좁히는 구현은 하지 않는다(대상 기준 자체가 Phase D 산출물이라 조기
+구현은 재작업 위험이 크다) — 이 SQL 주석과 표가 후속 작업자를 위한 착수 조건 기록이다.
 
 ## 원격 적용 절차 (리드가 MCP 인증 후 실행)
 
@@ -54,11 +70,30 @@ Supabase MCP(`supabase-planet-blitz`)로 인증한 세션에서:
 작성 단계에서는 다음을 육안·정적 점검했다:
 
 - 모든 `create table` / `create policy` / `create index` / `create trigger` 문 종결(`;`).
-- FK 순환(ladder ↔ defenses)은 `ladder` 를 먼저 만들고 `defenses` 정의 뒤
-  `alter table ... add constraint ladder_defense_fk` 로 지연 연결해 해소.
+- **테이블 생성 순서 vs FK 참조 대상 전수 재점검(코드리뷰 CRITICAL-1 재발 방지)**:
+  1. `profiles`(→ `auth.users`, Supabase 내장이라 항상 존재) →
+  2. `ships`(→ `profiles`, 이미 생성됨 OK) →
+  3. `items`(→ `profiles` OK) →
+  4. `ladder`(→ `profiles` OK; `defense_id` 는 **FK 없이 plain uuid** 로 선언 — `defenses`
+     가 아직 없으므로 인라인 `references` 를 걸면 이 시점에 즉시 실패한다) →
+  5. `defenses`(→ `profiles` OK). 이 섹션 끝에서 `alter table ladder add constraint
+     ladder_defense_fk ... references defenses(id)` 로 지연 연결(`defenses` 가 방금
+     생겼으므로 OK) →
+  6. `invasions`(→ `profiles` ×2 OK, → `defenses` OK — 5번에서 이미 생성됨) →
+  7. `guardians`(→ `profiles` OK).
+  전 FK 가 "참조 대상이 실행 시점에 이미 존재"를 만족한다. 최초 버전은 4번 `ladder` 안에
+  `defenses` 를 인라인 참조해 리뷰에서 CRITICAL 로 지적됨 — 수정 후 이 순서로 재검증.
 - `enable row level security` 를 7테이블 모두에 적용.
 - `pgcrypto` 확장(`gen_random_uuid`) 선언.
-- 서버 전용 쓰기 경로(ladder write, invasions 결과 update)에는 정책을 두지 않아 기본 거부.
+- 서버 전용 쓰기 경로(ladder write, invasions 결과 update, defenses.maintenance/budget_spent)
+  는 정책 부재 또는 가드 트리거로 기본 거부.
+- **재실행 안전성**: 모든 `create table`은 `if not exists`, `create index`는
+  `if not exists`, `create policy`는 `drop policy if exists` 선행, `create trigger`는
+  `create or replace trigger`(PG14+), FK 는 `drop constraint if exists` 선행으로 부분
+  실패 후 동일 스크립트 재적용이 에러 없이 수렴한다.
+- `supabase db lint` 류 정적 도구는 로컬 CLI/Docker 링크가 없어 이번 세션에서는 실행하지
+  못했다 — 원격 적용 후 Supabase Dashboard 의 Advisor(linter) 탭으로 `search_path`·RLS
+  누락 등 경고를 재확인 권장.
 
 > pg_cron(풍화 -5%p/주·비활성 침하)은 Phase E 범위라 본 마이그레이션에 없음. `defenses.maintenance`
 > · `guardians.performance` 필드만 선반영(감쇠 로직 없음).

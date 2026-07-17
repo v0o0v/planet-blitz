@@ -82,6 +82,18 @@ export function chooseProfile(local: Profile, server: Profile): Profile {
 }
 
 /**
+ * 다기기 last-write-wins 보강(코드리뷰 MED-6): 대기 중인 스냅샷(`pending`)을
+ * 서버로 밀어 넣기 전에, 서버가 그 사이 이미 더 진행된 상태로 갱신됐는지 판정한다.
+ * `pending` 이 서버보다 뒤처지면(진행도가 낮으면) false — 이 경우 업로드는 서버의
+ * 더 나은 상태를 낡은 스냅샷으로 덮어쓰는 회귀이므로 스킵해야 한다. 서버가 없거나
+ * `pending` 이 동점 이상이면 true(무손실 철학 — 진행이 뒤처지지 않는 한 반영).
+ */
+export function shouldPushPending(pending: Profile, server: Profile | null): boolean {
+  if (server === null) return true;
+  return chooseProfile(pending, server) === pending;
+}
+
+/**
  * 이관 계획 수립(순수). 분기:
  *  1. 이미 이관 완료(마커 有) + 서버에 프로필 존재 → skip(멱등).
  *  2. 서버에 프로필 없음 → 로컬 업로드(최초 임포트, 또는 마커만 남고 서버가 비어

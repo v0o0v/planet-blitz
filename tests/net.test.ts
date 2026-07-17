@@ -4,6 +4,7 @@ import {
   deserializeProfile,
   progressScore,
   chooseProfile,
+  shouldPushPending,
   planServerMigration,
   isMigrated,
   markMigrated,
@@ -126,6 +127,25 @@ describe('profileSync — 진행도 비교', () => {
   it('멱등: 자기 자신과 비교하면 자신', () => {
     const p = richProfile();
     expect(chooseProfile(p, p)).toBe(p);
+  });
+});
+
+describe('profileSync — shouldPushPending(다기기 회귀 방지, 코드리뷰 MED-6)', () => {
+  it('서버가 없으면 항상 push', () => {
+    expect(shouldPushPending(richProfile(), null)).toBe(true);
+  });
+
+  it('대기 프로필이 서버보다 진행 높거나 같으면 push', () => {
+    const pending = richProfile();
+    const server = defaultProfile();
+    expect(shouldPushPending(pending, server)).toBe(true);
+    expect(shouldPushPending(pending, pending)).toBe(true); // 동점
+  });
+
+  it('대기 프로필이 서버보다 뒤처지면 push 거부(회귀 방지)', () => {
+    const pending = defaultProfile();
+    const server = richProfile(); // 다른 기기가 그 사이 더 진행시킴
+    expect(shouldPushPending(pending, server)).toBe(false);
   });
 });
 
@@ -265,6 +285,38 @@ describe('net/index — PvE 런 기록·재시도 큐(AC8)', () => {
 
     // 네트워크 회복 후 flush.
     gw.failUpsert = false;
+    await flushPendingSync({ gateway: gw, store });
+    expect(gw.upserts).toBe(1);
+    expect(readPendingProfile(store)).toBeNull();
+  });
+
+  it('flushPendingSync 는 그 사이 서버가 더 진행됐으면 낡은 대기 스냅샷으로 덮어쓰지 않는다(다기기 회귀 방지, 코드리뷰 MED-6)', async () => {
+    // 대기 슬롯에는 낮은 진행도의 스냅샷이 남아있는데(전송 실패로 재시도 대기),
+    // 그 사이 다른 기기가 더 진행된 상태를 서버에 이미 올렸다고 가정.
+    const staleP = defaultProfile();
+    const gw = new FakeGateway('uid-1', null);
+    gw.failUpsert = true;
+    const store = memStore();
+    await recordPveRunResult(staleP, { gateway: gw, store });
+    expect(readPendingProfile(store)).toEqual(staleP);
+
+    // 다른 기기가 더 진행된 프로필을 서버에 올림 + 이 기기의 네트워크도 회복.
+    const advanced = richProfile();
+    gw.row = { save: advanced, saveVersion: advanced.saveVersion };
+    gw.failUpsert = false;
+
+    await flushPendingSync({ gateway: gw, store });
+
+    expect(gw.upserts).toBe(0); // 낡은 스냅샷 업로드 안 함
+    expect(gw.row?.save).toEqual(advanced); // 서버는 그대로 진행된 상태 유지
+    expect(readPendingProfile(store)).toBeNull(); // 해소됨 — 재시도 큐에서 제거
+  });
+
+  it('flushPendingSync 는 대기 스냅샷이 서버와 동점 이상이면 정상 업로드', async () => {
+    const p = richProfile();
+    const gw = new FakeGateway('uid-1', { save: p, saveVersion: p.saveVersion });
+    const store = memStore();
+    stashPendingProfile(store, p);
     await flushPendingSync({ gateway: gw, store });
     expect(gw.upserts).toBe(1);
     expect(readPendingProfile(store)).toBeNull();

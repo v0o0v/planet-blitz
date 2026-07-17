@@ -23,6 +23,7 @@ import {
   stashPendingProfile,
   readPendingProfile,
   clearPendingProfile,
+  shouldPushPending,
 } from './profileSync.js';
 
 /** 주입 가능한 의존성(테스트에서 gateway/store/config 를 대체). */
@@ -107,6 +108,12 @@ export async function recordPveRunResult(profile: Profile, deps: NetDeps = {}): 
 /**
  * 대기 중인 프로필 스냅샷을 서버로 밀어넣는다(재시도). 성공 시 대기 슬롯을 비우고,
  * 실패하면 남겨 다음 기회에 재시도한다.
+ *
+ * 다기기 보강(코드리뷰 MED-6): 무조건 upsert 하지 않고, 먼저 서버 프로필을 재조회해
+ * `shouldPushPending` 으로 진행도를 비교한다. 그 사이 다른 기기가 더 진행된 상태를
+ * 이미 서버에 올렸다면(예: 오프라인 대기 중 다른 탭/기기에서 플레이) 낡은 로컬
+ * 스냅샷으로 덮어쓰지 않고 스킵 — 이때 대기 슬롯도 비운다(서버가 이미 동등 이상이므로
+ * 더 이상 밀어야 할 것이 없는 "해소된" 상태).
  */
 export async function flushPendingSync(deps: NetDeps = {}): Promise<void> {
   const gateway = await resolveGateway(deps);
@@ -117,6 +124,12 @@ export async function flushPendingSync(deps: NetDeps = {}): Promise<void> {
   if (pending === null) return;
   try {
     const uid = await gateway.getUserId();
+    const serverRow = await gateway.fetchProfile(uid);
+    const serverProfile = serverRow === null ? null : deserializeProfile(serverRow);
+    if (!shouldPushPending(pending, serverProfile)) {
+      clearPendingProfile(store);
+      return;
+    }
     await gateway.upsertProfile(uid, serializeProfile(pending));
     clearPendingProfile(store);
   } catch {
