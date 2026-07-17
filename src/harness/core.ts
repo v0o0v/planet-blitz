@@ -41,7 +41,8 @@ export type HarnessScreen =
   | 'starMap'
   | 'inventory'
   | 'research'
-  | 'refinery';
+  | 'refinery'
+  | 'defense';
 
 /** Options for {@link Harness.startRun}. */
 export interface HarnessRunOpts {

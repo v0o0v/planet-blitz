@@ -20,6 +20,7 @@
 import { SAVE_VERSION, SLOT_KINDS, RARITY_BY_CODE } from '../items/types.js';
 import type { Item, EquipSlotId } from '../items/types.js';
 import { SKILLS, SKILL_NODE_COUNT } from '../../data/skills.js';
+import type { DefenseLayout } from '../sim/defense.js';
 
 /** Credit cost of one skill respec, per active-ship level (plan A3). */
 export const RESPEC_COST_PER_LEVEL = 100;
@@ -98,6 +99,20 @@ export interface Profile {
    * stamped `true` — they were already playing before the FTUE existed.
    */
   tutorialDone: boolean;
+  /**
+   * 방어 배치 에디터(M4 Phase C3)가 저장한 방어 배치. 침공(비동기 PvP)의 정적 스폰
+   * 데이터가 된다. 미배치 = `undefined`. 지금은 로컬 세이브에만 두고, Supabase `defenses`
+   * 테이블 연동은 M4 Phase B 후속(append-only 필드 — 깊은 검증은 UI의 normalizeLayout이
+   * 로드 시 수행하므로 여기선 얕은 형태만 보존한다).
+   *
+   * ⚠️ 이 값은 {@link normalizeStoredLayout}의 얕은 검증(core/turrets/obstacles 존재 여부)만
+   * 거친다 — 침공 배선(profile.defenseLayout → WorldConfig.invasion) 시에는 반드시
+   * `src/ui/defenseCommand.ts`의 `normalizeLayout()`으로 깊은 정규화(포탑 유형 범위·좌표
+   * 유한성·장애물 반폭/반높이 양수 등)를 거쳐 InvasionConfig를 구성할 것. 여기서 직접
+   * WorldConfig.invasion.layout에 흘려 넣지 말 것 — NaN/손상 좌표가 그대로 sim에 들어가면
+   * hashFloat 등 결정론 해시 계산에 도달해 재현성이 붕괴한다(ADR-0005).
+   */
+  defenseLayout?: DefenseLayout;
 }
 
 /** Which base-map buildings are currently unlocked (derived, GDD §7 / plan E2). */
@@ -177,8 +192,10 @@ export function computeUnlocks(profile: Profile): BaseUnlocks {
     hangar: true,
     research: level >= RESEARCH_UNLOCK_LEVEL,
     refinery: anyClear,
-    defenseCommand: false, // M4
-    controlTower: false, // M4
+    // 방어 사령부(M4 Phase C3): 행성 1회 클리어로 해금 — 지킬 기지를 갖춘 뒤 배치를 짠다
+    // (정제소와 동일 게이트). 관제탑(래더·침공 제출)은 아직 준비 중(관련 워커/후속 Phase).
+    defenseCommand: anyClear,
+    controlTower: false, // M4 (관제탑 — 후속)
   };
 }
 
@@ -391,7 +408,21 @@ function normalizeProfile(d: Record<string, unknown>): Profile {
     skillPoints: numOr(d.skillPoints, 0),
     skillInvest: normalizeSkillInvest(d.skillInvest),
     tutorialDone: d.tutorialDone === true,
+    ...normalizeStoredLayout(d.defenseLayout),
   };
+}
+
+/**
+ * 저장된 방어 배치를 얕게 보존한다: `core`/`turrets`/`obstacles` 꼴을 갖춘 객체면 그대로
+ * 통과시키고(왕복 무손실), 아니면 필드를 생략한다. 깊은 유효성(포탑 유형 범위 등)은 에디터의
+ * `normalizeLayout`이 로드 시 재검증하므로 여기서 sim 상수를 끌어오지 않는다(레이어 최소 결합).
+ */
+function normalizeStoredLayout(v: unknown): { defenseLayout?: DefenseLayout } {
+  if (typeof v !== 'object' || v === null) return {};
+  const d = v as Record<string, unknown>;
+  if (typeof d.core !== 'object' || d.core === null) return {};
+  if (!Array.isArray(d.turrets) || !Array.isArray(d.obstacles)) return {};
+  return { defenseLayout: v as DefenseLayout };
 }
 
 function normalizeShip(v: unknown): Ship | null {

@@ -39,6 +39,7 @@ import { InventoryOverlay } from './ui/inventory.js';
 import { BaseMap } from './ui/baseMap.js';
 import { ResearchLab } from './ui/researchLab.js';
 import { Refinery } from './ui/refinery.js';
+import { DefenseCommand } from './ui/defenseCommand.js';
 import {
   TitleScreen,
   TutorialOverlay,
@@ -148,6 +149,7 @@ async function main(): Promise<void> {
   const baseMap = new BaseMap();
   const researchLab = new ResearchLab(profile);
   const refinery = new Refinery(profile);
+  const defenseCommand = new DefenseCommand(profile);
   const titleScreen = new TitleScreen();
   const tutorialOverlay = new TutorialOverlay();
   const ftue = new FtueTracker();
@@ -216,6 +218,7 @@ async function main(): Promise<void> {
     tutorialOverlay.hide();
     resultOverlay.hide();
     baseMap.hide();
+    defenseCommand.hide();
     titleScreen.hide();
   }
 
@@ -250,6 +253,11 @@ async function main(): Promise<void> {
       onRefinery: () => {
         baseMap.hide();
         refinery.show(profile, () => openBaseMap());
+      },
+      onDefense: () => {
+        baseMap.hide();
+        setScreen('defense');
+        defenseCommand.show(profile, () => openBaseMap());
       },
       onStarMap: () => openStarMap(),
     });
@@ -593,6 +601,12 @@ async function main(): Promise<void> {
           setScreen('refinery');
           refinery.show(profile, () => openBaseMap());
           break;
+        case 'defense':
+          planetSelect.hide();
+          clearToMenu();
+          setScreen('defense');
+          defenseCommand.show(profile, () => openBaseMap());
+          break;
       }
     }
 
@@ -608,6 +622,7 @@ async function main(): Promise<void> {
         case 'inventory':
         case 'research':
         case 'refinery':
+        case 'defense':
           harnessGoto(currentScreenName);
           break;
         case 'base':
@@ -762,6 +777,7 @@ async function main(): Promise<void> {
         'inventory',
         'research',
         'refinery',
+        'defense',
       ];
       if ((valid as readonly string[]).includes(screenParam)) {
         harnessGoto(screenParam as HarnessScreen);
