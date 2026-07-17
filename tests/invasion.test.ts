@@ -23,13 +23,21 @@ import {
   TURRET_MISSILE,
   TURRET_TESLA,
   TURRET_TYPE_COUNT,
+  MAINTENANCE_FULL,
+  normalizeMaintenance,
+  scaleFireCooldown,
 } from '../src/sim/defense.js';
 import type { InvasionConfig, DefenseLayout } from '../src/sim/defense.js';
 
 const idle: InputFrame = emptyInput();
 
-function invasionConfig(layout: DefenseLayout, timeLimitTicks = DEFAULT_TIME_LIMIT_TICKS): WorldConfig {
-  const inv: InvasionConfig = { layout, timeLimitTicks };
+function invasionConfig(
+  layout: DefenseLayout,
+  timeLimitTicks = DEFAULT_TIME_LIMIT_TICKS,
+  maintenance?: number,
+): WorldConfig {
+  const inv: InvasionConfig =
+    maintenance === undefined ? { layout, timeLimitTicks } : { layout, timeLimitTicks, maintenance };
   return {
     arenaWidth: 1920,
     arenaHeight: 1080,
@@ -182,6 +190,105 @@ describe('침공 런 — 포탑 6종 발사 스모크 (plan C1)', () => {
       expect(firedSeen).toBe(true);
     });
   }
+});
+
+describe('침공 정비도(풍화, ADR-0006) — 성능 스케일 + 결정론', () => {
+  // 플레이어(0,0) 사거리 안에 근접 포탑을 두고, 원거리 코어로 우발 승리를 막아 순수하게
+  // 포탑 발사만 관찰한다. idle(정지) 입력이라 포탑 조준·발사만 변수가 된다.
+  const closeLayout: DefenseLayout = {
+    core: { x: 100000, y: 0 },
+    turrets: [
+      { type: TURRET_VULCAN, x: 300, y: 0 },
+      { type: TURRET_TESLA, x: 300, y: 150 },
+    ],
+    obstacles: [],
+  };
+
+  function countKindOverRun(maintenance: number | undefined, ticks: number): number {
+    const state = createWorld(9, invasionConfig(closeLayout, DEFAULT_TIME_LIMIT_TICKS, maintenance));
+    let bullets = 0;
+    for (let i = 0; i < ticks; i++) {
+      const before = countKind(state, 'enemyBullet');
+      stepWorld(state, idle);
+      const after = countKind(state, 'enemyBullet');
+      // 이 틱에 새로 생성된 적탄만 누적(수명 만료 소멸과 무관하게 발사량 근사).
+      if (after > before) bullets += after - before;
+    }
+    return bullets;
+  }
+
+  it('scaleFireCooldown: 100%→base, 0%→2×base, 중간값 선형(정수·결정론)', () => {
+    expect(scaleFireCooldown(12, MAINTENANCE_FULL)).toBe(12); // 완전 정비 = 무변화
+    expect(scaleFireCooldown(12, 0)).toBe(24); // 성능 50% → 간격 2배
+    expect(scaleFireCooldown(100, 0)).toBe(200);
+    expect(scaleFireCooldown(100, 5000)).toBe(133); // round(100*20000/15000)=133.33→133
+    // 순수 함수: 같은 입력 2회 동일(정수 연산이라 자명하지만 회귀 가드).
+    expect(scaleFireCooldown(90, 2500)).toBe(scaleFireCooldown(90, 2500));
+  });
+
+  it('normalizeMaintenance: 미지정·비유한·범위 밖을 정수 도메인으로 클램프', () => {
+    expect(normalizeMaintenance(undefined)).toBe(MAINTENANCE_FULL);
+    expect(normalizeMaintenance(Number.NaN)).toBe(MAINTENANCE_FULL);
+    expect(normalizeMaintenance(Number.POSITIVE_INFINITY)).toBe(MAINTENANCE_FULL);
+    expect(normalizeMaintenance(-5)).toBe(0);
+    expect(normalizeMaintenance(999999)).toBe(MAINTENANCE_FULL);
+    expect(normalizeMaintenance(5000.9)).toBe(5000); // 정수화(trunc)
+  });
+
+  it('미지정 정비도 == 명시 100%(MAINTENANCE_FULL): 해시 스트림 완전 일치', () => {
+    // append-only 안전성: 정비도 필드가 없던 침공 config 와, 명시적으로 완전 정비를 준 config
+    // 가 거동·해시 모두 비트 동일이어야 한다(기존 침공 런 회귀 0).
+    const inputs: InputFrame[] = [];
+    for (let i = 0; i < 250; i++) {
+      inputs.push({ moveX: Math.sin(i / 20), moveY: 0, aim: (i / 25) % 6.28, dash: false, special: 0 });
+    }
+    const omitted = runReplay({ seed: 7, config: invasionConfig(closeLayout), inputs });
+    const full = runReplay({
+      seed: 7,
+      config: invasionConfig(closeLayout, DEFAULT_TIME_LIMIT_TICKS, MAINTENANCE_FULL),
+      inputs,
+    });
+    expect(omitted.hashes).toEqual(full.hashes);
+  });
+
+  it('정비도가 다르면 해시가 발산(위조 방어: 방치 기지를 100% 주장 불가)', () => {
+    const inputs: InputFrame[] = [];
+    for (let i = 0; i < 250; i++) {
+      inputs.push({ moveX: 0, moveY: 0, aim: 0, dash: false, special: 0 });
+    }
+    const full = runReplay({
+      seed: 7,
+      config: invasionConfig(closeLayout, DEFAULT_TIME_LIMIT_TICKS, MAINTENANCE_FULL),
+      inputs,
+    });
+    const decayed = runReplay({
+      seed: 7,
+      config: invasionConfig(closeLayout, DEFAULT_TIME_LIMIT_TICKS, 0),
+      inputs,
+    });
+    // 최종 해시가 반드시 달라야 한다(정비도가 발사 간격 → 엔티티 상태 + config 폴드 양쪽 반영).
+    expect(decayed.finalHash).not.toBe(full.finalHash);
+  });
+
+  it('같은 정비도(중간값)면 2회 실행이 틱별 해시 100% 일치(결정론)', () => {
+    const inputs: InputFrame[] = [];
+    for (let i = 0; i < 300; i++) {
+      inputs.push({ moveX: Math.cos(i / 33), moveY: Math.sin(i / 44), aim: (i / 20) % 6.28, dash: i % 70 === 0, special: 0 });
+    }
+    const cfg = invasionConfig(closeLayout, DEFAULT_TIME_LIMIT_TICKS, 3750);
+    const a = runReplay({ seed: 7, config: cfg, inputs });
+    const b = runReplay({ seed: 7, config: cfg, inputs });
+    expect(a.hashes).toEqual(b.hashes);
+  });
+
+  it('정비도 0%(성능 50%)는 100%보다 적게 발사한다(성능 저하 실증)', () => {
+    const ticks = 600;
+    const shotsFull = countKindOverRun(MAINTENANCE_FULL, ticks);
+    const shotsDecayed = countKindOverRun(0, ticks);
+    expect(shotsFull).toBeGreaterThan(0);
+    // 발사 간격이 2배가 되므로 발사량이 뚜렷이 줄어야 한다(대략 절반 수준).
+    expect(shotsDecayed).toBeLessThan(shotsFull);
+  });
 });
 
 describe('침공 config 부재 시 PvE 해시 불변 (회귀 가드)', () => {

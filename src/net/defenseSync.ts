@@ -55,6 +55,95 @@ export function defenseLayoutCost(layout: DefenseLayout): number {
 }
 
 // ---------------------------------------------------------------------------
+// 풍화·정비 파생 (순수 · 테스트 대상 — ADR-0006/0007, 계획 §4 E3)
+// ---------------------------------------------------------------------------
+
+/** 주간 풍화 하락폭(ADR-0006 시작값: 정비도 주 -5%p). 서버 pg_cron 과 동일 값. */
+export const WEATHERING_DECAY_PER_WEEK = 5;
+
+/** 정비도 경고 수준(낮을수록 강조). */
+export type MaintenanceLevel = 'ok' | 'warn' | 'critical';
+
+/**
+ * 정비도(0~100) → 경고 수준(순수). 낮을수록 강한 강조:
+ *   - >= 70: 'ok'(정상)
+ *   - 40 ~ 69: 'warn'(주의 — 정비 권장)
+ *   - < 40: 'critical'(위험 — 방어력 크게 저하, 0%면 포탑 50%)
+ */
+export function maintenanceWarningLevel(maintenance: number): MaintenanceLevel {
+  const m = Number.isFinite(maintenance) ? maintenance : 0;
+  if (m >= 70) return 'ok';
+  if (m >= 40) return 'warn';
+  return 'critical';
+}
+
+/** 다음 풍화 후 예상 정비도(0 밑으로 안 내려감, 순수). */
+export function forecastMaintenance(maintenance: number, decay = WEATHERING_DECAY_PER_WEEK): number {
+  const m = Number.isFinite(maintenance) ? Math.max(0, Math.min(100, maintenance)) : 0;
+  return Math.max(0, m - decay);
+}
+
+/**
+ * 하락 예고 알림 문구(순수 · 관제탑/사령부 진입 시 표시). 다음 주간 풍화로 떨어질 정비도를
+ * 예고하고, 바닥(0%)에서는 포탑 성능 50% 저하를 경고한다(ADR-0006).
+ */
+export function weatheringForecastText(maintenance: number): string {
+  const m = Number.isFinite(maintenance) ? Math.max(0, Math.min(100, Math.round(maintenance))) : 0;
+  const next = forecastMaintenance(m);
+  if (m <= 0) {
+    return '정비도 0% — 포탑 성능이 50%까지 저하된 상태입니다. 정비로 회복하세요.';
+  }
+  if (next <= 0) {
+    return `다음 풍화 시 정비도 0% 도달 — 포탑 성능 50% 저하 임박. 정비를 권장합니다.`;
+  }
+  return `다음 풍화 시 정비도 ${next}% 예상(주 -${WEATHERING_DECAY_PER_WEEK}%p). 정비로 100% 회복 가능.`;
+}
+
+/** 정비 버튼 상태(순수): 정비 가능 여부 + 비활성 사유. */
+export interface RepairButtonState {
+  canRepair: boolean;
+  /** 비활성 사유(canRepair=true 면 빈 문자열). */
+  reason: string;
+}
+
+/**
+ * 정비 버튼 상태를 계산한다(순수). 우선순위:
+ *   1) 이미 100%면 정비 불필요.
+ *   2) 크레딧이 비용보다 적으면 부족 안내.
+ *   3) 그 외 정비 가능.
+ */
+export function repairButtonState(maintenance: number, credits: number, cost: number): RepairButtonState {
+  const m = Number.isFinite(maintenance) ? maintenance : 0;
+  if (m >= 100) return { canRepair: false, reason: '정비도 100% — 정비 불필요' };
+  if (!Number.isFinite(credits) || credits < cost) {
+    return { canRepair: false, reason: `크레딧 부족(${cost} 필요)` };
+  }
+  return { canRepair: true, reason: '' };
+}
+
+// ---------------------------------------------------------------------------
+// 정비 상태 조회·정비 게이트웨이 (계약 §4 — repair_defense RPC)
+// ---------------------------------------------------------------------------
+
+/** 내 방어의 정비 상태(정비 UI 표시용). maintenance=null 이면 활성 방어 없음. */
+export interface DefenseStatus {
+  /** 정비도(0~100). 활성 방어가 없으면 null. */
+  maintenance: number | null;
+  /** 현재 크레딧 잔액(정비 비용 차감 원천 — profiles.save.credits). */
+  credits: number;
+  /** 정비 1회 비용(서버 산출 — 시설 규모 반영 가능). */
+  repairCost: number;
+}
+
+/** 정비 RPC 결과(정비 후 갱신값). */
+export interface RepairResult {
+  /** 정비 후 크레딧 잔액. */
+  credits: number;
+  /** 정비 후 정비도(성공 시 100). */
+  maintenance: number;
+}
+
+// ---------------------------------------------------------------------------
 // 업서트 분기 (순수 · 테스트 대상)
 // ---------------------------------------------------------------------------
 
@@ -99,6 +188,16 @@ export interface DefenseGateway {
   insertDefense(uid: string, payload: DefenseInsertPayload): Promise<void>;
   /** 기존 방어 행의 layout 을 update(정비도·예산은 서버 가드가 처리). 실패 시 throw. */
   updateDefense(defenseId: string, layout: DefenseLayout): Promise<void>;
+  /**
+   * 내 방어 정비 상태(정비도·크레딧·정비 비용) 조회 — RPC `get_defense_status()`.
+   * 구현이 없으면 `undefined`(공개 함수가 no-op null 처리). 실패 시 throw.
+   */
+  fetchDefenseStatus?(uid: string): Promise<DefenseStatus>;
+  /**
+   * 정비 실행 — RPC `repair_defense()`(security definer): 크레딧 차감 + maintenance=100 원자.
+   * 반환은 정비 후 크레딧·정비도. 구현이 없으면 `undefined`. 실패(크레딧 부족 등) 시 throw.
+   */
+  repairDefense?(uid: string): Promise<RepairResult>;
 }
 
 /** 주입 가능한 의존성(테스트에서 gateway/config 대체). */
@@ -173,6 +272,40 @@ export async function uploadDefenseLayout(
       await gateway.updateDefense(racedId, layout);
       return 'updated';
     }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 내 방어 정비 상태를 조회한다(정비 UI 표시용). 미설정/오프라인/오류/게이트웨이 미구현이면
+ * `null`(→ 정비 UI 는 서버 미설정 안내). 서버 권위 — 클라이언트는 표시만 한다.
+ */
+export async function fetchDefenseStatus(deps: DefenseDeps = {}): Promise<DefenseStatus | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.fetchDefenseStatus === undefined) return null;
+  try {
+    const uid = await gateway.getUserId();
+    return await gateway.fetchDefenseStatus(uid);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 방어 정비를 실행한다(RPC `repair_defense()` — 크레딧 차감 + maintenance=100 원자 처리).
+ *
+ * 반환:
+ *  - {@link RepairResult} — 정비 성공(정비 후 크레딧·정비도). 정비 UI 가 잔액·정비도 갱신.
+ *  - `null` — 미설정(no-op)·오프라인·오류(크레딧 부족 등 서버 거부 포함). 정비 UI 는 상태를
+ *    다시 조회해 사용자에게 안내한다(서버가 실제 원자성·크레딧 검증을 강제).
+ */
+export async function repairDefense(deps: DefenseDeps = {}): Promise<RepairResult | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.repairDefense === undefined) return null;
+  try {
+    const uid = await gateway.getUserId();
+    return await gateway.repairDefense(uid);
   } catch {
     return null;
   }

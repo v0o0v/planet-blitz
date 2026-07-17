@@ -17,6 +17,7 @@ import { runReplay } from '../../src/sim/replay.ts';
 import type { InputFrame, WorldConfig } from '../../src/sim/world.ts';
 import {
   DEFAULT_TIME_LIMIT_TICKS,
+  MAINTENANCE_FULL,
   TURRET_VULCAN,
   TURRET_SNIPER,
   TURRET_SHOTGUN,
@@ -39,7 +40,11 @@ const SERVER_LAYOUT: DefenseLayout = {
   obstacles: [{ x: 450, y: 0, halfW: 50, halfH: 120 }],
 };
 
-function invasionConfig(layout: DefenseLayout, timeLimitTicks = DEFAULT_TIME_LIMIT_TICKS): WorldConfig {
+function invasionConfig(
+  layout: DefenseLayout,
+  timeLimitTicks = DEFAULT_TIME_LIMIT_TICKS,
+  maintenance?: number,
+): WorldConfig {
   return {
     arenaWidth: 1920,
     arenaHeight: 1080,
@@ -49,7 +54,7 @@ function invasionConfig(layout: DefenseLayout, timeLimitTicks = DEFAULT_TIME_LIM
     dashIframes: 10,
     hitIframes: 40,
     playerHp: 100,
-    invasion: { layout, timeLimitTicks },
+    invasion: { layout, timeLimitTicks, maintenance },
   };
 }
 
@@ -176,6 +181,33 @@ function main(): number {
   expectReject('손상된 서버 layout', base, ['server-layout-invalid'], {
     layout: { core: { x: 'broken', y: 0 }, turrets: [], obstacles: [] },
     timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
+  });
+
+  // --- 게이트 3.7: 정비도(풍화) 반영·발산(ADR-0006, Phase E EF 배선) ---
+  // 서버 재실행은 server.maintenance 로 포탑 발사 간격을 스케일한다(0%→2배 느림). 따라서:
+  //  (정상) 클라가 서버 정비도(0%)와 동일 정비도로 런·제출 → 재실행 해시 일치 → accept.
+  //  (발산) 클라가 완전 정비(base=풍화 미반영)로 런했는데 서버는 0% → 재실행 거동 상이 →
+  //         hashStream 발산으로 거부. 이 배선이 없으면 서버가 항상 완전 정비로 돌아
+  //         풍화가 검증에 반영되지 않는다(Phase E 완결 조건).
+  const ctxWeathered: InvasionServerContext = {
+    layout: SERVER_LAYOUT,
+    timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
+    maintenance: 0, // 완전 방치(0%) → 포탑 발사 간격 2배
+  };
+  const honestWeathered = honest(seed, invasionConfig(SERVER_LAYOUT, DEFAULT_TIME_LIMIT_TICKS, 0), inputs);
+  expectAccept('정비도 반영 정직 침공(풍화 0%)', honestWeathered, ctxWeathered);
+  // 완전 정비로 계산한 base(maintenance 미지정=MAINTENANCE_FULL)를 풍화 0% 서버로 검증 → 발산.
+  expectReject('정비도 불일치(완전정비 런 vs 풍화 서버)', base, [
+    'hash-stream-divergence',
+    'final-hash-mismatch',
+    'outcome-mismatch',
+  ], ctxWeathered);
+  // 역방향 대칭 확인: 완전 정비 서버에는 base(완전 정비 런)가 정상 accept(하위호환 — maintenance
+  // 미지정 컨텍스트는 MAINTENANCE_FULL 로 정규화되어 기존 거동 불변).
+  expectAccept('완전 정비 서버(하위호환)', base, {
+    layout: SERVER_LAYOUT,
+    timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
+    maintenance: MAINTENANCE_FULL,
   });
 
   // --- 게이트 4: 입력 길이 상한(제한 시간 초과) ---

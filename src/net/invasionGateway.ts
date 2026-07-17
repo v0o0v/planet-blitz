@@ -18,6 +18,8 @@ import type {
   InvasionVerdict,
   InvasionSubmitInput,
   LootItem,
+  PlacementStatus,
+  PlacementResult,
 } from './invasion.js';
 
 /** RPC/셀렉트가 돌려주는 raw 행에서 안전하게 값을 뽑는 헬퍼. */
@@ -110,6 +112,42 @@ export class SupabaseInvasionGateway implements InvasionGateway {
     if (error !== null) throw error;
     const rows = Array.isArray(data) ? data : [];
     return rows.map(rowToTarget);
+  }
+
+  async getPlacementTargets(): Promise<InvasionTarget[]> {
+    // 배치전 대상(NPC 시드 기지) — get_invasion_targets 와 동일 행 shape(계약 §2 재사용).
+    // 쿨다운 무시·NPC 전용은 서버 RPC 가 강제한다(클라이언트는 목록만 표시).
+    const { data, error } = await this.client.rpc('get_placement_targets');
+    if (error !== null) throw error;
+    const rows = Array.isArray(data) ? data : [];
+    return rows.map(rowToTarget);
+  }
+
+  async getPlacementStatus(): Promise<PlacementStatus> {
+    // 배치전 진행 상태. 서버 반환: { matches_played, matches_won, required(=5), placed }.
+    const { data, error } = await this.client.rpc('get_placement_status');
+    if (error !== null) throw error;
+    const r = asRecord(Array.isArray(data) ? data[0] : data);
+    return {
+      completed: asNumber(r.matches_played),
+      won: asNumber(r.matches_won),
+      total: asNumber(r.required, 5),
+      placed: r.placed === true,
+    };
+  }
+
+  async applyPlacementResult(): Promise<PlacementResult> {
+    // 배치전 5회 완료 후 성적으로 초기 rank 삽입. 서버 반환 jsonb:
+    //   { placed, rank, matches_won, note }.
+    const { data, error } = await this.client.rpc('apply_placement_result');
+    if (error !== null) throw error;
+    const r = asRecord(data);
+    return {
+      placed: r.placed === true,
+      rank: asNumber(r.rank),
+      matchesWon: asNumber(r.matches_won),
+      note: asString(r.note),
+    };
   }
 
   async fetchLadder(limit: number): Promise<LadderEntry[]> {

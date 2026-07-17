@@ -566,7 +566,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   // sink로 지역 entities/nextEntityId를 넘겨 id 할당을 위임하고, 소비된 nextEntityId를 회수한다.
   if (cfg.invasion !== undefined) {
     const sink = { entities, nextEntityId };
-    spawnInvasionLayout(sink, cfg.invasion.layout);
+    spawnInvasionLayout(sink, cfg.invasion.layout, cfg.invasion.maintenance);
     nextEntityId = sink.nextEntityId;
   }
 

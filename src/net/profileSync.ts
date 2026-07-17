@@ -180,3 +180,20 @@ export function clearPendingProfile(store: KeyValueStore): void {
     // 무해.
   }
 }
+
+/**
+ * 대기 슬롯에 스냅샷이 **이미 남아 있을 때만** 최신 프로필로 교체한다(없으면 아무것도
+ * 안 함 — 새 push 를 만들지 않는다). 반환: 교체했는지.
+ *
+ * 용도(정비 이중 권위 방어, Phase E 리뷰 MED): 서버가 크레딧을 차감하는 정비
+ * (`repair_defense`) 직후, 정비 **전**에 stash 된 낡은 스냅샷이 대기 슬롯에 남아 있으면
+ * (PvE 정산이 오프라인/일시 실패로 미전송) 다음 {@link flushPendingSync} 재시도가 정비 전
+ * 크레딧을 서버로 되밀어 차감을 복구시킨다 — `progressScore` 가 credits 를 포함해
+ * stale-high 스냅샷이 `shouldPushPending` 을 통과하기 때문. 슬롯이 원래 last-write-wins
+ * 단일 슬롯이므로, 정비 후 상태로 교체하는 것이 슬롯 의미론에 정합하는 최소 방어다.
+ */
+export function refreshPendingProfile(store: KeyValueStore, profile: Profile): boolean {
+  if (readPendingProfile(store) === null) return false;
+  stashPendingProfile(store, profile);
+  return true;
+}

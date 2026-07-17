@@ -345,3 +345,171 @@ verify-invasion 은 `src/sim` 전체 그래프를 import 하고 배포 경로는
 
 배포 후 스모크: 유효 사용자 JWT 로 `POST {invasion_id}` → 정직 제출 accept·위조 reject
 확인, `apply_invasion_result` 스왑·복제 약탈 e2e(AC3).
+
+## Phase E — 배치전·NPC 시드·풍화/정비·비활성 침하 (계획 §4 Phase E, 2026-07-17)
+
+래더 운영층. NPC 시드 기지 20개로 기존 침공 파이프라인을 재사용해 **배치전**(신규
+유저 첫 5회)을 성립시키고, **풍화 pg_cron**(주간 정비도 감쇠)·**정비 회복 RPC**·**비활성
+침하**를 붙인다. 서버 lane(e-server) 산출. 클라 lane(e-client)과 정합: layout 정본 =
+서버 마이그레이션(리드 판정), `data/seedBases.ts` 는 표시 메타(이름·난이도·UUID)만.
+
+### 마이그레이션 목록 (Phase E 추가분)
+
+| 파일 | 내용 | 원격 적용 |
+|---|---|---|
+| `20260717080000_m4_phase_e_npc_seed.sql` | NPC 시드 20개(auth.users+profiles+ships+defenses+ladder) · `profiles.is_npc` 컬럼+가드 | ✅ `m4_phase_e_npc_seed` — 20/20 전 테이블, rank 1~20 연속, budget=layout비용 20/20 일치, 예산 전부 ≤20 |
+| `20260717090000_m4_phase_e_placement.sql` | `get_placement_targets`·`get_placement_status`·`apply_placement_result` + `apply_invasion_result` 배치전 인지 개정 | ✅ `m4_phase_e_placement` — AC4·미배치 게이팅 실측 통과 |
+| `20260717100000_m4_phase_e_repair.sql` | `repair_defense`(크레딧 차감+정비도 100 원자) | ✅ `m4_phase_e_repair` — 실측 통과 |
+| `20260717110000_m4_phase_e_weathering.sql` | `weather_defenses`·`weather_guardians`·`sink_inactive` + defenses DELETE 우회 봉인 | ✅ `m4_phase_e_weathering` — AC5·침하·DELETE봉인 실측 통과 |
+| `20260717120000_m4_phase_e_cron_schedule.sql` | pg_cron 활성 + 3잡 스케줄 | ✅ `m4_phase_e_cron_schedule` — pg_cron 1.6.4 활성, 3잡 active 실측 |
+| `20260717130000_m4_phase_e_review_fixes.sql` | 리뷰 MED 2건 — `sink_inactive` NPC 면제 · `repair_defense` 프로필 행 잠금 | ✅ `m4_phase_e_review_fixes` — T-E9/T-E10/T-E11 실측 통과 |
+
+### 1. NPC 시드 기지 20개 (E2 · 계약 1)
+
+- **auth.users FK 처리 = ⓐ 마이그레이션 직접 insert(고정 UUID)**. 근거: admin API 부재,
+  NPC 는 로그인 안 하므로 GoTrue 인증 컬럼 전부 null 무해, `auth.users` NOT NULL 컬럼은
+  `id`·`is_sso_user`·`is_anonymous` 3개뿐(원격 실측)이라 최소 insert 안전. 고정 UUID
+  `000000e5-ed00-4000-8000-0000000000NN`(NN=01~20) — 클라 seedBases `SEED_BASE_PROFILE_IDS`
+  와 조인 키. 방어 앵커 UUID `000000de-f000-4000-8000-0000000000NN`.
+- **난이도 분포**(계획 §5 하위~중위): 예산 = NN(#01 예산2 … #20 예산20) 단조 증가. 밴드
+  01~07 하위 / 08~14 중하 / 15~20 중위. 초기 rank = 21-NN(#01=rank20 … #20=rank1).
+  포탑 조합도 난이도별(하위=발칸 위주, 중위=저격·미사일+장애물). 전 layout 은 클라
+  `normalizeLayout`(포탑 유형 0~5·좌표 유한·halfW/halfH>0) 규칙 + 예산 20 이하를 정적
+  생성기로 검증(전부 통과) 후 임베드. 서버 `budget_spent` = `defense_layout_cost(layout)`
+  20/20 일치 실측.
+- **정본 = 서버 defenses.layout**. 배치전/침공 모두 클라가 RPC 반환 layout 을 렌더·재실행,
+  verify-invasion EF 도 DB layout 으로 재실행 → 클라 seedBases 에 layout 이중 정의 없음
+  (드리프트 원천 차단).
+
+### 2. 배치전 (E1 · AC4 · 계약 2)
+
+- **`get_placement_targets()`**(definer, authenticated): 미배치(ladder row 없는) 유저에게
+  `is_npc` 활성 방어 20기 제안(쿨다운·순위격차 무시). 반환 shape = `get_invasion_targets`
+  와 동일(클라 타입 재사용).
+- **`get_placement_status()`**: `(matches_played, matches_won, required=5, placed)` —
+  verified 침공 중 attacker=나·defender=NPC 집계. 진행바·완료 판정.
+- **`apply_placement_result(p_player)`**(definer): 최초 verified NPC 매치 5회 승수로 초기
+  rank 삽입. 삽입 rank R = `max(1, (현재 최대 rank + 1) - wins*2)`(0승→맨 아래, 5승→중상위).
+  삽입 시 `update ladder set rank=rank+1 where rank>=R`(DEFERRABLE unique → 단일 트랜잭션
+  교차 안전). 멱등(이미 배치 시 no-op). authenticated 는 본인만, 타인 확정은 service_role.
+- **AC4 해석 = 상대 순서 불변**: R 이상 전 행이 일괄 +1 shift → 서로의 상대 순서 완전
+  보존, R 미만 불변. 절대 rank +1 은 총원 증가로 불가피하나 경쟁 구도 불변. **실측 T-E3**:
+  4승 유저 rank13 삽입, 기존 20명 순서 문자열 동일(existing_order_preserved=true).
+- **`apply_invasion_result` 배치전 인지 개정**(Phase D 미배치 엣지의 명시 정의): 공격자가
+  배치되지 않은(placed 아님) 경우 **스왑·복제 약탈·쿨다운 게이트를 모두 스킵**(계약 2
+  "배치전 중 스왑·약탈 금지" + GDD §8 배치전 쿨다운 무시). Phase D 판은 ladder row 유무와
+  무관하게 약탈했으므로 이 개정이 실질 변경점. 배치된 공격자(정상 PvP)는 Phase D 동작
+  완전 동일. **실측 T-E4**: 미배치 승리 → 약탈 0행·순위 불변·verified만. **T-E5**(회귀):
+  배치 공격자 승리 → 스왑(#016 rank5↔#018 rank3)·약탈 1건 정상.
+
+### 3. 풍화 pg_cron (E3 · AC5)
+
+- **pg_cron 활성 가능**(원격 `list_extensions` default_version 1.6.4 → `create extension`
+  성공, 3잡 active 실측). 스케줄은 `_cron_schedule` 마이그레이션(잡 함수와 분리 — 활성
+  실패해도 함수는 남도록). 실패 시 대안: Dashboard→Database→Extensions 에서 pg_cron 켠 뒤
+  `cron.schedule` 3줄 수동 실행.
+- **`weather_defenses()`**: 주 1회(일요일 00:00 UTC) `maintenance = greatest(0, maintenance-5)`.
+  **이 함수는 defenses.maintenance 외 아무것도 쓰지 않는다**(AC5). SECURITY DEFINER
+  소유자 컨텍스트라 defenses 가드의 `is_service_role()` 우회로 maintenance 직접 갱신.
+  **실측 T-E2**: weathered=20, ladder/profiles/items/def(layout+budget) 해시 전부 불변,
+  maintenance 만 2000→1900. 회복은 `repair_defense`(크레딧).
+- **`weather_guardians()`**(ADR-0007, 별도 잡): 수호 성능 -5%p, 바닥 50%, 회복 불가. AC5
+  불변식 검사(weather_defenses 단독)를 오염시키지 않도록 분리. M4 에선 guardians 빈 자리.
+
+### 4. 정비 회복 RPC (계약 4)
+
+- **`repair_defense(p_defense_id)`**(definer, authenticated 본인): cost = `ceil((100-maintenance)*5)`
+  크레딧. **크레딧 = profiles.save(jsonb) 최상위 'credits'**(src/save/profile.ts Profile.credits
+  구조 확인) 에서 `jsonb_set` 으로 차감 + maintenance=100 원자 처리. 만점→no-op(cost0),
+  부족→`insufficient-credits`. 반환 `{repaired, cost, credits, maintenance, note}`. ⚠️ 정비
+  직후 클라 profileSync pull 로 서버 save.credits 반영 필요(e-client 통지 완료). **실측
+  T-E6**: maint70→100, credits 1000→850(cost150).
+- **동시 정비 lost-update 차단**(리뷰 MED-2, `_review_fixes`): 기존엔 프로필 행을 잠그지
+  않고 select(credits)→update(jsonb_set) 2단계로 차감해, 동시 정비(더블클릭·다중 탭) 시
+  두 트랜잭션이 같은 잔액을 읽어 한 번 치 비용만 차감(과소차감)될 수 있었다. **크레딧
+  읽기에 `for update`** 를 붙여 프로필 행을 먼저 잠근다 — 두 번째 트랜잭션은 첫 커밋 후의
+  잔액을 읽는다(PostgreSQL 행 잠금 시맨틱). 택1 근거: 조건부 단일 UPDATE(+row_count) 안과
+  동등하게 안전하지만, 이 함수는 잔액을 읽어서 분기(부족 required 반환·만점 no-op)해야
+  해 어차피 select 가 필요하다 — 그 select 에 잠금을 붙이는 쪽이 로직 변경 최소·의도
+  명시적. 동시 두 세션 재현은 단일 연결(MCP)로 불가해 **T-E11**(라이브 함수 정의에
+  `for update` 반영 실측=true) + T-E6 재실행 기능 회귀(동일 결과)로 검증을 갈음.
+
+### 5. 비활성 침하 (E4)
+
+- **`sink_inactive()`**(별도 cron 잡, 일요일 00:30 UTC): `last_active` 30일+ 프로필을
+  정렬 키 +SINK_STEP(**기본안 3** — 튜닝 대상)으로 재랭킹 → **매 실행마다 최대 3위 하락**.
+  동률 sort_key 에서 활성을 앞에 두어 비활성이 활성을 완전히 지나 침하(경계 동률 하락폭
+  축소 방지), old_rank asc 로 클래스 내 상대 순서 보존. dense re-number 라 rank 1..n 연속
+  유지, **비활성 없으면 0행(멱등)**. **순위만 변경** — 이는 침하 잡의 본질(직접 순위 하락)
+  이라 ADR-0006 "풍화는 순위 불변"과 무충돌(침하 ≠ 풍화). **실측 T-E7**: #011 rank10→13,
+  아래 3명 상승, 상대 순서 보존, distinct 20. 전원 활성 시 0행.
+- **NPC 침하 면제**(리뷰 MED-1, `_review_fixes`): NPC 의 `last_active` 는 시드 시점 고정
+  + 갱신 경로가 없어(NPC 무로그인) 30일 뒤 전 NPC 가 '비활성' 판정 → 매주 -3 침하로 난이도
+  분포가 붕괴할 수 있었다. `sink_inactive` 대상 조건에 **`not p.is_npc`**(profiles 조인)
+  추가 — NPC 는 '미접속 유저'가 아니므로 침하 의미론상 애초 대상이 아니다. NPC 는 재랭킹
+  기준점으로만 참여(dense re-number 연속성 유지). **실측 T-E9**: 전 NPC 40일 미접속 상태
+  에서 sink → 0행 변경·전 NPC rank 불변. **T-E10**(혼합): 실유저만 rank10→13 침하, NPC
+  상대 순서(#20>…>#01) 완전 보존, distinct 21.
+
+### 6. 이월 항목 처리 (계약 6)
+
+- **DELETE→재생성 정비도 리셋 우회 봉인**(README 착수 조건 ②-2 이행): `defenses_rw_own`
+  (FOR ALL)을 SELECT/INSERT/UPDATE own 정책으로 분해하고 **DELETE 정책을 만들지 않는다**
+  → 클라이언트 DELETE 는 RLS 기본 거부. service_role BYPASSRLS·profiles 삭제 FK cascade 는
+  RLS 무관하게 동작해 계정 삭제 경로 무영향, 방어 교체는 UPDATE(defenseSync) 유지.
+  **실측 T-E8**: authenticated 의 자기 방어 DELETE → 0행 삭제·행 잔존.
+- **`ladder.defense_id` 백필 결정 = 소급 백필 트리거·잡 두지 않음**. NPC 는 시드에서 채움,
+  신규 유저는 배치 시점 활성 방어가 있으면 채움(있을 때만). 근거: 매치메이킹은
+  `defenses.active` 직접 조인·EF 는 `invasions.defense_id` 스냅샷을 쓰므로 **ladder.defense_id
+  를 읽는 경로가 없고**, 이 컬럼이 겨냥한 DELETE 우회 완화는 위 DELETE 봉인으로 근본
+  차단됨. M5 에서 실제 읽는 기능이 생기면 백필 배선 재검토(주석 착수 조건 기록).
+
+### 원격 실측·통합 테스트 (2026-07-17, `qxgbxwyccbxokdgwxcuw`)
+
+`supabase/tests/phase_e_verification.sql` 에 T-E1~T-E8 재현 스크립트 보존(트랜잭션 롤백/
+RAISE 자동 롤백 → 잔류 0). 요약:
+
+- T-E1 시드 무결성: NPC 20·rank 1~20 연속·budget=layout비용 20/20·예산≤20 ✅
+- T-E2 AC5 풍화 불변: weathered=20, ladder/profiles/items/layout+budget 불변, maintenance만 하락 ✅
+- T-E3 AC4 배치전 삽입: 4승→rank13, 기존 유저 상대순서 문자열 동일 ✅
+- T-E4 배치전 게이팅: 미배치 승리→약탈0·스왑없음·verified만 ✅
+- T-E5 정상 스왑+약탈 회귀: 배치 공격자 승리→스왑·약탈1 ✅
+- T-E6 정비: maint70→100·credits1000→850(cost150) ✅
+- T-E7 비활성 침하: rank10→13·아래3명 상승·상대순서 보존·distinct20 ✅
+- T-E8 DELETE 봉인: authenticated DELETE→0행·행 잔존 ✅
+- T-E9 NPC 침하 면제(MED-1): 전 NPC 40일 미접속→sink 0행·rank 불변 ✅
+- T-E10 혼합 침하: 실유저만 rank10→13, NPC 순서 보존·distinct 21 ✅
+- T-E11 repair 잠금(MED-2): 라이브 정의 `for update` 반영=true + T-E6 재실행 동일 결과 ✅
+- `get_advisors(security)` 재점검: 신규 WARN 은 전부 의도 — SECURITY DEFINER RPC 4종
+  (placement×3·repair, authenticated 가 auth.uid() 스코프 호출 — get_invasion_targets 와
+  동일 성격), pg_cron 시스템 테이블(cron.job/job_run_details), 익명 Auth 베이스라인. **ERROR
+  없음.** `apply_invasion_result`·`weather_*`·`sink_inactive` 는 목록에 없음(service 전용
+  EXECUTE 봉인 확인).
+
+### 정비도(풍화) 검증 배선 — sim 소비 구현됨·EF/클라 배선 완료 (2026-07-17)
+
+당초 "sim 이 maintenance 를 소비하지 않아 풍화가 게임플레이 무효" MEDIUM 리스크는 **해소**됐다:
+
+- **sim 소비 구현**(worker-e-sim lane): `InvasionConfig.maintenance`(정수 centi-percent
+  0..`MAINTENANCE_FULL`=10000, 미지정=완전 정비), `normalizeMaintenance`·`scaleFireCooldown`
+  (ADR-0006 "0%→성능 50%" = 발사 간격 2배 선형), `stepDefenseTurrets`/`spawnInvasionLayout`
+  반영. PvE fixtures 바이트 불변·477 vitest+deno 녹색(e-sim 보고).
+- **EF 배선 완료**(이 lane, verify-invasion): `InvasionServerContext.maintenance?` 추가,
+  `index.ts` 가 DB `defenses.maintenance`(numeric 0~100)를 **`Math.round(db*100)`** 로 정수
+  centi-percent 변환해 로드(스냅샷 defense_id·활성 방어 양 경로), `verifyInvasion` 의
+  `authoritativeInvasion` 에 `maintenance` 포함 → **서버 재실행이 서버 정비도로 포탑을
+  스케일**한다. 변환 공식은 클라와 동일(어긋나면 정직 런 오거부). 미지정→완전 정비 폴백으로
+  기존 검증 거동 100% 하위호환. layoutEquals 에 maintenance 대조는 불필요 — 서버 override +
+  hashStream 재실행이 정비도 불일치 위조를 `hash-stream-divergence`/`final-hash-mismatch`
+  로 잡는다.
+- **deno 발산 테스트 추가**(`scripts/deno-verify/verifyInvasion.ts`): ①풍화 0% 서버에
+  0% 로 정직 제출 → accept, ②완전 정비로 계산한 런을 풍화 0% 서버로 검증 → `final-hash-mismatch`
+  거부(배선 없으면 서버가 항상 완전 정비로 돌아 이 발산을 못 잡음 = Phase E 완결 조건),
+  ③완전 정비 서버 하위호환 accept. `deno task check`·`bundle`(dist.index.js 재생성, 36모듈)·
+  vitest·tsc·eslint 전부 녹색. **재배포 필요**(리드 처리) — dist.index.js 갱신됨.
+
+### 남은 리스크
+- **[LOW] 배치전 승수 산정 = 최초 5매치**: `apply_placement_result` 는 created_at 오름차순
+  최초 5 verified NPC 매치로 승수를 센다. 6매치 이상 플레이해도 첫 5개 기준(배치전 정의).
+- **[LOW] 밸런스 상수 튜닝 대상**(계획 §5): 정비 비용률 5·침하폭 3·배치 rank/win 계수 2·
+  풍화 -5%p 는 초기 추정값. M5 밸런싱 패스에서 확정.

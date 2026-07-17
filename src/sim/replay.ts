@@ -16,6 +16,7 @@ import type { InputFrame, WorldState, WorldConfig } from './world.js';
 import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } from './world.js';
 import type { Entity } from './entities.js';
 import { KIND_CODE } from './entities.js';
+import { normalizeMaintenance } from './defense.js';
 
 /** A recorded run: everything needed to deterministically reproduce it. */
 export interface Replay {
@@ -244,6 +245,11 @@ export function hashWorld(state: WorldState): number {
       h = hashFloat(h, o.halfW);
       h = hashFloat(h, o.halfH);
     }
+    // 정비도(풍화, ADR-0006) — 정수 centi-percent(정규화 본). 침공 블록 최후미에 append.
+    // 미지정(완전 정비)과 명시 10000 이 같은 값으로 접혀 거동과 정합한다. 정비도를 위조
+    // (예: 방치 기지를 100% 라 주장)하면 서버가 권위 정비도로 재실행 → 발사 간격이 달라져
+    // 엔티티 상태부터 발산하고, 이 폴드로 config 자체도 봉인된다. 신규 침공 필드는 이 아래.
+    h = hashU32(h, normalizeMaintenance(inv.maintenance) >>> 0);
   }
   return h >>> 0;
 }
