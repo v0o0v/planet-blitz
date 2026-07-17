@@ -66,6 +66,7 @@ export interface BaseMapCallbacks {
   onHangar: () => void;
   onResearch: () => void;
   onRefinery: () => void;
+  onDefense: () => void;
   onStarMap: () => void;
 }
 
@@ -106,6 +107,7 @@ export class BaseMap {
       case 'refinery':
         return u.refinery ? null : '행성 1회 클리어 필요';
       case 'defense':
+        return u.defenseCommand ? null : '행성 1회 클리어 필요';
       case 'control':
         return '준비 중 (M4)';
       default:
@@ -124,7 +126,10 @@ export class BaseMap {
       case 'refinery':
         cb.onRefinery();
         break;
-      // defense/control are always locked in M3 — no entry.
+      case 'defense':
+        cb.onDefense();
+        break;
+      // control (관제탑) is still locked — no entry.
     }
   }
 

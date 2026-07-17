@@ -553,6 +553,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         ['inventory', '인벤토리'],
         ['research', '연구소'],
         ['refinery', '정제소'],
+        ['defense', '방어사령부'],
       ];
       for (const [scr, label] of screens) {
         scrRow.appendChild(
