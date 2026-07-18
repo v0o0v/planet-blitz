@@ -179,6 +179,24 @@ export interface ClientResult {
   hashStream: number[];
 }
 
+/**
+ * 침공 권위 스냅샷(RPC `begin_invasion(defense_id)` 반환 — M5 레이스 B 폐쇄).
+ *
+ * T0(공격 개시) 시점에 서버가 방어 배치에 라이브 수호 권위를 접어 넣은 불변 스냅샷이다.
+ * 클라이언트는 이 `layout`(수호 권위 주입 완료)으로 침공 런을 돌리고, 제출 시 `snapshotId` 를
+ * 동봉한다 → EF 가 라이브 재조회 없이 이 고정본으로 대조(T0↔T1 사이 dismiss/retire/풍화 무영향).
+ * `layout` 은 raw jsonb(신뢰 불가)라 소비 전 `normalizeLayout()` 필수(현행 매치메이킹 serve
+ * layout 과 동일 규칙 — 수호 권위 정합). 실패(자격 미달·구버전 서버)면 게이트웨이가 null.
+ */
+export interface InvasionSnapshot {
+  /** invasion_snapshots 행 id — 제출 시 invasions.snapshot_id 로 동봉. */
+  snapshotId: string;
+  /** T0 고정 방어 배치(수호 권위 주입 완료 raw jsonb) — 소비 전 normalizeLayout 필수. */
+  layout: unknown;
+  /** T0 고정 정비도 %(0~100). 런·검증에 이 값을 쓴다(라이브 재조회 대신 고정본). */
+  maintenance: number;
+}
+
 /** 침공 제출 게이트웨이 입력(공격자 uid 포함 — RLS with_check 강제). */
 export interface InvasionSubmitInput {
   attackerId: string;
@@ -186,6 +204,8 @@ export interface InvasionSubmitInput {
   defenseId: string | null;
   replay: Replay;
   clientResult: ClientResult;
+  /** 침공 권위 스냅샷 id(begin_invasion 성공 시). 미설정이면 EF 라이브 경로(하위호환). */
+  snapshotId?: string | null;
 }
 
 /** 실제 서버 IO 추상화(테스트에서 fake 로 주입). */
@@ -198,6 +218,12 @@ export interface InvasionGateway {
   fetchLadder(limit: number): Promise<LadderEntry[]>;
   /** invasions insert(pending) → verify-invasion invoke → 판정 반환. 실패 시 throw. */
   submitInvasion(input: InvasionSubmitInput): Promise<InvasionVerdict>;
+  /**
+   * 침공 개시 권위 스냅샷 고정 — RPC `begin_invasion(defense_id)`(계약 M5). 성공 시
+   * {@link InvasionSnapshot}, 자격 미달·오류 시 throw. 구현이 없으면(구버전) `undefined` →
+   * 공개 함수가 no-op(null)로 처리하고 호출부가 라이브 경로로 폴백한다.
+   */
+  beginInvasion?(defenseId: string): Promise<InvasionSnapshot>;
   /**
    * 배치전 대상(NPC 시드 기지) 목록 — RPC `get_placement_targets()`. 쿨다운 무시(계약 §2).
    * 구현이 없는 게이트웨이(구버전)면 `undefined` — 공개 함수가 no-op(null)로 처리한다.
@@ -413,6 +439,25 @@ export async function fetchInvasionReplay(
 }
 
 /**
+ * 침공 개시 권위 스냅샷을 서버에 고정하고 받는다(RPC `begin_invasion` — M5 레이스 B 폐쇄).
+ *
+ * 대상(defenseId)을 확정한 순간 호출한다. 반환 {@link InvasionSnapshot} 의 `layout`(수호 권위
+ * 주입 완료)으로 침공 런을 돌리고, 제출 시 `snapshotId` 를 동봉하면 EF 가 라이브 재조회 없이
+ * 이 고정본으로 대조한다. 미설정/오프라인/오류/게이트웨이 미구현/자격 미달이면 `null` →
+ * 호출부는 현행 라이브 경로(매치메이킹 serve layout)로 폴백한다(하위호환 — 회귀 0).
+ */
+export async function beginInvasion(defenseId: string, deps: InvasionDeps = {}): Promise<InvasionSnapshot | null> {
+  if (typeof defenseId !== 'string' || defenseId.length === 0) return null;
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.beginInvasion === undefined) return null;
+  try {
+    return await gateway.beginInvasion(defenseId);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 관제탑 순위표 상위 `limit` 행을 받는다. 미설정/오프라인/오류면 `null`.
  */
 export async function fetchLadder(limit = 50, deps: InvasionDeps = {}): Promise<LadderEntry[] | null> {
@@ -436,7 +481,7 @@ export async function fetchLadder(limit = 50, deps: InvasionDeps = {}): Promise<
  * "미제출"로 안내한다(런 자체는 로컬에서 이미 끝났다).
  */
 export async function submitInvasion(
-  params: { target: InvasionTarget; replay: Replay; clientResult: ClientResult },
+  params: { target: InvasionTarget; replay: Replay; clientResult: ClientResult; snapshotId?: string | null },
   deps: InvasionDeps = {},
 ): Promise<InvasionVerdict | null> {
   const gateway = await resolveGateway(deps);
@@ -449,6 +494,7 @@ export async function submitInvasion(
       defenseId: params.target.defenseId,
       replay: params.replay,
       clientResult: params.clientResult,
+      snapshotId: params.snapshotId ?? null,
     });
     // 서버가 실제 판정을 내렸으므로(제출 성립) 로컬 쿨다운 미러를 갱신한다.
     const store = resolveStore(deps);
