@@ -25,10 +25,22 @@ import { planShopPurchase, validateFusion, planFusion } from './cardsCore.ts';
 import { shopDateSeedFromMs, shopUserSeed } from '../../../data/defenseCards.ts';
 import type { Rarity } from '../../../src/items/types.ts';
 
+/**
+ * CORS 헤더 — cards 는 브라우저 클라(방어 사령부 카드 UI)가 직접 호출하는 유일한 EF 라 반드시
+ * 필요하다(다른 EF: verify-invasion/-pve-sample 은 서버·cron 호출이라 불요). 없으면 브라우저가
+ * 프리플라이트(OPTIONS)를 차단해 supabase-js 가 "Failed to fetch" 로 즉시 실패한다. Authorization
+ * 을 쿠키가 아닌 헤더로 싣고 credentials 를 include 하지 않으므로 Allow-Origin '*' 로 충분하다.
+ */
+const corsHeaders: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json' },
+    headers: { ...corsHeaders, 'content-type': 'application/json' },
   });
 }
 
@@ -40,6 +52,10 @@ function cryptoU32(): number {
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
+  // CORS 프리플라이트: 브라우저가 실제 POST 전에 보내는 OPTIONS 에 허용 헤더로 응답한다.
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
   if (req.method !== 'POST') {
     return json({ ok: false, code: 'method-not-allowed' }, 405);
   }
