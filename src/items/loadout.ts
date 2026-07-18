@@ -15,6 +15,7 @@ import type { Item, StatKey } from './types.js';
 import type { LoadoutConfig } from '../sim/world.js';
 import { UNIQUE_REGISTRY } from './uniques.js';
 import { computeSkillStats } from './skills.js';
+import { normalizeLineageBonus } from '../../data/guardian.js';
 // side-effect: M2 유니크 5점을 레지스트리에 등록(장착 유니크의 bit → uniqueMask).
 import '../../data/uniques.js';
 
@@ -144,16 +145,35 @@ function zeroSums(): Record<StatKey, number> {
 }
 
 /**
+ * 계보 기체 가지 보너스(basis-point, [0,5000])를 로드아웃에 적용한다(ADR-0007 "내 현역
+ * 기체 소폭 강화"). 수호 가지의 resolveGuardianStats 와 대칭인 3축 — 데미지 ×(1+b),
+ * 발사 간격 ÷(1+b)(=연사↑), 최대 HP +기준 100 대비 b%(maxHpPct 어픽스와 같은 방식의
+ * flat 가산). 나머지 축(이속·탄속·자석 등)은 건드리지 않는다(소폭 강화 원칙 + 판정
+ * 기하 불변 철학, data/guardian.ts 참조). 보너스는 config 의 loadout 블록으로 리플레이
+ * 헤더에 스냅샷되므로 장비 어픽스와 동일하게 결정론·서버 재실행 검증과 호환된다.
+ */
+function applyShipLineageBonus(lo: LoadoutConfig, bonusBp: number): void {
+  const b = normalizeLineageBonus(bonusBp);
+  if (b === 0) return;
+  lo.damageMult *= (10000 + b) / 10000;
+  lo.fireRateMult *= 10000 / (10000 + b);
+  lo.maxHpAdd += Math.round((BASE_HP_REF * b) / 10000);
+}
+
+/**
  * Fold the equipped items (and optional skill investment) into a derived stat
  * block + meta mods. Order of the items does not matter (all contributions are
  * summed). When `invest` is supplied, the skill-derived stats stack on top of
  * the gear pass (multiplicatively across the two sources — standard ARPG stack),
  * so a deep build strengthens the run through the same block gear does. Absent /
  * empty `invest` reproduces the M2 gear-only result exactly (backward compat).
+ * `shipBonusBp`(계보 기체 가지, data/lineage.ts shipBonusBp)가 주어지면 마지막에
+ * {@link applyShipLineageBonus} 로 겹친다 — 미지정/0 은 기존 결과와 완전 동일.
  */
 export function computeLoadoutStats(
   equipped: readonly Item[],
   invest?: readonly number[],
+  shipBonusBp?: number,
 ): ComputedLoadout {
   const lo = neutralLoadout();
 
@@ -184,6 +204,8 @@ export function computeLoadoutStats(
   lo.fireDmg += sums.fireDmg;
   lo.coldSlow += sums.coldSlow;
   lo.lightning += sums.lightning;
+  // 계보 기체 가지(M5, ADR-0007): 장비·스킬 위에 마지막으로 겹치는 계정 단위 배율.
+  if (shipBonusBp !== undefined) applyShipLineageBonus(lo, shipBonusBp);
 
   const worldMods: WorldMods = {
     mineralFindMult: 1 + sums.mineralFindPct / 100,

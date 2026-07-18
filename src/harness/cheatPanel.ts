@@ -35,6 +35,7 @@ import { activeShip } from '../save/profile.js';
 import type { Profile } from '../save/profile.js';
 import { retireActiveShip, bulkDismissGuardians, investLineageBranch } from '../save/guardianLifecycle.js';
 import { GUARDIAN_TITAN, GUARDIAN_INTERCEPTOR } from '../../data/guardian.js';
+import { branchBonusBp } from '../../data/lineage.js';
 
 /**
  * main.ts가 주입하는 치트 패널 호스트. 하네스 공개 API로는 닿지 않는 프로필 지급·
@@ -681,9 +682,11 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       const refreshStatus = (): void => {
         const p = host.getProfile();
         const active = p.guardians.filter((g) => !g.retired).length;
+        const shipPct = (branchBonusBp(p.lineage.shipLevel) / 100).toFixed(1);
+        const guardPct = (branchBonusBp(p.lineage.guardianLevel) / 100).toFixed(1);
         status.textContent =
           `수호 ${active}기(활성)/${p.guardians.length}(총) · 계보 pt ${p.lineage.available} · ` +
-          `기체Lv ${p.lineage.shipLevel}·수호Lv ${p.lineage.guardianLevel}`;
+          `기체Lv ${p.lineage.shipLevel}(+${shipPct}%)·수호Lv ${p.lineage.guardianLevel}(+${guardPct}%)`;
       };
       refreshStatus();
 
