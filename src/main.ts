@@ -73,6 +73,7 @@ import { runBench } from './bench/bench.js';
 import { EQUIP_SLOTS } from './items/types.js';
 import type { Item } from './items/types.js';
 import { computeLoadoutStats } from './items/loadout.js';
+import { shipBonusBp } from '../data/lineage.js';
 import { loadProfile, saveProfile, activeShip } from './save/profile.js';
 import { settleRun } from './save/settlement.js';
 import type { SettlementOutcome } from './save/settlement.js';
@@ -497,7 +498,9 @@ async function main(): Promise<void> {
       if (it !== undefined) equipped.push(it);
     }
     const skillInvest = profile.skillInvest.slice();
-    const { loadout } = computeLoadoutStats(equipped, skillInvest);
+    // 계보 기체 가지(ADR-0007): 침공에도 동일 적용 — loadout 은 config 로 리플레이에
+    // 스냅샷되므로 서버 재실행 검증과 호환된다(장비 어픽스와 같은 경로).
+    const { loadout } = computeLoadoutStats(equipped, skillInvest, shipBonusBp(profile.lineage));
     // 방어 정비도(풍화, ADR-0006)를 sim centi-percent 로 변환해 config 에 싣는다.
     // 공식 Math.round(db*100)은 서버 EF 재실행과 동일해야 한다(어긋나면 해시 발산 오거부).
     const maintenance = maintenanceToCenti(target.maintenance);
@@ -651,7 +654,8 @@ async function main(): Promise<void> {
     // Skill investment (account-wide) folds into the loadout block and is carried
     // in the config as a snapshot (Replay.config) + read by the powerup weighting.
     const skillInvest = profile.skillInvest.slice();
-    const { loadout } = computeLoadoutStats(equipped, skillInvest);
+    // 계보 기체 가지(ADR-0007) — 계정 단위 보너스를 장비·스킬 위에 겹친다.
+    const { loadout } = computeLoadoutStats(equipped, skillInvest, shipBonusBp(profile.lineage));
     const config: WorldConfig = {
       ...DEFAULT_CONFIG,
       planet: sel.planet,
