@@ -1,25 +1,25 @@
-# Handoff: team-plan → team-exec (M4 잔여, Phase D 착수)
+# Handoff: team-plan → team-exec (방어 카드 시스템 구현)
 
-## 현재 상태 (2026-07-17, main `bfb8014`)
-- **Decided**: Phase A(Deno 검증)·B(스키마+원격 적용 완료)·C(방어/침공 시뮬+에디터) 머지 완료. 스키마는 원격(`qxgbxwyccbxokdgwxcuw`)에 적용됨 — 7테이블·RLS·정책 13·트리거 9 실측 확인. 익명 Auth 활성. `.env.local`(VITE_SUPABASE_URL/ANON_KEY) 로컬 설정 완료(커밋 금지).
-- **작업 브랜치**: `feat/m4-phase-d` (워크트리 `D:\ClaudeCowork\worktrees\shooting\supabase-connection-check-9bd96b`)
-- **Remaining**: Phase D → E → F → G (`.omc/plans/planet-blitz-m4-plan.md` §4)
+- **정본 스펙**: `.omc/specs/grill-defense-card-system.md` (확정 결정 10라운드·구현 접점 표·AC 11항목). 용어는 `CONTEXT.md`(방어 카드 섹션), 차감 시점은 `docs/adr/0012-defense-card-snapshot-charge.md`.
+- **브랜치**: `feat/defense-card-system` (origin/main `ba22bb0` 분기). lane 직렬 커밋, push/PR은 리드가.
+- **OQ 확정 (리드 결정, 스펙 권장안 채택)**:
+  - OQ#1 보관함 만석(20장) → **획득 차단** + 상점/합성 버튼 비활성화 안내
+  - OQ#2 방어 성공 카드 확률 = base × (1 + clamp(공격자 전투력점수 − 내 전투력점수, 0, 5000)/5000) — 순수 함수로 data에
+  - OQ#3 트리거 발동 연출 = 렌더 전용 배너(Lane D, 결정론 무관)
+  - OQ#4 배치전 NPC 기지 카드 **없음** (1차 범위 외)
+- **불변 제약 (전 lane)**:
+  - 결정론(ADR-0005): sim/data에 Math.random·Date.now·pixi 금지, 클라·EF(Deno) 동일 모듈 공유
+  - hashWorld는 조건부 append-only — 카드 미장착 침공·PvE 리플레이 해시 **바이트 불변**(fixtures diff 0으로 실증). 계보 마일스톤(PR#51)·수호(PR#35) 조건부 폴드 선례 참조
+  - 서버 권위: 카드 소유·장착·횟수는 클라 직접 쓰기 금지(가드 트리거), EF는 스냅샷 권위 카드로 재실행
+  - Rarity·RARITY_CODE 재사용(src/items/types.ts), 재번호 금지
+  - SQL 함수 create or replace 시 기존 봉인/가드 블록 전수 대조(PR#29·#35 회귀 교훈)
+- **수치 시작값(📝 튜닝 대상)**: 횟수 n6~10/m5~8/r3~6/u2~4, 합성 n→m 50%/m→r 20%/r→u 3%, 상점 재고 n3~4+m1~2, 보관함 20
+- **위험**: EF 재배포·마이그레이션 원격 적용은 이번 범위 밖(리포만 — 사용자 승인 필요 항목으로 리드가 최종 보고에 명시)
+- **검증 명령**: `npm test`(vitest), `npm run lint`, `npm run build`, deno task(supabase/functions 쪽 verify 태스크)
 
-## Phase D lane 분할 + 파일 소유권
-- **lane d-server**: `supabase/functions/**`, `supabase/migrations/**`(신규 마이그레이션), `supabase/README.md`, Deno 테스트. **src/ 수정 금지.**
-- **lane d-client**: `src/ui/**`, `src/net/**`, `src/main.ts`, `src/harness/**`, `tests/**`(vitest). **supabase/ 수정 금지.**
-- 두 lane 모두 **git commit 금지** — 리드가 완료 후 일괄 커밋·PR.
-
-## D 서버↔클라 계약 (양 lane 공통 전제 — 어긋나면 리드에 보고)
-1. **Edge Function `verify-invasion`** (verify_jwt=true, 호출자=공격자 본인):
-   - 요청: `POST { invasion_id: string }`
-   - 동작: invasions 행 로드(pending 확인, attacker=JWT uid 확인) → 리플레이 전수 재실행(verifyCore 확장, 방어 엔티티 포함) → client_result 대조 → verified_status/verified_result/attacker_won/verified_at 갱신 → 승리·순위 조건 충족 시 **래더 스왑 + 복제 약탈을 Postgres 함수 1개(security definer, 단일 트랜잭션)** 로 원자 처리.
-   - 응답: `{ status: 'verified'|'rejected', attackerWon: boolean, ladder: { attackerRank, defenderRank } | null, loot: LootItem[] }`
-2. **매치메이킹**: Postgres 함수 `get_invasion_targets()` (security definer) — 내 바로 위 3명 + (내 순위-30)~내 순위 구간 랜덤 1명 제안(GDD §8 해석; 서버 lane이 GDD 확인 후 확정, 계약은 "반환 shape" 고정): `[{ profile_id, rank, display_name, ship_summary jsonb, defense_id, layout jsonb, maintenance }]`. 재도전 쿨다운 1시간은 서버에서 강제(invasions 최근 행 검사).
-3. **클라 제출 플로우**(d-client): invasions 행 insert(replay+client_result, RLS상 pending 강제) → `supabase.functions.invoke('verify-invasion', { invasion_id })` → 응답으로 결과 UI.
-4. README "Phase D 착수 조건" 이행(서버 lane): 정찰 전면공개 3정책(`ships/defenses/guardians_select_others`)을 `get_invasion_targets()` 경유로 좁히기(정책 폐기), defenses INSERT budget_spent 검증 게이트.
-
-## Risks
-- verifyCore 는 PvE 런 검증용 — 침공(방어 엔티티 스폰) 확장 시 결정론 유지 필수(`src/sim/` 공유 소스 import, 갈림길①A).
-- Edge Function service_role 컨텍스트 확증 미실측(README §확증 4) — d-server 가 배포 후 `select current_user, public.is_service_role()` 실측할 것.
-- 클라 UI 는 defenseCommand(`?screen=defense`) 패턴 참조. 하네스 딥링크 `?screen=controlTower` 추가.
+## Lane 순서와 산출 핸드오프
+1. **Lane A** 카드 데이터+rollCard → `.omc/handoffs/lane-a-cards-data.md`
+2. **Lane B** sim 통합(해시 불변) → `.omc/handoffs/lane-b-sim.md`
+3. **Lane C** 스키마+EF+RPC → `.omc/handoffs/lane-c-server.md`
+4. **Lane D** net+UI+i18n → `.omc/handoffs/lane-d-ui.md`
+5. **Verify** 전체 게이트+리뷰 → 리드가 PR

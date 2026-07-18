@@ -28,6 +28,8 @@ import {
 } from '../src/sim/defense.js';
 import type { DefenseLayout } from '../src/sim/defense.js';
 import { GUARDIAN_TITAN, GUARDIAN_INTERCEPTOR, makeGuardianSnapshot, PERFORMANCE_FULL } from '../data/guardian.js';
+import type { CardInstance } from '../data/defenseCards.js';
+import type { AttackerMatchup, DefenseCardConfig } from '../src/sim/cardEffects.js';
 
 const SERVER_LAYOUT: DefenseLayout = {
   core: { x: 900, y: 0 },
@@ -296,5 +298,68 @@ describe('verify-invasion — M5 계보 마일스톤 권위 (injectGuardianAutho
     };
     const res = verifyInvasion(honest(SEED, invasionConfig(forged), INPUTS), ctx);
     expect(res).toMatchObject({ verdict: 'reject', reason: 'defense-mismatch' });
+  });
+});
+
+describe('verify-invasion — M6 방어 카드 서버 권위 (ADR-0012)', () => {
+  // 방어 카드 효력은 begin_invasion 스냅샷에 고정되고, EF 는 제출 config.invasion.card 를 신뢰하지
+  // 않고 서버 권위 card 로 오버라이드해 재실행한다. 정직(스냅샷 card 로 재현)은 accept, 위조(카드
+  // 제거·chargesLeft 조작·매치업 조작)는 재실행 발산으로 거부. 카드 없는 침공은 무회귀.
+  const MATCHUP_REVENGE: AttackerMatchup = {
+    fire: false, cold: false, lightning: false, beam: false,
+    attackerCp: 0, defenderCp: 0, revenge: true, reinvasion: false, subweaponHeavy: false,
+  };
+  const TEST_CARD: CardInstance = {
+    id: 'card-777',
+    rarity: 'rare',
+    prefixes: [{ id: 'cc-avenger', stat: 'turretDamagePct', value: 60 }],
+    suffixes: [],
+    chargesMax: 4,
+    chargesLeft: 4,
+    seed: 777,
+  };
+  const CARD_CFG: DefenseCardConfig = { card: TEST_CARD, matchup: MATCHUP_REVENGE };
+  function withCard(card: DefenseCardConfig): WorldConfig {
+    return {
+      ...invasionConfig(SERVER_LAYOUT),
+      invasion: { layout: SERVER_LAYOUT, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS, card },
+    };
+  }
+  const CARD_CTX: InvasionServerContext = {
+    layout: SERVER_LAYOUT,
+    timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
+    card: CARD_CFG,
+  };
+  const DIVERGE = ['hash-stream-divergence', 'final-hash-mismatch', 'outcome-mismatch'];
+
+  it('스냅샷 카드로 정직 재현하면 accept', () => {
+    const res = verifyInvasion(honest(SEED, withCard(CARD_CFG), INPUTS), CARD_CTX);
+    expect(res.verdict).toBe('accept');
+  });
+
+  it('카드 제거 위조(방어자 카드 무력화)는 재실행 발산으로 거부', () => {
+    // 공격자가 카드 없는 런을 제출해도 서버는 스냅샷 카드를 주입해 재실행 → 발산.
+    const res = verifyInvasion(honest(SEED, CFG, INPUTS), CARD_CTX);
+    expect(res.verdict).toBe('reject');
+    expect(DIVERGE).toContain(res.reason);
+  });
+
+  it('chargesLeft 조작 위조는 거부(카드 정체성 해시 폴드)', () => {
+    const forged: DefenseCardConfig = { card: { ...TEST_CARD, chargesLeft: 99 }, matchup: MATCHUP_REVENGE };
+    const res = verifyInvasion(honest(SEED, withCard(forged), INPUTS), CARD_CTX);
+    expect(res.verdict).toBe('reject');
+    expect(DIVERGE).toContain(res.reason);
+  });
+
+  it('매치업 조작 위조(정적 카운터 무력화)는 거부', () => {
+    const forged: DefenseCardConfig = { card: TEST_CARD, matchup: { ...MATCHUP_REVENGE, revenge: false } };
+    const res = verifyInvasion(honest(SEED, withCard(forged), INPUTS), CARD_CTX);
+    expect(res.verdict).toBe('reject');
+    expect(DIVERGE).toContain(res.reason);
+  });
+
+  it('카드 미장착 서버 컨텍스트에서 카드 없는 침공은 무회귀 accept', () => {
+    const res = verifyInvasion(honest(SEED, CFG, INPUTS), CTX);
+    expect(res.verdict).toBe('accept');
   });
 });

@@ -49,6 +49,7 @@ import {
   MILESTONE_CORE_GUARD,
   MILESTONE_SHIELD_SHARE,
 } from '../../data/lineage.js';
+import type { DefenseCardConfig } from './cardEffects.js';
 
 // ---------------------------------------------------------------------------
 // 포탑 유형 코드 (defenseTurret.enemyType 에 저장; 절대 재번호 금지 — 배치 JSON 계약)
@@ -331,6 +332,14 @@ export interface InvasionConfig {
    * 100%→성능 100%, 0%→성능 50%(선형). {@link scaleFireCooldown} 참조.
    */
   maintenance?: number;
+  /**
+   * 방어 카드 효력(Lane B). 방어자 장착 카드(서버 권위 CardInstance) + 공격자 매치업 데이터.
+   * 존재하면 정적 카운터·동적 트리거·유니크 룰 변경형이 방어전에 반영된다(src/sim/cardEffects.ts).
+   * **미지정 = 카드 미장착**: createWorld 가 cardRuntime 을 만들지 않고 stepWorld·resolveCollisions
+   * 의 모든 카드 접점이 게이트되어 거동·해시가 기존 침공/PvE 와 바이트 완전 불변(조건부 접기,
+   * append-only). 신규 침공 필드는 이 아래에만 추가.
+   */
+  card?: DefenseCardConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -600,6 +609,10 @@ export function stepDefenseTurrets(state: WorldState, player: Entity): void {
   // 침공 경로에서만 호출되므로 config.invasion 은 항상 존재하지만, 방어적으로 옵셔널 체인 +
   // 정규화한다(미지정=완전 정비=무변화). 루프 밖에서 1회 계산(정비도는 런 내 상수).
   const maintenance = normalizeMaintenance(state.config.invasion?.maintenance);
+  // 방어 카드(장착 시): 포탑 화력·연사 배율. 미장착이면 cr=undefined → 배율 1(거동·해시 불변).
+  const cr = state.cardRuntime;
+  const dmgMult = cr !== undefined ? cr.turretDamageMult : 1;
+  const fireRateMult = cr !== undefined ? cr.turretFireRateMult : 1;
   for (const t of state.entities) {
     if (t.kind !== 'defenseTurret' || t.dead) continue;
     if (t.cooldown > 0) {
@@ -620,14 +633,30 @@ export function stepDefenseTurrets(state: WorldState, player: Entity): void {
     ) {
       continue;
     }
-    fireTurret(state, t, spec, player);
-    t.cooldown = scaleFireCooldown(spec.fireCooldown, maintenance);
+    fireTurret(state, t, spec, player, dmgMult);
+    // 정비도 스케일 후 카드 연사 배율 적용(연사↑ = 간격↓). 배율 1 이면 정비도 결과 그대로(불변).
+    let cd = scaleFireCooldown(spec.fireCooldown, maintenance);
+    if (fireRateMult !== 1) {
+      const scaled = Math.round(cd / fireRateMult);
+      cd = scaled < 2 ? 2 : scaled;
+    }
+    t.cooldown = cd;
   }
 }
 
-/** 포탑 1기의 발사를 유형별로 디스패치(결정론). */
-function fireTurret(state: WorldState, t: Entity, spec: TurretSpec, player: Entity): void {
+/**
+ * 포탑 1기의 발사를 유형별로 디스패치(결정론). `dmgMult` 는 방어 카드 포탑 화력 배율(미장착=1).
+ * 배율 1 이면 `spec.damage * 1 === spec.damage` 로 발당 피해가 비트 동일해 카드 미장착 거동 불변.
+ */
+function fireTurret(
+  state: WorldState,
+  t: Entity,
+  spec: TurretSpec,
+  player: Entity,
+  dmgMult: number,
+): void {
   const ang = atan2(player.y - t.y, player.x - t.x);
+  const damage = spec.damage * dmgMult;
   switch (t.enemyType) {
     case TURRET_FROST: {
       // ④ 감속: 플레이어 현재 위치에 냉기 장판(HAZARD_SLOW)을 융기(M3 감속 지대 재사용).
@@ -640,7 +669,7 @@ function fireTurret(state: WorldState, t: Entity, spec: TurretSpec, player: Enti
         spec.hazardRadius,
         spec.hazardWindup,
         spec.hazardActive,
-        spec.damage,
+        damage,
         true, // 지속 피해 장판
         t.id,
       );
@@ -656,7 +685,7 @@ function fireTurret(state: WorldState, t: Entity, spec: TurretSpec, player: Enti
         cos(ang) * spec.bulletSpeed,
         sin(ang) * spec.bulletSpeed,
         ang,
-        spec.damage,
+        damage,
         spec.bulletRadius,
         spec.bulletLife,
       );
@@ -678,7 +707,7 @@ function fireTurret(state: WorldState, t: Entity, spec: TurretSpec, player: Enti
           cos(a) * spec.bulletSpeed,
           sin(a) * spec.bulletSpeed,
           a,
-          spec.damage,
+          damage,
           spec.bulletRadius,
           spec.bulletLife,
         );
@@ -694,7 +723,7 @@ function fireTurret(state: WorldState, t: Entity, spec: TurretSpec, player: Enti
         cos(ang) * spec.bulletSpeed,
         sin(ang) * spec.bulletSpeed,
         ang,
-        spec.damage,
+        damage,
         spec.bulletRadius,
         spec.bulletLife,
       );

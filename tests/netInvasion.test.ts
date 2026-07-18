@@ -33,6 +33,10 @@ import { emptyInput } from '../src/sim/world.js';
 import type { InputFrame } from '../src/sim/world.js';
 import { DEFAULT_TIME_LIMIT_TICKS, type DefenseLayout } from '../src/sim/defense.js';
 import type { KeyValueStore } from '../src/save/profile.js';
+import { verifyInvasion } from '../supabase/functions/verify-invasion/verifyInvasionCore.js';
+import type { InvasionServerContext } from '../supabase/functions/verify-invasion/verifyInvasionCore.js';
+import type { CardInstance } from '../data/defenseCards.js';
+import type { AttackerMatchup, DefenseCardConfig } from '../src/sim/cardEffects.js';
 
 /** In-memory KeyValueStore(net.test.ts 와 동일). */
 function memStore(seed?: Record<string, string>): KeyValueStore {
@@ -247,6 +251,66 @@ describe('net/invasion — buildClientResult(결정론·해시 스트림)', () =
     const cr = buildClientResult(replay);
     expect(cr.attackerWon).toBe(true);
     expect(cr.coreDestroyed).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M6 방어 카드: 클라 buildClientResult(스냅샷 card 재현) ↔ EF verifyInvasion 일치
+// ---------------------------------------------------------------------------
+
+describe('net/invasion — 방어 카드 스냅샷 재현 (M6 · ADR-0012)', () => {
+  // begin_invasion 스냅샷 card 로 클라가 런한 결과(buildClientResult)를, EF 가 같은 서버 권위
+  // card 로 재실행하면 hashStream 이 바이트 일치해 accept 된다(공/수 결정론 재현 고정). 이 테스트가
+  // 클라 net 경로(runReplay 경유)와 EF 재실행이 카드 포함 침공에서 정합함을 함께 못박는다.
+  // 승리(코어 파괴)로 종결되는 무포탑 배치 — 카드 기저 coreHpPct 가 코어 HP 를 키워 거동·해시를
+  // 바꾸지만(카드 효력 실증), 종료 상태는 victory 로 수렴한다(outcome 매핑 victory XOR gameOver 성립).
+  const layout: DefenseLayout = { core: { x: 380, y: 0 }, turrets: [], obstacles: [] };
+  const matchup: AttackerMatchup = {
+    fire: false, cold: false, lightning: false, beam: false,
+    attackerCp: 0, defenderCp: 0, revenge: true, reinvasion: false, subweaponHeavy: false,
+  };
+  const card: CardInstance = {
+    id: 'card-42', rarity: 'magic',
+    prefixes: [{ id: 'cc-avenger', stat: 'turretDamagePct', value: 40 }],
+    suffixes: [], chargesMax: 6, chargesLeft: 6, seed: 42,
+  };
+  const cardCfg: DefenseCardConfig = { card, matchup };
+
+  function cardReplay(ticks: number): Replay {
+    const inputs: InputFrame[] = [];
+    for (let i = 0; i < ticks; i++) inputs.push(emptyInput());
+    return {
+      seed: 3,
+      config: { ...invasionConfig(layout), invasion: { layout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS, card: cardCfg } },
+      inputs,
+    };
+  }
+
+  it('buildClientResult 는 카드 포함 리플레이에서도 결정론적', () => {
+    const replay = cardReplay(150);
+    expect(buildClientResult(replay)).toEqual(buildClientResult(replay));
+  });
+
+  it('클라가 만든 결과를 EF 가 서버 권위 card 로 재실행하면 accept', () => {
+    const replay = cardReplay(6000);
+    const cr = buildClientResult(replay);
+    expect(cr.attackerWon).toBe(true); // 종료 상태 victory(outcome 매핑 성립 전제)
+    const submission = {
+      seed: replay.seed,
+      config: replay.config,
+      inputs: replay.inputs,
+      claim: {
+        finalHash: cr.finalHash,
+        hashStream: cr.hashStream,
+        outcome: { victory: cr.attackerWon, gameOver: !cr.attackerWon },
+      },
+    };
+    const ctx: InvasionServerContext = {
+      layout,
+      timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
+      card: cardCfg,
+    };
+    expect(verifyInvasion(submission, ctx).verdict).toBe('accept');
   });
 });
 

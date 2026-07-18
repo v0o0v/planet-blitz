@@ -22,6 +22,7 @@
 import type { Replay } from '../sim/replay.js';
 import { runReplay } from '../sim/replay.js';
 import type { KeyValueStore } from '../save/profile.js';
+import type { DefenseCardConfig } from '../sim/cardEffects.js';
 import { readSupabaseConfig, type SupabaseConfig } from './config.js';
 
 // ---------------------------------------------------------------------------
@@ -195,6 +196,15 @@ export interface InvasionSnapshot {
   layout: unknown;
   /** T0 고정 정비도 %(0~100). 런·검증에 이 값을 쓴다(라이브 재조회 대신 고정본). */
   maintenance: number;
+  /**
+   * T0 고정 방어 카드 효력(M6 · ADR-0012) — 방어자 장착 카드(서버 권위 CardInstance)+공격자
+   * 매치업. 존재하면 침공 런 config 의 `invasion.card` 로 실어 정적 카운터·동적 트리거·유니크가
+   * 방어전에 반영된다(공격자 클라이언트도 이 고정본으로 재현해야 hashStream 이 EF 재실행과 일치).
+   * 방어자 카드 미장착이면 `null`/미설정 → 카드 없는 기존 침공과 거동·해시 완전 불변(조건부 접기).
+   * 서버가 authored 한 값이라 begin_invasion 응답 그대로 소비한다(위조 시 EF 가 스냅샷 권위로
+   * 오버라이드해 재실행 발산으로 거부).
+   */
+  card?: DefenseCardConfig | null;
 }
 
 /** 침공 제출 게이트웨이 입력(공격자 uid 포함 — RLS with_check 강제). */

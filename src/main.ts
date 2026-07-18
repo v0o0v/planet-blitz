@@ -92,6 +92,7 @@ import {
 import type { InvasionTarget } from './net/invasion.js';
 import { DEFAULT_TIME_LIMIT_TICKS } from './sim/defense.js';
 import type { InvasionConfig, DefenseLayout } from './sim/defense.js';
+import type { DefenseCardConfig } from './sim/cardEffects.js';
 // M4 Phase F: 리플레이 관전(F3) + 도발 스티커(F2).
 import { SpectateOverlay, isPlayableReplay, nextSpectateSpeed } from './ui/replaySpectate.js';
 import type { SpectateSpeed } from './ui/replaySpectate.js';
@@ -167,6 +168,34 @@ async function main(): Promise<void> {
   radar.layer.position.set(DESIGN_WIDTH - 24 - radar.radiusPx, 24 + radar.radiusPx);
   gameApp.stage.addChild(radar.layer);
 
+  // 블랙아웃(방어자 유니크 카드) 발동 중 공격자 화면에 띄우는 렌더 전용 배너. sim 무관 — 잔여
+  // 틱만 관찰해 표시한다(카드 미장착/PvE 면 절대 뜨지 않음).
+  const blackoutBanner = document.createElement('div');
+  blackoutBanner.id = 'pb-blackout';
+  blackoutBanner.style.cssText =
+    'position:absolute; top:16px; left:50%; transform:translateX(-50%); z-index:28; display:none;' +
+    "padding:6px 16px; border-radius:10px; font-family:'Segoe UI',system-ui,sans-serif; font-size:15px; font-weight:800;" +
+    'color:#0a0410; background:linear-gradient(90deg,#c86aff,#7affea); box-shadow:0 4px 16px rgba(200,106,255,.4); pointer-events:none;';
+  document.body.appendChild(blackoutBanner);
+
+  /**
+   * 레이더를 그리되, 방어자 카드 유니크 '블랙아웃'이 발동 중이면(공격자 = 현재 플레이어의
+   * 레이더 무력화, cardRuntime.blackoutTicksLeft>0) 레이더를 숨기고 상단 배너를 띄운다. 렌더
+   * 전용 게이트 — sim 은 무변경(카드 미장착/PvE 면 cardRuntime 부재라 항상 정상 렌더). 블랙아웃
+   * 잔여 틱은 stepCardRuntime 이 카운트다운한다(Lane B).
+   */
+  function renderRadarGated(): void {
+    const cr = world?.cardRuntime;
+    if (cr !== undefined && cr.blackoutTicksLeft > 0) {
+      radar.layer.visible = false;
+      blackoutBanner.textContent = t('card.hud.blackout', { n: Math.ceil(cr.blackoutTicksLeft / 60) });
+      blackoutBanner.style.display = 'block';
+      return;
+    }
+    if (blackoutBanner.style.display !== 'none') blackoutBanner.style.display = 'none';
+    radar.render(currSnap);
+  }
+
   const controller = new InputController(gameApp);
   const fps = new FpsMeter();
   // 유니크 드랍 세리머니(렌더 전용): 슬로모 + 금빛 플래시. 시뮬 결과 무영향.
@@ -238,6 +267,9 @@ async function main(): Promise<void> {
   // 동봉해 EF 가 T0 고정 권위로 대조하게 한다. null 이면 현행 라이브 경로(하위호환).
   let invasionSnapshotId: string | null = null;
   let pendingInvasionResult: InvasionResultView | null = null;
+  // 직전 침공 런에 실린 방어자 카드 효력(begin_invasion 스냅샷). 제출 후 관제탑 결과 배너에서
+  // 상대 카드 옵션을 정찰 공개하는 데 쓴다(스펙 R9 — 침공해 본 상대만 옵션 공개). 미장착이면 null.
+  let lastInvasionCard: DefenseCardConfig | null = null;
 
   // --- 리플레이 관전(F3) 상태 ---
   // spectateReplay !== null 이면 현재 화면은 관전 재생이다 → ticker 가 리플레이 입력을
@@ -382,6 +414,8 @@ async function main(): Promise<void> {
     if (pendingInvasionResult !== null) {
       showOpts.result = pendingInvasionResult;
       pendingInvasionResult = null;
+      // 방금 침공한 상대의 방어 카드 옵션을 정찰 공개(스펙 R9). 미장착이면 null → 패널 숨김.
+      showOpts.revealCard = lastInvasionCard !== null ? lastInvasionCard.card : null;
     }
     if (opts.verifying === true) showOpts.verifying = true;
     controlTower.show(
@@ -503,6 +537,9 @@ async function main(): Promise<void> {
     // 이미 라이브 수호 권위가 주입돼 있어(get_invasion_targets), 스냅샷 layout 과 정합한다.
     let runLayout: DefenseLayout = layout;
     let runMaintenanceDb: number = target.maintenance;
+    // 방어자 장착 카드 효력(M6). begin_invasion 스냅샷이 실어 준 서버 권위 {card,matchup}.
+    // 미장착·라이브 폴백·구버전 서버면 null → invasion.card 미포함(카드 미장착 = 무회귀).
+    let runCard: DefenseCardConfig | null = null;
     invasionSnapshotId = null;
     if (target.defenseId !== null) {
       const snapshot = await beginInvasion(target.defenseId);
@@ -512,9 +549,12 @@ async function main(): Promise<void> {
           runLayout = snapLayout;
           runMaintenanceDb = snapshot.maintenance;
           invasionSnapshotId = snapshot.snapshotId;
+          runCard = snapshot.card ?? null;
         }
       }
     }
+    // 침공 결과 정찰 공개용으로 스냅샷 카드를 보관(제출 후 관제탑 배너에서 옵션 공개 — 스펙 R9).
+    lastInvasionCard = runCard;
 
     const seed = nextSeed();
     const ship = activeShip(profile);
@@ -534,6 +574,8 @@ async function main(): Promise<void> {
       layout: runLayout,
       timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
       ...(maintenance !== undefined ? { maintenance } : {}),
+      // 카드 효력(정적 카운터·동적 트리거·유니크). 미장착이면 키 자체를 생략(해시 바이트 불변).
+      ...(runCard !== null ? { card: runCard } : {}),
     };
     const config: WorldConfig = {
       ...DEFAULT_CONFIG,
@@ -876,7 +918,8 @@ async function main(): Promise<void> {
     const alpha = accumulator / DT;
     entityRenderer.render(prevSnap, currSnap, alpha);
     // 우상단 레이더(렌더 전용): 현재 스냅샷만 읽어 보스·엘리트·드랍·기믹·해저드를 표시.
-    radar.render(currSnap);
+    // 블랙아웃 카드 발동 중이면 숨긴다(renderRadarGated — 렌더 게이트).
+    renderRadarGated();
 
     // Seamless background scroll: the tiling sprite stays fixed over the viewport
     // and only its tile offset moves with the interpolated camera. Take the f64
@@ -1083,7 +1126,7 @@ async function main(): Promise<void> {
       },
       renderOnce: () => {
         entityRenderer.render(prevSnap, currSnap, 1);
-        radar.render(currSnap);
+        renderRadarGated();
         gameApp.app.renderer.render(gameApp.app.stage);
       },
       setSpeedFactor: (mult) => {
@@ -1164,7 +1207,7 @@ async function main(): Promise<void> {
         prevSnap = currSnap;
         currSnap = snapshotWorld(w);
         entityRenderer.render(prevSnap, currSnap, 1);
-        radar.render(currSnap);
+        renderRadarGated();
         gameApp.app.renderer.render(gameApp.app.stage);
       },
       get state() {

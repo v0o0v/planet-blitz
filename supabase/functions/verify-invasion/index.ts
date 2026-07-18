@@ -32,6 +32,8 @@ import type {
 } from './verifyInvasionCore.ts';
 import { DEFAULT_TIME_LIMIT_TICKS, MAINTENANCE_FULL } from '../../../src/sim/defense.ts';
 import { MAX_GUARDIAN_SLOTS } from '../../../data/guardian.ts';
+import { rollCard } from '../../../src/items/rollCard.ts';
+import { defenseSuccessDropChance, rollDropRarity, DEFENSE_DROP_BASE_CHANCE } from '../../../data/defenseCards.ts';
 
 /** 재실행 벽시계 소프트 예산(ms). 초과 시 결과는 반환하되 경고 로그(중단은 불가). */
 const SOFT_RERUN_BUDGET_MS = 8_000;
@@ -41,6 +43,19 @@ function json(body: unknown, status: number): Response {
     status,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+/** 암호학적 난수 float [0,1) — 방어 성공 드랍 롤용(드랍은 리플레이 대상 아님, 결정론 불요). */
+function cryptoFloat(): number {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] / 4294967296;
+}
+/** 암호학적 난수 u32 — 드랍 결과 카드 롤 시드(결과 카드가 자기 시드로 재현되면 족함). */
+function cryptoU32(): number {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] >>> 0;
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -146,6 +161,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
   let layout: unknown = null;
   let maintenanceDb: unknown = null;
   let authorityFromSnapshot = false;
+  // M6 방어 카드 서버 권위: 스냅샷 경로일 때만 채운다(라이브 폴백은 카드 미주입 — 효력은
+  // 스냅샷 고정, ADR-0012). undefined = 카드 미장착 = 기존 침공 검증 거동·해시 불변.
+  let cardAuthority: unknown = undefined;
 
   const snapshotId = typeof inv.snapshot_id === 'string' && inv.snapshot_id.length > 0 ? inv.snapshot_id : null;
   if (snapshotId !== null) {
@@ -167,7 +185,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     let snapshot: InvasionSnapshotRow | null = null;
     if (snapRow !== null) {
-      const authority = (snapRow.authority ?? {}) as { layout?: unknown; maintenance?: unknown };
+      const authority = (snapRow.authority ?? {}) as { layout?: unknown; maintenance?: unknown; card?: unknown };
       const mRaw = authority.maintenance;
       const mNum = typeof mRaw === 'number' ? mRaw : Number(mRaw);
       snapshot = {
@@ -175,6 +193,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
         defenseId: typeof snapRow.defense_id === 'string' ? snapRow.defense_id : null,
         authorityLayout: authority.layout ?? null,
         authorityMaintenanceDb: Number.isFinite(mNum) ? mNum : undefined,
+        // M6: authority.card(미장착이면 null/undefined). verifyInvasion 이 서버 권위로 오버라이드.
+        authorityCard: authority.card ?? null,
         createdAtMs: typeof snapRow.created_at === 'string' ? Date.parse(snapRow.created_at) : Number.NaN,
       };
     }
@@ -189,6 +209,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (resolution.source === 'snapshot' && resolution.layout !== null && resolution.layout !== undefined) {
       layout = resolution.layout;
       maintenanceDb = resolution.maintenanceDb ?? null;
+      // M6: 스냅샷이 고정한 카드 효력(미장착이면 null → undefined 로 정규화해 미주입).
+      cardAuthority = resolution.card ?? undefined;
       authorityFromSnapshot = true;
     } else if (resolution.source === 'snapshot') {
       // 스냅샷 행은 유효하나 authority.layout 이 손상(null) → 안전하게 라이브 경로 폴백.
@@ -304,7 +326,18 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const startedAt = Date.now();
   let verdict: InvasionVerifyResult;
   try {
-    verdict = verifyInvasion(submission, { layout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS, maintenance });
+    // 서버 컨텍스트: 방어 카드(M6)는 스냅샷 경로에서만 실린다(cardAuthority undefined = 미장착).
+    // exactOptionalPropertyTypes 하에서 undefined 명시 대입이 금지되므로 정의된 경우만 포함한다.
+    const serverCtx: Parameters<typeof verifyInvasion>[1] =
+      cardAuthority === undefined
+        ? { layout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS, maintenance }
+        : {
+            layout,
+            timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
+            maintenance,
+            card: cardAuthority as Parameters<typeof verifyInvasion>[1]['card'],
+          };
+    verdict = verifyInvasion(submission, serverCtx);
   } catch (e) {
     console.error(`verify-invasion 재실행 예외 (invasion=${invasionId}):`, e);
     verdict = { verdict: 'reject', reason: 'server-layout-invalid' };
@@ -366,6 +399,34 @@ Deno.serve(async (req: Request): Promise<Response> => {
       200,
     );
   }
+  // (7) 방어 성공 보상 드랍(M6): 확정된 침공에서 방어자가 이겼으면(=방어 성공, attackerWon=false)
+  // 방어자에게 카드 드랍을 롤한다. 카드 장착 여부와 무관한 방어 성공 보상이라 cardAuthority 유무와
+  // 별개다(미장착 방어도 보상). 롤은 TS 롤러(rollCard) — SQL 이 못 하므로 여기(service_role·TS
+  // 컨텍스트)에서 수행하고, 상한(20)·insert 원자성은 apply_card_drop RPC 가 맡는다. 무작위는 crypto
+  // (드랍은 리플레이 대상 아님). 전투력 우위(매치업 CP)가 크면 확률이 오른다(현재 매치업 CP 는 보수
+  // 재구성으로 0 → 사실상 base 확률, 📝 CP 완전 재구성 후 상승). 드랍 실패/만석/오류는 침공 판정에
+  // 영향 없음(best-effort — 실패해도 verified 응답은 그대로).
+  if (attackerWon === false) {
+    try {
+      const matchup = (cardAuthority as { matchup?: { attackerCp?: unknown; defenderCp?: unknown } } | undefined)?.matchup;
+      const atkCp = typeof matchup?.attackerCp === 'number' ? matchup.attackerCp : 0;
+      const defCp = typeof matchup?.defenderCp === 'number' ? matchup.defenderCp : 0;
+      const chance = defenseSuccessDropChance(DEFENSE_DROP_BASE_CHANCE, atkCp, defCp);
+      if (cryptoFloat() < chance) {
+        const rarity = rollDropRarity(cryptoFloat());
+        const card = rollCard(cryptoU32(), rarity);
+        await service.rpc('apply_card_drop', {
+          p_profile_id: inv.defender_id,
+          p_card: card,
+          p_rarity: rarity,
+          p_charges_left: card.chargesLeft,
+        });
+      }
+    } catch (e) {
+      console.error(`verify-invasion 방어 성공 드랍 실패 (invasion=${invasionId}):`, e);
+    }
+  }
+
   const ladder =
     res.swapped === true
       ? { attackerRank: res.attacker_rank ?? null, defenderRank: res.defender_rank ?? null }
