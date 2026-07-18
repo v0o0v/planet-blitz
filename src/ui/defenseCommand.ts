@@ -29,8 +29,15 @@ import {
   type CorePlacement,
   type TurretPlacement,
   type ObstaclePlacement,
+  type GuardianPlacement,
   type InvasionConfig,
 } from '../sim/defense.js';
+import {
+  MAX_GUARDIAN_SLOTS,
+  normalizeGuardianPreset,
+  type GuardianSnapshot,
+} from '../../data/guardian.js';
+import { buildGuardianPlacements } from '../save/guardianLifecycle.js';
 import {
   createWorld,
   stepWorld,
@@ -102,14 +109,19 @@ export const SPAWN_ROW = (GRID_ROWS - 1) / 2;
 // ---------------------------------------------------------------------------
 // 에디터 상태 모델 + 순수 연산 (테스트 대상)
 // ---------------------------------------------------------------------------
-/** 배치 도구. `erase`는 칸 비우기, 나머지는 해당 엔티티 놓기. */
-export type ToolKind = 'turret' | 'obstacle' | 'core' | 'erase';
+/** 배치 도구. `erase`는 칸 비우기, `guardian`은 수호 슬롯 재배치, 나머지는 해당 엔티티 놓기. */
+export type ToolKind = 'turret' | 'obstacle' | 'core' | 'guardian' | 'erase';
 
-/** 현재 선택된 도구(포탑이면 유형 코드 동반). */
+/** 현재 선택된 도구(포탑이면 유형 코드, 수호면 슬롯 인덱스 동반). */
 export interface Tool {
   kind: ToolKind;
   /** kind==='turret'일 때만 유효한 포탑 유형 코드(TURRET_*). */
   turretType?: number;
+  /**
+   * kind==='guardian'일 때만 유효한 수호 슬롯 인덱스(0..MAX_GUARDIAN_SLOTS-1). 활성 수호
+   * 기체 i번을 격자에 재배치한다. 슬롯 순서는 activeGuardians·서버 정렬과 동일(슬롯 i ↔ 수호 i).
+   */
+  guardianSlot?: number;
 }
 
 /**
@@ -120,11 +132,19 @@ export interface DefenseEditorState {
   core: CorePlacement | null;
   turrets: TurretPlacement[];
   obstacles: ObstaclePlacement[];
+  /**
+   * 방어 배치 수호 기체(M5). 활성 수호 로스터(최대 {@link MAX_GUARDIAN_SLOTS}기)를 현재
+   * 성능·스냅샷·계보 보너스와 함께 담는다 — DefenseCommand 가 profile 로부터 채우고, 에디터는
+   * 좌표(x/y)만 재배치한다. 서버는 serve 시 권위 스냅샷·성능·보너스로 덮어쓰므로(갈림길①A),
+   * 여기 담긴 authority 필드는 로컬 미리보기·해시 재현 입력용이다. 비어 있으면 직렬화에서
+   * `guardians` 키 자체를 생략해 수호 미포함 배치의 해시 바이트 불변을 지킨다(append-only).
+   */
+  guardians: GuardianPlacement[];
 }
 
 /** 빈 에디터 상태(코어 미배치). */
 export function emptyEditorState(): DefenseEditorState {
-  return { core: null, turrets: [], obstacles: [] };
+  return { core: null, turrets: [], obstacles: [], guardians: [] };
 }
 
 /** 배치 1건의 비용을 계약 데이터로 조회. */
@@ -173,6 +193,7 @@ export type Occupant =
   | { kind: 'core' }
   | { kind: 'turret'; index: number }
   | { kind: 'obstacle'; index: number }
+  | { kind: 'guardian'; index: number }
   | null;
 
 /** 특정 격자 칸의 점유물을 찾는다(월드 좌표를 칸으로 환산해 비교). */
@@ -190,6 +211,11 @@ export function findAt(state: DefenseEditorState, col: number, row: number): Occ
     const o = state.obstacles[i]!;
     const c = worldToCell(o.x, o.y);
     if (c.col === col && c.row === row) return { kind: 'obstacle', index: i };
+  }
+  for (let i = 0; i < state.guardians.length; i++) {
+    const g = state.guardians[i]!;
+    const c = worldToCell(g.x, g.y);
+    if (c.col === col && c.row === row) return { kind: 'guardian', index: i };
   }
   return null;
 }
@@ -212,13 +238,33 @@ export function tryPlace(
 
   if (tool.kind === 'erase') {
     if (occ === null) return 'noop';
+    // 수호 기체는 로스터에 묶여 있어 지우개로 제거하지 않는다(슬롯 인덱스↔수호 매핑 보존).
+    // 재배치만 가능하며, 배치 해제는 로스터에서 소멸시켜야 한다(별도 UI).
+    if (occ.kind === 'guardian') return 'noop';
     removeOccupant(state, occ);
     return 'removed';
   }
 
-  // 코어·포탑은 공격자 스폰 칸에 놓지 못한다(장애물은 허용 — 스폰 봉쇄 여지).
-  if ((tool.kind === 'core' || tool.kind === 'turret') && col === SPAWN_COL && row === SPAWN_ROW) {
+  // 코어·포탑·수호는 공격자 스폰 칸에 놓지 못한다(장애물은 허용 — 스폰 봉쇄 여지).
+  if (
+    (tool.kind === 'core' || tool.kind === 'turret' || tool.kind === 'guardian') &&
+    col === SPAWN_COL &&
+    row === SPAWN_ROW
+  ) {
     return 'spawn';
+  }
+
+  // 수호 기체: 활성 로스터에서 채워진 기존 슬롯을 재배치한다(신규 생성 아님 — 로스터가 정본).
+  if (tool.kind === 'guardian') {
+    const slot = tool.guardianSlot ?? -1;
+    const g = state.guardians[slot];
+    if (g === undefined) return 'noop'; // 해당 슬롯에 활성 수호 없음
+    // 자기 자신 칸이면 무변경, 다른 엔티티가 점유 중이면 거부.
+    if (occ !== null && !(occ.kind === 'guardian' && occ.index === slot)) return 'occupied';
+    const w = cellToWorld(col, row);
+    g.x = w.x;
+    g.y = w.y;
+    return 'moved';
   }
 
   const { x, y } = cellToWorld(col, row);
@@ -269,14 +315,33 @@ export function validateEditor(
   return { ok: errors.length === 0, errors };
 }
 
-/** 유효한 에디터 상태를 {@link DefenseLayout}으로 직렬화(코어 없으면 null). */
+/** 수호 배치 1건을 깊은 복사한다(스냅샷 포함 — 원본 참조 공유 방지). */
+function cloneGuardian(g: GuardianPlacement): GuardianPlacement {
+  return {
+    x: g.x,
+    y: g.y,
+    snapshot: { ...g.snapshot },
+    performanceCP: g.performanceCP,
+    lineageBonusBp: g.lineageBonusBp,
+  };
+}
+
+/**
+ * 유효한 에디터 상태를 {@link DefenseLayout}으로 직렬화(코어 없으면 null). 수호가 있을 때만
+ * `guardians` 키를 포함한다 — 빈 배열이면 키를 생략해 수호 미포함 배치의 해시 바이트 불변을
+ * 지킨다(append-only, hashWorld 조건부 접기와 정합).
+ */
 export function editorStateToLayout(state: DefenseEditorState): DefenseLayout | null {
   if (state.core === null) return null;
-  return {
+  const layout: DefenseLayout = {
     core: { x: state.core.x, y: state.core.y },
     turrets: state.turrets.map((t) => ({ type: t.type, x: t.x, y: t.y })),
     obstacles: state.obstacles.map((o) => ({ x: o.x, y: o.y, halfW: o.halfW, halfH: o.halfH })),
   };
+  if (state.guardians.length > 0) {
+    layout.guardians = state.guardians.map(cloneGuardian);
+  }
+  return layout;
 }
 
 /** {@link DefenseLayout} → 에디터 상태(저장분 불러오기). */
@@ -285,6 +350,7 @@ export function editorStateFromLayout(layout: DefenseLayout): DefenseEditorState
     core: { x: layout.core.x, y: layout.core.y },
     turrets: layout.turrets.map((t) => ({ type: t.type, x: t.x, y: t.y })),
     obstacles: layout.obstacles.map((o) => ({ x: o.x, y: o.y, halfW: o.halfW, halfH: o.halfH })),
+    guardians: (layout.guardians ?? []).map(cloneGuardian),
   };
 }
 
@@ -331,7 +397,76 @@ export function normalizeLayout(raw: unknown): DefenseLayout | null {
     }
   }
 
-  return { core: { x: cx, y: cy }, turrets, obstacles };
+  // 수호 기체(M5): 서버가 serve 시 주입한 배치를 침공 런에 그대로 흘리려면 깊은 검증 후 보존해야
+  // 한다(ADR-0005 — NaN/손상 좌표·스냅샷이 hashFloat 에 닿으면 재현이 깨진다). 스냅샷 전 필드가
+  // 유한수여야 하고, 하나라도 손상이면 해당 수호를 통째로 드롭한다. 유효 수호가 0기면 `guardians`
+  // 키를 붙이지 않아 수호 미포함 배치의 바이트 불변을 유지한다(append-only 조건부 접기).
+  const guardians: GuardianPlacement[] = [];
+  if (Array.isArray(d.guardians)) {
+    for (const g of d.guardians) {
+      const norm = normalizeGuardian(g);
+      if (norm !== null) guardians.push(norm);
+      if (guardians.length >= MAX_GUARDIAN_SLOTS) break; // 상한 초과분은 sim 스폰도 자른다
+    }
+  }
+
+  const layout: DefenseLayout = { core: { x: cx, y: cy }, turrets, obstacles };
+  if (guardians.length > 0) layout.guardians = guardians;
+  return layout;
+}
+
+/** {@link GuardianSnapshot}의 수치 필드 목록(전부 유한수여야 결정론 해시 재현 성립). */
+const GUARDIAN_SNAPSHOT_FIELDS: readonly (keyof GuardianSnapshot)[] = [
+  'preset',
+  'radius',
+  'hp',
+  'contactDamage',
+  'fireCooldown',
+  'bulletDamage',
+  'bulletSpeed',
+  'bulletRadius',
+  'bulletLife',
+  'range',
+  'moveSpeed',
+  'standoff',
+];
+
+/**
+ * 수호 배치 1건을 깊은 검증한다(손상/부분 데이터는 null). 좌표·성능·보너스·스냅샷 전 필드가
+ * 유한수여야 한다. preset 은 정규화(범위 밖은 타이탄 폴백)한다. 서버 주입본과 저장 왕복 양쪽에서
+ * 동일하게 쓰인다.
+ */
+function normalizeGuardian(raw: unknown): GuardianPlacement | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const g = raw as Record<string, unknown>;
+  if (!isNum(g.x) || !isNum(g.y) || !isNum(g.performanceCP) || !isNum(g.lineageBonusBp)) return null;
+  const snap = g.snapshot;
+  if (typeof snap !== 'object' || snap === null) return null;
+  const s = snap as Record<string, unknown>;
+  for (const field of GUARDIAN_SNAPSHOT_FIELDS) {
+    if (!isNum(s[field])) return null;
+  }
+  const snapshot: GuardianSnapshot = {
+    preset: normalizeGuardianPreset(s.preset as number),
+    radius: s.radius as number,
+    hp: s.hp as number,
+    contactDamage: s.contactDamage as number,
+    fireCooldown: s.fireCooldown as number,
+    bulletDamage: s.bulletDamage as number,
+    bulletSpeed: s.bulletSpeed as number,
+    bulletRadius: s.bulletRadius as number,
+    bulletLife: s.bulletLife as number,
+    range: s.range as number,
+    moveSpeed: s.moveSpeed as number,
+    standoff: s.standoff as number,
+  };
+  return {
+    x: g.x,
+    y: g.y,
+    snapshot,
+    performanceCP: g.performanceCP,
+    lineageBonusBp: g.lineageBonusBp,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -450,7 +585,40 @@ function buildPalette(): PaletteEntry[] {
 
 /** 도구가 같은지 비교(팔레트 선택 강조용). */
 function sameTool(a: Tool, b: Tool): boolean {
-  return a.kind === b.kind && (a.turretType ?? -1) === (b.turretType ?? -1);
+  return (
+    a.kind === b.kind &&
+    (a.turretType ?? -1) === (b.turretType ?? -1) &&
+    (a.guardianSlot ?? -1) === (b.guardianSlot ?? -1)
+  );
+}
+
+/** 수호 프리셋별 표시(글리프·색·이름). 인덱스 = GUARDIAN_* 프리셋 코드. */
+const GUARDIAN_DISPLAY: readonly { label: string; glyph: string; accent: string }[] = [
+  { label: '타이탄형', glyph: '🛡️', accent: '#ffd24c' }, // GUARDIAN_TITAN
+  { label: '인터셉터형', glyph: '🚀', accent: '#4cd7ff' }, // GUARDIAN_INTERCEPTOR
+];
+
+/** 프리셋 코드 → 표시(범위 밖은 타이탄 폴백). */
+function guardianDisplay(preset: number): { label: string; glyph: string; accent: string } {
+  return GUARDIAN_DISPLAY[normalizeGuardianPreset(preset)] ?? GUARDIAN_DISPLAY[0]!;
+}
+
+/** 수호 슬롯 기본 배치 칸(코어 양옆 하단, 스폰 반대편). 최대 슬롯 수만큼 반환. */
+function defaultGuardianPositions(): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = [];
+  const offsets = [-2, 2, -3, 3];
+  for (let i = 0; i < MAX_GUARDIAN_SLOTS; i++) {
+    const col = clampCol(SPAWN_COL + (offsets[i] ?? 0));
+    out.push(cellToWorld(col, GRID_ROWS - 1));
+  }
+  return out;
+}
+
+/** 열 인덱스를 격자 범위로 클램프. */
+function clampCol(col: number): number {
+  if (col < 0) return 0;
+  if (col >= GRID_COLS) return GRID_COLS - 1;
+  return col;
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +652,10 @@ const STYLE = `
 #pb-def .pb-guard { display:flex; gap:8px; margin-top:6px; }
 #pb-def .pb-slot { width:52px; height:52px; border-radius:9px; border:2px dashed #3a4568; background:rgba(20,26,44,.5); display:flex; flex-direction:column; align-items:center; justify-content:center; color:#5a6788; font-size:10px; gap:2px; }
 #pb-def .pb-slot .lk { font-size:16px; }
+#pb-def .pb-slot.active { border-style:solid; color:#cdd7ef; cursor:pointer; transition:transform .08s ease,border-color .08s ease; }
+#pb-def .pb-slot.active:hover { transform:translateY(-2px); }
+#pb-def .pb-slot.active.sel { outline:2px solid #7affea; outline-offset:1px; }
+#pb-def .pb-slot .gm { font-size:20px; line-height:1; }
 #pb-def .pb-hint { color:#ff9a7a; font-size:12px; min-height:14px; text-align:center; max-width:420px; }
 #pb-def .pb-ok { color:#8fd94c; }
 #pb-def .pb-actions { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
@@ -548,6 +720,10 @@ export class DefenseCommand {
       const c = cellToWorld(SPAWN_COL, GRID_ROWS - 1); // 스폰 반대쪽 하단 중앙
       this.state.core = { x: c.x, y: c.y };
     }
+    // 수호 기체(M5): 활성 로스터가 정본이므로 매 진입 시 재구성한다 — 저장된 좌표는 유지하고,
+    // 스냅샷·성능%·계보 보너스는 profile 의 현재 값으로 갱신한다(풍화·계보 투자 반영). 로스터가
+    // 비면 buildGuardianPlacements 가 빈 배열을 돌려주어 배치에 수호 키가 붙지 않는다.
+    this.state.guardians = this.buildGuardianDeployment(this.state.guardians);
     this.tool = { kind: 'turret', turretType: 0 };
     this.tip = '';
     this.hint = '';
@@ -603,6 +779,22 @@ export class DefenseCommand {
       this.hint = '정비에 실패했습니다(크레딧 부족 또는 서버 미설정). 상태를 다시 확인하세요.';
     }
     void this.loadStatus();
+  }
+
+  /**
+   * 활성 수호 로스터를 방어 배치(GuardianPlacement[])로 구성한다. 이전 배치의 좌표를 슬롯 순서로
+   * 유지하고, 없으면 기본 칸(코어 양옆)에 놓는다. 스냅샷·성능%·계보 보너스는 buildGuardianPlacements
+   * 가 profile 현재 값으로 채운다(서버 권위 미러). 로스터가 비면 빈 배열.
+   */
+  private buildGuardianDeployment(prev: readonly GuardianPlacement[]): GuardianPlacement[] {
+    const defaults = defaultGuardianPositions();
+    const positions: { x: number; y: number }[] = [];
+    for (let i = 0; i < MAX_GUARDIAN_SLOTS; i++) {
+      const saved = prev[i];
+      if (saved !== undefined) positions.push({ x: saved.x, y: saved.y });
+      else positions.push(defaults[i] ?? defaults[defaults.length - 1] ?? { x: 0, y: 0 });
+    }
+    return buildGuardianPlacements(this.profile, positions);
   }
 
   private persist(): void {
@@ -853,19 +1045,44 @@ export class DefenseCommand {
     tip.textContent = this.tip;
     panel.appendChild(tip);
 
-    // 수호 기체 슬롯(M5 훅 자리 — 비활성, 계약 안정용).
+    // 수호 기체 슬롯(M5) — 활성 로스터를 배치 도구로 노출한다. 슬롯 선택 후 격자를 클릭해
+    // 재배치한다. 로스터가 비면 안내만 표시한다(퇴역으로 수호를 만들어야 함).
     const gh2 = document.createElement('h2');
     gh2.textContent = '수호 기체';
     gh2.style.marginTop = '12px';
     panel.appendChild(gh2);
     const guard = document.createElement('div');
     guard.className = 'pb-guard';
-    for (let i = 0; i < 2; i++) {
-      const slot = document.createElement('div');
-      slot.className = 'pb-slot';
-      slot.title = 'M5에서 해금';
-      slot.innerHTML = `<div class="lk">🔒</div><div>M5 해금</div>`;
-      guard.appendChild(slot);
+    const deployed = this.state.guardians;
+    if (deployed.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'pb-slot';
+      empty.title = '기체를 퇴역시키면 수호 기체가 됩니다.';
+      empty.innerHTML = `<div class="lk">➖</div><div>없음</div>`;
+      guard.appendChild(empty);
+    } else {
+      for (let i = 0; i < deployed.length; i++) {
+        const g = deployed[i]!;
+        const d = guardianDisplay(g.snapshot.preset);
+        const perf = Math.round(g.performanceCP / 100);
+        const tool: Tool = { kind: 'guardian', guardianSlot: i };
+        const selected = sameTool(tool, this.tool);
+        const slot = document.createElement('div');
+        slot.className = `pb-slot active${selected ? ' sel' : ''}`;
+        slot.style.borderColor = selected ? d.accent : '#3a4568';
+        slot.title = `${d.label} · 성능 ${perf}% — 클릭 후 격자에 재배치`;
+        slot.innerHTML = `<div class="gm" style="color:${d.accent}">${d.glyph}</div><div>${perf}%</div>`;
+        slot.addEventListener('mouseenter', () => {
+          this.tip = `수호 ${i + 1} · ${d.label} · 성능 ${perf}% (스탯은 서버 권위)`;
+          this.renderTip();
+        });
+        slot.addEventListener('click', () => {
+          this.tool = tool;
+          this.hint = '';
+          this.render();
+        });
+        guard.appendChild(slot);
+      }
     }
     panel.appendChild(guard);
     return panel;
@@ -909,6 +1126,11 @@ export class DefenseCommand {
   private occupantGlyph(occ: NonNullable<Occupant>): { g: string; accent: string; label: string } {
     if (occ.kind === 'core') return { g: '💠', accent: '#8fd94c', label: '코어' };
     if (occ.kind === 'obstacle') return { g: '🧱', accent: '#8896b8', label: '장애물' };
+    if (occ.kind === 'guardian') {
+      const gp = this.state.guardians[occ.index];
+      const d = guardianDisplay(gp?.snapshot.preset ?? 0);
+      return { g: d.glyph, accent: d.accent, label: `수호 ${occ.index + 1} · ${d.label}` };
+    }
     const t = this.state.turrets[occ.index];
     const d = t !== undefined ? TURRET_DISPLAY[t.type] : undefined;
     return { g: d?.glyph ?? '❔', accent: d?.accent ?? '#fff', label: d?.label ?? '포탑' };
