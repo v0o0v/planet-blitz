@@ -32,6 +32,28 @@ const MAX_BATCH = 200;
 /** 배치 재실행 벽시계 소프트 예산(ms). 초과 시 결과는 반환하되 경고 로그(중단 불가). */
 const SOFT_BATCH_BUDGET_MS = 25_000;
 
+/**
+ * 게이트웨이(verify_jwt=true)가 서명 검증을 마친 JWT 의 role 클레임을 읽는다.
+ * 서명 검증은 하지 않는다 — 이 함수 단독으로 신뢰 판정에 쓰면 안 되고, 반드시
+ * verify_jwt 게이트웨이 뒤에서만 호출한다. 형식 이상이면 null.
+ */
+function jwtRole(token: string): string | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const b64 = parts[1];
+  if (b64 === undefined) return null;
+  try {
+    const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+    const bin = atob(b64.replace(/-/g, '+').replace(/_/g, '/') + pad);
+    const payload: unknown = JSON.parse(bin);
+    if (typeof payload !== 'object' || payload === null) return null;
+    const role = (payload as Record<string, unknown>).role;
+    return typeof role === 'string' ? role : null;
+  } catch {
+    return null;
+  }
+}
+
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -50,10 +72,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json({ error: 'server-misconfigured' }, 500);
   }
 
-  // 서버/스케줄러(service_role 키)만 트리거 가능 — Bearer 토큰이 service key 와 일치해야 한다.
+  // 서버/스케줄러(service_role 키)만 트리거 가능. 두 판정 중 하나면 통과:
+  //   (a) Bearer == SUPABASE_SERVICE_ROLE_KEY env (구형 배선 하위호환), 또는
+  //   (b) Bearer JWT 의 role 클레임 == 'service_role'.
+  // (b)가 안전한 이유: 이 함수는 verify_jwt=true 로 배포되어 게이트웨이가 **서명을 이미
+  // 검증**한 뒤에만 여기 도달한다 — 여기서는 검증된 JWT 의 role 만 읽으면 된다. env 동등성
+  // 단독 비교는 신형 API 키 체계에서 런타임 주입 키(sb_secret)와 legacy service_role JWT 가
+  // 달라 스케줄러(Vault 의 legacy JWT)가 401 로 오거부되는 함정이 있었다(2026-07-18 실측).
   const authHeader = req.headers.get('Authorization');
   const bearer = authHeader?.startsWith('Bearer ') === true ? authHeader.slice(7) : null;
-  if (bearer !== serviceKey) {
+  if (bearer === null || (bearer !== serviceKey && jwtRole(bearer) !== 'service_role')) {
     return json({ error: 'unauthorized' }, 401);
   }
 
