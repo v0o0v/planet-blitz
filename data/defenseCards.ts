@@ -288,6 +288,34 @@ export function defenseSuccessDropChance(
   return base * (1 + diff / DROP_CP_DIFF_CAP);
 }
 
+// ---------------------------------------------------------------------------
+// 방어 성공 보상 드랍 — 등급 분포(rare 중심 + unique 극저확률, 스펙 §희소 획득).
+// ---------------------------------------------------------------------------
+
+/**
+ * 방어 성공 시 카드가 드랍될 기본 확률(defenseSuccessDropChance 의 base 인자). 전투력 우위가 클수록
+ * defenseSuccessDropChance 가 최대 2배까지 올린다. 📝 시작값.
+ */
+export const DEFENSE_DROP_BASE_CHANCE = 0.15;
+
+/** 드랍 카드 유니크 등급 확률(극저). 📝 시작값. */
+export const DROP_RARITY_UNIQUE_CHANCE = 0.04;
+/** 드랍 카드 매직 등급 확률. 나머지(1 − unique − magic)는 rare(중심). 📝 시작값. */
+export const DROP_RARITY_MAGIC_CHANCE = 0.31;
+
+/**
+ * 방어 성공 드랍 카드의 등급을 [0,1) 균등 roll 로 결정한다(rare 중심 + unique 극저). 드랍은 보상이라
+ * normal 은 나오지 않는다(magic 이상). 순수 함수 — 호출 측(EF)이 무작위 roll 을 공급한다.
+ *   roll < UNIQUE                    → unique
+ *   roll < UNIQUE + MAGIC            → magic
+ *   그 외(대부분)                     → rare
+ */
+export function rollDropRarity(roll: number): Rarity {
+  if (roll < DROP_RARITY_UNIQUE_CHANCE) return 'unique';
+  if (roll < DROP_RARITY_UNIQUE_CHANCE + DROP_RARITY_MAGIC_CHANCE) return 'magic';
+  return 'rare';
+}
+
 /** 등급 승급 사다리(normal→magic→rare→unique). 최상위(unique)는 undefined. */
 export function nextRarityUp(rarity: Rarity): Rarity | undefined {
   switch (rarity) {
@@ -318,6 +346,45 @@ export const SHOP_MAGIC_RANGE: readonly [number, number] = [1, 2];
  * src/items/rollCard.ts 의 rollShopRotation 이 이를 CardInstance 로 롤한다(계층 분리: 데이터는
  * 상점 정체성을, items 는 카드 확정을 담당 — 순환 import 회피).
  */
+/**
+ * 상점 로테이션 날짜 시드(UTC 일 단위). epoch ms → UTC 기준 날 인덱스(epoch 이래 경과 일수). 같은
+ * UTC 날짜면 클라·서버가 동일 시드를 얻어 재고를 일치시킨다(순수 — 호출 측이 시계값 nowMs 공급).
+ */
+export function shopDateSeedFromMs(nowMs: number): number {
+  return Math.floor(nowMs / 86_400_000) >>> 0;
+}
+
+/**
+ * 유저 고유 상점 시드(프로필 기반 안정값). uid 문자열을 FNV-1a 로 u32 로 접는다. 같은 uid → 항상 같은
+ * 시드라 클라(표시)와 서버(구매 재현)가 동일 재고를 계산한다(SeededRng.fork 의 hashString 과 동일 규약).
+ */
+export function shopUserSeed(uid: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < uid.length; i++) {
+    h ^= uid.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+// ---------------------------------------------------------------------------
+// 카드 구매 가격 — 상점 카드 구매 크레딧 비용(등급 기반, data/economy.ts 곡선과 정합).
+// ---------------------------------------------------------------------------
+
+/** 카드 구매 기본 비용(크레딧). 앵커: normal(랭크0) = BASE. 📝 시작값. */
+export const CARD_BUY_BASE = 40;
+/** 등급 1단계당 추가 구매 비용(크레딧) — 상위 등급일수록 비싸다. 📝 시작값. */
+export const CARD_BUY_PER_RARITY = 60;
+
+/**
+ * 상점 카드 구매 비용(크레딧). BASE + PER_RARITY×등급랭크(RARITY_CODE). 등급에 단조 증가.
+ * normal 40 / magic 100 / rare 160 / unique 220(상점은 normal·magic 만 취급하나 안전상 전 등급 정의).
+ * 결정론 정수 — 서버(차감)·클라(표기)가 동일 값을 재현. 📝 튜닝 대상.
+ */
+export function cardBuyPrice(rarity: Rarity): number {
+  return CARD_BUY_BASE + CARD_BUY_PER_RARITY * RARITY_CODE[rarity];
+}
+
 export function dailyShopRotation(dateSeed: number, userSeed: number): ShopSlot[] {
   // 날짜 시드에서 유저별 독립 스트림을 파생(같은 날이라도 유저마다 다른 재고, 유저·날 고정 시 동일).
   const rng = new SeededRng(dateSeed >>> 0).fork(userSeed >>> 0);

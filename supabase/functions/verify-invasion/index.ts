@@ -32,6 +32,8 @@ import type {
 } from './verifyInvasionCore.ts';
 import { DEFAULT_TIME_LIMIT_TICKS, MAINTENANCE_FULL } from '../../../src/sim/defense.ts';
 import { MAX_GUARDIAN_SLOTS } from '../../../data/guardian.ts';
+import { rollCard } from '../../../src/items/rollCard.ts';
+import { defenseSuccessDropChance, rollDropRarity, DEFENSE_DROP_BASE_CHANCE } from '../../../data/defenseCards.ts';
 
 /** 재실행 벽시계 소프트 예산(ms). 초과 시 결과는 반환하되 경고 로그(중단은 불가). */
 const SOFT_RERUN_BUDGET_MS = 8_000;
@@ -41,6 +43,19 @@ function json(body: unknown, status: number): Response {
     status,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+/** 암호학적 난수 float [0,1) — 방어 성공 드랍 롤용(드랍은 리플레이 대상 아님, 결정론 불요). */
+function cryptoFloat(): number {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] / 4294967296;
+}
+/** 암호학적 난수 u32 — 드랍 결과 카드 롤 시드(결과 카드가 자기 시드로 재현되면 족함). */
+function cryptoU32(): number {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] >>> 0;
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -384,6 +399,34 @@ Deno.serve(async (req: Request): Promise<Response> => {
       200,
     );
   }
+  // (7) 방어 성공 보상 드랍(M6): 확정된 침공에서 방어자가 이겼으면(=방어 성공, attackerWon=false)
+  // 방어자에게 카드 드랍을 롤한다. 카드 장착 여부와 무관한 방어 성공 보상이라 cardAuthority 유무와
+  // 별개다(미장착 방어도 보상). 롤은 TS 롤러(rollCard) — SQL 이 못 하므로 여기(service_role·TS
+  // 컨텍스트)에서 수행하고, 상한(20)·insert 원자성은 apply_card_drop RPC 가 맡는다. 무작위는 crypto
+  // (드랍은 리플레이 대상 아님). 전투력 우위(매치업 CP)가 크면 확률이 오른다(현재 매치업 CP 는 보수
+  // 재구성으로 0 → 사실상 base 확률, 📝 CP 완전 재구성 후 상승). 드랍 실패/만석/오류는 침공 판정에
+  // 영향 없음(best-effort — 실패해도 verified 응답은 그대로).
+  if (attackerWon === false) {
+    try {
+      const matchup = (cardAuthority as { matchup?: { attackerCp?: unknown; defenderCp?: unknown } } | undefined)?.matchup;
+      const atkCp = typeof matchup?.attackerCp === 'number' ? matchup.attackerCp : 0;
+      const defCp = typeof matchup?.defenderCp === 'number' ? matchup.defenderCp : 0;
+      const chance = defenseSuccessDropChance(DEFENSE_DROP_BASE_CHANCE, atkCp, defCp);
+      if (cryptoFloat() < chance) {
+        const rarity = rollDropRarity(cryptoFloat());
+        const card = rollCard(cryptoU32(), rarity);
+        await service.rpc('apply_card_drop', {
+          p_profile_id: inv.defender_id,
+          p_card: card,
+          p_rarity: rarity,
+          p_charges_left: card.chargesLeft,
+        });
+      }
+    } catch (e) {
+      console.error(`verify-invasion 방어 성공 드랍 실패 (invasion=${invasionId}):`, e);
+    }
+  }
+
   const ladder =
     res.swapped === true
       ? { attackerRank: res.attacker_rank ?? null, defenderRank: res.defender_rank ?? null }
