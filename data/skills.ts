@@ -45,8 +45,14 @@ export interface SkillNode {
   readonly perPoint: number;
   /** Max points investable in this node (4 or 5). */
   readonly maxPoints: number;
-  /** Depth 0..TREE_DEPTH-1. Higher tiers are amplified by lower-tier investment. */
+  /** Depth 0..TREE_DEPTH-1 for base nodes; CAPSTONE_TIER for the capstone. */
   readonly tier: number;
+  /**
+   * 질적 캡스톤 노드 표식(GDD §4). `true` 면 `stat`/`perPoint` 는 무의미(수치 미기여) —
+   * computeSkillStats 가 건너뛴다. 효과는 sim(src/sim/capstones.ts)이 uniqueMask 비트로
+   * 게이트한다. 진입 조건은 {@link capstoneUnlocked}(계열 base 20노드 합 ≥ CAPSTONE_GATE).
+   */
+  readonly capstone?: boolean;
 }
 
 /** Compact node spec: [name, desc, stat, perPoint, maxPoints]. */
@@ -173,18 +179,80 @@ const MOBILITY: readonly (readonly Spec[])[] = [
   ],
 ];
 
+// --- 최상위 질적 캡스톤 (GDD §4) --------------------------------------------
 /**
- * All 60 nodes in stable order: firepower[0..19], survival[20..39], mobility
- * [40..59]. Index === position in the profile's `skillInvest` vector.
+ * 캡스톤 노드의 티어 값(base 티어 0..4 위의 특수 티어). 렌더/시너지 계산에는 쓰이지 않고
+ * (computeSkillStats 가 캡스톤을 건너뜀), 표기·정렬 편의를 위한 상수다.
+ */
+export const CAPSTONE_TIER = TREE_DEPTH;
+/**
+ * 캡스톤 진입 게이트: 해당 계열의 base 20노드에 누적 투자한 포인트가 이 값 이상이어야
+ * 캡스톤 1포인트를 찍을 수 있고, sim 효과도 활성화된다(GDD §4 "충분한 투자"). 트리 용량
+ * (계열 ~83)의 절반 수준으로, 한 계열에 집중 투자한 빌드에만 열린다.
+ */
+export const CAPSTONE_GATE = 40;
+
+/** 캡스톤 노드 1개를 만든다(수치 미기여 — stat/perPoint 는 자리표시자). */
+function capstoneNode(tree: SkillTree, name: string, desc: string): SkillNode {
+  return { id: `${tree}-capstone`, tree, name, desc, stat: 'damagePct', perPoint: 0, maxPoints: 1, tier: CAPSTONE_TIER, capstone: true };
+}
+
+/** 계열별 캡스톤 노드(순서 = firepower·survival·mobility → 인덱스 60·61·62). */
+const CAPSTONES: readonly SkillNode[] = [
+  capstoneNode('firepower', '탄막 상쇄 레이저', '1.5초마다 전방 레이저가 적탄을 소거'),
+  capstoneNode('survival', '치명타 1회 무효', '런당 1회 치명 피격을 무효화 + 짧은 무적'),
+  capstoneNode('mobility', '대시 잔상 소거', '대시 시 반경 320 내 적탄을 소거'),
+];
+
+/**
+ * All nodes in stable order: firepower[0..19], survival[20..39], mobility[40..59],
+ * then the three qualitative capstones firepower/survival/mobility at 60/61/62.
+ * Index === position in the profile's `skillInvest` vector. 기존 60노드 인덱스는
+ * 세이브·리플레이 호환을 위해 절대 재번호하지 않는다 — 캡스톤은 항상 끝에 append.
  */
 export const SKILLS: readonly SkillNode[] = [
   ...buildTree('firepower', FIREPOWER),
   ...buildTree('survival', SURVIVAL),
   ...buildTree('mobility', MOBILITY),
+  ...CAPSTONES,
 ];
 
-/** Total node count (60). */
+/** Total node count (63 = 60 base + 3 capstones). */
 export const SKILL_NODE_COUNT = SKILLS.length;
+
+/** 계열별 캡스톤의 flat-vector 인덱스(base 60노드 뒤, 트리 순서). */
+export const FIREPOWER_CAPSTONE = 60;
+export const SURVIVAL_CAPSTONE = 61;
+export const MOBILITY_CAPSTONE = 62;
+
+/** 트리 → 그 계열 캡스톤 인덱스. */
+export function capstoneIndex(tree: SkillTree): number {
+  return NODES_PER_TREE * SKILL_TREES.length + SKILL_TREES.indexOf(tree);
+}
+
+/**
+ * 한 계열의 base 20노드에 누적 투자한 포인트 합(캡스톤 게이트 판정용 — 캡스톤 자체는 제외).
+ * 손상/짧은 벡터도 안전(누락 = 0).
+ */
+export function treeBaseInvested(invest: readonly number[], tree: SkillTree): number {
+  const { start, end } = treeRange(tree);
+  let sum = 0;
+  for (let i = start; i < end; i++) sum += invest[i] ?? 0;
+  return sum;
+}
+
+/** 계열 캡스톤이 게이트를 통과했는지(base 투자 ≥ CAPSTONE_GATE) — 투자 가능/해금 표시용. */
+export function capstoneUnlocked(invest: readonly number[], tree: SkillTree): boolean {
+  return treeBaseInvested(invest, tree) >= CAPSTONE_GATE;
+}
+
+/**
+ * 계열 캡스톤 효과가 실제 활성인지 = 게이트 통과 AND 캡스톤에 1포인트 투자. sim(loadout)이
+ * 이걸로 uniqueMask 비트를 세운다. 게이트 미달인데 캡스톤만 찍힌 손상 벡터는 비활성(robust).
+ */
+export function capstoneActive(invest: readonly number[], tree: SkillTree): boolean {
+  return capstoneUnlocked(invest, tree) && (invest[capstoneIndex(tree)] ?? 0) > 0;
+}
 
 /** Total investable capacity across all nodes (sum of maxPoints ≈ 250). */
 export const SKILL_TOTAL_CAPACITY = SKILLS.reduce((s, n) => s + n.maxPoints, 0);

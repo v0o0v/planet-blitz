@@ -102,6 +102,16 @@ import {
   RELIC_XP_MULT,
   AFTERIMAGE_RADIUS,
 } from './uniques.js';
+import {
+  hasCapstone,
+  CAP_FIREPOWER_LASER,
+  CAP_SURVIVAL_CRIT,
+  CAP_MOBILITY_DASH,
+  LASER_PERIOD,
+  laserHits,
+  CRIT_NEGATE_IFRAMES,
+  DASH_CLEAR_RADIUS,
+} from './capstones.js';
 import { SpatialHash, circlesOverlap } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
 import { updateBoss } from './boss.js';
@@ -672,6 +682,7 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   stepEnemies(state, player);
   stepBoss(state, player);
   autoAttack(state, player);
+  capstoneLaser(state, player);
   subWeapon(state, player);
   droneBay(state, player);
   stepTurrets(state, player);
@@ -904,13 +915,19 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
       player.dashCooldown = config.dashCooldownTicks;
       player.iframes = config.dashIframes;
     }
-    // ⑪ 잔상 추진기: 대시 순간 주변 적탄 소거(장착 시).
-    if (hasUnique(mask, UQ_AFTERIMAGE)) {
+    // ⑪ 잔상 추진기(유니크) + 기동 캡스톤(대시 잔상 소거): 대시 순간 주변 적탄 소거.
+    // 중첩 규칙: 둘 다 보유하면 더 큰 반경(캡스톤 DASH_CLEAR_RADIUS=320 > 잔상 220)으로
+    // **한 번만** 소거한다(반경을 더하지 않음). 미보유 시 no-op.
+    const afterOn = hasUnique(mask, UQ_AFTERIMAGE);
+    const dashCapOn = hasCapstone(mask, CAP_MOBILITY_DASH);
+    if (afterOn || dashCapOn) {
+      const clearR = dashCapOn ? DASH_CLEAR_RADIUS : AFTERIMAGE_RADIUS;
+      const clearR2 = clearR * clearR;
       for (const t of state.entities) {
         if (t.kind !== 'enemyBullet' || t.dead) continue;
         const ex = t.x - player.x;
         const ey = t.y - player.y;
-        if (ex * ex + ey * ey <= AFTERIMAGE_RADIUS * AFTERIMAGE_RADIUS) t.dead = true;
+        if (ex * ex + ey * ey <= clearR2) t.dead = true;
       }
     }
   }
@@ -1144,6 +1161,25 @@ function autoAttack(state: WorldState, player: Entity): void {
     );
   }
   player.cooldown = fireCd;
+}
+
+/**
+ * 화력 캡스톤 — 탄막 상쇄 레이저(GDD §4). 캡스톤 활성 시 LASER_PERIOD(90틱=1.5초)마다
+ * 조준 방향으로 전방 레이저를 쏴, 사거리·반폭 안의 적탄을 소거한다. 순수 결정론: 발화 시점은
+ * state.tick 배수, 판정은 정수/부동 산술(laserHits)만 사용 — RNG·wall-clock 없음. 적탄만
+ * 소거하고 새 엔티티/필드를 만들지 않아 hashWorld 레이아웃 불변.
+ */
+function capstoneLaser(state: WorldState, player: Entity): void {
+  const mask = state.config.loadout?.uniqueMask ?? 0;
+  if (!hasCapstone(mask, CAP_FIREPOWER_LASER)) return;
+  // tick 0 에는 적탄이 없으므로 사실상 무의미하지만, 배수 판정은 그대로 유지(결정론).
+  if (state.tick % LASER_PERIOD !== 0) return;
+  const dirX = cos(player.angle);
+  const dirY = sin(player.angle);
+  for (const t of state.entities) {
+    if (t.kind !== 'enemyBullet' || t.dead) continue;
+    if (laserHits(player.x, player.y, dirX, dirY, t.x, t.y)) t.dead = true;
+  }
 }
 
 // --- Sub-weapon 5종 (M2 plan B2, OQ-M2-2: 독립 발사 슬롯; GDD §5 "보조무기 5종") ------
@@ -1934,6 +1970,15 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // Supply raiders never harm the player (they do not attack).
   });
   if (dmg > 0 && !invulnerable) {
+    // 생존 캡스톤 — 치명타 1회 무효(GDD §4): 이 피격이 치명적(hp가 0 이하로 떨어짐)이고 아직
+    // 미소진(player.targetX===0)이면 피해를 전부 무효화하고 짧은 무적(CRIT_NEGATE_IFRAMES)을
+    // 준다. 소진 표식은 player.targetX(플레이어 미사용 필드, 이미 해시됨)에 1로 실어 런당 1회로
+    // 제한한다 — createWorld가 매 런 targetX=0으로 시작하므로 리셋이 자명하다. 무효 시 피격
+    // 후속(과열 리셋·반응 장갑·위상 전환막)은 모두 건너뛴다(없던 피격처럼 취급).
+    if (hasCapstone(uMask, CAP_SURVIVAL_CRIT) && player.targetX === 0 && player.hp - dmg <= 0) {
+      player.targetX = 1;
+      player.iframes = CRIT_NEGATE_IFRAMES;
+    } else {
     player.hp -= dmg;
     if (player.hp < 0) player.hp = 0;
     player.iframes = state.config.hitIframes;
@@ -1969,6 +2014,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       for (const t of state.entities) if (t.kind === 'enemyBullet') t.dead = true;
       player.hp = Math.min(player.maxHp, player.hp + Math.round(player.maxHp * PHASE_MEMBRANE_HEAL_FRAC));
       player.targetY = PHASE_MEMBRANE_COOLDOWN;
+    }
     }
   }
 }

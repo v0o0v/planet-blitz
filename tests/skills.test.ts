@@ -23,22 +23,30 @@ import {
 const BANKED_AT_CAP = 99;
 
 describe('skill data — shape + capacity gate (AC1, master §3 gate ②)', () => {
-  it('has 60 nodes, 3 trees × 20', () => {
-    expect(SKILL_NODE_COUNT).toBe(60);
+  it('has 63 nodes (60 base 3 trees × 20 + 3 capstones)', () => {
+    expect(SKILL_NODE_COUNT).toBe(63);
     expect(SKILL_TREES).toHaveLength(3);
     for (const tree of SKILL_TREES) {
       const { start, end } = treeRange(tree);
       expect(end - start).toBe(NODES_PER_TREE);
       for (let i = start; i < end; i++) expect(SKILLS[i]?.tree).toBe(tree);
+      // base 20노드는 캡스톤이 아니다.
+      for (let i = start; i < end; i++) expect(SKILLS[i]?.capstone).not.toBe(true);
     }
+    // 인덱스 60·61·62 는 계열별 캡스톤(재번호 금지).
+    expect(SKILLS[60]?.capstone).toBe(true);
+    expect(SKILLS[60]?.tree).toBe('firepower');
+    expect(SKILLS[61]?.tree).toBe('survival');
+    expect(SKILLS[62]?.tree).toBe('mobility');
   });
 
-  it('every node costs 1..5 points; per tree ~85, total ~250', () => {
+  it('every node costs 1..5 points; base per tree ~83, capstones 1pt each', () => {
     for (const n of SKILLS) {
       expect(n.maxPoints).toBeGreaterThanOrEqual(1);
       expect(n.maxPoints).toBeLessThanOrEqual(5);
     }
-    expect(SKILL_TOTAL_CAPACITY).toBe(250);
+    // 캡스톤 3노드(각 1pt) 포함 총 용량 = 250 base + 3 = 253.
+    expect(SKILL_TOTAL_CAPACITY).toBe(253);
     for (const tree of SKILL_TREES) {
       const { start, end } = treeRange(tree);
       let cap = 0;
@@ -48,12 +56,17 @@ describe('skill data — shape + capacity gate (AC1, master §3 gate ②)', () =
     }
   });
 
-  it('99 banked points cover ≤40% of the tree (capacity + node count)', () => {
-    // Capacity reading: 99 points is ≤40% of the 250-point capacity.
-    expect(BANKED_AT_CAP / SKILL_TOTAL_CAPACITY).toBeLessThanOrEqual(0.4);
-    // Node-count reading: spending greedily on the cheapest nodes first, 99
+  it('99 banked points cover ≤40% of the base tree (capacity + node count)', () => {
+    // 게이트는 base 60 수치 노드에 대한 것 — 캡스톤은 별도의 질적 해금이므로 제외한다.
+    const baseNodes = SKILLS.filter((n) => n.capstone !== true);
+    expect(baseNodes).toHaveLength(60);
+    const baseCapacity = baseNodes.reduce((s, n) => s + n.maxPoints, 0);
+    expect(baseCapacity).toBe(250);
+    // Capacity reading: 99 points is ≤40% of the 250-point base capacity.
+    expect(BANKED_AT_CAP / baseCapacity).toBeLessThanOrEqual(0.4);
+    // Node-count reading: spending greedily on the cheapest base nodes first, 99
     // points fully funds at most 24 nodes = 40% of 60.
-    const costs = SKILLS.map((n) => n.maxPoints).sort((a, b) => a - b);
+    const costs = baseNodes.map((n) => n.maxPoints).sort((a, b) => a - b);
     let pts = BANKED_AT_CAP;
     let count = 0;
     for (const c of costs) {
@@ -62,7 +75,7 @@ describe('skill data — shape + capacity gate (AC1, master §3 gate ②)', () =
         count++;
       } else break;
     }
-    expect(count).toBeLessThanOrEqual(Math.floor(SKILL_NODE_COUNT * 0.4));
+    expect(count).toBeLessThanOrEqual(Math.floor(baseNodes.length * 0.4));
   });
 });
 

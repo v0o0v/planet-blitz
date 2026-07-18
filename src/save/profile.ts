@@ -19,7 +19,7 @@
 
 import { SAVE_VERSION, SLOT_KINDS, RARITY_BY_CODE } from '../items/types.js';
 import type { Item, EquipSlotId } from '../items/types.js';
-import { SKILLS, SKILL_NODE_COUNT } from '../../data/skills.js';
+import { SKILLS, SKILL_NODE_COUNT, capstoneUnlocked } from '../../data/skills.js';
 import type { DefenseLayout } from '../sim/defense.js';
 import { emptyLineage } from '../../data/lineage.js';
 import type { LineageState } from '../../data/lineage.js';
@@ -93,8 +93,10 @@ export interface Profile {
   /** Banked skill points (M3 spends them; M2 only accrues, OQ-M2-7). */
   skillPoints: number;
   /**
-   * Per-node skill investment (M3 plan A3). Length === SKILL_NODE_COUNT (60);
-   * `skillInvest[i]` is the points put into `SKILLS[i]` (0..node.maxPoints).
+   * Per-node skill investment (M3 plan A3). Length === SKILL_NODE_COUNT (63 =
+   * 60 base + 3 최상위 캡스톤); `skillInvest[i]` is the points put into `SKILLS[i]`
+   * (0..node.maxPoints). 60-length pre-capstone saves are grown to 63 (new indices
+   * 60~62 = 0) by {@link normalizeSkillInvest} — 하위 호환.
    * Account-wide (research lab is a base building, not per-ship). Fed to
    * `computeLoadoutStats(equipped, skillInvest)` at run start.
    */
@@ -268,6 +270,8 @@ export function investSkill(profile: Profile, index: number): boolean {
   if (profile.skillPoints <= 0) return false;
   const cur = profile.skillInvest[index] ?? 0;
   if (cur >= node.maxPoints) return false;
+  // 최상위 캡스톤(GDD §4)은 해당 계열 base 40pt 게이트를 통과해야 투자 가능하다.
+  if (node.capstone === true && !capstoneUnlocked(profile.skillInvest, node.tree)) return false;
   profile.skillInvest[index] = cur + 1;
   profile.skillPoints -= 1;
   return true;

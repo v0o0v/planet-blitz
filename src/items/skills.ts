@@ -73,6 +73,8 @@ export function computeSkillStats(invest: readonly number[]): Record<StatKey, nu
   for (let i = 0; i < SKILL_NODE_COUNT; i++) {
     const node = SKILLS[i];
     if (node === undefined) continue;
+    // 질적 캡스톤(인덱스 60~62)은 수치를 기여하지 않는다 — sim이 uniqueMask 비트로 게이트.
+    if (node.capstone === true) continue;
     const pts = clampPoints(invest[i], node.maxPoints);
     if (pts === 0) continue;
     const treeIdx = Math.floor(i / NODES_PER_TREE);
@@ -83,6 +85,7 @@ export function computeSkillStats(invest: readonly number[]): Record<StatKey, nu
   for (let i = 0; i < SKILL_NODE_COUNT; i++) {
     const node = SKILLS[i];
     if (node === undefined) continue;
+    if (node.capstone === true) continue; // 캡스톤은 파생 스탯에 기여하지 않음(위와 동일).
     const pts = clampPoints(invest[i], node.maxPoints);
     if (pts === 0) continue;
     const treeIdx = Math.floor(i / NODES_PER_TREE);
