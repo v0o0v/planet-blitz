@@ -37,6 +37,25 @@ function defined<K extends string, V>(key: K, value: V | undefined): Record<K, V
   return value === undefined ? {} : ({ [key]: value } as Record<K, V>);
 }
 
+/**
+ * cards EF 는 비즈니스 거부(크레딧 부족·만석·중복 등)를 **4xx + `{ok:false, code}` body** 로
+ * 돌려준다. 그런데 supabase-js `functions.invoke` 는 non-2xx 를 error(FunctionsHttpError)로 취급해
+ * data=null 을 준다 → 그대로 throw 하면 `code` 가 유실되고 UI 가 일반 실패 메시지만 띄운다. 이
+ * 헬퍼는 FunctionsHttpError 가 실어 주는 Response(`.context`)의 JSON body 를 회수해 결과로 매핑할
+ * 수 있게 한다. body 를 못 읽으면(진짜 네트워크/릴레이 오류) null → 호출부가 throw.
+ */
+async function invokeErrorBody(error: unknown): Promise<Record<string, unknown> | null> {
+  const ctx = (error as { context?: unknown } | null)?.context;
+  if (ctx instanceof Response) {
+    try {
+      return asRecord(await ctx.clone().json());
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export class SupabaseCardsGateway implements CardsGateway {
   private readonly client: SupabaseClient;
 
@@ -62,8 +81,15 @@ export class SupabaseCardsGateway implements CardsGateway {
     const { data, error } = await this.client.functions.invoke('cards', {
       body: { action: 'buy', slotIndex },
     });
-    if (error !== null) throw error;
-    const r = asRecord(data);
+    // 4xx 비즈니스 거부는 body 의 code 를 살려 결과로 매핑(throw 하면 UI 가 사유를 못 보여준다).
+    let r: Record<string, unknown>;
+    if (error !== null) {
+      const body = await invokeErrorBody(error);
+      if (body === null) throw error;
+      r = body;
+    } else {
+      r = asRecord(data);
+    }
     // exactOptionalPropertyTypes: undefined 필드는 대입 대신 조건부 스프레드로 생략한다.
     return {
       ok: r.ok === true,
@@ -79,8 +105,15 @@ export class SupabaseCardsGateway implements CardsGateway {
     const { data, error } = await this.client.functions.invoke('cards', {
       body: { action: 'fuse', cardIds },
     });
-    if (error !== null) throw error;
-    const r = asRecord(data);
+    // 구매와 동일 — 4xx 합성 거부(미소유·등급 불일치 등)는 body 의 code 를 살려 결과로 매핑.
+    let r: Record<string, unknown>;
+    if (error !== null) {
+      const body = await invokeErrorBody(error);
+      if (body === null) throw error;
+      r = body;
+    } else {
+      r = asRecord(data);
+    }
     return {
       ok: r.ok === true,
       promoted: r.promoted === true,
