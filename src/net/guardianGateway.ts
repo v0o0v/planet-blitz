@@ -65,10 +65,15 @@ export class SupabaseGuardianGateway {
 
   /** 본인 수호 기체 목록(소멸분 포함 — 표시 측이 필터). */
   async fetchGuardians(uid: string): Promise<ServerGuardian[]> {
+    // 정렬 고정(created_at→id): 서버 verify-invasion 이 수호 권위 주입 시 같은 순서로 슬롯을
+    // 매핑하므로(index.ts), 클라 로컬 미러(profile.guardians)도 이 순서를 따라야 방어 배치
+    // buildGuardianPlacements 의 슬롯 i↔수호 i 매핑이 클라·서버 비트 동일해진다(M5 계약 통일).
     const { data, error } = await this.client
       .from('guardians')
       .select('id, data, performance, combat_score, preset, retired')
-      .eq('profile_id', uid);
+      .eq('profile_id', uid)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true });
     if (error !== null) throw error;
     const rows = Array.isArray(data) ? data : [];
     return rows.map((raw) => {

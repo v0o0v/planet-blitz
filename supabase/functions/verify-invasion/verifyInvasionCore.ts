@@ -39,8 +39,9 @@ import type {
   ObstaclePlacement,
   GuardianPlacement,
 } from '../../../src/sim/defense.js';
-import { MAX_GUARDIAN_SLOTS, GUARDIAN_PRESET_COUNT } from '../../../data/guardian.js';
+import { MAX_GUARDIAN_SLOTS, GUARDIAN_PRESET_COUNT, PERFORMANCE_FULL } from '../../../data/guardian.js';
 import type { GuardianSnapshot } from '../../../data/guardian.js';
+import { branchBonusBp } from '../../../data/lineage.js';
 
 /**
  * 침공 전용 거부 사유(verify-run의 RejectReason에 더해지는 코드). 기계 판독용이라
@@ -291,6 +292,86 @@ function isValidLayout(v: unknown): v is DefenseLayout {
   // 한다. normalizeGuardians 와 동일 규칙을 형태 검증으로만 재사용(값 대조는 layoutEquals).
   if (l.guardians !== undefined && normalizeGuardians(l.guardians) === null) return false;
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// 수호 권위 주입 (M5 — 정비도 주입과 대칭. index.ts 배선이 소비, deno 테스트가 검증)
+// ---------------------------------------------------------------------------
+
+/**
+ * 서버가 DB `guardians` 에서 로드한 방어자 활성 수호 1기(권위 주입 입력). 신뢰 경계:
+ * `data`(복사 스냅샷)·`combatScore` 는 클라 빌드 파생이라 클라 정본 미러지만(migration
+ * 20260718100000 헤더 신뢰 경계 참조), **`performance`(풍화 축)는 서버 권위**다 —
+ * 정비도와 동일하게 PvP 결정에 직결되는 축만 서버가 봉인한다.
+ */
+export interface AuthoritativeGuardianRow {
+  /** guardians.data — 퇴역 복사 스냅샷 jsonb(신뢰 불가 → normalizeGuardians 가 검증). */
+  readonly data: unknown;
+  /** guardians.performance — numeric(5,2) 0..100. 서버 풍화 권위값(cron weather_guardians). */
+  readonly performance: number;
+}
+
+/**
+ * DB `guardians.performance`(numeric(5,2), 0..100) → 정수 centi-percent(0..10000).
+ * **공식 고정 `Math.round(db*100)`** — 클라 `guardianGateway.fetchGuardians`(동일 `Math.round(
+ * performance*100)`)·정비도 변환(`Math.round(db*100)`)과 단일 공식이라, 클라가 제출한
+ * performanceCP 와 서버 주입값이 비트 동일해야 정직 런이 defense-mismatch 로 오거부되지 않는다.
+ * 비유한(NaN/Infinity/null)은 완전 성능(PERFORMANCE_FULL)로 폴백(클라 fetchGuardians 폴백 100 과 동일).
+ */
+export function performanceToCenti(dbPerformance: unknown): number {
+  const n = typeof dbPerformance === 'number' ? dbPerformance : Number(dbPerformance);
+  return Number.isFinite(n) ? Math.round(n * 100) : PERFORMANCE_FULL;
+}
+
+/**
+ * 방어 배치 layout 의 수호 슬롯을 **DB 권위 값으로 재구성**한다(M5 서버 권위 주입 — 정비도
+ * 주입과 대칭). 공격자 제출 config 의 수호 성능%·계보 보너스·스냅샷을 신뢰하지 않고, 방어자의
+ * 라이브 `guardians`(풍화된 performance)·`profiles.lineage_guardian_level` 로 덮어쓴다.
+ *
+ * 매핑(클라 `buildGuardianPlacements`(src/save/guardianLifecycle.ts) 와 동일 규칙):
+ *   - **슬롯 위치(x/y)**: 저장된 방어 배치(`defenses.layout.guardians[i]`)에서 온다 — 방어자
+ *     배치 결정이라 풍화 대상이 아니고 서버가 그대로 존중한다.
+ *   - **스냅샷/성능%/보너스**: 활성 수호를 결정론 순서(created_at, id — index.ts 조회 + 클라
+ *     fetchGuardians 조회 순서 일치)로 슬롯 i ↔ 활성 수호 i 매핑해 주입한다.
+ *   - **계보 보너스**: `branchBonusBp(lineageGuardianLevel)` — 클라 `guardianBonusBp` 와 동일 곡선.
+ *   - 슬롯 수·활성 수호 수·MAX_GUARDIAN_SLOTS 중 최솟값까지만 채운다(초과 슬롯 드롭 — 클라와 동일).
+ *
+ * 입력 layout 은 불변(얕은 복제로 guardians 만 교체). 수호 슬롯이 없거나 활성 수호가 없으면
+ * guardians 필드를 제거해 반환한다 → 수호 미포함 침공은 거동·해시가 완전 불변(하위호환).
+ * 주입된 스냅샷의 정합성은 이후 normalizeServerLayout/normalizeGuardians 가 검증한다(손상 →
+ * server-layout-invalid).
+ */
+export function injectGuardianAuthority(
+  rawLayout: unknown,
+  guardians: readonly AuthoritativeGuardianRow[],
+  lineageGuardianLevel: number,
+): unknown {
+  if (typeof rawLayout !== 'object' || rawLayout === null) return rawLayout;
+  const layout = rawLayout as Record<string, unknown>;
+  const slots = Array.isArray(layout.guardians) ? (layout.guardians as unknown[]) : [];
+  const bonusBp = branchBonusBp(
+    typeof lineageGuardianLevel === 'number' && Number.isFinite(lineageGuardianLevel)
+      ? lineageGuardianLevel
+      : 0,
+  );
+  const n = Math.min(slots.length, guardians.length, MAX_GUARDIAN_SLOTS);
+  const authoritative: GuardianPlacement[] = [];
+  for (let i = 0; i < n; i++) {
+    const slot = slots[i];
+    const sr = typeof slot === 'object' && slot !== null ? (slot as Record<string, unknown>) : {};
+    const row = guardians[i]!;
+    authoritative.push({
+      x: isFiniteNumber(sr.x) ? sr.x : 0,
+      y: isFiniteNumber(sr.y) ? sr.y : 0,
+      snapshot: row.data as GuardianSnapshot,
+      performanceCP: performanceToCenti(row.performance),
+      lineageBonusBp: bonusBp,
+    });
+  }
+  const out: Record<string, unknown> = { ...layout };
+  if (authoritative.length > 0) out.guardians = authoritative;
+  else delete out.guardians;
+  return out;
 }
 
 /**

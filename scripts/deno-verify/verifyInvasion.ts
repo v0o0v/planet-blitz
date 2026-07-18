@@ -11,8 +11,16 @@
  * `.js → .ts` resolve. 불일치 시 종료 코드 1.
  */
 
-import { verifyInvasion } from '../../supabase/functions/verify-invasion/verifyInvasionCore.ts';
-import type { InvasionServerContext } from '../../supabase/functions/verify-invasion/verifyInvasionCore.ts';
+import {
+  verifyInvasion,
+  injectGuardianAuthority,
+  performanceToCenti,
+} from '../../supabase/functions/verify-invasion/verifyInvasionCore.ts';
+import type {
+  InvasionServerContext,
+  AuthoritativeGuardianRow,
+} from '../../supabase/functions/verify-invasion/verifyInvasionCore.ts';
+import { branchBonusBp } from '../../data/lineage.ts';
 import { runReplay } from '../../src/sim/replay.ts';
 import type { InputFrame, WorldConfig } from '../../src/sim/world.ts';
 import {
@@ -235,6 +243,55 @@ function main(): number {
     guardians: [guardianLayout.guardians![0]!, { ...guardianLayout.guardians![1]!, performanceCP: PERFORMANCE_FULL }],
   };
   expectReject('수호 성능 위조', honest(seed, invasionConfig(forgedPerf), inputs), ['defense-mismatch'], gCtx);
+
+  // --- 게이트 3.9: M5 수호 권위 주입(DB → 서버 layout, 정비도 주입과 대칭) ---
+  // index.ts 배선이 저장 layout 의 수호 슬롯을 라이브 DB(guardians.performance·profiles.
+  // lineage_guardian_level)로 덮어쓴다. 여기서는 그 순수 주입 함수와 대조 계약을 증거화한다.
+  const dbRows: AuthoritativeGuardianRow[] = [
+    { data: makeGuardianSnapshot(GUARDIAN_TITAN, 140), performance: 60 }, // 서버 풍화 60%
+    { data: makeGuardianSnapshot(GUARDIAN_INTERCEPTOR, 90), performance: 75 }, // 서버 풍화 75%
+  ];
+  const guardianLevel = 10; // branchBonusBp(10)=floor(5000*10/30)=1666
+  // 저장 layout(defenses.layout): 슬롯 위치 + 공격자가 주장하는 위조 성능/보너스(풀성능·풀보너스).
+  const storedForgedLayout: DefenseLayout = {
+    ...SERVER_LAYOUT,
+    guardians: [
+      { x: 350, y: -100, snapshot: makeGuardianSnapshot(GUARDIAN_TITAN, 140), performanceCP: PERFORMANCE_FULL, lineageBonusBp: 5000 },
+      { x: 400, y: 150, snapshot: makeGuardianSnapshot(GUARDIAN_INTERCEPTOR, 90), performanceCP: PERFORMANCE_FULL, lineageBonusBp: 5000 },
+    ],
+  };
+  const authoritativeLayout = injectGuardianAuthority(storedForgedLayout, dbRows, guardianLevel) as DefenseLayout;
+  // 단위 검증: 성능·보너스가 DB 권위로 덮이고 슬롯 위치는 보존되는가.
+  const expectBonus = branchBonusBp(guardianLevel);
+  {
+    const g0 = authoritativeLayout.guardians?.[0];
+    const g1 = authoritativeLayout.guardians?.[1];
+    const ok =
+      g0 !== undefined && g1 !== undefined &&
+      g0.performanceCP === performanceToCenti(60) && g1.performanceCP === performanceToCenti(75) &&
+      g0.lineageBonusBp === expectBonus && g1.lineageBonusBp === expectBonus &&
+      g0.x === 350 && g0.y === -100 && g1.x === 400 && g1.y === 150;
+    if (ok) {
+      console.log(`${GREEN}PASS${RESET} 수호 권위 주입 단위(성능·보너스 덮어쓰기·위치 보존)`);
+    } else {
+      failures++;
+      console.log(`${RED}FAIL${RESET} 수호 권위 주입 단위: ${JSON.stringify(authoritativeLayout.guardians)}`);
+    }
+  }
+  const authCtx: InvasionServerContext = { layout: authoritativeLayout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
+  // 정직: 공격자가 서버 권위 주입 layout 으로 런·제출 → accept.
+  expectAccept('수호 권위 주입 후 정직 침공', honest(seed, invasionConfig(authoritativeLayout), inputs), authCtx);
+  // 위조: 공격자가 저장 위조 layout(풀성능·풀보너스)으로 런·제출 → 서버는 권위 주입 layout(풍화
+  // 60/75%·계보 1666bp)으로 대조 → defense-mismatch(방치 수호를 신선·풀보너스라 주장한 위조 거부).
+  expectReject('수호 권위 주입 vs 위조 제출', honest(seed, invasionConfig(storedForgedLayout), inputs), ['defense-mismatch'], authCtx);
+  // 하위호환: 수호 슬롯 없는 방어(SERVER_LAYOUT)는 활성 수호 DB 가 있어도 주입 생략 → guardians 미포함.
+  const noSlotInject = injectGuardianAuthority(SERVER_LAYOUT, dbRows, guardianLevel) as DefenseLayout;
+  if (noSlotInject.guardians === undefined) {
+    console.log(`${GREEN}PASS${RESET} 수호 슬롯 없으면 주입 생략(하위호환)`);
+  } else {
+    failures++;
+    console.log(`${RED}FAIL${RESET} 수호 슬롯 없음인데 guardians 주입됨`);
+  }
 
   // --- 게이트 4: 입력 길이 상한(제한 시간 초과) ---
   const shortCtx: InvasionServerContext = { layout: SERVER_LAYOUT, timeLimitTicks: 200 };
