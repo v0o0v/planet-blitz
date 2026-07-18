@@ -293,6 +293,26 @@ function main(): number {
     console.log(`${RED}FAIL${RESET} 수호 슬롯 없음인데 guardians 주입됨`);
   }
 
+  // --- 게이트 3.9b: 매치메이킹 라이브 서빙 == EF 권위 주입 델리버리 경로(PR#37 리뷰 LOW) ---
+  // 위 3.9 는 이미 계산된 authoritativeLayout 을 공격자 런과 EF 컨텍스트 양쪽에 재사용해
+  // "델리버리"(매치메이킹이 실제로 뭘 서빙하는가)를 생략했다는 지적을 받았다. 여기서는 방어자가
+  // 저장한 raw layout(storedForgedLayout — 슬롯 위치만 유효, 성능·보너스는 위조 주장) 한 곳에서
+  // 시작해, ①매치메이킹 RPC 몫(SQL `inject_guardian_authority`, 20260718110000)과 ②EF index.ts
+  // 몫(TS `injectGuardianAuthority`)이 **독립적으로 각자 호출**해도 동일한 권위 layout 을
+  // 재구성함을 증명한다 — 즉 공격자가 매치메이킹이 준 layout 을 그대로 정직하게 런하면, EF 가
+  // 같은 DB 상태에서 재구성한 권위 layout 과 반드시 일치해 accept 된다(실제 배달 경로 재현).
+  // SQL 함수 자체는 이 순수 TS 함수와 동일 규칙으로 작성됐다(마이그레이션 주석 대조 참조) — 이
+  // Deno 스위트는 플랫폼 무참조 TS 코어만 검증하고, SQL 헬퍼의 회귀는 리드의 원격 적용 후
+  // `get_advisors`·수동 대조 몫으로 남는다(README carry-forward에 명시).
+  const matchmakingServedLayout = injectGuardianAuthority(storedForgedLayout, dbRows, guardianLevel) as DefenseLayout;
+  const efReconstructedLayout = injectGuardianAuthority(storedForgedLayout, dbRows, guardianLevel) as DefenseLayout;
+  const deliveryCtx: InvasionServerContext = { layout: efReconstructedLayout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
+  expectAccept(
+    '매치메이킹 서빙 layout 그대로 정직 침공(델리버리 경로 재현)',
+    honest(seed, invasionConfig(matchmakingServedLayout), inputs),
+    deliveryCtx,
+  );
+
   // --- 게이트 4: 입력 길이 상한(제한 시간 초과) ---
   const shortCtx: InvasionServerContext = { layout: SERVER_LAYOUT, timeLimitTicks: 200 };
   const longInputs = buildInputs(300);

@@ -817,11 +817,32 @@ Phase F(`20260717150000_m4_phase_f_pve_sampling.sql`) "리플레이 재실행 �
   서버측 상한 클램프(5000 — dismiss_guardian 회수 포인트의 상한도 겸함).
 
 ### 신뢰 경계 (문서화된 한계 — carry-forward)
-- **[MED] EF index.ts 권위 수호 로딩**: `verifyInvasionCore` 는 서버 `server.layout.guardians` 를
-  진실로 재실행·대조한다. 이 배열의 **성능(performanceCP)·계보 보너스(lineageBonusBp)를 방어자
-  guardians 테이블(서버 풍화)·lineage 컬럼에서 권위 로딩해 주입**하는 것은 EF 배선(index.ts)의
-  몫이다(maintenance 주입과 동일 패턴). 이 워커는 코어 대조·재실행 지원까지 완성했고, index.ts
-  배선은 verify-invasion 배포 phase 로 이월한다.
+- **[MED→해소, PR#37] EF index.ts 권위 수호 로딩**: `verifyInvasionCore` 는 서버
+  `server.layout.guardians` 를 진실로 재실행·대조한다. 이 배열의 **성능(performanceCP)·계보
+  보너스(lineageBonusBp)를 방어자 guardians 테이블(서버 풍화)·lineage 컬럼에서 권위 로딩해
+  주입**하는 배선(index.ts `injectGuardianAuthority`, maintenance 주입과 동일 패턴)은 PR#37 로
+  완결됐다.
+- **[HIGH→해소, PR#37 리뷰 대응] 매치메이킹 라이브 수호 서빙**: EF 가 라이브 값으로 권위 대조를
+  시작하자, `get_invasion_targets`/`get_placement_targets`/`get_revenge_targets` 가 여전히
+  `defenses.layout`(업로드 시점 프리즈)을 그대로 서빙하는 비대칭이 드러났다 — 주간 풍화
+  (weather_guardians) 이후 공격자는 stale(고성능) layout 으로 정직하게 런하는데 EF 는 라이브
+  (저성능) 값으로 대조해 `defense-mismatch` 오거부가 광범위 발생하고, 공격자는 방어자 `guardians`
+  를 RLS 로 직접 못 읽어 라이브 값을 스스로 재현할 방법이 없었다. `20260718110000_m5_guardian_
+  live_targets.sql` 이 `inject_guardian_authority(layout, profile_id)` SQL 헬퍼(EF
+  `injectGuardianAuthority` 와 동일 규칙 — 슬롯 위치 존중·성능/보너스/스냅샷 라이브 덮어쓰기·
+  created_at→id 매핑·MAX_GUARDIAN_SLOTS=2 상한)를 신설해 매치메이킹 3종 RPC 의 `layout` 반환
+  컬럼에 적용한다. 원본 가드·쿨다운·매치메이킹 격차 로직·NPC 필터·복수전 데드라인은 전부 리터럴
+  보존(원격 `pg_get_functiondef` 로 drift 없음 확인 후 layout selector 한 줄만 치환 — PR#29 교훈).
+- **[MED, 잔여] 스냅샷~검증 사이 dismiss 레이스**: 위 라이브 서빙으로 "stale layout vs 라이브 DB"
+  불일치(상시 발생하던 축)는 해소되지만, get_invasion_targets 조회(T0)와 verify-invasion 재실행
+  (T1) 사이 짧은 창에 방어자가 `dismiss_guardian`/`retire_ship` 을 실행하면 T0 스냅샷과 T1 라이브
+  값의 활성 수호 개수(n)가 달라져 `guardiansEqual` 이 false → `defense-mismatch` 로 거부될 수
+  있다. **보안 영향 없음**(항상 reject 방향 — 위조 accept 경로가 생기지 않는다, 원칙2 위반 없음).
+  **정직 손해 빈도는 낮음**으로 평가: 두 RPC 모두 방어자 본인이 자기 방어 사령부에서 명시 클릭해야
+  하는 행동이고(자동 소멸 없음, ADR-0007) 공격자 런 시간(초~수분) 창에 정확히 겹쳐야 한다. 또
+  `retire_ship` 은 신규 수호를 created_at 뒤쪽에만 추가하므로 이미 채워진 슬롯의 매핑에는 영향이
+  없다(영향은 빈 슬롯이 신규 퇴역으로 막 채워지는 좁은 창뿐). 완전한 원자성(스냅샷을 침공 행에
+  고정해 EF 가 그 고정본을 대조)은 침공 제출 스키마 변경이 필요한 별도 작업으로 이월한다.
 - **[문서화] combat_score·snapshot 신뢰 경계**: 이 두 값은 클라이언트 빌드 파생이라 클라가 주장한다
   (items/save 가 이 게임에서 클라 정본인 것과 동일 축 — verifyInvasionCore 헤더 "공격자 로드아웃
   미대조" 한계와 같은 등급). PvP 결정에 직결되는 **풍화(performance)** 축만 서버 권위로 봉인한다.
