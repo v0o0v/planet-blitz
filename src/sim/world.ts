@@ -1145,52 +1145,207 @@ function autoAttack(state: WorldState, player: Entity): void {
   player.cooldown = fireCd;
 }
 
-// --- Sub-weapon (M2 plan B2, OQ-M2-2 default: independent fire slot) ---------
-/** Ticks between sub-weapon shots. */
-const SUB_WEAPON_COOLDOWN = 24;
-/** Sub-weapon targeting range. */
-const SUB_WEAPON_RANGE = 900;
-const SUB_BULLET_SPEED = 1500;
-const SUB_BULLET_DAMAGE = 6;
-const SUB_BULLET_RADIUS = 5;
-const SUB_BULLET_LIFE = 60;
-/** Side-splay for the twin sub variant (radians). */
-const SUB_TWIN_SPLAY = 0.16;
+// --- Sub-weapon 5종 (M2 plan B2, OQ-M2-2: 독립 발사 슬롯; GDD §5 "보조무기 5종") ------
+//
+// 보조무기는 주무기(autoAttack)와 완전히 분리된 자기 사이클로 동작한다. 사이클 카운트다운은
+// 플레이어의 미사용 `timer` 필드(이미 해시됨)에 실어 신규 WorldState 필드·해시 스키마 변경
+// 없이 결정론을 유지한다. 미장착(subWeaponType === SUB_WEAPON_NONE = -1)이면 즉시 반환 →
+// 기존 PvE 런과 비트 동일(거동·해시 불변). 5종은 확실히 다른 플레이 감각을 목표로 한다:
+//   0 사이드킥  — 빠른 연사 단발 볼트(근접 자동 조준). 꾸준한 보조 DPS.
+//   1 스캐터    — 3발 광각 산탄(짧은 사거리). 근거리 다수 제압.
+//   2 기뢰장    — 플레이어 위치에 설치형 지속 피해 장판(정지 발사체·긴 수명·넓은 반경).
+//   3 센트리    — 주기적으로 임시 자동 포탑 배치(독립 자동 사격). 자율 드론 베이 로직 재사용.
+//   4 호밍 플레어 — 유도 미사일(제한 선회). 느린 연사·강한 단발.
+//
+// 렌더 구분(요구 #4): 보조무기가 직접 쏘는 발사체는 blankEntity의 기본 enemyType(-1) 대신
+// 자기 타입 코드(0..4)를 실어 스폰한다. sim은 friendly bullet의 enemyType을 읽지 않으므로
+// (오직 ownerId만 유도 마커로 사용) 순수 렌더 태그다 — entityRenderer가 이 코드로 색을
+// 구분한다. 센트리(3)의 포탑탄은 stepTurrets가 표준 포탑탄으로 쏘므로 기본 렌더.
+//
+// 어픽스 상호작용(요구 #5): 데미지·연사 어픽스는 주무기와 동일한 배율(loadout.damageMult /
+// fireRateMult)을 보조무기의 직접 발사체(사이드킥·스캐터·기뢰·플레어)에 그대로 공유한다.
+// 센트리(3)가 배치하는 포탑은 자율 드론 베이와 동일하게 고정 스탯 포탑이다(포탑탄은 별도
+// 시스템 stepTurrets가 관리) — 문서화된 예외.
+
+/** 보조무기 타입 코드(loadout.ts SUB_* 상수와 동일 — friendly bullet 렌더 태그로도 사용). */
+const SUB_TYPE_SIDEKICK = 0;
+const SUB_TYPE_SCATTER = 1;
+const SUB_TYPE_MINE = 2;
+const SUB_TYPE_SENTRY = 3;
+const SUB_TYPE_FLARE = 4;
+
+// 사이드킥(0): 빠른 단발.
+const SUB_SIDEKICK_COOLDOWN = 18;
+const SUB_SIDEKICK_DAMAGE = 6;
+const SUB_SIDEKICK_SPEED = 1600;
+const SUB_SIDEKICK_RADIUS = 5;
+const SUB_SIDEKICK_LIFE = 60;
+const SUB_SIDEKICK_RANGE = 900;
+
+// 스캐터(1): 3발 광각 산탄, 짧은 사거리, 중간 쿨다운.
+const SUB_SCATTER_COOLDOWN = 33;
+const SUB_SCATTER_DAMAGE = 4;
+const SUB_SCATTER_SPEED = 1400;
+const SUB_SCATTER_RADIUS = 5;
+const SUB_SCATTER_LIFE = 38;
+const SUB_SCATTER_RANGE = 620;
+const SUB_SCATTER_PELLETS = 3;
+/** 총 부채꼴 각(라디안). */
+const SUB_SCATTER_SPREAD = 0.52;
+
+// 기뢰장(2): 플레이어 위치에 정지 발사체(속도 0)를 설치. 긴 수명·넓은 반경 동안 위로
+// 지나가는 적에게 매 틱 피해를 주되, 관통 예산이 소진되면 소멸(장판 총 피해 상한). 조준
+// 대상 없이도 설치(선제 지역 거부). 빔 세그먼트(정지 발사체) 판정 경로를 그대로 재사용.
+const SUB_MINE_COOLDOWN = 66;
+const SUB_MINE_DAMAGE = 3;
+const SUB_MINE_RADIUS = 64;
+const SUB_MINE_LIFE = 150;
+/** 장판이 흡수하는 총 명중 횟수(적×틱). 소진 시 즉시 소멸 → 총 피해 상한. */
+const SUB_MINE_PIERCE = 40;
+
+// 센트리(3): 임시 자동 포탑 주기 배치(자율 드론 베이 재사용). 조준 대상 없이도 배치.
+const SUB_SENTRY_COOLDOWN = 300;
+/** 배치 오프셋(플레이어 옆). 드론 베이와 동일 상수 재사용(DRONE_SPAWN_OFFSET). */
+
+// 호밍 플레어(4): 유도 미사일. 느린 연사·강한 단발. MISSILE_MARK로 stepProjectiles가 매 틱
+// 제한 선회. 탄속을 낮춰 곡선 추적이 눈에 보이게 한다.
+const SUB_FLARE_COOLDOWN = 45;
+const SUB_FLARE_DAMAGE = 14;
+const SUB_FLARE_SPEED = 1000;
+const SUB_FLARE_RADIUS = 6;
+const SUB_FLARE_LIFE = 95;
+const SUB_FLARE_RANGE = 950;
+
+/** 보조무기 직접 발사체에 주무기와 공유하는 데미지 배율 적용(요구 #5). 주무기와 동일한
+ *  반올림(소수 2자리)으로 결정론·플랫폼 불변 유지. */
+function subDamage(state: WorldState, base: number): number {
+  const mult = state.config.loadout?.damageMult ?? 1;
+  return Math.round(base * mult * 100) / 100;
+}
+
+/** 보조무기 사이클 쿨다운에 주무기와 공유하는 연사 배율 적용(요구 #5). 최소 2틱 하한
+ *  (주무기 fireCooldown 하한과 정합). */
+function subCooldown(state: WorldState, base: number): number {
+  const mult = state.config.loadout?.fireRateMult ?? 1;
+  const cd = Math.round(base * mult);
+  return cd < 2 ? 2 : cd;
+}
 
 /**
- * Independent sub-weapon fire (plan B2 / OQ-M2-2). Fires on its own cadence,
- * tracked on the player's otherwise-unused `timer` field (already hashed), so it
- * never competes with the primary weapon's cooldown. `subWeaponType`: 0 = single
- * rapid bolt, 1 = twin side bolts. -1 (no sub equipped) is a no-op.
+ * 독립 보조무기 발사(plan B2 / OQ-M2-2). 자기 사이클(player.timer)로 주무기 쿨다운과
+ * 경쟁하지 않는다. subWeaponType 0..4로 분기, -1(미장착)은 no-op(거동·해시 불변).
  */
 function subWeapon(state: WorldState, player: Entity): void {
-  const lo = state.config.loadout;
-  const subType = lo?.subWeaponType ?? -1;
+  const subType = state.config.loadout?.subWeaponType ?? -1;
   if (subType < 0) return;
   if (player.timer > 0) {
     player.timer--;
     return;
   }
-  const target = nearestTarget(state, player, SUB_WEAPON_RANGE);
-  if (target === undefined) return;
-  const baseAngle = atan2(target.y - player.y, target.x - player.x);
-  const angles = subType === 1 ? [baseAngle - SUB_TWIN_SPLAY, baseAngle + SUB_TWIN_SPLAY] : [baseAngle];
-  for (const ang of angles) {
-    spawnBullet(
+
+  // 기뢰장·센트리는 조준 대상 없이 선제 설치(지역 거부·자율 사격). 나머지는 최근접 적을
+  // 조준하며, 대상이 없으면 사이클을 소비하지 않고 대기(timer 유지 = 즉시 발사 준비).
+  if (subType === SUB_TYPE_MINE) {
+    const mine = spawnBullet(
       state,
       player.x,
       player.y,
-      ang,
-      SUB_BULLET_SPEED,
-      SUB_BULLET_DAMAGE,
       0,
-      SUB_BULLET_RADIUS,
-      SUB_BULLET_LIFE,
-      cos(ang),
-      sin(ang),
+      0,
+      subDamage(state, SUB_MINE_DAMAGE),
+      SUB_MINE_PIERCE,
+      SUB_MINE_RADIUS,
+      SUB_MINE_LIFE,
+      1,
+      0,
     );
+    mine.enemyType = SUB_TYPE_MINE; // 렌더 태그
+    player.timer = subCooldown(state, SUB_MINE_COOLDOWN);
+    return;
   }
-  player.timer = SUB_WEAPON_COOLDOWN;
+
+  if (subType === SUB_TYPE_SENTRY) {
+    // 자율 드론 베이와 동일: turretPickup을 배치 후 즉시 활성 포탑화. DRONE_MARK로 청크
+    // 기믹 컬링·상한 대상에서 제외(플레이어 소환물). stepTurrets가 자동 사격·수명 처리.
+    const sentry = spawnEventObject(state, 'turretPickup', player.x + DRONE_SPAWN_OFFSET, player.y, 44);
+    sentry.ownerId = DRONE_MARK;
+    activateTurret(sentry);
+    player.timer = subCooldown(state, SUB_SENTRY_COOLDOWN);
+    return;
+  }
+
+  const range =
+    subType === SUB_TYPE_SCATTER
+      ? SUB_SCATTER_RANGE
+      : subType === SUB_TYPE_FLARE
+        ? SUB_FLARE_RANGE
+        : SUB_SIDEKICK_RANGE;
+  const target = nearestTarget(state, player, range);
+  if (target === undefined) return;
+  const baseAngle = atan2(target.y - player.y, target.x - player.x);
+
+  if (subType === SUB_TYPE_SCATTER) {
+    const n = SUB_SCATTER_PELLETS;
+    const start = baseAngle - SUB_SCATTER_SPREAD / 2;
+    const stepA = n > 1 ? SUB_SCATTER_SPREAD / (n - 1) : 0;
+    const dmg = subDamage(state, SUB_SCATTER_DAMAGE);
+    for (let i = 0; i < n; i++) {
+      const ang = start + stepA * i;
+      const b = spawnBullet(
+        state,
+        player.x,
+        player.y,
+        ang,
+        SUB_SCATTER_SPEED,
+        dmg,
+        0,
+        SUB_SCATTER_RADIUS,
+        SUB_SCATTER_LIFE,
+        cos(ang),
+        sin(ang),
+      );
+      b.enemyType = SUB_TYPE_SCATTER;
+    }
+    player.timer = subCooldown(state, SUB_SCATTER_COOLDOWN);
+    return;
+  }
+
+  if (subType === SUB_TYPE_FLARE) {
+    const flare = spawnBullet(
+      state,
+      player.x,
+      player.y,
+      baseAngle,
+      SUB_FLARE_SPEED,
+      subDamage(state, SUB_FLARE_DAMAGE),
+      0,
+      SUB_FLARE_RADIUS,
+      SUB_FLARE_LIFE,
+      cos(baseAngle),
+      sin(baseAngle),
+    );
+    flare.ownerId = MISSILE_MARK; // 유도 마커: stepProjectiles가 매 틱 제한 선회
+    flare.enemyType = SUB_TYPE_FLARE; // 렌더 태그
+    player.timer = subCooldown(state, SUB_FLARE_COOLDOWN);
+    return;
+  }
+
+  // 0 사이드킥(기본): 단발.
+  const b = spawnBullet(
+    state,
+    player.x,
+    player.y,
+    baseAngle,
+    SUB_SIDEKICK_SPEED,
+    subDamage(state, SUB_SIDEKICK_DAMAGE),
+    0,
+    SUB_SIDEKICK_RADIUS,
+    SUB_SIDEKICK_LIFE,
+    cos(baseAngle),
+    sin(baseAngle),
+  );
+  b.enemyType = SUB_TYPE_SIDEKICK;
+  player.timer = subCooldown(state, SUB_SIDEKICK_COOLDOWN);
 }
 
 /**

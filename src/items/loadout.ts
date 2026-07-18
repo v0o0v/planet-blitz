@@ -29,6 +29,16 @@ export const WEAPON_BEAM = 4;
 /** No sub-weapon equipped. */
 export const SUB_WEAPON_NONE = -1;
 
+/** Sub-weapon types (GDD §5 "보조무기 5종"; shared numeric codes with the sim's
+ *  independent subWeapon fire cycle in src/sim/world.ts). */
+export const SUB_SIDEKICK = 0; // 빠른 연사 단발
+export const SUB_SCATTER = 1; // 3발 광각 산탄
+export const SUB_MINE = 2; // 설치형 지속 피해 장판
+export const SUB_SENTRY = 3; // 임시 자동 포탑 배치
+export const SUB_FLARE = 4; // 유도 미사일
+/** Number of sub-weapon variants (0..N-1) — mirrors roll.ts SUB_WEAPON_VARIANTS. */
+export const SUB_WEAPON_VARIANTS = 5;
+
 /** Reference base HP the maxHpPct affix scales against (matches DEFAULT_CONFIG). */
 const BASE_HP_REF = 100;
 

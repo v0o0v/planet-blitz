@@ -41,6 +41,11 @@ const LOOT_SIZE = 48;
 /** Rarity → tint for loot (render-only): normal grey, magic blue, rare gold,
  *  unique orange. Indexed by the rarity code carried in `enemyType`. */
 const LOOT_TINT = [0xcfd6e0, 0x5aa0ff, 0xffd24a, 0xff8a2a];
+/** 보조무기 5종의 직접 발사체 색(render-only): friendly bullet에 실린 sub-type 코드
+ *  (0..4, sim의 subWeapon이 enemyType에 태깅)로 색을 구분한다. 주무기 탄은 enemyType
+ *  -1이라 이 배열을 타지 않고 기본 흰색으로 렌더된다.
+ *  0 사이드킥=청록, 1 스캐터=연두, 2 기뢰장=주황, 3 센트리=미사용(포탑탄은 기본), 4 플레어=자홍. */
+const SUB_BULLET_TINT = [0x4ff0d0, 0x9cff5a, 0xff9a3a, 0xffffff, 0xff5ad0];
 
 export class EntityRenderer {
   readonly layer = new Container();
@@ -136,6 +141,12 @@ export class EntityRenderer {
           // sprite is the placeholder diamond or a neutral gold loot.png.
           sprite.setSize(LOOT_SIZE, LOOT_SIZE);
           sprite.tint = LOOT_TINT[e.enemyType] ?? LOOT_TINT[0] ?? 0xffffff;
+        } else if (e.kind === 'bullet' && e.enemyType >= 0) {
+          // 보조무기 직접 발사체: sub-type 코드로 색 구분(주무기 탄은 enemyType -1이라
+          // 이 분기를 타지 않음). 크기는 일반 탄과 동일한 hitbox 기준.
+          const size = e.radius * 2 * ART_SCALE;
+          sprite.setSize(size, size);
+          sprite.tint = SUB_BULLET_TINT[e.enemyType] ?? 0xffffff;
         } else {
           // Real sprites are 64/128px; scale to the sim hitbox so art matches
           // collisions (player r16 → 48px, matching the GDD ship size).
