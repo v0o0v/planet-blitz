@@ -202,6 +202,14 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   // 남고, OFF 시 이전 런의 savedMaxHp를 새 런에 덮어쓰는 desync가 생긴다(리뷰 LOW).
   let lastRunSeed: number | null = null;
   let lastRunTick = -1;
+  // 포인터로 버튼을 누르는 동안(pointerdown~pointerup)에는 250ms 자동 재빌드를
+  // 건너뛴다. 재빌드는 body.innerHTML 을 통째로 갈아엎어 눌린 버튼 DOM 을 교체하는데,
+  // mousedown~mouseup 사이에 그게 끼면 브라우저가 click 을 발화하지 않아 클릭이
+  // 유실된다 — 씬 런처 버튼이 "눌러도 화면이 안 바뀐다(될 때도 안 될 때도)"의 근본 원인.
+  // 라이브 런 중에는 snapshot(tick)이 매 틱 바뀌어 재빌드가 항상 실제 DOM 을 교체하므로
+  // 특히 잘 씹힌다. 억제 구간은 버튼을 누르고 있는 짧은 순간뿐이라 인스펙터 실시간
+  // 갱신 손실은 사실상 없다.
+  let pointerActive = false;
 
   // --- DOM 빌더 헬퍼 --------------------------------------------------------
 
@@ -944,11 +952,35 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   }
   window.addEventListener('keydown', onKey);
 
-  // 열려 있는 동안 250ms마다 인스펙터/상태 갱신. 단, 패널 안의 입력 필드를 편집
-  // 중이면 재빌드를 건너뛴다 — render()가 innerHTML을 갈아엎어 포커스·캐럿을 훔치면
-  // 시드 같은 여러 자리 값을 타이핑할 수 없다(리뷰 MED).
+  // 포인터로 패널을 누르는 동안 자동 재빌드를 억제해 click 유실을 막는다(pointerActive).
+  // pointerup 직후 click 이 동기로 발화하므로, 억제 해제는 다음 프레임(rAF)으로 미뤄
+  // 그 click 과 그 안의 render()가 끝난 뒤에야 250ms 재빌드가 재개되게 한다. rAF 가
+  // 없는 환경(테스트 등)에서는 setTimeout(0)로 폴백한다.
+  const releasePointer = (): void => {
+    pointerActive = false;
+  };
+  function onPointerDown(): void {
+    pointerActive = true;
+  }
+  function schedulePointerRelease(): void {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(releasePointer);
+    else window.setTimeout(releasePointer, 0);
+  }
+  root.addEventListener('pointerdown', onPointerDown);
+  // pointerup 은 패널 밖에서 떼도 잡도록 window 에 건다. 드래그 이탈·터치 취소
+  // (pointercancel), 그리고 버튼을 누른 채 커서가 창 밖으로 나가 떼는 경우의 안전망으로
+  // window blur 까지 해제 트리거로 묶는다 — 포인터가 정상 해제되지 않아 억제가 true 로
+  // 고착돼 인스펙터 자동 갱신이 멈추는 상황을 막기 위함(그래도 다음 창 내부 클릭이 자가 치유).
+  window.addEventListener('pointerup', schedulePointerRelease);
+  window.addEventListener('pointercancel', schedulePointerRelease);
+  window.addEventListener('blur', schedulePointerRelease);
+
+  // 열려 있는 동안 250ms마다 인스펙터/상태 갱신. 단, (1) 패널 안의 입력 필드를 편집
+  // 중이거나 (2) 포인터로 버튼을 누르는 중이면 재빌드를 건너뛴다 — render()가 innerHTML을
+  // 갈아엎어 포커스·캐럿을 훔치거나(리뷰 MED) 눌린 버튼을 교체해 click 을 유실시키기 때문.
   const timer = window.setInterval(() => {
     if (body.classList.contains('hidden')) return;
+    if (pointerActive) return;
     const ae = document.activeElement;
     if (ae !== null && body.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
     render();
@@ -958,6 +990,10 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     destroy(): void {
       window.clearInterval(timer);
       window.removeEventListener('keydown', onKey);
+      root.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointerup', schedulePointerRelease);
+      window.removeEventListener('pointercancel', schedulePointerRelease);
+      window.removeEventListener('blur', schedulePointerRelease);
       root.remove();
       style.remove();
     },
