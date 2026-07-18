@@ -852,3 +852,28 @@ Phase F(`20260717150000_m4_phase_f_pve_sampling.sql`) "리플레이 재실행 �
   미대조" 한계와 같은 등급). PvP 결정에 직결되는 **풍화(performance)** 축만 서버 권위로 봉인한다.
   리뷰 HIGH-3 수정으로 반복 채굴은 쿨다운+상한 클램프로 실질 봉쇄했으나, "진짜 만렙 기체 소비"의
   완전한 서버 검증(ships 행 직접 삭제 등 설계 변경)은 별도 작업으로 남아 있다.
+
+## M5 침공 권위 스냅샷 고정 (`20260718130000_m5_invasion_authority_snapshot`)
+
+위 **[MED, 잔여] 스냅샷~검증 사이 dismiss 레이스(레이스 B)** 를 스키마로 완전 해소한다.
+
+- **핵심**: 공격 개시 RPC `begin_invasion(p_defense_id)`(SECURITY DEFINER, `search_path=''`)가 T0 에
+  방어 배치에 수호 권위를 주입(`inject_guardian_authority`)하고 정비도와 함께 **불변 스냅샷**
+  (`public.invasion_snapshots.authority` = `{layout, maintenance}`)으로 박고 `snapshot_id` 를 발급한다.
+  EF 가 T1 에 라이브 수호/정비도를 재조회하는 대신 이 고정본을 대조하면, T0↔T1 사이 방어자의
+  `dismiss_guardian`/`retire_ship`/정비/풍화가 이 침공 검증에 **영향을 줄 수 없다**(레이스 B 제거,
+  dismiss_guardian 이 침공 검증과 완전 원자 분리).
+- **★기존 봉인 무수정(회귀 위험 0)**: 권위값을 `invasions` 가 아니라 별도 `invasion_snapshots` 에
+  담고 `invasions` 에는 참조 `snapshot_id` 만 추가했다. 따라서 `guard_invasions_client_insert/update`
+  를 **create or replace 하지 않는다** → PR#29/#35 에서 2회 발생한 봉인 유실 패턴을 원천 회피. 기존
+  seal(verified_*·attacker_won·caused_swap·is_revenge·attacker_sticker/defender_sticker·self-invasion
+  raise) 전부 무손실.
+- **위조 차단**: `invasion_snapshots` 는 클라 insert 정책 없음 → definer begin_invasion(소유자 postgres,
+  RLS 우회)만 기록. 공격자가 남의(약한) 스냅샷을 가리키면 EF 가 소유권(attacker_id·defense_id)을
+  대조해 무효화하고 라이브 폴백하므로 이득 없음. 자기 침공은 begin_invasion 내부에서 명시 raise
+  (definer 라 가드의 self-invasion raise 가 스킵되므로 자체 차단 — is_service_role 미사용, auth.uid 게이트).
+- **[리드 후속] EF·클라 배선 + 원격 적용**: 이 마이그레이션 applying 만으로는 **거동 무변**이다
+  (snapshot_id 미설정 → EF 현행 라이브 경로 = 회귀 0). 완전 원자성은 ① 클라가 begin_invasion 호출 후
+  반환 layout 으로 런 → insert 시 snapshot_id 동봉, ② EF 가 `inv.snapshot_id` 존재 & 소유권 일치 시
+  `authority.layout`(+maintenance) 사용(신선도는 get_invasion_targets 프레시 창 1시간과 동일 기준
+  강제 권장)일 때 발동한다. 원격 적용은 리드 승인 후.
