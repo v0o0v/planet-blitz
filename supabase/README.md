@@ -747,12 +747,16 @@ Phase F(`20260717150000_m4_phase_f_pve_sampling.sql`) "리플레이 재실행 �
   7컬럼·RLS true·정책 2개(insert_own/select_own)·가드 트리거 1개·RPC 2개(service_role EXECUTE
   만)·`get_advisors(security)` 신규 WARN 이 있으면 `sample_pve_runs`/`apply_pve_verification`
   는 service_role 전용이라 목록에 없어야 함(있으면 EXECUTE 회수 재확인).
-- EF 배포: `deploy_edge_function('verify-pve-sample', files=[{name:'index.ts', content:<dist.index.js>}],
-  verify_jwt=false)`. verify_jwt=false 는 사용자 JWT 흐름이 아니기 때문(EF 내부에서 Bearer==
-  service key 자체 검사). 스모크: service key 로 `POST {limit:1}` → `{checked,verified,rejected,
-  flagged}` 확인, 위조 런 심은 뒤 재호출해 rejected+flagged e2e.
-- 주기 실행: 마이그레이션 말미 주석의 pg_cron+pg_net(vault 시크릿) 또는 외부 스케줄러(01:30 UTC
-  권장 — 이상치 플래그 01:00 뒤).
+- ✅ **EF 배포 완료(2026-07-18)**: `verify-pve-sample` **v2 ACTIVE, verify_jwt=true**(계획과 달리
+  true 채택 — 게이트웨이가 JWT 서명을 검증하고, EF 는 `Bearer==env service key` **또는** JWT
+  `role=='service_role'` 클레임으로 판정. 신형 API 키 체계에서 런타임 주입 키(sb_secret)와 legacy
+  service_role JWT 가 달라 env 동등성 단독 비교가 401 오거부되던 함정을 실측 후 수정, PR#38).
+  스모크 실측: Vault 의 legacy JWT 로 `POST {limit:200}` → HTTP 200
+  `{"checked":0,"verified":0,"rejected":0,"flagged":0}`(pending 0 상태 정상).
+- ✅ **주기 실행 설정 완료(2026-07-18)**: pg_cron 잡 `planet-blitz-verify-pve-sample`(`30 1 * * *`,
+  active) — pg_net + Vault(`project_url`·`service_role_key`, 대시보드 등록) 조합, 원격 마이그레이션
+  `m4_pve_sample_cron`(리포 미러 `20260718120000_m4_pve_sample_cron.sql`). 실행 이력은
+  `cron.job_run_details` + `net._http_response` 로 확인.
 
 ### 남은 리스크 (PvE 샘플링)
 - **[LOW] 배치 상한·샘플률 튜닝**: `MAX_BATCH`=200·flagged 우선+random 은 잠정. 런 볼륨·재실행
