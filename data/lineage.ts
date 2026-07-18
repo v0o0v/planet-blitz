@@ -81,6 +81,60 @@ export function shipBonusBp(state: LineageState): number {
   return branchBonusBp(state.shipLevel);
 }
 
+// ---------------------------------------------------------------------------
+// 수호 가지 마일스톤 질적 노드(GDD §4, ADR-0007) — 레벨 도달 시 자동 해금(별도 투자 없음).
+// ---------------------------------------------------------------------------
+/**
+ * 마일스톤 비트마스크(방어전 config 로 실린다 — DefensePlacement 의 lineageBonusBp 와 동일 철학).
+ * sim 은 profile 을 읽지 않고 이 마스크만 소비한다(서버 리플레이 재현 가능). 비트 코드는 배치
+ * JSON·해시 계약이라 **절대 재번호 금지**.
+ */
+/** ① 격추 재기동: 수호 기체 HP 0 도달 시 방어전당 1회 부활(부활 HP·딜레이는 data/guardian.ts). */
+export const MILESTONE_REBOOT = 1;
+/** ② 코어 근접 수비: 코어 반경 내에서 수호 기체 피해·연사 강화(data/guardian.ts). */
+export const MILESTONE_CORE_GUARD = 2;
+/** ③ 실드 공유: 방어전 시작 시 코어·포탑에 수호 전투력 비례 실드 부여(data/guardian.ts). */
+export const MILESTONE_SHIELD_SHARE = 4;
+/** 정의된 마일스톤 비트 전체(마스크 정규화 상한 = 0b111 = 7). */
+export const MILESTONE_MASK_ALL = MILESTONE_REBOOT | MILESTONE_CORE_GUARD | MILESTONE_SHIELD_SHARE;
+
+/**
+ * 마일스톤 해금 레벨(수호 가지). 반감 레벨 K=20 곡선과 어울리게 초·중·후반에 배치한다:
+ *   - Lv{@link REBOOT_LEVEL}(격추 재기동) — 보너스 약 +16.7%(=CAP×10/30) 시점.
+ *   - Lv{@link CORE_GUARD_LEVEL}(코어 근접 수비) — 보너스 약 +27.8%(=CAP×25/45) 시점.
+ *   - Lv{@link SHIELD_SHARE_LEVEL}(실드 공유) — 보너스 약 +35.7%(=CAP×50/70) 시점.
+ * 튜닝 대상(§5). 리스펙 없음(단조 증가)이라 한번 넘긴 레벨은 영구 해금이다.
+ */
+export const REBOOT_LEVEL = 10;
+export const CORE_GUARD_LEVEL = 25;
+export const SHIELD_SHARE_LEVEL = 50;
+
+/**
+ * 수호 가지 누적 레벨 → 해금된 마일스톤 비트마스크(결정론 정수). 레벨 도달만으로 자동 해금
+ * (별도 투자 없음 — 리스펙 없음 원칙과 정합). 음수·소수는 안전 절삭한다.
+ */
+export function guardianMilestones(guardianLevel: number): number {
+  const l = guardianLevel < 0 ? 0 : Math.trunc(guardianLevel);
+  let m = 0;
+  if (l >= REBOOT_LEVEL) m |= MILESTONE_REBOOT;
+  if (l >= CORE_GUARD_LEVEL) m |= MILESTONE_CORE_GUARD;
+  if (l >= SHIELD_SHARE_LEVEL) m |= MILESTONE_SHIELD_SHARE;
+  return m;
+}
+
+/** 마일스톤 비트마스크를 [0, {@link MILESTONE_MASK_ALL}] 로 정규화(미지정·비유한·음수 = 0). */
+export function normalizeMilestones(mask: number | undefined): number {
+  if (mask === undefined || !Number.isFinite(mask)) return 0;
+  const i = Math.trunc(mask);
+  if (i <= 0) return 0;
+  return i & MILESTONE_MASK_ALL;
+}
+
+/** 특정 마일스톤 비트가 켜져 있는지. */
+export function hasMilestone(mask: number, bit: number): boolean {
+  return (mask & bit) !== 0;
+}
+
 /** 포인트 지급(퇴역 기본 지급·소멸 회수). 음수 무시. 새 상태를 반환(불변 갱신). */
 export function grantPoints(state: LineageState, amount: number): LineageState {
   const a = amount < 0 ? 0 : Math.trunc(amount);

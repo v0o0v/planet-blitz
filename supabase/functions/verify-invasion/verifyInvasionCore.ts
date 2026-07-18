@@ -41,7 +41,7 @@ import type {
 } from '../../../src/sim/defense.js';
 import { MAX_GUARDIAN_SLOTS, GUARDIAN_PRESET_COUNT, PERFORMANCE_FULL } from '../../../data/guardian.js';
 import type { GuardianSnapshot } from '../../../data/guardian.js';
-import { branchBonusBp } from '../../../data/lineage.js';
+import { branchBonusBp, guardianMilestones, normalizeMilestones } from '../../../data/lineage.js';
 
 /**
  * 침공 전용 거부 사유(verify-run의 RejectReason에 더해지는 코드). 기계 판독용이라
@@ -147,13 +147,18 @@ function normalizeGuardians(raw: unknown): GuardianPlacement[] | undefined | nul
     }
     const preset = snap.preset ?? -1;
     if (preset < 0 || preset >= GUARDIAN_PRESET_COUNT) return null;
-    out.push({
+    // 마일스톤 마스크(M5): 있으면 정규화(0..7)해 보존, 0/미지정이면 키 생략(해시 조건부 접기와
+    // 정합 — 마스크 0 은 replay.ts 가 접지 않아 바이트 불변). 비유한은 손상으로 보지 않고 0 처리.
+    const ms = normalizeMilestones(isFiniteNumber(gg.milestones) ? gg.milestones : 0);
+    const placement: GuardianPlacement = {
       x: gg.x,
       y: gg.y,
       performanceCP: gg.performanceCP,
       lineageBonusBp: gg.lineageBonusBp,
       snapshot: snap as unknown as GuardianSnapshot,
-    });
+    };
+    if (ms !== 0) placement.milestones = ms;
+    out.push(placement);
   }
   return out;
 }
@@ -171,6 +176,9 @@ function guardiansEqual(
     const y = b[i]!;
     if (!numEq(x.x, y.x) || !numEq(x.y, y.y)) return false;
     if (x.performanceCP !== y.performanceCP || x.lineageBonusBp !== y.lineageBonusBp) return false;
+    // 마일스톤 마스크 대조(M5): 서버 권위 마스크(계보 레벨 재도출)와 제출이 어긋나면 거부한다
+    // (부풀린 마일스톤 위조 차단). 정규화 후 비교(미지정=0).
+    if (normalizeMilestones(x.milestones) !== normalizeMilestones(y.milestones)) return false;
     for (const k of GUARDIAN_SNAPSHOT_KEYS) {
       if (!numEq(x.snapshot[k], y.snapshot[k])) return false;
     }
@@ -354,19 +362,30 @@ export function injectGuardianAuthority(
       ? lineageGuardianLevel
       : 0,
   );
+  // 마일스톤 마스크도 계보 레벨에서 권위 재도출한다(보너스 곡선과 동일 — 계정 단위). 공격자 제출
+  // 마스크를 신뢰하지 않고 방어자 라이브 레벨로 덮는다(위조 시 defense-mismatch). 0 이면 키 생략.
+  const milestones = normalizeMilestones(
+    guardianMilestones(
+      typeof lineageGuardianLevel === 'number' && Number.isFinite(lineageGuardianLevel)
+        ? lineageGuardianLevel
+        : 0,
+    ),
+  );
   const n = Math.min(slots.length, guardians.length, MAX_GUARDIAN_SLOTS);
   const authoritative: GuardianPlacement[] = [];
   for (let i = 0; i < n; i++) {
     const slot = slots[i];
     const sr = typeof slot === 'object' && slot !== null ? (slot as Record<string, unknown>) : {};
     const row = guardians[i]!;
-    authoritative.push({
+    const placement: GuardianPlacement = {
       x: isFiniteNumber(sr.x) ? sr.x : 0,
       y: isFiniteNumber(sr.y) ? sr.y : 0,
       snapshot: row.data as GuardianSnapshot,
       performanceCP: performanceToCenti(row.performance),
       lineageBonusBp: bonusBp,
-    });
+    };
+    if (milestones !== 0) placement.milestones = milestones;
+    authoritative.push(placement);
   }
   const out: Record<string, unknown> = { ...layout };
   if (authoritative.length > 0) out.guardians = authoritative;

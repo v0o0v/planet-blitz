@@ -35,7 +35,14 @@ import { activeShip } from '../save/profile.js';
 import type { Profile } from '../save/profile.js';
 import { retireActiveShip, bulkDismissGuardians, investLineageBranch } from '../save/guardianLifecycle.js';
 import { GUARDIAN_TITAN, GUARDIAN_INTERCEPTOR } from '../../data/guardian.js';
-import { branchBonusBp } from '../../data/lineage.js';
+import {
+  branchBonusBp,
+  guardianMilestones,
+  hasMilestone,
+  MILESTONE_REBOOT,
+  MILESTONE_CORE_GUARD,
+  MILESTONE_SHIELD_SHARE,
+} from '../../data/lineage.js';
 
 /**
  * main.ts가 주입하는 치트 패널 호스트. 하네스 공개 API로는 닿지 않는 프로필 지급·
@@ -684,9 +691,17 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         const active = p.guardians.filter((g) => !g.retired).length;
         const shipPct = (branchBonusBp(p.lineage.shipLevel) / 100).toFixed(1);
         const guardPct = (branchBonusBp(p.lineage.guardianLevel) / 100).toFixed(1);
+        // 해금된 마일스톤 질적 노드(레벨 도달 자동 해금 — 격추 재기동/코어 근접/실드 공유).
+        const mask = guardianMilestones(p.lineage.guardianLevel);
+        const nodes: string[] = [];
+        if (hasMilestone(mask, MILESTONE_REBOOT)) nodes.push('격추재기동');
+        if (hasMilestone(mask, MILESTONE_CORE_GUARD)) nodes.push('코어근접');
+        if (hasMilestone(mask, MILESTONE_SHIELD_SHARE)) nodes.push('실드공유');
+        const milestoneText = nodes.length > 0 ? nodes.join('·') : '없음';
         status.textContent =
           `수호 ${active}기(활성)/${p.guardians.length}(총) · 계보 pt ${p.lineage.available} · ` +
-          `기체Lv ${p.lineage.shipLevel}(+${shipPct}%)·수호Lv ${p.lineage.guardianLevel}(+${guardPct}%)`;
+          `기체Lv ${p.lineage.shipLevel}(+${shipPct}%)·수호Lv ${p.lineage.guardianLevel}(+${guardPct}%) · ` +
+          `마일스톤 ${milestoneText}`;
       };
       refreshStatus();
 

@@ -277,6 +277,13 @@ export function hashWorld(state: WorldState): number {
         h = hashFloat(h, s.range);
         h = hashFloat(h, s.moveSpeed);
         h = hashFloat(h, s.standoff);
+        // --- M5 계보 마일스톤(APPEND-ONLY, 조건부) ---
+        // 마일스톤 비트마스크가 0(미해금)이면 **아무것도 접지 않아** 마일스톤 이전에 기록된 수호
+        // 포함 리플레이의 해시가 바이트 단위로 완전 불변이다(하위 호환 — 필드 미존재 = 0 = 무접기).
+        // 마일스톤 해금 런만 마스크를 봉인해, 서버가 권위 계보 레벨로 재도출한 마스크와 대조한다
+        // (부풀린 마일스톤 위조는 재실행 발산 + 이 폴드 불일치로 이중 차단). 신규 필드는 이 아래.
+        const ms = (g.milestones ?? 0) >>> 0;
+        if (ms !== 0) h = hashU32(h, ms);
       }
     }
   }
