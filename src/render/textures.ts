@@ -69,6 +69,20 @@ export interface PlaceholderTextures {
   bombDevice: Texture;
   /** Turret pickup event object. */
   turretPickup: Texture;
+  // --- 방어 사령부 실화면 편집 (M4/M5, spec grill-defense-command-live-editor 레인 A) ---
+  /**
+   * 방어 포탑 6종 텍스처. index = `defenseTurret.enemyType` = TURRET_* 코드
+   * (0 발칸 / 1 저격 / 2 산탄 / 3 감속 / 4 미사일 / 5 전격 — src/sim/defense.ts 순서와 1:1).
+   * 유형별 색으로 구분되어 사거리 원 없이도 팔레트에서 구분된다. fixedFacing(포신 +x 고정).
+   */
+  defenseTurret: Texture[];
+  /** 방어 코어(침공 목표). fixedFacing. `decoyCore`(가짜 코어)도 이 텍스처로 렌더한다. */
+  core: Texture;
+  /**
+   * 수호 기체 2종. index = `guardian.enemyType` = preset(0 타이탄 / 1 인터셉터 —
+   * data/guardian.ts GUARDIAN_* 순서와 1:1). 이동 렌더 규약(e.angle)을 따른다(+x 향 저작).
+   */
+  guardian: Texture[];
 }
 
 /**
@@ -274,6 +288,62 @@ function explosionTexture(renderer: Renderer): Texture {
   return tex;
 }
 
+/**
+ * 방어 포탑 유형색(index = TURRET_* 코드). 사거리 원 없이도 팔레트에서 6종이 구분되도록
+ * 서로 충분히 떨어진 색을 쓴다: 발칸 블루 / 저격 퍼플 / 산탄 오렌지 / 감속 시안 / 미사일 레드 /
+ * 전격 옐로. 적(카르곤 red·베르단 green·니플헤임 blue·아르케 bronze)과 겹치지 않게 아군 톤 위주.
+ */
+const TURRET_COLORS: readonly number[] = [0x4aa3ff, 0xb060ff, 0xffa030, 0x39d0ff, 0xff5544, 0xffe033];
+
+/**
+ * 방어 포탑 플레이스홀더: 어두운 헥스 마운트 + 유형색 상부 헥스 + 동쪽(+x) 포신. fixedFacing
+ * 이라 포신은 항상 동쪽을 향한다(OQ1 — 정지 프리뷰 기본 방향 고정). drawHex 스타일과 정합.
+ */
+function defenseTurretTexture(renderer: Renderer, color: number): Texture {
+  const g = new Graphics();
+  drawHex(g, 32, 0x2b3242); // 어두운 마운트 베이스
+  // 포신(+x 방향 고정)
+  g.rect(0, -6, 44, 12).fill({ color: 0x1a1f2b }).stroke({ color, width: 2, alignment: 0 });
+  drawHex(g, 19, color); // 유형색 상부 헥스
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+/**
+ * 방어 코어 플레이스홀더: 헥스 헐 + 밝은 에너지 코어. 침공 목표라 눈에 확 띄게 한다. fixedFacing.
+ */
+function coreTexture(renderer: Renderer): Texture {
+  const g = new Graphics();
+  drawHex(g, 62, 0x1f6f5a); // 청록 헐
+  g.circle(0, 0, 34).fill({ color: 0x33ffcc }).stroke({ color: 0xffffff, width: 3, alignment: 0 });
+  g.circle(0, 0, 14).fill({ color: 0xffffff, alpha: 0.9 });
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+/**
+ * 수호 기체 플레이스홀더: 타이탄 = 육중한 사각 방패형, 인터셉터 = 날렵한 삼각 요격기. 둘 다
+ * +x(동쪽)을 향해 저작해 이동 렌더의 `rotation = e.angle` 규약에 맞춘다. 아군 톤(블루/민트)이라
+ * 적 스프라이트와 겹치지 않는다.
+ */
+function guardianTexture(renderer: Renderer, titan: boolean): Texture {
+  const g = new Graphics();
+  if (titan) {
+    // 타이탄: 육중한 방패형 사각 + 전방 노즈.
+    g.rect(-30, -30, 60, 60).fill({ color: 0x3a4a6a }).stroke({ color: 0x8ab4ff, width: 3, alignment: 0 });
+    g.moveTo(30, -14).lineTo(48, 0).lineTo(30, 14).fill({ color: 0x8ab4ff });
+  } else {
+    // 인터셉터: 날렵한 삼각 요격기(+x 향).
+    drawTriangle(g, 34, 0x1f7a5c);
+    g.circle(6, 0, 8).fill({ color: 0x5affc0 });
+  }
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
 /** Synchronous procedural texture set — bullets, fallbacks, and the bench path. */
 export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextures {
   const playerG = new Graphics();
@@ -367,6 +437,9 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
     magnetEmitter: renderer.generateTexture(magnetG),
     bombDevice: renderer.generateTexture(bombG),
     turretPickup: renderer.generateTexture(turretG),
+    defenseTurret: TURRET_COLORS.map((c) => defenseTurretTexture(renderer, c)),
+    core: coreTexture(renderer),
+    guardian: [guardianTexture(renderer, true), guardianTexture(renderer, false)],
   };
 
   playerG.destroy();
@@ -452,6 +525,18 @@ export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderT
   const bossFiles = ['boss.png', 'boss_berdan.png', 'boss_niflheim.png', 'boss_arke.png'];
   const bgFiles = ['bg_kargon.png', 'bg_berdan.png', 'bg_niflheim.png', 'bg_arke.png'];
 
+  // 방어 엔티티(파일명 계약, spec 레인 A). 포탑은 TURRET_* 인덱스 순서. 없는 파일은 유형색
+  // 플레이스홀더 유지(tryLoad 패턴 그대로). 실아트는 PixelLab 후속 세션.
+  const turretFiles = [
+    'turret_vulcan.png', // 0 발칸
+    'turret_sniper.png', // 1 저격
+    'turret_scatter.png', // 2 산탄
+    'turret_slow.png', // 3 감속
+    'turret_missile.png', // 4 미사일
+    'turret_shock.png', // 5 전격
+  ];
+  const guardianFiles = ['guardian_titan.png', 'guardian_interceptor.png']; // preset 0/1
+
   const [
     player,
     gem,
@@ -467,6 +552,9 @@ export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderT
     bosses,
     backgrounds,
     enemies,
+    core,
+    turrets,
+    guardians,
   ] = await Promise.all([
     tryLoad('player.png'),
     tryLoad('gem.png'),
@@ -482,6 +570,9 @@ export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderT
     Promise.all(bossFiles.map((f) => tryLoad(f))),
     Promise.all(bgFiles.map((f) => tryLoad(f))),
     Promise.all(enemyFiles.map((f) => tryLoad(f))),
+    tryLoad('defense_core.png'),
+    Promise.all(turretFiles.map((f) => tryLoad(f))),
+    Promise.all(guardianFiles.map((f) => tryLoad(f))),
   ]);
 
   if (player !== null) tex.player = player;
@@ -506,6 +597,14 @@ export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderT
   });
   enemies.forEach((t, i) => {
     if (t !== null) tex.enemy[i] = t;
+  });
+  // 방어 엔티티: PNG 가 있으면 유형색 플레이스홀더를 덮고, 없으면 그대로 유지(회귀 0).
+  if (core !== null) tex.core = core;
+  turrets.forEach((t, i) => {
+    if (t !== null) tex.defenseTurret[i] = t;
+  });
+  guardians.forEach((t, i) => {
+    if (t !== null) tex.guardian[i] = t;
   });
 
   return tex;

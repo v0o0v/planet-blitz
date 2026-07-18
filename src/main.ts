@@ -21,6 +21,8 @@ import { TilingSprite } from 'pixi.js';
 import { createGameApp, DESIGN_WIDTH, DESIGN_HEIGHT } from './render/app.js';
 import { loadGameTextures } from './render/textures.js';
 import { EntityRenderer } from './render/entityRenderer.js';
+import { DefensePreviewController } from './render/defensePreview.js';
+import type { DefensePreviewControls } from './render/defensePreview.js';
 import { AutotileBackground, loadWangTiles } from './render/autotile.js';
 import type { WangTiles } from './render/autotile.js';
 import { FpsMeter } from './render/fpsMeter.js';
@@ -212,6 +214,22 @@ async function main(): Promise<void> {
   const refinery = new Refinery(profile);
   const defenseCommand = new DefenseCommand(profile);
   const controlTower = new ControlTower();
+  // 방어 사령부 실화면 편집 프리뷰(레인 B, ADR-0013): 침공 정지 월드를 침공과 동일 렌더 경로로
+  // 그려 배치를 실화면으로 보여준다. 라이브 `world` 변수와 완전 분리 — 게임 루프·recorder 없음.
+  // 레인 C(defenseCommand 재편)가 이 컨트롤을 소비해 편집 UI 와 배선한다(현재는 진입/이탈 시
+  // start/stop 만 — defenseCommand DOM 이 아직 캔버스를 덮으므로 시각 회귀 0).
+  const defensePreview: DefensePreviewControls = new DefensePreviewController({
+    stage: gameApp.stage,
+    textures,
+    clientToDesign: (x, y) => gameApp.clientToDesign(x, y),
+    setBackdrop: (active) => {
+      if (!active) return; // 이탈 시 복원 불필요 — 다음 메뉴 화면이 자체 DOM 으로 덮는다.
+      // 침공과 동일: 카르곤 플랫 배경 + 오토타일 없음(D9). 배치 영역이 무대다.
+      background.texture = planetBackground(0);
+      autotile.configure(null, 0);
+      background.visible = true;
+    },
+  });
   // M4 Phase F: 관전 컨트롤 오버레이(F3) + 도발 스티커 선택(F2).
   const spectateOverlay = new SpectateOverlay();
   const stickerPicker = new StickerPicker();
@@ -351,6 +369,7 @@ async function main(): Promise<void> {
     resultOverlay.hide();
     baseMap.hide();
     defenseCommand.hide();
+    defensePreview.stop();
     controlTower.hide();
     spectateOverlay.hide();
     stickerPicker.hide();
@@ -393,7 +412,10 @@ async function main(): Promise<void> {
       onDefense: () => {
         baseMap.hide();
         setScreen('defense');
-        defenseCommand.show(profile, () => openBaseMap());
+        // 프리뷰 정지 월드를 저장된 배치로 켠다(레인 B). 레인 C 가 편집 상호작용을
+        // 배선하기 전까지는 진입/이탈 시 start/stop 만 — DOM 이 캔버스를 덮어 시각 회귀 0.
+        defensePreview.start(normalizeLayout(profile.defenseLayout));
+        defenseCommand.show(profile, () => openBaseMap(), defensePreview);
       },
       onControl: () => {
         baseMap.hide();
@@ -1082,7 +1104,8 @@ async function main(): Promise<void> {
           planetSelect.hide();
           clearToMenu();
           setScreen('defense');
-          defenseCommand.show(profile, () => openBaseMap());
+          defensePreview.start(normalizeLayout(profile.defenseLayout));
+          defenseCommand.show(profile, () => openBaseMap(), defensePreview);
           break;
         case 'controlTower':
           planetSelect.hide();
