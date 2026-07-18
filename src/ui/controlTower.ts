@@ -49,6 +49,8 @@ import {
 } from '../net/invasion.js';
 import { stickerLabel } from '../../data/stickers.js';
 import { seedBaseByProfileId } from '../../data/seedBases.js';
+import type { CardInstance } from '../../data/defenseCards.js';
+import { cardRarityColor, cardRarityLabel, cardAffixOneLine } from './cardsView.js';
 import { t } from '../i18n/index.js';
 import {
   GRID_COLS,
@@ -350,6 +352,10 @@ const STYLE = `
 #pb-ctl .pb-badge { display:inline-block; padding:1px 7px; margin-left:6px; font-size:10px; font-weight:800; color:#150a24; background:#ffd24c; border-radius:6px; vertical-align:middle; }
 #pb-ctl button.pb-rev-btn { pointer-events:auto; cursor:pointer; padding:7px 14px; font-size:12px; font-weight:800; color:#fff; background:linear-gradient(90deg,#ff5a7a,#ff9a4c); border:none; border-radius:8px; white-space:nowrap; }
 #pb-ctl button.pb-rev-btn:disabled { opacity:.4; cursor:default; filter:grayscale(.4); }
+#pb-ctl .pb-reveal { width:100%; max-width:640px; background:rgba(24,20,44,.7); border:1px solid #4c5a8a; border-radius:12px; padding:10px 14px; box-sizing:border-box; }
+#pb-ctl .pb-reveal .rv-head { color:#c3cdea; font-size:13px; font-weight:800; margin-bottom:4px; }
+#pb-ctl .pb-reveal .rv-grade { font-size:13px; font-weight:900; letter-spacing:1px; }
+#pb-ctl .pb-reveal .rv-affix { color:#9fb0d8; font-size:11px; margin-top:3px; line-height:1.5; }
 `;
 
 /** 관제탑 콜백(main 이 침공 런/뒤로가기를 구동). */
@@ -370,6 +376,11 @@ export interface ControlTowerShowOpts {
   result?: InvasionResultView;
   /** 서버 검증 대기 중 표시. */
   verifying?: boolean;
+  /**
+   * 방금 침공한 상대의 방어 카드(정찰 공개 — 스펙 R9). 침공해 본 상대만 옵션을 공개한다
+   * (타겟 목록은 등급도 비공개 상태이므로 여기서만 어픽스를 드러낸다). 미장착이면 null/미지정.
+   */
+  revealCard?: CardInstance | null;
 }
 
 export class ControlTower {
@@ -554,6 +565,8 @@ export class ControlTower {
     this.root.appendChild(sub);
 
     if (this.opts.result !== undefined) this.root.appendChild(this.banner(this.opts.result));
+    const reveal = this.revealPanel();
+    if (reveal !== null) this.root.appendChild(reveal);
     if (this.opts.verifying === true) {
       const v = document.createElement('div');
       v.className = 'pb-banner info';
@@ -596,6 +609,37 @@ export class ControlTower {
     });
     actions.appendChild(back);
     this.root.appendChild(actions);
+  }
+
+  /**
+   * 침공한 상대의 방어 카드 정찰 공개 패널(스펙 R9). 결과 배너가 있고 카드가 실제로 장착돼
+   * 있었을 때만 표시한다(미장착·미제출이면 null). 등급·잔여 횟수·어픽스 옵션을 드러내 복수전·
+   * 재침공의 역퍼즐 정보를 준다. 렌더 전용.
+   */
+  private revealPanel(): HTMLElement | null {
+    if (this.opts.result === undefined) return null;
+    const card = this.opts.revealCard;
+    if (card === null || card === undefined) return null;
+
+    const panel = document.createElement('div');
+    panel.className = 'pb-reveal';
+    const h3 = document.createElement('div');
+    h3.className = 'rv-head';
+    h3.textContent = t('card.reveal.head');
+    panel.appendChild(h3);
+
+    const grade = document.createElement('div');
+    grade.className = 'rv-grade';
+    grade.style.color = cardRarityColor(card.rarity);
+    grade.textContent = `${t('card.reveal.grade', { rarity: cardRarityLabel(card.rarity) })} · ${t('card.reveal.charges', { n: card.chargesLeft })}`;
+    panel.appendChild(grade);
+
+    const affix = document.createElement('div');
+    affix.className = 'rv-affix';
+    affix.textContent = cardAffixOneLine(card);
+    panel.appendChild(affix);
+
+    return panel;
   }
 
   private banner(view: InvasionResultView): HTMLElement {

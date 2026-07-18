@@ -58,6 +58,31 @@ import {
   type DefenseStatus,
 } from '../net/defenseSync.js';
 import { t, type MessageKey } from '../i18n/index.js';
+import {
+  getCardsUserId,
+  listCardInventory,
+  fetchCardEquip,
+  equipCard,
+  salvageCard as netSalvageCard,
+  buyShopCard as netBuyShopCard,
+  fuseCards as netFuseCards,
+  listCardShopPurchases,
+  type CardOwned,
+  type CardEquipState,
+} from '../net/cards.js';
+import { rollCurrentShop, computeShopSeeds } from '../net/cards.js';
+import type { CardInstance } from '../../data/defenseCards.js';
+import {
+  cardRarityColor,
+  cardRarityLabel,
+  cardAffixSummary,
+  isLowCharge,
+  storageGauge,
+  checkFusionSelection,
+  fusionCheckText,
+  buyErrorText,
+  shopSlotPrice,
+} from './cardsView.js';
 
 // ---------------------------------------------------------------------------
 // 격자 기하 (순수 · 테스트 대상)
@@ -688,6 +713,38 @@ const STYLE = `
 #pb-def .pb-maint .pb-mcredits { font-size:11px; color:#8896b8; }
 #pb-def .pb-maint button.pb-mrepair { pointer-events:auto; cursor:pointer; padding:7px 14px; font-size:12px; font-weight:800; color:#04121a; background:linear-gradient(90deg,#7affea,#8fd94c); border:none; border-radius:8px; }
 #pb-def .pb-maint button.pb-mrepair:disabled { opacity:.4; cursor:default; filter:grayscale(.5); color:#c3cdea; background:rgba(30,36,60,.9); }
+#pb-def .pb-tabs { display:flex; gap:8px; }
+#pb-def button.pb-tab { pointer-events:auto; cursor:pointer; padding:8px 20px; font-size:14px; font-weight:800; color:#aab6d6; background:rgba(20,26,44,.9); border:1px solid #2a3552; border-radius:10px 10px 0 0; }
+#pb-def button.pb-tab.on { color:#04121a; background:linear-gradient(90deg,#7affea,#8fd94c); border-color:#7affea; }
+#pb-def .pb-cards { display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap; justify-content:center; width:100%; max-width:960px; }
+#pb-def .pb-cards .pb-panel { flex:1 1 280px; min-width:260px; max-width:440px; }
+#pb-def .pb-cardslot { display:flex; flex-direction:column; gap:8px; padding:12px; border:2px solid #2a3552; border-radius:12px; background:rgba(20,26,44,.6); }
+#pb-def .pb-cardslot.filled { border-style:solid; }
+#pb-def .pb-cardslot .cs-grade { font-size:13px; font-weight:900; letter-spacing:1px; }
+#pb-def .pb-cardslot .cs-charges { font-size:12px; color:#aab6d6; font-weight:700; }
+#pb-def .pb-cardslot .cs-warn { font-size:12px; color:#ffb14c; font-weight:700; }
+#pb-def .pb-cardslot .cs-affix { font-size:11px; color:#9fb0d8; line-height:1.5; }
+#pb-def .pb-cardslot .cs-empty { font-size:13px; color:#68789c; font-weight:700; }
+#pb-def .pb-storage { display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:12px; color:#aab6d6; font-weight:700; }
+#pb-def .pb-storage .sg-meter { flex:1; height:9px; border-radius:6px; background:rgba(80,90,130,.35); border:1px solid #2a3552; overflow:hidden; }
+#pb-def .pb-storage .sg-fill { height:100%; background:#8fd94c; }
+#pb-def .pb-storage .sg-fill.full { background:#ff6a6a; }
+#pb-def .pb-cardrow { display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid #262f4c; border-radius:10px; margin-bottom:6px; background:rgba(16,20,36,.6); }
+#pb-def .pb-cardrow.equipped { border-color:#8fd94c; box-shadow:0 0 0 1px #8fd94c inset; }
+#pb-def .pb-cardrow.picked { border-color:#7affea; box-shadow:0 0 0 1px #7affea inset; }
+#pb-def .pb-cardrow .cr-info { flex:1; min-width:0; }
+#pb-def .pb-cardrow .cr-grade { font-size:12px; font-weight:900; }
+#pb-def .pb-cardrow .cr-ch { font-size:11px; color:#8896b8; font-weight:700; }
+#pb-def .pb-cardrow .cr-ch.low { color:#ffb14c; }
+#pb-def .pb-cardrow .cr-affix { font-size:10px; color:#8090b4; line-height:1.4; margin-top:2px; }
+#pb-def .pb-cardrow button { pointer-events:auto; cursor:pointer; padding:5px 10px; font-size:11px; font-weight:800; border:none; border-radius:7px; white-space:nowrap; }
+#pb-def .pb-cardrow button.cr-eq { color:#04121a; background:linear-gradient(90deg,#7affea,#8fd94c); }
+#pb-def .pb-cardrow button.cr-sv { color:#c3cdea; background:rgba(30,36,60,.9); border:1px solid #2a3552; }
+#pb-def .pb-cardrow button:disabled { opacity:.4; cursor:default; filter:grayscale(.4); }
+#pb-def .pb-fusebar { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+#pb-def button.pb-fuse { pointer-events:auto; cursor:pointer; padding:6px 14px; font-size:12px; font-weight:800; color:#150a24; background:linear-gradient(90deg,#c86aff,#7affea); border:none; border-radius:8px; }
+#pb-def button.pb-fuse:disabled { opacity:.4; cursor:default; filter:grayscale(.4); }
+#pb-def .pb-cardmsg { font-size:12px; color:#8896b8; padding:6px 2px; }
 `;
 
 export class DefenseCommand {
@@ -705,6 +762,25 @@ export class DefenseCommand {
   private statusLoading = false;
   private repairing = false;
   private statusToken = 0;
+
+  // 카드 탭(M6) 상태 — 서버 권위. null = 미로딩/미설정.
+  private activeTab: 'layout' | 'cards' = 'layout';
+  private cardUid: string | null = null;
+  /** 서버 연결 여부(uid 확보 성공). false = 오프라인/미설정(카드 UI 비활성 안내). */
+  private cardsOnline = false;
+  private cardsLoading = false;
+  private cardsToken = 0;
+  private cardInventory: CardOwned[] = [];
+  private cardEquip: CardEquipState | null = null;
+  private cardShop: CardInstance[] = [];
+  private shopPurchases: number[] = [];
+  /** 합성 선택 모드 여부 + 선택된 보관함 행 id 집합. */
+  private fuseMode = false;
+  private fusePicks = new Set<string>();
+  /** 카드 탭 하단 안내(성공/오류 토스트). */
+  private cardMsg = '';
+  /** 카드 관련 네트워크 요청 진행 중(중복 클릭 방지). */
+  private cardBusy = false;
 
   constructor(profile: Profile, store: KeyValueStore | null = null) {
     this.profile = profile;
@@ -741,6 +817,19 @@ export class DefenseCommand {
     this.hint = '';
     this.defenseStatus = null;
     this.repairing = false;
+    // 카드 탭 상태 초기화(매 진입 시 배치 탭으로 시작 — 저장 워크플로 존중).
+    this.activeTab = 'layout';
+    this.cardUid = null;
+    this.cardsOnline = false;
+    this.cardsLoading = false;
+    this.cardInventory = [];
+    this.cardEquip = null;
+    this.cardShop = [];
+    this.shopPurchases = [];
+    this.fuseMode = false;
+    this.fusePicks.clear();
+    this.cardMsg = '';
+    this.cardBusy = false;
     this.render();
     this.root.style.display = 'flex';
     void this.loadStatus();
@@ -914,6 +1003,13 @@ export class DefenseCommand {
     sub.textContent = t('def.sub');
     this.root.appendChild(sub);
 
+    this.root.appendChild(this.tabBar());
+
+    if (this.activeTab === 'cards') {
+      this.renderCardsBody();
+      return;
+    }
+
     this.root.appendChild(this.budgetBar());
     this.root.appendChild(this.maintenanceBar());
 
@@ -929,6 +1025,28 @@ export class DefenseCommand {
     this.root.appendChild(hintEl);
 
     this.root.appendChild(this.actionRow());
+  }
+
+  /** 배치/카드 탭 전환 바. 카드 탭 최초 진입 시 서버 데이터를 로드한다. */
+  private tabBar(): HTMLElement {
+    const bar = document.createElement('div');
+    bar.className = 'pb-tabs';
+    const mk = (tab: 'layout' | 'cards', label: string): HTMLButtonElement => {
+      const b = document.createElement('button');
+      b.className = `pb-tab${this.activeTab === tab ? ' on' : ''}`;
+      b.textContent = label;
+      b.addEventListener('click', () => {
+        if (this.activeTab === tab) return;
+        this.activeTab = tab;
+        this.hint = '';
+        this.render();
+        if (tab === 'cards') void this.loadCards();
+      });
+      return b;
+    };
+    bar.appendChild(mk('layout', t('card.tab.layout')));
+    bar.appendChild(mk('cards', t('card.tab.cards')));
+    return bar;
   }
 
   private budgetBar(): HTMLElement {
@@ -1184,5 +1302,487 @@ export class DefenseCommand {
     actions.appendChild(save);
 
     return actions;
+  }
+
+  // --- 카드 탭(M6) -----------------------------------------------------------
+
+  /**
+   * 카드 탭 서버 데이터를 로드한다(uid → 보관함·장착 상태·상점 재고·구매 이력). 미설정/오프라인이면
+   * cardsOnline=false 로 안내만 띄운다. race 방지 토큰 사용(정비 로드 패턴 동일).
+   */
+  private async loadCards(): Promise<void> {
+    const token = ++this.cardsToken;
+    this.cardsLoading = true;
+    this.render();
+    const uid = await getCardsUserId();
+    if (token !== this.cardsToken || !this.visible) return;
+    if (uid === null) {
+      this.cardsOnline = false;
+      this.cardsLoading = false;
+      this.render();
+      return;
+    }
+    this.cardUid = uid;
+    this.cardsOnline = true;
+    const dateSeed = computeShopSeeds(uid).dateSeed;
+    const [inv, equip, purchases] = await Promise.all([
+      listCardInventory(),
+      fetchCardEquip(),
+      listCardShopPurchases(dateSeed),
+    ]);
+    if (token !== this.cardsToken || !this.visible) return;
+    this.cardInventory = inv ?? [];
+    this.cardEquip = equip;
+    this.shopPurchases = purchases ?? [];
+    // 상점 재고는 (dateSeed,userSeed) 순수 함수로 클라가 재현(서버 호출 없음 — 표시=구매 대상 일치).
+    this.cardShop = rollCurrentShop(uid);
+    this.cardsLoading = false;
+    this.render();
+  }
+
+  private renderCardsBody(): void {
+    if (!this.cardsOnline || this.cardsLoading) {
+      const msg = document.createElement('div');
+      msg.className = 'pb-cardmsg';
+      msg.textContent = this.cardsLoading ? t('card.slot.loading') : t('card.slot.offline');
+      msg.style.marginTop = '16px';
+      this.root.appendChild(msg);
+      this.root.appendChild(this.cardsActionRow());
+      return;
+    }
+
+    const cols = document.createElement('div');
+    cols.className = 'pb-cards';
+    cols.appendChild(this.cardSlotPanel());
+    cols.appendChild(this.cardInventoryPanel());
+    cols.appendChild(this.cardShopPanel());
+    this.root.appendChild(cols);
+
+    if (this.cardMsg !== '') {
+      const msg = document.createElement('div');
+      msg.className = 'pb-cardmsg';
+      msg.textContent = this.cardMsg;
+      this.root.appendChild(msg);
+    }
+
+    this.root.appendChild(this.cardsActionRow());
+  }
+
+  /** 카드 탭 하단 액션(뒤로만 — 배치 저장과 분리). */
+  private cardsActionRow(): HTMLElement {
+    const actions = document.createElement('div');
+    actions.className = 'pb-actions';
+    const back = document.createElement('button');
+    back.className = 'pb-ghost';
+    back.textContent = t('common.backToBase');
+    back.addEventListener('click', () => {
+      const cb = this.onClose;
+      this.hide();
+      cb?.();
+    });
+    actions.appendChild(back);
+    return actions;
+  }
+
+  /** 보관함에서 defense_cards.id → 소유 카드 조회. */
+  private ownedById(id: string): CardOwned | undefined {
+    return this.cardInventory.find((c) => c.id === id);
+  }
+
+  /** 카드 슬롯 패널: 장착 카드 표시(등급·어픽스·잔여·경고) 또는 빈 슬롯 안내. */
+  private cardSlotPanel(): HTMLElement {
+    const panel = document.createElement('div');
+    panel.className = 'pb-panel';
+    const h2 = document.createElement('h2');
+    h2.textContent = t('card.slot.head');
+    panel.appendChild(h2);
+
+    const equip = this.cardEquip;
+    if (equip === null || equip.defenseId === null) {
+      const m = document.createElement('div');
+      m.className = 'pb-cardslot';
+      m.innerHTML = `<div class="cs-empty">${t('card.slot.noBase')}</div>`;
+      panel.appendChild(m);
+      return panel;
+    }
+
+    const slot = document.createElement('div');
+    const owned = equip.equippedCardId !== null ? this.ownedById(equip.equippedCardId) : undefined;
+    if (owned === undefined) {
+      slot.className = 'pb-cardslot';
+      slot.innerHTML =
+        `<div class="cs-empty">${t('card.slot.empty')}</div>` +
+        `<div class="cs-affix">${t('card.slot.emptyHint')}</div>`;
+      panel.appendChild(slot);
+      return panel;
+    }
+
+    slot.className = 'pb-cardslot filled';
+    slot.style.borderColor = cardRarityColor(owned.rarity);
+    const grade = document.createElement('div');
+    grade.className = 'cs-grade';
+    grade.style.color = cardRarityColor(owned.rarity);
+    grade.textContent = `${t('card.slot.equipped')} · ${cardRarityLabel(owned.rarity)}`;
+    slot.appendChild(grade);
+
+    const charges = document.createElement('div');
+    charges.className = 'cs-charges';
+    charges.textContent = t('card.slot.charges', { n: owned.chargesLeft, m: owned.card.chargesMax });
+    slot.appendChild(charges);
+
+    if (isLowCharge(owned.chargesLeft)) {
+      const warn = document.createElement('div');
+      warn.className = 'cs-warn';
+      warn.textContent = t('card.slot.lastCharge');
+      slot.appendChild(warn);
+    }
+
+    const affix = this.affixLinesEl(owned.card, 'cs-affix');
+    if (affix !== null) slot.appendChild(affix);
+
+    const unequip = document.createElement('button');
+    unequip.className = 'pb-ghost';
+    unequip.style.marginTop = '6px';
+    unequip.textContent = t('card.slot.unequip');
+    unequip.disabled = this.cardBusy;
+    unequip.addEventListener('click', () => void this.doEquip(equip.defenseId!, null));
+    slot.appendChild(unequip);
+
+    panel.appendChild(slot);
+    return panel;
+  }
+
+  /** 카드 어픽스 요약 요소(접두·접미·유니크). 어픽스 없으면 null(기저만). */
+  private affixLinesEl(card: CardInstance, cls: string): HTMLElement | null {
+    const s = cardAffixSummary(card);
+    const lines = [...(s.unique !== null ? [s.unique] : []), ...s.prefixes, ...s.suffixes];
+    const el = document.createElement('div');
+    el.className = cls;
+    el.textContent = lines.length > 0 ? lines.join(' · ') : t('card.baseOnly');
+    return el;
+  }
+
+  /** 보관함 패널: 상한 게이지 + 합성 바 + 카드 목록(장착/분해/합성 선택). */
+  private cardInventoryPanel(): HTMLElement {
+    const panel = document.createElement('div');
+    panel.className = 'pb-panel';
+    const h2 = document.createElement('h2');
+    h2.textContent = t('card.inv.head');
+    panel.appendChild(h2);
+
+    // 보관 게이지(만석 강조).
+    const gauge = storageGauge(this.cardInventory.length);
+    const st = document.createElement('div');
+    st.className = 'pb-storage';
+    st.innerHTML =
+      `<span>${t('card.inv.storage', { count: gauge.count, cap: gauge.cap })}</span>` +
+      `<span class="sg-meter"><span class="sg-fill${gauge.full ? ' full' : ''}" style="width:${gauge.pct}%"></span></span>`;
+    panel.appendChild(st);
+    if (gauge.full) {
+      const full = document.createElement('div');
+      full.className = 'cs-warn';
+      full.style.fontSize = '11px';
+      full.textContent = t('card.inv.full');
+      panel.appendChild(full);
+    }
+
+    // 합성 바(선택 모드 토글 + 확정).
+    panel.appendChild(this.fuseBar());
+
+    if (this.cardInventory.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'pb-cardmsg';
+      empty.textContent = t('card.inv.empty');
+      panel.appendChild(empty);
+      return panel;
+    }
+
+    const equippedId = this.cardEquip?.equippedCardId ?? null;
+    for (const owned of this.cardInventory) {
+      panel.appendChild(this.cardRow(owned, equippedId));
+    }
+    return panel;
+  }
+
+  private fuseBar(): HTMLElement {
+    const bar = document.createElement('div');
+    bar.className = 'pb-fusebar';
+    if (!this.fuseMode) {
+      const start = document.createElement('button');
+      start.className = 'pb-fuse';
+      start.textContent = t('card.inv.fuseStart');
+      start.disabled = this.cardBusy || this.cardInventory.length < 3;
+      start.addEventListener('click', () => {
+        this.fuseMode = true;
+        this.fusePicks.clear();
+        this.cardMsg = t('card.inv.fuseMode');
+        this.render();
+      });
+      bar.appendChild(start);
+      return bar;
+    }
+    const picks = this.pickedOwned();
+    const check = checkFusionSelection(picks);
+    const confirm = document.createElement('button');
+    confirm.className = 'pb-fuse';
+    confirm.textContent = t('card.inv.fuseConfirm', { n: this.fusePicks.size });
+    confirm.disabled = this.cardBusy || !check.ok;
+    confirm.addEventListener('click', () => void this.doFuse());
+    const cancel = document.createElement('button');
+    cancel.className = 'pb-ghost';
+    cancel.textContent = t('card.inv.fuseCancel');
+    cancel.addEventListener('click', () => {
+      this.fuseMode = false;
+      this.fusePicks.clear();
+      this.cardMsg = '';
+      this.render();
+    });
+    bar.append(confirm, cancel);
+    if (!check.ok && this.fusePicks.size > 0) {
+      const hint = document.createElement('span');
+      hint.className = 'pb-cardmsg';
+      hint.textContent = fusionCheckText(check.code);
+      bar.appendChild(hint);
+    }
+    return bar;
+  }
+
+  /** 현재 합성 선택된 소유 카드 목록(존재하는 것만). */
+  private pickedOwned(): CardOwned[] {
+    const out: CardOwned[] = [];
+    for (const id of this.fusePicks) {
+      const owned = this.ownedById(id);
+      if (owned !== undefined) out.push(owned);
+    }
+    return out;
+  }
+
+  private cardRow(owned: CardOwned, equippedId: string | null): HTMLElement {
+    const row = document.createElement('div');
+    const isEquipped = owned.id === equippedId;
+    const isPicked = this.fusePicks.has(owned.id);
+    row.className = `pb-cardrow${isEquipped ? ' equipped' : ''}${isPicked ? ' picked' : ''}`;
+
+    const info = document.createElement('div');
+    info.className = 'cr-info';
+    const grade = document.createElement('div');
+    grade.className = 'cr-grade';
+    grade.style.color = cardRarityColor(owned.rarity);
+    grade.textContent = cardRarityLabel(owned.rarity);
+    const ch = document.createElement('span');
+    ch.className = `cr-ch${isLowCharge(owned.chargesLeft) ? ' low' : ''}`;
+    ch.textContent = ` ${t('card.inv.charges', { n: owned.chargesLeft })}`;
+    grade.appendChild(ch);
+    info.appendChild(grade);
+    const affix = this.affixLinesEl(owned.card, 'cr-affix');
+    if (affix !== null) info.appendChild(affix);
+    row.appendChild(info);
+
+    if (this.fuseMode) {
+      // 합성 선택 모드: 각 행이 선택/해제 토글.
+      const pick = document.createElement('button');
+      pick.className = isPicked ? 'cr-eq' : 'cr-sv';
+      pick.textContent = isPicked ? t('card.inv.picked') : t('card.inv.pick');
+      pick.disabled = this.cardBusy || (!isPicked && this.fusePicks.size >= 3);
+      pick.addEventListener('click', () => {
+        if (isPicked) this.fusePicks.delete(owned.id);
+        else if (this.fusePicks.size < 3) this.fusePicks.add(owned.id);
+        this.render();
+      });
+      row.appendChild(pick);
+      return row;
+    }
+
+    // 일반 모드: 장착/해제 + 분해.
+    const eqBtn = document.createElement('button');
+    eqBtn.className = 'cr-eq';
+    eqBtn.textContent = isEquipped ? t('card.inv.equipped') : t('card.inv.equip');
+    eqBtn.disabled = this.cardBusy || this.cardEquip?.defenseId == null || isEquipped;
+    eqBtn.addEventListener('click', () => {
+      const defId = this.cardEquip?.defenseId;
+      if (defId != null) void this.doEquip(defId, owned.id);
+    });
+    row.appendChild(eqBtn);
+
+    const svBtn = document.createElement('button');
+    svBtn.className = 'cr-sv';
+    svBtn.textContent = t('card.inv.salvage');
+    svBtn.disabled = this.cardBusy;
+    svBtn.addEventListener('click', () => void this.doSalvage(owned.id));
+    row.appendChild(svBtn);
+
+    return row;
+  }
+
+  /** 상점 패널: 오늘 재고(미리 공개된 옵션·가격), 이미 산 슬롯 비활성. */
+  private cardShopPanel(): HTMLElement {
+    const panel = document.createElement('div');
+    panel.className = 'pb-panel';
+    const h2 = document.createElement('h2');
+    h2.textContent = t('card.shop.head');
+    panel.appendChild(h2);
+
+    const note = document.createElement('div');
+    note.className = 'pb-cardmsg';
+    note.textContent = t('card.shop.note');
+    panel.appendChild(note);
+
+    if (this.cardShop.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'pb-cardmsg';
+      empty.textContent = t('card.shop.empty');
+      panel.appendChild(empty);
+      return panel;
+    }
+
+    const gauge = storageGauge(this.cardInventory.length);
+    for (let i = 0; i < this.cardShop.length; i++) {
+      const card = this.cardShop[i]!;
+      panel.appendChild(this.shopRow(card, i, gauge.full));
+    }
+    return panel;
+  }
+
+  private shopRow(card: CardInstance, slotIndex: number, storageFull: boolean): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'pb-cardrow';
+    const bought = this.shopPurchases.includes(slotIndex);
+
+    const info = document.createElement('div');
+    info.className = 'cr-info';
+    const grade = document.createElement('div');
+    grade.className = 'cr-grade';
+    grade.style.color = cardRarityColor(card.rarity);
+    grade.textContent = `${cardRarityLabel(card.rarity)} · ${t('card.shop.price', { c: shopSlotPrice(card.rarity) })}`;
+    info.appendChild(grade);
+    const affix = this.affixLinesEl(card, 'cr-affix');
+    if (affix !== null) info.appendChild(affix);
+    row.appendChild(info);
+
+    const buy = document.createElement('button');
+    buy.className = 'cr-eq';
+    buy.textContent = bought ? t('card.shop.bought') : t('card.shop.buy');
+    // 만석이면 구매 결과가 차단되므로 미리 비활성(스펙 §정보 공개 — 만석 시 버튼 비활성).
+    buy.disabled = this.cardBusy || bought || storageFull;
+    buy.addEventListener('click', () => void this.doBuy(slotIndex));
+    row.appendChild(buy);
+    return row;
+  }
+
+  // --- 카드 네트워크 액션(서버 권위 — 성공 후 재로드/크레딧 pull) -------------
+
+  /** 서버가 반환한 크레딧을 로컬 프로필에 반영·영속(정비 크레딧 pull 패턴과 동일). */
+  private pullServerCredits(credits: number): void {
+    this.profile.credits = credits;
+    this.persist();
+    const pendingStore = this.pendingStore();
+    if (pendingStore !== null) refreshPendingProfile(pendingStore, this.profile);
+  }
+
+  private async doEquip(defenseId: string, cardId: string | null): Promise<void> {
+    if (this.cardBusy) return;
+    this.cardBusy = true;
+    this.render();
+    const ok = await equipCard(defenseId, cardId);
+    if (!this.visible) return;
+    this.cardBusy = false;
+    if (ok) {
+      this.cardMsg = cardId === null ? t('card.equip.unequipped') : t('card.equip.done');
+      // 장착 상태만 서버 재조회(보관함 불변).
+      const equip = await fetchCardEquip();
+      if (!this.visible) return;
+      if (equip !== null) this.cardEquip = equip;
+    } else {
+      this.cardMsg = t('card.equip.failed');
+    }
+    this.render();
+  }
+
+  private async doSalvage(cardId: string): Promise<void> {
+    if (this.cardBusy) return;
+    this.cardBusy = true;
+    this.render();
+    const result = await netSalvageCard(cardId);
+    if (!this.visible) return;
+    this.cardBusy = false;
+    if (result === null) {
+      this.cardMsg = t('card.salvage.failed');
+    } else if (!result.ok) {
+      this.cardMsg = t('card.salvage.notOwned');
+    } else {
+      if (result.credits !== undefined) this.pullServerCredits(result.credits);
+      this.cardMsg = t('card.salvage.done', { c: result.salvaged ?? 0 });
+    }
+    await this.reloadCardData();
+  }
+
+  private async doBuy(slotIndex: number): Promise<void> {
+    if (this.cardBusy) return;
+    this.cardBusy = true;
+    this.render();
+    const result = await netBuyShopCard(slotIndex);
+    if (!this.visible) return;
+    this.cardBusy = false;
+    if (result === null) {
+      this.cardMsg = t('card.buy.failed');
+    } else if (!result.ok) {
+      this.cardMsg = buyErrorText(result.code);
+      // 이미 구매/만석 등은 이력 갱신이 표시 정합에 도움.
+    } else {
+      if (result.credits !== undefined) this.pullServerCredits(result.credits);
+      this.cardMsg = t('card.buy.done', { rarity: cardRarityLabel(result.rarity ?? 'normal') });
+    }
+    await this.reloadCardData();
+  }
+
+  private async doFuse(): Promise<void> {
+    if (this.cardBusy) return;
+    const picks = this.pickedOwned();
+    const check = checkFusionSelection(picks);
+    if (!check.ok) {
+      this.cardMsg = fusionCheckText(check.code);
+      this.render();
+      return;
+    }
+    this.cardBusy = true;
+    this.render();
+    const ids = picks.map((c) => c.id) as unknown as readonly [string, string, string];
+    const result = await netFuseCards(ids);
+    if (!this.visible) return;
+    this.cardBusy = false;
+    this.fuseMode = false;
+    this.fusePicks.clear();
+    if (result === null) {
+      this.cardMsg = t('card.fuse.failed');
+    } else if (!result.ok) {
+      this.cardMsg = result.code === 'not-owned' ? t('card.fuse.notOwned') : t('card.fuse.failed');
+    } else {
+      const rarityLabel = cardRarityLabel(result.rarity ?? 'normal');
+      this.cardMsg = result.promoted === true
+        ? t('card.fuse.promoted', { rarity: rarityLabel })
+        : t('card.fuse.done', { rarity: rarityLabel });
+    }
+    await this.reloadCardData();
+  }
+
+  /** 보관함·장착·구매이력을 서버에서 재조회(상점 재고는 순수 재현이라 불변). */
+  private async reloadCardData(): Promise<void> {
+    const token = ++this.cardsToken;
+    const uid = this.cardUid;
+    if (uid === null) {
+      this.render();
+      return;
+    }
+    const dateSeed = computeShopSeeds(uid).dateSeed;
+    const [inv, equip, purchases] = await Promise.all([
+      listCardInventory(),
+      fetchCardEquip(),
+      listCardShopPurchases(dateSeed),
+    ]);
+    if (token !== this.cardsToken || !this.visible) return;
+    if (inv !== null) this.cardInventory = inv;
+    if (equip !== null) this.cardEquip = equip;
+    if (purchases !== null) this.shopPurchases = purchases;
+    this.render();
   }
 }

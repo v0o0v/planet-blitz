@@ -17,7 +17,10 @@ import type {
   CardBuyResult,
   CardFuseResult,
   CardSalvageResult,
+  CardOwned,
+  CardEquipState,
 } from './cards.js';
+import type { CardInstance } from '../../data/defenseCards.js';
 
 /** RPC/EF 응답 raw → Record 안전 변환. */
 function asRecord(v: unknown): Record<string, unknown> {
@@ -100,5 +103,66 @@ export class SupabaseCardsGateway implements CardsGateway {
       ...defined('rarity', asStr(r.rarity)),
       ...defined('note', asStr(r.note)),
     };
+  }
+
+  async listInventory(): Promise<CardOwned[]> {
+    // 보관함 직접 조회(RLS defense_cards_select_own 이 본인 행만 반환). 최신순 정렬.
+    const { data, error } = await this.client
+      .from('defense_cards')
+      .select('id, rarity, charges_left, card')
+      .order('created_at', { ascending: false });
+    if (error !== null) throw error;
+    const rows = Array.isArray(data) ? data : [];
+    const out: CardOwned[] = [];
+    for (const raw of rows) {
+      const r = asRecord(raw);
+      const id = asStr(r.id);
+      const rarity = asStr(r.rarity);
+      const chargesLeft = asNum(r.charges_left);
+      if (id === undefined || rarity === undefined || chargesLeft === undefined) continue;
+      out.push({ id, rarity, chargesLeft, card: r.card as CardInstance });
+    }
+    return out;
+  }
+
+  async fetchEquip(): Promise<CardEquipState> {
+    // 내 활성 방어 행(RLS defenses_rw_own). 없으면 defenseId=null(방어 미배치).
+    const { data, error } = await this.client
+      .from('defenses')
+      .select('id, equipped_card_id')
+      .eq('active', true)
+      .maybeSingle();
+    if (error !== null) throw error;
+    const r = asRecord(data);
+    return {
+      defenseId: asStr(r.id) ?? null,
+      equippedCardId: asStr(r.equipped_card_id) ?? null,
+    };
+  }
+
+  async setEquippedCard(defenseId: string, cardId: string | null): Promise<void> {
+    // 장착 변경(클라 직접 컬럼 update). guard_defenses_equipped_card 트리거가 자기 소유 카드만
+    // 통과시킨다(아니면 raise → 여기서 throw 로 흡수). maintenance/budget 봉인은 무영향.
+    const { error } = await this.client
+      .from('defenses')
+      .update({ equipped_card_id: cardId })
+      .eq('id', defenseId);
+    if (error !== null) throw error;
+  }
+
+  async listShopPurchases(dateSeed: number): Promise<number[]> {
+    // 오늘 이미 구매한 슬롯(RLS card_shop_purchases select-own). 표시 슬롯 비활성용.
+    const { data, error } = await this.client
+      .from('card_shop_purchases')
+      .select('slot_index')
+      .eq('date_seed', dateSeed);
+    if (error !== null) throw error;
+    const rows = Array.isArray(data) ? data : [];
+    const out: number[] = [];
+    for (const raw of rows) {
+      const n = asNum(asRecord(raw).slot_index);
+      if (n !== undefined) out.push(n);
+    }
+    return out;
   }
 }

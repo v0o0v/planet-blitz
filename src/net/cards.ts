@@ -55,12 +55,42 @@ export interface CardSalvageResult {
   note?: string;
 }
 
+/**
+ * 보관함 소유 카드 1건(defense_cards 행). `id` 는 **행 uuid**(장착·분해·합성에 넘기는 참조)로,
+ * CardInstance.id(시드 파생 표시 id)와 다르다. 서버가 rarity·chargesLeft 를 정규 컬럼으로 두므로
+ * 그 값을 신뢰하고(card jsonb 와 일치), card 는 어픽스 요약·표시에 쓴다.
+ */
+export interface CardOwned {
+  /** defense_cards.id — 장착/분해/합성 참조용 행 uuid. */
+  id: string;
+  rarity: string;
+  chargesLeft: number;
+  /** 직렬화된 CardInstance(어픽스·유니크 표시용). */
+  card: CardInstance;
+}
+
+/** 내 방어의 장착 상태(카드 슬롯 표시·장착 변경에 필요). */
+export interface CardEquipState {
+  /** 활성 방어 행 id(없으면 null — 방어 미배치). 장착 변경 update 대상. */
+  defenseId: string | null;
+  /** 현재 장착 카드의 defense_cards.id(미장착이면 null). */
+  equippedCardId: string | null;
+}
+
 /** 게이트웨이 인터페이스(테스트에서 fake 주입). 실 구현은 cardsGateway.ts. */
 export interface CardsGateway {
   getUserId(): Promise<string>;
   buyShopCard(slotIndex: number): Promise<CardBuyResult>;
   fuseCards(cardIds: readonly [string, string, string]): Promise<CardFuseResult>;
   salvageCard(cardId: string): Promise<CardSalvageResult>;
+  /** 보관함 조회(defense_cards, RLS 본인). 실패 시 throw. */
+  listInventory(): Promise<CardOwned[]>;
+  /** 내 활성 방어의 장착 상태(defenses, RLS 본인). 실패 시 throw. */
+  fetchEquip(): Promise<CardEquipState>;
+  /** 장착 변경(defenses.equipped_card_id update — 소유권 트리거 검증). 실패 시 throw. */
+  setEquippedCard(defenseId: string, cardId: string | null): Promise<void>;
+  /** 오늘(dateSeed) 이미 구매한 상점 슬롯 인덱스 목록(card_shop_purchases, RLS 본인). 실패 시 throw. */
+  listShopPurchases(dateSeed: number): Promise<number[]>;
 }
 
 /** 주입 가능한 의존성(테스트에서 gateway/config 대체). */
@@ -163,6 +193,71 @@ export async function salvageCard(cardId: string, deps: CardsDeps = {}): Promise
   if (gateway === null) return null;
   try {
     return await gateway.salvageCard(cardId);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 보관함(defense_cards) 조회. 미설정/오프라인/오류면 `null`(UI 는 오프라인 안내). 서버 RLS 로
+ * 본인 카드만 반환된다. 반환 순서는 서버 정렬(최신순) — UI 는 그대로 표시한다.
+ */
+export async function listCardInventory(deps: CardsDeps = {}): Promise<CardOwned[] | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null) return null;
+  try {
+    return await gateway.listInventory();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 내 활성 방어의 장착 상태 조회(카드 슬롯 표시·장착 변경 대상 defenseId 확보). 미설정/오프라인/
+ * 오류면 `null`.
+ */
+export async function fetchCardEquip(deps: CardsDeps = {}): Promise<CardEquipState | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null) return null;
+  try {
+    return await gateway.fetchEquip();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 카드 장착/해제(defenses.equipped_card_id update). cardId=null 은 해제. 자기 소유 카드만 서버
+ * 트리거가 허용한다. 성공하면 true, 미설정/오프라인/거부/오류면 false(UI 안내). 서버 권위 —
+ * 성공 후 호출부가 장착 상태를 재조회한다.
+ */
+export async function equipCard(
+  defenseId: string,
+  cardId: string | null,
+  deps: CardsDeps = {},
+): Promise<boolean> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null) return false;
+  try {
+    await gateway.setEquippedCard(defenseId, cardId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 오늘(dateSeed) 이미 구매한 상점 슬롯 인덱스 목록. 미설정/오프라인/오류면 `null`. 표시 상점의
+ * 해당 슬롯 버튼을 비활성(이미 구매)하는 데 쓴다. dateSeed 미지정 시 현재 UTC 날짜 시드.
+ */
+export async function listCardShopPurchases(
+  dateSeed: number = shopDateSeedFromMs(Date.now()),
+  deps: CardsDeps = {},
+): Promise<number[] | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null) return null;
+  try {
+    return await gateway.listShopPurchases(dateSeed);
   } catch {
     return null;
   }
