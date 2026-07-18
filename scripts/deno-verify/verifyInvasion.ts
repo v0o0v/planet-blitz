@@ -11,8 +11,16 @@
  * `.js → .ts` resolve. 불일치 시 종료 코드 1.
  */
 
-import { verifyInvasion } from '../../supabase/functions/verify-invasion/verifyInvasionCore.ts';
-import type { InvasionServerContext } from '../../supabase/functions/verify-invasion/verifyInvasionCore.ts';
+import {
+  verifyInvasion,
+  injectGuardianAuthority,
+  performanceToCenti,
+} from '../../supabase/functions/verify-invasion/verifyInvasionCore.ts';
+import type {
+  InvasionServerContext,
+  AuthoritativeGuardianRow,
+} from '../../supabase/functions/verify-invasion/verifyInvasionCore.ts';
+import { branchBonusBp } from '../../data/lineage.ts';
 import { runReplay } from '../../src/sim/replay.ts';
 import type { InputFrame, WorldConfig } from '../../src/sim/world.ts';
 import {
@@ -235,6 +243,75 @@ function main(): number {
     guardians: [guardianLayout.guardians![0]!, { ...guardianLayout.guardians![1]!, performanceCP: PERFORMANCE_FULL }],
   };
   expectReject('수호 성능 위조', honest(seed, invasionConfig(forgedPerf), inputs), ['defense-mismatch'], gCtx);
+
+  // --- 게이트 3.9: M5 수호 권위 주입(DB → 서버 layout, 정비도 주입과 대칭) ---
+  // index.ts 배선이 저장 layout 의 수호 슬롯을 라이브 DB(guardians.performance·profiles.
+  // lineage_guardian_level)로 덮어쓴다. 여기서는 그 순수 주입 함수와 대조 계약을 증거화한다.
+  const dbRows: AuthoritativeGuardianRow[] = [
+    { data: makeGuardianSnapshot(GUARDIAN_TITAN, 140), performance: 60 }, // 서버 풍화 60%
+    { data: makeGuardianSnapshot(GUARDIAN_INTERCEPTOR, 90), performance: 75 }, // 서버 풍화 75%
+  ];
+  const guardianLevel = 10; // branchBonusBp(10)=floor(5000*10/30)=1666
+  // 저장 layout(defenses.layout): 슬롯 위치 + 공격자가 주장하는 위조 성능/보너스(풀성능·풀보너스).
+  const storedForgedLayout: DefenseLayout = {
+    ...SERVER_LAYOUT,
+    guardians: [
+      { x: 350, y: -100, snapshot: makeGuardianSnapshot(GUARDIAN_TITAN, 140), performanceCP: PERFORMANCE_FULL, lineageBonusBp: 5000 },
+      { x: 400, y: 150, snapshot: makeGuardianSnapshot(GUARDIAN_INTERCEPTOR, 90), performanceCP: PERFORMANCE_FULL, lineageBonusBp: 5000 },
+    ],
+  };
+  const authoritativeLayout = injectGuardianAuthority(storedForgedLayout, dbRows, guardianLevel) as DefenseLayout;
+  // 단위 검증: 성능·보너스가 DB 권위로 덮이고 슬롯 위치는 보존되는가.
+  const expectBonus = branchBonusBp(guardianLevel);
+  {
+    const g0 = authoritativeLayout.guardians?.[0];
+    const g1 = authoritativeLayout.guardians?.[1];
+    const ok =
+      g0 !== undefined && g1 !== undefined &&
+      g0.performanceCP === performanceToCenti(60) && g1.performanceCP === performanceToCenti(75) &&
+      g0.lineageBonusBp === expectBonus && g1.lineageBonusBp === expectBonus &&
+      g0.x === 350 && g0.y === -100 && g1.x === 400 && g1.y === 150;
+    if (ok) {
+      console.log(`${GREEN}PASS${RESET} 수호 권위 주입 단위(성능·보너스 덮어쓰기·위치 보존)`);
+    } else {
+      failures++;
+      console.log(`${RED}FAIL${RESET} 수호 권위 주입 단위: ${JSON.stringify(authoritativeLayout.guardians)}`);
+    }
+  }
+  const authCtx: InvasionServerContext = { layout: authoritativeLayout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
+  // 정직: 공격자가 서버 권위 주입 layout 으로 런·제출 → accept.
+  expectAccept('수호 권위 주입 후 정직 침공', honest(seed, invasionConfig(authoritativeLayout), inputs), authCtx);
+  // 위조: 공격자가 저장 위조 layout(풀성능·풀보너스)으로 런·제출 → 서버는 권위 주입 layout(풍화
+  // 60/75%·계보 1666bp)으로 대조 → defense-mismatch(방치 수호를 신선·풀보너스라 주장한 위조 거부).
+  expectReject('수호 권위 주입 vs 위조 제출', honest(seed, invasionConfig(storedForgedLayout), inputs), ['defense-mismatch'], authCtx);
+  // 하위호환: 수호 슬롯 없는 방어(SERVER_LAYOUT)는 활성 수호 DB 가 있어도 주입 생략 → guardians 미포함.
+  const noSlotInject = injectGuardianAuthority(SERVER_LAYOUT, dbRows, guardianLevel) as DefenseLayout;
+  if (noSlotInject.guardians === undefined) {
+    console.log(`${GREEN}PASS${RESET} 수호 슬롯 없으면 주입 생략(하위호환)`);
+  } else {
+    failures++;
+    console.log(`${RED}FAIL${RESET} 수호 슬롯 없음인데 guardians 주입됨`);
+  }
+
+  // --- 게이트 3.9b: 매치메이킹 라이브 서빙 == EF 권위 주입 델리버리 경로(PR#37 리뷰 LOW) ---
+  // 위 3.9 는 이미 계산된 authoritativeLayout 을 공격자 런과 EF 컨텍스트 양쪽에 재사용해
+  // "델리버리"(매치메이킹이 실제로 뭘 서빙하는가)를 생략했다는 지적을 받았다. 여기서는 방어자가
+  // 저장한 raw layout(storedForgedLayout — 슬롯 위치만 유효, 성능·보너스는 위조 주장) 한 곳에서
+  // 시작해, ①매치메이킹 RPC 몫(SQL `inject_guardian_authority`, 20260718110000)과 ②EF index.ts
+  // 몫(TS `injectGuardianAuthority`)이 **독립적으로 각자 호출**해도 동일한 권위 layout 을
+  // 재구성함을 증명한다 — 즉 공격자가 매치메이킹이 준 layout 을 그대로 정직하게 런하면, EF 가
+  // 같은 DB 상태에서 재구성한 권위 layout 과 반드시 일치해 accept 된다(실제 배달 경로 재현).
+  // SQL 함수 자체는 이 순수 TS 함수와 동일 규칙으로 작성됐다(마이그레이션 주석 대조 참조) — 이
+  // Deno 스위트는 플랫폼 무참조 TS 코어만 검증하고, SQL 헬퍼의 회귀는 리드의 원격 적용 후
+  // `get_advisors`·수동 대조 몫으로 남는다(README carry-forward에 명시).
+  const matchmakingServedLayout = injectGuardianAuthority(storedForgedLayout, dbRows, guardianLevel) as DefenseLayout;
+  const efReconstructedLayout = injectGuardianAuthority(storedForgedLayout, dbRows, guardianLevel) as DefenseLayout;
+  const deliveryCtx: InvasionServerContext = { layout: efReconstructedLayout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
+  expectAccept(
+    '매치메이킹 서빙 layout 그대로 정직 침공(델리버리 경로 재현)',
+    honest(seed, invasionConfig(matchmakingServedLayout), inputs),
+    deliveryCtx,
+  );
 
   // --- 게이트 4: 입력 길이 상한(제한 시간 초과) ---
   const shortCtx: InvasionServerContext = { layout: SERVER_LAYOUT, timeLimitTicks: 200 };

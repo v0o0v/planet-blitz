@@ -24,9 +24,10 @@
 
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { verifyInvasion } from './verifyInvasionCore.ts';
-import type { InvasionVerifyResult } from './verifyInvasionCore.ts';
+import { verifyInvasion, injectGuardianAuthority } from './verifyInvasionCore.ts';
+import type { InvasionVerifyResult, AuthoritativeGuardianRow } from './verifyInvasionCore.ts';
 import { DEFAULT_TIME_LIMIT_TICKS, MAINTENANCE_FULL } from '../../../src/sim/defense.ts';
+import { MAX_GUARDIAN_SLOTS } from '../../../data/guardian.ts';
 
 /** 재실행 벽시계 소프트 예산(ms). 초과 시 결과는 반환하되 경고 로그(중단은 불가). */
 const SOFT_RERUN_BUDGET_MS = 8_000;
@@ -163,6 +164,41 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // 로드 실패·비수치는 완전 정비(MAINTENANCE_FULL)로 폴백(기존 거동 보존).
   const maintNum = typeof maintenanceDb === 'number' ? maintenanceDb : Number(maintenanceDb);
   const maintenance = Number.isFinite(maintNum) ? Math.round(maintNum * 100) : MAINTENANCE_FULL;
+
+  // (3.5) 서버 권위 수호 주입(M5 — 정비도 주입과 동일 패턴). 방어 배치 수호 슬롯의 성능%·계보
+  // 보너스·스냅샷을 **공격자 제출 config 가 아니라 DB(guardians·profiles)에서 권위 주입**한다.
+  // 슬롯 위치(x/y)는 저장된 layout 에서(방어자 배치 결정), 성능(풍화)·보너스(계보 레벨)·스냅샷은
+  // 라이브 DB 에서. 이후 verifyInvasion 이 이 권위 layout 으로 공격자 제출을 대조하므로(guardiansEqual),
+  // 방치 수호를 신선하다 주장하거나 계보 보너스를 부풀린 위조는 defense-mismatch 로 거부된다.
+  //
+  // 조회 순서 created_at→id 는 클라 buildGuardianPlacements 가 소비하는 활성 수호 순서(클라
+  // fetchGuardians 동일 정렬)와 일치해야 슬롯 i↔수호 i 매핑이 클라·서버 비트 동일하다.
+  // 저장 layout 에 수호 슬롯이 없으면(수호 미포함 방어) 조회 자체를 건너뛴다 → 기존 침공 거동 불변.
+  const rawGuardianSlots = (layout as { guardians?: unknown }).guardians;
+  if (Array.isArray(rawGuardianSlots) && rawGuardianSlots.length > 0) {
+    const { data: gRows } = await service
+      .from('guardians')
+      .select('data, performance, created_at, id')
+      .eq('profile_id', inv.defender_id)
+      .eq('retired', false)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .limit(MAX_GUARDIAN_SLOTS);
+    const { data: prof } = await service
+      .from('profiles')
+      .select('lineage_guardian_level')
+      .eq('id', inv.defender_id)
+      .maybeSingle();
+    const rows: AuthoritativeGuardianRow[] = Array.isArray(gRows)
+      ? gRows.map((r) => {
+          const rr = r as { data?: unknown; performance?: unknown };
+          return { data: rr.data, performance: Number(rr.performance) };
+        })
+      : [];
+    const lvlRaw = (prof as { lineage_guardian_level?: unknown } | null)?.lineage_guardian_level;
+    const level = typeof lvlRaw === 'number' && Number.isFinite(lvlRaw) ? lvlRaw : 0;
+    layout = injectGuardianAuthority(layout, rows, level);
+  }
 
   // (4) 제출(리플레이 + 클라이언트 주장)을 RunSubmission 형태로 조립.
   //
