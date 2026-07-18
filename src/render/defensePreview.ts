@@ -25,7 +25,7 @@ import {
 import { createWorld, DEFAULT_CONFIG, type WorldConfig, type WorldState } from '../sim/world.js';
 import { snapshotWorld, type WorldSnapshot } from '../sim/snapshot.js';
 import { DEFAULT_TIME_LIMIT_TICKS, type DefenseLayout, type InvasionConfig } from '../sim/defense.js';
-import { worldToCell, GRID_COLS, GRID_ROWS } from '../ui/defenseCommand.js';
+import { worldToCell, GRID_COLS, GRID_ROWS, CELL_W, CELL_H } from '../ui/defenseCommand.js';
 
 /**
  * 프리뷰 제어 인터페이스(레인 C 소비 계약). main 이 생성해 defenseCommand 로 주입하면, 편집
@@ -49,6 +49,13 @@ export interface DefensePreviewControls {
    * 프리뷰 좌표계로 환산하는 유일한 경로(격자 기하 하드코딩 중복 방지).
    */
   clientToCell(clientX: number, clientY: number): { col: number; row: number } | null;
+  /**
+   * 프리뷰를 화면의 특정 영역(좌/우 사이드 패널 사이 빈 공간)에 맞춰 축소·중앙정렬한다. 배치
+   * 격자는 design(1920×1080) 전체를 채우는 full-bleed라, 패널이 얹히면 양끝 열이 가린다 —
+   * `gap`(클라이언트 픽셀 사각형)에 격자 전체가 들어가도록 뷰포트를 스케일/팬한다. `null` 이면
+   * design 전체 기준(폴백). 편집 UI 가 패널 기하·리사이즈에 맞춰 호출한다.
+   */
+  setViewport(gap: { left: number; top: number; right: number; bottom: number } | null): void;
   /** 프리뷰가 현재 켜져 있는지. */
   readonly active: boolean;
 }
@@ -72,6 +79,12 @@ export class DefensePreviewController implements DefensePreviewControls {
   private readonly renderer: EntityRenderer;
   private readonly overlay = new DefensePreviewOverlay();
   private readonly deps: DefensePreviewDeps;
+  /**
+   * 프리뷰 스택(스프라이트 + 오버레이)을 함께 담는 뷰포트 컨테이너. 이 컨테이너에 scale/position
+   * 을 걸어 격자를 좌/우 패널 사이 영역에 축소·중앙정렬한다. 내부 레이어(renderer/overlay)는
+   * 여전히 camOffset 기준 월드 좌표로 그려지고, 뷰포트가 그 위에 화면 맞춤 변환을 얹는다.
+   */
+  private readonly viewport = new Container();
 
   private world: WorldState | null = null;
   private layout: DefenseLayout | null = null;
@@ -81,14 +94,20 @@ export class DefensePreviewController implements DefensePreviewControls {
   /** 카메라 팬 오프셋(정지 프리뷰는 고정 — 원점 기준 화면 중앙). */
   private camOffsetX = DESIGN_WIDTH / 2;
   private camOffsetY = DESIGN_HEIGHT / 2;
+  /** 화면 맞춤 목표(design 좌표: 중심 cx,cy + 가용 크기 w,h). null = design 전체(폴백). */
+  private fit: { cx: number; cy: number; w: number; h: number } | null = null;
+  /** 현재 뷰포트 스케일(clientToCell 역변환에 필요). */
+  private viewScale = 1;
 
   constructor(deps: DefensePreviewDeps) {
     this.deps = deps;
     this.renderer = new EntityRenderer(deps.textures);
     // 렌더 순서: 스프라이트(엔티티) 아래, 오버레이 위. 라이브 entityRenderer.layer 와는
     // 별개의 컨테이너라 서로 간섭하지 않는다(라이브는 프리뷰 중 emptySnap 만 그린다).
-    deps.stage.addChild(this.renderer.layer);
-    deps.stage.addChild(this.overlay.layer);
+    // 두 레이어를 뷰포트에 담아 하나의 스케일/팬 변환을 공유한다(패널 사이 화면 맞춤).
+    deps.stage.addChild(this.viewport);
+    this.viewport.addChild(this.renderer.layer);
+    this.viewport.addChild(this.overlay.layer);
     this.renderer.layer.visible = false;
     this.overlay.layer.visible = false;
   }
@@ -131,14 +150,53 @@ export class DefensePreviewController implements DefensePreviewControls {
 
   clientToCell(clientX: number, clientY: number): { col: number; row: number } | null {
     const d = this.deps.clientToDesign(clientX, clientY);
-    // design → 월드: 레이어 팬(camOffset)의 역변환. 카메라 고정이라 오프셋은 상수.
-    const worldX = d.x - this.camOffsetX;
-    const worldY = d.y - this.camOffsetY;
+    // design → 뷰포트-로컬(스케일·팬 역변환) → 월드(camOffset 역변환). 뷰포트 변환을 거쳐야
+    // 패널 사이로 축소된 격자와 클릭 좌표가 정확히 맞는다.
+    const vx = (d.x - this.viewport.position.x) / this.viewScale;
+    const vy = (d.y - this.viewport.position.y) / this.viewScale;
+    const worldX = vx - this.camOffsetX;
+    const worldY = vy - this.camOffsetY;
     const cell = worldToCell(worldX, worldY);
     if (cell.col < 0 || cell.col >= GRID_COLS || cell.row < 0 || cell.row >= GRID_ROWS) {
       return null;
     }
     return cell;
+  }
+
+  setViewport(gap: { left: number; top: number; right: number; bottom: number } | null): void {
+    if (gap === null) {
+      this.fit = null;
+    } else {
+      // 클라이언트 사각형 → design 사각형(letterbox 역변환). 안쪽 여백만큼 줄여 격자 외곽선이
+      // 패널에 딱 붙지 않게 한다.
+      const tl = this.deps.clientToDesign(gap.left, gap.top);
+      const br = this.deps.clientToDesign(gap.right, gap.bottom);
+      const w = br.x - tl.x - 2 * VIEWPORT_PAD;
+      const h = br.y - tl.y - 2 * VIEWPORT_PAD;
+      this.fit = w > 0 && h > 0 ? { cx: (tl.x + br.x) / 2, cy: (tl.y + br.y) / 2, w, h } : null;
+    }
+    this.applyViewport();
+  }
+
+  /**
+   * 뷰포트 스케일/팬을 다시 계산한다. 격자 전체(GRID_COLS×CELL_W × GRID_ROWS×CELL_H)가 fit
+   * 영역에 들어가도록 축소하고 그 중심에 맞춘다. fit 이 null 이면 design 전체 기준(스케일 1).
+   */
+  private applyViewport(): void {
+    const fit = this.fit;
+    if (fit === null) {
+      this.viewScale = 1;
+      this.viewport.scale.set(1);
+      this.viewport.position.set(0, 0);
+      return;
+    }
+    const gridW = GRID_COLS * CELL_W;
+    const gridH = GRID_ROWS * CELL_H;
+    const s = Math.min(fit.w / gridW, fit.h / gridH);
+    this.viewScale = s;
+    this.viewport.scale.set(s);
+    // 격자 중심(월드 원점)의 뷰포트-로컬 좌표 = camOffset. 이를 fit 중심으로 보낸다.
+    this.viewport.position.set(fit.cx - s * this.camOffsetX, fit.cy - s * this.camOffsetY);
   }
 
   /** 배치로 침공 정지 월드를 (재)생성하고 1프레임 렌더한다. layout null 이면 월드 없이 배경만. */
@@ -173,6 +231,8 @@ export class DefensePreviewController implements DefensePreviewControls {
     this.camOffsetX = DESIGN_WIDTH / 2 - snap.cameraX;
     this.camOffsetY = DESIGN_HEIGHT / 2 - snap.cameraY;
     this.overlay.setCamera(this.camOffsetX, this.camOffsetY);
+    // camOffset 이 바뀌면 뷰포트 팬(격자 중심 정렬)도 다시 계산해야 한다.
+    this.applyViewport();
   }
 
   private drawOverlay(): void {
@@ -192,6 +252,9 @@ export class DefensePreviewController implements DefensePreviewControls {
 
 /** 정지 프리뷰 시드(고정 — 스텝하지 않으므로 재현 무관, 상수로 충분). */
 const PREVIEW_SEED = 0x5eed;
+
+/** 뷰포트 안쪽 여백(design 유닛) — 격자 외곽선이 패널·화면 끝에 딱 붙지 않게. */
+const VIEWPORT_PAD = 20;
 
 /** 빈 스냅샷(월드 미배치 프레임에서 스프라이트를 비우는 데 쓴다). */
 const EMPTY_SNAP: WorldSnapshot = {

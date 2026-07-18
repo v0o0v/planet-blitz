@@ -764,6 +764,8 @@ export class DefenseCommand {
   private hint = '';
   /** 실화면 프리뷰 제어(레인 B). 없으면(옵셔널 미주입) 편집은 좌표 변환 없이 no-op 안전. */
   private preview: DefensePreviewControls | null = null;
+  /** 리사이즈 리스너(프리뷰 뷰포트 재계산). show 에서 부착, hide 에서 제거. */
+  private onResize: (() => void) | null = null;
   /** 캔버스에서 선택된 배치물(사거리 원 + 제거 버튼 대상). null = 미선택. */
   private selected: OverlayHighlight | null = null;
   /** 현재 호버 중인 격자 칸(오버레이 하이라이트용). */
@@ -849,6 +851,13 @@ export class DefenseCommand {
     // 프리뷰를 에디터 실상태(기본 코어·수호 포함)로 맞춘다 — main 은 저장 레이아웃으로만 start 했다.
     this.preview?.setLayout(editorStateToLayout(this.state));
     this.syncOverlay();
+    // 프리뷰를 좌/우 패널 사이 영역에 맞춘다(격자 full-bleed 1920×1080이 패널에 가리지 않게).
+    // 패널 폭은 고정이지만 letterbox 스케일이 창 크기에 따라 바뀌므로 리사이즈마다 재계산한다.
+    this.scheduleViewport();
+    if (this.onResize === null) {
+      this.onResize = () => this.scheduleViewport();
+      window.addEventListener('resize', this.onResize);
+    }
     void this.loadStatus();
     // 통합 화면: 카드 탭이 없으므로 진입 시 카드 데이터를 선로딩(우측 패널 요약·접이식 준비).
     void this.loadCards();
@@ -859,6 +868,36 @@ export class DefenseCommand {
     this.onClose = null;
     this.selected = null;
     this.hoverCell = null;
+    if (this.onResize !== null) {
+      window.removeEventListener('resize', this.onResize);
+      this.onResize = null;
+    }
+  }
+
+  /**
+   * 프리뷰 뷰포트를 패널 기하에 맞춰 갱신한다. display:block + DOM 부착 직후라 `getBoundingClientRect`
+   * 가 레이아웃을 동기 flush 하므로 즉시 측정한다. rAF 백업은 폰트·전환 등으로 폭이 늦게 잡히는
+   * 경우를 위한 재확인(백그라운드 탭에서 rAF 가 스로틀돼도 동기 호출이 이미 처리한다).
+   */
+  private scheduleViewport(): void {
+    if (this.preview === null) return;
+    this.updateViewport();
+    requestAnimationFrame(() => this.updateViewport());
+  }
+
+  /** 좌/우 패널의 실측 사각형으로 프리뷰가 채울 중앙 빈 영역(클라이언트 픽셀)을 계산해 넘긴다. */
+  private updateViewport(): void {
+    if (this.preview === null || !this.visible) return;
+    const left = this.root.querySelector('.pb-side.left');
+    const right = this.root.querySelector('.pb-side.right');
+    if (!(left instanceof HTMLElement) || !(right instanceof HTMLElement)) {
+      this.preview.setViewport(null);
+      return;
+    }
+    const lr = left.getBoundingClientRect();
+    const rr = right.getBoundingClientRect();
+    const root = this.root.getBoundingClientRect();
+    this.preview.setViewport({ left: lr.right, top: root.top, right: rr.left, bottom: root.bottom });
   }
 
   /** 프리뷰 오버레이(호버 셀·선택 배치물)를 현재 편집 상태로 밀어 다시 그린다. */
