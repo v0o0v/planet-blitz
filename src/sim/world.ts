@@ -145,6 +145,7 @@ import {
 } from './events.js';
 import type { InvasionConfig } from './defense.js';
 import { spawnInvasionLayout, stepDefenseTurrets, stepGuardians } from './defense.js';
+import { rebootHp, REBOOT_DELAY_TICKS } from '../../data/guardian.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -1595,6 +1596,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       )
         return;
       if (!circlesOverlap(b.x, b.y, b.radius, t.x, t.y, t.radius)) return;
+      // 마일스톤 ① 격추 재기동 딜레이(M5): 재기동 중(iframes>0)인 수호 기체는 무적이라 피해를
+      // 받지 않고 탄도 소비하지 않는다(다른 표적을 계속 노릴 수 있게 return). defense.stepGuardians
+      // 가 iframes 를 감소시켜 딜레이가 끝나면 다시 피격 가능해진다.
+      if (t.kind === 'guardian' && t.iframes > 0) return;
       // Boss takes double damage while overheated (iframes > 0), spec.
       const mult = t.kind === 'boss' && t.iframes > 0 ? 2 : 1;
       // ③ 관통 자이로: bullet.phase = 지금까지 관통한 횟수 → 관통당 피해 증폭.
@@ -1602,12 +1607,34 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       // ⑥ 수렴 프리즘: 빔 세그먼트가 관통한 적 수(phase)만큼 피해 증폭(자이로와 배타).
       const prismAmp = prismOn ? 1 + b.phase * PRISM_DAMAGE_AMP : 1;
       // 보호막의 엘리트: 받는 피해 절반(그 외 1).
-      t.hp -= b.damage * mult * gyroAmp * prismAmp * eliteDamageTakenMult(t);
+      let dealt = b.damage * mult * gyroAmp * prismAmp * eliteDamageTakenMult(t);
+      // 마일스톤 ③ 실드 공유(M5): 코어·포탑에 부여된 실드(targetY)가 남아 있으면 HP 보다 먼저
+      // 흡수한다. 실드가 피해를 다 막으면 HP 는 그대로다. 실드가 없으면(targetY<=0) 무영향이라
+      // 기존 거동과 완전히 동일하다(하위 호환). 결정론: 모든 항이 동일 f64 연산이라 플랫폼 무관.
+      if ((t.kind === 'core' || t.kind === 'defenseTurret') && t.targetY > 0) {
+        if (t.targetY >= dealt) {
+          t.targetY -= dealt;
+          dealt = 0;
+        } else {
+          dealt -= t.targetY;
+          t.targetY = 0;
+        }
+      }
+      t.hp -= dealt;
       if (t.hp <= 0) {
-        t.dead = true;
-        // ⑤ 군집 벌통: 미사일 원본(MISSILE_MARK)이 적/보스를 격추하면 마이크로탄 방사 예약.
-        if (hiveOn && b.ownerId === MISSILE_MARK && (t.kind === 'enemy' || t.kind === 'boss')) {
-          hiveSpawns.push({ x: t.x, y: t.y });
+        // 마일스톤 ① 격추 재기동(M5): 수호 기체가 부활 충전(phase>0)을 가진 채 HP 0 에 도달하면
+        // 죽지 않고 1회 부활한다 — 충전을 소진하고 실효 최대 HP 비율로 회복, 재기동 딜레이(iframes)
+        // 동안 무적·정지. 충전이 없으면(phase===0) 일반 격추. 다른 종류는 종전대로 즉시 격추.
+        if (t.kind === 'guardian' && t.phase > 0) {
+          t.phase--;
+          t.hp = rebootHp(t.maxHp);
+          t.iframes = REBOOT_DELAY_TICKS;
+        } else {
+          t.dead = true;
+          // ⑤ 군집 벌통: 미사일 원본(MISSILE_MARK)이 적/보스를 격추하면 마이크로탄 방사 예약.
+          if (hiveOn && b.ownerId === MISSILE_MARK && (t.kind === 'enemy' || t.kind === 'boss')) {
+            hiveSpawns.push({ x: t.x, y: t.y });
+          }
         }
       }
       // M3 원소 상태이상(plan B4): 적 명중 시 화염/냉기/전격 부여(장착 시에만).
@@ -1742,7 +1769,9 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       if (t.damage > dmg) dmg = t.damage;
       t.dead = true;
     } else if (t.kind === 'enemy' || t.kind === 'boss' || t.kind === 'guardian') {
-      // 수호 기체(M5)는 추적형 요격 유닛 — 접촉(램) 피해를 준다(방어전에만 존재).
+      // 수호 기체(M5)는 추적형 요격 유닛 — 접촉(램) 피해를 준다(방어전에만 존재). 단 마일스톤 ①
+      // 격추 재기동 딜레이 중(iframes>0)인 수호는 정지·무력 상태라 접촉 피해도 주지 않는다.
+      if (t.kind === 'guardian' && t.iframes > 0) return;
       if (t.damage > dmg) dmg = t.damage;
     } else if (t.kind === 'hazard' && hazardActive(t)) {
       if (t.damage > dmg) dmg = t.damage;

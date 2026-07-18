@@ -196,6 +196,62 @@ export function resolveGuardianStats(
   };
 }
 
+// ---------------------------------------------------------------------------
+// 마일스톤 질적 노드 효과 수치(GDD §4 · ADR-0007) — 순수 결정론 정수 함수.
+// 해금 여부는 data/lineage.ts guardianMilestones(레벨)이 판정하고 방어전 config 로 실린다.
+// 여기(data/ 층)는 "해금됐을 때 얼마나 강해지는가"의 순수 수치 해석만 담아 클라·서버가 공유한다.
+// ---------------------------------------------------------------------------
+
+/** 격추 재기동: 부활 HP 비율(basis-point, 5000=50%). 부활 직후 실효 최대 HP 대비. 튜닝 대상(§5). */
+export const REBOOT_HP_BP = 5000;
+/** 격추 재기동: 부활 후 재기동 딜레이(틱, 90=1.5초). 이 동안 무적·정지(이동·사격 안 함). */
+export const REBOOT_DELAY_TICKS = 90;
+
+/** 코어 근접 수비: 이 반경(월드 유닛) 내에서 강화. 튜닝 대상(§5). */
+export const CORE_GUARD_RADIUS = 420;
+/** 코어 근접 수비: 피해 강화(basis-point, 3000=+30%). 탄피해·접촉피해에 적용. */
+export const CORE_GUARD_DAMAGE_BP = 3000;
+
+/** 실드 공유: 코어 실드 = 수호 전투력 풀 × 이 비율(basis-point, 5000=50%). */
+export const SHIELD_SHARE_CORE_BP = 5000;
+/** 실드 공유: 포탑 1기 실드 = 수호 전투력 풀 × 이 비율(basis-point, 1000=10%). */
+export const SHIELD_SHARE_TURRET_BP = 1000;
+
+/**
+ * 부활 HP(결정론 정수) = 실효 최대 HP × {@link REBOOT_HP_BP}. 최소 1(0 부활 금지). 단일 나눗셈
+ * + Math.round 라 플랫폼 무관. maxHp 는 resolveGuardianStats 가 낸 정수 실효값이다.
+ */
+export function rebootHp(maxHp: number): number {
+  const v = Math.round((maxHp * REBOOT_HP_BP) / 10000);
+  return v < 1 ? 1 : v;
+}
+
+/**
+ * 코어 근접 강화 피해(결정론 정수) = base × (1 + {@link CORE_GUARD_DAMAGE_BP}). scaleStat 과 동일
+ * 산술 규율(단일 나눗셈 + Math.round). base 는 이미 성능·보너스가 적용된 정수 실효 피해다.
+ */
+export function coreGuardDamage(base: number): number {
+  return Math.round((base * (10000 + CORE_GUARD_DAMAGE_BP)) / 10000);
+}
+
+/**
+ * 코어 근접 강화 발사 간격(결정론 정수) = round(base × 10000 / (10000+bp)) — 연사↑. scaleCooldown
+ * 과 동일 규율(최소 2틱 보장 — 0 나눗셈·즉발 폭주 방지).
+ */
+export function coreGuardCooldown(base: number): number {
+  const v = Math.round((base * 10000) / (10000 + CORE_GUARD_DAMAGE_BP));
+  return v < 2 ? 2 : v;
+}
+
+/**
+ * 실드 공유 풀 → 코어·포탑 1기당 실드 HP(결정론 정수 내림). pool 은 참전 수호들의 실효 HP 합
+ * (전투력 비례). bp 로 코어/포탑 몫을 나눈다. 음수 풀은 0.
+ */
+export function shieldShareHp(pool: number, bp: number): number {
+  const p = pool < 0 ? 0 : pool;
+  return Math.floor((p * bp) / 10000);
+}
+
 /**
  * 퇴역 시 프리셋 + 전투력 점수로 **복사 스냅샷**을 만든다(ADR-0007 R8). 전투력 점수가 높을수록
  * (좋은 장비·깊은 빌드로 퇴역) 강한 수호기가 된다. hp·접촉·탄피해를 전투력 점수 비율로 스케일
