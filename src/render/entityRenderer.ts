@@ -104,6 +104,22 @@ export class EntityRenderer {
         const idx = e.enemyType >= 0 && e.enemyType < arr.length ? e.enemyType : 0;
         return arr[idx] ?? this.textures.player;
       }
+      case 'defenseTurret': {
+        // 포탑 유형(enemyType = TURRET_* 0..5)별 변형 텍스처. 범위 밖은 발칸(0) 폴백.
+        const arr = this.textures.defenseTurret;
+        const idx = e.enemyType >= 0 && e.enemyType < arr.length ? e.enemyType : 0;
+        return arr[idx] ?? this.textures.player;
+      }
+      case 'core':
+      case 'decoyCore':
+        // 가짜 코어(decoyCore)도 실제 코어와 동일 텍스처로 렌더(조준·피격이 같은 시각 계약).
+        return this.textures.core;
+      case 'guardian': {
+        // 수호 프리셋(enemyType = 0 타이탄 / 1 인터셉터)별 변형. 범위 밖은 타이탄(0) 폴백.
+        const arr = this.textures.guardian;
+        const idx = e.enemyType >= 0 && e.enemyType < arr.length ? e.enemyType : 0;
+        return arr[idx] ?? this.textures.player;
+      }
       default:
         return this.textures.player;
     }
@@ -191,7 +207,12 @@ export class EntityRenderer {
           e.kind === 'magnetEmitter' ||
           e.kind === 'bombDevice' ||
           e.kind === 'turretPickup' ||
-          e.kind === 'loot';
+          e.kind === 'loot' ||
+          // 방어 포탑·코어는 고정 방향(OQ1/OQ4). 수호(guardian)는 이 목록에 없어 이동
+          // 렌더 규약(e.angle = 추적 조준각)을 그대로 따른다.
+          e.kind === 'defenseTurret' ||
+          e.kind === 'core' ||
+          e.kind === 'decoyCore';
         tracked.sprite.rotation = fixedFacing ? 0 : e.angle;
       }
 

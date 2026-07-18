@@ -58,6 +58,8 @@ import {
   type DefenseStatus,
 } from '../net/defenseSync.js';
 import { t, type MessageKey } from '../i18n/index.js';
+import type { DefensePreviewControls } from '../render/defensePreview.js';
+import type { OverlayHighlight } from '../render/defensePreviewOverlay.js';
 import {
   getCardsUserId,
   listCardInventory,
@@ -663,44 +665,47 @@ function clampCol(col: number): number {
 // DOM 오버레이
 // ---------------------------------------------------------------------------
 const STYLE = `
-#pb-def { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; gap:12px; padding:20px 16px; box-sizing:border-box; background:radial-gradient(circle at 50% 18%,#0a1424,#03050c 76%); backdrop-filter:blur(3px); font-family:'Segoe UI',system-ui,sans-serif; z-index:29; overflow:auto; }
-#pb-def h1 { margin:0; color:#8fd94c; font-size:24px; font-weight:900; letter-spacing:2px; }
-#pb-def .pb-sub { color:#8896b8; font-size:12px; margin-top:-6px; }
-#pb-def .pb-bar { display:flex; gap:18px; align-items:center; color:#e8ecff; font-size:14px; font-weight:700; }
+#pb-def { position:absolute; inset:0; pointer-events:none; box-sizing:border-box; font-family:'Segoe UI',system-ui,sans-serif; z-index:29; }
+#pb-def .pb-stage { position:absolute; inset:0; pointer-events:auto; cursor:crosshair; }
+#pb-def .pb-side { position:absolute; top:0; bottom:0; width:312px; box-sizing:border-box; pointer-events:auto; padding:16px 14px; overflow-y:auto; display:flex; flex-direction:column; gap:12px; background:rgba(6,10,20,.62); backdrop-filter:blur(5px); }
+#pb-def .pb-side.left { left:0; border-right:1px solid #2a3552; }
+#pb-def .pb-side.right { right:0; border-left:1px solid #2a3552; align-items:stretch; }
+#pb-def h1 { margin:0; color:#8fd94c; font-size:22px; font-weight:900; letter-spacing:2px; }
+#pb-def .pb-sub { color:#8896b8; font-size:11px; margin-top:-6px; }
+#pb-def .pb-bar { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; color:#e8ecff; font-size:13px; font-weight:700; }
 #pb-def .pb-bar .pt { color:#8fd94c; }
 #pb-def .pb-bar .pt.over { color:#ff6a6a; }
-#pb-def .pb-cols { display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap; justify-content:center; }
-#pb-def .pb-panel { background:rgba(12,16,30,.7); border:1px solid #2a3552; border-radius:14px; padding:14px; }
+#pb-def .pb-panel { background:rgba(12,16,30,.55); border:1px solid #2a3552; border-radius:14px; padding:14px; }
 #pb-def .pb-panel h2 { margin:0 0 10px; color:#aab6d6; font-size:13px; font-weight:700; letter-spacing:1px; }
-#pb-def .pb-pal { display:grid; grid-template-columns:repeat(3,92px); gap:8px; }
-#pb-def .pb-tool { position:relative; width:92px; padding:8px 6px; box-sizing:border-box; background:rgba(20,26,44,.85); border:2px solid #2a3552; border-radius:10px; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:3px; text-align:center; transition:transform .08s ease,border-color .08s ease; }
+#pb-def .pb-pal { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+#pb-def .pb-tool { position:relative; width:auto; padding:8px 6px; box-sizing:border-box; background:rgba(20,26,44,.85); border:2px solid #2a3552; border-radius:10px; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:3px; text-align:center; transition:transform .08s ease,border-color .08s ease; }
 #pb-def .pb-tool:hover { transform:translateY(-2px); }
 #pb-def .pb-tool.sel { outline:2px solid #7affea; outline-offset:1px; }
 #pb-def .pb-tool .g { font-size:22px; line-height:1; }
 #pb-def .pb-tool .l { color:#fff; font-size:12px; font-weight:800; }
 #pb-def .pb-tool .c { color:#8fd94c; font-size:11px; font-weight:700; }
 #pb-def .pb-tool .c.free { color:#68789c; }
-#pb-def .pb-tip { min-height:14px; color:#aab6d6; font-size:11px; max-width:300px; text-align:center; }
-#pb-def .pb-gridwrap { position:relative; }
-#pb-def .pb-grid { display:grid; gap:2px; background:#0a1020; border:1px solid #2a3552; border-radius:10px; padding:4px; }
-#pb-def .pb-cell { width:34px; height:34px; border-radius:5px; background:rgba(30,40,64,.55); display:flex; align-items:center; justify-content:center; font-size:18px; line-height:1; cursor:pointer; user-select:none; box-sizing:border-box; }
-#pb-def .pb-cell:hover { background:rgba(60,80,120,.55); }
-#pb-def .pb-cell.spawn { background:rgba(80,60,30,.55); }
-#pb-def .pb-cell.spawn::after { content:'▲'; color:#ffb14c; font-size:12px; }
-#pb-def .pb-guard { display:flex; gap:8px; margin-top:6px; }
+#pb-def .pb-tip { min-height:14px; color:#aab6d6; font-size:11px; text-align:center; }
+#pb-def .pb-sel { display:flex; align-items:center; gap:10px; padding:8px 12px; border-radius:10px; background:rgba(20,26,44,.7); border:1px solid #2a3552; font-size:12px; color:#cdd7ef; font-weight:700; }
+#pb-def .pb-sel .pb-selname { flex:1; }
+#pb-def .pb-sel button.pb-selrm { pointer-events:auto; cursor:pointer; padding:6px 12px; font-size:12px; font-weight:800; color:#fff; background:#c8354c; border:none; border-radius:8px; }
+#pb-def .pb-cardhead { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+#pb-def button.pb-cardtoggle { pointer-events:auto; cursor:pointer; padding:6px 12px; font-size:12px; font-weight:800; color:#aab6d6; background:rgba(20,26,44,.9); border:1px solid #2a3552; border-radius:8px; white-space:nowrap; }
+#pb-def .pb-guard { display:flex; gap:8px; margin-top:6px; flex-wrap:wrap; }
 #pb-def .pb-slot { width:52px; height:52px; border-radius:9px; border:2px dashed #3a4568; background:rgba(20,26,44,.5); display:flex; flex-direction:column; align-items:center; justify-content:center; color:#5a6788; font-size:10px; gap:2px; }
 #pb-def .pb-slot .lk { font-size:16px; }
 #pb-def .pb-slot.active { border-style:solid; color:#cdd7ef; cursor:pointer; transition:transform .08s ease,border-color .08s ease; }
 #pb-def .pb-slot.active:hover { transform:translateY(-2px); }
 #pb-def .pb-slot.active.sel { outline:2px solid #7affea; outline-offset:1px; }
 #pb-def .pb-slot .gm { font-size:20px; line-height:1; }
-#pb-def .pb-hint { color:#ff9a7a; font-size:12px; min-height:14px; text-align:center; max-width:420px; }
+#pb-def .pb-hint { color:#ff9a7a; font-size:12px; min-height:14px; text-align:center; }
 #pb-def .pb-ok { color:#8fd94c; }
-#pb-def .pb-actions { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
+#pb-def .pb-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-start; }
+#pb-def .pb-actions button { flex:1 1 auto; }
 #pb-def button.pb-act { pointer-events:auto; cursor:pointer; padding:10px 18px; font-size:14px; font-weight:700; color:#04121a; background:linear-gradient(90deg,#7affea,#8fd94c); border:none; border-radius:10px; }
 #pb-def button.pb-act:disabled { opacity:.4; cursor:default; filter:grayscale(.5); }
 #pb-def button.pb-ghost { pointer-events:auto; cursor:pointer; padding:10px 18px; font-size:14px; font-weight:700; color:#aab6d6; background:rgba(20,26,44,.9); border:1px solid #2a3552; border-radius:10px; }
-#pb-def .pb-maint { display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center; max-width:820px; padding:8px 14px; border-radius:10px; background:rgba(12,16,30,.7); border:1px solid #2a3552; }
+#pb-def .pb-maint { display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-start; padding:8px 14px; border-radius:10px; background:rgba(12,16,30,.55); border:1px solid #2a3552; }
 #pb-def .pb-maint .pb-mlabel { font-size:13px; font-weight:800; color:#8fd94c; }
 #pb-def .pb-maint .pb-mlabel.lv-warn { color:#ffd24c; }
 #pb-def .pb-maint .pb-mlabel.lv-critical { color:#ff6a6a; }
@@ -716,8 +721,8 @@ const STYLE = `
 #pb-def .pb-tabs { display:flex; gap:8px; }
 #pb-def button.pb-tab { pointer-events:auto; cursor:pointer; padding:8px 20px; font-size:14px; font-weight:800; color:#aab6d6; background:rgba(20,26,44,.9); border:1px solid #2a3552; border-radius:10px 10px 0 0; }
 #pb-def button.pb-tab.on { color:#04121a; background:linear-gradient(90deg,#7affea,#8fd94c); border-color:#7affea; }
-#pb-def .pb-cards { display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap; justify-content:center; width:100%; max-width:960px; }
-#pb-def .pb-cards .pb-panel { flex:1 1 280px; min-width:260px; max-width:440px; }
+#pb-def .pb-cards { display:flex; flex-direction:column; gap:12px; align-items:stretch; width:100%; }
+#pb-def .pb-cards .pb-panel { width:100%; box-sizing:border-box; }
 #pb-def .pb-cardslot { display:flex; flex-direction:column; gap:8px; padding:12px; border:2px solid #2a3552; border-radius:12px; background:rgba(20,26,44,.6); }
 #pb-def .pb-cardslot.filled { border-style:solid; }
 #pb-def .pb-cardslot .cs-grade { font-size:13px; font-weight:900; letter-spacing:1px; }
@@ -757,14 +762,20 @@ export class DefenseCommand {
   private tool: Tool = { kind: 'turret', turretType: 0 };
   private tip = '';
   private hint = '';
+  /** 실화면 프리뷰 제어(레인 B). 없으면(옵셔널 미주입) 편집은 좌표 변환 없이 no-op 안전. */
+  private preview: DefensePreviewControls | null = null;
+  /** 캔버스에서 선택된 배치물(사거리 원 + 제거 버튼 대상). null = 미선택. */
+  private selected: OverlayHighlight | null = null;
+  /** 현재 호버 중인 격자 칸(오버레이 하이라이트용). */
+  private hoverCell: { col: number; row: number } | null = null;
   // 정비(E3) 상태 — 서버 권위. null = 미로딩/미설정(정비 UI 비활성 안내).
   private defenseStatus: DefenseStatus | null = null;
   private statusLoading = false;
   private repairing = false;
   private statusToken = 0;
 
-  // 카드 탭(M6) 상태 — 서버 권위. null = 미로딩/미설정.
-  private activeTab: 'layout' | 'cards' = 'layout';
+  // 카드(M6) 상태 — 서버 권위. null = 미로딩/미설정. 통합 화면에서 우측 패널 접이식으로 노출.
+  private cardsExpanded = false;
   private cardUid: string | null = null;
   /** 서버 연결 여부(uid 확보 성공). false = 오프라인/미설정(카드 UI 비활성 안내). */
   private cardsOnline = false;
@@ -798,9 +809,10 @@ export class DefenseCommand {
     return this.root.style.display !== 'none';
   }
 
-  show(profile: Profile, onClose: () => void): void {
+  show(profile: Profile, onClose: () => void, preview?: DefensePreviewControls): void {
     this.profile = profile;
     this.onClose = onClose;
+    this.preview = preview ?? null;
     // 저장된 배치가 있으면 불러오고, 없으면 코어를 기본 칸에 미리 놓아 시작을 돕는다.
     const saved = normalizeLayout(profile.defenseLayout);
     this.state = saved !== null ? editorStateFromLayout(saved) : emptyEditorState();
@@ -815,10 +827,12 @@ export class DefenseCommand {
     this.tool = { kind: 'turret', turretType: 0 };
     this.tip = '';
     this.hint = '';
+    this.selected = null;
+    this.hoverCell = null;
     this.defenseStatus = null;
     this.repairing = false;
-    // 카드 탭 상태 초기화(매 진입 시 배치 탭으로 시작 — 저장 워크플로 존중).
-    this.activeTab = 'layout';
+    // 카드 상태 초기화. 통합 화면에서 카드 관리는 우측 패널 접이식(기본 접힘 — 프리뷰 가림 최소).
+    this.cardsExpanded = false;
     this.cardUid = null;
     this.cardsOnline = false;
     this.cardsLoading = false;
@@ -831,13 +845,25 @@ export class DefenseCommand {
     this.cardMsg = '';
     this.cardBusy = false;
     this.render();
-    this.root.style.display = 'flex';
+    this.root.style.display = 'block';
+    // 프리뷰를 에디터 실상태(기본 코어·수호 포함)로 맞춘다 — main 은 저장 레이아웃으로만 start 했다.
+    this.preview?.setLayout(editorStateToLayout(this.state));
+    this.syncOverlay();
     void this.loadStatus();
+    // 통합 화면: 카드 탭이 없으므로 진입 시 카드 데이터를 선로딩(우측 패널 요약·접이식 준비).
+    void this.loadCards();
   }
 
   hide(): void {
     this.root.style.display = 'none';
     this.onClose = null;
+    this.selected = null;
+    this.hoverCell = null;
+  }
+
+  /** 프리뷰 오버레이(호버 셀·선택 배치물)를 현재 편집 상태로 밀어 다시 그린다. */
+  private syncOverlay(): void {
+    this.preview?.setOverlay(this.hoverCell, this.selected);
   }
 
   /** 정비 상태(정비도·크레딧·비용)를 서버에서 비동기 로드하고 정비 패널만 재렌더. */
@@ -920,8 +946,25 @@ export class DefenseCommand {
     return null;
   }
 
-  private onCellClick(col: number, row: number): void {
-    const res = tryPlace(this.state, this.budget, this.tool, col, row);
+  /**
+   * 실화면 프리뷰 위 클릭(D8): 도구를 칸에 적용하거나, 이미 놓인 배치물을 선택한다. 프리뷰가
+   * 없으면(옵셔널 미주입) 좌표 변환 경로가 없어 조용히 무시한다(무회귀 안전).
+   */
+  private onStageClick(clientX: number, clientY: number): void {
+    const cell = this.preview?.clientToCell(clientX, clientY);
+    if (cell === null || cell === undefined) return;
+    const occ = findAt(this.state, cell.col, cell.row);
+
+    // 지우개가 아닌 도구로 점유 칸을 클릭하면 배치가 아니라 선택(사거리 원 + 제거 버튼)한다.
+    if (this.tool.kind !== 'erase' && occ !== null) {
+      this.selected = { kind: occ.kind, index: occ.kind === 'core' ? 0 : occ.index };
+      this.hint = '';
+      this.syncOverlay();
+      this.render();
+      return;
+    }
+
+    const res = tryPlace(this.state, this.budget, this.tool, cell.col, cell.row);
     switch (res) {
       case 'occupied':
         this.hint = t('def.cell.occupied');
@@ -936,6 +979,50 @@ export class DefenseCommand {
         this.hint = '';
         break;
     }
+    // 배치가 실제로 바뀐 경우에만 프리뷰 월드를 재생성한다(체감 지연 없음 — OQ3).
+    if (res === 'placed' || res === 'moved' || res === 'removed') {
+      this.selected = null;
+      this.preview?.setLayout(editorStateToLayout(this.state));
+    }
+    this.syncOverlay();
+    this.render();
+  }
+
+  /** 프리뷰 위 호버(D5): 호버 셀 하이라이트를 오버레이에 반영한다(월드 재생성 없음 — 가벼움). */
+  private onStageHover(clientX: number, clientY: number): void {
+    const cell = this.preview?.clientToCell(clientX, clientY) ?? null;
+    if (
+      (cell === null && this.hoverCell === null) ||
+      (cell !== null &&
+        this.hoverCell !== null &&
+        cell.col === this.hoverCell.col &&
+        cell.row === this.hoverCell.row)
+    ) {
+      return; // 같은 칸이면 재그리기 생략
+    }
+    this.hoverCell = cell;
+    this.syncOverlay();
+  }
+
+  /** 선택된 배치물을 제거한다(코어·포탑·장애물만 — 수호는 로스터 정본이라 제거 불가). */
+  private removeSelected(): void {
+    const sel = this.selected;
+    if (sel === null || sel.kind === 'guardian') return;
+    let world: { x: number; y: number } | null = null;
+    if (sel.kind === 'core') world = this.state.core;
+    else if (sel.kind === 'turret') world = this.state.turrets[sel.index] ?? null;
+    else if (sel.kind === 'obstacle') world = this.state.obstacles[sel.index] ?? null;
+    if (world === null) {
+      this.selected = null;
+      this.render();
+      return;
+    }
+    const c = worldToCell(world.x, world.y);
+    tryPlace(this.state, this.budget, { kind: 'erase' }, c.col, c.row);
+    this.selected = null;
+    this.hint = '';
+    this.preview?.setLayout(editorStateToLayout(this.state));
+    this.syncOverlay();
     this.render();
   }
 
@@ -994,59 +1081,101 @@ export class DefenseCommand {
 
   private render(): void {
     this.root.innerHTML = '';
+    // 중앙 = 실화면 프리뷰가 보이도록 투명한 상호작용 레이어. 좌/우 = 반투명 사이드 패널.
+    this.root.appendChild(this.stageLayer());
+    this.root.appendChild(this.leftPanel());
+    this.root.appendChild(this.rightPanel());
+  }
+
+  /** 중앙 프리뷰 위 클릭/호버를 받는 투명 레이어(사이드 패널보다 아래 스택 — 패널 클릭 우선). */
+  private stageLayer(): HTMLElement {
+    const stage = document.createElement('div');
+    stage.className = 'pb-stage';
+    stage.addEventListener('click', (e) => this.onStageClick(e.clientX, e.clientY));
+    stage.addEventListener('mousemove', (e) => this.onStageHover(e.clientX, e.clientY));
+    stage.addEventListener('mouseleave', () => {
+      if (this.hoverCell === null) return;
+      this.hoverCell = null;
+      this.syncOverlay();
+    });
+    return stage;
+  }
+
+  /** 좌측 사이드 패널: 제목 · 예산 · 배치 팔레트(포탑/장애물/코어/지우개 + 수호) · 선택 · 저장. */
+  private leftPanel(): HTMLElement {
+    const side = document.createElement('div');
+    side.className = 'pb-side left';
 
     const h1 = document.createElement('h1');
     h1.textContent = t('def.title');
-    this.root.appendChild(h1);
+    side.appendChild(h1);
     const sub = document.createElement('div');
     sub.className = 'pb-sub';
     sub.textContent = t('def.sub');
-    this.root.appendChild(sub);
+    side.appendChild(sub);
 
-    this.root.appendChild(this.tabBar());
+    side.appendChild(this.budgetBar());
+    side.appendChild(this.palettePanel());
 
-    if (this.activeTab === 'cards') {
-      this.renderCardsBody();
-      return;
-    }
-
-    this.root.appendChild(this.budgetBar());
-    this.root.appendChild(this.maintenanceBar());
-
-    const cols = document.createElement('div');
-    cols.className = 'pb-cols';
-    cols.appendChild(this.palettePanel());
-    cols.appendChild(this.gridPanel());
-    this.root.appendChild(cols);
+    const selPanel = this.selectionPanel();
+    if (selPanel !== null) side.appendChild(selPanel);
 
     const hintEl = document.createElement('div');
     hintEl.className = this.hint === '' ? 'pb-hint pb-ok' : 'pb-hint';
     hintEl.textContent = this.hint !== '' ? this.hint : this.tip;
-    this.root.appendChild(hintEl);
+    side.appendChild(hintEl);
 
-    this.root.appendChild(this.actionRow());
+    side.appendChild(this.actionRow());
+    return side;
   }
 
-  /** 배치/카드 탭 전환 바. 카드 탭 최초 진입 시 서버 데이터를 로드한다. */
-  private tabBar(): HTMLElement {
-    const bar = document.createElement('div');
-    bar.className = 'pb-tabs';
-    const mk = (tab: 'layout' | 'cards', label: string): HTMLButtonElement => {
-      const b = document.createElement('button');
-      b.className = `pb-tab${this.activeTab === tab ? ' on' : ''}`;
-      b.textContent = label;
-      b.addEventListener('click', () => {
-        if (this.activeTab === tab) return;
-        this.activeTab = tab;
-        this.hint = '';
-        this.render();
-        if (tab === 'cards') void this.loadCards();
-      });
-      return b;
-    };
-    bar.appendChild(mk('layout', t('card.tab.layout')));
-    bar.appendChild(mk('cards', t('card.tab.cards')));
-    return bar;
+  /** 우측 사이드 패널: 정비도 바 · 카드 슬롯 요약 · 카드 관리(접이식 인벤/상점/합성). */
+  private rightPanel(): HTMLElement {
+    const side = document.createElement('div');
+    side.className = 'pb-side right';
+    side.appendChild(this.maintenanceBar());
+    this.appendCardsSection(side);
+    return side;
+  }
+
+  /** 선택된 배치물이 있으면 이름 + 제거 버튼(수호는 제거 불가 안내)을 반환, 없으면 null. */
+  private selectionPanel(): HTMLElement | null {
+    const sel = this.selected;
+    if (sel === null) return null;
+    const box = document.createElement('div');
+    box.className = 'pb-sel';
+    const name = document.createElement('span');
+    name.className = 'pb-selname';
+    name.textContent = t('def.selected', { name: this.selectedName(sel) });
+    box.appendChild(name);
+    if (sel.kind === 'guardian') {
+      const lock = document.createElement('span');
+      lock.textContent = t('def.selected.guardianLocked');
+      lock.style.fontWeight = '400';
+      lock.style.color = '#8896b8';
+      box.appendChild(lock);
+    } else {
+      const rm = document.createElement('button');
+      rm.className = 'pb-selrm';
+      rm.textContent = t('def.removeBtn');
+      rm.addEventListener('click', () => this.removeSelected());
+      box.appendChild(rm);
+    }
+    return box;
+  }
+
+  /** 선택된 배치물의 표시 이름(포탑 유형·코어·장애물·수호). */
+  private selectedName(sel: OverlayHighlight): string {
+    if (sel.kind === 'core') return t('def.cell.core');
+    if (sel.kind === 'obstacle') return t('def.cell.obstacle');
+    if (sel.kind === 'guardian') {
+      const gp = this.state.guardians[sel.index];
+      const d = guardianDisplay(gp?.snapshot.preset ?? 0);
+      return t('def.cell.guardian', { n: sel.index + 1, label: d.label });
+    }
+    const turret = this.state.turrets[sel.index];
+    const d = turret !== undefined ? TURRET_DISPLAY[turret.type] : undefined;
+    return d !== undefined ? t(d.labelKey) : t('def.cell.turret');
   }
 
   private budgetBar(): HTMLElement {
@@ -1220,49 +1349,6 @@ export class DefenseCommand {
     if (tip !== null) tip.textContent = this.tip;
   }
 
-  private gridPanel(): HTMLElement {
-    const panel = document.createElement('div');
-    panel.className = 'pb-panel';
-    const h2 = document.createElement('h2');
-    h2.textContent = t('def.gridHead');
-    panel.appendChild(h2);
-
-    const grid = document.createElement('div');
-    grid.className = 'pb-grid';
-    grid.style.gridTemplateColumns = `repeat(${GRID_COLS}, 34px)`;
-    for (let row = 0; row < GRID_ROWS; row++) {
-      for (let col = 0; col < GRID_COLS; col++) {
-        const cell = document.createElement('div');
-        const isSpawn = col === SPAWN_COL && row === SPAWN_ROW;
-        cell.className = `pb-cell${isSpawn ? ' spawn' : ''}`;
-        const occ = findAt(this.state, col, row);
-        if (occ !== null) {
-          const glyph = this.occupantGlyph(occ);
-          cell.textContent = glyph.g;
-          cell.style.color = glyph.accent;
-          cell.title = glyph.label;
-        }
-        cell.addEventListener('click', () => this.onCellClick(col, row));
-        grid.appendChild(cell);
-      }
-    }
-    panel.appendChild(grid);
-    return panel;
-  }
-
-  private occupantGlyph(occ: NonNullable<Occupant>): { g: string; accent: string; label: string } {
-    if (occ.kind === 'core') return { g: '💠', accent: '#8fd94c', label: t('def.cell.core') };
-    if (occ.kind === 'obstacle') return { g: '🧱', accent: '#8896b8', label: t('def.cell.obstacle') };
-    if (occ.kind === 'guardian') {
-      const gp = this.state.guardians[occ.index];
-      const d = guardianDisplay(gp?.snapshot.preset ?? 0);
-      return { g: d.glyph, accent: d.accent, label: t('def.cell.guardian', { n: occ.index + 1, label: d.label }) };
-    }
-    const turret = this.state.turrets[occ.index];
-    const d = turret !== undefined ? TURRET_DISPLAY[turret.type] : undefined;
-    return { g: d?.glyph ?? '❔', accent: d?.accent ?? '#fff', label: d !== undefined ? t(d.labelKey) : t('def.cell.turret') };
-  }
-
   private actionRow(): HTMLElement {
     const actions = document.createElement('div');
     actions.className = 'pb-actions';
@@ -1340,48 +1426,52 @@ export class DefenseCommand {
     this.render();
   }
 
-  private renderCardsBody(): void {
-    if (!this.cardsOnline || this.cardsLoading) {
+  /**
+   * 우측 패널에 카드 영역을 붙인다: 항상 보이는 카드 슬롯 요약 + 접이식 카드 관리(인벤/상점/합성).
+   * 미설정/오프라인·로딩 중이면 안내만. 카드 기능(장착·분해·구매·합성)은 기존과 동일하게 재사용한다.
+   */
+  private appendCardsSection(side: HTMLElement): void {
+    if (this.cardsLoading || !this.cardsOnline) {
       const msg = document.createElement('div');
       msg.className = 'pb-cardmsg';
       msg.textContent = this.cardsLoading ? t('card.slot.loading') : t('card.slot.offline');
-      msg.style.marginTop = '16px';
-      this.root.appendChild(msg);
-      this.root.appendChild(this.cardsActionRow());
+      side.appendChild(msg);
       return;
     }
 
+    // 항상 보이는 카드 슬롯 요약(장착 카드).
+    side.appendChild(this.cardSlotPanel());
+
+    // 접이식 카드 관리 토글(기본 접힘 — 프리뷰 가림 최소, OQ2).
+    const head = document.createElement('div');
+    head.className = 'pb-cardhead';
+    const label = document.createElement('span');
+    label.className = 'pb-sub';
+    label.textContent = t('def.cards.section');
+    const toggle = document.createElement('button');
+    toggle.className = 'pb-cardtoggle';
+    toggle.textContent = this.cardsExpanded ? t('def.cards.hide') : t('def.cards.manage');
+    toggle.addEventListener('click', () => {
+      this.cardsExpanded = !this.cardsExpanded;
+      this.render();
+    });
+    head.append(label, toggle);
+    side.appendChild(head);
+
+    if (!this.cardsExpanded) return;
+
     const cols = document.createElement('div');
     cols.className = 'pb-cards';
-    cols.appendChild(this.cardSlotPanel());
     cols.appendChild(this.cardInventoryPanel());
     cols.appendChild(this.cardShopPanel());
-    this.root.appendChild(cols);
+    side.appendChild(cols);
 
     if (this.cardMsg !== '') {
       const msg = document.createElement('div');
       msg.className = 'pb-cardmsg';
       msg.textContent = this.cardMsg;
-      this.root.appendChild(msg);
+      side.appendChild(msg);
     }
-
-    this.root.appendChild(this.cardsActionRow());
-  }
-
-  /** 카드 탭 하단 액션(뒤로만 — 배치 저장과 분리). */
-  private cardsActionRow(): HTMLElement {
-    const actions = document.createElement('div');
-    actions.className = 'pb-actions';
-    const back = document.createElement('button');
-    back.className = 'pb-ghost';
-    back.textContent = t('common.backToBase');
-    back.addEventListener('click', () => {
-      const cb = this.onClose;
-      this.hide();
-      cb?.();
-    });
-    actions.appendChild(back);
-    return actions;
   }
 
   /** 보관함에서 defense_cards.id → 소유 카드 조회. */

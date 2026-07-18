@@ -422,6 +422,13 @@ export const EN = {
   'def.clear': 'Clear All',
   'def.testBtn': '🧪 Layout Test',
   'def.saveBtn': '💾 Save',
+  // 실화면 통합 편집(레인 C) — 선택/제거/카드 관리 접이식.
+  'def.selected': 'Selected: {name}',
+  'def.selected.guardianLocked': 'Guardians cannot be removed here.',
+  'def.removeBtn': '🗑 Remove',
+  'def.cards.section': '🃏 Card Management',
+  'def.cards.manage': 'Manage ▾',
+  'def.cards.hide': 'Hide ▴',
 
   // --- 방어 카드 시스템(M6 — 슬롯/보관함/상점/합성/분해) ---
   'card.tab.layout': '🧱 Layout',
@@ -880,6 +887,13 @@ export const KO: Record<MessageKey, string> = {
   'def.clear': '전체 지우기',
   'def.testBtn': '🧪 배치 테스트',
   'def.saveBtn': '💾 저장',
+  // 실화면 통합 편집(레인 C) — 선택/제거/카드 관리 접이식.
+  'def.selected': '선택됨: {name}',
+  'def.selected.guardianLocked': '수호 기체는 여기서 제거할 수 없습니다.',
+  'def.removeBtn': '🗑 제거',
+  'def.cards.section': '🃏 카드 관리',
+  'def.cards.manage': '관리 ▾',
+  'def.cards.hide': '접기 ▴',
 
   // --- 방어 카드 시스템(M6 — 슬롯/보관함/상점/합성/분해) ---
   'card.tab.layout': '🧱 배치',
