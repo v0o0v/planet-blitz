@@ -16,6 +16,8 @@ import type { LoadoutConfig } from '../sim/world.js';
 import { UNIQUE_REGISTRY } from './uniques.js';
 import { computeSkillStats } from './skills.js';
 import { normalizeLineageBonus } from '../../data/guardian.js';
+import { capstoneActive } from '../../data/skills.js';
+import { CAP_FIREPOWER_LASER, CAP_SURVIVAL_CRIT, CAP_MOBILITY_DASH } from '../sim/capstones.js';
 // side-effect: M2 유니크 5점을 레지스트리에 등록(장착 유니크의 bit → uniqueMask).
 import '../../data/uniques.js';
 
@@ -199,6 +201,14 @@ export function computeLoadoutStats(
   applyStatSums(lo, sums);
   // Skill pass: fold skill-derived stats on top (synergy applied in skills.ts).
   if (invest !== undefined) applyStatSums(lo, computeSkillStats(invest));
+  // 스킬트리 최상위 질적 캡스톤(GDD §4): 게이트(계열 base 40pt) + 캡스톤 1pt 가 찍힌 계열의
+  // 효과 비트를 uniqueMask 상위 비트(15~17)에 OR 한다. 신규 필드/해시 폴드 없이 sim이
+  // hasCapstone 으로 게이트한다(캡스톤 미보유 런은 uniqueMask 불변 → 기존 해시 완전 불변).
+  if (invest !== undefined) {
+    if (capstoneActive(invest, 'firepower')) uniqueMask |= 1 << CAP_FIREPOWER_LASER;
+    if (capstoneActive(invest, 'survival')) uniqueMask |= 1 << CAP_SURVIVAL_CRIT;
+    if (capstoneActive(invest, 'mobility')) uniqueMask |= 1 << CAP_MOBILITY_DASH;
+  }
   lo.uniqueMask = uniqueMask;
   // M3 원소 어픽스(상태이상): 정수 강도 합산을 그대로 실어 sim이 명중 시 소비한다.
   lo.fireDmg += sums.fireDmg;

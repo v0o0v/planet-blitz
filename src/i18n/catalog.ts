@@ -216,6 +216,8 @@ export const EN = {
   'lab.err.noCredits': 'Not enough credits (need {n}).',
   'lab.respecDone': 'Reset the skill tree and refunded the points.',
   'lab.respecBtn': 'Respec ({n} credits)',
+  'lab.capstone.locked': 'Locked — invest {g}pt in this tree to unlock',
+  'lab.capstone.needGate': 'Capstone locked: invest {g} points in this tree first.',
 
   // --- 인벤토리 ---
   'inv.title': 'Manage Gear',
@@ -613,6 +615,8 @@ export const KO: Record<MessageKey, string> = {
   'lab.err.noCredits': '크레딧이 부족합니다 (필요 {n}).',
   'lab.respecDone': '스킬 트리를 초기화하고 포인트를 환급했습니다.',
   'lab.respecBtn': '리스펙 ({n} 크레딧)',
+  'lab.capstone.locked': '잠금 — 이 계열에 {g}pt 투자 시 해금',
+  'lab.capstone.needGate': '캡스톤 잠김: 이 계열에 먼저 {g}포인트를 투자하세요.',
 
   'inv.title': '장비 정비',
   'inv.cur.credits': '크레딧',

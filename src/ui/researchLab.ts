@@ -18,6 +18,10 @@ import {
   NODES_PER_TREE,
   TREE_DEPTH,
   treeRange,
+  capstoneIndex,
+  capstoneUnlocked,
+  treeBaseInvested,
+  CAPSTONE_GATE,
   type SkillTree,
 } from '../../data/skills.js';
 import type { StatKey } from '../items/types.js';
@@ -76,6 +80,10 @@ const STYLE = `
 #pb-lab .pb-node .nm { color:#dfe6f5; font-size:11px; font-weight:700; line-height:1.2; }
 #pb-lab .pb-node .pt { color:#8896b8; font-size:10px; margin-top:3px; display:flex; justify-content:space-between; }
 #pb-lab .pb-node .pt b { color:#7affea; }
+#pb-lab .pb-capstone { margin-top:7px; background:linear-gradient(160deg,rgba(40,30,16,.9),rgba(20,26,44,.9)); border-color:#c8a24c; }
+#pb-lab .pb-capstone .nm { color:#ffd98c; }
+#pb-lab .pb-capstone.maxed { border-color:#ffd24c; box-shadow:0 0 12px rgba(255,210,76,.3) inset; }
+#pb-lab .pb-capstone.cant { opacity:.7; }
 #pb-lab .pb-stats { background:rgba(12,16,30,.7); border:1px solid #2a3552; border-radius:14px; padding:14px; width:240px; }
 #pb-lab .pb-stats h2 { margin:0 0 10px; color:#aab6d6; font-size:14px; font-weight:700; letter-spacing:1px; }
 #pb-lab .pb-statrow { display:flex; justify-content:space-between; gap:14px; font-size:12px; padding:2px 0; border-bottom:1px solid rgba(255,255,255,.05); }
@@ -226,7 +234,46 @@ export class ResearchLab {
       }
       panel.appendChild(row);
     }
+    // 최상위 질적 캡스톤(GDD §4): 계열 base 40pt 게이트를 채우면 해금·투자 가능.
+    panel.appendChild(this.capstoneEl(tree, meta.accent));
     return panel;
+  }
+
+  /** 계열 캡스톤 노드 엘리먼트(게이트 미달이면 잠금 표시 + 진행도, 통과면 투자 가능). */
+  private capstoneEl(tree: SkillTree, accent: string): HTMLElement {
+    const index = capstoneIndex(tree);
+    const node = SKILLS[index]!;
+    const cur = this.profile.skillInvest[index] ?? 0;
+    const unlocked = capstoneUnlocked(this.profile.skillInvest, tree);
+    const invested = treeBaseInvested(this.profile.skillInvest, tree);
+    const maxed = cur >= node.maxPoints;
+    const el = document.createElement('div');
+    el.className = `pb-node pb-capstone${maxed ? ' maxed' : cur > 0 ? ' invested' : ''}${unlocked && !maxed ? '' : ' cant'}`;
+    el.title = node.desc;
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.textContent = `★ ${node.name}`;
+    const pt = document.createElement('div');
+    pt.className = 'pt';
+    if (unlocked) {
+      pt.innerHTML = `<span>${node.desc}</span><b>${cur}/${node.maxPoints}</b>`;
+      if (cur > 0) el.style.borderColor = accent;
+    } else {
+      pt.innerHTML = `<span>${t('lab.capstone.locked', { g: CAPSTONE_GATE })}</span><b>${invested}/${CAPSTONE_GATE}</b>`;
+    }
+    el.appendChild(nm);
+    el.appendChild(pt);
+    el.addEventListener('click', () => this.investCapstone(index, unlocked));
+    return el;
+  }
+
+  private investCapstone(index: number, unlocked: boolean): void {
+    if (!unlocked) {
+      this.hint = t('lab.capstone.needGate', { g: CAPSTONE_GATE });
+      this.render();
+      return;
+    }
+    this.invest(index);
   }
 
   private nodeEl(index: number, accent: string): HTMLElement {
