@@ -94,6 +94,25 @@ export async function migrateLocalProfileToServer(
 }
 
 /**
+ * 현재 Profile 을 서버로 **무조건 즉시** 업서트한다(진행도 비교 없이 그대로 덮어씀).
+ * DEV 하네스 치트가 부여한 재화(크레딧·광물·장비·기체·계보 등 — serializeProfile 이 전부 담는다)를
+ * 서버 권위 경로(카드 구매·정비 등이 읽는 profiles.save)에 반영시키는 용도다. 프로덕션 정상 흐름은
+ * 진행도 가드가 있는 {@link flushPendingSync}/{@link migrateLocalProfileToServer} 를 쓴다 — 이
+ * 함수는 하네스에서만 호출된다(치트로 만든 상태를 서버에 그대로 밀어야 하므로 가드를 두지 않는다).
+ * 미설정/오프라인/오류면 완전 no-op(절대 throw 안 함).
+ */
+export async function pushProfileToServer(profile: Profile, deps: NetDeps = {}): Promise<void> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null) return;
+  try {
+    const uid = await gateway.getUserId();
+    await gateway.upsertProfile(uid, serializeProfile(profile));
+  } catch {
+    // 오프라인/일시 오류 — best-effort(다음 치트/저장 때 다시 밀린다).
+  }
+}
+
+/**
  * PvE 런 정산 결과를 서버에 기록(계획 B3). 정산된 최신 Profile 을 대기 슬롯에 넣고
  * 전송을 시도한다. 실패하면 대기 슬롯에 남아 다음 기회(flushPendingSync)에 재전송
  * 된다(오프라인 우선). 절대 throw 하지 않음.

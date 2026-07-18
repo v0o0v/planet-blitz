@@ -81,7 +81,12 @@ import { settleRun } from './save/settlement.js';
 import type { SettlementOutcome } from './save/settlement.js';
 // M4 네트워크 계층(Phase B3): Supabase 미설정 시 완전 no-op, 절대 throw 안 함.
 // 정산 시점에서만 fire-and-forget 로 호출 — sim/게임루프와 무관(결정론·오프라인 우선).
-import { migrateLocalProfileToServer, recordPveRunResult, recordPveRun } from './net/index.js';
+import {
+  migrateLocalProfileToServer,
+  recordPveRunResult,
+  recordPveRun,
+  pushProfileToServer,
+} from './net/index.js';
 // M4 침공(비동기 PvP) 제출: 미설정 시 submitInvasion 은 null(잠정 결과만 표시).
 import {
   submitInvasion,
@@ -1139,6 +1144,15 @@ async function main(): Promise<void> {
       }
     }
 
+    // 하네스 재화 치트를 서버에도 반영한다. 프로필을 로컬 저장한 뒤 서버로 통째로 push —
+    // serializeProfile 이 크레딧·광물·장비·기체·계보 등 모든 재화를 담으므로, 한 번의 push 로
+    // 하네스가 올릴 수 있는 재화 전부가 서버 권위 경로(카드 구매·정비가 읽는 profiles.save)에
+    // 반영된다. DEV 전용·fire-and-forget(미설정/오프라인이면 로컬 저장만 하고 no-op).
+    const saveProfileToLocalAndServer = (): void => {
+      saveProfile(profile);
+      void pushProfileToServer(profile);
+    };
+
     const host: import('./harness/core.js').HarnessHost = {
       getWorld: () => world,
       getCurrentSeed: () => currentSeed,
@@ -1183,7 +1197,7 @@ async function main(): Promise<void> {
       },
       applyProfile: (p) => {
         Object.assign(profile, p);
-        saveProfile(profile);
+        saveProfileToLocalAndServer();
       },
       refreshScreen: () => harnessRefreshScreen(),
       getProfileSummary: () => ({
@@ -1250,7 +1264,8 @@ async function main(): Promise<void> {
       harness,
       getEntities: () => currSnap.entities,
       getProfile: () => profile,
-      saveProfile: () => saveProfile(profile),
+      // 로컬 저장 + 서버 push(하네스 재화 치트를 서버 권위 경로에 반영 — 위 helper 주석 참조).
+      saveProfile: () => saveProfileToLocalAndServer(),
       refreshScreen: () => harnessRefreshScreen(),
       activateHarnessProfile: () => {
         core.setProfileStoreOverride(core.harnessProfileStore());
