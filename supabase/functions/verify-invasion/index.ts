@@ -146,6 +146,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
   let layout: unknown = null;
   let maintenanceDb: unknown = null;
   let authorityFromSnapshot = false;
+  // M6 방어 카드 서버 권위: 스냅샷 경로일 때만 채운다(라이브 폴백은 카드 미주입 — 효력은
+  // 스냅샷 고정, ADR-0012). undefined = 카드 미장착 = 기존 침공 검증 거동·해시 불변.
+  let cardAuthority: unknown = undefined;
 
   const snapshotId = typeof inv.snapshot_id === 'string' && inv.snapshot_id.length > 0 ? inv.snapshot_id : null;
   if (snapshotId !== null) {
@@ -167,7 +170,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     let snapshot: InvasionSnapshotRow | null = null;
     if (snapRow !== null) {
-      const authority = (snapRow.authority ?? {}) as { layout?: unknown; maintenance?: unknown };
+      const authority = (snapRow.authority ?? {}) as { layout?: unknown; maintenance?: unknown; card?: unknown };
       const mRaw = authority.maintenance;
       const mNum = typeof mRaw === 'number' ? mRaw : Number(mRaw);
       snapshot = {
@@ -175,6 +178,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
         defenseId: typeof snapRow.defense_id === 'string' ? snapRow.defense_id : null,
         authorityLayout: authority.layout ?? null,
         authorityMaintenanceDb: Number.isFinite(mNum) ? mNum : undefined,
+        // M6: authority.card(미장착이면 null/undefined). verifyInvasion 이 서버 권위로 오버라이드.
+        authorityCard: authority.card ?? null,
         createdAtMs: typeof snapRow.created_at === 'string' ? Date.parse(snapRow.created_at) : Number.NaN,
       };
     }
@@ -189,6 +194,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (resolution.source === 'snapshot' && resolution.layout !== null && resolution.layout !== undefined) {
       layout = resolution.layout;
       maintenanceDb = resolution.maintenanceDb ?? null;
+      // M6: 스냅샷이 고정한 카드 효력(미장착이면 null → undefined 로 정규화해 미주입).
+      cardAuthority = resolution.card ?? undefined;
       authorityFromSnapshot = true;
     } else if (resolution.source === 'snapshot') {
       // 스냅샷 행은 유효하나 authority.layout 이 손상(null) → 안전하게 라이브 경로 폴백.
@@ -304,7 +311,18 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const startedAt = Date.now();
   let verdict: InvasionVerifyResult;
   try {
-    verdict = verifyInvasion(submission, { layout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS, maintenance });
+    // 서버 컨텍스트: 방어 카드(M6)는 스냅샷 경로에서만 실린다(cardAuthority undefined = 미장착).
+    // exactOptionalPropertyTypes 하에서 undefined 명시 대입이 금지되므로 정의된 경우만 포함한다.
+    const serverCtx: Parameters<typeof verifyInvasion>[1] =
+      cardAuthority === undefined
+        ? { layout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS, maintenance }
+        : {
+            layout,
+            timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
+            maintenance,
+            card: cardAuthority as Parameters<typeof verifyInvasion>[1]['card'],
+          };
+    verdict = verifyInvasion(submission, serverCtx);
   } catch (e) {
     console.error(`verify-invasion 재실행 예외 (invasion=${invasionId}):`, e);
     verdict = { verdict: 'reject', reason: 'server-layout-invalid' };

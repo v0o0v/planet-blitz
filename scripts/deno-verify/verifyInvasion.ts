@@ -40,6 +40,8 @@ import {
   PERFORMANCE_FULL,
   makeGuardianSnapshot,
 } from '../../data/guardian.ts';
+import type { CardInstance } from '../../data/defenseCards.ts';
+import type { AttackerMatchup, DefenseCardConfig } from '../../src/sim/cardEffects.ts';
 
 const RESET = '\x1b[0m';
 const GREEN = '\x1b[32m';
@@ -378,6 +380,63 @@ function main(): number {
   );
   // 재사용(다른 확정 침공이 이미 사용) → 라이브(1회성 방어적 2차선; DB 유니크 인덱스가 1차).
   expectLiveReason('스냅샷 재사용', { ...baseParams, reused: true }, 'reused');
+
+  // --- 게이트 3.11: 방어 카드 서버 권위(M6 · ADR-0012) ---
+  // 방어자 장착 카드 효력은 begin_invasion 스냅샷에 고정되고, EF 는 제출 config.invasion.card 를
+  // 신뢰하지 않고 서버 권위 card 로 오버라이드해 재실행한다. 정직(공격자가 스냅샷 card 로 재현)은
+  // accept, 위조(카드 제거·chargesLeft 조작·매치업 조작)는 재실행 발산으로 거부. 카드 없는 기존
+  // 침공(base)은 무회귀(위 '정직한 침공 제출' 에서 이미 accept).
+  const cardMatchupRevenge: AttackerMatchup = {
+    fire: false, cold: false, lightning: false, beam: false,
+    attackerCp: 0, defenderCp: 0, revenge: true, reinvasion: false, subweaponHeavy: false,
+  };
+  const testCard: CardInstance = {
+    id: 'card-777',
+    rarity: 'rare',
+    prefixes: [{ id: 'cc-avenger', stat: 'turretDamagePct', value: 60 }], // revenge 시 포탑 화력↑
+    suffixes: [],
+    chargesMax: 4,
+    chargesLeft: 4,
+    seed: 777,
+  };
+  const cardConfigVal: DefenseCardConfig = { card: testCard, matchup: cardMatchupRevenge };
+  function withCard(card: DefenseCardConfig): WorldConfig {
+    const c = invasionConfig(SERVER_LAYOUT);
+    return { ...c, invasion: { layout: SERVER_LAYOUT, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS, card } };
+  }
+  const cardCtx: InvasionServerContext = {
+    layout: SERVER_LAYOUT,
+    timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
+    card: cardConfigVal,
+  };
+  // 정직: 공격자가 스냅샷 카드로 재현 → accept.
+  expectAccept('방어 카드 포함 정직 침공', honest(seed, withCard(cardConfigVal), inputs), cardCtx);
+  // 위조 ①: 카드 제거(공격자가 방어자 카드를 뺀 no-card 런 제출) → 서버는 카드 주입 재실행 → 발산.
+  expectReject('카드 제거 위조(방어자 카드 무력화)', base, [
+    'hash-stream-divergence',
+    'final-hash-mismatch',
+    'outcome-mismatch',
+  ], cardCtx);
+  // 위조 ②: chargesLeft 조작(카드 정체성 해시 폴드 변조) → 서버 권위 card 재실행 발산.
+  const forgedCharges: DefenseCardConfig = { card: { ...testCard, chargesLeft: 99 }, matchup: cardMatchupRevenge };
+  expectReject('chargesLeft 조작 위조', honest(seed, withCard(forgedCharges), inputs), [
+    'hash-stream-divergence',
+    'final-hash-mismatch',
+    'outcome-mismatch',
+  ], cardCtx);
+  // 위조 ③: 매치업 조작(정적 카운터 revenge 를 꺼 cc-avenger 무력화한 런 제출) → 서버 권위 매치업
+  //   (revenge=true)으로 재실행 → 포탑 화력 상이 → 발산.
+  const forgedMatchup: DefenseCardConfig = {
+    card: testCard,
+    matchup: { ...cardMatchupRevenge, revenge: false },
+  };
+  expectReject('매치업 조작 위조(정적 카운터 무력화)', honest(seed, withCard(forgedMatchup), inputs), [
+    'hash-stream-divergence',
+    'final-hash-mismatch',
+    'outcome-mismatch',
+  ], cardCtx);
+  // 하위호환: 카드 없는 서버 컨텍스트(card 미지정)에서 base(카드 없음)는 여전히 accept.
+  expectAccept('카드 미장착 서버(하위호환)', base, ctx);
 
   // --- 게이트 4: 입력 길이 상한(제한 시간 초과) ---
   const shortCtx: InvasionServerContext = { layout: SERVER_LAYOUT, timeLimitTicks: 200 };

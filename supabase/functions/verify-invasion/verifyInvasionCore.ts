@@ -39,6 +39,7 @@ import type {
   ObstaclePlacement,
   GuardianPlacement,
 } from '../../../src/sim/defense.js';
+import type { DefenseCardConfig } from '../../../src/sim/cardEffects.js';
 import { MAX_GUARDIAN_SLOTS, GUARDIAN_PRESET_COUNT, PERFORMANCE_FULL } from '../../../data/guardian.js';
 import type { GuardianSnapshot } from '../../../data/guardian.js';
 import { branchBonusBp, guardianMilestones, normalizeMilestones } from '../../../data/lineage.js';
@@ -84,6 +85,17 @@ export interface InvasionServerContext {
    * 로 정규화) → 이 필드가 없던 기존 침공 검증과 거동·해시 100% 불변(하위호환).
    */
   maintenance?: number;
+  /**
+   * 방어 카드 효력(M6 · ADR-0012) — 방어자 장착 카드(서버 권위 CardInstance)+공격자 매치업.
+   * 정비도·수호 권위 주입과 동형: 공격자 제출 config.invasion.card 를 **신뢰하지 않고**, 서버가
+   * begin_invasion 스냅샷에 T0 고정한 값(index.ts 배선이 authority->'card' 로 로드)으로
+   * 오버라이드해 재실행한다. 제출 카드를 부풀리거나(효과·매치업·chargesLeft) 끄면 재실행이
+   * 갈려 hash-stream-divergence 로 거부된다. **미지정(undefined)이면 카드 미장착**으로 취급 →
+   * sim 이 cardRuntime 을 만들지 않아 이 필드가 없던 기존 침공 검증과 거동·해시 100% 불변
+   * (하위호환). 라이브 폴백(스냅샷 미배선/스테일)은 카드를 실지 않는다(효력은 스냅샷 고정 —
+   * ADR-0012, index.ts 계약).
+   */
+  card?: DefenseCardConfig;
 }
 
 function reject(reason: InvasionRejectReason, computed?: ComputedFacts): InvasionVerifyResult {
@@ -414,6 +426,13 @@ export interface InvasionSnapshotRow {
   readonly authorityLayout: unknown;
   /** authority->>'maintenance' — DB 정비도(numeric 0..100) 또는 미지정. index.ts 가 centi 변환. */
   readonly authorityMaintenanceDb: number | undefined;
+  /**
+   * authority->'card' — T0 고정 방어 카드 효력({@link DefenseCardConfig} 형태: {card, matchup}).
+   * begin_invasion 이 방어자 장착 카드+공격자 매치업을 접어 넣은 값(미장착이면 null). raw jsonb —
+   * verifyInvasion 이 서버 권위 card 로 그대로 오버라이드(sim 이 소비, 손상 시 재실행 예외 →
+   * index.ts try/catch 가 server-layout-invalid 로 수렴).
+   */
+  readonly authorityCard: unknown;
   /** invasion_snapshots.created_at → epoch ms. 신선도 판정 기준. */
   readonly createdAtMs: number;
 }
@@ -439,7 +458,13 @@ export interface SnapshotResolutionParams {
 
 /** 스냅샷 해석 결과: 유효 스냅샷이면 그 권위를, 아니면 라이브 폴백(사유 포함). */
 export type SnapshotResolution =
-  | { readonly source: 'snapshot'; readonly layout: unknown; readonly maintenanceDb: number | undefined }
+  | {
+      readonly source: 'snapshot';
+      readonly layout: unknown;
+      readonly maintenanceDb: number | undefined;
+      /** authority->'card' — T0 고정 카드 효력(미장착이면 null). index.ts 가 server.card 로 주입. */
+      readonly card: unknown;
+    }
   | {
       readonly source: 'live';
       readonly reason: 'no-snapshot-id' | 'snapshot-missing' | 'ownership-mismatch' | 'stale' | 'reused';
@@ -474,7 +499,12 @@ export function resolveSnapshotAuthority(params: SnapshotResolutionParams): Snap
     return { source: 'live', reason: 'stale' };
   }
   if (params.reused) return { source: 'live', reason: 'reused' };
-  return { source: 'snapshot', layout: snap.authorityLayout, maintenanceDb: snap.authorityMaintenanceDb };
+  return {
+    source: 'snapshot',
+    layout: snap.authorityLayout,
+    maintenanceDb: snap.authorityMaintenanceDb,
+    card: snap.authorityCard,
+  };
 }
 
 /**
@@ -531,12 +561,13 @@ export function verifyInvasion(raw: unknown, server: InvasionServerContext): Inv
   // 대조를 수행한다. hashStream이 이미 존재하므로 verifyRun이 매 틱 대조를 강제한다.
   // 서버 권위 정비도로 재실행(풍화 반영). undefined 면 sim 이 완전 정비로 정규화(하위호환) →
   // maintenance 대조는 layoutEquals 에 불필요(서버 override + hashStream 재실행이 정비도
-  // 불일치 위조를 hash-stream-divergence 로 잡는다). exactOptionalPropertyTypes 하에서
+  // 불일치 위조를 hash-stream-divergence 로 잡는다). 방어 카드(M6)도 동형 오버라이드 —
+  // 제출 config.invasion.card 를 무시하고 서버 권위 card(스냅샷 고정)로 재실행한다(카드
+  // 효과·매치업·chargesLeft 위조는 재실행 발산으로 거부). exactOptionalPropertyTypes 하에서
   // optional 필드에 undefined 명시 대입이 금지되므로, 정의된 경우에만 필드를 포함한다.
-  const authoritativeInvasion: InvasionConfig =
-    server.maintenance === undefined
-      ? { layout: serverLayout, timeLimitTicks: server.timeLimitTicks }
-      : { layout: serverLayout, timeLimitTicks: server.timeLimitTicks, maintenance: server.maintenance };
+  const authoritativeInvasion: InvasionConfig = { layout: serverLayout, timeLimitTicks: server.timeLimitTicks };
+  if (server.maintenance !== undefined) authoritativeInvasion.maintenance = server.maintenance;
+  if (server.card !== undefined) authoritativeInvasion.card = server.card;
   const authoritativeConfig: WorldConfig = {
     ...(sub.config as WorldConfig),
     invasion: authoritativeInvasion,

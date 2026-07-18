@@ -12,6 +12,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { SupabaseConfig } from './config.js';
 import type { Replay } from '../sim/replay.js';
+import type { DefenseCardConfig } from '../sim/cardEffects.js';
 import type {
   InvasionGateway,
   InvasionTarget,
@@ -253,9 +254,10 @@ export class SupabaseInvasionGateway implements InvasionGateway {
   }
 
   async beginInvasion(defenseId: string): Promise<InvasionSnapshot> {
-    // 침공 개시 권위 스냅샷 고정(계약 M5) — begin_invasion 은 자격 미달 시 raise 하며, 그
+    // 침공 개시 권위 스냅샷 고정(계약 M5/M6) — begin_invasion 은 자격 미달 시 raise 하며, 그
     // 에러는 공개 beginInvasion 이 흡수해 라이브 경로 폴백으로 전환한다. 반환 jsonb:
-    //   { snapshot_id, defender_id, defense_id, layout(권위 주입 완료 raw), maintenance }.
+    //   { snapshot_id, defender_id, defense_id, layout(권위 주입 완료 raw), maintenance,
+    //     card(방어 카드 효력 {card,matchup} 또는 null — M6) }.
     const { data, error } = await this.client.rpc('begin_invasion', { p_defense_id: defenseId });
     if (error !== null) throw error;
     const r = asRecord(data);
@@ -265,6 +267,9 @@ export class SupabaseInvasionGateway implements InvasionGateway {
       snapshotId,
       layout: r.layout ?? null, // raw jsonb — 소비 측에서 normalizeLayout
       maintenance: asNumber(r.maintenance, 100),
+      // 서버 authored 방어 카드 효력(미장착이면 null). 소비 측(Lane D)이 침공 config.invasion.card
+      // 로 실어 런하고, 제출 시 snapshotId 와 함께 EF 가 스냅샷 권위 card 로 재실행 대조한다.
+      card: (r.card ?? null) as DefenseCardConfig | null,
     };
   }
 
