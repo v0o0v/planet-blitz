@@ -3,13 +3,12 @@
  *
  * A collapsible bottom-right DOM overlay whose PRIMARY purpose is to let the
  * developer *play each scene by hand and verify behaviour with their own eyes*.
- * The panel is organised around that intent, top→bottom:
- *   1) 씬 런처   — one click stages a scene and hands control back LIVE at speed 1
- *                  (screens, 런 처음부터, 세그먼트 전투, 보스전, 튜토리얼, 레벨업
- *                  오버레이, 유니크 세리머니, 정산 승/패). 패널의 주역.
- *   2) 관전 도구 — watching aids (속도 1/4/16, 일시정지/재개, 틱 스텝, ff).
- *   3) 개입      — collapsed cheats (무적/힐/레벨업/재화·장비/소거·전멸·정예/프리셋).
- *   4) 인스펙터  — collapsed live snapshot + 이벤트 + 엔티티 목록.
+ * The panel is organised **per scene** (씬 중심 재편, 2026-07-19), top→bottom:
+ *   1) 재생 제어 — 횡단 도구(속도 1/4/16, 일시정지/재개, 틱 스텝, ff). 항상 표시.
+ *   2) 씬 탭 바  — 런 / 보스전 / 연출 / 정산 / 메뉴 / 수호·계보 / 인스펙터.
+ *   3) 탭 콘텐츠 — 선택한 씬의 "띄우기" 버튼과 그 씬에서 유효한 치트·관찰 도구만
+ *                  표시한다(한 번에 한 씬 — 눈 검증 중 시각 소음 최소화).
+ * 탭 선택은 클로저 상태(activeTab)로 보존되어 250ms 자동 재렌더에도 유지된다.
  *
  * 모든 상태 변경은 `harness.cheat()`(또는 프로필 지급)을 거쳐 오염 런(markTainted)으로
  * 표시된다. 씬 런처가 taint로 무대를 꾸민 경우 오염 배지가 그것을 알린다(ADR-0008 의도).
@@ -101,6 +100,19 @@ const TIER_NAMES: readonly string[] = ['정찰', '교전', '섬멸'];
 /** 일반 전투 세그먼트 수(보스 세그먼트 제외 — 마지막 인덱스는 보스). */
 const NORMAL_SEGMENTS = SEGMENTS.length - 1;
 
+/** 씬 탭 id — 패널은 씬 단위로 테스트 도구를 묶는다. */
+type SceneTab = 'run' | 'boss' | 'fx' | 'result' | 'menus' | 'guardian' | 'inspect';
+/** 씬 탭 정의(표시 순서). */
+const SCENE_TABS: readonly { id: SceneTab; label: string }[] = [
+  { id: 'run', label: '런' },
+  { id: 'boss', label: '보스전' },
+  { id: 'fx', label: '연출' },
+  { id: 'result', label: '정산' },
+  { id: 'menus', label: '메뉴' },
+  { id: 'guardian', label: '수호·계보' },
+  { id: 'inspect', label: '인스펙터' },
+];
+
 const STYLE = `
 #pb-cheat { position:absolute; right:12px; bottom:12px; z-index:60; font-family:'Segoe UI',system-ui,sans-serif; color:#dce4ff; }
 #pb-cheat .pb-c-toggle { pointer-events:auto; cursor:pointer; width:36px; height:36px; border-radius:10px; border:1px solid #2a3552; background:rgba(12,16,30,.92); color:#7affea; font-size:18px; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 16px rgba(0,0,0,.5); }
@@ -129,10 +141,11 @@ const STYLE = `
 #pb-cheat .pb-c-lbl { font-size:11px; color:#8896b8; }
 #pb-cheat .pb-c-badge { display:inline-block; background:#ff3355; color:#fff; font-size:12px; font-weight:900; letter-spacing:1px; padding:3px 10px; border-radius:20px; margin-bottom:8px; box-shadow:0 0 12px rgba(255,50,80,.7); }
 #pb-cheat .pb-c-badge.clean { background:rgba(30,40,64,.9); color:#5f7196; box-shadow:none; }
-#pb-cheat details.pb-c-sec > summary { color:#9fb0d8; font-size:11px; font-weight:700; letter-spacing:.5px; margin-bottom:6px; text-transform:uppercase; cursor:pointer; list-style:none; user-select:none; }
-#pb-cheat details.pb-c-sec > summary::-webkit-details-marker { display:none; }
-#pb-cheat details.pb-c-sec > summary::before { content:'▸ '; color:#4cd7ff; }
-#pb-cheat details.pb-c-sec[open] > summary::before { content:'▾ '; }
+/* 씬 탭 바: 선택한 씬의 테스트 도구만 아래 pane에 표시. */
+#pb-cheat .pb-c-tabs { display:flex; flex-wrap:wrap; gap:4px; margin:8px 0 6px; }
+#pb-cheat button.pb-c-tab { pointer-events:auto; cursor:pointer; padding:4px 9px; font-size:11px; font-weight:800; letter-spacing:.3px; color:#8896b8; background:rgba(16,22,40,.9); border:1px solid #2a3552; border-radius:8px 8px 3px 3px; }
+#pb-cheat button.pb-c-tab:hover { border-color:#4cd7ff; color:#dce4ff; }
+#pb-cheat button.pb-c-tab.on { background:linear-gradient(180deg,#20406a,#16294a); color:#7affea; border-color:#34507a; }
 #pb-cheat pre.pb-c-dump { margin:0; font-family:'Consolas',monospace; font-size:11px; line-height:1.35; color:#b7c6ea; white-space:pre-wrap; word-break:break-word; }
 #pb-cheat .pb-c-ents { max-height:150px; overflow:auto; border:1px solid #222c46; border-radius:8px; margin-top:5px; }
 #pb-cheat .pb-c-ent { display:flex; justify-content:space-between; gap:8px; font-size:11px; padding:3px 7px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,.04); }
@@ -193,10 +206,9 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   let seedStr = '';
   let planetIdx = 0;
   let tierIdx = 0;
-  // 접이식 섹션(개입·인스펙터) 펼침 상태 — 자동 갱신 재렌더를 넘어 보존.
-  let openIntervene = false;
-  let openInspector = false;
-  let openGuardian = false;
+  // 씬 탭 선택 — 자동 갱신 재렌더를 넘어 보존(클로저 상태). 한 번에 한 씬의 도구만
+  // 보여주는 씬 중심 레이아웃의 축.
+  let activeTab: SceneTab = 'run';
   // 런 식별 추적: 새 런이 시작되면 런 스코프 치트 상태(무적)를 리셋한다.
   // 무적은 일회성 world 변형이라 런을 넘어가면 실제 효과가 없는데 UI만 ON으로
   // 남고, OFF 시 이전 런의 savedMaxHp를 새 런에 덮어쓰는 desync가 생긴다(리뷰 LOW).
@@ -221,18 +233,6 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     t.textContent = title;
     s.appendChild(t);
     return s;
-  }
-
-  /** 펼침 상태를 클로저 boolean에 동기화하는 접이식 섹션(<details>). */
-  function collapsible(title: string, isOpen: () => boolean, setOpen: (v: boolean) => void): HTMLDetailsElement {
-    const d = document.createElement('details');
-    d.className = 'pb-c-sec';
-    d.open = isOpen();
-    const sm = document.createElement('summary');
-    sm.textContent = title;
-    d.appendChild(sm);
-    d.addEventListener('toggle', () => setOpen(d.open));
-    return d;
   }
 
   function btn(label: string, onClick: () => void, title?: string, cls?: string): HTMLButtonElement {
@@ -513,16 +513,103 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     badge.textContent = snap.tainted ? '⚠ 오염 런 (정산·제출 제외)' : '정상 런';
     body.appendChild(badge);
 
-    // 1) 씬 런처 (주역)
+    // 1) 재생 제어 — 횡단 도구(어느 씬에서든 배속/정지/스텝/ff). 항상 표시.
     {
-      const s = document.createElement('div');
-      s.className = 'pb-c-sec pb-c-launcher';
-      const t = document.createElement('div');
-      t.className = 'pb-c-t';
-      t.textContent = '씬 런처 — 눈으로 검증';
-      s.appendChild(t);
+      const s = section('재생');
+      const speedRow = document.createElement('div');
+      speedRow.className = 'pb-c-row';
+      for (const m of [1, 4, 16] as const) {
+        const b = btn(`${m}×`, () => {
+          speed = m;
+          harness.setSpeed(m);
+          render();
+        });
+        if (speed === m) b.classList.add('on');
+        speedRow.appendChild(b);
+      }
+      const pb = btn(paused ? '▶ 재개' : '⏸ 일시정지', () => {
+        paused = !paused;
+        if (paused) harness.pause();
+        else harness.resume();
+        render();
+      });
+      if (paused) pb.classList.add('on');
+      speedRow.appendChild(pb);
+      s.appendChild(speedRow);
 
-      // 시드/행성/티어 (씬 재현 핀). 클로저 상태에서 복원 → 자동 갱신에도 값 유지.
+      const ffRow = document.createElement('div');
+      ffRow.className = 'pb-c-row';
+      ffRow.appendChild(btn('+1 틱', () => harness.step(1)));
+      ffRow.appendChild(btn('+10 틱', () => harness.step(10)));
+      ffRow.appendChild(btn('+60 틱', () => harness.step(60)));
+      const ffTicks = numInput(600);
+      const apChk = document.createElement('label');
+      apChk.className = 'pb-c-chk';
+      const ap = document.createElement('input');
+      ap.type = 'checkbox';
+      ap.checked = true;
+      apChk.appendChild(ap);
+      apChk.appendChild(document.createTextNode('오토파일럿'));
+      ffRow.appendChild(ffTicks);
+      ffRow.appendChild(apChk);
+      ffRow.appendChild(
+        btn('▶▶ ff', () => {
+          const n = Math.max(0, Math.floor(Number(ffTicks.value) || 0));
+          harness.ff(n, { autopilot: ap.checked });
+          setHint(`ff ${n}틱 (${ap.checked ? '오토파일럿' : '중립'})`);
+        }),
+      );
+      s.appendChild(ffRow);
+      body.appendChild(s);
+    }
+
+    // 2) 씬 탭 바 — 선택한 씬의 테스트 도구만 아래 pane에 표시.
+    const tabBar = document.createElement('div');
+    tabBar.className = 'pb-c-tabs';
+    for (const tab of SCENE_TABS) {
+      const b = document.createElement('button');
+      b.className = `pb-c-tab${activeTab === tab.id ? ' on' : ''}`;
+      b.textContent = tab.label;
+      b.addEventListener('click', () => {
+        activeTab = tab.id;
+        render();
+      });
+      tabBar.appendChild(b);
+    }
+    body.appendChild(tabBar);
+
+    // 3) 선택된 씬 탭의 콘텐츠(빌더는 아래 함수 선언 — 호이스팅으로 접근 가능).
+    {
+      const pane = document.createElement('div');
+      pane.className = 'pb-c-sec pb-c-launcher';
+      switch (activeTab) {
+        case 'run':
+          buildRunTab(pane);
+          break;
+        case 'boss':
+          buildBossTab(pane);
+          break;
+        case 'fx':
+          buildFxTab(pane);
+          break;
+        case 'result':
+          buildResultTab(pane);
+          break;
+        case 'menus':
+          buildMenusTab(pane);
+          break;
+        case 'guardian':
+          buildGuardianTab(pane);
+          break;
+        case 'inspect':
+          buildInspectTab(pane);
+          break;
+      }
+      body.appendChild(pane);
+    }
+
+    /** seed/행성/티어 핀 행(런·보스전·연출 탭 공유) — 클로저 상태에서 복원. */
+    function buildPinRow(): HTMLElement {
       const cfgRow = document.createElement('div');
       cfgRow.className = 'pb-c-row';
       const seedIn = document.createElement('input');
@@ -559,10 +646,115 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       seedLbl.className = 'pb-c-lbl';
       seedLbl.textContent = 'seed';
       cfgRow.append(seedLbl, seedIn, planetSel, tierSel);
-      s.appendChild(cfgRow);
+      return cfgRow;
+    }
 
-      // 화면(메뉴 점프)
-      s.appendChild(subLabel('화면'));
+    /** 전투 치트 묶음(런·보스전 탭 공유): 무적/풀힐/레벨업 + 스폰 개입(오염). */
+    function appendCombatCheats(s: HTMLElement): void {
+      s.appendChild(subLabel('전투 치트 (오염)'));
+      const row1 = document.createElement('div');
+      row1.className = 'pb-c-row';
+      const invBtn = btn('무적', toggleInvincible);
+      if (invincible) invBtn.classList.add('on');
+      row1.append(invBtn, btn('풀 힐', fullHeal), btn('레벨업 +1', levelUp));
+      s.appendChild(row1);
+      const row2 = document.createElement('div');
+      row2.className = 'pb-c-row';
+      const bulletBtn = btn('적탄 소거', clearEnemyBullets);
+      const killBtn = btn('적 전멸', killAllEnemies);
+      const eliteBtn = btn('정예 승격', spawnElite);
+      if (!live) {
+        for (const b of [bulletBtn, killBtn, eliteBtn]) {
+          b.disabled = true;
+          b.title = '진행 중인 런이 없습니다';
+        }
+      }
+      row2.append(bulletBtn, killBtn, eliteBtn);
+      s.appendChild(row2);
+    }
+
+    /** 라이브 상태 한 줄(런·보스전 탭): 눈 검증 중 흘끗 볼 핵심 수치. */
+    function appendLiveStatusLine(s: HTMLElement): void {
+      const line = document.createElement('div');
+      line.className = 'pb-c-lbl';
+      line.textContent = live
+        ? `hp ${Math.ceil(snap.hp)}/${snap.maxHp} · lv ${snap.level} · seg ${snap.segment} · kills ${snap.kills}`
+        : '진행 중인 런 없음';
+      s.appendChild(line);
+    }
+
+    /** 런 탭: 깨끗한 런/튜토리얼 진입 + 세그먼트 점프 + 전투 치트. */
+    function buildRunTab(s: HTMLElement): void {
+      s.appendChild(buildPinRow());
+      s.appendChild(subLabel('띄우기 (클릭 → 직접 조작)'));
+      const playRow = document.createElement('div');
+      playRow.className = 'pb-c-row';
+      playRow.append(
+        btn('▶ 런 처음부터', sceneFreshRun, '선택한 행성/티어로 깨끗한 런 시작(비오염)', 'play'),
+        btn('튜토리얼', sceneTutorial, '정식 튜토리얼(고정 시드 + 힌트 오버레이)', 'play'),
+      );
+      s.appendChild(playRow);
+
+      s.appendChild(subLabel('세그먼트 점프 (풀 힐 후 시작 · 오염)'));
+      const segRow = document.createElement('div');
+      segRow.className = 'pb-c-row';
+      for (let n = 1; n <= NORMAL_SEGMENTS; n++) {
+        segRow.appendChild(btn(String(n), () => sceneSegment(n), `세그먼트 ${n} 전투로 점프`));
+      }
+      s.appendChild(segRow);
+
+      appendCombatCheats(s);
+      appendLiveStatusLine(s);
+    }
+
+    /** 보스전 탭: 보스 세그먼트 진입 + 보스 상태 라인 + 전투 치트. */
+    function buildBossTab(s: HTMLElement): void {
+      s.appendChild(buildPinRow());
+      s.appendChild(subLabel('띄우기'));
+      const row = document.createElement('div');
+      row.className = 'pb-c-row';
+      row.append(
+        btn('보스전 시작', sceneBoss, '보스 세그먼트로 점프해 sim이 보스를 소환(풀 힐 · 오염)', 'play'),
+      );
+      s.appendChild(row);
+      const bossLine = document.createElement('div');
+      bossLine.className = 'pb-c-lbl';
+      bossLine.textContent = snap.boss
+        ? `보스 HP ${Math.ceil(snap.boss.hp)}/${snap.boss.maxHp} · 페이즈 ${snap.boss.phase}`
+        : '보스 없음 — 위 버튼으로 진입하면 다음 틱에 소환됩니다';
+      s.appendChild(bossLine);
+      appendCombatCheats(s);
+      appendLiveStatusLine(s);
+    }
+
+    /** 연출 탭: 레벨업 오버레이·유니크 세리머니(버튼이 무대+발동까지 수행). */
+    function buildFxTab(s: HTMLElement): void {
+      s.appendChild(buildPinRow());
+      s.appendChild(subLabel('연출 발동 (새 런 무대 · 오염)'));
+      const row = document.createElement('div');
+      row.className = 'pb-c-row';
+      row.append(
+        btn('레벨업 오버레이', sceneLevelUp, '다음 틱에 3지선다 파워업 오버레이 표시'),
+        btn('유니크 세리머니', sceneUnique, '근처에 유니크 loot 드랍 → 금빛 슬로모'),
+      );
+      s.appendChild(row);
+    }
+
+    /** 정산 탭: 승/패 결과 오버레이(오염 런은 settlement 생략, 화면 표시만). */
+    function buildResultTab(s: HTMLElement): void {
+      s.appendChild(subLabel('결과 오버레이 (새 런 무대 · 오염)'));
+      const row = document.createElement('div');
+      row.className = 'pb-c-row';
+      row.append(
+        btn('정산 · 승리', () => sceneResult(true), '승리 강제 → 결과 오버레이'),
+        btn('정산 · 패배', () => sceneResult(false), '패배 강제 → 결과 오버레이'),
+      );
+      s.appendChild(row);
+    }
+
+    /** 메뉴 탭: 화면 점프 + 프로필 데이터 지급(메뉴 UI 변화를 눈으로 확인). */
+    function buildMenusTab(s: HTMLElement): void {
+      s.appendChild(subLabel('화면 점프'));
       const scrRow = document.createElement('div');
       scrRow.className = 'pb-c-row';
       const screens: readonly [HarnessScreen, string][] = [
@@ -585,113 +777,64 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       }
       s.appendChild(scrRow);
 
-      // 플레이 씬(무대 → 라이브 핸드오버)
-      s.appendChild(subLabel('플레이 씬 (클릭 → 직접 조작)'));
-      const playRow1 = document.createElement('div');
-      playRow1.className = 'pb-c-row';
-      playRow1.append(
-        btn('▶ 런 처음부터', sceneFreshRun, '선택한 행성/티어로 깨끗한 런 시작(비오염)', 'play'),
-        btn('튜토리얼', sceneTutorial, '정식 튜토리얼(고정 시드 + 힌트 오버레이)', 'play'),
+      s.appendChild(subLabel('재화 지급 (하네스 프로필)'));
+      const row2 = document.createElement('div');
+      row2.className = 'pb-c-row';
+      const credIn = numInput(10000, 72);
+      row2.append(
+        credIn,
+        btn('크레딧', () => grantCurrency('credits', Math.max(0, Math.floor(Number(credIn.value) || 0)))),
       );
-      s.appendChild(playRow1);
+      const minIn = numInput(10000, 72);
+      row2.append(
+        minIn,
+        btn('광물', () => grantCurrency('minerals', Math.max(0, Math.floor(Number(minIn.value) || 0)))),
+      );
+      s.appendChild(row2);
 
-      // 세그먼트 전투(일반 세그먼트 1~N)
-      s.appendChild(subLabel('세그먼트 전투 (풀 힐 후 시작 · 오염)'));
-      const segRow = document.createElement('div');
-      segRow.className = 'pb-c-row';
-      for (let n = 1; n <= NORMAL_SEGMENTS; n++) {
-        segRow.appendChild(btn(String(n), () => sceneSegment(n), `세그먼트 ${n} 전투로 점프`));
+      s.appendChild(subLabel('장비 지급 (활성 기체)'));
+      const row3 = document.createElement('div');
+      row3.className = 'pb-c-row';
+      const slotSel = document.createElement('select');
+      for (const id of EQUIP_SLOTS) {
+        const o = document.createElement('option');
+        o.value = id;
+        o.textContent = SLOT_LABEL[id];
+        slotSel.appendChild(o);
       }
-      segRow.appendChild(btn('보스전', sceneBoss, '보스 세그먼트로 점프해 sim이 보스를 소환', 'play'));
-      s.appendChild(segRow);
-
-      // 이벤트/연출 씬
-      s.appendChild(subLabel('이벤트 · 연출 (오염)'));
-      const fxRow = document.createElement('div');
-      fxRow.className = 'pb-c-row';
-      fxRow.append(
-        btn('레벨업 오버레이', sceneLevelUp, '다음 틱에 3지선다 파워업 오버레이 표시'),
-        btn('유니크 세리머니', sceneUnique, '근처에 유니크 loot 드랍 → 금빛 슬로모'),
-      );
-      s.appendChild(fxRow);
-      const resRow = document.createElement('div');
-      resRow.className = 'pb-c-row';
-      resRow.append(
-        btn('정산 · 승리', () => sceneResult(true), '승리 강제 → 결과 오버레이'),
-        btn('정산 · 패배', () => sceneResult(false), '패배 강제 → 결과 오버레이'),
-      );
-      s.appendChild(resRow);
-      body.appendChild(s);
-    }
-
-    // 2) 관전 도구 (재생 제어 — 검증을 지켜보기 위한 보조)
-    {
-      const s = section('관전 도구');
-      const speedRow = document.createElement('div');
-      speedRow.className = 'pb-c-row';
-      for (const m of [1, 4, 16] as const) {
-        const b = btn(`${m}×`, () => {
-          speed = m;
-          harness.setSpeed(m);
-          render();
-        });
-        if (speed === m) b.classList.add('on');
-        speedRow.appendChild(b);
+      const raritySel = document.createElement('select');
+      for (const r of RARITIES) {
+        const o = document.createElement('option');
+        o.value = r;
+        o.textContent = r;
+        if (r === 'rare') o.selected = true;
+        raritySel.appendChild(o);
       }
-      const pb = btn(paused ? '▶ 재개' : '⏸ 일시정지', () => {
-        paused = !paused;
-        if (paused) harness.pause();
-        else harness.resume();
-        render();
-      });
-      if (paused) pb.classList.add('on');
-      speedRow.appendChild(pb);
-      s.appendChild(speedRow);
+      row3.append(
+        slotSel,
+        raritySel,
+        btn('장비 지급', () => grantItem(slotSel.value as EquipSlotId, raritySel.value as Rarity)),
+      );
+      s.appendChild(row3);
 
-      const stepRow = document.createElement('div');
-      stepRow.className = 'pb-c-row';
-      stepRow.appendChild(btn('+1 틱', () => harness.step(1)));
-      stepRow.appendChild(btn('+10 틱', () => harness.step(10)));
-      stepRow.appendChild(btn('+60 틱', () => harness.step(60)));
-      s.appendChild(stepRow);
-
-      const ffRow = document.createElement('div');
-      ffRow.className = 'pb-c-row';
-      const ffTicks = numInput(600);
-      const apChk = document.createElement('label');
-      apChk.className = 'pb-c-chk';
-      const ap = document.createElement('input');
-      ap.type = 'checkbox';
-      ap.checked = true;
-      apChk.appendChild(ap);
-      apChk.appendChild(document.createTextNode('오토파일럿'));
-      const ffLbl = document.createElement('span');
-      ffLbl.className = 'pb-c-lbl';
-      ffLbl.textContent = 'ff';
-      ffRow.appendChild(ffLbl);
-      ffRow.appendChild(ffTicks);
-      ffRow.appendChild(apChk);
-      ffRow.appendChild(
-        btn('▶▶ 실행', () => {
-          const n = Math.max(0, Math.floor(Number(ffTicks.value) || 0));
-          harness.ff(n, { autopilot: ap.checked });
-          setHint(`ff ${n}틱 (${ap.checked ? '오토파일럿' : '중립'})`);
+      s.appendChild(subLabel('프리셋 (하네스 프로필 통째 교체)'));
+      const row4 = document.createElement('div');
+      row4.className = 'pb-c-row';
+      row4.append(
+        btn('프리셋: 신규', () => {
+          harness.preset('fresh');
+          setHint('프리셋 fresh 주입');
+        }),
+        btn('프리셋: 만렙', () => {
+          harness.preset('maxed');
+          setHint('프리셋 maxed 주입');
         }),
       );
-      s.appendChild(ffRow);
-      body.appendChild(s);
+      s.appendChild(row4);
     }
 
-    // 2.5) 수호·계보 (M5 Phase A — 퇴역 1사이클 딥링크: AC1/AC3/AC4 흐름 검증)
-    {
-      const s = collapsible(
-        '수호·계보 (M5)',
-        () => openGuardian,
-        (v) => {
-          openGuardian = v;
-        },
-      );
-
+    /** 수호·계보 탭(M5 Phase A — 퇴역 1사이클 딥링크: AC1/AC3/AC4 흐름 검증). */
+    function buildGuardianTab(s: HTMLElement): void {
       const status = document.createElement('div');
       status.className = 'pb-c-lbl';
       const refreshStatus = (): void => {
@@ -761,104 +904,10 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       );
       s.appendChild(dismissRow);
       s.appendChild(status);
-      body.appendChild(s);
     }
 
-    // 3) 개입 (구 치트+스폰 병합 — 접이식, 기본 접힘)
-    {
-      const s = collapsible(
-        '개입 (치트)',
-        () => openIntervene,
-        (v) => {
-          openIntervene = v;
-        },
-      );
-
-      const row1 = document.createElement('div');
-      row1.className = 'pb-c-row';
-      const invBtn = btn('무적', toggleInvincible);
-      if (invincible) invBtn.classList.add('on');
-      row1.append(invBtn, btn('풀 힐', fullHeal), btn('레벨업 +1', levelUp));
-      s.appendChild(row1);
-
-      const row2 = document.createElement('div');
-      row2.className = 'pb-c-row';
-      const credIn = numInput(10000, 72);
-      row2.append(
-        credIn,
-        btn('크레딧', () => grantCurrency('credits', Math.max(0, Math.floor(Number(credIn.value) || 0)))),
-      );
-      const minIn = numInput(10000, 72);
-      row2.append(
-        minIn,
-        btn('광물', () => grantCurrency('minerals', Math.max(0, Math.floor(Number(minIn.value) || 0)))),
-      );
-      s.appendChild(row2);
-
-      const row3 = document.createElement('div');
-      row3.className = 'pb-c-row';
-      const slotSel = document.createElement('select');
-      for (const id of EQUIP_SLOTS) {
-        const o = document.createElement('option');
-        o.value = id;
-        o.textContent = SLOT_LABEL[id];
-        slotSel.appendChild(o);
-      }
-      const raritySel = document.createElement('select');
-      for (const r of RARITIES) {
-        const o = document.createElement('option');
-        o.value = r;
-        o.textContent = r;
-        if (r === 'rare') o.selected = true;
-        raritySel.appendChild(o);
-      }
-      row3.append(
-        slotSel,
-        raritySel,
-        btn('장비 지급', () => grantItem(slotSel.value as EquipSlotId, raritySel.value as Rarity)),
-      );
-      s.appendChild(row3);
-
-      // 스폰 개입(라이브 런에서만)
-      const row4 = document.createElement('div');
-      row4.className = 'pb-c-row';
-      const bulletBtn = btn('적탄 소거', clearEnemyBullets);
-      const killBtn = btn('적 전멸', killAllEnemies);
-      const eliteBtn = btn('정예 승격', spawnElite);
-      if (!live) {
-        for (const b of [bulletBtn, killBtn, eliteBtn]) {
-          b.disabled = true;
-          b.title = '진행 중인 런이 없습니다';
-        }
-      }
-      row4.append(bulletBtn, killBtn, eliteBtn);
-      s.appendChild(row4);
-
-      const row5 = document.createElement('div');
-      row5.className = 'pb-c-row';
-      row5.append(
-        btn('프리셋: 신규', () => {
-          harness.preset('fresh');
-          setHint('프리셋 fresh 주입');
-        }),
-        btn('프리셋: 만렙', () => {
-          harness.preset('maxed');
-          setHint('프리셋 maxed 주입');
-        }),
-      );
-      s.appendChild(row5);
-      body.appendChild(s);
-    }
-
-    // 4) 인스펙터 (접이식, 기본 접힘)
-    {
-      const s = collapsible(
-        '인스펙터',
-        () => openInspector,
-        (v) => {
-          openInspector = v;
-        },
-      );
+    /** 인스펙터 탭: 스냅샷 덤프 + 최근 이벤트 + 엔티티 목록. */
+    function buildInspectTab(s: HTMLElement): void {
       const dump = document.createElement('pre');
       dump.className = 'pb-c-dump';
       const bossLine = snap.boss
@@ -923,7 +972,6 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         list.appendChild(empty);
       }
       s.appendChild(list);
-      body.appendChild(s);
     }
 
     // 힌트
