@@ -40,7 +40,9 @@ import {
   CORE_COST,
   TURRET_SPECS,
   type DefenseLayout,
+  type GuardianPlacement,
 } from '../src/sim/defense.js';
+import { makeGuardianSnapshot, GUARDIAN_TITAN, PERFORMANCE_FULL } from '../data/guardian.js';
 
 describe('격자 ↔ 월드 좌표 왕복', () => {
   it('cellToWorld → worldToCell이 모든 칸에서 무손실', () => {
@@ -216,6 +218,99 @@ describe('직렬화 왕복 — save→load 동일 (계약: defenses.layout = Def
     expect(cleaned).not.toBeNull();
     expect(cleaned!.turrets).toEqual([{ type: 0, x: 1, y: 2 }]);
     expect(cleaned!.obstacles).toEqual([{ x: 5, y: 6, halfW: 10, halfH: 10 }]);
+  });
+});
+
+/** 수호 배치 1건(테스트 픽스처) — 타이탄 스냅샷 + 완전 성능. */
+function guardianAt(x: number, y: number, bonusBp = 0): GuardianPlacement {
+  return {
+    x,
+    y,
+    snapshot: makeGuardianSnapshot(GUARDIAN_TITAN, 150),
+    performanceCP: PERFORMANCE_FULL,
+    lineageBonusBp: bonusBp,
+  };
+}
+
+describe('수호 기체 배치 배선(M5) — 슬롯 재배치·직렬화·정규화', () => {
+  it('수호 없는 배치는 guardians 키를 붙이지 않는다(해시 바이트 불변 · append-only)', () => {
+    const s = stateWithCore();
+    const layout = editorStateToLayout(s);
+    expect(layout).not.toBeNull();
+    expect('guardians' in layout!).toBe(false);
+    // normalizeLayout 왕복도 키를 만들지 않는다.
+    const rt = normalizeLayout(JSON.parse(JSON.stringify(layout)));
+    expect('guardians' in rt!).toBe(false);
+  });
+
+  it('수호 슬롯을 격자에 재배치하면 좌표만 바뀐다(guardian 도구)', () => {
+    const s = stateWithCore();
+    s.guardians = [guardianAt(-999, -999)];
+    const res = tryPlace(s, DEFENSE_BUDGET_BASE, { kind: 'guardian', guardianSlot: 0 }, 0, 0);
+    expect(res).toBe('moved');
+    expect(s.guardians[0]).toMatchObject(cellToWorld(0, 0));
+    // 존재하지 않는 슬롯은 noop.
+    expect(tryPlace(s, DEFENSE_BUDGET_BASE, { kind: 'guardian', guardianSlot: 5 }, 1, 1)).toBe('noop');
+  });
+
+  it('수호는 스폰 칸 금지·타 엔티티 점유 칸 거부·지우개 불가', () => {
+    const s = stateWithCore();
+    s.guardians = [guardianAt(-999, -999)];
+    // 스폰 칸 금지.
+    expect(tryPlace(s, DEFENSE_BUDGET_BASE, { kind: 'guardian', guardianSlot: 0 }, SPAWN_COL, SPAWN_ROW)).toBe('spawn');
+    // 포탑 점유 칸 거부.
+    tryPlace(s, DEFENSE_BUDGET_BASE, { kind: 'turret', turretType: TURRET_VULCAN }, 0, 0);
+    expect(tryPlace(s, DEFENSE_BUDGET_BASE, { kind: 'guardian', guardianSlot: 0 }, 0, 0)).toBe('occupied');
+    // 수호 배치 후 지우개는 무변경(로스터 정본).
+    tryPlace(s, DEFENSE_BUDGET_BASE, { kind: 'guardian', guardianSlot: 0 }, 3, 3);
+    const c = worldToCell(s.guardians[0]!.x, s.guardians[0]!.y);
+    expect(tryPlace(s, DEFENSE_BUDGET_BASE, { kind: 'erase' }, c.col, c.row)).toBe('noop');
+    expect(s.guardians.length).toBe(1);
+  });
+
+  it('수호는 배치 포인트를 소비하지 않는다(별도 재화)', () => {
+    const s = stateWithCore();
+    const before = editorCost(s);
+    s.guardians = [guardianAt(100, 100), guardianAt(200, 200)];
+    expect(editorCost(s)).toBe(before);
+  });
+
+  it('editorStateToLayout → JSON 왕복 → normalizeLayout이 수호를 보존한다(서버 주입 경로)', () => {
+    const s = stateWithCore();
+    s.guardians = [guardianAt(128, 240, 1500)];
+    const layout = editorStateToLayout(s);
+    expect(layout!.guardians).toHaveLength(1);
+    const rt = normalizeLayout(JSON.parse(JSON.stringify(layout)));
+    expect(rt).toEqual(layout);
+    // 에디터 상태로도 무손실 복원.
+    expect(editorStateFromLayout(rt!)).toEqual(s);
+  });
+
+  it('normalizeLayout은 손상 수호(비유한 좌표·스냅샷 결손)를 드롭한다', () => {
+    const good = guardianAt(128, 240);
+    const rt = normalizeLayout({
+      core: { x: 0, y: 0 },
+      turrets: [],
+      obstacles: [],
+      guardians: [
+        good,
+        { x: NaN, y: 0, snapshot: good.snapshot, performanceCP: 10000, lineageBonusBp: 0 }, // 비유한 좌표
+        { x: 1, y: 2, snapshot: { preset: 0 }, performanceCP: 10000, lineageBonusBp: 0 }, // 스냅샷 결손
+        { x: 3, y: 4, performanceCP: 10000, lineageBonusBp: 0 }, // 스냅샷 없음
+      ],
+    });
+    expect(rt!.guardians).toHaveLength(1);
+    expect(rt!.guardians![0]).toEqual(good);
+  });
+
+  it('normalizeLayout은 수호를 MAX_GUARDIAN_SLOTS로 자른다', () => {
+    const rt = normalizeLayout({
+      core: { x: 0, y: 0 },
+      turrets: [],
+      obstacles: [],
+      guardians: [guardianAt(1, 1), guardianAt(2, 2), guardianAt(3, 3)],
+    });
+    expect(rt!.guardians!.length).toBeLessThanOrEqual(2);
   });
 });
 
