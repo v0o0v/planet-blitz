@@ -26,9 +26,13 @@ import {
 } from '../save/profile.js';
 import { salvageItems } from '../save/settlement.js';
 import { t, type MessageKey } from '../i18n/index.js';
+import { stashExpansionCost, canAfford, STASH_EXPANSION_BASE } from '../../data/economy.js';
 
-/** Credit cost of the next stash expansion. */
-export const STASH_EXPANSION_COST = 200;
+/**
+ * Credit cost of the *first* stash expansion (앵커). 실제 회차별 비용은
+ * data/economy.ts stashExpansionCost(currentExpansions) 가 산출한다(1회차 200, 2회차 400).
+ */
+export const STASH_EXPANSION_COST = STASH_EXPANSION_BASE;
 
 /** Rarity → display colour (shared with tooltips/borders). */
 const RARITY_COLOR: Record<Rarity, string> = {
@@ -208,12 +212,13 @@ export class InventoryOverlay {
       this.render();
       return;
     }
-    if (this.profile.credits < STASH_EXPANSION_COST) {
-      this.hint = t('inv.err.noCredits', { n: STASH_EXPANSION_COST });
+    const cost = stashExpansionCost(this.profile.stashExpansions);
+    if (!canAfford(this.profile.credits, cost)) {
+      this.hint = t('inv.err.noCredits', { n: cost });
       this.render();
       return;
     }
-    this.profile.credits -= STASH_EXPANSION_COST;
+    this.profile.credits -= cost;
     this.profile.stashExpansions++;
     this.hint = t('inv.stashExpanded');
     this.persist();
@@ -399,13 +404,16 @@ export class InventoryOverlay {
     actions.className = 'pb-actions';
     actions.appendChild(this.actionBtn(t('inv.act.salvageLow'), () => this.salvageByRarities(['normal', 'magic'])));
     actions.appendChild(this.actionBtn(t('inv.act.salvageHigh'), () => this.salvageByRarities(['rare', 'unique'])));
+    const nextExpansionCost = stashExpansionCost(this.profile.stashExpansions);
     const expandBtn = this.actionBtn(
-      t('inv.act.expand', { n: STASH_EXPANSION_COST }),
+      t('inv.act.expand', { n: nextExpansionCost }),
       () => this.expandStash(),
     );
     if (this.profile.stashExpansions >= MAX_STASH_EXPANSIONS) {
       expandBtn.disabled = true;
       expandBtn.textContent = t('inv.act.expandMax');
+    } else if (!canAfford(this.profile.credits, nextExpansionCost)) {
+      expandBtn.disabled = true;
     }
     actions.appendChild(expandBtn);
     const closeBtn = this.actionBtn(t('inv.act.backToMap'), () => {
