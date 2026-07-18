@@ -30,6 +30,7 @@ import {
   investLineage,
   canInvest,
   guardianBonusBp,
+  guardianMilestones,
   RETIRE_LINEAGE_GRANT,
 } from '../../data/lineage.js';
 import type { LineageBranch } from '../../data/lineage.js';
@@ -149,6 +150,10 @@ export function buildGuardianPlacements(
   positions: readonly { x: number; y: number }[],
 ): GuardianPlacement[] {
   const bonusBp = guardianBonusBp(profile.lineage);
+  // 계보 수호 가지 레벨 → 해금된 마일스톤 비트마스크(레벨 도달 자동 해금). 계정 단위라 참전 수호
+  // 전원이 동일 마스크를 받는다(lineageBonusBp 와 동일 — 개체가 아닌 계정에 쌓인다). 0 이면
+  // 마일스톤 없음 = config 에 실려도 sim 거동·해시 완전 불변(하위 호환).
+  const milestones = guardianMilestones(profile.lineage.guardianLevel);
   const active = activeGuardians(profile);
   const n = active.length < MAX_GUARDIAN_SLOTS ? active.length : MAX_GUARDIAN_SLOTS;
   const out: GuardianPlacement[] = [];
@@ -161,6 +166,7 @@ export function buildGuardianPlacements(
       snapshot: g.snapshot,
       performanceCP: g.performanceCP,
       lineageBonusBp: bonusBp,
+      milestones,
     });
   }
   return out;

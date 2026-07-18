@@ -20,8 +20,11 @@ import { uniquesForSlot } from './uniques.js';
 // side-effect: M2 유니크 5점을 레지스트리에 등록(rarity=unique 롤이 슬롯별로 선택).
 import '../../data/uniques.js';
 
-/** Number of sub-weapon variants a `sub` item can roll (0..N-1). */
-const SUB_WEAPON_VARIANTS = 2;
+/** Number of sub-weapon variants a `sub` item can roll (0..N-1). GDD §5 "보조무기
+ *  5종" (사이드킥/스캐터/기뢰장/센트리/호밍 플레어). `int` consumes one nextU32
+ *  regardless of span, so widening 0..1 → 0..4 preserves the RNG stream shape —
+ *  only the resolved sub weapon value for a given drop seed changes. */
+const SUB_WEAPON_VARIANTS = 5;
 
 /**
  * Affix count for a rarity, drawn from `rng` (plan A1/A3):

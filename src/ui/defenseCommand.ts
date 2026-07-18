@@ -37,6 +37,7 @@ import {
   normalizeGuardianPreset,
   type GuardianSnapshot,
 } from '../../data/guardian.js';
+import { normalizeMilestones } from '../../data/lineage.js';
 import { buildGuardianPlacements } from '../save/guardianLifecycle.js';
 import {
   createWorld,
@@ -318,13 +319,18 @@ export function validateEditor(
 
 /** 수호 배치 1건을 깊은 복사한다(스냅샷 포함 — 원본 참조 공유 방지). */
 function cloneGuardian(g: GuardianPlacement): GuardianPlacement {
-  return {
+  const out: GuardianPlacement = {
     x: g.x,
     y: g.y,
     snapshot: { ...g.snapshot },
     performanceCP: g.performanceCP,
     lineageBonusBp: g.lineageBonusBp,
   };
+  // 마일스톤 마스크는 0(미해금)일 때 키를 생략해 수호 미마일스톤 배치의 해시 바이트 불변을
+  // 유지한다(append-only 조건부 접기와 정합 — replay.ts 는 마스크 0 을 접지 않는다).
+  const ms = normalizeMilestones(g.milestones);
+  if (ms !== 0) out.milestones = ms;
+  return out;
 }
 
 /**
@@ -461,13 +467,18 @@ function normalizeGuardian(raw: unknown): GuardianPlacement | null {
     moveSpeed: s.moveSpeed as number,
     standoff: s.standoff as number,
   };
-  return {
+  const out: GuardianPlacement = {
     x: g.x,
     y: g.y,
     snapshot,
     performanceCP: g.performanceCP,
     lineageBonusBp: g.lineageBonusBp,
   };
+  // 마일스톤 마스크(있으면) 보존 — 서버가 serve 시 권위 계보 레벨로 덮어쓰지만(injectGuardianAuthority),
+  // 로컬 미리보기·해시 재현 입력으로 실린다. 0/미지정/손상은 정규화가 0 으로 접고 키를 생략한다.
+  const ms = normalizeMilestones(isNum(g.milestones) ? (g.milestones as number) : 0);
+  if (ms !== 0) out.milestones = ms;
+  return out;
 }
 
 // ---------------------------------------------------------------------------

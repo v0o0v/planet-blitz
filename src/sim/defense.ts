@@ -30,8 +30,25 @@ import { HAZARD_SLOW } from './patterns/types.js';
 import { atan2, cos, sin, length } from './math.js';
 import { segmentBlocked } from './los.js';
 import { DT } from './constants.js';
-import { resolveGuardianStats, normalizeGuardianPreset, MAX_GUARDIAN_SLOTS } from '../../data/guardian.js';
+import {
+  resolveGuardianStats,
+  normalizeGuardianPreset,
+  MAX_GUARDIAN_SLOTS,
+  coreGuardDamage,
+  coreGuardCooldown,
+  shieldShareHp,
+  CORE_GUARD_RADIUS,
+  SHIELD_SHARE_CORE_BP,
+  SHIELD_SHARE_TURRET_BP,
+} from '../../data/guardian.js';
 import type { GuardianSnapshot, GuardianStats } from '../../data/guardian.js';
+import {
+  normalizeMilestones,
+  hasMilestone,
+  MILESTONE_REBOOT,
+  MILESTONE_CORE_GUARD,
+  MILESTONE_SHIELD_SHARE,
+} from '../../data/lineage.js';
 
 // ---------------------------------------------------------------------------
 // 포탑 유형 코드 (defenseTurret.enemyType 에 저장; 절대 재번호 금지 — 배치 JSON 계약)
@@ -275,6 +292,13 @@ export interface GuardianPlacement {
   performanceCP: number;
   /** 계보 수호 가지 보너스(basis-point, 0..5000). 미지정 = 0. */
   lineageBonusBp: number;
+  /**
+   * 계보 수호 가지 마일스톤 비트마스크(data/lineage.ts MILESTONE_*). 레벨 도달로 자동 해금된
+   * 질적 노드(격추 재기동·코어 근접 수비·실드 공유)를 **명시 config 필드**로 실어 sim 이 profile
+   * 을 읽지 않고 재현하게 한다(lineageBonusBp 와 동일 철학 — 서버 리플레이 검증 가능). 미지정 =
+   * 0(마일스톤 없음 = 기존 거동·해시 완전 불변, append-only 하위 호환).
+   */
+  milestones?: number;
 }
 
 export interface DefenseLayout {
@@ -405,8 +429,9 @@ export function spawnInvasionLayout(
   layout: DefenseLayout,
   maintenance: number = MAINTENANCE_FULL,
 ): void {
-  spawnCore(sink, layout.core.x, layout.core.y);
-  for (const t of layout.turrets) spawnDefenseTurret(sink, t.type, t.x, t.y, maintenance);
+  const core = spawnCore(sink, layout.core.x, layout.core.y);
+  const turrets: Entity[] = [];
+  for (const t of layout.turrets) turrets.push(spawnDefenseTurret(sink, t.type, t.x, t.y, maintenance));
   for (const o of layout.obstacles) spawnWall(sink, o.x, o.y, o.halfW, o.halfH);
   // M5 수호 기체(동시 최대 MAX_GUARDIAN_SLOTS): 코어·포탑·장애물 뒤에 스폰(배열 순서 = 결정론
   // 입력). 없거나 빈 배열이면 아무것도 안 함 → 기존 런 거동·해시 불변. 상한 초과분은 자른다.
@@ -414,7 +439,37 @@ export function spawnInvasionLayout(
   if (guardians !== undefined) {
     const n = guardians.length < MAX_GUARDIAN_SLOTS ? guardians.length : MAX_GUARDIAN_SLOTS;
     for (let i = 0; i < n; i++) spawnGuardian(sink, guardians[i]!, i);
+    // 마일스톤 ③ 실드 공유: 참전 수호가 이 마일스톤을 갖고 있으면 방어전 시작 시 코어·포탑에
+    // 전투력 비례 실드를 부여한다(스폰 직후 1회, 결정론 정수). 풀 = 참전 수호들의 실효 HP 합.
+    applyShieldShare(core, turrets, guardians, n);
   }
+}
+
+/**
+ * 마일스톤 ③ 실드 공유(방어전 시작 1회): 참전 수호 중 하나라도 {@link MILESTONE_SHIELD_SHARE}
+ * 를 갖고 있으면, 참전 수호들의 실효 HP 합(전투력 풀)에 비례한 실드 HP 를 코어·각 포탑에
+ * 부여한다. 실드는 엔티티 `targetY`(float 해시 필드 — 코어·포탑 미사용)에 실려, 아군탄 피해를
+ * HP 보다 먼저 흡수한다(world.ts resolveCollisions). 마일스톤 미보유·수호 미참전이면 아무것도
+ * 하지 않아 `targetY`=0 이 유지되어 기존 해시가 완전 불변이다(하위 호환).
+ */
+function applyShieldShare(
+  core: Entity,
+  turrets: readonly Entity[],
+  placements: readonly GuardianPlacement[],
+  n: number,
+): void {
+  let anyShield = false;
+  let pool = 0;
+  for (let i = 0; i < n; i++) {
+    const p = placements[i]!;
+    if (hasMilestone(normalizeMilestones(p.milestones), MILESTONE_SHIELD_SHARE)) anyShield = true;
+    const stats = resolveGuardianStats(p.snapshot, p.performanceCP, p.lineageBonusBp);
+    pool += stats.hp;
+  }
+  if (!anyShield) return;
+  core.targetY = shieldShareHp(pool, SHIELD_SHARE_CORE_BP);
+  const turretShield = shieldShareHp(pool, SHIELD_SHARE_TURRET_BP);
+  for (const t of turrets) t.targetY = turretShield;
 }
 
 // ---------------------------------------------------------------------------
@@ -442,6 +497,10 @@ export function spawnGuardian(sink: EntitySink, p: GuardianPlacement, slotIndex:
   g.maxHp = stats.hp;
   g.damage = stats.contactDamage;
   g.cooldown = stats.fireCooldown; // 초기 발사 지연(즉발 방지)
+  // 마일스톤 ① 격추 재기동: 해금 시 부활 충전 1회를 phase 에 싣는다(0=미해금/소진). 부활 딜레이
+  // 카운트다운은 iframes 를 재활용한다(수호는 평소 iframes 미사용). 두 필드 모두 hashEntity 가
+  // 접으므로 마일스톤 미해금이면 0 이 유지되어 기존 해시가 완전 불변이다(하위 호환).
+  g.phase = hasMilestone(normalizeMilestones(p.milestones), MILESTONE_REBOOT) ? 1 : 0;
   return addEntity(sink, g);
 }
 
@@ -457,11 +516,39 @@ export function spawnGuardian(sink: EntitySink, p: GuardianPlacement, slotIndex:
 export function stepGuardians(state: WorldState, player: Entity): void {
   const guardians = state.config.invasion?.layout.guardians;
   if (guardians === undefined || guardians.length === 0) return;
+  // 마일스톤 ② 코어 근접 수비용 코어 좌표(있으면). 코어는 배치당 1개이며 좌표는 config 정본이다.
+  const core = state.config.invasion?.layout.core;
   for (const g of state.entities) {
     if (g.kind !== 'guardian' || g.dead) continue;
     const p = guardians[g.pierce];
     if (p === undefined) continue;
-    const stats: GuardianStats = resolveGuardianStats(p.snapshot, p.performanceCP, p.lineageBonusBp);
+    // 마일스톤 ① 격추 재기동 딜레이: 부활 직후 재기동 중(iframes>0)이면 무적·정지 상태로 카운트
+    // 다운만 한다(이동·조준·사격 없음). 아군탄 피해도 world.ts 가 iframes>0 수호를 건너뛴다.
+    if (g.iframes > 0) {
+      g.iframes--;
+      continue;
+    }
+    let stats: GuardianStats = resolveGuardianStats(p.snapshot, p.performanceCP, p.lineageBonusBp);
+    // 마일스톤 ② 코어 근접 수비: 코어 반경 내면 탄피해·발사 간격을 결정론 정수로 강화한다(연사↑).
+    // 기하(사거리·탄속 등)는 건드리지 않아 판정 f64 산술 결정론 위험을 늘리지 않는다.
+    if (
+      core !== undefined &&
+      hasMilestone(normalizeMilestones(p.milestones), MILESTONE_CORE_GUARD)
+    ) {
+      const cdx = g.x - core.x;
+      const cdy = g.y - core.y;
+      if (cdx * cdx + cdy * cdy <= CORE_GUARD_RADIUS * CORE_GUARD_RADIUS) {
+        stats = {
+          ...stats,
+          bulletDamage: coreGuardDamage(stats.bulletDamage),
+          contactDamage: coreGuardDamage(stats.contactDamage),
+          fireCooldown: coreGuardCooldown(stats.fireCooldown),
+        };
+      }
+    }
+    // 접촉(램) 피해를 매 틱 실효값으로 동기화한다(코어 반경 진입/이탈에 따라 승격·복귀). stats 는
+    // 강화 구간에서만 승격된 값이라 반경 밖으로 나가면 base contactDamage 로 자동 복귀한다.
+    g.damage = stats.contactDamage;
     const dx = player.x - g.x;
     const dy = player.y - g.y;
     const dist = length(dx, dy);

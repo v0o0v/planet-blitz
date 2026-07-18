@@ -11,8 +11,15 @@
 import { describe, it, expect } from 'vitest';
 import type { InputFrame, WorldConfig } from '../src/sim/world.js';
 import { runReplay } from '../src/sim/replay.js';
-import { verifyInvasion } from '../supabase/functions/verify-invasion/verifyInvasionCore.js';
+import { verifyInvasion, injectGuardianAuthority } from '../supabase/functions/verify-invasion/verifyInvasionCore.js';
 import type { InvasionServerContext } from '../supabase/functions/verify-invasion/verifyInvasionCore.js';
+import {
+  MILESTONE_REBOOT,
+  MILESTONE_CORE_GUARD,
+  MILESTONE_MASK_ALL,
+  CORE_GUARD_LEVEL,
+  SHIELD_SHARE_LEVEL,
+} from '../data/lineage.js';
 import {
   DEFAULT_TIME_LIMIT_TICKS,
   TURRET_VULCAN,
@@ -249,6 +256,45 @@ describe('verify-invasion — M5 수호 기체 (AC2 서버 재현)', () => {
   it('수호 추가 위조(서버엔 없는 수호를 제출)는 defense-mismatch', () => {
     // 서버 배치엔 수호가 없는데 제출엔 수호가 있다.
     const res = verifyInvasion(honest(SEED, gCfg, INPUTS), CTX);
+    expect(res).toMatchObject({ verdict: 'reject', reason: 'defense-mismatch' });
+  });
+});
+
+describe('verify-invasion — M5 계보 마일스톤 권위 (injectGuardianAuthority)', () => {
+  // 서버가 DB 계보 레벨에서 마일스톤 마스크를 권위 재도출하는 경로를 검증한다(정비도·성능과 동일
+  // 패턴). index.ts 가 injectGuardianAuthority 로 layout 을 재구성한 뒤 verifyInvasion 에 넘긴다.
+  const SLOT_LAYOUT: DefenseLayout = {
+    ...SERVER_LAYOUT,
+    guardians: [
+      { x: 350, y: -100, snapshot: makeGuardianSnapshot(GUARDIAN_TITAN, 140), performanceCP: PERFORMANCE_FULL, lineageBonusBp: 0 },
+    ],
+  };
+  const rows = [{ data: makeGuardianSnapshot(GUARDIAN_TITAN, 140), performance: 100 }];
+
+  it('injectGuardianAuthority 가 계보 레벨에서 마일스톤 마스크를 스탬프한다', () => {
+    const injected = injectGuardianAuthority(SLOT_LAYOUT, rows, CORE_GUARD_LEVEL) as DefenseLayout;
+    expect(injected.guardians![0]!.milestones).toBe(MILESTONE_REBOOT | MILESTONE_CORE_GUARD);
+    // 계보 레벨 0 이면 마스크 미부여(키 생략 — 하위 호환).
+    const none = injectGuardianAuthority(SLOT_LAYOUT, rows, 0) as DefenseLayout;
+    expect(none.guardians![0]!.milestones).toBeUndefined();
+  });
+
+  it('서버 권위 마일스톤을 정직 제출하면 accept(honest 재현 일치)', () => {
+    const authLayout = injectGuardianAuthority(SLOT_LAYOUT, rows, SHIELD_SHARE_LEVEL) as DefenseLayout;
+    const ctx: InvasionServerContext = { layout: authLayout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
+    const res = verifyInvasion(honest(SEED, invasionConfig(authLayout), INPUTS), ctx);
+    expect(res.verdict).toBe('accept');
+  });
+
+  it('마일스톤 위조(레벨 0인데 마스크 주장)는 defense-mismatch', () => {
+    // 서버 권위: 계보 레벨 0 → 마일스톤 없음. 공격자 제출: 마스크를 손수 채워 넣음.
+    const authLayout = injectGuardianAuthority(SLOT_LAYOUT, rows, 0) as DefenseLayout;
+    const ctx: InvasionServerContext = { layout: authLayout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
+    const forged: DefenseLayout = {
+      ...authLayout,
+      guardians: [{ ...authLayout.guardians![0]!, milestones: MILESTONE_MASK_ALL }],
+    };
+    const res = verifyInvasion(honest(SEED, invasionConfig(forged), INPUTS), ctx);
     expect(res).toMatchObject({ verdict: 'reject', reason: 'defense-mismatch' });
   });
 });

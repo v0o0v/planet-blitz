@@ -25,9 +25,13 @@ import { emptyLineage } from '../../data/lineage.js';
 import type { LineageState } from '../../data/lineage.js';
 import { normalizeGuardianPreset, normalizePerformance, PERFORMANCE_FULL } from '../../data/guardian.js';
 import type { GuardianSnapshot } from '../../data/guardian.js';
+import { respecCostCredits, RESPEC_CREDITS_PER_LEVEL } from '../../data/economy.js';
 
-/** Credit cost of one skill respec, per active-ship level (plan A3). */
-export const RESPEC_COST_PER_LEVEL = 100;
+/**
+ * Credit cost of one skill respec, per active-ship level (plan A3).
+ * 실제 공식은 data/economy.ts respecCostCredits 로 이관됨(재수출로 호환 유지).
+ */
+export const RESPEC_COST_PER_LEVEL = RESPEC_CREDITS_PER_LEVEL;
 
 /** Active-ship level at which the research lab (skill tree) unlocks (GDD §7). */
 export const RESEARCH_UNLOCK_LEVEL = 3;
@@ -275,7 +279,7 @@ export function investSkill(profile: Profile, index: number): boolean {
 
 /** Credit cost to respec the tree, scaled by the active ship's level (plan A3). */
 export function respecCost(profile: Profile): number {
-  return activeShip(profile).level * RESPEC_COST_PER_LEVEL;
+  return respecCostCredits(activeShip(profile).level);
 }
 
 /**
