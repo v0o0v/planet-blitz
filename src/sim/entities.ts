@@ -32,7 +32,9 @@ export type EntityKind =
   | 'defenseTurret' // 방어 포탑 6종(enemyType=포탑 유형 0..5). 플레이어를 조준·발사, 결정론 거동
   | 'core' // 방어 코어(침공 목표). 파괴 시 침공 승리(compact가 victory 판정)
   // --- M5 수호 기체 (plan Phase A1, ADR-0007) ---
-  | 'guardian'; // 퇴역 기체의 방어 AI(추적형 요격 유닛). 침공 방어전에 참전, 플레이어를 추적·사격
+  | 'guardian' // 퇴역 기체의 방어 AI(추적형 요격 유닛). 침공 방어전에 참전, 플레이어를 추적·사격
+  // --- 방어 카드 유니크 신기루 코어 (Lane B) ---
+  | 'decoyCore'; // 유니크 '신기루 코어'가 스폰하는 가짜 코어. 조준·피격은 실제 코어와 같으나 파괴돼도 승리 없음
 
 /**
  * Stable integer per kind, folded into the state hash. Never renumber existing
@@ -62,6 +64,10 @@ export const KIND_CODE: Record<EntityKind, number> = {
   // Appended for the M5 수호 기체 (never renumber 1..16). PvE·수호 미포함 침공 런에는
   // guardian 엔티티가 없어 이 코드가 해시에 등장하지 않는다 → 기존 fixtures 바이트 불변.
   guardian: 17,
+  // Appended for 방어 카드 유니크 신기루 코어 (never renumber 1..17). 유니크 '신기루 코어'
+  // 카드가 장착된 침공에만 decoyCore 엔티티가 존재해 이 코드가 해시에 등장한다 → 카드 미장착
+  // 침공·PvE 리플레이는 바이트 불변(조건부 접기).
+  decoyCore: 18,
 };
 
 export interface Entity {

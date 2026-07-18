@@ -156,6 +156,8 @@ import {
 import type { InvasionConfig } from './defense.js';
 import { spawnInvasionLayout, stepDefenseTurrets, stepGuardians } from './defense.js';
 import { rebootHp, REBOOT_DELAY_TICKS } from '../../data/guardian.js';
+import type { CardRuntime } from './cardEffects.js';
+import { initCardRuntime, stepCardRuntime } from './cardEffects.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -518,6 +520,13 @@ export interface WorldState {
    * 쓰인다.
    */
   tainted: boolean;
+  /**
+   * 방어 카드 효력 런타임(Lane B). `config.invasion.card` 가 있는 침공에만 존재하며(그 외
+   * undefined), 정적 카운터 해석값·동적 트리거 상태·유니크 파라미터·매 틱 유효 배율을 담는다
+   * (src/sim/cardEffects.ts). undefined = 카드 미장착 = 기존 침공/PvE 경로와 거동·해시 완전 불변
+   * (조건부 접기). hashWorld 가 존재 시에만 결정론 필드를 append-only 로 접는다.
+   */
+  cardRuntime?: CardRuntime;
 }
 
 /**
@@ -575,9 +584,15 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   // 침공 런(M4 plan C2, 갈림길③A): 방어 배치를 정적 스폰(코어 → 포탑 → 장애물). 순수 데이터
   // 구동이라 재현이 자명하다. player가 index 0에 자리한 뒤 스폰해 hashWorld 불변식을 지킨다.
   // sink로 지역 entities/nextEntityId를 넘겨 id 할당을 위임하고, 소비된 nextEntityId를 회수한다.
+  let cardRuntime: CardRuntime | undefined;
   if (cfg.invasion !== undefined) {
     const sink = { entities, nextEntityId };
     spawnInvasionLayout(sink, cfg.invasion.layout, cfg.invasion.maintenance);
+    // 방어 카드(장착 시): 정적 카운터 해석 + 스폰 시점 효과(기저 코어 HP·유니크 신기루 코어).
+    // 미장착이면 이 블록을 건너뛰어 cardRuntime=undefined → 거동·해시 완전 불변(조건부 접기).
+    if (cfg.invasion.card !== undefined) {
+      cardRuntime = initCardRuntime(cfg.invasion.card, sink);
+    }
     nextEntityId = sink.nextEntityId;
   }
 
@@ -627,6 +642,9 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     generatedChunks: new Map<string, true>(),
     activeWalls: [],
     tainted: false,
+    // exactOptionalPropertyTypes: 카드 미장착이면 필드 자체를 두지 않는다(undefined 대입 금지·
+    // 조건부 접기 정합). 장착 시에만 런타임을 싣는다.
+    ...(cardRuntime !== undefined ? { cardRuntime } : {}),
   };
 }
 
@@ -676,6 +694,10 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // active-wall list (both before movement so walls obstruct this tick).
   if (invasion === undefined) activateChunks(state, player);
   rebuildActiveWalls(state);
+
+  // 방어 카드(장착 시): 이번 틱 유효 배율·트리거 상태를 stepPlayer 이전에 갱신해 모든 접점이
+  // 같은 틱 값을 읽게 한다. cardRuntime 미존재(카드 미장착·PvE)면 조기 반환 → 거동·해시 불변.
+  if (state.cardRuntime !== undefined) stepCardRuntime(state, player);
 
   stepPlayer(state, player, input);
   if (invasion === undefined) updateWaves(state, player);
@@ -887,8 +909,11 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
   // 미적용 — 아래 dash는 별도 가산). 매 틱 1 감소.
   const slowMult = state.playerSlowTicks > 0 ? PLAYER_SLOW_MULT : 1;
   if (state.playerSlowTicks > 0) state.playerSlowTicks--;
-  player.vx = mx * config.playerSpeed * slowMult;
-  player.vy = my * config.playerSpeed * slowMult;
+  // 방어 카드 ct-attrition(지연전): 공격자(플레이어) 이동 감속. 미장착·미발동이면 배율 1 이라
+  // `v * 1 === v` 로 비트 동일(거동·해시 불변). 대시 임펄스에는 미적용(감속 지대와 동일 규율).
+  const cardSlow = state.cardRuntime !== undefined ? state.cardRuntime.attackerSlowMult : 1;
+  player.vx = mx * config.playerSpeed * slowMult * cardSlow;
+  player.vy = my * config.playerSpeed * slowMult * cardSlow;
   player.angle = input.aim;
 
   if (player.dashCooldown > 0) player.dashCooldown--;
@@ -1264,7 +1289,11 @@ function subDamage(state: WorldState, base: number): number {
  *  (주무기 fireCooldown 하한과 정합). */
 function subCooldown(state: WorldState, base: number): number {
   const mult = state.config.loadout?.fireRateMult ?? 1;
-  const cd = Math.round(base * mult);
+  // 방어 카드 정적 카운터(절연/교란): 공격자 보조무기 쿨다운 증가(+% → 간격↑). 미장착·미일치면
+  // subMult=1 이라 `base*mult*1===base*mult` 로 비트 동일(거동·해시 불변).
+  const subMult =
+    state.cardRuntime !== undefined ? 1 + state.cardRuntime.attackerSubCdPct / 100 : 1;
+  const cd = Math.round(base * mult * subMult);
   return cd < 2 ? 2 : cd;
 }
 
@@ -1436,6 +1465,7 @@ function isPlayerTargetable(e: Entity): boolean {
     e.kind === 'supply' ||
     e.kind === 'defenseTurret' ||
     e.kind === 'core' ||
+    e.kind === 'decoyCore' ||
     e.kind === 'guardian'
   );
 }
@@ -1739,6 +1769,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       e.kind === 'loot' ||
       e.kind === 'defenseTurret' ||
       e.kind === 'core' ||
+      e.kind === 'decoyCore' ||
       e.kind === 'guardian'
     ) {
       grid.insert(e);
@@ -1749,6 +1780,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   // 유니크 게이트(장착 시에만 분기): ① 과열 드럼(명중 스택), ② 분열 코어(명중 파편),
   // ③ 관통 자이로(무한 관통 + 관통당 피해 증폭). 미장착 시 아래 분기는 전부 no-op.
   const uMask = state.config.loadout?.uniqueMask ?? 0;
+  // 방어 카드 런타임(장착 침공만). undefined 면 아래 카드 분기는 전부 no-op(거동·해시 불변).
+  const cr = state.cardRuntime;
   const overheatOn = hasUnique(uMask, UQ_OVERHEAT_DRUM);
   const splitOn = hasUnique(uMask, UQ_SPLIT_CORE);
   const gyroOn = hasUnique(uMask, UQ_PIERCE_GYRO);
@@ -1783,6 +1816,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         t.kind !== 'destructible' &&
         t.kind !== 'defenseTurret' &&
         t.kind !== 'core' &&
+        t.kind !== 'decoyCore' &&
         t.kind !== 'guardian'
       )
         return;
@@ -1799,6 +1833,17 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       const prismAmp = prismOn ? 1 + b.phase * PRISM_DAMAGE_AMP : 1;
       // 보호막의 엘리트: 받는 피해 절반(그 외 1).
       let dealt = b.damage * mult * gyroAmp * prismAmp * eliteDamageTakenMult(t);
+      // 방어 카드 정적 카운터/지구전(피해 감소): 코어·포탑이 받는 피해를 배율로 낮춘다(실드 흡수
+      // 이전 적용). 미장착·미발동이면 defenseDmgMult=1 이라 `dealt*1===dealt`(거동·해시 불변).
+      if (cr !== undefined && (t.kind === 'core' || t.kind === 'defenseTurret')) {
+        dealt *= cr.defenseDmgMult;
+      }
+      // 반사(ct-reflection/거울 관문): 실제 코어 피격 시 감소 후 입사 피해의 일부를 공격자에 반사.
+      // 실드 흡수 전 입사량 기준(피격 자체에 반응). 미보유면 reflectPct=0 → 반사 없음.
+      if (cr !== undefined && t.kind === 'core' && cr.reflectPct > 0 && dealt > 0) {
+        player.hp -= (dealt * cr.reflectPct) / 100;
+        if (player.hp < 0) player.hp = 0;
+      }
       // 마일스톤 ③ 실드 공유(M5): 코어·포탑에 부여된 실드(targetY)가 남아 있으면 HP 보다 먼저
       // 흡수한다. 실드가 피해를 다 막으면 HP 는 그대로다. 실드가 없으면(targetY<=0) 무영향이라
       // 기존 거동과 완전히 동일하다(하위 호환). 결정론: 모든 항이 동일 f64 연산이라 플랫폼 무관.
@@ -1820,8 +1865,19 @@ function resolveCollisions(state: WorldState, player: Entity): void {
           t.phase--;
           t.hp = rebootHp(t.maxHp);
           t.iframes = REBOOT_DELAY_TICKS;
+        } else if (t.kind === 'core' && cr !== undefined && cr.reviveCount > 0) {
+          // 유니크 '최후의 재기동': 코어 파괴 직전 1회 부활(실효 최대 HP 비율, 최소 1). 충전을
+          // 소진하고 살아남는다 → compact 의 victory 판정을 피한다. 충전 없으면 아래 일반 격파.
+          cr.reviveCount--;
+          t.hp = Math.max(1, Math.round((t.maxHp * cr.reviveHpPct) / 100));
         } else {
           t.dead = true;
+          // 방어 카드 ct-retribution(응징): 수호 기체가 실제 격추(부활 없이)될 때 공격자에 일제사격
+          // 피해. cr 미존재·미보유면 volleyDamage=0 → 무영향.
+          if (cr !== undefined && t.kind === 'guardian' && cr.volleyDamage > 0) {
+            player.hp -= cr.volleyDamage;
+            if (player.hp < 0) player.hp = 0;
+          }
           // ⑤ 군집 벌통: 미사일 원본(MISSILE_MARK)이 적/보스를 격추하면 마이크로탄 방사 예약.
           if (hiveOn && b.ownerId === MISSILE_MARK && (t.kind === 'enemy' || t.kind === 'boss')) {
             hiveSpawns.push({ x: t.x, y: t.y });

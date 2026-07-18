@@ -286,6 +286,43 @@ export function hashWorld(state: WorldState): number {
         if (ms !== 0) h = hashU32(h, ms);
       }
     }
+    // --- 방어 카드(APPEND-ONLY, 조건부) ---
+    // config.invasion.card 가 없으면(카드 미장착) 이 블록을 통째로 건너뛴다 → **카드 미장착 침공·
+    // PvE 리플레이의 해시가 바이트 단위로 완전 불변**(기존 M4/M5 fixtures 회귀 0). 카드 장착 런만
+    // 카드 정체성(seed·잔여 횟수)과 해석된 결정론 효력 파라미터(정적 누적·트리거 임계·유니크·런 중
+    // 래치)를 접어, 서버가 권위 카드·매치업으로 재도출한 값과 대조한다(위조 시 재실행 발산 + 이
+    // 폴드 불일치로 이중 차단). 매 틱 재계산 배율(*Mult)은 파생 스크래치라 접지 않는다(엔티티
+    // 상태로 이미 해시에 반영). 신규 카드 필드는 이 블록 최후미에만 append.
+    const card = inv.card;
+    const cr = state.cardRuntime;
+    if (card !== undefined && cr !== undefined) {
+      h = hashU32(h, card.card.seed >>> 0);
+      h = hashU32(h, card.card.chargesLeft >>> 0);
+      h = hashU32(h, cr.staticTurretDamagePct >>> 0);
+      h = hashU32(h, cr.staticIncomingReductionPct >>> 0);
+      h = hashU32(h, cr.attackerSubCdPct >>> 0);
+      h = hashU32(h, cr.reflectPct >>> 0);
+      h = hashU32(h, cr.coreHpPct >>> 0);
+      h = hashU32(h, cr.furyFireRatePct >>> 0);
+      h = hashU32(h, cr.furyThreshold >>> 0);
+      h = hashU32(h, cr.vanguardFireRatePct >>> 0);
+      h = hashU32(h, cr.vanguardTicks >>> 0);
+      h = hashU32(h, cr.laststandTurretDamagePct >>> 0);
+      h = hashU32(h, cr.laststandPct >>> 0);
+      h = hashU32(h, cr.attritionSlowPct >>> 0);
+      h = hashU32(h, cr.attritionTicks >>> 0);
+      h = hashU32(h, cr.entrenchReductionPct >>> 0);
+      h = hashU32(h, cr.entrenchTicks >>> 0);
+      h = hashU32(h, cr.forcefieldShield >>> 0);
+      h = hashU32(h, cr.volleyDamage >>> 0);
+      h = hashU32(h, cr.reviveCount >>> 0);
+      h = hashU32(h, cr.reviveHpPct >>> 0);
+      h = hashU32(h, cr.decoyHpPct >>> 0);
+      h = hashU32(h, cr.decoyCount >>> 0);
+      h = hashU32(h, cr.blackoutTicksLeft >>> 0);
+      h = hashU32(h, cr.coreProximityFired ? 1 : 0);
+      h = hashU32(h, cr.initialTurretCount >>> 0);
+    }
   }
   return h >>> 0;
 }
