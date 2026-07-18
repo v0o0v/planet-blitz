@@ -23,6 +23,7 @@ import type {
   PlacementResult,
   RevengeTarget,
   IncomingInvasion,
+  InvasionSnapshot,
 } from './invasion.js';
 
 /** RPC/셀렉트가 돌려주는 raw 행에서 안전하게 값을 뽑는 헬퍼. */
@@ -251,9 +252,26 @@ export class SupabaseInvasionGateway implements InvasionGateway {
     return rows.map(rowToLadder);
   }
 
+  async beginInvasion(defenseId: string): Promise<InvasionSnapshot> {
+    // 침공 개시 권위 스냅샷 고정(계약 M5) — begin_invasion 은 자격 미달 시 raise 하며, 그
+    // 에러는 공개 beginInvasion 이 흡수해 라이브 경로 폴백으로 전환한다. 반환 jsonb:
+    //   { snapshot_id, defender_id, defense_id, layout(권위 주입 완료 raw), maintenance }.
+    const { data, error } = await this.client.rpc('begin_invasion', { p_defense_id: defenseId });
+    if (error !== null) throw error;
+    const r = asRecord(data);
+    const snapshotId = asString(r.snapshot_id);
+    if (snapshotId === '') throw new Error('begin_invasion 후 snapshot_id 를 얻지 못했습니다');
+    return {
+      snapshotId,
+      layout: r.layout ?? null, // raw jsonb — 소비 측에서 normalizeLayout
+      maintenance: asNumber(r.maintenance, 100),
+    };
+  }
+
   async submitInvasion(input: InvasionSubmitInput): Promise<InvasionVerdict> {
     // 1) pending 증거 insert. RLS with_check(auth.uid()=attacker_id) + 트리거가
     //    verified_* 를 강제로 비운다(서버 권위). id 를 돌려받아 검증에 넘긴다.
+    //    snapshot_id(있으면)를 동봉하면 EF 가 T0 고정 권위로 대조(라이브 재조회 생략).
     const { data, error } = await this.client
       .from('invasions')
       .insert({
@@ -262,6 +280,7 @@ export class SupabaseInvasionGateway implements InvasionGateway {
         defense_id: input.defenseId,
         replay: input.replay,
         client_result: input.clientResult,
+        ...(input.snapshotId != null ? { snapshot_id: input.snapshotId } : {}),
       })
       .select('id')
       .single();

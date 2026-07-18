@@ -374,6 +374,90 @@ export function injectGuardianAuthority(
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// 침공 권위 스냅샷 해석 (M5 — 레이스 B 완전 폐쇄. index.ts 배선이 소비, deno 테스트가 검증)
+// ---------------------------------------------------------------------------
+
+/**
+ * 스냅샷 신선도 창(ms). get_invasion_targets 프레시 창(1시간)과 동일 — begin_invasion 이
+ * T0 에 고정한 권위는 1시간 이내에만 유효하다. 초과 스냅샷은 라이브 경로로 폴백(마이그레이션
+ * 20260718130000 EF 계약 ③).
+ */
+export const SNAPSHOT_FRESHNESS_MS = 60 * 60 * 1000;
+
+/** invasion_snapshots 행에서 EF 가 소비하는 필드(신뢰 경계: begin_invasion definer 만 기록). */
+export interface InvasionSnapshotRow {
+  /** invasion_snapshots.attacker_id — 소유권 대조 기준. */
+  readonly attackerId: string;
+  /** invasion_snapshots.defense_id — 소유권 대조 기준(null 가능). */
+  readonly defenseId: string | null;
+  /** authority->'layout' — T0 고정 수호 권위 주입 완료 layout(raw jsonb). */
+  readonly authorityLayout: unknown;
+  /** authority->>'maintenance' — DB 정비도(numeric 0..100) 또는 미지정. index.ts 가 centi 변환. */
+  readonly authorityMaintenanceDb: number | undefined;
+  /** invasion_snapshots.created_at → epoch ms. 신선도 판정 기준. */
+  readonly createdAtMs: number;
+}
+
+/** 스냅샷 해석 입력(index.ts 가 invasion 행·로드한 스냅샷·시각으로 구성). */
+export interface SnapshotResolutionParams {
+  /** invasions.snapshot_id (null = 현행 라이브 경로 — 스냅샷 미배선/구버전 제출). */
+  readonly invasionSnapshotId: string | null;
+  /** invasions.attacker_id — 스냅샷 소유권 대조 기준(OQ#1 CRITICAL). */
+  readonly invasionAttackerId: string;
+  /** invasions.defense_id — 스냅샷 소유권 대조 기준(OQ#1 CRITICAL, null 가능). */
+  readonly invasionDefenseId: string | null;
+  /** service_role 로 로드한 invasion_snapshots 행(부재 = null → 라이브 폴백). */
+  readonly snapshot: InvasionSnapshotRow | null;
+  /** 검증 시각(ms) — 신선도 판정 기준. */
+  readonly nowMs: number;
+  /**
+   * 이 snapshot_id 를 이미 다른 확정 invasion 이 사용했는가(재사용 방어적 2차선). DB 부분
+   * 유니크 인덱스(invasions_snapshot_unique)가 1차로 원자 강제하므로 여기는 belt-and-suspenders.
+   */
+  readonly reused: boolean;
+}
+
+/** 스냅샷 해석 결과: 유효 스냅샷이면 그 권위를, 아니면 라이브 폴백(사유 포함). */
+export type SnapshotResolution =
+  | { readonly source: 'snapshot'; readonly layout: unknown; readonly maintenanceDb: number | undefined }
+  | {
+      readonly source: 'live';
+      readonly reason: 'no-snapshot-id' | 'snapshot-missing' | 'ownership-mismatch' | 'stale' | 'reused';
+    };
+
+/**
+ * 침공 행의 snapshot_id 를 해석해 검증 권위를 결정한다(순수 — DB I/O 없음, index.ts 가 조회
+ * 결과를 넣는다). 레이스 B(스냅샷 대 검증 over-rejection) 완전 폐쇄의 판정 코어.
+ *
+ * 판정 순서(하나라도 어긋나면 라이브 경로 폴백 — 회귀 0·보안 무영향, 폴백은 항상 현행 라이브
+ * 재대조라 위조 accept 불가):
+ *   1. snapshot_id 없음 → 'no-snapshot-id' (현행 라이브 경로, 하위호환).
+ *   2. 스냅샷 행 부재(GC·삭제) → 'snapshot-missing'.
+ *   3. 소유권 불일치(attacker_id 또는 defense_id) → 'ownership-mismatch' (OQ#1 CRITICAL —
+ *      공격자가 남의/약한 스냅샷을 가리키는 위조를 무효화).
+ *   4. 신선도 초과(created_at 1시간 초과) → 'stale'.
+ *   5. 재사용(이미 다른 확정 침공이 사용) → 'reused'.
+ *   6. 전부 통과 → 스냅샷 권위(layout·maintenance) 사용. 이후 라이브 수호 재주입을 생략하고
+ *      이 고정본으로 대조·재실행한다 → T0↔T1 사이 dismiss/retire/정비/풍화 무영향.
+ */
+export function resolveSnapshotAuthority(params: SnapshotResolutionParams): SnapshotResolution {
+  if (params.invasionSnapshotId === null) return { source: 'live', reason: 'no-snapshot-id' };
+  const snap = params.snapshot;
+  if (snap === null) return { source: 'live', reason: 'snapshot-missing' };
+  if (
+    snap.attackerId !== params.invasionAttackerId ||
+    snap.defenseId !== params.invasionDefenseId
+  ) {
+    return { source: 'live', reason: 'ownership-mismatch' };
+  }
+  if (!Number.isFinite(snap.createdAtMs) || params.nowMs - snap.createdAtMs > SNAPSHOT_FRESHNESS_MS) {
+    return { source: 'live', reason: 'stale' };
+  }
+  if (params.reused) return { source: 'live', reason: 'reused' };
+  return { source: 'snapshot', layout: snap.authorityLayout, maintenanceDb: snap.authorityMaintenanceDb };
+}
+
 /**
  * 침공 리플레이 제출을 서버 권위로 전수 재실행해 무결성을 판정한다.
  *

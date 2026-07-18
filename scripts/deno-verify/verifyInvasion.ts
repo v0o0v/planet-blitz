@@ -15,10 +15,13 @@ import {
   verifyInvasion,
   injectGuardianAuthority,
   performanceToCenti,
+  resolveSnapshotAuthority,
+  SNAPSHOT_FRESHNESS_MS,
 } from '../../supabase/functions/verify-invasion/verifyInvasionCore.ts';
 import type {
   InvasionServerContext,
   AuthoritativeGuardianRow,
+  InvasionSnapshotRow,
 } from '../../supabase/functions/verify-invasion/verifyInvasionCore.ts';
 import { branchBonusBp } from '../../data/lineage.ts';
 import { runReplay } from '../../src/sim/replay.ts';
@@ -312,6 +315,69 @@ function main(): number {
     honest(seed, invasionConfig(matchmakingServedLayout), inputs),
     deliveryCtx,
   );
+
+  // --- 게이트 3.10: 침공 권위 스냅샷 해석(M5 레이스 B 폐쇄 — 소유권·신선도·재사용) ---
+  // resolveSnapshotAuthority 는 index.ts 배선이 DB 조회 결과를 넣어 호출하는 순수 판정 코어다.
+  // snapshot_id 유무·소유권 대조(OQ#1 CRITICAL)·신선도(1시간)·재사용 5분기를 증거화한다.
+  const nowMs = 1_000_000_000_000;
+  const goodSnapLayout = { ...SERVER_LAYOUT };
+  const goodSnap: InvasionSnapshotRow = {
+    attackerId: 'atk-1',
+    defenseId: 'def-1',
+    authorityLayout: goodSnapLayout,
+    authorityMaintenanceDb: 80,
+    createdAtMs: nowMs - 60_000, // 1분 전(신선)
+  };
+  const baseParams = {
+    invasionSnapshotId: 'snap-1',
+    invasionAttackerId: 'atk-1',
+    invasionDefenseId: 'def-1',
+    snapshot: goodSnap,
+    nowMs,
+    reused: false,
+  };
+  function expectSnapshotSource(label: string, params: Parameters<typeof resolveSnapshotAuthority>[0]): void {
+    const res = resolveSnapshotAuthority(params);
+    if (res.source === 'snapshot' && res.layout === goodSnapLayout && res.maintenanceDb === 80) {
+      console.log(`${GREEN}PASS${RESET} ${label}  ${DIM}source=snapshot${RESET}`);
+    } else {
+      failures++;
+      console.log(`${RED}FAIL${RESET} ${label}: ${JSON.stringify(res)}`);
+    }
+  }
+  function expectLiveReason(label: string, params: Parameters<typeof resolveSnapshotAuthority>[0], reason: string): void {
+    const res = resolveSnapshotAuthority(params);
+    if (res.source === 'live' && res.reason === reason) {
+      console.log(`${GREEN}PASS${RESET} ${label}  ${DIM}live/${res.reason}${RESET}`);
+    } else {
+      failures++;
+      console.log(`${RED}FAIL${RESET} ${label}: ${JSON.stringify(res)} (기대 live/${reason})`);
+    }
+  }
+  // 정상: 유효 스냅샷 → 스냅샷 권위 사용.
+  expectSnapshotSource('스냅샷 정상 경로(소유권·신선·미재사용)', baseParams);
+  // snapshot_id 없음 → 라이브(하위호환).
+  expectLiveReason('snapshot_id 없음', { ...baseParams, invasionSnapshotId: null }, 'no-snapshot-id');
+  // 스냅샷 행 부재(GC·삭제) → 라이브.
+  expectLiveReason('스냅샷 행 부재', { ...baseParams, snapshot: null }, 'snapshot-missing');
+  // 소유권 불일치(attacker) → 라이브(OQ#1 CRITICAL — 남의 스냅샷 위조 무효화).
+  expectLiveReason('소유권 불일치(attacker)', { ...baseParams, invasionAttackerId: 'atk-9' }, 'ownership-mismatch');
+  // 소유권 불일치(defense) → 라이브(약한 다른 방어 스냅샷 가리키기 차단).
+  expectLiveReason('소유권 불일치(defense)', { ...baseParams, invasionDefenseId: 'def-9' }, 'ownership-mismatch');
+  // 신선도 초과(1시간+1ms) → 라이브(스테일 스냅샷 재사용 방지).
+  expectLiveReason(
+    '신선도 초과(스테일)',
+    { ...baseParams, snapshot: { ...goodSnap, createdAtMs: nowMs - SNAPSHOT_FRESHNESS_MS - 1 } },
+    'stale',
+  );
+  // created_at 손상(NaN) → 라이브(스테일 취급).
+  expectLiveReason(
+    'created_at 손상',
+    { ...baseParams, snapshot: { ...goodSnap, createdAtMs: Number.NaN } },
+    'stale',
+  );
+  // 재사용(다른 확정 침공이 이미 사용) → 라이브(1회성 방어적 2차선; DB 유니크 인덱스가 1차).
+  expectLiveReason('스냅샷 재사용', { ...baseParams, reused: true }, 'reused');
 
   // --- 게이트 4: 입력 길이 상한(제한 시간 초과) ---
   const shortCtx: InvasionServerContext = { layout: SERVER_LAYOUT, timeLimitTicks: 200 };

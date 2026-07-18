@@ -24,8 +24,12 @@
 
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { verifyInvasion, injectGuardianAuthority } from './verifyInvasionCore.ts';
-import type { InvasionVerifyResult, AuthoritativeGuardianRow } from './verifyInvasionCore.ts';
+import { verifyInvasion, injectGuardianAuthority, resolveSnapshotAuthority } from './verifyInvasionCore.ts';
+import type {
+  InvasionVerifyResult,
+  AuthoritativeGuardianRow,
+  InvasionSnapshotRow,
+} from './verifyInvasionCore.ts';
 import { DEFAULT_TIME_LIMIT_TICKS, MAINTENANCE_FULL } from '../../../src/sim/defense.ts';
 import { MAX_GUARDIAN_SLOTS } from '../../../data/guardian.ts';
 
@@ -83,7 +87,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const { data: inv, error: invErr } = await service
     .from('invasions')
-    .select('id, attacker_id, defender_id, defense_id, replay, client_result, verified_status, attacker_won')
+    .select('id, attacker_id, defender_id, defense_id, snapshot_id, replay, client_result, verified_status, attacker_won')
     .eq('id', invasionId)
     .maybeSingle();
   if (invErr !== null) {
@@ -127,12 +131,74 @@ Deno.serve(async (req: Request): Promise<Response> => {
     );
   }
 
-  // (3) 서버 권위 방어 배치 로드: 침공 스냅샷 defense_id 우선, 없으면 방어자 활성 방어.
+  // (3) 서버 권위 방어 배치 로드.
+  //
+  // ▮ 침공 권위 스냅샷 경로(M5 — 레이스 B 완전 폐쇄): invasions.snapshot_id 가 있으면
+  //   begin_invasion 이 T0 에 고정한 불변 권위(수호 주입 완료 layout + 정비도)를 검증 입력으로
+  //   쓴다. 소유권(attacker_id·defense_id 대조)·신선도(1시간)·재사용은 순수
+  //   resolveSnapshotAuthority 가 판정하고, 하나라도 어긋나면 라이브 경로로 폴백한다(회귀 0·
+  //   보안 무영향 — 폴백은 항상 검증 시점 라이브 재대조라 위조 accept 불가). 유효 스냅샷이면
+  //   라이브 수호 재주입(3.5)을 생략한다(고정본이 이미 T0 권위를 담음 → dismiss/retire/풍화 무영향).
+  // ▮ 라이브 경로(현행): snapshot_id 없음/무효면 defense_id → 방어자 활성 방어 순으로 로드하고
+  //   라이브 수호를 재주입(3.5)한다(스냅샷 미배선·구버전 제출 하위호환).
   // raw jsonb 그대로 넘긴다 — 정규화·형태 검증은 검증 코어(normalizeServerLayout)가
   // 클라이언트와 동일 규칙으로 수행한다(리뷰 MED-3 대칭화).
   let layout: unknown = null;
   let maintenanceDb: unknown = null;
-  if (inv.defense_id !== null) {
+  let authorityFromSnapshot = false;
+
+  const snapshotId = typeof inv.snapshot_id === 'string' && inv.snapshot_id.length > 0 ? inv.snapshot_id : null;
+  if (snapshotId !== null) {
+    const { data: snapRow } = await service
+      .from('invasion_snapshots')
+      .select('attacker_id, defense_id, authority, created_at')
+      .eq('id', snapshotId)
+      .maybeSingle();
+    // 재사용 방어적 2차선(DB 부분 유니크 인덱스 invasions_snapshot_unique 가 1차 원자 강제):
+    // 같은 snapshot_id 를 쓰는 다른 확정(pending 아님) invasion 이 이미 있는가.
+    const { data: dupRows } = await service
+      .from('invasions')
+      .select('id')
+      .eq('snapshot_id', snapshotId)
+      .neq('id', invasionId)
+      .neq('verified_status', 'pending')
+      .limit(1);
+    const reused = Array.isArray(dupRows) && dupRows.length > 0;
+
+    let snapshot: InvasionSnapshotRow | null = null;
+    if (snapRow !== null) {
+      const authority = (snapRow.authority ?? {}) as { layout?: unknown; maintenance?: unknown };
+      const mRaw = authority.maintenance;
+      const mNum = typeof mRaw === 'number' ? mRaw : Number(mRaw);
+      snapshot = {
+        attackerId: typeof snapRow.attacker_id === 'string' ? snapRow.attacker_id : '',
+        defenseId: typeof snapRow.defense_id === 'string' ? snapRow.defense_id : null,
+        authorityLayout: authority.layout ?? null,
+        authorityMaintenanceDb: Number.isFinite(mNum) ? mNum : undefined,
+        createdAtMs: typeof snapRow.created_at === 'string' ? Date.parse(snapRow.created_at) : Number.NaN,
+      };
+    }
+    const resolution = resolveSnapshotAuthority({
+      invasionSnapshotId: snapshotId,
+      invasionAttackerId: inv.attacker_id,
+      invasionDefenseId: inv.defense_id,
+      snapshot,
+      nowMs: Date.now(),
+      reused,
+    });
+    if (resolution.source === 'snapshot' && resolution.layout !== null && resolution.layout !== undefined) {
+      layout = resolution.layout;
+      maintenanceDb = resolution.maintenanceDb ?? null;
+      authorityFromSnapshot = true;
+    } else if (resolution.source === 'snapshot') {
+      // 스냅샷 행은 유효하나 authority.layout 이 손상(null) → 안전하게 라이브 경로 폴백.
+      console.log(`verify-invasion 스냅샷 layout 손상 폴백(invasion=${invasionId})`);
+    } else {
+      console.log(`verify-invasion 스냅샷 폴백(invasion=${invasionId}): ${resolution.reason}`);
+    }
+  }
+
+  if (!authorityFromSnapshot && inv.defense_id !== null) {
     const { data: def } = await service
       .from('defenses')
       .select('layout, maintenance')
@@ -174,8 +240,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // 조회 순서 created_at→id 는 클라 buildGuardianPlacements 가 소비하는 활성 수호 순서(클라
   // fetchGuardians 동일 정렬)와 일치해야 슬롯 i↔수호 i 매핑이 클라·서버 비트 동일하다.
   // 저장 layout 에 수호 슬롯이 없으면(수호 미포함 방어) 조회 자체를 건너뛴다 → 기존 침공 거동 불변.
+  // ★스냅샷 경로(authorityFromSnapshot)는 begin_invasion 이 T0 에 이미 라이브 수호 권위를
+  //   접어 넣은 고정본이므로 재주입을 생략한다(재주입하면 T1 라이브로 덮여 레이스 B 재발).
   const rawGuardianSlots = (layout as { guardians?: unknown }).guardians;
-  if (Array.isArray(rawGuardianSlots) && rawGuardianSlots.length > 0) {
+  if (!authorityFromSnapshot && Array.isArray(rawGuardianSlots) && rawGuardianSlots.length > 0) {
     const { data: gRows } = await service
       .from('guardians')
       .select('data, performance, created_at, id')

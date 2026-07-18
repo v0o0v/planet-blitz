@@ -39,7 +39,7 @@ import { InventoryOverlay } from './ui/inventory.js';
 import { BaseMap } from './ui/baseMap.js';
 import { ResearchLab } from './ui/researchLab.js';
 import { Refinery } from './ui/refinery.js';
-import { DefenseCommand } from './ui/defenseCommand.js';
+import { DefenseCommand, normalizeLayout } from './ui/defenseCommand.js';
 import { ControlTower } from './ui/controlTower.js';
 import type { ControlTowerShowOpts, InvasionResultView } from './ui/controlTower.js';
 import {
@@ -84,6 +84,7 @@ import {
   submitInvasion,
   buildClientResult,
   maintenanceToCenti,
+  beginInvasion,
   fetchInvasionReplay,
   setInvasionSticker,
 } from './net/invasion.js';
@@ -232,6 +233,9 @@ async function main(): Promise<void> {
   // invasionTarget !== null 이면 현재 런은 침공 런이다 → endRun 이 PvE 정산 대신 서버
   // 제출로 분기한다. pendingInvasionResult 는 다음에 관제탑을 열 때 표시할 결과 배너.
   let invasionTarget: InvasionTarget | null = null;
+  // 현재 침공 런의 권위 스냅샷 id(begin_invasion 성공 시). 제출 시 invasions.snapshot_id 로
+  // 동봉해 EF 가 T0 고정 권위로 대조하게 한다. null 이면 현행 라이브 경로(하위호환).
+  let invasionSnapshotId: string | null = null;
   let pendingInvasionResult: InvasionResultView | null = null;
 
   // --- 리플레이 관전(F3) 상태 ---
@@ -382,7 +386,7 @@ async function main(): Promise<void> {
     controlTower.show(
       profile,
       {
-        onInvade: (target, layout) => startInvasionRun(target, layout),
+        onInvade: (target, layout) => void startInvasionRun(target, layout),
         onSpectate: (invasionId, attackerName) => void startSpectate(invasionId, attackerName),
         onSticker: (invasionId, attackerName) => promptSticker(invasionId, t('sticker.prompt.defend'), attackerName),
         onBack: () => openBaseMap(),
@@ -480,7 +484,7 @@ async function main(): Promise<void> {
    * 결정론 런을 돌린다(갈림길③A). 승리=코어 파괴, 패배=시간초과/격추. 런 종료 시
    * endRun 이 invasionTarget 을 보고 서버 제출로 분기한다.
    */
-  function startInvasionRun(target: InvasionTarget, layout: DefenseLayout): void {
+  async function startInvasionRun(target: InvasionTarget, layout: DefenseLayout): Promise<void> {
     // 관제탑 경유 시작 — 켜져 있을 수 있는 메뉴를 먼저 내린다(harness startRun 참조).
     planetSelect.hide();
     inventory.hide();
@@ -489,6 +493,28 @@ async function main(): Promise<void> {
     clearToMenu();
     tutorialActive = false;
     shownLevel = 0;
+
+    // (M5 레이스 B 폐쇄) 침공 개시 권위 스냅샷 고정: 대상 defenseId 로 begin_invasion 을
+    // 호출해 T0 고정 layout(수호 권위 주입 완료)·정비도를 받는다. 성공하면 그 고정본으로
+    // 런을 돌리고 제출 시 snapshot_id 를 동봉한다 → EF 가 라이브 재조회 없이 대조(T0↔T1
+    // 사이 dismiss/retire/풍화 무영향). 실패(자격 미달·구버전 서버·오프라인)면 매치메이킹
+    // serve layout(인자 layout)으로 폴백한다(하위호환 — 회귀 0). 매치메이킹 serve layout 도
+    // 이미 라이브 수호 권위가 주입돼 있어(get_invasion_targets), 스냅샷 layout 과 정합한다.
+    let runLayout: DefenseLayout = layout;
+    let runMaintenanceDb: number = target.maintenance;
+    invasionSnapshotId = null;
+    if (target.defenseId !== null) {
+      const snapshot = await beginInvasion(target.defenseId);
+      if (snapshot !== null) {
+        const snapLayout = normalizeLayout(snapshot.layout);
+        if (snapLayout !== null) {
+          runLayout = snapLayout;
+          runMaintenanceDb = snapshot.maintenance;
+          invasionSnapshotId = snapshot.snapshotId;
+        }
+      }
+    }
+
     const seed = nextSeed();
     const ship = activeShip(profile);
     const equipped: Item[] = [];
@@ -500,9 +526,9 @@ async function main(): Promise<void> {
     const { loadout } = computeLoadoutStats(equipped, skillInvest);
     // 방어 정비도(풍화, ADR-0006)를 sim centi-percent 로 변환해 config 에 싣는다.
     // 공식 Math.round(db*100)은 서버 EF 재실행과 동일해야 한다(어긋나면 해시 발산 오거부).
-    const maintenance = maintenanceToCenti(target.maintenance);
+    const maintenance = maintenanceToCenti(runMaintenanceDb);
     const invasion: InvasionConfig = {
-      layout,
+      layout: runLayout,
       timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
       ...(maintenance !== undefined ? { maintenance } : {}),
     };
@@ -544,7 +570,9 @@ async function main(): Promise<void> {
     settled = true;
     const target = invasionTarget;
     const rec = recorder;
+    const snapshotId = invasionSnapshotId;
     invasionTarget = null;
+    invasionSnapshotId = null;
     tutorialOverlay.hide();
     if (powerupOverlay.visible) powerupOverlay.hide();
     shownLevel = 0;
@@ -566,7 +594,7 @@ async function main(): Promise<void> {
     const clientResult = buildClientResult(replay);
     // 먼저 "서버 검증 중" 상태로 관제탑을 연다(사용자 대기 안내).
     openControlTower({ verifying: true });
-    const verdict = await submitInvasion({ target, replay, clientResult });
+    const verdict = await submitInvasion({ target, replay, clientResult, snapshotId });
     if (verdict === null) {
       // 미설정/오프라인 — 잠정 결과만.
       pendingInvasionResult = {
