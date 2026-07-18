@@ -9,7 +9,8 @@
  *  5) 배치 테스트(침공 config 스폰 스모크)가 계약대로 스폰 수를 맞춘다.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { setLocale } from '../src/i18n/index.js';
 import {
   GRID_COLS,
   GRID_ROWS,
@@ -26,6 +27,7 @@ import {
   findAt,
   tryPlace,
   validateEditor,
+
   editorStateToLayout,
   editorStateFromLayout,
   normalizeLayout,
@@ -43,6 +45,10 @@ import {
   type GuardianPlacement,
 } from '../src/sim/defense.js';
 import { makeGuardianSnapshot, GUARDIAN_TITAN, PERFORMANCE_FULL } from '../data/guardian.js';
+
+// validateEditor 오류 문자열을 한국어로 검증하므로 로케일을 ko 로 고정한다(i18n 도입 후 정합).
+beforeEach(() => setLocale('ko'));
+afterEach(() => setLocale('en'));
 
 describe('격자 ↔ 월드 좌표 왕복', () => {
   it('cellToWorld → worldToCell이 모든 칸에서 무손실', () => {

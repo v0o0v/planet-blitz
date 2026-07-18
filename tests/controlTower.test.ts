@@ -8,7 +8,8 @@
  *   4) previewCells — 방어 배치 → 미니 격자 셀(코어/포탑/장애물/스폰).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { setLocale } from '../src/i18n/index.js';
 import {
   shipSummaryText,
   maintenanceLabel,
@@ -30,6 +31,10 @@ import {
 } from '../src/net/invasion.js';
 import { SPAWN_COL, SPAWN_ROW, worldToCell, cellToWorld } from '../src/ui/defenseCommand.js';
 import { TURRET_VULCAN, type DefenseLayout } from '../src/sim/defense.js';
+
+// 이 파일은 한국어 표시 문자열을 정확히 검증하므로 로케일을 ko 로 고정한다(i18n 도입 후 정합).
+beforeEach(() => setLocale('ko'));
+afterEach(() => setLocale('en'));
 
 const VALID_LAYOUT: DefenseLayout = {
   core: { x: 400, y: 0 },

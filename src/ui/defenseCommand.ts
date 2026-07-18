@@ -56,6 +56,7 @@ import {
   repairButtonState,
   type DefenseStatus,
 } from '../net/defenseSync.js';
+import { t, type MessageKey } from '../i18n/index.js';
 
 // ---------------------------------------------------------------------------
 // 격자 기하 (순수 · 테스트 대상)
@@ -309,9 +310,9 @@ export function validateEditor(
   budget: number,
 ): { ok: boolean; errors: string[] } {
   const errors: string[] = [];
-  if (state.core === null) errors.push('코어를 1개 배치해야 합니다.');
+  if (state.core === null) errors.push(t('def.err.needCore'));
   const cost = editorCost(state);
-  if (cost > budget) errors.push(`예산 초과: ${cost}/${budget} 포인트.`);
+  if (cost > budget) errors.push(t('def.err.overBudget', { cost, budget }));
   return { ok: errors.length === 0, errors };
 }
 
@@ -518,8 +519,8 @@ export function tryTestLayout(layout: DefenseLayout, ticks = 60): TestReport {
     walls,
     steppedTicks: stepped,
     message: ok
-      ? `배치 검증 통과: 코어 ${cores} · 포탑 ${turrets} · 장애물 ${walls} (${stepped}틱 시뮬 무예외).`
-      : `배치 검증 불일치: 코어 ${cores}(기대 1) · 포탑 ${turrets}/${expTurrets} · 장애물 ${walls}/${expWalls}.`,
+      ? t('def.test.pass', { c: cores, t: turrets, w: walls, s: stepped })
+      : t('def.test.fail', { c: cores, t: turrets, et: expTurrets, w: walls, ew: expWalls }),
   };
 }
 
@@ -534,17 +535,17 @@ interface PaletteEntry {
   hint: string;
 }
 
-/** 포탑 유형별 표시(글리프·색·요약). 인덱스 = TURRET_* 코드. */
-const TURRET_DISPLAY: readonly { label: string; glyph: string; accent: string; hint: string }[] = [
-  { label: '발칸', glyph: '🔫', accent: '#4cd7ff', hint: '기본 연사 · 중피해' },
-  { label: '저격', glyph: '🎯', accent: '#ff5a7a', hint: '장거리 · 고피해 · 저속' },
-  { label: '산탄', glyph: '💥', accent: '#ffd24c', hint: '근거리 부채꼴 다발' },
-  { label: '감속', glyph: '❄️', accent: '#7ad0ff', hint: '냉기 장판 · 감속' },
-  { label: '미사일', glyph: '🚀', accent: '#ff9a4c', hint: '유도 · 중피해' },
-  { label: '전격', glyph: '⚡', accent: '#c86aff', hint: '고속 약탄 연쇄' },
+/** 포탑 유형별 표시(글리프·색·이름/요약 키). 인덱스 = TURRET_* 코드. */
+const TURRET_DISPLAY: readonly { labelKey: MessageKey; glyph: string; accent: string; hintKey: MessageKey }[] = [
+  { labelKey: 'def.turret.name.0', glyph: '🔫', accent: '#4cd7ff', hintKey: 'def.turret.hint.0' },
+  { labelKey: 'def.turret.name.1', glyph: '🎯', accent: '#ff5a7a', hintKey: 'def.turret.hint.1' },
+  { labelKey: 'def.turret.name.2', glyph: '💥', accent: '#ffd24c', hintKey: 'def.turret.hint.2' },
+  { labelKey: 'def.turret.name.3', glyph: '❄️', accent: '#7ad0ff', hintKey: 'def.turret.hint.3' },
+  { labelKey: 'def.turret.name.4', glyph: '🚀', accent: '#ff9a4c', hintKey: 'def.turret.hint.4' },
+  { labelKey: 'def.turret.name.5', glyph: '⚡', accent: '#c86aff', hintKey: 'def.turret.hint.5' },
 ];
 
-/** 팔레트 항목(포탑 6종 + 장애물 + 코어 + 지우개). */
+/** 팔레트 항목(포탑 6종 + 장애물 + 코어 + 지우개). 로케일 반영을 위해 렌더마다 새로 구성한다. */
 function buildPalette(): PaletteEntry[] {
   const out: PaletteEntry[] = [];
   for (let type = 0; type < TURRET_TYPE_COUNT; type++) {
@@ -553,32 +554,32 @@ function buildPalette(): PaletteEntry[] {
     if (d === undefined || spec === undefined) continue;
     out.push({
       tool: { kind: 'turret', turretType: type },
-      label: d.label,
+      label: t(d.labelKey),
       glyph: d.glyph,
       accent: d.accent,
-      hint: `${d.hint} · 비용 ${spec.cost}`,
+      hint: `${t(d.hintKey)}${t('def.costSuffix', { c: spec.cost })}`,
     });
   }
   out.push({
     tool: { kind: 'obstacle' },
-    label: '장애물',
+    label: t('def.pal.obstacle'),
     glyph: '🧱',
     accent: '#8896b8',
-    hint: `벽 · 이동·탄·시야 차단 · 비용 ${OBSTACLE_COST}`,
+    hint: `${t('def.hint.obstacle')}${t('def.costSuffix', { c: OBSTACLE_COST })}`,
   });
   out.push({
     tool: { kind: 'core' },
-    label: '코어',
+    label: t('def.pal.core'),
     glyph: '💠',
     accent: '#8fd94c',
-    hint: `침공 목표 · 필수 1개 · 비용 ${CORE_COST}`,
+    hint: `${t('def.hint.core')}${t('def.costSuffix', { c: CORE_COST })}`,
   });
   out.push({
     tool: { kind: 'erase' },
-    label: '지우개',
+    label: t('def.pal.erase'),
     glyph: '🧹',
     accent: '#68789c',
-    hint: '칸의 배치 제거',
+    hint: t('def.hint.erase'),
   });
   return out;
 }
@@ -592,15 +593,16 @@ function sameTool(a: Tool, b: Tool): boolean {
   );
 }
 
-/** 수호 프리셋별 표시(글리프·색·이름). 인덱스 = GUARDIAN_* 프리셋 코드. */
-const GUARDIAN_DISPLAY: readonly { label: string; glyph: string; accent: string }[] = [
-  { label: '타이탄형', glyph: '🛡️', accent: '#ffd24c' }, // GUARDIAN_TITAN
-  { label: '인터셉터형', glyph: '🚀', accent: '#4cd7ff' }, // GUARDIAN_INTERCEPTOR
+/** 수호 프리셋별 표시(글리프·색·이름 키). 인덱스 = GUARDIAN_* 프리셋 코드. */
+const GUARDIAN_DISPLAY: readonly { labelKey: MessageKey; glyph: string; accent: string }[] = [
+  { labelKey: 'def.guardian.titan', glyph: '🛡️', accent: '#ffd24c' }, // GUARDIAN_TITAN
+  { labelKey: 'def.guardian.interceptor', glyph: '🚀', accent: '#4cd7ff' }, // GUARDIAN_INTERCEPTOR
 ];
 
-/** 프리셋 코드 → 표시(범위 밖은 타이탄 폴백). */
+/** 프리셋 코드 → 표시(범위 밖은 타이탄 폴백). label 은 현재 로케일로 해석한다. */
 function guardianDisplay(preset: number): { label: string; glyph: string; accent: string } {
-  return GUARDIAN_DISPLAY[normalizeGuardianPreset(preset)] ?? GUARDIAN_DISPLAY[0]!;
+  const d = GUARDIAN_DISPLAY[normalizeGuardianPreset(preset)] ?? GUARDIAN_DISPLAY[0]!;
+  return { label: t(d.labelKey), glyph: d.glyph, accent: d.accent };
 }
 
 /** 수호 슬롯 기본 배치 칸(코어 양옆 하단, 스폰 반대편). 최대 슬롯 수만큼 반환. */
@@ -684,7 +686,6 @@ export class DefenseCommand {
   private onClose: (() => void) | null = null;
   private state: DefenseEditorState = emptyEditorState();
   private readonly budget = DEFENSE_BUDGET_BASE;
-  private readonly palette = buildPalette();
   private tool: Tool = { kind: 'turret', turretType: 0 };
   private tip = '';
   private hint = '';
@@ -773,10 +774,10 @@ export class DefenseCommand {
       // 정비 전 크레딧을 되밀므로, 정비 후 상태로 교체한다(최소 방어 — 슬롯 last-write-wins).
       const pendingStore = this.pendingStore();
       if (pendingStore !== null) refreshPendingProfile(pendingStore, this.profile);
-      this.tip = `정비 완료 — 정비도 ${Math.round(result.maintenance)}% 회복(잔여 크레딧 ${result.credits}).`;
+      this.tip = t('def.repairDone', { m: Math.round(result.maintenance), c: result.credits });
       this.hint = '';
     } else {
-      this.hint = '정비에 실패했습니다(크레딧 부족 또는 서버 미설정). 상태를 다시 확인하세요.';
+      this.hint = t('def.repairFail');
     }
     void this.loadStatus();
   }
@@ -823,13 +824,13 @@ export class DefenseCommand {
     const res = tryPlace(this.state, this.budget, this.tool, col, row);
     switch (res) {
       case 'occupied':
-        this.hint = '이미 배치된 칸입니다. 지우개로 비우고 놓으세요.';
+        this.hint = t('def.cell.occupied');
         break;
       case 'insufficient':
-        this.hint = '배치 포인트가 부족합니다.';
+        this.hint = t('def.cell.insufficient');
         break;
       case 'spawn':
-        this.hint = '공격자 진입 지점에는 코어·포탑을 놓을 수 없습니다.';
+        this.hint = t('def.cell.spawnBlocked');
         break;
       default:
         this.hint = '';
@@ -847,7 +848,7 @@ export class DefenseCommand {
     }
     const layout = editorStateToLayout(this.state);
     if (layout === null) {
-      this.hint = '코어를 1개 배치해야 합니다.';
+      this.hint = t('def.err.needCore');
       this.render();
       return;
     }
@@ -855,7 +856,7 @@ export class DefenseCommand {
     this.profile.defenseLayout = layout;
     this.persist();
     this.hint = '';
-    this.tip = '배치를 저장했습니다.';
+    this.tip = t('def.saved');
     this.render();
     // 서버 업로드(M4 Phase D): Supabase `defenses` 에 활성 방어로 업서트해 타인이 나를
     // 침공 대상으로 매치메이킹할 수 있게 한다(AC6). env 미설정 시 완전 no-op(로컬 저장만).
@@ -871,10 +872,7 @@ export class DefenseCommand {
   private uploadToServer(layout: DefenseLayout): void {
     void uploadDefenseLayout(layout).then((result) => {
       if (result === null || !this.visible || this.hint !== '') return;
-      this.tip =
-        result === 'inserted'
-          ? '배치를 저장하고 서버에 등록했습니다.'
-          : '배치를 저장하고 서버에 반영했습니다.';
+      this.tip = result === 'inserted' ? t('def.savedInserted') : t('def.savedUpdated');
       this.render();
     });
   }
@@ -882,7 +880,7 @@ export class DefenseCommand {
   private test(): void {
     const layout = editorStateToLayout(this.state);
     if (layout === null) {
-      this.hint = '코어를 1개 배치해야 배치 테스트가 가능합니다.';
+      this.hint = t('def.test.needCore');
       this.render();
       return;
     }
@@ -898,11 +896,11 @@ export class DefenseCommand {
     this.root.innerHTML = '';
 
     const h1 = document.createElement('h1');
-    h1.textContent = '방어 사령부 — 배치 에디터';
+    h1.textContent = t('def.title');
     this.root.appendChild(h1);
     const sub = document.createElement('div');
     sub.className = 'pb-sub';
-    sub.textContent = '포탑·장애물·코어를 배치해 침공에 대비하라. ▲ = 공격자 진입 지점.';
+    sub.textContent = t('def.sub');
     this.root.appendChild(sub);
 
     this.root.appendChild(this.budgetBar());
@@ -928,9 +926,9 @@ export class DefenseCommand {
     const spent = editorCost(this.state);
     const over = spent > this.budget;
     bar.innerHTML =
-      `<span class="pt${over ? ' over' : ''}">배치 포인트 <b>${spent} / ${this.budget}</b></span>` +
-      `<span>잔여 <b>${this.budget - spent}</b></span>` +
-      `<span>포탑 <b>${this.state.turrets.length}</b> · 장애물 <b>${this.state.obstacles.length}</b> · 코어 <b>${this.state.core !== null ? 1 : 0}</b></span>`;
+      `<span class="pt${over ? ' over' : ''}">${t('def.budget.points')} <b>${spent} / ${this.budget}</b></span>` +
+      `<span>${t('def.budget.remaining')} <b>${this.budget - spent}</b></span>` +
+      `<span>${t('def.budget.turret')} <b>${this.state.turrets.length}</b> · ${t('def.budget.obstacle')} <b>${this.state.obstacles.length}</b> · ${t('def.budget.core')} <b>${this.state.core !== null ? 1 : 0}</b></span>`;
     return bar;
   }
 
@@ -944,18 +942,16 @@ export class DefenseCommand {
     bar.className = 'pb-maint';
 
     if (this.statusLoading && this.defenseStatus === null) {
-      bar.innerHTML = `<span class="pb-mlabel">정비 상태 확인 중…</span>`;
+      bar.innerHTML = `<span class="pb-mlabel">${t('def.maint.loading')}</span>`;
       return bar;
     }
     const status = this.defenseStatus;
     if (status === null) {
-      bar.innerHTML =
-        `<span class="pb-mlabel">정비: 서버 미설정 또는 오프라인 — 풍화·정비는 서버 연결 시 활성화됩니다.</span>`;
+      bar.innerHTML = `<span class="pb-mlabel">${t('def.maint.offline')}</span>`;
       return bar;
     }
     if (status.maintenance === null) {
-      bar.innerHTML =
-        `<span class="pb-mlabel">아직 서버에 등록된 활성 방어가 없습니다. 배치를 저장하면 정비 대상이 됩니다.</span>`;
+      bar.innerHTML = `<span class="pb-mlabel">${t('def.maint.noActive')}</span>`;
       return bar;
     }
 
@@ -964,7 +960,9 @@ export class DefenseCommand {
 
     const label = document.createElement('span');
     label.className = `pb-mlabel lv-${level}`;
-    label.textContent = `정비도 ${m}%${level === 'critical' ? ' ⚠ 위험' : level === 'warn' ? ' 주의' : ''}`;
+    label.textContent =
+      t('def.maint.label', { m }) +
+      (level === 'critical' ? t('def.maint.critical') : level === 'warn' ? t('def.maint.warn') : '');
     bar.appendChild(label);
 
     const meter = document.createElement('div');
@@ -982,15 +980,15 @@ export class DefenseCommand {
 
     const credits = document.createElement('span');
     credits.className = 'pb-mcredits';
-    credits.textContent = `크레딧 ${status.credits} · 정비 비용 ${status.repairCost}`;
+    credits.textContent = t('def.maint.credits', { c: status.credits, r: status.repairCost });
     bar.appendChild(credits);
 
     const rb = repairButtonState(m, status.credits, status.repairCost);
     const btn = document.createElement('button');
     btn.className = 'pb-mrepair';
-    btn.textContent = this.repairing ? '정비 중…' : '🛠 정비';
+    btn.textContent = this.repairing ? t('def.maint.repairing') : t('def.maint.repair');
     btn.disabled = this.repairing || !rb.canRepair;
-    btn.title = rb.canRepair ? '크레딧으로 정비도 100% 회복' : rb.reason;
+    btn.title = rb.canRepair ? t('def.maint.repairTitle') : rb.reason;
     btn.addEventListener('click', () => void this.repair());
     bar.appendChild(btn);
 
@@ -1001,12 +999,12 @@ export class DefenseCommand {
     const panel = document.createElement('div');
     panel.className = 'pb-panel';
     const h2 = document.createElement('h2');
-    h2.textContent = '팔레트';
+    h2.textContent = t('def.paletteHead');
     panel.appendChild(h2);
 
     const pal = document.createElement('div');
     pal.className = 'pb-pal';
-    for (const entry of this.palette) {
+    for (const entry of buildPalette()) {
       const el = document.createElement('div');
       const selected = sameTool(entry.tool, this.tool);
       el.className = `pb-tool${selected ? ' sel' : ''}`;
@@ -1023,7 +1021,7 @@ export class DefenseCommand {
       if (entry.tool.kind !== 'erase') {
         const c = document.createElement('div');
         c.className = `c${cost === 0 ? ' free' : ''}`;
-        c.textContent = cost === 0 ? '무료' : `${cost}P`;
+        c.textContent = cost === 0 ? t('def.free') : `${cost}P`;
         el.appendChild(c);
       }
       el.addEventListener('mouseenter', () => {
@@ -1048,7 +1046,7 @@ export class DefenseCommand {
     // 수호 기체 슬롯(M5) — 활성 로스터를 배치 도구로 노출한다. 슬롯 선택 후 격자를 클릭해
     // 재배치한다. 로스터가 비면 안내만 표시한다(퇴역으로 수호를 만들어야 함).
     const gh2 = document.createElement('h2');
-    gh2.textContent = '수호 기체';
+    gh2.textContent = t('def.guardianHead');
     gh2.style.marginTop = '12px';
     panel.appendChild(gh2);
     const guard = document.createElement('div');
@@ -1057,8 +1055,8 @@ export class DefenseCommand {
     if (deployed.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'pb-slot';
-      empty.title = '기체를 퇴역시키면 수호 기체가 됩니다.';
-      empty.innerHTML = `<div class="lk">➖</div><div>없음</div>`;
+      empty.title = t('def.guardian.emptyTitle');
+      empty.innerHTML = `<div class="lk">➖</div><div>${t('def.guardian.none')}</div>`;
       guard.appendChild(empty);
     } else {
       for (let i = 0; i < deployed.length; i++) {
@@ -1070,10 +1068,10 @@ export class DefenseCommand {
         const slot = document.createElement('div');
         slot.className = `pb-slot active${selected ? ' sel' : ''}`;
         slot.style.borderColor = selected ? d.accent : '#3a4568';
-        slot.title = `${d.label} · 성능 ${perf}% — 클릭 후 격자에 재배치`;
+        slot.title = t('def.guardian.slotTitle', { label: d.label, perf });
         slot.innerHTML = `<div class="gm" style="color:${d.accent}">${d.glyph}</div><div>${perf}%</div>`;
         slot.addEventListener('mouseenter', () => {
-          this.tip = `수호 ${i + 1} · ${d.label} · 성능 ${perf}% (스탯은 서버 권위)`;
+          this.tip = t('def.guardian.tip', { n: i + 1, label: d.label, perf });
           this.renderTip();
         });
         slot.addEventListener('click', () => {
@@ -1097,7 +1095,7 @@ export class DefenseCommand {
     const panel = document.createElement('div');
     panel.className = 'pb-panel';
     const h2 = document.createElement('h2');
-    h2.textContent = '배치 격자';
+    h2.textContent = t('def.gridHead');
     panel.appendChild(h2);
 
     const grid = document.createElement('div');
@@ -1124,16 +1122,16 @@ export class DefenseCommand {
   }
 
   private occupantGlyph(occ: NonNullable<Occupant>): { g: string; accent: string; label: string } {
-    if (occ.kind === 'core') return { g: '💠', accent: '#8fd94c', label: '코어' };
-    if (occ.kind === 'obstacle') return { g: '🧱', accent: '#8896b8', label: '장애물' };
+    if (occ.kind === 'core') return { g: '💠', accent: '#8fd94c', label: t('def.cell.core') };
+    if (occ.kind === 'obstacle') return { g: '🧱', accent: '#8896b8', label: t('def.cell.obstacle') };
     if (occ.kind === 'guardian') {
       const gp = this.state.guardians[occ.index];
       const d = guardianDisplay(gp?.snapshot.preset ?? 0);
-      return { g: d.glyph, accent: d.accent, label: `수호 ${occ.index + 1} · ${d.label}` };
+      return { g: d.glyph, accent: d.accent, label: t('def.cell.guardian', { n: occ.index + 1, label: d.label }) };
     }
-    const t = this.state.turrets[occ.index];
-    const d = t !== undefined ? TURRET_DISPLAY[t.type] : undefined;
-    return { g: d?.glyph ?? '❔', accent: d?.accent ?? '#fff', label: d?.label ?? '포탑' };
+    const turret = this.state.turrets[occ.index];
+    const d = turret !== undefined ? TURRET_DISPLAY[turret.type] : undefined;
+    return { g: d?.glyph ?? '❔', accent: d?.accent ?? '#fff', label: d !== undefined ? t(d.labelKey) : t('def.cell.turret') };
   }
 
   private actionRow(): HTMLElement {
@@ -1142,7 +1140,7 @@ export class DefenseCommand {
 
     const back = document.createElement('button');
     back.className = 'pb-ghost';
-    back.textContent = '◀ 기지로';
+    back.textContent = t('common.backToBase');
     back.addEventListener('click', () => {
       const cb = this.onClose;
       this.hide();
@@ -1152,7 +1150,7 @@ export class DefenseCommand {
 
     const clear = document.createElement('button');
     clear.className = 'pb-ghost';
-    clear.textContent = '전체 지우기';
+    clear.textContent = t('def.clear');
     clear.addEventListener('click', () => {
       this.state = emptyEditorState();
       this.hint = '';
@@ -1163,13 +1161,13 @@ export class DefenseCommand {
 
     const test = document.createElement('button');
     test.className = 'pb-ghost';
-    test.textContent = '🧪 배치 테스트';
+    test.textContent = t('def.testBtn');
     test.addEventListener('click', () => this.test());
     actions.appendChild(test);
 
     const save = document.createElement('button');
     save.className = 'pb-act';
-    save.textContent = '💾 저장';
+    save.textContent = t('def.saveBtn');
     save.disabled = !validateEditor(this.state, this.budget).ok;
     save.addEventListener('click', () => this.save());
     actions.appendChild(save);

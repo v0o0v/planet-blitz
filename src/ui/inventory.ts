@@ -25,6 +25,7 @@ import {
   type Profile,
 } from '../save/profile.js';
 import { salvageItems } from '../save/settlement.js';
+import { t, type MessageKey } from '../i18n/index.js';
 
 /** Credit cost of the next stash expansion. */
 export const STASH_EXPANSION_COST = 200;
@@ -37,19 +38,30 @@ const RARITY_COLOR: Record<Rarity, string> = {
   unique: '#ff8a3c',
 };
 
-/** Korean slot labels for the equip row. */
-const SLOT_LABEL: Record<SlotKind, string> = {
-  main: '주무기',
-  sub: '보조무기',
-  armor: '장갑',
-  shield: '실드',
-  engine: '엔진',
-  core: '코어',
-  module: '모듈',
+/** Slot-kind → i18n key for the equip row (reuses the shared item.slot.* catalog). */
+const SLOT_LABEL_KEY: Record<SlotKind, MessageKey> = {
+  main: 'item.slot.main',
+  sub: 'item.slot.sub',
+  armor: 'item.slot.armor',
+  shield: 'item.slot.shield',
+  engine: 'item.slot.engine',
+  core: 'item.slot.core',
+  module: 'item.slot.module',
 };
 
-/** Weapon-type labels for `main` items. */
-const WEAPON_LABEL = ['발칸', '스프레드', '레일건'];
+/** Localised slot label. */
+function slotLabel(kind: SlotKind): string {
+  return t(SLOT_LABEL_KEY[kind]);
+}
+
+/** Weapon-type i18n keys for `main` items (reuses shared item.weapon.* catalog). */
+const WEAPON_KEY: readonly MessageKey[] = ['item.weapon.0', 'item.weapon.1', 'item.weapon.2'];
+
+/** Localised weapon label (falls back to '?' when the type is out of range). */
+function weaponLabel(type: number): string {
+  const key = WEAPON_KEY[type];
+  return key !== undefined ? t(key) : '?';
+}
 
 /** Which SlotKind an equip position accepts. */
 function slotKindOf(id: EquipSlotId): SlotKind {
@@ -163,7 +175,7 @@ export class InventoryOverlay {
     const item = ship.equipped[id];
     if (item === undefined) return;
     if (this.profile.inventory.length >= INVENTORY_CAP) {
-      this.hint = '인벤토리가 가득 찼습니다. 먼저 분해하거나 창고를 확장하세요.';
+      this.hint = t('inv.err.full');
       this.render();
       return;
     }
@@ -179,31 +191,31 @@ export class InventoryOverlay {
     const set = new Set(rarities);
     const targets = this.profile.inventory.filter((it) => set.has(it.rarity));
     if (targets.length === 0) {
-      this.hint = '분해할 아이템이 없습니다.';
+      this.hint = t('inv.err.noSalvage');
       this.render();
       return;
     }
     const mineralFindMult = computeLoadoutStats(this.equippedItems()).worldMods.mineralFindMult;
     const y = salvageItems(this.profile, targets, mineralFindMult);
-    this.hint = `${targets.length}개 분해 → 크레딧 +${y.credits}, 광물 +${y.minerals}`;
+    this.hint = t('inv.salvageDone', { n: targets.length, credits: y.credits, minerals: y.minerals });
     this.persist();
     this.render();
   }
 
   private expandStash(): void {
     if (this.profile.stashExpansions >= MAX_STASH_EXPANSIONS) {
-      this.hint = '창고를 최대까지 확장했습니다.';
+      this.hint = t('inv.stashMax');
       this.render();
       return;
     }
     if (this.profile.credits < STASH_EXPANSION_COST) {
-      this.hint = `크레딧이 부족합니다 (필요 ${STASH_EXPANSION_COST}).`;
+      this.hint = t('inv.err.noCredits', { n: STASH_EXPANSION_COST });
       this.render();
       return;
     }
     this.profile.credits -= STASH_EXPANSION_COST;
     this.profile.stashExpansions++;
-    this.hint = '창고를 확장했습니다.';
+    this.hint = t('inv.stashExpanded');
     this.persist();
     this.render();
   }
@@ -228,7 +240,7 @@ export class InventoryOverlay {
     name.textContent = this.itemName(item);
     const slot = document.createElement('div');
     slot.className = 't-slot';
-    slot.textContent = `${SLOT_LABEL[item.slot]} · ${item.rarity}`;
+    slot.textContent = `${slotLabel(item.slot)} · ${t(`item.rarity.${item.rarity}` as MessageKey)}`;
     this.tip.appendChild(name);
     this.tip.appendChild(slot);
     for (const a of item.affixes) {
@@ -241,7 +253,7 @@ export class InventoryOverlay {
     if (compareTo !== undefined && compareTo !== item) {
       const cmp = document.createElement('div');
       cmp.className = 't-cmp';
-      cmp.textContent = `장착 중: ${this.itemName(compareTo)} (어픽스 ${compareTo.affixes.length}개)`;
+      cmp.textContent = t('inv.tip.compare', { name: this.itemName(compareTo), n: compareTo.affixes.length });
       this.tip.appendChild(cmp);
     }
     this.tip.style.display = 'block';
@@ -266,9 +278,9 @@ export class InventoryOverlay {
 
   private itemName(item: Item): string {
     if (item.slot === 'main' && item.weaponType !== undefined) {
-      return `${SLOT_LABEL.main} · ${WEAPON_LABEL[item.weaponType] ?? '?'}`;
+      return `${t('item.slot.main')} · ${weaponLabel(item.weaponType)}`;
     }
-    return SLOT_LABEL[item.slot];
+    return slotLabel(item.slot);
   }
 
   // --- Render --------------------------------------------------------------
@@ -295,17 +307,17 @@ export class InventoryOverlay {
     this.root.innerHTML = '';
 
     const h1 = document.createElement('h1');
-    h1.textContent = '장비 정비';
+    h1.textContent = t('inv.title');
     this.root.appendChild(h1);
 
     const currency = document.createElement('div');
     currency.className = 'pb-currency';
     const ship = activeShip(this.profile);
     currency.innerHTML =
-      `<span>크레딧 <b>${this.profile.credits}</b></span>` +
-      `<span class="m">광물 <b>${this.profile.minerals}</b></span>` +
-      `<span>스킬 포인트 <b>${this.profile.skillPoints}</b></span>` +
-      `<span>기체 Lv <b>${ship.level}</b></span>`;
+      `<span>${t('inv.cur.credits')} <b>${this.profile.credits}</b></span>` +
+      `<span class="m">${t('inv.cur.minerals')} <b>${this.profile.minerals}</b></span>` +
+      `<span>${t('inv.cur.skillPoints')} <b>${this.profile.skillPoints}</b></span>` +
+      `<span>${t('inv.cur.shipLv')} <b>${ship.level}</b></span>`;
     this.root.appendChild(currency);
 
     const cols = document.createElement('div');
@@ -315,7 +327,7 @@ export class InventoryOverlay {
     const equipPanel = document.createElement('div');
     equipPanel.className = 'pb-panel';
     const eqH = document.createElement('h2');
-    eqH.textContent = '장착';
+    eqH.textContent = t('inv.equip');
     equipPanel.appendChild(eqH);
     const equipGrid = document.createElement('div');
     equipGrid.className = 'pb-equip';
@@ -324,7 +336,8 @@ export class InventoryOverlay {
       slotEl.className = 'pb-eslot';
       const lbl = document.createElement('div');
       lbl.className = 'pb-elabel';
-      lbl.textContent = id === 'module0' ? '모듈1' : id === 'module1' ? '모듈2' : SLOT_LABEL[slotKindOf(id)];
+      lbl.textContent =
+        id === 'module0' ? t('inv.module1') : id === 'module1' ? t('inv.module2') : slotLabel(slotKindOf(id));
       slotEl.appendChild(lbl);
       const item = ship.equipped[id];
       if (item !== undefined) {
@@ -351,7 +364,7 @@ export class InventoryOverlay {
     const invPanel = document.createElement('div');
     invPanel.className = 'pb-panel';
     const invH = document.createElement('h2');
-    invH.textContent = `인벤토리 (${this.profile.inventory.length}/${INVENTORY_CAP})`;
+    invH.textContent = t('inv.invHeader', { n: this.profile.inventory.length, cap: INVENTORY_CAP });
     invPanel.appendChild(invH);
     const invGrid = document.createElement('div');
     invGrid.className = 'pb-grid';
@@ -368,7 +381,7 @@ export class InventoryOverlay {
     stashPanel.className = 'pb-panel';
     const cap = stashCapacity(this.profile.stashExpansions);
     const stashH = document.createElement('h2');
-    stashH.textContent = `창고 (${this.profile.stash.length}/${cap})`;
+    stashH.textContent = t('inv.stashHeader', { n: this.profile.stash.length, cap });
     stashPanel.appendChild(stashH);
     const stashGrid = document.createElement('div');
     stashGrid.className = 'pb-stashgrid';
@@ -384,18 +397,18 @@ export class InventoryOverlay {
     // --- Actions ---
     const actions = document.createElement('div');
     actions.className = 'pb-actions';
-    actions.appendChild(this.actionBtn('노말·매직 일괄 분해', () => this.salvageByRarities(['normal', 'magic'])));
-    actions.appendChild(this.actionBtn('레어 이상 일괄 분해', () => this.salvageByRarities(['rare', 'unique'])));
+    actions.appendChild(this.actionBtn(t('inv.act.salvageLow'), () => this.salvageByRarities(['normal', 'magic'])));
+    actions.appendChild(this.actionBtn(t('inv.act.salvageHigh'), () => this.salvageByRarities(['rare', 'unique'])));
     const expandBtn = this.actionBtn(
-      `창고 확장 (${STASH_EXPANSION_COST} 크레딧)`,
+      t('inv.act.expand', { n: STASH_EXPANSION_COST }),
       () => this.expandStash(),
     );
     if (this.profile.stashExpansions >= MAX_STASH_EXPANSIONS) {
       expandBtn.disabled = true;
-      expandBtn.textContent = '창고 최대 확장됨';
+      expandBtn.textContent = t('inv.act.expandMax');
     }
     actions.appendChild(expandBtn);
-    const closeBtn = this.actionBtn('◀ 성계 지도로', () => {
+    const closeBtn = this.actionBtn(t('inv.act.backToMap'), () => {
       const cb = this.onClose;
       this.hide();
       cb?.();
@@ -421,20 +434,20 @@ export class InventoryOverlay {
     const panel = document.createElement('div');
     panel.className = 'pb-panel pb-stats';
     const h = document.createElement('h2');
-    h.textContent = '로드아웃 스탯';
+    h.textContent = t('inv.loadoutStats');
     panel.appendChild(h);
     const { loadout, worldMods } = computeLoadoutStats(this.equippedItems());
     const rows: [string, string][] = [
-      ['주무기', WEAPON_LABEL[loadout.weaponType] ?? '발칸'],
-      ['피해', `×${loadout.damageMult.toFixed(2)}`],
-      ['발사 속도', `×${(1 / loadout.fireRateMult).toFixed(2)}`],
-      ['탄 수', `+${loadout.bulletCountAdd}`],
-      ['관통', `+${loadout.pierceAdd}`],
-      ['이동 속도', `×${loadout.moveSpeedMult.toFixed(2)}`],
-      ['추가 HP', `+${loadout.maxHpAdd}`],
-      ['자석', `×${loadout.magnetMult.toFixed(2)}`],
-      ['경험치', `×${loadout.xpMult.toFixed(2)}`],
-      ['광물 발견', `×${worldMods.mineralFindMult.toFixed(2)}`],
+      [t('inv.stat.weapon'), t(WEAPON_KEY[loadout.weaponType] ?? 'item.weapon.0')],
+      [t('inv.stat.damage'), `×${loadout.damageMult.toFixed(2)}`],
+      [t('inv.stat.fireRate'), `×${(1 / loadout.fireRateMult).toFixed(2)}`],
+      [t('inv.stat.bullets'), `+${loadout.bulletCountAdd}`],
+      [t('inv.stat.pierce'), `+${loadout.pierceAdd}`],
+      [t('inv.stat.moveSpeed'), `×${loadout.moveSpeedMult.toFixed(2)}`],
+      [t('inv.stat.hp'), `+${loadout.maxHpAdd}`],
+      [t('inv.stat.magnet'), `×${loadout.magnetMult.toFixed(2)}`],
+      [t('inv.stat.xp'), `×${loadout.xpMult.toFixed(2)}`],
+      [t('inv.stat.mineralFind'), `×${worldMods.mineralFindMult.toFixed(2)}`],
     ];
     for (const [k, v] of rows) {
       const row = document.createElement('div');
