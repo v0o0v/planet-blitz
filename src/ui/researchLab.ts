@@ -22,6 +22,7 @@ import {
 } from '../../data/skills.js';
 import type { StatKey } from '../items/types.js';
 import { computeSkillStats } from '../items/skills.js';
+import { t, type MessageKey } from '../i18n/index.js';
 import {
   investSkill,
   respecSkills,
@@ -33,27 +34,27 @@ import {
   type Profile,
 } from '../save/profile.js';
 
-/** Tree id → header label + accent colour. */
-const TREE_META: Record<SkillTree, { name: string; accent: string }> = {
-  firepower: { name: '화력', accent: '#ff7a4c' },
-  survival: { name: '생존', accent: '#4cd7ff' },
-  mobility: { name: '기동', accent: '#8fd94c' },
+/** Tree id → header label key + accent colour. */
+const TREE_META: Record<SkillTree, { nameKey: MessageKey; accent: string }> = {
+  firepower: { nameKey: 'lab.tree.firepower', accent: '#ff7a4c' },
+  survival: { nameKey: 'lab.tree.survival', accent: '#4cd7ff' },
+  mobility: { nameKey: 'lab.tree.mobility', accent: '#8fd94c' },
 };
 
-/** Derived-stat preview rows: [StatKey, label, isPercent]. */
-const PREVIEW_ROWS: readonly [StatKey, string, boolean][] = [
-  ['damagePct', '탄환 데미지', true],
-  ['fireRatePct', '연사 속도', true],
-  ['bulletCount', '추가 탄환', false],
-  ['pierce', '관통', false],
-  ['bulletSpeedPct', '탄속', true],
-  ['rangeFlat', '사거리', false],
-  ['maxHpFlat', '최대 HP(고정)', false],
-  ['maxHpPct', '최대 HP', true],
-  ['dashCdPct', '대시 재충전 감소', true],
-  ['moveSpeedPct', '이동 속도', true],
-  ['magnetPct', '자석 반경', true],
-  ['xpPct', '경험치', true],
+/** Derived-stat preview rows: [StatKey, labelKey, isPercent]. */
+const PREVIEW_ROWS: readonly [StatKey, MessageKey, boolean][] = [
+  ['damagePct', 'lab.stat.damage', true],
+  ['fireRatePct', 'lab.stat.fireRate', true],
+  ['bulletCount', 'lab.stat.bulletCount', false],
+  ['pierce', 'lab.stat.pierce', false],
+  ['bulletSpeedPct', 'lab.stat.bulletSpeed', true],
+  ['rangeFlat', 'lab.stat.range', false],
+  ['maxHpFlat', 'lab.stat.maxHpFlat', false],
+  ['maxHpPct', 'lab.stat.maxHp', true],
+  ['dashCdPct', 'lab.stat.dashCd', true],
+  ['moveSpeedPct', 'lab.stat.moveSpeed', true],
+  ['magnetPct', 'lab.stat.magnet', true],
+  ['xpPct', 'lab.stat.xp', true],
 ];
 
 const STYLE = `
@@ -130,7 +131,7 @@ export class ResearchLab {
 
   private invest(index: number): void {
     if (!investSkill(this.profile, index)) {
-      this.hint = this.profile.skillPoints <= 0 ? '스킬 포인트가 부족합니다.' : '이미 최대까지 투자했습니다.';
+      this.hint = this.profile.skillPoints <= 0 ? t('lab.err.noPoints') : t('lab.err.maxed');
       this.render();
       return;
     }
@@ -143,12 +144,12 @@ export class ResearchLab {
     if (!respecSkills(this.profile)) {
       this.hint =
         totalInvested(this.profile) === 0
-          ? '되돌릴 투자가 없습니다.'
-          : `크레딧이 부족합니다 (필요 ${respecCost(this.profile)}).`;
+          ? t('lab.err.noInvest')
+          : t('lab.err.noCredits', { n: respecCost(this.profile) });
       this.render();
       return;
     }
-    this.hint = '스킬 트리를 초기화하고 포인트를 환급했습니다.';
+    this.hint = t('lab.respecDone');
     this.persist();
     this.render();
   }
@@ -157,17 +158,17 @@ export class ResearchLab {
     this.root.innerHTML = '';
 
     const h1 = document.createElement('h1');
-    h1.textContent = '연구소 — 스킬 트리';
+    h1.textContent = t('lab.title');
     this.root.appendChild(h1);
 
     const bar = document.createElement('div');
     bar.className = 'pb-bar';
     const ship = activeShip(this.profile);
     bar.innerHTML =
-      `<span>스킬 포인트 <b class="sp">${this.profile.skillPoints}</b></span>` +
-      `<span>투자 <b>${totalInvested(this.profile)}</b></span>` +
-      `<span>크레딧 <b class="cr">${this.profile.credits}</b></span>` +
-      `<span>기체 Lv <b>${ship.level}</b></span>`;
+      `<span>${t('lab.bar.points')} <b class="sp">${this.profile.skillPoints}</b></span>` +
+      `<span>${t('lab.bar.invest')} <b>${totalInvested(this.profile)}</b></span>` +
+      `<span>${t('lab.bar.credits')} <b class="cr">${this.profile.credits}</b></span>` +
+      `<span>${t('lab.bar.shipLv')} <b>${ship.level}</b></span>`;
     this.root.appendChild(bar);
 
     const cols = document.createElement('div');
@@ -178,10 +179,10 @@ export class ResearchLab {
 
     const actions = document.createElement('div');
     actions.className = 'pb-actions';
-    const respecBtn = this.actionBtn(`리스펙 (${respecCost(this.profile)} 크레딧)`, () => this.respec());
+    const respecBtn = this.actionBtn(t('lab.respecBtn', { n: respecCost(this.profile) }), () => this.respec());
     if (totalInvested(this.profile) === 0) respecBtn.disabled = true;
     actions.appendChild(respecBtn);
-    const closeBtn = this.actionBtn('◀ 기지로', () => {
+    const closeBtn = this.actionBtn(t('common.backToBase'), () => {
       const cb = this.onClose;
       this.hide();
       cb?.();
@@ -201,7 +202,7 @@ export class ResearchLab {
     const panel = document.createElement('div');
     panel.className = 'pb-tree';
     const h2 = document.createElement('h2');
-    h2.textContent = meta.name;
+    h2.textContent = t(meta.nameKey);
     h2.style.color = meta.accent;
     panel.appendChild(h2);
     const sub = document.createElement('div');
@@ -209,7 +210,7 @@ export class ResearchLab {
     const { start } = treeRange(tree);
     let invested = 0;
     for (let j = 0; j < NODES_PER_TREE; j++) invested += this.profile.skillInvest[start + j] ?? 0;
-    sub.textContent = `누적 투자 ${invested}pt · 하위 투자가 상위 노드를 증폭`;
+    sub.textContent = t('lab.tree.sub', { n: invested });
     panel.appendChild(sub);
 
     // 5 tiers × 4 nodes. SKILLS within a tree are tier-ascending, 4 per tier.
@@ -253,17 +254,17 @@ export class ResearchLab {
     const panel = document.createElement('div');
     panel.className = 'pb-stats';
     const h = document.createElement('h2');
-    h.textContent = '파생 스탯 (시너지 반영)';
+    h.textContent = t('lab.derivedStats');
     panel.appendChild(h);
     const sums = computeSkillStats(this.profile.skillInvest);
-    for (const [key, label, isPct] of PREVIEW_ROWS) {
+    for (const [key, labelKey, isPct] of PREVIEW_ROWS) {
       const v = sums[key];
       if (v === 0) continue;
       const row = document.createElement('div');
       row.className = 'pb-statrow';
       const kEl = document.createElement('span');
       kEl.className = 'k';
-      kEl.textContent = label;
+      kEl.textContent = t(labelKey);
       const vEl = document.createElement('span');
       vEl.className = 'v';
       vEl.textContent = isPct ? `+${v}%` : `+${v}`;
@@ -273,8 +274,7 @@ export class ResearchLab {
     }
     const syn = document.createElement('div');
     syn.className = 'pb-synergy';
-    syn.textContent =
-      '시너지: 각 노드의 출력은 같은 계열 하위 티어에 투자한 포인트만큼 소폭 증폭됩니다(최대 +50%). 깊게 투자할수록 상위 노드가 강해집니다.';
+    syn.textContent = t('lab.synergy');
     panel.appendChild(syn);
     return panel;
   }

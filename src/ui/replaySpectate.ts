@@ -12,6 +12,7 @@
  */
 
 import type { Replay } from '../sim/replay.js';
+import { t } from '../i18n/index.js';
 
 // ---------------------------------------------------------------------------
 // 순수 로직 (테스트 대상 — DOM 무관)
@@ -121,7 +122,7 @@ export class SpectateOverlay {
     const ctrls = document.createElement('div');
     ctrls.className = 'pb-spec-ctrls';
     this.playBtn = document.createElement('button');
-    this.playBtn.textContent = '⏸ 일시정지';
+    this.playBtn.textContent = t('replay.pause');
     this.speedBtn = document.createElement('button');
     this.speedBtn.className = 'ghost';
     this.speedBtn.textContent = '1x';
@@ -130,7 +131,7 @@ export class SpectateOverlay {
     this.timeEl.textContent = '0:00 / 0:00';
     const exitBtn = document.createElement('button');
     exitBtn.className = 'ghost';
-    exitBtn.textContent = '종료';
+    exitBtn.textContent = t('replay.exit');
     ctrls.append(this.playBtn, this.speedBtn, this.timeEl, exitBtn);
 
     this.root.append(this.titleEl, bar, ctrls);
@@ -151,8 +152,10 @@ export class SpectateOverlay {
   show(cb: SpectateCallbacks, opts: SpectateShowOpts): void {
     this.cb = cb;
     this.total = opts.total;
-    const who = opts.targetName.length > 0 ? opts.targetName : '상대 기지';
-    this.titleEl.innerHTML = `<b>관전</b> — ${escapeHtml(who)} 침공 리플레이 (렌더 전용·기록에 영향 없음)`;
+    const who = opts.targetName.length > 0 ? opts.targetName : t('replay.opponentBase');
+    this.titleEl.innerHTML = `<b>${escapeHtml(t('replay.badge'))}</b> — ${t('replay.titleBody', {
+      who: escapeHtml(who),
+    })}`;
     this.update({ tick: 0, playing: true, speed: 1, ended: false });
     this.root.style.display = 'flex';
   }
@@ -168,9 +171,9 @@ export class SpectateOverlay {
     this.timeEl.textContent = spectateProgressLabel(state.tick, this.total);
     this.speedBtn.textContent = `${state.speed}x`;
     if (state.ended) {
-      this.playBtn.textContent = '⟲ 처음부터';
+      this.playBtn.textContent = t('replay.restart');
     } else {
-      this.playBtn.textContent = state.playing ? '⏸ 일시정지' : '▶ 재생';
+      this.playBtn.textContent = state.playing ? t('replay.pause') : t('replay.play');
     }
   }
 }

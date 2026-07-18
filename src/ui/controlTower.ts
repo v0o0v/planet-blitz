@@ -49,6 +49,7 @@ import {
 } from '../net/invasion.js';
 import { stickerLabel } from '../../data/stickers.js';
 import { seedBaseByProfileId } from '../../data/seedBases.js';
+import { t } from '../i18n/index.js';
 import {
   GRID_COLS,
   GRID_ROWS,
@@ -80,15 +81,15 @@ const TURRET_GLYPH: readonly { g: string; accent: string }[] = [
 
 /** 기체 요약 → 한 줄 텍스트("이름 · Lv N"). 필드 부재 시 방어적 폴백. */
 export function shipSummaryText(summary: ShipSummary): string {
-  const name = typeof summary.name === 'string' && summary.name.length > 0 ? summary.name : '알 수 없는 기체';
+  const name = typeof summary.name === 'string' && summary.name.length > 0 ? summary.name : t('ctl.ship.unknown');
   const level = typeof summary.level === 'number' && Number.isFinite(summary.level) ? summary.level : null;
-  return level !== null ? `${name} · Lv ${level}` : name;
+  return level !== null ? t('ctl.ship.withLevel', { name, level }) : name;
 }
 
 /** 정비도 라벨("정비도 87%"). 0~100 밖은 클램프. */
 export function maintenanceLabel(maintenance: number): string {
   const m = Number.isFinite(maintenance) ? Math.max(0, Math.min(100, Math.round(maintenance))) : 0;
-  return `정비도 ${m}%`;
+  return t('ctl.maintenance', { m });
 }
 
 /** 남은 쿨다운(ms) → 사람이 읽는 라벨. 0 이하면 빈 문자열(즉시 가능). */
@@ -98,9 +99,9 @@ export function formatCooldown(remainingMs: number): string {
   if (totalMin >= 60) {
     const h = Math.floor(totalMin / 60);
     const m = totalMin % 60;
-    return m > 0 ? `재도전까지 ${h}시간 ${m}분` : `재도전까지 ${h}시간`;
+    return m > 0 ? t('ctl.cooldown.hm', { h, m }) : t('ctl.cooldown.h', { h });
   }
-  return `재도전까지 ${totalMin}분`;
+  return t('ctl.cooldown.min', { n: totalMin });
 }
 
 /** 침공 버튼 상태(순수): 침공 가능 여부 + 비활성 사유. */
@@ -125,7 +126,7 @@ export function computeInvadeState(
 ): InvadeState {
   const layout = normalizeLayout(target.layout);
   if (layout === null) {
-    return { canInvade: false, reason: '방어 기지 없음', layout: null };
+    return { canInvade: false, reason: t('ctl.noBase'), layout: null };
   }
   const remaining = cooldownRemainingMs(cooldowns, target.profileId, nowMs);
   if (remaining > 0) {
@@ -141,7 +142,7 @@ export function computeInvadeState(
 export function computePlacementInvadeState(target: InvasionTarget): InvadeState {
   const layout = normalizeLayout(target.layout);
   if (layout === null) {
-    return { canInvade: false, reason: '방어 기지 없음', layout: null };
+    return { canInvade: false, reason: t('ctl.noBase'), layout: null };
   }
   return { canInvade: true, reason: '', layout };
 }
@@ -187,7 +188,7 @@ export function revengeCardState(target: RevengeTarget, nowMs: number): RevengeC
 /** 알림 배너 문구(순수). 미확인 0 이면 빈 문자열(배너 숨김). */
 export function incomingBannerText(unseenCount: number): string {
   if (unseenCount <= 0) return '';
-  return `새 침공 결과 ${unseenCount}건 — 기지가 공격받았습니다`;
+  return t('ctl.incoming.banner', { n: unseenCount });
 }
 
 /**
@@ -195,11 +196,11 @@ export function incomingBannerText(unseenCount: number): string {
  * 복수 침공이면 앞에 "[복수]" 를 붙여 강조한다.
  */
 export function incomingRowText(inv: IncomingInvasion): string {
-  const who = inv.attackerName.length > 0 ? inv.attackerName : '무명 파일럿';
-  const outcome = inv.attackerWon ? '기지 함락' : '방어 성공';
-  const prefix = inv.isRevenge ? '[복수] ' : '';
+  const who = inv.attackerName.length > 0 ? inv.attackerName : t('ctl.anonymous');
+  const outcome = inv.attackerWon ? t('ctl.incoming.fell') : t('ctl.incoming.held');
+  const prefix = inv.isRevenge ? t('ctl.incoming.revengePrefix') : '';
   const taunt = stickerLabel(inv.sticker);
-  const tauntText = taunt.length > 0 ? ` · 도발: ${taunt}` : '';
+  const tauntText = taunt.length > 0 ? t('ctl.incoming.taunt', { taunt }) : '';
   return `${prefix}${who} — ${outcome}${tauntText}`;
 }
 
@@ -228,28 +229,27 @@ export function resultBannerText(view: InvasionResultView): string {
   const who = view.targetName !== undefined && view.targetName.length > 0 ? `${view.targetName} ` : '';
   if (!view.submitted) {
     // 서버 미제출 — 잠정 결과만(런은 끝났으나 판정 미확정).
-    const outcome = view.attackerWon === true ? '코어 파괴(잠정 승리)' : '침공 실패(잠정)';
-    return `${who}침공 종료 · ${outcome} — 서버 미설정/오프라인으로 미제출(잠정 결과)`;
+    const outcome = view.attackerWon === true ? t('ctl.res.provWin') : t('ctl.res.provLose');
+    return t('ctl.res.unsubmitted', { who, outcome });
   }
   if (view.status === 'rejected') {
-    return `${who}침공 거부됨 — 리플레이 검증 불일치(서버 권위)`;
+    return t('ctl.res.rejected', { who });
   }
   // verified — 서버가 승패 실값을 아직 안 준 응답(null)은 패배로 강제하지 않고 "확정 중".
   if (view.attackerWon === null) {
-    return `${who}침공 판정 확정 중 — 잠시 후 관제탑에서 결과를 확인하세요`;
+    return t('ctl.res.pending', { who });
   }
   if (view.attackerWon) {
-    const rankText =
-      view.ladder != null ? ` · 새 순위 ${view.ladder.attackerRank}위` : '';
-    const lootText = view.lootCount !== undefined && view.lootCount > 0 ? ` · 전리품 ${view.lootCount}개` : '';
+    const rankText = view.ladder != null ? t('ctl.res.rank', { n: view.ladder.attackerRank }) : '';
+    const lootText = view.lootCount !== undefined && view.lootCount > 0 ? t('ctl.res.loot', { n: view.lootCount }) : '';
     const bonusText =
       view.revenge === true && view.bonusMinerals !== undefined && view.bonusMinerals > 0
-        ? ` · 보너스 광물 ${view.bonusMinerals}`
+        ? t('ctl.res.bonus', { n: view.bonusMinerals })
         : '';
-    const head = view.revenge === true ? '복수 성공 — 자리 탈환' : '침공 성공 — 코어 파괴';
-    return `${who}${head}(서버 확정)${rankText}${lootText}${bonusText}`;
+    const head = view.revenge === true ? t('ctl.res.revengeHead') : t('ctl.res.winHead');
+    return t('ctl.res.winLine', { who, head, extra: `${rankText}${lootText}${bonusText}` });
   }
-  return `${who}침공 실패 — 방어 성공(서버 확정)`;
+  return t('ctl.res.lose', { who });
 }
 
 /** 미니 정찰 격자 한 칸의 표시(순수). 점유 없으면 null. */
@@ -263,11 +263,11 @@ export interface PreviewCell {
 }
 
 function occupantGlyph(state: DefenseEditorState, occ: NonNullable<Occupant>): { g: string; accent: string; label: string } {
-  if (occ.kind === 'core') return { g: '💠', accent: '#8fd94c', label: '코어' };
-  if (occ.kind === 'obstacle') return { g: '🧱', accent: '#8896b8', label: '장애물' };
-  const t = state.turrets[occ.index];
-  const d = t !== undefined ? TURRET_GLYPH[t.type] : undefined;
-  return { g: d?.g ?? '❔', accent: d?.accent ?? '#fff', label: '포탑' };
+  if (occ.kind === 'core') return { g: '💠', accent: '#8fd94c', label: t('ctl.cell.core') };
+  if (occ.kind === 'obstacle') return { g: '🧱', accent: '#8896b8', label: t('ctl.cell.obstacle') };
+  const turret = state.turrets[occ.index];
+  const d = turret !== undefined ? TURRET_GLYPH[turret.type] : undefined;
+  return { g: d?.g ?? '❔', accent: d?.accent ?? '#fff', label: t('ctl.cell.turret') };
 }
 
 /**
@@ -282,7 +282,7 @@ export function previewCells(layout: DefenseLayout): PreviewCell[] {
       const spawn = col === SPAWN_COL && row === SPAWN_ROW;
       const occ = findAt(state, col, row);
       if (occ === null) {
-        if (spawn) out.push({ col, row, glyph: '▲', accent: '#ffb14c', label: '공격자 진입', spawn: true });
+        if (spawn) out.push({ col, row, glyph: '▲', accent: '#ffb14c', label: t('ctl.cell.spawn'), spawn: true });
         continue;
       }
       const g = occupantGlyph(state, occ);
@@ -546,18 +546,18 @@ export class ControlTower {
     this.root.innerHTML = '';
 
     const h1 = document.createElement('h1');
-    h1.textContent = '관제탑 — 침공 사령';
+    h1.textContent = t('ctl.title');
     this.root.appendChild(h1);
     const sub = document.createElement('div');
     sub.className = 'pb-sub';
-    sub.textContent = '상위 랭커를 정찰하고 침공하라. 결과는 서버 전수 재실행으로 확정된다.';
+    sub.textContent = t('ctl.sub');
     this.root.appendChild(sub);
 
     if (this.opts.result !== undefined) this.root.appendChild(this.banner(this.opts.result));
     if (this.opts.verifying === true) {
       const v = document.createElement('div');
       v.className = 'pb-banner info';
-      v.textContent = '서버 검증 중… (전수 재실행으로 결과를 확정합니다)';
+      v.textContent = t('ctl.verifying');
       this.root.appendChild(v);
     }
 
@@ -581,15 +581,14 @@ export class ControlTower {
 
     const note = document.createElement('div');
     note.className = 'pb-note';
-    note.textContent =
-      '재도전 쿨다운(1시간)과 순위 스왑·복제 약탈은 서버가 강제한다. 이 화면의 값은 서버 판정의 미러다.';
+    note.textContent = t('ctl.note');
     this.root.appendChild(note);
 
     const actions = document.createElement('div');
     actions.className = 'pb-actions';
     const back = document.createElement('button');
     back.className = 'pb-ghost';
-    back.textContent = '◀ 기지로';
+    back.textContent = t('common.backToBase');
     back.addEventListener('click', () => {
       const cb = this.onBack;
       this.hide();
@@ -618,38 +617,26 @@ export class ControlTower {
     const panel = document.createElement('div');
     panel.className = 'pb-panel pb-targets';
     const h2 = document.createElement('h2');
-    h2.textContent = placementMode ? '배치전 상대 (NPC 시드 기지)' : '침공 대상 제안';
+    h2.textContent = placementMode ? t('ctl.tgt.placementHead') : t('ctl.tgt.head');
     panel.appendChild(h2);
 
     if (this.loading) {
-      panel.appendChild(this.msg('대상을 불러오는 중…'));
+      panel.appendChild(this.msg(t('ctl.tgt.loading')));
       return panel;
     }
     // 배치전이 아직 안 끝났으나 순위 삽입 대기(completing)면 목록 대신 안내.
     if (this.isCompleting()) {
-      panel.appendChild(this.msg('배치전 5회를 모두 마쳤습니다. 위의 순위 진입 버튼으로 초기 순위를 확정하세요.'));
+      panel.appendChild(this.msg(t('ctl.tgt.completingMsg')));
       return panel;
     }
 
     const list = placementMode ? this.placementTargets : this.targets;
     if (list === null) {
-      panel.appendChild(
-        this.msg(
-          placementMode
-            ? '배치전 상대를 불러오지 못했습니다 — 서버 미설정 또는 오프라인. (로컬 플레이는 정상)'
-            : '서버 미설정 또는 오프라인 — 침공이 비활성입니다. (로컬 플레이는 정상)',
-        ),
-      );
+      panel.appendChild(this.msg(placementMode ? t('ctl.tgt.placementNull') : t('ctl.tgt.normalNull')));
       return panel;
     }
     if (list.length === 0) {
-      panel.appendChild(
-        this.msg(
-          placementMode
-            ? '배치전 상대가 없습니다. 잠시 후 다시 시도하세요.'
-            : '제안할 침공 대상이 없습니다. 배치전을 마치면 순위가 잡힙니다.',
-        ),
-      );
+      panel.appendChild(this.msg(placementMode ? t('ctl.tgt.placementEmpty') : t('ctl.tgt.normalEmpty')));
       return panel;
     }
 
@@ -661,42 +648,44 @@ export class ControlTower {
   }
 
   /** 대상 1행(일반/배치전 공통). 배치전은 쿨다운 무시 + 시드 이름·난이도 밴드 표시. */
-  private targetRow(t: InvasionTarget, placementMode: boolean, now: number): HTMLElement {
+  private targetRow(target: InvasionTarget, placementMode: boolean, now: number): HTMLElement {
     const st = placementMode
-      ? computePlacementInvadeState(t)
-      : computeInvadeState(t, this.cooldowns, now);
-    const meta = placementMode ? seedBaseByProfileId(t.profileId) : null;
+      ? computePlacementInvadeState(target)
+      : computeInvadeState(target, this.cooldowns, now);
+    const meta = placementMode ? seedBaseByProfileId(target.profileId) : null;
 
     const row = document.createElement('div');
-    row.className = `pb-tgt${this.selectedId === t.profileId ? ' sel' : ''}`;
-    row.addEventListener('click', () => this.selectTarget(t.profileId));
+    row.className = `pb-tgt${this.selectedId === target.profileId ? ' sel' : ''}`;
+    row.addEventListener('click', () => this.selectTarget(target.profileId));
 
     const rk = document.createElement('div');
     rk.className = 'rk';
-    rk.textContent = `#${t.rank}`;
+    rk.textContent = `#${target.rank}`;
     const info = document.createElement('div');
     info.className = 'info';
     const nm = document.createElement('div');
     nm.className = 'nm';
-    nm.textContent = placementMode ? placementTargetName(t) : t.displayName;
+    nm.textContent = placementMode ? placementTargetName(target) : target.displayName;
     const ds = document.createElement('div');
     ds.className = 'ds';
     // 배치전이면 난이도 밴드 + 기체 요약, 일반이면 기체 요약.
     ds.textContent =
-      meta !== null ? `난이도 ${meta.difficultyBand} · ${shipSummaryText(t.shipSummary)}` : shipSummaryText(t.shipSummary);
+      meta !== null
+        ? t('ctl.tgt.difficulty', { band: meta.difficultyBand, ship: shipSummaryText(target.shipSummary) })
+        : shipSummaryText(target.shipSummary);
     info.append(nm, ds);
     const mt = document.createElement('div');
     mt.className = 'mt';
-    mt.textContent = maintenanceLabel(t.maintenance);
+    mt.textContent = maintenanceLabel(target.maintenance);
 
     const btn = document.createElement('button');
     btn.className = 'pb-inv';
-    btn.textContent = st.canInvade ? (placementMode ? '배치전' : '침공') : st.reason;
+    btn.textContent = st.canInvade ? (placementMode ? t('ctl.tgt.btnPlacement') : t('ctl.tgt.btnInvade')) : st.reason;
     btn.disabled = !st.canInvade;
-    btn.title = st.canInvade ? (placementMode ? '배치전 런 시작' : '침공 런 시작') : st.reason;
+    btn.title = st.canInvade ? (placementMode ? t('ctl.tgt.titlePlacement') : t('ctl.tgt.titleInvade')) : st.reason;
     btn.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      this.invade(t);
+      this.invade(target);
     });
 
     row.append(rk, info, mt, btn);
@@ -712,7 +701,10 @@ export class ControlTower {
     if (this.placementResult !== null && this.placementResult.placed) {
       const el = document.createElement('div');
       el.className = 'pb-banner win';
-      el.textContent = `순위 진입! 배치전 성적으로 ${this.placementResult.rank}위에 배치됐습니다 (배치전 ${this.placementResult.matchesWon}승). 이제 상위 랭커에 침공할 수 있습니다.`;
+      el.textContent = t('ctl.place.entered', {
+        rank: this.placementResult.rank,
+        won: this.placementResult.matchesWon,
+      });
       return el;
     }
     const status = this.placement;
@@ -725,12 +717,12 @@ export class ControlTower {
 
     if (phase === 'completing') {
       const line = document.createElement('div');
-      line.textContent = `배치전 완료 — ${status.total}전 ${status.won}승. 순위 진입 준비 완료.`;
+      line.textContent = t('ctl.place.completeLine', { total: status.total, won: status.won });
       line.style.marginBottom = '8px';
       wrap.appendChild(line);
       const btn = document.createElement('button');
       btn.className = 'pb-inv';
-      btn.textContent = this.applying ? '순위 확정 중…' : '순위 진입';
+      btn.textContent = this.applying ? t('ctl.place.applying') : t('ctl.place.enter');
       btn.disabled = this.applying;
       btn.addEventListener('click', () => void this.applyPlacement());
       wrap.appendChild(btn);
@@ -739,7 +731,7 @@ export class ControlTower {
 
     // 진행 중 — 진행바 + 남은 횟수.
     const label = document.createElement('div');
-    label.textContent = `${placementProgressLabel(status)} · 남은 배치전 ${placementRemaining(status)}회`;
+    label.textContent = `${placementProgressLabel(status)}${t('ctl.place.remaining', { n: placementRemaining(status) })}`;
     label.style.marginBottom = '6px';
     wrap.appendChild(label);
     const bar = document.createElement('div');
@@ -753,7 +745,7 @@ export class ControlTower {
     const hint = document.createElement('div');
     hint.className = 'pb-note';
     hint.style.marginTop = '6px';
-    hint.textContent = 'PvP 첫 관문 — NPC 시드 기지 상대로 5회를 치르면 성적에 따라 초기 순위가 잡힙니다(기존 순위 불변).';
+    hint.textContent = t('ctl.place.hint');
     wrap.appendChild(hint);
     return wrap;
   }
@@ -770,7 +762,7 @@ export class ControlTower {
     panel.className = 'pb-notif';
     const h3 = document.createElement('h3');
     const bannerText = incomingBannerText(this.unseenCount);
-    h3.textContent = bannerText.length > 0 ? bannerText : '최근 침공 결과';
+    h3.textContent = bannerText.length > 0 ? bannerText : t('ctl.notif.head');
     panel.appendChild(h3);
 
     for (const inv of incoming) {
@@ -781,14 +773,16 @@ export class ControlTower {
       // 내가 이미 이 침공에 도발을 남겼으면 함께 표시(방어 성공 회신).
       const myTaunt = stickerLabel(inv.defenderSticker);
       txt.textContent =
-        myTaunt.length > 0 ? `${incomingRowText(inv)} · 내 도발: ${myTaunt}` : incomingRowText(inv);
+        myTaunt.length > 0
+          ? `${incomingRowText(inv)}${t('ctl.notif.myTaunt', { taunt: myTaunt })}`
+          : incomingRowText(inv);
       row.appendChild(txt);
       // 방어 성공(격퇴)했고 아직 회신 도발이 없으면 "도발" 버튼(F2 방어자 몫).
       if (inv.invasionId.length > 0 && !inv.attackerWon && inv.defenderSticker === null) {
         const taunt = document.createElement('button');
         taunt.className = 'pb-spec-btn';
-        taunt.textContent = '도발';
-        taunt.title = '격퇴한 상대에게 도발 스티커를 남깁니다.';
+        taunt.textContent = t('ctl.notif.tauntBtn');
+        taunt.title = t('ctl.notif.tauntTitle');
         taunt.addEventListener('click', () => {
           const cb = this.onSticker;
           cb?.(inv.invasionId, inv.attackerName);
@@ -799,8 +793,8 @@ export class ControlTower {
       if (inv.invasionId.length > 0) {
         const spec = document.createElement('button');
         spec.className = 'pb-spec-btn';
-        spec.textContent = '관전';
-        spec.title = '이 침공 리플레이를 재생합니다(렌더 전용).';
+        spec.textContent = t('ctl.notif.spectate');
+        spec.title = t('ctl.notif.spectateTitle');
         spec.addEventListener('click', () => {
           const cb = this.onSpectate;
           cb?.(inv.invasionId, inv.attackerName);
@@ -825,11 +819,11 @@ export class ControlTower {
     const panel = document.createElement('div');
     panel.className = 'pb-rev';
     const h3 = document.createElement('h3');
-    h3.textContent = '복수전 — 24시간 내 되갚아라 (쿨다운 무시)';
+    h3.textContent = t('ctl.rev.head');
     panel.appendChild(h3);
 
-    for (const t of list) {
-      const st = revengeCardState(t, now);
+    for (const target of list) {
+      const st = revengeCardState(target, now);
       const card = document.createElement('div');
       card.className = 'pb-rev-card';
 
@@ -837,28 +831,28 @@ export class ControlTower {
       info.className = 'info';
       const nm = document.createElement('div');
       nm.className = 'nm';
-      nm.textContent = t.displayName.length > 0 ? t.displayName : '무명 파일럿';
+      nm.textContent = target.displayName.length > 0 ? target.displayName : t('ctl.anonymous');
       const badge = document.createElement('span');
       badge.className = 'pb-badge';
-      badge.textContent = '쿨다운 무시';
+      badge.textContent = t('ctl.rev.badge');
       nm.appendChild(badge);
       const rem = document.createElement('div');
       rem.className = 'rem';
       rem.textContent = st.expired
-        ? '복수 기한 만료'
-        : `${st.remainingLabel} · ${shipSummaryText(t.shipSummary)}`;
+        ? t('ctl.rev.expired')
+        : `${st.remainingLabel} · ${shipSummaryText(target.shipSummary)}`;
       info.append(nm, rem);
 
       const btn = document.createElement('button');
       btn.className = 'pb-rev-btn';
       const canRevenge = !st.expired && st.layout !== null;
-      btn.textContent = st.expired ? '만료' : st.layout === null ? '기지 없음' : '복수 침공';
+      btn.textContent = st.expired ? t('ctl.rev.btnExpired') : st.layout === null ? t('ctl.rev.btnNoBase') : t('ctl.rev.btnRevenge');
       btn.disabled = !canRevenge;
       btn.addEventListener('click', () => {
         if (!canRevenge || st.layout === null) return;
         const cb = this.onInvade;
         this.hide();
-        cb?.(t, st.layout);
+        cb?.(target, st.layout);
       });
 
       card.append(info, btn);
@@ -879,20 +873,20 @@ export class ControlTower {
     const panel = document.createElement('div');
     panel.className = 'pb-panel pb-recon';
     const h2 = document.createElement('h2');
-    h2.textContent = '기지 정찰';
+    h2.textContent = t('ctl.recon.head');
     panel.appendChild(h2);
 
     // 선택 대상은 일반/배치전 두 목록 중 하나에 있다.
     const inList = (list: InvasionTarget[] | null): InvasionTarget | null =>
-      list?.find((t) => t.profileId === this.selectedId) ?? null;
+      list?.find((x) => x.profileId === this.selectedId) ?? null;
     const target = inList(this.targets) ?? inList(this.placementTargets);
     if (target === null) {
-      panel.appendChild(this.msg('대상을 선택하면 방어 배치를 미리봅니다.'));
+      panel.appendChild(this.msg(t('ctl.recon.selectPrompt')));
       return panel;
     }
     const layout = normalizeLayout(target.layout);
     if (layout === null) {
-      panel.appendChild(this.msg('이 대상은 방어 기지가 없습니다.'));
+      panel.appendChild(this.msg(t('ctl.recon.noBase')));
       return panel;
     }
 
@@ -922,7 +916,7 @@ export class ControlTower {
     sum.className = 'pb-note';
     sum.style.textAlign = 'left';
     sum.style.marginTop = '6px';
-    sum.textContent = `포탑 ${layout.turrets.length} · 장애물 ${layout.obstacles.length} · 코어 1`;
+    sum.textContent = t('ctl.recon.summary', { t: layout.turrets.length, o: layout.obstacles.length });
     panel.appendChild(sum);
     return panel;
   }
@@ -931,26 +925,26 @@ export class ControlTower {
     const panel = document.createElement('div');
     panel.className = 'pb-panel';
     const h2 = document.createElement('h2');
-    h2.textContent = '순위표';
+    h2.textContent = t('ctl.ladder.head');
     panel.appendChild(h2);
 
     if (this.loading) {
-      panel.appendChild(this.msg('불러오는 중…'));
+      panel.appendChild(this.msg(t('ctl.ladder.loading')));
       return panel;
     }
     if (this.ladder === null) {
-      panel.appendChild(this.msg('서버 미설정 — 순위표를 표시할 수 없습니다.'));
+      panel.appendChild(this.msg(t('ctl.ladder.null')));
       return panel;
     }
     if (this.ladder.length === 0) {
-      panel.appendChild(this.msg('아직 순위가 없습니다.'));
+      panel.appendChild(this.msg(t('ctl.ladder.empty')));
       return panel;
     }
 
     const table = document.createElement('table');
     table.className = 'pb-lad';
     const thead = document.createElement('tr');
-    for (const label of ['순위', '이름', '전적']) {
+    for (const label of [t('ctl.ladder.rank'), t('ctl.ladder.name'), t('ctl.ladder.record')]) {
       const th = document.createElement('th');
       th.textContent = label;
       thead.appendChild(th);
@@ -964,7 +958,7 @@ export class ControlTower {
       const nm = document.createElement('td');
       nm.textContent = e.displayName ?? `${e.profileId.slice(0, 6)}…`;
       const rec = document.createElement('td');
-      rec.textContent = `${e.wins}승 ${e.losses}패`;
+      rec.textContent = t('ctl.ladder.wl', { w: e.wins, l: e.losses });
       tr.append(rk, nm, rec);
       table.appendChild(tr);
     }

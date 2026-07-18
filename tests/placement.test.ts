@@ -7,7 +7,8 @@
  *   3) controlTower 배치전 순수 표시(computePlacementInvadeState·placementTargetName).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { setLocale } from '../src/i18n/index.js';
 import {
   maintenanceToCenti,
   normalizePlacementStatus,
@@ -29,6 +30,10 @@ import {
 } from '../src/ui/controlTower.js';
 import { SEED_BASES } from '../data/seedBases.js';
 import { TURRET_VULCAN, type DefenseLayout } from '../src/sim/defense.js';
+
+// computePlacementInvadeState 등이 한국어 표시 문자열을 돌려주므로 로케일을 ko 로 고정한다.
+beforeEach(() => setLocale('ko'));
+afterEach(() => setLocale('en'));
 
 const VALID_LAYOUT: DefenseLayout = {
   core: { x: 400, y: 0 },

@@ -9,6 +9,8 @@
  * numbers pulled from sim state — it never touches the simulation itself.
  */
 
+import { t } from '../i18n/index.js';
+
 export interface BossHudState {
   hp: number;
   maxHp: number;
@@ -116,7 +118,7 @@ export class Hud {
 
     this.supplyBanner = document.createElement('div');
     this.supplyBanner.id = 'pb-supply';
-    this.supplyBanner.textContent = '⚠ 보급선 습격 — 격추하라!';
+    this.supplyBanner.textContent = t('hud.supplyRaid');
     this.supplyBanner.style.display = 'none';
     document.body.appendChild(this.supplyBanner);
 
@@ -163,7 +165,8 @@ export class Hud {
     const m = Math.floor(s.timeSec / 60);
     const sec = Math.floor(s.timeSec % 60);
     this.timeEl.textContent = `⏱ ${m}:${sec.toString().padStart(2, '0')}`;
-    this.comboEl.textContent = s.combo > 0 ? `콤보 x${s.multiplier.toFixed(2)} (${s.combo})` : '';
+    this.comboEl.textContent =
+      s.combo > 0 ? t('hud.combo', { mult: s.multiplier.toFixed(2), combo: s.combo }) : '';
 
     this.supplyBanner.style.display = s.supplyActive ? 'block' : 'none';
 
@@ -173,10 +176,10 @@ export class Hud {
       this.bossFill.style.width = `${pct}%`;
       this.bossFill.className = `pb-bossfill${s.boss.overheat ? ' overheat' : ''}`;
       this.bossMsg.textContent = s.boss.transitioning
-        ? `⚙ 페이즈 ${s.boss.phase + 1} 전환 중…`
+        ? t('hud.phaseTransition', { n: s.boss.phase + 1 })
         : s.boss.overheat
-          ? '🔥 과열 — 지금이 기회다! (피해 2배)'
-          : `페이즈 ${s.boss.phase + 1}`;
+          ? t('hud.overheat')
+          : t('hud.phase', { n: s.boss.phase + 1 });
     } else {
       this.bossRoot.style.display = 'none';
     }

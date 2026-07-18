@@ -17,6 +17,7 @@ import { AFFIX_BY_ID, AFFIXES } from '../../data/affixes.js';
 import { rerollAffixes } from '../items/roll.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../save/profile.js';
 import { UI_LOCK_URL, UI_UNLOCK_URL, pixelIcon } from './uiIcons.js';
+import { t, type MessageKey } from '../i18n/index.js';
 
 /** Minerals for a standard reroll; a locked reroll costs 3× (plan AC3). */
 export const REFINERY_REROLL_COST = 12;
@@ -30,18 +31,37 @@ const RARITY_COLOR: Record<Rarity, string> = {
   unique: '#ff8a3c',
 };
 
-const SLOT_LABEL: Record<string, string> = {
-  main: '주무기',
-  sub: '보조무기',
-  armor: '장갑',
-  shield: '실드',
-  engine: '엔진',
-  core: '코어',
-  module: '모듈',
+/** Slot id → i18n key (reuses the shared item.slot.* catalog). */
+const SLOT_LABEL_KEY: Record<string, MessageKey> = {
+  main: 'item.slot.main',
+  sub: 'item.slot.sub',
+  armor: 'item.slot.armor',
+  shield: 'item.slot.shield',
+  engine: 'item.slot.engine',
+  core: 'item.slot.core',
+  module: 'item.slot.module',
 };
 
-/** Weapon-type labels (0 발칸 … 4 빔; M3 무기 5타입). */
-const WEAPON_LABEL = ['발칸', '스프레드', '레일건', '미사일', '빔'];
+/** Localised slot label (falls back to the raw slot id). */
+function slotLabel(slot: string): string {
+  const key = SLOT_LABEL_KEY[slot];
+  return key !== undefined ? t(key) : slot;
+}
+
+/** Weapon-type i18n keys (0 발칸 … 4 빔; M3 무기 5타입 — reuses shared item.weapon.*). */
+const WEAPON_KEY: readonly MessageKey[] = [
+  'item.weapon.0',
+  'item.weapon.1',
+  'item.weapon.2',
+  'item.weapon.3',
+  'item.weapon.4',
+];
+
+/** Localised weapon label (falls back to '?' when out of range). */
+function weaponLabel(type: number): string {
+  const key = WEAPON_KEY[type];
+  return key !== undefined ? t(key) : '?';
+}
 
 const STYLE = `
 #pb-ref { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; gap:14px; padding:24px 16px; box-sizing:border-box; background:radial-gradient(circle at 50% 20%,#0a1220,#03050c 75%); backdrop-filter:blur(3px); font-family:'Segoe UI',system-ui,sans-serif; z-index:29; overflow:auto; }
@@ -148,7 +168,7 @@ export class Refinery {
     if (item === undefined || this.spinning) return;
     const cost = this.currentCost();
     if (this.profile.minerals < cost) {
-      this.hint = `광물이 부족합니다 (필요 ${cost}).`;
+      this.hint = t('refine.err.noMinerals', { n: cost });
       this.render();
       return;
     }
@@ -196,9 +216,9 @@ export class Refinery {
 
   private itemName(item: Item): string {
     if (item.slot === 'main' && item.weaponType !== undefined) {
-      return `${SLOT_LABEL.main} · ${WEAPON_LABEL[item.weaponType] ?? '?'}`;
+      return `${t('item.slot.main')} · ${weaponLabel(item.weaponType)}`;
     }
-    return SLOT_LABEL[item.slot] ?? item.slot;
+    return slotLabel(item.slot);
   }
 
   private affixText(item: Item, i: number): string {
@@ -214,14 +234,14 @@ export class Refinery {
     this.root.innerHTML = '';
 
     const h1 = document.createElement('h1');
-    h1.textContent = '정제소 — 어픽스 리롤';
+    h1.textContent = t('refine.title');
     this.root.appendChild(h1);
 
     const bar = document.createElement('div');
     bar.className = 'pb-bar';
     bar.innerHTML =
-      `<span class="m">광물 <b>${this.profile.minerals}</b></span>` +
-      `<span>크레딧 <b>${this.profile.credits}</b></span>`;
+      `<span class="m">${t('refine.bar.minerals')} <b>${this.profile.minerals}</b></span>` +
+      `<span>${t('refine.bar.credits')} <b>${this.profile.credits}</b></span>`;
     this.root.appendChild(bar);
 
     const cols = document.createElement('div');
@@ -232,12 +252,12 @@ export class Refinery {
     listPanel.className = 'pb-panel';
     const listH = document.createElement('h2');
     const items = this.rerollable();
-    listH.textContent = `보유 장비 (${items.length})`;
+    listH.textContent = t('refine.listHeader', { n: items.length });
     listPanel.appendChild(listH);
     if (items.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'pb-empty';
-      empty.textContent = '어픽스가 있는 장비가 없습니다.\n행성에서 장비를 획득하세요.';
+      empty.textContent = t('refine.noItems');
       empty.style.whiteSpace = 'pre-line';
       listPanel.appendChild(empty);
     } else {
@@ -272,7 +292,7 @@ export class Refinery {
     // Back button (row of its own so it's reachable even with no item selected).
     const back = document.createElement('button');
     back.className = 'pb-ghost';
-    back.textContent = '◀ 기지로';
+    back.textContent = t('common.backToBase');
     back.addEventListener('click', () => {
       if (this.spinning) return;
       const cb = this.onClose;
@@ -287,13 +307,13 @@ export class Refinery {
     panel.className = 'pb-panel pb-detail';
     const item = this.selected();
     const h2 = document.createElement('h2');
-    h2.textContent = '리롤';
+    h2.textContent = t('refine.reroll');
     panel.appendChild(h2);
 
     if (item === undefined) {
       const empty = document.createElement('div');
       empty.className = 'pb-empty';
-      empty.textContent = '왼쪽에서 장비를 선택하세요.';
+      empty.textContent = t('refine.selectPrompt');
       panel.appendChild(empty);
       return panel;
     }
@@ -305,7 +325,7 @@ export class Refinery {
     panel.appendChild(name);
     const slot = document.createElement('div');
     slot.className = 'pb-islot';
-    slot.textContent = `${SLOT_LABEL[item.slot] ?? item.slot} · ${item.rarity} · 어픽스 잠금 시 광물 ${LOCKED_REROLL_MULT}배`;
+    slot.textContent = `${slotLabel(item.slot)} · ${t(`item.rarity.${item.rarity}` as MessageKey)} · ${t('refine.lockNote', { mult: LOCKED_REROLL_MULT })}`;
     panel.appendChild(slot);
 
     for (let i = 0; i < item.affixes.length; i++) {
@@ -317,8 +337,14 @@ export class Refinery {
       txt.textContent = this.affixText(item, i);
       const lockBtn = document.createElement('button');
       lockBtn.className = 'lockbtn';
-      lockBtn.appendChild(pixelIcon(isLocked ? UI_LOCK_URL : UI_UNLOCK_URL, 16, isLocked ? '잠김' : '열림'));
-      lockBtn.title = isLocked ? '잠금 해제' : '이 어픽스 잠금(리롤에서 보존, 광물 3배)';
+      lockBtn.appendChild(
+        pixelIcon(
+          isLocked ? UI_LOCK_URL : UI_UNLOCK_URL,
+          16,
+          isLocked ? t('refine.lock.alt.locked') : t('refine.lock.alt.unlocked'),
+        ),
+      );
+      lockBtn.title = isLocked ? t('refine.lock.title.unlock') : t('refine.lock.title.lock');
       lockBtn.addEventListener('click', () => this.toggleLock(i));
       rowEl.appendChild(txt);
       rowEl.appendChild(lockBtn);
@@ -329,15 +355,15 @@ export class Refinery {
     cost.className = 'pb-cost';
     cost.textContent =
       this.lockedIndex !== null
-        ? `잠금 리롤 비용: 광물 ${this.currentCost()} (1칸 보존)`
-        : `리롤 비용: 광물 ${this.currentCost()}`;
+        ? t('refine.cost.locked', { n: this.currentCost() })
+        : t('refine.cost.normal', { n: this.currentCost() });
     panel.appendChild(cost);
 
     const actions = document.createElement('div');
     actions.className = 'pb-actions';
     const btn = document.createElement('button');
     btn.className = 'pb-act';
-    btn.textContent = this.spinning ? '⟳ 정제 중…' : '🎰 리롤';
+    btn.textContent = this.spinning ? t('refine.spinning') : t('refine.rollBtn');
     btn.disabled = this.spinning || this.profile.minerals < this.currentCost();
     btn.addEventListener('click', () => this.reroll());
     actions.appendChild(btn);
