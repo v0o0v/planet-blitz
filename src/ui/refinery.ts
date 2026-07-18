@@ -18,11 +18,9 @@ import { rerollAffixes } from '../items/roll.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../save/profile.js';
 import { UI_LOCK_URL, UI_UNLOCK_URL, pixelIcon } from './uiIcons.js';
 import { t, type MessageKey } from '../i18n/index.js';
+import { rerollCost, canAfford, LOCKED_REROLL_MULT } from '../../data/economy.js';
 
-/** Minerals for a standard reroll; a locked reroll costs 3× (plan AC3). */
-export const REFINERY_REROLL_COST = 12;
-/** Locked-reroll cost multiplier (광물 3배). */
-export const LOCKED_REROLL_MULT = 3;
+export { LOCKED_REROLL_MULT };
 
 const RARITY_COLOR: Record<Rarity, string> = {
   normal: '#b8c2d8',
@@ -160,14 +158,17 @@ export class Refinery {
   }
 
   private currentCost(): number {
-    return this.lockedIndex !== null ? REFINERY_REROLL_COST * LOCKED_REROLL_MULT : REFINERY_REROLL_COST;
+    const item = this.selected();
+    if (item === undefined) return 0;
+    const lockCount = this.lockedIndex !== null ? 1 : 0;
+    return rerollCost(item.rarity, item.affixes.length, lockCount);
   }
 
   private reroll(): void {
     const item = this.selected();
     if (item === undefined || this.spinning) return;
     const cost = this.currentCost();
-    if (this.profile.minerals < cost) {
+    if (!canAfford(this.profile.minerals, cost)) {
       this.hint = t('refine.err.noMinerals', { n: cost });
       this.render();
       return;
@@ -364,7 +365,7 @@ export class Refinery {
     const btn = document.createElement('button');
     btn.className = 'pb-act';
     btn.textContent = this.spinning ? t('refine.spinning') : t('refine.rollBtn');
-    btn.disabled = this.spinning || this.profile.minerals < this.currentCost();
+    btn.disabled = this.spinning || !canAfford(this.profile.minerals, this.currentCost());
     btn.addEventListener('click', () => this.reroll());
     actions.appendChild(btn);
     panel.appendChild(actions);
