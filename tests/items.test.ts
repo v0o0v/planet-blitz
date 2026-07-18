@@ -51,7 +51,7 @@ describe('rollItem — pure item roller (AC1)', () => {
         expect(item.weaponType).toBeLessThanOrEqual(4); // M3 C1: 5 main-weapon types
       } else if (item.slot === 'sub') {
         expect(item.weaponType).toBeGreaterThanOrEqual(0);
-        expect(item.weaponType).toBeLessThanOrEqual(1);
+        expect(item.weaponType).toBeLessThanOrEqual(4); // GDD §5: 보조무기 5종
       } else {
         expect(item.weaponType).toBeUndefined();
       }

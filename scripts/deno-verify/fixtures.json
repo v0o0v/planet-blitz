@@ -272,7 +272,7 @@
           "id": "it-13690129",
           "slot": "sub",
           "rarity": "rare",
-          "weaponType": 1,
+          "weaponType": 2,
           "uniqueId": null,
           "affixes": [
             {
@@ -395,7 +395,7 @@
           "id": "it-40993",
           "slot": "sub",
           "rarity": "magic",
-          "weaponType": 0,
+          "weaponType": 3,
           "uniqueId": null,
           "affixes": [
             {
@@ -556,7 +556,7 @@
           "id": "it-10360625",
           "slot": "sub",
           "rarity": "unique",
-          "weaponType": 1,
+          "weaponType": 0,
           "uniqueId": "drone-bay",
           "affixes": [
             {
@@ -893,7 +893,7 @@
           "id": "it-5349713",
           "slot": "sub",
           "rarity": "rare",
-          "weaponType": 0,
+          "weaponType": 2,
           "uniqueId": null,
           "affixes": [
             {
