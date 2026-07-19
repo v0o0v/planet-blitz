@@ -15,7 +15,8 @@ import { t, type MessageKey } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
-import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
+import { panelContent } from './nineSlicePanel.js';
+import { makePanelCard, panelDim } from './card.js';
 import { PixiButton } from './button.js';
 import { makeBanner, makeCurrencyChip } from './titleBar.js';
 import type { BaseMapCallbacks } from '../baseMap.js';
@@ -218,12 +219,16 @@ export class BaseMapScreen {
     const reason = this.lockReason(b.key, profile);
     const locked = reason !== null;
 
-    const tile = new Container();
+    // 카드 골격(패널 + hover 리프트 + 클릭)은 행성 선택 카드와 공용이다(card.ts).
+    // 잠금 타일은 클릭 자체를 달지 않아 hover 리프트도 함께 꺼진다(DOM 판과 동일).
+    const tile = makePanelCard({
+      width: TILE_W,
+      height: TILE_H,
+      texture: this.ui['ui_panel.png'],
+      ...(locked ? {} : { onClick: () => this.enter(b.key) }),
+    });
     tile.position.set(px, py);
     this.root.addChild(tile);
-
-    const panel = nineSlicePanel(TILE_W, TILE_H, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER });
-    tile.addChild(panel);
 
     // 건물 아이콘(nearest ×N 확대). 텍스처가 없으면 강조색 사각 폴백.
     const iconTex = this.ui[b.tex];
@@ -241,10 +246,9 @@ export class BaseMapScreen {
 
     if (locked) {
       // 잠금 막: 패널 안쪽 프레임 안에만 깐다(막은 콘텐츠가 아니라 오버레이라 BORDER 기준).
-      // 얹고, 사유는 설명 줄 자리에 넣는다(이름과 겹치지 않게 — 겹침이 첫 검증 결함이었다).
-      const ov = new Graphics();
-      ov.roundRect(PANEL_BORDER, PANEL_BORDER, TILE_W - PANEL_BORDER * 2, TILE_H - PANEL_BORDER * 2, 8).fill({ color: 0x0b0814, alpha: 0.62 });
-      tile.addChild(ov);
+      // 아이콘 위·이름 아래에 끼워야 해서 z 순서를 여기서 직접 잡는다. 사유는 설명 줄 자리에
+      // 넣는다(이름과 겹치지 않게 — 겹침이 첫 검증 결함이었다).
+      tile.addChild(panelDim(TILE_W, TILE_H));
 
       const lockSize = 60;
       const lockTex = this.ui['ui_icon_lock.png'];
@@ -290,20 +294,6 @@ export class BaseMapScreen {
     bottom.position.set(TILE_W / 2, DESC_Y);
     tile.addChild(bottom);
 
-    if (locked) return;
-
-    tile.eventMode = 'static';
-    tile.cursor = 'pointer';
-    tile.on('pointertap', () => this.enter(b.key));
-    // DOM 판의 translateY(-4px) hover 를 그대로 옮긴다.
-    tile.on('pointerover', () => {
-      tile.y = py - 4;
-      tile.alpha = 0.92;
-    });
-    tile.on('pointerout', () => {
-      tile.y = py;
-      tile.alpha = 1;
-    });
   }
 
   private renderLaunch(): void {

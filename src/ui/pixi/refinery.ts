@@ -25,6 +25,7 @@ import { PixiButton } from './button.js';
 import { makeSlotCell, gridPositions } from './slotGrid.js';
 import { PixiTooltip } from './tooltip.js';
 import { makeBanner, makeCurrencyChip, makeIconButton } from './titleBar.js';
+import { stripEmoji } from './text.js';
 
 /** 슬롯 id → i18n 키(공용 item.slot.* 카탈로그 재사용, DOM 판과 동일). */
 const SLOT_LABEL_KEY: Record<string, MessageKey> = {
@@ -54,16 +55,6 @@ const WEAPON_KEY: readonly MessageKey[] = [
 function weaponLabel(type: number): string {
   const key = WEAPON_KEY[type];
   return key !== undefined ? t(key) : '?';
-}
-
-/**
- * 라벨에서 컬러 이모지를 걷어낸다. DOM 버튼에서는 OS 컬러 이모지로 예쁘게 뜨던 🎰 가
- * Pixi 캔버스 텍스트(Malgun Gothic 폴백)에서는 흑백 두부 글리프로 떨어진다. ⟳ 같은
- * 기호 문자(Extended_Pictographic 아님)는 남긴다 — 스핀 표시로 쓸모가 있다.
- */
-function stripEmoji(s: string): string {
-  // 이모지 뒤에 붙는 variation selector-16(U+FE0F)까지 함께 걷어낸다.
-  return s.replace(/[\p{Extended_Pictographic}\u{FE0F}]+\s*/gu, '').trim();
 }
 
 // --- 레이아웃 상수(디자인 스페이스) ---
