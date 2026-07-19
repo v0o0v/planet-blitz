@@ -51,7 +51,7 @@ export class PixiButton {
       this.container.addChild(g);
     }
 
-    this.labelText = new Text({
+    this.labelText = new Text({ resolution: 2,
       text: opts.label,
       style: {
         fontFamily: UI_FONT,

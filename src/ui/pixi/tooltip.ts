@@ -39,7 +39,7 @@ export class PixiTooltip {
 
     let y = PAD;
     const makeLine = (text: string, size: number, color: number, weight: '400' | '700' | '800'): number => {
-      const t = new Text({
+      const t = new Text({ resolution: 2,
         text,
         style: {
           fontFamily: UI_FONT,
