@@ -64,9 +64,9 @@ describe('초기 로케일 선택(순수)', () => {
 describe('t() 조회·치환·폴백', () => {
   it('현재 로케일 문자열을 돌려준다', () => {
     setLocale('en');
-    expect(t('result.win.title')).toBe('Planet Conquered!');
+    expect(t('result.win.title')).toBe('Planet Conquered');
     setLocale('ko');
-    expect(t('result.win.title')).toBe('행성 정복!');
+    expect(t('result.win.title')).toBe('행성 정복');
     expect(getLocale()).toBe('ko');
   });
 

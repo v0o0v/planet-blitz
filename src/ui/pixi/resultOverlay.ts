@@ -36,14 +36,14 @@ const WIN_COLOR = COLOR.gold;
 const LOSE_COLOR = 0xffb0a0;
 
 // --- 레이아웃 상수(디자인 스페이스) ---
-/** 배너 폭은 가장 긴 제목("Planet Conquered!")이 들어가는 값. */
+/** 배너 폭은 가장 긴 제목("Planet Conquered")이 들어가는 값. */
 const BANNER_W = 520;
 const BANNER_H = 72;
 const BANNER_Y = 12;
 const SUB_Y = 100;
 
 const PANEL_Y = 150;
-/** 기록 7행이 상자를 채우고, 전리품 쪽 장비 그리드가 2행(16칸)까지 들어가는 높이. */
+/** 기록 6행이 상자를 채우고, 전리품 쪽 장비 그리드가 2행(16칸)까지 들어가는 높이. */
 const PANEL_H = 640;
 const PANEL_GAP = 24;
 const STATS_W = 700;
@@ -53,7 +53,8 @@ const STATS_W_ALONE = 900;
 
 /** 패널 제목(콘텐츠 상자 top = 60, 26px) 아래에서 첫 행이 시작한다. */
 const ROW_TOP = 132;
-const STAT_STEP = 62;
+/** 기록 6행이 콘텐츠 상자를 위아래로 고르게 채우는 간격. */
+const STAT_STEP = 72;
 const LOOT_STEP = 56;
 /** 전리품 항목은 2열로 접어 아래 장비 그리드에 자리를 내준다. */
 const LOOT_COLS = 2;
@@ -278,7 +279,8 @@ export class ResultOverlayScreen {
       [t('result.stat.kills'), `${s.kills}`],
       [t('result.stat.combo'), `${s.maxCombo}`],
       [t('result.stat.resources'), `${s.resources}`],
-      [t('result.stat.seed'), `${s.seed}`],
+      // 시드는 뺀다(사용자 지시) — 플레이어가 정산에서 읽을 이유가 없는 디버그 값이다.
+      // DOM 판은 그대로 표시하므로 회귀 대비 롤백 시에도 정보가 사라지지 않는다.
     ];
     rows.forEach(([k, v], i) => {
       this.valueRow(panel, centerX, ROW_TOP + i * STAT_STEP, k, v);
