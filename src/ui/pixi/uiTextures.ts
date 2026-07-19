@@ -39,6 +39,12 @@ export const UI_ASSET_NAMES = [
   'ui_icon_search.png',
   'ui_icon_trash.png',
   'ship_showcase_fighter.png',
+  // 기지 맵 건물 아이콘(카툰나무풍 롤아웃 #1).
+  'ui_bld_hangar.png',
+  'ui_bld_research.png',
+  'ui_bld_refinery.png',
+  'ui_bld_defense.png',
+  'ui_bld_control.png',
 ] as const;
 
 /** basename → Texture(로드 성공) | null(미존재/실패). */
