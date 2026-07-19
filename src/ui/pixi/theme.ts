@@ -27,6 +27,8 @@ export const COLOR = {
   panelFill: 0x1c182e,
   bg: 0x181426,
   connector: 0xffd678,
+  /** 밝은 바탕(노란 버튼 등) 위 라벨용 진한 갈색 — 흰 글씨가 묻히는 것을 막는다. */
+  darkLabel: 0x4a2a08,
 } as const;
 
 /** 텍스트 기본 다크 섀도(2px). */

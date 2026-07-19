@@ -38,7 +38,7 @@ import { ResultOverlay } from './ui/resultOverlay.js';
 import { PlanetSelect } from './ui/planetSelect.js';
 import type { LaunchSelection } from './ui/planetSelect.js';
 import { HangarScreen } from './ui/pixi/hangar.js';
-import { BaseMap } from './ui/baseMap.js';
+import { BaseMapScreen } from './ui/pixi/baseMap.js';
 import { ResearchLab } from './ui/researchLab.js';
 import { Refinery } from './ui/refinery.js';
 import { DefenseCommand, normalizeLayout } from './ui/defenseCommand.js';
@@ -217,7 +217,9 @@ async function main(): Promise<void> {
   // 클래스는 회귀 대비로 유지(삭제하지 않음).
   const inventory = new HangarScreen(profile, gameApp.stage);
   // M3 base-map hub + building screens + FTUE (Phase D/E).
-  const baseMap = new BaseMap();
+  // 카툰나무풍 롤아웃 #1(cartoonwood-rollout §화면 1): DOM `BaseMap` 대신 Pixi 캔버스 허브로
+  // 진입점을 교체한다(show/hide/visible + 콜백 타입 동일). DOM 클래스는 회귀 대비로 유지.
+  const baseMap = new BaseMapScreen(gameApp.stage);
   const researchLab = new ResearchLab(profile);
   const refinery = new Refinery(profile);
   const defenseCommand = new DefenseCommand(profile);

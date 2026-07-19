@@ -20,6 +20,11 @@ export interface ButtonOptions {
   fontSize?: number;
   /** 캡(좌우 9-slice 폭). 기본 30. */
   cap?: number;
+  /**
+   * 라벨 색. 기본은 흰색 — 빨강/파랑처럼 어두운 버튼 기준이다. 노란 버튼(ui_btn_yellow)
+   * 처럼 밝은 바탕에는 흰 글씨가 묻히므로 진한 갈색 등을 넘겨 대비를 확보한다.
+   */
+  labelColor?: number;
 }
 
 export class PixiButton {
@@ -57,9 +62,11 @@ export class PixiButton {
         fontFamily: UI_FONT,
         fontSize: opts.fontSize ?? 22,
         fontWeight: '700',
-        fill: 0xffffff,
+        fill: opts.labelColor ?? 0xffffff,
         align: 'center',
-        dropShadow: TEXT_SHADOW,
+        // 어두운 라벨(밝은 버튼)에는 다크 섀도를 끈다 — 획이 촘촘한 한글(예: "출")이
+        // 그림자와 뭉쳐 덩어리로 보인다. 흰 라벨(어두운 버튼)에서만 섀도가 필요하다.
+        dropShadow: opts.labelColor === undefined ? TEXT_SHADOW : false,
       },
     });
     this.labelText.anchor.set(0.5);
