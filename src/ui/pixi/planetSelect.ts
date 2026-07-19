@@ -149,6 +149,11 @@ export class PlanetSelectScreen {
   private tier = 0;
   private anomalyKind = ANOMALY_NONE;
   private anomalyAccepted = false;
+  /**
+   * 잠긴 티어를 눌렀을 때만 띄우는 해금 조건 문구. 평소에는 선택한 티어의 설명만 보인다
+   * (조건을 늘 붙여 두면 읽을 이유가 없는 문장이 항상 자리를 차지한다 — 사용자 지시).
+   */
+  private lockNotice: string | null = null;
   /** 활성 기체 레벨 — 섬멸 티어 게이트(canEnterTier). */
   private level = 1;
   private meta = '';
@@ -189,6 +194,7 @@ export class PlanetSelectScreen {
   }): void {
     this.anomalyKind = opts.anomalyOffered;
     this.anomalyAccepted = false;
+    this.lockNotice = null;
     this.level = opts.level ?? 1;
     // 레벨이 내려갔으면 선택 티어를 유효 범위로 되돌린다(DOM 판과 동일).
     if (!canEnterTier(this.tier, this.level)) this.tier = 0;
@@ -220,8 +226,18 @@ export class PlanetSelectScreen {
   }
 
   private selectTier(id: number): void {
-    if (!canEnterTier(id, this.level)) return; // 잠금 티어: 선택 유지
+    if (!canEnterTier(id, this.level)) {
+      // 잠금 티어: 선택은 그대로 두고 해금 조건만 알린다(사용자 지시 — 평소에는 숨긴다).
+      const tm = TIERS.find((x) => x.id === id);
+      this.lockNotice =
+        tm === undefined
+          ? null
+          : t('planet.lock', { tier: tm.name, lvl: ANNIHILATION_LEVEL, cur: this.level });
+      this.render();
+      return;
+    }
     this.tier = id;
+    this.lockNotice = null;
     this.render();
   }
 
@@ -436,7 +452,9 @@ export class PlanetSelectScreen {
       btn.container.position.set(bx + i * (TIER_BTN_W + TIER_BTN_GAP), TIER_BTN_Y);
       panel.addChild(btn.container);
       if (!unlocked) {
-        // 잠금 티어: 클릭 불가 + 자물쇠 아이콘(DOM 판 pixelIcon 과 같은 자산).
+        // 잠금 티어: 선택은 막되(setEnabled(false) → 버튼 자체는 이벤트를 안 받는다),
+        // "왜 못 고르는지"는 눌러서 물어볼 수 있어야 한다. 버튼 위에 투명 히트 영역을
+        // 따로 얹어 클릭을 받는다 — 버튼 컨테이너는 이미 eventMode 'none' 이라 자식으로는 못 받는다.
         btn.setEnabled(false);
         const lockTex = this.ui['ui_icon_lock.png'];
         if (lockTex) {
@@ -447,20 +465,30 @@ export class PlanetSelectScreen {
           lock.position.set(16, (TIER_BTN_H - lockSize) / 2);
           btn.container.addChild(lock);
         }
+        const catcher = new Graphics();
+        catcher.rect(0, 0, TIER_BTN_W, TIER_BTN_H).fill({ color: 0xffffff, alpha: 0 });
+        catcher.position.copyFrom(btn.container.position);
+        catcher.eventMode = 'static';
+        catcher.cursor = 'not-allowed';
+        catcher.on('pointertap', () => this.selectTier(tm.id));
+        panel.addChild(catcher);
       }
     });
 
+    // 평소에는 선택한 티어 설명, 잠긴 티어를 누른 직후에만 해금 조건(사용자 지시).
     const selTier = TIERS.find((tm) => tm.id === this.tier);
-    const lockedTier = TIERS.find((tm) => !canEnterTier(tm.id, this.level));
-    const descText =
-      lockedTier !== undefined
-        ? `${selTier?.desc ?? ''}   ·   ${t('planet.lock', { tier: lockedTier.name, lvl: ANNIHILATION_LEVEL, cur: this.level })}`
-        : (selTier?.desc ?? '');
+    const notice = this.lockNotice;
     const desc = new Text({
       resolution: 2,
       // 잠금 문구의 🔒 는 캔버스에서 두부로 떨어진다(자물쇠는 버튼 아이콘이 이미 보여준다).
-      text: stripEmoji(descText),
-      style: { fontFamily: UI_FONT, fontSize: 19, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+      text: stripEmoji(notice ?? selTier?.desc ?? ''),
+      style: {
+        fontFamily: UI_FONT,
+        fontSize: 19,
+        fill: notice !== null ? 0xff9a7a : COLOR.muted,
+        fontWeight: notice !== null ? '700' : 'normal',
+        dropShadow: TEXT_SHADOW,
+      },
     });
     desc.anchor.set(0.5, 0);
     // 한 줄 고정: 줄바꿈을 허용하면 로케일에 따라 두 번째 줄이 콘텐츠 상자 바닥을 넘는다.
