@@ -30,7 +30,7 @@ export function makeBanner(w: number, h: number, title: string, texture?: Textur
     g.roundRect(0, 0, w, h, 10).fill({ color: 0x8a2e2e }).stroke({ color: 0x000000, width: 2, alpha: 0.5 });
     root.addChild(g);
   }
-  const t = new Text({
+  const t = new Text({ resolution: 2,
     text: title,
     style: {
       fontFamily: UI_FONT,
@@ -85,7 +85,7 @@ export function makeCurrencyChip(
     root.addChild(icon);
   }
 
-  const t = new Text({
+  const t = new Text({ resolution: 2,
     text: value,
     style: {
       fontFamily: UI_FONT,
@@ -121,7 +121,7 @@ export function makeIconButton(
     const g = new Graphics();
     g.roundRect(0, 0, size, size, 8).fill({ color: 0x3a2a2a }).stroke({ color: 0x000000, width: 2, alpha: 0.5 });
     root.addChild(g);
-    const t = new Text({
+    const t = new Text({ resolution: 2,
       text: fallbackGlyph,
       style: { fontFamily: UI_FONT, fontSize: Math.round(size * 0.5), fontWeight: '800', fill: 0xffffff },
     });

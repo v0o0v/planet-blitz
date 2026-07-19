@@ -77,7 +77,7 @@ export function makeSlotCell(opts: SlotCellOptions): Container {
       .stroke({ color, width: 3, alignment: 1 });
     root.addChild(border);
 
-    const glyph = new Text({
+    const glyph = new Text({ resolution: 2,
       text: itemGlyph(opts.item.slot),
       style: {
         fontFamily: UI_FONT,

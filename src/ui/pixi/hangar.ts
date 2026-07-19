@@ -114,12 +114,18 @@ export class HangarScreen {
     this.root.visible = true;
     // 툴팁은 최상위로.
     this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
+    // DOM HUD(HP/LV, 좌하단)는 런 전용이라 캔버스 격납고 위에 떠 보인다 — 표시 중 숨긴다.
+    // (기존 메뉴 화면들은 전면 DOM 오버레이라 자연히 가려졌던 것을 캔버스 화면에서 명시 처리.)
+    const hud = document.getElementById('pb-hud');
+    if (hud !== null) hud.style.visibility = 'hidden';
   }
 
   hide(): void {
     this.root.visible = false;
     this.tooltip.hide();
     this.onClose = null;
+    const hud = document.getElementById('pb-hud');
+    if (hud !== null) hud.style.visibility = '';
   }
 
   private persist(): void {
@@ -294,7 +300,7 @@ export class HangarScreen {
     const bannerW = 760;
     const bannerH = 72;
     const banner = makeBanner(bannerW, bannerH, t('hangar.title'), this.ui['ui_banner.png']);
-    banner.position.set((DESIGN_WIDTH - bannerW) / 2, 24);
+    banner.position.set((DESIGN_WIDTH - bannerW) / 2, 8);
     this.root.addChild(banner);
 
     const chipW = 190;
@@ -306,7 +312,7 @@ export class HangarScreen {
       this.ui['ui_chip.png'],
       this.ui['ui_icon_coin.png'],
     );
-    credits.position.set((DESIGN_WIDTH - bannerW) / 2 - chipW - 20, 34);
+    credits.position.set((DESIGN_WIDTH - bannerW) / 2 - chipW - 20, 18);
     this.root.addChild(credits);
 
     const minerals = makeCurrencyChip(
@@ -316,7 +322,7 @@ export class HangarScreen {
       this.ui['ui_chip.png'],
       this.ui['ui_icon_crystal.png'],
     );
-    minerals.position.set((DESIGN_WIDTH + bannerW) / 2 + 20, 34);
+    minerals.position.set((DESIGN_WIDTH + bannerW) / 2 + 20, 18);
     this.root.addChild(minerals);
 
     const close = makeIconButton(
@@ -328,7 +334,7 @@ export class HangarScreen {
       },
       this.ui['ui_icon_close.png'],
     );
-    close.position.set(DESIGN_WIDTH - 24 - 56, 24);
+    close.position.set(DESIGN_WIDTH - 24 - 56, 12);
     this.root.addChild(close);
   }
 
@@ -369,14 +375,14 @@ export class HangarScreen {
 
   private renderStatsPanel(): void {
     const px = 24;
-    const py = 88;
+    const py = 96;
     const pw = 900;
-    const ph = 520;
+    const ph = 512;
     const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: 46 });
     panel.position.set(px, py);
     this.root.addChild(panel);
 
-    const title = new Text({
+    const title = new Text({ resolution: 2,
       text: t('hangar.panel.stats'),
       style: { fontFamily: UI_FONT, fontSize: 32, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
     });
@@ -390,7 +396,8 @@ export class HangarScreen {
     const contentTop = py + 88;
     const contentW = pw - 120;
     // 마스크 하한 = 패널 안쪽 프레임(border 46) 위 — 프레임 침범 0.
-    const contentH = ph - 88 - 50;
+    const STAT_STEP = 48;
+    const contentH = Math.floor((ph - 88 - 50) / STAT_STEP) * STAT_STEP; // 행 단위 클램프
 
     const clip = new Container();
     clip.position.set(contentX, contentTop);
@@ -404,27 +411,27 @@ export class HangarScreen {
     clip.addChild(content);
 
     const rows = this.statRows();
-    const step = 38;
+    const step = STAT_STEP;
     let y = 0;
     for (const r of rows) {
-      const name = new Text({
+      const name = new Text({ resolution: 2,
         text: r.label,
-        style: { fontFamily: UI_FONT, fontSize: 22, fontWeight: '700', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
+        style: { fontFamily: UI_FONT, fontSize: 24, fontWeight: '700', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
       });
       name.position.set(0, y);
       content.addChild(name);
-      const val = new Text({
+      const val = new Text({ resolution: 2,
         text: r.value,
-        style: { fontFamily: UI_FONT, fontSize: 22, fontWeight: '800', fill: r.color, dropShadow: TEXT_SHADOW },
+        style: { fontFamily: UI_FONT, fontSize: 24, fontWeight: '800', fill: r.color, dropShadow: TEXT_SHADOW },
       });
       val.position.set(440, y);
       content.addChild(val);
       if (r.desc !== '') {
-        const desc = new Text({
+        const desc = new Text({ resolution: 2,
           text: r.desc,
-          style: { fontFamily: UI_FONT, fontSize: 14, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+          style: { fontFamily: UI_FONT, fontSize: 15, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
         });
-        desc.position.set(0, y + 21);
+        desc.position.set(0, y + 27);
         content.addChild(desc);
       }
       y += step;
@@ -446,16 +453,16 @@ export class HangarScreen {
 
   private renderShowcasePanel(): void {
     const px = 944;
-    const py = 88;
+    const py = 96;
     const pw = 952;
-    const ph = 520;
+    const ph = 512;
     const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: 46 });
     panel.position.set(px, py);
     this.root.addChild(panel);
 
     const ship = activeShip(this.profile);
-    const title = new Text({
-      text: `${slotLabel('main')} · Lv ${ship.level}`,
+    const title = new Text({ resolution: 2,
+      text: `${ship.name} · Lv ${ship.level}`,
       style: { fontFamily: UI_FONT, fontSize: 30, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
     });
     title.anchor.set(0.5, 0);
@@ -490,7 +497,7 @@ export class HangarScreen {
     const leftX = px + 150;
     const rightX = px + pw - 150 - slotSize;
     const colTop = py + 130;
-    const colStep = 100;
+    const colStep = 88; // 4행째(실드/모듈2)가 패널 안쪽 프레임(py+ph-46) 안에 정확히 들어오는 간격
 
     // 연결선 레이어(슬롯보다 아래).
     const lines = new Graphics();
@@ -529,7 +536,7 @@ export class HangarScreen {
       // 라벨: 좌 컬럼은 슬롯 왼쪽(anchor 오른쪽), 우 컬럼은 슬롯 오른쪽(anchor 왼쪽).
       const labelText =
         id === 'module0' ? t('inv.module1') : id === 'module1' ? t('inv.module2') : slotLabel(slotKindOf(id));
-      const label = new Text({
+      const label = new Text({ resolution: 2,
         text: labelText,
         style: { fontFamily: UI_FONT, fontSize: 18, fontWeight: '700', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
       });
@@ -549,7 +556,7 @@ export class HangarScreen {
     this.root.addChild(panel);
 
     const cap = stashCapacity(this.profile.stashExpansions);
-    const title = new Text({
+    const title = new Text({ resolution: 2,
       text: t('inv.stashHeader', { n: this.profile.stash.length, cap }),
       style: { fontFamily: UI_FONT, fontSize: 26, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
     });
@@ -576,10 +583,10 @@ export class HangarScreen {
     const contentX = px + 60;
     const contentTop = py + 96;
     const contentW = pw - 120;
-    // 마스크 하한 = 패널 안쪽 프레임(border 46) 위 — 슬롯이 나무 테두리에 겹치지 않게.
-    const contentH = ph - 96 - 50;
     const cell = 66;
     const gap = 8;
+    // 마스크 하한 = 패널 안쪽 프레임(border 46) 위, 셀 행 배수로 클램프(반토막 셀 금지).
+    const contentH = Math.floor((ph - 96 - 50 + gap) / (cell + gap)) * (cell + gap) - gap;
     const cols = Math.max(1, Math.floor((contentW + gap) / (cell + gap)));
 
     const clip = new Container();
@@ -632,7 +639,7 @@ export class HangarScreen {
     panel.position.set(px, py);
     this.root.addChild(panel);
 
-    const title = new Text({
+    const title = new Text({ resolution: 2,
       text: t('inv.invHeader', { n: this.profile.inventory.length, cap: INVENTORY_CAP }),
       style: { fontFamily: UI_FONT, fontSize: 26, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
     });
@@ -671,11 +678,11 @@ export class HangarScreen {
     const contentX = px + 60;
     const contentTop = py + 100;
     const contentW = pw - 120;
-    // 마스크 하한 = 패널 안쪽 프레임(border 46) 위 — 슬롯이 나무 테두리에 겹치지 않게.
-    const contentH = ph - 100 - 50;
     const cols = 8;
     const cell = 66;
     const gap = 8;
+    // 마스크 하한 = 패널 안쪽 프레임(border 46) 위, 셀 행 배수로 클램프(반토막 셀 금지).
+    const contentH = Math.floor((ph - 100 - 50 + gap) / (cell + gap)) * (cell + gap) - gap;
 
     const clip = new Container();
     clip.position.set(contentX, contentTop);
@@ -722,7 +729,7 @@ export class HangarScreen {
 
   private renderHint(): void {
     if (this.hint === '') return;
-    const t2 = new Text({
+    const t2 = new Text({ resolution: 2,
       text: this.hint,
       style: { fontFamily: UI_FONT, fontSize: 20, fontWeight: '700', fill: 0xff9a7a, dropShadow: TEXT_SHADOW },
     });
