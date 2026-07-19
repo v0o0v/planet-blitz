@@ -40,8 +40,11 @@ export async function createGameApp(mount: HTMLElement): Promise<GameApp> {
   app.stage.addChild(stage);
 
   function fitToWindow(): void {
-    const w = app.renderer.width / app.renderer.resolution;
-    const h = app.renderer.height / app.renderer.resolution;
+    // Pixi v8: app.screen 은 이미 논리(CSS) 픽셀이다. renderer.width 를 resolution 으로
+    // 다시 나누면 dpr>1(Windows 배율) 환경에서 스케일이 과소 계산되어 화면 우/하단이
+    // 비고 UI 가 축소되는 실결함이 있었다(격납고 파일럿 검증에서 실증).
+    const w = app.screen.width;
+    const h = app.screen.height;
     const raw = Math.min(w / DESIGN_WIDTH, h / DESIGN_HEIGHT);
     // Integer scale when upscaling (pixel-art crispness); fractional when the
     // window is smaller than the design space and we must shrink to fit.
@@ -55,6 +58,14 @@ export async function createGameApp(mount: HTMLElement): Promise<GameApp> {
 
   fitToWindow();
   app.renderer.on('resize', fitToWindow);
+  // Pixi v8 의 resizeTo 경로에서 renderer 'resize' 이벤트가 리스너까지 전달되지 않는
+  // 환경이 있어(창 최대화 시 우/하단 공백 + 스케일 고정 실증), window resize 를 직접
+  // 구독해 다음 프레임에 재적합한다. resizeTo:window 의 실제 캔버스 리사이즈가 rAF 로
+  // 지연되므로 한 프레임 뒤에 fit 해야 새 크기를 읽는다.
+  const onWindowResize = (): void => {
+    requestAnimationFrame(fitToWindow);
+  };
+  window.addEventListener('resize', onWindowResize);
 
   return {
     app,
@@ -68,6 +79,7 @@ export async function createGameApp(mount: HTMLElement): Promise<GameApp> {
       };
     },
     destroy() {
+      window.removeEventListener('resize', onWindowResize);
       app.renderer.off('resize', fitToWindow);
       app.destroy(true, { children: true });
     },
