@@ -15,7 +15,7 @@ import { t, type MessageKey } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
-import { nineSlicePanel } from './nineSlicePanel.js';
+import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
 import { makeBanner, makeCurrencyChip } from './titleBar.js';
 import type { BaseMapCallbacks } from '../baseMap.js';
@@ -45,18 +45,20 @@ const BANNER_Y = 16;
 const CHIP_W = 190;
 const CHIP_H = 52;
 const SUB_Y = 100;
-/** 패널 9-slice 테두리(ui_panel.png 사양). 콘텐츠 하한 계산에 그대로 쓴다. */
-const BORDER = 46;
 const TILE_W = 470;
 const TILE_H = 340;
 const TILE_GAP = 36;
 const ROW1_Y = 134;
 const ROW2_Y = ROW1_Y + TILE_H + 30;
-/** 타일 내부 y 좌표. 하한 = TILE_H - BORDER(294) — 전부 그 위에 들어온다(프레임 침범 0). */
-const ICON_SIZE = 150;
-const ICON_Y = 54;
-const NAME_Y = 212;
-const DESC_Y = 256;
+/**
+ * 타일 안쪽 콘텐츠 상자. 아이콘·이름·설명을 전부 이 상자 안에 둔다 — 프레임 침범도,
+ * 테두리에 붙는 것도 막는다(nineSlicePanel §PANEL_INNER_PAD).
+ */
+const BOX = panelContent(TILE_W, TILE_H);
+const ICON_SIZE = 144;
+const ICON_Y = BOX.y;
+const NAME_Y = 210;
+const DESC_Y = 250;
 const LAUNCH_W = 460;
 const LAUNCH_H = 84;
 const LAUNCH_Y = 872;
@@ -220,7 +222,7 @@ export class BaseMapScreen {
     tile.position.set(px, py);
     this.root.addChild(tile);
 
-    const panel = nineSlicePanel(TILE_W, TILE_H, { texture: this.ui['ui_panel.png'], border: BORDER });
+    const panel = nineSlicePanel(TILE_W, TILE_H, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER });
     tile.addChild(panel);
 
     // 건물 아이콘(nearest ×N 확대). 텍스처가 없으면 강조색 사각 폴백.
@@ -238,10 +240,10 @@ export class BaseMapScreen {
     }
 
     if (locked) {
-      // 잠금 막: 패널 안쪽 프레임(BORDER) 안에만 깐다 — 프레임 침범 0. 아이콘 위에 자물쇠를
+      // 잠금 막: 패널 안쪽 프레임 안에만 깐다(막은 콘텐츠가 아니라 오버레이라 BORDER 기준).
       // 얹고, 사유는 설명 줄 자리에 넣는다(이름과 겹치지 않게 — 겹침이 첫 검증 결함이었다).
       const ov = new Graphics();
-      ov.roundRect(BORDER, BORDER, TILE_W - BORDER * 2, TILE_H - BORDER * 2, 8).fill({ color: 0x0b0814, alpha: 0.62 });
+      ov.roundRect(PANEL_BORDER, PANEL_BORDER, TILE_W - PANEL_BORDER * 2, TILE_H - PANEL_BORDER * 2, 8).fill({ color: 0x0b0814, alpha: 0.62 });
       tile.addChild(ov);
 
       const lockSize = 60;
@@ -280,7 +282,7 @@ export class BaseMapScreen {
         fill: locked ? 0xff9a7a : COLOR.muted,
         align: 'center',
         wordWrap: true,
-        wordWrapWidth: TILE_W - BORDER * 2 - 24,
+        wordWrapWidth: BOX.w,
         dropShadow: TEXT_SHADOW,
       },
     });

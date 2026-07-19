@@ -40,7 +40,7 @@ import {
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
-import { nineSlicePanel } from './nineSlicePanel.js';
+import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
 import { PixiTooltip } from './tooltip.js';
 import { makeBanner, makeCurrencyChip, makeIconButton } from './titleBar.js';
@@ -70,31 +70,41 @@ const PREVIEW_ROWS: readonly [StatKey, MessageKey, boolean][] = [
 
 // --- 레이아웃 상수(디자인 스페이스) ---
 const BANNER_W = 620;
-const BANNER_H = 76;
-const BANNER_Y = 16;
+const BANNER_H = 72;
+const BANNER_Y = 12;
 const CHIP_W = 190;
 const CHIP_H = 52;
-const SUB_Y = 100;
-/** 패널 9-slice 테두리. 콘텐츠 하한(= PANEL_H - BORDER) 계산에 그대로 쓴다. */
-const BORDER = 46;
-const PANEL_Y = 124;
-const PANEL_H = 756;
-const PANEL_W = 453;
-const PANEL_GAP = 20;
-const PANEL_X0 = 24;
-/** 트리 패널 안쪽 폭(= PANEL_W - BORDER*2). 노드 2열이 정확히 이 폭을 채운다. */
-const INNER_W = PANEL_W - BORDER * 2;
-const NODE_W = 175;
+const SUB_Y = 88;
+const PANEL_Y = 118;
+const PANEL_H = 776;
+const PANEL_W = 461;
+const PANEL_GAP = 14;
+const PANEL_X0 = Math.round((DESIGN_WIDTH - (PANEL_W * 4 + PANEL_GAP * 3)) / 2);
+/**
+ * 패널 안쪽 콘텐츠 상자. 제목·부제·노드·캡스톤·스탯 행을 전부 이 상자 기준으로 잡는다 —
+ * 프레임에 붙는 것을 좌표 재유도 없이 구조적으로 막는다(nineSlicePanel §PANEL_INNER_PAD).
+ */
+const BOX = panelContent(PANEL_W, PANEL_H);
+const TITLE_Y = BOX.y;
+const TREE_SUB_Y = 100;
+const NODE_TOP = 130;
 const NODE_H = 44;
-const NODE_GAP_X = INNER_W - NODE_W * 2;
-const NODE_TOP = 100;
-const NODE_STEP = 53;
+const NODE_STEP = 52;
 const NODE_ROWS = NODES_PER_TREE / 2;
-const CAPSTONE_Y = NODE_TOP + NODE_ROWS * NODE_STEP;
+const NODE_W = Math.floor((BOX.w - 11) / 2);
+const NODE_GAP_X = BOX.w - NODE_W * 2;
 const CAPSTONE_H = 56;
+/** 노드 그리드가 끝나는 y(10행 = 650). */
+const NODE_GRID_BOTTOM = NODE_TOP + NODE_ROWS * NODE_STEP;
+/**
+ * 캡스톤은 콘텐츠 상자 바닥에 붙인다(660) — 마지막 노드 행과의 간격이 자동으로 남는다.
+ * `Math.max` 는 그리드가 커져도 캡스톤이 노드 위로 겹치지 않게 하는 안전장치다.
+ */
+const CAPSTONE_Y = Math.max(NODE_GRID_BOTTOM + 10, BOX.bottom - CAPSTONE_H);
+const STAT_STEP = 34;
 const RESPEC_W = 420;
-const RESPEC_H = 64;
-const RESPEC_Y = 900;
+const RESPEC_H = 60;
+const RESPEC_Y = 908;
 
 function panelX(col: number): number {
   return PANEL_X0 + col * (PANEL_W + PANEL_GAP);
@@ -293,7 +303,7 @@ export class ResearchLabScreen {
     const panel = new Container();
     panel.position.set(px, PANEL_Y);
     this.root.addChild(panel);
-    panel.addChild(nineSlicePanel(PANEL_W, PANEL_H, { texture: this.ui['ui_panel.png'], border: BORDER }));
+    panel.addChild(nineSlicePanel(PANEL_W, PANEL_H, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER }));
 
     const title = new Text({
       resolution: 2,
@@ -301,7 +311,7 @@ export class ResearchLabScreen {
       style: { fontFamily: UI_FONT, fontSize: 28, fontWeight: '800', fill: meta.accent, dropShadow: TEXT_SHADOW },
     });
     title.anchor.set(0.5, 0);
-    title.position.set(PANEL_W / 2, 34);
+    title.position.set(PANEL_W / 2, TITLE_Y);
     panel.addChild(title);
 
     const { start } = treeRange(tree);
@@ -316,12 +326,12 @@ export class ResearchLabScreen {
         fill: COLOR.muted,
         align: 'center',
         wordWrap: true,
-        wordWrapWidth: INNER_W,
+        wordWrapWidth: BOX.w,
         dropShadow: TEXT_SHADOW,
       },
     });
     sub.anchor.set(0.5, 0);
-    sub.position.set(PANEL_W / 2, 70);
+    sub.position.set(PANEL_W / 2, TREE_SUB_Y);
     panel.addChild(sub);
 
     // 20노드 2열 그리드(티어 오름차순 = SKILLS 내 인덱스 순서).
@@ -329,7 +339,7 @@ export class ResearchLabScreen {
       const index = start + local;
       if (SKILLS[index] === undefined) continue;
       const cell = this.makeNodeCell(index, meta.accent);
-      cell.position.set(BORDER + (local % 2) * (NODE_W + NODE_GAP_X), NODE_TOP + Math.floor(local / 2) * NODE_STEP);
+      cell.position.set(BOX.x + (local % 2) * (NODE_W + NODE_GAP_X), NODE_TOP + Math.floor(local / 2) * NODE_STEP);
       panel.addChild(cell);
     }
 
@@ -416,7 +426,7 @@ export class ResearchLabScreen {
     const btn = new PixiButton({
       texture: this.ui[unlocked ? 'ui_btn_yellow.png' : 'ui_btn_wood.png'],
       fallbackColor: unlocked ? 0x9a7a2a : 0x4a3a24,
-      width: INNER_W,
+      width: BOX.w,
       height: CAPSTONE_H,
       fontSize: 18,
       // 노란 버튼은 바탕이 밝아 흰 라벨이 묻힌다(기지 맵과 동일 처리).
@@ -424,7 +434,7 @@ export class ResearchLabScreen {
       label,
       onClick: () => this.investCapstone(index, unlocked),
     });
-    btn.container.position.set(BORDER, CAPSTONE_Y);
+    btn.container.position.set(BOX.x, CAPSTONE_Y);
     btn.container.on('pointerover', (e) => this.showTip(index, unlocked ? COLOR.gold : accent, e.global.x, e.global.y));
     btn.container.on('pointermove', (e) => this.moveTip(e.global.x, e.global.y));
     btn.container.on('pointerout', () => this.tooltip.hide());
@@ -437,7 +447,7 @@ export class ResearchLabScreen {
     const panel = new Container();
     panel.position.set(px, PANEL_Y);
     this.root.addChild(panel);
-    panel.addChild(nineSlicePanel(PANEL_W, PANEL_H, { texture: this.ui['ui_panel.png'], border: BORDER }));
+    panel.addChild(nineSlicePanel(PANEL_W, PANEL_H, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER }));
 
     const title = new Text({
       resolution: 2,
@@ -449,12 +459,12 @@ export class ResearchLabScreen {
         fill: COLOR.cream,
         align: 'center',
         wordWrap: true,
-        wordWrapWidth: INNER_W,
+        wordWrapWidth: BOX.w,
         dropShadow: TEXT_SHADOW,
       },
     });
     title.anchor.set(0.5, 0);
-    title.position.set(PANEL_W / 2, 34);
+    title.position.set(PANEL_W / 2, TITLE_Y);
     panel.addChild(title);
 
     const sums = computeSkillStats(this.profile.skillInvest);
@@ -468,7 +478,7 @@ export class ResearchLabScreen {
         text: t(labelKey),
         style: { fontFamily: UI_FONT, fontSize: 18, fill: COLOR.cream, dropShadow: TEXT_SHADOW },
       });
-      k.position.set(BORDER, y);
+      k.position.set(BOX.x, y);
       panel.addChild(k);
       // 시너지 증폭은 분수를 만든다(예: 59.072) — 소수 1자리로 반올림해 표시 노이즈를 줄인다.
       const shownV = Number.isInteger(v) ? String(v) : v.toFixed(1);
@@ -478,9 +488,9 @@ export class ResearchLabScreen {
         style: { fontFamily: UI_FONT, fontSize: 18, fontWeight: '800', fill: COLOR.gold, dropShadow: TEXT_SHADOW },
       });
       val.anchor.set(1, 0);
-      val.position.set(PANEL_W - BORDER, y);
+      val.position.set(BOX.right, y);
       panel.addChild(val);
-      y += 34;
+      y += STAT_STEP;
       shown++;
     }
 
@@ -494,17 +504,17 @@ export class ResearchLabScreen {
           fill: COLOR.muted,
           align: 'center',
           wordWrap: true,
-          wordWrapWidth: INNER_W,
+          wordWrapWidth: BOX.w,
           dropShadow: TEXT_SHADOW,
         },
       });
       empty.anchor.set(0.5, 0);
       empty.position.set(PANEL_W / 2, y);
       panel.addChild(empty);
-      y += 34;
+      y += STAT_STEP * 2;
     }
 
-    // 시너지 안내는 스탯 행 아래. 최대 12행(y=508)이어도 패널 안쪽 하한(710) 안에 든다.
+    // 시너지 안내는 스탯 행 아래. 12행 전부 나와도(y=538) 콘텐츠 하한(BOX.bottom) 안에 든다.
     const syn = new Text({
       resolution: 2,
       text: t('lab.synergy'),
@@ -513,11 +523,11 @@ export class ResearchLabScreen {
         fontSize: 15,
         fill: COLOR.muted,
         wordWrap: true,
-        wordWrapWidth: INNER_W,
+        wordWrapWidth: BOX.w,
         dropShadow: TEXT_SHADOW,
       },
     });
-    syn.position.set(BORDER, y + 20);
+    syn.position.set(BOX.x, y + 20);
     panel.addChild(syn);
   }
 
