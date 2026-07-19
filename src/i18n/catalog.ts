@@ -208,6 +208,7 @@ export const EN = {
   'lab.stat.magnet': 'Magnet Radius',
   'lab.stat.xp': 'XP',
   'lab.derivedStats': 'Derived Stats (with synergy)',
+  'lab.noStats': 'Invest skill points to see the derived stats here.',
   'lab.synergy':
     "Synergy: each node's output is amplified by points invested in lower tiers of the same tree (up to +50%). Investing deeper strengthens higher nodes.",
   'lab.err.noPoints': 'Not enough skill points.',
@@ -704,6 +705,7 @@ export const KO: Record<MessageKey, string> = {
   'lab.stat.magnet': '자석 반경',
   'lab.stat.xp': '경험치',
   'lab.derivedStats': '파생 스탯 (시너지 반영)',
+  'lab.noStats': '스킬 포인트를 투자하면 여기에 파생 스탯이 표시됩니다.',
   'lab.synergy':
     '시너지: 각 노드의 출력은 같은 계열 하위 티어에 투자한 포인트만큼 소폭 증폭됩니다(최대 +50%). 깊게 투자할수록 상위 노드가 강해집니다.',
   'lab.err.noPoints': '스킬 포인트가 부족합니다.',

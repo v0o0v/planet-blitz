@@ -39,7 +39,7 @@ import { PlanetSelect } from './ui/planetSelect.js';
 import type { LaunchSelection } from './ui/planetSelect.js';
 import { HangarScreen } from './ui/pixi/hangar.js';
 import { BaseMapScreen } from './ui/pixi/baseMap.js';
-import { ResearchLab } from './ui/researchLab.js';
+import { ResearchLabScreen } from './ui/pixi/researchLab.js';
 import { Refinery } from './ui/refinery.js';
 import { DefenseCommand, normalizeLayout } from './ui/defenseCommand.js';
 import { ControlTower } from './ui/controlTower.js';
@@ -220,7 +220,8 @@ async function main(): Promise<void> {
   // 카툰나무풍 롤아웃 #1(cartoonwood-rollout §화면 1): DOM `BaseMap` 대신 Pixi 캔버스 허브로
   // 진입점을 교체한다(show/hide/visible + 콜백 타입 동일). DOM 클래스는 회귀 대비로 유지.
   const baseMap = new BaseMapScreen(gameApp.stage);
-  const researchLab = new ResearchLab(profile);
+  // 카툰나무풍 롤아웃 #2: DOM `ResearchLab` 대신 Pixi 캔버스 연구소로 교체(인터페이스 동일).
+  const researchLab = new ResearchLabScreen(profile, gameApp.stage);
   const refinery = new Refinery(profile);
   const defenseCommand = new DefenseCommand(profile);
   const controlTower = new ControlTower();
