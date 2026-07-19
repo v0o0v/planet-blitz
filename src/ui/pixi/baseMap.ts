@@ -311,6 +311,8 @@ export class BaseMapScreen {
       width: LAUNCH_W,
       height: LAUNCH_H,
       fontSize: 30,
+      // 노란 버튼은 바탕이 밝아 흰 글씨가 묻힌다 — 진한 갈색 라벨로 대비 확보(사용자 지적).
+      labelColor: COLOR.darkLabel,
       label: t('base.launch'),
       onClick: () => this.cb?.onStarMap(),
     });
