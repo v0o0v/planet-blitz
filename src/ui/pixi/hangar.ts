@@ -389,7 +389,8 @@ export class HangarScreen {
     const contentX = px + 60;
     const contentTop = py + 88;
     const contentW = pw - 120;
-    const contentH = ph - 88 - 16;
+    // 마스크 하한 = 패널 안쪽 프레임(border 46) 위 — 프레임 침범 0.
+    const contentH = ph - 88 - 50;
 
     const clip = new Container();
     clip.position.set(contentX, contentTop);
@@ -485,8 +486,9 @@ export class HangarScreen {
 
     // 장착 8슬롯: 좌 4 / 우 4 컬럼, y 간격 100. 라벨은 슬롯 바깥쪽.
     const slotSize = 72;
-    const leftX = px + 70;
-    const rightX = px + pw - 70 - slotSize;
+    // 바깥쪽 라벨(최대 ~90px)이 패널 안쪽 프레임(border 46) 안에 들어오도록 컬럼을 안쪽으로.
+    const leftX = px + 150;
+    const rightX = px + pw - 150 - slotSize;
     const colTop = py + 130;
     const colStep = 100;
 
@@ -574,7 +576,8 @@ export class HangarScreen {
     const contentX = px + 60;
     const contentTop = py + 96;
     const contentW = pw - 120;
-    const contentH = ph - 96 - 24;
+    // 마스크 하한 = 패널 안쪽 프레임(border 46) 위 — 슬롯이 나무 테두리에 겹치지 않게.
+    const contentH = ph - 96 - 50;
     const cell = 66;
     const gap = 8;
     const cols = Math.max(1, Math.floor((contentW + gap) / (cell + gap)));
@@ -668,7 +671,8 @@ export class HangarScreen {
     const contentX = px + 60;
     const contentTop = py + 100;
     const contentW = pw - 120;
-    const contentH = ph - 100 - 24;
+    // 마스크 하한 = 패널 안쪽 프레임(border 46) 위 — 슬롯이 나무 테두리에 겹치지 않게.
+    const contentH = ph - 100 - 50;
     const cols = 8;
     const cell = 66;
     const gap = 8;
