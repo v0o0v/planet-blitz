@@ -11,8 +11,19 @@
 import { Container, Graphics, NineSliceSprite, Sprite, Text, type Texture } from 'pixi.js';
 import { UI_FONT, TEXT_SHADOW, COLOR } from './theme.js';
 
-/** 배너 + 중앙 제목. */
-export function makeBanner(w: number, h: number, title: string, texture?: Texture | null): Container {
+/**
+ * 배너 + 중앙 제목.
+ *
+ * @param titleColor 제목 색. 기본 크림(0xffe9c0) — 화면 제목은 전부 이 색이다. 정산처럼
+ *   **배너 자체가 결과를 말해야 하는** 화면만 승리 골드/패배 살구색을 넘겨 대비를 준다.
+ */
+export function makeBanner(
+  w: number,
+  h: number,
+  title: string,
+  texture?: Texture | null,
+  titleColor = 0xffe9c0,
+): Container {
   const root = new Container();
   if (texture) {
     const bg = new NineSliceSprite({
@@ -36,7 +47,7 @@ export function makeBanner(w: number, h: number, title: string, texture?: Textur
       fontFamily: UI_FONT,
       fontSize: 32,
       fontWeight: '800',
-      fill: 0xffe9c0,
+      fill: titleColor,
       dropShadow: TEXT_SHADOW,
     },
   });

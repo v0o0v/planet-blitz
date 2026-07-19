@@ -34,13 +34,13 @@ import type { BossHudState } from './ui/hud.js';
 import { PowerupOverlay } from './ui/powerupOverlay.js';
 import { levelUpOverlayAction, readBuildStatus } from './ui/buildStatus.js';
 import { shouldEnterSettlement } from './ui/runFlow.js';
-import { ResultOverlay } from './ui/resultOverlay.js';
 import type { LaunchSelection } from './ui/planetSelect.js';
 import { HangarScreen } from './ui/pixi/hangar.js';
 import { BaseMapScreen } from './ui/pixi/baseMap.js';
 import { ResearchLabScreen } from './ui/pixi/researchLab.js';
 import { RefineryScreen } from './ui/pixi/refinery.js';
 import { PlanetSelectScreen } from './ui/pixi/planetSelect.js';
+import { ResultOverlayScreen } from './ui/pixi/resultOverlay.js';
 import { DefenseCommand, normalizeLayout } from './ui/defenseCommand.js';
 import { ControlTower } from './ui/controlTower.js';
 import type { ControlTowerShowOpts, InvasionResultView } from './ui/controlTower.js';
@@ -136,7 +136,6 @@ async function main(): Promise<void> {
   const gameApp = await createGameApp(mount);
   const hud = new Hud();
   const powerupOverlay = new PowerupOverlay();
-  const resultOverlay = new ResultOverlay();
   const textures = await loadGameTextures(gameApp.app.renderer);
   // Planet backdrop by index, with a guaranteed non-undefined fallback (the
   // array always holds 4 entries; the extra `?? gem` only satisfies the strict
@@ -227,6 +226,10 @@ async function main(): Promise<void> {
   // visible + LaunchSelection 동일). 다른 캔버스 메타 화면과 같은 블록에서 만들어야
   // entityRenderer·radar 레이어보다 **뒤에** stage 에 붙어 위로 그려진다(z 순서).
   const planetSelect = new PlanetSelectScreen(gameApp.stage);
+  // 카툰나무풍 롤아웃 #5: DOM `ResultOverlay` 대신 Pixi 캔버스 정산 화면으로 교체(show/hide/
+  // visible + ResultState 동일). 다른 캔버스 화면과 같은 이유로 여기서 만든다 — 앞쪽(텍스처
+  // 로드 전)에서 만들면 entityRenderer·radar 보다 먼저 stage 에 붙어 아레나 아래에 깔린다.
+  const resultOverlay = new ResultOverlayScreen(gameApp.stage);
   const defenseCommand = new DefenseCommand(profile);
   const controlTower = new ControlTower();
   // 방어 사령부 실화면 편집 프리뷰(레인 B, ADR-0013): 침공 정지 월드를 침공과 동일 렌더 경로로
@@ -390,7 +393,7 @@ async function main(): Promise<void> {
     tutorialOverlay.hide();
     resultOverlay.hide();
     baseMap.hide();
-    // 캔버스 메타 화면(성계 지도·격납고·연구소·정제소)은 DOM 오버레이와 달리 다음 화면이
+    // 캔버스 화면(정산·성계 지도·격납고·연구소·정제소)은 DOM 오버레이와 달리 다음 화면이
     // 자동으로 덮지 않는다 — 같은 stage 위에 계속 그려지므로 화면 전환마다 명시적으로 숨긴다.
     planetSelect.hide();
     inventory.hide();

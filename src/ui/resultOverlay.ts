@@ -96,8 +96,12 @@ function row(k: string, v: string, valueClass?: string): HTMLElement {
   return frag;
 }
 
-/** 장비 1개의 표시 이름(주무기는 무기 종류, 그 외는 슬롯명 — i18n). */
-function dropName(d: ResultDrop): string {
+/**
+ * 장비 1개의 표시 이름(주무기는 무기 종류, 그 외는 슬롯명 — i18n).
+ * Pixi 판(`src/ui/pixi/resultOverlay.ts`)이 그대로 import 한다 — 이름 규칙이 두 벌로
+ * 갈리면 같은 드랍이 화면마다 다른 이름으로 보인다.
+ */
+export function dropName(d: ResultDrop): string {
   if (d.slot === 'main' && d.weaponType !== undefined) {
     const key = `item.weapon.${d.weaponType}` as 'item.weapon.0' | 'item.weapon.1' | 'item.weapon.2';
     return t(key);
