@@ -48,6 +48,12 @@ export const UI_ASSET_NAMES = [
   // 정제소 어픽스 잠금 토글(카툰나무풍 롤아웃 #3) — DOM 판이 쓰던 32px 자물쇠 아이콘 재사용.
   'ui_lock.png',
   'ui_unlock.png',
+  // 성계 지도 행성 오브(카툰나무풍 롤아웃 #4). 인덱스는 data/planets 레지스트리 순서
+  // (0 카르곤 · 1 베르단 · 2 니플헤임 · 3 아르케). 없으면 코드 그라데이션 오브로 폴백한다.
+  'ui_planet_0.png',
+  'ui_planet_1.png',
+  'ui_planet_2.png',
+  'ui_planet_3.png',
 ] as const;
 
 /** basename → Texture(로드 성공) | null(미존재/실패). */

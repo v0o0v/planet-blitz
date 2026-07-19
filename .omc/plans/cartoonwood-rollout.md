@@ -21,8 +21,8 @@
 | 1 | 기지 맵 (BaseMap) | `src/ui/pixi/baseMap.ts` | **완료** (PR #67, 2026-07-19) | 건물 5종 3+2 나무 패널 타일. ADR 은 미작성 — 아래 "남은 문서 작업" 참조. |
 | 2 | 연구소 (ResearchLab) | `src/ui/pixi/researchLab.ts` | **완료** (2026-07-19) | 계열 3패널 + 파생 스탯 패널. 노드는 칩 9-slice 카드 2열 10행, 설명은 hover 툴팁(카드에 넣으면 한 화면에 안 들어감). 캡스톤은 해금 시 노란 버튼 / 잠금 시 나무 버튼. |
 | 3 | 정제소 (Refinery) | `src/ui/pixi/refinery.ts` | **완료** (2026-07-20) | 장비 6열 슬롯 그리드 + 어픽스 칩 행(잠금 토글 아이콘). 배너 제목은 사용자 지시로 "정제소"만(`refine.title` 에서 "— 어픽스 리롤" 제거). 컬러 이모지(🎰)는 Pixi 에서 두부로 떨어져 `stripEmoji` 로 제거. |
-| 4 | 행성 선택 (PlanetSelect) | `src/ui/planetSelect.ts` | **다음** | 출격 전 화면. 행성 카드 패널화. |
-| 5 | 정산 (ResultOverlay) | `src/ui/resultOverlay.ts` | 런 종료 보상 — 슬롯 그리드·등급색 재사용. |
+| 4 | 행성 선택 (PlanetSelect) | `src/ui/pixi/planetSelect.ts` | **완료** (2026-07-20) | 행성 카드 4장 + 티어 패널 + 변칙 패널(시드 제안 시만) + 출격/기지로/장비 정비. 카드 골격은 기지 맵 타일과 겹쳐 `card.ts`(`makePanelCard`·`panelDim`)로 승격하고 기지 맵도 그 부품으로 옮겼다. `stripEmoji` 는 `text.ts` 로 공용화(▶ ◀ 는 보존 — 둘 다 Extended_Pictographic 이라 정제소판 정규식이면 지워졌다). |
+| 5 | 정산 (ResultOverlay) | `src/ui/resultOverlay.ts` | **다음** | 런 종료 보상 — 슬롯 그리드·등급색 재사용. |
 | 6 | 관제탑 (ControlTower) | `src/ui/controlTower.ts` | 침공 결과 뷰 포함 — 표 형태 콘텐츠 많음. |
 | 7 | 카드 상점 (CardsView) | `src/ui/cardsView.ts` | 서버 권위 구매 경로 주의(CORS/거부 코드 매핑 기존 작업 참조). |
 | 8 | 설정 (SettingsPanel) | `src/ui/settingsPanel.ts` | 소형 — 마지막. |
@@ -32,11 +32,9 @@
 
 ## 남은 문서 작업
 
-- ADR "메타 UI DOM→Pixi 이관"(plan hangar-cartoon-ui-pilot §6) 미작성. 정제소(#3) 시점 판단:
-  **행성 선택(#4)까지 마친 뒤 작성**한다. 지금까지 이관한 3화면(기지 맵·연구소·정제소)은
-  "패널 + 그리드/행 + 하단 액션" 한 가지 골격만 반복해서, ADR 이 담을 결정(레이어 분리·
-  DOM 클래스 존치 기간·공용 부품 경계)이 아직 사례 1종에서만 검증됐다. 행성 선택은 카드형
-  레이아웃이라 골격이 하나 더 늘어난다 — 그때 쓰면 일반화된 결정을 담을 수 있다.
+- ADR "메타 UI DOM→Pixi 이관" **작성 완료** → `docs/adr/0014-meta-ui-dom-to-pixi.md`(2026-07-20,
+  행성 선택 #4 와 같은 PR). 레이어 분리 · DOM 클래스 존치와 제거 조건 · 공용 부품 경계(둘 이상
+  소비자일 때 승격) · `panelContent()` 로 여백을 코드 강제한 이유 · 검증 절차를 담았다.
 
 ## 진행 중 배운 것 (다음 세션이 반복하지 말 것)
 
@@ -56,6 +54,22 @@
 - **패널 모서리 확대 크롭 방법**: 캔버스에 CSS `transform: scale()` 을 걸면 이 환경에서
   좌표가 어긋난다. `position:fixed` + `width/height` ×N + 음수 `left/top` 으로 키우는
   편이 정확하다. 배율 환산은 `fitToWindow` 와 같은 식(`min(w/1920,h/1080)`, ≥1 이면 floor).
+- **`▶`·`◀` 도 `Extended_Pictographic` 이다**(U+25B6/U+25C0). 정제소(#3)가 쓰던
+  `stripEmoji`(모든 Extended_Pictographic 제거)를 그대로 성계 지도에 쓰면 "▶ 출격"의 삼각형이
+  사라진다. 이 기호들은 폰트 폴백이 흑백 글리프를 제대로 갖고 있어 두부가 되지 않으므로
+  **보존 목록**이 필요하다 → 공용 `src/ui/pixi/text.ts` 의 `KEEP` 집합.
+- **chrome-devtools MCP 가 다른 세션에 점유**되면(`browser is already running for …chrome-profile`)
+  스크린샷 경로가 통째로 막힌다. 대안: `chrome.exe --headless=new --remote-debugging-port=9333`
+  로 별도 프로필 브라우저를 띄우고 CDP(`Page.navigate`/`Runtime.evaluate`/`Page.captureScreenshot`)를
+  Node 내장 `WebSocket` 으로 직접 두드린다(러너: 세션 scratchpad `shot.mjs`). `chrome --screenshot`
+  one-shot 은 캔버스가 비어 찍히니 쓰지 말 것.
+- **모서리 확대 크롭은 CDP `Page.captureScreenshot` 의 `clip`(x,y,w,h,scale)이 정답**이다 —
+  CSS 로 캔버스를 키우는 방법(이전 세션의 `position:fixed` + 음수 offset)보다 정확하고 부수효과가 없다.
+- 캔버스 클릭 검증은 **좌표 대신 표시 객체를 찾아** 누르는 편이 안정적이다(레이아웃 상수가 바뀌어도
+  안 깨진다): stage 를 순회해 라벨 `Text` 를 찾고 `getBounds()` 중심을 client 좌표로 환산해 dispatch.
+  단 `t.visible` 은 **자기 자신만** 보므로 숨은 화면의 텍스트도 잡힌다 — 화면 잔상 판정에는 쓸 수 없다.
+- 성계 지도의 변칙 제안은 **시드가 정한다**. 제안이 뜬 화면을 검증하려면 `__pb.openStarMap()` 을
+  제안이 나올 때까지 반복 호출한다(페이지를 다시 띄우는 것보다 빠르다).
 - 하네스에 리롤용 장비를 채울 때는 치트 패널 **메뉴 → 장비 지급**을 슬롯별로 반복한다
   (같은 슬롯에 또 지급하면 기존 장착분이 인벤토리로 밀려나 쌓인다). `preset('maxed')` 는
   재화만 주고 인벤토리는 비어 있다.

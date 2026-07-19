@@ -12,6 +12,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["vite", "--port", "5185", "--strictPort"],
       "port": 5185
+    },
+    {
+      "name": "planet-blitz-dev-alt2",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--port", "5187", "--strictPort"],
+      "port": 5187
     }
   ]
 }

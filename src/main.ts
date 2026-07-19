@@ -35,12 +35,12 @@ import { PowerupOverlay } from './ui/powerupOverlay.js';
 import { levelUpOverlayAction, readBuildStatus } from './ui/buildStatus.js';
 import { shouldEnterSettlement } from './ui/runFlow.js';
 import { ResultOverlay } from './ui/resultOverlay.js';
-import { PlanetSelect } from './ui/planetSelect.js';
 import type { LaunchSelection } from './ui/planetSelect.js';
 import { HangarScreen } from './ui/pixi/hangar.js';
 import { BaseMapScreen } from './ui/pixi/baseMap.js';
 import { ResearchLabScreen } from './ui/pixi/researchLab.js';
 import { RefineryScreen } from './ui/pixi/refinery.js';
+import { PlanetSelectScreen } from './ui/pixi/planetSelect.js';
 import { DefenseCommand, normalizeLayout } from './ui/defenseCommand.js';
 import { ControlTower } from './ui/controlTower.js';
 import type { ControlTowerShowOpts, InvasionResultView } from './ui/controlTower.js';
@@ -137,7 +137,6 @@ async function main(): Promise<void> {
   const hud = new Hud();
   const powerupOverlay = new PowerupOverlay();
   const resultOverlay = new ResultOverlay();
-  const planetSelect = new PlanetSelect();
   const textures = await loadGameTextures(gameApp.app.renderer);
   // Planet backdrop by index, with a guaranteed non-undefined fallback (the
   // array always holds 4 entries; the extra `?? gem` only satisfies the strict
@@ -224,6 +223,10 @@ async function main(): Promise<void> {
   const researchLab = new ResearchLabScreen(profile, gameApp.stage);
   // 카툰나무풍 롤아웃 #3: DOM `Refinery` 대신 Pixi 캔버스 정제소로 교체(인터페이스 동일).
   const refinery = new RefineryScreen(profile, gameApp.stage);
+  // 카툰나무풍 롤아웃 #4: DOM `PlanetSelect` 대신 Pixi 캔버스 성계 지도로 교체(show/hide/
+  // visible + LaunchSelection 동일). 다른 캔버스 메타 화면과 같은 블록에서 만들어야
+  // entityRenderer·radar 레이어보다 **뒤에** stage 에 붙어 위로 그려진다(z 순서).
+  const planetSelect = new PlanetSelectScreen(gameApp.stage);
   const defenseCommand = new DefenseCommand(profile);
   const controlTower = new ControlTower();
   // 방어 사령부 실화면 편집 프리뷰(레인 B, ADR-0013): 침공 정지 월드를 침공과 동일 렌더 경로로
@@ -332,6 +335,13 @@ async function main(): Promise<void> {
     return (Math.random() * 0xffffffff) >>> 0;
   }
 
+  /**
+   * 다음 런에 쓸 시드. 성계 지도를 열 때 한 번 뽑고, **런이 실제로 시작될 때까지 유지**한다.
+   * 매번 새로 뽑으면 화면을 잠깐 나갔다 오는 것만으로 변칙 제안이 다시 굴러 "새로고침 뽑기"가
+   * 된다(사용자 지적). 런이 시작되면 소진해서 다음 출격은 새 시드를 받는다.
+   */
+  let pendingRunSeed: number | null = null;
+
   /** Meta status line for the star map / no gameplay numbers. */
   function metaLine(): string {
     const ship = activeShip(profile);
@@ -380,8 +390,9 @@ async function main(): Promise<void> {
     tutorialOverlay.hide();
     resultOverlay.hide();
     baseMap.hide();
-    // 캔버스 메타 화면(격납고·연구소)은 DOM 오버레이와 달리 다음 화면이 자동으로 덮지
-    // 않는다 — 같은 stage 위에 계속 그려지므로 화면 전환마다 명시적으로 숨긴다.
+    // 캔버스 메타 화면(성계 지도·격납고·연구소·정제소)은 DOM 오버레이와 달리 다음 화면이
+    // 자동으로 덮지 않는다 — 같은 stage 위에 계속 그려지므로 화면 전환마다 명시적으로 숨긴다.
+    planetSelect.hide();
     inventory.hide();
     researchLab.hide();
     refinery.hide();
@@ -719,7 +730,9 @@ async function main(): Promise<void> {
   function openStarMap(): void {
     clearToMenu();
     setScreen('starMap');
-    const seed = nextSeed();
+    // 이번 출격의 시드(pendingRunSeed 참조 — 화면을 오가도 같은 제안이 유지된다).
+    pendingRunSeed ??= nextSeed();
+    const seed = pendingRunSeed;
     // Pre-compute the anomaly the seed offers (same fork the sim uses) so the
     // player can accept/reject it before the run (OQ-M2-3).
     const offer = rollAnomaly(new SeededRng(seed).fork('anomaly'), false);
@@ -751,6 +764,7 @@ async function main(): Promise<void> {
 
   /** Assemble the run config from the selection + active loadout, then start. */
   function startRun(seed: number, sel: LaunchSelection): void {
+    pendingRunSeed = null; // 이번 시드 소진 — 다음 성계 지도는 새 변칙 제안을 굴린다
     tutorialActive = false; // normal run unless startTutorial re-flags it
     invasionTarget = null; // PvE 런: 침공 컨텍스트 해제(endRun 이 정산 경로로 분기)
     shownLevel = 0; // 새 런: 레벨업 오버레이 표시 상태 초기화

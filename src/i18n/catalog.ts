@@ -74,7 +74,7 @@ export const EN = {
   'item.rarity.unique': 'Unique',
 
   // --- 성계 지도 ---
-  'planet.title': 'Star Map — Prepare to Launch',
+  'planet.title': 'Star Map',
   'planet.sub': 'Choose a planet and operation intensity.',
   'planet.tierLabel': 'Operation Intensity',
   'planet.anomaly.title': '⚠ Anomaly Alert: {name}',
@@ -582,7 +582,7 @@ export const KO: Record<MessageKey, string> = {
   'item.rarity.rare': '레어',
   'item.rarity.unique': '유니크',
 
-  'planet.title': '성계 지도 — 출격 준비',
+  'planet.title': '성계 지도',
   'planet.sub': '행성과 작전 강도를 선택하라.',
   'planet.tierLabel': '작전 강도',
   'planet.anomaly.title': '⚠ 변칙 경보: {name}',
