@@ -45,6 +45,9 @@ export const UI_ASSET_NAMES = [
   'ui_bld_refinery.png',
   'ui_bld_defense.png',
   'ui_bld_control.png',
+  // 정제소 어픽스 잠금 토글(카툰나무풍 롤아웃 #3) — DOM 판이 쓰던 32px 자물쇠 아이콘 재사용.
+  'ui_lock.png',
+  'ui_unlock.png',
 ] as const;
 
 /** basename → Texture(로드 성공) | null(미존재/실패). */

@@ -40,7 +40,7 @@ import type { LaunchSelection } from './ui/planetSelect.js';
 import { HangarScreen } from './ui/pixi/hangar.js';
 import { BaseMapScreen } from './ui/pixi/baseMap.js';
 import { ResearchLabScreen } from './ui/pixi/researchLab.js';
-import { Refinery } from './ui/refinery.js';
+import { RefineryScreen } from './ui/pixi/refinery.js';
 import { DefenseCommand, normalizeLayout } from './ui/defenseCommand.js';
 import { ControlTower } from './ui/controlTower.js';
 import type { ControlTowerShowOpts, InvasionResultView } from './ui/controlTower.js';
@@ -222,7 +222,8 @@ async function main(): Promise<void> {
   const baseMap = new BaseMapScreen(gameApp.stage);
   // 카툰나무풍 롤아웃 #2: DOM `ResearchLab` 대신 Pixi 캔버스 연구소로 교체(인터페이스 동일).
   const researchLab = new ResearchLabScreen(profile, gameApp.stage);
-  const refinery = new Refinery(profile);
+  // 카툰나무풍 롤아웃 #3: DOM `Refinery` 대신 Pixi 캔버스 정제소로 교체(인터페이스 동일).
+  const refinery = new RefineryScreen(profile, gameApp.stage);
   const defenseCommand = new DefenseCommand(profile);
   const controlTower = new ControlTower();
   // 방어 사령부 실화면 편집 프리뷰(레인 B, ADR-0013): 침공 정지 월드를 침공과 동일 렌더 경로로

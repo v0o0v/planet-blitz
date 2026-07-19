@@ -20,8 +20,8 @@
 |---|---|---|---|---|
 | 1 | 기지 맵 (BaseMap) | `src/ui/pixi/baseMap.ts` | **완료** (PR #67, 2026-07-19) | 건물 5종 3+2 나무 패널 타일. ADR 은 미작성 — 아래 "남은 문서 작업" 참조. |
 | 2 | 연구소 (ResearchLab) | `src/ui/pixi/researchLab.ts` | **완료** (2026-07-19) | 계열 3패널 + 파생 스탯 패널. 노드는 칩 9-slice 카드 2열 10행, 설명은 hover 툴팁(카드에 넣으면 한 화면에 안 들어감). 캡스톤은 해금 시 노란 버튼 / 잠금 시 나무 버튼. |
-| 3 | 정제소 (Refinery) | `src/ui/refinery.ts` | **다음** | 재화 변환 UI — 칩·버튼 중심이라 이관 난도 낮음. |
-| 4 | 행성 선택 (PlanetSelect) | `src/ui/planetSelect.ts` | 출격 전 화면. 행성 카드 패널화. |
+| 3 | 정제소 (Refinery) | `src/ui/pixi/refinery.ts` | **완료** (2026-07-20) | 장비 6열 슬롯 그리드 + 어픽스 칩 행(잠금 토글 아이콘). 배너 제목은 사용자 지시로 "정제소"만(`refine.title` 에서 "— 어픽스 리롤" 제거). 컬러 이모지(🎰)는 Pixi 에서 두부로 떨어져 `stripEmoji` 로 제거. |
+| 4 | 행성 선택 (PlanetSelect) | `src/ui/planetSelect.ts` | **다음** | 출격 전 화면. 행성 카드 패널화. |
 | 5 | 정산 (ResultOverlay) | `src/ui/resultOverlay.ts` | 런 종료 보상 — 슬롯 그리드·등급색 재사용. |
 | 6 | 관제탑 (ControlTower) | `src/ui/controlTower.ts` | 침공 결과 뷰 포함 — 표 형태 콘텐츠 많음. |
 | 7 | 카드 상점 (CardsView) | `src/ui/cardsView.ts` | 서버 권위 구매 경로 주의(CORS/거부 코드 매핑 기존 작업 참조). |
@@ -32,8 +32,11 @@
 
 ## 남은 문서 작업
 
-- ADR "메타 UI DOM→Pixi 이관"(plan hangar-cartoon-ui-pilot §6) 미작성. 화면 3~4개를 더 이관해
-  패턴이 굳은 뒤 한 번에 쓰는 편이 낫다 — 정제소(#3) 완료 시점에 작성 판단.
+- ADR "메타 UI DOM→Pixi 이관"(plan hangar-cartoon-ui-pilot §6) 미작성. 정제소(#3) 시점 판단:
+  **행성 선택(#4)까지 마친 뒤 작성**한다. 지금까지 이관한 3화면(기지 맵·연구소·정제소)은
+  "패널 + 그리드/행 + 하단 액션" 한 가지 골격만 반복해서, ADR 이 담을 결정(레이어 분리·
+  DOM 클래스 존치 기간·공용 부품 경계)이 아직 사례 1종에서만 검증됐다. 행성 선택은 카드형
+  레이아웃이라 골격이 하나 더 늘어난다 — 그때 쓰면 일반화된 결정을 담을 수 있다.
 
 ## 진행 중 배운 것 (다음 세션이 반복하지 말 것)
 
@@ -46,6 +49,16 @@
   넣어야 한다. render() 가 매 클릭마다 표시 객체를 새로 만들어서, 프레임을 안 넘기면 첫 클릭만 먹는다.
 - `mcp__Claude_Browser__computer` 스크린샷은 이 프로젝트에서 타임아웃한다 →
   chrome-devtools MCP(`new_page` + `take_screenshot filePath`)로 찍고 Read 로 본다.
+- **i18n 문자열의 컬러 이모지는 Pixi 캔버스에서 흑백 두부 글리프로 떨어진다**(DOM 에서는
+  OS 컬러 이모지로 예쁘게 떴던 것). 정제소 리롤 버튼의 🎰 가 그랬다 → `stripEmoji()` 로
+  라벨에서 걷어낸다(카탈로그는 DOM 판과 공유하므로 건드리지 않는다). ⟳ 같은 기호 문자
+  (Extended_Pictographic 아님)는 정상 렌더되므로 남긴다.
+- **패널 모서리 확대 크롭 방법**: 캔버스에 CSS `transform: scale()` 을 걸면 이 환경에서
+  좌표가 어긋난다. `position:fixed` + `width/height` ×N + 음수 `left/top` 으로 키우는
+  편이 정확하다. 배율 환산은 `fitToWindow` 와 같은 식(`min(w/1920,h/1080)`, ≥1 이면 floor).
+- 하네스에 리롤용 장비를 채울 때는 치트 패널 **메뉴 → 장비 지급**을 슬롯별로 반복한다
+  (같은 슬롯에 또 지급하면 기존 장착분이 인벤토리로 밀려나 쌓인다). `preset('maxed')` 는
+  재화만 주고 인벤토리는 비어 있다.
 
 ## 좌표
 
