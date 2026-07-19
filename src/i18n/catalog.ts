@@ -30,10 +30,11 @@ export const EN = {
   'settings.lang.ko': '한국어',
 
   // --- 정산 화면(C2) ---
-  'result.win.title': 'Planet Conquered!',
+  'result.win.title': 'Planet Conquered',
   'result.lose.title': 'Shot Down…',
   'result.win.sub': 'The lava fortress tank is destroyed.',
   'result.lose.sub': 'The pilot ejected safely. Time to sortie again.',
+  'result.stat.title': 'Battle Log',
   'result.stat.time': 'Survival Time',
   'result.stat.level': 'Level Reached',
   'result.stat.xp': 'XP Gained',
@@ -540,10 +541,11 @@ export const KO: Record<MessageKey, string> = {
   'settings.lang.en': 'English',
   'settings.lang.ko': '한국어',
 
-  'result.win.title': '행성 정복!',
+  'result.win.title': '행성 정복',
   'result.lose.title': '격추당했다…',
   'result.win.sub': '용암 요새 전차를 격파했다.',
   'result.lose.sub': '파일럿은 무사히 사출했다. 다시 출격하자.',
+  'result.stat.title': '전투 기록',
   'result.stat.time': '생존 시간',
   'result.stat.level': '도달 레벨',
   'result.stat.xp': '획득 경험치',

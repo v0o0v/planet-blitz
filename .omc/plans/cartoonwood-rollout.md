@@ -22,8 +22,8 @@
 | 2 | 연구소 (ResearchLab) | `src/ui/pixi/researchLab.ts` | **완료** (2026-07-19) | 계열 3패널 + 파생 스탯 패널. 노드는 칩 9-slice 카드 2열 10행, 설명은 hover 툴팁(카드에 넣으면 한 화면에 안 들어감). 캡스톤은 해금 시 노란 버튼 / 잠금 시 나무 버튼. |
 | 3 | 정제소 (Refinery) | `src/ui/pixi/refinery.ts` | **완료** (2026-07-20) | 장비 6열 슬롯 그리드 + 어픽스 칩 행(잠금 토글 아이콘). 배너 제목은 사용자 지시로 "정제소"만(`refine.title` 에서 "— 어픽스 리롤" 제거). 컬러 이모지(🎰)는 Pixi 에서 두부로 떨어져 `stripEmoji` 로 제거. |
 | 4 | 행성 선택 (PlanetSelect) | `src/ui/pixi/planetSelect.ts` | **완료** (2026-07-20) | 행성 카드 4장 + 티어 패널 + 변칙 패널(시드 제안 시만) + 출격/기지로/장비 정비. 카드 골격은 기지 맵 타일과 겹쳐 `card.ts`(`makePanelCard`·`panelDim`)로 승격하고 기지 맵도 그 부품으로 옮겼다. `stripEmoji` 는 `text.ts` 로 공용화(▶ ◀ 는 보존 — 둘 다 Extended_Pictographic 이라 정제소판 정규식이면 지워졌다). |
-| 5 | 정산 (ResultOverlay) | `src/ui/resultOverlay.ts` | **다음** | 런 종료 보상 — 슬롯 그리드·등급색 재사용. |
-| 6 | 관제탑 (ControlTower) | `src/ui/controlTower.ts` | 침공 결과 뷰 포함 — 표 형태 콘텐츠 많음. |
+| 5 | 정산 (ResultOverlay) | `src/ui/pixi/resultOverlay.ts` | **완료** (2026-07-20) | 승/패 배너 + 기록 패널(7행) + 전리품 패널(2열 × 3행 + 획득 장비 슬롯 그리드 8열·hover 툴팁). 다른 메타 화면과 달리 배경은 **반투명 암막**(런 직후라 얼어붙은 아레나가 비친다 — DOM 판과 동일). `makeBanner` 에 `titleColor` 추가(승리 골드/패배 살구 — 배너가 결과를 말한다), `makeSlotCell` 의 아이템 타입을 `SlotCellItem`(등급+슬롯)로 넓혀 표시 전용 `ResultDrop` 을 그대로 얹었다. 실화면 판정에서 사용자 지시 2건: **기록에서 시드 행 제거**(Pixi 판만 — DOM 판은 롤백 대비로 유지), **승리 제목의 느낌표 제거**(`result.win.title`, en/ko 공통 → i18n 테스트 기대값도 갱신). |
+| 6 | 관제탑 (ControlTower) | `src/ui/controlTower.ts` | **다음** | 침공 결과 뷰 포함 — 표 형태 콘텐츠 많음. |
 | 7 | 카드 상점 (CardsView) | `src/ui/cardsView.ts` | 서버 권위 구매 경로 주의(CORS/거부 코드 매핑 기존 작업 참조). |
 | 8 | 설정 (SettingsPanel) | `src/ui/settingsPanel.ts` | 소형 — 마지막. |
 
@@ -70,6 +70,20 @@
   단 `t.visible` 은 **자기 자신만** 보므로 숨은 화면의 텍스트도 잡힌다 — 화면 잔상 판정에는 쓸 수 없다.
 - 성계 지도의 변칙 제안은 **시드가 정한다**. 제안이 뜬 화면을 검증하려면 `__pb.openStarMap()` 을
   제안이 나올 때까지 반복 호출한다(페이지를 다시 띄우는 것보다 빠르다).
+- **정산(#5)은 "런이 끝나도 `world` 가 살아 있는" 유일한 화면**이다. 그래서 다른 캔버스 화면에는
+  없는 문제가 둘 있다. ① DEV 텔레메트리 줄(`index.html` 의 `#hud` — seed/tick/hash/FPS)이 매
+  프레임 갱신되며 캔버스 위로 그려진다(DOM 판에서는 z-index 30 오버레이가 덮어 줬다) → `#pb-hud`
+  와 함께 숨긴다. ② 배경을 불투명하게 덮으면 방금 끝난 전장이 사라진다 → 세트 배경색 대신
+  **반투명 암막**(0x05060f α0.9)을 깐다.
+- **하네스로 정산 화면을 띄우는 법**(딥링크 없음): `goto('menu')` → `preset('maxed')` →
+  `startRun({planet,tier,anomaly})` → `ff(1800,{autopilot:true})` 를 종료까지 반복 → rAF 몇 프레임.
+  **`preset` 은 런이 없을 때 호출하면 오염 표시가 안 붙는다**(`markTaintedIfLive` 가 no-op) —
+  런 시작 **전에** 걸어야 정산 블록이 나온다. 맨몸(`fresh`)은 autopilot 이 12초 만에 죽고
+  드랍이 0이라 전리품 레이아웃을 못 본다. 드랍을 20개 이상 만들어 보려면 실런 대신
+  `__pb.resultOverlay.show(합성 ResultState, ()=>{}, ()=>{})` 로 뷰만 직접 띄운다.
+- **모서리 확대 크롭은 Pixi stage 를 직접 확대**해도 된다(chrome-devtools MCP 는 CDP `clip` 을
+  못 넘긴다): `stage.scale.set(k); stage.position.set(-x0*k, -y0*k)` 로 디자인 좌표 (x0,y0)를
+  화면 원점에 붙인 뒤 스크린샷, 끝나면 원래 값 복원. 스크린샷 전용이라 좌표계가 깨져도 무해하다.
 - 하네스에 리롤용 장비를 채울 때는 치트 패널 **메뉴 → 장비 지급**을 슬롯별로 반복한다
   (같은 슬롯에 또 지급하면 기존 장착분이 인벤토리로 밀려나 쌓인다). `preset('maxed')` 는
   재화만 주고 인벤토리는 비어 있다.

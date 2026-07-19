@@ -7,8 +7,18 @@
  */
 
 import { Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
-import type { Item, SlotKind } from '../../items/types.js';
+import type { Rarity, SlotKind } from '../../items/types.js';
 import { RARITY_COLOR_NUM, UI_FONT, TEXT_SHADOW } from './theme.js';
+
+/**
+ * 셀이 실제로 읽는 최소 아이템 모양(등급 + 슬롯). 인벤토리/정제소가 넘기는 `Item` 은 물론,
+ * 정산 화면의 **표시 전용 드랍 요약**(`ResultDrop` — 어픽스도 id 도 없다)도 그대로 얹힌다.
+ * 셀이 필요로 하지 않는 필드까지 요구하면 소비 측이 가짜 `Item` 을 지어내게 된다.
+ */
+export interface SlotCellItem {
+  readonly rarity: Rarity;
+  readonly slot: SlotKind;
+}
 
 /** slot 종류 → 인벤토리와 동일한 글리프(파밍 시각 언어 보존). */
 export function itemGlyph(slot: SlotKind): string {
@@ -36,7 +46,7 @@ export function gridPositions(
 
 export interface SlotCellOptions {
   size: number;
-  item?: Item | undefined;
+  item?: SlotCellItem | undefined;
   slotTex?: Texture | null | undefined;
   highlight?: boolean | undefined;
   highlightTex?: Texture | null | undefined;
