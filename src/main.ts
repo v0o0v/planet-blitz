@@ -37,7 +37,7 @@ import { shouldEnterSettlement } from './ui/runFlow.js';
 import { ResultOverlay } from './ui/resultOverlay.js';
 import { PlanetSelect } from './ui/planetSelect.js';
 import type { LaunchSelection } from './ui/planetSelect.js';
-import { InventoryOverlay } from './ui/inventory.js';
+import { HangarScreen } from './ui/pixi/hangar.js';
 import { BaseMap } from './ui/baseMap.js';
 import { ResearchLab } from './ui/researchLab.js';
 import { Refinery } from './ui/refinery.js';
@@ -212,7 +212,10 @@ async function main(): Promise<void> {
   const profile = loadProfile();
   // 로컬 세이브 → 서버 1회 이관(멱등, 무손실). 미설정이면 no-op. 비차단.
   void migrateLocalProfileToServer(profile);
-  const inventory = new InventoryOverlay(profile);
+  // 격납고 카툰 UI 파일럿(plan hangar-cartoon-ui): 기존 DOM InventoryOverlay 대신 Pixi
+  // 캔버스 격납고로 진입점을 교체한다(인터페이스 show/hide/visible 동일). InventoryOverlay
+  // 클래스는 회귀 대비로 유지(삭제하지 않음).
+  const inventory = new HangarScreen(profile, gameApp.stage);
   // M3 base-map hub + building screens + FTUE (Phase D/E).
   const baseMap = new BaseMap();
   const researchLab = new ResearchLab(profile);

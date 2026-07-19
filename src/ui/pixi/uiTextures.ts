@@ -1,0 +1,84 @@
+/**
+ * 카툰 UI 킷 텍스처 로더 (격납고 파일럿, plan §3).
+ *
+ * `src/render/textures.ts` 의 glob + Assets.load + nearest scaleMode 패턴을 그대로
+ * 따른다. 존재하는 `assets/ui_*.png`(+ ship_showcase)만 URL 로 잡히고, 없거나 로드
+ * 실패한 슬롯은 `null` 이라 소비 측(nineSlicePanel/PixiButton/SlotGrid)이 Graphics
+ * 폴백으로 우아하게 대체한다 — 자산 하나가 빠져도 화면은 죽지 않는다.
+ *
+ * 순수 render/UI 레이어다. sim 은 이 파일을 절대 참조하지 않는다(ADR-0005).
+ */
+
+import { Assets, type Texture } from 'pixi.js';
+
+/** 로드 대상 UI 자산 basename (assets/ 아래, 확장자 포함). */
+export const UI_ASSET_NAMES = [
+  'ui_panel.png',
+  'ui_banner.png',
+  'ui_btn_red.png',
+  'ui_btn_blue.png',
+  'ui_btn_yellow.png',
+  'ui_btn_wood.png',
+  'ui_chip.png',
+  'ui_slot.png',
+  'ui_slot_hl.png',
+  'ui_icon_close.png',
+  'ui_icon_coin.png',
+  'ui_icon_crystal.png',
+  'ui_icon_star.png',
+  'ui_icon_lock.png',
+  'ui_icon_salvage.png',
+  'ui_icon_expand.png',
+  'ui_icon_arrow_left.png',
+  'ui_icon_arrow_right.png',
+  'ui_icon_gear.png',
+  'ui_icon_upgrade.png',
+  'ui_icon_shield.png',
+  'ui_icon_rocket.png',
+  'ui_icon_check.png',
+  'ui_icon_search.png',
+  'ui_icon_trash.png',
+  'ship_showcase_fighter.png',
+] as const;
+
+/** basename → Texture(로드 성공) | null(미존재/실패). */
+export type UiTextures = Record<string, Texture | null>;
+
+// assets/*.png URL 을 빌드타임에 잡는다(textures.ts 와 동일 방식). 이 파일은
+// src/ui/pixi/ 라 assets 까지 3단계 상위다.
+const UI_ASSET_URLS = import.meta.glob('../../../assets/*.png', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>;
+
+function uiAssetUrl(basename: string): string | undefined {
+  for (const key in UI_ASSET_URLS) {
+    if (key.endsWith(`/${basename}`)) return UI_ASSET_URLS[key];
+  }
+  return undefined;
+}
+
+/** 단일 PNG 를 nearest 텍스처로 로드(실패/미존재 시 null — 폴백 유도). */
+async function tryLoad(basename: string): Promise<Texture | null> {
+  const url = uiAssetUrl(basename);
+  if (url === undefined) return null;
+  try {
+    const tex = await Assets.load<Texture>(url);
+    tex.source.scaleMode = 'nearest';
+    return tex;
+  } catch {
+    return null;
+  }
+}
+
+/** 모든 UI 자산을 병렬 로드해 basename→Texture|null 맵을 만든다(누락은 null). */
+export async function loadUiTextures(): Promise<UiTextures> {
+  const out: UiTextures = {};
+  await Promise.all(
+    UI_ASSET_NAMES.map(async (name) => {
+      out[name] = await tryLoad(name);
+    }),
+  );
+  return out;
+}
