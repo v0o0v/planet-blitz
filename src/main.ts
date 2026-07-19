@@ -39,7 +39,7 @@ import { PlanetSelect } from './ui/planetSelect.js';
 import type { LaunchSelection } from './ui/planetSelect.js';
 import { HangarScreen } from './ui/pixi/hangar.js';
 import { BaseMapScreen } from './ui/pixi/baseMap.js';
-import { ResearchLab } from './ui/researchLab.js';
+import { ResearchLabScreen } from './ui/pixi/researchLab.js';
 import { Refinery } from './ui/refinery.js';
 import { DefenseCommand, normalizeLayout } from './ui/defenseCommand.js';
 import { ControlTower } from './ui/controlTower.js';
@@ -220,7 +220,8 @@ async function main(): Promise<void> {
   // 카툰나무풍 롤아웃 #1(cartoonwood-rollout §화면 1): DOM `BaseMap` 대신 Pixi 캔버스 허브로
   // 진입점을 교체한다(show/hide/visible + 콜백 타입 동일). DOM 클래스는 회귀 대비로 유지.
   const baseMap = new BaseMapScreen(gameApp.stage);
-  const researchLab = new ResearchLab(profile);
+  // 카툰나무풍 롤아웃 #2: DOM `ResearchLab` 대신 Pixi 캔버스 연구소로 교체(인터페이스 동일).
+  const researchLab = new ResearchLabScreen(profile, gameApp.stage);
   const refinery = new Refinery(profile);
   const defenseCommand = new DefenseCommand(profile);
   const controlTower = new ControlTower();
@@ -378,6 +379,11 @@ async function main(): Promise<void> {
     tutorialOverlay.hide();
     resultOverlay.hide();
     baseMap.hide();
+    // 캔버스 메타 화면(격납고·연구소)은 DOM 오버레이와 달리 다음 화면이 자동으로 덮지
+    // 않는다 — 같은 stage 위에 계속 그려지므로 화면 전환마다 명시적으로 숨긴다.
+    inventory.hide();
+    researchLab.hide();
+    refinery.hide();
     defenseCommand.hide();
     defensePreview.stop();
     controlTower.hide();

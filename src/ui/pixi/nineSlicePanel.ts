@@ -10,6 +10,42 @@
 import { Container, Graphics, NineSliceSprite, type Texture } from 'pixi.js';
 import { COLOR } from './theme.js';
 
+/** `ui_panel.png` 의 9-slice 테두리(px). 나무 프레임의 실제 두께. */
+export const PANEL_BORDER = 46;
+
+/**
+ * 프레임 **안쪽에 추가로** 비워야 하는 여백(px).
+ *
+ * 프레임 경계(46)에 콘텐츠를 딱 붙이면 — 특히 패널 제목처럼 큰 텍스트는 — 나무 테두리에
+ * 얹힌 것처럼 보인다(사용자 지적 2회: 격납고 파일럿, 연구소 롤아웃). 침범이 아니라
+ * "숨 쉴 틈"의 문제라 `border` 만으로는 못 막는다. 모든 화면은 콘텐츠를
+ * {@link panelContent} 가 주는 상자 안에만 배치한다.
+ */
+export const PANEL_INNER_PAD = 14;
+
+/** 패널 안쪽 콘텐츠 상자(프레임 + 여백을 뺀 영역). 좌표는 패널 로컬. */
+export interface PanelContentBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** 콘텐츠 오른쪽 한계(x + w). */
+  right: number;
+  /** 콘텐츠 아래쪽 한계(y + h) — 마스크 하한·마지막 행 계산의 기준. */
+  bottom: number;
+}
+
+/**
+ * 패널(w×h) 안에서 콘텐츠가 들어가도 되는 상자를 돌려준다. 제목·본문·슬롯·버튼·마스크
+ * 하한을 전부 이 상자 기준으로 잡으면 프레임 침범도, 테두리에 붙는 것도 구조적으로 막힌다.
+ */
+export function panelContent(w: number, h: number, border = PANEL_BORDER, pad = PANEL_INNER_PAD): PanelContentBox {
+  const inset = border + pad;
+  const cw = Math.max(0, w - inset * 2);
+  const ch = Math.max(0, h - inset * 2);
+  return { x: inset, y: inset, w: cw, h: ch, right: inset + cw, bottom: inset + ch };
+}
+
 export interface PanelOptions {
   /** 프레임 텍스처(없으면 Graphics 폴백). */
   texture?: Texture | null | undefined;

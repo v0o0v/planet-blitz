@@ -34,7 +34,7 @@ import { stashExpansionCost, canAfford } from '../../../data/economy.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, RARITY_COLOR_NUM, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
-import { nineSlicePanel } from './nineSlicePanel.js';
+import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
 import { makeSlotCell, gridPositions } from './slotGrid.js';
 import { PixiTooltip } from './tooltip.js';
@@ -378,7 +378,8 @@ export class HangarScreen {
     const py = 96;
     const pw = 900;
     const ph = 512;
-    const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: 46 });
+    const box = panelContent(pw, ph);
+    const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER });
     panel.position.set(px, py);
     this.root.addChild(panel);
 
@@ -386,18 +387,18 @@ export class HangarScreen {
       text: t('hangar.panel.stats'),
       style: { fontFamily: UI_FONT, fontSize: 32, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
     });
-    title.position.set(px + 60, py + 40);
+    title.position.set(px + box.x, py + box.y);
     this.root.addChild(title);
 
     // 스크롤 가능한 스탯 콘텐츠(마스크 클립 + 휠). 스크롤바 시각 요소 없음. 결함 #3 수정:
     // 콘텐츠 top 을 제목 바로 아래로 당기고 행 간격/폰트를 줄여 기본 10행+설명이 스크롤 없이
     // 최대한 보이도록 한다(넘치는 원소/계보/유니크 조건부 행만 스크롤로).
-    const contentX = px + 60;
-    const contentTop = py + 88;
-    const contentW = pw - 120;
-    // 마스크 하한 = 패널 안쪽 프레임(border 46) 위 — 프레임 침범 0.
+    const contentX = px + box.x;
+    const contentTop = py + 104; // 제목(60..92) 아래
+    const contentW = box.w;
+    // 마스크 하한 = 콘텐츠 상자 바닥(프레임 + 여백) — 프레임 침범도 붙는 것도 막는다.
     const STAT_STEP = 48;
-    const contentH = Math.floor((ph - 88 - 50) / STAT_STEP) * STAT_STEP; // 행 단위 클램프
+    const contentH = Math.floor((box.bottom - 104) / STAT_STEP) * STAT_STEP; // 행 단위 클램프
 
     const clip = new Container();
     clip.position.set(contentX, contentTop);
@@ -456,7 +457,8 @@ export class HangarScreen {
     const py = 96;
     const pw = 952;
     const ph = 512;
-    const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: 46 });
+    const box = panelContent(pw, ph);
+    const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER });
     panel.position.set(px, py);
     this.root.addChild(panel);
 
@@ -466,7 +468,7 @@ export class HangarScreen {
       style: { fontFamily: UI_FONT, fontSize: 30, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
     });
     title.anchor.set(0.5, 0);
-    title.position.set(px + pw / 2, py + 40);
+    title.position.set(px + pw / 2, py + box.y);
     this.root.addChild(title);
 
     // 기체 일러스트(×2 nearest). 중앙.
@@ -493,11 +495,13 @@ export class HangarScreen {
 
     // 장착 8슬롯: 좌 4 / 우 4 컬럼, y 간격 100. 라벨은 슬롯 바깥쪽.
     const slotSize = 72;
-    // 바깥쪽 라벨(최대 ~90px)이 패널 안쪽 프레임(border 46) 안에 들어오도록 컬럼을 안쪽으로.
-    const leftX = px + 150;
-    const rightX = px + pw - 150 - slotSize;
-    const colTop = py + 130;
-    const colStep = 88; // 4행째(실드/모듈2)가 패널 안쪽 프레임(py+ph-46) 안에 정확히 들어오는 간격
+    // 바깥쪽 라벨(최대 ~90px)이 콘텐츠 상자(box.x=60) 안에 들어오도록 컬럼을 안쪽으로.
+    const labelGutter = 90 + 12;
+    const leftX = px + box.x + labelGutter;
+    const rightX = px + box.right - labelGutter - slotSize;
+    const colTop = py + 140;
+    // 4행째(실드/모듈2) 하단이 콘텐츠 상자 바닥(py+box.bottom) 안에 들어오는 간격을 역산한다.
+    const colStep = Math.floor((box.bottom - 140 - slotSize) / 3);
 
     // 연결선 레이어(슬롯보다 아래).
     const lines = new Graphics();
@@ -551,7 +555,8 @@ export class HangarScreen {
     const py = 652;
     const pw = 900;
     const ph = 404;
-    const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: 46 });
+    const box = panelContent(pw, ph);
+    const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER });
     panel.position.set(px, py);
     this.root.addChild(panel);
 
@@ -560,7 +565,7 @@ export class HangarScreen {
       text: t('inv.stashHeader', { n: this.profile.stash.length, cap }),
       style: { fontFamily: UI_FONT, fontSize: 26, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
     });
-    title.position.set(px + 60, py + 42);
+    title.position.set(px + box.x, py + box.y);
     this.root.addChild(title);
 
     // 창고 확장 버튼(파랑) — 패널 우상단.
@@ -575,18 +580,18 @@ export class HangarScreen {
       label: maxed ? t('inv.act.expandMax') : t('inv.act.expand', { n: nextCost }),
       onClick: () => this.expandStash(),
     });
-    expandBtn.container.position.set(px + pw - 60 - 260, py + 40);
+    expandBtn.container.position.set(px + box.right - 260, py + box.y);
     this.root.addChild(expandBtn.container);
     if (maxed || !canAfford(this.profile.credits, nextCost)) expandBtn.setEnabled(false);
 
     // 스크롤 그리드(마스크 클립 + 휠, 스크롤바 없음).
-    const contentX = px + 60;
-    const contentTop = py + 96;
-    const contentW = pw - 120;
+    const contentX = px + box.x;
+    const contentTop = py + 118; // 제목/확장 버튼(60..108) 아래
+    const contentW = box.w;
     const cell = 66;
     const gap = 8;
-    // 마스크 하한 = 패널 안쪽 프레임(border 46) 위, 셀 행 배수로 클램프(반토막 셀 금지).
-    const contentH = Math.floor((ph - 96 - 50 + gap) / (cell + gap)) * (cell + gap) - gap;
+    // 마스크 하한 = 콘텐츠 상자 바닥, 셀 행 배수로 클램프(반토막 셀 금지).
+    const contentH = Math.floor((box.bottom - 118 + gap) / (cell + gap)) * (cell + gap) - gap;
     const cols = Math.max(1, Math.floor((contentW + gap) / (cell + gap)));
 
     const clip = new Container();
@@ -635,7 +640,8 @@ export class HangarScreen {
     const py = 652;
     const pw = 952;
     const ph = 404;
-    const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: 46 });
+    const box = panelContent(pw, ph);
+    const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER });
     panel.position.set(px, py);
     this.root.addChild(panel);
 
@@ -643,7 +649,7 @@ export class HangarScreen {
       text: t('inv.invHeader', { n: this.profile.inventory.length, cap: INVENTORY_CAP }),
       style: { fontFamily: UI_FONT, fontSize: 26, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
     });
-    title.position.set(px + 60, py + 42);
+    title.position.set(px + box.x, py + box.y);
     this.root.addChild(title);
 
     // 일괄 분해 버튼 2종(빨강) — 패널 우상단 나란히.
@@ -658,7 +664,7 @@ export class HangarScreen {
       label: t('inv.act.salvageHigh'),
       onClick: () => this.salvageByRarities(['rare', 'unique']),
     });
-    salvageHigh.container.position.set(px + pw - 60 - bw, py + 40);
+    salvageHigh.container.position.set(px + box.right - bw, py + box.y);
     this.root.addChild(salvageHigh.container);
 
     const salvageLow = new PixiButton({
@@ -670,19 +676,19 @@ export class HangarScreen {
       label: t('inv.act.salvageLow'),
       onClick: () => this.salvageByRarities(['normal', 'magic']),
     });
-    salvageLow.container.position.set(px + pw - 60 - bw * 2 - 12, py + 40);
+    salvageLow.container.position.set(px + box.right - bw * 2 - 12, py + box.y);
     this.root.addChild(salvageLow.container);
 
     // 8열 그리드(48칸) — 창고와 동일하게 마스크 클립 + 휠 스크롤(패널 프레임 침범 0,
     // 스크롤바 시각 요소 없음). 48칸(6행)이 패널 안쪽 높이를 넘치므로 필수(결함 #2 수정).
-    const contentX = px + 60;
-    const contentTop = py + 100;
-    const contentW = pw - 120;
+    const contentX = px + box.x;
+    const contentTop = py + 118; // 제목/일괄 분해 버튼(60..108) 아래
+    const contentW = box.w;
     const cols = 8;
     const cell = 66;
     const gap = 8;
-    // 마스크 하한 = 패널 안쪽 프레임(border 46) 위, 셀 행 배수로 클램프(반토막 셀 금지).
-    const contentH = Math.floor((ph - 100 - 50 + gap) / (cell + gap)) * (cell + gap) - gap;
+    // 마스크 하한 = 콘텐츠 상자 바닥, 셀 행 배수로 클램프(반토막 셀 금지).
+    const contentH = Math.floor((box.bottom - 118 + gap) / (cell + gap)) * (cell + gap) - gap;
 
     const clip = new Container();
     clip.position.set(contentX, contentTop);
