@@ -279,7 +279,7 @@ export const EN = {
   'hangar.desc.lineage': 'Account-wide boost to your active ship.',
 
   // --- 정제소 ---
-  'refine.title': 'Refinery — Affix Reroll',
+  'refine.title': 'Refinery',
   'refine.bar.minerals': 'Minerals',
   'refine.bar.credits': 'Credits',
   'refine.listHeader': 'Owned Gear ({n})',
@@ -774,7 +774,7 @@ export const KO: Record<MessageKey, string> = {
   'hangar.desc.element.lightning': '명중 시 인접 적에게 연쇄 피해를 줍니다.',
   'hangar.desc.lineage': '현역 기체를 강화하는 계정 단위 보너스입니다.',
 
-  'refine.title': '정제소 — 어픽스 리롤',
+  'refine.title': '정제소',
   'refine.bar.minerals': '광물',
   'refine.bar.credits': '크레딧',
   'refine.listHeader': '보유 장비 ({n})',
