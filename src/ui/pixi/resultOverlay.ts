@@ -24,7 +24,7 @@ import { COLOR, RARITY_COLOR_NUM, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
-import { makeSlotCell, gridPositions } from './slotGrid.js';
+import { makeSlotCell, gridPositions, equipIconTexture } from './slotGrid.js';
 import { PixiTooltip } from './tooltip.js';
 import { makeBanner } from './titleBar.js';
 import { stripEmoji } from './text.js';
@@ -399,6 +399,7 @@ export class ResultOverlayScreen {
         size: CELL,
         item: d,
         slotTex: this.ui['ui_slot.png'],
+        iconTex: equipIconTexture(this.ui, d),
         onHover: (gx, gy) => this.showTip(d, gx, gy),
         onMove: (gx, gy) => this.moveTip(gx, gy),
         onOut: () => this.tooltip.hide(),

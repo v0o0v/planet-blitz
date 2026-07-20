@@ -21,7 +21,7 @@
  * 순수 render/UI 레이어(ADR-0005 · ADR-0014) — sim 은 이 파일을 모른다.
  */
 
-import { Container, Graphics, Rectangle, Text, type FederatedPointerEvent } from 'pixi.js';
+import { Container, Graphics, Rectangle, Sprite, Text, type FederatedPointerEvent } from 'pixi.js';
 import type { Profile } from '../../save/profile.js';
 import { t } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
@@ -73,7 +73,7 @@ import {
   type PreviewCell,
 } from '../controlTower.js';
 import { COLOR, UI_FONT, TEXT_SHADOW, hexColor } from './theme.js';
-import { loadUiTextures, type UiTextures } from './uiTextures.js';
+import { loadUiTextures, stickerIconName, type UiTextures } from './uiTextures.js';
 import { nineSlicePanel, panelContent, PANEL_BORDER, type PanelContentBox } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
 import { PixiTooltip } from './tooltip.js';
@@ -127,6 +127,9 @@ const CONTENT_TOP = 118;
 const ALERT_BTN_W = 240;
 const ALERT_BTN_H = 56;
 const ALERT_BTN_Y = 22;
+/** 알림 행의 도발 스티커 아이콘 크기 — 첫 줄(상대 도발) · 상세 줄(내 회신 도발). */
+const ALERT_ICON_H = 28;
+const ALERT_ICON_SUB = 22;
 
 // 대상 목록 행.
 const TGT_ROW_H = 96;
@@ -1684,6 +1687,21 @@ export class ControlTowerScreen {
     }
   }
 
+  /**
+   * 도발 스티커 아이콘 Sprite(정사각 `size`). 인덱스가 손상/미설정이거나 자산이 아직 없으면
+   * null 을 돌려주고, 호출자는 스티커 **문구만** 남긴다(자산 하나가 빠져도 화면은 죽지 않는다).
+   */
+  private stickerIcon(index: unknown, size: number): Sprite | null {
+    const name = stickerIconName(index);
+    if (name === null) return null;
+    const tex = this.ui[name];
+    if (!tex) return null;
+    const sp = new Sprite(tex);
+    sp.width = size;
+    sp.height = size;
+    return sp;
+  }
+
   /** 알림 1행 — 결과 문구 + 시각/도발 상세 + 도발·관전 버튼. */
   private makeAlertRow(inv: IncomingInvasion, now: number, w: number): { node: Container; h: number } {
     const row = new Container();
@@ -1721,15 +1739,27 @@ export class ControlTowerScreen {
     const btnArea = buttons.length > 0 ? buttons.length * btnW + (buttons.length - 1) * 10 + 28 : 14;
     const textW = Math.max(120, w - 14 - btnArea);
 
-    // 스티커 라벨의 컬러 이모지는 캔버스에서 두부로 떨어진다(문구는 남는다).
-    const head = this.label(stripEmoji(incomingRowText(inv)), 19, inv.attackerWon ? 0xffb0a0 : 0xa8dda8, '700', textW);
-    head.position.set(14, 12);
+    // 스티커 라벨의 컬러 이모지는 캔버스에서 두부로 떨어져 stripEmoji 가 걷어낸다 — 그 자리를
+    // 아이콘 텍스처가 대신한다. 자산이 아직 없으면 아이콘만 빠지고 **문구는 그대로 남는다**(폴백).
+    const headIcon = this.stickerIcon(inv.sticker, ALERT_ICON_H);
+    const headX = 14 + (headIcon !== null ? ALERT_ICON_H + 8 : 0);
+    const head = this.label(
+      stripEmoji(incomingRowText(inv)),
+      19,
+      inv.attackerWon ? 0xffb0a0 : 0xa8dda8,
+      '700',
+      Math.max(60, textW - (headX - 14)),
+    );
+    head.position.set(headX, 12);
+    headIcon?.position.set(14, 11);
 
     // 상대 도발은 `incomingRowText` 가 이미 첫 줄에 붙여 준다 — 여기서 또 적으면 같은 문장이
     // 두 번 나온다. 상세 줄에는 첫 줄에 없는 것(시각·내 회신 도발)만 담는다.
     const details: string[] = [t('ctl.notif.when', { when: relTime(inv.createdAtMs, now) })];
     const mine = stickerLabel(inv.defenderSticker);
     if (mine.length > 0) details.push(t('ctl.notif.mine', { taunt: mine }));
+    const subIcon = mine.length > 0 ? this.stickerIcon(inv.defenderSticker, ALERT_ICON_SUB) : null;
+    const subX = 14 + (subIcon !== null ? ALERT_ICON_SUB + 6 : 0);
     const sub = new Text({
       resolution: 2,
       text: stripEmoji(details.join(' · ')),
@@ -1738,14 +1768,17 @@ export class ControlTowerScreen {
         fontSize: 16,
         fill: COLOR.muted,
         wordWrap: true,
-        wordWrapWidth: textW,
+        wordWrapWidth: Math.max(60, textW - (subX - 14)),
         dropShadow: TEXT_SHADOW,
       },
     });
-    sub.position.set(14, 42);
+    sub.position.set(subX, 42);
+    subIcon?.position.set(14, 43);
 
     const h = Math.max(96, 42 + Math.ceil(sub.height) + 20);
     row.addChild(listRowBg(w, h, { accent: inv.attackerWon ? 0x8a4a4a : 0x4a7a4a }));
+    if (headIcon !== null) row.addChild(headIcon);
+    if (subIcon !== null) row.addChild(subIcon);
     row.addChild(head);
     row.addChild(sub);
     buttons.forEach((b, i) => {
