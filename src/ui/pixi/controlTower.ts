@@ -21,7 +21,7 @@
  * 순수 render/UI 레이어(ADR-0005 · ADR-0014) — sim 은 이 파일을 모른다.
  */
 
-import { Container, Graphics, Text, type FederatedPointerEvent } from 'pixi.js';
+import { Container, Graphics, Rectangle, Text, type FederatedPointerEvent } from 'pixi.js';
 import type { Profile } from '../../save/profile.js';
 import { t } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
@@ -680,8 +680,12 @@ export class ControlTowerScreen {
     set(v);
     content.y = -v;
     if (maxScroll > 0) {
-      mask.eventMode = 'static';
-      mask.on('wheel', (e) => {
+      // 휠은 **클립 Container** 가 받는다 — 마스크로 쓰이는 Graphics 는 히트 테스트에서 제외돼
+      // (`isMask`) 리스너가 영영 불리지 않는다(카드 화면 #7 에서 실측). hitArea 를 주면 행 사이
+      // 빈 자리에서도 잡히고, 행 위에서는 행 → 클립으로 버블링되어 함께 성립한다.
+      clip.eventMode = 'static';
+      clip.hitArea = new Rectangle(0, 0, w, h);
+      clip.on('wheel', (e) => {
         const next = Math.max(0, Math.min(maxScroll, get() + e.deltaY));
         set(next);
         content.y = -next;
