@@ -36,7 +36,7 @@ import { COLOR, RARITY_COLOR_NUM, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
-import { makeSlotCell, gridPositions } from './slotGrid.js';
+import { makeSlotCell, gridPositions, equipIconTexture } from './slotGrid.js';
 import { PixiTooltip } from './tooltip.js';
 import { makeBanner, makeCurrencyChip, makeIconButton } from './titleBar.js';
 
@@ -527,6 +527,7 @@ export class HangarScreen {
         size: slotSize,
         item,
         slotTex: this.ui[item !== undefined ? 'ui_slot_hl.png' : 'ui_slot.png'],
+        iconTex: equipIconTexture(this.ui, item),
         highlight: item !== undefined,
         highlightTex: this.ui['ui_slot_hl.png'],
         onClick: item !== undefined ? () => this.unequip(id) : undefined,
@@ -612,6 +613,7 @@ export class HangarScreen {
         size: cell,
         item,
         slotTex: this.ui['ui_slot.png'],
+        iconTex: equipIconTexture(this.ui, item),
         onHover: item !== undefined ? (gx, gy) => this.showTip(item, gx, gy) : undefined,
         onMove: (gx, gy) => this.moveTip(gx, gy),
         onOut: () => this.tooltip.hide(),
@@ -709,6 +711,7 @@ export class HangarScreen {
         size: cell,
         item,
         slotTex: this.ui['ui_slot.png'],
+        iconTex: equipIconTexture(this.ui, item),
         onClick: item !== undefined ? () => this.equip(item) : undefined,
         onHover: item !== undefined ? (gx, gy) => this.showTip(item, gx, gy, compareTo) : undefined,
         onMove: (gx, gy) => this.moveTip(gx, gy),

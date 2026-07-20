@@ -39,7 +39,7 @@ import {
 } from '../../save/profile.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
-import { loadUiTextures, type UiTextures } from './uiTextures.js';
+import { loadUiTextures, skillIconName, type UiTextures } from './uiTextures.js';
 import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
 import { PixiTooltip } from './tooltip.js';
@@ -109,6 +109,9 @@ const NODE_ICON_Y = 8;
 /** 이름 2줄 블록의 상단 y(2줄 × lineHeight 17 = 34 → 88 에서 끝나 하단 여백 7). */
 const NODE_NAME_Y = 54;
 const CAPSTONE_H = 52;
+/** 캡스톤 버튼 좌측 개별 아트 자리(라벨은 버튼 중앙이라 겹치지 않는다). */
+const CAPSTONE_ICON = 40;
+const CAPSTONE_ICON_X = 10;
 /** 노드 그리드가 끝나는 y(5행 = 616). */
 const NODE_GRID_BOTTOM = NODE_TOP + NODE_ROWS * (NODE_H + NODE_GAP_Y);
 /**
@@ -406,20 +409,26 @@ export class ResearchLabScreen {
       cell.addChild(g);
     }
 
-    // === [Lane D2] 스킬 아이콘 텍스처 삽입 지점 ===============================
-    // 아래 플레이스홀더(둥근 사각 + 계열색 테두리)를 스킬별 아이콘 스프라이트로 교체한다:
-    //   const tex = this.ui[skillIconKey(node)];
-    //   if (tex) { const sp = new Sprite(tex); sp.width = sp.height = NODE_ICON;
-    //              sp.position.set(iconX, NODE_ICON_Y); cell.addChild(sp); }
-    // 자리(정사각 NODE_ICON=44)는 이미 확보돼 있으므로 레이아웃 상수는 건드릴 필요가 없다.
+    // 스킬 아이콘(44px 정사각). 축은 (스탯 × 티어대)라 같은 스탯의 노드는 같은 그림을
+    // 공유한다 — 구별은 아래의 이름과 포인트 배지가 한다({@link skillIconName}).
+    // 자산 PNG 가 아직 없을 수 있으므로 텍스처가 null 이면 기존 플레이스홀더(둥근 사각 +
+    // 계열색 테두리)로 되돌아간다 — 한 장이 빠져도 화면은 죽지 않는다.
     const iconX = Math.round((NODE_W - NODE_ICON) / 2);
-    const icon = new Graphics();
-    icon
-      .roundRect(iconX, NODE_ICON_Y, NODE_ICON, NODE_ICON, 8)
-      .fill({ color: 0x000000, alpha: 0.28 })
-      .stroke({ color: accent, width: 2, alpha: maxed ? 0.9 : 0.45 });
-    cell.addChild(icon);
-    // === 삽입 지점 끝 =========================================================
+    const iconTex = this.ui[skillIconName(node)];
+    if (iconTex) {
+      const sp = new Sprite(iconTex);
+      sp.width = NODE_ICON;
+      sp.height = NODE_ICON;
+      sp.position.set(iconX, NODE_ICON_Y);
+      cell.addChild(sp);
+    } else {
+      const icon = new Graphics();
+      icon
+        .roundRect(iconX, NODE_ICON_Y, NODE_ICON, NODE_ICON, 8)
+        .fill({ color: 0x000000, alpha: 0.28 })
+        .stroke({ color: accent, width: 2, alpha: maxed ? 0.9 : 0.45 });
+      cell.addChild(icon);
+    }
 
     const name = new Text({
       resolution: 2,
@@ -494,6 +503,16 @@ export class ResearchLabScreen {
       label,
       onClick: () => this.investCapstone(index, unlocked),
     });
+    // 캡스톤은 perPoint 0 인 질적 노드라 스탯 아이콘을 붙이면 거짓말이 된다 — 계열별 개별 아트.
+    const capTex = this.ui[skillIconName(node)];
+    if (capTex) {
+      const sp = new Sprite(capTex);
+      sp.width = CAPSTONE_ICON;
+      sp.height = CAPSTONE_ICON;
+      sp.position.set(CAPSTONE_ICON_X, (CAPSTONE_H - CAPSTONE_ICON) / 2);
+      btn.container.addChild(sp);
+    }
+
     btn.container.position.set(BOX.x, CAPSTONE_Y);
     btn.container.on('pointerover', (e) => this.showTip(index, unlocked ? COLOR.gold : accent, e.global.x, e.global.y));
     btn.container.on('pointermove', (e) => this.moveTip(e.global.x, e.global.y));
