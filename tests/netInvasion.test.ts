@@ -44,8 +44,35 @@ import {
   SAMPLE_REF,
 } from '../src/sim/invasion/normalize.js';
 import type { InvasionLayers } from '../src/sim/invasion/types.js';
-import { INVASION_CORE_MODULE_SLOTS, INVASION_TOTAL_TICKS } from '../src/sim/invasion/constants.js';
+import { INVASION_TOTAL_TICKS } from '../src/sim/invasion/constants.js';
 import { normalizeModulesAuthority } from '../src/net/invasionGateway.js';
+import { MODULE_EQUIP_SLOTS } from '../data/coreModules.js';
+import type { ModuleInstance } from '../data/coreModules.js';
+import type { AttackerMatchup } from '../src/sim/moduleEffects.js';
+
+/** 코어 모듈 권위 표본(begin_invasion 이 실어 주는 wire 형상 그대로). */
+const SAMPLE_MODULE: ModuleInstance = {
+  id: 'mod-1',
+  rarity: 'magic',
+  prefixes: [{ id: 'mc-bulwark', stat: 'incomingDmgReductionPct', value: 12 }],
+  suffixes: [],
+  chargesMax: 5,
+  chargesLeft: 3,
+  seed: 12345,
+};
+
+/** 정적 카운터 판정 입력 표본(서버 build_attacker_matchup 산출 형상). */
+const SAMPLE_MATCHUP: AttackerMatchup = {
+  fire: false,
+  cold: false,
+  lightning: false,
+  beam: false,
+  attackerCp: 0,
+  defenderCp: 0,
+  revenge: true,
+  reinvasion: false,
+  subweaponHeavy: false,
+};
 
 /** In-memory KeyValueStore(net.test.ts 와 동일). */
 function memStore(seed?: Record<string, string>): KeyValueStore {
@@ -367,7 +394,7 @@ describe('net/invasion — 3레이어 스냅샷 계약(M7a)', () => {
       layers,
       layout: layers,
       maintenance: 91,
-      modules: { slots: [SAMPLE_REF, null], matchup: { revenge: true } },
+      modules: { modules: [SAMPLE_MODULE], matchup: SAMPLE_MATCHUP },
     };
     const gateway = {
       getUserId: async () => 'me',
@@ -381,7 +408,8 @@ describe('net/invasion — 3레이어 스냅샷 계약(M7a)', () => {
     const got = await beginInvasion('defense-1', { gateway });
     expect(got?.snapshotId).toBe('snap-1');
     expect(got?.layers).toEqual(layers);
-    expect(got?.modules?.slots).toHaveLength(2);
+    expect(got?.modules?.modules).toHaveLength(1);
+    expect(got?.modules?.modules[0]?.id).toBe('mod-1');
   });
 
   it('beginInvasion: 게이트웨이가 throw 하면 null(라이브 경로 폴백)', async () => {
@@ -395,28 +423,52 @@ describe('net/invasion — 3레이어 스냅샷 계약(M7a)', () => {
 });
 
 describe('net/invasionGateway — 코어 모듈 권위 파싱(normalizeModulesAuthority)', () => {
-  it('modules 키가 없거나 손상이면 null(모듈 없음)', () => {
+  it('modules 키가 없거나 손상이면 null(모듈 미장착)', () => {
     expect(normalizeModulesAuthority(null)).toBeNull();
     expect(normalizeModulesAuthority(undefined)).toBeNull();
     expect(normalizeModulesAuthority('부서진 값')).toBeNull();
   });
 
-  it('슬롯은 고정 길이 2 로 복원되고 빈 슬롯이 자리를 지킨다(밀집화 금지)', () => {
-    const got = normalizeModulesAuthority({ slots: [null, SAMPLE_REF], matchup: {} });
-    expect(got?.slots).toHaveLength(INVASION_CORE_MODULE_SLOTS);
-    expect(got?.slots[0]).toBeNull();
-    expect(got?.slots[1]).toEqual(SAMPLE_REF);
+  it('wire 키 `instances` 를 읽어 ModuleInstance 로 복원한다(TS 필드명은 modules)', () => {
+    const got = normalizeModulesAuthority({ instances: [SAMPLE_MODULE], matchup: {} });
+    expect(got?.modules).toHaveLength(1);
+    expect(got?.modules[0]).toEqual(SAMPLE_MODULE);
   });
 
-  it('슬롯 초과분은 잘리고 부족분은 null 로 채워진다', () => {
-    const many = normalizeModulesAuthority({ slots: [SAMPLE_REF, SAMPLE_REF, SAMPLE_REF] });
-    expect(many?.slots).toHaveLength(INVASION_CORE_MODULE_SLOTS);
-    const few = normalizeModulesAuthority({ slots: [] });
-    expect(few?.slots).toEqual([null, null]);
+  it('장착 상한(2)을 넘는 인스턴스는 잘린다', () => {
+    const got = normalizeModulesAuthority({
+      instances: [SAMPLE_MODULE, SAMPLE_MODULE, SAMPLE_MODULE],
+    });
+    expect(got?.modules).toHaveLength(MODULE_EQUIP_SLOTS);
   });
 
-  it('matchup 은 서버 권위 값을 그대로 보존한다(정적 카운터 판정 입력)', () => {
-    const got = normalizeModulesAuthority({ slots: [], matchup: { revenge: true, attackerCp: 12 } });
-    expect(got?.matchup).toEqual({ revenge: true, attackerCp: 12 });
+  it('손상된 인스턴스(등급 미상·id 없음)는 버리고 나머지를 살린다', () => {
+    const got = normalizeModulesAuthority({
+      instances: [{ id: '', rarity: 'magic' }, { id: 'x', rarity: '없는등급' }, SAMPLE_MODULE],
+    });
+    expect(got?.modules).toEqual([SAMPLE_MODULE]);
+  });
+
+  it('미지의 stat 키를 가진 어픽스 롤은 버린다(위조·구버전 방어)', () => {
+    const got = normalizeModulesAuthority({
+      instances: [
+        {
+          ...SAMPLE_MODULE,
+          prefixes: [{ id: 'mc-x', stat: '없는스탯', value: 9 }, SAMPLE_MODULE.prefixes[0]],
+        },
+      ],
+    });
+    expect(got?.modules[0]?.prefixes).toEqual(SAMPLE_MODULE.prefixes);
+  });
+
+  it('matchup 은 서버 권위 값을 보존하고 누락 키는 미발동(false·0)으로 접는다', () => {
+    const got = normalizeModulesAuthority({
+      instances: [],
+      matchup: { revenge: true, attackerCp: 12 },
+    });
+    expect(got?.matchup.revenge).toBe(true);
+    expect(got?.matchup.attackerCp).toBe(12);
+    expect(got?.matchup.fire).toBe(false);
+    expect(got?.matchup.defenderCp).toBe(0);
   });
 });

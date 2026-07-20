@@ -196,6 +196,12 @@ function spawnFormationMember(
     e.maxHp = hp;
     e.damage = Math.round((e.damage * cp) / 100);
   }
+  // 코어 모듈 편대 화력 배율(M7b). 미장착이면 배율 1 → `Math.round(정수*1)===정수` 로 비트
+  // 동일이라 거동·해시가 불변이다. 스폰 시점 값을 굳힌다(mt-vanguard 는 초반 스폰분만 강화).
+  const mr = state.moduleRuntime;
+  if (mr !== undefined && mr.formationDamageMult !== 1) {
+    e.damage = Math.round(e.damage * mr.formationDamageMult);
+  }
   // 정비도 풍화(결정 #18): 배치된 방어체는 방치될수록 연사가 느려진다. 정수 연산 전용
   // invasionFireCooldown(편대·설비·기물·보스 공용 산식)을 쓴다.
   e.cooldown = invasionFireCooldown(e.cooldown, ctx.maintenance);

@@ -21,6 +21,7 @@
 
 import type { GuardianSnapshot } from '../../../data/guardian.js';
 import type { WorldState } from '../world.js';
+import type { CoreModuleConfig } from '../moduleEffects.js';
 
 // ---------------------------------------------------------------------------
 // 공용 Ref — 카탈로그 참조 + 강화 3축
@@ -160,6 +161,18 @@ export interface Invasion3Config {
   timeLimitTicks: number;
   /** 방어 정비도(centi-percent 0..10000). 미지정 = 완전 정비. */
   maintenance?: number;
+  /**
+   * 코어 모듈 효력(M7b · ADR-0018). T0 스냅샷이 고정한 서버 권위 {instances, matchup} 이며,
+   * `defenses.equipped_module_ids` → `core_modules` 행을 서버가 풀어 준 결과다.
+   *
+   * **{@link InvasionLayer3.modules}(ModuleRef 슬롯)와 다른 축이다.** 코어 모듈은 카탈로그
+   * 참조가 아니라 시드 롤이 굳은 **소모성 인스턴스**라 layers 직렬화로는 표현되지 않는다.
+   * l3.modules 는 스키마 예약(항상 null)으로 남기고 정본은 이 필드다 — 스키마에서 빼면
+   * normalize/layersEqual/해시 v2 재생성이 동반되므로 M7a 계약을 건드리지 않는다.
+   *
+   * 미장착이면 필드 자체를 두지 않는다(조건부 접기 → 거동·해시 바이트 불변).
+   */
+  modules?: CoreModuleConfig;
 }
 
 // ---------------------------------------------------------------------------

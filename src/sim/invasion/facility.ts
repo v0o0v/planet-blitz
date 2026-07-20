@@ -303,7 +303,7 @@ function stepTurretFacility(
     }
     fireFacilityBullets(state, e, spec, e.angle);
     e.phase = 0;
-    e.timer = invasionFireCooldown(spec.fireCooldown, maintenance);
+    e.timer = moduleFacilityCooldown(state, invasionFireCooldown(spec.fireCooldown, maintenance));
     return;
   }
   if (e.timer > 0) {
@@ -326,11 +326,33 @@ function stepTurretFacility(
     return;
   }
   fireFacilityBullets(state, e, spec, ang);
-  e.timer = invasionFireCooldown(spec.fireCooldown, maintenance);
+  e.timer = moduleFacilityCooldown(state, invasionFireCooldown(spec.fireCooldown, maintenance));
+}
+
+/**
+ * 코어 모듈 설비 화력 배율 적용(M7b). 미장착이면 배율 1 → `Math.round(정수*1)===정수` 로
+ * 비트 동일이라 거동·해시가 불변이다.
+ */
+function moduleFacilityDamage(state: WorldState, damage: number): number {
+  const mr = state.moduleRuntime;
+  if (mr === undefined || mr.facilityDamageMult === 1) return damage;
+  return Math.round(damage * mr.facilityDamageMult);
+}
+
+/**
+ * 코어 모듈 설비 연사 배율 적용(M7b). 연사 +% → 간격 축소. 최소 1틱 하한(0 은 무한 발사).
+ * 미장착이면 그대로 반환(비트 동일).
+ */
+function moduleFacilityCooldown(state: WorldState, cd: number): number {
+  const mr = state.moduleRuntime;
+  if (mr === undefined || mr.facilityFireRateMult === 1) return cd;
+  const scaled = Math.round(cd / mr.facilityFireRateMult);
+  return scaled < 1 ? 1 : scaled;
 }
 
 /** 단발 또는 부채꼴 다발 발사(정수 도 → 라디안 변환은 여기서 1회). */
 function fireFacilityBullets(state: WorldState, e: Entity, spec: FacilitySpec, ang: number): void {
+  const damage = moduleFacilityDamage(state, e.damage);
   const pellets = spec.pellets < 1 ? 1 : spec.pellets;
   const spread = spec.spreadDeg * DEG_TO_RAD;
   const start = pellets > 1 ? ang - spread / 2 : ang;
@@ -344,7 +366,7 @@ function fireFacilityBullets(state: WorldState, e: Entity, spec: FacilitySpec, a
       cos(a) * spec.bulletSpeed,
       sin(a) * spec.bulletSpeed,
       a,
-      e.damage,
+      damage,
       spec.bulletRadius,
       spec.bulletLife,
     );

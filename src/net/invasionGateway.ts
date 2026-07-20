@@ -12,13 +12,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { SupabaseConfig } from './config.js';
 import type { Replay } from '../sim/replay.js';
-import type { DefenseCardConfig } from '../sim/cardEffects.js';
-import {
-  normalizeInvasionLayers,
-  normalizeRef,
-} from '../sim/invasion/normalize.js';
-import { INVASION_CORE_MODULE_SLOTS } from '../sim/invasion/constants.js';
-import type { ModuleRef } from '../sim/invasion/types.js';
+import { normalizeInvasionLayers } from '../sim/invasion/normalize.js';
+import { parseModulesAuthority } from './modules.js';
 import type {
   InvasionModulesAuthority,
   InvasionGateway,
@@ -57,17 +52,12 @@ function asEpochMs(v: unknown, fallback = 0): number {
 /**
  * `begin_invasion` 의 `modules` jsonb → {@link InvasionModulesAuthority}(테스트를 위해 export).
  *
- * 슬롯 배열은 **고정 길이 + null 허용**으로 되돌린다(밀집화 금지 — 슬롯 인덱스가 계약이다).
- * 서버가 modules 키를 안 주는 구버전 응답이면 `null` 을 돌려 호출부가 "모듈 없음"으로 본다.
+ * 파싱 본체는 `src/net/modules.ts` 의 {@link parseModulesAuthority} 하나뿐이다 — EF 와 클라가
+ * **같은 형상**을 읽어야 재실행이 비트 일치하므로 파서를 두 벌 두지 않는다. 서버가 modules
+ * 키를 안 주는 구버전 응답이면 `null` 을 돌려 호출부가 "모듈 없음"으로 본다.
  */
 export function normalizeModulesAuthority(raw: unknown): InvasionModulesAuthority | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const r = raw as Record<string, unknown>;
-  const rawSlots = Array.isArray(r.slots) ? r.slots : [];
-  const slots: (ModuleRef | null)[] = new Array(INVASION_CORE_MODULE_SLOTS).fill(null);
-  const n = Math.min(rawSlots.length, INVASION_CORE_MODULE_SLOTS);
-  for (let i = 0; i < n; i++) slots[i] = normalizeRef(rawSlots[i]);
-  return { slots, matchup: asRecord(r.matchup) };
+  return parseModulesAuthority(raw);
 }
 
 /** 스티커 인덱스 정규화: 정수 0..11 만 통과, 그 외(null/손상/범위밖)는 null. */
@@ -330,7 +320,7 @@ export class SupabaseInvasionGateway implements InvasionGateway {
     // 침공 개시 권위 스냅샷 고정(계약 M5/M6/M7a) — begin_invasion 은 자격 미달 시 raise 하며,
     // 그 에러는 공개 beginInvasion 이 흡수해 라이브 경로 폴백으로 전환한다. 반환 jsonb:
     //   { snapshot_id, defender_id, defense_id, layers(수호 권위 주입 완료 3레이어),
-    //     maintenance, modules({slots,matchup} — M7a), card({card,matchup} 또는 null — M6) }.
+    //     maintenance, modules({instances,matchup} 또는 null — M7b) }.
     // 구버전 서버는 `layers` 대신 `layout` 을 준다 → 폴백해서 같은 정규화를 태운다(정규화는
     // total function 이라 구 스키마도 빈 3레이어로 수렴하고, 그 상태로는 EF 대조가 어차피
     // 거부되므로 조용한 오작동이 아니라 명시적 실패로 드러난다).
@@ -345,10 +335,10 @@ export class SupabaseInvasionGateway implements InvasionGateway {
       layers: normalizeInvasionLayers(rawLayers),
       layout: rawLayers, // @deprecated — 구 호출부(main.ts)가 이관될 때까지만 유지
       maintenance: asNumber(r.maintenance, 100),
+      // 서버 authored 코어 모듈 권위(미장착이면 null). 소비 측(main.ts)이 침공
+      // config.invasion3.modules 로 실어 런하고, 제출 시 snapshotId 와 함께 EF 가 스냅샷
+      // 권위 modules 로 재실행 대조한다.
       modules: normalizeModulesAuthority(r.modules),
-      // 서버 authored 방어 카드 효력(미장착이면 null). 소비 측(Lane D)이 침공 config.invasion.card
-      // 로 실어 런하고, 제출 시 snapshotId 와 함께 EF 가 스냅샷 권위 card 로 재실행 대조한다.
-      card: (r.card ?? null) as DefenseCardConfig | null,
     };
   }
 

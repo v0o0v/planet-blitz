@@ -9,6 +9,16 @@ import { EN, KO } from '../src/i18n/catalog.js';
 import { t, setLocale, getLocale, pickInitialLocale, isLocale } from '../src/i18n/index.js';
 import { STICKERS } from '../data/stickers.js';
 import { INVASION_CATALOG, DEF3_MESSAGE_KEYS, def3NameKey, def3DescKey } from '../data/invasion/catalog.js';
+import {
+  DEFENSE_UNIT_AFFIXES,
+  defenseUnitAffixNameKey,
+  defenseUnitAffixDescKey,
+} from '../data/defenseUnits.js';
+import {
+  CORE_MODULE_UNIQUES,
+  moduleUniqueNameKey,
+  moduleUniqueDescKey,
+} from '../data/coreModules.js';
 
 afterEach(() => {
   setLocale('en'); // 다른 테스트에 로케일 누수 방지.
@@ -48,6 +58,52 @@ describe('카탈로그 완전성', () => {
       for (const key of [def3NameKey(e.i18nId), def3DescKey(e.i18nId)]) {
         expect(EN, `EN missing ${key}`).toHaveProperty(key);
         expect(KO, `KO missing ${key}`).toHaveProperty(key);
+      }
+    }
+  });
+
+  /**
+   * 방어체 어픽스(M7b · data/defenseUnits.ts)의 `def3.affix.<id>.name/.desc` 전수.
+   * 어픽스 정의 배열에서 파생하므로, 어픽스를 append 하면 문구를 채우기 전까지 빨간불이다.
+   */
+  it('방어체 어픽스 전종의 def3.affix.* 키가 EN·KO 양쪽에 존재한다', () => {
+    expect(DEFENSE_UNIT_AFFIXES.length).toBeGreaterThan(0);
+    for (const a of DEFENSE_UNIT_AFFIXES) {
+      for (const key of [defenseUnitAffixNameKey(a.id), defenseUnitAffixDescKey(a.id)]) {
+        expect(EN, `EN missing ${key}`).toHaveProperty(key);
+        expect(KO, `KO missing ${key}`).toHaveProperty(key);
+      }
+    }
+  });
+
+  /** 코어 모듈 유니크(M7b · data/coreModules.ts)의 `def3.module.<id>.name/.desc` 전수. */
+  it('코어 모듈 유니크 전종의 def3.module.* 키가 EN·KO 양쪽에 존재한다', () => {
+    expect(CORE_MODULE_UNIQUES.length).toBeGreaterThan(0);
+    for (const u of CORE_MODULE_UNIQUES) {
+      for (const key of [moduleUniqueNameKey(u.id), moduleUniqueDescKey(u.id)]) {
+        expect(EN, `EN missing ${key}`).toHaveProperty(key);
+        expect(KO, `KO missing ${key}`).toHaveProperty(key);
+      }
+    }
+  });
+
+  it('def3.affix.* / def3.module.* 문구도 비지 않고 컬러 이모지를 쓰지 않는다', () => {
+    const table = (o: Record<string, string>, k: string): string => o[k] ?? '';
+    const keys = [
+      ...DEFENSE_UNIT_AFFIXES.flatMap((a) => [
+        defenseUnitAffixNameKey(a.id),
+        defenseUnitAffixDescKey(a.id),
+      ]),
+      ...CORE_MODULE_UNIQUES.flatMap((u) => [moduleUniqueNameKey(u.id), moduleUniqueDescKey(u.id)]),
+    ];
+    for (const key of keys) {
+      for (const [label, t] of [
+        ['EN', EN as unknown as Record<string, string>],
+        ['KO', KO as unknown as Record<string, string>],
+      ] as const) {
+        const v = table(t, key);
+        expect(v.length, `${label} empty ${key}`).toBeGreaterThan(0);
+        expect(v, `${label} emoji in ${key}`).not.toMatch(/\p{Extended_Pictographic}/u);
       }
     }
   });

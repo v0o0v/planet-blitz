@@ -33,8 +33,6 @@ import type {
 // 정비도 상한은 L11 에서 src/sim/defense.ts 와 함께 src/sim/invasion/guardian.ts 로 이관됐다.
 import { MAINTENANCE_FULL } from '../../../src/sim/invasion/guardian.ts';
 import { INVASION_GUARDIAN_SLOTS, INVASION_TOTAL_TICKS } from '../../../src/sim/invasion/constants.ts';
-import { rollCard } from '../../../src/items/rollCard.ts';
-import { defenseSuccessDropChance, rollDropRarity, DEFENSE_DROP_BASE_CHANCE } from '../../../data/defenseCards.ts';
 
 /**
  * 재실행 벽시계 소프트 예산(ms). 초과 시 결과는 반환하되 경고 로그(중단은 불가).
@@ -53,19 +51,6 @@ function json(body: unknown, status: number): Response {
     status,
     headers: { 'content-type': 'application/json' },
   });
-}
-
-/** 암호학적 난수 float [0,1) — 방어 성공 드랍 롤용(드랍은 리플레이 대상 아님, 결정론 불요). */
-function cryptoFloat(): number {
-  const buf = new Uint32Array(1);
-  crypto.getRandomValues(buf);
-  return buf[0] / 4294967296;
-}
-/** 암호학적 난수 u32 — 드랍 결과 카드 롤 시드(결과 카드가 자기 시드로 재현되면 족함). */
-function cryptoU32(): number {
-  const buf = new Uint32Array(1);
-  crypto.getRandomValues(buf);
-  return buf[0] >>> 0;
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -171,9 +156,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
   let layers: unknown = null;
   let maintenanceDb: unknown = null;
   let authorityFromSnapshot = false;
-  // 구 M6 방어 카드 권위 — M7a 에서 **재실행 입력이 아니다**(코어 모듈이 layers.l3.modules 로
-  // 배치에 흡수됐다). 아래 방어 성공 드랍 확률의 매치업 CP 참조로만 남는다.
-  let cardAuthority: unknown = undefined;
+  // 코어 모듈 권위(M7b · ADR-0018) — **재실행 입력이다**. 모듈은 소모성 인스턴스라 layers
+  // 직렬화에 없으므로 이 키를 재실행에 싣지 않으면 모듈 장착 방어의 정직한 침공이 전량
+  // hash-stream-divergence 로 오거부된다.
+  let modulesAuthority: unknown = undefined;
 
   const snapshotId = typeof inv.snapshot_id === 'string' && inv.snapshot_id.length > 0 ? inv.snapshot_id : null;
   if (snapshotId !== null) {
@@ -199,7 +185,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         layers?: unknown;
         layout?: unknown;
         maintenance?: unknown;
-        card?: unknown;
+        modules?: unknown;
       };
       const mRaw = authority.maintenance;
       const mNum = typeof mRaw === 'number' ? mRaw : Number(mRaw);
@@ -211,8 +197,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
         // 이다(둘 다 3레이어 내용이면 결과가 같다). L7 적용 확인 후 제거 가능.
         authorityLayers: authority.layers ?? authority.layout ?? null,
         authorityMaintenanceDb: Number.isFinite(mNum) ? mNum : undefined,
-        // 구 M6 카드(드랍 확률 매치업 전용 — 재실행 권위 아님).
-        authorityCard: authority.card ?? null,
+        // 코어 모듈 권위(재실행 입력 — 미장착·구버전이면 null).
+        authorityModules: authority.modules ?? null,
         createdAtMs: typeof snapRow.created_at === 'string' ? Date.parse(snapRow.created_at) : Number.NaN,
       };
     }
@@ -227,7 +213,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (resolution.source === 'snapshot' && resolution.layers !== null && resolution.layers !== undefined) {
       layers = resolution.layers;
       maintenanceDb = resolution.maintenanceDb ?? null;
-      cardAuthority = resolution.card ?? undefined;
+      modulesAuthority = resolution.modules ?? undefined;
       authorityFromSnapshot = true;
     } else if (resolution.source === 'snapshot') {
       // 스냅샷 행은 유효하나 authority.layers 가 손상(null) → 안전하게 라이브 경로 폴백.
@@ -345,12 +331,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const startedAt = Date.now();
   let verdict: InvasionVerifyResult;
   try {
-    // 서버 컨텍스트: 3레이어 배치 + 총 시간 예산(INVASION_TOTAL_TICKS=18000) + 정비도.
-    // 코어 모듈 권위는 layers.l3.modules 안에 이미 들어 있으므로 별도 키가 없다(구 card 폐지).
+    // 서버 컨텍스트: 3레이어 배치 + 총 시간 예산(INVASION_TOTAL_TICKS=18000) + 정비도 +
+    // 코어 모듈 권위. 모듈은 layers 에 들어 있지 않으므로 반드시 별도 키로 넘긴다.
     verdict = verifyInvasion(submission, {
       layers,
       timeLimitTicks: INVASION_TOTAL_TICKS,
       maintenance,
+      modules: modulesAuthority,
     });
   } catch (e) {
     console.error(`verify-invasion 재실행 예외 (invasion=${invasionId}):`, e);
@@ -413,31 +400,35 @@ Deno.serve(async (req: Request): Promise<Response> => {
       200,
     );
   }
-  // (7) 방어 성공 보상 드랍(M6): 확정된 침공에서 방어자가 이겼으면(=방어 성공, attackerWon=false)
-  // 방어자에게 카드 드랍을 롤한다. 카드 장착 여부와 무관한 방어 성공 보상이라 cardAuthority 유무와
-  // 별개다(미장착 방어도 보상). 롤은 TS 롤러(rollCard) — SQL 이 못 하므로 여기(service_role·TS
-  // 컨텍스트)에서 수행하고, 상한(20)·insert 원자성은 apply_card_drop RPC 가 맡는다. 무작위는 crypto
-  // (드랍은 리플레이 대상 아님). 전투력 우위(매치업 CP)가 크면 확률이 오른다(현재 매치업 CP 는 보수
-  // 재구성으로 0 → 사실상 base 확률, 📝 CP 완전 재구성 후 상승). 드랍 실패/만석/오류는 침공 판정에
-  // 영향 없음(best-effort — 실패해도 verified 응답은 그대로).
-  if (attackerWon === false) {
-    try {
-      const matchup = (cardAuthority as { matchup?: { attackerCp?: unknown; defenderCp?: unknown } } | undefined)?.matchup;
-      const atkCp = typeof matchup?.attackerCp === 'number' ? matchup.attackerCp : 0;
-      const defCp = typeof matchup?.defenderCp === 'number' ? matchup.defenderCp : 0;
-      const chance = defenseSuccessDropChance(DEFENSE_DROP_BASE_CHANCE, atkCp, defCp);
-      if (cryptoFloat() < chance) {
-        const rarity = rollDropRarity(cryptoFloat());
-        const card = rollCard(cryptoU32(), rarity);
-        await service.rpc('apply_card_drop', {
-          p_profile_id: inv.defender_id,
-          p_card: card,
-          p_rarity: rarity,
-          p_charges_left: card.chargesLeft,
-        });
+  // (7) 방어 성공 보조 보상: **코어 모듈 드랍은 폐지됐다**(ADR-0018 · 기획 §4 — 방어체 획득
+  // 경로에서 제외해 부익부를 막는다). 대신 apply_invasion_result 가 방어 성공 분기에서
+  // DEFENSE_SUCCESS_CREDITS 크레딧을 정액 지급하므로 EF 가 할 일이 없다. 구 apply_card_drop
+  // RPC 는 M7b 마이그레이션이 drop 하므로 이 자리에 호출을 되살리면 확정 경로가 500 이 된다.
+
+  // (8) 설계도 약탈 복제(M7b) — 확정된 **공격자 승리**에 한해 12% 로 방어자가 배치한
+  // 방어체 1종의 설계도 사본 1장을 공격자에게 준다. ADR-0003 방어자 무손실: 이 RPC 는
+  // 방어자 데이터를 읽기만 한다(사본이 생길 뿐 방어자 것이 줄지 않는다).
+  //
+  // blueprint_raid_log(invasion_id PK)로 멱등이라 EF 재시도에도 두 번 지급되지 않는다.
+  // service_role 전용 RPC 이므로 `service` 클라이언트로만 호출된다. 이 단계 실패는 침공
+  // 확정(래더 스왑·약탈)을 되돌릴 이유가 못 되므로 응답을 막지 않고 경고만 남긴다.
+  let blueprint: { kind: number; catalogId: number } | null = null;
+  if (attackerWon) {
+    const { data: bp, error: bpErr } = await service.rpc('loot_defense_blueprint', {
+      p_invasion_id: invasionId,
+    });
+    if (bpErr !== null) {
+      console.warn(`loot_defense_blueprint 실패 (invasion=${invasionId}):`, bpErr.message);
+    } else {
+      const b = (bp ?? {}) as {
+        ok?: boolean;
+        granted?: boolean;
+        kind?: number | null;
+        catalogId?: number | null;
+      };
+      if (b.ok === true && b.granted === true && typeof b.kind === 'number' && typeof b.catalogId === 'number') {
+        blueprint = { kind: b.kind, catalogId: b.catalogId };
       }
-    } catch (e) {
-      console.error(`verify-invasion 방어 성공 드랍 실패 (invasion=${invasionId}):`, e);
     }
   }
 
@@ -453,6 +444,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       loot: res.loot ?? [],
       revenge: res.is_revenge === true,
       bonusMinerals: res.bonus_minerals ?? 0,
+      // additive 필드 — 구 클라이언트는 무시해도 안전하다(결과 배너 표시용).
+      blueprint,
     },
     200,
   );

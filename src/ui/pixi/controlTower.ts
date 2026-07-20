@@ -65,8 +65,11 @@ import {
   incomingBannerText,
   incomingRowText,
   resultBannerText,
-  reconSummary,
+  reconView,
+  reconRarityColor,
+  reconSlotLabel,
   normalizeTargetLayers,
+  type ReconStrip,
   type ControlTowerCallbacks,
   type ControlTowerShowOpts,
   type InvasionResultView,
@@ -110,6 +113,18 @@ const COLS_3 = { targets: 640, recon: 700, revenge: 436 } as const;
 
 /** 패널 제목(26px) 아래에서 본문이 시작한다 — 상자 top(60) + 58. */
 const CONTENT_TOP = 118;
+
+// 기지 정찰 — 레이어별 슬롯 칩(실루엣·등급 색·승급 별).
+/** 요약 한 줄이 차지하는 높이(다음 줄 시작선). */
+const RECON_SUMMARY_H = 52;
+/** 슬롯 칩 한 변. */
+const RECON_CHIP = 38;
+/** 칩 사이 여백(폭이 모자라면 자동으로 줄어든다). */
+const RECON_GAP = 10;
+/** 레이어 라벨(L1/L2/L3) 열 폭. */
+const RECON_TAG_W = 46;
+/** 한 줄 전체 높이(칩 + 승급 별 + 줄 간격). */
+const RECON_ROW_H = RECON_CHIP + 26;
 
 // 알림 버튼(우상단).
 const ALERT_BTN_W = 240;
@@ -1141,10 +1156,60 @@ export class ControlTowerScreen {
       return;
     }
 
-    // 15×9 미니 격자는 M7a 에서 사라졌다 — 3레이어(종스크롤 → 횡스크롤 → 코어방)에는 격자
-    // 좌표계 자체가 없다. 정식 정찰(레이어 탭 · 실루엣 · 등급/승급 표시)은 M7b-command-ui 가
-    // 만든다. 그때까지 슬롯 점유 요약 한 줄만 띄운다(레인 문서 L11 ④).
-    this.msg(panel, box, reconSummary(layers));
+    // 3레이어 정찰(M7b-acquisition · 결정 #15). 15×9 미니 격자는 M7a 에서 사라졌다 —
+    // 3레이어(종스크롤 → 횡스크롤 → 코어방)에는 격자 좌표계 자체가 없다. 대신 레이어별
+    // **실루엣 칩 · 등급 색 · 승급 별**만 낸다. 정확 스펙(레벨·어픽스)은 뷰 모델에 필드가
+    // 없어 여기서 흘릴 방법이 아예 없고, 종류 이름은 1회 침공한 상대만 열린다.
+    const view = reconView(layers, this.cooldowns[target.profileId] !== undefined);
+    this.msg(panel, box, view.summary, CONTENT_TOP);
+
+    let cursor = CONTENT_TOP + RECON_SUMMARY_H;
+    for (const strip of view.strips) {
+      if (cursor + RECON_ROW_H > box.bottom) break;
+      const row = this.makeReconStrip(strip, box.w);
+      row.position.set(box.x, cursor);
+      panel.addChild(row);
+      cursor += RECON_ROW_H;
+    }
+  }
+
+  /** 정찰 한 줄 — 레이어 라벨 + 슬롯 칩(등급 색 채움 · 승급 별 · 잠금이면 '?'). */
+  private makeReconStrip(strip: ReconStrip, w: number): Container {
+    const row = new Container();
+    // 레이어 번호는 코드 라벨이라 번역 대상이 아니다(L1/L2/L3).
+    const tag = this.label(`L${strip.layer}`, 18, COLOR.muted, '800');
+    tag.position.set(0, (RECON_CHIP - 18) / 2);
+    row.addChild(tag);
+
+    const x0 = RECON_TAG_W;
+    // 소켓이 12개까지 늘어나므로 남는 폭에 맞춰 칸 간격을 줄인다(넘치면 잘리는 대신 좁아진다).
+    const avail = Math.max(RECON_CHIP, w - x0);
+    const step = Math.min(RECON_CHIP + RECON_GAP, strip.slots.length > 0 ? avail / strip.slots.length : avail);
+
+    strip.slots.forEach((slot, i) => {
+      const g = new Graphics();
+      if (slot.occupied) {
+        g.roundRect(0, 0, RECON_CHIP, RECON_CHIP, 6).fill({ color: hexColor(reconRarityColor(slot.rarity)) });
+      } else {
+        g.roundRect(0, 0, RECON_CHIP, RECON_CHIP, 6).stroke({ color: 0x5a4a34, width: 2 });
+      }
+      g.position.set(x0 + i * step, 0);
+      row.addChild(g);
+      if (!slot.occupied) return;
+
+      // 실루엣 글리프: 해금이면 이름 첫 글자, 잠금이면 '?'. 정확 스펙은 어느 쪽이든 안 낸다.
+      const glyph = this.label(reconSlotLabel(slot).slice(0, 1), 18, COLOR.darkLabel, '800');
+      glyph.position.set(x0 + i * step + (RECON_CHIP - glyph.width) / 2, (RECON_CHIP - 20) / 2);
+      row.addChild(glyph);
+
+      if (slot.ascension > 0) {
+        // 승급 별은 채워진 개수만 작게 얹는다(빈 별까지 그리면 칩이 뭉갠다).
+        const stars = this.label('★'.repeat(Math.min(slot.ascension, 5)), 11, COLOR.gold, '800', RECON_CHIP);
+        stars.position.set(x0 + i * step, RECON_CHIP - 2);
+        row.addChild(stars);
+      }
+    });
+    return row;
   }
 
   // --- 복수전 -------------------------------------------------------------

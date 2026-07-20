@@ -43,6 +43,7 @@ import { PlanetSelectScreen } from './ui/pixi/planetSelect.js';
 import { ResultOverlayScreen } from './ui/pixi/resultOverlay.js';
 import { ControlTowerScreen } from './ui/pixi/controlTower.js';
 import { CardsScreen } from './ui/pixi/cardsView.js';
+import { DefenseCommandScreen } from './ui/pixi/defenseCommand.js';
 
 import type { ControlTowerShowOpts, InvasionResultView } from './ui/controlTower.js';
 import { TitleScreen } from './ui/pixi/titleScreen.js';
@@ -98,16 +99,21 @@ import {
   setInvasionSticker,
 } from './net/invasion.js';
 import type { InvasionTarget } from './net/invasion.js';
+// M7b 방어체 경제: 설계도 지급(정산 파생) + 보관함·강화 게이트웨이 팩토리 등록.
+import { grantBlueprintDrops } from './net/blueprints.js';
+import { setDefenseUnitsGatewayFactory } from './net/defenseUnits.js';
+import { readSupabaseConfig } from './net/config.js';
 // M7a 침공 3레이어(ADR-0017): 침공 런은 구 단일 아레나 `WorldConfig.invasion` 이 아니라
 // `invasion3`(L1 대기권 → L2 회랑 → L3 코어방) 로 만든다. 두 필드를 함께 지정하면 방어
 // 배치가 이중 스폰되므로 **한쪽만** 쓴다.
 import {
   INVASION_TOTAL_TICKS,
+  MAINTENANCE_FULL,
   PHASE_L1,
   normalizeInvasionLayers,
 } from './sim/invasion/index.js';
 import type { Invasion3Config } from './sim/invasion/index.js';
-import type { DefenseCardConfig } from './sim/cardEffects.js';
+import type { CoreModuleConfig } from './sim/moduleEffects.js';
 // M4 Phase F: 리플레이 관전(F3) + 도발 스티커(F2).
 import { SpectateOverlay, isPlayableReplay, nextSpectateSpeed } from './ui/replaySpectate.js';
 import type { SpectateSpeed } from './ui/replaySpectate.js';
@@ -192,13 +198,13 @@ async function main(): Promise<void> {
   document.body.appendChild(blackoutBanner);
 
   /**
-   * 레이더를 그리되, 방어자 카드 유니크 '블랙아웃'이 발동 중이면(공격자 = 현재 플레이어의
-   * 레이더 무력화, cardRuntime.blackoutTicksLeft>0) 레이더를 숨기고 상단 배너를 띄운다. 렌더
-   * 전용 게이트 — sim 은 무변경(카드 미장착/PvE 면 cardRuntime 부재라 항상 정상 렌더). 블랙아웃
-   * 잔여 틱은 stepCardRuntime 이 카운트다운한다(Lane B).
+   * 레이더를 그리되, 방어자 코어 모듈 유니크 '블랙아웃'이 발동 중이면(공격자 = 현재 플레이어의
+   * 레이더 무력화, moduleRuntime.blackoutTicksLeft>0) 레이더를 숨기고 상단 배너를 띄운다. 렌더
+   * 전용 게이트 — sim 은 무변경(모듈 미장착/PvE 면 moduleRuntime 부재라 항상 정상 렌더).
+   * 블랙아웃 잔여 틱은 stepModuleRuntime 이 카운트다운한다(M7b).
    */
   function renderRadarGated(): void {
-    const cr = world?.cardRuntime;
+    const cr = world?.moduleRuntime;
     if (cr !== undefined && cr.blackoutTicksLeft > 0) {
       radar.layer.visible = false;
       blackoutBanner.textContent = t('card.hud.blackout', { n: Math.ceil(cr.blackoutTicksLeft / 60) });
@@ -218,6 +224,19 @@ async function main(): Promise<void> {
   const profile = loadProfile();
   // 로컬 세이브 → 서버 1회 이관(멱등, 무손실). 미설정이면 no-op. 비차단.
   void migrateLocalProfileToServer(profile);
+  // M7b: 방어체 보관함·강화 게이트웨이 팩토리 등록. 등록 전에는 net/defenseUnits 의 모든
+  // 공개 함수가 no-op 이라 방어 사령부가 영구 '오프라인'으로 보인다. **설정이 있을 때만**
+  // 동적 import 하는 이유는 Supabase SDK 를 메인 청크에 싣지 않기 위해서다(modules.ts 와
+  // 같은 규율). 실패해도 삼킨다 — 배치 편집·프리뷰·시험 침공은 서버 없이도 전부 동작한다.
+  if (readSupabaseConfig() !== null) {
+    void import('./net/defenseUnitsGateway.js')
+      .then((m) => {
+        setDefenseUnitsGatewayFactory((config) => new m.SupabaseDefenseUnitsGateway(config));
+      })
+      .catch(() => {
+        /* SDK 로드 실패 = 오프라인과 동일 취급 */
+      });
+  }
   // 격납고 카툰 UI 파일럿(plan hangar-cartoon-ui): 기존 DOM InventoryOverlay 대신 Pixi
   // 캔버스 격납고로 진입점을 교체한다(인터페이스 show/hide/visible 동일). InventoryOverlay
   // 클래스는 회귀 대비로 유지(삭제하지 않음).
@@ -248,21 +267,39 @@ async function main(): Promise<void> {
   // 부르지 않는다). 다른 캔버스 화면과 같은 블록에서 만들어야 z 순서가 맞는다.
   const cardsScreen = new CardsScreen(profile, gameApp.stage);
 
+  // 3레이어 배치 프리뷰(M7b) — 방어 사령부가 자기 루트에 붙여 배경 위·패널 아래로 순서를
+  // 잡는다(`attachTo`). 목업이 아니라 실제 `createWorld(invasion3)` 정지 렌더다.
+  const defensePreview: DefensePreviewControls = new DefensePreviewController({ textures });
+  // 방어 사령부(M7b-command-ui) — 침공 3레이어 배치 사령. 다른 캔버스 화면과 같은 블록에서
+  // 만들어야 entityRenderer·radar 레이어보다 **뒤에** stage 에 붙어 위로 그려진다(z 순서).
+  const defenseCommand = new DefenseCommandScreen(profile, gameApp.stage, defensePreview);
+
   /**
    * 방어 사령부 진입(기지 맵·하네스 공용).
    *
-   * **M7a L11 현재 방어 사령부 화면은 존재하지 않는다.** 구 화면(15×9 격자·포탑 6종·배치
-   * 포인트 예산제)은 3레이어 개편으로 전제가 통째로 사라져 이번 레인에서 삭제했고, 3레이어
-   * Pixi 사령부는 **M7b-command-ui** 가 새로 만든다(레인 문서). 그 사이 기간 동안 이 진입점은
-   * 카드 관리 화면으로 대신 들어간다 — 방어 배치 편집 수단이 없다는 것이 **설계된 중간 상태**임을
-   * 여기 남긴다(빈 화면이 뜨는 것보다 낫다).
+   * 코어 모듈 관리는 별도 캔버스 화면이라 **suspend/resume** 으로 오간다 — `show()` 로 되돌리면
+   * 사령부의 미저장 배치 편집이 날아간다(실측 규율). 시험 침공은 하네스 침공 경로로 보낸다:
+   * `startHarnessInvasionRun` 은 `invasionTarget` 을 세우지 않고 `harnessInvasionRun` 만 세우므로
+   * 정산도 리플레이 제출도 타지 않는다(ADR-0008 오염 런 격리).
    */
   function openDefenseCommand(): void {
-    defensePreview.stop();
-    cardsScreen.show(profile, () => openBaseMap());
+    defenseCommand.show(profile, {
+      onClose: () => openBaseMap(),
+      onTestInvade: (layers) => {
+        startHarnessInvasionRun({
+          seed: nextSeed(),
+          layers,
+          maintenance: MAINTENANCE_FULL,
+          timeLimitTicks: INVASION_TOTAL_TICKS,
+        });
+      },
+      onOpenModules: (resume) => {
+        cardsScreen.show(profile, () => {
+          resume();
+        });
+      },
+    });
   }
-  // 3레이어 배치 프리뷰는 M7b 가 다시 만든다(현재 no-op 스텁 — src/render/defensePreview.ts).
-  const defensePreview: DefensePreviewControls = new DefensePreviewController();
   // M4 Phase F: 관전 컨트롤 오버레이(F3) + 도발 스티커 선택(F2).
   const spectateOverlay = new SpectateOverlay();
   const stickerPicker = new StickerPicker();
@@ -323,9 +360,6 @@ async function main(): Promise<void> {
   // 제출도 하지 않는다 — endRun 이 이 플래그를 보고 두 경로를 모두 건너뛴다.
   let harnessInvasionRun = false;
   let pendingInvasionResult: InvasionResultView | null = null;
-  // 직전 침공 런에 실린 방어자 카드 효력(begin_invasion 스냅샷). 제출 후 관제탑 결과 배너에서
-  // 상대 카드 옵션을 정찰 공개하는 데 쓴다(스펙 R9 — 침공해 본 상대만 옵션 공개). 미장착이면 null.
-  let lastInvasionCard: DefenseCardConfig | null = null;
 
   // --- 리플레이 관전(F3) 상태 ---
   // spectateReplay !== null 이면 현재 화면은 관전 재생이다 → ticker 가 리플레이 입력을
@@ -420,6 +454,7 @@ async function main(): Promise<void> {
     researchLab.hide();
     refinery.hide();
     cardsScreen.hide();
+    defenseCommand.hide();
     defensePreview.stop();
     controlTower.hide();
     spectateOverlay.hide();
@@ -488,8 +523,9 @@ async function main(): Promise<void> {
     if (pendingInvasionResult !== null) {
       showOpts.result = pendingInvasionResult;
       pendingInvasionResult = null;
-      // 방금 침공한 상대의 방어 카드 옵션을 정찰 공개(스펙 R9). 미장착이면 null → 패널 숨김.
-      showOpts.revealCard = lastInvasionCard !== null ? lastInvasionCard.card : null;
+      // 상대 코어 모듈 옵션 정찰 공개(스펙 R9)는 M7b-command-ui 가 모듈 뷰를 세운 뒤
+      // 재배선한다 — 구 CardInstance 패널(ControlTowerShowOpts.revealCard)은 개명 대상이라
+      // 여기서 먹이지 않는다. 입력은 startInvasionRun 의 스냅샷 modules 권위다.
     }
     if (opts.verifying === true) showOpts.verifying = true;
     controlTower.show(
@@ -631,9 +667,10 @@ async function main(): Promise<void> {
     // 배치는 빈 배치로 접히고, 빈 슬롯은 스폰 단계에서 기본 수비대가 충원한다.
     let runLayoutRaw: unknown = layout;
     let runMaintenanceDb: number = target.maintenance;
-    // 방어자 장착 카드 효력(M6). begin_invasion 스냅샷이 실어 준 서버 권위 {card,matchup}.
-    // 미장착·라이브 폴백·구버전 서버면 null → invasion.card 미포함(카드 미장착 = 무회귀).
-    let runCard: DefenseCardConfig | null = null;
+    // 방어자 장착 코어 모듈 효력(M7b). begin_invasion 스냅샷이 실어 준 서버 권위
+    // {instances,matchup}. 미장착·라이브 폴백·구버전 서버면 null → invasion3.modules 미포함
+    // (모듈 미장착 = 거동·해시 무회귀).
+    let runModules: CoreModuleConfig | null = null;
     invasionSnapshotId = null;
     if (target.defenseId !== null) {
       const snapshot = await beginInvasion(target.defenseId);
@@ -645,11 +682,9 @@ async function main(): Promise<void> {
         runLayoutRaw = snapshot.layers;
         runMaintenanceDb = snapshot.maintenance;
         invasionSnapshotId = snapshot.snapshotId;
-        runCard = snapshot.card ?? null;
+        runModules = snapshot.modules ?? null;
       }
     }
-    // 침공 결과 정찰 공개용으로 스냅샷 카드를 보관(제출 후 관제탑 배너에서 옵션 공개 — 스펙 R9).
-    lastInvasionCard = runCard;
 
     const seed = nextSeed();
     const ship = activeShip(profile);
@@ -665,13 +700,14 @@ async function main(): Promise<void> {
     // 방어 정비도(풍화, ADR-0006)를 sim centi-percent 로 변환해 config 에 싣는다.
     // 공식 Math.round(db*100)은 서버 EF 재실행과 동일해야 한다(어긋나면 해시 발산 오거부).
     const maintenance = maintenanceToCenti(runMaintenanceDb);
-    // 구 방어 카드 효력(M6)은 3레이어에서 **코어 모듈**(l3.modules)로 대체된다(M7b). 그때까지
-    // 카드는 런에 싣지 않고 정찰 공개용으로만 보관한다 — 구 InvasionConfig.card 를 함께 쓰면
-    // 방어 배치가 이중으로 스폰된다.
+    // 코어 모듈 효력(M7b · ADR-0018). 서버 권위 스냅샷이 준 {instances,matchup} 을 그대로
+    // 싣는다 — EF 가 같은 고정본으로 재실행하므로 hashStream 이 일치한다. 미장착이면 필드
+    // 자체를 두지 않는다(조건부 접기 → 거동·해시 바이트 불변).
     const invasion3: Invasion3Config = {
       layers: normalizeInvasionLayers(runLayoutRaw),
       timeLimitTicks: INVASION_TOTAL_TICKS,
       ...(maintenance !== undefined ? { maintenance } : {}),
+      ...(runModules !== null ? { modules: runModules } : {}),
     };
     const config: WorldConfig = {
       ...DEFAULT_CONFIG,
@@ -965,6 +1001,10 @@ async function main(): Promise<void> {
         // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.
         if (tutorialActive) profile.tutorialDone = true;
         saveProfile(profile);
+        // 설계도 지급(M7b): 정산이 파생한 목록을 서버 보유량에 얹는다. 미설정·오프라인이면
+        // no-op 이고 throw 하지 않는다. 오염 런·하네스 침공 런은 이 블록에 들어오지 않으므로
+        // 설계도도 함께 차단된다(ADR-0008 과 같은 격리면).
+        void grantBlueprintDrops(lastOutcome.blueprintsGained);
         // PvE 런 결과(정산된 메타)를 서버에 기록. 미설정이면 no-op, 실패 시 로컬
         // 대기 슬롯에 남아 재시도(오프라인 우선). 비차단 fire-and-forget.
         void recordPveRunResult(profile);
@@ -1386,9 +1426,11 @@ async function main(): Promise<void> {
       // 카드 화면도 로그인해야 채워진다(미로그인이면 안내 상태) — 검증 시 이 참조로 상태를
       // 직접 넣고 render() 를 부른다(카툰나무풍 롤아웃 #7 검증 절차).
       cardsScreen,
-      // 구 방어 사령부의 "카드 관리" 진입(openCards)은 사령부 화면과 함께 M7a L11 에서
-      // 사라졌다 — 지금은 openDefenseCommand 가 카드 화면을 직접 연다(M7b 에서 재배선).
-      openCards: openDefenseCommand,
+      // 방어 사령부(M7b) — 검증 시 이 참조로 탭·배치 상태를 직접 넣고 render() 를 부른다.
+      defenseCommand,
+      // 코어 모듈 화면 직행(구 "카드 관리" 진입점 계승). 사령부를 거치지 않으므로 배치 편집
+      // 상태와 무관하다 — 사령부 안에서 열 때는 suspend/resume 경로를 탄다.
+      openCards: () => cardsScreen.show(profile, () => openBaseMap()),
       // 설정은 톱니 클릭으로만 열리는 크롬 UI 다 — 검증 시 이 참조로 직접 연다(#8).
       settings,
       // 하네스 API 표면(개발 도구): goto/startRun/ff/setSpeed/pause/resume/step/

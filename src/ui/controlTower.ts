@@ -21,7 +21,7 @@
  */
 
 import type { Profile } from '../save/profile.js';
-import type { InvasionLayers } from '../sim/invasion/types.js';
+import type { InvasionLayers, InvasionRef } from '../sim/invasion/types.js';
 import { normalizeInvasionLayers } from '../sim/invasion/normalize.js';
 import {
   INVASION_WAVE_SLOTS,
@@ -55,9 +55,17 @@ import {
 } from '../net/invasion.js';
 import { stickerLabel } from '../../data/stickers.js';
 import { seedBaseByProfileId } from '../../data/seedBases.js';
+import {
+  CATALOG_FORMATION,
+  CATALOG_FACILITY,
+  CATALOG_PROP,
+  CATALOG_BOSS,
+  catalogEntry,
+  def3NameKey,
+} from '../../data/invasion/catalog.js';
 import type { CardInstance } from '../../data/defenseCards.js';
 import { cardRarityColor, cardRarityLabel, cardAffixOneLine } from './cardsView.js';
-import { t } from '../i18n/index.js';
+import { t, type MessageKey } from '../i18n/index.js';
 
 // ---------------------------------------------------------------------------
 // 표시 데이터
@@ -277,6 +285,131 @@ export function reconSummary(layers: InvasionLayers): string {
     pm: INVASION_PROP_SLOTS,
     b: layers.l3.boss !== null ? 1 : 0,
   });
+}
+
+// ---------------------------------------------------------------------------
+// 3레이어 정찰 뷰 모델 (M7b-acquisition · 결정 #15) — 순수 · 테스트 대상
+// ---------------------------------------------------------------------------
+
+/**
+ * 정찰 슬롯 1칸의 **표시 전용** 모델.
+ *
+ * ## 정보 공개 범위(결정 #15)가 이 타입의 형태로 강제된다
+ * 잠금 상태에서 공개하는 것은 ①슬롯이 찼는가 ②등급(색) ③승급(별) **셋뿐**이다. 레벨·
+ * 어픽스 시드·카탈로그 id 는 **필드 자체가 없다** — 렌더가 실수로 흘릴 표면을 타입에서
+ * 없애는 편이 "안 그리기로 약속" 보다 확실하다. 1회 침공한 상대만 `nameKey` 가 채워져
+ * 종류를 알 수 있고, 그마저도 레벨·어픽스는 여전히 내지 않는다(그건 결과 화면 몫).
+ */
+export interface ReconSlotView {
+  /** 슬롯이 차 있는가(비었으면 기본 수비대가 스폰 단계에서 충원된다). */
+  readonly occupied: boolean;
+  /** 등급 코드 0..3. 빈 슬롯이면 0. */
+  readonly rarity: number;
+  /** 승급 단계 0..5(별 개수). 빈 슬롯이면 0. */
+  readonly ascension: number;
+  /** 해금(1회 침공 완료)됐을 때만 채워지는 표시명 i18n 키. 잠금이면 null. */
+  readonly nameKey: string | null;
+}
+
+/** 정찰 한 줄(레이어 안의 한 슬롯 무리). */
+export interface ReconStrip {
+  /** 레이어 번호(1..3). */
+  readonly layer: number;
+  /** 카탈로그 종류 코드(CATALOG_*). 수호 기체 줄은 -1(카탈로그 밖). */
+  readonly kind: number;
+  readonly slots: readonly ReconSlotView[];
+}
+
+/** 정찰 화면 전체. */
+export interface ReconView {
+  /** 1회 침공해 종류가 해금됐는가. */
+  readonly revealed: boolean;
+  /** 슬롯 점유 요약 한 줄(기존 문구 재사용). */
+  readonly summary: string;
+  readonly strips: readonly ReconStrip[];
+}
+
+/** 승급 별 최대 표시 수(외형 티어 신호 — data/defenseUnits.ts ASCENSION 상한과 동일). */
+const RECON_MAX_STARS = 5;
+
+/** 등급 코드 → 정찰 칩 색(CSS). 장비/모듈 팔레트와 같은 어휘(회색→파랑→금색→보라). */
+export const RECON_RARITY_COLOR: readonly string[] = ['#8a8f9e', '#5aa9ff', '#ffd24c', '#c86aff'];
+
+/** 등급 코드 → 칩 색. 범위를 벗어나면 노말 회색. */
+export function reconRarityColor(rarity: number): string {
+  return RECON_RARITY_COLOR[rarity] ?? RECON_RARITY_COLOR[0]!;
+}
+
+/** 승급 단계 → 별 문자열('★★☆☆☆'). 컬러 이모지가 아니라 흑백 기하 기호다(Pixi 두부 회피). */
+export function ascensionStars(ascension: number): string {
+  const n = Math.max(0, Math.min(RECON_MAX_STARS, Math.trunc(ascension)));
+  return '★'.repeat(n) + '☆'.repeat(RECON_MAX_STARS - n);
+}
+
+/** 배치 Ref 1건 → 슬롯 뷰. 잠금이면 종류를 숨긴다. */
+function slotView(ref: InvasionRef | null, kind: number, revealed: boolean): ReconSlotView {
+  if (ref === null) return { occupied: false, rarity: 0, ascension: 0, nameKey: null };
+  const entry = revealed ? catalogEntry(kind, ref.catalogId) : undefined;
+  return {
+    occupied: true,
+    rarity: ref.rarity,
+    ascension: ref.ascension,
+    nameKey: entry === undefined ? null : def3NameKey(entry.i18nId),
+  };
+}
+
+/**
+ * 3레이어 배치 → 정찰 뷰(순수).
+ *
+ * `revealed` 는 **1회 침공 이력**이다(결정 #15). 클라는 재도전 쿨다운 로컬 미러에 그 이력을
+ * 이미 갖고 있으므로(침공 시작 시 기록) 별도 저장소·서버 왕복 없이 판정한다 — 이 값을
+ * 조작해도 드러나는 것은 "종류 이름" 뿐이고 레벨·어픽스는 애초에 응답에 없다.
+ */
+export function reconView(layers: InvasionLayers, revealed: boolean): ReconView {
+  const strips: ReconStrip[] = [
+    {
+      layer: 1,
+      kind: CATALOG_FORMATION,
+      slots: layers.l1.waveSlots.map((s) => slotView(s, CATALOG_FORMATION, revealed)),
+    },
+    {
+      layer: 2,
+      kind: CATALOG_FACILITY,
+      slots: layers.l2.sockets.map((s) => slotView(s, CATALOG_FACILITY, revealed)),
+    },
+    {
+      layer: 3,
+      kind: CATALOG_BOSS,
+      slots: [slotView(layers.l3.boss, CATALOG_BOSS, revealed)],
+    },
+    {
+      layer: 3,
+      kind: CATALOG_PROP,
+      slots: layers.l3.props.map((s) => slotView(s, CATALOG_PROP, revealed)),
+    },
+    {
+      // 수호 기체는 카탈로그 밖(퇴역 기체 복사본)이라 등급·승급 축이 없다 — 점유만 낸다.
+      layer: 3,
+      kind: RECON_KIND_GUARDIAN,
+      slots: layers.l3.guardians.map((g) => ({
+        occupied: g !== null,
+        rarity: 0,
+        ascension: 0,
+        nameKey: null,
+      })),
+    },
+  ];
+  return { revealed, summary: reconSummary(layers), strips };
+}
+
+/** 수호 기체 줄의 종류 코드(카탈로그 밖 — CATALOG_* 와 겹치지 않는 음수). */
+export const RECON_KIND_GUARDIAN = -1;
+
+/** 슬롯 뷰 → 잠금 상태에서도 안전한 한 줄 라벨(해금이면 이름, 아니면 물음표). */
+export function reconSlotLabel(slot: ReconSlotView): string {
+  if (!slot.occupied) return '';
+  if (slot.nameKey === null) return '?';
+  return t(slot.nameKey as MessageKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -919,15 +1052,59 @@ export class ControlTower {
       return panel;
     }
 
-    // 15×9 미니 격자는 M7a 에서 사라졌다(3레이어에 격자가 없다). 정식 정찰 화면은
-    // M7b-command-ui 가 레이어 탭으로 다시 만든다 — 그때까지 슬롯 점유 요약 한 줄만 보여준다.
+    // 3레이어 정찰(결정 #15): 레이어별 실루엣 칩 + 등급 색 + 승급 별만. 정확 스펙(레벨·
+    // 어픽스)은 뷰 모델에 필드조차 없다. 1회 침공한 상대만 종류 이름이 열린다.
+    const view = reconView(layout, this.cooldowns[target.profileId] !== undefined);
     const sum = document.createElement('div');
     sum.className = 'pb-note';
     sum.style.textAlign = 'left';
     sum.style.marginTop = '6px';
-    sum.textContent = reconSummary(layout);
+    sum.textContent = view.summary;
     panel.appendChild(sum);
+    for (const strip of view.strips) {
+      panel.appendChild(this.reconStripRow(strip));
+    }
     return panel;
+  }
+
+  /** 정찰 한 줄 — 레이어 라벨 + 슬롯 칩(등급 색 채움 · 승급 별 · 잠금이면 '?'). */
+  private reconStripRow(strip: ReconStrip): HTMLElement {
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.gap = '4px';
+    row.style.marginTop = '5px';
+
+    const tag = document.createElement('span');
+    tag.style.color = '#8896b8';
+    tag.style.fontSize = '11px';
+    tag.style.minWidth = '22px';
+    // 레이어 번호는 코드 라벨이라 번역 대상이 아니다(L1/L2/L3).
+    tag.textContent = `L${strip.layer}`;
+    row.appendChild(tag);
+
+    for (const slot of strip.slots) {
+      const chip = document.createElement('span');
+      chip.style.width = '18px';
+      chip.style.height = '18px';
+      chip.style.borderRadius = '4px';
+      chip.style.display = 'inline-flex';
+      chip.style.alignItems = 'center';
+      chip.style.justifyContent = 'center';
+      chip.style.fontSize = '10px';
+      chip.style.fontWeight = '800';
+      chip.style.color = '#12102a';
+      if (slot.occupied) {
+        chip.style.background = reconRarityColor(slot.rarity);
+        chip.textContent = reconSlotLabel(slot).slice(0, 1);
+        chip.title = `${reconSlotLabel(slot)} · ${ascensionStars(slot.ascension)}`;
+      } else {
+        chip.style.background = 'transparent';
+        chip.style.border = '1px dashed #2a3552';
+      }
+      row.appendChild(chip);
+    }
+    return row;
   }
 
   private ladderPanel(): HTMLElement {

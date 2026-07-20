@@ -57,6 +57,7 @@ import type {
   InvasionGuardianPlacement,
   InvasionLayers,
 } from '../../../src/sim/invasion/types.js';
+import { parseModulesAuthority } from '../../../src/sim/moduleEffects.js';
 import { PERFORMANCE_FULL } from '../../../data/guardian.js';
 import type { GuardianSnapshot } from '../../../data/guardian.js';
 import { branchBonusBp, guardianMilestones, normalizeMilestones } from '../../../data/lineage.js';
@@ -106,6 +107,17 @@ export interface InvasionServerContext {
    * "0%→성능 50%")한다. **미지정(undefined)이면 완전 정비**로 취급한다.
    */
   maintenance?: number;
+  /**
+   * T0 스냅샷 `authority.modules` raw jsonb(M7b · ADR-0018). 방어자가 장착한 코어 모듈
+   * 인스턴스 + 공격자 매치업이며, verifyInvasion 이 클라이언트와 **같은 파서**
+   * ({@link parseModulesAuthority})로 접어 재실행 config 에 싣는다.
+   *
+   * **이 배선이 빠지면 모듈 장착 방어의 정직한 침공이 전량 hash-stream-divergence 로 오거부된다**
+   * — 클라는 모듈 효력을 반영해 달렸는데 서버는 안 반영하고 재실행하기 때문이다. 모듈은
+   * `layers` 직렬화에 들어 있지 않으므로(소모성 인스턴스) 반드시 별도 키로 와야 한다.
+   * 미장착·구버전 스냅샷이면 미지정 → 모듈 없는 재실행(거동·해시 불변).
+   */
+  modules?: unknown;
 }
 
 function reject(reason: InvasionRejectReason, computed?: ComputedFacts): InvasionVerifyResult {
@@ -233,12 +245,11 @@ export interface InvasionSnapshotRow {
   /** authority->>'maintenance' — DB 정비도(numeric 0..100) 또는 미지정. index.ts 가 centi 변환. */
   readonly authorityMaintenanceDb: number | undefined;
   /**
-   * authority->'card' — 구 M6 방어 카드 효력. **M7a 에서 재실행 권위 입력이 아니다** — 코어
-   * 모듈이 `layers.l3.modules` 로 배치에 흡수됐기 때문이다. 남겨 둔 이유는 index.ts 의
-   * 방어 성공 드랍 확률이 아직 이 매치업 CP 를 참조하기 때문이며, M7b-core-modules 레인이
-   * 드랍 경로를 갈아끼울 때 함께 사라진다.
+   * authority->'modules' — T0 고정 코어 모듈 권위(M7b, `{instances,matchup}` raw jsonb).
+   * **재실행 입력이다** — 모듈은 layers 직렬화에 없으므로 이 키가 빠지면 모듈 장착 방어의
+   * 정직한 침공이 전량 오거부된다. 미장착·구버전 스냅샷이면 null.
    */
-  readonly authorityCard: unknown;
+  readonly authorityModules: unknown;
   /** invasion_snapshots.created_at → epoch ms. 신선도 판정 기준. */
   readonly createdAtMs: number;
 }
@@ -268,8 +279,8 @@ export type SnapshotResolution =
       readonly source: 'snapshot';
       readonly layers: unknown;
       readonly maintenanceDb: number | undefined;
-      /** authority->'card' — 구 M6 잔재(드랍 확률 매치업 전용, 재실행 권위 아님). */
-      readonly card: unknown;
+      /** authority->'modules' — 코어 모듈 재실행 권위(raw jsonb, 미장착이면 null). */
+      readonly modules: unknown;
     }
   | {
       readonly source: 'live';
@@ -309,7 +320,7 @@ export function resolveSnapshotAuthority(params: SnapshotResolutionParams): Snap
     source: 'snapshot',
     layers: snap.authorityLayers,
     maintenanceDb: snap.authorityMaintenanceDb,
-    card: snap.authorityCard,
+    modules: snap.authorityModules,
   };
 }
 
@@ -382,6 +393,11 @@ export function verifyInvasion(raw: unknown, server: InvasionServerContext): Inv
     timeLimitTicks: server.timeLimitTicks,
   };
   if (server.maintenance !== undefined) authoritativeInvasion.maintenance = server.maintenance;
+  // 코어 모듈 권위(M7b): 제출 config 의 modules 는 **읽지 않는다** — 공격자가 방어자 모듈을
+  // 지워 보내는 위조를 원천 차단하기 위해 서버 스냅샷 authority 만 신뢰한다. 클라이언트도
+  // 같은 스냅샷을 받아 같은 파서로 접었으므로 hashStream 이 일치한다.
+  const serverModules = parseModulesAuthority(server.modules);
+  if (serverModules !== null) authoritativeInvasion.modules = serverModules;
   // 구 침공 블록(`config.invasion`)을 떼어내던 방어선은 L11 에서 **필요가 없어졌다** — sim 이
   // 그 키를 읽는 경로 자체가 삭제돼(구 단일 아레나 침공 폐기) 공격자가 실어 보내도 엔티티가
   // 생기지 않는다. 정체불명 키는 재실행이 무시하므로 그대로 흘려보낸다. 침공 거동을 정하는

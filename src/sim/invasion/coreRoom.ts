@@ -407,7 +407,13 @@ export function updateDefenseBoss(
   if (phase === undefined) return;
   const attackIndex = boss.pierce % phase.attacks.length;
   const attack = phase.attacks[attackIndex];
-  if (attack !== undefined) executeDefenseAttack(state, boss, player, attack, powerBp);
+  // 코어 모듈 보스 화력 배율(M7b): 강화 3축 bp 에 곱해 **정수 bp 로 되돌린 뒤** 넘긴다 —
+  // 피해 산식(scaleByBp)이 정수 basis-point 단일 나눗셈이라는 규율을 깨지 않기 위해서다.
+  // 미장착이면 배율 1 → bp 그대로(비트 동일).
+  const mr = state.moduleRuntime;
+  const bossBp =
+    mr === undefined || mr.bossDamageMult === 1 ? powerBp : Math.round(powerBp * mr.bossDamageMult);
+  if (attack !== undefined) executeDefenseAttack(state, boss, player, attack, bossBp);
   boss.pierce++;
   boss.cooldown = invasionFireCooldown(phase.patternCooldown, maintenance);
   // 과열 창은 시그니처 캐스트(인덱스 0) 직후, 재장전이 끝났을 때만 열린다 → 열림/닫힘 리듬.

@@ -23,6 +23,8 @@
  */
 
 import { rollItem } from '../items/roll.js';
+import { blueprintDropsFromLoot } from '../../data/planets/index.js';
+import type { BlueprintGrant } from '../../data/planets/blueprints.js';
 import { RARITY_BY_CODE } from '../items/types.js';
 import type { Item } from '../items/types.js';
 import type { LootRecord } from '../sim/world.js';
@@ -53,6 +55,13 @@ export interface SettlementOutcome {
   creditsGained: number;
   /** Items that fit neither inventory nor stash (prompt the player to clear space). */
   overflow: number;
+  /**
+   * 이 런이 낸 방어체 설계도(M7b). **프로필에는 담지 않는다** — 설계도 보유량은 서버
+   * (`defense_blueprints`)가 진실이라, 호출부가 이 목록을 `grantBlueprintDrops` 로 넘긴다.
+   * 파생은 순수하고 RNG 를 소비하지 않는다(장비 확정과 **같은 드랍 시드**에서 되풀어 쓴다)
+   * — 그래서 해시·fixture 가 그대로다(data/planets/blueprints.ts `rollBlueprintDrop` 계약).
+   */
+  blueprintsGained: BlueprintGrant[];
 }
 
 /**
@@ -91,7 +100,18 @@ export function settleRun(profile: Profile, result: RunResult): SettlementOutcom
     recordPlanetClear(profile, result.planet, result.tier);
   }
 
-  return { itemsGained, levelsGained, skillPointsGained, creditsGained, overflow };
+  // 6. 설계도 파생(M7b) — 장비 확정과 같은 드랍 시드에서 되풀어 쓰는 순수 함수라 RNG 커서를
+  //    건드리지 않는다. 지급(서버 RPC)은 호출부 몫이다(위 SettlementOutcome 주석 참조).
+  const blueprintsGained = blueprintDropsFromLoot(result.loot);
+
+  return {
+    itemsGained,
+    levelsGained,
+    skillPointsGained,
+    creditsGained,
+    overflow,
+    blueprintsGained,
+  };
 }
 
 /** Add XP to a ship and resolve level-ups. Returns the number of levels gained. */

@@ -402,7 +402,7 @@ describe('verify-invasion — 권위 스냅샷 해석 (레이스 B)', () => {
     defenseId: 'def-1',
     authorityLayers: snapLayers,
     authorityMaintenanceDb: 80,
-    authorityCard: null,
+    authorityModules: null,
     createdAtMs: nowMs - 60_000,
   };
   const baseParams = {

@@ -20,7 +20,7 @@
 import { SeededRng } from './rng.js';
 import { cos, sin, atan2, length, TWO_PI, wrapAngle } from './math.js';
 import { DT, VIEW_WIDTH, VIEW_HEIGHT, OFFSCREEN_X } from './constants.js';
-import type { Entity } from './entities.js';
+import type { Entity, EntityKind } from './entities.js';
 import {
   blankEntity,
   spawnBullet,
@@ -154,8 +154,8 @@ import {
   TURRET_BULLET_LIFE,
 } from './events.js';
 import { rebootHp, REBOOT_DELAY_TICKS } from '../../data/guardian.js';
-import type { CardRuntime } from './cardEffects.js';
-import { stepCardRuntime } from './cardEffects.js';
+import type { ModuleRuntime } from './moduleEffects.js';
+import { initModuleRuntime, stepModuleRuntime } from './moduleEffects.js';
 // --- 침공 3레이어(M7a) — 강제 스크롤 카메라 · 페이즈 머신 -----------------------------
 import type { Invasion3Config, InvasionRuntime } from './invasion/types.js';
 import { PHASE_L3 } from './invasion/constants.js';
@@ -542,12 +542,12 @@ export interface WorldState {
    */
   tainted: boolean;
   /**
-   * 방어 카드 효력 런타임(Lane B). `config.invasion.card` 가 있는 침공에만 존재하며(그 외
-   * undefined), 정적 카운터 해석값·동적 트리거 상태·유니크 파라미터·매 틱 유효 배율을 담는다
-   * (src/sim/cardEffects.ts). undefined = 카드 미장착 = 기존 침공/PvE 경로와 거동·해시 완전 불변
-   * (조건부 접기). hashWorld 가 존재 시에만 결정론 필드를 append-only 로 접는다.
+   * 코어 모듈 효력 런타임(M7b · ADR-0018 — 구 `cardRuntime` 계승). `config.invasion3.modules`
+   * 가 있는 침공에만 존재하며(그 외 undefined), 정적 카운터 해석값·동적 트리거 상태·유니크
+   * 파라미터·매 틱 유효 배율을 담는다(src/sim/moduleEffects.ts). undefined = 모듈 미장착 =
+   * 기존 침공/PvE 경로와 거동·해시 완전 불변(조건부 접기).
    */
-  cardRuntime?: CardRuntime;
+  moduleRuntime?: ModuleRuntime;
   /**
    * 침공 3레이어 런타임(M7a). `config.invasion3` 가 있는 런에만 존재한다(그 외 undefined →
    * 조건부 접기로 PvE·구 침공 해시 완전 불변). 스크롤 오프셋이 여기 실리면서 카메라가
@@ -614,12 +614,6 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   player.maxHp = cfg.playerHp;
   entities.push(player);
 
-  // 방어 카드 런타임(M6). **M7a 현재 이 값을 만드는 경로가 없다** — 구 단일 아레나 침공
-  // (`config.invasion`)이 유일한 생성 지점이었고 L11 에서 함께 사라졌다. 카드는 ADR-0018 에
-  // 따라 M7b 에서 '코어 모듈'로 재설계되며, 그때 3레이어 config 에 다시 실린다. 그때까지
-  // cardRuntime 은 항상 undefined → 아래 모든 카드 접점이 no-op 이라 거동·해시 불변이다.
-  const cardRuntime: CardRuntime | undefined = undefined;
-
   // 침공 3레이어(M7a): 배치를 **여기서 한 번** 정규화해 sim·해시가 항상 정규형만 본다
   // (raw 가 새어 들어가면 클라·서버 재실행이 갈린다). cfg 는 이미 얕은 사본이라 호출부의
   // config 객체를 변형하지 않는다. 레이어 정적 배치 스폰은 진입 훅(L4/L5 소관)이 맡는다.
@@ -682,10 +676,8 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     // 탄-벽 broad-phase 는 침공 3레이어에서만 쓴다. PvE 는 null → 기존 직접 스윕 그대로라
     // 해시가 바이트 불변이다(회랑 벽이 '활성 벽 ≤~19' 전제를 깨는 것은 침공 경로뿐).
     wallIndex: invasion3Runtime !== undefined ? new InvasionWallIndex() : null,
-    // exactOptionalPropertyTypes: 카드 미장착이면 필드 자체를 두지 않는다(undefined 대입 금지·
-    // 조건부 접기 정합). 장착 시에만 런타임을 싣는다.
-    ...(cardRuntime !== undefined ? { cardRuntime } : {}),
-    // 동일 규율: 3레이어 침공이 아니면 필드 자체를 두지 않는다.
+    // 3레이어 침공이 아니면 필드 자체를 두지 않는다(exactOptionalPropertyTypes — undefined
+    // 대입 금지 · 조건부 접기 정합).
     ...(invasion3Runtime !== undefined ? { invasion3: invasion3Runtime } : {}),
   };
 
@@ -693,6 +685,10 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   // 때문이다. 플레이어는 이미 index 0 에 있으므로 hashWorld 불변식이 유지된다.
   if (cfg.invasion3 !== undefined && invasion3Runtime !== undefined) {
     initInvasionPhase(state, cfg.invasion3, invasion3Runtime);
+    // 코어 모듈 효력(M7b): 배치 스폰이 끝난 뒤 해석한다 — 스폰 시점 효과(코어 HP·기물 내구·
+    // 신기루 코어)가 대상 엔티티를 봐야 하기 때문이다. 미장착이면 필드 자체를 두지 않는다.
+    const modules = cfg.invasion3.modules;
+    if (modules !== undefined) state.moduleRuntime = initModuleRuntime(modules, state);
   }
   return state;
 }
@@ -761,9 +757,9 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // 플레이어는 갱신된 창 안에서 움직인다(같은 틱 안에서 창 밖으로 튀는 프레임이 없다).
   if (inv3Runtime !== undefined) advanceInvasionScroll(state, inv3Runtime);
 
-  // 방어 카드(장착 시): 이번 틱 유효 배율·트리거 상태를 stepPlayer 이전에 갱신해 모든 접점이
-  // 같은 틱 값을 읽게 한다. cardRuntime 미존재(카드 미장착·PvE)면 조기 반환 → 거동·해시 불변.
-  if (state.cardRuntime !== undefined) stepCardRuntime(state, player);
+  // 코어 모듈(장착 시): 이번 틱 유효 배율·트리거 상태를 stepPlayer 이전에 갱신해 모든 접점이
+  // 같은 틱 값을 읽게 한다. moduleRuntime 미존재(미장착·PvE)면 조기 반환 → 거동·해시 불변.
+  if (state.moduleRuntime !== undefined) stepModuleRuntime(state, player);
 
   stepPlayer(state, player, input);
   if (!designedRun) updateWaves(state, player);
@@ -968,11 +964,11 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
   // 미적용 — 아래 dash는 별도 가산). 매 틱 1 감소.
   const slowMult = state.playerSlowTicks > 0 ? PLAYER_SLOW_MULT : 1;
   if (state.playerSlowTicks > 0) state.playerSlowTicks--;
-  // 방어 카드 ct-attrition(지연전): 공격자(플레이어) 이동 감속. 미장착·미발동이면 배율 1 이라
+  // 코어 모듈 mt-attrition(지연전): 공격자(플레이어) 이동 감속. 미장착·미발동이면 배율 1 이라
   // `v * 1 === v` 로 비트 동일(거동·해시 불변). 대시 임펄스에는 미적용(감속 지대와 동일 규율).
-  const cardSlow = state.cardRuntime !== undefined ? state.cardRuntime.attackerSlowMult : 1;
-  player.vx = mx * config.playerSpeed * slowMult * cardSlow;
-  player.vy = my * config.playerSpeed * slowMult * cardSlow;
+  const moduleSlow = state.moduleRuntime !== undefined ? state.moduleRuntime.attackerSlowMult : 1;
+  player.vx = mx * config.playerSpeed * slowMult * moduleSlow;
+  player.vy = my * config.playerSpeed * slowMult * moduleSlow;
   player.angle = input.aim;
 
   if (player.dashCooldown > 0) player.dashCooldown--;
@@ -1354,14 +1350,34 @@ function subDamage(state: WorldState, base: number): number {
   return Math.round(base * mult * 100) / 100;
 }
 
+/**
+ * 침공 방어 측 엔티티인가(코어 모듈 피해 감소 대상). 3레이어의 방어체는 편대(L1)·설비(L2)·
+ * 기물/보스/수호/코어(L3) 전부다. 편대원·소환 드론은 `summonEnemy` 경유라 kind 가 'enemy' 다.
+ */
+function isInvasionDefender(kind: EntityKind): boolean {
+  return (
+    kind === 'core' ||
+    kind === 'guardian' ||
+    kind === 'enemy' ||
+    kind === 'formation' ||
+    kind === 'formationDrone' ||
+    kind === 'facilityGun' ||
+    kind === 'facilityHazard' ||
+    kind === 'facilitySpawner' ||
+    kind === 'spawnedDrone' ||
+    kind === 'prop' ||
+    kind === 'defenseBoss'
+  );
+}
+
 /** 보조무기 사이클 쿨다운에 주무기와 공유하는 연사 배율 적용(요구 #5). 최소 2틱 하한
  *  (주무기 fireCooldown 하한과 정합). */
 function subCooldown(state: WorldState, base: number): number {
   const mult = state.config.loadout?.fireRateMult ?? 1;
-  // 방어 카드 정적 카운터(절연/교란): 공격자 보조무기 쿨다운 증가(+% → 간격↑). 미장착·미일치면
+  // 코어 모듈 정적 카운터(절연/교란): 공격자 보조무기 쿨다운 증가(+% → 간격↑). 미장착·미일치면
   // subMult=1 이라 `base*mult*1===base*mult` 로 비트 동일(거동·해시 불변).
   const subMult =
-    state.cardRuntime !== undefined ? 1 + state.cardRuntime.attackerSubCdPct / 100 : 1;
+    state.moduleRuntime !== undefined ? 1 + state.moduleRuntime.attackerSubCdPct / 100 : 1;
   const cd = Math.round(base * mult * subMult);
   return cd < 2 ? 2 : cd;
 }
@@ -1888,8 +1904,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   // 유니크 게이트(장착 시에만 분기): ① 과열 드럼(명중 스택), ② 분열 코어(명중 파편),
   // ③ 관통 자이로(무한 관통 + 관통당 피해 증폭). 미장착 시 아래 분기는 전부 no-op.
   const uMask = state.config.loadout?.uniqueMask ?? 0;
-  // 방어 카드 런타임(장착 침공만). undefined 면 아래 카드 분기는 전부 no-op(거동·해시 불변).
-  const cr = state.cardRuntime;
+  // 코어 모듈 런타임(장착 침공만). undefined 면 아래 모듈 분기는 전부 no-op(거동·해시 불변).
+  const cr = state.moduleRuntime;
   const overheatOn = hasUnique(uMask, UQ_OVERHEAT_DRUM);
   const splitOn = hasUnique(uMask, UQ_SPLIT_CORE);
   const gyroOn = hasUnique(uMask, UQ_PIERCE_GYRO);
@@ -1947,12 +1963,14 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       const prismAmp = prismOn ? 1 + b.phase * PRISM_DAMAGE_AMP : 1;
       // 보호막의 엘리트: 받는 피해 절반(그 외 1).
       let dealt = b.damage * mult * gyroAmp * prismAmp * eliteDamageTakenMult(t);
-      // 방어 카드 정적 카운터/지구전(피해 감소): 코어·포탑이 받는 피해를 배율로 낮춘다(실드 흡수
-      // 이전 적용). 미장착·미발동이면 defenseDmgMult=1 이라 `dealt*1===dealt`(거동·해시 불변).
-      if (cr !== undefined && (t.kind === 'core' || t.kind === 'facilityGun')) {
+      // 코어 모듈 정적 카운터/지구전(피해 감소): **방어체**가 받는 피해를 배율로 낮춘다(실드
+      // 흡수 이전 적용). 미장착·미발동이면 defenseDmgMult=1 이라 `dealt*1===dealt`(거동·해시
+      // 불변). moduleRuntime 은 침공에만 존재하므로 여기서 'enemy'(편대원·소환 드론)를 포함해도
+      // PvE 경로에는 닿지 않는다 — PvE 는 cr===undefined 로 분기 자체가 접힌다.
+      if (cr !== undefined && isInvasionDefender(t.kind)) {
         dealt *= cr.defenseDmgMult;
       }
-      // 반사(ct-reflection/거울 관문): 실제 코어 피격 시 감소 후 입사 피해의 일부를 공격자에 반사.
+      // 반사(mt-reflection/거울 관문): 실제 코어 피격 시 감소 후 입사 피해의 일부를 공격자에 반사.
       // 실드 흡수 전 입사량 기준(피격 자체에 반응). 미보유면 reflectPct=0 → 반사 없음.
       if (cr !== undefined && t.kind === 'core' && cr.reflectPct > 0 && dealt > 0) {
         player.hp -= (dealt * cr.reflectPct) / 100;
@@ -1986,7 +2004,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
           t.hp = Math.max(1, Math.round((t.maxHp * cr.reviveHpPct) / 100));
         } else {
           t.dead = true;
-          // 방어 카드 ct-retribution(응징): 수호 기체가 실제 격추(부활 없이)될 때 공격자에 일제사격
+          // 코어 모듈 mt-retribution(응징): 수호 기체가 실제 격추(부활 없이)될 때 공격자에 일제사격
           // 피해. cr 미존재·미보유면 volleyDamage=0 → 무영향.
           if (cr !== undefined && t.kind === 'guardian' && cr.volleyDamage > 0) {
             player.hp -= cr.volleyDamage;

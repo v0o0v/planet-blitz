@@ -22,8 +22,8 @@
 import type { Replay } from '../sim/replay.js';
 import { runReplay } from '../sim/replay.js';
 import type { KeyValueStore } from '../save/profile.js';
-import type { DefenseCardConfig } from '../sim/cardEffects.js';
-import type { InvasionLayers, ModuleRef } from '../sim/invasion/types.js';
+import type { InvasionLayers } from '../sim/invasion/types.js';
+import type { CoreModuleConfig } from '../sim/moduleEffects.js';
 import { readSupabaseConfig, type SupabaseConfig } from './config.js';
 
 // ---------------------------------------------------------------------------
@@ -252,32 +252,26 @@ export interface InvasionSnapshot {
   /** T0 고정 정비도 %(0~100). 런·검증에 이 값을 쓴다(라이브 재조회 대신 고정본). */
   maintenance: number;
   /**
-   * T0 고정 방어 카드 효력(M6 · ADR-0012) — 방어자 장착 카드(서버 권위 CardInstance)+공격자
-   * 매치업. 존재하면 침공 런 config 의 `invasion.card` 로 실어 정적 카운터·동적 트리거·유니크가
-   * 방어전에 반영된다(공격자 클라이언트도 이 고정본으로 재현해야 hashStream 이 EF 재실행과 일치).
-   * 방어자 카드 미장착이면 `null`/미설정 → 카드 없는 기존 침공과 거동·해시 완전 불변(조건부 접기).
-   * 서버가 authored 한 값이라 begin_invasion 응답 그대로 소비한다(위조 시 EF 가 스냅샷 권위로
-   * 오버라이드해 재실행 발산으로 거부).
-   */
-  card?: DefenseCardConfig | null;
-  /**
-   * T0 고정 **코어 모듈 권위**(M7a). 모듈 효과값 자체는 직렬화하지 않고 카탈로그 참조
-   * (`slots`)와 공격자 매치업만 고정한다 — 실제 효력은 클라·EF 가 같은 카탈로그로 결정론
-   * 파생한다(위조 표면 축소). 서버가 모듈 키를 안 주는 구버전이면 `null`.
+   * T0 고정 **코어 모듈 권위**(M7b · ADR-0018 — 구 M6 `card` 계승). 방어자가 장착한 코어 모듈
+   * 인스턴스(최대 {@link MODULE_EQUIP_SLOTS})와 공격자 매치업을 서버가 고정한다. 존재하면
+   * 침공 런 config 의 `invasion3.modules` 로 실어 정적 카운터·동적 트리거·유니크가 방어전에
+   * 반영된다(공격자 클라이언트도 이 고정본으로 재현해야 hashStream 이 EF 재실행과 일치).
+   *
+   * 모듈 미장착·구버전 서버면 `null` → 거동·해시 완전 불변(조건부 접기).
    */
   modules?: InvasionModulesAuthority | null;
 }
 
 /**
- * 코어 모듈 권위 스냅샷(`begin_invasion` 의 `modules`). `slots` 는 고정 길이
- * {@link INVASION_CORE_MODULE_SLOTS} 배열(빈 슬롯 null — 밀집화 금지), `matchup` 은 정적
- * 카운터 판정 입력(서버 `build_attacker_matchup` 산출 — 공/수 재현 일관성의 근거).
+ * 코어 모듈 권위 스냅샷(`begin_invasion` 의 `modules` jsonb).
+ * `{ instances: ModuleInstance[], matchup: AttackerMatchup }` — sim 이 그대로 소비하는
+ * {@link CoreModuleConfig} 와 **같은 형상**이라 변환 없이 config 에 실린다.
+ *
+ * 모듈은 카탈로그 참조(InvasionRef)가 아니라 **시드 롤이 굳은 소모성 인스턴스**다. 그래서
+ * `layers`(카탈로그 참조 직렬화)가 아니라 authority 로 온다 — 정본은 서버의
+ * `defenses.equipped_module_ids` → `core_modules` 행이다.
  */
-export interface InvasionModulesAuthority {
-  slots: (ModuleRef | null)[];
-  /** 공격자 매치업(shape 는 서버 권위라 느슨하게 둔다 — 소비 측이 필요한 키만 읽는다). */
-  matchup: Record<string, unknown>;
-}
+export type InvasionModulesAuthority = CoreModuleConfig;
 
 /** 침공 제출 게이트웨이 입력(공격자 uid 포함 — RLS with_check 강제). */
 export interface InvasionSubmitInput {

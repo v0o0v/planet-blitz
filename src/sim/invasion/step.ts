@@ -20,6 +20,7 @@ import type { Invasion3Config, InvasionRuntime, InvasionStepContext, InvasionSte
 import { stepInvasionFormation } from './formation.js';
 import { enterFacilityLayer, stepFacility } from './facility.js';
 import { enterCoreRoom, stepCoreRoom } from './coreRoom.js';
+import { applyModuleSpawnEffects } from '../moduleEffects.js';
 
 /**
  * 정본 배선 — L3(편대)·L4(설비)·L5(코어방) 구현체를 **모듈 로드 시 1회** 정적으로 묶는다.
@@ -86,6 +87,10 @@ export function enterInvasionLayer(state: WorldState, ctx: InvasionStepContext):
   if (phase === PHASE_L1) registered.enterFormation?.(state, ctx);
   else if (phase === PHASE_L2) registered.enterFacility?.(state, ctx);
   else registered.enterCoreRoom?.(state, ctx);
+  // 코어 모듈 스폰 시점 효과(M7b): 설비(L2)·코어/기물(L3)은 **이 진입에서** 깔리므로 진입
+  // 직후에 적용해야 대상이 존재한다. T0 1회 적용으로는 전부 빗나간다. 각 효과는 자기 래치로
+  // 1회만 적용되므로(applyModuleSpawnEffects) 진입마다 불러도 이중 적용이 없다.
+  if (state.moduleRuntime !== undefined) applyModuleSpawnEffects(state.moduleRuntime, state);
 }
 
 /** 현재 페이즈에 대응하는 매 틱 스텝 훅을 호출한다. */

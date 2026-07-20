@@ -571,6 +571,137 @@ export const EN = {
   'def3.map.curved.desc': 'Three offset segments, ten sockets, and blind spots between them.',
   'def3.map.choke.name': 'Choke Corridor',
   'def3.map.choke.desc': 'A narrow squeeze with only eight sockets but very little room to move.',
+
+  // 방어체 어픽스(M7b — data/defenseUnits.ts DEFENSE_UNIT_AFFIXES 에서 파생 검증)
+  'def3.affix.du-reinforced.name': 'Reinforced',
+  'def3.affix.du-reinforced.desc':
+    'Thicker plating. The unit takes more hits before it goes down.',
+  'def3.affix.du-honed.name': 'Honed',
+  'def3.affix.du-honed.desc':
+    'Sharpened firing gear. Every shot lands harder.',
+  'def3.affix.du-cycled.name': 'Cycled',
+  'def3.affix.du-cycled.desc':
+    'Tuned feed mechanism. The unit fires more often.',
+  'def3.affix.du-plated.name': 'Plated',
+  'def3.affix.du-plated.desc':
+    'A standing barrier that soaks damage before the hull does.',
+  'def3.affix.du-sealed.name': 'Sealed',
+  'def3.affix.du-sealed.desc':
+    'Weatherproofed housing. Neglect wears this unit down more slowly.',
+  'def3.affix.du-teeming.name': 'Teeming',
+  'def3.affix.du-teeming.desc':
+    'Wider launch bay. The spawner keeps more drones alive at once.',
+  'def3.affix.du-insulated.name': 'Insulated',
+  'def3.affix.du-insulated.desc':
+    'Heat sinks on the drive. The boss overheats later and less often.',
+  'def3.affix.du-vanward.name': 'Vanward',
+  'def3.affix.du-vanward.desc':
+    'Boosted approach thrusters. The flight reaches its firing line sooner.',
+  'def3.affix.dt-ambush.name': 'of Ambush',
+  'def3.affix.dt-ambush.desc':
+    'Strikes hardest right after the attacker enters the layer.',
+  'def3.affix.dt-lastwall.name': 'of the Last Wall',
+  'def3.affix.dt-lastwall.desc':
+    'Hardens once the core drops below thirty percent.',
+  'def3.affix.dt-vengeance.name': 'of Vengeance',
+  'def3.affix.dt-vengeance.desc':
+    'Grows angrier with each nearby defender destroyed.',
+  'def3.affix.dt-siege.name': 'of Siege',
+  'def3.affix.dt-siege.desc':
+    'Winds up over the first minute and then fires faster.',
+  'def3.affix.dt-bulwark.name': 'of the Bulwark',
+  'def3.affix.dt-bulwark.desc':
+    'Raises a barrier when the core falls to half health.',
+  'def3.affix.dt-recoil.name': 'of Recoil',
+  'def3.affix.dt-recoil.desc':
+    'Hits far harder while the attacker is at close range.',
+  'def3.affix.dt-swarmcall.name': 'of the Swarm Call',
+  'def3.affix.dt-swarmcall.desc':
+    'Every defender lost frees another slot for drones.',
+  'def3.affix.dt-secondwind.name': 'of Second Wind',
+  'def3.affix.dt-secondwind.desc':
+    'Shrugs off neglect once the invasion runs long.',
+  // 코어 모듈 유니크(M7b — data/coreModules.ts CORE_MODULE_UNIQUES)
+  'def3.module.uq-mirage-core.name': 'Mirage Core',
+  'def3.module.uq-mirage-core.desc':
+    'Projects a decoy core beside the real one. Breaking it wins nothing.',
+  'def3.module.uq-blackout.name': 'Blackout',
+  'def3.module.uq-blackout.desc':
+    'Jams attacker radar for the first thirty seconds.',
+  'def3.module.uq-last-reboot.name': 'Last Reboot',
+  'def3.module.uq-last-reboot.desc':
+    'The core reboots once instead of falling, at a fifth of its health.',
+  'def3.module.uq-mirror-gate.name': 'Mirror Gate',
+  'def3.module.uq-mirror-gate.desc':
+    'Reflects a quarter of the damage the core takes back at the attacker.',
+
+  // 방어 사령부 화면(M7b — src/ui/pixi/defenseCommand.ts). 통합 게이트가 레인 로컬
+  // 폴백표(CMD_FALLBACK_*)를 정본 카탈로그로 승격한 분량이다.
+  'def3.cmd.title': 'Defense Command',
+  'def3.cmd.tab.l1': 'L1 Approach',
+  'def3.cmd.tab.l2': 'L2 Corridor',
+  'def3.cmd.tab.l3': 'L3 Core Room',
+  'def3.cmd.tab.inv': 'Collection',
+  'def3.cmd.tab.mod': 'Core Modules',
+  'def3.cmd.save': 'Save layout',
+  'def3.cmd.revert': 'Revert',
+  'def3.cmd.test': 'Test invasion',
+  'def3.cmd.back': '◀ Base',
+  'def3.cmd.dirty': 'Unsaved changes',
+  'def3.cmd.saved': 'Layout saved.',
+  'def3.cmd.savedLocal': 'Saved locally only (offline — the server layout is unchanged).',
+  'def3.cmd.offline': 'Managing defense units needs a login. Layout editing works offline.',
+  'def3.cmd.loading': 'Loading…',
+  'def3.cmd.preview': 'Preview',
+  'def3.cmd.previewHint': 'This is what an attacker actually sees on this layer.',
+  'def3.cmd.slots.l1': 'Wave slots',
+  'def3.cmd.slots.l2': 'Facility sockets',
+  'def3.cmd.slots.l3': 'Core room',
+  'def3.cmd.slot.empty': 'Empty — the standing garrison fills in',
+  'def3.cmd.slot.emptyProp': 'Empty',
+  'def3.cmd.slot.wave': 'Wave {n}',
+  'def3.cmd.slot.socket': 'Socket {n}',
+  'def3.cmd.slot.prop': 'Prop {n}',
+  'def3.cmd.slot.boss': 'Defense boss',
+  'def3.cmd.slot.guardian': 'Guardian {n}',
+  'def3.cmd.slot.core': 'Core',
+  'def3.cmd.slot.place': 'Place',
+  'def3.cmd.slot.clear': 'Clear',
+  'def3.cmd.core.hp': 'Core integrity {hp}',
+  'def3.cmd.template': 'Corridor terrain',
+  'def3.cmd.template.sockets': '{n} sockets',
+  'def3.cmd.pick.title': 'Choose a defense unit',
+  'def3.cmd.pick.none': 'No eligible unit. Craft one from a blueprint in the Collection tab.',
+  'def3.cmd.pick.placed': 'Already placed',
+  'def3.cmd.inv.head': 'Defense units',
+  'def3.cmd.inv.empty': 'No defense units yet. Craft one from a blueprint.',
+  'def3.cmd.inv.blueprints': 'Blueprints',
+  'def3.cmd.inv.bpEmpty': 'No blueprints yet. They drop from planet runs and invasion loot.',
+  'def3.cmd.inv.craft': 'Craft',
+  'def3.cmd.inv.count': 'x{n}',
+  'def3.cmd.unit.level': 'Lv {n}',
+  'def3.cmd.unit.ascension': 'Ascension {n}',
+  'def3.cmd.unit.power': 'Power {p}%',
+  'def3.cmd.unit.levelUp': 'Level up',
+  'def3.cmd.unit.ascend': 'Ascend',
+  'def3.cmd.unit.reroll': 'Reroll affixes',
+  'def3.cmd.unit.promote': 'Promote grade',
+  'def3.cmd.unit.max': 'Max',
+  'def3.cmd.unit.cost': '{c} cr / {m} min / {b} bp',
+  'def3.cmd.unit.affix.none': 'Base stats only',
+  'def3.cmd.unit.affix.always': 'Always',
+  'def3.cmd.unit.affix.cond': 'Conditional',
+  'def3.cmd.mod.head': 'Core modules',
+  'def3.cmd.mod.note':
+    'Core modules are consumable instances, not catalog picks — they live in their own screen.',
+  'def3.cmd.mod.open': 'Manage modules',
+  'def3.cmd.rarity.normal': 'Normal',
+  'def3.cmd.rarity.magic': 'Magic',
+  'def3.cmd.rarity.rare': 'Rare',
+  'def3.cmd.rarity.unique': 'Unique',
+  'def3.cmd.err.failed': 'Server rejected the request.',
+  'def3.cmd.err.offline': 'Not connected.',
+  'def3.cmd.ok.upgrade': 'Upgraded.',
 } as const;
 
 /** 카탈로그 키 = 영어 정본의 키 집합. */
@@ -1101,6 +1232,135 @@ export const KO: Record<MessageKey, string> = {
   'def3.map.curved.desc': '세 구간이 위아래로 엇갈린 통로. 소켓 10개에 사각지대가 생긴다.',
   'def3.map.choke.name': '병목 회랑',
   'def3.map.choke.desc': '소켓은 8개뿐이지만 통로가 좁아 피할 자리가 거의 없다.',
+
+  // 방어체 어픽스(M7b)
+  'def3.affix.du-reinforced.name': '보강된',
+  'def3.affix.du-reinforced.desc':
+    '장갑을 덧댔다. 쓰러지기까지 더 많은 타격을 견딘다.',
+  'def3.affix.du-honed.name': '벼려진',
+  'def3.affix.du-honed.desc':
+    '사격 기구를 다듬었다. 한 발 한 발이 더 아프다.',
+  'def3.affix.du-cycled.name': '순환식',
+  'def3.affix.du-cycled.desc':
+    '급탄부를 손봤다. 더 자주 쏜다.',
+  'def3.affix.du-plated.name': '판갑의',
+  'def3.affix.du-plated.desc':
+    '선체보다 먼저 피해를 흡수하는 상시 보호막.',
+  'def3.affix.du-sealed.name': '밀폐된',
+  'def3.affix.du-sealed.desc':
+    '풍우를 막는 외피. 방치돼도 더 천천히 삭는다.',
+  'def3.affix.du-teeming.name': '증식형',
+  'def3.affix.du-teeming.desc':
+    '사출구를 넓혔다. 드론을 더 많이 동시에 유지한다.',
+  'def3.affix.du-insulated.name': '단열된',
+  'def3.affix.du-insulated.desc':
+    '구동부 방열재. 보스가 더 늦게, 더 적게 과열된다.',
+  'def3.affix.du-vanward.name': '선봉의',
+  'def3.affix.du-vanward.desc':
+    '진입 추진기를 키웠다. 편대가 사선에 더 빨리 붙는다.',
+  'def3.affix.dt-ambush.name': '매복의',
+  'def3.affix.dt-ambush.desc':
+    '공격자가 레이어에 들어선 직후 가장 강하게 때린다.',
+  'def3.affix.dt-lastwall.name': '최후 방벽의',
+  'def3.affix.dt-lastwall.desc':
+    '코어가 30% 아래로 떨어지면 단단해진다.',
+  'def3.affix.dt-vengeance.name': '복수의',
+  'def3.affix.dt-vengeance.desc':
+    '곁의 방어체가 부서질수록 사나워진다.',
+  'def3.affix.dt-siege.name': '공성의',
+  'def3.affix.dt-siege.desc':
+    '첫 1분을 버틴 뒤부터 연사가 빨라진다.',
+  'def3.affix.dt-bulwark.name': '성벽의',
+  'def3.affix.dt-bulwark.desc':
+    '코어가 절반까지 깎이면 보호막을 올린다.',
+  'def3.affix.dt-recoil.name': '반동의',
+  'def3.affix.dt-recoil.desc':
+    '공격자가 가까이 붙어 있는 동안 훨씬 세게 때린다.',
+  'def3.affix.dt-swarmcall.name': '군집 호출의',
+  'def3.affix.dt-swarmcall.desc':
+    '방어체를 하나 잃을 때마다 드론 자리가 하나 늘어난다.',
+  'def3.affix.dt-secondwind.name': '재기의',
+  'def3.affix.dt-secondwind.desc':
+    '침공이 길어지면 방치의 흔적을 털어낸다.',
+  // 코어 모듈 유니크(M7b)
+  'def3.module.uq-mirage-core.name': '신기루 코어',
+  'def3.module.uq-mirage-core.desc':
+    '진짜 코어 곁에 가짜를 투영한다. 부숴도 얻는 것이 없다.',
+  'def3.module.uq-blackout.name': '블랙아웃',
+  'def3.module.uq-blackout.desc':
+    '첫 30초 동안 공격자의 레이더를 무력화한다.',
+  'def3.module.uq-last-reboot.name': '최후의 재기동',
+  'def3.module.uq-last-reboot.desc':
+    '코어가 쓰러지는 대신 최대 체력의 5분의 1로 1회 재기동한다.',
+  'def3.module.uq-mirror-gate.name': '거울 관문',
+  'def3.module.uq-mirror-gate.desc':
+    '코어가 받는 피해의 4분의 1을 공격자에게 되돌린다.',
+
+  // 방어 사령부 화면(M7b)
+  'def3.cmd.title': '방어 사령부',
+  'def3.cmd.tab.l1': 'L1 대기권',
+  'def3.cmd.tab.l2': 'L2 회랑',
+  'def3.cmd.tab.l3': 'L3 코어방',
+  'def3.cmd.tab.inv': '보관함',
+  'def3.cmd.tab.mod': '코어 모듈',
+  'def3.cmd.save': '배치 저장',
+  'def3.cmd.revert': '되돌리기',
+  'def3.cmd.test': '시험 침공',
+  'def3.cmd.back': '◀ 기지로',
+  'def3.cmd.dirty': '저장하지 않은 변경',
+  'def3.cmd.saved': '배치를 저장했다.',
+  'def3.cmd.savedLocal': '로컬에만 저장했다(오프라인 — 서버 배치는 그대로).',
+  'def3.cmd.offline': '방어체 관리는 로그인이 필요하다. 배치 편집은 오프라인에서도 된다.',
+  'def3.cmd.loading': '불러오는 중…',
+  'def3.cmd.preview': '미리보기',
+  'def3.cmd.previewHint': '공격자가 이 레이어에서 실제로 보는 모습이다.',
+  'def3.cmd.slots.l1': '웨이브 슬롯',
+  'def3.cmd.slots.l2': '설비 소켓',
+  'def3.cmd.slots.l3': '코어방',
+  'def3.cmd.slot.empty': '비어 있음 — 기본 수비대가 충원한다',
+  'def3.cmd.slot.emptyProp': '비어 있음',
+  'def3.cmd.slot.wave': '웨이브 {n}',
+  'def3.cmd.slot.socket': '소켓 {n}',
+  'def3.cmd.slot.prop': '기물 {n}',
+  'def3.cmd.slot.boss': '방어 보스',
+  'def3.cmd.slot.guardian': '수호 {n}',
+  'def3.cmd.slot.core': '코어',
+  'def3.cmd.slot.place': '배치',
+  'def3.cmd.slot.clear': '비우기',
+  'def3.cmd.core.hp': '코어 내구도 {hp}',
+  'def3.cmd.template': '회랑 지형',
+  'def3.cmd.template.sockets': '소켓 {n}',
+  'def3.cmd.pick.title': '방어체 고르기',
+  'def3.cmd.pick.none': '꽂을 수 있는 방어체가 없다. 보관함 탭에서 설계도로 제작하라.',
+  'def3.cmd.pick.placed': '이미 배치됨',
+  'def3.cmd.inv.head': '보유 방어체',
+  'def3.cmd.inv.empty': '보유 방어체가 없다. 설계도로 제작하라.',
+  'def3.cmd.inv.blueprints': '설계도',
+  'def3.cmd.inv.bpEmpty': '보유 설계도가 없다. 행성 런과 침공 약탈에서 나온다.',
+  'def3.cmd.inv.craft': '제작',
+  'def3.cmd.inv.count': '{n}장',
+  'def3.cmd.unit.level': 'Lv {n}',
+  'def3.cmd.unit.ascension': '승급 {n}',
+  'def3.cmd.unit.power': '전력 {p}%',
+  'def3.cmd.unit.levelUp': '레벨업',
+  'def3.cmd.unit.ascend': '승급',
+  'def3.cmd.unit.reroll': '어픽스 리롤',
+  'def3.cmd.unit.promote': '등급 승급',
+  'def3.cmd.unit.max': '최대',
+  'def3.cmd.unit.cost': '{c} 크레딧 / 광물 {m} / 설계도 {b}',
+  'def3.cmd.unit.affix.none': '기저 스탯만',
+  'def3.cmd.unit.affix.always': '상시',
+  'def3.cmd.unit.affix.cond': '조건부',
+  'def3.cmd.mod.head': '코어 모듈',
+  'def3.cmd.mod.note': '코어 모듈은 카탈로그 선택이 아니라 소모성 인스턴스라 전용 화면에서 다룬다.',
+  'def3.cmd.mod.open': '모듈 관리',
+  'def3.cmd.rarity.normal': '일반',
+  'def3.cmd.rarity.magic': '마법',
+  'def3.cmd.rarity.rare': '희귀',
+  'def3.cmd.rarity.unique': '유니크',
+  'def3.cmd.err.failed': '서버가 요청을 거부했다.',
+  'def3.cmd.err.offline': '서버에 연결돼 있지 않다.',
+  'def3.cmd.ok.upgrade': '강화했다.',
 };
 
 /** 로케일별 카탈로그 묶음. */
