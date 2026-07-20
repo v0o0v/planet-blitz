@@ -2,9 +2,10 @@
  * 파워업 → 아이콘 키 매핑 테스트 (src/ui/powerupIcons.ts).
  *
  * 아이콘 0장 전략(ADR-0015)의 계약을 고정한다:
- *  1) 24종 전부가 매핑돼 있고, 키가 스킬/장비 세트의 명명 규약을 따른다.
+ *  1) 24종 전부가 매핑돼 있고, 키가 **텍스처 로더에 실재하는** 이름으로 해석된다
+ *     (없는 티어대를 가리키면 아이콘이 조용히 사라지므로 UI_ASSET_NAMES 와 대조한다).
  *  2) weaponType 이 있는 파워업만 무기 배지를 갖고, 배지 무기가 그 weaponType 과 일치한다.
- *  3) 스탯+배지 조합의 충돌 수가 문서화된 값과 같다(무기 파생 8종은 모두 구별된다).
+ *  3) 스탯+티어대+배지 조합이 24종 전부를 구별한다(충돌 0).
  *
  * UI 를 거치지 않는 순수 매핑 검증이라 DOM 없이 돈다.
  */
@@ -16,6 +17,7 @@ import {
   powerupIconKeysById,
   allPowerupIconKeys,
 } from '../src/ui/powerupIcons.js';
+import { UI_ASSET_NAMES } from '../src/ui/pixi/uiTextures.js';
 
 /** 매니페스트의 무기 코드 → equip_main_* 키(장비 세트 명명). */
 const WEAPON_BADGE: Record<number, string> = {
@@ -33,6 +35,19 @@ describe('powerupIcons — 24종 매핑 커버리지', () => {
       const keys = powerupIconKeys(i);
       expect(keys, `powerup #${i} 매핑 누락`).toBeDefined();
       expect(keys?.statKey).toMatch(/^skill_[a-z0-9_]+_(low|mid|high)$/);
+    }
+  });
+
+  it('모든 키(스탯·배지)가 텍스처 로더에 등재된 실재 자산을 가리킨다', () => {
+    // 존재하지 않는 티어대(예: skill_bullet_count_low, skill_range_flat_mid)를 가리키면
+    // 텍스처가 없어 아이콘이 조용히 사라진다 — 그 회귀를 여기서 잡는다.
+    const registered = new Set<string>(UI_ASSET_NAMES);
+    for (const def of POWERUPS) {
+      const keys = powerupIconKeysById(def.id);
+      expect(registered.has(`${keys?.statKey ?? '?'}.png`), `${def.id} statKey 미등재`).toBe(true);
+      if (keys?.badgeKey !== undefined) {
+        expect(registered.has(`${keys.badgeKey}.png`), `${def.id} badgeKey 미등재`).toBe(true);
+      }
     }
   });
 
@@ -82,10 +97,24 @@ describe('powerupIcons — 조합 구별도', () => {
     expect(new Set(badged.map((e) => e.combo)).size).toBe(8);
   });
 
-  it('전체 조합은 17종 — 배지 없는 파워업끼리의 충돌 7건은 의도된 상태다', () => {
-    // 예: reinforced-hull / sv-plating / field-medkit 은 모두 "최대 HP" 아이콘을 쓴다.
-    // 배지를 붙일 무기 축이 없어 아이콘만으로는 갈리지 않고, 카드의 이름·설명 텍스트가
-    // 구별을 담당한다. 이 수가 바뀌면 매핑 변경이 의도된 것인지 확인하라.
-    expect(new Set(combos).size).toBe(17);
+  it('전체 24종이 서로 구별된다 — 티어대 축이 배지 없는 충돌을 없앤다', () => {
+    // 스탯+배지 둘만 쓰던 때는 17종으로 접혔다(최대 HP 3종, 데미지·연사·이속·대시·자석
+    // 각 2종 = 충돌 7건). 같은 스탯을 수치 크기 순으로 저·중·고에 나눠 담아 해소했다.
+    // 이 수가 24 미만으로 떨어지면 3택 오버레이에 같은 그림이 두 장 뜬다는 뜻이다.
+    expect(new Set(combos).size).toBe(24);
+  });
+
+  it('같은 스탯의 배지 없는 파워업은 서로 다른 티어대를 쓴다', () => {
+    // 예: field-medkit(+15) / reinforced-hull(+25) / sv-plating(+30) 은 최대 HP 저·중·고.
+    const byStat = new Map<string, string[]>();
+    for (const def of POWERUPS) {
+      const k = powerupIconKeysById(def.id);
+      if (k === undefined || k.badgeKey !== undefined) continue;
+      const stat = k.statKey.replace(/_(low|mid|high)$/, '');
+      byStat.set(stat, [...(byStat.get(stat) ?? []), k.statKey]);
+    }
+    for (const [stat, keys] of byStat) {
+      expect(new Set(keys).size, `${stat} 티어대 충돌: ${keys.join(', ')}`).toBe(keys.length);
+    }
   });
 });
