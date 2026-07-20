@@ -15,7 +15,7 @@
 import { Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
 import type { Rarity, SlotKind } from '../../items/types.js';
 import { equipIconName } from '../equipIcons.js';
-import { RARITY_COLOR_NUM, UI_FONT, TEXT_SHADOW } from './theme.js';
+import { SLOT_RARITY_COLOR_NUM, SLOT_RARE_GROOVE, UI_FONT, TEXT_SHADOW } from './theme.js';
 import type { UiTextures } from './uiTextures.js';
 
 /**
@@ -64,12 +64,30 @@ const RARITY_GLOW_ALPHA: Record<Rarity, number> = {
 /** 글로우 띠 개수(안쪽으로 갈수록 옅어진다). */
 const GLOW_BANDS = 4;
 
+/** 글로우 띠 한 겹의 두께. 시작 위치를 역산해야 하는 호출부와 값을 공유한다. */
+function glowBand(size: number): number {
+  return Math.max(2, Math.round(size * 0.055));
+}
+
+/**
+ * 레어 전용 홈 두께(px). 0 이면 홈 없음 = 다른 등급은 기존 그대로.
+ *
+ * 레어만 특별 취급하는 이유는 레어만 실제로 충돌하기 때문이다: 장착 슬롯이 쓰는
+ * `ui_slot_hl.png` 의 프레임이 금색이고(0~11% 폭), 등급 테두리도 `pad = size*0.1` 자리라
+ * 둘이 같은 띠를 점유한다. 게다가 글로우의 첫(가장 진한) 띠는 `alignment: 0`(= Pixi v8 에서
+ * **바깥**)이라 `pad` 바깥, 즉 프레임 위로 번진다. 금색 프레임 + 금색 글로우 + 금색 테두리가
+ * 연속된 한 덩어리가 되는 구조였다. 홈만큼 안으로 들여 앉히면 셋이 갈린다.
+ */
+function rareGroove(size: number, rarity: Rarity): number {
+  return rarity === 'rare' ? Math.max(2, Math.round(size * 0.04)) : 0;
+}
+
 /** 등급색 내부 글로우(테두리 안쪽에서 안으로 번지는 띠). 유니크/무등급이면 null. */
 function makeRarityGlow(size: number, pad: number, rarity: Rarity): Graphics | null {
   const peak = RARITY_GLOW_ALPHA[rarity];
   if (peak <= 0) return null;
-  const color = RARITY_COLOR_NUM[rarity];
-  const band = Math.max(2, Math.round(size * 0.055));
+  const color = SLOT_RARITY_COLOR_NUM[rarity];
+  const band = glowBand(size);
   const g = new Graphics();
   for (let i = 0; i < GLOW_BANDS; i++) {
     const inset = pad + i * band;
@@ -156,18 +174,33 @@ export function makeSlotCell(opts: SlotCellOptions): Container {
   }
 
   if (opts.item !== undefined) {
-    const color = RARITY_COLOR_NUM[opts.item.rarity];
+    const color = SLOT_RARITY_COLOR_NUM[opts.item.rarity];
     const pad = Math.round(size * 0.1);
+    // 레어는 홈 두께만큼 안으로 들어간다(0 = 나머지 등급은 좌표가 예전 그대로).
+    const groove = rareGroove(size, opts.item.rarity);
+    const bPad = pad + groove;
 
     // 등급 신호 ①: 안쪽 글로우(아이콘이 글리프 색을 대체해도 등급이 남는다).
-    const glow = makeRarityGlow(size, pad, opts.item.rarity);
+    // 레어는 테두리 안쪽 끝(bPad+4)에서 첫 띠가 시작하도록 역산한다 — 그래야 프레임을 안 덮는다.
+    const glowPad = groove > 0 ? bPad + 4 + glowBand(size) : pad;
+    const glow = makeRarityGlow(size, glowPad, opts.item.rarity);
     if (glow !== null) root.addChild(glow);
 
     // 등급 신호 ②: 테두리(컬러 아이콘 옆에서도 읽히도록 3px → 4px).
     const border = new Graphics();
-    border
-      .roundRect(pad, pad, size - pad * 2, size - pad * 2, 7)
-      .stroke({ color, width: 4, alignment: 1 });
+    if (groove > 0) {
+      // 프레임 ↔ 테두리 사이의 얇은 어두운 홈. 금색끼리 맞붙는 것을 구조적으로 끊는다.
+      border
+        .roundRect(pad, pad, size - pad * 2, size - pad * 2, 7)
+        .stroke({ color: SLOT_RARE_GROOVE, width: groove, alpha: 0.85, alignment: 1 });
+      border
+        .roundRect(bPad, bPad, size - bPad * 2, size - bPad * 2, 6)
+        .stroke({ color, width: 4, alignment: 1 });
+    } else {
+      border
+        .roundRect(pad, pad, size - pad * 2, size - pad * 2, 7)
+        .stroke({ color, width: 4, alignment: 1 });
+    }
     root.addChild(border);
 
     if (opts.iconTex) {

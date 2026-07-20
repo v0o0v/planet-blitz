@@ -38,7 +38,7 @@ import {
   type Profile,
 } from '../../save/profile.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
-import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
+import { COLOR, UI_FONT, TEXT_SHADOW, iconContrastRingBands } from './theme.js';
 import { loadUiTextures, skillIconName, type UiTextures } from './uiTextures.js';
 import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
@@ -145,6 +145,27 @@ const HINT_Y = DESIGN_HEIGHT - 8;
 
 function panelX(col: number): number {
   return PANEL_X0 + col * (PANEL_W + PANEL_GAP);
+}
+
+/**
+ * 아이콘 자리 뒤에 까는 대비 링({@link iconContrastRingBands} 근거). 스프라이트보다 먼저
+ * 넣어 **뒤에** 깔리게 한다 — 아이콘을 가리지 않고 가장자리에서만 보인다.
+ *
+ * 노드 아이콘과 캡스톤 아이콘 양쪽에 같은 값으로 건다(균일 적용 — 일부만 특별 취급하면
+ * 세트가 갈린다). 레이아웃 상수는 건드리지 않는다: 링은 아이콘 상자 밖 2w(44px 기준 4px)만
+ * 차지하고 셀 여백 안에서 끝난다.
+ */
+function iconContrastRing(x: number, y: number, size: number): Graphics {
+  const g = new Graphics();
+  for (const b of iconContrastRingBands(size)) {
+    g.roundRect(x - b.inset, y - b.inset, size + b.inset * 2, size + b.inset * 2, b.radius).stroke({
+      color: b.color,
+      width: b.width,
+      alpha: b.alpha,
+      alignment: 0.5,
+    });
+  }
+  return g;
 }
 
 export class ResearchLabScreen {
@@ -414,6 +435,7 @@ export class ResearchLabScreen {
     // 자산 PNG 가 아직 없을 수 있으므로 텍스처가 null 이면 기존 플레이스홀더(둥근 사각 +
     // 계열색 테두리)로 되돌아간다 — 한 장이 빠져도 화면은 죽지 않는다.
     const iconX = Math.round((NODE_W - NODE_ICON) / 2);
+    cell.addChild(iconContrastRing(iconX, NODE_ICON_Y, NODE_ICON));
     const iconTex = this.ui[skillIconName(node)];
     if (iconTex) {
       const sp = new Sprite(iconTex);
@@ -506,6 +528,9 @@ export class ResearchLabScreen {
     // 캡스톤은 perPoint 0 인 질적 노드라 스탯 아이콘을 붙이면 거짓말이 된다 — 계열별 개별 아트.
     const capTex = this.ui[skillIconName(node)];
     if (capTex) {
+      btn.container.addChild(
+        iconContrastRing(CAPSTONE_ICON_X, (CAPSTONE_H - CAPSTONE_ICON) / 2, CAPSTONE_ICON),
+      );
       const sp = new Sprite(capTex);
       sp.width = CAPSTONE_ICON;
       sp.height = CAPSTONE_ICON;

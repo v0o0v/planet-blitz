@@ -20,10 +20,21 @@ import { powerupIconKeys } from './powerupIcons.js';
 import { iconUrl, pixelIcon } from './uiIcons.js';
 import { t } from '../i18n/index.js';
 
-/** 카드 바탕 스탯 아이콘 한 변(px). */
+/** 카드 바탕 스탯 아이콘 한 변(px). 원본 PNG 가 64px 라 1:1 — 확대하면 픽셀이 갈린다. */
 const ICON_SIZE = 64;
-/** 우하단 무기 배지 한 변(px) — 바탕의 40%라 스탯 실루엣을 가리지 않는다. */
-const BADGE_SIZE = 26;
+/**
+ * 우하단 무기 배지 한 변(px). 26px 에서는 네 무기(스프레드·레일건·미사일·빔)가 전부
+ * "금·탄 대각선 총열"로 뭉개져 구별되지 않았다 — 키 조합 충돌은 0 인데 지각 충돌이 남았다.
+ *
+ * 32px 인 이유는 두 가지다. ① 64px 원본의 정확히 1/2 이라 nearest 축소가 픽셀을 2:1 로
+ * 깨끗이 접는다(26px 은 2.46:1 이라 인접 픽셀이 불규칙하게 버려져 실루엣이 뭉개진다).
+ * ② 그러고도 바탕 아이콘을 더 가리지 않는다 — 칩 전체가 40px 이 되지만 바깥으로 12px
+ * 밀어내서 실제 가림은 28×28(바탕의 19%, 기존 26×26=16.5%)이고 중심(32,32)은 4px 여유로
+ * 열려 있다.
+ */
+const BADGE_SIZE = 32;
+/** 배지 칩을 아이콘 상자 밖으로 밀어내는 양(px) — 중심 실루엣을 비우기 위한 값. */
+const BADGE_OFFSET = 12;
 
 const STYLE = `
 #pb-powerup { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; background:rgba(4,6,14,.72); backdrop-filter:blur(2px); font-family:'Segoe UI',system-ui,sans-serif; z-index:20; }
@@ -41,7 +52,7 @@ const STYLE = `
 #pb-powerup .pb-badge.match { color:#04121a; background:#7affea; border-color:#7affea; }
 #pb-powerup .pb-icon { position:relative; width:${ICON_SIZE}px; height:${ICON_SIZE}px; margin:0 auto 10px; }
 #pb-powerup .pb-icon img { display:block; }
-#pb-powerup .pb-wbadge { position:absolute; right:-6px; bottom:-6px; padding:2px; background:#0d1120; border:1px solid #3a4a72; border-radius:6px; box-shadow:0 2px 6px rgba(0,0,0,.5); }
+#pb-powerup .pb-wbadge { position:absolute; right:-${BADGE_OFFSET}px; bottom:-${BADGE_OFFSET}px; padding:2px; background:#03050c; border:2px solid #9db3e0; border-radius:8px; box-shadow:0 2px 10px rgba(0,0,0,.8); }
 #pb-powerup .pb-name { color:#fff; font-size:19px; font-weight:800; margin-bottom:10px; }
 #pb-powerup .pb-desc { color:#aab6d6; font-size:14px; line-height:1.5; }
 #pb-powerup.picked .pb-card { cursor:default; }
