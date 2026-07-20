@@ -16,7 +16,14 @@
 
 import { POWERUPS } from '../sim/powerups.js';
 import { choiceRelevance, type BuildStatus } from './buildStatus.js';
+import { powerupIconKeys } from './powerupIcons.js';
+import { iconUrl, pixelIcon } from './uiIcons.js';
 import { t } from '../i18n/index.js';
+
+/** 카드 바탕 스탯 아이콘 한 변(px). */
+const ICON_SIZE = 64;
+/** 우하단 무기 배지 한 변(px) — 바탕의 40%라 스탯 실루엣을 가리지 않는다. */
+const BADGE_SIZE = 26;
 
 const STYLE = `
 #pb-powerup { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; background:rgba(4,6,14,.72); backdrop-filter:blur(2px); font-family:'Segoe UI',system-ui,sans-serif; z-index:20; }
@@ -32,6 +39,9 @@ const STYLE = `
 #pb-powerup .pb-key { display:inline-block; width:26px; height:26px; line-height:26px; border-radius:6px; background:#4cd7ff; color:#04121a; font-weight:800; margin-bottom:10px; }
 #pb-powerup .pb-badge { position:absolute; top:10px; right:10px; font-size:10px; font-weight:700; letter-spacing:.5px; color:#8896b8; background:#1a2340; border:1px solid #2a3552; border-radius:5px; padding:2px 6px; }
 #pb-powerup .pb-badge.match { color:#04121a; background:#7affea; border-color:#7affea; }
+#pb-powerup .pb-icon { position:relative; width:${ICON_SIZE}px; height:${ICON_SIZE}px; margin:0 auto 10px; }
+#pb-powerup .pb-icon img { display:block; }
+#pb-powerup .pb-wbadge { position:absolute; right:-6px; bottom:-6px; padding:2px; background:#0d1120; border:1px solid #3a4a72; border-radius:6px; box-shadow:0 2px 6px rgba(0,0,0,.5); }
 #pb-powerup .pb-name { color:#fff; font-size:19px; font-weight:800; margin-bottom:10px; }
 #pb-powerup .pb-desc { color:#aab6d6; font-size:14px; line-height:1.5; }
 #pb-powerup.picked .pb-card { cursor:default; }
@@ -40,6 +50,33 @@ const STYLE = `
 #pb-powerup .pb-card.chosen { border-color:#7affea; box-shadow:0 0 24px rgba(122,255,234,.4); }
 #pb-powerup .pb-hint { color:#68789c; font-size:12px; letter-spacing:1px; }
 `;
+
+/**
+ * 카드 아이콘 블록(스탯 아이콘 + 무기 배지)을 만든다.
+ *
+ * 아이콘 PNG 가 아직 없을 수 있으므로 자산이 없으면 `null` 을 돌려주고 카드는 기존
+ * 이름/설명 텍스트만으로 성립한다(자산이 빠져도 화면이 죽지 않는다). 배지만 없을
+ * 때는 스탯 아이콘만 표시한다.
+ */
+function buildIcon(poolIndex: number, alt: string): HTMLElement | null {
+  const keys = powerupIconKeys(poolIndex);
+  if (keys === undefined) return null;
+  const statUrl = iconUrl(keys.statKey);
+  if (statUrl === undefined) return null;
+
+  const box = document.createElement('div');
+  box.className = 'pb-icon';
+  box.appendChild(pixelIcon(statUrl, ICON_SIZE, alt));
+
+  const badgeUrl = keys.badgeKey !== undefined ? iconUrl(keys.badgeKey) : undefined;
+  if (badgeUrl !== undefined) {
+    const badge = document.createElement('div');
+    badge.className = 'pb-wbadge';
+    badge.appendChild(pixelIcon(badgeUrl, BADGE_SIZE));
+    box.appendChild(badge);
+  }
+  return box;
+}
 
 export class PowerupOverlay {
   private readonly root: HTMLElement;
@@ -139,6 +176,7 @@ export class PowerupOverlay {
       const key = document.createElement('div');
       key.className = 'pb-key';
       key.textContent = String(offerIndex + 1);
+      const icon = buildIcon(poolIndex, def?.name ?? '');
       const name = document.createElement('div');
       name.className = 'pb-name';
       name.textContent = def?.name ?? '???';
@@ -146,6 +184,7 @@ export class PowerupOverlay {
       desc.className = 'pb-desc';
       desc.textContent = def?.desc ?? '';
       card.appendChild(key);
+      if (icon !== null) card.appendChild(icon);
       card.appendChild(name);
       card.appendChild(desc);
       card.addEventListener('click', () => this.pick(offerIndex));
