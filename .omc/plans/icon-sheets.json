@@ -1,0 +1,734 @@
+{
+  "_meta": {
+    "generated": "2026-07-20",
+    "totalSheets": 27,
+    "totalIcons": 77,
+    "totalLeftoverCells": 4,
+    "breakdown": {
+      "equip": {
+        "sheets": 10,
+        "icons": 30,
+        "leftover": 0
+      },
+      "skill": {
+        "sheets": 13,
+        "icons": 35,
+        "leftover": 4
+      },
+      "sticker": {
+        "sheets": 4,
+        "icons": 12,
+        "leftover": 0
+      }
+    },
+    "groupingPrinciple": "Sheets group icons likely to be re-touched together (ADR-0016: regen unit is the sheet, all 3 cells regenerate together). Equip: 5 sheets chunk the 15 slot+weaponType icons sequentially (main x5, sub x5, other x5) — 2 sheets cross a sub-category boundary (main/sub, sub/other) only to keep the pack at exactly 5 sheets / 0 leftover; the other 5 sheets group the 15 uniques by slot family (M2 main trio, M3 main trio, sub+armor, armor+shield+engine, core+module x2). Skill: the 9 stats that have all 3 tier bands each get their own dedicated 3-cell sheet (a stat's low/mid/high progression is the textbook case of \"revised together\"); the 3 stats with fewer than 3 bands (bulletCount, bulletSpeedPct, rangeFlat) are kept isolated in their own sheets rather than mixed with unrelated stats, so a fix to one never forces a regen of an unrelated stat — this is what produces the 4 leftover cells the task anticipated. Capstones get a dedicated sheet (qualitative art, not a stat). Sticker: kept in the fixed STICKERS array order (index is a wire contract, non-reorderable) chunked sequentially.",
+    "styleNote": "style phrase applied uniformly per ADR-0016 anchor pb-equip-icon: \"soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate\""
+  },
+  "sheets": [
+    {
+      "sheet_id": "EQ-01",
+      "icons": [
+        "equip_main_vulcan",
+        "equip_main_spread",
+        "equip_main_railgun"
+      ],
+      "description": "a twin-barrel rapid-fire vulcan cannon, angled diagonally from lower-left to upper-right, filling the square frame; a wide-mouth spread cannon with a flared shotgun-like barrel, angled diagonally from lower-left to upper-right, filling the square frame; a sleek railgun cannon with parallel conducting rails and a glowing energy coil, angled diagonally from lower-left to upper-right, filling the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "equip_main_vulcan",
+          "label": "주무기·발칸",
+          "prompt_en": "a twin-barrel rapid-fire vulcan cannon, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "equip_main_spread",
+          "label": "blank, no text",
+          "prompt_en": "a wide-mouth spread cannon with a flared shotgun-like barrel, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "equip_main_railgun",
+          "label": "blank, no text",
+          "prompt_en": "a sleek railgun cannon with parallel conducting rails and a glowing energy coil, angled diagonally from lower-left to upper-right, filling the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "EQ-02",
+      "icons": [
+        "equip_main_missile",
+        "equip_main_beam",
+        "equip_sub_sidekick"
+      ],
+      "description": "a compact missile launcher pod with a visible warhead tip, angled diagonally from lower-left to upper-right, filling the square frame; a focused beam emitter cannon with a glowing crystal lens tip, angled diagonally from lower-left to upper-right, filling the square frame; a small rapid-fire sidearm blaster, angled diagonally from lower-left to upper-right, filling the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "equip_main_missile",
+          "label": "blank, no text",
+          "prompt_en": "a compact missile launcher pod with a visible warhead tip, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "equip_main_beam",
+          "label": "주무기·빔",
+          "prompt_en": "a focused beam emitter cannon with a glowing crystal lens tip, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "equip_sub_sidekick",
+          "label": "blank, no text",
+          "prompt_en": "a small rapid-fire sidearm blaster, angled diagonally from lower-left to upper-right, filling the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "EQ-03",
+      "icons": [
+        "equip_sub_scatter",
+        "equip_sub_mine",
+        "equip_sub_sentry"
+      ],
+      "description": "a compact scatter-shot secondary cannon, angled diagonally from lower-left to upper-right, filling the square frame; a round deployable proximity mine with a blinking sensor light, centered in the square frame; a small deployable automated sentry turret pod, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "equip_sub_scatter",
+          "label": "blank, no text",
+          "prompt_en": "a compact scatter-shot secondary cannon, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "equip_sub_mine",
+          "label": "blank, no text",
+          "prompt_en": "a round deployable proximity mine with a blinking sensor light, centered in the square frame"
+        },
+        {
+          "key": "equip_sub_sentry",
+          "label": "blank, no text",
+          "prompt_en": "a small deployable automated sentry turret pod, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "EQ-04",
+      "icons": [
+        "equip_sub_flare",
+        "equip_slot_armor",
+        "equip_slot_shield"
+      ],
+      "description": "a homing flare missile pod with tail fins, angled diagonally from lower-left to upper-right, filling the square frame; a layered chest armor plate module, centered in the square frame; an energy shield generator emitter with a glowing projector dish, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "equip_sub_flare",
+          "label": "blank, no text",
+          "prompt_en": "a homing flare missile pod with tail fins, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "equip_slot_armor",
+          "label": "장갑",
+          "prompt_en": "a layered chest armor plate module, centered in the square frame"
+        },
+        {
+          "key": "equip_slot_shield",
+          "label": "실드",
+          "prompt_en": "an energy shield generator emitter with a glowing projector dish, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "EQ-05",
+      "icons": [
+        "equip_slot_engine",
+        "equip_slot_core",
+        "equip_slot_module"
+      ],
+      "description": "a thruster engine module with glowing exhaust vents, centered in the square frame; a reactor core module with a pulsing energy center, centered in the square frame; a generic utility module chip with a circuit-board pattern, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "equip_slot_engine",
+          "label": "엔진",
+          "prompt_en": "a thruster engine module with glowing exhaust vents, centered in the square frame"
+        },
+        {
+          "key": "equip_slot_core",
+          "label": "코어",
+          "prompt_en": "a reactor core module with a pulsing energy center, centered in the square frame"
+        },
+        {
+          "key": "equip_slot_module",
+          "label": "모듈",
+          "prompt_en": "a generic utility module chip with a circuit-board pattern, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "EQ-06",
+      "icons": [
+        "equip_unique_overheat_drum",
+        "equip_unique_split_core",
+        "equip_unique_pierce_gyro"
+      ],
+      "description": "an overheating ammunition drum with glowing red heat vents mounted on a cannon breech, angled diagonally from lower-left to upper-right, filling the square frame; a twin-split energy core weapon module that channels dual bolts, angled diagonally from lower-left to upper-right, filling the square frame; a spinning gyroscopic penetrator core mounted on a railgun barrel, angled diagonally from lower-left to upper-right, filling the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "equip_unique_overheat_drum",
+          "label": "과열 드럼",
+          "prompt_en": "an overheating ammunition drum with glowing red heat vents mounted on a cannon breech, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "equip_unique_split_core",
+          "label": "분열 코어",
+          "prompt_en": "a twin-split energy core weapon module that channels dual bolts, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "equip_unique_pierce_gyro",
+          "label": "관통 자이로",
+          "prompt_en": "a spinning gyroscopic penetrator core mounted on a railgun barrel, angled diagonally from lower-left to upper-right, filling the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "EQ-07",
+      "icons": [
+        "equip_unique_hive_swarm",
+        "equip_unique_converge_prism",
+        "equip_unique_twin_star"
+      ],
+      "description": "a cluster missile pod shaped like a hive with swarming micro-missiles emerging, angled diagonally from lower-left to upper-right, filling the square frame; a crystalline prism lens weapon converging multiple beams into one point, angled diagonally from lower-left to upper-right, filling the square frame; a twin-barreled star-shaped spread weapon radiating a bright glow, angled diagonally from lower-left to upper-right, filling the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "equip_unique_hive_swarm",
+          "label": "군집 벌통",
+          "prompt_en": "a cluster missile pod shaped like a hive with swarming micro-missiles emerging, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "equip_unique_converge_prism",
+          "label": "수렴 프리즘",
+          "prompt_en": "a crystalline prism lens weapon converging multiple beams into one point, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "equip_unique_twin_star",
+          "label": "쌍둥이 항성",
+          "prompt_en": "a twin-barreled star-shaped spread weapon radiating a bright glow, angled diagonally from lower-left to upper-right, filling the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "EQ-08",
+      "icons": [
+        "equip_unique_drone_bay",
+        "equip_unique_singularity",
+        "equip_unique_phase_armor"
+      ],
+      "description": "a small autonomous combat drone hovering beside a compact launch bay, centered in the square frame; a small gravity-well generator orb with swirling dark energy, centered in the square frame; a shimmering translucent phase-shift armor plate with violet energy ripples, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "equip_unique_drone_bay",
+          "label": "blank, no text",
+          "prompt_en": "a small autonomous combat drone hovering beside a compact launch bay, centered in the square frame"
+        },
+        {
+          "key": "equip_unique_singularity",
+          "label": "blank, no text",
+          "prompt_en": "a small gravity-well generator orb with swirling dark energy, centered in the square frame"
+        },
+        {
+          "key": "equip_unique_phase_armor",
+          "label": "위상 장갑",
+          "prompt_en": "a shimmering translucent phase-shift armor plate with violet energy ripples, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "EQ-09",
+      "icons": [
+        "equip_unique_reactive_armor",
+        "equip_unique_phase_membrane",
+        "equip_unique_afterimage_thruster"
+      ],
+      "description": "a spiked reactive armor plate with explosive charge segments, centered in the square frame; an iridescent phase-shift shield membrane bubble, centered in the square frame; a thruster engine trailing ghostly cyan afterimage energy streaks, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "equip_unique_reactive_armor",
+          "label": "반응 장갑",
+          "prompt_en": "a spiked reactive armor plate with explosive charge segments, centered in the square frame"
+        },
+        {
+          "key": "equip_unique_phase_membrane",
+          "label": "위상 전환막",
+          "prompt_en": "an iridescent phase-shift shield membrane bubble, centered in the square frame"
+        },
+        {
+          "key": "equip_unique_afterimage_thruster",
+          "label": "잔상 추진기",
+          "prompt_en": "a thruster engine trailing ghostly cyan afterimage energy streaks, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "EQ-10",
+      "icons": [
+        "equip_unique_greed_heart",
+        "equip_unique_gambler_chip",
+        "equip_unique_relic_amplifier"
+      ],
+      "description": "a golden reactor core shaped like a glowing heart clutching coins, centered in the square frame; a holographic casino chip module with a spinning fortune symbol, centered in the square frame; an ancient relic amplifier module with glowing runic engravings, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "equip_unique_greed_heart",
+          "label": "탐욕의 심장",
+          "prompt_en": "a golden reactor core shaped like a glowing heart clutching coins, centered in the square frame"
+        },
+        {
+          "key": "equip_unique_gambler_chip",
+          "label": "도박사의 칩",
+          "prompt_en": "a holographic casino chip module with a spinning fortune symbol, centered in the square frame"
+        },
+        {
+          "key": "equip_unique_relic_amplifier",
+          "label": "유물 증폭기",
+          "prompt_en": "an ancient relic amplifier module with glowing runic engravings, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "SK-01",
+      "icons": [
+        "skill_damage_pct_low",
+        "skill_damage_pct_mid",
+        "skill_damage_pct_high"
+      ],
+      "description": "a single small red-tipped ammunition round with a faint spark, centered in the square frame; a serrated high-caliber warhead cracked open with glowing energy, centered in the square frame; a massive glowing explosive warhead crackling with intense red-orange energy, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "skill_damage_pct_low",
+          "label": "blank, no text",
+          "prompt_en": "a single small red-tipped ammunition round with a faint spark, centered in the square frame"
+        },
+        {
+          "key": "skill_damage_pct_mid",
+          "label": "blank, no text",
+          "prompt_en": "a serrated high-caliber warhead cracked open with glowing energy, centered in the square frame"
+        },
+        {
+          "key": "skill_damage_pct_high",
+          "label": "blank, no text",
+          "prompt_en": "a massive glowing explosive warhead crackling with intense red-orange energy, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "SK-02",
+      "icons": [
+        "skill_fire_rate_pct_low",
+        "skill_fire_rate_pct_mid",
+        "skill_fire_rate_pct_high"
+      ],
+      "description": "a twin-barrel gun muzzle with short motion streak lines, angled diagonally from lower-left to upper-right, filling the square frame; a triple-barrel gatling cluster with a blurred motion streak, angled diagonally from lower-left to upper-right, filling the square frame; an overheating rapid-fire barrel cluster glowing red-hot with intense motion blur streaks, angled diagonally from lower-left to upper-right, filling the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "skill_fire_rate_pct_low",
+          "label": "blank, no text",
+          "prompt_en": "a twin-barrel gun muzzle with short motion streak lines, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "skill_fire_rate_pct_mid",
+          "label": "blank, no text",
+          "prompt_en": "a triple-barrel gatling cluster with a blurred motion streak, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "skill_fire_rate_pct_high",
+          "label": "blank, no text",
+          "prompt_en": "an overheating rapid-fire barrel cluster glowing red-hot with intense motion blur streaks, angled diagonally from lower-left to upper-right, filling the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "SK-03",
+      "icons": [
+        "skill_pierce_low",
+        "skill_pierce_mid",
+        "skill_pierce_high"
+      ],
+      "description": "a sharp spike piercing through one thin metal plate, angled diagonally from lower-left to upper-right, filling the square frame; a sharp spike piercing through two stacked metal plates with sparks, angled diagonally from lower-left to upper-right, filling the square frame; a long lance-like spike piercing through three stacked metal plates in a shower of sparks, angled diagonally from lower-left to upper-right, filling the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "skill_pierce_low",
+          "label": "관통 (저)",
+          "prompt_en": "a sharp spike piercing through one thin metal plate, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "skill_pierce_mid",
+          "label": "관통 (중)",
+          "prompt_en": "a sharp spike piercing through two stacked metal plates with sparks, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "skill_pierce_high",
+          "label": "관통 (고)",
+          "prompt_en": "a long lance-like spike piercing through three stacked metal plates in a shower of sparks, angled diagonally from lower-left to upper-right, filling the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "SK-04",
+      "icons": [
+        "skill_max_hp_flat_low",
+        "skill_max_hp_flat_mid",
+        "skill_max_hp_flat_high"
+      ],
+      "description": "a single curved armor plate segment, centered in the square frame; three overlapping armor plate segments riveted together, centered in the square frame; a thick heavy composite armor block with reinforced ridges, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "skill_max_hp_flat_low",
+          "label": "blank, no text",
+          "prompt_en": "a single curved armor plate segment, centered in the square frame"
+        },
+        {
+          "key": "skill_max_hp_flat_mid",
+          "label": "blank, no text",
+          "prompt_en": "three overlapping armor plate segments riveted together, centered in the square frame"
+        },
+        {
+          "key": "skill_max_hp_flat_high",
+          "label": "blank, no text",
+          "prompt_en": "a thick heavy composite armor block with reinforced ridges, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "SK-05",
+      "icons": [
+        "skill_max_hp_pct_low",
+        "skill_max_hp_pct_mid",
+        "skill_max_hp_pct_high"
+      ],
+      "description": "a small glowing green health cross emblem, centered in the square frame; a medium glowing health core with pulsing energy rings around it, centered in the square frame; a large radiant health core with bright pulsing aura rings, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "skill_max_hp_pct_low",
+          "label": "blank, no text",
+          "prompt_en": "a small glowing green health cross emblem, centered in the square frame"
+        },
+        {
+          "key": "skill_max_hp_pct_mid",
+          "label": "blank, no text",
+          "prompt_en": "a medium glowing health core with pulsing energy rings around it, centered in the square frame"
+        },
+        {
+          "key": "skill_max_hp_pct_high",
+          "label": "blank, no text",
+          "prompt_en": "a large radiant health core with bright pulsing aura rings, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "SK-06",
+      "icons": [
+        "skill_dash_cd_pct_low",
+        "skill_dash_cd_pct_mid",
+        "skill_dash_cd_pct_high"
+      ],
+      "description": "a small thruster nozzle emitting a short burst flame, angled diagonally from lower-left to upper-right, filling the square frame; twin thruster nozzles emitting a stronger burst flame with a motion streak, angled diagonally from lower-left to upper-right, filling the square frame; a large thruster array emitting an intense burst flame with long motion streaks, angled diagonally from lower-left to upper-right, filling the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "skill_dash_cd_pct_low",
+          "label": "blank, no text",
+          "prompt_en": "a small thruster nozzle emitting a short burst flame, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "skill_dash_cd_pct_mid",
+          "label": "blank, no text",
+          "prompt_en": "twin thruster nozzles emitting a stronger burst flame with a motion streak, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "skill_dash_cd_pct_high",
+          "label": "blank, no text",
+          "prompt_en": "a large thruster array emitting an intense burst flame with long motion streaks, angled diagonally from lower-left to upper-right, filling the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "SK-07",
+      "icons": [
+        "skill_move_speed_pct_low",
+        "skill_move_speed_pct_mid",
+        "skill_move_speed_pct_high"
+      ],
+      "description": "a small compact engine nozzle with a faint exhaust glow, centered in the square frame; a medium engine pod with a brighter exhaust glow and a short trail, centered in the square frame; a large twin-nozzle engine array with an intense exhaust glow and a long trail, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "skill_move_speed_pct_low",
+          "label": "blank, no text",
+          "prompt_en": "a small compact engine nozzle with a faint exhaust glow, centered in the square frame"
+        },
+        {
+          "key": "skill_move_speed_pct_mid",
+          "label": "blank, no text",
+          "prompt_en": "a medium engine pod with a brighter exhaust glow and a short trail, centered in the square frame"
+        },
+        {
+          "key": "skill_move_speed_pct_high",
+          "label": "blank, no text",
+          "prompt_en": "a large twin-nozzle engine array with an intense exhaust glow and a long trail, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "SK-08",
+      "icons": [
+        "skill_magnet_pct_low",
+        "skill_magnet_pct_mid",
+        "skill_magnet_pct_high"
+      ],
+      "description": "a small horseshoe magnet with faint attraction field lines, centered in the square frame; a medium ringed magnet coil with visible swirling attraction field lines, centered in the square frame; a large glowing magnet coil array with a strong swirling attraction field, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "skill_magnet_pct_low",
+          "label": "blank, no text",
+          "prompt_en": "a small horseshoe magnet with faint attraction field lines, centered in the square frame"
+        },
+        {
+          "key": "skill_magnet_pct_mid",
+          "label": "blank, no text",
+          "prompt_en": "a medium ringed magnet coil with visible swirling attraction field lines, centered in the square frame"
+        },
+        {
+          "key": "skill_magnet_pct_high",
+          "label": "blank, no text",
+          "prompt_en": "a large glowing magnet coil array with a strong swirling attraction field, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "SK-09",
+      "icons": [
+        "skill_xp_pct_low",
+        "skill_xp_pct_mid",
+        "skill_xp_pct_high"
+      ],
+      "description": "a single small glowing star, centered in the square frame; a cluster of three glowing stars, centered in the square frame; a radiant burst of many glowing stars around a bright core, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "skill_xp_pct_low",
+          "label": "blank, no text",
+          "prompt_en": "a single small glowing star, centered in the square frame"
+        },
+        {
+          "key": "skill_xp_pct_mid",
+          "label": "blank, no text",
+          "prompt_en": "a cluster of three glowing stars, centered in the square frame"
+        },
+        {
+          "key": "skill_xp_pct_high",
+          "label": "blank, no text",
+          "prompt_en": "a radiant burst of many glowing stars around a bright core, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "SK-10",
+      "icons": [
+        "skill_bullet_count_mid",
+        "skill_bullet_count_high"
+      ],
+      "description": "three parallel bullet tracers fanned out from a single point, centered in the square frame; five parallel bullet tracers fanned out wide from a single point, centered in the square frame. Only 2 items — leave the remaining 1 cell of the row empty/blank (do not invent extra objects to fill the frame). soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "skill_bullet_count_mid",
+          "label": "blank, no text",
+          "prompt_en": "three parallel bullet tracers fanned out from a single point, centered in the square frame"
+        },
+        {
+          "key": "skill_bullet_count_high",
+          "label": "blank, no text",
+          "prompt_en": "five parallel bullet tracers fanned out wide from a single point, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 1
+    },
+    {
+      "sheet_id": "SK-11",
+      "icons": [
+        "skill_bullet_speed_pct_low",
+        "skill_bullet_speed_pct_mid"
+      ],
+      "description": "a single bullet with a short speed trail behind it, angled diagonally from lower-left to upper-right, filling the square frame; a single bullet with a long streaking speed trail and motion blur, angled diagonally from lower-left to upper-right, filling the square frame. Only 2 items — leave the remaining 1 cell of the row empty/blank (do not invent extra objects to fill the frame). soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "skill_bullet_speed_pct_low",
+          "label": "탄속 (저)",
+          "prompt_en": "a single bullet with a short speed trail behind it, angled diagonally from lower-left to upper-right, filling the square frame"
+        },
+        {
+          "key": "skill_bullet_speed_pct_mid",
+          "label": "탄속 (중)",
+          "prompt_en": "a single bullet with a long streaking speed trail and motion blur, angled diagonally from lower-left to upper-right, filling the square frame"
+        }
+      ],
+      "leftover_cells": 1
+    },
+    {
+      "sheet_id": "SK-12",
+      "icons": [
+        "skill_range_flat_low"
+      ],
+      "description": "a long-range targeting reticle with crosshair lines extending outward to the frame edges, centered in the square frame. Only 1 item — leave the remaining 2 cells of the row empty/blank (do not invent extra objects to fill the frame). soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "skill_range_flat_low",
+          "label": "blank, no text",
+          "prompt_en": "a long-range targeting reticle with crosshair lines extending outward to the frame edges, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 2
+    },
+    {
+      "sheet_id": "SK-13",
+      "icons": [
+        "skill_capstone_firepower",
+        "skill_capstone_survival",
+        "skill_capstone_mobility"
+      ],
+      "description": "a forward-firing energy laser beam intercepting and dissolving a cluster of incoming enemy projectiles, dramatic action icon, centered in the square frame; a glowing protective barrier bubble shattering an incoming red critical-strike bolt, dramatic action icon, centered in the square frame; a starfighter afterimage trail dashing through a burst of dissolving enemy bullets, dramatic action icon, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "skill_capstone_firepower",
+          "label": "blank, no text",
+          "prompt_en": "a forward-firing energy laser beam intercepting and dissolving a cluster of incoming enemy projectiles, dramatic action icon, centered in the square frame"
+        },
+        {
+          "key": "skill_capstone_survival",
+          "label": "blank, no text",
+          "prompt_en": "a glowing protective barrier bubble shattering an incoming red critical-strike bolt, dramatic action icon, centered in the square frame"
+        },
+        {
+          "key": "skill_capstone_mobility",
+          "label": "blank, no text",
+          "prompt_en": "a starfighter afterimage trail dashing through a burst of dissolving enemy bullets, dramatic action icon, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "ST-01",
+      "icons": [
+        "sticker_good_game",
+        "sticker_nice_try",
+        "sticker_galaxy_small"
+      ],
+      "description": "a handshake emblem inside a circular badge, playful winner sticker, centered in the square frame; a cool sunglasses face emblem inside a circular badge, playful winner sticker, centered in the square frame; a swirling spiral galaxy emblem inside a circular badge, playful winner sticker, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "sticker_good_game",
+          "label": "blank, no text",
+          "prompt_en": "a handshake emblem inside a circular badge, playful winner sticker, centered in the square frame"
+        },
+        {
+          "key": "sticker_nice_try",
+          "label": "blank, no text",
+          "prompt_en": "a cool sunglasses face emblem inside a circular badge, playful winner sticker, centered in the square frame"
+        },
+        {
+          "key": "sticker_galaxy_small",
+          "label": "blank, no text",
+          "prompt_en": "a swirling spiral galaxy emblem inside a circular badge, playful winner sticker, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "ST-02",
+      "icons": [
+        "sticker_lock_door",
+        "sticker_five_stars",
+        "sticker_maintenance"
+      ],
+      "description": "a padlock emblem inside a circular badge, playful winner sticker, centered in the square frame; a five-star rating emblem inside a circular badge, playful winner sticker, centered in the square frame; a wrench tool emblem inside a circular badge, playful winner sticker, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "sticker_lock_door",
+          "label": "blank, no text",
+          "prompt_en": "a padlock emblem inside a circular badge, playful winner sticker, centered in the square frame"
+        },
+        {
+          "key": "sticker_five_stars",
+          "label": "blank, no text",
+          "prompt_en": "a five-star rating emblem inside a circular badge, playful winner sticker, centered in the square frame"
+        },
+        {
+          "key": "sticker_maintenance",
+          "label": "blank, no text",
+          "prompt_en": "a wrench tool emblem inside a circular badge, playful winner sticker, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "ST-03",
+      "icons": [
+        "sticker_sightseeing",
+        "sticker_turret_regards",
+        "sticker_take_a_seat"
+      ],
+      "description": "a rocket ship emblem inside a circular badge, playful winner sticker, centered in the square frame; a satellite dish emblem inside a circular badge, playful winner sticker, centered in the square frame; a steaming coffee cup emblem inside a circular badge, playful winner sticker, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "sticker_sightseeing",
+          "label": "blank, no text",
+          "prompt_en": "a rocket ship emblem inside a circular badge, playful winner sticker, centered in the square frame"
+        },
+        {
+          "key": "sticker_turret_regards",
+          "label": "blank, no text",
+          "prompt_en": "a satellite dish emblem inside a circular badge, playful winner sticker, centered in the square frame"
+        },
+        {
+          "key": "sticker_take_a_seat",
+          "label": "blank, no text",
+          "prompt_en": "a steaming coffee cup emblem inside a circular badge, playful winner sticker, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    },
+    {
+      "sheet_id": "ST-04",
+      "icons": [
+        "sticker_rematch_anytime",
+        "sticker_core_walk",
+        "sticker_safe_travels"
+      ],
+      "description": "an hourglass emblem inside a circular badge, playful winner sticker, centered in the square frame; a faceted diamond gem-core emblem inside a circular badge, playful winner sticker, centered in the square frame; a satellite emblem inside a circular badge, playful winner sticker, centered in the square frame. soft cartoon pixel art, high detail, warm cream-gold rim light, no heavy dark outline, transparent background, no text labels, no panel frame, no background plate",
+      "pieces": [
+        {
+          "key": "sticker_rematch_anytime",
+          "label": "blank, no text",
+          "prompt_en": "an hourglass emblem inside a circular badge, playful winner sticker, centered in the square frame"
+        },
+        {
+          "key": "sticker_core_walk",
+          "label": "blank, no text",
+          "prompt_en": "a faceted diamond gem-core emblem inside a circular badge, playful winner sticker, centered in the square frame"
+        },
+        {
+          "key": "sticker_safe_travels",
+          "label": "blank, no text",
+          "prompt_en": "a satellite emblem inside a circular badge, playful winner sticker, centered in the square frame"
+        }
+      ],
+      "leftover_cells": 0
+    }
+  ]
+}
