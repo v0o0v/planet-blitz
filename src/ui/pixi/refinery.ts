@@ -10,7 +10,7 @@
  * 순수 render/UI 레이어(ADR-0005) — sim 은 이 파일을 모른다.
  */
 
-import { Container, Graphics, NineSliceSprite, Text } from 'pixi.js';
+import { Container, Graphics, Rectangle, NineSliceSprite, Text } from 'pixi.js';
 import type { Item } from '../../items/types.js';
 import { AFFIX_BY_ID, AFFIXES } from '../../../data/affixes.js';
 import { rerollAffixes } from '../../items/roll.js';
@@ -440,8 +440,11 @@ export class RefineryScreen {
     this.listScrollY = Math.min(this.listScrollY, maxScroll);
     content.y = -this.listScrollY;
     if (maxScroll > 0) {
-      mask.eventMode = 'static';
-      mask.on('wheel', (e) => {
+      // 휠은 **클립 Container** 가 받는다 — 마스크로 쓰이는 Graphics 는 히트 테스트에서 제외돼
+      // (`isMask`) 리스너가 영영 불리지 않는다(카드 화면 #7 에서 실측).
+      clip.eventMode = 'static';
+      clip.hitArea = new Rectangle(0, 0, GRID_W, GRID_H);
+      clip.on('wheel', (e) => {
         this.listScrollY = Math.max(0, Math.min(maxScroll, this.listScrollY + e.deltaY));
         content.y = -this.listScrollY;
       });

@@ -503,8 +503,12 @@ export const EN = {
   'def.cards.section': '🃏 Card Management',
   'def.cards.manage': 'Manage ▾',
   'def.cards.hide': 'Hide ▴',
+  // 카드 관리는 별도 캔버스 화면이다(카툰나무풍 롤아웃 #7) — 여기서는 진입 버튼만 둔다.
+  'def.cards.open': 'Open ▸',
 
   // --- 방어 카드 시스템(M6 — 슬롯/보관함/상점/합성/분해) ---
+  'card.title': 'Defense Cards',
+  'card.back': '◀ Back to Defense',
   'card.tab.layout': '🧱 Layout',
   'card.tab.cards': '🃏 Cards',
   'card.baseOnly': 'Base effect only',
@@ -517,6 +521,7 @@ export const EN = {
   'card.slot.empty': 'No card equipped',
   'card.slot.emptyHint': 'Equip a card from your collection — it auto-triggers when you are invaded.',
   'card.slot.equipped': 'Equipped',
+  'card.slot.autoHint': 'This card triggers automatically when you are invaded.',
   'card.slot.charges': 'Charges {n}/{m}',
   'card.slot.lastCharge': '⚠ Last charge — consumed on the next confirmed invasion.',
   'card.slot.unequip': 'Unequip',
@@ -1042,8 +1047,11 @@ export const KO: Record<MessageKey, string> = {
   'def.cards.section': '🃏 카드 관리',
   'def.cards.manage': '관리 ▾',
   'def.cards.hide': '접기 ▴',
+  'def.cards.open': '열기 ▸',
 
   // --- 방어 카드 시스템(M6 — 슬롯/보관함/상점/합성/분해) ---
+  'card.title': '방어 카드',
+  'card.back': '◀ 방어 사령부로',
   'card.tab.layout': '🧱 배치',
   'card.tab.cards': '🃏 카드',
   'card.baseOnly': '기저 효과만',
@@ -1056,6 +1064,7 @@ export const KO: Record<MessageKey, string> = {
   'card.slot.empty': '장착된 카드 없음',
   'card.slot.emptyHint': '보관함에서 카드를 장착하세요 — 침공당할 때 자동 발동합니다.',
   'card.slot.equipped': '장착됨',
+  'card.slot.autoHint': '이 카드는 침공당할 때 자동으로 발동합니다.',
   'card.slot.charges': '사용 {n}/{m}회',
   'card.slot.lastCharge': '⚠ 잔여 1회 — 다음 확정 침공에서 소진됩니다.',
   'card.slot.unequip': '해제',

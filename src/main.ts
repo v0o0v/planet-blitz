@@ -42,6 +42,7 @@ import { RefineryScreen } from './ui/pixi/refinery.js';
 import { PlanetSelectScreen } from './ui/pixi/planetSelect.js';
 import { ResultOverlayScreen } from './ui/pixi/resultOverlay.js';
 import { ControlTowerScreen } from './ui/pixi/controlTower.js';
+import { CardsScreen } from './ui/pixi/cardsView.js';
 import { DefenseCommand, normalizeLayout } from './ui/defenseCommand.js';
 import type { ControlTowerShowOpts, InvasionResultView } from './ui/controlTower.js';
 import {
@@ -234,7 +235,25 @@ async function main(): Promise<void> {
   // visible + 콜백·옵션 타입 동일). 다른 캔버스 화면과 같은 블록에서 만들어야
   // entityRenderer·radar 레이어보다 **뒤에** stage 에 붙어 위로 그려진다(z 순서).
   const controlTower = new ControlTowerScreen(gameApp.stage);
+  // 카툰나무풍 롤아웃 #7: 방어 사령부 우측 접이식이던 카드 관리(보관함·상점·합성)를 독립
+  // 캔버스 화면으로 뺐다. 진입은 방어 사령부의 "카드 관리" 버튼 — 그 DOM 오버레이만
+  // suspend 로 감췄다가 닫힐 때 resume 한다(미저장 배치 편집을 지키기 위해 show 를 다시
+  // 부르지 않는다). 다른 캔버스 화면과 같은 블록에서 만들어야 z 순서가 맞는다.
+  const cardsScreen = new CardsScreen(profile, gameApp.stage);
   const defenseCommand = new DefenseCommand(profile);
+
+  /** 방어 사령부 → 카드 화면. 닫으면 편집 상태 그대로 방어 사령부로 돌아온다. */
+  function openCards(): void {
+    defenseCommand.suspend();
+    cardsScreen.show(profile, () => defenseCommand.resume());
+  }
+
+  /** 방어 사령부 진입(기지 맵·하네스 공용) — 프리뷰 시작 + 카드 화면 진입 배선. */
+  function openDefenseCommand(): void {
+    // 프리뷰 정지 월드를 저장된 배치로 켠다(레인 B).
+    defensePreview.start(normalizeLayout(profile.defenseLayout));
+    defenseCommand.show(profile, () => openBaseMap(), defensePreview, () => openCards());
+  }
   // 방어 사령부 실화면 편집 프리뷰(레인 B, ADR-0013): 침공 정지 월드를 침공과 동일 렌더 경로로
   // 그려 배치를 실화면으로 보여준다. 라이브 `world` 변수와 완전 분리 — 게임 루프·recorder 없음.
   // 레인 C(defenseCommand 재편)가 이 컨트롤을 소비해 편집 UI 와 배선한다(현재는 진입/이탈 시
@@ -403,6 +422,7 @@ async function main(): Promise<void> {
     researchLab.hide();
     refinery.hide();
     defenseCommand.hide();
+    cardsScreen.hide();
     defensePreview.stop();
     controlTower.hide();
     spectateOverlay.hide();
@@ -446,10 +466,7 @@ async function main(): Promise<void> {
       onDefense: () => {
         baseMap.hide();
         setScreen('defense');
-        // 프리뷰 정지 월드를 저장된 배치로 켠다(레인 B). 레인 C 가 편집 상호작용을
-        // 배선하기 전까지는 진입/이탈 시 start/stop 만 — DOM 이 캔버스를 덮어 시각 회귀 0.
-        defensePreview.start(normalizeLayout(profile.defenseLayout));
-        defenseCommand.show(profile, () => openBaseMap(), defensePreview);
+        openDefenseCommand();
       },
       onControl: () => {
         baseMap.hide();
@@ -1141,8 +1158,7 @@ async function main(): Promise<void> {
           planetSelect.hide();
           clearToMenu();
           setScreen('defense');
-          defensePreview.start(normalizeLayout(profile.defenseLayout));
-          defenseCommand.show(profile, () => openBaseMap(), defensePreview);
+          openDefenseCommand();
           break;
         case 'controlTower':
           planetSelect.hide();
@@ -1260,6 +1276,10 @@ async function main(): Promise<void> {
       // 관제탑은 서버 왕복 화면이라 로그인 없이는 안내 상태만 뜬다 — 채워진 화면을
       // 검증하려면 이 참조로 뷰를 직접 띄운다(카툰나무풍 롤아웃 #6 검증 절차).
       controlTower,
+      // 카드 화면도 로그인해야 채워진다(미로그인이면 안내 상태) — 검증 시 이 참조로 상태를
+      // 직접 넣고 render() 를 부른다(카툰나무풍 롤아웃 #7 검증 절차).
+      cardsScreen,
+      openCards,
       // 하네스 API 표면(개발 도구): goto/startRun/ff/setSpeed/pause/resume/step/
       // preset/snapshot/events/cheat. 프로덕션 미포함.
       harness,
