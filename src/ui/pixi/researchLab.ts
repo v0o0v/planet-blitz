@@ -720,17 +720,13 @@ export class ResearchLabScreen {
     panel.position.set(POP_X, POP_Y);
     this.root.addChild(panel);
     // 밝은 화면 위 팝업은 불투명이어야 한다 — 반투명이면 뒤가 비쳐 읽기 어렵다(실측 결함).
-    // `fillInset` 을 기본(border-2)보다 더 안으로 당기는 이유: 기본값이면 어두운 채움이 끝나는
-    // 자리와 나무 프레임의 불투명한 살이 시작하는 자리 사이에 5px 짜리 틈이 남고, 평면 배경 위
-    // 패널에서는 안 보이던 그 틈이 **화면 위에 얹는 팝업에서는 뒤 화면이 비치는 띠**가 된다
-    // (실측: 팝업 하단에 파생 스탯 띠 글자가 그대로 비쳤다). 채움은 프레임 밑에 깔리므로
-    // 더 넓혀도 프레임을 침범하지 않는다.
+    // 채움과 나무 살 사이 틈(뒤 화면이 비치던 띠)은 `fillInset` 기본값이 자산 실측으로
+    // 바뀌면서 없어졌다 — 여기서 따로 당기지 않는다.
     panel.addChild(
       nineSlicePanel(POP_W, POP_H, {
         texture: this.ui['ui_panel.png'],
         border: PANEL_BORDER,
         fillAlpha: 1,
-        fillInset: PANEL_BORDER - 16,
       }),
     );
     // 패널 위 클릭이 뒤의 막까지 새지 않게 막는다(패널 안 빈자리 클릭 = 닫힘 방지).
