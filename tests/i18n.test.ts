@@ -16,8 +16,11 @@ import {
 } from '../data/defenseUnits.js';
 import {
   CORE_MODULE_UNIQUES,
+  MODULE_AFFIXES,
   moduleUniqueNameKey,
   moduleUniqueDescKey,
+  moduleAffixNameKey,
+  moduleAffixDescKey,
 } from '../data/coreModules.js';
 
 afterEach(() => {
@@ -76,6 +79,21 @@ describe('카탈로그 완전성', () => {
     }
   });
 
+  /**
+   * 모듈 어픽스(M7b · data/coreModules.ts)의 `def3.affix.<id>.name/.desc` 전수.
+   * 구 카드 어픽스는 데이터에 한글 `name` 필드를 들고 있었다 — 그 리터럴을 i18n 으로 옮기면서
+   * 검증도 **배열 파생**으로 세워, 어픽스를 추가하면 문구를 채우기 전까지 빨간불이게 만든다.
+   */
+  it('모듈 어픽스 전종의 def3.affix.* 키가 EN·KO 양쪽에 존재한다', () => {
+    expect(MODULE_AFFIXES.length).toBeGreaterThan(0);
+    for (const a of MODULE_AFFIXES) {
+      for (const key of [moduleAffixNameKey(a.id), moduleAffixDescKey(a.id)]) {
+        expect(EN, `EN missing ${key}`).toHaveProperty(key);
+        expect(KO, `KO missing ${key}`).toHaveProperty(key);
+      }
+    }
+  });
+
   /** 코어 모듈 유니크(M7b · data/coreModules.ts)의 `def3.module.<id>.name/.desc` 전수. */
   it('코어 모듈 유니크 전종의 def3.module.* 키가 EN·KO 양쪽에 존재한다', () => {
     expect(CORE_MODULE_UNIQUES.length).toBeGreaterThan(0);
@@ -95,6 +113,7 @@ describe('카탈로그 완전성', () => {
         defenseUnitAffixDescKey(a.id),
       ]),
       ...CORE_MODULE_UNIQUES.flatMap((u) => [moduleUniqueNameKey(u.id), moduleUniqueDescKey(u.id)]),
+      ...MODULE_AFFIXES.flatMap((a) => [moduleAffixNameKey(a.id), moduleAffixDescKey(a.id)]),
     ];
     for (const key of keys) {
       for (const [label, t] of [

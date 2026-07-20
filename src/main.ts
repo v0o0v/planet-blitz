@@ -42,7 +42,7 @@ import { RefineryScreen } from './ui/pixi/refinery.js';
 import { PlanetSelectScreen } from './ui/pixi/planetSelect.js';
 import { ResultOverlayScreen } from './ui/pixi/resultOverlay.js';
 import { ControlTowerScreen } from './ui/pixi/controlTower.js';
-import { CardsScreen } from './ui/pixi/cardsView.js';
+import { ModulesScreen } from './ui/pixi/modulesView.js';
 import { DefenseCommandScreen } from './ui/pixi/defenseCommand.js';
 
 import type { ControlTowerShowOpts, InvasionResultView } from './ui/controlTower.js';
@@ -114,6 +114,7 @@ import {
 } from './sim/invasion/index.js';
 import type { Invasion3Config } from './sim/invasion/index.js';
 import type { CoreModuleConfig } from './sim/moduleEffects.js';
+import type { ModuleInstance } from '../data/coreModules.js';
 // M4 Phase F: 리플레이 관전(F3) + 도발 스티커(F2).
 import { SpectateOverlay, isPlayableReplay, nextSpectateSpeed } from './ui/replaySpectate.js';
 import type { SpectateSpeed } from './ui/replaySpectate.js';
@@ -207,7 +208,7 @@ async function main(): Promise<void> {
     const cr = world?.moduleRuntime;
     if (cr !== undefined && cr.blackoutTicksLeft > 0) {
       radar.layer.visible = false;
-      blackoutBanner.textContent = t('card.hud.blackout', { n: Math.ceil(cr.blackoutTicksLeft / 60) });
+      blackoutBanner.textContent = t('mod.hud.blackout', { n: Math.ceil(cr.blackoutTicksLeft / 60) });
       blackoutBanner.style.display = 'block';
       return;
     }
@@ -261,11 +262,10 @@ async function main(): Promise<void> {
   // visible + 콜백·옵션 타입 동일). 다른 캔버스 화면과 같은 블록에서 만들어야
   // entityRenderer·radar 레이어보다 **뒤에** stage 에 붙어 위로 그려진다(z 순서).
   const controlTower = new ControlTowerScreen(gameApp.stage);
-  // 카툰나무풍 롤아웃 #7: 방어 사령부 우측 접이식이던 카드 관리(보관함·상점·합성)를 독립
-  // 캔버스 화면으로 뺐다. 진입은 방어 사령부의 "카드 관리" 버튼 — 그 DOM 오버레이만
-  // suspend 로 감췄다가 닫힐 때 resume 한다(미저장 배치 편집을 지키기 위해 show 를 다시
-  // 부르지 않는다). 다른 캔버스 화면과 같은 블록에서 만들어야 z 순서가 맞는다.
-  const cardsScreen = new CardsScreen(profile, gameApp.stage);
+  // 코어 모듈 화면(M7b — 구 카드 화면 계승). 진입은 방어 사령부의 모듈 탭 버튼이고, 사령부는
+  // 자기 화면만 suspend 로 감췄다가 닫힐 때 resume 한다(미저장 배치 편집을 지키기 위해 show 를
+  // 다시 부르지 않는다). 다른 캔버스 화면과 같은 블록에서 만들어야 z 순서가 맞는다.
+  const modulesScreen = new ModulesScreen(profile, gameApp.stage);
 
   // 3레이어 배치 프리뷰(M7b) — 방어 사령부가 자기 루트에 붙여 배경 위·패널 아래로 순서를
   // 잡는다(`attachTo`). 목업이 아니라 실제 `createWorld(invasion3)` 정지 렌더다.
@@ -294,7 +294,7 @@ async function main(): Promise<void> {
         });
       },
       onOpenModules: (resume) => {
-        cardsScreen.show(profile, () => {
+        modulesScreen.show(profile, () => {
           resume();
         });
       },
@@ -360,6 +360,9 @@ async function main(): Promise<void> {
   // 제출도 하지 않는다 — endRun 이 이 플래그를 보고 두 경로를 모두 건너뛴다.
   let harnessInvasionRun = false;
   let pendingInvasionResult: InvasionResultView | null = null;
+  // 방금 상대한 방어의 장착 코어 모듈(T0 스냅샷 권위). 결과 배너와 함께 관제탑에서 정찰
+  // 공개된다(스펙 R9) — 등급·잔여 횟수·모듈 어픽스까지 드러나 복수전·재침공의 역퍼즐이 된다.
+  let pendingRevealModules: readonly ModuleInstance[] = [];
 
   // --- 리플레이 관전(F3) 상태 ---
   // spectateReplay !== null 이면 현재 화면은 관전 재생이다 → ticker 가 리플레이 입력을
@@ -453,7 +456,7 @@ async function main(): Promise<void> {
     inventory.hide();
     researchLab.hide();
     refinery.hide();
-    cardsScreen.hide();
+    modulesScreen.hide();
     defenseCommand.hide();
     defensePreview.stop();
     controlTower.hide();
@@ -523,9 +526,11 @@ async function main(): Promise<void> {
     if (pendingInvasionResult !== null) {
       showOpts.result = pendingInvasionResult;
       pendingInvasionResult = null;
-      // 상대 코어 모듈 옵션 정찰 공개(스펙 R9)는 M7b-command-ui 가 모듈 뷰를 세운 뒤
-      // 재배선한다 — 구 CardInstance 패널(ControlTowerShowOpts.revealCard)은 개명 대상이라
-      // 여기서 먹이지 않는다. 입력은 startInvasionRun 의 스냅샷 modules 권위다.
+      // 상대 코어 모듈 옵션 정찰 공개(스펙 R9). 입력은 방금 끝난 침공의 T0 권위 스냅샷
+      // (begin_invasion 의 authority.modules)이라 라이브 재조회가 필요 없고, 방어자가 그
+      // 사이 모듈을 바꿔도 "내가 상대한 방어"가 그대로 보인다(ADR-0012 스냅샷 고정).
+      if (pendingRevealModules.length > 0) showOpts.revealModules = pendingRevealModules;
+      pendingRevealModules = [];
     }
     if (opts.verifying === true) showOpts.verifying = true;
     controlTower.show(
@@ -672,6 +677,8 @@ async function main(): Promise<void> {
     // (모듈 미장착 = 거동·해시 무회귀).
     let runModules: CoreModuleConfig | null = null;
     invasionSnapshotId = null;
+    // 이전 침공의 공개분이 남아 다음 결과 화면에 새지 않게 매 런 시작에 비운다.
+    pendingRevealModules = [];
     if (target.defenseId !== null) {
       const snapshot = await beginInvasion(target.defenseId);
       if (snapshot !== null) {
@@ -683,6 +690,9 @@ async function main(): Promise<void> {
         runMaintenanceDb = snapshot.maintenance;
         invasionSnapshotId = snapshot.snapshotId;
         runModules = snapshot.modules ?? null;
+        // 결과 화면의 정찰 공개용으로 남겨 둔다(런이 끝나야 보여 준다 — 침공 전에 알면
+        // 카운터 모듈의 의미가 사라진다).
+        pendingRevealModules = runModules !== null ? runModules.modules : [];
       }
     }
 
@@ -1423,14 +1433,14 @@ async function main(): Promise<void> {
       // 관제탑은 서버 왕복 화면이라 로그인 없이는 안내 상태만 뜬다 — 채워진 화면을
       // 검증하려면 이 참조로 뷰를 직접 띄운다(카툰나무풍 롤아웃 #6 검증 절차).
       controlTower,
-      // 카드 화면도 로그인해야 채워진다(미로그인이면 안내 상태) — 검증 시 이 참조로 상태를
-      // 직접 넣고 render() 를 부른다(카툰나무풍 롤아웃 #7 검증 절차).
-      cardsScreen,
+      // 코어 모듈 화면도 로그인해야 채워진다(미로그인이면 안내 상태) — 검증 시 이 참조로
+      // 상태를 직접 넣고 render() 를 부른다.
+      modulesScreen,
       // 방어 사령부(M7b) — 검증 시 이 참조로 탭·배치 상태를 직접 넣고 render() 를 부른다.
       defenseCommand,
-      // 코어 모듈 화면 직행(구 "카드 관리" 진입점 계승). 사령부를 거치지 않으므로 배치 편집
-      // 상태와 무관하다 — 사령부 안에서 열 때는 suspend/resume 경로를 탄다.
-      openCards: () => cardsScreen.show(profile, () => openBaseMap()),
+      // 코어 모듈 화면 직행. 사령부를 거치지 않으므로 배치 편집 상태와 무관하다 — 사령부
+      // 안에서 열 때는 suspend/resume 경로를 탄다.
+      openModules: () => modulesScreen.show(profile, () => openBaseMap()),
       // 설정은 톱니 클릭으로만 열리는 크롬 UI 다 — 검증 시 이 참조로 직접 연다(#8).
       settings,
       // 하네스 API 표면(개발 도구): goto/startRun/ff/setSpeed/pause/resume/step/

@@ -39,6 +39,8 @@ import {
   propPowerBp,
 } from '../data/invasion/props.js';
 import { HAZARD_SLOW } from '../src/sim/patterns/types.js';
+import { affixDamage, affixHp, defenseAffixSet } from '../src/sim/invasion/affix.js';
+import { CATALOG_BOSS } from '../data/invasion/catalog.js';
 
 // ---------------------------------------------------------------------------
 // 픽스처
@@ -359,16 +361,34 @@ describe('L3 코어방 — 방어 보스', () => {
     expect(boss.iframes).toBeGreaterThan(0);
   });
 
-  it('강화 3축이 HP·접촉피해를 정수 배율로 올린다', () => {
+  it('강화 3축이 HP·접촉피해를 정수 배율로 올린다(어픽스 미보유 = 3축 산식 그대로)', () => {
+    // normal 등급은 방어체 어픽스가 0개(DEFENSE_UNIT_AFFIX_RANGE.normal = [0,0])라 강화 3축
+    // 산식만 남는다 — 어픽스 sim 반영 이후에도 이 등식이 깨지지 않아야 한다(비트 동일 계약).
     const layers = layersWith({
-      boss: { catalogId: 0, level: 11, ascension: 2, affixSeed: 0, rarity: 3 },
+      boss: { catalogId: 0, level: 11, ascension: 2, affixSeed: 0, rarity: 0 },
     });
     const w = createWorld(1);
     enterCoreRoom(w, ctxOf(layers));
     const boss = one(w, DEFENSE_BOSS_KIND as string);
-    const bp = defenseBossPowerBp(11, 2, 3);
+    const bp = defenseBossPowerBp(11, 2, 0);
     expect(boss.hp).toBe(scaleByBp(DEFENSE_BOSSES[0]!.hp, bp));
     expect(boss.damage).toBe(scaleByBp(DEFENSE_BOSSES[0]!.contactDamage, bp));
+    expect(Number.isInteger(boss.hp)).toBe(true);
+  });
+
+  it('어픽스를 가진 등급은 3축 위에 접두 보정이 정수로 얹힌다', () => {
+    // unique(3)는 어픽스 5개 고정. `affixSeed` 로 복원한 접두를 접은 값이 정본이며, 그 정본은
+    // affix.ts 의 순수 함수(`defenseAffixSet`·`affixHp`)가 만든다 — 여기서 재구현하지 않는다.
+    const ref = { catalogId: 0, level: 11, ascension: 2, affixSeed: 0, rarity: 3 };
+    const w = createWorld(1);
+    enterCoreRoom(w, ctxOf(layersWith({ boss: ref })));
+    const boss = one(w, DEFENSE_BOSS_KIND as string);
+    const bp = defenseBossPowerBp(11, 2, 3);
+    const mods = defenseAffixSet(CATALOG_BOSS, ref).always;
+    expect(boss.hp).toBe(affixHp(scaleByBp(DEFENSE_BOSSES[0]!.hp, bp), mods));
+    expect(boss.damage).toBe(affixDamage(scaleByBp(DEFENSE_BOSSES[0]!.contactDamage, bp), mods));
+    // 어픽스 리롤이 전투에 실제로 닿는다는 것 자체를 못 박는다(리롤 축이 no-op 이면 여기서 깨진다).
+    expect(boss.hp).not.toBe(scaleByBp(DEFENSE_BOSSES[0]!.hp, bp));
     expect(Number.isInteger(boss.hp)).toBe(true);
   });
 });

@@ -63,8 +63,8 @@ import {
   catalogEntry,
   def3NameKey,
 } from '../../data/invasion/catalog.js';
-import type { CardInstance } from '../../data/defenseCards.js';
-import { cardRarityColor, cardRarityLabel, cardAffixOneLine } from './cardsView.js';
+import type { ModuleInstance } from '../../data/coreModules.js';
+import { moduleRarityColor, moduleRarityLabel, moduleAffixOneLine } from './modulesView.js';
 import { t, type MessageKey } from '../i18n/index.js';
 
 // ---------------------------------------------------------------------------
@@ -495,10 +495,12 @@ export interface ControlTowerShowOpts {
   /** 서버 검증 대기 중 표시. */
   verifying?: boolean;
   /**
-   * 방금 침공한 상대의 방어 카드(정찰 공개 — 스펙 R9). 침공해 본 상대만 옵션을 공개한다
-   * (타겟 목록은 등급도 비공개 상태이므로 여기서만 어픽스를 드러낸다). 미장착이면 null/미지정.
+   * 방금 침공한 상대의 장착 코어 모듈(정찰 공개 — 스펙 R9). 침공해 본 상대만 옵션을 공개한다
+   * (타겟 목록은 등급도 비공개 상태이므로 여기서만 모듈 어픽스를 드러낸다). 슬롯이 2개이므로
+   * **배열**이며, 미장착이면 빈 배열/미지정이다. 입력은 T0 권위 스냅샷이라 방어자가 그 사이
+   * 모듈을 바꿔도 "내가 상대한 방어"가 보인다(ADR-0012).
    */
-  revealCard?: CardInstance | null;
+  revealModules?: readonly ModuleInstance[];
 }
 
 export class ControlTower {
@@ -730,32 +732,34 @@ export class ControlTower {
   }
 
   /**
-   * 침공한 상대의 방어 카드 정찰 공개 패널(스펙 R9). 결과 배너가 있고 카드가 실제로 장착돼
-   * 있었을 때만 표시한다(미장착·미제출이면 null). 등급·잔여 횟수·어픽스 옵션을 드러내 복수전·
-   * 재침공의 역퍼즐 정보를 준다. 렌더 전용.
+   * 침공한 상대의 코어 모듈 정찰 공개 패널(스펙 R9). 결과 배너가 있고 모듈이 실제로 장착돼
+   * 있었을 때만 표시한다(미장착·미제출이면 null). 등급·잔여 횟수·모듈 어픽스를 드러내 복수전·
+   * 재침공의 역퍼즐 정보를 준다. 슬롯이 2개라 장착분 전부를 줄줄이 보여 준다. 렌더 전용.
    */
   private revealPanel(): HTMLElement | null {
     if (this.opts.result === undefined) return null;
-    const card = this.opts.revealCard;
-    if (card === null || card === undefined) return null;
+    const modules = this.opts.revealModules;
+    if (modules === undefined || modules.length === 0) return null;
 
     const panel = document.createElement('div');
     panel.className = 'pb-reveal';
     const h3 = document.createElement('div');
     h3.className = 'rv-head';
-    h3.textContent = t('card.reveal.head');
+    h3.textContent = t('mod.reveal.head');
     panel.appendChild(h3);
 
-    const grade = document.createElement('div');
-    grade.className = 'rv-grade';
-    grade.style.color = cardRarityColor(card.rarity);
-    grade.textContent = `${t('card.reveal.grade', { rarity: cardRarityLabel(card.rarity) })} · ${t('card.reveal.charges', { n: card.chargesLeft })}`;
-    panel.appendChild(grade);
+    for (const mod of modules) {
+      const grade = document.createElement('div');
+      grade.className = 'rv-grade';
+      grade.style.color = moduleRarityColor(mod.rarity);
+      grade.textContent = `${t('mod.reveal.grade', { rarity: moduleRarityLabel(mod.rarity) })} · ${t('mod.reveal.charges', { n: mod.chargesLeft })}`;
+      panel.appendChild(grade);
 
-    const affix = document.createElement('div');
-    affix.className = 'rv-affix';
-    affix.textContent = cardAffixOneLine(card);
-    panel.appendChild(affix);
+      const affix = document.createElement('div');
+      affix.className = 'rv-affix';
+      affix.textContent = moduleAffixOneLine(mod);
+      panel.appendChild(affix);
+    }
 
     return panel;
   }

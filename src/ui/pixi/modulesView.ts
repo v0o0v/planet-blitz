@@ -1,21 +1,33 @@
 /**
- * 방어 카드 화면 (Pixi 카툰나무풍 리스킨 — `.omc/plans/cartoonwood-rollout.md` #7).
+ * 코어 모듈 화면 — 슬롯 2 · 보관함 · 일일 상점 (M7b-core-modules, ADR-0018).
  *
- * 방어 사령부(`src/ui/defenseCommand.ts`) 우측 패널에 접이식으로 들어 있던 카드 관리
- * (슬롯·보관함·합성·일일 상점)를 독립 캔버스 화면으로 옮긴다. 방어 사령부에서 "카드 관리"
- * 버튼으로 진입하고, 닫으면 편집 상태를 유지한 채 그 화면으로 돌아간다(defenseCommand 는
- * DOM 오버레이만 잠시 감춘다 — suspend/resume).
+ * ## 무엇이 바뀌었나 (구 카드 화면 대비)
+ * 구 `src/ui/pixi/cardsView.ts`(M6 방어 카드)는 **슬롯 1개**에 카드 한 장을 꽂는 화면이었다.
+ * 3레이어 개편에서 방어 카드는 폐지되고 **L3 코어의 강화 슬롯 2개에 꽂는 소모성 코어 모듈**
+ * 이 됐다(ADR-0018). 그래서 이 화면은:
+ *   - 슬롯을 **2칸 목록**으로 그리고(슬롯 i ↔ 표시 i, 밀집화 금지 — `normalizeEquippedModules`),
+ *   - 장착은 "슬롯을 고른 뒤 보관함에서 장착"이라는 2단 조작이며(빈 슬롯 자동 선택 폴백),
+ *   - 남은 사용 횟수를 슬롯·보관함·상점 세 곳에서 모두 드러낸다(소모품이라는 사실이 화면에서
+ *     사라지면 사용자가 "왜 모듈이 없어졌냐"고 묻게 된다).
  *
- * 표시 로직(등급 색·등급 라벨·어픽스 요약·잔여 경고·보관 게이지·합성 사전 검증·구매 실패
- * 문구)은 DOM 판이 소유한 순수 함수(`src/ui/cardsView.ts`)를 **그대로 import 해 재사용**한다
- * — 값이 조용히 갈리는 것을 막는다.
+ * ## 공용 부품에 위임한다 (중복 조립 금지)
+ * 스크롤 영역·목록 행·팝업은 `scrollArea.ts` / `listRow.ts` / `modal.ts` 를 쓴다. 구 카드
+ * 화면은 이 셋을 파일 안에 사본으로 갖고 있었고, 그래서 선택 링 두께 같은 값이 화면마다
+ * 갈렸다. 여기서 다시 복제하면 같은 일이 반복된다.
  *
- * 서버 권위: 구매·합성·분해·장착은 cards Edge Function / salvage_card RPC / defenses update 가
- * 최종 판정한다. 이 화면은 결과 코드를 문구로 옮기고(4xx 거부 사유 매핑 보존) 성공 후 서버
- * 크레딧을 프로필에 pull 한다. 순수 render/UI 레이어(ADR-0005) — sim 은 이 파일을 모른다.
+ * ## 진입·복귀
+ * 방어 사령부(`defenseCommand.ts`) 모듈 탭에서 진입하며, 사령부는 `suspend()` 로 자기 화면만
+ * 감췄다가 이 화면이 닫힐 때 `resume()` 한다 — `show()` 로 되돌리면 **미저장 배치 편집이
+ * 날아간다**(실측 규율).
+ *
+ * ## 서버 권위
+ * 구매·합성은 `modules` Edge Function, 분해는 `salvage_core_module` RPC, 장착은 defenses
+ * update(소유권 트리거)가 최종 판정한다. 이 화면은 거부 코드를 문구로 옮기고(4xx 사유 매핑
+ * 보존) 성공 후 서버 크레딧을 프로필에 pull 한다. 순수 render/UI 레이어(ADR-0005) — sim 은
+ * 이 파일을 모른다.
  */
 
-import { Container, Graphics, Rectangle, Text, type FederatedPointerEvent } from 'pixi.js';
+import { Container, Graphics, Text } from 'pixi.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../../save/profile.js';
 import { refreshPendingProfile } from '../../net/profileSync.js';
 import { t } from '../../i18n/index.js';
@@ -26,32 +38,39 @@ import { nineSlicePanel, panelContent, PANEL_BORDER, type PanelContentBox } from
 import { PixiButton } from './button.js';
 import { makeBanner, makeCurrencyChip, makeIconButton } from './titleBar.js';
 import { stripEmoji } from './text.js';
+import { makeScrollArea, rowBounds, clampToRows } from './scrollArea.js';
+import { listRowBg, attachRowClick, stopRowPropagation } from './listRow.js';
 import {
-  getCardsUserId,
-  listCardInventory,
-  fetchCardEquip,
-  equipCard,
-  salvageCard as netSalvageCard,
-  buyShopCard as netBuyShopCard,
-  fuseCards as netFuseCards,
-  listCardShopPurchases,
-  rollCurrentShop,
+  getModulesUserId,
+  listModuleInventory,
+  fetchModuleEquip,
+  equipModules,
+  salvageModule as netSalvageModule,
+  buyShopModule as netBuyShopModule,
+  fuseModules as netFuseModules,
+  listModuleShopPurchases,
+  rollCurrentModuleShop,
   computeShopSeeds,
-  type CardOwned,
-  type CardEquipState,
-} from '../../net/cards.js';
-import { FUSION_INPUT_COUNT, type CardInstance } from '../../../data/defenseCards.js';
+  type ModuleOwned,
+  type ModuleEquipState,
+} from '../../net/modules.js';
 import {
-  cardRarityColor,
-  cardRarityLabel,
-  cardAffixOneLine,
+  MODULE_FUSION_INPUT_COUNT,
+  MODULE_EQUIP_SLOTS,
+  type ModuleInstance,
+} from '../../../data/coreModules.js';
+import {
+  moduleRarityColor,
+  moduleRarityLabel,
+  moduleAffixOneLine,
   isLowCharge,
   storageGauge,
   checkFusionSelection,
   fusionCheckText,
   buyErrorText,
   shopSlotPrice,
-} from '../cardsView.js';
+  pickEquipSlot,
+} from '../modulesView.js';
 
 // --- 레이아웃 상수(디자인 스페이스) ---
 const BANNER_W = 440;
@@ -75,6 +94,11 @@ const COL_SHOP = 500;
 /** 패널 제목(26px) 아래에서 본문이 시작한다 — 상자 top(60) + 58. */
 const CONTENT_TOP = 118;
 
+// 슬롯.
+const SLOT_ROW_GAP = 12;
+const UNEQUIP_W = 120;
+const UNEQUIP_H = 40;
+
 // 보관함.
 const GAUGE_Y = CONTENT_TOP;
 const GAUGE_H = 14;
@@ -90,34 +114,17 @@ const SHOP_ROW_GAP = 10;
 const SHOP_BTN_W = 130;
 const SHOP_BTN_H = 42;
 
-// 카드 슬롯.
-const UNEQUIP_W = 200;
-const UNEQUIP_H = 52;
-
 // 하단.
 const BACK_W = 320;
 const BACK_H = 60;
 const BACK_Y = 950;
 
-/** 잔여 1회 경고·만석 경고에 쓰는 주황(DOM 판 `cs-warn` 과 같은 값). */
+/** 잔여 1회 경고·만석 경고에 쓰는 주황. */
 const WARN_COLOR = 0xffb14c;
-/** 장착 카드 강조(DOM 판 `pb-cardrow.equipped` 테두리색). */
+/** 장착 모듈 강조 테두리색. */
 const EQUIPPED_COLOR = 0x8fd94c;
 
-/** 목록 행 바탕(선택 시 금색 링). 카드 화면 전용 조립이라 공용으로 올리지 않는다(ADR-0014). */
-function listRowBg(w: number, h: number, opts: { selected?: boolean; accent?: number } = {}): Graphics {
-  const g = new Graphics();
-  g.roundRect(0, 0, w, h, 10).fill({ color: 0x241d33, alpha: 0.92 });
-  const stroke = opts.selected === true ? COLOR.gold : (opts.accent ?? 0x5a4630);
-  g.roundRect(0, 0, w, h, 10).stroke({
-    color: stroke,
-    width: opts.selected === true ? 3 : 2,
-    alignment: 1,
-  });
-  return g;
-}
-
-export class CardsScreen {
+export class ModulesScreen {
   private readonly stage: Container;
   private readonly root = new Container();
   private ui: UiTextures = {};
@@ -130,11 +137,13 @@ export class CardsScreen {
   private online = false;
   private loading = true;
   private loadToken = 0;
-  private inventory: CardOwned[] = [];
-  private equip: CardEquipState | null = null;
-  private shop: CardInstance[] = [];
+  private inventory: ModuleOwned[] = [];
+  private equip: ModuleEquipState | null = null;
+  private shop: ModuleInstance[] = [];
   private purchases: number[] = [];
 
+  /** 장착 대상 슬롯(사용자 선택). null 이면 첫 빈 슬롯이 대상이 된다. */
+  private selectedSlot: number | null = null;
   /** 합성 선택 모드 여부 + 선택된 보관함 행 id 집합. */
   private fuseMode = false;
   private readonly fusePicks = new Set<string>();
@@ -155,6 +164,7 @@ export class CardsScreen {
     this.root.eventMode = 'static';
     this.stage.addChild(this.root);
     // UI 킷 텍스처 비동기 로드 — 완료 후 열려 있으면 실 아트로 다시 그린다(그 전엔 폴백).
+    // 리스너는 render() 안에서만 붙이므로 이 재호출이 클릭을 두 번 돌게 하지 않는다.
     void loadUiTextures().then((tex) => {
       this.ui = tex;
       if (this.root.visible) this.render();
@@ -175,6 +185,7 @@ export class CardsScreen {
     this.equip = null;
     this.shop = [];
     this.purchases = [];
+    this.selectedSlot = null;
     this.fuseMode = false;
     this.fusePicks.clear();
     this.msgText = '';
@@ -186,7 +197,7 @@ export class CardsScreen {
     // 방어 프리뷰(정지 월드)는 방어 사령부 진입 때 stage 에 붙으므로 이 화면보다 뒤에 생성돼도
     // **위에** 그려진다 — 열 때마다 맨 앞으로 올려 아레나가 패널을 뚫고 보이지 않게 한다.
     this.stage.setChildIndex(this.root, this.stage.children.length - 1);
-    // DOM HUD(HP/LV, 좌하단)는 런 전용 — 캔버스 메타 화면 위에 떠 보이므로 숨긴다(스킬 §7).
+    // DOM HUD(HP/LV, 좌하단)는 런 전용 — 캔버스 메타 화면 위에 떠 보이므로 숨긴다.
     const hud = document.getElementById('pb-hud');
     if (hud !== null) hud.style.visibility = 'hidden';
     void this.load();
@@ -199,14 +210,14 @@ export class CardsScreen {
     if (hud !== null) hud.style.visibility = '';
   }
 
-  // --- 로드 (DOM 판 loadCards 와 동일 규칙) ---------------------------------
+  // --- 로드 ------------------------------------------------------------------
 
   /** uid → 보관함·장착 상태·상점 재고·구매 이력. race 방지 토큰 사용. */
   private async load(): Promise<void> {
     const token = ++this.loadToken;
     this.loading = true;
     this.render();
-    const uid = await getCardsUserId();
+    const uid = await getModulesUserId();
     if (token !== this.loadToken || !this.visible) return;
     if (uid === null) {
       this.online = false;
@@ -218,16 +229,16 @@ export class CardsScreen {
     this.online = true;
     const dateSeed = computeShopSeeds(uid).dateSeed;
     const [inv, equip, purchases] = await Promise.all([
-      listCardInventory(),
-      fetchCardEquip(),
-      listCardShopPurchases(dateSeed),
+      listModuleInventory(),
+      fetchModuleEquip(),
+      listModuleShopPurchases(dateSeed),
     ]);
     if (token !== this.loadToken || !this.visible) return;
     this.inventory = inv ?? [];
     this.equip = equip;
     this.purchases = purchases ?? [];
     // 상점 재고는 (dateSeed,userSeed) 순수 함수로 클라가 재현(서버 호출 없음 — 표시=구매 대상 일치).
-    this.shop = rollCurrentShop(uid);
+    this.shop = rollCurrentModuleShop(uid);
     this.loading = false;
     this.render();
   }
@@ -242,9 +253,9 @@ export class CardsScreen {
     }
     const dateSeed = computeShopSeeds(uid).dateSeed;
     const [inv, equip, purchases] = await Promise.all([
-      listCardInventory(),
-      fetchCardEquip(),
-      listCardShopPurchases(dateSeed),
+      listModuleInventory(),
+      fetchModuleEquip(),
+      listModuleShopPurchases(dateSeed),
     ]);
     if (token !== this.loadToken || !this.visible) return;
     if (inv !== null) this.inventory = inv;
@@ -253,7 +264,7 @@ export class CardsScreen {
     this.render();
   }
 
-  // --- 서버 액션 (DOM 판과 동일 — 거부 코드 → 문구 매핑 보존) ----------------
+  // --- 서버 액션 (거부 코드 → 문구 매핑 보존) ---------------------------------
 
   /** 서버가 반환한 크레딧을 로컬 프로필에 반영·영속(정비 크레딧 pull 패턴과 동일). */
   private pullServerCredits(credits: number): void {
@@ -274,38 +285,63 @@ export class CardsScreen {
     return null;
   }
 
-  private async doEquip(defenseId: string, cardId: string | null): Promise<void> {
+  /** 슬롯 배열의 한 칸만 바꾼 새 배열(고정 길이 유지 — 밀집화 금지). */
+  private nextEquipped(slotIndex: number, moduleId: string | null): (string | null)[] {
+    const cur = this.equip?.equipped ?? [];
+    const out: (string | null)[] = [];
+    for (let i = 0; i < MODULE_EQUIP_SLOTS; i++) {
+      const v = cur[i] ?? null;
+      // 같은 모듈이 다른 슬롯에 이미 있으면 그 칸을 비운다(중복 장착 금지 — 서버 트리거 동일 규칙).
+      out.push(i === slotIndex ? moduleId : v === moduleId && moduleId !== null ? null : v);
+    }
+    return out;
+  }
+
+  private async doEquip(defenseId: string, slotIndex: number, moduleId: string | null): Promise<void> {
     if (this.busy) return;
     this.busy = true;
     this.render();
-    const ok = await equipCard(defenseId, cardId);
+    const ok = await equipModules(defenseId, this.nextEquipped(slotIndex, moduleId));
     if (!this.visible) return;
     this.busy = false;
     if (ok) {
-      this.msgText = cardId === null ? t('card.equip.unequipped') : t('card.equip.done');
-      const equip = await fetchCardEquip();
+      this.msgText = moduleId === null ? t('mod.equip.unequipped') : t('mod.equip.done');
+      const equip = await fetchModuleEquip();
       if (!this.visible) return;
       if (equip !== null) this.equip = equip;
     } else {
-      this.msgText = t('card.equip.failed');
+      this.msgText = t('mod.equip.failed');
     }
     this.render();
   }
 
-  private async doSalvage(cardId: string): Promise<void> {
+  /** 보관함 행의 "장착" — 선택 슬롯(없으면 첫 빈 슬롯)에 꽂는다. 둘 다 차 있으면 안내만. */
+  private equipToSlot(moduleId: string): void {
+    const equip = this.equip;
+    if (equip === null || equip.defenseId === null) return;
+    const slot = pickEquipSlot(equip.equipped, this.selectedSlot);
+    if (slot === null) {
+      this.msgText = t('mod.equip.noSlot');
+      this.render();
+      return;
+    }
+    void this.doEquip(equip.defenseId, slot, moduleId);
+  }
+
+  private async doSalvage(moduleId: string): Promise<void> {
     if (this.busy) return;
     this.busy = true;
     this.render();
-    const result = await netSalvageCard(cardId);
+    const result = await netSalvageModule(moduleId);
     if (!this.visible) return;
     this.busy = false;
     if (result === null) {
-      this.msgText = t('card.salvage.failed');
+      this.msgText = t('mod.salvage.failed');
     } else if (!result.ok) {
-      this.msgText = t('card.salvage.notOwned');
+      this.msgText = t('mod.salvage.notOwned');
     } else {
       if (result.credits !== undefined) this.pullServerCredits(result.credits);
-      this.msgText = t('card.salvage.done', { c: result.salvaged ?? 0 });
+      this.msgText = t('mod.salvage.done', { c: result.salvaged ?? 0 });
     }
     await this.reload();
   }
@@ -314,17 +350,17 @@ export class CardsScreen {
     if (this.busy) return;
     this.busy = true;
     this.render();
-    const result = await netBuyShopCard(slotIndex);
+    const result = await netBuyShopModule(slotIndex);
     if (!this.visible) return;
     this.busy = false;
     if (result === null) {
-      this.msgText = t('card.buy.failed');
+      this.msgText = t('mod.buy.failed');
     } else if (!result.ok) {
       // 서버가 내려준 거부 코드를 그대로 사유 문구로 옮긴다(잔액 부족·만석·중복 구매 …).
       this.msgText = buyErrorText(result.code);
     } else {
       if (result.credits !== undefined) this.pullServerCredits(result.credits);
-      this.msgText = t('card.buy.done', { rarity: cardRarityLabel(result.rarity ?? 'normal') });
+      this.msgText = t('mod.buy.done', { rarity: moduleRarityLabel(result.rarity ?? 'normal') });
     }
     await this.reload();
   }
@@ -340,35 +376,35 @@ export class CardsScreen {
     }
     this.busy = true;
     this.render();
-    const ids = picks.map((c) => c.id) as unknown as readonly [string, string, string];
-    const result = await netFuseCards(ids);
+    const ids = picks.map((m) => m.id) as unknown as readonly [string, string, string];
+    const result = await netFuseModules(ids);
     if (!this.visible) return;
     this.busy = false;
     this.fuseMode = false;
     this.fusePicks.clear();
     if (result === null) {
-      this.msgText = t('card.fuse.failed');
+      this.msgText = t('mod.fuse.failed');
     } else if (!result.ok) {
-      this.msgText = result.code === 'not-owned' ? t('card.fuse.notOwned') : t('card.fuse.failed');
+      this.msgText = result.code === 'not-owned' ? t('mod.fuse.notOwned') : t('mod.fuse.failed');
     } else {
-      const rarityLabel = cardRarityLabel(result.rarity ?? 'normal');
+      const rarityLabel = moduleRarityLabel(result.rarity ?? 'normal');
       this.msgText =
         result.promoted === true
-          ? t('card.fuse.promoted', { rarity: rarityLabel })
-          : t('card.fuse.done', { rarity: rarityLabel });
+          ? t('mod.fuse.promoted', { rarity: rarityLabel })
+          : t('mod.fuse.done', { rarity: rarityLabel });
     }
     await this.reload();
   }
 
-  // --- 상호작용 ------------------------------------------------------------
+  // --- 상호작용 --------------------------------------------------------------
 
-  private ownedById(id: string): CardOwned | undefined {
-    return this.inventory.find((c) => c.id === id);
+  private ownedById(id: string): ModuleOwned | undefined {
+    return this.inventory.find((m) => m.id === id);
   }
 
-  /** 현재 합성 선택된 소유 카드 목록(존재하는 것만). */
-  private pickedOwned(): CardOwned[] {
-    const out: CardOwned[] = [];
+  /** 현재 합성 선택된 소유 모듈 목록(존재하는 것만). */
+  private pickedOwned(): ModuleOwned[] {
+    const out: ModuleOwned[] = [];
     for (const id of this.fusePicks) {
       const owned = this.ownedById(id);
       if (owned !== undefined) out.push(owned);
@@ -377,13 +413,13 @@ export class CardsScreen {
   }
 
   /**
-   * 합성 선택 토글. 상한(3장)은 여기서 지킨다 — 비활성 버튼은 이벤트를 받지 않아 클릭이
+   * 합성 선택 토글. 상한(3개)은 여기서 지킨다 — 비활성 버튼은 이벤트를 받지 않아 클릭이
    * 행 선택으로 넘어오므로, 버튼 disabled 만으로는 상한이 강제되지 않는다.
    */
   private togglePick(id: string): void {
     if (this.busy) return;
     if (this.fusePicks.has(id)) this.fusePicks.delete(id);
-    else if (this.fusePicks.size < FUSION_INPUT_COUNT) this.fusePicks.add(id);
+    else if (this.fusePicks.size < MODULE_FUSION_INPUT_COUNT) this.fusePicks.add(id);
     this.render();
   }
 
@@ -393,7 +429,7 @@ export class CardsScreen {
     cb?.();
   }
 
-  // --- 공용 렌더 조각 -------------------------------------------------------
+  // --- 공용 렌더 조각 ---------------------------------------------------------
 
   private label(
     text: string,
@@ -428,7 +464,7 @@ export class CardsScreen {
     });
   }
 
-  /** 패널 제목 — top = 콘텐츠 상자 top(스킬 §4, 제목이 나무 테두리에 붙던 결함 재발 방지). */
+  /** 패널 제목 — top = 콘텐츠 상자 top(제목이 나무 테두리에 붙던 결함 재발 방지). */
   private panelTitle(parent: Container, box: PanelContentBox, text: string, color: number = COLOR.cream): void {
     const title = this.label(text, 26, color, '800');
     title.position.set(box.x, box.y);
@@ -454,58 +490,42 @@ export class CardsScreen {
   }
 
   /**
-   * 마스크 스크롤 영역을 만들고 콘텐츠 Container 를 돌려준다. 마스크 높이는 호출자가
-   * **행 경계로 클램프한 값**으로 넘긴다(반토막 행 금지 — 스킬 §4).
+   * 행 목록을 스크롤 영역에 깐다(공용 부품 위임). 마스크 높이는 **행 경계로 클램프**해
+   * 마지막 행이 반토막 나지 않게 한다.
    */
-  private scrollArea(
+  private layoutRows(
     panel: Container,
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    totalH: number,
+    box: PanelContentBox,
+    top: number,
+    rows: readonly { node: Container; h: number }[],
+    gap: number,
     get: () => number,
     set: (v: number) => void,
-  ): Container {
-    const clip = new Container();
-    clip.position.set(x, y);
-    panel.addChild(clip);
-    const mask = new Graphics();
-    mask.rect(x, y, w, h).fill({ color: 0xffffff });
-    panel.addChild(mask);
-    clip.mask = mask;
-    const content = new Container();
-    clip.addChild(content);
-
-    const maxScroll = Math.max(0, totalH - h);
-    const v = Math.max(0, Math.min(get(), maxScroll));
-    set(v);
-    content.y = -v;
-    if (maxScroll > 0) {
-      // 휠은 **클립 Container** 가 받는다. 마스크로 쓰이는 Graphics 는 히트 테스트에서 제외돼
-      // (`isMask`) 리스너가 영영 안 불린다(실측). hitArea 를 주면 행 사이 빈 자리에서도 잡히고,
-      // 행 위에서는 행 → 클립으로 버블링되어 함께 성립한다.
-      clip.eventMode = 'static';
-      clip.hitArea = new Rectangle(0, 0, w, h);
-      clip.on('wheel', (e) => {
-        const next = Math.max(0, Math.min(maxScroll, get() + e.deltaY));
-        set(next);
-        content.y = -next;
-      });
+  ): void {
+    const bounds = rowBounds(
+      rows.map((r) => r.h),
+      gap,
+    );
+    const total = bounds.length > 0 ? bounds[bounds.length - 1]! : 0;
+    const maskH = clampToRows(box.bottom - top, bounds);
+    const content = makeScrollArea(panel, {
+      x: box.x,
+      y: top,
+      w: box.w,
+      h: maskH,
+      totalH: total,
+      get,
+      set,
+    });
+    let cy = 0;
+    for (const row of rows) {
+      row.node.position.set(0, cy);
+      content.addChild(row.node);
+      cy += row.h + gap;
     }
-    return content;
   }
 
-  /** 행 경계로 클램프한 마스크 높이(반토막 행 금지). 한 행도 안 들어가면 가용 높이 그대로. */
-  private clampToRows(avail: number, bounds: readonly number[]): number {
-    let best = 0;
-    for (const b of bounds) {
-      if (b <= avail && b > best) best = b;
-    }
-    return best > 0 ? best : Math.max(0, avail);
-  }
-
-  // --- 렌더 ----------------------------------------------------------------
+  // --- 렌더 ------------------------------------------------------------------
 
   private render(): void {
     for (const child of [...this.root.children]) {
@@ -513,7 +533,7 @@ export class CardsScreen {
       child.destroy({ children: true });
     }
 
-    // 배경(불투명 — 뒤 방어 프리뷰를 가린다). 별 장식 금지(세트 팔레트 확정).
+    // 배경(불투명 — 뒤 방어 프리뷰를 가린다).
     const bg = new Graphics();
     bg.rect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT).fill({ color: COLOR.bg });
     bg.eventMode = 'static'; // 뒤로 이벤트가 새지 않게 막는다.
@@ -524,8 +544,8 @@ export class CardsScreen {
     const h = BOARD_BOTTOM - BOARD_TOP;
     if (this.loading || !this.online) {
       const { panel, box } = this.addPanel(MARGIN, BOARD_TOP, BOARD_W, 320);
-      this.panelTitle(panel, box, t('card.slot.head'));
-      this.msg(panel, box, this.loading ? t('card.slot.loading') : t('card.slot.offline'));
+      this.panelTitle(panel, box, t('mod.slot.head'));
+      this.msg(panel, box, this.loading ? t('mod.slot.loading') : t('mod.slot.offline'));
     } else {
       this.renderSlotPanel(MARGIN, BOARD_TOP, COL_SLOT, h);
       this.renderInventoryPanel(MARGIN + COL_SLOT + GAP, BOARD_TOP, COL_INV, h);
@@ -536,7 +556,7 @@ export class CardsScreen {
   }
 
   private renderTitleBar(): void {
-    const banner = makeBanner(BANNER_W, BANNER_H, t('card.title'), this.ui['ui_banner.png']);
+    const banner = makeBanner(BANNER_W, BANNER_H, t('mod.title'), this.ui['ui_banner.png']);
     banner.position.set((DESIGN_WIDTH - BANNER_W) / 2, BANNER_Y);
     this.root.addChild(banner);
 
@@ -563,7 +583,7 @@ export class CardsScreen {
       width: BACK_W,
       height: BACK_H,
       fontSize: 22,
-      label: stripEmoji(t('card.back')),
+      label: stripEmoji(t('mod.back')),
       onClick: () => this.close(),
     });
     back.container.position.set((DESIGN_WIDTH - BACK_W) / 2, BACK_Y);
@@ -576,84 +596,134 @@ export class CardsScreen {
     this.root.addChild(hint);
   }
 
-  // --- 카드 슬롯 -----------------------------------------------------------
+  // --- 코어 모듈 슬롯(2) ------------------------------------------------------
 
-  /** 장착 카드 표시(등급·어픽스·잔여·경고) 또는 빈 슬롯 안내 + 해제 버튼. */
+  /** 슬롯 2칸 목록 — 각 칸은 장착 모듈 요약 또는 빈 슬롯 안내. 클릭하면 장착 대상이 된다. */
   private renderSlotPanel(x: number, y: number, w: number, h: number): void {
     const { panel, box } = this.addPanel(x, y, w, h);
-    this.panelTitle(panel, box, t('card.slot.head'));
+    this.panelTitle(panel, box, t('mod.slot.head'));
 
     const equip = this.equip;
     if (equip === null || equip.defenseId === null) {
-      this.msg(panel, box, t('card.slot.noBase'));
+      this.msg(panel, box, t('mod.slot.noBase'));
       return;
     }
+    const defenseId = equip.defenseId;
 
-    const owned = equip.equippedCardId !== null ? this.ownedById(equip.equippedCardId) : undefined;
-    if (owned === undefined) {
-      this.msg(panel, box, t('card.slot.empty'));
-      this.msg(panel, box, t('card.slot.emptyHint'), CONTENT_TOP + 84);
-      return;
+    const rows: { node: Container; h: number }[] = [];
+    for (let i = 0; i < MODULE_EQUIP_SLOTS; i++) {
+      const moduleId = equip.equipped[i] ?? null;
+      const owned = moduleId !== null ? this.ownedById(moduleId) : undefined;
+      rows.push(this.makeSlotRow(i, owned, box.w, defenseId));
     }
+    this.layoutRows(
+      panel,
+      box,
+      CONTENT_TOP,
+      rows,
+      SLOT_ROW_GAP,
+      () => 0,
+      () => {
+        /* 슬롯은 2칸이라 항상 다 보인다 — 스크롤 상태를 둘 필요가 없다. */
+      },
+    );
 
-    const accent = hexColor(cardRarityColor(owned.rarity));
-    const card = new Container();
-    card.position.set(box.x, CONTENT_TOP);
-    panel.addChild(card);
+    const hint = this.wrapped(t('mod.slot.autoHint'), 16, COLOR.muted, box.w);
+    hint.anchor.set(0.5, 1);
+    hint.position.set(box.x + box.w / 2, box.bottom);
+    panel.addChild(hint);
+  }
+
+  /** 슬롯 1칸. 행 전체가 "이 슬롯을 장착 대상으로" 선택 토글이다. */
+  private makeSlotRow(
+    index: number,
+    owned: ModuleOwned | undefined,
+    w: number,
+    defenseId: string,
+  ): { node: Container; h: number } {
+    const selected = this.selectedSlot === index;
+    const row = new Container();
+    // 선택 클릭은 **행 Container** 가 받는다(바탕 Graphics 면 위에 얹힌 텍스트가 삼킨다).
+    attachRowClick(row, () => {
+      if (this.busy) return;
+      this.selectedSlot = selected ? null : index;
+      this.render();
+    });
 
     const inner = new Container();
-    let cy = 16;
-    const put = (el: Text, px: number): void => {
-      el.position.set(px, cy);
+    let cy = 14;
+    const put = (el: Text): void => {
+      el.position.set(16, cy);
       inner.addChild(el);
       cy += el.height + 6;
     };
 
-    put(this.label(`${t('card.slot.equipped')} · ${cardRarityLabel(owned.rarity)}`, 22, accent, '800', box.w - 32), 16);
+    const head = `${t('mod.slot.label', { n: index + 1 })}${selected ? ` · ${t('mod.slot.selected')}` : ''}`;
+    put(this.label(head, 20, selected ? COLOR.gold : COLOR.cream, '800', w - 32));
+
+    if (owned === undefined) {
+      put(this.wrapped(t('mod.slot.empty'), 17, COLOR.muted, w - 32));
+      put(this.wrapped(t('mod.slot.emptyHint'), 15, COLOR.muted, w - 32));
+      const h = cy + 8;
+      row.addChild(listRowBg(w, h, { selected }));
+      row.addChild(inner);
+      return { node: row, h };
+    }
+
+    const accent = hexColor(moduleRarityColor(owned.rarity));
     put(
-      this.label(t('card.slot.charges', { n: owned.chargesLeft, m: owned.card.chargesMax }), 18, COLOR.cream, '700'),
-      16,
+      this.label(
+        `${t('mod.slot.equipped')} · ${moduleRarityLabel(owned.rarity)}`,
+        19,
+        accent,
+        '800',
+        w - 32 - UNEQUIP_W,
+      ),
+    );
+    put(
+      this.label(
+        t('mod.slot.charges', { n: owned.chargesLeft, m: owned.module.chargesMax }),
+        17,
+        isLowCharge(owned.chargesLeft) ? WARN_COLOR : COLOR.cream,
+        '700',
+      ),
     );
     if (isLowCharge(owned.chargesLeft)) {
-      put(this.wrapped(t('card.slot.lastCharge'), 16, WARN_COLOR, box.w - 32, '700'), 16);
+      put(this.wrapped(t('mod.slot.lastCharge'), 15, WARN_COLOR, w - 32, '700'));
     }
-    cy += 4;
-    put(this.wrapped(cardAffixOneLine(owned.card), 17, COLOR.muted, box.w - 32), 16);
+    put(this.wrapped(moduleAffixOneLine(owned.module), 15, COLOR.muted, w - 32));
 
-    const cardH = cy + 10;
-    card.addChild(listRowBg(box.w, cardH, { accent }));
-    card.addChild(inner);
+    const h = cy + 8;
+    row.addChild(listRowBg(w, h, selected ? { selected: true } : { accent }));
+    row.addChild(inner);
 
     const unequip = new PixiButton({
       texture: this.ui['ui_btn_wood.png'],
       fallbackColor: 0x4a3a24,
       width: UNEQUIP_W,
       height: UNEQUIP_H,
-      fontSize: 20,
-      label: stripEmoji(t('card.slot.unequip')),
-      onClick: () => void this.doEquip(equip.defenseId!, null),
+      fontSize: 17,
+      label: stripEmoji(t('mod.slot.unequip')),
+      onClick: () => void this.doEquip(defenseId, index, null),
     });
-    // 해제 버튼은 카드 **바로 아래**에 둔다(상자 바닥에 붙이면 카드와 멀어 한 덩어리로 안 읽힌다).
-    const btnY = Math.min(CONTENT_TOP + cardH + 18, box.bottom - UNEQUIP_H);
-    unequip.container.position.set(box.x + (box.w - UNEQUIP_W) / 2, btnY);
-    panel.addChild(unequip.container);
+    unequip.container.position.set(w - UNEQUIP_W - 12, 12);
+    // 해제 버튼 클릭이 행 선택 토글까지 함께 발동하지 않게 끊는다.
+    stopRowPropagation(unequip.container);
+    row.addChild(unequip.container);
     if (this.busy) unequip.setEnabled(false);
 
-    const hint = this.wrapped(t('card.slot.autoHint'), 16, COLOR.muted, box.w);
-    hint.anchor.set(0.5, 0);
-    hint.position.set(box.x + box.w / 2, btnY + UNEQUIP_H + 18);
-    panel.addChild(hint);
+    return { node: row, h };
   }
 
-  // --- 보관함 --------------------------------------------------------------
+  // --- 보관함 ----------------------------------------------------------------
 
-  /** 보관 게이지 + 합성 바 + 카드 목록(장착/분해 또는 합성 선택). */
+  /** 보관 게이지 + 합성 바 + 모듈 목록(장착/분해 또는 합성 선택). */
   private renderInventoryPanel(x: number, y: number, w: number, h: number): void {
     const { panel, box } = this.addPanel(x, y, w, h);
-    this.panelTitle(panel, box, t('card.inv.head'));
+    this.panelTitle(panel, box, t('mod.inv.head'));
 
     const gauge = storageGauge(this.inventory.length);
-    const gaugeLabel = this.label(t('card.inv.storage', { count: gauge.count, cap: gauge.cap }), 18, COLOR.cream, '700');
+    const gaugeLabel = this.label(t('mod.inv.storage', { count: gauge.count, cap: gauge.cap }), 18, COLOR.cream, '700');
     gaugeLabel.position.set(box.x, GAUGE_Y);
     panel.addChild(gaugeLabel);
 
@@ -671,7 +741,7 @@ export class CardsScreen {
 
     let top = GAUGE_Y + gaugeLabel.height + 10;
     if (gauge.full) {
-      const full = this.wrapped(t('card.inv.full'), 16, WARN_COLOR, box.w, '700');
+      const full = this.wrapped(t('mod.inv.full'), 16, WARN_COLOR, box.w, '700');
       full.position.set(box.x, top);
       panel.addChild(full);
       top += full.height + 6;
@@ -680,38 +750,23 @@ export class CardsScreen {
     top = this.renderFuseBar(panel, box, top) + 14;
 
     if (this.inventory.length === 0) {
-      this.msg(panel, box, t('card.inv.empty'), top + 20);
+      this.msg(panel, box, t('mod.inv.empty'), top + 20);
       return;
     }
 
-    // 행 높이가 제각각(어픽스 줄 수)이라 행마다 재고, 마스크는 그 경계로 클램프한다.
-    const equippedId = this.equip?.equippedCardId ?? null;
-    const rows = this.inventory.map((owned) => this.makeInvRow(owned, box.w, equippedId));
-    const bounds: number[] = [];
-    let total = 0;
-    rows.forEach((row, i) => {
-      total += row.h + (i > 0 ? INV_ROW_GAP : 0);
-      bounds.push(total);
-    });
-    const maskH = this.clampToRows(box.bottom - top, bounds);
-    const content = this.scrollArea(
+    const equippedIds = new Set((this.equip?.equipped ?? []).filter((v): v is string => v !== null));
+    const rows = this.inventory.map((owned) => this.makeInvRow(owned, box.w, equippedIds));
+    this.layoutRows(
       panel,
-      box.x,
+      box,
       top,
-      box.w,
-      maskH,
-      total,
+      rows,
+      INV_ROW_GAP,
       () => this.invScrollY,
       (v) => {
         this.invScrollY = v;
       },
     );
-    let cy = 0;
-    for (const row of rows) {
-      row.node.position.set(0, cy);
-      content.addChild(row.node);
-      cy += row.h + INV_ROW_GAP;
-    }
   }
 
   /** 합성 바(선택 모드 토글 + 확정 + 취소). 다음 y 를 돌려준다. */
@@ -723,17 +778,17 @@ export class CardsScreen {
         width: 220,
         height: FUSE_BTN_H,
         fontSize: 19,
-        label: stripEmoji(t('card.inv.fuseStart')),
+        label: stripEmoji(t('mod.inv.fuseStart')),
         onClick: () => {
           this.fuseMode = true;
           this.fusePicks.clear();
-          this.msgText = t('card.inv.fuseMode');
+          this.msgText = t('mod.inv.fuseMode');
           this.render();
         },
       });
       start.container.position.set(box.x, top);
       panel.addChild(start.container);
-      if (this.busy || this.inventory.length < FUSION_INPUT_COUNT) start.setEnabled(false);
+      if (this.busy || this.inventory.length < MODULE_FUSION_INPUT_COUNT) start.setEnabled(false);
       return top + FUSE_BTN_H;
     }
 
@@ -746,7 +801,7 @@ export class CardsScreen {
       fontSize: 19,
       // 노란 버튼은 바탕이 밝아 흰 라벨이 묻힌다(세트 규칙).
       ...(check.ok ? { labelColor: COLOR.darkLabel } : {}),
-      label: stripEmoji(t('card.inv.fuseConfirm', { n: this.fusePicks.size })),
+      label: stripEmoji(t('mod.inv.fuseConfirm', { n: this.fusePicks.size })),
       onClick: () => void this.doFuse(),
     });
     confirm.container.position.set(box.x, top);
@@ -759,7 +814,7 @@ export class CardsScreen {
       width: 140,
       height: FUSE_BTN_H,
       fontSize: 19,
-      label: stripEmoji(t('card.inv.fuseCancel')),
+      label: stripEmoji(t('mod.inv.fuseCancel')),
       onClick: () => {
         this.fuseMode = false;
         this.fusePicks.clear();
@@ -780,39 +835,38 @@ export class CardsScreen {
   }
 
   /** 보관함 1행. 합성 모드에서는 **행 전체**가 선택 토글이 된다. */
-  private makeInvRow(owned: CardOwned, w: number, equippedId: string | null): { node: Container; h: number } {
-    const isEquipped = owned.id === equippedId;
+  private makeInvRow(
+    owned: ModuleOwned,
+    w: number,
+    equippedIds: ReadonlySet<string>,
+  ): { node: Container; h: number } {
+    const isEquipped = equippedIds.has(owned.id);
     const isPicked = this.fusePicks.has(owned.id);
-    const rarityColor = hexColor(cardRarityColor(owned.rarity));
+    const rarityColor = hexColor(moduleRarityColor(owned.rarity));
 
     const row = new Container();
     const btnCount = this.fuseMode ? 1 : 2;
     const btnZone = btnCount * INV_BTN_W + (btnCount - 1) * 8 + 24;
     const textW = Math.max(120, w - btnZone - 20);
 
-    const grade = this.label(cardRarityLabel(owned.rarity), 20, rarityColor, '800');
+    const grade = this.label(moduleRarityLabel(owned.rarity), 20, rarityColor, '800');
     grade.position.set(16, 12);
 
     const charges = this.label(
-      t('card.inv.charges', { n: owned.chargesLeft }),
+      t('mod.inv.charges', { n: owned.chargesLeft }),
       16,
       isLowCharge(owned.chargesLeft) ? WARN_COLOR : COLOR.muted,
       '700',
     );
     charges.position.set(16 + grade.width + 10, 16);
 
-    const affix = this.wrapped(cardAffixOneLine(owned.card), 15, COLOR.muted, textW);
+    const affix = this.wrapped(moduleAffixOneLine(owned.module), 15, COLOR.muted, textW);
     affix.position.set(16, 42);
 
     const h = Math.max(78, 42 + affix.height + 14);
 
-    // 선택 클릭은 **행 전체**가 받는다. 바탕(Graphics)에만 걸면 등급·어픽스 텍스트 위를
-    // 눌렀을 때 먹지 않는다(Pixi 히트 테스트는 형제로 내려가지 않는다 — 관제탑 #6 실측 결함).
-    if (this.fuseMode) {
-      row.eventMode = 'static';
-      row.cursor = 'pointer';
-      row.on('pointertap', () => this.togglePick(owned.id));
-    }
+    // 선택 클릭은 **행 전체**가 받는다(바탕 Graphics 면 텍스트 위 클릭이 먹지 않는다).
+    if (this.fuseMode) attachRowClick(row, () => this.togglePick(owned.id));
     row.addChild(
       listRowBg(w, h, {
         selected: isPicked,
@@ -830,12 +884,12 @@ export class CardsScreen {
         height: INV_BTN_H,
         fontSize: 17,
         ...(isPicked ? { labelColor: COLOR.darkLabel } : {}),
-        label: stripEmoji(isPicked ? t('card.inv.picked') : t('card.inv.pick')),
+        label: stripEmoji(isPicked ? t('mod.inv.picked') : t('mod.inv.pick')),
         onClick: () => this.togglePick(owned.id),
       });
       pick.container.position.set(w - INV_BTN_W - 12, btnY);
       // 버튼 클릭이 행 토글까지 겹쳐 두 번 뒤집히지 않게 끊는다.
-      pick.container.on('pointertap', (e: FederatedPointerEvent) => e.stopPropagation());
+      stopRowPropagation(pick.container);
       row.addChild(pick.container);
       if (this.busy) pick.setEnabled(false);
       return { node: row, h };
@@ -849,11 +903,8 @@ export class CardsScreen {
       height: INV_BTN_H,
       fontSize: 17,
       ...(canEquip ? { labelColor: COLOR.darkLabel } : {}),
-      label: stripEmoji(isEquipped ? t('card.inv.equipped') : t('card.inv.equip')),
-      onClick: () => {
-        const defId = this.equip?.defenseId;
-        if (defId != null) void this.doEquip(defId, owned.id);
-      },
+      label: stripEmoji(isEquipped ? t('mod.inv.equipped') : t('mod.inv.equip')),
+      onClick: () => this.equipToSlot(owned.id),
     });
     eq.container.position.set(w - INV_BTN_W * 2 - 8 - 12, btnY);
     row.addChild(eq.container);
@@ -865,7 +916,7 @@ export class CardsScreen {
       width: INV_BTN_W,
       height: INV_BTN_H,
       fontSize: 17,
-      label: stripEmoji(t('card.inv.salvage')),
+      label: stripEmoji(t('mod.inv.salvage')),
       onClick: () => void this.doSalvage(owned.id),
     });
     sv.container.position.set(w - INV_BTN_W - 12, btnY);
@@ -875,68 +926,54 @@ export class CardsScreen {
     return { node: row, h };
   }
 
-  // --- 일일 상점 -----------------------------------------------------------
+  // --- 일일 상점 --------------------------------------------------------------
 
   /** 오늘 재고(옵션 미리 공개 · 가격), 이미 산 슬롯은 비활성. */
   private renderShopPanel(x: number, y: number, w: number, h: number): void {
     const { panel, box } = this.addPanel(x, y, w, h);
-    this.panelTitle(panel, box, t('card.shop.head'));
+    this.panelTitle(panel, box, t('mod.shop.head'));
 
-    const note = this.wrapped(t('card.shop.note'), 15, COLOR.muted, box.w);
+    const note = this.wrapped(t('mod.shop.note'), 15, COLOR.muted, box.w);
     note.position.set(box.x, CONTENT_TOP);
     panel.addChild(note);
     const top = CONTENT_TOP + note.height + 12;
 
     if (this.shop.length === 0) {
-      this.msg(panel, box, t('card.shop.empty'), top + 20);
+      this.msg(panel, box, t('mod.shop.empty'), top + 20);
       return;
     }
 
     const storageFull = storageGauge(this.inventory.length).full;
-    const rows = this.shop.map((card, i) => this.makeShopRow(card, i, box.w, storageFull));
-    const bounds: number[] = [];
-    let total = 0;
-    rows.forEach((row, i) => {
-      total += row.h + (i > 0 ? SHOP_ROW_GAP : 0);
-      bounds.push(total);
-    });
-    const maskH = this.clampToRows(box.bottom - top, bounds);
-    const content = this.scrollArea(
+    const rows = this.shop.map((mod, i) => this.makeShopRow(mod, i, box.w, storageFull));
+    this.layoutRows(
       panel,
-      box.x,
+      box,
       top,
-      box.w,
-      maskH,
-      total,
+      rows,
+      SHOP_ROW_GAP,
       () => this.shopScrollY,
       (v) => {
         this.shopScrollY = v;
       },
     );
-    let cy = 0;
-    for (const row of rows) {
-      row.node.position.set(0, cy);
-      content.addChild(row.node);
-      cy += row.h + SHOP_ROW_GAP;
-    }
   }
 
   /**
    * 상점 1행. 열이 좁아 구매 버튼은 문구 **옆이 아니라 아래**에 둔다 — 옆에 붙이면 어픽스
-   * 문구 폭이 눌려 가로 축소가 걸리고 읽을 수 없다(관제탑 #6 교훈).
+   * 문구 폭이 눌려 가로 축소가 걸리고 읽을 수 없다(관제탑 교훈).
    */
   private makeShopRow(
-    card: CardInstance,
+    mod: ModuleInstance,
     slotIndex: number,
     w: number,
     storageFull: boolean,
   ): { node: Container; h: number } {
     const bought = this.purchases.includes(slotIndex);
-    const rarityColor = hexColor(cardRarityColor(card.rarity));
+    const rarityColor = hexColor(moduleRarityColor(mod.rarity));
     const row = new Container();
 
     const head = this.label(
-      `${cardRarityLabel(card.rarity)} · ${t('card.shop.price', { c: shopSlotPrice(card.rarity) })}`,
+      `${moduleRarityLabel(mod.rarity)} · ${t('mod.shop.price', { c: shopSlotPrice(mod.rarity) })}`,
       19,
       rarityColor,
       '800',
@@ -944,14 +981,24 @@ export class CardsScreen {
     );
     head.position.set(16, 12);
 
-    const affix = this.wrapped(cardAffixOneLine(card), 15, COLOR.muted, w - 32);
-    affix.position.set(16, 40);
+    // 소모품이라는 사실이 구매 전에 보여야 한다 — 잔여 횟수를 재고에서 미리 드러낸다.
+    const charges = this.label(
+      t('mod.slot.charges', { n: mod.chargesLeft, m: mod.chargesMax }),
+      15,
+      COLOR.muted,
+      '700',
+      w - 32,
+    );
+    charges.position.set(16, 38);
 
-    const btnY = 40 + affix.height + 10;
+    const affix = this.wrapped(moduleAffixOneLine(mod), 15, COLOR.muted, w - 32);
+    affix.position.set(16, 62);
+
+    const btnY = 62 + affix.height + 10;
     const h = btnY + SHOP_BTN_H + 12;
 
     row.addChild(listRowBg(w, h, bought ? {} : { accent: rarityColor }));
-    row.addChild(head, affix);
+    row.addChild(head, charges, affix);
 
     const canBuy = !bought && !storageFull && !this.busy;
     const buy = new PixiButton({
@@ -961,7 +1008,7 @@ export class CardsScreen {
       height: SHOP_BTN_H,
       fontSize: 18,
       ...(canBuy ? { labelColor: COLOR.darkLabel } : {}),
-      label: stripEmoji(bought ? t('card.shop.bought') : t('card.shop.buy')),
+      label: stripEmoji(bought ? t('mod.shop.bought') : t('mod.shop.buy')),
       onClick: () => void this.doBuy(slotIndex),
     });
     buy.container.position.set(w - SHOP_BTN_W - 16, btnY);

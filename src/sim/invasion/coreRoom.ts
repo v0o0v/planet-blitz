@@ -54,8 +54,23 @@ import {
   propPowerBp,
   propSpec,
 } from '../../../data/invasion/props.js';
+import { CATALOG_BOSS, CATALOG_PROP } from '../../../data/invasion/catalog.js';
 import { INVASION_CORE_RADIUS } from './constants.js';
 import type { InvasionRef, InvasionStepContext } from './types.js';
+import {
+  NEUTRAL_AFFIX_MODS,
+  affixCooldown,
+  affixDamage,
+  affixHp,
+  affixMaintenance,
+  affixOverheatTicks,
+  affixPowerBp,
+  coreHpPctOf,
+  defenseAffixSet,
+  raiseMaxHp,
+  resolveDefenseMods,
+} from './affix.js';
+import type { DefenseAffixMods, DefenseTriggerState } from './affix.js';
 import {
   guardianShieldShareHp,
   invasionFireCooldown,
@@ -181,17 +196,22 @@ export function spawnDefenseBoss(
 ): Entity {
   const def = defenseBossDef(ref.catalogId);
   const bp = defenseBossPowerBp(ref.level, ref.ascension, ref.rarity);
+  // 방어체 어픽스는 접두(상시)만 스폰에 싣는다. 접미는 스텝이 매 틱 얹는다(affix.ts 규율).
+  const mods = defenseAffixSet(CATALOG_BOSS, ref).always;
   const b = blankEntity(KIND_DEFENSE_BOSS);
   b.x = x;
   b.y = y;
   b.enemyType = ref.catalogId;
   b.radius = def.radius;
-  b.hp = scaleByBp(def.hp, bp);
+  b.hp = affixHp(scaleByBp(def.hp, bp), mods);
   b.maxHp = b.hp;
-  b.damage = scaleByBp(def.contactDamage, bp);
+  b.damage = affixDamage(scaleByBp(def.contactDamage, bp), mods);
   b.phase = 0;
   // 첫 캐스트까지의 지연도 정비도로 스케일 — 방치된 기지는 첫 공격부터 느리다(포탑 선례).
-  b.cooldown = invasionFireCooldown(def.phases[0].patternCooldown, maintenance);
+  b.cooldown = affixCooldown(
+    invasionFireCooldown(def.phases[0].patternCooldown, affixMaintenance(maintenance, mods)),
+    mods,
+  );
   return addEntity(sink, b);
 }
 
@@ -210,25 +230,34 @@ export function spawnL3Prop(
   const spec = propSpec(ref.catalogId);
   if (spec === null) return null;
   const bp = propPowerBp(ref.level, ref.ascension, ref.rarity);
+  const mods = defenseAffixSet(CATALOG_PROP, ref).always;
   const p = blankEntity(KIND_L3_PROP);
   p.x = x;
   p.y = y;
   p.enemyType = spec.role;
   p.pierce = socketIndex;
   p.radius = spec.radius;
-  p.hp = scaleByBp(spec.hp, bp);
+  // 보호막(defShieldFlat)은 코어 공급량이 아니라 **자기 내구도 위**에 얹힌다
+  // (data/defenseUnits.ts 의 stat 정의 그대로 — "파괴 전까지 내구도 위에 얹힌다").
+  p.hp = affixHp(scaleByBp(spec.hp, bp), mods);
   p.maxHp = p.hp;
   switch (spec.role) {
     case PROP_SHIELD_GENERATOR:
       p.targetX = scaleByBp(spec.shieldHp, bp);
       break;
     case PROP_GRAVITY_ANCHOR:
-      p.damage = scaleByBp(spec.hazardDamage, bp);
-      p.cooldown = invasionFireCooldown(spec.periodTicks, maintenance);
+      p.damage = affixDamage(scaleByBp(spec.hazardDamage, bp), mods);
+      p.cooldown = affixCooldown(
+        invasionFireCooldown(spec.periodTicks, affixMaintenance(maintenance, mods)),
+        mods,
+      );
       break;
     case PROP_FIXED_CANNON:
-      p.damage = scaleByBp(spec.damage, bp);
-      p.cooldown = invasionFireCooldown(spec.fireCooldown, maintenance);
+      p.damage = affixDamage(scaleByBp(spec.damage, bp), mods);
+      p.cooldown = affixCooldown(
+        invasionFireCooldown(spec.fireCooldown, affixMaintenance(maintenance, mods)),
+        mods,
+      );
       break;
     default:
       break;
@@ -247,10 +276,54 @@ export function spawnL3Prop(
 export function stepCoreRoom(state: WorldState, ctx: InvasionStepContext): void {
   const player = findPlayer(state);
   if (player === null) return;
-  stepDefenseBosses(state, player, ctx);
-  stepL3Props(state, player, ctx);
+  // 접미(조건부) 어픽스 판정 입력을 이 틱에 한 번 만들어 코어방 전체가 공유한다.
+  const trigger = coreRoomTriggerState(state, ctx, player);
+  stepDefenseBosses(state, player, ctx, trigger);
+  stepL3Props(state, player, ctx, trigger);
   stepInvasionGuardians(state, player, ctx);
   updateCoreShield(state, ctx);
+}
+
+/**
+ * L3 접미 계기 판정 입력. 코어가 실제로 존재하는 유일한 레이어라 `coreHpLow` 가 여기서만
+ * 발동한다(`dt-lastwall`·`dt-bulwark` = "코어가 무너지기 시작하면 방어체가 재장갑한다").
+ *
+ * `alliesDestroyed` 는 상태 없이 순수 계산한다: 배치된 아군 방어체 수(기물 + 보스 + 수호)
+ * − 현재 살아 있는 수. 배치 배열이 곧 초기 수라 별도 카운터를 sim 상태에 추가하지 않는다.
+ */
+function coreRoomTriggerState(
+  state: WorldState,
+  ctx: InvasionStepContext,
+  player: Entity,
+): DefenseTriggerState {
+  const l3 = ctx.layers.l3;
+  let placed = l3.boss === null || l3.boss === undefined ? 0 : 1;
+  for (const ref of l3.props) {
+    if (ref !== null && ref !== undefined) placed++;
+  }
+  for (const g of l3.guardians) {
+    if (g !== null && g !== undefined) placed++;
+  }
+  let alive = 0;
+  let corePct = 0;
+  let coreSeen = false;
+  for (const e of state.entities) {
+    if (e.dead) continue;
+    if (e.kind === KIND_L3_PROP || e.kind === KIND_DEFENSE_BOSS || e.kind === 'guardian') alive++;
+    else if (e.kind === 'core' && !coreSeen) {
+      coreSeen = true;
+      corePct = coreHpPctOf(e.hp, e.maxHp);
+    }
+  }
+  const destroyed = placed - alive;
+  const elapsed = state.tick - ctx.runtime.phaseEnterTick;
+  return {
+    elapsedTicks: elapsed < 0 ? 0 : elapsed,
+    coreHpPct: coreSeen ? corePct : coreHpPctOf(0, 0),
+    alliesDestroyed: destroyed < 0 ? 0 : destroyed,
+    playerX: player.x,
+    playerY: player.y,
+  };
 }
 
 /**
@@ -279,13 +352,31 @@ function updateCoreShield(state: WorldState, ctx: InvasionStepContext): void {
 }
 
 /** 기물 전체를 1틱 진행(역할별 디스패치). */
-function stepL3Props(state: WorldState, player: Entity, ctx: InvasionStepContext): void {
+function stepL3Props(
+  state: WorldState,
+  player: Entity,
+  ctx: InvasionStepContext,
+  trigger: DefenseTriggerState,
+): void {
   for (const p of state.entities) {
     if (p.kind !== KIND_L3_PROP || p.dead) continue;
     const ref = ctx.layers.l3.props[p.pierce];
     if (ref === null || ref === undefined) continue;
     const spec = propSpec(ref.catalogId);
     if (spec === null) continue;
+    // 어픽스 미보유면 NEUTRAL 로 떨어져 아래 적용 함수가 전부 입력을 그대로 돌려준다(비트 동일).
+    const set = defenseAffixSet(CATALOG_PROP, ref);
+    const mods = set.neutral ? NEUTRAL_AFFIX_MODS : resolveDefenseMods(set, trigger, p.x, p.y);
+    if (!set.neutral) {
+      const bp = propPowerBp(ref.level, ref.ascension, ref.rarity);
+      // 내구도는 **단조 상향**만(되돌리면 이미 입은 피해가 사라진다). 피해는 매 틱 덮어쓴다.
+      raiseMaxHp(p, affixHp(scaleByBp(spec.hp, bp), mods));
+      if (p.enemyType === PROP_GRAVITY_ANCHOR) {
+        p.damage = affixDamage(scaleByBp(spec.hazardDamage, bp), mods);
+      } else if (p.enemyType === PROP_FIXED_CANNON) {
+        p.damage = affixDamage(scaleByBp(spec.damage, bp), mods);
+      }
+    }
     switch (p.enemyType) {
       case PROP_GRAVITY_ANCHOR: {
         // 주기 융기: 쿨다운이 끝나면 플레이어 위치에 감속 장판을 깔고 주기를 재장전한다.
@@ -305,7 +396,10 @@ function stepL3Props(state: WorldState, player: Entity, ctx: InvasionStepContext
           true,
           p.id,
         );
-        p.cooldown = invasionFireCooldown(spec.periodTicks, ctx.maintenance);
+        p.cooldown = affixCooldown(
+          invasionFireCooldown(spec.periodTicks, affixMaintenance(ctx.maintenance, mods)),
+          mods,
+        );
         break;
       }
       case PROP_FIXED_CANNON: {
@@ -336,7 +430,10 @@ function stepL3Props(state: WorldState, player: Entity, ctx: InvasionStepContext
           spec.bulletLife,
         );
         p.angle = ang;
-        p.cooldown = invasionFireCooldown(spec.fireCooldown, ctx.maintenance);
+        p.cooldown = affixCooldown(
+          invasionFireCooldown(spec.fireCooldown, affixMaintenance(ctx.maintenance, mods)),
+          mods,
+        );
         break;
       }
       default:
@@ -347,7 +444,12 @@ function stepL3Props(state: WorldState, player: Entity, ctx: InvasionStepContext
 }
 
 /** 방어 보스 전체를 1틱 진행. */
-function stepDefenseBosses(state: WorldState, player: Entity, ctx: InvasionStepContext): void {
+function stepDefenseBosses(
+  state: WorldState,
+  player: Entity,
+  ctx: InvasionStepContext,
+  trigger: DefenseTriggerState,
+): void {
   for (const b of state.entities) {
     if (b.kind !== KIND_DEFENSE_BOSS || b.dead) continue;
     const ref = ctx.layers.l3.boss;
@@ -356,7 +458,14 @@ function stepDefenseBosses(state: WorldState, player: Entity, ctx: InvasionStepC
       ref !== null && ref !== undefined
         ? defenseBossPowerBp(ref.level, ref.ascension, ref.rarity)
         : 10000;
-    updateDefenseBoss(state, b, player, def, bp, ctx.maintenance);
+    const set = defenseAffixSet(CATALOG_BOSS, ref);
+    const mods = set.neutral ? NEUTRAL_AFFIX_MODS : resolveDefenseMods(set, trigger, b.x, b.y);
+    if (!set.neutral) {
+      // 내구도는 단조 상향(dt-lastwall = 코어 저HP 재장갑), 접촉 피해는 매 틱 재계산.
+      raiseMaxHp(b, affixHp(scaleByBp(def.hp, bp), mods));
+      b.damage = affixDamage(scaleByBp(def.contactDamage, bp), mods);
+    }
+    updateDefenseBoss(state, b, player, def, bp, ctx.maintenance, mods);
   }
 }
 
@@ -371,6 +480,7 @@ export function updateDefenseBoss(
   def: DefenseBossDef,
   powerBp: number,
   maintenance: number,
+  mods: DefenseAffixMods = NEUTRAL_AFFIX_MODS,
 ): void {
   // 전이 연출 중: 정지·무발사·과열 감쇠 없음.
   if (boss.timer > 0) {
@@ -411,14 +521,20 @@ export function updateDefenseBoss(
   // 피해 산식(scaleByBp)이 정수 basis-point 단일 나눗셈이라는 규율을 깨지 않기 위해서다.
   // 미장착이면 배율 1 → bp 그대로(비트 동일).
   const mr = state.moduleRuntime;
-  const bossBp =
+  const moduleBp =
     mr === undefined || mr.bossDamageMult === 1 ? powerBp : Math.round(powerBp * mr.bossDamageMult);
+  // 방어체 어픽스 피해도 같은 규율로 **정수 bp 에 접는다**(scaleByBp 단일 나눗셈 유지).
+  const bossBp = affixPowerBp(moduleBp, mods);
   if (attack !== undefined) executeDefenseAttack(state, boss, player, attack, bossBp);
   boss.pierce++;
-  boss.cooldown = invasionFireCooldown(phase.patternCooldown, maintenance);
+  boss.cooldown = affixCooldown(
+    invasionFireCooldown(phase.patternCooldown, affixMaintenance(maintenance, mods)),
+    mods,
+  );
   // 과열 창은 시그니처 캐스트(인덱스 0) 직후, 재장전이 끝났을 때만 열린다 → 열림/닫힘 리듬.
+  // `defOverheatResistPct` 는 그 창을 줄인다(최소 1틱 — 약점이 통째로 사라지지는 않는다).
   if (attackIndex === 0 && boss.dashCooldown === 0) {
-    boss.iframes = DEFENSE_BOSS_OVERHEAT_TICKS;
+    boss.iframes = affixOverheatTicks(DEFENSE_BOSS_OVERHEAT_TICKS, mods);
     boss.dashCooldown = phase.overheatInterval;
   }
 }

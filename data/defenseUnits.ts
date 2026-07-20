@@ -43,7 +43,9 @@
 
 import type { Rarity } from '../src/items/types.js';
 import { RARITY_CODE, RARITY_BY_CODE } from '../src/items/types.js';
-import { nextRarityUp } from './defenseCards.js';
+// 등급 승급 사다리는 코어 모듈 쪽 정본을 그대로 쓴다(구 data/defenseCards.ts 는 M7b 에서
+// 삭제됐고, 같은 4등급 사다리를 두 벌 두면 한쪽만 늘었을 때 조용히 갈린다).
+import { nextRarityUp } from './coreModules.js';
 import {
   CATALOG_FORMATION,
   CATALOG_FACILITY,

@@ -9,13 +9,14 @@
  *  - 서버가 권위다. 레벨업·승급·리롤은 전부 서버 RPC 가 재화를 차감하고 결과를 확정한다
  *    (`defense_units` 테이블은 클라 select 만 허용 — 쓰기 정책 부재).
  *
- * ## 게이트웨이 주입 방식이 cards.ts 와 다른 이유
- * `cards.ts` 는 `./cardsGateway.js` 를 동적 import 한다. 이 레인은 **Supabase SDK 게이트웨이
- * 구현 파일을 소유하지 않으므로**(레인 경계) 존재하지 않는 모듈을 import 하지 않는다. 대신
- * {@link setDefenseUnitsGatewayFactory} 로 팩토리를 등록하는 형태를 쓴다 —
+ * ## 게이트웨이 주입 방식이 modules.ts 와 다른 이유
+ * `modules.ts` 는 `./modulesGateway.js` 를 스스로 동적 import 한다. 이 모듈은 레인 경계 때문에
+ * SDK 게이트웨이 구현 파일을 소유하지 않은 채 먼저 만들어졌고, 그래서 대신
+ * {@link setDefenseUnitsGatewayFactory} 로 팩토리를 등록받는 형태를 쓴다 —
  *   · 팩토리 미등록 + 설정 있음 → `null`(no-op, throw 없음)
  *   · 팩토리 등록 → 설정으로 게이트웨이 생성 후 캐시
- * 통합 레인이 `defenseUnitsGateway.ts` 를 추가하면 부트스트랩에서 팩토리 1줄만 등록하면 된다.
+ * 실 구현 `defenseUnitsGateway.ts` 는 이제 존재하며, 부트스트랩(`main.ts`)이 설정이 있을 때만
+ * 동적 import 해 팩토리를 등록한다(미설정 번들·테스트에 SDK 가 실리지 않는다).
  *
  * ## 비용은 클라가 계산하지 않는다
  * 표시용 비용은 `data/defenseUnits.ts` 순수 함수로 재현하되(서버와 같은 산식), **차감은 서버**가

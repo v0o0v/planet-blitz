@@ -47,7 +47,10 @@ import {
   moduleRarityRank,
   moduleUniqueNameKey,
   moduleUniqueDescKey,
+  moduleAffixNameKey,
+  moduleAffixDescKey,
 } from '../data/coreModules.js';
+import { DEFENSE_UNIT_AFFIXES } from '../data/defenseUnits.js';
 import type { ModuleInstance, ModuleStatKey } from '../data/coreModules.js';
 import { INVASION_CORE_MODULE_SLOTS } from '../src/sim/invasion/constants.js';
 import {
@@ -209,9 +212,16 @@ describe('모듈 어픽스 정의', () => {
     }
   });
 
-  it('표시명에 컬러 이모지가 없다(Pixi 두부 방지)', () => {
+  it('정의에 표시명 필드가 없다(표기는 i18n 키로만 — 한글 리터럴 재유입 차단)', () => {
+    // 구 정의는 `name: '소화의'` 처럼 한글 리터럴을 들고 있어 EN 로케일에서도 한글이 샜고
+    // i18n 검증 밖에 남았다. 필드를 없애 두면 다음 사람이 되돌리려 해도 타입이 막는다.
+    for (const a of MODULE_AFFIXES) {
+      expect(Object.prototype.hasOwnProperty.call(a, 'name')).toBe(false);
+    }
+  });
+
+  it('유니크 표시명에 컬러 이모지가 없다(Pixi 두부 방지)', () => {
     const emoji = /\p{Extended_Pictographic}/u;
-    for (const a of MODULE_AFFIXES) expect(emoji.test(a.name)).toBe(false);
     for (const u of CORE_MODULE_UNIQUES) expect(emoji.test(u.name)).toBe(false);
   });
 });
@@ -727,5 +737,18 @@ describe('i18n 키 규약', () => {
 
   it('유니크 id 가 전역 유일하다', () => {
     expect(new Set(CORE_MODULE_UNIQUES.map((u) => u.id)).size).toBe(CORE_MODULE_UNIQUES.length);
+  });
+
+  it('모듈 어픽스 키가 방어체 어픽스와 같은 def3.affix.* 규약을 따른다', () => {
+    for (const a of MODULE_AFFIXES) {
+      expect(moduleAffixNameKey(a.id)).toBe(`def3.affix.${a.id}.name`);
+      expect(moduleAffixDescKey(a.id)).toBe(`def3.affix.${a.id}.desc`);
+    }
+  });
+
+  it('모듈 어픽스 id 가 방어체 어픽스 id 와 겹치지 않는다(같은 네임스페이스 공유)', () => {
+    // 두 축이 `def3.affix.*` 를 함께 쓰므로 id 가 겹치면 한쪽 문구가 다른 쪽을 덮어쓴다.
+    const unitIds = new Set(DEFENSE_UNIT_AFFIXES.map((a) => a.id));
+    for (const a of MODULE_AFFIXES) expect(unitIds.has(a.id)).toBe(false);
   });
 });

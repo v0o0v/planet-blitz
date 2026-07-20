@@ -54,8 +54,22 @@ import {
 } from '../../../data/invasion/facilities.js';
 import type { InvasionMapTemplate, InvasionSocketDef } from '../../../data/invasion/mapTemplates.js';
 import { mapTemplateFor } from '../../../data/invasion/mapTemplates.js';
+import { CATALOG_FACILITY } from '../../../data/invasion/catalog.js';
 import { isCycleSpawnTick, socketPhaseOffset } from './hazardCycle.js';
 import type { FacilityRef, InvasionStepContext } from './types.js';
+import {
+  AFFIX_NO_CORE_HP_PCT,
+  NEUTRAL_AFFIX_MODS,
+  affixCooldown,
+  affixDamage,
+  affixHp,
+  affixMaintenance,
+  affixSpawnCap,
+  defenseAffixSet,
+  raiseMaxHp,
+  resolveDefenseMods,
+} from './affix.js';
+import type { DefenseAffixMods, DefenseTriggerState } from './affix.js';
 
 /** 방향 제한 방어포 kind. */
 export const FACILITY_GUN_KIND: EntityKind = 'facilityGun';
@@ -188,16 +202,20 @@ export function spawnFacility(
 ): Entity | undefined {
   const spec = facilitySpecFor(ref.catalogId);
   if (spec === undefined) return undefined;
-  const stats = resolveFacilityStats(spec, ref, maintenance);
+  // 방어체 어픽스는 **접두(상시)만** 스폰 시점에 싣는다. 접미(조건부)는 스텝이 매 틱 얹는다
+  // (src/sim/invasion/affix.ts 머리말 "적용 시점 규율"). 어픽스 미보유면 배율 1 → 비트 동일.
+  const mods = defenseAffixSet(CATALOG_FACILITY, ref).always;
+  const stats = resolveFacilityStats(spec, ref, affixMaintenance(maintenance, mods));
+  const hp = affixHp(stats.hp, mods);
   const facing = socket.facingDeg * DEG_TO_RAD;
   const e = blankEntity(kindForBehavior(spec.behavior));
   e.x = socket.x;
   e.y = socket.y;
   e.enemyType = ref.catalogId;
   e.radius = spec.radius;
-  e.hp = stats.hp;
-  e.maxHp = stats.hp;
-  e.damage = stats.damage;
+  e.hp = hp;
+  e.maxHp = hp;
+  e.damage = affixDamage(stats.damage, mods);
   e.angle = facing; // 초기 조준각 = 정면(렌더 기본자세)
   e.targetX = facing; // 사계·융기·사출 기준 방향
   e.pierce = socket.arcDeg; // 사계 전체 폭(정수 도)
@@ -207,13 +225,13 @@ export function spawnFacility(
   switch (spec.behavior) {
     case FACILITY_BEHAVIOR_SPAWNER:
       e.aux0 = SPAWN_BUDGET_UNLIMITED; // 파괴 전까지 무제한 생산
-      e.aux1 = stats.spawnInterval; // 다음 소환까지 틱
+      e.aux1 = affixCooldown(stats.spawnInterval, mods); // 다음 소환까지 틱
       break;
     case FACILITY_BEHAVIOR_HAZARD:
       e.aux0 = spec.hazardSubtype; // 렌더 분화용 subtype
       break;
     default:
-      e.timer = stats.fireCooldown;
+      e.timer = affixCooldown(stats.fireCooldown, mods);
       break;
   }
   return addEntity(state, e);
@@ -265,21 +283,83 @@ export function stepFacility(state: WorldState, ctx: InvasionStepContext): void 
   const maintenance = normalizeMaintenance(ctx.maintenance);
   const template = mapTemplateFor(ctx.layers.l2.templateId);
   const socketCount = template.sockets.length;
+  // 접미(조건부) 어픽스 판정 입력을 이 틱에 한 번 만들어 회랑 전체가 공유한다.
+  const trigger = facilityTriggerState(state, ctx, player);
+  const sockets = ctx.layers.l2.sockets;
   const n = state.entities.length;
   for (let i = 0; i < n; i++) {
     const e = state.entities[i]!;
     if (e.dead) continue;
+    if (!isFacility(e)) continue;
+    const spec = facilitySpecFor(e.enemyType);
+    if (spec === undefined) continue;
+    // 소켓 인덱스(`dashCooldown`)로 배치 참조를 되짚어 어픽스를 얹는다. 어픽스 미보유면
+    // `NEUTRAL_AFFIX_MODS` 로 떨어져 아래 적용 함수들이 전부 입력을 그대로 돌려준다(비트 동일).
+    const ref = sockets[e.dashCooldown];
+    const set = defenseAffixSet(CATALOG_FACILITY, ref);
+    const mods = set.neutral
+      ? NEUTRAL_AFFIX_MODS
+      : resolveDefenseMods(set, trigger, e.x, e.y);
+    if (!set.neutral && ref !== null && ref !== undefined) {
+      syncFacilityAffixStats(e, spec, ref, maintenance, mods);
+    }
     if (e.kind === FACILITY_GUN_KIND) {
-      const spec = facilitySpecFor(e.enemyType);
-      if (spec !== undefined) stepTurretFacility(state, e, spec, player, maintenance);
+      stepTurretFacility(state, e, spec, player, maintenance, mods);
     } else if (e.kind === FACILITY_HAZARD_KIND) {
-      const spec = facilitySpecFor(e.enemyType);
-      if (spec !== undefined) stepHazardFacility(state, e, spec, socketCount);
-    } else if (e.kind === FACILITY_SPAWNER_KIND) {
-      const spec = facilitySpecFor(e.enemyType);
-      if (spec !== undefined) stepSpawnerFacility(state, e, spec, maintenance);
+      // 해저드는 연사 어픽스를 받지 않는다 — 주기가 **틱의 순수 함수**(위상은 소켓 인덱스 파생)
+      // 라서 개체마다 주기를 흔들면 예열 예고 리듬이 소켓 간에 엇갈려 읽을 수 없게 된다.
+      // 어픽스는 장판 피해(`e.damage`)와 내구도로 실린다(위 syncFacilityAffixStats).
+      stepHazardFacility(state, e, spec, socketCount);
+    } else {
+      stepSpawnerFacility(state, e, spec, maintenance, mods);
     }
   }
+}
+
+/**
+ * L2 접미 계기 판정 입력. 코어는 L3 에서야 스폰되므로 회랑에서는 언제나 "코어 없음"이다.
+ * `alliesDestroyed` 는 상태 없이 순수 계산한다: 배치된 소켓 수 − 현재 살아 있는 설비 수.
+ */
+function facilityTriggerState(
+  state: WorldState,
+  ctx: InvasionStepContext,
+  player: Entity,
+): DefenseTriggerState {
+  const sockets = ctx.layers.l2.sockets;
+  let placed = 0;
+  for (const ref of sockets) {
+    if (ref !== null && ref !== undefined) placed++;
+  }
+  let alive = 0;
+  for (const e of state.entities) {
+    if (!e.dead && isFacility(e)) alive++;
+  }
+  const destroyed = placed - alive;
+  const elapsed = state.tick - ctx.runtime.phaseEnterTick;
+  return {
+    elapsedTicks: elapsed < 0 ? 0 : elapsed,
+    coreHpPct: AFFIX_NO_CORE_HP_PCT,
+    alliesDestroyed: destroyed < 0 ? 0 : destroyed,
+    playerX: player.x,
+    playerY: player.y,
+  };
+}
+
+/**
+ * 설비 1기의 내구도·피해를 이번 틱 어픽스로 다시 접는다.
+ *   - 피해는 매 틱 덮어쓴다(발사 시점에 읽히는 값이라 안전).
+ *   - 내구도는 **단조 상향**만 한다({@link raiseMaxHp}) — 되돌리면 이미 입은 피해가 사라진다.
+ */
+function syncFacilityAffixStats(
+  e: Entity,
+  spec: FacilitySpec,
+  ref: FacilityRef,
+  maintenance: number,
+  mods: DefenseAffixMods,
+): void {
+  const base = resolveFacilityStats(spec, ref, affixMaintenance(maintenance, mods));
+  raiseMaxHp(e, affixHp(base.hp, mods));
+  e.damage = affixDamage(base.damage, mods);
 }
 
 /**
@@ -294,6 +374,7 @@ function stepTurretFacility(
   spec: FacilitySpec,
   player: Entity,
   maintenance: number,
+  mods: DefenseAffixMods,
 ): void {
   // 예고선 소화 중: 잠긴 각도로만 발사한다(플레이어가 사계 밖으로 나가도 예고분은 나간다).
   if (e.phase === 1) {
@@ -303,7 +384,7 @@ function stepTurretFacility(
     }
     fireFacilityBullets(state, e, spec, e.angle);
     e.phase = 0;
-    e.timer = moduleFacilityCooldown(state, invasionFireCooldown(spec.fireCooldown, maintenance));
+    e.timer = facilityReloadTicks(state, spec, maintenance, mods);
     return;
   }
   if (e.timer > 0) {
@@ -326,7 +407,21 @@ function stepTurretFacility(
     return;
   }
   fireFacilityBullets(state, e, spec, ang);
-  e.timer = moduleFacilityCooldown(state, invasionFireCooldown(spec.fireCooldown, maintenance));
+  e.timer = facilityReloadTicks(state, spec, maintenance, mods);
+}
+
+/**
+ * 방어포 재장전 틱 = 정비도 풍화(어픽스 저항 반영) → 코어 모듈 연사 → 방어체 어픽스 연사.
+ * 세 축이 같은 값을 서로 다른 지점에서 고치므로 접기 순서를 이 함수 하나로 고정한다.
+ */
+function facilityReloadTicks(
+  state: WorldState,
+  spec: FacilitySpec,
+  maintenance: number,
+  mods: DefenseAffixMods,
+): number {
+  const weathered = invasionFireCooldown(spec.fireCooldown, affixMaintenance(maintenance, mods));
+  return affixCooldown(moduleFacilityCooldown(state, weathered), mods);
 }
 
 /**
@@ -415,6 +510,7 @@ function stepSpawnerFacility(
   e: Entity,
   spec: FacilitySpec,
   maintenance: number,
+  mods: DefenseAffixMods,
 ): void {
   if (e.aux0 === 0) return; // 소환 수 소진(무한이면 -1 이라 여기 걸리지 않는다)
   if (e.aux1 > 0) {
@@ -425,7 +521,8 @@ function stepSpawnerFacility(
   for (const other of state.entities) {
     if (other.kind === 'enemy' && !other.dead && other.ownerId === e.id) alive++;
   }
-  if (alive >= spec.spawnMaxAlive) {
+  // 방어체 어픽스 `defSpawnCapFlat` — 동시 생존 상한을 절대량으로 늘린다(미보유면 스펙 그대로).
+  if (alive >= affixSpawnCap(spec.spawnMaxAlive, mods)) {
     e.aux1 = SPAWNER_RETRY_TICKS;
     return;
   }
@@ -436,7 +533,10 @@ function stepSpawnerFacility(
   const drone = summonEnemy(state, def, sx, sy);
   drone.ownerId = e.id; // 생산자 표식(동시 생존 상한 판정 키)
   if (e.aux0 > 0) e.aux0--;
-  e.aux1 = invasionFireCooldown(spec.spawnIntervalTicks, maintenance);
+  e.aux1 = affixCooldown(
+    invasionFireCooldown(spec.spawnIntervalTicks, affixMaintenance(maintenance, mods)),
+    mods,
+  );
 }
 
 /** 템플릿 조회 재수출(하네스·렌더가 소켓 좌표를 읽을 때 쓴다). */

@@ -27,8 +27,8 @@ import { t } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { stickerLabel } from '../../../data/stickers.js';
 import { seedBaseByProfileId } from '../../../data/seedBases.js';
-import type { CardInstance } from '../../../data/defenseCards.js';
-import { cardRarityColor, cardRarityLabel, cardAffixOneLine } from '../cardsView.js';
+import type { ModuleInstance } from '../../../data/coreModules.js';
+import { moduleRarityColor, moduleRarityLabel, moduleAffixOneLine } from '../modulesView.js';
 import {
   fetchInvasionTargets,
   fetchPlacementStatus,
@@ -807,9 +807,11 @@ export class ControlTowerScreen {
   private renderStatusPanel(): number {
     const result = this.opts.result;
     const verifying = this.opts.verifying === true;
-    const revealCard = result !== undefined ? (this.opts.revealCard ?? null) : null;
+    const revealModules = result !== undefined ? (this.opts.revealModules ?? []) : [];
     const placementBlock = this.placementBlock();
-    if (result === undefined && !verifying && revealCard === null && placementBlock === null) return 0;
+    if (result === undefined && !verifying && revealModules.length === 0 && placementBlock === null) {
+      return 0;
+    }
 
     const box = panelContent(BOARD_W, STATUS_MIN_H);
     const content = new Container();
@@ -843,8 +845,8 @@ export class ControlTowerScreen {
     if (placementBlock !== null) {
       y = placementBlock(content, box, y);
     }
-    if (revealCard !== null) {
-      y = this.renderRevealLines(content, box, y, revealCard);
+    for (const mod of revealModules) {
+      y = this.renderRevealLines(content, box, y, mod);
     }
 
     // 아래 여백은 위와 **대칭**이어야 한다(box.y = border + pad). 실제 콘텐츠 바닥을 재서
@@ -866,12 +868,12 @@ export class ControlTowerScreen {
     return view.status === 'verified' && view.attackerWon ? COLOR.gold : 0xffb0a0;
   }
 
-  /** 상대 방어 카드 정찰 공개(스펙 R9) 3줄. 다음 y 를 돌려준다. */
+  /** 상대 코어 모듈 정찰 공개(스펙 R9) 3줄 — 장착 모듈 1개분. 다음 y 를 돌려준다. */
   private renderRevealLines(
     content: Container,
     box: PanelContentBox,
     y0: number,
-    card: CardInstance,
+    mod: ModuleInstance,
   ): number {
     let y = y0;
     const put = (text: string, size: number, color: number, weight: '400' | '700' | '800'): void => {
@@ -892,15 +894,15 @@ export class ControlTowerScreen {
       content.addChild(el);
       y += el.height + 4;
     };
-    // '🃏 상대 방어 카드' 의 컬러 이모지는 캔버스에서 두부가 된다.
-    put(stripEmoji(t('card.reveal.head')), 18, COLOR.muted, '700');
+    // 컬러 이모지는 캔버스에서 두부가 된다(문구 자체에도 넣지 않지만 방어적으로 벗긴다).
+    put(stripEmoji(t('mod.reveal.head')), 18, COLOR.muted, '700');
     put(
-      `${t('card.reveal.grade', { rarity: cardRarityLabel(card.rarity) })} · ${t('card.reveal.charges', { n: card.chargesLeft })}`,
+      `${t('mod.reveal.grade', { rarity: moduleRarityLabel(mod.rarity) })} · ${t('mod.reveal.charges', { n: mod.chargesLeft })}`,
       20,
-      hexColor(cardRarityColor(card.rarity)),
+      hexColor(moduleRarityColor(mod.rarity)),
       '800',
     );
-    put(cardAffixOneLine(card), 16, COLOR.muted, '400');
+    put(moduleAffixOneLine(mod), 16, COLOR.muted, '400');
     return y + 4;
   }
 

@@ -130,11 +130,14 @@ export type ModuleAffixKind = 'prefix' | 'suffix';
  * 모듈 어픽스 정의(designer-authored). value 는 [min,max] 정수 균등 롤. 접두는 `condition`
  * (정적 카운터), 접미는 `trigger`(+`threshold`)를 갖는다.
  * `id` 는 롤 jsonb 에 실리는 **wire 값**이므로 확정 후 재번호 금지.
+ *
+ * **표기명은 이 정의에 없다.** 한글 리터럴 `name` 필드를 두면 EN 로케일에서도 한글이 새고
+ * i18n 검증 밖에 남는다 — 표시명·설명은 {@link moduleAffixNameKey}/{@link moduleAffixDescKey}
+ * (`def3.affix.<id>.name` / `.desc`) 로 카탈로그(src/i18n/catalog.ts)에 두고, 존재 여부는
+ * tests/i18n.test.ts 가 **이 배열에서 파생**해 전수 강제한다(방어체 어픽스와 동일 규약).
  */
 export interface ModuleAffixDef {
   readonly id: string;
-  /** 한글 표기명(툴팁/보관함). "모듈 어픽스" 전체 표기 원칙에 따라 접두/접미를 붙여 쓴다. */
-  readonly name: string;
   readonly kind: ModuleAffixKind;
   readonly stat: ModuleStatKey;
   readonly min: number;
@@ -152,14 +155,14 @@ export interface ModuleAffixDef {
  * id 접두 `mc-` = **m**odule **c**ounter.
  */
 export const MODULE_PREFIXES: readonly ModuleAffixDef[] = [
-  { id: 'mc-quench', name: '소화의', kind: 'prefix', stat: 'incomingDmgReductionPct', min: 8, max: 18, condition: 'fireAttacker' },
-  { id: 'mc-frostward', name: '방한의', kind: 'prefix', stat: 'incomingDmgReductionPct', min: 8, max: 18, condition: 'coldAttacker' },
-  { id: 'mc-insulate', name: '절연의', kind: 'prefix', stat: 'attackerSubCdPct', min: 15, max: 35, condition: 'lightningAttacker' },
-  { id: 'mc-refract', name: '분광의', kind: 'prefix', stat: 'incomingDmgReductionPct', min: 6, max: 14, condition: 'beamAttacker' },
-  { id: 'mc-armorbreak', name: '중장갑 파쇄의', kind: 'prefix', stat: 'facilityDamagePct', min: 12, max: 28, condition: 'powerSuperiority' },
-  { id: 'mc-avenger', name: '복수자의', kind: 'prefix', stat: 'bossDamagePct', min: 40, max: 80, condition: 'revenge' },
-  { id: 'mc-blockade', name: '연전 차단의', kind: 'prefix', stat: 'propDurabilityPct', min: 10, max: 22, condition: 'reinvasion' },
-  { id: 'mc-disruptor', name: '교란의', kind: 'prefix', stat: 'attackerSubCdPct', min: 12, max: 30, condition: 'subweaponHeavy' },
+  { id: 'mc-quench', kind: 'prefix', stat: 'incomingDmgReductionPct', min: 8, max: 18, condition: 'fireAttacker' },
+  { id: 'mc-frostward', kind: 'prefix', stat: 'incomingDmgReductionPct', min: 8, max: 18, condition: 'coldAttacker' },
+  { id: 'mc-insulate', kind: 'prefix', stat: 'attackerSubCdPct', min: 15, max: 35, condition: 'lightningAttacker' },
+  { id: 'mc-refract', kind: 'prefix', stat: 'incomingDmgReductionPct', min: 6, max: 14, condition: 'beamAttacker' },
+  { id: 'mc-armorbreak', kind: 'prefix', stat: 'facilityDamagePct', min: 12, max: 28, condition: 'powerSuperiority' },
+  { id: 'mc-avenger', kind: 'prefix', stat: 'bossDamagePct', min: 40, max: 80, condition: 'revenge' },
+  { id: 'mc-blockade', kind: 'prefix', stat: 'propDurabilityPct', min: 10, max: 22, condition: 'reinvasion' },
+  { id: 'mc-disruptor', kind: 'prefix', stat: 'attackerSubCdPct', min: 12, max: 30, condition: 'subweaponHeavy' },
 ];
 
 /**
@@ -167,14 +170,14 @@ export const MODULE_PREFIXES: readonly ModuleAffixDef[] = [
  * id 접두 `mt-` = **m**odule **t**rigger.
  */
 export const MODULE_SUFFIXES: readonly ModuleAffixDef[] = [
-  { id: 'mt-forcefield', name: '의 역장', kind: 'suffix', stat: 'coreShieldFlat', min: 120, max: 320, trigger: 'coreProximity' },
-  { id: 'mt-fury', name: '의 격노', kind: 'suffix', stat: 'facilityFireRatePct', min: 15, max: 35, trigger: 'facilitiesDestroyed', threshold: 3 },
-  { id: 'mt-attrition', name: '의 지연전', kind: 'suffix', stat: 'attackerSlowPct', min: 10, max: 25, trigger: 'timeElapsed', threshold: 90 },
-  { id: 'mt-retribution', name: '의 응징', kind: 'suffix', stat: 'volleyDamage', min: 200, max: 500, trigger: 'guardianDowned' },
-  { id: 'mt-laststand', name: '의 배수진', kind: 'suffix', stat: 'bossDamagePct', min: 25, max: 55, trigger: 'coreHpLow', threshold: 30 },
-  { id: 'mt-vanguard', name: '의 선제', kind: 'suffix', stat: 'formationDamagePct', min: 12, max: 28, trigger: 'earlyPhase', threshold: 20 },
-  { id: 'mt-reflection', name: '의 반사', kind: 'suffix', stat: 'reflectDamagePct', min: 8, max: 20, trigger: 'coreHit' },
-  { id: 'mt-bulwark', name: '의 최종 방벽', kind: 'suffix', stat: 'incomingDmgReductionPct', min: 8, max: 16, trigger: 'coreRoomEntered' },
+  { id: 'mt-forcefield', kind: 'suffix', stat: 'coreShieldFlat', min: 120, max: 320, trigger: 'coreProximity' },
+  { id: 'mt-fury', kind: 'suffix', stat: 'facilityFireRatePct', min: 15, max: 35, trigger: 'facilitiesDestroyed', threshold: 3 },
+  { id: 'mt-attrition', kind: 'suffix', stat: 'attackerSlowPct', min: 10, max: 25, trigger: 'timeElapsed', threshold: 90 },
+  { id: 'mt-retribution', kind: 'suffix', stat: 'volleyDamage', min: 200, max: 500, trigger: 'guardianDowned' },
+  { id: 'mt-laststand', kind: 'suffix', stat: 'bossDamagePct', min: 25, max: 55, trigger: 'coreHpLow', threshold: 30 },
+  { id: 'mt-vanguard', kind: 'suffix', stat: 'formationDamagePct', min: 12, max: 28, trigger: 'earlyPhase', threshold: 20 },
+  { id: 'mt-reflection', kind: 'suffix', stat: 'reflectDamagePct', min: 8, max: 20, trigger: 'coreHit' },
+  { id: 'mt-bulwark', kind: 'suffix', stat: 'incomingDmgReductionPct', min: 8, max: 16, trigger: 'coreRoomEntered' },
 ];
 
 /** 전체 모듈 어픽스 풀(접두 후 접미). {@link rollModule} 이 균등 추첨한다. */
@@ -559,6 +562,24 @@ export function moduleRarityRank(rarity: Rarity): number {
  * 아니라 인스턴스 경제라 INVASION_CATALOG 레지스트리에 편입하지 않는다.)
  */
 export const MODULE_I18N_PREFIX = 'module';
+
+/**
+ * 모듈 어픽스 i18n 종류 접두 — **방어체 어픽스와 같은 `def3.affix.*` 네임스페이스**를 쓴다
+ * (`data/defenseUnits.ts` 의 `defenseUnitAffixNameKey` 와 동일 규약). id 접두가 서로 달라
+ * (`mc-`/`mt-` vs `du-`/`dt-`) 충돌하지 않고, 어픽스를 어느 축에서 추가하든 같은 자리에서
+ * 문구를 찾게 된다.
+ */
+export const MODULE_AFFIX_I18N_PREFIX = 'affix';
+
+/** 모듈 어픽스 표기명 i18n 키. 컬러 이모지 금지(Pixi 두부). */
+export function moduleAffixNameKey(affixId: string): string {
+  return `def3.${MODULE_AFFIX_I18N_PREFIX}.${affixId}.name`;
+}
+
+/** 모듈 어픽스 설명 i18n 키. */
+export function moduleAffixDescKey(affixId: string): string {
+  return `def3.${MODULE_AFFIX_I18N_PREFIX}.${affixId}.desc`;
+}
 
 /** 유니크 모듈 표시명 i18n 키. 컬러 이모지 금지(Pixi 두부). */
 export function moduleUniqueNameKey(uniqueId: string): string {

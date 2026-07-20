@@ -352,3 +352,71 @@ describe('M7b 통합 — 사령부 문구가 정본 카탈로그에 있다', () 
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// ⑦ 코어 모듈 화면 배선 (ModulesUI 레인) — 단위 테스트가 못 보는 틈.
+// ---------------------------------------------------------------------------
+// modulesView 의 순수 함수(pickEquipSlot·가격·합성 사전검증)는 화면이 부트스트랩에 아예
+// 연결되지 않아도 전부 통과한다. 여기서 보는 것은 "정말 열리는가/정말 공개되는가" 뿐이다.
+describe('M7b 통합 — 코어 모듈 화면 배선(main.ts)', () => {
+  const main = src('../src/main.ts');
+
+  it('방어 사령부의 모듈 열기가 ModulesScreen 으로 간다(미배선이면 화면이 영원히 안 열린다)', () => {
+    expect(main).toContain("import { ModulesScreen } from './ui/pixi/modulesView.js'");
+    expect(main).toContain('new ModulesScreen(');
+    const open = main.indexOf('onOpenModules:');
+    expect(open).toBeGreaterThan(-1);
+    // 콜백 본문이 실제로 화면을 띄운다(빈 콜백이면 사령부 버튼이 먹통).
+    expect(main.slice(open, open + 200)).toContain('modulesScreen.show(');
+  });
+
+  it('진입은 suspend/resume 경로다 — resume 콜백을 실제로 부른다(미저장 편집 보존)', () => {
+    const open = main.indexOf('onOpenModules:');
+    const body = main.slice(open, open + 200);
+    expect(body).toContain('resume()');
+  });
+
+  it('레거시 카드 화면 경로가 남아 있지 않다(마이그레이션 적용 즉시 죽는 경로)', () => {
+    expect(main).not.toContain('CardsScreen');
+    expect(main).not.toContain('cardsView');
+  });
+
+  it('정찰 공개는 begin_invasion 스냅샷의 authority.modules 에서 온다(라이브 재조회 금지)', () => {
+    expect(main).toContain('pendingRevealModules');
+    const from = main.indexOf('pendingRevealModules = runModules');
+    const use = main.indexOf('showOpts.revealModules = pendingRevealModules');
+    expect(from).toBeGreaterThan(-1);
+    expect(use).toBeGreaterThan(-1);
+  });
+
+  it('공개는 매 런 시작에 초기화된다(이전 침공분이 새지 않는다)', () => {
+    // 대입이 최소 3곳: 초기화 선언 · 런 시작 리셋 · 결과 소비 후 리셋.
+    const resets = main.split('pendingRevealModules = ').length - 1;
+    expect(resets).toBeGreaterThanOrEqual(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑧ 어픽스가 sim 에 실제로 닿는가 (AffixWiring 레인).
+// ---------------------------------------------------------------------------
+// affix.ts 의 순수 함수는 세 레이어 중 어디에도 import 되지 않아도 단독으로 통과한다.
+// 리롤 축이 전투 영향 0 이던 결함이 정확히 그 형태였다.
+describe('M7b 통합 — 어픽스 sim 배선', () => {
+  it('세 레이어(편대·설비·코어방)가 전부 affix 를 import 한다', () => {
+    for (const rel of [
+      '../src/sim/invasion/formation.ts',
+      '../src/sim/invasion/facility.ts',
+      '../src/sim/invasion/coreRoom.ts',
+    ]) {
+      expect(src(rel)).toContain("from './affix.js'");
+    }
+  });
+
+  it('affix 는 sim 결정론 규율을 지킨다(Math.random·Date.now·performance.now 금지)', () => {
+    const affix = src('../src/sim/invasion/affix.ts');
+    // 주석까지 포함해 전수 — 산문에도 안 쓰이므로 오탐이 없다.
+    expect(affix).not.toContain('Math.random');
+    expect(affix).not.toContain('Date.now');
+    expect(affix).not.toContain('performance.now');
+  });
+});
