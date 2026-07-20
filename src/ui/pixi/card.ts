@@ -11,7 +11,7 @@
 
 import { Container, Graphics, type Texture } from 'pixi.js';
 import { COLOR } from './theme.js';
-import { nineSlicePanel, PANEL_BORDER } from './nineSlicePanel.js';
+import { nineSlicePanel, PANEL_BORDER, PANEL_FILL_RADIUS, PANEL_FRAME_SOLID } from './nineSlicePanel.js';
 
 export interface PanelCardOptions {
   width: number;
@@ -76,17 +76,26 @@ export function makePanelCard(opts: PanelCardOptions): Container {
 
 /**
  * 카드 안쪽 전체를 덮는 잠금 딤. 콘텐츠가 아니라 오버레이라 콘텐츠 상자(border+pad)가 아닌
- * **프레임 기준(PANEL_BORDER)** 으로 깐다 — 세트 정본 SKILL.md §4 가 허용한 유일한 예외다.
- * z 순서를 호출자가 잡을 수 있도록 Graphics 만 돌려준다.
+ * 프레임 기준으로 깐다 — 세트 정본 SKILL.md §4 가 허용한 유일한 예외다. z 순서를 호출자가
+ * 잡을 수 있도록 Graphics 만 돌려준다.
+ *
+ * 기준은 `PANEL_BORDER`(46)가 아니라 **불투명한 나무 살이 끝나는 지점**({@link
+ * PANEL_FRAME_SOLID}=37)이다. 딤은 프레임 **위에** 그려지므로(호출자가 프레임보다 뒤에
+ * 얹는다), 46 으로 깔면 살 끝(37)과 딤(46) 사이 어두운 채움 9px 이 딤에 안 덮여 밝은 띠로
+ * 남는다(실측: 잠금 타일 안쪽에 채움색 #1c182e 띠). 살 끝에 맞추면 그 틈이 사라진다.
+ * 47 은 살이 46 보다 얇아 안전 — 살보다 안쪽에서 시작하는 값은 나무를 덮지 않는다. 살은
+ * 변마다 37~39 로 1~2px 다르지만 제일 얇은 37 을 기준으로 잡아 어느 변에도 밝은 틈이 없게
+ * 한다(두꺼운 변은 안쪽 홈 1~2px 이 함께 어두워지나, 밝은 채움 틈보다 훨씬 덜 띈다).
  */
 export function panelDim(width: number, height: number, alpha = 0.62): Graphics {
+  const inset = PANEL_FRAME_SOLID;
   const g = new Graphics();
   g.roundRect(
-    PANEL_BORDER,
-    PANEL_BORDER,
-    width - PANEL_BORDER * 2,
-    height - PANEL_BORDER * 2,
-    8,
+    inset,
+    inset,
+    width - inset * 2,
+    height - inset * 2,
+    PANEL_FILL_RADIUS,
   ).fill({ color: 0x0b0814, alpha });
   return g;
 }
