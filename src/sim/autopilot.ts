@@ -73,13 +73,30 @@ export function autopilotInput(world: WorldState): InputFrame {
   return { moveX: 0, moveY: 0, aim, dash: false, special: SPECIAL_NONE };
 }
 
-/** 조준·카이팅 대상이 되는 최근접 적대 엔티티(적/보스). 없으면 undefined. */
+/**
+ * 조준·카이팅 대상이 되는 최근접 적대 엔티티. PvE 적성(적·보스)에 침공 3레이어 방어체를
+ * 더한다 — PvE 런에는 이 kind 들이 존재하지 않으므로 기존 PvE 거동·해시는 불변이다.
+ *
+ * 코어를 일부러 넣지 않는다: 코어는 정지 표적이라 카이팅 기준으로 삼으면 봇이 코어 주위
+ * 고정 거리에 붙박여 실드 발생기 쪽으로 이동하지 않는다. 사격 조준은 sim 자동 조준
+ * (`isPlayerTargetable`)이 따로 잡으므로, 여기서는 **이동을 만들어 내는** 표적만 고른다.
+ */
 function nearestTarget(world: WorldState, player: Entity): Entity | undefined {
   let best: Entity | undefined;
   let bestD = Infinity;
   for (const e of world.entities) {
     if (e.dead) continue;
-    if (e.kind !== 'enemy' && e.kind !== 'boss') continue;
+    if (
+      e.kind !== 'enemy' &&
+      e.kind !== 'boss' &&
+      e.kind !== 'defenseBoss' &&
+      e.kind !== 'guardian' &&
+      e.kind !== 'prop' &&
+      e.kind !== 'facilityGun' &&
+      e.kind !== 'facilityHazard' &&
+      e.kind !== 'facilitySpawner'
+    )
+      continue;
     const dx = e.x - player.x;
     const dy = e.y - player.y;
     const d = dx * dx + dy * dy;

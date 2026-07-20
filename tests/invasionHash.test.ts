@@ -192,6 +192,9 @@ describe('침공 3레이어 해시 v2 — 런타임 페이즈 상태', () => {
 describe('엔티티 해시 레이아웃 계약', () => {
   it('KIND_CODE 는 append-only 다(기존 코드 재배치 금지)', () => {
     // 골든: 코드 1..18 은 M1~M6 확정분, 19..26 은 M7a 3레이어 예약분.
+    // **15 는 영구 결번**이다 — 구 defenseTurret 이 L11(레거시 삭제)에서 사라졌지만 번호를
+    // 당기지 않았다. 당기면 core(16) 이하가 전부 재배치돼 기존 리플레이·fixture 가 통째로
+    // 갈린다(append-only 계약의 핵심은 '번호 재사용·재배치 금지'이지 '연속'이 아니다).
     expect(KIND_CODE).toEqual({
       player: 1,
       enemy: 2,
@@ -207,7 +210,6 @@ describe('엔티티 해시 레이아웃 계약', () => {
       bombDevice: 12,
       turretPickup: 13,
       loot: 14,
-      defenseTurret: 15,
       core: 16,
       guardian: 17,
       decoyCore: 18,

@@ -29,7 +29,8 @@ export type EntityKind =
   // --- M2 파밍 루프 (plan Phase B3) ---
   | 'loot' // 엘리트·보스가 바닥에 떨군 장비 드랍(접촉 자동 획득). damage=드랍시드, enemyType=rarity 코드
   // --- M4 침공 방어 배치 (plan Phase C1) ---
-  | 'defenseTurret' // 방어 포탑 6종(enemyType=포탑 유형 0..5). 플레이어를 조준·발사, 결정론 거동
+  // (구 'defenseTurret' 포탑 6종은 M7a L11 에서 삭제 — L2 회랑 설비 3종이 계승했다.
+  //  KIND_CODE 15 는 재사용하지 않는다. 아래 KIND_CODE 주석 참조.)
   | 'core' // 방어 코어(침공 목표). 파괴 시 침공 승리(compact가 victory 판정)
   // --- M5 수호 기체 (plan Phase A1, ADR-0007) ---
   | 'guardian' // 퇴역 기체의 방어 AI(추적형 요격 유닛). 침공 방어전에 참전, 플레이어를 추적·사격
@@ -71,7 +72,8 @@ export const KIND_CODE: Record<EntityKind, number> = {
   // Appended for the M2 farming loop (never renumber 1..13).
   loot: 14,
   // Appended for the M4 침공 방어 배치 (never renumber 1..14).
-  defenseTurret: 15,
+  // **코드 15(구 defenseTurret)는 영구 결번**이다. M7a L11 에서 포탑 6종을 삭제했지만 번호를
+  // 당기지 않는다 — 당기면 core(16) 이하 전부가 재배치돼 기존 리플레이·fixture 가 통째로 갈린다.
   core: 16,
   // Appended for the M5 수호 기체 (never renumber 1..16). PvE·수호 미포함 침공 런에는
   // guardian 엔티티가 없어 이 코드가 해시에 등장하지 않는다 → 기존 fixtures 바이트 불변.

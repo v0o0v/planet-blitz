@@ -29,7 +29,6 @@ import { stickerLabel } from '../../../data/stickers.js';
 import { seedBaseByProfileId } from '../../../data/seedBases.js';
 import type { CardInstance } from '../../../data/defenseCards.js';
 import { cardRarityColor, cardRarityLabel, cardAffixOneLine } from '../cardsView.js';
-import { GRID_COLS, GRID_ROWS, normalizeLayout } from '../defenseCommand.js';
 import {
   fetchInvasionTargets,
   fetchPlacementStatus,
@@ -66,11 +65,11 @@ import {
   incomingBannerText,
   incomingRowText,
   resultBannerText,
-  previewCells,
+  reconSummary,
+  normalizeTargetLayers,
   type ControlTowerCallbacks,
   type ControlTowerShowOpts,
   type InvasionResultView,
-  type PreviewCell,
 } from '../controlTower.js';
 import { COLOR, UI_FONT, TEXT_SHADOW, hexColor } from './theme.js';
 import { loadUiTextures, stickerIconName, type UiTextures } from './uiTextures.js';
@@ -81,17 +80,6 @@ import { makeBanner, makeIconButton } from './titleBar.js';
 import { stripEmoji } from './text.js';
 
 export type { ControlTowerCallbacks, ControlTowerShowOpts, InvasionResultView };
-
-/**
- * 정찰 격자 글리프 → 도형. `previewCells`(DOM 판의 검증된 좌표 로직)가 돌려주는 이모지는
- * 캔버스에서 흑백 두부로 떨어지므로(스킬 §6 · 롤아웃 #3 교훈) 표시만 도형으로 바꾼다.
- * 표에 없는 글리프(포탑 6종·미지)는 전부 원(포탑)으로 그린다.
- */
-const GLYPH_SHAPE: Record<string, 'core' | 'obstacle' | 'spawn'> = {
-  '💠': 'core',
-  '🧱': 'obstacle',
-  '▲': 'spawn',
-};
 
 /** 열려 있는 팝업 종류(없으면 null). */
 type ModalKind = 'ladder' | 'alerts' | 'history';
@@ -146,10 +134,6 @@ const REV_ROW_GAP = 8;
 const SEG_W = 56;
 const SEG_H = 12;
 const SEG_GAP = 8;
-
-// 정찰 격자.
-const RECON_CELL_MAX = 44;
-const RECON_CELL_GAP = 3;
 
 // 하단 버튼 행.
 const FOOT_Y = 980;
@@ -1151,86 +1135,16 @@ export class ControlTowerScreen {
       this.msg(panel, box, t('ctl.recon.selectPrompt'));
       return;
     }
-    const layout = normalizeLayout(target.layout);
-    if (layout === null) {
+    const layers = normalizeTargetLayers(target.layout);
+    if (layers === null) {
       this.msg(panel, box, t('ctl.recon.noBase'));
       return;
     }
 
-    // 요약 한 줄 자리를 남기고 남은 상자 안에 격자를 정확히 맞춘다(상자 밖 침범 0).
-    // 칸 크기는 폭·높이 양쪽에서 뽑아 작은 쪽을 쓴다 — 열이 좁아져도 격자가 상자를 넘지 않는다.
-    const summaryH = 40;
-    const availH = box.bottom - summaryH - CONTENT_TOP;
-    const cellFromH = Math.floor((availH + RECON_CELL_GAP) / GRID_ROWS) - RECON_CELL_GAP;
-    const cellFromW = Math.floor((box.w + RECON_CELL_GAP) / GRID_COLS) - RECON_CELL_GAP;
-    const cell = Math.max(8, Math.min(RECON_CELL_MAX, cellFromH, cellFromW));
-    const gridW = GRID_COLS * (cell + RECON_CELL_GAP) - RECON_CELL_GAP;
-    const gridH = GRID_ROWS * (cell + RECON_CELL_GAP) - RECON_CELL_GAP;
-    const gridX = box.x + Math.floor((box.w - gridW) / 2);
-    // 격자 + 요약을 한 덩어리로 묶어 세로 가운데 정렬한다(요약만 바닥에 떨어지면 따로 논다).
-    const gridY = CONTENT_TOP + Math.floor((availH - gridH) / 2);
-
-    const occupied = new Map<string, PreviewCell>();
-    for (const c of previewCells(layout)) occupied.set(`${c.col},${c.row}`, c);
-
-    const grid = new Container();
-    grid.position.set(gridX, gridY);
-    panel.addChild(grid);
-    for (let row = 0; row < GRID_ROWS; row++) {
-      for (let col = 0; col < GRID_COLS; col++) {
-        const pc = occupied.get(`${col},${row}`);
-        const c = this.makeReconCell(cell, pc);
-        c.position.set(col * (cell + RECON_CELL_GAP), row * (cell + RECON_CELL_GAP));
-        grid.addChild(c);
-      }
-    }
-
-    const sum = this.label(
-      t('ctl.recon.summary', { t: layout.turrets.length, o: layout.obstacles.length }),
-      17,
-      COLOR.muted,
-      '400',
-      box.w,
-    );
-    sum.anchor.set(0.5, 0);
-    sum.position.set(box.x + box.w / 2, Math.min(gridY + gridH + 16, box.bottom - 22));
-    panel.addChild(sum);
-  }
-
-  /** 정찰 격자 한 칸(도형 + hover 라벨 툴팁). DOM 판의 `title` 속성 툴팁과 같은 정보다. */
-  private makeReconCell(size: number, pc: PreviewCell | undefined): Container {
-    const cellRoot = new Container();
-    const spawn = pc?.spawn === true;
-    const bg = new Graphics();
-    bg.roundRect(0, 0, size, size, 3).fill({ color: spawn ? 0x4a3a1e : 0x2a2440, alpha: 0.9 });
-    cellRoot.addChild(bg);
-    if (pc === undefined) return cellRoot;
-
-    const color = hexColor(pc.accent);
-    const c = size / 2;
-    const r = size * 0.3;
-    const shape = GLYPH_SHAPE[pc.glyph] ?? 'turret';
-    const g = new Graphics();
-    if (shape === 'core') {
-      g.poly([c, c - r, c + r, c, c, c + r, c - r, c]).fill({ color });
-    } else if (shape === 'obstacle') {
-      g.roundRect(c - r, c - r, r * 2, r * 2, 2).fill({ color });
-    } else if (shape === 'spawn') {
-      g.poly([c, c - r, c + r, c + r, c - r, c + r]).fill({ color });
-    } else {
-      g.circle(c, c, r).fill({ color });
-    }
-    cellRoot.addChild(g);
-
-    const label = pc.label;
-    cellRoot.eventMode = 'static';
-    cellRoot.on('pointerover', (e) => {
-      const p = this.root.toLocal({ x: e.global.x, y: e.global.y });
-      this.tooltip.show({ title: label, titleColor: color, subtitle: '', lines: [] }, p.x, p.y, color);
-      this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
-    });
-    cellRoot.on('pointerout', () => this.tooltip.hide());
-    return cellRoot;
+    // 15×9 미니 격자는 M7a 에서 사라졌다 — 3레이어(종스크롤 → 횡스크롤 → 코어방)에는 격자
+    // 좌표계 자체가 없다. 정식 정찰(레이어 탭 · 실루엣 · 등급/승급 표시)은 M7b-command-ui 가
+    // 만든다. 그때까지 슬롯 점유 요약 한 줄만 띄운다(레인 문서 L11 ④).
+    this.msg(panel, box, reconSummary(layers));
   }
 
   // --- 복수전 -------------------------------------------------------------

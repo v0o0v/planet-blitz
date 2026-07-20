@@ -18,7 +18,7 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { SupabaseConfig } from './config.js';
-import type { DefenseLayout } from '../sim/defense.js';
+import type { InvasionLayers } from '../sim/invasion/types.js';
 import type {
   DefenseGateway,
   DefenseInsertPayload,
@@ -85,7 +85,7 @@ export class SupabaseDefenseGateway implements DefenseGateway {
     if (error !== null) throw error;
   }
 
-  async updateDefense(defenseId: string, layout: DefenseLayout): Promise<void> {
+  async updateDefense(defenseId: string, layout: InvasionLayers): Promise<void> {
     // layout 만 갱신 — budget_spent 재산출·maintenance 보존은 서버 가드가 처리(정비도
     // 리셋 우회 금지). 정비도를 delete→insert 로 리셋하지 않기 위한 핵심 경로.
     const { error } = await this.client.from('defenses').update({ layout }).eq('id', defenseId);

@@ -6,11 +6,14 @@
  * `Math.random` in the sim path.
  *
  * Run:  npx vite-node src/bench/simBench.ts
+ *       npx vite-node src/bench/simBench.ts --invasion3   (M7a 재실행 예산 실측만)
  *
  * It reports:
  *   1. Average `stepWorld` ms/tick vs the 16.6 ms (60 fps) frame budget (AC4).
  *   2. A/B of the broad-phase grid cell size (128 vs 256) so the winner can be
  *      baked into GRID_CELL_SIZE (world.ts).
+ *   3. (M7a · L6) 침공 3레이어 18000틱 **서버 재실행 벽시계** 실측 — Edge Function
+ *      `verify-invasion` 의 재실행 예산(SOFT_RERUN_BUDGET_MS)이 현실적인지 판정한다.
  */
 
 import { createWorld, stepWorld, emptyInput, GRID_CELL_SIZE } from '../sim/world.js';
@@ -19,18 +22,30 @@ import { blankEntity, addEntity } from '../sim/entities.js';
 import { SpatialHash } from '../sim/collision.js';
 import type { Entity } from '../sim/entities.js';
 import {
-  DEFAULT_TIME_LIMIT_TICKS,
-  TURRET_VULCAN,
-  TURRET_MISSILE,
-  TURRET_TESLA,
-} from '../sim/defense.js';
-import type { DefenseLayout, InvasionConfig } from '../sim/defense.js';
-import {
   GUARDIAN_TITAN,
   GUARDIAN_INTERCEPTOR,
   PERFORMANCE_FULL,
   makeGuardianSnapshot,
 } from '../../data/guardian.js';
+import { hashWorld } from '../sim/replay.js';
+import { SPECIAL_POWERUP_PICK } from '../sim/world.js';
+import type { InputFrame } from '../sim/world.js';
+import {
+  INVASION_CORE_HP,
+  INVASION_CORE_MODULE_SLOTS,
+  INVASION_GUARDIAN_SLOTS,
+  INVASION_PROP_SLOTS,
+  INVASION_SOCKET_COUNTS,
+  INVASION_TOTAL_TICKS,
+  INVASION_WAVE_SLOTS,
+  MAP_TEMPLATE_STRAIGHT,
+} from '../sim/invasion/constants.js';
+import { normalizeInvasionLayers } from '../sim/invasion/normalize.js';
+import type { InvasionLayers, InvasionRef } from '../sim/invasion/types.js';
+import { FORMATION_COUNT } from '../../data/invasion/formations.js';
+import { FACILITY_CATALOG_COUNT } from '../../data/invasion/facilities.js';
+import { L3_PROP_COUNT } from '../../data/invasion/props.js';
+import { DEFAULT_DEFENSE_BOSS_ID } from '../../data/invasion/defenseBosses.js';
 
 // Inject a little over 2,000 so that after warmup drain (some drift beyond the
 // cull radius / are swept by walls) the SUSTAINED live count stays >= 2,000 (AC4).
@@ -118,37 +133,73 @@ function measure(cellSize: number): { avgMs: number; projectiles: number; walls:
   return { avgMs: elapsedMs / MEASURE_TICKS, projectiles, walls };
 }
 
+// ---------------------------------------------------------------------------
+// M7a · L6 — 침공 3레이어 18000틱 서버 재실행 벽시계 실측
+//
+// (구 "수호 포함 방어전" 시나리오 — 포탑 6기 + 코어 단일 아레나 — 는 M7a L11 에서 삭제됐다.
+//  같은 부하를 3레이어 만렙 배치가 상위 호환으로 덮는다: 편대 6 + 설비 12 + 기물 6 + 수호 2 +
+//  보스 1. 실측 이력은 docs/qa/m5-phase-d-results.md 참조.)
+// ---------------------------------------------------------------------------
+
 /**
- * 수호 포함 방어전(침공 런) 최악 부하 시나리오 (M5 Phase D1, AC9).
- *
- * `buildStressWorld`(무한 맵 PvE)와 달리, 이쪽은 **침공 방어전 config**를 구성한다: 수호 2기
- * (타이탄+인터셉터, 완전 성능) + 포탑 6기(발사체 방출) + 코어. 여기에 2,000발 스트레스 로드를
- * 얹어, 수호 AI(추적·조준·발사)와 포탑 발사가 함께 도는 tick 비용을 측정한다. 이것이 M5에서
- * 새로 추가된 sim 부하 경로다(M4 침공 런 + 수호 엔티티). 발사체 damage=0 으로 코어·플레이어를
- * 살려 인구를 안정 유지하고, 제한 시간(3분=10800틱) 안에서 측정해 조기 종료를 피한다. */
-function buildGuardianStressWorld(seed: number): WorldState {
-  const cx = 900;
-  const layout: DefenseLayout = {
-    core: { x: cx, y: 0 },
-    turrets: [
-      { type: TURRET_VULCAN, x: cx - 200, y: -150 },
-      { type: TURRET_VULCAN, x: cx - 200, y: 150 },
-      { type: TURRET_MISSILE, x: cx + 150, y: -180 },
-      { type: TURRET_MISSILE, x: cx + 150, y: 180 },
-      { type: TURRET_TESLA, x: cx, y: -260 },
-      { type: TURRET_TESLA, x: cx, y: 260 },
-    ],
-    obstacles: [
-      { x: cx - 60, y: 0, halfW: 40, halfH: 220 },
-      { x: cx + 320, y: -300, halfW: 30, halfH: 30 },
-    ],
-    guardians: [
-      { x: 350, y: -120, snapshot: makeGuardianSnapshot(GUARDIAN_TITAN, 400), performanceCP: PERFORMANCE_FULL, lineageBonusBp: 5000 },
-      { x: 350, y: 120, snapshot: makeGuardianSnapshot(GUARDIAN_INTERCEPTOR, 400), performanceCP: PERFORMANCE_FULL, lineageBonusBp: 5000 },
-    ],
-  };
-  const inv: InvasionConfig = { layout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
-  const cfg: WorldConfig = {
+ * Edge Function 재실행 예산 게이트(`SOFT_RERUN_BUDGET_MS`, verify-invasion/index.ts)와
+ * 같은 값. 벽시계가 이 값을 넘으면 Supabase Edge Runtime CPU/wall 한도에 걸려 **검증 자체가
+ * 실패**할 위험이 커진다(재실행은 동기 루프라 중단 불가).
+ */
+export const INVASION3_RERUN_BUDGET_MS = 20_000;
+
+/** 표본 Ref 1건(정수 5필드). 카탈로그 크기를 넘지 않도록 catalogId 를 접는다. */
+function benchRef(catalogId: number, level: number, ascension: number, rarity: number): InvasionRef {
+  return { catalogId, level, ascension, affixSeed: (catalogId * 2654435761) >>> 0, rarity };
+}
+
+/**
+ * **최악 부하 배치** — 전 슬롯을 채운 만렙 3레이어 배치. 재실행 예산은 평균이 아니라 상한을
+ * 봐야 의미가 있으므로, 빈 슬롯(기본 수비대 lv1)이 아니라 lv99·승급 최대·유니크로 채운다.
+ */
+export function maxedInvasionLayers(): InvasionLayers {
+  const waveSlots: InvasionRef[] = [];
+  for (let i = 0; i < INVASION_WAVE_SLOTS; i++) {
+    waveSlots.push(benchRef(i % FORMATION_COUNT, 99, 5, 3));
+  }
+  const socketCount = INVASION_SOCKET_COUNTS[MAP_TEMPLATE_STRAIGHT] ?? 0;
+  const sockets: InvasionRef[] = [];
+  for (let i = 0; i < socketCount; i++) {
+    sockets.push(benchRef(i % FACILITY_CATALOG_COUNT, 99, 5, 3));
+  }
+  const props: InvasionRef[] = [];
+  for (let i = 0; i < INVASION_PROP_SLOTS; i++) {
+    props.push(benchRef(i % L3_PROP_COUNT, 99, 5, 3));
+  }
+  const guardians: unknown[] = [];
+  for (let i = 0; i < INVASION_GUARDIAN_SLOTS; i++) {
+    guardians.push({
+      x: 240 * (i === 0 ? -1 : 1),
+      y: -160,
+      snapshot: makeGuardianSnapshot(i === 0 ? GUARDIAN_TITAN : GUARDIAN_INTERCEPTOR, 400),
+      performanceCP: PERFORMANCE_FULL,
+      lineageBonusBp: 5000,
+      milestones: 7,
+    });
+  }
+  const modules: InvasionRef[] = [];
+  for (let i = 0; i < INVASION_CORE_MODULE_SLOTS; i++) modules.push(benchRef(i, 99, 5, 3));
+  return normalizeInvasionLayers({
+    l1: { waveSlots },
+    l2: { templateId: MAP_TEMPLATE_STRAIGHT, sockets },
+    l3: {
+      boss: benchRef(DEFAULT_DEFENSE_BOSS_ID, 99, 5, 3),
+      guardians,
+      props,
+      core: { hp: INVASION_CORE_HP, x: 0, y: 0 },
+      modules,
+    },
+  });
+}
+
+/** 3레이어 침공 런 config(플레이어는 죽지 않게 — 18000틱 전부를 실제로 돌려야 한다). */
+export function invasion3BenchConfig(layers: InvasionLayers): WorldConfig {
+  return {
     arenaWidth: 1920,
     arenaHeight: 1080,
     playerSpeed: 720,
@@ -157,70 +208,105 @@ function buildGuardianStressWorld(seed: number): WorldState {
     dashIframes: 10,
     hitIframes: 40,
     playerHp: 1e9,
-    invasion: inv,
+    invasion3: { layers, timeLimitTicks: INVASION_TOTAL_TICKS },
   };
-  const state = createWorld(seed, cfg);
-  const player = state.entities[0]!;
-  player.hp = 1e9;
-  player.maxHp = 1e9;
-  // 수호·포탑이 붙도록 몇 틱 굴려 엔티티를 활성화한 뒤 스트레스 발사체를 얹는다.
-  for (let t = 0; t < 30; t++) stepWorld(state, { moveX: 1, moveY: 0, aim: 0, dash: false, special: 0 });
+}
 
-  const px = player.x;
-  const py = player.y;
-  let s = 0x9e3779b9 ^ seed;
-  const next = (): number => {
-    s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0;
-    return s / 0xffffffff;
+/**
+ * 조종 입력 1프레임(결정론 — Math.random 미사용). `pendingLevelUp` 이면 레벨업 선택을 실어
+ * 프리즈를 푼다.
+ *
+ * ⚠️ 이 처리를 빼면 벤치가 **조용히 무의미해진다.** stepWorld 는 `pendingLevelUp` 동안
+ * 월드를 통째로 정지시키고 tick 만 올린다(world.ts). 침공 런은 편대를 잡아 금방 레벨업하므로,
+ * 선택을 안 실으면 런이 L2 에서 얼어붙은 채 남은 1만여 틱을 빈 루프로 흘려보내고 벽시계가
+ * 실제의 몇 분의 일로 나온다(초기 측정에서 실제로 발생 — 0.4초/L2 정지).
+ */
+function pilotFrame(state: WorldState, i: number): InputFrame {
+  return {
+    moveX: Math.sin(i / 37),
+    moveY: Math.cos(i / 53),
+    aim: (i / 29) % 6.28,
+    dash: i % 90 === 0,
+    special: state.pendingLevelUp ? SPECIAL_POWERUP_PICK : 0,
   };
-  const spread = 1600;
-  for (let i = 0; i < PROJECTILES; i++) {
-    const b = blankEntity('enemyBullet');
-    b.x = px + (next() - 0.5) * spread;
-    b.y = py + (next() - 0.5) * spread;
-    const ang = next() * Math.PI * 2;
-    const sp = 60 + next() * 180;
-    b.vx = Math.cos(ang) * sp;
-    b.vy = Math.sin(ang) * sp;
-    b.radius = 5;
-    b.damage = 0;
-    b.life = 100000;
-    addEntity(state, b);
-  }
-  return state;
 }
 
-function countGuardians(state: WorldState): number {
-  let n = 0;
-  for (const e of state.entities) if (e.kind === 'guardian' && !e.dead) n++;
-  return n;
-}
-function countTurrets(state: WorldState): number {
-  let n = 0;
-  for (const e of state.entities) if (e.kind === 'defenseTurret' && !e.dead) n++;
-  return n;
-}
-
-function measureGuardian(): {
-  avgMs: number;
-  projectiles: number;
-  guardians: number;
-  turrets: number;
+/**
+ * 18000틱 3레이어 런을 **서버가 하는 그대로**(createWorld → stepWorld → hashWorld 전 틱)
+ * 재실행하고 벽시계를 잰다. EF `verifyRun` 의 지배적 비용이 정확히 이 경로다.
+ *
+ * 2패스인 이유: 클라이언트는 라이브로 조종하며 입력을 **기록**하고, 서버는 그 기록을
+ * **재생**한다. 벤치도 같은 구조여야 한다 — 1패스에서 적응형 파일럿으로 입력 로그를 만들고,
+ * 2패스에서 그 로그만으로 재실행해 잰다(측정 구간에 조종 판단 비용이 섞이지 않는다).
+ */
+export function measureInvasion3Rerun(seed = 0x7a11): {
+  elapsedMs: number;
+  ticks: number;
+  peakEntities: number;
+  maxPhase: number;
+  ended: 'victory' | 'gameOver' | 'timeLimit';
 } {
-  const state = buildGuardianStressWorld(0x5121);
-  const idle = emptyInput();
-  for (let t = 0; t < WARMUP_TICKS; t++) stepWorld(state, idle);
-  const projectiles = countProjectiles(state);
-  const guardians = countGuardians(state);
-  const turrets = countTurrets(state);
-  if (state.gameOver || state.victory) throw new Error('guardian bench world ended before measuring — check load setup');
+  const layers = maxedInvasionLayers();
+  const config = invasion3BenchConfig(layers);
+
+  // --- 1패스: 라이브 조종 + 입력 기록(클라이언트 몫). 측정 대상 아님. ---
+  const recorded: InputFrame[] = [];
+  {
+    const live = createWorld(seed, config);
+    for (let i = 0; i < INVASION_TOTAL_TICKS; i++) {
+      const frame = pilotFrame(live, i);
+      recorded.push(frame);
+      stepWorld(live, frame);
+      if (live.gameOver || live.victory) break;
+    }
+  }
+
+  // --- 2패스: 서버 재실행(측정 구간). 틱마다 hashWorld 까지 — verifyRun 과 동일. ---
   const start = performance.now();
-  for (let t = 0; t < MEASURE_TICKS; t++) stepWorld(state, idle);
+  const state = createWorld(seed, config);
+  let peakEntities = state.entities.length;
+  let maxPhase = state.invasion3?.phase ?? 0;
+  for (const input of recorded) {
+    stepWorld(state, input);
+    void hashWorld(state);
+    const n = state.entities.length;
+    if (n > peakEntities) peakEntities = n;
+    const p = state.invasion3?.phase ?? 0;
+    if (p > maxPhase) maxPhase = p;
+  }
   const elapsedMs = performance.now() - start;
-  return { avgMs: elapsedMs / MEASURE_TICKS, projectiles, guardians, turrets };
+  return {
+    elapsedMs,
+    ticks: state.tick,
+    peakEntities,
+    maxPhase,
+    ended: state.victory ? 'victory' : state.gameOver ? 'gameOver' : 'timeLimit',
+  };
+}
+
+function reportInvasion3(): void {
+  console.log('\n[simBench] --- M7a 침공 3레이어 서버 재실행 예산(18000틱) ---');
+  const m = measureInvasion3Rerun();
+  const s = (m.elapsedMs / 1000).toFixed(2);
+  console.log(
+    `[simBench] invasion3 rerun: ${s}s (${m.elapsedMs.toFixed(0)}ms) ` +
+      `ticks=${m.ticks} peakEntities=${m.peakEntities} maxPhase=L${m.maxPhase + 1} ended=${m.ended}`,
+  );
+  console.log(
+    m.elapsedMs <= INVASION3_RERUN_BUDGET_MS
+      ? `[simBench] PASS: ${s}s <= ${INVASION3_RERUN_BUDGET_MS / 1000}s (EF SOFT_RERUN_BUDGET_MS).`
+      : `[simBench] FAIL: ${s}s > ${INVASION3_RERUN_BUDGET_MS / 1000}s — L3 엔티티 상한·컬링 반경을 조여야 한다.`,
+  );
 }
 
 function main(): void {
+  // `--invasion3` 만 주면 M7a 재실행 예산 실측만 돌린다(구 시나리오는 수 분이 걸린다).
+  // `process` 를 전역 타입으로 가정하지 않는다(sim 과 같은 플랫폼 무참조 규율 — memProbe.ts 선례).
+  const argv = (globalThis as { process?: { argv?: readonly string[] } }).process?.argv ?? [];
+  if (argv.includes('--invasion3')) {
+    reportInvasion3();
+    return;
+  }
   const budget = 1000 / 60;
   console.log(`[simBench] load: ${PROJECTILES} enemy bullets + ${ENEMIES} enemies, scroll map active`);
   console.log(`[simBench] frame budget @60fps = ${budget.toFixed(2)} ms/tick\n`);
@@ -253,24 +339,8 @@ function main(): void {
       : `[simBench] FAIL: ${winner.avgMs.toFixed(3)} ms > ${budget.toFixed(2)} ms budget.`,
   );
 
-  // --- M5 Phase D1: 수호 포함 방어전 시나리오 ---
-  console.log('\n[simBench] --- 수호 포함 방어전(침공 런) 시나리오 ---');
-  let gBest = Infinity;
-  let gLast = { avgMs: 0, projectiles: 0, guardians: 0, turrets: 0 };
-  for (let r = 0; r < 3; r++) {
-    gLast = measureGuardian();
-    if (gLast.avgMs < gBest) gBest = gLast.avgMs;
-  }
-  console.log(
-    `[simBench] guardian scenario: ${gBest.toFixed(3)} ms/tick  ` +
-      `(${(budget / gBest).toFixed(1)}x budget headroom, ` +
-      `${gLast.projectiles} projectiles + ${gLast.guardians} guardians + ${gLast.turrets} turrets)`,
-  );
-  console.log(
-    gBest <= budget
-      ? `[simBench] PASS: ${gBest.toFixed(3)} ms <= ${budget.toFixed(2)} ms budget (AC9 수호 포함 60fps).`
-      : `[simBench] FAIL: ${gBest.toFixed(3)} ms > ${budget.toFixed(2)} ms budget.`,
-  );
+  // --- M7a L6: 침공 3레이어 서버 재실행 예산 (구 M5 수호 방어전 시나리오를 대체) ---
+  reportInvasion3();
 }
 
 main();

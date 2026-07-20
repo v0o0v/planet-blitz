@@ -29,17 +29,20 @@ import {
   placementTargetName,
 } from '../src/ui/controlTower.js';
 import { SEED_BASES } from '../data/seedBases.js';
-import { TURRET_VULCAN, type DefenseLayout } from '../src/sim/defense.js';
+import { emptyInvasionLayers, SAMPLE_REF } from '../src/sim/invasion/normalize.js';
+import type { InvasionLayers } from '../src/sim/invasion/types.js';
 
 // computePlacementInvadeState 등이 한국어 표시 문자열을 돌려주므로 로케일을 ko 로 고정한다.
 beforeEach(() => setLocale('ko'));
 afterEach(() => setLocale('en'));
 
-const VALID_LAYOUT: DefenseLayout = {
-  core: { x: 400, y: 0 },
-  turrets: [{ type: TURRET_VULCAN, x: 200, y: 0 }],
-  obstacles: [],
-};
+/** 유효한 3레이어 배치(웨이브 슬롯 1칸만 채운 최소 정규형). */
+function validLayers(): InvasionLayers {
+  const l = emptyInvasionLayers();
+  l.l1.waveSlots[0] = { ...SAMPLE_REF };
+  return l;
+}
+const VALID_LAYOUT: InvasionLayers = validLayers();
 
 function pt(over: Partial<InvasionTarget> = {}): InvasionTarget {
   return {

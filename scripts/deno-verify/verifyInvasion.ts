@@ -1,11 +1,15 @@
 /**
- * verify-invasion 검증 코어 — Deno 검증 + 위조/조작 거부 러너 (M4 Phase D · D1 · AC2).
+ * verify-invasion 검증 코어 — Deno 검증 + 위조/조작 거부 러너 (M7a 침공 3레이어 · ADR-0017).
  *
- * verify-run 러너(verifyRun.ts)의 침공판. 다음을 Deno 에서 증거화한다:
- *   (정상)   서버 권위 방어 배치로 정직하게 제출하면 accept.
- *   (게이트) 침공은 hashStream 필수 · config.invasion 필수 · 방어 배치가 서버 값과
- *            정확히 일치해야 함(약화된 가짜 방어 거부) · 입력이 제한 시간 이내여야 함.
- *   (위조)   조작 해시 · 변조 입력 · 트림 로그 · 승패 뒤집기 100% 거부.
+ * verify-run 러너(verifyRun.ts)의 침공판. `tests/verifyInvasion.test.ts` 와 **같은 계약을
+ * 다른 런타임(Deno/V8)** 에서 굴려 EF 코어가 Node 와 비트 동일하게 판정하는지를 증거화한다.
+ * 두 파일은 원래 동형이며, 여기서는 교차 런타임 증거로서 의미 있는 최소 집합만 유지한다:
+ *   (정상)   서버 권위 3레이어 배치로 정직하게 제출하면 accept.
+ *   (게이트) hashStream 필수 · `config.invasion3` 필수 · 배치가 서버 값과 정확히 일치 ·
+ *            입력 길이가 18000틱 이내.
+ *   (위조)   스키마에서 파생한 변조 지점 전수 거부(양방향) · 조작 해시 · 변조 입력 ·
+ *            트림 로그 · 승패 뒤집기.
+ *   (권위)   수호 권위 주입(고정 길이 2 · 위치 매핑 · 마일스톤) · 스냅샷 해석 5분기.
  *
  * 실행: `deno task verify-invasion` (scripts/deno-verify 에서). sloppy-imports 로
  * `.js → .ts` resolve. 불일치 시 종료 코드 1.
@@ -23,25 +27,35 @@ import type {
   AuthoritativeGuardianRow,
   InvasionSnapshotRow,
 } from '../../supabase/functions/verify-invasion/verifyInvasionCore.ts';
-import { branchBonusBp } from '../../data/lineage.ts';
+import { branchBonusBp, guardianMilestones, normalizeMilestones } from '../../data/lineage.ts';
 import { runReplay } from '../../src/sim/replay.ts';
+import { createWorld, stepWorld, SPECIAL_POWERUP_PICK } from '../../src/sim/world.ts';
 import type { InputFrame, WorldConfig } from '../../src/sim/world.ts';
 import {
-  DEFAULT_TIME_LIMIT_TICKS,
-  MAINTENANCE_FULL,
-  TURRET_VULCAN,
-  TURRET_SNIPER,
-  TURRET_SHOTGUN,
-} from '../../src/sim/defense.ts';
-import type { DefenseLayout } from '../../src/sim/defense.ts';
+  enumerateLayerFields,
+  mutateLayerField,
+  normalizeInvasionLayers,
+} from '../../src/sim/invasion/normalize.ts';
+import type { InvasionLayers, InvasionRef } from '../../src/sim/invasion/types.ts';
+import {
+  INVASION_CORE_HP,
+  INVASION_CORE_MODULE_SLOTS,
+  INVASION_GUARDIAN_SLOTS,
+  INVASION_PROP_SLOTS,
+  INVASION_SOCKET_COUNTS,
+  INVASION_TOTAL_TICKS,
+  INVASION_WAVE_SLOTS,
+  MAP_TEMPLATE_STRAIGHT,
+} from '../../src/sim/invasion/constants.ts';
+import { FORMATION_COUNT } from '../../data/invasion/formations.ts';
+import { FACILITY_CATALOG_COUNT } from '../../data/invasion/facilities.ts';
+import { L3_PROP_COUNT } from '../../data/invasion/props.ts';
+import { DEFAULT_DEFENSE_BOSS_ID } from '../../data/invasion/defenseBosses.ts';
 import {
   GUARDIAN_TITAN,
   GUARDIAN_INTERCEPTOR,
-  PERFORMANCE_FULL,
   makeGuardianSnapshot,
 } from '../../data/guardian.ts';
-import type { CardInstance } from '../../data/defenseCards.ts';
-import type { AttackerMatchup, DefenseCardConfig } from '../../src/sim/cardEffects.ts';
 
 const RESET = '\x1b[0m';
 const GREEN = '\x1b[32m';
@@ -49,21 +63,54 @@ const RED = '\x1b[31m';
 const CYAN = '\x1b[36m';
 const DIM = '\x1b[2m';
 
-const SERVER_LAYOUT: DefenseLayout = {
-  core: { x: 900, y: 0 },
-  turrets: [
-    { type: TURRET_VULCAN, x: 400, y: -150 },
-    { type: TURRET_SNIPER, x: 500, y: 200 },
-    { type: TURRET_SHOTGUN, x: 250, y: 0 },
-  ],
-  obstacles: [{ x: 450, y: 0, halfW: 50, halfH: 120 }],
-};
+// ---------------------------------------------------------------------------
+// 표본 배치 — 전 슬롯을 채운다(위조 파생 커버리지를 위해 null 슬롯을 남기지 않는다)
+// ---------------------------------------------------------------------------
 
-function invasionConfig(
-  layout: DefenseLayout,
-  timeLimitTicks = DEFAULT_TIME_LIMIT_TICKS,
-  maintenance?: number,
-): WorldConfig {
+function ref(catalogId: number, level: number, ascension: number, rarity: number): InvasionRef {
+  return { catalogId, level, ascension, affixSeed: (catalogId * 2654435761) >>> 0, rarity };
+}
+
+/**
+ * 전 슬롯이 채워진 3레이어 배치. **중간값**(레벨 40·승급 2·등급 2)을 쓴다 — 클램프 경계에
+ * 붙여 두면 `mutateLayerField` 가 ±1 양방향 모두에서 정규화 후 같은 값이 되어 변조 케이스를
+ * 만들지 못하는 필드가 생긴다.
+ */
+function fullLayers(): InvasionLayers {
+  const waveSlots: InvasionRef[] = [];
+  for (let i = 0; i < INVASION_WAVE_SLOTS; i++) waveSlots.push(ref(i % FORMATION_COUNT, 40, 2, 2));
+  const socketCount = INVASION_SOCKET_COUNTS[MAP_TEMPLATE_STRAIGHT] ?? 0;
+  const sockets: InvasionRef[] = [];
+  for (let i = 0; i < socketCount; i++) sockets.push(ref(i % FACILITY_CATALOG_COUNT, 30, 1, 1));
+  const props: InvasionRef[] = [];
+  for (let i = 0; i < INVASION_PROP_SLOTS; i++) props.push(ref(i % L3_PROP_COUNT, 20, 1, 1));
+  const guardians: unknown[] = [];
+  for (let i = 0; i < INVASION_GUARDIAN_SLOTS; i++) {
+    guardians.push({
+      x: i === 0 ? -240 : 240,
+      y: -160,
+      snapshot: makeGuardianSnapshot(i === 0 ? GUARDIAN_TITAN : GUARDIAN_INTERCEPTOR, 140),
+      performanceCP: 7500,
+      lineageBonusBp: 1200,
+      milestones: 3,
+    });
+  }
+  const modules: InvasionRef[] = [];
+  for (let i = 0; i < INVASION_CORE_MODULE_SLOTS; i++) modules.push(ref(i, 10, 1, 1));
+  return normalizeInvasionLayers({
+    l1: { waveSlots },
+    l2: { templateId: MAP_TEMPLATE_STRAIGHT, sockets },
+    l3: {
+      boss: ref(DEFAULT_DEFENSE_BOSS_ID, 25, 1, 2),
+      guardians,
+      props,
+      core: { hp: INVASION_CORE_HP, x: 0, y: 0 },
+      modules,
+    },
+  });
+}
+
+function invasion3Config(layers: InvasionLayers, timeLimitTicks = INVASION_TOTAL_TICKS): WorldConfig {
   return {
     arenaWidth: 1920,
     arenaHeight: 1080,
@@ -73,20 +120,33 @@ function invasionConfig(
     dashIframes: 10,
     hitIframes: 40,
     playerHp: 100,
-    invasion: { layout, timeLimitTicks, maintenance },
+    invasion3: { layers, timeLimitTicks },
   };
 }
 
-function buildInputs(n: number): InputFrame[] {
+/**
+ * 조종 입력 1프레임. `pendingLevelUp` 이면 레벨업 선택을 실어 프리즈를 푼다 — 안 그러면
+ * stepWorld 가 월드를 정지시킨 채 tick 만 올려 런이 레이어 하나에서 얼어붙는다(측정 무의미).
+ */
+function pilotFrame(pendingLevelUp: boolean, i: number): InputFrame {
+  return {
+    moveX: Math.sin(i / 37),
+    moveY: Math.cos(i / 53),
+    aim: (i / 29) % 6.28,
+    dash: i % 90 === 0,
+    special: pendingLevelUp ? SPECIAL_POWERUP_PICK : 0,
+  };
+}
+
+/** 라이브 런을 굴려 실제 클라이언트가 남길 법한 입력 로그를 기록한다(최대 n틱). */
+function recordInputs(seed: number, config: WorldConfig, n: number): InputFrame[] {
+  const state = createWorld(seed, config);
   const out: InputFrame[] = [];
   for (let i = 0; i < n; i++) {
-    out.push({
-      moveX: Math.sin(i / 40),
-      moveY: Math.cos(i / 55),
-      aim: (i / 30) % 6.28,
-      dash: i % 90 === 0,
-      special: 0,
-    });
+    const frame = pilotFrame(state.pendingLevelUp, i);
+    out.push(frame);
+    stepWorld(state, frame);
+    if (state.gameOver || state.victory) break;
   }
   return out;
 }
@@ -117,15 +177,19 @@ function honest(seed: number, config: WorldConfig, inputs: InputFrame[]): Submis
   };
 }
 
+/** 재실행이 실제로 갈렸을 때 나올 수 있는 사유들(어느 지점에서 먼저 잡히든 거부면 통과). */
+const DIVERGE = ['hash-stream-divergence', 'final-hash-mismatch', 'outcome-mismatch'];
+
 function main(): number {
-  console.log(`${CYAN}=== verify-invasion 검증 코어 — Deno 검증 + 위조/조작 거부 ===${RESET}`);
+  console.log(`${CYAN}=== verify-invasion 검증 코어 — 3레이어 Deno 검증 + 위조 거부 ===${RESET}`);
   console.log(`${DIM}Deno ${Deno.version.deno} / V8 ${Deno.version.v8}${RESET}\n`);
 
   let failures = 0;
   const seed = 7;
-  const inputs = buildInputs(400);
-  const cfg = invasionConfig(SERVER_LAYOUT);
-  const ctx: InvasionServerContext = { layout: SERVER_LAYOUT, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
+  const layers = fullLayers();
+  const cfg = invasion3Config(layers);
+  const inputs = recordInputs(seed, cfg, 400);
+  const ctx: InvasionServerContext = { layers, timeLimitTicks: INVASION_TOTAL_TICKS };
   const base = honest(seed, cfg, inputs);
 
   function expectAccept(label: string, sub: unknown, c: InvasionServerContext = ctx): void {
@@ -137,9 +201,14 @@ function main(): number {
       console.log(`${RED}FAIL${RESET} ${label}: 정직한 제출이 reject(${res.reason})`);
     }
   }
-  function expectReject(label: string, sub: unknown, expected: readonly string[], c: InvasionServerContext = ctx): void {
+  function expectReject(
+    label: string,
+    sub: unknown,
+    expected: readonly string[],
+    c: InvasionServerContext = ctx,
+  ): void {
     const res = verifyInvasion(sub, c);
-    if (res.verdict === 'reject' && expected.includes(res.reason)) {
+    if (res.verdict === 'reject' && expected.includes(res.reason ?? '')) {
       console.log(`${GREEN}PASS${RESET} ${label}  ${DIM}reason=${res.reason}${RESET}`);
     } else {
       failures++;
@@ -148,301 +217,230 @@ function main(): number {
       );
     }
   }
+  function check(label: string, ok: boolean, detail = ''): void {
+    if (ok) {
+      console.log(`${GREEN}PASS${RESET} ${label}`);
+    } else {
+      failures++;
+      console.log(`${RED}FAIL${RESET} ${label}${detail === '' ? '' : `: ${detail}`}`);
+    }
+  }
 
   // --- 정상: 서버 권위 배치로 정직하게 제출 → accept ---
-  expectAccept('정직한 침공 제출', base);
+  expectAccept('정직한 3레이어 침공 제출', base);
 
   // --- 게이트 1: hashStream 필수화 ---
-  const noStream: Submission = { ...base, claim: { finalHash: base.claim.finalHash, outcome: base.claim.outcome } };
-  expectReject('hashStream 부재', noStream, ['hash-stream-required']);
+  expectReject(
+    'hashStream 부재',
+    { ...base, claim: { finalHash: base.claim.finalHash, outcome: base.claim.outcome } },
+    ['hash-stream-required'],
+  );
 
-  // --- 게이트 2: config.invasion 필수 ---
-  const noConfig: Submission = { seed: base.seed, inputs: base.inputs, claim: base.claim };
-  expectReject('config 부재', noConfig, ['config-required']);
-  const noInvasion: Submission = { ...base, config: { ...cfg, invasion: undefined } as WorldConfig };
-  expectReject('invasion 블록 부재', noInvasion, ['invasion-config-required']);
+  // --- 게이트 2: config.invasion3 필수 ---
+  expectReject('config 부재', { seed: base.seed, inputs: base.inputs, claim: base.claim }, [
+    'config-required',
+  ]);
+  expectReject(
+    'invasion3 블록 부재',
+    { ...base, config: { ...cfg, invasion3: undefined } as WorldConfig },
+    ['invasion-config-required'],
+  );
 
-  // --- 게이트 3: 방어 배치 정당성(약화된 가짜 방어 거부) ---
-  const weakerLayout: DefenseLayout = {
-    ...SERVER_LAYOUT,
-    turrets: [{ type: TURRET_VULCAN, x: 400, y: -150 }], // 포탑 3→1로 약화
+  // --- 게이트 3: 정규화 대칭(DB 에 쓰레기가 섞여도 정직 런은 accept) ---
+  // 클라·서버가 같은 normalizeInvasionLayers 를 쓰므로, 서버 raw 에 범위 밖 값이 있어도 정규형이
+  // 같으면 accept 되어야 한다(정규화 갈림으로 인한 오거부 0).
+  const dirty = {
+    ...(layers as unknown as Record<string, unknown>),
+    l2: {
+      templateId: MAP_TEMPLATE_STRAIGHT,
+      // 소켓 배열 뒤에 초과분을 붙인다 → 정규화가 잘라 내 원본과 같은 정규형이 된다.
+      sockets: [...layers.l2.sockets, ref(0, 1, 0, 0), ref(1, 1, 0, 0)],
+    },
   };
-  const weakerSub = honest(seed, invasionConfig(weakerLayout), inputs); // 약화 배치로 정직 재현
-  expectReject('약화된 가짜 방어(포탑 축소)', weakerSub, ['defense-mismatch']);
-  // 제한 시간 조작도 defense-mismatch.
-  const timeSub = honest(seed, invasionConfig(SERVER_LAYOUT, DEFAULT_TIME_LIMIT_TICKS + 100), inputs);
-  expectReject('제한 시간 조작', timeSub, ['defense-mismatch']);
-
-  // --- 게이트 3.5: 서버 layout 정규화 대칭(리뷰 MED-3) ---
-  // DB layout 에 정규화 대상 쓰레기(범위 밖 유형·비유한 좌표·halfW<=0)가 섞여 있어도,
-  // 클라이언트가 normalizeLayout 본으로 런·제출한 정직 침공은 accept 되어야 한다.
-  const dirtyServerLayout = {
-    core: { x: 900, y: 0 },
-    turrets: [
-      { type: TURRET_VULCAN, x: 400, y: -150 },
-      { type: 99, x: 1, y: 1 }, // 범위 밖 유형 → 클라·서버 모두 드롭
-      { type: TURRET_SNIPER, x: 500, y: 200 },
-      { type: TURRET_SHOTGUN, x: 250, y: 0 },
-      { type: TURRET_VULCAN, x: Number.NaN, y: 3 }, // 비유한 좌표 → 드롭
-    ],
-    obstacles: [
-      { x: 450, y: 0, halfW: 50, halfH: 120 },
-      { x: 1, y: 1, halfW: 0, halfH: 10 }, // halfW<=0 → 드롭
-    ],
-    guardianSlots: [{ id: 'm5' }], // 대조·해시 대상 아님
-  };
-  // 정규화 결과 = SERVER_LAYOUT 과 동일 → 기존 정직 제출(base)이 dirty 컨텍스트에서도 accept.
-  expectAccept('서버 layout 정규화 대칭(쓰레기 항목 필터)', base, {
-    layout: dirtyServerLayout,
-    timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
-  });
-  // 정규화 불능(코어 좌표 손상) → server-layout-invalid.
-  expectReject('손상된 서버 layout', base, ['server-layout-invalid'], {
-    layout: { core: { x: 'broken', y: 0 }, turrets: [], obstacles: [] },
-    timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
+  expectAccept('서버 배치 정규화 대칭(초과 슬롯 절단)', base, {
+    layers: dirty,
+    timeLimitTicks: INVASION_TOTAL_TICKS,
   });
 
-  // --- 게이트 3.7: 정비도(풍화) 반영·발산(ADR-0006, Phase E EF 배선) ---
-  // 서버 재실행은 server.maintenance 로 포탑 발사 간격을 스케일한다(0%→2배 느림). 따라서:
-  //  (정상) 클라가 서버 정비도(0%)와 동일 정비도로 런·제출 → 재실행 해시 일치 → accept.
-  //  (발산) 클라가 완전 정비(base=풍화 미반영)로 런했는데 서버는 0% → 재실행 거동 상이 →
-  //         hashStream 발산으로 거부. 이 배선이 없으면 서버가 항상 완전 정비로 돌아
-  //         풍화가 검증에 반영되지 않는다(Phase E 완결 조건).
-  const ctxWeathered: InvasionServerContext = {
-    layout: SERVER_LAYOUT,
-    timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
-    maintenance: 0, // 완전 방치(0%) → 포탑 발사 간격 2배
-  };
-  const honestWeathered = honest(seed, invasionConfig(SERVER_LAYOUT, DEFAULT_TIME_LIMIT_TICKS, 0), inputs);
-  expectAccept('정비도 반영 정직 침공(풍화 0%)', honestWeathered, ctxWeathered);
-  // 완전 정비로 계산한 base(maintenance 미지정=MAINTENANCE_FULL)를 풍화 0% 서버로 검증 → 발산.
-  expectReject('정비도 불일치(완전정비 런 vs 풍화 서버)', base, [
-    'hash-stream-divergence',
-    'final-hash-mismatch',
-    'outcome-mismatch',
-  ], ctxWeathered);
-  // 역방향 대칭 확인: 완전 정비 서버에는 base(완전 정비 런)가 정상 accept(하위호환 — maintenance
-  // 미지정 컨텍스트는 MAINTENANCE_FULL 로 정규화되어 기존 거동 불변).
-  expectAccept('완전 정비 서버(하위호환)', base, {
-    layout: SERVER_LAYOUT,
-    timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
-    maintenance: MAINTENANCE_FULL,
-  });
-
-  // --- 게이트 3.8: M5 수호 기체(AC2 서버 재현·Node↔Deno 결정론) ---
-  // 수호 2기 포함 방어전을 서버 권위 배치로 정직 제출 → accept(수호 AI 추적·사격이 Deno
-  // 에서도 Node 와 bit-identical 재현). 위조(성능·스냅샷)는 defense-mismatch.
-  const guardianLayout: DefenseLayout = {
-    ...SERVER_LAYOUT,
-    guardians: [
-      { x: 350, y: -100, snapshot: makeGuardianSnapshot(GUARDIAN_TITAN, 140), performanceCP: PERFORMANCE_FULL, lineageBonusBp: 1200 },
-      { x: 400, y: 150, snapshot: makeGuardianSnapshot(GUARDIAN_INTERCEPTOR, 90), performanceCP: 7500, lineageBonusBp: 800 },
-    ],
-  };
-  const gCtx: InvasionServerContext = { layout: guardianLayout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
-  const gSub = honest(seed, invasionConfig(guardianLayout), inputs);
-  expectAccept('수호 기체 포함 정직 침공(Node↔Deno)', gSub, gCtx);
-  // 성능 위조(방치 수호를 신선하다 주장).
-  const forgedPerf: DefenseLayout = {
-    ...guardianLayout,
-    guardians: [guardianLayout.guardians![0]!, { ...guardianLayout.guardians![1]!, performanceCP: PERFORMANCE_FULL }],
-  };
-  expectReject('수호 성능 위조', honest(seed, invasionConfig(forgedPerf), inputs), ['defense-mismatch'], gCtx);
-
-  // --- 게이트 3.9: M5 수호 권위 주입(DB → 서버 layout, 정비도 주입과 대칭) ---
-  // index.ts 배선이 저장 layout 의 수호 슬롯을 라이브 DB(guardians.performance·profiles.
-  // lineage_guardian_level)로 덮어쓴다. 여기서는 그 순수 주입 함수와 대조 계약을 증거화한다.
-  const dbRows: AuthoritativeGuardianRow[] = [
-    { data: makeGuardianSnapshot(GUARDIAN_TITAN, 140), performance: 60 }, // 서버 풍화 60%
-    { data: makeGuardianSnapshot(GUARDIAN_INTERCEPTOR, 90), performance: 75 }, // 서버 풍화 75%
-  ];
-  const guardianLevel = 10; // branchBonusBp(10)=floor(5000*10/30)=1666
-  // 저장 layout(defenses.layout): 슬롯 위치 + 공격자가 주장하는 위조 성능/보너스(풀성능·풀보너스).
-  const storedForgedLayout: DefenseLayout = {
-    ...SERVER_LAYOUT,
-    guardians: [
-      { x: 350, y: -100, snapshot: makeGuardianSnapshot(GUARDIAN_TITAN, 140), performanceCP: PERFORMANCE_FULL, lineageBonusBp: 5000 },
-      { x: 400, y: 150, snapshot: makeGuardianSnapshot(GUARDIAN_INTERCEPTOR, 90), performanceCP: PERFORMANCE_FULL, lineageBonusBp: 5000 },
-    ],
-  };
-  const authoritativeLayout = injectGuardianAuthority(storedForgedLayout, dbRows, guardianLevel) as DefenseLayout;
-  // 단위 검증: 성능·보너스가 DB 권위로 덮이고 슬롯 위치는 보존되는가.
-  const expectBonus = branchBonusBp(guardianLevel);
+  // --- 게이트 4: 시간 예산 3중 일치 ---
+  expectReject(
+    '제한 시간 조작(18000 아님)',
+    {
+      ...base,
+      config: { ...cfg, invasion3: { layers, timeLimitTicks: INVASION_TOTAL_TICKS + 1 } },
+    },
+    ['defense-mismatch'],
+  );
   {
-    const g0 = authoritativeLayout.guardians?.[0];
-    const g1 = authoritativeLayout.guardians?.[1];
-    const ok =
-      g0 !== undefined && g1 !== undefined &&
-      g0.performanceCP === performanceToCenti(60) && g1.performanceCP === performanceToCenti(75) &&
-      g0.lineageBonusBp === expectBonus && g1.lineageBonusBp === expectBonus &&
-      g0.x === 350 && g0.y === -100 && g1.x === 400 && g1.y === 150;
-    if (ok) {
-      console.log(`${GREEN}PASS${RESET} 수호 권위 주입 단위(성능·보너스 덮어쓰기·위치 보존)`);
-    } else {
-      failures++;
-      console.log(`${RED}FAIL${RESET} 수호 권위 주입 단위: ${JSON.stringify(authoritativeLayout.guardians)}`);
+    const tooLong = new Array<InputFrame>(INVASION_TOTAL_TICKS + 1).fill(inputs[0]!);
+    expectReject(
+      `입력 ${INVASION_TOTAL_TICKS + 1}틱(상한 초과)`,
+      { ...base, inputs: tooLong },
+      ['invasion-inputs-too-long'],
+    );
+  }
+
+  // --- 게이트 5: 위조 전수 거부(스키마 파생 — 하드코딩 목록 없음) ---
+  // 필드가 늘면 케이스가 자동으로 늘고, 열거가 조용히 비면 하한 가드가 잡는다.
+  {
+    const fields = enumerateLayerFields(layers);
+    check(
+      `위조 변조 지점 열거(${fields.length}개)`,
+      fields.length > 100,
+      `열거가 ${fields.length}개뿐 — 파생이 끊겼다`,
+    );
+    let bad = 0;
+    for (const f of fields) {
+      const mutated = mutateLayerField(layers, f);
+      // ① 서버 권위만 변조 — 정직 제출이 서버 값과 어긋난다.
+      const a = verifyInvasion(base, { layers: mutated, timeLimitTicks: INVASION_TOTAL_TICKS });
+      // ② 제출만 변조 — 약화된 가짜 방어를 얹은 제출.
+      const b = verifyInvasion(
+        { ...base, config: { ...cfg, invasion3: { layers: mutated, timeLimitTicks: INVASION_TOTAL_TICKS } } },
+        ctx,
+      );
+      if (a.verdict !== 'reject' || a.reason !== 'defense-mismatch') bad++;
+      else if (b.verdict !== 'reject' || b.reason !== 'defense-mismatch') bad++;
+    }
+    check(`위조 ${fields.length}지점 × 양방향 전수 거부`, bad === 0, `${bad}건이 통과했다`);
+  }
+
+  // --- 게이트 6: 구 invasion 블록 부착이 재실행 월드를 오염시키지 않는다 ---
+  // L11 에서 구 단일 아레나 침공(`config.invasion` 소비 경로)이 sim 에서 통째로 삭제됐다 —
+  // 이제 그 키는 어떤 엔티티도 만들지 못하므로 EF 가 따로 떼어낼 필요가 없다. 여기서 재는 것은
+  // "구 키를 실어 보내도 정직한 3레이어 런이 오거부되지 않는가"다.
+  {
+    const withLegacy = {
+      ...base,
+      config: {
+        ...cfg,
+        invasion: { layout: { core: { x: 0, y: 0 }, turrets: [], obstacles: [] }, timeLimitTicks: 10800 },
+      } as WorldConfig,
+    };
+    const res = verifyInvasion(withLegacy, ctx);
+    check(
+      '구 invasion 블록을 얹어도 재실행이 오염되지 않는다(accept)',
+      res.verdict === 'accept',
+      `verdict=${res.verdict} reason=${res.reason}`,
+    );
+  }
+
+  // --- 게이트 7: 정비도(풍화) 반영·발산(ADR-0006) ---
+  {
+    const weathered: InvasionServerContext = {
+      layers,
+      timeLimitTicks: INVASION_TOTAL_TICKS,
+      maintenance: 0,
+    };
+    const wCfg: WorldConfig = {
+      ...cfg,
+      invasion3: { layers, timeLimitTicks: INVASION_TOTAL_TICKS, maintenance: 0 },
+    };
+    const wInputs = recordInputs(seed, wCfg, 300);
+    expectAccept('정비도 반영 정직 침공(풍화 0%)', honest(seed, wCfg, wInputs), weathered);
+    // 완전 정비로 계산한 base 를 풍화 0% 서버로 검증 → 재실행 거동 상이 → 발산.
+    expectReject('정비도 불일치(완전정비 런 vs 풍화 서버)', base, DIVERGE, weathered);
+  }
+
+  // --- 게이트 8: 수호 권위 주입(SQL·EF·클라 3자 계약) ---
+  {
+    const dbRows: AuthoritativeGuardianRow[] = [
+      { data: makeGuardianSnapshot(GUARDIAN_TITAN, 140), performance: 60 },
+      { data: makeGuardianSnapshot(GUARDIAN_INTERCEPTOR, 90), performance: 75 },
+    ];
+    const guardianLevel = 10;
+    const authLayers = injectGuardianAuthority(layers, dbRows, guardianLevel) as InvasionLayers;
+    const g = authLayers.l3.guardians;
+    check(
+      '수호 주입 배열은 고정 길이 2(밀집화 금지)',
+      g.length === INVASION_GUARDIAN_SLOTS,
+      `length=${g.length}`,
+    );
+    const expectBonus = branchBonusBp(guardianLevel);
+    const expectMs = normalizeMilestones(guardianMilestones(guardianLevel));
+    check(
+      '성능·계보 보너스·마일스톤이 DB 권위로 덮이고 슬롯 좌표는 보존된다',
+      g[0]?.performanceCP === performanceToCenti(60) &&
+        g[1]?.performanceCP === performanceToCenti(75) &&
+        g[0]?.lineageBonusBp === expectBonus &&
+        g[1]?.lineageBonusBp === expectBonus &&
+        g[0]?.milestones === expectMs &&
+        g[1]?.milestones === expectMs &&
+        g[0]?.x === -240 &&
+        g[1]?.x === 240,
+      JSON.stringify(g.map((p) => (p === null ? null : { x: p.x, cp: p.performanceCP, ms: p.milestones }))),
+    );
+    // 활성 수호가 1기면 슬롯 0 만 채우고 슬롯 1 은 null 로 남는다(위치 매핑 — 밀집화하면
+    // 2기 중 1기만 있는 중간 상태에서 SQL·EF·클라가 갈린다).
+    const oneRow = injectGuardianAuthority(layers, [dbRows[0]!], guardianLevel) as InvasionLayers;
+    check(
+      '활성 수호 1기 → [placement, null] (위치 매핑)',
+      oneRow.l3.guardians.length === INVASION_GUARDIAN_SLOTS &&
+        oneRow.l3.guardians[0] !== null &&
+        oneRow.l3.guardians[1] === null,
+      JSON.stringify(oneRow.l3.guardians),
+    );
+    // 정직: 공격자가 서버 권위 주입 배치로 런·제출 → accept.
+    const authCfg = invasion3Config(normalizeInvasionLayers(authLayers));
+    const authCtx: InvasionServerContext = { layers: authLayers, timeLimitTicks: INVASION_TOTAL_TICKS };
+    const authInputs = recordInputs(seed, authCfg, 300);
+    expectAccept('수호 권위 주입 후 정직 침공(Node↔Deno)', honest(seed, authCfg, authInputs), authCtx);
+    // 위조: 공격자가 저장 위조 배치(풀성능·풀보너스)로 런·제출 → 권위 주입본과 대조 → 거부.
+    expectReject('수호 성능·보너스 위조 제출', base, ['defense-mismatch'], authCtx);
+  }
+
+  // --- 게이트 9: 침공 권위 스냅샷 해석(소유권·신선도·재사용 5분기) ---
+  {
+    const nowMs = 1_000_000_000_000;
+    const snapLayers = layers as unknown;
+    const goodSnap: InvasionSnapshotRow = {
+      attackerId: 'atk-1',
+      defenseId: 'def-1',
+      authorityLayers: snapLayers,
+      authorityMaintenanceDb: 80,
+      card: undefined,
+      createdAtMs: nowMs - 60_000,
+    };
+    const baseParams = {
+      invasionSnapshotId: 'snap-1',
+      invasionAttackerId: 'atk-1',
+      invasionDefenseId: 'def-1',
+      snapshot: goodSnap,
+      nowMs,
+      reused: false,
+    };
+    const ok = resolveSnapshotAuthority(baseParams);
+    check(
+      '스냅샷 정상 경로(소유권·신선·미재사용)',
+      ok.source === 'snapshot' && ok.layers === snapLayers && ok.maintenanceDb === 80,
+      JSON.stringify(ok),
+    );
+    const liveCases: readonly [string, Parameters<typeof resolveSnapshotAuthority>[0], string][] = [
+      ['snapshot_id 없음', { ...baseParams, invasionSnapshotId: null }, 'no-snapshot-id'],
+      ['스냅샷 행 부재', { ...baseParams, snapshot: null }, 'snapshot-missing'],
+      ['소유권 불일치(attacker)', { ...baseParams, invasionAttackerId: 'atk-9' }, 'ownership-mismatch'],
+      ['소유권 불일치(defense)', { ...baseParams, invasionDefenseId: 'def-9' }, 'ownership-mismatch'],
+      [
+        '신선도 초과(스테일)',
+        { ...baseParams, snapshot: { ...goodSnap, createdAtMs: nowMs - SNAPSHOT_FRESHNESS_MS - 1 } },
+        'stale',
+      ],
+      [
+        'created_at 손상',
+        { ...baseParams, snapshot: { ...goodSnap, createdAtMs: Number.NaN } },
+        'stale',
+      ],
+      ['스냅샷 재사용', { ...baseParams, reused: true }, 'reused'],
+    ];
+    for (const [label, params, reason] of liveCases) {
+      const res = resolveSnapshotAuthority(params);
+      check(
+        `스냅샷 폴백 — ${label}`,
+        res.source === 'live' && res.reason === reason,
+        JSON.stringify(res),
+      );
     }
   }
-  const authCtx: InvasionServerContext = { layout: authoritativeLayout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
-  // 정직: 공격자가 서버 권위 주입 layout 으로 런·제출 → accept.
-  expectAccept('수호 권위 주입 후 정직 침공', honest(seed, invasionConfig(authoritativeLayout), inputs), authCtx);
-  // 위조: 공격자가 저장 위조 layout(풀성능·풀보너스)으로 런·제출 → 서버는 권위 주입 layout(풍화
-  // 60/75%·계보 1666bp)으로 대조 → defense-mismatch(방치 수호를 신선·풀보너스라 주장한 위조 거부).
-  expectReject('수호 권위 주입 vs 위조 제출', honest(seed, invasionConfig(storedForgedLayout), inputs), ['defense-mismatch'], authCtx);
-  // 하위호환: 수호 슬롯 없는 방어(SERVER_LAYOUT)는 활성 수호 DB 가 있어도 주입 생략 → guardians 미포함.
-  const noSlotInject = injectGuardianAuthority(SERVER_LAYOUT, dbRows, guardianLevel) as DefenseLayout;
-  if (noSlotInject.guardians === undefined) {
-    console.log(`${GREEN}PASS${RESET} 수호 슬롯 없으면 주입 생략(하위호환)`);
-  } else {
-    failures++;
-    console.log(`${RED}FAIL${RESET} 수호 슬롯 없음인데 guardians 주입됨`);
-  }
-
-  // --- 게이트 3.9b: 매치메이킹 라이브 서빙 == EF 권위 주입 델리버리 경로(PR#37 리뷰 LOW) ---
-  // 위 3.9 는 이미 계산된 authoritativeLayout 을 공격자 런과 EF 컨텍스트 양쪽에 재사용해
-  // "델리버리"(매치메이킹이 실제로 뭘 서빙하는가)를 생략했다는 지적을 받았다. 여기서는 방어자가
-  // 저장한 raw layout(storedForgedLayout — 슬롯 위치만 유효, 성능·보너스는 위조 주장) 한 곳에서
-  // 시작해, ①매치메이킹 RPC 몫(SQL `inject_guardian_authority`, 20260718110000)과 ②EF index.ts
-  // 몫(TS `injectGuardianAuthority`)이 **독립적으로 각자 호출**해도 동일한 권위 layout 을
-  // 재구성함을 증명한다 — 즉 공격자가 매치메이킹이 준 layout 을 그대로 정직하게 런하면, EF 가
-  // 같은 DB 상태에서 재구성한 권위 layout 과 반드시 일치해 accept 된다(실제 배달 경로 재현).
-  // SQL 함수 자체는 이 순수 TS 함수와 동일 규칙으로 작성됐다(마이그레이션 주석 대조 참조) — 이
-  // Deno 스위트는 플랫폼 무참조 TS 코어만 검증하고, SQL 헬퍼의 회귀는 리드의 원격 적용 후
-  // `get_advisors`·수동 대조 몫으로 남는다(README carry-forward에 명시).
-  const matchmakingServedLayout = injectGuardianAuthority(storedForgedLayout, dbRows, guardianLevel) as DefenseLayout;
-  const efReconstructedLayout = injectGuardianAuthority(storedForgedLayout, dbRows, guardianLevel) as DefenseLayout;
-  const deliveryCtx: InvasionServerContext = { layout: efReconstructedLayout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
-  expectAccept(
-    '매치메이킹 서빙 layout 그대로 정직 침공(델리버리 경로 재현)',
-    honest(seed, invasionConfig(matchmakingServedLayout), inputs),
-    deliveryCtx,
-  );
-
-  // --- 게이트 3.10: 침공 권위 스냅샷 해석(M5 레이스 B 폐쇄 — 소유권·신선도·재사용) ---
-  // resolveSnapshotAuthority 는 index.ts 배선이 DB 조회 결과를 넣어 호출하는 순수 판정 코어다.
-  // snapshot_id 유무·소유권 대조(OQ#1 CRITICAL)·신선도(1시간)·재사용 5분기를 증거화한다.
-  const nowMs = 1_000_000_000_000;
-  const goodSnapLayout = { ...SERVER_LAYOUT };
-  const goodSnap: InvasionSnapshotRow = {
-    attackerId: 'atk-1',
-    defenseId: 'def-1',
-    authorityLayout: goodSnapLayout,
-    authorityMaintenanceDb: 80,
-    createdAtMs: nowMs - 60_000, // 1분 전(신선)
-  };
-  const baseParams = {
-    invasionSnapshotId: 'snap-1',
-    invasionAttackerId: 'atk-1',
-    invasionDefenseId: 'def-1',
-    snapshot: goodSnap,
-    nowMs,
-    reused: false,
-  };
-  function expectSnapshotSource(label: string, params: Parameters<typeof resolveSnapshotAuthority>[0]): void {
-    const res = resolveSnapshotAuthority(params);
-    if (res.source === 'snapshot' && res.layout === goodSnapLayout && res.maintenanceDb === 80) {
-      console.log(`${GREEN}PASS${RESET} ${label}  ${DIM}source=snapshot${RESET}`);
-    } else {
-      failures++;
-      console.log(`${RED}FAIL${RESET} ${label}: ${JSON.stringify(res)}`);
-    }
-  }
-  function expectLiveReason(label: string, params: Parameters<typeof resolveSnapshotAuthority>[0], reason: string): void {
-    const res = resolveSnapshotAuthority(params);
-    if (res.source === 'live' && res.reason === reason) {
-      console.log(`${GREEN}PASS${RESET} ${label}  ${DIM}live/${res.reason}${RESET}`);
-    } else {
-      failures++;
-      console.log(`${RED}FAIL${RESET} ${label}: ${JSON.stringify(res)} (기대 live/${reason})`);
-    }
-  }
-  // 정상: 유효 스냅샷 → 스냅샷 권위 사용.
-  expectSnapshotSource('스냅샷 정상 경로(소유권·신선·미재사용)', baseParams);
-  // snapshot_id 없음 → 라이브(하위호환).
-  expectLiveReason('snapshot_id 없음', { ...baseParams, invasionSnapshotId: null }, 'no-snapshot-id');
-  // 스냅샷 행 부재(GC·삭제) → 라이브.
-  expectLiveReason('스냅샷 행 부재', { ...baseParams, snapshot: null }, 'snapshot-missing');
-  // 소유권 불일치(attacker) → 라이브(OQ#1 CRITICAL — 남의 스냅샷 위조 무효화).
-  expectLiveReason('소유권 불일치(attacker)', { ...baseParams, invasionAttackerId: 'atk-9' }, 'ownership-mismatch');
-  // 소유권 불일치(defense) → 라이브(약한 다른 방어 스냅샷 가리키기 차단).
-  expectLiveReason('소유권 불일치(defense)', { ...baseParams, invasionDefenseId: 'def-9' }, 'ownership-mismatch');
-  // 신선도 초과(1시간+1ms) → 라이브(스테일 스냅샷 재사용 방지).
-  expectLiveReason(
-    '신선도 초과(스테일)',
-    { ...baseParams, snapshot: { ...goodSnap, createdAtMs: nowMs - SNAPSHOT_FRESHNESS_MS - 1 } },
-    'stale',
-  );
-  // created_at 손상(NaN) → 라이브(스테일 취급).
-  expectLiveReason(
-    'created_at 손상',
-    { ...baseParams, snapshot: { ...goodSnap, createdAtMs: Number.NaN } },
-    'stale',
-  );
-  // 재사용(다른 확정 침공이 이미 사용) → 라이브(1회성 방어적 2차선; DB 유니크 인덱스가 1차).
-  expectLiveReason('스냅샷 재사용', { ...baseParams, reused: true }, 'reused');
-
-  // --- 게이트 3.11: 방어 카드 서버 권위(M6 · ADR-0012) ---
-  // 방어자 장착 카드 효력은 begin_invasion 스냅샷에 고정되고, EF 는 제출 config.invasion.card 를
-  // 신뢰하지 않고 서버 권위 card 로 오버라이드해 재실행한다. 정직(공격자가 스냅샷 card 로 재현)은
-  // accept, 위조(카드 제거·chargesLeft 조작·매치업 조작)는 재실행 발산으로 거부. 카드 없는 기존
-  // 침공(base)은 무회귀(위 '정직한 침공 제출' 에서 이미 accept).
-  const cardMatchupRevenge: AttackerMatchup = {
-    fire: false, cold: false, lightning: false, beam: false,
-    attackerCp: 0, defenderCp: 0, revenge: true, reinvasion: false, subweaponHeavy: false,
-  };
-  const testCard: CardInstance = {
-    id: 'card-777',
-    rarity: 'rare',
-    prefixes: [{ id: 'cc-avenger', stat: 'turretDamagePct', value: 60 }], // revenge 시 포탑 화력↑
-    suffixes: [],
-    chargesMax: 4,
-    chargesLeft: 4,
-    seed: 777,
-  };
-  const cardConfigVal: DefenseCardConfig = { card: testCard, matchup: cardMatchupRevenge };
-  function withCard(card: DefenseCardConfig): WorldConfig {
-    const c = invasionConfig(SERVER_LAYOUT);
-    return { ...c, invasion: { layout: SERVER_LAYOUT, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS, card } };
-  }
-  const cardCtx: InvasionServerContext = {
-    layout: SERVER_LAYOUT,
-    timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
-    card: cardConfigVal,
-  };
-  // 정직: 공격자가 스냅샷 카드로 재현 → accept.
-  expectAccept('방어 카드 포함 정직 침공', honest(seed, withCard(cardConfigVal), inputs), cardCtx);
-  // 위조 ①: 카드 제거(공격자가 방어자 카드를 뺀 no-card 런 제출) → 서버는 카드 주입 재실행 → 발산.
-  expectReject('카드 제거 위조(방어자 카드 무력화)', base, [
-    'hash-stream-divergence',
-    'final-hash-mismatch',
-    'outcome-mismatch',
-  ], cardCtx);
-  // 위조 ②: chargesLeft 조작(카드 정체성 해시 폴드 변조) → 서버 권위 card 재실행 발산.
-  const forgedCharges: DefenseCardConfig = { card: { ...testCard, chargesLeft: 99 }, matchup: cardMatchupRevenge };
-  expectReject('chargesLeft 조작 위조', honest(seed, withCard(forgedCharges), inputs), [
-    'hash-stream-divergence',
-    'final-hash-mismatch',
-    'outcome-mismatch',
-  ], cardCtx);
-  // 위조 ③: 매치업 조작(정적 카운터 revenge 를 꺼 cc-avenger 무력화한 런 제출) → 서버 권위 매치업
-  //   (revenge=true)으로 재실행 → 포탑 화력 상이 → 발산.
-  const forgedMatchup: DefenseCardConfig = {
-    card: testCard,
-    matchup: { ...cardMatchupRevenge, revenge: false },
-  };
-  expectReject('매치업 조작 위조(정적 카운터 무력화)', honest(seed, withCard(forgedMatchup), inputs), [
-    'hash-stream-divergence',
-    'final-hash-mismatch',
-    'outcome-mismatch',
-  ], cardCtx);
-  // 하위호환: 카드 없는 서버 컨텍스트(card 미지정)에서 base(카드 없음)는 여전히 accept.
-  expectAccept('카드 미장착 서버(하위호환)', base, ctx);
-
-  // --- 게이트 4: 입력 길이 상한(제한 시간 초과) ---
-  const shortCtx: InvasionServerContext = { layout: SERVER_LAYOUT, timeLimitTicks: 200 };
-  const longInputs = buildInputs(300);
-  const longSub = honest(seed, invasionConfig(SERVER_LAYOUT, 200), longInputs);
-  expectReject('입력이 제한 시간 초과', longSub, ['invasion-inputs-too-long'], shortCtx);
 
   // --- 위조 4대 시나리오(AC2) ---
   expectReject(
@@ -450,26 +448,34 @@ function main(): number {
     { ...base, claim: { ...base.claim, finalHash: (base.claim.finalHash ^ 0x1) >>> 0 } },
     ['final-hash-mismatch', 'hash-stream-divergence'],
   );
-  const tampered = inputs.map((f) => ({ ...f }));
-  const mid = Math.floor(tampered.length / 2);
-  tampered[mid] = { ...tampered[mid]!, moveX: -tampered[mid]!.moveX, dash: true };
-  expectReject('② 변조된 입력 로그', { ...base, inputs: tampered }, [
-    'final-hash-mismatch',
-    'hash-stream-divergence',
-  ]);
+  {
+    const tampered = inputs.map((f) => ({ ...f }));
+    const mid = Math.floor(tampered.length / 2);
+    tampered[mid] = { ...tampered[mid]!, moveX: -tampered[mid]!.moveX, dash: true };
+    expectReject('② 변조된 입력 로그', { ...base, inputs: tampered }, [
+      'final-hash-mismatch',
+      'hash-stream-divergence',
+    ]);
+  }
   expectReject('③ 트림된(짧은) 로그', { ...base, inputs: inputs.slice(0, inputs.length - 50) }, [
     'hash-stream-length-mismatch',
     'final-hash-mismatch',
   ]);
   expectReject(
     '④ 조작된 결과(승패 뒤집기)',
-    { ...base, claim: { ...base.claim, outcome: { victory: !base.claim.outcome.victory, gameOver: base.claim.outcome.gameOver } } },
+    {
+      ...base,
+      claim: {
+        ...base.claim,
+        outcome: { victory: !base.claim.outcome.victory, gameOver: base.claim.outcome.gameOver },
+      },
+    },
     ['outcome-mismatch'],
   );
 
   console.log('');
   if (failures === 0) {
-    console.log(`${GREEN}=== 전체 통과: 침공 검증 정상 accept + 게이트/위조 100% 거부 ===${RESET}`);
+    console.log(`${GREEN}=== 전체 통과: 3레이어 침공 정상 accept + 게이트/위조 100% 거부 ===${RESET}`);
     return 0;
   }
   console.log(`${RED}=== ${failures}건 실패 ===${RESET}`);

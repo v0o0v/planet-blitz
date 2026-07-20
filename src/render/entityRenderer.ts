@@ -12,12 +12,14 @@
  * so they are drawn into a Graphics overlay from the current snapshot each frame.
  */
 
-import { Container, Graphics, Sprite } from 'pixi.js';
+import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import type { WorldSnapshot, EntitySnapshot } from '../sim/snapshot.js';
 import type { EntityKind } from '../sim/entities.js';
 import type { PlaceholderTextures } from './textures.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from './app.js';
 import { shipFacing } from './shipFacing.js';
+import { facilitySpecFor } from '../../data/invasion/facilities.js';
+import { HAZARD_LAVA, HAZARD_MORTAR, HAZARD_SLOW } from '../sim/patterns/types.js';
 
 interface TrackedSprite {
   sprite: Sprite;
@@ -30,7 +32,6 @@ interface DeathEffect {
   life: number;
 }
 
-const HAZARD_MORTAR = 0;
 /** Sprite display diameter relative to the sim hitbox (art reads a bit larger). */
 const ART_SCALE = 1.5;
 /** Frames a death burst stays alive (render-only, not sim time). */
@@ -46,6 +47,243 @@ const LOOT_TINT = [0xcfd6e0, 0x5aa0ff, 0xffd24a, 0xff8a2a];
  *  -1이라 이 배열을 타지 않고 기본 흰색으로 렌더된다.
  *  0 사이드킥=청록, 1 스캐터=연두, 2 기뢰장=주황, 3 센트리=미사용(포탑탄은 기본), 4 플레어=자홍. */
 const SUB_BULLET_TINT = [0x4ff0d0, 0x9cff5a, 0xff9a3a, 0xffffff, 0xff5ad0];
+
+// ---------------------------------------------------------------------------
+// kind → 텍스처 슬롯 매핑 (M7a L10-render)
+//
+// 이 매핑이 **모든** kind 를 덮는지는 tests/invasionRender.test.ts 가 KIND_CODE 배열에서
+// 파생해 전수 검사한다. 미등록 kind 는 조용히 player 텍스처로 폴백해 결함이 눈에 띄지 않기
+// 때문에(정찰 지적), 매핑을 스위치 안에 숨기지 않고 **순수 함수로 꺼내** 검증 가능하게 뒀다.
+// ---------------------------------------------------------------------------
+
+/** 단일 텍스처 슬롯 이름. */
+export type SingleTextureSlot =
+  | 'player'
+  | 'bullet'
+  | 'enemyBullet'
+  | 'gem'
+  | 'supply'
+  | 'loot'
+  | 'wall'
+  | 'destructible'
+  | 'magnetEmitter'
+  | 'bombDevice'
+  | 'turretPickup'
+  | 'core'
+  | 'formation'
+  | 'formationDrone'
+  | 'spawnedDrone';
+
+/** 배열 텍스처 슬롯 이름(인덱스 의미는 textures.ts 인터페이스 주석이 정본). */
+export type ArrayTextureSlot =
+  | 'enemy'
+  | 'boss'
+  | 'enemyBulletBehaviors'
+  | 'guardian'
+  | 'facility'
+  | 'prop'
+  | 'defenseBoss';
+
+/** 한 kind 가 어느 텍스처를 쓰는지의 서술(순수 데이터 — 렌더 상태 무관). */
+export type SpriteSlot =
+  | { readonly kind: 'single'; readonly slot: SingleTextureSlot }
+  | { readonly kind: 'array'; readonly slot: ArrayTextureSlot; readonly index: number }
+  /** 스프라이트가 없는 kind(오버레이 Graphics 로 그린다) — `hazard` 하나뿐이다. */
+  | { readonly kind: 'overlay' };
+
+/**
+ * 엔티티 kind(+ 유형 코드)를 텍스처 슬롯으로 사상한다. **순수 함수** — 폴백 판단(범위 밖
+ * 인덱스 → 0)은 텍스처 해석 단계가 맡고, 여기서는 "어느 배열의 몇 번" 만 정한다.
+ *
+ * @param planet `boss` 전용(행성별 보스 아트). 그 외 kind 는 무시된다.
+ */
+export function spriteSlotFor(kind: EntityKind, enemyType: number, planet = 0): SpriteSlot {
+  switch (kind) {
+    case 'player':
+      return { kind: 'single', slot: 'player' };
+    case 'bullet':
+      return { kind: 'single', slot: 'bullet' };
+    case 'enemyBullet':
+      // 시각 문법(탄막 다양성 Lane 1): 색 = 거동 종류. 거동 없는 적탄(-1)은 기본 hot-red.
+      return enemyType >= 0
+        ? { kind: 'array', slot: 'enemyBulletBehaviors', index: enemyType }
+        : { kind: 'single', slot: 'enemyBullet' };
+    case 'hazard':
+      return { kind: 'overlay' };
+    case 'gem':
+      return { kind: 'single', slot: 'gem' };
+    case 'supply':
+      return { kind: 'single', slot: 'supply' };
+    case 'boss':
+      return { kind: 'array', slot: 'boss', index: planet };
+    case 'wall':
+      return { kind: 'single', slot: 'wall' };
+    case 'destructible':
+      return { kind: 'single', slot: 'destructible' };
+    case 'magnetEmitter':
+      return { kind: 'single', slot: 'magnetEmitter' };
+    case 'bombDevice':
+      return { kind: 'single', slot: 'bombDevice' };
+    case 'turretPickup':
+      return { kind: 'single', slot: 'turretPickup' };
+    case 'loot':
+      return { kind: 'single', slot: 'loot' };
+    case 'enemy':
+      return { kind: 'array', slot: 'enemy', index: enemyType };
+    case 'core':
+    case 'decoyCore':
+      // 가짜 코어도 실제 코어와 동일 텍스처(조준·피격이 같은 시각 계약).
+      return { kind: 'single', slot: 'core' };
+    case 'guardian':
+      return { kind: 'array', slot: 'guardian', index: enemyType };
+    // --- M7a 침공 3레이어 ---
+    case 'formation':
+      return { kind: 'single', slot: 'formation' };
+    case 'formationDrone':
+      return { kind: 'single', slot: 'formationDrone' };
+    case 'spawnedDrone':
+      return { kind: 'single', slot: 'spawnedDrone' };
+    case 'facilityGun':
+    case 'facilityHazard':
+    case 'facilitySpawner':
+      // 설비 3종 모두 `enemyType = 설비 catalogId`(facility.ts 필드 매핑표가 정본).
+      return { kind: 'array', slot: 'facility', index: enemyType };
+    case 'prop':
+      // 기물은 `enemyType = 역할 코드 PROP_*`(catalogId 가 아니다 — coreRoom.ts 필드 매핑표).
+      return { kind: 'array', slot: 'prop', index: enemyType };
+    case 'defenseBoss':
+      return { kind: 'array', slot: 'defenseBoss', index: enemyType };
+  }
+}
+
+/** 슬롯 서술 → 실제 텍스처. 범위 밖 인덱스·빈 슬롯은 순차 폴백(화면이 비지 않는다). */
+export function resolveSpriteSlot(textures: PlaceholderTextures, s: SpriteSlot): Texture {
+  if (s.kind === 'overlay') return textures.player; // 호출되지 않는 경로(방어적)
+  if (s.kind === 'single') return textures[s.slot] ?? textures.player;
+  const arr = textures[s.slot];
+  const i = s.index >= 0 && s.index < arr.length ? s.index : 0;
+  return arr[i] ?? arr[0] ?? textures.player;
+}
+
+// ---------------------------------------------------------------------------
+// 예고선(관통 레일포 텔레그래프) · 주기 해저드 온오프 시각 표현
+// ---------------------------------------------------------------------------
+
+/** 예고선 색(경고 앰버 — 적탄 hot-red 와 구분되어 "아직 안 맞는다"가 읽힌다). */
+export const TELEGRAPH_COLOR = 0xffb020;
+/** 예고선 굵기(px). */
+export const TELEGRAPH_WIDTH = 3;
+
+/** 화면에 그릴 예고선 1개(월드 좌표). */
+export interface TelegraphRail {
+  readonly x1: number;
+  readonly y1: number;
+  readonly x2: number;
+  readonly y2: number;
+  readonly alpha: number;
+}
+
+/**
+ * 방향 제한 방어포의 **예고선**. 예고 구간(`facility.ts` 의 `phase === 1`)에만 나오며,
+ * 스냅샷에서는 `active` 플래그로 실려 온다(설비 텔레그래프 = active).
+ *
+ * 길이는 카탈로그의 사거리(`spec.range`)에서 파생한다 — 하드코딩하면 설비 스펙이 바뀔 때
+ * 예고선과 실제 사거리가 조용히 어긋난다. 잠긴 조준각(`angle`)을 그대로 쓴다.
+ *
+ * 알파는 프레임 틱의 순수 함수로 맥동시켜(0.45~0.9) 정지 화면에서도 "곧 발사"가 읽힌다.
+ */
+export function railTelegraph(e: EntitySnapshot, frameTick: number): TelegraphRail | null {
+  if (e.kind !== 'facilityGun' || !e.active) return null;
+  const spec = facilitySpecFor(e.enemyType);
+  if (spec === undefined || spec.range <= 0) return null;
+  const pulse = 0.5 + 0.5 * Math.sin(frameTick * 0.5);
+  return {
+    x1: e.x,
+    y1: e.y,
+    x2: e.x + Math.cos(e.angle) * spec.range,
+    y2: e.y + Math.sin(e.angle) * spec.range,
+    alpha: 0.45 + 0.45 * pulse,
+  };
+}
+
+/** 해저드 장판 1개의 표시 스타일. */
+export interface HazardStyle {
+  readonly color: number;
+  /** 채움 알파(0 = 테두리만 = 예열 중). */
+  readonly fillAlpha: number;
+  readonly strokeAlpha: number;
+}
+
+/**
+ * 해저드 subtype·활성 여부 → 표시 스타일. 주기 온오프 설비(L2)·중력 앵커(L3)가 이 장판을
+ * 반복 융기시키므로, **예열(테두리만) ↔ 활성(채움)** 대비가 리듬을 읽게 하는 핵심이다.
+ *
+ * 색 = subtype: 박격 red / 용암 orange / 감속 cyan. 미지의 subtype 은 박격 색으로 폴백한다.
+ */
+export function hazardStyle(subtype: number, active: boolean): HazardStyle {
+  const color =
+    subtype === HAZARD_LAVA
+      ? 0xff7a1a
+      : subtype === HAZARD_SLOW
+        ? 0x39d0ff
+        : subtype === HAZARD_MORTAR
+          ? 0xff3355
+          : 0xff3355; // 미지의 subtype = 박격 색 폴백(장판이 보이지 않는 것보다 낫다)
+  return active
+    ? { color, fillAlpha: 0.4, strokeAlpha: 0.9 }
+    : { color, fillAlpha: 0, strokeAlpha: 0.85 };
+}
+
+/** 사망 폭발 스케일. 등록되지 않은 kind 는 폭발 없음(0). */
+function explosionScale(kind: EntityKind): number {
+  switch (kind) {
+    case 'boss':
+    case 'defenseBoss':
+      return 3;
+    case 'facilityGun':
+    case 'facilityHazard':
+    case 'facilitySpawner':
+    case 'prop':
+      return 2;
+    case 'enemy':
+    case 'formation':
+    case 'formationDrone':
+    case 'spawnedDrone':
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * 회전하지 않는(고정 방향) kind 집합. 여기 없는 kind 는 이동 렌더 규약(`rotation = e.angle`)을
+ * 따른다.
+ *
+ * - 코어는 고정 방향(OQ1/OQ4). 수호(guardian)는 목록 밖이라 조준각으로 돈다.
+ * - 침공 3레이어: 벽 부착 해저드·스포너와 L3 기물·보스는 고정 자세다. `facilityGun` 만
+ *   조준각으로 회전한다 — 예고선과 포신 방향이 일치해야 예고가 읽힌다.
+ */
+const FIXED_FACING_KINDS: ReadonlySet<EntityKind> = new Set<EntityKind>([
+  'gem',
+  'boss',
+  'supply',
+  'wall',
+  'destructible',
+  'magnetEmitter',
+  'bombDevice',
+  'turretPickup',
+  'loot',
+  'core',
+  'decoyCore',
+  'facilityHazard',
+  'facilitySpawner',
+  'prop',
+  'defenseBoss',
+]);
+
+function isFixedFacing(kind: EntityKind): boolean {
+  return FIXED_FACING_KINDS.has(kind);
+}
 
 export class EntityRenderer {
   readonly layer = new Container();
@@ -67,62 +305,9 @@ export class EntityRenderer {
     this.layer.addChild(this.effectLayer);
   }
 
-  private textureFor(e: EntitySnapshot) {
-    switch (e.kind) {
-      case 'player':
-        return this.textures.player;
-      case 'bullet':
-        return this.textures.bullet;
-      case 'enemyBullet': {
-        // 시각 문법(탄막 다양성 Lane 1): 색 = 거동 종류. enemyType(거동 코드 BK_*)로
-        // 거동별 텍스처를 고르고, 거동 없는 적탄(-1)은 기본 hot-red 텍스처로 렌더한다.
-        const bv = this.textures.enemyBulletBehaviors;
-        return e.enemyType >= 0 && e.enemyType < bv.length
-          ? (bv[e.enemyType] ?? this.textures.enemyBullet)
-          : this.textures.enemyBullet;
-      }
-      case 'gem':
-        return this.textures.gem;
-      case 'boss':
-        return this.textures.boss[this.planet] ?? this.textures.boss[0] ?? this.textures.player;
-      case 'supply':
-        return this.textures.supply;
-      case 'loot':
-        return this.textures.loot;
-      case 'wall':
-        return this.textures.wall;
-      case 'destructible':
-        return this.textures.destructible;
-      case 'magnetEmitter':
-        return this.textures.magnetEmitter;
-      case 'bombDevice':
-        return this.textures.bombDevice;
-      case 'turretPickup':
-        return this.textures.turretPickup;
-      case 'enemy': {
-        const arr = this.textures.enemy;
-        const idx = e.enemyType >= 0 && e.enemyType < arr.length ? e.enemyType : 0;
-        return arr[idx] ?? this.textures.player;
-      }
-      case 'defenseTurret': {
-        // 포탑 유형(enemyType = TURRET_* 0..5)별 변형 텍스처. 범위 밖은 발칸(0) 폴백.
-        const arr = this.textures.defenseTurret;
-        const idx = e.enemyType >= 0 && e.enemyType < arr.length ? e.enemyType : 0;
-        return arr[idx] ?? this.textures.player;
-      }
-      case 'core':
-      case 'decoyCore':
-        // 가짜 코어(decoyCore)도 실제 코어와 동일 텍스처로 렌더(조준·피격이 같은 시각 계약).
-        return this.textures.core;
-      case 'guardian': {
-        // 수호 프리셋(enemyType = 0 타이탄 / 1 인터셉터)별 변형. 범위 밖은 타이탄(0) 폴백.
-        const arr = this.textures.guardian;
-        const idx = e.enemyType >= 0 && e.enemyType < arr.length ? e.enemyType : 0;
-        return arr[idx] ?? this.textures.player;
-      }
-      default:
-        return this.textures.player;
-    }
+  /** 스냅샷 1건의 텍스처. 매핑 판단은 순수 함수({@link spriteSlotFor})가 하고 여기서는 해석만 한다. */
+  private textureFor(e: EntitySnapshot): Texture {
+    return resolveSpriteSlot(this.textures, spriteSlotFor(e.kind, e.enemyType, this.planet));
   }
 
   render(prev: WorldSnapshot, curr: WorldSnapshot, alpha: number): void {
@@ -197,23 +382,8 @@ export class EntityRenderer {
         tracked.sprite.rotation = facing;
       } else {
         // Gems, boss, supply and the static gimmicks keep a fixed facing; others
-        // face their travel/aim angle.
-        const fixedFacing =
-          e.kind === 'gem' ||
-          e.kind === 'boss' ||
-          e.kind === 'supply' ||
-          e.kind === 'wall' ||
-          e.kind === 'destructible' ||
-          e.kind === 'magnetEmitter' ||
-          e.kind === 'bombDevice' ||
-          e.kind === 'turretPickup' ||
-          e.kind === 'loot' ||
-          // 방어 포탑·코어는 고정 방향(OQ1/OQ4). 수호(guardian)는 이 목록에 없어 이동
-          // 렌더 규약(e.angle = 추적 조준각)을 그대로 따른다.
-          e.kind === 'defenseTurret' ||
-          e.kind === 'core' ||
-          e.kind === 'decoyCore';
-        tracked.sprite.rotation = fixedFacing ? 0 : e.angle;
+        // face their travel/aim angle. 목록은 isFixedFacing 이 정본이다.
+        tracked.sprite.rotation = isFixedFacing(e.kind) ? 0 : e.angle;
       }
 
       if (e.kind === 'boss') {
@@ -234,9 +404,9 @@ export class EntityRenderer {
     for (const [id, tracked] of this.sprites) {
       if (tracked.seenTick !== this.frameTick) {
         // A combat unit vanishing = a kill: leave a brief death burst behind.
-        if (tracked.kind === 'enemy' || tracked.kind === 'boss') {
-          this.spawnExplosion(tracked.sprite.x, tracked.sprite.y, tracked.kind === 'boss' ? 3 : 1);
-        }
+        // 침공 3레이어의 설비·기물·보스도 파괴 연출을 받는다(스케일은 explosionScale).
+        const scale = explosionScale(tracked.kind);
+        if (scale > 0) this.spawnExplosion(tracked.sprite.x, tracked.sprite.y, scale);
         tracked.sprite.destroy();
         this.sprites.delete(id);
       }
@@ -277,14 +447,26 @@ export class EntityRenderer {
       g.moveTo(b.x1, b.y1).lineTo(b.x2, b.y2).stroke({ color: 0x33ffcc, width: 3, alpha: 0.5 });
     }
     // Hazard zones: telegraph = outlined warning ring; active = filled danger.
+    // 주기 온오프 해저드(L2 설비·L3 중력 앵커)는 이 예열↔활성 대비가 리듬을 읽게 한다.
     for (const e of curr.entities) {
       if (e.kind !== 'hazard') continue;
-      const color = e.enemyType === HAZARD_MORTAR ? 0xff3355 : 0xff7a1a;
-      if (e.active) {
-        g.circle(e.x, e.y, e.radius).fill({ color, alpha: 0.4 }).stroke({ color, width: 2, alpha: 0.9 });
+      const st = hazardStyle(e.enemyType, e.active);
+      if (st.fillAlpha > 0) {
+        g.circle(e.x, e.y, e.radius)
+          .fill({ color: st.color, alpha: st.fillAlpha })
+          .stroke({ color: st.color, width: 2, alpha: st.strokeAlpha });
       } else {
-        g.circle(e.x, e.y, e.radius).stroke({ color, width: 2, alpha: 0.85 });
+        g.circle(e.x, e.y, e.radius).stroke({ color: st.color, width: 2, alpha: st.strokeAlpha });
       }
+    }
+    // 예고선(관통 레일포 텔레그래프): 조준각이 잠긴 예고 구간에만 나온다. 탄보다 먼저 선이
+    // 보이므로 플레이어가 사계를 벗어날 시간을 얻는다(예고 중에는 피해가 없다 — facility.ts).
+    for (const e of curr.entities) {
+      const rail = railTelegraph(e, this.frameTick);
+      if (rail === null) continue;
+      g.moveTo(rail.x1, rail.y1)
+        .lineTo(rail.x2, rail.y2)
+        .stroke({ color: TELEGRAPH_COLOR, width: TELEGRAPH_WIDTH, alpha: rail.alpha });
     }
   }
 

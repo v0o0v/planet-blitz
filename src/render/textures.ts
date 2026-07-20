@@ -19,6 +19,20 @@
  */
 
 import { Assets, Graphics, type Renderer, type Texture } from 'pixi.js';
+import {
+  INVASION_FACILITIES,
+  FACILITY_BEHAVIOR_HAZARD,
+  FACILITY_BEHAVIOR_SPAWNER,
+} from '../../data/invasion/facilities.js';
+import {
+  L3_PROPS,
+  PROP_ROLE_COUNT,
+  PROP_FIXED_CANNON,
+  PROP_GRAVITY_ANCHOR,
+  PROP_SHIELD_GENERATOR,
+} from '../../data/invasion/props.js';
+import { DEFENSE_BOSSES } from '../../data/invasion/defenseBosses.js';
+import { CATALOG_BOSS, CATALOG_FACILITY, CATALOG_PROP, catalogSlug } from '../../data/invasion/catalog.js';
 
 export interface PlaceholderTextures {
   player: Texture;
@@ -69,13 +83,8 @@ export interface PlaceholderTextures {
   bombDevice: Texture;
   /** Turret pickup event object. */
   turretPickup: Texture;
-  // --- 방어 사령부 실화면 편집 (M4/M5, spec grill-defense-command-live-editor 레인 A) ---
-  /**
-   * 방어 포탑 6종 텍스처. index = `defenseTurret.enemyType` = TURRET_* 코드
-   * (0 발칸 / 1 저격 / 2 산탄 / 3 감속 / 4 미사일 / 5 전격 — src/sim/defense.ts 순서와 1:1).
-   * 유형별 색으로 구분되어 사거리 원 없이도 팔레트에서 구분된다. fixedFacing(포신 +x 고정).
-   */
-  defenseTurret: Texture[];
+  // --- 방어 코어·수호 기체 (M4/M5) ---
+  // (구 방어 포탑 6종 텍스처 슬롯은 M7a L11 에서 삭제 — L2 회랑 설비 3종이 계승했다.)
   /** 방어 코어(침공 목표). fixedFacing. `decoyCore`(가짜 코어)도 이 텍스처로 렌더한다. */
   core: Texture;
   /**
@@ -83,6 +92,32 @@ export interface PlaceholderTextures {
    * data/guardian.ts GUARDIAN_* 순서와 1:1). 이동 렌더 규약(e.angle)을 따른다(+x 향 저작).
    */
   guardian: Texture[];
+  // --- M7a 침공 3레이어 (ADR-0017~0019, L10-render) ---
+  /**
+   * 레이어별 침공 배경. **index = 침공 페이즈 코드**(PHASE_L1 0 대기권 / PHASE_L2 1 회랑
+   * 격벽 / PHASE_L3 2 코어방 — src/sim/invasion/constants.ts 와 1:1). 타일 가능(TilingSprite).
+   * 전환 크로스페이드는 src/render/invasionBackdrop.ts 가 담당한다.
+   */
+  invasionBackdrop: Texture[];
+  /**
+   * L2 회랑 설비. **index = 설비 catalogId**(INVASION_FACILITIES 배열 인덱스). 설비 3 kind
+   * (`facilityGun`/`facilityHazard`/`facilitySpawner`)가 모두 `enemyType = catalogId` 규약이라
+   * 한 배열을 공유한다 — 거동별 색은 카탈로그의 behavior 에서 파생하므로 드리프트가 없다.
+   */
+  facility: Texture[];
+  /**
+   * L3 기물. **index = 기물 역할 코드 PROP_\***(엔티티 `enemyType` = spec.role — catalogId 가
+   * 아니다, data/invasion/props.ts 참조).
+   */
+  prop: Texture[];
+  /** L3 방어 보스. **index = 보스 catalogId**(DEFENSE_BOSSES 배열 인덱스). */
+  defenseBoss: Texture[];
+  /** L1 편대 리더(진형 기준점). 이동 렌더 규약(+x 향 저작). */
+  formation: Texture;
+  /** L1 편대원. 이동 렌더 규약(+x 향 저작). */
+  formationDrone: Texture;
+  /** L2 스포너가 소환한 드론. 편대원과 구분되는 색(스포너 계열 톤). */
+  spawnedDrone: Texture;
 }
 
 /**
@@ -289,28 +324,6 @@ function explosionTexture(renderer: Renderer): Texture {
 }
 
 /**
- * 방어 포탑 유형색(index = TURRET_* 코드). 사거리 원 없이도 팔레트에서 6종이 구분되도록
- * 서로 충분히 떨어진 색을 쓴다: 발칸 블루 / 저격 퍼플 / 산탄 오렌지 / 감속 시안 / 미사일 레드 /
- * 전격 옐로. 적(카르곤 red·베르단 green·니플헤임 blue·아르케 bronze)과 겹치지 않게 아군 톤 위주.
- */
-const TURRET_COLORS: readonly number[] = [0x4aa3ff, 0xb060ff, 0xffa030, 0x39d0ff, 0xff5544, 0xffe033];
-
-/**
- * 방어 포탑 플레이스홀더: 어두운 헥스 마운트 + 유형색 상부 헥스 + 동쪽(+x) 포신. fixedFacing
- * 이라 포신은 항상 동쪽을 향한다(OQ1 — 정지 프리뷰 기본 방향 고정). drawHex 스타일과 정합.
- */
-function defenseTurretTexture(renderer: Renderer, color: number): Texture {
-  const g = new Graphics();
-  drawHex(g, 32, 0x2b3242); // 어두운 마운트 베이스
-  // 포신(+x 방향 고정)
-  g.rect(0, -6, 44, 12).fill({ color: 0x1a1f2b }).stroke({ color, width: 2, alignment: 0 });
-  drawHex(g, 19, color); // 유형색 상부 헥스
-  const tex = renderer.generateTexture(g);
-  g.destroy();
-  return tex;
-}
-
-/**
  * 방어 코어 플레이스홀더: 헥스 헐 + 밝은 에너지 코어. 침공 목표라 눈에 확 띄게 한다. fixedFacing.
  */
 function coreTexture(renderer: Renderer): Texture {
@@ -342,6 +355,247 @@ function guardianTexture(renderer: Renderer, titan: boolean): Texture {
   const tex = renderer.generateTexture(g);
   g.destroy();
   return tex;
+}
+
+// ---------------------------------------------------------------------------
+// M7a 침공 3레이어 — 배경 3종 · 신규 kind 스프라이트 (L10-render)
+// ---------------------------------------------------------------------------
+
+/**
+ * 설비 거동별 색(index = FACILITY_BEHAVIOR_*). 색 = 거동이라 팔레트·화면 어디서든 방어포/
+ * 해저드/스포너가 즉시 구분된다. 아군 톤(시안·민트)과 겹치지 않는 적대 계열.
+ */
+const FACILITY_BEHAVIOR_COLORS: readonly number[] = [
+  0xff6a3a, // 0 방어포 — 주적 오렌지레드
+  0xb060ff, // 1 해저드 — 퍼플(장판 예고 링과 같은 계열)
+  0x7ec53a, // 2 스포너 — 산성 그린(생산 = 증식 이미지)
+];
+
+/**
+ * 설비 플레이스홀더. 벽 부착물이라 각진 마운트가 기본이고, 거동별로 상부 실루엣이 다르다:
+ * 방어포 = +x 포신(사계 기준 방향 = e.angle 로 회전), 해저드 = 동심 방사 링, 스포너 = 사출 해치.
+ */
+function facilityTexture(renderer: Renderer, behavior: number, radius: number): Texture {
+  const color = FACILITY_BEHAVIOR_COLORS[behavior] ?? FACILITY_BEHAVIOR_COLORS[0] ?? 0xffffff;
+  const r = radius;
+  const g = new Graphics();
+  // 공통: 어두운 벽 마운트(각진 사각) + 유형색 테두리.
+  g.rect(-r, -r, r * 2, r * 2)
+    .fill({ color: 0x232838 })
+    .stroke({ color, width: 3, alignment: 0 });
+  if (behavior === FACILITY_BEHAVIOR_HAZARD) {
+    g.circle(0, 0, r * 0.72).stroke({ color, width: 4, alignment: 0 });
+    g.circle(0, 0, r * 0.4).stroke({ color, width: 3, alignment: 0 });
+    g.circle(0, 0, r * 0.16).fill({ color });
+  } else if (behavior === FACILITY_BEHAVIOR_SPAWNER) {
+    // 사출 해치: +x 쪽이 열린 사다리꼴 + 내부 드론 실루엣.
+    g.moveTo(r * 0.1, -r * 0.75)
+      .lineTo(r, -r * 0.45)
+      .lineTo(r, r * 0.45)
+      .lineTo(r * 0.1, r * 0.75)
+      .closePath()
+      .fill({ color: 0x101520 })
+      .stroke({ color, width: 3, alignment: 0 });
+    drawTriangle(g, r * 0.3, color);
+  } else {
+    // 방어포: +x 포신 + 유형색 상부 헥스(구 포탑과 같은 문법 — 학습 비용 0).
+    g.rect(0, -r * 0.22, r * 1.35, r * 0.44)
+      .fill({ color: 0x101520 })
+      .stroke({ color, width: 2, alignment: 0 });
+    drawHex(g, r * 0.55, color);
+  }
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+/** 기물 역할색(index = PROP_*). 실드 = 시안, 중력 = 바이올렛, 주포 = 앰버. */
+const PROP_ROLE_COLORS: readonly number[] = [0x39d0ff, 0x8a6aff, 0xffb020];
+
+/**
+ * L3 기물 플레이스홀더. 역할이 실루엣으로 읽힌다: 실드 발생기 = 팔각 돔 + 보호막 링,
+ * 중력 앵커 = 하강 화살 삼각 + 소용돌이 링, 고정 주포 = 대형 +x 포신. 전부 fixedFacing.
+ */
+function propTexture(renderer: Renderer, role: number, radius: number): Texture {
+  const color = PROP_ROLE_COLORS[role] ?? PROP_ROLE_COLORS[0] ?? 0xffffff;
+  const r = radius;
+  const g = new Graphics();
+  drawHex(g, r * 0.9, 0x1b2130); // 공통 대좌
+  switch (role) {
+    case PROP_SHIELD_GENERATOR:
+      g.circle(0, 0, r * 0.62).fill({ color, alpha: 0.35 }).stroke({ color, width: 4, alignment: 0 });
+      g.circle(0, 0, r * 0.28).fill({ color });
+      g.circle(0, 0, r).stroke({ color, width: 2, alpha: 0.6, alignment: 0 });
+      break;
+    case PROP_GRAVITY_ANCHOR:
+      g.circle(0, 0, r * 0.7).stroke({ color, width: 3, alpha: 0.8, alignment: 0 });
+      g.circle(0, 0, r * 0.45).stroke({ color, width: 3, alpha: 0.9, alignment: 0 });
+      g.moveTo(0, r * 0.55)
+        .lineTo(-r * 0.34, -r * 0.2)
+        .lineTo(r * 0.34, -r * 0.2)
+        .closePath()
+        .fill({ color });
+      break;
+    case PROP_FIXED_CANNON:
+    default:
+      g.rect(0, -r * 0.24, r * 1.25, r * 0.48)
+        .fill({ color: 0x101520 })
+        .stroke({ color, width: 3, alignment: 0 });
+      drawSquare(g, r * 0.45, color);
+      break;
+  }
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+/**
+ * 방어 보스 플레이스홀더. PvE 보스(육각 + 코어)와 같은 문법을 쓰되 **강철 회색 헐 + 진홍
+ * 코어**로 색을 갈라, 침공 L3 의 보스가 PvE 보스와 다른 계통임을 즉시 알린다.
+ */
+function defenseBossTexture(renderer: Renderer, radius: number): Texture {
+  const g = new Graphics();
+  drawHex(g, radius, 0x4a5160);
+  drawHex(g, radius * 0.72, 0x2a3040);
+  g.circle(0, 0, radius * 0.36).fill({ color: 0xff3355 }).stroke({ color: 0xffd0d8, width: 3, alignment: 0 });
+  for (let i = 0; i < 6; i++) {
+    const a = (i * Math.PI) / 3;
+    g.moveTo(Math.cos(a) * radius * 0.75, Math.sin(a) * radius * 0.75)
+      .lineTo(Math.cos(a) * radius, Math.sin(a) * radius)
+      .stroke({ color: 0xff8090, width: 3 });
+  }
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+/**
+ * 편대 유닛 플레이스홀더(+x 향 저작 — 이동 렌더 규약). 리더는 크고 날개가 붙은 삼각,
+ * 편대원·소환 드론은 작은 삼각이며 색으로 소속이 갈린다(편대 = 적색 계열, 소환 = 스포너 그린).
+ */
+function formationUnitTexture(renderer: Renderer, radius: number, color: number, leader: boolean): Texture {
+  const g = new Graphics();
+  drawTriangle(g, radius, color);
+  if (leader) {
+    // 리더 표식: 뒤쪽으로 뻗은 날개 + 밝은 코어.
+    g.moveTo(-radius * 0.8, -radius * 0.7)
+      .lineTo(-radius * 1.25, 0)
+      .lineTo(-radius * 0.8, radius * 0.7)
+      .closePath()
+      .fill({ color, alpha: 0.75 });
+    g.circle(radius * 0.1, 0, radius * 0.24).fill({ color: 0xffffff, alpha: 0.9 });
+  }
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+/** 침공 레이어별 배경 팔레트(index = 페이즈 코드). */
+interface InvasionBackdropPalette {
+  /** 바탕. */
+  readonly base: number;
+  /** 주 구조선(격벽 이음매·성층권 밴드·에너지 그리드). */
+  readonly line: number;
+  /** 강조점(별·리벳·코어 글로우). */
+  readonly accent: number;
+}
+
+const INVASION_BACKDROP_PALETTES: readonly InvasionBackdropPalette[] = [
+  { base: 0x060a18, line: 0x1b3358, accent: 0x9fd0ff }, // 0 L1 대기권 — 짙은 남색 성층권
+  { base: 0x14100a, line: 0x4a3a22, accent: 0xffb020 }, // 1 L2 회랑 격벽 — 금속 갈색 + 경고색
+  { base: 0x120616, line: 0x3d1a52, accent: 0xff5ad0 }, // 2 L3 코어방 — 자주빛 에너지실
+];
+
+/**
+ * 침공 레이어 배경 타일(256², 이음매 안전). 레이어마다 구조가 다르다:
+ * L1 = 성층권 밴드 + 별, L2 = 격벽 패널 격자 + 리벳, L3 = 에너지 그리드 + 코어 글로우.
+ * 기하는 전부 고정(비랜덤)이라 타일 경계가 어긋나지 않는다(행성 배경과 같은 규율).
+ */
+function invasionBackdropTextureFor(renderer: Renderer, layer: number, pal: InvasionBackdropPalette): Texture {
+  const S = 256;
+  const g = new Graphics();
+  g.rect(0, 0, S, S).fill({ color: pal.base });
+  if (layer === 0) {
+    // 성층권: 가로 밴드(스크롤 축과 무관하게 읽히도록 옅게) + 고정 별자리.
+    for (const y of [36, 104, 178, 236]) {
+      g.rect(0, y, S, 10).fill({ color: pal.line, alpha: 0.35 });
+    }
+    const stars: [number, number, number][] = [
+      [22, 18, 1.6], [88, 62, 1.1], [150, 28, 2.0], [212, 74, 1.3],
+      [40, 132, 1.2], [118, 168, 1.8], [196, 140, 1.1], [236, 208, 1.5],
+      [70, 224, 1.3], [166, 244, 1.0],
+    ];
+    for (const [x, y, r] of stars) g.circle(x, y, r).fill({ color: pal.accent, alpha: 0.85 });
+  } else if (layer === 1) {
+    // 회랑 격벽: 128 격자 패널 + 이음매 + 모서리 리벳 + 경고 사선.
+    for (const p of [0, 128]) {
+      for (const q of [0, 128]) {
+        g.rect(p + 6, q + 6, 116, 116).fill({ color: pal.line, alpha: 0.5 });
+        for (const [rx, ry] of [[18, 18], [110, 18], [18, 110], [110, 110]] as const) {
+          g.circle(p + rx, q + ry, 3).fill({ color: pal.accent, alpha: 0.7 });
+        }
+      }
+    }
+    for (let i = -S; i < S; i += 64) {
+      g.moveTo(i, 0).lineTo(i + S, S).stroke({ color: pal.accent, width: 2, alpha: 0.16 });
+    }
+  } else {
+    // 코어방: 32 간격 에너지 그리드 + 교차점 글로우 + 중앙 대형 링.
+    for (let i = 32; i < S; i += 32) {
+      g.moveTo(i, 0).lineTo(i, S).stroke({ color: pal.line, width: 1.5, alpha: 0.7 });
+      g.moveTo(0, i).lineTo(S, i).stroke({ color: pal.line, width: 1.5, alpha: 0.7 });
+    }
+    for (const [x, y] of [[64, 64], [192, 64], [64, 192], [192, 192]] as const) {
+      g.circle(x, y, 3.5).fill({ color: pal.accent, alpha: 0.8 });
+    }
+    g.circle(128, 128, 52).stroke({ color: pal.accent, width: 3, alpha: 0.45 });
+    g.circle(128, 128, 30).stroke({ color: pal.accent, width: 2, alpha: 0.3 });
+  }
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+/** 카탈로그 식별자 → 자산 파일명 조각(영숫자 외는 `_`). 하드코딩 표 없이 파생한다. */
+function assetSlug(raw: string): string {
+  return raw.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+/**
+ * 설비 자산 파일명(index = catalogId). 카탈로그에서 파생하므로 항목이 늘면 파일명도 자동으로
+ * 늘어난다 — 배열 길이가 어긋나 조용히 폴백하는 사고가 구조적으로 불가능하다.
+ */
+export const FACILITY_ASSET_FILES: readonly string[] = INVASION_FACILITIES.map(
+  (s) => `def3_fac_${assetSlug(catalogSlug(CATALOG_FACILITY, s.key))}.png`,
+);
+
+/** 기물 자산 파일명(index = 역할 코드 PROP_*). */
+export const PROP_ASSET_FILES: readonly string[] = buildPropAssetFiles();
+
+function buildPropAssetFiles(): string[] {
+  const files: string[] = [];
+  for (let role = 0; role < PROP_ROLE_COUNT; role++) {
+    const spec = L3_PROPS.find((p) => p.role === role);
+    files.push(`def3_prop_${assetSlug(spec === undefined ? String(role) : catalogSlug(CATALOG_PROP, spec.id))}.png`);
+  }
+  return files;
+}
+
+/** 방어 보스 자산 파일명(index = catalogId). */
+export const DEFENSE_BOSS_ASSET_FILES: readonly string[] = DEFENSE_BOSSES.map(
+  (b) => `def3_boss_${assetSlug(catalogSlug(CATALOG_BOSS, b.id))}.png`,
+);
+
+/** 침공 배경 자산 파일명(index = 페이즈 코드). */
+export const INVASION_BACKDROP_ASSET_FILES: readonly string[] = [
+  'bg_invasion_l1.png',
+  'bg_invasion_l2.png',
+  'bg_invasion_l3.png',
+];
+
+/** 역할별 기물 반지름(카탈로그에서 파생 — 없으면 기본 48). */
+function propRadius(role: number): number {
+  return L3_PROPS.find((p) => p.role === role)?.radius ?? 48;
 }
 
 /** Synchronous procedural texture set — bullets, fallbacks, and the bench path. */
@@ -437,9 +691,17 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
     magnetEmitter: renderer.generateTexture(magnetG),
     bombDevice: renderer.generateTexture(bombG),
     turretPickup: renderer.generateTexture(turretG),
-    defenseTurret: TURRET_COLORS.map((c) => defenseTurretTexture(renderer, c)),
+
     core: coreTexture(renderer),
     guardian: [guardianTexture(renderer, true), guardianTexture(renderer, false)],
+    // M7a 침공 3레이어: 배경 3종 + 신규 kind 스프라이트. 인덱스 계약은 인터페이스 주석 참조.
+    invasionBackdrop: INVASION_BACKDROP_PALETTES.map((p, i) => invasionBackdropTextureFor(renderer, i, p)),
+    facility: INVASION_FACILITIES.map((s) => facilityTexture(renderer, s.behavior, s.radius)),
+    prop: Array.from({ length: PROP_ROLE_COUNT }, (_, role) => propTexture(renderer, role, propRadius(role))),
+    defenseBoss: DEFENSE_BOSSES.map((b) => defenseBossTexture(renderer, b.radius)),
+    formation: formationUnitTexture(renderer, 40, 0xff5533, true),
+    formationDrone: formationUnitTexture(renderer, 26, 0xff8a6a, false),
+    spawnedDrone: formationUnitTexture(renderer, 24, 0x9bd94a, false),
   };
 
   playerG.destroy();
@@ -525,16 +787,8 @@ export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderT
   const bossFiles = ['boss.png', 'boss_berdan.png', 'boss_niflheim.png', 'boss_arke.png'];
   const bgFiles = ['bg_kargon.png', 'bg_berdan.png', 'bg_niflheim.png', 'bg_arke.png'];
 
-  // 방어 엔티티(파일명 계약, spec 레인 A). 포탑은 TURRET_* 인덱스 순서. 없는 파일은 유형색
-  // 플레이스홀더 유지(tryLoad 패턴 그대로). 실아트는 PixelLab 후속 세션.
-  const turretFiles = [
-    'turret_vulcan.png', // 0 발칸
-    'turret_sniper.png', // 1 저격
-    'turret_scatter.png', // 2 산탄
-    'turret_slow.png', // 3 감속
-    'turret_missile.png', // 4 미사일
-    'turret_shock.png', // 5 전격
-  ];
+  // 방어 엔티티(파일명 계약, spec 레인 A). 없는 파일은 절차적 플레이스홀더 유지(tryLoad 패턴).
+  // 구 포탑 6종(turret_*.png)은 M7a L11 에서 삭제 — 설비 아트는 FACILITY_ASSET_FILES 가 정본.
   const guardianFiles = ['guardian_titan.png', 'guardian_interceptor.png']; // preset 0/1
 
   const [
@@ -553,8 +807,14 @@ export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderT
     backgrounds,
     enemies,
     core,
-    turrets,
     guardians,
+    invasionBackdrops,
+    facilities,
+    props,
+    defenseBosses,
+    formation,
+    formationDrone,
+    spawnedDrone,
   ] = await Promise.all([
     tryLoad('player.png'),
     tryLoad('gem.png'),
@@ -571,8 +831,16 @@ export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderT
     Promise.all(bgFiles.map((f) => tryLoad(f))),
     Promise.all(enemyFiles.map((f) => tryLoad(f))),
     tryLoad('defense_core.png'),
-    Promise.all(turretFiles.map((f) => tryLoad(f))),
+
     Promise.all(guardianFiles.map((f) => tryLoad(f))),
+    // M7a 침공 3레이어: 파일명은 카탈로그 파생(FACILITY_ASSET_FILES 등) — 없으면 절차적 유지.
+    Promise.all(INVASION_BACKDROP_ASSET_FILES.map((f) => tryLoad(f))),
+    Promise.all(FACILITY_ASSET_FILES.map((f) => tryLoad(f))),
+    Promise.all(PROP_ASSET_FILES.map((f) => tryLoad(f))),
+    Promise.all(DEFENSE_BOSS_ASSET_FILES.map((f) => tryLoad(f))),
+    tryLoad('def3_formation_leader.png'),
+    tryLoad('def3_formation_drone.png'),
+    tryLoad('def3_spawned_drone.png'),
   ]);
 
   if (player !== null) tex.player = player;
@@ -600,12 +868,27 @@ export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderT
   });
   // 방어 엔티티: PNG 가 있으면 유형색 플레이스홀더를 덮고, 없으면 그대로 유지(회귀 0).
   if (core !== null) tex.core = core;
-  turrets.forEach((t, i) => {
-    if (t !== null) tex.defenseTurret[i] = t;
-  });
+
   guardians.forEach((t, i) => {
     if (t !== null) tex.guardian[i] = t;
   });
+  // 침공 3레이어: 슬롯 길이는 절차적 생성이 이미 카탈로그에서 확정했으므로, 여기서는
+  // 존재하는 PNG 만 덮는다(누락 = 플레이스홀더 유지, 회귀 0).
+  invasionBackdrops.forEach((t, i) => {
+    if (t !== null) tex.invasionBackdrop[i] = t;
+  });
+  facilities.forEach((t, i) => {
+    if (t !== null) tex.facility[i] = t;
+  });
+  props.forEach((t, i) => {
+    if (t !== null) tex.prop[i] = t;
+  });
+  defenseBosses.forEach((t, i) => {
+    if (t !== null) tex.defenseBoss[i] = t;
+  });
+  if (formation !== null) tex.formation = formation;
+  if (formationDrone !== null) tex.formationDrone = formationDrone;
+  if (spawnedDrone !== null) tex.spawnedDrone = spawnedDrone;
 
   return tex;
 }

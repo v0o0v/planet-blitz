@@ -152,7 +152,7 @@ export interface InvasionRuntime {
   accelCp: number;
 }
 
-/** 침공 런 설정(WorldConfig.invasion3). 구 InvasionConfig 와 병존한다. */
+/** 침공 런 설정(WorldConfig.invasion3). 구 InvasionConfig 는 L11 에서 삭제돼 이것이 유일하다. */
 export interface Invasion3Config {
   /** 정규화된 3레이어 배치. */
   layers: InvasionLayers;

@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createWorld, stepWorld, DEFAULT_CONFIG } from '../src/sim/world.js';
+import { createWorld, stepWorld, packPowerupPick, DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { WorldConfig, WorldState } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
 import type { InputFrame } from '../src/sim/world.js';
@@ -36,8 +36,10 @@ function ref(catalogId = 0) {
 }
 
 /**
- * 명시 배치. 빈 슬롯 자동 충원(기본 수비대)은 L9 레인 소유라 아직 없다 — 그래서 편대·설비는
- * 슬롯을 직접 채워야 스폰된다(보스만 coreRoom 이 스폰 단계에서 충원한다).
+ * 명시 배치. 빈 슬롯은 통합 게이트에서 배선된 기본 수비대 자동 충원(결정 #22 —
+ * `makeInvasionContext` → `garrisonLayers`)이 스폰 단계에서 채우므로, 여기서 슬롯을 직접
+ * 채우는 목적은 '명시 배치가 그대로 스폰되는가'를 충원과 구분해 보기 위함이다. 충원 자체는
+ * 아래 `emptyLayers()` 케이스가 따로 관찰한다.
  */
 function filledLayers() {
   return normalizeInvasionLayers({
@@ -59,11 +61,23 @@ function makeInvasionWorld(seed = 7, maintenance = 10000, coreHp?: number): Worl
   return createWorld(seed, config);
 }
 
+/**
+ * 한 틱 진행한다. **레벨업이 뜨면 그 프레임에 0번 선택을 소비한다.**
+ *
+ * `stepWorld` 는 `pendingLevelUp` 동안 월드를 정지시키고 tick 만 올린다(world.ts:736). 침공
+ * 런은 편대를 잡아 금방 레벨업하므로, 선택을 소비하지 않으면 페이즈 전이·hard 타임아웃이 둘 다
+ * 멈춘 채 남은 예산을 빈 루프로 흘린다 — 관측이 아니라 정지 상태를 재게 된다. 실제 클라는
+ * 레벨업 UI 가 선택을 강제하므로 여기서 그 역할을 대신한다(하네스·EF 벤치도 동일 규약).
+ */
+function step(state: WorldState, input: InputFrame = IDLE): void {
+  stepWorld(state, state.pendingLevelUp ? { ...input, special: packPowerupPick(0) } : input);
+}
+
 /** 페이즈가 바뀔 때까지(또는 상한까지) 돌린다. 반환 = 실제로 돈 틱 수. */
 function runUntilPhase(state: WorldState, target: number, maxTicks: number): number {
   let t = 0;
   while (t < maxTicks && state.invasion3!.phase !== target && !state.gameOver) {
-    stepWorld(state, IDLE);
+    step(state);
     t++;
   }
   return t;
@@ -222,21 +236,85 @@ describe('침공 3레이어 통합 — 런 수명', () => {
     const p0 = state.entities[0]!;
     p0.maxHp = 1e9;
     p0.hp = 1e9;
-    for (let i = 0; i < INVASION_TOTAL_TICKS - 1; i++) stepWorld(state, IDLE);
+    for (let i = 0; i < INVASION_TOTAL_TICKS - 1; i++) step(state);
     expect(state.gameOver).toBe(false);
-    stepWorld(state, IDLE);
+    step(state);
     expect(state.gameOver).toBe(true);
     expect(state.victory).toBe(false);
     expect(state.tick).toBe(INVASION_TOTAL_TICKS);
   });
 
-  it('가만히 있으면 코어방 방어가 실제로 플레이어를 죽인다(콘텐츠가 무해하지 않다)', () => {
+  it('가만히 있으면 코어방 방어가 실제로 플레이어를 깎는다(콘텐츠가 무해하지 않다)', () => {
+    // 재는 것은 **L3 코어방 콘텐츠의 유해성**이다. '사망 여부'로 재면 레벨업 파워업 경제가
+    // 측정에 섞인다 — 레벨업을 소비해야 런이 진행되는데(step 주석), 그 선택이 플레이어를
+    // 강화해 치사 여부가 밸런스 조정마다 뒤집힌다. 그래서 사망이 아니라 **L3 구간 피해량**을
+    // 잰다: 무입력 플레이어가 코어방에서 최대 HP 의 상당 비율을 잃어야 한다.
+    // (L3 진입 시 HP 는 레이어 클리어 회복 보너스로 채워지므로 진입 시점을 기준선으로 쓴다.)
     const state = makeInvasionWorld();
-    let died = false;
-    for (let i = 0; i < INVASION_TOTAL_TICKS && !died; i++) {
-      stepWorld(state, IDLE);
-      if (state.entities[0]!.hp <= 0) died = true;
+    let hpAtL3 = -1;
+    for (let i = 0; i < INVASION_TOTAL_TICKS; i++) {
+      step(state);
+      if (hpAtL3 < 0 && state.invasion3!.phase === PHASE_L3) hpAtL3 = state.entities[0]!.hp;
+      if (state.gameOver || state.victory) break;
     }
-    expect(died).toBe(true);
+    expect(hpAtL3).toBeGreaterThan(0);
+    const lost = hpAtL3 - state.entities[0]!.hp;
+    expect(lost).toBeGreaterThanOrEqual(Math.round(state.entities[0]!.maxHp / 4));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑤ 기본 수비대 자동 충원 — 빈 배치 기지가 '무저항'으로 남지 않는가
+// ---------------------------------------------------------------------------
+
+describe('침공 3레이어 통합 — 기본 수비대 충원', () => {
+  /** 전 슬롯 빈 정규형(NPC 초기 기지·신규 유저 방어 배치의 실제 모습). */
+  function emptyLayers() {
+    return normalizeInvasionLayers(undefined);
+  }
+
+  function makeEmptyWorld(seed = 9): WorldState {
+    const config = { ...DEFAULT_CONFIG } as WorldConfig;
+    config.invasion3 = {
+      layers: emptyLayers(),
+      timeLimitTicks: INVASION_TOTAL_TICKS,
+      maintenance: 10000,
+    };
+    return createWorld(seed, config);
+  }
+
+  it('빈 배치여도 L1 에 편대가 스폰된다(충원 배선이 빠지면 적 0마리로 남는다)', () => {
+    const state = makeEmptyWorld();
+    for (let i = 0; i < 120; i++) step(state);
+    expect(countKinds(state, ['enemy'])).toBeGreaterThan(0);
+  });
+
+  it('빈 배치여도 L2 소켓 설비가 스폰된다', () => {
+    const state = makeEmptyWorld();
+    runUntilPhase(state, PHASE_L2, INVASION_TOTAL_TICKS);
+    expect(state.invasion3?.phase).toBe(PHASE_L2);
+    step(state);
+    expect(
+      countKinds(state, ['facilityGun', 'facilityHazard', 'facilitySpawner']),
+    ).toBeGreaterThan(0);
+  });
+
+  it('충원은 스폰 단계 주입이라 config.layers 직렬화·해시를 오염시키지 않는다', () => {
+    const state = makeEmptyWorld();
+    for (let i = 0; i < 600; i++) step(state);
+    // 런이 실제로 진행됐는데도 config 가 보는 배치는 끝까지 빈 정규형이다 — 이 등식이 깨지면
+    // 클라·서버 중 한쪽만 충원본을 직렬화한 것이고, 그 순간 전 침공이 defense-mismatch 로
+    // 오거부된다(EF layersEqual 은 언제나 충원 **전** 원본을 본다).
+    expect(state.config.invasion3!.layers).toEqual(emptyLayers());
+  });
+
+  it('빈 배치 런도 결정론이다(같은 seed → 매 틱 해시 동일)', () => {
+    const a = makeEmptyWorld(9);
+    const b = makeEmptyWorld(9);
+    for (let i = 0; i < 400; i++) {
+      step(a);
+      step(b);
+      expect(hashWorld(a)).toBe(hashWorld(b));
+    }
   });
 });

@@ -42,7 +42,7 @@ import { blankEntity, addEntity, spawnEnemyBullet, spawnHazard, spawnWall } from
 import type { WorldState } from '../world.js';
 import { atan2, cos, sin, wrapAngle, PI } from '../math.js';
 import { segmentBlocked } from '../los.js';
-import { normalizeMaintenance } from '../defense.js';
+import { normalizeMaintenance } from './guardian.js';
 import { invasionFireCooldown } from './guardianBridge.js';
 import { summonEnemy } from '../waves.js';
 import { ENEMY_BY_TYPE } from '../../../data/enemies.js';

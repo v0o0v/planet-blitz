@@ -12,7 +12,8 @@
  * {@link resetInvasionStepHooks} 로 되돌린다.
  */
 
-import { normalizeMaintenance } from '../defense.js';
+import { garrisonLayers } from '../../../data/invasion/garrison.js';
+import { normalizeMaintenance } from './guardian.js';
 import type { WorldState } from '../world.js';
 import { PHASE_L1, PHASE_L2 } from './constants.js';
 import type { Invasion3Config, InvasionRuntime, InvasionStepContext, InvasionStepHooks } from './types.js';
@@ -60,13 +61,20 @@ export function invasionStepHooks(): InvasionStepHooks {
 /**
  * 스텝 컨텍스트를 만든다. `runtime` 은 **참조로** 실린다 — 페이즈 머신이 갱신하는 같은 객체를
  * 훅들이 그대로 읽는다(틱 중간 값 불일치 방지).
+ *
+ * ## 기본 수비대 충원(결정 #22)
+ * `layers` 는 원본이 아니라 {@link garrisonLayers} 파생 사본이다 — 빈 웨이브 슬롯·빈 소켓이
+ * 스폰 단계에서만 기본 수비대로 채워진다. 충원은 **정규화가 아니라 스폰 단계 주입**이라
+ * `config.layers`(직렬화·hashWorld 침공 블록·EF `layersEqual` 이 보는 값)는 끝까지 빈 정규형으로
+ * 남는다. 이 한 줄이 빠지면 빈 배치 기지가 적 0마리 '무저항 기지'가 된다.
+ * `garrisonLayers` 는 입력 객체 신원 기준 WeakMap 메모이즈라 매 틱 호출해도 재할당이 없다.
  */
 export function makeInvasionContext(
   config: Invasion3Config,
   runtime: InvasionRuntime,
 ): InvasionStepContext {
   return {
-    layers: config.layers,
+    layers: garrisonLayers(config.layers),
     runtime,
     maintenance: normalizeMaintenance(config.maintenance),
   };

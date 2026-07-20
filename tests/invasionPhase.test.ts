@@ -11,7 +11,7 @@
  *   7. 전이 엔티티 정리 규칙(적 제거 · 플레이어 투사체 승계).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig, WorldState } from '../src/sim/world.js';
 import { blankEntity } from '../src/sim/entities.js';
@@ -31,8 +31,32 @@ import {
   isClearTarget,
   isSegmentCleared,
 } from '../src/sim/invasion/phase.js';
+import {
+  registerInvasionStepHooks,
+  resetInvasionStepHooks,
+} from '../src/sim/invasion/step.js';
 
 const idle: InputFrame = emptyInput();
+
+/**
+ * ## 측정 대상 분리 — 이 파일은 **페이즈 머신만** 잰다
+ *
+ * 통합 게이트에서 기본 수비대 자동 충원(결정 #22, `makeInvasionContext` → `garrisonLayers`)이
+ * 배선되면서 `emptyInvasionLayers()` 가 더는 '내용 없는 월드'를 뜻하지 않게 됐다 — 빈 웨이브
+ * 슬롯·빈 소켓이 스폰 단계에서 정찰 드론편대·속사포로 채워진다. 그러면 여기 있는 전이·자원
+ * 승계·hard 상한 케이스가 콘텐츠 밸런스(플레이어 사망·레벨업 프리즈·격추 속도)에 좌우돼
+ * **재는 대상이 뒤바뀐다**.
+ *
+ * 그래서 이 파일은 스텝 훅을 비워 스폰을 끄고 페이즈 머신 자체만 관찰한다(테스트 완화가 아니라
+ * 측정 대상 분리다). 정본 정적 배선이 실제로 콘텐츠를 스폰하는지, 그리고 실 콘텐츠 런에서도
+ * 18000틱 hard 상한이 서는지는 `tests/invasionIntegration.test.ts` 가 정규 경로로 검증한다.
+ */
+beforeEach(() => {
+  registerInvasionStepHooks({});
+});
+afterEach(() => {
+  resetInvasionStepHooks();
+});
 
 function invasion3Config(timeLimitTicks = INVASION_TOTAL_TICKS): WorldConfig {
   return {
@@ -196,7 +220,7 @@ describe('전이 엔티티 정리 규칙', () => {
     push(w, 'enemy', 100, 100);
     push(w, 'enemyBullet', 120, 100);
     push(w, 'hazard', 140, 100);
-    push(w, 'defenseTurret', 160, 100);
+    push(w, 'facilityGun', 160, 100); // 방어 배치(설비)도 레이어와 함께 사라진다
     const bullet = push(w, 'bullet', 180, 100);
     const killsBefore = w.kills;
     clearLayerEntities(w);
@@ -246,16 +270,11 @@ describe('전멸 판정 대상', () => {
 
 describe('총 제한 시간(hard)', () => {
   it('18000틱 도달 시 gameOver, 17999 에서는 아니다', () => {
-    // 이 테스트가 재는 것은 **hard 상한 틱**이지 승패가 아니다. 스텝 훅이 배선된 뒤로는 런이
-    // 실제로 진행되므로 두 가지 조기 종료가 끼어든다 — ① 플레이어 자동 사격이 코어를 부수면
-    // victory(실측 tick 15069), ② 코어방 보스·기물 피해로 플레이어가 죽으면 gameOver. 둘 다
-    // 막아야 18000틱 상한만 남는다(막지 않으면 gameOver 의 원인이 뒤섞여 상한을 못 잰다).
-    const cfg = invasion3Config();
-    cfg.invasion3!.layers.l3.core.hp = 1_000_000_000;
-    const w = createWorld(51, cfg);
-    const p0 = w.entities[0]!;
-    p0.maxHp = 1e9;
-    p0.hp = 1e9;
+    // 이 테스트가 재는 것은 **hard 상한 틱**이지 승패가 아니다. 파일 상단 beforeEach 가 스폰
+    // 훅을 비워 두므로 코어 파괴 victory·코어방 피해 사망 같은 조기 종료가 끼어들 여지가 없고,
+    // 남는 종료 사유는 18000틱 상한 하나뿐이다. 실 콘텐츠 런에서의 같은 상한은
+    // tests/invasionIntegration.test.ts 가 검증한다.
+    const w = createWorld(51, invasion3Config());
     for (let i = 0; i < INVASION_TOTAL_TICKS - 1; i++) stepWorld(w, idle);
     expect(w.gameOver).toBe(false);
     expect(w.victory).toBe(false);

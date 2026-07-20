@@ -20,8 +20,10 @@ import {
   cooldownRemainingMs,
   canInvadeTarget,
   historyIWon,
+  beginInvasion,
   INVASION_COOLDOWN_MS,
   type InvasionGateway,
+  type InvasionSnapshot,
   type InvasionTarget,
   type LadderEntry,
   type InvasionVerdict,
@@ -32,12 +34,18 @@ import type { WorldConfig } from '../src/sim/world.js';
 import type { Replay } from '../src/sim/replay.js';
 import { emptyInput } from '../src/sim/world.js';
 import type { InputFrame } from '../src/sim/world.js';
-import { DEFAULT_TIME_LIMIT_TICKS, type DefenseLayout } from '../src/sim/defense.js';
 import type { KeyValueStore } from '../src/save/profile.js';
-import { verifyInvasion } from '../supabase/functions/verify-invasion/verifyInvasionCore.js';
-import type { InvasionServerContext } from '../supabase/functions/verify-invasion/verifyInvasionCore.js';
-import type { CardInstance } from '../data/defenseCards.js';
-import type { AttackerMatchup, DefenseCardConfig } from '../src/sim/cardEffects.js';
+// EF 재실행 대조(verifyInvasion/InvasionServerContext)는 3레이어 전환으로 입력 계약이 바뀌어
+// tests/verifyInvasion.test.ts 가 정본으로 커버한다 — 여기서는 더 이상 import 하지 않는다.
+import {
+  layersEqual,
+  normalizeInvasionLayers,
+  SAMPLE_GUARDIAN,
+  SAMPLE_REF,
+} from '../src/sim/invasion/normalize.js';
+import type { InvasionLayers } from '../src/sim/invasion/types.js';
+import { INVASION_CORE_MODULE_SLOTS, INVASION_TOTAL_TICKS } from '../src/sim/invasion/constants.js';
+import { normalizeModulesAuthority } from '../src/net/invasionGateway.js';
 
 /** In-memory KeyValueStore(net.test.ts 와 동일). */
 function memStore(seed?: Record<string, string>): KeyValueStore {
@@ -49,13 +57,20 @@ function memStore(seed?: Record<string, string>): KeyValueStore {
   };
 }
 
+/** 침공 런에 실을 3레이어 표본 배치(빈 슬롯은 기본 수비대가 스폰 단계에서 충원한다). */
+const SAMPLE_LAYERS: InvasionLayers = normalizeInvasionLayers({
+  l1: { waveSlots: [SAMPLE_REF, null, null, null, null, null] },
+  l2: { templateId: 0, sockets: [SAMPLE_REF, null, null, null, null, null] },
+  l3: { boss: SAMPLE_REF, guardians: [null, null], props: [SAMPLE_REF] },
+});
+
 const SAMPLE_TARGET: InvasionTarget = {
   profileId: 'def-1',
   rank: 3,
   displayName: '적기지 알파',
   shipSummary: { name: '스팅어', level: 20 },
   defenseId: 'defense-1',
-  layout: { core: { x: 400, y: 0 }, turrets: [], obstacles: [] },
+  layout: SAMPLE_LAYERS,
   maintenance: 88,
 };
 
@@ -92,14 +107,14 @@ class FakeInvasionGateway implements InvasionGateway {
   }
 }
 
-function invasionConfig(layout: DefenseLayout, timeLimitTicks = DEFAULT_TIME_LIMIT_TICKS): WorldConfig {
-  return { ...DEFAULT_CONFIG, invasion: { layout, timeLimitTicks } };
+function invasionConfig(layers: InvasionLayers, timeLimitTicks = INVASION_TOTAL_TICKS): WorldConfig {
+  return { ...DEFAULT_CONFIG, invasion3: { layers, timeLimitTicks } };
 }
 
-function idleReplay(ticks: number, layout: DefenseLayout, seed = 7): Replay {
+function idleReplay(ticks: number, layers: InvasionLayers, seed = 7): Replay {
   const inputs: InputFrame[] = [];
   for (let i = 0; i < ticks; i++) inputs.push(emptyInput());
-  return { seed, config: invasionConfig(layout), inputs };
+  return { seed, config: invasionConfig(layers), inputs };
 }
 
 // ---------------------------------------------------------------------------
@@ -115,7 +130,7 @@ describe('net/invasion — no-op 모드(미설정)', () => {
   });
   it('config=null 이면 submitInvasion 은 null(제출 안 함)', async () => {
     const store = memStore();
-    const replay = idleReplay(3, SAMPLE_TARGET.layout as DefenseLayout);
+    const replay = idleReplay(3, SAMPLE_LAYERS);
     const clientResult = buildClientResult(replay);
     const res = await submitInvasion(
       { target: SAMPLE_TARGET, replay, clientResult },
@@ -156,7 +171,7 @@ describe('net/invasion — 제출 플로우(fake 게이트웨이)', () => {
   it('uid·defender·defense 를 넘겨 제출하고 판정을 반환 + 쿨다운 기록', async () => {
     const gw = new FakeInvasionGateway();
     const store = memStore();
-    const replay = idleReplay(3, SAMPLE_TARGET.layout as DefenseLayout);
+    const replay = idleReplay(3, SAMPLE_LAYERS);
     const clientResult = buildClientResult(replay);
     const before = Date.now();
     const res = await submitInvasion({ target: SAMPLE_TARGET, replay, clientResult }, { gateway: gw, store });
@@ -175,7 +190,7 @@ describe('net/invasion — 제출 플로우(fake 게이트웨이)', () => {
     const gw = new FakeInvasionGateway();
     gw.fail = true;
     const store = memStore();
-    const replay = idleReplay(3, SAMPLE_TARGET.layout as DefenseLayout);
+    const replay = idleReplay(3, SAMPLE_LAYERS);
     const res = await submitInvasion(
       { target: SAMPLE_TARGET, replay, clientResult: buildClientResult(replay) },
       { gateway: gw, store },
@@ -225,14 +240,8 @@ describe('net/invasionGateway — normalizeVerdict(attackerWon null 보존)', ()
 // ---------------------------------------------------------------------------
 
 describe('net/invasion — buildClientResult(결정론·해시 스트림)', () => {
-  const layout: DefenseLayout = {
-    core: { x: 900, y: 0 },
-    turrets: [{ type: 0, x: 300, y: 0 }],
-    obstacles: [{ x: 500, y: 0, halfW: 50, halfH: 50 }],
-  };
-
   it('해시 스트림 길이 === 틱 수, finalTick 일치, attackerWon===coreDestroyed', () => {
-    const replay = idleReplay(120, layout);
+    const replay = idleReplay(120, SAMPLE_LAYERS);
     const cr = buildClientResult(replay);
     expect(cr.hashStream).toHaveLength(120);
     expect(cr.finalTick).toBe(120);
@@ -241,79 +250,31 @@ describe('net/invasion — buildClientResult(결정론·해시 스트림)', () =
   });
 
   it('같은 리플레이는 결정론적으로 동일 결과', () => {
-    const replay = idleReplay(80, layout);
+    const replay = idleReplay(80, SAMPLE_LAYERS);
     expect(buildClientResult(replay)).toEqual(buildClientResult(replay));
   });
 
-  it('코어 근접·무포탑이면 승리(coreDestroyed=true)로 수렴', () => {
-    const winLayout: DefenseLayout = { core: { x: 380, y: 0 }, turrets: [], obstacles: [] };
-    // 자동 조준으로 코어를 파괴할 만큼 충분히 긴 idle 런.
-    const replay = idleReplay(6000, winLayout, 3);
-    const cr = buildClientResult(replay);
-    expect(cr.attackerWon).toBe(true);
-    expect(cr.coreDestroyed).toBe(true);
+  it('배치가 다르면 결과 해시가 갈린다(배치가 런에 실제로 실린다)', () => {
+    // 구 판은 "코어 근접·무포탑 idle 런이 승리로 수렴"을 봤다. 3레이어에서는 코어가 **L3**에
+    // 있어 idle 로 도달하려면 1만 틱을 넘겨야 하고(그마저 레벨업 프리즈로 멈춘다), 승리 경로는
+    // tests/invasion.test.ts(L3 코어 파괴)·tests/invasionIntegration.test.ts 가 정본으로 본다.
+    // 여기서 net 계층이 보장할 것은 "제출용 결과가 배치를 반영하는가" 하나다.
+    const other = normalizeInvasionLayers({
+      l1: { waveSlots: [SAMPLE_REF, SAMPLE_REF, null, null, null, null] },
+      l2: { templateId: 2, sockets: [SAMPLE_REF] },
+      l3: { boss: null, guardians: [SAMPLE_GUARDIAN, null], props: [] },
+    });
+    const a = buildClientResult(idleReplay(120, SAMPLE_LAYERS));
+    const b = buildClientResult(idleReplay(120, other));
+    expect(a.finalHash).not.toBe(b.finalHash);
   });
 });
 
-// ---------------------------------------------------------------------------
-// M6 방어 카드: 클라 buildClientResult(스냅샷 card 재현) ↔ EF verifyInvasion 일치
-// ---------------------------------------------------------------------------
-
-describe('net/invasion — 방어 카드 스냅샷 재현 (M6 · ADR-0012)', () => {
-  // begin_invasion 스냅샷 card 로 클라가 런한 결과(buildClientResult)를, EF 가 같은 서버 권위
-  // card 로 재실행하면 hashStream 이 바이트 일치해 accept 된다(공/수 결정론 재현 고정). 이 테스트가
-  // 클라 net 경로(runReplay 경유)와 EF 재실행이 카드 포함 침공에서 정합함을 함께 못박는다.
-  // 승리(코어 파괴)로 종결되는 무포탑 배치 — 카드 기저 coreHpPct 가 코어 HP 를 키워 거동·해시를
-  // 바꾸지만(카드 효력 실증), 종료 상태는 victory 로 수렴한다(outcome 매핑 victory XOR gameOver 성립).
-  const layout: DefenseLayout = { core: { x: 380, y: 0 }, turrets: [], obstacles: [] };
-  const matchup: AttackerMatchup = {
-    fire: false, cold: false, lightning: false, beam: false,
-    attackerCp: 0, defenderCp: 0, revenge: true, reinvasion: false, subweaponHeavy: false,
-  };
-  const card: CardInstance = {
-    id: 'card-42', rarity: 'magic',
-    prefixes: [{ id: 'cc-avenger', stat: 'turretDamagePct', value: 40 }],
-    suffixes: [], chargesMax: 6, chargesLeft: 6, seed: 42,
-  };
-  const cardCfg: DefenseCardConfig = { card, matchup };
-
-  function cardReplay(ticks: number): Replay {
-    const inputs: InputFrame[] = [];
-    for (let i = 0; i < ticks; i++) inputs.push(emptyInput());
-    return {
-      seed: 3,
-      config: { ...invasionConfig(layout), invasion: { layout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS, card: cardCfg } },
-      inputs,
-    };
-  }
-
-  it('buildClientResult 는 카드 포함 리플레이에서도 결정론적', () => {
-    const replay = cardReplay(150);
-    expect(buildClientResult(replay)).toEqual(buildClientResult(replay));
-  });
-
-  it('클라가 만든 결과를 EF 가 서버 권위 card 로 재실행하면 accept', () => {
-    const replay = cardReplay(6000);
-    const cr = buildClientResult(replay);
-    expect(cr.attackerWon).toBe(true); // 종료 상태 victory(outcome 매핑 성립 전제)
-    const submission = {
-      seed: replay.seed,
-      config: replay.config,
-      inputs: replay.inputs,
-      claim: {
-        finalHash: cr.finalHash,
-        hashStream: cr.hashStream,
-        outcome: { victory: cr.attackerWon, gameOver: !cr.attackerWon },
-      },
-    };
-    const ctx: InvasionServerContext = {
-      layout,
-      timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
-      card: cardCfg,
-    };
-    expect(verifyInvasion(submission, ctx).verdict).toBe('accept');
-  });
-});
+// ▮ 삭제한 describe: "net/invasion — 방어 카드 스냅샷 재현 (M6 · ADR-0012)"
+//   구 `WorldConfig.invasion.card`(방어 카드) 입력 자체가 L11 에서 사라졌다. 카드는 M7b 에서
+//   **코어 모듈**로 개명·재설계되며(`Invasion3Config` 에는 아직 모듈 필드가 없다), 그 스냅샷
+//   재현 검증은 M7b-core-modules 레인이 새 어휘로 다시 세운다. 폐기된 입력 계약을 억지로
+//   살려 두면 테스트가 죽은 스키마를 고착시킨다.
 
 // ---------------------------------------------------------------------------
 // 재도전 쿨다운(순수)
@@ -373,5 +334,89 @@ describe('전투 기록 승패 해석(historyIWon)', () => {
   it('서버 미확정(null)은 패배로 강제하지 않고 null 을 유지한다', () => {
     expect(historyIWon({ ...base, attacking: true, attackerWon: null })).toBeNull();
     expect(historyIWon({ ...base, attacking: false, attackerWon: null })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M7a — 3레이어 스냅샷 계약 (L7-db-net)
+// ---------------------------------------------------------------------------
+// 게이트웨이가 서버 jsonb(begin_invasion 의 layers/modules)를 클라 정규형으로 되돌리는
+// 경로를 고정한다. 여기가 어긋나면 정직한 런이 전량 defense-mismatch 로 오거부된다.
+
+describe('net/invasion — 3레이어 스냅샷 계약(M7a)', () => {
+  it('jsonb 왕복(JSON 직렬화) 후에도 layers 정규형이 바이트 동일', () => {
+    const layers = normalizeInvasionLayers({
+      l1: { waveSlots: [SAMPLE_REF, null, null, null, null, null] },
+      l2: { templateId: 1, sockets: [SAMPLE_REF] },
+      l3: { boss: SAMPLE_REF, guardians: [SAMPLE_GUARDIAN, null], props: [SAMPLE_REF] },
+    });
+    const roundTrip = normalizeInvasionLayers(JSON.parse(JSON.stringify(layers)) as unknown);
+    expect(roundTrip).toEqual(layers);
+    expect(layersEqual(roundTrip, layers)).toBe(true);
+  });
+
+  it('beginInvasion: 미설정이면 null(no-op — throw 금지 규율 유지)', async () => {
+    expect(await beginInvasion('defense-1', { config: null })).toBeNull();
+    expect(await beginInvasion('', { config: null })).toBeNull();
+  });
+
+  it('beginInvasion: 게이트웨이 스냅샷의 layers·modules 를 그대로 전달한다', async () => {
+    const layers = normalizeInvasionLayers({ l1: { waveSlots: [SAMPLE_REF] } });
+    const snap: InvasionSnapshot = {
+      snapshotId: 'snap-1',
+      layers,
+      layout: layers,
+      maintenance: 91,
+      modules: { slots: [SAMPLE_REF, null], matchup: { revenge: true } },
+    };
+    const gateway = {
+      getUserId: async () => 'me',
+      getInvasionTargets: async () => [],
+      fetchLadder: async () => [],
+      submitInvasion: async () => {
+        throw new Error('사용 안 함');
+      },
+      beginInvasion: async () => snap,
+    } as unknown as InvasionGateway;
+    const got = await beginInvasion('defense-1', { gateway });
+    expect(got?.snapshotId).toBe('snap-1');
+    expect(got?.layers).toEqual(layers);
+    expect(got?.modules?.slots).toHaveLength(2);
+  });
+
+  it('beginInvasion: 게이트웨이가 throw 하면 null(라이브 경로 폴백)', async () => {
+    const gateway = {
+      beginInvasion: async () => {
+        throw new Error('자격 미달');
+      },
+    } as unknown as InvasionGateway;
+    expect(await beginInvasion('defense-1', { gateway })).toBeNull();
+  });
+});
+
+describe('net/invasionGateway — 코어 모듈 권위 파싱(normalizeModulesAuthority)', () => {
+  it('modules 키가 없거나 손상이면 null(모듈 없음)', () => {
+    expect(normalizeModulesAuthority(null)).toBeNull();
+    expect(normalizeModulesAuthority(undefined)).toBeNull();
+    expect(normalizeModulesAuthority('부서진 값')).toBeNull();
+  });
+
+  it('슬롯은 고정 길이 2 로 복원되고 빈 슬롯이 자리를 지킨다(밀집화 금지)', () => {
+    const got = normalizeModulesAuthority({ slots: [null, SAMPLE_REF], matchup: {} });
+    expect(got?.slots).toHaveLength(INVASION_CORE_MODULE_SLOTS);
+    expect(got?.slots[0]).toBeNull();
+    expect(got?.slots[1]).toEqual(SAMPLE_REF);
+  });
+
+  it('슬롯 초과분은 잘리고 부족분은 null 로 채워진다', () => {
+    const many = normalizeModulesAuthority({ slots: [SAMPLE_REF, SAMPLE_REF, SAMPLE_REF] });
+    expect(many?.slots).toHaveLength(INVASION_CORE_MODULE_SLOTS);
+    const few = normalizeModulesAuthority({ slots: [] });
+    expect(few?.slots).toEqual([null, null]);
+  });
+
+  it('matchup 은 서버 권위 값을 그대로 보존한다(정적 카운터 판정 입력)', () => {
+    const got = normalizeModulesAuthority({ slots: [], matchup: { revenge: true, attackerCp: 12 } });
+    expect(got?.matchup).toEqual({ revenge: true, attackerCp: 12 });
   });
 });

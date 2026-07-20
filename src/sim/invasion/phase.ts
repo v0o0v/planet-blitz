@@ -57,7 +57,6 @@ export function isClearTarget(e: Entity): boolean {
     case 'boss':
     case 'core':
     case 'decoyCore':
-    case 'defenseTurret':
     case 'guardian':
     case 'destructible':
       return true;

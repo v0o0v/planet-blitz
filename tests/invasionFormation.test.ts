@@ -14,7 +14,7 @@ import { describe, it, expect } from 'vitest';
 import { createWorld } from '../src/sim/world.js';
 import type { WorldState } from '../src/sim/world.js';
 import type { Entity } from '../src/sim/entities.js';
-import { MAINTENANCE_FULL } from '../src/sim/defense.js';
+import { MAINTENANCE_FULL } from '../src/sim/invasion/guardian.js';
 import { emptyInvasionLayers } from '../src/sim/invasion/normalize.js';
 import type {
   InvasionLayers,

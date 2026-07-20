@@ -5,7 +5,7 @@
  *   1) 타깃 제안 목록 — RPC `get_invasion_targets()`(내 위 랭커 3명 + 30위 랜덤 1명).
  *      각 행: 순위·이름·기체 요약·정비도 + 정찰/침공 버튼. 재도전 쿨다운 1h(서버 강제)
  *      미러로 버튼을 비활성·남은 시간 표시.
- *   2) 기지 정찰 뷰 — 선택한 대상의 방어 layout 미리보기(읽기 전용 미니 격자).
+ *   2) 기지 정찰 뷰 — 선택한 대상의 3레이어 배치 요약(M7a 임시 텍스트, 정식판은 M7b).
  *   3) 순위표 — `ladder` 상위 조회(관제탑 래더 표시).
  *
  * 서버 권위(원칙2): 침공 런의 클라이언트 결과는 잠정이며, `submitInvasion` 의 서버 판정이
@@ -15,12 +15,18 @@
  * 뜬다(기존 로컬 플레이 100% 유지 — 침공만 잠긴다).
  *
  * 결정론 무관: 렌더/네트워크 전용. 침공 런의 정적 배치(layout)만 sim config 로 흘러가고
- * 그 시뮬은 sim 이 결정론으로 재현한다. layout 은 **반드시 `normalizeLayout()`** 으로
- * 깊은 정규화를 거쳐 InvasionConfig 를 구성한다(PR#24 carry-forward, ADR-0005 보호).
+ * 그 시뮬은 sim 이 결정론으로 재현한다. layout 은 **반드시 {@link normalizeTargetLayers}** 로
+ * 정규화(내부적으로 sim 정본 `normalizeInvasionLayers`)해 Invasion3Config 를 구성한다 —
+ * raw jsonb 를 sim 에 그대로 넣으면 클라·서버 재실행이 갈린다(ADR-0005 보호).
  */
 
 import type { Profile } from '../save/profile.js';
-import type { DefenseLayout } from '../sim/defense.js';
+import type { InvasionLayers } from '../sim/invasion/types.js';
+import { normalizeInvasionLayers } from '../sim/invasion/normalize.js';
+import {
+  INVASION_WAVE_SLOTS,
+  INVASION_PROP_SLOTS,
+} from '../sim/invasion/constants.js';
 import {
   fetchInvasionTargets,
   fetchLadder,
@@ -52,31 +58,10 @@ import { seedBaseByProfileId } from '../../data/seedBases.js';
 import type { CardInstance } from '../../data/defenseCards.js';
 import { cardRarityColor, cardRarityLabel, cardAffixOneLine } from './cardsView.js';
 import { t } from '../i18n/index.js';
-import {
-  GRID_COLS,
-  GRID_ROWS,
-  SPAWN_COL,
-  SPAWN_ROW,
-  editorStateFromLayout,
-  findAt,
-  normalizeLayout,
-  type DefenseEditorState,
-  type Occupant,
-} from './defenseCommand.js';
 
 // ---------------------------------------------------------------------------
 // 표시 데이터
 // ---------------------------------------------------------------------------
-/** 포탑 유형별 글리프·색(인덱스 = TURRET_* 코드; defenseCommand 팔레트와 정합). */
-const TURRET_GLYPH: readonly { g: string; accent: string }[] = [
-  { g: '🔫', accent: '#4cd7ff' },
-  { g: '🎯', accent: '#ff5a7a' },
-  { g: '💥', accent: '#ffd24c' },
-  { g: '❄️', accent: '#7ad0ff' },
-  { g: '🚀', accent: '#ff9a4c' },
-  { g: '⚡', accent: '#c86aff' },
-];
-
 // ---------------------------------------------------------------------------
 // 순수 표시 로직 (테스트 대상 — DOM 무관)
 // ---------------------------------------------------------------------------
@@ -111,8 +96,24 @@ export interface InvadeState {
   canInvade: boolean;
   /** 비활성 사유(canInvade=true 면 빈 문자열). */
   reason: string;
-  /** 정규화된 배치(침공 런 config 입력). 배치 없음/손상이면 null. */
-  layout: DefenseLayout | null;
+  /** 정규화된 3레이어 배치(침공 런 config 입력). 배치 없음/손상이면 null. */
+  layout: InvasionLayers | null;
+}
+
+/**
+ * 서버가 준 raw layout → 정규화된 3레이어 배치. **"배치 없음"을 구분하는 유일한 지점**이다.
+ *
+ * `normalizeInvasionLayers` 는 total function 이라 무엇을 넣어도 정규형을 돌려준다(빈 배치로
+ * 폴백). 그건 sim·해시 입력으로는 옳지만 UI 로는 위험하다 — 서버 응답이 통째로 비었거나 구
+ * 형식(`{core,turrets,obstacles}`)이어도 "정상 기지"로 보여 침공 버튼이 열리기 때문이다.
+ * 그래서 여기서 **3레이어 형태인지**(l1/l2/l3 중 하나라도 있는 객체인지)를 먼저 보고, 아니면
+ * null 을 돌려 호출부가 "방어 기지 없음"으로 분기하게 한다.
+ */
+export function normalizeTargetLayers(raw: unknown): InvasionLayers | null {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  if (o['l1'] === undefined && o['l2'] === undefined && o['l3'] === undefined) return null;
+  return normalizeInvasionLayers(raw);
 }
 
 /**
@@ -126,7 +127,7 @@ export function computeInvadeState(
   cooldowns: Record<string, number>,
   nowMs: number,
 ): InvadeState {
-  const layout = normalizeLayout(target.layout);
+  const layout = normalizeTargetLayers(target.layout);
   if (layout === null) {
     return { canInvade: false, reason: t('ctl.noBase'), layout: null };
   }
@@ -142,7 +143,7 @@ export function computeInvadeState(
  * (계약 §2 — 배치전은 NPC 전용·쿨다운 없음). 배치 layout 정규화만 검사한다.
  */
 export function computePlacementInvadeState(target: InvasionTarget): InvadeState {
-  const layout = normalizeLayout(target.layout);
+  const layout = normalizeTargetLayers(target.layout);
   if (layout === null) {
     return { canInvade: false, reason: t('ctl.noBase'), layout: null };
   }
@@ -170,7 +171,7 @@ export interface RevengeCardState {
   /** 잔여시간 라벨("복수 가능 N시간 남음"). 만료면 빈 문자열. */
   remainingLabel: string;
   /** 방어 배치 정규화 결과(복수 침공 런 config). 배치 없음/손상이면 null. */
-  layout: DefenseLayout | null;
+  layout: InvasionLayers | null;
 }
 
 /**
@@ -179,7 +180,7 @@ export interface RevengeCardState {
  */
 export function revengeCardState(target: RevengeTarget, nowMs: number): RevengeCardState {
   const remaining = revengeRemainingMs(target.expiresAtMs, nowMs);
-  const layout = normalizeLayout(target.layout);
+  const layout = normalizeTargetLayers(target.layout);
   return {
     expired: remaining <= 0,
     remainingLabel: formatRevengeRemaining(remaining),
@@ -254,44 +255,28 @@ export function resultBannerText(view: InvasionResultView): string {
   return t('ctl.res.lose', { who });
 }
 
-/** 미니 정찰 격자 한 칸의 표시(순수). 점유 없으면 null. */
-export interface PreviewCell {
-  col: number;
-  row: number;
-  glyph: string;
-  accent: string;
-  label: string;
-  spawn: boolean;
-}
-
-function occupantGlyph(state: DefenseEditorState, occ: NonNullable<Occupant>): { g: string; accent: string; label: string } {
-  if (occ.kind === 'core') return { g: '💠', accent: '#8fd94c', label: t('ctl.cell.core') };
-  if (occ.kind === 'obstacle') return { g: '🧱', accent: '#8896b8', label: t('ctl.cell.obstacle') };
-  const turret = state.turrets[occ.index];
-  const d = turret !== undefined ? TURRET_GLYPH[turret.type] : undefined;
-  return { g: d?.g ?? '❔', accent: d?.accent ?? '#fff', label: t('ctl.cell.turret') };
-}
-
 /**
- * 방어 배치 → 미니 격자 미리보기 셀 목록(순수). editorStateFromLayout + findAt 재사용
- * (defenseCommand 의 검증된 좌표 로직). 점유 칸만 반환한다(스폰 칸은 빈 칸이라도 표시).
+ * 3레이어 배치 정찰 요약 한 줄(순수). 정식 정찰 화면(레이어별 실루엣·등급·승급 표시)은
+ * **M7b-command-ui** 가 만든다 — 여기서는 "몇 개나 배치돼 있는가"만 센다.
+ *
+ * 구 구현은 15×9 미니 격자에 포탑·장애물 글리프를 찍었다. 3레이어에는 격자가 없어 그 표현이
+ * 통째로 성립하지 않으므로 M7a 에서는 텍스트로 낮춘다(레인 문서 L11 ④).
+ *
+ * 정찰 정보 공개 범위(결정 #15): 슬롯 **점유 수**까지만 세고 카탈로그 id·레벨·어픽스 같은
+ * 정확 스펙은 노출하지 않는다.
  */
-export function previewCells(layout: DefenseLayout): PreviewCell[] {
-  const state = editorStateFromLayout(layout);
-  const out: PreviewCell[] = [];
-  for (let row = 0; row < GRID_ROWS; row++) {
-    for (let col = 0; col < GRID_COLS; col++) {
-      const spawn = col === SPAWN_COL && row === SPAWN_ROW;
-      const occ = findAt(state, col, row);
-      if (occ === null) {
-        if (spawn) out.push({ col, row, glyph: '▲', accent: '#ffb14c', label: t('ctl.cell.spawn'), spawn: true });
-        continue;
-      }
-      const g = occupantGlyph(state, occ);
-      out.push({ col, row, glyph: g.g, accent: g.accent, label: g.label, spawn });
-    }
-  }
-  return out;
+export function reconSummary(layers: InvasionLayers): string {
+  const filled = (slots: readonly (unknown | null)[]): number =>
+    slots.reduce<number>((n, s) => (s === null || s === undefined ? n : n + 1), 0);
+  return t('ctl.recon.summary3', {
+    f: filled(layers.l1.waveSlots),
+    fm: INVASION_WAVE_SLOTS,
+    s: filled(layers.l2.sockets),
+    sm: layers.l2.sockets.length,
+    p: filled(layers.l3.props),
+    pm: INVASION_PROP_SLOTS,
+    b: layers.l3.boss !== null ? 1 : 0,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -360,8 +345,8 @@ const STYLE = `
 
 /** 관제탑 콜백(main 이 침공 런/뒤로가기를 구동). */
 export interface ControlTowerCallbacks {
-  /** 침공 시작 — 정규화된 방어 배치를 침공 런 config 로 넘긴다(normalizeLayout 완료본). */
-  onInvade: (target: InvasionTarget, layout: DefenseLayout) => void;
+  /** 침공 시작 — 정규화된 3레이어 배치를 침공 런 config 로 넘긴다(normalizeTargetLayers 완료본). */
+  onInvade: (target: InvasionTarget, layout: InvasionLayers) => void;
   /** 리플레이 관전 진입 — invasionId 로 리플레이를 로드해 재생한다(F3). */
   onSpectate: (invasionId: string, attackerName: string) => void;
   /** 방어 성공한 침공에 도발 스티커 달기(F2 방어자 몫) — 스티커 선택 UI 를 연다. */
@@ -928,39 +913,19 @@ export class ControlTower {
       panel.appendChild(this.msg(t('ctl.recon.selectPrompt')));
       return panel;
     }
-    const layout = normalizeLayout(target.layout);
+    const layout = normalizeTargetLayers(target.layout);
     if (layout === null) {
       panel.appendChild(this.msg(t('ctl.recon.noBase')));
       return panel;
     }
 
-    const cells = previewCells(layout);
-    const occupied = new Map<string, PreviewCell>();
-    for (const c of cells) occupied.set(`${c.col},${c.row}`, c);
-
-    const grid = document.createElement('div');
-    grid.className = 'grid';
-    grid.style.gridTemplateColumns = `repeat(${GRID_COLS}, 20px)`;
-    for (let row = 0; row < GRID_ROWS; row++) {
-      for (let col = 0; col < GRID_COLS; col++) {
-        const cell = document.createElement('div');
-        const pc = occupied.get(`${col},${row}`);
-        cell.className = `cell${pc?.spawn === true ? ' spawn' : ''}`;
-        if (pc !== undefined) {
-          cell.textContent = pc.glyph;
-          cell.style.color = pc.accent;
-          cell.title = pc.label;
-        }
-        grid.appendChild(cell);
-      }
-    }
-    panel.appendChild(grid);
-
+    // 15×9 미니 격자는 M7a 에서 사라졌다(3레이어에 격자가 없다). 정식 정찰 화면은
+    // M7b-command-ui 가 레이어 탭으로 다시 만든다 — 그때까지 슬롯 점유 요약 한 줄만 보여준다.
     const sum = document.createElement('div');
     sum.className = 'pb-note';
     sum.style.textAlign = 'left';
     sum.style.marginTop = '6px';
-    sum.textContent = t('ctl.recon.summary', { t: layout.turrets.length, o: layout.obstacles.length });
+    sum.textContent = reconSummary(layout);
     panel.appendChild(sum);
     return panel;
   }

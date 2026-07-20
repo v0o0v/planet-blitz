@@ -62,7 +62,7 @@ import {
   FACILITY_BEHAVIOR_SPAWNER,
   GARRISON_FACILITY_CATALOG_ID,
 } from '../data/invasion/facilities.js';
-import { MAINTENANCE_FULL } from '../src/sim/defense.js';
+import { MAINTENANCE_FULL } from '../src/sim/invasion/guardian.js';
 
 // ---------------------------------------------------------------------------
 // 헬퍼

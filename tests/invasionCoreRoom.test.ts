@@ -23,7 +23,7 @@ import {
 import { normalizeInvasionLayers, SAMPLE_GUARDIAN } from '../src/sim/invasion/normalize.js';
 import { INVASION_CORE_HP, INVASION_CORE_RADIUS } from '../src/sim/invasion/constants.js';
 import type { InvasionLayers, InvasionStepContext } from '../src/sim/invasion/types.js';
-import { MAINTENANCE_FULL } from '../src/sim/defense.js';
+import { MAINTENANCE_FULL } from '../src/sim/invasion/guardian.js';
 import {
   DEFENSE_BOSS_TRANSITION_TICKS,
   DEFENSE_BOSSES,

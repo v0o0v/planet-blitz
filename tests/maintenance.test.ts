@@ -21,7 +21,7 @@ import {
   type DefenseStatus,
   type RepairResult,
 } from '../src/net/defenseSync.js';
-import type { DefenseLayout } from '../src/sim/defense.js';
+import type { InvasionLayers } from '../src/sim/invasion/types.js';
 import {
   stashPendingProfile,
   readPendingProfile,
@@ -117,7 +117,7 @@ class BareDefenseGateway implements DefenseGateway {
     return null;
   }
   async insertDefense(): Promise<void> {}
-  async updateDefense(_id: string, _layout: DefenseLayout): Promise<void> {}
+  async updateDefense(_id: string, _layout: InvasionLayers): Promise<void> {}
 }
 
 describe('maintenance — net 공개 함수', () => {

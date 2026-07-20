@@ -96,6 +96,39 @@ describe('seedBases — 순번·난이도 밴드·rank', () => {
       expect(b.shipSummary.level).toBeGreaterThan(0);
     }
   });
+
+  /**
+   * 설명 문구는 3레이어 어휘(편대·회랑/설비/소켓·기물/수호/보스/코어)로 쓴다(M7a · L9).
+   * 구 단일 아레나 어휘('포탑'·'장애물'·'예산')가 남으면 정찰 화면이 실제 배치와 어긋난 설명을
+   * 보여주므로, 문구 재작성 누락을 여기서 잡는다.
+   */
+  it('설명은 3레이어 어휘를 쓰고 구 아레나 어휘가 남아 있지 않다', () => {
+    const legacy = ['포탑', '장애물', '예산'];
+    const layer3 = [
+      '편대',
+      '회랑',
+      '설비',
+      '소켓',
+      '슬롯',
+      '기물',
+      '수호',
+      '보스',
+      '코어',
+      '드론',
+      '수비대',
+      '레이어',
+      '정비도',
+    ];
+    for (const b of SEED_BASES) {
+      for (const w of legacy) {
+        expect(b.description.includes(w), `${b.id}: 구 어휘 "${w}"`).toBe(false);
+      }
+      expect(
+        layer3.some((w) => b.description.includes(w)),
+        `${b.id}: 3레이어 어휘 없음`,
+      ).toBe(true);
+    }
+  });
 });
 
 describe('seedBases — 조회 헬퍼', () => {

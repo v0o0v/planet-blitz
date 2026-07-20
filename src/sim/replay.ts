@@ -16,7 +16,7 @@ import type { InputFrame, WorldState, WorldConfig } from './world.js';
 import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } from './world.js';
 import type { Entity } from './entities.js';
 import { KIND_CODE } from './entities.js';
-import { normalizeMaintenance } from './defense.js';
+import { normalizeMaintenance } from './invasion/guardian.js';
 import { INVASION_HASH_VERSION } from './invasion/constants.js';
 import { GUARDIAN_SNAPSHOT_FIELDS } from './invasion/normalize.js';
 import type {
@@ -163,7 +163,8 @@ export function hashEntity(hash: number, e: Entity): number {
 // 침공 3레이어 해시 블록 v2 (M7a · L1-determinism)
 //
 // ## 왜 v2 인가
-// 구 침공 블록(아래 `config.invasion` 분기)은 침공 → 수호 → 마일스톤 → 카드로 조건부 접기가
+// 구 침공 블록(`config.invasion` 분기 — L11 에서 삭제됐다. 아래 "(결번)" 주석 참조)은
+// 침공 → 수호 → 마일스톤 → 카드로 조건부 접기가
 // 4단 중첩돼 있다. 3레이어 배치(웨이브 6 · 소켓 N · 기물 6 · 모듈 2 · 보스 · 코어)와 런타임
 // 페이즈 상태를 그 위에 얹으면 5단이 되고, **순서를 한 곳만 틀려도 클라(Node)와 서버(Deno)
 // 재실행이 갈려 전 침공이 오거부**된다. 그래서 3레이어는 중첩을 늘리지 않고 **평탄한 별도
@@ -382,110 +383,12 @@ export function hashWorld(state: WorldState): number {
   // runtime 블록에서 이미 접힘). 신규 필드는 이 아래에만 append.
   h = hashU32(h, state.wave.segmentBaseKills >>> 0);
   h = hashU32(h, state.wave.segmentKillGoal >>> 0);
-  // --- M4 침공 방어 배치(APPEND-ONLY, 조건부) ---
-  // PvE 런은 config.invasion이 undefined라 이 블록을 통째로 건너뛴다 → 기존 fixtures 해시가
-  // 바이트 단위로 완전 불변(방어 엔티티도 PvE엔 없어 위 엔티티 루프도 불변). 침공 런만 제한
-  // 시간·배치(코어·포탑 유형/좌표·장애물 AABB)를 결정론 입력으로 접어, 서버가 정확한 config로
-  // 재현했는지 검증한다(방어 엔티티 스폰으로 이미 발산하지만 config 자체도 봉인). 신규 침공
-  // 필드는 이 블록 안 최후미에만 append.
-  const inv = state.config.invasion;
-  if (inv !== undefined) {
-    h = hashU32(h, inv.timeLimitTicks >>> 0);
-    const lay = inv.layout;
-    h = hashFloat(h, lay.core.x);
-    h = hashFloat(h, lay.core.y);
-    h = hashU32(h, lay.turrets.length >>> 0);
-    for (const t of lay.turrets) {
-      h = hashU32(h, t.type >>> 0);
-      h = hashFloat(h, t.x);
-      h = hashFloat(h, t.y);
-    }
-    h = hashU32(h, lay.obstacles.length >>> 0);
-    for (const o of lay.obstacles) {
-      h = hashFloat(h, o.x);
-      h = hashFloat(h, o.y);
-      h = hashFloat(h, o.halfW);
-      h = hashFloat(h, o.halfH);
-    }
-    // 정비도(풍화, ADR-0006) — 정수 centi-percent(정규화 본). 침공 블록 최후미에 append.
-    // 미지정(완전 정비)과 명시 10000 이 같은 값으로 접혀 거동과 정합한다. 정비도를 위조
-    // (예: 방치 기지를 100% 라 주장)하면 서버가 권위 정비도로 재실행 → 발사 간격이 달라져
-    // 엔티티 상태부터 발산하고, 이 폴드로 config 자체도 봉인된다. 신규 침공 필드는 이 아래.
-    h = hashU32(h, normalizeMaintenance(inv.maintenance) >>> 0);
-    // --- M5 수호 기체(APPEND-ONLY, 이중 조건부) ---
-    // guardians 필드가 없거나 빈 배열이면 이 블록을 통째로 건너뛴다 → **수호 미포함 침공/PvE
-    // 런의 해시가 바이트 단위로 완전 불변**(기존 M4 fixtures 회귀 0). 수호 포함 런만 스냅샷·
-    // 성능%·계보 보너스·좌표를 결정론 입력으로 접어, 서버가 권위 값으로 재현했는지 봉인한다
-    // (수호 엔티티 스폰으로 이미 발산하지만 config 자체도 함께 봉인 — 정비도 폴드와 동일 철학).
-    // 신규 수호 필드는 이 스냅샷 폴드 최후미에만 append.
-    const gs = lay.guardians;
-    if (gs !== undefined && gs.length > 0) {
-      h = hashU32(h, gs.length >>> 0);
-      for (const g of gs) {
-        h = hashFloat(h, g.x);
-        h = hashFloat(h, g.y);
-        h = hashU32(h, (g.performanceCP ?? 0) >>> 0);
-        h = hashU32(h, (g.lineageBonusBp ?? 0) >>> 0);
-        const s = g.snapshot;
-        h = hashU32(h, s.preset >>> 0);
-        h = hashFloat(h, s.radius);
-        h = hashFloat(h, s.hp);
-        h = hashFloat(h, s.contactDamage);
-        h = hashU32(h, s.fireCooldown >>> 0);
-        h = hashFloat(h, s.bulletDamage);
-        h = hashFloat(h, s.bulletSpeed);
-        h = hashFloat(h, s.bulletRadius);
-        h = hashU32(h, s.bulletLife >>> 0);
-        h = hashFloat(h, s.range);
-        h = hashFloat(h, s.moveSpeed);
-        h = hashFloat(h, s.standoff);
-        // --- M5 계보 마일스톤(APPEND-ONLY, 조건부) ---
-        // 마일스톤 비트마스크가 0(미해금)이면 **아무것도 접지 않아** 마일스톤 이전에 기록된 수호
-        // 포함 리플레이의 해시가 바이트 단위로 완전 불변이다(하위 호환 — 필드 미존재 = 0 = 무접기).
-        // 마일스톤 해금 런만 마스크를 봉인해, 서버가 권위 계보 레벨로 재도출한 마스크와 대조한다
-        // (부풀린 마일스톤 위조는 재실행 발산 + 이 폴드 불일치로 이중 차단). 신규 필드는 이 아래.
-        const ms = (g.milestones ?? 0) >>> 0;
-        if (ms !== 0) h = hashU32(h, ms);
-      }
-    }
-    // --- 방어 카드(APPEND-ONLY, 조건부) ---
-    // config.invasion.card 가 없으면(카드 미장착) 이 블록을 통째로 건너뛴다 → **카드 미장착 침공·
-    // PvE 리플레이의 해시가 바이트 단위로 완전 불변**(기존 M4/M5 fixtures 회귀 0). 카드 장착 런만
-    // 카드 정체성(seed·잔여 횟수)과 해석된 결정론 효력 파라미터(정적 누적·트리거 임계·유니크·런 중
-    // 래치)를 접어, 서버가 권위 카드·매치업으로 재도출한 값과 대조한다(위조 시 재실행 발산 + 이
-    // 폴드 불일치로 이중 차단). 매 틱 재계산 배율(*Mult)은 파생 스크래치라 접지 않는다(엔티티
-    // 상태로 이미 해시에 반영). 신규 카드 필드는 이 블록 최후미에만 append.
-    const card = inv.card;
-    const cr = state.cardRuntime;
-    if (card !== undefined && cr !== undefined) {
-      h = hashU32(h, card.card.seed >>> 0);
-      h = hashU32(h, card.card.chargesLeft >>> 0);
-      h = hashU32(h, cr.staticTurretDamagePct >>> 0);
-      h = hashU32(h, cr.staticIncomingReductionPct >>> 0);
-      h = hashU32(h, cr.attackerSubCdPct >>> 0);
-      h = hashU32(h, cr.reflectPct >>> 0);
-      h = hashU32(h, cr.coreHpPct >>> 0);
-      h = hashU32(h, cr.furyFireRatePct >>> 0);
-      h = hashU32(h, cr.furyThreshold >>> 0);
-      h = hashU32(h, cr.vanguardFireRatePct >>> 0);
-      h = hashU32(h, cr.vanguardTicks >>> 0);
-      h = hashU32(h, cr.laststandTurretDamagePct >>> 0);
-      h = hashU32(h, cr.laststandPct >>> 0);
-      h = hashU32(h, cr.attritionSlowPct >>> 0);
-      h = hashU32(h, cr.attritionTicks >>> 0);
-      h = hashU32(h, cr.entrenchReductionPct >>> 0);
-      h = hashU32(h, cr.entrenchTicks >>> 0);
-      h = hashU32(h, cr.forcefieldShield >>> 0);
-      h = hashU32(h, cr.volleyDamage >>> 0);
-      h = hashU32(h, cr.reviveCount >>> 0);
-      h = hashU32(h, cr.reviveHpPct >>> 0);
-      h = hashU32(h, cr.decoyHpPct >>> 0);
-      h = hashU32(h, cr.decoyCount >>> 0);
-      h = hashU32(h, cr.blackoutTicksLeft >>> 0);
-      h = hashU32(h, cr.coreProximityFired ? 1 : 0);
-      h = hashU32(h, cr.initialTurretCount >>> 0);
-    }
-  }
+  // --- (결번) M4 침공 방어 배치 블록 ---
+  // 구 단일 아레나 침공(`config.invasion` — 코어·포탑 6종·장애물 + 수호·마일스톤·카드의 4단
+  // 조건부 접기)은 M7a L11 에서 통째로 삭제됐다. **PvE 해시는 바이트 불변**이다 — 그 블록은
+  // `config.invasion === undefined` 일 때 한 폴드도 실행하지 않았으므로, 통째로 없애도 PvE
+  // 스트림에서 사라지는 바이트가 없다(tests/determinism.test.ts 가 이를 강제한다).
+  // 3레이어 침공은 아래 v2 블록이 전담한다.
   // --- M7a 침공 3레이어 v2 (APPEND-ONLY, 조건부 · 평탄 직렬화) ---
   // 규율과 근거는 파일 상단 "침공 3레이어 해시 블록 v2" 주석 참조. 신규 3레이어 필드는
   // **이 블록 최후미(런타임 폴드 뒤)에만** append 한다.

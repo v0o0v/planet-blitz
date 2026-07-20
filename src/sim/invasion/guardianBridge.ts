@@ -2,17 +2,15 @@
  * 침공 L3 — 수호 기체 브리지 (M7a · L5-core-room).
  *
  * ## 이 파일이 존재하는 이유
- * `src/sim/defense.ts` 는 **레거시 삭제 레인(L11)의 단독 소유**다. 이 웨이브에서는 한 줄도
- * 수정하지 않는다. 그런데 3레이어 코어방은 수호 기체 스폰·거동을 그대로 써야 하므로,
- * "구 파일에서 **import 만** 하고, 신 스키마(`InvasionLayers.l3.guardians`)와 잇는 얇은 층"이
- * 필요하다 — 그게 이 모듈이다.
+ * 3레이어 코어방은 수호 기체 스폰·거동을 그대로 써야 하는데, 배치를 읽는 **경로**가 달라졌다.
+ * 스폰(`spawnGuardian` — config 를 읽지 않는 순수 함수)은 그대로 재사용하고, 신 스키마
+ * (`InvasionLayers.l3.guardians`)와 잇는 얇은 층이 이 모듈이다.
  *
- * ## 왜 stepGuardians 를 그대로 부르지 못하는가
- * `defense.stepGuardians` 는 배치를 `state.config.invasion?.layout.guardians` 에서 읽는다(구
- * config 경로). 3레이어 런은 그 경로를 채우지 않으므로 그대로 부르면 **조용히 조기 반환**한다.
- * 그래서 스폰(`spawnGuardian` — config 를 읽지 않는 순수 함수)은 재사용하고, 스텝 루프만
- * 여기서 신 스키마 기준으로 다시 쓴다. 거동 규칙(추적·유지거리·LOS·마일스톤 3종)은 구
- * 구현과 **동일한 결정론 산술**을 쓴다.
+ * ## 왜 구 stepGuardians 를 그대로 쓰지 않는가
+ * 구 `defense.stepGuardians` 는 배치를 `state.config.invasion?.layout.guardians`(단일 아레나
+ * 시절 config 경로)에서 읽었다. 그 경로는 L11 에서 사라졌고, 3레이어는 슬롯 인덱스 매핑까지
+ * 필요하다. 그래서 스텝 루프만 여기서 신 스키마 기준으로 다시 썼다 — 거동 규칙(추적·유지거리·
+ * LOS·마일스톤 3종)은 구 구현과 **동일한 결정론 산술**이다.
  *
  * ## 슬롯 매핑 계약 (SQL·EF·클라 3자 정합의 핵심)
  *   `layers.l3.guardians[i]` ↔ 수호 엔티티 `entity.pierce === i`
@@ -34,13 +32,13 @@ import { spawnEnemyBullet } from '../entities.js';
 import { atan2, cos, sin, length } from '../math.js';
 import { segmentBlocked } from '../los.js';
 import { DT } from '../constants.js';
-// 구 defense.ts 에서 **import 만** 한다(수정 금지 — L11 단독 소유).
+// 정비도 산술·수호 스폰은 L11 에서 구 defense.ts → invasion/guardian.ts 로 이관됐다(산술 무변).
 import {
   spawnGuardian,
   normalizeMaintenance,
   scaleFireCooldown,
   MAINTENANCE_FULL,
-} from '../defense.js';
+} from './guardian.js';
 import {
   resolveGuardianStats,
   coreGuardDamage,

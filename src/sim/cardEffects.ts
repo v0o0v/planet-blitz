@@ -303,7 +303,9 @@ export function initCardRuntime(cfg: DefenseCardConfig, sink: EntitySink): CardR
   let initialTurretCount = 0;
   for (const e of sink.entities) {
     if (e.kind === 'core') core = e;
-    else if (e.kind === 'defenseTurret') initialTurretCount++;
+    // 구 포탑(defenseTurret)은 M7a L11 에서 삭제됐다 — L2 회랑의 벽부착 방어포가 계승자다.
+    // (M7b 코어 모듈 재설계 전까지 이 런타임을 만드는 경로 자체가 없어 실행되지 않는다.)
+    else if (e.kind === 'facilityGun') initialTurretCount++;
   }
   if (core !== undefined && coreHpPct !== 0) {
     const scaled = Math.round(core.maxHp * (1 + coreHpPct / 100));
@@ -385,7 +387,7 @@ export function stepCardRuntime(state: {
   for (const e of state.entities) {
     if (e.dead) continue;
     if (e.kind === 'core') core = e;
-    else if (e.kind === 'defenseTurret') liveTurrets++;
+    else if (e.kind === 'facilityGun') liveTurrets++;
   }
   const turretsDestroyed = cr.initialTurretCount - liveTurrets;
   const coreHpFrac = core !== undefined && core.maxHp > 0 ? core.hp / core.maxHp : 1;
