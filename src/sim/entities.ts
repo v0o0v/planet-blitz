@@ -34,7 +34,19 @@ export type EntityKind =
   // --- M5 수호 기체 (plan Phase A1, ADR-0007) ---
   | 'guardian' // 퇴역 기체의 방어 AI(추적형 요격 유닛). 침공 방어전에 참전, 플레이어를 추적·사격
   // --- 방어 카드 유니크 신기루 코어 (Lane B) ---
-  | 'decoyCore'; // 유니크 '신기루 코어'가 스폰하는 가짜 코어. 조준·피격은 실제 코어와 같으나 파괴돼도 승리 없음
+  | 'decoyCore' // 유니크 '신기루 코어'가 스폰하는 가짜 코어. 조준·피격은 실제 코어와 같으나 파괴돼도 승리 없음
+  // --- M7a 침공 3레이어 (레인 문서 W1 예약분, ADR-0017~0019) ---
+  // 이 8종은 W1 킥오프 시 L1-determinism 레인이 **미리 예약**한 것이다. L2~L5 레인이
+  // 병렬로 구현하면서 kind 를 append 하려고 replay/entities 를 동시에 열면 해시 계약이
+  // 갈리므로, 코드 번호를 여기서 한 번에 확정해 두고 각 레인은 이름만 쓴다.
+  | 'formation' // L1 편대 리더. 진형의 기준점이자 편대원 스폰 앵커(aux0=편대 카탈로그 id, aux1=진형 진행 틱)
+  | 'formationDrone' // L1 편대원. 리더 기준 절대 오프셋으로 배치되는 실전투 유닛
+  | 'facilityGun' // L2 벽부착 방어포. 방향 제한 사격(facingDeg/arcDeg 는 설비 스펙에서 파생)
+  | 'facilityHazard' // L2 기믹 해저드. 주기 온오프 상태머신(period/on/phaseOffset)
+  | 'facilitySpawner' // L2 드론 스포너. aux0=남은 소환 수, aux1=다음 소환까지 틱
+  | 'spawnedDrone' // facilitySpawner 가 소환한 드론(모체 파괴와 무관하게 독립 생존)
+  | 'prop' // L3 기물(실드 발생기·중력 앵커·고정 주포). aux0=기물 카탈로그 id
+  | 'defenseBoss'; // L3 방어 보스. PvE 'boss' 와 별도 kind — compact() 의 boss→victory 함정을 피한다
 
 /**
  * Stable integer per kind, folded into the state hash. Never renumber existing
@@ -68,6 +80,17 @@ export const KIND_CODE: Record<EntityKind, number> = {
   // 카드가 장착된 침공에만 decoyCore 엔티티가 존재해 이 코드가 해시에 등장한다 → 카드 미장착
   // 침공·PvE 리플레이는 바이트 불변(조건부 접기).
   decoyCore: 18,
+  // Appended for M7a 침공 3레이어 (never renumber 1..18). 이 8종은 3레이어 침공 런에만
+  // 등장하므로 PvE·구 침공 리플레이의 해시에는 나타나지 않는다(기존 fixtures 회귀 0).
+  // **코드 19..26 은 계약이다** — 재배치·중간 삽입 금지, 신규 kind 는 27 부터 append.
+  formation: 19,
+  formationDrone: 20,
+  facilityGun: 21,
+  facilityHazard: 22,
+  facilitySpawner: 23,
+  spawnedDrone: 24,
+  prop: 25,
+  defenseBoss: 26,
 };
 
 export interface Entity {
@@ -105,6 +128,18 @@ export interface Entity {
   targetY: number;
   /** Owning entity id (hazard/beam source); 0 = none. */
   ownerId: number;
+  /**
+   * 범용 정수 확장 슬롯 0 (M7a). 기존 22필드가 kind 별 재활용으로 포화 상태라, 3레이어
+   * 콘텐츠가 필드를 하나씩 늘리며 `hashEntity` 레이아웃을 반복 변경하는 것을 막으려고
+   * **여기서 1회만** 확장한다. 용도는 kind 마다 각 레인이 정한다(예: facilitySpawner =
+   * 남은 소환 수, formation = 편대 카탈로그 id).
+   *
+   * **반드시 정수**여야 한다 — 해시가 `hashU32`(ToUint32)로 접으므로 소수부는 조용히
+   * 사라져 재현 대조를 무력화한다. 실수 상태가 필요하면 aux 가 아니라 기존 f64 필드를 써라.
+   */
+  aux0: number;
+  /** 범용 정수 확장 슬롯 1. 규율은 {@link Entity.aux0} 와 동일(정수 전용). */
+  aux1: number;
   /** Transient removal flag — set during a tick, compacted before hashing. */
   dead: boolean;
 }
@@ -140,6 +175,8 @@ export function blankEntity(kind: EntityKind): Entity {
     targetX: 0,
     targetY: 0,
     ownerId: 0,
+    aux0: 0,
+    aux1: 0,
     dead: false,
   };
 }

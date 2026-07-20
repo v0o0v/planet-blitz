@@ -17,6 +17,14 @@ import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } from './world.js';
 import type { Entity } from './entities.js';
 import { KIND_CODE } from './entities.js';
 import { normalizeMaintenance } from './defense.js';
+import { INVASION_HASH_VERSION } from './invasion/constants.js';
+import { GUARDIAN_SNAPSHOT_FIELDS } from './invasion/normalize.js';
+import type {
+  Invasion3Config,
+  InvasionGuardianPlacement,
+  InvasionRef,
+  InvasionRuntime,
+} from './invasion/types.js';
 
 /** A recorded run: everything needed to deterministically reproduce it. */
 export interface Replay {
@@ -62,7 +70,58 @@ function hashU32(hash: number, value: number): number {
   return h;
 }
 
-function hashEntity(hash: number, e: Entity): number {
+/** 엔티티 필드 1건을 접는 방식. `f64` = IEEE-754 8바이트 원문, `u32` = ToUint32 4바이트. */
+export type EntityFoldMode = 'f64' | 'u32';
+
+/**
+ * `hashEntity` 의 폴드 레이아웃 **골든 계약**(M7a 에서 aux0/aux1 append 로 1회 확정).
+ *
+ * 이 배열은 문서가 아니라 테스트가 강제하는 계약이다 — tests/invasionHash.test.ts 가 이
+ * 목록만 보고 독립 구현으로 해시를 재계산해 {@link hashEntity} 와 바이트 비교한다. 따라서
+ * 코드와 배열 중 **한쪽만** 바뀌면 즉시 실패한다. 순서·모드 변경은 곧 리플레이 포맷 변경이므로
+ * 기존 항목은 재배치 금지, 신규 필드는 **맨 뒤에만 append**(M7b/M7c 는 aux 재활용이 원칙).
+ * `dead` 는 해시 시점에 항상 false 인 과도 상태라 의도적으로 제외한다.
+ */
+export const ENTITY_HASH_LAYOUT: readonly (readonly [keyof Entity, EntityFoldMode])[] = [
+  ['id', 'u32'],
+  // kind 는 KIND_CODE 를 거쳐 u32 로 접힌다(여기서는 원본 필드명으로 표기).
+  ['kind', 'u32'],
+  ['x', 'f64'],
+  ['y', 'f64'],
+  ['vx', 'f64'],
+  ['vy', 'f64'],
+  ['angle', 'f64'],
+  ['radius', 'f64'],
+  ['hp', 'f64'],
+  ['maxHp', 'f64'],
+  ['timer', 'u32'],
+  ['dashCooldown', 'u32'],
+  ['iframes', 'u32'],
+  ['enemyType', 'u32'],
+  ['cooldown', 'u32'],
+  ['phase', 'u32'],
+  ['life', 'u32'],
+  ['damage', 'f64'],
+  ['pierce', 'u32'],
+  ['targetX', 'f64'],
+  ['targetY', 'f64'],
+  ['ownerId', 'u32'],
+  // --- M7a 범용 확장 슬롯(APPEND-ONLY, **조건부 꼬리**) ---
+  // aux0·aux1 이 **둘 다 0 이면 이 두 폴드는 생략**된다(기존 리플레이 바이트 불변). 어느
+  // 한쪽이라도 0 이 아니면 둘 다 이 순서로 접힌다. 골든 테스트는 aux 가 0 이 아닌 엔티티로
+  // 순서를 대조하고, 0 인 경우는 "생략" 을 별도로 검증한다.
+  ['aux0', 'u32'],
+  ['aux1', 'u32'],
+];
+
+/** 조건부 꼬리(둘 다 0 이면 생략되는 폴드)의 필드 이름. 골든 테스트가 참조한다. */
+export const ENTITY_HASH_OPTIONAL_TAIL: readonly (keyof Entity)[] = ['aux0', 'aux1'];
+
+/**
+ * 엔티티 1건을 해시에 접는다. 순서·모드는 {@link ENTITY_HASH_LAYOUT} 이 정본이다.
+ * (테스트가 독립 구현과 대조할 수 있도록 export 한다 — 런타임 호출부는 hashWorld 뿐이다.)
+ */
+export function hashEntity(hash: number, e: Entity): number {
   let h = hash;
   h = hashU32(h, e.id);
   h = hashU32(h, KIND_CODE[e.kind]);
@@ -86,8 +145,111 @@ function hashEntity(hash: number, e: Entity): number {
   h = hashFloat(h, e.targetX);
   h = hashFloat(h, e.targetY);
   h = hashU32(h, e.ownerId >>> 0);
+  // --- M7a 범용 확장 슬롯(APPEND-ONLY, 조건부) ---
+  // 둘 다 0 이면 **아무것도 접지 않는다** → aux 를 쓰지 않는 기존 엔티티(PvE 전량·구 침공
+  // 전량)의 해시가 바이트 단위로 완전 불변이다(계보 마일스톤 폴드와 같은 규율). 덕분에
+  // fixtures.json 과 tests/defenseCardSim.test.ts 의 골든 해시가 그대로 살아 회귀 가드가
+  // 유지된다. 어느 한쪽이라도 0 이 아니면 **둘 다** 고정 폭으로 접는다(부분 폴드 금지 —
+  // (1,0) 과 (0,1) 이 갈려야 한다).
+  if (e.aux0 !== 0 || e.aux1 !== 0) {
+    h = hashU32(h, e.aux0 >>> 0);
+    h = hashU32(h, e.aux1 >>> 0);
+  }
   // `dead` is transient (always false at hash time) and is deliberately omitted.
   return h;
+}
+
+// ---------------------------------------------------------------------------
+// 침공 3레이어 해시 블록 v2 (M7a · L1-determinism)
+//
+// ## 왜 v2 인가
+// 구 침공 블록(아래 `config.invasion` 분기)은 침공 → 수호 → 마일스톤 → 카드로 조건부 접기가
+// 4단 중첩돼 있다. 3레이어 배치(웨이브 6 · 소켓 N · 기물 6 · 모듈 2 · 보스 · 코어)와 런타임
+// 페이즈 상태를 그 위에 얹으면 5단이 되고, **순서를 한 곳만 틀려도 클라(Node)와 서버(Deno)
+// 재실행이 갈려 전 침공이 오거부**된다. 그래서 3레이어는 중첩을 늘리지 않고 **평탄한 별도
+// 블록**으로 새로 판다.
+//
+// ## 평탄 직렬화 규율
+//   - 조건부 접기가 없다. 슬롯이 비어 있어도 `있음 플래그(0) + 필드 0` 를 **항상 같은 바이트
+//     수만큼** 접는다. "비었으니 안 접는다" 규칙이 없으면 순서 실수 자체가 생기지 않는다.
+//   - 전 필드 정수다(hashU32 만 쓴다). 스키마가 정수 도메인으로 확정돼 있어(L0) hashFloat 가
+//     필요 없고, 그만큼 f64 비트 표현 갈림의 여지도 사라진다.
+//   - 길이 프리픽스로 배열을 감싸 소켓 수가 다른 맵 템플릿이 서로 다른 해시를 낸다.
+//
+// ## 하위 호환
+// `config.invasion3` 이 없으면 블록을 통째로 건너뛴다 → **PvE·구 침공 리플레이는 이 블록에
+// 관해 바이트 불변**이다(엔티티 aux 폴드만 fixtures 재생성으로 흡수). 구 침공 블록은 한 줄도
+// 수정하지 않았다 — 신·구 병존이 M7a 웨이브 0~2 의 정상 상태이고, 삭제는 L11 레인 몫이다.
+// ---------------------------------------------------------------------------
+
+/** Ref 5필드 폴드 폭(있음 플래그 제외). 슬롯이 비어도 같은 폭을 0 으로 채운다. */
+const REF_FOLD_WIDTH = 5;
+
+/** 배치 참조 1건(있음 플래그 + 정수 5필드). null 이면 전부 0 — 폭은 항상 같다. */
+function hashRefSlot(hash: number, ref: InvasionRef | null | undefined): number {
+  let h = hash;
+  if (ref === null || ref === undefined) {
+    h = hashU32(h, 0);
+    for (let i = 0; i < REF_FOLD_WIDTH; i++) h = hashU32(h, 0);
+    return h;
+  }
+  h = hashU32(h, 1);
+  h = hashU32(h, ref.catalogId >>> 0);
+  h = hashU32(h, ref.level >>> 0);
+  h = hashU32(h, ref.ascension >>> 0);
+  h = hashU32(h, ref.affixSeed >>> 0);
+  h = hashU32(h, ref.rarity >>> 0);
+  return h;
+}
+
+/** 고정 길이 슬롯 배열(길이 프리픽스 + 슬롯별 고정 폭). */
+function hashRefSlots(hash: number, slots: readonly (InvasionRef | null)[]): number {
+  let h = hashU32(hash, slots.length >>> 0);
+  for (const s of slots) h = hashRefSlot(h, s);
+  return h;
+}
+
+/**
+ * 수호 배치 1기(있음 플래그 + 좌표·성능·계보·마일스톤 + 스냅샷 12필드).
+ * 스냅샷 필드 순서는 {@link GUARDIAN_SNAPSHOT_FIELDS}(정규화 모듈의 직렬화 계약)를 그대로
+ * 따른다 — 순서 정의가 두 군데로 갈리지 않게 한 곳만 읽는다.
+ */
+function hashGuardianSlot(hash: number, g: InvasionGuardianPlacement | null | undefined): number {
+  let h = hash;
+  if (g === null || g === undefined) {
+    h = hashU32(h, 0);
+    for (let i = 0; i < 5 + GUARDIAN_SNAPSHOT_FIELDS.length; i++) h = hashU32(h, 0);
+    return h;
+  }
+  h = hashU32(h, 1);
+  h = hashU32(h, g.x >>> 0);
+  h = hashU32(h, g.y >>> 0);
+  h = hashU32(h, g.performanceCP >>> 0);
+  h = hashU32(h, g.lineageBonusBp >>> 0);
+  h = hashU32(h, g.milestones >>> 0);
+  const snap = g.snapshot as unknown as Record<string, number>;
+  for (const key of GUARDIAN_SNAPSHOT_FIELDS) {
+    h = hashU32(h, (snap[key as string] ?? 0) >>> 0);
+  }
+  return h;
+}
+
+/**
+ * 3레이어 설정·런타임의 보유자 뷰.
+ *
+ * `WorldConfig.invasion3` 와 `WorldState.invasion3`(런타임)·`invasion3Bombs` 는 world.ts 소유
+ * 레인(L2)이 선언한다. 통합 게이트에서 실제 필드명(`invasion3`)으로 확정했다 — 최초 계약안의
+ * `invasionRuntime` 은 world.ts 에 존재하지 않아 런타임 폴드가 항상 present=0 으로 접히는
+ * '봉인 미작동' 결함이었다.
+ */
+interface Invasion3Carrier {
+  readonly config: { readonly invasion3?: Invasion3Config };
+  readonly invasion3?: InvasionRuntime;
+  readonly invasion3Bombs?: number;
+}
+
+function invasion3Of(state: WorldState): Invasion3Carrier {
+  return state as unknown as Invasion3Carrier;
 }
 
 /**
@@ -323,6 +485,46 @@ export function hashWorld(state: WorldState): number {
       h = hashU32(h, cr.coreProximityFired ? 1 : 0);
       h = hashU32(h, cr.initialTurretCount >>> 0);
     }
+  }
+  // --- M7a 침공 3레이어 v2 (APPEND-ONLY, 조건부 · 평탄 직렬화) ---
+  // 규율과 근거는 파일 상단 "침공 3레이어 해시 블록 v2" 주석 참조. 신규 3레이어 필드는
+  // **이 블록 최후미(런타임 폴드 뒤)에만** append 한다.
+  const carrier = invasion3Of(state);
+  const inv3 = carrier.config.invasion3;
+  if (inv3 !== undefined) {
+    // (0) 포맷 버전 — 블록 첫 폴드. 포맷이 또 바뀌면 이 값만 올리면 구·신이 즉시 갈린다.
+    h = hashU32(h, INVASION_HASH_VERSION >>> 0);
+    // (1) 런 예산·정비도.
+    h = hashU32(h, inv3.timeLimitTicks >>> 0);
+    h = hashU32(h, normalizeMaintenance(inv3.maintenance) >>> 0);
+    const L = inv3.layers;
+    // (2) L1 — 웨이브 슬롯(고정 길이 6).
+    h = hashRefSlots(h, L.l1.waveSlots);
+    // (3) L2 — 맵 템플릿 + 설치 소켓(템플릿이 길이를 정하므로 길이 프리픽스가 곧 템플릿 봉인).
+    h = hashU32(h, L.l2.templateId >>> 0);
+    h = hashRefSlots(h, L.l2.sockets);
+    // (4) L3 — 보스 → 수호 → 기물 → 코어 → 코어 모듈.
+    h = hashRefSlot(h, L.l3.boss);
+    h = hashU32(h, L.l3.guardians.length >>> 0);
+    for (const g of L.l3.guardians) h = hashGuardianSlot(h, g);
+    h = hashRefSlots(h, L.l3.props);
+    h = hashU32(h, L.l3.core.hp >>> 0);
+    h = hashU32(h, L.l3.core.x >>> 0);
+    h = hashU32(h, L.l3.core.y >>> 0);
+    h = hashRefSlots(h, L.l3.modules);
+    // (5) 런타임 페이즈 상태(sim 권위 카메라·페이즈 머신, L2 레인 소유).
+    // 페이즈 전이 틱이 해시에 들어가야 "언제 전이했는가"가 봉인된다 — 전이 틱만 다른 두 런은
+    // 엔티티가 같아 보이는 순간에도 여기서 갈린다. 런타임이 아직 없으면(배선 전) 0 으로 접어
+    // 폭을 유지한다.
+    const rt = carrier.invasion3;
+    h = hashU32(h, rt === undefined ? 0 : 1);
+    h = hashU32(h, (rt?.phase ?? 0) >>> 0);
+    h = hashU32(h, (rt?.phaseEnterTick ?? 0) >>> 0);
+    h = hashU32(h, (rt?.scrollX ?? 0) >>> 0);
+    h = hashU32(h, (rt?.scrollY ?? 0) >>> 0);
+    h = hashU32(h, (rt?.accelCp ?? 0) >>> 0);
+    // (6) 레이어 클리어 보너스로 적립되는 폭탄(정수, 상한 3). 자원 위조를 봉인한다.
+    h = hashU32(h, (carrier.invasion3Bombs ?? 0) >>> 0);
   }
   return h >>> 0;
 }
