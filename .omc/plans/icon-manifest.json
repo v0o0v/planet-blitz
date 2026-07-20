@@ -1,0 +1,1422 @@
+{
+  "_meta": {
+    "generated": "2026-07-20",
+    "generator": "scratchpad/gen-icon-manifest.mjs (recon lane, read-only against repo data)",
+    "total": 77,
+    "counts": {
+      "equip-slot": 15,
+      "equip-unique": 15,
+      "skill-stat": 32,
+      "skill-capstone": 3,
+      "sticker": 12
+    },
+    "filenameConvention": "Flat under assets/ (NOT assets/icons/ — src/ui/pixi/uiTextures.ts and src/render/textures.ts both glob a non-recursive \"../../assets/*.png\", so a subfolder would be invisible to both loaders). Prefix by axis: equip_main_*, equip_sub_*, equip_slot_*, equip_unique_*, skill_<stat_snake>_<band>.png, skill_capstone_<tree>.png, sticker_<id_snake>.png. Matches repo convention of flat \"<category>_<descriptor>.png\" (turret_vulcan.png, enemy_arke_charger.png) rather than the ui_* prefix, which is reserved for the separate cartoon-wood UI kit register (ADR-0016: equip icons are a THIRD register, anchor pb-equip-icon, must not mix with pb-cartoon-wood-ui).",
+    "powerupStatMapping": {
+      "note": "0 new icons for powerups (ADR-0015). D3 wiring should reference the skill-stat icon for the derived stat, and — for weaponType-tagged powerups — additionally badge the matching equip_main_* weapon icon. universal/tree powerups reference the skill-stat icon only.",
+      "entries": [
+        {
+          "id": "rapid-fire",
+          "index": 0,
+          "weaponType": 0,
+          "statIconKey": "skill_fire_rate_pct_low"
+        },
+        {
+          "id": "twin-shot",
+          "index": 1,
+          "universal": true,
+          "statIconKey": "skill_bullet_count_mid"
+        },
+        {
+          "id": "heavy-rounds",
+          "index": 2,
+          "universal": true,
+          "statIconKey": "skill_damage_pct_low"
+        },
+        {
+          "id": "piercing-rounds",
+          "index": 3,
+          "universal": true,
+          "statIconKey": "skill_pierce_low"
+        },
+        {
+          "id": "thrusters",
+          "index": 4,
+          "tree": "mobility",
+          "statIconKey": "skill_move_speed_pct_low"
+        },
+        {
+          "id": "dash-coils",
+          "index": 5,
+          "tree": "mobility",
+          "statIconKey": "skill_dash_cd_pct_low"
+        },
+        {
+          "id": "reinforced-hull",
+          "index": 6,
+          "tree": "survival",
+          "statIconKey": "skill_max_hp_flat_low"
+        },
+        {
+          "id": "gem-magnet",
+          "index": 7,
+          "tree": "mobility",
+          "statIconKey": "skill_magnet_pct_low"
+        },
+        {
+          "id": "spread-pellets",
+          "index": 8,
+          "weaponType": 1,
+          "statIconKey": "skill_bullet_count_mid",
+          "weaponBadgeKey": "equip_main_spread"
+        },
+        {
+          "id": "spread-choke",
+          "index": 9,
+          "weaponType": 1,
+          "statIconKey": "skill_damage_pct_mid",
+          "weaponBadgeKey": "equip_main_spread"
+        },
+        {
+          "id": "rail-penetrator",
+          "index": 10,
+          "weaponType": 2,
+          "statIconKey": "skill_pierce_mid",
+          "weaponBadgeKey": "equip_main_railgun"
+        },
+        {
+          "id": "rail-overcharge",
+          "index": 11,
+          "weaponType": 2,
+          "statIconKey": "skill_damage_pct_mid",
+          "weaponBadgeKey": "equip_main_railgun"
+        },
+        {
+          "id": "missile-salvo",
+          "index": 12,
+          "weaponType": 3,
+          "statIconKey": "skill_bullet_count_mid",
+          "weaponBadgeKey": "equip_main_missile"
+        },
+        {
+          "id": "missile-warhead",
+          "index": 13,
+          "weaponType": 3,
+          "statIconKey": "skill_damage_pct_mid",
+          "weaponBadgeKey": "equip_main_missile"
+        },
+        {
+          "id": "beam-intensifier",
+          "index": 14,
+          "weaponType": 4,
+          "statIconKey": "skill_damage_pct_mid",
+          "weaponBadgeKey": "equip_main_beam"
+        },
+        {
+          "id": "beam-focuser",
+          "index": 15,
+          "weaponType": 4,
+          "statIconKey": "skill_range_flat_low",
+          "weaponBadgeKey": "equip_main_beam"
+        },
+        {
+          "id": "fp-focus",
+          "index": 16,
+          "tree": "firepower",
+          "statIconKey": "skill_damage_pct_low"
+        },
+        {
+          "id": "fp-cadence",
+          "index": 17,
+          "tree": "firepower",
+          "statIconKey": "skill_fire_rate_pct_low"
+        },
+        {
+          "id": "sv-plating",
+          "index": 18,
+          "tree": "survival",
+          "statIconKey": "skill_max_hp_flat_low"
+        },
+        {
+          "id": "sv-evasion",
+          "index": 19,
+          "tree": "survival",
+          "statIconKey": "skill_dash_cd_pct_low"
+        },
+        {
+          "id": "mb-overdrive",
+          "index": 20,
+          "tree": "mobility",
+          "statIconKey": "skill_move_speed_pct_low"
+        },
+        {
+          "id": "mb-collector",
+          "index": 21,
+          "tree": "mobility",
+          "statIconKey": "skill_magnet_pct_low"
+        },
+        {
+          "id": "muzzle-velocity",
+          "index": 22,
+          "universal": true,
+          "statIconKey": "skill_bullet_speed_pct_low"
+        },
+        {
+          "id": "field-medkit",
+          "index": 23,
+          "universal": true,
+          "statIconKey": "skill_max_hp_flat_low"
+        }
+      ]
+    },
+    "cacheReuse": {
+      "anchor": "pb-equip-icon",
+      "anchorSheet": {
+        "id": "pb_equip_style_anchor_sheet",
+        "note": "Actual generation params (from cache index.json), which the ADR-0016 prose does NOT match: tool=create_1_direction_object, size=512 (single square canvas, 3 icons in a row), NOT create_ui_asset 512x192 as the ADR text describes. Follow-up sheets should replicate the verified tool (create_1_direction_object, size 512) unless a deliberate change is tested and re-documented."
+      },
+      "reusableIcons": [
+        {
+          "key": "equip_main_railgun",
+          "cacheId": "pb_equip_main_railgun",
+          "score": 0.69
+        },
+        {
+          "key": "equip_slot_shield",
+          "cacheId": "pb_equip_slot_shield",
+          "score": 0.74
+        },
+        {
+          "key": "equip_unique_overheat_drum",
+          "cacheId": "pb_equip_unique_overheat_drum",
+          "score": 0.69
+        }
+      ],
+      "rejectedProbes": [
+        "pb_equip_probe_outlined_sheet",
+        "pb_equip_probe_sf_railgun",
+        "pb_equip_probe_sf_shield",
+        "pb_equip_probe_sf_drum"
+      ]
+    }
+  },
+  "icons": [
+    {
+      "key": "equip_main_vulcan",
+      "category": "equip-slot",
+      "file": "assets/equip_main_vulcan.png",
+      "label_ko": "주무기·발칸",
+      "prompt_en": "a hull-mounted multi-barrel rotary gatling cannon turret with six rotating barrels clustered in a circle, mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm",
+      "source": {
+        "slot": "main",
+        "weaponType": "vulcan",
+        "weaponTypeCode": 0,
+        "identifier": "WEAPON_VULCAN"
+      }
+    },
+    {
+      "key": "equip_main_spread",
+      "category": "equip-slot",
+      "file": "assets/equip_main_spread.png",
+      "label_ko": "주무기·스프레드",
+      "prompt_en": "a hull-mounted spread cannon module with several barrels splayed widely apart into a flared trumpet-shaped muzzle, the fanned-out spread clearly readable in silhouette, mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld shotgun",
+      "source": {
+        "slot": "main",
+        "weaponType": "spread",
+        "weaponTypeCode": 1,
+        "identifier": "WEAPON_SPREAD"
+      }
+    },
+    {
+      "key": "equip_main_railgun",
+      "category": "equip-slot",
+      "file": "assets/equip_main_railgun.png",
+      "label_ko": "주무기·레일건",
+      "prompt_en": "a hull-mounted railgun cannon module with parallel conducting rails and a glowing energy coil on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm",
+      "source": {
+        "slot": "main",
+        "weaponType": "railgun",
+        "weaponTypeCode": 2,
+        "identifier": "WEAPON_RAILGUN"
+      },
+      "reuse": "pb_equip_main_railgun"
+    },
+    {
+      "key": "equip_main_missile",
+      "category": "equip-slot",
+      "file": "assets/equip_main_missile.png",
+      "label_ko": "주무기·미사일",
+      "prompt_en": "a hull-mounted missile launcher pod module with a sharply tapered conical warhead tip and small tail fins, fixed to a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld launcher",
+      "source": {
+        "slot": "main",
+        "weaponType": "missile",
+        "weaponTypeCode": 3,
+        "identifier": "WEAPON_MISSILE"
+      }
+    },
+    {
+      "key": "equip_main_beam",
+      "category": "equip-slot",
+      "file": "assets/equip_main_beam.png",
+      "label_ko": "주무기·빔",
+      "prompt_en": "a hull-mounted beam emitter cannon module with a round glowing crystal orb lens at the tip, on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld weapon",
+      "source": {
+        "slot": "main",
+        "weaponType": "beam",
+        "weaponTypeCode": 4,
+        "identifier": "WEAPON_BEAM"
+      }
+    },
+    {
+      "key": "equip_sub_sidekick",
+      "category": "equip-slot",
+      "file": "assets/equip_sub_sidekick.png",
+      "label_ko": "보조무기·사이드킥",
+      "prompt_en": "a small hull-mounted rapid-fire cannon module on a compact weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld sidearm",
+      "source": {
+        "slot": "sub",
+        "weaponType": "sidekick",
+        "weaponTypeCode": 0,
+        "identifier": "SUB_SIDEKICK"
+      }
+    },
+    {
+      "key": "equip_sub_scatter",
+      "category": "equip-slot",
+      "file": "assets/equip_sub_scatter.png",
+      "label_ko": "보조무기·스캐터",
+      "prompt_en": "a compact hull-mounted scatter-shot cannon module on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm",
+      "source": {
+        "slot": "sub",
+        "weaponType": "scatter",
+        "weaponTypeCode": 1,
+        "identifier": "SUB_SCATTER"
+      }
+    },
+    {
+      "key": "equip_sub_mine",
+      "category": "equip-slot",
+      "file": "assets/equip_sub_mine.png",
+      "label_ko": "보조무기·기뢰장",
+      "prompt_en": "a round deployable proximity mine module with a blinking sensor light, centered in the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld device",
+      "source": {
+        "slot": "sub",
+        "weaponType": "mine",
+        "weaponTypeCode": 2,
+        "identifier": "SUB_MINE"
+      }
+    },
+    {
+      "key": "equip_sub_sentry",
+      "category": "equip-slot",
+      "file": "assets/equip_sub_sentry.png",
+      "label_ko": "보조무기·센트리",
+      "prompt_en": "a small deployable automated sentry turret pod module, centered in the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld device",
+      "source": {
+        "slot": "sub",
+        "weaponType": "sentry",
+        "weaponTypeCode": 3,
+        "identifier": "SUB_SENTRY"
+      }
+    },
+    {
+      "key": "equip_sub_flare",
+      "category": "equip-slot",
+      "file": "assets/equip_sub_flare.png",
+      "label_ko": "보조무기·호밍 플레어",
+      "prompt_en": "a hull-mounted homing flare missile pod module with tail fins, fixed to a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld launcher",
+      "source": {
+        "slot": "sub",
+        "weaponType": "flare",
+        "weaponTypeCode": 4,
+        "identifier": "SUB_FLARE"
+      }
+    },
+    {
+      "key": "equip_slot_armor",
+      "category": "equip-slot",
+      "file": "assets/equip_slot_armor.png",
+      "label_ko": "장갑",
+      "prompt_en": "a layered chest armor plate module, centered in the square frame",
+      "source": {
+        "slot": "armor"
+      }
+    },
+    {
+      "key": "equip_slot_shield",
+      "category": "equip-slot",
+      "file": "assets/equip_slot_shield.png",
+      "label_ko": "실드",
+      "prompt_en": "an energy shield generator emitter with a glowing projector dish, centered in the square frame",
+      "source": {
+        "slot": "shield"
+      },
+      "reuse": "pb_equip_slot_shield"
+    },
+    {
+      "key": "equip_slot_engine",
+      "category": "equip-slot",
+      "file": "assets/equip_slot_engine.png",
+      "label_ko": "엔진",
+      "prompt_en": "a thruster engine module with glowing exhaust vents, centered in the square frame",
+      "source": {
+        "slot": "engine"
+      }
+    },
+    {
+      "key": "equip_slot_core",
+      "category": "equip-slot",
+      "file": "assets/equip_slot_core.png",
+      "label_ko": "코어",
+      "prompt_en": "a reactor core module with a pulsing energy center, centered in the square frame",
+      "source": {
+        "slot": "core"
+      }
+    },
+    {
+      "key": "equip_slot_module",
+      "category": "equip-slot",
+      "file": "assets/equip_slot_module.png",
+      "label_ko": "모듈",
+      "prompt_en": "a generic utility module chip with a circuit-board pattern, centered in the square frame",
+      "source": {
+        "slot": "module"
+      }
+    },
+    {
+      "key": "equip_unique_overheat_drum",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_overheat_drum.png",
+      "label_ko": "과열 드럼",
+      "prompt_en": "a hull-mounted cannon module with an overheating ammunition drum glowing red through heat vents, fixed on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm",
+      "source": {
+        "id": "overheat-drum",
+        "name": "과열 드럼",
+        "slot": "main",
+        "weaponType": 0,
+        "milestone": "M2"
+      },
+      "reuse": "pb_equip_unique_overheat_drum"
+    },
+    {
+      "key": "equip_unique_split_core",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_split_core.png",
+      "label_ko": "분열 코어",
+      "prompt_en": "a hull-mounted weapon module with a twin-split energy core channeling dual crackling bolts, mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld weapon",
+      "source": {
+        "id": "split-core",
+        "name": "분열 코어",
+        "slot": "main",
+        "weaponType": 1,
+        "milestone": "M2"
+      }
+    },
+    {
+      "key": "equip_unique_pierce_gyro",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_pierce_gyro.png",
+      "label_ko": "관통 자이로",
+      "prompt_en": "a hull-mounted railgun cannon module with a spinning gyroscopic penetrator core glowing at the barrel tip, fixed on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm",
+      "source": {
+        "id": "pierce-gyro",
+        "name": "관통 자이로",
+        "slot": "main",
+        "weaponType": 2,
+        "milestone": "M2"
+      }
+    },
+    {
+      "key": "equip_unique_drone_bay",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_drone_bay.png",
+      "label_ko": "자율 드론 베이",
+      "prompt_en": "a small autonomous combat drone hovering beside a compact launch bay, centered in the square frame",
+      "source": {
+        "id": "drone-bay",
+        "name": "자율 드론 베이",
+        "slot": "sub",
+        "milestone": "M2"
+      }
+    },
+    {
+      "key": "equip_unique_phase_armor",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_phase_armor.png",
+      "label_ko": "위상 장갑",
+      "prompt_en": "a shimmering translucent phase-shift armor plate with violet energy ripples, centered in the square frame",
+      "source": {
+        "id": "phase-armor",
+        "name": "위상 장갑",
+        "slot": "armor",
+        "milestone": "M2"
+      }
+    },
+    {
+      "key": "equip_unique_hive_swarm",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_hive_swarm.png",
+      "label_ko": "군집 벌통",
+      "prompt_en": "a hull-mounted missile launcher pod module shaped like a hive with swarming micro-missiles emerging from its cells, fixed on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld launcher",
+      "source": {
+        "id": "hive-swarm",
+        "name": "군집 벌통",
+        "slot": "main",
+        "weaponType": 3,
+        "milestone": "M3"
+      }
+    },
+    {
+      "key": "equip_unique_converge_prism",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_converge_prism.png",
+      "label_ko": "수렴 프리즘",
+      "prompt_en": "a hull-mounted beam emitter cannon module with a crystalline prism lens converging multiple beams into one glowing point, mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld weapon",
+      "source": {
+        "id": "converge-prism",
+        "name": "수렴 프리즘",
+        "slot": "main",
+        "weaponType": 4,
+        "milestone": "M3"
+      }
+    },
+    {
+      "key": "equip_unique_twin_star",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_twin_star.png",
+      "label_ko": "쌍둥이 항성",
+      "prompt_en": "a hull-mounted twin-barreled spread cannon module with star-shaped muzzles radiating a bright glow, splayed barrels mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld weapon",
+      "source": {
+        "id": "twin-star",
+        "name": "쌍둥이 항성",
+        "slot": "main",
+        "weaponType": 1,
+        "milestone": "M3"
+      }
+    },
+    {
+      "key": "equip_unique_singularity",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_singularity.png",
+      "label_ko": "특이점 발생기",
+      "prompt_en": "a small gravity-well generator orb with swirling dark energy, centered in the square frame",
+      "source": {
+        "id": "singularity",
+        "name": "특이점 발생기",
+        "slot": "sub",
+        "milestone": "M3"
+      }
+    },
+    {
+      "key": "equip_unique_reactive_armor",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_reactive_armor.png",
+      "label_ko": "반응 장갑",
+      "prompt_en": "a spiked reactive armor plate with explosive charge segments, centered in the square frame",
+      "source": {
+        "id": "reactive-armor",
+        "name": "반응 장갑",
+        "slot": "armor",
+        "milestone": "M3"
+      }
+    },
+    {
+      "key": "equip_unique_phase_membrane",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_phase_membrane.png",
+      "label_ko": "위상 전환막",
+      "prompt_en": "an iridescent phase-shift shield membrane bubble, centered in the square frame",
+      "source": {
+        "id": "phase-membrane",
+        "name": "위상 전환막",
+        "slot": "shield",
+        "milestone": "M3"
+      }
+    },
+    {
+      "key": "equip_unique_afterimage_thruster",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_afterimage_thruster.png",
+      "label_ko": "잔상 추진기",
+      "prompt_en": "a thruster engine trailing ghostly cyan afterimage energy streaks, centered in the square frame",
+      "source": {
+        "id": "afterimage-thruster",
+        "name": "잔상 추진기",
+        "slot": "engine",
+        "milestone": "M3"
+      }
+    },
+    {
+      "key": "equip_unique_greed_heart",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_greed_heart.png",
+      "label_ko": "탐욕의 심장",
+      "prompt_en": "a golden reactor core shaped like a glowing heart clutching coins, centered in the square frame",
+      "source": {
+        "id": "greed-heart",
+        "name": "탐욕의 심장",
+        "slot": "core",
+        "milestone": "M3"
+      }
+    },
+    {
+      "key": "equip_unique_gambler_chip",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_gambler_chip.png",
+      "label_ko": "도박사의 칩",
+      "prompt_en": "a holographic casino chip module with a spinning fortune symbol, centered in the square frame",
+      "source": {
+        "id": "gambler-chip",
+        "name": "도박사의 칩",
+        "slot": "module",
+        "milestone": "M3"
+      }
+    },
+    {
+      "key": "equip_unique_relic_amplifier",
+      "category": "equip-unique",
+      "file": "assets/equip_unique_relic_amplifier.png",
+      "label_ko": "유물 증폭기",
+      "prompt_en": "an ancient relic amplifier module with glowing runic engravings, centered in the square frame",
+      "source": {
+        "id": "relic-amplifier",
+        "name": "유물 증폭기",
+        "slot": "module",
+        "milestone": "M3"
+      }
+    },
+    {
+      "key": "skill_damage_pct_low",
+      "category": "skill-stat",
+      "file": "assets/skill_damage_pct_low.png",
+      "label_ko": "탄환 데미지 (저)",
+      "prompt_en": "a single small red-tipped ammunition round with a faint spark, centered in the square frame",
+      "source": {
+        "stat": "damagePct",
+        "band": "low",
+        "tierRange": [
+          0,
+          1
+        ],
+        "nodeIds": [
+          "firepower-0-0",
+          "firepower-0-1",
+          "firepower-1-0"
+        ],
+        "nodeCount": 3
+      }
+    },
+    {
+      "key": "skill_damage_pct_mid",
+      "category": "skill-stat",
+      "file": "assets/skill_damage_pct_mid.png",
+      "label_ko": "탄환 데미지 (중)",
+      "prompt_en": "a serrated high-caliber warhead cracked open with glowing energy, centered in the square frame",
+      "source": {
+        "stat": "damagePct",
+        "band": "mid",
+        "tierRange": [
+          2,
+          3
+        ],
+        "nodeIds": [
+          "firepower-2-0",
+          "firepower-3-0"
+        ],
+        "nodeCount": 2
+      }
+    },
+    {
+      "key": "skill_damage_pct_high",
+      "category": "skill-stat",
+      "file": "assets/skill_damage_pct_high.png",
+      "label_ko": "탄환 데미지 (고)",
+      "prompt_en": "a massive glowing explosive warhead crackling with intense red-orange energy, centered in the square frame",
+      "source": {
+        "stat": "damagePct",
+        "band": "high",
+        "tierRange": [
+          4,
+          4
+        ],
+        "nodeIds": [
+          "firepower-4-0"
+        ],
+        "nodeCount": 1
+      }
+    },
+    {
+      "key": "skill_fire_rate_pct_low",
+      "category": "skill-stat",
+      "file": "assets/skill_fire_rate_pct_low.png",
+      "label_ko": "연사 속도 (저)",
+      "prompt_en": "a twin-barrel gun muzzle with short motion streak lines, angled diagonally from lower-left to upper-right, filling the square frame",
+      "source": {
+        "stat": "fireRatePct",
+        "band": "low",
+        "tierRange": [
+          0,
+          1
+        ],
+        "nodeIds": [
+          "firepower-0-2",
+          "firepower-1-1"
+        ],
+        "nodeCount": 2
+      }
+    },
+    {
+      "key": "skill_fire_rate_pct_mid",
+      "category": "skill-stat",
+      "file": "assets/skill_fire_rate_pct_mid.png",
+      "label_ko": "연사 속도 (중)",
+      "prompt_en": "a triple-barrel gatling cluster with a blurred motion streak, angled diagonally from lower-left to upper-right, filling the square frame",
+      "source": {
+        "stat": "fireRatePct",
+        "band": "mid",
+        "tierRange": [
+          2,
+          3
+        ],
+        "nodeIds": [
+          "firepower-2-3",
+          "firepower-3-3"
+        ],
+        "nodeCount": 2
+      }
+    },
+    {
+      "key": "skill_fire_rate_pct_high",
+      "category": "skill-stat",
+      "file": "assets/skill_fire_rate_pct_high.png",
+      "label_ko": "연사 속도 (고)",
+      "prompt_en": "an overheating rapid-fire barrel cluster glowing red-hot with intense motion blur streaks, angled diagonally from lower-left to upper-right, filling the square frame",
+      "source": {
+        "stat": "fireRatePct",
+        "band": "high",
+        "tierRange": [
+          4,
+          4
+        ],
+        "nodeIds": [
+          "firepower-4-3"
+        ],
+        "nodeCount": 1
+      }
+    },
+    {
+      "key": "skill_bullet_count_mid",
+      "category": "skill-stat",
+      "file": "assets/skill_bullet_count_mid.png",
+      "label_ko": "탄환 수 (중)",
+      "prompt_en": "three parallel bullet tracers fanned out from a single point, centered in the square frame",
+      "source": {
+        "stat": "bulletCount",
+        "band": "mid",
+        "tierRange": [
+          2,
+          3
+        ],
+        "nodeIds": [
+          "firepower-2-1",
+          "firepower-3-2"
+        ],
+        "nodeCount": 2
+      }
+    },
+    {
+      "key": "skill_bullet_count_high",
+      "category": "skill-stat",
+      "file": "assets/skill_bullet_count_high.png",
+      "label_ko": "탄환 수 (고)",
+      "prompt_en": "five parallel bullet tracers fanned out wide from a single point, centered in the square frame",
+      "source": {
+        "stat": "bulletCount",
+        "band": "high",
+        "tierRange": [
+          4,
+          4
+        ],
+        "nodeIds": [
+          "firepower-4-1"
+        ],
+        "nodeCount": 1
+      }
+    },
+    {
+      "key": "skill_bullet_speed_pct_low",
+      "category": "skill-stat",
+      "file": "assets/skill_bullet_speed_pct_low.png",
+      "label_ko": "탄속 (저)",
+      "prompt_en": "a single bullet with a short speed trail behind it, angled diagonally from lower-left to upper-right, filling the square frame",
+      "source": {
+        "stat": "bulletSpeedPct",
+        "band": "low",
+        "tierRange": [
+          0,
+          1
+        ],
+        "nodeIds": [
+          "firepower-0-3"
+        ],
+        "nodeCount": 1
+      }
+    },
+    {
+      "key": "skill_bullet_speed_pct_mid",
+      "category": "skill-stat",
+      "file": "assets/skill_bullet_speed_pct_mid.png",
+      "label_ko": "탄속 (중)",
+      "prompt_en": "a single bullet with a long streaking speed trail and motion blur, angled diagonally from lower-left to upper-right, filling the square frame",
+      "source": {
+        "stat": "bulletSpeedPct",
+        "band": "mid",
+        "tierRange": [
+          2,
+          3
+        ],
+        "nodeIds": [
+          "firepower-2-2",
+          "mobility-2-2"
+        ],
+        "nodeCount": 2
+      }
+    },
+    {
+      "key": "skill_pierce_low",
+      "category": "skill-stat",
+      "file": "assets/skill_pierce_low.png",
+      "label_ko": "관통 (저)",
+      "prompt_en": "a sharp spike piercing through one thin metal plate, angled diagonally from lower-left to upper-right, filling the square frame",
+      "source": {
+        "stat": "pierce",
+        "band": "low",
+        "tierRange": [
+          0,
+          1
+        ],
+        "nodeIds": [
+          "firepower-1-3"
+        ],
+        "nodeCount": 1
+      }
+    },
+    {
+      "key": "skill_pierce_mid",
+      "category": "skill-stat",
+      "file": "assets/skill_pierce_mid.png",
+      "label_ko": "관통 (중)",
+      "prompt_en": "a sharp spike piercing through two stacked metal plates with sparks, angled diagonally from lower-left to upper-right, filling the square frame",
+      "source": {
+        "stat": "pierce",
+        "band": "mid",
+        "tierRange": [
+          2,
+          3
+        ],
+        "nodeIds": [
+          "firepower-3-1"
+        ],
+        "nodeCount": 1
+      }
+    },
+    {
+      "key": "skill_pierce_high",
+      "category": "skill-stat",
+      "file": "assets/skill_pierce_high.png",
+      "label_ko": "관통 (고)",
+      "prompt_en": "a long lance-like spike piercing through three stacked metal plates in a shower of sparks, angled diagonally from lower-left to upper-right, filling the square frame",
+      "source": {
+        "stat": "pierce",
+        "band": "high",
+        "tierRange": [
+          4,
+          4
+        ],
+        "nodeIds": [
+          "firepower-4-2"
+        ],
+        "nodeCount": 1
+      }
+    },
+    {
+      "key": "skill_range_flat_low",
+      "category": "skill-stat",
+      "file": "assets/skill_range_flat_low.png",
+      "label_ko": "사거리 (저)",
+      "prompt_en": "a long-range targeting reticle with crosshair lines extending outward to the frame edges, centered in the square frame",
+      "source": {
+        "stat": "rangeFlat",
+        "band": "low",
+        "tierRange": [
+          0,
+          1
+        ],
+        "nodeIds": [
+          "firepower-1-2"
+        ],
+        "nodeCount": 1
+      }
+    },
+    {
+      "key": "skill_max_hp_flat_low",
+      "category": "skill-stat",
+      "file": "assets/skill_max_hp_flat_low.png",
+      "label_ko": "최대 HP(고정) (저)",
+      "prompt_en": "a single curved armor plate segment, centered in the square frame",
+      "source": {
+        "stat": "maxHpFlat",
+        "band": "low",
+        "tierRange": [
+          0,
+          1
+        ],
+        "nodeIds": [
+          "survival-0-0",
+          "survival-0-1",
+          "survival-1-0",
+          "survival-1-3"
+        ],
+        "nodeCount": 4
+      }
+    },
+    {
+      "key": "skill_max_hp_flat_mid",
+      "category": "skill-stat",
+      "file": "assets/skill_max_hp_flat_mid.png",
+      "label_ko": "최대 HP(고정) (중)",
+      "prompt_en": "three overlapping armor plate segments riveted together, centered in the square frame",
+      "source": {
+        "stat": "maxHpFlat",
+        "band": "mid",
+        "tierRange": [
+          2,
+          3
+        ],
+        "nodeIds": [
+          "survival-2-1",
+          "survival-3-2"
+        ],
+        "nodeCount": 2
+      }
+    },
+    {
+      "key": "skill_max_hp_flat_high",
+      "category": "skill-stat",
+      "file": "assets/skill_max_hp_flat_high.png",
+      "label_ko": "최대 HP(고정) (고)",
+      "prompt_en": "a thick heavy composite armor block with reinforced ridges, centered in the square frame",
+      "source": {
+        "stat": "maxHpFlat",
+        "band": "high",
+        "tierRange": [
+          4,
+          4
+        ],
+        "nodeIds": [
+          "survival-4-1"
+        ],
+        "nodeCount": 1
+      }
+    },
+    {
+      "key": "skill_max_hp_pct_low",
+      "category": "skill-stat",
+      "file": "assets/skill_max_hp_pct_low.png",
+      "label_ko": "최대 HP(%) (저)",
+      "prompt_en": "a small glowing green health cross emblem, centered in the square frame",
+      "source": {
+        "stat": "maxHpPct",
+        "band": "low",
+        "tierRange": [
+          0,
+          1
+        ],
+        "nodeIds": [
+          "survival-1-1"
+        ],
+        "nodeCount": 1
+      }
+    },
+    {
+      "key": "skill_max_hp_pct_mid",
+      "category": "skill-stat",
+      "file": "assets/skill_max_hp_pct_mid.png",
+      "label_ko": "최대 HP(%) (중)",
+      "prompt_en": "a medium glowing health core with pulsing energy rings around it, centered in the square frame",
+      "source": {
+        "stat": "maxHpPct",
+        "band": "mid",
+        "tierRange": [
+          2,
+          3
+        ],
+        "nodeIds": [
+          "survival-2-0",
+          "survival-3-0"
+        ],
+        "nodeCount": 2
+      }
+    },
+    {
+      "key": "skill_max_hp_pct_high",
+      "category": "skill-stat",
+      "file": "assets/skill_max_hp_pct_high.png",
+      "label_ko": "최대 HP(%) (고)",
+      "prompt_en": "a large radiant health core with bright pulsing aura rings, centered in the square frame",
+      "source": {
+        "stat": "maxHpPct",
+        "band": "high",
+        "tierRange": [
+          4,
+          4
+        ],
+        "nodeIds": [
+          "survival-4-0"
+        ],
+        "nodeCount": 1
+      }
+    },
+    {
+      "key": "skill_dash_cd_pct_low",
+      "category": "skill-stat",
+      "file": "assets/skill_dash_cd_pct_low.png",
+      "label_ko": "대시 재충전 (저)",
+      "prompt_en": "a small thruster nozzle emitting a short burst flame, angled diagonally from lower-left to upper-right, filling the square frame",
+      "source": {
+        "stat": "dashCdPct",
+        "band": "low",
+        "tierRange": [
+          0,
+          1
+        ],
+        "nodeIds": [
+          "survival-0-2",
+          "survival-1-2",
+          "mobility-1-1"
+        ],
+        "nodeCount": 3
+      }
+    },
+    {
+      "key": "skill_dash_cd_pct_mid",
+      "category": "skill-stat",
+      "file": "assets/skill_dash_cd_pct_mid.png",
+      "label_ko": "대시 재충전 (중)",
+      "prompt_en": "twin thruster nozzles emitting a stronger burst flame with a motion streak, angled diagonally from lower-left to upper-right, filling the square frame",
+      "source": {
+        "stat": "dashCdPct",
+        "band": "mid",
+        "tierRange": [
+          2,
+          3
+        ],
+        "nodeIds": [
+          "survival-2-2",
+          "survival-3-1",
+          "mobility-2-1",
+          "mobility-3-1"
+        ],
+        "nodeCount": 4
+      }
+    },
+    {
+      "key": "skill_dash_cd_pct_high",
+      "category": "skill-stat",
+      "file": "assets/skill_dash_cd_pct_high.png",
+      "label_ko": "대시 재충전 (고)",
+      "prompt_en": "a large thruster array emitting an intense burst flame with long motion streaks, angled diagonally from lower-left to upper-right, filling the square frame",
+      "source": {
+        "stat": "dashCdPct",
+        "band": "high",
+        "tierRange": [
+          4,
+          4
+        ],
+        "nodeIds": [
+          "survival-4-2",
+          "mobility-4-1"
+        ],
+        "nodeCount": 2
+      }
+    },
+    {
+      "key": "skill_move_speed_pct_low",
+      "category": "skill-stat",
+      "file": "assets/skill_move_speed_pct_low.png",
+      "label_ko": "이동 속도 (저)",
+      "prompt_en": "a small compact engine nozzle with a faint exhaust glow, centered in the square frame",
+      "source": {
+        "stat": "moveSpeedPct",
+        "band": "low",
+        "tierRange": [
+          0,
+          1
+        ],
+        "nodeIds": [
+          "survival-0-3",
+          "mobility-0-0",
+          "mobility-0-1",
+          "mobility-1-0"
+        ],
+        "nodeCount": 4
+      }
+    },
+    {
+      "key": "skill_move_speed_pct_mid",
+      "category": "skill-stat",
+      "file": "assets/skill_move_speed_pct_mid.png",
+      "label_ko": "이동 속도 (중)",
+      "prompt_en": "a medium engine pod with a brighter exhaust glow and a short trail, centered in the square frame",
+      "source": {
+        "stat": "moveSpeedPct",
+        "band": "mid",
+        "tierRange": [
+          2,
+          3
+        ],
+        "nodeIds": [
+          "survival-2-3",
+          "survival-3-3",
+          "mobility-2-0",
+          "mobility-3-0"
+        ],
+        "nodeCount": 4
+      }
+    },
+    {
+      "key": "skill_move_speed_pct_high",
+      "category": "skill-stat",
+      "file": "assets/skill_move_speed_pct_high.png",
+      "label_ko": "이동 속도 (고)",
+      "prompt_en": "a large twin-nozzle engine array with an intense exhaust glow and a long trail, centered in the square frame",
+      "source": {
+        "stat": "moveSpeedPct",
+        "band": "high",
+        "tierRange": [
+          4,
+          4
+        ],
+        "nodeIds": [
+          "survival-4-3",
+          "mobility-4-0"
+        ],
+        "nodeCount": 2
+      }
+    },
+    {
+      "key": "skill_magnet_pct_low",
+      "category": "skill-stat",
+      "file": "assets/skill_magnet_pct_low.png",
+      "label_ko": "젬 자석 (저)",
+      "prompt_en": "a small horseshoe magnet with faint attraction field lines, centered in the square frame",
+      "source": {
+        "stat": "magnetPct",
+        "band": "low",
+        "tierRange": [
+          0,
+          1
+        ],
+        "nodeIds": [
+          "mobility-0-2",
+          "mobility-1-2"
+        ],
+        "nodeCount": 2
+      }
+    },
+    {
+      "key": "skill_magnet_pct_mid",
+      "category": "skill-stat",
+      "file": "assets/skill_magnet_pct_mid.png",
+      "label_ko": "젬 자석 (중)",
+      "prompt_en": "a medium ringed magnet coil with visible swirling attraction field lines, centered in the square frame",
+      "source": {
+        "stat": "magnetPct",
+        "band": "mid",
+        "tierRange": [
+          2,
+          3
+        ],
+        "nodeIds": [
+          "mobility-2-3",
+          "mobility-3-3"
+        ],
+        "nodeCount": 2
+      }
+    },
+    {
+      "key": "skill_magnet_pct_high",
+      "category": "skill-stat",
+      "file": "assets/skill_magnet_pct_high.png",
+      "label_ko": "젬 자석 (고)",
+      "prompt_en": "a large glowing magnet coil array with a strong swirling attraction field, centered in the square frame",
+      "source": {
+        "stat": "magnetPct",
+        "band": "high",
+        "tierRange": [
+          4,
+          4
+        ],
+        "nodeIds": [
+          "mobility-4-3"
+        ],
+        "nodeCount": 1
+      }
+    },
+    {
+      "key": "skill_xp_pct_low",
+      "category": "skill-stat",
+      "file": "assets/skill_xp_pct_low.png",
+      "label_ko": "경험치 (저)",
+      "prompt_en": "a single small glowing star, centered in the square frame",
+      "source": {
+        "stat": "xpPct",
+        "band": "low",
+        "tierRange": [
+          0,
+          1
+        ],
+        "nodeIds": [
+          "mobility-0-3",
+          "mobility-1-3"
+        ],
+        "nodeCount": 2
+      }
+    },
+    {
+      "key": "skill_xp_pct_mid",
+      "category": "skill-stat",
+      "file": "assets/skill_xp_pct_mid.png",
+      "label_ko": "경험치 (중)",
+      "prompt_en": "a cluster of three glowing stars, centered in the square frame",
+      "source": {
+        "stat": "xpPct",
+        "band": "mid",
+        "tierRange": [
+          2,
+          3
+        ],
+        "nodeIds": [
+          "mobility-3-2"
+        ],
+        "nodeCount": 1
+      }
+    },
+    {
+      "key": "skill_xp_pct_high",
+      "category": "skill-stat",
+      "file": "assets/skill_xp_pct_high.png",
+      "label_ko": "경험치 (고)",
+      "prompt_en": "a radiant burst of many glowing stars around a bright core, centered in the square frame",
+      "source": {
+        "stat": "xpPct",
+        "band": "high",
+        "tierRange": [
+          4,
+          4
+        ],
+        "nodeIds": [
+          "mobility-4-2"
+        ],
+        "nodeCount": 1
+      }
+    },
+    {
+      "key": "skill_capstone_firepower",
+      "category": "skill-capstone",
+      "file": "assets/skill_capstone_firepower.png",
+      "label_ko": "화력 캡스톤 · 탄막 상쇄 레이저",
+      "prompt_en": "a forward-firing energy laser beam intercepting and dissolving a cluster of incoming enemy projectiles, dramatic action icon, centered in the square frame",
+      "source": {
+        "id": "firepower-capstone",
+        "tree": "firepower",
+        "name": "탄막 상쇄 레이저",
+        "desc": "1.5초마다 전방 레이저가 적탄을 소거",
+        "tier": 5
+      }
+    },
+    {
+      "key": "skill_capstone_survival",
+      "category": "skill-capstone",
+      "file": "assets/skill_capstone_survival.png",
+      "label_ko": "생존 캡스톤 · 치명타 1회 무효",
+      "prompt_en": "a glowing protective barrier bubble shattering an incoming red critical-strike bolt, dramatic action icon, centered in the square frame",
+      "source": {
+        "id": "survival-capstone",
+        "tree": "survival",
+        "name": "치명타 1회 무효",
+        "desc": "런당 1회 치명 피격을 무효화 + 짧은 무적",
+        "tier": 5
+      }
+    },
+    {
+      "key": "skill_capstone_mobility",
+      "category": "skill-capstone",
+      "file": "assets/skill_capstone_mobility.png",
+      "label_ko": "기동 캡스톤 · 대시 잔상 소거",
+      "prompt_en": "a starfighter afterimage trail dashing through a burst of dissolving enemy bullets, dramatic action icon, centered in the square frame",
+      "source": {
+        "id": "mobility-capstone",
+        "tree": "mobility",
+        "name": "대시 잔상 소거",
+        "desc": "대시 시 반경 320 내 적탄을 소거",
+        "tier": 5
+      }
+    },
+    {
+      "key": "sticker_good_game",
+      "category": "sticker",
+      "file": "assets/sticker_good_game.png",
+      "label_ko": "GG! 다음 판도 부탁해",
+      "prompt_en": "a handshake emblem inside a circular badge, playful winner sticker, centered in the square frame",
+      "source": {
+        "id": "good-game",
+        "index": 0,
+        "emoji": "🤝",
+        "text": "GG! 다음 판도 부탁해"
+      }
+    },
+    {
+      "key": "sticker_nice_try",
+      "category": "sticker",
+      "file": "assets/sticker_nice_try.png",
+      "label_ko": "잘 싸웠다 — 그래도 내가 이겼지만",
+      "prompt_en": "a cool sunglasses face emblem inside a circular badge, playful winner sticker, centered in the square frame",
+      "source": {
+        "id": "nice-try",
+        "index": 1,
+        "emoji": "😎",
+        "text": "잘 싸웠다 — 그래도 내가 이겼지만"
+      }
+    },
+    {
+      "key": "sticker_galaxy_small",
+      "category": "sticker",
+      "file": "assets/sticker_galaxy_small.png",
+      "label_ko": "은하가 좁네, 또 보자고",
+      "prompt_en": "a swirling spiral galaxy emblem inside a circular badge, playful winner sticker, centered in the square frame",
+      "source": {
+        "id": "galaxy-small",
+        "index": 2,
+        "emoji": "🌌",
+        "text": "은하가 좁네, 또 보자고"
+      }
+    },
+    {
+      "key": "sticker_lock_door",
+      "category": "sticker",
+      "file": "assets/sticker_lock_door.png",
+      "label_ko": "다음엔 문 좀 잠가두렴",
+      "prompt_en": "a padlock emblem inside a circular badge, playful winner sticker, centered in the square frame",
+      "source": {
+        "id": "lock-door",
+        "index": 3,
+        "emoji": "🔒",
+        "text": "다음엔 문 좀 잠가두렴"
+      }
+    },
+    {
+      "key": "sticker_five_stars",
+      "category": "sticker",
+      "file": "assets/sticker_five_stars.png",
+      "label_ko": "네 기지 별점 5개! (돌파 난이도 별점 아님)",
+      "prompt_en": "a five-star rating emblem inside a circular badge, playful winner sticker, centered in the square frame",
+      "source": {
+        "id": "five-stars",
+        "index": 4,
+        "emoji": "⭐",
+        "text": "네 기지 별점 5개! (돌파 난이도 별점 아님)"
+      }
+    },
+    {
+      "key": "sticker_maintenance",
+      "category": "sticker",
+      "file": "assets/sticker_maintenance.png",
+      "label_ko": "정비도 좀 챙기지 그랬어",
+      "prompt_en": "a wrench tool emblem inside a circular badge, playful winner sticker, centered in the square frame",
+      "source": {
+        "id": "maintenance",
+        "index": 5,
+        "emoji": "🔧",
+        "text": "정비도 좀 챙기지 그랬어"
+      }
+    },
+    {
+      "key": "sticker_sightseeing",
+      "category": "sticker",
+      "file": "assets/sticker_sightseeing.png",
+      "label_ko": "행성 관광 잘 마쳤습니다",
+      "prompt_en": "a rocket ship emblem inside a circular badge, playful winner sticker, centered in the square frame",
+      "source": {
+        "id": "sightseeing",
+        "index": 6,
+        "emoji": "🚀",
+        "text": "행성 관광 잘 마쳤습니다"
+      }
+    },
+    {
+      "key": "sticker_turret_regards",
+      "category": "sticker",
+      "file": "assets/sticker_turret_regards.png",
+      "label_ko": "우리 포탑이 안부 전하래",
+      "prompt_en": "a satellite dish emblem inside a circular badge, playful winner sticker, centered in the square frame",
+      "source": {
+        "id": "turret-regards",
+        "index": 7,
+        "emoji": "📡",
+        "text": "우리 포탑이 안부 전하래"
+      }
+    },
+    {
+      "key": "sticker_take_a_seat",
+      "category": "sticker",
+      "file": "assets/sticker_take_a_seat.png",
+      "label_ko": "앉아서 커피 한 잔 하고 갈걸",
+      "prompt_en": "a steaming coffee cup emblem inside a circular badge, playful winner sticker, centered in the square frame",
+      "source": {
+        "id": "take-a-seat",
+        "index": 8,
+        "emoji": "☕",
+        "text": "앉아서 커피 한 잔 하고 갈걸"
+      }
+    },
+    {
+      "key": "sticker_rematch_anytime",
+      "category": "sticker",
+      "file": "assets/sticker_rematch_anytime.png",
+      "label_ko": "복수? 얼마든지 기다릴게",
+      "prompt_en": "an hourglass emblem inside a circular badge, playful winner sticker, centered in the square frame",
+      "source": {
+        "id": "rematch-anytime",
+        "index": 9,
+        "emoji": "⏳",
+        "text": "복수? 얼마든지 기다릴게"
+      }
+    },
+    {
+      "key": "sticker_core_walk",
+      "category": "sticker",
+      "file": "assets/sticker_core_walk.png",
+      "label_ko": "코어까지 산책 편했다",
+      "prompt_en": "a faceted diamond gem-core emblem inside a circular badge, playful winner sticker, centered in the square frame",
+      "source": {
+        "id": "core-walk",
+        "index": 10,
+        "emoji": "💠",
+        "text": "코어까지 산책 편했다"
+      }
+    },
+    {
+      "key": "sticker_safe_travels",
+      "category": "sticker",
+      "file": "assets/sticker_safe_travels.png",
+      "label_ko": "돌아가는 길 조심하고",
+      "prompt_en": "a satellite emblem inside a circular badge, playful winner sticker, centered in the square frame",
+      "source": {
+        "id": "safe-travels",
+        "index": 11,
+        "emoji": "🛰️",
+        "text": "돌아가는 길 조심하고"
+      }
+    }
+  ]
+}

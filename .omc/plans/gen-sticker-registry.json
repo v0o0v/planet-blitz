@@ -1,0 +1,120 @@
+{
+  "_meta": {
+    "generated": "2026-07-20",
+    "lane": "gen-sticker",
+    "note": "도발 스티커 12종(4시트) 생성 기록 — key/PNG경로/영문 프롬프트/원본 오브젝트ID 표. 캐시 등록(index.json add)은 별도 레인 몫이라 여기서 하지 않았다. 이 파일은 icon-sheets.json/icon-manifest.json 을 대체하지 않는다(그건 읽기 전용) — 이 레인이 실제로 사용한 프롬프트가 매니페스트 원안과 달라진 부분만 기록한다.",
+    "sizeDeviation": "브리핑은 size:512 를 지시했으나, 현재 배포된 create_1_direction_object 툴 스키마는 size 최대 256, style_images 도 이미지당 최대 256x256 으로 캡돼 있다(2026-07-20 확인). 게다가 item_descriptions 로 한 콜에 3개를 몰아 뽑으려면 'size 로 산출되는 오브젝트 슬롯 수'가 3 이상이어야 하는데, 그 슬롯 수 규칙(≤42→64, ≤85→16, ≤170→4, >170→1)상 size 는 170 이하여야 한다(>170 이면 슬롯 1개뿐이라 3아이템 배치 자체가 불가). 그래서 파일럿 v2(lane-a-pilot)가 이미 검증해 둔 대로 스타일 앵커를 최대변 160px 로 리사이즈한 style_ref_160.png(160x60, ST-01 이 실제로 이 레퍼런스로 생성됨)를 그대로 재사용해 size 를 style_images 로부터 자동 산출(160, 4슬롯 브래킷)되게 했다. 이 앵커는 pb_equip_style_anchor_sheet.png(512x192)를 축소한 사본이 아니라 파일럿이 이미 만들어 검증한 파일 그대로다 — 재검증 없이 재사용해 ST-01 과의 톤 일관성도 확보했다. 리드에게: '바꾸지 마라'는 지시를 지키기 위해 리터럴 512 가 아니라 파일럿이 실제로 실증한 recipe(스타일 레퍼런스 최대변 160)를 따랐다.",
+    "promptDeviation": "매니페스트 원안 프롬프트는 각 스티커를 'inside a circular badge' 로 감쌌다. 파일럿 소견(원형 뱃지 테두리끼리 겹쳐 육안 구분 어려움)에 따라 이 레인에서는 뱃지 표현을 빼고 순수 이모지 실루엣만 남겼다 — 'no circular badge ring, no background plate' 를 명시. 매니페스트 파일 자체는 읽기 전용이라 수정하지 않았다.",
+    "recipe": {
+      "tool": "create_1_direction_object",
+      "size": "omitted (auto-derived from style_images, 160x160)",
+      "style_images": "style_ref_160.png (160x60, pilot v2 산출물 재사용) — C:/Users/v0o0v/AppData/Local/Temp/haru-shots/pilot-icons-lane-a/style_ref_160.png",
+      "item_descriptions": "시트당 3개 몰아서 1콜",
+      "flow": "create_1_direction_object → review(4후보, 3개는 요청 아이템과 매칭 + 1개는 미요청 보너스 후보) → select_object_frames(indices=[0,1,2]) → get_object(각 신규 object_id) 로 download URL 획득 → curl 다운로드 → asset-prep.mjs slice-sheet --cols 1 (160x160 → 64x64 알파bbox+중앙배치)"
+    }
+  },
+  "sheets": [
+    {
+      "sheet_id": "ST-01",
+      "note": "파일럿 v2(lane-a-pilot) 산출물 그대로 최종 배치(재생성 안 함) — C:/Users/v0o0v/AppData/Local/Temp/haru-shots/pilot-icons-lane-a/v2-sliced/*.png 에서 복사",
+      "items": [
+        {
+          "key": "sticker_good_game",
+          "file": "assets/sticker_good_game.png",
+          "prompt_en": "a handshake emblem, playful winner sticker, centered in the square frame"
+        },
+        {
+          "key": "sticker_nice_try",
+          "file": "assets/sticker_nice_try.png",
+          "prompt_en": "a cool sunglasses face emblem, playful winner sticker, centered in the square frame"
+        },
+        {
+          "key": "sticker_galaxy_small",
+          "file": "assets/sticker_galaxy_small.png",
+          "prompt_en": "a swirling spiral galaxy emblem, playful winner sticker, centered in the square frame"
+        }
+      ]
+    },
+    {
+      "sheet_id": "ST-02",
+      "object_id": "2ac14696-8719-44e8-a5fb-6bb166046452",
+      "items": [
+        {
+          "key": "sticker_lock_door",
+          "file": "assets/sticker_lock_door.png",
+          "prompt_en": "a padlock emblem, playful winner sticker icon, no circular badge ring, no background plate, floating alone, centered and filling the square frame",
+          "objectId": "5b10cc7f-c28c-4408-af9f-ca3b9a7ea367"
+        },
+        {
+          "key": "sticker_five_stars",
+          "file": "assets/sticker_five_stars.png",
+          "prompt_en": "a row of five gold rating stars, playful winner sticker icon, no circular badge ring, no background plate, floating alone, centered and filling the square frame",
+          "objectId": "6eb57921-d035-4ecb-a303-cb87feba1607"
+        },
+        {
+          "key": "sticker_maintenance",
+          "file": "assets/sticker_maintenance.png",
+          "prompt_en": "a wrench tool emblem, playful winner sticker icon, no circular badge ring, no background plate, floating alone, centered and filling the square frame",
+          "objectId": "6fdd3118-6590-45d4-9db1-56ecfbb57fb2"
+        }
+      ],
+      "discardedCandidate": "index 3 — a trophy cup (not requested, unused bonus candidate)"
+    },
+    {
+      "sheet_id": "ST-03",
+      "object_id": "225e1030-7fde-448b-a850-7511a59a1281",
+      "items": [
+        {
+          "key": "sticker_sightseeing",
+          "file": "assets/sticker_sightseeing.png",
+          "prompt_en": "a rocket ship emblem, playful winner sticker icon, no circular badge ring, no background plate, floating alone, centered and filling the square frame",
+          "objectId": "eb69ec79-9bc9-4312-81b0-c044953e94ca"
+        },
+        {
+          "key": "sticker_turret_regards",
+          "file": "assets/sticker_turret_regards.png",
+          "prompt_en": "a parabolic satellite dish antenna emblem, playful winner sticker icon, no circular badge ring, no background plate, floating alone, centered and filling the square frame",
+          "objectId": "20dbae31-a40f-4d81-810e-fbf0a8f2014b"
+        },
+        {
+          "key": "sticker_take_a_seat",
+          "file": "assets/sticker_take_a_seat.png",
+          "prompt_en": "a steaming coffee cup emblem, playful winner sticker icon, no circular badge ring, no background plate, floating alone, centered and filling the square frame",
+          "objectId": "b6730dc7-e644-4973-b693-044be2b3681a"
+        }
+      ],
+      "discardedCandidate": "index 3 — a joystick/game controller (not requested, unused bonus candidate)"
+    },
+    {
+      "sheet_id": "ST-04",
+      "object_id": "4383e140-da80-4db1-952c-7153143395f3",
+      "items": [
+        {
+          "key": "sticker_rematch_anytime",
+          "file": "assets/sticker_rematch_anytime.png",
+          "prompt_en": "an hourglass emblem, playful winner sticker icon, no circular badge ring, no background plate, floating alone, centered and filling the square frame",
+          "objectId": "a4d2e416-5365-4f70-ae15-3414ae5eed61"
+        },
+        {
+          "key": "sticker_core_walk",
+          "file": "assets/sticker_core_walk.png",
+          "prompt_en": "a faceted diamond gem-core emblem, playful winner sticker icon, no circular badge ring, no background plate, floating alone, centered and filling the square frame",
+          "objectId": "d39e72b5-33ce-4c9d-8011-a7008e92da35"
+        },
+        {
+          "key": "sticker_safe_travels",
+          "file": "assets/sticker_safe_travels.png",
+          "prompt_en": "a boxy space satellite with two solar panel wings emblem, playful winner sticker icon, no circular badge ring, no background plate, floating alone, centered and filling the square frame",
+          "objectId": "01374e57-ade9-4df9-8cd4-4bb347cecd17"
+        }
+      ],
+      "discardedCandidate": "index 3 — a laurel wreath with star (not requested, unused bonus candidate)"
+    }
+  ],
+  "distinctness_note": "sticker_turret_regards(파라볼릭 접시 안테나, 크림/골드 톤)와 sticker_safe_travels(박스형 본체+태양광 패널 날개, 블루 톤) 는 둘 다 '우주 통신 장비' 소재라 실루엣·색조를 의도적으로 갈랐다(프롬프트에 형태 차이를 명시) — 64x64 축소 후에도 육안 구분됨을 확인.",
+  "balance": {
+    "before": "$6.86",
+    "after": "$5.06",
+    "delta": "$1.80 for 3 sheets (9 icons) = $0.60/sheet, $0.20/icon"
+  }
+}

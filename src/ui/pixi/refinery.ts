@@ -22,7 +22,7 @@ import { COLOR, RARITY_COLOR_NUM, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
-import { makeSlotCell, gridPositions } from './slotGrid.js';
+import { makeSlotCell, gridPositions, equipIconTexture } from './slotGrid.js';
 import { PixiTooltip } from './tooltip.js';
 import { makeBanner, makeCurrencyChip, makeIconButton } from './titleBar.js';
 import { stripEmoji } from './text.js';
@@ -416,6 +416,7 @@ export class RefineryScreen {
         size: CELL,
         item,
         slotTex: this.ui[isSel ? 'ui_slot_hl.png' : 'ui_slot.png'],
+        iconTex: equipIconTexture(this.ui, item),
         highlight: isSel,
         highlightTex: this.ui['ui_slot_hl.png'],
         onClick: () => this.select(item),

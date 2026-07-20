@@ -16,7 +16,25 @@
 
 import { POWERUPS } from '../sim/powerups.js';
 import { choiceRelevance, type BuildStatus } from './buildStatus.js';
+import { powerupIconKeys } from './powerupIcons.js';
+import { iconUrl, pixelIcon } from './uiIcons.js';
 import { t } from '../i18n/index.js';
+
+/** 카드 바탕 스탯 아이콘 한 변(px). 원본 PNG 가 64px 라 1:1 — 확대하면 픽셀이 갈린다. */
+const ICON_SIZE = 64;
+/**
+ * 우하단 무기 배지 한 변(px). 26px 에서는 네 무기(스프레드·레일건·미사일·빔)가 전부
+ * "금·탄 대각선 총열"로 뭉개져 구별되지 않았다 — 키 조합 충돌은 0 인데 지각 충돌이 남았다.
+ *
+ * 32px 인 이유는 두 가지다. ① 64px 원본의 정확히 1/2 이라 nearest 축소가 픽셀을 2:1 로
+ * 깨끗이 접는다(26px 은 2.46:1 이라 인접 픽셀이 불규칙하게 버려져 실루엣이 뭉개진다).
+ * ② 그러고도 바탕 아이콘을 더 가리지 않는다 — 칩 전체가 40px 이 되지만 바깥으로 12px
+ * 밀어내서 실제 가림은 28×28(바탕의 19%, 기존 26×26=16.5%)이고 중심(32,32)은 4px 여유로
+ * 열려 있다.
+ */
+const BADGE_SIZE = 32;
+/** 배지 칩을 아이콘 상자 밖으로 밀어내는 양(px) — 중심 실루엣을 비우기 위한 값. */
+const BADGE_OFFSET = 12;
 
 const STYLE = `
 #pb-powerup { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; background:rgba(4,6,14,.72); backdrop-filter:blur(2px); font-family:'Segoe UI',system-ui,sans-serif; z-index:20; }
@@ -32,6 +50,9 @@ const STYLE = `
 #pb-powerup .pb-key { display:inline-block; width:26px; height:26px; line-height:26px; border-radius:6px; background:#4cd7ff; color:#04121a; font-weight:800; margin-bottom:10px; }
 #pb-powerup .pb-badge { position:absolute; top:10px; right:10px; font-size:10px; font-weight:700; letter-spacing:.5px; color:#8896b8; background:#1a2340; border:1px solid #2a3552; border-radius:5px; padding:2px 6px; }
 #pb-powerup .pb-badge.match { color:#04121a; background:#7affea; border-color:#7affea; }
+#pb-powerup .pb-icon { position:relative; width:${ICON_SIZE}px; height:${ICON_SIZE}px; margin:0 auto 10px; }
+#pb-powerup .pb-icon img { display:block; }
+#pb-powerup .pb-wbadge { position:absolute; right:-${BADGE_OFFSET}px; bottom:-${BADGE_OFFSET}px; padding:2px; background:#03050c; border:2px solid #9db3e0; border-radius:8px; box-shadow:0 2px 10px rgba(0,0,0,.8); }
 #pb-powerup .pb-name { color:#fff; font-size:19px; font-weight:800; margin-bottom:10px; }
 #pb-powerup .pb-desc { color:#aab6d6; font-size:14px; line-height:1.5; }
 #pb-powerup.picked .pb-card { cursor:default; }
@@ -40,6 +61,33 @@ const STYLE = `
 #pb-powerup .pb-card.chosen { border-color:#7affea; box-shadow:0 0 24px rgba(122,255,234,.4); }
 #pb-powerup .pb-hint { color:#68789c; font-size:12px; letter-spacing:1px; }
 `;
+
+/**
+ * 카드 아이콘 블록(스탯 아이콘 + 무기 배지)을 만든다.
+ *
+ * 아이콘 PNG 가 아직 없을 수 있으므로 자산이 없으면 `null` 을 돌려주고 카드는 기존
+ * 이름/설명 텍스트만으로 성립한다(자산이 빠져도 화면이 죽지 않는다). 배지만 없을
+ * 때는 스탯 아이콘만 표시한다.
+ */
+function buildIcon(poolIndex: number, alt: string): HTMLElement | null {
+  const keys = powerupIconKeys(poolIndex);
+  if (keys === undefined) return null;
+  const statUrl = iconUrl(keys.statKey);
+  if (statUrl === undefined) return null;
+
+  const box = document.createElement('div');
+  box.className = 'pb-icon';
+  box.appendChild(pixelIcon(statUrl, ICON_SIZE, alt));
+
+  const badgeUrl = keys.badgeKey !== undefined ? iconUrl(keys.badgeKey) : undefined;
+  if (badgeUrl !== undefined) {
+    const badge = document.createElement('div');
+    badge.className = 'pb-wbadge';
+    badge.appendChild(pixelIcon(badgeUrl, BADGE_SIZE));
+    box.appendChild(badge);
+  }
+  return box;
+}
 
 export class PowerupOverlay {
   private readonly root: HTMLElement;
@@ -139,6 +187,7 @@ export class PowerupOverlay {
       const key = document.createElement('div');
       key.className = 'pb-key';
       key.textContent = String(offerIndex + 1);
+      const icon = buildIcon(poolIndex, def?.name ?? '');
       const name = document.createElement('div');
       name.className = 'pb-name';
       name.textContent = def?.name ?? '???';
@@ -146,6 +195,7 @@ export class PowerupOverlay {
       desc.className = 'pb-desc';
       desc.textContent = def?.desc ?? '';
       card.appendChild(key);
+      if (icon !== null) card.appendChild(icon);
       card.appendChild(name);
       card.appendChild(desc);
       card.addEventListener('click', () => this.pick(offerIndex));

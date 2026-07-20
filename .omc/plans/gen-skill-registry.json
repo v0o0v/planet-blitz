@@ -1,0 +1,132 @@
+{
+  "_meta": {
+    "generated": "2026-07-20",
+    "generator": "gen-skill-registry lane (skill icon generation, 12 sheets + SK-07 pilot carry-over)",
+    "tool": "create_1_direction_object",
+    "size": 512,
+    "style_images_anchor": "pb_equip_style_anchor_sheet (resized to 160x60, quantized to 64 colors for base64 payload size)",
+    "anchor": "pb-equip-icon",
+    "note": "캐시 등록은 하지 않음(별도 등록 레인 담당). 이 표는 그 레인의 입력. SK-07(move_speed_pct)은 파일럿(lane-a-pilot) 산출물을 그대로 배치했고, 프롬프트도 파일럿이 사용한 원문 그대로 기록.",
+    "tierPromptStrategy": "각 셀 프롬프트는 티어 진행을 크기(작다/크다) 대신 형태·개수·부가 요소 변화로 표현하도록 매니페스트 원문에서 다듬었다 (예: 발톱 1개→2개→4개, 코일 1개→3개 탑, 고리 0→1→3겹). SK-12(range_flat)·SK-13(capstone)은 티어가 1개뿐이거나 정성적이라 매니페스트 원문 그대로 사용."
+  },
+  "sheets": [
+    {
+      "sheet_id": "SK-01",
+      "object_id": "99af94e1-c295-43ad-bedb-ca99abef6cd8",
+      "items": [
+        { "key": "skill_damage_pct_low", "file": "assets/skill_damage_pct_low.png", "prompt_en": "a single small bullet round with a faint spark at its tip, centered in the square frame" },
+        { "key": "skill_damage_pct_mid", "file": "assets/skill_damage_pct_mid.png", "prompt_en": "two crossed serrated warheads cracked open with glowing energy seams, centered in the square frame" },
+        { "key": "skill_damage_pct_high", "file": "assets/skill_damage_pct_high.png", "prompt_en": "a cluster of three spiked explosive warheads bound together, crackling with intense red-orange energy, centered in the square frame" }
+      ]
+    },
+    {
+      "sheet_id": "SK-02",
+      "object_id": "ac54598c-3d45-432f-bd14-be92dc1347cb",
+      "items": [
+        { "key": "skill_fire_rate_pct_low", "file": "assets/skill_fire_rate_pct_low.png", "prompt_en": "a twin-barrel gun muzzle with two short motion streak lines, angled diagonally from lower-left to upper-right, filling the square frame" },
+        { "key": "skill_fire_rate_pct_mid", "file": "assets/skill_fire_rate_pct_mid.png", "prompt_en": "a triple-barrel gatling cluster with three blurred motion streak lines, angled diagonally from lower-left to upper-right, filling the square frame" },
+        { "key": "skill_fire_rate_pct_high", "file": "assets/skill_fire_rate_pct_high.png", "prompt_en": "a five-barrel gatling cluster glowing red-hot with intense crossing motion blur streaks, angled diagonally from lower-left to upper-right, filling the square frame" }
+      ]
+    },
+    {
+      "sheet_id": "SK-03",
+      "object_id": "6c654beb-6d32-48e8-bcec-53f5a0968129",
+      "items": [
+        { "key": "skill_pierce_low", "file": "assets/skill_pierce_low.png", "prompt_en": "a sharp spike piercing through one thin metal plate, angled diagonally from lower-left to upper-right, filling the square frame" },
+        { "key": "skill_pierce_mid", "file": "assets/skill_pierce_mid.png", "prompt_en": "a sharp spike piercing through two stacked metal plates with sparks, angled diagonally from lower-left to upper-right, filling the square frame" },
+        { "key": "skill_pierce_high", "file": "assets/skill_pierce_high.png", "prompt_en": "a long lance-like spike piercing through three stacked metal plates in a shower of sparks, angled diagonally from lower-left to upper-right, filling the square frame" }
+      ]
+    },
+    {
+      "sheet_id": "SK-04",
+      "object_id": "6ab81b85-9f5f-4f65-964a-8b23a2acb310",
+      "items": [
+        { "key": "skill_max_hp_flat_low", "file": "assets/skill_max_hp_flat_low.png", "prompt_en": "a single curved armor plate segment with one rivet, centered in the square frame" },
+        { "key": "skill_max_hp_flat_mid", "file": "assets/skill_max_hp_flat_mid.png", "prompt_en": "three overlapping armor plate segments riveted together in a row, centered in the square frame" },
+        { "key": "skill_max_hp_flat_high", "file": "assets/skill_max_hp_flat_high.png", "prompt_en": "five riveted armor plates stacked into a thick fortress-block formation with reinforced ridges, centered in the square frame" }
+      ]
+    },
+    {
+      "sheet_id": "SK-05",
+      "object_id": "678c2586-904e-4962-a72b-a31f9cc2f7a5",
+      "items": [
+        { "key": "skill_max_hp_pct_low", "file": "assets/skill_max_hp_pct_low.png", "prompt_en": "a small glowing green health cross emblem with a thin outline, centered in the square frame" },
+        { "key": "skill_max_hp_pct_mid", "file": "assets/skill_max_hp_pct_mid.png", "prompt_en": "a glowing green health core encircled by a single pulsing energy ring, centered in the square frame" },
+        { "key": "skill_max_hp_pct_high", "file": "assets/skill_max_hp_pct_high.png", "prompt_en": "a glowing green health core wrapped in three overlapping pulsing energy rings with radiating burst spikes, centered in the square frame" }
+      ]
+    },
+    {
+      "sheet_id": "SK-06",
+      "object_id": "4b4f56ef-56ca-4044-834b-132d31ab8ec6",
+      "items": [
+        { "key": "skill_dash_cd_pct_low", "file": "assets/skill_dash_cd_pct_low.png", "prompt_en": "a single thruster nozzle emitting one short burst flame, angled diagonally from lower-left to upper-right, filling the square frame" },
+        { "key": "skill_dash_cd_pct_mid", "file": "assets/skill_dash_cd_pct_mid.png", "prompt_en": "twin thruster nozzles emitting two burst flames with a motion streak, angled diagonally from lower-left to upper-right, filling the square frame" },
+        { "key": "skill_dash_cd_pct_high", "file": "assets/skill_dash_cd_pct_high.png", "prompt_en": "a four-nozzle thruster array emitting four intense burst flames with long crossing motion streaks, angled diagonally from lower-left to upper-right, filling the square frame" }
+      ]
+    },
+    {
+      "sheet_id": "SK-07",
+      "object_id": "pilot-lane-a (see .omc/handoffs or pilot artifacts under C:/Users/v0o0v/AppData/Local/Temp/haru-shots/pilot-icons-lane-a)",
+      "note": "파일럿 v2 산출물 그대로 재사용(재생성 안 함). 64x64 소스: pilot v2-sliced/skill_move_speed_pct_{low,mid,high}.png",
+      "items": [
+        { "key": "skill_move_speed_pct_low", "file": "assets/skill_move_speed_pct_low.png", "prompt_en": "a small compact engine nozzle with a faint exhaust glow, centered in the square frame" },
+        { "key": "skill_move_speed_pct_mid", "file": "assets/skill_move_speed_pct_mid.png", "prompt_en": "a medium engine pod with a brighter exhaust glow and a short trail, centered in the square frame" },
+        { "key": "skill_move_speed_pct_high", "file": "assets/skill_move_speed_pct_high.png", "prompt_en": "a large twin-nozzle engine array with an intense exhaust glow and a long trail, centered in the square frame" }
+      ]
+    },
+    {
+      "sheet_id": "SK-08",
+      "object_id": "186dfb27-331d-4fc3-9915-330538b59f37",
+      "items": [
+        { "key": "skill_magnet_pct_low", "file": "assets/skill_magnet_pct_low.png", "prompt_en": "a small horseshoe magnet with two faint attraction sparkles orbiting it, centered in the square frame" },
+        { "key": "skill_magnet_pct_mid", "file": "assets/skill_magnet_pct_mid.png", "prompt_en": "a ringed magnet coil with swirling attraction field lines pulling in three small gem shards, centered in the square frame" },
+        { "key": "skill_magnet_pct_high", "file": "assets/skill_magnet_pct_high.png", "prompt_en": "three stacked ringed magnet coils forming a tower with a wide swirling attraction vortex pulling in a cluster of many gem shards, centered in the square frame" }
+      ]
+    },
+    {
+      "sheet_id": "SK-09",
+      "object_id": "846b0123-ddec-40a7-9538-4e87b3a80ea2",
+      "items": [
+        { "key": "skill_xp_pct_low", "file": "assets/skill_xp_pct_low.png", "prompt_en": "a single small glowing star, centered in the square frame" },
+        { "key": "skill_xp_pct_mid", "file": "assets/skill_xp_pct_mid.png", "prompt_en": "a cluster of three glowing stars, centered in the square frame" },
+        { "key": "skill_xp_pct_high", "file": "assets/skill_xp_pct_high.png", "prompt_en": "a radiant burst of many glowing stars around a bright core, centered in the square frame" }
+      ]
+    },
+    {
+      "sheet_id": "SK-10",
+      "object_id": "6f9d82bb-7f1a-470a-aa01-3d7821a57637",
+      "note": "leftover_cells:1 — 항목 2개만 생성(review 4후보 중 [0,1] 선택, [2],[3]은 무관 필러라 폐기)",
+      "items": [
+        { "key": "skill_bullet_count_mid", "file": "assets/skill_bullet_count_mid.png", "prompt_en": "three parallel bullet tracers fanned out from a single point, centered in the square frame" },
+        { "key": "skill_bullet_count_high", "file": "assets/skill_bullet_count_high.png", "prompt_en": "five parallel bullet tracers fanned out wide from a single point, centered in the square frame" }
+      ]
+    },
+    {
+      "sheet_id": "SK-11",
+      "object_id": "275c2d2a-8fdd-4e5b-9c37-31e252934870",
+      "note": "1차 시도(트레일 길이/두께 차이)는 64px 슬라이싱 후 구별 안 됨 — 리드 지시로 재생성. 2차: 트레일 길이 대신 '충격파 링'의 유무 + 스트릭 분기(요소 추가)로 전환, 64px 최종 확인 결과 뚜렷이 구별됨. leftover_cells:1 — 항목 2개만 생성([0,1] 선택, [2],[3]은 무관 필러라 폐기).",
+      "items": [
+        { "key": "skill_bullet_speed_pct_low", "file": "assets/skill_bullet_speed_pct_low.png", "prompt_en": "a single bullet with one short straight speed-streak line trailing behind it, no ring, no glow burst, angled diagonally from lower-left to upper-right, filling the square frame" },
+        { "key": "skill_bullet_speed_pct_mid", "file": "assets/skill_bullet_speed_pct_mid.png", "prompt_en": "a single bullet bursting through a glowing shockwave ring, with its speed-streak forking into two separate lines past the ring, angled diagonally from lower-left to upper-right, filling the square frame" }
+      ]
+    },
+    {
+      "sheet_id": "SK-12",
+      "object_id": "96b5632b-7336-48af-8522-ac8a38cb5bfa",
+      "note": "leftover_cells:2 — 항목 1개만 생성([0] 선택), 티어 진행 대상 아님.",
+      "items": [
+        { "key": "skill_range_flat_low", "file": "assets/skill_range_flat_low.png", "prompt_en": "a long-range targeting reticle with crosshair lines extending outward to the frame edges, centered in the square frame" }
+      ]
+    },
+    {
+      "sheet_id": "SK-13",
+      "object_id": "67eae1a9-9d6c-4657-b4cf-aa83f9ef7432",
+      "note": "캡스톤 3종 — 정성적 개별 아트, 티어 진행 대상 아님.",
+      "items": [
+        { "key": "skill_capstone_firepower", "file": "assets/skill_capstone_firepower.png", "prompt_en": "a forward-firing energy laser beam intercepting and dissolving a cluster of incoming enemy projectiles, dramatic action icon, centered in the square frame" },
+        { "key": "skill_capstone_survival", "file": "assets/skill_capstone_survival.png", "prompt_en": "a glowing protective barrier bubble shattering an incoming red critical-strike bolt, dramatic action icon, centered in the square frame" },
+        { "key": "skill_capstone_mobility", "file": "assets/skill_capstone_mobility.png", "prompt_en": "a starfighter afterimage trail dashing through a burst of dissolving enemy bullets, dramatic action icon, centered in the square frame" }
+      ]
+    }
+  ]
+}
