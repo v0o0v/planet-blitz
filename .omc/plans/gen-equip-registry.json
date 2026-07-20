@@ -1,0 +1,161 @@
+{
+  "_meta": {
+    "generated": "2026-07-20",
+    "lane": "equip-icon-generation",
+    "total": 30,
+    "tool": "create_1_direction_object",
+    "note": "size param varied (48px 16-candidate review pack for most sheets, 100px 4-candidate review pack for EQ-01/EQ-08/EQ-09/EQ-10 which needed a redo for content quality); no style_images used in the final accepted batches (text-only prompts) after style_images base64 transcription proved unreliable for this session. Registration lane: register each PNG under anchor pb-equip-icon."
+  },
+  "items": [
+    {
+      "key": "equip_main_vulcan",
+      "file": "assets/equip_main_vulcan.png",
+      "prompt_en": "a hull-mounted multi-barrel rotary gatling cannon turret with six rotating barrels clustered in a circle, mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm"
+    },
+    {
+      "key": "equip_main_spread",
+      "file": "assets/equip_main_spread.png",
+      "prompt_en": "a hull-mounted spread cannon module with several barrels splayed widely apart into a flared trumpet-shaped muzzle, the fanned-out spread clearly readable in silhouette, mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld shotgun"
+    },
+    {
+      "key": "equip_main_railgun",
+      "file": "assets/equip_main_railgun.png",
+      "prompt_en": "a hull-mounted railgun cannon module with parallel conducting rails and a glowing energy coil on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm"
+    },
+    {
+      "key": "equip_main_missile",
+      "file": "assets/equip_main_missile.png",
+      "prompt_en": "a hull-mounted missile launcher pod module with a sharply tapered conical warhead tip and small tail fins, fixed to a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld launcher"
+    },
+    {
+      "key": "equip_main_beam",
+      "file": "assets/equip_main_beam.png",
+      "prompt_en": "a hull-mounted beam emitter cannon module with a round glowing crystal orb lens at the tip, on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld weapon"
+    },
+    {
+      "key": "equip_sub_sidekick",
+      "file": "assets/equip_sub_sidekick.png",
+      "prompt_en": "a small hull-mounted rapid-fire cannon module on a compact weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld sidearm"
+    },
+    {
+      "key": "equip_sub_scatter",
+      "file": "assets/equip_sub_scatter.png",
+      "prompt_en": "a compact hull-mounted scatter-shot cannon module on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm"
+    },
+    {
+      "key": "equip_sub_mine",
+      "file": "assets/equip_sub_mine.png",
+      "prompt_en": "a round deployable proximity mine module with a blinking sensor light, centered in the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld device"
+    },
+    {
+      "key": "equip_sub_sentry",
+      "file": "assets/equip_sub_sentry.png",
+      "prompt_en": "a small deployable automated sentry turret pod module, centered in the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld device"
+    },
+    {
+      "key": "equip_sub_flare",
+      "file": "assets/equip_sub_flare.png",
+      "prompt_en": "a hull-mounted homing flare missile pod module with tail fins, fixed to a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld launcher"
+    },
+    {
+      "key": "equip_slot_armor",
+      "file": "assets/equip_slot_armor.png",
+      "prompt_en": "a layered chest armor plate module, centered in the square frame"
+    },
+    {
+      "key": "equip_slot_shield",
+      "file": "assets/equip_slot_shield.png",
+      "prompt_en": "an energy shield generator emitter with a glowing projector dish, centered in the square frame"
+    },
+    {
+      "key": "equip_slot_engine",
+      "file": "assets/equip_slot_engine.png",
+      "prompt_en": "a thruster engine module with glowing exhaust vents, centered in the square frame"
+    },
+    {
+      "key": "equip_slot_core",
+      "file": "assets/equip_slot_core.png",
+      "prompt_en": "a reactor core module with a pulsing energy center, centered in the square frame"
+    },
+    {
+      "key": "equip_slot_module",
+      "file": "assets/equip_slot_module.png",
+      "prompt_en": "a generic utility module chip with a circuit-board pattern, centered in the square frame"
+    },
+    {
+      "key": "equip_unique_overheat_drum",
+      "file": "assets/equip_unique_overheat_drum.png",
+      "prompt_en": "a hull-mounted cannon module with an overheating ammunition drum glowing red through heat vents, fixed on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm"
+    },
+    {
+      "key": "equip_unique_split_core",
+      "file": "assets/equip_unique_split_core.png",
+      "prompt_en": "a hull-mounted weapon module with a twin-split energy core channeling dual crackling bolts, mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld weapon"
+    },
+    {
+      "key": "equip_unique_pierce_gyro",
+      "file": "assets/equip_unique_pierce_gyro.png",
+      "prompt_en": "a hull-mounted railgun cannon module with a spinning gyroscopic penetrator core glowing at the barrel tip, fixed on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm"
+    },
+    {
+      "key": "equip_unique_drone_bay",
+      "file": "assets/equip_unique_drone_bay.png",
+      "prompt_en": "a small autonomous combat drone hovering beside a compact launch bay, centered in the square frame"
+    },
+    {
+      "key": "equip_unique_phase_armor",
+      "file": "assets/equip_unique_phase_armor.png",
+      "prompt_en": "a shimmering translucent phase-shift armor plate with violet energy ripples, centered in the square frame"
+    },
+    {
+      "key": "equip_unique_hive_swarm",
+      "file": "assets/equip_unique_hive_swarm.png",
+      "prompt_en": "a hull-mounted missile launcher pod module shaped like a hive with swarming micro-missiles emerging from its cells, fixed on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld launcher"
+    },
+    {
+      "key": "equip_unique_converge_prism",
+      "file": "assets/equip_unique_converge_prism.png",
+      "prompt_en": "a hull-mounted beam emitter cannon module with a crystalline prism lens converging multiple beams into one glowing point, mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld weapon"
+    },
+    {
+      "key": "equip_unique_twin_star",
+      "file": "assets/equip_unique_twin_star.png",
+      "prompt_en": "a hull-mounted twin-barreled spread cannon module with star-shaped muzzles radiating a bright glow, splayed barrels mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld weapon"
+    },
+    {
+      "key": "equip_unique_singularity",
+      "file": "assets/equip_unique_singularity.png",
+      "prompt_en": "a small gravity-well generator orb with swirling dark energy, centered in the square frame"
+    },
+    {
+      "key": "equip_unique_reactive_armor",
+      "file": "assets/equip_unique_reactive_armor.png",
+      "prompt_en": "a spiked reactive armor plate with explosive charge segments, centered in the square frame"
+    },
+    {
+      "key": "equip_unique_phase_membrane",
+      "file": "assets/equip_unique_phase_membrane.png",
+      "prompt_en": "an iridescent phase-shift shield membrane bubble, centered in the square frame"
+    },
+    {
+      "key": "equip_unique_afterimage_thruster",
+      "file": "assets/equip_unique_afterimage_thruster.png",
+      "prompt_en": "a thruster engine trailing ghostly cyan afterimage energy streaks, centered in the square frame"
+    },
+    {
+      "key": "equip_unique_greed_heart",
+      "file": "assets/equip_unique_greed_heart.png",
+      "prompt_en": "a golden reactor core shaped like a glowing heart clutching coins, centered in the square frame"
+    },
+    {
+      "key": "equip_unique_gambler_chip",
+      "file": "assets/equip_unique_gambler_chip.png",
+      "prompt_en": "a holographic casino chip module with a spinning fortune symbol, centered in the square frame"
+    },
+    {
+      "key": "equip_unique_relic_amplifier",
+      "file": "assets/equip_unique_relic_amplifier.png",
+      "prompt_en": "an ancient relic amplifier module with glowing runic engravings, centered in the square frame"
+    }
+  ]
+}

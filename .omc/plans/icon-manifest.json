@@ -205,7 +205,7 @@
       "category": "equip-slot",
       "file": "assets/equip_main_vulcan.png",
       "label_ko": "주무기·발칸",
-      "prompt_en": "a twin-barrel rapid-fire vulcan cannon, angled diagonally from lower-left to upper-right, filling the square frame",
+      "prompt_en": "a hull-mounted multi-barrel rotary gatling cannon turret with six rotating barrels clustered in a circle, mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm",
       "source": {
         "slot": "main",
         "weaponType": "vulcan",
@@ -218,7 +218,7 @@
       "category": "equip-slot",
       "file": "assets/equip_main_spread.png",
       "label_ko": "주무기·스프레드",
-      "prompt_en": "a wide-mouth spread cannon with a flared shotgun-like barrel, angled diagonally from lower-left to upper-right, filling the square frame",
+      "prompt_en": "a hull-mounted spread cannon module with several barrels splayed widely apart into a flared trumpet-shaped muzzle, the fanned-out spread clearly readable in silhouette, mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld shotgun",
       "source": {
         "slot": "main",
         "weaponType": "spread",
@@ -231,7 +231,7 @@
       "category": "equip-slot",
       "file": "assets/equip_main_railgun.png",
       "label_ko": "주무기·레일건",
-      "prompt_en": "a sleek railgun cannon with parallel conducting rails and a glowing energy coil, angled diagonally from lower-left to upper-right, filling the square frame",
+      "prompt_en": "a hull-mounted railgun cannon module with parallel conducting rails and a glowing energy coil on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm",
       "source": {
         "slot": "main",
         "weaponType": "railgun",
@@ -245,7 +245,7 @@
       "category": "equip-slot",
       "file": "assets/equip_main_missile.png",
       "label_ko": "주무기·미사일",
-      "prompt_en": "a compact missile launcher pod with a visible warhead tip, angled diagonally from lower-left to upper-right, filling the square frame",
+      "prompt_en": "a hull-mounted missile launcher pod module with a sharply tapered conical warhead tip and small tail fins, fixed to a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld launcher",
       "source": {
         "slot": "main",
         "weaponType": "missile",
@@ -258,7 +258,7 @@
       "category": "equip-slot",
       "file": "assets/equip_main_beam.png",
       "label_ko": "주무기·빔",
-      "prompt_en": "a focused beam emitter cannon with a glowing crystal lens tip, angled diagonally from lower-left to upper-right, filling the square frame",
+      "prompt_en": "a hull-mounted beam emitter cannon module with a round glowing crystal orb lens at the tip, on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld weapon",
       "source": {
         "slot": "main",
         "weaponType": "beam",
@@ -271,7 +271,7 @@
       "category": "equip-slot",
       "file": "assets/equip_sub_sidekick.png",
       "label_ko": "보조무기·사이드킥",
-      "prompt_en": "a small rapid-fire sidearm blaster, angled diagonally from lower-left to upper-right, filling the square frame",
+      "prompt_en": "a small hull-mounted rapid-fire cannon module on a compact weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld sidearm",
       "source": {
         "slot": "sub",
         "weaponType": "sidekick",
@@ -284,7 +284,7 @@
       "category": "equip-slot",
       "file": "assets/equip_sub_scatter.png",
       "label_ko": "보조무기·스캐터",
-      "prompt_en": "a compact scatter-shot secondary cannon, angled diagonally from lower-left to upper-right, filling the square frame",
+      "prompt_en": "a compact hull-mounted scatter-shot cannon module on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm",
       "source": {
         "slot": "sub",
         "weaponType": "scatter",
@@ -297,7 +297,7 @@
       "category": "equip-slot",
       "file": "assets/equip_sub_mine.png",
       "label_ko": "보조무기·기뢰장",
-      "prompt_en": "a round deployable proximity mine with a blinking sensor light, centered in the square frame",
+      "prompt_en": "a round deployable proximity mine module with a blinking sensor light, centered in the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld device",
       "source": {
         "slot": "sub",
         "weaponType": "mine",
@@ -310,7 +310,7 @@
       "category": "equip-slot",
       "file": "assets/equip_sub_sentry.png",
       "label_ko": "보조무기·센트리",
-      "prompt_en": "a small deployable automated sentry turret pod, centered in the square frame",
+      "prompt_en": "a small deployable automated sentry turret pod module, centered in the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld device",
       "source": {
         "slot": "sub",
         "weaponType": "sentry",
@@ -323,7 +323,7 @@
       "category": "equip-slot",
       "file": "assets/equip_sub_flare.png",
       "label_ko": "보조무기·호밍 플레어",
-      "prompt_en": "a homing flare missile pod with tail fins, angled diagonally from lower-left to upper-right, filling the square frame",
+      "prompt_en": "a hull-mounted homing flare missile pod module with tail fins, fixed to a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld launcher",
       "source": {
         "slot": "sub",
         "weaponType": "flare",
@@ -387,7 +387,7 @@
       "category": "equip-unique",
       "file": "assets/equip_unique_overheat_drum.png",
       "label_ko": "과열 드럼",
-      "prompt_en": "an overheating ammunition drum with glowing red heat vents mounted on a cannon breech, angled diagonally from lower-left to upper-right, filling the square frame",
+      "prompt_en": "a hull-mounted cannon module with an overheating ammunition drum glowing red through heat vents, fixed on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm",
       "source": {
         "id": "overheat-drum",
         "name": "과열 드럼",
@@ -402,7 +402,7 @@
       "category": "equip-unique",
       "file": "assets/equip_unique_split_core.png",
       "label_ko": "분열 코어",
-      "prompt_en": "a twin-split energy core weapon module that channels dual bolts, angled diagonally from lower-left to upper-right, filling the square frame",
+      "prompt_en": "a hull-mounted weapon module with a twin-split energy core channeling dual crackling bolts, mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld weapon",
       "source": {
         "id": "split-core",
         "name": "분열 코어",
@@ -416,7 +416,7 @@
       "category": "equip-unique",
       "file": "assets/equip_unique_pierce_gyro.png",
       "label_ko": "관통 자이로",
-      "prompt_en": "a spinning gyroscopic penetrator core mounted on a railgun barrel, angled diagonally from lower-left to upper-right, filling the square frame",
+      "prompt_en": "a hull-mounted railgun cannon module with a spinning gyroscopic penetrator core glowing at the barrel tip, fixed on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld firearm",
       "source": {
         "id": "pierce-gyro",
         "name": "관통 자이로",
@@ -456,7 +456,7 @@
       "category": "equip-unique",
       "file": "assets/equip_unique_hive_swarm.png",
       "label_ko": "군집 벌통",
-      "prompt_en": "a cluster missile pod shaped like a hive with swarming micro-missiles emerging, angled diagonally from lower-left to upper-right, filling the square frame",
+      "prompt_en": "a hull-mounted missile launcher pod module shaped like a hive with swarming micro-missiles emerging from its cells, fixed on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld launcher",
       "source": {
         "id": "hive-swarm",
         "name": "군집 벌통",
@@ -470,7 +470,7 @@
       "category": "equip-unique",
       "file": "assets/equip_unique_converge_prism.png",
       "label_ko": "수렴 프리즘",
-      "prompt_en": "a crystalline prism lens weapon converging multiple beams into one point, angled diagonally from lower-left to upper-right, filling the square frame",
+      "prompt_en": "a hull-mounted beam emitter cannon module with a crystalline prism lens converging multiple beams into one glowing point, mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld weapon",
       "source": {
         "id": "converge-prism",
         "name": "수렴 프리즘",
@@ -484,7 +484,7 @@
       "category": "equip-unique",
       "file": "assets/equip_unique_twin_star.png",
       "label_ko": "쌍둥이 항성",
-      "prompt_en": "a twin-barreled star-shaped spread weapon radiating a bright glow, angled diagonally from lower-left to upper-right, filling the square frame",
+      "prompt_en": "a hull-mounted twin-barreled spread cannon module with star-shaped muzzles radiating a bright glow, splayed barrels mounted on a weapon mount bracket, angled diagonally from lower-left to upper-right, filling the square frame, no buttstock, no trigger, no hand grip, no handguard, not a handheld weapon",
       "source": {
         "id": "twin-star",
         "name": "쌍둥이 항성",
