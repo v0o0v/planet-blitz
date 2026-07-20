@@ -45,8 +45,8 @@ import { ControlTowerScreen } from './ui/pixi/controlTower.js';
 import { CardsScreen } from './ui/pixi/cardsView.js';
 import { DefenseCommand, normalizeLayout } from './ui/defenseCommand.js';
 import type { ControlTowerShowOpts, InvasionResultView } from './ui/controlTower.js';
+import { TitleScreen } from './ui/pixi/titleScreen.js';
 import {
-  TitleScreen,
   TutorialOverlay,
   FtueTracker,
   TUTORIAL_SEED,
@@ -109,7 +109,7 @@ import type { Replay } from './sim/replay.js';
 // M5 Phase C: 사운드(C1)·정산 완성판(C2)·로컬라이즈(C3). 전부 render/UI 레이어(sim 무수정).
 import { GameAudio } from './render/audio.js';
 import { RunSoundObserver } from './render/soundScape.js';
-import { SettingsPanel } from './ui/settingsPanel.js';
+import { SettingsScreen } from './ui/pixi/settingsPanel.js';
 import { t } from './i18n/index.js';
 import { totalCombatPower } from './save/combatPower.js';
 import type { ResultDrop } from './ui/resultOverlay.js';
@@ -273,7 +273,8 @@ async function main(): Promise<void> {
   // M4 Phase F: 관전 컨트롤 오버레이(F3) + 도발 스티커 선택(F2).
   const spectateOverlay = new SpectateOverlay();
   const stickerPicker = new StickerPicker();
-  const titleScreen = new TitleScreen();
+  // 타이틀도 카툰나무풍 Pixi 다(#8 과 같은 PR) — DOM 판이면 캔버스 안 설정 톱니를 덮는다.
+  const titleScreen = new TitleScreen(gameApp.stage);
   const tutorialOverlay = new TutorialOverlay();
   const ftue = new FtueTracker();
   // M5 C1: 절차 합성 사운드 + 런 사운드 관찰자(sim 스냅샷 델타 → SFX, 단방향 render).
@@ -287,9 +288,10 @@ async function main(): Promise<void> {
   };
   window.addEventListener('pointerdown', unlockAudioOnce);
   window.addEventListener('keydown', unlockAudioOnce);
-  // M5 C1/C3: 좌상단 설정 패널(음소거·볼륨·언어). 생성만으로 DOM 에 자기 등록하므로 참조를
-  // 따로 보관하지 않는다. 언어 전환 시 현재 메뉴 화면을 다시 그린다.
-  new SettingsPanel(audio, () => rerenderCurrentScreen());
+  // M5 C1/C3: 좌상단 설정(사운드·볼륨·언어) — 카툰나무풍 롤아웃 #8 로 Pixi 이관.
+  // 화면이 아니라 크롬 UI 라 clearToMenu() 에 없고 런 중에도 떠 있다. 다른 캔버스 화면이
+  // show() 에서 자기를 stage 맨 앞으로 올리므로 렌더 루프에서 raise() 로 되돌린다.
+  const settings = new SettingsScreen(audio, gameApp.stage, () => rerenderCurrentScreen());
   let tutorialActive = false;
   // 현재 오버레이가 띄운 레벨업의 기체 레벨(멀티 레벨업 시 신규 레벨업 감지용). 0 = 미표시.
   let shownLevel = 0;
@@ -429,6 +431,10 @@ async function main(): Promise<void> {
     stickerPicker.hide();
     spectateReplay = null; // 관전 종료(화면 전환 시 항상 해제)
     titleScreen.hide();
+    // 레벨업 오버레이는 런 종료(정산) 경로에서만 숨겨 왔다 — 런을 정산 없이 벗어나면
+    // (하네스 goto 등) 메뉴 화면 위에 남는다. 런 전용 UI 이므로 화면 전환에서도 숨긴다.
+    if (powerupOverlay.visible) powerupOverlay.hide();
+    shownLevel = 0;
   }
 
   /** Title screen — first launch forces the tutorial; afterwards it enters base. */
@@ -936,6 +942,10 @@ async function main(): Promise<void> {
   openTitle();
 
   gameApp.app.ticker.add((ticker) => {
+    // 설정은 모든 화면 위에 떠 있는 크롬 UI 다 — 다른 캔버스 화면이 show() 에서 자기를 맨
+    // 앞으로 올리므로 매 프레임 되돌린다(이미 마지막 자식이면 no-op).
+    settings.raise();
+
     let frame = ticker.deltaMS / 1000;
     if (frame > 0.25) frame = 0.25; // clamp to avoid spiral-of-death after stalls
 
@@ -1280,6 +1290,8 @@ async function main(): Promise<void> {
       // 직접 넣고 render() 를 부른다(카툰나무풍 롤아웃 #7 검증 절차).
       cardsScreen,
       openCards,
+      // 설정은 톱니 클릭으로만 열리는 크롬 UI 다 — 검증 시 이 참조로 직접 연다(#8).
+      settings,
       // 하네스 API 표면(개발 도구): goto/startRun/ff/setSpeed/pause/resume/step/
       // preset/snapshot/events/cheat. 프로덕션 미포함.
       harness,

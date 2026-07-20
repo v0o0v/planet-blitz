@@ -21,10 +21,14 @@
       canvas {
         display: block;
       }
+      /* DEV 텔레메트리(seed/tick/hash/FPS). 캔버스 위에 그려지는 DOM 이라 겹치는 쪽을
+         덮어 버린다 — 좌상단은 설정 톱니, 우상단은 레이더, 좌하단은 런 HUD 가 쓰므로
+         유일하게 빈 우하단으로 보낸다(오른쪽 여백은 치트 패널 버튼 자리). */
       #hud {
         position: absolute;
-        top: 8px;
-        left: 8px;
+        bottom: 8px;
+        right: 56px;
+        text-align: right;
         color: #b8f;
         font-family: monospace;
         font-size: 13px;
