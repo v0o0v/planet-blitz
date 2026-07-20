@@ -1,20 +1,36 @@
 /**
- * verify-invasion 검증 코어 (M4 Phase D · D1 · ADR-0005).
+ * verify-invasion 검증 코어 (M4 Phase D · D1 → **M7a 3레이어 확장 · L6-verify-ef**).
  *
  * verify-run(Phase A)의 순수 재실행 검증을 침공(PvP)용으로 좁힌 게이트다. Phase A의
  * `verifyRun`은 "제출된 [seed+config+inputs]가 주장 결과를 내적으로 재현하는가"만
  * 증명했다(verifyCore.ts 상단 carry-forward 경고). 침공은 결과가 영구 래더(ADR-0004)에
  * 직결되므로, verify-run README "Phase D 착수 조건" 3건을 이 코어에서 강제한다:
  *
- *   1. **config 정당성 대조** — 클라이언트가 보낸 방어 배치(config.invasion.layout·
- *      timeLimitTicks)를 서버가 DB(defenses)에서 로드한 **권위 배치**와 정확히 대조한다.
- *      불일치(약화된 가짜 방어로 쉽게 이긴 척)는 `defense-mismatch`로 거부한다. 재실행은
- *      제출 config가 아니라 **서버 권위 config**로 돌려, config를 조작해도 재현이 갈리게 한다.
+ *   1. **config 정당성 대조** — 클라이언트가 보낸 3레이어 배치(config.invasion3.layers·
+ *      timeLimitTicks)를 서버가 DB(defenses/스냅샷)에서 로드한 **권위 배치**와 정확히
+ *      대조한다. 불일치(약화된 가짜 방어로 쉽게 이긴 척)는 `defense-mismatch`로 거부한다.
+ *      재실행은 제출 config가 아니라 **서버 권위 config**로 돌려, config를 조작해도 재현이
+ *      갈리게 한다.
  *   2. **hashStream 필수화** — verify-run에서 선택이던 틱별 해시 스트림을 침공에서는
  *      필수로 강제한다(`hash-stream-required`). 중간 발산 지점(위조 추적 근거)을 항상 확보.
- *   3. **재실행 시간예산 가드** — 입력 길이를 침공 제한 시간(timeLimitTicks) 이내로
- *      제한(`invasion-inputs-too-long`)해 재실행 CPU를 상한한다. wall-clock 가드는 배선
- *      계층(index.ts)이 담당한다.
+ *   3. **재실행 시간예산 가드** — 입력 길이를 침공 제한 시간(timeLimitTicks = 18000틱,
+ *      INVASION_TOTAL_TICKS) 이내로 제한(`invasion-inputs-too-long`)해 재실행 CPU를
+ *      상한한다. wall-clock 가드는 배선 계층(index.ts)이 담당한다.
+ *
+ * ## M7a 에서 바뀐 것 — 정규화·대조의 구조적 단일화
+ * 구 구조는 클라 `normalizeLayout`(src/ui/defenseCommand.ts) ↔ 서버 `normalizeServerLayout`
+ * (이 파일)이 **"자구 일치"라는 구두 계약**으로 묶여 있었다. 한쪽만 고치면 정직한 런이 전량
+ * `defense-mismatch` 로 오거부되고, 신규 필드를 대조(`layoutEquals`)에 넣는 걸 잊으면 반대로
+ * **위조 프리패스**가 된다 — 즉 사람이 두 곳을 손으로 맞춰야 안전한 구조였다.
+ *
+ * 그래서 세 함수(`layoutEquals`/`normalizeServerLayout`/`isValidLayout`)를 **폐기**하고,
+ * 클라·sim·서버가 전부 `src/sim/invasion/normalize.ts` 하나를 쓴다:
+ *   - {@link normalizeInvasionLayers} 는 total function(널 반환 없음·멱등)이라 "정규화 실패"
+ *     라는 갈림 상태 자체가 없다.
+ *   - {@link layersEqual} 은 정규형 **전체를 구조적으로 깊이 비교**한다(필드 화이트리스트가
+ *     아니다). 스키마에 필드를 추가해도 대조 코드를 갱신할 필요가 없고, 누락이 구조적으로
+ *     불가능하다.
+ * EF 는 sloppy-imports 로 이미 `src/sim/**` 를 직접 읽으므로 추가 인프라가 필요 없다.
  *
  * 신뢰 경계: 입력(`raw`)·클라이언트 주장은 전부 신뢰 불가. 서버가 재실행으로 도출한
  * 값만 진실이다(원칙2 서버 권위). 이 파일은 플랫폼 전역(`Deno`·`window`·Node)을 일절
@@ -31,16 +47,18 @@
 import { verifyRun } from '../verify-run/verifyCore.js';
 import type { VerifyResult, ComputedFacts } from '../verify-run/verifyCore.js';
 import type { WorldConfig } from '../../../src/sim/world.js';
-import { TURRET_TYPE_COUNT } from '../../../src/sim/defense.js';
+import {
+  layersEqual,
+  normalizeInvasionLayers,
+} from '../../../src/sim/invasion/normalize.js';
+import { INVASION_GUARDIAN_SLOTS } from '../../../src/sim/invasion/constants.js';
 import type {
-  DefenseLayout,
-  InvasionConfig,
-  TurretPlacement,
-  ObstaclePlacement,
-  GuardianPlacement,
-} from '../../../src/sim/defense.js';
-import type { DefenseCardConfig } from '../../../src/sim/cardEffects.js';
-import { MAX_GUARDIAN_SLOTS, GUARDIAN_PRESET_COUNT, PERFORMANCE_FULL } from '../../../data/guardian.js';
+  Invasion3Config,
+  InvasionGuardianPlacement,
+  InvasionLayers,
+} from '../../../src/sim/invasion/types.js';
+import { parseModulesAuthority } from '../../../src/sim/moduleEffects.js';
+import { PERFORMANCE_FULL } from '../../../data/guardian.js';
 import type { GuardianSnapshot } from '../../../data/guardian.js';
 import { branchBonusBp, guardianMilestones, normalizeMilestones } from '../../../data/lineage.js';
 
@@ -68,34 +86,38 @@ export interface InvasionVerifyResult {
 /** 서버가 DB에서 로드한 권위 침공 컨텍스트(재실행·대조의 진실값). */
 export interface InvasionServerContext {
   /**
-   * defenses 테이블에서 로드한 방어자 배치(raw jsonb — 신뢰하되 정규화 필요).
-   * verifyInvasion 이 {@link normalizeServerLayout}(클라이언트 normalizeLayout 동일
-   * 규칙)로 정규화한 본을 대조·재실행의 진실값으로 쓴다(리뷰 MED-3 대칭화). 정규화
-   * 불능이면 `server-layout-invalid` 로 거부한다.
+   * `defenses.layout` jsonb 또는 T0 스냅샷 `authority.layers` 에서 로드한 방어자 3레이어
+   * 배치(raw — 신뢰하되 정규화 필요). verifyInvasion 이
+   * {@link normalizeInvasionLayers}(클라이언트·sim 과 **같은 함수**)로 정규화한 본을
+   * 대조·재실행의 진실값으로 쓴다. 정규화는 total 이라 "서버 데이터 손상으로 정규화 불능"
+   * 이라는 분기가 없다 — 손상 슬롯은 비고, 결과는 언제나 유효한 정규형이다.
    */
-  layout: unknown;
-  /** 서버가 인정하는 제한 시간(틱). 기본 3분(DEFAULT_TIME_LIMIT_TICKS). */
+  layers: unknown;
+  /**
+   * 서버가 인정하는 제한 시간(틱). M7a 기준 `INVASION_TOTAL_TICKS`(18000 = 300초).
+   * 배선 계층(index.ts)이 이 상수를 싣는다 — 클라 sim 의 총 예산과 반드시 같은 값이어야
+   * 정직한 5분 런이 `invasion-inputs-too-long`/`defense-mismatch` 로 오거부되지 않는다.
+   */
   timeLimitTicks: number;
   /**
    * 방어 정비도(풍화, ADR-0006) — **정수 centi-percent**(0..MAINTENANCE_FULL=10000).
    * DB `defenses.maintenance`(numeric(5,2), 0~100)를 배선 계층(index.ts)이 `Math.round(db*100)`
    * 로 변환해 싣는다(클라이언트 변환 공식과 반드시 동일 — 어긋나면 정직한 런이 오거부된다).
-   * 서버 재실행은 이 값으로 포탑 발사 간격을 스케일(0%→2배 느림, ADR-0006 "0%→성능 50%")한다.
-   * **미지정(undefined)이면 완전 정비**로 취급(sim `normalizeMaintenance` 가 MAINTENANCE_FULL
-   * 로 정규화) → 이 필드가 없던 기존 침공 검증과 거동·해시 100% 불변(하위호환).
+   * 서버 재실행은 이 값으로 설비·편대·기물의 발사 간격을 스케일(0%→2배 느림, ADR-0006
+   * "0%→성능 50%")한다. **미지정(undefined)이면 완전 정비**로 취급한다.
    */
   maintenance?: number;
   /**
-   * 방어 카드 효력(M6 · ADR-0012) — 방어자 장착 카드(서버 권위 CardInstance)+공격자 매치업.
-   * 정비도·수호 권위 주입과 동형: 공격자 제출 config.invasion.card 를 **신뢰하지 않고**, 서버가
-   * begin_invasion 스냅샷에 T0 고정한 값(index.ts 배선이 authority->'card' 로 로드)으로
-   * 오버라이드해 재실행한다. 제출 카드를 부풀리거나(효과·매치업·chargesLeft) 끄면 재실행이
-   * 갈려 hash-stream-divergence 로 거부된다. **미지정(undefined)이면 카드 미장착**으로 취급 →
-   * sim 이 cardRuntime 을 만들지 않아 이 필드가 없던 기존 침공 검증과 거동·해시 100% 불변
-   * (하위호환). 라이브 폴백(스냅샷 미배선/스테일)은 카드를 실지 않는다(효력은 스냅샷 고정 —
-   * ADR-0012, index.ts 계약).
+   * T0 스냅샷 `authority.modules` raw jsonb(M7b · ADR-0018). 방어자가 장착한 코어 모듈
+   * 인스턴스 + 공격자 매치업이며, verifyInvasion 이 클라이언트와 **같은 파서**
+   * ({@link parseModulesAuthority})로 접어 재실행 config 에 싣는다.
+   *
+   * **이 배선이 빠지면 모듈 장착 방어의 정직한 침공이 전량 hash-stream-divergence 로 오거부된다**
+   * — 클라는 모듈 효력을 반영해 달렸는데 서버는 안 반영하고 재실행하기 때문이다. 모듈은
+   * `layers` 직렬화에 들어 있지 않으므로(소모성 인스턴스) 반드시 별도 키로 와야 한다.
+   * 미장착·구버전 스냅샷이면 미지정 → 모듈 없는 재실행(거동·해시 불변).
    */
-  card?: DefenseCardConfig;
+  modules?: unknown;
 }
 
 function reject(reason: InvasionRejectReason, computed?: ComputedFacts): InvasionVerifyResult {
@@ -108,214 +130,13 @@ function isFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
 }
 
-/** 코어/포탑/장애물 좌표를 raw IEEE-754 비트로 정확히 대조한다(해시 대조와 같은 엄밀도). */
-function numEq(a: number, b: number): boolean {
-  // Object.is로 -0/NaN까지 엄격 대조(재실행 해시가 raw 비트를 접으므로 동일 규율).
-  return Object.is(a, b);
-}
-
-/** 수호 스냅샷의 결정론 정수 필드 이름(대조·정규화 공통 순회). */
-const GUARDIAN_SNAPSHOT_KEYS: readonly (keyof GuardianSnapshot)[] = [
-  'preset',
-  'radius',
-  'hp',
-  'contactDamage',
-  'fireCooldown',
-  'bulletDamage',
-  'bulletSpeed',
-  'bulletRadius',
-  'bulletLife',
-  'range',
-  'moveSpeed',
-  'standoff',
-];
-
-/**
- * DB layout 의 수호 배열을 검증·정규화한다(M5). 각 항목은 좌표(x/y)·성능%·계보 보너스·스냅샷
- * (12개 정수 필드)이 모두 유한해야 한다. 하나라도 손상이면 전체 무효(null)로 본다 — 수호는
- * 방어전 결과를 바꾸는 결정론 입력이라, 손상 데이터로 조용히 스킵하면 재현이 갈린다. 상한
- * (MAX_GUARDIAN_SLOTS) 초과분은 sim spawn 이 자르므로 서버 정규화도 동일하게 자른다.
- * guardians 자체가 없으면(구 배치·수호 미보유) undefined 반환 → layout 에 필드 미포함.
- */
-function normalizeGuardians(raw: unknown): GuardianPlacement[] | undefined | null {
-  if (raw === undefined) return undefined;
-  if (!Array.isArray(raw)) return null;
-  const out: GuardianPlacement[] = [];
-  const n = raw.length < MAX_GUARDIAN_SLOTS ? raw.length : MAX_GUARDIAN_SLOTS;
-  for (let i = 0; i < n; i++) {
-    const g = raw[i];
-    if (typeof g !== 'object' || g === null) return null;
-    const gg = g as Record<string, unknown>;
-    if (!isFiniteNumber(gg.x) || !isFiniteNumber(gg.y)) return null;
-    if (!isFiniteNumber(gg.performanceCP) || !isFiniteNumber(gg.lineageBonusBp)) return null;
-    const snapRaw = gg.snapshot;
-    if (typeof snapRaw !== 'object' || snapRaw === null) return null;
-    const sr = snapRaw as Record<string, unknown>;
-    const snap: Record<string, number> = {};
-    for (const k of GUARDIAN_SNAPSHOT_KEYS) {
-      const v = sr[k];
-      if (!isFiniteNumber(v)) return null;
-      snap[k] = v;
-    }
-    const preset = snap.preset ?? -1;
-    if (preset < 0 || preset >= GUARDIAN_PRESET_COUNT) return null;
-    // 마일스톤 마스크(M5): 있으면 정규화(0..7)해 보존, 0/미지정이면 키 생략(해시 조건부 접기와
-    // 정합 — 마스크 0 은 replay.ts 가 접지 않아 바이트 불변). 비유한은 손상으로 보지 않고 0 처리.
-    const ms = normalizeMilestones(isFiniteNumber(gg.milestones) ? gg.milestones : 0);
-    const placement: GuardianPlacement = {
-      x: gg.x,
-      y: gg.y,
-      performanceCP: gg.performanceCP,
-      lineageBonusBp: gg.lineageBonusBp,
-      snapshot: snap as unknown as GuardianSnapshot,
-    };
-    if (ms !== 0) placement.milestones = ms;
-    out.push(placement);
-  }
-  return out;
-}
-
-/** 제출 수호 배열이 서버 권위 배열과 완전히 동일한지 대조(순서·전 필드 raw 비트). */
-function guardiansEqual(
-  sub: GuardianPlacement[] | undefined,
-  srv: GuardianPlacement[] | undefined,
-): boolean {
-  const a = sub ?? [];
-  const b = srv ?? [];
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < b.length; i++) {
-    const x = a[i]!;
-    const y = b[i]!;
-    if (!numEq(x.x, y.x) || !numEq(x.y, y.y)) return false;
-    if (x.performanceCP !== y.performanceCP || x.lineageBonusBp !== y.lineageBonusBp) return false;
-    // 마일스톤 마스크 대조(M5): 서버 권위 마스크(계보 레벨 재도출)와 제출이 어긋나면 거부한다
-    // (부풀린 마일스톤 위조 차단). 정규화 후 비교(미지정=0).
-    if (normalizeMilestones(x.milestones) !== normalizeMilestones(y.milestones)) return false;
-    for (const k of GUARDIAN_SNAPSHOT_KEYS) {
-      if (!numEq(x.snapshot[k], y.snapshot[k])) return false;
-    }
-  }
-  return true;
-}
-
-/**
- * 제출된 방어 배치가 서버 권위 배치와 완전히 동일한지 대조한다. 순서까지 동일해야
- * 한다(hashWorld가 turrets/obstacles를 배열 순서대로 접으므로 순서가 결정론 입력이다).
- * 하나라도 어긋나면 false → `defense-mismatch`.
- */
-function layoutEquals(sub: DefenseLayout, srv: DefenseLayout): boolean {
-  if (!numEq(sub.core.x, srv.core.x) || !numEq(sub.core.y, srv.core.y)) return false;
-  if (sub.turrets.length !== srv.turrets.length) return false;
-  for (let i = 0; i < srv.turrets.length; i++) {
-    const a = sub.turrets[i]!;
-    const b = srv.turrets[i]!;
-    if (a.type !== b.type || !numEq(a.x, b.x) || !numEq(a.y, b.y)) return false;
-  }
-  if (sub.obstacles.length !== srv.obstacles.length) return false;
-  for (let i = 0; i < srv.obstacles.length; i++) {
-    const a = sub.obstacles[i]!;
-    const b = srv.obstacles[i]!;
-    if (
-      !numEq(a.x, b.x) ||
-      !numEq(a.y, b.y) ||
-      !numEq(a.halfW, b.halfW) ||
-      !numEq(a.halfH, b.halfH)
-    ) {
-      return false;
-    }
-  }
-  // M5 수호 기체 대조(순서·전 스냅샷 필드). 서버 권위 배열이 진실 — 제출이 다르면 거부.
-  if (!guardiansEqual(sub.guardians, srv.guardians)) return false;
-  return true;
-}
-
-/**
- * DB 에서 로드한 방어 배치를 클라이언트 `normalizeLayout`(src/ui/defenseCommand.ts:293)과
- * **완전히 동일한 규칙**으로 정규화한다(리뷰 MED-3 대칭화). 클라이언트는 stored layout 을
- * 이 정규화 본으로 런·제출하므로, 서버도 같은 본으로 대조·재실행해야 정상 침공이
- * defense-mismatch 로 오거부되지 않는다. 규칙(클라와 자구 일치):
- *   - core.x/y 유한 숫자 아님 → 전체 무효(null).
- *   - 포탑: 비객체/비유한 필드 스킵, type 은 trunc 후 0..TURRET_TYPE_COUNT-1 범위 밖 스킵.
- *   - 장애물: 비객체/비유한 필드 스킵, halfW/halfH <= 0 스킵.
- *   - guardianSlots 드롭(대조·해시 대상 아님, M5 자리).
- * 좌표 값 자체는 변형하지 않으므로(필터만) 정규형 layout 에 적용하면 항등이다.
- */
-export function normalizeServerLayout(raw: unknown): DefenseLayout | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const d = raw as Record<string, unknown>;
-  const core = d.core;
-  if (typeof core !== 'object' || core === null) return null;
-  const cx = (core as Record<string, unknown>).x;
-  const cy = (core as Record<string, unknown>).y;
-  if (!isFiniteNumber(cx) || !isFiniteNumber(cy)) return null;
-
-  const turrets: TurretPlacement[] = [];
-  if (Array.isArray(d.turrets)) {
-    for (const t of d.turrets) {
-      if (typeof t !== 'object' || t === null) continue;
-      const tt = t as Record<string, unknown>;
-      if (!isFiniteNumber(tt.type) || !isFiniteNumber(tt.x) || !isFiniteNumber(tt.y)) continue;
-      const type = Math.trunc(tt.type);
-      if (type < 0 || type >= TURRET_TYPE_COUNT) continue;
-      turrets.push({ type, x: tt.x, y: tt.y });
-    }
-  }
-
-  const obstacles: ObstaclePlacement[] = [];
-  if (Array.isArray(d.obstacles)) {
-    for (const o of d.obstacles) {
-      if (typeof o !== 'object' || o === null) continue;
-      const oo = o as Record<string, unknown>;
-      if (!isFiniteNumber(oo.x) || !isFiniteNumber(oo.y) || !isFiniteNumber(oo.halfW) || !isFiniteNumber(oo.halfH)) {
-        continue;
-      }
-      if (oo.halfW <= 0 || oo.halfH <= 0) continue;
-      obstacles.push({ x: oo.x, y: oo.y, halfW: oo.halfW, halfH: oo.halfH });
-    }
-  }
-
-  // M5 수호 기체 정규화(손상 데이터는 전체 무효 → server-layout-invalid). 없으면 필드 미포함.
-  const guardians = normalizeGuardians(d.guardians);
-  if (guardians === null) return null;
-
-  const layout: DefenseLayout = { core: { x: cx, y: cy }, turrets, obstacles };
-  if (guardians !== undefined) layout.guardians = guardians;
-  return layout;
-}
-
-/** 신뢰 불가 값이 DefenseLayout 구조를 만족하는지(대조 전에 형태 검증). */
-function isValidLayout(v: unknown): v is DefenseLayout {
-  if (typeof v !== 'object' || v === null) return false;
-  const l = v as Record<string, unknown>;
-  const core = l.core as Record<string, unknown> | undefined;
-  if (typeof core !== 'object' || core === null) return false;
-  if (!isFiniteNumber(core.x) || !isFiniteNumber(core.y)) return false;
-  if (!Array.isArray(l.turrets) || !Array.isArray(l.obstacles)) return false;
-  for (const t of l.turrets as unknown[]) {
-    if (typeof t !== 'object' || t === null) return false;
-    const r = t as Record<string, unknown>;
-    if (!isFiniteNumber(r.type) || !isFiniteNumber(r.x) || !isFiniteNumber(r.y)) return false;
-  }
-  for (const o of l.obstacles as unknown[]) {
-    if (typeof o !== 'object' || o === null) return false;
-    const r = o as Record<string, unknown>;
-    if (
-      !isFiniteNumber(r.x) ||
-      !isFiniteNumber(r.y) ||
-      !isFiniteNumber(r.halfW) ||
-      !isFiniteNumber(r.halfH)
-    ) {
-      return false;
-    }
-  }
-  // M5 수호 기체(있으면) 구조 검증: 배열이며 각 항목이 좌표·성능·보너스·스냅샷 정수를 갖춰야
-  // 한다. normalizeGuardians 와 동일 규칙을 형태 검증으로만 재사용(값 대조는 layoutEquals).
-  if (l.guardians !== undefined && normalizeGuardians(l.guardians) === null) return false;
-  return true;
+function asRecord(v: unknown): Record<string, unknown> | null {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  return v as Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
-// 수호 권위 주입 (M5 — 정비도 주입과 대칭. index.ts 배선이 소비, deno 테스트가 검증)
+// 수호 권위 주입 (M5 → M7a 경로 이전. index.ts 배선이 소비, deno 테스트가 검증)
 // ---------------------------------------------------------------------------
 
 /**
@@ -325,7 +146,7 @@ function isValidLayout(v: unknown): v is DefenseLayout {
  * 정비도와 동일하게 PvP 결정에 직결되는 축만 서버가 봉인한다.
  */
 export interface AuthoritativeGuardianRow {
-  /** guardians.data — 퇴역 복사 스냅샷 jsonb(신뢰 불가 → normalizeGuardians 가 검증). */
+  /** guardians.data — 퇴역 복사 스냅샷 jsonb(신뢰 불가 → 정규화가 검증). */
   readonly data: unknown;
   /** guardians.performance — numeric(5,2) 0..100. 서버 풍화 권위값(cron weather_guardians). */
   readonly performance: number;
@@ -344,65 +165,62 @@ export function performanceToCenti(dbPerformance: unknown): number {
 }
 
 /**
- * 방어 배치 layout 의 수호 슬롯을 **DB 권위 값으로 재구성**한다(M5 서버 권위 주입 — 정비도
- * 주입과 대칭). 공격자 제출 config 의 수호 성능%·계보 보너스·스냅샷을 신뢰하지 않고, 방어자의
- * 라이브 `guardians`(풍화된 performance)·`profiles.lineage_guardian_level` 로 덮어쓴다.
+ * 3레이어 배치 `layers.l3.guardians` 슬롯을 **DB 권위 값으로 재구성**한다(M5 서버 권위 주입의
+ * M7a 경로 이전 — 정비도 주입과 대칭). 공격자 제출 config 의 수호 성능%·계보 보너스·스냅샷을
+ * 신뢰하지 않고, 방어자의 라이브 `guardians`(풍화된 performance)·`profiles.
+ * lineage_guardian_level` 로 덮어쓴다.
  *
- * 매핑(클라 `buildGuardianPlacements`(src/save/guardianLifecycle.ts) 와 동일 규칙):
- *   - **슬롯 위치(x/y)**: 저장된 방어 배치(`defenses.layout.guardians[i]`)에서 온다 — 방어자
- *     배치 결정이라 풍화 대상이 아니고 서버가 그대로 존중한다.
- *   - **스냅샷/성능%/보너스**: 활성 수호를 결정론 순서(created_at, id — index.ts 조회 + 클라
- *     fetchGuardians 조회 순서 일치)로 슬롯 i ↔ 활성 수호 i 매핑해 주입한다.
- *   - **계보 보너스**: `branchBonusBp(lineageGuardianLevel)` — 클라 `guardianBonusBp` 와 동일 곡선.
- *   - 슬롯 수·활성 수호 수·MAX_GUARDIAN_SLOTS 중 최솟값까지만 채운다(초과 슬롯 드롭 — 클라와 동일).
+ * ⚠️ **슬롯 매핑 3자 정합**(SQL `inject_guardian_authority` / 이 함수 / 클라
+ * `buildGuardianPlacements`)이 비트 동일해야 한다. 셋 중 하나만 어긋나면 **정직한 런이 전량
+ * defense-mismatch 로 오거부**된다. M7a 에서 경로가 `layout->'guardians'` 에서
+ * `layers->'l3'->'guardians'` 로 바뀌었으므로 SQL(L7 레인)도 반드시 함께 옮겨야 한다.
  *
- * 입력 layout 은 불변(얕은 복제로 guardians 만 교체). 수호 슬롯이 없거나 활성 수호가 없으면
- * guardians 필드를 제거해 반환한다 → 수호 미포함 침공은 거동·해시가 완전 불변(하위호환).
- * 주입된 스냅샷의 정합성은 이후 normalizeServerLayout/normalizeGuardians 가 검증한다(손상 →
- * server-layout-invalid).
+ * 매핑 규칙(구 규칙 그대로 — 배열 인덱스 i ↔ 활성 수호 i):
+ *   - **슬롯 위치(x/y)**: 저장된 배치(`layers.l3.guardians[i]`)에서 온다 — 방어자 배치 결정이라
+ *     풍화 대상이 아니고 서버가 그대로 존중한다. 해당 슬롯이 비어 있으면 (0,0).
+ *   - **스냅샷/성능%/보너스/마일스톤**: 활성 수호를 결정론 순서(created_at, id — index.ts 조회 +
+ *     클라 fetchGuardians 조회 순서 일치)로 슬롯 i ↔ 활성 수호 i 매핑해 주입한다.
+ *   - 활성 수호 수·{@link INVASION_GUARDIAN_SLOTS} 중 최솟값까지만 채우고 나머지 슬롯은 null.
+ *
+ * 입력은 불변(얕은 복제로 l3.guardians 만 교체). 반환은 raw 형태 그대로다 — 정규화는
+ * verifyInvasion 이 한 번에 한다(중복 정규화는 멱등이라 무해하지만 경로를 하나로 유지한다).
  */
 export function injectGuardianAuthority(
-  rawLayout: unknown,
+  rawLayers: unknown,
   guardians: readonly AuthoritativeGuardianRow[],
   lineageGuardianLevel: number,
 ): unknown {
-  if (typeof rawLayout !== 'object' || rawLayout === null) return rawLayout;
-  const layout = rawLayout as Record<string, unknown>;
-  const slots = Array.isArray(layout.guardians) ? (layout.guardians as unknown[]) : [];
-  const bonusBp = branchBonusBp(
+  const root = asRecord(rawLayers);
+  if (root === null) return rawLayers;
+  const l3 = asRecord(root.l3) ?? {};
+  const slots = Array.isArray(l3.guardians) ? (l3.guardians as unknown[]) : [];
+
+  const level =
     typeof lineageGuardianLevel === 'number' && Number.isFinite(lineageGuardianLevel)
       ? lineageGuardianLevel
-      : 0,
-  );
+      : 0;
+  const bonusBp = branchBonusBp(level);
   // 마일스톤 마스크도 계보 레벨에서 권위 재도출한다(보너스 곡선과 동일 — 계정 단위). 공격자 제출
-  // 마스크를 신뢰하지 않고 방어자 라이브 레벨로 덮는다(위조 시 defense-mismatch). 0 이면 키 생략.
-  const milestones = normalizeMilestones(
-    guardianMilestones(
-      typeof lineageGuardianLevel === 'number' && Number.isFinite(lineageGuardianLevel)
-        ? lineageGuardianLevel
-        : 0,
-    ),
+  // 마스크를 신뢰하지 않고 방어자 라이브 레벨로 덮는다(위조 시 defense-mismatch).
+  const milestones = normalizeMilestones(guardianMilestones(level));
+
+  const n = Math.min(guardians.length, INVASION_GUARDIAN_SLOTS);
+  const authoritative: (InvasionGuardianPlacement | null)[] = new Array(INVASION_GUARDIAN_SLOTS).fill(
+    null,
   );
-  const n = Math.min(slots.length, guardians.length, MAX_GUARDIAN_SLOTS);
-  const authoritative: GuardianPlacement[] = [];
   for (let i = 0; i < n; i++) {
-    const slot = slots[i];
-    const sr = typeof slot === 'object' && slot !== null ? (slot as Record<string, unknown>) : {};
+    const sr = asRecord(slots[i]) ?? {};
     const row = guardians[i]!;
-    const placement: GuardianPlacement = {
-      x: isFiniteNumber(sr.x) ? sr.x : 0,
-      y: isFiniteNumber(sr.y) ? sr.y : 0,
+    authoritative[i] = {
+      x: isFiniteNumber(sr.x) ? Math.trunc(sr.x) : 0,
+      y: isFiniteNumber(sr.y) ? Math.trunc(sr.y) : 0,
       snapshot: row.data as GuardianSnapshot,
       performanceCP: performanceToCenti(row.performance),
       lineageBonusBp: bonusBp,
+      milestones,
     };
-    if (milestones !== 0) placement.milestones = milestones;
-    authoritative.push(placement);
   }
-  const out: Record<string, unknown> = { ...layout };
-  if (authoritative.length > 0) out.guardians = authoritative;
-  else delete out.guardians;
-  return out;
+  return { ...root, l3: { ...l3, guardians: authoritative } };
 }
 
 // ---------------------------------------------------------------------------
@@ -422,17 +240,16 @@ export interface InvasionSnapshotRow {
   readonly attackerId: string;
   /** invasion_snapshots.defense_id — 소유권 대조 기준(null 가능). */
   readonly defenseId: string | null;
-  /** authority->'layout' — T0 고정 수호 권위 주입 완료 layout(raw jsonb). */
-  readonly authorityLayout: unknown;
+  /** authority->'layers' — T0 고정 수호 권위 주입 완료 3레이어 배치(raw jsonb). */
+  readonly authorityLayers: unknown;
   /** authority->>'maintenance' — DB 정비도(numeric 0..100) 또는 미지정. index.ts 가 centi 변환. */
   readonly authorityMaintenanceDb: number | undefined;
   /**
-   * authority->'card' — T0 고정 방어 카드 효력({@link DefenseCardConfig} 형태: {card, matchup}).
-   * begin_invasion 이 방어자 장착 카드+공격자 매치업을 접어 넣은 값(미장착이면 null). raw jsonb —
-   * verifyInvasion 이 서버 권위 card 로 그대로 오버라이드(sim 이 소비, 손상 시 재실행 예외 →
-   * index.ts try/catch 가 server-layout-invalid 로 수렴).
+   * authority->'modules' — T0 고정 코어 모듈 권위(M7b, `{instances,matchup}` raw jsonb).
+   * **재실행 입력이다** — 모듈은 layers 직렬화에 없으므로 이 키가 빠지면 모듈 장착 방어의
+   * 정직한 침공이 전량 오거부된다. 미장착·구버전 스냅샷이면 null.
    */
-  readonly authorityCard: unknown;
+  readonly authorityModules: unknown;
   /** invasion_snapshots.created_at → epoch ms. 신선도 판정 기준. */
   readonly createdAtMs: number;
 }
@@ -460,10 +277,10 @@ export interface SnapshotResolutionParams {
 export type SnapshotResolution =
   | {
       readonly source: 'snapshot';
-      readonly layout: unknown;
+      readonly layers: unknown;
       readonly maintenanceDb: number | undefined;
-      /** authority->'card' — T0 고정 카드 효력(미장착이면 null). index.ts 가 server.card 로 주입. */
-      readonly card: unknown;
+      /** authority->'modules' — 코어 모듈 재실행 권위(raw jsonb, 미장착이면 null). */
+      readonly modules: unknown;
     }
   | {
       readonly source: 'live';
@@ -482,7 +299,7 @@ export type SnapshotResolution =
  *      공격자가 남의/약한 스냅샷을 가리키는 위조를 무효화).
  *   4. 신선도 초과(created_at 1시간 초과) → 'stale'.
  *   5. 재사용(이미 다른 확정 침공이 사용) → 'reused'.
- *   6. 전부 통과 → 스냅샷 권위(layout·maintenance) 사용. 이후 라이브 수호 재주입을 생략하고
+ *   6. 전부 통과 → 스냅샷 권위(layers·maintenance) 사용. 이후 라이브 수호 재주입을 생략하고
  *      이 고정본으로 대조·재실행한다 → T0↔T1 사이 dismiss/retire/정비/풍화 무영향.
  */
 export function resolveSnapshotAuthority(params: SnapshotResolutionParams): SnapshotResolution {
@@ -501,30 +318,34 @@ export function resolveSnapshotAuthority(params: SnapshotResolutionParams): Snap
   if (params.reused) return { source: 'live', reason: 'reused' };
   return {
     source: 'snapshot',
-    layout: snap.authorityLayout,
+    layers: snap.authorityLayers,
     maintenanceDb: snap.authorityMaintenanceDb,
-    card: snap.authorityCard,
+    modules: snap.authorityModules,
   };
 }
+
+// ---------------------------------------------------------------------------
+// 검증 본체
+// ---------------------------------------------------------------------------
 
 /**
  * 침공 리플레이 제출을 서버 권위로 전수 재실행해 무결성을 판정한다.
  *
  * @param raw    신뢰 불가 제출(RunSubmission 형태 — seed·config·inputs·claim).
- * @param server DB에서 로드한 권위 침공 컨텍스트(방어 배치·제한 시간).
+ * @param server DB에서 로드한 권위 침공 컨텍스트(3레이어 배치·제한 시간·정비도).
  *
  * 절차:
- *   1) 구조 최소 검증(재실행 이전) + hashStream 필수 + invasion config 존재 강제.
- *   2) 제출 방어 배치를 서버 권위 배치와 대조(defense-mismatch 거부).
+ *   1) 구조 최소 검증(재실행 이전) + hashStream 필수 + invasion3 config 존재 강제.
+ *   2) 제출 배치를 서버 권위 배치와 **정규형 전체 대조**(defense-mismatch 거부).
  *   3) 서버 권위 config로 오버라이드해 verifyRun에 위임(재실행·해시/결과 대조).
  *      → config를 조작해도 재실행이 서버 배치로 돌아가므로 hashStream이 갈려 거부된다.
  */
 export function verifyInvasion(raw: unknown, server: InvasionServerContext): InvasionVerifyResult {
-  // (서버 데이터 게이트, 리뷰 MED-3) DB layout 을 클라이언트와 동일 규칙으로 정규화.
-  // 정규화 불능(코어 좌표 손상 등)은 제출 측 위조가 아니라 서버 데이터 문제이므로
-  // 별도 사유로 거부한다 — 이후 모든 대조·재실행은 이 정규화 본을 진실값으로 쓴다.
-  const serverLayout = normalizeServerLayout(server.layout);
-  if (serverLayout === null) return reject('server-layout-invalid');
+  // 서버 권위 배치 정규화. total function 이라 실패 분기가 없다 — 손상 슬롯은 비고, 결과는
+  // 언제나 유효한 정규형이다. 클라도 **같은 함수**로 정규화한 본을 런·제출하므로, DB 에
+  // 쓰레기가 섞여 있어도 정직 침공이 오거부되지 않는다(구 normalizeServerLayout 의 null
+  // 반환 → server-layout-invalid 분기가 사라진 이유).
+  const serverLayers: InvasionLayers = normalizeInvasionLayers(server.layers);
 
   if (typeof raw !== 'object' || raw === null) return reject('malformed-submission');
   const sub = raw as Record<string, unknown>;
@@ -534,20 +355,24 @@ export function verifyInvasion(raw: unknown, server: InvasionServerContext): Inv
   if (typeof claim !== 'object' || claim === null) return reject('malformed-submission');
   if (claim.hashStream === undefined) return reject('hash-stream-required');
 
-  // (config 정당성 게이트) 침공은 config.invasion.layout이 반드시 있어야 한다.
+  // (config 정당성 게이트) 침공은 config.invasion3 가 반드시 있어야 한다.
   if (sub.config === undefined) return reject('config-required');
-  if (typeof sub.config !== 'object' || sub.config === null) return reject('config-required');
-  const cfg = sub.config as Record<string, unknown>;
-  const inv = cfg.invasion as Record<string, unknown> | undefined;
-  if (typeof inv !== 'object' || inv === null) return reject('invasion-config-required');
-  if (!isValidLayout(inv.layout)) return reject('malformed-layout');
-  const submittedLayout = inv.layout as DefenseLayout;
+  const cfg = asRecord(sub.config);
+  if (cfg === null) return reject('config-required');
+  const inv = asRecord(cfg.invasion3);
+  if (inv === null) return reject('invasion-config-required');
+  // layers 는 객체여야 한다. 배열·원시값은 "정규화하면 빈 배치"라 조용히 defense-mismatch 가
+  // 되겠지만, 구조 결함과 위조를 진단상 구분하기 위해 별도 사유로 끊는다.
+  if (asRecord(inv.layers) === null) return reject('malformed-layout');
 
-  // 제출 배치 ↔ 서버 권위 배치 대조(약화된 가짜 방어 차단). 제한 시간도 대조.
-  if (!isFiniteNumber(inv.timeLimitTicks) || (inv.timeLimitTicks as number) !== server.timeLimitTicks) {
+  // 제한 시간 대조(시간 예산 3중 정합의 한 축 — 서버 상수 INVASION_TOTAL_TICKS 와 어긋나면 거부).
+  if (!isFiniteNumber(inv.timeLimitTicks) || inv.timeLimitTicks !== server.timeLimitTicks) {
     return reject('defense-mismatch');
   }
-  if (!layoutEquals(submittedLayout, serverLayout)) {
+
+  // 제출 배치 ↔ 서버 권위 배치 대조(약화된 가짜 방어 차단). layersEqual 은 정규형 **전체**를
+  // 깊이 비교하므로 신규 필드가 대조에서 누락되는 보안 구멍이 구조적으로 생기지 않는다.
+  if (!layersEqual(inv.layers, serverLayers)) {
     return reject('defense-mismatch');
   }
 
@@ -557,20 +382,29 @@ export function verifyInvasion(raw: unknown, server: InvasionServerContext): Inv
   }
 
   // 서버 권위 config로 재실행하도록 오버라이드(제출 config의 다른 필드—공격자 로드아웃—는
-  // 보존하되 invasion 블록만 서버 값으로 교체). verifyRun이 구조 재검증·재실행·해시/결과
+  // 보존하되 invasion3 블록만 서버 값으로 교체). verifyRun이 구조 재검증·재실행·해시/결과
   // 대조를 수행한다. hashStream이 이미 존재하므로 verifyRun이 매 틱 대조를 강제한다.
-  // 서버 권위 정비도로 재실행(풍화 반영). undefined 면 sim 이 완전 정비로 정규화(하위호환) →
-  // maintenance 대조는 layoutEquals 에 불필요(서버 override + hashStream 재실행이 정비도
-  // 불일치 위조를 hash-stream-divergence 로 잡는다). 방어 카드(M6)도 동형 오버라이드 —
-  // 제출 config.invasion.card 를 무시하고 서버 권위 card(스냅샷 고정)로 재실행한다(카드
-  // 효과·매치업·chargesLeft 위조는 재실행 발산으로 거부). exactOptionalPropertyTypes 하에서
+  // 서버 권위 정비도로 재실행(풍화 반영). undefined 면 sim 이 완전 정비로 정규화 →
+  // maintenance 대조는 layersEqual 에 불필요(서버 override + hashStream 재실행이 정비도
+  // 불일치 위조를 hash-stream-divergence 로 잡는다). exactOptionalPropertyTypes 하에서
   // optional 필드에 undefined 명시 대입이 금지되므로, 정의된 경우에만 필드를 포함한다.
-  const authoritativeInvasion: InvasionConfig = { layout: serverLayout, timeLimitTicks: server.timeLimitTicks };
+  const authoritativeInvasion: Invasion3Config = {
+    layers: serverLayers,
+    timeLimitTicks: server.timeLimitTicks,
+  };
   if (server.maintenance !== undefined) authoritativeInvasion.maintenance = server.maintenance;
-  if (server.card !== undefined) authoritativeInvasion.card = server.card;
+  // 코어 모듈 권위(M7b): 제출 config 의 modules 는 **읽지 않는다** — 공격자가 방어자 모듈을
+  // 지워 보내는 위조를 원천 차단하기 위해 서버 스냅샷 authority 만 신뢰한다. 클라이언트도
+  // 같은 스냅샷을 받아 같은 파서로 접었으므로 hashStream 이 일치한다.
+  const serverModules = parseModulesAuthority(server.modules);
+  if (serverModules !== null) authoritativeInvasion.modules = serverModules;
+  // 구 침공 블록(`config.invasion`)을 떼어내던 방어선은 L11 에서 **필요가 없어졌다** — sim 이
+  // 그 키를 읽는 경로 자체가 삭제돼(구 단일 아레나 침공 폐기) 공격자가 실어 보내도 엔티티가
+  // 생기지 않는다. 정체불명 키는 재실행이 무시하므로 그대로 흘려보낸다. 침공 거동을 정하는
+  // 유일한 필드인 `invasion3` 만 서버 권위로 덮는다.
   const authoritativeConfig: WorldConfig = {
-    ...(sub.config as WorldConfig),
-    invasion: authoritativeInvasion,
+    ...(cfg as unknown as WorldConfig),
+    invasion3: authoritativeInvasion,
   };
   const authoritativeSubmission = {
     seed: sub.seed,

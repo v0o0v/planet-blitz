@@ -20,39 +20,27 @@
  *    리셋되어 ADR-0006(정비도 자가회복 금지)을 우회한다(README Phase D 착수 조건 ②).
  *    UPDATE 는 서버 가드(`guard_defenses_client_write`)가 클라이언트 경로에서 maintenance
  *    를 이전 값으로 고정하므로 정비도가 보존된다.
- *  - budget_spent 는 서버 가드가 layout 에서 재산출(`defense_layout_cost`)하고 예산 상한
- *    (20)을 강제한다 — 클라이언트가 낮춰 신고 불가. INSERT 시엔 정직하게 layout 비용 합계를
- *    함께 신고해(서버가 대조·게이트) 의미를 맞춘다. UPDATE 시엔 layout 만 보낸다.
+ *
+ * ## M7a — 배치 포인트 예산제 폐지(결정 #14 "슬롯이 곧 예산")
+ * 구조는 3레이어({@link InvasionLayers})로 바뀌었고, 서버 게이트도 `defense_layout_cost`
+ * 합계 상한(20)에서 **슬롯 수·형식 검증**(`invasion_layers_valid`)으로 교체됐다
+ * (마이그레이션 20260721000000). 그래서 이 모듈에 있던 비용 산출 클라 미러도 함께 삭제했다 —
+ * 미러가 남아 있으면 폐지된 규칙을 UI 가 계속 강제해 정상 배치가 막힌다
+ * (회귀 가드: tests/netDefense.test.ts 가 이 파일에서 그 이름들이 사라졌는지 검사한다).
+ * 업로드 직전 {@link normalizeInvasionLayers} 를 한 번 태워 **슬롯 초과분이 서버에 닿기 전에
+ * 잘려 나가게** 한다(서버 게이트는 방어선일 뿐, 정상 클라는 애초에 규격을 넘기지 않는다).
+ * `budget_spent` 컬럼은 서버에 남아 있으나 의미가 없어 항상 0 을 신고한다.
  */
 
-import {
-  TURRET_SPECS,
-  TURRET_VULCAN,
-  OBSTACLE_COST,
-  type DefenseLayout,
-} from '../sim/defense.js';
+import { normalizeInvasionLayers } from '../sim/invasion/normalize.js';
+import type { InvasionLayers } from '../sim/invasion/types.js';
 import { readSupabaseConfig, type SupabaseConfig } from './config.js';
 
-// ---------------------------------------------------------------------------
-// 비용 산출 (순수 · 서버 defense_layout_cost 와 일치 · 테스트 대상)
-// ---------------------------------------------------------------------------
-
 /**
- * 방어 배치 layout 의 배치 포인트 비용 합계. 서버의 `public.defense_layout_cost`(SQL)와
- * **정확히 일치**해야 한다(재번호 금지 계약): 포탑은 `TURRET_SPECS[type].cost`, 범위 밖
- * 유형은 발칸(1)으로 폴백(spawnDefenseTurret·서버 게이트와 동일), 장애물은 개당
- * `OBSTACLE_COST`(1). 코어는 0(참고). INSERT 시 budget_spent 를 정직하게 신고하는 데 쓴다.
+ * 폐지된 예산 컬럼에 싣는 값. 서버 가드가 어차피 0 으로 덮어쓰므로(클라 신고 무시) 이 값은
+ * 순전히 컬럼 NOT NULL 을 만족시키기 위한 자리다.
  */
-export function defenseLayoutCost(layout: DefenseLayout): number {
-  const vulcanCost = TURRET_SPECS[TURRET_VULCAN]!.cost;
-  let sum = 0;
-  for (const t of layout.turrets) {
-    const spec = TURRET_SPECS[t.type];
-    sum += spec !== undefined ? spec.cost : vulcanCost;
-  }
-  sum += layout.obstacles.length * OBSTACLE_COST;
-  return sum;
-}
+export const DEFENSE_BUDGET_UNUSED = 0;
 
 // ---------------------------------------------------------------------------
 // 풍화·정비 파생 (순수 · 테스트 대상 — ADR-0006/0007, 계획 §4 E3)
@@ -173,8 +161,9 @@ export function planDefenseUpsert(existingActiveId: string | null): DefenseUpser
 
 /** INSERT 페이로드(active 는 게이트웨이가 true 로 고정). */
 export interface DefenseInsertPayload {
-  layout: DefenseLayout;
-  /** 정직하게 신고하는 배치 비용(서버 가드가 재산출·게이트하되 대조용). */
+  /** 정규화된 3레이어 배치(`defenses.layout` jsonb 계약). */
+  layout: InvasionLayers;
+  /** 폐지된 예산 컬럼({@link DEFENSE_BUDGET_UNUSED} 고정) — 서버가 0 으로 덮어쓴다. */
   budgetSpent: number;
 }
 
@@ -186,8 +175,13 @@ export interface DefenseGateway {
   fetchActiveDefenseId(uid: string): Promise<string | null>;
   /** 신규 활성 방어 행 insert(active=true). 실패 시 throw. */
   insertDefense(uid: string, payload: DefenseInsertPayload): Promise<void>;
-  /** 기존 방어 행의 layout 을 update(정비도·예산은 서버 가드가 처리). 실패 시 throw. */
-  updateDefense(defenseId: string, layout: DefenseLayout): Promise<void>;
+  /**
+   * 기존 방어 행의 layout 을 update(정비도는 서버 가드가 보존). 실패 시 throw.
+   * 파라미터를 `unknown` 으로 둔 이유: 실 게이트웨이(defenseGateway.ts)는 이 값을 그대로
+   * jsonb 로 흘려보낼 뿐이라 구체 타입을 요구하지 않고, 그래야 3레이어 전환기에 구·신
+   * 구현이 동시에 컴파일된다. 실제로 넘어가는 값은 항상 정규화된 {@link InvasionLayers} 다.
+   */
+  updateDefense(defenseId: string, layout: unknown): Promise<void>;
   /**
    * 내 방어 정비 상태(정비도·크레딧·정비 비용) 조회 — RPC `get_defense_status()`.
    * 구현이 없으면 `undefined`(공개 함수가 no-op null 처리). 실패 시 throw.
@@ -244,11 +238,14 @@ async function resolveGateway(deps: DefenseDeps): Promise<DefenseGateway | null>
  * 토스트만 승격한다. 게임루프·결정론과 무관(메타 동기화).
  */
 export async function uploadDefenseLayout(
-  layout: DefenseLayout,
+  rawLayers: unknown,
   deps: DefenseDeps = {},
 ): Promise<DefenseUploadResult> {
   const gateway = await resolveGateway(deps);
   if (gateway === null) return null;
+  // 업로드 전 정규화(공유 정본): 슬롯 초과분 절단·손상 슬롯 비움·정수화가 여기서 끝난다.
+  // 서버 `invasion_layers_valid` 가 거부할 형태가 애초에 만들어지지 않는다.
+  const layout = normalizeInvasionLayers(rawLayers);
   try {
     const uid = await gateway.getUserId();
     const existingId = await gateway.fetchActiveDefenseId(uid);
@@ -258,7 +255,7 @@ export async function uploadDefenseLayout(
       return 'updated';
     }
     try {
-      await gateway.insertDefense(uid, { layout, budgetSpent: defenseLayoutCost(layout) });
+      await gateway.insertDefense(uid, { layout, budgetSpent: DEFENSE_BUDGET_UNUSED });
       return 'inserted';
     } catch (insertErr) {
       // 동시 업로드 레이스(코드리뷰 LOW): 두 세션이 모두 "활성 행 없음"으로 판단해 각자

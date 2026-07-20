@@ -89,7 +89,12 @@ export default tseslint.config(
   },
   {
     // Deterministic simulation core — strictest restrictions (ADR-0005).
-    files: ['src/sim/**/*.ts'],
+    //
+    // `data/**` 도 같은 규율 대상이다: sim 이 data/guardian.ts·lineage.ts·defenseCards.ts 등을
+    // **런타임 import** 하므로, 데이터 모듈에 Math.random/Date.now 가 들어가면 sim 결정론이
+    // 그대로 깨진다. 그런데 lint 대상은 src/sim/** 뿐이라 규율 밖이었다. 3레이어 데이터
+    // (data/invasion/**)가 대량 유입되기 전에 막는다(M7a L0-schema).
+    files: ['src/sim/**/*.ts', 'data/**/*.ts'],
     rules: simCoreRestrictions,
   },
   {

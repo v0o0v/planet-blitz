@@ -14,11 +14,11 @@
  *
  * 순번 = 난이도 오름차순(01 가장 쉬움 … 20 가장 어려움). 서버 초기 rank = 21-순번
  * (#01 → rank 20, #20 → rank 1). 난이도 밴드(계획 §5 "하위~중위 커버", 서버 확정):
- *   - 하위(순번 01~07): 방치·기본 방어.
- *   - 중하(순번 08~14): 혼합 포탑 + 장애물.
- *   - 중위(순번 15~20): 저격·유도 등 고비용 포탑 다수, 예산 상한 복합.
- * 실제 배치 규모·포탑 구성은 서버 SQL의 정본 layout이 결정한다(이 밴드와 정합하도록 서버가
- * 설계). 이 메타의 밴드/순번은 배치전 대상 표시·정렬·연출용이다.
+ *   - 하위(순번 01~07): 웨이브 슬롯·설치 소켓이 대부분 비어 기본 수비대가 대신 서는 기지.
+ *   - 중하(순번 08~14): 편대·설비를 고르게 채우고 코어방 기물이 붙기 시작.
+ *   - 중위(순번 15~20): 3레이어 전 슬롯을 채우고 기물·수호 기체·방어 보스까지 갖춘 기지.
+ * 실제 배치 규모·구성은 서버 SQL의 정본 layout(3레이어 jsonb)이 결정한다(이 밴드와 정합하도록
+ * 서버가 설계). 이 메타의 밴드/순번은 배치전 대상 표시·정렬·연출용이다.
  */
 
 /** 배치전 시드 기지 표시용 기체 요약(정찰/목록 표시 — 서버 layout과 무관한 플레이버). */
@@ -89,29 +89,29 @@ interface RawSeed {
 }
 
 const RAW_SEEDS: readonly RawSeed[] = [
-  // --- 하위(01~07): 방치·기본 방어 ---
-  { id: 'training-target-alpha', name: '훈련 표적 알파', description: '사격 연습용 표적 기지. 방어라 부르기도 민망한 최소 포좌뿐이라 배치전 첫 상대로 적당하다.', ship: '훈련용 표적기', level: 4 },
-  { id: 'rusty-post', name: '녹슨 초소', description: '오래 방치돼 절반쯤 멈춘 낡은 초소. 느린 포탑 몇 기가 겨우 조준한다.', ship: '고물 순찰기', level: 6 },
-  { id: 'outpost-watchtower', name: '전초 감시탑', description: '변경을 살피는 감시탑. 기본 포탑이 접근로를 얕게 경계한다.', ship: '변경 초계기', level: 8 },
-  { id: 'sandwind-barrier', name: '모래바람 방벽', description: '모래바람에 반쯤 묻힌 방벽. 벽 뒤 포탑이 근접을 견제한다.', ship: '사막 순찰기', level: 10 },
-  { id: 'twin-emplacement', name: '이중 포좌', description: '두 문의 포좌가 교차 사격으로 정면 접근을 막는 소규모 거점.', ship: '이중 포좌기', level: 12 },
-  { id: 'scrap-fort', name: '고철 요새', description: '고철을 쌓아 만든 임시 요새. 장애물과 기본 포탑이 얼기설기 얽혀 있다.', ship: '고철 수거기', level: 13 },
-  { id: 'thornbush-position', name: '가시덤불 진지', description: '장애물을 촘촘히 세워 진입로를 좁힌 매복형 진지. 서두르면 갇힌다.', ship: '가시덤불 매복기', level: 14 },
-  // --- 중하(08~14): 혼합 포탑 + 장애물 ---
-  { id: 'frostmist-redoubt', name: '서리안개 보루', description: '냉기장이 필드를 얼려 이동을 늦춘다. 얼어붙은 채 집중포화에 노출되기 쉽다.', ship: '서리안개 보루기', level: 16 },
-  { id: 'chain-discharge-station', name: '연쇄 방전소', description: '전격 다발이 사방에서 튀어 회피 공간이 좁다. 근접이 특히 위험하다.', ship: '방전 관제기', level: 18 },
-  { id: 'triangle-crossfire', name: '삼각 교차포', description: '세 방향 포좌가 교차 사격망을 짜 코어로 향하는 직선을 봉쇄한다.', ship: '삼각 교차기', level: 20 },
-  { id: 'coolant-maze', name: '냉각 미로', description: '냉기장과 장애물 미로가 얽혀 발이 묶인다. 길을 잘못 들면 포화에 갇힌다.', ship: '냉각 작업기', level: 21 },
-  { id: 'thorn-citadel', name: '가시 성채', description: '장애물 벽과 산탄·전격이 겹친 근접 지옥. 벽을 끼고 돌파구를 찾아야 한다.', ship: '가시 성채기', level: 22 },
-  { id: 'missile-nest', name: '유도탄 둥지', description: '유도탄이 집요하게 추적한다. 선회를 유도해 벽으로 흘려보내는 기술이 필요하다.', ship: '유도탄 둥지기', level: 24 },
-  { id: 'storm-gate', name: '폭풍의 문', description: '전격과 냉기가 폭풍처럼 몰아치는 관문. 한 발도 헛디디면 순식간에 무너진다.', ship: '폭풍 관문기', level: 25 },
-  // --- 중위(15~20): 고비용 포탑 다수·예산 상한 복합 ---
-  { id: 'sniper-corridor', name: '저격 회랑', description: '긴 회랑을 따라 저격 포탑이 늘어서 장거리부터 압박한다. 엄폐 없이 직진은 자살행위.', ship: '저격 회랑기', level: 28 },
-  { id: 'missile-cluster', name: '미사일 성단', description: '유도탄 다수가 성단처럼 쏟아진다. 벽과 선회 유도를 총동원해야 살아남는다.', ship: '미사일 성단기', level: 30 },
-  { id: 'coldwave-fortress', name: '한파 요새', description: '다중 냉기장과 저격이 얼린 뒤 저격하는 정예 요새. 속도 관리가 승부처.', ship: '한파 요새기', level: 32 },
-  { id: 'thunderstorm-altar', name: '뇌우 제단', description: '전격 다발과 저격이 근·원거리를 동시에 봉쇄한다. 사각이 거의 없다.', ship: '뇌우 제단기', level: 34 },
-  { id: 'steel-gateway', name: '강철 관문', description: '저격·유도·산탄·전격을 예산 한계까지 채운 복합 관문. 상위권 도전의 문턱.', ship: '강철 관문기', level: 37 },
-  { id: 'impregnable-nest', name: '난공불락 둥지', description: '모든 포탑이 완벽히 맞물린 시드 기지의 정점. 배치전 최종 시험대.', ship: '난공불락 근위기', level: 40 },
+  // --- 하위(01~07): 웨이브 슬롯·소켓이 거의 비어 기본 수비대로 채워진 기지 ---
+  { id: 'training-target-alpha', name: '훈련 표적 알파', description: '사격 연습용 표적 기지. 웨이브 슬롯도 회랑 소켓도 대부분 비어 기본 수비대가 대신 서 있다. 배치전 첫 상대로 적당하다.', ship: '훈련용 표적기', level: 4 },
+  { id: 'rusty-post', name: '녹슨 초소', description: '오래 방치돼 정비도가 바닥난 초소. 편대도 설비도 반응이 한 박자 느리다.', ship: '고물 순찰기', level: 6 },
+  { id: 'outpost-watchtower', name: '전초 감시탑', description: '변경을 살피는 감시탑. 대기권 초입에 정찰 드론편대만 얕게 깔려 있다.', ship: '변경 초계기', level: 8 },
+  { id: 'sandwind-barrier', name: '모래바람 방벽', description: '모래에 반쯤 묻힌 개활 회랑. 벽 소켓 몇 자리에만 속사포가 붙어 있다.', ship: '사막 순찰기', level: 10 },
+  { id: 'twin-emplacement', name: '이중 포좌', description: '회랑 위아래 소켓이 짝을 지어 교차 화망을 만든다. 가운데로 곧장 지나가면 양쪽에서 맞는다.', ship: '이중 포좌기', level: 12 },
+  { id: 'scrap-fort', name: '고철 요새', description: '고철로 급조한 회랑. 설비 배치가 성기지만 코어방에 고정 주포 한 문이 버티고 있다.', ship: '고철 수거기', level: 13 },
+  { id: 'thornbush-position', name: '가시덤불 진지', description: '병목 회랑에 매복 설비를 몰아넣었다. 좁은 구간에서 서두르면 빠져나갈 자리가 없다.', ship: '가시덤불 매복기', level: 14 },
+  // --- 중하(08~14): 편대·설비를 고르게 채우고 기물이 붙기 시작 ---
+  { id: 'frostmist-redoubt', name: '서리안개 보루', description: '코어방에 중력 앵커가 깔려 이동이 무겁다. 느려진 채 회랑 설비의 화력에 노출되기 쉽다.', ship: '서리안개 보루기', level: 16 },
+  { id: 'chain-discharge-station', name: '연쇄 방전소', description: '회랑 소켓마다 레이저 격자를 물려 짧은 주기로 켜졌다 꺼진다. 켜지는 순간을 못 읽으면 한복판에서 갈린다.', ship: '방전 관제기', level: 18 },
+  { id: 'triangle-crossfire', name: '삼각 교차포', description: '굴곡 회랑의 세 구간마다 사계가 겹치도록 설비를 배치했다. 코어로 향하는 직선이 없다.', ship: '삼각 교차기', level: 20 },
+  { id: 'coolant-maze', name: '냉각 미로', description: '굴곡 회랑의 사각지대마다 화염 방사구가 숨어 있다. 길을 잘못 들면 장판 위에서 발이 묶인다.', ship: '냉각 작업기', level: 21 },
+  { id: 'thorn-citadel', name: '가시 성채', description: '병목 회랑 구간에 곡사 박격포를 몰아 면 제압을 건다. 벽을 끼고 돌파 타이밍을 재야 한다.', ship: '가시 성채기', level: 22 },
+  { id: 'missile-nest', name: '유도탄 둥지', description: '드론 사출구가 회랑 내내 소형 드론을 찍어낸다. 근원을 먼저 부수지 않으면 끝이 없다.', ship: '유도탄 둥지기', level: 24 },
+  { id: 'storm-gate', name: '폭풍의 문', description: '요격 편대와 회랑 설비가 쉴 틈 없이 이어진다. 웨이브 사이 정리를 못 하면 그대로 밀린다.', ship: '폭풍 관문기', level: 25 },
+  // --- 중위(15~20): 전 슬롯을 채우고 코어방 기물·수호·보스까지 갖춘 기지 ---
+  { id: 'sniper-corridor', name: '저격 회랑', description: '개활 회랑 12소켓을 관통 레일포로 채웠다. 예고선이 그어질 때마다 자리를 옮겨야 한다.', ship: '저격 회랑기', level: 28 },
+  { id: 'missile-cluster', name: '미사일 성단', description: '강습 돌격편대가 연달아 들어오는 사이 회랑 설비가 뒤를 받친다. 화력을 어디에 쓸지가 승부처.', ship: '미사일 성단기', level: 30 },
+  { id: 'coldwave-fortress', name: '한파 요새', description: '코어방에 중력 앵커와 고정 주포가 함께 선다. 느려진 상태로 직사 화력을 받아내야 한다.', ship: '한파 요새기', level: 32 },
+  { id: 'thunderstorm-altar', name: '뇌우 제단', description: '실드 발생기가 코어를 감싸고 그 뒤에서 방어 보스가 버틴다. 부수는 순서를 틀리면 시간이 녹는다.', ship: '뇌우 제단기', level: 34 },
+  { id: 'steel-gateway', name: '강철 관문', description: '세 레이어를 빈틈없이 채운 복합 관문. 수호 기체 둘이 코어방 입구를 지킨다. 상위권 도전의 문턱.', ship: '강철 관문기', level: 37 },
+  { id: 'impregnable-nest', name: '난공불락 둥지', description: '편대·설비·기물·수호·보스가 완벽히 맞물린 시드 기지의 정점. 배치전 최종 시험대.', ship: '난공불락 근위기', level: 40 },
 ];
 
 /** 20개 시드 기지 표시 메타(정본 순서 — UUID 순번 = index+1 = 난이도 오름차순). */

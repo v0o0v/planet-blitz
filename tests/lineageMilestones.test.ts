@@ -16,10 +16,13 @@
 import { describe, it, expect } from 'vitest';
 import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig } from '../src/sim/world.js';
-import { runReplay } from '../src/sim/replay.js';
-import type { Replay } from '../src/sim/replay.js';
-import { DEFAULT_TIME_LIMIT_TICKS, TURRET_VULCAN } from '../src/sim/defense.js';
-import type { DefenseLayout, GuardianPlacement, InvasionConfig } from '../src/sim/defense.js';
+import { hashWorld } from '../src/sim/replay.js';
+import type { GuardianPlacement } from '../src/sim/invasion/guardian.js';
+import { normalizeInvasionLayers } from '../src/sim/invasion/normalize.js';
+import type { Invasion3Config, InvasionLayers } from '../src/sim/invasion/types.js';
+import { INVASION_CORE_HP, INVASION_TOTAL_TICKS, PHASE_L3 } from '../src/sim/invasion/constants.js';
+import { enterCoreRoom } from '../src/sim/invasion/coreRoom.js';
+import { makeInvasionContext } from '../src/sim/invasion/step.js';
 import {
   GUARDIAN_TITAN,
   GUARDIAN_INTERCEPTOR,
@@ -69,8 +72,18 @@ function guardianM(
   return g;
 }
 
-function invasionConfig(layout: DefenseLayout): WorldConfig {
-  const inv: InvasionConfig = { layout, timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS };
+/** 수호는 L3 코어방 슬롯(`l3.guardians`)에 산다 — 고정 길이 + null 허용. */
+function layersWith(l3: Record<string, unknown>): InvasionLayers {
+  return normalizeInvasionLayers({ l3 });
+}
+
+/** 코어 위치·수호만 지정하는 축약(코어 HP 는 기본값). */
+function coreAnd(coreX: number, guardians: unknown[]): InvasionLayers {
+  return layersWith({ core: { hp: INVASION_CORE_HP, x: coreX, y: 0 }, guardians });
+}
+
+function invasionConfig(layers: InvasionLayers): WorldConfig {
+  const inv3: Invasion3Config = { layers, timeLimitTicks: INVASION_TOTAL_TICKS };
   return {
     arenaWidth: 1920,
     arenaHeight: 1080,
@@ -80,8 +93,21 @@ function invasionConfig(layout: DefenseLayout): WorldConfig {
     dashIframes: 10,
     hitIframes: 40,
     playerHp: 100,
-    invasion: inv,
+    invasion3: inv3,
   };
+}
+
+/**
+ * **L3 코어방에서 시작하는** 침공 월드. 마일스톤은 전부 수호 거동이라 코어방에서만 관측된다
+ * (L1 대기권·L2 회랑에는 수호 엔티티가 없다).
+ */
+function coreRoomWorld(seed: number, layers: InvasionLayers) {
+  const w = createWorld(seed, invasionConfig(layers));
+  w.entities.length = 1; // index 0 = player (hashWorld 불변식)
+  w.invasion3!.phase = PHASE_L3;
+  w.invasion3!.phaseEnterTick = 0;
+  enterCoreRoom(w, makeInvasionContext(w.config.invasion3!, w.invasion3!));
+  return w;
 }
 
 function countKind(state: { entities: { kind: string }[] }, kind: string): number {
@@ -163,37 +189,19 @@ describe('마일스톤 ① 격추 재기동', () => {
   }
 
   it('해금 시 스폰 수호는 부활 충전(phase=1)을 갖는다', () => {
-    const layout: DefenseLayout = {
-      core: { x: 100000, y: 0 },
-      turrets: [],
-      obstacles: [],
-      guardians: [guardianM(GUARDIAN_TITAN, 400, 0, { milestones: MILESTONE_REBOOT })],
-    };
-    const state = createWorld(1, invasionConfig(layout));
+    const state = coreRoomWorld(1, coreAnd(100000, [guardianM(GUARDIAN_TITAN, 400, 0, { milestones: MILESTONE_REBOOT })]));
     expect(guardianEntity(state)!.phase).toBe(1);
   });
 
   it('미해금(마스크 0) 수호는 부활 충전이 없다(phase=0)', () => {
-    const layout: DefenseLayout = {
-      core: { x: 100000, y: 0 },
-      turrets: [],
-      obstacles: [],
-      guardians: [guardianM(GUARDIAN_TITAN, 400, 0, { milestones: 0 })],
-    };
-    const state = createWorld(1, invasionConfig(layout));
+    const state = coreRoomWorld(1, coreAnd(100000, [guardianM(GUARDIAN_TITAN, 400, 0, { milestones: 0 })]));
     expect(guardianEntity(state)!.phase).toBe(0);
   });
 
   it('부활: 재기동 중(iframes>0) 관측 후 결국 격추(1회 부활 후 소진)', () => {
     // 저내구 인터셉터를 플레이어 바로 앞에 두고 자동 사격으로 격추. 부활 마일스톤이 있으면
     // 한 번 부활하면서 재기동 딜레이(iframes>0)가 관측된다.
-    const layout: DefenseLayout = {
-      core: { x: 100000, y: 0 },
-      turrets: [],
-      obstacles: [],
-      guardians: [guardianM(GUARDIAN_INTERCEPTOR, 260, 0, { combatScore: 40, milestones: MILESTONE_REBOOT })],
-    };
-    const state = createWorld(3, invasionConfig(layout));
+    const state = coreRoomWorld(3, coreAnd(100000, [guardianM(GUARDIAN_INTERCEPTOR, 260, 0, { combatScore: 40, milestones: MILESTONE_REBOOT })]));
     let rebootObserved = false;
     let destroyed = false;
     for (let i = 0; i < 4000; i++) {
@@ -210,13 +218,7 @@ describe('마일스톤 ① 격추 재기동', () => {
   });
 
   it('미해금 수호는 재기동 없이 격추된다(iframes>0 관측 안 됨)', () => {
-    const layout: DefenseLayout = {
-      core: { x: 100000, y: 0 },
-      turrets: [],
-      obstacles: [],
-      guardians: [guardianM(GUARDIAN_INTERCEPTOR, 260, 0, { combatScore: 40, milestones: 0 })],
-    };
-    const state = createWorld(3, invasionConfig(layout));
+    const state = coreRoomWorld(3, coreAnd(100000, [guardianM(GUARDIAN_INTERCEPTOR, 260, 0, { combatScore: 40, milestones: 0 })]));
     let rebootObserved = false;
     let destroyed = false;
     for (let i = 0; i < 4000; i++) {
@@ -237,39 +239,54 @@ describe('마일스톤 ① 격추 재기동', () => {
 // 4. 코어 근접 수비
 // ---------------------------------------------------------------------------
 describe('마일스톤 ② 코어 근접 수비', () => {
-  // 수호 위치는 고정(플레이어 사거리 안)하고 코어 위치만 바꿔 근접 강화만 격리한다. 발사물 고유
-  // id 집합 크기로 누적 발사 수를 센다(enemyBullet 는 소멸하므로 순간 개수로는 부정확 — id 는
-  // 단조 증가라 집합 크기가 총 발사 수의 하한).
+  /**
+   * 수호가 쏜 적탄의 누적 개수. 두 가지 교란을 **설계로** 제거한다(구 판은 이걸 놓쳐
+   * '근접 vs 원거리' 비교가 강화가 아니라 다른 요인을 재고 있었다).
+   *
+   *   ① **코어방 보스의 탄이 섞인다.** 빈 보스 슬롯을 기본 수비대(강철 골리앗)가 충원하고,
+   *      보스는 코어 옆에 스폰된다 — 코어를 옮기면 보스 사거리가 통째로 바뀌어 전체 적탄 수가
+   *      수 배 갈린다. 그래서 **수호 위치에서 갓 생성된 탄만** 센다(수호는 자기 좌표에 탄을
+   *      스폰하므로 반경 200 안이면 수호 탄이다).
+   *   ② **플레이어 사망으로 런이 조기 종료된다.** 강화된 쪽이 더 아프게 때려 먼저 죽으면
+   *      관측 창이 짧아져 발사 수가 **거꾸로** 적게 나온다. 플레이어 HP 를 크게 잡아 두 팔 모두
+   *      600틱을 온전히 돌린다.
+   *
+   * 두 팔의 **코어 좌표는 항상 같게** 두고 마일스톤만 토글한다 — 그래야 보스 배치·플레이어
+   * 조준이 완전히 동일해져 차이가 근접 강화 하나로만 남는다.
+   */
   function firedCount(seed: number, coreX: number, milestones: number): number {
-    const layout: DefenseLayout = {
-      core: { x: coreX, y: 0 },
-      turrets: [],
-      obstacles: [],
-      // 수호는 항상 (600,0) — 플레이어(원점) 사거리 안. 코어 위치만 근접/원거리로 바꾼다.
-      guardians: [guardianM(GUARDIAN_INTERCEPTOR, 600, 0, { combatScore: 200, milestones })],
-    };
-    const state = createWorld(seed, invasionConfig(layout));
+    // 수호는 항상 (600,0) — 플레이어(원점) 사거리 안.
+    const state = coreRoomWorld(seed, coreAnd(coreX, [guardianM(GUARDIAN_INTERCEPTOR, 600, 0, { combatScore: 200, milestones })]));
+    const player = state.entities[0]!;
+    player.maxHp = 1e9;
+    player.hp = 1e9;
     const ids = new Set<number>();
-    for (let i = 0; i < 240; i++) {
+    for (let i = 0; i < 600; i++) {
       stepWorld(state, idle);
-      for (const e of state.entities) if (e.kind === 'enemyBullet') ids.add(e.id);
+      const g = state.entities.find((e) => e.kind === 'guardian' && !e.dead);
+      if (g === undefined) continue;
+      for (const e of state.entities) {
+        if (e.kind !== 'enemyBullet' || ids.has(e.id)) continue;
+        const dx = e.x - g.x;
+        const dy = e.y - g.y;
+        if (dx * dx + dy * dy < 200 * 200) ids.add(e.id);
+      }
     }
     return ids.size;
   }
 
-  it('코어 반경 내 수호는 연사가 빨라 발사물이 더 많다(반경 밖 동일 마일스톤 대비)', () => {
-    // 수호 고정(600,0). 코어를 수호 옆(근접, x=640)에 둔 경우 vs 멀리(x=100000). 둘 다 CORE_GUARD
-    // 마일스톤을 갖지만, 근접일 때만 강화가 활성화된다.
-    const near = firedCount(9, 640, MILESTONE_CORE_GUARD);
-    const far = firedCount(9, 100000, MILESTONE_CORE_GUARD);
-    expect(near).toBeGreaterThan(far);
+  it('코어 반경 내 수호는 연사가 빨라 발사물이 더 많다(같은 코어 위치·마일스톤만 토글)', () => {
+    // 코어를 수호 옆(x=640, 반경 420 안)에 고정하고 마일스톤만 켠다.
+    const withMs = firedCount(9, 640, MILESTONE_CORE_GUARD);
+    const noMs = firedCount(9, 640, 0);
+    expect(withMs).toBeGreaterThan(noMs);
   });
 
-  it('마일스톤 미해금이면 코어 근접이라도 강화가 없다(발사 수 동일)', () => {
-    // 코어 근접(x=640) 동일 위치에서 마일스톤 유무만 토글. 미해금이면 강화 없이 기본 연사.
-    const nearNoMs = firedCount(9, 640, 0);
+  it('반경 밖이면 마일스톤이 있어도 강화가 없다(발사 수 동일)', () => {
+    // 코어를 멀리(x=100000) 고정하면 근접 판정이 서지 않아 마일스톤 유무가 거동을 못 바꾼다.
     const farWithMs = firedCount(9, 100000, MILESTONE_CORE_GUARD);
-    expect(nearNoMs).toBe(farWithMs); // 둘 다 기본 연사(강화 미적용)
+    const farNoMs = firedCount(9, 100000, 0);
+    expect(farWithMs).toBe(farNoMs);
   });
 });
 
@@ -277,46 +294,35 @@ describe('마일스톤 ② 코어 근접 수비', () => {
 // 5. 실드 공유
 // ---------------------------------------------------------------------------
 describe('마일스톤 ③ 실드 공유', () => {
-  function coreAndTurretShields(milestones: number): { core: number; turret: number } {
-    const layout: DefenseLayout = {
-      core: { x: 900, y: 0 },
-      turrets: [{ type: TURRET_VULCAN, x: 500, y: 0 }],
-      obstacles: [],
-      guardians: [guardianM(GUARDIAN_TITAN, 350, 0, { combatScore: 300, milestones })],
-    };
-    const state = createWorld(1, invasionConfig(layout));
-    const core = state.entities.find((e) => e.kind === 'core')!;
-    const turret = state.entities.find((e) => e.kind === 'defenseTurret')!;
-    return { core: core.targetY, turret: turret.targetY };
+  // 3레이어 코어방에는 포탑이 없다(설비는 L2 회랑에 산다) — 실드 공유는 **코어 몫만** 계산한다
+  // (guardianBridge.guardianShieldShareHp). 포탑 몫 상수(SHIELD_SHARE_TURRET_BP)는 순수 함수
+  // 테스트에만 남는다.
+  function coreShield(milestones: number): number {
+    const state = coreRoomWorld(1, coreAnd(900, [guardianM(GUARDIAN_TITAN, 350, 0, { combatScore: 300, milestones })]));
+    return state.entities.find((e) => e.kind === 'core')!.targetY;
   }
 
-  it('해금 시 방어전 시작에 코어·포탑에 전투력 비례 실드 부여', () => {
-    const withMs = coreAndTurretShields(MILESTONE_SHIELD_SHARE);
-    // 풀 = 수호 실효 HP. 코어/포탑 몫이 각각 bp 비율(내림).
+  it('해금 시 방어전 시작에 코어에 전투력 비례 실드 부여', () => {
+    // 풀 = 수호 실효 HP. 코어 몫이 bp 비율(내림).
     const pool = resolveGuardianStats(makeGuardianSnapshot(GUARDIAN_TITAN, 300), PERFORMANCE_FULL, 0).hp;
-    expect(withMs.core).toBe(shieldShareHp(pool, SHIELD_SHARE_CORE_BP));
-    expect(withMs.turret).toBe(shieldShareHp(pool, SHIELD_SHARE_TURRET_BP));
-    expect(withMs.core).toBeGreaterThan(0);
+    const withMs = coreShield(MILESTONE_SHIELD_SHARE);
+    expect(withMs).toBe(shieldShareHp(pool, SHIELD_SHARE_CORE_BP));
+    expect(withMs).toBeGreaterThan(0);
   });
 
   it('미해금이면 실드 없음(targetY=0 — 기존 거동 불변)', () => {
-    const noMs = coreAndTurretShields(0);
-    expect(noMs.core).toBe(0);
-    expect(noMs.turret).toBe(0);
+    expect(coreShield(0)).toBe(0);
   });
 
   it('실드가 코어 피해를 흡수한다(코어 HP 손실 감소)', () => {
     // 플레이어 앞(원점 +x)에 코어를 두고 자동 사격. 수호는 멀리 둬 플레이어를 방해하지 않게 한다
     // (실드 풀은 여전히 부여). 고정 틱 후 남은 코어 HP 를 비교 — 실드가 있으면 HP 손실이 적다.
     function coreHpAfter(milestones: number): { hp: number; shield: number } {
-      const layout: DefenseLayout = {
-        core: { x: 220, y: 0 },
-        turrets: [],
-        obstacles: [],
-        // 수호는 원거리(플레이어 사거리 밖)에 둬 사격·추적 간섭을 배제하되 실드 풀은 제공.
-        guardians: [guardianM(GUARDIAN_TITAN, 100000, 100000, { combatScore: 300, milestones })],
-      };
-      const state = createWorld(5, invasionConfig(layout));
+      // 수호는 원거리(플레이어 사거리 밖)에 둬 사격·추적 간섭을 배제하되 실드 풀은 제공.
+      const state = coreRoomWorld(
+        5,
+        coreAnd(220, [guardianM(GUARDIAN_TITAN, 100000, 100000, { combatScore: 300, milestones })]),
+      );
       for (let i = 0; i < 400; i++) {
         if (countKind(state, 'core') === 0) break;
         stepWorld(state, idle);
@@ -327,7 +333,7 @@ describe('마일스톤 ③ 실드 공유', () => {
     const withShield = coreHpAfter(MILESTONE_SHIELD_SHARE);
     const noShield = coreHpAfter(0);
     // 실드 없는 코어는 400틱 동안 HP 가 깎였다(플레이어 사격이 코어에 실제로 닿음).
-    expect(noShield.hp).toBeLessThan(3000);
+    expect(noShield.hp).toBeLessThan(INVASION_CORE_HP);
     // 실드가 피해 일부를 흡수해 실드분만큼 코어 HP 손실이 적다.
     expect(withShield.hp).toBeGreaterThan(noShield.hp);
     expect(withShield.shield).toBeGreaterThanOrEqual(0);
@@ -346,55 +352,53 @@ describe('마일스톤 — 결정론 + 하위 호환', () => {
     return out;
   }
 
-  it('모든 마일스톤 해금 config 2회 재실행 → 틱별 해시 스트림 100% 일치', () => {
-    const layout: DefenseLayout = {
-      core: { x: 700, y: 0 },
-      turrets: [{ type: TURRET_VULCAN, x: 500, y: 0 }],
-      obstacles: [],
-      guardians: [
-        guardianM(GUARDIAN_TITAN, 640, -60, { combatScore: 200, lineageBonusBp: 1200, milestones: MILESTONE_MASK_ALL }),
-        guardianM(GUARDIAN_INTERCEPTOR, 660, 80, { combatScore: 120, milestones: MILESTONE_MASK_ALL }),
-      ],
-    };
-    const replay: Replay = { seed: 7, config: invasionConfig(layout), inputs: busyInputs(500) };
-    const a = runReplay(replay);
-    const b = runReplay(replay);
-    expect(a.hashes).toEqual(b.hashes);
-    expect(a.finalHash).toBe(b.finalHash);
+  /**
+   * L3 코어방에서 `inputs` 를 소화하며 매 틱 hashWorld 를 모은다.
+   *
+   * 구 판은 `runReplay` 로 해시 스트림을 얻었지만, 3레이어 런은 **L1 대기권에서 시작**해
+   * 코어방까지 1만 틱 넘게 걸린다 — 수백 틱짜리 리플레이로는 수호가 스폰조차 되지 않아
+   * 마일스톤 거동이 해시에 실리지 않는다(설정 폴드만 갈리는 공허한 대조가 된다). 그래서
+   * 위 단위 케이스들과 같은 `coreRoomWorld` 규약으로 코어방에서 직접 굴린다.
+   */
+  function coreRoomHashes(seed: number, layers: InvasionLayers, inputs: InputFrame[]): number[] {
+    const w = coreRoomWorld(seed, layers);
+    const out: number[] = [];
+    for (const f of inputs) {
+      stepWorld(w, f);
+      out.push(hashWorld(w));
+    }
+    return out;
+  }
+
+  it('모든 마일스톤 해금 배치 2회 재실행 → 틱별 해시 스트림 100% 일치', () => {
+    const layers = coreAnd(700, [
+      guardianM(GUARDIAN_TITAN, 640, -60, { combatScore: 200, lineageBonusBp: 1200, milestones: MILESTONE_MASK_ALL }),
+      guardianM(GUARDIAN_INTERCEPTOR, 660, 80, { combatScore: 120, milestones: MILESTONE_MASK_ALL }),
+    ]);
+    const inputs = busyInputs(500);
+    const a = coreRoomHashes(7, layers, inputs);
+    const b = coreRoomHashes(7, layers, inputs);
+    expect(a).toEqual(b);
+    expect(a[a.length - 1]).toBe(b[b.length - 1]);
   });
 
   it('milestones=0 == 필드 미지정: 해시 스트림 완전 일치(하위 호환)', () => {
-    const base: DefenseLayout = {
-      core: { x: 900, y: 0 },
-      turrets: [{ type: TURRET_VULCAN, x: 500, y: 0 }],
-      obstacles: [],
-      guardians: [guardianM(GUARDIAN_TITAN, 350, 0, { combatScore: 140 })], // milestones 미지정
-    };
-    const withZero: DefenseLayout = {
-      ...base,
-      guardians: [guardianM(GUARDIAN_TITAN, 350, 0, { combatScore: 140, milestones: 0 })],
-    };
+    // 미지정은 정규화가 0 으로 접는다 — 설정 폴드도 거동도 완전히 같아야 한다.
+    const base = coreAnd(900, [guardianM(GUARDIAN_TITAN, 350, 0, { combatScore: 140 })]); // milestones 미지정
+    const withZero = coreAnd(900, [guardianM(GUARDIAN_TITAN, 350, 0, { combatScore: 140, milestones: 0 })]);
     const inputs = busyInputs(300);
-    const omitted = runReplay({ seed: 7, config: invasionConfig(base), inputs });
-    const zero = runReplay({ seed: 7, config: invasionConfig(withZero), inputs });
-    expect(omitted.hashes).toEqual(zero.hashes);
+    expect(coreRoomHashes(7, base, inputs)).toEqual(coreRoomHashes(7, withZero, inputs));
   });
 
   it('마일스톤 해금 시 해시가 미해금 대비 발산한다(실제 반영)', () => {
-    const noMs: DefenseLayout = {
-      core: { x: 700, y: 0 },
-      turrets: [{ type: TURRET_VULCAN, x: 500, y: 0 }],
-      obstacles: [],
-      guardians: [guardianM(GUARDIAN_TITAN, 640, 0, { combatScore: 200, milestones: 0 })],
-    };
-    const withMs: DefenseLayout = {
-      ...noMs,
-      guardians: [guardianM(GUARDIAN_TITAN, 640, 0, { combatScore: 200, milestones: MILESTONE_MASK_ALL })],
-    };
+    const noMs = coreAnd(700, [guardianM(GUARDIAN_TITAN, 640, 0, { combatScore: 200, milestones: 0 })]);
+    const withMs = coreAnd(700, [
+      guardianM(GUARDIAN_TITAN, 640, 0, { combatScore: 200, milestones: MILESTONE_MASK_ALL }),
+    ]);
     const inputs = busyInputs(400);
-    const a = runReplay({ seed: 7, config: invasionConfig(noMs), inputs });
-    const b = runReplay({ seed: 7, config: invasionConfig(withMs), inputs });
-    expect(a.finalHash).not.toBe(b.finalHash);
+    const a = coreRoomHashes(7, noMs, inputs);
+    const b = coreRoomHashes(7, withMs, inputs);
+    expect(a[a.length - 1]).not.toBe(b[b.length - 1]);
   });
 });
 

@@ -27,9 +27,8 @@ import { t } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { stickerLabel } from '../../../data/stickers.js';
 import { seedBaseByProfileId } from '../../../data/seedBases.js';
-import type { CardInstance } from '../../../data/defenseCards.js';
-import { cardRarityColor, cardRarityLabel, cardAffixOneLine } from '../cardsView.js';
-import { GRID_COLS, GRID_ROWS, normalizeLayout } from '../defenseCommand.js';
+import type { ModuleInstance } from '../../../data/coreModules.js';
+import { moduleRarityColor, moduleRarityLabel, moduleAffixOneLine } from '../modulesView.js';
 import {
   fetchInvasionTargets,
   fetchPlacementStatus,
@@ -66,11 +65,14 @@ import {
   incomingBannerText,
   incomingRowText,
   resultBannerText,
-  previewCells,
+  reconView,
+  reconRarityColor,
+  reconSlotLabel,
+  normalizeTargetLayers,
+  type ReconStrip,
   type ControlTowerCallbacks,
   type ControlTowerShowOpts,
   type InvasionResultView,
-  type PreviewCell,
 } from '../controlTower.js';
 import { COLOR, UI_FONT, TEXT_SHADOW, hexColor } from './theme.js';
 import { loadUiTextures, stickerIconName, type UiTextures } from './uiTextures.js';
@@ -81,17 +83,6 @@ import { makeBanner, makeIconButton } from './titleBar.js';
 import { stripEmoji } from './text.js';
 
 export type { ControlTowerCallbacks, ControlTowerShowOpts, InvasionResultView };
-
-/**
- * 정찰 격자 글리프 → 도형. `previewCells`(DOM 판의 검증된 좌표 로직)가 돌려주는 이모지는
- * 캔버스에서 흑백 두부로 떨어지므로(스킬 §6 · 롤아웃 #3 교훈) 표시만 도형으로 바꾼다.
- * 표에 없는 글리프(포탑 6종·미지)는 전부 원(포탑)으로 그린다.
- */
-const GLYPH_SHAPE: Record<string, 'core' | 'obstacle' | 'spawn'> = {
-  '💠': 'core',
-  '🧱': 'obstacle',
-  '▲': 'spawn',
-};
 
 /** 열려 있는 팝업 종류(없으면 null). */
 type ModalKind = 'ladder' | 'alerts' | 'history';
@@ -123,6 +114,18 @@ const COLS_3 = { targets: 640, recon: 700, revenge: 436 } as const;
 /** 패널 제목(26px) 아래에서 본문이 시작한다 — 상자 top(60) + 58. */
 const CONTENT_TOP = 118;
 
+// 기지 정찰 — 레이어별 슬롯 칩(실루엣·등급 색·승급 별).
+/** 요약 한 줄이 차지하는 높이(다음 줄 시작선). */
+const RECON_SUMMARY_H = 52;
+/** 슬롯 칩 한 변. */
+const RECON_CHIP = 38;
+/** 칩 사이 여백(폭이 모자라면 자동으로 줄어든다). */
+const RECON_GAP = 10;
+/** 레이어 라벨(L1/L2/L3) 열 폭. */
+const RECON_TAG_W = 46;
+/** 한 줄 전체 높이(칩 + 승급 별 + 줄 간격). */
+const RECON_ROW_H = RECON_CHIP + 26;
+
 // 알림 버튼(우상단).
 const ALERT_BTN_W = 240;
 const ALERT_BTN_H = 56;
@@ -146,10 +149,6 @@ const REV_ROW_GAP = 8;
 const SEG_W = 56;
 const SEG_H = 12;
 const SEG_GAP = 8;
-
-// 정찰 격자.
-const RECON_CELL_MAX = 44;
-const RECON_CELL_GAP = 3;
 
 // 하단 버튼 행.
 const FOOT_Y = 980;
@@ -808,9 +807,11 @@ export class ControlTowerScreen {
   private renderStatusPanel(): number {
     const result = this.opts.result;
     const verifying = this.opts.verifying === true;
-    const revealCard = result !== undefined ? (this.opts.revealCard ?? null) : null;
+    const revealModules = result !== undefined ? (this.opts.revealModules ?? []) : [];
     const placementBlock = this.placementBlock();
-    if (result === undefined && !verifying && revealCard === null && placementBlock === null) return 0;
+    if (result === undefined && !verifying && revealModules.length === 0 && placementBlock === null) {
+      return 0;
+    }
 
     const box = panelContent(BOARD_W, STATUS_MIN_H);
     const content = new Container();
@@ -844,8 +845,8 @@ export class ControlTowerScreen {
     if (placementBlock !== null) {
       y = placementBlock(content, box, y);
     }
-    if (revealCard !== null) {
-      y = this.renderRevealLines(content, box, y, revealCard);
+    for (const mod of revealModules) {
+      y = this.renderRevealLines(content, box, y, mod);
     }
 
     // 아래 여백은 위와 **대칭**이어야 한다(box.y = border + pad). 실제 콘텐츠 바닥을 재서
@@ -867,12 +868,12 @@ export class ControlTowerScreen {
     return view.status === 'verified' && view.attackerWon ? COLOR.gold : 0xffb0a0;
   }
 
-  /** 상대 방어 카드 정찰 공개(스펙 R9) 3줄. 다음 y 를 돌려준다. */
+  /** 상대 코어 모듈 정찰 공개(스펙 R9) 3줄 — 장착 모듈 1개분. 다음 y 를 돌려준다. */
   private renderRevealLines(
     content: Container,
     box: PanelContentBox,
     y0: number,
-    card: CardInstance,
+    mod: ModuleInstance,
   ): number {
     let y = y0;
     const put = (text: string, size: number, color: number, weight: '400' | '700' | '800'): void => {
@@ -893,15 +894,15 @@ export class ControlTowerScreen {
       content.addChild(el);
       y += el.height + 4;
     };
-    // '🃏 상대 방어 카드' 의 컬러 이모지는 캔버스에서 두부가 된다.
-    put(stripEmoji(t('card.reveal.head')), 18, COLOR.muted, '700');
+    // 컬러 이모지는 캔버스에서 두부가 된다(문구 자체에도 넣지 않지만 방어적으로 벗긴다).
+    put(stripEmoji(t('mod.reveal.head')), 18, COLOR.muted, '700');
     put(
-      `${t('card.reveal.grade', { rarity: cardRarityLabel(card.rarity) })} · ${t('card.reveal.charges', { n: card.chargesLeft })}`,
+      `${t('mod.reveal.grade', { rarity: moduleRarityLabel(mod.rarity) })} · ${t('mod.reveal.charges', { n: mod.chargesLeft })}`,
       20,
-      hexColor(cardRarityColor(card.rarity)),
+      hexColor(moduleRarityColor(mod.rarity)),
       '800',
     );
-    put(cardAffixOneLine(card), 16, COLOR.muted, '400');
+    put(moduleAffixOneLine(mod), 16, COLOR.muted, '400');
     return y + 4;
   }
 
@@ -1151,86 +1152,66 @@ export class ControlTowerScreen {
       this.msg(panel, box, t('ctl.recon.selectPrompt'));
       return;
     }
-    const layout = normalizeLayout(target.layout);
-    if (layout === null) {
+    const layers = normalizeTargetLayers(target.layout);
+    if (layers === null) {
       this.msg(panel, box, t('ctl.recon.noBase'));
       return;
     }
 
-    // 요약 한 줄 자리를 남기고 남은 상자 안에 격자를 정확히 맞춘다(상자 밖 침범 0).
-    // 칸 크기는 폭·높이 양쪽에서 뽑아 작은 쪽을 쓴다 — 열이 좁아져도 격자가 상자를 넘지 않는다.
-    const summaryH = 40;
-    const availH = box.bottom - summaryH - CONTENT_TOP;
-    const cellFromH = Math.floor((availH + RECON_CELL_GAP) / GRID_ROWS) - RECON_CELL_GAP;
-    const cellFromW = Math.floor((box.w + RECON_CELL_GAP) / GRID_COLS) - RECON_CELL_GAP;
-    const cell = Math.max(8, Math.min(RECON_CELL_MAX, cellFromH, cellFromW));
-    const gridW = GRID_COLS * (cell + RECON_CELL_GAP) - RECON_CELL_GAP;
-    const gridH = GRID_ROWS * (cell + RECON_CELL_GAP) - RECON_CELL_GAP;
-    const gridX = box.x + Math.floor((box.w - gridW) / 2);
-    // 격자 + 요약을 한 덩어리로 묶어 세로 가운데 정렬한다(요약만 바닥에 떨어지면 따로 논다).
-    const gridY = CONTENT_TOP + Math.floor((availH - gridH) / 2);
+    // 3레이어 정찰(M7b-acquisition · 결정 #15). 15×9 미니 격자는 M7a 에서 사라졌다 —
+    // 3레이어(종스크롤 → 횡스크롤 → 코어방)에는 격자 좌표계 자체가 없다. 대신 레이어별
+    // **실루엣 칩 · 등급 색 · 승급 별**만 낸다. 정확 스펙(레벨·어픽스)은 뷰 모델에 필드가
+    // 없어 여기서 흘릴 방법이 아예 없고, 종류 이름은 1회 침공한 상대만 열린다.
+    const view = reconView(layers, this.cooldowns[target.profileId] !== undefined);
+    this.msg(panel, box, view.summary, CONTENT_TOP);
 
-    const occupied = new Map<string, PreviewCell>();
-    for (const c of previewCells(layout)) occupied.set(`${c.col},${c.row}`, c);
-
-    const grid = new Container();
-    grid.position.set(gridX, gridY);
-    panel.addChild(grid);
-    for (let row = 0; row < GRID_ROWS; row++) {
-      for (let col = 0; col < GRID_COLS; col++) {
-        const pc = occupied.get(`${col},${row}`);
-        const c = this.makeReconCell(cell, pc);
-        c.position.set(col * (cell + RECON_CELL_GAP), row * (cell + RECON_CELL_GAP));
-        grid.addChild(c);
-      }
+    let cursor = CONTENT_TOP + RECON_SUMMARY_H;
+    for (const strip of view.strips) {
+      if (cursor + RECON_ROW_H > box.bottom) break;
+      const row = this.makeReconStrip(strip, box.w);
+      row.position.set(box.x, cursor);
+      panel.addChild(row);
+      cursor += RECON_ROW_H;
     }
-
-    const sum = this.label(
-      t('ctl.recon.summary', { t: layout.turrets.length, o: layout.obstacles.length }),
-      17,
-      COLOR.muted,
-      '400',
-      box.w,
-    );
-    sum.anchor.set(0.5, 0);
-    sum.position.set(box.x + box.w / 2, Math.min(gridY + gridH + 16, box.bottom - 22));
-    panel.addChild(sum);
   }
 
-  /** 정찰 격자 한 칸(도형 + hover 라벨 툴팁). DOM 판의 `title` 속성 툴팁과 같은 정보다. */
-  private makeReconCell(size: number, pc: PreviewCell | undefined): Container {
-    const cellRoot = new Container();
-    const spawn = pc?.spawn === true;
-    const bg = new Graphics();
-    bg.roundRect(0, 0, size, size, 3).fill({ color: spawn ? 0x4a3a1e : 0x2a2440, alpha: 0.9 });
-    cellRoot.addChild(bg);
-    if (pc === undefined) return cellRoot;
+  /** 정찰 한 줄 — 레이어 라벨 + 슬롯 칩(등급 색 채움 · 승급 별 · 잠금이면 '?'). */
+  private makeReconStrip(strip: ReconStrip, w: number): Container {
+    const row = new Container();
+    // 레이어 번호는 코드 라벨이라 번역 대상이 아니다(L1/L2/L3).
+    const tag = this.label(`L${strip.layer}`, 18, COLOR.muted, '800');
+    tag.position.set(0, (RECON_CHIP - 18) / 2);
+    row.addChild(tag);
 
-    const color = hexColor(pc.accent);
-    const c = size / 2;
-    const r = size * 0.3;
-    const shape = GLYPH_SHAPE[pc.glyph] ?? 'turret';
-    const g = new Graphics();
-    if (shape === 'core') {
-      g.poly([c, c - r, c + r, c, c, c + r, c - r, c]).fill({ color });
-    } else if (shape === 'obstacle') {
-      g.roundRect(c - r, c - r, r * 2, r * 2, 2).fill({ color });
-    } else if (shape === 'spawn') {
-      g.poly([c, c - r, c + r, c + r, c - r, c + r]).fill({ color });
-    } else {
-      g.circle(c, c, r).fill({ color });
-    }
-    cellRoot.addChild(g);
+    const x0 = RECON_TAG_W;
+    // 소켓이 12개까지 늘어나므로 남는 폭에 맞춰 칸 간격을 줄인다(넘치면 잘리는 대신 좁아진다).
+    const avail = Math.max(RECON_CHIP, w - x0);
+    const step = Math.min(RECON_CHIP + RECON_GAP, strip.slots.length > 0 ? avail / strip.slots.length : avail);
 
-    const label = pc.label;
-    cellRoot.eventMode = 'static';
-    cellRoot.on('pointerover', (e) => {
-      const p = this.root.toLocal({ x: e.global.x, y: e.global.y });
-      this.tooltip.show({ title: label, titleColor: color, subtitle: '', lines: [] }, p.x, p.y, color);
-      this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
+    strip.slots.forEach((slot, i) => {
+      const g = new Graphics();
+      if (slot.occupied) {
+        g.roundRect(0, 0, RECON_CHIP, RECON_CHIP, 6).fill({ color: hexColor(reconRarityColor(slot.rarity)) });
+      } else {
+        g.roundRect(0, 0, RECON_CHIP, RECON_CHIP, 6).stroke({ color: 0x5a4a34, width: 2 });
+      }
+      g.position.set(x0 + i * step, 0);
+      row.addChild(g);
+      if (!slot.occupied) return;
+
+      // 실루엣 글리프: 해금이면 이름 첫 글자, 잠금이면 '?'. 정확 스펙은 어느 쪽이든 안 낸다.
+      const glyph = this.label(reconSlotLabel(slot).slice(0, 1), 18, COLOR.darkLabel, '800');
+      glyph.position.set(x0 + i * step + (RECON_CHIP - glyph.width) / 2, (RECON_CHIP - 20) / 2);
+      row.addChild(glyph);
+
+      if (slot.ascension > 0) {
+        // 승급 별은 채워진 개수만 작게 얹는다(빈 별까지 그리면 칩이 뭉갠다).
+        const stars = this.label('★'.repeat(Math.min(slot.ascension, 5)), 11, COLOR.gold, '800', RECON_CHIP);
+        stars.position.set(x0 + i * step, RECON_CHIP - 2);
+        row.addChild(stars);
+      }
     });
-    cellRoot.on('pointerout', () => this.tooltip.hide());
-    return cellRoot;
+    return row;
   }
 
   // --- 복수전 -------------------------------------------------------------

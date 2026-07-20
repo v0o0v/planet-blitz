@@ -10,6 +10,7 @@
 import type { WorldState } from './world.js';
 import type { EntityKind } from './entities.js';
 import { eliteAffix } from './elite.js';
+import { windowCenterX, windowCenterY } from './invasion/scroll.js';
 
 export interface EntitySnapshot {
   id: number;
@@ -75,9 +76,14 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
   const entities: EntitySnapshot[] = [];
   const beams: Beam[] = [];
   // Camera tracks the player (entity at index 0); origin if it is somehow absent.
+  //
+  // 침공 3레이어(M7a)만 예외다: 강제 스크롤에서는 화면이 플레이어와 무관하게 밀려나가고,
+  // 창 위치가 sim 권위 상태(state.invasion3)로 존재한다. 그때는 파생이 아니라 **sim 이
+  // 정한 창 중심**을 그대로 카메라로 쓴다. 그 외 런은 runtime 미존재 → 기존 파생 그대로다.
   const player = state.entities[0];
-  const cameraX = player?.x ?? 0;
-  const cameraY = player?.y ?? 0;
+  const inv3 = state.invasion3;
+  const cameraX = inv3 !== undefined ? windowCenterX(inv3) : (player?.x ?? 0);
+  const cameraY = inv3 !== undefined ? windowCenterY(inv3) : (player?.y ?? 0);
   for (const e of state.entities) {
     entities.push({
       id: e.id,

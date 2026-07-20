@@ -23,6 +23,13 @@ import { NIFLHEIM_ROSTER, NIFLHEIM_ELITES, NIFLHEIM_CARD_POOL } from './niflheim
 import { NIFLHEIM_FLAGSHIP } from '../bosses/niflheim-flagship.js';
 import { ARKE_ROSTER, ARKE_ELITES, ARKE_CARD_POOL } from './arke.js';
 import { ARKE_OBELISK } from '../bosses/arke-obelisk.js';
+import {
+  blueprintTableSize,
+  resolveBlueprintDrop,
+  mergeBlueprintGrants,
+  type BlueprintGrant,
+} from './blueprints.js';
+import { rollBlueprintDrop } from '../../src/sim/drops.js';
 
 /** 행성×티어 드랍 rarity 기준 확률(src/sim/drops.ts가 소비). */
 export interface PlanetDropTable {
@@ -32,6 +39,13 @@ export interface PlanetDropTable {
   readonly eliteUniqueBase: number;
   /** 보스 유니크 기본 확률(나머지는 레어 확정). */
   readonly bossUniqueBase: number;
+  /**
+   * 행성 특산 설계도 테이블 크기(M7b-acquisition — **기존 3행 뒤에 append**). 값은 항상
+   * `blueprintTableSize(index)` 에서 가져온다(하드코딩하면 목록과 갈린다).
+   */
+  readonly blueprintTableSize?: number;
+  /** 등급 코드별 설계도 동반 확률(centi-percent). 미지정이면 sim 기본표. */
+  readonly blueprintChanceCp?: readonly number[];
 }
 
 /** 행성 특산 광물(분해 환산·상점 재료). 데이터 id·이름만 고정. */
@@ -68,7 +82,13 @@ export const KARGON: PlanetContent = {
   cardPool: CARD_POOL,
   boss: LAVA_FORTRESS,
   // 카르곤 드랍 기준값 = src/sim/drops.ts 기존 상수(정합). 변경 시 함께 유지.
-  dropTable: { eliteRareBase: 0.25, eliteUniqueBase: 0.03, bossUniqueBase: 0.15 },
+  dropTable: {
+    eliteRareBase: 0.25,
+    eliteUniqueBase: 0.03,
+    bossUniqueBase: 0.15,
+    blueprintTableSize: blueprintTableSize(0),
+    blueprintChanceCp: [0, 0, 500, 2000],
+  },
   minerals: [
     { id: 'kargon-obsidian', name: '흑요석 파편' },
     { id: 'kargon-magmite', name: '용암정' },
@@ -85,7 +105,13 @@ export const BERDAN: PlanetContent = {
   cardPool: BERDAN_CARD_POOL,
   boss: BERDAN_QUEEN,
   // 물량 행성: 레어는 카르곤과 비슷하되 유니크가 살짝 후하다(파밍 유인).
-  dropTable: { eliteRareBase: 0.27, eliteUniqueBase: 0.04, bossUniqueBase: 0.18 },
+  dropTable: {
+    eliteRareBase: 0.27,
+    eliteUniqueBase: 0.04,
+    bossUniqueBase: 0.18,
+    blueprintTableSize: blueprintTableSize(1),
+    blueprintChanceCp: [0, 0, 600, 2200],
+  },
   minerals: [
     { id: 'berdan-chitin', name: '경화 키틴' },
     { id: 'berdan-royal-jelly', name: '여왕 젤리' },
@@ -102,7 +128,13 @@ export const NIFLHEIM: PlanetContent = {
   cardPool: NIFLHEIM_CARD_POOL,
   boss: NIFLHEIM_FLAGSHIP,
   // 서리 행성: 레어는 베르단과 비슷하되 유니크가 살짝 더 후하다(심층 파밍 유인).
-  dropTable: { eliteRareBase: 0.28, eliteUniqueBase: 0.05, bossUniqueBase: 0.2 },
+  dropTable: {
+    eliteRareBase: 0.28,
+    eliteUniqueBase: 0.05,
+    bossUniqueBase: 0.2,
+    blueprintTableSize: blueprintTableSize(2),
+    blueprintChanceCp: [0, 0, 700, 2400],
+  },
   minerals: [
     { id: 'niflheim-rime-crystal', name: '서리 결정' },
     { id: 'niflheim-ghost-alloy', name: '유령 합금' },
@@ -119,7 +151,13 @@ export const ARKE: PlanetContent = {
   cardPool: ARKE_CARD_POOL,
   boss: ARKE_OBELISK,
   // 심층 행성: 최고 난도인 만큼 레어·유니크 확률이 가장 높다.
-  dropTable: { eliteRareBase: 0.3, eliteUniqueBase: 0.06, bossUniqueBase: 0.22 },
+  dropTable: {
+    eliteRareBase: 0.3,
+    eliteUniqueBase: 0.06,
+    bossUniqueBase: 0.22,
+    blueprintTableSize: blueprintTableSize(3),
+    blueprintChanceCp: [0, 0, 800, 2600],
+  },
   minerals: [
     { id: 'arke-ancient-core', name: '고대 코어' },
     { id: 'arke-relic-plating', name: '유물 장갑판' },
@@ -132,4 +170,34 @@ export const PLANETS: readonly PlanetContent[] = [KARGON, BERDAN, NIFLHEIM, ARKE
 /** planet index → 콘텐츠. 범위를 벗어나면 카르곤(0)으로 안전 폴백. */
 export function planetContent(index: number | undefined): PlanetContent {
   return PLANETS[index ?? 0] ?? KARGON;
+}
+
+// ---------------------------------------------------------------------------
+// 설계도 드랍 — 정산 입력 (M7b-acquisition)
+// ---------------------------------------------------------------------------
+
+/** {@link blueprintDropsFromLoot} 입력 — `LootRecord` 의 부분집합(sim 타입 의존 없음). */
+export interface LootLike {
+  readonly seed: number;
+  readonly rarity: number;
+  readonly planet: number;
+}
+
+/**
+ * 런이 수거한 장비 드랍 목록 → 동반 설계도 목록(순수).
+ *
+ * 정산이 `LootRecord` 를 장비로 확정하는 것과 **같은 입력**에서 파생한다 — 설계도용 추가
+ * RNG 소비도, `LootRecord` 스키마 확장도 없다(그래서 해시·fixture 가 그대로다). 판정은
+ * 드랍이 난 행성의 특산 테이블로 하므로 "이 방어체는 이 행성" 규칙이 자동으로 지켜진다.
+ */
+export function blueprintDropsFromLoot(loot: readonly LootLike[]): BlueprintGrant[] {
+  const grants: BlueprintGrant[] = [];
+  for (const rec of loot) {
+    const odds = planetContent(rec.planet).dropTable;
+    const code = rollBlueprintDrop({ seed: rec.seed, rarityCode: rec.rarity }, odds);
+    if (code === null) continue;
+    const grant = resolveBlueprintDrop(rec.planet, code);
+    if (grant !== null) grants.push(grant);
+  }
+  return mergeBlueprintGrants(grants);
 }

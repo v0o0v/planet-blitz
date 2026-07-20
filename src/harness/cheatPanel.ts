@@ -22,6 +22,9 @@
  */
 
 import type { Harness, HarnessScreen } from './core.js';
+import { INVASION_PRESET_KINDS } from './presets.js';
+import type { InvasionPresetKind } from './presets.js';
+import { MAINTENANCE_FULL } from '../sim/invasion/guardian.js';
 import type { EntitySnapshot } from '../sim/snapshot.js';
 import { xpToNext } from '../sim/world.js';
 import { spawnLoot } from '../sim/entities.js';
@@ -101,10 +104,11 @@ const TIER_NAMES: readonly string[] = ['정찰', '교전', '섬멸'];
 const NORMAL_SEGMENTS = SEGMENTS.length - 1;
 
 /** 씬 탭 id — 패널은 씬 단위로 테스트 도구를 묶는다. */
-type SceneTab = 'run' | 'boss' | 'fx' | 'result' | 'menus' | 'guardian' | 'inspect';
+type SceneTab = 'run' | 'invasion' | 'boss' | 'fx' | 'result' | 'menus' | 'guardian' | 'inspect';
 /** 씬 탭 정의(표시 순서). */
 const SCENE_TABS: readonly { id: SceneTab; label: string }[] = [
   { id: 'run', label: '런' },
+  { id: 'invasion', label: '침공' },
   { id: 'boss', label: '보스전' },
   { id: 'fx', label: '연출' },
   { id: 'result', label: '정산' },
@@ -209,6 +213,10 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   // 씬 탭 선택 — 자동 갱신 재렌더를 넘어 보존(클로저 상태). 한 번에 한 씬의 도구만
   // 보여주는 씬 중심 레이아웃의 축.
   let activeTab: SceneTab = 'run';
+  // 침공 탭 입력값(250ms 자동 재렌더를 넘어 보존되는 클로저 상태).
+  let invasionPreset: InvasionPresetKind = 'def3-mid';
+  /** 침공 시작 시 걸 정비도(centi-percent). 100% = 완전 정비. */
+  let invasionMaintCP: number = MAINTENANCE_FULL;
   // 런 식별 추적: 새 런이 시작되면 런 스코프 치트 상태(무적)를 리셋한다.
   // 무적은 일회성 world 변형이라 런을 넘어가면 실제 효과가 없는데 UI만 ON으로
   // 남고, OFF 시 이전 런의 savedMaxHp를 새 런에 덮어쓰는 desync가 생긴다(리뷰 LOW).
@@ -335,6 +343,24 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     });
     handOver();
     setHint('보스전 (오염)');
+  }
+
+  /**
+   * 침공 3레이어 무대(M7a L8). 배치 프리셋을 **런 시작 전에** 걸어 비오염 런을 세운다
+   * (프리셋을 런 중에 걸면 harness.preset 이 오염시킨다 — 시작 전에 거는 것이 규율).
+   * 레이어를 2·3 으로 지정하면 그 점프만 오염이다.
+   */
+  function sceneInvasion(layer: 1 | 2 | 3): void {
+    const seed = readSeedOpt();
+    harness.startInvasion({
+      preset: invasionPreset,
+      maintenance: invasionMaintCP,
+      layer,
+      ...(seed !== undefined ? { seed } : {}),
+    });
+    handOver();
+    const tail = layer === 1 ? '비오염' : `L${layer} 점프 · 오염`;
+    setHint(`침공 ${invasionPreset} · 정비도 ${invasionMaintCP / 100}% (${tail})`);
   }
 
   /** 튜토리얼 무대: 정식 튜토리얼 흐름(고정 시드 + 힌트 오버레이 + FTUE, 비오염). */
@@ -586,6 +612,9 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         case 'run':
           buildRunTab(pane);
           break;
+        case 'invasion':
+          buildInvasionTab(pane);
+          break;
         case 'boss':
           buildBossTab(pane);
           break;
@@ -702,6 +731,90 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         segRow.appendChild(btn(String(n), () => sceneSegment(n), `세그먼트 ${n} 전투로 점프`));
       }
       s.appendChild(segRow);
+
+      appendCombatCheats(s);
+      appendLiveStatusLine(s);
+    }
+
+    /**
+     * 침공 탭(M7a L8): 3레이어 침공 런 진입 + 레이어 점프 + 레이어 상태 라인.
+     * 배치 프리셋·정비도가 방어 측 입력이고, 시드 핀은 런 재현용이다(행성·티어는 무의미).
+     */
+    function buildInvasionTab(s: HTMLElement): void {
+      // 시드 핀만 재사용한다(행성·티어는 침공에 의미가 없어 셀렉트를 따로 두지 않는다).
+      const cfgRow = document.createElement('div');
+      cfgRow.className = 'pb-c-row';
+      const seedIn = document.createElement('input');
+      seedIn.type = 'text';
+      seedIn.placeholder = 'seed(빈=랜덤)';
+      seedIn.value = seedStr;
+      seedIn.title = '시드를 고정하면 침공 런이 재현 가능해집니다(핀). 빈 값은 랜덤.';
+      seedIn.addEventListener('input', () => {
+        seedStr = seedIn.value;
+      });
+      const presetSel = document.createElement('select');
+      for (const k of INVASION_PRESET_KINDS) {
+        const o = document.createElement('option');
+        o.value = k;
+        o.textContent = k;
+        if (k === invasionPreset) o.selected = true;
+        presetSel.appendChild(o);
+      }
+      presetSel.title =
+        'def3-empty = 전 슬롯 비움(기본 수비대 충원) · def3-mid = 절반 배치 · def3-maxed = 만렙 전 슬롯';
+      presetSel.addEventListener('change', () => {
+        const v = INVASION_PRESET_KINDS.find((k) => k === presetSel.value);
+        if (v !== undefined) invasionPreset = v;
+      });
+      const maintIn = numInput(invasionMaintCP / 100, 56);
+      maintIn.title = '방어 정비도(%) — 0%면 설비 발사 간격이 2배(풍화 상한)';
+      maintIn.addEventListener('input', () => {
+        const pct = Number(maintIn.value);
+        if (!Number.isFinite(pct)) return;
+        const cp = Math.round(pct * 100);
+        invasionMaintCP = cp < 0 ? 0 : cp > MAINTENANCE_FULL ? MAINTENANCE_FULL : cp;
+      });
+      const maintLbl = document.createElement('span');
+      maintLbl.className = 'pb-c-lbl';
+      maintLbl.textContent = '정비도%';
+      cfgRow.append(seedIn, presetSel, maintLbl, maintIn);
+      s.appendChild(cfgRow);
+
+      s.appendChild(subLabel('띄우기 (클릭 → 직접 조작)'));
+      const playRow = document.createElement('div');
+      playRow.className = 'pb-c-row';
+      playRow.append(
+        btn('▶ 침공 시작 (L1)', () => sceneInvasion(1), '선택한 배치로 3레이어 침공 시작(비오염)', 'play'),
+        btn('L2 회랑부터', () => sceneInvasion(2), 'L2 회랑 돌파로 점프해 시작(오염)'),
+        btn('L3 코어방부터', () => sceneInvasion(3), 'L3 코어방으로 점프해 시작(오염)'),
+      );
+      s.appendChild(playRow);
+
+      s.appendChild(subLabel('라이브 런 레이어 점프 (오염)'));
+      const jumpRow = document.createElement('div');
+      jumpRow.className = 'pb-c-row';
+      const inv = snap.invasion;
+      for (const layer of [2, 3] as const) {
+        const b = btn(`→ L${layer}`, () => {
+          const ok = harness.jumpInvasionLayer(layer);
+          setHint(ok ? `L${layer} 로 점프(오염)` : `L${layer} 로 점프할 수 없습니다`);
+        });
+        if (inv === null || inv.phase >= layer - 1) {
+          b.disabled = true;
+          b.title = inv === null ? '진행 중인 침공 런이 없습니다' : '이미 그 레이어를 지났습니다';
+        }
+        jumpRow.appendChild(b);
+      }
+      s.appendChild(jumpRow);
+
+      const line = document.createElement('div');
+      line.className = 'pb-c-lbl';
+      line.textContent =
+        inv === null
+          ? '진행 중인 침공 런 없음'
+          : `L${inv.phase + 1} · 진입틱 ${inv.phaseEnterTick} · 스크롤 (${inv.scrollX},${inv.scrollY}) · ` +
+            `가속 ${inv.accelCp}cp · 폭탄 ${inv.bombs}`;
+      s.appendChild(line);
 
       appendCombatCheats(s);
       appendLiveStatusLine(s);

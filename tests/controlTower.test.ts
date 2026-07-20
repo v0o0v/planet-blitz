@@ -3,9 +3,9 @@
  *
  * DOM 오버레이가 아니라 표시를 떠받치는 순수 함수를 검증한다:
  *   1) 기체 요약·정비도·쿨다운 라벨 포매팅.
- *   2) computeInvadeState — 배치 없음/쿨다운/가능 분기(+normalizeLayout 연동).
+ *   2) computeInvadeState — 배치 없음/쿨다운/가능 분기(+normalizeTargetLayers 연동).
  *   3) resultBannerText — 서버 권위(제출/미제출·거부·승/패) 문구.
- *   4) previewCells — 방어 배치 → 미니 격자 셀(코어/포탑/장애물/스폰).
+ *   4) normalizeTargetLayers / reconSummary — 3레이어 배치 판별과 정찰 요약(M7a 임시).
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -16,7 +16,8 @@ import {
   formatCooldown,
   computeInvadeState,
   resultBannerText,
-  previewCells,
+  reconSummary,
+  normalizeTargetLayers,
   revengeCardState,
   incomingBannerText,
   incomingRowText,
@@ -29,18 +30,21 @@ import {
   type RevengeTarget,
   type IncomingInvasion,
 } from '../src/net/invasion.js';
-import { SPAWN_COL, SPAWN_ROW, worldToCell, cellToWorld } from '../src/ui/defenseCommand.js';
-import { TURRET_VULCAN, type DefenseLayout } from '../src/sim/defense.js';
+import { emptyInvasionLayers, SAMPLE_REF } from '../src/sim/invasion/normalize.js';
+import type { InvasionLayers } from '../src/sim/invasion/types.js';
 
 // 이 파일은 한국어 표시 문자열을 정확히 검증하므로 로케일을 ko 로 고정한다(i18n 도입 후 정합).
 beforeEach(() => setLocale('ko'));
 afterEach(() => setLocale('en'));
 
-const VALID_LAYOUT: DefenseLayout = {
-  core: { x: 400, y: 0 },
-  turrets: [{ type: TURRET_VULCAN, x: 200, y: 0 }],
-  obstacles: [{ x: 100, y: 120, halfW: 56, halfH: 52 }],
-};
+/** 유효한 3레이어 배치(웨이브 슬롯 1 + 설비 소켓 1). */
+function validLayers(): InvasionLayers {
+  const l = emptyInvasionLayers();
+  l.l1.waveSlots[0] = { ...SAMPLE_REF };
+  l.l2.sockets[0] = { ...SAMPLE_REF };
+  return l;
+}
+const VALID_LAYOUT: InvasionLayers = validLayers();
 
 function target(over: Partial<InvasionTarget> = {}): InvasionTarget {
   return {
@@ -230,21 +234,35 @@ describe('알림 배너·행 문구(순수)', () => {
   });
 });
 
-describe('previewCells — 방어 배치 미니 격자', () => {
-  it('코어·포탑·장애물·스폰 칸을 정확한 위치에 표시', () => {
-    const cells = previewCells(VALID_LAYOUT);
-    const at = (x: number, y: number) => {
-      const c = worldToCell(x, y);
-      return cells.find((p) => p.col === c.col && p.row === c.row);
-    };
-    // 코어(💠), 포탑(🔫=발칸), 장애물(🧱).
-    expect(at(400, 0)?.glyph).toBe('💠');
-    expect(at(200, 0)?.glyph).toBe('🔫');
-    expect(at(100, 120)?.glyph).toBe('🧱');
-    // 스폰 칸(정중앙)은 빈 칸이라도 ▲ 로 표시.
-    const spawnWorld = cellToWorld(SPAWN_COL, SPAWN_ROW);
-    const spawnCell = at(spawnWorld.x, spawnWorld.y);
-    expect(spawnCell?.spawn).toBe(true);
-    expect(spawnCell?.glyph).toBe('▲');
+describe('normalizeTargetLayers — 배치 없음 판별', () => {
+  it('3레이어 꼴이면 정규형을 돌려준다', () => {
+    const l = normalizeTargetLayers(VALID_LAYOUT);
+    expect(l).not.toBeNull();
+    expect(l!.l1.waveSlots[0]).not.toBeNull();
+  });
+
+  it('null·비객체·배열·구 형식(core/turrets/obstacles)은 null', () => {
+    // 구 단일 아레나 배치가 그대로 넘어와도 "기지 있음"으로 오인하면 안 된다 — 3레이어 런이
+    // 빈 배치로 조용히 굴러가 정직한 침공이 무내용이 된다.
+    expect(normalizeTargetLayers(null)).toBeNull();
+    expect(normalizeTargetLayers(42)).toBeNull();
+    expect(normalizeTargetLayers([])).toBeNull();
+    expect(normalizeTargetLayers({ core: { x: 0, y: 0 }, turrets: [], obstacles: [] })).toBeNull();
+    expect(normalizeTargetLayers({ nope: true })).toBeNull();
+  });
+});
+
+describe('reconSummary — 3레이어 정찰 요약(임시 텍스트)', () => {
+  it('레이어별 점유 슬롯 수를 센다', () => {
+    // 편대 1/6 · 설비 1/N · 기물 0/6 · 보스 0.
+    const s = reconSummary(VALID_LAYOUT);
+    expect(s).toContain('편대 1/6');
+    expect(s).toContain('기물 0/6');
+    expect(s).toContain('보스 0');
+  });
+
+  it('정확 스펙(카탈로그 id·레벨)은 노출하지 않는다(정찰 공개 범위 — 결정 #15)', () => {
+    const s = reconSummary(VALID_LAYOUT);
+    expect(s).not.toContain(String(SAMPLE_REF.affixSeed));
   });
 });

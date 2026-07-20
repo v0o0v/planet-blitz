@@ -20,7 +20,7 @@
 import { SAVE_VERSION, SLOT_KINDS, RARITY_BY_CODE } from '../items/types.js';
 import type { Item, EquipSlotId } from '../items/types.js';
 import { SKILLS, SKILL_NODE_COUNT, capstoneUnlocked } from '../../data/skills.js';
-import type { DefenseLayout } from '../sim/defense.js';
+import type { InvasionLayers } from '../sim/invasion/types.js';
 import { emptyLineage } from '../../data/lineage.js';
 import type { LineageState } from '../../data/lineage.js';
 import { normalizeGuardianPreset, normalizePerformance, PERFORMANCE_FULL } from '../../data/guardian.js';
@@ -110,19 +110,16 @@ export interface Profile {
    */
   tutorialDone: boolean;
   /**
-   * 방어 배치 에디터(M4 Phase C3)가 저장한 방어 배치. 침공(비동기 PvP)의 정적 스폰
-   * 데이터가 된다. 미배치 = `undefined`. 지금은 로컬 세이브에만 두고, Supabase `defenses`
-   * 테이블 연동은 M4 Phase B 후속(append-only 필드 — 깊은 검증은 UI의 normalizeLayout이
-   * 로드 시 수행하므로 여기선 얕은 형태만 보존한다).
+   * 방어 사령부가 저장한 3레이어 방어 배치(M7a, ADR-0017). 침공(비동기 PvP)의 정적 스폰
+   * 데이터가 된다. 미배치 = `undefined`. 서버 정본은 `defenses.layout` jsonb 이고 여기는
+   * 오프라인 표시·즉시 반영용 로컬 미러다.
    *
-   * ⚠️ 이 값은 {@link normalizeStoredLayout}의 얕은 검증(core/turrets/obstacles 존재 여부)만
-   * 거친다 — 침공 배선(profile.defenseLayout → WorldConfig.invasion) 시에는 반드시
-   * `src/ui/defenseCommand.ts`의 `normalizeLayout()`으로 깊은 정규화(포탑 유형 범위·좌표
-   * 유한성·장애물 반폭/반높이 양수 등)를 거쳐 InvasionConfig를 구성할 것. 여기서 직접
-   * WorldConfig.invasion.layout에 흘려 넣지 말 것 — NaN/손상 좌표가 그대로 sim에 들어가면
-   * hashFloat 등 결정론 해시 계산에 도달해 재현성이 붕괴한다(ADR-0005).
+   * ⚠️ 이 값은 {@link normalizeStoredLayout}의 얕은 검증(l1/l2/l3 존재 여부)만 거친다 —
+   * 침공 배선(profile.defenseLayout → WorldConfig.invasion3) 시에는 반드시
+   * `normalizeInvasionLayers()`(src/sim/invasion/normalize.ts)로 깊은 정규화를 거칠 것.
+   * raw 를 sim 에 그대로 흘리면 손상 좌표가 해시 계산에 도달해 재현성이 붕괴한다(ADR-0005).
    */
-  defenseLayout?: DefenseLayout;
+  defenseLayout?: InvasionLayers;
   /**
    * 계보 상태(M5 Phase A5, ADR-0007) — 기체 가지·수호 가지 누적 레벨 + 미사용/누적 포인트.
    * 서버 정본은 profiles.lineage_* 컬럼(RPC 만 갱신). 로컬은 오프라인 표시·즉시 반영용 미러다.
@@ -509,16 +506,18 @@ function normalizeGuardianRecords(v: unknown): GuardianRecord[] {
 }
 
 /**
- * 저장된 방어 배치를 얕게 보존한다: `core`/`turrets`/`obstacles` 꼴을 갖춘 객체면 그대로
- * 통과시키고(왕복 무손실), 아니면 필드를 생략한다. 깊은 유효성(포탑 유형 범위 등)은 에디터의
- * `normalizeLayout`이 로드 시 재검증하므로 여기서 sim 상수를 끌어오지 않는다(레이어 최소 결합).
+ * 저장된 3레이어 방어 배치를 얕게 보존한다: `l1`/`l2`/`l3` 꼴을 갖춘 객체면 그대로 통과시키고
+ * (왕복 무손실), 아니면 필드를 생략한다 — 구 형식(core/turrets/obstacles)은 여기서 걸러진다.
+ * 깊은 유효성은 `normalizeInvasionLayers`(sim 정본)가 사용 시점에 재검증하므로 여기서 sim
+ * 상수를 끌어오지 않는다(레이어 최소 결합).
  */
-function normalizeStoredLayout(v: unknown): { defenseLayout?: DefenseLayout } {
+function normalizeStoredLayout(v: unknown): { defenseLayout?: InvasionLayers } {
   if (typeof v !== 'object' || v === null) return {};
   const d = v as Record<string, unknown>;
-  if (typeof d.core !== 'object' || d.core === null) return {};
-  if (!Array.isArray(d.turrets) || !Array.isArray(d.obstacles)) return {};
-  return { defenseLayout: v as DefenseLayout };
+  for (const k of ['l1', 'l2', 'l3']) {
+    if (typeof d[k] !== 'object' || d[k] === null) return {};
+  }
+  return { defenseLayout: v as unknown as InvasionLayers };
 }
 
 function normalizeShip(v: unknown): Ship | null {

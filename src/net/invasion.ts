@@ -22,7 +22,8 @@
 import type { Replay } from '../sim/replay.js';
 import { runReplay } from '../sim/replay.js';
 import type { KeyValueStore } from '../save/profile.js';
-import type { DefenseCardConfig } from '../sim/cardEffects.js';
+import type { InvasionLayers } from '../sim/invasion/types.js';
+import type { CoreModuleConfig } from '../sim/moduleEffects.js';
 import { readSupabaseConfig, type SupabaseConfig } from './config.js';
 
 // ---------------------------------------------------------------------------
@@ -49,7 +50,18 @@ export interface InvasionTarget {
   displayName: string;
   shipSummary: ShipSummary;
   defenseId: string | null;
-  /** raw DefenseLayout jsonb — 소비 전 normalizeLayout 필수. */
+  /**
+   * 방어 배치 raw jsonb — 소비 전 정규화 필수.
+   *
+   * **M7a 주의(정찰 부분 공개, 결정 #15)**: `get_invasion_targets` / `get_revenge_targets`
+   * 가 주는 값은 서버가 마스킹한 **정찰 뷰**(`invasion_recon_layers` — 실루엣·등급·승급만,
+   * `level`·`affixSeed`·수호 스냅샷 제외, `recon:true` 표식)라 **침공 런의 입력이 아니다**.
+   * 침공은 반드시 {@link beginInvasion} 이 돌려주는 {@link InvasionSnapshot.layers}(T0 고정
+   * 정확 배치)로 돌려야 EF 재실행과 비트 일치한다. 이 필드로 런을 구성하면 정직한 침공이
+   * 전량 `defense-mismatch` 로 거부된다.
+   * 예외: `get_placement_targets`(배치전 NPC)는 begin_invasion 자격 미달 경로라 **정확 배치**를
+   * 그대로 서빙한다 — 그쪽은 이 필드로 런을 구성하는 것이 정본이다.
+   */
   layout: unknown;
   /** 정비도 %(0~100). 풍화로 하락(ADR-0006). */
   maintenance: number;
@@ -225,20 +237,41 @@ export interface ClientResult {
 export interface InvasionSnapshot {
   /** invasion_snapshots 행 id — 제출 시 invasions.snapshot_id 로 동봉. */
   snapshotId: string;
-  /** T0 고정 방어 배치(수호 권위 주입 완료 raw jsonb) — 소비 전 normalizeLayout 필수. */
+  /**
+   * T0 고정 **3레이어 정규형**(수호 권위 주입 완료). 게이트웨이가 공유 정규화를 이미 태웠으므로
+   * 그대로 침공 런 config(`invasion3.layers`)에 실으면 된다 — EF 는 같은 스냅샷의
+   * `authority.layers` 를 같은 정규화로 읽어 대조한다(M7a · L7 마이그레이션 20260721000000).
+   */
+  layers: InvasionLayers;
+  /**
+   * 구 계약 잔재(raw jsonb). M7a 서버는 `layers` 를 주므로 이 필드는 하위호환 폴백 값이다
+   * (구 서버 응답의 `layout`). 신규 코드는 {@link layers} 만 읽어라 — L11 에서 삭제 예정.
+   * @deprecated
+   */
   layout: unknown;
   /** T0 고정 정비도 %(0~100). 런·검증에 이 값을 쓴다(라이브 재조회 대신 고정본). */
   maintenance: number;
   /**
-   * T0 고정 방어 카드 효력(M6 · ADR-0012) — 방어자 장착 카드(서버 권위 CardInstance)+공격자
-   * 매치업. 존재하면 침공 런 config 의 `invasion.card` 로 실어 정적 카운터·동적 트리거·유니크가
-   * 방어전에 반영된다(공격자 클라이언트도 이 고정본으로 재현해야 hashStream 이 EF 재실행과 일치).
-   * 방어자 카드 미장착이면 `null`/미설정 → 카드 없는 기존 침공과 거동·해시 완전 불변(조건부 접기).
-   * 서버가 authored 한 값이라 begin_invasion 응답 그대로 소비한다(위조 시 EF 가 스냅샷 권위로
-   * 오버라이드해 재실행 발산으로 거부).
+   * T0 고정 **코어 모듈 권위**(M7b · ADR-0018 — 구 M6 `card` 계승). 방어자가 장착한 코어 모듈
+   * 인스턴스(최대 {@link MODULE_EQUIP_SLOTS})와 공격자 매치업을 서버가 고정한다. 존재하면
+   * 침공 런 config 의 `invasion3.modules` 로 실어 정적 카운터·동적 트리거·유니크가 방어전에
+   * 반영된다(공격자 클라이언트도 이 고정본으로 재현해야 hashStream 이 EF 재실행과 일치).
+   *
+   * 모듈 미장착·구버전 서버면 `null` → 거동·해시 완전 불변(조건부 접기).
    */
-  card?: DefenseCardConfig | null;
+  modules?: InvasionModulesAuthority | null;
 }
+
+/**
+ * 코어 모듈 권위 스냅샷(`begin_invasion` 의 `modules` jsonb).
+ * `{ instances: ModuleInstance[], matchup: AttackerMatchup }` — sim 이 그대로 소비하는
+ * {@link CoreModuleConfig} 와 **같은 형상**이라 변환 없이 config 에 실린다.
+ *
+ * 모듈은 카탈로그 참조(InvasionRef)가 아니라 **시드 롤이 굳은 소모성 인스턴스**다. 그래서
+ * `layers`(카탈로그 참조 직렬화)가 아니라 authority 로 온다 — 정본은 서버의
+ * `defenses.equipped_module_ids` → `core_modules` 행이다.
+ */
+export type InvasionModulesAuthority = CoreModuleConfig;
 
 /** 침공 제출 게이트웨이 입력(공격자 uid 포함 — RLS with_check 강제). */
 export interface InvasionSubmitInput {

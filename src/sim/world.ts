@@ -20,7 +20,7 @@
 import { SeededRng } from './rng.js';
 import { cos, sin, atan2, length, TWO_PI, wrapAngle } from './math.js';
 import { DT, VIEW_WIDTH, VIEW_HEIGHT, OFFSCREEN_X } from './constants.js';
-import type { Entity } from './entities.js';
+import type { Entity, EntityKind } from './entities.js';
 import {
   blankEntity,
   spawnBullet,
@@ -153,11 +153,27 @@ import {
   TURRET_BULLET_RADIUS,
   TURRET_BULLET_LIFE,
 } from './events.js';
-import type { InvasionConfig } from './defense.js';
-import { spawnInvasionLayout, stepDefenseTurrets, stepGuardians } from './defense.js';
 import { rebootHp, REBOOT_DELAY_TICKS } from '../../data/guardian.js';
-import type { CardRuntime } from './cardEffects.js';
-import { initCardRuntime, stepCardRuntime } from './cardEffects.js';
+import type { ModuleRuntime } from './moduleEffects.js';
+import { initModuleRuntime, stepModuleRuntime } from './moduleEffects.js';
+// --- 침공 3레이어(M7a) — 강제 스크롤 카메라 · 페이즈 머신 -----------------------------
+import type { Invasion3Config, InvasionRuntime } from './invasion/types.js';
+import { PHASE_L3 } from './invasion/constants.js';
+import { normalizeInvasionLayers } from './invasion/normalize.js';
+import {
+  clampToWindow,
+  createInvasionRuntime,
+  windowCenterX,
+  windowCenterY,
+} from './invasion/scroll.js';
+import {
+  advanceInvasionPhase,
+  advanceInvasionScroll,
+  checkInvasion3Timeout,
+  initInvasionPhase,
+} from './invasion/phase.js';
+import { makeInvasionContext, stepInvasionLayer } from './invasion/step.js';
+import { InvasionWallIndex } from './invasion/wallIndex.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -375,12 +391,12 @@ export interface WorldConfig {
    */
   maxSegments?: number;
   /**
-   * 침공 런 설정(M4 plan Phase C2, 갈림길③A). 존재하면 침공 런: createWorld가 방어 배치
-   * (코어·포탑 6종·장애물)를 정적 스폰하고, 웨이브·청크 기믹·보급 등 절차 생성 시스템을
-   * 끈다. 승리 = 코어 파괴, 실패 = 제한 시간 초과/격추. absent = 기존 PvE 런(거동·해시
-   * 100% 불변). append-only 규율: 신규 필드는 항상 이 아래에만 추가.
+   * 침공 런 설정(M7a, ADR-0017). 존재하면 3레이어 침공: 강제 스크롤 카메라가 sim 권위가 되고
+   * 페이즈 머신 L1(대기권)→L2(회랑)→L3(코어방)이 돈다. 없으면 기존 PvE 런(거동·해시 100%
+   * 불변). 구 단일 아레나 필드 `invasion`(코어·포탑 6종·장애물)은 L11 에서 삭제됐다.
+   * append-only 규율: 신규 필드는 항상 이 아래에만 추가.
    */
-  invasion?: InvasionConfig;
+  invasion3?: Invasion3Config;
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {
@@ -514,6 +530,11 @@ export interface WorldState {
    */
   activeWalls: Entity[];
   /**
+   * 활성 벽 broad-phase 인덱스(침공 3레이어 전용, 그 외 null). `activeWalls` 재빌드 직후 갱신되며
+   * `firstBlocking` 이 직접 스윕과 **배열 최소 인덱스까지 동일**해 결과가 비트 일치한다.
+   */
+  wallIndex: InvasionWallIndex | null;
+  /**
    * 오염 런 표시(ADR-0008). 치트·하네스 개입이 한 번이라도 일어난 런에 `markTainted`로
    * 세운다. 순수 DEV 메타데이터 — 시뮬레이션 거동과 `hashWorld` 출력 모두에 영향이 없다
    * (hashWorld는 이 필드를 접지 않는다). 정산·리플레이 제출에서 오염 런을 제외하는 데만
@@ -521,12 +542,24 @@ export interface WorldState {
    */
   tainted: boolean;
   /**
-   * 방어 카드 효력 런타임(Lane B). `config.invasion.card` 가 있는 침공에만 존재하며(그 외
-   * undefined), 정적 카운터 해석값·동적 트리거 상태·유니크 파라미터·매 틱 유효 배율을 담는다
-   * (src/sim/cardEffects.ts). undefined = 카드 미장착 = 기존 침공/PvE 경로와 거동·해시 완전 불변
-   * (조건부 접기). hashWorld 가 존재 시에만 결정론 필드를 append-only 로 접는다.
+   * 코어 모듈 효력 런타임(M7b · ADR-0018 — 구 `cardRuntime` 계승). `config.invasion3.modules`
+   * 가 있는 침공에만 존재하며(그 외 undefined), 정적 카운터 해석값·동적 트리거 상태·유니크
+   * 파라미터·매 틱 유효 배율을 담는다(src/sim/moduleEffects.ts). undefined = 모듈 미장착 =
+   * 기존 침공/PvE 경로와 거동·해시 완전 불변(조건부 접기).
    */
-  cardRuntime?: CardRuntime;
+  moduleRuntime?: ModuleRuntime;
+  /**
+   * 침공 3레이어 런타임(M7a). `config.invasion3` 가 있는 런에만 존재한다(그 외 undefined →
+   * 조건부 접기로 PvE·구 침공 해시 완전 불변). 스크롤 오프셋이 여기 실리면서 카메라가
+   * **sim 권위**가 된다 — 스냅샷의 플레이어 파생 카메라(snapshot.ts)를 대체한다.
+   */
+  invasion3?: InvasionRuntime;
+  /**
+   * 레이어 클리어 폭탄 적립분(정수, 상한 INVASION_BOMB_CAP). 3레이어 침공에서만 증가하고
+   * 그 외 런에서는 항상 0 이다. 소비 경로(입력 프레임 비트)는 후속 레인 소관 — M7a 는
+   * 적립까지다.
+   */
+  invasion3Bombs: number;
 }
 
 /**
@@ -581,26 +614,23 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   player.maxHp = cfg.playerHp;
   entities.push(player);
 
-  // 침공 런(M4 plan C2, 갈림길③A): 방어 배치를 정적 스폰(코어 → 포탑 → 장애물). 순수 데이터
-  // 구동이라 재현이 자명하다. player가 index 0에 자리한 뒤 스폰해 hashWorld 불변식을 지킨다.
-  // sink로 지역 entities/nextEntityId를 넘겨 id 할당을 위임하고, 소비된 nextEntityId를 회수한다.
-  let cardRuntime: CardRuntime | undefined;
-  if (cfg.invasion !== undefined) {
-    const sink = { entities, nextEntityId };
-    spawnInvasionLayout(sink, cfg.invasion.layout, cfg.invasion.maintenance);
-    // 방어 카드(장착 시): 정적 카운터 해석 + 스폰 시점 효과(기저 코어 HP·유니크 신기루 코어).
-    // 미장착이면 이 블록을 건너뛰어 cardRuntime=undefined → 거동·해시 완전 불변(조건부 접기).
-    if (cfg.invasion.card !== undefined) {
-      cardRuntime = initCardRuntime(cfg.invasion.card, sink);
-    }
-    nextEntityId = sink.nextEntityId;
+  // 침공 3레이어(M7a): 배치를 **여기서 한 번** 정규화해 sim·해시가 항상 정규형만 본다
+  // (raw 가 새어 들어가면 클라·서버 재실행이 갈린다). cfg 는 이미 얕은 사본이라 호출부의
+  // config 객체를 변형하지 않는다. 레이어 정적 배치 스폰은 진입 훅(L4/L5 소관)이 맡는다.
+  let invasion3Runtime: InvasionRuntime | undefined;
+  if (cfg.invasion3 !== undefined) {
+    cfg.invasion3 = {
+      ...cfg.invasion3,
+      layers: normalizeInvasionLayers(cfg.invasion3.layers),
+    };
+    invasion3Runtime = createInvasionRuntime();
   }
 
   // Anomaly: roll the seed-only offer, gate it on the config acceptance flag.
   const anomalyRng = rng.fork('anomaly');
   const anomaly = rollAnomaly(anomalyRng, cfg.anomalyAccepted ?? false);
 
-  return {
+  const state: WorldState = {
     tick: 0,
     config: cfg,
     rng,
@@ -642,10 +672,25 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     generatedChunks: new Map<string, true>(),
     activeWalls: [],
     tainted: false,
-    // exactOptionalPropertyTypes: 카드 미장착이면 필드 자체를 두지 않는다(undefined 대입 금지·
-    // 조건부 접기 정합). 장착 시에만 런타임을 싣는다.
-    ...(cardRuntime !== undefined ? { cardRuntime } : {}),
+    invasion3Bombs: 0,
+    // 탄-벽 broad-phase 는 침공 3레이어에서만 쓴다. PvE 는 null → 기존 직접 스윕 그대로라
+    // 해시가 바이트 불변이다(회랑 벽이 '활성 벽 ≤~19' 전제를 깨는 것은 침공 경로뿐).
+    wallIndex: invasion3Runtime !== undefined ? new InvasionWallIndex() : null,
+    // 3레이어 침공이 아니면 필드 자체를 두지 않는다(exactOptionalPropertyTypes — undefined
+    // 대입 금지 · 조건부 접기 정합).
+    ...(invasion3Runtime !== undefined ? { invasion3: invasion3Runtime } : {}),
   };
+
+  // L1 진입 훅(정적 배치 스폰)은 상태가 완성된 뒤에 태운다 — 훅이 state.entities 에 스폰하기
+  // 때문이다. 플레이어는 이미 index 0 에 있으므로 hashWorld 불변식이 유지된다.
+  if (cfg.invasion3 !== undefined && invasion3Runtime !== undefined) {
+    initInvasionPhase(state, cfg.invasion3, invasion3Runtime);
+    // 코어 모듈 효력(M7b): 배치 스폰이 끝난 뒤 해석한다 — 스폰 시점 효과(코어 HP·기물 내구·
+    // 신기루 코어)가 대상 엔티티를 봐야 하기 때문이다. 미장착이면 필드 자체를 두지 않는다.
+    const modules = cfg.invasion3.modules;
+    if (modules !== undefined) state.moduleRuntime = initModuleRuntime(modules, state);
+  }
+  return state;
 }
 
 function getPlayer(state: WorldState): Entity {
@@ -685,22 +730,39 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
 
   const player = getPlayer(state);
 
-  // 침공 런(M4 plan C2)은 설계된 방어 기지만 상대한다 — 절차 생성 시스템(청크 기믹·웨이브
-  // 적·보급 습격)을 끈다. 정적 배치 장애물(wall)이 청크 컬링에 잘려나가지 않게 하는 것도
-  // 겸한다(activateChunks 미실행). rebuildActiveWalls는 방어 장애물이 wall kind라 유지한다.
-  const invasion = state.config.invasion;
+  // 침공 3레이어(M7a): config·런타임이 모두 있을 때만 활성. 컨텍스트는 런타임을 참조로 담아
+  // 페이즈 머신 갱신이 훅에 즉시 보이게 한다.
+  const invasion3 = state.config.invasion3;
+  const inv3Runtime = state.invasion3;
+  const inv3Ctx =
+    invasion3 !== undefined && inv3Runtime !== undefined
+      ? makeInvasionContext(invasion3, inv3Runtime)
+      : undefined;
+  /**
+   * 절차 생성(청크 기믹·웨이브 적·보급 습격)을 끄는 조건 — 침공은 설계된 방어 기지만 상대한다.
+   * 정적 배치 장애물(wall)이 청크 컬링에 잘려나가지 않게 하는 것도 겸한다(activateChunks 미실행).
+   * rebuildActiveWalls 는 방어 장애물이 wall kind 라 유지한다.
+   */
+  const designedRun = invasion3 !== undefined;
 
   // Materialise/cull scroll-map gimmicks around the player, then rebuild the
   // active-wall list (both before movement so walls obstruct this tick).
-  if (invasion === undefined) activateChunks(state, player);
+  if (!designedRun) activateChunks(state, player);
   rebuildActiveWalls(state);
+  // 침공 회랑은 활성 벽이 수십 개라 탄-벽 직접 스윕(O(탄 × 벽))이 무너진다. 인덱스를 여기서
+  // 한 번 재빌드해 이번 틱 stepProjectiles 가 질의만 하게 한다.
+  state.wallIndex?.rebuild(state.activeWalls);
 
-  // 방어 카드(장착 시): 이번 틱 유효 배율·트리거 상태를 stepPlayer 이전에 갱신해 모든 접점이
-  // 같은 틱 값을 읽게 한다. cardRuntime 미존재(카드 미장착·PvE)면 조기 반환 → 거동·해시 불변.
-  if (state.cardRuntime !== undefined) stepCardRuntime(state, player);
+  // 강제 스크롤: 가속 갱신 + 창 전진을 **플레이어 이동 이전에** 처리한다. 창이 먼저 밀고,
+  // 플레이어는 갱신된 창 안에서 움직인다(같은 틱 안에서 창 밖으로 튀는 프레임이 없다).
+  if (inv3Runtime !== undefined) advanceInvasionScroll(state, inv3Runtime);
+
+  // 코어 모듈(장착 시): 이번 틱 유효 배율·트리거 상태를 stepPlayer 이전에 갱신해 모든 접점이
+  // 같은 틱 값을 읽게 한다. moduleRuntime 미존재(미장착·PvE)면 조기 반환 → 거동·해시 불변.
+  if (state.moduleRuntime !== undefined) stepModuleRuntime(state, player);
 
   stepPlayer(state, player, input);
-  if (invasion === undefined) updateWaves(state, player);
+  if (!designedRun) updateWaves(state, player);
   stepEnemies(state, player);
   stepBoss(state, player);
   autoAttack(state, player);
@@ -708,33 +770,26 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   subWeapon(state, player);
   droneBay(state, player);
   stepTurrets(state, player);
-  if (invasion !== undefined) stepDefenseTurrets(state, player);
-  // 수호 기체(M5 plan A1): 방어전에서만 추적·사격. 수호 없으면 조기 반환(거동·해시 불변).
-  if (invasion !== undefined) stepGuardians(state, player);
+  // 3레이어 침공: 현재 페이즈의 스텝 훅(L1 편대 / L2 설비 / L3 코어방)을 단일 디스패치.
+  // 미배선 훅은 no-op 이라 W1 병렬 중에도 런이 성립한다.
+  if (inv3Ctx !== undefined) stepInvasionLayer(state, inv3Ctx);
   stepProjectiles(state, player);
   stepGems(state, player);
-  if (invasion === undefined) stepSupply(state, player);
+  if (!designedRun) stepSupply(state, player);
   stepHazards(state);
   resolveCollisions(state, player);
   compact(state);
   updateCombo(state);
   checkLevelUp(state);
   checkGameOver(state, player);
-  // 침공 제한 시간(3분): 코어 미파괴로 시간 초과 시 격추와 동일하게 패배(gameOver).
-  if (invasion !== undefined) checkInvasionTimeout(state, invasion);
+  // 3레이어: 페이즈 전이(soft 예산·주파 완료)를 compact 이후에 판정해 이번 틱에 죽은 적까지
+  // 반영한 뒤, 총 예산(hard) 초과를 확인한다.
+  if (invasion3 !== undefined && inv3Runtime !== undefined) {
+    advanceInvasionPhase(state, invasion3, inv3Runtime);
+    checkInvasion3Timeout(state, invasion3);
+  }
 
   state.tick++;
-}
-
-/**
- * 침공 제한 시간 판정(M4 plan C2). 코어 파괴(victory)가 이미 확정됐으면 무시한다. 현재 틱
- * 처리를 끝내며 누적 틱 수가 제한(timeLimitTicks)에 도달하면 gameOver로 확정한다. 결정론:
- * state.tick(해시 포함)과 config의 제한 틱(해시 포함)만으로 판정 — wall-clock 미사용.
- */
-function checkInvasionTimeout(state: WorldState, invasion: InvasionConfig): void {
-  if (state.victory || state.gameOver) return;
-  // 이 시점 state.tick은 아직 증가 전(현재 틱 인덱스). 이 틱을 끝내면 tick+1개를 소화한 것.
-  if (state.tick + 1 >= invasion.timeLimitTicks) state.gameOver = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -909,11 +964,11 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
   // 미적용 — 아래 dash는 별도 가산). 매 틱 1 감소.
   const slowMult = state.playerSlowTicks > 0 ? PLAYER_SLOW_MULT : 1;
   if (state.playerSlowTicks > 0) state.playerSlowTicks--;
-  // 방어 카드 ct-attrition(지연전): 공격자(플레이어) 이동 감속. 미장착·미발동이면 배율 1 이라
+  // 코어 모듈 mt-attrition(지연전): 공격자(플레이어) 이동 감속. 미장착·미발동이면 배율 1 이라
   // `v * 1 === v` 로 비트 동일(거동·해시 불변). 대시 임펄스에는 미적용(감속 지대와 동일 규율).
-  const cardSlow = state.cardRuntime !== undefined ? state.cardRuntime.attackerSlowMult : 1;
-  player.vx = mx * config.playerSpeed * slowMult * cardSlow;
-  player.vy = my * config.playerSpeed * slowMult * cardSlow;
+  const moduleSlow = state.moduleRuntime !== undefined ? state.moduleRuntime.attackerSlowMult : 1;
+  player.vx = mx * config.playerSpeed * slowMult * moduleSlow;
+  player.vy = my * config.playerSpeed * slowMult * moduleSlow;
   player.angle = input.aim;
 
   if (player.dashCooldown > 0) player.dashCooldown--;
@@ -966,6 +1021,16 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     const slid = slideCircleWalls(player.x, player.y, player.radius, state.activeWalls);
     player.x = slid.x;
     player.y = slid.y;
+  }
+  // 침공 3레이어: 강제 스크롤 창 밖으로 나갈 수 없다. PvE 의 "무한 맵, 아레나 클램프 없음"
+  // 규율은 그대로고(runtime 미존재 → 이 블록 자체를 건너뜀), 침공에서만 창이 경계가 된다.
+  // 벽 슬라이드 **이후**에 적용해 창 경계가 항상 최종 권위를 갖게 한다(벽이 플레이어를 창
+  // 밖으로 밀어내는 상태를 허용하지 않는다).
+  const inv3 = state.invasion3;
+  if (inv3 !== undefined) {
+    const clamped = clampToWindow(player.x, player.y, player.radius, inv3);
+    player.x = clamped.x;
+    player.y = clamped.y;
   }
 }
 
@@ -1285,14 +1350,34 @@ function subDamage(state: WorldState, base: number): number {
   return Math.round(base * mult * 100) / 100;
 }
 
+/**
+ * 침공 방어 측 엔티티인가(코어 모듈 피해 감소 대상). 3레이어의 방어체는 편대(L1)·설비(L2)·
+ * 기물/보스/수호/코어(L3) 전부다. 편대원·소환 드론은 `summonEnemy` 경유라 kind 가 'enemy' 다.
+ */
+function isInvasionDefender(kind: EntityKind): boolean {
+  return (
+    kind === 'core' ||
+    kind === 'guardian' ||
+    kind === 'enemy' ||
+    kind === 'formation' ||
+    kind === 'formationDrone' ||
+    kind === 'facilityGun' ||
+    kind === 'facilityHazard' ||
+    kind === 'facilitySpawner' ||
+    kind === 'spawnedDrone' ||
+    kind === 'prop' ||
+    kind === 'defenseBoss'
+  );
+}
+
 /** 보조무기 사이클 쿨다운에 주무기와 공유하는 연사 배율 적용(요구 #5). 최소 2틱 하한
  *  (주무기 fireCooldown 하한과 정합). */
 function subCooldown(state: WorldState, base: number): number {
   const mult = state.config.loadout?.fireRateMult ?? 1;
-  // 방어 카드 정적 카운터(절연/교란): 공격자 보조무기 쿨다운 증가(+% → 간격↑). 미장착·미일치면
+  // 코어 모듈 정적 카운터(절연/교란): 공격자 보조무기 쿨다운 증가(+% → 간격↑). 미장착·미일치면
   // subMult=1 이라 `base*mult*1===base*mult` 로 비트 동일(거동·해시 불변).
   const subMult =
-    state.cardRuntime !== undefined ? 1 + state.cardRuntime.attackerSubCdPct / 100 : 1;
+    state.moduleRuntime !== undefined ? 1 + state.moduleRuntime.attackerSubCdPct / 100 : 1;
   const cd = Math.round(base * mult * subMult);
   return cd < 2 ? 2 : cd;
 }
@@ -1455,18 +1540,38 @@ const losCands: { e: Entity; d: number }[] = [];
  */
 /**
  * 플레이어(및 아군 포탑·유도탄)가 조준·타격할 수 있는 적성 대상인가. 기존 PvE 적성
- * (enemy·boss·supply)에 M4 침공 방어 엔티티(defenseTurret·core)를 더한다. PvE 런에는 방어
+ * (enemy·boss·supply)에 침공 방어 엔티티(core·수호·설비 등)를 더한다. PvE 런에는 방어
  * 엔티티가 존재하지 않으므로 이 확장은 기존 거동·해시에 영향이 없다(순수 추가 대상).
+ *
+ * **세 목록은 항상 같이 바뀐다.** ① 충돌 격자 등록(약 1840행) ② 아군탄 표적 화이트리스트
+ * (약 2114행) ③ 이 조준 술어. M7a 통합 시 ①②만 확장돼 3레이어 방어체가 '맞기는 하지만
+ * 조준되지는 않는' 상태로 남았고, 그 결과 실드 발생기(기물 역할 0)가 소켓에 하나만 있어도
+ * 침공이 **수학적으로 클리어 불가**였다 — 발생기가 살아 있는 동안 코어 보호막이 매 틱
+ * 전량 재충전되는데(updateCoreShield, 의도된 '먼저 파괴 강제' 설계), 정작 그 발생기를
+ * 플레이어가 조준할 수 없어 영원히 파괴하지 못했다. 무적 플레이어로 L3 를 7200틱 돌려도
+ * 코어 8000/8000·발생기 900/900 으로 무피해였다.
  */
 function isPlayerTargetable(e: Entity): boolean {
+  // 발생기 보호막 국면의 코어는 **조준 대상에서 뺀다**(`timer === 1` = 실드 발생기가 살아
+  // 있음, coreRoom.updateCoreShield 가 세우는 결정론 플래그). 이 국면의 코어는 매 틱 보호막이
+  // 전량 재충전돼 피해가 0 이므로, 조준을 허용하면 언제나 코어가 최근접 표적으로 뽑혀 플레이어가
+  // 무적 표적을 영원히 때리고 정작 발생기는 한 대도 맞지 않는다 — 기물 설계 의도(공격 순서
+  // 강제)가 자동 조준 때문에 뒤집히던 지점이다. 뺀 동안에는 발생기·설비가 최근접으로 뽑혀
+  // 파괴되고, 마지막 발생기가 죽는 틱에 timer 가 0 이 되어 코어가 다시 조준 가능해진다.
+  // (수동 조준·직접 충돌 피해는 이 술어와 무관하게 그대로 코어에 들어간다.)
+  if (e.kind === 'core') return e.timer !== 1;
   return (
     e.kind === 'enemy' ||
     e.kind === 'boss' ||
     e.kind === 'supply' ||
-    e.kind === 'defenseTurret' ||
-    e.kind === 'core' ||
     e.kind === 'decoyCore' ||
-    e.kind === 'guardian'
+    e.kind === 'guardian' ||
+    // M7a 3레이어 방어체(위 ①② 목록과 쌍).
+    e.kind === 'facilityGun' ||
+    e.kind === 'facilityHazard' ||
+    e.kind === 'facilitySpawner' ||
+    e.kind === 'defenseBoss' ||
+    e.kind === 'prop'
   );
 }
 
@@ -1601,7 +1706,14 @@ function stepProjectiles(state: WorldState, player: Entity): void {
   // radius. Both conditions are checked so a bullet can never accumulate
   // forever off-screen (see tests/projectiles.test.ts).
   const cullR2 = PROJECTILE_CULL_RADIUS * PROJECTILE_CULL_RADIUS;
+  // 침공 3레이어에서는 화면이 플레이어가 아니라 스크롤 창을 따라가므로, 컬링 기준점도 창
+  // 중심이어야 한다(플레이어 기준이면 창 앞쪽에서 대기 중인 탄이 조기 소멸한다).
+  // PvE·구 침공은 runtime 미존재 → cullX/cullY 가 그대로 player.x/y 라 산술이 바이트 동일하다.
+  const inv3 = state.invasion3;
+  const cullX = inv3 !== undefined ? windowCenterX(inv3) : player.x;
+  const cullY = inv3 !== undefined ? windowCenterY(inv3) : player.y;
   const walls = state.activeWalls;
+  const wallIndex = state.wallIndex;
   // 중력 폭풍 변칙: enemy bullets travel slower (single application point so no
   // emitter needs touching). Friendly bullets are unaffected (mult = 1).
   const enemyBulletMult = enemyBulletSpeedMult(state.anomaly);
@@ -1620,8 +1732,8 @@ function stepProjectiles(state: WorldState, player: Entity): void {
     e.x += e.vx * DT * m;
     e.y += e.vy * DT * m;
     if (e.life > 0) e.life--;
-    const dx = e.x - player.x;
-    const dy = e.y - player.y;
+    const dx = e.x - cullX;
+    const dy = e.y - cullY;
     if (e.life === 0 || dx * dx + dy * dy > cullR2) {
       e.dead = true;
       continue;
@@ -1632,6 +1744,12 @@ function stepProjectiles(state: WorldState, player: Entity): void {
     // (MAX_ACTIVE_GIMMICKS, 실측 ≤~19벽)에 묶여 있고 탄은 bulletCap(≤~2000)이라
     // 현 스케일에선 안전하다. 활성 벽 수가 이 전제를 크게 넘어서면(예: 벽 밀집
     // 청크·상한 상향) 벽에도 broad-phase(공간 격자/스윕-프룬)가 필요하다.
+    // 침공 3레이어는 broad-phase 인덱스로 질의한다(firstBlocking 은 배열 최소 인덱스를 돌려주어
+    // 아래 직접 스윕의 first-hit 와 비트 동일 — 결과가 갈릴 여지가 구조적으로 없다).
+    if (wallIndex !== null) {
+      if (wallIndex.firstBlocking(e.x, e.y, e.radius) !== null) e.dead = true;
+      continue;
+    }
     for (const w of walls) {
       if (circleOverlapsWall(e.x, e.y, e.radius, w)) {
         e.dead = true;
@@ -1767,10 +1885,16 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       e.kind === 'bombDevice' ||
       e.kind === 'turretPickup' ||
       e.kind === 'loot' ||
-      e.kind === 'defenseTurret' ||
       e.kind === 'core' ||
       e.kind === 'decoyCore' ||
-      e.kind === 'guardian'
+      e.kind === 'guardian' ||
+      // M7a 3레이어 신규 피격 대상. 격자 등록과 아래 아군탄 표적 화이트리스트는 **항상 같이**
+      // 바뀌어야 한다 — 한쪽만 빠지면 설비·보스·기물이 조용히 무적으로 남는다.
+      e.kind === 'facilityGun' ||
+      e.kind === 'facilityHazard' ||
+      e.kind === 'facilitySpawner' ||
+      e.kind === 'defenseBoss' ||
+      e.kind === 'prop'
     ) {
       grid.insert(e);
     }
@@ -1780,8 +1904,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   // 유니크 게이트(장착 시에만 분기): ① 과열 드럼(명중 스택), ② 분열 코어(명중 파편),
   // ③ 관통 자이로(무한 관통 + 관통당 피해 증폭). 미장착 시 아래 분기는 전부 no-op.
   const uMask = state.config.loadout?.uniqueMask ?? 0;
-  // 방어 카드 런타임(장착 침공만). undefined 면 아래 카드 분기는 전부 no-op(거동·해시 불변).
-  const cr = state.cardRuntime;
+  // 코어 모듈 런타임(장착 침공만). undefined 면 아래 모듈 분기는 전부 no-op(거동·해시 불변).
+  const cr = state.moduleRuntime;
   const overheatOn = hasUnique(uMask, UQ_OVERHEAT_DRUM);
   const splitOn = hasUnique(uMask, UQ_SPLIT_CORE);
   const gyroOn = hasUnique(uMask, UQ_PIERCE_GYRO);
@@ -1814,10 +1938,15 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         t.kind !== 'boss' &&
         t.kind !== 'supply' &&
         t.kind !== 'destructible' &&
-        t.kind !== 'defenseTurret' &&
         t.kind !== 'core' &&
         t.kind !== 'decoyCore' &&
-        t.kind !== 'guardian'
+        t.kind !== 'guardian' &&
+        // M7a 3레이어(위 격자 등록과 쌍).
+        t.kind !== 'facilityGun' &&
+        t.kind !== 'facilityHazard' &&
+        t.kind !== 'facilitySpawner' &&
+        t.kind !== 'defenseBoss' &&
+        t.kind !== 'prop'
       )
         return;
       if (!circlesOverlap(b.x, b.y, b.radius, t.x, t.y, t.radius)) return;
@@ -1826,19 +1955,22 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       // 가 iframes 를 감소시켜 딜레이가 끝나면 다시 피격 가능해진다.
       if (t.kind === 'guardian' && t.iframes > 0) return;
       // Boss takes double damage while overheated (iframes > 0), spec.
-      const mult = t.kind === 'boss' && t.iframes > 0 ? 2 : 1;
+      // 방어 보스도 시그니처 캐스트 뒤 과열 창(iframes>0)을 연다 — PvE 보스와 같은 규칙.
+      const mult = (t.kind === 'boss' || t.kind === 'defenseBoss') && t.iframes > 0 ? 2 : 1;
       // ③ 관통 자이로: bullet.phase = 지금까지 관통한 횟수 → 관통당 피해 증폭.
       const gyroAmp = gyroOn ? 1 + b.phase * GYRO_DAMAGE_AMP : 1;
       // ⑥ 수렴 프리즘: 빔 세그먼트가 관통한 적 수(phase)만큼 피해 증폭(자이로와 배타).
       const prismAmp = prismOn ? 1 + b.phase * PRISM_DAMAGE_AMP : 1;
       // 보호막의 엘리트: 받는 피해 절반(그 외 1).
       let dealt = b.damage * mult * gyroAmp * prismAmp * eliteDamageTakenMult(t);
-      // 방어 카드 정적 카운터/지구전(피해 감소): 코어·포탑이 받는 피해를 배율로 낮춘다(실드 흡수
-      // 이전 적용). 미장착·미발동이면 defenseDmgMult=1 이라 `dealt*1===dealt`(거동·해시 불변).
-      if (cr !== undefined && (t.kind === 'core' || t.kind === 'defenseTurret')) {
+      // 코어 모듈 정적 카운터/지구전(피해 감소): **방어체**가 받는 피해를 배율로 낮춘다(실드
+      // 흡수 이전 적용). 미장착·미발동이면 defenseDmgMult=1 이라 `dealt*1===dealt`(거동·해시
+      // 불변). moduleRuntime 은 침공에만 존재하므로 여기서 'enemy'(편대원·소환 드론)를 포함해도
+      // PvE 경로에는 닿지 않는다 — PvE 는 cr===undefined 로 분기 자체가 접힌다.
+      if (cr !== undefined && isInvasionDefender(t.kind)) {
         dealt *= cr.defenseDmgMult;
       }
-      // 반사(ct-reflection/거울 관문): 실제 코어 피격 시 감소 후 입사 피해의 일부를 공격자에 반사.
+      // 반사(mt-reflection/거울 관문): 실제 코어 피격 시 감소 후 입사 피해의 일부를 공격자에 반사.
       // 실드 흡수 전 입사량 기준(피격 자체에 반응). 미보유면 reflectPct=0 → 반사 없음.
       if (cr !== undefined && t.kind === 'core' && cr.reflectPct > 0 && dealt > 0) {
         player.hp -= (dealt * cr.reflectPct) / 100;
@@ -1847,7 +1979,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       // 마일스톤 ③ 실드 공유(M5): 코어·포탑에 부여된 실드(targetY)가 남아 있으면 HP 보다 먼저
       // 흡수한다. 실드가 피해를 다 막으면 HP 는 그대로다. 실드가 없으면(targetY<=0) 무영향이라
       // 기존 거동과 완전히 동일하다(하위 호환). 결정론: 모든 항이 동일 f64 연산이라 플랫폼 무관.
-      if ((t.kind === 'core' || t.kind === 'defenseTurret') && t.targetY > 0) {
+      if (t.kind === 'core' && t.targetY > 0) {
         if (t.targetY >= dealt) {
           t.targetY -= dealt;
           dealt = 0;
@@ -1872,7 +2004,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
           t.hp = Math.max(1, Math.round((t.maxHp * cr.reviveHpPct) / 100));
         } else {
           t.dead = true;
-          // 방어 카드 ct-retribution(응징): 수호 기체가 실제 격추(부활 없이)될 때 공격자에 일제사격
+          // 코어 모듈 mt-retribution(응징): 수호 기체가 실제 격추(부활 없이)될 때 공격자에 일제사격
           // 피해. cr 미존재·미보유면 volleyDamage=0 → 무영향.
           if (cr !== undefined && t.kind === 'guardian' && cr.volleyDamage > 0) {
             player.hp -= cr.volleyDamage;
@@ -2015,7 +2147,14 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     if (t.kind === 'enemyBullet') {
       if (t.damage > dmg) dmg = t.damage;
       t.dead = true;
-    } else if (t.kind === 'enemy' || t.kind === 'boss' || t.kind === 'guardian') {
+      // 'prop'(L3 기물)은 여기 넣지 않는다 — 기물의 damage 는 탄·장판 피해라 접촉 피해로
+      // 겸용하면 코어방에 들어서기만 해도 플레이어가 갈린다.
+    } else if (
+      t.kind === 'enemy' ||
+      t.kind === 'boss' ||
+      t.kind === 'guardian' ||
+      t.kind === 'defenseBoss'
+    ) {
       // 수호 기체(M5)는 추적형 요격 유닛 — 접촉(램) 피해를 준다(방어전에만 존재). 단 마일스톤 ①
       // 격추 재기동 딜레이 중(iframes>0)인 수호는 정지·무력 상태라 접촉 피해도 주지 않는다.
       if (t.kind === 'guardian' && t.iframes > 0) return;
@@ -2156,8 +2295,17 @@ function compact(state: WorldState): void {
     } else if (e.kind === 'core') {
       // 침공 승리(M4 plan C2): 코어 파괴 = 침공 성공. 보스와 달리 드랍은 없다(침공 보상은
       // 래더 스왑·복제 약탈로 서버가 처리 — Phase D). 승리 확정만 세운다.
-      state.victory = true;
-    } else if (e.kind === 'boss') {
+      //
+      // 3레이어(M7a): **L3 에서만** 승리가 선다. L1/L2 에 코어 kind 가 등장하면(기만 홀로그램·
+      // 잔재) victory 가 서고 stepWorld 첫 줄 가드에 걸려 런이 그 자리에서 죽기 때문이다.
+      // 구 침공·PvE 는 invasion3 미존재 → 조건이 항상 참이라 거동 불변.
+      if (state.config.invasion3 === undefined || state.invasion3?.phase === PHASE_L3) {
+        state.victory = true;
+      }
+    } else if (e.kind === 'boss' && state.config.invasion3 === undefined) {
+      // 3레이어 침공에서는 보스 격파가 승리 조건이 아니다(승리 = L3 코어 파괴). 방어 보스는
+      // 전용 kind 를 쓰는 것이 정본이지만, 'boss' 가 섞여 들어와도 런이 조기 종료되지 않도록
+      // 여기서 막는다. PvE·구 침공은 조건이 항상 참이라 거동·해시 불변.
       state.victory = true;
       bossKilled = true;
       // Boss guaranteed rare+ drop (GDD §3, plan B3). 승리 tick이라 바닥 스폰→접촉 수거가

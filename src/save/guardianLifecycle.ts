@@ -24,7 +24,7 @@ import {
   normalizeGuardianPreset,
   MAX_GUARDIAN_SLOTS,
 } from '../../data/guardian.js';
-import type { GuardianPlacement } from '../sim/defense.js';
+import type { GuardianPlacement } from '../sim/invasion/guardian.js';
 import {
   grantPoints,
   investLineage,

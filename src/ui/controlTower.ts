@@ -5,7 +5,7 @@
  *   1) 타깃 제안 목록 — RPC `get_invasion_targets()`(내 위 랭커 3명 + 30위 랜덤 1명).
  *      각 행: 순위·이름·기체 요약·정비도 + 정찰/침공 버튼. 재도전 쿨다운 1h(서버 강제)
  *      미러로 버튼을 비활성·남은 시간 표시.
- *   2) 기지 정찰 뷰 — 선택한 대상의 방어 layout 미리보기(읽기 전용 미니 격자).
+ *   2) 기지 정찰 뷰 — 선택한 대상의 3레이어 배치 요약(M7a 임시 텍스트, 정식판은 M7b).
  *   3) 순위표 — `ladder` 상위 조회(관제탑 래더 표시).
  *
  * 서버 권위(원칙2): 침공 런의 클라이언트 결과는 잠정이며, `submitInvasion` 의 서버 판정이
@@ -15,12 +15,18 @@
  * 뜬다(기존 로컬 플레이 100% 유지 — 침공만 잠긴다).
  *
  * 결정론 무관: 렌더/네트워크 전용. 침공 런의 정적 배치(layout)만 sim config 로 흘러가고
- * 그 시뮬은 sim 이 결정론으로 재현한다. layout 은 **반드시 `normalizeLayout()`** 으로
- * 깊은 정규화를 거쳐 InvasionConfig 를 구성한다(PR#24 carry-forward, ADR-0005 보호).
+ * 그 시뮬은 sim 이 결정론으로 재현한다. layout 은 **반드시 {@link normalizeTargetLayers}** 로
+ * 정규화(내부적으로 sim 정본 `normalizeInvasionLayers`)해 Invasion3Config 를 구성한다 —
+ * raw jsonb 를 sim 에 그대로 넣으면 클라·서버 재실행이 갈린다(ADR-0005 보호).
  */
 
 import type { Profile } from '../save/profile.js';
-import type { DefenseLayout } from '../sim/defense.js';
+import type { InvasionLayers, InvasionRef } from '../sim/invasion/types.js';
+import { normalizeInvasionLayers } from '../sim/invasion/normalize.js';
+import {
+  INVASION_WAVE_SLOTS,
+  INVASION_PROP_SLOTS,
+} from '../sim/invasion/constants.js';
 import {
   fetchInvasionTargets,
   fetchLadder,
@@ -49,34 +55,21 @@ import {
 } from '../net/invasion.js';
 import { stickerLabel } from '../../data/stickers.js';
 import { seedBaseByProfileId } from '../../data/seedBases.js';
-import type { CardInstance } from '../../data/defenseCards.js';
-import { cardRarityColor, cardRarityLabel, cardAffixOneLine } from './cardsView.js';
-import { t } from '../i18n/index.js';
 import {
-  GRID_COLS,
-  GRID_ROWS,
-  SPAWN_COL,
-  SPAWN_ROW,
-  editorStateFromLayout,
-  findAt,
-  normalizeLayout,
-  type DefenseEditorState,
-  type Occupant,
-} from './defenseCommand.js';
+  CATALOG_FORMATION,
+  CATALOG_FACILITY,
+  CATALOG_PROP,
+  CATALOG_BOSS,
+  catalogEntry,
+  def3NameKey,
+} from '../../data/invasion/catalog.js';
+import type { ModuleInstance } from '../../data/coreModules.js';
+import { moduleRarityColor, moduleRarityLabel, moduleAffixOneLine } from './modulesView.js';
+import { t, type MessageKey } from '../i18n/index.js';
 
 // ---------------------------------------------------------------------------
 // 표시 데이터
 // ---------------------------------------------------------------------------
-/** 포탑 유형별 글리프·색(인덱스 = TURRET_* 코드; defenseCommand 팔레트와 정합). */
-const TURRET_GLYPH: readonly { g: string; accent: string }[] = [
-  { g: '🔫', accent: '#4cd7ff' },
-  { g: '🎯', accent: '#ff5a7a' },
-  { g: '💥', accent: '#ffd24c' },
-  { g: '❄️', accent: '#7ad0ff' },
-  { g: '🚀', accent: '#ff9a4c' },
-  { g: '⚡', accent: '#c86aff' },
-];
-
 // ---------------------------------------------------------------------------
 // 순수 표시 로직 (테스트 대상 — DOM 무관)
 // ---------------------------------------------------------------------------
@@ -111,8 +104,24 @@ export interface InvadeState {
   canInvade: boolean;
   /** 비활성 사유(canInvade=true 면 빈 문자열). */
   reason: string;
-  /** 정규화된 배치(침공 런 config 입력). 배치 없음/손상이면 null. */
-  layout: DefenseLayout | null;
+  /** 정규화된 3레이어 배치(침공 런 config 입력). 배치 없음/손상이면 null. */
+  layout: InvasionLayers | null;
+}
+
+/**
+ * 서버가 준 raw layout → 정규화된 3레이어 배치. **"배치 없음"을 구분하는 유일한 지점**이다.
+ *
+ * `normalizeInvasionLayers` 는 total function 이라 무엇을 넣어도 정규형을 돌려준다(빈 배치로
+ * 폴백). 그건 sim·해시 입력으로는 옳지만 UI 로는 위험하다 — 서버 응답이 통째로 비었거나 구
+ * 형식(`{core,turrets,obstacles}`)이어도 "정상 기지"로 보여 침공 버튼이 열리기 때문이다.
+ * 그래서 여기서 **3레이어 형태인지**(l1/l2/l3 중 하나라도 있는 객체인지)를 먼저 보고, 아니면
+ * null 을 돌려 호출부가 "방어 기지 없음"으로 분기하게 한다.
+ */
+export function normalizeTargetLayers(raw: unknown): InvasionLayers | null {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  if (o['l1'] === undefined && o['l2'] === undefined && o['l3'] === undefined) return null;
+  return normalizeInvasionLayers(raw);
 }
 
 /**
@@ -126,7 +135,7 @@ export function computeInvadeState(
   cooldowns: Record<string, number>,
   nowMs: number,
 ): InvadeState {
-  const layout = normalizeLayout(target.layout);
+  const layout = normalizeTargetLayers(target.layout);
   if (layout === null) {
     return { canInvade: false, reason: t('ctl.noBase'), layout: null };
   }
@@ -142,7 +151,7 @@ export function computeInvadeState(
  * (계약 §2 — 배치전은 NPC 전용·쿨다운 없음). 배치 layout 정규화만 검사한다.
  */
 export function computePlacementInvadeState(target: InvasionTarget): InvadeState {
-  const layout = normalizeLayout(target.layout);
+  const layout = normalizeTargetLayers(target.layout);
   if (layout === null) {
     return { canInvade: false, reason: t('ctl.noBase'), layout: null };
   }
@@ -170,7 +179,7 @@ export interface RevengeCardState {
   /** 잔여시간 라벨("복수 가능 N시간 남음"). 만료면 빈 문자열. */
   remainingLabel: string;
   /** 방어 배치 정규화 결과(복수 침공 런 config). 배치 없음/손상이면 null. */
-  layout: DefenseLayout | null;
+  layout: InvasionLayers | null;
 }
 
 /**
@@ -179,7 +188,7 @@ export interface RevengeCardState {
  */
 export function revengeCardState(target: RevengeTarget, nowMs: number): RevengeCardState {
   const remaining = revengeRemainingMs(target.expiresAtMs, nowMs);
-  const layout = normalizeLayout(target.layout);
+  const layout = normalizeTargetLayers(target.layout);
   return {
     expired: remaining <= 0,
     remainingLabel: formatRevengeRemaining(remaining),
@@ -254,44 +263,153 @@ export function resultBannerText(view: InvasionResultView): string {
   return t('ctl.res.lose', { who });
 }
 
-/** 미니 정찰 격자 한 칸의 표시(순수). 점유 없으면 null. */
-export interface PreviewCell {
-  col: number;
-  row: number;
-  glyph: string;
-  accent: string;
-  label: string;
-  spawn: boolean;
+/**
+ * 3레이어 배치 정찰 요약 한 줄(순수). 정식 정찰 화면(레이어별 실루엣·등급·승급 표시)은
+ * **M7b-command-ui** 가 만든다 — 여기서는 "몇 개나 배치돼 있는가"만 센다.
+ *
+ * 구 구현은 15×9 미니 격자에 포탑·장애물 글리프를 찍었다. 3레이어에는 격자가 없어 그 표현이
+ * 통째로 성립하지 않으므로 M7a 에서는 텍스트로 낮춘다(레인 문서 L11 ④).
+ *
+ * 정찰 정보 공개 범위(결정 #15): 슬롯 **점유 수**까지만 세고 카탈로그 id·레벨·어픽스 같은
+ * 정확 스펙은 노출하지 않는다.
+ */
+export function reconSummary(layers: InvasionLayers): string {
+  const filled = (slots: readonly (unknown | null)[]): number =>
+    slots.reduce<number>((n, s) => (s === null || s === undefined ? n : n + 1), 0);
+  return t('ctl.recon.summary3', {
+    f: filled(layers.l1.waveSlots),
+    fm: INVASION_WAVE_SLOTS,
+    s: filled(layers.l2.sockets),
+    sm: layers.l2.sockets.length,
+    p: filled(layers.l3.props),
+    pm: INVASION_PROP_SLOTS,
+    b: layers.l3.boss !== null ? 1 : 0,
+  });
 }
 
-function occupantGlyph(state: DefenseEditorState, occ: NonNullable<Occupant>): { g: string; accent: string; label: string } {
-  if (occ.kind === 'core') return { g: '💠', accent: '#8fd94c', label: t('ctl.cell.core') };
-  if (occ.kind === 'obstacle') return { g: '🧱', accent: '#8896b8', label: t('ctl.cell.obstacle') };
-  const turret = state.turrets[occ.index];
-  const d = turret !== undefined ? TURRET_GLYPH[turret.type] : undefined;
-  return { g: d?.g ?? '❔', accent: d?.accent ?? '#fff', label: t('ctl.cell.turret') };
+// ---------------------------------------------------------------------------
+// 3레이어 정찰 뷰 모델 (M7b-acquisition · 결정 #15) — 순수 · 테스트 대상
+// ---------------------------------------------------------------------------
+
+/**
+ * 정찰 슬롯 1칸의 **표시 전용** 모델.
+ *
+ * ## 정보 공개 범위(결정 #15)가 이 타입의 형태로 강제된다
+ * 잠금 상태에서 공개하는 것은 ①슬롯이 찼는가 ②등급(색) ③승급(별) **셋뿐**이다. 레벨·
+ * 어픽스 시드·카탈로그 id 는 **필드 자체가 없다** — 렌더가 실수로 흘릴 표면을 타입에서
+ * 없애는 편이 "안 그리기로 약속" 보다 확실하다. 1회 침공한 상대만 `nameKey` 가 채워져
+ * 종류를 알 수 있고, 그마저도 레벨·어픽스는 여전히 내지 않는다(그건 결과 화면 몫).
+ */
+export interface ReconSlotView {
+  /** 슬롯이 차 있는가(비었으면 기본 수비대가 스폰 단계에서 충원된다). */
+  readonly occupied: boolean;
+  /** 등급 코드 0..3. 빈 슬롯이면 0. */
+  readonly rarity: number;
+  /** 승급 단계 0..5(별 개수). 빈 슬롯이면 0. */
+  readonly ascension: number;
+  /** 해금(1회 침공 완료)됐을 때만 채워지는 표시명 i18n 키. 잠금이면 null. */
+  readonly nameKey: string | null;
+}
+
+/** 정찰 한 줄(레이어 안의 한 슬롯 무리). */
+export interface ReconStrip {
+  /** 레이어 번호(1..3). */
+  readonly layer: number;
+  /** 카탈로그 종류 코드(CATALOG_*). 수호 기체 줄은 -1(카탈로그 밖). */
+  readonly kind: number;
+  readonly slots: readonly ReconSlotView[];
+}
+
+/** 정찰 화면 전체. */
+export interface ReconView {
+  /** 1회 침공해 종류가 해금됐는가. */
+  readonly revealed: boolean;
+  /** 슬롯 점유 요약 한 줄(기존 문구 재사용). */
+  readonly summary: string;
+  readonly strips: readonly ReconStrip[];
+}
+
+/** 승급 별 최대 표시 수(외형 티어 신호 — data/defenseUnits.ts ASCENSION 상한과 동일). */
+const RECON_MAX_STARS = 5;
+
+/** 등급 코드 → 정찰 칩 색(CSS). 장비/모듈 팔레트와 같은 어휘(회색→파랑→금색→보라). */
+export const RECON_RARITY_COLOR: readonly string[] = ['#8a8f9e', '#5aa9ff', '#ffd24c', '#c86aff'];
+
+/** 등급 코드 → 칩 색. 범위를 벗어나면 노말 회색. */
+export function reconRarityColor(rarity: number): string {
+  return RECON_RARITY_COLOR[rarity] ?? RECON_RARITY_COLOR[0]!;
+}
+
+/** 승급 단계 → 별 문자열('★★☆☆☆'). 컬러 이모지가 아니라 흑백 기하 기호다(Pixi 두부 회피). */
+export function ascensionStars(ascension: number): string {
+  const n = Math.max(0, Math.min(RECON_MAX_STARS, Math.trunc(ascension)));
+  return '★'.repeat(n) + '☆'.repeat(RECON_MAX_STARS - n);
+}
+
+/** 배치 Ref 1건 → 슬롯 뷰. 잠금이면 종류를 숨긴다. */
+function slotView(ref: InvasionRef | null, kind: number, revealed: boolean): ReconSlotView {
+  if (ref === null) return { occupied: false, rarity: 0, ascension: 0, nameKey: null };
+  const entry = revealed ? catalogEntry(kind, ref.catalogId) : undefined;
+  return {
+    occupied: true,
+    rarity: ref.rarity,
+    ascension: ref.ascension,
+    nameKey: entry === undefined ? null : def3NameKey(entry.i18nId),
+  };
 }
 
 /**
- * 방어 배치 → 미니 격자 미리보기 셀 목록(순수). editorStateFromLayout + findAt 재사용
- * (defenseCommand 의 검증된 좌표 로직). 점유 칸만 반환한다(스폰 칸은 빈 칸이라도 표시).
+ * 3레이어 배치 → 정찰 뷰(순수).
+ *
+ * `revealed` 는 **1회 침공 이력**이다(결정 #15). 클라는 재도전 쿨다운 로컬 미러에 그 이력을
+ * 이미 갖고 있으므로(침공 시작 시 기록) 별도 저장소·서버 왕복 없이 판정한다 — 이 값을
+ * 조작해도 드러나는 것은 "종류 이름" 뿐이고 레벨·어픽스는 애초에 응답에 없다.
  */
-export function previewCells(layout: DefenseLayout): PreviewCell[] {
-  const state = editorStateFromLayout(layout);
-  const out: PreviewCell[] = [];
-  for (let row = 0; row < GRID_ROWS; row++) {
-    for (let col = 0; col < GRID_COLS; col++) {
-      const spawn = col === SPAWN_COL && row === SPAWN_ROW;
-      const occ = findAt(state, col, row);
-      if (occ === null) {
-        if (spawn) out.push({ col, row, glyph: '▲', accent: '#ffb14c', label: t('ctl.cell.spawn'), spawn: true });
-        continue;
-      }
-      const g = occupantGlyph(state, occ);
-      out.push({ col, row, glyph: g.g, accent: g.accent, label: g.label, spawn });
-    }
-  }
-  return out;
+export function reconView(layers: InvasionLayers, revealed: boolean): ReconView {
+  const strips: ReconStrip[] = [
+    {
+      layer: 1,
+      kind: CATALOG_FORMATION,
+      slots: layers.l1.waveSlots.map((s) => slotView(s, CATALOG_FORMATION, revealed)),
+    },
+    {
+      layer: 2,
+      kind: CATALOG_FACILITY,
+      slots: layers.l2.sockets.map((s) => slotView(s, CATALOG_FACILITY, revealed)),
+    },
+    {
+      layer: 3,
+      kind: CATALOG_BOSS,
+      slots: [slotView(layers.l3.boss, CATALOG_BOSS, revealed)],
+    },
+    {
+      layer: 3,
+      kind: CATALOG_PROP,
+      slots: layers.l3.props.map((s) => slotView(s, CATALOG_PROP, revealed)),
+    },
+    {
+      // 수호 기체는 카탈로그 밖(퇴역 기체 복사본)이라 등급·승급 축이 없다 — 점유만 낸다.
+      layer: 3,
+      kind: RECON_KIND_GUARDIAN,
+      slots: layers.l3.guardians.map((g) => ({
+        occupied: g !== null,
+        rarity: 0,
+        ascension: 0,
+        nameKey: null,
+      })),
+    },
+  ];
+  return { revealed, summary: reconSummary(layers), strips };
+}
+
+/** 수호 기체 줄의 종류 코드(카탈로그 밖 — CATALOG_* 와 겹치지 않는 음수). */
+export const RECON_KIND_GUARDIAN = -1;
+
+/** 슬롯 뷰 → 잠금 상태에서도 안전한 한 줄 라벨(해금이면 이름, 아니면 물음표). */
+export function reconSlotLabel(slot: ReconSlotView): string {
+  if (!slot.occupied) return '';
+  if (slot.nameKey === null) return '?';
+  return t(slot.nameKey as MessageKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -360,8 +478,8 @@ const STYLE = `
 
 /** 관제탑 콜백(main 이 침공 런/뒤로가기를 구동). */
 export interface ControlTowerCallbacks {
-  /** 침공 시작 — 정규화된 방어 배치를 침공 런 config 로 넘긴다(normalizeLayout 완료본). */
-  onInvade: (target: InvasionTarget, layout: DefenseLayout) => void;
+  /** 침공 시작 — 정규화된 3레이어 배치를 침공 런 config 로 넘긴다(normalizeTargetLayers 완료본). */
+  onInvade: (target: InvasionTarget, layout: InvasionLayers) => void;
   /** 리플레이 관전 진입 — invasionId 로 리플레이를 로드해 재생한다(F3). */
   onSpectate: (invasionId: string, attackerName: string) => void;
   /** 방어 성공한 침공에 도발 스티커 달기(F2 방어자 몫) — 스티커 선택 UI 를 연다. */
@@ -377,10 +495,12 @@ export interface ControlTowerShowOpts {
   /** 서버 검증 대기 중 표시. */
   verifying?: boolean;
   /**
-   * 방금 침공한 상대의 방어 카드(정찰 공개 — 스펙 R9). 침공해 본 상대만 옵션을 공개한다
-   * (타겟 목록은 등급도 비공개 상태이므로 여기서만 어픽스를 드러낸다). 미장착이면 null/미지정.
+   * 방금 침공한 상대의 장착 코어 모듈(정찰 공개 — 스펙 R9). 침공해 본 상대만 옵션을 공개한다
+   * (타겟 목록은 등급도 비공개 상태이므로 여기서만 모듈 어픽스를 드러낸다). 슬롯이 2개이므로
+   * **배열**이며, 미장착이면 빈 배열/미지정이다. 입력은 T0 권위 스냅샷이라 방어자가 그 사이
+   * 모듈을 바꿔도 "내가 상대한 방어"가 보인다(ADR-0012).
    */
-  revealCard?: CardInstance | null;
+  revealModules?: readonly ModuleInstance[];
 }
 
 export class ControlTower {
@@ -612,32 +732,34 @@ export class ControlTower {
   }
 
   /**
-   * 침공한 상대의 방어 카드 정찰 공개 패널(스펙 R9). 결과 배너가 있고 카드가 실제로 장착돼
-   * 있었을 때만 표시한다(미장착·미제출이면 null). 등급·잔여 횟수·어픽스 옵션을 드러내 복수전·
-   * 재침공의 역퍼즐 정보를 준다. 렌더 전용.
+   * 침공한 상대의 코어 모듈 정찰 공개 패널(스펙 R9). 결과 배너가 있고 모듈이 실제로 장착돼
+   * 있었을 때만 표시한다(미장착·미제출이면 null). 등급·잔여 횟수·모듈 어픽스를 드러내 복수전·
+   * 재침공의 역퍼즐 정보를 준다. 슬롯이 2개라 장착분 전부를 줄줄이 보여 준다. 렌더 전용.
    */
   private revealPanel(): HTMLElement | null {
     if (this.opts.result === undefined) return null;
-    const card = this.opts.revealCard;
-    if (card === null || card === undefined) return null;
+    const modules = this.opts.revealModules;
+    if (modules === undefined || modules.length === 0) return null;
 
     const panel = document.createElement('div');
     panel.className = 'pb-reveal';
     const h3 = document.createElement('div');
     h3.className = 'rv-head';
-    h3.textContent = t('card.reveal.head');
+    h3.textContent = t('mod.reveal.head');
     panel.appendChild(h3);
 
-    const grade = document.createElement('div');
-    grade.className = 'rv-grade';
-    grade.style.color = cardRarityColor(card.rarity);
-    grade.textContent = `${t('card.reveal.grade', { rarity: cardRarityLabel(card.rarity) })} · ${t('card.reveal.charges', { n: card.chargesLeft })}`;
-    panel.appendChild(grade);
+    for (const mod of modules) {
+      const grade = document.createElement('div');
+      grade.className = 'rv-grade';
+      grade.style.color = moduleRarityColor(mod.rarity);
+      grade.textContent = `${t('mod.reveal.grade', { rarity: moduleRarityLabel(mod.rarity) })} · ${t('mod.reveal.charges', { n: mod.chargesLeft })}`;
+      panel.appendChild(grade);
 
-    const affix = document.createElement('div');
-    affix.className = 'rv-affix';
-    affix.textContent = cardAffixOneLine(card);
-    panel.appendChild(affix);
+      const affix = document.createElement('div');
+      affix.className = 'rv-affix';
+      affix.textContent = moduleAffixOneLine(mod);
+      panel.appendChild(affix);
+    }
 
     return panel;
   }
@@ -928,41 +1050,65 @@ export class ControlTower {
       panel.appendChild(this.msg(t('ctl.recon.selectPrompt')));
       return panel;
     }
-    const layout = normalizeLayout(target.layout);
+    const layout = normalizeTargetLayers(target.layout);
     if (layout === null) {
       panel.appendChild(this.msg(t('ctl.recon.noBase')));
       return panel;
     }
 
-    const cells = previewCells(layout);
-    const occupied = new Map<string, PreviewCell>();
-    for (const c of cells) occupied.set(`${c.col},${c.row}`, c);
-
-    const grid = document.createElement('div');
-    grid.className = 'grid';
-    grid.style.gridTemplateColumns = `repeat(${GRID_COLS}, 20px)`;
-    for (let row = 0; row < GRID_ROWS; row++) {
-      for (let col = 0; col < GRID_COLS; col++) {
-        const cell = document.createElement('div');
-        const pc = occupied.get(`${col},${row}`);
-        cell.className = `cell${pc?.spawn === true ? ' spawn' : ''}`;
-        if (pc !== undefined) {
-          cell.textContent = pc.glyph;
-          cell.style.color = pc.accent;
-          cell.title = pc.label;
-        }
-        grid.appendChild(cell);
-      }
-    }
-    panel.appendChild(grid);
-
+    // 3레이어 정찰(결정 #15): 레이어별 실루엣 칩 + 등급 색 + 승급 별만. 정확 스펙(레벨·
+    // 어픽스)은 뷰 모델에 필드조차 없다. 1회 침공한 상대만 종류 이름이 열린다.
+    const view = reconView(layout, this.cooldowns[target.profileId] !== undefined);
     const sum = document.createElement('div');
     sum.className = 'pb-note';
     sum.style.textAlign = 'left';
     sum.style.marginTop = '6px';
-    sum.textContent = t('ctl.recon.summary', { t: layout.turrets.length, o: layout.obstacles.length });
+    sum.textContent = view.summary;
     panel.appendChild(sum);
+    for (const strip of view.strips) {
+      panel.appendChild(this.reconStripRow(strip));
+    }
     return panel;
+  }
+
+  /** 정찰 한 줄 — 레이어 라벨 + 슬롯 칩(등급 색 채움 · 승급 별 · 잠금이면 '?'). */
+  private reconStripRow(strip: ReconStrip): HTMLElement {
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.gap = '4px';
+    row.style.marginTop = '5px';
+
+    const tag = document.createElement('span');
+    tag.style.color = '#8896b8';
+    tag.style.fontSize = '11px';
+    tag.style.minWidth = '22px';
+    // 레이어 번호는 코드 라벨이라 번역 대상이 아니다(L1/L2/L3).
+    tag.textContent = `L${strip.layer}`;
+    row.appendChild(tag);
+
+    for (const slot of strip.slots) {
+      const chip = document.createElement('span');
+      chip.style.width = '18px';
+      chip.style.height = '18px';
+      chip.style.borderRadius = '4px';
+      chip.style.display = 'inline-flex';
+      chip.style.alignItems = 'center';
+      chip.style.justifyContent = 'center';
+      chip.style.fontSize = '10px';
+      chip.style.fontWeight = '800';
+      chip.style.color = '#12102a';
+      if (slot.occupied) {
+        chip.style.background = reconRarityColor(slot.rarity);
+        chip.textContent = reconSlotLabel(slot).slice(0, 1);
+        chip.title = `${reconSlotLabel(slot)} · ${ascensionStars(slot.ascension)}`;
+      } else {
+        chip.style.background = 'transparent';
+        chip.style.border = '1px dashed #2a3552';
+      }
+      row.appendChild(chip);
+    }
+    return row;
   }
 
   private ladderPanel(): HTMLElement {

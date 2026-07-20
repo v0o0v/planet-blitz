@@ -42,8 +42,9 @@ import { RefineryScreen } from './ui/pixi/refinery.js';
 import { PlanetSelectScreen } from './ui/pixi/planetSelect.js';
 import { ResultOverlayScreen } from './ui/pixi/resultOverlay.js';
 import { ControlTowerScreen } from './ui/pixi/controlTower.js';
-import { CardsScreen } from './ui/pixi/cardsView.js';
-import { DefenseCommand, normalizeLayout } from './ui/defenseCommand.js';
+import { ModulesScreen } from './ui/pixi/modulesView.js';
+import { DefenseCommandScreen } from './ui/pixi/defenseCommand.js';
+
 import type { ControlTowerShowOpts, InvasionResultView } from './ui/controlTower.js';
 import { TitleScreen } from './ui/pixi/titleScreen.js';
 import {
@@ -98,9 +99,22 @@ import {
   setInvasionSticker,
 } from './net/invasion.js';
 import type { InvasionTarget } from './net/invasion.js';
-import { DEFAULT_TIME_LIMIT_TICKS } from './sim/defense.js';
-import type { InvasionConfig, DefenseLayout } from './sim/defense.js';
-import type { DefenseCardConfig } from './sim/cardEffects.js';
+// M7b 방어체 경제: 설계도 지급(정산 파생) + 보관함·강화 게이트웨이 팩토리 등록.
+import { grantBlueprintDrops } from './net/blueprints.js';
+import { setDefenseUnitsGatewayFactory } from './net/defenseUnits.js';
+import { readSupabaseConfig } from './net/config.js';
+// M7a 침공 3레이어(ADR-0017): 침공 런은 구 단일 아레나 `WorldConfig.invasion` 이 아니라
+// `invasion3`(L1 대기권 → L2 회랑 → L3 코어방) 로 만든다. 두 필드를 함께 지정하면 방어
+// 배치가 이중 스폰되므로 **한쪽만** 쓴다.
+import {
+  INVASION_TOTAL_TICKS,
+  MAINTENANCE_FULL,
+  PHASE_L1,
+  normalizeInvasionLayers,
+} from './sim/invasion/index.js';
+import type { Invasion3Config } from './sim/invasion/index.js';
+import type { CoreModuleConfig } from './sim/moduleEffects.js';
+import type { ModuleInstance } from '../data/coreModules.js';
 // M4 Phase F: 리플레이 관전(F3) + 도발 스티커(F2).
 import { SpectateOverlay, isPlayableReplay, nextSpectateSpeed } from './ui/replaySpectate.js';
 import type { SpectateSpeed } from './ui/replaySpectate.js';
@@ -185,16 +199,16 @@ async function main(): Promise<void> {
   document.body.appendChild(blackoutBanner);
 
   /**
-   * 레이더를 그리되, 방어자 카드 유니크 '블랙아웃'이 발동 중이면(공격자 = 현재 플레이어의
-   * 레이더 무력화, cardRuntime.blackoutTicksLeft>0) 레이더를 숨기고 상단 배너를 띄운다. 렌더
-   * 전용 게이트 — sim 은 무변경(카드 미장착/PvE 면 cardRuntime 부재라 항상 정상 렌더). 블랙아웃
-   * 잔여 틱은 stepCardRuntime 이 카운트다운한다(Lane B).
+   * 레이더를 그리되, 방어자 코어 모듈 유니크 '블랙아웃'이 발동 중이면(공격자 = 현재 플레이어의
+   * 레이더 무력화, moduleRuntime.blackoutTicksLeft>0) 레이더를 숨기고 상단 배너를 띄운다. 렌더
+   * 전용 게이트 — sim 은 무변경(모듈 미장착/PvE 면 moduleRuntime 부재라 항상 정상 렌더).
+   * 블랙아웃 잔여 틱은 stepModuleRuntime 이 카운트다운한다(M7b).
    */
   function renderRadarGated(): void {
-    const cr = world?.cardRuntime;
+    const cr = world?.moduleRuntime;
     if (cr !== undefined && cr.blackoutTicksLeft > 0) {
       radar.layer.visible = false;
-      blackoutBanner.textContent = t('card.hud.blackout', { n: Math.ceil(cr.blackoutTicksLeft / 60) });
+      blackoutBanner.textContent = t('mod.hud.blackout', { n: Math.ceil(cr.blackoutTicksLeft / 60) });
       blackoutBanner.style.display = 'block';
       return;
     }
@@ -211,6 +225,19 @@ async function main(): Promise<void> {
   const profile = loadProfile();
   // 로컬 세이브 → 서버 1회 이관(멱등, 무손실). 미설정이면 no-op. 비차단.
   void migrateLocalProfileToServer(profile);
+  // M7b: 방어체 보관함·강화 게이트웨이 팩토리 등록. 등록 전에는 net/defenseUnits 의 모든
+  // 공개 함수가 no-op 이라 방어 사령부가 영구 '오프라인'으로 보인다. **설정이 있을 때만**
+  // 동적 import 하는 이유는 Supabase SDK 를 메인 청크에 싣지 않기 위해서다(modules.ts 와
+  // 같은 규율). 실패해도 삼킨다 — 배치 편집·프리뷰·시험 침공은 서버 없이도 전부 동작한다.
+  if (readSupabaseConfig() !== null) {
+    void import('./net/defenseUnitsGateway.js')
+      .then((m) => {
+        setDefenseUnitsGatewayFactory((config) => new m.SupabaseDefenseUnitsGateway(config));
+      })
+      .catch(() => {
+        /* SDK 로드 실패 = 오프라인과 동일 취급 */
+      });
+  }
   // 격납고 카툰 UI 파일럿(plan hangar-cartoon-ui): 기존 DOM InventoryOverlay 대신 Pixi
   // 캔버스 격납고로 진입점을 교체한다(인터페이스 show/hide/visible 동일). InventoryOverlay
   // 클래스는 회귀 대비로 유지(삭제하지 않음).
@@ -235,41 +262,44 @@ async function main(): Promise<void> {
   // visible + 콜백·옵션 타입 동일). 다른 캔버스 화면과 같은 블록에서 만들어야
   // entityRenderer·radar 레이어보다 **뒤에** stage 에 붙어 위로 그려진다(z 순서).
   const controlTower = new ControlTowerScreen(gameApp.stage);
-  // 카툰나무풍 롤아웃 #7: 방어 사령부 우측 접이식이던 카드 관리(보관함·상점·합성)를 독립
-  // 캔버스 화면으로 뺐다. 진입은 방어 사령부의 "카드 관리" 버튼 — 그 DOM 오버레이만
-  // suspend 로 감췄다가 닫힐 때 resume 한다(미저장 배치 편집을 지키기 위해 show 를 다시
-  // 부르지 않는다). 다른 캔버스 화면과 같은 블록에서 만들어야 z 순서가 맞는다.
-  const cardsScreen = new CardsScreen(profile, gameApp.stage);
-  const defenseCommand = new DefenseCommand(profile);
+  // 코어 모듈 화면(M7b — 구 카드 화면 계승). 진입은 방어 사령부의 모듈 탭 버튼이고, 사령부는
+  // 자기 화면만 suspend 로 감췄다가 닫힐 때 resume 한다(미저장 배치 편집을 지키기 위해 show 를
+  // 다시 부르지 않는다). 다른 캔버스 화면과 같은 블록에서 만들어야 z 순서가 맞는다.
+  const modulesScreen = new ModulesScreen(profile, gameApp.stage);
 
-  /** 방어 사령부 → 카드 화면. 닫으면 편집 상태 그대로 방어 사령부로 돌아온다. */
-  function openCards(): void {
-    defenseCommand.suspend();
-    cardsScreen.show(profile, () => defenseCommand.resume());
-  }
+  // 3레이어 배치 프리뷰(M7b) — 방어 사령부가 자기 루트에 붙여 배경 위·패널 아래로 순서를
+  // 잡는다(`attachTo`). 목업이 아니라 실제 `createWorld(invasion3)` 정지 렌더다.
+  const defensePreview: DefensePreviewControls = new DefensePreviewController({ textures });
+  // 방어 사령부(M7b-command-ui) — 침공 3레이어 배치 사령. 다른 캔버스 화면과 같은 블록에서
+  // 만들어야 entityRenderer·radar 레이어보다 **뒤에** stage 에 붙어 위로 그려진다(z 순서).
+  const defenseCommand = new DefenseCommandScreen(profile, gameApp.stage, defensePreview);
 
-  /** 방어 사령부 진입(기지 맵·하네스 공용) — 프리뷰 시작 + 카드 화면 진입 배선. */
+  /**
+   * 방어 사령부 진입(기지 맵·하네스 공용).
+   *
+   * 코어 모듈 관리는 별도 캔버스 화면이라 **suspend/resume** 으로 오간다 — `show()` 로 되돌리면
+   * 사령부의 미저장 배치 편집이 날아간다(실측 규율). 시험 침공은 하네스 침공 경로로 보낸다:
+   * `startHarnessInvasionRun` 은 `invasionTarget` 을 세우지 않고 `harnessInvasionRun` 만 세우므로
+   * 정산도 리플레이 제출도 타지 않는다(ADR-0008 오염 런 격리).
+   */
   function openDefenseCommand(): void {
-    // 프리뷰 정지 월드를 저장된 배치로 켠다(레인 B).
-    defensePreview.start(normalizeLayout(profile.defenseLayout));
-    defenseCommand.show(profile, () => openBaseMap(), defensePreview, () => openCards());
+    defenseCommand.show(profile, {
+      onClose: () => openBaseMap(),
+      onTestInvade: (layers) => {
+        startHarnessInvasionRun({
+          seed: nextSeed(),
+          layers,
+          maintenance: MAINTENANCE_FULL,
+          timeLimitTicks: INVASION_TOTAL_TICKS,
+        });
+      },
+      onOpenModules: (resume) => {
+        modulesScreen.show(profile, () => {
+          resume();
+        });
+      },
+    });
   }
-  // 방어 사령부 실화면 편집 프리뷰(레인 B, ADR-0013): 침공 정지 월드를 침공과 동일 렌더 경로로
-  // 그려 배치를 실화면으로 보여준다. 라이브 `world` 변수와 완전 분리 — 게임 루프·recorder 없음.
-  // 레인 C(defenseCommand 재편)가 이 컨트롤을 소비해 편집 UI 와 배선한다(현재는 진입/이탈 시
-  // start/stop 만 — defenseCommand DOM 이 아직 캔버스를 덮으므로 시각 회귀 0).
-  const defensePreview: DefensePreviewControls = new DefensePreviewController({
-    stage: gameApp.stage,
-    textures,
-    clientToDesign: (x, y) => gameApp.clientToDesign(x, y),
-    setBackdrop: (active) => {
-      if (!active) return; // 이탈 시 복원 불필요 — 다음 메뉴 화면이 자체 DOM 으로 덮는다.
-      // 침공과 동일: 카르곤 플랫 배경 + 오토타일 없음(D9). 배치 영역이 무대다.
-      background.texture = planetBackground(0);
-      autotile.configure(null, 0);
-      background.visible = true;
-    },
-  });
   // M4 Phase F: 관전 컨트롤 오버레이(F3) + 도발 스티커 선택(F2).
   const spectateOverlay = new SpectateOverlay();
   const stickerPicker = new StickerPicker();
@@ -326,10 +356,13 @@ async function main(): Promise<void> {
   // 현재 침공 런의 권위 스냅샷 id(begin_invasion 성공 시). 제출 시 invasions.snapshot_id 로
   // 동봉해 EF 가 T0 고정 권위로 대조하게 한다. null 이면 현행 라이브 경로(하위호환).
   let invasionSnapshotId: string | null = null;
+  // DEV 하네스 침공 런(ADR-0008 오염 격리). 대상 기지가 없는 개발용 무대라 정산도 서버
+  // 제출도 하지 않는다 — endRun 이 이 플래그를 보고 두 경로를 모두 건너뛴다.
+  let harnessInvasionRun = false;
   let pendingInvasionResult: InvasionResultView | null = null;
-  // 직전 침공 런에 실린 방어자 카드 효력(begin_invasion 스냅샷). 제출 후 관제탑 결과 배너에서
-  // 상대 카드 옵션을 정찰 공개하는 데 쓴다(스펙 R9 — 침공해 본 상대만 옵션 공개). 미장착이면 null.
-  let lastInvasionCard: DefenseCardConfig | null = null;
+  // 방금 상대한 방어의 장착 코어 모듈(T0 스냅샷 권위). 결과 배너와 함께 관제탑에서 정찰
+  // 공개된다(스펙 R9) — 등급·잔여 횟수·모듈 어픽스까지 드러나 복수전·재침공의 역퍼즐이 된다.
+  let pendingRevealModules: readonly ModuleInstance[] = [];
 
   // --- 리플레이 관전(F3) 상태 ---
   // spectateReplay !== null 이면 현재 화면은 관전 재생이다 → ticker 가 리플레이 입력을
@@ -383,7 +416,7 @@ async function main(): Promise<void> {
   /**
    * 현재 메뉴 화면을 다시 그린다(M5 C3 언어 전환용). 런/정산/관전 중에는 안전하게 무시한다
    * — 사운드/사이드이펙트 재실행 없이 순수 메뉴 UI 만 새 로케일로 재구성한다. controlTower/
-   * defenseCommand 등 아직 미로케일화된 화면도 안전하게 재오픈된다(문자열만 그대로).
+   * 관제탑 등 아직 미로케일화된 화면도 안전하게 재오픈된다(문자열만 그대로).
    */
   function rerenderCurrentScreen(): void {
     if (world !== null) return; // 런/관전 중에는 재렌더하지 않는다(HUD 는 다음 프레임 반영).
@@ -423,8 +456,8 @@ async function main(): Promise<void> {
     inventory.hide();
     researchLab.hide();
     refinery.hide();
+    modulesScreen.hide();
     defenseCommand.hide();
-    cardsScreen.hide();
     defensePreview.stop();
     controlTower.hide();
     spectateOverlay.hide();
@@ -493,8 +526,11 @@ async function main(): Promise<void> {
     if (pendingInvasionResult !== null) {
       showOpts.result = pendingInvasionResult;
       pendingInvasionResult = null;
-      // 방금 침공한 상대의 방어 카드 옵션을 정찰 공개(스펙 R9). 미장착이면 null → 패널 숨김.
-      showOpts.revealCard = lastInvasionCard !== null ? lastInvasionCard.card : null;
+      // 상대 코어 모듈 옵션 정찰 공개(스펙 R9). 입력은 방금 끝난 침공의 T0 권위 스냅샷
+      // (begin_invasion 의 authority.modules)이라 라이브 재조회가 필요 없고, 방어자가 그
+      // 사이 모듈을 바꿔도 "내가 상대한 방어"가 그대로 보인다(ADR-0012 스냅샷 고정).
+      if (pendingRevealModules.length > 0) showOpts.revealModules = pendingRevealModules;
+      pendingRevealModules = [];
     }
     if (opts.verifying === true) showOpts.verifying = true;
     controlTower.show(
@@ -594,11 +630,28 @@ async function main(): Promise<void> {
   }
 
   /**
-   * 침공 런 시작. 대상의 방어 배치(normalizeLayout 완료본)를 침공 config 로 넣어
+   * 레이어별 배경 텍스처 인덱스(L1 대기권 · L2 회랑 · L3 코어방).
+   *
+   * **L10 통합 지점**: 정식 배경 3종 + 전환 크로스페이드는 L10-render 가
+   * `src/render/invasionBackdrop.ts` 로 제공한다. 그 모듈이 붙기 전까지는 기존 행성 배경을
+   * 레이어마다 갈라 써서 전환이 눈에 보이게 한다(연출 없는 폴백 — 무결함 동작).
+   */
+  const INVASION_BACKDROP_PLANET: readonly number[] = [2, 1, 3];
+  /** 마지막으로 배경에 반영한 침공 페이즈(-1 = 침공 아님). */
+  let shownInvasionPhase = -1;
+
+  /** 침공 레이어 배경 적용(렌더 전용 — sim 무영향). */
+  function applyInvasionBackdrop(phase: number): void {
+    shownInvasionPhase = phase;
+    background.texture = planetBackground(INVASION_BACKDROP_PLANET[phase] ?? 0);
+  }
+
+  /**
+   * 침공 런 시작. 대상의 방어 배치(서버 raw)를 3레이어 정규화해 침공 config 로 넣어
    * 결정론 런을 돌린다(갈림길③A). 승리=코어 파괴, 패배=시간초과/격추. 런 종료 시
    * endRun 이 invasionTarget 을 보고 서버 제출로 분기한다.
    */
-  async function startInvasionRun(target: InvasionTarget, layout: DefenseLayout): Promise<void> {
+  async function startInvasionRun(target: InvasionTarget, layout: unknown): Promise<void> {
     // 관제탑 경유 시작 — 켜져 있을 수 있는 메뉴를 먼저 내린다(harness startRun 참조).
     planetSelect.hide();
     inventory.hide();
@@ -614,26 +667,34 @@ async function main(): Promise<void> {
     // 사이 dismiss/retire/풍화 무영향). 실패(자격 미달·구버전 서버·오프라인)면 매치메이킹
     // serve layout(인자 layout)으로 폴백한다(하위호환 — 회귀 0). 매치메이킹 serve layout 도
     // 이미 라이브 수호 권위가 주입돼 있어(get_invasion_targets), 스냅샷 layout 과 정합한다.
-    let runLayout: DefenseLayout = layout;
+    // 배치는 서버가 주는 raw 를 그대로 받아 공유 정규화(L0)를 한 번만 통과시킨다.
+    // normalizeInvasionLayers 는 total function 이라 "정규화 실패" 상태가 없다 — 손상·구형식
+    // 배치는 빈 배치로 접히고, 빈 슬롯은 스폰 단계에서 기본 수비대가 충원한다.
+    let runLayoutRaw: unknown = layout;
     let runMaintenanceDb: number = target.maintenance;
-    // 방어자 장착 카드 효력(M6). begin_invasion 스냅샷이 실어 준 서버 권위 {card,matchup}.
-    // 미장착·라이브 폴백·구버전 서버면 null → invasion.card 미포함(카드 미장착 = 무회귀).
-    let runCard: DefenseCardConfig | null = null;
+    // 방어자 장착 코어 모듈 효력(M7b). begin_invasion 스냅샷이 실어 준 서버 권위
+    // {instances,matchup}. 미장착·라이브 폴백·구버전 서버면 null → invasion3.modules 미포함
+    // (모듈 미장착 = 거동·해시 무회귀).
+    let runModules: CoreModuleConfig | null = null;
     invasionSnapshotId = null;
+    // 이전 침공의 공개분이 남아 다음 결과 화면에 새지 않게 매 런 시작에 비운다.
+    pendingRevealModules = [];
     if (target.defenseId !== null) {
       const snapshot = await beginInvasion(target.defenseId);
       if (snapshot !== null) {
-        const snapLayout = normalizeLayout(snapshot.layout);
-        if (snapLayout !== null) {
-          runLayout = snapLayout;
-          runMaintenanceDb = snapshot.maintenance;
-          invasionSnapshotId = snapshot.snapshotId;
-          runCard = snapshot.card ?? null;
-        }
+        // 게이트웨이가 이미 3레이어 정규형으로 접어 둔 `layers` 가 정본이다(구 `layout` 은
+        // @deprecated raw jsonb). normalizeInvasionLayers 는 멱등이라 아래에서 한 번 더
+        // 통과해도 값이 변하지 않는다 — 폴백 경로(매치메이킹 serve layout, raw)와 같은
+        // 코드로 접히게 두어 두 경로가 갈릴 여지를 없앤다.
+        runLayoutRaw = snapshot.layers;
+        runMaintenanceDb = snapshot.maintenance;
+        invasionSnapshotId = snapshot.snapshotId;
+        runModules = snapshot.modules ?? null;
+        // 결과 화면의 정찰 공개용으로 남겨 둔다(런이 끝나야 보여 준다 — 침공 전에 알면
+        // 카운터 모듈의 의미가 사라진다).
+        pendingRevealModules = runModules !== null ? runModules.modules : [];
       }
     }
-    // 침공 결과 정찰 공개용으로 스냅샷 카드를 보관(제출 후 관제탑 배너에서 옵션 공개 — 스펙 R9).
-    lastInvasionCard = runCard;
 
     const seed = nextSeed();
     const ship = activeShip(profile);
@@ -649,12 +710,14 @@ async function main(): Promise<void> {
     // 방어 정비도(풍화, ADR-0006)를 sim centi-percent 로 변환해 config 에 싣는다.
     // 공식 Math.round(db*100)은 서버 EF 재실행과 동일해야 한다(어긋나면 해시 발산 오거부).
     const maintenance = maintenanceToCenti(runMaintenanceDb);
-    const invasion: InvasionConfig = {
-      layout: runLayout,
-      timeLimitTicks: DEFAULT_TIME_LIMIT_TICKS,
+    // 코어 모듈 효력(M7b · ADR-0018). 서버 권위 스냅샷이 준 {instances,matchup} 을 그대로
+    // 싣는다 — EF 가 같은 고정본으로 재실행하므로 hashStream 이 일치한다. 미장착이면 필드
+    // 자체를 두지 않는다(조건부 접기 → 거동·해시 바이트 불변).
+    const invasion3: Invasion3Config = {
+      layers: normalizeInvasionLayers(runLayoutRaw),
+      timeLimitTicks: INVASION_TOTAL_TICKS,
       ...(maintenance !== undefined ? { maintenance } : {}),
-      // 카드 효력(정적 카운터·동적 트리거·유니크). 미장착이면 키 자체를 생략(해시 바이트 불변).
-      ...(runCard !== null ? { card: runCard } : {}),
+      ...(runModules !== null ? { modules: runModules } : {}),
     };
     const config: WorldConfig = {
       ...DEFAULT_CONFIG,
@@ -663,10 +726,10 @@ async function main(): Promise<void> {
       anomalyAccepted: false,
       loadout,
       skillInvest,
-      invasion,
+      invasion3,
     };
-    // 침공 아레나는 기본 배경(타일셋 없음) — 방어 배치가 무대다.
-    background.texture = planetBackground(0);
+    // 레이어별 배경(L1 대기권 → L2 회랑 → L3 코어방). 전환은 렌더 루프가 페이즈를 보고 건다.
+    applyInvasionBackdrop(PHASE_L1);
     autotile.configure(null, seed);
     background.visible = true;
     currentSeed = seed;
@@ -681,6 +744,63 @@ async function main(): Promise<void> {
     lastOutcome = null;
     resultOverlay.hide();
     invasionTarget = target;
+    harnessInvasionRun = false; // 정식 침공: 정산·제출 경로를 탄다
+    setScreen('run');
+  }
+
+  /**
+   * DEV 하네스 침공 런(M7a L8). 대상 기지 없이 **배치만** 넘겨 3레이어 런을 세운다.
+   *
+   * ADR-0008 오염 격리: `invasionTarget` 을 세우지 않고 `harnessInvasionRun` 만 세운다 →
+   * endRun 이 PvE 정산도 서버 제출도 하지 않는다. 리플레이 recorder 는 정식 런과 똑같이
+   * 붙여서(같은 record 경로) 재현·해시 검증이 가능하게 한다.
+   */
+  function startHarnessInvasionRun(opts: {
+    seed: number;
+    layers: unknown;
+    maintenance: number;
+    timeLimitTicks: number;
+  }): void {
+    tutorialActive = false;
+    shownLevel = 0;
+    const ship = activeShip(profile);
+    const equipped: Item[] = [];
+    for (const id of EQUIP_SLOTS) {
+      const it = ship.equipped[id];
+      if (it !== undefined) equipped.push(it);
+    }
+    const skillInvest = profile.skillInvest.slice();
+    const { loadout } = computeLoadoutStats(equipped, skillInvest, shipBonusBp(profile.lineage));
+    const invasion3: Invasion3Config = {
+      layers: normalizeInvasionLayers(opts.layers),
+      timeLimitTicks: opts.timeLimitTicks,
+      maintenance: opts.maintenance,
+    };
+    const config: WorldConfig = {
+      ...DEFAULT_CONFIG,
+      planet: 0,
+      tier: 0,
+      anomalyAccepted: false,
+      loadout,
+      skillInvest,
+      invasion3,
+    };
+    applyInvasionBackdrop(PHASE_L1);
+    autotile.configure(null, opts.seed);
+    background.visible = true;
+    currentSeed = opts.seed;
+    world = createWorld(opts.seed, config);
+    recorder = new ReplayRecorder(opts.seed, world.config);
+    prevSnap = snapshotWorld(world);
+    currSnap = prevSnap;
+    accumulator = 0;
+    settled = false;
+    ceremony.reset();
+    soundObserver.reset();
+    lastOutcome = null;
+    resultOverlay.hide();
+    invasionTarget = null;
+    harnessInvasionRun = true;
     setScreen('run');
   }
 
@@ -796,6 +916,8 @@ async function main(): Promise<void> {
     pendingRunSeed = null; // 이번 시드 소진 — 다음 성계 지도는 새 변칙 제안을 굴린다
     tutorialActive = false; // normal run unless startTutorial re-flags it
     invasionTarget = null; // PvE 런: 침공 컨텍스트 해제(endRun 이 정산 경로로 분기)
+    harnessInvasionRun = false;
+    shownInvasionPhase = -1; // 침공 배경 추적 해제(PvE 는 행성 배경)
     shownLevel = 0; // 새 런: 레벨업 오버레이 표시 상태 초기화
     const ship = activeShip(profile);
     const equipped: Item[] = [];
@@ -872,7 +994,11 @@ async function main(): Promise<void> {
       // 튜토리얼 완료 플래그 모두 프로필에 반영되지 않고, 리플레이도 제출 대상에서
       // 빠진다(리플레이는 아직 어디에도 제출되지 않으므로 recorder 결과를 그냥 버린다).
       // 결과 화면은 정보 표시용으로 그대로 띄우되 settlement 블록만 생략한다.
-      if (!w.tainted) {
+      //
+      // DEV 하네스 침공 런(M7a L8)도 같은 취급이다 — 대상 기지가 없는 개발용 무대라 전리품·
+      // XP 를 계정에 넣지 않고 PvE 런 기록(recordPveRun)도 올리지 않는다. 침공 제출 경로는
+      // invasionTarget 이 null 이라 애초에 타지 않는다(ADR-0008 오염 런 격리와 동일 규율).
+      if (!w.tainted && !harnessInvasionRun) {
         lastOutcome = settleRun(profile, {
           victory: w.victory,
           loot: w.loot,
@@ -885,6 +1011,10 @@ async function main(): Promise<void> {
         // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.
         if (tutorialActive) profile.tutorialDone = true;
         saveProfile(profile);
+        // 설계도 지급(M7b): 정산이 파생한 목록을 서버 보유량에 얹는다. 미설정·오프라인이면
+        // no-op 이고 throw 하지 않는다. 오염 런·하네스 침공 런은 이 블록에 들어오지 않으므로
+        // 설계도도 함께 차단된다(ADR-0008 과 같은 격리면).
+        void grantBlueprintDrops(lastOutcome.blueprintsGained);
         // PvE 런 결과(정산된 메타)를 서버에 기록. 미설정이면 no-op, 실패 시 로컬
         // 대기 슬롯에 남아 재시도(오프라인 우선). 비차단 fire-and-forget.
         void recordPveRunResult(profile);
@@ -897,6 +1027,8 @@ async function main(): Promise<void> {
     tutorialOverlay.hide();
     if (powerupOverlay.visible) powerupOverlay.hide();
     shownLevel = 0; // 정산 화면 진입: 오버레이 표시 상태 초기화
+    harnessInvasionRun = false; // 하네스 침공 런 종료(다음 런은 정식 경로)
+    shownInvasionPhase = -1;
     setScreen('result');
     const o = lastOutcome;
     resultOverlay.show(
@@ -999,6 +1131,11 @@ async function main(): Promise<void> {
       if (hasDrop) ftue.markFirstDrop();
       tutorialOverlay.update(w.tick, hasDrop);
     }
+
+    // 침공 레이어 전환 → 배경 교체(렌더 전용, sim 무영향). 페이즈는 sim 권위라 여기서는
+    // 관찰만 한다 — 전환 크로스페이드는 L10 의 invasionBackdrop 이 붙으면 이 자리에서 건다.
+    const inv3 = w?.invasion3;
+    if (inv3 !== undefined && inv3.phase !== shownInvasionPhase) applyInvasionBackdrop(inv3.phase);
 
     // --- Render ---
     const alpha = accumulator / DT;
@@ -1249,6 +1386,16 @@ async function main(): Promise<void> {
           ...(opts.maxSegments !== undefined ? { maxSegments: opts.maxSegments } : {}),
         });
       },
+      startInvasion: (opts) => {
+        // startRun 과 같은 이유로 켜져 있을 수 있는 메뉴를 먼저 내린다(하네스 경유 진입은
+        // 어느 스크린에서든 가능하다).
+        planetSelect.hide();
+        inventory.hide();
+        researchLab.hide();
+        refinery.hide();
+        clearToMenu();
+        startHarnessInvasionRun(opts);
+      },
       nextSeed: () => nextSeed(),
       activateHarnessProfile: () => {
         core.setProfileStoreOverride(core.harnessProfileStore());
@@ -1286,10 +1433,14 @@ async function main(): Promise<void> {
       // 관제탑은 서버 왕복 화면이라 로그인 없이는 안내 상태만 뜬다 — 채워진 화면을
       // 검증하려면 이 참조로 뷰를 직접 띄운다(카툰나무풍 롤아웃 #6 검증 절차).
       controlTower,
-      // 카드 화면도 로그인해야 채워진다(미로그인이면 안내 상태) — 검증 시 이 참조로 상태를
-      // 직접 넣고 render() 를 부른다(카툰나무풍 롤아웃 #7 검증 절차).
-      cardsScreen,
-      openCards,
+      // 코어 모듈 화면도 로그인해야 채워진다(미로그인이면 안내 상태) — 검증 시 이 참조로
+      // 상태를 직접 넣고 render() 를 부른다.
+      modulesScreen,
+      // 방어 사령부(M7b) — 검증 시 이 참조로 탭·배치 상태를 직접 넣고 render() 를 부른다.
+      defenseCommand,
+      // 코어 모듈 화면 직행. 사령부를 거치지 않으므로 배치 편집 상태와 무관하다 — 사령부
+      // 안에서 열 때는 suspend/resume 경로를 탄다.
+      openModules: () => modulesScreen.show(profile, () => openBaseMap()),
       // 설정은 톱니 클릭으로만 열리는 크롬 UI 다 — 검증 시 이 참조로 직접 연다(#8).
       settings,
       // 하네스 API 표면(개발 도구): goto/startRun/ff/setSpeed/pause/resume/step/
@@ -1371,6 +1522,22 @@ async function main(): Promise<void> {
       if ((valid as readonly string[]).includes(screenParam)) {
         harnessGoto(screenParam as HarnessScreen);
       }
+    }
+
+    // URL 딥링크(DEV): `?invasion=def3-mid&invasionLayer=2` 로 3레이어 침공 런에 바로 진입.
+    // `?invasion=1` 은 def3-empty(기본 수비대 전면 충원) 와 같다. 레이어 점프는 무대
+    // 꾸미기라 오염 런으로 표시된다(ADR-0008).
+    const invasionParam = params.get('invasion');
+    if (invasionParam !== null && harness !== null) {
+      // 프리셋 목록은 하네스 모듈에 있다 — 동적 import 라 프로덕션 번들에 들어가지 않는다.
+      const presets = await import('./harness/presets.js');
+      const presetParam = presets.INVASION_PRESET_KINDS.find((k) => k === invasionParam);
+      const layerParam = Number(params.get('invasionLayer'));
+      const layer = layerParam === 2 || layerParam === 3 ? layerParam : 1;
+      harness.startInvasion({
+        ...(presetParam !== undefined ? { preset: presetParam } : {}),
+        layer,
+      });
     }
   }
 }
