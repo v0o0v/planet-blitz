@@ -41,8 +41,8 @@ import { ResearchLabScreen } from './ui/pixi/researchLab.js';
 import { RefineryScreen } from './ui/pixi/refinery.js';
 import { PlanetSelectScreen } from './ui/pixi/planetSelect.js';
 import { ResultOverlayScreen } from './ui/pixi/resultOverlay.js';
+import { ControlTowerScreen } from './ui/pixi/controlTower.js';
 import { DefenseCommand, normalizeLayout } from './ui/defenseCommand.js';
-import { ControlTower } from './ui/controlTower.js';
 import type { ControlTowerShowOpts, InvasionResultView } from './ui/controlTower.js';
 import {
   TitleScreen,
@@ -230,8 +230,11 @@ async function main(): Promise<void> {
   // visible + ResultState 동일). 다른 캔버스 화면과 같은 이유로 여기서 만든다 — 앞쪽(텍스처
   // 로드 전)에서 만들면 entityRenderer·radar 보다 먼저 stage 에 붙어 아레나 아래에 깔린다.
   const resultOverlay = new ResultOverlayScreen(gameApp.stage);
+  // 카툰나무풍 롤아웃 #6: DOM `ControlTower` 대신 Pixi 캔버스 관제탑으로 교체(show/hide/
+  // visible + 콜백·옵션 타입 동일). 다른 캔버스 화면과 같은 블록에서 만들어야
+  // entityRenderer·radar 레이어보다 **뒤에** stage 에 붙어 위로 그려진다(z 순서).
+  const controlTower = new ControlTowerScreen(gameApp.stage);
   const defenseCommand = new DefenseCommand(profile);
-  const controlTower = new ControlTower();
   // 방어 사령부 실화면 편집 프리뷰(레인 B, ADR-0013): 침공 정지 월드를 침공과 동일 렌더 경로로
   // 그려 배치를 실화면으로 보여준다. 라이브 `world` 변수와 완전 분리 — 게임 루프·recorder 없음.
   // 레인 C(defenseCommand 재편)가 이 컨트롤을 소비해 편집 UI 와 배선한다(현재는 진입/이탈 시
@@ -1254,6 +1257,9 @@ async function main(): Promise<void> {
       resultOverlay,
       planetSelect,
       inventory,
+      // 관제탑은 서버 왕복 화면이라 로그인 없이는 안내 상태만 뜬다 — 채워진 화면을
+      // 검증하려면 이 참조로 뷰를 직접 띄운다(카툰나무풍 롤아웃 #6 검증 절차).
+      controlTower,
       // 하네스 API 표면(개발 도구): goto/startRun/ff/setSpeed/pause/resume/step/
       // preset/snapshot/events/cheat. 프로덕션 미포함.
       harness,

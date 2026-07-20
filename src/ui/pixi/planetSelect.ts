@@ -20,7 +20,7 @@ import { ANOMALY_GRAVITY, ANOMALY_SWARM, ANOMALY_NEBULA, ANOMALY_NONE } from '..
 import { t, type MessageKey } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import type { LaunchSelection } from '../planetSelect.js';
-import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
+import { COLOR, UI_FONT, TEXT_SHADOW, hexColor } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { panelContent, PANEL_BORDER, nineSlicePanel } from './nineSlicePanel.js';
 import { makePanelCard } from './card.js';
@@ -96,12 +96,6 @@ const META_Y = 1000;
 function cardWidth(n: number): number {
   if (n <= 0) return CARD_MAX_W;
   return Math.min(CARD_MAX_W, Math.floor((CARD_ROW_MAX_W - CARD_GAP * (n - 1)) / n));
-}
-
-/** '#rrggbb' → Pixi 정수색. 형식이 어긋나면 중립 회청색으로 폴백한다. */
-function hexColor(css: string): number {
-  const n = Number.parseInt(css.replace('#', ''), 16);
-  return Number.isNaN(n) ? 0x8896b8 : n;
 }
 
 /** 두 색을 tt(0=a, 1=b) 로 섞는다 — 오브 그라데이션용. */

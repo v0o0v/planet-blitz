@@ -24,6 +24,7 @@ import type {
   PlacementResult,
   RevengeTarget,
   IncomingInvasion,
+  InvasionHistoryEntry,
   InvasionSnapshot,
 } from './invasion.js';
 
@@ -77,7 +78,28 @@ function rowToLadder(raw: unknown): LadderEntry {
     losses: asNumber(r.losses),
   };
   if (typeof r.display_name === 'string') entry.displayName = r.display_name;
+  if (typeof r.placed === 'boolean') entry.placed = r.placed;
   return entry;
+}
+
+/** `invasions` 한 행 + 내 uid → 내 시점의 전투 기록 1건. */
+function rowToHistory(raw: unknown, myId: string): InvasionHistoryEntry {
+  const r = asRecord(raw);
+  const attackerId = asString(r.attacker_id);
+  const defenderId = asString(r.defender_id);
+  const attacking = attackerId === myId;
+  const statusRaw = asString(r.verified_status, 'pending');
+  const status: InvasionHistoryEntry['status'] =
+    statusRaw === 'verified' || statusRaw === 'rejected' ? statusRaw : 'pending';
+  return {
+    invasionId: asString(r.id),
+    attacking,
+    opponentId: attacking ? defenderId : attackerId,
+    attackerWon: typeof r.attacker_won === 'boolean' ? r.attacker_won : null,
+    status,
+    // 확정 시각이 있으면 그것이 기록의 시각이다(미확정 행은 제출 시각).
+    atMs: asEpochMs(r.verified_at ?? r.created_at),
+  };
 }
 
 /**
@@ -240,17 +262,45 @@ export class SupabaseInvasionGateway implements InvasionGateway {
     return typeof replay === 'object' && replay !== null ? (replay as Replay) : null;
   }
 
-  async fetchLadder(limit: number): Promise<LadderEntry[]> {
+  async fetchLadder(limit: number, offset = 0): Promise<LadderEntry[]> {
     // 순위표는 서버 RPC `get_ladder_top(p_limit, p_offset)`(security definer)로 조회한다 —
     // 타인 display_name 을 노출하는 유일한 경로(직접 ladder select 는 profiles RLS 로
     // 이름 미노출). 반환: { profile_id, rank, display_name, wins, losses, placed }.
     const { data, error } = await this.client.rpc('get_ladder_top', {
       p_limit: limit,
-      p_offset: 0,
+      p_offset: offset,
     });
     if (error !== null) throw error;
     const rows = Array.isArray(data) ? data : [];
     return rows.map(rowToLadder);
+  }
+
+  async getMyLadderRank(): Promise<LadderEntry | null> {
+    // `ladder` 는 authenticated 공개 읽기(ladder_select_all) — 내 행은 직접 select 로 얻는다.
+    // display_name 은 여기서 안 온다(profiles RLS). "내 순위" 표시는 이름이 필요 없다.
+    const uid = await this.getUserId();
+    const { data, error } = await this.client
+      .from('ladder')
+      .select('profile_id, rank, wins, losses, placed')
+      .eq('profile_id', uid)
+      .maybeSingle();
+    if (error !== null) throw error;
+    if (data === null || data === undefined) return null;
+    return rowToLadder(data);
+  }
+
+  async getInvasionHistory(limit: number): Promise<InvasionHistoryEntry[]> {
+    // RLS(invasions_select_participant)가 "내가 공격했거나 방어당한" 행만 열어 주므로 필터
+    // 없이 최신순으로 받아도 남의 기록이 섞이지 않는다. replay/client_result 는 무거워서 뺀다.
+    const uid = await this.getUserId();
+    const { data, error } = await this.client
+      .from('invasions')
+      .select('id, attacker_id, defender_id, verified_status, attacker_won, created_at, verified_at')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error !== null) throw error;
+    const rows = Array.isArray(data) ? data : [];
+    return rows.map((raw) => rowToHistory(raw, uid));
   }
 
   async beginInvasion(defenseId: string): Promise<InvasionSnapshot> {

@@ -31,6 +31,17 @@ export const COLOR = {
   darkLabel: 0x4a2a08,
 } as const;
 
+/**
+ * '#rrggbb' CSS 색 → Pixi 정수색. 형식이 어긋나면 중립 회청색으로 폴백한다.
+ *
+ * DOM 판이 소유한 팔레트(행성 `accent`, 방어 카드 등급색 …)를 캔버스에서 그대로 쓰기 위한
+ * 변환이다. 성계 지도(#4)와 관제탑(#6) 두 화면이 쓰므로 여기로 올렸다(ADR-0014 공용 경계).
+ */
+export function hexColor(css: string): number {
+  const n = Number.parseInt(css.replace('#', ''), 16);
+  return Number.isNaN(n) ? 0x8896b8 : n;
+}
+
 /** 텍스트 기본 다크 섀도(2px). */
 export const TEXT_SHADOW = {
   color: 0x000000,

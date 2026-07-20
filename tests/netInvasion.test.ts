@@ -19,6 +19,7 @@ import {
   recordInvasionAttempt,
   cooldownRemainingMs,
   canInvadeTarget,
+  historyIWon,
   INVASION_COOLDOWN_MS,
   type InvasionGateway,
   type InvasionTarget,
@@ -348,5 +349,29 @@ describe('net/invasion — 재도전 쿨다운 미러(순수)', () => {
     expect(canInvadeTarget(cd, 'def-1', 1500)).toBe(false);
     expect(canInvadeTarget(cd, 'def-1', 1000 + INVASION_COOLDOWN_MS)).toBe(true);
     expect(canInvadeTarget(cd, 'never-attacked', 0)).toBe(true);
+  });
+});
+
+describe('전투 기록 승패 해석(historyIWon)', () => {
+  const base = {
+    invasionId: 'inv-1',
+    opponentId: 'other',
+    status: 'verified' as const,
+    atMs: 0,
+  };
+
+  it('공격 기록은 공격자 승이 곧 내 승', () => {
+    expect(historyIWon({ ...base, attacking: true, attackerWon: true })).toBe(true);
+    expect(historyIWon({ ...base, attacking: true, attackerWon: false })).toBe(false);
+  });
+
+  it('방어 기록은 뒤집힌다 — 공격자가 졌으면 내가 이긴 것', () => {
+    expect(historyIWon({ ...base, attacking: false, attackerWon: false })).toBe(true);
+    expect(historyIWon({ ...base, attacking: false, attackerWon: true })).toBe(false);
+  });
+
+  it('서버 미확정(null)은 패배로 강제하지 않고 null 을 유지한다', () => {
+    expect(historyIWon({ ...base, attacking: true, attackerWon: null })).toBeNull();
+    expect(historyIWon({ ...base, attacking: false, attackerWon: null })).toBeNull();
   });
 });
