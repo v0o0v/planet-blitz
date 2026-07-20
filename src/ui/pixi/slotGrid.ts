@@ -27,7 +27,28 @@ export function itemGlyph(slot: SlotKind): string {
 
 /**
  * n 칸을 cols 열 그리드로 배치했을 때 각 칸의 좌상단 좌표(순수 — 테스트 대상).
- * cell = 셀 한 변, gap = 칸 간격.
+ * 셀이 정사각이 아니고 가로·세로 간격이 다를 수 있는 일반형이다(연구소 노드 119×95 등).
+ */
+export function rectGridPositions(
+  n: number,
+  cols: number,
+  cellW: number,
+  cellH: number,
+  gapX: number,
+  gapY: number,
+): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    out.push({ x: col * (cellW + gapX), y: row * (cellH + gapY) });
+  }
+  return out;
+}
+
+/**
+ * n 칸을 cols 열 정사각 그리드로 배치했을 때 각 칸의 좌상단 좌표(순수 — 테스트 대상).
+ * cell = 셀 한 변, gap = 칸 간격. {@link rectGridPositions} 의 정사각 특수형.
  */
 export function gridPositions(
   n: number,
@@ -35,13 +56,7 @@ export function gridPositions(
   cell: number,
   gap: number,
 ): { x: number; y: number }[] {
-  const out: { x: number; y: number }[] = [];
-  for (let i = 0; i < n; i++) {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    out.push({ x: col * (cell + gap), y: row * (cell + gap) });
-  }
-  return out;
+  return rectGridPositions(n, cols, cell, cell, gap, gap);
 }
 
 export interface SlotCellOptions {

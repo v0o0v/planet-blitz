@@ -12,7 +12,7 @@
  * 순수 render/UI 레이어(ADR-0005) — sim 은 이 파일을 모른다.
  */
 
-import { Container, Graphics, NineSliceSprite, Text } from 'pixi.js';
+import { Container, Graphics, Sprite, Text } from 'pixi.js';
 import {
   SKILLS,
   SKILL_TREES,
@@ -44,6 +44,7 @@ import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js'
 import { PixiButton } from './button.js';
 import { PixiTooltip } from './tooltip.js';
 import { makeBanner, makeCurrencyChip, makeIconButton } from './titleBar.js';
+import { rectGridPositions } from './slotGrid.js';
 
 /** 계열 → 헤더 라벨 키 + 강조색(정수). DOM 판 TREE_META 와 같은 색. */
 const TREE_META: Record<SkillTree, { nameKey: MessageKey; accent: number }> = {
@@ -69,42 +70,75 @@ const PREVIEW_ROWS: readonly [StatKey, MessageKey, boolean][] = [
 ];
 
 // --- 레이아웃 상수(디자인 스페이스) ---
+//
+// 노드 셀에 44px 아이콘이 들어가면서 2열 그리드는 산술적으로 불가능해졌다: 이름 가용 폭이
+// 97 → 57px 로 줄어 한글 이름이 읽히지 않고, 셀을 키우려 해도 10행이라 세로 증분이 10배로
+// 곱해져 1080 천장을 넘는다. 그래서 **열을 늘려 행을 줄인다**(4열 × 5행 = 티어 1행씩).
+// 넓어진 계열 패널(620) 자리를 만들려고 파생 스탯 패널은 화면 하단 가로 띠로 내렸다.
 const BANNER_W = 620;
 const BANNER_H = 72;
-const BANNER_Y = 12;
+const BANNER_Y = 10;
 const CHIP_W = 190;
 const CHIP_H = 52;
-const SUB_Y = 88;
-const PANEL_Y = 118;
-const PANEL_H = 776;
-const PANEL_W = 461;
+const SUB_Y = 84;
+const PANEL_Y = 112;
+const PANEL_H = 740;
+const PANEL_W = 620;
 const PANEL_GAP = 14;
-const PANEL_X0 = Math.round((DESIGN_WIDTH - (PANEL_W * 4 + PANEL_GAP * 3)) / 2);
+const PANEL_COLS = 3;
+const PANEL_X0 = Math.round((DESIGN_WIDTH - (PANEL_W * PANEL_COLS + PANEL_GAP * (PANEL_COLS - 1))) / 2);
 /**
- * 패널 안쪽 콘텐츠 상자. 제목·부제·노드·캡스톤·스탯 행을 전부 이 상자 기준으로 잡는다 —
+ * 패널 안쪽 콘텐츠 상자. 제목·부제·노드·캡스톤을 전부 이 상자 기준으로 잡는다 —
  * 프레임에 붙는 것을 좌표 재유도 없이 구조적으로 막는다(nineSlicePanel §PANEL_INNER_PAD).
  */
 const BOX = panelContent(PANEL_W, PANEL_H);
 const TITLE_Y = BOX.y;
-const TREE_SUB_Y = 100;
-const NODE_TOP = 130;
-const NODE_H = 44;
-const NODE_STEP = 52;
-const NODE_ROWS = NODES_PER_TREE / 2;
-const NODE_W = Math.floor((BOX.w - 11) / 2);
-const NODE_GAP_X = BOX.w - NODE_W * 2;
-const CAPSTONE_H = 56;
-/** 노드 그리드가 끝나는 y(10행 = 650). */
-const NODE_GRID_BOTTOM = NODE_TOP + NODE_ROWS * NODE_STEP;
+const TREE_SUB_Y = 94;
+const NODE_TOP = 116;
+/** 노드 셀: 아이콘 44 + 이름 2줄(13px) + 포인트 배지가 들어가는 최소 크기. */
+const NODE_W = 119;
+const NODE_H = 95;
+const NODE_COLS = 4;
+const NODE_ROWS = NODES_PER_TREE / NODE_COLS;
+/** 4열이 콘텐츠 상자 폭(500)을 정확히 채우는 간격: (500 - 4×119) / 3 = 8. */
+const NODE_GAP_X = Math.floor((BOX.w - NODE_W * NODE_COLS) / (NODE_COLS - 1));
+const NODE_GAP_Y = 5;
+/** 셀 안 아이콘 자리(정사각). Lane D2 가 여기에 스킬 아이콘 텍스처를 넣는다. */
+const NODE_ICON = 44;
+const NODE_ICON_Y = 8;
+/** 이름 2줄 블록의 상단 y(2줄 × lineHeight 17 = 34 → 88 에서 끝나 하단 여백 7). */
+const NODE_NAME_Y = 54;
+const CAPSTONE_H = 52;
+/** 노드 그리드가 끝나는 y(5행 = 616). */
+const NODE_GRID_BOTTOM = NODE_TOP + NODE_ROWS * (NODE_H + NODE_GAP_Y);
 /**
- * 캡스톤은 콘텐츠 상자 바닥에 붙인다(660) — 마지막 노드 행과의 간격이 자동으로 남는다.
+ * 캡스톤은 콘텐츠 상자 바닥에 붙인다(628) — 마지막 노드 행과의 간격이 자동으로 남는다.
  * `Math.max` 는 그리드가 커져도 캡스톤이 노드 위로 겹치지 않게 하는 안전장치다.
  */
-const CAPSTONE_Y = Math.max(NODE_GRID_BOTTOM + 10, BOX.bottom - CAPSTONE_H);
-const STAT_STEP = 34;
-const RESPEC_W = 420;
-const RESPEC_H = 60;
-const RESPEC_Y = 908;
+const CAPSTONE_Y = Math.max(NODE_GRID_BOTTOM + 8, BOX.bottom - CAPSTONE_H);
+
+// --- 파생 스탯 하단 가로 띠 ---
+const STRIP_W = PANEL_W * PANEL_COLS + PANEL_GAP * (PANEL_COLS - 1);
+const STRIP_X = PANEL_X0;
+const STRIP_Y = PANEL_Y + PANEL_H + 12;
+const STRIP_H = 172;
+/** 띠 안쪽 콘텐츠 상자(1768 × 52). 제목·스탯 그리드·시너지 안내를 가로로 나눠 쓴다. */
+const SBOX = panelContent(STRIP_W, STRIP_H);
+const STRIP_TITLE_W = 200;
+const STRIP_SYN_W = 360;
+const STAT_COLS = 6;
+const STAT_ROW_H = 26;
+/** 제목·시너지 열을 뺀 나머지를 6열로 나눈 폭: (1768 - 200 - 16 - 360 - 16) / 6 = 196. */
+const STAT_COL_W = Math.floor((SBOX.w - STRIP_TITLE_W - STRIP_SYN_W - 32) / STAT_COLS);
+const STAT_X = SBOX.x + STRIP_TITLE_W + 16;
+
+// 리스펙은 하단 띠에 자리를 내주고 타이틀바 우측(크레딧 칩 ~ 닫기 버튼 사이)으로 옮겼다.
+const RESPEC_W = 300;
+const RESPEC_H = 52;
+const RESPEC_X = 1500;
+const RESPEC_Y = BANNER_Y + (BANNER_H - RESPEC_H) / 2;
+
+const HINT_Y = DESIGN_HEIGHT - 8;
 
 function panelX(col: number): number {
   return PANEL_X0 + col * (PANEL_W + PANEL_GAP);
@@ -241,7 +275,7 @@ export class ResearchLabScreen {
 
     this.renderTitleBar();
     SKILL_TREES.forEach((tree, i) => this.renderTreePanel(tree, i));
-    this.renderStatsPanel();
+    this.renderStatsStrip();
     this.renderActions();
     this.renderHint();
 
@@ -278,7 +312,7 @@ export class ResearchLabScreen {
     const sub = new Text({
       resolution: 2,
       text: `${t('lab.bar.invest')} ${totalInvested(this.profile)}pt · ${t('lab.bar.shipLv')} ${ship.level}`,
-      style: { fontFamily: UI_FONT, fontSize: 20, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+      style: { fontFamily: UI_FONT, fontSize: 18, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
     });
     sub.anchor.set(0.5, 0);
     sub.position.set(DESIGN_WIDTH / 2, SUB_Y);
@@ -308,7 +342,7 @@ export class ResearchLabScreen {
     const title = new Text({
       resolution: 2,
       text: t(meta.nameKey),
-      style: { fontFamily: UI_FONT, fontSize: 28, fontWeight: '800', fill: meta.accent, dropShadow: TEXT_SHADOW },
+      style: { fontFamily: UI_FONT, fontSize: 26, fontWeight: '800', fill: meta.accent, dropShadow: TEXT_SHADOW },
     });
     title.anchor.set(0.5, 0);
     title.position.set(PANEL_W / 2, TITLE_Y);
@@ -322,7 +356,7 @@ export class ResearchLabScreen {
       text: t('lab.tree.sub', { n: invested }),
       style: {
         fontFamily: UI_FONT,
-        fontSize: 14,
+        fontSize: 13,
         fill: COLOR.muted,
         align: 'center',
         wordWrap: true,
@@ -334,19 +368,25 @@ export class ResearchLabScreen {
     sub.position.set(PANEL_W / 2, TREE_SUB_Y);
     panel.addChild(sub);
 
-    // 20노드 2열 그리드(티어 오름차순 = SKILLS 내 인덱스 순서).
+    // 20노드 4열 × 5행 그리드 — 한 행이 한 티어다(티어 오름차순 = SKILLS 내 인덱스 순서).
+    const cells = rectGridPositions(NODES_PER_TREE, NODE_COLS, NODE_W, NODE_H, NODE_GAP_X, NODE_GAP_Y);
     for (let local = 0; local < NODES_PER_TREE; local++) {
       const index = start + local;
-      if (SKILLS[index] === undefined) continue;
+      const at = cells[local];
+      if (SKILLS[index] === undefined || at === undefined) continue;
       const cell = this.makeNodeCell(index, meta.accent);
-      cell.position.set(BOX.x + (local % 2) * (NODE_W + NODE_GAP_X), NODE_TOP + Math.floor(local / 2) * NODE_STEP);
+      cell.position.set(BOX.x + at.x, NODE_TOP + at.y);
       panel.addChild(cell);
     }
 
     panel.addChild(this.makeCapstone(tree, meta.accent));
   }
 
-  /** 노드 카드: 칩 9-slice + 이름 + 투자량. 설명은 hover 툴팁. */
+  /**
+   * 노드 카드(119×95): 아이콘 44px 상단 + 이름 2줄(13px) + 포인트 배지. 설명은 hover 툴팁.
+   *
+   * 세로 구성은 8(상단 여백) → 아이콘 44 → 이름 2줄(34) → 8(하단 여백) = 94 ≈ NODE_H.
+   */
   private makeNodeCell(index: number, accent: number): Container {
     const node = SKILLS[index]!;
     const cur = this.profile.skillInvest[index] ?? 0;
@@ -354,9 +394,9 @@ export class ResearchLabScreen {
     const canInvest = !maxed && this.profile.skillPoints > 0;
 
     const cell = new Container();
-    const chipTex = this.ui['ui_chip.png'];
-    if (chipTex) {
-      const bg = new NineSliceSprite({ texture: chipTex, leftWidth: 24, topHeight: 0, rightWidth: 24, bottomHeight: 0 });
+    const slotTex = this.ui['ui_slot.png'];
+    if (slotTex) {
+      const bg = new Sprite(slotTex);
       bg.width = NODE_W;
       bg.height = NODE_H;
       cell.addChild(bg);
@@ -366,38 +406,58 @@ export class ResearchLabScreen {
       cell.addChild(g);
     }
 
+    // === [Lane D2] 스킬 아이콘 텍스처 삽입 지점 ===============================
+    // 아래 플레이스홀더(둥근 사각 + 계열색 테두리)를 스킬별 아이콘 스프라이트로 교체한다:
+    //   const tex = this.ui[skillIconKey(node)];
+    //   if (tex) { const sp = new Sprite(tex); sp.width = sp.height = NODE_ICON;
+    //              sp.position.set(iconX, NODE_ICON_Y); cell.addChild(sp); }
+    // 자리(정사각 NODE_ICON=44)는 이미 확보돼 있으므로 레이아웃 상수는 건드릴 필요가 없다.
+    const iconX = Math.round((NODE_W - NODE_ICON) / 2);
+    const icon = new Graphics();
+    icon
+      .roundRect(iconX, NODE_ICON_Y, NODE_ICON, NODE_ICON, 8)
+      .fill({ color: 0x000000, alpha: 0.28 })
+      .stroke({ color: accent, width: 2, alpha: maxed ? 0.9 : 0.45 });
+    cell.addChild(icon);
+    // === 삽입 지점 끝 =========================================================
+
     const name = new Text({
       resolution: 2,
       text: node.name,
       style: {
         fontFamily: UI_FONT,
-        fontSize: 15,
+        fontSize: 13,
         fontWeight: '700',
         fill: maxed ? COLOR.gold : COLOR.cream,
+        align: 'center',
+        wordWrap: true,
+        // 두 줄(13px × lineHeight 17)까지 들어가므로 잘라내지 않고 접는다. 폭은 셀보다
+        // 24px 좁게 — 슬롯 텍스처의 베벨에 글자가 닿아 답답해 보이는 것을 막는다
+        // (최장 이름 "고기동 스러스터" 96px 가 여기서 두 줄로 접힌다).
+        wordWrapWidth: NODE_W - 24,
+        breakWords: true,
+        lineHeight: 17,
         dropShadow: TEXT_SHADOW,
       },
     });
-    name.anchor.set(0, 0.5);
-    name.position.set(16, NODE_H / 2);
-    // 긴 이름("고기동 스러스터")이 우측 포인트 수치와 붙지 않게 가로만 축소해 맞춘다
-    // (줄바꿈은 44px 카드에 안 들어가고, 잘라내면 어떤 노드인지 알 수 없다).
-    const maxNameW = NODE_W - 16 - 52;
-    if (name.width > maxNameW) name.scale.x = maxNameW / name.width;
+    name.anchor.set(0.5, 0.5);
+    name.position.set(NODE_W / 2, NODE_NAME_Y + 17);
     cell.addChild(name);
 
+    // 포인트 배지: 셀 우상단(아이콘은 가운데 44px 라 겹치지 않는다).
     const pts = new Text({
       resolution: 2,
       text: `${cur}/${node.maxPoints}`,
       style: {
         fontFamily: UI_FONT,
-        fontSize: 15,
+        fontSize: 13,
         fontWeight: '800',
         fill: maxed ? COLOR.gold : cur > 0 ? accent : COLOR.muted,
         dropShadow: TEXT_SHADOW,
       },
     });
-    pts.anchor.set(1, 0.5);
-    pts.position.set(NODE_W - 16, NODE_H / 2);
+    pts.anchor.set(1, 0);
+    pts.position.set(NODE_W - 8, 7);
     cell.addChild(pts);
 
     // 투자 여력이 없으면(포인트 0 또는 만렙) 흐리게 — 클릭은 살려 안내 힌트를 띄운다.
@@ -442,95 +502,99 @@ export class ResearchLabScreen {
     return btn.container;
   }
 
-  private renderStatsPanel(): void {
-    const px = panelX(3);
+  /**
+   * 파생 스탯 미리보기 — 화면 하단 가로 띠. 세로 목록이던 것을 눕혀 화면 폭을 쓴다
+   * (계열 패널이 620px 로 넓어지면서 4번째 세로 패널 자리가 없어졌다).
+   *
+   * 콘텐츠 상자(1768×52)를 [제목 200 | 스탯 6열×2행 | 시너지 안내 360] 으로 가로 분할한다.
+   */
+  private renderStatsStrip(): void {
     const panel = new Container();
-    panel.position.set(px, PANEL_Y);
+    panel.position.set(STRIP_X, STRIP_Y);
     this.root.addChild(panel);
-    panel.addChild(nineSlicePanel(PANEL_W, PANEL_H, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER }));
+    panel.addChild(nineSlicePanel(STRIP_W, STRIP_H, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER }));
+
+    const midY = SBOX.y + SBOX.h / 2;
 
     const title = new Text({
       resolution: 2,
       text: t('lab.derivedStats'),
       style: {
         fontFamily: UI_FONT,
-        fontSize: 22,
+        fontSize: 18,
         fontWeight: '800',
         fill: COLOR.cream,
-        align: 'center',
         wordWrap: true,
-        wordWrapWidth: BOX.w,
+        wordWrapWidth: STRIP_TITLE_W,
         dropShadow: TEXT_SHADOW,
       },
     });
-    title.anchor.set(0.5, 0);
-    title.position.set(PANEL_W / 2, TITLE_Y);
+    title.anchor.set(0, 0.5);
+    title.position.set(SBOX.x, midY);
     panel.addChild(title);
 
     const sums = computeSkillStats(this.profile.skillInvest);
-    let y = NODE_TOP;
-    let shown = 0;
-    for (const [key, labelKey, isPct] of PREVIEW_ROWS) {
-      const v = sums[key];
-      if (v === 0) continue;
+    const rows = PREVIEW_ROWS.filter(([key]) => sums[key] !== 0);
+    const cells = rectGridPositions(rows.length, STAT_COLS, STAT_COL_W, STAT_ROW_H, 0, 0);
+    rows.forEach(([key, labelKey, isPct], i) => {
+      const at = cells[i];
+      if (at === undefined) return;
+      const cy = SBOX.y + at.y + STAT_ROW_H / 2;
       const k = new Text({
         resolution: 2,
         text: t(labelKey),
-        style: { fontFamily: UI_FONT, fontSize: 18, fill: COLOR.cream, dropShadow: TEXT_SHADOW },
+        style: { fontFamily: UI_FONT, fontSize: 14, fill: COLOR.cream, dropShadow: TEXT_SHADOW },
       });
-      k.position.set(BOX.x, y);
+      k.anchor.set(0, 0.5);
+      k.position.set(STAT_X + at.x, cy);
       panel.addChild(k);
       // 시너지 증폭은 분수를 만든다(예: 59.072) — 소수 1자리로 반올림해 표시 노이즈를 줄인다.
+      const v = sums[key];
       const shownV = Number.isInteger(v) ? String(v) : v.toFixed(1);
       const val = new Text({
         resolution: 2,
         text: isPct ? `+${shownV}%` : `+${shownV}`,
-        style: { fontFamily: UI_FONT, fontSize: 18, fontWeight: '800', fill: COLOR.gold, dropShadow: TEXT_SHADOW },
+        style: { fontFamily: UI_FONT, fontSize: 14, fontWeight: '800', fill: COLOR.gold, dropShadow: TEXT_SHADOW },
       });
-      val.anchor.set(1, 0);
-      val.position.set(BOX.right, y);
+      val.anchor.set(1, 0.5);
+      val.position.set(STAT_X + at.x + STAT_COL_W - 10, cy);
       panel.addChild(val);
-      y += STAT_STEP;
-      shown++;
-    }
+      // 최악 조합(긴 라벨 "대시 재충전 감소" + 3자리 값 "+149.0%")이 붙어 보이지 않게, 값이
+      // 차지하고 남은 자리에 라벨을 가로로 눌러 맞춘다. 로케일이 바뀌어도 겹치지 않는다.
+      const labelRoom = STAT_COL_W - 10 - val.width - 10;
+      if (k.width > labelRoom) k.scale.x = labelRoom / k.width;
+    });
 
-    if (shown === 0) {
+    if (rows.length === 0) {
       const empty = new Text({
         resolution: 2,
         text: t('lab.noStats'),
-        style: {
-          fontFamily: UI_FONT,
-          fontSize: 17,
-          fill: COLOR.muted,
-          align: 'center',
-          wordWrap: true,
-          wordWrapWidth: BOX.w,
-          dropShadow: TEXT_SHADOW,
-        },
+        style: { fontFamily: UI_FONT, fontSize: 16, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
       });
-      empty.anchor.set(0.5, 0);
-      empty.position.set(PANEL_W / 2, y);
+      empty.anchor.set(0, 0.5);
+      empty.position.set(STAT_X, midY);
       panel.addChild(empty);
-      y += STAT_STEP * 2;
     }
 
-    // 시너지 안내는 스탯 행 아래. 12행 전부 나와도(y=538) 콘텐츠 하한(BOX.bottom) 안에 든다.
     const syn = new Text({
       resolution: 2,
       text: t('lab.synergy'),
       style: {
         fontFamily: UI_FONT,
-        fontSize: 15,
+        fontSize: 13,
         fill: COLOR.muted,
         wordWrap: true,
-        wordWrapWidth: BOX.w,
+        wordWrapWidth: STRIP_SYN_W,
+        lineHeight: 17,
         dropShadow: TEXT_SHADOW,
       },
     });
-    syn.position.set(BOX.x, y + 20);
+    syn.anchor.set(0, 0.5);
+    syn.position.set(SBOX.right - STRIP_SYN_W, midY);
     panel.addChild(syn);
   }
 
+  /** 리스펙 버튼 — 하단 띠에 자리를 내주고 타이틀바 우측으로 옮겼다. */
   private renderActions(): void {
     const cost = respecCost(this.profile);
     const respec = new PixiButton({
@@ -538,11 +602,11 @@ export class ResearchLabScreen {
       fallbackColor: 0x9a2a2a,
       width: RESPEC_W,
       height: RESPEC_H,
-      fontSize: 22,
+      fontSize: 18,
       label: t('lab.respecBtn', { n: cost }),
       onClick: () => this.respec(),
     });
-    respec.container.position.set((DESIGN_WIDTH - RESPEC_W) / 2, RESPEC_Y);
+    respec.container.position.set(RESPEC_X, RESPEC_Y);
     this.root.addChild(respec.container);
     if (totalInvested(this.profile) === 0) respec.setEnabled(false);
   }
@@ -552,10 +616,10 @@ export class ResearchLabScreen {
     const h = new Text({
       resolution: 2,
       text: this.hint,
-      style: { fontFamily: UI_FONT, fontSize: 20, fontWeight: '700', fill: 0xff9a7a, dropShadow: TEXT_SHADOW },
+      style: { fontFamily: UI_FONT, fontSize: 18, fontWeight: '700', fill: 0xff9a7a, dropShadow: TEXT_SHADOW },
     });
     h.anchor.set(0.5, 1);
-    h.position.set(DESIGN_WIDTH / 2, DESIGN_HEIGHT - 12);
+    h.position.set(DESIGN_WIDTH / 2, HINT_Y);
     this.root.addChild(h);
   }
 }
