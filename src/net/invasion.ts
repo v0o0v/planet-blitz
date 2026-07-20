@@ -97,6 +97,39 @@ export interface LadderEntry {
   losses: number;
   /** 타인 display_name 은 현행 RLS 로 미노출일 수 있어 optional(서버 뷰 확장 시 채워짐). */
   displayName?: string;
+  /** 배치전을 마치고 순위에 든 상태인지(`ladder.placed`). 서버가 안 주면 undefined. */
+  placed?: boolean;
+}
+
+/**
+ * 전투 기록 1건 — `invasions` 한 행을 **내 시점으로 정규화**한 것(공격·방어 양방향).
+ *
+ * RLS(`invasions_select_participant`)가 "내가 공격했거나 내가 방어당한" 행만 열어 주므로
+ * 별도 서버 RPC 없이 클라이언트 select 로 모을 수 있다. 상대 표시명은 이 행에 없다 —
+ * 소비 측이 순위표(`get_ladder_top`)·시드 기지 메타로 id→이름을 해석한다.
+ */
+export interface InvasionHistoryEntry {
+  invasionId: string;
+  /** 내가 공격한 침공인지(false = 내가 방어당한 침공). */
+  attacking: boolean;
+  /** 상대 profile id — 공격이면 방어자, 방어면 공격자. */
+  opponentId: string;
+  /** 서버 확정 승패(**공격자 기준**). 미확정이면 null. */
+  attackerWon: boolean | null;
+  /** 서버 판정 상태. */
+  status: 'pending' | 'verified' | 'rejected';
+  /** 확정 시각(없으면 생성 시각) epoch ms. */
+  atMs: number;
+}
+
+/**
+ * 전투 기록 1건을 **내가 이겼는지**로 바꾼다(순수). 공격이면 공격자 승이 곧 내 승이고,
+ * 방어면 뒤집힌다. 아직 확정되지 않았으면(null) null 을 그대로 돌려준다 —
+ * 미확정을 패배로 강제 해석하지 않는다(서버 권위, `resultBannerText` 와 같은 규율).
+ */
+export function historyIWon(entry: InvasionHistoryEntry): boolean | null {
+  if (entry.attackerWon === null) return null;
+  return entry.attacking ? entry.attackerWon : !entry.attackerWon;
 }
 
 /** 복제 약탈 전리품 1건(ADR-0003 — 방어자 원본 무손실). 서버 shape 미고정이라 느슨. */
@@ -224,8 +257,18 @@ export interface InvasionGateway {
   getUserId(): Promise<string>;
   /** RPC `get_invasion_targets()` — 매치메이킹 대상 목록. 실패 시 throw. */
   getInvasionTargets(): Promise<InvasionTarget[]>;
-  /** `ladder` 상위 `limit` 행. 실패 시 throw. */
-  fetchLadder(limit: number): Promise<LadderEntry[]>;
+  /** `ladder` 상위 `limit` 행(`offset` 부터). 실패 시 throw. */
+  fetchLadder(limit: number, offset?: number): Promise<LadderEntry[]>;
+  /**
+   * 내 순위표 행(`ladder` 본인 select — 공개 읽기 정책). 아직 순위가 없으면 `null`.
+   * 실패 시 throw. 구현이 없으면 `undefined`(no-op → "내 순위" 표시 생략).
+   */
+  getMyLadderRank?(): Promise<LadderEntry | null>;
+  /**
+   * 전투 기록(`invasions` 본인 참여 행). 실패 시 throw. 구현이 없으면 `undefined`
+   * (no-op → 전투 기록 팝업이 안내 상태로 뜬다).
+   */
+  getInvasionHistory?(limit: number): Promise<InvasionHistoryEntry[]>;
   /** invasions insert(pending) → verify-invasion invoke → 판정 반환. 실패 시 throw. */
   submitInvasion(input: InvasionSubmitInput): Promise<InvasionVerdict>;
   /**
@@ -475,6 +518,55 @@ export async function fetchLadder(limit = 50, deps: InvasionDeps = {}): Promise<
   if (gateway === null) return null;
   try {
     return await gateway.fetchLadder(limit);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 순위표를 `offset` 부터 `limit` 행 받는다(RPC 상한 200). 관제탑 순위표 팝업의 검색·페이징이
+ * 한 번에 받아 두는 경로다. 미설정/오프라인/오류면 `null`.
+ */
+export async function fetchLadderPage(
+  limit = 200,
+  offset = 0,
+  deps: InvasionDeps = {},
+): Promise<LadderEntry[] | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null) return null;
+  try {
+    return await gateway.fetchLadder(limit, offset);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 내 순위표 행을 받는다. 아직 순위가 없거나(배치전 미완료) 미설정/오프라인/오류/미구현이면
+ * `null` — 호출부는 "아직 순위 없음"으로 안내한다.
+ */
+export async function fetchMyLadderRank(deps: InvasionDeps = {}): Promise<LadderEntry | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.getMyLadderRank === undefined) return null;
+  try {
+    return await gateway.getMyLadderRank();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 내가 참여한 침공 기록(공격·방어 양방향)을 최신순으로 받는다. 미설정/오프라인/오류/미구현이면
+ * `null`(→ 전투 기록 팝업이 안내 상태). 서버 판정 전 행(pending)도 그대로 포함한다.
+ */
+export async function fetchInvasionHistory(
+  limit = 100,
+  deps: InvasionDeps = {},
+): Promise<InvasionHistoryEntry[] | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.getInvasionHistory === undefined) return null;
+  try {
+    return await gateway.getInvasionHistory(limit);
   } catch {
     return null;
   }
