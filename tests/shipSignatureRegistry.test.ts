@@ -3,8 +3,8 @@
  * `data/ships/*.ts`(레지스트리 `signatureBit` 필드) (M8 통합 게이트, 설계서 §4·§10-1).
  *
  * ## 왜 별도 파일인가
- * 같은 wire 값이 **두 곳에 리터럴로** 적혀 있다. L2 는 `SIG_* = 18|19|20|21` 을, L1 은
- * `SHIP_TYPES[i].signatureBit = 18|19|20|21` 을 각자 선언했고, 두 레인의 테스트는 각자
+ * 같은 wire 값이 **두 곳에 리터럴로** 적혀 있다. L2 는 `SIG_* = 18..23` 을, L1 은
+ * `SHIP_TYPES[i].signatureBit = 18..23` 을 각자 선언했고, 두 레인의 테스트는 각자
  * 자기 쪽 숫자만 고정한다 — **양쪽이 갈려도 둘 다 그린이다.**
  *
  * 갈렸을 때의 증상이 이 프로젝트의 반복 결함 그 자체다: W2-L4 의 OR-in 은 `SIG_*` 를 읽고
@@ -20,7 +20,9 @@ import {
   SIG_BRUISER_ARMOR,
   SIG_ARC_OVERCHARGE,
   SIG_PHANTOM_CLOAK,
-  SIG_BION_SPORE,
+  SIG_HATCHLING_BROOD,
+  SIG_MALLOW_CUSHION,
+  SIG_BUBBLE_FILM,
   SIGNATURE_BITS,
   SIGNATURE_BIT_MAX as SIM_SIGNATURE_BIT_MAX,
   hasSignature,
@@ -37,7 +39,9 @@ const EXPECTED_BY_TYPE_ID: readonly (readonly [number, number])[] = [
   [1, SIG_BRUISER_ARMOR],
   [2, SIG_ARC_OVERCHARGE],
   [3, SIG_PHANTOM_CLOAK],
-  [4, SIG_BION_SPORE],
+  [4, SIG_HATCHLING_BROOD],
+  [5, SIG_MALLOW_CUSHION],
+  [6, SIG_BUBBLE_FILM],
 ];
 
 describe('시그니처 비트 교차 계약 (sim 상수 ↔ 기체 레지스트리)', () => {

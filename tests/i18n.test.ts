@@ -45,7 +45,10 @@ import {
   SHIP_SPRITE_NAMES,
   shipSpriteName,
   applyShipSprite,
+  resolveShipTextures,
 } from '../src/render/textures.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile, activeShip } from '../src/save/profile.js';
 import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
@@ -337,6 +340,33 @@ describe('기체 타입 카탈로그 완전성 (SHIP_TYPES 파생)', () => {
   });
 
   /**
+   * **반려된 컨셉 어휘 가드**(2026-07-21 사용자 지시).
+   *
+   * typeId 4 는 원래 곤충·생체(`bion`, 계열 `swarm`/`mutate`/`blight`) 컨셉이었고 사용자가
+   * 명시적으로 반려했다 — "벌레 말고 다른 컨셉. 너무 징그럽다. 귀여운 걸로." 개명은 slug 만
+   * 바꾸면 끝나지 않는다: 문구는 사람이 손으로 쓰므로 다음에 이 기체 텍스트를 손볼 때 옛
+   * 어휘가 조용히 되돌아올 수 있고, 그때 잡아주는 것이 아무것도 없다. 그래서 **기체 표시
+   * 문자열 전역**(이름·소개·시그니처·계열명)에 대해 금지 어휘를 테스트로 못박는다.
+   *
+   * 적·이상현상 쪽 문구(`anomaly.swarm`·`def3.boss.sporeQueen` 등)는 대상이 아니다 — 반려된
+   * 것은 **플레이어가 조종하는 기체**의 컨셉이지 적 진영의 세계관이 아니다.
+   */
+  it('기체 문구에 반려된 곤충·생체 어휘가 없다(4번 기체 개명 후퇴 방지)', () => {
+    const bannedKo = ['벌레', '곤충', '군체', '군집', '역병', '변이', '포자', '유충', '촌충',
+      '촉수', '점액', '기생', '감염', '징그'];
+    const bannedEn = /\b(bug|bugs|insect|insects|larva|larvae|swarm|swarms|plague|blight|spore|spores|mutate|mutation|parasite|infest\w*|vermin|maggot)\b/i;
+    const keys = [...shipNameKeys(), ...shipSignatureKeys(), ...shipTreeKeys()];
+    for (const key of keys) {
+      const en = (EN as unknown as Record<string, string>)[key] ?? '';
+      const ko = (KO as unknown as Record<string, string>)[key] ?? '';
+      expect(en, `EN banned concept vocabulary in ${key}`).not.toMatch(bannedEn);
+      for (const w of bannedKo) {
+        expect(ko.includes(w), `KO "${w}" in ${key}: ${ko}`).toBe(false);
+      }
+    }
+  });
+
+  /**
    * 고아 키 가드 — 레지스트리에서 **파생되지 않는** `ship.*` / `lab.tree.*` 키가 남아 있으면
    * 잡는다. 존재 검증은 방향이 반대라 이것을 절대 못 잡는다: 타입·계열 slug 를 개명하면 옛
    * 문구가 조용히 남아 썩는다(`def3` 고아 가드와 같은 논리).
@@ -458,7 +488,7 @@ describe('기체 아트 슬롯 — 파일이 없어도 폴백이 동작한다', 
   });
 
   /**
-   * **아트 부채를 코드에 명시한다.** 신규 4종의 PNG 는 아직 없다(생성은 별도 파이프라인).
+   * **아트 부채를 코드에 명시한다.** 신규 6종의 PNG 는 아직 없다(생성은 별도 파이프라인).
    * 이 테스트는 "없어도 괜찮다"를 고정하는 것이 아니라, 파일이 도착했을 때 목록이 자동으로
    * 따라오는지를 본다 — 존재 여부는 폴백이 흡수하므로 실패시키지 않는다.
    */
@@ -483,17 +513,105 @@ describe('기체 아트 슬롯 — 파일이 없어도 폴백이 동작한다', 
     }
   });
 
+  /**
+   * **정규 경로**: `Profile{typeId}` → `buildRunConfig` → `createWorld` → `stepWorld` 로 실제
+   * 런을 굴린 뒤, **그 런의 `config.shipType`** 으로 스프라이트를 고른다. 위 케이스들은
+   * `applyShipSprite(stub, def.id)` 처럼 typeId 를 손으로 넣으므로 "프로필의 기체가
+   * WorldConfig 까지 도달하지 못한다"(설계서 §10-2)를 못 잡는다 — 그 결함이 있으면 단위
+   * 테스트는 전부 그린인데 화면에는 늘 스트라이커가 뜬다.
+   *
+   * 로더의 폴백 조립도 같은 코드(`resolveShipTextures`)로 통과시켜, "이름은 맞는데 슬롯이
+   * 레거시로 덮인다"까지 함께 본다.
+   */
+  it('실제로 굴린 런의 shipType 이 그 기체의 스프라이트 슬롯을 고른다', () => {
+    // 전 타입 PNG 가 존재하는 상태를 흉내 낸다(파일명 = 로더가 실제로 tryLoad 하는 이름).
+    const loaded = SHIP_SPRITE_NAMES.map((n, id) =>
+      id === 0 ? null : (`tex:${n}` as unknown as string),
+    );
+    const legacy = 'tex:player.png';
+
+    for (const def of SHIP_TYPES) {
+      const p = defaultProfile();
+      const ship = activeShip(p);
+      ship.typeId = def.id;
+      ship.skillInvest = zeroSkillInvest(def.id);
+
+      const cfg = buildRunConfig(p, { planet: 0, tier: 0 });
+      const state = createWorld(4242, { ...cfg, playerHp: 100_000_000 });
+      for (let i = 0; i < 30; i++) stepWorld(state, emptyInput());
+
+      const live = state.config.shipType ?? 0;
+      expect(live, `${def.slug} run shipType`).toBe(def.id);
+      expect(shipSpriteName(live), `${def.slug} sprite name`).toBe(
+        def.id === 0 ? LEGACY_SHIP_SPRITE : `ship_${def.slug}.png`,
+      );
+
+      const tex = {
+        player: legacy as unknown,
+        shipByType: resolveShipTextures(loaded, legacy) as unknown[],
+      } as unknown as Parameters<typeof applyShipSprite>[0];
+      applyShipSprite(tex, live);
+      expect(tex.player as unknown as string, `${def.slug} player slot`).toBe(
+        def.id === 0 ? legacy : `tex:ship_${def.slug}.png`,
+      );
+    }
+  });
+
+  /** 아트가 없는 타입은 레거시(`player.png`) 슬롯으로 내려간다 — 예외 없이, 조용히. */
+  it('타입 전용 PNG 가 하나도 없으면 전 슬롯이 레거시로 폴백한다', () => {
+    const legacy = 'tex:player.png';
+    const none = SHIP_TYPES.map(() => null);
+    const slots = resolveShipTextures(none, legacy);
+    expect(slots.length).toBe(SHIP_TYPES.length);
+    for (const s of slots) expect(s).toBe(legacy);
+  });
+
+  /**
+   * **디스크에 실재하는** 기체 PNG 의 규격 가드(2026-07-21 아트 배치분).
+   *
+   * 존재를 강제하지 않는다 — 아트는 코드보다 늦게 오고 폴백이 흡수한다. 대신 **있는 파일은**
+   * 레지스트리 파생 이름이어야 하고 인게임 스프라이트는 64×64 여야 한다(쇼케이스 128×128 을
+   * 인게임 슬롯에 잘못 떨어뜨리면 화면에서만 티가 난다). typeId 0 의 `player.png` 는 M8 이전
+   * 자산이라 반드시 있어야 한다.
+   */
+  it('assets/ 에 있는 기체 스프라이트는 레지스트리 이름 + 64x64 이다', () => {
+    const png = (name: string): Uint8Array | null => {
+      try {
+        return readFileSync(fileURLToPath(new URL(`../assets/${name}`, import.meta.url)));
+      } catch {
+        return null; // 아직 안 온 아트 — 폴백이 흡수한다.
+      }
+    };
+    const be32 = (b: Uint8Array, off: number): number =>
+      new DataView(b.buffer, b.byteOffset, b.byteLength).getUint32(off, false);
+
+    expect(png(LEGACY_SHIP_SPRITE), 'player.png 은 M8 이전 자산이라 반드시 존재한다').not.toBeNull();
+    for (const name of SHIP_SPRITE_NAMES) {
+      const buf = png(name);
+      if (buf === null) continue;
+      expect([...buf.slice(1, 4)].map((c) => String.fromCharCode(c)).join(''), `${name} PNG`).toBe(
+        'PNG',
+      );
+      expect(be32(buf, 16), `${name} width`).toBe(64);
+      expect(be32(buf, 20), `${name} height`).toBe(64);
+    }
+  });
+
   it('필요한 기체 아트 파일 목록이 레지스트리와 정확히 일치한다', () => {
     const need = [...SHIP_SHOWCASE_NAMES.slice(1), ...SHIP_SPRITE_NAMES.slice(1)];
     expect(need).toEqual([
       'ship_showcase_bruiser.png',
       'ship_showcase_arccaster.png',
       'ship_showcase_phantom.png',
-      'ship_showcase_bion.png',
+      'ship_showcase_hatchling.png',
+      'ship_showcase_mallow.png',
+      'ship_showcase_bubble.png',
       'ship_bruiser.png',
       'ship_arccaster.png',
       'ship_phantom.png',
-      'ship_bion.png',
+      'ship_hatchling.png',
+      'ship_mallow.png',
+      'ship_bubble.png',
     ]);
   });
 });

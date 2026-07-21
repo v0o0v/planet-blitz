@@ -20,7 +20,7 @@ import type { Fixture } from '../scripts/deno-verify/common.js';
 import { SCENARIOS } from '../scripts/deno-verify/scenarios.js';
 import { shipSkillNodeCount } from '../data/ships/index.js';
 import { hasCapstone } from '../src/sim/capstones.js';
-import { SIG_BION_SPORE } from '../src/sim/shipSignature.js';
+import { SIG_HATCHLING_BROOD } from '../src/sim/shipSignature.js';
 
 const FIXTURE_PATH = fileURLToPath(
   new URL('../scripts/deno-verify/fixtures.json', import.meta.url),
@@ -77,14 +77,14 @@ describe('Deno 교차 검증 픽스처 (M4 스파이크)', () => {
   it('⑦ 이 실제로 비스트라이커다 — EF 가 shipType 을 모르면 여기서 갈린다 (설계서 §10-8)', () => {
     // 이 케이스가 지키는 것: 누군가 ⑦ 의 config 에서 shipType/skillInvest 를 떨어뜨려도
     // 다른 테스트는 전부 그린이고, **비스트라이커 커버리지만 조용히 사라진다.**
-    const bion = SCENARIOS.find((s) => s.name.startsWith('⑦'));
-    expect(bion, '⑦ 비스트라이커 시나리오가 존재해야 한다').toBeDefined();
-    expect(bion!.config.shipType).toBe(4);
+    const nonStriker = SCENARIOS.find((s) => s.name.startsWith('⑦'));
+    expect(nonStriker, '⑦ 비스트라이커 시나리오가 존재해야 한다').toBeDefined();
+    expect(nonStriker!.config.shipType).toBe(4);
     // 스트라이커(63)와 길이가 달라야 길이 프리픽스 폴드까지 자극한다.
-    expect(bion!.config.skillInvest?.length).toBe(shipSkillNodeCount(4));
-    expect(bion!.config.skillInvest?.length).not.toBe(shipSkillNodeCount(0));
+    expect(nonStriker!.config.skillInvest?.length).toBe(shipSkillNodeCount(4));
+    expect(nonStriker!.config.skillInvest?.length).not.toBe(shipSkillNodeCount(0));
     // 시그니처 비트가 실제 로드아웃 마스크에 OR 돼 있다(§10-1 을 fixture 축에서 재확인).
-    expect(hasCapstone(bion!.config.loadout!.uniqueMask, SIG_BION_SPORE)).toBe(true);
+    expect(hasCapstone(nonStriker!.config.loadout!.uniqueMask, SIG_HATCHLING_BROOD)).toBe(true);
     // 그리고 스트라이커 시나리오들은 여전히 shipType 미지정이어야 한다(골든 불변의 전제).
     for (const s of SCENARIOS) {
       if (s.name.startsWith('⑦')) continue;

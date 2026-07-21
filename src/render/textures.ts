@@ -69,6 +69,16 @@ export function shipSpriteName(typeId: number): string {
 export const SHIP_SPRITE_NAMES: readonly string[] = SHIP_TYPES.map((d) => shipSpriteName(d.id));
 
 /**
+ * 타입별 로드 결과(index = typeId, 미존재·로드 실패는 null)를 **전 슬롯 non-null** 인
+ * 타입별 텍스처 배열로 접는다. 로더 안에 인라인으로 두면 "폴백이 실제로 어느 슬롯을 채우는가"를
+ * 테스트가 못 본다(Pixi 없이 `loadGameTextures` 를 부를 수 없다) — 그래서 순수 함수로 뽑아
+ * 로더와 테스트가 **같은 코드**를 타게 한다. 제네릭인 것은 테스트가 문자열로 대신 넣기 위함이다.
+ */
+export function resolveShipTextures<T>(typed: readonly (T | null | undefined)[], fallback: T): T[] {
+  return SHIP_TYPES.map((d) => typed[d.id] ?? fallback);
+}
+
+/**
  * 플레이어 슬롯을 `typeId` 의 기체 스프라이트로 갈아끼운다(**동기**, 렌더 전용).
  *
  * 런 시작 직전에 부른다 — `EntityRenderer` 가 `textures.player` 를 스프라이트 생성 시점에
@@ -962,8 +972,7 @@ export async function loadGameTextures(
   // 타입 0)에도 아무 예외 없이 다음 단으로 내려간다.
   if (player !== null) tex.player = player;
   // 전 타입 슬롯을 채운다. 폴백 기준은 이 시점의 `tex.player`(= 레거시 또는 절차적)다.
-  const shipFallback = tex.player;
-  tex.shipByType = SHIP_TYPES.map((d) => shipTypedAll[d.id] ?? shipFallback);
+  tex.shipByType = resolveShipTextures(shipTypedAll, tex.player);
   applyShipSprite(tex, shipType);
   if (gem !== null) tex.gem = gem;
   if (explosion !== null) tex.explosion = explosion;

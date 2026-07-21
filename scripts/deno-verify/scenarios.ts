@@ -247,21 +247,21 @@ const ARKE_ENGAGE: WorldConfig = {
   loadout: ARKE_BEAM_LOADOUT,
 };
 
-// --- 시나리오 ⑦: 비스트라이커 기체(비온) 런 — M8 기체 타입 교차 검증 -----------------
+// --- 시나리오 ⑦: 비스트라이커 기체(해츨링) 런 — M8 기체 타입 교차 검증 ---------------
 // ⚠️ 설계서 §10-8 이 예측한 **라이브 서비스 파손** 지점을 닫는 시나리오다. ①~⑥ 은 전부
 // 스트라이커(=`shipType` 미지정) 전제라, EF/Deno 가 기체 타입을 모르면 클라 단위 테스트가
 // 전부 그린인 채로 **비스트라이커 런만 서버 재실행에서 갈린다**. 그래서 이 시나리오는
 // 세 가지를 동시에 자극한다:
 //   ① `WorldConfig.shipType` 조건부 해시 꼬리 폴드(`replay.ts` 최후미)
 //   ② 시그니처 비트(`uniqueMask` 18~21) → sim 의 `signatureOn` 분기와 파생 스탯
-//   ③ 스트라이커와 **길이가 다른** `skillInvest`(비온 78) → 길이 프리픽스 폴드와
+//   ③ 스트라이커와 **길이가 다른** `skillInvest`(해츨링 78) → 길이 프리픽스 폴드와
 //      파워업 affinity 슬라이스(`nodesPerTree` 가 타입별)
 // 로드아웃은 리터럴이 아니라 실제 파생 함수를 태워, 클라가 쓰는 경로와 같은 값이 되게 한다.
-const BION_TYPE_ID = 4;
+const HATCHLING_TYPE_ID = 4;
 
-function bionSkillInvest(): number[] {
-  const def = shipTypeDef(BION_TYPE_ID);
-  const v = zeroSkillInvest(BION_TYPE_ID);
+function hatchlingSkillInvest(): number[] {
+  const def = shipTypeDef(HATCHLING_TYPE_ID);
+  const v = zeroSkillInvest(HATCHLING_TYPE_ID);
   // 세 계열 tier0 을 각각 다르게 찍어 affinity 슬라이스가 실제로 갈리게 한다.
   for (let ti = 0; ti < def.trees.length; ti++) {
     const { start } = shipTreeRange(def, ti);
@@ -270,16 +270,16 @@ function bionSkillInvest(): number[] {
   return v;
 }
 
-const BION_INVEST = bionSkillInvest();
+const HATCHLING_INVEST = hatchlingSkillInvest();
 
-const BION_RUN: WorldConfig = {
+const HATCHLING_RUN: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 2,
   tier: 1,
   playerHp: DURABLE,
-  loadout: computeLoadoutStats([], BION_INVEST, undefined, BION_TYPE_ID).loadout,
-  skillInvest: BION_INVEST,
-  shipType: BION_TYPE_ID,
+  loadout: computeLoadoutStats([], HATCHLING_INVEST, undefined, HATCHLING_TYPE_ID).loadout,
+  skillInvest: HATCHLING_INVEST,
+  shipType: HATCHLING_TYPE_ID,
 };
 
 /** 7종 대표 시나리오(M2 4 + M3 표면 2 + M8 비스트라이커 1). */
@@ -372,11 +372,11 @@ export const SCENARIOS: readonly Scenario[] = [
     ],
   },
   {
-    name: '⑦ 비온(비스트라이커 기체) 런 — shipType 폴드 + 시그니처 + 78길이 벡터',
+    name: '⑦ 해츨링(비스트라이커 기체) 런 — shipType 폴드 + 시그니처 + 78길이 벡터',
     seed: 0xb10f,
-    config: BION_RUN,
+    config: HATCHLING_RUN,
     checkpointInterval: 600,
-    buildInputs: () => driveDurable(0xb10f, BION_RUN, MAX_RUN_TICKS),
+    buildInputs: () => driveDurable(0xb10f, HATCHLING_RUN, MAX_RUN_TICKS),
     rolls: [
       { dropSeed: 0xb10f_71, rarity: 'rare', source: { planet: 2, tier: 1 } },
       { dropSeed: 0xb10f_72, rarity: 'unique', source: { planet: 2, tier: 1 } },

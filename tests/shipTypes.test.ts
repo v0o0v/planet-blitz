@@ -206,9 +206,10 @@ describe('② 시그니처 비트', () => {
     expect(new Set(bits).size).toBe(bits.length);
   });
 
-  it('설계서 §4 배정과 일치한다 (bruiser 18 · arccaster 19 · phantom 20 · bion 21)', () => {
+  it('설계서 §4 배정 + 7종 확장과 일치한다 (18·19·20·21·22·23)', () => {
     // L2 의 src/sim/shipSignature.ts SIG_* 상수가 이 값과 같아야 한다(정본은 그쪽, 여기는 데이터).
-    expect(SHIP_TYPES.map((d) => d.signatureBit)).toEqual([-1, 18, 19, 20, 21]);
+    // bruiser 18 · arccaster 19 · phantom 20 · hatchling 21 · mallow 22 · bubble 23.
+    expect(SHIP_TYPES.map((d) => d.signatureBit)).toEqual([-1, 18, 19, 20, 21, 22, 23]);
   });
 
   it('1 << bit 이 양수다 (마스크 연산 안전 — 31 비트 금지의 이유)', () => {
@@ -328,7 +329,7 @@ describe('⑥ affinity 매핑', () => {
   });
 });
 
-describe('신규 4종 스텁의 최소 유효성 (M8-L6 이 실데이터로 교체)', () => {
+describe('신규 6종의 최소 유효성 (구조 계약)', () => {
   it('전 타입의 flat 벡터 길이가 trees×(nodesPerTree+1) 이고 zeroSkillInvest 와 맞는다', () => {
     for (const def of SHIP_TYPES) {
       const n = def.trees.length * (def.nodesPerTree + 1);

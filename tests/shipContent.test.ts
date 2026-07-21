@@ -1,5 +1,5 @@
 /**
- * M8-L6 — 신규 기체 4종 트리 **콘텐츠** 게이트.
+ * M8-L6 — 신규 기체 6종 트리 **콘텐츠** 게이트 (로스터 7종).
  *
  * L1 의 `tests/shipTypes.test.ts` 가 레지스트리의 *구조*(인덱스 계약·flat 레이아웃·스트라이커
  * 동결)를 지킨다면, 이 파일은 그 위에 얹힌 *데이터*를 지킨다.
@@ -16,7 +16,7 @@
  * 5. **i18n 키가 화면에 그대로 뜨는 것** — 연구소는 `node.name` 을 `t()` 없이 그린다
  *    (`src/ui/pixi/researchLab.ts:636,861`). 스텁이 쓰던 `ship.<slug>...` 키 형태가 남으면
  *    유저에게 키가 보인다.
- * 6. **4종이 사실상 같은 기체인 것** — 트리를 채웠는데 스탯 분포가 비슷하면 "타입이 5종"은
+ * 6. **여러 종이 사실상 같은 기체인 것** — 트리를 채웠는데 스탯 분포가 비슷하면 "타입이 7종"은
  *    문구일 뿐이다. 만렙 투자 프로파일을 실제로 비교해 축이 갈리는지 본다.
  *
  * 마지막 describe 는 **정규 경로 통합**이다(설계서 §10). 레지스트리를 직접 부르지 않고
@@ -47,7 +47,7 @@ import { defaultProfile, activeShip } from '../src/save/profile.js';
 import type { Profile } from '../src/save/profile.js';
 import { retireActiveShip } from '../src/save/guardianLifecycle.js';
 
-/** 타입 1~4 (스트라이커는 L1 이 동결을 지킨다 — 여기서는 신규분만 본다). */
+/** 타입 1~6 (스트라이커는 L1 이 동결을 지킨다 — 여기서는 신규분만 본다). */
 const NEW_TYPES: readonly ShipTypeDef[] = SHIP_TYPES.slice(1);
 
 /** 스킬 트리가 **절대 주지 않기로 한** 스탯: 메타 재화 1 + 장비 어픽스 전용 원소 3. */
@@ -174,7 +174,7 @@ describe('② 캡스톤 게이트 정합', () => {
       const max = Math.max(...caps);
       expect(max / min, `${def.slug} 계열 편차`).toBeLessThanOrEqual(1.1);
       const total = caps.reduce((a, b) => a + b, 0);
-      // 스트라이커 250 기준. 비온은 노드가 얕고 많아 상단(309)이지만 포인트 예산은 공유다.
+      // 스트라이커 250 기준. 해츨링은 노드가 얕고 많아 상단(309)이지만 포인트 예산은 공유다.
       expect(total, `${def.slug} 총 용량`).toBeGreaterThanOrEqual(240);
       expect(total, `${def.slug} 총 용량`).toBeLessThanOrEqual(320);
     }
@@ -278,15 +278,19 @@ describe('⑤ 표시 문자열', () => {
   });
 });
 
-describe('⑥ 4종이 실제로 다른 빌드를 만든다', () => {
+describe('⑥ 7종이 실제로 다른 빌드를 만든다', () => {
   it('축별 1위가 서로 다른 기체다', () => {
     expect(argMaxBy('damagePct')).toBe('phantom'); // 유리 대포
     expect(argMaxBy('maxHpFlat')).toBe('bruiser'); // 장갑
-    expect(argMaxBy('fireRatePct')).toBe('bion'); // 군체 연사
-    expect(argMaxBy('xpPct')).toBe('bion'); // 군체 성장
+    expect(argMaxBy('fireRatePct')).toBe('hatchling'); // 무리 연사
+    expect(argMaxBy('xpPct')).toBe('hatchling'); // 무리 성장
     expect(argMaxBy('rangeFlat')).toBe('arccaster'); // 포격
     expect(argMaxBy('bulletCount')).toBe('arccaster'); // 탄막
     expect(argMaxBy('moveSpeedPct')).toBe('phantom'); // 기동
+    expect(argMaxBy('maxHpPct')).toBe('mallow'); // 완충 = 비율 체력
+    expect(argMaxBy('bulletSpeedPct')).toBe('bubble'); // 파열 압력
+    expect(argMaxBy('magnetPct')).toBe('bubble'); // 떠다니며 끌어온다
+    expect(argMaxBy('pierce')).toBe('bubble'); // 막을 뚫는 탄
   });
 
   it('각 신규 타입이 스트라이커보다 자기 축에서 뚜렷하게 크다 (기준점 대비 차별화)', () => {
@@ -299,22 +303,29 @@ describe('⑥ 4종이 실제로 다른 빌드를 만든다', () => {
     expect(p('arccaster').bulletCount).toBeGreaterThan(base.bulletCount * 1.5);
     expect(p('phantom').damagePct).toBeGreaterThan(base.damagePct * 2);
     expect(p('phantom').maxHpFlat).toBeLessThan(base.maxHpFlat * 0.6);
-    expect(p('bion').fireRatePct).toBeGreaterThan(base.fireRatePct * 2);
-    expect(p('bion').damagePct).toBeLessThan(base.damagePct * 0.7);
+    expect(p('hatchling').fireRatePct).toBeGreaterThan(base.fireRatePct * 2);
+    expect(p('hatchling').damagePct).toBeLessThan(base.damagePct * 0.7);
+    expect(p('mallow').maxHpPct).toBeGreaterThan(base.maxHpPct * 3);
+    expect(p('mallow').damagePct).toBeLessThan(base.damagePct * 1.5);
+    expect(p('bubble').bulletSpeedPct).toBeGreaterThan(base.bulletSpeedPct * 2);
+    expect(p('bubble').magnetPct).toBeGreaterThan(base.magnetPct * 1.1);
+    expect(p('bubble').rangeFlat).toBe(0); // 사거리 노드가 하나도 없는 유일한 기체
   });
 
-  it('브루저 장갑이 비온보다 총량·포인트당 **둘 다** 앞선다 (노드 수 차이가 축을 뒤집지 않는다)', () => {
-    // 비온은 계열 용량이 103(브루저 83)이라 flat 값을 같은 눈금으로 주면 만렙 총량만으로
-    // 비온이 더 단단해 보인다. 총량 비교만 걸어 두면 그 역전이 조용히 통과한다.
+  it('브루저 장갑이 해츨링보다 총량·포인트당 **둘 다** 앞선다 (노드 수 차이가 축을 뒤집지 않는다)', () => {
+    // 해츨링은 계열 용량이 103(브루저 83)이라 flat 값을 같은 눈금으로 주면 만렙 총량만으로
+    // 해츨링이 더 단단해 보인다. 총량 비교만 걸어 두면 그 역전이 조용히 통과한다.
     const bruiser = shipTypeDef(1);
-    const bion = shipTypeDef(4);
+    const hatchling = shipTypeDef(4);
     const hpTotal = (d: ShipTypeDef): number => fullInvestProfile(d).maxHpFlat;
     const defCap = (d: ShipTypeDef): number => {
       const ti = d.trees.findIndex((t) => t.affinity === 'defense');
       return treeCapacity(d, ti);
     };
-    expect(hpTotal(bruiser)).toBeGreaterThan(hpTotal(bion) * 1.15);
-    expect(hpTotal(bruiser) / defCap(bruiser)).toBeGreaterThan(hpTotal(bion) / defCap(bion) * 1.3);
+    expect(hpTotal(bruiser)).toBeGreaterThan(hpTotal(hatchling) * 1.15);
+    expect(hpTotal(bruiser) / defCap(bruiser)).toBeGreaterThan(
+      (hpTotal(hatchling) / defCap(hatchling)) * 1.3,
+    );
   });
 
   it('정규화 분포가 쌍마다 충분히 다르다 (총량이 아니라 축의 차이)', () => {
@@ -343,7 +354,9 @@ describe('⑦ 벡터 길이 계약', () => {
     expect(shipSkillNodeCount(1)).toBe(63); // bruiser  3×(20+1)
     expect(shipSkillNodeCount(2)).toBe(63); // arccaster
     expect(shipSkillNodeCount(3)).toBe(63); // phantom
-    expect(shipSkillNodeCount(4)).toBe(78); // bion     3×(25+1)
+    expect(shipSkillNodeCount(4)).toBe(78); // hatchling 3×(25+1)
+    expect(shipSkillNodeCount(5)).toBe(63); // mallow
+    expect(shipSkillNodeCount(6)).toBe(63); // bubble
     expect(SHIP_TYPES[4]?.nodesPerTree).toBe(25);
     expect(SHIP_TYPES[1]?.nodesPerTree).toBe(NODES_PER_TREE);
   });
@@ -421,9 +434,9 @@ describe('정규 경로 통합 — 퇴역으로 기체 전환 → 런 설정 →
       const config = assembleRunConfigLikeMain(profileWithType(def.id), 0, 0);
       expect(config.skillInvest?.length, def.slug).toBe(shipSkillNodeCount(def.id));
     }
-    const bion = assembleRunConfigLikeMain(profileWithType(4), 0, 0);
-    expect(bion.skillInvest?.length).toBe(78);
-    expect(bion.skillInvest?.length).not.toBe(SKILL_NODE_COUNT);
+    const hatchling = assembleRunConfigLikeMain(profileWithType(4), 0, 0);
+    expect(hatchling.skillInvest?.length).toBe(78);
+    expect(hatchling.skillInvest?.length).not.toBe(SKILL_NODE_COUNT);
   });
 
   it('신규 타입 런이 실제로 돌고 결정론적이다 (같은 seed → 같은 해시 스트림)', () => {

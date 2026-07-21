@@ -148,6 +148,6 @@ export function flattenShipNodes(def: ShipTypeDef): readonly SkillNode[] {
   return out;
 }
 
-// (삭제됨) `placeholderTree()` — L1 이 신규 4종을 "유효하지만 최소" 스텁으로 세우기 위한
-// 자리표시자 헬퍼였다. M8-L6 이 bruiser·arccaster·phantom·bion 에 실데이터를 채우면서
+// (삭제됨) `placeholderTree()` — L1 이 신규 타입을 "유효하지만 최소" 스텁으로 세우기 위한
+// 자리표시자 헬퍼였다. M8-L6 이 bruiser·arccaster·phantom·hatchling 에 실데이터를 채우면서
 // 호출부가 0 이 됐다(L1 헤더 주석의 "L6 이 함께 지운다" 지시대로 제거). grep 잔존 0건.

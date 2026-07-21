@@ -18,7 +18,7 @@ import { SHIP_TYPES, DEFAULT_SHIP_TYPE, shipTypeDef } from '../../../data/ships/
  * 연구소 스킬 노드 아이콘 39종 = 스탯 × 티어대 36 + 계열 캡스톤 3
  * (`.omc/plans/icon-manifest.json` 의 skill-stat · skill-capstone 축).
  *
- * ⚠️ **M8 아트 부채 4장.** M8 신규 기체 트리(`data/ships/{arccaster,phantom,bion}.ts`)가
+ * ⚠️ **M8 아트 부채 4장.** M8 신규 기체 트리(`data/ships/{arccaster,phantom,hatchling}.ts`)가
  * 스트라이커에 없던 (스탯, 티어대) 조합 4개를 새로 만들었다:
  * `skill_range_flat_mid` · `skill_range_flat_high` · `skill_bullet_speed_pct_high` ·
  * `skill_bullet_count_low`. **PNG 는 아직 없다** — `assets/skill_*.png` 는 35장뿐이다.

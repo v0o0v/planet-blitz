@@ -203,9 +203,15 @@ export const EN = {
   'lab.tree.assassin': 'Assassin',
   'lab.tree.phase': 'Phase',
   'lab.tree.disrupt': 'Disrupt',
-  'lab.tree.swarm': 'Swarm',
-  'lab.tree.mutate': 'Mutate',
-  'lab.tree.blight': 'Blight',
+  'lab.tree.brood': 'Brood',
+  'lab.tree.nurture': 'Nurture',
+  'lab.tree.shelter': 'Shelter',
+  'lab.tree.squish': 'Squish',
+  'lab.tree.mend': 'Mend',
+  'lab.tree.cushion': 'Cushion',
+  'lab.tree.pop': 'Pop',
+  'lab.tree.drift': 'Drift',
+  'lab.tree.film': 'Film',
   'lab.tree.sub': 'Invested {n}pt · lower tiers amplify higher nodes',
   'lab.browseAll': 'All Skills ({n}/{m} invested)',
   'lab.noInvested': 'Nothing invested in this tree yet.\nOpen the full list above to invest.',
@@ -322,10 +328,19 @@ export const EN = {
   'ship.phantom.role': 'Glass assassin. Highest single-shot damage, thinnest hull.',
   'ship.phantom.signature':
     'Cloak — go 4 seconds without being hit to slip out of enemy targeting. The shot that breaks cloak lands at 2.5x damage.',
-  'ship.bion.name': 'Bion',
-  'ship.bion.role': 'Swarm host. Fastest fire rate and the widest trees, weakest single shot.',
-  'ship.bion.signature':
-    'Spore Bloom — kills bank spores and a spore ally hatches on its own once the count is met. The count starts at 12 kills and rises by 4 every 60 cumulative kills, capped at 40.',
+  'ship.hatchling.name': 'Hatchling',
+  'ship.hatchling.role':
+    'Brood carrier. Fastest fire rate and the widest trees, weakest single shot.',
+  'ship.hatchling.signature':
+    'Hatch — kills fill the nest and a chick drone launches on its own once the count is met. The count starts at 12 kills and rises by 4 every 60 cumulative kills, capped at 40.',
+  'ship.mallow.name': 'Mallow',
+  'ship.mallow.role': 'Cushioned brawler. Largest percentage hull growth, softest punch.',
+  'ship.mallow.signature':
+    'Cushion — 35% of every hit is stored as delayed damage instead of landing right away. Go 3 seconds without being hit and 60% of what is stored heals back.',
+  'ship.bubble.name': 'Bubble',
+  'ship.bubble.role': 'Drifting skirmisher. Fastest shots and widest pickup pull, thinnest film hull.',
+  'ship.bubble.signature':
+    'Bubble Film — a film that absorbs 60 damage forms every 7 seconds. When it pops it shoves nearby enemies out to a radius of 220.',
 
   // --- 챔피언 선택(M8) ---
   'champion.title': 'Choose Your Ship',
@@ -1056,9 +1071,15 @@ export const KO: Record<MessageKey, string> = {
   'lab.tree.assassin': '암살',
   'lab.tree.phase': '위상',
   'lab.tree.disrupt': '교란',
-  'lab.tree.swarm': '군체',
-  'lab.tree.mutate': '변이',
-  'lab.tree.blight': '역병',
+  'lab.tree.brood': '무리',
+  'lab.tree.nurture': '보살핌',
+  'lab.tree.shelter': '둥지',
+  'lab.tree.squish': '뭉개기',
+  'lab.tree.mend': '아물기',
+  'lab.tree.cushion': '완충',
+  'lab.tree.pop': '터트리기',
+  'lab.tree.drift': '표류',
+  'lab.tree.film': '방막',
   'lab.tree.sub': '누적 투자 {n}pt · 하위 투자가 상위 노드를 증폭',
   'lab.browseAll': '전체 스킬 보기 ({n}/{m} 투자)',
   'lab.noInvested': '이 계열에 투자한 스킬이 없습니다.\n위 버튼으로 전체 목록에서 투자하세요.',
@@ -1167,10 +1188,18 @@ export const KO: Record<MessageKey, string> = {
   'ship.phantom.role': '유리 대포 암살형. 가장 높은 단발 피해, 가장 얇은 선체.',
   'ship.phantom.signature':
     '은신 — 4초 동안 피격되지 않으면 적의 조준 대상에서 빠집니다. 은신을 푸는 첫 타는 피해가 2.5배입니다.',
-  'ship.bion.name': '비온',
-  'ship.bion.role': '군체를 부리는 소환형. 가장 빠른 연사와 가장 넓은 트리, 가장 약한 단발.',
-  'ship.bion.signature':
-    '포자 개화 — 적을 처치하면 포자가 쌓이고 요구치를 채우면 포자 동료가 스스로 부화합니다. 요구치는 12처치에서 시작해 누적 60처치마다 4씩 오르며 40에서 멈춥니다.',
+  'ship.hatchling.name': '해츨링',
+  'ship.hatchling.role': '무리를 부화시키는 소환형. 가장 빠른 연사와 가장 넓은 트리, 가장 약한 단발.',
+  'ship.hatchling.signature':
+    '부화 — 적을 처치하면 둥지가 차고 요구치를 채우면 병아리 드론이 스스로 출격합니다. 요구치는 12처치에서 시작해 누적 60처치마다 4씩 오르며 40에서 멈춥니다.',
+  'ship.mallow.name': '말로우',
+  'ship.mallow.role': '충격을 삼키는 완충형. 비율 체력 성장이 가장 크고, 한 방의 위력은 가장 약합니다.',
+  'ship.mallow.signature':
+    '완충 — 피격 피해의 35%는 즉시 들어가지 않고 지연분으로 적립됩니다. 3초 동안 맞지 않으면 적립된 지연분의 60%가 회복됩니다.',
+  'ship.bubble.name': '버블',
+  'ship.bubble.role': '막을 두르고 떠다니는 유격형. 가장 빠른 탄과 가장 넓은 수집, 가장 얇은 선체.',
+  'ship.bubble.signature':
+    '거품 방막 — 7초마다 피해 60을 흡수하는 막이 생깁니다. 막이 터지면 반경 220 안의 적을 밀어냅니다.',
 
   'champion.title': '기체 고르기',
   'champion.roster': '보유 가능 기체',

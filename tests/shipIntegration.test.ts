@@ -30,7 +30,13 @@ import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig, WorldState } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { hasCapstone } from '../src/sim/capstones.js';
-import { SIG_BRUISER_ARMOR, SIG_ARC_OVERCHARGE } from '../src/sim/shipSignature.js';
+import {
+  SIG_BRUISER_ARMOR,
+  SIG_ARC_OVERCHARGE,
+  SIG_MALLOW_CUSHION,
+  SIG_BUBBLE_FILM,
+  SIGNATURE_BITS,
+} from '../src/sim/shipSignature.js';
 import { SHIP_TYPES, shipSkillNodeCount, zeroSkillInvest } from '../data/ships/index.js';
 import { createHarness } from '../src/harness/core.js';
 import type { HarnessHost, HarnessInvasionResolved } from '../src/harness/core.js';
@@ -101,6 +107,32 @@ describe('① Profile{typeId} → buildRunConfig → createWorld → stepWorld',
     expect(hasCapstone(bruiser.loadout?.uniqueMask ?? 0, SIG_ARC_OVERCHARGE)).toBe(false);
     expect(hasCapstone(arc.loadout?.uniqueMask ?? 0, SIG_ARC_OVERCHARGE)).toBe(true);
     expect(hasCapstone(arc.loadout?.uniqueMask ?? 0, SIG_BRUISER_ARMOR)).toBe(false);
+  });
+
+  it('신규 2종(typeId 5·6)도 자기 비트만 켜고 타입 0 과 관측 결과가 갈린다', () => {
+    // 로스터 7종 확장분. 레지스트리·상수 단위 테스트는 append 만으로도 전부 그린이므로,
+    // "정의는 됐는데 `buildRunConfig` → sim 까지 도달하지 않는" 결함은 이 케이스에서만 난다.
+    const striker = buildRunConfig(defaultProfile(), { planet: 0, tier: 0 });
+    const strikerHashes = runHashes(3311, striker, 180);
+    expect(new Set(strikerHashes).size).toBeGreaterThan(90);
+
+    for (const [typeId, bit] of [
+      [5, SIG_MALLOW_CUSHION],
+      [6, SIG_BUBBLE_FILM],
+    ] as const) {
+      const cfg = buildRunConfig(profileWithType(typeId), { planet: 0, tier: 0 });
+      expect(cfg.shipType, String(typeId)).toBe(typeId);
+      const mask = cfg.loadout?.uniqueMask ?? 0;
+      expect(hasCapstone(mask, bit), `typeId ${typeId}: 시그니처 비트 미점등`).toBe(true);
+      // 자기 비트 하나만 켜져야 한다 — 남의 패시브가 함께 켜지면 여기서 터진다.
+      for (const other of SIGNATURE_BITS) {
+        if (other === bit) continue;
+        expect(hasCapstone(mask, other), `typeId ${typeId}: 비트 ${other} 오점등`).toBe(false);
+      }
+      const hashes = runHashes(3311, cfg, 180);
+      expect(hashes, `typeId ${typeId}: 타입 0 과 관측이 같다`).not.toEqual(strikerHashes);
+      expect(new Set(hashes).size, `typeId ${typeId} 해시 다양성`).toBeGreaterThan(90);
+    }
   });
 
   it('동일 seed·입력에서 typeId=1 런과 typeId=0 런의 관측 결과가 실제로 다르다', () => {

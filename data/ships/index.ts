@@ -9,15 +9,18 @@
  * 노드 63개 고정. 설계서 §11 채택안 A: 5종 리팩터가 도는 동안 스트라이커를 **회귀 탐지기**로
  * 남긴다. 전 신규 경로가 타입 0 에서 조기 탈출하므로 기존 런의 해시가 바이트 불변이다.
  *
- * 1~4 는 현재 **자리표시자 스텁**이다(M8-L6 이 실데이터로 교체). 스텁 노드는 `perPoint: 0` 이라
- * 파생 스탯에 기여하지 않는다.
+ * 1~6 은 실데이터다. 타입 4 는 구 slug `bion`(곤충 컨셉)에서 `hatchling` 으로 **개명**됐고
+ * (2026-07-21 사용자 지시), 5·6(`mallow`·`bubble`)은 같은 지시로 **append** 된 신규 기체다 —
+ * 개명은 slug·표시 문구만 바꾸며 `id`·`signatureBit` 은 wire 계약이라 그대로다.
  */
 
 import { STRIKER } from './striker.js';
 import { BRUISER } from './bruiser.js';
 import { ARCCASTER } from './arccaster.js';
 import { PHANTOM } from './phantom.js';
-import { BION } from './bion.js';
+import { HATCHLING } from './hatchling.js';
+import { MALLOW } from './mallow.js';
+import { BUBBLE } from './bubble.js';
 import { shipNodeCount } from './types.js';
 import type { ShipTypeDef } from './types.js';
 
@@ -44,10 +47,20 @@ export { STRIKER } from './striker.js';
 export { BRUISER } from './bruiser.js';
 export { ARCCASTER } from './arccaster.js';
 export { PHANTOM } from './phantom.js';
-export { BION } from './bion.js';
+export { HATCHLING } from './hatchling.js';
+export { MALLOW } from './mallow.js';
+export { BUBBLE } from './bubble.js';
 
 /** 인덱스 = typeId. **append-only** — 삽입·삭제·재정렬 금지. */
-export const SHIP_TYPES: readonly ShipTypeDef[] = [STRIKER, BRUISER, ARCCASTER, PHANTOM, BION];
+export const SHIP_TYPES: readonly ShipTypeDef[] = [
+  STRIKER,
+  BRUISER,
+  ARCCASTER,
+  PHANTOM,
+  HATCHLING,
+  MALLOW,
+  BUBBLE,
+];
 
 /** 기본(첫 지급) 기체 타입 = 스트라이커. `WorldConfig.shipType` 미지정 시의 값이기도 하다. */
 export const DEFAULT_SHIP_TYPE = 0;

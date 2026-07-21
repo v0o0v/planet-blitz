@@ -36,6 +36,7 @@ import {
 } from '../src/ui/pixi/shipLabels.js';
 import { shipShowcaseName, LEGACY_SHOWCASE, UI_ASSET_NAMES, SHIP_SHOWCASE_NAMES } from '../src/ui/pixi/uiTextures.js';
 import { SHIP_TYPES, selectableShipTypes, shipSkillNodeCount } from '../data/ships/index.js';
+import { clampScroll } from '../src/ui/pixi/scrollArea.js';
 import { defaultProfile, activeShip, type KeyValueStore, type Profile } from '../src/save/profile.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
@@ -83,11 +84,21 @@ describe('로스터 목록 기하', () => {
     expect(rosterStackHeight(2)).toBe(ROSTER_ROW_H * 2 + ROSTER_ROW_GAP);
   });
 
-  it('현재 로스터가 스크롤 창 안에 들어간다(들어가지 않아도 스크롤 영역이 받는다)', () => {
+  it('로스터가 창을 넘치면 스크롤 산술이 끝까지 도달한다 (7종 확장으로 실제 넘침)', () => {
     expect(ROSTER_LIST_AVAIL).toBeGreaterThan(ROSTER_ROW_H);
-    // 지금은 5종이라 한 화면에 들어간다. 7종으로 늘면 이 기대가 깨지는데, 그때 필요한 조치는
-    // "테스트 완화" 가 아니라 스크롤이 실제로 도는지 확인이다(makeScrollArea 가 이미 붙어 있다).
-    expect(rosterStackHeight(rosterSize())).toBeLessThanOrEqual(ROSTER_LIST_AVAIL);
+    const totalH = rosterStackHeight(rosterSize());
+    // ⚠️ 5종일 때는 한 화면에 들어갔고(구 기대), 7종으로 늘며 실제로 넘쳤다. 여기서 필요한
+    // 조치는 "테스트 완화" 가 아니라 **스크롤이 실제로 도는지** 확인이다 — 화면은 목록을
+    // `makeScrollArea`(`src/ui/pixi/championSelect.ts` 의 `ROSTER_LIST_AVAIL` 창) 안에 넣고
+    // 같은 `clampScroll` 산술을 쓴다. 넘치는데 클램프가 마지막 행을 못 보여주면 그 행은
+    // 영원히 선택 불가인데 예외도 로그도 없다.
+    expect(totalH).toBeGreaterThan(ROSTER_LIST_AVAIL);
+    const maxScroll = totalH - ROSTER_LIST_AVAIL;
+    expect(clampScroll(0, totalH, ROSTER_LIST_AVAIL)).toBe(0);
+    expect(clampScroll(-999, totalH, ROSTER_LIST_AVAIL)).toBe(0);
+    // 끝까지 내리면 마지막 행의 바닥이 정확히 창 바닥에 닿는다(잘린 행 0).
+    expect(clampScroll(99_999, totalH, ROSTER_LIST_AVAIL)).toBe(maxScroll);
+    expect(totalH - maxScroll).toBe(ROSTER_LIST_AVAIL);
   });
 });
 

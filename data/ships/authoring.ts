@@ -1,8 +1,8 @@
 /**
- * 신규 기체 타입(1~4)의 트리 **저작 헬퍼** (M8-L6 콘텐츠).
+ * 신규 기체 타입(1~6)의 트리 **저작 헬퍼** (M8-L6 콘텐츠 + 7종 확장).
  *
  * ## 왜 별도 모듈인가
- * `bruiser`/`arccaster`/`phantom`/`bion` 네 파일이 같은 조립 규약을 쓴다. 규약을 네 벌 복사하면
+ * `bruiser`/`arccaster`/`phantom`/`hatchling`/`mallow`/`bubble` 여섯 파일이 같은 조립 규약을 쓴다. 규약을 여섯 벌 복사하면
  * 한 벌만 어긋나도 flat 인덱스 계약이 조용히 갈린다(`data/ships/types.ts` §flat 벡터 레이아웃).
  * 조립은 여기 한 곳, 데이터는 각 기체 파일 — `data/skills.ts` 가 로컬 `buildTree` 로 하는 것과
  * 같은 구조를 파일 경계 밖으로 한 칸 올린 것뿐이다.

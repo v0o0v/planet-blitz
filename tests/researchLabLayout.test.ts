@@ -27,7 +27,7 @@ import { NODES_PER_TREE, SKILL_NODE_COUNT } from '../data/skills.js';
 import {
   SHIP_TYPES,
   STRIKER,
-  BION,
+  HATCHLING,
   shipTypeDef,
   shipTreeRange,
   shipCapstoneIndex,
@@ -122,10 +122,10 @@ describe('본 패널 목록', () => {
     expect(h).toBeLessThanOrEqual(INVESTED_LIST.avail);
   });
 
-  it('비온(25노드)은 가용 세로를 넘는다 — 그래서 목록이 스크롤 영역 안에 있어야 한다', () => {
+  it('해츨링(25노드)은 가용 세로를 넘는다 — 그래서 목록이 스크롤 영역 안에 있어야 한다', () => {
     // 이 케이스가 실패하면 "스크롤이 필요 없어졌다" 는 뜻이므로 구현을 되돌려도 좋다는 신호다.
-    // 반대로 이 케이스가 있는 한, 목록을 스크롤 영역 밖으로 빼면 비온에서 행이 잘린다.
-    const h = listStackHeight(BION.nodesPerTree, INVESTED_LIST.cols, INVESTED_LIST.cellH, INVESTED_LIST.gapY);
+    // 반대로 이 케이스가 있는 한, 목록을 스크롤 영역 밖으로 빼면 해츨링에서 행이 잘린다.
+    const h = listStackHeight(HATCHLING.nodesPerTree, INVESTED_LIST.cols, INVESTED_LIST.cellH, INVESTED_LIST.gapY);
     expect(h).toBeGreaterThan(INVESTED_LIST.avail);
   });
 

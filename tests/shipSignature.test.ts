@@ -23,7 +23,9 @@ import {
   SIG_BRUISER_ARMOR,
   SIG_ARC_OVERCHARGE,
   SIG_PHANTOM_CLOAK,
-  SIG_BION_SPORE,
+  SIG_HATCHLING_BROOD,
+  SIG_MALLOW_CUSHION,
+  SIG_BUBBLE_FILM,
   SIGNATURE_BITS,
   SIGNATURE_BIT_MAX,
   hasSignature,
@@ -42,11 +44,22 @@ import {
   CLOAK_BREAK_BP,
   cloakActive,
   cloakBreakDamage,
-  SPORE_BASE_KILLS,
-  SPORE_STEP_KILLS,
-  SPORE_SCALE_KILLS,
-  SPORE_MAX_KILLS,
-  sporeThreshold,
+  HATCH_BASE_KILLS,
+  HATCH_STEP_KILLS,
+  HATCH_SCALE_KILLS,
+  HATCH_MAX_KILLS,
+  hatchThreshold,
+  CUSHION_DEFER_BP,
+  CUSHION_RECOVER_TICKS,
+  CUSHION_RECOVER_BP,
+  cushionDeferredDamage,
+  cushionImmediateDamage,
+  cushionRecovered,
+  FILM_PERIOD_TICKS,
+  FILM_ABSORB_FLAT,
+  filmReady,
+  filmAbsorbed,
+  filmRemainingDamage,
 } from '../src/sim/shipSignature.js';
 import { hasUnique } from '../src/sim/uniques.js';
 import { hasCapstone } from '../src/sim/capstones.js';
@@ -112,8 +125,10 @@ describe('시그니처 비트 배정', () => {
     expect(SIG_BRUISER_ARMOR).toBe(18);
     expect(SIG_ARC_OVERCHARGE).toBe(19);
     expect(SIG_PHANTOM_CLOAK).toBe(20);
-    expect(SIG_BION_SPORE).toBe(21);
-    expect(SIGNATURE_BITS).toEqual([18, 19, 20, 21]);
+    expect(SIG_HATCHLING_BROOD).toBe(21);
+    expect(SIG_MALLOW_CUSHION).toBe(22);
+    expect(SIG_BUBBLE_FILM).toBe(23);
+    expect(SIGNATURE_BITS).toEqual([18, 19, 20, 21, 22, 23]);
   });
 
   it('원문 실측: 유니크 15종(0~14) · 캡스톤 3종(15~17) 이 실제로 그 범위다', () => {
@@ -187,7 +202,7 @@ describe('결정론 산술 게이트 (소스 grep)', () => {
   it('나눗셈이 오직 10000(bp) 또는 명시 정수 상수로만 이뤄진다', () => {
     const divisors = [...CODE.matchAll(/\/\s*([A-Za-z0-9_]+)/g)].map((m) => m[1] as string);
     expect(divisors.length).toBeGreaterThan(0);
-    const allowed = new Set(['10000', 'SPORE_SCALE_KILLS']);
+    const allowed = new Set(['10000', 'HATCH_SCALE_KILLS']);
     for (const d of divisors) expect(allowed.has(d), `허용되지 않은 제수: ${d}`).toBe(true);
   });
 
@@ -256,13 +271,13 @@ describe('정수 in / 정수 out (파라미터 스윕)', () => {
     }
   });
 
-  it('sporeThreshold — 전 처치 구간이 정수·단조 비감소·상한 준수', () => {
+  it('hatchThreshold — 전 처치 구간이 정수·단조 비감소·상한 준수', () => {
     let prev = 0;
     for (let k = -5; k <= 4000; k++) {
-      const out = sporeThreshold(k);
+      const out = hatchThreshold(k);
       expect(Number.isInteger(out), `kills=${k} → ${out}`).toBe(true);
-      expect(out).toBeGreaterThanOrEqual(SPORE_BASE_KILLS);
-      expect(out).toBeLessThanOrEqual(SPORE_MAX_KILLS);
+      expect(out).toBeGreaterThanOrEqual(HATCH_BASE_KILLS);
+      expect(out).toBeLessThanOrEqual(HATCH_MAX_KILLS);
       if (k > 0) expect(out, `kills=${k} 에서 감소`).toBeGreaterThanOrEqual(prev);
       prev = out;
     }
@@ -273,7 +288,7 @@ describe('정수 in / 정수 out (파라미터 스윕)', () => {
     expect(Number.isInteger(overchargeBp(90.9))).toBe(true);
     expect(Number.isInteger(overchargedDamage(33.3, 120.6))).toBe(true);
     expect(Number.isInteger(cloakBreakDamage(41.2))).toBe(true);
-    expect(Number.isInteger(sporeThreshold(61.8))).toBe(true);
+    expect(Number.isInteger(hatchThreshold(61.8))).toBe(true);
   });
 });
 
@@ -364,24 +379,110 @@ describe('경계 골든 — 팬텀 은신', () => {
   });
 });
 
-describe('경계 골든 — 비온 포자', () => {
+describe('경계 골든 — 말로우 완충 (지연 피해 + 무피격 회복)', () => {
+  it('즉시분 + 지연분 = 원래 피해다 (양쪽을 따로 반올림하면 1이 새거나 는다)', () => {
+    for (const d of DAMAGE_SWEEP) {
+      expect(cushionImmediateDamage(d) + cushionDeferredDamage(d), `damage=${d}`).toBe(
+        Math.max(0, Math.trunc(d)),
+      );
+    }
+  });
+
+  it('지연 전환 비율이 설계값(35%)이고 전 구간 정수다', () => {
+    expect(CUSHION_DEFER_BP).toBe(3500);
+    expect(cushionDeferredDamage(1000)).toBe(350);
+    expect(cushionImmediateDamage(1000)).toBe(650);
+    for (const d of DAMAGE_SWEEP) {
+      expect(Number.isInteger(cushionDeferredDamage(d)), `damage=${d}`).toBe(true);
+      expect(Number.isInteger(cushionImmediateDamage(d)), `damage=${d}`).toBe(true);
+    }
+  });
+
+  it('피해 0·음수는 양쪽 모두 0', () => {
+    expect(cushionDeferredDamage(0)).toBe(0);
+    expect(cushionDeferredDamage(-40)).toBe(0);
+    expect(cushionImmediateDamage(0)).toBe(0);
+    expect(cushionImmediateDamage(-40)).toBe(0);
+  });
+
+  it('회복은 무피격 임계 179 / 180 / 181 에서 갈리고 상한을 넘지 않는다', () => {
+    expect(CUSHION_RECOVER_TICKS).toBe(180);
+    expect(CUSHION_RECOVER_BP).toBe(6000);
+    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS - 1)).toBe(0);
+    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS)).toBe(600);
+    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS + 1)).toBe(600);
+    for (const v of DAMAGE_SWEEP) {
+      for (const t of [-3, 0, 179, 180, 5000]) {
+        const out = cushionRecovered(v, t);
+        expect(Number.isInteger(out), `deferred=${v} ticks=${t}`).toBe(true);
+        expect(out).toBeGreaterThanOrEqual(0);
+        expect(out).toBeLessThanOrEqual(Math.max(0, v));
+      }
+    }
+  });
+
+  it('비정수 입력이 들어와도 정수만 나온다', () => {
+    expect(Number.isInteger(cushionDeferredDamage(77.4))).toBe(true);
+    expect(Number.isInteger(cushionImmediateDamage(77.4))).toBe(true);
+    expect(Number.isInteger(cushionRecovered(77.4, 180.9))).toBe(true);
+  });
+});
+
+describe('경계 골든 — 버블 방막 (주기 흡수 + 파열)', () => {
+  it('막 재생 주기 419 / 420 / 421 에서 갈린다', () => {
+    expect(FILM_PERIOD_TICKS).toBe(420);
+    expect(filmReady(FILM_PERIOD_TICKS - 1)).toBe(false);
+    expect(filmReady(FILM_PERIOD_TICKS)).toBe(true);
+    expect(filmReady(FILM_PERIOD_TICKS + 1)).toBe(true);
+    expect(filmReady(0)).toBe(false);
+    expect(filmReady(-10)).toBe(false);
+  });
+
+  it('흡수량 + 통과 피해 = 원래 피해이고 둘 다 정수·비음수다', () => {
+    for (const d of DAMAGE_SWEEP) {
+      for (const shield of [-5, 0, 1, FILM_ABSORB_FLAT, FILM_ABSORB_FLAT + 1, 100_000]) {
+        const a = filmAbsorbed(d, shield);
+        const r = filmRemainingDamage(d, shield);
+        expect(Number.isInteger(a), `d=${d} s=${shield}`).toBe(true);
+        expect(Number.isInteger(r), `d=${d} s=${shield}`).toBe(true);
+        expect(a).toBeGreaterThanOrEqual(0);
+        expect(r).toBeGreaterThanOrEqual(0);
+        expect(a).toBeLessThanOrEqual(Math.max(0, shield));
+        expect(a + r, `d=${d} s=${shield}`).toBe(Math.max(0, d));
+      }
+    }
+  });
+
+  it('막 내구가 남아 있는 만큼만 먹고 나머지는 선체로 간다', () => {
+    expect(FILM_ABSORB_FLAT).toBe(60);
+    expect(filmAbsorbed(100, FILM_ABSORB_FLAT)).toBe(60);
+    expect(filmRemainingDamage(100, FILM_ABSORB_FLAT)).toBe(40);
+    expect(filmAbsorbed(30, FILM_ABSORB_FLAT)).toBe(30);
+    expect(filmRemainingDamage(30, FILM_ABSORB_FLAT)).toBe(0);
+    // 막이 없으면 무연산 — 피해가 그대로 들어간다.
+    expect(filmAbsorbed(100, 0)).toBe(0);
+    expect(filmRemainingDamage(100, 0)).toBe(100);
+  });
+});
+
+describe('경계 골든 — 해츨링 부화', () => {
   it('0 처치 시 기본 임계', () => {
-    expect(sporeThreshold(0)).toBe(SPORE_BASE_KILLS);
-    expect(sporeThreshold(-7)).toBe(SPORE_BASE_KILLS);
+    expect(hatchThreshold(0)).toBe(HATCH_BASE_KILLS);
+    expect(hatchThreshold(-7)).toBe(HATCH_BASE_KILLS);
   });
 
   it('스케일 경계 59 / 60 / 61 에서 한 단계 오른다', () => {
-    expect(sporeThreshold(SPORE_SCALE_KILLS - 1)).toBe(SPORE_BASE_KILLS);
-    expect(sporeThreshold(SPORE_SCALE_KILLS)).toBe(SPORE_BASE_KILLS + SPORE_STEP_KILLS);
-    expect(sporeThreshold(SPORE_SCALE_KILLS + 1)).toBe(SPORE_BASE_KILLS + SPORE_STEP_KILLS);
+    expect(hatchThreshold(HATCH_SCALE_KILLS - 1)).toBe(HATCH_BASE_KILLS);
+    expect(hatchThreshold(HATCH_SCALE_KILLS)).toBe(HATCH_BASE_KILLS + HATCH_STEP_KILLS);
+    expect(hatchThreshold(HATCH_SCALE_KILLS + 1)).toBe(HATCH_BASE_KILLS + HATCH_STEP_KILLS);
   });
 
   it('상한에서 평평해진다', () => {
-    const capKills = SPORE_SCALE_KILLS * ((SPORE_MAX_KILLS - SPORE_BASE_KILLS) / SPORE_STEP_KILLS);
+    const capKills = HATCH_SCALE_KILLS * ((HATCH_MAX_KILLS - HATCH_BASE_KILLS) / HATCH_STEP_KILLS);
     expect(capKills).toBe(420);
-    expect(sporeThreshold(capKills)).toBe(SPORE_MAX_KILLS);
-    expect(sporeThreshold(capKills - SPORE_SCALE_KILLS)).toBe(SPORE_MAX_KILLS - SPORE_STEP_KILLS);
-    expect(sporeThreshold(100_000)).toBe(SPORE_MAX_KILLS);
+    expect(hatchThreshold(capKills)).toBe(HATCH_MAX_KILLS);
+    expect(hatchThreshold(capKills - HATCH_SCALE_KILLS)).toBe(HATCH_MAX_KILLS - HATCH_STEP_KILLS);
+    expect(hatchThreshold(100_000)).toBe(HATCH_MAX_KILLS);
   });
 });
 
@@ -402,7 +503,13 @@ describe('재현성 — 같은 입력 2회', () => {
         }
         sink.push(cloakBreakDamage(d));
         sink.push(cloakActive(d) ? 1 : 0);
-        sink.push(sporeThreshold(d));
+        sink.push(hatchThreshold(d));
+        sink.push(cushionDeferredDamage(d));
+        sink.push(cushionImmediateDamage(d));
+        sink.push(cushionRecovered(d, CUSHION_RECOVER_TICKS));
+        sink.push(filmAbsorbed(d, FILM_ABSORB_FLAT));
+        sink.push(filmRemainingDamage(d, FILM_ABSORB_FLAT));
+        sink.push(filmReady(d) ? 1 : 0);
       }
     }
     expect(JSON.stringify(first)).toBe(JSON.stringify(second));

@@ -1072,7 +1072,7 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
 // 정본은 `LoadoutConfig.uniqueMask` 의 시그니처 비트(M8-L4 가 loadout.ts 에서 OR-in)다. 다만
 // 그 배선이 빠지면 **패시브가 영구 미발동인데 어떤 테스트도 실패하지 않는다**(설계서 §10-1 이
 // 예측한 결함 유형). 그래서 sim 이 아는 또 하나의 권위 — `config.shipType`(해시에 봉인됨) —
-// 도 함께 인정한다. 스트라이커는 `signatureBit === -1` 이고 마스크에도 18~21 비트가 없으므로
+// 도 함께 인정한다. 스트라이커는 `signatureBit === -1` 이고 마스크에도 18~23 비트가 없으므로
 // **두 축 모두 false** → 조기 탈출(해시 불변).
 // ---------------------------------------------------------------------------
 
