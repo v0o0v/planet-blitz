@@ -168,7 +168,7 @@ describe('powerup pool — 24 tagged + build-weighted draw (C2, AC9, OQ-M3-1)', 
     }
   });
 
-  it('soft-weights toward the equipped weapon (beam offered more under a beam build)', () => {
+  it('무기 전용 강화는 장착 무기에서만 제시된다 (오프빌드 완전 배제)', () => {
     const beamIdx = POWERUPS.map((p, i) => (p.weaponType === WEAPON_BEAM ? i : -1)).filter((i) => i >= 0);
     expect(beamIdx.length).toBeGreaterThan(0);
     const count = (weaponType: number): number => {
@@ -180,12 +180,14 @@ describe('powerup pool — 24 tagged + build-weighted draw (C2, AC9, OQ-M3-1)', 
       }
       return hits;
     };
-    // Beam powerups appear far more often when a beam is equipped, yet a mismatched
-    // build still sees them occasionally (soft weighting, never hard-excluded).
+    // `fix/weapon-range-semantics` 이전에는 오프빌드도 낮은 가중값(2)으로 **뽑힐 수
+    // 있었다.** 낮을 뿐 0 이 아니라 실제로 뽑혔고(벌컨 빌드 24시드 중 1시드가 빔 전용
+    // '집속 렌즈'를 먹는 것이 7기체 전부에서 관측됐다), 당시 `0 = 무제한` 사거리
+    // 의미론과 맞물려 그 시드는 사격이 통째로 멎었다. 이제는 후보 풀에서 아예 뺀다.
     const beamBuild = count(WEAPON_BEAM);
     const vulcanBuild = count(0);
-    expect(beamBuild).toBeGreaterThan(vulcanBuild * 3);
-    expect(vulcanBuild).toBeGreaterThan(0);
+    expect(beamBuild).toBeGreaterThan(0);
+    expect(vulcanBuild).toBe(0);
   });
 
   it('soft-weights toward an invested skill tree', () => {
@@ -225,9 +227,10 @@ describe('powerup pool — 24 tagged + build-weighted draw (C2, AC9, OQ-M3-1)', 
  */
 function legacyPowerupWeight(def: PowerupDef, state: WorldState): number {
   if (def.universal === true) return 10; // WEIGHT_UNIVERSAL
-  if (def.weaponType !== undefined) {
-    return def.weaponType === state.weapon.weaponType ? 28 : 2;
-  }
+  // 오프빌드 배제는 `fix/weapon-range-semantics` 의 **의도된** 변경이라 미러도 함께 지운다
+  // (아래 legacyDrawPowerupChoices 의 skip 과 쌍). 이 미러를 옛 가중값 2 로 남겨 두면
+  // 대조가 "affinity 슬라이스가 맞는가"가 아니라 "그 변경이 있었는가"를 재는 것이 된다.
+  if (def.weaponType !== undefined) return 28;
   if (def.affinity !== undefined) {
     const tree = AFFINITY_LEGACY_TREE[def.affinity];
     const t = SKILL_TREES.indexOf(tree);
@@ -247,6 +250,7 @@ function legacyDrawPowerupChoices(state: WorldState, count: number): number[] {
   for (let i = 0; i < POWERUPS.length; i++) {
     const def = POWERUPS[i];
     if (def === undefined) continue;
+    if (def.weaponType !== undefined && def.weaponType !== state.weapon.weaponType) continue;
     pool.push(i);
     weights.push(legacyPowerupWeight(def, state));
   }

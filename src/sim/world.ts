@@ -300,9 +300,25 @@ export interface WeaponStats {
   /** Extra enemies a bullet passes through (0 = despawn on first hit). */
   pierce: number;
   bulletRadius: number;
-  /** Targeting range; 0 = unlimited. */
+  /**
+   * 이 무기가 **실제로 닿는 거리**(월드 단위). 조준 대상 탐색 상한이자, 발사체가 커버해야
+   * 하는 거리다. 두 쓰임이 같은 값이라는 것이 이 필드의 계약이다 — 조준만 되고 탄이 닿지
+   * 않거나(그 반대) 하면 "에임은 맞는데 총알이 안 나간다" 부류의 결함이 된다.
+   *
+   * ⚠️ **`0 = 무제한` 센티널은 폐기됐다**(M8, `fix/weapon-range-semantics`). 예전에는
+   * 기본값이 0(무제한)이라 **사거리에 1점이라도 투자하면 조준 상한이 무한에서 유한값으로
+   * 좁아지는** 부호 반전이 있었다: 데이터 문안은 전부 "사거리 +N/pt" 로 이득을 약속하는데
+   * 실제로는 손해였고, 오토파일럿 카이팅 거리(460)보다 짧아지면 `autoAttack` 이 매 틱
+   * 표적 없음으로 조기 반환해 **사격이 통째로 멎었다**(만렙 투자 시 스트라이커 170 ·
+   * 브루저 106 · 팬텀 135 · 말로우 22 — 7기체 중 4기체가 붕괴). 이제 기준값이
+   * {@link BASE_WEAPON_RANGE} 로 유한하고 투자는 전 구간 단조 이득이다.
+   */
   range: number;
-  /** Bullet lifetime in ticks. */
+  /**
+   * 발사체 수명(틱). **사거리 커버 보정의 하한**이다 — 실제 발사에는
+   * {@link reachLife} 가 `max(이 값, 사거리 ÷ 틱당 이동)` 을 쓰므로, 사거리 투자가
+   * 늘어나면 탄이 그 끝까지 살아서 날아간다.
+   */
   bulletLife: number;
   /**
    * Primary weapon firing archetype (M2 plan B2): 0 = 발칸 (fanned volley), 1 =
@@ -311,6 +327,28 @@ export interface WeaponStats {
    */
   weaponType: number;
 }
+
+/**
+ * 무투자 기준 사거리(월드 단위). `weapon.range` 의미론의 **유일한 기준점**이다.
+ *
+ * 1650 은 임의값이 아니라 **발칸 탄의 자연 도달거리** 그 자체다:
+ * `bulletSpeed 1800 × DT × bulletLife 55 = 1650`. 사거리를 "닿는 거리"로 정의한 이상
+ * 무투자 기준값은 탄이 실제로 날아가는 거리와 같아야 한다 — 더 짧으면 닿을 수 있는데
+ * 안 쏘고(교전 거리를 스스로 깎는다), 더 길면 조준만 하고 탄이 죽는다.
+ *  - 적 스폰 링 `SPAWN_RING_RADIUS ≈ 1322`(constants.ts) **초과** — 무투자 플레이어가
+ *    화면에 들어온 적을 놓치지 않는다.
+ *  - 오토파일럿 카이팅 거리 `KITE_DISTANCE 460`(autopilot.ts)의 3배 — 봇이 붙박이는
+ *    거리에서 사격이 멎는 일이 어떤 투자 조합에서도 생기지 않는다.
+ *  - 기준값에서는 {@link reachLife} 보정이 정확히 항등이라 무투자 탄 거동이 불변이다.
+ *
+ * ⚠️ 값을 낮추면 **교전 거리가 실제로 줄어든다.** 1400 으로 잡아 봤을 때 침공 최상위
+ * 기지(#20) 클리어율이 25% → 8.3%(24시드) 로 떨어졌다 — 접근해 오는 적을 사거리 밖에서
+ * 놓치기 때문이다. 1650 에서는 기존 실측과 같은 25% 다.
+ *
+ * 이 값 위로 `rangeFlat` 투자가 **더해지기만** 한다. 따라서 사거리 투자는 전 구간
+ * 단조 이득이고, 데이터 문안("사거리 +N/pt")과 부호가 일치한다.
+ */
+export const BASE_WEAPON_RANGE = 1650;
 
 export const DEFAULT_WEAPON: WeaponStats = {
   fireCooldown: 6,
@@ -322,7 +360,7 @@ export const DEFAULT_WEAPON: WeaponStats = {
   spread: 0.18,
   pierce: 0,
   bulletRadius: 5,
-  range: 0,
+  range: BASE_WEAPON_RANGE,
   bulletLife: 55,
   weaponType: 0,
 };
@@ -651,7 +689,10 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     weapon.pierce += lo.pierceAdd;
     weapon.bulletSpeed = Math.round(weapon.bulletSpeed * lo.bulletSpeedMult * 100) / 100;
     weapon.spread += lo.spreadAdd;
-    weapon.range += lo.rangeAdd;
+    // 아키타입 기준 보정은 음수일 수 있다(빔). 사거리가 음수로 내려가면 `nearestTarget`
+    // 이 아무것도 못 고르므로 0 에서 막는다 — 옛 `0 = 무제한` 센티널과 달리 지금 0 은
+    // 문자 그대로 "닿는 거리 없음"이다.
+    weapon.range = Math.max(0, weapon.range + lo.rangeAdd);
     cfg.playerSpeed = Math.round(cfg.playerSpeed * lo.moveSpeedMult);
     cfg.dashCooldownTicks = Math.max(12, Math.round(cfg.dashCooldownTicks * lo.dashCdMult));
     cfg.playerHp += lo.maxHpAdd;
@@ -1548,16 +1589,51 @@ const BEAM_SEGMENT_SPACING = 90;
 const BEAM_SEGMENT_RADIUS = 52;
 /** Beam segment lifetime (ticks): a brief static hit line, re-laid each fire. */
 const BEAM_SEGMENT_LIFE = 2;
-/** Beam range used when the weapon's range is unbounded (0). */
-const BEAM_DEFAULT_RANGE = 1200;
+/**
+ * 빔이 세그먼트로 **물리적으로 덮을 수 있는** 최대 거리. 세그먼트 개수 상한이 곧 사거리
+ * 상한이므로 두 값을 따로 두지 않고 여기서 파생시킨다 — 예전에는 조준 상한(`w.range`)과
+ * 세그먼트 커버리지가 각각 굴러가서, 사거리 투자가 세그먼트에는 이득이고 조준에는 손해인
+ * **부호가 엇갈린 상태**였다.
+ */
+const BEAM_MAX_REACH = BEAM_MAX_SEGMENTS * BEAM_SEGMENT_SPACING;
+
+/**
+ * 이 무기가 **실제로 닿는 거리**. 조준 탐색과 발사체 커버리지가 반드시 같은 값을 써야
+ * "조준은 되는데 안 닿는다"(혹은 그 반대)가 생기지 않는다.
+ *
+ * 빔만 예외적으로 상한이 있다: 세그먼트를 {@link BEAM_MAX_SEGMENTS} 개까지만 깔 수 있어
+ * 그보다 먼 표적은 조준해도 타격선이 닿지 않는다. 그래서 조준 자체를 상한까지만 한다.
+ */
+function weaponReach(w: WeaponStats): number {
+  const r = w.range > 0 ? w.range : 0;
+  if (w.weaponType === WEAPON_TYPE_BEAM) return r < BEAM_MAX_REACH ? r : BEAM_MAX_REACH;
+  return r;
+}
+
+/**
+ * 발사체가 사거리 끝까지 살아 있도록 보정한 수명(틱).
+ *
+ * 사거리는 "닿는 거리"라는 계약이므로(WeaponStats.range), 조준한 표적까지 탄이 실제로
+ * 날아가야 한다. 기본값(발칸 1800×DT×55 = 1650)은 기준 사거리 1400 을 이미 덮으므로
+ * 무투자 거동은 그대로이고, 사거리에 투자했거나 탄속이 낮은 아키타입(미사일 ×0.7 →
+ * 자연 도달 1155)에서만 수명이 늘어난다.
+ */
+function reachLife(w: WeaponStats, reach: number): number {
+  const perTick = w.bulletSpeed * DT;
+  if (perTick <= 0) return w.bulletLife;
+  const need = Math.ceil(reach / perTick);
+  return need > w.bulletLife ? need : w.bulletLife;
+}
 
 function autoAttack(state: WorldState, player: Entity): void {
   const w = state.weapon;
   if (player.cooldown > 0) player.cooldown--;
   if (player.cooldown > 0) return;
 
-  const target = nearestTarget(state, player, w.range);
+  const reach = weaponReach(w);
+  const target = nearestTarget(state, player, reach);
   if (target === undefined) return;
+  const bulletLife = reachLife(w, reach);
 
   // ① 과열 드럼: 연속 명중 스택(player.phase)만큼 발사 쿨다운 단축. 미장착 시
   //    스택은 항상 0이라 base 그대로(거동 불변).
@@ -1609,7 +1685,7 @@ function autoAttack(state: WorldState, player: Entity): void {
       wDamage,
       w.pierce,
       w.bulletRadius,
-      w.bulletLife,
+      bulletLife,
       cos(baseAngle),
       sin(baseAngle),
     );
@@ -1632,7 +1708,7 @@ function autoAttack(state: WorldState, player: Entity): void {
         wDamage,
         w.pierce,
         w.bulletRadius,
-        w.bulletLife,
+        bulletLife,
         cos(ang),
         sin(ang),
       );
@@ -1643,10 +1719,13 @@ function autoAttack(state: WorldState, player: Entity): void {
   }
 
   if (w.weaponType === WEAPON_TYPE_BEAM) {
-    const range = w.range > 0 ? w.range : BEAM_DEFAULT_RANGE;
-    let segs = Math.floor(range / BEAM_SEGMENT_SPACING);
+    // 타격선은 **조준한 거리와 정확히 같은 만큼** 깐다(`reach`). 상한 클램프가 따로 없는
+    // 이유는 `weaponReach` 가 이미 BEAM_MAX_REACH(= 상한 개수 × 간격)로 잘라 주기 때문이다
+    // — `floor(BEAM_MAX_REACH / BEAM_SEGMENT_SPACING) === BEAM_MAX_SEGMENTS` 로 정의상 일치한다.
+    // (예전 `w.range > 0 ? w.range : BEAM_DEFAULT_RANGE` 폴백은 도달 불가능한 죽은 분기였다:
+    //  빔은 `applyWeaponTypeBase` 가 사거리를 무조건 더해 `range` 가 항상 0 초과였다.)
+    let segs = Math.floor(reach / BEAM_SEGMENT_SPACING);
     if (segs < 1) segs = 1;
-    if (segs > BEAM_MAX_SEGMENTS) segs = BEAM_MAX_SEGMENTS;
     const ca = cos(baseAngle);
     const sa = sin(baseAngle);
     for (let i = 1; i <= segs; i++) {
@@ -1692,7 +1771,7 @@ function autoAttack(state: WorldState, player: Entity): void {
       dmg,
       w.pierce,
       w.bulletRadius,
-      w.bulletLife,
+      bulletLife,
       cos(ang),
       sin(ang),
     );
@@ -2022,8 +2101,17 @@ function isPlayerTargetable(e: Entity): boolean {
   );
 }
 
+/**
+ * `range` 안에서 가장 가까운 조준 대상.
+ *
+ * ⚠️ **`range` 는 언제나 유한한 실제 사거리다.** 예전에는 `0` 을 "무제한" 센티널로 썼는데,
+ * 그 탓에 기본 무기(`range 0`)가 무한 조준이고 사거리에 1점이라도 투자하면 조준 상한이
+ * **좁아지는** 부호 반전이 있었다({@link BASE_WEAPON_RANGE} 주석). 센티널은 폐기됐고
+ * 호출자 4곳(주무기·보조무기 3종·포탑)은 모두 유한값을 넘긴다. `range <= 0` 이면 표적을
+ * 하나도 고르지 않는다 — 무제한으로 되돌아가지 않는 것이 의도다.
+ */
 function nearestTarget(state: WorldState, from: Entity, range: number): Entity | undefined {
-  const maxD2 = range > 0 ? range * range : Infinity;
+  const maxD2 = range * range;
 
   // Fast path: no walls → nearest candidate, nothing to occlude.
   if (state.activeWalls.length === 0) {

@@ -81,6 +81,20 @@ export function neutralLoadout(): LoadoutConfig {
   };
 }
 
+/**
+ * 빔 아키타입의 기준 사거리 보정(음수). 빔의 `range` 는 조준 상한이자 **타격선 길이**라
+ * 다른 아키타입과 성질이 다르다 — 세그먼트를 `BEAM_MAX_SEGMENTS`(16) × 간격(90) = 1440
+ * 까지만 깔 수 있어 그 위의 사거리는 빔에게 아무 의미가 없다. 그래서 공용 기준값
+ * (`BASE_WEAPON_RANGE` 1650)에서 출발시키면 **처음부터 상한에 붙어** 사거리 투자와
+ * 집속 렌즈가 전부 무효가 된다. 1650 - 850 = 800 에서 출발시켜 상한까지 640 의 투자
+ * 여지를 남긴다(세그먼트 8개 → 최대 16개).
+ *
+ * ⚠️ 이 파일은 sim 런타임을 값으로 import 하지 않는 규율이라(파일 머리말) 1400 을 직접
+ * 참조하지 않는다. 두 상수가 조용히 갈라지지 않도록 `tests/weaponRange.test.ts` 가
+ * "빔 기준 사거리 === 800" 을 못 박는다.
+ */
+const BEAM_RANGE_DELTA = -850;
+
 /** Per-weapon-type baseline, applied before affixes so each type feels distinct
  *  (plan B2). Vulcan is the neutral reference; spread trades damage for a wide
  *  pellet count; railgun trades cadence for a fast, hard, deeply-piercing shot. */
@@ -104,10 +118,10 @@ function applyWeaponTypeBase(lo: LoadoutConfig, weaponType: number): void {
     lo.bulletSpeedMult *= 0.7;
   } else if (weaponType === WEAPON_BEAM) {
     // 빔: 빠른 연사 · 짧은 수명 세그먼트 판정(OQ-M3-3). 세그먼트 하나당 피해는 작고
-    // 사거리 라인을 촘촘히 덮는다. 넓은 사거리 기본 부여.
+    // 사거리 라인을 촘촘히 덮는다.
     lo.damageMult *= 0.42;
     lo.fireRateMult *= 0.6;
-    lo.rangeAdd += 300;
+    lo.rangeAdd += BEAM_RANGE_DELTA;
   }
 }
 

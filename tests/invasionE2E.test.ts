@@ -121,9 +121,13 @@ function playRun(seed: number, layers: InvasionLayers): RunResult {
  * 클리어까지 가는 시드는 배치마다 다르다(플레이어가 먼저 죽는 시드도 정상적으로 존재한다 —
  * 침공은 이길 수도 질 수도 있어야 한다). 여기 박아 둔 시드는 아래 두 케이스가 실제로
  * 승리에 도달하는 것으로 확인된 값이다.
+ *
+ * ⚠️ **sim 이 바뀌면 증인 시드도 다시 골라야 한다.** 채운 배치는
+ * `fix/weapon-range-semantics`(무제한 조준 폐지)로 7 → 10 으로 갈았다 — 단언을 약화한 것이
+ * 아니라 같은 성질의 증인을 다시 고른 것이다(빈 배치 1 은 그대로 승리한다).
  */
 const WINNING_SEED_EMPTY = 1;
-const WINNING_SEED_FILLED = 7;
+const WINNING_SEED_FILLED = 10;
 
 /** 코어 파괴 승리를 공통 단언으로 묶는다. */
 function expectCoreKillVictory(run: RunResult): void {
