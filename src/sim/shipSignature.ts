@@ -236,6 +236,35 @@ export const FILM_ABSORB_FLAT = 60;
 export const FILM_BURST_RADIUS = 220;
 /** 막이 터질 때 주변 적에게 실리는 밀어내기 속도(sim 좌표/틱 × 100, 정수 유지용 눈금). */
 export const FILM_BURST_PUSH = 260;
+/**
+ * 파열 밀어내기를 **1회성 변위**로 접을 때 곱하는 지속 틱.
+ *
+ * 왜 지속이 아니라 1회 변위인가(world.ts 배선이 정한 규칙, 코드 근거):
+ * 적 속도(`e.vx`/`e.vy`)는 이동 컴포넌트가 **매 틱 대입으로 덮어쓴다**
+ * (`patterns/index.ts` moveStandoff·moveSeekWounded·stationary). 따라서 속도에 밀어내기를
+ * 실으면 다음 틱에 흔적 없이 사라지고 **화면상 아무 일도 안 일어나는데 그 1틱의 해시만
+ * 갈린다.** 밀어내기는 좌표를 직접 옮기는 방식으로만 관측 가능하며, 그 선례가
+ * `applySingularityPull`(world.ts)이다.
+ *
+ * 그래서 눈금 상수(FILM_BURST_PUSH = sim 좌표/틱 × 100)를 **단일 나눗셈**으로 속도로 되돌린
+ * 뒤(2.6 좌표/틱), 이 틱 수만큼 지속된 결과를 파열 그 자리에서 한 번에 적용한다. 값 100 은
+ * 결과 변위가 FILM_BURST_RADIUS(220)보다 커지게 하는 최소 눈금이다 — "반경 안의 적을 반경
+ * 밖으로 밀어낸다" 가 성립해야 파열이 체감된다. 기존 상수의 값·의미는 하나도 바꾸지 않는다.
+ */
+export const FILM_BURST_PUSH_TICKS = 100;
+/**
+ * `FILM_BURST_PUSH` 가 실린 눈금(속도 × 이 값이 상수에 저장돼 있다). 나눗셈 제수를 리터럴이
+ * 아니라 이름 있는 정수 상수로 두는 것은 이 모듈의 규약이다(선례: HATCH_SCALE_KILLS).
+ */
+export const FILM_PUSH_SCALE = 100;
+
+/**
+ * 막 파열이 반경 안 적 하나를 밀어내는 **1회 변위**(sim 좌표). 나눗셈 1회.
+ * = 260 좌표 > FILM_BURST_RADIUS(220).
+ */
+export function filmBurstPush(): number {
+  return (FILM_BURST_PUSH * FILM_BURST_PUSH_TICKS) / FILM_PUSH_SCALE;
+}
 
 /** 마지막 파열 이후 `ticksSinceBurst` 만큼 지났을 때 막이 다시 서 있는가. */
 export function filmReady(ticksSinceBurst: number): boolean {

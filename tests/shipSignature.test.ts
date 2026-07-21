@@ -202,7 +202,9 @@ describe('결정론 산술 게이트 (소스 grep)', () => {
   it('나눗셈이 오직 10000(bp) 또는 명시 정수 상수로만 이뤄진다', () => {
     const divisors = [...CODE.matchAll(/\/\s*([A-Za-z0-9_]+)/g)].map((m) => m[1] as string);
     expect(divisors.length).toBeGreaterThan(0);
-    const allowed = new Set(['10000', 'HATCH_SCALE_KILLS']);
+    // 허용은 bp 제수(10000)와 **이름 있는 정수 상수**뿐이다 — 리터럴 제수는 계속 금지다.
+    // FILM_PUSH_SCALE 은 버블 파열 눈금(FILM_BURST_PUSH 가 "속도 × 100" 으로 저장됨)의 제수.
+    const allowed = new Set(['10000', 'HATCH_SCALE_KILLS', 'FILM_PUSH_SCALE']);
     for (const d of divisors) expect(allowed.has(d), `허용되지 않은 제수: ${d}`).toBe(true);
   });
 

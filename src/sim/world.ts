@@ -117,6 +117,7 @@ import {
   SIG_BRUISER_ARMOR,
   SIG_ARC_OVERCHARGE,
   SIG_MALLOW_CUSHION,
+  SIG_BUBBLE_FILM,
   ARMOR_PER_STACK_BP,
   ARMOR_DECAY_TICKS,
   clampArmorStacks,
@@ -124,6 +125,12 @@ import {
   CUSHION_RECOVER_TICKS,
   cushionDeferredDamage,
   cushionSettled,
+  FILM_ABSORB_FLAT,
+  FILM_BURST_RADIUS,
+  filmReady,
+  filmAbsorbed,
+  filmRemainingDamage,
+  filmBurstPush,
 } from './shipSignature.js';
 import { shipTypeDef } from '../../data/ships/index.js';
 import { SpatialHash, circlesOverlap } from './collision.js';
@@ -1072,6 +1079,7 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
 //   브루저   aux0 = 장갑 스택(0..8) · aux1 = 마지막 피격 이후 경과 틱
 //   아크캐스터 aux0 = 연속 정지 틱      · aux1 = 미사용(0)
 //   말로우    aux0 = 적립된 지연 피해(비음 정수) · aux1 = 연속 무피격 틱
+//   버블      aux0 = 남은 막 내구(0..FILM_ABSORB_FLAT) · aux1 = 마지막 파열 이후 경과 틱
 //
 // ## 활성 판정을 두 축으로 OR 하는 이유
 // 정본은 `LoadoutConfig.uniqueMask` 의 시그니처 비트(M8-L4 가 loadout.ts 에서 OR-in)다. 다만
@@ -1155,6 +1163,62 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
       const applied = due > room ? room : due;
       if (applied > 0) player.hp -= applied;
     }
+    // ⚠️ 아크캐스터 분기와 같은 이유로 **명시적으로** 반환한다 — 뒤에 버블 분기를 append 한
+    // 지금, return 이 없으면 말로우 런이 버블 분기까지 흘러 aux 의미가 두 겹으로 겹친다.
+    return;
+  }
+  if (signatureOn(state, SIG_BUBBLE_FILM)) {
+    // 버블 시그니처 — 방막(설계서 §3). aux0 = 남은 막 내구 · aux1 = 마지막 파열 이후 경과 틱.
+    //
+    // ## 왜 이 순서·이 게이트인가
+    // 재생 타이머(aux1)는 **막이 없을 때만**(aux0 === 0) 돈다. 그래야 "막이 터진 뒤
+    // FILM_PERIOD_TICKS 지나면 다시 선다" 가 되고, 막이 서 있는 동안 타이머가 굴러
+    // 재생성 시점이 앞당겨지는 일이 없다. 런 시작은 aux0 = aux1 = 0 이므로 첫 막도 같은
+    // 규칙으로 FILM_PERIOD_TICKS 뒤에 선다(시작 즉시 무료 흡수막을 주지 않는다).
+    //
+    // 카운터 상한은 별도로 두지 않는다 — aux1 은 임계(FILM_PERIOD_TICKS)에서 반드시 0 으로
+    // 리셋되므로 구조적으로 유계이고, aux0 은 FILM_ABSORB_FLAT 을 넘지 않는다. 둘 다 비음
+    // 정수라 u32 폴드(replay.ts hashEntity)에 안전하다.
+    if (player.aux0 === 0) {
+      player.aux1++;
+      if (filmReady(player.aux1)) {
+        player.aux0 = FILM_ABSORB_FLAT;
+        player.aux1 = 0;
+      }
+    }
+    return;
+  }
+}
+
+/**
+ * 버블 방막 파열 — 반경 안의 적을 **좌표로** 직접 밀어낸다(설계서 §3).
+ *
+ * ⚠️ `e.vx`/`e.vy` 에 실으면 안 된다. 적 속도는 이동 컴포넌트가 매 틱 대입으로 덮어쓰므로
+ * (patterns/index.ts 의 moveStandoff·moveSeekWounded·stationary) 밀어내기가 다음 틱에 흔적
+ * 없이 사라지고, **화면상 아무 일도 안 일어나는데 그 1틱의 해시만 갈린다.** 좌표를 직접
+ * 옮기는 선례가 바로 위 `applySingularityPull` 이며 산술 형태를 그대로 복제했다 —
+ * `length` 1회 · 나눗셈 1회 · 곱셈 1회, `Math.pow`/`Math.hypot`/각도 경유 없음.
+ * (ADR-0005 의 정수 bp 규율은 배율·피해 산술에 대한 것이고 위치는 f64 로 해시된다.)
+ *
+ * 대상은 `enemy` 로만 좁힌다 — 침공 방어체(prop·facility*)는 배치 좌표가 소켓 계약이라
+ * 밀면 안 되고, 벽은 activeWalls·wallIndex 재빌드와 얽힌다.
+ */
+function burstFilm(state: WorldState, player: Entity): void {
+  const push = filmBurstPush();
+  const r2 = FILM_BURST_RADIUS * FILM_BURST_RADIUS;
+  for (const e of state.entities) {
+    if (e.dead || e.kind !== 'enemy') continue;
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    const d2 = dx * dx + dy * dy;
+    // 반경 판정은 제곱 비교로(선례: nearestTarget·applySingularityPull) — sqrt 를 아끼는 것이
+    // 아니라 반경 밖 적에 대해 산술 자체를 실행하지 않기 위해서다.
+    if (d2 > r2) continue;
+    const d = length(dx, dy);
+    // 플레이어와 정확히 겹친 적은 밀 방향이 정의되지 않는다 — 임의 방향을 만들지 않고 둔다.
+    if (d <= 1) continue;
+    e.x += (dx / d) * push;
+    e.y += (dy / d) * push;
   }
 }
 
@@ -2310,6 +2374,38 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     if (armorOn) {
       const bp = clampArmorStacks(player.aux0) * ARMOR_PER_STACK_BP;
       if (bp > 0) dmg -= Math.round((dmg * bp) / 10000);
+    }
+    // 버블 시그니처 — 방막 흡수(설계서 §3·§4). 막은 선체 **바깥** 층이므로 브루저 장갑 감소
+    // **뒤** · 완충 지연 전환과 생존 캡스톤 판정 **앞**이다.
+    //  · 완충보다 먼저인 이유: 지연 전환이 먼저면 애초에 막이 다 막아 낼 피해가 지연분으로
+    //    적립돼 **막을 통과하지 않은 피해가 나중에 선체로 들어온다.** 두 시그니처는 한 런에
+    //    공존할 수 없지만(§ 슬롯 배정), 순서를 코드로 못 박아 훗날 합성될 때 논쟁이 없게 한다.
+    //  · 캡스톤보다 먼저인 이유: 장갑·완충과 같은 논증 — 캡스톤은 `hp - dmg <= 0` 으로 치사를
+    //    보므로, 막이 살려 낸 피격까지 "치명타 1회 무효" 를 소진시키면 안 된다.
+    // ⚠️ `Math.round(dmg)` 는 반드시 이 게이트 **안**이다(브루저·말로우 주석과 같은 함정):
+    //    밖으로 빼면 시그니처 없는 런의 소수 접촉 피해(엘리트 배율)까지 바뀐다. 게이트 안에서
+    //    먼저 정수화하는 이유는 aux0(막 내구)이 u32 로 해시되기 때문이다 — 소수를 깎으면
+    //    소수부가 조용히 잘려 클라와 서버 재실행이 갈린다.
+    // 무적(iframes) 중에는 위 수집 루프가 피해를 아예 누적하지 않으므로(2280행 조기 반환)
+    // 막 내구도 소모되지 않는다 — 무적은 이미 완전 방어라 막을 함께 태우면 이중 손실이다.
+    if (signatureOn(state, SIG_BUBBLE_FILM) && player.aux0 > 0) {
+      dmg = Math.round(dmg);
+      const absorbed = filmAbsorbed(dmg, player.aux0);
+      // 남는 피해는 순수 함수로 받는다(= dmg - absorbed). 두 값의 합이 원래 피해와 같다는
+      // 계약(shipSignature.ts ⑥절)을 world 배선이 재구현하지 않고 그대로 상속한다.
+      const rest = filmRemainingDamage(dmg, player.aux0);
+      player.aux0 -= absorbed;
+      dmg = rest;
+      // 막이 이번 피격으로 **소진된 순간**이 파열이다. "피격 시 항상 터진다" 를 택하지 않은
+      // 이유: 그러면 내구(FILM_ABSORB_FLAT)가 사실상 무의미해지고 막이 한 대만 막는 유틸이
+      // 된다. 소진 조건이라야 "흡수량을 다 쓰면 터진다" 는 축이 성립한다. 재생 타이머(aux1)는
+      // 이 틱부터 0 에서 다시 돈다(stepShipSignature 의 aux0 === 0 게이트).
+      if (player.aux0 === 0) burstFilm(state, player);
+      // ⚠️ 막이 전량 흡수했으면 **여기서 함수를 빠져나간다.** 그대로 흘리면 dmg 0 인 피격에
+      //    `player.iframes = hitIframes` 가 공짜로 서고 반응 장갑 펄스·위상 전환막이 발동한다
+      //    (플레이어가 강해지는 방향이라 결함으로 신고되지 않는 조용한 오류). 이 시점 이후
+      //    resolveCollisions 는 아무 일도 하지 않으므로 return 이 안전하다.
+      if (dmg <= 0) return;
     }
     // 말로우 시그니처 — 완충 지연 전환(설계서 §3·§4). 이번 피격 피해의 CUSHION_DEFER_BP 만큼을
     // 지금 넣지 않고 떼어 둔다. **적립(aux0 += deferred)은 여기서 하지 않고 아래 hp 차감 분기
