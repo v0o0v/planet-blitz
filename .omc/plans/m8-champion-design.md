@@ -62,25 +62,35 @@ export interface ShipTypeDef {
 추가하면 `zeroStatSums`(`src/items/skills.ts:32-52`)·`zeroSums`(`loadout.ts:138-157`)·`LoadoutConfig`·`replay.ts:336-355` 폴드 레이아웃이 함께 움직인다 = 해시 레이아웃 변경. 게다가 아이콘이 (stat, tierBand) 축이라(`uiTextures.ts:184`) 스탯 1종당 3장이 는다.
 **기존 16종 StatKey 안에서만 트리를 짠다.** 차별화는 트리 이름·분포·시그니처·bp 보정이 담당.
 
-## 3. 로스터 5종
+## 3. 로스터 7종 (구현 반영, 2026-07-21)
 
 정본 컨셉표: `.omc/plans/invasion-3layer-redesign.md:109-118`
 
-| id | slug | 역할 | 트리 3계열 (slug/affinity) | 시그니처 패시브 | baseBp 방향 |
-|---|---|---|---|---|---|
-| 0 | `striker` | 만능 기준점 | firepower/off · survival/def · mobility/util (**현행 그대로**) | **없음**(§5 참조) | 전부 0 |
-| 1 | `bruiser` | 맞으며 전진 | blade/off · morph/util · fortify/def | 피격 시 장갑 스택(상한 8, 스택당 피해감소 250bp, 비피격 180틱 후 1스택 소멸) | dmg +800, fireRate −600, maxHp +2500, move −500 |
-| 2 | `arccaster` | 정지 포격 | chain/off · barrage/util · barrier/def | 정지 90틱 이상 시 과충전(피해 +bp, 이동 즉시 해제) | dmg +1200, fireRate −1000, maxHp −1000, move −1200 |
-| 3 | `phantom` | 은신 암살 | assassin/off · phase/util · disrupt/def | 무피격 240틱 시 은신(적 조준 제외) + 해제 첫 타 배율 | dmg +1500, fireRate 0, maxHp −2000, move +800 |
-| 4 | `bion` | 군체 소환 | swarm/off · mutate/util · blight/def | 처치 시 포자 적립, 임계에서 자동 소환 | dmg −500, fireRate +500, maxHp +1000, move 0 |
+> **이 표는 2026-07-21 커밋 `dd93cce`(로스터 5종 → 7종) 이후의 실코드 실측값이다.**
+> 최초 초안은 5종(0~4)·`bion` 이었다. 사용자 지시로 ①`bion` → **`hatchling`** 개명(곤충 컨셉 반려, 귀여운 마스코트로 전환 — `id`·`signatureBit` 은 wire 계약이라 불변) ②`mallow`·`bubble` 2종 **append** 가 이루어졌다.
+> 근거: `data/ships/index.ts:55-63`(`SHIP_TYPES`) · 각 `data/ships/<slug>.ts` 의 `signatureBit`/`baseBp` · `src/sim/shipSignature.ts:34-44`.
 
-수치는 제안값(밸런스 패스 대상). **확정된 것은 축과 부호뿐.**
+| id | slug | 역할 | 트리 3계열 (slug/affinity) | 시그니처 패시브 | 비트 | baseBp (dmg/fireRate/maxHp/move) |
+|---|---|---|---|---|---|---|
+| 0 | `striker` | 만능 기준점 | firepower/off · survival/def · mobility/util (**현행 그대로**) | **없음**(§11 참조) | −1 | 0 / 0 / 0 / 0 |
+| 1 | `bruiser` | 맞으며 전진 | blade/off · morph/util · fortify/def | 피격 시 장갑 스택, 스택당 피해 감소 | 18 | +800 / −600 / +2500 / −500 |
+| 2 | `arccaster` | 정지 포격 | chain/off · barrage/util · barrier/def | 일정 시간 정지 시 과충전, 이동 즉시 해제 | 19 | +1200 / −1000 / −1000 / −1200 |
+| 3 | `phantom` | 은신 암살 | assassin/off · phase/util · disrupt/def | 무피격 지속 시 은신(적 조준 제외) + 해제 첫 타 배율 | 20 | +1500 / 0 / −2000 / +800 |
+| 4 | `hatchling` | 동료 소환 | brood/off · nurture/util · shelter/def | 처치 적립, 임계 도달 시 병아리 드론 자동 출격 | 21 | −500 / +500 / +1000 / 0 |
+| 5 | `mallow` | 완충 재생 | squish/off · mend/util · cushion/def | 피격 피해 일부를 **지연 피해**로 전환, 무피격 지속 시 회복 | 22 | −800 / −200 / +1800 / +600 |
+| 6 | `bubble` | 거품 방막 | pop/off · drift/util · film/def | 주기적 피해 흡수막, 터질 때 주변을 밀어냄 | 23 | +300 / +700 / −1400 / +200 |
+
+수치는 제안값(밸런스 패스 대상 — 5·6 은 특히 **미검증**). **확정된 것은 축과 부호뿐.**
+
+### sim 배선 현황 — **브루저·아크캐스터 2종만 실동작**
+`src/sim/world.ts` 가 실제로 게이트하는 시그니처는 `SIG_BRUISER_ARMOR`(`:1093`, `:2259`)·`SIG_ARC_OVERCHARGE`(`:1102`, `:1230`) **둘뿐**이다. 팬텀·해츨링·말로우·버블은 비트 상수 + 순수 정수 함수(`src/sim/shipSignature.ts`)까지만 있고 world 분기가 없다 — 아래 "신규 2종 우선 출시" 원칙에 따른 **의도된 미완**이며, 타입 선택·트리·baseBp·해시 폴드는 7종 전부 정상 동작한다.
 
 ### 신규 2종 우선 출시 = **브루저 + 아크 캐스터** (근거는 취향이 아니라 구현 위험)
 - 두 시그니처 모두 **단일 정수 카운터** → `Entity.aux0` 하나로 충분. aux 는 이미 조건부 꼬리(`replay.ts:154-157`)라 스트라이커 해시 불변. 신규 Entity kind 도 신규 폴드도 불요.
 - 아크 캐스터 과충전 빔은 `WEAPON_BEAM`(`loadout.ts:29`) 재사용.
 - **팬텀 보류 이유**: 은신이 적 조준 대상군을 바꿔 `world.ts` 의 `nearestTarget`·적 AI 를 넓게 건드린다 — M8 최대 경합 파일이고 PvE 해시 파급 여지 최대.
-- **비온 보류 이유**: 소환 경로가 침공 레인이 이미 겪은 함정(RNG 미소비 `summonEnemy` vs RNG 소비 `spawnEnemy`, 레인 문서 `:135`)을 그대로 재현. 포자 개체마다 아트도 는다.
+- **해츨링(구 `bion`) 보류 이유**: 소환 경로가 침공 레인이 이미 겪은 함정(RNG 미소비 `summonEnemy` vs RNG 소비 `spawnEnemy`, 레인 문서 `:135`)을 그대로 재현. 소환 개체마다 아트도 는다.
+- **말로우·버블 보류 이유**(2026-07-21 append 분): 둘 다 **시간축 상태**(지연 피해 큐 · 주기 재생성 방막)를 요구해 단일 `aux0` 카운터로 안 끝난다. 브루저·아크캐스터가 실전 검증될 때까지 순수 함수 단계에서 멈춘다.
 - 부수 효과: 브루저(근접·저기동·고HP)와 아크캐스터(정지·원거리·저HP)는 플레이 축 양 극단 → 최소 코드로 "타입이 정말 다르다" 체감 최대.
 
 ## 4. 시그니처 패시브 — 신규 필드·신규 폴드 0
@@ -88,9 +98,20 @@ export interface ShipTypeDef {
 ### 게이트 = `uniqueMask` 미사용 비트
 `src/sim/capstones.ts:8-12` 가 이 기법을 명문화. 신규 `LoadoutConfig` 필드나 신규 `hashWorld` 폴드 없이 미사용 상위 비트를 쓰면 그 기능을 안 쓰는 런의 해시가 **바이트 불변**.
 
-**비트 가용 현황(실측):** 0~14 유니크 15종(`src/sim/uniques.ts:21-50`) · 15~17 캡스톤 3종(`capstones.ts:20-24`) · **18~30 미사용 13비트**(grep 0건) · 31 은 쓰지 않음(`1<<31` 이 음수라 마스크 연산 취약).
+**비트 가용 현황(구현 후 실측, `src/sim/shipSignature.ts:11-17`):** 0~14 유니크 15종(`src/sim/uniques.ts`) · 15~17 캡스톤 3종(`capstones.ts`) · **18~23 시그니처 6종** · **24~30 미사용 7비트** · 31 은 영구 사용 금지(`1<<31` 이 음수라 마스크 연산 취약, `SIGNATURE_BIT_MAX=30`).
 
-배정: `SIG_BRUISER_ARMOR=18` · `SIG_ARC_OVERCHARGE=19` · `SIG_PHANTOM_CLOAK=20` · `SIG_BION_SPORE=21`. 상수 정본 소유자는 **`src/sim/shipSignature.ts`**(캡스톤 비트가 sim 에 살고 `loadout.ts:20` 이 import 하는 현행과 동형).
+배정 — **7종 확정판**(`shipSignature.ts:34-44`). 최초 초안은 18~21 네 개였고, `bion`→`hatchling` 개명 시 **비트 값 21 은 wire 계약이라 그대로 두고 상수명만** `SIG_BION_SPORE` → `SIG_HATCHLING_BROOD` 로 바꿨다. 22·23 은 append 분이다.
+
+| 상수 | 비트 | 타입 |
+|---|---|---|
+| `SIG_BRUISER_ARMOR` | 18 | 1 `bruiser` |
+| `SIG_ARC_OVERCHARGE` | 19 | 2 `arccaster` |
+| `SIG_PHANTOM_CLOAK` | 20 | 3 `phantom` |
+| `SIG_HATCHLING_BROOD` | 21 | 4 `hatchling` (구 `SIG_BION_SPORE`) |
+| `SIG_MALLOW_CUSHION` | 22 | 5 `mallow` |
+| `SIG_BUBBLE_FILM` | 23 | 6 `bubble` |
+
+상수 정본 소유자는 **`src/sim/shipSignature.ts`**(캡스톤 비트가 sim 에 살고 `loadout.ts` 가 import 하는 현행과 동형). 테스트·게이트는 하드코딩 목록 대신 `SIGNATURE_BITS`(`shipSignature.ts:50-57`) 배열을 순회한다 — 비트가 늘면 게이트가 자동으로 따라온다.
 
 OR-in 은 `computeLoadoutStats` 안, 캡스톤 블록(`loadout.ts:217-221`) **바로 뒤**에 같은 문법으로:
 ```ts
@@ -118,13 +139,14 @@ export function armorReducedDamage(damage: number, stacks: number): number {
 | **shipType 자체** | `hashWorld` 최후미 조건부 꼬리 | 1개(조건부) |
 
 ```ts
-// hashWorld 최후미 — invasion3 if-블록이 완전히 닫힌 뒤(:431 이후), return 직전
+// hashWorld 최후미 — invasion3 if-블록이 완전히 닫힌 뒤, return 직전
 const st = state.config.shipType ?? 0;
 if (st !== 0) {
   h = hashU32(h, SHIP_HASH_VERSION >>> 0);
   h = hashU32(h, st >>> 0);
 }
 ```
+**구현 착지 위치(실측):** `src/sim/replay.ts:444-454`(`SHIP_HASH_VERSION = 1` 은 `:50`). 설계대로 invasion3 블록 **바깥**이며 `shipType !== 0` 조건부다.
 스트라이커는 **한 폴드도 실행하지 않는다**. `replay.ts:392-394` 주석이 "신규 3레이어 필드는 이 블록 최후미에만 append" 라고 했으므로 M8 의 append 는 **invasion3 블록 바깥, 그 뒤**임을 레인 프롬프트에 못박을 것.
 
 이 폴드는 엄밀히 잉여다(시그니처 비트로 타입이 유일 결정됨). 그럼에도 넣는 이유: EF 가 타입을 **추론이 아니라 명시**로 읽고, 훗날 시그니처 없는 타입이 추가돼도 추론이 조용히 깨지지 않는다. 스트라이커 비용이 0이라 보험료가 공짜.
@@ -304,9 +326,10 @@ L3 가 대안(활성 기체만 승계, 나머지 0)을 제시하며 판단을 �
 - **격납고 쇼케이스**: `ship_showcase_<slug>.png` (128×128). 스트라이커는 기존 `ship_showcase_fighter.png` 유지.
 - 둘 다 **미존재 시 조용히 폴백**해야 하고 예외를 던지면 안 된다(아트가 코드보다 늦게 도착한다).
 
-### 아트 채택 현황 (2026-07-21, 사용자 검수 완료분)
-- 브루저 · 아크캐스터 · 팬텀 = 1차 배치에서 채택 확정
-- **4번 기체는 반려됐다** — "벌레 말고 다른 컨셉. 너무 징그럽다. 귀여운 걸로." 곤충·생체 방향 폐기, **귀여운 마스코트**로 재생성 중. 메커니즘(처치 시 적립 → 동료 자동 소환)은 불변이고 fiction·naming·아트만 바뀐다. slug `bion` 과 트리 slug `swarm`/`mutate`/`blight` 도 함께 개명 대상(W2 게이트 후).
+### 아트 채택 현황 — **완료 (2026-07-21 마감 실측)**
+- 위 "필요 목록 24장" 은 4종 기준의 **초안**이다. 실제 배치분은 **12장**: 인게임 `ship_<slug>.png` 6장(`bruiser`·`arccaster`·`phantom`·`hatchling`·`mallow`·`bubble`) + 쇼케이스 `ship_showcase_<slug>.png` 6장. 스트라이커는 기존 `player.png` / `ship_showcase_fighter.png` 를 그대로 쓴다(커밋 `dd93cce`·`7ae64b6`).
+- **계열 캡스톤 아이콘 신규 0장** — 초안은 4타입 × 3계열 = 12장을 예상했으나, `buildShipTree`(`data/ships/authoring.ts:59,67`)가 `SkillNode.tree` 에 **affinity 의 레거시 트리명**(`firepower`/`survival`/`mobility`)을 넣으므로 `skillIconName`(`uiTextures.ts:224`)이 항상 기존 3장으로 해석된다. 로스터 행 엠블럼도 쇼케이스 재사용으로 대체됐다.
+- **4번 기체 반려 → 해소.** 1차 배치의 곤충·생체 컨셉이 "벌레 말고 다른 컨셉. 너무 징그럽다. 귀여운 걸로" 로 반려돼 `bion` → `hatchling`(귀여운 마스코트)으로 개명·재생성됐고, 같은 지시로 `mallow`·`bubble` 이 추가됐다. 메커니즘(처치 적립 → 동료 자동 출격)은 불변이며 트리 slug 도 `brood`/`nurture`/`shelter` 로 함께 교체됐다.
 
 ### 파이프라인 지시
 - 팔레트·화풍은 문서 스펙이 아니라 **기존 파일을 레퍼런스로 전달**: `assets/player.png` + `ship_showcase_fighter.png` + `skill_capstone_*.png`. (정확한 팔레트 값은 **미확인** — 색 샘플링 미수행. 손으로 적은 스펙보다 실파일 레퍼런스가 안전)
