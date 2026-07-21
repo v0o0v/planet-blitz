@@ -130,7 +130,7 @@ function runObserved(seed: number, cfg: WorldConfig, ticks: number): Observed {
     stepWorld(state, NEUTRAL);
     const p = state.entities[0]!;
     for (const e of state.entities) if (e.kind === 'enemyBullet' && !e.dead) enemyBulletTicks++;
-    if (playerCloaked(state)) cloakedTicks++;
+    if (playerCloaked(state, p)) cloakedTicks++;
     // 진입 판정은 대기 플래그로 한다 — 같은 틱 안에서 진입 후 곧바로 첫 타가 나가면 틱 종료
     // 시점의 aux0 은 이미 0 으로 되돌아 있어 카운터만으로는 놓친다.
     if (prevAux1 === 0 && p.aux1 === 1) {
