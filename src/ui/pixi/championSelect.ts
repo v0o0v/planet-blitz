@@ -69,7 +69,20 @@ const ROSTER_BOX = panelContent(ROSTER_W, ROSTER_H);
 /** 로스터 행 한 칸(아이콘 + 이름 + 역할 한 줄). */
 export const ROSTER_ROW_H = 96;
 export const ROSTER_ROW_GAP = 10;
-const ROSTER_LIST_TOP = 96;
+/** 로스터 제목 폰트 크기 · 그 아래 안내(sub) 의 상대 y·폰트 크기. 목록 시작 y 를 여기서 역산한다. */
+const ROSTER_TITLE_SIZE = 26;
+const ROSTER_SUB_DY = 38;
+const ROSTER_SUB_SIZE = 14;
+/**
+ * 목록 시작 y (패널 로컬).
+ *
+ * ⚠️ 상수로 96 을 박아 두었더니 ADR-0019 안내(sub, `ROSTER_BOX.y + 38` = 98 부터)가 **첫 행 아래로
+ * 깔려 완전히 가려졌다**(결함 C-3). 안내 바닥 = `ROSTER_BOX.y + ROSTER_SUB_DY + 줄높이` 이므로
+ * 목록 상단을 그 아래로 역산한다 — 폰트를 바꿔도 겹침이 재발하지 않는다(`panelContent` 상자 규율).
+ */
+const ROSTER_SUB_MAX_LINES = 2;
+const ROSTER_LIST_TOP =
+  ROSTER_BOX.y + ROSTER_SUB_DY + Math.ceil(ROSTER_SUB_SIZE * 1.4) * ROSTER_SUB_MAX_LINES + 12;
 const ROSTER_ICON = 64;
 
 const DETAIL_X = 632;
@@ -135,7 +148,10 @@ export function applyChampionChoice(
   store: KeyValueStore | null,
 ): number {
   const result = retireActiveShip(profile, undefined, typeId);
-  saveProfile(profile, store);
+  // ⚠️ `store` 가 null 이면 **기본 인자가 적용되지 않는다** — `saveProfile` 은 명시적 null 을
+  // 즉시 return 으로 처리한다. 화면은 store 없이 생성되므로(main.ts → HangarScreen → 여기)
+  // null 을 그대로 넘기면 세대 교체가 저장되지 않는다. `?? undefined` 로 기본 store 를 태운다.
+  saveProfile(profile, store ?? undefined);
   return result.ship.typeId;
 }
 
@@ -157,6 +173,8 @@ export class ChampionSelectScreen {
   private scrollY = 0;
   private confirming = false;
   private hint = '';
+  /** 진입 시점의 런 HUD `visibility` 인라인 값(닫을 때 그대로 되돌린다 — 결함 C-4). */
+  private hudPrevVisibility: string | null = null;
 
   constructor(profile: Profile, stage: Container, store: KeyValueStore | null = null) {
     this.profile = profile;
@@ -193,13 +211,13 @@ export class ChampionSelectScreen {
     this.render();
     this.root.visible = true;
     this.raise();
-    this.hideRunHud(true);
+    this.hideRunHud();
   }
 
   hide(): void {
     this.root.visible = false;
     this.cb = null;
-    this.hideRunHud(false);
+    this.restoreRunHud();
   }
 
   /** 다른 캔버스 화면에 자리를 내주고 잠시 감춘다(상태 보존). */
@@ -217,11 +235,31 @@ export class ChampionSelectScreen {
     this.stage.setChildIndex(this.root, this.stage.children.length - 1);
   }
 
-  /** 런 전용 DOM HUD 는 캔버스 메타 화면 위에 떠 보이므로 감춘다(node 환경 가드 포함). */
-  private hideRunHud(hidden: boolean): void {
-    if (typeof document === 'undefined') return;
-    const hud = document.getElementById('pb-hud');
-    if (hud !== null) hud.style.visibility = hidden ? 'hidden' : '';
+  /** 런 전용 DOM HUD 엘리먼트(node 환경 가드 포함). */
+  private hudEl(): HTMLElement | null {
+    if (typeof document === 'undefined') return null;
+    return document.getElementById('pb-hud');
+  }
+
+  /**
+   * HUD 를 감추되 **진입 시점의 값을 기억**한다.
+   *
+   * ⚠️ 예전 구현은 닫을 때 무조건 `visibility = ''` 로 되살렸다 — 이 화면은 격납고 **위**에서
+   * 열리고 격납고도 자기 show/hide 에서 같은 스타일을 만지므로, 닫고 격납고로 돌아가면 런 HUD 가
+   * 격납고 위로 다시 떠올랐다(결함 C-4). 이전 값 복원이 유일하게 옳은 규약이다.
+   */
+  private hideRunHud(): void {
+    const hud = this.hudEl();
+    if (hud === null) return;
+    this.hudPrevVisibility = hud.style.visibility;
+    hud.style.visibility = 'hidden';
+  }
+
+  private restoreRunHud(): void {
+    const hud = this.hudEl();
+    if (hud === null || this.hudPrevVisibility === null) return;
+    hud.style.visibility = this.hudPrevVisibility;
+    this.hudPrevVisibility = null;
   }
 
   // --- 동작 ----------------------------------------------------------------
@@ -299,7 +337,13 @@ export class ChampionSelectScreen {
     const title = new Text({
       resolution: 2,
       text: tShipKey('champion.roster', 'Roster'),
-      style: { fontFamily: UI_FONT, fontSize: 26, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
+      style: {
+        fontFamily: UI_FONT,
+        fontSize: ROSTER_TITLE_SIZE,
+        fontWeight: '800',
+        fill: COLOR.cream,
+        dropShadow: TEXT_SHADOW,
+      },
     });
     title.position.set(ROSTER_BOX.x, ROSTER_BOX.y);
     panel.addChild(title);
@@ -308,9 +352,16 @@ export class ChampionSelectScreen {
       resolution: 2,
       // ADR-0019: 전체 개방이 **명시적 결정**이다. 이 안내가 그 결정을 화면에서도 못박는다.
       text: tShipKey('champion.rosterSub', 'All ships are available — no unlock requirements.'),
-      style: { fontFamily: UI_FONT, fontSize: 14, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+      style: {
+        fontFamily: UI_FONT,
+        fontSize: ROSTER_SUB_SIZE,
+        fill: COLOR.muted,
+        wordWrap: true,
+        wordWrapWidth: ROSTER_BOX.w,
+        dropShadow: TEXT_SHADOW,
+      },
     });
-    sub.position.set(ROSTER_BOX.x, ROSTER_BOX.y + 38);
+    sub.position.set(ROSTER_BOX.x, ROSTER_BOX.y + ROSTER_SUB_DY);
     panel.addChild(sub);
 
     const roster = selectableShipTypes();

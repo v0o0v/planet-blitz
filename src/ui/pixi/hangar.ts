@@ -12,7 +12,7 @@
  * 이 파일을 모른다.
  */
 
-import { Container, Graphics, Sprite, Text } from 'pixi.js';
+import { Container, Graphics, Rectangle, Sprite, Text } from 'pixi.js';
 import type { Item, EquipSlotId, SlotKind, Rarity } from '../../items/types.js';
 import { EQUIP_SLOTS } from '../../items/types.js';
 import { AFFIX_BY_ID } from '../../../data/affixes.js';
@@ -66,6 +66,33 @@ function weaponLabel(type: number): string {
 
 function slotKindOf(id: EquipSlotId): SlotKind {
   return (id === 'module0' || id === 'module1' ? 'module' : id) as SlotKind;
+}
+
+/**
+ * 휠 스크롤을 **클립 Container** 에 건다 (결함 C-2).
+ *
+ * ⚠️ 마스크로 쓰이는 Graphics 는 Pixi 히트 테스트에서 통째로 제외된다(`isMask`) — 마스크에 건
+ * `wheel` 리스너는 영영 안 불린다. 격납고 3패널(스탯·창고·인벤토리)이 전부 마스크에 걸어 두어
+ * 휠이 죽어 있었다. 클립 Container 에 `hitArea` 를 주면 셀 사이 빈 자리에서도 잡히고, 셀 위에서는
+ * 셀 → 클립으로 버블링돼 함께 성립한다(`scrollArea.ts`·방어 사령부 팝업의 확인된 관용구).
+ *
+ * `set` 은 클램프된 값을 받는다 — 호출자가 그 값으로 상태와 `content.y` 를 함께 갱신한다.
+ */
+export function attachWheelScroll(
+  clip: Container,
+  viewW: number,
+  viewH: number,
+  maxScroll: number,
+  get: () => number,
+  set: (v: number) => void,
+): boolean {
+  if (maxScroll <= 0) return false;
+  clip.eventMode = 'static';
+  clip.hitArea = new Rectangle(0, 0, viewW, viewH);
+  clip.on('wheel', (e) => {
+    set(Math.max(0, Math.min(maxScroll, get() + e.deltaY)));
+  });
+  return true;
 }
 
 /** 스탯 행 정의: 라벨 · 값 · 1줄 설명(결정 7). */
@@ -161,7 +188,11 @@ export class HangarScreen {
   }
 
   private persist(): void {
-    saveProfile(this.profile, this.store);
+    // ⚠️ `this.store` 가 null 이면 **기본 인자가 적용되지 않는다** — `saveProfile` 은 명시적
+    // null 을 "저장하지 마라" 로 읽고 즉시 return 한다. main.ts 는 store 없이 이 화면을 만들기
+    // 때문에(= null), 그대로 넘기면 장비 장착이 통째로 no-op 이 된다. `?? undefined` 로 넘겨야
+    // localStorage 기본 store 가 잡힌다(defenseCommand/modulesView 와 같은 관용구).
+    saveProfile(this.profile, this.store ?? undefined);
   }
 
   // --- 장착 / 해제 (InventoryOverlay 와 동일 규칙) -------------------------
@@ -507,13 +538,17 @@ export class HangarScreen {
     this.statsScrollY = Math.min(this.statsScrollY, maxScroll);
     content.y = -this.statsScrollY;
 
-    if (maxScroll > 0) {
-      mask.eventMode = 'static';
-      mask.on('wheel', (e) => {
-        this.statsScrollY = Math.max(0, Math.min(maxScroll, this.statsScrollY + e.deltaY));
-        content.y = -this.statsScrollY;
-      });
-    }
+    attachWheelScroll(
+      clip,
+      contentW,
+      contentH,
+      maxScroll,
+      () => this.statsScrollY,
+      (v) => {
+        this.statsScrollY = v;
+        content.y = -v;
+      },
+    );
   }
 
   private renderShowcasePanel(): void {
@@ -694,13 +729,17 @@ export class HangarScreen {
     const maxScroll = Math.max(0, total - contentH);
     this.stashScrollY = Math.min(this.stashScrollY, maxScroll);
     content.y = -this.stashScrollY;
-    if (maxScroll > 0) {
-      mask.eventMode = 'static';
-      mask.on('wheel', (e) => {
-        this.stashScrollY = Math.max(0, Math.min(maxScroll, this.stashScrollY + e.deltaY));
-        content.y = -this.stashScrollY;
-      });
-    }
+    attachWheelScroll(
+      clip,
+      contentW,
+      contentH,
+      maxScroll,
+      () => this.stashScrollY,
+      (v) => {
+        this.stashScrollY = v;
+        content.y = -v;
+      },
+    );
   }
 
   private renderInventoryPanel(): void {
@@ -793,13 +832,17 @@ export class HangarScreen {
     const maxScroll = Math.max(0, total - contentH);
     this.inventoryScrollY = Math.min(this.inventoryScrollY, maxScroll);
     content.y = -this.inventoryScrollY;
-    if (maxScroll > 0) {
-      mask.eventMode = 'static';
-      mask.on('wheel', (e) => {
-        this.inventoryScrollY = Math.max(0, Math.min(maxScroll, this.inventoryScrollY + e.deltaY));
-        content.y = -this.inventoryScrollY;
-      });
-    }
+    attachWheelScroll(
+      clip,
+      contentW,
+      contentH,
+      maxScroll,
+      () => this.inventoryScrollY,
+      (v) => {
+        this.inventoryScrollY = v;
+        content.y = -v;
+      },
+    );
   }
 
   private renderHint(): void {

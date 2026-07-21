@@ -35,6 +35,10 @@ export const TAB_GAP = 8;
 export const TAB_SINK = 10;
 /** 바 바닥 금색 연결선 두께. */
 export const TAB_CONNECTOR_H = 3;
+/** 비선택 탭의 기본 alpha(가라앉힘 대비). */
+export const TAB_IDLE_ALPHA = 0.82;
+/** 비선택 탭에 마우스를 올렸을 때의 alpha(기본보다 더 흐리게 — hover 피드백은 유지). */
+export const TAB_IDLE_HOVER_ALPHA = 0.7;
 
 /** 탭 1칸의 배치(순수 계산 결과). */
 export interface TabRect {
@@ -141,7 +145,20 @@ export function makeTabBar(opts: TabBarOptions): Container {
       onClick: () => opts.onSelect(i),
     });
     btn.container.position.set(r.x, r.y);
-    if (!r.active) btn.container.alpha = 0.82;
+    if (!r.active) {
+      // ② 비선택 탭은 가라앉힌다. ⚠️ alpha 를 **생성 시 1회만** 주면 안 된다 —
+      // `button.ts` 의 pointerout 핸들러가 원래 alpha 를 보존하지 않고 1.0 으로 되돌리므로,
+      // 한 번 hover 하는 순간 선택/비선택 대비가 영구히 사라진다(결함 C-5). 같은 이벤트에
+      // 우리 리스너를 **뒤에** 덧붙여 가라앉힌 alpha 를 다시 씌운다(나중 리스너가 이긴다).
+      btn.container.alpha = TAB_IDLE_ALPHA;
+      btn.container.on('pointerover', () => {
+        btn.container.alpha = TAB_IDLE_HOVER_ALPHA;
+      });
+      btn.container.on('pointerout', () => {
+        btn.container.alpha = TAB_IDLE_ALPHA;
+      });
+    }
+    // 잠금은 마지막에 — alpha 0.4 + eventMode 'none' 로 위 hover 규칙을 통째로 덮는다.
     if (locked) btn.setEnabled(false);
     root.addChild(btn.container);
   });

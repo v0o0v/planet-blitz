@@ -47,6 +47,7 @@ import {
   applyShipSprite,
   resolveShipTextures,
 } from '../src/render/textures.js';
+import { panelMessageKey } from '../src/ui/pixi/modulesView.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { buildRunConfig } from '../src/run/runConfig.js';
@@ -211,6 +212,97 @@ describe('카탈로그 완전성', () => {
         expect(v, `${label} emoji in ${key}`).not.toMatch(/\p{Extended_Pictographic}/u);
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 확인 팝업·조회 실패 전용 문구 (플레이테스트 F-1/F-2)
+// ---------------------------------------------------------------------------
+//
+// 실측 결함: 두 화면 모두 **전용 키가 없어 다른 상황의 문구를 빌려 썼다**. [시험 침공] 확인
+// 팝업은 버튼 라벨을 이어 붙여 "저장하지 않은 변경 · 시험 침공"이라는 문장 아닌 문장을 띄웠고,
+// 코어 모듈 조회 실패는 서버 연결 안내를 대신 띄워 "연결 없음"과 "조회 실패"를 뭉갰다.
+// 키 존재만 보면 다시 빌려 쓰는 회귀를 놓치므로 **화면 배선까지 함께** 대조한다.
+
+describe('전용 문구 — 시험 침공 확인 팝업 / 코어 모듈 조회 실패', () => {
+  const readSource = (rel: string): string =>
+    new TextDecoder().decode(readFileSync(fileURLToPath(new URL(rel, import.meta.url))));
+  const table = (o: unknown): Record<string, string> => o as Record<string, string>;
+
+  const CONFIRM_KEYS = [
+    'def3.cmd.test.confirm.title',
+    'def3.cmd.test.confirm.body',
+    'def3.cmd.test.confirm.saveAndGo',
+    'def3.cmd.test.confirm.discardAndGo',
+    'def3.cmd.test.confirm.cancel',
+  ] as const;
+  const LOAD_KEYS = ['mod.load.failed', 'mod.load.retry'] as const;
+
+  it('신규 키가 EN·KO 양쪽에 있고 비어 있지 않다', () => {
+    for (const key of [...CONFIRM_KEYS, ...LOAD_KEYS]) {
+      for (const [label, t] of [
+        ['EN', table(EN)],
+        ['KO', table(KO)],
+      ] as const) {
+        expect(t[key], `${label} missing ${key}`).toBeTypeOf('string');
+        expect((t[key] ?? '').length, `${label} empty ${key}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('신규 문구에 컬러 이모지가 없다(Pixi 두부 방지 — ▶ ◀ 만 예외)', () => {
+    for (const key of [...CONFIRM_KEYS, ...LOAD_KEYS]) {
+      for (const [label, t] of [
+        ['EN', table(EN)],
+        ['KO', table(KO)],
+      ] as const) {
+        expect(t[key], `${label} emoji in ${key}`).not.toMatch(/\p{Extended_Pictographic}/u);
+      }
+    }
+  });
+
+  it('확인 팝업 세 갈래가 서로 다른 문구다(버튼 라벨 재활용 금지)', () => {
+    for (const [label, t] of [
+      ['EN', table(EN)],
+      ['KO', table(KO)],
+    ] as const) {
+      const choices = [
+        t['def3.cmd.test.confirm.saveAndGo'],
+        t['def3.cmd.test.confirm.discardAndGo'],
+        t['def3.cmd.test.confirm.cancel'],
+      ];
+      expect(new Set(choices).size, `${label} duplicate choice labels`).toBe(3);
+      // 빌려 쓰던 원 문구와도 달라야 한다(되돌아가면 이 단정이 깨진다).
+      for (const borrowed of ['def3.cmd.dirty', 'def3.cmd.test', 'def3.cmd.save', 'def3.cmd.back']) {
+        expect(t['def3.cmd.test.confirm.body'], `${label} body == ${borrowed}`).not.toBe(t[borrowed]);
+        expect(t['def3.cmd.test.confirm.title'], `${label} title == ${borrowed}`).not.toBe(t[borrowed]);
+      }
+    }
+  });
+
+  it('조회 실패 문구가 오프라인 안내와 다르다(mod.slot.offline 재활용 금지)', () => {
+    for (const [label, t] of [
+      ['EN', table(EN)],
+      ['KO', table(KO)],
+    ] as const) {
+      expect(t['mod.load.failed'], `${label} failed == offline`).not.toBe(t['mod.slot.offline']);
+      expect(t['mod.load.failed'], `${label} failed == inv.empty`).not.toBe(t['mod.inv.empty']);
+    }
+  });
+
+  it('방어 사령부 확인 팝업이 전용 키를 실제로 쓴다(배선 대조)', () => {
+    const src = readSource('../src/ui/pixi/defenseCommand.ts');
+    for (const key of CONFIRM_KEYS) expect(src, `unused ${key}`).toContain(key);
+  });
+
+  it('코어 모듈 화면의 실패 안내가 mod.load.* 로 갈아 끼워졌다(배선 대조)', () => {
+    // 판정 함수가 돌려주는 키 자체를 못 박는다 — 문구만 추가하고 매핑을 안 바꾸면 여기서 걸린다.
+    expect(panelMessageKey('failed')).toBe('mod.load.failed');
+    const src = readSource('../src/ui/pixi/modulesView.ts');
+    expect(src).toContain('mod.load.failed');
+    expect(src).toContain('mod.load.retry');
+    // 실패 분기가 다시 서버 연결 안내로 폴백하면 두 상태가 도로 뭉개진다.
+    expect(src).not.toMatch(/panelMessageKey\([^)]*\)\s*\?\?\s*'mod\.slot\.offline'/);
   });
 });
 

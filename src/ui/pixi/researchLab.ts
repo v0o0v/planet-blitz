@@ -381,7 +381,9 @@ export class ResearchLabScreen {
   }
 
   private persist(): void {
-    saveProfile(this.profile, this.store);
+    // ⚠️ 명시적 null 은 `saveProfile` 의 기본 인자를 밀어내고 즉시 return 된다 — main.ts 가
+    // store 없이 이 화면을 만들기 때문에 그대로 넘기면 스킬 투자가 저장되지 않는다.
+    saveProfile(this.profile, this.store ?? undefined);
   }
 
   // --- 투자 / 리스펙 (DOM 판과 동일 규칙) ----------------------------------
