@@ -41,6 +41,11 @@ import { INVASION_FACILITIES } from '../data/invasion/facilities.js';
 import { L3_PROPS } from '../data/invasion/props.js';
 import { DEFENSE_BOSSES } from '../data/invasion/defenseBosses.js';
 import { SEED_BASES, SEED_BASE_COUNT, seedBaseUuid } from '../data/seedBases.js';
+import { SHIP_TYPES, zeroSkillInvest } from '../data/ships/index.js';
+import { buildRunConfig } from '../src/run/runConfig.js';
+import { defaultProfile, activeShip } from '../src/save/profile.js';
+import { WEAPON_VULCAN } from '../src/items/loadout.js';
+import type { AffixRoll, Item } from '../src/items/types.js';
 
 // ---------------------------------------------------------------------------
 // 시드 램프 미러 — 정본은 마이그레이션 SQL 이다
@@ -186,10 +191,77 @@ interface RunOutcome {
   readonly reachedL3: boolean;
 }
 
-function playRun(seed: number, layers: InvasionLayers): RunOutcome {
-  const config = { ...DEFAULT_CONFIG } as WorldConfig;
-  config.invasion3 = { layers, timeLimitTicks: INVASION_TOTAL_TICKS, maintenance: 10000 };
-  config.loadout = GEAR_REFERENCE;
+/**
+ * {@link GEAR_REFERENCE} 와 **같은 결과를 내는 어픽스 표현**. 정규 경로
+ * (`buildRunConfig` → `computeLoadoutStats`)는 리터럴 로드아웃을 받지 않고 장착 아이템에서
+ * 출발하므로, 로스터 게이트는 리터럴 대신 이 표를 아이템에 실어 보낸다.
+ *
+ * 대응은 `src/items/loadout.ts` 의 `applyStatSums` 규칙 그대로다(발칸은 무기 baseline 이
+ * 무연산이라 중립 로드아웃이 출발점이다):
+ *   damagePct 90 → damageMult 1.9 · fireRatePct 18 → fireRateMult 0.82(=1−0.18)
+ *   bulletCount 1 · pierce 1 · moveSpeedPct 10 → 1.1 · maxHpFlat 60 · dashCdPct 15 → 0.85
+ * 나머지 축(탄속·확산·자석·경험치·원소)은 `GEAR_REFERENCE` 가 중립이라 어픽스도 없다.
+ */
+const GEAR_REFERENCE_AFFIXES: readonly AffixRoll[] = [
+  { id: 'gate-damage', stat: 'damagePct', value: 90 },
+  { id: 'gate-firerate', stat: 'fireRatePct', value: 18 },
+  { id: 'gate-bulletcount', stat: 'bulletCount', value: 1 },
+  { id: 'gate-pierce', stat: 'pierce', value: 1 },
+  { id: 'gate-movespeed', stat: 'moveSpeedPct', value: 10 },
+  { id: 'gate-maxhp', stat: 'maxHpFlat', value: 60 },
+  { id: 'gate-dashcd', stat: 'dashCdPct', value: 15 },
+];
+
+/** 참조 장비를 한 자루의 발칸 주무기로 묶는다(슬롯 순서 계약상 `main` 이어야 무기 타입이 선택된다). */
+function gateGearItem(rangeAdd: number): Item {
+  return {
+    id: 'roster-gate-reference',
+    slot: 'main',
+    rarity: 'rare',
+    affixes: [...GEAR_REFERENCE_AFFIXES, { id: 'gate-range', stat: 'rangeFlat', value: rangeAdd }],
+    weaponType: WEAPON_VULCAN,
+    source: { planet: 0, tier: 0 },
+  };
+}
+
+/**
+ * 로스터 게이트용 `WorldConfig` — **정규 경로 전량**을 탄다.
+ * `Profile`(활성 기체 typeId · 타입별 skillInvest · 장착 아이템) → `buildRunConfig`
+ * → `computeLoadoutStats(..., typeId)` → `applyShipTypeBase`(섀시 baseBp) → `createWorld`.
+ * 리터럴 로드아웃을 꽂으면 이 사슬이 통째로 우회돼 baseBp 회귀가 보이지 않는다.
+ */
+function rosterGateConfig(
+  layers: InvasionLayers,
+  over: { readonly shipType: number; readonly rangeAdd: number },
+): WorldConfig {
+  const profile = defaultProfile();
+  const ship = activeShip(profile);
+  ship.typeId = over.shipType;
+  // 벡터 길이는 타입별 계약이다(스트라이커 63 · 나머지 상이). **무투자**로 둔다 — 투자를
+  // 실으면 6기체가 전부 83~100% 로 포화돼 회귀 신호가 죽는다(아래 게이트 주석 §커버 범위 ③).
+  ship.skillInvest = zeroSkillInvest(over.shipType);
+  ship.equipped.main = gateGearItem(over.rangeAdd);
+  return buildRunConfig(profile, {
+    planet: 0,
+    tier: 0,
+    invasion3: { layers, timeLimitTicks: INVASION_TOTAL_TICKS, maintenance: 10000 },
+  });
+}
+
+function playRun(
+  seed: number,
+  layers: InvasionLayers,
+  /** 로스터 게이트 전용 덮어쓰기. 미지정이면 기존 19건과 **완전히 같은** 구성이다. */
+  over?: { readonly shipType: number; readonly rangeAdd: number },
+): RunOutcome {
+  let config: WorldConfig;
+  if (over === undefined) {
+    config = { ...DEFAULT_CONFIG } as WorldConfig;
+    config.invasion3 = { layers, timeLimitTicks: INVASION_TOTAL_TICKS, maintenance: 10000 };
+    config.loadout = GEAR_REFERENCE;
+  } else {
+    config = rosterGateConfig(layers, over);
+  }
   const state = createWorld(seed, config);
   let reachedL3 = false;
   for (let t = 0; t < INVASION_TOTAL_TICKS; t++) {
@@ -529,4 +601,141 @@ describe('seedBases — 재조정이 구조를 건드리지 않았다', () => {
       expect(b.description).not.toMatch(/\p{Extended_Pictographic}/u);
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// ⑦ 로스터 간섭 회귀 게이트 — 침공은 기체 로스터와 한 배를 탄다
+// ---------------------------------------------------------------------------
+
+/**
+ * ## 이 블록이 막는 것
+ * 위 19건은 전부 `GEAR_REFERENCE` 리터럴만 쓰고 `config.shipType` 을 세우지 않는다. 그래서
+ * 사실상 **스트라이커(signatureBit −1) 고정 · `rangeAdd 0`** 한 조합만 잰다. 그런데 로스터는
+ * 침공 런에 네 갈래로 새어 들어온다 — 코드로 확인한 경로다:
+ *   ① `src/run/runConfig.ts` 의 `buildRunConfig` 가 PvE·정식 침공·하네스 침공의 **단일 정본**
+ *      이고, `applyShipTypeBase`(`src/items/loadout.ts:202`)로 섀시 `baseBp` 4축이 침공 런에도
+ *      그대로 실린다.
+ *   ② `src/sim/world.ts` 의 로드아웃 적용부에 침공 분기가 없다 — PvE 와 같은 코드를 탄다.
+ *   ③ `isPlayerTargetable` 이 `facilityGun`·`defenseBoss`·`prop`·`core` 를 포함하므로
+ *      `weapon.range`(= 로스터의 range 노드·`rangeAdd`)가 **침공 조준 거리도** 좁힌다.
+ *   ④ `signatureOn`(`src/sim/world.ts`) → SIG_* 6종이 침공 게이트 없이 발동한다.
+ *
+ * ## 이 게이트가 실제로 커버하는 범위 (측정으로 확인한 사실만 적는다)
+ * 게이트 런은 {@link rosterGateConfig} 로 **정규 경로 전량**을 탄다 —
+ * `Profile` → `buildRunConfig` → `computeLoadoutStats(..., typeId)` → `applyShipTypeBase`.
+ *   - ① **커버**. `data/ships/<slug>.ts` 의 `baseBp` 를 극단으로 변조하면 이 게이트가 깨진다
+ *     (아래 "감도 실증" 참고). 리터럴 로드아웃을 꽂던 이전 판은 이 사슬을 통째로 우회해
+ *     **baseBp 를 −9000 으로 만들어도 통과**했다.
+ *   - ② **커버**(①이 만든 로드아웃이 `weapon.damage`/`fireCooldown`/`playerHp`/`playerSpeed`
+ *     로 착지하는 것이 승률에 그대로 나타난다).
+ *   - ③ **부분 커버**. 게이트가 싣는 `rangeAdd 460` 은 장비 어픽스(`rangeFlat`)에서 온다.
+ *     `lo.rangeAdd` → `weapon.range` → `isPlayerTargetable` 구간은 이걸로 실제로 탄다.
+ *     **미커버: 스킬트리 노드가 주는 `rangeFlat`** — 게이트는 **무투자** 벡터를 싣는다.
+ *     투자를 실으면 기체 간 격차가 아니라 트리 총량이 승률을 지배해 baseBp 회귀 신호가
+ *     묻히므로 일부러 무투자로 고정했다. 트리 rangeFlat 회귀는 `tests/skills.test.ts`
+ *     계열이 맡는다.
+ *   - ④ **커버**. `buildRunConfig` 가 `shipType` 을 항상 명시하고 시그니처 비트를
+ *     `loadout.uniqueMask` 에 OR 한다.
+ *
+ * ## 왜 하필 이 조합인가
+ * - `rangeAdd = 460` 은 `src/sim/autopilot.ts` 의 `KITE_DISTANCE` 와 같은 값이다. 참조봇이
+ *   유지하려는 거리와 사거리가 정확히 겹치는 **임계점**이라, range 축이 조금만 흔들려도
+ *   조준 성공/실패가 갈린다 — 로스터 range 변경에 가장 민감한 지점이다.
+ * - 기지 **두 곳**을 쓴다. 한 곳으로는 **양방향 감도가 안 나온다** — 실증한 사실이다.
+ *
+ * ## 기지·폭 선정 — 전량 재실측 (2026-07-21)
+ * 아래 값은 **이 트리에서 그대로 재현되는 실측**이다. 게이트를 통과시키려고 폭을 넓힌 것이
+ * 아니라, 전 기지를 재고 **담당 방향별로 기지를 골랐다**.
+ * 재현법: 기지 nn × 비-스트라이커 6기체 × `BALANCE_SEEDS` 12시드를 {@link rosterGateRate}
+ * 로 돌린다(정규 경로 · `rangeAdd 460` · 무투자).
+ *
+ * 실측 — 기체 1(브루저)~6 순, 괄호는 (min~max, 폭):
+ *     #9  = 66.7/41.7/58.3/100.0/83.3/66.7   (41.7~100.0, 58.3pp)
+ *     #10 = 75.0/75.0/41.7/100.0/91.7/66.7   (41.7~100.0, 58.3pp)
+ *     #11 = 66.7/50.0/66.7/83.3/50.0/66.7    (50.0~83.3, 33.3pp)
+ *     #12 = 58.3/50.0/50.0/75.0/50.0/58.3    (50.0~75.0, 25.0pp) ← 전 기지 중 **가장 좁다**
+ *     #13 = 58.3/41.7/58.3/83.3/75.0/50.0    (41.7~83.3, 41.7pp)
+ *     #14 = 50.0/25.0/83.3/33.3/50.0/41.7    (25.0~83.3, 58.3pp)
+ *     #15 = 41.7/50.0/33.3/50.0/66.7/33.3    (33.3~66.7, 33.3pp)
+ *     #16 = 50.0/33.3/25.0/33.3/58.3/33.3    (25.0~58.3, 33.3pp) ← **천장이 가장 낮다**
+ *     #17 = 41.7/16.7/58.3/33.3/83.3/58.3    (16.7~83.3, 66.7pp)
+ *     #18 = 50.0/41.7/41.7/16.7/100.0/100.0  (16.7~100.0, 83.3pp)
+ *     #19 = 100.0/91.7/25.0/58.3/100.0/100.0 (25.0~100.0, 75.0pp)
+ *     #20 = 8.3/83.3/50.0/8.3/50.0/16.7      (8.3~83.3, 75.0pp)
+ *
+ * - **#12 = 하한 담당.** 바닥이 50.0% 로 높고 폭이 25.0pp(3눈금)로 전 기지 중 가장 좁다 —
+ *   아래쪽 여유가 최대다. 상향은 여기서 안 잡힌다: `+20000` 변조에서 기체 1 이 58.3 → 75.0
+ *   으로 오르는데 **기저 최대(기체 4)가 이미 75.0** 이라 어떤 hi 도 둘을 가르지 못한다.
+ * - **#16 = 상한 담당.** 천장이 58.3% 로 전 기지 중 가장 낮은데 `+20000` 변조는 기체 1 을
+ *   75.0% 로 올린다 — 분리 폭 16.7pp(2눈금)로 **전 기지 중 유일하게 상향이 분리된다**
+ *   (#15 는 8.3pp, 나머지는 기저 최대가 83.3% 이상이라 분리 0).
+ * - 폭(12시드의 최소 눈금은 8.33pp):
+ *     #12 lo 20 — 기저 최소 50.0 에서 아래로 30.0pp(3.6눈금). 통상 ±2눈금 튜닝은 통과한다.
+ *     #12 hi 95 — 기저 최대 75.0 에서 위로 20.0pp. 담당 방향이 아니라 느슨한 안전망이다.
+ *     #16 hi 70 — 기저 최대 58.3 과 변조값 75.0 **사이**다. 이 구간에 놓인 실현 가능한 값은
+ *                 66.7(8/12) 하나뿐이므로 **위쪽 여유는 정확히 1눈금**이고, 그것이 이 sim 에서
+ *                 확보 가능한 최대다(변조가 75.0 에서 포화한다). 여기만 ±2눈금 여유가 없다 —
+ *                 대신 하한 담당(#12)이 3.6눈금을 갖는다.
+ *     #16 lo  5 — 기저 최소 25.0 에서 아래로 20.0pp(2.4눈금). 담당 방향이 아니므로 **"전 시드
+ *                 패배"에 가까운 선**으로 둔다.
+ *
+ * ## 감도 실증 (2026-07-21, 위 실측과 같은 트리에서 수행하고 원복)
+ * `data/ships/bruiser.ts` 의 `baseBp` 4축을 통째로 바꾼 뒤 게이트를 돌렸다.
+ *   `{-9000,-9000,-9000,-9000}` : #12 기체 1 = **0.0%**  → lo 20 위반 → 실패
+ *                                 (#11·#15·#16 도 전부 0.0% 로 죽는다)
+ *   `{20000,20000,20000,20000}` : #16 기체 1 = **75.0%** → hi 70 위반 → 실패
+ *                                 (같은 변조에서 #11 66.7→75.0 · #12 58.3→75.0 · #15 41.7→75.0)
+ * 두 변조 모두 기체 2~6 열은 값이 그대로였다 — 하네스가 변조 기체만 격리해 잰다는 증거다.
+ * 원복 후 전 기지·전 기체 그린.
+ */
+const ROSTER_GATE_RANGE_ADD = 460;
+
+/** 로스터 게이트가 도는 기지와 그 기지에서의 허용 폭. 위 주석의 실측이 근거다. */
+const ROSTER_GATE_BASES = [
+  { nn: 12, lo: 20, hi: 95, band: '50.0~75.0' },
+  { nn: 16, lo: 5, hi: 70, band: '25.0~58.3' },
+] as const;
+
+/** 스트라이커(0)를 뺀 나머지 전 기체. 카탈로그에서 유도한다 — 개수를 손으로 적지 않는다. */
+const NON_STRIKER_SHIP_TYPES: readonly number[] = SHIP_TYPES.map((_, i) => i).filter((i) => i > 0);
+
+function rosterGateRate(shipType: number, nn: number): number {
+  const layers = seedBaseLayers(nn);
+  let wins = 0;
+  for (const seed of BALANCE_SEEDS) {
+    const o = playRun(seed, layers, { shipType, rangeAdd: ROSTER_GATE_RANGE_ADD });
+    if (o.win) wins++;
+  }
+  return (wins / BALANCE_SEEDS.length) * 100;
+}
+
+/** (기체, 기지 순번) 전 조합. 개수를 손으로 적지 않는다. */
+const ROSTER_GATE_CASES = NON_STRIKER_SHIP_TYPES.flatMap((shipType) =>
+  ROSTER_GATE_BASES.map((b) => [shipType, b.nn] as [number, number]),
+);
+
+function rosterGateBase(nn: number): (typeof ROSTER_GATE_BASES)[number] {
+  const b = ROSTER_GATE_BASES.find((x) => x.nn === nn);
+  if (b === undefined) throw new Error(`로스터 게이트 기지 정의 없음: #${nn}`);
+  return b;
+}
+
+describe('로스터 간섭 게이트 — 비-스트라이커 기체로도 침공이 성립한다', () => {
+  it('스트라이커가 typeId 0 이고 나머지 기체가 존재한다', () => {
+    // 아래 게이트의 전제. 카탈로그가 재정렬되면 게이트가 엉뚱한 기체를 재게 된다.
+    expect(SHIP_TYPES[0]?.id).toBe(0);
+    expect(NON_STRIKER_SHIP_TYPES.length).toBeGreaterThan(0);
+    expect(NON_STRIKER_SHIP_TYPES).not.toContain(0);
+  });
+
+  it.each(ROSTER_GATE_CASES)(
+    '기체 %i 이 기지 #%i(사거리 임계)에서 0%%도 100%%도 아니다',
+    (shipType, nn) => {
+      const base = rosterGateBase(nn);
+      const rate = rosterGateRate(shipType, nn);
+      const msg = `기체 ${shipType} · 기지 #${base.nn} 클리어율 ${rate.toFixed(1)}% (실측 밴드 ${base.band}%)`;
+      expect(rate, msg).toBeGreaterThanOrEqual(base.lo);
+      expect(rate, msg).toBeLessThanOrEqual(base.hi);
+    },
+  );
 });
