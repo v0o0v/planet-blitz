@@ -42,9 +42,9 @@
 
 둘 다 게이트웨이 오류가 아니라 **함수 자신의 구조화된 응답**이므로 모듈 그래프 전체가 로드됐다.
 
-### ② `20260723000000_m7c_seed_rebalance.sql` 원격 적용 — ✅ **완료**
+### ② 마이그레이션 원격 적용 — ✅ **완료 (7/7)**
 
-2026-07-21 적용됨(`list_migrations` 실측: 원격 version `20260721042605`, name `m7c_seed_rebalance`). 원격 마이그레이션 히스토리는 이제 28건이고 리포 파일 28개와 1:1 대응한다(**version 스탬프는 대응하지 않는다 — 아래 경고**).
+2026-07-21 적용됨. 원격 마이그레이션 히스토리는 이제 29건이고 리포 파일 29개와 1:1 대응한다(**version 스탬프는 대응하지 않는다 — 아래 경고**).
 
 **적용 순서와 결과** — 선행 5종은 그 이전에 적용돼 있었다.
 
@@ -56,6 +56,15 @@
 | 4 | `20260722010000_m7b_core_modules` | `20260720191910` | ✅ 적용 완료 |
 | 5 | `20260722020000_m7b_blueprint_drops` | `20260720192019` | ✅ 적용 완료 |
 | 6 | `20260723000000_m7c_seed_rebalance` | `20260721042605` | ✅ 적용 완료 (2026-07-21) |
+| 7 | `20260724000000_m7c_module_slot_preserve` | `20260721081753` | ✅ 적용 완료 (2026-07-21, 플레이테스트 PR#87 산출) |
+
+**⑦ 코어 모듈 슬롯 "빈 슬롯 보존" 복구 (2026-07-21)** — 하네스 플레이테스트(PR#87)가 찾은 서버 결함이다. `guard_defenses_equipped_modules` 가 검증 **전에** `array(select x from unnest(...) x where x is not null)` 로 배열을 재작성해 **빈 슬롯을 밀집화**하고 있었다(before update 트리거라 그 결과가 그대로 저장). 클라가 `[null, M]` 을 보내면 `[M]` 으로 저장되고 재조회 시 `[M, null]` 로 읽혀 **모듈이 슬롯1 로 이동**한다 — `src/net/modules.ts normalizeEquippedModules` 와 `apply_invasion_result` 가 지키던 "슬롯 i ↔ 표시 i" 규약이 서버에서 한 번도 지켜지지 않았다. `apply_module_fusion`(`x <> all(...)`)·`salvage_core_module`(`x <> p_module_id`)의 장착 해제 블록도 같은 밀집화를 했다(null 은 비교 결과가 null 이라 필터에서 탈락).
+
+- **적용 전 원격 실측으로 결함 3건 전부 확인**했다(`pg_get_functiondef` 패턴 매칭) — 리포 SQL 만 보고 적용하지 않았다.
+- **DDL 전용**(`create or replace function` 3개 + `comment on column`). DML 0건이라 기존 행 무변경. `defenses` 21행이 전부 빈 배열이라 밀집화된 기존 데이터 자체가 없었다(백필 불요).
+- **적용 후 거동 검증**: 롤백되는 `DO` 블록 안에서 `equipped_module_ids = array[null, null]` 을 저장하고 길이를 읽어 `len=2` 확인(구 트리거면 `0`). 구조(함수 정의 문자열)만 보지 않고 **실제 저장 경로로** 확인한 것이다.
+- `get_advisors(security)` **신규 ERROR 0건**(전부 기존 WARN). `defenses` 21행 · `core_modules` 0 · `invasions` 0 무변경.
+- 클라 쪽 계약 대조 테스트 = `tests/coreModuleSlotContract.test.ts`(17케이스 — 슬롯 수 상수 3중 미러 포함).
 
 > **`supabase db push` 를 쓰면 안 된다.** 원격 migration version 스탬프가 로컬 파일명과 다르다(위 표가 그 실측이다). 지금까지 MCP `apply_migration` 으로 적용해 와서 어긋났고, `db push` 는 이미 적용된 28개를 미적용으로 오판해 재실행한다 — `m4_phase_e_npc_seed`·`m4_phase_e_placement` 재실행은 데이터 리셋 위험이다.
 
