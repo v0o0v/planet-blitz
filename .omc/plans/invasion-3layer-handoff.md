@@ -1,68 +1,113 @@
 # 침공 3레이어 → M8 기체 챔피언화 — 세션 인계 (M7c·M8 완료 → 배포 마감 + 플레이테스트 착수 지점)
 
 - 작성: 2026-07-21 (M7c·M8·로스터 7종 구현 세션 마감)
+- 개정: 2026-07-21 (원격 배포 실행 완료 — §0 을 실행 기록으로, §4 를 배포 후 상태로 갱신)
 - 브랜치: `claude-wt/hopeful-ishizaka-038840` (베이스 `b3aa857` = PR #81 머지 커밋)
 - 설계서: `.omc/plans/m8-champion-design.md`(M8 정본) / `.omc/plans/invasion-3layer-redesign.md`(기획) / `.omc/plans/invasion-3layer-impl-lanes.md`(레인 분해) / `.omc/research/invasion-3layer-recon.md`(정찰)
 
 ---
 
-## 0. ⚠️ 다음 세션이 **첫 30분에** 할 것
+## 0. ✅ 원격 배포 — **실행 완료 (2026-07-21)**
 
-순서대로. 1번은 사용자 손이 필요하므로 **세션을 열자마자 요청**해 두고 2번을 병행하라.
+마이그레이션 6종 적용 완료 · `verify-invasion` v17 재배포 완료 · `cards` 삭제 완료. 이 절은 이제 "할 일"이 아니라 **실행 기록 + 다음에도 그대로 쓸 배포 경로**다. 남은 것은 ③ 하네스 플레이테스트다(사용자가 직접 수행 예정).
 
-### ① EF 3종 재배포 + `cards` 삭제 — **사용자 CLI 실행 필요 (블로킹)**
+### ① EF 재배포 + `cards` 삭제 — ✅ **완료**
 
-원격 `verify-invasion` 은 아직 **v16**(M6 시절 번들, MCP `list_edge_functions` 실측). 즉 **비스트라이커 기체로 침공하면 서버 재실행이 전량 `defense-mismatch`** 가 난다. 미출시라 실피해는 없으나 **출시 전 무조건 게이트**다.
+| 대상 | 착수 전 | 결과 | 비고 |
+|---|---|---|---|
+| `verify-invasion` | v16 (M6 시절 번들) | **v17 ACTIVE** | `verify_jwt = true` 유지 |
+| `cards` | v2 ACTIVE (호출 시 항상 500) | **삭제 완료** | 목록에서 소멸 · `POST /functions/v1/cards` → 404 |
+| `modules` | v1 ACTIVE | v1 ACTIVE (무영향) | 이번 회차 재배포 대상 아님 |
+| `verify-pve-sample` | v2 ACTIVE | v2 ACTIVE (무영향) | 이번 회차 **재배포하지 않았다** — §4 #13 |
 
-> ⚠️ **M8 시그니처 배선 이후 대상이 3종으로 늘었다** (2026-07-21). `verify-invasion`·`verify-pve-sample`·`verify-run` 은 셋 다 `src/sim` 을 sloppy-imports 로 번들한다. M8 은 그 공유 sim(`world.ts`·`replay.ts`·`patterns/index.ts`·`boss.ts` + 신규 `cloak.ts`)을 바꿨으므로, **원격 번들이 낡은 동안 typeId 1~6 런은 제출 즉시 해시 불일치로 거부된다.** 스트라이커(typeId 0)는 W0 골든 33건·Deno 픽스처 ①~⑥ 이 바이트 불변임을 못 박으므로 안전하다.
-> **배포 순서: M8 머지 → 각 함수 디렉터리에서 `deno task bundle` → EF 3종 재배포 → 그 다음 클라 배포.** 클라를 먼저 내보내면 비스트라이커 파일럿이 전원 거부된다.
+착수 전 위험은 이것이었다 — 원격 번들이 M6 시절이라 **M8 이 바꾼 공유 sim(`world.ts`·`replay.ts`·`patterns/index.ts`·`boss.ts` + 신규 `cloak.ts`)을 모르는 상태**였고, 그동안 typeId 1~6 런은 제출 즉시 해시 불일치(`defense-mismatch`)로 거부됐다. v17 로 이 창이 닫혔다.
 
-**MCP `deploy_edge_function` 은 구조적으로 불가하다.** 독립 시도 3건이 같은 결론에 도달했다 — 이 도구는 `files[].content` 를 인라인 문자열로 받으므로 LLM 이 번들 전체를 토큰으로 재생성해야 하는데, 파일을 파이프로 넘길 경로가 없고 번들이 출력 토큰 한도를 넘는다. `modules`(8,021바이트)가 통과한 것은 번들이 작았기 때문이지 도구가 되기 때문이 아니다.
+**업로드 번들 실측**
 
-> ⚠️ 이 환경의 `supabase` CLI 는 **peruse 계정**(org `qspuzjcmitdhzpcftqli`)으로 로그인돼 있어 `qxgbxwyccbxokdgwxcuw` 프로젝트가 보이지 않는다. 토큰은 Windows 자격 증명 관리자에 있다.
-> **`supabase login` 을 쓰면 안 된다** — CLI 액세스 토큰은 계정당 1개라 peruse 로그인을 덮어쓴다(글로벌 메모리의 "계정 종속 외부 MCP/CLI 격리" 규칙). 환경변수로 이 셸에서만 오버라이드한다.
-
-배포 직전 준비 (Claude 가 수행):
-
-```powershell
-git -C "<repo>" status --porcelain
-```
-
-워킹트리가 깨끗한지 먼저 확인한 뒤 번들을 **다시 만든다**. 더티 상태에서 `deno bundle` 하면 HEAD 에 없는 코드가 EF 번들에 섞인다(이번 세션 교훈 §7). 깨끗하지 않으면 `git archive HEAD` 나 detached worktree 에서 번들할 것.
-
-사용자 실행 명령 — **한 줄씩** 붙여넣는다.
-
-```powershell
-$env:SUPABASE_ACCESS_TOKEN = "<planet-blitz PAT>"
-```
-
-```powershell
-supabase functions deploy verify-invasion --project-ref qxgbxwyccbxokdgwxcuw --use-api --workdir "<스테이징 경로>"
-```
-
-```powershell
-supabase functions delete cards --project-ref qxgbxwyccbxokdgwxcuw
-```
-
-- **업로드 대상은 번들 `dist.index.js` 를 `index.ts` 엔트리포인트로** 올리는 것이다. 함수 디렉터리 **밖**의 상대 의존(`../../../src/sim/**`)이 있어 소스 `.ts` 를 그대로 올리면 런타임에 죽는다. `dist.index.js` 는 `.gitignore` 대상이라 워킹트리에만 있다 — 없으면 `deno task bundle`(이 환경에 deno 2.8.0 있음).
-- `verify_jwt: true` 유지.
-- `cards` 삭제 이유: 원격에 v2 ACTIVE 인데 M7b 마이그레이션이 `apply_card_*`·`defense_cards` 를 drop 했으므로 호출 시 항상 500. **호출 코드는 0건**이라 실피해는 없고, 죽은 표면 제거가 목적이다. MCP 에 삭제 도구가 없다.
-
-**번들 크기 — 배포 직전 재측정할 것.** 세 값이 갈린다: 커밋 `285b41d` 메시지 "157KB" · 배포 게이트 실측 160,594바이트 · 현재 워킹트리 `dist.index.js` **172,056바이트**(2026-07-21 12:55 생성). 어느 것이 clean HEAD 산출물인지 **미확인**이므로 재번들 후 실제 크기로 판단하라.
+- 소스 커밋 `7ae64b63f3a2318aaea85872d9eee00d5454031b` 의 **클린 detached 워크트리**에서 `deno task check` 통과 후 `deno task bundle`.
+- sha256 `04D1D450075ECE1EBE94F5BEA2972C25D21A01643FEB1759F132EECD086169AC`, **172,056바이트**, 상대 경로 import **0건**(단일 자립 파일).
+- 착수 전 갈렸던 세 값(커밋 메시지 "157KB" / 게이트 실측 160,594 / 워킹트리 172,056) 중 **172,056 이 clean HEAD 산출물**로 확정됐다.
 
 ### ② `20260723000000_m7c_seed_rebalance.sql` 원격 적용 — ✅ **완료**
 
 2026-07-21 적용됨(`list_migrations` 실측: 원격 version `20260721042605`, name `m7c_seed_rebalance`). 원격 마이그레이션 히스토리는 이제 28건이고 리포 파일 28개와 1:1 대응한다(**version 스탬프는 대응하지 않는다 — 아래 경고**).
 
-> **`supabase db push` 를 쓰면 안 된다.** 원격 migration version 스탬프가 로컬 파일명과 다르다(로컬 `20260721000000_m7a_invasion_3layer` ↔ 원격 `20260720191311 m7a_invasion_3layer`). 지금까지 MCP `apply_migration` 으로 적용해 와서 어긋났고, `db push` 는 이미 적용된 27개를 미적용으로 오판해 재실행한다 — `m4_phase_e_npc_seed`·`m4_phase_e_placement` 재실행은 데이터 리셋 위험이다.
+**적용 순서와 결과** — 선행 5종은 그 이전에 적용돼 있었다.
 
-### ③ 하네스 플레이테스트 — **한 번도 실시하지 않았다**
+| # | 리포 파일 | 원격 version | 결과 |
+|---|---|---|---|
+| 1 | `20260721000000_m7a_invasion_3layer` | `20260720191311` | ✅ 적용 완료 |
+| 2 | `20260721010000_m7a_seed_bases_3layer` | `20260720191408` | ✅ 적용 완료 |
+| 3 | `20260722000000_m7b_defense_units` | `20260720191553` | ✅ 적용 완료 |
+| 4 | `20260722010000_m7b_core_modules` | `20260720191910` | ✅ 적용 완료 |
+| 5 | `20260722020000_m7b_blueprint_drops` | `20260720192019` | ✅ 적용 완료 |
+| 6 | `20260723000000_m7c_seed_rebalance` | `20260721042605` | ✅ 적용 완료 (2026-07-21) |
+
+> **`supabase db push` 를 쓰면 안 된다.** 원격 migration version 스탬프가 로컬 파일명과 다르다(위 표가 그 실측이다). 지금까지 MCP `apply_migration` 으로 적용해 와서 어긋났고, `db push` 는 이미 적용된 28개를 미적용으로 오판해 재실행한다 — `m4_phase_e_npc_seed`·`m4_phase_e_placement` 재실행은 데이터 리셋 위험이다.
+
+### ②-1 배포 후 검증 — 실측 결과
+
+**DB**
+
+- `defenses` **21행 전부** `layout ? 'l1'` = true.
+- NPC **20행 전부** `l2.templateId` 존재.
+- 웨이브 레벨 램프 **1..29**(재조정 전 1..58) — M7c 재시드가 실제로 반영됐다.
+- `invasions` = 0 · `invasion_snapshots` = 0 유지(시드 재조정이 라이브 침공 데이터를 건드리지 않았다).
+- `get_advisors` **신규 경고 0건** — DDL 없는 데이터 UPDATE 라 예상대로다.
+
+**EF 부팅 스모크 (`verify-invasion` v17)**
+
+- anon(publishable) 키는 프로젝트가 서명한 JWT 라 `Authorization: Bearer <anon>` + `apikey` 헤더면 `verify_jwt=true` 게이트웨이를 통과한다. **익명 로그인 불요 → `auth.users` 오염 0.**
+- `{"invasionId":"not-a-uuid"}` POST → **400 + `{"status":"rejected","reason":"malformed-invasion-id",...}`**. 게이트웨이 오류가 아니라 **함수 자신의 구조화된 응답**이므로 핸들러가 실제로 실행됐다.
+- `execution_time_ms` 545, 부팅 스택 없음.
+- `deno bundle` 산출물은 단일 자립 파일이라 **부팅 성공 = 76개 모듈 그래프 전체 로드 성공**이다. 이 프로젝트가 겪었던 "EF 가 삭제된 모듈을 import(tsconfig 밖이라 tsc 미검출) → 배포 즉시 사망"(§5) 부류의 위험은 이것으로 닫혔다.
+
+### ②-2 배포 경로 (다음에도 이대로) — 이 절의 핵심 가치
+
+**MCP `deploy_edge_function` 은 구조적으로 불가하다. 재시도 금지.**
+이 도구는 `files[].content` 를 인라인 문자열로 받으므로 LLM 이 번들 전체를 토큰으로 재생성해야 하는데, 파일을 파이프로 넘길 경로가 없고 172KB 번들은 출력 토큰 한도에서 잘린다. **독립 시도 3건이 동일 결론에 도달했고 합계 30만 토큰을 소모했다.** `modules`(8,021바이트)가 통과한 것은 번들이 작았기 때문이지 도구가 되기 때문이 아니라, 선례가 못 된다.
+
+**CLI + PAT 가 유일한 경로다.**
+
+> ⚠️ 이 환경의 `supabase` CLI 는 **peruse 계정**으로 로그인돼 있고 토큰은 Windows 자격 증명 관리자에 있다.
+> **`supabase login` 을 쓰면 안 된다** — CLI 액세스 토큰은 계정당 1개라 peruse 로그인을 덮어쓴다(글로벌 메모리의 "계정 종속 외부 MCP/CLI 격리" 규칙).
+> **환경변수를 User/Machine scope 로 영구 심어도 안 된다** — 모든 창에서 peruse 를 가린다.
+
+해법은 `$PROFILE`(`C:\Users\v0o0v\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1`, **UTF-8 BOM 필수** — PowerShell 5.1 은 BOM 없으면 한글을 ANSI 로 읽어 깨진다)에 설치한 **`spb` 래퍼 함수**다. DPAPI 로 암호화된 `~\.supabase-pb.token` 을 읽어 **그 명령이 실행되는 동안에만** `SUPABASE_ACCESS_TOKEN` 을 주입하고 `finally` 로 원복한다.
+
+- `supabase ...` = **peruse** 계정
+- `spb ...` = **planet-blitz** 계정
+
+두 계정이 한 셸에서 영구 공존한다.
+
+**빌드는 반드시 detached 클린 워크트리에서** — `git worktree add --detach <tmp> HEAD`. 더티 워킹트리에서 번들하면 HEAD 에 없는 코드가 EF 번들에 섞인다(§7 교훈).
+
+배포 명령:
+
+```powershell
+spb functions deploy verify-invasion --project-ref qxgbxwyccbxokdgwxcuw --use-api --workdir "<스테이징 경로>"
+```
+
+```powershell
+spb functions delete cards --project-ref qxgbxwyccbxokdgwxcuw
+```
+
+- 스테이징 디렉터리에는 `supabase/config.toml`(= `project_id` + `[functions.verify-invasion] verify_jwt = true`)을 두고, 번들을 `index.ts` 로 배치한다.
+- **`--no-verify-jwt` 금지.**
+- **업로드 대상은 번들을 `index.ts` 엔트리포인트로** 올리는 것이다. 함수 디렉터리 **밖**의 상대 의존(`../../../src/sim/**`)이 있어 소스 `.ts` 를 그대로 올리면 런타임에 죽는다. `dist.index.js` 는 `.gitignore` 대상이라 워킹트리에만 있다 — 없으면 `deno task bundle`(이 환경에 deno 2.8.0 있음).
+- 클라 배포는 **EF 재배포 뒤에** 한다. 클라를 먼저 내보내면 비스트라이커 파일럿이 전원 거부된다.
+
+### ③ 하네스 플레이테스트 — **아직 한 번도 실시하지 않았다** (유일한 잔여 항목)
 
 M7a 이후 배포가 끝났으므로 이제 실제로 조작 가능하다. `harness` 스킬로 띄우고 눈으로 확인:
 
 방어 사령부 5탭 전환 / L1 슬롯 선택 시 프리뷰 반영 / L2 템플릿 교체 시 회랑 변화 / 팝업 목록 휠 스크롤 / 시험 침공 후 **정산 미발생** / 코어 모듈 화면 / **침공 완주 1회** / 챔피언 선택 화면에서 7종 전환 → 격납고 쇼케이스·인게임 스프라이트가 실제로 바뀌는지.
 
 프리뷰 축소 배율(패널 안 1920×1080 fit)이 실화면에서 너무 작으면 코어 주변 크롭을 조정한다.
+
+> **이 플레이테스트가 배포 검증의 나머지 절반이다.** 배포 스모크는 조기 반환 경로만 탔으므로 **유효 `invasionId` 정상 경로**(DB 조회 · RLS · service_role · 시뮬 재실행)와 **EF↔마이그레이션 스키마 정합**, **18000틱 재실행 CPU 예산**은 아직 한 번도 실행되지 않았다. "침공 완주 1회"가 이 셋을 동시에 여는 유일한 게이트다. §4 #7·#7-a·#7-b.
+
+**사용자가 직접 수행할 예정이다.**
 
 ---
 
@@ -72,7 +117,8 @@ M7a 이후 배포가 끝났으므로 이제 실제로 조작 가능하다. `harn
 |---|---|---|
 | M7a 침공 코어 | ✅ 완료 (이전 세션) | `494422e` → `6ddb2c0` |
 | M7b 방어체 경제 | ✅ 완료 (이전 세션) | `8790c0a` → `5b9071f` |
-| M7a·M7b 원격 배포 | ✅ 마이그레이션 5종 적용 / ⚠️ EF 2건 잔여 | `63b43bc` |
+| M7a·M7b 원격 배포 | ✅ 마이그레이션 5종 적용 | `63b43bc` |
+| M7c 원격 배포 + EF 마감 | ✅ **완료 (2026-07-21)** — 마이그레이션 6/6 · `verify-invasion` v17 · `cards` 삭제. §0 | `7ae64b6` (번들 소스) |
 | M7c 콘텐츠 완충 | ✅ 완료 | `8b98715` |
 | M8 설계 정본 | ✅ 완료 | `b4a30f1` |
 | M8 기체 챔피언화 | ✅ 완료 (sim 배선 2/6 — 의도된 미완) | `285b41d` |
@@ -226,24 +272,29 @@ M7a 임시 카탈로그를 풀 카탈로그로 확장했다. **전부 배열 끝
 
 ## 4. 남은 부채·위험
 
+> **2026-07-21 배포로 해소된 항목:** #1(`verify-invasion` 재배포 + `cards` 삭제) · #5(`m7c_seed_rebalance` 원격 적용). 아래 표에 ✅ 로 남겨 둔다 — 삭제하지 않는 이유는 다음에 같은 일을 할 때 경로(§0-②-2)를 되짚기 위해서다.
+
 | # | 항목 | 상태 |
 |---|---|---|
-| 1 | **`verify-invasion` 재배포 + `cards` 삭제** | 사용자 CLI/PAT 필요. §0-① |
-| 2 | **하네스 플레이테스트 미실시** | 배포 후 즉시. §0-③ |
+| 1 | ~~**`verify-invasion` 재배포 + `cards` 삭제**~~ | ✅ **해소** (2026-07-21). v16→v17 ACTIVE · `cards` 삭제 완료. 경로는 §0-②-2 |
+| 2 | **하네스 플레이테스트 미실시** | ⚠️ **잔여 — 최우선.** 배포가 끝나 이제 실제 조작이 가능하다. **사용자가 직접 수행할 예정.** §0-③ |
 | 3 | **시그니처 sim 배선 스텁 4종** | 팬텀·해츨링·말로우·버블. 상수·순수 함수만 있고 `world.ts` 분기 없음 — 설계 §3 "브루저·아크캐스터 우선 배선" 원칙에 따른 **의도된 미완** |
 | 4 | **Deno 시나리오 비스트라이커 1건뿐** | ⑦(해츨링)만. **typeId 5·6 EF 커버리지 없음** — 출시 전 추가 권장 |
-| 5 | `20260723000000_m7c_seed_rebalance.sql` | 원격 미적용. §0-② |
+| 5 | ~~`20260723000000_m7c_seed_rebalance.sql`~~ | ✅ **해소** — 원격 적용 완료(version `20260721042605`, 2026-07-21). §0-② |
 | 6 | **신규 기체 밸런스 미검증** | `baseBp` 는 제안값 |
-| 7 | **EF 재실행 CPU 예산 실측 미완** | `SOFT_RERUN_BUDGET_MS` 8000 → 20000. 18000틱 3레이어 재실행이 Supabase Edge Runtime 한도를 넘는지 **실배포 실측이 남아 있다**. 넘으면 L3 엔티티 상한·컬링 반경을 먼저 조이고, 최악의 경우 "전 구간 재실행" → "샘플 구간 재실행" 아키텍처 변경 |
+| 7 | **EF 재실행 CPU 예산 실측 미완** | ⚠️ **잔여.** `SOFT_RERUN_BUDGET_MS` 8000 → 20000. 18000틱 3레이어 재실행이 Supabase Edge Runtime 한도를 넘는지 **여전히 미측정**이다 — 배포 스모크의 `execution_time_ms` 545 는 **조기 반환(`malformed-invasion-id`) 경로 값이라 정보량 0**이다. 넘으면 L3 엔티티 상한·컬링 반경을 먼저 조이고, 최악의 경우 "전 구간 재실행" → "샘플 구간 재실행" 아키텍처 변경 |
+| 7-a | **유효 `invasionId` 정상 경로 미검증** | ⚠️ **잔여.** 배포 검증은 조기 반환 경로만 탔다. **DB 조회 · RLS · service_role 권한 · 시뮬 실행**은 한 번도 실행되지 않았다 — 하네스로 침공을 1회 완주해야 처음 통과한다 |
+| 7-b | **EF ↔ 마이그레이션 스키마 정합 미검증** | ⚠️ **잔여.** v17 번들이 기대하는 컬럼·RPC 시그니처가 원격 스키마(28건 적용본)와 실제로 맞는지는 정상 경로를 태워야 확인된다. #7-a 와 같은 게이트에서 함께 닫힌다 |
 | 8 | **모듈 장착 상태로 침공을 끝까지 완주하는 e2e 없음** | 구간 관측 + 3000틱 해시 대조까지만. `tests/invasionE2E.test.ts` 의 승리 시드는 모듈 미장착 기준 |
 | 9 | **수호 중복 선택 판별**이 `(snapshot.hp, performanceCP)` 조합 | 배치에 원본 `GuardianRecord.id` 가 실리지 않는 스키마 제약. 완전히 같은 스펙의 수호가 둘이면 한쪽만 쓰인다 |
 | 10 | `grant_blueprints` 가 authenticated 클라 호출 | 현행 장비 드랍과 동급 트러스트 모델이라 의도적. 강화한다면 장비 드랍과 **함께** 서버 권위로 올려야 한다 |
 | 11 | `GRID_COLS` grep 잔존 5건 | `refinery.ts`(=6)·`resultOverlay.ts`(=8) 의 무관한 지역 UI 상수. 구 15×9 방어 격자와 무관해 개명하지 않았다 |
 | 12 | **CrazyGames 제출 보류** | 상태 그대로 |
+| 13 | **`verify-pve-sample` 구 번들 잔존** | ⚠️ **잔여.** v2 는 M8 이전 공유 sim 번들이다. 이번 회차에서 `verify-invasion` 만 갱신했다. PvE 샘플 교차검증이 비스트라이커 런에서 갈릴 수 있다 — 같은 경로(§0-②-2)로 재배포하면 된다 |
 
 **미확인으로 남긴 것**
-- `supabase/functions/verify-run` 은 리포에 디렉터리가 있으나 **원격 EF 목록에 없다**(원격 = `verify-invasion`·`verify-pve-sample`·`cards`·`modules` 4종). 의도적 미배포인지 누락인지 **미확인** — 배포 세션에서 확인할 것.
-- `dist.index.js` 실크기(§0-① 참조, 세 값이 갈림).
+- `supabase/functions/verify-run` 은 리포에 디렉터리가 있으나 **원격 EF 목록에 없다**(배포 후 원격 = `verify-invasion`·`verify-pve-sample`·`modules` 3종). 의도적 미배포인지 누락인지 **여전히 미확인**.
+- ~~`dist.index.js` 실크기~~ → ✅ **확정: 172,056바이트**(sha256 `04D1D45…86169AC`, 커밋 `7ae64b6` 클린 detached 워크트리 산출물). §0-①.
 
 ---
 
