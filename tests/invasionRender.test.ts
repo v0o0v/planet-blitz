@@ -11,6 +11,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { Texture } from 'pixi.js';
+import { SHIP_TYPES } from '../data/ships/index.js';
 import {
   spriteSlotFor,
   resolveSpriteSlot,
@@ -62,6 +63,9 @@ function stubTextures(): PlaceholderTextures {
     Array.from({ length: n }, (_, i) => tex(`${name}[${i}]`));
   return {
     player: tex('player'),
+    // 기체 타입별 인게임 스프라이트 슬롯(M8). 개수는 레지스트리 파생이라 타입이 늘어도
+    // 스텁이 조용히 짧아지지 않는다.
+    shipByType: SHIP_TYPES.map((d) => tex(`ship[${d.id}]`)),
     bullet: tex('bullet'),
     enemyBullet: tex('enemyBullet'),
     enemyBulletBehaviors: arr('enemyBulletBehaviors', 4),

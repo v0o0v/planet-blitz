@@ -13,6 +13,7 @@
 import type { WorldState } from '../sim/world.js';
 import { POWERUPS } from '../sim/powerups.js';
 import type { SkillTree } from '../../data/skills.js';
+import { AFFINITY_LEGACY_TREE } from '../../data/ships/index.js';
 
 /** 무기 아키타입 표시명(weaponType 인덱스 → 한글). autoAttack 분기와 동일 코드. */
 export const WEAPON_TYPE_NAMES: Record<number, string> = {
@@ -93,7 +94,11 @@ export function choiceRelevance(poolIndex: number, currentWeaponType: number): C
       matchesWeapon: matches,
     };
   }
-  if (def.tree !== undefined) return { label: SKILL_TREE_NAMES[def.tree], matchesWeapon: false };
+  // M8: 파워업 빌드 태그가 트리 **이름**에서 **affinity(역할 축)** 로 바뀌었다(설계서 §2).
+  // 배지는 여전히 레거시 계열명으로 보여준다 — 표시 문자열 개편은 M8-L9(i18n) 몫이다.
+  if (def.affinity !== undefined) {
+    return { label: SKILL_TREE_NAMES[AFFINITY_LEGACY_TREE[def.affinity]], matchesWeapon: false };
+  }
   return { label: '범용', matchesWeapon: false };
 }
 

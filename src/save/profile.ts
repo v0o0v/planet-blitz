@@ -19,7 +19,14 @@
 
 import { SAVE_VERSION, SLOT_KINDS, RARITY_BY_CODE } from '../items/types.js';
 import type { Item, EquipSlotId } from '../items/types.js';
-import { SKILLS, SKILL_NODE_COUNT, capstoneUnlocked } from '../../data/skills.js';
+import type { SkillNode } from '../../data/skills.js';
+import { shipCapstoneUnlocked } from '../items/skills.js';
+import {
+  shipTypeDef,
+  flattenShipNodes,
+  normalizeShipTypeId,
+  zeroSkillInvest as registryZeroSkillInvest,
+} from '../../data/ships/index.js';
 import type { InvasionLayers } from '../sim/invasion/types.js';
 import { emptyLineage } from '../../data/lineage.js';
 import type { LineageState } from '../../data/lineage.js';
@@ -62,12 +69,30 @@ export function stashCapacity(expansions: number): number {
 export interface Ship {
   readonly id: string;
   name: string;
+  /**
+   * 기체 타입(M8, ADR-0019) — `SHIP_TYPES` 배열 인덱스. 0 = 스트라이커(기본·기존 유저 전원).
+   * **재번호 금지**: 인덱스가 트리 정의·시그니처 비트·아이콘 축의 계약이다.
+   * {@link normalizeShip} 이 `normalizeShipTypeId` 로 정규화한다 — 범위 밖·손상은 상한 clamp 가
+   * 아니라 **0(스트라이커) 복귀**다(설계서 §6, 2026-07-21 확정). 상한으로 clamp 하면 손상 세이브가
+   * 유저에게 조용히 *다른 기체* 를 쥐여 준다. 정규화를 건너뛰면 타입 조회가 `undefined` 가 되어
+   * loadout 전체가 **조용히** 중립이 된다.
+   */
+  typeId: number;
   /** Current level (starts at 1). */
   level: number;
   /** XP banked toward the next level (resets each level-up, plan AC11). */
   xp: number;
   /** Items in the eight equip positions (absent = empty slot). */
   equipped: Partial<Record<EquipSlotId, Item>>;
+  /**
+   * 이 기체의 스킬 트리 투자 벡터(M8 v4 — **정본**). 길이 = `shipTypeNodes(typeId).length`
+   * (스트라이커 = SKILL_NODE_COUNT = 63). `skillInvest[i]` = 노드 i 에 넣은 포인트.
+   *
+   * 퇴역은 세대 리셋이므로 이 벡터는 기체와 함께 사라진다(계정을 관통하는 성장은 계보가
+   * 담당 — data/lineage.ts). 런 시작 시 `computeLoadoutStats(equipped, ship.skillInvest, ...)`
+   * 로 접혀 `WorldConfig.skillInvest` 가 된다.
+   */
+  skillInvest: number[];
 }
 
 /** Per-planet clear progress (drives star-map gating, plan D3). */
@@ -92,15 +117,6 @@ export interface Profile {
   minerals: number;
   /** Banked skill points (M3 spends them; M2 only accrues, OQ-M2-7). */
   skillPoints: number;
-  /**
-   * Per-node skill investment (M3 plan A3). Length === SKILL_NODE_COUNT (63 =
-   * 60 base + 3 최상위 캡스톤); `skillInvest[i]` is the points put into `SKILLS[i]`
-   * (0..node.maxPoints). 60-length pre-capstone saves are grown to 63 (new indices
-   * 60~62 = 0) by {@link normalizeSkillInvest} — 하위 호환.
-   * Account-wide (research lab is a base building, not per-ship). Fed to
-   * `computeLoadoutStats(equipped, skillInvest)` at run start.
-   */
-  skillInvest: number[];
   /**
    * Whether the forced first-run tutorial (FTUE, plan E1/E2) has been completed.
    * A fresh profile starts `false` (new pilots are dropped straight into the
@@ -175,18 +191,49 @@ export interface KeyValueStore {
 // Defaults
 // ---------------------------------------------------------------------------
 
-function defaultShip(): Ship {
-  return { id: 'ship-0', name: '초기 전투기', level: 1, xp: 0, equipped: {} };
+// ---------------------------------------------------------------------------
+// 기체 타입 레지스트리 (M8-L1 `data/ships/` 와 만나는 유일한 자리)
+// ---------------------------------------------------------------------------
+
+/**
+ * save 층이 레지스트리에서 필요로 하는 것은 **타입별 노드 정의**뿐이다(타입 id 정규화는
+ * 레지스트리의 `normalizeShipTypeId` 를 그대로 쓴다 — 규칙을 두 벌 두지 않는다).
+ * 아래 한 함수로 좁혀 둔다: 레지스트리 형태가 바뀌어도 갈아끼울 자리가 여기 하나다.
+ *
+ * ⚠️ 노드 순서는 **`flattenShipNodes` 로만** 얻는다. `trees.flatMap((t) => t.nodes)` 로
+ * 단순 concat 하면 안 된다 — flat 벡터의 실제 배치는 `[base 블록 전부][캡스톤 3개]` 라서
+ * concat 은 인덱스를 밀어 ① 리플레이 해시 폴드 ② 파생 스탯 ③ 파워업 RNG 슬라이스의
+ * 삼중 계약을 조용히 깬다(`data/ships/types.ts` §flat 벡터 레이아웃 계약).
+ */
+function shipTypeNodes(typeId: number): readonly SkillNode[] {
+  return flattenShipNodes(shipTypeDef(typeId));
 }
 
-/** A zeroed skill-investment vector (length === SKILL_NODE_COUNT). */
-export function zeroSkillInvest(): number[] {
-  return new Array<number>(SKILL_NODE_COUNT).fill(0);
+// ---------------------------------------------------------------------------
+// Defaults
+// ---------------------------------------------------------------------------
+
+function defaultShip(typeId = 0, id = 'ship-0', name = '초기 전투기'): Ship {
+  return { id, name, typeId, level: 1, xp: 0, equipped: {}, skillInvest: zeroSkillInvest(typeId) };
+}
+
+/**
+ * A zeroed skill-investment vector for `typeId` (스트라이커 = SKILL_NODE_COUNT = 63).
+ *
+ * ⚠️ 항상 **새 배열**을 준다. 공유 배열을 돌려주면 한 기체의 투자가 다른 기체로 샌다
+ * (신규 기체 지급·퇴역이 이 함수를 쓴다).
+ *
+ * ⚠️ 구현을 두 벌 두지 않는다 — 레지스트리(`data/ships/index.ts`)의 동명 함수에 **위임**한다.
+ * 두 벌이면 노드 수 계산이 갈려 벡터 길이가 어긋날 수 있고, 길이는 리플레이 해시 폴드의
+ * 계약이다(설계서 §1). 이 export 는 기존 save 층 독자를 위한 재수출일 뿐이다.
+ */
+export function zeroSkillInvest(typeId = 0): number[] {
+  return registryZeroSkillInvest(typeId);
 }
 
 /** A fresh profile — one starter ship, empty everything. */
 export function defaultProfile(): Profile {
-  return {
+  const p: Profile = {
     saveVersion: SAVE_VERSION,
     ships: [defaultShip()],
     activeShipIndex: 0,
@@ -197,12 +244,13 @@ export function defaultProfile(): Profile {
     credits: 0,
     minerals: 0,
     skillPoints: 0,
-    skillInvest: zeroSkillInvest(),
     tutorialDone: false,
     lineage: emptyLineage(),
     guardians: [],
   };
+  return p;
 }
+
 
 /** The active ship (falls back to the first, then a fresh default). */
 export function activeShip(profile: Profile): Ship {
@@ -250,26 +298,45 @@ export function recordPlanetClear(profile: Profile, planet: number, tier: number
 // Skill investment + respec (M3 plan A3)
 // ---------------------------------------------------------------------------
 
-/** Total points currently invested across all skill nodes. */
+/** Total points currently invested across the active ship's skill nodes. */
 export function totalInvested(profile: Profile): number {
   let n = 0;
-  for (const v of profile.skillInvest) n += v;
+  for (const v of activeShip(profile).skillInvest) n += v;
   return n;
 }
 
 /**
- * Spend one banked skill point into node `index`. No-ops (returns false) when the
- * index is out of range, the node is already maxed, or no points are banked.
+ * Spend one banked skill point into node `index` **of the active ship** (M8 v4 —
+ * 투자는 계정이 아니라 기체에 쌓인다). No-ops (returns false) when the index is out of
+ * range, the node is already maxed, or no points are banked.
+ *
+ * ⚠️ 노드 정의·캡스톤 게이트는 **활성 기체 타입의 것**을 쓴다(M8 통합 게이트에서 일반화).
+ * 스트라이커 정본(`SKILLS`/`capstoneUnlocked`)을 쓰던 구현은 실측상 다음 3가지를 조용히
+ * 깼다 — 예외도 타입 오류도 나지 않아 단위 테스트가 전부 그린이었다:
+ *   ① 노드 수가 63 을 넘는 타입(bion=78)의 인덱스 63~77 이 **영구 투자 불가**
+ *   ② `maxPoints` 가 타입별로 다른 노드에서 상한 오판정(과투자 또는 조기 차단)
+ *   ③ 캡스톤 판정이 스트라이커 flat 레이아웃(60~62)·게이트 폭(20/40)으로 이뤄져,
+ *      다른 레이아웃의 타입은 **base 노드가 캡스톤으로 오인**되고 진짜 캡스톤은 투자 불가
+ * 그래서 노드는 `flattenShipNodes(shipTypeDef(ship.typeId))`, 게이트는
+ * `shipCapstoneUnlocked(invest, def, treeIndex)` 로만 얻는다.
  */
 export function investSkill(profile: Profile, index: number): boolean {
-  const node = SKILLS[index];
-  if (node === undefined) return false;
   if (profile.skillPoints <= 0) return false;
-  const cur = profile.skillInvest[index] ?? 0;
+  const ship = activeShip(profile);
+  const def = shipTypeDef(ship.typeId);
+  const node = flattenShipNodes(def)[index];
+  if (node === undefined) return false;
+  const invest = ship.skillInvest;
+  const cur = invest[index] ?? 0;
   if (cur >= node.maxPoints) return false;
-  // 최상위 캡스톤(GDD §4)은 해당 계열 base 40pt 게이트를 통과해야 투자 가능하다.
-  if (node.capstone === true && !capstoneUnlocked(profile.skillInvest, node.tree)) return false;
-  profile.skillInvest[index] = cur + 1;
+  // 최상위 캡스톤(GDD §4)은 해당 계열 base 게이트(`def.capstoneGate`)를 통과해야 투자 가능.
+  // flat 레이아웃이 `[base 블록 전부][캡스톤 trees.length 개]` 이므로 계열 인덱스는
+  // 캡스톤 블록 시작점으로부터의 오프셋이다.
+  if (node.capstone === true) {
+    const treeIndex = index - def.nodesPerTree * def.trees.length;
+    if (!shipCapstoneUnlocked(invest, def, treeIndex)) return false;
+  }
+  invest[index] = cur + 1;
   profile.skillPoints -= 1;
   return true;
 }
@@ -292,7 +359,9 @@ export function respecSkills(profile: Profile): boolean {
   if (profile.credits < cost) return false;
   profile.credits -= cost;
   profile.skillPoints += invested;
-  profile.skillInvest = zeroSkillInvest();
+  // 제자리 0 채움. 새 배열로 갈아끼워도 지금은 무해하지만(M8-L7 이 별칭 필드를 삭제했다),
+  // 화면이 렌더 도중 배열 참조를 들고 있는 경우가 있어 인스턴스를 유지하는 편이 안전하다.
+  activeShip(profile).skillInvest.fill(0);
   return true;
 }
 
@@ -372,6 +441,7 @@ export function migrate(raw: unknown): Profile {
   if (version < 1) data = migrateV0toV1(data);
   if (version < 2) data = migrateV1toV2(data);
   if (version < 3) data = migrateV2toV3(data);
+  if (version < 4) data = migrateV3toV4(data);
   return normalizeProfile(data);
 }
 
@@ -413,17 +483,55 @@ function migrateV2toV3(v2: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
- * Normalize a stored skill vector to exactly SKILL_NODE_COUNT entries, each an
- * integer clamped to its node's [0, maxPoints]. Missing/extra/corrupt entries
- * recover to 0 so a partial save never over-invests.
+ * v3 → v4 (M8 기체 챔피언화, ADR-0019): 계정 단위 `skillInvest` 를 **기체 단위**로 내린다.
+ *
+ * 기존 유저는 전원 스트라이커이므로 각 기체에 `typeId: 0` 을 찍고, 계정 벡터를 그대로
+ * 승계시킨다 — **투자가 사라지지 않는 것이 이 마이그레이션의 유일한 존재 이유다.**
+ * 승계 후 계정 키는 blob 에서 제거한다(정본은 기체 벡터 하나뿐이라는 것을 저장 형식 차원에서
+ * 못박는다). M8-L7 이 계정 단위 필드를 삭제했으므로 투자 벡터를 읽는 자리는
+ * `activeShip(profile).skillInvest` 하나뿐이다 — 두 독자가 갈라질 자리가 없다.
+ *
+ * 여러 기체가 있어도 전원이 같은 계정 벡터를 물려받는다 — v3 에는 기체별 투자라는 개념 자체가
+ * 없었으므로 "그 유저가 실제로 굴리던 빌드"가 각 기체에 대한 유일하게 정직한 복원값이다.
+ * (실제로 v3 세이브의 `ships` 는 항상 길이 1 이다 — 기체 추가 경로가 없었다.)
+ *
+ * DB 변경 없음: `profiles.save` 는 불투명 jsonb 이고 서버 SQL 은 `credits`/`minerals` 만 읽는다.
  */
-function normalizeSkillInvest(v: unknown): number[] {
-  const out = zeroSkillInvest();
+function migrateV3toV4(v3: Record<string, unknown>): Record<string, unknown> {
+  const account = v3.skillInvest;
+  const out: Record<string, unknown> = { ...v3, saveVersion: 4 };
+  if (Array.isArray(v3.ships)) {
+    out.ships = v3.ships.map((s) => {
+      if (typeof s !== 'object' || s === null) return s;
+      const ship = s as Record<string, unknown>;
+      // ⚠️ 벡터 정규화는 **그 기체의 타입**으로 해야 한다. 여기서 0 을 하드코딩하면, 노드 수가
+      // 63 이 아닌 타입이 생기는 순간(M8-L6) 부분 v4 blob 의 벡터가 63 으로 잘린 뒤
+      // normalizeShip 이 실제 길이로 0 패딩해 **꼬리 투자가 조용히 소실**된다.
+      const typeId = normalizeShipTypeId(ship.typeId);
+      return {
+        ...ship,
+        typeId,
+        // 이미 기체 벡터가 있으면(부분 v4 blob) 그것을 우선하고, 없으면 계정 벡터를 승계.
+        skillInvest: normalizeSkillInvest(ship.skillInvest ?? account, typeId),
+      };
+    });
+  }
+  delete out.skillInvest;
+  return out;
+}
+
+/**
+ * Normalize a stored skill vector for `typeId` to exactly that type's node count,
+ * each an integer clamped to its node's [0, maxPoints]. Missing/extra/corrupt entries
+ * recover to 0 so a partial save never over-invests. 60-length pre-capstone saves are
+ * grown to 63 (new indices 60~62 = 0) — 하위 호환.
+ */
+export function normalizeSkillInvest(v: unknown, typeId = 0): number[] {
+  const nodes = shipTypeNodes(typeId);
+  const out = zeroSkillInvest(typeId);
   if (!Array.isArray(v)) return out;
-  for (let i = 0; i < SKILL_NODE_COUNT; i++) {
-    const node = SKILLS[i];
-    const max = node?.maxPoints ?? 0;
-    out[i] = clampInt(v[i], 0, max, 0);
+  for (let i = 0; i < nodes.length; i++) {
+    out[i] = clampInt(v[i], 0, nodes[i]?.maxPoints ?? 0, 0);
   }
   return out;
 }
@@ -434,7 +542,7 @@ function normalizeProfile(d: Record<string, unknown>): Profile {
     ? d.ships.map(normalizeShip).filter((s): s is Ship => s !== null)
     : [];
   const finalShips = ships.length > 0 ? ships : base.ships;
-  return {
+  const out: Profile = {
     saveVersion: SAVE_VERSION,
     ships: finalShips,
     activeShipIndex: clampInt(d.activeShipIndex, 0, finalShips.length - 1, 0),
@@ -445,12 +553,12 @@ function normalizeProfile(d: Record<string, unknown>): Profile {
     credits: numOr(d.credits, 0),
     minerals: numOr(d.minerals, 0),
     skillPoints: numOr(d.skillPoints, 0),
-    skillInvest: normalizeSkillInvest(d.skillInvest),
     tutorialDone: d.tutorialDone === true,
     lineage: normalizeLineage(d.lineage),
     guardians: normalizeGuardianRecords(d.guardians),
     ...normalizeStoredLayout(d.defenseLayout),
   };
+  return out;
 }
 
 /** 저장된 계보 상태를 안전 정규화(손상·부분 세이브는 빈 계보로 복구, 음수는 0). */
@@ -529,12 +637,24 @@ function normalizeShip(v: unknown): Ship | null {
       if (isValidItem(item)) equipped[slot as EquipSlotId] = item;
     }
   }
+  // ⚠️ typeId 는 반드시 유효 범위로 정규화한다. 범위 밖 값이 통과하면 `SHIP_TYPES[typeId]` 가
+  // undefined 가 되어 트리·시그니처·baseBp 가 전부 빠진 채 **예외 없이 조용히** 중립 loadout
+  // 으로 흘러간다(설계서 §6).
+  //
+  // 규칙은 `data/ships/index.ts` 의 `normalizeShipTypeId` **하나로 통일한다**: 범위 밖·손상은
+  // 전부 0(스트라이커). 저장층에서 상한으로 clamp 하면(999 → 4) 손상 세이브가 유저에게
+  // **조용히 다른 기체를 쥐여 준다** — 트리도 시그니처도 다른 기체다. 0 복귀는 최소한
+  // "기본 기체로 돌아갔다" 는 설명 가능한 상태이고, 조회층(shipTypeDef)과 규칙이 같아져
+  // 저장·조회가 어긋날 여지도 사라진다.
+  const typeId = normalizeShipTypeId(s.typeId);
   return {
     id: typeof s.id === 'string' ? s.id : 'ship-0',
     name: typeof s.name === 'string' ? s.name : '초기 전투기',
+    typeId,
     level: Math.max(1, numOr(s.level, 1)),
     xp: Math.max(0, numOr(s.xp, 0)),
     equipped,
+    skillInvest: normalizeSkillInvest(s.skillInvest, typeId),
   };
 }
 

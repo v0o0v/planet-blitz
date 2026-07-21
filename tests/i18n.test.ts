@@ -26,6 +26,29 @@ import {
   moduleAffixNameKey,
   moduleAffixDescKey,
 } from '../data/coreModules.js';
+import { SHIP_TYPES, shipTypeDef, zeroSkillInvest } from '../data/ships/index.js';
+import {
+  shipTypeName,
+  shipTypeRole,
+  shipSignatureDesc,
+  shipTreeName,
+  hasMessageKey,
+} from '../src/ui/pixi/shipLabels.js';
+import {
+  LEGACY_SHOWCASE,
+  SHIP_SHOWCASE_NAMES,
+  UI_ASSET_NAMES,
+  shipShowcaseName,
+} from '../src/ui/pixi/uiTextures.js';
+import {
+  LEGACY_SHIP_SPRITE,
+  SHIP_SPRITE_NAMES,
+  shipSpriteName,
+  applyShipSprite,
+} from '../src/render/textures.js';
+import { buildRunConfig } from '../src/run/runConfig.js';
+import { defaultProfile, activeShip } from '../src/save/profile.js';
+import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
 
 afterEach(() => {
   setLocale('en'); // 다른 테스트에 로케일 누수 방지.
@@ -185,6 +208,293 @@ describe('카탈로그 완전성', () => {
         expect(v, `${label} emoji in ${key}`).not.toMatch(/\p{Extended_Pictographic}/u);
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 기체 타입 문자열 (M8-L9) — 검증 목록은 전부 `SHIP_TYPES` 파생이다.
+//
+// 하드코딩 목록을 쓰면 `data/ships/index.ts` 에 타입이 append 될 때 이 스위트가 새 키를
+// **모르고 그대로 그린**이 된다(설계서 §10-6 이 예측한 지점). STICKERS·INVASION_CATALOG
+// 선례대로 정본 배열에서 파생해, 타입을 추가하면 문구를 채우기 전까지 빨간불로 남긴다.
+// ---------------------------------------------------------------------------
+
+/** `ship.<slug>.name` / `.role` — 전 타입 필수. */
+function shipNameKeys(): string[] {
+  return SHIP_TYPES.flatMap((d) => [`ship.${d.slug}.name`, `ship.${d.slug}.role`]);
+}
+
+/**
+ * `ship.<slug>.signature` — **시그니처를 가진 타입만.** 스트라이커는 `signatureBit = -1`
+ * (설계서 §11: 의도된 부재)이라 키가 있으면 고아다. `shipSignatureDesc` 도 같은 조건으로
+ * 갈라지므로 화면과 검증이 같은 규칙을 쓴다.
+ */
+function shipSignatureKeys(): string[] {
+  return SHIP_TYPES.filter((d) => d.signatureBit >= 0).map((d) => `ship.${d.slug}.signature`);
+}
+
+/** `lab.tree.<treeSlug>` — 전 타입 × 3계열. 스트라이커 3개는 기존 키가 그대로 맞는다. */
+function shipTreeKeys(): string[] {
+  return [...new Set(SHIP_TYPES.flatMap((d) => d.trees.map((t) => `lab.tree.${t.slug}`)))];
+}
+
+/**
+ * `champion.bp.<축>` — 라벨 목록이 아니라 **`baseBp` 필드 파생**이다. 섀시 보정 축이 하나
+ * 늘면(예: 관통) 라벨이 없다는 것을 이 테스트가 즉시 말한다.
+ */
+function shipBpKeys(): string[] {
+  const axes = new Set<string>();
+  for (const d of SHIP_TYPES) {
+    for (const k of Object.keys(d.baseBp)) axes.add(`champion.bp.${k.replace(/Bp$/, '')}`);
+  }
+  return [...axes];
+}
+
+/** 챔피언 선택 화면이 부르는 그 밖의 키(배열 파생이 불가능한 화면 크롬). */
+const CHAMPION_CHROME_KEYS = [
+  'champion.title',
+  'champion.roster',
+  'champion.rosterSub',
+  'champion.confirm',
+  'champion.current',
+  'champion.signature',
+  'champion.signature.none',
+  'champion.chassis',
+  'champion.trees',
+  'champion.tree.meta',
+  'champion.retire.title',
+  'champion.retire.body',
+  'champion.retire.yes',
+  'champion.retire.no',
+  'hangar.act.swapShip',
+];
+
+function allShipKeys(): string[] {
+  return [
+    ...shipNameKeys(),
+    ...shipSignatureKeys(),
+    ...shipTreeKeys(),
+    ...shipBpKeys(),
+    ...CHAMPION_CHROME_KEYS,
+  ];
+}
+
+describe('기체 타입 카탈로그 완전성 (SHIP_TYPES 파생)', () => {
+  it('전 기체 타입의 ship.<slug>.name/.role 이 EN·KO 양쪽에 존재한다', () => {
+    expect(SHIP_TYPES.length).toBeGreaterThan(0);
+    for (const key of shipNameKeys()) {
+      expect(EN, `EN missing ${key}`).toHaveProperty(key);
+      expect(KO, `KO missing ${key}`).toHaveProperty(key);
+    }
+  });
+
+  it('시그니처를 가진 타입만 ship.<slug>.signature 를 갖는다(스트라이커는 없다)', () => {
+    const keys = shipSignatureKeys();
+    expect(keys.length).toBe(SHIP_TYPES.filter((d) => d.signatureBit >= 0).length);
+    for (const key of keys) {
+      expect(EN, `EN missing ${key}`).toHaveProperty(key);
+      expect(KO, `KO missing ${key}`).toHaveProperty(key);
+    }
+    for (const d of SHIP_TYPES) {
+      if (d.signatureBit >= 0) continue;
+      expect(EN, `EN orphan ship.${d.slug}.signature`).not.toHaveProperty(
+        `ship.${d.slug}.signature`,
+      );
+      expect(KO, `KO orphan ship.${d.slug}.signature`).not.toHaveProperty(
+        `ship.${d.slug}.signature`,
+      );
+    }
+  });
+
+  it('전 타입 3계열의 lab.tree.<slug> 가 EN·KO 양쪽에 존재한다', () => {
+    const keys = shipTreeKeys();
+    // 스트라이커 3 + 신규 4종 × 3 = 15(중복 없음). 계열 slug 가 겹치면 이 수가 줄어든다.
+    expect(keys.length).toBe(new Set(keys).size);
+    for (const key of keys) {
+      expect(EN, `EN missing ${key}`).toHaveProperty(key);
+      expect(KO, `KO missing ${key}`).toHaveProperty(key);
+    }
+  });
+
+  it('섀시 보정 4축(baseBp 파생)과 챔피언 화면 크롬 키가 EN·KO 양쪽에 존재한다', () => {
+    for (const key of [...shipBpKeys(), ...CHAMPION_CHROME_KEYS]) {
+      expect(EN, `EN missing ${key}`).toHaveProperty(key);
+      expect(KO, `KO missing ${key}`).toHaveProperty(key);
+    }
+  });
+
+  it('기체 문구가 비어 있지 않고 컬러 이모지를 쓰지 않는다(Pixi 두부 방지)', () => {
+    for (const key of allShipKeys()) {
+      for (const [label, table] of [
+        ['EN', EN as unknown as Record<string, string>],
+        ['KO', KO as unknown as Record<string, string>],
+      ] as const) {
+        const v = table[key] ?? '';
+        expect(v.length, `${label} empty ${key}`).toBeGreaterThan(0);
+        expect(v, `${label} emoji in ${key}`).not.toMatch(/\p{Extended_Pictographic}/u);
+      }
+    }
+  });
+
+  /**
+   * 고아 키 가드 — 레지스트리에서 **파생되지 않는** `ship.*` / `lab.tree.*` 키가 남아 있으면
+   * 잡는다. 존재 검증은 방향이 반대라 이것을 절대 못 잡는다: 타입·계열 slug 를 개명하면 옛
+   * 문구가 조용히 남아 썩는다(`def3` 고아 가드와 같은 논리).
+   */
+  it('레지스트리에서 파생되지 않는 고아 ship.* / lab.tree.* 키가 없다', () => {
+    // `lab.tree.sub` 는 계열 이름이 아니라 트리 패널 부제다 — 접두사만 겹친다.
+    const treeAllow = new Set([...shipTreeKeys(), 'lab.tree.sub']);
+    const shipAllow = new Set([...shipNameKeys(), ...shipSignatureKeys()]);
+    for (const [label, table] of [
+      ['EN', EN as unknown as Record<string, string>],
+      ['KO', KO as unknown as Record<string, string>],
+    ] as const) {
+      const keys = Object.keys(table);
+      expect(
+        keys.filter((k) => k.startsWith('ship.') && !shipAllow.has(k)),
+        `${label} orphan ship.* keys`,
+      ).toEqual([]);
+      expect(
+        keys.filter((k) => k.startsWith('lab.tree.') && !treeAllow.has(k)),
+        `${label} orphan lab.tree.* keys`,
+      ).toEqual([]);
+    }
+  });
+});
+
+describe('기체 표시명 — 정규 경로 통합 (Profile → buildRunConfig → createWorld → stepWorld)', () => {
+  /**
+   * 설계서 §10-6 의 결함은 "카탈로그에 키를 넣었는데 화면이 다른 키를 본다" 이므로, 키 존재만
+   * 봐서는 닫히지 않는다. **런을 실제로 굴린 뒤** 그 런의 `shipType` 으로 화면 함수를 호출해
+   * 자리표시자(`humanizeSlug` 결과)가 아니라 카탈로그 문자열이 나오는지 확인한다.
+   */
+  it('실제로 굴린 런의 shipType 으로 뽑은 이름·시그니처·계열명이 자리표시자가 아니다', () => {
+    for (const def of SHIP_TYPES) {
+      const p = defaultProfile();
+      const ship = activeShip(p);
+      ship.typeId = def.id;
+      ship.skillInvest = zeroSkillInvest(def.id);
+
+      const cfg = buildRunConfig(p, { planet: 0, tier: 0 });
+      expect(cfg.shipType, `${def.slug} shipType`).toBe(def.id);
+
+      const state = createWorld(4242, { ...cfg, playerHp: 100_000_000 });
+      for (let i = 0; i < 30; i++) stepWorld(state, emptyInput());
+
+      const live = shipTypeDef(state.config.shipType ?? 0);
+      expect(live.slug).toBe(def.slug);
+
+      for (const [locale, table] of [
+        ['en', EN as unknown as Record<string, string>],
+        ['ko', KO as unknown as Record<string, string>],
+      ] as const) {
+        setLocale(locale);
+        // 등재 여부를 먼저 못박는다 — `tShipKey` 는 미등재 키를 자리표시자로 덮으므로,
+        // 반환값만 보면 "키가 없는데 그럴듯한 문자열"이 통과한다(EN 'Striker' 가 실제로
+        // 자리표시자와 같다). 등재 + 카탈로그 값 일치를 함께 본다.
+        expect(hasMessageKey(`ship.${live.slug}.name`), `${locale}/${def.slug} name key`).toBe(true);
+        expect(shipTypeName(live), `${locale}/${def.slug} name`).toBe(
+          table[`ship.${live.slug}.name`],
+        );
+        expect(shipTypeRole(live), `${locale}/${def.slug} role`).toBe(
+          table[`ship.${live.slug}.role`],
+        );
+        if (live.signatureBit >= 0) {
+          expect(shipSignatureDesc(live), `${locale}/${def.slug} signature`).toBe(
+            table[`ship.${live.slug}.signature`],
+          );
+        } else {
+          expect(shipSignatureDesc(live)).toBe('');
+        }
+        for (const tree of live.trees) {
+          expect(hasMessageKey(`lab.tree.${tree.slug}`), `${locale}/${tree.slug} key`).toBe(true);
+          expect(shipTreeName(tree), `${locale}/${tree.slug}`).toBe(table[`lab.tree.${tree.slug}`]);
+        }
+      }
+    }
+  });
+});
+
+describe('기체 아트 슬롯 — 파일이 없어도 폴백이 동작한다', () => {
+  it('쇼케이스·인게임 스프라이트 basename 이 SHIP_TYPES 파생이고 중복이 없다', () => {
+    expect(SHIP_SHOWCASE_NAMES.length).toBe(SHIP_TYPES.length);
+    expect(SHIP_SPRITE_NAMES.length).toBe(SHIP_TYPES.length);
+    expect(new Set(SHIP_SHOWCASE_NAMES).size).toBe(SHIP_TYPES.length);
+    expect(new Set(SHIP_SPRITE_NAMES).size).toBe(SHIP_TYPES.length);
+    // 타입 0 만 레거시 이름을 유지한다(파일 개명 금지 — 설계서 §9).
+    expect(SHIP_SHOWCASE_NAMES[0]).toBe(LEGACY_SHOWCASE);
+    expect(SHIP_SPRITE_NAMES[0]).toBe(LEGACY_SHIP_SPRITE);
+    for (const d of SHIP_TYPES.slice(1)) {
+      expect(SHIP_SHOWCASE_NAMES[d.id]).toBe(`ship_showcase_${d.slug}.png`);
+      expect(SHIP_SPRITE_NAMES[d.id]).toBe(`ship_${d.slug}.png`);
+    }
+  });
+
+  it('쇼케이스 전종이 UI 로더 목록에 등재돼 있다(등재 누락 = 조용한 null)', () => {
+    for (const name of SHIP_SHOWCASE_NAMES) expect(UI_ASSET_NAMES).toContain(name);
+  });
+
+  /**
+   * 아트는 코드보다 늦게 온다. 실 PNG 가 하나도 없는 상태(= 로더가 전 슬롯 null)에서도
+   * 소비 측 폴백 사슬이 **예외 없이** 값을 낸다는 것을 확인한다. 격납고
+   * (`src/ui/pixi/hangar.ts:543`)와 같은 식이다.
+   */
+  it('로드된 텍스처가 하나도 없어도 쇼케이스 조회가 예외 없이 폴백한다', () => {
+    const empty: Record<string, string | null> = {};
+    const legacyOnly: Record<string, string | null> = { [LEGACY_SHOWCASE]: 'legacy' };
+    for (const d of SHIP_TYPES) {
+      const name = shipShowcaseName(d.id);
+      expect(() => empty[name] ?? empty[LEGACY_SHOWCASE] ?? null).not.toThrow();
+      expect(empty[name] ?? empty[LEGACY_SHOWCASE] ?? null).toBeNull(); // Graphics 폴백으로 내려간다
+      expect(legacyOnly[name] ?? legacyOnly[LEGACY_SHOWCASE]).toBe('legacy');
+    }
+  });
+
+  it('손상된 typeId 도 존재하지 않는 파일명을 만들지 않는다(0 으로 복귀)', () => {
+    for (const bad of [999, -1, Number.NaN, SHIP_TYPES.length]) {
+      expect(shipShowcaseName(bad)).toBe(LEGACY_SHOWCASE);
+      expect(shipSpriteName(bad)).toBe(LEGACY_SHIP_SPRITE);
+    }
+  });
+
+  /**
+   * **아트 부채를 코드에 명시한다.** 신규 4종의 PNG 는 아직 없다(생성은 별도 파이프라인).
+   * 이 테스트는 "없어도 괜찮다"를 고정하는 것이 아니라, 파일이 도착했을 때 목록이 자동으로
+   * 따라오는지를 본다 — 존재 여부는 폴백이 흡수하므로 실패시키지 않는다.
+   */
+  /**
+   * `applyShipSprite` = 런 시작 시점의 **동기** 교체(W4 게이트 신규). basename 유도만 보는
+   * 위 케이스들은 "이름은 맞는데 플레이어 슬롯에 실제로 안 들어간다"를 못 잡는다.
+   */
+  it('applyShipSprite 가 플레이어 슬롯을 그 타입의 스프라이트로 실제로 바꾼다', () => {
+    const stub = {
+      player: 'procedural' as unknown,
+      shipByType: SHIP_TYPES.map((d) => `tex:${d.slug}` as unknown),
+    } as unknown as Parameters<typeof applyShipSprite>[0];
+
+    for (const d of SHIP_TYPES) {
+      applyShipSprite(stub, d.id);
+      expect(stub.player as unknown as string).toBe(`tex:${d.slug}`);
+    }
+    // 손상 typeId 는 0(스트라이커)으로 복귀 — 조용히 다른 기체를 그리지 않는다.
+    for (const bad of [999, -1, Number.NaN, SHIP_TYPES.length]) {
+      applyShipSprite(stub, bad);
+      expect(stub.player as unknown as string).toBe(`tex:${SHIP_TYPES[0]!.slug}`);
+    }
+  });
+
+  it('필요한 기체 아트 파일 목록이 레지스트리와 정확히 일치한다', () => {
+    const need = [...SHIP_SHOWCASE_NAMES.slice(1), ...SHIP_SPRITE_NAMES.slice(1)];
+    expect(need).toEqual([
+      'ship_showcase_bruiser.png',
+      'ship_showcase_arccaster.png',
+      'ship_showcase_phantom.png',
+      'ship_showcase_bion.png',
+      'ship_bruiser.png',
+      'ship_arccaster.png',
+      'ship_phantom.png',
+      'ship_bion.png',
+    ]);
   });
 });
 

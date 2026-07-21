@@ -42,6 +42,13 @@ export interface Replay {
 const FNV_OFFSET = 0x811c9dc5;
 const FNV_PRIME = 0x01000193;
 
+/**
+ * 기체 타입 꼬리 폴드의 포맷 버전(M8, 설계서 §4). 타입 0(스트라이커)에서는 **접히지 않으므로**
+ * 이 값을 올려도 기존 PvE·침공 해시는 불변이다. 비스트라이커 폴드 레이아웃이 바뀌면 이 값만
+ * 올려 구·신을 즉시 갈라놓는다(INVASION_HASH_VERSION 과 같은 규율).
+ */
+export const SHIP_HASH_VERSION = 1;
+
 const scratch = new ArrayBuffer(8);
 const scratchF64 = new Float64Array(scratch);
 const scratchBytes = new Uint8Array(scratch);
@@ -428,6 +435,22 @@ export function hashWorld(state: WorldState): number {
     h = hashU32(h, (rt?.accelCp ?? 0) >>> 0);
     // (6) 레이어 클리어 보너스로 적립되는 폭탄(정수, 상한 3). 자원 위조를 봉인한다.
     h = hashU32(h, (carrier.invasion3Bombs ?? 0) >>> 0);
+  }
+  // --- M8 기체 타입(APPEND-ONLY, 조건부 · 침공 3레이어 블록 **바깥**) ---
+  // ⚠️ 위 `if (inv3 !== undefined)` 블록 **안에 넣지 마라.** 그 블록은 3레이어 전용이고(:392-394
+  // 주석), 기체 타입은 PvE·침공 양쪽에 공통이다. 블록 안에 있으면 PvE 비스트라이커 런이
+  // 타입을 전혀 봉인하지 못한다.
+  //
+  // 조건부인 이유: `shipType` 이 0(스트라이커, 미지정 포함)이면 **한 폴드도 실행하지 않는다** →
+  // 기존 PvE·침공 fixtures 와 W0 골든이 바이트 단위로 불변이다(설계서 §5 다섯 겹 방어 중 2·3번).
+  //
+  // 엄밀히는 잉여 폴드다(시그니처 비트가 uniqueMask 를 통해 타입을 유일 결정한다). 그럼에도
+  // 접는 이유: 서버(EF) 가 타입을 **추론이 아니라 명시**로 읽고, 훗날 시그니처 없는 타입이
+  // 추가돼도 그 추론이 조용히 깨지지 않는다. 스트라이커 비용이 0 이라 보험료가 공짜다.
+  const st = state.config.shipType ?? 0;
+  if (st !== 0) {
+    h = hashU32(h, SHIP_HASH_VERSION >>> 0);
+    h = hashU32(h, st >>> 0);
   }
   return h >>> 0;
 }

@@ -12,20 +12,18 @@
  * every change, and never touches the simulation.
  */
 
+import type { SkillNode } from '../../data/skills.js';
 import {
-  SKILLS,
-  SKILL_TREES,
-  NODES_PER_TREE,
-  TREE_DEPTH,
-  treeRange,
-  capstoneIndex,
-  capstoneUnlocked,
-  treeBaseInvested,
-  CAPSTONE_GATE,
-  type SkillTree,
-} from '../../data/skills.js';
+  shipTypeDef,
+  flattenShipNodes,
+  shipTreeRange,
+  shipCapstoneIndex,
+  type ShipTypeDef,
+  type TreeAffinity,
+} from '../../data/ships/index.js';
 import type { StatKey } from '../items/types.js';
-import { computeSkillStats } from '../items/skills.js';
+import { computeSkillStats, shipCapstoneUnlocked, shipTreeBaseInvested } from '../items/skills.js';
+import { shipTreeName } from './pixi/shipLabels.js';
 import { t, type MessageKey } from '../i18n/index.js';
 import {
   investSkill,
@@ -38,11 +36,14 @@ import {
   type Profile,
 } from '../save/profile.js';
 
-/** Tree id → header label key + accent colour. */
-const TREE_META: Record<SkillTree, { nameKey: MessageKey; accent: string }> = {
-  firepower: { nameKey: 'lab.tree.firepower', accent: '#ff7a4c' },
-  survival: { nameKey: 'lab.tree.survival', accent: '#4cd7ff' },
-  mobility: { nameKey: 'lab.tree.mobility', accent: '#8fd94c' },
+/**
+ * 계열 강조색의 축은 **affinity(역할)** 다 — 트리 이름도 인덱스도 아니다(M8, 설계서 §2).
+ * Pixi 판 `AFFINITY_ACCENT` 와 같은 색이고, 스트라이커 3계열의 기존 색이 그대로 보존된다.
+ */
+const AFFINITY_ACCENT: Readonly<Record<TreeAffinity, string>> = {
+  offense: '#ff7a4c',
+  defense: '#4cd7ff',
+  utility: '#8fd94c',
 };
 
 /** Derived-stat preview rows: [StatKey, labelKey, isPercent]. */
@@ -137,7 +138,20 @@ export class ResearchLab {
     saveProfile(this.profile, this.store);
   }
 
-  private invest(index: number): void {
+  /** 현재 편집 대상 = 활성 기체의 타입 정의(트리 수·노드 수·게이트의 단일 출처). */
+  private def(): ShipTypeDef {
+    return shipTypeDef(activeShip(this.profile).typeId);
+  }
+
+  /**
+   * 투자 벡터 정본(M8 v4) = **활성 기체 벡터**. 계정 단위 `Profile.skillInvest` 는 M8-L7 이
+   * 삭제했다(설계서 §6) — 미러도 별칭도 남아 있지 않으므로 여기가 유일한 읽기 경로다.
+   */
+  private invest(): number[] {
+    return activeShip(this.profile).skillInvest;
+  }
+
+  private investNode(index: number): void {
     if (!investSkill(this.profile, index)) {
       this.hint = this.profile.skillPoints <= 0 ? t('lab.err.noPoints') : t('lab.err.maxed');
       this.render();
@@ -181,7 +195,8 @@ export class ResearchLab {
 
     const cols = document.createElement('div');
     cols.className = 'pb-cols';
-    for (const tree of SKILL_TREES) cols.appendChild(this.treePanel(tree));
+    // 계열 수·구성은 활성 기체 타입이 정한다(3계열 고정 가정 제거).
+    this.def().trees.forEach((_, i) => cols.appendChild(this.treePanel(i)));
     cols.appendChild(this.statsPanel());
     this.root.appendChild(cols);
 
@@ -205,47 +220,55 @@ export class ResearchLab {
     this.root.appendChild(hintEl);
   }
 
-  private treePanel(tree: SkillTree): HTMLElement {
-    const meta = TREE_META[tree];
+  private treePanel(treeIndex: number): HTMLElement {
+    const def = this.def();
+    const treeDef = def.trees[treeIndex]!;
+    const accent = AFFINITY_ACCENT[treeDef.affinity];
+    const nodes = flattenShipNodes(def);
     const panel = document.createElement('div');
     panel.className = 'pb-tree';
     const h2 = document.createElement('h2');
-    h2.textContent = t(meta.nameKey);
-    h2.style.color = meta.accent;
+    h2.textContent = shipTreeName(treeDef);
+    h2.style.color = accent;
     panel.appendChild(h2);
     const sub = document.createElement('div');
     sub.className = 'pb-tsub';
-    const { start } = treeRange(tree);
-    let invested = 0;
-    for (let j = 0; j < NODES_PER_TREE; j++) invested += this.profile.skillInvest[start + j] ?? 0;
-    sub.textContent = t('lab.tree.sub', { n: invested });
+    sub.textContent = t('lab.tree.sub', { n: shipTreeBaseInvested(this.invest(), def, treeIndex) });
     panel.appendChild(sub);
 
-    // 5 tiers × 4 nodes. SKILLS within a tree are tier-ascending, 4 per tier.
-    for (let tier = 0; tier < TREE_DEPTH; tier++) {
+    // ⚠️ 티어 행은 노드의 **`tier` 값으로 묶는다**. 예전 구현은 `NODES_PER_TREE / TREE_DEPTH`
+    // (= 20/5 = 4)를 "티어당 노드 수" 로 나눠 썼는데, 그 산술은 스트라이커 한 타입에만 맞는
+    // 우연이다 — 비온(25노드)에서는 5가 되어 티어 경계가 통째로 어긋난다.
+    const { start, end } = shipTreeRange(def, treeIndex);
+    const byTier = new Map<number, { index: number; node: SkillNode }[]>();
+    for (let index = start; index < end; index++) {
+      const node = nodes[index];
+      if (node === undefined) continue;
+      const bucket = byTier.get(node.tier);
+      if (bucket === undefined) byTier.set(node.tier, [{ index, node }]);
+      else bucket.push({ index, node });
+    }
+    for (const tier of [...byTier.keys()].sort((a, b) => a - b)) {
       const row = document.createElement('div');
       row.className = 'pb-tier';
-      for (let c = 0; c < NODES_PER_TREE / TREE_DEPTH; c++) {
-        const localIdx = tier * (NODES_PER_TREE / TREE_DEPTH) + c;
-        const index = start + localIdx;
-        const node = SKILLS[index];
-        if (node === undefined) continue;
-        row.appendChild(this.nodeEl(index, meta.accent));
-      }
+      for (const entry of byTier.get(tier) ?? []) row.appendChild(this.nodeEl(entry.index, accent));
       panel.appendChild(row);
     }
-    // 최상위 질적 캡스톤(GDD §4): 계열 base 40pt 게이트를 채우면 해금·투자 가능.
-    panel.appendChild(this.capstoneEl(tree, meta.accent));
+    // 최상위 질적 캡스톤(GDD §4): 계열 base 게이트(타입별)를 채우면 해금·투자 가능.
+    panel.appendChild(this.capstoneEl(treeIndex, accent));
     return panel;
   }
 
   /** 계열 캡스톤 노드 엘리먼트(게이트 미달이면 잠금 표시 + 진행도, 통과면 투자 가능). */
-  private capstoneEl(tree: SkillTree, accent: string): HTMLElement {
-    const index = capstoneIndex(tree);
-    const node = SKILLS[index]!;
-    const cur = this.profile.skillInvest[index] ?? 0;
-    const unlocked = capstoneUnlocked(this.profile.skillInvest, tree);
-    const invested = treeBaseInvested(this.profile.skillInvest, tree);
+  private capstoneEl(treeIndex: number, accent: string): HTMLElement {
+    const def = this.def();
+    const invest = this.invest();
+    const index = shipCapstoneIndex(def, treeIndex);
+    const node = flattenShipNodes(def)[index]!;
+    const cur = invest[index] ?? 0;
+    const unlocked = shipCapstoneUnlocked(invest, def, treeIndex);
+    const invested = shipTreeBaseInvested(invest, def, treeIndex);
+    const gate = def.capstoneGate;
     const maxed = cur >= node.maxPoints;
     const el = document.createElement('div');
     el.className = `pb-node pb-capstone${maxed ? ' maxed' : cur > 0 ? ' invested' : ''}${unlocked && !maxed ? '' : ' cant'}`;
@@ -259,7 +282,7 @@ export class ResearchLab {
       pt.innerHTML = `<span>${node.desc}</span><b>${cur}/${node.maxPoints}</b>`;
       if (cur > 0) el.style.borderColor = accent;
     } else {
-      pt.innerHTML = `<span>${t('lab.capstone.locked', { g: CAPSTONE_GATE })}</span><b>${invested}/${CAPSTONE_GATE}</b>`;
+      pt.innerHTML = `<span>${t('lab.capstone.locked', { g: gate })}</span><b>${invested}/${gate}</b>`;
     }
     el.appendChild(nm);
     el.appendChild(pt);
@@ -269,16 +292,16 @@ export class ResearchLab {
 
   private investCapstone(index: number, unlocked: boolean): void {
     if (!unlocked) {
-      this.hint = t('lab.capstone.needGate', { g: CAPSTONE_GATE });
+      this.hint = t('lab.capstone.needGate', { g: this.def().capstoneGate });
       this.render();
       return;
     }
-    this.invest(index);
+    this.investNode(index);
   }
 
   private nodeEl(index: number, accent: string): HTMLElement {
-    const node = SKILLS[index]!;
-    const cur = this.profile.skillInvest[index] ?? 0;
+    const node = flattenShipNodes(this.def())[index]!;
+    const cur = this.invest()[index] ?? 0;
     const el = document.createElement('div');
     const maxed = cur >= node.maxPoints;
     const canInvest = !maxed && this.profile.skillPoints > 0;
@@ -293,7 +316,7 @@ export class ResearchLab {
     el.appendChild(nm);
     el.appendChild(pt);
     if (cur > 0) el.style.borderColor = accent;
-    el.addEventListener('click', () => this.invest(index));
+    el.addEventListener('click', () => this.investNode(index));
     return el;
   }
 
@@ -303,7 +326,7 @@ export class ResearchLab {
     const h = document.createElement('h2');
     h.textContent = t('lab.derivedStats');
     panel.appendChild(h);
-    const sums = computeSkillStats(this.profile.skillInvest);
+    const sums = computeSkillStats(this.invest(), this.def().id);
     for (const [key, labelKey, isPct] of PREVIEW_ROWS) {
       const v = sums[key];
       if (v === 0) continue;

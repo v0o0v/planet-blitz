@@ -14,9 +14,10 @@
 import type { Item, StatKey } from './types.js';
 import type { LoadoutConfig } from '../sim/world.js';
 import { UNIQUE_REGISTRY } from './uniques.js';
-import { computeSkillStats } from './skills.js';
+import { computeSkillStats, shipCapstoneActive } from './skills.js';
 import { normalizeLineageBonus } from '../../data/guardian.js';
-import { capstoneActive } from '../../data/skills.js';
+import { DEFAULT_SHIP_TYPE, shipTypeDef } from '../../data/ships/index.js';
+import type { ShipBaseBp, TreeAffinity } from '../../data/ships/index.js';
 import { CAP_FIREPOWER_LASER, CAP_SURVIVAL_CRIT, CAP_MOBILITY_DASH } from '../sim/capstones.js';
 // side-effect: M2 유니크 5점을 레지스트리에 등록(장착 유니크의 bit → uniqueMask).
 import '../../data/uniques.js';
@@ -173,6 +174,55 @@ function applyShipLineageBonus(lo: LoadoutConfig, bonusBp: number): void {
 }
 
 /**
+ * 기체 타입 기본 보정(baseBp)의 안전 범위. 하한은 `10000 + bp` 가 0 이하가 되어 발사 간격
+ * 배율이 0 나눗셈/부호 반전이 되는 것을 막는다(손상 데이터 방어 — 정상 로스터는 ±2500 이내).
+ */
+const SHIP_BASE_BP_MIN = -9000;
+const SHIP_BASE_BP_MAX = 20000;
+
+function normalizeShipBaseBp(v: number): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return 0;
+  const n = Math.trunc(v);
+  if (n < SHIP_BASE_BP_MIN) return SHIP_BASE_BP_MIN;
+  if (n > SHIP_BASE_BP_MAX) return SHIP_BASE_BP_MAX;
+  return n;
+}
+
+/**
+ * 기체 타입(ADR-0019)의 기본 스탯 보정을 로드아웃에 적용한다(M8 설계 §4).
+ *
+ * 문법은 {@link applyShipLineageBonus} 와 **완전히 같다** — 이미 검증된 결정론 경로이기
+ * 때문이다: 정수 basis-point 를 **단일 나눗셈**으로 한 번만 적용하고, 축마다 `0` 이면
+ * 아무 연산도 하지 않는다. 스트라이커는 4축 전부 0 이라 이 함수 전체가 자동 무연산이 되고,
+ * 그 결과 기존 런의 `LoadoutConfig` 가 **바이트 불변**이다(설계 §5 다섯 겹 방어 ②).
+ *
+ * 축 의미: damage 는 배율 ↑, fireRate 는 **양수 = 연사 ↑ = 발사 간격 ↓**(계보와 동일한
+ * `10000/(10000+b)`), maxHp 는 기준 HP 100 대비 flat 가산, moveSpeed 는 배율 ↑.
+ */
+function applyShipTypeBase(lo: LoadoutConfig, baseBp: ShipBaseBp): void {
+  const d = normalizeShipBaseBp(baseBp.damageBp);
+  if (d !== 0) lo.damageMult *= (10000 + d) / 10000;
+  const f = normalizeShipBaseBp(baseBp.fireRateBp);
+  if (f !== 0) lo.fireRateMult *= 10000 / (10000 + f);
+  const h = normalizeShipBaseBp(baseBp.maxHpBp);
+  if (h !== 0) lo.maxHpAdd += Math.round((BASE_HP_REF * h) / 10000);
+  const m = normalizeShipBaseBp(baseBp.moveSpeedBp);
+  if (m !== 0) lo.moveSpeedMult *= (10000 + m) / 10000;
+}
+
+/**
+ * 계열 affinity → 그 계열 캡스톤이 켜는 `uniqueMask` 비트. 캡스톤 효과는 sim 이 비트로
+ * 게이트하므로(`src/sim/capstones.ts`), 신규 타입도 **역할이 같은** 계열이 같은 효과를
+ * 얻는다. 스트라이커 매핑(firepower→offense·survival→defense·mobility→utility)이 1:1 이라
+ * 타입 0 의 마스크는 비트값·OR 순서까지 기존과 동일하다.
+ */
+const CAPSTONE_BIT_BY_AFFINITY: Readonly<Record<TreeAffinity, number>> = {
+  offense: CAP_FIREPOWER_LASER,
+  defense: CAP_SURVIVAL_CRIT,
+  utility: CAP_MOBILITY_DASH,
+};
+
+/**
  * Fold the equipped items (and optional skill investment) into a derived stat
  * block + meta mods. Order of the items does not matter (all contributions are
  * summed). When `invest` is supplied, the skill-derived stats stack on top of
@@ -181,13 +231,22 @@ function applyShipLineageBonus(lo: LoadoutConfig, bonusBp: number): void {
  * empty `invest` reproduces the M2 gear-only result exactly (backward compat).
  * `shipBonusBp`(계보 기체 가지, data/lineage.ts shipBonusBp)가 주어지면 마지막에
  * {@link applyShipLineageBonus} 로 겹친다 — 미지정/0 은 기존 결과와 완전 동일.
+ *
+ * `typeId`(ADR-0019 기체 타입, M8)는 **optional 이며 미지정 = 0(스트라이커)** 이다. 타입 0 은
+ * 시그니처 비트가 없고(-1) baseBp 가 전 축 0 이며 트리 슬라이스가 기존과 동일하므로,
+ * `computeLoadoutStats(eq, inv, bp)` 와 `computeLoadoutStats(eq, inv, bp, 0)` 는 물론
+ * M8 이전 구현과도 결과가 **완전히 동일**하다(설계 §5 — 스트라이커 불변의 핵심 관문,
+ * tests/skills.test.ts 가 명시적으로 못 박는다). 범위 밖 typeId 는 손상 세이브로 보고
+ * 스트라이커로 되돌린다(`shipTypeDef` 가 정규화).
  */
 export function computeLoadoutStats(
   equipped: readonly Item[],
   invest?: readonly number[],
   shipBonusBp?: number,
+  typeId: number = DEFAULT_SHIP_TYPE,
 ): ComputedLoadout {
   const lo = neutralLoadout();
+  const shipType = shipTypeDef(typeId);
 
   // Weapon / sub-weapon type from the equipped main/sub items.
   const main = equipped.find((it) => it.slot === 'main');
@@ -195,6 +254,9 @@ export function computeLoadoutStats(
   lo.weaponType = main?.weaponType ?? WEAPON_VULCAN;
   lo.subWeaponType = sub?.weaponType ?? SUB_WEAPON_NONE;
   applyWeaponTypeBase(lo, lo.weaponType);
+  // 기체 타입 섀시 보정(M8): 무기 타입 baseline 과 같은 결의 "출발점" 이므로 여기서 겹친다.
+  // 스트라이커(전 축 0)는 무연산 → 기존 결과 바이트 불변.
+  applyShipTypeBase(lo, shipType.baseBp);
 
   // Sum every equipped item's affixes, then OR in unique bits.
   const sums = zeroSums();
@@ -210,15 +272,25 @@ export function computeLoadoutStats(
   // Gear pass: convert integer percent/flat affix sums into multipliers/adds.
   applyStatSums(lo, sums);
   // Skill pass: fold skill-derived stats on top (synergy applied in skills.ts).
-  if (invest !== undefined) applyStatSums(lo, computeSkillStats(invest));
+  if (invest !== undefined) applyStatSums(lo, computeSkillStats(invest, shipType.id));
   // 스킬트리 최상위 질적 캡스톤(GDD §4): 게이트(계열 base 40pt) + 캡스톤 1pt 가 찍힌 계열의
   // 효과 비트를 uniqueMask 상위 비트(15~17)에 OR 한다. 신규 필드/해시 폴드 없이 sim이
   // hasCapstone 으로 게이트한다(캡스톤 미보유 런은 uniqueMask 불변 → 기존 해시 완전 불변).
+  // M8: 계열은 타입별이므로 트리 인덱스로 순회하고, 비트는 affinity 로 고른다. 스트라이커는
+  // 트리 순서·affinity 매핑이 1:1 이라 OR 되는 비트도 순서도 M7 이전과 동일하다.
   if (invest !== undefined) {
-    if (capstoneActive(invest, 'firepower')) uniqueMask |= 1 << CAP_FIREPOWER_LASER;
-    if (capstoneActive(invest, 'survival')) uniqueMask |= 1 << CAP_SURVIVAL_CRIT;
-    if (capstoneActive(invest, 'mobility')) uniqueMask |= 1 << CAP_MOBILITY_DASH;
+    for (let ti = 0; ti < shipType.trees.length; ti++) {
+      const tree = shipType.trees[ti];
+      if (tree === undefined) continue;
+      if (shipCapstoneActive(invest, shipType, ti)) {
+        uniqueMask |= 1 << CAPSTONE_BIT_BY_AFFINITY[tree.affinity];
+      }
+    }
   }
+  // 기체 시그니처 패시브(M8 설계 §4): 타입이 가진 미사용 상위 비트(18~21)를 OR 한다.
+  // **스트라이커는 signatureBit = -1 이라 무연산** → 기존 런의 uniqueMask 가 바이트 불변.
+  const sig = shipType.signatureBit;
+  if (sig >= 0) uniqueMask |= 1 << sig;
   lo.uniqueMask = uniqueMask;
   // M3 원소 어픽스(상태이상): 정수 강도 합산을 그대로 실어 sim이 명중 시 소비한다.
   lo.fireDmg += sums.fireDmg;

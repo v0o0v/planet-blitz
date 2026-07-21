@@ -112,6 +112,16 @@ import {
   CRIT_NEGATE_IFRAMES,
   DASH_CLEAR_RADIUS,
 } from './capstones.js';
+import {
+  hasSignature,
+  SIG_BRUISER_ARMOR,
+  SIG_ARC_OVERCHARGE,
+  ARMOR_PER_STACK_BP,
+  ARMOR_DECAY_TICKS,
+  clampArmorStacks,
+  overchargeBp,
+} from './shipSignature.js';
+import { shipTypeDef } from '../../data/ships/index.js';
 import { SpatialHash, circlesOverlap } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
 import { updateBoss } from './boss.js';
@@ -397,6 +407,15 @@ export interface WorldConfig {
    * append-only 규율: 신규 필드는 항상 이 아래에만 추가.
    */
   invasion3?: Invasion3Config;
+  /**
+   * 기체 타입 id(`data/ships` 의 `SHIP_TYPES` 인덱스, ADR-0019). **optional** —
+   * **미지정 = 0(스트라이커)** 이며, 그 경우 이 필드가 만드는 신규 경로는 전부 조기 탈출한다:
+   * 시그니처 비트 없음(`signatureBit = -1`) · 파워업 affinity 슬라이스가 레거시와 바이트 동일 ·
+   * `hashWorld` 꼬리 폴드 미실행. 즉 **기존 config 조립을 한 줄도 안 고쳐도 해시가 불변**이다
+   * (설계서 §5 다섯 겹 방어 중 3번).
+   * append-only 규율: 신규 필드는 항상 이 아래에만 추가.
+   */
+  shipType?: number;
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {
@@ -762,6 +781,9 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   if (state.moduleRuntime !== undefined) stepModuleRuntime(state, player);
 
   stepPlayer(state, player, input);
+  // 기체 시그니처 카운터는 이동 직후·발사 이전에 갱신한다 — autoAttack 이 이번 틱의 과충전
+  // 값을 읽고, 피격 판정(resolveCollisions)이 이번 틱의 장갑 스택을 읽는다.
+  stepShipSignature(state, player, input);
   if (!designedRun) updateWaves(state, player);
   stepEnemies(state, player);
   stepBoss(state, player);
@@ -1035,6 +1057,58 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
 }
 
 // ---------------------------------------------------------------------------
+// 기체 시그니처 패시브 (M8 — 설계서 §3·§4). 순수 산술은 전부 sim/shipSignature.ts 소유.
+//
+// ## 신규 필드 0 · 신규 해시 폴드 0
+// 런타임 상태는 플레이어 엔티티의 범용 확장 슬롯(`aux0`/`aux1`)에만 싣는다. 그 슬롯은 이미
+// **조건부 꼬리**(replay.ts hashEntity — 둘 다 0 이면 무폴드)라 시그니처 없는 런(스트라이커 =
+// 기존 fixtures·W0 골든 전량)의 해시가 바이트 단위로 불변이다.
+//
+// ## 슬롯 배정 (한 런에 시그니처는 최대 하나라 충돌하지 않는다)
+//   브루저   aux0 = 장갑 스택(0..8) · aux1 = 마지막 피격 이후 경과 틱
+//   아크캐스터 aux0 = 연속 정지 틱      · aux1 = 미사용(0)
+//
+// ## 활성 판정을 두 축으로 OR 하는 이유
+// 정본은 `LoadoutConfig.uniqueMask` 의 시그니처 비트(M8-L4 가 loadout.ts 에서 OR-in)다. 다만
+// 그 배선이 빠지면 **패시브가 영구 미발동인데 어떤 테스트도 실패하지 않는다**(설계서 §10-1 이
+// 예측한 결함 유형). 그래서 sim 이 아는 또 하나의 권위 — `config.shipType`(해시에 봉인됨) —
+// 도 함께 인정한다. 스트라이커는 `signatureBit === -1` 이고 마스크에도 18~21 비트가 없으므로
+// **두 축 모두 false** → 조기 탈출(해시 불변).
+// ---------------------------------------------------------------------------
+
+/** 과충전 정지 카운터 상한. bp 는 190틱에서 이미 상한이라 거동 무영향, 정수 유계 유지용. */
+const OVERCHARGE_TICK_CAP = 600;
+
+/** 이 런에서 시그니처 `bit` 이 활성인가. 위 주석의 2축 OR. */
+function signatureOn(state: WorldState, bit: number): boolean {
+  if (hasSignature(state.config.loadout?.uniqueMask ?? 0, bit)) return true;
+  return shipTypeDef(state.config.shipType ?? 0).signatureBit === bit;
+}
+
+/**
+ * 시그니처 런타임 카운터를 1틱 진행한다(피해·발사 경로의 게이트가 읽는 값). 스트라이커는
+ * 두 분기 모두 false 라 본문이 한 줄도 실행되지 않는다.
+ */
+function stepShipSignature(state: WorldState, player: Entity, input: InputFrame): void {
+  if (signatureOn(state, SIG_BRUISER_ARMOR)) {
+    // 비피격 지속 시 스택이 하나씩 빠진다(설계서 §3: 비피격 180틱 후 1스택 소멸).
+    player.aux1++;
+    if (player.aux1 >= ARMOR_DECAY_TICKS) {
+      player.aux1 = 0;
+      if (player.aux0 > 0) player.aux0--;
+    }
+    return;
+  }
+  if (signatureOn(state, SIG_ARC_OVERCHARGE)) {
+    // 정지 판정은 **입력**으로 한다 — 속도는 감속 장판·코어 모듈 배율이 섞여 "멈춰 있는데
+    // 이동 중"으로 읽힐 여지가 있다. 입력은 리플레이가 그대로 재생하므로 재현이 자명하다.
+    const still = input.moveX === 0 && input.moveY === 0 && !input.dash;
+    if (!still) player.aux0 = 0;
+    else if (player.aux0 < OVERCHARGE_TICK_CAP) player.aux0++;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Enemies (pattern engine)
 // ---------------------------------------------------------------------------
 
@@ -1146,6 +1220,16 @@ function autoAttack(state: WorldState, player: Entity): void {
     ? overheatCooldown(w.fireCooldown, player.phase)
     : w.fireCooldown;
 
+  // 아크캐스터 시그니처 — 연속 정지 틱(player.aux0)에 비례한 피해 증폭(설계서 §3·§4).
+  // 미보유·이동 중이면 bp = 0 → `wDamage === w.damage` 로 **완전히 같은 값**이라 거동·해시 불변.
+  // ⚠️ L2 의 `overchargedDamage` 를 직접 부르지 않고 `overchargeBp` 만 쓰는 이유: 그 함수는
+  // 입력을 `Math.trunc` 하는데(정수 in/정수 out 규약), 이 sim 의 `weapon.damage` 는 소수 2자리
+  // 실수라(`Math.round(x*100)/100`) bp=0 인 평상시에도 소수부가 사라져 **비과충전 피해까지
+  // 바뀐다.** 적용 산술은 그 함수와 동형(정수 bp · 단일 나눗셈 · 반올림 1회)이며, 정수 피해에
+  // 대해서는 두 경로가 완전히 같은 값임을 tests/weapons.test.ts 가 못 박는다.
+  const ocBp = signatureOn(state, SIG_ARC_OVERCHARGE) ? overchargeBp(player.aux0) : 0;
+  const wDamage = ocBp === 0 ? w.damage : w.damage + Math.round((w.damage * ocBp) / 10000);
+
   const baseAngle = atan2(target.y - player.y, target.x - player.x);
   // Firing archetypes off `weaponType` (M2 B2 + M3 C1):
   //   2 = 레일건: one shot straight at the target (pierce/speed do the work).
@@ -1159,7 +1243,7 @@ function autoAttack(state: WorldState, player: Entity): void {
       player.y,
       baseAngle,
       w.bulletSpeed,
-      w.damage,
+      wDamage,
       w.pierce,
       w.bulletRadius,
       w.bulletLife,
@@ -1182,7 +1266,7 @@ function autoAttack(state: WorldState, player: Entity): void {
         player.y,
         ang,
         w.bulletSpeed,
-        w.damage,
+        wDamage,
         w.pierce,
         w.bulletRadius,
         w.bulletLife,
@@ -1213,7 +1297,7 @@ function autoAttack(state: WorldState, player: Entity): void {
         player.y + sa * dist,
         baseAngle,
         0,
-        w.damage,
+        wDamage,
         9999,
         BEAM_SEGMENT_RADIUS,
         BEAM_SEGMENT_LIFE,
@@ -1231,7 +1315,7 @@ function autoAttack(state: WorldState, player: Entity): void {
   //    무기에 롤될 수 없고, 설령 실려도 no-op.
   const twinOn = hasUnique(mask, UQ_TWIN_STAR) && w.weaponType === WEAPON_TYPE_SPREAD;
   const n = twinOn ? w.bulletCount * 2 : w.bulletCount;
-  const dmg = twinOn ? w.damage * TWIN_STAR_DAMAGE_MULT : w.damage;
+  const dmg = twinOn ? wDamage * TWIN_STAR_DAMAGE_MULT : wDamage;
   const start = n > 1 ? baseAngle - w.spread / 2 : baseAngle;
   const stepA = n > 1 ? w.spread / (n - 1) : 0;
   for (let i = 0; i < n; i++) {
@@ -2165,6 +2249,18 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // Supply raiders never harm the player (they do not attack).
   });
   if (dmg > 0 && !invulnerable) {
+    // 브루저 시그니처 — 장갑 스택 피해 감소(설계서 §3·§4). **생존 캡스톤 판정보다 먼저** 적용해
+    // "치명타 1회 무효" 가 감소된 피해로 치사 여부를 판정하게 한다(장갑이 살려낸 피격까지
+    // 캡스톤을 소진시키지 않는다). 미보유면 armorOn=false 로 한 줄도 실행되지 않는다.
+    // ⚠️ 산술은 shipSignature.ts 의 `armorReducedDamage` 와 동형(합산 bp · 단일 나눗셈)이되
+    // 그 함수의 `Math.trunc` 만 뺐다 — 접촉 피해에는 엘리트 배율이 섞여 소수가 될 수 있고,
+    // trunc 는 스택 0(bp=0)일 때조차 소수부를 지워 **무스택 피해까지 바꾼다.** 정수 피해에
+    // 대해 두 경로가 같은 값임은 tests/weapons.test.ts 가 못 박는다.
+    const armorOn = signatureOn(state, SIG_BRUISER_ARMOR);
+    if (armorOn) {
+      const bp = clampArmorStacks(player.aux0) * ARMOR_PER_STACK_BP;
+      if (bp > 0) dmg -= Math.round((dmg * bp) / 10000);
+    }
     // 생존 캡스톤 — 치명타 1회 무효(GDD §4): 이 피격이 치명적(hp가 0 이하로 떨어짐)이고 아직
     // 미소진(player.targetX===0)이면 피해를 전부 무효화하고 짧은 무적(CRIT_NEGATE_IFRAMES)을
     // 준다. 소진 표식은 player.targetX(플레이어 미사용 필드, 이미 해시됨)에 1로 실어 런당 1회로
@@ -2177,6 +2273,12 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     player.hp -= dmg;
     if (player.hp < 0) player.hp = 0;
     player.iframes = state.config.hitIframes;
+    // 브루저 시그니처 — 실제로 피해를 입은 이번 피격으로 장갑 1스택 적립 + 소멸 타이머 리셋.
+    // (캡스톤 무효 분기는 "없던 피격"이라 여기 도달하지 않는다 = 스택도 쌓이지 않는다.)
+    if (armorOn) {
+      player.aux0 = clampArmorStacks(player.aux0 + 1);
+      player.aux1 = 0;
+    }
     // ① 과열 드럼: 피격 시 연속 명중 스택 리셋(장착 시에만 phase가 비0).
     if (overheatOn) player.phase = 0;
     // ⑨ 반응 장갑(plan B4): 피격 시 방사형 반격 펄스(아군탄) 방출.

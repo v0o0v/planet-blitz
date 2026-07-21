@@ -12,10 +12,20 @@
 import { Assets, type Texture } from 'pixi.js';
 import { stickerByIndex } from '../../../data/stickers.js';
 import type { SkillNode } from '../../../data/skills.js';
+import { SHIP_TYPES, DEFAULT_SHIP_TYPE, shipTypeDef } from '../../../data/ships/index.js';
 
 /**
- * 연구소 스킬 노드 아이콘 35종 = 스탯 × 티어대 32 + 계열 캡스톤 3
+ * 연구소 스킬 노드 아이콘 39종 = 스탯 × 티어대 36 + 계열 캡스톤 3
  * (`.omc/plans/icon-manifest.json` 의 skill-stat · skill-capstone 축).
+ *
+ * ⚠️ **M8 아트 부채 4장.** M8 신규 기체 트리(`data/ships/{arccaster,phantom,bion}.ts`)가
+ * 스트라이커에 없던 (스탯, 티어대) 조합 4개를 새로 만들었다:
+ * `skill_range_flat_mid` · `skill_range_flat_high` · `skill_bullet_speed_pct_high` ·
+ * `skill_bullet_count_low`. **PNG 는 아직 없다** — `assets/skill_*.png` 는 35장뿐이다.
+ * 목록에 등재하지 않으면 설계서 §10-7 이 예측한 "조용한 null 폴백"(빈 셀인데 예외도 로그도
+ * 없음)이 되므로 먼저 등재하고, 아트는 M8-L9 가 채운다. 등재만으로는 화면이 여전히 비지만
+ * `tests/skillIcons.test.ts` 가 목록 ↔ 노드 수요를 전 SHIP_TYPES 에 대해 대조하므로
+ * 부채가 코드에 명시된다.
  *
  * 축이 (스탯, 티어대)라 **같은 스탯의 노드는 같은 그림을 공유한다** — "예리한"과 "잔혹한"이
  * 한 장을 쓰는 것은 결함이 아니라 결정의 내용이고, 구별은 노드 이름과 포인트 수치가 한다.
@@ -31,14 +41,18 @@ export const SKILL_ICON_NAMES = [
   'skill_fire_rate_pct_low.png',
   'skill_fire_rate_pct_mid.png',
   'skill_fire_rate_pct_high.png',
+  'skill_bullet_count_low.png',
   'skill_bullet_count_mid.png',
   'skill_bullet_count_high.png',
   'skill_bullet_speed_pct_low.png',
   'skill_bullet_speed_pct_mid.png',
+  'skill_bullet_speed_pct_high.png',
   'skill_pierce_low.png',
   'skill_pierce_mid.png',
   'skill_pierce_high.png',
   'skill_range_flat_low.png',
+  'skill_range_flat_mid.png',
+  'skill_range_flat_high.png',
   'skill_max_hp_flat_low.png',
   'skill_max_hp_flat_mid.png',
   'skill_max_hp_flat_high.png',
@@ -63,8 +77,34 @@ export const SKILL_ICON_NAMES = [
   'skill_capstone_mobility.png',
 ] as const;
 
+/**
+ * 스트라이커(타입 0)의 격납고 쇼케이스 파일명. **개명하지 않는다** — M8 이전부터 있던 자산이고,
+ * 파일을 옮기면 아트가 도착하지 않은 신규 타입까지 한꺼번에 빈 화면이 된다(설계서 §9).
+ */
+export const LEGACY_SHOWCASE = 'ship_showcase_fighter.png';
+
+/**
+ * 기체 타입 → 격납고 쇼케이스 basename(128×128). 타입 0 만 레거시 이름을 쓰고 1~ 은
+ * `ship_showcase_<slug>.png` 다. **범위 밖 typeId 는 `shipTypeDef` 가 0 으로 되돌린다** —
+ * 손상 세이브가 존재하지 않는 파일명을 만들어 조용히 빈 화면이 되는 것을 막는다.
+ *
+ * 순수 문자열 유도라 Pixi 없이 테스트한다. 실제 PNG 가 없으면 로더가 null 을 주고 소비 측
+ * (`hangar.ts`)이 **레거시 텍스처 → Graphics** 순으로 폴백한다(아트가 코드보다 늦게 온다).
+ */
+export function shipShowcaseName(typeId: number): string {
+  const def = shipTypeDef(typeId);
+  return def.id === DEFAULT_SHIP_TYPE ? LEGACY_SHOWCASE : `ship_showcase_${def.slug}.png`;
+}
+
+/**
+ * 전 기체 타입의 쇼케이스 basename(중복 없음). 리터럴 목록이 아니라 **레지스트리 파생**이다 —
+ * 하드코딩하면 `SHIP_TYPES` 에 타입이 추가될 때 로더가 조용히 그 한 장을 안 잡는다
+ * (설계서 §10-7 이 예측한 "조용한 null 폴백" 의 쇼케이스 판).
+ */
+export const SHIP_SHOWCASE_NAMES: readonly string[] = SHIP_TYPES.map((d) => shipShowcaseName(d.id));
+
 /** 로드 대상 UI 자산 basename (assets/ 아래, 확장자 포함). */
-export const UI_ASSET_NAMES = [
+export const UI_ASSET_NAMES: readonly string[] = [
   'ui_panel.png',
   'ui_banner.png',
   'ui_btn_red.png',
@@ -90,7 +130,8 @@ export const UI_ASSET_NAMES = [
   'ui_icon_check.png',
   'ui_icon_search.png',
   'ui_icon_trash.png',
-  'ship_showcase_fighter.png',
+  // 격납고·챔피언 선택 쇼케이스 — 타입 수만큼(레지스트리 파생, 타입 0 은 레거시 이름).
+  ...SHIP_SHOWCASE_NAMES,
   // 기지 맵 건물 아이콘(카툰나무풍 롤아웃 #1).
   'ui_bld_hangar.png',
   'ui_bld_research.png',
@@ -156,7 +197,7 @@ export const UI_ASSET_NAMES = [
   'equip_unique_relic_amplifier.png',
   // 연구소 스킬 노드 아이콘 35종 — 규칙은 {@link skillIconName}, 목록은 {@link SKILL_ICON_NAMES}.
   ...SKILL_ICON_NAMES,
-] as const;
+];
 
 /** StatKey(camelCase) → 파일명 조각(snake_case). `maxHpFlat` → `max_hp_flat`. */
 function statSlug(stat: string): string {

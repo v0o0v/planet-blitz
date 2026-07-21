@@ -191,6 +191,21 @@ export const EN = {
   'lab.tree.firepower': 'Firepower',
   'lab.tree.survival': 'Survival',
   'lab.tree.mobility': 'Mobility',
+  // M8 신규 기체 12계열. 키의 축은 `ShipTreeDef.slug` 다 — 위 3개(firepower/survival/mobility)는
+  // 스트라이커의 slug 라 개명 없이 그대로 맞는다. `tests/i18n.test.ts` 가 SHIP_TYPES 를 순회해
+  // 전 계열 slug 의 존재를 대조하므로, 타입이 늘면 문구를 채우기 전까지 빨간불이다.
+  'lab.tree.blade': 'Blade',
+  'lab.tree.morph': 'Morph',
+  'lab.tree.fortify': 'Fortify',
+  'lab.tree.chain': 'Chain',
+  'lab.tree.barrage': 'Barrage',
+  'lab.tree.barrier': 'Barrier',
+  'lab.tree.assassin': 'Assassin',
+  'lab.tree.phase': 'Phase',
+  'lab.tree.disrupt': 'Disrupt',
+  'lab.tree.swarm': 'Swarm',
+  'lab.tree.mutate': 'Mutate',
+  'lab.tree.blight': 'Blight',
   'lab.tree.sub': 'Invested {n}pt · lower tiers amplify higher nodes',
   'lab.browseAll': 'All Skills ({n}/{m} invested)',
   'lab.noInvested': 'Nothing invested in this tree yet.\nOpen the full list above to invest.',
@@ -284,6 +299,54 @@ export const EN = {
   'hangar.desc.element.cold': 'Slows enemies on hit.',
   'hangar.desc.element.lightning': 'Chains damage to nearby enemies.',
   'hangar.desc.lineage': 'Account-wide boost to your active ship.',
+  'hangar.act.swapShip': 'Change Ship',
+
+  // --- 기체 타입(M8, ADR-0019) ---
+  // 키의 축은 `ShipTypeDef.slug` 다(`src/ui/pixi/shipLabels.ts` 가 유도한다). 하드코딩 목록이
+  // 아니라 SHIP_TYPES 파생이므로, 타입이 늘면 `tests/i18n.test.ts` 가 누락을 잡는다.
+  // `.signature` 는 **시그니처를 가진 타입만** 둔다 — 스트라이커는 `signatureBit = -1`(설계서
+  // §11: 의도된 부재)이라 키가 있으면 오히려 고아다. 수치는 sim 정본
+  // (`src/sim/shipSignature.ts`)에서 그대로 옮겼다. 문구가 없는 효과를 약속하면 UI 가 거짓말을
+  // 한다. 컬러 이모지 금지(Pixi stripEmoji 가 두부로 떨군다).
+  'ship.striker.name': 'Striker',
+  'ship.striker.role': 'Balanced baseline — no chassis bias in any direction.',
+  'ship.bruiser.name': 'Bruiser',
+  'ship.bruiser.role': 'Brawler that walks into fire. Heaviest hull, shortest reach.',
+  'ship.bruiser.signature':
+    'Armor Stacks — each hit you take adds a stack (up to 8). Every stack cuts incoming damage by 2.5%, so a full stack absorbs 20%. One stack falls off after 3 seconds without being hit.',
+  'ship.arccaster.name': 'Arccaster',
+  'ship.arccaster.role': 'Siege gunner. Longest range and densest volleys, slowest to reposition.',
+  'ship.arccaster.signature':
+    'Overcharge — stand still for 1.5 seconds to gain +15% damage, then +15% for each further second, up to +40%. Moving cancels it instantly.',
+  'ship.phantom.name': 'Phantom',
+  'ship.phantom.role': 'Glass assassin. Highest single-shot damage, thinnest hull.',
+  'ship.phantom.signature':
+    'Cloak — go 4 seconds without being hit to slip out of enemy targeting. The shot that breaks cloak lands at 2.5x damage.',
+  'ship.bion.name': 'Bion',
+  'ship.bion.role': 'Swarm host. Fastest fire rate and the widest trees, weakest single shot.',
+  'ship.bion.signature':
+    'Spore Bloom — kills bank spores and a spore ally hatches on its own once the count is met. The count starts at 12 kills and rises by 4 every 60 cumulative kills, capped at 40.',
+
+  // --- 챔피언 선택(M8) ---
+  'champion.title': 'Choose Your Ship',
+  'champion.roster': 'Roster',
+  'champion.rosterSub': 'All ships are available — no unlock requirements.',
+  'champion.confirm': 'Retire & Switch to {name}',
+  'champion.current': 'Current: {name}',
+  'champion.signature': 'Signature',
+  'champion.signature.none': 'No signature passive — a clean baseline chassis.',
+  'champion.chassis': 'Chassis',
+  'champion.bp.damage': 'Damage',
+  'champion.bp.fireRate': 'Fire rate',
+  'champion.bp.maxHp': 'Hull',
+  'champion.bp.moveSpeed': 'Speed',
+  'champion.trees': 'Skill trees',
+  'champion.tree.meta': '{n} nodes · capstone gate {g}pt',
+  'champion.retire.title': 'Retire your ship?',
+  'champion.retire.body':
+    'Your current ship (Lv {level}) becomes a Guardian. Level, skill points and gear slots reset; equipment returns to the stash. You will pilot a fresh {name}.',
+  'champion.retire.yes': 'Retire and switch',
+  'champion.retire.no': 'Cancel',
 
   // --- 정제소 ---
   'refine.title': 'Refinery',
@@ -984,6 +1047,18 @@ export const KO: Record<MessageKey, string> = {
   'lab.tree.firepower': '화력',
   'lab.tree.survival': '생존',
   'lab.tree.mobility': '기동',
+  'lab.tree.blade': '칼날',
+  'lab.tree.morph': '변형',
+  'lab.tree.fortify': '요새',
+  'lab.tree.chain': '연쇄',
+  'lab.tree.barrage': '탄막',
+  'lab.tree.barrier': '방벽',
+  'lab.tree.assassin': '암살',
+  'lab.tree.phase': '위상',
+  'lab.tree.disrupt': '교란',
+  'lab.tree.swarm': '군체',
+  'lab.tree.mutate': '변이',
+  'lab.tree.blight': '역병',
   'lab.tree.sub': '누적 투자 {n}pt · 하위 투자가 상위 노드를 증폭',
   'lab.browseAll': '전체 스킬 보기 ({n}/{m} 투자)',
   'lab.noInvested': '이 계열에 투자한 스킬이 없습니다.\n위 버튼으로 전체 목록에서 투자하세요.',
@@ -1076,6 +1151,46 @@ export const KO: Record<MessageKey, string> = {
   'hangar.desc.element.cold': '명중 시 적을 감속시킵니다.',
   'hangar.desc.element.lightning': '명중 시 인접 적에게 연쇄 피해를 줍니다.',
   'hangar.desc.lineage': '현역 기체를 강화하는 계정 단위 보너스입니다.',
+  'hangar.act.swapShip': '기체 교체',
+
+  'ship.striker.name': '스트라이커',
+  'ship.striker.role': '균형 잡힌 기준점. 어느 축으로도 섀시 보정이 없습니다.',
+  'ship.bruiser.name': '브루저',
+  'ship.bruiser.role': '맞으며 전진하는 근접형. 가장 두꺼운 선체, 가장 짧은 사거리.',
+  'ship.bruiser.signature':
+    '장갑 스택 — 피격할 때마다 스택이 1개 쌓입니다(최대 8). 스택 1개당 받는 피해가 2.5% 줄어 8스택이면 20% 감소합니다. 3초 동안 맞지 않으면 스택이 1개 사라집니다.',
+  'ship.arccaster.name': '아크 캐스터',
+  'ship.arccaster.role': '자리를 잡고 쏘는 포격형. 가장 긴 사거리와 두꺼운 탄막, 가장 느린 재배치.',
+  'ship.arccaster.signature':
+    '과충전 — 1.5초 동안 멈춰 있으면 피해가 15% 오르고, 이후 정지 1초마다 15%씩 더해져 최대 40%까지 오릅니다. 움직이면 즉시 풀립니다.',
+  'ship.phantom.name': '팬텀',
+  'ship.phantom.role': '유리 대포 암살형. 가장 높은 단발 피해, 가장 얇은 선체.',
+  'ship.phantom.signature':
+    '은신 — 4초 동안 피격되지 않으면 적의 조준 대상에서 빠집니다. 은신을 푸는 첫 타는 피해가 2.5배입니다.',
+  'ship.bion.name': '비온',
+  'ship.bion.role': '군체를 부리는 소환형. 가장 빠른 연사와 가장 넓은 트리, 가장 약한 단발.',
+  'ship.bion.signature':
+    '포자 개화 — 적을 처치하면 포자가 쌓이고 요구치를 채우면 포자 동료가 스스로 부화합니다. 요구치는 12처치에서 시작해 누적 60처치마다 4씩 오르며 40에서 멈춥니다.',
+
+  'champion.title': '기체 고르기',
+  'champion.roster': '보유 가능 기체',
+  'champion.rosterSub': '모든 기체가 열려 있습니다 — 해금 조건이 없습니다.',
+  'champion.confirm': '퇴역하고 {name}(으)로 교체',
+  'champion.current': '현재 기체: {name}',
+  'champion.signature': '시그니처',
+  'champion.signature.none': '시그니처 패시브가 없습니다 — 보정 없는 기준 섀시입니다.',
+  'champion.chassis': '섀시 보정',
+  'champion.bp.damage': '피해',
+  'champion.bp.fireRate': '연사',
+  'champion.bp.maxHp': '선체',
+  'champion.bp.moveSpeed': '이동',
+  'champion.trees': '스킬 계열',
+  'champion.tree.meta': '노드 {n}개 · 캡스톤 게이트 {g}pt',
+  'champion.retire.title': '기체를 퇴역시킬까요?',
+  'champion.retire.body':
+    '현재 기체(Lv {level})가 수호기로 넘어갑니다. 레벨·스킬 포인트·장착 슬롯이 초기화되고 장비는 창고로 돌아옵니다. 새 {name}(으)로 출격하게 됩니다.',
+  'champion.retire.yes': '퇴역하고 교체',
+  'champion.retire.no': '취소',
 
   'refine.title': '정제소',
   'refine.bar.minerals': '광물',

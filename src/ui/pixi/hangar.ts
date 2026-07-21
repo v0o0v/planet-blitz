@@ -19,6 +19,7 @@ import { AFFIX_BY_ID } from '../../../data/affixes.js';
 import { computeLoadoutStats } from '../../items/loadout.js';
 import { UNIQUE_REGISTRY } from '../../items/uniques.js';
 import { shipBonusBp } from '../../../data/lineage.js';
+import { shipTypeDef } from '../../../data/ships/index.js';
 import {
   saveProfile,
   activeShip,
@@ -33,7 +34,9 @@ import { t, type MessageKey } from '../../i18n/index.js';
 import { stashExpansionCost, canAfford } from '../../../data/economy.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, RARITY_COLOR_NUM, UI_FONT, TEXT_SHADOW } from './theme.js';
-import { loadUiTextures, type UiTextures } from './uiTextures.js';
+import { loadUiTextures, shipShowcaseName, LEGACY_SHOWCASE, type UiTextures } from './uiTextures.js';
+import { ChampionSelectScreen } from './championSelect.js';
+import { shipTypeName, tShipKey } from './shipLabels.js';
 import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
 import { makeSlotCell, gridPositions, equipIconTexture } from './slotGrid.js';
@@ -85,11 +88,17 @@ export class HangarScreen {
   private stashScrollY = 0;
   private statsScrollY = 0;
   private inventoryScrollY = 0;
+  /**
+   * 챔피언(기체) 선택 화면. 격납고의 **하위 화면**이라 `show()` 가 아니라 `suspend()`/`resume()`
+   * 로 자리를 주고받는다 — `show()` 로 되돌리면 미저장 장비 편집이 사라진다(defenseCommand 선례).
+   */
+  private readonly champion: ChampionSelectScreen;
 
   constructor(profile: Profile, stage: Container, store: KeyValueStore | null = null) {
     this.profile = profile;
     this.store = store;
     this.stage = stage;
+    this.champion = new ChampionSelectScreen(profile, stage, store);
     this.root.visible = false;
     this.root.eventMode = 'static';
     this.stage.addChild(this.root);
@@ -126,6 +135,29 @@ export class HangarScreen {
     this.onClose = null;
     const hud = document.getElementById('pb-hud');
     if (hud !== null) hud.style.visibility = '';
+  }
+
+  /** 다른 캔버스 화면(챔피언 선택)에 자리를 내주고 잠시 감춘다 — **상태는 그대로 남는다**. */
+  suspend(): void {
+    this.root.visible = false;
+    this.tooltip.hide();
+  }
+
+  resume(): void {
+    this.root.visible = true;
+    this.stage.setChildIndex(this.root, this.stage.children.length - 1);
+    this.render();
+  }
+
+  /**
+   * 챔피언 선택으로 내려간다. 확정되면 활성 기체가 통째로 바뀌므로(퇴역 = 세대 교체) 돌아올 때
+   * `render()` 가 새 기체를 읽는다 — `resume()` 이 그 일을 한다.
+   */
+  private openChampionSelect(): void {
+    this.suspend();
+    this.champion.show(this.profile, {
+      onClose: () => this.resume(),
+    });
   }
 
   private persist(): void {
@@ -182,7 +214,7 @@ export class HangarScreen {
       this.render();
       return;
     }
-    const mineralFindMult = computeLoadoutStats(this.equippedItems()).worldMods.mineralFindMult;
+    const mineralFindMult = this.computeStats().worldMods.mineralFindMult;
     const y = salvageItems(this.profile, targets, mineralFindMult);
     this.hint = t('inv.salvageDone', { n: targets.length, credits: y.credits, minerals: y.minerals });
     this.persist();
@@ -206,6 +238,24 @@ export class HangarScreen {
     this.hint = t('inv.stashExpanded');
     this.persist();
     this.render();
+  }
+
+  /**
+   * 격납고 미리보기가 쓰는 파생 스탯. **런과 같은 입력 4종**(장착 · 스킬 투자 · 계보 bp ·
+   * 기체 타입)을 전부 넘긴다.
+   *
+   * ⚠️ 이전 구현은 `computeLoadoutStats(this.equippedItems())` 뿐이라 투자·계보·기체 타입이
+   * 통째로 빠져 있었다 — 유저가 격납고에서 보는 수치와 실제 런 수치가 갈렸고, 브루저의
+   * HP +25% 같은 섀시 보정은 화면 어디에도 나타나지 않았다(M8 통합 게이트 findings ④).
+   */
+  private computeStats(): ReturnType<typeof computeLoadoutStats> {
+    const ship = activeShip(this.profile);
+    return computeLoadoutStats(
+      this.equippedItems(),
+      ship.skillInvest,
+      shipBonusBp(this.profile.lineage),
+      ship.typeId,
+    );
   }
 
   private equippedItems(): Item[] {
@@ -325,6 +375,20 @@ export class HangarScreen {
     minerals.position.set((DESIGN_WIDTH + bannerW) / 2 + 20, 18);
     this.root.addChild(minerals);
 
+    // 기체 교체(챔피언 선택) 진입 — 크레딧 칩과 닫기 버튼 사이의 빈 자리.
+    const swapW = 260;
+    const swap = new PixiButton({
+      texture: this.ui['ui_btn_wood.png'],
+      fallbackColor: 0x4a3a24,
+      width: swapW,
+      height: 52,
+      fontSize: 17,
+      label: tShipKey('hangar.act.swapShip', 'Change Ship'),
+      onClick: () => this.openChampionSelect(),
+    });
+    swap.container.position.set(DESIGN_WIDTH - 24 - 56 - 12 - swapW, 18);
+    this.root.addChild(swap.container);
+
     const close = makeIconButton(
       56,
       () => {
@@ -339,7 +403,7 @@ export class HangarScreen {
   }
 
   private statRows(): StatRow[] {
-    const { loadout, worldMods } = computeLoadoutStats(this.equippedItems());
+    const { loadout, worldMods } = this.computeStats();
     const rows: StatRow[] = [
       { label: t('inv.stat.weapon'), value: t(WEAPON_KEY[loadout.weaponType] ?? 'item.weapon.0'), desc: t('hangar.desc.weapon'), color: COLOR.gold },
       { label: t('inv.stat.damage'), value: `×${loadout.damageMult.toFixed(2)}`, desc: t('hangar.desc.damage'), color: COLOR.gold },
@@ -464,7 +528,7 @@ export class HangarScreen {
 
     const ship = activeShip(this.profile);
     const title = new Text({ resolution: 2,
-      text: `${ship.name} · Lv ${ship.level}`,
+      text: `${shipTypeName(shipTypeDef(ship.typeId))} · Lv ${ship.level}`,
       style: { fontFamily: UI_FONT, fontSize: 30, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
     });
     title.anchor.set(0.5, 0);
@@ -474,7 +538,9 @@ export class HangarScreen {
     // 기체 일러스트(×2 nearest). 중앙.
     const shipCx = px + pw / 2;
     const shipCy = py + ph / 2 + 20;
-    const shipTex = this.ui['ship_showcase_fighter.png'];
+    // 쇼케이스는 **기체 타입 파생**이다. 아트가 아직 없으면 조용히 레거시 텍스처로 폴백해
+    // 화면이 비지 않게 한다(설계서 §8·§9 — 아트는 코드보다 늦게 도착한다).
+    const shipTex = this.ui[shipShowcaseName(ship.typeId)] ?? this.ui[LEGACY_SHOWCASE];
     if (shipTex) {
       const sp = new Sprite(shipTex);
       sp.anchor.set(0.5);

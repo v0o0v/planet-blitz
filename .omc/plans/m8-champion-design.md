@@ -176,7 +176,10 @@ export interface Ship {
 - `SAVE_VERSION` 3 → **4** (`src/items/types.ts:18`)
 - `migrateV3toV4`: 각 `ship` 에 `typeId=0`, `skillInvest=normalizeSkillInvest(profile.skillInvest, 0)` 주입 후 `profile.skillInvest` 제거. 기존 유저는 전원 스트라이커이며 투자가 활성 기체로 승계
 - `normalizeSkillInvest(v, typeId)` — `profile.ts:420-429` 타입 파라미터화. 손상 세이브는 기존대로 0 복구
-- `normalizeShip` 이 `typeId` 를 `[0, SHIP_TYPES.length-1]` 로 clamp — 범위 밖 값이 런타임에 `undefined` 타입으로 흘러가면 loadout 전체가 조용히 중립이 된다
+- **`normalizeShip` 의 범위 밖 `typeId` 는 `clamp` 가 아니라 `normalizeShipTypeId`(범위 밖 → **0**, 스트라이커)로 처리한다. 2026-07-21 확정.**
+  ⚠️ 최초 초안은 "`[0, SHIP_TYPES.length-1]` 로 clamp" 였는데, 그러면 `999 → 4(BION)` 이 되어 **손상된 세이브값이 조용히 *다른 기체*를 준다.** 3자(코드 `clampInt` / 테스트 기대 `999→0` / L1 의 `normalizeShipTypeId`)가 갈려 실제로 테스트가 실패했다.
+  채택 근거: ①손상값 복구는 "안전한 기본값"이어야지 "가장 가까운 유효값"이면 안 된다 ②조회층(`selectableShipTypes`)과 저장층이 같은 규칙을 쓰게 된다.
+  어느 쪽이든 범위 밖 값이 런타임에 `undefined` 타입으로 흘러가면 loadout 전체가 조용히 중립이 되는 것은 막아야 한다.
 
 **DB 마이그레이션 필요 여부 — 미확인.** `supabase/migrations/` 에서 `skillInvest` grep 0건이라 트리 벡터는 서버 테이블에 없어 보이고(리플레이 헤더로만 이동 — `verifyInvasionCore.ts:40`), 그렇다면 DB 변경 불요. **L3 레인의 첫 작업으로 `supabase/migrations/**` + `src/net/**` 를 실측 확인해 결론낼 것.**
 
@@ -184,6 +187,47 @@ export interface Ship {
 - **첫 기체 자동 지급**: `defaultProfile()` 이 이미 `ships:[defaultShip()]` 를 준다(`profile.ts:191`). `typeId: 0` 한 줄 추가로 끝
 - **퇴역 → 자유 선택**: `retireActiveShip(profile, preset, nextTypeId)` 로 시그니처 확장, 기존 동작 뒤에 신규 `Ship` push + `activeShipIndex` 이동
 - **전체 개방**: `selectableShipTypes()` 는 `SHIP_TYPES` 전량 반환. **해금 게이트 부재를 테스트로 못박는다** — 레인이 선의로 레벨 조건을 붙이는 것을 막는 유일한 수단(ADR-0019 는 전체 개방을 명시적 사용자 선택으로 기록)
+
+## 6-bis. 구현 중 확정된 사항 (W1 완료 시점, 2026-07-21)
+
+W1(L0-baseline / L1-schema / L2-signature / L3-save) 착지 후 실측으로 확정된 것들. **W2·W3 레인은 이 절을 반드시 읽어라.**
+
+### `Profile.skillInvest` 는 미러가 아니라 **별칭(alias)** 으로 구현됐다
+L3 가 설계서 §10-3("연구소는 미러에 쓰는데 런은 기체 벡터를 읽는" 결함)을 **구조적으로 불가능**하게 만들었다 — 복사본이 아니라 **활성 기체 벡터와 같은 배열 인스턴스**를 가리킨다. 같은 메모리라 갈라질 수가 없다. 덕분에 W1·W2 동안 `main.ts`·`researchLab` 을 한 줄도 안 고치고도 거동이 정확하다.
+
+⚠️ **대가로 생긴 규약 2개. 깨면 조용히 끊어진다.**
+1. **재할당 금지.** `profile.skillInvest = X` 로 갈아끼우면 별칭이 즉시 끊긴다. 그래서 `respecSkills` 가 재할당이 아니라 `.fill(0)` 이다. 테스트로 못박혀 있다.
+2. **`activeShipIndex` 가 움직이는 새 경로에는 반드시 `refreshSkillInvestAlias` 호출이 필요하다.**
+   → **W3-L8(UI)이 기체 전환/챔피언 선택 화면을 만들면 정확히 이 함정을 밟는다.** 전환 후 별칭 갱신을 빠뜨리면 연구소가 옛 기체 벡터를 계속 편집한다.
+
+이 구조는 **W3-L7 이 `Profile.skillInvest` 를 삭제하면 소멸하는 임시 장치**다.
+
+### W3-L7 이 삭제해야 할 `Profile.skillInvest` 독자 — 전량 (L3 실측)
+- `src/main.ts:706` · `:772` · `:930` — **3중복 조립.** `buildRunConfig(profile)` 단일 함수로 추출하며 `activeShip(profile).skillInvest` 로 전환
+- `src/ui/researchLab.ts:220, 246, 247, 248, 281, 306`
+- `src/ui/pixi/researchLab.ts:420, 534, 552, 606, 664, 665, 666, 755, 831, 935`
+- `src/save/profile.ts:119-129`(필드 선언) · `:268-277`(`refreshSkillInvestAlias`) · `:258`·`:568`(별칭 초기화 2곳)
+- `tests/shipHashBaseline.test.ts:213, 240`
+
+**삭제 순서**: 위 UI·main 독자를 `activeShip(...).skillInvest` 로 옮긴 뒤 → 필드 + `refreshSkillInvestAlias` + 호출 3곳 제거.
+
+⚠️ L3 의 통합 테스트는 `main.ts` 조립을 **재현**한 것이지 `buildRunConfig` 를 호출한 것이 아니다(그 함수가 아직 없었다). **L7 이 추출하는 순간 그 헬퍼를 지우고 실함수 호출로 바꿔야** §10-2 가 문자 그대로 닫힌다. 코드에 그 지시 주석이 남아 있다.
+
+### DB 마이그레이션 = **불요. 확정.** (설계서 §6 의 "미확인" 종결)
+- `supabase/migrations/**`·`src/net/**` 전량 grep 에서 `skillInvest`/`skill_invest` **0건**
+- 서버 SQL 이 `profiles.save`(jsonb) **안쪽**을 읽는 곳은 전수 조사 결과 `save->>'credits'` 와 `save->>'minerals'` **둘뿐**(repair_defense·card economy·defense_units·core_modules·m7a RPC 등 12곳 전부)
+- `profiles.save_version` 은 `integer not null default 0`(20260717000000:65), **CHECK 제약·서버측 분기 전무** → 4 를 그대로 받는다
+- `serializeProfile`(profileSync.ts:41-43)이 Profile 을 통짜로 넣으므로 스키마 변경이 jsonb 안에 갇힌다
+→ **신규 마이그레이션 SQL 0건.**
+
+부수 사실: 서버 v3 blob 은 유저가 v4 클라로 한 번 저장하기 전까지 v3 로 남는다. 서버가 그 안을 안 읽으므로 무해하다.
+
+### `migrateV3toV4` 의 다중 기체 처리 — **전원이 계정 벡터를 물려받는다. 채택 확정.**
+L3 가 대안(활성 기체만 승계, 나머지 0)을 제시하며 판단을 요청했다. **현행(전원 승계)을 유지한다.**
+근거: v3 에서 `skillInvest` 는 **계정 단위**였다(`profile.ts:100-103` 주석이 명시). 즉 v3 에서 기체를 바꿔도 같은 투자가 따라다녔으므로 **모든 기체가 실제로 그 투자를 갖고 있었다.** 전원 승계가 v3 semantics 의 충실한 이식이고, "활성만 승계"는 나머지 기체에 대해 **없던 손실을 만든다.** (실제 v3 세이브의 `ships` 는 항상 길이 1 이라 관측 가능한 차이도 없다.)
+
+### `investSkill` 은 아직 스트라이커 정본을 쓴다 → **M8-L4 가 타입별로 일반화해야 한다**
+`profile.ts:341-355` 의 노드 정의·캡스톤 게이트가 `SKILLS`/`capstoneUnlocked`(스트라이커 정본)를 참조한다. 타입 1~4 가 스텁인 동안은 도달 불가 경로지만, L6 이 실데이터를 채우면 **타입 1~4 의 투자가 스트라이커 트리 규칙으로 판정된다.**
 
 ## 7. 레인 분해 (파일 겹침 0)
 
@@ -251,6 +295,18 @@ export interface Ship {
 | 계열 캡스톤 아이콘 | 12 | 64×64 | 4타입 × 3계열 |
 | 로스터 행 엠블럼 | 4 | 64×64 | 목록 행 좌측 |
 | 스킬 노드 아이콘 | 0 | — | 기존 StatKey 재사용 시 35장으로 충족 |
+
+### 파일명 규약 — **확정(2026-07-21)**
+현재 `src/render/textures.ts:859` 가 `tryLoad('player.png')` **단일 텍스처**로 플레이어를 로드한다. 타입별 분기가 없다.
+
+- **인게임 스프라이트**: `ship_<slug>.png` (64×64). typeId ≥ 1 만 신규.
+  **typeId 0(스트라이커)은 기존 `player.png` 를 그대로 쓴다** — 파일을 옮기거나 개명하지 않는다. 폴백 순서는 `ship_<slug>.png` → `player.png`.
+- **격납고 쇼케이스**: `ship_showcase_<slug>.png` (128×128). 스트라이커는 기존 `ship_showcase_fighter.png` 유지.
+- 둘 다 **미존재 시 조용히 폴백**해야 하고 예외를 던지면 안 된다(아트가 코드보다 늦게 도착한다).
+
+### 아트 채택 현황 (2026-07-21, 사용자 검수 완료분)
+- 브루저 · 아크캐스터 · 팬텀 = 1차 배치에서 채택 확정
+- **4번 기체는 반려됐다** — "벌레 말고 다른 컨셉. 너무 징그럽다. 귀여운 걸로." 곤충·생체 방향 폐기, **귀여운 마스코트**로 재생성 중. 메커니즘(처치 시 적립 → 동료 자동 소환)은 불변이고 fiction·naming·아트만 바뀐다. slug `bion` 과 트리 slug `swarm`/`mutate`/`blight` 도 함께 개명 대상(W2 게이트 후).
 
 ### 파이프라인 지시
 - 팔레트·화풍은 문서 스펙이 아니라 **기존 파일을 레퍼런스로 전달**: `assets/player.png` + `ship_showcase_fighter.png` + `skill_capstone_*.png`. (정확한 팔레트 값은 **미확인** — 색 샘플링 미수행. 손으로 적은 스펙보다 실파일 레퍼런스가 안전)

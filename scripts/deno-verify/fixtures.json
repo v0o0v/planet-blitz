@@ -2,7 +2,7 @@
   "meta": {
     "generatedBy": "tests/denoFixture.test.ts (Node/vitest)",
     "node": "v24.13.0",
-    "scenarioCount": 6
+    "scenarioCount": 7
   },
   "mathProbe": 793092539,
   "scenarios": [
@@ -1292,6 +1292,355 @@
         "level": 15,
         "bossSpawned": true,
         "entityCount": 173
+      }
+    },
+    {
+      "name": "⑦ 비온(비스트라이커 기체) 런 — shipType 폴드 + 시그니처 + 78길이 벡터",
+      "seed": 45327,
+      "ticks": 14400,
+      "inputsHash": 70452940,
+      "checkpoints": [
+        {
+          "tick": 600,
+          "hash": 1463954774
+        },
+        {
+          "tick": 1200,
+          "hash": 3787497819
+        },
+        {
+          "tick": 1800,
+          "hash": 4206751984
+        },
+        {
+          "tick": 2400,
+          "hash": 1400927573
+        },
+        {
+          "tick": 3000,
+          "hash": 1747169615
+        },
+        {
+          "tick": 3600,
+          "hash": 1425350522
+        },
+        {
+          "tick": 4200,
+          "hash": 3571333294
+        },
+        {
+          "tick": 4800,
+          "hash": 1021288492
+        },
+        {
+          "tick": 5400,
+          "hash": 1221581913
+        },
+        {
+          "tick": 6000,
+          "hash": 2097836484
+        },
+        {
+          "tick": 6600,
+          "hash": 1936166063
+        },
+        {
+          "tick": 7200,
+          "hash": 887145343
+        },
+        {
+          "tick": 7800,
+          "hash": 3171968474
+        },
+        {
+          "tick": 8400,
+          "hash": 3171968474
+        },
+        {
+          "tick": 9000,
+          "hash": 3171968474
+        },
+        {
+          "tick": 9600,
+          "hash": 3171968474
+        },
+        {
+          "tick": 10200,
+          "hash": 3171968474
+        },
+        {
+          "tick": 10800,
+          "hash": 3171968474
+        },
+        {
+          "tick": 11400,
+          "hash": 3171968474
+        },
+        {
+          "tick": 12000,
+          "hash": 3171968474
+        },
+        {
+          "tick": 12600,
+          "hash": 3171968474
+        },
+        {
+          "tick": 13200,
+          "hash": 3171968474
+        },
+        {
+          "tick": 13800,
+          "hash": 3171968474
+        },
+        {
+          "tick": 14400,
+          "hash": 3171968474
+        }
+      ],
+      "finalHash": 3171968474,
+      "loot": [
+        {
+          "seed": 2503720499,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 1505253724,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 2459103096,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 4103502411,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 1243582780,
+          "rarity": 3,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 2879006522,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 897808207,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 520725850,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 3717233549,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 3954201212,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 2249300138,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 3815596015,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 3419356504,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 2619330015,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 2837994708,
+          "rarity": 3,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 3220749508,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 1614127437,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 2732449094,
+          "rarity": 3,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 1873271106,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 3831398443,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 386739882,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 149156721,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 1673482205,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 3206047509,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 879787286,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 1887289110,
+          "rarity": 2,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 3864732659,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 200312541,
+          "rarity": 1,
+          "planet": 2,
+          "tier": 1
+        },
+        {
+          "seed": 2808816246,
+          "rarity": 3,
+          "planet": 2,
+          "tier": 1
+        }
+      ],
+      "rolls": [
+        {
+          "id": "it-11603825",
+          "slot": "armor",
+          "rarity": "rare",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "overclocked",
+              "stat": "fireRatePct",
+              "value": 13
+            },
+            {
+              "id": "of-learning",
+              "stat": "xpPct",
+              "value": 12
+            },
+            {
+              "id": "of-swiftness",
+              "stat": "moveSpeedPct",
+              "value": 8
+            },
+            {
+              "id": "of-celerity",
+              "stat": "moveSpeedPct",
+              "value": 15
+            }
+          ]
+        },
+        {
+          "id": "it-11603826",
+          "slot": "shield",
+          "rarity": "unique",
+          "weaponType": null,
+          "uniqueId": "phase-membrane",
+          "affixes": [
+            {
+              "id": "velocity",
+              "stat": "bulletSpeedPct",
+              "value": 11
+            },
+            {
+              "id": "multibarrel",
+              "stat": "bulletCount",
+              "value": 1
+            },
+            {
+              "id": "brutal",
+              "stat": "damagePct",
+              "value": 16
+            },
+            {
+              "id": "flaming",
+              "stat": "fireDmg",
+              "value": 4
+            }
+          ]
+        }
+      ],
+      "summary": {
+        "victory": true,
+        "gameOver": false,
+        "kills": 108,
+        "level": 12,
+        "bossSpawned": true,
+        "entityCount": 124
       }
     }
   ]

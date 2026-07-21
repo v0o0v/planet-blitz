@@ -19,7 +19,7 @@
 
 import { TilingSprite } from 'pixi.js';
 import { createGameApp, DESIGN_WIDTH, DESIGN_HEIGHT } from './render/app.js';
-import { loadGameTextures } from './render/textures.js';
+import { loadGameTextures, applyShipSprite } from './render/textures.js';
 import { EntityRenderer } from './render/entityRenderer.js';
 import { DefensePreviewController } from './render/defensePreview.js';
 import type { DefensePreviewControls } from './render/defensePreview.js';
@@ -64,7 +64,7 @@ import {
   comboMultiplier,
   DEFAULT_CONFIG,
 } from './sim/world.js';
-import type { WorldState, WorldConfig, InputFrame } from './sim/world.js';
+import type { WorldState, InputFrame } from './sim/world.js';
 // DEV 하네스: 타입만 정적 import(런타임 값은 아래 import.meta.env.DEV 블록에서 동적
 // import 하므로 프로덕션 번들에서 완전히 제거된다). 타입 import는 컴파일 시 소거됨.
 import type { Harness, HarnessScreen } from './harness/core.js';
@@ -74,10 +74,9 @@ import { ReplayRecorder, hashWorld } from './sim/replay.js';
 import { SeededRng } from './sim/rng.js';
 import { rollAnomaly } from './sim/anomaly.js';
 import { runBench } from './bench/bench.js';
-import { EQUIP_SLOTS } from './items/types.js';
-import type { Item } from './items/types.js';
-import { computeLoadoutStats } from './items/loadout.js';
-import { shipBonusBp } from '../data/lineage.js';
+// 런 설정 조립 **단일 정본**(M8 설계서 §10-2). PvE·정식 침공·하네스 침공 세 경로가 전부
+// 이것만 쓴다 — main.ts 안에서 config 를 다시 조립하지 마라(3중복이 배선 누락의 원인이었다).
+import { buildRunConfig } from './run/runConfig.js';
 import { loadProfile, saveProfile, activeShip } from './save/profile.js';
 import { settleRun } from './save/settlement.js';
 import type { SettlementOutcome } from './save/settlement.js';
@@ -697,16 +696,6 @@ async function main(): Promise<void> {
     }
 
     const seed = nextSeed();
-    const ship = activeShip(profile);
-    const equipped: Item[] = [];
-    for (const id of EQUIP_SLOTS) {
-      const it = ship.equipped[id];
-      if (it !== undefined) equipped.push(it);
-    }
-    const skillInvest = profile.skillInvest.slice();
-    // 계보 기체 가지(ADR-0007): 침공에도 동일 적용 — loadout 은 config 로 리플레이에
-    // 스냅샷되므로 서버 재실행 검증과 호환된다(장비 어픽스와 같은 경로).
-    const { loadout } = computeLoadoutStats(equipped, skillInvest, shipBonusBp(profile.lineage));
     // 방어 정비도(풍화, ADR-0006)를 sim centi-percent 로 변환해 config 에 싣는다.
     // 공식 Math.round(db*100)은 서버 EF 재실행과 동일해야 한다(어긋나면 해시 발산 오거부).
     const maintenance = maintenanceToCenti(runMaintenanceDb);
@@ -719,15 +708,10 @@ async function main(): Promise<void> {
       ...(maintenance !== undefined ? { maintenance } : {}),
       ...(runModules !== null ? { modules: runModules } : {}),
     };
-    const config: WorldConfig = {
-      ...DEFAULT_CONFIG,
-      planet: 0,
-      tier: 0,
-      anomalyAccepted: false,
-      loadout,
-      skillInvest,
-      invasion3,
-    };
+    // 런 조립은 단일 정본(`buildRunConfig`)만 쓴다 — 여기서 config 를 손보지 마라(설계서 §10-2).
+    const config = buildRunConfig(profile, { planet: 0, tier: 0, invasion3 });
+    // 활성 기체 스프라이트 교체(렌더 전용) — `createWorld` 앞. PvE `startRun` 과 동일 규약.
+    applyShipSprite(textures, config.shipType ?? 0);
     // 레이어별 배경(L1 대기권 → L2 회랑 → L3 코어방). 전환은 렌더 루프가 페이즈를 보고 건다.
     applyInvasionBackdrop(PHASE_L1);
     autotile.configure(null, seed);
@@ -763,28 +747,15 @@ async function main(): Promise<void> {
   }): void {
     tutorialActive = false;
     shownLevel = 0;
-    const ship = activeShip(profile);
-    const equipped: Item[] = [];
-    for (const id of EQUIP_SLOTS) {
-      const it = ship.equipped[id];
-      if (it !== undefined) equipped.push(it);
-    }
-    const skillInvest = profile.skillInvest.slice();
-    const { loadout } = computeLoadoutStats(equipped, skillInvest, shipBonusBp(profile.lineage));
     const invasion3: Invasion3Config = {
       layers: normalizeInvasionLayers(opts.layers),
       timeLimitTicks: opts.timeLimitTicks,
       maintenance: opts.maintenance,
     };
-    const config: WorldConfig = {
-      ...DEFAULT_CONFIG,
-      planet: 0,
-      tier: 0,
-      anomalyAccepted: false,
-      loadout,
-      skillInvest,
-      invasion3,
-    };
+    // 정식 침공과 **같은 조립**을 탄다(단일 정본). 하네스 런만 다른 config 를 갖게 되면
+    // "하네스에서는 되는데 실제 런에서는 안 되는" 결함이 생긴다.
+    const config = buildRunConfig(profile, { planet: 0, tier: 0, invasion3 });
+    applyShipSprite(textures, config.shipType ?? 0);
     applyInvasionBackdrop(PHASE_L1);
     autotile.configure(null, opts.seed);
     background.visible = true;
@@ -919,27 +890,17 @@ async function main(): Promise<void> {
     harnessInvasionRun = false;
     shownInvasionPhase = -1; // 침공 배경 추적 해제(PvE 는 행성 배경)
     shownLevel = 0; // 새 런: 레벨업 오버레이 표시 상태 초기화
-    const ship = activeShip(profile);
-    const equipped: Item[] = [];
-    for (const id of EQUIP_SLOTS) {
-      const it = ship.equipped[id];
-      if (it !== undefined) equipped.push(it);
-    }
-    // Skill investment (account-wide) folds into the loadout block and is carried
-    // in the config as a snapshot (Replay.config) + read by the powerup weighting.
-    const skillInvest = profile.skillInvest.slice();
-    // 계보 기체 가지(ADR-0007) — 계정 단위 보너스를 장비·스킬 위에 겹친다.
-    const { loadout } = computeLoadoutStats(equipped, skillInvest, shipBonusBp(profile.lineage));
-    const config: WorldConfig = {
-      ...DEFAULT_CONFIG,
+    // 런 조립 단일 정본. 투자 벡터·기체 타입·계보 보너스는 전부 이 안에서 접힌다 —
+    // 튜토리얼 단축판(maxSegments)도 여기로 넘겨 config 후처리를 남기지 않는다.
+    const config = buildRunConfig(profile, {
       planet: sel.planet,
       tier: sel.tier,
       anomalyAccepted: sel.anomalyAccepted,
-      loadout,
-      skillInvest,
-    };
-    // 튜토리얼 단축판: 상한이 지정된 런(startTutorial)만 세그먼트를 제한한다.
-    if (sel.maxSegments !== undefined) config.maxSegments = sel.maxSegments;
+      ...(sel.maxSegments !== undefined ? { maxSegments: sel.maxSegments } : {}),
+    });
+    // 활성 기체의 인게임 스프라이트로 플레이어 슬롯을 교체(렌더 전용, sim 무영향).
+    // `createWorld` **앞**이어야 이번 런의 플레이어 스프라이트가 올바른 기체로 생성된다.
+    applyShipSprite(textures, config.shipType ?? 0);
     // Swap the arena backdrop to the launched planet's theme (render-only). The
     // Wang autotile floor takes over when the planet has a tileset; otherwise the
     // flat TilingSprite stays visible as the fallback.
@@ -1410,6 +1371,8 @@ async function main(): Promise<void> {
         minerals: profile.minerals,
         shipLevel: activeShip(profile).level,
       }),
+      // 기체 타입 치트가 제자리 편집한다(편집 후 applyProfile 로 저장 + 서버 push).
+      getProfile: () => profile,
       markTaintedIfLive: () => {
         const w = world;
         if (w !== null && !w.gameOver && !w.victory) markTainted(w);

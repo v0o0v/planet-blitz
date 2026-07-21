@@ -4,7 +4,7 @@
  * 24 powerups: the original M1 eight (indices 0..7, NEVER reordered — the index
  * is the wire value packed into the pick input frame) plus 16 M3 additions
  * (8..23) covering every main-weapon archetype and each skill tree. Each entry
- * carries a build TAG (weaponType / tree / universal); `drawPowerupChoices`
+ * carries a build TAG (weaponType / affinity / universal); `drawPowerupChoices`
  * soft-weights the offer by the run's loadout + skill investment (OQ-M3-1
  * default): universal powerups are always viable candidates, build-matched ones
  * are weighted up, and off-build ones stay possible but rare — so the offer feels
@@ -19,16 +19,20 @@
 
 import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
-import { SKILL_TREES, NODES_PER_TREE } from '../../data/skills.js';
-import type { SkillTree } from '../../data/skills.js';
+import { shipTypeDef, shipTreeRange } from '../../data/ships/index.js';
+import type { TreeAffinity } from '../../data/ships/index.js';
 
 export interface PowerupDef {
   readonly id: string;
   readonly name: string;
   readonly desc: string;
-  /** Build tag (drives the soft weighting). Exactly one of the three is set. */
+  /**
+   * Build tag (drives the soft weighting). Exactly one of the three is set.
+   * `affinity` 는 트리 **이름**이 아니라 **역할 축**이다(M8) — 신규 기체 타입은 트리 이름이
+   * 달라도 같은 역할이면 같은 가중을 받는다. 스트라이커에 대해서는 레거시와 바이트 동일.
+   */
   readonly weaponType?: number;
-  readonly tree?: SkillTree;
+  readonly affinity?: TreeAffinity;
   readonly universal?: boolean;
   /** Applies the effect to the world (deterministic, no RNG). */
   readonly apply: (state: WorldState) => void;
@@ -85,7 +89,7 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'thrusters',
     name: '추진기 증강',
     desc: '이동 속도 +12%',
-    tree: 'mobility',
+    affinity: 'utility',
     apply: (s) => {
       s.config.playerSpeed = Math.round(s.config.playerSpeed * 1.12);
     },
@@ -94,7 +98,7 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'dash-coils',
     name: '대시 코일',
     desc: '대시 재충전 -20%',
-    tree: 'mobility',
+    affinity: 'utility',
     apply: (s) => {
       s.config.dashCooldownTicks = Math.max(12, Math.round(s.config.dashCooldownTicks * 0.8));
     },
@@ -103,7 +107,7 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'reinforced-hull',
     name: '강화 장갑',
     desc: '최대 HP +25, 즉시 회복',
-    tree: 'survival',
+    affinity: 'defense',
     apply: (s) => {
       const p = player(s);
       if (p !== undefined) {
@@ -117,7 +121,7 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'gem-magnet',
     name: '자기장 코일',
     desc: '젬 흡수 반경 +40%',
-    tree: 'mobility',
+    affinity: 'utility',
     apply: (s) => {
       s.magnetRadius = Math.round(s.magnetRadius * 1.4);
     },
@@ -202,7 +206,7 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'fp-focus',
     name: '화력 집중',
     desc: '탄환 데미지 +20%',
-    tree: 'firepower',
+    affinity: 'offense',
     apply: (s) => {
       s.weapon.damage = Math.round(s.weapon.damage * 1.2 * 100) / 100;
     },
@@ -211,7 +215,7 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'fp-cadence',
     name: '속사 조율',
     desc: '발사 간격 -15%',
-    tree: 'firepower',
+    affinity: 'offense',
     apply: (s) => {
       s.weapon.fireCooldown = Math.max(2, Math.round(s.weapon.fireCooldown * 0.85));
     },
@@ -220,7 +224,7 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'sv-plating',
     name: '보강 도금',
     desc: '최대 HP +30, 즉시 회복',
-    tree: 'survival',
+    affinity: 'defense',
     apply: (s) => {
       const p = player(s);
       if (p !== undefined) {
@@ -234,7 +238,7 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'sv-evasion',
     name: '회피 부스터',
     desc: '대시 재충전 -15%',
-    tree: 'survival',
+    affinity: 'defense',
     apply: (s) => {
       s.config.dashCooldownTicks = Math.max(12, Math.round(s.config.dashCooldownTicks * 0.85));
     },
@@ -243,7 +247,7 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'mb-overdrive',
     name: '기동 오버드라이브',
     desc: '이동 속도 +10%',
-    tree: 'mobility',
+    affinity: 'utility',
     apply: (s) => {
       s.config.playerSpeed = Math.round(s.config.playerSpeed * 1.1);
     },
@@ -252,7 +256,7 @@ export const POWERUPS: readonly PowerupDef[] = [
     id: 'mb-collector',
     name: '수집 증폭',
     desc: '젬 흡수 반경 +30%',
-    tree: 'mobility',
+    affinity: 'utility',
     apply: (s) => {
       s.magnetRadius = Math.round(s.magnetRadius * 1.3);
     },
@@ -291,14 +295,27 @@ const WEIGHT_TREE_BASE = 4;
 /** Points invested in a tree per +1 weight (fully-fed tree ≈ +20 weight). */
 const TREE_POINTS_PER_WEIGHT = 4;
 
-/** Total points invested in one tree (contiguous block of the skill vector). */
-function investedInTree(invest: readonly number[] | undefined, tree: SkillTree): number {
+/**
+ * 이 런의 기체 타입에서 `affinity` 역할을 맡은 트리에 투자된 총 포인트.
+ *
+ * ⚠️ **레거시 등가 증명(M8, 설계서 §2).** 예전 구현은 `SKILL_TREES.indexOf(tree) * NODES_PER_TREE`
+ * 로 슬라이스를 잡았다. 스트라이커(`shipType` 미지정 = 0)의 `trees` 는 `SKILL_TREES` 순서를 그대로
+ * 가지고(`data/ships/striker.ts`), affinity 매핑(firepower→offense·survival→defense·mobility→utility)이
+ * 1:1 이며 `nodesPerTree === NODES_PER_TREE` 다. 따라서 `findIndex(affinity)` 는 `indexOf(tree)` 와
+ * **같은 인덱스**를, `shipTreeRange` 는 **같은 구간**을 준다 → 가중값이 바이트 동일하고
+ * `powerupRng` 소비 순서도 갈리지 않는다(tests/weapons.test.ts 가 못 박는다).
+ *
+ * 신규 타입은 트리 이름이 달라도 affinity 로 매칭되므로 빌드 친화 가중을 자동으로 얻는다.
+ */
+function investedInAffinity(state: WorldState, affinity: TreeAffinity): number {
+  const invest = state.config.skillInvest;
   if (invest === undefined) return 0;
-  const t = SKILL_TREES.indexOf(tree);
+  const def = shipTypeDef(state.config.shipType ?? 0);
+  const t = def.trees.findIndex((tr) => tr.affinity === affinity);
   if (t < 0) return 0;
-  const start = t * NODES_PER_TREE;
+  const { start, end } = shipTreeRange(def, t);
   let sum = 0;
-  for (let i = start; i < start + NODES_PER_TREE; i++) sum += invest[i] ?? 0;
+  for (let i = start; i < end; i++) sum += invest[i] ?? 0;
   return sum;
 }
 
@@ -310,8 +327,8 @@ function powerupWeight(def: PowerupDef, state: WorldState): number {
       ? WEIGHT_WEAPON_MATCH
       : WEIGHT_WEAPON_OFFBUILD;
   }
-  if (def.tree !== undefined) {
-    const invested = investedInTree(state.config.skillInvest, def.tree);
+  if (def.affinity !== undefined) {
+    const invested = investedInAffinity(state, def.affinity);
     return WEIGHT_TREE_BASE + Math.floor(invested / TREE_POINTS_PER_WEIGHT);
   }
   return 1;

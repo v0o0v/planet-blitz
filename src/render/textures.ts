@@ -36,9 +36,65 @@ import {
 } from '../../data/invasion/props.js';
 import { DEFENSE_BOSSES } from '../../data/invasion/defenseBosses.js';
 import { CATALOG_BOSS, CATALOG_FACILITY, CATALOG_PROP, catalogSlug } from '../../data/invasion/catalog.js';
+import {
+  SHIP_TYPES,
+  DEFAULT_SHIP_TYPE,
+  shipTypeDef,
+  normalizeShipTypeId,
+} from '../../data/ships/index.js';
+
+/**
+ * 타입 0(스트라이커)의 인게임 기체 스프라이트 basename. **개명·이동 금지** — M8 이전부터 있던
+ * 자산이고, 아트가 아직 없는 신규 타입 전부의 최종 폴백이기도 하다(설계서 §9).
+ */
+export const LEGACY_SHIP_SPRITE = 'player.png';
+
+/**
+ * 기체 타입 → 인게임 스프라이트 basename(64×64, 기수 +X 방향). 타입 0 만 레거시 이름을 쓰고
+ * 1~ 은 `ship_<slug>.png` 다. 범위 밖 typeId 는 `shipTypeDef` 가 0 으로 되돌리므로 손상
+ * 세이브가 존재하지 않는 파일명을 만들지 않는다.
+ *
+ * 순수 문자열 유도(Pixi 미의존) — 로더 없이 테스트한다. **실 PNG 가 없으면 예외가 아니라
+ * 폴백**이다: `ship_<slug>.png` → `player.png` → 절차적 플레이스홀더.
+ */
+export function shipSpriteName(typeId: number): string {
+  const def = shipTypeDef(typeId);
+  return def.id === DEFAULT_SHIP_TYPE ? LEGACY_SHIP_SPRITE : `ship_${def.slug}.png`;
+}
+
+/**
+ * 전 기체 타입의 인게임 스프라이트 basename. 리터럴이 아니라 **레지스트리 파생**이라, 타입이
+ * 늘면 로더가 조용히 한 장을 빠뜨리는 일이 없다(설계서 §10-7 의 인게임 스프라이트 판).
+ */
+export const SHIP_SPRITE_NAMES: readonly string[] = SHIP_TYPES.map((d) => shipSpriteName(d.id));
+
+/**
+ * 플레이어 슬롯을 `typeId` 의 기체 스프라이트로 갈아끼운다(**동기**, 렌더 전용).
+ *
+ * 런 시작 직전에 부른다 — `EntityRenderer` 가 `textures.player` 를 스프라이트 생성 시점에
+ * 읽으므로, `createWorld` 앞에서 대입해야 그 런의 플레이어가 올바른 기체로 뜬다. 범위 밖·
+ * 손상 `typeId` 는 `normalizeShipTypeId` 가 0(스트라이커)으로 되돌린다.
+ */
+export function applyShipSprite(tex: PlaceholderTextures, typeId: number): void {
+  const slot = tex.shipByType[normalizeShipTypeId(typeId)];
+  if (slot !== undefined) tex.player = slot;
+}
 
 export interface PlaceholderTextures {
   player: Texture;
+  /**
+   * 기체 타입별 인게임 스프라이트(index = typeId, `SHIP_TYPES` 파생 · 전 슬롯 non-null).
+   *
+   * ⚠️ 이 배열이 존재하는 이유는 **런 시작 시점에 동기적으로** 기체 스프라이트를 갈아끼우기
+   * 위해서다. 텍스처는 부팅 때 한 번만 로드되는데(`main.ts` 의 `loadGameTextures` 1회 호출)
+   * 기체는 챔피언 선택으로 런 사이에 바뀐다. 런마다 다시 `await` 하면 스프라이트가 이미
+   * 생성된 뒤에 도착해 그 런 내내 옛 기체로 보인다. 그래서 전 타입을 미리 로드해 두고
+   * `applyShipSprite` 가 대입만 한다.
+   *
+   * 각 슬롯 폴백: `ship_<slug>.png` → `player.png` → 절차적 플레이스홀더. 아트가 없어도
+   * 예외 없이 스트라이커 스프라이트로 뜬다.
+   */
+  shipByType: Texture[];
   bullet: Texture;
   enemyBullet: Texture;
   /**
@@ -713,8 +769,12 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
   turretG.closePath().fill({ color: 0x1f7a4a }).stroke({ color: 0x66ffaa, width: 4, alignment: 0 });
   turretG.rect(-6, -46, 12, 20).fill({ color: 0x66ffaa });
 
+  const playerTex = renderer.generateTexture(playerG);
   const textures: PlaceholderTextures = {
-    player: renderer.generateTexture(playerG),
+    player: playerTex,
+    // 절차적 단계에서는 전 타입이 같은 플레이스홀더를 가리킨다. `loadGameTextures` 가
+    // 실파일이 로드되는 슬롯만 덮어쓴다.
+    shipByType: SHIP_TYPES.map(() => playerTex),
     bullet: renderer.generateTexture(bulletG),
     enemyBullet: renderer.generateTexture(enemyBulletG),
     enemyBulletBehaviors: ENEMY_BULLET_BEHAVIOR_OUTLINE.map((c) => enemyBulletTexture(renderer, c)),
@@ -789,8 +849,15 @@ async function tryLoad(basename: string): Promise<Texture | null> {
 /**
  * Build the full texture set, overriding placeholder slots with real sprites
  * where the asset loads. Any load failure keeps the procedural placeholder.
+ *
+ * `shipType`(M8, 기본 0 = 스트라이커)은 플레이어 슬롯에 어느 기체 스프라이트를 넣을지만
+ * 정한다. 인자를 생략하면 기존과 **완전히 동일**하게 `player.png` 를 쓴다 — 신규 타입의 PNG 가
+ * 아직 없으면 로드가 null 이라 그대로 `player.png` 로 되돌아간다(예외 없음, 화면 안 비침).
  */
-export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderTextures> {
+export async function loadGameTextures(
+  renderer: Renderer,
+  shipType: number = DEFAULT_SHIP_TYPE,
+): Promise<PlaceholderTextures> {
   const tex = createPlaceholderTextures(renderer);
 
   // Enemy filenames by global typeIndex (0..21). 0~3 keep the M1 names; 4~21
@@ -831,7 +898,12 @@ export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderT
   // 구 포탑 6종(turret_*.png)은 M7a L11 에서 삭제 — 설비 아트는 FACILITY_ASSET_FILES 가 정본.
   const guardianFiles = ['guardian_titan.png', 'guardian_interceptor.png']; // preset 0/1
 
+  // 기체 스프라이트는 2단 폴백이다: `ship_<slug>.png`(신규 타입) → `player.png` → 절차적.
+  // 부팅 1회에 **전 타입**을 함께 로드한다 — 런 시작 시점의 교체를 동기로 만들기 위해서다
+  // (근거는 `PlaceholderTextures.shipByType` 주석). 실파일이 없는 타입은 null 이라 비용 0.
+
   const [
+    shipTypedAll,
     player,
     gem,
     explosion,
@@ -856,7 +928,10 @@ export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderT
     formationDrone,
     spawnedDrone,
   ] = await Promise.all([
-    tryLoad('player.png'),
+    Promise.all(
+      SHIP_SPRITE_NAMES.map((f) => (f === LEGACY_SHIP_SPRITE ? Promise.resolve(null) : tryLoad(f))),
+    ),
+    tryLoad(LEGACY_SHIP_SPRITE),
     tryLoad('gem.png'),
     tryLoad('fx_explosion.png'),
     tryLoad('loot.png'),
@@ -883,7 +958,13 @@ export async function loadGameTextures(renderer: Renderer): Promise<PlaceholderT
     tryLoad('def3_spawned_drone.png'),
   ]);
 
+  // 우선순위: 타입 전용 → 레거시 → 절차적. 타입 전용이 null 인 경우(파일 미존재·로드 실패·
+  // 타입 0)에도 아무 예외 없이 다음 단으로 내려간다.
   if (player !== null) tex.player = player;
+  // 전 타입 슬롯을 채운다. 폴백 기준은 이 시점의 `tex.player`(= 레거시 또는 절차적)다.
+  const shipFallback = tex.player;
+  tex.shipByType = SHIP_TYPES.map((d) => shipTypedAll[d.id] ?? shipFallback);
+  applyShipSprite(tex, shipType);
   if (gem !== null) tex.gem = gem;
   if (explosion !== null) tex.explosion = explosion;
   if (loot !== null) tex.loot = loot;

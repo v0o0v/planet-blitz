@@ -36,6 +36,7 @@ import { UQ_AFTERIMAGE, AFTERIMAGE_RADIUS } from '../src/sim/uniques.js';
 import {
   SKILLS,
   SKILL_NODE_COUNT,
+  SKILL_TREES,
   CAPSTONE_GATE,
   capstoneIndex,
   capstoneUnlocked,
@@ -44,7 +45,19 @@ import {
   treeRange,
   type SkillTree,
 } from '../data/skills.js';
-import { defaultProfile, investSkill, zeroSkillInvest } from '../src/save/profile.js';
+import { activeShip, defaultProfile, investSkill, zeroSkillInvest } from '../src/save/profile.js';
+import {
+  shipTreeBaseInvested,
+  shipCapstoneUnlocked,
+  shipCapstoneActive,
+} from '../src/items/skills.js';
+import {
+  SHIP_TYPES,
+  shipTypeDef,
+  shipCapstoneIndex,
+  shipTreeRange,
+  zeroSkillInvest as registryZeroInvest,
+} from '../data/ships/index.js';
 
 /** uniqueMask 비트만 세운 로드아웃 config(캡스톤도 유니크와 같은 mask 비트를 씀). */
 function capstoneCfg(bit: number): WorldConfig {
@@ -129,9 +142,9 @@ describe('캡스톤 데이터 + 게이트 (GDD §4)', () => {
       for (let k = 0; k < put; k++) investSkill(p, i);
       need -= put;
     }
-    expect(capstoneUnlocked(p.skillInvest, 'firepower')).toBe(true);
+    expect(capstoneUnlocked(activeShip(p).skillInvest, 'firepower')).toBe(true);
     expect(investSkill(p, capstoneIndex('firepower'))).toBe(true);
-    expect(p.skillInvest[capstoneIndex('firepower')]).toBe(1);
+    expect(activeShip(p).skillInvest[capstoneIndex('firepower')]).toBe(1);
     // maxPoints 1 이라 두 번째 투자는 거부.
     expect(investSkill(p, capstoneIndex('firepower'))).toBe(false);
   });
@@ -320,5 +333,102 @@ describe('캡스톤 결정론 + 해시 불변', () => {
       stepWorld(wb, emptyInput());
     }
     expect(hashWorld(wb)).toBe(hashWorld(wa));
+  });
+});
+
+// ===========================================================================
+// M8-L4 — 캡스톤 게이트의 타입별 일반화 (설계서 §4)
+//
+// `data/skills.ts` 의 capstoneActive 계열은 스트라이커 전용(트리를 문자열로 받는다).
+// src/items/skills.ts 가 같은 규칙을 ShipTypeDef + 트리 인덱스로 일반화했고, 아래 케이스가
+// ① 스트라이커에서 두 경로가 **완전 동치**임을 전 계열·전 경계에서 못 박고
+// ② 신규 타입의 캡스톤 비트가 **affinity 로** 골라짐을 증명한다(트리 인덱스로 고르면 오답).
+// ===========================================================================
+
+/** 임의 타입의 `treeIndex` 계열에 base `basePts` + 캡스톤 `capPts` 를 찍은 벡터. */
+function shipInvestedVector(typeId: number, treeIndex: number, basePts: number, capPts: number): number[] {
+  const def = shipTypeDef(typeId);
+  const v = registryZeroInvest(typeId);
+  const { start, end } = shipTreeRange(def, treeIndex);
+  let remaining = basePts;
+  const nodes = def.trees[treeIndex]?.nodes ?? [];
+  for (let i = start; remaining > 0 && i < end; i++) {
+    const max = nodes[i - start]?.maxPoints ?? 0;
+    const put = Math.min(max, remaining);
+    v[i] = put;
+    remaining -= put;
+  }
+  v[shipCapstoneIndex(def, treeIndex)] = capPts;
+  return v;
+}
+
+describe('타입별 캡스톤 게이트 — 스트라이커 동치 + affinity 매핑', () => {
+  it('스트라이커: 신규 3함수가 레거시 3함수와 전 경계에서 동치', () => {
+    const striker = shipTypeDef(0);
+    for (let ti = 0; ti < SKILL_TREES.length; ti++) {
+      const tree = SKILL_TREES[ti]!;
+      expect(shipCapstoneIndex(striker, ti)).toBe(capstoneIndex(tree));
+      expect(shipTreeRange(striker, ti)).toEqual(treeRange(tree));
+      for (const basePts of [0, 1, CAPSTONE_GATE - 1, CAPSTONE_GATE, CAPSTONE_GATE + 12]) {
+        for (const capPts of [0, 1]) {
+          const v = investedVector(tree, basePts, capPts);
+          expect(shipTreeBaseInvested(v, striker, ti)).toBe(treeBaseInvested(v, tree));
+          expect(shipCapstoneUnlocked(v, striker, ti)).toBe(capstoneUnlocked(v, tree));
+          expect(shipCapstoneActive(v, striker, ti)).toBe(capstoneActive(v, tree));
+        }
+      }
+    }
+  });
+
+  it('스트라이커: 세 계열 전부 투자한 벡터의 uniqueMask 가 레거시 3비트와 정확히 일치', () => {
+    const v = zeroSkillInvest();
+    for (const tree of SKILL_TREES) {
+      const { start } = treeRange(tree);
+      let need = CAPSTONE_GATE;
+      for (let i = start; need > 0 && i < start + 20; i++) {
+        const put = Math.min(SKILLS[i]!.maxPoints, need);
+        v[i] = put;
+        need -= put;
+      }
+      v[capstoneIndex(tree)] = 1;
+    }
+    const mask = computeLoadoutStats([], v).loadout.uniqueMask;
+    expect(mask).toBe((1 << CAP_FIREPOWER_LASER) | (1 << CAP_SURVIVAL_CRIT) | (1 << CAP_MOBILITY_DASH));
+    // typeId 를 명시해도 동일해야 한다(스트라이커 불변 관문).
+    expect(computeLoadoutStats([], v, undefined, 0).loadout.uniqueMask).toBe(mask);
+  });
+
+  it('신규 타입: 캡스톤 비트를 트리 인덱스가 아니라 affinity 로 고른다', () => {
+    for (const def of SHIP_TYPES) {
+      if (def.id === 0) continue;
+      for (let ti = 0; ti < def.trees.length; ti++) {
+        const tree = def.trees[ti]!;
+        const v = shipInvestedVector(def.id, ti, def.capstoneGate, 1);
+        expect(shipCapstoneActive(v, def, ti)).toBe(true);
+        const mask = computeLoadoutStats([], v, undefined, def.id).loadout.uniqueMask;
+        const expected =
+          tree.affinity === 'offense'
+            ? CAP_FIREPOWER_LASER
+            : tree.affinity === 'defense'
+              ? CAP_SURVIVAL_CRIT
+              : CAP_MOBILITY_DASH;
+        expect(hasCapstone(mask, expected)).toBe(true);
+        for (const other of [CAP_FIREPOWER_LASER, CAP_SURVIVAL_CRIT, CAP_MOBILITY_DASH]) {
+          if (other === expected) continue;
+          expect(hasCapstone(mask, other)).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('신규 타입: 게이트 미달 캡스톤 투자는 비트를 켜지 않는다(손상 벡터 robust)', () => {
+    const def = shipTypeDef(1);
+    const v = shipInvestedVector(1, 0, def.capstoneGate - 1, 1);
+    expect(shipCapstoneUnlocked(v, def, 0)).toBe(false);
+    expect(shipCapstoneActive(v, def, 0)).toBe(false);
+    const mask = computeLoadoutStats([], v, undefined, 1).loadout.uniqueMask;
+    // 시그니처 비트만 켜져 있고 캡스톤 비트는 꺼져 있어야 한다.
+    expect(hasCapstone(mask, CAP_FIREPOWER_LASER)).toBe(false);
+    expect(hasCapstone(mask, def.signatureBit)).toBe(true);
   });
 });

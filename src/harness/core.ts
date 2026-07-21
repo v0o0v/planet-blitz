@@ -31,8 +31,9 @@ import { hashWorld } from '../sim/replay.js';
 import { autopilotInput } from '../sim/autopilot.js';
 import type { EntityKind } from '../sim/entities.js';
 import type { KeyValueStore } from '../save/profile.js';
-import { setProfileStoreOverride } from '../save/profile.js';
+import { activeShip, setProfileStoreOverride } from '../save/profile.js';
 import type { Profile } from '../save/profile.js';
+import { SHIP_TYPES, normalizeShipTypeId, zeroSkillInvest } from '../../data/ships/index.js';
 import { buildInvasionPreset, buildPreset, isInvasionPreset } from './presets.js';
 import type { PresetKind } from './presets.js';
 import {
@@ -138,6 +139,12 @@ export interface HarnessSnapshot {
   /** 침공 3레이어 런타임 요약(침공 런이 아니면 null). */
   invasion: HarnessInvasionState | null;
   profileSummary: { credits: number; minerals: number; shipLevel: number };
+  /**
+   * 활성 기체의 타입 id(`SHIP_TYPES` 인덱스). **런의 `config.shipType` 이 아니라 프로필 값**
+   * 이므로, 런 시작 전에 치트가 실제로 먹혔는지 확인하는 데 쓴다. 런이 그 타입으로 도는지는
+   * `snapshot().hash` 와 시그니처 거동으로 판별한다.
+   */
+  shipTypeId: number;
 }
 
 /**
@@ -187,6 +194,8 @@ export interface HarnessHost {
   /** Re-render the current screen from the (possibly changed) profile. */
   refreshScreen(): void;
   getProfileSummary(): { credits: number; minerals: number; shipLevel: number };
+  /** 라이브 프로필(치트가 제자리 편집한다 — 편집 후 {@link HarnessHost.applyProfile} 로 저장). */
+  getProfile(): Profile;
   /** Mark the live run tainted (오염 런) — no-op if no run is in progress. */
   markTaintedIfLive(): void;
   /** Whether the live run is tainted (false when no run/flag unsupported). */
@@ -245,6 +254,22 @@ export interface Harness {
    * No-op when no run is live.
    */
   cheat(mutate: (world: WorldState) => void): void;
+  /**
+   * 활성 기체의 **타입을 바꾼다**(치트). 투자 벡터는 그 타입의 무투자 벡터로 초기화된다 —
+   * 타입마다 노드 수·의미가 다르므로 옛 벡터를 그대로 두면 다른 트리의 투자로 잘못 읽힌다.
+   *
+   * ⚠️ **런 시작 전에 걸어야 비오염이다**(ADR-0008). 라이브 런이 있으면 그 런을 오염시킨다 —
+   * `WorldConfig.shipType` 은 `createWorld` 시점에 봉인되므로 도는 런의 타입은 바꿀 수 없고,
+   * 프로필만 갈아 두면 "무엇을 검증했는지"가 어긋나기 때문이다(배치 프리셋과 같은 규율).
+   *
+   * 프로필 프리셋과 마찬가지로 **하네스 프로필 슬롯**을 먼저 활성화하므로 본 세이브는
+   * 절대 건드리지 않는다. 범위 밖 값은 0(스트라이커)으로 되돌린다.
+   *
+   * @returns 실제로 적용된 typeId.
+   */
+  setShipType(typeId: number): number;
+  /** 선택 가능한 기체 타입 slug 목록(치트 패널 셀렉트·테스트 파생용). 인덱스 = typeId. */
+  shipTypeSlugs(): readonly string[];
   /** Report a screen change (fires a `screenChange` event). Used by main.ts. */
   observeScreen(screen: string): void;
   /** Per-tick observation hook — main.ts calls this from `stepOnce`. */
@@ -478,6 +503,7 @@ export function createHarness(host: HarnessHost): Harness {
           tainted: false,
           invasion: null,
           profileSummary: summary,
+          shipTypeId: normalizeShipTypeId(activeShip(host.getProfile()).typeId),
         };
       }
       const player = world.entities[0];
@@ -498,11 +524,30 @@ export function createHarness(host: HarnessHost): Harness {
         tainted: host.isTainted(),
         invasion: invasionStateOf(world),
         profileSummary: summary,
+        shipTypeId: normalizeShipTypeId(activeShip(host.getProfile()).typeId),
       };
     },
 
     events() {
       return events.list();
+    },
+
+    setShipType(typeId) {
+      const t = normalizeShipTypeId(typeId);
+      // 프로필 프리셋과 같은 순서: 격리 슬롯 활성화 → 오염 표시 → 편집 → 저장 → 화면 갱신.
+      host.activateHarnessProfile();
+      host.markTaintedIfLive();
+      const profile = host.getProfile();
+      const ship = activeShip(profile);
+      ship.typeId = t;
+      ship.skillInvest = zeroSkillInvest(t);
+      host.applyProfile(profile);
+      host.refreshScreen();
+      return t;
+    },
+
+    shipTypeSlugs() {
+      return SHIP_TYPES.map((d) => d.slug);
     },
 
     cheat(mutate) {
