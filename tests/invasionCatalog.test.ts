@@ -63,6 +63,12 @@ import {
   garrisonRef,
   withGarrison,
 } from '../data/invasion/garrison.js';
+import { FORMATIONS } from '../data/invasion/formations.js';
+import { INVASION_FACILITIES } from '../data/invasion/facilities.js';
+import { L3_PROPS } from '../data/invasion/props.js';
+import { DEFENSE_BOSSES } from '../data/invasion/defenseBosses.js';
+import { INVASION_MAP_TEMPLATES } from '../data/invasion/mapTemplates.js';
+import { EN, KO } from '../src/i18n/catalog.js';
 
 const IDLE: InputFrame = { moveX: 0, moveY: 0, aim: 0, dash: false, special: 0 };
 
@@ -124,20 +130,74 @@ describe('침공 카탈로그 — 인덱스 계약', () => {
       'formation.scout-drones',
       'formation.interceptors',
       'formation.assault',
+      'formation.glide-flock',
+      'formation.mine-layer',
+      'formation.shield-escort',
+      'formation.sniper-nest',
+      'formation.support-escort',
       'fac.rapid',
       'fac.rail',
       'fac.mortar',
       'fac.laser',
       'fac.flame',
       'fac.spawner',
+      'fac.press',
+      'fac.gravwell',
+      'fac.shock',
       'prop.shieldGenerator',
       'prop.gravityAnchor',
       'prop.fixedCannon',
+      'prop.repairPylon',
+      'prop.decoyHologram',
+      'prop.mineSwarm',
       'boss.steelGoliath',
+      'boss.sporeQueen',
+      'boss.phaseWarden',
       'map.straight',
       'map.curved',
       'map.choke',
     ]);
+  });
+
+  /**
+   * 종류별 등록 수는 **원본 배열 length 파생**이어야 한다. 여기서 개수를 하드코딩하면 카탈로그가
+   * 늘 때마다 두 곳을 고쳐야 하고, 한쪽만 고치면 `catalogEntriesOfKind` 가 조용히 잘린다.
+   * (M7c 확장분 = 편대 8 · 설비 9 · 기물 6 · 보스 3 · 맵 3 — 아래 골든이 정본이다.)
+   */
+  it('CATALOG_KIND_COUNTS 는 원본 배열 length 에서 파생된다(하드코딩 금지)', () => {
+    expect(CATALOG_KIND_COUNTS).toEqual([
+      FORMATIONS.length,
+      INVASION_FACILITIES.length,
+      L3_PROPS.length,
+      DEFENSE_BOSSES.length,
+      INVASION_MAP_TEMPLATES.length,
+    ]);
+    expect(CATALOG_KIND_COUNTS.length).toBe(CATALOG_KIND_COUNT);
+    // 종류마다 최소 1종은 있어야 한다(빈 종류는 배치 UI 가 고를 것이 없는 상태다).
+    for (const n of CATALOG_KIND_COUNTS) expect(n).toBeGreaterThan(0);
+  });
+
+  /**
+   * append-only 접두 골든 — 위 전체 골든이 "지금 순서"를 봉인한다면 이쪽은 **M7a 16종이 여전히
+   * 각 종류의 맨 앞에 원래 순서 그대로 있다**를 따로 봉인한다. 전체 골든만 있으면 누군가
+   * 앞쪽을 재배치하고 골든도 같이 고쳐 초록불로 만들 수 있다(이 프로젝트의 반복 결함 유형 —
+   * 테스트가 코드와 같은 팬텀을 본다). 접두 골든은 "저장된 배치 jsonb 가 가리키던 catalogId 가
+   * 아직 같은 것을 가리키는가"라는 별개 질문이라, 함께 고치려면 의도가 드러난다.
+   */
+  it('M7a 16종의 catalogId 가 이동하지 않았다(저장된 배치 jsonb 호환)', () => {
+    const frozen: readonly (readonly [number, readonly string[]])[] = [
+      [CATALOG_FORMATION, ['formation.scout-drones', 'formation.interceptors', 'formation.assault']],
+      [CATALOG_FACILITY, ['fac.rapid', 'fac.rail', 'fac.mortar', 'fac.laser', 'fac.flame', 'fac.spawner']],
+      [CATALOG_PROP, ['prop.shieldGenerator', 'prop.gravityAnchor', 'prop.fixedCannon']],
+      [CATALOG_BOSS, ['boss.steelGoliath']],
+      [CATALOG_MAP, ['map.straight', 'map.curved', 'map.choke']],
+    ];
+    for (const [kind, prefix] of frozen) {
+      const ids = catalogEntriesOfKind(kind).map((e) => e.i18nId);
+      expect(ids.slice(0, prefix.length), `kind ${kind} 접두 이동`).toEqual(prefix);
+      // 신규분은 반드시 뒤에만 붙는다.
+      expect(ids.length).toBeGreaterThanOrEqual(prefix.length);
+    }
   });
 
   it('표시 식별자에 컬러 이모지를 쓰지 않는다(Pixi 두부 방지)', () => {
@@ -357,6 +417,85 @@ describe('기본 수비대 — 빈 배치 런 스모크', () => {
     // 런이 매달리지 않고 종료된다(격추 또는 총 예산 소진).
     expect(state.gameOver || state.victory).toBe(true);
     expect(ticks).toBeLessThanOrEqual(INVASION_TOTAL_TICKS);
+  });
+
+  /**
+   * ⑤ **정규 경로 통합** — M7c 신규 13종만 꽂은 배치로 `createWorld → stepWorld` 를 실제로
+   * 돌린다. 이 프로젝트의 반복 결함이 "단위 테스트는 그린인데 배선이 통째로 없다"이므로,
+   * 신규 항목이 ①실제 런에서 스폰되고 ②그 항목의 표시 문구가 EN·KO 양쪽에서 해석되는지를
+   * 한 테스트에서 같이 본다. 문구만 있고 스폰이 없으면(또는 그 반대면) 여기서 빨간불이다.
+   */
+  it('M7c 신규 13종이 실제 런에서 스폰되고 표시 문구가 EN·KO 로 해석된다', () => {
+    resetInvasionStepHooks(); // 정본 훅 그대로(충원 래핑 없음 — 신규분만 관찰하려고).
+    const layers = normalizeInvasionLayers({
+      // 편대 3~7(신규 5종)을 웨이브 슬롯에 그대로 꽂는다.
+      l1: { waveSlots: [3, 4, 5, 6, 7].map((id) => ({ catalogId: id, level: 1 })) },
+      // 설비 6~8(프레스·견인 자기장·충격파)만 소켓에 반복 배치한다.
+      l2: {
+        templateId: 0,
+        sockets: [6, 7, 8, 6, 7, 8].map((id) => ({ catalogId: id, level: 1 })),
+      },
+      // 기물 3~5(회복 파일런·기만 홀로그램·자폭 지뢰군) + 보스 1(포자 여왕).
+      l3: {
+        boss: { catalogId: 1, level: 1 },
+        props: [{ catalogId: 3, level: 1 }, { catalogId: 4, level: 1 }, { catalogId: 5, level: 1 }],
+      },
+    });
+    const config = {
+      ...DEFAULT_CONFIG,
+      playerHp: 1_000_000, // 무입력 플레이어가 L1 에서 격추되면 L2·L3 을 관찰할 수 없다.
+      invasion3: { layers, timeLimitTicks: INVASION_TOTAL_TICKS, maintenance: 10000 },
+    } as WorldConfig;
+
+    const state = createWorld(11, config);
+    let sawEnemy = 0;
+    let sawFacility = 0;
+    let sawWall = 0;
+    let sawProp = 0;
+    let sawDecoy = 0;
+    let sawBoss = 0;
+    for (let i = 0; i < INVASION_TOTAL_TICKS && !state.gameOver && !state.victory; i++) {
+      stepWorld(state, state.pendingLevelUp ? { ...IDLE, special: packPowerupPick(0) } : IDLE);
+      sawEnemy = Math.max(sawEnemy, countKinds(state, ['enemy']));
+      sawFacility = Math.max(
+        sawFacility,
+        countKinds(state, ['facilityGun', 'facilityHazard', 'facilitySpawner']),
+      );
+      sawWall = Math.max(sawWall, countKinds(state, ['wall']));
+      sawProp = Math.max(sawProp, countKinds(state, ['prop']));
+      sawDecoy = Math.max(sawDecoy, countKinds(state, ['decoyCore']));
+      sawBoss = Math.max(sawBoss, countKinds(state, ['defenseBoss']));
+    }
+
+    expect(sawEnemy, '신규 편대가 한 기도 스폰되지 않았다').toBeGreaterThan(0);
+    expect(sawFacility, '견인 자기장·충격파가 세워지지 않았다').toBeGreaterThan(0);
+    expect(sawWall, '압축 프레스의 이동 판이 스폰되지 않았다').toBeGreaterThan(0);
+    expect(sawProp, '신규 기물이 스폰되지 않았다').toBeGreaterThan(0);
+    expect(sawDecoy, '기만 홀로그램(decoyCore)이 스폰되지 않았다').toBeGreaterThan(0);
+    expect(sawBoss, '포자 여왕이 스폰되지 않았다').toBeGreaterThan(0);
+
+    // 배치에 실제로 꽂은 항목 전부의 표시 문구가 두 로케일에서 해석된다(키 그대로 노출 금지).
+    const placed: readonly (readonly [number, number])[] = [
+      ...[3, 4, 5, 6, 7].map((id) => [CATALOG_FORMATION, id] as const),
+      ...[6, 7, 8].map((id) => [CATALOG_FACILITY, id] as const),
+      ...[3, 4, 5].map((id) => [CATALOG_PROP, id] as const),
+      [CATALOG_BOSS, 1] as const,
+      [CATALOG_BOSS, 2] as const,
+    ];
+    for (const [kind, id] of placed) {
+      const entry = catalogEntry(kind, id);
+      expect(entry, `카탈로그 미등록: kind ${kind} / id ${id}`).toBeDefined();
+      for (const key of [def3NameKey(entry!.i18nId), def3DescKey(entry!.i18nId)]) {
+        for (const [label, table] of [
+          ['EN', EN as unknown as Record<string, string>],
+          ['KO', KO as unknown as Record<string, string>],
+        ] as const) {
+          const v = table[key] ?? '';
+          expect(v.length, `${label} 문구 없음: ${key}`).toBeGreaterThan(0);
+          expect(v, `${label} 이모지: ${key}`).not.toMatch(/\p{Extended_Pictographic}/u);
+        }
+      }
+    }
   });
 
   it('충원 런도 결정론적이다(같은 seed·입력 → 매 틱 같은 해시)', () => {

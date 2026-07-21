@@ -24,11 +24,12 @@ import { NIFLHEIM_FLAGSHIP } from '../bosses/niflheim-flagship.js';
 import { ARKE_ROSTER, ARKE_ELITES, ARKE_CARD_POOL } from './arke.js';
 import { ARKE_OBELISK } from '../bosses/arke-obelisk.js';
 import {
-  blueprintTableSize,
-  resolveBlueprintDrop,
+  PLANET_BLUEPRINT_SPECIALTIES,
   mergeBlueprintGrants,
   type BlueprintGrant,
+  type BlueprintSpecialty,
 } from './blueprints.js';
+import { CATALOG_BOSS, CATALOG_KIND_COUNTS } from '../invasion/catalog.js';
 import { rollBlueprintDrop } from '../../src/sim/drops.js';
 
 /** 행성×티어 드랍 rarity 기준 확률(src/sim/drops.ts가 소비). */
@@ -41,7 +42,7 @@ export interface PlanetDropTable {
   readonly bossUniqueBase: number;
   /**
    * 행성 특산 설계도 테이블 크기(M7b-acquisition — **기존 3행 뒤에 append**). 값은 항상
-   * `blueprintTableSize(index)` 에서 가져온다(하드코딩하면 목록과 갈린다).
+   * `planetBlueprintTableSize(index)` 에서 가져온다(하드코딩하면 목록과 갈린다).
    */
   readonly blueprintTableSize?: number;
   /** 등급 코드별 설계도 동반 확률(centi-percent). 미지정이면 sim 기본표. */
@@ -72,6 +73,110 @@ export interface PlanetContent {
   readonly minerals: readonly [Mineral, Mineral];
 }
 
+// ---------------------------------------------------------------------------
+// 행성 특산 설계도 분배 규칙 (미결 #6 확정 — M7c-content)
+// ---------------------------------------------------------------------------
+
+/**
+ * ## 분배 규칙 정본 (미결 #6)
+ *
+ * "이 편대를 얻으려면 이 행성을 파밍한다" 는 진행 동기가 이 규칙 하나에 걸려 있다. 규칙은
+ * 두 층으로 나뉜다 — 사람이 정하는 **테마 배정**과, 손대지 않아도 굴러가는 **자동 파생**.
+ *
+ * 1. **명시 배정(테마 축)** — `data/planets/blueprints.ts` 의 행성별 목록이 정본이다.
+ *    카르곤=화염·직격 / 베르단=물량·소환 / 니플헤임=저지·보호 / 아르케=정밀·기계.
+ *    기획자가 테마를 판단해 넣는 층이라 코드가 대신할 수 없다.
+ * 2. **자동 파생(미배정 잔여)** — 카탈로그에 있는데 어느 목록에도 없는 방어체는
+ *    {@link derivePlanetBlueprints} 가 규칙으로 배정한다. 그래서 다음 마일스톤이 카탈로그에
+ *    항목을 append 하고 표를 손으로 갱신하지 않아도 **분배가 비지 않는다**.
+ * 3. **공급 행성은 정확히 1곳** — 명시 배정이 이미 있으면 자동 파생은 손대지 않는다.
+ *    중복 공급을 만들면 "아무 데나 돌아도 나온다" 가 되어 행성 선택이 무의미해진다.
+ * 4. **보스는 최심 행성 전용 · 최저 가중치** — 천장 재료다.
+ * 5. **균등** — 보스를 먼저 놓고, 나머지는 **항목 수가 가장 적은 행성**(동수면 낮은 index)에
+ *    붙인다. 그래서 파밍 가치가 한 행성에 몰리지 않는다.
+ * 6. **append-only** — 자동 파생분은 언제나 그 행성 목록의 **끝에** 붙는다. 기존 항목의
+ *    인덱스가 밀리지 않아 `PlanetDropTable` 은 4행 구조 그대로다.
+ *
+ * 순수 함수다(RNG·시각 미소비). 결과는 카탈로그 배열 길이만의 함수라 결정론적이다.
+ */
+export function derivePlanetBlueprints(
+  explicit: readonly (readonly BlueprintSpecialty[])[],
+  kindCounts: readonly number[] = CATALOG_KIND_COUNTS,
+): BlueprintSpecialty[][] {
+  const out: BlueprintSpecialty[][] = explicit.map((list) => [...list]);
+  if (out.length === 0) return out;
+  const deepest = out.length - 1;
+  const assigned = new Set<string>();
+  for (const list of explicit) for (const e of list) assigned.add(`${e.kind}:${e.catalogId}`);
+
+  /** 미배정 항목을 (종류, catalogId) 오름차순으로 모은다 — 카탈로그 순서 = 결정론 순서. */
+  const pending: { kind: number; catalogId: number }[] = [];
+  for (let kind = 0; kind <= CATALOG_BOSS; kind++) {
+    const count = kindCounts[kind] ?? 0;
+    for (let catalogId = 0; catalogId < count; catalogId++) {
+      if (!assigned.has(`${kind}:${catalogId}`)) pending.push({ kind, catalogId });
+    }
+  }
+  // 규칙 4·5: 보스를 먼저 최심 행성에 못 박고, 그 무게까지 센 뒤 나머지를 균등 배분한다.
+  for (const p of pending) {
+    if (p.kind !== CATALOG_BOSS) continue;
+    out[deepest]!.push({ ...p, weight: AUTO_BLUEPRINT_WEIGHT_BOSS });
+  }
+  for (const p of pending) {
+    if (p.kind === CATALOG_BOSS) continue;
+    let target = 0;
+    for (let i = 1; i < out.length; i++) if (out[i]!.length < out[target]!.length) target = i;
+    out[target]!.push({ ...p, weight: AUTO_BLUEPRINT_WEIGHT });
+  }
+  return out;
+}
+
+/** 자동 파생 항목의 기본 가중치(명시 배정 평균 근처 — 튀지 않게). */
+export const AUTO_BLUEPRINT_WEIGHT = 2;
+/** 자동 파생 보스의 가중치(규칙 4 — 항상 최저). */
+export const AUTO_BLUEPRINT_WEIGHT_BOSS = 1;
+
+/** 가중치만큼 펼친다(균등 인덱스 → 가중 추첨). `blueprints.ts` 의 전개와 같은 규칙. */
+function expandWeights(list: readonly BlueprintSpecialty[]): readonly BlueprintSpecialty[] {
+  const out: BlueprintSpecialty[] = [];
+  for (const e of list) {
+    const w = Number.isInteger(e.weight) && e.weight > 0 ? e.weight : 1;
+    for (let i = 0; i < w; i++) out.push(e);
+  }
+  return out;
+}
+
+/**
+ * 행성 index → 특산 목록(명시 배정 + 자동 파생, 가중치 미전개). **분배의 정본**이다 —
+ * 드랍 테이블 크기도 확정도 전부 여기서 파생하므로 두 갈래 진실이 생기지 않는다.
+ */
+export const PLANET_BLUEPRINTS: readonly (readonly BlueprintSpecialty[])[] =
+  derivePlanetBlueprints(PLANET_BLUEPRINT_SPECIALTIES);
+
+/** 행성 index → **펼친** 특산 테이블. 길이가 곧 `DropOdds.blueprintTableSize` 다. */
+export const PLANET_BLUEPRINT_DROP_TABLES: readonly (readonly BlueprintSpecialty[])[] =
+  PLANET_BLUEPRINTS.map(expandWeights);
+
+/** 행성 index → 펼친 테이블 길이. 범위를 벗어나면 0(그 행성은 설계도 미지급). */
+export function planetBlueprintTableSize(planetIndex: number | undefined): number {
+  return PLANET_BLUEPRINT_DROP_TABLES[planetIndex ?? 0]?.length ?? 0;
+}
+
+/**
+ * sim 이 낸 불투명 코드 → 실제 설계도. 테이블 밖 인덱스는 null(조용히 미지급).
+ * sim 은 카탈로그를 모르고 `{tableIndex, seed}` 만 낸다 — 확정은 이 메타 레이어의 책임이다.
+ */
+export function resolvePlanetBlueprintDrop(
+  planetIndex: number | undefined,
+  code: { tableIndex: number; seed: number },
+): BlueprintGrant | null {
+  const table = PLANET_BLUEPRINT_DROP_TABLES[planetIndex ?? 0];
+  if (table === undefined) return null;
+  const e = table[code.tableIndex];
+  if (e === undefined) return null;
+  return { kind: e.kind, catalogId: e.catalogId, count: 1 };
+}
+
 /** 카르곤(0) — M1 화산 행성. 기존 로스터/카드/보스 재사용. */
 export const KARGON: PlanetContent = {
   index: 0,
@@ -86,7 +191,7 @@ export const KARGON: PlanetContent = {
     eliteRareBase: 0.25,
     eliteUniqueBase: 0.03,
     bossUniqueBase: 0.15,
-    blueprintTableSize: blueprintTableSize(0),
+    blueprintTableSize: planetBlueprintTableSize(0),
     blueprintChanceCp: [0, 0, 500, 2000],
   },
   minerals: [
@@ -109,7 +214,7 @@ export const BERDAN: PlanetContent = {
     eliteRareBase: 0.27,
     eliteUniqueBase: 0.04,
     bossUniqueBase: 0.18,
-    blueprintTableSize: blueprintTableSize(1),
+    blueprintTableSize: planetBlueprintTableSize(1),
     blueprintChanceCp: [0, 0, 600, 2200],
   },
   minerals: [
@@ -132,7 +237,7 @@ export const NIFLHEIM: PlanetContent = {
     eliteRareBase: 0.28,
     eliteUniqueBase: 0.05,
     bossUniqueBase: 0.2,
-    blueprintTableSize: blueprintTableSize(2),
+    blueprintTableSize: planetBlueprintTableSize(2),
     blueprintChanceCp: [0, 0, 700, 2400],
   },
   minerals: [
@@ -155,7 +260,7 @@ export const ARKE: PlanetContent = {
     eliteRareBase: 0.3,
     eliteUniqueBase: 0.06,
     bossUniqueBase: 0.22,
-    blueprintTableSize: blueprintTableSize(3),
+    blueprintTableSize: planetBlueprintTableSize(3),
     blueprintChanceCp: [0, 0, 800, 2600],
   },
   minerals: [
@@ -196,7 +301,7 @@ export function blueprintDropsFromLoot(loot: readonly LootLike[]): BlueprintGran
     const odds = planetContent(rec.planet).dropTable;
     const code = rollBlueprintDrop({ seed: rec.seed, rarityCode: rec.rarity }, odds);
     if (code === null) continue;
-    const grant = resolveBlueprintDrop(rec.planet, code);
+    const grant = resolvePlanetBlueprintDrop(rec.planet, code);
     if (grant !== null) grants.push(grant);
   }
   return mergeBlueprintGrants(grants);

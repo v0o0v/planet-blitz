@@ -6,8 +6,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { defaultProfile, migrate } from '../src/save/profile.js';
+import { defaultProfile, migrate, activeShip, investSkill } from '../src/save/profile.js';
 import type { Profile } from '../src/save/profile.js';
+import { SHIP_TYPES, shipSkillNodeCount } from '../data/ships/index.js';
 import {
   retireActiveShip,
   retirementCombatScore,
@@ -54,11 +55,14 @@ describe('퇴역 — 수호 기체 생성 + 계보 지급 (AC1)', () => {
 
   it('퇴역 시 장착 장비가 창고(stash)로 반환된다(ADR-0007)', () => {
     const p = profileWithGear();
+    const retiring = p.ships[p.activeShipIndex]!;
     const stashBefore = p.stash.length;
     retireActiveShip(p, GUARDIAN_INTERCEPTOR);
     expect(p.stash.length).toBe(stashBefore + 2); // weapon + armor 반환
-    const ship = p.ships[p.activeShipIndex]!;
-    expect(Object.keys(ship.equipped).length).toBe(0); // 장착 비워짐
+    // ⚠️ M8: 퇴역이 기체를 **교체**하므로 활성 기체는 더 이상 퇴역한 그 기체가 아니다.
+    // 장착이 비워졌는지는 퇴역한 기체 본체에서 확인한다.
+    expect(Object.keys(retiring.equipped).length).toBe(0);
+    expect(Object.keys(p.ships[p.activeShipIndex]!.equipped).length).toBe(0); // 새 기체도 빈손
   });
 
   it('프리셋 선택제: 타이탄과 인터셉터는 다른 스냅샷 형태', () => {
@@ -69,6 +73,93 @@ describe('퇴역 — 수호 기체 생성 + 계보 지급 (AC1)', () => {
     // 같은 전투력이라도 프리셋 형태가 다르다(타이탄 고HP·저속, 인터셉터 저HP·고속).
     expect(titan.guardians[0]!.snapshot.hp).toBeGreaterThan(inter.guardians[0]!.snapshot.hp);
     expect(inter.guardians[0]!.snapshot.moveSpeed).toBeGreaterThan(titan.guardians[0]!.snapshot.moveSpeed);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M8 — 퇴역이 세대 교체가 된다 (설계서 §6·§10-9, ADR-0019)
+//
+// ⚠️ **의도된 거동 변경**: 이전 구현은 수호 스냅샷·계보·장비 회수까지만 하고 같은 기체를
+// 그대로 활성으로 남겼다("다음 기체" 개념이 모델에 없었다). 위 기존 케이스 중 활성 기체를
+// 계속 참조하던 것들은 그래서 함께 갱신됐다 — 테스트 완화가 아니라 계약 변경 반영이다.
+// ---------------------------------------------------------------------------
+describe('퇴역 — 세대 교체 (M8)', () => {
+  it('퇴역하면 신규 기체가 추가되고 활성이 그쪽으로 옮겨간다', () => {
+    const p = profileWithGear();
+    const before = p.ships.length;
+    const retiring = p.ships[p.activeShipIndex]!;
+
+    const r = retireActiveShip(p, GUARDIAN_TITAN, 0);
+
+    expect(p.ships.length).toBe(before + 1);
+    expect(p.activeShipIndex).toBe(p.ships.length - 1);
+    expect(activeShip(p)).toBe(r.ship);
+    expect(activeShip(p)).not.toBe(retiring); // 같은 기체가 남아 있으면 세대 교체가 아니다
+    expect(r.ship.id).not.toBe(retiring.id);
+  });
+
+  it('신규 기체는 요청한 타입 · level 1 · xp 0 · 투자 전 0 · 빈 장비로 시작한다', () => {
+    for (let t = 0; t < SHIP_TYPES.length; t++) {
+      const p = profileWithGear();
+      p.skillPoints = 5;
+      investSkill(p, 0); // 퇴역 전 기체에 투자를 남겨 둔다
+      const r = retireActiveShip(p, GUARDIAN_TITAN, t);
+
+      expect(r.ship.typeId).toBe(t);
+      expect(r.ship.level).toBe(1);
+      expect(r.ship.xp).toBe(0);
+      expect(Object.keys(r.ship.equipped).length).toBe(0);
+      // 퇴역 = 세대 리셋. 투자는 승계되지 않는다(계정 성장은 계보가 담당).
+      expect(r.ship.skillInvest).toHaveLength(shipSkillNodeCount(t));
+      expect(r.ship.skillInvest.every((v) => v === 0)).toBe(true);
+    }
+  });
+
+  it('구 기체는 수호로 전환되고, 그 투자 깊이가 전투력에 반영된다', () => {
+    const invested = profileWithGear();
+    invested.skillPoints = 20;
+    for (let k = 0; k < 5; k++) investSkill(invested, 0);
+    const bare = profileWithGear();
+
+    const scoreInvested = retirementCombatScore(invested);
+    const scoreBare = retirementCombatScore(bare);
+    // 투자 깊이는 기체 벡터에서 읽어야 한다 — 계정 벡터를 읽으면 이 차이가 사라진다.
+    expect(scoreInvested).toBeGreaterThan(scoreBare);
+
+    const r = retireActiveShip(invested, GUARDIAN_TITAN, 0);
+    expect(invested.guardians.length).toBe(1);
+    expect(invested.guardians[0]!).toBe(r.guardian);
+    expect(r.guardian.combatScore).toBe(scoreInvested);
+    expect(r.guardian.retired).toBe(false);
+  });
+
+  it('퇴역 후 연구소 투자는 새 기체에 쌓인다(별칭 재바인딩 누락 방지)', () => {
+    const p = profileWithGear();
+    const retiring = p.ships[p.activeShipIndex]!;
+    const r = retireActiveShip(p, GUARDIAN_TITAN, 0);
+    p.skillPoints = 3;
+    investSkill(p, 0);
+    expect(r.ship.skillInvest[0]).toBe(1);
+    expect(retiring.skillInvest[0]).toBe(0); // 퇴역한 기체로 새지 않았다
+    // 정본은 활성 기체 벡터 하나뿐이다(M8-L7 이 계정 단위 별칭을 삭제했다).
+    expect(activeShip(p).skillInvest).toBe(r.ship.skillInvest);
+  });
+
+  it('범위 밖 nextTypeId 는 0(스트라이커)으로 clamp 된다', () => {
+    for (const bad of [SHIP_TYPES.length, 999, -1, NaN]) {
+      const p = profileWithGear();
+      expect(retireActiveShip(p, GUARDIAN_TITAN, bad).ship.typeId).toBe(0);
+    }
+  });
+
+  it('퇴역 결과가 저장→로드 왕복을 견딘다(신규 기체·활성 인덱스 보존)', () => {
+    const p = profileWithGear();
+    retireActiveShip(p, GUARDIAN_TITAN, 0);
+    const back = migrate(JSON.parse(JSON.stringify(p)));
+    expect(back.ships.length).toBe(p.ships.length);
+    expect(back.activeShipIndex).toBe(p.activeShipIndex);
+    expect(activeShip(back).typeId).toBe(activeShip(p).typeId);
+    expect(activeShip(back).skillInvest).toEqual(activeShip(p).skillInvest);
   });
 });
 

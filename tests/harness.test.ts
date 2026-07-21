@@ -45,6 +45,7 @@ import {
   setProfileStoreOverride,
 } from '../src/save/profile.js';
 import type { KeyValueStore } from '../src/save/profile.js';
+import type { Profile } from '../src/save/profile.js';
 import { isValidItem } from '../src/save/profile.js';
 import { EQUIP_SLOTS, SAVE_VERSION } from '../src/items/types.js';
 import { computeLoadoutStats } from '../src/items/loadout.js';
@@ -168,11 +169,14 @@ function fakeHost(): HarnessHost & {
   world: WorldState | null;
   started: HarnessInvasionResolved | null;
   calls: string[];
+  profile: Profile;
 } {
   const h = {
     world: null as WorldState | null,
     started: null as HarnessInvasionResolved | null,
     calls: [] as string[],
+    // 하네스 치트가 제자리 편집하는 라이브 프로필(main.ts 의 `profile` 에 대응).
+    profile: defaultProfile(),
     getWorld: () => h.world,
     getCurrentSeed: () => 7,
     stepOnce: () => {
@@ -206,13 +210,15 @@ function fakeHost(): HarnessHost & {
     activateHarnessProfile: () => {
       h.calls.push('activateHarnessProfile');
     },
-    applyProfile: () => {
+    applyProfile: (p: Profile) => {
       h.calls.push('applyProfile');
+      h.profile = p;
     },
     refreshScreen: () => {
       h.calls.push('refreshScreen');
     },
     getProfileSummary: () => ({ credits: 0, minerals: 0, shipLevel: 1 }),
+    getProfile: () => h.profile,
     markTaintedIfLive: () => {
       h.calls.push('markTaintedIfLive');
       const w = h.world;

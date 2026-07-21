@@ -11,7 +11,8 @@
  * 배열 인덱스 = `catalogId` 계약이며 **append-only** 다(M7c 풀 카탈로그는 뒤에만 추가).
  */
 
-import { HAZARD_SLOW } from '../../src/sim/patterns/types.js';
+import { HAZARD_MORTAR, HAZARD_SLOW } from '../../src/sim/patterns/types.js';
+import { TWO_PI, cos, sin } from '../../src/sim/math.js';
 
 // ---------------------------------------------------------------------------
 // 기물 역할 코드 (엔티티 `enemyType` 에 실려 스텝 디스패치·렌더 분화를 겸한다)
@@ -23,8 +24,29 @@ export const PROP_SHIELD_GENERATOR = 0;
 export const PROP_GRAVITY_ANCHOR = 1;
 /** ③ 고정 주포: 사거리·LOS 안의 플레이어에게 단발 직사한다(선회 없음). */
 export const PROP_FIXED_CANNON = 2;
+/**
+ * ④ 회복 파일런(M7c): 주기적으로 **반경 안의 아군 방어체**(보스·수호·다른 기물)를 정수 회복한다.
+ * 유일하게 플레이어를 직접 건드리지 않는 역할이라, "처치 우선순위를 뒤트는" 압박이 본질이다.
+ */
+export const PROP_REPAIR_PYLON = 3;
+/**
+ * ⑤ 기만 홀로그램(M7c): 코어와 같은 실루엣·조준 우선순위를 갖는 **가짜 코어**.
+ *
+ * 이 역할만 엔티티 kind 가 `'prop'` 이 아니라 **`'decoyCore'`** 다. `'core'` 로 만들면
+ * `compact()` 가 파괴 즉시 `victory` 를 세워 침공이 가짜 코어로 끝난다(world.ts 의 core→victory
+ * 경로는 kind 로만 판별한다). 유니크 '신기루 코어'가 이미 같은 이유로 별도 kind 를 쓴 선례를
+ * 그대로 따른다. 모듈이 스폰하는 신기루 코어와 구분하려고 `enemyType` 에 이 역할 코드를
+ * 싣는다(모듈 신기루는 `enemyType === -1`).
+ */
+export const PROP_DECOY_HOLOGRAM = 4;
+/**
+ * ⑥ 자폭 지뢰군(M7c): 자기 주위 고정 링 좌표에 폭발 지뢰(단발 HAZARD_MORTAR)를 순차 부설한다.
+ * 중력 앵커가 **플레이어를 따라다니는 감속**이라면 이쪽은 **기물 주변 고정 지역 거부**다 —
+ * "이 기물에 붙어서 때리면 아프다"가 역할이라 서로 겹치지 않는다.
+ */
+export const PROP_MINE_SWARM = 5;
 /** 기물 역할 수. */
-export const PROP_ROLE_COUNT = 3;
+export const PROP_ROLE_COUNT = 6;
 
 /**
  * 기물 1종의 스펙. 역할별로 쓰지 않는 필드는 0 이다(TurretSpec 선례 — 플랫 구조가 분기 없는
@@ -41,20 +63,32 @@ export interface PropSpec {
   readonly radius: number;
   /** [실드 발생기] 코어에 공급하는 보호막 HP(1기당). 그 외 0. */
   readonly shieldHp: number;
-  /** [중력 앵커] 장판 재융기 주기(틱). 정비도로 스케일. 그 외 0. */
+  /**
+   * [중력 앵커·회복 파일런·자폭 지뢰군] 주기 행동의 재장전 간격(틱). 정비도로 스케일. 그 외 0.
+   */
   readonly periodTicks: number;
-  /** [중력 앵커] 장판 반지름 / 예열 / 활성 / 피해. 그 외 0. */
+  /** [중력 앵커·자폭 지뢰군] 장판/지뢰 반지름 · 예열 · 활성 · 피해. 그 외 0. */
   readonly hazardRadius: number;
   readonly hazardWindup: number;
   readonly hazardActive: number;
   readonly hazardDamage: number;
-  /** [고정 주포] 사거리 / 발사 간격(정비도 스케일) / 발당 피해 / 탄 제원. 그 외 0. */
+  /**
+   * [고정 주포] 사거리 / [회복 파일런] 회복 반경 / [자폭 지뢰군] 지뢰 부설 링 반지름.
+   * 그 외 0. 셋 다 "이 기물이 영향을 미치는 거리"라 한 필드를 공유한다.
+   */
   readonly range: number;
   readonly fireCooldown: number;
   readonly damage: number;
   readonly bulletSpeed: number;
   readonly bulletRadius: number;
   readonly bulletLife: number;
+  /** [회복 파일런] 펄스당 회복량(강화 3축으로 스케일). 그 외 0. */
+  readonly healAmount: number;
+  /**
+   * [자폭 지뢰군] 부설 링의 고정 슬롯 수. 펄스마다 슬롯을 하나씩 돌며 지뢰를 깐다 —
+   * 좌표가 슬롯 인덱스의 순수 함수라 RNG 없이도 부설 위치가 흩어진다. 그 외 0.
+   */
+  readonly patternCount: number;
 }
 
 /**
@@ -81,6 +115,8 @@ export const L3_PROPS: readonly PropSpec[] = [
     bulletSpeed: 0,
     bulletRadius: 0,
     bulletLife: 0,
+    healAmount: 0,
+    patternCount: 0,
   },
   // ② 중력 앵커 — 감속 지대(M3 HAZARD_SLOW 재사용)를 주기적으로 깔아 회피 여유를 깎는다.
   {
@@ -100,6 +136,8 @@ export const L3_PROPS: readonly PropSpec[] = [
     bulletSpeed: 0,
     bulletRadius: 0,
     bulletLife: 0,
+    healAmount: 0,
+    patternCount: 0,
   },
   // ③ 고정 주포 — 코어방의 순수 화력. 사거리·LOS 게이트는 포탑과 동일 규율.
   {
@@ -119,6 +157,74 @@ export const L3_PROPS: readonly PropSpec[] = [
     bulletSpeed: 900,
     bulletRadius: 11,
     bulletLife: 140,
+    healAmount: 0,
+    patternCount: 0,
+  },
+  // ④ 회복 파일런(M7c) — 스스로는 아무도 때리지 않지만, 살려 두면 보스·수호·다른 기물이
+  //    계속 되살아난다. 파일런을 먼저 지울 것인가 보스를 계속 밀 것인가의 선택을 만든다.
+  {
+    id: 'repairPylon',
+    role: PROP_REPAIR_PYLON,
+    hp: 620,
+    radius: 44,
+    shieldHp: 0,
+    periodTicks: 120,
+    hazardRadius: 0,
+    hazardWindup: 0,
+    hazardActive: 0,
+    hazardDamage: 0,
+    range: 620,
+    fireCooldown: 0,
+    damage: 0,
+    bulletSpeed: 0,
+    bulletRadius: 0,
+    bulletLife: 0,
+    healAmount: 40,
+    patternCount: 0,
+  },
+  // ⑤ 기만 홀로그램(M7c) — 코어와 같은 실루엣·조준 우선순위를 갖는 가짜 코어. 파괴해도
+  //    승리가 서지 않는다(kind = decoyCore). 자동 조준을 통째로 낭비시키는 것이 화력이다.
+  {
+    id: 'decoyHologram',
+    role: PROP_DECOY_HOLOGRAM,
+    hp: 2200,
+    radius: 88,
+    shieldHp: 0,
+    periodTicks: 0,
+    hazardRadius: 0,
+    hazardWindup: 0,
+    hazardActive: 0,
+    hazardDamage: 0,
+    range: 0,
+    fireCooldown: 0,
+    damage: 0,
+    bulletSpeed: 0,
+    bulletRadius: 0,
+    bulletLife: 0,
+    healAmount: 0,
+    patternCount: 0,
+  },
+  // ⑥ 자폭 지뢰군(M7c) — 자기 주위 링에 단발 폭발 지뢰를 순차 부설한다. 근접 사격 자세를
+  //    벌주는 지역 거부. 예열이 짧아 "붙으면 아프다"가 즉시 읽힌다.
+  {
+    id: 'mineSwarm',
+    role: PROP_MINE_SWARM,
+    hp: 540,
+    radius: 42,
+    shieldHp: 0,
+    periodTicks: 96,
+    hazardRadius: 150,
+    hazardWindup: 24,
+    hazardActive: 18,
+    hazardDamage: 14,
+    range: 260,
+    fireCooldown: 0,
+    damage: 0,
+    bulletSpeed: 0,
+    bulletRadius: 0,
+    bulletLife: 0,
+    healAmount: 0,
+    patternCount: 6,
   },
 ];
 
@@ -161,12 +267,17 @@ export const DEFENSE_BOSS_SPAWN_OFFSET = { x: 0, y: -560 } as const;
 // 강화 3축 → 스탯 스케일
 // ---------------------------------------------------------------------------
 
+/*
+ * M7c 밸런스 패스(C7-balance) 재배분 — 600/2000/1200 → 140/2400/1500.
+ * 이유는 `data/invasion/defenseBosses.ts` 의 같은 블록과 동일하다(레벨 축 독주 해소).
+ */
+
 /** 레벨 1단계당 전투력 가산(bp). */
-export const PROP_LEVEL_BP = 600;
+export const PROP_LEVEL_BP = 140;
 /** 승급 1단계당 전투력 가산(bp). */
-export const PROP_ASCENSION_BP = 2000;
+export const PROP_ASCENSION_BP = 2400;
 /** 등급 1단계당 전투력 가산(bp). */
-export const PROP_RARITY_BP = 1200;
+export const PROP_RARITY_BP = 1500;
 
 /**
  * 기물 강화 3축 → 전투력 배율(basis-point, 10000 = ×1.00). 정수 덧셈만 쓴다.
@@ -181,3 +292,30 @@ export function propPowerBp(level: number, ascension: number, rarity: number): n
 
 /** 중력 앵커 장판 subtype(코어방 스텝이 spawnHazard 에 넘긴다). */
 export const PROP_SLOW_SUBTYPE = HAZARD_SLOW;
+
+/** 자폭 지뢰군 지뢰 subtype(단발 폭발 — 감속 장판과 색·거동이 갈린다). */
+export const PROP_MINE_SUBTYPE = HAZARD_MORTAR;
+
+/**
+ * 회복 파일런 펄스 1회가 아군 방어체 하나를 회복시키는 양. 강화 3축 배율을 적용한 정수다.
+ * 데이터가 정본이고 스텝은 이 함수만 부른다 — 회복 산식이 sim 쪽에 흩어지지 않게.
+ */
+export function propHealAmount(spec: PropSpec, powerBp: number): number {
+  if (spec.healAmount <= 0) return 0;
+  const v = Math.round((spec.healAmount * powerBp) / 10000);
+  return v < 1 ? 1 : v;
+}
+
+/**
+ * 자폭 지뢰군의 `slot` 번째 부설 좌표(기물 상대 오프셋). 슬롯 인덱스의 순수 함수라 RNG 없이
+ * 부설 위치가 링을 돈다. 반환은 f64 지만 **상태에 누적되지 않고** 매 펄스 슬롯에서 새로
+ * 계산되므로 f64 누적 오차가 쌓일 자리가 없다(같은 슬롯 → 항상 같은 값).
+ */
+export function mineRingOffset(spec: PropSpec, slot: number): { x: number; y: number } {
+  const n = spec.patternCount > 0 ? spec.patternCount : 1;
+  const i = ((slot % n) + n) % n;
+  // 삼각함수는 반드시 src/sim/math.ts 의 결정론 구현을 쓴다(ADR-0005 — 내장 Math.sin/cos 는
+  // 정확 반올림이 보장되지 않아 Node↔Deno 재현 대조를 가른다).
+  const ang = (i * TWO_PI) / n;
+  return { x: cos(ang) * spec.range, y: sin(ang) * spec.range };
+}

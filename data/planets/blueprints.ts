@@ -1,8 +1,8 @@
 /**
  * 행성 특산 설계도 분배 — 방어체 획득 경로의 정본 (M7b-acquisition · 기획 §4, 미결 #6 해소).
  *
- * "이 편대를 얻으려면 이 행성을 파밍한다" 는 동기가 **이 파일 하나**에 걸려 있다. M7a 임시
- * 카탈로그 13종(편대 3 · 설비 6 · 기물 3 · 보스 1)을 현행 행성 4종에 **겹치지 않게** 나눠,
+ * "이 편대를 얻으려면 이 행성을 파밍한다" 는 동기가 **이 파일 하나**에 걸려 있다. M7c 확장
+ * 카탈로그 26종(편대 8 · 설비 9 · 기물 6 · 보스 3)을 현행 행성 4종에 **겹치지 않게** 나눠,
  * 각 방어체의 공급원이 정확히 한 행성이 되게 했다. 겹치면 "아무 데나 돌아도 나온다" 가 되어
  * 행성 선택이 무의미해진다.
  *
@@ -76,6 +76,12 @@ export const KARGON_BLUEPRINTS: readonly BlueprintSpecialty[] = [
   { kind: CATALOG_FORMATION, catalogId: 2, weight: 3 },
   { kind: CATALOG_FACILITY, catalogId: 4, weight: 4 },
   { kind: CATALOG_PROP, catalogId: 2, weight: 2 },
+  // M7c append — 조류형 활공편대(3, 최고속 정면 돌파) · 압축 프레스(설비 6, 압살) ·
+  // 충격파 발생기(설비 8, 단발 초고피해) · 실드 호위편대(5, 전열 탱킹).
+  { kind: CATALOG_FORMATION, catalogId: 3, weight: 3 },
+  { kind: CATALOG_FORMATION, catalogId: 5, weight: 2 },
+  { kind: CATALOG_FACILITY, catalogId: 6, weight: 3 },
+  { kind: CATALOG_FACILITY, catalogId: 8, weight: 2 },
 ];
 
 /**
@@ -86,6 +92,11 @@ export const BERDAN_BLUEPRINTS: readonly BlueprintSpecialty[] = [
   { kind: CATALOG_FORMATION, catalogId: 0, weight: 4 },
   { kind: CATALOG_FACILITY, catalogId: 5, weight: 3 },
   { kind: CATALOG_PROP, catalogId: 1, weight: 2 },
+  // M7c append — 기뢰 살포편대(4, 지역 봉쇄) · 지원 호위편대(7, 치유원 동반 = 수 유지) ·
+  // 지뢰군 기물(5, 지뢰를 계속 불린다).
+  { kind: CATALOG_FORMATION, catalogId: 4, weight: 3 },
+  { kind: CATALOG_FORMATION, catalogId: 7, weight: 2 },
+  { kind: CATALOG_PROP, catalogId: 5, weight: 2 },
 ];
 
 /**
@@ -97,6 +108,9 @@ export const NIFLHEIM_BLUEPRINTS: readonly BlueprintSpecialty[] = [
   { kind: CATALOG_FACILITY, catalogId: 0, weight: 4 },
   { kind: CATALOG_FACILITY, catalogId: 2, weight: 3 },
   { kind: CATALOG_PROP, catalogId: 0, weight: 2 },
+  // M7c append — 견인 자기장(설비 7, 감속 전용 저지) · 수리 파일런(기물 3, 아군 보호).
+  { kind: CATALOG_FACILITY, catalogId: 7, weight: 3 },
+  { kind: CATALOG_PROP, catalogId: 3, weight: 2 },
 ];
 
 /**
@@ -107,6 +121,12 @@ export const ARKE_BLUEPRINTS: readonly BlueprintSpecialty[] = [
   { kind: CATALOG_FACILITY, catalogId: 1, weight: 3 },
   { kind: CATALOG_FACILITY, catalogId: 3, weight: 3 },
   { kind: CATALOG_BOSS, catalogId: 0, weight: 1 },
+  // M7c append — 저격 둥지편대(6, 원거리 정밀) · 기만 홀로그램(기물 4, 기계적 속임수) ·
+  // 신규 보스 2종. 규칙 4 대로 보스는 최심 행성 전용 + 최저 가중치(천장 재료).
+  { kind: CATALOG_FORMATION, catalogId: 6, weight: 3 },
+  { kind: CATALOG_PROP, catalogId: 4, weight: 2 },
+  { kind: CATALOG_BOSS, catalogId: 1, weight: 1 },
+  { kind: CATALOG_BOSS, catalogId: 2, weight: 1 },
 ];
 
 /** 행성 index → 특산 목록(가중치 미전개). PLANETS 와 같은 순서. */
@@ -118,44 +138,26 @@ export const PLANET_BLUEPRINT_SPECIALTIES: readonly (readonly BlueprintSpecialty
 ];
 
 // ---------------------------------------------------------------------------
-// 가중치 전개 + 조회
+// 가중치 전개 + 조회 — **이 파일에는 없다**
 // ---------------------------------------------------------------------------
-
-/** 가중치만큼 항목을 되풀이해 펼친다(균등 인덱스 → 가중 추첨). */
-function expand(list: readonly BlueprintSpecialty[]): readonly BlueprintSpecialty[] {
-  const out: BlueprintSpecialty[] = [];
-  for (const e of list) {
-    const w = Number.isInteger(e.weight) && e.weight > 0 ? e.weight : 1;
-    for (let i = 0; i < w; i++) out.push(e);
-  }
-  return out;
-}
-
-/** 행성 index → **펼친** 특산 테이블. 길이가 곧 `DropOdds.blueprintTableSize` 다. */
-export const PLANET_BLUEPRINT_TABLES: readonly (readonly BlueprintSpecialty[])[] =
-  PLANET_BLUEPRINT_SPECIALTIES.map(expand);
-
-/** 행성 index → 펼친 테이블 길이. 범위를 벗어나면 0(그 행성은 설계도 미지급). */
-export function blueprintTableSize(planetIndex: number | undefined): number {
-  return PLANET_BLUEPRINT_TABLES[planetIndex ?? 0]?.length ?? 0;
-}
-
-/**
- * sim 이 낸 불투명 코드 → 실제 설계도. 테이블 밖 인덱스는 null(조용히 미지급).
- *
- * `seed` 는 여기서 쓰지 않는다 — 현행 규칙은 "1건 = 1장" 이라 추가 롤이 필요 없다. 장수
- * 가변화(예: 유니크 드랍은 2장) 같은 확장이 붙으면 이 시드를 입력으로 쓴다.
- */
-export function resolveBlueprintDrop(
-  planetIndex: number | undefined,
-  code: { tableIndex: number; seed: number },
-): BlueprintGrant | null {
-  const table = PLANET_BLUEPRINT_TABLES[planetIndex ?? 0];
-  if (table === undefined) return null;
-  const e = table[code.tableIndex];
-  if (e === undefined) return null;
-  return { kind: e.kind, catalogId: e.catalogId, count: 1 };
-}
+//
+// ⚠️ M7c 통합 게이트(2026-07-21): 여기 있던 `PLANET_BLUEPRINT_TABLES` ·
+// `blueprintTableSize()` · `resolveBlueprintDrop()` 3종을 **삭제**했다. 이 셋은 위의
+// **명시 배정만** 알아서, C6 레인이 `data/planets/index.ts` 에 규칙 파생
+// (`derivePlanetBlueprints` = 명시 배정 + 미배정 자동 배분)을 도입하고 프로덕션 경로를
+// 그쪽으로 재배선한 뒤로는 **아무도 호출하지 않는 반쪽 진실**로 남아 있었다.
+//
+// 위험했던 이유는 "죽은 코드" 자체가 아니라 **테스트가 그 죽은 코드를 보고 있었다**는
+// 점이다(`tests/blueprintDrops.test.ts`). 프로덕션은 `resolvePlanetBlueprintDrop` 로
+// 설계도를 확정하는데 테스트는 `resolveBlueprintDrop` 을 단언했다 — 오늘은 파생 결과와
+// 명시 표가 우연히 같아 초록불이지만, 다음 마일스톤이 카탈로그에 append 만 하면 두 값이
+// 갈리면서 **테스트는 배송되지 않는 함수를 계속 통과시킨다**. 이 리포에서 8번 재발한
+// "테스트가 코드와 같은 팬텀을 본다" 유형이라 게이트에서 접었다.
+//
+// 정본: `data/planets/index.ts` 의 `PLANET_BLUEPRINTS`(미전개) ·
+// `PLANET_BLUEPRINT_DROP_TABLES`(전개) · `planetBlueprintTableSize()` ·
+// `resolvePlanetBlueprintDrop()`. 이 파일은 이제 **명시 테마 배정(사람이 정하는 층)** 과
+// 제작 비용만 담는다.
 
 /** 같은 (kind, catalogId) 끼리 장수를 합친다(서버 지급 호출 수를 줄인다). */
 export function mergeBlueprintGrants(grants: readonly BlueprintGrant[]): BlueprintGrant[] {

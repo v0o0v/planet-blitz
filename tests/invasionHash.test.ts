@@ -351,3 +351,49 @@ describe('엔티티 해시 레이아웃 계약', () => {
     expect(hashEntity(FNV_OFFSET, e)).toBe(ref);
   });
 });
+
+// ---------------------------------------------------------------------------
+// M8 — 기체 타입 꼬리 폴드가 침공 블록을 오염시키지 않는지 (설계서 §4).
+//
+// 신규 폴드는 invasion3 if-블록이 **완전히 닫힌 뒤** 조건부로만 붙는다. 세 가지를 못박는다.
+//   ① 스트라이커(미지정·0) 침공 런의 해시가 바이트 불변 — 기존 침공 fixtures 와 EF 재실행이
+//      그대로 살아 있다.
+//   ② 비스트라이커 침공 런은 갈린다 — 타입이 실제로 봉인된다.
+//   ③ 폴드가 블록 **안**이 아니다 — invasion3 없는 PvE 에서도 타입 차이가 드러난다.
+//
+// ⚠️ 설계서 §10-8: 비스트라이커 침공을 **출시하기 전에** `scripts/deno-verify/scenarios.ts` 에
+// 비스트라이커 시나리오를 추가하고 EF 를 재배포해야 한다. 그 전에는 서버가 shipType 을 모르는
+// 번들로 재실행해 전 침공이 `defense-mismatch` 로 오거부된다(라이브 서비스 파손).
+// ---------------------------------------------------------------------------
+
+describe('M8 기체 타입 폴드 — 침공 블록과의 경계', () => {
+  it('침공 런에서 shipType 미지정과 0 명시가 per-tick 해시 스트림 전체에서 동일하다', () => {
+    const layers = filledLayers();
+    const inputs = idleInputs(120);
+    const plain = stepThrough(makeInvasionState(4242, layers), inputs);
+    const zeroState = makeInvasionState(4242, layers);
+    zeroState.config.shipType = 0;
+    expect(stepThrough(zeroState, inputs)).toEqual(plain);
+  });
+
+  it('침공 런에서 비스트라이커는 해시가 갈린다 (타입이 실제로 봉인된다)', () => {
+    const layers = filledLayers();
+    const striker = makeInvasionState(4242, layers);
+    const bruiser = makeInvasionState(4242, layers);
+    bruiser.config.shipType = 1;
+    expect(hashWorld(bruiser)).not.toBe(hashWorld(striker));
+  });
+
+  it('폴드가 침공 블록 안이 아니다 — invasion3 유무와 무관하게 타입 차이가 드러난다', () => {
+    const layers = filledLayers();
+    const withInv = makeInvasionState(4242, layers);
+    const withInvTyped = makeInvasionState(4242, layers);
+    withInvTyped.config.shipType = 3;
+    // 폴드가 블록 **안**이면 아래 pveDiff 가 false 가 된다.
+    expect(hashWorld(withInv) !== hashWorld(withInvTyped)).toBe(true);
+
+    const pve = createWorld(4242, { ...DEFAULT_CONFIG } as WorldConfig);
+    const pveTyped = createWorld(4242, { ...DEFAULT_CONFIG, shipType: 3 } as WorldConfig);
+    expect(hashWorld(pve) !== hashWorld(pveTyped)).toBe(true);
+  });
+});

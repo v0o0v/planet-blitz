@@ -21,21 +21,18 @@
  */
 
 import { Container, Graphics, Rectangle, Sprite, Text, type Texture } from 'pixi.js';
+import type { SkillNode } from '../../../data/skills.js';
 import {
-  SKILLS,
-  SKILL_TREES,
-  NODES_PER_TREE,
-  treeRange,
-  capstoneIndex,
-  capstoneUnlocked,
-  treeBaseInvested,
-  CAPSTONE_GATE,
-  type SkillNode,
-  type SkillTree,
-} from '../../../data/skills.js';
+  shipTypeDef,
+  flattenShipNodes,
+  shipTreeRange,
+  shipCapstoneIndex,
+  type ShipTypeDef,
+} from '../../../data/ships/index.js';
 import type { StatKey } from '../../items/types.js';
-import { computeSkillStats } from '../../items/skills.js';
+import { computeSkillStats, shipCapstoneUnlocked, shipTreeBaseInvested } from '../../items/skills.js';
 import { t, type MessageKey } from '../../i18n/index.js';
+import { shipTreeName, AFFINITY_ACCENT } from './shipLabels.js';
 import {
   investSkill,
   respecSkills,
@@ -54,13 +51,11 @@ import { PixiButton } from './button.js';
 import { PixiTooltip } from './tooltip.js';
 import { makeBanner, makeCurrencyChip, makeIconButton } from './titleBar.js';
 import { rectGridPositions } from './slotGrid.js';
+import { makeScrollArea } from './scrollArea.js';
 
-/** 계열 → 헤더 라벨 키 + 강조색(정수). DOM 판 TREE_META 와 같은 색. */
-const TREE_META: Record<SkillTree, { nameKey: MessageKey; accent: number }> = {
-  firepower: { nameKey: 'lab.tree.firepower', accent: 0xff7a4c },
-  survival: { nameKey: 'lab.tree.survival', accent: 0x4cd7ff },
-  mobility: { nameKey: 'lab.tree.mobility', accent: 0x8fd94c },
-};
+// 계열 강조색(affinity 축)의 정본은 `./shipLabels.ts` 다 — 격납고·챔피언 선택도 같은 값을
+// 쓰므로 이 화면 파일에 두면 다른 화면이 연구소 전체를 끌어오게 된다. 재수출만 한다.
+export { AFFINITY_ACCENT } from './shipLabels.js';
 
 /** 파생 스탯 미리보기 행: [StatKey, labelKey, isPercent]. DOM 판과 동일. */
 const PREVIEW_ROWS: readonly [StatKey, MessageKey, boolean][] = [
@@ -175,13 +170,21 @@ function panelX(col: number): number {
 }
 
 /**
- * 계열에서 **포인트를 투자한** base 노드의 flat 인덱스 목록(SKILLS 순서 = 티어 오름차순).
+ * 계열에서 **포인트를 투자한** base 노드의 flat 인덱스 목록(flat 순서 = 티어 오름차순).
  * 캡스톤은 별도 바가 맡으므로 제외한다. 손상/짧은 벡터도 안전(누락 = 0).
+ *
+ * ⚠️ M8: 축이 트리 **이름**(`'firepower'|…`)에서 **(타입 정의, 트리 인덱스)** 로 바뀌었다.
+ * 이름 축을 남기면 신규 기체의 계열이 이 함수에 아예 들어올 수 없고(타입이 3리터럴), 슬라이스
+ * 폭도 스트라이커의 20 으로 고정돼 비온(25)에서 다섯 칸이 조용히 잘린다.
  *
  * 순수 함수(Pixi 미의존) — 본 패널이 "찍은 것만" 보이는 규칙의 진실의 원천이다.
  */
-export function investedNodeIndices(invest: readonly number[], tree: SkillTree): number[] {
-  const { start, end } = treeRange(tree);
+export function investedNodeIndices(
+  invest: readonly number[],
+  def: ShipTypeDef,
+  treeIndex: number,
+): number[] {
+  const { start, end } = shipTreeRange(def, treeIndex);
   const out: number[] = [];
   for (let i = start; i < end; i++) {
     if ((invest[i] ?? 0) > 0) out.push(i);
@@ -311,9 +314,28 @@ export class ResearchLabScreen {
   private onClose: (() => void) | null = null;
   private hint = '';
   private ui: UiTextures = {};
-  /** 열려 있는 전체 스킬 팝업의 계열(null = 닫힘). */
-  private popupTree: SkillTree | null = null;
+  /** 열려 있는 전체 스킬 팝업의 **계열 인덱스**(null = 닫힘). */
+  private popupTree: number | null = null;
   private popupScrollY = 0;
+  /** 본 패널 투자 목록의 계열별 스크롤 위치(노드가 많은 타입에서만 쓰인다). */
+  private readonly listScrollY: number[] = [0, 0, 0];
+
+  /**
+   * 현재 편집 대상 = **활성 기체의 타입 정의**. 화면 전체가 이 하나에서 파생된다
+   * (트리 수·노드 수·게이트·캡스톤 인덱스). 스트라이커 정본 상수를 직접 읽으면 비온(25노드,
+   * 게이트 44)에서 그리드가 붕괴하고 캡스톤 잠금이 오판정된다.
+   */
+  private def(): ShipTypeDef {
+    return shipTypeDef(activeShip(this.profile).typeId);
+  }
+
+  /**
+   * 투자 벡터의 **정본**(M8 v4) = 활성 기체 벡터. `profile.skillInvest`(폐기 예정 별칭)를
+   * 읽으면 M8-L7 이 그 필드를 지우는 순간 화면이 통째로 끊긴다.
+   */
+  private invest(): number[] {
+    return activeShip(this.profile).skillInvest;
+  }
 
   constructor(profile: Profile, stage: Container, store: KeyValueStore | null = null) {
     this.profile = profile;
@@ -364,7 +386,7 @@ export class ResearchLabScreen {
 
   // --- 투자 / 리스펙 (DOM 판과 동일 규칙) ----------------------------------
 
-  private invest(index: number): void {
+  private investNode(index: number): void {
     if (!investSkill(this.profile, index)) {
       this.hint = this.profile.skillPoints <= 0 ? t('lab.err.noPoints') : t('lab.err.maxed');
       this.render();
@@ -377,11 +399,12 @@ export class ResearchLabScreen {
 
   private investCapstone(index: number, unlocked: boolean): void {
     if (!unlocked) {
-      this.hint = t('lab.capstone.needGate', { g: CAPSTONE_GATE });
+      // 게이트 폭은 타입별이다(스트라이커·브루저·아크·팬텀 40, 비온 44) — 상수를 박으면 거짓말.
+      this.hint = t('lab.capstone.needGate', { g: this.def().capstoneGate });
       this.render();
       return;
     }
-    this.invest(index);
+    this.investNode(index);
   }
 
   private respec(): void {
@@ -398,7 +421,7 @@ export class ResearchLabScreen {
     this.render();
   }
 
-  private openPopup(tree: SkillTree): void {
+  private openPopup(tree: number): void {
     this.popupTree = tree;
     this.popupScrollY = 0;
     this.hint = '';
@@ -415,9 +438,9 @@ export class ResearchLabScreen {
   // --- 툴팁 ----------------------------------------------------------------
 
   private showTip(index: number, accent: number, globalX: number, globalY: number): void {
-    const node = SKILLS[index];
+    const node = flattenShipNodes(this.def())[index];
     if (node === undefined) return;
-    const cur = this.profile.skillInvest[index] ?? 0;
+    const cur = this.invest()[index] ?? 0;
     const p = this.root.toLocal({ x: globalX, y: globalY });
     this.tooltip.show(
       { title: node.name, titleColor: accent, subtitle: `${cur} / ${node.maxPoints} pt`, lines: [node.desc] },
@@ -454,7 +477,8 @@ export class ResearchLabScreen {
     this.root.addChildAt(bg, 0);
 
     this.renderTitleBar();
-    SKILL_TREES.forEach((tree, i) => this.renderTreePanel(tree, i));
+    // 계열 수·구성은 **활성 기체 타입** 이 정한다(3계열 고정 가정 제거).
+    this.def().trees.forEach((_, i) => this.renderTreePanel(i));
     this.renderStatsStrip();
     this.renderActions();
     // 팝업을 먼저 얹고 힌트를 그 위에 — 팝업에서 투자에 실패했을 때 안내가 막에 가리지 않는다.
@@ -515,8 +539,12 @@ export class ResearchLabScreen {
 
   // --- 본 화면 계열 패널(찍은 것만) ----------------------------------------
 
-  private renderTreePanel(tree: SkillTree, col: number): void {
-    const meta = TREE_META[tree];
+  private renderTreePanel(treeIndex: number): void {
+    const def = this.def();
+    const treeDef = def.trees[treeIndex];
+    if (treeDef === undefined) return;
+    const accent = AFFINITY_ACCENT[treeDef.affinity];
+    const col = treeIndex;
     const panel = new Container();
     panel.position.set(panelX(col), PANEL_Y);
     this.root.addChild(panel);
@@ -524,14 +552,14 @@ export class ResearchLabScreen {
 
     const title = new Text({
       resolution: 2,
-      text: t(meta.nameKey),
-      style: { fontFamily: UI_FONT, fontSize: 26, fontWeight: '800', fill: meta.accent, dropShadow: TEXT_SHADOW },
+      text: shipTreeName(treeDef),
+      style: { fontFamily: UI_FONT, fontSize: 26, fontWeight: '800', fill: accent, dropShadow: TEXT_SHADOW },
     });
     title.anchor.set(0.5, 0);
     title.position.set(PANEL_W / 2, TITLE_Y);
     panel.addChild(title);
 
-    const invested = treeBaseInvested(this.profile.skillInvest, tree);
+    const invested = shipTreeBaseInvested(this.invest(), def, treeIndex);
     const sub = new Text({
       resolution: 2,
       text: t('lab.tree.sub', { n: invested }),
@@ -549,7 +577,7 @@ export class ResearchLabScreen {
     sub.position.set(PANEL_W / 2, TREE_SUB_Y);
     panel.addChild(sub);
 
-    const picked = investedNodeIndices(this.profile.skillInvest, tree);
+    const picked = investedNodeIndices(this.invest(), def, treeIndex);
 
     // 전체 목록은 팝업 몫 — 이 버튼이 유일한 진입점이자, 투자가 일어나는 자리다.
     const browse = new PixiButton({
@@ -558,8 +586,8 @@ export class ResearchLabScreen {
       width: BOX.w,
       height: BROWSE_H,
       fontSize: 17,
-      label: t('lab.browseAll', { n: picked.length, m: NODES_PER_TREE }),
-      onClick: () => this.openPopup(tree),
+      label: t('lab.browseAll', { n: picked.length, m: def.nodesPerTree }),
+      onClick: () => this.openPopup(treeIndex),
     });
     browse.container.position.set(BOX.x, BROWSE_Y);
     panel.addChild(browse.container);
@@ -584,18 +612,34 @@ export class ResearchLabScreen {
       empty.position.set(PANEL_W / 2, LIST_TOP + INVESTED_LIST.avail / 2);
       panel.addChild(empty);
     } else {
+      // ⚠️ 목록 세로가 가용 높이를 넘을 수 있다 — `nodesPerTree` 가 타입별이라(비온 25) 2열
+      // 13행 = 585 로 가용 450 을 넘긴다. 스크롤 영역에 넣어 두면 20노드 타입에서는
+      // `totalH <= viewH` 라 휠 리스너조차 안 붙어 기존 거동과 같다(makeScrollArea 규약).
+      const nodes = flattenShipNodes(def);
       const cells = rectGridPositions(picked.length, INV_COLS, INV_W, INV_H, INV_GAP_X, INV_GAP_Y);
+      const totalH = listStackHeight(picked.length, INV_COLS, INV_H, INV_GAP_Y);
+      const content = makeScrollArea(panel, {
+        x: BOX.x,
+        y: LIST_TOP,
+        w: BOX.w,
+        h: INVESTED_LIST.avail,
+        totalH,
+        get: () => this.listScrollY[treeIndex] ?? 0,
+        set: (v) => {
+          this.listScrollY[treeIndex] = v;
+        },
+      });
       picked.forEach((index, i) => {
         const at = cells[i];
-        const node = SKILLS[index];
+        const node = nodes[index];
         if (at === undefined || node === undefined) return;
-        const row = this.makeInvestedRow(index, node, meta.accent);
-        row.position.set(BOX.x + at.x, LIST_TOP + at.y);
-        panel.addChild(row);
+        const row = this.makeInvestedRow(index, node, accent);
+        row.position.set(at.x, at.y);
+        content.addChild(row);
       });
     }
 
-    panel.addChild(this.makeCapstone(tree, meta.accent));
+    panel.addChild(this.makeCapstone(treeIndex, accent));
   }
 
   /**
@@ -603,7 +647,7 @@ export class ResearchLabScreen {
    * 투자는 팝업 한 곳에서만 일어나게 해 진입점을 갈라 놓지 않는다. 설명은 hover 툴팁.
    */
   private makeInvestedRow(index: number, node: SkillNode, accent: number): Container {
-    const cur = this.profile.skillInvest[index] ?? 0;
+    const cur = this.invest()[index] ?? 0;
     const maxed = cur >= node.maxPoints;
 
     const row = new Container();
@@ -658,16 +702,18 @@ export class ResearchLabScreen {
   }
 
   /** 캡스톤: 해금이면 노란 버튼, 잠기면 나무 버튼 + 게이트 진행도. */
-  private makeCapstone(tree: SkillTree, accent: number): Container {
-    const index = capstoneIndex(tree);
-    const node = SKILLS[index]!;
-    const cur = this.profile.skillInvest[index] ?? 0;
-    const unlocked = capstoneUnlocked(this.profile.skillInvest, tree);
-    const gateProgress = treeBaseInvested(this.profile.skillInvest, tree);
+  private makeCapstone(treeIndex: number, accent: number): Container {
+    const def = this.def();
+    const invest = this.invest();
+    const index = shipCapstoneIndex(def, treeIndex);
+    const node = flattenShipNodes(def)[index]!;
+    const cur = invest[index] ?? 0;
+    const unlocked = shipCapstoneUnlocked(invest, def, treeIndex);
+    const gateProgress = shipTreeBaseInvested(invest, def, treeIndex);
 
     const label = unlocked
       ? `★ ${node.name}   ${cur}/${node.maxPoints}`
-      : `${node.name}   ${gateProgress}/${CAPSTONE_GATE}`;
+      : `${node.name}   ${gateProgress}/${def.capstoneGate}`;
     const btn = new PixiButton({
       texture: this.ui[unlocked ? 'ui_btn_yellow.png' : 'ui_btn_wood.png'],
       fallbackColor: unlocked ? 0x9a7a2a : 0x4a3a24,
@@ -706,8 +752,12 @@ export class ResearchLabScreen {
    * 세로 스크롤은 마스크 + 클립 Container 조합이고, 마스크 높이는 행 피치의 배수로 클램프해
    * 반토막 행이 나오지 않게 한다.
    */
-  private renderPopup(tree: SkillTree): void {
-    const meta = TREE_META[tree];
+  private renderPopup(treeIndex: number): void {
+    const def = this.def();
+    const treeDef = def.trees[treeIndex];
+    if (treeDef === undefined) return;
+    const meta = { accent: AFFINITY_ACCENT[treeDef.affinity], name: shipTreeName(treeDef) };
+    const nodes = flattenShipNodes(def);
 
     // 뒤 화면을 덮는 막 — 클릭을 흡수하고(뒤 행이 눌리지 않게) 바깥 클릭은 닫기로 쓴다.
     const veil = new Graphics();
@@ -737,7 +787,7 @@ export class ResearchLabScreen {
 
     const title = new Text({
       resolution: 2,
-      text: t('lab.all.title', { tree: t(meta.nameKey) }),
+      text: t('lab.all.title', { tree: meta.name }),
       style: { fontFamily: UI_FONT, fontSize: 26, fontWeight: '800', fill: meta.accent, dropShadow: TEXT_SHADOW },
     });
     title.anchor.set(0, 0);
@@ -752,7 +802,7 @@ export class ResearchLabScreen {
       resolution: 2,
       text: t('lab.all.sub', {
         n: this.profile.skillPoints,
-        m: treeBaseInvested(this.profile.skillInvest, tree),
+        m: shipTreeBaseInvested(this.invest(), def, treeIndex),
       }),
       style: { fontFamily: UI_FONT, fontSize: 15, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
     });
@@ -771,8 +821,9 @@ export class ResearchLabScreen {
 
     // 마스크 하한은 콘텐츠 상자 바닥(프레임 + 여백 위) — 목록이 나무 테두리에 닿지 않는다.
     const viewH = clampToRowHeight(PBOX.bottom - POP_LIST_TOP, POP_ROW_PITCH);
-    const { start } = treeRange(tree);
-    const totalH = listStackHeight(NODES_PER_TREE, 1, POP_ROW_H, POP_ROW_GAP);
+    const { start } = shipTreeRange(def, treeIndex);
+    const perTree = def.nodesPerTree;
+    const totalH = listStackHeight(perTree, 1, POP_ROW_H, POP_ROW_GAP);
 
     const clip = new Container();
     clip.position.set(PBOX.x, POP_LIST_TOP);
@@ -788,9 +839,9 @@ export class ResearchLabScreen {
     this.popupScrollY = scrollY;
     content.y = -scrollY;
 
-    for (let local = 0; local < NODES_PER_TREE; local++) {
+    for (let local = 0; local < perTree; local++) {
       const index = start + local;
-      const node = SKILLS[index];
+      const node = nodes[index];
       if (node === undefined) continue;
       const row = this.makePopupRow(index, node, meta.accent);
       row.position.set(0, local * POP_ROW_PITCH);
@@ -828,7 +879,7 @@ export class ResearchLabScreen {
 
   /** 팝업 목록 행(780×65): 아이콘 + 이름 + 상세 설명 + `현재/최대`. 행 클릭 = 1포인트 투자. */
   private makePopupRow(index: number, node: SkillNode, accent: number): Container {
-    const cur = this.profile.skillInvest[index] ?? 0;
+    const cur = this.invest()[index] ?? 0;
     const maxed = cur >= node.maxPoints;
     const canInvest = !maxed && this.profile.skillPoints > 0;
 
@@ -895,7 +946,7 @@ export class ResearchLabScreen {
     // 클릭 판정은 행 Container 에(바탕 Graphics 에만 걸면 텍스트·아이콘이 삼킨다).
     row.eventMode = 'static';
     row.cursor = canInvest ? 'pointer' : 'default';
-    row.on('pointertap', () => this.invest(index));
+    row.on('pointertap', () => this.investNode(index));
     return row;
   }
 
@@ -932,7 +983,9 @@ export class ResearchLabScreen {
     title.position.set(SBOX.x, midY);
     panel.addChild(title);
 
-    const sums = computeSkillStats(this.profile.skillInvest);
+    // 파생 스탯도 **기체 타입** 을 함께 넘긴다 — 노드 정의가 타입별이라 타입을 빼면 비온의
+    // 25번째 이후 노드가 통째로 무시되고, 트리 슬라이스 폭도 20 으로 오판정된다.
+    const sums = computeSkillStats(this.invest(), this.def().id);
     const rows = PREVIEW_ROWS.filter(([key]) => sums[key] !== 0);
     const cells = rectGridPositions(rows.length, STAT_COLS, STAT_COL_W, STAT_ROW_H, 0, 0);
     rows.forEach(([key, labelKey, isPct], i) => {

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { buildRunConfig } from '../src/run/runConfig.js';
 import {
   loadProfile,
   saveProfile,
@@ -20,8 +21,27 @@ import {
 import { rollItem } from '../src/items/roll.js';
 import { xpToNext } from '../src/sim/world.js';
 import type { LootRecord } from '../src/sim/world.js';
+import {
+  investSkill,
+  respecSkills,
+  totalInvested,
+  zeroSkillInvest,
+  normalizeSkillInvest,
+} from '../src/save/profile.js';
+import { retireActiveShip } from '../src/save/guardianLifecycle.js';
 import { SAVE_VERSION } from '../src/items/types.js';
-import { SKILL_NODE_COUNT } from '../data/skills.js';
+import { SKILL_NODE_COUNT, SKILLS } from '../data/skills.js';
+import {
+  SHIP_TYPES,
+  selectableShipTypes,
+  shipSkillNodeCount,
+  shipTypeDef,
+  flattenShipNodes,
+  shipCapstoneIndex,
+} from '../data/ships/index.js';
+import { createWorld, stepWorld } from '../src/sim/world.js';
+import type { WorldConfig, InputFrame } from '../src/sim/world.js';
+import { hashWorld } from '../src/sim/replay.js';
 
 /** In-memory KeyValueStore so tests run under the `node` vitest environment. */
 function memStore(seed?: Record<string, string>): KeyValueStore {
@@ -114,9 +134,9 @@ describe('profile — migration v0 → v1 (AC5)', () => {
     expect(p.ships[0]?.level).toBe(5);
     expect(p.credits).toBe(250);
     expect(activeShip(p).name).toBe('초기 전투기');
-    // v2 fills a zeroed skill vector for a pre-M3 blob.
-    expect(p.skillInvest).toHaveLength(SKILL_NODE_COUNT);
-    expect(p.skillInvest.every((v) => v === 0)).toBe(true);
+    // v2 fills a zeroed skill vector for a pre-M3 blob (v4 부터 정본은 기체 벡터다).
+    expect(activeShip(p).skillInvest).toHaveLength(SKILL_NODE_COUNT);
+    expect(activeShip(p).skillInvest.every((v: number) => v === 0)).toBe(true);
   });
 });
 
@@ -217,5 +237,386 @@ describe('salvage — bulk disenchant (AC6)', () => {
     const y = salvageItems(p, [reRolled]);
     expect(y.minerals).toBe(3);
     expect(p.inventory).toHaveLength(0); // 참조가 달라도 id로 매칭돼 제거됨
+  });
+});
+
+// ===========================================================================
+// M8 v4 — skillInvest 를 기체 단위로 내린다 (설계서 §6, ADR-0019)
+// ===========================================================================
+
+/** v3(계정 단위) 세이브 blob. `skillInvest` 가 Profile 최상위에 있던 시절의 형태. */
+function v3Blob(invest: unknown, ships = 1): Record<string, unknown> {
+  return {
+    saveVersion: 3,
+    ships: Array.from({ length: ships }, (_, i) => ({
+      id: `ship-${i}`, name: '초기 전투기', level: 5, xp: 0, equipped: {},
+    })),
+    activeShipIndex: 0,
+    inventory: [], stash: [], stashExpansions: 0, planetProgress: {},
+    credits: 10, minerals: 0, skillPoints: 0, tutorialDone: true,
+    skillInvest: invest,
+  };
+}
+
+describe('마이그레이션 v3 → v4 — 계정 투자가 기체로 승계된다 (검증①)', () => {
+  it('기존 유저의 투자가 활성 기체 벡터로 그대로 옮겨진다', () => {
+    const invest = zeroSkillInvest(0);
+    invest[0] = 3;   // 화력 트리
+    invest[25] = 2;  // 생존 트리
+    invest[45] = 1;  // 기동 트리
+    const p = migrate(v3Blob(invest));
+
+    expect(p.saveVersion).toBe(SAVE_VERSION);
+    expect(SAVE_VERSION).toBe(4);
+    const ship = activeShip(p);
+    expect(ship.typeId).toBe(0); // 기존 유저는 전원 스트라이커
+    expect(ship.skillInvest).toHaveLength(shipSkillNodeCount(0));
+    expect(ship.skillInvest[0]).toBe(3);
+    expect(ship.skillInvest[25]).toBe(2);
+    expect(ship.skillInvest[45]).toBe(1);
+    // 총량 보존 — 마이그레이션이 조용히 포인트를 흘리지 않았는지 합으로 재확인.
+    expect(ship.skillInvest.reduce((a, b) => a + b, 0)).toBe(6);
+    // 다른 진행 상태도 함께 보존된다(기체를 통째로 갈아치우지 않았는가).
+    expect(ship.level).toBe(5);
+  });
+
+  it('마이그레이션 후 계정 단위 키가 Profile 에 남지 않는다(정본 유일성)', () => {
+    // 설계서 §10-3: "연구소는 미러에 쓰는데 런은 기체 벡터를 읽는" 결함을 구조적으로
+    // 불가능하게 만드는 근거. M8-L7 이 `Profile.skillInvest` 를 삭제했으므로 투자 벡터를
+    // 읽는 자리는 `activeShip(profile).skillInvest` 하나뿐이다 — 갈라질 두 번째 자리가 없다.
+    const invest = zeroSkillInvest(0);
+    invest[0] = 4;
+    const p = migrate(v3Blob(invest));
+    expect('skillInvest' in p).toBe(false);
+    expect(activeShip(p).skillInvest[0]).toBe(4);
+  });
+
+  it('세이브→로드 왕복이 기체 벡터를 무손실로 복원한다', () => {
+    const store = memStore();
+    const p = defaultProfile();
+    p.skillPoints = 5;
+    investSkill(p, 0);
+    saveProfile(p, store);
+    const restored = loadProfile(store);
+    expect('skillInvest' in restored).toBe(false);
+    expect(activeShip(restored).skillInvest[0]).toBe(1);
+    expect(restored).toEqual(p); // 왕복 무손실
+  });
+
+  it('이미 기체 벡터를 가진 blob 은 그것을 우선한다(계정 벡터가 덮어쓰지 않는다)', () => {
+    const account = zeroSkillInvest(0);
+    account[0] = 5;
+    const blob = v3Blob(account);
+    const own = zeroSkillInvest(0);
+    own[0] = 2;
+    (blob.ships as Record<string, unknown>[])[0]!.skillInvest = own;
+    expect(activeShip(migrate(blob)).skillInvest[0]).toBe(2);
+  });
+
+  it('기체마다 독립된 벡터 인스턴스를 갖는다(한 기체 투자가 다른 기체로 새지 않음)', () => {
+    const p = migrate(v3Blob(zeroSkillInvest(0), 2));
+    expect(p.ships).toHaveLength(2);
+    expect(p.ships[0]!.skillInvest).not.toBe(p.ships[1]!.skillInvest);
+    p.ships[0]!.skillInvest[0] = 5;
+    expect(p.ships[1]!.skillInvest[0]).toBe(0);
+  });
+});
+
+describe('손상 세이브 복구 — 투자 벡터·타입 (검증②③)', () => {
+  it('손상 원소는 0 으로, 상한 초과는 maxPoints 로 복구된다', () => {
+    const out = normalizeSkillInvest(['x', -5, 9999, NaN, null], 0);
+    expect(out).toHaveLength(shipSkillNodeCount(0));
+    expect(out[0]).toBe(0);
+    expect(out[1]).toBe(0);
+    expect(out[2]).toBe(SKILLS[2]!.maxPoints); // 과투자 금지
+    expect(out[3]).toBe(0);
+    expect(out[4]).toBe(0);
+  });
+
+  it('배열이 아니면 전부 0 으로 복구된다', () => {
+    expect(migrate(v3Blob('nope')).ships[0]!.skillInvest.every((v) => v === 0)).toBe(true);
+    expect(normalizeSkillInvest(undefined, 0).every((v) => v === 0)).toBe(true);
+  });
+
+  it('길이가 짧거나 긴 벡터도 타입 노드 수로 정규화된다', () => {
+    expect(normalizeSkillInvest([1, 1, 1], 0)).toHaveLength(SKILL_NODE_COUNT);
+    expect(normalizeSkillInvest(new Array<number>(200).fill(1), 0)).toHaveLength(SKILL_NODE_COUNT);
+  });
+
+  it('typeId 가 범위 밖이면 clamp 된다 — undefined 타입이 런타임에 흐르지 않는다', () => {
+    // 범위 밖 typeId 가 통과하면 SHIP_TYPES[typeId] 가 undefined 가 되어 트리·시그니처·
+    // baseBp 가 전부 빠진 채 **예외 없이 조용히** 중립 loadout 이 된다(설계서 §6).
+    const mk = (typeId: unknown): number => {
+      const blob = v3Blob(zeroSkillInvest(0));
+      (blob.ships as Record<string, unknown>[])[0]!.typeId = typeId;
+      return activeShip(migrate(blob)).typeId;
+    };
+    // 규칙: 범위 밖·손상은 전부 0(스트라이커). 상한 clamp(999 → 4)로 하지 않는 이유는
+    // 손상 세이브가 유저에게 **조용히 다른 기체**(다른 트리·다른 시그니처)를 쥐여 주기
+    // 때문이다. 0 복귀는 "기본 기체로 돌아갔다"는 설명 가능한 상태이고, 조회층
+    // `shipTypeDef`/`normalizeShipTypeId` 와 규칙이 같아 저장·조회가 어긋나지 않는다.
+    expect(mk(999)).toBe(0);
+    expect(mk(-5)).toBe(0);
+    expect(mk('striker')).toBe(0);
+    expect(mk(undefined)).toBe(0);
+    expect(mk(1.9)).toBe(1); // 정수화
+    // 어떤 입력이든 조회가 성립해야 한다(undefined 금지).
+    for (const bad of [999, -5, 'x', undefined, 1.9, NaN]) {
+      expect(SHIP_TYPES[mk(bad)]).toBeDefined();
+    }
+  });
+
+  it('clamp 된 타입의 노드 수로 벡터 길이도 함께 맞춰진다', () => {
+    for (let t = 0; t < SHIP_TYPES.length; t++) {
+      const blob = v3Blob(zeroSkillInvest(0));
+      (blob.ships as Record<string, unknown>[])[0]!.typeId = t;
+      const ship = activeShip(migrate(blob));
+      expect(ship.typeId).toBe(t);
+      expect(ship.skillInvest).toHaveLength(shipSkillNodeCount(t));
+    }
+  });
+
+  /**
+   * 마이그레이션이 **그 기체의 타입**으로 벡터를 정규화하는지. `migrateV3toV4` 안에서
+   * 타입을 0 으로 하드코딩하면, 노드 수가 63 이 아닌 타입이 생기는 순간(M8-L6 콘텐츠 레인)
+   * 부분 v4 blob 의 벡터가 63 으로 잘리고 `normalizeShip` 이 실제 길이로 0 패딩해
+   * **꼬리 투자가 예외 없이 조용히 사라진다**. 지금은 전 타입이 63 이라 통과하지만,
+   * 노드 수가 갈라지는 즉시 자동으로 판별력을 얻는 전방 가드다.
+   */
+  it('부분 v4 blob 의 기체 벡터를 그 기체 타입 길이로 정규화한다(꼬리 투자 무손실)', () => {
+    for (let t = 0; t < SHIP_TYPES.length; t++) {
+      const count = shipSkillNodeCount(t);
+      const own = zeroSkillInvest(t);
+      own[count - 1] = 1; // 꼬리 노드(그 타입의 마지막 캡스톤)에 1점
+      const blob = v3Blob(zeroSkillInvest(0));
+      const s0 = (blob.ships as Record<string, unknown>[])[0]!;
+      s0.typeId = t;
+      s0.skillInvest = own;
+      const ship = activeShip(migrate(blob));
+      expect(ship.skillInvest).toHaveLength(count);
+      expect(ship.skillInvest[count - 1], `타입 ${t}: 꼬리 투자가 소실됐다`).toBe(1);
+    }
+  });
+});
+
+describe('정본은 기체 벡터 — 연구소 투자·리스펙', () => {
+  it('investSkill 이 활성 기체 벡터에 쌓인다', () => {
+    const p = defaultProfile();
+    p.skillPoints = 3;
+    expect(investSkill(p, 0)).toBe(true);
+    expect(activeShip(p).skillInvest[0]).toBe(1);
+    expect(totalInvested(p)).toBe(1);
+  });
+
+  it('리스펙은 활성 기체 벡터를 0 으로 되돌린다', () => {
+    const p = defaultProfile();
+    p.skillPoints = 3;
+    p.credits = 100_000;
+    investSkill(p, 0);
+    expect(respecSkills(p)).toBe(true);
+    expect(activeShip(p).skillInvest.every((v: number) => v === 0)).toBe(true);
+  });
+
+  it('활성 기체를 옮기면 투자·조회가 그 기체 벡터를 따라간다', () => {
+    // M8-L7 이 계정 단위 별칭을 삭제한 뒤의 계약: `activeShipIndex` 만 움직이면 되고,
+    // 별도의 재바인딩 호출이 필요 없다(빠뜨릴 자리 자체가 사라졌다).
+    const p = defaultProfile();
+    p.ships.push({
+      id: 'ship-1', name: '2번기', typeId: 0, level: 1, xp: 0, equipped: {},
+      skillInvest: zeroSkillInvest(0),
+    });
+    p.activeShipIndex = 1;
+    p.skillPoints = 1;
+    expect(investSkill(p, 0)).toBe(true);
+    expect(p.ships[1]!.skillInvest[0]).toBe(1);
+    expect(p.ships[0]!.skillInvest[0]).toBe(0); // 0번기로 새지 않았다
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 정규 경로 통합 — Profile → 런 설정 → createWorld/stepWorld (검증⑥)
+//
+// ⚠️ 모듈 직접 호출만으로는 "배선이 통째로 없다" 를 못 잡는다(이 저장소 8회 재발 결함).
+// 아래는 `src/main.ts` 런 시작 조립(:700-728)과 **같은 함수·같은 순서**를 탄다.
+// M8-L7 이 `buildRunConfig(profile)` 를 추출하면 이 헬퍼를 지우고 그것을 직접 부를 것.
+// ---------------------------------------------------------------------------
+
+// ✅ M8-L7 완료: 실제 앱이 부르는 `buildRunConfig` 를 그대로 호출한다.
+function assembleRunConfigLikeMain(profile: Profile): WorldConfig {
+  return buildRunConfig(profile, { planet: 0, tier: 0 });
+}
+
+const NEUTRAL: InputFrame = { moveX: 0, moveY: 0, aim: 0, dash: false, special: 0 };
+
+function runHashes(seed: number, cfg: WorldConfig, ticks: number): number[] {
+  const state = createWorld(seed, cfg);
+  const out: number[] = [];
+  for (let i = 0; i < ticks; i++) {
+    stepWorld(state, NEUTRAL);
+    out.push(hashWorld(state));
+  }
+  return out;
+}
+
+describe('정규 경로 통합 — 기체 벡터가 실제 런에 도달한다 (검증⑥)', () => {
+  it('v3 유저가 승계한 투자가 런 설정과 sim 해시 스트림까지 흘러간다', () => {
+    const invest = zeroSkillInvest(0);
+    invest[0] = SKILLS[0]!.maxPoints;
+    const migrated = migrate(v3Blob(invest));
+
+    const cfg = assembleRunConfigLikeMain(migrated);
+    // ① 런 설정이 기체 벡터를 그대로 실었는가(마이그레이션 → 런 배선).
+    expect(cfg.skillInvest).toEqual(activeShip(migrated).skillInvest);
+    // ② 투자가 파생 스탯으로 실제로 접혔는가(중립 loadout 이 아님).
+    const none = assembleRunConfigLikeMain(migrate(v3Blob(zeroSkillInvest(0))));
+    expect(cfg.loadout).not.toEqual(none.loadout);
+    // ③ sim 이 실제로 다르게 굴러가는가 — 파생 스탯만 비교하면 "접히긴 했는데 sim 이
+    //    안 읽는" 경우를 놓친다. 여기까지 와야 "배선이 있다"고 말할 수 있다.
+    expect(runHashes(1234, cfg, 120)).not.toEqual(runHashes(1234, none, 120));
+    // ④ 재실행 결정론(ADR-0005): 같은 설정은 같은 스트림.
+    expect(runHashes(1234, cfg, 120)).toEqual(runHashes(1234, cfg, 120));
+  });
+
+  it('연구소 투자 → 저장 → 재로드 → 런 설정 왕복이 반영된다', () => {
+    const store = memStore();
+    const p = defaultProfile();
+    p.skillPoints = 3;
+    expect(investSkill(p, 0)).toBe(true); // 연구소가 부르는 바로 그 함수
+    saveProfile(p, store);
+
+    const reloaded = loadProfile(store);
+    expect(activeShip(reloaded).skillInvest[0]).toBe(1);
+    expect(assembleRunConfigLikeMain(reloaded)).toEqual(assembleRunConfigLikeMain(p));
+  });
+
+  it('무투자 기본 프로필은 v3 시절과 같은 길이 63 벡터를 싣는다(스트라이커 동결)', () => {
+    const cfg = assembleRunConfigLikeMain(defaultProfile());
+    expect(cfg.skillInvest).toHaveLength(SKILL_NODE_COUNT);
+    expect(cfg.skillInvest?.every((v) => v === 0)).toBe(true);
+  });
+});
+
+describe('기체 타입 선택 — 해금 게이트 부재 (검증⑤)', () => {
+  // ⚠️ 이 테스트의 목적은 기능 검증이 아니라 **결정 보호**다. ADR-0019 는 "전체 개방"을
+  // 명시적 사용자 결정으로 기록했다. 후속 레인이 선의로 "레벨 10 부터 해금" 같은 조건을
+  // 붙이는 것을 막는 유일한 수단이 이 못이다. 실패하면 그것은 개선이 아니라 결정 위반이다.
+  it('선택 가능 타입은 레지스트리 전량이다', () => {
+    expect(selectableShipTypes()).toEqual(SHIP_TYPES);
+    expect(selectableShipTypes()).toHaveLength(SHIP_TYPES.length);
+  });
+
+  it('선택 목록은 프로필 상태(레벨·진행도·계보)와 무관하다', () => {
+    // 인자를 받지 않는 시그니처가 1차 방어선이다 — 프로필을 볼 수 없으면 게이트를 걸 수 없다.
+    const before = selectableShipTypes();
+    const veteran = defaultProfile();
+    activeShip(veteran).level = 99;
+    veteran.credits = 1_000_000;
+    veteran.lineage.shipLevel = 50;
+    veteran.planetProgress[0] = { bestTierCleared: 9 };
+    expect(selectableShipTypes()).toEqual(before);
+  });
+
+  it('갓 시작한 프로필도 모든 타입으로 퇴역·전환할 수 있다', () => {
+    for (let t = 0; t < SHIP_TYPES.length; t++) {
+      const p = defaultProfile(); // level 1 · 진행도 0 · 계보 0 — 가장 약한 상태
+      const r = retireActiveShip(p, 0, t);
+      expect(r.ship.typeId).toBe(t);
+      expect(activeShip(p).typeId).toBe(t);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M8 통합 게이트 — investSkill 이 **활성 기체 타입**의 노드·게이트를 쓴다
+// ---------------------------------------------------------------------------
+
+/**
+ * 통합 게이트(W2)에서 실측으로 잡은 배선 결함의 회귀 가드.
+ *
+ * 결함: `investSkill` 이 스트라이커 정본(`SKILLS` 길이 63 / `capstoneUnlocked` 게이트 폭 20·40)
+ * 으로 노드를 찾았다. 레지스트리·파생·sim 은 전부 타입별로 일반화됐는데 **투자 경로만**
+ * 스트라이커에 묶여 있었고, 예외도 타입 오류도 나지 않아 전 레인 테스트가 그린이었다.
+ *
+ * 관측된 증상(수정 전 실측):
+ *   - 비온(78노드): 인덱스 63~77 이 `SKILLS[i] === undefined` 로 **영구 투자 불가**
+ *     (= 3계열 마지막 행 전부 + 진짜 캡스톤 3개)
+ *   - 비온: base 인덱스 60·61·62 가 스트라이커 캡스톤으로 **오인**돼 게이트에 막힘
+ *   - 전 타입: `maxPoints` 가 스트라이커와 다른 인덱스에서 상한 오판정
+ */
+describe('M8 — investSkill 은 활성 기체 타입의 노드·캡스톤 게이트를 쓴다', () => {
+  /** 모든 노드를 최대치까지 밀어 넣는다(캡스톤 게이트를 위해 두 바퀴). */
+  function maxOut(p: Profile, typeId: number): number[] {
+    const nodes = flattenShipNodes(shipTypeDef(typeId));
+    p.skillPoints = 100_000;
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < nodes.length; i++) {
+        for (let k = 0; k < nodes[i]!.maxPoints; k++) investSkill(p, i);
+      }
+    }
+    return activeShip(p).skillInvest;
+  }
+
+  it('모든 타입의 모든 노드가 투자 가능하다 (노드 수 63 하드코딩이면 비온이 실패)', () => {
+    for (const def of SHIP_TYPES) {
+      const p = defaultProfile();
+      retireActiveShip(p, 0, def.id);
+      const nodes = flattenShipNodes(def);
+      const inv = maxOut(p, def.id);
+      expect(inv.length, `${def.slug} 벡터 길이`).toBe(nodes.length);
+      for (let i = 0; i < nodes.length; i++) {
+        expect(inv[i], `${def.slug} 인덱스 ${i} (${nodes[i]!.id}) 미투자`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('노드별 상한은 그 타입의 maxPoints 다 (스트라이커 상한을 빌려 쓰면 과투자/조기차단)', () => {
+    for (const def of SHIP_TYPES) {
+      const p = defaultProfile();
+      retireActiveShip(p, 0, def.id);
+      const nodes = flattenShipNodes(def);
+      const inv = maxOut(p, def.id);
+      for (let i = 0; i < nodes.length; i++) {
+        expect(inv[i], `${def.slug} 인덱스 ${i} 상한`).toBe(nodes[i]!.maxPoints);
+      }
+    }
+  });
+
+  it('캡스톤은 그 타입의 계열 게이트를 통과해야만 찍힌다 (레이아웃·게이트 폭이 타입별)', () => {
+    for (const def of SHIP_TYPES) {
+      const p = defaultProfile();
+      retireActiveShip(p, 0, def.id);
+      p.skillPoints = 100_000;
+      for (let ti = 0; ti < def.trees.length; ti++) {
+        const ci = shipCapstoneIndex(def, ti);
+        // 게이트 미달 상태에서는 거부된다.
+        expect(investSkill(p, ci), `${def.slug} 트리${ti} 게이트 미달인데 통과`).toBe(false);
+      }
+      // 게이트를 채우면 3계열 캡스톤이 전부 열린다.
+      const nodes = flattenShipNodes(def);
+      for (let i = 0; i < def.nodesPerTree * def.trees.length; i++) {
+        for (let k = 0; k < nodes[i]!.maxPoints; k++) investSkill(p, i);
+      }
+      for (let ti = 0; ti < def.trees.length; ti++) {
+        expect(investSkill(p, shipCapstoneIndex(def, ti)), `${def.slug} 트리${ti} 캡스톤`).toBe(true);
+      }
+    }
+  });
+
+  it('스트라이커 거동은 불변이다 (63노드 전량 투자 · 총 253pt)', () => {
+    const p = defaultProfile();
+    const inv = maxOut(p, 0);
+    expect(inv.length).toBe(SKILL_NODE_COUNT);
+    expect(inv.reduce((a, b) => a + b, 0)).toBe(
+      SKILLS.reduce((a, n) => a + n.maxPoints, 0),
+    );
+  });
+
+  it('범위 밖 인덱스는 거부된다 (음수·초과·비온 길이를 스트라이커에 적용)', () => {
+    const p = defaultProfile();
+    p.skillPoints = 10;
+    expect(investSkill(p, -1)).toBe(false);
+    expect(investSkill(p, SKILL_NODE_COUNT)).toBe(false);
+    expect(investSkill(p, 77)).toBe(false); // 비온에만 있는 인덱스
+    expect(p.skillPoints).toBe(10); // 포인트가 새지 않는다
   });
 });

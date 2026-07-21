@@ -50,8 +50,10 @@ import type { FacilitySpec } from '../../../data/invasion/facilities.js';
 import {
   facilitySpecFor,
   FACILITY_BEHAVIOR_HAZARD,
+  FACILITY_BEHAVIOR_PRESS,
   FACILITY_BEHAVIOR_SPAWNER,
 } from '../../../data/invasion/facilities.js';
+import { spawnMovingWall, stepMovingWalls } from './movingWall.js';
 import type { InvasionMapTemplate, InvasionSocketDef } from '../../../data/invasion/mapTemplates.js';
 import { mapTemplateFor } from '../../../data/invasion/mapTemplates.js';
 import { CATALOG_FACILITY } from '../../../data/invasion/catalog.js';
@@ -202,6 +204,12 @@ export function spawnFacility(
 ): Entity | undefined {
   const spec = facilitySpecFor(ref.catalogId);
   if (spec === undefined) return undefined;
+  // 압축 프레스는 설비 엔티티가 아니라 **이동 벽**이다(M7c). 스탯·어픽스·정비도 축을 타지
+  // 않으므로 여기서 갈라 전용 스폰으로 넘긴다 — 아래 어픽스·조준 경로가 프레스를 보면
+  // `facilitySpecFor` 수치가 전부 0 이라 조용히 무력한 포탑이 하나 생긴다.
+  if (spec.behavior === FACILITY_BEHAVIOR_PRESS) {
+    return spawnMovingWall(state, socket, socketIndex, ref, spec);
+  }
   // 방어체 어픽스는 **접두(상시)만** 스폰 시점에 싣는다. 접미(조건부)는 스텝이 매 틱 얹는다
   // (src/sim/invasion/affix.ts 머리말 "적용 시점 규율"). 어픽스 미보유면 배율 1 → 비트 동일.
   const mods = defenseAffixSet(CATALOG_FACILITY, ref).always;
@@ -278,6 +286,11 @@ function findPlayer(state: WorldState): Entity | undefined {
  * 훑어 순서가 흔들리는 것을 막는다(결정론).
  */
 export function stepFacility(state: WorldState, ctx: InvasionStepContext): void {
+  // 압축 프레스(이동 벽)를 **가장 먼저** 옮긴다. 설비 조준·LOS·해저드 융기가 전부
+  // `state.activeWalls` 를 읽으므로, 프레스가 뒤에 움직이면 같은 틱 안에서 조준은 옛 벽을,
+  // 탄은 새 벽을 보는 어긋남이 생긴다. 플레이어가 없어도(사망 직후) 벽은 계속 움직여야
+  // 좌표가 틱의 순수 함수로 남는다 — 그래서 아래 player 가드보다 위에 둔다.
+  stepMovingWalls(state, ctx);
   const player = findPlayer(state);
   if (player === undefined) return;
   const maintenance = normalizeMaintenance(ctx.maintenance);
@@ -328,7 +341,12 @@ function facilityTriggerState(
   const sockets = ctx.layers.l2.sockets;
   let placed = 0;
   for (const ref of sockets) {
-    if (ref !== null && ref !== undefined) placed++;
+    if (ref === null || ref === undefined) continue;
+    // 압축 프레스는 파괴 불가 이동 벽이라 설비 엔티티가 없다. 배치 수에 세면
+    // `alliesDestroyed` 가 스폰 직후부터 프레스 수만큼 부풀어 접미 어픽스가 오발동한다.
+    const s = facilitySpecFor(ref.catalogId);
+    if (s === undefined || s.behavior === FACILITY_BEHAVIOR_PRESS) continue;
+    placed++;
   }
   let alive = 0;
   for (const e of state.entities) {

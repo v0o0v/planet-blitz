@@ -12,6 +12,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { SKILLS, SKILL_NODE_COUNT, capstoneIndex, SKILL_TREES } from '../data/skills.js';
+import { SHIP_TYPES, flattenShipNodes } from '../data/ships/index.js';
 import { UI_ASSET_NAMES, SKILL_ICON_NAMES, skillIconBand, skillIconName } from '../src/ui/pixi/uiTextures.js';
 
 describe('skillIconBand', () => {
@@ -63,9 +64,26 @@ describe('skillIconName', () => {
     for (const name of caps) expect(stat.has(name)).toBe(false);
   });
 
-  it('keeps SKILL_ICON_NAMES exactly equal to what the nodes need (no dead art)', () => {
-    const needed = new Set(SKILLS.map(skillIconName));
+  it('keeps SKILL_ICON_NAMES exactly equal to what ALL ship types need (no dead art, no null fallback)', () => {
+    // ⚠️ M8(설계서 §10-7): 스트라이커(`SKILLS`)만 순회하면 신규 기체 트리가 만든 새 (스탯,
+    // 티어대) 조합이 목록에 없어도 **그린이다** — 렌더는 null 을 예외 없이 삼키므로 화면에서
+    // 빈 셀로만 드러난다. 실측으로 4건(range_flat_mid/high · bullet_speed_pct_high ·
+    // bullet_count_low)이 이 상태였다. 그래서 전 SHIP_TYPES 를 순회한다.
+    const needed = new Set<string>();
+    for (const def of SHIP_TYPES) {
+      for (const node of flattenShipNodes(def)) needed.add(skillIconName(node));
+    }
     expect([...SKILL_ICON_NAMES].sort()).toEqual([...needed].sort());
-    expect(SKILL_ICON_NAMES).toHaveLength(35);
+  });
+
+  it('resolves every node of every ship type to a registered loader name', () => {
+    const registered = new Set<string>(UI_ASSET_NAMES);
+    for (const def of SHIP_TYPES) {
+      for (const node of flattenShipNodes(def)) {
+        const name = skillIconName(node);
+        expect(name, `${def.slug} / ${node.id}`).toMatch(/^skill_[a-z_]+\.png$/);
+        expect(registered.has(name), `${def.slug} / ${node.id} → ${name}`).toBe(true);
+      }
+    }
   });
 });

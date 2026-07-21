@@ -34,6 +34,9 @@ import {
   ENTRY_STRAIGHT,
   ENTRY_FLANK,
   ENTRY_CHARGE,
+  ENTRY_GLIDE,
+  ENTRY_SNIPE,
+  ENTRY_DRIFT,
 } from '../../../data/invasion/formations.js';
 import type { FormationDef } from '../../../data/invasion/formations.js';
 import { CATALOG_FORMATION } from '../../../data/invasion/catalog.js';
@@ -75,6 +78,24 @@ export const FORMATION_FLANK_AHEAD = 700;
 
 /** 진입 속도(월드 유닛/초). 적 이동 컴포넌트가 곧 덮어쓰지만 첫 틱 거동·해시에 반영된다. */
 export const FORMATION_ENTRY_SPEED = 240;
+
+/** {@link ENTRY_GLIDE} 편대의 급강하 시작 고도 — 정면 편대보다 높은 곳에서 떨어진다. */
+export const FORMATION_GLIDE_AHEAD = 1700;
+/** {@link ENTRY_GLIDE} 편대의 하강 속도(정면 진입의 1.5배). 대각선 궤도를 만든다. */
+export const FORMATION_GLIDE_SPEED_VY = 360;
+
+/**
+ * {@link ENTRY_SNIPE} 편대가 등장하는 얕은 거리. 화면 밖(OFFSCREEN_Y=680)보다는 멀어서
+ * 팝인이 없지만 정면 편대(1400)보다 훨씬 가까워 곧바로 상단 저격선을 이룬다.
+ */
+export const FORMATION_SNIPE_AHEAD = 900;
+/** {@link ENTRY_SNIPE} 편대의 하강 속도 — 거의 내려오지 않고 상단에 머무른다. */
+export const FORMATION_SNIPE_SPEED_VY = 60;
+
+/** {@link ENTRY_DRIFT} 편대가 추가로 물러나는 거리 — 봉쇄물을 미리 깔 여유를 준다. */
+export const FORMATION_DRIFT_EXTRA_AHEAD = 200;
+/** {@link ENTRY_DRIFT} 편대의 하강 속도 — 느리게 흘러내려 구간을 오래 점유한다. */
+export const FORMATION_DRIFT_SPEED_VY = 80;
 
 // ---------------------------------------------------------------------------
 // 트리거·좌표 — 순수 함수(테스트가 직접 검증한다)
@@ -134,6 +155,17 @@ export function formationMemberSpawnPos(
         x: scrollX + m.dx,
         y: scrollY - FORMATION_SPAWN_AHEAD - FORMATION_CHARGE_EXTRA_AHEAD + m.dy,
       };
+    case ENTRY_GLIDE:
+      // 급강하: 정면보다 높은 곳에서 시작한다. 좌우 확산은 구성원 dx 가 그대로 만든다.
+      return { x: scrollX + m.dx, y: scrollY - FORMATION_GLIDE_AHEAD + m.dy };
+    case ENTRY_SNIPE:
+      // 고정 저격선: 얕게 등장해 화면 상단을 점유한다.
+      return { x: scrollX + m.dx, y: scrollY - FORMATION_SNIPE_AHEAD + m.dy };
+    case ENTRY_DRIFT:
+      return {
+        x: scrollX + m.dx,
+        y: scrollY - FORMATION_SPAWN_AHEAD - FORMATION_DRIFT_EXTRA_AHEAD + m.dy,
+      };
     case ENTRY_STRAIGHT:
     default:
       return { x: scrollX + m.dx, y: scrollY - FORMATION_SPAWN_AHEAD + m.dy };
@@ -155,6 +187,15 @@ export function formationMemberEntryVelocity(
     }
     case ENTRY_CHARGE:
       return { vx: 0, vy: FORMATION_ENTRY_SPEED * 2 };
+    case ENTRY_GLIDE: {
+      // 바깥에서 안쪽으로 파고들며 빠르게 떨어진다(대각선 급강하).
+      const side = m.dx < 0 ? 1 : -1;
+      return { vx: side * FORMATION_ENTRY_SPEED, vy: FORMATION_GLIDE_SPEED_VY };
+    }
+    case ENTRY_SNIPE:
+      return { vx: 0, vy: FORMATION_SNIPE_SPEED_VY };
+    case ENTRY_DRIFT:
+      return { vx: 0, vy: FORMATION_DRIFT_SPEED_VY };
     case ENTRY_STRAIGHT:
     default:
       return { vx: 0, vy: FORMATION_ENTRY_SPEED };
@@ -195,9 +236,14 @@ export function stepInvasionFormation(state: WorldState, ctx: InvasionStepContex
       if (elapsed !== formationMemberSpawnTick(i, m.delayTicks, set.always)) continue;
       const mods = resolveDefenseMods(set, trigger, ctx.runtime.scrollX, ctx.runtime.scrollY);
       const e = spawnFormationMember(state, ctx, def, j, ref, mods);
-      // 접미를 가진 편대만 슬롯을 표식으로 남긴다 — 미보유면 aux0 이 0 그대로라 해시 폴드가
-      // 늘지 않고(replay.ts ENTITY_HASH_OPTIONAL_TAIL) 기존 런과 바이트 동일하다.
-      if (e !== undefined && set.conditional.length > 0) e.aux0 = i + 1;
+      // 접미 **또는 유니크**를 가진 편대만 슬롯을 표식으로 남긴다 — 둘 다 미보유면 aux0 이 0
+      // 그대로라 해시 폴드가 늘지 않고(replay.ts ENTITY_HASH_OPTIONAL_TAIL) 기존 런과 바이트
+      // 동일하다. 유니크를 조건에 넣지 않으면 **접두만 붙은 유니크 편대**가 표식을 못 받아
+      // `refreshFormationAffixes` 를 통째로 건너뛰고, `vengeanceEngine`·`proximityReactor`
+      // 같은 매 틱 재계산이 필요한 동적 유니크가 조용히 죽는다(M7c 통합 게이트 수정분).
+      if (e !== undefined && (set.conditional.length > 0 || (set.unique ?? null) !== null)) {
+        e.aux0 = i + 1;
+      }
     }
   }
   refreshFormationAffixes(state, ctx, trigger);

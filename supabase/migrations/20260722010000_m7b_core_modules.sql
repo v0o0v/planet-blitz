@@ -48,7 +48,6 @@
 --
 -- 재실행 안전: create table if not exists · drop policy if exists → create · add column if not
 --   exists · create or replace function · drop ... if exists · search_path='' 고정 · 권한 재적용.
--- 원격 적용은 하지 말 것(리포 마이그레이션만).
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------

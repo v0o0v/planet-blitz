@@ -43,16 +43,27 @@
  * | defSpawnCapFlat | 드론 스포너 동시 생존 상한 |
  * | defOverheatResistPct | 보스 과열 창 지속(최소 1틱 — 약점이 사라지지는 않는다) |
  * | defEntryHastePct | 편대 웨이브 슬롯 등장 틱 앞당김 |
+ *
+ * ## 유니크 고유 효과 (M7c)
+ * 유니크 등급 방어체는 어픽스 위에 **고유 효과**를 하나 더 싣는다
+ * (`data/defenseUnits.ts` {@link DefenseUniqueDef}). 이 모듈이 그것도 함께 편다:
+ *   - **상수항**은 접두와 같은 누적기에 접혀 {@link DefenseAffixSet.always} 에 들어간다 →
+ *     스폰 경로(편대·설비·기물·보스 전부 `.always` 를 읽는다)가 자동으로 반영한다.
+ *   - **동적항**은 {@link uniqueDynamicMods} 가 그 틱의 {@link DefenseTriggerState} 로 펴고
+ *     {@link resolveDefenseMods} 가 합친다 → 세 레이어 스텝이 이미 매 틱 부르는 함수라
+ *     별도 배선이 필요 없다(호출부 파일을 한 줄도 고치지 않는다).
+ * 유니크가 아니면 `set.unique === null` 이고 위 두 경로가 통째로 건너뛰어져 M7b 와 바이트 동일하다.
  */
 
 import { TICK_RATE } from '../constants.js';
-import { DEFENSE_UNIT_AFFIX_BY_ID } from '../../../data/defenseUnits.js';
+import { DEFENSE_UNIT_AFFIX_BY_ID, uniqueParam } from '../../../data/defenseUnits.js';
 import type {
   DefenseUnitAffixRoll,
   DefenseUnitStatKey,
   DefenseUnitTrigger,
+  DefenseUniqueDef,
 } from '../../../data/defenseUnits.js';
-import { defenseUnitFromRef } from '../../items/rollDefenseUnit.js';
+import { defenseUnitFromRef, defenseUnitUnique } from '../../items/rollDefenseUnit.js';
 import type { InvasionRef } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -139,11 +150,20 @@ export interface DefenseConditionalAffix {
 
 /** 방어체 1기의 어픽스 해석 결과(런 내내 불변 — 캐시 대상). */
 export interface DefenseAffixSet {
-  /** 접두(상시)만 접은 보정. 스폰 시점에 싣는 값. */
+  /**
+   * 접두(상시) + **유니크 고유 효과의 상수항**을 접은 보정. 스폰 시점에 싣는 값.
+   * 유니크의 대가(내구도 −%·피해 −%)가 여기 들어와야 스폰 HP 가 처음부터 옳다.
+   */
   readonly always: DefenseAffixMods;
   /** 접미(조건부) 원본 목록. 정의 순서 고정 = 결정론 입력. */
   readonly conditional: readonly DefenseConditionalAffix[];
-  /** 접두·접미가 모두 비어 sim 거동이 완전히 불변인가. */
+  /**
+   * 유니크 고유 효과 정의(비유니크면 null). 동적항은 매 틱 {@link resolveDefenseMods} 가 편다.
+   * **선택 필드**로 둔 것은 append-only 규율이다 — M7b 시점에 손으로 조립한 집합 리터럴
+   * (테스트 하네스 등)이 이 필드 없이도 그대로 유효해야 하고, 미지정은 "유니크 없음"이다.
+   */
+  readonly unique?: DefenseUniqueDef | null;
+  /** 접두·접미·유니크가 모두 비어 sim 거동이 완전히 불변인가. */
   readonly neutral: boolean;
 }
 
@@ -151,6 +171,7 @@ export interface DefenseAffixSet {
 export const NEUTRAL_AFFIX_SET: DefenseAffixSet = {
   always: NEUTRAL_AFFIX_MODS,
   conditional: [],
+  unique: null,
   neutral: true,
 };
 
@@ -269,14 +290,128 @@ export function defenseAffixSet(
     const c = toConditional(roll);
     if (c !== null) conditional.push(c);
   }
+  // 유니크 고유 효과의 **상수항**은 접두와 같은 누적기에 접는다(접두·유니크가 같은 퍼센트
+  // 공간에서 합산돼 표기와 실제가 갈리지 않는다). 동적항은 여기 들어오지 않는다.
+  const unique = defenseUnitUnique(unit);
+  if (unique !== null) addUniqueConstants(sums, unique);
   const always = foldSums(sums);
   const set: DefenseAffixSet = {
     always,
     conditional,
-    neutral: conditional.length === 0 && isNeutralAffixMods(always),
+    unique,
+    neutral: unique === null && conditional.length === 0 && isNeutralAffixMods(always),
   };
   SET_CACHE.set(ref, { kind, set });
   return set;
+}
+
+// ---------------------------------------------------------------------------
+// 유니크 고유 효과 — 상수항 / 동적항
+// ---------------------------------------------------------------------------
+
+/**
+ * 유니크의 **상수항**(런 상태에 의존하지 않는 부분)을 접두 누적기에 더한다.
+ * 대가(내구도·피해 감소)가 여기 들어와야 스폰 시점 값이 처음부터 옳다.
+ */
+function addUniqueConstants(sums: AffixSums, u: DefenseUniqueDef): void {
+  switch (u.effect) {
+    case 'overclockCore':
+      sums.hpPct -= uniqueParam(u, 'hpPenaltyPct', 0);
+      break;
+    case 'swarmNexus':
+      sums.spawnCap += uniqueParam(u, 'spawnCapFlat', 0);
+      sums.fireRatePct -= uniqueParam(u, 'fireRatePenaltyPct', 0);
+      break;
+    case 'aegisLattice':
+      sums.shieldFlat += uniqueParam(u, 'shieldFlat', 0);
+      sums.weatherPct += uniqueParam(u, 'weatherResistPct', 0);
+      sums.damagePct -= uniqueParam(u, 'damagePenaltyPct', 0);
+      break;
+    case 'thermalVault':
+      sums.overheatPct += uniqueParam(u, 'overheatResistPct', 0);
+      sums.hpPct += uniqueParam(u, 'hpBonusPct', 0);
+      break;
+    case 'vanguardTide':
+      sums.entryPct += uniqueParam(u, 'entryHastePct', 0);
+      sums.damagePct += uniqueParam(u, 'damageBonusPct', 0);
+      sums.hpPct -= uniqueParam(u, 'hpPenaltyPct', 0);
+      break;
+    // 아래 넷은 상수항이 없다(전부 런 상태의 함수).
+    case 'vengeanceEngine':
+    case 'deathgripBastion':
+    case 'proximityReactor':
+      break;
+  }
+}
+
+/** 증폭형 basis-point 를 합산 상한으로 자른다(음수 배율 금지). */
+function clampAddBp(add: number, cap: number): number {
+  if (add <= 0) return 0;
+  return add > cap ? cap : add;
+}
+
+/**
+ * 유니크의 **동적항**을 이번 틱의 관측값으로 편다. ONE 기준 보정 묶음을 돌려주며,
+ * 발동 조건에 닿지 않으면 {@link NEUTRAL_AFFIX_MODS} 를 그대로 돌려준다(무보정 경로 값싸게).
+ *
+ * 전부 정수 basis-point + `Math.floor(a * b / d)` 단일 나눗셈이다. 거리 항만은 좌표가 f64 라
+ * **밴드 계단**으로 양자화해서 미세 좌표 차가 bp 를 흔들지 않게 한다(sim 전반의 좌표 f64 관행
+ * 안에서 가장 둔감한 형태 — `isConditionalActive`(playerClose)의 제곱거리 비교와 같은 계열).
+ */
+export function uniqueDynamicMods(
+  u: DefenseUniqueDef,
+  st: DefenseTriggerState,
+  selfX: number,
+  selfY: number,
+): DefenseAffixMods {
+  switch (u.effect) {
+    case 'overclockCore': {
+      const perSec = uniqueParam(u, 'rateBpPerSec', 0);
+      const cap = uniqueParam(u, 'rateCapBp', 0);
+      const elapsed = st.elapsedTicks > 0 ? st.elapsedTicks : 0;
+      const add = clampAddBp(Math.floor((elapsed * perSec) / TICK_RATE), cap);
+      return add === 0 ? NEUTRAL_AFFIX_MODS : { ...NEUTRAL_AFFIX_MODS, fireRateBp: AFFIX_BP_ONE + add };
+    }
+    case 'vengeanceEngine': {
+      const per = uniqueParam(u, 'damageBpPerAlly', 0);
+      const cap = uniqueParam(u, 'damageCapBp', 0);
+      const allies = st.alliesDestroyed > 0 ? st.alliesDestroyed : 0;
+      const add = clampAddBp(allies * per, cap);
+      return add === 0 ? NEUTRAL_AFFIX_MODS : { ...NEUTRAL_AFFIX_MODS, damageBp: AFFIX_BP_ONE + add };
+    }
+    case 'deathgripBastion': {
+      const pivot = uniqueParam(u, 'pivotPct', 0);
+      const atZero = uniqueParam(u, 'hpBpAtZero', 0);
+      // 코어 없음(AFFIX_NO_CORE_HP_PCT=101)은 pivot 위라 자동으로 0 이 된다.
+      if (pivot <= 0 || st.coreHpPct >= pivot) return NEUTRAL_AFFIX_MODS;
+      const lack = pivot - (st.coreHpPct > 0 ? st.coreHpPct : 0);
+      const add = clampAddBp(Math.floor((atZero * lack) / pivot), atZero);
+      return add === 0 ? NEUTRAL_AFFIX_MODS : { ...NEUTRAL_AFFIX_MODS, hpBp: AFFIX_BP_ONE + add };
+    }
+    case 'proximityReactor': {
+      const radius = uniqueParam(u, 'radius', 0);
+      const near = uniqueParam(u, 'damageBpNear', 0);
+      const bands = uniqueParam(u, 'bands', 1);
+      if (radius <= 0 || bands <= 0) return NEUTRAL_AFFIX_MODS;
+      const dx = st.playerX - selfX;
+      const dy = st.playerY - selfY;
+      const d2 = dx * dx + dy * dy;
+      const r2 = radius * radius;
+      if (!(d2 < r2)) return NEUTRAL_AFFIX_MODS;
+      // 밴드 인덱스 0(최근접) .. bands-1. 정수 계단이라 좌표 미세 차이가 bp 를 흔들지 않는다.
+      let band = Math.floor((bands * d2) / r2);
+      if (band < 0) band = 0;
+      if (band > bands - 1) band = bands - 1;
+      const add = clampAddBp(Math.floor((near * (bands - band)) / bands), near);
+      return add === 0 ? NEUTRAL_AFFIX_MODS : { ...NEUTRAL_AFFIX_MODS, damageBp: AFFIX_BP_ONE + add };
+    }
+    // 상수항만 있는 유니크는 동적항이 없다.
+    case 'swarmNexus':
+    case 'aegisLattice':
+    case 'thermalVault':
+    case 'vanguardTide':
+      return NEUTRAL_AFFIX_MODS;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -344,7 +479,16 @@ export function resolveDefenseMods(
   selfX: number,
   selfY: number,
 ): DefenseAffixMods {
-  if (set.conditional.length === 0) return set.always;
+  // 유니크 동적항(M7c). 비유니크·미발동이면 null 이라 아래 경로가 M7b 와 바이트 동일하다.
+  let dyn: DefenseAffixMods | null = null;
+  const unique = set.unique ?? null;
+  if (unique !== null) {
+    const d = uniqueDynamicMods(unique, st, selfX, selfY);
+    if (!isNeutralAffixMods(d)) dyn = d;
+  }
+  if (set.conditional.length === 0) {
+    return dyn === null ? set.always : combineMods(set.always, dyn);
+  }
   const sums = emptySums();
   let any = false;
   for (const c of set.conditional) {
@@ -352,20 +496,27 @@ export function resolveDefenseMods(
     addSum(sums, c.stat, c.value);
     any = true;
   }
-  if (!any) return set.always;
+  if (!any) return dyn === null ? set.always : combineMods(set.always, dyn);
   // 접두를 퍼센트로 되풀어 합산하지 않고, 접힌 bp 끼리 **정수 가산**한다(bp 는 선형이라
   // (1+a)+(1+b)-1 = 1+a+b 로 접두·접미 합산이 데이터 정의(퍼센트 합)와 일치한다).
-  const cond = foldSums(sums);
-  const a = set.always;
+  const merged = combineMods(set.always, foldSums(sums));
+  return dyn === null ? merged : combineMods(merged, dyn);
+}
+
+/**
+ * 보정 묶음 2개를 **정수 가산**으로 합친다. 배율축은 bp 선형 가산((1+a)+(1+b)-1),
+ * 절대축은 단순 합, 감쇠축은 합산 후 상한. 나눗셈이 없어 f64 가 끼지 않는다.
+ */
+function combineMods(a: DefenseAffixMods, b: DefenseAffixMods): DefenseAffixMods {
   return {
-    hpBp: a.hpBp + cond.hpBp - AFFIX_BP_ONE,
-    damageBp: a.damageBp + cond.damageBp - AFFIX_BP_ONE,
-    fireRateBp: a.fireRateBp + cond.fireRateBp - AFFIX_BP_ONE,
-    shieldFlat: a.shieldFlat + cond.shieldFlat,
-    weatherResistBp: capReduction(a.weatherResistBp + cond.weatherResistBp),
-    spawnCapFlat: a.spawnCapFlat + cond.spawnCapFlat,
-    overheatResistBp: capReduction(a.overheatResistBp + cond.overheatResistBp),
-    entryHasteBp: capReduction(a.entryHasteBp + cond.entryHasteBp),
+    hpBp: a.hpBp + b.hpBp - AFFIX_BP_ONE,
+    damageBp: a.damageBp + b.damageBp - AFFIX_BP_ONE,
+    fireRateBp: a.fireRateBp + b.fireRateBp - AFFIX_BP_ONE,
+    shieldFlat: a.shieldFlat + b.shieldFlat,
+    weatherResistBp: capReduction(a.weatherResistBp + b.weatherResistBp),
+    spawnCapFlat: a.spawnCapFlat + b.spawnCapFlat,
+    overheatResistBp: capReduction(a.overheatResistBp + b.overheatResistBp),
+    entryHasteBp: capReduction(a.entryHasteBp + b.entryHasteBp),
   };
 }
 

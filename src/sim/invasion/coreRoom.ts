@@ -46,11 +46,17 @@ import {
 import type { DefenseBossAttack, DefenseBossDef } from '../../../data/invasion/defenseBosses.js';
 import {
   DEFENSE_BOSS_SPAWN_OFFSET,
+  PROP_DECOY_HOLOGRAM,
   PROP_FIXED_CANNON,
   PROP_GRAVITY_ANCHOR,
+  PROP_MINE_SUBTYPE,
+  PROP_MINE_SWARM,
+  PROP_REPAIR_PYLON,
   PROP_SHIELD_GENERATOR,
   PROP_SLOW_SUBTYPE,
   PROP_SOCKET_OFFSETS,
+  mineRingOffset,
+  propHealAmount,
   propPowerBp,
   propSpec,
 } from '../../../data/invasion/props.js';
@@ -93,10 +99,31 @@ const KIND_DEFENSE_BOSS: EntityKind = 'defenseBoss';
 /** 위 참조. L3 기물 엔티티 kind(정본 이름 = 'prop'). */
 const KIND_L3_PROP: EntityKind = 'prop';
 
+/**
+ * 기만 홀로그램(기물 역할 4)만 쓰는 kind. **`'core'` 를 쓰면 안 된다** — `compact()` 는
+ * kind 로만 승리를 판정하므로(world.ts) 가짜 코어를 부순 순간 침공이 끝난다. 유니크
+ * '신기루 코어'가 같은 이유로 이 kind 를 먼저 만들어 뒀고, 조준·피격 화이트리스트에도 이미
+ * 등록돼 있어 world.ts 를 한 줄도 열지 않고 재사용할 수 있다.
+ */
+const KIND_DECOY_CORE: EntityKind = 'decoyCore';
+
 /** 방어 보스 엔티티 kind(다른 레인·렌더가 조회할 수 있게 공개). */
 export const DEFENSE_BOSS_KIND = KIND_DEFENSE_BOSS;
 /** 기물 엔티티 kind. */
 export const L3_PROP_KIND = KIND_L3_PROP;
+/** 기만 홀로그램 엔티티 kind(가짜 코어 — 파괴해도 승리가 서지 않는다). */
+export const DECOY_HOLOGRAM_KIND = KIND_DECOY_CORE;
+
+/**
+ * 이 엔티티가 **배치된 L3 기물**인가. 기만 홀로그램만 kind 가 `decoyCore` 라 kind 비교
+ * 하나로는 셀 수 없다. 코어 모듈 유니크가 스폰하는 신기루 코어(`enemyType === -1`)와는
+ * 역할 코드 유무로 갈린다 — 모듈 신기루를 기물로 세면 어픽스 계기(`alliesDestroyed`)가
+ * 조용히 어긋난다.
+ */
+export function isPlacedProp(e: Entity): boolean {
+  if (e.kind === KIND_L3_PROP) return true;
+  return e.kind === KIND_DECOY_CORE && e.enemyType >= 0;
+}
 
 // ---------------------------------------------------------------------------
 // 조회 헬퍼
@@ -231,7 +258,8 @@ export function spawnL3Prop(
   if (spec === null) return null;
   const bp = propPowerBp(ref.level, ref.ascension, ref.rarity);
   const mods = defenseAffixSet(CATALOG_PROP, ref).always;
-  const p = blankEntity(KIND_L3_PROP);
+  // 기만 홀로그램만 kind 가 다르다(가짜 코어). 그 외 필드 매핑은 전부 동일하다.
+  const p = blankEntity(spec.role === PROP_DECOY_HOLOGRAM ? KIND_DECOY_CORE : KIND_L3_PROP);
   p.x = x;
   p.y = y;
   p.enemyType = spec.role;
@@ -259,7 +287,26 @@ export function spawnL3Prop(
         mods,
       );
       break;
+    case PROP_REPAIR_PYLON:
+      // `damage` 슬롯을 **펄스당 회복량**으로 재활용한다(플랫 Entity 규율 — 신규 필드 없음).
+      p.damage = propHealAmount(spec, bp);
+      p.cooldown = affixCooldown(
+        invasionFireCooldown(spec.periodTicks, affixMaintenance(maintenance, mods)),
+        mods,
+      );
+      break;
+    case PROP_MINE_SWARM:
+      p.damage = affixDamage(scaleByBp(spec.hazardDamage, bp), mods);
+      p.cooldown = affixCooldown(
+        invasionFireCooldown(spec.periodTicks, affixMaintenance(maintenance, mods)),
+        mods,
+      );
+      // `phase` = 다음에 지뢰를 깔 링 슬롯(정수 커서). aux0 은 entities.ts 가 '기물 카탈로그
+      // id' 로 예약해 둔 자리라 쓰지 않는다.
+      p.phase = 0;
+      break;
     default:
+      // 실드 발생기·기만 홀로그램: 능동 거동 없음.
       break;
   }
   return addEntity(sink, p);
@@ -309,7 +356,7 @@ function coreRoomTriggerState(
   let coreSeen = false;
   for (const e of state.entities) {
     if (e.dead) continue;
-    if (e.kind === KIND_L3_PROP || e.kind === KIND_DEFENSE_BOSS || e.kind === 'guardian') alive++;
+    if (isPlacedProp(e) || e.kind === KIND_DEFENSE_BOSS || e.kind === 'guardian') alive++;
     else if (e.kind === 'core' && !coreSeen) {
       coreSeen = true;
       corePct = coreHpPctOf(e.hp, e.maxHp);
@@ -359,7 +406,9 @@ function stepL3Props(
   trigger: DefenseTriggerState,
 ): void {
   for (const p of state.entities) {
-    if (p.kind !== KIND_L3_PROP || p.dead) continue;
+    // 기만 홀로그램은 kind 가 `decoyCore` 라 kind 비교로는 걸리지 않는다 — 어픽스 내구 상향이
+    // 홀로그램만 조용히 빠지지 않도록 배치 기물 술어로 판정한다.
+    if (!isPlacedProp(p) || p.dead) continue;
     const ref = ctx.layers.l3.props[p.pierce];
     if (ref === null || ref === undefined) continue;
     const spec = propSpec(ref.catalogId);
@@ -371,10 +420,14 @@ function stepL3Props(
       const bp = propPowerBp(ref.level, ref.ascension, ref.rarity);
       // 내구도는 **단조 상향**만(되돌리면 이미 입은 피해가 사라진다). 피해는 매 틱 덮어쓴다.
       raiseMaxHp(p, affixHp(scaleByBp(spec.hp, bp), mods));
-      if (p.enemyType === PROP_GRAVITY_ANCHOR) {
+      if (p.enemyType === PROP_GRAVITY_ANCHOR || p.enemyType === PROP_MINE_SWARM) {
         p.damage = affixDamage(scaleByBp(spec.hazardDamage, bp), mods);
       } else if (p.enemyType === PROP_FIXED_CANNON) {
         p.damage = affixDamage(scaleByBp(spec.damage, bp), mods);
+      } else if (p.enemyType === PROP_REPAIR_PYLON) {
+        // 회복량은 어픽스 피해 보정을 타지 않는다(피해 어픽스가 회복을 밀어 올리면 "공격
+        // 어픽스인데 왜 회복이 늘지" 라는 규칙 붕괴가 생긴다). 강화 3축만 반영한다.
+        p.damage = propHealAmount(spec, bp);
       }
     }
     switch (p.enemyType) {
@@ -436,10 +489,78 @@ function stepL3Props(
         );
         break;
       }
+      case PROP_REPAIR_PYLON: {
+        if (p.cooldown > 0) {
+          p.cooldown--;
+          break;
+        }
+        healNearbyDefenders(state, p, spec.range, p.damage);
+        p.cooldown = affixCooldown(
+          invasionFireCooldown(spec.periodTicks, affixMaintenance(ctx.maintenance, mods)),
+          mods,
+        );
+        break;
+      }
+      case PROP_MINE_SWARM: {
+        if (p.cooldown > 0) {
+          p.cooldown--;
+          break;
+        }
+        // 부설 좌표는 링 슬롯 인덱스의 순수 함수다(RNG 미소비). 커서는 정수라 해시 안전.
+        const off = mineRingOffset(spec, p.phase);
+        spawnHazard(
+          state,
+          PROP_MINE_SUBTYPE,
+          p.x + off.x,
+          p.y + off.y,
+          spec.hazardRadius,
+          spec.hazardWindup,
+          spec.hazardActive,
+          p.damage,
+          false, // 단발 폭발(감속 장판의 지속 피해와 갈린다)
+          p.id,
+        );
+        p.phase++;
+        p.cooldown = affixCooldown(
+          invasionFireCooldown(spec.periodTicks, affixMaintenance(ctx.maintenance, mods)),
+          mods,
+        );
+        break;
+      }
       default:
-        // 실드 발생기: 능동 거동 없음(공급량은 updateCoreShield 가 읽는다).
+        // 실드 발생기(공급량은 updateCoreShield 가 읽는다) · 기만 홀로그램(순수 미끼):
+        // 능동 거동 없음.
         break;
     }
+  }
+}
+
+/**
+ * 회복 파일런 펄스: 반경 안의 **살아 있는 아군 방어체**를 정수 회복한다(최대 내구도 상한).
+ * 자기 자신은 제외한다 — 포함하면 파일런 한 기가 사실상 불사가 되어 "먼저 지울까"라는 선택
+ * 자체가 사라진다(파일런 둘을 나란히 두면 서로 살리는 시너지는 그대로 성립한다).
+ *
+ * 대상은 보스·수호·다른 기물(기만 홀로그램 포함)이다. 코어는 제외한다 — 코어 내구도는
+ * 실드 발생기·수호 실드 공유가 담당하는 별도 축이고, 여기에 회복까지 얹으면 코어를 깎는
+ * 국면이 통째로 사라진다.
+ */
+function healNearbyDefenders(
+  state: WorldState,
+  pylon: Entity,
+  range: number,
+  amount: number,
+): void {
+  if (amount <= 0 || range <= 0) return;
+  const r2 = range * range;
+  for (const t of state.entities) {
+    if (t.dead || t.id === pylon.id) continue;
+    if (t.kind !== KIND_DEFENSE_BOSS && t.kind !== 'guardian' && !isPlacedProp(t)) continue;
+    if (t.hp >= t.maxHp) continue;
+    const dx = t.x - pylon.x;
+    const dy = t.y - pylon.y;
+    if (dx * dx + dy * dy > r2) continue;
+    const healed = t.hp + amount;
+    t.hp = healed > t.maxHp ? t.maxHp : healed;
   }
 }
 

@@ -14,8 +14,14 @@
  *  any breaking layout change so the migration path can key off it.
  *  v2 (M3): adds the `skillInvest` vector (60-node skill tree).
  *  v3 (M3 Phase E2): adds the `tutorialDone` flag (FTUE gate + base-building
- *  unlocks); existing saves migrate with it pre-set (they already played). */
-export const SAVE_VERSION = 3;
+ *  unlocks); existing saves migrate with it pre-set (they already played).
+ *  v4 (M8 기체 챔피언화, ADR-0019): `skillInvest` 가 계정 단위에서 **기체 단위**로
+ *  내려간다 — `Ship.typeId`(SHIP_TYPES 인덱스) + `Ship.skillInvest`(타입별 트리 벡터)
+ *  신설. v3 의 계정 벡터는 마이그레이션이 각 기체로 승계한다(전원 스트라이커 = typeId 0).
+ *  ⚠️ DB 변경 없음 — `profiles.save` 는 불투명 jsonb 이고 서버 SQL 은 그 안의
+ *  `credits`/`minerals` 만 읽는다(실측: supabase/migrations/** 에 skillInvest 0건).
+ *  `profiles.save_version` 은 제약 없는 integer 스탬프라 4 를 그대로 받는다. */
+export const SAVE_VERSION = 4;
 
 // ---------------------------------------------------------------------------
 // Rarity

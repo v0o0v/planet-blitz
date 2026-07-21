@@ -930,6 +930,34 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       );
       s.appendChild(row3);
 
+      // 기체 타입 치트(M8). 런의 `WorldConfig.shipType` 은 createWorld 시점에 봉인되므로
+      // **런을 시작하기 전에** 바꿔야 그 타입으로 도는 런이 만들어진다(라이브 런에 걸면 오염).
+      s.appendChild(subLabel('기체 타입 (런 시작 전에 바꿀 것 — ADR-0008)'));
+      const shipRow = document.createElement('div');
+      shipRow.className = 'pb-c-row';
+      const shipSel = document.createElement('select');
+      const slugs = harness.shipTypeSlugs();
+      const currentType = harness.snapshot().shipTypeId;
+      for (let i = 0; i < slugs.length; i++) {
+        const o = document.createElement('option');
+        o.value = String(i);
+        o.textContent = `${i}: ${slugs[i] ?? '?'}`;
+        if (i === currentType) o.selected = true;
+        shipSel.appendChild(o);
+      }
+      shipSel.title =
+        '활성 기체의 타입을 바꾼다. 투자 벡터는 그 타입의 무투자 벡터로 초기화된다 ' +
+        '(타입마다 노드 수·의미가 달라 옛 벡터를 그대로 두면 다른 트리로 잘못 읽힌다). ' +
+        '라이브 런이 있으면 그 런은 오염된다 — 반드시 런 시작 전에.';
+      shipRow.append(
+        shipSel,
+        btn('기체 타입 적용', () => {
+          const applied = harness.setShipType(Number(shipSel.value));
+          setHint(`기체 타입 → ${applied}:${slugs[applied] ?? '?'} (런은 새로 시작할 것)`);
+        }),
+      );
+      s.appendChild(shipRow);
+
       s.appendChild(subLabel('프리셋 (하네스 프로필 통째 교체)'));
       const row4 = document.createElement('div');
       row4.className = 'pb-c-row';
@@ -1035,7 +1063,8 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         `seg ${snap.segment}  kills ${snap.kills}  combo ${snap.combo}\n` +
         `${bossLine}\n` +
         `hash ${snap.hash || '-'}  seed ${snap.seed}\n` +
-        `프로필 c${snap.profileSummary.credits} m${snap.profileSummary.minerals} shipLv${snap.profileSummary.shipLevel}\n` +
+        `프로필 c${snap.profileSummary.credits} m${snap.profileSummary.minerals} ` +
+        `shipLv${snap.profileSummary.shipLevel} type${snap.shipTypeId}\n` +
         `엔티티 ${counts || '-'}`;
       s.appendChild(dump);
 

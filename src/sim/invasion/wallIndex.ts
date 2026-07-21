@@ -65,6 +65,8 @@ export class InvasionWallIndex {
   private queryId = 0;
   /** 정확 판정(circleOverlapsWall) 호출 누적 횟수 — 성능 계측/테스트용. */
   private probes = 0;
+  /** rebuild 누적 횟수. 이동 벽 갱신 규율이 지켜지는지 테스트가 관측하는 창구다. */
+  private builds = 0;
 
   constructor(cellSize: number = WALL_INDEX_CELL_SIZE) {
     this.cellSize = cellSize > 0 ? cellSize : WALL_INDEX_CELL_SIZE;
@@ -83,6 +85,7 @@ export class InvasionWallIndex {
    */
   rebuild(walls: readonly Entity[]): void {
     this.cells.clear();
+    this.builds++;
     this.walls = walls;
     if (this.stamps.length < walls.length) this.stamps = new Int32Array(walls.length * 2 + 8);
     else this.stamps.fill(0, 0, walls.length);
@@ -109,9 +112,28 @@ export class InvasionWallIndex {
     }
   }
 
+  /**
+   * 마지막 rebuild 에 쓴 **같은 배열**로 격자를 다시 만든다.
+   *
+   * ## 왜 필요한가 (이동 벽 갱신 규율 — M7c)
+   * `world.ts` 는 틱 머리에서 rebuild 를 한 번만 한다. 압축 프레스(이동 벽)는 그 뒤
+   * `stepFacility` 안에서 좌표가 바뀌므로, 갱신하지 않으면 같은 틱 뒷단(stepProjectiles)이
+   * **옛 좌표 격자**로 탄-벽 판정을 한다 — 탄이 프레스를 뚫거나 허공에서 사라진다.
+   * 벽 배열의 신원·순서는 그대로이므로 셀 재등록만 하면 되고, `firstBlocking` 의
+   * "가장 작은 배열 인덱스" 계약도 그대로 유지된다.
+   */
+  refresh(): void {
+    this.rebuild(this.walls);
+  }
+
   /** 등록된 벽 수. */
   get size(): number {
     return this.walls.length;
+  }
+
+  /** rebuild 누적 횟수(갱신 규율 검증용). */
+  get buildCount(): number {
+    return this.builds;
   }
 
   /** 정확 판정 누적 호출 수(성능 계측). */
