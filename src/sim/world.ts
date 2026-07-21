@@ -116,12 +116,14 @@ import {
   hasSignature,
   SIG_BRUISER_ARMOR,
   SIG_ARC_OVERCHARGE,
+  SIG_HATCHLING_BROOD,
   SIG_MALLOW_CUSHION,
   SIG_BUBBLE_FILM,
   ARMOR_PER_STACK_BP,
   ARMOR_DECAY_TICKS,
   clampArmorStacks,
   overchargeBp,
+  hatchThreshold,
   CUSHION_RECOVER_TICKS,
   cushionDeferredDamage,
   cushionSettled,
@@ -1078,6 +1080,7 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
 // ## 슬롯 배정 (한 런에 시그니처는 최대 하나라 충돌하지 않는다)
 //   브루저   aux0 = 장갑 스택(0..8) · aux1 = 마지막 피격 이후 경과 틱
 //   아크캐스터 aux0 = 연속 정지 틱      · aux1 = 미사용(0)
+//   해츨링    aux0 = 마지막 출격 시점의 state.kills 스냅샷 · aux1 = 미사용(0)
 //   말로우    aux0 = 적립된 지연 피해(비음 정수) · aux1 = 연속 무피격 틱
 //   버블      aux0 = 남은 막 내구(0..FILM_ABSORB_FLAT) · aux1 = 마지막 파열 이후 경과 틱
 //
@@ -1128,6 +1131,31 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
     else if (player.aux0 < OVERCHARGE_TICK_CAP) player.aux0++;
     // ⚠️ 함수 끝이라 의미는 없지만 **명시적으로** 반환한다 — 뒤에 분기를 append 하는 순간
     // 아크캐스터 런이 다음 시그니처 분기로 흘러들어간다(한 런에 시그니처는 최대 하나).
+    return;
+  }
+  if (signatureOn(state, SIG_HATCHLING_BROOD)) {
+    // 해츨링 시그니처 — 부화(설계서 §3). aux0 = **마지막 출격 시점의 state.kills 스냅샷** ·
+    // aux1 = 미사용(0).
+    //
+    // ## 왜 처치 카운터를 aux 에 따로 세지 않는가
+    // 순수 함수 계약(shipSignature.ts ④절 hatchThreshold 주석)은 "출격 이후 처치 카운터를 0
+    // 으로 리셋하고 그 카운터가 임계 이상이 되는 틱에 출격" 이다. 그 카운터를 aux1 에 직접
+    // 적립하면 **런 누적 처치(state.kills)와 사본이 두 벌** 생겨 갈릴 여지가 생긴다. 대신
+    // 마지막 출격 시점의 누적치만 aux0 에 스냅샷해 두고 `state.kills - aux0` 을 카운터로
+    // 읽는다 — 값이 정확히 같으면서 정본은 하나다. state.kills 는 단조 증가 정수이고
+    // (compact 의 `state.kills++` 단 한 곳) 이미 해시에 접히므로(replay.ts) 신규 폴드도 0 이다.
+    //
+    // ## 처치 집계 경로가 반쪽이 될 수 없는 이유
+    // 총알 명중·화염 지속피해·전격 연쇄·폭탄 기물 — 모든 사망 경로가 `e.dead = true` 로만
+    // 수렴하고 집계는 compact() 한 곳에서만 일어난다. 따라서 state.kills 를 읽는 이 배선은
+    // 처치 판정 지점을 하나도 놓칠 수 없다(지점별 훅을 심었다면 반쪽 배선이 됐을 자리다).
+    //
+    // ## 진행 순서
+    // stepShipSignature 는 compact() **이전**에 돈다 — 즉 이번 틱에 죽을 적은 아직 세지지
+    // 않았고, 판정은 항상 "직전 틱까지의 누적" 으로 이뤄진다. 매 틱 같은 규칙이라 결정론에
+    // 영향이 없고, 출격이 한 틱 늦을 뿐이다.
+    stepHatchBrood(state, player);
+    // ⚠️ 아크캐스터·말로우 분기와 같은 이유로 **명시적으로** 반환한다.
     return;
   }
   if (signatureOn(state, SIG_MALLOW_CUSHION)) {
@@ -1188,6 +1216,70 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
     }
     return;
   }
+}
+
+/**
+ * 병아리 드론 동시 생존 상한. `hatchThreshold` 가 누적 처치에 따라 요구치를 올리지만
+ * (상한 HATCH_MAX_KILLS), 드론이 잡은 적도 state.kills 에 들어가 **드론이 드론을 부르는 양의
+ * 되먹임**이 생긴다. 상한이 없으면 발산하지는 않아도 후반 프레임이 조용히 무너진다.
+ *
+ * 상한은 `ownerId === DRONE_MARK` 인 활성 포탑 전체를 센다 — 즉 유니크 ④ 자율 드론 베이가
+ * 띄운 드론과 **상한을 공유**한다. 의도된 것이다: 이 상한의 의미는 "해츨링이 몇 마리까지"가
+ * 아니라 "플레이어 곁에 동시에 서 있는 아군 소환 포탑 몇 대까지" 이고, 프레임·조준 부하를
+ * 만드는 것은 출처가 아니라 총 대수다.
+ */
+const BROOD_MAX_DRONES = 4;
+
+/** 병아리 드론 반경. 드론 베이·센트리 선례와 같은 값(같은 스프라이트 슬롯을 쓴다). */
+const BROOD_DRONE_RADIUS = 44;
+
+/**
+ * 해츨링 부화 판정 — 임계를 넘긴 틱에 병아리 드론 1기를 출격시킨다.
+ *
+ * ## 왜 신규 EntityKind 를 만들지 않는가
+ * 병아리는 **플레이어를 돕는 유닛**이다. `summonEnemy`/`spawnEnemy`(waves.ts)는 kind 를
+ * `'enemy'` 로 하드코딩하는 **적 생성** 함수라 애초에 대상이 아니다(특히 `spawnEnemy` 는
+ * `waveRng` 를 소비해 결정론까지 깬다). sim 에 이미 있는 유일한 아군 유닛 메커니즘이
+ * `turretPickup` + `DRONE_MARK` 이고, 선례가 둘(유니크 ④ 드론 베이 `droneBay`, 보조무기 ③
+ * 센트리)이다. 재사용으로 자동 조준·사격(stepTurrets)·수명(TURRET_LIFE_TICKS)·청크 컬링
+ * 제외(isGimmick)·충돌 격자·렌더 스프라이트가 전부 공짜로 따라오고, 신규 KIND_CODE 가 0 이라
+ * 해시 레이아웃이 불변이다.
+ *
+ * ⚠️ 마커는 반드시 `DRONE_MARK` 를 재사용한다. `isGimmick` 이 이 상수를 리터럴로 비교하므로
+ * 신규 마커를 만들면 병아리가 청크 컬링에 잘리고 MAX_ACTIVE_GIMMICKS 를 잡아먹는다 — 그리고
+ * 컬링은 조용히 일어나 "가끔 안 나온다" 로만 관측된다.
+ *
+ * ## RNG 미소비
+ * `spawnEventObject`·`activateTurret` 은 어느 RNG 스트림도 건드리지 않는다. 배치 좌표도
+ * 살아 있는 드론 수로 고른 고정 4방향이라 난수가 없다 — 웨이브 구성·드랍 시퀀스가 해츨링
+ * 런에서도 밀리지 않는다.
+ */
+function stepHatchBrood(state: WorldState, player: Entity): void {
+  if (state.kills - player.aux0 < hatchThreshold(state.kills)) return;
+  // 임계를 넘긴 틱에만 스캔한다(수십 틱에 한 번) — 매 틱 전체 순회를 만들지 않기 위해서다.
+  let live = 0;
+  for (const e of state.entities) {
+    if (!e.dead && e.ownerId === DRONE_MARK && isActiveTurret(e)) live++;
+  }
+  // 상한에 걸리면 **aux0 을 갱신하지 않고** 보류한다 — 자리가 나는 즉시 다음 틱에 출격하고,
+  // 그동안 쌓인 처치가 소멸하지 않는다.
+  if (live >= BROOD_MAX_DRONES) return;
+  // 배치는 살아 있는 대수로 고른 고정 4방향(우·좌·하·상). 여러 기가 정확히 겹쳐 한 대처럼
+  // 보이는 것을 막는 목적이고, 난수·삼각함수를 쓰지 않아 결정론이 자명하다.
+  const slot = live % 4;
+  const ox = slot === 0 ? DRONE_SPAWN_OFFSET : slot === 1 ? -DRONE_SPAWN_OFFSET : 0;
+  const oy = slot === 2 ? DRONE_SPAWN_OFFSET : slot === 3 ? -DRONE_SPAWN_OFFSET : 0;
+  const chick = spawnEventObject(
+    state,
+    'turretPickup',
+    player.x + ox,
+    player.y + oy,
+    BROOD_DRONE_RADIUS,
+  );
+  chick.ownerId = DRONE_MARK; // 청크 기믹과 구분(isGimmick 제외 → 컬링·상한 비대상)
+  activateTurret(chick); // 즉시 활성 포탑(TURRET_LIFE_TICKS 동안 자동 사격)
+  // 출격 성공 시에만 스냅샷을 갱신한다 = 순수 함수 계약의 "카운터 0 리셋".
+  player.aux0 = state.kills;
 }
 
 /**
