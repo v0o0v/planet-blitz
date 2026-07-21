@@ -16,6 +16,7 @@ import type { InputFrame, WorldState, WorldConfig } from './world.js';
 import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } from './world.js';
 import type { Entity } from './entities.js';
 import { KIND_CODE } from './entities.js';
+import { normalizeShipTypeId } from '../../data/ships/index.js';
 import { normalizeMaintenance } from './invasion/guardian.js';
 import { INVASION_HASH_VERSION } from './invasion/constants.js';
 import { GUARDIAN_SNAPSHOT_FIELDS } from './invasion/normalize.js';
@@ -447,7 +448,12 @@ export function hashWorld(state: WorldState): number {
   // 엄밀히는 잉여 폴드다(시그니처 비트가 uniqueMask 를 통해 타입을 유일 결정한다). 그럼에도
   // 접는 이유: 서버(EF) 가 타입을 **추론이 아니라 명시**로 읽고, 훗날 시그니처 없는 타입이
   // 추가돼도 그 추론이 조용히 깨지지 않는다. 스트라이커 비용이 0 이라 보험료가 공짜다.
-  const st = state.config.shipType ?? 0;
+  // ⚠️ `normalizeShipTypeId` 를 반드시 거친다(적대적 리뷰 LOW-3). sim 거동 축(`signatureOn`·
+  // `computeLoadoutStats`)은 전부 이 정규화를 거치는데 해시 꼬리만 원값을 접으면, `"3"`(JSON
+  // 문자열)·`2.5`·`-0.5`·`99` 같은 입력이 **거동은 스트라이커인데 꼬리 폴드는 실행되는** 상태가
+  // 된다("shipType 이 0 이면 한 폴드도 실행하지 않는다" 는 아래 불변식 주장이 사실과 어긋난다).
+  // 클라·서버가 같은 코드라 divergence 는 아니지만, 불변식은 주장한 그대로여야 한다.
+  const st = normalizeShipTypeId(state.config.shipType);
   if (st !== 0) {
     h = hashU32(h, SHIP_HASH_VERSION >>> 0);
     h = hashU32(h, st >>> 0);

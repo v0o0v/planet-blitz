@@ -8,6 +8,7 @@
  */
 
 import type { WorldState } from '../world.js';
+import { playerCloaked } from '../cloak.js';
 import type { Entity } from '../entities.js';
 import type { EnemyDef } from './types.js';
 import { HAZARD_MORTAR, HAZARD_LAVA } from './types.js';
@@ -36,7 +37,12 @@ export function updateEnemy(state: WorldState, e: Entity, def: EnemyDef, player:
   }
   // Fragments fire from the movement step (periodic cadence burst + wall-impact
   // hook), never from the generic cadence path below.
-  if (def.attack.kind !== 'fragments' && e.cooldown <= 0) {
+  //
+  // 팬텀 은신(M8 시그니처, 비트 20): 은신 중에는 **방출만** 막는다 — 이동(applyMovement)은
+  // 위에서 이미 끝났고 여기서 되돌리지 않는다. 쿨다운도 리셋하지 않아 `e.cooldown` 이 0 에
+  // 머물다가 은신이 풀린 첫 틱에 곧바로 발사된다(은신이 쿨다운을 태워 없애지 않는다).
+  // `playerCloaked` 는 시그니처 미보유 런에서 즉시 false 라 조건식이 원래와 동일 경로다.
+  if (def.attack.kind !== 'fragments' && e.cooldown <= 0 && !playerCloaked(state, player)) {
     runAttack(state, e, def, player);
     e.cooldown = def.fireCooldown;
   }
@@ -92,7 +98,15 @@ function moveCharge(state: WorldState, e: Entity, def: EnemyDef, player: Entity)
 
   // Secondary fragments trigger: fire on the fire-cadence timer (open terrain),
   // re-aiming at the player so the charger keeps pressing after each burst.
-  if (def.attack.kind === 'fragments' && e.cooldown <= 0) {
+  //
+  // 팬텀 은신: 돌격형은 **이 경로로만** 쏘므로 여기도 같은 게이트가 필요하다(위 generic
+  // cadence 경로만 막으면 돌격형이 은신을 그대로 뚫는 반쪽 배선이 된다).
+  // ⚠️ 은신 중에는 else 분기로 흘러 **재조준 규칙이 실제로 달라진다** — 원래 경로는 분출과 함께
+  // `aimAt` 을 무조건 걸지만, 은신 중에는 "플레이어를 지나쳤을 때만 다시 조준" 이 된다. 즉
+  // 돌격형은 은신한 플레이어를 지나쳐 관성으로 흘러간다. 이는 은신의 의도된 회피 이득이며
+  // (조준 정보를 잃은 적의 정의된 행동), 난수를 쓰지 않고 정지시키지도 않아 결정론은 불변이다.
+  // 쿨다운이 0 에 머물러 은신이 풀린 첫 틱에 즉시 분출한다.
+  if (def.attack.kind === 'fragments' && e.cooldown <= 0 && !playerCloaked(state, player)) {
     sprayFragments(state, e, def.attack);
     e.cooldown = def.fireCooldown;
     aimAt(e, def.speed, player.x, player.y);
@@ -116,7 +130,10 @@ function moveCharge(state: WorldState, e: Entity, def: EnemyDef, player: Entity)
  * infinite map. Deterministic (position/timer only, no RNG).
  */
 export function chargerHitWall(state: WorldState, e: Entity, def: EnemyDef, player: Entity): void {
-  if (def.attack.kind === 'fragments' && e.cooldown <= 0) {
+  // 팬텀 은신: 벽 충돌 분출도 방출이라 같은 게이트를 건다. 아래 `aimAt`(이동 방향 재설정)은
+  // 게이트 밖에 그대로 둔다 — 벽에 부딪힌 뒤 방향을 다시 잡는 것은 사격이 아니라 물리적
+  // 반응이고, 여기서 막으면 은신 중 돌격형이 벽에 박혀 미는 미정의 상태가 된다.
+  if (def.attack.kind === 'fragments' && e.cooldown <= 0 && !playerCloaked(state, player)) {
     sprayFragments(state, e, def.attack);
     e.cooldown = def.fireCooldown;
   }

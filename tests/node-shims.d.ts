@@ -14,6 +14,7 @@
 declare module 'node:fs' {
   export function writeFileSync(path: string, data: string | Uint8Array, encoding?: string): void;
   export function readFileSync(path: string): Uint8Array;
+  export function readFileSync(path: string, encoding: string): string;
   export function mkdtempSync(prefix: string): string;
   export function readdirSync(path: string): string[];
 }
@@ -30,4 +31,7 @@ declare module 'node:url' {
   export function fileURLToPath(url: string | URL): string;
 }
 
-declare const process: { readonly version: string };
+declare const process: {
+  readonly version: string;
+  readonly env: Record<string, string | undefined>;
+};

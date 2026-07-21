@@ -21,6 +21,7 @@
  */
 
 import type { WorldState } from './world.js';
+import { playerCloaked } from './cloak.js';
 import type { Entity } from './entities.js';
 import { spawnEnemyBullet, spawnHazard } from './entities.js';
 import { HAZARD_LAVA, HAZARD_SLOW } from './patterns/types.js';
@@ -91,6 +92,12 @@ export function updateBoss(state: WorldState, boss: Entity, player: Entity): voi
     boss.cooldown--;
     return;
   }
+  // 팬텀 은신(M8 시그니처, 비트 20): 조준 대상을 잃은 보스는 이번 틱 패턴을 **캐스트하지
+  // 않는다**. 위 `moveBoss` 는 이미 끝났으므로 호버 추적은 그대로다(정지시키지 않는다).
+  // 여기서 반환하면 `boss.cooldown` 이 0 에 머물고 `boss.pierce`(패턴 라운드로빈)·과열 창도
+  // 진행하지 않아, 은신이 풀린 첫 틱에 원래 쏘려던 패턴이 그대로 나간다 — 은신이 보스의 패턴
+  // 순서를 건너뛰게 만들지 않는다. 시그니처 미보유 런에서는 즉시 false 라 무영향.
+  if (playerCloaked(state, player)) return;
   const phase = bossDef.phases[boss.phase];
   if (phase === undefined) return;
   const attackIndex = boss.pierce % phase.attacks.length;
