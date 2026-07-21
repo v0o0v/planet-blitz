@@ -116,6 +116,7 @@ import {
   hasSignature,
   SIG_BRUISER_ARMOR,
   SIG_ARC_OVERCHARGE,
+  SIG_PHANTOM_CLOAK,
   SIG_HATCHLING_BROOD,
   SIG_MALLOW_CUSHION,
   SIG_BUBBLE_FILM,
@@ -123,6 +124,8 @@ import {
   ARMOR_DECAY_TICKS,
   clampArmorStacks,
   overchargeBp,
+  CLOAK_BREAK_BP,
+  cloakActive,
   hatchThreshold,
   CUSHION_RECOVER_TICKS,
   cushionDeferredDamage,
@@ -1080,6 +1083,7 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
 // ## 슬롯 배정 (한 런에 시그니처는 최대 하나라 충돌하지 않는다)
 //   브루저   aux0 = 장갑 스택(0..8) · aux1 = 마지막 피격 이후 경과 틱
 //   아크캐스터 aux0 = 연속 정지 틱      · aux1 = 미사용(0)
+//   팬텀      aux0 = 연속 무피격 틱(0..CLOAK_TICK_CAP) · aux1 = 은신 해제 첫 타 대기 플래그(0/1)
 //   해츨링    aux0 = 마지막 출격 시점의 state.kills 스냅샷 · aux1 = 미사용(0)
 //   말로우    aux0 = 적립된 지연 피해(비음 정수) · aux1 = 연속 무피격 틱
 //   버블      aux0 = 남은 막 내구(0..FILM_ABSORB_FLAT) · aux1 = 마지막 파열 이후 경과 틱
@@ -1103,10 +1107,51 @@ const OVERCHARGE_TICK_CAP = 600;
  */
 const CUSHION_TICK_CAP = 600;
 
+/**
+ * 은신 무피격 카운터 상한. 임계(CLOAK_UNHIT_TICKS=240)를 한참 넘긴 값이라 거동에는 영향이
+ * 없고(그 위로는 `cloakActive` 가 항상 true), 적이 한 명도 사거리에 들어오지 않는 구간에서
+ * aux0 이 무한히 커지는 것만 막는다 — aux 는 u32 로 해시된다(replay.ts hashEntity).
+ */
+const CLOAK_TICK_CAP = 600;
+
 /** 이 런에서 시그니처 `bit` 이 활성인가. 위 주석의 2축 OR. */
 function signatureOn(state: WorldState, bit: number): boolean {
   if (hasSignature(state.config.loadout?.uniqueMask ?? 0, bit)) return true;
   return shipTypeDef(state.config.shipType ?? 0).signatureBit === bit;
+}
+
+/**
+ * 팬텀 은신 — **적이 지금 플레이어를 조준 대상으로 삼을 수 있는가**의 술어(적 AI 가 읽는다).
+ *
+ * ## 왜 조준 좌표를 바꾸지 않고 "공격 방출" 만 게이트하는가
+ * 적의 조준 좌표는 곧 **이동 목표**이기도 하다(patterns/index.ts 의 moveCharge·moveStandoff·
+ * moveSeekWounded·boss.ts moveBoss 가 같은 `player.x/y` 를 쓴다). 가짜 좌표를 먹이면 적이
+ * 엉뚱한 곳으로 날아가고, 조준과 이동을 분리하려면 조준 지점 12곳을 개별 수정해야 해
+ * **일부만 고쳐 "어떤 적은 은신을 뚫는" 반쪽 배선**(이 저장소의 재발 결함)이 된다. 그래서
+ * 게이트는 방출 단계 2곳(잡몹 runAttack·파편 분출 / 보스 패턴 캐스트)에만 건다.
+ *
+ * ## 은신 중 적의 정의된 행동 (미정의 동작을 남기지 않는다)
+ *  · **이동은 그대로** — 은신해도 적은 계속 다가온다. "적을 얼려 세운다" 는 해석보다 게임이
+ *    덜 망가지고, 이동 코드를 한 줄도 건드리지 않아 결정론 논증이 단순하다.
+ *  · **발사만 막는다.** 이때 발사 쿨다운은 **소비하지 않는다**(`e.cooldown` 을 리셋하지 않고
+ *    0 에 머문다) → 은신이 풀린 첫 틱에 곧바로 쏜다. 은신이 "쿨다운을 태워 없애는" 이득까지
+ *    주면 컨셉(피탐지 회피)을 넘어선다.
+ *  · RNG 미소비 — patterns/index.ts·boss.ts 는 어느 RNG 스트림도 뽑지 않는다(파일 헤더 명시).
+ *    따라서 은신은 웨이브 구성·드랍·엘리트 어픽스 시퀀스를 한 칸도 밀지 않는다.
+ *
+ * ## 침공(3레이어)에서는 발동하지 않는다 — 의도된 범위 제한
+ * 침공 방어체의 조준 좌표 일부는 **방어체 어픽스의 발동 조건 입력**이라(invasion/facility.ts·
+ * coreRoom.ts 의 DefenseTriggerState), 은신을 섞으면 "근접 어픽스가 왜 안 터지나" 형태로
+ * 방어체 경제(M7b)가 조용히 바뀐다. 게다가 침공은 서버(Deno EF)가 재실행 검증하므로 sim 이
+ * 갈리면 라이브 침공이 통째로 거부된다. 배선 계약(§2.6)이 침공 조준 지점 7종을 전량 제외한
+ * 이유이며, 여기서 `designedRun`(= invasion3 config 존재) 을 한 번에 차단해 **L1 편대 적
+ * (kind 'enemy' 라 같은 updateEnemy 를 탄다)까지** 예외 없이 제외한다.
+ * 은신 해제 첫 타 배율은 플레이어 쪽 피해 산술이라 침공에서도 그대로 작동한다.
+ */
+export function playerCloaked(state: WorldState): boolean {
+  if (state.config.invasion3 !== undefined) return false;
+  if (!signatureOn(state, SIG_PHANTOM_CLOAK)) return false;
+  return cloakActive(state.entities[0]?.aux0 ?? 0);
 }
 
 /**
@@ -1131,6 +1176,32 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
     else if (player.aux0 < OVERCHARGE_TICK_CAP) player.aux0++;
     // ⚠️ 함수 끝이라 의미는 없지만 **명시적으로** 반환한다 — 뒤에 분기를 append 하는 순간
     // 아크캐스터 런이 다음 시그니처 분기로 흘러들어간다(한 런에 시그니처는 최대 하나).
+    return;
+  }
+  if (signatureOn(state, SIG_PHANTOM_CLOAK)) {
+    // 팬텀 시그니처 — 은신(설계서 §3). aux0 = 연속 무피격 틱 · aux1 = 해제 첫 타 대기 플래그.
+    //
+    // ## 왜 두 슬롯인가 (aux0 만으로도 유도되는데)
+    // 은신 판정(`cloakActive(aux0)`)과 "이번 발사가 해제 첫 타인가" 는 지금 규칙에서는 같은
+    // 값이지만, **소진 표식을 정수 플래그로 따로 들고 발사 시점에 0 으로 되돌린다.** 배율이
+    // 두 번 실릴 여지를 상태로 못 박아 없애는 쪽이, 조건식이 우연히 두 번 참이 되는 경로가
+    // 생겼을 때 조용히 2.5배가 중복되는 것보다 안전하다. 두 값은 항상 같이 리셋된다
+    // (발사: autoAttack · 피격: resolveCollisions).
+    //
+    // ## 은신 해제 조건 = **발사**
+    // 설계서는 "무피격 지속 시 은신 + 해제 첫 타 배율" 까지만 정하고 무엇이 은신을 푸는지는
+    // 비워 두었다. 여기서 택한 규칙은 **첫 발을 쏘는 순간 풀린다**(배율은 그 발에 실린다).
+    //  · 반대안("피격으로만 풀린다")은 적이 조준하지 못하는 동안 일방적으로 딜을 넣게 되어
+    //    밸런스가 무너진다.
+    //  · 이 규칙에서 은신은 "사거리 안에 적이 없는 동안" 유지된다(자동 조준이라 적이 들어오면
+    //    즉시 첫 발이 나간다) → 히트앤런 루프가 되어 암살자 컨셉과 맞는다.
+    // 그 결과 교전이 빽빽한 무대에서는 은신 유지 구간이 짧다. 이것은 축 그 자체이며, 길이를
+    // 늘리고 싶다면 CLOAK_UNHIT_TICKS 밸런스 패스로 다룰 문제이지 배선으로 우회할 것이 아니다.
+    if (player.aux0 < CLOAK_TICK_CAP) player.aux0++;
+    // 임계를 넘긴 동안 매 틱 세운다(멱등) — 상한(CLOAK_TICK_CAP)에 걸려 aux0 이 더 이상
+    // 오르지 않아도 플래그는 유지된다.
+    if (cloakActive(player.aux0)) player.aux1 = 1;
+    // ⚠️ 아크캐스터·해츨링 분기와 같은 이유로 **명시적으로** 반환한다.
     return;
   }
   if (signatureOn(state, SIG_HATCHLING_BROOD)) {
@@ -1434,7 +1505,23 @@ function autoAttack(state: WorldState, player: Entity): void {
   // 바뀐다.** 적용 산술은 그 함수와 동형(정수 bp · 단일 나눗셈 · 반올림 1회)이며, 정수 피해에
   // 대해서는 두 경로가 완전히 같은 값임을 tests/weapons.test.ts 가 못 박는다.
   const ocBp = signatureOn(state, SIG_ARC_OVERCHARGE) ? overchargeBp(player.aux0) : 0;
-  const wDamage = ocBp === 0 ? w.damage : w.damage + Math.round((w.damage * ocBp) / 10000);
+  let wDamage = ocBp === 0 ? w.damage : w.damage + Math.round((w.damage * ocBp) / 10000);
+
+  // 팬텀 시그니처 — 은신 해제 첫 타 배율(설계서 §3·§4). **여기가 유일한 소진 지점이다**:
+  // 이 줄 아래의 모든 무기 아키타입 분기(레일건·미사일·빔·발칸/스프레드)가 예외 없이
+  // 발사하므로, 위쪽 조기 반환(쿨다운 미준비 `player.cooldown > 0` · 사거리 안 표적 없음)에
+  // 걸린 틱에는 표식이 소모되지 않는다 — "쏘지 않으면 은신이 유지된다" 가 코드 구조로
+  // 보장된다. 배율은 플레이어가 **주는** 피해에 실린다(암살자 축).
+  // ⚠️ L2 의 `cloakBreakDamage` 를 직접 부르지 않는 이유는 아크캐스터 주석과 같다: 그 함수는
+  // 입력을 `Math.trunc` 하는데 `weapon.damage` 는 소수 2자리 실수다. 산술은 그 함수와 동형
+  // (정수 bp · 단일 나눗셈 · 반올림 1회)이라 정수 피해에 대해 값이 완전히 같다.
+  // 미보유·비은신이면 이 블록은 한 줄도 실행되지 않아 `wDamage` 가 위 값 그대로다(해시 불변).
+  if (signatureOn(state, SIG_PHANTOM_CLOAK) && player.aux1 !== 0) {
+    wDamage = Math.round((wDamage * CLOAK_BREAK_BP) / 10000);
+    // 은신 해제 — 무피격 스트릭과 소진 표식을 함께 되돌린다(둘은 항상 같이 리셋된다).
+    player.aux0 = 0;
+    player.aux1 = 0;
+  }
 
   const baseAngle = atan2(target.y - player.y, target.x - player.x);
   // Firing archetypes off `weaponType` (M2 B2 + M3 C1):
@@ -2543,6 +2630,14 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     if (cushionOn) {
       player.aux1 = 0;
       player.aux0 += deferred;
+    }
+    // 팬텀 시그니처 — 실제로 피해를 입은 이번 피격에서만 무피격 스트릭과 해제 표식을 리셋한다.
+    // **반드시 이 분기 안**이어야 한다: 생존 캡스톤이 무효화한 피격은 "없던 피격"(위 주석)이라
+    // 거기서 리셋하면 맞지도 않은 타격이 은신을 깨서 은신이 사실상 발동하지 않게 되고, 반대로
+    // 리셋을 아예 빼면 **맞아도 은신이 유지**된다. 둘 다 화면상으로는 조용하다.
+    if (signatureOn(state, SIG_PHANTOM_CLOAK)) {
+      player.aux0 = 0;
+      player.aux1 = 0;
     }
     // ① 과열 드럼: 피격 시 연속 명중 스택 리셋(장착 시에만 phase가 비0).
     if (overheatOn) player.phase = 0;
