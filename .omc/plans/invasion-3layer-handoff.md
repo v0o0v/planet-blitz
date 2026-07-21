@@ -10,9 +10,12 @@
 
 순서대로. 1번은 사용자 손이 필요하므로 **세션을 열자마자 요청**해 두고 2번을 병행하라.
 
-### ① `verify-invasion` 재배포 + `cards` 삭제 — **사용자 CLI 실행 필요 (블로킹)**
+### ① EF 3종 재배포 + `cards` 삭제 — **사용자 CLI 실행 필요 (블로킹)**
 
 원격 `verify-invasion` 은 아직 **v16**(M6 시절 번들, MCP `list_edge_functions` 실측). 즉 **비스트라이커 기체로 침공하면 서버 재실행이 전량 `defense-mismatch`** 가 난다. 미출시라 실피해는 없으나 **출시 전 무조건 게이트**다.
+
+> ⚠️ **M8 시그니처 배선 이후 대상이 3종으로 늘었다** (2026-07-21). `verify-invasion`·`verify-pve-sample`·`verify-run` 은 셋 다 `src/sim` 을 sloppy-imports 로 번들한다. M8 은 그 공유 sim(`world.ts`·`replay.ts`·`patterns/index.ts`·`boss.ts` + 신규 `cloak.ts`)을 바꿨으므로, **원격 번들이 낡은 동안 typeId 1~6 런은 제출 즉시 해시 불일치로 거부된다.** 스트라이커(typeId 0)는 W0 골든 33건·Deno 픽스처 ①~⑥ 이 바이트 불변임을 못 박으므로 안전하다.
+> **배포 순서: M8 머지 → 각 함수 디렉터리에서 `deno task bundle` → EF 3종 재배포 → 그 다음 클라 배포.** 클라를 먼저 내보내면 비스트라이커 파일럿이 전원 거부된다.
 
 **MCP `deploy_edge_function` 은 구조적으로 불가하다.** 독립 시도 3건이 같은 결론에 도달했다 — 이 도구는 `files[].content` 를 인라인 문자열로 받으므로 LLM 이 번들 전체를 토큰으로 재생성해야 하는데, 파일을 파이프로 넘길 경로가 없고 번들이 출력 토큰 한도를 넘는다. `modules`(8,021바이트)가 통과한 것은 번들이 작았기 때문이지 도구가 되기 때문이 아니다.
 
@@ -47,9 +50,9 @@ supabase functions delete cards --project-ref qxgbxwyccbxokdgwxcuw
 
 **번들 크기 — 배포 직전 재측정할 것.** 세 값이 갈린다: 커밋 `285b41d` 메시지 "157KB" · 배포 게이트 실측 160,594바이트 · 현재 워킹트리 `dist.index.js` **172,056바이트**(2026-07-21 12:55 생성). 어느 것이 clean HEAD 산출물인지 **미확인**이므로 재번들 후 실제 크기로 판단하라.
 
-### ② `20260723000000_m7c_seed_rebalance.sql` 원격 적용
+### ② `20260723000000_m7c_seed_rebalance.sql` 원격 적용 — ✅ **완료**
 
-M7c 가 추가한 시드 기지 재조정 마이그레이션이 **원격 미적용**이다(`list_migrations` 실측 — 원격 최신은 `20260720192019 m7b_blueprint_drops`). MCP `apply_migration` 으로 적용 가능하다(SQL 인라인 왕복 비용이 드니 세션 초반에).
+2026-07-21 적용됨(`list_migrations` 실측: 원격 version `20260721042605`, name `m7c_seed_rebalance`). 원격 마이그레이션 히스토리는 이제 28건이고 리포 파일 28개와 1:1 대응한다(**version 스탬프는 대응하지 않는다 — 아래 경고**).
 
 > **`supabase db push` 를 쓰면 안 된다.** 원격 migration version 스탬프가 로컬 파일명과 다르다(로컬 `20260721000000_m7a_invasion_3layer` ↔ 원격 `20260720191311 m7a_invasion_3layer`). 지금까지 MCP `apply_migration` 으로 적용해 와서 어긋났고, `db push` 는 이미 적용된 27개를 미적용으로 오판해 재실행한다 — `m4_phase_e_npc_seed`·`m4_phase_e_placement` 재실행은 데이터 리셋 위험이다.
 
