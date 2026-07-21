@@ -21,7 +21,10 @@
  *   하위(01~07) ≥ 85%  — 배치전은 PvP 해금 후 **필수 5회**다. 여기서 막히면 진행이 멈춘다.
  *   중하(08~14) 55~80% — 절반 이상 이기되 배치를 신경 쓰게 만드는 구간.
  *   중위(15~20) 25~55% — 재도전 전제의 상위권 문턱. 0% 도 100% 도 아니어야 한다.
- * 실측: 24시드 96.4% / 74.4% / 31.3% · 아래 12시드 부분집합 97.6% / 73.8% / 26.4%.
+ * 실측: 24시드 98.2% / 71.4% / 30.6% · 아래 12시드 부분집합 97.6% / 66.7% / 30.6%.
+ * (직전 실측은 24시드 96.4 / 74.4 / 31.3 · 12시드 97.6 / 73.8 / 26.4 였다 —
+ *  `fix/weapon-range-semantics` 로 무제한 조준이 사라지면서 재측정한 값이다. 아래
+ *  "밴드 안 분산" 절의 상한 주석에 이동 폭과 원인을 적어 두었다.)
  */
 
 import { describe, it, expect } from 'vitest';
@@ -306,7 +309,17 @@ describe('밸런스 스모크 — 밴드 안 분산', () => {
 
   it('기지별 승률 편차가 상한 안', () => {
     // 밴드 안에서 한 기지만 유별나게 쉽거나 어려우면 '난이도 밴드'라는 표시가 거짓이 된다.
-    const limits: Record<keyof typeof BANDS, number> = { 하위: 20, 중하: 28, 중위: 28 };
+    //
+    // ⚠️ 중하 상한은 `fix/weapon-range-semantics` 로 **28 → 32 재조정**했다. 무제한 조준을
+    // 유한화하자 밴드 양 끝이 서로 반대로 움직여 편차가 18.1 → 30.2pp 로 벌어졌다:
+    //   기지별 승률 100/75/92/83/50/50/67 → 100/100/75/92/33/42/25 (12시드)
+    // 접근형 편대가 많은 상위 중하(#12~14)는 사거리 밖에서 적을 놓쳐 어려워졌고, 하위
+    // 중하(#8·#9)는 오프빌드 강화가 제시되지 않게 되면서 쉬워졌다. 실패 사유는 전부
+    // 사망(시간초과 0)이라 배선 결함이 아니라 난이도 이동이다. M7c 시드 램프가 **버그
+    // 있는 sim 위에서** 튜닝된 값이었으므로 램프 재조정이 정답이고, 그건 M8 밸런스
+    // 레인 몫이다(사용자 판단 2026-07-21: "일단 둬. 밸런스는 나중에 한번에 잡는다").
+    // 상한을 32 로 둔 것은 그 재조정 전까지 **더 벌어지는 것만은 잡기 위한** 임시 기준선이다.
+    const limits: Record<keyof typeof BANDS, number> = { 하위: 20, 중하: 32, 중위: 28 };
     for (const band of Object.keys(BANDS) as (keyof typeof BANDS)[]) {
       const sd = stdev(measured[band].perBaseRates);
       expect(sd, `${band} 기지간 승률 편차 ${sd.toFixed(1)}pp`).toBeLessThanOrEqual(limits[band]);
@@ -345,13 +358,17 @@ describe('밸런스 스모크 — 정규 경로 통합', () => {
 
   it('상위 기지 런에서 방어 보스·기물이 실제로 존재한다', () => {
     // 카탈로그에 넣었는데 스폰 경로가 없으면 승률만 보고는 알 수 없다.
-    // 시드 37 은 #20 이 L3 까지 도달해 승리하는 것으로 확인된 값이다(패배 시드로 재면
+    // 시드 5 는 #20 이 L3 까지 도달해 승리하는 것으로 확인된 값이다(패배 시드로 재면
     // 플레이어가 L3 전에 죽어 "보스가 없다"가 오탐이 된다).
+    // ⚠️ 증인 시드는 sim 이 바뀌면 함께 갱신해야 한다 — 예전 값 37 은
+    // `fix/weapon-range-semantics` 이후 L3 에 도달하지 못한다(#20 의 L3 도달 시드 집합이
+    // 71·83·97·127·163·173 에서 1·5·11·23·113·149·173 으로 갈렸다). 단언을 약화한 것이
+    // 아니라 **같은 성질의 증인을 다시 고른 것**이다.
     const layers = seedBaseLayers(20);
     const config = { ...DEFAULT_CONFIG } as WorldConfig;
     config.invasion3 = { layers, timeLimitTicks: INVASION_TOTAL_TICKS, maintenance: 10000 };
     config.loadout = GEAR_REFERENCE;
-    const state = createWorld(37, config);
+    const state = createWorld(5, config);
     let sawBoss = false;
     let sawProp = false;
     for (let t = 0; t < INVASION_TOTAL_TICKS; t++) {
@@ -363,6 +380,28 @@ describe('밸런스 스모크 — 정규 경로 통합', () => {
     }
     expect(sawBoss, '#20 배치에 보스가 있는데 엔티티가 없다').toBe(true);
     expect(sawProp, '#20 배치에 기물이 있는데 엔티티가 없다').toBe(true);
+  });
+
+  it('사거리에 투자한 공격자도 실제로 사격하고 승리까지 간다', () => {
+    // 이 하네스는 오래도록 `rangeAdd: 0` 한 점만 밟았다(`GEAR_REFERENCE`). 그 사이
+    // `weapon.range` 는 `0 = 무제한` 센티널이라 **사거리에 투자할수록 조준 상한이 좁아졌고**,
+    // 오토파일럿 카이팅 거리(460)보다 짧아지면 침공 공격자가 한 발도 쏘지 못했다 —
+    // "밴드별 승률 전부 목표 안" 옆에 "사거리 노드를 찍으면 마비"가 나란히 있었다는 뜻이다.
+    // 사거리 축을 실제로 밟는 유일한 자리이므로, 승패뿐 아니라 **탄이 나갔는지**까지 본다.
+    const invested: LoadoutConfig = { ...GEAR_REFERENCE, rangeAdd: 400 };
+    const layers = seedBaseLayers(1);
+    const config = { ...DEFAULT_CONFIG } as WorldConfig;
+    config.invasion3 = { layers, timeLimitTicks: INVASION_TOTAL_TICKS, maintenance: 10000 };
+    config.loadout = invested;
+    const state = createWorld(1, config);
+    let firedTicks = 0;
+    for (let t = 0; t < INVASION_TOTAL_TICKS; t++) {
+      stepWorld(state, autopilotInput(state));
+      if (state.entities.some((e) => e.kind === 'bullet' && !e.dead)) firedTicks++;
+      if (state.gameOver || state.victory) break;
+    }
+    expect(firedTicks, '사거리 투자 프로필이 한 발도 쏘지 못했다').toBeGreaterThan(0);
+    expect(state.victory, '사거리 투자 프로필이 무투자 대비 승리하지 못했다').toBe(true);
   });
 });
 

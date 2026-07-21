@@ -290,7 +290,6 @@ export const POWERUPS: readonly PowerupDef[] = [
 // --- Soft-weighting tuning (integer weights → deterministic weighted draw) -----
 const WEIGHT_UNIVERSAL = 10;
 const WEIGHT_WEAPON_MATCH = 28;
-const WEIGHT_WEAPON_OFFBUILD = 2;
 const WEIGHT_TREE_BASE = 4;
 /** Points invested in a tree per +1 weight (fully-fed tree ≈ +20 weight). */
 const TREE_POINTS_PER_WEIGHT = 4;
@@ -319,14 +318,23 @@ function investedInAffinity(state: WorldState, affinity: TreeAffinity): number {
   return sum;
 }
 
+/**
+ * 이 강화가 **지금 무기에서 의미가 있는가**. 무기 전용 강화는 다른 무기에 붙으면 효과가
+ * 없거나(피해 배율은 그 무기 분기에서만 읽힌다) 엉뚱한 스탯만 건드린다. 예전에는 낮은
+ * 가중값(2)으로 남겨 뒀는데, 낮을 뿐 0 이 아니라 **실제로 뽑혔다** — 벌컨 빌드 24시드 중
+ * 1시드가 빔 전용 '집속 렌즈'(사거리 +320)를 먹는 것이 7기체 전부에서 관측됐고, 당시
+ * `0 = 무제한` 사거리 의미론과 맞물려 그 한 시드는 사격이 통째로 멎었다. 의미론은
+ * 고쳐졌지만 "쓸모없는 선택지를 제시한다"는 문제는 남으므로 아예 후보에서 뺀다.
+ */
+function offBuildWeaponPowerup(def: PowerupDef, state: WorldState): boolean {
+  return def.weaponType !== undefined && def.weaponType !== state.weapon.weaponType;
+}
+
 /** Soft weight of a powerup given the run's build (always ≥ 1). */
 function powerupWeight(def: PowerupDef, state: WorldState): number {
   if (def.universal) return WEIGHT_UNIVERSAL;
-  if (def.weaponType !== undefined) {
-    return def.weaponType === state.weapon.weaponType
-      ? WEIGHT_WEAPON_MATCH
-      : WEIGHT_WEAPON_OFFBUILD;
-  }
+  // 오프빌드는 `drawPowerupChoices` 가 애초에 풀에 넣지 않으므로 여기 오면 항상 일치다.
+  if (def.weaponType !== undefined) return WEIGHT_WEAPON_MATCH;
   if (def.affinity !== undefined) {
     const invested = investedInAffinity(state, def.affinity);
     return WEIGHT_TREE_BASE + Math.floor(invested / TREE_POINTS_PER_WEIGHT);
@@ -347,6 +355,7 @@ export function drawPowerupChoices(state: WorldState, count: number): number[] {
   for (let i = 0; i < POWERUPS.length; i++) {
     const def = POWERUPS[i];
     if (def === undefined) continue;
+    if (offBuildWeaponPowerup(def, state)) continue;
     pool.push(i);
     weights.push(powerupWeight(def, state));
   }

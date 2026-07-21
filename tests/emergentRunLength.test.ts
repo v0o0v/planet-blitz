@@ -97,7 +97,11 @@ describe('오토파일럿 완주 (ADR-0011, par 창발)', () => {
   it('적정 화력으로 par 근처에 완주한다', () => {
     // 무장갑(기본 HP 100) 오토파일럿 = 적정 티어 기준선. 고정 타이머 폐지로 런 길이가
     // 상대적 강함의 결과로 창발한다 — 러프 범위로 단언(정확한 par 강제 아님).
-    const state = createWorld(0x50c1a1, { ...DEFAULT_CONFIG, planet: 0, tier: 0 });
+    // ⚠️ 증인 시드는 sim 이 바뀌면 다시 골라야 한다. `fix/weapon-range-semantics`
+    // (무제한 조준 폐지)로 0x50c1a1 → 0x50c1a2 로 갈았다 — 무장갑 오토파일럿의 완주는
+    // 원래 시드마다 갈리는 값이고(kargon-t0 P0 클리어율 33~63%), 표본 12시드 중 7시드가
+    // 여전히 40~70초에 완주하므로 단언이 약해진 것이 아니라 증인만 바뀐 것이다.
+    const state = createWorld(0x50c1a2, { ...DEFAULT_CONFIG, planet: 0, tier: 0 });
     let ticks = 0;
     for (let t = 0; t < 60 * 300; t++) {
       stepWorld(state, autopilotInput(state));
