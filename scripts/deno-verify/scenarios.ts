@@ -259,9 +259,16 @@ const ARKE_ENGAGE: WorldConfig = {
 // 로드아웃은 리터럴이 아니라 실제 파생 함수를 태워, 클라가 쓰는 경로와 같은 값이 되게 한다.
 const HATCHLING_TYPE_ID = 4;
 
-function hatchlingSkillInvest(): number[] {
-  const def = shipTypeDef(HATCHLING_TYPE_ID);
-  const v = zeroSkillInvest(HATCHLING_TYPE_ID);
+/**
+ * 타입 무관 샘플 투자 벡터 — 각 계열(tree)의 **첫 base 노드**에 `ti + 2` 를 찍는다.
+ *
+ * 길이는 `zeroSkillInvest(typeId)` 가, 계열 경계는 `shipTreeRange` 가 준다 — **길이·계열 수를
+ * 하드코딩하지 않는다.** 타입마다 `nodesPerTree` 가 다르기 때문이다(해츨링 78 / 나머지 63).
+ * ⑦·⑧·⑨ 가 같은 생성기를 공유하므로 ⑦ 의 벡터는 도입 전과 바이트 동일하다(같은 호출·같은 값).
+ */
+function shipSampleInvest(typeId: number): number[] {
+  const def = shipTypeDef(typeId);
+  const v = zeroSkillInvest(typeId);
   // 세 계열 tier0 을 각각 다르게 찍어 affinity 슬라이스가 실제로 갈리게 한다.
   for (let ti = 0; ti < def.trees.length; ti++) {
     const { start } = shipTreeRange(def, ti);
@@ -270,7 +277,7 @@ function hatchlingSkillInvest(): number[] {
   return v;
 }
 
-const HATCHLING_INVEST = hatchlingSkillInvest();
+const HATCHLING_INVEST = shipSampleInvest(HATCHLING_TYPE_ID);
 
 const HATCHLING_RUN: WorldConfig = {
   ...DEFAULT_CONFIG,
@@ -282,7 +289,109 @@ const HATCHLING_RUN: WorldConfig = {
   shipType: HATCHLING_TYPE_ID,
 };
 
-/** 7종 대표 시나리오(M2 4 + M3 표면 2 + M8 비스트라이커 1). */
+// --- 시나리오 ⑧·⑨: 말로우(완충) · 버블(방막) 런 — M8 시그니처 sim 분기 교차 검증 -------
+// ⑦ 과 같은 이유(설계서 §10-8: EF/Deno 가 `shipType` 을 모르면 비스트라이커 침공이 전량
+// `defense-mismatch`)로 추가한다. ⑦ 은 해츨링 하나뿐이라 **시그니처 sim 분기가 붙은 다른
+// 타입들은 서버 재실행 커버리지가 0** 이었다.
+//
+// ⚠️ 길이 축은 여기서 자극되지 않는다 — `data/ships/mallow.ts`·`data/ships/bubble.ts` 는 둘 다
+//    `nodesPerTree: NODES_PER_TREE` 라 스킬 노드 수가 **스트라이커와 같은 63** 이다. "스트라이커와
+//    길이가 다른 skillInvest" 축은 해츨링(78) 전담이며 ⑧·⑨ 는 그 축을 대신하지 못한다.
+//    ⑧·⑨ 가 새로 자극하는 것은 ①`shipType` 값 5·6 의 꼬리 폴드 ②시그니처 비트 22·23 의
+//    `stepShipSignature`/`resolveCollisions` 분기(= aux0/aux1 조건부 폴드)다.
+//
+// ## 무대 선정 근거 — "얼마나 아픈가" 가 아니라 "어느 분기가 실행되는가" 로 골랐다
+// 이 파일의 비교는 부등호가 아니라 **bit-identical 해시**다. 따라서 신호의 크기보다 **시그니처
+// 분기가 한 번이라도 실행되는가**가 기준이다(실행되지 않는 분기는 EF 가 통째로 빠뜨려도
+// 두 런타임의 해시가 같다 — 커버리지 0).
+//  · ⑧ 말로우 = `planet 2 / tier 0` — 완충은 분기가 둘이다: **지연 적립**(피격 시)과
+//    **정산**(연속 무피격 CUSHION_RECOVER_TICKS=180 을 채운 틱). 압박이 끊기지 않는 섬멸
+//    티어(t2)는 무피격 최대 113틱이라 **정산 분기가 한 번도 실행되지 않는다**(실측). 정찰
+//    티어라야 교전이 끊겨 두 분기가 모두 돈다.
+//  · ⑨ 버블 = `planet 2 / tier 1` — 방막은 시간축만 필요해 무대에 둔감하다. 보스까지 도달해
+//    루팅 시퀀스까지 함께 굳는 교전 티어를 골랐다(정찰 티어는 런이 짧아 막 재생 횟수가 준다).
+// 실측 수치는 아래 각 엔트리 주석에 있다.
+const MALLOW_TYPE_ID = 5;
+const BUBBLE_TYPE_ID = 6;
+
+const MALLOW_INVEST = shipSampleInvest(MALLOW_TYPE_ID);
+const BUBBLE_INVEST = shipSampleInvest(BUBBLE_TYPE_ID);
+
+const MALLOW_RUN: WorldConfig = {
+  ...DEFAULT_CONFIG,
+  planet: 2,
+  tier: 0,
+  playerHp: DURABLE,
+  loadout: computeLoadoutStats([], MALLOW_INVEST, undefined, MALLOW_TYPE_ID).loadout,
+  skillInvest: MALLOW_INVEST,
+  shipType: MALLOW_TYPE_ID,
+};
+
+const BUBBLE_RUN: WorldConfig = {
+  ...DEFAULT_CONFIG,
+  planet: 2,
+  tier: 1,
+  playerHp: DURABLE,
+  loadout: computeLoadoutStats([], BUBBLE_INVEST, undefined, BUBBLE_TYPE_ID).loadout,
+  skillInvest: BUBBLE_INVEST,
+  shipType: BUBBLE_TYPE_ID,
+};
+
+// --- 시나리오 ⑩·⑪·⑫: 브루저(장갑) · 아크캐스터(과충전) · 팬텀(은신) 런 -----------------
+// ⑦⑧⑨ 와 같은 이유로 추가한다. 그 셋을 넣고도 **로스터 6종 중 3종(1·2·3)은 Node↔Deno
+// bit-identical 검증을 한 번도 받지 못한 상태**였다(적대적 리뷰 determinism MED-2 / wiring MED-4).
+// 특히 팬텀은 `patterns/index.ts`·`boss.ts` 라는 **적 AI 코드까지 바꾸는 유일한 시그니처**이고,
+// 그 게이트를 위해 `src/sim/cloak.ts` 라는 신규 모듈 경계까지 생겼다 — 번들러가 모듈 초기화를
+// 재배치했을 때 클라와 EF 가 갈리면 팬텀 런의 정상 침공 제출이 전량 거부된다. 이제 6종 전량이
+// `deno task verify` 에 들어간다.
+//
+// ## 무대 선정 근거 (⑧⑨ 와 같은 기준 — "어느 분기가 실행되는가")
+//  · ⑩ 브루저 = `planet 2 / tier 1` — 장갑은 **맞아야** 쌓인다. 교전 티어라야 피격이 반복돼
+//    스택 적립(resolveCollisions)과 소멸 타이머(stepShipSignature) 두 분기가 모두 돈다.
+//  · ⑪ 아크캐스터 = `planet 2 / tier 1` — 과충전은 **정지 입력**이 필요하다. `driveDurable` 은
+//    보스·루팅 구간 외에는 `emptyInput`(정지)을 내므로 임계(90틱)를 넘겨 증폭 분기가 실행된다.
+//  · ⑫ 팬텀 = `planet 0 / tier 0` — 은신은 **연속 무피격 240틱**이 필요하다. 압박이 빽빽한
+//    무대에서는 진입 자체가 0 이라(실측) 정찰 티어를 골랐다. 여기서 은신·해제 배율·적 방출
+//    억제 세 분기가 모두 실행된다.
+const BRUISER_TYPE_ID = 1;
+const ARCCASTER_TYPE_ID = 2;
+const PHANTOM_TYPE_ID = 3;
+
+const BRUISER_INVEST = shipSampleInvest(BRUISER_TYPE_ID);
+const ARCCASTER_INVEST = shipSampleInvest(ARCCASTER_TYPE_ID);
+const PHANTOM_INVEST = shipSampleInvest(PHANTOM_TYPE_ID);
+
+const BRUISER_RUN: WorldConfig = {
+  ...DEFAULT_CONFIG,
+  planet: 2,
+  tier: 1,
+  playerHp: DURABLE,
+  loadout: computeLoadoutStats([], BRUISER_INVEST, undefined, BRUISER_TYPE_ID).loadout,
+  skillInvest: BRUISER_INVEST,
+  shipType: BRUISER_TYPE_ID,
+};
+
+const ARCCASTER_RUN: WorldConfig = {
+  ...DEFAULT_CONFIG,
+  planet: 2,
+  tier: 1,
+  playerHp: DURABLE,
+  loadout: computeLoadoutStats([], ARCCASTER_INVEST, undefined, ARCCASTER_TYPE_ID).loadout,
+  skillInvest: ARCCASTER_INVEST,
+  shipType: ARCCASTER_TYPE_ID,
+};
+
+const PHANTOM_RUN: WorldConfig = {
+  ...DEFAULT_CONFIG,
+  planet: 0,
+  tier: 0,
+  playerHp: DURABLE,
+  loadout: computeLoadoutStats([], PHANTOM_INVEST, undefined, PHANTOM_TYPE_ID).loadout,
+  skillInvest: PHANTOM_INVEST,
+  shipType: PHANTOM_TYPE_ID,
+};
+
+/** 12종 대표 시나리오(M2 4 + M3 표면 2 + M8 비스트라이커 6 = 로스터 전량). */
 export const SCENARIOS: readonly Scenario[] = [
   {
     name: '① 카르곤 정찰 기본(로밍)',
@@ -380,6 +489,71 @@ export const SCENARIOS: readonly Scenario[] = [
     rolls: [
       { dropSeed: 0xb10f_71, rarity: 'rare', source: { planet: 2, tier: 1 } },
       { dropSeed: 0xb10f_72, rarity: 'unique', source: { planet: 2, tier: 1 } },
+    ],
+  },
+  {
+    // 완충은 **맞아야** 발현된다 — 피격 피해의 CUSHION_DEFER_BP(35%)를 지연분으로 떼어 aux0 에
+    // 적립하고, 연속 무피격 CUSHION_RECOVER_TICKS(180)를 채운 틱에 풀을 통째로 정산한다.
+    // 실측(런 3488틱, 보스 처치·승리): **지연 적립 34회**(aux0 최대 167) · **정산 6회**
+    // (aux0 이 양수 → 0 으로 떨어진 횟수) · aux1 최대 322. 시그니처 억제 동형 대조군은
+    // aux0/aux1 이 끝까지 0 이고(조건부 폴드 미발생) 승리에도 도달하지 못한다.
+    name: '⑧ 말로우(완충) 런 — shipType 5 폴드 + 시그니처 22 지연적립/정산 aux 폴드',
+    seed: 0xc0a5,
+    config: MALLOW_RUN,
+    checkpointInterval: 600,
+    buildInputs: () => driveDurable(0xc0a5, MALLOW_RUN, MAX_RUN_TICKS),
+    rolls: [
+      { dropSeed: 0xc0a5_81, rarity: 'rare', source: { planet: 2, tier: 0 } },
+      { dropSeed: 0xc0a5_82, rarity: 'unique', source: { planet: 2, tier: 0 } },
+    ],
+  },
+  {
+    // 방막은 시간축만 필요하다 — 막이 없는 동안 FILM_PERIOD_TICKS(420)를 채우면 내구
+    // FILM_ABSORB_FLAT(60)짜리 막이 서고, 내구가 소진되는 순간 파열해 반경 안의 적을 밀어낸다.
+    // 실측(런 14400틱 = 주기의 34배, 보스 처치·승리): **막 재생 24회 · 파열 24회**
+    // (aux0 0 → 60 → 0 왕복), aux1 최대 419(재생 임계 직전). 파열은 적 좌표를 직접 옮기므로
+    // 해시에 그대로 반영된다. 억제 동형 대조군은 aux 가 끝까지 0.
+    name: '⑨ 버블(방막) 런 — shipType 6 폴드 + 시그니처 23 흡수/파열 aux 폴드',
+    seed: 0xf11a,
+    config: BUBBLE_RUN,
+    checkpointInterval: 600,
+    buildInputs: () => driveDurable(0xf11a, BUBBLE_RUN, MAX_RUN_TICKS),
+    rolls: [
+      { dropSeed: 0xf11a_91, rarity: 'rare', source: { planet: 2, tier: 1 } },
+      { dropSeed: 0xf11a_92, rarity: 'unique', source: { planet: 2, tier: 1 } },
+    ],
+  },
+  {
+    name: '⑩ 브루저(장갑) 런 — shipType 1 폴드 + 시그니처 18 스택/소멸 aux 폴드',
+    seed: 0x8b01,
+    config: BRUISER_RUN,
+    checkpointInterval: 600,
+    buildInputs: () => driveDurable(0x8b01, BRUISER_RUN, MAX_RUN_TICKS),
+    rolls: [
+      { dropSeed: 0x8b01_a1, rarity: 'rare', source: { planet: 2, tier: 1 } },
+      { dropSeed: 0x8b01_a2, rarity: 'unique', source: { planet: 2, tier: 1 } },
+    ],
+  },
+  {
+    name: '⑪ 아크캐스터(과충전) 런 — shipType 2 폴드 + 시그니처 19 정지카운터 aux 폴드',
+    seed: 0xa2cc,
+    config: ARCCASTER_RUN,
+    checkpointInterval: 600,
+    buildInputs: () => driveDurable(0xa2cc, ARCCASTER_RUN, MAX_RUN_TICKS),
+    rolls: [
+      { dropSeed: 0xa2cc_b1, rarity: 'rare', source: { planet: 2, tier: 1 } },
+      { dropSeed: 0xa2cc_b2, rarity: 'unique', source: { planet: 2, tier: 1 } },
+    ],
+  },
+  {
+    name: '⑫ 팬텀(은신) 런 — shipType 3 폴드 + 시그니처 20 은신 aux 폴드 + 적 AI 방출 게이트',
+    seed: 0x9fa3,
+    config: PHANTOM_RUN,
+    checkpointInterval: 600,
+    buildInputs: () => driveDurable(0x9fa3, PHANTOM_RUN, MAX_RUN_TICKS),
+    rolls: [
+      { dropSeed: 0x9fa3_c1, rarity: 'rare', source: { planet: 0, tier: 0 } },
+      { dropSeed: 0x9fa3_c2, rarity: 'unique', source: { planet: 0, tier: 0 } },
     ],
   },
 ];
