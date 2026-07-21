@@ -2,6 +2,7 @@
 
 - 작성: 2026-07-21 (M7c·M8·로스터 7종 구현 세션 마감)
 - 개정: 2026-07-21 (원격 배포 실행 완료 — §0 을 실행 기록으로, §4 를 배포 후 상태로 갱신)
+- 개정: 2026-07-21 (EF 2회차 재배포 — 1회차 v17 이 M8 배선 미포함이었음을 정정. verify-invasion v18 · verify-pve-sample v3)
 - 브랜치: `claude-wt/hopeful-ishizaka-038840` (베이스 `b3aa857` = PR #81 머지 커밋)
 - 설계서: `.omc/plans/m8-champion-design.md`(M8 정본) / `.omc/plans/invasion-3layer-redesign.md`(기획) / `.omc/plans/invasion-3layer-impl-lanes.md`(레인 분해) / `.omc/research/invasion-3layer-recon.md`(정찰)
 
@@ -9,24 +10,37 @@
 
 ## 0. ✅ 원격 배포 — **실행 완료 (2026-07-21)**
 
-마이그레이션 6종 적용 완료 · `verify-invasion` v17 재배포 완료 · `cards` 삭제 완료. 이 절은 이제 "할 일"이 아니라 **실행 기록 + 다음에도 그대로 쓸 배포 경로**다. 남은 것은 ③ 하네스 플레이테스트다(사용자가 직접 수행 예정).
+마이그레이션 6종 적용 완료 · `cards` 삭제 완료 · **EF 2종이 M8 시그니처 배선까지 반영된 v18 / v3 으로 재배포 완료**. 이 절은 이제 "할 일"이 아니라 **실행 기록 + 다음에도 그대로 쓸 배포 경로**다. 남은 것은 ③ 하네스 플레이테스트다(사용자가 직접 수행 예정).
 
-### ① EF 재배포 + `cards` 삭제 — ✅ **완료**
+### ① EF 재배포 + `cards` 삭제 — ✅ **완료 (2회차로 마감)**
 
-| 대상 | 착수 전 | 결과 | 비고 |
+> ⚠️ **1회차(v17)는 M8 시그니처 배선을 담지 못했다.** 번들 소스가 `7ae64b6` 이었는데 M8 배선 5커밋(`2604e3b` 말로우 · `984ea03` 버블 · `741c937` 해츨링 · `698339c` 팬텀 · `ee5caf2` aux 별칭 봉인)이 **그 뒤에** 들어왔다. `git diff --stat 7ae64b6..4ba3ac8 -- src/sim/` 실측 **627줄 변경**(`world.ts` +452 · 신규 `cloak.ts` · `patterns/index.ts` · `boss.ts` · `replay.ts` · `shipSignature.ts`). 아래 2회차가 그 창을 실제로 닫았다.
+> **교훈: 번들 소스 커밋을 반드시 기록하고, 배포 직후 그 커밋이 `origin/main` 최신인지 대조하라.** "재배포 완료"라는 문장만으로는 무엇이 올라갔는지 알 수 없고, 이 저장소의 반복 결함("배선이 통째로 없는데 그린")이 배포 축에서 재현된 사례다.
+
+| 대상 | 1회차 | **2회차 (M8 반영)** | 비고 |
 |---|---|---|---|
-| `verify-invasion` | v16 (M6 시절 번들) | **v17 ACTIVE** | `verify_jwt = true` 유지 |
-| `cards` | v2 ACTIVE (호출 시 항상 500) | **삭제 완료** | 목록에서 소멸 · `POST /functions/v1/cards` → 404 |
-| `modules` | v1 ACTIVE | v1 ACTIVE (무영향) | 이번 회차 재배포 대상 아님 |
-| `verify-pve-sample` | v2 ACTIVE | v2 ACTIVE (무영향) | 이번 회차 **재배포하지 않았다** — §4 #13 |
+| `verify-invasion` | v16 → v17 (소스 `7ae64b6`) | **v17 → v18 ACTIVE** (소스 `4ba3ac8`) | `verify_jwt = true` 유지 |
+| `verify-pve-sample` | 재배포 안 함 (v2 = 2026-07-18 번들) | **v2 → v3 ACTIVE** (소스 `4ba3ac8`) | `src/sim` 번들 — 1회차 누락분(§4 #13) 해소 |
+| `cards` | **삭제 완료** | — | 목록에서 소멸 · `POST /functions/v1/cards` → 404 |
+| `modules` | v1 ACTIVE | v1 ACTIVE (**대상 아님**) | `src/items/types` 를 **type-only import**(`import type { Rarity }`) 라 번들에 런타임 코드 무포함 + 자체 소스 무변경 |
 
-착수 전 위험은 이것이었다 — 원격 번들이 M6 시절이라 **M8 이 바꾼 공유 sim(`world.ts`·`replay.ts`·`patterns/index.ts`·`boss.ts` + 신규 `cloak.ts`)을 모르는 상태**였고, 그동안 typeId 1~6 런은 제출 즉시 해시 불일치(`defense-mismatch`)로 거부됐다. v17 로 이 창이 닫혔다.
+> `verify-run` 은 **원격에 존재하지 않는다**(`list_edge_functions` 실측). `deno.json` 주석대로 로컬 확인 전용이고 `bundle` 태스크도 없다. 초기 표기 "EF 3종"은 틀렸다 — **실제 배포 대상은 2종**이다.
 
-**업로드 번들 실측**
+**업로드 번들 실측 (2회차, 소스 `4ba3ac8`. `git diff HEAD origin/main -- src/ data/ supabase/` 공백 = 소스 동일 확인)**
 
-- 소스 커밋 `7ae64b63f3a2318aaea85872d9eee00d5454031b` 의 **클린 detached 워크트리**에서 `deno task check` 통과 후 `deno task bundle`.
-- sha256 `04D1D450075ECE1EBE94F5BEA2972C25D21A01643FEB1759F132EECD086169AC`, **172,056바이트**, 상대 경로 import **0건**(단일 자립 파일).
-- 착수 전 갈렸던 세 값(커밋 메시지 "157KB" / 게이트 실측 160,594 / 워킹트리 172,056) 중 **172,056 이 clean HEAD 산출물**로 확정됐다.
+| 함수 | 크기 | sha256 |
+|---|---|---|
+| `verify-invasion` | 174,396 B (170.19KB) | `a16802e4adb745dda1c642aaa79515856e46660c936003bb35c823b730d3216e` |
+| `verify-pve-sample` | 165,427 B (161.43KB) | `b19370cb1096b67bea17e178b36e94bd403e88f851b07db0b109b1a65d858cb1` |
+
+1회차 172,056 B ↔ 2회차 174,396 B 의 차이가 곧 M8 배선분이다.
+
+**2회차 부팅 스모크 (anon JWT — 익명 로그인 불요, `auth.users` 오염 0)**
+
+- `verify-invasion` v18 — `{"invasionId":"not-a-uuid"}` POST → **400 `{"status":"rejected","reason":"malformed-invasion-id",...}`**
+- `verify-pve-sample` v3 — `{"limit":0}` POST → **401 `{"error":"unauthorized"}`** (= `index.ts:85` 의 자체 응답. service_role 게이트에 도달했다는 뜻)
+
+둘 다 게이트웨이 오류가 아니라 **함수 자신의 구조화된 응답**이므로 모듈 그래프 전체가 로드됐다.
 
 ### ② `20260723000000_m7c_seed_rebalance.sql` 원격 적용 — ✅ **완료**
 
@@ -55,7 +69,7 @@
 - `invasions` = 0 · `invasion_snapshots` = 0 유지(시드 재조정이 라이브 침공 데이터를 건드리지 않았다).
 - `get_advisors` **신규 경고 0건** — DDL 없는 데이터 UPDATE 라 예상대로다.
 
-**EF 부팅 스모크 (`verify-invasion` v17)**
+**EF 부팅 스모크 (1회차 = `verify-invasion` v17. 2회차 v18·v3 스모크는 §0-① 참조)**
 
 - anon(publishable) 키는 프로젝트가 서명한 JWT 라 `Authorization: Bearer <anon>` + `apikey` 헤더면 `verify_jwt=true` 게이트웨이를 통과한다. **익명 로그인 불요 → `auth.users` 오염 0.**
 - `{"invasionId":"not-a-uuid"}` POST → **400 + `{"status":"rejected","reason":"malformed-invasion-id",...}`**. 게이트웨이 오류가 아니라 **함수 자신의 구조화된 응답**이므로 핸들러가 실제로 실행됐다.
@@ -92,7 +106,8 @@ spb functions deploy verify-invasion --project-ref qxgbxwyccbxokdgwxcuw --use-ap
 spb functions delete cards --project-ref qxgbxwyccbxokdgwxcuw
 ```
 
-- 스테이징 디렉터리에는 `supabase/config.toml`(= `project_id` + `[functions.verify-invasion] verify_jwt = true`)을 두고, 번들을 `index.ts` 로 배치한다.
+- 스테이징 디렉터리에는 `supabase/config.toml`(= `project_id` + **배포할 함수마다** `[functions.<slug>] verify_jwt = true`)을 두고, 각 함수의 번들을 `supabase/functions/<slug>/index.ts` 로 배치한다. 한 스테이징에 여러 함수를 두고 `deploy` 를 슬러그별로 반복하면 된다(2회차가 그렇게 했다).
+- **`spb` 는 `$PROFILE` 함수라 비대화형 셸에서 자동 로드되지 않는다.** Claude 가 PowerShell 로 직접 실행할 때는 먼저 dot-source 하라: `. "C:\Users\v0o0v\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"` — 그러면 **사용자 손 없이 Claude 가 배포까지 끝낼 수 있다**(2회차 실증).
 - **`--no-verify-jwt` 금지.**
 - **업로드 대상은 번들을 `index.ts` 엔트리포인트로** 올리는 것이다. 함수 디렉터리 **밖**의 상대 의존(`../../../src/sim/**`)이 있어 소스 `.ts` 를 그대로 올리면 런타임에 죽는다. `dist.index.js` 는 `.gitignore` 대상이라 워킹트리에만 있다 — 없으면 `deno task bundle`(이 환경에 deno 2.8.0 있음).
 - 클라 배포는 **EF 재배포 뒤에** 한다. 클라를 먼저 내보내면 비스트라이커 파일럿이 전원 거부된다.
@@ -118,10 +133,10 @@ M7a 이후 배포가 끝났으므로 이제 실제로 조작 가능하다. `harn
 | M7a 침공 코어 | ✅ 완료 (이전 세션) | `494422e` → `6ddb2c0` |
 | M7b 방어체 경제 | ✅ 완료 (이전 세션) | `8790c0a` → `5b9071f` |
 | M7a·M7b 원격 배포 | ✅ 마이그레이션 5종 적용 | `63b43bc` |
-| M7c 원격 배포 + EF 마감 | ✅ **완료 (2026-07-21)** — 마이그레이션 6/6 · `verify-invasion` v17 · `cards` 삭제. §0 | `7ae64b6` (번들 소스) |
+| M7c 원격 배포 + EF 마감 | ✅ **완료 (2026-07-21)** — 마이그레이션 6/6 · `cards` 삭제 · EF 2종 **v18 / v3**(M8 배선 포함). §0 | 1회차 `7ae64b6` → **2회차 `4ba3ac8`**(번들 소스) |
 | M7c 콘텐츠 완충 | ✅ 완료 | `8b98715` |
 | M8 설계 정본 | ✅ 완료 | `b4a30f1` |
-| M8 기체 챔피언화 | ✅ 완료 (sim 배선 2/6 — 의도된 미완) | `285b41d` |
+| M8 기체 챔피언화 | ✅ 완료 (**sim 배선 6/6** — 스트라이커는 §11 대로 의도적 미보유) | `285b41d` → `4ba3ac8` (PR #83) |
 | 로스터 5종 → 7종 | ✅ 완료 | `dd93cce` |
 | 기체 아트 12장 | ✅ 완료 | `dd93cce`(인게임 6) · `7ae64b6`(쇼케이스 6) |
 
@@ -290,10 +305,10 @@ M7a 임시 카탈로그를 풀 카탈로그로 확장했다. **전부 배열 끝
 | 10 | `grant_blueprints` 가 authenticated 클라 호출 | 현행 장비 드랍과 동급 트러스트 모델이라 의도적. 강화한다면 장비 드랍과 **함께** 서버 권위로 올려야 한다 |
 | 11 | `GRID_COLS` grep 잔존 5건 | `refinery.ts`(=6)·`resultOverlay.ts`(=8) 의 무관한 지역 UI 상수. 구 15×9 방어 격자와 무관해 개명하지 않았다 |
 | 12 | **CrazyGames 제출 보류** | 상태 그대로 |
-| 13 | **`verify-pve-sample` 구 번들 잔존** | ⚠️ **잔여.** v2 는 M8 이전 공유 sim 번들이다. 이번 회차에서 `verify-invasion` 만 갱신했다. PvE 샘플 교차검증이 비스트라이커 런에서 갈릴 수 있다 — 같은 경로(§0-②-2)로 재배포하면 된다 |
+| 13 | ~~**`verify-pve-sample` 구 번들 잔존**~~ | ✅ **해소** (2026-07-21 2회차). v2 → **v3**, 소스 `4ba3ac8`. 같은 회차에 `verify-invasion` 도 v17 → **v18** 로 갱신해 M8 배선이 원격에 도달했다. §0-① |
 
 **미확인으로 남긴 것**
-- `supabase/functions/verify-run` 은 리포에 디렉터리가 있으나 **원격 EF 목록에 없다**(배포 후 원격 = `verify-invasion`·`verify-pve-sample`·`modules` 3종). 의도적 미배포인지 누락인지 **여전히 미확인**.
+- `supabase/functions/verify-run` 은 리포에 디렉터리가 있으나 **원격 EF 목록에 없다**(원격 = `verify-invasion`·`verify-pve-sample`·`modules` 3종). ✅ **의도적 미배포로 확정** — `deno.json` 이 `"Supabase 프로젝트 미생성 — 배포 전 로컬 확인 전용"` 이라 명시하고 `tasks` 에 **`bundle` 이 아예 없다**(`serve`·`check` 뿐). 배포 대상이 아니므로 M8 재배포에서 제외한 것이 옳다.
 - ~~`dist.index.js` 실크기~~ → ✅ **확정: 172,056바이트**(sha256 `04D1D45…86169AC`, 커밋 `7ae64b6` 클린 detached 워크트리 산출물). §0-①.
 
 ---
