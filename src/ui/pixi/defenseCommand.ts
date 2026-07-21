@@ -80,12 +80,13 @@ import {
   defenseUnitRerollCost,
   defenseUnitRarityUpCost,
   defenseUnitAffixNameKey,
+  defenseUniqueNameKey,
   defenseUnitRarityRank,
   ascensionVisualTier,
   type DefenseUnitInstance,
   type Rarity,
 } from '../../../data/defenseUnits.js';
-import { toInvasionRef, defenseUnitFromRef } from '../../items/rollDefenseUnit.js';
+import { toInvasionRef, defenseUnitFromRef, defenseUnitUnique } from '../../items/rollDefenseUnit.js';
 import {
   getDefenseUnitsUserId,
   listDefenseUnits,
@@ -399,9 +400,19 @@ export function unitSummary(unit: DefenseUnitInstance): string {
   );
 }
 
-/** 어픽스 한 줄(상시/조건부 분리 표기 — 합쳐 쓰면 항상 실린다고 오독한다). */
+/**
+ * 어픽스 한 줄(상시/조건부 분리 표기 — 합쳐 쓰면 항상 실린다고 오독한다).
+ *
+ * **유니크 고유 효과를 맨 앞에 싣는다**(M7c 통합 게이트). `defenseUnitUnique` 는 sim 에서만
+ * 소비되고 화면에는 한 곳도 배선되지 않아, 유니크 방어체를 뽑아도 플레이어가 그 사실을 알
+ * 방법이 없었다 — 어픽스가 하나도 없는 유니크는 오히려 "기본 스탯뿐"으로 표기됐다. 유니크는
+ * 런 상태의 연속 함수라 어픽스 문법으로 표현되지 않으므로 값 대신 이름만 표기하고, 수치는
+ * `def3.duq.<id>.desc` 가 담는다.
+ */
 export function unitAffixLine(unit: DefenseUnitInstance): string {
   const parts: string[] = [];
+  const unique = defenseUnitUnique(unit);
+  if (unique !== null) parts.push(`[${tCmd(defenseUniqueNameKey(unique.id))}]`);
   for (const r of unit.prefixes) parts.push(`${tCmd(defenseUnitAffixNameKey(r.id))} +${r.value}`);
   for (const r of unit.suffixes) {
     parts.push(`(${tCmd('def3.cmd.unit.affix.cond')}) ${tCmd(defenseUnitAffixNameKey(r.id))} +${r.value}`);

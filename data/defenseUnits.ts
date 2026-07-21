@@ -206,6 +206,163 @@ export function defenseUnitAffixDescKey(affixId: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// 유니크 방어체 고유 효과 (M7c)
+// ---------------------------------------------------------------------------
+
+/**
+ * 유니크 방어체 고유 효과의 **판별자**. `params` 의 키 집합이 판별자마다 다르므로
+ * (`data/coreModules.ts` `CoreModuleUniqueDef` 문법 복제 + 판별자 추가) sim 은 이 값으로
+ * switch 하고 숫자는 전부 `params` 에서 읽는다.
+ *
+ * ## 왜 "고유"인가 — 일반 어픽스와 무엇이 다른가
+ * 일반 방어체 어픽스는 **상수**(접두) 또는 **불리언 게이트가 걸린 상수**(접미)다. 유니크
+ * 고유 효과는 그 위에 **런 상태의 연속 함수**를 얹는다 — 경과 시간·파괴된 아군 수·코어 HP·
+ * 공격자 거리에 따라 매 틱 값이 달라진다. 어픽스 문법으로는 표현할 수 없는 형태이고,
+ * 그래서 유니크가 "숫자가 큰 레어"가 아니라 다른 물건이 된다.
+ *
+ * ## 정수 규율
+ * 동적 항은 전부 basis-point 정수이고 `Math.floor(a * bp / d)` **단일 나눗셈**으로만 접는다
+ * (`src/sim/invasion/affix.ts` `uniqueDynamicMods`). f64 누적 없음.
+ */
+export type DefenseUniqueEffect =
+  /** 과부하 노심 — 레이어 경과 시간에 비례해 연사가 오른다. 대신 상시 내구도 감소. */
+  | 'overclockCore'
+  /** 복수 기관 — 같은 레이어의 아군이 파괴될수록 피해가 오른다. */
+  | 'vengeanceEngine'
+  /** 최후의 요새 — 코어 HP 가 낮을수록 내구도가 오른다(코어가 있는 레이어 전용). */
+  | 'deathgripBastion'
+  /** 근접 반응로 — 공격자가 가까울수록 피해가 오른다(거리 밴드 계단). */
+  | 'proximityReactor'
+  /** 군체 중추 — 동시 생존 상한 대폭 증가, 대신 생산 간격 증가. */
+  | 'swarmNexus'
+  /** 수호 격자 — 보호막·풍화 저항을 얻고 피해를 잃는다. */
+  | 'aegisLattice'
+  /** 열 금고 — 과열 창이 짧아지고 내구도가 오른다(보스 전용). */
+  | 'thermalVault'
+  /** 선봉 조류 — 훨씬 빨리 밀려 들어오고 피해가 높다. 대신 무르다(편대 전용). */
+  | 'vanguardTide';
+
+/**
+ * 유니크 방어체 고유 효과 정의(designer-authored).
+ *
+ * `id` 는 **wire 계약**이다(`defense_units.unit` jsonb `uniqueId`) — 재번호·개명 금지.
+ * `kinds` 는 붙을 수 있는 방어체 종류(CATALOG_*)이고 **특정 catalogId 를 절대 지목하지 않는다**:
+ * 카탈로그는 M7c 에서 계속 늘어나므로 고유 효과를 개별 항목에 묶으면 append 마다 표를 고쳐야 하고,
+ * 그러다 한 번이라도 인덱스를 틀면 배치 jsonb·해시 스트림이 함께 깨진다.
+ */
+export interface DefenseUniqueDef {
+  readonly id: string;
+  readonly effect: DefenseUniqueEffect;
+  /** 붙을 수 있는 방어체 종류(CATALOG_* 코드). 비면 정의 오류. */
+  readonly kinds: readonly number[];
+  /** sim 이 읽는 효과 파라미터. **전부 정수**(퍼센트·basis-point·틱·유닛). */
+  readonly params: Readonly<Record<string, number>>;
+}
+
+/**
+ * 유니크 고유 효과 8종. 배열 순서는 **롤 결정론 입력**이므로 append-only
+ * (중간 삽입·재정렬 = 같은 시드가 다른 유니크를 내는 것 = 저장된 방어체가 바뀌는 것).
+ *
+ * 배분: 편대 1 전용 · 설비 1 전용 · 보스 1 전용 · 코어 레이어(기물·보스) 1 · 전 종류 2 ·
+ * 사격체 계열(설비·기물·보스) 2. 종류마다 최소 3종이 걸리게 해 유니크 롤이 한 가지로
+ * 수렴하지 않는다. 📝 모든 수치는 밸런스 조정 대상.
+ */
+export const DEFENSE_UNIQUES: readonly DefenseUniqueDef[] = [
+  {
+    id: 'duq-overclock-core',
+    effect: 'overclockCore',
+    kinds: [CATALOG_FACILITY, CATALOG_PROP, CATALOG_BOSS],
+    // 1초당 연사 +0.60%(60bp), 상한 +60%(6000bp). 대가로 상시 내구도 −25%.
+    params: { hpPenaltyPct: 25, rateBpPerSec: 60, rateCapBp: 6000 },
+  },
+  {
+    id: 'duq-vengeance-engine',
+    effect: 'vengeanceEngine',
+    kinds: ALL_KINDS,
+    // 같은 레이어 아군 1기 파괴당 피해 +12%(1200bp), 상한 +60%.
+    params: { damageBpPerAlly: 1200, damageCapBp: 6000 },
+  },
+  {
+    id: 'duq-deathgrip-bastion',
+    effect: 'deathgripBastion',
+    kinds: [CATALOG_PROP, CATALOG_BOSS],
+    // 코어 HP 60% 아래부터 선형 상승, 코어 HP 0 에서 내구도 +80%(8000bp).
+    params: { pivotPct: 60, hpBpAtZero: 8000 },
+  },
+  {
+    id: 'duq-proximity-reactor',
+    effect: 'proximityReactor',
+    kinds: ALL_KINDS,
+    // 반경 480u 안에서 거리 4밴드 계단, 최근접 밴드에서 피해 +50%(5000bp).
+    params: { radius: 480, damageBpNear: 5000, bands: 4 },
+  },
+  {
+    id: 'duq-swarm-nexus',
+    effect: 'swarmNexus',
+    kinds: [CATALOG_FACILITY],
+    // 동시 생존 +3, 대가로 생산·발사 간격 +25%(연사 −20%).
+    params: { spawnCapFlat: 3, fireRatePenaltyPct: 20 },
+  },
+  {
+    id: 'duq-aegis-lattice',
+    effect: 'aegisLattice',
+    kinds: [CATALOG_FACILITY, CATALOG_PROP, CATALOG_BOSS],
+    params: { shieldFlat: 900, weatherResistPct: 50, damagePenaltyPct: 30 },
+  },
+  {
+    id: 'duq-thermal-vault',
+    effect: 'thermalVault',
+    kinds: [CATALOG_BOSS],
+    params: { overheatResistPct: 55, hpBonusPct: 15 },
+  },
+  {
+    id: 'duq-vanguard-tide',
+    effect: 'vanguardTide',
+    kinds: [CATALOG_FORMATION],
+    params: { entryHastePct: 45, damageBonusPct: 20, hpPenaltyPct: 15 },
+  },
+];
+
+/** id → 유니크 정의(미지정 시 undefined). */
+export const DEFENSE_UNIQUE_BY_ID: ReadonlyMap<string, DefenseUniqueDef> = new Map(
+  DEFENSE_UNIQUES.map((u) => [u.id, u]),
+);
+
+/**
+ * 특정 종류에 붙을 수 있는 유니크만 추린다(롤 풀 — 순서는 정의 순서 고정 = 결정론 입력).
+ * 어픽스 풀({@link defenseUnitAffixPool})과 같은 규율이다.
+ */
+export function defenseUniquePool(kind: number): readonly DefenseUniqueDef[] {
+  return DEFENSE_UNIQUES.filter((u) => u.kinds.includes(kind));
+}
+
+/** 유니크 방어체 표시명 i18n 키(`def3.duq.<id>.name`). 본문은 src/i18n/catalog.ts 소관. */
+export function defenseUniqueNameKey(uniqueId: string): string {
+  return `def3.duq.${uniqueId}.name`;
+}
+
+/** 유니크 방어체 설명 i18n 키(`def3.duq.<id>.desc`). */
+export function defenseUniqueDescKey(uniqueId: string): string {
+  return `def3.duq.${uniqueId}.desc`;
+}
+
+/**
+ * 유니크 8종에서 **파생한** i18n 키 목록(name·desc 각 1건). 하드코딩 표가 아니라 파생이므로
+ * 유니크를 추가하면 문구를 채우기 전까지 i18n 전수 테스트가 빨간불로 남는다
+ * (`data/invasion/catalog.ts` `DEF3_MESSAGE_KEYS` 선례).
+ */
+export const DEFENSE_UNIQUE_MESSAGE_KEYS: readonly string[] = DEFENSE_UNIQUES.flatMap((u) => [
+  defenseUniqueNameKey(u.id),
+  defenseUniqueDescKey(u.id),
+]);
+
+/** 파라미터 읽기(미정의 키는 fallback). 정의가 줄어도 sim 이 NaN 을 만들지 않는다. */
+export function uniqueParam(def: DefenseUniqueDef, key: string, fallback: number): number {
+  const v = def.params[key];
+  return v === undefined || !Number.isFinite(v) ? fallback : Math.trunc(v);
+}
+
+// ---------------------------------------------------------------------------
 // 인스턴스 직렬화 계약 — DB jsonb 에 실린다
 // ---------------------------------------------------------------------------
 
@@ -243,6 +400,12 @@ export interface DefenseUnitInstance {
   readonly prefixes: readonly DefenseUnitAffixRoll[];
   /** 접미(조건부) 롤. */
   readonly suffixes: readonly DefenseUnitAffixRoll[];
+  /**
+   * rarity='unique' 일 때만 설정 — {@link DEFENSE_UNIQUES} 의 `id`(append-only wire 키).
+   * 어픽스와 마찬가지로 `affixSeed` 에서 결정론 재구성되므로 **배치 jsonb 에 실리지 않는다**
+   * (`toInvasionRef` 는 여전히 정수 5필드만 낸다 — 방어자가 고를 수 있는 값이 아니다).
+   */
+  readonly uniqueId?: string;
 }
 
 // ---------------------------------------------------------------------------

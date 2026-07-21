@@ -26,13 +26,17 @@ import {
   PLANETS,
   planetContent,
   blueprintDropsFromLoot,
+  // M7c 통합 게이트: 분배 정본이 `blueprints.ts`(명시 배정만) → `index.ts`(명시 + 규칙 파생)로
+  // 옮겨졌다. 아래 단언들은 **프로덕션이 실제로 호출하는** 파생본을 대상으로 한다 — 예전엔
+  // 명시 전용 헬퍼(`resolveBlueprintDrop` 등)를 봤는데, 그건 아무도 호출하지 않는 함수라
+  // 카탈로그가 늘어나는 순간 "배송되지 않는 코드를 통과시키는 테스트"가 됐다.
+  PLANET_BLUEPRINTS,
+  PLANET_BLUEPRINT_DROP_TABLES,
+  planetBlueprintTableSize,
+  resolvePlanetBlueprintDrop,
   type LootLike,
 } from '../data/planets/index.js';
 import {
-  PLANET_BLUEPRINT_SPECIALTIES,
-  PLANET_BLUEPRINT_TABLES,
-  blueprintTableSize,
-  resolveBlueprintDrop,
   mergeBlueprintGrants,
   craftMineralCost,
   CRAFT_MINERAL_COST,
@@ -123,13 +127,13 @@ describe('설계도 드랍 판정(sim)', () => {
 
 describe('행성별 특산 설계도 분배', () => {
   it('행성 수만큼 목록이 있다', () => {
-    expect(PLANET_BLUEPRINT_SPECIALTIES.length).toBe(PLANETS.length);
-    expect(PLANET_BLUEPRINT_TABLES.length).toBe(PLANETS.length);
+    expect(PLANET_BLUEPRINTS.length).toBe(PLANETS.length);
+    expect(PLANET_BLUEPRINT_DROP_TABLES.length).toBe(PLANETS.length);
   });
 
   it('M7a 카탈로그(편대·설비·기물·보스) 전종이 정확히 한 행성에만 실려 있다', () => {
     const seen = new Map<string, number[]>();
-    PLANET_BLUEPRINT_SPECIALTIES.forEach((list, planet) => {
+    PLANET_BLUEPRINTS.forEach((list, planet) => {
       for (const e of list) {
         const key = `${e.kind}:${e.catalogId}`;
         seen.set(key, [...(seen.get(key) ?? []), planet]);
@@ -153,39 +157,39 @@ describe('행성별 특산 설계도 분배', () => {
   });
 
   it('행성별 항목 수가 ±1 이내로 균등하다(파밍 가치 쏠림 방지 규칙 3)', () => {
-    const sizes = PLANET_BLUEPRINT_SPECIALTIES.map((l) => l.length);
+    const sizes = PLANET_BLUEPRINTS.map((l) => l.length);
     expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(1);
   });
 
   it('보스 설계도는 최심 행성(아르케)에서만, 가중치가 가장 낮다', () => {
-    PLANET_BLUEPRINT_SPECIALTIES.forEach((list, planet) => {
+    PLANET_BLUEPRINTS.forEach((list, planet) => {
       for (const e of list) {
         if (e.kind === CATALOG_BOSS) expect(planet).toBe(ARKE_INDEX);
       }
     });
-    const arke = PLANET_BLUEPRINT_SPECIALTIES[ARKE_INDEX]!;
+    const arke = PLANET_BLUEPRINTS[ARKE_INDEX]!;
     const boss = arke.find((e) => e.kind === CATALOG_BOSS)!;
     for (const e of arke) expect(boss.weight).toBeLessThanOrEqual(e.weight);
   });
 
   it('펼친 테이블 길이 = 가중치 합 = dropTable.blueprintTableSize', () => {
-    PLANET_BLUEPRINT_SPECIALTIES.forEach((list, planet) => {
+    PLANET_BLUEPRINTS.forEach((list, planet) => {
       const sum = list.reduce((n, e) => n + e.weight, 0);
-      expect(PLANET_BLUEPRINT_TABLES[planet]!.length).toBe(sum);
-      expect(blueprintTableSize(planet)).toBe(sum);
+      expect(PLANET_BLUEPRINT_DROP_TABLES[planet]!.length).toBe(sum);
+      expect(planetBlueprintTableSize(planet)).toBe(sum);
       expect(PLANETS[planet]!.dropTable.blueprintTableSize).toBe(sum);
     });
   });
 
-  it('resolveBlueprintDrop 이 그 행성 목록 밖의 방어체를 절대 내지 않는다', () => {
+  it('resolvePlanetBlueprintDrop 이 그 행성 목록 밖의 방어체를 절대 내지 않는다', () => {
     PLANETS.forEach((planet, index) => {
       const allowed = new Set(
-        PLANET_BLUEPRINT_SPECIALTIES[index]!.map((e) => `${e.kind}:${e.catalogId}`),
+        PLANET_BLUEPRINTS[index]!.map((e) => `${e.kind}:${e.catalogId}`),
       );
       for (let seed = 1; seed < 800; seed++) {
         const code = rollBlueprintDrop({ seed, rarityCode: RARITY_RARE }, planet.dropTable);
         if (code === null) continue;
-        const grant = resolveBlueprintDrop(index, code)!;
+        const grant = resolvePlanetBlueprintDrop(index, code)!;
         expect(allowed.has(`${grant.kind}:${grant.catalogId}`)).toBe(true);
         expect(grant.count).toBe(1);
       }
@@ -193,9 +197,9 @@ describe('행성별 특산 설계도 분배', () => {
   });
 
   it('테이블 밖 인덱스·미지 행성은 조용히 null', () => {
-    expect(resolveBlueprintDrop(0, { tableIndex: 9999, seed: 1 })).toBeNull();
-    expect(resolveBlueprintDrop(99, { tableIndex: 0, seed: 1 })).toBeNull();
-    expect(blueprintTableSize(99)).toBe(0);
+    expect(resolvePlanetBlueprintDrop(0, { tableIndex: 9999, seed: 1 })).toBeNull();
+    expect(resolvePlanetBlueprintDrop(99, { tableIndex: 0, seed: 1 })).toBeNull();
+    expect(planetBlueprintTableSize(99)).toBe(0);
   });
 });
 
@@ -205,7 +209,7 @@ describe('정산 입력(blueprintDropsFromLoot)', () => {
     for (let seed = 1; seed <= 300; seed++) loot.push({ seed, rarity: RARITY_UNIQUE, planet: 1 });
     const grants = blueprintDropsFromLoot(loot);
     expect(grants.length).toBeGreaterThan(0);
-    const allowed = new Set(PLANET_BLUEPRINT_SPECIALTIES[1]!.map((e) => `${e.kind}:${e.catalogId}`));
+    const allowed = new Set(PLANET_BLUEPRINTS[1]!.map((e) => `${e.kind}:${e.catalogId}`));
     for (const g of grants) expect(allowed.has(`${g.kind}:${g.catalogId}`)).toBe(true);
   });
 

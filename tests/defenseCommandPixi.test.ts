@@ -46,8 +46,12 @@ import {
   eligibleUnits,
   tabForSlot,
   tabPhase,
+  unitAffixLine,
   type DefenseSlotRef,
 } from '../src/ui/pixi/defenseCommand.js';
+import { defenseUniqueNameKey, type DefenseUnitInstance } from '../data/defenseUnits.js';
+import { CATALOG } from '../src/i18n/catalog.js';
+import { getLocale } from '../src/i18n/index.js';
 import { buildPreviewWorld, previewFit, PREVIEW_SEED } from '../src/render/defensePreview.js';
 import {
   emptyInvasionLayers,
@@ -65,7 +69,7 @@ import {
 } from '../src/sim/invasion/index.js';
 import { CATALOG_FORMATION, CATALOG_FACILITY, CATALOG_PROP, CATALOG_BOSS } from '../data/invasion/catalog.js';
 import { buildInvasionPreset } from '../src/harness/presets.js';
-import { rollDefenseUnit } from '../src/items/rollDefenseUnit.js';
+import { rollDefenseUnit, defenseUnitUnique } from '../src/items/rollDefenseUnit.js';
 import type { DefenseUnitOwned } from '../src/net/defenseUnits.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../src/render/app.js';
 
@@ -471,5 +475,56 @@ describe('시험 침공은 정산·제출 경로를 타지 않는다', () => {
     const ui = readSource('../src/ui/pixi/defenseCommand.ts');
     // 모듈 진입에서 show() 를 다시 부르면 편집이 날아간다 — suspend 후 resume 콜백만 넘긴다.
     expect(ui).toMatch(/this\.suspend\(\);\s*\n\s*cb\?\.onOpenModules\(\(\) => this\.resume\(\)\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑧ 유니크 고유 효과 표시 (M7c 통합 게이트)
+// ---------------------------------------------------------------------------
+//
+// 배선 누락 유형: `data/defenseUnits.ts` 가 유니크 8종을 정의하고, `rollDefenseUnit` 이
+// `uniqueId` 를 굴리고, `affix.ts` 가 sim 에서 효과를 실어 나르고, i18n 이 16키를 갖췄는데
+// **화면에 꽂는 마지막 한 홉이 없었다**. `defenseUnitUnique()` 는 src/ui 어디에서도
+// 호출되지 않았고, 그래서 유니크를 뽑아도 플레이어가 알 방법이 없었다. 더 나쁜 것은 어픽스가
+// 0개인 유니크가 "기본 스탯뿐"으로 표기됐다는 점이다 — 있는 것을 없다고 말하는 표기였다.
+// 각 레인의 단위 테스트는 자기 모듈만 직접 호출하므로 전부 초록불이었다.
+
+describe('유니크 방어체가 화면 문구에 실제로 실린다', () => {
+  /** 지정 유니크가 실제로 붙은 방어체를 시드 스윕으로 찾는다(롤은 순수·결정론). */
+  function findUnitWithUnique(kind: number): DefenseUnitInstance | null {
+    for (let seed = 1; seed < 4000; seed++) {
+      const unit = rollDefenseUnit({ kind, catalogId: 0, rarity: 'unique', affixSeed: seed });
+      if (defenseUnitUnique(unit) !== null) return unit;
+    }
+    return null;
+  }
+
+  it('유니크 종류 전부에 대해 어픽스 줄이 유니크 이름을 담는다', () => {
+    for (const kind of [CATALOG_FORMATION, CATALOG_FACILITY, CATALOG_PROP, CATALOG_BOSS]) {
+      const unit = findUnitWithUnique(kind);
+      expect(unit, `유니크가 붙는 표본을 못 찾음(kind ${kind})`).not.toBeNull();
+      const uq = defenseUnitUnique(unit!)!;
+      const line = unitAffixLine(unit!);
+      const name = CATALOG[getLocale()][defenseUniqueNameKey(uq.id) as keyof typeof CATALOG.en];
+      // 키가 아니라 **해석된 문구**가 실려야 한다 — 미해석 키가 그대로 새면 화면에 날문자가 뜬다.
+      expect(name, `i18n 미등재: ${uq.id}`).toBeTruthy();
+      expect(line).toContain(name);
+      expect(line).not.toContain('def3.duq.');
+    }
+  });
+
+  // NOTE: "어픽스 0개인 유니크" 케이스는 **구조적으로 발생 불가**라 테스트를 두지 않는다 —
+  // `DEFENSE_UNIT_AFFIX_RANGE.unique = [5, 5]` 라 유니크는 항상 어픽스 5개를 받는다.
+  // (게이트에서 이 케이스를 쓰려다 공허 검증 방지 가드에 걸려 사실을 확인했다.)
+
+  it('유니크가 없는 방어체 문구에는 유니크 표기가 새지 않는다(대조군)', () => {
+    const unit = rollDefenseUnit({
+      kind: CATALOG_FORMATION,
+      catalogId: 0,
+      rarity: 'rare',
+      affixSeed: 4242,
+    });
+    expect(defenseUnitUnique(unit)).toBeNull();
+    expect(unitAffixLine(unit)).not.toContain('[');
   });
 });

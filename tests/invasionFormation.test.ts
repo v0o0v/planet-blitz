@@ -11,8 +11,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createWorld } from '../src/sim/world.js';
-import type { WorldState } from '../src/sim/world.js';
+import { createWorld, stepWorld, DEFAULT_CONFIG } from '../src/sim/world.js';
+import type { WorldState, WorldConfig } from '../src/sim/world.js';
+import { autopilotInput } from '../src/sim/autopilot.js';
 import type { Entity } from '../src/sim/entities.js';
 import { MAINTENANCE_FULL } from '../src/sim/invasion/guardian.js';
 import { emptyInvasionLayers } from '../src/sim/invasion/normalize.js';
@@ -27,11 +28,13 @@ import {
   PHASE_L3,
   INVASION_WAVE_SLOTS,
   INVASION_ACCEL_BASE_CP,
+  INVASION_TOTAL_TICKS,
 } from '../src/sim/invasion/constants.js';
 import {
   stepInvasionFormation,
   formationSlotTriggerTick,
   formationMemberSpawnPos,
+  formationMemberEntryVelocity,
   formationScheduleSpan,
   FORMATION_SLOT_INTERVAL_TICKS,
 } from '../src/sim/invasion/formation.js';
@@ -41,6 +44,11 @@ import {
   FORMATION_SCOUT_DRONES,
   FORMATION_INTERCEPTORS,
   FORMATION_ASSAULT,
+  FORMATION_GLIDE_FLOCK,
+  FORMATION_MINE_LAYER,
+  FORMATION_SHIELD_ESCORT,
+  FORMATION_SNIPER_NEST,
+  FORMATION_SUPPORT_ESCORT,
   formationById,
   formationPowerCp,
   ENTRY_PATTERN_COUNT,
@@ -114,9 +122,78 @@ describe('편대 카탈로그 — append-only 계약', () => {
     FORMATIONS.forEach((f, i) => expect(f.catalogId).toBe(i));
   });
 
-  it('임시 카탈로그는 3종이고 id 가 전역 유일', () => {
-    expect(FORMATION_COUNT).toBe(3);
-    expect(new Set(FORMATIONS.map((f) => f.id)).size).toBe(3);
+  it('풀 카탈로그는 8종이고 id 가 전역 유일', () => {
+    expect(FORMATION_COUNT).toBe(8);
+    expect(new Set(FORMATIONS.map((f) => f.id)).size).toBe(8);
+  });
+
+  /**
+   * **append-only 골든.** 배열 인덱스가 곧 `defenses.layout` jsonb·해시 스트림·EF 재실행의
+   * 계약이라 중간 삽입·재정렬·개명은 이미 저장된 배치를 통째로 다른 편대로 바꿔 버린다.
+   * M7c append 로 뒤에 5종이 붙었어도 앞 3종의 위치·id 는 한 글자도 움직이면 안 된다.
+   */
+  it('카탈로그 id 순서 골든 — 기존 0~2 가 제자리에 그대로 있다', () => {
+    expect(FORMATIONS.map((f) => f.id)).toEqual([
+      'formation-scout-drones',
+      'formation-interceptors',
+      'formation-assault',
+      'formation-glide-flock',
+      'formation-mine-layer',
+      'formation-shield-escort',
+      'formation-sniper-nest',
+      'formation-support-escort',
+    ]);
+    expect(FORMATION_SCOUT_DRONES).toBe(0);
+    expect(FORMATION_INTERCEPTORS).toBe(1);
+    expect(FORMATION_ASSAULT).toBe(2);
+    expect(FORMATION_GLIDE_FLOCK).toBe(3);
+    expect(FORMATION_MINE_LAYER).toBe(4);
+    expect(FORMATION_SHIELD_ESCORT).toBe(5);
+    expect(FORMATION_SNIPER_NEST).toBe(6);
+    expect(FORMATION_SUPPORT_ESCORT).toBe(7);
+  });
+
+  /**
+   * 신규 편대는 **기존 적 22종만** 참조한다(적 append 없음). ENEMY_BY_TYPE 인덱스는 해시
+   * 계약이라 늘리는 순간 스프라이트 매핑·조준 술어·EF 재실행까지 표면이 넓어진다 —
+   * 이 가드는 "편대를 늘리다가 적을 슬쩍 끼워 넣는" 변경을 즉시 빨간불로 만든다.
+   */
+  it('ENEMY_BY_TYPE 골든 — 22종·연속 typeIndex·기존 0~21 불변', () => {
+    expect(ENEMY_BY_TYPE.length).toBe(22);
+    ENEMY_BY_TYPE.forEach((def, i) => expect(def.typeIndex).toBe(i));
+    expect(ENEMY_BY_TYPE.map((d) => d.id)).toEqual([
+      'kargon-charger',
+      'kargon-gunner',
+      'kargon-lava-spring',
+      'kargon-repair-drone',
+      'berdan-worker-rusher',
+      'berdan-spitter',
+      'berdan-acid-gland',
+      'berdan-brood-nurse',
+      'berdan-sentinel',
+      'berdan-brood-mother',
+      'niflheim-wraith-interceptor',
+      'niflheim-frost-gunner',
+      'niflheim-rime-fissure',
+      'niflheim-cryo-tender',
+      'niflheim-frost-sentinel',
+      'niflheim-spectral-carrier',
+      'arke-crusher-golem',
+      'arke-precision-turret',
+      'arke-grind-totem',
+      'arke-restore-droid',
+      'arke-guardian-battery',
+      'arke-ancient-breaker',
+    ]);
+  });
+
+  it('8종의 역할이 겹치지 않는다 — 진형·구성이 서로 다르다', () => {
+    // 같은 (진입 패턴 + 구성원 유형 다중집합)이 둘 있으면 사실상 같은 편대다.
+    const shapes = FORMATIONS.map(
+      (f) =>
+        `${f.entryPattern}|${[...f.members.map((m) => m.enemyTypeIndex)].sort((a, b) => a - b).join(',')}`,
+    );
+    expect(new Set(shapes).size).toBe(FORMATION_COUNT);
   });
 
   it('구성원의 적 유형이 전부 ENEMY_BY_TYPE 범위 안이고 오프셋이 정수', () => {
@@ -160,12 +237,13 @@ describe('편대 스폰 — RNG 미소비 계약', () => {
   it('전 슬롯 편대를 다 스폰해도 waveRng/eliteRng 커서가 불변', () => {
     const state = createWorld(1234);
     const ctx = ctxOf(
+      // 신규 5종을 포함해 전 슬롯을 서로 다른 편대로 채운다(패턴별 스폰 경로 전수).
       layersWith([
-        ref(FORMATION_SCOUT_DRONES),
-        ref(FORMATION_INTERCEPTORS),
-        ref(FORMATION_ASSAULT),
-        ref(FORMATION_SCOUT_DRONES),
-        ref(FORMATION_INTERCEPTORS),
+        ref(FORMATION_GLIDE_FLOCK),
+        ref(FORMATION_MINE_LAYER),
+        ref(FORMATION_SHIELD_ESCORT),
+        ref(FORMATION_SNIPER_NEST),
+        ref(FORMATION_SUPPORT_ESCORT),
         ref(FORMATION_ASSAULT),
       ]),
       runtime(),
@@ -258,6 +336,98 @@ describe('편대 진형 — 오프셋 골든', () => {
       { x: -60, y: -2120 },
       { x: 60, y: -2120 },
     ]);
+  });
+
+  it('조류형 활공편대(높은 곳에서 좌우 급강하)', () => {
+    const def = FORMATIONS[FORMATION_GLIDE_FLOCK]!;
+    const got = def.members.map((_, j) => formationMemberSpawnPos(def, j, 0, 0));
+    expect(got).toEqual([
+      { x: -720, y: -1700 },
+      { x: 720, y: -1700 },
+      { x: -480, y: -1820 },
+      { x: 480, y: -1820 },
+      { x: -240, y: -1940 },
+      { x: 240, y: -1940 },
+    ]);
+  });
+
+  it('기뢰 살포선(느린 표류·넓은 봉쇄)', () => {
+    const def = FORMATIONS[FORMATION_MINE_LAYER]!;
+    const got = def.members.map((_, j) => formationMemberSpawnPos(def, j, 0, 0));
+    expect(got).toEqual([
+      { x: 0, y: -1600 },
+      { x: -560, y: -1760 },
+      { x: 560, y: -1760 },
+      { x: -200, y: -1860 },
+      { x: 200, y: -1860 },
+    ]);
+  });
+
+  it('실드 호위편대(전면 전열 + 후방 사수)', () => {
+    const def = FORMATIONS[FORMATION_SHIELD_ESCORT]!;
+    const got = def.members.map((_, j) => formationMemberSpawnPos(def, j, 0, 0));
+    expect(got).toEqual([
+      { x: -260, y: -1400 },
+      { x: 260, y: -1400 },
+      { x: 0, y: -1460 },
+      { x: -140, y: -1700 },
+      { x: 140, y: -1700 },
+    ]);
+  });
+
+  it('저격 편대(얕게 등장해 상단 고정)', () => {
+    const def = FORMATIONS[FORMATION_SNIPER_NEST]!;
+    const got = def.members.map((_, j) => formationMemberSpawnPos(def, j, 0, 0));
+    expect(got).toEqual([
+      { x: -600, y: -900 },
+      { x: 600, y: -900 },
+      { x: 0, y: -1020 },
+      { x: -300, y: -1140 },
+      { x: 300, y: -1140 },
+    ]);
+  });
+
+  it('지원 편대(모체 + 치유원 후열)', () => {
+    const def = FORMATIONS[FORMATION_SUPPORT_ESCORT]!;
+    const got = def.members.map((_, j) => formationMemberSpawnPos(def, j, 0, 0));
+    expect(got).toEqual([
+      { x: 0, y: -1400 },
+      { x: -300, y: -1540 },
+      { x: 300, y: -1540 },
+      { x: -140, y: -1700 },
+      { x: 140, y: -1700 },
+    ]);
+  });
+
+  /**
+   * 진입 속도 골든. 좌표만 맞고 속도가 틀리면 "제자리에 뜬 채 안 내려오는 편대"가 되는데
+   * 좌표 스냅샷만으로는 잡히지 않는다 — 신규 3패턴이 실제로 서로 다른 궤도를 만드는지 본다.
+   */
+  it('신규 진입 패턴의 속도가 서로 다른 궤도를 만든다', () => {
+    const glide = FORMATIONS[FORMATION_GLIDE_FLOCK]!;
+    expect(glide.members.map((_, j) => formationMemberEntryVelocity(glide, j))).toEqual([
+      { vx: 240, vy: 360 },
+      { vx: -240, vy: 360 },
+      { vx: 240, vy: 360 },
+      { vx: -240, vy: 360 },
+      { vx: 240, vy: 360 },
+      { vx: -240, vy: 360 },
+    ]);
+    const snipe = FORMATIONS[FORMATION_SNIPER_NEST]!;
+    expect(formationMemberEntryVelocity(snipe, 0)).toEqual({ vx: 0, vy: 60 });
+    const drift = FORMATIONS[FORMATION_MINE_LAYER]!;
+    expect(formationMemberEntryVelocity(drift, 0)).toEqual({ vx: 0, vy: 80 });
+    // 정면 계열은 기존 값 그대로(회귀 가드).
+    const shield = FORMATIONS[FORMATION_SHIELD_ESCORT]!;
+    expect(formationMemberEntryVelocity(shield, 0)).toEqual({ vx: 0, vy: 240 });
+    // 전 편대의 속도가 정수다(ADR-0005 — f64 누적 금지).
+    for (const def of FORMATIONS) {
+      def.members.forEach((_, j) => {
+        const v = formationMemberEntryVelocity(def, j);
+        expect(Number.isInteger(v.vx)).toBe(true);
+        expect(Number.isInteger(v.vy)).toBe(true);
+      });
+    }
   });
 
   it('모든 진형이 창 전방(-Y)에 등장한다 — 플레이어 뒤에서 튀어나오지 않음', () => {
@@ -370,6 +540,31 @@ describe('편대 스폰 — 결정론', () => {
     expect(enemies(a).length).toBe(5 + 4 + 6);
   });
 
+  it('신규 5종도 같은 시드 2회 재실행이 바이트 동일하고 전원이 등장한다', () => {
+    const layers = layersWith([
+      ref(FORMATION_GLIDE_FLOCK, 30, 2, 1),
+      ref(FORMATION_MINE_LAYER, 8, 0, 0),
+      ref(FORMATION_SHIELD_ESCORT, 55, 4, 3),
+      ref(FORMATION_SNIPER_NEST, 1, 0, 0),
+      ref(FORMATION_SUPPORT_ESCORT, 77, 5, 2),
+    ]);
+    const span = formationScheduleSpan() + 1;
+
+    const a = createWorld(31337);
+    runFormationTicks(a, ctxOf(layers, runtime()), span);
+    const b = createWorld(31337);
+    runFormationTicks(b, ctxOf(layers, runtime()), span);
+
+    expect(fingerprint(b)).toBe(fingerprint(a));
+    const expected =
+      FORMATIONS[FORMATION_GLIDE_FLOCK]!.members.length +
+      FORMATIONS[FORMATION_MINE_LAYER]!.members.length +
+      FORMATIONS[FORMATION_SHIELD_ESCORT]!.members.length +
+      FORMATIONS[FORMATION_SNIPER_NEST]!.members.length +
+      FORMATIONS[FORMATION_SUPPORT_ESCORT]!.members.length;
+    expect(enemies(a).length).toBe(expected);
+  });
+
   it('강화 3축이 내구도를 정수 배율로 올린다', () => {
     const base = createWorld(5);
     runFormationTicks(base, ctxOf(layersWith([ref(FORMATION_ASSAULT)]), runtime()), 60);
@@ -409,5 +604,107 @@ describe('편대 스폰 — 결정론', () => {
     for (let i = 0; i < ea.length; i++) {
       expect((eb[i] as Entity).cooldown).toBe((ea[i] as Entity).cooldown * 2);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑥ 정규 경로 통합 — createWorld → stepWorld 로 실제 런을 돌린다
+//
+// 이 프로젝트에서 8번 재발한 결함이 "단위 테스트는 전부 그린인데 배선이 통째로 없다"이다.
+// 위 케이스들은 전부 `stepInvasionFormation` 을 직접 부르므로, 스텝 훅이 world.ts 에서
+// 빠지거나 신규 편대원이 자동 조준 술어(`isPlayerTargetable`)에서 누락돼도 다 통과한다.
+// 그래서 여기서는 오직 정규 경로로만 돌린다: 실제 침공 config → createWorld → stepWorld.
+// ---------------------------------------------------------------------------
+
+/** 슬롯 0 에 편대 하나만 꽂은 실제 침공 config(다른 레이어는 정규형 기본값). */
+function invasionConfigWith(catalogId: number): WorldConfig {
+  const config = { ...DEFAULT_CONFIG } as WorldConfig;
+  const layers = emptyInvasionLayers();
+  layers.l1.waveSlots[0] = ref(catalogId);
+  config.invasion3 = { layers, timeLimitTicks: INVASION_TOTAL_TICKS, maintenance: MAINTENANCE_FULL };
+  return config;
+}
+
+interface RunObservation {
+  /** 런 중 한 번이라도 등장한 적 유형(enemyType) 집합. */
+  readonly types: Set<number>;
+  /** 동시 생존 최대치(스폰이 실제로 일어났는지의 하한). */
+  readonly peakAlive: number;
+  /** 플레이어 사격에 실제로 피해를 입은 편대원이 있었는가(= 조준 가능). */
+  readonly damaged: boolean;
+}
+
+/**
+ * 오토파일럿 입력으로 실제 런을 돌리며 편대원의 등장·피격을 관측한다.
+ *
+ * 피해 관측이 핵심이다. 자동 조준(`nearestTarget` → `isPlayerTargetable`)을 통과해야만
+ * 플레이어 탄이 그 적을 향해 나가므로, "맞기는 하지만 조준되지 않는" 상태였던 과거 결함이
+ * 여기서 곧바로 빨간불이 된다.
+ */
+function observeRun(catalogId: number, ticks: number, wanted: ReadonlySet<number>): RunObservation {
+  const state = createWorld(4242, invasionConfigWith(catalogId));
+  const types = new Set<number>();
+  let peakAlive = 0;
+  let damaged = false;
+  for (let t = 0; t < ticks; t++) {
+    stepWorld(state, autopilotInput(state));
+    let alive = 0;
+    for (const e of state.entities) {
+      if (e.kind !== 'enemy') continue;
+      types.add(e.enemyType);
+      // 관측 대상은 **이 편대의 구성원 유형만**이다. 빈 슬롯은 기본 수비대(정찰 드론편대)가
+      // 충원하므로 전체를 세면 남의 편대가 낸 피해로 통과할 수 있다.
+      if (!wanted.has(e.enemyType)) continue;
+      if (e.dead) {
+        damaged = true;
+        continue;
+      }
+      alive++;
+      if (e.hp < e.maxHp) damaged = true;
+    }
+    if (alive > peakAlive) peakAlive = alive;
+    if (state.gameOver || state.victory) break;
+  }
+  return { types, peakAlive, damaged };
+}
+
+describe('편대 — 정규 경로(createWorld→stepWorld) 통합', () => {
+  it.each(FORMATIONS.map((f, i) => [i, f.id] as const))(
+    '편대 %i(%s)가 실제 런에서 스폰되고 플레이어에게 조준·피격된다',
+    (catalogId) => {
+      const def = FORMATIONS[catalogId]!;
+      // 700틱 = 슬롯 1 트리거(720) **직전**. 이 구간에 등장하는 적은 슬롯 0 의 이 편대뿐이라
+      // 기본 수비대 충원분이 관측에 섞이지 않는다.
+      const wanted = new Set(def.members.map((m) => m.enemyTypeIndex));
+      const run = observeRun(catalogId, 700, wanted);
+
+      // ① 구성원 전 유형이 실제로 전장에 올라왔다(스텝 훅 배선 확인).
+      for (const typeIndex of wanted) {
+        expect(run.types.has(typeIndex), `유형 ${typeIndex} 미등장(편대 ${def.id})`).toBe(true);
+      }
+      // ② 동시 생존이 실제로 늘었다(스폰 0 인데 통과하는 일이 없게).
+      expect(run.peakAlive).toBeGreaterThan(0);
+      // ③ 자동 조준을 통과해 실제로 맞았다(isPlayerTargetable 누락 가드).
+      expect(run.damaged, `편대 ${def.id} 가 한 번도 피격되지 않음(조준 누락 의심)`).toBe(true);
+    },
+  );
+
+  it('정규 경로 런도 waveRng 를 소비하지 않는다(편대 스폰 경로 한정)', () => {
+    // 편대 없는 런과 편대 있는 런의 waveRng 커서가 같다 = 편대가 RNG 를 건드리지 않았다.
+    const empty = createWorld(99, (() => {
+      const c = { ...DEFAULT_CONFIG } as WorldConfig;
+      c.invasion3 = {
+        layers: emptyInvasionLayers(),
+        timeLimitTicks: INVASION_TOTAL_TICKS,
+        maintenance: MAINTENANCE_FULL,
+      };
+      return c;
+    })());
+    const filled = createWorld(99, invasionConfigWith(FORMATION_SNIPER_NEST));
+    for (let t = 0; t < 400; t++) {
+      stepWorld(empty, autopilotInput(empty));
+      stepWorld(filled, autopilotInput(filled));
+    }
+    expect(filled.waveRng.getState()).toEqual(empty.waveRng.getState());
   });
 });

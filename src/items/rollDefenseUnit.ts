@@ -20,7 +20,9 @@ import { SeededRng } from '../sim/rng.js';
 import type { Rarity } from './types.js';
 import {
   DEFENSE_UNIT_AFFIX_RANGE,
+  DEFENSE_UNIQUE_BY_ID,
   defenseUnitAffixPool,
+  defenseUniquePool,
   rarityFromCode,
 } from '../../data/defenseUnits.js';
 import type {
@@ -28,6 +30,7 @@ import type {
   DefenseUnitAffixRoll,
   DefenseUnitInstance,
   DefenseUnitStatKey,
+  DefenseUniqueDef,
 } from '../../data/defenseUnits.js';
 import type { InvasionRef } from '../sim/invasion/types.js';
 import {
@@ -118,6 +121,7 @@ export function rollDefenseUnit(input: DefenseUnitRollInput): DefenseUnitInstanc
 
   const rng = new SeededRng(seed);
   const { prefixes, suffixes } = rollAffixes(rng, kind, affixCountFor(input.rarity, rng));
+  const uniqueId = rollUniqueId(rng, kind, input.rarity);
 
   return {
     id: `du-${kind}-${catalogId}-${seed}`,
@@ -129,7 +133,29 @@ export function rollDefenseUnit(input: DefenseUnitRollInput): DefenseUnitInstanc
     affixSeed: seed,
     prefixes,
     suffixes,
+    ...(uniqueId !== undefined ? { uniqueId } : {}),
   };
+}
+
+/**
+ * 유니크 고유 효과 추첨(M7c). **드로우 순서의 맨 끝**에 붙는다 — 어픽스 뒤에 append 이므로
+ * unique 가 아닌 등급은 rng 를 한 번도 더 소비하지 않고, unique 등급의 어픽스 롤도 이 레인
+ * 이전과 바이트 동일하다(스트림이 밀리지 않는다).
+ *
+ * 풀은 **종류(kind)로만** 걸린다 — catalogId 를 지목하지 않으므로 카탈로그가 늘어도 이 함수는
+ * 손댈 것이 없다.
+ */
+function rollUniqueId(rng: SeededRng, kind: number, rarity: Rarity): string | undefined {
+  if (rarity !== 'unique') return undefined;
+  const pool = defenseUniquePool(kind);
+  if (pool.length === 0) return undefined;
+  return pool[rng.int(0, pool.length - 1)]?.id;
+}
+
+/** 보유 방어체의 유니크 고유 효과 정의(비유니크·미지의 id 는 null). */
+export function defenseUnitUnique(unit: DefenseUnitInstance): DefenseUniqueDef | null {
+  if (unit.uniqueId === undefined) return null;
+  return DEFENSE_UNIQUE_BY_ID.get(unit.uniqueId) ?? null;
 }
 
 /**

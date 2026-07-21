@@ -45,6 +45,11 @@ import type {
   ModuleCounterCondition,
 } from '../../data/coreModules.js';
 import { RARITY_BY_CODE } from '../items/types.js';
+// M7c: 배치된 L3 기물 판정. 기만 홀로그램(prop 역할 4)만 kind 가 `decoyCore` 라 kind 비교
+// 하나로는 못 센다. 이 술어는 역할 코드(`enemyType >= 0`)로 **아래 ③ 이 스폰하는 모듈 신기루
+// 코어(enemyType === -1)** 를 배제하므로, 내구 +% 가 모듈 신기루에 새지 않는다.
+// (런타임 순환 없음 — coreRoom 은 step/types 를 type-only 로만 참조한다.)
+import { isPlacedProp } from './invasion/coreRoom.js';
 
 // ---------------------------------------------------------------------------
 // 튜닝 상수 (📝 밸런스 조정 대상)
@@ -527,7 +532,7 @@ export function applyModuleSpawnEffects(mr: ModuleRuntime, sink: EntitySink): vo
     if (e.kind === 'core') core = e;
     else if (e.kind === 'facilityGun' || e.kind === 'facilityHazard' || e.kind === 'facilitySpawner') {
       facilityCount++;
-    } else if (e.kind === 'prop') props.push(e);
+    } else if (isPlacedProp(e)) props.push(e);
   }
 
   // ④ L2 진입분 설비 수(첫 관측 1회만 — 이후 감소는 '파괴'로 해석해야 한다).

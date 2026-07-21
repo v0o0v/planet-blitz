@@ -588,6 +588,21 @@ export const EN = {
     'Six mortar craft close in from both flanks in staggered waves.',
   'def3.formation.assault.name': 'Assault Charge',
   'def3.formation.assault.desc': 'Four rammers dive in a tight column, one right after another.',
+  'def3.formation.glide-flock.name': 'Glide Flock',
+  'def3.formation.glide-flock.desc':
+    'Six fragile interceptors dive inward from both edges. Their diagonal tracks cross the lane, so standing still means getting clipped.',
+  'def3.formation.mine-layer.name': 'Mine Layer',
+  'def3.formation.mine-layer.desc':
+    'A slow hauler drifts ahead and seeds stationary hulks across the lane. They stay where they land and the forced scroll pushes you into them.',
+  'def3.formation.shield-escort.name': 'Shield Escort',
+  'def3.formation.shield-escort.desc':
+    'Heavy hulls form a wall in front with precision turrets trailing behind. Punch through the line or go around it.',
+  'def3.formation.sniper-nest.name': 'Sniper Nest',
+  'def3.formation.sniper-nest.desc':
+    'Long-range emplacements park high in the lane and keep painting warning lines. Easy to break up close, punishing if ignored.',
+  'def3.formation.support-escort.name': 'Support Escort',
+  'def3.formation.support-escort.desc':
+    'A heavy brood ship travels with repair droids that keep healing it from close range. Kill the healers first or the brood never drops.',
   // L2 설비
   'def3.fac.rapid.name': 'Rapid Cannon',
   'def3.fac.rapid.desc': 'Wall-mounted autocannon with a steady stream of short-range fire.',
@@ -601,6 +616,15 @@ export const EN = {
   'def3.fac.flame.desc': 'Pours a constant burning field just inside the wall.',
   'def3.fac.spawner.name': 'Drone Launcher',
   'def3.fac.spawner.desc': 'Keeps producing small drones until the launcher itself is destroyed.',
+  'def3.fac.press.name': 'Crusher Press',
+  'def3.fac.press.desc':
+    'An indestructible plate that sweeps out into the corridor and back on a fixed cycle. Get caught with no room to give and it grinds you down.',
+  'def3.fac.gravwell.name': 'Tractor Well',
+  'def3.fac.gravwell.desc':
+    'Raises a wide slowing field on a cycle. It deals no damage of its own — it just makes every other facility hit.',
+  'def3.fac.shock.name': 'Shock Emitter',
+  'def3.fac.shock.desc':
+    'Charges for a long beat, then detonates a huge blast for a fraction of a second. One dodge, correctly timed.',
   // L3 기물
   'def3.prop.shieldGenerator.name': 'Shield Generator',
   'def3.prop.shieldGenerator.desc':
@@ -610,10 +634,25 @@ export const EN = {
     'Drops a slowing field on a cycle, shrinking the room you have to dodge.',
   'def3.prop.fixedCannon.name': 'Fixed Battery',
   'def3.prop.fixedCannon.desc': 'A stationary gun that covers the core room with direct fire.',
+  'def3.prop.repairPylon.name': 'Repair Pylon',
+  'def3.prop.repairPylon.desc':
+    'Never fires. It pulses repairs into every defense unit around it, so the boss and the props keep coming back until the pylon is gone.',
+  'def3.prop.decoyHologram.name': 'Decoy Hologram',
+  'def3.prop.decoyHologram.desc':
+    'A fake core with the same silhouette and the same targeting priority. Breaking it wins nothing — its damage is the fire you waste on it.',
+  'def3.prop.mineSwarm.name': 'Mine Swarm',
+  'def3.prop.mineSwarm.desc':
+    'Lays blast mines one at a time around its own ring. It punishes anyone who parks next to it to shoot.',
   // L3 방어 보스
   'def3.boss.steelGoliath.name': 'Steel Goliath',
   'def3.boss.steelGoliath.desc':
     'Core room guardian. Three phases, with an overheat window after each opening pattern.',
+  'def3.boss.sporeQueen.name': 'Spore Queen',
+  'def3.boss.sporeQueen.desc':
+    'Slow, huge, and territorial. She takes the floor away with slowing fields and lava pillars, then opens her overheat window while you stand in them.',
+  'def3.boss.phaseWarden.name': 'Phase Warden',
+  'def3.boss.phaseWarden.desc':
+    'Thin, fast, and pure bullet pattern — it lays no ground hazard at all. It leaves you gaps between shots instead of room to stand.',
   // L2 맵 템플릿
   'def3.map.straight.name': 'Open Corridor',
   'def3.map.straight.desc': 'A long straight run with twelve sockets and almost no cover.',
@@ -671,6 +710,31 @@ export const EN = {
   'def3.affix.dt-secondwind.name': 'of Second Wind',
   'def3.affix.dt-secondwind.desc':
     'Shrugs off neglect once the invasion runs long.',
+  // 유니크 방어체 고유 효과(M7b — data/defenseUnits.ts DEFENSE_UNIQUES 에서 파생 검증)
+  'def3.duq.duq-overclock-core.name': 'Overclock Core',
+  'def3.duq.duq-overclock-core.desc':
+    'Fires faster the longer the invasion runs, up to a hard cap. Pays for it with permanently thinner hull.',
+  'def3.duq.duq-vengeance-engine.name': 'Vengeance Engine',
+  'def3.duq.duq-vengeance-engine.desc':
+    'Every allied defender destroyed on the same layer raises its damage, up to a cap.',
+  'def3.duq.duq-deathgrip-bastion.name': 'Deathgrip Bastion',
+  'def3.duq.duq-deathgrip-bastion.desc':
+    'Toughens up as the core loses integrity, peaking when the core is nearly gone.',
+  'def3.duq.duq-proximity-reactor.name': 'Proximity Reactor',
+  'def3.duq.duq-proximity-reactor.desc':
+    'Hits harder the closer the attacker gets, stepping up through fixed distance bands.',
+  'def3.duq.duq-swarm-nexus.name': 'Swarm Nexus',
+  'def3.duq.duq-swarm-nexus.desc':
+    'Keeps far more drones alive at once, but every cycle takes longer to come around.',
+  'def3.duq.duq-aegis-lattice.name': 'Aegis Lattice',
+  'def3.duq.duq-aegis-lattice.desc':
+    'Gains a flat shield and heavy weathering resistance at the cost of its own damage.',
+  'def3.duq.duq-thermal-vault.name': 'Thermal Vault',
+  'def3.duq.duq-thermal-vault.desc':
+    'A defense boss that cuts its overheat window short and carries extra hull.',
+  'def3.duq.duq-vanguard-tide.name': 'Vanguard Tide',
+  'def3.duq.duq-vanguard-tide.desc':
+    'A formation that pours in much faster and hits harder, but folds under return fire.',
   // 코어 모듈 유니크(M7b — data/coreModules.ts CORE_MODULE_UNIQUES)
   'def3.module.uq-mirage-core.name': 'Mirage Core',
   'def3.module.uq-mirage-core.desc':
@@ -1289,6 +1353,21 @@ export const KO: Record<MessageKey, string> = {
   'def3.formation.interceptors.desc': '박격 기체 6기가 좌우에서 시차를 두고 조여든다.',
   'def3.formation.assault.name': '강습 돌격편대',
   'def3.formation.assault.desc': '파쇄 기체 4기가 밀집 종대로 연달아 들이받는다.',
+  'def3.formation.glide-flock.name': '활공 편대',
+  'def3.formation.glide-flock.desc':
+    '무른 요격기 6기가 좌우 끝에서 안쪽으로 급강하한다. 궤도가 대각선이라 제자리에 서 있으면 반드시 스친다.',
+  'def3.formation.mine-layer.name': '기뢰 살포선',
+  'def3.formation.mine-layer.desc':
+    '느린 수송선이 앞서 흐르며 고정형 기체를 통로에 넓게 깔아 둔다. 깔린 자리에 그대로 남고, 강제 스크롤이 그 위로 밀어 넣는다.',
+  'def3.formation.shield-escort.name': '실드 호위편대',
+  'def3.formation.shield-escort.desc':
+    '중장갑 기체가 앞에서 벽을 세우고 정밀 포탑이 뒤를 따른다. 전열을 뚫을지 우회할지 골라야 한다.',
+  'def3.formation.sniper-nest.name': '저격 편대',
+  'def3.formation.sniper-nest.desc':
+    '원거리 포대가 통로 위쪽에 눌러앉아 착탄 예고선을 계속 긋는다. 붙으면 쉽게 부수지만 방치하면 계속 맞는다.',
+  'def3.formation.support-escort.name': '지원 편대',
+  'def3.formation.support-escort.desc':
+    '두꺼운 모체를 복원 드로이드가 따라다니며 근거리에서 계속 회복시킨다. 치유원을 먼저 지우지 않으면 모체가 내려가지 않는다.',
   // L2 설비
   'def3.fac.rapid.name': '속사포',
   'def3.fac.rapid.desc': '벽에 붙어 근거리를 꾸준히 훑는 기본 연사 포대.',
@@ -1302,6 +1381,15 @@ export const KO: Record<MessageKey, string> = {
   'def3.fac.flame.desc': '벽 안쪽에 꺼지지 않는 화염 장판을 계속 뿜는다.',
   'def3.fac.spawner.name': '드론 사출구',
   'def3.fac.spawner.desc': '사출구가 부서지기 전까지 소형 드론을 끊임없이 찍어낸다.',
+  'def3.fac.press.name': '압축 프레스',
+  'def3.fac.press.desc':
+    '부술 수 없는 압축 판이 정해진 주기로 회랑 안쪽까지 뻗었다 되돌아온다. 밀려날 자리가 없으면 그대로 짓눌린다.',
+  'def3.fac.gravwell.name': '견인 자기장',
+  'def3.fac.gravwell.desc':
+    '주기적으로 넓은 감속 장판을 세운다. 스스로는 피해를 주지 않고, 다른 설비의 사격을 맞게 만드는 것이 역할이다.',
+  'def3.fac.shock.name': '충격파 발생기',
+  'def3.fac.shock.desc':
+    '길게 예열한 뒤 아주 짧은 순간에 거대한 광역 폭발을 터뜨린다. 회피 타이밍 한 번을 정확히 묻는다.',
   // L3 기물
   'def3.prop.shieldGenerator.name': '실드 발생기',
   'def3.prop.shieldGenerator.desc': '코어를 보호막으로 감싼다. 이걸 먼저 부수지 않으면 코어에 흠집도 안 난다.',
@@ -1309,9 +1397,24 @@ export const KO: Record<MessageKey, string> = {
   'def3.prop.gravityAnchor.desc': '주기적으로 감속 지대를 깔아 회피할 여유를 깎는다.',
   'def3.prop.fixedCannon.name': '고정 주포',
   'def3.prop.fixedCannon.desc': '코어방을 직사로 훑는 고정 화력.',
+  'def3.prop.repairPylon.name': '회복 파일런',
+  'def3.prop.repairPylon.desc':
+    '아무도 때리지 않는 대신 주변 방어체를 주기적으로 회복시킨다. 이걸 지우기 전까지 보스도 기물도 계속 되살아난다.',
+  'def3.prop.decoyHologram.name': '기만 홀로그램',
+  'def3.prop.decoyHologram.desc':
+    '실루엣도 조준 우선순위도 코어와 같은 가짜 코어. 부숴도 승리가 서지 않는다 — 여기 쏟은 화력 자체가 이 기물의 피해다.',
+  'def3.prop.mineSwarm.name': '자폭 지뢰군',
+  'def3.prop.mineSwarm.desc':
+    '자기 주위 링을 돌며 폭발 지뢰를 하나씩 깐다. 옆에 붙어서 쏘는 자세를 벌준다.',
   // L3 방어 보스
   'def3.boss.steelGoliath.name': '강철 골리앗',
   'def3.boss.steelGoliath.desc': '코어방의 수문장. 3페이즈로 싸우며 각 페이즈 첫 패턴 뒤 과열 창이 열린다.',
+  'def3.boss.sporeQueen.name': '포자 여왕',
+  'def3.boss.sporeQueen.desc':
+    '느리고 거대한 지형 장악형. 감속 장판과 용암 기둥으로 바닥을 계속 빼앗고, 그 장판 위에서 과열 창을 연다.',
+  'def3.boss.phaseWarden.name': '위상 감시자',
+  'def3.boss.phaseWarden.desc':
+    '얇고 빠른 순수 탄막형. 장판을 전혀 깔지 않는 대신 설 자리가 아니라 탄 사이 틈만 남긴다.',
   // L2 맵 템플릿
   'def3.map.straight.name': '개활 회랑',
   'def3.map.straight.desc': '엄폐가 거의 없는 긴 직선 통로. 설치 소켓이 12개로 가장 많다.',
@@ -1369,6 +1472,26 @@ export const KO: Record<MessageKey, string> = {
   'def3.affix.dt-secondwind.name': '재기의',
   'def3.affix.dt-secondwind.desc':
     '침공이 길어지면 방치의 흔적을 털어낸다.',
+  // 유니크 방어체 고유 효과(M7b — data/defenseUnits.ts DEFENSE_UNIQUES)
+  'def3.duq.duq-overclock-core.name': '과부하 코어',
+  'def3.duq.duq-overclock-core.desc':
+    '침공이 길어질수록 연사가 빨라진다(상한 있음). 대가로 내구도가 상시 깎인다.',
+  'def3.duq.duq-vengeance-engine.name': '복수 기관',
+  'def3.duq.duq-vengeance-engine.desc': '같은 레이어의 아군이 파괴될 때마다 피해가 오른다(상한 있음).',
+  'def3.duq.duq-deathgrip-bastion.name': '최후의 요새',
+  'def3.duq.duq-deathgrip-bastion.desc':
+    '코어 내구도가 떨어질수록 단단해지고, 코어가 거의 무너졌을 때 가장 질기다.',
+  'def3.duq.duq-proximity-reactor.name': '근접 반응로',
+  'def3.duq.duq-proximity-reactor.desc': '공격자가 가까울수록 피해가 오른다. 고정 거리 밴드로 계단식.',
+  'def3.duq.duq-swarm-nexus.name': '군체 중추',
+  'def3.duq.duq-swarm-nexus.desc': '드론을 훨씬 많이 동시에 유지한다. 대신 매 주기가 더 느려진다.',
+  'def3.duq.duq-aegis-lattice.name': '수호 격자',
+  'def3.duq.duq-aegis-lattice.desc': '보호막과 강한 풍화 저항을 얻는 대신 자기 화력을 잃는다.',
+  'def3.duq.duq-thermal-vault.name': '열 금고',
+  'def3.duq.duq-thermal-vault.desc': '과열 창이 짧아지고 내구도가 늘어난 방어 보스.',
+  'def3.duq.duq-vanguard-tide.name': '선봉 조류',
+  'def3.duq.duq-vanguard-tide.desc':
+    '훨씬 빨리 밀려 들어오고 피해도 높은 편대. 대신 반격에 쉽게 무너진다.',
   // 코어 모듈 유니크(M7b)
   'def3.module.uq-mirage-core.name': '신기루 코어',
   'def3.module.uq-mirage-core.desc':

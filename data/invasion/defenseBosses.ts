@@ -234,10 +234,204 @@ export const STEEL_GOLIATH: DefenseBossDef = {
 };
 
 /**
- * 방어 보스 카탈로그. **배열 인덱스 = catalogId(계약, append-only)**.
- * M7c 풀 카탈로그(보스 3종)는 이 배열 뒤에만 추가한다.
+ * ② 포자 여왕(M7c) — 소환·잠식형 생체. 방어 배치에서 잡몹 소환은 L1 편대·L2 스포너의 몫이므로
+ * (`summon` 캐스트를 의도적으로 복제하지 않았다) "잠식"을 **지형 장악**으로 번역했다: 느리고
+ * 크고, 감속 장판과 용암 기둥으로 바닥을 계속 빼앗아 회피 공간을 좁힌다.
+ *
+ * 강철 골리앗과의 성격 분리: 골리앗은 **탄막 밀도**로 압박하고 여왕은 **설 자리**로 압박한다.
+ * 그래서 여왕의 P1 시그니처는 링이 아니라 감속 장판이다(과열 창이 장판 직후에 열린다 =
+ * 장판 위에서 딜을 넣어야 하는 교환).
  */
-export const DEFENSE_BOSSES: readonly DefenseBossDef[] = [STEEL_GOLIATH];
+export const SPORE_QUEEN: DefenseBossDef = {
+  id: 'sporeQueen',
+  hp: 6800,
+  radius: 138,
+  contactDamage: 24,
+  moveSpeed: 92,
+  phases: [
+    {
+      patternCooldown: 108,
+      overheatInterval: 620,
+      attacks: [
+        { kind: 'slowField', zones: 2, windup: 42, activeTicks: 168, radius: 240, damage: 4 },
+        { kind: 'ring', count: 16, speed: 520, damage: 8, bulletRadius: 8, bulletLife: 150 },
+      ],
+    },
+    {
+      patternCooldown: 92,
+      overheatInterval: 590,
+      attacks: [
+        { kind: 'slowField', zones: 3, windup: 38, activeTicks: 180, radius: 250, damage: 5 },
+        {
+          kind: 'hazardLine',
+          subtype: HAZARD_LAVA,
+          pillars: 5,
+          windup: 52,
+          activeTicks: 120,
+          radius: 118,
+          damage: 11,
+        },
+        {
+          kind: 'aimedBurst',
+          count: 7,
+          arc: 0.9,
+          speed: 700,
+          damage: 9,
+          bulletRadius: 8,
+          bulletLife: 140,
+        },
+      ],
+    },
+    {
+      patternCooldown: 72,
+      overheatInterval: 560,
+      attacks: [
+        { kind: 'slowField', zones: 4, windup: 30, activeTicks: 200, radius: 260, damage: 6 },
+        {
+          kind: 'hazardLine',
+          subtype: HAZARD_LAVA,
+          pillars: 8,
+          windup: 40,
+          activeTicks: 140,
+          radius: 112,
+          damage: 12,
+        },
+        { kind: 'ring', count: 26, speed: 620, damage: 10, bulletRadius: 8, bulletLife: 170 },
+        {
+          kind: 'spiral',
+          count: 10,
+          speed: 640,
+          damage: 10,
+          bulletRadius: 8,
+          bulletLife: 170,
+          turn: 0.38,
+        },
+      ],
+    },
+  ],
+};
+
+/**
+ * ③ 위상 감시자(M7c) — 순간이동·탄막형 기계 안구. 셋 중 가장 얇고 빠르며, 지형을 전혀 깔지
+ * 않는 **순수 탄막**이다(해저드 캐스트 0). 골리앗·여왕이 "서 있을 자리"를 뺏는다면 이쪽은
+ * "탄 사이 틈"만 남긴다 — 회피 축이 달라 같은 배치에 셋을 섞어도 학습이 중복되지 않는다.
+ *
+ * 얇은 대신 캐스트 간격이 짧고 P3 에서 다각형 회전이 두 방향으로 갈린다(turn 부호 반전).
+ */
+export const PHASE_WARDEN: DefenseBossDef = {
+  id: 'phaseWarden',
+  hp: 5200,
+  radius: 116,
+  contactDamage: 20,
+  moveSpeed: 148,
+  phases: [
+    {
+      patternCooldown: 78,
+      overheatInterval: 560,
+      attacks: [
+        {
+          kind: 'aimedBurst',
+          count: 3,
+          arc: 0.32,
+          speed: 1000,
+          damage: 9,
+          bulletRadius: 5,
+          bulletLife: 120,
+        },
+        {
+          kind: 'spiral',
+          count: 8,
+          speed: 660,
+          damage: 8,
+          bulletRadius: 5,
+          bulletLife: 140,
+          turn: 0.62,
+        },
+      ],
+    },
+    {
+      patternCooldown: 66,
+      overheatInterval: 530,
+      attacks: [
+        {
+          kind: 'aimedBurst',
+          count: 5,
+          arc: 0.5,
+          speed: 1040,
+          damage: 10,
+          bulletRadius: 5,
+          bulletLife: 130,
+        },
+        {
+          kind: 'polygonSpin',
+          sides: 4,
+          perSide: 2,
+          spread: 0.28,
+          speed: 720,
+          damage: 9,
+          bulletRadius: 5,
+          bulletLife: 150,
+          turn: 0.58,
+        },
+        {
+          kind: 'spiral',
+          count: 11,
+          speed: 720,
+          damage: 9,
+          bulletRadius: 5,
+          bulletLife: 150,
+          turn: -0.46,
+        },
+      ],
+    },
+    {
+      patternCooldown: 52,
+      overheatInterval: 500,
+      attacks: [
+        {
+          kind: 'aimedBurst',
+          count: 7,
+          arc: 0.74,
+          speed: 1080,
+          damage: 11,
+          bulletRadius: 5,
+          bulletLife: 140,
+        },
+        {
+          kind: 'polygonSpin',
+          sides: 6,
+          perSide: 2,
+          spread: 0.22,
+          speed: 800,
+          damage: 10,
+          bulletRadius: 5,
+          bulletLife: 160,
+          turn: 0.7,
+        },
+        { kind: 'ring', count: 22, speed: 860, damage: 10, bulletRadius: 5, bulletLife: 160 },
+        {
+          kind: 'spiral',
+          count: 13,
+          speed: 800,
+          damage: 11,
+          bulletRadius: 5,
+          bulletLife: 160,
+          turn: -0.66,
+        },
+      ],
+    },
+  ],
+};
+
+/**
+ * 방어 보스 카탈로그. **배열 인덱스 = catalogId(계약, append-only)**.
+ * M7c 풀 카탈로그(보스 3종) 완성 — 신규는 항상 이 배열 **뒤에만** 추가한다.
+ */
+export const DEFENSE_BOSSES: readonly DefenseBossDef[] = [
+  STEEL_GOLIATH,
+  SPORE_QUEEN,
+  PHASE_WARDEN,
+];
 
 /** 등록된 방어 보스 수. */
 export const DEFENSE_BOSS_COUNT = DEFENSE_BOSSES.length;
@@ -258,12 +452,23 @@ export function defenseBossDef(catalogId: number): DefenseBossDef {
 // 강화 3축 → 스탯 스케일 (정수 basis-point)
 // ---------------------------------------------------------------------------
 
+/*
+ * M7c 밸런스 패스(C7-balance) 재배분 — 800/2500/1500 → 180/3000/1800.
+ *
+ * 참조봇 실측에서 **레벨 축만 지배하고 등급·승급은 사실상 무력**했다. 레벨은 보스·기물·
+ * 설비·편대의 HP 와 피해를 동시에 곱해 lv30 부근에서 계단이 아니라 절벽이 됐고(중하·중위
+ * 밴드 클리어율 0%), 반대로 등급 0→3 이나 승급 0→2 는 승률을 유의미하게 움직이지 못했다.
+ * 강화 3축 중 두 축이 죽어 있으면 방어체 육성 선택 자체가 무의미해지므로, 레벨 기여를
+ * 줄이고 등급·승급 기여를 늘려 세 축이 비슷한 폭을 갖게 했다.
+ * 측정 근거·목표 승률은 `tests/invasionBalance.test.ts` 머리말 참조.
+ */
+
 /** 레벨 1단계당 전투력 가산(bp). lv1 = +0. */
-export const DEFENSE_BOSS_LEVEL_BP = 800;
+export const DEFENSE_BOSS_LEVEL_BP = 180;
 /** 승급 1단계당 전투력 가산(bp). */
-export const DEFENSE_BOSS_ASCENSION_BP = 2500;
+export const DEFENSE_BOSS_ASCENSION_BP = 3000;
 /** 등급 1단계당 전투력 가산(bp). 0=normal … 3=unique. */
-export const DEFENSE_BOSS_RARITY_BP = 1500;
+export const DEFENSE_BOSS_RARITY_BP = 1800;
 
 /**
  * 강화 3축 → 전투력 배율(basis-point, 10000 = ×1.00). 전부 정수 덧셈이라 플랫폼 무관.

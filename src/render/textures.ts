@@ -30,6 +30,9 @@ import {
   PROP_FIXED_CANNON,
   PROP_GRAVITY_ANCHOR,
   PROP_SHIELD_GENERATOR,
+  PROP_REPAIR_PYLON,
+  PROP_DECOY_HOLOGRAM,
+  PROP_MINE_SWARM,
 } from '../../data/invasion/props.js';
 import { DEFENSE_BOSSES } from '../../data/invasion/defenseBosses.js';
 import { CATALOG_BOSS, CATALOG_FACILITY, CATALOG_PROP, catalogSlug } from '../../data/invasion/catalog.js';
@@ -409,12 +412,22 @@ function facilityTexture(renderer: Renderer, behavior: number, radius: number): 
   return tex;
 }
 
-/** 기물 역할색(index = PROP_*). 실드 = 시안, 중력 = 바이올렛, 주포 = 앰버. */
-const PROP_ROLE_COLORS: readonly number[] = [0x39d0ff, 0x8a6aff, 0xffb020];
+/**
+ * 기물 역할색(index = PROP_*). 실드 = 시안, 중력 = 바이올렛, 주포 = 앰버,
+ * 수리 파일런 = 라임(회복), 기만 홀로그램 = 창백한 청록(가짜 코어), 지뢰군 = 주홍(위험).
+ *
+ * **길이가 `L3_PROPS.length` 와 맞아야 한다** — 짧으면 신규 역할이 조용히 0번 색으로
+ * 폴백해 화면에서 실드 발생기와 구분되지 않는다(M7c 통합 게이트에서 3색 추가).
+ */
+const PROP_ROLE_COLORS: readonly number[] = [
+  0x39d0ff, 0x8a6aff, 0xffb020, 0x6ee06e, 0x8ad8d0, 0xff6a40,
+];
 
 /**
  * L3 기물 플레이스홀더. 역할이 실루엣으로 읽힌다: 실드 발생기 = 팔각 돔 + 보호막 링,
- * 중력 앵커 = 하강 화살 삼각 + 소용돌이 링, 고정 주포 = 대형 +x 포신. 전부 fixedFacing.
+ * 중력 앵커 = 하강 화살 삼각 + 소용돌이 링, 고정 주포 = 대형 +x 포신,
+ * 수리 파일런 = 십자 + 방사 링, 기만 홀로그램 = 코어형 이중 마름모(반투명),
+ * 지뢰군 = 중심 원 + 방사 스파이크 6. 전부 fixedFacing.
  */
 function propTexture(renderer: Renderer, role: number, radius: number): Texture {
   const color = PROP_ROLE_COLORS[role] ?? PROP_ROLE_COLORS[0] ?? 0xffffff;
@@ -435,6 +448,33 @@ function propTexture(renderer: Renderer, role: number, radius: number): Texture 
         .lineTo(r * 0.34, -r * 0.2)
         .closePath()
         .fill({ color });
+      break;
+    case PROP_REPAIR_PYLON:
+      // 회복 십자 + 영향 반경을 암시하는 방사 링.
+      g.circle(0, 0, r * 0.86).stroke({ color, width: 2, alpha: 0.5, alignment: 0 });
+      g.rect(-r * 0.14, -r * 0.6, r * 0.28, r * 1.2).fill({ color });
+      g.rect(-r * 0.6, -r * 0.14, r * 1.2, r * 0.28).fill({ color });
+      break;
+    case PROP_DECOY_HOLOGRAM:
+      // 진짜 코어와 같은 계통으로 읽히되 **반투명 윤곽만** — 가짜라는 힌트.
+      g.moveTo(0, -r * 0.85)
+        .lineTo(r * 0.7, 0)
+        .lineTo(0, r * 0.85)
+        .lineTo(-r * 0.7, 0)
+        .closePath()
+        .fill({ color, alpha: 0.22 })
+        .stroke({ color, width: 3, alpha: 0.9, alignment: 0 });
+      g.circle(0, 0, r * 0.26).stroke({ color, width: 2, alpha: 0.8, alignment: 0 });
+      break;
+    case PROP_MINE_SWARM:
+      // 중심 원 + 방사 스파이크 6 — 부설 링을 실루엣으로 예고한다.
+      for (let i = 0; i < 6; i++) {
+        const a = (i * Math.PI) / 3;
+        g.moveTo(0, 0)
+          .lineTo(Math.cos(a) * r * 0.85, Math.sin(a) * r * 0.85)
+          .stroke({ color, width: 3, alignment: 0 });
+      }
+      g.circle(0, 0, r * 0.34).fill({ color }).stroke({ color: 0x101520, width: 2, alignment: 0 });
       break;
     case PROP_FIXED_CANNON:
     default:

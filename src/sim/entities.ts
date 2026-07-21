@@ -78,9 +78,11 @@ export const KIND_CODE: Record<EntityKind, number> = {
   // Appended for the M5 수호 기체 (never renumber 1..16). PvE·수호 미포함 침공 런에는
   // guardian 엔티티가 없어 이 코드가 해시에 등장하지 않는다 → 기존 fixtures 바이트 불변.
   guardian: 17,
-  // Appended for 방어 카드 유니크 신기루 코어 (never renumber 1..17). 유니크 '신기루 코어'
-  // 카드가 장착된 침공에만 decoyCore 엔티티가 존재해 이 코드가 해시에 등장한다 → 카드 미장착
-  // 침공·PvE 리플레이는 바이트 불변(조건부 접기).
+  // Appended for 방어 카드 유니크 신기루 코어 (never renumber 1..17). 이 kind 를 만드는 경로는
+  // **둘**이다: ① 유니크 '신기루 코어' 모듈(`src/sim/moduleEffects.ts`) ② M7c L3 기물 역할 4
+  // '기만 홀로그램'(`src/sim/invasion/coreRoom.ts` — 카탈로그에서 배치된다). 둘 중 하나라도
+  // 실린 침공에만 decoyCore 엔티티가 존재해 이 코드가 해시에 등장한다 → 미장착·미배치 침공과
+  // PvE 리플레이는 바이트 불변(조건부 접기).
   decoyCore: 18,
   // Appended for M7a 침공 3레이어 (never renumber 1..18). 이 8종은 3레이어 침공 런에만
   // 등장하므로 PvE·구 침공 리플레이의 해시에는 나타나지 않는다(기존 fixtures 회귀 0).

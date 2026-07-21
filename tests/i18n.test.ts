@@ -11,8 +11,12 @@ import { STICKERS } from '../data/stickers.js';
 import { INVASION_CATALOG, DEF3_MESSAGE_KEYS, def3NameKey, def3DescKey } from '../data/invasion/catalog.js';
 import {
   DEFENSE_UNIT_AFFIXES,
+  DEFENSE_UNIQUES,
+  DEFENSE_UNIQUE_MESSAGE_KEYS,
   defenseUnitAffixNameKey,
   defenseUnitAffixDescKey,
+  defenseUniqueNameKey,
+  defenseUniqueDescKey,
 } from '../data/defenseUnits.js';
 import {
   CORE_MODULE_UNIQUES,
@@ -105,7 +109,48 @@ describe('카탈로그 완전성', () => {
     }
   });
 
-  it('def3.affix.* / def3.module.* 문구도 비지 않고 컬러 이모지를 쓰지 않는다', () => {
+  /**
+   * 유니크 방어체 고유 효과(M7b · data/defenseUnits.ts)의 `def3.duq.<id>.name/.desc` 전수.
+   *
+   * 이 테스트가 없던 동안 duq 16키는 EN·KO 양쪽에 **하나도 없는데 스위트가 전부 그린**이었다
+   * (통합 게이트 finding #7). 카탈로그·어픽스·모듈은 전부 배열 파생 검증이 있었는데 유니크만
+   * 빠져 있었던 것 — 검증 사각지대 자체가 결함이었다. DEF3_MESSAGE_KEYS 선례대로 정본 배열에서
+   * 파생하므로 유니크를 append 하면 문구를 채우기 전까지 빨간불로 남는다.
+   */
+  it('유니크 방어체 고유 효과 전종의 def3.duq.* 키가 EN·KO 양쪽에 존재한다', () => {
+    expect(DEFENSE_UNIQUES.length).toBeGreaterThan(0);
+    expect(DEFENSE_UNIQUE_MESSAGE_KEYS.length).toBe(DEFENSE_UNIQUES.length * 2);
+    for (const u of DEFENSE_UNIQUES) {
+      for (const key of [defenseUniqueNameKey(u.id), defenseUniqueDescKey(u.id)]) {
+        expect(DEFENSE_UNIQUE_MESSAGE_KEYS).toContain(key);
+        expect(EN, `EN missing ${key}`).toHaveProperty(key);
+        expect(KO, `KO missing ${key}`).toHaveProperty(key);
+      }
+    }
+  });
+
+  /**
+   * 고아 키 가드 — 카탈로그에서 **파생되지 않는** `def3.<카탈로그 종류>.*` 키가 EN·KO 에 남아
+   * 있으면 잡는다. 카탈로그 항목을 지우거나 슬러그를 개명했을 때 문구만 남아 조용히 썩는 자리다
+   * (존재 검증만으로는 절대 안 잡힌다 — 방향이 반대라서).
+   * `def3.affix.*` / `def3.module.*` / `def3.duq.*` / `def3.cmd.*` 는 카탈로그 파생이 아니므로
+   * 대상에서 제외한다(각자 별도 배열 파생 테스트가 위에 있다).
+   */
+  it('카탈로그에 없는 고아 def3.<종류>.* 키가 EN·KO 에 남아 있지 않다', () => {
+    const kindPrefixes = ['formation', 'fac', 'prop', 'boss', 'map'];
+    const derived = new Set(DEF3_MESSAGE_KEYS);
+    const isCatalogKey = (k: string): boolean =>
+      kindPrefixes.some((p) => k.startsWith(`def3.${p}.`));
+    for (const [label, table] of [
+      ['EN', EN as unknown as Record<string, string>],
+      ['KO', KO as unknown as Record<string, string>],
+    ] as const) {
+      const orphans = Object.keys(table).filter((k) => isCatalogKey(k) && !derived.has(k));
+      expect(orphans, `${label} orphan def3 keys`).toEqual([]);
+    }
+  });
+
+  it('def3.affix.* / def3.module.* / def3.duq.* 문구도 비지 않고 컬러 이모지를 쓰지 않는다', () => {
     const table = (o: Record<string, string>, k: string): string => o[k] ?? '';
     const keys = [
       ...DEFENSE_UNIT_AFFIXES.flatMap((a) => [
@@ -114,6 +159,7 @@ describe('카탈로그 완전성', () => {
       ]),
       ...CORE_MODULE_UNIQUES.flatMap((u) => [moduleUniqueNameKey(u.id), moduleUniqueDescKey(u.id)]),
       ...MODULE_AFFIXES.flatMap((a) => [moduleAffixNameKey(a.id), moduleAffixDescKey(a.id)]),
+      ...DEFENSE_UNIQUE_MESSAGE_KEYS,
     ];
     for (const key of keys) {
       for (const [label, t] of [
