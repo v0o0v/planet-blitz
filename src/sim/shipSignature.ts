@@ -208,6 +208,25 @@ export function cushionRecovered(deferred: number, unhitTicks: number): number {
   return Math.round((v * CUSHION_RECOVER_BP) / 10000);
 }
 
+/**
+ * 정산 시점에 **실제로 선체(hp)에 들어가는** 지연분(정수) = 적립분 − 회복분.
+ *
+ * 이 파일의 나머지 완충 함수는 적립(`cushionDeferredDamage`)과 회복(`cushionRecovered`)만
+ * 정의하고 "미룬 피해가 언제 들어오는가" 를 비워 두었다. world.ts 배선(M8)이 택한 소진 규칙은
+ * **연속 무피격이 `CUSHION_RECOVER_TICKS` 를 채운 그 틱에 풀을 통째로 정산한다** 이고, 이
+ * 함수가 그 정산에서 남는 몫이다. 회복분과 합하면 항상 적립분과 같아 "미룬 피해는 회복된
+ * 만큼만 사라진다" 가 성립한다(즉시분/지연분 합 보존과 같은 사상).
+ *
+ * 임계 미만이면 0 — 아직 정산 자체가 일어나지 않는다(`cushionRecovered` 와 동일 게이트라
+ * 호출부가 임계를 두 번 판정할 필요가 없다).
+ */
+export function cushionSettled(deferred: number, unhitTicks: number): number {
+  const v = Math.trunc(deferred);
+  if (v <= 0) return 0;
+  if (Math.trunc(unhitTicks) < CUSHION_RECOVER_TICKS) return 0;
+  return v - cushionRecovered(v, unhitTicks);
+}
+
 // --- ⑥ 버블: 방막(주기적 흡수 + 파열 밀어내기) --------------------------------
 /** 막이 다시 생기기까지의 틱(60fps 기준 7초). */
 export const FILM_PERIOD_TICKS = 420;

@@ -116,10 +116,14 @@ import {
   hasSignature,
   SIG_BRUISER_ARMOR,
   SIG_ARC_OVERCHARGE,
+  SIG_MALLOW_CUSHION,
   ARMOR_PER_STACK_BP,
   ARMOR_DECAY_TICKS,
   clampArmorStacks,
   overchargeBp,
+  CUSHION_RECOVER_TICKS,
+  cushionDeferredDamage,
+  cushionSettled,
 } from './shipSignature.js';
 import { shipTypeDef } from '../../data/ships/index.js';
 import { SpatialHash, circlesOverlap } from './collision.js';
@@ -1067,6 +1071,7 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
 // ## 슬롯 배정 (한 런에 시그니처는 최대 하나라 충돌하지 않는다)
 //   브루저   aux0 = 장갑 스택(0..8) · aux1 = 마지막 피격 이후 경과 틱
 //   아크캐스터 aux0 = 연속 정지 틱      · aux1 = 미사용(0)
+//   말로우    aux0 = 적립된 지연 피해(비음 정수) · aux1 = 연속 무피격 틱
 //
 // ## 활성 판정을 두 축으로 OR 하는 이유
 // 정본은 `LoadoutConfig.uniqueMask` 의 시그니처 비트(M8-L4 가 loadout.ts 에서 OR-in)다. 다만
@@ -1078,6 +1083,14 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
 
 /** 과충전 정지 카운터 상한. bp 는 190틱에서 이미 상한이라 거동 무영향, 정수 유계 유지용. */
 const OVERCHARGE_TICK_CAP = 600;
+
+/**
+ * 완충 무피격 카운터 상한. 정산은 임계(CUSHION_RECOVER_TICKS=180)에서 일어나므로 정상
+ * 경로에서는 도달하지 않지만, **적립분이 0 인 구간**(정산할 것이 없어 카운터가 리셋되지 않는
+ * 구간)에서 aux1 이 무한히 커지는 것을 막는다 — aux 는 u32 로 해시된다(replay.ts hashEntity).
+ * 상한에 걸려도 임계(180)는 이미 넘긴 뒤라 거동에는 영향이 없다.
+ */
+const CUSHION_TICK_CAP = 600;
 
 /** 이 런에서 시그니처 `bit` 이 활성인가. 위 주석의 2축 OR. */
 function signatureOn(state: WorldState, bit: number): boolean {
@@ -1105,6 +1118,43 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
     const still = input.moveX === 0 && input.moveY === 0 && !input.dash;
     if (!still) player.aux0 = 0;
     else if (player.aux0 < OVERCHARGE_TICK_CAP) player.aux0++;
+    // ⚠️ 함수 끝이라 의미는 없지만 **명시적으로** 반환한다 — 뒤에 분기를 append 하는 순간
+    // 아크캐스터 런이 다음 시그니처 분기로 흘러들어간다(한 런에 시그니처는 최대 하나).
+    return;
+  }
+  if (signatureOn(state, SIG_MALLOW_CUSHION)) {
+    // 말로우 시그니처 — 완충(설계서 §3). aux0 = 적립된 지연 피해(비음 정수) · aux1 = 연속 무피격 틱.
+    //
+    // ## "미룬 피해가 언제 hp 에 들어가는가" — 이 배선이 정한 소진 규칙과 근거
+    // 순수 함수 층(shipSignature.ts ⑤절)은 적립·회복만 정의하고 소진을 비워 두었다. 여기서
+    // 택한 규칙은 **연속 무피격이 CUSHION_RECOVER_TICKS 를 채운 그 틱에 풀을 통째로 정산**
+    // 이다 — 회복분(cushionRecovered)은 사라지고 나머지(cushionSettled)가 그때 선체로 들어간다.
+    //  ① **가장 단순하다.** 상태는 이미 배정된 aux 2칸뿐이고, 틱당 상환율 같은 신규 밸런스
+    //     상수를 발명하지 않는다(설계 정본 밖의 수치를 만들지 않는다).
+    //  ② **결정론적이다.** 정산 시점이 정수 카운터의 단일 임계뿐이라 f64 누적이 낄 자리가
+    //     없고, 적립·회복·정산이 전부 정수 bp 단일 나눗셈에서 나온다(ADR-0005).
+    //  ③ 설계 의도("피해를 미루고, 안 맞으면 일부를 되돌린다")를 문자 그대로 만족한다. 순
+    //     경감은 35% × 60% = 21%(반올림 전)이고, 남은 피해는 **교전이 끊긴 안전한 순간**에
+    //     들어온다. 반대로 풀을 영영 남기는 규칙은 "지연"이 아니라 순수 감쇄가 되어 버린다.
+    // 정산 후 aux1 도 0 으로 되돌린다 — 그래야 다음 정산이 임계를 처음부터 다시 채우고,
+    // 임계 이후 매 틱 정산이 반복되지 않는다.
+    // 결과로 **압박이 끊기지 않는 무대에서는 풀이 정산되지 않고 계속 쌓인다**(실측: 행성2/
+    // 티어2 정지 파일럿은 무피격 최대 146틱 < 180). 이것은 결함이 아니라 축 그 자체다 —
+    // 완충은 "안전해질 때까지 피해를 미루는" 기체이고, 미룬 분은 교전이 끊기는 순간 들어온다.
+    // 풀은 비음 정수이고 런 누적 피해로 유계라 u32 폴드에 안전하다.
+    if (player.aux1 < CUSHION_TICK_CAP) player.aux1++;
+    if (player.aux0 > 0 && player.aux1 >= CUSHION_RECOVER_TICKS) {
+      const due = cushionSettled(player.aux0, player.aux1);
+      player.aux0 = 0;
+      player.aux1 = 0;
+      // ⚠️ 완충은 절대 치명적이지 않다. 미룬 피해가 hp 를 1 미만으로 내리지 못하게 클램프한다 —
+      // 안전한 곳으로 빠진 직후 화면상 아무 원인 없이 죽는 사인은 플레이어가 관측할 수도
+      // 반응할 수도 없다("완충" 이라는 축과도 정면으로 어긋난다). 초과분은 소멸시킨다.
+      // hp 는 f64 일 수 있으므로(엘리트 배율 접촉 피해) floor 로 정수 여유분을 잡는다.
+      const room = Math.floor(player.hp) - 1;
+      const applied = due > room ? room : due;
+      if (applied > 0) player.hp -= applied;
+    }
   }
 }
 
@@ -2261,6 +2311,24 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       const bp = clampArmorStacks(player.aux0) * ARMOR_PER_STACK_BP;
       if (bp > 0) dmg -= Math.round((dmg * bp) / 10000);
     }
+    // 말로우 시그니처 — 완충 지연 전환(설계서 §3·§4). 이번 피격 피해의 CUSHION_DEFER_BP 만큼을
+    // 지금 넣지 않고 떼어 둔다. **적립(aux0 += deferred)은 여기서 하지 않고 아래 hp 차감 분기
+    // 안에서만** 한다 — 근거는 그쪽 주석.
+    // 브루저 감소 **뒤** · 생존 캡스톤 판정 **앞**인 이유는 장갑과 완전히 같은 논증이다
+    // (위 2252-2254 주석): 캡스톤은 `hp - dmg <= 0` 으로 치사 여부를 보므로, 완충이 살려 낸
+    // 피격까지 캡스톤을 소진시키지 않으려면 감액이 먼저여야 한다.
+    // ⚠️ `Math.round(dmg)` 는 **반드시 이 게이트 안**에 둔다 — 밖으로 빼면 시그니처 없는 런의
+    //    소수 접촉 피해(엘리트 배율)까지 바뀐다. 게이트 안에서 먼저 정수화하는 이유는 aux0 이
+    //    u32 로 해시되기 때문이다(replay.ts hashEntity 의 `>>> 0`): 소수를 적립하면 소수부가
+    //    조용히 잘려 클라와 서버 재실행이 갈린다. 정수화 뒤에 나누면 "즉시분 + 지연분 = 원래
+    //    피해" 라는 순수 함수 계약(cushionImmediateDamage)도 world 배선에서 그대로 보존된다.
+    const cushionOn = signatureOn(state, SIG_MALLOW_CUSHION);
+    let deferred = 0;
+    if (cushionOn) {
+      dmg = Math.round(dmg);
+      deferred = cushionDeferredDamage(dmg);
+      dmg -= deferred;
+    }
     // 생존 캡스톤 — 치명타 1회 무효(GDD §4): 이 피격이 치명적(hp가 0 이하로 떨어짐)이고 아직
     // 미소진(player.targetX===0)이면 피해를 전부 무효화하고 짧은 무적(CRIT_NEGATE_IFRAMES)을
     // 준다. 소진 표식은 player.targetX(플레이어 미사용 필드, 이미 해시됨)에 1로 실어 런당 1회로
@@ -2278,6 +2346,15 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     if (armorOn) {
       player.aux0 = clampArmorStacks(player.aux0 + 1);
       player.aux1 = 0;
+    }
+    // 말로우 시그니처 — 실제로 피해를 입은 이번 피격에서만 지연분을 적립하고 무피격 스트릭을
+    // 리셋한다. 적립을 위쪽 감액 지점에 두면 **캡스톤이 무효화한 "없던 피격"에서 지연 피해가
+    // 태어나** 몇 초 뒤 플레이어를 죽인다(사인이 캡스톤으로 보이지 않아 추적이 어렵다).
+    // deferred 는 위 게이트에서 정수화한 dmg 에서 나오므로 항상 비음 정수다 — aux0 의 u32
+    // 규율(replay.ts hashEntity)이 여기서 지켜진다.
+    if (cushionOn) {
+      player.aux1 = 0;
+      player.aux0 += deferred;
     }
     // ① 과열 드럼: 피격 시 연속 명중 스택 리셋(장착 시에만 phase가 비0).
     if (overheatOn) player.phase = 0;
