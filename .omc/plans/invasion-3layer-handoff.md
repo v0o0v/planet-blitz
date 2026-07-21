@@ -3,6 +3,7 @@
 - 작성: 2026-07-21 (M7c·M8·로스터 7종 구현 세션 마감)
 - 개정: 2026-07-21 (원격 배포 실행 완료 — §0 을 실행 기록으로, §4 를 배포 후 상태로 갱신)
 - 개정: 2026-07-21 (EF 2회차 재배포 — 1회차 v17 이 M8 배선 미포함이었음을 정정. verify-invasion v18 · verify-pve-sample v3)
+- 개정: 2026-07-21 (EF 3회차 재배포 — `fix/weapon-range-semantics` 반영. verify-invasion v19 · verify-pve-sample v4, 소스 `a343412`)
 - 브랜치: `claude-wt/hopeful-ishizaka-038840` (베이스 `b3aa857` = PR #81 머지 커밋)
 - 설계서: `.omc/plans/m8-champion-design.md`(M8 정본) / `.omc/plans/invasion-3layer-redesign.md`(기획) / `.omc/plans/invasion-3layer-impl-lanes.md`(레인 분해) / `.omc/research/invasion-3layer-recon.md`(정찰)
 
@@ -10,19 +11,33 @@
 
 ## 0. ✅ 원격 배포 — **실행 완료 (2026-07-21)**
 
-마이그레이션 6종 적용 완료 · `cards` 삭제 완료 · **EF 2종이 M8 시그니처 배선까지 반영된 v18 / v3 으로 재배포 완료**. 이 절은 이제 "할 일"이 아니라 **실행 기록 + 다음에도 그대로 쓸 배포 경로**다. 남은 것은 ③ 하네스 플레이테스트다(사용자가 직접 수행 예정).
+마이그레이션 6종 적용 완료 · `cards` 삭제 완료 · **EF 2종이 최신 sim(사거리 의미론 수정 포함)까지 반영된 v19 / v4 로 재배포 완료**. 이 절은 이제 "할 일"이 아니라 **실행 기록 + 다음에도 그대로 쓸 배포 경로**다. 남은 것은 ③ 하네스 플레이테스트다(사용자가 직접 수행 예정).
 
-### ① EF 재배포 + `cards` 삭제 — ✅ **완료 (2회차로 마감)**
+### ① EF 재배포 + `cards` 삭제 — ✅ **완료 (3회차까지 진행. sim 을 바꾸면 매번 이 절차를 돈다)**
 
 > ⚠️ **1회차(v17)는 M8 시그니처 배선을 담지 못했다.** 번들 소스가 `7ae64b6` 이었는데 M8 배선 5커밋(`2604e3b` 말로우 · `984ea03` 버블 · `741c937` 해츨링 · `698339c` 팬텀 · `ee5caf2` aux 별칭 봉인)이 **그 뒤에** 들어왔다. `git diff --stat 7ae64b6..4ba3ac8 -- src/sim/` 실측 **627줄 변경**(`world.ts` +452 · 신규 `cloak.ts` · `patterns/index.ts` · `boss.ts` · `replay.ts` · `shipSignature.ts`). 아래 2회차가 그 창을 실제로 닫았다.
 > **교훈: 번들 소스 커밋을 반드시 기록하고, 배포 직후 그 커밋이 `origin/main` 최신인지 대조하라.** "재배포 완료"라는 문장만으로는 무엇이 올라갔는지 알 수 없고, 이 저장소의 반복 결함("배선이 통째로 없는데 그린")이 배포 축에서 재현된 사례다.
 
-| 대상 | 1회차 | **2회차 (M8 반영)** | 비고 |
-|---|---|---|---|
-| `verify-invasion` | v16 → v17 (소스 `7ae64b6`) | **v17 → v18 ACTIVE** (소스 `4ba3ac8`) | `verify_jwt = true` 유지 |
-| `verify-pve-sample` | 재배포 안 함 (v2 = 2026-07-18 번들) | **v2 → v3 ACTIVE** (소스 `4ba3ac8`) | `src/sim` 번들 — 1회차 누락분(§4 #13) 해소 |
-| `cards` | **삭제 완료** | — | 목록에서 소멸 · `POST /functions/v1/cards` → 404 |
-| `modules` | v1 ACTIVE | v1 ACTIVE (**대상 아님**) | `src/items/types` 를 **type-only import**(`import type { Rarity }`) 라 번들에 런타임 코드 무포함 + 자체 소스 무변경 |
+| 대상 | 1회차 | **2회차 (M8 반영)** | **3회차 (사거리 의미론)** | 비고 |
+|---|---|---|---|---|
+| `verify-invasion` | v16 → v17 (소스 `7ae64b6`) | v17 → v18 ACTIVE (소스 `4ba3ac8`) | **v18 → v19 ACTIVE** (소스 `a343412`) | `verify_jwt = true` 유지 |
+| `verify-pve-sample` | 재배포 안 함 (v2 = 2026-07-18 번들) | v2 → v3 ACTIVE (소스 `4ba3ac8`) | **v3 → v4 ACTIVE** (소스 `a343412`) | `src/sim` 번들 |
+| `cards` | **삭제 완료** | — | — | 목록에서 소멸 · `POST /functions/v1/cards` → 404 |
+| `modules` | v1 ACTIVE | v1 ACTIVE (**대상 아님**) | v1 ACTIVE (**대상 아님**) | `src/items/types` 를 **type-only import**(`import type { Rarity }`) 라 번들에 런타임 코드 무포함 + 자체 소스 무변경 |
+
+**3회차 (2026-07-21, PR #89 `fix/weapon-range-semantics`)** — `weapon.range` 의미론 수정이
+`src/sim/world.ts` 를 바꿔 두 EF 의 재실행 해시가 갈렸다. 클라 배포처가 아직 없어(CrazyGames
+보류) 스큐 창은 없지만, 원격이 구 sim 을 들고 있으면 이후 제출분이 전부 거부되므로 같은
+날 닫았다.
+
+| 함수 | 크기 (2회차 → 3회차) | 소스 |
+|---|---|---|
+| `verify-invasion` | 174,396 → **174,614 B** | `a343412` (= `origin/main` 최신, detached 클린 워크트리에서 번들) |
+| `verify-pve-sample` | 165,427 → **165,644 B** | 〃 |
+
+3회차 부팅 스모크(anon JWT) — 둘 다 게이트웨이 오류가 아니라 **함수 자신의 구조화된 응답**:
+- `verify-invasion` v19 — `{"invasionId":"not-a-uuid"}` → **400 `{"status":"rejected","reason":"malformed-invasion-id",…}`**
+- `verify-pve-sample` v4 — `{"limit":0}` → **401 `{"error":"unauthorized"}`**
 
 > `verify-run` 은 **원격에 존재하지 않는다**(`list_edge_functions` 실측). `deno.json` 주석대로 로컬 확인 전용이고 `bundle` 태스크도 없다. 초기 표기 "EF 3종"은 틀렸다 — **실제 배포 대상은 2종**이다.
 
