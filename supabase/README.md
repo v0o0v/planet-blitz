@@ -6,6 +6,21 @@ M4 PvP(침공·래더·치트 방어)의 서버 스키마와 적용 절차. 근�
 - 프로젝트 ref: `qxgbxwyccbxokdgwxcuw` (`.mcp.json` `supabase-planet-blitz`, project scope 고정 — 전역 메모리 규칙: 계정 종속 MCP 는 user scope 금지)
 - 마이그레이션: `supabase/migrations/`
 
+> ⚠️ **2026-07-21~22(M7a·M7b)부터 `defenses.layout` 스키마가 전면 교체됐다.** 포탑 6종
+> (`TURRET_SPECS`)·`DefenseLayout`(core/turrets/obstacles)·배치 포인트 예산제
+> (`defenseLayoutCost`/`defense_layout_cost`)·15×9 격자 편집기는 **전부 폐기**됐다
+> (`src/sim/defense.ts` 자체가 삭제됨 — L11-legacy-purge). 대체 구조는 침공 3레이어다 —
+> L1 웨이브 슬롯 6(편대) / L2 맵 템플릿+설치 소켓(직선 12·굴곡 10·병목 8) / L3 코어방
+> (보스 1·수호 2·기물 6·코어 모듈 2). 배치 포인트 예산 상한(20)은 폐지되고 **슬롯 수
+> 자체가 예산**이다(`invasion_layers_valid` 가 구조·슬롯 수만 검증, `budget_spent` 컬럼은
+> 하위호환용으로 남아 있으나 클라 경로에서 항상 0 고정). 스키마 정본은
+> `src/sim/invasion/types.ts`, DB 정본은 `supabase/migrations/20260721000000_m7a_invasion_3layer.sql`
+> 부터 `20260722020000_m7b_blueprint_drops.sql`까지 마이그레이션 5종이다(이 README 는 아직
+> 그 5종을 위한 전용 섹션을 두지 않았다 — 배포 절차·설계 근거는
+> `.omc/plans/invasion-3layer-handoff.md` §2·§3 을 볼 것). **이 문서의 M4~M6 절(아래 마이그
+> 레이션 목록 상단부)은 그 시점의 정확한 역사 기록**이며, 이후 폐기된 개념이 남아 있는
+> 지점마다 "(M7a 로 폐기/대체)" 각주를 달아 뒀다.
+
 ## 마이그레이션 목록
 
 | 파일 | 내용 | 원격 적용 |
@@ -23,7 +38,7 @@ M4 PvP(침공·래더·치트 방어)의 서버 스키마와 적용 절차. 근�
 | `ships` | 기체 미러(래더·정찰 표시) | 본인 rw, 타인 select(정찰) |
 | `items` | 인벤/보관함 미러(사적) | 본인 rw만. 복제 약탈은 service_role |
 | `ladder` | 영구 순위표(ADR-0004) | **select만**. 순위 스왑·삽입·침하는 service_role/pg_cron 전용 |
-| `defenses` | 방어 배치(DefenseLayout JSON) + 정비도(풍화) | 본인 rw(단 `maintenance`/`budget_spent`는 트리거로 서버 전용), 타인 select(정찰) |
+| `defenses` | 방어 배치 + 정비도(풍화). `layout` 은 **3레이어 정규형**(`l1`/`l2`/`l3` — M7a `20260721000000` 이후. 구 DefenseLayout core/turrets/obstacles 는 폐기) | 본인 rw(단 `maintenance`는 트리거로 서버 전용, `budget_spent`는 M7a 이후 클라 신고값 무시하고 항상 0 고정 — 배치 포인트 예산제 폐지·컬럼은 하위호환용 잔존), 타인 select(정찰) |
 | `invasions` | 침공 리플레이 blob·결과·검증상태 | **insert(pending 증거)·본인 관련 select만**. 결과 확정 update 는 service_role |
 | `guardians` | 수호 기체 M5 자리(최소 스키마) | 본인 rw, 타인 select |
 
@@ -31,7 +46,7 @@ M4 PvP(침공·래더·치트 방어)의 서버 스키마와 적용 절차. 근�
 - `ladder`: 쓰기 정책을 만들지 않아 RLS 기본 거부 → 클라이언트 직접 순위 조작 불가.
 - `invasions`: `trg_invasions_guard_insert` 가 클라이언트 insert 를 `pending`·결과 null 로 강제. update 정책 없음 → 결과 못 바꿈.
 - `profiles.flagged`: `trg_profiles_guard` 가 클라이언트 update 시 이전 값 유지 강제.
-- `defenses.maintenance`/`defenses.budget_spent`: `trg_defenses_guard` 가 클라이언트 update 시 이전 값 유지 강제(코드리뷰 HIGH-2 수정) — `defenses_rw_own` 정책 자체는 전 컬럼 update 를 허용하므로, 이 트리거가 없으면 클라이언트가 `maintenance:=100`(풍화 자가회복)이나 `budget_spent:=0`(배치 예산 우회)을 직접 제출할 수 있었다. 정비 회복·예산 검증은 Phase C/E 의 service_role 트랜잭션만 갱신한다.
+- `defenses.maintenance`: `trg_defenses_guard` 가 클라이언트 update 시 이전 값 유지 강제(코드리뷰 HIGH-2 수정) — `defenses_rw_own` 정책 자체는 전 컬럼 update 를 허용하므로, 이 트리거가 없으면 클라이언트가 `maintenance:=100`(풍화 자가회복)을 직접 제출할 수 있었다. 정비 회복은 Phase C/E 의 service_role 트랜잭션만 갱신한다. (⚠️ `defenses.budget_spent`: M4~M6 시절엔 배치 포인트 예산(상한 20) 자가 신고를 이 트리거가 함께 막았으나, **M7a(`20260721000000`)가 배치 포인트 예산제 자체를 폐지**했다 — 이제 클라 경로에서 이 컬럼을 항상 `0` 으로 고정할 뿐이고, 무결성은 `invasion_layers_valid`(슬롯 수·구조 검증, `20260721000000_m7a_invasion_3layer.sql` §1~2)가 대신 맡는다.)
 - `service_role`(Edge Function) 키는 RLS 를 우회(BYPASSRLS)하므로 서버 로직만 순위/결과/정비도를 쓴다.
 - 역할 판정 헬퍼 `public.is_service_role()`은 `current_user in ('service_role','supabase_admin','postgres')` 로 서버/마이그레이션 컨텍스트를 식별하며, `search_path = ''` 로 고정해 함수 하이재킹(Supabase linter "function search path mutable" 경고) 여지를 없앤다.
 
@@ -67,6 +82,11 @@ Phase D(침공 검증·래더 스왑, 계획 §4)에서 매치메이킹 RPC 를 
    검증(불일치 시 reject). 예산 계산 규칙이 아직 Phase C 산출물(포탑 6종 비용표)에
    달려 있어 이번 마이그레이션에서는 스키마의 `check (budget_spent >= 0)` 이상을 걸지
    않는다.
+   > **[2026-07-21 갱신] moot — M7a 로 해소**: `20260721000000_m7a_invasion_3layer.sql` 이
+   > 배치 포인트 예산제 자체를 폐지했다(결정 #14 "슬롯이 곧 예산"). `defense_layout_cost`
+   > 함수는 `drop function` 됐고 `budget_spent` 는 클라 경로에서 항상 0 으로 고정된다.
+   > 이 항목이 우려하던 "포탑·장애물 비용 자가 신고" 게이트는 더 이상 필요 없다 — 대신
+   > `invasion_layers_valid`(슬롯 수·구조 검증)가 무결성을 담당한다.
 2. **DELETE→재생성으로 정비도 리셋**: `defenses_rw_own` 은 DELETE 도 허용하므로, 풍화
    (Phase E)로 `maintenance` 가 낮아진 행을 클라이언트가 지우고 `maintenance` 기본값
    100.00 인 새 행을 다시 INSERT 해 풍화를 무력화할 수 있다. `defenses_one_active_idx`
@@ -161,10 +181,13 @@ Phase A(verify-run)의 결정론 재실행 검증을 침공(PvP)에 배선하고
 | `functions/verify-invasion/index.ts` | `Deno.serve` HTTP·Auth·DB I/O 배선 | `Deno` |
 | `functions/verify-invasion/deno.json` | sloppy-imports + `check`/`bundle` 태스크 | — |
 
-> 배포용 자립 번들 `dist.index.js`(36모듈·70KB)는 `deno task bundle`로 생성하며
-> **워킹트리에 유지한다**(배포 담당 인수용 — 리드 지시). 파일 머리의
-> `/* eslint-disable */` 헤더가 `eslint .` 게이트 오염을 막는다(생성 태스크 후 수동
-> 재부착 필요 없음 — 재생성 시 헤더를 다시 붙일 것). `@generated` 주석 참조.
+> 배포용 자립 번들 `dist.index.js`(36모듈·70KB)는 `deno task bundle`로 생성한다.
+> ⚠️ **[2026-07-21 갱신] `.gitignore`(`supabase/functions/**/dist.index.js`)에 걸려
+> 있어 git 추적·커밋 대상이 아니다** — 워킹트리에 파일로 남아 있을 수는 있으나 보장되지
+> 않는다(새 클론·`git clean`·다른 세션·`src/sim` 변경 이후에는 아예 없거나 낡아 있다).
+> **배포 직전에는 항상 `deno task bundle`로 최신 `src/sim` 그래프 기준으로 재생성할
+> 것.** 파일 머리의 `/* eslint-disable */` 헤더가 `eslint .` 게이트 오염을 막는다(생성
+> 태스크 후 수동 재부착 필요 없음 — 재생성 시 헤더를 다시 붙일 것). `@generated` 주석 참조.
 
 방어 배치 대조 범위: EF 의 `defense-mismatch` 대조(`layoutEquals`)와 `hashWorld` 침공
 블록(replay.ts)은 **`core`·`turrets`·`obstacles`만** 접고 비교한다. `DefenseLayout.
@@ -212,7 +235,10 @@ guardianSlots`(M5 자리)는 양쪽 모두 대조·해시 대상이 아니므로
   `{ profile_id, rank, display_name, ship_summary(jsonb), defense_id, layout(jsonb), maintenance }`.
 - **`defense_layout_cost(layout)`**: `layout` 의 포탑(유형별 비용)·장애물 비용 합산.
   비용표는 `src/sim/defense.ts` `TURRET_SPECS[].cost`·`OBSTACLE_COST` 와 일치
-  (발칸1·저격3·산탄2·감속2·미사일3·전격2·장애물1).
+  (발칸1·저격3·산탄2·감속2·미사일3·전격2·장애물1). ⚠️ **[2026-07-21 폐기]** M7a
+  (`20260721000000_m7a_invasion_3layer.sql`)가 이 함수를 `drop function` 했다 —
+  배치 포인트 예산제 자체가 폐지됐고(결정 #14), `src/sim/defense.ts` 도 이후 삭제됐다.
+  현재 무결성 검증은 `invasion_layers_valid(layout)`(3레이어 슬롯 수·구조 검증)이 맡는다.
 - **`caller_is_service_role()`**: `request.jwt.claims` 의 role 을 읽어 SECURITY DEFINER
   안에서도 실제 호출자를 판정(아래 "SECURITY DEFINER 주의" 참조).
 
@@ -228,7 +254,11 @@ guardianSlots`(M5 자리)는 양쪽 모두 대조·해시 대상이 아니므로
   `defense_layout_cost(layout)`로 **직접 산출**(자가 신고 불가)하고 기본 예산 20 초과
   시 거부. UPDATE 는 `maintenance` 자가회복도 계속 차단(HIGH-2 승계), INSERT 는
   `maintenance`를 100 으로 강제. (⚠️ DELETE→재생성 정비도 리셋 우회는 Phase E cron
-  설계 몫으로 잔존 — 기존 착수 조건 ②-2 문서 유지.)
+  설계 몫으로 잔존 — 기존 착수 조건 ②-2 문서 유지.) ⚠️ **[2026-07-21 갱신]** 이 예산
+  게이트 자체가 M7a(`20260721000000`)에서 폐지됐다 — `guard_defenses_client_write`는
+  이제 `invasion_layers_valid`(3레이어 슬롯 수·구조 검증)로 대체됐고 `budget_spent`는
+  클라 경로에서 항상 0 고정이다(정비도 봉인 로직은 그대로 유지). 상세는
+  `supabase/migrations/20260721000000_m7a_invasion_3layer.sql` §1~2 및 문서 맨 위 안내 참고.
 
 ### SECURITY DEFINER 주의 (설계 반영)
 
@@ -338,7 +368,10 @@ service_role 만)과 (b) `request.jwt.claims` role 을 읽는 `caller_is_service
   동일 매핑임을 확인. 게다가 서버 트리거가 클라 신고값을 **무시하고 layout 에서 재산출**해
   덮어쓰므로(자가 신고 불가) 양측 표가 어긋나도 서버 값이 진실이다. ⚠️ 단 **예산 상한
   20** 은 양측 합의값이어야 한다 — 클라 에디터가 20 초과 배치를 허용하면 서버 INSERT/UPDATE
-  가 `check_violation`으로 거부한다.
+  가 `check_violation`으로 거부한다. ⚠️ **[2026-07-21 폐기]** 이 비용표·예산 상한 20
+  개념 전체가 M7a(`20260721000000`)로 폐지됐다. 클라 `defenseLayoutCost`·서버
+  `defense_layout_cost` 모두 더 이상 존재하지 않는다 — 3레이어 무결성은 슬롯 수 상한
+  (L1 6 / L2 12·10·8 / L3 보스1·수호2·기물6·모듈2)만으로 검증한다.
 
 ### 배포 (핸드오프 — deploy 자격 필요)
 
@@ -384,12 +417,19 @@ verify-invasion 은 `src/sim` 전체 그래프를 import 하고 배포 경로는
   `id`·`is_sso_user`·`is_anonymous` 3개뿐(원격 실측)이라 최소 insert 안전. 고정 UUID
   `000000e5-ed00-4000-8000-0000000000NN`(NN=01~20) — 클라 seedBases `SEED_BASE_PROFILE_IDS`
   와 조인 키. 방어 앵커 UUID `000000de-f000-4000-8000-0000000000NN`.
-- **난이도 분포**(계획 §5 하위~중위): 예산 = NN(#01 예산2 … #20 예산20) 단조 증가. 밴드
-  01~07 하위 / 08~14 중하 / 15~20 중위. 초기 rank = 21-NN(#01=rank20 … #20=rank1).
-  포탑 조합도 난이도별(하위=발칸 위주, 중위=저격·미사일+장애물). 전 layout 은 클라
-  `normalizeLayout`(포탑 유형 0~5·좌표 유한·halfW/halfH>0) 규칙 + 예산 20 이하를 정적
-  생성기로 검증(전부 통과) 후 임베드. 서버 `budget_spent` = `defense_layout_cost(layout)`
+- **난이도 분포**(계획 §5 하위~중위, 2026-07-17 시점): 예산 = NN(#01 예산2 … #20 예산20)
+  단조 증가. 밴드 01~07 하위 / 08~14 중하 / 15~20 중위. 초기 rank = 21-NN(#01=rank20 …
+  #20=rank1). 포탑 조합도 난이도별(하위=발칸 위주, 중위=저격·미사일+장애물). 전 layout 은
+  클라 `normalizeLayout`(포탑 유형 0~5·좌표 유한·halfW/halfH>0) 규칙 + 예산 20 이하를
+  정적 생성기로 검증(전부 통과) 후 임베드. 서버 `budget_spent` = `defense_layout_cost(layout)`
   20/20 일치 실측.
+  > ⚠️ **[2026-07-21 대체] `20260721010000_m7a_seed_bases_3layer.sql`이 이 20기지의
+  > `layout`을 3레이어로 덮어썼다**(원 시드 파일 자체는 수정하지 않고 별도 마이그레이션이
+  > 덮어쓰는 방식 — 재시드 규칙은 rank 배치와 정합해 하위 01~07=직선형 맵(소켓12)·편대1~3·
+  > 설비2~5·기물0~1·보스없음~1, 중하 08~14=굴곡형 맵(소켓10)·편대3~5·설비5~8·기물1·보스1,
+  > 중위 15~20=병목형 맵(소켓8)·편대5~6·설비8(만석)·기물2·보스1). 위 포탑 조합·예산20·
+  > `defense_layout_cost` 문단은 그 시점의 정확한 역사 기록이며 현재 이 20기지의 실제
+  > 배치를 더 이상 대표하지 않는다.
 - **정본 = 서버 defenses.layout**. 배치전/침공 모두 클라가 RPC 반환 layout 을 렌더·재실행,
   verify-invasion EF 도 DB layout 으로 재실행 → 클라 seedBases 에 layout 이중 정의 없음
   (드리프트 원천 차단).
@@ -729,7 +769,8 @@ Phase F(`20260717150000_m4_phase_f_pve_sampling.sql`) "리플레이 재실행 �
     key, 불일치 401). `sample_pve_runs` 로 대상 선정 → 배치 재실행 → `apply_pve_verification`
     으로 확정(+불일치 시 계정 플래그). 한 요청 최대 `MAX_BATCH`(200)건(시간예산 방어).
   - `deno.json`: `check`/`bundle` 태스크(verify-invasion 과 동일 패턴). 배포용 자립 번들
-    `dist.index.js`(36모듈·65KB, `/* eslint-disable */` 헤더) 워킹트리 유지 — **재배포는 리드**.
+    `dist.index.js`(36모듈·65KB, `/* eslint-disable */` 헤더)는 `.gitignore` 대상이라
+    커밋되지 않는다 — **재배포 전 `deno task bundle`로 재생성 필요, 재배포는 리드**.
 - **선정·확정 RPC**(마이그레이션 `20260718000000`, 둘 다 security definer·**service_role EXECUTE
   만**):
   - `sample_pve_runs(p_limit)`: pending 런을 **이상치 플래그(`profiles.flagged`) 계정 우선 +
@@ -772,8 +813,11 @@ Phase F(`20260717150000_m4_phase_f_pve_sampling.sql`) "리플레이 재실행 �
 증명)했고, DB 는 서버 권위 생애주기 RPC + 계보 경제를 담는다.
 
 ### sim·검증 (원격 DB 무관 — 이미 커밋·통과)
-- **수호 엔티티**(`src/sim/entities.ts` `guardian` kind 17 append, `src/sim/defense.ts`
-  `spawnGuardian`/`stepGuardians`): 추적형 요격 유닛. 스탯 = 스냅샷 × 남은 성능% × 계보 보너스
+- **수호 엔티티**(`src/sim/entities.ts` `guardian` kind 17 append; 스폰·스텝 로직은 당시
+  `src/sim/defense.ts` `spawnGuardian`/`stepGuardians`에 있었으나 **M7a(L11-legacy-purge)로
+  그 파일이 삭제**되며 스폰은 `src/sim/invasion/guardian.ts` `spawnGuardian`, 스텝은
+  `src/sim/invasion/guardianBridge.ts` `stepInvasionGuardians`(구 `stepGuardians` 대체 —
+  3레이어 슬롯 인덱스 매핑 포함)로 이관됐다): 추적형 요격 유닛. 스탯 = 스냅샷 × 남은 성능% × 계보 보너스
   (`data/guardian.ts resolveGuardianStats`, 순수 결정론 정수). 방어 배치 config 에 [스냅샷+성능%+
   보너스]를 실어(갈림길①A) 클라·서버가 동일 함수로 실효 스탯을 재현.
 - **해시 불변**: `hashWorld` 수호 폴드는 **이중 조건부**(invasion 존재 && guardians 비어있지 않음)
