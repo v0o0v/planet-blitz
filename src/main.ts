@@ -586,6 +586,10 @@ async function main(): Promise<void> {
     spectateSpeed = 1;
     const seed = replay.seed >>> 0;
     currentSeed = seed;
+    // 이전 런의 스프라이트 캐시를 비운다(B-1). 렌더러는 엔티티 id 로 스프라이트를 캐시하고
+    // 텍스처를 생성 시점에 한 번만 묶으므로, 비우지 않으면 관전 월드의 플레이어가 직전 런의
+    // 기체 그림으로 뜬다. 정본 규약: `createWorld` 앞에 항상 `entityRenderer.reset()`.
+    entityRenderer.reset();
     world = createWorld(seed, replay.config ?? DEFAULT_CONFIG);
     markTainted(world); // 렌더 전용 — 정산/제출 오염 차단(ADR-0008 패턴)
     recorder = null;
@@ -717,6 +721,10 @@ async function main(): Promise<void> {
     autotile.configure(null, seed);
     background.visible = true;
     currentSeed = seed;
+    // 스프라이트 캐시 리셋(B-1) — `createWorld` 앞. 렌더러가 엔티티 id 로 스프라이트를 캐시하고
+    // 텍스처를 생성 시점에 묶으므로, 비우지 않으면 바로 위 `applyShipSprite` 가 갈아끼운 기체가
+    // 화면에 반영되지 않고 직전 런의 그림이 남는다.
+    entityRenderer.reset();
     world = createWorld(seed, config);
     recorder = new ReplayRecorder(seed, world.config);
     prevSnap = snapshotWorld(world);
@@ -745,6 +753,11 @@ async function main(): Promise<void> {
     maintenance: number;
     timeLimitTicks: number;
   }): void {
+    // 켜져 있을 수 있는 메뉴 화면을 먼저 내린다. 하네스 경유 진입(host.startInvasion)은 이미
+    // clearToMenu 를 부르고 오지만(멱등), **방어 사령부의 [시험 침공] 버튼**은 자기 화면만
+    // 감추고 이 함수로 바로 들어온다 — 그 경로에서는 배치 프리뷰(defensePreview)가 계속 켜진
+    // 채로 런이 시작된다. 정식 침공(startInvasionRun)과 같은 규약으로 맞춘다.
+    clearToMenu();
     tutorialActive = false;
     shownLevel = 0;
     const invasion3: Invasion3Config = {
@@ -760,6 +773,8 @@ async function main(): Promise<void> {
     autotile.configure(null, opts.seed);
     background.visible = true;
     currentSeed = opts.seed;
+    // 스프라이트 캐시 리셋(B-1) — `createWorld` 앞(정식 침공·PvE 와 같은 규약).
+    entityRenderer.reset();
     world = createWorld(opts.seed, config);
     recorder = new ReplayRecorder(opts.seed, world.config);
     prevSnap = snapshotWorld(world);
@@ -909,6 +924,10 @@ async function main(): Promise<void> {
     autotile.configure(tiles, seed);
     background.visible = !autotile.active;
     currentSeed = seed;
+    // 스프라이트 캐시 리셋(B-1) — `createWorld` 앞. 위 `applyShipSprite` 가 `textures.player` 를
+    // 갈아끼워도, 이전 런의 플레이어 스프라이트(같은 엔티티 id)가 캐시에 남아 있으면 그 런 내내
+    // 옛 기체 그림이 그대로 뜬다(세션 중 기체 교체 5종 전부 재현된 결함).
+    entityRenderer.reset();
     world = createWorld(seed, config);
     recorder = new ReplayRecorder(seed, world.config);
     prevSnap = snapshotWorld(world);
@@ -1031,6 +1050,27 @@ async function main(): Promise<void> {
     );
   }
 
+  /**
+   * 런 종료 판정 → 정산 → 결과 화면 전이를 **정확히 1회** 돌린다(런당).
+   *
+   * ticker 프레임과 DEV 하네스 훅({@link HarnessHost.settleIfRunOver})이 **공유하는 단일
+   * 판정면**이다. 두 곳에 같은 판정을 적으면 갈라진다 — 이 저장소가 반복해서 당한 유형이라
+   * 호출부는 이 함수만 부른다.
+   *
+   * 계약(하네스 훅과 동일): **sim 을 스텝하지 않는다.** 종료 판정 + 정산 + 화면 전이만
+   * 한다 — `ff` 의 "정확히 N 틱" 결정론을 깨지 않기 위해서다. 정산의 오염/하네스 침공 격리
+   * (ADR-0008)는 `endRun` 안의 `!w.tainted && !harnessInvasionRun` 가드가 그대로 맡는다:
+   * 결과 화면으로는 넘어가되 재화·설계도·서버 제출은 차단된다.
+   *
+   * 관전(리플레이 재생)은 정산 경로를 타지 않으므로 여기서 먼저 걸러낸다.
+   */
+  function settleIfRunOver(): void {
+    const w = world;
+    if (w === null || spectateReplay !== null) return;
+    if (!shouldEnterSettlement(w.gameOver || w.victory, settled)) return;
+    endRun(w);
+  }
+
   // Kick off at the title screen (first launch forces the tutorial → base map).
   openTitle();
 
@@ -1150,9 +1190,8 @@ async function main(): Promise<void> {
     // Settlement screen on death or clear. `settled`로 게이트한다(런 종료당 정확히 1회
     // — shouldEnterSettlement 참조). `!resultOverlay.visible`로 게이트하면 '장비 정비'가
     // 오버레이를 숨긴 뒤 endRun이 재호출되어 결과 화면이 인벤토리 위로 다시 뜬다.
-    if (!spectating && w !== null && shouldEnterSettlement(runOver, settled)) {
-      endRun(w);
-    }
+    // 판정 자체는 settleIfRunOver 한 곳에만 산다 — DEV 하네스 훅도 같은 함수를 부른다.
+    settleIfRunOver();
 
     // --- HUD (only during a live run) ---
     const f = fps.tick(frame);
@@ -1379,6 +1418,10 @@ async function main(): Promise<void> {
       },
       isTainted: () => world?.tainted ?? false,
       currentScreen: () => currentScreenName,
+      // ff 는 rAF 가 안 도는 환경에서도 쓰이므로 종료 판정을 명시적으로 부른다. ticker 와
+      // **같은 함수**를 부른다 — 판정을 복제하면 두 경로가 갈라진다. sim 을 스텝하지 않아
+      // ff 의 틱 결정론은 그대로고, 오염/하네스 침공 격리(ADR-0008)도 endRun 가드가 유지한다.
+      settleIfRunOver: () => settleIfRunOver(),
     };
 
     harness = core.createHarness(host);

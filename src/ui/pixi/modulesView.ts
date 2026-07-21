@@ -30,7 +30,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../../save/profile.js';
 import { refreshPendingProfile } from '../../net/profileSync.js';
-import { t } from '../../i18n/index.js';
+import { t, type MessageKey } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, UI_FONT, TEXT_SHADOW, hexColor } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
@@ -114,10 +114,69 @@ const SHOP_ROW_GAP = 10;
 const SHOP_BTN_W = 130;
 const SHOP_BTN_H = 42;
 
+// 조회 실패 안내의 [다시 시도].
+const RETRY_W = 180;
+const RETRY_H = 44;
+const RETRY_GAP = 16;
+
 // 하단.
 const BACK_W = 320;
 const BACK_H = 60;
 const BACK_Y = 950;
+
+// ---------------------------------------------------------------------------
+// 로드 상태 판정 (순수) — **조회 실패를 "비어 있음"으로 말하지 않는다**
+// ---------------------------------------------------------------------------
+//
+// 실측 결함: uid 획득만 성공하면 `online = true` 를 세운 뒤 보관함 조회가 실패해도 `inv ?? []`
+// 로 빈 배열과 동일하게 취급했다. 그래서 서버 오류인데 화면은 "보관함이 비어 있습니다"·"방어
+// 미배치"라고 단정했고, 사용자는 **자기 모듈이 사라진 줄 안다**. 없다고 말하는 것과 모른다고
+// 말하는 것은 다르다. 판정을 순수 함수로 빼 두어 캔버스 없이 검증한다.
+
+/** 보관함 패널이 보여야 할 상태. */
+export type InventoryPanelKind = 'failed' | 'empty' | 'list';
+
+/**
+ * 보관함 패널 상태. 조회에 실패해도 **직전에 받아 둔 목록이 있으면 그것을 계속 보여 준다**
+ * (있던 것을 지워 놓고 오류를 띄우면 그게 더 무섭다). 목록이 없을 때만 실패를 말한다.
+ */
+export function inventoryPanelKind(s: { count: number; failed: boolean }): InventoryPanelKind {
+  if (s.count > 0) return 'list';
+  return s.failed ? 'failed' : 'empty';
+}
+
+/** 슬롯 패널이 보여야 할 상태. */
+export type SlotPanelKind = 'failed' | 'noBase' | 'slots';
+
+/**
+ * 슬롯 패널 상태. 장착 상태 조회가 실패한 것(`equip === null` + failed)과 방어를 아직 안 짠 것
+ * (`defenseId === null`)은 사용자가 해야 할 일이 정반대다 — 전자는 기다리기, 후자는 배치 저장하기.
+ */
+export function slotPanelKind(s: { equip: ModuleEquipState | null; failed: boolean }): SlotPanelKind {
+  if (s.equip === null) return s.failed ? 'failed' : 'noBase';
+  return s.equip.defenseId === null ? 'noBase' : 'slots';
+}
+
+/**
+ * 상태 → 안내 문구 키(목록을 그리는 상태면 null). 세 상태가 **서로 다른 키**로 갈리는 것이
+ * 이 함수의 계약이다.
+ *
+ * 실패는 `mod.load.failed`(조회 실패 전용)를 쓴다. 서버 연결 안내(`mod.slot.offline`)를 빌려
+ * 쓰면 "연결이 없다"와 "물어봤는데 답을 못 받았다"가 한 문구로 뭉개져, 온라인인데 조회만 실패한
+ * 사용자가 자기 연결을 의심하게 된다. 실패 안내에는 재시도 버튼이 함께 붙는다.
+ */
+export function panelMessageKey(kind: InventoryPanelKind | SlotPanelKind): MessageKey | null {
+  switch (kind) {
+    case 'failed':
+      return 'mod.load.failed';
+    case 'empty':
+      return 'mod.inv.empty';
+    case 'noBase':
+      return 'mod.slot.noBase';
+    default:
+      return null;
+  }
+}
 
 /** 잔여 1회 경고·만석 경고에 쓰는 주황. */
 const WARN_COLOR = 0xffb14c;
@@ -139,6 +198,9 @@ export class ModulesScreen {
   private loadToken = 0;
   private inventory: ModuleOwned[] = [];
   private equip: ModuleEquipState | null = null;
+  /** 직전 보관함/장착 조회가 실패했는가(= 비어 있음과 구분해야 하는 상태). */
+  private invFailed = false;
+  private equipFailed = false;
   private shop: ModuleInstance[] = [];
   private purchases: number[] = [];
 
@@ -183,6 +245,8 @@ export class ModulesScreen {
     this.loading = true;
     this.inventory = [];
     this.equip = null;
+    this.invFailed = false;
+    this.equipFailed = false;
     this.shop = [];
     this.purchases = [];
     this.selectedSlot = null;
@@ -234,7 +298,10 @@ export class ModulesScreen {
       listModuleShopPurchases(dateSeed),
     ]);
     if (token !== this.loadToken || !this.visible) return;
-    this.inventory = inv ?? [];
+    // 실패(null)를 빈 배열로 뭉개지 않는다 — 뭉개면 "보관함이 비어 있습니다"라고 거짓말하게 된다.
+    this.invFailed = inv === null;
+    this.equipFailed = equip === null;
+    if (inv !== null) this.inventory = inv;
     this.equip = equip;
     this.purchases = purchases ?? [];
     // 상점 재고는 (dateSeed,userSeed) 순수 함수로 클라가 재현(서버 호출 없음 — 표시=구매 대상 일치).
@@ -258,6 +325,8 @@ export class ModulesScreen {
       listModuleShopPurchases(dateSeed),
     ]);
     if (token !== this.loadToken || !this.visible) return;
+    this.invFailed = inv === null;
+    this.equipFailed = equip === null;
     if (inv !== null) this.inventory = inv;
     if (equip !== null) this.equip = equip;
     if (purchases !== null) this.purchases = purchases;
@@ -480,6 +549,31 @@ export class ModulesScreen {
     parent.addChild(el);
   }
 
+  /**
+   * 조회 실패 안내 + [다시 시도]. 실패는 사용자가 손쓸 수 있는 상태라 문구만 띄우고 끝내면
+   * 화면을 닫았다 여는 것 말고는 방법이 없다 — 재조회 버튼을 같은 자리에 붙인다.
+   */
+  private failedPanel(parent: Container, box: PanelContentBox, top = CONTENT_TOP + 40): void {
+    // 문구는 판정 함수에서 받는다 — 여기에 키를 직접 박으면 판정과 화면이 갈라진다.
+    const el = this.wrapped(t(panelMessageKey('failed') ?? 'mod.load.failed'), 19, COLOR.muted, box.w);
+    el.anchor.set(0.5, 0);
+    el.position.set(box.x + box.w / 2, top);
+    parent.addChild(el);
+
+    const retry = new PixiButton({
+      texture: this.ui['ui_btn_wood.png'],
+      fallbackColor: 0x4a3a24,
+      width: RETRY_W,
+      height: RETRY_H,
+      fontSize: 18,
+      label: stripEmoji(t('mod.load.retry')),
+      onClick: () => void this.reload(),
+    });
+    retry.container.position.set(box.x + (box.w - RETRY_W) / 2, top + el.height + RETRY_GAP);
+    if (this.busy) retry.setEnabled(false);
+    parent.addChild(retry.container);
+  }
+
   /** 패널 한 장(프레임 + 위치)을 만들어 부모에 붙이고 콘텐츠 상자를 돌려준다. */
   private addPanel(x: number, y: number, w: number, h: number): { panel: Container; box: PanelContentBox } {
     const panel = new Container();
@@ -516,6 +610,9 @@ export class ModulesScreen {
       totalH: total,
       get,
       set,
+      // 마스크를 행 경계로 자르면 마지막 행이 온전히 보여 **잘렸다는 신호가 사라진다** —
+      // 위치 표시가 유일한 "더 있다" 단서다(스크롤할 게 없으면 그려지지 않는다).
+      thumb: true,
     });
     let cy = 0;
     for (const row of rows) {
@@ -604,8 +701,11 @@ export class ModulesScreen {
     this.panelTitle(panel, box, t('mod.slot.head'));
 
     const equip = this.equip;
-    if (equip === null || equip.defenseId === null) {
-      this.msg(panel, box, t('mod.slot.noBase'));
+    const kind = slotPanelKind({ equip, failed: this.equipFailed });
+    if (kind !== 'slots' || equip === null || equip.defenseId === null) {
+      // 조회 실패("모른다")와 방어 미배치("아직 안 짰다")를 다른 문구로 가른다.
+      if (kind === 'failed') this.failedPanel(panel, box);
+      else this.msg(panel, box, t(panelMessageKey(kind) ?? 'mod.slot.noBase'));
       return;
     }
     const defenseId = equip.defenseId;
@@ -722,6 +822,14 @@ export class ModulesScreen {
     const { panel, box } = this.addPanel(x, y, w, h);
     this.panelTitle(panel, box, t('mod.inv.head'));
 
+    const kind = inventoryPanelKind({ count: this.inventory.length, failed: this.invFailed });
+    if (kind === 'failed') {
+      // 조회 실패에 "보관 0/20" 게이지·합성 버튼을 함께 그리면 **모듈이 0개라고 단정**하는 화면이
+      // 된다. 실패일 때는 수치를 아예 말하지 않는다.
+      this.failedPanel(panel, box);
+      return;
+    }
+
     const gauge = storageGauge(this.inventory.length);
     const gaugeLabel = this.label(t('mod.inv.storage', { count: gauge.count, cap: gauge.cap }), 18, COLOR.cream, '700');
     gaugeLabel.position.set(box.x, GAUGE_Y);
@@ -749,8 +857,8 @@ export class ModulesScreen {
 
     top = this.renderFuseBar(panel, box, top) + 14;
 
-    if (this.inventory.length === 0) {
-      this.msg(panel, box, t('mod.inv.empty'), top + 20);
+    if (kind === 'empty') {
+      this.msg(panel, box, t(panelMessageKey(kind) ?? 'mod.inv.empty'), top + 20);
       return;
     }
 

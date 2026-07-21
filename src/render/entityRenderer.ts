@@ -305,6 +305,15 @@ export class EntityRenderer {
     this.layer.addChild(this.effectLayer);
   }
 
+  /**
+   * 현재 살아 있는 사망 연출(폭발) 개수. **읽기 전용 관측창** — 렌더 거동에 전혀 관여하지 않고
+   * 상태를 노출만 한다. 정지 1프레임 렌더(방어 배치 프리뷰)는 이펙트가 페이드아웃될 프레임을
+   * 얻지 못해 누적이 눈에 보이는 결함이 되므로, 그 계약을 테스트가 수치로 못 박을 수 있어야 한다.
+   */
+  get effectCount(): number {
+    return this.effects.length;
+  }
+
   /** 스냅샷 1건의 텍스처. 매핑 판단은 순수 함수({@link spriteSlotFor})가 하고 여기서는 해석만 한다. */
   private textureFor(e: EntitySnapshot): Texture {
     return resolveSpriteSlot(this.textures, spriteSlotFor(e.kind, e.enemyType, this.planet));
@@ -468,6 +477,33 @@ export class EntityRenderer {
         .lineTo(rail.x2, rail.y2)
         .stroke({ color: TELEGRAPH_COLOR, width: TELEGRAPH_WIDTH, alpha: rail.alpha });
     }
+  }
+
+  /**
+   * 런 사이 스프라이트 캐시를 비운다(**런 시작 시 호출** — `main.ts` 의 `createWorld` 직전).
+   *
+   * ## 왜 필요한가 (라이브 플레이테스트 B-1)
+   * 스프라이트는 **엔티티 id 로 캐시**되고 텍스처는 `new Sprite(this.textureFor(e))` 로
+   * **생성 시점에 한 번만** 묶인다. 퇴출은 "이번 프레임에 안 보인 스프라이트" 뿐인데, 플레이어
+   * 엔티티 id 는 런이 바뀌어도 동일(항상 0번 슬롯)하므로 **이전 런의 플레이어 스프라이트가
+   * 그대로 재사용**된다 → `applyShipSprite` 가 `textures.player` 를 새 기체로 갈아끼워도
+   * 화면의 기체는 새로고침 전까지 첫 런의 그림으로 고정된다(기체 교체 5종 전부 재현).
+   *
+   * ## 왜 "매 프레임 텍스처 재조회"가 아니라 리셋인가
+   * 매 프레임 `spriteSlotFor`+`resolveSpriteSlot` 를 전 엔티티(탄막 포함 수백~수천)에 대해
+   * 다시 돌리는 것은 순수 렌더 오버헤드다. 텍스처가 바뀌는 시점은 **런 시작 하나뿐**이므로
+   * (`applyShipSprite` 호출 지점 = `createWorld` 직전) 그 시점에 캐시를 비우는 것이 정확하면서
+   * 프레임 비용 0 이다.
+   *
+   * `destroy()` 와 달리 레이어·오버레이는 살려 둔다 — 렌더러 인스턴스는 앱 수명 내내 유지된다.
+   */
+  reset(): void {
+    for (const { sprite } of this.sprites.values()) sprite.destroy();
+    this.sprites.clear();
+    for (const { sprite } of this.effects) sprite.destroy();
+    this.effects.length = 0;
+    this.overlay.clear();
+    this.lastPlayerAngle = 0;
   }
 
   destroy(): void {

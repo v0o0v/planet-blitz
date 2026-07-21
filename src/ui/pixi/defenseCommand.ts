@@ -29,7 +29,12 @@
  */
 
 import { Container, Graphics, Text } from 'pixi.js';
-import { saveProfile, type KeyValueStore, type Profile } from '../../save/profile.js';
+import {
+  saveProfile,
+  type GuardianRecord,
+  type KeyValueStore,
+  type Profile,
+} from '../../save/profile.js';
 import { refreshPendingProfile } from '../../net/profileSync.js';
 import { t, type MessageKey, type TParams } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
@@ -313,6 +318,69 @@ export interface CommandState {
   selected: DefenseSlotRef | null;
   /** 탭별 목록 스크롤 위치(탭을 오가도 보존된다). */
   scroll: number[];
+  /**
+   * 수호 슬롯 i 에 꽂은 {@link GuardianRecord.id} (UI 로컬 · 미저장).
+   *
+   * 배치 스키마(`InvasionGuardianPlacement`)는 수호를 **스냅샷 + 성능%** 로만 싣고 원본
+   * 레코드 id 는 싣지 않는다(wire 계약이라 이 레인이 바꿀 수 없다). 그래서 "이미 꽂은 수호"
+   * 판정을 `hp:performanceCP` 로 지어내면 **같은 프리셋·같은 점수로 두 번 퇴역한 기체가
+   * 완전히 겹친다** — `retireActiveShip` 이 신규 수호를 항상 `PERFORMANCE_FULL` 로 만들고
+   * hp 는 (preset, combatScore)의 순수 함수이며, 퇴역 직후 기체는 장비·투자가 0 이라
+   * combatScore 가 1 로 clamp 되기 때문에 연속 퇴역이면 **필연적으로** 같은 키가 된다.
+   * 그 결과 수호 2기를 갖고도 슬롯 2 를 영영 못 채웠다.
+   *
+   * 이 배열은 그 손실을 UI 안에서만 복구한다. 저장본에서 되살아난 슬롯은 id 를 모르므로
+   * (`null`) 기존 키 매칭으로 폴백하되, **다중집합으로 한 번씩만 소진**해 중복 기체가
+   * 서로를 지우지 않게 한다({@link pickGuardianId}).
+   */
+  guardianIds: (string | null)[];
+}
+
+/** 수호 신원의 **손실 있는** 대체 키(저장본 복원 슬롯 전용 폴백). */
+export function guardianFallbackKey(hp: number, performanceCP: number): string {
+  return `${hp}:${performanceCP}`;
+}
+
+/**
+ * 이 슬롯에 새로 꽂을 수호 레코드 id. 없으면 null.
+ *
+ * - 다른 슬롯이 **id 로** 점유한 기체는 제외한다(정확).
+ * - 저장본에서 복원돼 id 를 모르는 슬롯은 대체 키 **다중집합**으로 한 번씩만 소진한다 —
+ *   같은 키를 가진 기체가 2기면 1기만 가려지고 나머지 1기는 후보로 남는다.
+ * - **대상 슬롯 자신은 점유에서 제외**한다(재배치가 막히면 안 된다).
+ */
+export function pickGuardianId(
+  guardians: readonly GuardianRecord[],
+  slots: readonly (InvasionGuardianPlacement | null)[],
+  slotIds: readonly (string | null)[],
+  target: number,
+): string | null {
+  const usedIds = new Set<string>();
+  const unknown = new Map<string, number>();
+  for (let i = 0; i < slots.length; i++) {
+    if (i === target) continue;
+    const g = slots[i];
+    if (g === null || g === undefined) continue;
+    const id = slotIds[i] ?? null;
+    if (id !== null) {
+      usedIds.add(id);
+      continue;
+    }
+    const key = guardianFallbackKey(g.snapshot.hp, g.performanceCP);
+    unknown.set(key, (unknown.get(key) ?? 0) + 1);
+  }
+  for (const g of guardians) {
+    if (g.retired) continue;
+    if (usedIds.has(g.id)) continue;
+    const key = guardianFallbackKey(g.snapshot.hp, g.performanceCP);
+    const left = unknown.get(key) ?? 0;
+    if (left > 0) {
+      unknown.set(key, left - 1); // 이 슬롯이 점유 중인 기체로 간주하고 한 번만 가린다
+      continue;
+    }
+    return g.id;
+  }
+  return null;
 }
 
 /** 저장된 배치에서 화면 상태를 만든다. `saved` 가 없으면 빈 배치에서 시작. */
@@ -324,6 +392,7 @@ export function createCommandState(saved: InvasionLayers | null | undefined): Co
     saved: cloneInvasionLayers(base),
     selected: { kind: 'wave', index: 0 },
     scroll: new Array<number>(DEF_TAB_COUNT).fill(0),
+    guardianIds: new Array<string | null>(INVASION_GUARDIAN_SLOTS).fill(null),
   };
 }
 
@@ -352,9 +421,24 @@ export function isDirty(state: CommandState): boolean {
   return !layersEqual(state.draft, state.saved);
 }
 
-/** 되돌리기 — 저장본으로 초안을 복원한다. */
+/**
+ * 되돌리기 — 저장본으로 초안을 복원한다. 수호 슬롯의 id 추적도 함께 버린다(복원된 배치가
+ * 어느 레코드였는지 알 수 없으므로 대체 키 폴백으로 되돌아간다 — 거짓 신원보다 낫다).
+ */
 export function revertDraft(state: CommandState): void {
   state.draft = cloneInvasionLayers(state.saved);
+  state.guardianIds = new Array<string | null>(INVASION_GUARDIAN_SLOTS).fill(null);
+}
+
+/**
+ * [시험 침공] 을 눌렀을 때 무엇을 해야 하는가. 미저장 편집이 있으면 **먼저 물어야 한다** —
+ * 시험 침공은 화면을 닫고(`hide()` → `cb = null`), 복귀는 `show()` 라 저장본에서 상태를 새로
+ * 만든다. 즉 확인 없이 넘기면 방금 편집한 배치로 침공이 정상 실행되므로 편집이 살아 있다고
+ * 믿게 되는데, 돌아오면 초안도 '미저장' 경고도 함께 사라져 **무엇을 잃었는지조차 모른다**.
+ */
+export type TestInvadeAction = 'confirm' | 'go';
+export function testInvadeAction(state: CommandState): TestInvadeAction {
+  return isDirty(state) ? 'confirm' : 'go';
 }
 
 /** 저장 확정 — 초안을 저장본으로 승격한다(서버 업로드 성공 여부와 무관한 로컬 정본). */
@@ -450,6 +534,15 @@ const BOARD_H = BOARD_BOTTOM - BOARD_TOP;
 /** 패널 제목(26px) 아래에서 본문이 시작한다. */
 const CONTENT_TOP = 118;
 
+/**
+ * 화면 루트에서 프리뷰 노드가 놓일 z 인덱스 — **맨 앞**(자세한 근거는 `placePreview` 주석).
+ * 순수 함수로 빼 둔 이유는 노드 없이 이 계약을 테스트하기 위해서다(vitest 는 node 환경이라
+ * Pixi 표시 객체를 만들 수 없다). 구 동작은 상수 1(배경 바로 위 = 액자 아래)이었다.
+ */
+export function previewChildIndex(childCount: number): number {
+  return Math.max(0, childCount - 1);
+}
+
 /** 레이어 탭 좌측 프리뷰 열 폭. */
 const PREVIEW_COL_W = 900;
 const COL_GAP = 24;
@@ -464,10 +557,14 @@ const FOOT_H = 58;
 const MODAL_W = 1180;
 const MODAL_H = 800;
 
+/** 확인 팝업(미저장 시험 침공) — 목록이 아니라 문장 하나 + 버튼 3개다. */
+const CONFIRM_W = 860;
+const CONFIRM_H = 300;
+
 const WARN_COLOR = 0xffb14c;
 
-/** 팝업 종류. */
-type ModalKind = 'pick' | 'unit' | 'blueprints' | null;
+/** 팝업 종류. `confirmTest` = 미저장 편집이 있는 채로 시험 침공을 누른 경우의 확인. */
+type ModalKind = 'pick' | 'unit' | 'blueprints' | 'confirmTest' | null;
 
 /** 방어 사령부 화면 콜백. */
 export interface DefenseCommandCallbacks {
@@ -625,19 +722,30 @@ export class DefenseCommandScreen {
 
   // --- 배치 저장 -----------------------------------------------------------
 
-  /** 로컬 저장(즉시) → 서버 업로드(fire-and-forget, 결과만 토스트로 승격). */
+  /**
+   * 로컬 저장(즉시) → 서버 업로드(fire-and-forget, 결과만 토스트로 승격).
+   *
+   * ⚠ `busy` 해제는 **finally** 여야 한다. 예전에는 await 뒤 `if (!this.visible) return;` 이
+   * 해제보다 먼저 있어, 업로드 중에 [코어 모듈 열기]로 suspend 되면 busy 가 true 로 굳었다.
+   * `resume()` 은 busy 를 건드리지 않고 리셋은 `show()` 뿐이라 복귀 후 저장·되돌리기·배치·
+   * 강화·제작 버튼이 **영구 비활성**이 됐다.
+   */
   private async saveLayout(): Promise<void> {
     if (this.busy) return;
     this.busy = true;
     const layers = cloneInvasionLayers(this.state.draft);
-    this.profile.defenseLayout = layers;
-    saveProfile(this.profile, this.store ?? undefined);
-    commitDraft(this.state);
-    this.msgText = tCmd('def3.cmd.savedLocal');
-    this.render();
-    const result = await uploadDefenseLayout(layers);
+    let result: unknown;
+    try {
+      this.profile.defenseLayout = layers;
+      saveProfile(this.profile, this.store ?? undefined);
+      commitDraft(this.state);
+      this.msgText = tCmd('def3.cmd.savedLocal');
+      this.render();
+      result = await uploadDefenseLayout(layers);
+    } finally {
+      this.busy = false;
+    }
     if (!this.visible) return;
-    this.busy = false;
     this.msgText = result === null ? tCmd('def3.cmd.savedLocal') : tCmd('def3.cmd.saved');
     this.render();
   }
@@ -672,9 +780,14 @@ export class DefenseCommandScreen {
     }
     this.busy = true;
     this.render();
-    const result = await fn();
+    // busy 해제는 finally — suspend 중 완료돼도 잠금이 남지 않는다(saveLayout 주석 참고).
+    let result: DefenseUnitUpgradeResult | null;
+    try {
+      result = await fn();
+    } finally {
+      this.busy = false;
+    }
     if (!this.visible) return;
-    this.busy = false;
     if (result === null || !result.ok) {
       this.msgText = result?.code !== undefined ? result.code : tCmd('def3.cmd.err.failed');
     } else {
@@ -927,10 +1040,9 @@ export class DefenseCommandScreen {
       testW,
       FOOT_H,
       () => {
-        const cb = this.cb;
-        const layers = cloneInvasionLayers(this.state.draft);
-        this.hide();
-        cb?.onTestInvade(layers);
+        // 미저장 편집이 있으면 먼저 묻는다(testInvadeAction 주석 = 근거).
+        if (testInvadeAction(this.state) === 'confirm') this.openModal('confirmTest');
+        else this.startTestInvade();
       },
       { fontSize: 21 },
     );
@@ -964,6 +1076,15 @@ export class DefenseCommandScreen {
     cb?.onClose();
   }
 
+  /** 시험 침공 실행 — 현재 초안으로 오염 런을 띄우고 화면을 닫는다(ADR-0008). */
+  private startTestInvade(): void {
+    const cb = this.cb;
+    const layers = cloneInvasionLayers(this.state.draft);
+    this.modal = null;
+    this.hide();
+    cb?.onTestInvade(layers);
+  }
+
   // --- 레이어 탭 -----------------------------------------------------------
 
   /** 프리뷰 뷰포트(레이어 탭 좌측 패널 안). */
@@ -978,8 +1099,16 @@ export class DefenseCommandScreen {
   }
 
   /**
-   * 프리뷰 노드를 화면 루트 **바로 뒤**로 돌린다. 프리뷰는 stage 에 붙는 별도 노드라
-   * 이 화면보다 먼저 붙었든 나중에 붙었든 순서를 매 렌더 끝에 강제해야 패널을 뚫지 않는다.
+   * 프리뷰 노드를 화면 루트 **맨 앞**으로 돌린다.
+   *
+   * 예전엔 인덱스 1(배경 바로 위)로 내렸다 — "패널을 뚫지 않게" 하려던 것인데, 프리뷰 액자
+   * 패널이 그 위를 `nineSlicePanel` 기본 `fillAlpha: 0.96` 으로 덮는다. 실측(라이브 캡처
+   * 픽셀 샘플): 프리뷰 배경 `0x0b0a18`(11,10,24) 이 화면에 (27,23,45) 로, 마커 링
+   * `0xff6a5a` 는 (230,96,83) 이어야 할 것이 (37,27,48) 로 찍혔다 — 프리뷰 기여분이
+   * **4.6%**. 즉 프레이밍·마커를 아무리 고쳐도 액자 뒤에 묻혀 사실상 빈 상자였다.
+   *
+   * 프리뷰는 자기 뷰포트로 마스크되고, 그 뷰포트는 액자 안쪽(제목 아래·안내문 위)이라
+   * 맨 앞에 둬도 다른 UI 를 가리지 않는다. 팝업이 뜨면 위에서 `stop()` 하므로 팝업도 안전.
    */
   private placePreview(): void {
     const phase = tabPhase(this.state.tab);
@@ -991,7 +1120,9 @@ export class DefenseCommandScreen {
     this.preview.start(this.state.draft);
     this.syncPreview();
     const node = this.preview.layer;
-    if (node.parent === this.root) this.root.setChildIndex(node, 1); // 배경 바로 위.
+    if (node.parent === this.root) {
+      this.root.setChildIndex(node, previewChildIndex(this.root.children.length));
+    }
   }
 
   private renderLayerTab(tab: number): void {
@@ -1142,7 +1273,11 @@ export class DefenseCommandScreen {
       tCmd('def3.cmd.slot.clear'),
       ROW_BTN_W,
       ROW_BTN_H,
-      () => this.mutate(clearSlot(this.state.draft, slot)),
+      () => {
+        // 수호를 비우면 신원 추적도 함께 비운다(안 그러면 그 기체가 영영 후보에서 빠진다).
+        if (slot.kind === 'guardian') this.state.guardianIds[slot.index] = null;
+        this.mutate(clearSlot(this.state.draft, slot));
+      },
       { fontSize: 17, enabled: ref !== null || guardian !== null },
     );
     clear.container.position.set(w - ROW_BTN_W - 12, btnY);
@@ -1168,13 +1303,15 @@ export class DefenseCommandScreen {
    * 기획상 "어느 기체를 쓰느냐"이지 "몇 픽셀에 두느냐"가 아니다.
    */
   private placeNextGuardian(index: number): void {
-    const used = new Set<string>();
-    for (const g of this.state.draft.l3.guardians) {
-      if (g !== null && g !== undefined) used.add(String(g.snapshot.hp) + ':' + String(g.performanceCP));
-    }
-    const pick = this.profile.guardians.find(
-      (g) => !g.retired && !used.has(String(g.snapshot.hp) + ':' + String(g.performanceCP)),
+    // 신원 판정은 `pickGuardianId` 가 한다 — hp:performanceCP 키는 연속 퇴역 시 필연적으로
+    // 충돌해 슬롯 2 를 영영 못 채웠다(그 함수 주석이 근거).
+    const id = pickGuardianId(
+      this.profile.guardians,
+      this.state.draft.l3.guardians,
+      this.state.guardianIds,
+      index,
     );
+    const pick = id === null ? undefined : this.profile.guardians.find((g) => g.id === id);
     if (pick === undefined) {
       this.msgText = tCmd('def3.cmd.pick.none');
       this.render();
@@ -1189,6 +1326,7 @@ export class DefenseCommandScreen {
       lineageBonusBp: guardianBonusBp(this.profile.lineage),
       milestones: guardianMilestones(this.profile.lineage.guardianLevel),
     };
+    this.state.guardianIds[index] = pick.id;
     this.mutate(placeGuardian(this.state.draft, index, placement));
   }
 
@@ -1307,10 +1445,13 @@ export class DefenseCommandScreen {
         ? 'def3.cmd.pick.title'
         : this.modal === 'unit'
           ? 'def3.cmd.inv.head'
-          : 'def3.cmd.inv.blueprints';
+          : this.modal === 'confirmTest'
+            ? 'def3.cmd.test.confirm.title'
+            : 'def3.cmd.inv.blueprints';
+    const confirm = this.modal === 'confirmTest';
     const parts = makeModal({
-      width: MODAL_W,
-      height: MODAL_H,
+      width: confirm ? CONFIRM_W : MODAL_W,
+      height: confirm ? CONFIRM_H : MODAL_H,
       title: tCmd(titleKey),
       onClose: () => this.closeModal(),
       panelTexture: this.ui['ui_panel.png'],
@@ -1320,7 +1461,55 @@ export class DefenseCommandScreen {
 
     if (this.modal === 'pick') this.renderPickModal(parts);
     else if (this.modal === 'unit') this.renderUnitModal(parts);
+    else if (this.modal === 'confirmTest') this.renderConfirmTestModal(parts);
     else this.renderBlueprintModal(parts);
+  }
+
+  /**
+   * 미저장 편집 + [시험 침공] 확인. 세 갈래: 저장 후 진행 / 그대로 진행(초안 폐기) / 취소.
+   *
+   * 문구는 `def3.cmd.test.confirm.*` 전용 키다 — 버튼 라벨을 조합해 만든 문장("저장하지 않은
+   * 변경 · 시험 침공")은 세 갈래가 각각 무슨 결과인지 말해 주지 못했다.
+   */
+  private renderConfirmTestModal(parts: ModalParts): void {
+    const { panel, box } = parts;
+    const body = this.wrapped(tCmd('def3.cmd.test.confirm.body'), 20, COLOR.cream, box.w);
+    body.position.set(box.x, box.y + 52);
+    panel.addChild(body);
+
+    const gap = 14;
+    const bw = Math.floor((box.w - gap * 2) / 3);
+    const by = box.bottom - 58;
+    const buttons: { label: string; primary: boolean; run: () => void }[] = [
+      {
+        label: tCmd('def3.cmd.test.confirm.saveAndGo'),
+        primary: true,
+        run: () => {
+          // 로컬 저장은 동기로 끝나고 업로드만 뒤에서 계속된다 — 초안이 확실히 남는다.
+          void this.saveLayout();
+          this.startTestInvade();
+        },
+      },
+      {
+        label: tCmd('def3.cmd.test.confirm.discardAndGo'),
+        primary: false,
+        run: () => this.startTestInvade(),
+      },
+      {
+        label: tCmd('def3.cmd.test.confirm.cancel'),
+        primary: false,
+        run: () => this.closeModal(),
+      },
+    ];
+    buttons.forEach((b, i) => {
+      const btn = this.woodButton(b.label, bw, 52, b.run, {
+        primary: b.primary,
+        enabled: !this.busy || i > 0,
+        fontSize: 19,
+      });
+      btn.container.position.set(box.x + i * (bw + gap), by);
+      panel.addChild(btn.container);
+    });
   }
 
   /** 슬롯에 꽂을 방어체 고르기. */

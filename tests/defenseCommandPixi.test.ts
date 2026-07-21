@@ -47,8 +47,15 @@ import {
   tabForSlot,
   tabPhase,
   unitAffixLine,
+  pickGuardianId,
+  guardianFallbackKey,
+  placeGuardian,
+  testInvadeAction,
   type DefenseSlotRef,
 } from '../src/ui/pixi/defenseCommand.js';
+import { defaultProfile } from '../src/save/profile.js';
+import { retireActiveShip } from '../src/save/guardianLifecycle.js';
+import type { InvasionGuardianPlacement } from '../src/sim/invasion/types.js';
 import { defenseUniqueNameKey, type DefenseUnitInstance } from '../data/defenseUnits.js';
 import { CATALOG } from '../src/i18n/catalog.js';
 import { getLocale } from '../src/i18n/index.js';
@@ -476,6 +483,159 @@ describe('시험 침공은 정산·제출 경로를 타지 않는다', () => {
     // 모듈 진입에서 show() 를 다시 부르면 편집이 날아간다 — suspend 후 resume 콜백만 넘긴다.
     expect(ui).toMatch(/this\.suspend\(\);\s*\n\s*cb\?\.onOpenModules\(\(\) => this\.resume\(\)\)/);
   });
+});
+
+// ---------------------------------------------------------------------------
+// ⑨ 수호 슬롯 신원 (A-3) — 손실 있는 대체 키가 슬롯 2 를 봉인했다
+// ---------------------------------------------------------------------------
+//
+// 재현 경로는 **정규 경로**다: `retireActiveShip` 를 두 번 부르면(장비·투자 0 이라
+// `retirementCombatScore` 가 1 로 clamp) hp·performanceCP 가 완전히 같은 수호가 2기 생긴다.
+// 구 판정 키(`hp:performanceCP`)로는 두 기체가 구별되지 않아, 1기를 꽂는 순간 나머지 1기도
+// 후보에서 사라져 슬롯 2 에는 영영 "배치할 방어체가 없습니다" 만 떴다.
+
+describe('수호 슬롯 신원(중복 판정)', () => {
+  /** 연속 퇴역 2회 — 실제 게임이 수호를 만드는 그 경로. */
+  function twoIdenticalGuardians() {
+    const profile = defaultProfile();
+    retireActiveShip(profile);
+    retireActiveShip(profile);
+    return profile;
+  }
+
+  function placementOf(g: { snapshot: { hp: number }; performanceCP: number }): InvasionGuardianPlacement {
+    return {
+      x: 0,
+      y: 0,
+      snapshot: g.snapshot,
+      performanceCP: g.performanceCP,
+      lineageBonusBp: 0,
+      milestones: [],
+    } as unknown as InvasionGuardianPlacement;
+  }
+
+  it('연속 퇴역 2기는 대체 키가 완전히 겹친다(결함의 전제 — 공허 검증 방지)', () => {
+    const p = twoIdenticalGuardians();
+    expect(p.guardians.length).toBe(2);
+    const [a, b] = p.guardians as [typeof p.guardians[0], typeof p.guardians[0]];
+    expect(guardianFallbackKey(a.snapshot.hp, a.performanceCP)).toBe(
+      guardianFallbackKey(b.snapshot.hp, b.performanceCP),
+    );
+    expect(a.id).not.toBe(b.id); // 신원 자체는 다르다 — 키만 손실이었다
+  });
+
+  it('슬롯 1 에 꽂은 뒤에도 슬롯 2 에 나머지 1기를 꽂을 수 있다', () => {
+    const p = twoIdenticalGuardians();
+    const first = p.guardians[0]!;
+    const slots: (InvasionGuardianPlacement | null)[] = [placementOf(first), null];
+    const ids: (string | null)[] = [first.id, null];
+    const next = pickGuardianId(p.guardians, slots, ids, 1);
+    expect(next).toBe(p.guardians[1]!.id);
+  });
+
+  it('슬롯 자신은 점유에서 제외된다(재배치가 막히지 않는다)', () => {
+    const p = twoIdenticalGuardians();
+    const a = p.guardians[0]!;
+    const slots: (InvasionGuardianPlacement | null)[] = [placementOf(a), null];
+    // 슬롯 0 을 다시 채우려 하면 슬롯 0 자신은 무시되므로 첫 후보가 그대로 나온다.
+    expect(pickGuardianId(p.guardians, slots, [a.id, null], 0)).toBe(a.id);
+  });
+
+  it('저장본 복원(슬롯 id 미상)이어도 같은 키 2기 중 1기만 가려진다', () => {
+    const p = twoIdenticalGuardians();
+    const slots: (InvasionGuardianPlacement | null)[] = [placementOf(p.guardians[0]!), null];
+    // id 를 모르는 슬롯 → 대체 키 다중집합으로 **한 번만** 소진한다.
+    const next = pickGuardianId(p.guardians, slots, [null, null], 1);
+    expect(next).not.toBeNull();
+    expect(p.guardians.some((g) => g.id === next)).toBe(true);
+  });
+
+  it('두 슬롯이 모두 차면 더 줄 기체가 없다', () => {
+    const p = twoIdenticalGuardians();
+    const [a, b] = p.guardians as [typeof p.guardians[0], typeof p.guardians[0]];
+    const slots: (InvasionGuardianPlacement | null)[] = [placementOf(a), placementOf(b)];
+    expect(pickGuardianId(p.guardians, slots, [a.id, b.id], 0)).toBe(a.id); // 자기 슬롯 재배치
+    // 세 번째 슬롯이 있었다면 후보가 없다.
+    expect(pickGuardianId(p.guardians, slots, [a.id, b.id], 2)).toBeNull();
+  });
+
+  it('소멸(retired)한 기체는 후보가 아니다', () => {
+    const p = twoIdenticalGuardians();
+    for (const g of p.guardians) g.retired = true;
+    expect(pickGuardianId(p.guardians, [null, null], [null, null], 0)).toBeNull();
+  });
+
+  it('되돌리기는 수호 id 추적을 함께 버린다(거짓 신원 잔류 금지)', () => {
+    const state = createCommandState(null);
+    state.guardianIds[0] = 'g-1';
+    state.draft = placeGuardian(
+      state.draft,
+      0,
+      placementOf({ snapshot: { hp: 100 }, performanceCP: 10_000 }),
+    );
+    revertDraft(state);
+    expect(state.draft.l3.guardians[0]).toBeNull();
+    expect(state.guardianIds.every((v) => v === null)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑩ 시험 침공이 미저장 편집을 조용히 버리지 않는다 (A-4)
+// ---------------------------------------------------------------------------
+//
+// [시험 침공] 은 `hide()` 로 화면을 끝내고, 복귀는 `main.ts` → `show()` → `createCommandState`
+// (저장본에서 새로) 다. 즉 확인이 없으면 초안이 통째로 증발하는데, 침공은 편집한 배치로
+// 정상 실행되므로 사용자는 편집이 살아 있다고 믿는다. 돌아오면 '미저장' 경고까지 함께
+// 사라져 무엇을 잃었는지도 알 수 없다.
+
+describe('시험 침공 · 미저장 편집 보호', () => {
+  const ui = readSource('../src/ui/pixi/defenseCommand.ts');
+
+  it('미저장이면 확인, 깨끗하면 바로 진행', () => {
+    const state = createCommandState(null);
+    expect(testInvadeAction(state)).toBe('go');
+    state.draft = placeRef(state.draft, { kind: 'boss', index: 0 }, ref(0));
+    expect(testInvadeAction(state)).toBe('confirm');
+    commitDraft(state);
+    expect(testInvadeAction(state)).toBe('go');
+  });
+
+  it('푸터 [시험 침공] 버튼이 그 판정을 실제로 거친다(배선 확인)', () => {
+    // 판정 함수만 있고 버튼이 안 부르면 2000개 테스트가 초록인 채 결함이 남는다.
+    expect(ui).toMatch(/testInvadeAction\(this\.state\) === 'confirm'\)\s*this\.openModal\('confirmTest'\)/);
+    expect(ui).toMatch(/private renderConfirmTestModal\(/);
+    // 확인 팝업은 저장/그대로/취소 세 갈래여야 한다.
+    expect(ui).toMatch(/void this\.saveLayout\(\);\s*\n\s*this\.startTestInvade\(\);/);
+    expect(ui).toMatch(/run: \(\) => this\.startTestInvade\(\)/);
+    expect(ui).toMatch(/run: \(\) => this\.closeModal\(\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑪ busy 플래그 누수 (A-5)
+// ---------------------------------------------------------------------------
+//
+// `if (!this.visible) return;` 이 해제보다 앞에 있으면, 업로드/강화 중 [코어 모듈 열기]로
+// suspend 됐다 돌아왔을 때 busy 가 true 로 굳는다(`resume()` 은 busy 를 안 건드리고 리셋은
+// `show()` 뿐). 결과: 저장·되돌리기·배치·강화·제작 버튼이 영구 비활성.
+
+describe('busy 잠금은 항상 풀린다', () => {
+  const ui = readSource('../src/ui/pixi/defenseCommand.ts');
+
+  function bodyOf(name: string): string {
+    const m = new RegExp(`private async ${name}\\([\\s\\S]*?\\n  \\}`).exec(ui);
+    expect(m, `${name} 본문을 못 찾음`).not.toBeNull();
+    return m![0];
+  }
+
+  for (const fn of ['saveLayout', 'runUpgrade']) {
+    it(`${fn} 은 finally 로 busy 를 해제한다`, () => {
+      const body = bodyOf(fn);
+      expect(body).toMatch(/\}\s*finally\s*\{\s*\n\s*this\.busy = false;/);
+      // 조기 반환이 해제보다 앞서면(구 결함) 잠금이 남는다.
+      expect(body).not.toMatch(/if \(!this\.visible\) return;\s*\n\s*this\.busy = false;/);
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------

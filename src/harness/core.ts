@@ -202,6 +202,22 @@ export interface HarnessHost {
   isTainted(): boolean;
   /** The current screen name for snapshots. */
   currentScreen(): string;
+  /**
+   * 런 종료 감지를 **1회** 돌린다(정산 → 결과 화면 전이). 호스트 프레임(ticker)에만 있는
+   * 판정을 하네스가 명시적으로 부르기 위한 훅으로, 런이 아직 안 끝났으면 no-op 이다.
+   *
+   * 왜 필요한가: {@link Harness.ff} 는 `stepOnce` 를 동기 루프로 돌린 뒤 `renderOnce()` 만
+   * 부른다. 종료 감지가 ticker 에만 있으므로 **rAF 가 안 도는 환경(백그라운드 탭·headless)**
+   * 에서는 ff 로 hp 0 까지 가도 `screen === 'run'` 에 멈춰, 하네스로 런 완주를 검증할 수
+   * 없었다.
+   *
+   * 계약: **sim 을 스텝하면 안 된다.** 종료 판정 + 정산 + 화면 전이만 한다 — ff 의
+   * "정확히 N 틱" 결정론과 비오염 성질(ADR-0008)을 깨지 않기 위해서다.
+   *
+   * optional 인 이유: 구현하지 않은 호스트(테스트 fake 등)에서는 ff 가 이 단계를 조용히
+   * 건너뛴다(종전 동작).
+   */
+  settleIfRunOver?(): void;
 }
 
 /** The public `window.__pb.harness` API surface. */
@@ -224,8 +240,13 @@ export interface Harness {
   jumpInvasionLayer(layer: 1 | 2 | 3): boolean;
   /**
    * Headless fast-forward: synchronously step `ticks` sim ticks with autopilot
-   * (default) or neutral input, then render one frame. Inputs go through the
+   * (default) or neutral input, then run the host's run-end detection once
+   * ({@link HarnessHost.settleIfRunOver}) and render one frame. Inputs go through the
    * normal record path so the replay stays reproducible. NOT tainting.
+   *
+   * 종료 감지를 여기서 부르는 이유: 그 판정은 호스트 프레임(ticker)에만 있어, rAF 가 안 도는
+   * 환경에서는 ff 로 hp 0 까지 가도 결과 화면으로 넘어가지 않았다(하네스로 런 완주를 검증할
+   * 수 없었다).
    */
   ff(ticks: number, opts?: { autopilot?: boolean }): void;
   /** Realtime accelerated playback: scale the main ticker (1 | 4 | 16). */
@@ -439,6 +460,11 @@ export function createHarness(host: HarnessHost): Harness {
         const input = useAutopilot ? autopilotInput(world) : emptyInput();
         host.stepOnce(input); // records + snapshots + observe (via host)
       }
+      // 런이 이 ff 안에서 끝났을 수 있다. 종료 감지는 호스트 프레임(ticker)에만 있으므로
+      // rAF 가 안 도는 환경에서는 여기서 명시적으로 한 번 돌려야 결과 화면으로 넘어간다
+      // (안 그러면 hp 0 인데 screen === 'run' 에 멈춘다). sim 을 스텝하지 않는 훅이라
+      // 결정론·비오염은 그대로다. 렌더는 전이 뒤에 해야 결과 화면이 그려진다.
+      host.settleIfRunOver?.();
       host.renderOnce();
     },
 
