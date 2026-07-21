@@ -51,3 +51,6 @@ assets/_raw/
 
 # Edge Function 자립 번들 산출물(deno task bundle) — 소스 index.ts가 원본, 커밋 금지
 supabase/functions/**/dist.index.js
+
+# Supabase CLI 로컬 상태(연결된 프로젝트 정보·CLI 버전) — 머신마다 다르고 리포에 들어갈 물건이 아니다
+supabase/.temp/
