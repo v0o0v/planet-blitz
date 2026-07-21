@@ -114,6 +114,7 @@ import {
 } from './capstones.js';
 import {
   hasSignature,
+  SIGNATURE_BITS,
   SIG_BRUISER_ARMOR,
   SIG_ARC_OVERCHARGE,
   SIG_PHANTOM_CLOAK,
@@ -125,8 +126,10 @@ import {
   clampArmorStacks,
   overchargeBp,
   CLOAK_BREAK_BP,
-  cloakActive,
+  CLOAK_UNHIT_TICKS,
+  CLOAK_HOLD_TICKS,
   hatchThreshold,
+  BROOD_MARK,
   CUSHION_RECOVER_TICKS,
   cushionDeferredDamage,
   cushionSettled,
@@ -503,6 +506,24 @@ export interface WorldState {
   bulletCap: number;
   /** Live enemy-bullet count this tick (maintained during the enemy phase). */
   enemyBulletCount: number;
+  /**
+   * 이 런에서 **유일하게** 활성인 시그니처 비트(18~23), 없으면 -1. `createWorld` 가 config 에서
+   * 한 번 계산하고 런 중에는 절대 바뀌지 않는다(`config.shipType`·`config.loadout.uniqueMask`
+   * 는 sim 이 쓰지 않는 읽기 전용 입력이다 — 파워업도 loadout 을 갈아끼우지 않는다).
+   *
+   * ⚠️ **정규화가 유일한 이유**(적대적 리뷰 HIGH-1): 예전 `signatureOn` 은 마스크 축과 타입 축의
+   * OR 를 **비트마다 독립으로** 판정했다. 그래서 마스크에 시그니처 비트가 둘 이상 켜지면
+   * `stepShipSignature`(첫 분기에서 return)는 하나만 굴리는데 소비 지점(autoAttack·
+   * resolveCollisions)은 여럿이 참이 되어 **aux 슬롯이 별칭**이 됐다 — 예: 마스크 18|20 런에서
+   * 팬텀 소비자가 브루저의 장갑 소멸 타이머(1..179)를 "은신 해제 대기 플래그"로 읽어 사실상
+   * 모든 발사에 2.5배가 실렸다(실측 kills 41→45, 잔존 적 hp 241→78). 침공 EF 는 공격자
+   * loadout 을 검증 없이 재실행에 쓰므로 자기 강화 위조가 내적 일관 상태로 accept 된다.
+   * 여기서 **런당 시그니처를 정확히 하나로 접어** 그 별칭을 구조적으로 없앤다.
+   *
+   * 캐시인 부수 효과로 `playerCloaked` 가 적 1기·1틱마다 `shipTypeDef()` 정규화를 다시 도는
+   * 비용(적 200기 × 14400틱 ≈ 290만 회)도 사라진다.
+   */
+  sigBit: number;
   kills: number;
   gems: number;
   // --- Progression (Phase 3) ---
@@ -685,6 +706,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     playerId: player.id,
     bulletCap: 300,
     enemyBulletCount: 0,
+    sigBit: computeActiveSignature(config),
     kills: 0,
     gems: 0,
     xp: 0,
@@ -845,7 +867,7 @@ function isGimmick(e: Entity): boolean {
     e.kind === 'destructible' ||
     e.kind === 'magnetEmitter' ||
     e.kind === 'bombDevice' ||
-    (e.kind === 'turretPickup' && e.ownerId !== DRONE_MARK) ||
+    (e.kind === 'turretPickup' && e.ownerId !== DRONE_MARK && e.ownerId !== BROOD_MARK) ||
     (e.kind === 'hazard' && e.life < 0)
   );
 }
@@ -1108,51 +1130,37 @@ const OVERCHARGE_TICK_CAP = 600;
 const CUSHION_TICK_CAP = 600;
 
 /**
- * 은신 무피격 카운터 상한. 임계(CLOAK_UNHIT_TICKS=240)를 한참 넘긴 값이라 거동에는 영향이
- * 없고(그 위로는 `cloakActive` 가 항상 true), 적이 한 명도 사거리에 들어오지 않는 구간에서
- * aux0 이 무한히 커지는 것만 막는다 — aux 는 u32 로 해시된다(replay.ts hashEntity).
+ * 이 런의 **유일한** 시그니처 비트를 config 에서 계산한다(없으면 -1). `createWorld` 가 딱 한 번
+ * 부르고 결과를 `state.sigBit` 에 봉인한다.
+ *
+ * ## 정규화 규칙 (정확히 하나를 고른다)
+ *  ① 마스크 축이 우선이다 — `uniqueMask` 에 켜진 시그니처 비트 중 **가장 낮은 것 하나**.
+ *     최저 비트를 고르는 이유는 예전 `stepShipSignature` 의 if-체인 순서(18→23)와 같은 승자를
+ *     내어, 정상적인 단일 시그니처 런의 거동·해시가 한 비트도 바뀌지 않기 때문이다.
+ *  ② 마스크 축이 비면 타입 축(`shipTypeDef(shipType).signatureBit`).
+ *  ③ 둘 다 없으면 -1(스트라이커) — 신규 코드가 한 줄도 실행되지 않는다.
+ *
+ * 정상 경로에서는 loadout.ts 가 타입의 시그니처 비트를 그대로 OR-in 하므로 ①과 ②가 같은 값이라
+ * 이 정규화는 무연산이다. 둘 이상이 켜진 입력(위조·미래의 합성 장비)에서만 하나로 접힌다.
  */
-const CLOAK_TICK_CAP = 600;
+function computeActiveSignature(config: WorldConfig): number {
+  const mask = config.loadout?.uniqueMask ?? 0;
+  for (const bit of SIGNATURE_BITS) {
+    if (hasSignature(mask, bit)) return bit;
+  }
+  const typeBit = shipTypeDef(config.shipType ?? 0).signatureBit;
+  return typeBit;
+}
 
-/** 이 런에서 시그니처 `bit` 이 활성인가. 위 주석의 2축 OR. */
+/** 이 런에서 시그니처 `bit` 이 활성인가 — 정규화된 단일 비트와의 동치 비교. */
 function signatureOn(state: WorldState, bit: number): boolean {
-  if (hasSignature(state.config.loadout?.uniqueMask ?? 0, bit)) return true;
-  return shipTypeDef(state.config.shipType ?? 0).signatureBit === bit;
+  return state.sigBit === bit;
 }
 
-/**
- * 팬텀 은신 — **적이 지금 플레이어를 조준 대상으로 삼을 수 있는가**의 술어(적 AI 가 읽는다).
- *
- * ## 왜 조준 좌표를 바꾸지 않고 "공격 방출" 만 게이트하는가
- * 적의 조준 좌표는 곧 **이동 목표**이기도 하다(patterns/index.ts 의 moveCharge·moveStandoff·
- * moveSeekWounded·boss.ts moveBoss 가 같은 `player.x/y` 를 쓴다). 가짜 좌표를 먹이면 적이
- * 엉뚱한 곳으로 날아가고, 조준과 이동을 분리하려면 조준 지점 12곳을 개별 수정해야 해
- * **일부만 고쳐 "어떤 적은 은신을 뚫는" 반쪽 배선**(이 저장소의 재발 결함)이 된다. 그래서
- * 게이트는 방출 단계 2곳(잡몹 runAttack·파편 분출 / 보스 패턴 캐스트)에만 건다.
- *
- * ## 은신 중 적의 정의된 행동 (미정의 동작을 남기지 않는다)
- *  · **이동은 그대로** — 은신해도 적은 계속 다가온다. "적을 얼려 세운다" 는 해석보다 게임이
- *    덜 망가지고, 이동 코드를 한 줄도 건드리지 않아 결정론 논증이 단순하다.
- *  · **발사만 막는다.** 이때 발사 쿨다운은 **소비하지 않는다**(`e.cooldown` 을 리셋하지 않고
- *    0 에 머문다) → 은신이 풀린 첫 틱에 곧바로 쏜다. 은신이 "쿨다운을 태워 없애는" 이득까지
- *    주면 컨셉(피탐지 회피)을 넘어선다.
- *  · RNG 미소비 — patterns/index.ts·boss.ts 는 어느 RNG 스트림도 뽑지 않는다(파일 헤더 명시).
- *    따라서 은신은 웨이브 구성·드랍·엘리트 어픽스 시퀀스를 한 칸도 밀지 않는다.
- *
- * ## 침공(3레이어)에서는 발동하지 않는다 — 의도된 범위 제한
- * 침공 방어체의 조준 좌표 일부는 **방어체 어픽스의 발동 조건 입력**이라(invasion/facility.ts·
- * coreRoom.ts 의 DefenseTriggerState), 은신을 섞으면 "근접 어픽스가 왜 안 터지나" 형태로
- * 방어체 경제(M7b)가 조용히 바뀐다. 게다가 침공은 서버(Deno EF)가 재실행 검증하므로 sim 이
- * 갈리면 라이브 침공이 통째로 거부된다. 배선 계약(§2.6)이 침공 조준 지점 7종을 전량 제외한
- * 이유이며, 여기서 `designedRun`(= invasion3 config 존재) 을 한 번에 차단해 **L1 편대 적
- * (kind 'enemy' 라 같은 updateEnemy 를 탄다)까지** 예외 없이 제외한다.
- * 은신 해제 첫 타 배율은 플레이어 쪽 피해 산술이라 침공에서도 그대로 작동한다.
- */
-export function playerCloaked(state: WorldState): boolean {
-  if (state.config.invasion3 !== undefined) return false;
-  if (!signatureOn(state, SIG_PHANTOM_CLOAK)) return false;
-  return cloakActive(state.entities[0]?.aux0 ?? 0);
-}
+// 팬텀 은신 술어는 leaf 모듈 `./cloak.js` 로 내려갔다 — world ↔ patterns/boss 런타임 순환
+// import 를 만들지 않기 위해서다(사유는 그 파일 헤더). 여기서 재수출해 기존 import 경로
+// (`from './world.js'`)를 그대로 유지한다.
+export { playerCloaked } from './cloak.js';
 
 /**
  * 시그니처 런타임 카운터를 1틱 진행한다(피해·발사 경로의 게이트가 읽는 값). 스트라이커는
@@ -1188,19 +1196,35 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
     // 생겼을 때 조용히 2.5배가 중복되는 것보다 안전하다. 두 값은 항상 같이 리셋된다
     // (발사: autoAttack · 피격: resolveCollisions).
     //
-    // ## 은신 해제 조건 = **발사**
-    // 설계서는 "무피격 지속 시 은신 + 해제 첫 타 배율" 까지만 정하고 무엇이 은신을 푸는지는
-    // 비워 두었다. 여기서 택한 규칙은 **첫 발을 쏘는 순간 풀린다**(배율은 그 발에 실린다).
-    //  · 반대안("피격으로만 풀린다")은 적이 조준하지 못하는 동안 일방적으로 딜을 넣게 되어
-    //    밸런스가 무너진다.
-    //  · 이 규칙에서 은신은 "사거리 안에 적이 없는 동안" 유지된다(자동 조준이라 적이 들어오면
-    //    즉시 첫 발이 나간다) → 히트앤런 루프가 되어 암살자 컨셉과 맞는다.
-    // 그 결과 교전이 빽빽한 무대에서는 은신 유지 구간이 짧다. 이것은 축 그 자체이며, 길이를
-    // 늘리고 싶다면 CLOAK_UNHIT_TICKS 밸런스 패스로 다룰 문제이지 배선으로 우회할 것이 아니다.
-    if (player.aux0 < CLOAK_TICK_CAP) player.aux0++;
-    // 임계를 넘긴 동안 매 틱 세운다(멱등) — 상한(CLOAK_TICK_CAP)에 걸려 aux0 이 더 이상
-    // 오르지 않아도 플래그는 유지된다.
-    if (cloakActive(player.aux0)) player.aux1 = 1;
+    // ## 은신 해제 조건 = **피격** (배율 토큰만 발사로 소진한다)
+    // 설계서 §3 은 "무피격 지속 시 은신(적 조준 제외) + 해제 첫 타 배율" 이다. 즉 은신을 푸는
+    // 것은 **피격**이고, 발사는 배율을 소진할 뿐이다. 그래서 두 슬롯의 역할이 갈린다:
+    //   aux0 = 연속 무피격 틱(은신 여부의 정본) — 오직 피격으로만 0 이 된다.
+    //   aux1 = 해제 첫 타 배율 토큰(0/1) — 임계를 넘는 틱에 한 번 서고 발사로 소진된다.
+    //
+    // ⚠️ 초판은 "발사하면 은신도 풀린다" 였고 그것이 **HIGH 결함**이었다: 자동 조준 sim 에서
+    // `autoAttack` 은 사거리 안에 적이 하나라도 있으면 무조건 쏘므로, 실질 조건이 "4초 동안
+    // 사거리 안에 적이 하나도 없을 것" 이 되어 은신이 사실상 발동하지 않았다(정규 경로 실측
+    // 14400틱 기준 p0t0 14틱=0.10%, p1t1/p2t2 seed3311 은 **0틱**). 설계서가 선언한 축이
+    // 관측 불가 수준이면 그것은 밸런스가 아니라 미배선이다.
+    //
+    // 새 규칙에서 은신은 자기 제한적이다 — 적은 은신 중에도 **이동하고 접촉(램) 피해를 준다**
+    // (cloak.ts 헤더). 한 대만 맞으면 aux0 이 0 으로 돌아가 다시 240틱을 채워야 한다.
+    // 그리고 배율 토큰은 은신 진입당 정확히 1회다(`===` 임계 판정).
+    // 침공(3레이어)에서는 시그니처 자체를 접는다 — 억제(대가)는 방어체 어픽스 좌표 계약 때문에
+    // 걸 수 없는데(cloak.ts 헤더) 배율(이득)만 남기면 침공에서 팬텀이 공짜로 강해진다. 여기서
+    // 통째로 반환하면 aux0/aux1 이 끝까지 0 이라 "둘 다 0 이면 무폴드" 조건부 해시 규약도 그대로다.
+    if (state.config.invasion3 !== undefined) return;
+    player.aux0++;
+    // 토큰은 임계를 **넘는 그 틱에 한 번만** 선다(`>=` 가 아니라 `===`). 매 틱 다시 세우면
+    // 발사로 소진해도 다음 틱에 부활해 **모든 발사에 2.5배가 실린다.**
+    if (player.aux0 === CLOAK_UNHIT_TICKS) player.aux1 = 1;
+    // 유지 창(CLOAK_HOLD_TICKS)이 끝나면 사이클을 통째로 되감는다 — 다시 240틱을 채워야 한다.
+    // 여기가 aux0 의 구조적 상한이기도 하다(0..CLOAK_UNHIT_TICKS+CLOAK_HOLD_TICKS-1 = 0..359).
+    else if (player.aux0 >= CLOAK_UNHIT_TICKS + CLOAK_HOLD_TICKS) {
+      player.aux0 = 0;
+      player.aux1 = 0;
+    }
     // ⚠️ 아크캐스터·해츨링 분기와 같은 이유로 **명시적으로** 반환한다.
     return;
   }
@@ -1294,10 +1318,12 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
  * (상한 HATCH_MAX_KILLS), 드론이 잡은 적도 state.kills 에 들어가 **드론이 드론을 부르는 양의
  * 되먹임**이 생긴다. 상한이 없으면 발산하지는 않아도 후반 프레임이 조용히 무너진다.
  *
- * 상한은 `ownerId === DRONE_MARK` 인 활성 포탑 전체를 센다 — 즉 유니크 ④ 자율 드론 베이가
- * 띄운 드론과 **상한을 공유**한다. 의도된 것이다: 이 상한의 의미는 "해츨링이 몇 마리까지"가
- * 아니라 "플레이어 곁에 동시에 서 있는 아군 소환 포탑 몇 대까지" 이고, 프레임·조준 부하를
- * 만드는 것은 출처가 아니라 총 대수다.
+ * 상한은 `ownerId === BROOD_MARK` 인 병아리**만** 센다 — 유니크 ④ 자율 드론 베이·보조무기 ③
+ * 센트리(둘 다 `DRONE_MARK`)와 상한을 공유하지 않는다. 초판은 공유였고 그것이 결함이었다
+ * (적대적 리뷰 invariants-6): 드론 베이를 장착한 해츨링 런에서 베이 드론이 상한을 채우면
+ * **시그니처가 한 기도 출격하지 않는데 아무 테스트도 실패하지 않는다.** 출처별로 나누면 최악의
+ * 동시 생존 대수가 4(병아리) + 1(베이) + 1(센트리) = 6 으로, 프레임·조준 부하 관점에서도
+ * 여전히 유계다.
  */
 const BROOD_MAX_DRONES = 4;
 
@@ -1316,9 +1342,9 @@ const BROOD_DRONE_RADIUS = 44;
  * 제외(isGimmick)·충돌 격자·렌더 스프라이트가 전부 공짜로 따라오고, 신규 KIND_CODE 가 0 이라
  * 해시 레이아웃이 불변이다.
  *
- * ⚠️ 마커는 반드시 `DRONE_MARK` 를 재사용한다. `isGimmick` 이 이 상수를 리터럴로 비교하므로
- * 신규 마커를 만들면 병아리가 청크 컬링에 잘리고 MAX_ACTIVE_GIMMICKS 를 잡아먹는다 — 그리고
- * 컬링은 조용히 일어나 "가끔 안 나온다" 로만 관측된다.
+ * ⚠️ 마커는 `BROOD_MARK`(병아리 전용)이고, `isGimmick` 이 **DRONE_MARK 와 함께** 이 상수도
+ * 기믹 분류에서 제외한다. 둘 중 하나라도 빠지면 병아리가 청크 컬링에 잘리고
+ * MAX_ACTIVE_GIMMICKS 를 잡아먹는데, 컬링은 조용히 일어나 "가끔 안 나온다" 로만 관측된다.
  *
  * ## RNG 미소비
  * `spawnEventObject`·`activateTurret` 은 어느 RNG 스트림도 건드리지 않는다. 배치 좌표도
@@ -1330,7 +1356,7 @@ function stepHatchBrood(state: WorldState, player: Entity): void {
   // 임계를 넘긴 틱에만 스캔한다(수십 틱에 한 번) — 매 틱 전체 순회를 만들지 않기 위해서다.
   let live = 0;
   for (const e of state.entities) {
-    if (!e.dead && e.ownerId === DRONE_MARK && isActiveTurret(e)) live++;
+    if (!e.dead && e.ownerId === BROOD_MARK && isActiveTurret(e)) live++;
   }
   // 상한에 걸리면 **aux0 을 갱신하지 않고** 보류한다 — 자리가 나는 즉시 다음 틱에 출격하고,
   // 그동안 쌓인 처치가 소멸하지 않는다.
@@ -1347,7 +1373,7 @@ function stepHatchBrood(state: WorldState, player: Entity): void {
     player.y + oy,
     BROOD_DRONE_RADIUS,
   );
-  chick.ownerId = DRONE_MARK; // 청크 기믹과 구분(isGimmick 제외 → 컬링·상한 비대상)
+  chick.ownerId = BROOD_MARK; // 청크 기믹과 구분(isGimmick 제외 → 컬링 비대상) + 병아리 전용 상한
   activateTurret(chick); // 즉시 활성 포탑(TURRET_LIFE_TICKS 동안 자동 사격)
   // 출격 성공 시에만 스냅샷을 갱신한다 = 순수 함수 계약의 "카운터 0 리셋".
   player.aux0 = state.kills;
@@ -1365,7 +1391,40 @@ function stepHatchBrood(state: WorldState, player: Entity): void {
  *
  * 대상은 `enemy` 로만 좁힌다 — 침공 방어체(prop·facility*)는 배치 좌표가 소켓 계약이라
  * 밀면 안 되고, 벽은 activeWalls·wallIndex 재빌드와 얽힌다.
+ *
+ * ## 침공에서도 그대로 작동한다 — 팬텀과 달리 게이트하지 않는 근거 (적대적 리뷰 wiring MED-2)
+ * 침공 L1 편대원은 `kind === 'enemy'` 라 이 밀어내기의 대상이고, `refreshFormationAffixes`
+ * (invasion/formation.ts)가 **매 틱** `resolveDefenseMods(set, trigger, e.x, e.y)` 로 좌표 기반
+ * 어픽스를 다시 접는다. 그럼에도 게이트하지 않는 이유: 그 재계산은 원래 **매 틱 살아 있는 좌표**
+ * 에서 이뤄지고 적은 어차피 매 틱 이동한다 — 파열은 "한 틱에 크게 움직인 이동" 일 뿐 계약을
+ * 깨지 않는다. 팬텀을 침공에서 뺀 사유는 좌표가 아니라 **방어체가 공격할 수 있는지 여부**를
+ * 바꾸는 것이었다(DefenseTriggerState 의 입력 자체가 사라진다). 둘은 같은 문제가 아니다.
+ * (이 판단을 문서에 남기지 않으면 다음 세션이 "왜 하나만 게이트돼 있나" 를 다시 묻게 된다.)
  */
+/**
+ * `resolveCollisions` 의 시그니처 완화 스택(브루저 장갑 → 버블 방막 → 말로우 완충)을 타지 않고
+ * `player.hp` 를 **직접** 깎는 경로에서, 시그니처의 "무피격" 의미만이라도 맞춰 준다.
+ *
+ * 대상은 침공 코어 모듈 반격 2종(`mt-reflection` 반사 · `mt-retribution` 일제사격)이다. 그대로
+ * 두면(적대적 리뷰 wiring MED-3):
+ *  · 말로우 — `aux1`(연속 무피격 틱)이 리셋되지 않아 **반사 피해를 매 틱 맞는 중에도** 임계
+ *    180틱을 채워 완충 정산이 진행된다. "안전해진 순간에 미룬 피해가 들어온다" 는 축이 교전
+ *    한복판에서 깨진다.
+ *  · 브루저 — 같은 이유로 반사 피해를 맞는 동안 장갑 스택이 `ARMOR_DECAY_TICKS` 로 계속 빠진다.
+ * 팬텀은 침공에서 시그니처 자체가 비활성이라(stepShipSignature) 대상이 아니고, 버블의 `aux1` 은
+ * 피격과 무관한 **재생 타이머**라 절대 리셋하면 안 된다.
+ *
+ * ⚠️ 완화 스택 자체를 태우지는 않는다(반사·일제사격은 장갑/막/완충을 그대로 통과한다). 그것은
+ * "플레이어 피해 진입점 3곳을 하나로 합치는" 리팩터가 필요하고 침공 밸런스(M7b 방어체 경제)를
+ * 함께 움직이는 결정이라, M8 배선 범위 밖으로 남긴다 — 대신 여기에 근거를 남겨 다음 세션이
+ * 미배선으로 오인하지 않게 한다.
+ */
+function noteDirectPlayerDamage(state: WorldState, player: Entity): void {
+  if (state.sigBit === SIG_BRUISER_ARMOR || state.sigBit === SIG_MALLOW_CUSHION) {
+    player.aux1 = 0;
+  }
+}
+
 function burstFilm(state: WorldState, player: Entity): void {
   const push = filmBurstPush();
   const r2 = FILM_BURST_RADIUS * FILM_BURST_RADIUS;
@@ -1382,6 +1441,16 @@ function burstFilm(state: WorldState, player: Entity): void {
     if (d <= 1) continue;
     e.x += (dx / d) * push;
     e.y += (dy / d) * push;
+    // ⚠️ 밀어낸 직후 벽 충돌을 **즉시** 재해결한다(적대적 리뷰 MED-4). 260 유닛은 벽 두께보다
+    // 크므로, 그냥 두면 침공 회랑처럼 벽이 촘촘한 무대에서 적이 벽 안쪽 깊숙이 박힌다. 다음 틱
+    // 이동 단계의 `slideCircleWalls` 는 **최근접 면**으로 밀어내므로 침투 깊이가 두께의 절반을
+    // 넘으면 반대편으로 튀어나온다(터널링) — 결정론은 유지되므로 서버 재실행도 같은 결과를 내고,
+    // 그래서 해시 검증으로는 절대 잡히지 않는 조용한 배치 계약 위반이 된다.
+    if (state.activeWalls.length > 0) {
+      const slid = slideCircleWalls(e.x, e.y, e.radius, state.activeWalls);
+      e.x = slid.x;
+      e.y = slid.y;
+    }
   }
 }
 
@@ -1518,8 +1587,9 @@ function autoAttack(state: WorldState, player: Entity): void {
   // 미보유·비은신이면 이 블록은 한 줄도 실행되지 않아 `wDamage` 가 위 값 그대로다(해시 불변).
   if (signatureOn(state, SIG_PHANTOM_CLOAK) && player.aux1 !== 0) {
     wDamage = Math.round((wDamage * CLOAK_BREAK_BP) / 10000);
-    // 은신 해제 — 무피격 스트릭과 소진 표식을 함께 되돌린다(둘은 항상 같이 리셋된다).
-    player.aux0 = 0;
+    // 토큰만 소진한다 — **aux0(무피격 스트릭)은 건드리지 않는다.** 은신을 푸는 것은 피격이지
+    // 발사가 아니다(stepShipSignature 팬텀 분기 주석). aux0 을 여기서 0 으로 되돌리면 은신이
+    // 사실상 발동하지 않는 초판 결함으로 되돌아간다.
     player.aux1 = 0;
   }
 
@@ -2352,6 +2422,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       if (cr !== undefined && t.kind === 'core' && cr.reflectPct > 0 && dealt > 0) {
         player.hp -= (dealt * cr.reflectPct) / 100;
         if (player.hp < 0) player.hp = 0;
+        noteDirectPlayerDamage(state, player);
       }
       // 마일스톤 ③ 실드 공유(M5): 코어·포탑에 부여된 실드(targetY)가 남아 있으면 HP 보다 먼저
       // 흡수한다. 실드가 피해를 다 막으면 HP 는 그대로다. 실드가 없으면(targetY<=0) 무영향이라
@@ -2386,6 +2457,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
           if (cr !== undefined && t.kind === 'guardian' && cr.volleyDamage > 0) {
             player.hp -= cr.volleyDamage;
             if (player.hp < 0) player.hp = 0;
+            noteDirectPlayerDamage(state, player);
           }
           // ⑤ 군집 벌통: 미사일 원본(MISSILE_MARK)이 적/보스를 격추하면 마이크로탄 방사 예약.
           if (hiveOn && b.ownerId === MISSILE_MARK && (t.kind === 'enemy' || t.kind === 'boss')) {
@@ -2580,11 +2652,21 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       // 된다. 소진 조건이라야 "흡수량을 다 쓰면 터진다" 는 축이 성립한다. 재생 타이머(aux1)는
       // 이 틱부터 0 에서 다시 돈다(stepShipSignature 의 aux0 === 0 게이트).
       if (player.aux0 === 0) burstFilm(state, player);
-      // ⚠️ 막이 전량 흡수했으면 **여기서 함수를 빠져나간다.** 그대로 흘리면 dmg 0 인 피격에
-      //    `player.iframes = hitIframes` 가 공짜로 서고 반응 장갑 펄스·위상 전환막이 발동한다
-      //    (플레이어가 강해지는 방향이라 결함으로 신고되지 않는 조용한 오류). 이 시점 이후
-      //    resolveCollisions 는 아무 일도 하지 않으므로 return 이 안전하다.
-      if (dmg <= 0) return;
+      // ⚠️ 막이 전량 흡수했으면 **여기서 함수를 빠져나간다** — 다만 무적 창은 세우고 나간다.
+      //    · 나머지 피격 후속(과열 스택 리셋·반응 장갑 펄스·위상 전환막·캡스톤 소진·장갑 적립)은
+      //      건너뛴다: 피해가 0 이므로 "맞지 않은 것" 으로 취급하는 편이 일관적이고, 플레이어가
+      //      공짜로 강해지는 방향의 조용한 오류를 만들지 않는다.
+      //    · 반면 `iframes` 를 세우지 않으면 **막이 피격당 1대가 아니라 틱당 1대로 증발한다**
+      //      (적대적 리뷰 MED-3/invariants-2). 접촉 피해가 이어지는 무대에서 실측 막 수명이
+      //      25틱·22틱으로 무적 창(hitIframes=40틱)보다 짧았다 — 막이 없었다면 그 구간에 들어올
+      //      피해가 정확히 1회인데, 막은 그 1회를 막느라 내구 60 을 전량 태웠다. 재생 주기가
+      //      420틱이라 "주기적 흡수막" 이라는 축이 사실상 1회 접촉분으로 붕괴한다.
+      //    무적을 세우는 것이 정당한 이유: 막은 선체 바깥 층이고 **이 피격은 실제로 막혔다.**
+      //    무적 창은 "방금 한 대 처리했다" 는 표식이지 "선체가 깎였다" 는 표식이 아니다.
+      if (dmg <= 0) {
+        player.iframes = state.config.hitIframes;
+        return;
+      }
     }
     // 말로우 시그니처 — 완충 지연 전환(설계서 §3·§4). 이번 피격 피해의 CUSHION_DEFER_BP 만큼을
     // 지금 넣지 않고 떼어 둔다. **적립(aux0 += deferred)은 여기서 하지 않고 아래 hp 차감 분기

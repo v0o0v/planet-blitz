@@ -132,9 +132,31 @@ export const CLOAK_UNHIT_TICKS = 240;
 /** 은신 해제 첫 타 배율(basis-point, 10000 = 1배). 25000 = 2.5배. */
 export const CLOAK_BREAK_BP = 25000;
 
-/** 연속 무피격 틱 수가 임계 이상이면 은신 상태. */
+/**
+ * 은신 **유지** 시간(진입 후 이 틱 수만큼만 은신이 선다). 60fps 기준 2초.
+ *
+ * ## 왜 상한이 필요한가 (초판 두 규칙이 모두 틀렸다)
+ *  · 초판 ①"발사하면 풀린다" — 자동 조준 sim 에서는 사거리 안에 적이 있으면 무조건 쏘므로 실질
+ *    조건이 "4초간 사거리 안에 적이 하나도 없을 것" 이 되어 **은신이 사실상 발동하지 않았다**
+ *    (실측 14400틱 중 0~14틱).
+ *  · 초판 ②"피격으로만 풀린다" — 반대로 **영구 은신**이 됐다. 원거리 견제형(standoff/gunner)만
+ *    있는 무대에서는 접촉이 일어나지 않아 스트릭이 영영 끊기지 않고, 적이 한 발도 못 쏘는
+ *    무적 런이 된다(실측: 정지 파일럿 p0t1 seed42 에서 3600틱 중 3361틱 은신).
+ * 그래서 규칙은 **"연속 무피격 240틱을 채우면 120틱 동안 은신, 그 뒤 자동 해제 후 다시 240틱을
+ * 채워야 한다"** 이다. 피격은 그 사이클을 즉시 0 으로 되돌린다. 최선의 경우에도 은신 점유율이
+ * 120/360 = 1/3 로 구조적으로 유계이고, 한 대라도 맞으면 그보다 훨씬 낮아진다.
+ */
+export const CLOAK_HOLD_TICKS = 120;
+
+/** 연속 무피격 틱 수가 진입 임계 이상인가(사이클 진입 판정). */
 export function cloakActive(unhitTicks: number): boolean {
   return Math.trunc(unhitTicks) >= CLOAK_UNHIT_TICKS;
+}
+
+/** 지금 실제로 은신 중인가 — 진입 임계 이상 **그리고** 유지 창 안. */
+export function cloakWindowActive(unhitTicks: number): boolean {
+  const t = Math.trunc(unhitTicks);
+  return t >= CLOAK_UNHIT_TICKS && t < CLOAK_UNHIT_TICKS + CLOAK_HOLD_TICKS;
 }
 
 /** 은신 해제 첫 타의 피해량(정수). 나눗셈 1회. */
@@ -145,6 +167,23 @@ export function cloakBreakDamage(damage: number): number {
 }
 
 // --- ④ 해츨링: 부화 ----------------------------------------------------------
+/**
+ * 병아리 드론 마커(`entity.ownerId`). 유니크 ④ 자율 드론 베이·보조무기 ③ 센트리가 쓰는
+ * `DRONE_MARK` 와 **일부러 다른 값**이다.
+ *
+ * ⚠️ 처음에는 `DRONE_MARK` 를 재사용했고 그것이 결함이었다(적대적 리뷰 invariants-6): 동시 생존
+ * 상한(BROOD_MAX_DRONES=4)을 `DRONE_MARK` 인 활성 포탑 전체로 세는 바람에, **드론 베이나 센트리를
+ * 장착한 해츨링 런에서는 시그니처가 한 기도 출격하지 않을 수 있다** — 그리고 그 미발현은 화면에도
+ * 테스트에도 아무 흔적을 남기지 않는다(이 저장소가 8번 겪은 "조용한 미발현"). 마커를 분리해
+ * 상한을 출처별로 나눈다.
+ *
+ * ⚠️ `isGimmick`(world.ts)은 이 마커도 **반드시** 기믹 분류에서 제외해야 한다 — 빠뜨리면 병아리가
+ * 청크 컬링에 잘리고 MAX_ACTIVE_GIMMICKS 를 잡아먹는데, 컬링은 조용히 일어나 "가끔 안 나온다"
+ * 로만 관측된다. DRONE_MARK/HIVE_MICRO_MARK/MISSILE_MARK 어느 것과도 겹치지 않는 큰 상수라
+ * 실제 엔티티 id 와 충돌하지 않는다(이미 해시되는 필드 재활용, hashWorld 레이아웃 불변).
+ */
+export const BROOD_MARK = 0xb400d5;
+
 /** 첫 출격에 필요한 처치 수. */
 export const HATCH_BASE_KILLS = 12;
 /** 스케일 구간을 하나 넘길 때마다 늘어나는 요구 처치 수. */
