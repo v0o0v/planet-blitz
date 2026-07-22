@@ -34,13 +34,13 @@ describe('powerupIcons — 24종 매핑 커버리지', () => {
     for (let i = 0; i < POWERUPS.length; i++) {
       const keys = powerupIconKeys(i);
       expect(keys, `powerup #${i} 매핑 누락`).toBeDefined();
-      expect(keys?.statKey).toMatch(/^skill_[a-z0-9_]+_(low|mid|high)$/);
+      expect(keys?.statKey).toMatch(/^skill_[a-z0-9_]+_(low|lowmid|mid|midhigh|high)$/);
     }
   });
 
   it('모든 키(스탯·배지)가 텍스처 로더에 등재된 실재 자산을 가리킨다', () => {
-    // 존재하지 않는 티어대(예: skill_bullet_count_low, skill_range_flat_mid)를 가리키면
-    // 텍스처가 없어 아이콘이 조용히 사라진다 — 그 회귀를 여기서 잡는다.
+    // 5구간 유니온에 없는 티어대(예: skill_range_flat_low — rangeFlat 은 tier 0 수요가 없다)를
+    // 가리키면 텍스처가 없어 아이콘이 조용히 사라진다 — 그 회귀를 여기서 잡는다.
     const registered = new Set<string>(UI_ASSET_NAMES);
     for (const def of POWERUPS) {
       const keys = powerupIconKeysById(def.id);
@@ -99,8 +99,9 @@ describe('powerupIcons — 조합 구별도', () => {
 
   it('전체 24종이 서로 구별된다 — 티어대 축이 배지 없는 충돌을 없앤다', () => {
     // 스탯+배지 둘만 쓰던 때는 17종으로 접혔다(최대 HP 3종, 데미지·연사·이속·대시·자석
-    // 각 2종 = 충돌 7건). 같은 스탯을 수치 크기 순으로 저·중·고에 나눠 담아 해소했다.
-    // 이 수가 24 미만으로 떨어지면 3택 오버레이에 같은 그림이 두 장 뜬다는 뜻이다.
+    // 각 2종 = 충돌 7건). 같은 스탯을 수치 크기 순으로 티어대(5구간 중 기존 아트 밴드
+    // low/mid/high 우선)에 나눠 담아 해소했다. 이 수가 24 미만으로 떨어지면 3택 오버레이에
+    // 같은 그림이 두 장 뜬다는 뜻이다.
     expect(new Set(combos).size).toBe(24);
   });
 
@@ -110,7 +111,7 @@ describe('powerupIcons — 조합 구별도', () => {
     for (const def of POWERUPS) {
       const k = powerupIconKeysById(def.id);
       if (k === undefined || k.badgeKey !== undefined) continue;
-      const stat = k.statKey.replace(/_(low|mid|high)$/, '');
+      const stat = k.statKey.replace(/_(low|lowmid|mid|midhigh|high)$/, '');
       byStat.set(stat, [...(byStat.get(stat) ?? []), k.statKey]);
     }
     for (const [stat, keys] of byStat) {

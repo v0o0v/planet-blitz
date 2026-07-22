@@ -7,20 +7,25 @@
  *    작은 배지로 겹친다 — "초크 개조 = 스프레드 데미지 / 과충전 코일 = 레일건 데미지"처럼
  *    같은 스탯을 다른 무기가 올리는 경우를 구별하기 위함.
  *
- * **티어대(low/mid/high)가 세 번째 축이다.** 스탯 + 무기 배지 둘만으로는 24종이 17종으로
- * 접혔다 — 배지를 붙일 무기 축이 없는 파워업끼리 겹쳐 충돌 7건(최대 HP 3종, 데미지·연사·
- * 이속·대시·자석 각 2종)이 남았고, 3택 오버레이는 즉시 판단해야 하는 모달이라 같은 그림
- * 두 장이 나란히 뜨면 읽기가 느려진다. 스킬 세트는 어차피 스탯마다 티어대별 아트를 만들고
+ * **티어대(5구간: low/lowmid/mid/midhigh/high)가 세 번째 축이다.** 스탯 + 무기 배지 둘만으로는
+ * 24종이 17종으로 접혔다 — 배지를 붙일 무기 축이 없는 파워업끼리 겹쳐 충돌 7건(최대 HP 3종,
+ * 데미지·연사·이속·대시·자석 각 2종)이 남았고, 3택 오버레이는 즉시 판단해야 하는 모달이라 같은
+ * 그림 두 장이 나란히 뜨면 읽기가 느려진다. 스킬 세트는 어차피 스탯마다 티어대별 아트를 만들고
  * 있으므로, **같은 스탯의 파워업을 수치 크기 순으로 그 티어대에 나눠 배정**하면 추가 생성
  * 0장을 유지한 채 충돌이 사라진다.
  *
  * 배정 규칙(아래 표는 이 규칙을 손으로 푼 결과다):
  *  1. 같은 스탯을 올리는 파워업을 `PowerupDef.apply` 의 실제 수치로 오름차순 정렬한다.
- *  2. 그 스탯에 **존재하는** 밴드에만 `floor(rank * bandCount / n)` 으로 나눠 담는다.
- *     밴드가 다 있는 것은 아니다 — `bullet_count` 는 저 밴드가 없고(mid/high),
- *     `bullet_speed_pct` 는 고가 없으며, `range_flat` 은 저 하나뿐이다. 없는 밴드를
- *     가리키면 텍스처가 없어 아이콘이 조용히 사라진다.
- *  3. 수치가 같으면(탄환 +1 셋) 같은 밴드에 둔다 — 이들은 배지로 갈린다.
+ *  2. **기존 아트가 있는 밴드(low/mid/high = 스킬 tier 0/2/4)를 우선 쓴다.** Lane 10 이 티어대를
+ *     3→5구간(low·lowmid·mid·midhigh·high)으로 넓혔지만 `lowmid`(tier 1)·`midhigh`(tier 3)는
+ *     아직 PNG 가 없는 신규 밴드라, 여기로 내려보내는 항목은 회귀(null 폴백)가 된다 —
+ *     low/mid/high 로 충돌이 이미 풀리므로 굳이 신규 밴드를 쓰지 않는다.
+ *  3. statKey 는 반드시 `SKILL_ICON_NAMES`(전 SHIP_TYPES 수요 유니온)에 **실재**해야 한다.
+ *     밴드가 다 있는 것은 아니다 — `range_flat` 은 어느 기체에서도 tier 0 이 없어 5구간 유니온에
+ *     `low` 밴드 자체가 없다(그래서 단독 파워업 `beam-focuser` 는 최저 실재 밴드 `lowmid` 를
+ *     쓴다 — 배지로 갈리므로 충돌 없음, 단 신규 밴드라 아트 부채). 유니온에 없는 이름을 가리키면
+ *     텍스처가 없어 아이콘이 조용히 사라진다.
+ *  4. 수치가 같으면(탄환 +1 셋) 같은 밴드에 둔다 — 이들은 배지로 갈린다.
  *
  * 결과는 24종 전부가 서로 다른 조합이다(충돌 0). 매핑의 진실의 원천은 이 파일이다 —
  * `.omc/plans/icon-manifest.json` 의 `_meta.powerupStatMapping` 은 초안이고,
@@ -81,9 +86,10 @@ const POWERUP_ICONS: Readonly<Record<string, PowerupIconKeys>> = {
   'mb-collector': { statKey: 'skill_magnet_pct_low' },
   'gem-magnet': { statKey: 'skill_magnet_pct_mid' },
 
-  // 단독 스탯 2종 — 비교 대상이 없어 최저 밴드.
+  // 단독 스탯 2종 — 비교 대상이 없어 최저 실재 밴드. bullet_speed 는 low(기존 아트) 사용.
+  // range_flat 은 5구간 유니온에 low 가 없어(tier 0 수요 없음) 최저 밴드가 lowmid(신규·아트 부채).
   'muzzle-velocity': { statKey: 'skill_bullet_speed_pct_low' },
-  'beam-focuser': { statKey: 'skill_range_flat_low', badgeKey: 'equip_main_beam' },
+  'beam-focuser': { statKey: 'skill_range_flat_lowmid', badgeKey: 'equip_main_beam' },
 };
 
 /** 파워업 id 로 아이콘 키를 얻는다(미등록이면 undefined → 텍스트 폴백). */

@@ -11,6 +11,30 @@
       "sticker": 12
     },
     "filenameConvention": "Flat under assets/ (NOT assets/icons/ — src/ui/pixi/uiTextures.ts and src/render/textures.ts both glob a non-recursive \"../../assets/*.png\", so a subfolder would be invisible to both loaders). Prefix by axis: equip_main_*, equip_sub_*, equip_slot_*, equip_unique_*, skill_<stat_snake>_<band>.png, skill_capstone_<tree>.png, sticker_<id_snake>.png. Matches repo convention of flat \"<category>_<descriptor>.png\" (turret_vulcan.png, enemy_arke_charger.png) rather than the ui_* prefix, which is reserved for the separate cartoon-wood UI kit register (ADR-0016: equip icons are a THIRD register, anchor pb-equip-icon, must not mix with pb-cartoon-wood-ui).",
+    "iconBandsV5": {
+      "note": "Lane 10 — skillIconBand 이 스킬 tier 0~4 를 3구간(저·중·고) → 5구간으로 1:1 확장(ADR-0015 갱신, ADR-0022 §7-R #6 단계 앵커). 아래 icons[] 의 skill-stat 32엔트리는 아직 3구간(low/mid/high) 아트만 담고, tierRange 는 구 3구간 기준이다. 여기 스캐폴드가 후속 아트패스의 5구간 생성 계약이다. 런타임 진실의 원천은 src/ui/pixi/uiTextures.ts 의 SKILL_ICON_NAMES(62) + skillIconBand.",
+      "bands": [
+        { "band": "low", "tier": 0, "art": "existing" },
+        { "band": "lowmid", "tier": 1, "art": "debt" },
+        { "band": "mid", "tier": 2, "art": "existing" },
+        { "band": "midhigh", "tier": 3, "art": "debt" },
+        { "band": "high", "tier": 4, "art": "existing" }
+      ],
+      "union": {
+        "skillStat": 59,
+        "skillCapstone": 3,
+        "total": 62,
+        "rule": "12 stats × 5 bands, 단 rangeFlat 는 어느 SHIP_TYPES 에서도 tier 0(low) 수요가 없어 4밴드 → 5×11 + 4 = 59"
+      },
+      "pngExisting": 32,
+      "artDebt": {
+        "count": 28,
+        "newBands": "lowmid(tier 1)·midhigh(tier 3) × 12 stats = 24 (rangeFlat 포함)",
+        "legacyGaps": ["bullet_count_low", "bullet_speed_pct_high", "range_flat_mid", "range_flat_high"],
+        "orphaned": ["skill_range_flat_low.png — tier 1 이 lowmid 로 이동하며 미참조된 사문서 아트(무해)"]
+      },
+      "followUpArtPass": "각 스탯의 lowmid·midhigh 2장을 ADR-0016 시트(2아이콘 묶음, 이웃 밴드와 형태·장식·색의 중간 단계)로 뽑고 기존 결손 4장을 채운다. rangeFlat 은 lowmid·mid·midhigh·high 4장."
+    },
     "powerupStatMapping": {
       "note": "0 new icons for powerups (ADR-0015). D3 wiring should reference the skill-stat icon for the derived stat, and — for weaponType-tagged powerups — additionally badge the matching equip_main_* weapon icon. universal/tree powerups reference the skill-stat icon only.",
       "entries": [
@@ -115,7 +139,7 @@
           "id": "beam-focuser",
           "index": 15,
           "weaponType": 4,
-          "statIconKey": "skill_range_flat_low",
+          "statIconKey": "skill_range_flat_lowmid",
           "weaponBadgeKey": "equip_main_beam"
         },
         {

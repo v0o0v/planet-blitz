@@ -15,61 +15,95 @@ import type { SkillNode } from '../../../data/skills.js';
 import { SHIP_TYPES, DEFAULT_SHIP_TYPE, shipTypeDef } from '../../../data/ships/index.js';
 
 /**
- * 연구소 스킬 노드 아이콘 39종 = 스탯 × 티어대 36 + 계열 캡스톤 3
+ * 연구소 스킬 노드 아이콘 62종 = 스탯 × 티어대 59 + 계열 캡스톤 3
  * (`.omc/plans/icon-manifest.json` 의 skill-stat · skill-capstone 축).
  *
- * ⚠️ **M8 아트 부채 4장.** M8 신규 기체 트리(`data/ships/{arccaster,phantom,hatchling}.ts`)가
- * 스트라이커에 없던 (스탯, 티어대) 조합 4개를 새로 만들었다:
- * `skill_range_flat_mid` · `skill_range_flat_high` · `skill_bullet_speed_pct_high` ·
- * `skill_bullet_count_low`. **PNG 는 아직 없다** — `assets/skill_*.png` 는 35장뿐이다.
- * 목록에 등재하지 않으면 설계서 §10-7 이 예측한 "조용한 null 폴백"(빈 셀인데 예외도 로그도
- * 없음)이 되므로 먼저 등재하고, 아트는 M8-L9 가 채운다. 등재만으로는 화면이 여전히 비지만
- * `tests/skillIcons.test.ts` 가 목록 ↔ 노드 수요를 전 SHIP_TYPES 에 대해 대조하므로
- * 부채가 코드에 명시된다.
+ * **Lane 10 — 티어대 3구간 → 5구간.** `skillIconBand` 이 스킬 tier 0~4 를 저·중·상·최상·초월
+ * 5밴드로 1:1 접는다(ADR-0022 §7-R #6 단계 앵커). 12스탯 × 5밴드지만 전 SHIP_TYPES 를 통틀어
+ * `rangeFlat` 만 tier 0(low) 수요가 없어 4밴드라 59다(= 5×11 + 4).
  *
- * 축이 (스탯, 티어대)라 **같은 스탯의 노드는 같은 그림을 공유한다** — "예리한"과 "잔혹한"이
- * 한 장을 쓰는 것은 결함이 아니라 결정의 내용이고, 구별은 노드 이름과 포인트 수치가 한다.
- * 63노드에 63장을 만들지 않기 위한 선택이다(ADR-0015 아이콘 축).
+ * ⚠️ **아트 부채 28장(Lane 10 확장분 24 + 기존 결손 4).** `assets/skill_*.png` 는 여전히
+ * 32장(스탯)뿐이고 그 슬러그는 `_low`·`_mid`·`_high` 로만 존재한다. 5밴드 확장은 **기존 아트를
+ * tier 0/2/4(=low/mid/high 슬러그)에 그대로 보존**해 회귀를 최소화했다 — tier 0/2/4 노드는 그림이
+ * 바뀌지 않는다. 새로 갈라진 `lowmid`(tier 1)·`midhigh`(tier 3) 2밴드만 아직 PNG 가 없어 로더가
+ * 조용히 null 폴백한다. 기존 결손 4장(`bullet_count_low`·`bullet_speed_pct_high`·
+ * `range_flat_mid`·`range_flat_high`, M8-L9 부채)도 그대로다. 목록에 등재하지 않으면 설계서 §10-7
+ * 이 예측한 "조용한 null 폴백"(빈 셀인데 예외도 로그도 없음)이 되므로 먼저 등재하고, 아트는 후속
+ * 아트패스가 채운다. `tests/skillIcons.test.ts` 가 목록 ↔ 노드 수요를 전 SHIP_TYPES 에 대해
+ * 대조하므로 부채가 코드에 명시된다.
+ *
+ * `assets/skill_range_flat_low.png` 는 디스크에 남아 있으나 tier 1 이 `lowmid` 로 이동하며
+ * 어느 노드도 이 슬러그를 부르지 않는 **사문서 아트**가 됐다(무해 — 로더가 이름으로만 찾는다).
+ *
+ * 축이 (스탯, 티어대)라 **같은 스탯·같은 밴드의 노드는 같은 그림을 공유한다** — "예리한"과
+ * "잔혹한"이 한 장을 쓰는 것은 결함이 아니라 결정의 내용이고, 구별은 노드 이름과 포인트 수치가
+ * 한다. 63노드에 63장을 만들지 않기 위한 선택이다(ADR-0015 아이콘 축).
  *
  * 목록을 리터럴로 두는 이유: {@link skillIconName} 이 노드에서 유도한 이름이 이 목록에
  * 실재하는지를 테스트가 대조해, 티어대 경계나 스탯 구성이 바뀌면 즉시 깨지게 하기 위함이다.
  */
 export const SKILL_ICON_NAMES = [
+  // 각 스탯 5구간(저·중·상·최상·초월 = low·lowmid·mid·midhigh·high). low/mid/high 는
+  // 기존 아트 보존(tier 0/2/4), lowmid/midhigh 는 신규 밴드 아트 부채(후속 아트패스).
   'skill_damage_pct_low.png',
+  'skill_damage_pct_lowmid.png',
   'skill_damage_pct_mid.png',
+  'skill_damage_pct_midhigh.png',
   'skill_damage_pct_high.png',
   'skill_fire_rate_pct_low.png',
+  'skill_fire_rate_pct_lowmid.png',
   'skill_fire_rate_pct_mid.png',
+  'skill_fire_rate_pct_midhigh.png',
   'skill_fire_rate_pct_high.png',
   'skill_bullet_count_low.png',
+  'skill_bullet_count_lowmid.png',
   'skill_bullet_count_mid.png',
+  'skill_bullet_count_midhigh.png',
   'skill_bullet_count_high.png',
   'skill_bullet_speed_pct_low.png',
+  'skill_bullet_speed_pct_lowmid.png',
   'skill_bullet_speed_pct_mid.png',
+  'skill_bullet_speed_pct_midhigh.png',
   'skill_bullet_speed_pct_high.png',
   'skill_pierce_low.png',
+  'skill_pierce_lowmid.png',
   'skill_pierce_mid.png',
+  'skill_pierce_midhigh.png',
   'skill_pierce_high.png',
-  'skill_range_flat_low.png',
+  // 사거리는 저 밴드 없음 — rangeFlat 노드가 어느 기체에서도 tier 0 에 없다(4구간).
+  'skill_range_flat_lowmid.png',
   'skill_range_flat_mid.png',
+  'skill_range_flat_midhigh.png',
   'skill_range_flat_high.png',
   'skill_max_hp_flat_low.png',
+  'skill_max_hp_flat_lowmid.png',
   'skill_max_hp_flat_mid.png',
+  'skill_max_hp_flat_midhigh.png',
   'skill_max_hp_flat_high.png',
   'skill_max_hp_pct_low.png',
+  'skill_max_hp_pct_lowmid.png',
   'skill_max_hp_pct_mid.png',
+  'skill_max_hp_pct_midhigh.png',
   'skill_max_hp_pct_high.png',
   'skill_dash_cd_pct_low.png',
+  'skill_dash_cd_pct_lowmid.png',
   'skill_dash_cd_pct_mid.png',
+  'skill_dash_cd_pct_midhigh.png',
   'skill_dash_cd_pct_high.png',
   'skill_move_speed_pct_low.png',
+  'skill_move_speed_pct_lowmid.png',
   'skill_move_speed_pct_mid.png',
+  'skill_move_speed_pct_midhigh.png',
   'skill_move_speed_pct_high.png',
   'skill_magnet_pct_low.png',
+  'skill_magnet_pct_lowmid.png',
   'skill_magnet_pct_mid.png',
+  'skill_magnet_pct_midhigh.png',
   'skill_magnet_pct_high.png',
   'skill_xp_pct_low.png',
+  'skill_xp_pct_lowmid.png',
   'skill_xp_pct_mid.png',
+  'skill_xp_pct_midhigh.png',
   'skill_xp_pct_high.png',
   // 캡스톤 3종은 `perPoint: 0` 인 질적 노드라 스탯 아이콘을 붙이면 거짓말이 된다 — 개별 아트.
   'skill_capstone_firepower.png',
@@ -195,7 +229,7 @@ export const UI_ASSET_NAMES: readonly string[] = [
   'equip_unique_greed_heart.png',
   'equip_unique_gambler_chip.png',
   'equip_unique_relic_amplifier.png',
-  // 연구소 스킬 노드 아이콘 35종 — 규칙은 {@link skillIconName}, 목록은 {@link SKILL_ICON_NAMES}.
+  // 연구소 스킬 노드 아이콘 62종 — 규칙은 {@link skillIconName}, 목록은 {@link SKILL_ICON_NAMES}.
   ...SKILL_ICON_NAMES,
 ];
 
@@ -204,15 +238,26 @@ function statSlug(stat: string): string {
   return stat.replace(/([A-Z])/g, '_$1').toLowerCase();
 }
 
+/** 아이콘 티어대 5구간 — 스킬 tier 0~4 를 1:1 로 접는 순수 시각 묶음(런타임 파생 타입). */
+export type SkillIconBand = 'low' | 'lowmid' | 'mid' | 'midhigh' | 'high';
+
 /**
- * 노드 티어 → 아이콘 티어대. 저(0~1) · 중(2~3) · 고(4).
+ * 노드 티어 → 아이콘 티어대 **5구간**(저·중·상·최상·초월 = tier 0·1·2·3·4 1:1, Lane 10).
  *
- * 티어대는 **아이콘을 묶기 위한 구분일 뿐 게임 데이터가 아니다** — `data/skills.ts` 의 `tier`
- * 는 이 함수가 읽기만 하고 절대 바꾸지 않는다. 캡스톤(tier 5)은 여기까지 오지 않는다.
+ * §7-R #6 의 단계 25/50/75/100/100+ 는 개념 앵커(기체 Lv≈단계, 스킬 tier 는 레벨 진행으로
+ * 해금)일 뿐, 아이콘 밴드의 물리적 입력은 여전히 `SkillNode.tier` 0~4 다(ADR-0015·ADR-0022).
+ *
+ * 3밴드에서 확장할 때 **기존 low/mid/high 아트를 tier 0/2/4 에 그대로 보존**해 회귀를 최소화했다 —
+ * tier 0/2/4 아이콘은 그림이 바뀌지 않는다. 새로 갈라진 `lowmid`(tier 1)·`midhigh`(tier 3)만
+ * 아직 PNG 가 없어 로더가 조용히 null 폴백한다(M8 부채 4장과 동급, 후속 아트패스로 채운다 —
+ * `uiTextures.ts:22-28` 관용). 밴드는 **아이콘을 묶기 위한 구분일 뿐 게임 데이터가 아니다** —
+ * `data/skills.ts` 의 `tier` 는 이 함수가 읽기만 하고 절대 바꾸지 않는다. 캡스톤은 오지 않는다.
  */
-export function skillIconBand(tier: number): 'low' | 'mid' | 'high' {
-  if (tier <= 1) return 'low';
-  if (tier <= 3) return 'mid';
+export function skillIconBand(tier: number): SkillIconBand {
+  if (tier <= 0) return 'low';
+  if (tier <= 1) return 'lowmid';
+  if (tier <= 2) return 'mid';
+  if (tier <= 3) return 'midhigh';
   return 'high';
 }
 
