@@ -159,6 +159,11 @@ export function spriteSlotFor(kind: EntityKind, enemyType: number, planet = 0): 
       // TODO(art): 전용 부스트 패드 아트는 후속(Lane5 스펙 §3 — 렌더 세부는 balance/art 후속).
       // 지금은 기존 이벤트 오브젝트 텍스처를 placeholder 로 재사용한다(sim 정합만 필수).
       return { kind: 'single', slot: 'turretPickup' };
+    // --- 추격·탈출(Lane6) ---
+    case 'shelter':
+      // TODO(art): 전용 대피소 아트 + 시야 암흑/안개 오버레이는 후속(Lane6 스펙 §5.6 — 렌더 세부는
+      // art 후속). 지금은 기존 이벤트 오브젝트 텍스처를 placeholder 로 재사용한다(sim 정합만 필수).
+      return { kind: 'single', slot: 'magnetEmitter' };
   }
 }
 

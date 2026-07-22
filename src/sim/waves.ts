@@ -37,6 +37,7 @@ import {
 } from './modes/blockBreak.js';
 import { racingProgress, RACING_SECTION_LENGTH, RACING_SPAWN_AHEAD } from './modes/racing.js';
 import { contaminationPurifyRate, CONTAMINATION_PURIFY_THRESHOLD } from './modes/contamination.js';
+import { chaseShelterReached } from './modes/chase.js';
 
 export interface WaveRuntime {
   segmentIndex: number;
@@ -144,6 +145,12 @@ export function updateWaves(state: WorldState, player: Entity): void {
       const normalSegments = SEGMENTS.length - 1;
       const milestone = (CONTAMINATION_PURIFY_THRESHOLD * (w.segmentIndex + 1)) / normalSegments;
       cleared = contaminationPurifyRate(state) >= milestone;
+    } else if (state.config.planetMode === PLANET_MODE.chase) {
+      // 추격(Lane6): 처치 할당 대신 **대피소 도달**로 구간을 넘는다("탈출 단계"). 세그먼트 i 통과 =
+      // aux0===i 대피소에 도달. 마지막 일반 세그먼트 통과 → 보스 세그먼트지만, 포식자는 이미
+      // 존재(bossSpawned)라 두 번째 보스가 뜨지 않는다. 승리는 대피소가 아니라 반격 장치 전부
+      // 파괴→취약→포식자 처치다(§7-R#3). planetMode 게이트라 뱀서류·침공 거동 불변.
+      cleared = chaseShelterReached(state, w.segmentIndex);
     } else cleared = state.kills - w.segmentBaseKills >= w.segmentKillGoal;
     if (cleared) {
       w.segmentIndex++;

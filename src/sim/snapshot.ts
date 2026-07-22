@@ -11,6 +11,7 @@ import type { WorldState } from './world.js';
 import type { EntityKind } from './entities.js';
 import { eliteAffix } from './elite.js';
 import { windowCenterX, windowCenterY } from './invasion/scroll.js';
+import { chaseVisionRadius } from './modes/chase.js';
 
 export interface EntitySnapshot {
   id: number;
@@ -65,6 +66,12 @@ export interface WorldSnapshot {
    * WorldState, not this snapshot), so it is safe to expose here.
    */
   planet: number;
+  /**
+   * 시야 반경(월드 유닛, 추격 모드=Lane6). sim 이 정한 정수 상태 — 렌더가 이 값으로 플레이어
+   * 주변 암흑/안개 오버레이를 그린다(렌더 세부는 art 후속). 0 = 무제한(그 외 전 모드). 렌더
+   * 전용이라 hashWorld 와 무관하다(planet 필드 선례).
+   */
+  visionRadius: number;
   entities: EntitySnapshot[];
   beams: Beam[];
 }
@@ -117,6 +124,7 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
     cameraX,
     cameraY,
     planet: state.config.planet ?? 0,
+    visionRadius: chaseVisionRadius(state.config.planetMode),
     entities,
     beams,
   };
