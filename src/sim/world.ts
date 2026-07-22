@@ -231,6 +231,15 @@ import {
   RACING_ENEMY_CULL_RADIUS,
   RACING_WALL_MARK,
 } from './modes/racing.js';
+// --- 오염 확산 콘텐츠(Lane8 · ADR-0021 §2.6) — 비-스크롤 자유추적. 파괴가능 오염 노드가 실시간
+//     확산, 지형 지속피해, 노드 파괴로 억제, 정화율 게이트, 임계 오염 실패 -----------------------
+import {
+  placeContaminationField,
+  stepContamination,
+  contaminationCritical,
+  CONTAMINATION_NODE_MARK,
+  HAZARD_CONTAMINATION,
+} from './modes/contamination.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -851,6 +860,11 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     // PvE 레이싱(Lane5): 정적 분기 코스(불파괴 채널 벽 + 부스트 패드)를 1회 배치한다. 마찬가지로
     // racing 런에만 — 뱀서류·블록격파·침공은 조건 밖이라 부스트 패드·레이싱 벽이 안 생겨 불변.
     placeRacingCourse(state);
+  } else if (cfg.planetMode === PLANET_MODE.contamination) {
+    // PvE 오염(Lane8): 비-스크롤 자유추적이라 scrollRuntime 이 없다(위 두 분기 조건 밖). 오염
+    // 노드 필드(고정 링)를 1회 배치한다. contamination 런에만 — 뱀서류·블록격파·레이싱·침공은
+    // 조건 밖이라 오염 노드가 하나도 안 생겨 골든 바이트 불변.
+    placeContaminationField(state);
   }
   return state;
 }
@@ -953,6 +967,10 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
         : BLOCKBREAK_ENEMY_CULL_RADIUS;
     cullScrollEnemies(state, cullRadius);
   }
+  // 오염 확산(Lane8): 살아있는 오염 노드가 결정론 확산으로 오염 지형 셀을 뿌린다(확산 틱마다).
+  // stepEnemies~stepHazards 사이라 이번 틱 스폰된 지형이 resolveCollisions 판정에 든다. planetMode
+  // 게이트라 뱀서류·블록격파·레이싱·침공은 미실행(골든 바이트 불변). 스폰은 노드 순회 후 일괄 append.
+  if (state.config.planetMode === PLANET_MODE.contamination) stepContamination(state);
   stepBoss(state, player);
   autoAttack(state, player);
   capstoneLaser(state, player);
@@ -999,11 +1017,19 @@ function isGimmick(e: Entity): boolean {
     // 마커(RACING_WALL_MARK — DRONE_MARK 선례)로 제외한다. 침공/뱀서류/블록격파 벽은 ownerId=0
     // 이라 조건이 그대로 성립해 거동·해시 완전 불변이다.
     (e.kind === 'wall' && e.hp <= 0 && e.ownerId !== RACING_WALL_MARK) ||
-    e.kind === 'destructible' ||
+    // ⚠️ 오염 노드(Lane8 · destructible + CONTAMINATION_NODE_MARK)는 createWorld 에서 원점에
+    // 고정 배치한 코스라 청크 컬링 대상이 아니다. 제외하지 않으면 자유추적 플레이어가 필드에서
+    // 컬 반경(3000) 밖으로 벗어날 때 노드가 dead 로 지워지고, `contaminationPurifyRate` 가 그
+    // 컬링된 노드를 "정화됨"으로 세어 **도망만으로 정화율이 오르는** 코어 루프 붕괴가 난다
+    // (리뷰 CRITICAL 확증). 절차 청크 destructible 은 ownerId=0 이라 조건 그대로 성립 → 불변.
+    (e.kind === 'destructible' && e.ownerId !== CONTAMINATION_NODE_MARK) ||
     e.kind === 'magnetEmitter' ||
     e.kind === 'bombDevice' ||
     (e.kind === 'turretPickup' && e.ownerId !== DRONE_MARK && e.ownerId !== BROOD_MARK) ||
-    (e.kind === 'hazard' && e.life < 0)
+    // 오염 셀(Lane8 · 영구 해저드 + HAZARD_CONTAMINATION)도 같은 이유로 컬링에서 제외 —
+    // 셀이 컬링되면 임계 오염 실패 게이트를 카이팅으로 무력화할 수 있다(같은 근본 원인의 이면).
+    // 절차 지형 해저드는 enemyType=HAZARD_TERRAIN(2)≠3 이라 조건 그대로 성립 → 거동·해시 불변.
+    (e.kind === 'hazard' && e.life < 0 && e.enemyType !== HAZARD_CONTAMINATION)
   );
 }
 
@@ -3123,6 +3149,10 @@ function checkLevelUp(state: WorldState): void {
 
 function checkGameOver(state: WorldState, player: Entity): void {
   if (player.hp <= 0) state.gameOver = true;
+  // 오염(Lane8): 맵이 임계까지 오염되면(마킹 오염 지형 수 ≥ 임계) 실패. planetMode 게이트라
+  // 타 모드는 이 조건이 항상 거짓 → 거동 불변.
+  else if (state.config.planetMode === PLANET_MODE.contamination && contaminationCritical(state))
+    state.gameOver = true;
 }
 
 function countKind(state: WorldState, kind: Entity['kind']): number {

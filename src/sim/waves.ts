@@ -36,6 +36,7 @@ import {
   BLOCKBREAK_SPAWN_AHEAD,
 } from './modes/blockBreak.js';
 import { racingProgress, RACING_SECTION_LENGTH, RACING_SPAWN_AHEAD } from './modes/racing.js';
+import { contaminationPurifyRate, CONTAMINATION_PURIFY_THRESHOLD } from './modes/contamination.js';
 
 export interface WaveRuntime {
   segmentIndex: number;
@@ -135,7 +136,15 @@ export function updateWaves(state: WorldState, player: Entity): void {
       cleared = blockBreakProgress(sw) >= (w.segmentIndex + 1) * BLOCKBREAK_SECTION_LENGTH;
     else if (sw !== undefined && state.config.planetMode === PLANET_MODE.racing)
       cleared = racingProgress(sw) >= (w.segmentIndex + 1) * RACING_SECTION_LENGTH;
-    else cleared = state.kills - w.segmentBaseKills >= w.segmentKillGoal;
+    else if (state.config.planetMode === PLANET_MODE.contamination) {
+      // 오염(Lane8): 스크롤 거리 대신 **정화율**(파괴된 오염 노드 비율)로 구간을 넘는다. 구간 i
+      // 통과 = 정화율 ≥ 임계 × (i+1)/일반세그먼트수. 일반 세그먼트 수 = SEGMENTS.length − 1
+      // (마지막은 보스). 마지막 일반 세그먼트 통과 = 정화 임계 도달 → 보스 세그먼트 → 오염원
+      // 코어 보스(stepBoss 공통 경로). 곡선·임계는 TODO(밸런스), 구조는 "정화 진행 → 보스".
+      const normalSegments = SEGMENTS.length - 1;
+      const milestone = (CONTAMINATION_PURIFY_THRESHOLD * (w.segmentIndex + 1)) / normalSegments;
+      cleared = contaminationPurifyRate(state) >= milestone;
+    } else cleared = state.kills - w.segmentBaseKills >= w.segmentKillGoal;
     if (cleared) {
       w.segmentIndex++;
       // 튜토리얼 단축판(config.maxSegments): 일반 세그먼트를 상한만큼 소화했으면 곧장
