@@ -47,7 +47,9 @@ export type EntityKind =
   | 'facilitySpawner' // L2 드론 스포너. aux0=남은 소환 수, aux1=다음 소환까지 틱
   | 'spawnedDrone' // facilitySpawner 가 소환한 드론(모체 파괴와 무관하게 독립 생존)
   | 'prop' // L3 기물(실드 발생기·중력 앵커·고정 주포). aux0=기물 카탈로그 id
-  | 'defenseBoss'; // L3 방어 보스. PvE 'boss' 와 별도 kind — compact() 의 boss→victory 함정을 피한다
+  | 'defenseBoss' // L3 방어 보스. PvE 'boss' 와 별도 kind — compact() 의 boss→victory 함정을 피한다
+  // --- 레이싱(Lane5, ADR-0021 §2.3) — 부스트 패드 -----------------------------------
+  | 'boostPad'; // 레이싱 지름길 채널의 순간가속 오버레이. 충돌·이동 차단·grid 등록 없음(inert) — racingCleared 가 플레이어 overlap 만 판정해 가속
 
 /**
  * Stable integer per kind, folded into the state hash. Never renumber existing
@@ -95,6 +97,9 @@ export const KIND_CODE: Record<EntityKind, number> = {
   spawnedDrone: 24,
   prop: 25,
   defenseBoss: 26,
+  // Appended for 레이싱(Lane5, never renumber 1..26). 부스트 패드는 레이싱 런에만 등장하므로
+  // PvE·구 침공·블록격파 리플레이의 해시에는 나타나지 않는다(기존 fixtures 회귀 0).
+  boostPad: 27,
 };
 
 export interface Entity {
@@ -436,4 +441,18 @@ export function spawnLoot(
   l.damage = dropSeed >>> 0;
   l.enemyType = rarityCode;
   return addEntity(sink, l);
+}
+
+/**
+ * 부스트 패드(레이싱 Lane5). `radius` 는 밟음 판정용 접촉 반경. 순수 오버레이 —
+ * resolveCollisions 격자·rebuildActiveWalls·isGimmick 어디에도 등록되지 않아 충돌·이동
+ * 차단이 없다. racingCleared 가 플레이어 overlap 을 판정해 가속만 낸다. hp=0 이라 파괴되지도
+ * 않는다(compact 는 dead 만 수거하는데 부스트 패드는 dead 가 되는 경로가 없다).
+ */
+export function spawnBoostPad(sink: EntitySink, x: number, y: number, radius: number): Entity {
+  const b = blankEntity('boostPad');
+  b.x = x;
+  b.y = y;
+  b.radius = radius;
+  return addEntity(sink, b);
 }

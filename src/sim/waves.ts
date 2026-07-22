@@ -35,6 +35,7 @@ import {
   BLOCKBREAK_SECTION_LENGTH,
   BLOCKBREAK_SPAWN_AHEAD,
 } from './modes/blockBreak.js';
+import { racingProgress, RACING_SECTION_LENGTH, RACING_SPAWN_AHEAD } from './modes/racing.js';
 
 export interface WaveRuntime {
   segmentIndex: number;
@@ -125,16 +126,16 @@ export function updateWaves(state: WorldState, player: Entity): void {
   // 적을 다 쓸어도 기다리지 않으므로 강한 빌드는 런이 짧아진다(창발). 보스 세그먼트는
   // 보스 처치(victory)로만 끝나므로 이 게이트를 타지 않는다.
   if (!seg.boss && w.segmentIndex < SEGMENTS.length - 1) {
-    // 세그먼트 전진 게이트: 블록격파(Lane4)는 처치 할당 대신 스크롤 주파 거리로 구간을 넘는다
-    // (구간 i 돌파 = 진행도 ≥ (i+1)×구간길이). 그 외 모드는 기존 killGoal 게이트 그대로라
-    // 뱀서류·침공 거동이 불변이다. ⚠️ Lane5 racing 확장 지점 — racing 은 +scrollX 진행도라
-    // 여기에 racing 분기를 얹는다(현재는 killGoal 로 폴백).
-    const scrollWin =
-      state.config.planetMode === PLANET_MODE.blockBreak ? state.scrollRuntime : undefined;
-    const cleared =
-      scrollWin !== undefined
-        ? blockBreakProgress(scrollWin) >= (w.segmentIndex + 1) * BLOCKBREAK_SECTION_LENGTH
-        : state.kills - w.segmentBaseKills >= w.segmentKillGoal;
+    // 세그먼트 전진 게이트: 블록격파(Lane4)·레이싱(Lane5)은 처치 할당 대신 스크롤 주파 거리로
+    // 구간을 넘는다(구간 i 돌파 = 진행도 ≥ (i+1)×구간길이). 그 외 모드는 기존 killGoal 게이트
+    // 그대로라 뱀서류·침공 거동이 불변이다. 블록격파=−scrollY 진행도, 레이싱=+scrollX 진행도.
+    const sw = state.scrollRuntime;
+    let cleared: boolean;
+    if (sw !== undefined && state.config.planetMode === PLANET_MODE.blockBreak)
+      cleared = blockBreakProgress(sw) >= (w.segmentIndex + 1) * BLOCKBREAK_SECTION_LENGTH;
+    else if (sw !== undefined && state.config.planetMode === PLANET_MODE.racing)
+      cleared = racingProgress(sw) >= (w.segmentIndex + 1) * RACING_SECTION_LENGTH;
+    else cleared = state.kills - w.segmentBaseKills >= w.segmentKillGoal;
     if (cleared) {
       w.segmentIndex++;
       // 튜토리얼 단축판(config.maxSegments): 일반 세그먼트를 상한만큼 소화했으면 곧장
@@ -288,14 +289,24 @@ function formationPositions(
   // direction. Placement stays a pure function of the wave RNG + player position.
   const rng = state.waveRng;
   const out: { x: number; y: number }[] = [];
-  // 강제 스크롤(Lane4 blockBreak): 스폰 기준점을 플레이어가 아니라 창 중심 전방(−Y)으로 옮긴다
-  // (적이 코스 앞쪽에서 내려오는 정체성). 창 미존재(뱀서류·침공)·다른 모드면 baseX/baseY 가
-  // 그대로 플레이어 좌표라 RNG 소비·산술이 바이트 동일하다(회귀 0). ⚠️ Lane5 racing 확장 지점
-  // (전방 = +X): racing 은 여기에 창 중심 우측 기준을 얹는다.
+  // 강제 스크롤(Lane4/5): 스폰 기준점을 플레이어가 아니라 창 중심 전방으로 옮긴다(적이 코스
+  // 앞쪽에서 다가오는 정체성). 블록격파는 전방=−Y, 레이싱은 전방=+X. 창 미존재(뱀서류·침공)·
+  // 그 외 모드면 baseX/baseY 가 그대로 플레이어 좌표라 RNG 소비·산술이 바이트 동일하다(회귀 0).
+  const mode = state.config.planetMode;
   const scrollWin =
-    state.config.planetMode === PLANET_MODE.blockBreak ? state.scrollRuntime : undefined;
-  const baseX = scrollWin !== undefined ? scrollWin.scrollX : player.x;
-  const baseY = scrollWin !== undefined ? scrollWin.scrollY - BLOCKBREAK_SPAWN_AHEAD : player.y;
+    mode === PLANET_MODE.blockBreak || mode === PLANET_MODE.racing ? state.scrollRuntime : undefined;
+  let baseX: number;
+  let baseY: number;
+  if (scrollWin !== undefined && mode === PLANET_MODE.racing) {
+    baseX = scrollWin.scrollX + RACING_SPAWN_AHEAD; // 전방 = +X(오른쪽에서 다가온다)
+    baseY = scrollWin.scrollY;
+  } else if (scrollWin !== undefined) {
+    baseX = scrollWin.scrollX; // 블록격파: 전방 = −Y(위에서 내려온다)
+    baseY = scrollWin.scrollY - BLOCKBREAK_SPAWN_AHEAD;
+  } else {
+    baseX = player.x; // 뱀서류·침공·그 외: 플레이어 기준(바이트 동일)
+    baseY = player.y;
+  }
 
   switch (formation) {
     case 'ring': {

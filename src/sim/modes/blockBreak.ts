@@ -148,14 +148,18 @@ export function isPinnedByWall(player: Entity, walls: readonly Entity[]): boolea
 /**
  * 창 중심에서 컬 반경 밖(뒤로 흘러간) 적을 dead 표시한다(강제 스크롤 모드 전용). 보스는
  * 제외 — 코스 끝 보스는 창을 벗어나도 유지된다. compact 가 dead 를 수거한다. scrollRuntime
- * 미존재면 no-op(뱀서류·침공 무영향).
+ * 미존재면 no-op(뱀서류·침공 무영향). `cullRadius` 는 모드별 컬 반경(Lane5) — 호출부가 각
+ * 모드의 상수를 넘긴다. 미지정 시 블록격파 기본값(단위 테스트 호환).
  */
-export function cullScrollEnemies(state: WorldState): void {
+export function cullScrollEnemies(
+  state: WorldState,
+  cullRadius: number = BLOCKBREAK_ENEMY_CULL_RADIUS,
+): void {
   const rt = state.scrollRuntime;
   if (rt === undefined) return;
   const cx = rt.scrollX;
   const cy = rt.scrollY;
-  const r2 = BLOCKBREAK_ENEMY_CULL_RADIUS * BLOCKBREAK_ENEMY_CULL_RADIUS;
+  const r2 = cullRadius * cullRadius;
   for (const e of state.entities) {
     if (e.dead || e.kind !== 'enemy') continue;
     const dx = e.x - cx;

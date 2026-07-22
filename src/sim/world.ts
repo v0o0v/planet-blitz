@@ -221,7 +221,16 @@ import {
   isPinnedByWall,
   isBreakableWall,
   cullScrollEnemies,
+  BLOCKBREAK_ENEMY_CULL_RADIUS,
 } from './modes/blockBreak.js';
+// --- 레이싱 콘텐츠(Lane5 · ADR-0021 §2.3) — Lane3 스크롤 위에 분기 코스·부스트·뒤 경계 압박 ---
+import {
+  placeRacingCourse,
+  racingCleared,
+  racingRearPressure,
+  RACING_ENEMY_CULL_RADIUS,
+  RACING_WALL_MARK,
+} from './modes/racing.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -835,9 +844,13 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
 
   // PvE 블록격파(Lane4): 파괴가능 벽 코스를 state 완성 후 1회 배치한다(entities sink·플레이어
   // index 0 확정 이후 append 하므로 hashWorld 불변식 유지). scrollRuntime 이 서 있는 blockBreak
-  // 런에만 배치 — 뱀서류·레이싱·침공은 조건 밖이라 벽이 하나도 안 생겨 골든 바이트 불변.
+  // 런에만 배치 — 뱀서류·침공은 조건 밖이라 벽이 하나도 안 생겨 골든 바이트 불변.
   if (scrollRuntime !== undefined && cfg.planetMode === PLANET_MODE.blockBreak) {
     placeBlockBreakWalls(state);
+  } else if (scrollRuntime !== undefined && cfg.planetMode === PLANET_MODE.racing) {
+    // PvE 레이싱(Lane5): 정적 분기 코스(불파괴 채널 벽 + 부스트 패드)를 1회 배치한다. 마찬가지로
+    // racing 런에만 — 뱀서류·블록격파·침공은 조건 밖이라 부스트 패드·레이싱 벽이 안 생겨 불변.
+    placeRacingCourse(state);
   }
   return state;
 }
@@ -909,10 +922,14 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // 플레이어는 갱신된 창 안에서 움직인다(같은 틱 안에서 창 밖으로 튀는 프레임이 없다).
   if (inv3Runtime !== undefined) advanceInvasionScroll(state, inv3Runtime);
   else if (scrollRuntime !== undefined && scrollAxisDir !== undefined) {
-    // 전멸 가속 신호(Lane4): 블록격파는 창 안 적·보스 전멸 시 가속(cleared=true). 그 외 강제
-    // 스크롤 모드(레이싱=Lane5)는 아직 기준 속도(cleared=false) — 신호는 그 레인이 얹는다.
+    // 전멸 가속 신호: 블록격파(Lane4)는 창 안 적·보스 전멸 시, 레이싱(Lane5)은 전멸 OR 부스트
+    // 패드 위에서 가속(cleared=true). 두 모드 모두 planetMode 게이트라 뱀서류는 미진입(불변).
     const cleared =
-      state.config.planetMode === PLANET_MODE.blockBreak ? blockBreakCleared(state) : false;
+      state.config.planetMode === PLANET_MODE.blockBreak
+        ? blockBreakCleared(state)
+        : state.config.planetMode === PLANET_MODE.racing
+          ? racingCleared(state)
+          : false;
     advanceScrollRuntime(scrollRuntime, scrollAxisDir, cleared);
   }
 
@@ -926,9 +943,16 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   stepShipSignature(state, player, input);
   if (!designedRun) updateWaves(state, player);
   stepEnemies(state, player);
-  // 강제 스크롤(Lane4): 창 뒤로 흘러간 적을 정리한다(보스 제외). 뱀서류·침공은 창 미존재 →
-  // no-op(거동·해시 불변). compact 가 dead 를 수거한다.
-  if (scrollRuntime !== undefined) cullScrollEnemies(state);
+  // 강제 스크롤(Lane4/5): 창 뒤로 흘러간 적을 정리한다(보스 제외). 컬 반경은 모드별로 고른다 —
+  // 각 모드의 최대 스폰 거리보다 크다는 구조적 불변식이 상수 doc 에 못박혀 있다(Lane4 MED 교훈).
+  // 뱀서류·침공은 창 미존재 → no-op(거동·해시 불변). compact 가 dead 를 수거한다.
+  if (scrollRuntime !== undefined) {
+    const cullRadius =
+      state.config.planetMode === PLANET_MODE.racing
+        ? RACING_ENEMY_CULL_RADIUS
+        : BLOCKBREAK_ENEMY_CULL_RADIUS;
+    cullScrollEnemies(state, cullRadius);
+  }
   stepBoss(state, player);
   autoAttack(state, player);
   capstoneLaser(state, player);
@@ -971,7 +995,10 @@ function isGimmick(e: Entity): boolean {
     // 파괴가능 벽(hp>0, blockBreak Lane4)은 청크 기믹이 아니라 createWorld 에서 미리 깐 코스라
     // activateChunks 의 청크 컬링 대상에서 제외한다(플레이어 청크에서 멀어지면 dead 로 지워져
     // 코스가 소멸하는 것을 막는다). 침공/뱀서류 벽은 hp=0 이라 조건이 그대로라 거동·해시 불변.
-    (e.kind === 'wall' && e.hp <= 0) ||
+    // ⚠️ 레이싱(Lane5) 채널 벽은 hp=0 불파괴라 이 조건에 걸려 코스가 지워지므로, ownerId
+    // 마커(RACING_WALL_MARK — DRONE_MARK 선례)로 제외한다. 침공/뱀서류/블록격파 벽은 ownerId=0
+    // 이라 조건이 그대로 성립해 거동·해시 완전 불변이다.
+    (e.kind === 'wall' && e.hp <= 0 && e.ownerId !== RACING_WALL_MARK) ||
     e.kind === 'destructible' ||
     e.kind === 'magnetEmitter' ||
     e.kind === 'bombDevice' ||
@@ -1201,13 +1228,16 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     player.y = clamped.y;
   }
   // 블록격파 압사(Lane4): 벽 슬라이드·창 클램프 이후에도 파괴가능 벽에 끼여 있으면 누적 피해.
-  // 창 경계와 부술 수 있는 벽 사이에 몰렸다는 뜻이다(불파괴 벽 hp=0 은 대상 아님). 뱀서류·
-  // 침공·레이싱은 조건 밖이라 미실행 → 거동·해시 불변.
+  // 창 경계와 부술 수 있는 벽 사이에 몰렸다는 뜻이다(불파괴 벽 hp=0 은 대상 아님). 레이싱
+  // (Lane5)은 벽이 아니라 창 뒤(−X) 경계에 몰리면 누적 피해(즉사 아님). 뱀서류·침공은 두 조건
+  // 모두 밖이라 미실행 → 거동·해시 불변.
   if (
     state.config.planetMode === PLANET_MODE.blockBreak &&
     isPinnedByWall(player, state.activeWalls)
   ) {
     crushBlockBreak(state, player);
+  } else if (state.config.planetMode === PLANET_MODE.racing) {
+    racingRearPressure(state, player);
   }
 }
 
@@ -1624,12 +1654,15 @@ function stepBoss(state: WorldState, player: Entity): void {
     // 행성별 보스 선택(카르곤 용암 요새 / 베르단 여왕). enemyType에 행성 인덱스를
     // 태깅해 렌더가 보스 스프라이트를 분화할 수 있게 한다(카르곤=0 유지 → 해시 불변).
     const bossDef = planetContent(state.config.planet).boss;
-    // 강제 스크롤(Lane4): 카메라가 플레이어가 아니라 스크롤 창이므로 보스도 창 중심 상단에
-    // 소환한다(플레이어 기준이면 창 안 오프셋만큼 어긋난다). 뱀서류는 창 미존재 → 플레이어
-    // 기준 그대로(바이트 불변). 침공은 wave.boss 를 세우지 않아 이 경로에 도달하지 않는다.
+    // 강제 스크롤(Lane4/5): 카메라가 플레이어가 아니라 스크롤 창이므로 보스도 창 중심 기준으로
+    // 소환한다(플레이어 기준이면 창 안 오프셋만큼 어긋난다). 모드별 방향으로 코스 끝에 둔다 —
+    // 레이싱(+X 스크롤)은 오른쪽 끝(+X), 블록격파(−Y 스크롤)·뱀서류는 위(−Y). 뱀서류는 창
+    // 미존재 → 플레이어 기준 + −Y 그대로(바이트 불변). 침공은 wave.boss 를 세우지 않아 미도달.
     const bossWin = state.invasion3 ?? state.scrollRuntime;
-    const bossX = bossWin !== undefined ? windowCenterX(bossWin) : player.x;
-    const bossY = (bossWin !== undefined ? windowCenterY(bossWin) : player.y) - VIEW_HEIGHT * 0.55;
+    let bossX = bossWin !== undefined ? windowCenterX(bossWin) : player.x;
+    let bossY = bossWin !== undefined ? windowCenterY(bossWin) : player.y;
+    if (state.config.planetMode === PLANET_MODE.racing) bossX += VIEW_WIDTH * 0.55; // 코스 끝(+X)
+    else bossY -= VIEW_HEIGHT * 0.55; // 블록격파 top(−Y)·뱀서류 기존
     const boss = spawnBoss(state, bossX, bossY, bossDef.hp, bossDef.radius);
     boss.damage = bossDef.contactDamage;
     boss.enemyType = state.config.planet ?? 0;
