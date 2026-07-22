@@ -36,6 +36,7 @@ import { shipBonusBp } from '../../data/lineage.js';
 import { activeShip } from '../save/profile.js';
 import type { Profile } from '../save/profile.js';
 import { normalizeShipTypeId } from '../../data/ships/index.js';
+import { planetContent } from '../../data/planets/index.js';
 
 /** 무대 선택값 — 프로필에서 파생되지 **않는** 입력만 여기 온다. */
 export interface RunConfigOpts {
@@ -73,6 +74,10 @@ function equippedItems(profile: Profile): Item[] {
  *  1. `computeLoadoutStats(..., typeId)` — 섀시 baseBp · 타입별 트리 파생 · 시그니처 비트 OR-in
  *  2. `WorldConfig.shipType` — sim 의 시그니처 게이트(`world.ts`)와 `hashWorld` 꼬리 폴드
  *  3. `skillInvest` 길이 — 타입별 노드 수(스트라이커 63, 비온 78 …)가 해시에 그대로 접힌다
+ *
+ * 행성 모드(ADR-0021, Lane2)도 여기서 **단일 정본**으로 스탬프한다 — 레지스트리
+ * `planetContent(planet).mode` 가 정본이라 데이터 주도다. shipType 처럼 항상 명시하되
+ * 값이 0(vampire)이면 `hashWorld` 꼬리 폴드가 미실행이라 뱀서류/침공 해시가 불변이다.
  */
 export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConfig {
   const ship = activeShip(profile);
@@ -103,6 +108,10 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
     // **추론이 아니라 명시**로 읽게 된다(설계서 §4). 훗날 시그니처 없는 타입이 추가돼도
     // "필드가 없으니 스트라이커겠지" 라는 추론이 조용히 깨지지 않는다.
     shipType: typeId,
+    // 행성 모드는 레지스트리(PlanetContent.mode)가 정본이다(데이터 주도, ADR-0021).
+    // shipType 과 같이 **항상 명시** — 서버(EF)가 추론이 아니라 명시로 읽는다. 침공 런은
+    // planet 0(카르곤=vampire) 이라 mode 0 → 폴드 미실행 → verify-invasion 무영향.
+    planetMode: planetContent(opts.planet).mode,
     ...(opts.maxSegments !== undefined ? { maxSegments: opts.maxSegments } : {}),
     ...(opts.invasion3 !== undefined ? { invasion3: opts.invasion3 } : {}),
   };

@@ -37,6 +37,7 @@ import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile, activeShip } from '../src/save/profile.js';
 import type { Profile } from '../src/save/profile.js';
 import { SKILL_NODE_COUNT } from '../data/skills.js';
+import { PLANET_MODE } from '../src/sim/planetMode.js';
 
 // tests/node-shims.d.ts 의 readFileSync 는 Uint8Array 만 반환한다(encoding 오버로드 없음).
 // 소유하지 않은 그 파일을 넓히는 대신 여기서 디코드한다.
@@ -213,7 +214,12 @@ function assembleRunConfigLikeMain(
  * (`expectSameStream`)은 아래에서 그대로 증명된다.
  */
 function goldenConfigAsApp(planet: PlanetSpec, invest: readonly number[]): WorldConfig {
-  return { ...baselineConfig(planet, invest), anomalyAccepted: false, shipType: 0 };
+  return {
+    ...baselineConfig(planet, invest),
+    anomalyAccepted: false,
+    shipType: 0,
+    planetMode: PLANET_MODE.vampire,
+  };
 }
 
 /** 골든과 같은 조건으로 실제 sim 을 굴려 per-tick 해시를 모은다. */
