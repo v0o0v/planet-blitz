@@ -309,6 +309,26 @@ describe('오염 — 정규경로 통합(배선 실도달)', () => {
     // hp 사망이 아니라 임계 오염 실패임을 못박는다(durableHP 라 hp 는 아직 크다).
     expect((w.entities[0] as Entity).hp).toBeGreaterThan(0);
   });
+
+  it('(h) 필드에서 컬 반경 밖으로 도망가도 노드가 컬링되지 않아 정화율이 0을 유지한다 — 도망 exploit 회귀 가드(리뷰 CRITICAL)', () => {
+    // isGimmick 이 오염 노드/셀을 청크 컬링 대상으로 잘못 분류하면, 자유추적 플레이어가 필드에서
+    // 멀어질 때 노드가 dead 로 컬링되고 contaminationPurifyRate 가 그걸 "정화됨"으로 세어
+    // **도망만으로 정화율이 올라 무노력 승리**가 났다(CONTAMINATION_NODE_MARK/HAZARD_CONTAMINATION
+    // 를 isGimmick 에서 제외해 해결). 이 가드가 그 회귀를 막는다.
+    const w = createWorld(21, durableContamination());
+    w.weapon.damage = 0; // 노드를 실제로 파괴하지 않았음을 확실히(원거리라 안 맞지만 이중 보증).
+    const player = w.entities[0] as Entity;
+    expect(nodes(w).length).toBe(CONTAMINATION_NODE_COUNT); // 원점 링에 배치됨
+    expect(contaminationPurifyRate(w)).toBe(0);
+    // 컬 반경(CHUNK_CULL_RADIUS=3000) 훨씬 밖으로 이동 → activateChunks 가 매 틱 gimmick 을 컬링한다.
+    player.x = 8000;
+    player.y = 8000;
+    for (let i = 0; i < 10; i++) stepContam(w);
+    // 수정 전이면 노드가 컬링돼 배열에서 사라지고(compact 제거) 정화율이 상승했다.
+    expect(nodes(w).length).toBe(CONTAMINATION_NODE_COUNT); // ★ 노드가 하나도 안 지워졌다
+    expect(contaminationPurifyRate(w)).toBe(0); // ★ 도망으로 정화율이 오르지 않는다(파괴 없음)
+    expect(w.bossSpawned).toBe(false); // 무노력 보스 소환도 없다
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -237,6 +237,8 @@ import {
   placeContaminationField,
   stepContamination,
   contaminationCritical,
+  CONTAMINATION_NODE_MARK,
+  HAZARD_CONTAMINATION,
 } from './modes/contamination.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
@@ -1015,11 +1017,19 @@ function isGimmick(e: Entity): boolean {
     // 마커(RACING_WALL_MARK — DRONE_MARK 선례)로 제외한다. 침공/뱀서류/블록격파 벽은 ownerId=0
     // 이라 조건이 그대로 성립해 거동·해시 완전 불변이다.
     (e.kind === 'wall' && e.hp <= 0 && e.ownerId !== RACING_WALL_MARK) ||
-    e.kind === 'destructible' ||
+    // ⚠️ 오염 노드(Lane8 · destructible + CONTAMINATION_NODE_MARK)는 createWorld 에서 원점에
+    // 고정 배치한 코스라 청크 컬링 대상이 아니다. 제외하지 않으면 자유추적 플레이어가 필드에서
+    // 컬 반경(3000) 밖으로 벗어날 때 노드가 dead 로 지워지고, `contaminationPurifyRate` 가 그
+    // 컬링된 노드를 "정화됨"으로 세어 **도망만으로 정화율이 오르는** 코어 루프 붕괴가 난다
+    // (리뷰 CRITICAL 확증). 절차 청크 destructible 은 ownerId=0 이라 조건 그대로 성립 → 불변.
+    (e.kind === 'destructible' && e.ownerId !== CONTAMINATION_NODE_MARK) ||
     e.kind === 'magnetEmitter' ||
     e.kind === 'bombDevice' ||
     (e.kind === 'turretPickup' && e.ownerId !== DRONE_MARK && e.ownerId !== BROOD_MARK) ||
-    (e.kind === 'hazard' && e.life < 0)
+    // 오염 셀(Lane8 · 영구 해저드 + HAZARD_CONTAMINATION)도 같은 이유로 컬링에서 제외 —
+    // 셀이 컬링되면 임계 오염 실패 게이트를 카이팅으로 무력화할 수 있다(같은 근본 원인의 이면).
+    // 절차 지형 해저드는 enemyType=HAZARD_TERRAIN(2)≠3 이라 조건 그대로 성립 → 거동·해시 불변.
+    (e.kind === 'hazard' && e.life < 0 && e.enemyType !== HAZARD_CONTAMINATION)
   );
 }
 
