@@ -335,6 +335,26 @@ export function spawnWall(sink: EntitySink, x: number, y: number, halfW: number,
   return addEntity(sink, w);
 }
 
+/**
+ * 파괴가능 벽(hp>0, blockBreak Lane4). 아군탄이 hp 를 깎고 hp≤0 에서 파괴한다. AABB 필드
+ * 매핑(radius=halfW, targetX=halfH)은 spawnWall 정본과 동일 — **별도 kind 를 만들지 않아**
+ * 이동 차단·창 클램프·LOS·압사 기하가 전부 기존 wall 경로로 공짜로 붙는다. `hp>0` 자체가
+ * 파괴가능 표식이라 침공/뱀서류 벽(hp=0)과 게이트로 갈린다(그쪽 거동·해시 불변).
+ */
+export function spawnBreakableWall(
+  sink: EntitySink,
+  x: number,
+  y: number,
+  halfW: number,
+  halfH: number,
+  hp: number,
+): Entity {
+  const w = spawnWall(sink, x, y, halfW, halfH);
+  w.hp = hp;
+  w.maxHp = hp;
+  return w;
+}
+
 /** Spawn a destructible object: `hp` > 0, drops a gem worth `xpValue` when broken. */
 export function spawnDestructible(
   sink: EntitySink,

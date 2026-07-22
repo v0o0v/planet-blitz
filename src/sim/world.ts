@@ -212,6 +212,16 @@ import {
   isScrollMode,
   type ScrollRuntime,
 } from './scrollMode.js';
+// --- 블록격파 콘텐츠(Lane4 · ADR-0021 §2.2) — Lane3 스크롤 위에 파괴가능 벽·진행 게이트·압사 ---
+import { PLANET_MODE } from './planetMode.js';
+import {
+  placeBlockBreakWalls,
+  blockBreakCleared,
+  crushBlockBreak,
+  isPinnedByWall,
+  isBreakableWall,
+  cullScrollEnemies,
+} from './modes/blockBreak.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -822,6 +832,13 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     const modules = cfg.invasion3.modules;
     if (modules !== undefined) state.moduleRuntime = initModuleRuntime(modules, state);
   }
+
+  // PvE 블록격파(Lane4): 파괴가능 벽 코스를 state 완성 후 1회 배치한다(entities sink·플레이어
+  // index 0 확정 이후 append 하므로 hashWorld 불변식 유지). scrollRuntime 이 서 있는 blockBreak
+  // 런에만 배치 — 뱀서류·레이싱·침공은 조건 밖이라 벽이 하나도 안 생겨 골든 바이트 불변.
+  if (scrollRuntime !== undefined && cfg.planetMode === PLANET_MODE.blockBreak) {
+    placeBlockBreakWalls(state);
+  }
   return state;
 }
 
@@ -892,8 +909,11 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // 플레이어는 갱신된 창 안에서 움직인다(같은 틱 안에서 창 밖으로 튀는 프레임이 없다).
   if (inv3Runtime !== undefined) advanceInvasionScroll(state, inv3Runtime);
   else if (scrollRuntime !== undefined && scrollAxisDir !== undefined) {
-    // 전멸 가속 신호는 Lane4/5 — 인프라 단계는 기준 속도(cleared=false).
-    advanceScrollRuntime(scrollRuntime, scrollAxisDir, false);
+    // 전멸 가속 신호(Lane4): 블록격파는 창 안 적·보스 전멸 시 가속(cleared=true). 그 외 강제
+    // 스크롤 모드(레이싱=Lane5)는 아직 기준 속도(cleared=false) — 신호는 그 레인이 얹는다.
+    const cleared =
+      state.config.planetMode === PLANET_MODE.blockBreak ? blockBreakCleared(state) : false;
+    advanceScrollRuntime(scrollRuntime, scrollAxisDir, cleared);
   }
 
   // 코어 모듈(장착 시): 이번 틱 유효 배율·트리거 상태를 stepPlayer 이전에 갱신해 모든 접점이
@@ -906,6 +926,9 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   stepShipSignature(state, player, input);
   if (!designedRun) updateWaves(state, player);
   stepEnemies(state, player);
+  // 강제 스크롤(Lane4): 창 뒤로 흘러간 적을 정리한다(보스 제외). 뱀서류·침공은 창 미존재 →
+  // no-op(거동·해시 불변). compact 가 dead 를 수거한다.
+  if (scrollRuntime !== undefined) cullScrollEnemies(state);
   stepBoss(state, player);
   autoAttack(state, player);
   capstoneLaser(state, player);
@@ -945,7 +968,10 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
  *  TURRET_LIFE_TICKS 수명만 따른다. */
 function isGimmick(e: Entity): boolean {
   return (
-    e.kind === 'wall' ||
+    // 파괴가능 벽(hp>0, blockBreak Lane4)은 청크 기믹이 아니라 createWorld 에서 미리 깐 코스라
+    // activateChunks 의 청크 컬링 대상에서 제외한다(플레이어 청크에서 멀어지면 dead 로 지워져
+    // 코스가 소멸하는 것을 막는다). 침공/뱀서류 벽은 hp=0 이라 조건이 그대로라 거동·해시 불변.
+    (e.kind === 'wall' && e.hp <= 0) ||
     e.kind === 'destructible' ||
     e.kind === 'magnetEmitter' ||
     e.kind === 'bombDevice' ||
@@ -1173,6 +1199,15 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     const clamped = clampToWindow(player.x, player.y, player.radius, scrollWin);
     player.x = clamped.x;
     player.y = clamped.y;
+  }
+  // 블록격파 압사(Lane4): 벽 슬라이드·창 클램프 이후에도 파괴가능 벽에 끼여 있으면 누적 피해.
+  // 창 경계와 부술 수 있는 벽 사이에 몰렸다는 뜻이다(불파괴 벽 hp=0 은 대상 아님). 뱀서류·
+  // 침공·레이싱은 조건 밖이라 미실행 → 거동·해시 불변.
+  if (
+    state.config.planetMode === PLANET_MODE.blockBreak &&
+    isPinnedByWall(player, state.activeWalls)
+  ) {
+    crushBlockBreak(state, player);
   }
 }
 
@@ -1589,13 +1624,13 @@ function stepBoss(state: WorldState, player: Entity): void {
     // 행성별 보스 선택(카르곤 용암 요새 / 베르단 여왕). enemyType에 행성 인덱스를
     // 태깅해 렌더가 보스 스프라이트를 분화할 수 있게 한다(카르곤=0 유지 → 해시 불변).
     const bossDef = planetContent(state.config.planet).boss;
-    const boss = spawnBoss(
-      state,
-      player.x,
-      player.y - VIEW_HEIGHT * 0.55,
-      bossDef.hp,
-      bossDef.radius,
-    );
+    // 강제 스크롤(Lane4): 카메라가 플레이어가 아니라 스크롤 창이므로 보스도 창 중심 상단에
+    // 소환한다(플레이어 기준이면 창 안 오프셋만큼 어긋난다). 뱀서류는 창 미존재 → 플레이어
+    // 기준 그대로(바이트 불변). 침공은 wave.boss 를 세우지 않아 이 경로에 도달하지 않는다.
+    const bossWin = state.invasion3 ?? state.scrollRuntime;
+    const bossX = bossWin !== undefined ? windowCenterX(bossWin) : player.x;
+    const bossY = (bossWin !== undefined ? windowCenterY(bossWin) : player.y) - VIEW_HEIGHT * 0.55;
+    const boss = spawnBoss(state, bossX, bossY, bossDef.hp, bossDef.radius);
     boss.damage = bossDef.contactDamage;
     boss.enemyType = state.config.planet ?? 0;
     state.bossSpawned = true;
@@ -2323,12 +2358,26 @@ function stepProjectiles(state: WorldState, player: Entity): void {
     // 청크·상한 상향) 벽에도 broad-phase(공간 격자/스윕-프룬)가 필요하다.
     // 침공 3레이어는 broad-phase 인덱스로 질의한다(firstBlocking 은 배열 최소 인덱스를 돌려주어
     // 아래 직접 스윕의 first-hit 와 비트 동일 — 결과가 갈릴 여지가 구조적으로 없다).
+    // ⚠️ 이 broad-phase 빠른 경로는 벽 파괴를 적용하지 않는다(firstBlocking 은 bool 만 반환) —
+    // 탄만 죽이고 벽 hp 는 못 깎는다. 현재 wallIndex 는 **침공 3레이어에서만** non-null 이고
+    // blockBreak 는 null 이라 아래 직접 스윕으로 파괴가 정상 동작한다. 훗날 PvE 스크롤 모드에
+    // 성능용 wallIndex 를 붙이면 파괴가능 벽이 조용히 불파괴가 되어 모드 클리어 불가가 되므로,
+    // 그때는 이 분기에도 벽 피해를 적용해야 한다(firstBlocking 이 벽 참조를 반환하도록 확장).
     if (wallIndex !== null) {
       if (wallIndex.firstBlocking(e.x, e.y, e.radius) !== null) e.dead = true;
       continue;
     }
     for (const w of walls) {
       if (circleOverlapsWall(e.x, e.y, e.radius, w)) {
+        // 블록격파(Lane4): 아군탄(bullet)이 파괴가능 벽(hp>0)에 피해를 주고 hp≤0 이면 벽을
+        // 파괴한다(관통 무시 = 밸런스, 첫 겹침에서 탄 소멸). 적탄·hp=0 벽(침공/뱀서류)은
+        // isBreakableWall=false → 탄만 소멸(기존 거동·해시 완전 불변). 파괴된 벽은 **의도적으로
+        // 젬을 안 준다**(destructible 은 보상 오브젝트라 젬을 주지만, 코스 벽은 통과 장애물이라
+        // 무보상 — compact 에 wall 드랍 분기가 없는 것이 이 설계다).
+        if (e.kind === 'bullet' && isBreakableWall(w)) {
+          w.hp -= e.damage;
+          if (w.hp <= 0) w.dead = true;
+        }
         e.dead = true;
         break;
       }
@@ -2946,7 +2995,12 @@ function compact(state: WorldState): void {
       survivors.push(e);
       continue;
     }
-    if (e.kind === 'enemy') {
+    // 처치 집계는 `hp<=0`(실제 격추)로 게이트한다 — supply(아래 "vs. escaped")·destructible
+    // ("vs. culled")과 동일 규율. 기존 전 사망 경로(탄 명중·화염 DoT·전격·폭탄 기물)는 항상
+    // hp<=0 에서 dead 가 되므로 이 게이트는 그들에게 무연산(뱀서류·침공 바이트 불변)이다.
+    // 강제 스크롤 컬링(cullScrollEnemies, Lane4)만 hp>0 인 적을 dead 로 표시하는데, 그건 도망쳐
+    // 창 뒤로 빠진 적이라 처치가 아니다 — 공짜 처치·젬·엘리트 루팅을 여기서 정확히 배제한다.
+    if (e.kind === 'enemy' && e.hp <= 0) {
       state.kills++;
       const def = enemyDefFor(e);
       drops.push({ x: e.x, y: e.y, xp: def?.xpValue ?? 1 });
