@@ -204,6 +204,14 @@ import {
 } from './invasion/phase.js';
 import { makeInvasionContext, stepInvasionLayer } from './invasion/step.js';
 import { InvasionWallIndex } from './invasion/wallIndex.js';
+// --- PvE 행성 모드 강제 스크롤(Lane3 · ADR-0021) — invasion3 과 분리된 경량 런타임 ---------
+import {
+  createScrollRuntime,
+  advanceScrollRuntime,
+  scrollModeAxisDir,
+  isScrollMode,
+  type ScrollRuntime,
+} from './scrollMode.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -665,6 +673,12 @@ export interface WorldState {
    * 적립까지다.
    */
   invasion3Bombs: number;
+  /**
+   * PvE 강제 스크롤 런타임(Lane3, ADR-0021). 존재 = 블록격파/레이싱 등 강제 스크롤 모드.
+   * invasion3 과 **상호 배타**(createWorld 가 한쪽만 세운다). 없으면 자유추적 카메라(뱀서류).
+   * hashWorld 는 존재 시에만 조건부 폴드 → 뱀서류·침공 바이트 불변. append-only.
+   */
+  scrollRuntime?: ScrollRuntime;
 }
 
 /**
@@ -734,6 +748,12 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     invasion3Runtime = createInvasionRuntime();
   }
 
+  // PvE 강제 스크롤 모드(블록격파/레이싱). invasion3 이면 세우지 않는다(상호 배타).
+  let scrollRuntime: ScrollRuntime | undefined;
+  if (cfg.invasion3 === undefined && isScrollMode(cfg.planetMode)) {
+    scrollRuntime = createScrollRuntime();
+  }
+
   // Anomaly: roll the seed-only offer, gate it on the config acceptance flag.
   const anomalyRng = rng.fork('anomaly');
   const anomaly = rollAnomaly(anomalyRng, cfg.anomalyAccepted ?? false);
@@ -788,6 +808,9 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     // 3레이어 침공이 아니면 필드 자체를 두지 않는다(exactOptionalPropertyTypes — undefined
     // 대입 금지 · 조건부 접기 정합).
     ...(invasion3Runtime !== undefined ? { invasion3: invasion3Runtime } : {}),
+    // PvE 강제 스크롤 런타임도 존재할 때만 싣는다(exactOptionalPropertyTypes · 조건부 접기
+    // 정합). invasion3 과 상호 배타라 둘 다 실리는 상태는 위 가드로 발생하지 않는다.
+    ...(scrollRuntime !== undefined ? { scrollRuntime } : {}),
   };
 
   // L1 진입 훅(정적 배치 스폰)은 상태가 완성된 뒤에 태운다 — 훅이 state.entities 에 스폰하기
@@ -843,6 +866,9 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // 페이즈 머신 갱신이 훅에 즉시 보이게 한다.
   const invasion3 = state.config.invasion3;
   const inv3Runtime = state.invasion3;
+  // PvE 강제 스크롤(Lane3): 런타임·축방향이 모두 있을 때만 활성. invasion3 과 상호 배타다.
+  const scrollRuntime = state.scrollRuntime;
+  const scrollAxisDir = scrollModeAxisDir(state.config.planetMode);
   const inv3Ctx =
     invasion3 !== undefined && inv3Runtime !== undefined
       ? makeInvasionContext(invasion3, inv3Runtime)
@@ -865,6 +891,10 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // 강제 스크롤: 가속 갱신 + 창 전진을 **플레이어 이동 이전에** 처리한다. 창이 먼저 밀고,
   // 플레이어는 갱신된 창 안에서 움직인다(같은 틱 안에서 창 밖으로 튀는 프레임이 없다).
   if (inv3Runtime !== undefined) advanceInvasionScroll(state, inv3Runtime);
+  else if (scrollRuntime !== undefined && scrollAxisDir !== undefined) {
+    // 전멸 가속 신호는 Lane4/5 — 인프라 단계는 기준 속도(cleared=false).
+    advanceScrollRuntime(scrollRuntime, scrollAxisDir, false);
+  }
 
   // 코어 모듈(장착 시): 이번 틱 유효 배율·트리거 상태를 stepPlayer 이전에 갱신해 모든 접점이
   // 같은 틱 값을 읽게 한다. moduleRuntime 미존재(미장착·PvE)면 조기 반환 → 거동·해시 불변.
@@ -1134,13 +1164,13 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     player.x = slid.x;
     player.y = slid.y;
   }
-  // 침공 3레이어: 강제 스크롤 창 밖으로 나갈 수 없다. PvE 의 "무한 맵, 아레나 클램프 없음"
-  // 규율은 그대로고(runtime 미존재 → 이 블록 자체를 건너뜀), 침공에서만 창이 경계가 된다.
-  // 벽 슬라이드 **이후**에 적용해 창 경계가 항상 최종 권위를 갖게 한다(벽이 플레이어를 창
-  // 밖으로 밀어내는 상태를 허용하지 않는다).
-  const inv3 = state.invasion3;
-  if (inv3 !== undefined) {
-    const clamped = clampToWindow(player.x, player.y, player.radius, inv3);
+  // 강제 스크롤(침공 3레이어 또는 PvE 스크롤 모드=Lane3): 창 밖으로 나갈 수 없다. PvE 의
+  // "무한 맵, 아레나 클램프 없음" 규율은 그대로고(창 미존재 → 이 블록 자체를 건너뜀),
+  // 강제 스크롤에서만 창이 경계가 된다. 벽 슬라이드 **이후**에 적용해 창 경계가 항상 최종
+  // 권위를 갖게 한다(벽이 플레이어를 창 밖으로 밀어내는 상태를 허용하지 않는다).
+  const scrollWin = state.invasion3 ?? state.scrollRuntime;
+  if (scrollWin !== undefined) {
+    const clamped = clampToWindow(player.x, player.y, player.radius, scrollWin);
     player.x = clamped.x;
     player.y = clamped.y;
   }
@@ -2252,12 +2282,13 @@ function stepProjectiles(state: WorldState, player: Entity): void {
   // radius. Both conditions are checked so a bullet can never accumulate
   // forever off-screen (see tests/projectiles.test.ts).
   const cullR2 = PROJECTILE_CULL_RADIUS * PROJECTILE_CULL_RADIUS;
-  // 침공 3레이어에서는 화면이 플레이어가 아니라 스크롤 창을 따라가므로, 컬링 기준점도 창
-  // 중심이어야 한다(플레이어 기준이면 창 앞쪽에서 대기 중인 탄이 조기 소멸한다).
-  // PvE·구 침공은 runtime 미존재 → cullX/cullY 가 그대로 player.x/y 라 산술이 바이트 동일하다.
-  const inv3 = state.invasion3;
-  const cullX = inv3 !== undefined ? windowCenterX(inv3) : player.x;
-  const cullY = inv3 !== undefined ? windowCenterY(inv3) : player.y;
+  // 강제 스크롤(침공 3레이어 또는 PvE 스크롤 모드=Lane3)에서는 화면이 플레이어가 아니라
+  // 스크롤 창을 따라가므로, 컬링 기준점도 창 중심이어야 한다(플레이어 기준이면 창 앞쪽에서
+  // 대기 중인 탄이 조기 소멸한다). 뱀서류는 창 미존재 → cullX/cullY 가 그대로 player.x/y 라
+  // 산술이 바이트 동일하다.
+  const scrollWin = state.invasion3 ?? state.scrollRuntime;
+  const cullX = scrollWin !== undefined ? windowCenterX(scrollWin) : player.x;
+  const cullY = scrollWin !== undefined ? windowCenterY(scrollWin) : player.y;
   const walls = state.activeWalls;
   const wallIndex = state.wallIndex;
   // 중력 폭풍 변칙: enemy bullets travel slower (single application point so no
