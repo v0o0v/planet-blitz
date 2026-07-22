@@ -43,8 +43,8 @@ export interface RunResult {
   resources: number;
   /** Planet index the run took place on (records a clear on victory, plan E2). */
   planet?: number;
-  /** Tier index the run took place on (records a clear on victory, plan E2). */
-  tier?: number;
+  /** 침략 단계 the run took place on (records a clear on victory, ADR-0022). */
+  stage?: number;
 }
 
 /** Summary of what a run added to the profile (for the result overlay). */
@@ -73,7 +73,7 @@ export function settleRun(profile: Profile, result: RunResult): SettlementOutcom
   const itemsGained: Item[] = [];
   for (const rec of result.loot) {
     const rarity = RARITY_BY_CODE[rec.rarity] ?? 'normal';
-    itemsGained.push(rollItem(rec.seed, rarity, { planet: rec.planet, tier: rec.tier }));
+    itemsGained.push(rollItem(rec.seed, rarity, { planet: rec.planet, stage: rec.stage }));
   }
 
   // 2. Place items: inventory first, then stash, then overflow.
@@ -95,9 +95,10 @@ export function settleRun(profile: Profile, result: RunResult): SettlementOutcom
   const creditsGained = Math.max(0, Math.floor(result.resources));
   profile.credits += creditsGained;
 
-  // 5. On victory, record the planet clear (drives 정제소 unlock + tier gating).
-  if (result.victory && result.planet !== undefined && result.tier !== undefined) {
-    recordPlanetClear(profile, result.planet, result.tier);
+  // 5. On victory, record the planet clear (drives 정제소 unlock + 단계 개방 상한, ADR-0022).
+  //    승리한 단계가 실제로 기록돼야 개방이 진행된다(핵심 배선 — 누락 시 개방 영영 안 됨).
+  if (result.victory && result.planet !== undefined && result.stage !== undefined) {
+    recordPlanetClear(profile, result.planet, result.stage);
   }
 
   // 6. 설계도 파생(M7b) — 장비 확정과 같은 드랍 시드에서 되풀어 쓰는 순수 함수라 RNG 커서를

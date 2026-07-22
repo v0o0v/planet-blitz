@@ -66,8 +66,8 @@ export interface HarnessRunOpts {
   seed?: number;
   /** Planet index (default 0). */
   planet?: number;
-  /** Difficulty tier index (default 0). */
-  tier?: number;
+  /** 침략 단계(1..∞, ADR-0022; default 1). */
+  stage?: number;
   /** Accept the seed-offered anomaly (default false). */
   anomaly?: boolean;
   /** Cap of pre-boss segments (tutorial short run); absent = full run. */
@@ -173,7 +173,7 @@ export interface HarnessHost {
   /** Jump to a menu screen (programmatic — reuses main's open* functions). */
   goto(screen: HarnessScreen): void;
   /** Start a run directly from resolved options. */
-  startRun(opts: Required<Pick<HarnessRunOpts, 'planet' | 'tier' | 'anomaly'>> & {
+  startRun(opts: Required<Pick<HarnessRunOpts, 'planet' | 'stage' | 'anomaly'>> & {
     seed: number;
     maxSegments?: number;
   }): void;
@@ -417,7 +417,7 @@ export function createHarness(host: HarnessHost): Harness {
       host.startRun({
         seed,
         planet: opts.planet ?? 0,
-        tier: opts.tier ?? 0,
+        stage: opts.stage ?? 1,
         anomaly: opts.anomaly ?? false,
         ...(opts.maxSegments !== undefined ? { maxSegments: opts.maxSegments } : {}),
       });

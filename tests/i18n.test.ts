@@ -497,7 +497,7 @@ describe('기체 표시명 — 정규 경로 통합 (Profile → buildRunConfig 
       ship.typeId = def.id;
       ship.skillInvest = zeroSkillInvest(def.id);
 
-      const cfg = buildRunConfig(p, { planet: 0, tier: 0 });
+      const cfg = buildRunConfig(p, { planet: 0, stage: 1 });
       expect(cfg.shipType, `${def.slug} shipType`).toBe(def.id);
 
       const state = createWorld(4242, { ...cfg, playerHp: 100_000_000 });
@@ -628,7 +628,7 @@ describe('기체 아트 슬롯 — 파일이 없어도 폴백이 동작한다', 
       ship.typeId = def.id;
       ship.skillInvest = zeroSkillInvest(def.id);
 
-      const cfg = buildRunConfig(p, { planet: 0, tier: 0 });
+      const cfg = buildRunConfig(p, { planet: 0, stage: 1 });
       const state = createWorld(4242, { ...cfg, playerHp: 100_000_000 });
       for (let i = 0; i < 30; i++) stepWorld(state, emptyInput());
 

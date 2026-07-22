@@ -57,24 +57,24 @@ interface Stage {
   readonly key: string;
   readonly label: string;
   readonly planet: number;
-  readonly tier: number;
+  readonly stage: number;
 }
 
 /**
- * 무대 4종. 전 조합(4행성 × 3티어 = 12)을 돌리면 비용이 4배가 되므로 **효과를 분리할 수
- * 있는 최소 집합**만 고른다:
- *  - S0·S1 은 행성을 고정(kargon)하고 티어만 0↔2 로 벌려 **난이도 효과를 단독 관측**한다.
- *  - S1·S3 은 티어를 고정(2)하고 행성만 kargon↔arke 로 벌려 **행성 효과를 단독 관측**한다.
+ * 무대 4종. 전 조합(4행성 × 3밴드 = 12)을 돌리면 비용이 4배가 되므로 **효과를 분리할 수
+ * 있는 최소 집합**만 고른다(침략 단계 밴드 대표: 1=구 정찰, 11=구 교전, 21=구 섬멸):
+ *  - S0·S1 은 행성을 고정(kargon)하고 단계만 1↔21 로 벌려 **난이도 효과를 단독 관측**한다.
+ *  - S1·S3 은 단계를 고정(21)하고 행성만 kargon↔arke 로 벌려 **행성 효과를 단독 관측**한다.
  *  - S2 는 스트라이커 골든 픽스처(`tests/fixtures/striker-prem8.json`)가 쓰는 두 무대 중
- *    하나(`berdan-engage` = planet 1 / tier 1)를 그대로 채택한 중간 기준점이다.
- *    (골든의 다른 무대 `kargon-recon` = planet 0 / tier 0 은 S0 과 동일하다.)
- * 즉 S0=바닥, S2=중간(골든 기준), S1=티어 상한, S3=행성·티어 동시 상한.
+ *    하나(`berdan-engage` = planet 1 / 단계 11)를 그대로 채택한 중간 기준점이다.
+ *    (골든의 다른 무대 `kargon-recon` = planet 0 / 단계 1 은 S0 과 동일하다.)
+ * 즉 S0=바닥, S2=중간(골든 기준), S1=단계 밴드 상한, S3=행성·단계 동시 상한.
  */
 const STAGES: readonly Stage[] = [
-  { key: 'kargon-t0', label: '카르곤 · 정찰(t0)', planet: 0, tier: 0 },
-  { key: 'kargon-t2', label: '카르곤 · 섬멸(t2)', planet: 0, tier: 2 },
-  { key: 'berdan-t1', label: '베르단 · 교전(t1)', planet: 1, tier: 1 },
-  { key: 'arke-t2', label: '아르케 · 섬멸(t2)', planet: 3, tier: 2 },
+  { key: 'kargon-s1', label: '카르곤 · 단계1', planet: 0, stage: 1 },
+  { key: 'kargon-s21', label: '카르곤 · 단계21', planet: 0, stage: 21 },
+  { key: 'berdan-s11', label: '베르단 · 단계11', planet: 1, stage: 11 },
+  { key: 'arke-s21', label: '아르케 · 단계21', planet: 3, stage: 21 },
 ];
 
 interface InvestProfile {
@@ -200,7 +200,7 @@ function runOne(
   const s = activeShip(p);
   s.typeId = ship;
   s.skillInvest = investVector(ship, profile.perTree);
-  const config = buildRunConfig(p, { planet: stage.planet, tier: stage.tier });
+  const config = buildRunConfig(p, { planet: stage.planet, stage: stage.stage });
 
   const state = createWorld(seed, config);
   const derived = readDerived(state);
@@ -393,9 +393,9 @@ function renderMarkdown(cells: readonly Cell[], elapsedMs: number, stages: reado
   L.push('');
   L.push('## 무대');
   L.push('');
-  L.push('| key | 행성 | 티어 | 설명 |');
+  L.push('| key | 행성 | 단계 | 설명 |');
   L.push('|---|---|---|---|');
-  for (const s of stages) L.push(`| \`${s.key}\` | ${s.planet} | ${s.tier} | ${s.label} |`);
+  for (const s of stages) L.push(`| \`${s.key}\` | ${s.planet} | ${s.stage} | ${s.label} |`);
   L.push('');
   L.push('## 투자 프로파일');
   L.push('');

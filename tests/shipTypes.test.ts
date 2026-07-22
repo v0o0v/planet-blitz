@@ -395,8 +395,8 @@ describe('신규 6종의 최소 유효성 (구조 계약)', () => {
 
 // ✅ M8-L7 완료: 조립을 재현하지 않고 실제 앱(`src/main.ts`)이 부르는 `buildRunConfig` 를
 // 그대로 호출한다. `playerHp` 만 테스트가 덮는데, 그것은 프로필 파생값이 아니라 무대 상수다.
-function assembleRunConfigLikeMain(profile: Profile, planet: number, tier: number): WorldConfig {
-  return { ...buildRunConfig(profile, { planet, tier }), playerHp: 100_000_000 };
+function assembleRunConfigLikeMain(profile: Profile, planet: number, stage: number): WorldConfig {
+  return { ...buildRunConfig(profile, { planet, stage }), playerHp: 100_000_000 };
 }
 
 function runTicks(seed: number, config: WorldConfig, ticks: number): number[] {
@@ -419,7 +419,7 @@ describe('정규 경로 통합 — Profile → 런 설정 → createWorld/stepWo
   });
 
   it('앱 경로가 만든 WorldConfig.skillInvest 가 레지스트리 벡터와 같고 sim 이 실제로 돈다', () => {
-    const config = assembleRunConfigLikeMain(defaultProfile(), 0, 0);
+    const config = assembleRunConfigLikeMain(defaultProfile(), 0, 1);
     expect(config.skillInvest).toEqual(zeroSkillInvest(0));
     expect(config.skillInvest?.length).toBe(63);
     // 스트라이커는 시그니처가 없으므로 무투자 런의 uniqueMask 는 0 이어야 한다.
@@ -432,8 +432,8 @@ describe('정규 경로 통합 — Profile → 런 설정 → createWorld/stepWo
   });
 
   it('같은 Profile 은 같은 해시 스트림을 낸다 (결정론 — ADR-0005)', () => {
-    const a = runTicks(777, assembleRunConfigLikeMain(defaultProfile(), 1, 0), 60);
-    const b = runTicks(777, assembleRunConfigLikeMain(defaultProfile(), 1, 0), 60);
+    const a = runTicks(777, assembleRunConfigLikeMain(defaultProfile(), 1, 1), 60);
+    const b = runTicks(777, assembleRunConfigLikeMain(defaultProfile(), 1, 1), 60);
     expect(a).toEqual(b);
   });
 
@@ -442,7 +442,7 @@ describe('정규 경로 통합 — Profile → 런 설정 → createWorld/stepWo
     // (EF 가 추론이 아니라 명시로 읽게 하려고 — 설계서 §4). 따라서 여기서 검증할 계약은
     // "앱이 필드를 비운다" 가 아니라 **"미지정과 0 이 관측상 완전히 동일하다"** 이다.
     // 이것이 곧 M8 이전 config(필드 자체가 없던 시절)의 해시 동결 근거다.
-    const config = assembleRunConfigLikeMain(defaultProfile(), 0, 0);
+    const config = assembleRunConfigLikeMain(defaultProfile(), 0, 1);
     expect(config.shipType).toBe(0);
     const { shipType: _omitted, ...withoutField } = config;
     expect('shipType' in withoutField).toBe(false);

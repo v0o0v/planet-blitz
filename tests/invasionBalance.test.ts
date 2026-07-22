@@ -220,7 +220,7 @@ function gateGearItem(rangeAdd: number): Item {
     rarity: 'rare',
     affixes: [...GEAR_REFERENCE_AFFIXES, { id: 'gate-range', stat: 'rangeFlat', value: rangeAdd }],
     weaponType: WEAPON_VULCAN,
-    source: { planet: 0, tier: 0 },
+    source: { planet: 0, stage: 1 },
   };
 }
 
@@ -243,7 +243,7 @@ function rosterGateConfig(
   ship.equipped.main = gateGearItem(over.rangeAdd);
   return buildRunConfig(profile, {
     planet: 0,
-    tier: 0,
+    stage: 1,
     invasion3: { layers, timeLimitTicks: INVASION_TOTAL_TICKS, maintenance: 10000 },
   });
 }

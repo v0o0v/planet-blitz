@@ -33,7 +33,9 @@ import { atan2, length } from '../src/sim/math.js';
 import { computeLoadoutStats } from '../src/items/loadout.js';
 import { zeroSkillInvest } from '../src/save/profile.js';
 import { SKILLS, treeRange } from '../data/skills.js';
-import { TIER_ANNIHILATION } from '../data/waves.js';
+
+/** 구 섬멸 티어와 sim 파라미터가 byte-identical 한 침략 단계(STAGE_MILESTONES 밴드2 = minStage21). */
+const STAGE_ANNIHILATION = 21;
 
 /** 내구 파일럿으로 런을 끝까지 진행(보스 세그먼트 도달·처치 보장). */
 function playToEnd(seed: number, config: WorldConfig): WorldState {
@@ -69,7 +71,7 @@ function endgameFirepowerConfig(planet: number, base: Partial<WorldConfig> = {})
     ...DEFAULT_CONFIG,
     ...base,
     planet,
-    tier: TIER_ANNIHILATION,
+    stage: STAGE_ANNIHILATION,
     playerHp: 100_000_000,
     loadout,
     skillInvest: invest,
@@ -85,11 +87,11 @@ function expectVictory(state: WorldState): void {
 
 describe('전 행성 × 전 티어 완주 (G4 게이트 ④, AC4·AC5)', () => {
   it('니플헤임(2) 정찰 완주 — 기본 기체로 유령 기함을 처치한다', () => {
-    expectVictory(playToEnd(0x2f10, { ...DEFAULT_CONFIG, planet: 2, tier: 0, playerHp: 100_000_000 }));
+    expectVictory(playToEnd(0x2f10, { ...DEFAULT_CONFIG, planet: 2, stage: 1, playerHp: 100_000_000 }));
   });
 
   it('아르케(3) 정찰 완주 — 기본 기체로 수호자 오벨리스크를 처치한다', () => {
-    expectVictory(playToEnd(0x3a17, { ...DEFAULT_CONFIG, planet: 3, tier: 0, playerHp: 100_000_000 }));
+    expectVictory(playToEnd(0x3a17, { ...DEFAULT_CONFIG, planet: 3, stage: 1, playerHp: 100_000_000 }));
   });
 
   it('니플헤임(2) 섬멸 완주 — 육성 기체가 최고 티어를 뚫고 완주한다', () => {

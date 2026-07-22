@@ -164,8 +164,8 @@ describe('시그니처 배정 — 적 kind별 데이터 탄 거동', () => {
   });
 
   it('사수형 섬멸 서브탄은 가속(BK_ACCEL) 거동을 갖는다', () => {
-    // 섬멸 티어(tier 2)에서만 mortar 서브탄이 방사된다(tierParams.subBullets>0).
-    const state = createWorld(7, { ...DEFAULT_CONFIG, tier: 2 });
+    // 밴드2(단계21+)에서만 mortar 서브탄이 방사된다(stageParams.subBullets>0).
+    const state = createWorld(7, { ...DEFAULT_CONFIG, stage: 21 });
     const player = state.entities[0]!;
     const gunner = blankEntity('enemy');
     gunner.x = player.x + 380;

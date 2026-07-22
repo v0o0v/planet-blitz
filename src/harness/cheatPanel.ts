@@ -98,8 +98,6 @@ const RARITIES: readonly Rarity[] = ['normal', 'magic', 'rare', 'unique'];
 
 /** 씬 런처 셀렉트용 행성 이름(planet index = 배열 인덱스, data/planets/index.ts와 정합). */
 const PLANET_NAMES: readonly string[] = ['카르곤', '베르단', '니플헤임', '아르케'];
-/** 씬 런처 셀렉트용 티어 이름(tier index = 배열 인덱스, data/waves.ts와 정합). */
-const TIER_NAMES: readonly string[] = ['정찰', '교전', '섬멸'];
 /** 일반 전투 세그먼트 수(보스 세그먼트 제외 — 마지막 인덱스는 보스). */
 const NORMAL_SEGMENTS = SEGMENTS.length - 1;
 
@@ -162,7 +160,7 @@ const STYLE = `
 
 /** 지정한 슬롯 종류·희귀도의 아이템을 결정론적으로 뽑는다(presets.ts와 동일 전략). */
 function rollItemForSlot(startSeed: number, slotKind: SlotKind, rarity: Rarity): Item {
-  const source = { planet: 0, tier: 1 };
+  const source = { planet: 0, stage: 11 };
   let last = rollItem(startSeed >>> 0, rarity, source);
   for (let i = 0; i < 4096; i++) {
     const item = rollItem((startSeed + i) >>> 0, rarity, source);
@@ -209,7 +207,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   // 재현 가능해진다("핀"), 빈 값은 랜덤.
   let seedStr = '';
   let planetIdx = 0;
-  let tierIdx = 0;
+  let stageValue = 1;
   // 씬 탭 선택 — 자동 갱신 재렌더를 넘어 보존(클로저 상태). 한 번에 한 씬의 도구만
   // 보여주는 씬 중심 레이아웃의 축.
   let activeTab: SceneTab = 'run';
@@ -295,7 +293,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     const seed = readSeedOpt();
     harness.startRun({
       planet: planetIdx,
-      tier: tierIdx,
+      stage: stageValue,
       anomaly: false,
       ...(seed !== undefined ? { seed } : {}),
     });
@@ -304,7 +302,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   function sceneFreshRun(): void {
     stageRun();
     handOver();
-    setHint(`런 처음부터 · ${PLANET_NAMES[planetIdx] ?? planetIdx} / ${TIER_NAMES[tierIdx] ?? tierIdx}`);
+    setHint(`런 처음부터 · ${PLANET_NAMES[planetIdx] ?? planetIdx} / 단계 ${stageValue}`);
   }
 
   /** 세그먼트 N(1-based, 일반 전투) 무대: 해당 세그먼트로 점프 + 풀 힐(오염). */
@@ -660,21 +658,25 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       planetSel.addEventListener('change', () => {
         planetIdx = Number(planetSel.value) || 0;
       });
-      const tierSel = document.createElement('select');
-      for (let i = 0; i < TIER_NAMES.length; i++) {
-        const o = document.createElement('option');
-        o.value = String(i);
-        o.textContent = TIER_NAMES[i] ?? String(i);
-        if (i === tierIdx) o.selected = true;
-        tierSel.appendChild(o);
-      }
-      tierSel.addEventListener('change', () => {
-        tierIdx = Number(tierSel.value) || 0;
+      // 침략 단계(1..∞, ADR-0022): 티어 3버튼 대신 단계 숫자 입력(개발 도구라 상한 없이 넉넉히).
+      const stageIn = document.createElement('input');
+      stageIn.type = 'number';
+      stageIn.min = '1';
+      stageIn.step = '1';
+      stageIn.value = String(stageValue);
+      stageIn.title = '침략 단계(1..∞). 1 = 구 정찰.';
+      stageIn.style.width = '64px';
+      stageIn.addEventListener('input', () => {
+        const n = Math.floor(Number(stageIn.value));
+        stageValue = Number.isFinite(n) && n >= 1 ? n : 1;
       });
+      const stageLbl = document.createElement('span');
+      stageLbl.className = 'pb-c-lbl';
+      stageLbl.textContent = '단계';
       const seedLbl = document.createElement('span');
       seedLbl.className = 'pb-c-lbl';
       seedLbl.textContent = 'seed';
-      cfgRow.append(seedLbl, seedIn, planetSel, tierSel);
+      cfgRow.append(seedLbl, seedIn, planetSel, stageLbl, stageIn);
       return cfgRow;
     }
 

@@ -3,7 +3,7 @@ import { rollItem, rerollAffixes } from '../src/items/roll.js';
 import type { Item, ItemSource } from '../src/items/types.js';
 import { AFFIX_BY_ID } from '../data/affixes.js';
 
-const SRC: ItemSource = { planet: 0, tier: 0 };
+const SRC: ItemSource = { planet: 0, stage: 1 };
 
 /** A rare item with a healthy affix count for reroll coverage. */
 function rareWithAffixes(seed: number): Item {

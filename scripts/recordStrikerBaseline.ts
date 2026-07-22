@@ -154,16 +154,21 @@ export interface PlanetSpec {
   readonly id: string;
   readonly label: string;
   readonly planet: number;
-  readonly tier: number;
+  /** 침략 단계(ADR-0022). 밴드 대표: 1=구 정찰(tier0), 11=구 교전(tier1). */
+  readonly stage: number;
   /** 런 시드의 축(빌드 인덱스와 섞어 런마다 다른 시드를 만든다). */
   readonly seedBase: number;
 }
 
+// 침략 단계로 전환(ADR-0022). 단계 11 은 구 교전(tier1)과 sim 파라미터가 byte-identical
+// (STAGE_MILESTONES 밴드1 = minStage11)이므로 스폰/HP/엘리트 거동이 그대로다 — 단, 해시
+// config 폴드는 0-기반 인덱스라(단계11 → 10) 구 tier1 폴드(=1)와 달라 berdan 골든만 재녹화된다.
+// 카르곤(단계1)은 폴드·파라미터 모두 구 tier0 과 동일해 바이트 불변이다(결정론 규율 1).
 export const BASELINE_PLANETS: readonly PlanetSpec[] = [
-  { id: 'kargon-recon', label: '카르곤 정찰', planet: 0, tier: 0, seedBase: 0x5731 },
+  { id: 'kargon-recon', label: '카르곤 단계1', planet: 0, stage: 1, seedBase: 0x5731 },
   // seedBase 는 임의값이 아니라 **선별값**이다: 6빌드 전부가 3000틱 안에 레벨업 3회 이상을
   // 내는 시드를 고른 것(0xb4d0 은 무투자 런이 0회라 파워업 골든이 비었다 — 실측).
-  { id: 'berdan-engage', label: '베르단 교전', planet: 1, tier: 1, seedBase: 0x2211 },
+  { id: 'berdan-engage', label: '베르단 단계11', planet: 1, stage: 11, seedBase: 0x2211 },
 ];
 
 /**
@@ -177,7 +182,7 @@ export function baselineConfig(planet: PlanetSpec, invest: readonly number[]): W
   return {
     ...DEFAULT_CONFIG,
     planet: planet.planet,
-    tier: planet.tier,
+    stage: planet.stage,
     playerHp: DURABLE,
     loadout,
     skillInvest,
@@ -270,7 +275,7 @@ export interface BaselineRun {
   readonly key: string;
   readonly label: string;
   readonly planet: number;
-  readonly tier: number;
+  readonly stage: number;
   readonly seed: number;
   readonly ticks: number;
   /** 이 런의 스킬 투자 벡터(길이 SKILL_NODE_COUNT). */
@@ -337,7 +342,7 @@ export function recordRun(planet: PlanetSpec, build: BuildSpec, buildIndex: numb
     key: `${planet.id}/${build.id}`,
     label: `${planet.label} · ${build.label}`,
     planet: planet.planet,
-    tier: planet.tier,
+    stage: planet.stage,
     seed,
     ticks: inputs.length,
     skillInvest: build.invest.slice(),

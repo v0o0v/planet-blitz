@@ -395,8 +395,8 @@ describe('⑦ 벡터 길이 계약', () => {
 
 // ✅ M8-L7 완료: 조립을 재현하지 않고 실제 앱(`src/main.ts`)이 부르는 `buildRunConfig` 를
 // 그대로 호출한다. `playerHp` 만 테스트가 덮는데, 그것은 프로필 파생값이 아니라 무대 상수다.
-function assembleRunConfigLikeMain(profile: Profile, planet: number, tier: number): WorldConfig {
-  return { ...buildRunConfig(profile, { planet, tier }), playerHp: 100_000_000 };
+function assembleRunConfigLikeMain(profile: Profile, planet: number, stage: number): WorldConfig {
+  return { ...buildRunConfig(profile, { planet, stage }), playerHp: 100_000_000 };
 }
 
 function runTicks(seed: number, config: WorldConfig, ticks: number): number[] {
@@ -431,17 +431,17 @@ describe('정규 경로 통합 — 퇴역으로 기체 전환 → 런 설정 →
   it('앱 경로가 만든 WorldConfig.skillInvest 가 타입별 길이를 그대로 나른다', () => {
     // 여기서 길이가 63 으로 고정돼 있으면 "레지스트리는 있는데 런이 안 탄다" 는 뜻이다.
     for (const def of SHIP_TYPES) {
-      const config = assembleRunConfigLikeMain(profileWithType(def.id), 0, 0);
+      const config = assembleRunConfigLikeMain(profileWithType(def.id), 0, 1);
       expect(config.skillInvest?.length, def.slug).toBe(shipSkillNodeCount(def.id));
     }
-    const hatchling = assembleRunConfigLikeMain(profileWithType(4), 0, 0);
+    const hatchling = assembleRunConfigLikeMain(profileWithType(4), 0, 1);
     expect(hatchling.skillInvest?.length).toBe(78);
     expect(hatchling.skillInvest?.length).not.toBe(SKILL_NODE_COUNT);
   });
 
   it('신규 타입 런이 실제로 돌고 결정론적이다 (같은 seed → 같은 해시 스트림)', () => {
     for (const def of NEW_TYPES) {
-      const cfg = (): WorldConfig => assembleRunConfigLikeMain(profileWithType(def.id), 0, 0);
+      const cfg = (): WorldConfig => assembleRunConfigLikeMain(profileWithType(def.id), 0, 1);
       const a = runTicks(4242, cfg(), 120);
       const b = runTicks(4242, cfg(), 120);
       expect(a, def.slug).toEqual(b);
@@ -453,7 +453,7 @@ describe('정규 경로 통합 — 퇴역으로 기체 전환 → 런 설정 →
 
   it('타입 0 런은 신규 데이터에 영향받지 않는다 (회귀 탐지기 보존)', () => {
     // 신규 타입 데이터를 채운 뒤에도 스트라이커 config 는 63 길이·uniqueMask 0 이어야 한다.
-    const config = assembleRunConfigLikeMain(defaultProfile(), 0, 0);
+    const config = assembleRunConfigLikeMain(defaultProfile(), 0, 1);
     expect(config.skillInvest).toEqual(zeroSkillInvest(0));
     expect(config.loadout?.uniqueMask).toBe(0);
     expect(shipTypeDef(0)).toBe(STRIKER);

@@ -33,7 +33,7 @@ function weaponConfig(weaponType: number, skillInvest?: number[]): WorldConfig {
   const cfg: WorldConfig = {
     ...DEFAULT_CONFIG,
     planet: 0,
-    tier: 0,
+    stage: 1,
     loadout: { ...neutralLoadout(), weaponType },
   };
   if (skillInvest !== undefined) cfg.skillInvest = skillInvest;

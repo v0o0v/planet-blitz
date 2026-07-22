@@ -28,7 +28,7 @@ function itemOf(rarity: Item['rarity'], affixCount: number): Item {
     slot: 'main',
     rarity,
     affixes: new Array(affixCount).fill(0).map((_, i) => ({ id: `a${i}`, stat: 'damagePct', value: i + 1 })),
-    source: { planet: 0, tier: 0 },
+    source: { planet: 0, stage: 1 },
   };
 }
 

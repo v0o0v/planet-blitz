@@ -88,7 +88,7 @@ function memStore(): KeyValueStore {
 
 describe('① Profile{typeId} → buildRunConfig → createWorld → stepWorld', () => {
   it('브루저(typeId 1) 런의 uniqueMask 에 SIG_BRUISER_ARMOR 가 켜진다', () => {
-    const cfg = buildRunConfig(profileWithType(1), { planet: 0, tier: 0 });
+    const cfg = buildRunConfig(profileWithType(1), { planet: 0, stage: 1 });
     // ⚠️ 정의만 되고 OR 이 안 되는 결함(§10-1)은 여기서만 잡힌다 — L1·L2·L4 단위 테스트는
     //    전부 통과하면서 패시브만 영구 미발동이 된다.
     expect(hasCapstone(cfg.loadout?.uniqueMask ?? 0, SIG_BRUISER_ARMOR)).toBe(true);
@@ -96,14 +96,14 @@ describe('① Profile{typeId} → buildRunConfig → createWorld → stepWorld',
   });
 
   it('스트라이커(typeId 0) 런은 시그니처 비트를 하나도 켜지 않는다 (회귀 탐지기 보존)', () => {
-    const cfg = buildRunConfig(defaultProfile(), { planet: 0, tier: 0 });
+    const cfg = buildRunConfig(defaultProfile(), { planet: 0, stage: 1 });
     expect(cfg.loadout?.uniqueMask).toBe(0);
     expect(cfg.shipType).toBe(0);
   });
 
   it('타입별로 서로 다른 시그니처 비트가 켜진다(한 비트가 전 타입에 새지 않는다)', () => {
-    const bruiser = buildRunConfig(profileWithType(1), { planet: 0, tier: 0 });
-    const arc = buildRunConfig(profileWithType(2), { planet: 0, tier: 0 });
+    const bruiser = buildRunConfig(profileWithType(1), { planet: 0, stage: 1 });
+    const arc = buildRunConfig(profileWithType(2), { planet: 0, stage: 1 });
     expect(hasCapstone(bruiser.loadout?.uniqueMask ?? 0, SIG_ARC_OVERCHARGE)).toBe(false);
     expect(hasCapstone(arc.loadout?.uniqueMask ?? 0, SIG_ARC_OVERCHARGE)).toBe(true);
     expect(hasCapstone(arc.loadout?.uniqueMask ?? 0, SIG_BRUISER_ARMOR)).toBe(false);
@@ -112,7 +112,7 @@ describe('① Profile{typeId} → buildRunConfig → createWorld → stepWorld',
   it('신규 2종(typeId 5·6)도 자기 비트만 켜고 타입 0 과 관측 결과가 갈린다', () => {
     // 로스터 7종 확장분. 레지스트리·상수 단위 테스트는 append 만으로도 전부 그린이므로,
     // "정의는 됐는데 `buildRunConfig` → sim 까지 도달하지 않는" 결함은 이 케이스에서만 난다.
-    const striker = buildRunConfig(defaultProfile(), { planet: 0, tier: 0 });
+    const striker = buildRunConfig(defaultProfile(), { planet: 0, stage: 1 });
     const strikerHashes = runHashes(3311, striker, 180);
     expect(new Set(strikerHashes).size).toBeGreaterThan(90);
 
@@ -120,7 +120,7 @@ describe('① Profile{typeId} → buildRunConfig → createWorld → stepWorld',
       [5, SIG_MALLOW_CUSHION],
       [6, SIG_BUBBLE_FILM],
     ] as const) {
-      const cfg = buildRunConfig(profileWithType(typeId), { planet: 0, tier: 0 });
+      const cfg = buildRunConfig(profileWithType(typeId), { planet: 0, stage: 1 });
       expect(cfg.shipType, String(typeId)).toBe(typeId);
       const mask = cfg.loadout?.uniqueMask ?? 0;
       expect(hasCapstone(mask, bit), `typeId ${typeId}: 시그니처 비트 미점등`).toBe(true);
@@ -138,10 +138,10 @@ describe('① Profile{typeId} → buildRunConfig → createWorld → stepWorld',
   it('동일 seed·입력에서 typeId=1 런과 typeId=0 런의 관측 결과가 실제로 다르다', () => {
     // 마스크 비트만 비교하면 "비트는 켰는데 sim 이 안 읽는" 경우를 놓친다. 여기까지 와야
     // "배선이 있다"고 말할 수 있다(설계서 §10 공통 원칙).
-    const striker = runHashes(9182, buildRunConfig(defaultProfile(), { planet: 0, tier: 0 }), 180);
+    const striker = runHashes(9182, buildRunConfig(defaultProfile(), { planet: 0, stage: 1 }), 180);
     const bruiser = runHashes(
       9182,
-      buildRunConfig(profileWithType(1), { planet: 0, tier: 0 }),
+      buildRunConfig(profileWithType(1), { planet: 0, stage: 1 }),
       180,
     );
     expect(bruiser).not.toEqual(striker);
@@ -152,14 +152,14 @@ describe('① Profile{typeId} → buildRunConfig → createWorld → stepWorld',
 
   it('같은 Profile 은 같은 해시 스트림을 낸다 (결정론 — ADR-0005)', () => {
     for (const def of SHIP_TYPES) {
-      const cfg = (): WorldConfig => buildRunConfig(profileWithType(def.id), { planet: 0, tier: 0 });
+      const cfg = (): WorldConfig => buildRunConfig(profileWithType(def.id), { planet: 0, stage: 1 });
       expect(runHashes(555, cfg(), 90), def.slug).toEqual(runHashes(555, cfg(), 90));
     }
   });
 
   it('전 타입의 skillInvest 길이가 레지스트리 노드 수와 같다 (해시 폴드 레이아웃)', () => {
     for (const def of SHIP_TYPES) {
-      const cfg = buildRunConfig(profileWithType(def.id), { planet: 0, tier: 0 });
+      const cfg = buildRunConfig(profileWithType(def.id), { planet: 0, stage: 1 });
       expect(cfg.skillInvest?.length, def.slug).toBe(shipSkillNodeCount(def.id));
     }
   });
@@ -168,7 +168,7 @@ describe('① Profile{typeId} → buildRunConfig → createWorld → stepWorld',
     for (const bad of [SHIP_TYPES.length, 999, -1, NaN]) {
       const p = defaultProfile();
       activeShip(p).typeId = bad;
-      const cfg = buildRunConfig(p, { planet: 0, tier: 0 });
+      const cfg = buildRunConfig(p, { planet: 0, stage: 1 });
       expect(cfg.shipType, String(bad)).toBe(0);
       expect(cfg.loadout?.uniqueMask, String(bad)).toBe(0);
     }
@@ -180,8 +180,8 @@ describe('① Profile{typeId} → buildRunConfig → createWorld → stepWorld',
       timeLimitTicks: 600,
       maintenance: 10_000,
     };
-    const pve = buildRunConfig(profileWithType(1), { planet: 0, tier: 0 });
-    const inv = buildRunConfig(profileWithType(1), { planet: 0, tier: 0, invasion3 });
+    const pve = buildRunConfig(profileWithType(1), { planet: 0, stage: 1 });
+    const inv = buildRunConfig(profileWithType(1), { planet: 0, stage: 1, invasion3 });
     expect(inv.invasion3).toBe(invasion3);
     // invasion3 를 뺀 나머지는 PvE 와 완전히 동일해야 한다 — 침공 경로만 타입을 잃는
     // 결함(main.ts 3중복 시절의 전형)이 여기서 잡힌다.
@@ -278,24 +278,24 @@ describe('③ 투자 → 저장 → 재로드 → buildRunConfig 왕복', () => 
     saveProfile(p, store);
 
     const reloaded = loadProfile(store);
-    const cfg = buildRunConfig(reloaded, { planet: 0, tier: 0 });
+    const cfg = buildRunConfig(reloaded, { planet: 0, stage: 1 });
     expect(cfg.skillInvest?.[0]).toBe(1);
     // 저장 직전 프로필과 재로드 프로필이 같은 런을 만든다(직렬화 왕복 무손실).
-    expect(cfg).toEqual(buildRunConfig(p, { planet: 0, tier: 0 }));
+    expect(cfg).toEqual(buildRunConfig(p, { planet: 0, stage: 1 }));
     // 투자가 파생 스탯으로 실제로 접혔는가(중립 loadout 이 아님).
     expect(cfg.loadout).not.toEqual(
-      buildRunConfig(defaultProfile(), { planet: 0, tier: 0 }).loadout,
+      buildRunConfig(defaultProfile(), { planet: 0, stage: 1 }).loadout,
     );
     // sim 이 실제로 다르게 굴러가는가.
     expect(runHashes(31337, cfg, 120)).not.toEqual(
-      runHashes(31337, buildRunConfig(defaultProfile(), { planet: 0, tier: 0 }), 120),
+      runHashes(31337, buildRunConfig(defaultProfile(), { planet: 0, stage: 1 }), 120),
     );
   });
 
   it('런 config 의 벡터는 복사본이라 런 도중 투자가 라이브 월드로 새지 않는다', () => {
     const p = defaultProfile();
     p.skillPoints = 3;
-    const cfg = buildRunConfig(p, { planet: 0, tier: 0 });
+    const cfg = buildRunConfig(p, { planet: 0, stage: 1 });
     investSkill(p, 0);
     expect(activeShip(p).skillInvest[0]).toBe(1);
     expect(cfg.skillInvest?.[0]).toBe(0); // 이미 시작한 런은 영향받지 않는다
@@ -315,7 +315,7 @@ describe('③ 투자 → 저장 → 재로드 → buildRunConfig 왕복', () => 
       skillInvest: zeroSkillInvest(1),
     });
     p.activeShipIndex = 1;
-    const cfg = buildRunConfig(p, { planet: 0, tier: 0 });
+    const cfg = buildRunConfig(p, { planet: 0, stage: 1 });
     expect(cfg.shipType).toBe(1);
     expect(cfg.skillInvest?.every((v) => v === 0)).toBe(true);
   });
@@ -350,11 +350,11 @@ function fakeHost(): HarnessHost & {
     setPaused: () => undefined,
     isPaused: () => false,
     goto: () => undefined,
-    startRun: (opts: { seed: number; planet: number; tier: number; anomaly: boolean }) => {
+    startRun: (opts: { seed: number; planet: number; stage: number; anomaly: boolean }) => {
       h.calls.push('startRun');
       const config = buildRunConfig(h.profile, {
         planet: opts.planet,
-        tier: opts.tier,
+        stage: opts.stage,
         anomalyAccepted: opts.anomaly,
       });
       h.lastConfig = config;
@@ -364,7 +364,7 @@ function fakeHost(): HarnessHost & {
       h.calls.push('startInvasion');
       const config = buildRunConfig(h.profile, {
         planet: 0,
-        tier: 0,
+        stage: 1,
         invasion3: {
           layers: normalizeInvasionLayers(opts.layers),
           timeLimitTicks: opts.timeLimitTicks,

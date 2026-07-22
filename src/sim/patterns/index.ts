@@ -16,7 +16,7 @@ import { spawnEnemyBullet, spawnHazard } from '../entities.js';
 import { cos, sin, atan2, length, TWO_PI, HALF_PI } from '../math.js';
 import { DT, HAZARD_LINE_SPAN } from '../constants.js';
 import { slideCircleWalls } from '../los.js';
-import { tierParams } from '../../../data/waves.js';
+import { stageParams } from '../../../data/waves.js';
 import { applyBehavior, curveBehavior, accelBehavior } from '../bullets.js';
 
 /**
@@ -195,9 +195,9 @@ function runAttack(state: WorldState, e: Entity, def: EnemyDef, player: Entity):
         false,
         e.id,
       );
-      // 섬멸 티어 패턴 변형(plan B3): 사수형이 포격과 함께 방사형 견제탄(서브탄)을 흩뿌린다.
-      // 정찰/교전은 subBullets 0이라 no-op(거동 불변).
-      const sub = tierParams(state.config.tier).subBullets;
+      // 밴드2(21+) 패턴 변형(ADR-0022): 사수형이 포격과 함께 방사형 견제탄(서브탄)을 흩뿌린다.
+      // 밴드0/1(단계1..20)은 subBullets 0이라 no-op(거동 불변).
+      const sub = stageParams(state.config.stage ?? 1).subBullets;
       const shardSpeed = 460;
       const shardDamage = Math.max(4, Math.round(def.attack.damage * 0.5));
       for (let i = 0; i < sub; i++) {
@@ -268,9 +268,9 @@ function sprayFragments(
   e: Entity,
   atk: Extract<EnemyDef['attack'], { kind: 'fragments' }>,
 ): void {
-  // 섬멸 티어 패턴 변형(plan B3): 서브탄 수만큼 파편 부채를 더 촘촘히 만든다(데이터
-  // 주도). 정찰/교전은 subBullets 0이라 atk.count 그대로(거동 불변).
-  const count = atk.count + tierParams(state.config.tier).subBullets;
+  // 밴드2(21+) 패턴 변형(ADR-0022): 서브탄 수만큼 파편 부채를 더 촘촘히 만든다(데이터
+  // 주도). 밴드0/1(단계1..20)은 subBullets 0이라 atk.count 그대로(거동 불변).
+  const count = atk.count + stageParams(state.config.stage ?? 1).subBullets;
   for (let i = 0; i < count; i++) {
     // Respect the segment's simultaneous enemy-bullet cap (perf + fairness).
     if (state.enemyBulletCount >= state.bulletCap) break;

@@ -34,31 +34,31 @@ describe('base unlocks — computeUnlocks (plan E2, GDD §7)', () => {
     activeShip(p).level = RESEARCH_UNLOCK_LEVEL;
     expect(computeUnlocks(p).research).toBe(true);
     expect(computeUnlocks(p).refinery).toBe(false);
-    recordPlanetClear(p, 0, 0);
+    recordPlanetClear(p, 0, 1); // 단계 1 클리어(개방/정제소 게이트는 bestStageCleared >= 1)
     expect(computeUnlocks(p).refinery).toBe(true);
   });
 });
 
-describe('recordPlanetClear — keeps the highest tier (plan E2)', () => {
-  it('records a clear and never lowers the best tier', () => {
+describe('recordPlanetClear — keeps the highest 침략 단계 (ADR-0022)', () => {
+  it('records a clear and never lowers the best stage', () => {
     const p = defaultProfile();
-    recordPlanetClear(p, 2, 1);
-    expect(p.planetProgress[2]?.bestTierCleared).toBe(1);
-    recordPlanetClear(p, 2, 0); // lower tier — no downgrade
-    expect(p.planetProgress[2]?.bestTierCleared).toBe(1);
-    recordPlanetClear(p, 2, 2); // higher tier — upgrades
-    expect(p.planetProgress[2]?.bestTierCleared).toBe(2);
+    recordPlanetClear(p, 2, 5);
+    expect(p.planetProgress[2]?.bestStageCleared).toBe(5);
+    recordPlanetClear(p, 2, 3); // lower stage — no downgrade
+    expect(p.planetProgress[2]?.bestStageCleared).toBe(5);
+    recordPlanetClear(p, 2, 12); // higher stage — upgrades
+    expect(p.planetProgress[2]?.bestStageCleared).toBe(12);
   });
 });
 
 describe('settleRun — records a planet clear on victory only', () => {
   it('victory records the clear; defeat does not', () => {
     const win = defaultProfile();
-    settleRun(win, { victory: true, loot: [], xpTotal: 0, resources: 0, planet: 1, tier: 1 });
-    expect(win.planetProgress[1]?.bestTierCleared).toBe(1);
+    settleRun(win, { victory: true, loot: [], xpTotal: 0, resources: 0, planet: 1, stage: 11 });
+    expect(win.planetProgress[1]?.bestStageCleared).toBe(11);
 
     const loss = defaultProfile();
-    settleRun(loss, { victory: false, loot: [], xpTotal: 0, resources: 0, planet: 1, tier: 1 });
+    settleRun(loss, { victory: false, loot: [], xpTotal: 0, resources: 0, planet: 1, stage: 11 });
     expect(loss.planetProgress[1]).toBeUndefined();
   });
 });

@@ -32,11 +32,17 @@ import {
 import { CATALOG_BOSS, CATALOG_KIND_COUNTS } from '../invasion/catalog.js';
 import { rollBlueprintDrop } from '../../src/sim/drops.js';
 
-/** 행성×티어 드랍 rarity 기준 확률(src/sim/drops.ts가 소비). */
+/**
+ * 행성 드랍 rarity 기준 확률(src/sim/drops.ts가 소비).
+ *
+ * 품질(침략 단계)⟂종류(행성) 직교(ADR-0022): 드랍 rarity 배율은 **전 행성 동일**이고,
+ * 단계별 상향은 sim(`stageRareMult`/`stageUniqueMult`)이 얹는다. 종류(특산 설계도·광물)만
+ * 행성별로 갈린다 — 그래서 `eliteRareBase` 등은 전 행성 동일값이다(심층 사다리 폐기).
+ */
 export interface PlanetDropTable {
-  /** 엘리트 레어 기본 확률(정찰 티어). */
+  /** 엘리트 레어 기본 확률(단계1 기준, 전 행성 동일 — 단계 상향은 sim). */
   readonly eliteRareBase: number;
-  /** 엘리트 유니크 기본 확률(정찰 티어). */
+  /** 엘리트 유니크 기본 확률(단계1 기준, 전 행성 동일 — 단계 상향은 sim). */
   readonly eliteUniqueBase: number;
   /** 보스 유니크 기본 확률(나머지는 레어 확정). */
   readonly bossUniqueBase: number;
@@ -209,11 +215,12 @@ export const BERDAN: PlanetContent = {
   elites: BERDAN_ELITES,
   cardPool: BERDAN_CARD_POOL,
   boss: BERDAN_QUEEN,
-  // 물량 행성: 레어는 카르곤과 비슷하되 유니크가 살짝 후하다(파밍 유인).
+  // 품질(단계)⟂종류(행성) 직교(ADR-0022): rarity 배율은 전 행성 동일(= 카르곤 기본값 =
+  // DEFAULT_DROP_ODDS). 심층 사다리(0.27/0.04/0.18)는 폐기 — 종류(특산 설계도·광물)만 행성별.
   dropTable: {
-    eliteRareBase: 0.27,
-    eliteUniqueBase: 0.04,
-    bossUniqueBase: 0.18,
+    eliteRareBase: 0.25,
+    eliteUniqueBase: 0.03,
+    bossUniqueBase: 0.15,
     blueprintTableSize: planetBlueprintTableSize(1),
     blueprintChanceCp: [0, 0, 600, 2200],
   },
@@ -232,11 +239,12 @@ export const NIFLHEIM: PlanetContent = {
   elites: NIFLHEIM_ELITES,
   cardPool: NIFLHEIM_CARD_POOL,
   boss: NIFLHEIM_FLAGSHIP,
-  // 서리 행성: 레어는 베르단과 비슷하되 유니크가 살짝 더 후하다(심층 파밍 유인).
+  // 품질(단계)⟂종류(행성) 직교(ADR-0022): rarity 배율은 전 행성 동일(= 카르곤 기본값).
+  // 심층 사다리(0.28/0.05/0.20)는 폐기 — 종류(특산 설계도·광물)만 행성별.
   dropTable: {
-    eliteRareBase: 0.28,
-    eliteUniqueBase: 0.05,
-    bossUniqueBase: 0.2,
+    eliteRareBase: 0.25,
+    eliteUniqueBase: 0.03,
+    bossUniqueBase: 0.15,
     blueprintTableSize: planetBlueprintTableSize(2),
     blueprintChanceCp: [0, 0, 700, 2400],
   },
@@ -255,11 +263,12 @@ export const ARKE: PlanetContent = {
   elites: ARKE_ELITES,
   cardPool: ARKE_CARD_POOL,
   boss: ARKE_OBELISK,
-  // 심층 행성: 최고 난도인 만큼 레어·유니크 확률이 가장 높다.
+  // 품질(단계)⟂종류(행성) 직교(ADR-0022): rarity 배율은 전 행성 동일(= 카르곤 기본값).
+  // 심층 사다리(0.30/0.06/0.22)는 폐기 — 종류(특산 설계도·광물)만 행성별.
   dropTable: {
-    eliteRareBase: 0.3,
-    eliteUniqueBase: 0.06,
-    bossUniqueBase: 0.22,
+    eliteRareBase: 0.25,
+    eliteUniqueBase: 0.03,
+    bossUniqueBase: 0.15,
     blueprintTableSize: planetBlueprintTableSize(3),
     blueprintChanceCp: [0, 0, 800, 2600],
   },

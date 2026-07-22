@@ -19,8 +19,8 @@ function countKind(state: { entities: { kind: string }[] }, kind: string): numbe
 
 describe('drop rolls (AC3)', () => {
   it('rollEliteDrop is deterministic and yields a valid rarity', () => {
-    const a = rollEliteDrop(new SeededRng(5), 0, { kind: -1, active: false });
-    const b = rollEliteDrop(new SeededRng(5), 0, { kind: -1, active: false });
+    const a = rollEliteDrop(new SeededRng(5), 1, { kind: -1, active: false });
+    const b = rollEliteDrop(new SeededRng(5), 1, { kind: -1, active: false });
     expect(a).toEqual(b);
     expect(a.rarityCode).toBeGreaterThanOrEqual(1);
     expect(a.rarityCode).toBeLessThanOrEqual(3);
@@ -28,7 +28,7 @@ describe('drop rolls (AC3)', () => {
 
   it('rollBossDrop always yields rare or unique (guaranteed high-tier)', () => {
     for (let s = 1; s <= 300; s++) {
-      const roll = rollBossDrop(new SeededRng(s), 0, { kind: -1, active: false });
+      const roll = rollBossDrop(new SeededRng(s), 1, { kind: -1, active: false });
       expect([RARITY_RARE, RARITY_UNIQUE]).toContain(roll.rarityCode);
     }
   });
@@ -36,23 +36,23 @@ describe('drop rolls (AC3)', () => {
 
 describe('loot pickup accumulation (AC3, OQ-M2-1 contact auto-collect)', () => {
   it('collects a loot drop on contact and records seed/rarity/source', () => {
-    const cfg: WorldConfig = { ...DEFAULT_CONFIG, planet: 1, tier: 1 };
+    const cfg: WorldConfig = { ...DEFAULT_CONFIG, planet: 1, stage: 11 };
     const state = createWorld(123, cfg);
     const player = state.entities[0]!;
     spawnLoot(state, player.x, player.y, 0xabcdef, RARITY_RARE);
     stepWorld(state, emptyInput());
     expect(state.loot.length).toBe(1);
-    expect(state.loot[0]).toEqual({ seed: 0xabcdef, rarity: RARITY_RARE, planet: 1, tier: 1 });
+    expect(state.loot[0]).toEqual({ seed: 0xabcdef, rarity: RARITY_RARE, planet: 1, stage: 11 });
     expect(countKind(state, 'loot')).toBe(0); // consumed
   });
 });
 
-describe('elite spawning by tier (AC9)', () => {
-  it('engagement tier spawns elites; recon tier does not', () => {
+describe('elite spawning by 침략 단계 (AC9)', () => {
+  it('밴드1(단계11+) spawns elites; 단계1 does not', () => {
     // Elites are combatants that get killed, so count the max seen alive across
     // the run rather than the final tick.
-    const maxElitesSeen = (tier: number): number => {
-      const state = createWorld(0x1234, { ...DEFAULT_CONFIG, tier });
+    const maxElitesSeen = (stage: number): number => {
+      const state = createWorld(0x1234, { ...DEFAULT_CONFIG, stage });
       const input = emptyInput();
       let max = 0;
       for (let t = 0; t < 400; t++) {
@@ -62,8 +62,8 @@ describe('elite spawning by tier (AC9)', () => {
       }
       return max;
     };
-    expect(maxElitesSeen(1)).toBeGreaterThan(0);
-    expect(maxElitesSeen(0)).toBe(0);
+    expect(maxElitesSeen(11)).toBeGreaterThan(0); // 밴드1 = eliteCount 1(구 교전)
+    expect(maxElitesSeen(1)).toBe(0); // 밴드0 = eliteCount 0(구 정찰)
   });
 });
 
@@ -103,7 +103,7 @@ describe('weapon-type firing archetypes (AC4)', () => {
     // A real spread loadout (via computeLoadoutStats) carries the +2 pellet
     // baseline, so it fans 3 pellets (base 1 + 2).
     const { loadout } = computeLoadoutStats([
-      { id: 'm', slot: 'main', rarity: 'rare', affixes: [], source: { planet: 0, tier: 0 }, weaponType: WEAPON_SPREAD },
+      { id: 'm', slot: 'main', rarity: 'rare', affixes: [], source: { planet: 0, stage: 1 }, weaponType: WEAPON_SPREAD },
     ]);
     const spread = createWorld(1, { ...DEFAULT_CONFIG, loadout });
     addTargetEnemy(spread);

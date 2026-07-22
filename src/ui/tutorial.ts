@@ -3,7 +3,7 @@
  * GDD §12).
  *
  * First launch flow: 타이틀 → (입력) → 즉시 튜토리얼 런 → 첫 드랍 → 기지 공개. The
- * tutorial run reuses the homeworld-orbit content (planet 0 카르곤 / tier 0 정찰) at
+ * tutorial run reuses the homeworld-orbit content (planet 0 카르곤 / 침략 단계 1) at
  * a FIXED seed so it is fully deterministic (a scripted first impression). Scripted
  * hints are a render-only overlay layered over the live run — they never touch the
  * simulation. The tutorial is forced exactly once (OQ-M3-7); afterwards the title's
@@ -18,9 +18,9 @@ import { t } from '../i18n/index.js';
 
 /** Fixed tutorial run seed — deterministic first impression (ADR-0005 spirit). */
 export const TUTORIAL_SEED = 0x7b1a2c3d;
-/** Tutorial content: homeworld orbit (카르곤) at the standard 정찰 tier. */
+/** Tutorial content: homeworld orbit (카르곤) at 침략 단계 1(구 정찰). */
 export const TUTORIAL_PLANET = 0;
-export const TUTORIAL_TIER = 0;
+export const TUTORIAL_STAGE = 1;
 /**
  * 튜토리얼 단축판(GDD §12 "3~4분 단축판"): 일반 세그먼트 3개(45s×3) 후 곧장 보스
  * 세그먼트로 점프 — 보스전 포함 약 3~4분. sim의 config.maxSegments로 전달된다.

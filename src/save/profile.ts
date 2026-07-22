@@ -95,10 +95,10 @@ export interface Ship {
   skillInvest: number[];
 }
 
-/** Per-planet clear progress (drives star-map gating, plan D3). */
+/** Per-planet clear progress (drives 개방 상한 산정, ADR-0022). */
 export interface PlanetProgress {
-  /** Highest tier cleared (-1 none, 0 정찰, 1 교전). */
-  bestTierCleared: number;
+  /** 그 행성 최고 클리어 단계(0 = 미클리어, 1..∞). 개방 상한 = max(10, 이 값 + 5). */
+  bestStageCleared: number;
 }
 
 /** The player's whole persistent meta state. */
@@ -268,7 +268,7 @@ export function computeUnlocks(profile: Profile): BaseUnlocks {
   const level = activeShip(profile).level;
   let anyClear = false;
   for (const p of Object.values(profile.planetProgress)) {
-    if (p.bestTierCleared >= 0) {
+    if (p.bestStageCleared >= 1) {
       anyClear = true;
       break;
     }
@@ -284,13 +284,13 @@ export function computeUnlocks(profile: Profile): BaseUnlocks {
   };
 }
 
-/** Record a planet clear, keeping the highest tier ever cleared there. Drives the
- *  정제소 unlock and star-map tier gating (plan E2). No-op if `tier` is lower than
+/** Record a planet clear, keeping the highest 침략 단계 ever cleared there. Drives the
+ *  정제소 unlock and 단계 개방 상한(ADR-0022). No-op if `stage` is not higher than
  *  the recorded best. */
-export function recordPlanetClear(profile: Profile, planet: number, tier: number): void {
+export function recordPlanetClear(profile: Profile, planet: number, stage: number): void {
   const cur = profile.planetProgress[planet];
-  if (cur === undefined || tier > cur.bestTierCleared) {
-    profile.planetProgress[planet] = { bestTierCleared: tier };
+  if (cur === undefined || stage > cur.bestStageCleared) {
+    profile.planetProgress[planet] = { bestStageCleared: stage };
   }
 }
 
@@ -442,7 +442,34 @@ export function migrate(raw: unknown): Profile {
   if (version < 2) data = migrateV1toV2(data);
   if (version < 3) data = migrateV2toV3(data);
   if (version < 4) data = migrateV3toV4(data);
+  if (version < 5) data = migrateV4toV5(data);
   return normalizeProfile(data);
+}
+
+/**
+ * v4 → v5 (ADR-0022 침략 단계): `planetProgress.bestTierCleared` → `bestStageCleared`.
+ *
+ * 구 티어(t) → 단계(t+1) 매핑으로 클리어 상태를 보존한다(미클리어 -1 → 0). 미출시라 정확
+ * 매핑 저부담이다. ⚠️ 반드시 여기서 키를 먼저 옮겨야 한다 — `normalizeProgress` 가 이제
+ * `bestStageCleared` 를 읽으므로, 이 마이그레이션 없이 v4 blob 이 normalize 를 통과하면
+ * 구 `bestTierCleared` 값이 그대로 유실된다(하한 0 으로 리셋).
+ */
+function migrateV4toV5(v4: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...v4, saveVersion: 5 };
+  const prog = v4.planetProgress;
+  if (typeof prog === 'object' && prog !== null) {
+    const next: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(prog as Record<string, unknown>)) {
+      if (typeof val === 'object' && val !== null && 'bestTierCleared' in val) {
+        const t = Number((val as Record<string, unknown>).bestTierCleared);
+        next[k] = { bestStageCleared: Number.isFinite(t) && t >= 0 ? t + 1 : 0 };
+      } else {
+        next[k] = val;
+      }
+    }
+    out.planetProgress = next;
+  }
+  return out;
 }
 
 /**
@@ -671,7 +698,8 @@ function normalizeProgress(v: unknown): Record<number, PlanetProgress> {
     if (!Number.isFinite(id)) continue;
     if (typeof val === 'object' && val !== null) {
       const p = val as Record<string, unknown>;
-      out[id] = { bestTierCleared: clampInt(p.bestTierCleared, -1, 99, -1) };
+      // 하한 0(미클리어), 상한 넉넉히(무한 단계 축). v4→v5 마이그레이션이 이미 키를 옮겼다.
+      out[id] = { bestStageCleared: clampInt(p.bestStageCleared, 0, 99999, 0) };
     }
   }
   return out;

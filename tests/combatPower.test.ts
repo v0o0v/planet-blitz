@@ -16,7 +16,7 @@ function mkItem(rarity: Rarity, affixCount: number): Item {
     slot: 'armor',
     rarity,
     affixes,
-    source: { planet: 0, tier: 0 },
+    source: { planet: 0, stage: 1 },
   };
 }
 

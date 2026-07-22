@@ -104,7 +104,7 @@ function startRunAndGetPlayer(
   ship.skillInvest = zeroSkillInvest(typeId);
 
   // --- 이하 순서는 main.ts 의 startRun/startInvasionRun 과 동일하다 ---
-  const config = buildRunConfig(profile, { planet: 0, tier: 0 });
+  const config = buildRunConfig(profile, { planet: 0, stage: 1 });
   applyShipSprite(textures, config.shipType ?? 0);
   renderer.reset();
   const world = createWorld(0x1234abcd, config);

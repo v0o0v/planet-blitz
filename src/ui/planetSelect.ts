@@ -1,31 +1,34 @@
 /**
- * Star-map / planet-select overlay (DOM — M2 Phase D3, plan §4, AC8/AC9/AC10).
+ * Star-map / planet-select overlay (DOM — 레거시. 실사용은 Pixi 판 `pixi/planetSelect.ts`).
  *
- * The pre-run screen: pick a planet (data-driven from data/planets.ts), a tier
- * (정찰/교전), and — when the seed offers one — accept or reject the run's anomaly
- * (OQ-M2-3: chosen before the run, carried as a config flag so the sim stays a
+ * The pre-run screen: pick a planet (data-driven from data/planets.ts), 침략 단계
+ * (ADR-0022 — 행성별 1..개방 상한), and — when the seed offers one — accept or reject the
+ * run's anomaly (OQ-M2-3: chosen before the run, carried as a config flag so the sim stays a
  * function of [seed + inputs + config]). "출격" hands a `LaunchSelection` back to
- * the caller, which assembles the WorldConfig (planet/tier/anomaly + loadout).
+ * the caller, which assembles the WorldConfig (planet/stage/anomaly + loadout).
  *
  * Pure view: no sim import at runtime beyond the anomaly kind CONSTANTS (numbers)
  * used to label the offer. Never touches the simulation.
  */
 
-import { PLANETS, TIERS, planetById } from '../../data/planets.js';
-import { canEnterTier, ANNIHILATION_UNLOCK_LEVEL } from '../../data/waves.js';
+import { PLANETS, planetById } from '../../data/planets.js';
+import { stageOpenCap } from '../../data/waves.js';
 import { ANOMALY_GRAVITY, ANOMALY_SWARM, ANOMALY_NEBULA, ANOMALY_NONE } from '../sim/anomaly.js';
-import { UI_LOCK_URL, pixelIcon } from './uiIcons.js';
 import { t, type MessageKey } from '../i18n/index.js';
 
 /** What the player chose on the star map. */
 export interface LaunchSelection {
   planet: number;
-  tier: number;
+  /** 침략 단계(1..개방 상한, ADR-0022). */
+  stage: number;
   /** Whether the offered anomaly was accepted (false when none offered). */
   anomalyAccepted: boolean;
   /** 보스 이전 일반 세그먼트 수 상한(튜토리얼 단축판). absent = 풀 런. */
   maxSegments?: number;
 }
+
+/** 선택한 행성의 개방 상한을 산정하는 콜백(행성별 최고 클리어 단계 → 상한). */
+export type BestStageClearedFn = (planet: number) => number;
 
 /** Anomaly kind → i18n 키(render-only, 로케일화). */
 const ANOMALY_LABEL: Record<number, { nameKey: MessageKey; descKey: MessageKey }> = {
@@ -62,17 +65,15 @@ const STYLE = `
 #pb-planet .pb-inv-btn:hover { border-color:#4cd7ff; color:#fff; }
 `;
 
-/** Active-ship level required for the 섬멸 tier (surfaced as a lock reason). */
-const ANNIHILATION_LEVEL = ANNIHILATION_UNLOCK_LEVEL;
-
 export class PlanetSelect {
   private readonly root: HTMLElement;
   private planet = 0;
-  private tier = 0;
+  /** 선택된 침략 단계(1..개방 상한). */
+  private stage = 1;
   private anomalyKind = ANOMALY_NONE;
   private anomalyAccepted = false;
-  /** Active-ship level — gates the 섬멸 tier (canEnterTier). */
-  private level = 1;
+  /** 행성별 개방 상한 산정 콜백(미지정 = 최고 클리어 0 → 상한 10). */
+  private bestStageCleared: BestStageClearedFn = () => 0;
   private onLaunch: ((sel: LaunchSelection) => void) | null = null;
   private onInventory: (() => void) | null = null;
   private onBack: (() => void) | null = null;
@@ -100,8 +101,8 @@ export class PlanetSelect {
     opts: {
       anomalyOffered: number;
       meta: string;
-      /** Active-ship level (gates the 섬멸 tier). Defaults to 1 when omitted. */
-      level?: number;
+      /** 행성별 개방 상한 산정 콜백(ADR-0022). 생략 시 최고 클리어 0(상한 10). */
+      bestStageCleared?: BestStageClearedFn;
       onLaunch: (sel: LaunchSelection) => void;
       onInventory: () => void;
       /** Optional "back to base map" affordance (plan D1 왕복 동선). */
@@ -110,9 +111,9 @@ export class PlanetSelect {
   ): void {
     this.anomalyKind = opts.anomalyOffered;
     this.anomalyAccepted = false;
-    this.level = opts.level ?? 1;
-    // Keep the selected tier valid for this level (a demotion clamps 섬멸 away).
-    if (!canEnterTier(this.tier, this.level)) this.tier = 0;
+    this.bestStageCleared = opts.bestStageCleared ?? (() => 0);
+    // 선택 단계를 현재 행성 개방 상한으로 클램프한다.
+    this.stage = this.clampStage(this.stage);
     this.onLaunch = opts.onLaunch;
     this.onInventory = opts.onInventory;
     this.onBack = opts.onBack ?? null;
@@ -125,6 +126,17 @@ export class PlanetSelect {
     this.onLaunch = null;
     this.onInventory = null;
     this.onBack = null;
+  }
+
+  /** 현재 선택 행성의 개방 상한(max(10, 최고 클리어 + 5)). */
+  private openCap(): number {
+    return stageOpenCap(this.bestStageCleared(this.planet));
+  }
+
+  /** 단계를 [1, 개방 상한]으로 클램프한다. */
+  private clampStage(stage: number): number {
+    const cap = this.openCap();
+    return stage < 1 ? 1 : stage > cap ? cap : stage;
   }
 
   private render(meta: string): void {
@@ -159,51 +171,48 @@ export class PlanetSelect {
       card.appendChild(psub);
       card.addEventListener('click', () => {
         this.planet = p.id;
+        // 행성마다 개방 상한이 다르므로 선택 단계를 새 행성 상한으로 클램프한다.
+        this.stage = this.clampStage(this.stage);
         this.render(meta);
       });
       planets.appendChild(card);
     }
     this.root.appendChild(planets);
 
-    // Tier segmented control.
-    const tierRow = document.createElement('div');
-    tierRow.className = 'pb-row';
-    const tierLabel = document.createElement('span');
-    tierLabel.className = 'pb-meta';
-    tierLabel.textContent = t('planet.tierLabel');
+    // 침략 단계 스텝퍼(± 버튼 + 현재 단계, 1..개방 상한 클램프).
+    const cap = this.openCap();
+    const stageRow = document.createElement('div');
+    stageRow.className = 'pb-row';
+    const stageLabel = document.createElement('span');
+    stageLabel.className = 'pb-meta';
+    stageLabel.textContent = t('planet.stageLabel');
     const seg = document.createElement('div');
     seg.className = 'pb-seg';
-    for (const tm of TIERS) {
-      const unlocked = canEnterTier(tm.id, this.level);
-      const b = document.createElement('button');
-      b.className = `${tm.id === this.tier ? 'sel' : ''}${unlocked ? '' : ' locked'}`.trim();
-      if (unlocked) {
-        b.textContent = tm.name;
-      } else {
-        // 잠금 티어: 픽셀 자물쇠 아이콘 + 이름(이모지 폴백 대체).
-        b.appendChild(pixelIcon(UI_LOCK_URL, 12, t('base.locked')));
-        b.appendChild(document.createTextNode(` ${tm.name}`));
-      }
-      b.addEventListener('click', () => {
-        if (!canEnterTier(tm.id, this.level)) return; // locked: keep current selection
-        this.tier = tm.id;
-        this.render(meta);
-      });
-      seg.appendChild(b);
-    }
-    tierRow.appendChild(tierLabel);
-    tierRow.appendChild(seg);
-    this.root.appendChild(tierRow);
-    const tierDesc = document.createElement('div');
-    tierDesc.className = 'pb-tierdesc';
-    const selTier = TIERS.find((t) => t.id === this.tier);
-    // Show the lock reason for any tier that is gated at the current level.
-    const lockedTier = TIERS.find((t) => !canEnterTier(t.id, this.level));
-    tierDesc.textContent =
-      lockedTier !== undefined
-        ? `${selTier?.desc ?? ''}   ·   ${t('planet.lock', { tier: lockedTier.name, lvl: ANNIHILATION_LEVEL, cur: this.level })}`
-        : (selTier?.desc ?? '');
-    this.root.appendChild(tierDesc);
+    const dec = document.createElement('button');
+    dec.textContent = '−';
+    dec.addEventListener('click', () => {
+      this.stage = this.clampStage(this.stage - 1);
+      this.render(meta);
+    });
+    const cur = document.createElement('button');
+    cur.className = 'sel';
+    cur.textContent = String(this.stage);
+    const inc = document.createElement('button');
+    inc.textContent = '+';
+    inc.addEventListener('click', () => {
+      this.stage = this.clampStage(this.stage + 1);
+      this.render(meta);
+    });
+    seg.appendChild(dec);
+    seg.appendChild(cur);
+    seg.appendChild(inc);
+    stageRow.appendChild(stageLabel);
+    stageRow.appendChild(seg);
+    this.root.appendChild(stageRow);
+    const stageDesc = document.createElement('div');
+    stageDesc.className = 'pb-tierdesc';
+    stageDesc.textContent = t('planet.stageDesc', { stage: this.stage, cap });
+    this.root.appendChild(stageDesc);
 
     // Anomaly offer (only when the seed rolled one).
     if (this.anomalyKind !== ANOMALY_NONE) {
@@ -267,7 +276,7 @@ export class PlanetSelect {
       this.hide();
       cb?.({
         planet: this.planet,
-        tier: this.tier,
+        stage: this.stage,
         anomalyAccepted: this.anomalyKind !== ANOMALY_NONE && this.anomalyAccepted,
       });
     });

@@ -16,7 +16,7 @@ import type { EnemyDef } from './patterns/types.js';
 import { ENEMY_BY_TYPE } from '../../data/enemies.js';
 import {
   SEGMENTS,
-  tierParams,
+  stageParams,
   RUSH_RAMP_TICKS,
   RUSH_ENEMY_STEP,
   RUSH_ENEMY_MAX,
@@ -94,9 +94,9 @@ export function updateWaves(state: WorldState, player: Entity): void {
   // 가능하고 부족하면 몹이 서서히 쌓여 자연 사망으로 긴 꼬리가 캡된다(별도 enrage 없음).
   const rushSteps = seg.boss ? 0 : Math.floor(w.segmentElapsed / RUSH_RAMP_TICKS);
   const rushEnemyBonus = Math.min(rushSteps * RUSH_ENEMY_STEP, RUSH_ENEMY_MAX);
-  // 군체 대발생 변칙 × 섬멸 티어 밀도↑: raise the onscreen enemy cap. 티어 밀도는
-  // 데이터 주도(TIER_PARAMS.densityMult) — 정찰/교전은 1(거동 불변), 섬멸은 ×1.5.
-  const tp = tierParams(state.config.tier);
+  // 군체 대발생 변칙 × 침략 단계 밀도↑: raise the onscreen enemy cap. 단계 밀도는
+  // 데이터 주도(STAGE_MILESTONES.densityMult) — 밴드0/1(단계1..20)은 1(거동 불변), 밴드2(21+)는 ×1.5.
+  const tp = stageParams(state.config.stage ?? 1);
   const maxEnemies = Math.round(
     (seg.maxEnemies + rushEnemyBonus) * maxEnemiesMult(state.anomaly) * tp.densityMult,
   );
@@ -162,10 +162,10 @@ function spawnCard(state: WorldState, card: WaveCard, maxEnemies: number, player
     const e = spawnEnemy(state, def, adj.x, adj.y);
     spawned.push(e);
   }
-  // 티어별 정예 승격(교전=1 / 섬멸=2, TIER_PARAMS.eliteCount). 카드에서 먼저 스폰된
+  // 단계별 정예 승격(밴드1=1 / 밴드2=2, STAGE_MILESTONES.eliteCount). 카드에서 먼저 스폰된
   // eliteCount마리를 전용 스트림(OQ-M2-4)에서 뽑은 어픽스로 엘리트화한다. spawnEnemy
-  // 뒤라 변칙/티어 HP 배율이 이미 반영된 상태에서 승격된다. 정찰(0)은 승격 없음(불변).
-  const eliteCount = tierParams(state.config.tier).eliteCount;
+  // 뒤라 변칙/단계 HP 배율이 이미 반영된 상태에서 승격된다. 단계1(밴드0)은 승격 없음(불변).
+  const eliteCount = stageParams(state.config.stage ?? 1).eliteCount;
   const promote = eliteCount < spawned.length ? eliteCount : spawned.length;
   for (let i = 0; i < promote; i++) {
     const affix = state.eliteRng.int(0, ELITE_AFFIX_COUNT - 1);
@@ -222,8 +222,8 @@ function spawnEnemy(state: WorldState, def: EnemyDef, x: number, y: number): Ent
   e.x = x;
   e.y = y;
   e.radius = def.radius;
-  // 군체 대발생 변칙 × 티어 HP 배율. 정찰 ×1(불변), 교전 ×2.2(밸런스 표), 섬멸 ×4.5.
-  const hp = Math.round(def.hp * enemyHpMult(state.anomaly) * tierParams(state.config.tier).hpMult);
+  // 군체 대발생 변칙 × 침략 단계 HP 배율. 단계1 ×1(불변), 연속 상향(밴드 대표 1/2.2/4.5).
+  const hp = Math.round(def.hp * enemyHpMult(state.anomaly) * stageParams(state.config.stage ?? 1).hpMult);
   e.hp = hp;
   e.maxHp = hp;
   e.damage = def.contactDamage;
@@ -248,7 +248,7 @@ export function summonEnemy(state: WorldState, def: EnemyDef, x: number, y: numb
   e.x = x;
   e.y = y;
   e.radius = def.radius;
-  const hp = Math.round(def.hp * enemyHpMult(state.anomaly) * tierParams(state.config.tier).hpMult);
+  const hp = Math.round(def.hp * enemyHpMult(state.anomaly) * stageParams(state.config.stage ?? 1).hpMult);
   e.hp = hp;
   e.maxHp = hp;
   e.damage = def.contactDamage;

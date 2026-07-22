@@ -21,31 +21,22 @@ import type { EnemyRole } from '../src/sim/patterns/types.js';
 export type Formation = 'ring' | 'line' | 'edges' | 'cluster';
 
 // ---------------------------------------------------------------------------
-// 난도 티어 (plan B3, 갈림길 ③A: 티어 파라미터 데이터 주입, AC5)
+// 침략 단계 (ADR-0022: 난이도 3티어 폐지 → 행성별 독립 1..∞ 정수 축)
 // ---------------------------------------------------------------------------
 
-/** 정찰(0): 기본. */
-export const TIER_RECON = 0;
-/** 교전(1): 카드당 정예 1 승격 + HP ×2.2(plan 밸런스 표 — 패턴은 M2와 동일). */
-export const TIER_ENGAGE = 1;
-/** 섬멸(2): 패턴 변형(서브탄)+밀도↑+정예 2 + HP 완만 상향(×4.5). */
-export const TIER_ANNIHILATION = 2;
-
-/** 레벨 캡(plan §3). */
+/** 레벨 캡(plan §3 — 기체 레벨은 침략 단계를 잠그지 않는 순수 난이도 앵커). */
 export const LEVEL_CAP = 100;
-/** 섬멸 티어 진입 게이트 레벨(plan B3, 게이트 ④). */
-export const ANNIHILATION_UNLOCK_LEVEL = 60;
 
 /**
- * 티어 파라미터 — 패턴 엔진·웨이브 디렉터에 데이터로 주입(갈림길 ③A). "수치만 다른
- * 티어" 금지(원칙4): 섬멸은 서브탄(패턴 변형)+밀도↑가 본질이고 HP는 완만하게만 오른다.
+ * 단계 파라미터 — 패턴 엔진·웨이브 디렉터에 데이터로 주입. 구 `TierParams` 와 동형(이름만).
+ * "수치만 다른 단계" 금지(원칙4): 질적 요소(정예·서브탄·밀도)는 구간 마일스톤에서만 오르고,
+ * 그 사이는 HP만 연속 상향한다.
  *
- * 정찰(0)은 M2 거동을 그대로 보존한다(hpMult 1·subBullets 0·densityMult 1 →
- * 기존 스폰/패턴/해시 불변). 교전(1)은 plan 밸런스 표의 HP ×2.2를 싣는다(패턴·밀도·
- * 정예 승격은 M2와 동일). 섬멸(2)만 패턴 변형까지 포함한 신규 수치를 싣는다.
+ * 단계 1 은 구 정찰(tier 0) 거동을 그대로 보존한다(hpMult 1·subBullets 0·densityMult 1·
+ * eliteCount 0 → 기존 스폰/패턴/해시 불변, ADR-0022 결정론 규율 1).
  */
-export interface TierParams {
-  /** 적 스폰 HP 배율(완만). */
+export interface StageParams {
+  /** 적 스폰 HP 배율(연속 상향). */
   readonly hpMult: number;
   /** 온스크린 적 상한 배율(밀도↑). */
   readonly densityMult: number;
@@ -55,22 +46,77 @@ export interface TierParams {
   readonly subBullets: number;
 }
 
-/** 티어별 파라미터(index = 티어). 새 티어는 append. */
-export const TIER_PARAMS: readonly TierParams[] = [
-  { hpMult: 1, densityMult: 1, eliteCount: 0, subBullets: 0 }, // 정찰
-  { hpMult: 2.2, densityMult: 1, eliteCount: 1, subBullets: 0 }, // 교전(plan 밸런스 표 ×2.2)
-  { hpMult: 4.5, densityMult: 1.5, eliteCount: 2, subBullets: 3 }, // 섬멸
-];
-
-/** 티어 파라미터 조회(범위 밖은 정찰로 폴백). */
-export function tierParams(tier: number | undefined): TierParams {
-  return TIER_PARAMS[tier ?? 0] ?? (TIER_PARAMS[0] as TierParams);
+/** 한 구간 마일스톤: `minStage` 이상에서 이 질적 요소들이 해금된다. */
+export interface StageMilestone {
+  readonly minStage: number;
+  readonly eliteCount: number;
+  readonly subBullets: number;
+  readonly densityMult: number;
 }
 
-/** 티어 진입 게이트: 섬멸은 레벨 60+ 요구, 그 외는 항상 허용(plan B3). */
-export function canEnterTier(tier: number, level: number): boolean {
-  if (tier >= TIER_ANNIHILATION) return level >= ANNIHILATION_UNLOCK_LEVEL;
-  return true;
+/**
+ * 구간 마일스톤: 정한 경계에서 질적 요소 해금(구 정찰/교전/섬멸을 밴드로 재배치).
+ * 경계값(11,21)·계수는 TODO(밸런스): 출시 전 일괄 튜닝.
+ */
+export const STAGE_MILESTONES: readonly StageMilestone[] = [
+  { minStage: 1, eliteCount: 0, subBullets: 0, densityMult: 1 }, // 밴드0 (구 정찰)
+  { minStage: 11, eliteCount: 1, subBullets: 0, densityMult: 1 }, // 밴드1 (구 교전)
+  { minStage: 21, eliteCount: 2, subBullets: 3, densityMult: 1.5 }, // 밴드2 (구 섬멸)
+];
+
+// hpMult 앵커: 밴드 대표값(구 정찰/교전/섬멸의 HP 배율). 곡선은 이 앵커들을 지나는 구간선형.
+// TODO(밸런스): 출시 전 일괄 튜닝(앵커값·경계·21+ 기울기 전부 플레이스홀더).
+const HP_ANCHOR_STAGE_1 = 1; // 밴드0 대표(구 정찰)
+const HP_ANCHOR_STAGE_11 = 2.2; // 밴드1 대표(구 교전)
+const HP_ANCHOR_STAGE_21 = 4.5; // 밴드2 대표(구 섬멸)
+
+/**
+ * hpMult: 단계마다 연속 상향. **단계 1 = 정확히 1.0**(구 정찰, 결정론 불변 — 부동소수 오차
+ * 금지라 `stage <= 1` 은 early-return 1). 곡선 계수 TODO(밸런스): 출시 전 일괄 튜닝.
+ * 플레이스홀더: 밴드 대표값(1 / 2.2 / 4.5)을 지나는 구간선형(21+ 는 마지막 기울기 연장).
+ */
+export function stageHpMult(stage: number): number {
+  if (stage <= 1) return 1; // 단계1 ≡ 구 정찰: 정확히 1.0(오차 없음).
+  if (stage <= 11) return HP_ANCHOR_STAGE_1 + ((HP_ANCHOR_STAGE_11 - HP_ANCHOR_STAGE_1) * (stage - 1)) / 10;
+  if (stage <= 21) return HP_ANCHOR_STAGE_11 + ((HP_ANCHOR_STAGE_21 - HP_ANCHOR_STAGE_11) * (stage - 11)) / 10;
+  return HP_ANCHOR_STAGE_21 + ((HP_ANCHOR_STAGE_21 - HP_ANCHOR_STAGE_11) * (stage - 21)) / 10;
+}
+
+/**
+ * 단계 파라미터 조회. hpMult 는 연속 함수, 나머지(정예·서브탄·밀도)는 `stage` 이하 최대
+ * `minStage` 밴드에서 온다. 범위 밖(<1)은 단계 1로 클램프.
+ *
+ * `stageParams(1)` = `{hpMult:1, densityMult:1, eliteCount:0, subBullets:0}` (구 정찰과 동일).
+ */
+export function stageParams(stage: number): StageParams {
+  const s = stage < 1 ? 1 : stage;
+  let band = STAGE_MILESTONES[0] as StageMilestone;
+  for (const m of STAGE_MILESTONES) {
+    if (s >= m.minStage) band = m;
+    else break;
+  }
+  return {
+    hpMult: stageHpMult(s),
+    densityMult: band.densityMult,
+    eliteCount: band.eliteCount,
+    subBullets: band.subBullets,
+  };
+}
+
+// 개방 규칙(ADR-0022): 도전 가능 상한 = max(10, 그 행성 최고 클리어 단계 + 5). 초기 1~10 개방.
+/** 개방 하한(초기 개방 단계 수). */
+export const STAGE_OPEN_FLOOR = 10;
+/** 최고 클리어 단계 위로 추가 개방되는 단계 수. */
+export const STAGE_OPEN_LOOKAHEAD = 5;
+
+/** 그 행성에서 도전 가능한 최고 단계(개방 상한). */
+export function stageOpenCap(bestStageCleared: number): number {
+  return Math.max(STAGE_OPEN_FLOOR, (bestStageCleared | 0) + STAGE_OPEN_LOOKAHEAD);
+}
+
+/** 단계가 개방됐는가(1 ≤ stage ≤ 개방 상한). */
+export function isStageOpen(stage: number, bestStageCleared: number): boolean {
+  return stage >= 1 && stage <= stageOpenCap(bestStageCleared);
 }
 
 /**

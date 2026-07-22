@@ -100,7 +100,7 @@ function rollItemForSlot(
   slotKind: SlotKind,
   rarity: Rarity,
 ): Item {
-  const source = { planet: 0, tier: 1 };
+  const source = { planet: 0, stage: 11 };
   let last = rollItem(startSeed >>> 0, rarity, source);
   for (let i = 0; i < 4096; i++) {
     const item = rollItem((startSeed + i) >>> 0, rarity, source);
@@ -146,10 +146,10 @@ export function buildPreset(kind: ProfilePresetKind): Profile {
   profile.minerals = 999_999;
   profile.skillPoints = 100;
   profile.tutorialDone = true;
-  // Record a clear on the two starter planets so 정제소 unlocks + tiers are open.
+  // Record a clear on the two starter planets so 정제소 unlocks + 높은 단계까지 개방된다.
   profile.planetProgress = {
-    0: { bestTierCleared: 1 },
-    1: { bestTierCleared: 1 },
+    0: { bestStageCleared: 20 },
+    1: { bestStageCleared: 20 },
   };
   return profile;
 }

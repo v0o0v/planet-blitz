@@ -22,12 +22,12 @@ import { PLANETS, NIFLHEIM, ARKE, planetContent } from '../data/planets/index.js
 import { AFFIXES, PREFIXES } from '../data/affixes.js';
 import { M2_UNIQUES, M3_UNIQUES } from '../data/uniques.js';
 import {
-  TIER_PARAMS,
-  TIER_ANNIHILATION,
-  ANNIHILATION_UNLOCK_LEVEL,
+  STAGE_MILESTONES,
   LEVEL_CAP,
-  tierParams,
-  canEnterTier,
+  stageParams,
+  stageHpMult,
+  stageOpenCap,
+  isStageOpen,
 } from '../data/waves.js';
 import { HAZARD_SLOW } from '../src/sim/patterns/types.js';
 import {
@@ -166,43 +166,55 @@ describe('감속 지대 (B1 유령 기함, AC4)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// B3 — 섬멸 티어 + 엘리트 어픽스 8종 (AC5)
+// 침략 단계 파라미터 + 구간 마일스톤 + 개방 규칙 (ADR-0022, Lane1 게이트 1)
 // ---------------------------------------------------------------------------
 
-describe('섬멸 티어 파라미터 (B3, AC5)', () => {
-  it('3티어 파라미터가 정의되고 정찰은 M2 거동 보존, 교전은 HP ×2.2 튜닝을 싣는다', () => {
-    expect(TIER_PARAMS.length).toBe(3);
-    expect(tierParams(0)).toMatchObject({ hpMult: 1, densityMult: 1, eliteCount: 0, subBullets: 0 });
-    // 교전 HP ×2.2 = plan 밸런스 표(재미 게이트 루프 반영). 패턴·밀도·정예는 M2 보존.
-    expect(tierParams(1)).toMatchObject({ hpMult: 2.2, densityMult: 1, eliteCount: 1, subBullets: 0 });
+describe('침략 단계 파라미터 (ADR-0022)', () => {
+  it('단계 1 은 구 정찰(tier0) 파라미터를 정확히 보존한다(결정론 규율 1)', () => {
+    // 부동소수 오차 금지 — hpMult 는 정확히 1.
+    expect(stageHpMult(1)).toBe(1);
+    expect(stageParams(1)).toEqual({ hpMult: 1, densityMult: 1, eliteCount: 0, subBullets: 0 });
   });
 
-  it('섬멸은 패턴 변형(서브탄)+밀도↑+정예 2 + 완만한 HP(×4.5)를 싣는다', () => {
-    const t2 = tierParams(TIER_ANNIHILATION);
-    expect(t2.eliteCount).toBe(2);
-    expect(t2.subBullets).toBeGreaterThan(0);
-    expect(t2.densityMult).toBeGreaterThan(1);
-    expect(t2.hpMult).toBe(4.5);
+  it('밴드 대표 단계(1/11/21)가 구 3티어(정찰/교전/섬멸) 값을 재배치한다', () => {
+    expect(STAGE_MILESTONES.length).toBe(3);
+    // 밴드1(단계11) = 구 교전: HP ×2.2·정예 1·서브탄 0·밀도 1.
+    expect(stageParams(11)).toEqual({ hpMult: 2.2, densityMult: 1, eliteCount: 1, subBullets: 0 });
+    // 밴드2(단계21) = 구 섬멸: HP ×4.5·정예 2·서브탄 3·밀도 1.5.
+    expect(stageParams(21)).toEqual({ hpMult: 4.5, densityMult: 1.5, eliteCount: 2, subBullets: 3 });
   });
 
-  it('레벨 캡 100·섬멸 진입 게이트(Lv60)가 데이터로 존재한다', () => {
+  it('hpMult 가 단계마다 연속 상향한다(단계1 < 단계11 < 단계21 < 단계31)', () => {
+    expect(stageHpMult(1)).toBeLessThan(stageHpMult(11));
+    expect(stageHpMult(11)).toBeLessThan(stageHpMult(21));
+    expect(stageHpMult(21)).toBeLessThan(stageHpMult(31));
+    // 범위 밖(<1)은 단계 1로 클램프.
+    expect(stageParams(0)).toEqual(stageParams(1));
+  });
+
+  it('레벨 캡 100 이 데이터로 존재한다(기체 레벨은 단계를 잠그지 않는 순수 앵커)', () => {
     expect(LEVEL_CAP).toBe(100);
-    expect(ANNIHILATION_UNLOCK_LEVEL).toBe(60);
-    expect(canEnterTier(TIER_ANNIHILATION, 59)).toBe(false);
-    expect(canEnterTier(TIER_ANNIHILATION, 60)).toBe(true);
-    expect(canEnterTier(1, 1)).toBe(true); // 교전은 게이트 없음
   });
 
-  it('섬멸 티어가 잡몹 스폰 HP를 완만히 상향한다(×4.5)', () => {
-    const recon = createWorld(0x9001, { ...DEFAULT_CONFIG, tier: 0 });
-    const annih = createWorld(0x9001, { ...DEFAULT_CONFIG, tier: 2 });
+  it('개방 규칙: max(10, 최고클리어+5)·1..상한만 개방(Lane1 게이트 1)', () => {
+    expect(stageOpenCap(0)).toBe(10);
+    expect(stageOpenCap(20)).toBe(25);
+    expect(isStageOpen(10, 0)).toBe(true);
+    expect(isStageOpen(11, 0)).toBe(false);
+    expect(isStageOpen(26, 20)).toBe(false);
+    expect(isStageOpen(0, 0)).toBe(false); // 단계는 1 이상
+  });
+
+  it('높은 단계가 잡몹 스폰 HP를 연속 상향한다(단계1 < 단계21)', () => {
+    const recon = createWorld(0x9001, { ...DEFAULT_CONFIG, stage: 1 });
+    const annih = createWorld(0x9001, { ...DEFAULT_CONFIG, stage: 21 });
     for (let t = 0; t < 60; t++) {
       stepWorld(recon, emptyInput());
       stepWorld(annih, emptyInput());
     }
     const maxHp = (s: WorldState) =>
       Math.max(0, ...s.entities.filter((e) => e.kind === 'enemy' && !isElite(e)).map((e) => e.maxHp));
-    // 같은 시드라 동일 def가 스폰되므로 섬멸의 최대 HP가 정찰보다 높다.
+    // 같은 시드라 동일 def가 스폰되므로 높은 단계의 최대 HP가 단계1보다 높다.
     expect(maxHp(annih)).toBeGreaterThan(maxHp(recon));
   });
 });
@@ -424,7 +436,7 @@ describe('유니크 15점 완성 (B4, AC6)', () => {
 
 describe('M3 콘텐츠 결정론 (AC2)', () => {
   it('니플헤임 섬멸 런이 동일 해시로 재현된다', () => {
-    const cfg: WorldConfig = { ...DEFAULT_CONFIG, planet: 2, tier: 2 };
+    const cfg: WorldConfig = { ...DEFAULT_CONFIG, planet: 2, stage: 21 };
     const inputs = Array.from({ length: 400 }, () => emptyInput());
     const a = runReplay({ seed: 0x2c2c, config: cfg, inputs });
     const b = runReplay({ seed: 0x2c2c, config: cfg, inputs });
@@ -454,7 +466,7 @@ describe('M3 Lane1+Lane2 통합 결정론 (AC2)', () => {
     const cfg: WorldConfig = {
       ...DEFAULT_CONFIG,
       planet: 2, // 니플헤임(신규 행성)
-      tier: 2, // 섬멸(파워업 가중·엘리트 2개)
+      stage: 21, // 섬멸(파워업 가중·엘리트 2개)
       anomalyAccepted: true, // 변칙 수락
       loadout: {
         ...neutralLoadout(),
@@ -476,7 +488,7 @@ describe('M3 Lane1+Lane2 통합 결정론 (AC2)', () => {
     const cfg: WorldConfig = {
       ...DEFAULT_CONFIG,
       planet: 3, // 아르케(신규 행성)
-      tier: 2, // 섬멸
+      stage: 21, // 섬멸
       loadout: {
         ...neutralLoadout(),
         weaponType: WEAPON_MISSILE,
@@ -495,7 +507,7 @@ describe('M3 Lane1+Lane2 통합 결정론 (AC2)', () => {
     const base: WorldConfig = {
       ...DEFAULT_CONFIG,
       planet: 2,
-      tier: 1,
+      stage: 11,
       loadout: { ...neutralLoadout(), weaponType: WEAPON_BEAM },
     };
     const withPrism: WorldConfig = {

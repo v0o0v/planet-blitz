@@ -337,7 +337,9 @@ export function hashWorld(state: WorldState): number {
   h = hashU32(h, state.anomaly.active ? 1 : 0);
   const cfg2 = state.config;
   h = hashU32(h, (cfg2.planet ?? 0) >>> 0);
-  h = hashU32(h, (cfg2.tier ?? 0) >>> 0);
+  // 0-기반 난이도 인덱스 — 단계1 ≡ 구 정찰(tier0) 바이트 보존(ADR-0022). `-1` 오프셋으로
+  // 미지정/단계1 → 0 = 구 `(cfg2.tier ?? 0)` 이라 shipHashBaseline/determinism 골든이 불변이다.
+  h = hashU32(h, (Math.max(1, cfg2.stage ?? 1) - 1) >>> 0);
   h = hashU32(h, cfg2.anomalyAccepted ? 1 : 0);
   const lo = cfg2.loadout;
   h = hashU32(h, lo ? 1 : 0);
@@ -367,7 +369,9 @@ export function hashWorld(state: WorldState): number {
     h = hashU32(h, r.seed >>> 0);
     h = hashU32(h, r.rarity >>> 0);
     h = hashU32(h, r.planet >>> 0);
-    h = hashU32(h, r.tier >>> 0);
+    // 0-기반 난이도 인덱스 — 단계1 ≡ 구 정찰(tier0) 바이트 보존(ADR-0022). `-1` 오프셋으로
+    // 단계1 loot → 0 = 구 `r.tier`(정찰 드랍) 이라 골든 loot 폴드가 불변이다.
+    h = hashU32(h, ((r.stage - 1) >>> 0));
   }
   // --- M3 (APPEND-ONLY; never reorder the folds below or above) ---
   // 통합 시 확정한 순서: (1) Lane2 감속 잔여 틱 → (2) Lane1 스킬 투자 스냅샷.

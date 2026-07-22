@@ -532,7 +532,7 @@ describe('재현성 — 같은 입력 2회', () => {
 function assembleRunConfigLikeMain(invest: readonly number[]) {
   const profile = defaultProfile();
   activeShip(profile).skillInvest = invest.slice();
-  const cfg = buildRunConfig(profile, { planet: 0, tier: 0 });
+  const cfg = buildRunConfig(profile, { planet: 0, stage: 1 });
   return { loadout: cfg.loadout!, skillInvest: cfg.skillInvest! };
 }
 

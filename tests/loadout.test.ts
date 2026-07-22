@@ -9,7 +9,7 @@ import {
 } from '../src/items/loadout.js';
 import type { Item, ItemSource, SlotKind, StatKey } from '../src/items/types.js';
 
-const SRC: ItemSource = { planet: 0, tier: 0 };
+const SRC: ItemSource = { planet: 0, stage: 1 };
 
 function item(slot: SlotKind, affixes: { stat: StatKey; value: number }[], weaponType?: number): Item {
   return {
