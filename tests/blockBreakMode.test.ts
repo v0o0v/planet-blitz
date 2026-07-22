@@ -245,13 +245,16 @@ describe('블록격파 — 정규경로 통합(배선 실도달)', () => {
     expect(w.bossSpawned).toBe(true);
     // 코스 끝(= 마지막 구간 통과) 이후에만 보스가 뜬다.
     expect(-w.scrollRuntime!.scrollY).toBeGreaterThanOrEqual(blockBreakCourseLength());
-    // 보스 처치 → 공통 승리(compact) 재사용을 확인한다. 실제 처치 산술(resolveCollisions:
-    // hp≤0 → dead)은 기존 테스트가 커버하고, 아군탄은 코스 벽에 막혀(정체성) 여기서 재현이
-    // 불안정하므로, 격파 결과(dead)를 세우고 한 틱 굴려 compact 의 boss→victory 분기가
-    // blockBreak(invasion3 미존재)에서 그대로 도달함을 못박는다.
-    (boss as Entity).hp = 0;
-    (boss as Entity).dead = true;
-    stepWorld(w, idle);
+    // 보스 처치 → 공통 승리(compact) 재사용을 **실제 피해 경로로** 못박는다(수동 dead 세팅 금지 —
+    // 리뷰 MEDIUM-2). 보스 hp 를 낮춘 뒤 매 틱 보스 현재 위치에 거대 아군탄을 쏴, resolveCollisions
+    // 가 hp≤0 으로 깎아 dead 로 만들고 → compact 의 boss(invasion3 미존재) 분기가 victory 를
+    // 세우는 end-to-end 사슬을 통과시킨다(보스는 코스 최상단, 마지막 벽 행 위라 벽 가림 없음).
+    (boss as Entity).hp = 10;
+    for (let i = 0; i < 30 && !w.victory; i++) {
+      const b = w.entities.find((e) => e.kind === 'boss');
+      if (b !== undefined) spawnBullet(w, b.x, b.y, 0, 0, 1_000_000, 0, b.radius + 100, 120, 1, 0);
+      stepWorld(w, idle);
+    }
     expect(w.victory).toBe(true);
   });
 
@@ -264,6 +267,30 @@ describe('블록격파 — 정규경로 통합(배선 실도달)', () => {
     const hp0 = player.hp;
     runTicks(w, 120);
     expect(player.hp).toBeLessThan(hp0);
+  });
+
+  it('(g) 컬링된 적(hp>0)은 처치·젬·루팅을 주지 않는다 — 경제/집계 오염 회귀 가드(리뷰 HIGH)', () => {
+    // 도망쳐 창 뒤로 빠진 적(무손상)을 cullScrollEnemies 가 dead 로 표시하는데, compact 의 적
+    // 처치 분기가 `hp<=0` 게이트로 이를 배제해야 한다(supply/destructible 와 동일 규율). 게이트가
+    // 없으면 한 대도 안 맞은 적이 kills++·젬·엘리트 루팅을 준다(해츨링 시그니처·정산 오염).
+    const w = createWorld(7, durableBlockBreak());
+    const rt = w.scrollRuntime!;
+    // 창 뒤(+Y, 컬 반경 밖)에 무손상 적 주입. enemyType 0 = 유효 로스터 역할(updateEnemy 안전).
+    const foe = blankEntity('enemy');
+    foe.id = w.nextEntityId++;
+    foe.enemyType = 0;
+    foe.x = rt.scrollX;
+    foe.y = rt.scrollY + BLOCKBREAK_ENEMY_CULL_RADIUS + 800;
+    foe.hp = 9999;
+    foe.maxHp = 9999;
+    w.entities.push(foe);
+    const kills0 = w.kills;
+    const gems0 = w.entities.filter((e) => e.kind === 'gem').length;
+    stepWorld(w, idle);
+    expect(foe.dead).toBe(true); // 컬링은 됐고(제거),
+    expect(w.entities.includes(foe)).toBe(false); // compact 가 수거했지만
+    expect(w.kills).toBe(kills0); // ★ 처치로 집계되지 않는다(핵심 — HIGH 수정).
+    expect(w.entities.filter((e) => e.kind === 'gem').length).toBe(gems0); // 젬도 안 생긴다.
   });
 });
 

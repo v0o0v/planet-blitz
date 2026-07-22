@@ -2358,6 +2358,11 @@ function stepProjectiles(state: WorldState, player: Entity): void {
     // 청크·상한 상향) 벽에도 broad-phase(공간 격자/스윕-프룬)가 필요하다.
     // 침공 3레이어는 broad-phase 인덱스로 질의한다(firstBlocking 은 배열 최소 인덱스를 돌려주어
     // 아래 직접 스윕의 first-hit 와 비트 동일 — 결과가 갈릴 여지가 구조적으로 없다).
+    // ⚠️ 이 broad-phase 빠른 경로는 벽 파괴를 적용하지 않는다(firstBlocking 은 bool 만 반환) —
+    // 탄만 죽이고 벽 hp 는 못 깎는다. 현재 wallIndex 는 **침공 3레이어에서만** non-null 이고
+    // blockBreak 는 null 이라 아래 직접 스윕으로 파괴가 정상 동작한다. 훗날 PvE 스크롤 모드에
+    // 성능용 wallIndex 를 붙이면 파괴가능 벽이 조용히 불파괴가 되어 모드 클리어 불가가 되므로,
+    // 그때는 이 분기에도 벽 피해를 적용해야 한다(firstBlocking 이 벽 참조를 반환하도록 확장).
     if (wallIndex !== null) {
       if (wallIndex.firstBlocking(e.x, e.y, e.radius) !== null) e.dead = true;
       continue;
@@ -2366,7 +2371,9 @@ function stepProjectiles(state: WorldState, player: Entity): void {
       if (circleOverlapsWall(e.x, e.y, e.radius, w)) {
         // 블록격파(Lane4): 아군탄(bullet)이 파괴가능 벽(hp>0)에 피해를 주고 hp≤0 이면 벽을
         // 파괴한다(관통 무시 = 밸런스, 첫 겹침에서 탄 소멸). 적탄·hp=0 벽(침공/뱀서류)은
-        // isBreakableWall=false → 탄만 소멸(기존 거동·해시 완전 불변).
+        // isBreakableWall=false → 탄만 소멸(기존 거동·해시 완전 불변). 파괴된 벽은 **의도적으로
+        // 젬을 안 준다**(destructible 은 보상 오브젝트라 젬을 주지만, 코스 벽은 통과 장애물이라
+        // 무보상 — compact 에 wall 드랍 분기가 없는 것이 이 설계다).
         if (e.kind === 'bullet' && isBreakableWall(w)) {
           w.hp -= e.damage;
           if (w.hp <= 0) w.dead = true;
@@ -2988,7 +2995,12 @@ function compact(state: WorldState): void {
       survivors.push(e);
       continue;
     }
-    if (e.kind === 'enemy') {
+    // 처치 집계는 `hp<=0`(실제 격추)로 게이트한다 — supply(아래 "vs. escaped")·destructible
+    // ("vs. culled")과 동일 규율. 기존 전 사망 경로(탄 명중·화염 DoT·전격·폭탄 기물)는 항상
+    // hp<=0 에서 dead 가 되므로 이 게이트는 그들에게 무연산(뱀서류·침공 바이트 불변)이다.
+    // 강제 스크롤 컬링(cullScrollEnemies, Lane4)만 hp>0 인 적을 dead 로 표시하는데, 그건 도망쳐
+    // 창 뒤로 빠진 적이라 처치가 아니다 — 공짜 처치·젬·엘리트 루팅을 여기서 정확히 배제한다.
+    if (e.kind === 'enemy' && e.hp <= 0) {
       state.kills++;
       const def = enemyDefFor(e);
       drops.push({ x: e.x, y: e.y, xp: def?.xpValue ?? 1 });

@@ -37,8 +37,15 @@ export const BLOCKBREAK_GAP_HALF_W = 220;
 export const BLOCKBREAK_ROW_SPACING = 800;
 /** 적 스폰 기준을 창 중심에서 전방(−Y)으로 당기는 거리(위에서 내려오는 정체성). TODO(밸런스). */
 export const BLOCKBREAK_SPAWN_AHEAD = 700;
-/** 창 중심에서 이 반경 밖으로 흘러간 적을 컬(뒤로 밀려난 적 정리). TODO(밸런스). */
-export const BLOCKBREAK_ENEMY_CULL_RADIUS = 1600;
+/**
+ * 창 중심에서 이 반경 밖으로 흘러간 적을 컬(뒤로 밀려난 적 정리).
+ * ⚠️ **구조적 불변식(밸런스 아님)**: 이 값은 반드시 **최대 스폰 거리**보다 커야 한다 — 그렇지
+ * 않으면 창 전방(−Y, `BLOCKBREAK_SPAWN_AHEAD`)에 뜬 적이 플레이어에 닿기도 전에 즉시 컬링돼
+ * 모드가 성립하지 않는다. 현재 최대 스폰 거리 ≈ 2080(ring: SPAWN_AHEAD 700 + SPAWN_RING_RADIUS,
+ * cluster: 700+800+400). 그래서 2600(여유 ~500). 실제 수치 튜닝은 TODO(밸런스)지만 이 부등식은
+ * 튜닝과 무관하게 유지돼야 한다.
+ */
+export const BLOCKBREAK_ENEMY_CULL_RADIUS = 2600;
 
 /** 벽 행이 덮는 절반 폭 = 창 반폭(±창). 코스 x 는 창(scrollX=0)과 항상 정렬된다. */
 const COURSE_HALF_W = INVASION_WINDOW_HALF_W;
