@@ -35,6 +35,17 @@ import {
 import type { InvasionPhase, InvasionRuntime } from './types.js';
 
 /**
+ * 스크롤 창 중심을 아는 최소 구조(InvasionRuntime·ScrollRuntime 공통). 순수 창 수학의 입력.
+ * `windowCenterX/Y`·`clampToWindow` 는 `scrollX/scrollY` 만 읽으므로 이 구조 타입으로 넓혀
+ * 침공(InvasionRuntime)과 PvE 강제 스크롤(ScrollRuntime, Lane3)을 함께 받는다 — 런타임
+ * 거동·해시는 불변(타입만 확장, 본문·반환 그대로).
+ */
+export interface ScrollWindow {
+  readonly scrollX: number;
+  readonly scrollY: number;
+}
+
+/**
  * 기준 스크롤 속도(월드 유닛/틱, 가속 100cp 기준) = 720 u/s.
  * 플레이어 기본 이동 속도(720 u/s)와 같은 값이라 "전진하지 않으면 창 뒤편에 밀린다"가
  * 그대로 성립한다.
@@ -129,12 +140,12 @@ export function layerProgress(runtime: InvasionRuntime): number {
 }
 
 /** 스크롤 창 중심 x(= 카메라 x). */
-export function windowCenterX(runtime: InvasionRuntime): number {
+export function windowCenterX(runtime: ScrollWindow): number {
   return runtime.scrollX;
 }
 
 /** 스크롤 창 중심 y(= 카메라 y). */
-export function windowCenterY(runtime: InvasionRuntime): number {
+export function windowCenterY(runtime: ScrollWindow): number {
   return runtime.scrollY;
 }
 
@@ -146,7 +157,7 @@ export function clampToWindow(
   x: number,
   y: number,
   radius: number,
-  runtime: InvasionRuntime,
+  runtime: ScrollWindow,
 ): { x: number; y: number } {
   const cx = windowCenterX(runtime);
   const cy = windowCenterY(runtime);

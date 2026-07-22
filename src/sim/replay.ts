@@ -471,6 +471,15 @@ export function hashWorld(state: WorldState): number {
   if (pm !== 0) {
     h = hashU32(h, pm);
   }
+  // --- PvE 강제 스크롤 런타임(APPEND-ONLY, 조건부 · ADR-0021 Lane3) ---
+  // 존재할 때만 접는다(뱀서류·침공은 미존재 → 무폴드 → 바이트 불변). scrollX/scrollY 는
+  // 음수 가능(블록격파 −Y)하지만 `>>> 0` uint32 접기라 결정론적이다(invasion3 런타임 폴드와 동일).
+  const sr = state.scrollRuntime;
+  if (sr !== undefined) {
+    h = hashU32(h, sr.scrollX >>> 0);
+    h = hashU32(h, sr.scrollY >>> 0);
+    h = hashU32(h, sr.accelCp >>> 0);
+  }
   return h >>> 0;
 }
 
