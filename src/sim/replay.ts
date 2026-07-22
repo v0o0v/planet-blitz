@@ -462,6 +462,15 @@ export function hashWorld(state: WorldState): number {
     h = hashU32(h, SHIP_HASH_VERSION >>> 0);
     h = hashU32(h, st >>> 0);
   }
+  // --- 행성 모드(APPEND-ONLY, 조건부 · ADR-0021 Lane2) ---
+  // shipType 과 같은 규율: 미지정/뱀서류(0)면 한 폴드도 실행하지 않아 기존 PvE·침공
+  // fixtures·골든이 바이트 불변이다. 비-0 모드만 접어 리플레이가 **선언한 모드**에 묶인다
+  // (같은 리플레이를 다른 모드로 재실행하면 서버 검증이 갈린다). `>>> 0` 정규화로
+  // "0"(문자열)·소수 같은 비정상 입력이 0 으로 접혀 불변식("0 이면 무폴드")을 지킨다.
+  const pm = (state.config.planetMode ?? 0) >>> 0;
+  if (pm !== 0) {
+    h = hashU32(h, pm);
+  }
   return h >>> 0;
 }
 

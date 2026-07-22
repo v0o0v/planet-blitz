@@ -20,6 +20,7 @@
 import { SeededRng } from './rng.js';
 import { cos, sin, atan2, length, TWO_PI, wrapAngle } from './math.js';
 import { DT, VIEW_WIDTH, VIEW_HEIGHT, OFFSCREEN_X } from './constants.js';
+import type { PlanetMode } from './planetMode.js';
 import type { Entity, EntityKind } from './entities.js';
 import {
   blankEntity,
@@ -476,6 +477,13 @@ export interface WorldConfig {
    * append-only 규율: 신규 필드는 항상 이 아래에만 추가.
    */
   shipType?: number;
+  /**
+   * 행성 모드(ADR-0021, Lane2). **optional** — 미지정 = vampire(0) = 뱀서류.
+   * shipType 과 같은 조건부 폴드 규율: 0 이면 `hashWorld` 꼬리 폴드가 실행되지 않아
+   * 기존 PvE·침공·골든 해시가 바이트 불변이다. Lane2 에서 sim 은 이 필드로 분기하지
+   * 않는다(각 모드 거동은 Lane3~8). append-only: 신규 필드는 이 아래에만.
+   */
+  planetMode?: PlanetMode;
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {

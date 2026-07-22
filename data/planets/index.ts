@@ -14,6 +14,7 @@
 import type { EnemyDef, EnemyRole } from '../../src/sim/patterns/types.js';
 import type { WaveCard } from '../waves.js';
 import type { BossDef } from '../boss.js';
+import { PLANET_MODE, type PlanetMode } from '../../src/sim/planetMode.js';
 import { KARGON_ROSTER } from '../enemies.js';
 import { CARD_POOL } from '../waves.js';
 import { LAVA_FORTRESS } from '../boss.js';
@@ -68,6 +69,11 @@ export interface PlanetContent {
   readonly id: string;
   /** 한글 표기(성계 지도/HUD). */
   readonly name: string;
+  /**
+   * 행성 모드(ADR-0021, Lane2). 이 행성이 어느 게임플레이 규칙 집합으로 도는지의 정본이다.
+   * `buildRunConfig` 가 이 값을 `WorldConfig.planetMode` 로 스탬프한다(데이터 주도).
+   */
+  readonly mode: PlanetMode;
   /** 역할 슬롯 로스터(웨이브 카드가 역할로 참조). */
   readonly roster: Record<EnemyRole, EnemyDef>;
   /** 정예(엘리트-타입) 적. 웨이브 카드의 elite 인덱스가 참조. */
@@ -188,6 +194,8 @@ export const KARGON: PlanetContent = {
   index: 0,
   id: 'kargon',
   name: '카르곤',
+  // ADR-0021 배정: 카르곤 = vampire(0) 온보딩 기준 모드(현행 뱀서류 경로).
+  mode: PLANET_MODE.vampire,
   roster: KARGON_ROSTER,
   elites: [],
   cardPool: CARD_POOL,
@@ -211,6 +219,8 @@ export const BERDAN: PlanetContent = {
   index: 1,
   id: 'berdan',
   name: '베르단',
+  // ADR-0021 배정: 베르단 = shrink(4) 수축 지대(곤충 군체 공간압박).
+  mode: PLANET_MODE.shrink,
   roster: BERDAN_ROSTER,
   elites: BERDAN_ELITES,
   cardPool: BERDAN_CARD_POOL,
@@ -235,6 +245,8 @@ export const NIFLHEIM: PlanetContent = {
   index: 2,
   id: 'niflheim',
   name: '니플헤임',
+  // ADR-0021 배정: 니플헤임 = chase(3) 추격·탈출(유령 기함·서리 안개).
+  mode: PLANET_MODE.chase,
   roster: NIFLHEIM_ROSTER,
   elites: NIFLHEIM_ELITES,
   cardPool: NIFLHEIM_CARD_POOL,
@@ -259,6 +271,8 @@ export const ARKE: PlanetContent = {
   index: 3,
   id: 'arke',
   name: '아르케',
+  // ADR-0021 배정: 아르케 = racing(2) 레이싱(기계 정밀·속도).
+  mode: PLANET_MODE.racing,
   roster: ARKE_ROSTER,
   elites: ARKE_ELITES,
   cardPool: ARKE_CARD_POOL,

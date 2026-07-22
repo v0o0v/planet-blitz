@@ -21,6 +21,7 @@ import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
 import { shipTypeDef, shipTreeRange } from '../../data/ships/index.js';
 import type { TreeAffinity } from '../../data/ships/index.js';
+import type { PlanetMode } from './planetMode.js';
 
 export interface PowerupDef {
   readonly id: string;
@@ -34,6 +35,8 @@ export interface PowerupDef {
   readonly weaponType?: number;
   readonly affinity?: TreeAffinity;
   readonly universal?: boolean;
+  /** 행성 모드 문맥 태그(Lane2 훅, ADR-0021). 지정 시 그 모드 런에서만 후보. 미지정 = 전 모드. */
+  readonly mode?: PlanetMode;
   /** Applies the effect to the world (deterministic, no RNG). */
   readonly apply: (state: WorldState) => void;
 }
@@ -291,6 +294,8 @@ export const POWERUPS: readonly PowerupDef[] = [
 const WEIGHT_UNIVERSAL = 10;
 const WEIGHT_WEAPON_MATCH = 28;
 const WEIGHT_TREE_BASE = 4;
+/** 행성 모드 매치 가중(Lane2 훅). 필터가 불일치를 이미 걷어내므로 도달분은 항상 일치다. */
+const WEIGHT_MODE_MATCH = 22;
 /** Points invested in a tree per +1 weight (fully-fed tree ≈ +20 weight). */
 const TREE_POINTS_PER_WEIGHT = 4;
 
@@ -330,9 +335,20 @@ function offBuildWeaponPowerup(def: PowerupDef, state: WorldState): boolean {
   return def.weaponType !== undefined && def.weaponType !== state.weapon.weaponType;
 }
 
+/**
+ * 이 강화가 **지금 행성 모드**에서 의미가 있는가(모드 전용 강화의 대칭 필터).
+ * 런 시작 config 의 `planetMode`(런 내내 고정)만 읽으므로 결정론적이다 — 런 중 상태
+ * (레벨·킬 등)를 절대 보지 않는다.
+ */
+function offModePowerup(def: PowerupDef, state: WorldState): boolean {
+  return def.mode !== undefined && def.mode !== ((state.config.planetMode ?? 0) >>> 0);
+}
+
 /** Soft weight of a powerup given the run's build (always ≥ 1). */
 function powerupWeight(def: PowerupDef, state: WorldState): number {
   if (def.universal) return WEIGHT_UNIVERSAL;
+  // 오프모드도 `drawPowerupChoices` 가 애초에 풀에 넣지 않으므로 여기 오면 항상 일치다.
+  if (def.mode !== undefined) return WEIGHT_MODE_MATCH;
   // 오프빌드는 `drawPowerupChoices` 가 애초에 풀에 넣지 않으므로 여기 오면 항상 일치다.
   if (def.weaponType !== undefined) return WEIGHT_WEAPON_MATCH;
   if (def.affinity !== undefined) {
@@ -356,6 +372,7 @@ export function drawPowerupChoices(state: WorldState, count: number): number[] {
     const def = POWERUPS[i];
     if (def === undefined) continue;
     if (offBuildWeaponPowerup(def, state)) continue;
+    if (offModePowerup(def, state)) continue;
     pool.push(i);
     weights.push(powerupWeight(def, state));
   }
