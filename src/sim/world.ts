@@ -231,6 +231,13 @@ import {
   RACING_ENEMY_CULL_RADIUS,
   RACING_WALL_MARK,
 } from './modes/racing.js';
+// --- 오염 확산 콘텐츠(Lane8 · ADR-0021 §2.6) — 비-스크롤 자유추적. 파괴가능 오염 노드가 실시간
+//     확산, 지형 지속피해, 노드 파괴로 억제, 정화율 게이트, 임계 오염 실패 -----------------------
+import {
+  placeContaminationField,
+  stepContamination,
+  contaminationCritical,
+} from './modes/contamination.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -851,6 +858,11 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     // PvE 레이싱(Lane5): 정적 분기 코스(불파괴 채널 벽 + 부스트 패드)를 1회 배치한다. 마찬가지로
     // racing 런에만 — 뱀서류·블록격파·침공은 조건 밖이라 부스트 패드·레이싱 벽이 안 생겨 불변.
     placeRacingCourse(state);
+  } else if (cfg.planetMode === PLANET_MODE.contamination) {
+    // PvE 오염(Lane8): 비-스크롤 자유추적이라 scrollRuntime 이 없다(위 두 분기 조건 밖). 오염
+    // 노드 필드(고정 링)를 1회 배치한다. contamination 런에만 — 뱀서류·블록격파·레이싱·침공은
+    // 조건 밖이라 오염 노드가 하나도 안 생겨 골든 바이트 불변.
+    placeContaminationField(state);
   }
   return state;
 }
@@ -953,6 +965,10 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
         : BLOCKBREAK_ENEMY_CULL_RADIUS;
     cullScrollEnemies(state, cullRadius);
   }
+  // 오염 확산(Lane8): 살아있는 오염 노드가 결정론 확산으로 오염 지형 셀을 뿌린다(확산 틱마다).
+  // stepEnemies~stepHazards 사이라 이번 틱 스폰된 지형이 resolveCollisions 판정에 든다. planetMode
+  // 게이트라 뱀서류·블록격파·레이싱·침공은 미실행(골든 바이트 불변). 스폰은 노드 순회 후 일괄 append.
+  if (state.config.planetMode === PLANET_MODE.contamination) stepContamination(state);
   stepBoss(state, player);
   autoAttack(state, player);
   capstoneLaser(state, player);
@@ -3123,6 +3139,10 @@ function checkLevelUp(state: WorldState): void {
 
 function checkGameOver(state: WorldState, player: Entity): void {
   if (player.hp <= 0) state.gameOver = true;
+  // 오염(Lane8): 맵이 임계까지 오염되면(마킹 오염 지형 수 ≥ 임계) 실패. planetMode 게이트라
+  // 타 모드는 이 조건이 항상 거짓 → 거동 불변.
+  else if (state.config.planetMode === PLANET_MODE.contamination && contaminationCritical(state))
+    state.gameOver = true;
 }
 
 function countKind(state: WorldState, kind: Entity['kind']): number {

@@ -20,6 +20,7 @@ import { DESIGN_WIDTH, DESIGN_HEIGHT } from './app.js';
 import { shipFacing } from './shipFacing.js';
 import { facilitySpecFor } from '../../data/invasion/facilities.js';
 import { HAZARD_LAVA, HAZARD_MORTAR, HAZARD_SLOW } from '../sim/patterns/types.js';
+import { HAZARD_CONTAMINATION } from '../sim/modes/contamination.js';
 
 interface TrackedSprite {
   sprite: Sprite;
@@ -231,9 +232,11 @@ export function hazardStyle(subtype: number, active: boolean): HazardStyle {
       ? 0xff7a1a
       : subtype === HAZARD_SLOW
         ? 0x39d0ff
-        : subtype === HAZARD_MORTAR
-          ? 0xff3355
-          : 0xff3355; // 미지의 subtype = 박격 색 폴백(장판이 보이지 않는 것보다 낫다)
+        : subtype === HAZARD_CONTAMINATION
+          ? 0x7fd43a // TODO(art): 오염 지형 임시 색(독성 녹색) — Lane8, 전용 아트 이관 전 placeholder
+          : subtype === HAZARD_MORTAR
+            ? 0xff3355
+            : 0xff3355; // 미지의 subtype = 박격 색 폴백(장판이 보이지 않는 것보다 낫다)
   return active
     ? { color, fillAlpha: 0.4, strokeAlpha: 0.9 }
     : { color, fillAlpha: 0, strokeAlpha: 0.85 };
