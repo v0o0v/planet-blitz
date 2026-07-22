@@ -29,6 +29,12 @@ import { cos, sin, PI, TWO_PI } from './math.js';
 import { OFFSCREEN_X, OFFSCREEN_Y, SPAWN_RING_RADIUS, VIEW_HEIGHT } from './constants.js';
 import { maxEnemiesMult, enemyHpMult } from './anomaly.js';
 import { makeElite, ELITE_AFFIX_COUNT } from './elite.js';
+import { PLANET_MODE } from './planetMode.js';
+import {
+  blockBreakProgress,
+  BLOCKBREAK_SECTION_LENGTH,
+  BLOCKBREAK_SPAWN_AHEAD,
+} from './modes/blockBreak.js';
 
 export interface WaveRuntime {
   segmentIndex: number;
@@ -119,7 +125,16 @@ export function updateWaves(state: WorldState, player: Entity): void {
   // 적을 다 쓸어도 기다리지 않으므로 강한 빌드는 런이 짧아진다(창발). 보스 세그먼트는
   // 보스 처치(victory)로만 끝나므로 이 게이트를 타지 않는다.
   if (!seg.boss && w.segmentIndex < SEGMENTS.length - 1) {
-    const cleared = state.kills - w.segmentBaseKills >= w.segmentKillGoal;
+    // 세그먼트 전진 게이트: 블록격파(Lane4)는 처치 할당 대신 스크롤 주파 거리로 구간을 넘는다
+    // (구간 i 돌파 = 진행도 ≥ (i+1)×구간길이). 그 외 모드는 기존 killGoal 게이트 그대로라
+    // 뱀서류·침공 거동이 불변이다. ⚠️ Lane5 racing 확장 지점 — racing 은 +scrollX 진행도라
+    // 여기에 racing 분기를 얹는다(현재는 killGoal 로 폴백).
+    const scrollWin =
+      state.config.planetMode === PLANET_MODE.blockBreak ? state.scrollRuntime : undefined;
+    const cleared =
+      scrollWin !== undefined
+        ? blockBreakProgress(scrollWin) >= (w.segmentIndex + 1) * BLOCKBREAK_SECTION_LENGTH
+        : state.kills - w.segmentBaseKills >= w.segmentKillGoal;
     if (cleared) {
       w.segmentIndex++;
       // 튜토리얼 단축판(config.maxSegments): 일반 세그먼트를 상한만큼 소화했으면 곧장
@@ -273,6 +288,14 @@ function formationPositions(
   // direction. Placement stays a pure function of the wave RNG + player position.
   const rng = state.waveRng;
   const out: { x: number; y: number }[] = [];
+  // 강제 스크롤(Lane4 blockBreak): 스폰 기준점을 플레이어가 아니라 창 중심 전방(−Y)으로 옮긴다
+  // (적이 코스 앞쪽에서 내려오는 정체성). 창 미존재(뱀서류·침공)·다른 모드면 baseX/baseY 가
+  // 그대로 플레이어 좌표라 RNG 소비·산술이 바이트 동일하다(회귀 0). ⚠️ Lane5 racing 확장 지점
+  // (전방 = +X): racing 은 여기에 창 중심 우측 기준을 얹는다.
+  const scrollWin =
+    state.config.planetMode === PLANET_MODE.blockBreak ? state.scrollRuntime : undefined;
+  const baseX = scrollWin !== undefined ? scrollWin.scrollX : player.x;
+  const baseY = scrollWin !== undefined ? scrollWin.scrollY - BLOCKBREAK_SPAWN_AHEAD : player.y;
 
   switch (formation) {
     case 'ring': {
@@ -281,8 +304,8 @@ function formationPositions(
       for (let i = 0; i < count; i++) {
         const ang = start + (i * TWO_PI) / count;
         out.push({
-          x: player.x + cos(ang) * SPAWN_RING_RADIUS,
-          y: player.y + sin(ang) * SPAWN_RING_RADIUS,
+          x: baseX + cos(ang) * SPAWN_RING_RADIUS,
+          y: baseY + sin(ang) * SPAWN_RING_RADIUS,
         });
       }
       break;
@@ -290,8 +313,8 @@ function formationPositions(
     case 'line': {
       // A column entering from a random off-screen side of the viewport.
       const fromLeft = rng.chance(0.5);
-      const x0 = player.x + (fromLeft ? -OFFSCREEN_X : OFFSCREEN_X);
-      const y0 = player.y + rng.range(-VIEW_HEIGHT * 0.3, VIEW_HEIGHT * 0.3);
+      const x0 = baseX + (fromLeft ? -OFFSCREEN_X : OFFSCREEN_X);
+      const y0 = baseY + rng.range(-VIEW_HEIGHT * 0.3, VIEW_HEIGHT * 0.3);
       for (let i = 0; i < count; i++) {
         // Formation spacing doubled for the 2x-scale entities (line 46 -> 92).
         out.push({ x: x0 + (fromLeft ? -1 : 1) * i * 92, y: y0 + i * 40 });
@@ -302,20 +325,20 @@ function formationPositions(
       // Each enemy spawns along one of the four off-screen viewport edges.
       for (let i = 0; i < count; i++) {
         const side = rng.int(0, 3);
-        let x = player.x;
-        let y = player.y;
+        let x = baseX;
+        let y = baseY;
         if (side === 0) {
-          x = player.x + rng.range(-OFFSCREEN_X, OFFSCREEN_X);
-          y = player.y - OFFSCREEN_Y;
+          x = baseX + rng.range(-OFFSCREEN_X, OFFSCREEN_X);
+          y = baseY - OFFSCREEN_Y;
         } else if (side === 1) {
-          x = player.x + rng.range(-OFFSCREEN_X, OFFSCREEN_X);
-          y = player.y + OFFSCREEN_Y;
+          x = baseX + rng.range(-OFFSCREEN_X, OFFSCREEN_X);
+          y = baseY + OFFSCREEN_Y;
         } else if (side === 2) {
-          x = player.x - OFFSCREEN_X;
-          y = player.y + rng.range(-OFFSCREEN_Y, OFFSCREEN_Y);
+          x = baseX - OFFSCREEN_X;
+          y = baseY + rng.range(-OFFSCREEN_Y, OFFSCREEN_Y);
         } else {
-          x = player.x + OFFSCREEN_X;
-          y = player.y + rng.range(-OFFSCREEN_Y, OFFSCREEN_Y);
+          x = baseX + OFFSCREEN_X;
+          y = baseY + rng.range(-OFFSCREEN_Y, OFFSCREEN_Y);
         }
         out.push({ x, y });
       }
@@ -324,8 +347,8 @@ function formationPositions(
     case 'cluster': {
       // A blob offset from the player so it is not on top of them. Offsets and
       // spread doubled for the 2x-scale entities (spread +/-90 -> +/-180).
-      const cx = player.x + rng.range(-1, 1) * 1000 + 520;
-      const cy = player.y + rng.range(-1, 1) * 800 - 400;
+      const cx = baseX + rng.range(-1, 1) * 1000 + 520;
+      const cy = baseY + rng.range(-1, 1) * 800 - 400;
       for (let i = 0; i < count; i++) {
         out.push({ x: cx + rng.range(-180, 180), y: cy + rng.range(-180, 180) });
       }
