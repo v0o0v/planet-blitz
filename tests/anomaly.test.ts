@@ -75,7 +75,7 @@ describe('loadout + tier + anomaly determinism (AC2 extension)', () => {
     const config = {
       ...DEFAULT_CONFIG,
       planet: 1,
-      tier: 1,
+      stage: 11,
       anomalyAccepted: true,
       loadout: {
         weaponType: 2,

@@ -156,14 +156,14 @@ const BERDAN_LOADOUT = {
 const KARGON_RECON: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 0,
-  tier: 0,
+  stage: 1,
   playerHp: DURABLE,
 };
 
 const BERDAN_ENGAGE: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 1,
-  tier: 1,
+  stage: 11,
   playerHp: DURABLE,
   loadout: BERDAN_LOADOUT,
 };
@@ -171,7 +171,7 @@ const BERDAN_ENGAGE: WorldConfig = {
 const ANOMALY_BASE: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 0,
-  tier: 0,
+  stage: 1,
   playerHp: DURABLE,
   anomalyAccepted: true,
 };
@@ -180,7 +180,7 @@ const ANOMALY_SEED = findAnomalySeed(ANOMALY_BASE);
 const UNIQUE_RUN: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 1,
-  tier: 1,
+  stage: 11,
   playerHp: DURABLE,
   loadout: UNIQUE_LOADOUT,
 };
@@ -216,7 +216,7 @@ const NIFLHEIM_LOADOUT = {
 const NIFLHEIM_ANNIHILATION: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 2, // 니플헤임(신규 행성)
-  tier: 2, // 섬멸(엘리트 2개·파워업 가중)
+  stage: 21, // 섬멸(엘리트 2개·파워업 가중)
   playerHp: DURABLE,
   loadout: NIFLHEIM_LOADOUT,
   skillInvest: sampleSkillInvest(),
@@ -242,7 +242,7 @@ const ARKE_BEAM_LOADOUT = {
 const ARKE_ENGAGE: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 3, // 아르케(신규 행성)
-  tier: 1, // 교전
+  stage: 11, // 교전
   playerHp: DURABLE,
   loadout: ARKE_BEAM_LOADOUT,
 };
@@ -282,7 +282,7 @@ const HATCHLING_INVEST = shipSampleInvest(HATCHLING_TYPE_ID);
 const HATCHLING_RUN: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 2,
-  tier: 1,
+  stage: 11,
   playerHp: DURABLE,
   loadout: computeLoadoutStats([], HATCHLING_INVEST, undefined, HATCHLING_TYPE_ID).loadout,
   skillInvest: HATCHLING_INVEST,
@@ -320,7 +320,7 @@ const BUBBLE_INVEST = shipSampleInvest(BUBBLE_TYPE_ID);
 const MALLOW_RUN: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 2,
-  tier: 0,
+  stage: 1,
   playerHp: DURABLE,
   loadout: computeLoadoutStats([], MALLOW_INVEST, undefined, MALLOW_TYPE_ID).loadout,
   skillInvest: MALLOW_INVEST,
@@ -330,7 +330,7 @@ const MALLOW_RUN: WorldConfig = {
 const BUBBLE_RUN: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 2,
-  tier: 1,
+  stage: 11,
   playerHp: DURABLE,
   loadout: computeLoadoutStats([], BUBBLE_INVEST, undefined, BUBBLE_TYPE_ID).loadout,
   skillInvest: BUBBLE_INVEST,
@@ -364,7 +364,7 @@ const PHANTOM_INVEST = shipSampleInvest(PHANTOM_TYPE_ID);
 const BRUISER_RUN: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 2,
-  tier: 1,
+  stage: 11,
   playerHp: DURABLE,
   loadout: computeLoadoutStats([], BRUISER_INVEST, undefined, BRUISER_TYPE_ID).loadout,
   skillInvest: BRUISER_INVEST,
@@ -374,7 +374,7 @@ const BRUISER_RUN: WorldConfig = {
 const ARCCASTER_RUN: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 2,
-  tier: 1,
+  stage: 11,
   playerHp: DURABLE,
   loadout: computeLoadoutStats([], ARCCASTER_INVEST, undefined, ARCCASTER_TYPE_ID).loadout,
   skillInvest: ARCCASTER_INVEST,
@@ -384,7 +384,7 @@ const ARCCASTER_RUN: WorldConfig = {
 const PHANTOM_RUN: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 0,
-  tier: 0,
+  stage: 1,
   playerHp: DURABLE,
   loadout: computeLoadoutStats([], PHANTOM_INVEST, undefined, PHANTOM_TYPE_ID).loadout,
   skillInvest: PHANTOM_INVEST,
@@ -401,9 +401,9 @@ export const SCENARIOS: readonly Scenario[] = [
     // 정찰은 보스까지 가되, 로밍으로 스크롤맵 기믹도 함께 자극.
     buildInputs: () => driveDurable(0x6a19, KARGON_RECON, MAX_RUN_TICKS),
     rolls: [
-      { dropSeed: 0x6a19_01, rarity: 'normal', source: { planet: 0, tier: 0 } },
-      { dropSeed: 0x6a19_02, rarity: 'magic', source: { planet: 0, tier: 0 } },
-      { dropSeed: 0x6a19_03, rarity: 'rare', source: { planet: 0, tier: 0 } },
+      { dropSeed: 0x6a19_01, rarity: 'normal', source: { planet: 0, stage: 1 } },
+      { dropSeed: 0x6a19_02, rarity: 'magic', source: { planet: 0, stage: 1 } },
+      { dropSeed: 0x6a19_03, rarity: 'rare', source: { planet: 0, stage: 1 } },
     ],
   },
   {
@@ -413,12 +413,12 @@ export const SCENARIOS: readonly Scenario[] = [
     checkpointInterval: 600,
     buildInputs: () => driveDurable(0xd0e5, BERDAN_ENGAGE, MAX_RUN_TICKS),
     rolls: [
-      { dropSeed: 0xd0e5_11, rarity: 'rare', source: { planet: 1, tier: 1 } },
-      { dropSeed: 0xd0e5_12, rarity: 'unique', source: { planet: 1, tier: 1 } },
+      { dropSeed: 0xd0e5_11, rarity: 'rare', source: { planet: 1, stage: 11 } },
+      { dropSeed: 0xd0e5_12, rarity: 'unique', source: { planet: 1, stage: 11 } },
       {
         dropSeed: 0xd0e5_13,
         rarity: 'rare',
-        source: { planet: 1, tier: 1 },
+        source: { planet: 1, stage: 11 },
         reroll: { rerollSeed: 0xbeef11, lockedIndex: 1 },
       },
     ],
@@ -430,8 +430,8 @@ export const SCENARIOS: readonly Scenario[] = [
     checkpointInterval: 600,
     buildInputs: () => driveRoam(0xa0a0, 60 * 40),
     rolls: [
-      { dropSeed: 0xa0_21, rarity: 'magic', source: { planet: 0, tier: 0 } },
-      { dropSeed: 0xa0_22, rarity: 'unique', source: { planet: 0, tier: 0 } },
+      { dropSeed: 0xa0_21, rarity: 'magic', source: { planet: 0, stage: 1 } },
+      { dropSeed: 0xa0_22, rarity: 'unique', source: { planet: 0, stage: 1 } },
     ],
   },
   {
@@ -441,12 +441,12 @@ export const SCENARIOS: readonly Scenario[] = [
     checkpointInterval: 600,
     buildInputs: () => driveDurable(0x9e17, UNIQUE_RUN, MAX_RUN_TICKS),
     rolls: [
-      { dropSeed: 0x9e17_31, rarity: 'unique', source: { planet: 1, tier: 1 } },
-      { dropSeed: 0x9e17_32, rarity: 'rare', source: { planet: 1, tier: 1 } },
+      { dropSeed: 0x9e17_31, rarity: 'unique', source: { planet: 1, stage: 11 } },
+      { dropSeed: 0x9e17_32, rarity: 'rare', source: { planet: 1, stage: 11 } },
       {
         dropSeed: 0x9e17_33,
         rarity: 'unique',
-        source: { planet: 1, tier: 1 },
+        source: { planet: 1, stage: 11 },
         reroll: { rerollSeed: 0x1234abc },
       },
     ],
@@ -458,12 +458,12 @@ export const SCENARIOS: readonly Scenario[] = [
     checkpointInterval: 600,
     buildInputs: () => driveDurable(0x51a1, NIFLHEIM_ANNIHILATION, MAX_RUN_TICKS),
     rolls: [
-      { dropSeed: 0x51a1_51, rarity: 'rare', source: { planet: 2, tier: 2 } },
-      { dropSeed: 0x51a1_52, rarity: 'unique', source: { planet: 2, tier: 2 } },
+      { dropSeed: 0x51a1_51, rarity: 'rare', source: { planet: 2, stage: 21 } },
+      { dropSeed: 0x51a1_52, rarity: 'unique', source: { planet: 2, stage: 21 } },
       {
         dropSeed: 0x51a1_53,
         rarity: 'rare',
-        source: { planet: 2, tier: 2 },
+        source: { planet: 2, stage: 21 },
         reroll: { rerollSeed: 0x5150c0, lockedIndex: 0 },
       },
     ],
@@ -475,9 +475,9 @@ export const SCENARIOS: readonly Scenario[] = [
     checkpointInterval: 600,
     buildInputs: () => driveDurable(0x7e2e, ARKE_ENGAGE, MAX_RUN_TICKS),
     rolls: [
-      { dropSeed: 0x7e2e_61, rarity: 'unique', source: { planet: 3, tier: 1 } },
-      { dropSeed: 0x7e2e_62, rarity: 'rare', source: { planet: 3, tier: 1 } },
-      { dropSeed: 0x7e2e_63, rarity: 'unique', source: { planet: 3, tier: 1 } },
+      { dropSeed: 0x7e2e_61, rarity: 'unique', source: { planet: 3, stage: 11 } },
+      { dropSeed: 0x7e2e_62, rarity: 'rare', source: { planet: 3, stage: 11 } },
+      { dropSeed: 0x7e2e_63, rarity: 'unique', source: { planet: 3, stage: 11 } },
     ],
   },
   {
@@ -487,8 +487,8 @@ export const SCENARIOS: readonly Scenario[] = [
     checkpointInterval: 600,
     buildInputs: () => driveDurable(0xb10f, HATCHLING_RUN, MAX_RUN_TICKS),
     rolls: [
-      { dropSeed: 0xb10f_71, rarity: 'rare', source: { planet: 2, tier: 1 } },
-      { dropSeed: 0xb10f_72, rarity: 'unique', source: { planet: 2, tier: 1 } },
+      { dropSeed: 0xb10f_71, rarity: 'rare', source: { planet: 2, stage: 11 } },
+      { dropSeed: 0xb10f_72, rarity: 'unique', source: { planet: 2, stage: 11 } },
     ],
   },
   {
@@ -503,8 +503,8 @@ export const SCENARIOS: readonly Scenario[] = [
     checkpointInterval: 600,
     buildInputs: () => driveDurable(0xc0a5, MALLOW_RUN, MAX_RUN_TICKS),
     rolls: [
-      { dropSeed: 0xc0a5_81, rarity: 'rare', source: { planet: 2, tier: 0 } },
-      { dropSeed: 0xc0a5_82, rarity: 'unique', source: { planet: 2, tier: 0 } },
+      { dropSeed: 0xc0a5_81, rarity: 'rare', source: { planet: 2, stage: 1 } },
+      { dropSeed: 0xc0a5_82, rarity: 'unique', source: { planet: 2, stage: 1 } },
     ],
   },
   {
@@ -519,8 +519,8 @@ export const SCENARIOS: readonly Scenario[] = [
     checkpointInterval: 600,
     buildInputs: () => driveDurable(0xf11a, BUBBLE_RUN, MAX_RUN_TICKS),
     rolls: [
-      { dropSeed: 0xf11a_91, rarity: 'rare', source: { planet: 2, tier: 1 } },
-      { dropSeed: 0xf11a_92, rarity: 'unique', source: { planet: 2, tier: 1 } },
+      { dropSeed: 0xf11a_91, rarity: 'rare', source: { planet: 2, stage: 11 } },
+      { dropSeed: 0xf11a_92, rarity: 'unique', source: { planet: 2, stage: 11 } },
     ],
   },
   {
@@ -530,8 +530,8 @@ export const SCENARIOS: readonly Scenario[] = [
     checkpointInterval: 600,
     buildInputs: () => driveDurable(0x8b01, BRUISER_RUN, MAX_RUN_TICKS),
     rolls: [
-      { dropSeed: 0x8b01_a1, rarity: 'rare', source: { planet: 2, tier: 1 } },
-      { dropSeed: 0x8b01_a2, rarity: 'unique', source: { planet: 2, tier: 1 } },
+      { dropSeed: 0x8b01_a1, rarity: 'rare', source: { planet: 2, stage: 11 } },
+      { dropSeed: 0x8b01_a2, rarity: 'unique', source: { planet: 2, stage: 11 } },
     ],
   },
   {
@@ -541,8 +541,8 @@ export const SCENARIOS: readonly Scenario[] = [
     checkpointInterval: 600,
     buildInputs: () => driveDurable(0xa2cc, ARCCASTER_RUN, MAX_RUN_TICKS),
     rolls: [
-      { dropSeed: 0xa2cc_b1, rarity: 'rare', source: { planet: 2, tier: 1 } },
-      { dropSeed: 0xa2cc_b2, rarity: 'unique', source: { planet: 2, tier: 1 } },
+      { dropSeed: 0xa2cc_b1, rarity: 'rare', source: { planet: 2, stage: 11 } },
+      { dropSeed: 0xa2cc_b2, rarity: 'unique', source: { planet: 2, stage: 11 } },
     ],
   },
   {
@@ -552,8 +552,8 @@ export const SCENARIOS: readonly Scenario[] = [
     checkpointInterval: 600,
     buildInputs: () => driveDurable(0x9fa3, PHANTOM_RUN, MAX_RUN_TICKS),
     rolls: [
-      { dropSeed: 0x9fa3_c1, rarity: 'rare', source: { planet: 0, tier: 0 } },
-      { dropSeed: 0x9fa3_c2, rarity: 'unique', source: { planet: 0, tier: 0 } },
+      { dropSeed: 0x9fa3_c1, rarity: 'rare', source: { planet: 0, stage: 1 } },
+      { dropSeed: 0x9fa3_c2, rarity: 'unique', source: { planet: 0, stage: 1 } },
     ],
   },
 ];

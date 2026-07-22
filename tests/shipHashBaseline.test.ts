@@ -198,10 +198,10 @@ describe('스트라이커 해시 골든 (M8-L0 안전망)', () => {
 function assembleRunConfigLikeMain(
   profile: Profile,
   planet: number,
-  tier: number,
+  stage: number,
   playerHp: number,
 ): WorldConfig {
-  return { ...buildRunConfig(profile, { planet, tier }), playerHp };
+  return { ...buildRunConfig(profile, { planet, stage }), playerHp };
 }
 
 /**
@@ -240,7 +240,7 @@ describe('정규 경로 통합 — Profile → 런 설정 → createWorld/stepWo
     const profile = defaultProfile();
     activeShip(profile).skillInvest = build.invest.slice();
 
-    const config = assembleRunConfigLikeMain(profile, planet.planet, planet.tier, DURABLE_HP);
+    const config = assembleRunConfigLikeMain(profile, planet.planet, planet.stage, DURABLE_HP);
     // 앱 경로가 만든 config 가 골든 시나리오 config 와 실제로 같은가(배선 증명).
     expect(config).toEqual(goldenConfigAsApp(planet, build.invest));
     // 캡스톤 비트가 실제로 켜졌는가(투자 → 파생 → sim 게이트).
@@ -253,7 +253,7 @@ describe('정규 경로 통합 — Profile → 런 설정 → createWorld/stepWo
     const planet = BASELINE_PLANETS[0]!;
     const golden = findRun(GOLDEN, `${planet.id}/no-invest`);
     const profile = defaultProfile();
-    const config = assembleRunConfigLikeMain(profile, planet.planet, planet.tier, DURABLE_HP);
+    const config = assembleRunConfigLikeMain(profile, planet.planet, planet.stage, DURABLE_HP);
     expect(config).toEqual(goldenConfigAsApp(planet, BASELINE_BUILDS[0]!.invest));
     expect(config.skillInvest?.length).toBe(SKILL_NODE_COUNT);
     expectSameStream(runHashes(golden.seed, config), golden.hashes, 'profile-path/no-invest');

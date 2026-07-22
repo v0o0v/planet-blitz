@@ -55,8 +55,8 @@ function memStore(seed?: Record<string, string>): KeyValueStore {
 
 const KEY = 'planet-blitz:profile';
 
-function loot(seed: number, rarity: number, planet = 0, tier = 0): LootRecord {
-  return { seed, rarity, planet, tier };
+function loot(seed: number, rarity: number, planet = 0, stage = 1): LootRecord {
+  return { seed, rarity, planet, stage };
 }
 
 describe('profile — save/load round-trip (AC5)', () => {
@@ -70,17 +70,17 @@ describe('profile — save/load round-trip (AC5)', () => {
   it('a populated profile survives save→load losslessly', () => {
     const store = memStore();
     const p = defaultProfile();
-    p.inventory.push(rollItem(111, 'rare', { planet: 0, tier: 1 }));
-    p.stash.push(rollItem(222, 'magic', { planet: 1, tier: 0 }));
+    p.inventory.push(rollItem(111, 'rare', { planet: 0, stage: 11 }));
+    p.stash.push(rollItem(222, 'magic', { planet: 1, stage: 1 }));
     const ship = activeShip(p);
-    ship.equipped.main = rollItem(333, 'unique', { planet: 0, tier: 0 });
+    ship.equipped.main = rollItem(333, 'unique', { planet: 0, stage: 1 });
     ship.level = 7;
     ship.xp = 12;
     p.credits = 340;
     p.minerals = 15;
     p.skillPoints = 6;
     p.stashExpansions = 2;
-    p.planetProgress[1] = { bestTierCleared: 1 };
+    p.planetProgress[1] = { bestStageCleared: 11 };
     saveProfile(p, store);
     expect(loadProfile(store)).toEqual(p);
   });
@@ -100,7 +100,7 @@ describe('profile — corruption recovery (AC5)', () => {
   });
 
   it('drops malformed items but keeps valid ones', () => {
-    const good = rollItem(9, 'rare', { planet: 0, tier: 0 });
+    const good = rollItem(9, 'rare', { planet: 0, stage: 1 });
     const blob = JSON.stringify({
       saveVersion: 1,
       ships: [{ id: 'ship-0', name: 'x', level: 3, xp: 1, equipped: {} }],
@@ -152,13 +152,13 @@ describe('stashCapacity (AC6)', () => {
 describe('settleRun — loot → items + leveling (AC3/AC11)', () => {
   it('confirms each loot record deterministically via rollItem', () => {
     const p = defaultProfile();
-    const records: LootRecord[] = [loot(101, 2, 0, 1), loot(202, 3, 1, 0)];
+    const records: LootRecord[] = [loot(101, 2, 0, 11), loot(202, 3, 1, 1)];
     const out = settleRun(p, { victory: true, loot: records, xpTotal: 0, resources: 0 });
     expect(out.itemsGained).toHaveLength(2);
     expect(p.inventory).toHaveLength(2);
     // Same seeds re-roll to byte-identical items.
-    expect(out.itemsGained[0]).toEqual(rollItem(101, 'rare', { planet: 0, tier: 1 }));
-    expect(out.itemsGained[1]).toEqual(rollItem(202, 'unique', { planet: 1, tier: 0 }));
+    expect(out.itemsGained[0]).toEqual(rollItem(101, 'rare', { planet: 0, stage: 11 }));
+    expect(out.itemsGained[1]).toEqual(rollItem(202, 'unique', { planet: 1, stage: 1 }));
   });
 
   it('banks XP onto the active ship and grants one skill point per level', () => {
@@ -175,8 +175,8 @@ describe('settleRun — loot → items + leveling (AC3/AC11)', () => {
     const p = defaultProfile();
     p.stashExpansions = 0; // stash cap 32
     // Fill inventory (48) and stash (32) so the next drop overflows.
-    for (let i = 0; i < INVENTORY_CAP; i++) p.inventory.push(rollItem(i + 1, 'normal', { planet: 0, tier: 0 }));
-    for (let i = 0; i < 32; i++) p.stash.push(rollItem(1000 + i, 'normal', { planet: 0, tier: 0 }));
+    for (let i = 0; i < INVENTORY_CAP; i++) p.inventory.push(rollItem(i + 1, 'normal', { planet: 0, stage: 1 }));
+    for (let i = 0; i < 32; i++) p.stash.push(rollItem(1000 + i, 'normal', { planet: 0, stage: 1 }));
     const out = settleRun(p, { victory: true, loot: [loot(5000, 2)], xpTotal: 0, resources: 0 });
     expect(out.overflow).toBe(1);
     expect(p.inventory).toHaveLength(INVENTORY_CAP);
@@ -200,21 +200,21 @@ describe('grantXp — level curve', () => {
 
 describe('salvage — bulk disenchant (AC6)', () => {
   it('normal/magic yield credits, rare+ yield minerals', () => {
-    expect(salvageValue(rollItem(1, 'normal', { planet: 0, tier: 0 }))).toEqual({ credits: 2, minerals: 0 });
-    expect(salvageValue(rollItem(1, 'magic', { planet: 0, tier: 0 }))).toEqual({ credits: 5, minerals: 0 });
-    expect(salvageValue(rollItem(1, 'rare', { planet: 0, tier: 0 })).minerals).toBe(3);
-    expect(salvageValue(rollItem(1, 'unique', { planet: 0, tier: 0 })).minerals).toBe(8);
+    expect(salvageValue(rollItem(1, 'normal', { planet: 0, stage: 1 }))).toEqual({ credits: 2, minerals: 0 });
+    expect(salvageValue(rollItem(1, 'magic', { planet: 0, stage: 1 }))).toEqual({ credits: 5, minerals: 0 });
+    expect(salvageValue(rollItem(1, 'rare', { planet: 0, stage: 1 })).minerals).toBe(3);
+    expect(salvageValue(rollItem(1, 'unique', { planet: 0, stage: 1 })).minerals).toBe(8);
   });
 
   it('scales mineral yield by the loadout mineral-find mult', () => {
-    const rare = rollItem(1, 'rare', { planet: 0, tier: 0 });
+    const rare = rollItem(1, 'rare', { planet: 0, stage: 1 });
     expect(salvageValue(rare, 2).minerals).toBe(6);
   });
 
   it('removes salvaged items and credits/minerals the profile', () => {
     const p: Profile = defaultProfile();
-    const normal = rollItem(1, 'normal', { planet: 0, tier: 0 });
-    const rare = rollItem(2, 'rare', { planet: 0, tier: 0 });
+    const normal = rollItem(1, 'normal', { planet: 0, stage: 1 });
+    const rare = rollItem(2, 'rare', { planet: 0, stage: 1 });
     p.inventory.push(normal, rare);
     const y = salvageItems(p, [normal, rare]);
     expect(y.credits).toBe(2);
@@ -228,10 +228,10 @@ describe('salvage — bulk disenchant (AC6)', () => {
     // 인벤토리에 보관된 인스턴스와, 정산에서 다시 롤한(직렬화·복원 등) 동일 아이템이
     // 서로 다른 객체여도 같은 id면 제거돼야 한다.
     const p: Profile = defaultProfile();
-    const stored = rollItem(2, 'rare', { planet: 0, tier: 0 });
+    const stored = rollItem(2, 'rare', { planet: 0, stage: 1 });
     p.inventory.push(stored);
     // 동일 seed/rarity/source로 다시 롤 → 값은 같지만 참조는 다른 새 인스턴스.
-    const reRolled = rollItem(2, 'rare', { planet: 0, tier: 0 });
+    const reRolled = rollItem(2, 'rare', { planet: 0, stage: 1 });
     expect(reRolled).not.toBe(stored);
     expect(reRolled.id).toBe(stored.id);
     const y = salvageItems(p, [reRolled]);
@@ -267,7 +267,7 @@ describe('마이그레이션 v3 → v4 — 계정 투자가 기체로 승계된�
     const p = migrate(v3Blob(invest));
 
     expect(p.saveVersion).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(4);
+    expect(SAVE_VERSION).toBe(5);
     const ship = activeShip(p);
     expect(ship.typeId).toBe(0); // 기존 유저는 전원 스트라이커
     expect(ship.skillInvest).toHaveLength(shipSkillNodeCount(0));
@@ -399,6 +399,37 @@ describe('손상 세이브 복구 — 투자 벡터·타입 (검증②③)', () 
   });
 });
 
+describe('마이그레이션 v4 → v5 — 티어→침략 단계 (ADR-0022, Lane1 게이트 5)', () => {
+  /** v4 세이브 blob(계정 벡터는 이미 기체로 내려간 형태) + planetProgress.bestTierCleared. */
+  function v4Blob(progress: Record<number, { bestTierCleared: number }>): Record<string, unknown> {
+    return {
+      saveVersion: 4,
+      ships: [{ id: 'ship-0', name: '초기 전투기', typeId: 0, level: 5, xp: 0, equipped: {}, skillInvest: zeroSkillInvest(0) }],
+      activeShipIndex: 0,
+      inventory: [], stash: [], stashExpansions: 0,
+      planetProgress: progress,
+      credits: 10, minerals: 0, skillPoints: 0, tutorialDone: true,
+    };
+  }
+
+  it('구 티어(t) → 단계(t+1)로 옮기고 saveVersion 을 5 로 올린다(왕복 무손실)', () => {
+    const p = migrate(v4Blob({ 0: { bestTierCleared: 2 }, 1: { bestTierCleared: 0 } }));
+    expect(p.saveVersion).toBe(5);
+    // 티어 2(섬멸 클리어) → 단계 3, 티어 0(정찰 클리어) → 단계 1.
+    expect(p.planetProgress[0]?.bestStageCleared).toBe(3);
+    expect(p.planetProgress[1]?.bestStageCleared).toBe(1);
+    // 재저장·재로드해도 값이 그대로다(정규화가 옮겨진 키를 읽는다).
+    const store = memStore();
+    saveProfile(p, store);
+    expect(loadProfile(store).planetProgress[0]?.bestStageCleared).toBe(3);
+  });
+
+  it('미클리어(-1) 티어는 단계 0(미클리어)으로 보존된다', () => {
+    const p = migrate(v4Blob({ 3: { bestTierCleared: -1 } }));
+    expect(p.planetProgress[3]?.bestStageCleared).toBe(0);
+  });
+});
+
 describe('정본은 기체 벡터 — 연구소 투자·리스펙', () => {
   it('investSkill 이 활성 기체 벡터에 쌓인다', () => {
     const p = defaultProfile();
@@ -443,7 +474,7 @@ describe('정본은 기체 벡터 — 연구소 투자·리스펙', () => {
 
 // ✅ M8-L7 완료: 실제 앱이 부르는 `buildRunConfig` 를 그대로 호출한다.
 function assembleRunConfigLikeMain(profile: Profile): WorldConfig {
-  return buildRunConfig(profile, { planet: 0, tier: 0 });
+  return buildRunConfig(profile, { planet: 0, stage: 1 });
 }
 
 const NEUTRAL: InputFrame = { moveX: 0, moveY: 0, aim: 0, dash: false, special: 0 };
@@ -512,7 +543,7 @@ describe('기체 타입 선택 — 해금 게이트 부재 (검증⑤)', () => {
     activeShip(veteran).level = 99;
     veteran.credits = 1_000_000;
     veteran.lineage.shipLevel = 50;
-    veteran.planetProgress[0] = { bestTierCleared: 9 };
+    veteran.planetProgress[0] = { bestStageCleared: 9 };
     expect(selectableShipTypes()).toEqual(before);
   });
 

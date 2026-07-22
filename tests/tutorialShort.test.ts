@@ -11,7 +11,7 @@ import { createWorld, stepWorld, emptyInput, packPowerupPick, DEFAULT_CONFIG } f
 import type { WorldConfig } from '../src/sim/world.js';
 import { runReplay, idleInputs } from '../src/sim/replay.js';
 import { SEGMENTS } from '../data/waves.js';
-import { TUTORIAL_SEED, TUTORIAL_PLANET, TUTORIAL_TIER, TUTORIAL_MAX_SEGMENTS } from '../src/ui/tutorial.js';
+import { TUTORIAL_SEED, TUTORIAL_PLANET, TUTORIAL_STAGE, TUTORIAL_MAX_SEGMENTS } from '../src/ui/tutorial.js';
 
 const BOSS_INDEX = SEGMENTS.length - 1;
 
@@ -56,7 +56,7 @@ describe('튜토리얼 단축판 (maxSegments)', () => {
     const config: WorldConfig = {
       ...DEFAULT_CONFIG,
       planet: TUTORIAL_PLANET,
-      tier: TUTORIAL_TIER,
+      stage: TUTORIAL_STAGE,
       maxSegments: TUTORIAL_MAX_SEGMENTS,
     };
     const inputs = idleInputs(900);

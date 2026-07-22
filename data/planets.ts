@@ -37,18 +37,6 @@ export const PLANETS: readonly PlanetMeta[] = PLANET_CONTENT.map((c) => ({
   ...(PRESENTATION[c.index] ?? FALLBACK_PRESENTATION),
 }));
 
-export interface TierMeta {
-  readonly id: number;
-  readonly name: string;
-  readonly desc: string;
-}
-
-export const TIERS: readonly TierMeta[] = [
-  { id: 0, name: '정찰', desc: '표준 난이도 · 기본 드랍' },
-  { id: 1, name: '교전', desc: '적 강화 · 엘리트 어픽스 · 드랍 상향' },
-  { id: 2, name: '섬멸', desc: '패턴 변형 · 밀도↑ · 엘리트 2 · 최상급 드랍 (Lv60 필요)' },
-];
-
 /** Lookup a planet by id (falls back to the first planet = 카르곤). */
 export function planetById(id: number): PlanetMeta {
   return PLANETS.find((p) => p.id === id) ?? PLANETS[0]!;

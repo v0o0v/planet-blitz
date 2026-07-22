@@ -214,7 +214,7 @@ describe('M8 기체 타입 해시 꼬리 폴드 (설계서 §4·§5)', () => {
 // ✅ M8-L7 완료: 조립을 재현하지 않고 실제 앱(`src/main.ts`)이 부르는 `buildRunConfig` 를
 // 그대로 호출한다. `playerHp` 만 테스트가 덮는데, 그것은 프로필 파생값이 아니라 무대 상수다.
 function assembleRunConfigLikeMain(profile: Profile, playerHp: number): WorldConfig {
-  return { ...buildRunConfig(profile, { planet: 0, tier: 0 }), playerHp };
+  return { ...buildRunConfig(profile, { planet: 0, stage: 1 }), playerHp };
 }
 
 /** 피격을 실제로 겪게 하려면 오래 살아야 한다 — 골든 하네스와 같은 관례. */

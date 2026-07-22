@@ -123,7 +123,7 @@ export interface ScenarioResult {
   checkpoints: Checkpoint[];
   finalHash: number;
   /** 드랍 시드 시퀀스(정산 입력) — bit-identical이어야 서버 재현이 같은 아이템. */
-  loot: { seed: number; rarity: number; planet: number; tier: number }[];
+  loot: { seed: number; rarity: number; planet: number; stage: number }[];
   rolls: RollSnapshot[];
   /** 최종 상태 요약(가독 확인용, 해시 비교에는 미포함). */
   summary: {
@@ -159,7 +159,7 @@ export function computeScenario(sc: Scenario): ScenarioResult {
       seed: r.seed >>> 0,
       rarity: r.rarity,
       planet: r.planet,
-      tier: r.tier,
+      stage: r.stage,
     })),
     rolls: sc.rolls.map(snapshotRoll),
     summary: {

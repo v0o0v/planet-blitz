@@ -5,7 +5,7 @@ import { SLOT_KINDS } from '../src/items/types.js';
 import { AFFIX_BY_ID } from '../data/affixes.js';
 import { UNIQUE_REGISTRY, registerUnique } from '../src/items/uniques.js';
 
-const SRC: ItemSource = { planet: 0, tier: 0 };
+const SRC: ItemSource = { planet: 0, stage: 1 };
 
 describe('rollItem — pure item roller (AC1)', () => {
   it('is deterministic: same seed + rarity + source → identical item', () => {
@@ -59,7 +59,7 @@ describe('rollItem — pure item roller (AC1)', () => {
   });
 
   it('stamps the source and a seed-derived id', () => {
-    const src: ItemSource = { planet: 1, tier: 1 };
+    const src: ItemSource = { planet: 1, stage: 11 };
     const item = rollItem(555, 'magic', src);
     expect(item.source).toEqual(src);
     expect(item.id).toBe('it-555');

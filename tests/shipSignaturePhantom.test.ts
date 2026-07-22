@@ -161,7 +161,7 @@ function runObserved(seed: number, cfg: WorldConfig, ticks: number): Observed {
 
 describe('팬텀(typeId 3) 정규 경로 배선 — Profile → buildRunConfig → createWorld → stepWorld', () => {
   it('마스크에 자기 비트만 켜지고 shipType 축도 선다', () => {
-    const cfg = buildRunConfig(profileWithType(3), { planet: 0, tier: 0 });
+    const cfg = buildRunConfig(profileWithType(3), { planet: 0, stage: 1 });
     expect(cfg.shipType).toBe(3);
     const mask = cfg.loadout?.uniqueMask ?? 0;
     expect(hasCapstone(mask, SIG_PHANTOM_CLOAK)).toBe(true);
@@ -174,7 +174,7 @@ describe('팬텀(typeId 3) 정규 경로 배선 — Profile → buildRunConfig �
   // 무대 선정도 계약의 일부다: 은신은 **연속 무피격 240틱**이 필요하므로 압박이 끊이지 않는
   // 무대(행성2/티어2)에서는 정지 파일럿의 무피격 최대치가 146틱에 그쳐 영영 진입하지 못한다
   // (실측). 행성0/티어0 은 교전 사이에 긴 무피격 구간이 생겨 은신이 반복 발현한다.
-  const TRAJ = { planet: 0, tier: 0 } as const;
+  const TRAJ = { planet: 0, stage: 1 } as const;
   const TRAJ_SEED = 555;
   const TRAJ_TICKS = 1800;
 
@@ -216,7 +216,7 @@ describe('팬텀(typeId 3) 정규 경로 배선 — Profile → buildRunConfig �
   // 행성1/티어0 · seed 9182 · 3600틱 기준선: 적탄 누적 52150(live) vs 66585(ctrl),
   // 최종 엔티티 45 vs 50. 은신 유지는 3틱뿐인데 차이가 큰 것은 막힌 일제사격 하나가 이후
   // 교전 전개를 통째로 바꾸기 때문이다.
-  const GATE = { planet: 1, tier: 0 } as const;
+  const GATE = { planet: 1, stage: 1 } as const;
   const GATE_SEED = 9182;
   const GATE_TICKS = 3600;
 

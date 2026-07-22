@@ -159,7 +159,7 @@ describe('유니크 레지스트리 + 로드아웃 배선 (AC7)', () => {
   it('유니크 아이템 장착 시 uniqueMask에 해당 비트가 켜진다', () => {
     const armor = M2_UNIQUES.find((u) => u.id === 'phase-armor')!;
     const { loadout } = computeLoadoutStats([
-      { id: 'u1', slot: 'armor', rarity: 'unique', affixes: [], source: { planet: 0, tier: 0 }, uniqueId: armor.id },
+      { id: 'u1', slot: 'armor', rarity: 'unique', affixes: [], source: { planet: 0, stage: 1 }, uniqueId: armor.id },
     ]);
     expect((loadout.uniqueMask & (1 << UQ_PHASE_ARMOR)) !== 0).toBe(true);
   });
@@ -169,7 +169,7 @@ describe('유니크 레지스트리 + 로드아웃 배선 (AC7)', () => {
     const ids = new Set([...M2_UNIQUES, ...M3_UNIQUES].map((u) => u.id));
     let found = false;
     for (let s = 1; s < 500 && !found; s++) {
-      const item = rollItem(s, 'unique', { planet: 1, tier: 1 });
+      const item = rollItem(s, 'unique', { planet: 1, stage: 11 });
       if (item.slot === 'main' && item.uniqueId !== undefined) {
         expect(ids.has(item.uniqueId)).toBe(true);
         found = true;
@@ -186,7 +186,7 @@ describe('유니크 레지스트리 + 로드아웃 배선 (AC7)', () => {
     );
     let checked = 0;
     for (let s = 1; s < 4000; s++) {
-      const item = rollItem(s, 'unique', { planet: 1, tier: 1 });
+      const item = rollItem(s, 'unique', { planet: 1, stage: 11 });
       if (item.slot !== 'main' || item.uniqueId === undefined) continue;
       const wt = wtById.get(item.uniqueId);
       // 주무기 유니크는 반드시 weaponType이 지정돼 있고 아이템과 일치해야 한다.

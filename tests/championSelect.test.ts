@@ -245,7 +245,7 @@ describe('정규 경로 통합 — 선택 → buildRunConfig → createWorld →
     const profile = defaultProfile();
     applyChampionChoice(profile, 1, store); // 브루저
 
-    const cfg = buildRunConfig(profile, { planet: 0, tier: 0 });
+    const cfg = buildRunConfig(profile, { planet: 0, stage: 1 });
     expect(cfg.shipType).toBe(1);
     expect(cfg.skillInvest).toHaveLength(shipSkillNodeCount(1));
     // 시그니처 비트가 loadout.uniqueMask 에 실제로 OR 돼 있어야 한다(§10-1).
@@ -263,7 +263,7 @@ describe('정규 경로 통합 — 선택 → buildRunConfig → createWorld →
     const store = memStore();
     const profile = defaultProfile();
     applyChampionChoice(profile, 0, store);
-    const cfg = buildRunConfig(profile, { planet: 0, tier: 0 });
+    const cfg = buildRunConfig(profile, { planet: 0, stage: 1 });
     expect(cfg.shipType).toBe(0);
     for (const def of SHIP_TYPES) {
       if (def.signatureBit < 0) continue;
@@ -277,8 +277,8 @@ describe('정규 경로 통합 — 선택 → buildRunConfig → createWorld →
     const b = defaultProfile();
     applyChampionChoice(b, 1, memStore());
 
-    const wa = createWorld(999, buildRunConfig(a, { planet: 0, tier: 0 }));
-    const wb = createWorld(999, buildRunConfig(b, { planet: 0, tier: 0 }));
+    const wa = createWorld(999, buildRunConfig(a, { planet: 0, stage: 1 }));
+    const wb = createWorld(999, buildRunConfig(b, { planet: 0, stage: 1 }));
     for (let i = 0; i < 30; i++) {
       stepWorld(wa, emptyInput());
       stepWorld(wb, emptyInput());

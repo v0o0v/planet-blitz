@@ -42,7 +42,7 @@ describe('베르단 로스터 (AC8, E1)', () => {
   });
 
   it('교전 티어 베르단 런에서 엘리트 타입(8·9)이 등장한다', () => {
-    const state = createWorld(0x51ee, { ...DEFAULT_CONFIG, planet: 1, tier: 1 });
+    const state = createWorld(0x51ee, { ...DEFAULT_CONFIG, planet: 1, stage: 11 });
     const seen = seenEnemyTypes(state, 6000);
     // 엘리트 카드(파수병정 8 / 분열유충모체 9) 중 최소 하나는 스폰된다.
     expect(seen.has(8) || seen.has(9)).toBe(true);
@@ -120,7 +120,7 @@ function playToEnd(seed: number, config: WorldConfig): { state: WorldState; inpu
 }
 
 describe('베르단 완주 + 결정론 (AC8, AC2)', () => {
-  const durable: WorldConfig = { ...DEFAULT_CONFIG, planet: 1, tier: 1, playerHp: 100_000_000 };
+  const durable: WorldConfig = { ...DEFAULT_CONFIG, planet: 1, stage: 11, playerHp: 100_000_000 };
 
   it('여왕 보스까지 완주해 승리하고 리플레이가 동일 해시로 재현된다', () => {
     const { state, inputs } = playToEnd(0xd00d, durable);

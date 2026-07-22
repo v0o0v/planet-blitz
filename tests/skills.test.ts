@@ -221,7 +221,7 @@ describe('profile — invest + respec (AC1, plan A3)', () => {
 // M8-L4 — 파생 스탯의 타입 인식 확장 (설계서 §4·§5)
 // ===========================================================================
 
-const M8_SRC = { planet: 0, tier: 0 } as const;
+const M8_SRC = { planet: 0, stage: 1 } as const;
 
 function m8Item(slot: 'main' | 'sub' | 'armor', affixes: { stat: StatKey; value: number }[]): Item {
   return {
@@ -477,7 +477,7 @@ describe('타입별 트리 슬라이스 (computeSkillStats(invest, typeId))', ()
 // ✅ M8-L7 완료: 조립을 재현하지 않고 실제 앱(`src/main.ts`)이 부르는 `buildRunConfig` 를
 // 그대로 호출한다. `playerHp` 만 테스트가 덮는데, 그것은 프로필 파생값이 아니라 무대 상수다.
 function assembleRunConfigLikeMain(profile: Profile): WorldConfig {
-  return { ...buildRunConfig(profile, { planet: 0, tier: 0 }), playerHp: 100_000_000 };
+  return { ...buildRunConfig(profile, { planet: 0, stage: 1 }), playerHp: 100_000_000 };
 }
 
 function runHashes(seed: number, config: WorldConfig, ticks: number): number[] {

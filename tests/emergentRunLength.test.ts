@@ -15,7 +15,7 @@ import { SEGMENTS } from '../data/waves.js';
 
 const BOSS_INDEX = SEGMENTS.length - 1;
 /** 내구(글래스캐논 방지) — 게이트/스폰 관찰이 사망으로 중단되지 않게. */
-const DURABLE = { ...DEFAULT_CONFIG, planet: 0, tier: 0, playerHp: 100_000_000 };
+const DURABLE = { ...DEFAULT_CONFIG, planet: 0, stage: 1, playerHp: 100_000_000 };
 
 const countEnemies = (state: ReturnType<typeof createWorld>): number =>
   state.entities.filter((e) => e.kind === 'enemy').length;
@@ -101,7 +101,7 @@ describe('오토파일럿 완주 (ADR-0011, par 창발)', () => {
     // (무제한 조준 폐지)로 0x50c1a1 → 0x50c1a2 로 갈았다 — 무장갑 오토파일럿의 완주는
     // 원래 시드마다 갈리는 값이고(kargon-t0 P0 클리어율 33~63%), 표본 12시드 중 7시드가
     // 여전히 40~70초에 완주하므로 단언이 약해진 것이 아니라 증인만 바뀐 것이다.
-    const state = createWorld(0x50c1a2, { ...DEFAULT_CONFIG, planet: 0, tier: 0 });
+    const state = createWorld(0x50c1a2, { ...DEFAULT_CONFIG, planet: 0, stage: 1 });
     let ticks = 0;
     for (let t = 0; t < 60 * 300; t++) {
       stepWorld(state, autopilotInput(state));

@@ -38,7 +38,7 @@ import { RARITY_RARE, RARITY_UNIQUE } from '../src/sim/drops.js';
 const BERDAN_ENGAGE: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 1,
-  tier: 1,
+  stage: 11,
   playerHp: 100_000_000,
   loadout: { ...neutralLoadout(), weaponType: WEAPON_VULCAN, uniqueMask: 1 << 0 },
 };
@@ -98,10 +98,10 @@ describe('파밍 루프 end-to-end (G1, AC8/AC3)', () => {
     expect(state.bossSpawned).toBe(true);
     // 보스 확정 드랍이 최소 1건은 수거돼야 한다.
     expect(state.loot.length).toBeGreaterThan(0);
-    // 모든 드랍이 베르단(planet=1)·교전(tier=1)으로 스탬프된다(행성 소스 정합).
+    // 모든 드랍이 베르단(planet=1)·단계11(구 교전)으로 스탬프된다(행성 소스 정합).
     for (const rec of state.loot) {
       expect(rec.planet).toBe(1);
-      expect(rec.tier).toBe(1);
+      expect(rec.stage).toBe(11);
     }
     // 보스 드랍은 레어 이상 확정(GDD §3) — 최소 한 건은 rare+ 여야 한다.
     expect(state.loot.some((r) => r.rarity === RARITY_RARE || r.rarity === RARITY_UNIQUE)).toBe(true);
@@ -161,7 +161,7 @@ describe('장착 → 재런 스탯 반영 (G1, AC4)', () => {
       slot: 'main',
       rarity: 'rare',
       affixes: [],
-      source: { planet: 1, tier: 1 },
+      source: { planet: 1, stage: 11 },
       weaponType: WEAPON_SPREAD,
     };
     activeShip(profile).equipped.main = spread;

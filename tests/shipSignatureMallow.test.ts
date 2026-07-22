@@ -140,7 +140,7 @@ function runObserved(seed: number, cfg: WorldConfig, ticks: number): Observed {
 describe('말로우(typeId 5) 정규 경로 배선 — Profile → buildRunConfig → createWorld → stepWorld', () => {
   // 무대 선정도 계약의 일부다: p0/t0 는 3600틱 누적 피해가 수십뿐이라 21% 경감이 정수
   // 반올림에 먹힌다. p2/t2 는 신호가 크다(정찰 실측 기준).
-  const STAGE = { planet: 2, tier: 2 } as const;
+  const STAGE = { planet: 2, stage: 21 } as const;
   const SEED = 3311;
   // 첫 피격 + CUSHION_RECOVER_TICKS(180) 이후 첫 정산 → 반복 발현까지 보려면 넉넉히.
   const TICKS = 1800;
@@ -173,7 +173,7 @@ describe('말로우(typeId 5) 정규 경로 배선 — Profile → buildRunConfi
     // 일어나지 않는다**(실측 무피격 최대 146틱 < 180). 소진 규칙 자체를 관측하려면 교전
     // 밀도가 낮은 p0/t0 무대가 필요하다 — 이 케이스가 없으면 "적립만 하고 영원히 안
     // 들어오는" 배선(= 순수 감쇄)도 위 케이스를 통과해 버린다.
-    const cfg = buildRunConfig(profileWithType(5), { planet: 0, tier: 0 });
+    const cfg = buildRunConfig(profileWithType(5), { planet: 0, stage: 1 });
     const live = runObserved(555, cfg, 1800);
     const ctrl = runObserved(555, suppressSignature(cfg, SIG_MALLOW_CUSHION), 1800);
 

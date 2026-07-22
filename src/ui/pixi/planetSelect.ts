@@ -2,8 +2,8 @@
  * 성계 지도 / 행성 선택 화면 (Pixi 카툰나무풍 리스킨 — `.omc/plans/cartoonwood-rollout.md` #4).
  *
  * `src/ui/planetSelect.ts` 의 DOM `PlanetSelect` 와 기능 1:1 동등하게 출격 전 화면을 Pixi
- * 캔버스(1920×1080 디자인 스페이스)로 재구현한다: 행성 카드 선택, 티어(정찰/교전/섬멸) 선택
- * 과 레벨 잠금(`canEnterTier`), 시드가 굴린 변칙 제안 수락/거부, 출격/장비 정비/기지 복귀.
+ * 캔버스(1920×1080 디자인 스페이스)로 재구현한다: 행성 카드 선택, 침략 단계 선택(ADR-0022 —
+ * 행성별 1..개방 상한 스텝퍼), 시드가 굴린 변칙 제안 수락/거부, 출격/장비 정비/기지 복귀.
  * 공개 인터페이스(`show`/`hide`/`visible`)와 `LaunchSelection` 은 DOM 판 그대로라 main.ts 는
  * 생성자 한 줄만 바뀐다(롤아웃 공통 규칙 2). DOM 클래스는 회귀 대비로 남긴다.
  *
@@ -14,12 +14,12 @@
  */
 
 import { Container, Graphics, Sprite, Text } from 'pixi.js';
-import { PLANETS, TIERS, planetById, type PlanetMeta } from '../../../data/planets.js';
-import { canEnterTier, ANNIHILATION_UNLOCK_LEVEL } from '../../../data/waves.js';
+import { PLANETS, planetById, type PlanetMeta } from '../../../data/planets.js';
+import { stageOpenCap } from '../../../data/waves.js';
 import { ANOMALY_GRAVITY, ANOMALY_SWARM, ANOMALY_NEBULA, ANOMALY_NONE } from '../../sim/anomaly.js';
 import { t, type MessageKey } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
-import type { LaunchSelection } from '../planetSelect.js';
+import type { LaunchSelection, BestStageClearedFn } from '../planetSelect.js';
 import { COLOR, UI_FONT, TEXT_SHADOW, hexColor } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { panelContent, PANEL_BORDER, nineSlicePanel } from './nineSlicePanel.js';
@@ -36,9 +36,6 @@ const ANOMALY_LABEL: Record<number, { nameKey: MessageKey; descKey: MessageKey }
   [ANOMALY_SWARM]: { nameKey: 'anomaly.swarm.name', descKey: 'anomaly.swarm.desc' },
   [ANOMALY_NEBULA]: { nameKey: 'anomaly.nebula.name', descKey: 'anomaly.nebula.desc' },
 };
-
-/** 섬멸 티어 해금 레벨(잠금 사유 문구에 노출). */
-const ANNIHILATION_LEVEL = ANNIHILATION_UNLOCK_LEVEL;
 
 /** 변칙 패널 강조색(DOM 판 보라 계열 유지 — "위험한 선택" 시각 언어). */
 const ANOMALY_ACCENT = 0xe0a8ff;
@@ -140,16 +137,12 @@ export class PlanetSelectScreen {
   private readonly root = new Container();
   private ui: UiTextures = {};
   private planet = 0;
-  private tier = 0;
+  /** 선택된 침략 단계(1..개방 상한). `stage`(Pixi Container)와 이름이 겹치지 않게 별칭. */
+  private selectedStage = 1;
   private anomalyKind = ANOMALY_NONE;
   private anomalyAccepted = false;
-  /**
-   * 잠긴 티어를 눌렀을 때만 띄우는 해금 조건 문구. 평소에는 선택한 티어의 설명만 보인다
-   * (조건을 늘 붙여 두면 읽을 이유가 없는 문장이 항상 자리를 차지한다 — 사용자 지시).
-   */
-  private lockNotice: string | null = null;
-  /** 활성 기체 레벨 — 섬멸 티어 게이트(canEnterTier). */
-  private level = 1;
+  /** 행성별 개방 상한 산정 콜백(미지정 = 최고 클리어 0 → 상한 10). */
+  private bestStageCleared: BestStageClearedFn = () => 0;
   private meta = '';
   private onLaunch: ((sel: LaunchSelection) => void) | null = null;
   private onInventory: (() => void) | null = null;
@@ -179,8 +172,8 @@ export class PlanetSelectScreen {
   show(opts: {
     anomalyOffered: number;
     meta: string;
-    /** 활성 기체 레벨(섬멸 티어 게이트). 생략 시 1. */
-    level?: number;
+    /** 행성별 개방 상한 산정 콜백(ADR-0022). 생략 시 최고 클리어 0(상한 10). */
+    bestStageCleared?: BestStageClearedFn;
     onLaunch: (sel: LaunchSelection) => void;
     onInventory: () => void;
     /** 기지 맵 복귀(왕복 동선). */
@@ -188,10 +181,9 @@ export class PlanetSelectScreen {
   }): void {
     this.anomalyKind = opts.anomalyOffered;
     this.anomalyAccepted = false;
-    this.lockNotice = null;
-    this.level = opts.level ?? 1;
-    // 레벨이 내려갔으면 선택 티어를 유효 범위로 되돌린다(DOM 판과 동일).
-    if (!canEnterTier(this.tier, this.level)) this.tier = 0;
+    this.bestStageCleared = opts.bestStageCleared ?? (() => 0);
+    // 선택 단계를 현재 행성 개방 상한으로 클램프한다(DOM 판과 동일).
+    this.selectedStage = this.clampStage(this.selectedStage);
     this.meta = opts.meta;
     this.onLaunch = opts.onLaunch;
     this.onInventory = opts.onInventory;
@@ -216,22 +208,24 @@ export class PlanetSelectScreen {
 
   private selectPlanet(id: number): void {
     this.planet = id;
+    // 행성마다 개방 상한이 다르므로 선택 단계를 새 행성 상한으로 클램프한다.
+    this.selectedStage = this.clampStage(this.selectedStage);
     this.render();
   }
 
-  private selectTier(id: number): void {
-    if (!canEnterTier(id, this.level)) {
-      // 잠금 티어: 선택은 그대로 두고 해금 조건만 알린다(사용자 지시 — 평소에는 숨긴다).
-      const tm = TIERS.find((x) => x.id === id);
-      this.lockNotice =
-        tm === undefined
-          ? null
-          : t('planet.lock', { tier: tm.name, lvl: ANNIHILATION_LEVEL, cur: this.level });
-      this.render();
-      return;
-    }
-    this.tier = id;
-    this.lockNotice = null;
+  /** 현재 선택 행성의 개방 상한(max(10, 최고 클리어 + 5), ADR-0022). */
+  private openCap(): number {
+    return stageOpenCap(this.bestStageCleared(this.planet));
+  }
+
+  /** 단계를 [1, 개방 상한]으로 클램프한다. */
+  private clampStage(stage: number): number {
+    const cap = this.openCap();
+    return stage < 1 ? 1 : stage > cap ? cap : stage;
+  }
+
+  private stepStage(delta: number): void {
+    this.selectedStage = this.clampStage(this.selectedStage + delta);
     this.render();
   }
 
@@ -244,7 +238,7 @@ export class PlanetSelectScreen {
     const cb = this.onLaunch;
     const sel: LaunchSelection = {
       planet: this.planet,
-      tier: this.tier,
+      stage: this.selectedStage,
       anomalyAccepted: this.anomalyKind !== ANOMALY_NONE && this.anomalyAccepted,
     };
     this.hide();
@@ -370,9 +364,9 @@ export class PlanetSelectScreen {
     const rowW = hasAnomaly ? tierW + LOW_GAP + ANOM_W : tierW;
     const x0 = (DESIGN_WIDTH - rowW) / 2;
 
-    const tier = this.makeTierPanel(tierW);
-    tier.position.set(x0, LOW_Y);
-    this.root.addChild(tier);
+    const stage = this.makeStagePanel(tierW);
+    stage.position.set(x0, LOW_Y);
+    this.root.addChild(stage);
 
     if (hasAnomaly) {
       const anomaly = this.makeAnomalyPanel();
@@ -425,68 +419,66 @@ export class PlanetSelectScreen {
     });
   }
 
-  private makeTierPanel(w: number): Container {
+  /**
+   * 침략 단계 스텝퍼 패널(ADR-0022). 3버튼 티어를 대체한다 — `−` / 현재 단계 / `+` 세 버튼으로
+   * 1..개방 상한 사이를 오간다. 상한은 선택 행성의 최고 클리어 단계에서 파생한다(`openCap`).
+   */
+  private makeStagePanel(w: number): Container {
     const panel = new Container();
     panel.addChild(nineSlicePanel(w, LOW_H, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER }));
     const box = panelContent(w, LOW_H);
-    this.panelTitle(panel, w, t('planet.tierLabel'));
+    this.panelTitle(panel, w, t('planet.stageLabel'));
 
-    const n = TIERS.length;
-    const rowW = n * TIER_BTN_W + (n - 1) * TIER_BTN_GAP;
+    const cap = this.openCap();
+    const rowW = TIER_BTN_W * 3 + TIER_BTN_GAP * 2;
     const bx = box.x + Math.floor((box.w - rowW) / 2);
-    TIERS.forEach((tm, i) => {
-      const unlocked = canEnterTier(tm.id, this.level);
-      const btn = this.choiceButton({
-        label: tm.name,
-        width: TIER_BTN_W,
-        height: TIER_BTN_H,
-        selected: unlocked && tm.id === this.tier,
-        onClick: () => this.selectTier(tm.id),
-      });
-      btn.container.position.set(bx + i * (TIER_BTN_W + TIER_BTN_GAP), TIER_BTN_Y);
-      panel.addChild(btn.container);
-      if (!unlocked) {
-        // 잠금 티어: 선택은 막되(setEnabled(false) → 버튼 자체는 이벤트를 안 받는다),
-        // "왜 못 고르는지"는 눌러서 물어볼 수 있어야 한다. 버튼 위에 투명 히트 영역을
-        // 따로 얹어 클릭을 받는다 — 버튼 컨테이너는 이미 eventMode 'none' 이라 자식으로는 못 받는다.
-        btn.setEnabled(false);
-        const lockTex = this.ui['ui_icon_lock.png'];
-        if (lockTex) {
-          const lockSize = 28;
-          const lock = new Sprite(lockTex);
-          lock.width = lockSize;
-          lock.height = lockSize;
-          lock.position.set(16, (TIER_BTN_H - lockSize) / 2);
-          btn.container.addChild(lock);
-        }
-        const catcher = new Graphics();
-        catcher.rect(0, 0, TIER_BTN_W, TIER_BTN_H).fill({ color: 0xffffff, alpha: 0 });
-        catcher.position.copyFrom(btn.container.position);
-        catcher.eventMode = 'static';
-        catcher.cursor = 'not-allowed';
-        catcher.on('pointertap', () => this.selectTier(tm.id));
-        panel.addChild(catcher);
-      }
-    });
 
-    // 평소에는 선택한 티어 설명, 잠긴 티어를 누른 직후에만 해금 조건(사용자 지시).
-    const selTier = TIERS.find((tm) => tm.id === this.tier);
-    const notice = this.lockNotice;
+    const dec = this.choiceButton({
+      label: '−',
+      width: TIER_BTN_W,
+      height: TIER_BTN_H,
+      selected: false,
+      onClick: () => this.stepStage(-1),
+      fontSize: 34,
+    });
+    dec.container.position.set(bx, TIER_BTN_Y);
+    if (this.selectedStage <= 1) dec.setEnabled(false);
+    panel.addChild(dec.container);
+
+    const cur = this.choiceButton({
+      label: String(this.selectedStage),
+      width: TIER_BTN_W,
+      height: TIER_BTN_H,
+      selected: true,
+      onClick: () => {}, // 현재 단계 표시(비활성 클릭).
+    });
+    cur.setEnabled(false);
+    cur.container.position.set(bx + TIER_BTN_W + TIER_BTN_GAP, TIER_BTN_Y);
+    panel.addChild(cur.container);
+
+    const inc = this.choiceButton({
+      label: '+',
+      width: TIER_BTN_W,
+      height: TIER_BTN_H,
+      selected: false,
+      onClick: () => this.stepStage(1),
+      fontSize: 34,
+    });
+    inc.container.position.set(bx + (TIER_BTN_W + TIER_BTN_GAP) * 2, TIER_BTN_Y);
+    if (this.selectedStage >= cap) inc.setEnabled(false);
+    panel.addChild(inc.container);
+
     const desc = new Text({
       resolution: 2,
-      // 잠금 문구의 🔒 는 캔버스에서 두부로 떨어진다(자물쇠는 버튼 아이콘이 이미 보여준다).
-      text: stripEmoji(notice ?? selTier?.desc ?? ''),
+      text: t('planet.stageDesc', { stage: this.selectedStage, cap }),
       style: {
         fontFamily: UI_FONT,
         fontSize: 19,
-        fill: notice !== null ? 0xff9a7a : COLOR.muted,
-        fontWeight: notice !== null ? '700' : 'normal',
+        fill: COLOR.muted,
         dropShadow: TEXT_SHADOW,
       },
     });
     desc.anchor.set(0.5, 0);
-    // 한 줄 고정: 줄바꿈을 허용하면 로케일에 따라 두 번째 줄이 콘텐츠 상자 바닥을 넘는다.
-    // 넘칠 때는 가로만 줄인다(잘라내면 무슨 티어인지 모른다 — 정제소 어픽스 행과 같은 처리).
     if (desc.width > box.w) desc.scale.x = box.w / desc.width;
     desc.position.set(w / 2, TIER_DESC_Y);
     panel.addChild(desc);

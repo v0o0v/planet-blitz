@@ -153,7 +153,7 @@ function runObserved(seed: number, cfg: WorldConfig, ticks: number): Observed {
 describe('버블(typeId 6) 정규 경로 배선 — Profile → buildRunConfig → createWorld → stepWorld', () => {
   // 무대 선정도 계약의 일부다: 막 1장의 흡수량이 FILM_ABSORB_FLAT(60) 고정이라 교전 밀도가
   // 낮은 무대에서는 누적 피해 자체가 그보다 작아 신호가 묻힌다. p2/t2 는 신호가 크다.
-  const STAGE = { planet: 2, tier: 2 } as const;
+  const STAGE = { planet: 2, stage: 21 } as const;
   const SEED = 3311;
   // 첫 막(420틱) → 소진 → 재생(420틱)까지 최소 두 사이클을 보려면 넉넉히.
   const TICKS = 1800;

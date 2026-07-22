@@ -50,7 +50,7 @@ function src(rel: string): string {
 function lootSweep(planet: number, count: number): LootRecord[] {
   const out: LootRecord[] = [];
   for (let i = 0; i < count; i++) {
-    out.push({ seed: (i * 2654435761) >>> 0, rarity: 2, planet, tier: 0 } as LootRecord);
+    out.push({ seed: (i * 2654435761) >>> 0, rarity: 2, planet, stage: 1 } as LootRecord);
   }
   return out;
 }
@@ -59,7 +59,7 @@ describe('M7b 통합 — 정산 → 설계도 파생', () => {
   it('settleRun 이 설계도 목록을 실제로 내놓는다(배선 누락이면 항상 빈 배열)', () => {
     const profile = loadProfile();
     const loot = lootSweep(0, 60);
-    const out = settleRun(profile, { victory: true, loot, xpTotal: 0, resources: 0, planet: 0, tier: 0 });
+    const out = settleRun(profile, { victory: true, loot, xpTotal: 0, resources: 0, planet: 0, stage: 1 });
     expect(Array.isArray(out.blueprintsGained)).toBe(true);
     expect(out.blueprintsGained.length).toBeGreaterThan(0);
   });
@@ -67,14 +67,14 @@ describe('M7b 통합 — 정산 → 설계도 파생', () => {
   it('정산이 내놓는 목록은 순수 파생과 정확히 같다(두 진실 금지)', () => {
     const profile = loadProfile();
     const loot = lootSweep(1, 40);
-    const out = settleRun(profile, { victory: true, loot, xpTotal: 0, resources: 0, planet: 1, tier: 0 });
+    const out = settleRun(profile, { victory: true, loot, xpTotal: 0, resources: 0, planet: 1, stage: 1 });
     expect(out.blueprintsGained).toEqual(blueprintDropsFromLoot(loot));
   });
 
   it('같은 런을 두 번 정산하면 같은 설계도가 나온다(결정론 — RNG 미소비)', () => {
     const loot = lootSweep(3, 40);
-    const a = settleRun(loadProfile(), { victory: true, loot, xpTotal: 0, resources: 0, planet: 3, tier: 0 });
-    const b = settleRun(loadProfile(), { victory: true, loot, xpTotal: 0, resources: 0, planet: 3, tier: 0 });
+    const a = settleRun(loadProfile(), { victory: true, loot, xpTotal: 0, resources: 0, planet: 3, stage: 1 });
+    const b = settleRun(loadProfile(), { victory: true, loot, xpTotal: 0, resources: 0, planet: 3, stage: 1 });
     expect(a.blueprintsGained).toEqual(b.blueprintsGained);
   });
 
@@ -86,7 +86,7 @@ describe('M7b 통합 — 정산 → 설계도 파생', () => {
       xpTotal: 0,
       resources: 0,
       planet: 0,
-      tier: 0,
+      stage: 1,
     });
     expect(Object.keys(profile)).not.toContain('blueprints');
     expect(Object.keys(profile)).not.toContain('defenseBlueprints');

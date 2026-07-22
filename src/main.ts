@@ -7,7 +7,7 @@
  * so motion is smooth on any refresh rate.
  *
  * M2 wraps the run in a meta loop (plan Phase C/D): a persistent `Profile`
- * (localStorage) feeds the star-map screen (planet/tier/anomaly) and the
+ * (localStorage) feeds the star-map screen (planet/stage/anomaly) and the
  * inventory/equip screen. The active ship's equipped gear becomes a `LoadoutConfig`
  * (computeLoadoutStats) injected into the run's WorldConfig; when the run ends the
  * collected loot + XP are settled back into the profile and saved, then the
@@ -52,7 +52,7 @@ import {
   FtueTracker,
   TUTORIAL_SEED,
   TUTORIAL_PLANET,
-  TUTORIAL_TIER,
+  TUTORIAL_STAGE,
   TUTORIAL_MAX_SEGMENTS,
 } from './ui/tutorial.js';
 import {
@@ -713,7 +713,7 @@ async function main(): Promise<void> {
       ...(runModules !== null ? { modules: runModules } : {}),
     };
     // 런 조립은 단일 정본(`buildRunConfig`)만 쓴다 — 여기서 config 를 손보지 마라(설계서 §10-2).
-    const config = buildRunConfig(profile, { planet: 0, tier: 0, invasion3 });
+    const config = buildRunConfig(profile, { planet: 0, stage: 1, invasion3 });
     // 활성 기체 스프라이트 교체(렌더 전용) — `createWorld` 앞. PvE `startRun` 과 동일 규약.
     applyShipSprite(textures, config.shipType ?? 0);
     // 레이어별 배경(L1 대기권 → L2 회랑 → L3 코어방). 전환은 렌더 루프가 페이즈를 보고 건다.
@@ -767,7 +767,7 @@ async function main(): Promise<void> {
     };
     // 정식 침공과 **같은 조립**을 탄다(단일 정본). 하네스 런만 다른 config 를 갖게 되면
     // "하네스에서는 되는데 실제 런에서는 안 되는" 결함이 생긴다.
-    const config = buildRunConfig(profile, { planet: 0, tier: 0, invasion3 });
+    const config = buildRunConfig(profile, { planet: 0, stage: 1, invasion3 });
     applyShipSprite(textures, config.shipType ?? 0);
     applyInvasionBackdrop(PHASE_L1);
     autotile.configure(null, opts.seed);
@@ -874,7 +874,8 @@ async function main(): Promise<void> {
     planetSelect.show({
       anomalyOffered: offer.kind,
       meta: metaLine(),
-      level: activeShip(profile).level,
+      // 행성별 개방 상한 산정(ADR-0022): 그 행성 최고 클리어 단계 → max(10, +5).
+      bestStageCleared: (planet) => profile.planetProgress[planet]?.bestStageCleared ?? 0,
       onLaunch: (sel) => startRun(seed, sel),
       onInventory: () => {
         planetSelect.hide();
@@ -888,7 +889,7 @@ async function main(): Promise<void> {
   function startTutorial(): void {
     startRun(TUTORIAL_SEED, {
       planet: TUTORIAL_PLANET,
-      tier: TUTORIAL_TIER,
+      stage: TUTORIAL_STAGE,
       anomalyAccepted: false,
       maxSegments: TUTORIAL_MAX_SEGMENTS,
     });
@@ -909,7 +910,7 @@ async function main(): Promise<void> {
     // 튜토리얼 단축판(maxSegments)도 여기로 넘겨 config 후처리를 남기지 않는다.
     const config = buildRunConfig(profile, {
       planet: sel.planet,
-      tier: sel.tier,
+      stage: sel.stage,
       anomalyAccepted: sel.anomalyAccepted,
       ...(sel.maxSegments !== undefined ? { maxSegments: sel.maxSegments } : {}),
     });
@@ -985,7 +986,7 @@ async function main(): Promise<void> {
           xpTotal: w.xpTotal,
           resources: w.resources,
           planet: w.config.planet ?? 0,
-          tier: w.config.tier ?? 0,
+          stage: w.config.stage ?? 1,
         });
         // Completing the tutorial (win or lose) reveals the base and makes the run
         // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.
@@ -1381,7 +1382,7 @@ async function main(): Promise<void> {
         clearToMenu();
         startRun(opts.seed, {
           planet: opts.planet,
-          tier: opts.tier,
+          stage: opts.stage,
           anomalyAccepted: opts.anomaly,
           ...(opts.maxSegments !== undefined ? { maxSegments: opts.maxSegments } : {}),
         });

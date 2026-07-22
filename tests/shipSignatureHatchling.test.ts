@@ -158,7 +158,7 @@ function runObserved(seed: number, cfg: WorldConfig, ticks: number): Observed {
 describe('해츨링(typeId 4) 정규 경로 배선 — Profile → buildRunConfig → createWorld → stepWorld', () => {
   // 무대 선정도 계약의 일부다: 임계가 처치 수라 교전 밀도가 낮은 무대(행성1/티어1)는 5400틱을
   // 돌려도 12킬에 못 닿는다. 행성0/티어0 은 정지 파일럿으로도 500틱 안에 첫 임계를 넘긴다.
-  const STAGE = { planet: 0, tier: 0 } as const;
+  const STAGE = { planet: 0, stage: 1 } as const;
   const SEED = 555;
   // 임계 3회(12·24·36)를 통과해 "반복 발현" 까지 보는 길이.
   const TICKS = 1800;

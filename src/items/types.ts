@@ -20,8 +20,11 @@
  *  신설. v3 의 계정 벡터는 마이그레이션이 각 기체로 승계한다(전원 스트라이커 = typeId 0).
  *  ⚠️ DB 변경 없음 — `profiles.save` 는 불투명 jsonb 이고 서버 SQL 은 그 안의
  *  `credits`/`minerals` 만 읽는다(실측: supabase/migrations/** 에 skillInvest 0건).
- *  `profiles.save_version` 은 제약 없는 integer 스탬프라 4 를 그대로 받는다. */
-export const SAVE_VERSION = 4;
+ *  `profiles.save_version` 은 제약 없는 integer 스탬프라 4 를 그대로 받는다.
+ *
+ *  v5 (ADR-0022 침략 단계): `planetProgress.bestTierCleared` → `bestStageCleared`.
+ *  마이그레이션이 구 티어(t) → 단계(t+1)로 옮긴다(클리어 상태 보존). ItemSource.tier→stage. */
+export const SAVE_VERSION = 5;
 
 // ---------------------------------------------------------------------------
 // Rarity
@@ -142,12 +145,12 @@ export interface AffixRoll {
 // ---------------------------------------------------------------------------
 
 /** Where a drop came from — feeds drop tables and is stamped onto the item so
- *  the settlement/inventory can show provenance (planet index, tier index). */
+ *  the settlement/inventory can show provenance (planet index, 침략 단계). */
 export interface ItemSource {
   /** Planet index (0 = 카르곤, 1 = 베르단, …). */
   readonly planet: number;
-  /** Tier index (0 = 정찰, 1 = 교전). */
-  readonly tier: number;
+  /** 침략 단계(1..∞, ADR-0022). */
+  readonly stage: number;
 }
 
 /**

@@ -39,7 +39,7 @@ function richProfile(): Profile {
   p.ships[0]!.level = 12;
   p.credits = 500;
   p.minerals = 40;
-  p.inventory.push(rollItem(1, 'rare', { planet: 0, tier: 1 }));
+  p.inventory.push(rollItem(1, 'rare', { planet: 0, stage: 11 }));
   return p;
 }
 

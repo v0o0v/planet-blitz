@@ -41,8 +41,8 @@ import { normalizeShipTypeId } from '../../data/ships/index.js';
 export interface RunConfigOpts {
   /** 행성 인덱스. 침공 런은 0. */
   planet: number;
-  /** 난이도 티어. 침공 런은 0. */
-  tier: number;
+  /** 침략 단계(1..∞, ADR-0022). 침공 런은 1(단계 무관). */
+  stage: number;
   /** 시드가 제안한 변칙을 수락했는가(침공은 항상 false). */
   anomalyAccepted?: boolean;
   /** 보스 전 세그먼트 상한(튜토리얼 단축판). 미지정 = 무제한. */
@@ -92,7 +92,9 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
   return {
     ...DEFAULT_CONFIG,
     planet: opts.planet,
-    tier: opts.tier,
+    // 단계 정본 클램프: [1,∞) 정수. sim(stageParams: s<1→1)과 hashWorld 폴드(replay.ts)를
+    // 대칭으로 맞춰 stage:0/음수가 흘러도 결정론이 어긋나지 않게 한다(리뷰 LOW — 잠재 지뢰).
+    stage: Math.max(1, opts.stage | 0),
     anomalyAccepted: opts.anomalyAccepted ?? false,
     loadout,
     skillInvest,

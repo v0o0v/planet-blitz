@@ -247,7 +247,7 @@ interface Case {
   slug: string;
   bit: number;
   planet: number;
-  tier: number;
+  stage: number;
   seed: number;
   ticks: number;
   /** 그 타입 고유 효과 — live/ctrl 관측을 받아 타입별 단언을 건다. */
@@ -260,7 +260,7 @@ const CASES: Case[] = [
     slug: 'bruiser',
     bit: SIG_BRUISER_ARMOR,
     planet: 2,
-    tier: 2,
+    stage: 21,
     seed: 3311,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
@@ -276,7 +276,7 @@ const CASES: Case[] = [
     slug: 'arccaster',
     bit: SIG_ARC_OVERCHARGE,
     planet: 2,
-    tier: 2,
+    stage: 21,
     seed: 3311,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
@@ -296,7 +296,7 @@ const CASES: Case[] = [
     slug: 'phantom',
     bit: SIG_PHANTOM_CLOAK,
     planet: 0,
-    tier: 0,
+    stage: 1,
     seed: 42,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
@@ -324,7 +324,7 @@ const CASES: Case[] = [
     slug: 'phantom-suppression',
     bit: SIG_PHANTOM_CLOAK,
     planet: 0,
-    tier: 0,
+    stage: 1,
     seed: 48,
     ticks: 3600,
     signatureEffect: (live, ctrl) => {
@@ -348,7 +348,7 @@ const CASES: Case[] = [
     slug: 'hatchling',
     bit: SIG_HATCHLING_BROOD,
     planet: 0,
-    tier: 0,
+    stage: 1,
     seed: 3311,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
@@ -366,7 +366,7 @@ const CASES: Case[] = [
     slug: 'mallow',
     bit: SIG_MALLOW_CUSHION,
     planet: 2,
-    tier: 2,
+    stage: 21,
     seed: 3311,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
@@ -384,7 +384,7 @@ const CASES: Case[] = [
     slug: 'bubble',
     bit: SIG_BUBBLE_FILM,
     planet: 2,
-    tier: 2,
+    stage: 21,
     seed: 3311,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
@@ -404,7 +404,7 @@ const CASES: Case[] = [
 
 describe('① buildRunConfig 가 타입별 시그니처 비트를 켠다', () => {
   it.each(CASES)('typeId $typeId ($slug) 의 비트가 켜지고 남의 비트는 꺼져 있다', (c) => {
-    const cfg = buildRunConfig(profileWithType(c.typeId), { planet: c.planet, tier: c.tier });
+    const cfg = buildRunConfig(profileWithType(c.typeId), { planet: c.planet, stage: c.stage });
     expect(cfg.shipType).toBe(c.typeId);
     expect(hasSignature(cfg.loadout?.uniqueMask ?? 0, c.bit), `${c.slug}: 자기 비트 미점등`).toBe(
       true,
@@ -427,7 +427,7 @@ describe('② 시그니처를 끄면 관측이 달라진다 (= world.ts 배선�
   it.each(CASES)(
     'typeId $typeId ($slug): live 와 시그니처 억제 대조군의 관측이 갈린다',
     (c) => {
-      const live = buildRunConfig(profileWithType(c.typeId), { planet: c.planet, tier: c.tier });
+      const live = buildRunConfig(profileWithType(c.typeId), { planet: c.planet, stage: c.stage });
       const ctrl = suppressSignature(live, c.typeId);
 
       // 대조군은 시그니처 축만 다르다 — 나머지 파생 스탯(baseBp·트리)은 그대로다.
@@ -460,7 +460,7 @@ describe('② 시그니처를 끄면 관측이 달라진다 (= world.ts 배선�
 
 describe('③ aux0/aux1 조건부 폴드 규약', () => {
   it.each(CASES)('typeId $typeId ($slug): live 는 aux 를 쓰고 억제 대조군은 끝까지 0', (c) => {
-    const live = buildRunConfig(profileWithType(c.typeId), { planet: c.planet, tier: c.tier });
+    const live = buildRunConfig(profileWithType(c.typeId), { planet: c.planet, stage: c.stage });
     const liveObs = observe(c.seed, live, c.ticks);
     const ctrlObs = observe(c.seed, suppressSignature(live, c.typeId), c.ticks);
 
@@ -475,17 +475,17 @@ describe('③ aux0/aux1 조건부 폴드 규약', () => {
   });
 
   it('스트라이커(typeId 0) 런은 어떤 무대에서도 aux 를 건드리지 않는다', () => {
-    for (const { planet, tier, seed } of [
-      { planet: 0, tier: 0, seed: 3311 },
-      { planet: 2, tier: 2, seed: 3311 },
-      { planet: 0, tier: 0, seed: 42 },
+    for (const { planet, stage, seed } of [
+      { planet: 0, stage: 1, seed: 3311 },
+      { planet: 2, stage: 21, seed: 3311 },
+      { planet: 0, stage: 1, seed: 42 },
     ]) {
-      const cfg = buildRunConfig(defaultProfile(), { planet, tier });
+      const cfg = buildRunConfig(defaultProfile(), { planet, stage });
       expect(cfg.loadout?.uniqueMask).toBe(0);
       const o = observe(seed, cfg, 1200);
-      expect(o.maxAux0, `p${planet}t${tier} s${seed}`).toBe(0);
-      expect(o.maxAux1, `p${planet}t${tier} s${seed}`).toBe(0);
-      expect(o.cloakedTicks, `p${planet}t${tier} s${seed}`).toBe(0);
+      expect(o.maxAux0, `p${planet}s${stage} sd${seed}`).toBe(0);
+      expect(o.maxAux1, `p${planet}s${stage} sd${seed}`).toBe(0);
+      expect(o.cloakedTicks, `p${planet}s${stage} sd${seed}`).toBe(0);
     }
   });
 });
@@ -495,11 +495,11 @@ describe('③ aux0/aux1 조건부 폴드 규약', () => {
 // ---------------------------------------------------------------------------
 
 describe('④ typeId 0 런과 해시 스트림이 갈린다 (보조 지표)', () => {
-  const strikerCfg = buildRunConfig(defaultProfile(), { planet: 0, tier: 0 });
+  const strikerCfg = buildRunConfig(defaultProfile(), { planet: 0, stage: 1 });
 
   it.each(CASES)('typeId $typeId ($slug) 런은 스트라이커 런과 다르게 굴러간다', (c) => {
     const striker = runHashes(9182, strikerCfg, 240);
-    const cfg = buildRunConfig(profileWithType(c.typeId), { planet: 0, tier: 0 });
+    const cfg = buildRunConfig(profileWithType(c.typeId), { planet: 0, stage: 1 });
     const mine = runHashes(9182, cfg, 240);
     expect(mine, `${c.slug}: 스트라이커와 해시가 같다`).not.toEqual(striker);
     // 월드가 멈춰 있으면 이 케이스는 아무것도 증명하지 못한다.
@@ -515,7 +515,7 @@ describe('④ typeId 0 런과 해시 스트림이 갈린다 (보조 지표)', ()
 describe('⑤ 결정론', () => {
   it.each(CASES)('typeId $typeId ($slug) 런은 두 번 굴려도 같은 관측을 낸다', (c) => {
     const cfg = (): WorldConfig =>
-      buildRunConfig(profileWithType(c.typeId), { planet: c.planet, tier: c.tier });
+      buildRunConfig(profileWithType(c.typeId), { planet: c.planet, stage: c.stage });
     expect(observe(c.seed, cfg(), 600)).toEqual(observe(c.seed, cfg(), 600));
   });
 });
@@ -531,7 +531,7 @@ describe('⑤ 결정론', () => {
 
 describe('⑥ 은신 억제 게이트 (잡몹 / 보스를 각각 단독으로 덮는다)', () => {
   // 실측으로 고른 무대: 정지 파일럿이 은신에 반복 진입하고(521틱) 그 내내 살아 있는 적이 있다.
-  const GATE = { planet: 0, tier: 0 } as const;
+  const GATE = { planet: 0, stage: 1 } as const;
   const GATE_SEED = 42;
   const GATE_TICKS = 5400;
 
@@ -635,7 +635,7 @@ describe('⑥ 은신 억제 게이트 (잡몹 / 보스를 각각 단독으로 �
     // 보스는 정지 파일럿 런에서 은신 구간과 겹치지 않는다(실측 bossAliveWhileCloaked = 0).
     // 그래서 tests/berdan.test.ts 의 선례대로 보스를 직접 스폰해 `updateBoss` 를 격리 구동한다.
     // config 는 정규 경로가 만든 것을 그대로 쓴다(테스트가 WorldConfig 를 조립하지 않는다).
-    const cfg = buildRunConfig(profileWithType(3), { planet: 1, tier: 0 });
+    const cfg = buildRunConfig(profileWithType(3), { planet: 1, stage: 1 });
     const state = createWorld(0x9ee, { ...cfg, playerHp: DURABLE_HP });
     const player = state.entities[0]!;
     const boss = spawnBoss(state, player.x, player.y - 400, BERDAN.boss.hp, BERDAN.boss.radius);
@@ -663,7 +663,7 @@ describe('⑥ 은신 억제 게이트 (잡몹 / 보스를 각각 단독으로 �
   });
 
   it('침공(3레이어) 런에서는 은신도 해제 배율도 서지 않는다 (대칭 범위 제한)', () => {
-    const cfg = buildRunConfig(profileWithType(3), { planet: 0, tier: 0 });
+    const cfg = buildRunConfig(profileWithType(3), { planet: 0, stage: 1 });
     // 침공 config 를 손으로 조립하지 않고, 정규 경로 config 에 invasion3 존재만 표시한다 —
     // `playerCloaked`·`stepShipSignature` 가 읽는 것이 정확히 그 존재 여부다.
     const state = createWorld(GATE_SEED, {
@@ -688,7 +688,7 @@ describe('⑦ 런당 시그니처는 정확히 하나 (aux 별칭 봉인)', () =
     // 적대적 리뷰 HIGH-1 의 실제 재현 조합: 브루저(18) + 팬텀(20). 예전 구현에서는
     // stepShipSignature 가 브루저만 굴리는데 autoAttack 의 팬텀 소비자가 브루저의 장갑 소멸
     // 타이머(1..179)를 "은신 해제 대기 플래그" 로 읽어 **거의 모든 발사에 2.5배**가 실렸다.
-    const base = buildRunConfig(profileWithType(1), { planet: 0, tier: 0 });
+    const base = buildRunConfig(profileWithType(1), { planet: 0, stage: 1 });
     const loadout = base.loadout!;
     const single: WorldConfig = base;
     const aliased: WorldConfig = {
@@ -710,7 +710,7 @@ describe('⑦ 런당 시그니처는 정확히 하나 (aux 별칭 봉인)', () =
   });
 
   it('여섯 비트를 전부 켜도 최저 비트(브루저)만 동작한다', () => {
-    const base = buildRunConfig(profileWithType(1), { planet: 0, tier: 0 });
+    const base = buildRunConfig(profileWithType(1), { planet: 0, stage: 1 });
     const loadout = base.loadout!;
     let mask = loadout.uniqueMask;
     for (const bit of SIGNATURE_BITS) mask = (mask | (1 << bit)) >>> 0;
@@ -719,7 +719,7 @@ describe('⑦ 런당 시그니처는 정확히 하나 (aux 별칭 봉인)', () =
   });
 
   it('마스크가 비면 타입 축이 승자다 (배선 누락 대비 2축 OR 의 나머지 절반)', () => {
-    const base = buildRunConfig(profileWithType(6), { planet: 2, tier: 2 });
+    const base = buildRunConfig(profileWithType(6), { planet: 2, stage: 21 });
     const loadout = base.loadout!;
     // loadout.ts 의 OR-in 이 통째로 빠진 상태를 흉내 낸다 — shipType 만으로도 시그니처가 산다.
     let mask = loadout.uniqueMask;

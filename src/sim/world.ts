@@ -438,8 +438,11 @@ export interface WorldConfig {
   // --- M2 farming loop (all optional; absent = M1 behaviour) ---
   /** Source planet index (0 = 카르곤, 1 = 베르단). Stamped onto drops. */
   planet?: number;
-  /** Difficulty tier (0 = 정찰, 1 = 교전). Gates elite affixes + drop odds. */
-  tier?: number;
+  /**
+   * 침략 단계(1..∞, ADR-0022). 미지정 = 1(구 정찰). 엘리트 어픽스·드랍 품질·HP·밀도를
+   * 구간 마일스톤 + 연속 곡선으로 올린다(구 `tier` 리네임 — append-only 위치 유지).
+   */
+  stage?: number;
   /** Player accepted the offered anomaly (OQ-M2-3 pre-run flag). */
   anomalyAccepted?: boolean;
   /** Loadout-derived stats; absent = neutral (no equipment). */
@@ -496,8 +499,8 @@ export interface LootRecord {
   rarity: number;
   /** Source planet index (from config). */
   planet: number;
-  /** Source tier index (from config). */
-  tier: number;
+  /** Source 침략 단계(from config, 1..∞). */
+  stage: number;
 }
 
 export interface WorldState {
@@ -2875,7 +2878,7 @@ function collectLoot(state: WorldState, loot: Entity): void {
     seed: loot.damage >>> 0, // drop seed stored in `damage`
     rarity: loot.enemyType, // rarity code stored in `enemyType`
     planet: state.config.planet ?? 0,
-    tier: state.config.tier ?? 0,
+    stage: state.config.stage ?? 1,
   });
 }
 
@@ -2891,7 +2894,7 @@ function compact(state: WorldState): void {
   // survivor array is rebuilt so we never mutate `state.entities` mid-iteration.
   const lootDrops: { x: number; y: number; seed: number; rarity: number }[] = [];
   const splitElites: Entity[] = [];
-  const tier = state.config.tier ?? 0;
+  const stage = state.config.stage ?? 1;
   const planet = state.config.planet ?? 0;
   // 이 compact에서 보스가 죽어 승리가 확정됐는지. 승리 tick에는 다음 stepWorld가
   // 즉시 return(gameOver/victory 가드)하므로 collectLoot(resolveCollisions 내부)가
@@ -2911,7 +2914,7 @@ function compact(state: WorldState): void {
       // Elites are the only rank-and-file loot source (GDD §3). They always drop
       // one item; a 분열하는 elite additionally bursts fragments on death (B4).
       if (isElite(e)) {
-        const roll = rollEliteDrop(state.dropRng, tier, state.anomaly, dropOdds);
+        const roll = rollEliteDrop(state.dropRng, stage, state.anomaly, dropOdds);
         lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
         // 분열하는·폭발성의 엘리트는 사망 시 방사 폭발을 남긴다(spawnEliteDeathFx).
         const ea = eliteAffix(e);
@@ -2942,8 +2945,8 @@ function compact(state: WorldState): void {
       bossKilled = true;
       // Boss guaranteed rare+ drop (GDD §3, plan B3). 승리 tick이라 바닥 스폰→접촉 수거가
       // 불가능하므로 state.loot에 직접 기록해 정산에 포함시킨다(해시 포함, replay.ts).
-      const roll = rollBossDrop(state.dropRng, tier, state.anomaly, dropOdds);
-      state.loot.push({ seed: roll.seed >>> 0, rarity: roll.rarityCode, planet, tier });
+      const roll = rollBossDrop(state.dropRng, stage, state.anomaly, dropOdds);
+      state.loot.push({ seed: roll.seed >>> 0, rarity: roll.rarityCode, planet, stage });
     }
   }
   state.entities = survivors;
@@ -2952,7 +2955,7 @@ function compact(state: WorldState): void {
     // 보스와 같은 tick에 죽은 엘리트 loot도 승리 tick이라 바닥에서 수거될 수 없다.
     // 보스 드랍과 동일하게 state.loot에 직접 기록해 유실을 막는다(결정론: 배열 순서 고정).
     for (const d of lootDrops) {
-      state.loot.push({ seed: d.seed >>> 0, rarity: d.rarity, planet, tier });
+      state.loot.push({ seed: d.seed >>> 0, rarity: d.rarity, planet, stage });
     }
   } else {
     for (const d of lootDrops) spawnLoot(state, d.x, d.y, d.seed, d.rarity);

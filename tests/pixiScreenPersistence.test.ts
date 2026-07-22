@@ -153,7 +153,7 @@ function persisted(): Profile {
 
 function itemOfSlot(seed: number, want: Item['slot']): Item {
   for (let s = seed; s < seed + 5000; s++) {
-    const it = rollItem(s, 'rare', { planet: 0, tier: 0 });
+    const it = rollItem(s, 'rare', { planet: 0, stage: 1 });
     if (it.slot === want) return it;
   }
   throw new Error(`슬롯 ${want} 아이템을 굴리지 못했다`);

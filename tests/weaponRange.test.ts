@@ -203,7 +203,7 @@ function beamLoadout(): LoadoutConfig {
       slot: 'main',
       rarity: 'rare',
       affixes: [],
-      source: { planet: 0, tier: 0 },
+      source: { planet: 0, stage: 1 },
       weaponType: WEAPON_BEAM,
     },
   ]);

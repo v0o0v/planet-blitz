@@ -302,7 +302,7 @@ export function buildPreviewWorld(input: PreviewWorldInput): WorldState {
   const config: WorldConfig = {
     ...DEFAULT_CONFIG,
     planet: 0,
-    tier: 0,
+    stage: 1,
     invasion3: {
       layers,
       timeLimitTicks: INVASION_TOTAL_TICKS,
