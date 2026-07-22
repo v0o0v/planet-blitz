@@ -41,11 +41,14 @@ export const BLOCKBREAK_SPAWN_AHEAD = 700;
  * 창 중심에서 이 반경 밖으로 흘러간 적을 컬(뒤로 밀려난 적 정리).
  * ⚠️ **구조적 불변식(밸런스 아님)**: 이 값은 반드시 **최대 스폰 거리**보다 커야 한다 — 그렇지
  * 않으면 창 전방(−Y, `BLOCKBREAK_SPAWN_AHEAD`)에 뜬 적이 플레이어에 닿기도 전에 즉시 컬링돼
- * 모드가 성립하지 않는다. 현재 최대 스폰 거리 ≈ 2080(ring: SPAWN_AHEAD 700 + SPAWN_RING_RADIUS,
- * cluster: 700+800+400). 그래서 2600(여유 ~500). 실제 수치 튜닝은 TODO(밸런스)지만 이 부등식은
- * 튜닝과 무관하게 유지돼야 한다.
+ * 모드가 성립하지 않는다. 최악은 **cluster 포메이션 코너**다(ring 이 아니다): cull 중심
+ * (scrollX,scrollY) 대비 cluster base=(scrollX, scrollY−700), 오프셋
+ * `cx=base+range(-1,1)*1000+520(±180)`·`cy=base+range(-1,1)*800-400(±180)` 라 최악 상대좌표
+ * ≈(+1700,−2080) → 유클리드 거리 ≈2686. 그래서 3000(여유 ~314)으로 덮는다. 실제 수치 튜닝은
+ * TODO(밸런스)지만 이 부등식은 튜닝과 무관하게 유지돼야 한다(Lane5 리뷰 MED — ring 만 보고
+ * 2600 으로 잡으면 cluster 코너가 샜다).
  */
-export const BLOCKBREAK_ENEMY_CULL_RADIUS = 2600;
+export const BLOCKBREAK_ENEMY_CULL_RADIUS = 3000;
 
 /** 벽 행이 덮는 절반 폭 = 창 반폭(±창). 코스 x 는 창(scrollX=0)과 항상 정렬된다. */
 const COURSE_HALF_W = INVASION_WINDOW_HALF_W;
@@ -148,14 +151,18 @@ export function isPinnedByWall(player: Entity, walls: readonly Entity[]): boolea
 /**
  * 창 중심에서 컬 반경 밖(뒤로 흘러간) 적을 dead 표시한다(강제 스크롤 모드 전용). 보스는
  * 제외 — 코스 끝 보스는 창을 벗어나도 유지된다. compact 가 dead 를 수거한다. scrollRuntime
- * 미존재면 no-op(뱀서류·침공 무영향).
+ * 미존재면 no-op(뱀서류·침공 무영향). `cullRadius` 는 모드별 컬 반경(Lane5) — 호출부가 각
+ * 모드의 상수를 넘긴다. 미지정 시 블록격파 기본값(단위 테스트 호환).
  */
-export function cullScrollEnemies(state: WorldState): void {
+export function cullScrollEnemies(
+  state: WorldState,
+  cullRadius: number = BLOCKBREAK_ENEMY_CULL_RADIUS,
+): void {
   const rt = state.scrollRuntime;
   if (rt === undefined) return;
   const cx = rt.scrollX;
   const cy = rt.scrollY;
-  const r2 = BLOCKBREAK_ENEMY_CULL_RADIUS * BLOCKBREAK_ENEMY_CULL_RADIUS;
+  const r2 = cullRadius * cullRadius;
   for (const e of state.entities) {
     if (e.dead || e.kind !== 'enemy') continue;
     const dx = e.x - cx;

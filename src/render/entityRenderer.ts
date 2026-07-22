@@ -153,6 +153,11 @@ export function spriteSlotFor(kind: EntityKind, enemyType: number, planet = 0): 
       return { kind: 'array', slot: 'prop', index: enemyType };
     case 'defenseBoss':
       return { kind: 'array', slot: 'defenseBoss', index: enemyType };
+    // --- 레이싱(Lane5) ---
+    case 'boostPad':
+      // TODO(art): 전용 부스트 패드 아트는 후속(Lane5 스펙 §3 — 렌더 세부는 balance/art 후속).
+      // 지금은 기존 이벤트 오브젝트 텍스처를 placeholder 로 재사용한다(sim 정합만 필수).
+      return { kind: 'single', slot: 'turretPickup' };
   }
 }
 
