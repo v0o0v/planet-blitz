@@ -33,12 +33,14 @@ export const RACING_SPAWN_AHEAD = 700;
  * 창 중심에서 이 반경 밖으로 흘러간 적을 컬(뒤로 밀려난 적 정리).
  * ⚠️ **구조적 불변식(밸런스 아님)**: 이 값은 반드시 **최대 스폰 거리**보다 커야 한다 — 그렇지
  * 않으면 창 전방(+X, `RACING_SPAWN_AHEAD`)에 뜬 적이 플레이어에 닿기도 전에 즉시 컬링돼
- * 모드가 성립하지 않는다. 최대 스폰 거리는 blockBreak 과 동일한 포메이션 오프셋(ring 반경
- * ≈1322, cluster)에 SPAWN_AHEAD 700 을 더한 ≈2080(축만 −Y→+X 로 회전 — 유클리드 거리는
- * 불변)이라 2600(여유 ~500)으로 둔다. 실제 수치 튜닝은 TODO(밸런스)지만 이 부등식은 튜닝과
- * 무관하게 유지돼야 한다(Lane4 MED 교훈).
+ * 모드가 성립하지 않는다. 최악은 **cluster 포메이션 코너**다(ring 이 아니다): racing 은 cull
+ * 중심(scrollX,scrollY) 대비 cluster base=(scrollX+700, scrollY), cluster 오프셋
+ * `cx=base+range(-1,1)*1000+520(±180)`·`cy=base+range(-1,1)*800-400(±180)` 라 최악 상대좌표
+ * ≈(+2400,−1380) → 유클리드 거리 ≈2768. 그래서 3000(여유 ~230)으로 덮는다. blockBreak 도
+ * 동형(최악 ≈2686). 실제 수치 튜닝은 TODO(밸런스)지만 이 부등식은 튜닝과 무관하게 유지돼야
+ * 한다(Lane4 MED·Lane5 리뷰 MED 교훈 — ring 만 보고 2600 으로 잡으면 cluster 코너가 샌다).
  */
-export const RACING_ENEMY_CULL_RADIUS = 2600;
+export const RACING_ENEMY_CULL_RADIUS = 3000;
 /** 창 뒤(−X) 경계에서 이 거리 안쪽에 몰리면 압박 피해. TODO(밸런스). */
 export const RACING_REAR_PRESSURE_MARGIN = 120;
 /** 뒤 경계 압박 틱당 피해(iframes 간격 적용, 즉사 아님). TODO(밸런스). */
