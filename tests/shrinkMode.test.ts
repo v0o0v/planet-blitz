@@ -40,6 +40,7 @@ import {
   SHRINK_GRACE_TICKS,
   SHRINK_OUT_OF_BOUNDS_DAMAGE,
   SHRINK_SPAWN_RING_RADIUS,
+  SHRINK_SPAWN_INSET,
 } from '../src/sim/modes/shrink.js';
 
 const idle: InputFrame = emptyInput();
@@ -174,16 +175,20 @@ describe('수축 — 순수 함수', () => {
     expect(pNo.hp).toBe(hpNo);
   });
 
-  it('shrinkSafeRadius/shrinkSpawnRadius: rt 값 노출 · 스폰 반경은 항상 safeRadius 이하', () => {
+  it('shrinkSafeRadius/shrinkSpawnRadius: rt 값 노출 · 스폰 반경은 항상 safeRadius 미만(인셋)', () => {
     expect(shrinkSafeRadius(unitState(undefined))).toBe(0);
     expect(shrinkSpawnRadius(unitState(undefined))).toBe(0);
     const big: ShrinkRuntime = { safeRadius: SHRINK_INITIAL_RADIUS, graceTicks: 0 };
     expect(shrinkSafeRadius(unitState(big))).toBe(SHRINK_INITIAL_RADIUS);
-    // safeRadius > SPAWN_RING → 스폰은 SPAWN_RING 로 제한(초기).
-    expect(shrinkSpawnRadius(unitState(big))).toBe(SHRINK_SPAWN_RING_RADIUS);
-    // safeRadius < SPAWN_RING → 스폰은 safeRadius 로 조여진다(항상 안전 반경 안 = 링 게이트 성립).
+    // safeRadius > SPAWN_RING → 스폰은 SPAWN_RING 상한에서 인셋만큼 안쪽(리뷰 MED: cos²+sin²>1 이라
+    // 경계 스폰은 "밖" 오분류 → 인셋으로 엄격히 안쪽에 둔다).
+    expect(shrinkSpawnRadius(unitState(big))).toBe(SHRINK_SPAWN_RING_RADIUS - SHRINK_SPAWN_INSET);
+    // safeRadius ≤ SPAWN_RING → safeRadius 에서 인셋만큼 조여진다(항상 안전 반경 안 = 링 게이트 성립).
     const small: ShrinkRuntime = { safeRadius: SHRINK_SPAWN_RING_RADIUS - 100, graceTicks: 0 };
-    expect(shrinkSpawnRadius(unitState(small))).toBe(SHRINK_SPAWN_RING_RADIUS - 100);
+    expect(shrinkSpawnRadius(unitState(small))).toBe(SHRINK_SPAWN_RING_RADIUS - 100 - SHRINK_SPAWN_INSET);
+    // 경계값(safeRadius === SPAWN_RING)에서도 스폰이 엄격히 안쪽이다(r=1400 조기 전진 버그 방어).
+    const edge: ShrinkRuntime = { safeRadius: SHRINK_SPAWN_RING_RADIUS, graceTicks: 0 };
+    expect(shrinkSpawnRadius(unitState(edge))).toBeLessThan(SHRINK_SPAWN_RING_RADIUS);
   });
 });
 
@@ -317,6 +322,39 @@ describe('수축 — 정규경로 full-path 통합(베르단=shrink)', () => {
   it('(g) full-path config 는 실제로 shrink 를 스탬프한다(planetContent 정본, 브릿지 없음)', () => {
     const cfg = buildRunConfig(defaultProfile(), { planet: 1, stage: 1 });
     expect(cfg.planetMode).toBe(PLANET_MODE.shrink);
+  });
+
+  it('(h) safeRadius ≤ 스폰 링 반경 구간에서 실제 스폰(cos/sin)이 안전 반경 안에 들어 링 게이트가 헛돌지 않는다(리뷰 MED 회귀)', () => {
+    // ⚠️ 결정론용 Taylor sin/cos 는 cos²+sin²>1 이라, 경계(=safeRadius) 스폰은 x²+y²>safeRadius²
+    // 가 되어 shrinkRingCleared 가 "밖"으로 오분류 → 세그먼트 조기 전진(코어 진행 규칙 무력화).
+    // 인셋 수정(SHRINK_SPAWN_INSET) 검증: safeRadius 를 스폰 링 반경(1400) 이하(1000)로 낮추고
+    // **실제 웨이브 스폰 경로**(formationPositions cos/sin)를 태워도, 스폰된 적이 안전 반경 안이라
+    // shrinkRingCleared 가 false(아직 안 비었다)이고 세그먼트가 스폰만으로 전진하지 않는다.
+    // (수정 전이면 스폰 적이 전원 "밖" → shrinkRingCleared true → 조기 전진으로 이 테스트가 실패.)
+    const w = createWorld(7, shrinkConfig());
+    w.weapon.damage = 0; // 처치 배제(kills=0) → shrink 의 유일 전진 경로는 링 게이트뿐
+    const rt = w.shrinkRuntime as ShrinkRuntime;
+    rt.safeRadius = 1000; // 스폰 링 반경(1400) 이하 → 인셋 없으면 경계 스폰 버그 구간
+    rt.graceTicks = 1_000_000; // 반경 홀드(수축이 이 테스트를 흔들지 않게)
+    const seg0 = w.wave.segmentIndex;
+    let spawned = false;
+    for (let i = 0; i < 400 && !spawned; i++) {
+      stepShrink(w);
+      spawned = w.entities.some((e) => e.kind === 'enemy' && !e.dead);
+    }
+    expect(spawned).toBe(true); // 적이 실제로 스폰됐다(공허 런 가드)
+    expect(rt.safeRadius).toBe(1000); // 유예 홀드로 반경 불변(판정 전제)
+    // ★ 핵심: 스폰된 적이 안전 반경 안이라 링이 아직 안 비었다(수정 전이면 true 로 실패).
+    expect(shrinkRingCleared(w)).toBe(false);
+    // 실제 스폰 좌표(cos/sin 경로)가 안전 반경 안임을 직접 확증.
+    const enemies = w.entities.filter((e) => e.kind === 'enemy' && !e.dead);
+    for (const e of enemies) {
+      expect(e.x * e.x + e.y * e.y).toBeLessThanOrEqual(rt.safeRadius * rt.safeRadius);
+    }
+    // 스폰만으로 조기 전진하지 않았다(링이 안 비었으므로 세그먼트 불변).
+    expect(w.wave.segmentIndex).toBe(seg0);
+    // 스폰 반경 자체도 safeRadius 미만(인셋 적용)임을 못박는다.
+    expect(shrinkSpawnRadius(w)).toBeLessThan(rt.safeRadius);
   });
 });
 

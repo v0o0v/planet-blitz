@@ -50,6 +50,16 @@ export const SHRINK_OUT_OF_BOUNDS_DAMAGE = 8;
  * TODO(밸런스).
  */
 export const SHRINK_SPAWN_RING_RADIUS = 1400;
+/**
+ * 스폰 링 인셋(safeRadius 경계에서 안쪽으로 당기는 정수 여유). ⚠️ 결정론용 Taylor sin/cos
+ * (`math.ts`)는 **모든 각도에서 cos²+sin²>1**(20M 각도 전수 실측 최대 1.0000071)이라, 경계
+ * (=safeRadius)에 스폰하면 `x²+y² = r²·(cos²+sin²) > safeRadius²` 가 되어 `shrinkRingCleared` 가
+ * 그 적을 **"밖"으로 오분류**한다 → 스폰 틱에 링이 "전멸"로 보여 세그먼트가 조기 전진(코어
+ * 진행 규칙 무력화, 리뷰 MED). 스폰을 이 인셋만큼 **엄격히 안쪽**에 둬 링 전멸 게이트 불변식
+ * ("스폰은 항상 안전 반경 안")을 실제로 성립시킨다. 상대오차 ~7e-6 라 1 유닛이면 충분하나
+ * 여유를 준다(정수). TODO(밸런스).
+ */
+export const SHRINK_SPAWN_INSET = 16;
 
 /** 수축지대 런타임(정수 2필드). 원점 0,0 이 안전 반경의 중심이다. */
 export interface ShrinkRuntime {
@@ -95,7 +105,13 @@ export function shrinkSafeRadius(state: WorldState): number {
  */
 export function shrinkSpawnRadius(state: WorldState): number {
   const r = shrinkSafeRadius(state);
-  return r < SHRINK_SPAWN_RING_RADIUS ? r : SHRINK_SPAWN_RING_RADIUS;
+  if (r <= 0) return 0;
+  // 스폰은 항상 안전 반경 **미만**이어야 링 전멸 게이트가 성립한다(SHRINK_SPAWN_INSET 근거 참조).
+  // safeRadius 를 스폰 링 반경 상한으로 min 한 뒤, 인셋으로 경계에서 엄격히 떼어 낸다 — safeRadius
+  // 가 SHRINK_SPAWN_RING_RADIUS 와 같은 경계값(예: 정확히 1400)일 때도 안쪽이 보장된다.
+  const capped = r < SHRINK_SPAWN_RING_RADIUS ? r : SHRINK_SPAWN_RING_RADIUS;
+  const inset = capped - SHRINK_SPAWN_INSET;
+  return inset < 0 ? 0 : inset;
 }
 
 /**
