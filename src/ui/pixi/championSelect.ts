@@ -55,6 +55,9 @@ import {
   tShipKey,
   AFFINITY_ACCENT,
 } from './shipLabels.js';
+import { shipStory } from '../../../data/lore/index.js';
+import { makePilotFileModal } from './storyModal.js';
+import { storyProgressFromProfile } from './storyUnlock.js';
 
 // --- 레이아웃(디자인 스페이스 1920×1080) ---
 const BANNER_W = 640;
@@ -172,6 +175,9 @@ export class ChampionSelectScreen {
   private selected = 0;
   private scrollY = 0;
   private confirming = false;
+  /** 사연(파일럿 파일) 팝업 열림 상태 + 챕터 스크롤 위치(재렌더 사이 유지). */
+  private storyOpen = false;
+  private storyScrollY = 0;
   private hint = '';
   /** 진입 시점의 런 HUD `visibility` 인라인 값(닫을 때 그대로 되돌린다 — 결함 C-4). */
   private hudPrevVisibility: string | null = null;
@@ -205,6 +211,8 @@ export class ChampionSelectScreen {
     this.cb = cb;
     this.hint = '';
     this.confirming = false;
+    this.storyOpen = false;
+    this.storyScrollY = 0;
     this.scrollY = 0;
     // 기본 선택은 **현역 기체 타입** — "지금 무엇을 타고 있는지" 에서 출발해야 비교가 된다.
     this.selected = shipTypeDef(activeShip(profile).typeId).id;
@@ -311,6 +319,7 @@ export class ChampionSelectScreen {
     this.renderDetail();
     this.renderHint();
     if (this.confirming) this.renderConfirmModal();
+    if (this.storyOpen) this.renderStoryModal();
   }
 
   private renderTitleBar(): void {
@@ -529,6 +538,52 @@ export class ChampionSelectScreen {
     this.renderSignature(panel, def, DETAIL_BOX.y + 150);
     this.renderBpTable(panel, def, DETAIL_BOX.y + 300);
     this.renderTreePreview(panel, def, DETAIL_BOX.y + 470);
+
+    // 사연 읽기 — 트리 미리보기 아래 남는 세로에. 시그니처의 "왜 이 능력인가"를 서사가 푼다.
+    const storyBtn = new PixiButton({
+      texture: this.ui['ui_btn_wood.png'],
+      fallbackColor: 0x4a3a24,
+      width: Math.min(300, DETAIL_BOX.w),
+      height: 52,
+      fontSize: 17,
+      label: tShipKey('champion.story.open', 'Read Pilot File'),
+      onClick: () => this.openStory(),
+    });
+    storyBtn.container.position.set(DETAIL_BOX.x, DETAIL_BOX.bottom - 52);
+    panel.addChild(storyBtn.container);
+  }
+
+  /** 사연 팝업 열기 — 스크롤을 처음으로 되돌리고 재렌더. */
+  private openStory(): void {
+    this.storyOpen = true;
+    this.storyScrollY = 0;
+    this.render();
+  }
+
+  /** 파일럿 파일(사연) 팝업. 잠긴 챕터는 과제 힌트만 보인다(해금 판정은 storyUnlock). */
+  private renderStoryModal(): void {
+    const def = shipTypeDef(this.selected);
+    const story = shipStory(def.slug);
+    if (story === undefined) {
+      // 사연 데이터가 없는 타입은 팝업을 열지 않는다(방어 — 정상 경로에선 전 타입에 사연이 있다).
+      this.storyOpen = false;
+      return;
+    }
+    const modal = makePilotFileModal({
+      ui: this.ui,
+      def,
+      story,
+      progress: storyProgressFromProfile(this.profile, story),
+      scrollY: this.storyScrollY,
+      onScroll: (v) => {
+        this.storyScrollY = v;
+      },
+      onClose: () => {
+        this.storyOpen = false;
+        this.render();
+      },
+    });
+    this.root.addChild(modal);
   }
 
   /** 시그니처 패시브 카드. 스트라이커는 "없음" 을 명시한다(설계서 §11 — 의도된 부재다). */
