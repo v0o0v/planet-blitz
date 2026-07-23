@@ -480,6 +480,16 @@ export function hashWorld(state: WorldState): number {
     h = hashU32(h, sr.scrollY >>> 0);
     h = hashU32(h, sr.accelCp >>> 0);
   }
+  // --- 수축지대 런타임(APPEND-ONLY, 조건부 · ADR-0021 Lane7) ---
+  // 이 재설계의 첫 "신규 해시 필드" 모드. 존재할 때만 접는다(뱀서류·침공·블록격파·레이싱·추격·
+  // 오염은 shrinkRuntime 미존재 → 무폴드 → 바이트 불변). safeRadius·graceTicks 는 항상 정수라
+  // `>>> 0` uint32 접기가 결정론적이다(소수부 유실 없음 — 정수 전용 규율). **append-only 맨 꼬리**
+  // 라 위 폴드 순서를 하나도 건드리지 않는다(재배치 금지).
+  const shr = state.shrinkRuntime;
+  if (shr !== undefined) {
+    h = hashU32(h, shr.safeRadius >>> 0);
+    h = hashU32(h, shr.graceTicks >>> 0);
+  }
   return h >>> 0;
 }
 

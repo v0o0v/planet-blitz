@@ -334,6 +334,7 @@ async function main(): Promise<void> {
     cameraY: 0,
     planet: 0,
     visionRadius: 0, // 메뉴 프레임 — 시야 제한 없음(추격 아님).
+    safeRadius: 0, // 메뉴 프레임 — 안전 반경 제한 없음(수축 아님).
     entities: [],
     beams: [],
   };
