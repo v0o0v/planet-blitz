@@ -36,7 +36,7 @@ const NOISE_SCALE_FINE = 3.2;
 const UPPER_THRESHOLD = 0.5;
 
 /** Planet index → tileset asset basename (matches assets/tilesets/<name>.*). */
-const PLANET_TILESET = ['kargon', 'berdan', 'niflheim', 'arke'] as const;
+const PLANET_TILESET = ['kargon', 'berdan', 'niflheim', 'arke', 'toxar', 'kras'] as const;
 
 type Corner = 'upper' | 'lower';
 interface WangTileMeta {
