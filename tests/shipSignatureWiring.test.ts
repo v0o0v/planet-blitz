@@ -36,6 +36,7 @@ import { defaultProfile, activeShip } from '../src/save/profile.js';
 import type { Profile } from '../src/save/profile.js';
 import { createWorld, stepWorld, playerCloaked } from '../src/sim/world.js';
 import { spawnBoss } from '../src/sim/entities.js';
+import { PLANET_MODE } from '../src/sim/planetMode.js';
 import { updateBoss } from '../src/sim/boss.js';
 import { updateEnemy, chargerHitWall } from '../src/sim/patterns/index.js';
 import { summonEnemy } from '../src/sim/waves.js';
@@ -142,7 +143,10 @@ interface Observed {
 }
 
 function observe(seed: number, cfg: WorldConfig, ticks: number): Observed {
-  const state = createWorld(seed, { ...cfg, playerHp: DURABLE_HP });
+  // 함선 시그니처 관측은 **중립 서바이벌 아레나**(vampire)에서 돈다. CASES 의 planet 2(니플헤임)는
+  // Lane6 에서 chase 로 배정돼 무적 포식자가 정지·저속 플레이어를 접촉 즉사시키므로(MED-1 수정 후
+  // 치명적), planetMode 를 vampire 로 덮어 장시간 관측 런이 조기 종료되지 않게 한다(로스터 유지·chase만 끔).
+  const state = createWorld(seed, { ...cfg, planetMode: PLANET_MODE.vampire, playerHp: DURABLE_HP });
   let maxAux0 = 0;
   let maxAux1 = 0;
   let cloakedTicks = 0;
@@ -221,7 +225,8 @@ function observe(seed: number, cfg: WorldConfig, ticks: number): Observed {
 }
 
 function runHashes(seed: number, cfg: WorldConfig, ticks: number): number[] {
-  const state = createWorld(seed, { ...cfg, playerHp: DURABLE_HP });
+  // observe 와 동일: 시그니처 해시 관측을 중립 vampire 아레나로 통일한다(planet 2 chase 조기 종료 회피).
+  const state = createWorld(seed, { ...cfg, planetMode: PLANET_MODE.vampire, playerHp: DURABLE_HP });
   const out: number[] = [];
   for (let i = 0; i < ticks; i++) {
     stepWorld(state, NEUTRAL);

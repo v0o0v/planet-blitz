@@ -23,6 +23,7 @@ import type { InputFrame, WorldConfig, WorldState } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile } from '../src/save/profile.js';
+import { SEGMENTS } from '../data/waves.js';
 import { PLANET_MODE } from '../src/sim/planetMode.js';
 import { blankEntity, spawnBullet } from '../src/sim/entities.js';
 import type { Entity } from '../src/sim/entities.js';
@@ -183,6 +184,13 @@ describe('추격 — 순수 함수', () => {
     expect(chaseVisionRadius(PLANET_MODE.contamination)).toBe(0);
     expect(chaseVisionRadius(undefined)).toBe(0);
   });
+
+  it('CHASE_SHELTER_COUNT 는 일반 세그먼트 수(SEGMENTS.length-1)와 일치한다(desync 가드, 리뷰 LOW)', () => {
+    // 대피소 aux0(0..N-1)가 각 일반 세그먼트에 1:1 대응한다. SEGMENTS 가 바뀌면 초과 세그먼트에
+    // 매칭 대피소가 없어 도주 진행이 정체될 수 있으므로(하드락은 아님 — 포식자 처치 승리는 유지),
+    // 이 등식을 못박아 조용한 desync 를 잡는다.
+    expect(CHASE_SHELTER_COUNT).toBe(SEGMENTS.length - 1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -296,6 +304,27 @@ describe('추격 — 정규경로 full-path 통합(니플헤임=chase)', () => {
   it('(g) full-path config 는 실제로 chase 를 스탬프한다(planetContent 정본, 브릿지 없음)', () => {
     const cfg = buildRunConfig(defaultProfile(), { planet: 2, stage: 1 });
     expect(cfg.planetMode).toBe(PLANET_MODE.chase);
+  });
+
+  it('(h) 무적 포식자가 hover 오프셋이 아니라 플레이어 실좌표로 수렴한다 — 정지 플레이어는 접촉 즉사(리뷰 MED-1)', () => {
+    // 수정 전엔 포식자가 공용 moveBoss 로 머리 위 302유닛 hover 를 유지해, 정지·도주 플레이어에게
+    // 접촉이 **구조적으로 절대 발생하지 않았다**(도주 긴장 부재). 이제 취약화 전(aux0=0) 포식자는
+    // chasePredatorPursue 로 플레이어 실좌표에 수렴하므로, 가만히 선 플레이어는 결국 접촉 즉사한다.
+    const w = createWorld(13, chaseConfig());
+    w.weapon.damage = 0; // 반격 장치 파괴 배제 → 포식자 무적(aux0=0) 유지(무노력 취약화 없음)
+    const player = w.entities[0] as Entity;
+    const predator = predatorOf(w) as Entity;
+    expect(predator.aux0).toBe(0);
+    // 원점에서 떨어진 곳에 플레이어를 매 틱 "정지" 고정한다. hover 라면 절대 못 닿지만 실좌표
+    // 수렴이면 포식자가 다가와 접촉 판정 안으로 들어온다.
+    for (let i = 0; i < 800 && !w.gameOver; i++) {
+      player.x = 600;
+      player.y = 0;
+      stepChase(w);
+    }
+    // 무적 유지(도중에 취약화되지 않았다) + 포식자 실좌표 수렴으로 접촉 즉사.
+    expect(chaseAliveCounterDevices(w)).toBe(CHASE_COUNTER_DEVICE_COUNT);
+    expect(w.gameOver).toBe(true);
   });
 });
 
