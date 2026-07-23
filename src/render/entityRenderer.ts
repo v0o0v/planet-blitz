@@ -165,6 +165,11 @@ export function spriteSlotFor(kind: EntityKind, enemyType: number, planet = 0): 
       // 대피소 전용 슬롯(안전지대 돔). 실 PNG 가 없으면 절차적 돔으로 폴백한다(textures.ts).
       // 시야 암흑/안개는 별도 렌더 오버레이(drawFieldOverlays)가 담당한다(스프라이트가 아니다).
       return { kind: 'single', slot: 'shelter' };
+    // --- 에코 신호(story Phase D, ADR-0023) ---
+    case 'echo':
+      // TODO(art): 전용 에코 신호 비콘 아트는 후속. 지금은 자석 이미터 텍스처를 placeholder 로
+      // 재사용한다(sim 정합만 필수 — boostPad 선례). 안정화 반경·게이지 UI 는 W3 렌더 몫이다.
+      return { kind: 'single', slot: 'magnetEmitter' };
   }
 }
 

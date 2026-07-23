@@ -490,6 +490,19 @@ export function hashWorld(state: WorldState): number {
     h = hashU32(h, shr.safeRadius >>> 0);
     h = hashU32(h, shr.graceTicks >>> 0);
   }
+  // --- 에코 신호 런타임(APPEND-ONLY, 조건부 · story Phase D · ADR-0023) ---
+  // 존재할 때만 접는다(에코 미발생 런 = 뱀서류·침공·블록격파·레이싱·추격·수축·오염 전부 →
+  // echoRuntime 미존재 → 무폴드 → 바이트 불변). state·spawnTick·dwell·entityId 는 전부 정수라
+  // `>>> 0` uint32 접기가 결정론적이다(정수 전용 규율 — 거리 판정은 엔티티 f64 좌표로 하되 그
+  // 좌표는 hashEntity 가 이미 접는다). **append-only 맨 꼬리**(shrinkRuntime 폴드 뒤)라 위 폴드
+  // 순서를 하나도 건드리지 않는다(재배치 금지). 신규 story 필드는 이 아래에만 append.
+  const echo = state.echoRuntime;
+  if (echo !== undefined) {
+    h = hashU32(h, echo.state >>> 0);
+    h = hashU32(h, echo.spawnTick >>> 0);
+    h = hashU32(h, echo.dwell >>> 0);
+    h = hashU32(h, echo.entityId >>> 0);
+  }
   return h >>> 0;
 }
 

@@ -75,6 +75,11 @@ const STYLE = `
 #pb-boss .pb-bossfill.overheat { background:linear-gradient(90deg,#ffdd44,#ff5522); box-shadow:0 0 16px 4px rgba(255,120,20,.8) inset; }
 #pb-boss .pb-bossmark { position:absolute; top:0; bottom:0; width:2px; background:rgba(255,255,255,.7); }
 #pb-boss .pb-bossmsg { font-size:12px; font-weight:700; color:#ffd98a; margin-top:3px; height:14px; text-shadow:0 1px 2px #000; }
+#pb-lore { position:absolute; top:140px; left:50%; transform:translateX(-50%); max-width:80vw; background:rgba(18,24,44,.82); border:1px solid rgba(120,200,255,.55); box-shadow:0 0 18px 2px rgba(60,140,220,.35) inset; color:#dbe8ff; padding:10px 22px; border-radius:12px; font-family:'Segoe UI',system-ui,sans-serif; text-align:center; pointer-events:none; user-select:none; }
+#pb-lore .pb-lore-line { font-size:14px; font-weight:600; letter-spacing:.4px; text-shadow:0 1px 3px #000; line-height:1.5; }
+#pb-lore .pb-lore-line + .pb-lore-line { font-size:12px; font-weight:500; color:#a9c6ff; }
+#pb-lore.pb-lore-in { animation:pb-lore-fade 5.2s ease-in-out forwards; }
+@keyframes pb-lore-fade { 0%{opacity:0;transform:translate(-50%,-8px);} 8%{opacity:1;transform:translate(-50%,0);} 82%{opacity:1;transform:translate(-50%,0);} 100%{opacity:0;transform:translate(-50%,-8px);} }
 `;
 
 export class Hud {
@@ -90,6 +95,9 @@ export class Hud {
   private readonly bossFill: HTMLElement;
   private readonly bossName: HTMLElement;
   private readonly bossMsg: HTMLElement;
+  /** 스토리 로어 토스트 배너(에코 안정화 등). 기본 숨김, {@link showLore} 로 잠깐 표시. */
+  private readonly loreToast: HTMLElement;
+  private loreTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(elementId = 'hud') {
     const el = document.getElementById(elementId);
@@ -146,6 +154,38 @@ export class Hud {
     this.bossRoot.appendChild(this.bossMsg);
     this.bossRoot.style.display = 'none';
     document.body.appendChild(this.bossRoot);
+
+    this.loreToast = document.createElement('div');
+    this.loreToast.id = 'pb-lore';
+    this.loreToast.style.display = 'none';
+    document.body.appendChild(this.loreToast);
+  }
+
+  /**
+   * 스토리 로어 토스트를 잠깐 띄운다(에코 안정화·파편 획득 등, 스토리 Phase E). 각 줄이 별도
+   * 라인으로 표시되고 약 5초 후 자동으로 사라진다. 연달아 부르면 이전 타이머를 취소하고 재무장한다
+   * (겹침 방지). 순수 표시 — sim·정산과 무관하며, 표시할 줄이 없으면 no-op.
+   */
+  showLore(lines: readonly string[]): void {
+    if (lines.length === 0) return;
+    this.loreToast.replaceChildren();
+    for (const line of lines) {
+      const el = document.createElement('div');
+      el.className = 'pb-lore-line';
+      el.textContent = line;
+      this.loreToast.appendChild(el);
+    }
+    this.loreToast.style.display = 'block';
+    // 애니메이션 재시작(연속 호출 시 처음부터 페이드). reflow 를 강제해 클래스 재적용이 먹게 한다.
+    this.loreToast.classList.remove('pb-lore-in');
+    void this.loreToast.offsetWidth;
+    this.loreToast.classList.add('pb-lore-in');
+    if (this.loreTimer !== null) clearTimeout(this.loreTimer);
+    this.loreTimer = setTimeout(() => {
+      this.loreToast.style.display = 'none';
+      this.loreToast.classList.remove('pb-lore-in');
+      this.loreTimer = null;
+    }, 5200);
   }
 
   /** Debug telemetry line (kept from Phase 1; also used by the bench scene). */

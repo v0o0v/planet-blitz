@@ -528,6 +528,26 @@ export const EN = {
   'shard.your-name-here.body':
     'The final shard is blank. Not lost — blank, waiting. The Archive leaves one entry open on every ledger it keeps. It seems to believe your story is still being filed.',
 
+  // 에코 신호 보상 — 안정화 로어 토스트 · 파편 획득 알림 (Phase E, ADR-0023)
+  'echo.stabilized.toast': 'Echo Signal stabilized — a lost record finishes sending.',
+  'shard.gained': 'New record shard recovered.',
+
+  // 도감 코스메틱 — 사연 챕터 해금 배지(챕터 2)·칭호(챕터 3). id = `<slug>-ch<번호>` (Phase E)
+  'cosmetic.striker-ch2.name': 'First Entry',
+  'cosmetic.striker-ch3.name': 'The Self-Made Record',
+  'cosmetic.bruiser-ch2.name': 'Weight of Kras',
+  'cosmetic.bruiser-ch3.name': 'Bearer of Names',
+  'cosmetic.arccaster-ch2.name': 'The Masterpiece Vault',
+  'cosmetic.arccaster-ch3.name': 'The Beam Sculptor',
+  'cosmetic.phantom-ch2.name': 'The Cold Trail',
+  'cosmetic.phantom-ch3.name': 'The Strike That Remembers',
+  'cosmetic.hatchling-ch2.name': 'The Green Coordinates',
+  'cosmetic.hatchling-ch3.name': 'Mother of a Brood',
+  'cosmetic.mallow-ch2.name': 'The Sealed Recipe',
+  'cosmetic.mallow-ch3.name': 'Sweet by the Thousand',
+  'cosmetic.bubble-ch2.name': 'First Burst',
+  'cosmetic.bubble-ch3.name': 'The Fearless Film',
+
   // --- 정제소 ---
   'refine.title': 'Refinery',
   'refine.bar.minerals': 'Minerals',
@@ -1586,6 +1606,26 @@ export const KO: Record<MessageKey, string> = {
   'shard.your-name-here.title': '파편: 여기 당신의 이름',
   'shard.your-name-here.body':
     '마지막 파편은 비어 있다. 잃어버린 게 아니라 — 비어서, 기다리는 중이다. 기록 보관소는 자신이 관리하는 모든 공적부에 한 칸을 비워 둔다. 당신의 이야기가 아직 정리되는 중이라고 여기는 모양이다.',
+
+  // 에코 신호 보상 — 안정화 로어 토스트 · 파편 획득 알림
+  'echo.stabilized.toast': '에코 신호 안정화 — 잃어버린 기록이 전송을 마칩니다.',
+  'shard.gained': '새 기록 파편을 획득했습니다.',
+
+  // 도감 코스메틱 — 사연 챕터 해금 배지(챕터 2)·칭호(챕터 3)
+  'cosmetic.striker-ch2.name': '첫 기록',
+  'cosmetic.striker-ch3.name': '스스로 남긴 이름',
+  'cosmetic.bruiser-ch2.name': '크라스의 무게',
+  'cosmetic.bruiser-ch3.name': '이름을 새긴 자',
+  'cosmetic.arccaster-ch2.name': '걸작의 금고',
+  'cosmetic.arccaster-ch3.name': '광선 조각가',
+  'cosmetic.phantom-ch2.name': '식은 자취',
+  'cosmetic.phantom-ch3.name': '기억하는 일격',
+  'cosmetic.hatchling-ch2.name': '초록빛 좌표',
+  'cosmetic.hatchling-ch3.name': '무리의 어미',
+  'cosmetic.mallow-ch2.name': '봉인된 레시피',
+  'cosmetic.mallow-ch3.name': '천 번의 단맛',
+  'cosmetic.bubble-ch2.name': '첫 파열',
+  'cosmetic.bubble-ch3.name': '두렵지 않은 막',
 
   'refine.title': '정제소',
   'refine.bar.minerals': '광물',

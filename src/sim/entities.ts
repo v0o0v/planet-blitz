@@ -51,7 +51,9 @@ export type EntityKind =
   // --- 레이싱(Lane5, ADR-0021 §2.3) — 부스트 패드 -----------------------------------
   | 'boostPad' // 레이싱 지름길 채널의 순간가속 오버레이. 충돌·이동 차단·grid 등록 없음(inert) — racingCleared 가 플레이어 overlap 만 판정해 가속
   // --- 추격·탈출(Lane6, ADR-0021 §2.4) — 대피소 -------------------------------------
-  | 'shelter'; // 추격 모드 대피소. boostPad 선례(inert): 충돌·이동 차단·grid 등록·isGimmick 어디에도 없음 — chaseShelterReached 가 플레이어 overlap 만 판정해 세그먼트 전진. aux0=대피소 인덱스(세그먼트 대응)
+  | 'shelter' // 추격 모드 대피소. boostPad 선례(inert): 충돌·이동 차단·grid 등록·isGimmick 어디에도 없음 — chaseShelterReached 가 플레이어 overlap 만 판정해 세그먼트 전진. aux0=대피소 인덱스(세그먼트 대응)
+  // --- 에코 신호(story Phase D, ADR-0023) — 서사 이벤트 오브젝트 ----------------------
+  | 'echo'; // 에코 신호. boostPad/shelter 선례(inert): 충돌·이동 차단·grid 등록·isGimmick 어디에도 없음 — echo.ts stepEchoStabilize 가 플레이어 반경 내 체류를 판정해 안정화. 에코 런(≈3%)에만 등장
 
 /**
  * Stable integer per kind, folded into the state hash. Never renumber existing
@@ -105,6 +107,10 @@ export const KIND_CODE: Record<EntityKind, number> = {
   // Appended for 추격·탈출(Lane6, never renumber 1..27). 대피소는 추격 런에만 등장하므로
   // PvE·구 침공·블록격파·레이싱·오염 리플레이의 해시에는 나타나지 않는다(기존 fixtures 회귀 0).
   shelter: 28,
+  // Appended for 에코 신호(story Phase D, never renumber 1..28). 에코 오브젝트는 에코 런(≈3%)
+  // 에만 등장하므로 에코 미발생 런(뱀서류·침공·블록격파·레이싱·추격·수축·오염 전부)의 해시에는
+  // 나타나지 않는다(기존 fixtures 회귀 0). 신규 kind 는 30 부터 append.
+  echo: 29,
 };
 
 export interface Entity {
@@ -475,4 +481,20 @@ export function spawnShelter(sink: EntitySink, x: number, y: number, radius: num
   s.y = y;
   s.radius = radius;
   return addEntity(sink, s);
+}
+
+/**
+ * 에코 신호 오브젝트(story Phase D, ADR-0023). `radius` 는 렌더/풋프린트 반경일 뿐 충돌엔 쓰지
+ * 않는다. boostPad/shelter 정본과 같은 순수 inert 오브젝트 — resolveCollisions 격자·
+ * rebuildActiveWalls·isGimmick·피해목록 어디에도 등록되지 않아 충돌·이동 차단·청크 컬링이 없다.
+ * echo.ts 의 stepEchoStabilize 가 플레이어 반경 내 체류를 판정해 안정화하고, 성공 시 dead 로
+ * 표시한다(그전엔 dead 가 되는 경로가 없다). 에코 런(≈3%)에만 스폰돼 KIND_CODE 29 가 그 외
+ * 런의 해시에 등장하지 않는다.
+ */
+export function spawnEcho(sink: EntitySink, x: number, y: number, radius: number): Entity {
+  const e = blankEntity('echo');
+  e.x = x;
+  e.y = y;
+  e.radius = radius;
+  return addEntity(sink, e);
 }

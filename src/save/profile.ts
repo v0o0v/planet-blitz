@@ -155,6 +155,30 @@ export interface Profile {
    * 고른다. 서버 정본은 guardians 테이블(performance·retired 는 서버 권위).
    */
   guardians: GuardianRecord[];
+  /**
+   * 수집한 기록 파편 id 집합(스토리 시스템 Phase E, ADR-0023). 에코 신호 안정화로 정산 경로에서
+   * append 되며(중복 없는 집합 의미지만 저장은 순서 있는 배열), 기록 보관소 도감이 읽어 오스카
+   * 문명 로어를 조각조각 연다. 순수 메타/UI 데이터 — sim·해시 무관. 정본 파편 목록은
+   * `data/lore` `RECORD_SHARDS`. {@link normalizeProfile} 이 문자열만·중복 제거로 정규화한다.
+   */
+  collectedShards: string[];
+  /**
+   * 사연 챕터3 마일스톤 카운터(metric id → 누적값, 스토리 시스템 Phase E). 정산 경로에서만
+   * 누적하며(sim 관측 델타 + victory 시 runsWon), `storyUnlock` 이 읽어 챕터3 해금을 판정한다.
+   * metric id 정본은 `data/lore` 챕터3 unlock.metric(runsWon·hitsTaken·overchargeKills·
+   * cloakBreaks·broodLaunches·cushionHealed·filmPops). {@link normalizeProfile} 이 값을 유한
+   * 정수(음수는 0 하한)로 정규화한다. 희소 맵 — 관측된 metric 만 키로 존재한다.
+   */
+  storyMetrics: Record<string, number>;
+  /**
+   * 지급 완료한 사연 챕터 보상 원장(claimId 집합, 스토리 시스템 Phase E). claimId =
+   * `${slug}-ch${index+1}`. 챕터 해금 조건은 영구 참(누적 마일스톤·행성 클리어)이라 매 정산마다
+   * 재판정되므로, **한 번 지급한 크레딧을 다시 주지 않도록** 정산 경로가 여기에 claimId 를
+   * 기록하고 이미 있으면 지급을 건너뛴다(중복 없는 집합 의미지만 저장은 순서 있는 배열).
+   * 코스메틱은 순수 파생이라 원장이 필요 없고, 크레딧만 1회성이라 이 원장이 필요하다.
+   * {@link normalizeProfile} 이 문자열만·중복 제거로 정규화한다.
+   */
+  storyRewardsClaimed: string[];
 }
 
 /** 로컬 세이브의 수호 기체 레코드(서버 guardians 미러, ADR-0007). */
@@ -255,6 +279,9 @@ export function defaultProfile(): Profile {
     introSeen: false,
     lineage: emptyLineage(),
     guardians: [],
+    collectedShards: [],
+    storyMetrics: {},
+    storyRewardsClaimed: [],
   };
   return p;
 }
@@ -451,7 +478,18 @@ export function migrate(raw: unknown): Profile {
   if (version < 3) data = migrateV2toV3(data);
   if (version < 4) data = migrateV3toV4(data);
   if (version < 5) data = migrateV4toV5(data);
+  if (version < 6) data = migrateV5toV6(data);
   return normalizeProfile(data);
+}
+
+/**
+ * v5 → v6 (스토리 시스템 Phase E, ADR-0023): `collectedShards` + `storyMetrics` 신설.
+ * 두 필드는 신규 프로필에서 빈 값(수집·누적 전)이므로 마이그레이션은 스탬프만 올리고
+ * (migrateV1toV2 선례), 실제 필드 채움은 `normalizeProfile`(빈 배열·빈 객체)이 맡는다.
+ * 기존 유저는 파편 0개·마일스톤 0에서 시작한다(과거 런은 관측되지 않았으므로 정직한 초기값).
+ */
+function migrateV5toV6(v5: Record<string, unknown>): Record<string, unknown> {
+  return { ...v5, saveVersion: 6 };
 }
 
 /**
@@ -592,8 +630,47 @@ function normalizeProfile(d: Record<string, unknown>): Profile {
     introSeen: d.introSeen === true,
     lineage: normalizeLineage(d.lineage),
     guardians: normalizeGuardianRecords(d.guardians),
+    collectedShards: normalizeStringSet(d.collectedShards),
+    storyMetrics: normalizeStoryMetrics(d.storyMetrics),
+    storyRewardsClaimed: normalizeStringSet(d.storyRewardsClaimed),
     ...normalizeStoredLayout(d.defenseLayout),
   };
+  return out;
+}
+
+/**
+ * 문자열 id 집합(저장은 순서 있는 배열)을 정규화한다(Phase E). 수집 파편(`collectedShards`)과
+ * 챕터 보상 원장(`storyRewardsClaimed`)이 공유한다 — 둘 다 "중복 없는 문자열 집합"이라
+ * 비-문자열·빈 문자열을 걸러내고 중복을 제거한다(입력 순서 보존). 손상/부분 세이브는 빈 배열.
+ * ⚠️ 여기서 id 가 정본(`RECORD_SHARDS`·챕터 claimId)에 실재하는지는 검사하지 않는다 — 표시·판정은
+ * 정본을 순회하며 이 집합과 대조하므로, 정본에 없는 유령 id 는 자연히 어디에도 영향을 주지 않는다.
+ */
+function normalizeStringSet(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const x of v) {
+    if (typeof x === 'string' && x.length > 0 && !seen.has(x)) {
+      seen.add(x);
+      out.push(x);
+    }
+  }
+  return out;
+}
+
+/**
+ * 사연 마일스톤 카운터 맵을 정규화한다(Phase E). 값은 유한 정수(음수는 0 하한, lineage 정규화
+ * 선례)로 강제하고, 숫자가 아니거나 비유한인 손상 항목은 키째 버린다. 손상/부분 세이브는 빈 객체.
+ * 위조 방어의 1차선은 아니지만(정산 격리가 담당), 손상 세이브가 유효 프로필이 되게 한다.
+ */
+function normalizeStoryMetrics(v: unknown): Record<string, number> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return {};
+  const out: Record<string, number> = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof val === 'number' && Number.isFinite(val)) {
+      out[k] = clampInt(val, 0, Number.MAX_SAFE_INTEGER, 0);
+    }
+  }
   return out;
 }
 
