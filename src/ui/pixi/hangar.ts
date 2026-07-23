@@ -118,6 +118,12 @@ export class HangarScreen {
   private statsScrollY = 0;
   private inventoryScrollY = 0;
   /**
+   * 창고 확장 재화 차감(`spend_currency`)의 서버 왕복이 진행 중인지 — 동시(재진입) 클릭 가드.
+   * async `expandStash()` 는 비용을 첫 await 전에 `stashExpansions` 로 산정하므로, 왕복 중
+   * 두 번째 클릭이 끼면 둘 다 같은(싼) 가격으로 과금돼 2차 확장을 언더페이한다(이 플래그로 차단).
+   */
+  private busy = false;
+  /**
    * 챔피언(기체) 선택 화면. 격납고의 **하위 화면**이라 `show()` 가 아니라 `suspend()`/`resume()`
    * 로 자리를 주고받는다 — `show()` 로 되돌리면 미저장 장비 편집이 사라진다(defenseCommand 선례).
    */
@@ -283,6 +289,8 @@ export class HangarScreen {
   }
 
   private async expandStash(): Promise<void> {
+    // 동시(재진입) 클릭 가드: 서버 왕복 중 두 번째 클릭이 2차 확장을 언더페이하지 못하게 막는다.
+    if (this.busy) return;
     if (this.profile.stashExpansions >= MAX_STASH_EXPANSIONS) {
       this.hint = t('inv.stashMax');
       this.render();
@@ -294,23 +302,30 @@ export class HangarScreen {
       this.render();
       return;
     }
-    // 재화 서버 권위(ADR-0027): 온라인이면 spend_currency 로 차감을 확정하고(ok 일 때만 확장),
-    // 미설정이면 기존 로컬 차감. 잔액 부족·오프라인(rejected)이면 확장하지 않는다(위조 차단).
-    const res = await spendCurrencyOnServer(cost, 0, 'stash');
-    if (res.status === 'ok') {
-      this.profile.credits = res.creditsLeft;
-      this.profile.minerals = res.mineralsLeft;
-    } else if (res.status === 'unconfigured') {
-      this.profile.credits -= cost;
-    } else {
-      this.hint = t('inv.err.noCredits', { n: cost });
+    // 네트워크 창을 잠근다 — 비용이 첫 await 전에 산정되므로, 왕복 중 재진입을 막지 않으면
+    // 두 클릭이 같은(싼) 가격으로 과금돼 2차 확장을 언더페이한다.
+    this.busy = true;
+    try {
+      // 재화 서버 권위(ADR-0027): 온라인이면 spend_currency 로 차감을 확정하고(ok 일 때만 확장),
+      // 미설정이면 기존 로컬 차감. 잔액 부족·오프라인(rejected)이면 확장하지 않는다(위조 차단).
+      const res = await spendCurrencyOnServer(cost, 0, 'stash');
+      if (res.status === 'ok') {
+        this.profile.credits = res.creditsLeft;
+        this.profile.minerals = res.mineralsLeft;
+      } else if (res.status === 'unconfigured') {
+        this.profile.credits -= cost;
+      } else {
+        this.hint = t('inv.err.noCredits', { n: cost });
+        this.render();
+        return;
+      }
+      this.profile.stashExpansions++;
+      this.hint = t('inv.stashExpanded');
+      this.persist();
       this.render();
-      return;
+    } finally {
+      this.busy = false;
     }
-    this.profile.stashExpansions++;
-    this.hint = t('inv.stashExpanded');
-    this.persist();
-    this.render();
   }
 
   /**

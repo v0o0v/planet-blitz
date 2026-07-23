@@ -34,11 +34,14 @@ import {
   defaultProfile,
   loadProfile,
   activeShip,
+  totalInvested,
   type Profile,
   type KeyValueStore,
 } from '../src/save/profile.js';
 import { rollItem } from '../src/items/roll.js';
 import type { Item } from '../src/items/types.js';
+import { stashExpansionCost, rerollCost } from '../data/economy.js';
+import * as net from '../src/net/index.js';
 
 // ---------------------------------------------------------------------------
 // 전역 환경 스텁 — **주입이 아니다.** 화면은 store 를 전혀 모른 채 만들어지고,
@@ -139,6 +142,7 @@ afterEach(() => {
   if (!hadLocalStorage) delete g.localStorage;
   if (!hadDocument) delete g.document;
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 /** 저장이 실제로 일어났는지 — 키·JSON 파싱·`loadProfile` 왕복까지 셋 다 본다. */
@@ -279,5 +283,93 @@ describe('챔피언 선택을 닫아도 런 HUD 가 되살아나지 않는다 (C
 
     (champ as unknown as { close(): void }).close();
     expect(hud.style.visibility).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 동시(재진입) 클릭 가드 — 코드리뷰 LOW-1 후속.
+//
+// async 재화 스펜드 핸들러는 `spend_currency` 서버 왕복(await) 동안 두 번째 클릭이 끼면 두 번째
+// 차감을 일으킨다(사전검사가 첫 await 해소 전이라 둘 다 통과). 각 화면의 `busy` 플래그가 그
+// 네트워크 창을 잠가 이중 차감을 막는지, 첫 호출이 await 에서 정지한 사이 두 번째를 쏘아 검증한다.
+// ---------------------------------------------------------------------------
+
+describe('동시(재진입) 클릭이 재화를 이중 차감하지 않는다 (LOW-1)', () => {
+  it('격납고: 창고 확장 동시 클릭 → 1회만 과금·확장', async () => {
+    const profile = defaultProfile();
+    profile.credits = 1_000_000;
+    const cost = stashExpansionCost(profile.stashExpansions); // 0차 확장 가격
+    const stage = new Container();
+    const hangar = new HangarScreen(profile, stage);
+    hangar.show(profile, () => {});
+
+    // 첫 호출이 spend await 에서 정지한 사이 두 번째를 쏜다 — 가드가 없으면 둘 다 통과해
+    // 같은(싼) 가격으로 stashExpansions 를 2 로 밀어 올린다(2차 확장 언더페이).
+    const h = hangar as unknown as { expandStash(): Promise<void> };
+    const p1 = h.expandStash();
+    const p2 = h.expandStash();
+    await Promise.all([p1, p2]);
+
+    expect(profile.stashExpansions, '두 번째 클릭이 2차 확장을 언더페이로 밀어넣었다').toBe(1);
+    expect(profile.credits, '크레딧이 이중 차감됐다').toBe(1_000_000 - cost);
+    expect(persisted().stashExpansions).toBe(1);
+  });
+
+  it('정제소: 리롤 동시 클릭 → 광물 1회만 차감', async () => {
+    vi.useFakeTimers();
+    const profile = defaultProfile();
+    profile.minerals = 1_000_000;
+    const item = itemOfSlot(31, 'main');
+    expect(item.affixes.length).toBeGreaterThan(0);
+    profile.inventory.push(item);
+    const cost = rerollCost(item.rarity, item.affixes.length, 0); // 잠금 없음
+
+    const stage = new Container();
+    const refinery = new RefineryScreen(profile, stage);
+    refinery.show(profile, () => {});
+    const r = refinery as unknown as { select(i: Item): void; reroll(): Promise<void> };
+    r.select(item);
+
+    // `spinning` 은 spend await **뒤에야** 세워지므로, 두 번째 클릭은 `busy` 만이 막을 수 있다.
+    const p1 = r.reroll();
+    const p2 = r.reroll();
+    await Promise.all([p1, p2]);
+
+    expect(profile.minerals, '광물이 이중 차감됐다').toBe(1_000_000 - cost);
+    expect(persisted().minerals).toBe(profile.minerals);
+  });
+
+  it('연구소: 리스펙 동시 클릭 → 서버 차감 1회만 (온라인 ok 경로)', async () => {
+    const profile = defaultProfile();
+    profile.skillPoints = 5;
+    profile.credits = 1_000_000;
+    const stage = new Container();
+    const lab = new ResearchLabScreen(profile, stage);
+    lab.show(profile, () => {});
+
+    // 리스펙 사전검사(투자 有)를 통과시키려면 실제로 한 포인트 투자해 둔다.
+    (lab as unknown as { investNode(i: number): void }).investNode(0);
+    expect(totalInvested(profile), '투자가 성립하지 않아 테스트 전제 실패').toBeGreaterThan(0);
+
+    // 온라인 ok 경로를 강제한다 — 미설정(오프라인)에서는 두 번째 respecSkills 가 스스로 false 라
+    // 이중 차감이 재현되지 않는다(서버만 매 spend 호출마다 차감). spend 호출 횟수를 센다.
+    let spendCalls = 0;
+    vi.spyOn(net, 'spendCurrencyOnServer').mockImplementation(
+      async (credits: number, minerals: number): Promise<net.SpendOutcome> => {
+        spendCalls++;
+        return {
+          status: 'ok',
+          creditsLeft: profile.credits - credits,
+          mineralsLeft: profile.minerals - minerals,
+        };
+      },
+    );
+
+    const r = lab as unknown as { respec(): Promise<void> };
+    const p1 = r.respec();
+    const p2 = r.respec();
+    await Promise.all([p1, p2]);
+
+    expect(spendCalls, '리스펙 서버 차감이 두 번 일어났다(재진입 가드 부재)').toBe(1);
   });
 });
