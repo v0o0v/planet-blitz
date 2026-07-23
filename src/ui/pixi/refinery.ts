@@ -117,6 +117,12 @@ export class RefineryScreen {
   private selectedId: string | null = null;
   private lockedIndex: number | null = null;
   private spinning = false;
+  /**
+   * 리롤 재화 차감(`spend_currency`)의 서버 왕복이 진행 중인지 — 동시(재진입) 클릭 가드.
+   * `spinning` 은 차감 확정 **뒤에야**(await 이후) 세워지므로 왕복 중에는 재진입을 막지 못한다.
+   * 이 플래그가 그 창을 잠가 광물 이중 차감을 차단하고, 이후는 `spinning` 이 이어받는다.
+   */
+  private busy = false;
   private hint = '';
   private spinTimer: ReturnType<typeof setInterval> | null = null;
   /** 스핀 프레임이 글자만 갈아끼울 어픽스 행 텍스트(잠긴 행은 null). */
@@ -215,51 +221,58 @@ export class RefineryScreen {
 
   private async reroll(): Promise<void> {
     const item = this.selected();
-    if (item === undefined || this.spinning) return;
+    // 동시(재진입) 클릭 가드: `spinning` 은 await 뒤에야 세워지므로 서버 왕복 창은 `busy` 로 막는다.
+    if (item === undefined || this.spinning || this.busy) return;
     const cost = this.currentCost();
     if (!canAfford(this.profile.minerals, cost)) {
       this.hint = t('refine.err.noMinerals', { n: cost });
       this.render();
       return;
     }
-    // 재화 서버 권위(ADR-0027): 온라인이면 spend_currency 로 광물 차감을 확정(ok 일 때만 리롤),
-    // 미설정이면 기존 로컬 차감. 잔액 부족·오프라인(rejected)이면 리롤하지 않는다(위조 차단).
-    const res = await spendCurrencyOnServer(0, cost, 'reroll');
-    if (res.status === 'ok') {
-      this.profile.credits = res.creditsLeft;
-      this.profile.minerals = res.mineralsLeft;
-    } else if (res.status === 'unconfigured') {
-      this.profile.minerals -= cost;
-    } else {
-      this.hint = t('refine.err.noMinerals', { n: cost });
-      this.render();
-      return;
-    }
-    // 리롤 시드는 UI 레이어에서 만든다(sim 밖이라 Math.random 자유).
-    const seed = (Math.random() * 0xffffffff) >>> 0;
-    const lockIdx = this.lockedIndex ?? undefined;
-    const reforged = rerollAffixes(item, seed, lockIdx);
-
-    // 재련 결과를 id 로 인벤토리에 교체 투입(차감은 위에서 확정됨).
-    const idx = this.profile.inventory.findIndex((it) => it.id === item.id);
-    if (idx >= 0) this.profile.inventory[idx] = reforged;
-    this.persist();
-
-    // 슬롯머신 스핀(렌더 전용): 무작위 어픽스 이름을 굴리다 결과로 안착.
-    this.hint = '';
-    this.spinning = true;
-    this.render();
-    let ticks = 0;
-    const TOTAL = 12;
-    this.spinTimer = setInterval(() => {
-      ticks++;
-      if (ticks >= TOTAL) {
-        this.stopSpin();
-        this.render();
+    // 네트워크 창을 잠근다 — spend 확정 후에는 `spinning` 이 재진입을 막으므로 여기서만 유효하면 된다.
+    this.busy = true;
+    try {
+      // 재화 서버 권위(ADR-0027): 온라인이면 spend_currency 로 광물 차감을 확정(ok 일 때만 리롤),
+      // 미설정이면 기존 로컬 차감. 잔액 부족·오프라인(rejected)이면 리롤하지 않는다(위조 차단).
+      const res = await spendCurrencyOnServer(0, cost, 'reroll');
+      if (res.status === 'ok') {
+        this.profile.credits = res.creditsLeft;
+        this.profile.minerals = res.mineralsLeft;
+      } else if (res.status === 'unconfigured') {
+        this.profile.minerals -= cost;
       } else {
-        this.renderSpinFrame();
+        this.hint = t('refine.err.noMinerals', { n: cost });
+        this.render();
+        return;
       }
-    }, 70);
+      // 리롤 시드는 UI 레이어에서 만든다(sim 밖이라 Math.random 자유).
+      const seed = (Math.random() * 0xffffffff) >>> 0;
+      const lockIdx = this.lockedIndex ?? undefined;
+      const reforged = rerollAffixes(item, seed, lockIdx);
+
+      // 재련 결과를 id 로 인벤토리에 교체 투입(차감은 위에서 확정됨).
+      const idx = this.profile.inventory.findIndex((it) => it.id === item.id);
+      if (idx >= 0) this.profile.inventory[idx] = reforged;
+      this.persist();
+
+      // 슬롯머신 스핀(렌더 전용): 무작위 어픽스 이름을 굴리다 결과로 안착.
+      this.hint = '';
+      this.spinning = true;
+      this.render();
+      let ticks = 0;
+      const TOTAL = 12;
+      this.spinTimer = setInterval(() => {
+        ticks++;
+        if (ticks >= TOTAL) {
+          this.stopSpin();
+          this.render();
+        } else {
+          this.renderSpinFrame();
+        }
+      }, 70);
+    } finally {
+      this.busy = false;
+    }
   }
 
   private itemName(item: Item): string {

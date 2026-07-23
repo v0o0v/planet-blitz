@@ -321,6 +321,12 @@ export class ResearchLabScreen {
   private popupScrollY = 0;
   /** 본 패널 투자 목록의 계열별 스크롤 위치(노드가 많은 타입에서만 쓰인다). */
   private readonly listScrollY: number[] = [0, 0, 0];
+  /**
+   * 리스펙 재화 차감(`spend_currency`)의 서버 왕복이 진행 중인지 — 동시(재진입) 클릭 가드.
+   * async `respec()` 의 사전검사와 첫 await 사이에 두 번째 클릭이 끼어들면 둘 다 검사를 통과해
+   * 크레딧이 이중 차감되므로(온라인 ok 경로), 네트워크 창 동안 이 플래그로 재진입을 막는다.
+   */
+  private busy = false;
 
   /**
    * 현재 편집 대상 = **활성 기체의 타입 정의**. 화면 전체가 이 하나에서 파생된다
@@ -412,6 +418,8 @@ export class ResearchLabScreen {
   }
 
   private async respec(): Promise<void> {
+    // 동시(재진입) 클릭 가드: 서버 왕복 중 두 번째 클릭이 두 번째 차감을 일으키지 못하게 막는다.
+    if (this.busy) return;
     // 사전 게이트(투자 有 · 로컬 미러 잔액 충분)는 그대로 — 재화 서버 권위(ADR-0027)에서도
     // UX 즉시성을 위해 미러로 먼저 거른다(서버가 최종 재검증).
     if (totalInvested(this.profile) === 0) {
@@ -425,26 +433,33 @@ export class ResearchLabScreen {
       this.render();
       return;
     }
-    // 온라인 → spend_currency 로 차감 확정(ok 일 때만 환급). 미설정 → 기존 로컬 차감(respecSkills).
-    // 잔액 부족·오프라인(rejected)이면 환급하지 않는다(스킬 포인트 무상 환급 위조 차단).
-    const res = await spendCurrencyOnServer(cost, 0, 'respec');
-    if (res.status === 'ok') {
-      this.profile.credits = res.creditsLeft;
-      this.profile.minerals = res.mineralsLeft;
-      applyRespecRefund(this.profile);
-    } else if (res.status === 'unconfigured') {
-      if (!respecSkills(this.profile)) {
+    // 네트워크 창을 잠근다 — 사전검사~첫 await 사이 재진입을 막아 크레딧 이중 차감(온라인 ok
+    // 경로에서 두 번째 applyRespecRefund 는 0 환급이라 유저만 크레딧 이중 손실)을 차단한다.
+    this.busy = true;
+    try {
+      // 온라인 → spend_currency 로 차감 확정(ok 일 때만 환급). 미설정 → 기존 로컬 차감(respecSkills).
+      // 잔액 부족·오프라인(rejected)이면 환급하지 않는다(스킬 포인트 무상 환급 위조 차단).
+      const res = await spendCurrencyOnServer(cost, 0, 'respec');
+      if (res.status === 'ok') {
+        this.profile.credits = res.creditsLeft;
+        this.profile.minerals = res.mineralsLeft;
+        applyRespecRefund(this.profile);
+      } else if (res.status === 'unconfigured') {
+        if (!respecSkills(this.profile)) {
+          this.render();
+          return;
+        }
+      } else {
+        this.hint = t('lab.err.noCredits', { n: cost });
         this.render();
         return;
       }
-    } else {
-      this.hint = t('lab.err.noCredits', { n: cost });
+      this.hint = t('lab.respecDone');
+      this.persist();
       this.render();
-      return;
+    } finally {
+      this.busy = false;
     }
-    this.hint = t('lab.respecDone');
-    this.persist();
-    this.render();
   }
 
   private openPopup(tree: number): void {
