@@ -15,6 +15,12 @@ import { SHIP_TYPES } from '../data/ships/index.js';
 import { PLANETS } from '../data/planets/index.js';
 import { SHIP_PORTRAIT_NAMES, shipPortraitName, UI_ASSET_NAMES } from '../src/ui/pixi/uiTextures.js';
 import {
+  chapterUnlocked,
+  unlockedChapterCount,
+  storyProgressFromProfile,
+} from '../src/ui/pixi/storyUnlock.js';
+import { defaultProfile } from '../src/save/profile.js';
+import {
   storyMessageKeys,
   introMessageKeys,
   recordShardMessageKeys,
@@ -250,5 +256,44 @@ describe('기체 초상 자산 (ship_portrait_*)', () => {
       expect(be32(buf, 16), `${name} width`).toBe(128);
       expect(be32(buf, 20), `${name} height`).toBe(128);
     }
+  });
+});
+
+describe('사연 챕터 해금 판정 (storyUnlock)', () => {
+  it('챕터 1은 항상, 챕터 2는 인연 행성 클리어, 챕터 3은 마일스톤에 좌우된다', () => {
+    for (const story of SHIP_STORIES) {
+      const [ch1, ch2, ch3] = story.chapters;
+      // 챕터 1 = default → 진행과 무관하게 항상 열림.
+      expect(chapterUnlocked(ch1, { bondPlanetCleared: false, milestoneReached: false })).toBe(true);
+      // 챕터 2 = bondPlanetClear.
+      expect(chapterUnlocked(ch2, { bondPlanetCleared: false, milestoneReached: false })).toBe(false);
+      expect(chapterUnlocked(ch2, { bondPlanetCleared: true, milestoneReached: false })).toBe(true);
+      // 챕터 3 = milestone(Phase E).
+      expect(chapterUnlocked(ch3, { bondPlanetCleared: true, milestoneReached: false })).toBe(false);
+      expect(chapterUnlocked(ch3, { bondPlanetCleared: true, milestoneReached: true })).toBe(true);
+    }
+  });
+
+  it('unlockedChapterCount 가 진행 상태에 따라 1·2·3 을 센다', () => {
+    const story = SHIP_STORIES[0]!;
+    expect(unlockedChapterCount(story, { bondPlanetCleared: false, milestoneReached: false })).toBe(1);
+    expect(unlockedChapterCount(story, { bondPlanetCleared: true, milestoneReached: false })).toBe(2);
+    expect(unlockedChapterCount(story, { bondPlanetCleared: true, milestoneReached: true })).toBe(3);
+  });
+
+  it('storyProgressFromProfile 이 인연 행성 클리어를 기존 planetProgress 로 판정한다', () => {
+    const story = SHIP_STORIES.find((s) => s.slug === 'bruiser')!; // 인연 = 크라스(5)
+    const p = defaultProfile();
+    // 클리어 기록이 없으면 미해금.
+    expect(storyProgressFromProfile(p, story).bondPlanetCleared).toBe(false);
+    // 인연 행성 1단계 클리어 기록 → 해금. 마일스톤은 Phase E 전까지 항상 false.
+    p.planetProgress[story.bondPlanet] = { bestStageCleared: 1 };
+    const prog = storyProgressFromProfile(p, story);
+    expect(prog.bondPlanetCleared).toBe(true);
+    expect(prog.milestoneReached).toBe(false);
+    // 다른 행성 클리어는 이 기체의 인연 해금과 무관하다.
+    const other = defaultProfile();
+    other.planetProgress[(story.bondPlanet + 1) % 6] = { bestStageCleared: 9 };
+    expect(storyProgressFromProfile(other, story).bondPlanetCleared).toBe(false);
   });
 });
