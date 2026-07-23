@@ -404,6 +404,15 @@ export const EN = {
   'champion.story.open': 'Read Pilot File',
   'champion.story.title': '{name} — Pilot File',
 
+  // 출격 기체 선택(예비역 소집, ADR-0024) — 관제탑 침공 시작 팝업
+  'sortie.title': 'Choose Sortie Ship',
+  'sortie.sub': 'Launch with your active ship, or call up a retired guardian to fly in its place.',
+  'sortie.active': 'Active ship · full performance',
+  'sortie.guardian': 'Reserve',
+  'sortie.perf': 'Performance {n}%',
+  'sortie.gear': 'Locked gear {n}',
+  'sortie.launch': 'Sortie',
+
   // 사연 — 스트라이커(무명 신출내기, 성장)
   'story.striker.tagline': 'The pilot with an empty logbook.',
   'story.striker.ch1.title': 'No Record to Speak Of',
@@ -1482,6 +1491,15 @@ export const KO: Record<MessageKey, string> = {
   // 챔피언 선택 화면 — 사연 열람 버튼/팝업
   'champion.story.open': '사연 읽기',
   'champion.story.title': '{name} — 파일럿 파일',
+
+  // 출격 기체 선택(예비역 소집, ADR-0024) — 관제탑 침공 시작 팝업
+  'sortie.title': '출격 기체 선택',
+  'sortie.sub': '활성 기체로 출격하거나, 퇴역한 수호 기체를 소집해 대신 출격시킵니다.',
+  'sortie.active': '활성 기체 · 성능 100%',
+  'sortie.guardian': '예비역',
+  'sortie.perf': '성능 {n}%',
+  'sortie.gear': '잠긴 장비 {n}개',
+  'sortie.launch': '출격',
 
   // 사연 — 스트라이커
   'story.striker.tagline': '항해일지가 텅 빈 파일럿.',

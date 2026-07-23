@@ -22,7 +22,12 @@
  */
 
 import { Container, Graphics, Rectangle, Sprite, Text, type FederatedPointerEvent } from 'pixi.js';
-import type { Profile } from '../../save/profile.js';
+import { activeShip } from '../../save/profile.js';
+import type { Profile, GuardianRecord } from '../../save/profile.js';
+import { activeGuardians } from '../../save/guardianLifecycle.js';
+import type { InvasionLayers } from '../../sim/invasion/types.js';
+import { shipTypeDef } from '../../../data/ships/index.js';
+import { shipTypeName } from './shipLabels.js';
 import { t } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { stickerLabel } from '../../../data/stickers.js';
@@ -84,8 +89,8 @@ import { stripEmoji } from './text.js';
 
 export type { ControlTowerCallbacks, ControlTowerShowOpts, InvasionResultView };
 
-/** 열려 있는 팝업 종류(없으면 null). */
-type ModalKind = 'ladder' | 'alerts' | 'history';
+/** 열려 있는 팝업 종류(없으면 null). `sortie` = 출격 기체 선택(ADR-0024 예비역 소집). */
+type ModalKind = 'ladder' | 'alerts' | 'history' | 'sortie';
 
 /** 전투 기록 필터(공/수). */
 type HistoryFilter = 'all' | 'attack' | 'defense';
@@ -171,6 +176,12 @@ const LADDER_ROW_H = 44;
 const LADDER_PAGE = 11;
 const HIST_ROW_H = 48;
 const HIST_PAGE = 10;
+
+// 출격 기체 선택(소집) 행.
+const SORTIE_ROW_H = 88;
+const SORTIE_ROW_GAP = 12;
+const SORTIE_BTN_W = 200;
+const SORTIE_BTN_H = 56;
 /** 페이지 이동 줄이 차지하는 높이 — 표는 이 위에서 끝난다. */
 const PAGER_H = 52;
 /** 순위표 RPC 상한(get_ladder_top 은 200 을 넘겨도 200 으로 자른다). */
@@ -306,6 +317,12 @@ export class ControlTowerScreen {
   private onSticker: ControlTowerCallbacks['onSticker'] | null = null;
   private onBack: (() => void) | null = null;
 
+  // 소집(ADR-0024)용 프로필 참조 — 소집 가능 수호기 목록·기체 타입명 표시에 쓴다(순수 읽기).
+  private profile: Profile | null = null;
+  // 출격 기체 선택 팝업이 열려 있는 동안 보관하는 대상+정규화 배치. 확정 시 onInvade 로 넘어간다.
+  private pendingSortie: { target: InvasionTarget; layout: InvasionLayers } | null = null;
+  private sortieScrollY = 0;
+
   private targets: InvasionTarget[] | null = null; // null = 미로딩/미설정
   private cooldowns: Record<string, number> = {};
   private selectedId: string | null = null;
@@ -368,12 +385,15 @@ export class ControlTowerScreen {
     return this.root.visible;
   }
 
-  show(_profile: Profile, cb: ControlTowerCallbacks, opts: ControlTowerShowOpts = {}): void {
+  show(profile: Profile, cb: ControlTowerCallbacks, opts: ControlTowerShowOpts = {}): void {
+    this.profile = profile;
     this.onInvade = cb.onInvade;
     this.onSpectate = cb.onSpectate;
     this.onSticker = cb.onSticker;
     this.onBack = cb.onBack;
     this.opts = opts;
+    this.pendingSortie = null;
+    this.sortieScrollY = 0;
     this.selectedId = null;
     this.loading = true;
     this.targets = null;
@@ -411,6 +431,8 @@ export class ControlTowerScreen {
     this.tooltip.hide();
     this.search.unmount();
     this.modal = null;
+    this.pendingSortie = null;
+    this.profile = null;
     this.onInvade = null;
     this.onSpectate = null;
     this.onSticker = null;
@@ -565,10 +587,37 @@ export class ControlTowerScreen {
       ? computePlacementInvadeState(target)
       : computeInvadeState(target, this.cooldowns, Date.now());
     if (!st.canInvade || st.layout === null) return;
+    // 예비역 소집(ADR-0024): 소집 가능한 수호기(활성·미소멸 + 실물 빌드 有)가 하나라도 있으면
+    // 출격 기체 선택 팝업을 띄운다. 없으면 기존과 동일하게 활성 기체로 즉시 출격한다(마찰 0·거동
+    // 불변 — pilotGuardianId 인자 자체를 넘기지 않아 침공 경로가 바이트 그대로 유지된다).
+    if (this.callupEligible().length > 0) {
+      this.pendingSortie = { target, layout: st.layout };
+      this.openModal('sortie');
+      return;
+    }
     const cb = this.onInvade;
     // 침공 런으로 넘어가면 이 화면은 내려간다(런 종료 후 main 이 다시 연다).
     this.hide();
     cb?.(target, st.layout);
+  }
+
+  /** 소집 가능한 수호기(활성·미소멸 + 실물 빌드 有). build 없는 구 수호기는 소집 비활성(ADR-0024). */
+  private callupEligible(): GuardianRecord[] {
+    const p = this.profile;
+    if (p === null) return [];
+    return activeGuardians(p).filter((g) => g.build !== undefined);
+  }
+
+  /**
+   * 출격 기체 선택 확정 — 팝업을 닫고 선택(활성=null / 수호기 id)을 침공 런으로 넘긴다.
+   * `hide()` 가 `onInvade`·`pendingSortie` 를 비우므로 먼저 캡처한 뒤 호출한다.
+   */
+  private launchSortie(pilotGuardianId: string | null): void {
+    const pending = this.pendingSortie;
+    if (pending === null) return;
+    const cb = this.onInvade;
+    this.hide();
+    cb?.(pending.target, pending.layout, pilotGuardianId);
   }
 
   private back(): void {
@@ -592,6 +641,8 @@ export class ControlTowerScreen {
 
   private closeModal(): void {
     this.modal = null;
+    // 소집 팝업을 암막·닫기·Esc 로 닫으면 출격을 취소한다 — 대기 중인 대상+배치를 버린다.
+    this.pendingSortie = null;
     this.search.unmount();
     this.render();
   }
@@ -1402,7 +1453,13 @@ export class ControlTowerScreen {
     panel.on('pointertap', (e: FederatedPointerEvent) => e.stopPropagation());
 
     const titleKey =
-      kind === 'ladder' ? 'ctl.ladder.title' : kind === 'alerts' ? 'ctl.notif.title' : 'ctl.hist.title';
+      kind === 'ladder'
+        ? 'ctl.ladder.title'
+        : kind === 'alerts'
+          ? 'ctl.notif.title'
+          : kind === 'sortie'
+            ? 'sortie.title'
+            : 'ctl.hist.title';
     this.panelTitle(panel, box, t(titleKey));
 
     const close = makeIconButton(44, () => this.closeModal(), this.ui['ui_icon_close.png']);
@@ -1411,6 +1468,7 @@ export class ControlTowerScreen {
 
     if (kind === 'ladder') this.renderLadderModal(panel, box);
     else if (kind === 'alerts') this.renderAlertsModal(panel, box);
+    else if (kind === 'sortie') this.renderSortieModal(panel, box);
     else this.renderHistoryModal(panel, box);
   }
 
@@ -1770,6 +1828,110 @@ export class ControlTowerScreen {
       row.addChild(b.container);
     });
     return { node: row, h };
+  }
+
+  // --- 출격 기체 선택(예비역 소집, ADR-0024) --------------------------------
+
+  /**
+   * 출격 기체 선택 팝업. 활성 기체(기본) + 소집 가능한 수호기 목록을 보여 주고, 한 행을 고르면
+   * 그 파일럿으로 침공 런을 시작한다(활성=null, 수호기=id). 대기 중인 대상+배치는 {@link pendingSortie}
+   * 에 보관돼 있고 확정 시 `onInvade` 로 넘어간다. 취소(암막·닫기·Esc)면 관제탑에 그대로 남는다.
+   */
+  private renderSortieModal(panel: Container, box: PanelContentBox): void {
+    const profile = this.profile;
+    if (profile === null) return;
+
+    const sub = this.label(t('sortie.sub'), 18, COLOR.muted, '400', box.w);
+    sub.position.set(box.x, MODAL_TOOL_Y);
+    panel.addChild(sub);
+    const listTop = MODAL_TOOL_Y + 44;
+
+    // 첫 행 = 활성 기체(id=null, 기본), 이어서 소집 가능한 수호기 각 1행.
+    const rows: Container[] = [this.makeSortieRow(null, box.w)];
+    for (const g of this.callupEligible()) rows.push(this.makeSortieRow(g, box.w));
+
+    const step = SORTIE_ROW_H + SORTIE_ROW_GAP;
+    const total = rows.length * step - SORTIE_ROW_GAP;
+    const bounds: number[] = [];
+    for (let i = 1; i <= rows.length; i++) bounds.push(i * step - SORTIE_ROW_GAP);
+    const maskH = this.clampToRows(box.bottom - listTop, bounds);
+
+    const content = this.scrollArea(
+      panel,
+      box.x,
+      listTop,
+      box.w,
+      maskH,
+      total,
+      () => this.sortieScrollY,
+      (v) => {
+        this.sortieScrollY = v;
+      },
+    );
+    rows.forEach((row, i) => {
+      row.position.set(0, i * step);
+      content.addChild(row);
+    });
+  }
+
+  /**
+   * 출격 기체 행 1장. `guardian === null` = 활성 기체(성능 100%·기존 거동), 아니면 소집 수호기
+   * (잠긴 빌드의 기체 타입명 · 남은 성능% · 잠긴 장비 수). 행 전체와 우측 출격 버튼이 같은 동작이다.
+   */
+  private makeSortieRow(guardian: GuardianRecord | null, w: number): Container {
+    const profile = this.profile;
+    const active = guardian === null;
+
+    let typeId: number;
+    let desc: string;
+    if (active) {
+      const ship = profile !== null ? activeShip(profile) : null;
+      typeId = ship?.typeId ?? 0;
+      // 활성 기체는 풍화 대상이 아니다(라이브 기체) — 성능 100%. 문구는 sortie.active 에 담겨 있다.
+      desc = t('sortie.active');
+    } else {
+      const build = guardian.build;
+      typeId = build?.typeId ?? 0;
+      const gearCount =
+        build !== undefined ? Object.values(build.equipped).filter((it) => it !== undefined).length : 0;
+      const perfPct = Math.round(guardian.performanceCP / 100);
+      desc = `${t('sortie.guardian')} · ${t('sortie.perf', { n: perfPct })} · ${t('sortie.gear', { n: gearCount })}`;
+    }
+    const gid = active ? null : guardian.id;
+
+    const row = new Container();
+    // 행 전체가 선택(출격) 대상 — 버튼만 아래에서 전파를 끊는다(중복 실행 방지, 대상 목록 규약과 동일).
+    row.eventMode = 'static';
+    row.cursor = 'pointer';
+    row.on('pointertap', () => this.launchSortie(gid));
+    // 기본(활성) 행은 금색 링으로 강조한다.
+    row.addChild(listRowBg(w, SORTIE_ROW_H, active ? { accent: COLOR.gold } : {}));
+
+    const textW = Math.max(80, w - SORTIE_BTN_W - 24 - 16);
+    const name = this.label(shipTypeName(shipTypeDef(typeId)), 22, COLOR.cream, '800', textW);
+    name.position.set(16, 16);
+    row.addChild(name);
+
+    const descEl = this.label(desc, 16, COLOR.muted, '400', textW);
+    descEl.position.set(16, 50);
+    row.addChild(descEl);
+
+    const btn = new PixiButton({
+      texture: this.ui['ui_btn_yellow.png'],
+      fallbackColor: 0x9a7a2a,
+      width: SORTIE_BTN_W,
+      height: SORTIE_BTN_H,
+      fontSize: 22,
+      // 노란 버튼은 바탕이 밝아 흰 라벨이 묻힌다(관제탑 다른 노란 버튼과 동일 처리).
+      labelColor: COLOR.darkLabel,
+      label: t('sortie.launch'),
+      onClick: () => this.launchSortie(gid),
+    });
+    btn.container.position.set(w - SORTIE_BTN_W - 16, (SORTIE_ROW_H - SORTIE_BTN_H) / 2);
+    btn.container.on('pointertap', (e: FederatedPointerEvent) => e.stopPropagation());
+    row.addChild(btn.container);
+
+    return row;
   }
 
   // --- 전투 기록 팝업 ------------------------------------------------------
