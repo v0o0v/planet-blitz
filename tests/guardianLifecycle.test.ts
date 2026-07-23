@@ -53,16 +53,30 @@ describe('퇴역 — 수호 기체 생성 + 계보 지급 (AC1)', () => {
     expect(p.lineage.available).toBe(RETIRE_LINEAGE_GRANT);
   });
 
-  it('퇴역 시 장착 장비가 창고(stash)로 반환된다(ADR-0007)', () => {
+  it('퇴역 시 장착 장비가 수호 기체에 잠긴다(ADR-0024 — stash 불변)', () => {
     const p = profileWithGear();
+    p.skillPoints = 3;
+    investSkill(p, 0); // 스킬 투자를 남겨 build.skillInvest 캡처를 검증
     const retiring = p.ships[p.activeShipIndex]!;
+    const mainItem = retiring.equipped.main!;
+    const armorItem = retiring.equipped.armor!;
+    const investSnapshot = retiring.skillInvest.slice();
     const stashBefore = p.stash.length;
-    retireActiveShip(p, GUARDIAN_INTERCEPTOR);
-    expect(p.stash.length).toBe(stashBefore + 2); // weapon + armor 반환
+    const r = retireActiveShip(p, GUARDIAN_INTERCEPTOR);
+    // 장비 잠김: stash 로 반환되지 않고 수호기에 봉인된다(구 ADR-0007 stash+2 를 뒤집음).
+    expect(p.stash.length).toBe(stashBefore);
     // ⚠️ M8: 퇴역이 기체를 **교체**하므로 활성 기체는 더 이상 퇴역한 그 기체가 아니다.
-    // 장착이 비워졌는지는 퇴역한 기체 본체에서 확인한다.
+    // 장착이 비워졌는지는 퇴역한 기체 본체에서 확인한다(장비는 build 로 옮겨감).
     expect(Object.keys(retiring.equipped).length).toBe(0);
     expect(Object.keys(p.ships[p.activeShipIndex]!.equipped).length).toBe(0); // 새 기체도 빈손
+    // 새 수호기의 build 에 퇴역 순간 빌드가 잠겼다: typeId · 장착 장비 · 스킬 투자 캡처.
+    const build = r.guardian.build;
+    expect(build).toBeDefined();
+    expect(build!.typeId).toBe(retiring.typeId);
+    expect(build!.equipped.main).toBe(mainItem);
+    expect(build!.equipped.armor).toBe(armorItem);
+    expect(build!.skillInvest).toEqual(investSnapshot);
+    expect(build!.skillInvest[0]).toBe(1); // 투자가 실제로 캡처됐다
   });
 
   it('프리셋 선택제: 타이탄과 인터셉터는 다른 스냅샷 형태', () => {
@@ -177,6 +191,24 @@ describe('소멸 — 상시 회수 + 계보 포인트 (AC3)', () => {
     expect(p.lineage.available).toBe(before + expected);
     // 이미 소멸한 개체는 재소멸 불가(no-op).
     expect(dismissGuardianRecord(p, g.id).dismissed).toBe(false);
+  });
+
+  it('소멸하면 잠긴 장비가 stash 로 반환된다(ADR-0024)', () => {
+    const p = profileWithGear();
+    const retiring = p.ships[p.activeShipIndex]!;
+    const mainItem = retiring.equipped.main!;
+    const armorItem = retiring.equipped.armor!;
+    const n = Object.keys(retiring.equipped).length; // 2 (main + armor)
+    const stashBefore = p.stash.length;
+    const r = retireActiveShip(p, GUARDIAN_TITAN);
+    // 퇴역 직후: 장비는 수호기에 잠기고 stash 는 그대로.
+    expect(p.stash.length).toBe(stashBefore);
+    expect(Object.keys(r.guardian.build!.equipped).length).toBe(n);
+    // 소멸: 잠긴 장비가 stash 로 반환된다.
+    dismissGuardianRecord(p, p.guardians[0]!.id);
+    expect(p.stash.length).toBe(stashBefore + n);
+    expect(p.stash).toContain(mainItem);
+    expect(p.stash).toContain(armorItem);
   });
 
   it('풍화된(성능 낮은) 수호는 회수 포인트가 적다', () => {

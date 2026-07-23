@@ -29,6 +29,7 @@ import {
   normalizeSkillInvest,
 } from '../src/save/profile.js';
 import { retireActiveShip } from '../src/save/guardianLifecycle.js';
+import { makeGuardianSnapshot } from '../data/guardian.js';
 import { SAVE_VERSION } from '../src/items/types.js';
 import { SKILL_NODE_COUNT, SKILLS } from '../data/skills.js';
 import {
@@ -298,7 +299,7 @@ describe('마이그레이션 v3 → v4 — 계정 투자가 기체로 승계된�
     const p = migrate(v3Blob(invest));
 
     expect(p.saveVersion).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(6);
+    expect(SAVE_VERSION).toBe(7);
     const ship = activeShip(p);
     expect(ship.typeId).toBe(0); // 기존 유저는 전원 스트라이커
     expect(ship.skillInvest).toHaveLength(shipSkillNodeCount(0));
@@ -489,7 +490,7 @@ describe('마이그레이션 v5 → v6 — 기록 파편·마일스톤 카운터
   it('필드 부재 v5 세이브를 v6 로 올리고 두 필드를 기본값으로 채운다', () => {
     const p = migrate(v5Blob());
     expect(p.saveVersion).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(6);
+    expect(SAVE_VERSION).toBe(7);
     expect(p.collectedShards).toEqual([]);
     expect(p.storyMetrics).toEqual({});
     // 기존 진행 상태는 함께 보존된다(필드 신설이 다른 축을 건드리지 않는다).
@@ -511,6 +512,68 @@ describe('마이그레이션 v5 → v6 — 기록 파편·마일스톤 카운터
     expect(restored.collectedShards).toEqual(['first-archive', 'echoes']);
     expect(restored.storyMetrics).toEqual({ runsWon: 12, hitsTaken: 340 });
     expect(restored).toEqual(p);
+  });
+});
+
+describe('정규화 — GuardianRecord.build 실물 빌드 (예비역 소집·장비 잠김, ADR-0024 v7)', () => {
+  /** 유효 스냅샷 1개(모든 전투 스탯 숫자 필수 — normalizeGuardianSnapshot 통과용). */
+  const snap = makeGuardianSnapshot(0, 100);
+
+  /** guardians 배열만 담은 v7 프로필 blob(나머지 필드는 normalizeProfile 이 기본값으로 채운다). */
+  function guardianBlob(guardians: unknown[]): Record<string, unknown> {
+    return {
+      saveVersion: 7,
+      ships: [{ id: 'ship-0', name: '초기 전투기', typeId: 0, level: 1, xp: 0, equipped: {}, skillInvest: zeroSkillInvest(0) }],
+      activeShipIndex: 0,
+      inventory: [], stash: [], stashExpansions: 0, planetProgress: {},
+      credits: 0, minerals: 0, skillPoints: 0, tutorialDone: true, introSeen: true,
+      guardians,
+    };
+  }
+
+  it('유효 build 는 typeId·equipped·skillInvest 를 무손실로 왕복한다', () => {
+    const gear = rollItem(333, 'unique', { planet: 0, stage: 1 });
+    const skillInvest = zeroSkillInvest(0);
+    skillInvest[0] = 2;
+    const p = migrate(guardianBlob([
+      {
+        id: 'g-live', snapshot: snap, performanceCP: 10000, combatScore: 120, preset: 0, retired: false,
+        build: { typeId: 0, equipped: { main: gear }, skillInvest },
+      },
+    ]));
+    expect(p.guardians).toHaveLength(1);
+    const g = p.guardians[0]!;
+    expect(g.build).toBeDefined();
+    expect(g.build!.typeId).toBe(0);
+    expect(g.build!.equipped.main).toEqual(gear);
+    expect(g.build!.skillInvest[0]).toBe(2);
+    expect(g.build!.skillInvest).toHaveLength(shipSkillNodeCount(0));
+    // 세이브→로드(JSON 직렬화)까지 build 가 살아남는다.
+    const store = memStore();
+    saveProfile(p, store);
+    const restored = loadProfile(store);
+    expect(restored.guardians[0]!.build).toEqual(g.build);
+    // 기존 수호 필드는 그대로(build 는 형제 additive — 다른 축 불변).
+    expect(restored.guardians[0]!.combatScore).toBe(120);
+    expect(restored.guardians[0]!.snapshot).toEqual(g.snapshot);
+  });
+
+  it('손상 build(객체 아님)는 undefined 로 정규화되지만 레코드는 유지된다', () => {
+    const p = migrate(guardianBlob([
+      { id: 'g-bad', snapshot: snap, performanceCP: 10000, combatScore: 80, preset: 0, retired: false, build: 'garbage' },
+    ]));
+    expect(p.guardians).toHaveLength(1);
+    expect(p.guardians[0]!.build).toBeUndefined();
+    expect(p.guardians[0]!.combatScore).toBe(80); // 손상 build 가 레코드를 버리지 않는다
+  });
+
+  it('build 부재(구 수호기 = 소집 비활성)는 build 없이 정규화되고 레코드는 유지된다', () => {
+    const p = migrate(guardianBlob([
+      { id: 'g-legacy', snapshot: snap, performanceCP: 10000, combatScore: 60, preset: 0, retired: false },
+    ]));
+    expect(p.guardians).toHaveLength(1);
+    expect(p.guardians[0]!.build).toBeUndefined();
+    expect('build' in p.guardians[0]!).toBe(false); // 부재 시 키 자체가 없다(optional 정합)
   });
 });
 

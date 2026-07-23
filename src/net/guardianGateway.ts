@@ -16,6 +16,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { SupabaseConfig } from './config.js';
 import type { GuardianSnapshot } from '../../data/guardian.js';
+import type { GuardianBuild } from '../save/profile.js';
 import type { LineageBranch } from '../../data/lineage.js';
 
 function asRec(v: unknown): Record<string, unknown> {
@@ -34,6 +35,12 @@ export interface ServerGuardian {
   combatScore: number;
   preset: number;
   retired: boolean;
+  /**
+   * 퇴역 순간 고정된 실물 빌드(ADR-0024, guardians.build jsonb). 소집·장비 잠김용 — snapshot 의
+   * 형제. 컬럼 부재/null(구 수호기) 이면 undefined. 깊은 정규화는 로컬 미러 조립 시
+   * (normalizeGuardianRecords) 수행한다(여기선 jsonb 셰이프를 그대로 신뢰 — snapshot 과 동일 규율).
+   */
+  build?: GuardianBuild;
 }
 
 /** 서버 계보 상태(profiles 컬럼). */
@@ -70,7 +77,7 @@ export class SupabaseGuardianGateway {
     // buildGuardianPlacements 의 슬롯 i↔수호 i 매핑이 클라·서버 비트 동일해진다(M5 계약 통일).
     const { data, error } = await this.client
       .from('guardians')
-      .select('id, data, performance, combat_score, preset, retired')
+      .select('id, data, performance, combat_score, preset, retired, build')
       .eq('profile_id', uid)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true });
@@ -85,6 +92,10 @@ export class SupabaseGuardianGateway {
         combatScore: num(r.combat_score, 0),
         preset: num(r.preset, 0),
         retired: r.retired === true,
+        // build jsonb: null/부재(구 수호기) 이면 undefined. snapshot 과 동일하게 셰이프를 신뢰한다.
+        ...(typeof r.build === 'object' && r.build !== null
+          ? { build: r.build as unknown as GuardianBuild }
+          : {}),
       };
     });
   }
@@ -106,11 +117,13 @@ export class SupabaseGuardianGateway {
   }
 
   /** 퇴역 → 수호 기체 생성 + 계보 기본 지급. 반환: {guardianId, granted}. */
-  async retireShip(preset: number, combatScore: number, snapshot: GuardianSnapshot): Promise<{ guardianId: string; granted: number }> {
+  async retireShip(preset: number, combatScore: number, snapshot: GuardianSnapshot, build?: GuardianBuild): Promise<{ guardianId: string; granted: number }> {
     const { data, error } = await this.client.rpc('retire_ship', {
       p_preset: preset,
       p_combat_score: combatScore,
       p_snapshot: snapshot,
+      // 실물 빌드(ADR-0024) — guardians.build 에 저장. 미전달(구 경로)이면 null 로 기존 동작 유지.
+      p_build: build ?? null,
     });
     if (error !== null) throw error;
     const r = asRec(data);

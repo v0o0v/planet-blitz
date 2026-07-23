@@ -30,8 +30,14 @@
  *  (`migrateV5toV6`) 두 필드는 `normalizeProfile` 이 기본값(빈 배열·빈 객체)으로 채운다.
  *  ⚠️ DB 변경 없음 — `profiles.save` 는 불투명 jsonb 이고 서버 SQL 은 `credits`/`minerals` 만
  *  읽는다(실측: supabase/migrations/** 에 collectedShards/storyMetrics 0건). save_version 은
- *  제약 없는 integer 스탬프라 6 을 그대로 받는다. */
-export const SAVE_VERSION = 6;
+ *  제약 없는 integer 스탬프라 6 을 그대로 받는다.
+ *
+ *  v7 (예비역 소집·장비 잠김, ADR-0024): `GuardianRecord.build`(퇴역 순간 고정 실물 빌드) 신설.
+ *  additive-optional 이라 마이그레이션은 스탬프만 올리고(`migrateV6toV7`) 실제 파싱은
+ *  `normalizeGuardianRecords`(build 부재 = 소집 비활성)가 맡는다. 구 수호기는 build 없이 정규화된다.
+ *  ⚠️ DB 변경 없음 — `profiles.save` 는 불투명 jsonb. (별개로 원격 guardians 테이블에 build
+ *  jsonb 컬럼을 더하는 마이그레이션 파일은 작성하되 원격 적용은 Wave 2 로 이월한다.) */
+export const SAVE_VERSION = 7;
 
 // ---------------------------------------------------------------------------
 // Rarity

@@ -37,6 +37,7 @@ import { activeShip } from '../save/profile.js';
 import type { Profile } from '../save/profile.js';
 import { normalizeShipTypeId } from '../../data/ships/index.js';
 import { planetContent } from '../../data/planets/index.js';
+import { normalizePerformance } from '../../data/guardian.js';
 
 /** 무대 선택값 — 프로필에서 파생되지 **않는** 입력만 여기 온다. */
 export interface RunConfigOpts {
@@ -50,6 +51,13 @@ export interface RunConfigOpts {
   maxSegments?: number;
   /** 3레이어 침공 설정(ADR-0017). 있으면 침공 런, 없으면 PvE. */
   invasion3?: Invasion3Config;
+  /**
+   * 예비역 소집(ADR-0024): 활성 기체 대신 이 수호 빌드로 출격한다. **침공 경로에서만** 전달한다.
+   * 호출부가 고른 `GuardianRecord` 의 `build`(타입·장착 장비·스킬 투자)에 남은 성능%를 얹어
+   * 만든 스냅샷이다. `equipped` 는 `equippedItems(profile)` 산출처럼 `EQUIP_SLOTS` 관련 순서의
+   * 배열이다(무기/보조 선택이 순서 계약). 미지정 = 활성 기체 출격(기존 거동 불변).
+   */
+  pilot?: { equipped: Item[]; skillInvest: number[]; typeId: number; performanceCP: number };
 }
 
 /**
@@ -78,22 +86,42 @@ function equippedItems(profile: Profile): Item[] {
  * 행성 모드(ADR-0021, Lane2)도 여기서 **단일 정본**으로 스탬프한다 — 레지스트리
  * `planetContent(planet).mode` 가 정본이라 데이터 주도다. shipType 처럼 항상 명시하되
  * 값이 0(vampire)이면 `hashWorld` 꼬리 폴드가 미실행이라 뱀서류/침공 해시가 불변이다.
+ *
+ * ## 예비역 소집(ADR-0024) — opt-in 신규 입력
+ * `opts.pilot` 이 있으면(침공 경로에서만 전달) 활성 기체 대신 예비역 빌드에서 loadout 을
+ * 파생한다. 아래 소스 선택(`typeId`/`skillInvest`/`equipped`)은 **순수 additive** 라
+ * `opts.pilot` 미지정 시 산술이 활성 기체 경로와 **바이트 동일**하다 — perf 감쇠 곱은
+ * 소집 때만 실행된다(스트라이커 해시 골든 `tests/shipHashBaseline.test.ts` 가 못 박는다).
  */
 export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConfig {
+  const pilot = opts.pilot;
   const ship = activeShip(profile);
-  // 손상 세이브 방어: 범위 밖 typeId 는 스트라이커로 되돌린다(설계서 §6 — clamp 가 아니라 0).
-  const typeId = normalizeShipTypeId(ship.typeId);
+  // 소집이면 예비역 빌드에서, 아니면 활성 기체에서 소스를 고른다. 손상 세이브 방어: 범위 밖
+  // typeId 는 스트라이커로 되돌린다(설계서 §6 — clamp 가 아니라 0).
+  const typeId = normalizeShipTypeId(pilot !== undefined ? pilot.typeId : ship.typeId);
   // 복사본이다. 런 중 연구소 투자가 라이브 월드로 새지 않게(그리고 리플레이 스냅샷이
   // 나중에 변하지 않게) 반드시 잘라서 싣는다.
-  const skillInvest = ship.skillInvest.slice();
-  // 계보 기체 가지(ADR-0007)를 장비·스킬 위에 겹친다. loadout 은 config 로 리플레이에
-  // 스냅샷되므로 서버 재실행 검증(EF)과 호환된다.
+  const skillInvest = (pilot !== undefined ? pilot.skillInvest : ship.skillInvest).slice();
+  // 소집은 스냅샷 장비를 그대로 쓴다(프로필 재조회 금지). 계보 기체 가지(ADR-0007)는 계정
+  // 단위 파일럿 버프라 소집이든 활성이든 동일하게 얹는다(계정의 버프는 무엇을 타든 적용).
+  // loadout 은 config 로 리플레이에 스냅샷되므로 서버 재실행 검증(EF)과 호환된다.
   const { loadout } = computeLoadoutStats(
-    equippedItems(profile),
+    pilot !== undefined ? pilot.equipped : equippedItems(profile),
     skillInvest,
     shipBonusBp(profile.lineage),
     typeId,
   );
+  // 성능% 감쇠(소집 전용) — resolveGuardianStats 철학 그대로: **크기(피해·HP)만** 스케일하고
+  // 기하(발사 간격·탄속·사거리 등)는 불변이다. perf 는 centi-percent [5000,10000] 이라 완전
+  // 성능(10000)이면 damageMult ×1·maxHpAdd round(x×1)=x 로 무연산 → 활성 빌드와 loadout 바이트
+  // 동일(소집==활성 증명). maxHpAdd 는 단일 나눗셈+Math.round 로 정수 안정(scaleStat 규율).
+  // 결과 loadout 은 config.loadout 로 스냅샷돼 EF 가 재파생 없이 그대로 리플레이한다 — 서버
+  // 재해석이 없으므로 Node 내부 결정론만 필요하다(Math.random/Date.now 미사용).
+  if (pilot !== undefined) {
+    const perf = normalizePerformance(pilot.performanceCP);
+    loadout.damageMult *= perf / 10000;
+    loadout.maxHpAdd = Math.round((loadout.maxHpAdd * perf) / 10000);
+  }
   return {
     ...DEFAULT_CONFIG,
     planet: opts.planet,
