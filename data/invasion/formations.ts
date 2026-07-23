@@ -75,6 +75,14 @@ export const FORMATION_SHIELD_ESCORT = 5;
 export const FORMATION_SNIPER_NEST = 6;
 /** 편대 catalogId — 지원 편대(M7c append). */
 export const FORMATION_SUPPORT_ESCORT = 7;
+/** 편대 catalogId — 부식 강습편대(Lane9 톡사르 append). */
+export const FORMATION_TOXAR_CORROSION = 8;
+/** 편대 catalogId — 역병 살포편대(Lane9 톡사르 append). */
+export const FORMATION_TOXAR_BLIGHT = 9;
+/** 편대 catalogId — 파쇄 돌격편대(Lane9 크라스 append). */
+export const FORMATION_KRAS_BREAKER = 10;
+/** 편대 catalogId — 관통 저격편대(Lane9 크라스 append). */
+export const FORMATION_KRAS_PIERCER = 11;
 
 /** 정찰 드론편대 — 수리드론 5기 V자 직진. 가장 가벼운 기본 편대(빈 슬롯 충원 대상). */
 const SCOUT_DRONES: FormationDef = {
@@ -217,9 +225,85 @@ const SUPPORT_ESCORT: FormationDef = {
   ],
 };
 
+// ---------------------------------------------------------------------------
+// Lane9 append — 신규 4종(톡사르 2 · 크라스 2). 기존 적 22종만 참조한다(적 append 없음 —
+// 신규 행성 로스터 22~33 은 PvE 로스터라 침공 편대 표면을 넓히지 않는다, 머리말 계약 참고).
+// 톡사르=부식(산성 잡몹 재사용) · 크라스=파괴/관통(아르케 중장 잡몹 재사용).
+// ---------------------------------------------------------------------------
+
 /**
- * 편대 카탈로그(풀 8종). **배열 인덱스 = catalogId, append-only.**
- * 앞 3종은 M7a 임시분이고 뒤 5종이 M7c append — 앞쪽 순서는 절대 건드리지 않는다.
+ * 부식 강습편대 — 산성 돌격체(4) 2기가 좌우에서 파고들고 그 뒤로 독액 분사체(5)·부식 분비강
+ * (6)이 협공 계단으로 붙는다. 붙으면 계속 갉아먹는 톡사르 오염 테마의 근접 압박(회피 강요).
+ */
+const TOXAR_CORROSION: FormationDef = {
+  id: 'formation-toxar-corrosion',
+  catalogId: FORMATION_TOXAR_CORROSION,
+  entryPattern: ENTRY_FLANK,
+  members: [
+    { enemyTypeIndex: 4, dx: -200, dy: 0, delayTicks: 0 },
+    { enemyTypeIndex: 4, dx: 200, dy: 0, delayTicks: 0 },
+    { enemyTypeIndex: 5, dx: -200, dy: -140, delayTicks: 24 },
+    { enemyTypeIndex: 5, dx: 200, dy: -140, delayTicks: 24 },
+    { enemyTypeIndex: 6, dx: -200, dy: -280, delayTicks: 48 },
+    { enemyTypeIndex: 6, dx: 200, dy: -280, delayTicks: 48 },
+  ],
+};
+
+/**
+ * 역병 살포편대 — 산성 돌격체(4) 1기가 앞서고 독액 분사체(5)·부식 분비강(6)이 느리게 흘러내리며
+ * 구간을 오염으로 봉쇄한다. 표류 진입이라 화면에 오래 남으며 지속 피해로 통로를 좁힌다.
+ */
+const TOXAR_BLIGHT_FORMATION: FormationDef = {
+  id: 'formation-toxar-blight',
+  catalogId: FORMATION_TOXAR_BLIGHT,
+  entryPattern: ENTRY_DRIFT,
+  members: [
+    { enemyTypeIndex: 4, dx: 0, dy: 0, delayTicks: 0 },
+    { enemyTypeIndex: 5, dx: -360, dy: -120, delayTicks: 30 },
+    { enemyTypeIndex: 5, dx: 360, dy: -120, delayTicks: 30 },
+    { enemyTypeIndex: 6, dx: -160, dy: -240, delayTicks: 60 },
+    { enemyTypeIndex: 6, dx: 160, dy: -240, delayTicks: 60 },
+  ],
+};
+
+/**
+ * 파쇄 돌격편대 — 파쇄 골렘(16) 3기가 밀집 종대로 들이받고 고대 파괴자(21) 2기가 뒤에서 가속
+ * 진입한다. 크라스 파괴 테마의 정면 전열 — 뚫을지 우회할지 고르게 만든다.
+ */
+const KRAS_BREAKER_FORMATION: FormationDef = {
+  id: 'formation-kras-breaker',
+  catalogId: FORMATION_KRAS_BREAKER,
+  entryPattern: ENTRY_CHARGE,
+  members: [
+    { enemyTypeIndex: 16, dx: -160, dy: 0, delayTicks: 0 },
+    { enemyTypeIndex: 16, dx: 160, dy: 0, delayTicks: 12 },
+    { enemyTypeIndex: 16, dx: 0, dy: -120, delayTicks: 24 },
+    { enemyTypeIndex: 21, dx: -80, dy: -240, delayTicks: 36 },
+    { enemyTypeIndex: 21, dx: 80, dy: -240, delayTicks: 48 },
+  ],
+};
+
+/**
+ * 관통 저격편대 — 수호 포대(20) 2기가 얕게 등장해 상단에 눌러앉아 예고선을 긋고, 정밀 포탑(17)
+ * 2기와 파쇄 골렘(16) 1기가 뒤따른다. 접근하면 부수지만 방치하면 계속 관통당하는 긴장 리듬.
+ */
+const KRAS_PIERCER_FORMATION: FormationDef = {
+  id: 'formation-kras-piercer',
+  catalogId: FORMATION_KRAS_PIERCER,
+  entryPattern: ENTRY_SNIPE,
+  members: [
+    { enemyTypeIndex: 20, dx: -600, dy: 0, delayTicks: 0 },
+    { enemyTypeIndex: 20, dx: 600, dy: 0, delayTicks: 0 },
+    { enemyTypeIndex: 17, dx: -300, dy: -120, delayTicks: 45 },
+    { enemyTypeIndex: 17, dx: 300, dy: -120, delayTicks: 45 },
+    { enemyTypeIndex: 16, dx: 0, dy: -240, delayTicks: 90 },
+  ],
+};
+
+/**
+ * 편대 카탈로그(풀 12종). **배열 인덱스 = catalogId, append-only.**
+ * 앞 3종은 M7a 임시분, 그다음 5종이 M7c append, 뒤 4종이 Lane9 append — 앞쪽 순서는 절대
+ * 건드리지 않는다.
  */
 export const FORMATIONS: readonly FormationDef[] = [
   SCOUT_DRONES,
@@ -230,6 +314,10 @@ export const FORMATIONS: readonly FormationDef[] = [
   SHIELD_ESCORT,
   SNIPER_NEST,
   SUPPORT_ESCORT,
+  TOXAR_CORROSION,
+  TOXAR_BLIGHT_FORMATION,
+  KRAS_BREAKER_FORMATION,
+  KRAS_PIERCER_FORMATION,
 ];
 
 /** 편대 종류 수. */

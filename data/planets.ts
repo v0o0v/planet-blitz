@@ -26,6 +26,8 @@ export interface PlanetMeta {
 const PRESENTATION: Record<number, { subtitle: string; accent: string }> = {
   0: { subtitle: '용암 지대 · 기계 군단', accent: '#ff6a3c' },
   1: { subtitle: '곤충 군체 · 여왕의 둥지', accent: '#8fd94c' },
+  4: { subtitle: '오염 지대 · 부패의 모체', accent: '#b04dd6' },
+  5: { subtitle: '파괴 전선 · 공성 콜로서스', accent: '#d6484a' },
 };
 
 const FALLBACK_PRESENTATION = { subtitle: '미지의 성역', accent: '#8896b8' } as const;

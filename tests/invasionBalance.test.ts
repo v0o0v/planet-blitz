@@ -492,6 +492,10 @@ describe('카탈로그 계약 — 수치 튜닝이 인덱스를 건드리지 않
       'formation-shield-escort',
       'formation-sniper-nest',
       'formation-support-escort',
+      'formation-toxar-corrosion',
+      'formation-toxar-blight',
+      'formation-kras-breaker',
+      'formation-kras-piercer',
     ]);
     FORMATIONS.forEach((f, i) => expect(f.catalogId).toBe(i));
   });
@@ -507,6 +511,14 @@ describe('카탈로그 계약 — 수치 튜닝이 인덱스를 건드리지 않
       'fac.press',
       'fac.gravwell',
       'fac.shock',
+      'fac.venomvent',
+      'fac.blightpool',
+      'fac.corrosivemist',
+      'fac.toxinturret',
+      'fac.heavyrail',
+      'fac.siegecannon',
+      'fac.breachturret',
+      'fac.demolisher',
     ]);
   });
 
@@ -552,7 +564,7 @@ describe('시드 재조정 — SQL 정본과의 정합', () => {
     expect(sql).not.toMatch(/update\s+public\.defenses[\s\S]{0,400}?where\s+true/i);
   });
 
-  it('20기지가 풀 카탈로그를 전부 노출한다(미사용 콘텐츠 0)', () => {
+  it('20기지가 시드 램프 목표 카탈로그를 전부 노출한다(미사용 시드 콘텐츠 0)', () => {
     const formations = new Set<number>();
     const facilities = new Set<number>();
     const props = new Set<number>();
@@ -564,10 +576,32 @@ describe('시드 재조정 — SQL 정본과의 정합', () => {
       for (const s of l.l3.props) if (s !== null) props.add(s.catalogId);
       if (l.l3.boss !== null) bosses.add(l.l3.boss.catalogId);
     }
-    expect([...formations].sort((a, b) => a - b)).toEqual(FORMATIONS.map((_, i) => i));
-    expect([...facilities].sort((a, b) => a - b)).toEqual(INVASION_FACILITIES.map((_, i) => i));
+    // 시드 램프(RAMP)가 **목표로 하는** 카탈로그 대역을 빠짐없이 노출하는지 본다(대역 안에
+    // 구멍이 있으면 그 콘텐츠는 NPC 기지에서 영영 안 보인다). 대역 상한은 램프에서 파생한다
+    // (하드코딩 금지) — 편대·설비는 램프 상한까지, 기물·보스는 전량이다.
+    //
+    // ⚠️ Lane9 신규 방어체(편대 8~11 · 설비 9~16)는 램프 대역 **밖**이다: 톡사르·크라스
+    // 특산 설계도라 획득 경로가 **행성 파밍**이고, 그 도달은 tests/planetDrops.test.ts ③·⑥ 이
+    // 보장한다(미사용 콘텐츠 0 은 전역적으로 여전히 성립 — 죽은 콘텐츠가 아니다). NPC 시드
+    // 기지 노출까지 넓히는 것은 서버 시드 램프(20260723000000_m7c_seed_rebalance.sql) 수정 +
+    // 클리어율 밴드 재측정을 동반하는 별도 밸런스 패스 소관이다(defer-balance-tuning).
+    const seedFormationKinds = Math.max(
+      ...Array.from({ length: SEED_BASE_COUNT }, (_, i) => RAMP.formationKinds(i + 1)),
+    );
+    const seedFacilityKinds = Math.max(
+      ...Array.from({ length: SEED_BASE_COUNT }, (_, i) => RAMP.facilityKinds(i + 1)),
+    );
+    expect([...formations].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: seedFormationKinds }, (_, i) => i),
+    );
+    expect([...facilities].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: seedFacilityKinds }, (_, i) => i),
+    );
     expect([...props].sort((a, b) => a - b)).toEqual(L3_PROPS.map((_, i) => i));
     expect([...bosses].sort((a, b) => a - b)).toEqual(DEFENSE_BOSSES.map((_, i) => i));
+    // 시드가 참조하는 편대·설비 id 는 전부 실재 카탈로그다(댕글링 시드 0).
+    for (const id of formations) expect(FORMATIONS[id]).toBeDefined();
+    for (const id of facilities) expect(INVASION_FACILITIES[id]).toBeDefined();
   });
 
   it('시드 배치가 전부 정규형이다(정규화 멱등)', () => {

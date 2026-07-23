@@ -189,8 +189,8 @@ describe('프레스 좌표는 틱의 순수 함수다', () => {
 // ---------------------------------------------------------------------------
 
 describe('압축 프레스 카탈로그', () => {
-  it('catalogId 6 이 프레스이고 카탈로그는 9종이다(append-only)', () => {
-    expect(INVASION_FACILITIES.length).toBe(9);
+  it('catalogId 6 이 프레스이고 카탈로그는 17종이다(append-only)', () => {
+    expect(INVASION_FACILITIES.length).toBe(17); // Lane9: 톡사르 9~12 · 크라스 13~16 append
     expect(PRESS_SPEC.behavior).toBe(FACILITY_BEHAVIOR_PRESS);
     expect(PRESS_SPEC.key).toBe('fac.press');
     // 앞선 6종의 키가 한 칸도 밀리지 않았다(해시·배치 jsonb 계약).

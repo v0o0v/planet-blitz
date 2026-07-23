@@ -226,6 +226,20 @@ const ENEMY_STYLE: { color: number; radius: number; shape: 'tri' | 'square' | 'd
   { color: 0xe0ad5a, radius: 30, shape: 'hex' }, // 19 support
   { color: 0xf0c268, radius: 48, shape: 'square' }, // 20 elite gunner
   { color: 0xf0c268, radius: 54, shape: 'tri' }, // 21 elite charger
+  // 톡사르 22~27 — 부식 톡식 퍼플 (TODO(art): 실 스프라이트 대기)
+  { color: 0xb04dd6, radius: 32, shape: 'tri' }, // 22 charger
+  { color: 0xc46ae6, radius: 30, shape: 'square' }, // 23 gunner
+  { color: 0x8a34b0, radius: 42, shape: 'diamond' }, // 24 special
+  { color: 0xd79bf0, radius: 28, shape: 'hex' }, // 25 support
+  { color: 0xe6b8f8, radius: 44, shape: 'square' }, // 26 elite gunner
+  { color: 0xe6b8f8, radius: 50, shape: 'tri' }, // 27 elite charger
+  // 크라스 28~33 — 파괴 크림슨/러스트 (TODO(art): 실 스프라이트 대기)
+  { color: 0xc0303a, radius: 38, shape: 'tri' }, // 28 charger
+  { color: 0xd6484a, radius: 34, shape: 'square' }, // 29 gunner
+  { color: 0x8f2028, radius: 46, shape: 'diamond' }, // 30 special
+  { color: 0xe08a6a, radius: 30, shape: 'hex' }, // 31 support
+  { color: 0xf06058, radius: 48, shape: 'square' }, // 32 elite gunner
+  { color: 0xf06058, radius: 54, shape: 'tri' }, // 33 elite charger
 ];
 
 /**
@@ -897,12 +911,26 @@ export async function loadGameTextures(
     'enemy_arke_support.png', // 19
     'enemy_arke_elite_gunner.png', // 20
     'enemy_arke_elite_charger.png', // 21
+    // 톡사르 22~27 · 크라스 28~33 (Lane9). TODO(art): 실 스프라이트 대기 — 없으면 절차적 유지.
+    'enemy_toxar_charger.png', // 22
+    'enemy_toxar_gunner.png', // 23
+    'enemy_toxar_special.png', // 24
+    'enemy_toxar_support.png', // 25
+    'enemy_toxar_elite_gunner.png', // 26
+    'enemy_toxar_elite_charger.png', // 27
+    'enemy_kras_charger.png', // 28
+    'enemy_kras_gunner.png', // 29
+    'enemy_kras_special.png', // 30
+    'enemy_kras_support.png', // 31
+    'enemy_kras_elite_gunner.png', // 32
+    'enemy_kras_elite_charger.png', // 33
   ];
 
-  // Boss + backdrop by planetIndex (0 카르곤 .. 3 아르케). Slot 0 keeps the M1
+  // Boss + backdrop by planetIndex (0 카르곤 .. 5 크라스). Slot 0 keeps the M1
   // filenames (`boss.png`, `bg_kargon.png`); others follow the planet contract.
-  const bossFiles = ['boss.png', 'boss_berdan.png', 'boss_niflheim.png', 'boss_arke.png'];
-  const bgFiles = ['bg_kargon.png', 'bg_berdan.png', 'bg_niflheim.png', 'bg_arke.png'];
+  // 4~5(톡사르·크라스)는 Lane9 append — TODO(art): 실 스프라이트 대기.
+  const bossFiles = ['boss.png', 'boss_berdan.png', 'boss_niflheim.png', 'boss_arke.png', 'boss_toxar.png', 'boss_kras.png'];
+  const bgFiles = ['bg_kargon.png', 'bg_berdan.png', 'bg_niflheim.png', 'bg_arke.png', 'bg_toxar.png', 'bg_kras.png'];
 
   // 방어 엔티티(파일명 계약, spec 레인 A). 없는 파일은 절차적 플레이스홀더 유지(tryLoad 패턴).
   // 구 포탑 6종(turret_*.png)은 M7a L11 에서 삭제 — 설비 아트는 FACILITY_ASSET_FILES 가 정본.

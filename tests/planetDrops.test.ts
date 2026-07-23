@@ -28,6 +28,7 @@ import {
   blueprintDropsFromLoot,
   AUTO_BLUEPRINT_WEIGHT,
   AUTO_BLUEPRINT_WEIGHT_BOSS,
+  BOSS_BLUEPRINT_PLANET,
   type LootLike,
 } from '../data/planets/index.js';
 import { PLANET_BLUEPRINT_SPECIALTIES, type BlueprintSpecialty } from '../data/planets/blueprints.js';
@@ -41,8 +42,13 @@ import {
 } from '../data/invasion/garrison.js';
 import { CATALOG_FORMATION, CATALOG_FACILITY } from '../data/invasion/catalog.js';
 
-/** 최심 행성 index(보스 설계도 전용 — 규칙 4). */
-const DEEPEST = PLANETS.length - 1;
+/**
+ * 보스 설계도가 쌓이는 **고정 보스 행성** index(규칙 4 — Lane9 완화). 6행성 parallel-planet
+ * 모델(ADR-0021)에선 "최심"이 무의미하므로 `PLANETS.length-1`(=크라스)이 아니라 정본 상수
+ * `BOSS_BLUEPRINT_PLANET`(=아르케 3)을 오라클로 쓴다. 프로덕션 코드와 같은 상수를 참조해야
+ * 하드코딩 3 이 테스트·코드 두 곳에 흩어져 갈리지 않는다.
+ */
+const BOSS_PLANET = BOSS_BLUEPRINT_PLANET;
 
 const key = (e: { kind: number; catalogId: number }) => `${e.kind}:${e.catalogId}`;
 
@@ -108,9 +114,9 @@ describe('② 행성별 분배 규칙', () => {
 
   it('보스 설계도는 최심 행성에서만 나오고 가중치가 가장 낮다(규칙 4)', () => {
     PLANET_BLUEPRINTS.forEach((list, planet) => {
-      for (const e of list) if (e.kind === CATALOG_BOSS) expect(planet).toBe(DEEPEST);
+      for (const e of list) if (e.kind === CATALOG_BOSS) expect(planet).toBe(BOSS_PLANET);
     });
-    const deep = PLANET_BLUEPRINTS[DEEPEST]!;
+    const deep = PLANET_BLUEPRINTS[BOSS_PLANET]!;
     const bosses = deep.filter((e) => e.kind === CATALOG_BOSS);
     expect(bosses.length).toBeGreaterThan(0);
     const minWeight = Math.min(...deep.map((e) => e.weight));
@@ -222,13 +228,21 @@ describe('④ 카탈로그 확장 시 규칙 자동 파생', () => {
     });
     // 규칙 4 — 신규 보스도 최심 행성 · 최저 가중치.
     derived.forEach((list, planet) => {
-      for (const e of list) if (e.kind === CATALOG_BOSS) expect(planet).toBe(DEEPEST);
+      for (const e of list) if (e.kind === CATALOG_BOSS) expect(planet).toBe(BOSS_PLANET);
     });
-    const newBoss = derived[DEEPEST]!.find((e) => e.kind === CATALOG_BOSS && e.catalogId === CATALOG_KIND_COUNTS[CATALOG_BOSS])!;
+    const newBoss = derived[BOSS_PLANET]!.find((e) => e.kind === CATALOG_BOSS && e.catalogId === CATALOG_KIND_COUNTS[CATALOG_BOSS])!;
     expect(newBoss.weight).toBe(AUTO_BLUEPRINT_WEIGHT_BOSS);
-    // 규칙 5 — 항목 수가 ±1 이내(보스를 먼저 놓고 나머지를 최소 적재 행성에 붙인 결과).
+    // 규칙 5 재정의(Lane9 — boss=BOSS_PLANET 고정의 논리적 귀결).
+    // 보스는 천장 재료라 BOSS_PLANET 한 곳에만 쌓인다. 6행성이면 6-사이즈 행성이 여럿 남아
+    // 가상 보스가 BOSS_PLANET 의 '총' 사이즈를 스프레드 2 로 올린다(보스 적재분 때문). 균등의
+    // 실제 대상인 '비보스 적재'를 두 축으로 갈라 단언한다:
+    //   (a) BOSS_PLANET 을 제외한 행성들의 총 사이즈가 ±1(순수 파밍 분배가 균등하다).
+    //   (b) BOSS_PLANET 의 비보스 적재도 다른 행성 이하다(보스 외 추가 쏠림이 없다).
     const sizes = derived.map((l) => l.length);
-    expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(1);
+    const nonBossPlanetSizes = sizes.filter((_, p) => p !== BOSS_PLANET);
+    expect(Math.max(...nonBossPlanetSizes) - Math.min(...nonBossPlanetSizes)).toBeLessThanOrEqual(1);
+    const bossPlanetNonBoss = derived[BOSS_PLANET]!.filter((e) => e.kind !== CATALOG_BOSS).length;
+    expect(bossPlanetNonBoss).toBeLessThanOrEqual(Math.max(...nonBossPlanetSizes));
     // 신규 비보스는 자동 가중치.
     const autoAdded = derived.flatMap((l, p) => l.slice(PLANET_BLUEPRINT_SPECIALTIES[p]!.length));
     for (const e of autoAdded) {
@@ -247,7 +261,7 @@ describe('④ 카탈로그 확장 시 규칙 자동 파생', () => {
     const sizes = derived.map((l) => l.length);
     expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(1);
     derived.forEach((list, planet) => {
-      for (const e of list) if (e.kind === CATALOG_BOSS) expect(planet).toBe(DEEPEST);
+      for (const e of list) if (e.kind === CATALOG_BOSS) expect(planet).toBe(BOSS_PLANET);
     });
   });
 
@@ -274,7 +288,7 @@ describe('⑤ sim ↔ 메타 레이어 경계', () => {
   });
 
   it('sim 드랍 코드는 불투명하다 — kind·catalogId 를 내지 않는다', () => {
-    const odds = PLANETS[DEEPEST]!.dropTable;
+    const odds = PLANETS[BOSS_PLANET]!.dropTable;
     const code = rollBlueprintDrop({ seed: 12345, rarityCode: RARITY_UNIQUE }, odds);
     if (code !== null) {
       expect(Object.keys(code).sort()).toEqual(['seed', 'tableIndex']);
@@ -314,11 +328,11 @@ function runForLoot(seed: number, planet: number) {
 
 describe('⑥ 정규 경로 통합(createWorld → stepWorld → 정산 입력)', () => {
   it('실런의 loot 이 그 행성 특산 설계도로 풀린다', () => {
-    const state = runForLoot(0xc6d1, DEEPEST);
+    const state = runForLoot(0xc6d1, BOSS_PLANET);
     expect(state.loot.length).toBeGreaterThan(0);
-    for (const rec of state.loot) expect(rec.planet).toBe(DEEPEST);
+    for (const rec of state.loot) expect(rec.planet).toBe(BOSS_PLANET);
     const grants = blueprintDropsFromLoot(state.loot);
-    const allowed = supplySets(PLANET_BLUEPRINTS)[DEEPEST]!;
+    const allowed = supplySets(PLANET_BLUEPRINTS)[BOSS_PLANET]!;
     for (const g of grants) {
       expect(allowed.has(key(g)), `행성 밖 설계도 ${key(g)}`).toBe(true);
       expect(g.count).toBeGreaterThanOrEqual(1);

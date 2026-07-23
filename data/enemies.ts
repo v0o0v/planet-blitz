@@ -16,6 +16,8 @@ import { HAZARD_LAVA } from '../src/sim/patterns/types.js';
 import { BERDAN_DEFS } from './planets/berdan.js';
 import { NIFLHEIM_DEFS } from './planets/niflheim.js';
 import { ARKE_DEFS } from './planets/arke.js';
+import { TOXAR_DEFS } from './planets/toxar.js';
+import { KRAS_DEFS } from './planets/kras.js';
 
 /** 파쇄차 — 돌격형: slow straight rush, sprays 4 fragments on wall impact. */
 export const CHARGER: EnemyDef = {
@@ -90,9 +92,9 @@ export const KARGON_ROSTER = {
 
 /**
  * Lookup by stable typeIndex (used when reconstructing behaviour from state).
- * 카르곤 0~3 → 베르단 4~9 → 니플헤임 10~15 → 아르케 16~21 순으로 append — typeIndex는
- * 전역 고유하며 entity.enemyType이 이 배열의 인덱스이므로 절대 재정렬/재번호 금지
- * (해시 불변).
+ * 카르곤 0~3 → 베르단 4~9 → 니플헤임 10~15 → 아르케 16~21 → 톡사르 22~27 → 크라스 28~33
+ * 순으로 append — typeIndex는 전역 고유하며 entity.enemyType이 이 배열의 인덱스이므로 절대
+ * 재정렬/재번호 금지(해시 불변).
  */
 export const ENEMY_BY_TYPE: readonly EnemyDef[] = [
   CHARGER,
@@ -102,4 +104,6 @@ export const ENEMY_BY_TYPE: readonly EnemyDef[] = [
   ...BERDAN_DEFS,
   ...NIFLHEIM_DEFS,
   ...ARKE_DEFS,
+  ...TOXAR_DEFS,
+  ...KRAS_DEFS,
 ];

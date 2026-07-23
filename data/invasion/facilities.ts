@@ -287,6 +287,134 @@ export const INVASION_FACILITIES: readonly FacilitySpec[] = [
     hazardDamage: 40,
     hazardOffset: 420,
   },
+  // -------------------------------------------------------------------------
+  // Lane9 append (append-only — 9..16). 위 0..8 을 한 칸도 옮기지 않는다.
+  //   톡사르(부식·중독) = 지속 해저드 계열 9..12 · 크라스(파괴·관통) = 고화력 방어포 13..16.
+  //   전 수치 플레이스홀더(// TODO(밸런스)) — 거동은 기존 4갈래 재사용(신규 sim 축 없음).
+  // -------------------------------------------------------------------------
+  // 9 — 부식 분사구(톡사르): 벽 안쪽에 꺼지지 않는 산성 장판을 계속 뿜는다(화염 방사구 계열).
+  {
+    ...BASE,
+    key: 'fac.venomvent',
+    behavior: FACILITY_BEHAVIOR_HAZARD,
+    hp: 240, // TODO(밸런스)
+    radius: 30, // TODO(밸런스)
+    hazardSubtype: HAZARD_LAVA,
+    hazardRadius: 240, // TODO(밸런스)
+    periodTicks: 60, // TODO(밸런스)
+    windupTicks: 0,
+    onTicks: 60, // TODO(밸런스)
+    hazardDamage: 6, // TODO(밸런스)
+    hazardOffset: 240, // TODO(밸런스)
+  },
+  // 10 — 오염 늪(톡사르): 피해 낮은 감속 전용 주기 장판(HAZARD_SLOW). 회피 여유를 깎아 다른
+  //      부식 장판의 명중을 올린다.
+  {
+    ...BASE,
+    key: 'fac.blightpool',
+    behavior: FACILITY_BEHAVIOR_HAZARD,
+    hp: 210, // TODO(밸런스)
+    radius: 30, // TODO(밸런스)
+    hazardSubtype: HAZARD_SLOW,
+    hazardRadius: 340, // TODO(밸런스)
+    periodTicks: 180, // TODO(밸런스)
+    windupTicks: 20, // TODO(밸런스)
+    onTicks: 120, // TODO(밸런스)
+    hazardDamage: 2, // TODO(밸런스)
+    hazardOffset: 300, // TODO(밸런스)
+  },
+  // 11 — 부식 안개(톡사르): 넓게 퍼지는 저피해 주기 장판. 예열 뒤 회랑 폭을 오래 덮는다.
+  {
+    ...BASE,
+    key: 'fac.corrosivemist',
+    behavior: FACILITY_BEHAVIOR_HAZARD,
+    hp: 200, // TODO(밸런스)
+    radius: 30, // TODO(밸런스)
+    hazardSubtype: HAZARD_LAVA,
+    hazardRadius: 360, // TODO(밸런스)
+    periodTicks: 150, // TODO(밸런스)
+    windupTicks: 30, // TODO(밸런스)
+    onTicks: 60, // TODO(밸런스)
+    hazardDamage: 4, // TODO(밸런스)
+    hazardOffset: 320, // TODO(밸런스)
+  },
+  // 12 — 독성 연사포(톡사르): 근거리를 빠르게 훑는 저피해 연사 방어포(속사포 계열).
+  {
+    ...BASE,
+    key: 'fac.toxinturret',
+    behavior: FACILITY_BEHAVIOR_TURRET,
+    hp: 250, // TODO(밸런스)
+    radius: 34, // TODO(밸런스)
+    range: 900, // TODO(밸런스)
+    fireCooldown: 18, // TODO(밸런스)
+    damage: 5, // TODO(밸런스)
+    bulletSpeed: 1100, // TODO(밸런스)
+    bulletRadius: 8, // TODO(밸런스)
+    bulletLife: 70, // TODO(밸런스)
+    pellets: 1,
+  },
+  // 13 — 중장 레일포(크라스): 조준을 잠그고 예고선을 그은 뒤 초고피해 관통탄 1발(관통 레일포 계열).
+  {
+    ...BASE,
+    key: 'fac.heavyrail',
+    behavior: FACILITY_BEHAVIOR_TURRET,
+    hp: 220, // TODO(밸런스)
+    radius: 32, // TODO(밸런스)
+    range: 1600, // TODO(밸런스)
+    fireCooldown: 120, // TODO(밸런스)
+    damage: 40, // TODO(밸런스)
+    bulletSpeed: 2600, // TODO(밸런스)
+    bulletRadius: 8, // TODO(밸런스)
+    bulletLife: 90, // TODO(밸런스)
+    pellets: 1,
+    telegraphTicks: 40, // TODO(밸런스)
+  },
+  // 14 — 공성 주포(크라스): 느리지만 무거운 단발 고화력 포격.
+  {
+    ...BASE,
+    key: 'fac.siegecannon',
+    behavior: FACILITY_BEHAVIOR_TURRET,
+    hp: 320, // TODO(밸런스)
+    radius: 36, // TODO(밸런스)
+    range: 1200, // TODO(밸런스)
+    fireCooldown: 80, // TODO(밸런스)
+    damage: 30, // TODO(밸런스)
+    bulletSpeed: 1000, // TODO(밸런스)
+    bulletRadius: 12, // TODO(밸런스)
+    bulletLife: 120, // TODO(밸런스)
+    pellets: 1,
+  },
+  // 15 — 돌파 산탄포(크라스): 중간 화력의 부채꼴 다발로 회랑 면을 제압한다.
+  {
+    ...BASE,
+    key: 'fac.breachturret',
+    behavior: FACILITY_BEHAVIOR_TURRET,
+    hp: 270, // TODO(밸런스)
+    radius: 34, // TODO(밸런스)
+    range: 1000, // TODO(밸런스)
+    fireCooldown: 50, // TODO(밸런스)
+    damage: 12, // TODO(밸런스)
+    bulletSpeed: 1200, // TODO(밸런스)
+    bulletRadius: 9, // TODO(밸런스)
+    bulletLife: 90, // TODO(밸런스)
+    pellets: 3, // TODO(밸런스)
+    spreadDeg: 30, // TODO(밸런스)
+  },
+  // 16 — 파괴 폭뢰기(크라스): 긴 예열 뒤 짧게 터지는 초고피해 광역(충격파 발생기 계열).
+  {
+    ...BASE,
+    key: 'fac.demolisher',
+    behavior: FACILITY_BEHAVIOR_HAZARD,
+    hp: 200, // TODO(밸런스)
+    radius: 28, // TODO(밸런스)
+    hazardSubtype: HAZARD_LAVA,
+    hazardRadius: 500, // TODO(밸런스)
+    periodTicks: 300, // TODO(밸런스)
+    windupTicks: 60, // TODO(밸런스)
+    onTicks: 10, // TODO(밸런스)
+    hazardDamage: 42, // TODO(밸런스)
+    hazardOffset: 420, // TODO(밸런스)
+  },
 ];
 
 /** 카탈로그 개수(M7c 확장 후 9종). 앞으로도 **append 만** 한다. */

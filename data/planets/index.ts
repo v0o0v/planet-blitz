@@ -24,6 +24,10 @@ import { NIFLHEIM_ROSTER, NIFLHEIM_ELITES, NIFLHEIM_CARD_POOL } from './niflheim
 import { NIFLHEIM_FLAGSHIP } from '../bosses/niflheim-flagship.js';
 import { ARKE_ROSTER, ARKE_ELITES, ARKE_CARD_POOL } from './arke.js';
 import { ARKE_OBELISK } from '../bosses/arke-obelisk.js';
+import { TOXAR_ROSTER, TOXAR_ELITES, TOXAR_CARD_POOL } from './toxar.js';
+import { TOXAR_BLIGHT } from '../bosses/toxar-blight.js';
+import { KRAS_ROSTER, KRAS_ELITES, KRAS_CARD_POOL } from './kras.js';
+import { KRAS_COLOSSUS } from '../bosses/kras-colossus.js';
 import {
   PLANET_BLUEPRINT_SPECIALTIES,
   mergeBlueprintGrants,
@@ -117,7 +121,10 @@ export function derivePlanetBlueprints(
 ): BlueprintSpecialty[][] {
   const out: BlueprintSpecialty[][] = explicit.map((list) => [...list]);
   if (out.length === 0) return out;
-  const deepest = out.length - 1;
+  // 보스 설계도는 **고정 보스 행성**에만 쌓는다(규칙 4 완화 — Lane9). parallel-planet 모델에서
+  // "최심"은 무의미하므로 out.length-1(최종 행성)이 아니라 아르케(BOSS_BLUEPRINT_PLANET)에
+  // 못 박는다. 방어적: 행성이 4개 미만이라 상수가 범위를 벗어나면 최종 행성으로 폴백한다.
+  const bossPlanet = BOSS_BLUEPRINT_PLANET < out.length ? BOSS_BLUEPRINT_PLANET : out.length - 1;
   const assigned = new Set<string>();
   for (const list of explicit) for (const e of list) assigned.add(`${e.kind}:${e.catalogId}`);
 
@@ -129,10 +136,10 @@ export function derivePlanetBlueprints(
       if (!assigned.has(`${kind}:${catalogId}`)) pending.push({ kind, catalogId });
     }
   }
-  // 규칙 4·5: 보스를 먼저 최심 행성에 못 박고, 그 무게까지 센 뒤 나머지를 균등 배분한다.
+  // 규칙 4·5: 보스를 먼저 고정 보스 행성에 못 박고, 그 무게까지 센 뒤 나머지를 균등 배분한다.
   for (const p of pending) {
     if (p.kind !== CATALOG_BOSS) continue;
-    out[deepest]!.push({ ...p, weight: AUTO_BLUEPRINT_WEIGHT_BOSS });
+    out[bossPlanet]!.push({ ...p, weight: AUTO_BLUEPRINT_WEIGHT_BOSS });
   }
   for (const p of pending) {
     if (p.kind === CATALOG_BOSS) continue;
@@ -147,6 +154,17 @@ export function derivePlanetBlueprints(
 export const AUTO_BLUEPRINT_WEIGHT = 2;
 /** 자동 파생 보스의 가중치(규칙 4 — 항상 최저). */
 export const AUTO_BLUEPRINT_WEIGHT_BOSS = 1;
+
+/**
+ * 보스 설계도가 쌓이는 **고정 행성 index**(아르케 = 3, Lane9 규칙 4 완화).
+ *
+ * 6행성 parallel-planet 모델(ADR-0021)에선 "최심 행성"이 무의미해졌다 — 톡사르(4)·크라스(5)는
+ * 아르케보다 뒤 index 지만 난이도 사다리의 더 깊은 층이 아니다. 그래서 보스 blueprint 는
+ * `derivePlanetBlueprints` 의 자동 파생이든 명시 배정이든 이 상수 한 곳(아르케)에 집중한다.
+ * `blueprints.ts` 의 명시 배정도 이 index 를 쓰고, `tests/planetDrops.test.ts` 가 이 상수를
+ * 보스 행성 오라클로 참조한다(하드코딩 3 이 여기저기 흩어지지 않게).
+ */
+export const BOSS_BLUEPRINT_PLANET = 3;
 
 /** 가중치만큼 펼친다(균등 인덱스 → 가중 추첨). `blueprints.ts` 의 전개와 같은 규칙. */
 function expandWeights(list: readonly BlueprintSpecialty[]): readonly BlueprintSpecialty[] {
@@ -292,8 +310,60 @@ export const ARKE: PlanetContent = {
   ],
 };
 
+/** 톡사르(4) — Lane9 오염·부식 행성. 산성 장판·지속 피해·부패의 모체. */
+export const TOXAR: PlanetContent = {
+  index: 4,
+  id: 'toxar',
+  name: '톡사르',
+  // ADR-0021 배정: 톡사르 = contamination(5) 오염 확산(부식·중독 잠식).
+  mode: PLANET_MODE.contamination,
+  roster: TOXAR_ROSTER,
+  elites: TOXAR_ELITES,
+  cardPool: TOXAR_CARD_POOL,
+  boss: TOXAR_BLIGHT,
+  // 품질(단계)⟂종류(행성) 직교(ADR-0022): rarity 배율은 전 행성 동일(= 카르곤 기본값).
+  // 종류(특산 설계도·광물)만 행성별. blueprintChanceCp 는 플레이스홀더(// TODO(밸런스)).
+  dropTable: {
+    eliteRareBase: 0.25,
+    eliteUniqueBase: 0.03,
+    bossUniqueBase: 0.15,
+    blueprintTableSize: planetBlueprintTableSize(4),
+    blueprintChanceCp: [0, 0, 600, 2200], // TODO(밸런스)
+  },
+  minerals: [
+    { id: 'toxar-blightspore', name: '역병 포자' },
+    { id: 'toxar-acid-resin', name: '산성 수지' },
+  ],
+};
+
+/** 크라스(5) — Lane9 파괴·관통 행성. 중장 돌격·고관통 포격·공성 콜로서스. */
+export const KRAS: PlanetContent = {
+  index: 5,
+  id: 'kras',
+  name: '크라스',
+  // ADR-0021 배정: 크라스 = blockBreak(1) 블록격파(파괴·관통).
+  mode: PLANET_MODE.blockBreak,
+  roster: KRAS_ROSTER,
+  elites: KRAS_ELITES,
+  cardPool: KRAS_CARD_POOL,
+  boss: KRAS_COLOSSUS,
+  // 품질(단계)⟂종류(행성) 직교(ADR-0022): rarity 배율은 전 행성 동일(= 카르곤 기본값).
+  // 종류(특산 설계도·광물)만 행성별. blueprintChanceCp 는 플레이스홀더(// TODO(밸런스)).
+  dropTable: {
+    eliteRareBase: 0.25,
+    eliteUniqueBase: 0.03,
+    bossUniqueBase: 0.15,
+    blueprintTableSize: planetBlueprintTableSize(5),
+    blueprintChanceCp: [0, 0, 700, 2400], // TODO(밸런스)
+  },
+  minerals: [
+    { id: 'kras-breachsteel', name: '돌파 강철' },
+    { id: 'kras-ruin-slag', name: '파멸 슬래그' },
+  ],
+};
+
 /** 행성 레지스트리(index 순). 새 행성은 여기에 append. */
-export const PLANETS: readonly PlanetContent[] = [KARGON, BERDAN, NIFLHEIM, ARKE];
+export const PLANETS: readonly PlanetContent[] = [KARGON, BERDAN, NIFLHEIM, ARKE, TOXAR, KRAS];
 
 /** planet index → 콘텐츠. 범위를 벗어나면 카르곤(0)으로 안전 폴백. */
 export function planetContent(index: number | undefined): PlanetContent {
