@@ -152,6 +152,11 @@ export interface PlaceholderTextures {
   bombDevice: Texture;
   /** Turret pickup event object. */
   turretPickup: Texture;
+  /**
+   * 대피소(추격 모드=Lane6 의 신규 inert kind `shelter`). 안전지대 도달 = 세그먼트 전진.
+   * fixedFacing(회전 없음). 실 PNG(`shelter.png`) 가 있으면 덮고, 없으면 절차적 돔 유지(회귀 0).
+   */
+  shelter: Texture;
   // --- 방어 코어·수호 기체 (M4/M5) ---
   // (구 방어 포탑 6종 텍스처 슬롯은 M7a L11 에서 삭제 — L2 회랑 설비 3종이 계승했다.)
   /** 방어 코어(침공 목표). fixedFacing. `decoyCore`(가짜 코어)도 이 텍스처로 렌더한다. */
@@ -328,6 +333,10 @@ const BACKDROP_PALETTES: readonly BackdropPalette[] = [
   { base: 0x0a1207, crackUnder: 0x24401a, crackOver: 0x7ec53a, ember: 0xb6e86a }, // 1 베르단 산성 습지
   { base: 0x081018, crackUnder: 0x1a3a52, crackOver: 0x5cc4f2, ember: 0xa6e6ff }, // 2 니플헤임 빙원
   { base: 0x120e08, crackUnder: 0x4a3418, crackOver: 0xc07a28, ember: 0xe0ad5a }, // 3 아르케 유적
+  // Lane9 신규 2행성(index 4·5). 없으면 background[0](카르곤 빨강)으로 폴백하던 것을 테마색으로
+  // 교정한다 — 톡사르=부식 톡식 퍼플, 크라스=파괴 크림슨(ENEMY_STYLE·팔레트와 정합). 렌더 전용.
+  { base: 0x14081a, crackUnder: 0x3a1050, crackOver: 0xb04dd6, ember: 0xe6b8f8 }, // 4 톡사르 오염 늪
+  { base: 0x160808, crackUnder: 0x4a1010, crackOver: 0xc0303a, ember: 0xf06058 }, // 5 크라스 파괴 폐허
 ];
 
 /**
@@ -414,6 +423,23 @@ function coreTexture(renderer: Renderer): Texture {
   drawHex(g, 62, 0x1f6f5a); // 청록 헐
   g.circle(0, 0, 34).fill({ color: 0x33ffcc }).stroke({ color: 0xffffff, width: 3, alignment: 0 });
   g.circle(0, 0, 14).fill({ color: 0xffffff, alpha: 0.9 });
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+/**
+ * 대피소 플레이스홀더(추격 모드 Lane6): 안전지대 돔. 어두운 베이스 원반 + 청록 보호막 돔 +
+ * 안전 오라 링 + 회복 십자. 아군 톤(민트·시안)이라 적 스프라이트와 겹치지 않고 "여기가 안전"이
+ * 즉시 읽힌다. inert·fixedFacing(회전 없음).
+ */
+function shelterTexture(renderer: Renderer): Texture {
+  const g = new Graphics();
+  g.circle(0, 0, 30).fill({ color: 0x0e2a24 }).stroke({ color: 0x2fe0b0, width: 3, alignment: 0 }); // 베이스 원반
+  g.circle(0, 0, 22).fill({ color: 0x1f7a5c, alpha: 0.55 }).stroke({ color: 0x5affc0, width: 2, alignment: 0 }); // 보호막 돔
+  g.circle(0, 0, 34).stroke({ color: 0x39d0ff, width: 2, alpha: 0.6, alignment: 0 }); // 안전 오라
+  g.rect(-3, -12, 6, 24).fill({ color: 0xd8fff0 }); // 회복 십자(세로)
+  g.rect(-12, -3, 24, 6).fill({ color: 0xd8fff0 }); // 회복 십자(가로)
   const tex = renderer.generateTexture(g);
   g.destroy();
   return tex;
@@ -815,6 +841,7 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
     magnetEmitter: renderer.generateTexture(magnetG),
     bombDevice: renderer.generateTexture(bombG),
     turretPickup: renderer.generateTexture(turretG),
+    shelter: shelterTexture(renderer),
 
     core: coreTexture(renderer),
     guardian: [guardianTexture(renderer, true), guardianTexture(renderer, false)],
@@ -953,6 +980,7 @@ export async function loadGameTextures(
     magnetEmitter,
     bombDevice,
     turretPickup,
+    shelter,
     bosses,
     backgrounds,
     enemies,
@@ -980,6 +1008,7 @@ export async function loadGameTextures(
     tryLoad('magnet_emitter.png'),
     tryLoad('bomb_device.png'),
     tryLoad('turret_pickup.png'),
+    tryLoad('shelter.png'),
     Promise.all(bossFiles.map((f) => tryLoad(f))),
     Promise.all(bgFiles.map((f) => tryLoad(f))),
     Promise.all(enemyFiles.map((f) => tryLoad(f))),
@@ -1015,6 +1044,7 @@ export async function loadGameTextures(
   if (magnetEmitter !== null) tex.magnetEmitter = magnetEmitter;
   if (bombDevice !== null) tex.bombDevice = bombDevice;
   if (turretPickup !== null) tex.turretPickup = turretPickup;
+  if (shelter !== null) tex.shelter = shelter;
   bosses.forEach((t, i) => {
     if (t !== null) tex.boss[i] = t;
   });

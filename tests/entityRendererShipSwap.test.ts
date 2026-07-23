@@ -71,6 +71,7 @@ function realTextures(): PlaceholderTextures {
     magnetEmitter: tex('magnetEmitter'),
     bombDevice: tex('bombDevice'),
     turretPickup: tex('turretPickup'),
+    shelter: tex('shelter'),
     core: tex('core'),
     guardian: arr('guardian', 2),
     invasionBackdrop: arr('invasionBackdrop', 3),
@@ -170,7 +171,7 @@ describe('B-1 · 세션 중 기체 교체가 인게임 스프라이트에 반영
     renderer.reset();
     expect(sprites.size).toBe(0);
     expect(renderer.layer.destroyed).toBe(false);
-    expect(renderer.layer.children.length).toBe(3); // overlay · sprite · effect 레이어
+    expect(renderer.layer.children.length).toBe(4); // overlay · sprite · effect · fog(시야/안전반경) 레이어
   });
 });
 
