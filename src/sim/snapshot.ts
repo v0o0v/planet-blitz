@@ -12,6 +12,7 @@ import type { EntityKind } from './entities.js';
 import { eliteAffix } from './elite.js';
 import { windowCenterX, windowCenterY } from './invasion/scroll.js';
 import { chaseVisionRadius } from './modes/chase.js';
+import { shrinkSafeRadius } from './modes/shrink.js';
 
 export interface EntitySnapshot {
   id: number;
@@ -72,6 +73,12 @@ export interface WorldSnapshot {
    * 전용이라 hashWorld 와 무관하다(planet 필드 선례).
    */
   visionRadius: number;
+  /**
+   * 안전 반경(월드 유닛, 수축 모드=Lane7). sim 이 정한 정수 상태 — 렌더가 이 값으로 원점(0,0)
+   * 기준 안전 반경 링/밖 어둠 오버레이를 그린다(렌더 세부는 art 후속). 0 = 무제한(그 외 전 모드).
+   * 렌더 전용이라 hashWorld 와 무관하다(planet·visionRadius 필드 선례).
+   */
+  safeRadius: number;
   entities: EntitySnapshot[];
   beams: Beam[];
 }
@@ -125,6 +132,7 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
     cameraY,
     planet: state.config.planet ?? 0,
     visionRadius: chaseVisionRadius(state.config.planetMode),
+    safeRadius: shrinkSafeRadius(state),
     entities,
     beams,
   };

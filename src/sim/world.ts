@@ -243,6 +243,15 @@ import {
 // --- 추격·탈출 콘텐츠(Lane6 · ADR-0021 §2.4) — 비-스크롤 자유추적. 무적 포식자(boss.aux0=0)가
 //     끝없이 추격, 대피소 도달로 진행, 반격 장치 전부 파괴로 취약화(aux0=1)→보스전, 접촉 시 실패 ---
 import { placeChaseCourse, updateChasePredator, COUNTER_DEVICE_MARK } from './modes/chase.js';
+// --- 수축지대 콘텐츠(Lane7 · ADR-0021 §2.5) — 비-스크롤 자유추적. 아레나 중심(원점 0,0) 기준
+//     동적으로 줄어드는 안전 반경 밖이면 지속 피해, 안전 반경 안 적 전멸로 진행, 중심 보스 처치로
+//     완주. 이 재설계의 첫 "신규 해시 필드" 모드(shrinkRuntime, 정수 2필드) -----------------------
+import {
+  createShrinkRuntime,
+  advanceShrinkRuntime,
+  shrinkOutOfBounds,
+  type ShrinkRuntime,
+} from './modes/shrink.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -710,6 +719,13 @@ export interface WorldState {
    * hashWorld 는 존재 시에만 조건부 폴드 → 뱀서류·침공 바이트 불변. append-only.
    */
   scrollRuntime?: ScrollRuntime;
+  /**
+   * 수축지대 런타임(Lane7, ADR-0021 §2.5). 존재 = 수축 모드(비-스크롤 자유추적). 안전 반경·유예
+   * 정수 2필드를 담는다. 이 재설계의 첫 "신규 해시 필드" 모드 — 반경이 게임플레이 이력에 의존해
+   * 누적되는 동적 정수라 파생 불가(scrollRuntime 선례). hashWorld 는 존재 시에만 조건부 폴드 →
+   * 뱀서류·침공·타 모드 바이트 불변. append-only.
+   */
+  shrinkRuntime?: ShrinkRuntime;
 }
 
 /**
@@ -785,6 +801,13 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     scrollRuntime = createScrollRuntime();
   }
 
+  // PvE 수축지대 모드(Lane7). 비-스크롤 자유추적이라 scrollRuntime 은 안 선다(위 조건 밖).
+  // invasion3 이면 세우지 않는다(침공 중엔 수축 안 켜짐 — scrollRuntime 과 같은 상호 배타 가드).
+  let shrinkRuntime: ShrinkRuntime | undefined;
+  if (cfg.invasion3 === undefined && cfg.planetMode === PLANET_MODE.shrink) {
+    shrinkRuntime = createShrinkRuntime();
+  }
+
   // Anomaly: roll the seed-only offer, gate it on the config acceptance flag.
   const anomalyRng = rng.fork('anomaly');
   const anomaly = rollAnomaly(anomalyRng, cfg.anomalyAccepted ?? false);
@@ -842,6 +865,9 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     // PvE 강제 스크롤 런타임도 존재할 때만 싣는다(exactOptionalPropertyTypes · 조건부 접기
     // 정합). invasion3 과 상호 배타라 둘 다 실리는 상태는 위 가드로 발생하지 않는다.
     ...(scrollRuntime !== undefined ? { scrollRuntime } : {}),
+    // PvE 수축지대 런타임도 존재할 때만 싣는다(exactOptionalPropertyTypes · 조건부 접기 정합).
+    // shrink 는 비-스크롤이라 scrollRuntime 과 동시에 서지 않고, invasion3 과도 상호 배타다.
+    ...(shrinkRuntime !== undefined ? { shrinkRuntime } : {}),
   };
 
   // L1 진입 훅(정적 배치 스폰)은 상태가 완성된 뒤에 태운다 — 훅이 state.entities 에 스폰하기
@@ -955,6 +981,12 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
           : false;
     advanceScrollRuntime(scrollRuntime, scrollAxisDir, cleared);
   }
+
+  // 수축지대(Lane7): 안전 반경을 한 틱 전진(유예 소진 후 정수 감소)한다. **stepPlayer 이전에**
+  // 두어 같은 틱 밖 판정(shrinkOutOfBounds)이 이번 틱의 최신 반경을 본다. 반경 전진은 적 상태를
+  // 보지 않으므로(순수 정수 산술) compact 타이밍과 무관하다. planetMode 게이트라 뱀서류·블록격파·
+  // 레이싱·오염·추격·침공은 미실행(shrinkRuntime 미존재 → 조기 반환) → 골든 바이트 불변.
+  if (state.shrinkRuntime !== undefined) advanceShrinkRuntime(state.shrinkRuntime);
 
   // 코어 모듈(장착 시): 이번 틱 유효 배율·트리거 상태를 stepPlayer 이전에 갱신해 모든 접점이
   // 같은 틱 값을 읽게 한다. moduleRuntime 미존재(미장착·PvE)면 조기 반환 → 거동·해시 불변.
@@ -1282,6 +1314,10 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     crushBlockBreak(state, player);
   } else if (state.config.planetMode === PLANET_MODE.racing) {
     racingRearPressure(state, player);
+  } else if (state.config.planetMode === PLANET_MODE.shrink) {
+    // 수축지대(Lane7): 아레나 중심(원점 0,0) 안전 반경 밖이면 지속 피해(하드 클램프 없음 —
+    // 밖으로 나갈 수는 있고 피해만 받는다). iframes 존중·즉사 아님. shrinkRuntime 미존재면 no-op.
+    shrinkOutOfBounds(state, player);
   }
 }
 
@@ -1705,7 +1741,13 @@ function stepBoss(state: WorldState, player: Entity): void {
     const bossWin = state.invasion3 ?? state.scrollRuntime;
     let bossX = bossWin !== undefined ? windowCenterX(bossWin) : player.x;
     let bossY = bossWin !== undefined ? windowCenterY(bossWin) : player.y;
-    if (state.config.planetMode === PLANET_MODE.racing) bossX += VIEW_WIDTH * 0.55; // 코스 끝(+X)
+    if (state.config.planetMode === PLANET_MODE.shrink) {
+      // 수축지대(Lane7): 보스를 아레나 중심(원점 0,0)에 소환한다 — 안전 반경이 조여드는 코어에서
+      // 최후전. 플레이어/창 기준 오프셋을 쓰지 않는다(shrink 는 창 미존재 → bossWin undefined).
+      bossX = 0;
+      bossY = 0;
+    } else if (state.config.planetMode === PLANET_MODE.racing)
+      bossX += VIEW_WIDTH * 0.55; // 코스 끝(+X)
     else bossY -= VIEW_HEIGHT * 0.55; // 블록격파 top(−Y)·뱀서류 기존
     const boss = spawnBoss(state, bossX, bossY, bossDef.hp, bossDef.radius);
     boss.damage = bossDef.contactDamage;
