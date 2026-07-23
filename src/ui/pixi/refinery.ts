@@ -15,6 +15,7 @@ import type { Item } from '../../items/types.js';
 import { AFFIX_BY_ID, AFFIXES } from '../../../data/affixes.js';
 import { rerollAffixes } from '../../items/roll.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../../save/profile.js';
+import { spendCurrencyOnServer } from '../../net/index.js';
 import { t, type MessageKey } from '../../i18n/index.js';
 import { rerollCost, canAfford, LOCKED_REROLL_MULT } from '../../../data/economy.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
@@ -212,11 +213,24 @@ export class RefineryScreen {
     this.render();
   }
 
-  private reroll(): void {
+  private async reroll(): Promise<void> {
     const item = this.selected();
     if (item === undefined || this.spinning) return;
     const cost = this.currentCost();
     if (!canAfford(this.profile.minerals, cost)) {
+      this.hint = t('refine.err.noMinerals', { n: cost });
+      this.render();
+      return;
+    }
+    // 재화 서버 권위(ADR-0027): 온라인이면 spend_currency 로 광물 차감을 확정(ok 일 때만 리롤),
+    // 미설정이면 기존 로컬 차감. 잔액 부족·오프라인(rejected)이면 리롤하지 않는다(위조 차단).
+    const res = await spendCurrencyOnServer(0, cost, 'reroll');
+    if (res.status === 'ok') {
+      this.profile.credits = res.creditsLeft;
+      this.profile.minerals = res.mineralsLeft;
+    } else if (res.status === 'unconfigured') {
+      this.profile.minerals -= cost;
+    } else {
       this.hint = t('refine.err.noMinerals', { n: cost });
       this.render();
       return;
@@ -226,8 +240,7 @@ export class RefineryScreen {
     const lockIdx = this.lockedIndex ?? undefined;
     const reforged = rerollAffixes(item, seed, lockIdx);
 
-    // 광물 차감 + 재련 결과를 id 로 인벤토리에 교체 투입.
-    this.profile.minerals -= cost;
+    // 재련 결과를 id 로 인벤토리에 교체 투입(차감은 위에서 확정됨).
     const idx = this.profile.inventory.findIndex((it) => it.id === item.id);
     if (idx >= 0) this.profile.inventory[idx] = reforged;
     this.persist();
@@ -543,7 +556,7 @@ export class RefineryScreen {
       // 노란 버튼은 바탕이 밝아 흰 라벨이 묻힌다(기지 맵·연구소와 동일 처리).
       labelColor: COLOR.darkLabel,
       label: stripEmoji(this.spinning ? t('refine.spinning') : t('refine.rollBtn')),
-      onClick: () => this.reroll(),
+      onClick: () => void this.reroll(),
     });
     roll.container.position.set((DETAIL_W - ROLL_W) / 2, rollY);
     panel.addChild(roll.container);

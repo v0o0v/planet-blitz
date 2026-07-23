@@ -181,14 +181,16 @@ describe('Pixi 메타 화면 — store 없이 생성해도 프로필이 저장�
     expect(activeShip(saved).equipped.engine?.id).toBe(item.id);
   });
 
-  it('격납고: 창고 확장도 저장된다(같은 persist 경로의 2차 확인)', () => {
+  it('격납고: 창고 확장도 저장된다(같은 persist 경로의 2차 확인)', async () => {
     const profile = defaultProfile();
     profile.credits = 1_000_000;
     const stage = new Container();
     const hangar = new HangarScreen(profile, stage);
     hangar.show(profile, () => {});
 
-    (hangar as unknown as { expandStash(): void }).expandStash();
+    // 재화 서버 권위(ADR-0027) 이후 확장은 async(온라인=spend_currency / 미설정=로컬 차감).
+    // 테스트 env 는 Supabase 미설정이라 로컬 폴백 경로 — await 로 폴백 반영을 기다린다.
+    await (hangar as unknown as { expandStash(): Promise<void> }).expandStash();
 
     expect(profile.stashExpansions).toBe(1);
     expect(persisted().stashExpansions).toBe(1);
@@ -225,7 +227,7 @@ describe('Pixi 메타 화면 — store 없이 생성해도 프로필이 저장�
     expect(activeShip(persisted()).skillInvest[0]).toBe(invested);
   });
 
-  it('정제소: 어픽스 리롤이 저장된다', () => {
+  it('정제소: 어픽스 리롤이 저장된다', async () => {
     vi.useFakeTimers();
     const profile = defaultProfile();
     profile.minerals = 1_000_000;
@@ -237,9 +239,11 @@ describe('Pixi 메타 화면 — store 없이 생성해도 프로필이 저장�
     const refinery = new RefineryScreen(profile, stage);
     refinery.show(profile, () => {});
 
-    const r = refinery as unknown as { select(i: Item): void; reroll(): void };
+    // 리롤은 async(온라인=spend_currency / 미설정=로컬 광물 차감). 테스트 env 는 미설정이라
+    // 로컬 폴백 — await 로 차감·교체·persist 를 기다린 뒤 검증한다(스핀 setInterval 은 fake timers).
+    const r = refinery as unknown as { select(i: Item): void; reroll(): Promise<void> };
     r.select(item);
-    r.reroll();
+    await r.reroll();
 
     expect(profile.minerals).toBeLessThan(1_000_000);
     const saved = persisted();

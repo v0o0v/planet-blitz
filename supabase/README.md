@@ -730,6 +730,17 @@ f-client 영향: `not-winner` 는 새 note 값(additive) — 클라 승자 UI �
 
 ## PvE 런 서버 기록 + 리플레이 재실행 샘플링 (계획 §4 F4 완전판, 2026-07-18)
 
+> ⛔ **폐기(ADR-0026, 2026-07-24) — 이 절 전체는 이력이다.** 아래에 서술된 PvE 리플레이 전량
+> 업로드·샘플링 재실행(EF `verify-pve-sample` + RPC `sample_pve_runs`/`apply_pve_verification`
+> + pg_cron `planet-blitz-verify-pve-sample`)은 폐기됐다. 무료 티어 DB 용량이 리플레이 blob
+> 적재를 감당 못 하고, PvE 치팅 이득은 3중 캡(`settle_pve_run`·`grant_currency`,
+> `20260726000200`)으로 유계되며 래더 무결성은 침공 전수 검증이 단독으로 지키므로, 정산 요약 +
+> 3중 캡으로 전환했다. 철거 마이그레이션 = **`20260726000300_pve_verification_teardown.sql`**
+> (cron 해제 · RPC 2종 drop · `settle_pve_run` 임시 삽입 정리 · `pve_runs.replay`·`client_result`
+> 컬럼 drop), EF 디렉터리 `supabase/functions/verify-pve-sample/` 및 deno 러너
+> `scripts/deno-verify/verifyPveSample.ts` 삭제. **침공(verify-invasion)·verify-run 코어·
+> `flag_pve_anomalies` 는 유지**한다.
+
 Phase F(`20260717150000_m4_phase_f_pve_sampling.sql`) "리플레이 재실행 샘플링 착수 조건"
 3건(①PvE 런 서버 기록 ②재실행 인프라 ③적발 처리)을 배선해, 통계 이상치 플래그(집계 기반)만
 있던 PvE 검증에 **개별 런 리플레이 전수 재실행**을 더한다. ADR-0005(결정론 재실행) 유지 —
@@ -788,22 +799,26 @@ Phase F(`20260717150000_m4_phase_f_pve_sampling.sql`) "리플레이 재실행 �
   7컬럼·RLS true·정책 2개(insert_own/select_own)·가드 트리거 1개·RPC 2개(service_role EXECUTE
   만)·`get_advisors(security)` 신규 WARN 이 있으면 `sample_pve_runs`/`apply_pve_verification`
   는 service_role 전용이라 목록에 없어야 함(있으면 EXECUTE 회수 재확인).
-- ✅ **EF 배포 완료(2026-07-18)**: `verify-pve-sample` **v2 ACTIVE, verify_jwt=true**(계획과 달리
-  true 채택 — 게이트웨이가 JWT 서명을 검증하고, EF 는 `Bearer==env service key` **또는** JWT
-  `role=='service_role'` 클레임으로 판정. 신형 API 키 체계에서 런타임 주입 키(sb_secret)와 legacy
-  service_role JWT 가 달라 env 동등성 단독 비교가 401 오거부되던 함정을 실측 후 수정, PR#38).
-  스모크 실측: Vault 의 legacy JWT 로 `POST {limit:200}` → HTTP 200
-  `{"checked":0,"verified":0,"rejected":0,"flagged":0}`(pending 0 상태 정상).
-- ✅ **주기 실행 설정 완료(2026-07-18)**: pg_cron 잡 `planet-blitz-verify-pve-sample`(`30 1 * * *`,
-  active) — pg_net + Vault(`project_url`·`service_role_key`, 대시보드 등록) 조합, 원격 마이그레이션
-  `m4_pve_sample_cron`(리포 미러 `20260718120000_m4_pve_sample_cron.sql`). 실행 이력은
-  `cron.job_run_details` + `net._http_response` 로 확인.
+- ⛔ **폐기(ADR-0026, 2026-07-24)** — 아래 2026-07-18 배포는 이력이다. `verify-pve-sample` EF·
+  `planet-blitz-verify-pve-sample` cron 은 `20260726000300_pve_verification_teardown.sql` 로
+  철거됐다(원격 적용 시 cron unschedule + RPC drop + 컬럼 drop 반영). **재배포하지 않는다.**
+  - (이력) **EF 배포(2026-07-18)**: `verify-pve-sample` v2 ACTIVE, verify_jwt=true — 게이트웨이가
+    JWT 서명을 검증하고, EF 는 `Bearer==env service key` **또는** JWT `role=='service_role'`
+    클레임으로 판정(신형 API 키 체계의 런타임 주입 키 vs legacy JWT 401 함정 수정, PR#38).
+    스모크: Vault legacy JWT 로 `POST {limit:200}` → HTTP 200
+    `{"checked":0,"verified":0,"rejected":0,"flagged":0}`.
+  - (이력) **주기 실행(2026-07-18)**: pg_cron 잡 `planet-blitz-verify-pve-sample`(`30 1 * * *`) —
+    pg_net + Vault(`project_url`·`service_role_key`) 조합, 마이그레이션 `m4_pve_sample_cron`.
+- **현재 배포 대상 EF**: `verify-invasion`(침공 전수 검증 · 자립 번들), `modules`(공유 코어 —
+  type-only import). `verify-run` 은 로컬 검증 전용(bundle 태스크 없음), `verify-pve-sample` 은
+  **폐기(위 철거)**. 즉 원격 배포 대상에서 `verify-pve-sample` 은 제외된다.
 
-### 남은 리스크 (PvE 샘플링)
-- **[LOW] 배치 상한·샘플률 튜닝**: `MAX_BATCH`=200·flagged 우선+random 은 잠정. 런 볼륨·재실행
-  비용 실측 후 상위 N%·랜덤 비율을 정교화(OQ-M4-2 원안).
-- **[LOW] 리플레이 blob 용량**: `pve_runs.replay` 는 입력 로그 전량을 담아 장기 런에서 커질 수
-  있다. 보존 기간·압축·검증 완료분 정리(cron)는 운영 지표 확인 후 별도 결정.
+### 남은 리스크 (PvE — ADR-0026 전환 후)
+- **[MED→수용] PvE 정교 치트**: 샘플링 재실행이 폐기돼 봇·슬로우핵은 적발되지 않는다. 피해는
+  3중 캡(`settle_pve_run`·`grant_currency`)이 경제 인플레 수준으로 유계하고 래더는 오염되지
+  않는다는 것이 ADR-0026 수용 기준이다. `flag_pve_anomalies` 는 캡 극단 초과의 운영 표식으로 남음.
+- **[LOW] 캡 수치 튜닝**: PvE 의 유일한 방어선이 된 3중 캡 상수(`20260726000200` 배너)는 출시
+  전 밸런스 일괄 튜닝 대상(초기값 보수적).
 
 ---
 

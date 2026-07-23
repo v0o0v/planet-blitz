@@ -183,11 +183,13 @@ describe('settleRun — loot → items + leveling (AC3/AC11)', () => {
     expect(p.inventory).toHaveLength(INVENTORY_CAP);
   });
 
-  it('converts raid resources to credits', () => {
+  it('converts raid resources to a credit delta without touching the mirror (ADR-0027)', () => {
+    // 재화 서버 권위: 순수 정산은 creditsGained 델타를 계산·반환만 하고 프로필 미러(credits)에
+    // 가산하지 않는다 — 지급은 호출부가 온라인=서버 RPC / 미설정=로컬 미러로 가른다.
     const p = defaultProfile();
     const out = settleRun(p, { victory: true, loot: [], xpTotal: 0, resources: 4 });
     expect(out.creditsGained).toBe(4);
-    expect(p.credits).toBe(4);
+    expect(p.credits).toBe(0); // 순수 정산은 재화를 창조하지 않는다(위조 불가 계약)
   });
 });
 
@@ -212,7 +214,9 @@ describe('salvage — bulk disenchant (AC6)', () => {
     expect(salvageValue(rare, 2).minerals).toBe(6);
   });
 
-  it('removes salvaged items and credits/minerals the profile', () => {
+  it('removes salvaged items and returns the yield without touching the mirror (ADR-0027)', () => {
+    // 재화 서버 권위: salvageItems 는 아이템만 제거하고 획득 재화를 반환한다 — 미러 가산은
+    // 호출부(온라인=grant_currency / 미설정=로컬)가 맡는다.
     const p: Profile = defaultProfile();
     const normal = rollItem(1, 'normal', { planet: 0, stage: 1 });
     const rare = rollItem(2, 'rare', { planet: 0, stage: 1 });
@@ -221,8 +225,8 @@ describe('salvage — bulk disenchant (AC6)', () => {
     expect(y.credits).toBe(2);
     expect(y.minerals).toBe(3);
     expect(p.inventory).toHaveLength(0);
-    expect(p.credits).toBe(2);
-    expect(p.minerals).toBe(3);
+    expect(p.credits).toBe(0); // 순수 살베지는 미러를 만지지 않는다
+    expect(p.minerals).toBe(0);
   });
 
   it('matches salvage targets by item.id, not reference identity (리뷰 LOW-3)', () => {

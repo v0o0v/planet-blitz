@@ -92,7 +92,8 @@ import type { SettlementOutcome } from './save/settlement.js';
 import {
   migrateLocalProfileToServer,
   recordPveRunResult,
-  recordPveRun,
+  settlePveRunCurrency,
+  isNetConfigured,
   pushProfileToServer,
 } from './net/index.js';
 // M4 침공(비동기 PvP) 제출: 미설정 시 submitInvasion 은 null(잠정 결과만 표시).
@@ -1078,18 +1079,39 @@ async function main(): Promise<void> {
         // Completing the tutorial (win or lose) reveals the base and makes the run
         // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.
         if (tutorialActive) profile.tutorialDone = true;
+        // 재화 지급(ADR-0026/0027 서버 권위): settleRun 은 재화를 만지지 않고 델타만 반환한다.
+        //  - 온라인(설정) → settle_pve_run(자원→credits·광물→minerals) + story 보상 grant 를
+        //    서버로 지급하고 응답 잔액으로 미러를 갱신(서버값이 정본). 전송 실패는 대기 큐 재시도.
+        //  - 미설정(오프라인 단일플레이) → 로컬 미러에 직접 가산(기존 동작 100% 보존).
+        // isNetConfigured() 로 분기해 미설정 폴백을 saveProfile **전에** 동기 반영한다.
+        const creditsGained = lastOutcome.creditsGained;
+        const storyReward = lastOutcome.storyRewardCredits ?? 0;
+        if (isNetConfigured()) {
+          void settlePveRunCurrency(profile, {
+            summary: {
+              victory: w.victory,
+              planet: w.config.planet ?? 0,
+              stage: w.config.stage ?? 1,
+              finalTick: w.tick,
+              resources: creditsGained,
+              minerals: 0,
+              kills: w.kills,
+            },
+            storyRewardCredits: storyReward,
+          });
+        } else {
+          profile.credits += creditsGained + storyReward;
+        }
         saveProfile(profile);
         // 설계도 지급(M7b): 정산이 파생한 목록을 서버 보유량에 얹는다. 미설정·오프라인이면
         // no-op 이고 throw 하지 않는다. 오염 런·하네스 침공 런은 이 블록에 들어오지 않으므로
         // 설계도도 함께 차단된다(ADR-0008 과 같은 격리면).
         void grantBlueprintDrops(lastOutcome.blueprintsGained);
-        // PvE 런 결과(정산된 메타)를 서버에 기록. 미설정이면 no-op, 실패 시 로컬
-        // 대기 슬롯에 남아 재시도(오프라인 우선). 비차단 fire-and-forget.
+        // PvE 런 결과(정산된 메타: 아이템·XP·진행도 — 재화는 서버 컬럼 정본이라 미러만)를 서버
+        // save 에 반영. 미설정이면 no-op, 실패 시 로컬 대기 슬롯에 남아 재시도(오프라인 우선).
+        // ADR-0026: 리플레이 업로드(recordPveRun/pve_runs)는 폐기했다 — 재화가 서버 권위라
+        // 사후 샘플링 재검증이 불필요해졌다(ReplayRecorder 는 침공 제출용으로만 살아있다).
         void recordPveRunResult(profile);
-        // 개별 PvE 런 리플레이(시드·입력·해시)를 pve_runs 에 기록 → 서버 표본 재실행
-        // 검증 대상 확보(계획 §4 F4). 오염 런은 이 블록에 들어오지 않으므로 제출 안전.
-        // 미설정/오프라인이면 no-op. recorder 는 startRun 에서 항상 세팅되나 방어적으로 확인.
-        if (recorder !== null) void recordPveRun(recorder.toReplay());
       }
     }
     tutorialOverlay.hide();

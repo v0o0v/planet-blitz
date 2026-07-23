@@ -30,6 +30,7 @@ import {
   type Profile,
 } from '../../save/profile.js';
 import { salvageItems } from '../../save/settlement.js';
+import { spendCurrencyOnServer, grantCurrencyToServer } from '../../net/index.js';
 import { t, type MessageKey } from '../../i18n/index.js';
 import { stashExpansionCost, canAfford } from '../../../data/economy.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
@@ -255,7 +256,7 @@ export class HangarScreen {
 
   // --- 분해 / 창고 ---------------------------------------------------------
 
-  private salvageByRarities(rarities: readonly Rarity[]): void {
+  private async salvageByRarities(rarities: readonly Rarity[]): Promise<void> {
     const set = new Set(rarities);
     const targets = this.profile.inventory.filter((it) => set.has(it.rarity));
     if (targets.length === 0) {
@@ -264,13 +265,24 @@ export class HangarScreen {
       return;
     }
     const mineralFindMult = this.computeStats().worldMods.mineralFindMult;
+    // salvageItems 는 아이템만 제거하고 획득 재화를 반환한다(미러 미가산 — ADR-0027). 재화 지급은:
+    //  온라인 → grant_currency(source='salvage')로 서버에 가산하고 미러를 서버 잔액으로 갱신.
+    //  미설정/전송실패 → 로컬 미러에 가산(단일플레이 보존, 서버 있으면 다음 fetchProfile 이 정정).
     const y = salvageItems(this.profile, targets, mineralFindMult);
+    const g = await grantCurrencyToServer(y.credits, y.minerals, 'salvage');
+    if (g.status === 'applied') {
+      this.profile.credits = g.creditsLeft;
+      this.profile.minerals = g.mineralsLeft;
+    } else {
+      this.profile.credits += y.credits;
+      this.profile.minerals += y.minerals;
+    }
     this.hint = t('inv.salvageDone', { n: targets.length, credits: y.credits, minerals: y.minerals });
     this.persist();
     this.render();
   }
 
-  private expandStash(): void {
+  private async expandStash(): Promise<void> {
     if (this.profile.stashExpansions >= MAX_STASH_EXPANSIONS) {
       this.hint = t('inv.stashMax');
       this.render();
@@ -282,7 +294,19 @@ export class HangarScreen {
       this.render();
       return;
     }
-    this.profile.credits -= cost;
+    // 재화 서버 권위(ADR-0027): 온라인이면 spend_currency 로 차감을 확정하고(ok 일 때만 확장),
+    // 미설정이면 기존 로컬 차감. 잔액 부족·오프라인(rejected)이면 확장하지 않는다(위조 차단).
+    const res = await spendCurrencyOnServer(cost, 0, 'stash');
+    if (res.status === 'ok') {
+      this.profile.credits = res.creditsLeft;
+      this.profile.minerals = res.mineralsLeft;
+    } else if (res.status === 'unconfigured') {
+      this.profile.credits -= cost;
+    } else {
+      this.hint = t('inv.err.noCredits', { n: cost });
+      this.render();
+      return;
+    }
     this.profile.stashExpansions++;
     this.hint = t('inv.stashExpanded');
     this.persist();
@@ -715,7 +739,7 @@ export class HangarScreen {
       height: 48,
       fontSize: 18,
       label: maxed ? t('inv.act.expandMax') : t('inv.act.expand', { n: nextCost }),
-      onClick: () => this.expandStash(),
+      onClick: () => void this.expandStash(),
     });
     expandBtn.container.position.set(px + box.right - 260, py + box.y);
     this.root.addChild(expandBtn.container);
@@ -804,7 +828,7 @@ export class HangarScreen {
       height: bh,
       fontSize: 16,
       label: t('inv.act.salvageHigh'),
-      onClick: () => this.salvageByRarities(['rare', 'unique']),
+      onClick: () => void this.salvageByRarities(['rare', 'unique']),
     });
     salvageHigh.container.position.set(px + box.right - bw, py + box.y);
     this.root.addChild(salvageHigh.container);
@@ -816,7 +840,7 @@ export class HangarScreen {
       height: bh,
       fontSize: 16,
       label: t('inv.act.salvageLow'),
-      onClick: () => this.salvageByRarities(['normal', 'magic']),
+      onClick: () => void this.salvageByRarities(['normal', 'magic']),
     });
     salvageLow.container.position.set(px + box.right - bw * 2 - 12, py + box.y);
     this.root.addChild(salvageLow.container);

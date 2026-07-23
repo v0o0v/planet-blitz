@@ -65,6 +65,36 @@ function asStickerIndex(v: unknown): number | null {
   return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 11 ? v : null;
 }
 
+/**
+ * base64 문자열 → 바이트 배열(브라우저·Node 공통 전역 atob).
+ *
+ * 반환 타입을 `Uint8Array<ArrayBuffer>` 로 고정한다 — TS 5.7+ 의 제네릭 Uint8Array 에서
+ * 넓은 `Uint8Array<ArrayBufferLike>` 는 `Response`(BodyInit)의 BufferSource 로 못 넘어간다.
+ */
+function base64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
+  const bin = atob(base64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/**
+ * base64 로 인코딩된 gzip 압축 리플레이를 풀어 파싱한다(ADR-0026 — 관전 로드 경로, 테스트용 export).
+ *
+ * EF(verify-invasion)가 검증 확정 후 원본 replay(jsonb)를 gzip → base64 로 접어 replay_gz(bytea)
+ * 에 넣고 replay 를 null 화한다(index.ts gzipToBase64 → store_invasion_replay_gz RPC). 관전은
+ * get_invasion_replay_gz RPC 가 돌려준 base64 를 이 함수로 풀어 Replay 로 되살린다. 브라우저·
+ * Deno·Node 공통 표준 `DecompressionStream('gzip')` 만 쓴다(외부 의존성 0). 손상/실패는 호출부
+ * (getInvasionReplay)가 잡아 관전 불가로 안내한다(isPlayableReplay 가드와 정합).
+ */
+export async function decompressReplayGz(base64: string): Promise<unknown> {
+  const bytes = base64ToBytes(base64);
+  const stream = new Response(bytes).body!.pipeThrough(new DecompressionStream('gzip'));
+  const buf = await new Response(stream).arrayBuffer();
+  const text = new TextDecoder().decode(buf);
+  return JSON.parse(text);
+}
+
 /** RPC `get_invasion_targets()` 한 행 → InvasionTarget(계약 정규화). */
 function rowToTarget(raw: unknown): InvasionTarget {
   const r = asRecord(raw);
@@ -265,6 +295,12 @@ export class SupabaseInvasionGateway implements InvasionGateway {
   async getInvasionReplay(invasionId: string): Promise<Replay | null> {
     // 관전용 리플레이 로드(계약 §F3) — 방어자/공격자만 RLS select 로 읽는다. 검증된 침공의
     // 리플레이라 신뢰하되, 소비 측(main)이 재실행 전 shape 를 재확인한다(렌더 전용·tainted).
+    //
+    // ADR-0026: 검증 확정 후 EF 가 원본 replay(jsonb)를 null 화하고 gzip 압축본을 replay_gz
+    // (bytea)에 접는다. 따라서 로드는 2단이다.
+    //   (1) replay(jsonb)가 살아 있으면(미확정·미압축 건) 그대로 쓴다.
+    //   (2) null 이면 get_invasion_replay_gz RPC 로 압축본 base64 를 받아 푼다. RPC 는 참여자만
+    //       통과시키고, 없으면(48h 경과·행 부재) null → 관전 불가(만료)로 수렴한다.
     const { data, error } = await this.client
       .from('invasions')
       .select('replay')
@@ -272,7 +308,21 @@ export class SupabaseInvasionGateway implements InvasionGateway {
       .single();
     if (error !== null) throw error;
     const replay = asRecord(data).replay;
-    return typeof replay === 'object' && replay !== null ? (replay as Replay) : null;
+    if (typeof replay === 'object' && replay !== null) {
+      return replay as Replay;
+    }
+    // (2) 압축본 폴백.
+    const { data: gzData, error: gzErr } = await this.client.rpc('get_invasion_replay_gz', {
+      p_id: invasionId,
+    });
+    if (gzErr !== null) throw gzErr;
+    if (typeof gzData !== 'string' || gzData.length === 0) return null; // 만료·부재
+    try {
+      const parsed = await decompressReplayGz(gzData);
+      return typeof parsed === 'object' && parsed !== null ? (parsed as Replay) : null;
+    } catch {
+      return null; // 압축 손상 → 관전 불가 안내(isPlayableReplay 가드와 정합)
+    }
   }
 
   async fetchLadder(limit: number, offset = 0): Promise<LadderEntry[]> {
