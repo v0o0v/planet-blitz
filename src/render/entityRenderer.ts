@@ -70,6 +70,7 @@ export type SingleTextureSlot =
   | 'magnetEmitter'
   | 'bombDevice'
   | 'turretPickup'
+  | 'shelter'
   | 'core'
   | 'formation'
   | 'formationDrone'
@@ -161,9 +162,9 @@ export function spriteSlotFor(kind: EntityKind, enemyType: number, planet = 0): 
       return { kind: 'single', slot: 'turretPickup' };
     // --- 추격·탈출(Lane6) ---
     case 'shelter':
-      // TODO(art): 전용 대피소 아트 + 시야 암흑/안개 오버레이는 후속(Lane6 스펙 §5.6 — 렌더 세부는
-      // art 후속). 지금은 기존 이벤트 오브젝트 텍스처를 placeholder 로 재사용한다(sim 정합만 필수).
-      return { kind: 'single', slot: 'magnetEmitter' };
+      // 대피소 전용 슬롯(안전지대 돔). 실 PNG 가 없으면 절차적 돔으로 폴백한다(textures.ts).
+      // 시야 암흑/안개는 별도 렌더 오버레이(drawFieldOverlays)가 담당한다(스프라이트가 아니다).
+      return { kind: 'single', slot: 'shelter' };
   }
 }
 
@@ -285,6 +286,7 @@ const FIXED_FACING_KINDS: ReadonlySet<EntityKind> = new Set<EntityKind>([
   'magnetEmitter',
   'bombDevice',
   'turretPickup',
+  'shelter',
   'loot',
   'core',
   'decoyCore',
@@ -298,6 +300,72 @@ function isFixedFacing(kind: EntityKind): boolean {
   return FIXED_FACING_KINDS.has(kind);
 }
 
+// ---------------------------------------------------------------------------
+// 필드 오버레이 — 시야 암흑(추격 Lane6) · 안전 반경 압박존(수축 Lane7)
+//
+// 둘 다 **렌더 전용**이다: 스냅샷의 render-only 필드(visionRadius/safeRadius)만 읽고, sim·
+// hashWorld/hashEntity 에 절대 접히지 않는다(결정론 골든 바이트 불변). 월드=화면 1:1 이므로
+// (app.ts, 카메라 줌 없음) 화면 절반 대각선까지 덮으면 뷰포트 구석이 채워진다. `fog` Graphics 는
+// 카메라 팬 레이어 안에 있어 월드 좌표로 그린다.
+// ---------------------------------------------------------------------------
+
+/** 화면 절반 대각선(월드 유닛=px). 오버레이가 뷰포트 구석까지 덮도록 외곽 반경 상한에 쓴다. */
+const HALF_DIAGONAL = Math.hypot(DESIGN_WIDTH / 2, DESIGN_HEIGHT / 2);
+
+/** 시야 암흑 색(거의 검정, 살짝 남색). */
+export const VISION_FOG_COLOR = 0x05070d;
+/** 시야 암흑 최대 알파(가장자리). 완전 불투명을 피해 소프트 비네트로 읽힌다. */
+export const VISION_FOG_MAX_ALPHA = 0.85;
+
+/**
+ * 추격 시야 암흑(플레이어=카메라 중심 기준). 반경 안은 투명, 밖은 반경→외곽으로 알파가 오르는
+ * 동심 밴드 비네트. 반경이 화면 절반 대각선보다 크면 화면 전체가 시야 안이라 밴드가 화면 밖에만
+ * 걸려 아무것도 안 보인다(밸런스가 반경을 줄이면 자연히 암흑이 나타난다). 순수 그리기(상태 무변경).
+ */
+export function drawVisionFog(g: Graphics, cx: number, cy: number, radius: number): void {
+  const outer = radius + HALF_DIAGONAL + 40; // 화면 구석까지 확실히 덮는다
+  const band = 24;
+  for (let r = radius; r < outer; r += band) {
+    const t = (r - radius) / (outer - radius); // 0..1
+    const alpha = Math.min(VISION_FOG_MAX_ALPHA, t * VISION_FOG_MAX_ALPHA * 1.7);
+    g.circle(cx, cy, r + band).stroke({ color: VISION_FOG_COLOR, width: band + 2, alpha });
+  }
+}
+
+/** 안전 반경 경계 링 색(시안 — 아군/안전 톤). */
+export const SAFE_RING_COLOR = 0x39d0ff;
+/** 안전 반경 밖 압박존 색(어두운 적자). */
+export const SAFE_PRESSURE_COLOR = 0x2a0812;
+/** 압박존 최대 알파. */
+export const SAFE_PRESSURE_MAX_ALPHA = 0.62;
+
+/**
+ * 수축 안전 반경(아레나 중심 = 월드 원점 0,0 기준). 경계에 맥동하는 시안 링을 긋고, 반경 밖을
+ * 적자 압박존으로 어둡게 한다(배틀로얄식). 압박존은 카메라 위치를 반영해 화면에 보이는 "밖"
+ * 영역까지 덮는다(원점→카메라 거리 + 화면 절반 대각선). 순수 그리기(상태 무변경).
+ */
+export function drawSafeZone(
+  g: Graphics,
+  camX: number,
+  camY: number,
+  radius: number,
+  frameTick: number,
+): void {
+  // 경계 링(맥동) — 줄어드는 가장자리가 눈에 읽힌다.
+  const pulse = 0.5 + 0.5 * Math.sin(frameTick * 0.08);
+  g.circle(0, 0, radius).stroke({ color: SAFE_RING_COLOR, width: 4, alpha: 0.5 + 0.35 * pulse, alignment: 0 });
+  g.circle(0, 0, radius - 3).stroke({ color: 0xffffff, width: 1.5, alpha: 0.28, alignment: 0 });
+  // 압박존: 반경 밖을 어둡게. 화면에 보이는 최원거리까지 덮되 밴드 수를 120 으로 상한(성능).
+  const need = Math.hypot(camX, camY) + HALF_DIAGONAL + 40;
+  const outer = Math.max(radius + 200, need);
+  const band = Math.max(24, (outer - radius) / 120);
+  for (let r = radius; r < outer; r += band) {
+    const t = (r - radius) / (outer - radius); // 0..1
+    const alpha = Math.min(SAFE_PRESSURE_MAX_ALPHA, t * 1.1);
+    g.circle(0, 0, r + band).stroke({ color: SAFE_PRESSURE_COLOR, width: band + 2, alpha });
+  }
+}
+
 export class EntityRenderer {
   readonly layer = new Container();
   private readonly sprites = new Map<number, TrackedSprite>();
@@ -305,6 +373,12 @@ export class EntityRenderer {
   private readonly effectLayer = new Container();
   private readonly effects: DeathEffect[] = [];
   private readonly overlay = new Graphics();
+  /**
+   * 필드 오버레이(시야 암흑·안전 반경 압박존). **엔티티 스프라이트보다 위**에 그려 시야 밖 적을
+   * 어둡게 가린다(hazard 오버레이는 아래). 렌더 전용 — sim/해시와 무관하며 스냅샷의 render-only
+   * 필드(visionRadius·safeRadius)만 읽는다(결정론 골든 불변).
+   */
+  private readonly fog = new Graphics();
   private frameTick = 0;
   /** Active planet index (from the current snapshot) — selects boss art. */
   private planet = 0;
@@ -312,10 +386,12 @@ export class EntityRenderer {
   private lastPlayerAngle = 0;
 
   constructor(private readonly textures: PlaceholderTextures) {
-    // Draw order (bottom → top): hazard/beam overlay, entity sprites, death bursts.
+    // Draw order (bottom → top): hazard/beam overlay, entity sprites, death bursts,
+    // then the field overlay (시야 암흑·안전 반경) on top so it dims out-of-vision entities.
     this.layer.addChild(this.overlay);
     this.layer.addChild(this.spriteLayer);
     this.layer.addChild(this.effectLayer);
+    this.layer.addChild(this.fog);
   }
 
   /**
@@ -342,6 +418,7 @@ export class EntityRenderer {
     const camY = prev.cameraY + (curr.cameraY - prev.cameraY) * alpha;
     this.layer.position.set(DESIGN_WIDTH / 2 - camX, DESIGN_HEIGHT / 2 - camY);
     this.drawOverlay(curr);
+    this.drawFieldOverlays(curr);
     this.updateEffects();
 
     const prevById = new Map<number, EntitySnapshot>();
@@ -493,6 +570,18 @@ export class EntityRenderer {
   }
 
   /**
+   * 필드 오버레이(추격 시야 암흑 · 수축 안전 반경). 스냅샷의 render-only 필드만 읽고 둘 다 0 이면
+   * 아무것도 그리지 않는다(그 외 전 모드는 0). chase↔shrink 는 상호 배타라 동시에 켜지지 않는다.
+   * `fog` 는 스프라이트보다 위 레이어라 시야 밖 엔티티가 어둡게 가려진다. sim/해시 무관.
+   */
+  private drawFieldOverlays(curr: WorldSnapshot): void {
+    const g = this.fog;
+    g.clear();
+    if (curr.visionRadius > 0) drawVisionFog(g, curr.cameraX, curr.cameraY, curr.visionRadius);
+    if (curr.safeRadius > 0) drawSafeZone(g, curr.cameraX, curr.cameraY, curr.safeRadius, this.frameTick);
+  }
+
+  /**
    * 런 사이 스프라이트 캐시를 비운다(**런 시작 시 호출** — `main.ts` 의 `createWorld` 직전).
    *
    * ## 왜 필요한가 (라이브 플레이테스트 B-1)
@@ -516,6 +605,7 @@ export class EntityRenderer {
     for (const { sprite } of this.effects) sprite.destroy();
     this.effects.length = 0;
     this.overlay.clear();
+    this.fog.clear();
     this.lastPlayerAngle = 0;
   }
 
@@ -525,6 +615,7 @@ export class EntityRenderer {
     for (const { sprite } of this.effects) sprite.destroy();
     this.effects.length = 0;
     this.overlay.destroy();
+    this.fog.destroy();
     this.layer.destroy({ children: true });
   }
 }

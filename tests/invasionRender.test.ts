@@ -82,6 +82,7 @@ function stubTextures(): PlaceholderTextures {
     magnetEmitter: tex('magnetEmitter'),
     bombDevice: tex('bombDevice'),
     turretPickup: tex('turretPickup'),
+    shelter: tex('shelter'),
     core: tex('core'),
     guardian: arr('guardian', 2),
     invasionBackdrop: arr('invasionBackdrop', 3),
