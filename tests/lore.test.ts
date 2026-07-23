@@ -7,10 +7,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { EN, KO } from '../src/i18n/catalog.js';
 import { SHIP_STORIES, INTRO_SLIDES, RECORD_SHARDS, shipStory } from '../data/lore/index.js';
 import { SHIP_TYPES } from '../data/ships/index.js';
 import { PLANETS } from '../data/planets/index.js';
+import { SHIP_PORTRAIT_NAMES, shipPortraitName, UI_ASSET_NAMES } from '../src/ui/pixi/uiTextures.js';
 import {
   storyMessageKeys,
   introMessageKeys,
@@ -196,5 +199,56 @@ describe('서사 i18n 완전성 (배열 파생)', () => {
     expect(introBodyKey('launch')).toBe('intro.launch.body');
     expect(recordShardTitleKey('echoes')).toBe('shard.echoes.title');
     expect(recordShardBodyKey('overflow')).toBe('shard.overflow.body');
+  });
+});
+
+describe('기체 초상 자산 (ship_portrait_*)', () => {
+  it('초상 basename 이 레지스트리 파생이고 lore 정본(ShipStory.portrait)과 일치한다', () => {
+    expect(SHIP_PORTRAIT_NAMES.length).toBe(SHIP_TYPES.length);
+    expect(new Set(SHIP_PORTRAIT_NAMES).size).toBe(SHIP_TYPES.length);
+    for (const d of SHIP_TYPES) {
+      const expected = `ship_portrait_${d.slug}.png`;
+      expect(shipPortraitName(d.id), `${d.slug} name`).toBe(expected);
+      // lore 데이터가 선언한 초상 파일명과 로더 파생이 어긋나면 화면이 다른 파일을 찾는다.
+      expect(shipStory(d.slug)?.portrait, `${d.slug} lore portrait`).toBe(expected);
+    }
+  });
+
+  it('쇼케이스와 달리 초상은 레거시 예외가 없다(스트라이커도 slug 파일)', () => {
+    expect(shipPortraitName(0)).toBe('ship_portrait_striker.png');
+  });
+
+  it('손상된 typeId 도 존재하지 않는 초상 파일명을 만들지 않는다(0 으로 복귀)', () => {
+    for (const bad of [999, -1, Number.NaN, SHIP_TYPES.length]) {
+      expect(shipPortraitName(bad)).toBe('ship_portrait_striker.png');
+    }
+  });
+
+  it('초상 전종이 UI 로더 목록(UI_ASSET_NAMES)에 등재돼 있다(등재 누락 = 조용한 null)', () => {
+    for (const name of SHIP_PORTRAIT_NAMES) expect(UI_ASSET_NAMES).toContain(name);
+  });
+
+  /**
+   * **디스크 실재 초상의 규격 가드.** 존재를 강제하지 않는다(아트는 코드보다 늦게 올 수 있고
+   * 폴백이 흡수) — 단 **있는 파일은** 유효 PNG + 128×128 이어야 한다. 잘못된 크기를 인게임에
+   * 떨어뜨리면 화면에서만 티가 난다(쇼케이스 스프라이트 규격 가드 선례).
+   */
+  it('assets/ 에 있는 초상은 유효 PNG + 128x128 이다', () => {
+    const be32 = (b: Uint8Array, off: number): number =>
+      new DataView(b.buffer, b.byteOffset, b.byteLength).getUint32(off, false);
+    for (const name of SHIP_PORTRAIT_NAMES) {
+      let buf: Uint8Array | null;
+      try {
+        buf = readFileSync(fileURLToPath(new URL(`../assets/${name}`, import.meta.url)));
+      } catch {
+        buf = null; // 아직 안 온 아트 — 폴백이 흡수한다.
+      }
+      if (buf === null) continue;
+      expect([...buf.slice(1, 4)].map((c) => String.fromCharCode(c)).join(''), `${name} PNG`).toBe(
+        'PNG',
+      );
+      expect(be32(buf, 16), `${name} width`).toBe(128);
+      expect(be32(buf, 20), `${name} height`).toBe(128);
+    }
   });
 });

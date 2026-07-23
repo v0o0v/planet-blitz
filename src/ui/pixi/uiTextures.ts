@@ -137,6 +137,22 @@ export function shipShowcaseName(typeId: number): string {
  */
 export const SHIP_SHOWCASE_NAMES: readonly string[] = SHIP_TYPES.map((d) => shipShowcaseName(d.id));
 
+/**
+ * 기체 타입 → 초상 basename(128×128, 카툰 픽셀 흉상). 쇼케이스(기체 외형)와 달리 **레거시
+ * 예외가 없다** — 초상은 스토리 시스템 신규 자산이라 스트라이커도 `ship_portrait_striker.png`
+ * 를 쓴다(`data/lore` 의 `ShipStory.portrait` 와 동일 규칙, `tests/lore.test.ts`·아래 테스트가
+ * 두 소스를 대조). 범위 밖 typeId 는 `shipTypeDef` 가 0 으로 되돌린다(손상 세이브 방어).
+ *
+ * 실제 PNG 가 없으면 로더가 null 을 주고 소비 측(챔피언 사연 팝업·기록 보관소)이 초상 자리에
+ * 절차적 폴백을 그린다 — 아트가 코드보다 늦게 와도 화면이 죽지 않는다(쇼케이스 선례).
+ */
+export function shipPortraitName(typeId: number): string {
+  return `ship_portrait_${shipTypeDef(typeId).slug}.png`;
+}
+
+/** 전 기체 타입의 초상 basename(중복 없음). 레지스트리 파생 — 하드코딩하면 타입 추가 시 조용히 빠진다. */
+export const SHIP_PORTRAIT_NAMES: readonly string[] = SHIP_TYPES.map((d) => shipPortraitName(d.id));
+
 /** 로드 대상 UI 자산 basename (assets/ 아래, 확장자 포함). */
 export const UI_ASSET_NAMES: readonly string[] = [
   'ui_panel.png',
@@ -166,6 +182,8 @@ export const UI_ASSET_NAMES: readonly string[] = [
   'ui_icon_trash.png',
   // 격납고·챔피언 선택 쇼케이스 — 타입 수만큼(레지스트리 파생, 타입 0 은 레거시 이름).
   ...SHIP_SHOWCASE_NAMES,
+  // 기체 초상 — 사연 팝업·기록 보관소용 카툰 픽셀 흉상(레지스트리 파생, 레거시 예외 없음).
+  ...SHIP_PORTRAIT_NAMES,
   // 기지 맵 건물 아이콘(카툰나무풍 롤아웃 #1).
   'ui_bld_hangar.png',
   'ui_bld_research.png',
