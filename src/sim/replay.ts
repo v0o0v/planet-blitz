@@ -219,7 +219,7 @@ function hashRefSlots(hash: number, slots: readonly (InvasionRef | null)[]): num
 }
 
 /**
- * 수호 배치 1기(있음 플래그 + 좌표·성능·계보·마일스톤 + 스냅샷 12필드).
+ * 수호 배치 1기(있음 플래그 + 좌표·성능·계보·마일스톤 + 스냅샷 15필드[스탯 12 + 발사 서술자 3]).
  * 스냅샷 필드 순서는 {@link GUARDIAN_SNAPSHOT_FIELDS}(정규화 모듈의 직렬화 계약)를 그대로
  * 따른다 — 순서 정의가 두 군데로 갈리지 않게 한 곳만 읽는다.
  */

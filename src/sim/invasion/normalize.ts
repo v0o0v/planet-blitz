@@ -24,6 +24,11 @@
 
 import type { GuardianSnapshot } from '../../../data/guardian.js';
 import {
+  normalizeGuardianWeaponType,
+  normalizeGuardianBulletCount,
+  normalizeGuardianSpread,
+} from '../../../data/guardian.js';
+import {
   INVASION_ASCENSION_MAX,
   INVASION_ASCENSION_MIN,
   INVASION_CORE_HP,
@@ -167,6 +172,12 @@ export function normalizeGuardianPlacement(raw: unknown): InvasionGuardianPlacem
     }
     snap[key as string] = toInt(v, 0);
   }
+  // 주입 경계 방어(ADR-0025): 발사 서술자를 민팅과 동일 상한으로 클램프한다 — 변조된 대량
+  // bulletCount(예: 1e6)가 sim 발사(fireGuardianFan)에서 탄 폭주로 CPU·메모리 예산을 고갈시키는
+  // DoS 를 막는다. 정상 데이터엔 no-op(범위 내). 클라·EF 공유 코드라 결정론 무해(해시 정합).
+  snap.weaponType = normalizeGuardianWeaponType(snap.weaponType ?? 0);
+  snap.bulletCount = normalizeGuardianBulletCount(snap.bulletCount ?? 1);
+  snap.spread = normalizeGuardianSpread(snap.spread ?? 0);
   return {
     x: toInt(g.x, 0),
     y: toInt(g.y, 0),

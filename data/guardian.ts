@@ -319,6 +319,26 @@ const MAX_GUARDIAN_BULLET_COUNT = 12;
 const MAX_GUARDIAN_SPREAD_MRAD = 3142;
 
 /**
+ * 산탄 팬 발수(최종값)를 [1, {@link MAX_GUARDIAN_BULLET_COUNT}] 정수로 정규화한다. **주입 경계
+ * 방어**: 변조된 `guardians.data`(예: bulletCount=1e6)가 sim 발사(fireGuardianFan)에서 탄 폭주로
+ * CPU·메모리 예산을 고갈시키는 것을 막는다. 결정론 무해(클라·EF 동일 상한 → 해시 정합).
+ */
+export function normalizeGuardianBulletCount(n: number): number {
+  if (!Number.isFinite(n)) return 1;
+  const i = Math.trunc(n);
+  if (i < 1) return 1;
+  return i > MAX_GUARDIAN_BULLET_COUNT ? MAX_GUARDIAN_BULLET_COUNT : i;
+}
+
+/** 팬 각(밀리라디안, 최종값)을 [0, {@link MAX_GUARDIAN_SPREAD_MRAD}] 정수로 정규화(주입 경계 방어). */
+export function normalizeGuardianSpread(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  const i = Math.trunc(n);
+  if (i < 0) return 0;
+  return i > MAX_GUARDIAN_SPREAD_MRAD ? MAX_GUARDIAN_SPREAD_MRAD : i;
+}
+
+/**
  * {@link mapLoadoutToGuardianSnapshot}가 읽는 loadout 부분집합. `LoadoutConfig`(src/sim/world.ts)가
  * 이 필드들을 전부 가지므로 **구조적으로 만족**한다 — data/ 층이 sim 을 import 하지 않게 하려는
  * 의도적 최소 계약(파일 머리말의 순수성 규율). 상위(save 층)가 computeLoadoutStats 결과를 넘긴다.
@@ -339,18 +359,16 @@ function finiteOr(v: number, fallback: number): number {
   return Number.isFinite(v) ? v : fallback;
 }
 
-/** 산탄 팬 발수 = 1 + bulletCountAdd, [1, {@link MAX_GUARDIAN_BULLET_COUNT}] 클램프(정수). */
+/** 산탄 팬 발수 = 1 + bulletCountAdd(loadout), 상한은 {@link normalizeGuardianBulletCount} 에 위임. */
 function clampGuardianBulletCount(bulletCountAdd: number): number {
   const add = Number.isFinite(bulletCountAdd) ? Math.trunc(bulletCountAdd) : 0;
-  const n = 1 + (add > 0 ? add : 0);
-  return n > MAX_GUARDIAN_BULLET_COUNT ? MAX_GUARDIAN_BULLET_COUNT : n;
+  return normalizeGuardianBulletCount(1 + (add > 0 ? add : 0));
 }
 
-/** 팬 각 → 정수 밀리라디안 [0, {@link MAX_GUARDIAN_SPREAD_MRAD}](스냅샷 정수 도메인 유지). */
+/** 팬 각(loadout 라디안) → 정수 밀리라디안, 상한은 {@link normalizeGuardianSpread} 에 위임. */
 function clampGuardianSpreadMrad(spreadAdd: number): number {
   if (!Number.isFinite(spreadAdd) || spreadAdd <= 0) return 0;
-  const mr = Math.round(spreadAdd * 1000);
-  return mr > MAX_GUARDIAN_SPREAD_MRAD ? MAX_GUARDIAN_SPREAD_MRAD : mr;
+  return normalizeGuardianSpread(Math.round(spreadAdd * 1000));
 }
 
 /**
