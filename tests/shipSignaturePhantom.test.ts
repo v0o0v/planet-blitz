@@ -24,6 +24,7 @@ import { defaultProfile, activeShip } from '../src/save/profile.js';
 import type { Profile } from '../src/save/profile.js';
 import { createWorld, stepWorld, playerCloaked } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig } from '../src/sim/world.js';
+import { PLANET_MODE } from '../src/sim/planetMode.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { hasCapstone } from '../src/sim/capstones.js';
 import {
@@ -216,12 +217,19 @@ describe('팬텀(typeId 3) 정규 경로 배선 — Profile → buildRunConfig �
   // 행성1/티어0 · seed 9182 · 3600틱 기준선: 적탄 누적 52150(live) vs 66585(ctrl),
   // 최종 엔티티 45 vs 50. 은신 유지는 3틱뿐인데 차이가 큰 것은 막힌 일제사격 하나가 이후
   // 교전 전개를 통째로 바꾸기 때문이다.
+  // ⚠️ Lane7: 베르단(planet 1)이 이제 수축(shrink) 모드라 원점 링 스폰·밖 피해로 전투 동역학이
+  // 바뀌어 이 기준선(수축 도입 전 = shrink 가 sim no-op 이던 시절의 vampire 거동으로 측정)이 깨진다.
+  // 이 테스트는 **팬텀 시그니처 축**을 재는 것이라 planet 모드 축과 직교하므로, planetMode 를
+  // vampire 로 고정해 기준선과 같은 전투 환경(베르단 로스터 + vampire 스폰)에서 게이트를 검증한다.
   const GATE = { planet: 1, stage: 1 } as const;
   const GATE_SEED = 9182;
   const GATE_TICKS = 3600;
 
   it('은신이 적의 방출을 실제로 막는다 — 억제 대조군과 적탄 총량·엔티티가 갈린다', () => {
-    const cfg = buildRunConfig(profileWithType(3), GATE);
+    const cfg: WorldConfig = {
+      ...buildRunConfig(profileWithType(3), GATE),
+      planetMode: PLANET_MODE.vampire,
+    };
     const live = runObserved(GATE_SEED, cfg, GATE_TICKS);
     const ctrl = runObserved(GATE_SEED, suppressSignature(cfg, SIG_PHANTOM_CLOAK), GATE_TICKS);
 

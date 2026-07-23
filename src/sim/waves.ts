@@ -38,6 +38,7 @@ import {
 import { racingProgress, RACING_SECTION_LENGTH, RACING_SPAWN_AHEAD } from './modes/racing.js';
 import { contaminationPurifyRate, CONTAMINATION_PURIFY_THRESHOLD } from './modes/contamination.js';
 import { chaseShelterReached } from './modes/chase.js';
+import { shrinkRingCleared, shrinkSpawnRadius, SHRINK_GRACE_TICKS } from './modes/shrink.js';
 
 export interface WaveRuntime {
   segmentIndex: number;
@@ -151,6 +152,12 @@ export function updateWaves(state: WorldState, player: Entity): void {
       // 존재(bossSpawned)라 두 번째 보스가 뜨지 않는다. 승리는 대피소가 아니라 반격 장치 전부
       // 파괴→취약→포식자 처치다(§7-R#3). planetMode 게이트라 뱀서류·침공 거동 불변.
       cleared = chaseShelterReached(state, w.segmentIndex);
+    } else if (state.config.planetMode === PLANET_MODE.shrink) {
+      // 수축(Lane7): 처치 할당 대신 **안전 반경 안 적 전멸**(shrinkRingCleared)로 구간을 넘는다.
+      // 마지막 일반 세그먼트 통과 → 보스 세그먼트 → 아레나 중심 보스(stepBoss 공통 경로). 전진
+      // 시 유예 리셋(아래 if(cleared) 블록)이 반경을 잠시 홀드해 수축 사이클을 이력 의존으로
+      // 만든다(shrinkRuntime 신규 필드 정당성). planetMode 게이트라 뱀서류·침공 거동 불변.
+      cleared = shrinkRingCleared(state);
     } else cleared = state.kills - w.segmentBaseKills >= w.segmentKillGoal;
     if (cleared) {
       w.segmentIndex++;
@@ -166,6 +173,10 @@ export function updateWaves(state: WorldState, player: Entity): void {
       w.cardTimer = 0;
       w.segmentBaseKills = state.kills;
       w.segmentKillGoal = next ? next.killGoal : 0;
+      // 수축(Lane7): 세그먼트 전진 직후 유예를 리셋해 반경을 잠시 홀드한다(숨돌릴 틈). 정수 대입뿐.
+      // 이 이력 의존이 safeRadius 를 tick 의 닫힌 함수가 아니게 만들어 shrinkRuntime 신규 필드를
+      // 정당화한다(scrollX/accelCp 와 동일 사유). shrinkRuntime 미존재(타 모드)면 no-op(불변).
+      if (state.shrinkRuntime !== undefined) state.shrinkRuntime.graceTicks = SHRINK_GRACE_TICKS;
     }
   }
 }
@@ -309,6 +320,19 @@ function formationPositions(
   // 앞쪽에서 다가오는 정체성). 블록격파는 전방=−Y, 레이싱은 전방=+X. 창 미존재(뱀서류·침공)·
   // 그 외 모드면 baseX/baseY 가 그대로 플레이어 좌표라 RNG 소비·산술이 바이트 동일하다(회귀 0).
   const mode = state.config.planetMode;
+  // 수축지대(Lane7): 스폰을 아레나 중심(원점 0,0) 안전 반경 안 링에 몰아 "중앙 집결" 압박을
+  // 만든다(플레이어 기준이 아니다 — 스크롤 모드가 창 중심을 쓰듯 shrink 는 원점을 쓴다). 스폰
+  // 반경은 현재 safeRadius 이하(shrinkSpawnRadius)라 항상 안전 반경 안 → 링 전멸 게이트가
+  // 성립한다(밖에 스폰하면 gate 가 헛돈다). planetMode 게이트라 타 모드 스폰은 바이트 불변.
+  if (mode === PLANET_MODE.shrink) {
+    const start = rng.range(-PI, PI);
+    const r = shrinkSpawnRadius(state);
+    for (let i = 0; i < count; i++) {
+      const ang = start + (i * TWO_PI) / count;
+      out.push({ x: cos(ang) * r, y: sin(ang) * r });
+    }
+    return out;
+  }
   const scrollWin =
     mode === PLANET_MODE.blockBreak || mode === PLANET_MODE.racing ? state.scrollRuntime : undefined;
   let baseX: number;
