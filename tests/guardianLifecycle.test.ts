@@ -79,14 +79,23 @@ describe('퇴역 — 수호 기체 생성 + 계보 지급 (AC1)', () => {
     expect(build!.skillInvest[0]).toBe(1); // 투자가 실제로 캡처됐다
   });
 
-  it('프리셋 선택제: 타이탄과 인터셉터는 다른 스냅샷 형태', () => {
+  it('프리셋은 이동 AI 성향만 정한다: 같은 빌드면 파워 동일, 거동만 다르다 (ADR-0025)', () => {
     const titan = profileWithGear();
     const inter = profileWithGear();
     retireActiveShip(titan, GUARDIAN_TITAN);
     retireActiveShip(inter, GUARDIAN_INTERCEPTOR);
-    // 같은 전투력이라도 프리셋 형태가 다르다(타이탄 고HP·저속, 인터셉터 저HP·고속).
-    expect(titan.guardians[0]!.snapshot.hp).toBeGreaterThan(inter.guardians[0]!.snapshot.hp);
-    expect(inter.guardians[0]!.snapshot.moveSpeed).toBeGreaterThan(titan.guardians[0]!.snapshot.moveSpeed);
+    const ts = titan.guardians[0]!.snapshot;
+    const is = inter.guardians[0]!.snapshot;
+    // ADR-0025: 프리셋은 파워(hp·피해·발사간격)를 결정하지 않는다 — 실물 빌드가 결정하므로
+    // 같은 빌드면 프리셋 무관 동일하다(구 "타이탄 고HP" 모델 폐기).
+    expect(ts.hp).toBe(is.hp);
+    expect(ts.contactDamage).toBe(is.contactDamage);
+    expect(ts.fireCooldown).toBe(is.fireCooldown);
+    // 프리셋이 정하는 것은 이동 AI: 인터셉터=근접 추격(고속·짧은 standoff·작은 히트박스),
+    // 타이탄=원거리 버팀(저속·먼 standoff·큰 히트박스).
+    expect(is.moveSpeed).toBeGreaterThan(ts.moveSpeed);
+    expect(ts.standoff).toBeGreaterThan(is.standoff);
+    expect(ts.radius).toBeGreaterThan(is.radius);
   });
 });
 

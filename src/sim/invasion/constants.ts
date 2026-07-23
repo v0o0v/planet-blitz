@@ -163,7 +163,8 @@ export const INVASION_AFFIX_SEED_MASK = 0xffffffff;
 
 /**
  * 침공 해시 블록 버전. M7a 에서 구 침공 블록(조건부 접기 4단)을 통째로 v2 로 교체한다.
- * 미출시 전제라 fixture 를 전량 재생성하는 편이 접기 5단보다 안전하다는 판단(레인 문서 §채택
- * 결정값). **PvE 블록은 한 바이트도 바뀌지 않는다.**
+ * v3(ADR-0025): 수호 스냅샷에 발사 서술자 3필드(weaponType·bulletCount·spread)를 추가하고
+ * 수호 발사 sim 을 무기 아키타입별로 분기해 해시가 바뀐다 — 미출시 전제라 fixture 를 전량
+ * 재생성한다(접기 5단보다 안전 — 레인 문서 §채택 결정값). **PvE 블록은 한 바이트도 바뀌지 않는다.**
  */
-export const INVASION_HASH_VERSION = 2;
+export const INVASION_HASH_VERSION = 3;

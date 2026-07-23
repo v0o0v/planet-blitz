@@ -267,9 +267,9 @@ describe('침공 3레이어 스키마 — layersEqual 위조 대조', () => {
       1 + INVASION_WAVE_SLOTS + INVASION_SOCKET_COUNTS[MAP_TEMPLATE_STRAIGHT]! +
         INVASION_GUARDIAN_SLOTS + INVASION_PROP_SLOTS + INVASION_CORE_MODULE_SLOTS,
     );
-    // Ref 5필드 × (6웨이브 + 12소켓 + 6기물 + 2모듈 + 1보스) + 수호 2×(x,y,perf,lineage,milestones + 스냅샷 12)
-    // + templateId + core 3
-    expect(numbers.length).toBe(5 * (6 + 12 + 6 + 2 + 1) + 2 * (5 + 12) + 1 + 3);
+    // Ref 5필드 × (6웨이브 + 12소켓 + 6기물 + 2모듈 + 1보스) + 수호 2×(x,y,perf,lineage,milestones
+    // + 스냅샷 15[12 스탯 + 발사 서술자 weaponType·bulletCount·spread, ADR-0025]) + templateId + core 3
+    expect(numbers.length).toBe(5 * (6 + 12 + 6 + 2 + 1) + 2 * (5 + 15) + 1 + 3);
 
     const failures: string[] = [];
     for (const f of fields) {

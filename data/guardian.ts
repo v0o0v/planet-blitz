@@ -60,6 +60,13 @@ export interface GuardianSnapshot {
   readonly moveSpeed: number;
   /** 유지 거리(유닛): 이 거리보다 멀면 추적, 이내면 멈춰 사격(요격 유닛 거동). */
   readonly standoff: number;
+  // 발사 서술자(ADR-0025 — 장착 메인 무기 타입이 방어 발사체를 결정). 전부 정수(정규화 계약).
+  /** 메인 무기 타입 코드(0=벌컨/1=산탄/2=레일건/3=미사일/4=빔 — src/items/loadout.ts WEAPON_*). */
+  readonly weaponType: number;
+  /** 산탄/미사일 팬 발수(≥1, 벌컨·레일건·빔은 1). */
+  readonly bulletCount: number;
+  /** 팬 각(정수 밀리라디안 — sim 발사 시 /1000; 정수 도메인 유지). 0=단발. */
+  readonly spread: number;
 }
 
 /** {@link resolveGuardianStats}가 낸 실효 전투 스탯(성능·보너스 적용 후, 정수). */
@@ -75,6 +82,10 @@ export interface GuardianStats {
   readonly range: number;
   readonly moveSpeed: number;
   readonly standoff: number;
+  // 발사 서술자(스냅샷에서 그대로 통과 — 성능·보너스로 스케일하지 않는다, ADR-0025 §3).
+  readonly weaponType: number;
+  readonly bulletCount: number;
+  readonly spread: number;
 }
 
 /**
@@ -98,6 +109,9 @@ const PRESET_BASE: readonly GuardianSnapshot[] = [
     range: 1100,
     moveSpeed: 220,
     standoff: 640,
+    weaponType: 0, // WEAPON_VULCAN
+    bulletCount: 1,
+    spread: 0,
   },
   // GUARDIAN_INTERCEPTOR
   {
@@ -113,6 +127,9 @@ const PRESET_BASE: readonly GuardianSnapshot[] = [
     range: 760,
     moveSpeed: 460,
     standoff: 300,
+    weaponType: 0, // WEAPON_VULCAN
+    bulletCount: 1,
+    spread: 0,
   },
 ];
 
@@ -123,6 +140,19 @@ const PRESET_BASE: readonly GuardianSnapshot[] = [
 export function normalizeGuardianPreset(preset: number): number {
   const p = Math.trunc(preset);
   return p >= 0 && p < GUARDIAN_PRESET_COUNT ? p : GUARDIAN_TITAN;
+}
+
+/** 유효 메인 무기 타입 수(src/items/loadout.ts WEAPON_VULCAN=0 .. WEAPON_BEAM=4). */
+export const GUARDIAN_WEAPON_TYPE_COUNT = 5;
+
+/**
+ * 메인 무기 타입 코드를 [0, {@link GUARDIAN_WEAPON_TYPE_COUNT})로 정규화한다(범위 밖·비유한은
+ * 벌컨=0 폴백 — 손상 스냅샷이 sim 발사 분기에서 undefined 스펙을 타는 것을 막는다).
+ */
+export function normalizeGuardianWeaponType(weaponType: number): number {
+  if (!Number.isFinite(weaponType)) return 0;
+  const w = Math.trunc(weaponType);
+  return w >= 0 && w < GUARDIAN_WEAPON_TYPE_COUNT ? w : 0;
 }
 
 /**
@@ -193,6 +223,10 @@ export function resolveGuardianStats(
     range: snapshot.range,
     moveSpeed: snapshot.moveSpeed,
     standoff: snapshot.standoff,
+    // 발사 서술자는 발사체 정체성이라 성능·보너스로 스케일하지 않고 그대로 통과(ADR-0025 §3).
+    weaponType: snapshot.weaponType,
+    bulletCount: snapshot.bulletCount,
+    spread: snapshot.spread,
   };
 }
 
@@ -252,10 +286,141 @@ export function shieldShareHp(pool: number, bp: number): number {
   return Math.floor((p * bp) / 10000);
 }
 
+// ---------------------------------------------------------------------------
+// 실물 빌드 loadout → 방어 스냅샷 파생 (ADR-0025) — 순수 결정론 정수 매핑.
+//
+// 프리셋은 이동 AI(radius/moveSpeed/standoff)만, 파워·발사 기하는 아래 universal base × loadout
+// 배율, 발사체 정체성은 weaponType/bulletCount/spread 로 실린다. 아래 base 계수는 전부 **밸런스
+// placeholder**(출시 전 일괄 튜닝 이월 — defer-balance-tuning)이며, ADR-0025 는 어느 축이
+// preset/loadout/universal 에서 오는지의 **구조**만 확정한다.
+// ---------------------------------------------------------------------------
+
+/** 플레이어 기준 HP(loadout.maxHpAdd 가 가산되는 기준 — src/items/loadout.ts BASE_HP_REF 와 동일). */
+const PLAYER_BASE_HP = 100;
+/** 수호 HP = 플레이어 실효 HP × 이 계수(수호는 정지 방어체라 플레이어보다 튼튼). placeholder. */
+const GUARDIAN_HP_PER_PLAYER_HP = 3;
+/** 접촉(램) 피해 universal base(× damageMult). placeholder. */
+const GUARDIAN_BASE_CONTACT_DAMAGE = 20;
+/** 발당 탄피해 universal base(× damageMult). placeholder. */
+const GUARDIAN_BASE_BULLET_DAMAGE = 16;
+/** 발사 간격(틱) universal base(× fireRateMult — >1=느림, <1=빠름). placeholder. */
+const GUARDIAN_BASE_FIRE_COOLDOWN = 36;
+/** 탄속(유닛/초) universal base(× bulletSpeedMult). placeholder. */
+const GUARDIAN_BASE_BULLET_SPEED = 1200;
+/** 탄 반지름 universal base. placeholder. */
+const GUARDIAN_BASE_BULLET_RADIUS = 10;
+/** 탄 수명(틱) universal base. placeholder. */
+const GUARDIAN_BASE_BULLET_LIFE = 100;
+/** 조준·발사 사거리 universal base(+ rangeAdd). placeholder. */
+const GUARDIAN_BASE_RANGE = 1000;
+/** 산탄 팬 펠릿 수 상한(병리적 빌드의 탄 폭주로 성능·bulletCap 파괴 방어). */
+const MAX_GUARDIAN_BULLET_COUNT = 12;
+/** 팬 각 상한(밀리라디안, π ≈ 3142 — 전방위 초과 방지). */
+const MAX_GUARDIAN_SPREAD_MRAD = 3142;
+
 /**
- * 퇴역 시 프리셋 + 전투력 점수로 **복사 스냅샷**을 만든다(ADR-0007 R8). 전투력 점수가 높을수록
- * (좋은 장비·깊은 빌드로 퇴역) 강한 수호기가 된다. hp·접촉·탄피해를 전투력 점수 비율로 스케일
- * (100=기본), 나머지 기하는 프리셋 그대로. 결정론 정수.
+ * 산탄 팬 발수(최종값)를 [1, {@link MAX_GUARDIAN_BULLET_COUNT}] 정수로 정규화한다. **주입 경계
+ * 방어**: 변조된 `guardians.data`(예: bulletCount=1e6)가 sim 발사(fireGuardianFan)에서 탄 폭주로
+ * CPU·메모리 예산을 고갈시키는 것을 막는다. 결정론 무해(클라·EF 동일 상한 → 해시 정합).
+ */
+export function normalizeGuardianBulletCount(n: number): number {
+  if (!Number.isFinite(n)) return 1;
+  const i = Math.trunc(n);
+  if (i < 1) return 1;
+  return i > MAX_GUARDIAN_BULLET_COUNT ? MAX_GUARDIAN_BULLET_COUNT : i;
+}
+
+/** 팬 각(밀리라디안, 최종값)을 [0, {@link MAX_GUARDIAN_SPREAD_MRAD}] 정수로 정규화(주입 경계 방어). */
+export function normalizeGuardianSpread(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  const i = Math.trunc(n);
+  if (i < 0) return 0;
+  return i > MAX_GUARDIAN_SPREAD_MRAD ? MAX_GUARDIAN_SPREAD_MRAD : i;
+}
+
+/**
+ * {@link mapLoadoutToGuardianSnapshot}가 읽는 loadout 부분집합. `LoadoutConfig`(src/sim/world.ts)가
+ * 이 필드들을 전부 가지므로 **구조적으로 만족**한다 — data/ 층이 sim 을 import 하지 않게 하려는
+ * 의도적 최소 계약(파일 머리말의 순수성 규율). 상위(save 층)가 computeLoadoutStats 결과를 넘긴다.
+ */
+export interface GuardianLoadoutInput {
+  readonly weaponType: number;
+  readonly damageMult: number;
+  readonly fireRateMult: number;
+  readonly bulletCountAdd: number;
+  readonly bulletSpeedMult: number;
+  readonly spreadAdd: number;
+  readonly rangeAdd: number;
+  readonly maxHpAdd: number;
+}
+
+/** 안전 유한화(비유한 → 폴백). */
+function finiteOr(v: number, fallback: number): number {
+  return Number.isFinite(v) ? v : fallback;
+}
+
+/** 산탄 팬 발수 = 1 + bulletCountAdd(loadout), 상한은 {@link normalizeGuardianBulletCount} 에 위임. */
+function clampGuardianBulletCount(bulletCountAdd: number): number {
+  const add = Number.isFinite(bulletCountAdd) ? Math.trunc(bulletCountAdd) : 0;
+  return normalizeGuardianBulletCount(1 + (add > 0 ? add : 0));
+}
+
+/** 팬 각(loadout 라디안) → 정수 밀리라디안, 상한은 {@link normalizeGuardianSpread} 에 위임. */
+function clampGuardianSpreadMrad(spreadAdd: number): number {
+  if (!Number.isFinite(spreadAdd) || spreadAdd <= 0) return 0;
+  return normalizeGuardianSpread(Math.round(spreadAdd * 1000));
+}
+
+/**
+ * 실물 빌드 loadout → 방어 스냅샷(ADR-0025 — "한 기체 = 한 스펙"의 방어측 파생). 순수 결정론
+ * 정수 매핑이라 클라(Node)·서버(Deno) 재실행이 비트 동일하다(단일 나눗셈 + Math.round).
+ *
+ * - **프리셋(이동 AI):** radius·moveSpeed·standoff 는 {@link PRESET_BASE}[preset] 에서.
+ * - **파워:** hp(maxHpAdd)·접촉/탄피해(damageMult)·발사간격(fireRateMult)·탄속(bulletSpeedMult)·
+ *   사거리(rangeAdd)는 universal base × loadout 배율.
+ * - **발사체:** weaponType·bulletCount·spread 는 loadout 에서(무기 아키타입 복제 서술자).
+ *
+ * ⚠️ 모든 반환 필드는 유한 정수여야 한다 — normalize.ts `normalizeGuardianPlacement` 가 non-finite
+ * 필드를 만나면 슬롯을 통째로 null 로 버려 방어 수호가 소실된다. standoff 는 range 이내로 클램프해
+ * "사거리 밖에서 멈춰 영영 무발사" 를 막는다.
+ */
+export function mapLoadoutToGuardianSnapshot(
+  preset: number,
+  loadout: GuardianLoadoutInput,
+): GuardianSnapshot {
+  const p = normalizeGuardianPreset(preset);
+  const beh = PRESET_BASE[p]!;
+  const dmg = finiteOr(loadout.damageMult, 1);
+  const fr = finiteOr(loadout.fireRateMult, 1);
+  const bs = finiteOr(loadout.bulletSpeedMult, 1);
+  const playerHp = PLAYER_BASE_HP + finiteOr(loadout.maxHpAdd, 0);
+  const range = Math.max(1, Math.round(GUARDIAN_BASE_RANGE + finiteOr(loadout.rangeAdd, 0)));
+  return {
+    preset: p,
+    radius: beh.radius,
+    hp: Math.max(1, Math.round(playerHp * GUARDIAN_HP_PER_PLAYER_HP)),
+    contactDamage: Math.max(0, Math.round(GUARDIAN_BASE_CONTACT_DAMAGE * dmg)),
+    fireCooldown: Math.max(2, Math.round(GUARDIAN_BASE_FIRE_COOLDOWN * fr)),
+    bulletDamage: Math.max(0, Math.round(GUARDIAN_BASE_BULLET_DAMAGE * dmg)),
+    bulletSpeed: Math.max(1, Math.round(GUARDIAN_BASE_BULLET_SPEED * bs)),
+    bulletRadius: GUARDIAN_BASE_BULLET_RADIUS,
+    bulletLife: GUARDIAN_BASE_BULLET_LIFE,
+    range,
+    moveSpeed: beh.moveSpeed,
+    standoff: Math.min(beh.standoff, range),
+    weaponType: normalizeGuardianWeaponType(loadout.weaponType),
+    bulletCount: clampGuardianBulletCount(loadout.bulletCountAdd),
+    spread: clampGuardianSpreadMrad(loadout.spreadAdd),
+  };
+}
+
+/**
+ * 프리셋 + 전투력 점수로 **합성 스냅샷**을 만든다(단발 벌컨 발사체). hp·접촉·탄피해를 전투력
+ * 점수 비율로 스케일(100=기본), 나머지 기하·발사서술자는 프리셋 그대로. 결정론 정수.
+ *
+ * ⚠️ ADR-0025 이후 **프로덕션 퇴역 경로는 {@link mapLoadoutToGuardianSnapshot}(실물 빌드 파생)** 를
+ * 쓴다. 이 함수는 실물 빌드가 없는 **하네스·벤치·검증 fixture 의 합성 수호** 생성 전용으로 남는다
+ * (전투력 점수만으로 임의 강도의 수호가 필요한 dev/test 경로).
  */
 export function makeGuardianSnapshot(preset: number, combatScore: number): GuardianSnapshot {
   const p = normalizeGuardianPreset(preset);
@@ -275,6 +440,9 @@ export function makeGuardianSnapshot(preset: number, combatScore: number): Guard
     range: base.range,
     moveSpeed: base.moveSpeed,
     standoff: base.standoff,
+    weaponType: base.weaponType,
+    bulletCount: base.bulletCount,
+    spread: base.spread,
   };
 }
 

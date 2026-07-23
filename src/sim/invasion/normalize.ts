@@ -24,6 +24,11 @@
 
 import type { GuardianSnapshot } from '../../../data/guardian.js';
 import {
+  normalizeGuardianWeaponType,
+  normalizeGuardianBulletCount,
+  normalizeGuardianSpread,
+} from '../../../data/guardian.js';
+import {
   INVASION_ASCENSION_MAX,
   INVASION_ASCENSION_MIN,
   INVASION_CORE_HP,
@@ -128,11 +133,28 @@ export const GUARDIAN_SNAPSHOT_FIELDS: readonly (keyof GuardianSnapshot)[] = [
   'range',
   'moveSpeed',
   'standoff',
+  // 발사 서술자(ADR-0025) — append-only. 순서 변경 금지(직렬화 계약).
+  'weaponType',
+  'bulletCount',
+  'spread',
 ];
 
 /**
- * 수호 배치 1기 정규화. 스냅샷 필드가 **하나라도** 유한수가 아니면 슬롯을 통째로 비운다
- * (손상 스냅샷이 hashFloat 에 닿으면 재현이 깨진다 — 구 normalizeGuardian 규율 계승).
+ * 발사 서술자(ADR-0025) 기본값 — 구 스냅샷(발사 필드 부재)을 벌컨 단발로 우아하게 승격한다
+ * (정규화가 슬롯을 통째로 버려 구 수호가 방어에서 사라지는 것을 막는다). 클라(Node)·서버(Deno)가
+ * 동일 기본값을 쓰므로 바이트 정합이 유지된다. **코어 12필드는 기본값 없음** — 비유한이면 슬롯을
+ * 통째로 null 로 버린다(결정론 가드 — 손상 스냅샷이 hashFloat 에 닿는 것 차단).
+ */
+const GUARDIAN_SNAPSHOT_FIELD_DEFAULTS: Partial<Record<keyof GuardianSnapshot, number>> = {
+  weaponType: 0,
+  bulletCount: 1,
+  spread: 0,
+};
+
+/**
+ * 수호 배치 1기 정규화. 코어 스냅샷 필드가 **하나라도** 유한수가 아니면 슬롯을 통째로 비운다
+ * (손상 스냅샷이 hashFloat 에 닿으면 재현이 깨진다 — 구 normalizeGuardian 규율 계승). 발사
+ * 서술자 3필드(ADR-0025)는 부재/비유한 시 {@link GUARDIAN_SNAPSHOT_FIELD_DEFAULTS}로 승격한다.
  */
 export function normalizeGuardianPlacement(raw: unknown): InvasionGuardianPlacement | null {
   const g = asRecord(raw);
@@ -142,9 +164,20 @@ export function normalizeGuardianPlacement(raw: unknown): InvasionGuardianPlacem
   const snap: Record<string, number> = {};
   for (const key of GUARDIAN_SNAPSHOT_FIELDS) {
     const v = snapRaw[key as string];
-    if (!isFiniteNumber(v)) return null;
+    if (!isFiniteNumber(v)) {
+      const def = GUARDIAN_SNAPSHOT_FIELD_DEFAULTS[key];
+      if (def === undefined) return null; // 코어 필드 비유한 → 슬롯 폐기(결정론 가드)
+      snap[key as string] = def; // 발사 서술자 부재 → 기본값(구 수호 하위호환)
+      continue;
+    }
     snap[key as string] = toInt(v, 0);
   }
+  // 주입 경계 방어(ADR-0025): 발사 서술자를 민팅과 동일 상한으로 클램프한다 — 변조된 대량
+  // bulletCount(예: 1e6)가 sim 발사(fireGuardianFan)에서 탄 폭주로 CPU·메모리 예산을 고갈시키는
+  // DoS 를 막는다. 정상 데이터엔 no-op(범위 내). 클라·EF 공유 코드라 결정론 무해(해시 정합).
+  snap.weaponType = normalizeGuardianWeaponType(snap.weaponType ?? 0);
+  snap.bulletCount = normalizeGuardianBulletCount(snap.bulletCount ?? 1);
+  snap.spread = normalizeGuardianSpread(snap.spread ?? 0);
   return {
     x: toInt(g.x, 0),
     y: toInt(g.y, 0),
@@ -320,6 +353,12 @@ export const SAMPLE_GUARDIAN: InvasionGuardianPlacement = {
     range: 1100,
     moveSpeed: 220,
     standoff: 700,
+    // 발사 서술자는 벌컨 단발(0/1/0)로 둔다 — invasionE2E 의 filledLayers 가 이 표본을 수호로
+    // 쓰므로, 여기를 비-벌컨으로 바꾸면 e2e 런 궤적이 바뀐다. 변조 테스트는 값과 무관하게 필드
+    // 봉인만 검증한다(0→변조도 해시가 갈린다). 아키타입 발사 자체는 별도 통합 테스트가 다룬다.
+    weaponType: 0,
+    bulletCount: 1,
+    spread: 0,
   },
   performanceCP: 9000,
   lineageBonusBp: 1200,

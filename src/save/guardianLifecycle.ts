@@ -16,8 +16,9 @@
 import type { Profile, GuardianRecord, GuardianBuild, Ship } from './profile.js';
 import { totalCombatPower } from './combatPower.js';
 import type { Item } from '../items/types.js';
+import { computeLoadoutStats } from '../items/loadout.js';
 import {
-  makeGuardianSnapshot,
+  mapLoadoutToGuardianSnapshot,
   dismissPoints,
   PERFORMANCE_FULL,
   GUARDIAN_TITAN,
@@ -91,8 +92,7 @@ export function retireActiveShip(
 ): RetireResult {
   const p = normalizeGuardianPreset(preset);
   const score = retirementCombatScore(profile);
-  const snapshot = makeGuardianSnapshot(p, score);
-  // 퇴역 순간의 실물 빌드를 통째로 복사해 잠근다(ADR-0024) — 비우기 전에 캡처해야 한다.
+  // 퇴역 순간의 실물 빌드를 통째로 복사해 잠근다(ADR-0024) — 스냅샷 파생·장착 비우기 전에 캡처.
   // equipped 는 얕은 복사(Item 은 불변 데이터라 참조 공유 안전), skillInvest 는 벡터 복사.
   const ship = activeShip(profile);
   const build: GuardianBuild = {
@@ -100,6 +100,14 @@ export function retireActiveShip(
     equipped: { ...ship.equipped },
     skillInvest: ship.skillInvest.slice(),
   };
+  // ADR-0025: 방어 스냅샷은 실물 빌드 loadout 에서 파생한다(프리셋=이동 AI, 파워·발사체=빌드).
+  // 계보 기체 가지(shipBonusBp)는 넘기지 않는다 — 수호 계보 보너스는 수호 가지이며 스폰 시
+  // resolveGuardianStats 가 적용한다(스냅샷에 계보를 굽지 않는 기존 모델 유지 — 이중 계산 방지).
+  const equippedItems: Item[] = Object.values(build.equipped).filter(
+    (it): it is Item => it !== undefined,
+  );
+  const { loadout } = computeLoadoutStats(equippedItems, build.skillInvest, undefined, build.typeId);
+  const snapshot = mapLoadoutToGuardianSnapshot(p, loadout);
   const guardian: GuardianRecord = {
     id: makeLocalGuardianId(profile),
     snapshot,
