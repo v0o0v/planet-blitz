@@ -169,13 +169,15 @@ async function main(): Promise<void> {
   // `startRun`; a planet with no bundled tileset keeps the TilingSprite backdrop.
   const autotile = new AutotileBackground();
   gameApp.stage.addChild(autotile.layer);
-  // Load all four planet Wang tilesets up front (missing ones resolve to null →
+  // Load all six planet Wang tilesets up front (missing ones resolve to null →
   // that planet falls back to the procedural TilingSprite, regression 0).
   const wangTiles: (WangTiles | null)[] = await Promise.all([
     loadWangTiles(0),
     loadWangTiles(1),
     loadWangTiles(2),
     loadWangTiles(3),
+    loadWangTiles(4),
+    loadWangTiles(5),
   ]);
   const entityRenderer = new EntityRenderer(textures);
   gameApp.stage.addChild(entityRenderer.layer);
