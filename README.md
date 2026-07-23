@@ -20,6 +20,12 @@ corepack enable pnpm
 pnpm install
 ```
 
+새 워크트리에서 자동 설치를 켜려면 추적되는 `post-checkout` 훅을 연결한다(클론/머신당 최초 1회 — 공용 git 설정이라 모든 worktree 에 적용된다). 이후 `git worktree add` 로 만든 워크트리는 node_modules 가 비어 있으면 자동으로 `pnpm install` 이 돈다:
+
+```
+git config core.hooksPath .githooks
+```
+
 개발 서버 (포트 5180):
 
 ```
