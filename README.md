@@ -6,16 +6,24 @@ CrazyGames 출시용 탑다운 탄막 슈팅 × 디아블로2 파밍 × 비동�
 
 ## 실행
 
+이 저장소는 **pnpm** 을 쓴다. pnpm 은 전역 content-addressable 스토어에서 하드링크로 의존성을 깔기 때문에, **git worktree 를 새로 만들어도 `pnpm install` 이 스토어에서 재사용해 빠르고 디스크를 아낀다**(worktree 마다 node_modules 를 통째로 다시 받지 않는다). 버전은 `package.json` 의 `packageManager` 필드에 고정돼 있고, Node 번들 corepack 으로 활성화한다:
+
+```
+corepack enable pnpm
+```
+
+> corepack enable 이 권한 문제로 막히면(Windows Program Files 쓰기) 활성화 없이 `corepack pnpm <명령>` 으로 바로 실행해도 된다.
+
 의존성 설치:
 
 ```
-npm install
+pnpm install
 ```
 
 개발 서버 (포트 5180):
 
 ```
-npm run dev
+pnpm run dev
 ```
 
 - 게임: `http://localhost:5180`
@@ -42,15 +50,15 @@ M1 실측(2026-07-15): 2,000탄+200적에서 프레임당 avg **0.49ms** / p95 0
 ## 검증
 
 ```
-npm run test
+pnpm test
 ```
 
 ```
-npm run lint
+pnpm run lint
 ```
 
 ```
-npm run build
+pnpm run build
 ```
 
 - `test`: vitest — 결정론 해시 테스트(동일 시드+입력로그 2회 실행 시 틱별 상태 해시 100% 일치) 등

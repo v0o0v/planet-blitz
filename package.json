@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Planet Blitz - deterministic bullet-hell shooter (M1 combat prototype)",
+  "packageManager": "pnpm@11.16.0",
   "scripts": {
     "dev": "vite --port 5180",
     "build": "tsc --noEmit && vite build",
