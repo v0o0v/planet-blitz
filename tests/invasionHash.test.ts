@@ -192,9 +192,10 @@ describe('침공 3레이어 해시 v2 — 런타임 페이즈 상태', () => {
 describe('엔티티 해시 레이아웃 계약', () => {
   it('KIND_CODE 는 append-only 다(기존 코드 재배치 금지)', () => {
     // 골든: 코드 1..18 은 M1~M6 확정분, 19..26 은 M7a 3레이어 예약분, 27 은 레이싱(Lane5) 부스트 패드,
-    // 28 은 추격·탈출(Lane6) 대피소. **15 는 영구 결번**이다 — 구 defenseTurret 이 L11(레거시 삭제)에서
-    // 사라졌지만 번호를 당기지 않았다. 당기면 core(16) 이하가 전부 재배치돼 기존 리플레이·fixture 가
-    // 통째로 갈린다(append-only 계약의 핵심은 '번호 재사용·재배치 금지'이지 '연속'이 아니다).
+    // 28 은 추격·탈출(Lane6) 대피소, 29 는 에코 신호(story Phase D · ADR-0023). **15 는 영구 결번**이다 —
+    // 구 defenseTurret 이 L11(레거시 삭제)에서 사라졌지만 번호를 당기지 않았다. 당기면 core(16) 이하가
+    // 전부 재배치돼 기존 리플레이·fixture 가 통째로 갈린다(append-only 계약의 핵심은 '번호 재사용·재배치
+    // 금지'이지 '연속'이 아니다). echo(29)는 신규 append 라 이 골든에만 추가되고 기존 코드는 전부 불변이다.
     expect(KIND_CODE).toEqual({
       player: 1,
       enemy: 2,
@@ -223,6 +224,7 @@ describe('엔티티 해시 레이아웃 계약', () => {
       defenseBoss: 26,
       boostPad: 27,
       shelter: 28,
+      echo: 29,
     });
     // 코드 값은 전역 유일해야 한다(중복은 서로 다른 kind 를 같은 해시로 접는다).
     const codes = Object.values(KIND_CODE);

@@ -189,6 +189,9 @@ describe('서사 i18n 완전성 (배열 파생)', () => {
       'intro.skip',
       'intro.next',
       'intro.begin',
+      // shard.* 는 파편 도감 파생 외에 에코 보상 알림 크롬(shard.gained)도 있다 — 허용 목록에
+      // (Phase E). 파편 id 파생이 아니라 고정 크롬이라 개명 위험이 없다.
+      'shard.gained',
     ]);
     for (const [label, table] of [
       ['EN', enT],
@@ -306,5 +309,33 @@ describe('사연 챕터 해금 판정 (storyUnlock)', () => {
     const other = defaultProfile();
     other.planetProgress[(story.bondPlanet + 1) % 6] = { bestStageCleared: 9 };
     expect(storyProgressFromProfile(other, story).bondPlanetCleared).toBe(false);
+  });
+
+  it('storyProgressFromProfile 이 storyMetrics 로 마일스톤 챕터(챕터3)를 판정한다 (Phase E)', () => {
+    for (const story of SHIP_STORIES) {
+      const ch3 = story.chapters[2].unlock;
+      if (ch3.kind !== 'milestone') throw new Error(`${story.slug} ch3 not milestone`);
+      const p = defaultProfile();
+      // 기본 프로필(카운터 0)은 미달성.
+      expect(storyProgressFromProfile(p, story).milestoneReached, `${story.slug} zero`).toBe(false);
+      // 임계 바로 아래는 미달성.
+      p.storyMetrics[ch3.metric] = ch3.threshold - 1;
+      expect(storyProgressFromProfile(p, story).milestoneReached, `${story.slug} below`).toBe(false);
+      // 임계 이상은 달성.
+      p.storyMetrics[ch3.metric] = ch3.threshold;
+      expect(storyProgressFromProfile(p, story).milestoneReached, `${story.slug} at`).toBe(true);
+      p.storyMetrics[ch3.metric] = ch3.threshold + 1000;
+      expect(storyProgressFromProfile(p, story).milestoneReached, `${story.slug} above`).toBe(true);
+    }
+  });
+
+  it('마일스톤은 다른 기체의 metric 에 오염되지 않는다(metric id 별 격리)', () => {
+    // 브루저(hitsTaken)를 채워도 아크캐스터(overchargeKills) 마일스톤은 열리지 않는다.
+    const bruiser = SHIP_STORIES.find((s) => s.slug === 'bruiser')!;
+    const arc = SHIP_STORIES.find((s) => s.slug === 'arccaster')!;
+    const p = defaultProfile();
+    p.storyMetrics['hitsTaken'] = 99999;
+    expect(storyProgressFromProfile(p, bruiser).milestoneReached).toBe(true);
+    expect(storyProgressFromProfile(p, arc).milestoneReached).toBe(false);
   });
 });

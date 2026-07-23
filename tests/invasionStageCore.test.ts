@@ -26,6 +26,7 @@ import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { defaultProfile, migrate } from '../src/save/profile.js';
+import { SAVE_VERSION } from '../src/items/types.js';
 import { settleRun } from '../src/save/settlement.js';
 
 /** 정규 경로로 조립한 config 를 주어진 seed 로 굴려 per-tick 해시 스트림을 모은다. */
@@ -143,7 +144,7 @@ describe('Lane1 게이트 4 — 승리한 단계가 개방 진행에 실제로 �
 // ---------------------------------------------------------------------------
 
 describe('Lane1 게이트 5 — v4 → v5 마이그레이션', () => {
-  it('bestTierCleared:2 → bestStageCleared:3, saveVersion:5', () => {
+  it('bestTierCleared:2 → bestStageCleared:3, 최신 saveVersion 으로 정규화', () => {
     const v4 = {
       saveVersion: 4,
       ships: [{ id: 'ship-0', name: 'x', typeId: 0, level: 5, xp: 0, equipped: {}, skillInvest: [] }],
@@ -158,7 +159,8 @@ describe('Lane1 게이트 5 — v4 → v5 마이그레이션', () => {
       tutorialDone: true,
     };
     const p = migrate(v4);
-    expect(p.saveVersion).toBe(5);
+    // 마이그레이션 체인은 v4→v5(티어→단계) 후에도 이어져 최종적으로 SAVE_VERSION 으로 스탬프된다.
+    expect(p.saveVersion).toBe(SAVE_VERSION);
     expect(p.planetProgress[0]?.bestStageCleared).toBe(3);
   });
 });

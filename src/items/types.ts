@@ -23,8 +23,15 @@
  *  `profiles.save_version` 은 제약 없는 integer 스탬프라 4 를 그대로 받는다.
  *
  *  v5 (ADR-0022 침략 단계): `planetProgress.bestTierCleared` → `bestStageCleared`.
- *  마이그레이션이 구 티어(t) → 단계(t+1)로 옮긴다(클리어 상태 보존). ItemSource.tier→stage. */
-export const SAVE_VERSION = 5;
+ *  마이그레이션이 구 티어(t) → 단계(t+1)로 옮긴다(클리어 상태 보존). ItemSource.tier→stage.
+ *
+ *  v6 (스토리 시스템 Phase E, ADR-0023): `collectedShards`(수집 기록 파편 id) +
+ *  `storyMetrics`(사연 챕터3 마일스톤 카운터) 신설. 마이그레이션은 스탬프만 올리고
+ *  (`migrateV5toV6`) 두 필드는 `normalizeProfile` 이 기본값(빈 배열·빈 객체)으로 채운다.
+ *  ⚠️ DB 변경 없음 — `profiles.save` 는 불투명 jsonb 이고 서버 SQL 은 `credits`/`minerals` 만
+ *  읽는다(실측: supabase/migrations/** 에 collectedShards/storyMetrics 0건). save_version 은
+ *  제약 없는 integer 스탬프라 6 을 그대로 받는다. */
+export const SAVE_VERSION = 6;
 
 // ---------------------------------------------------------------------------
 // Rarity

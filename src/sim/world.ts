@@ -133,6 +133,7 @@ import {
   BROOD_MARK,
   CUSHION_RECOVER_TICKS,
   cushionDeferredDamage,
+  cushionRecovered,
   cushionSettled,
   FILM_ABSORB_FLAT,
   FILM_BURST_RADIUS,
@@ -252,6 +253,13 @@ import {
   shrinkOutOfBounds,
   type ShrinkRuntime,
 } from './modes/shrink.js';
+// --- 에코 신호 콘텐츠(story Phase D · ADR-0023) — 런 중 드문(시드 파생 ≈3%) 서사 이벤트.
+//     반경 내 체류 누적으로 안정화, 보상은 크레딧(런 경제)+기록 파편(메타)뿐 · 전투력 불개입.
+//     positive 런에만 echoRuntime 이 서고 hashWorld 가 조건부 폴드 → 에코 미발생 런 바이트 불변. --
+import { rollEcho, stepEcho, type EchoRuntime } from './echo.js';
+// RunResult 리더 헬퍼는 W3(정산·main.ts)이 `from './world.js'` 로 소비할 수 있게 재수출한다
+// (playerCloaked 재수출 선례). sim 내부 배선은 stepEcho 뿐이고 이 둘은 순수 리더다.
+export { echoStabilizedOf, runStoryMetrics } from './echo.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -726,6 +734,29 @@ export interface WorldState {
    * 뱀서류·침공·타 모드 바이트 불변. append-only.
    */
   shrinkRuntime?: ShrinkRuntime;
+  /**
+   * 에코 신호 런타임(story Phase D, ADR-0023). 존재 = 이 런에 에코가 롤인됐다(시드 파생 ≈3%,
+   * PvE 전용 — 침공엔 안 붙는다). 정수 필드만 담고(echo.ts EchoRuntime), hashWorld 는 존재 시에만
+   * 조건부 폴드 → 에코 미발생 런(뱀서류·침공·타 모드 전부) 바이트 불변. append-only.
+   */
+  echoRuntime?: EchoRuntime;
+  // --- 사연 마일스톤 관측 카운터(story Phase D · 비-해시 · 설계서 §4) ----------------------
+  // ⚠️ **반드시 hashWorld 에서 접지 않는다**(tainted 선례 — 순수 메타데이터라 결정론·해시 무영향).
+  // 각 기체 시그니처 훅 발동 지점에서만 누적되고, 정산(W3)이 RunResult 델타로 읽어 프로필의
+  // storyMetrics 에 쌓는다. createWorld 가 전부 0 으로 초기화한다. metric id 계약(data/lore)과
+  // 같은 이름이라 runStoryMetrics(echo.ts)가 그대로 키로 쓴다.
+  /** 플레이어가 실제 피해를 입은 피격 횟수(브루저 사연 metric). 전 기체 집계. */
+  hitsTaken: number;
+  /** 과충전(bp>0) 활성 중 낸 처치 수(아크캐스터 사연 metric). */
+  overchargeKills: number;
+  /** 은신 해제 첫 타 발동 횟수(팬텀 사연 metric). */
+  cloakBreaks: number;
+  /** 병아리 드론 출격 횟수(해츨링 사연 metric). */
+  broodLaunches: number;
+  /** 완충 회복분 HP 누적(말로우 사연 metric). */
+  cushionHealed: number;
+  /** 방막 파열 횟수(버블 사연 metric). */
+  filmPops: number;
 }
 
 /**
@@ -808,6 +839,17 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     shrinkRuntime = createShrinkRuntime();
   }
 
+  // PvE 에코 신호(story Phase D, ADR-0023). worldRng.fork('echoEvent') 로 이 런의 에코 출현
+  // 여부·스폰 틱을 롤한다. fork 는 부모(worldRng)를 전진시키지 않으므로 worldRng 의 해시 상태가
+  // 불변 — 에코 미발생 런은 물론 발생 런도 기존 RNG 스트림 소비가 0 이다(새 상시 스트림 추가
+  // 금지). 침공(invasion3)엔 붙이지 않는다(설계된 방어전 + 침공 해시 골든 불변 · scrollRuntime/
+  // shrinkRuntime 과 같은 상호 배타 가드). **positive 일 때만** echoRuntime 을 세운다 → hashWorld
+  // 조건부 폴드가 성립해 에코 미발생 런은 바이트 불변이다. worldRng 은 이 로컬 인스턴스를 state
+  // 에 그대로 싣는다(아래 리터럴) — fork 는 소비가 아니라 파생이라 getState() 가 여전히 pristine.
+  const worldRng = rng.fork('world');
+  let echoRuntime: EchoRuntime | undefined;
+  if (cfg.invasion3 === undefined) echoRuntime = rollEcho(worldRng);
+
   // Anomaly: roll the seed-only offer, gate it on the config acceptance flag.
   const anomalyRng = rng.fork('anomaly');
   const anomaly = rollAnomaly(anomalyRng, cfg.anomalyAccepted ?? false);
@@ -819,7 +861,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     waveRng: rng.fork('waves'),
     powerupRng: rng.fork('powerups'),
     supplyRng: rng.fork('supply'),
-    worldRng: rng.fork('world'),
+    worldRng,
     dropRng: rng.fork('drops'),
     eliteRng: rng.fork('elite'),
     anomalyRng,
@@ -855,6 +897,13 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     generatedChunks: new Map<string, true>(),
     activeWalls: [],
     tainted: false,
+    // 사연 마일스톤 관측 카운터(비-해시). 0 초기화 — 시그니처 훅 발동 지점에서만 누적된다.
+    hitsTaken: 0,
+    overchargeKills: 0,
+    cloakBreaks: 0,
+    broodLaunches: 0,
+    cushionHealed: 0,
+    filmPops: 0,
     invasion3Bombs: 0,
     // 탄-벽 broad-phase 는 침공 3레이어에서만 쓴다. PvE 는 null → 기존 직접 스윕 그대로라
     // 해시가 바이트 불변이다(회랑 벽이 '활성 벽 ≤~19' 전제를 깨는 것은 침공 경로뿐).
@@ -868,6 +917,9 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     // PvE 수축지대 런타임도 존재할 때만 싣는다(exactOptionalPropertyTypes · 조건부 접기 정합).
     // shrink 는 비-스크롤이라 scrollRuntime 과 동시에 서지 않고, invasion3 과도 상호 배타다.
     ...(shrinkRuntime !== undefined ? { shrinkRuntime } : {}),
+    // PvE 에코 신호 런타임도 positive 런에만 싣는다(exactOptionalPropertyTypes · 조건부 폴드 정합).
+    // 침공엔 위 롤 가드로 애초에 세우지 않으므로 invasion3 과 공존하지 않는다.
+    ...(echoRuntime !== undefined ? { echoRuntime } : {}),
   };
 
   // L1 진입 훅(정적 배치 스폰)은 상태가 완성된 뒤에 태운다 — 훅이 state.entities 에 스폰하기
@@ -996,6 +1048,10 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // 기체 시그니처 카운터는 이동 직후·발사 이전에 갱신한다 — autoAttack 이 이번 틱의 과충전
   // 값을 읽고, 피격 판정(resolveCollisions)이 이번 틱의 장갑 스택을 읽는다.
   stepShipSignature(state, player, input);
+  // 에코 신호(story Phase D): 스폰 틱 도달 시 오브젝트 스폰 + 반경 내 체류 누적으로 안정화한다.
+  // stepPlayer 직후라 이번 틱의 최신 플레이어 좌표로 판정한다. echoRuntime 미존재(에코 미발생
+  // 런·침공)면 즉시 no-op → 거동·해시 불변. 안정화 보상(resources)은 hashWorld 에 접힌다.
+  stepEcho(state, player);
   if (!designedRun) updateWaves(state, player);
   stepEnemies(state, player);
   // 강제 스크롤(Lane4/5): 창 뒤로 흘러간 적을 정리한다(보스 제외). 컬 반경은 모드별로 고른다 —
@@ -1503,6 +1559,9 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
     if (player.aux1 < CUSHION_TICK_CAP) player.aux1++;
     if (player.aux0 > 0 && player.aux1 >= CUSHION_RECOVER_TICKS) {
       const due = cushionSettled(player.aux0, player.aux1);
+      // 사연 관측(비-해시): 이번 정산에서 회복으로 사라진 지연분 HP 를 누적한다(aux0 을 0 으로
+      // 되돌리기 **전**에 읽는다). 결정론 무영향 — hashWorld 가 접지 않는 순수 메타.
+      state.cushionHealed += cushionRecovered(player.aux0, player.aux1);
       player.aux0 = 0;
       player.aux1 = 0;
       // ⚠️ 완충은 절대 치명적이지 않다. 미룬 피해가 hp 를 1 미만으로 내리지 못하게 클램프한다 —
@@ -1602,6 +1661,9 @@ function stepHatchBrood(state: WorldState, player: Entity): void {
   );
   chick.ownerId = BROOD_MARK; // 청크 기믹과 구분(isGimmick 제외 → 컬링 비대상) + 병아리 전용 상한
   activateTurret(chick); // 즉시 활성 포탑(TURRET_LIFE_TICKS 동안 자동 사격)
+  // 사연 관측(비-해시): 병아리 드론이 실제로 출격한 이 지점에서만 센다(상한·보류로 미출격이면
+  // 여기 도달 안 함). 결정론 무영향 — hashWorld 가 접지 않는 순수 메타.
+  state.broodLaunches++;
   // 출격 성공 시에만 스냅샷을 갱신한다 = 순수 함수 계약의 "카운터 0 리셋".
   player.aux0 = state.kills;
 }
@@ -1858,6 +1920,9 @@ function autoAttack(state: WorldState, player: Entity): void {
   // 미보유·비은신이면 이 블록은 한 줄도 실행되지 않아 `wDamage` 가 위 값 그대로다(해시 불변).
   if (signatureOn(state, SIG_PHANTOM_CLOAK) && player.aux1 !== 0) {
     wDamage = Math.round((wDamage * CLOAK_BREAK_BP) / 10000);
+    // 사연 관측(비-해시): 은신 해제 첫 타가 실제로 발동한 이 지점에서만 센다. 결정론 무영향 —
+    // hashWorld 가 접지 않는 순수 메타.
+    state.cloakBreaks++;
     // 토큰만 소진한다 — **aux0(무피격 스트릭)은 건드리지 않는다.** 은신을 푸는 것은 피격이지
     // 발사가 아니다(stepShipSignature 팬텀 분기 주석). aux0 을 여기서 0 으로 되돌리면 은신이
     // 사실상 발동하지 않는 초판 결함으로 되돌아간다.
@@ -2961,7 +3026,12 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       // 이유: 그러면 내구(FILM_ABSORB_FLAT)가 사실상 무의미해지고 막이 한 대만 막는 유틸이
       // 된다. 소진 조건이라야 "흡수량을 다 쓰면 터진다" 는 축이 성립한다. 재생 타이머(aux1)는
       // 이 틱부터 0 에서 다시 돈다(stepShipSignature 의 aux0 === 0 게이트).
-      if (player.aux0 === 0) burstFilm(state, player);
+      if (player.aux0 === 0) {
+        // 사연 관측(비-해시): 막이 이번 피격으로 소진돼 파열한 이 지점에서만 센다. 결정론
+        // 무영향 — hashWorld 가 접지 않는 순수 메타.
+        state.filmPops++;
+        burstFilm(state, player);
+      }
       // ⚠️ 막이 전량 흡수했으면 **여기서 함수를 빠져나간다** — 다만 무적 창은 세우고 나간다.
       //    · 나머지 피격 후속(과열 스택 리셋·반응 장갑 펄스·위상 전환막·캡스톤 소진·장갑 적립)은
       //      건너뛴다: 피해가 0 이므로 "맞지 않은 것" 으로 취급하는 편이 일관적이고, 플레이어가
@@ -3005,6 +3075,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       player.targetX = 1;
       player.iframes = CRIT_NEGATE_IFRAMES;
     } else {
+    // 사연 관측(비-해시): 실제로 선체 피해를 입은 이 지점에서만 센다(막 전량 흡수·캡스톤 무효
+    // = "없던 피격"은 여기 도달하지 않는다). iframes 부여 직전 · 전 기체 집계(storyUnlock 은
+    // 브루저 사연만 이 metric 을 보지만 카운트는 기체 무관). 결정론 무영향 — hashWorld 미접.
+    state.hitsTaken++;
     player.hp -= dmg;
     if (player.hp < 0) player.hp = 0;
     player.iframes = state.config.hitIframes;
@@ -3119,6 +3193,13 @@ function compact(state: WorldState): void {
   // 즉시 return(gameOver/victory 가드)하므로 collectLoot(resolveCollisions 내부)가
   // 다시 실행되지 않는다 → 이 tick에 바닥 스폰된 loot는 영영 수거되지 않아 유실된다.
   let bossKilled = false;
+  // 사연 관측(비-해시): 이번 틱 과충전(bp>0)이 활성인가 — 아크캐스터 시그니처 런에서만 참이다.
+  // player.aux0 은 stepShipSignature 가 이번 틱에 갱신한 정지 틱이고 autoAttack 이후 불변이라
+  // "이번 틱 과충전 발사" 와 정확히 같은 판정이다. sigBit 게이트로 다른 기체의 aux0(장갑 스택·
+  // 은신 틱 등)을 과충전으로 오독하지 않는다. 결정론 무영향 — hashWorld 가 접지 않는 순수 메타.
+  const p0 = state.entities[0];
+  const ocKill =
+    p0 !== undefined && state.sigBit === SIG_ARC_OVERCHARGE && overchargeBp(p0.aux0) > 0;
   // 행성별 드랍 테이블(rarity 기준 확률)을 엘리트/보스 드랍 판정에 넘긴다(E3).
   const dropOdds = planetContent(state.config.planet).dropTable;
   for (const e of state.entities) {
@@ -3133,6 +3214,7 @@ function compact(state: WorldState): void {
     // 창 뒤로 빠진 적이라 처치가 아니다 — 공짜 처치·젬·엘리트 루팅을 여기서 정확히 배제한다.
     if (e.kind === 'enemy' && e.hp <= 0) {
       state.kills++;
+      if (ocKill) state.overchargeKills++; // 사연 관측(비-해시): 과충전 활성 중 처치.
       const def = enemyDefFor(e);
       drops.push({ x: e.x, y: e.y, xp: def?.xpValue ?? 1 });
       // Elites are the only rank-and-file loot source (GDD §3). They always drop

@@ -298,7 +298,7 @@ describe('마이그레이션 v3 → v4 — 계정 투자가 기체로 승계된�
     const p = migrate(v3Blob(invest));
 
     expect(p.saveVersion).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(5);
+    expect(SAVE_VERSION).toBe(6);
     const ship = activeShip(p);
     expect(ship.typeId).toBe(0); // 기존 유저는 전원 스트라이커
     expect(ship.skillInvest).toHaveLength(shipSkillNodeCount(0));
@@ -443,9 +443,10 @@ describe('마이그레이션 v4 → v5 — 티어→침략 단계 (ADR-0022, Lan
     };
   }
 
-  it('구 티어(t) → 단계(t+1)로 옮기고 saveVersion 을 5 로 올린다(왕복 무손실)', () => {
+  it('구 티어(t) → 단계(t+1)로 옮기고 최신 saveVersion 으로 정규화한다(왕복 무손실)', () => {
     const p = migrate(v4Blob({ 0: { bestTierCleared: 2 }, 1: { bestTierCleared: 0 } }));
-    expect(p.saveVersion).toBe(5);
+    // 마이그레이션 체인은 v4→v5(티어→단계) 후에도 계속 진행돼 최종적으로 SAVE_VERSION 으로 스탬프된다.
+    expect(p.saveVersion).toBe(SAVE_VERSION);
     // 티어 2(섬멸 클리어) → 단계 3, 티어 0(정찰 클리어) → 단계 1.
     expect(p.planetProgress[0]?.bestStageCleared).toBe(3);
     expect(p.planetProgress[1]?.bestStageCleared).toBe(1);
@@ -458,6 +459,108 @@ describe('마이그레이션 v4 → v5 — 티어→침략 단계 (ADR-0022, Lan
   it('미클리어(-1) 티어는 단계 0(미클리어)으로 보존된다', () => {
     const p = migrate(v4Blob({ 3: { bestTierCleared: -1 } }));
     expect(p.planetProgress[3]?.bestStageCleared).toBe(0);
+  });
+});
+
+// ===========================================================================
+// 스토리 시스템 Phase E — collectedShards + storyMetrics (V5→V6, ADR-0023)
+// ===========================================================================
+
+describe('마이그레이션 v5 → v6 — 기록 파편·마일스톤 카운터 신설', () => {
+  /** v5 세이브 blob(collectedShards/storyMetrics 필드가 아직 없던 형태). */
+  function v5Blob(extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      saveVersion: 5,
+      ships: [{ id: 'ship-0', name: '초기 전투기', typeId: 0, level: 5, xp: 0, equipped: {}, skillInvest: zeroSkillInvest(0) }],
+      activeShipIndex: 0,
+      inventory: [], stash: [], stashExpansions: 0,
+      planetProgress: {},
+      credits: 10, minerals: 0, skillPoints: 0, tutorialDone: true, introSeen: true,
+      ...extra,
+    };
+  }
+
+  it('신규 프로필은 collectedShards=[]·storyMetrics={} 로 시작한다', () => {
+    const d = defaultProfile();
+    expect(d.collectedShards).toEqual([]);
+    expect(d.storyMetrics).toEqual({});
+  });
+
+  it('필드 부재 v5 세이브를 v6 로 올리고 두 필드를 기본값으로 채운다', () => {
+    const p = migrate(v5Blob());
+    expect(p.saveVersion).toBe(SAVE_VERSION);
+    expect(SAVE_VERSION).toBe(6);
+    expect(p.collectedShards).toEqual([]);
+    expect(p.storyMetrics).toEqual({});
+    // 기존 진행 상태는 함께 보존된다(필드 신설이 다른 축을 건드리지 않는다).
+    expect(activeShip(p).level).toBe(5);
+    expect(p.introSeen).toBe(true);
+  });
+
+  it('이미 채워진 collectedShards·storyMetrics 는 왕복 무손실로 보존된다', () => {
+    const blob = v5Blob({
+      collectedShards: ['first-archive', 'echoes'],
+      storyMetrics: { runsWon: 12, hitsTaken: 340 },
+    });
+    const p = migrate(blob);
+    expect(p.collectedShards).toEqual(['first-archive', 'echoes']);
+    expect(p.storyMetrics).toEqual({ runsWon: 12, hitsTaken: 340 });
+    const store = memStore();
+    saveProfile(p, store);
+    const restored = loadProfile(store);
+    expect(restored.collectedShards).toEqual(['first-archive', 'echoes']);
+    expect(restored.storyMetrics).toEqual({ runsWon: 12, hitsTaken: 340 });
+    expect(restored).toEqual(p);
+  });
+});
+
+describe('정규화 — collectedShards(문자열 집합)·storyMetrics(유한 정수)', () => {
+  function v6Blob(collectedShards: unknown, storyMetrics: unknown): Record<string, unknown> {
+    return {
+      saveVersion: 6,
+      ships: [{ id: 'ship-0', name: '초기 전투기', typeId: 0, level: 1, xp: 0, equipped: {}, skillInvest: zeroSkillInvest(0) }],
+      activeShipIndex: 0,
+      inventory: [], stash: [], stashExpansions: 0, planetProgress: {},
+      credits: 0, minerals: 0, skillPoints: 0, tutorialDone: true,
+      collectedShards, storyMetrics,
+    };
+  }
+
+  it('collectedShards 는 문자열만 남기고 빈 문자열·중복을 제거한다(순서 보존)', () => {
+    const p = migrate(v6Blob(['a', 5, 'a', '', null, 'b', { x: 1 }, 'b'], {}));
+    expect(p.collectedShards).toEqual(['a', 'b']);
+  });
+
+  it('collectedShards 가 배열이 아니면 빈 배열로 복구된다', () => {
+    expect(migrate(v6Blob('nope', {})).collectedShards).toEqual([]);
+    expect(migrate(v6Blob(null, {})).collectedShards).toEqual([]);
+    expect(migrate(v6Blob({ 0: 'a' }, {})).collectedShards).toEqual([]);
+  });
+
+  it('storyMetrics 는 유한 정수만 남기고 손상 항목을 버린다(음수는 0, 실수는 절삭)', () => {
+    const p = migrate(
+      v6Blob([], {
+        runsWon: 3,
+        hitsTaken: -5, // 음수 → 0 하한
+        overchargeKills: 2.9, // 실수 → 절삭
+        cloakBreaks: NaN, // 비유한 → 키째 제거
+        broodLaunches: Infinity, // 비유한 → 키째 제거
+        filmPops: '10', // 비-숫자 → 키째 제거
+      }),
+    );
+    expect(p.storyMetrics).toEqual({ runsWon: 3, hitsTaken: 0, overchargeKills: 2 });
+  });
+
+  it('storyMetrics 가 객체가 아니면 빈 객체로 복구된다', () => {
+    expect(migrate(v6Blob([], 'nope')).storyMetrics).toEqual({});
+    expect(migrate(v6Blob([], null)).storyMetrics).toEqual({});
+    expect(migrate(v6Blob([], [1, 2, 3])).storyMetrics).toEqual({});
+  });
+
+  it('손상 세이브도 유효 프로필이 된다(두 필드가 안전 기본값)', () => {
+    const p = migrate(v6Blob(42, 42));
+    expect(p.collectedShards).toEqual([]);
+    expect(p.storyMetrics).toEqual({});
   });
 });
 

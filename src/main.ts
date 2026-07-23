@@ -65,8 +65,12 @@ import {
   xpToNext,
   comboMultiplier,
   DEFAULT_CONFIG,
+  echoStabilizedOf,
+  runStoryMetrics,
 } from './sim/world.js';
 import type { WorldState, InputFrame } from './sim/world.js';
+// 스토리 시스템(Phase E): 에코 안정화로 실을 파편 슬롯이 남았는지 판정(로어 토스트 예측용).
+import { RECORD_SHARDS } from '../data/lore/index.js';
 // DEV 하네스: 타입만 정적 import(런타임 값은 아래 import.meta.env.DEV 블록에서 동적
 // import 하므로 프로덕션 번들에서 완전히 제거된다). 타입 import는 컴파일 시 소거됨.
 import type { Harness, HarnessScreen } from './harness/core.js';
@@ -357,6 +361,9 @@ async function main(): Promise<void> {
   let currSnap: WorldSnapshot = emptySnap;
   let accumulator = 0;
   let frameCount = 0;
+  // 스토리 시스템(Phase E): 이번 런에 에코 안정화 로어 토스트를 이미 띄웠는가(런당 1회).
+  // echoStabilizedOf 는 안정화 후 런 내내 true 라, 전이 관측을 이 플래그로 1회로 고정한다.
+  let echoToastShown = false;
 
   // --- 침공(비동기 PvP) 런 상태 ---
   // invasionTarget !== null 이면 현재 런은 침공 런이다 → endRun 이 PvE 정산 대신 서버
@@ -958,6 +965,7 @@ async function main(): Promise<void> {
     harnessInvasionRun = false;
     shownInvasionPhase = -1; // 침공 배경 추적 해제(PvE 는 행성 배경)
     shownLevel = 0; // 새 런: 레벨업 오버레이 표시 상태 초기화
+    echoToastShown = false; // 새 런: 에코 안정화 로어 토스트 재무장
     // 런 조립 단일 정본. 투자 벡터·기체 타입·계보 보너스는 전부 이 안에서 접힌다 —
     // 튜토리얼 단축판(maxSegments)도 여기로 넘겨 config 후처리를 남기지 않는다.
     const config = buildRunConfig(profile, {
@@ -1039,6 +1047,12 @@ async function main(): Promise<void> {
           resources: w.resources,
           planet: w.config.planet ?? 0,
           stage: w.config.stage ?? 1,
+          // 스토리 시스템(Phase E): 에코 안정화(파편 수집) + 사연 마일스톤 관측 델타를 정산에
+          // 실어 프로필에 누적한다. 헬퍼는 world.js(→echo.js) 재수출 순수 리더 — sim 무수정.
+          // 침공 런은 이 블록에 도달하지 않는다(위 invasionTarget return · !harnessInvasionRun
+          // 가드) — PvE 런만 조립하며, 에코도 PvE 전용(echoRuntime 미장착)이다.
+          echoStabilized: echoStabilizedOf(w),
+          storyMetricDeltas: runStoryMetrics(w),
         });
         // Completing the tutorial (win or lose) reveals the base and makes the run
         // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.
@@ -1184,6 +1198,17 @@ async function main(): Promise<void> {
       const hasDrop = w.loot.length > 0;
       if (hasDrop) ftue.markFirstDrop();
       tutorialOverlay.update(w.tick, hasDrop);
+    }
+
+    // 스토리 시스템(Phase E, ADR-0023): 에코 신호 안정화 전이를 렌더에서 관측해 로어 토스트 1줄을
+    // 띄운다(런당 1회 — echoToastShown 게이트). 안정화(파편 획득)는 정산에서 프로필에 반영되지만,
+    // 이 순간 로어를 보여 주는 게 서사 리빌이다. 관전 리플레이(spectating)는 남의 런이라 제외한다.
+    // 파편 슬롯이 남았을 때만 shard.gained 를 함께 얹는다(전부 수집이면 정산이 파편을 안 담는다).
+    if (!spectating && w !== null && !echoToastShown && echoStabilizedOf(w)) {
+      echoToastShown = true;
+      const lines = [t('echo.stabilized.toast')];
+      if (profile.collectedShards.length < RECORD_SHARDS.length) lines.push(t('shard.gained'));
+      hud.showLore(lines);
     }
 
     // 침공 레이어 전환 → 배경 교체(렌더 전용, sim 무영향). 페이즈는 sim 권위라 여기서는
