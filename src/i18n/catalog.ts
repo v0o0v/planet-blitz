@@ -363,6 +363,166 @@ export const EN = {
   'champion.retire.yes': 'Retire and switch',
   'champion.retire.no': 'Cancel',
 
+  // --- 서사(스토리) — 사연·인트로·기록 파편 (ADR-0023) ---
+  // 키는 `data/lore` 정본 파생이다(`src/ui/pixi/loreLabels.ts` 가 유도). 사연 캐스트는 혼합 —
+  // 일부 기체는 전속 파일럿 인물이, 유기체형(해츨링·말로우·버블)은 기체 자신이 인격체다. 각
+  // 사연의 핵심은 시그니처 패시브의 "왜 이 능력인가"를 푸는 것이다. 컬러 이모지 금지(Pixi 두부).
+
+  // 인트로 슬라이드(첫 실행 1회, 스킵/다시보기 가능)
+  'intro.collapse.title': 'The Oscar Collapse',
+  'intro.collapse.body':
+    'An age ago, the Oscar civilization recorded everything it ever built — and then fell silent in a single day. Its cities are dust now. Its blueprints are not.',
+  'intro.records.title': 'Records Are the Only Currency',
+  'intro.records.body':
+    'In the ruins, one thing still holds value: a record. A sealed design, a scrap of lost knowledge. Whoever gathers the most rises highest on the Archive ledger.',
+  'intro.archives.title': 'Six Sealed Worlds',
+  'intro.archives.body':
+    'Oscar locked its knowledge inside six archive planets, each guarded by systems that never powered down. Pilots swarm them — and raid one another for records, copying the vaults without ever taking the original.',
+  'intro.launch.title': 'Your Turn to Launch',
+  'intro.launch.body':
+    'You have a ship, an empty logbook, and a name no one has heard yet. The ledger is open. Go make it remember you.',
+
+  // 기록 보관소(기지 시설) 화면 크롬
+  'archive.title': 'Record Vault',
+  'archive.subtitle': 'The stories and secrets you have uncovered.',
+  'archive.tab.stories': 'Pilot Files',
+  'archive.tab.shards': 'Record Shards',
+  'archive.tab.intro': 'Prologue',
+  'archive.shards.progress': '{n} / {total} shards recovered',
+  'archive.shards.locked': 'Not yet recovered. Stabilize an Echo Signal to find one.',
+  'archive.story.locked': 'Locked',
+  'archive.story.chapter': 'Chapter {n}',
+  'archive.intro.replay': 'Replay Prologue',
+  'archive.empty': 'Nothing here yet.',
+
+  // 챔피언 선택 화면 — 사연 열람 버튼/팝업
+  'champion.story.open': 'Read Pilot File',
+  'champion.story.title': '{name} — Pilot File',
+
+  // 사연 — 스트라이커(무명 신출내기, 성장)
+  'story.striker.tagline': 'The pilot with an empty logbook.',
+  'story.striker.ch1.title': 'No Record to Speak Of',
+  'story.striker.ch1.body':
+    'You come from a world that recorded nothing — a people who left no blueprint, no monument, not even a name the Archive bothered to file. The Striker is a plain chassis with no signature trick to its name. That is the point: your story has not been written yet.',
+  'story.striker.ch2.title': 'First Entry',
+  'story.striker.ch2.body':
+    'The molten vaults of Kargon do not care where you came from. You cleared them anyway, and for the first time the ledger holds a line with your call sign on it. It is a small line. It is still yours.',
+  'story.striker.ch3.title': 'Someone Worth Filing',
+  'story.striker.ch3.body':
+    'A dozen victories in, other pilots have started spelling your name right. The Archive that ignored your entire civilization now keeps a folder on you. It turns out the way to be remembered was never to inherit a record — it was to make one.',
+  'story.striker.quest.ch2': 'Clear Kargon, your first proving ground, at least once.',
+  'story.striker.quest.ch3': 'Win enough runs to make the ledger spell your name right.',
+
+  // 사연 — 브루저(호위함 노병, 감동)
+  'story.bruiser.tagline': 'He carries their names into every fight.',
+  'story.bruiser.ch1.title': 'The Names on the Plating',
+  'story.bruiser.ch1.body':
+    'Bruiser escorted supply convoys for thirty years and lost one. He never speaks of the ships he saved, only the one he did not. Every armor plate on his hull is engraved with a name from that lost convoy.',
+  'story.bruiser.ch2.title': 'Kras Remembers Weight',
+  'story.bruiser.ch2.body':
+    'Kras is a world of siege and rubble, and it hits back hard. Bruiser walked into it on purpose — the heavier the blow, the more names he gets to remember. He came out slower, dented, and still standing.',
+  'story.bruiser.ch3.title': 'Every Plate Full',
+  'story.bruiser.ch3.body':
+    'Take enough fire and the whole hull is covered — no bare plating left, every name accounted for. The Armor Stacks are not a defensive trick. They are a roll call, read aloud, one hit at a time.',
+  'story.bruiser.quest.ch2': 'Clear Kras, the siege world, at least once.',
+  'story.bruiser.quest.ch3': 'Take enough hits to engrave every last name onto your plating.',
+
+  // 사연 — 아크 캐스터(광선 조각가, 재미)
+  'story.arccaster.tagline': 'Shooting on the move is just doodling.',
+  'story.arccaster.ch1.title': 'The Beam Sculptor',
+  'story.arccaster.ch1.body':
+    'Arccaster insists that firing while moving is scribbling, and that real art happens only when the feet are planted. Critics call this pretentious. Arccaster calls the critics people who move too much.',
+  'story.arccaster.ch2.title': 'The Masterpiece Vault',
+  'story.arccaster.ch2.body':
+    'Arke is the Oscar capital archive, where the finest sealed designs are kept — and Arccaster has wanted a look for a very long time. Standing perfectly still under fire, it carved a path straight to the vault. Beautiful, apparently.',
+  'story.arccaster.ch3.title': 'Overcharged Perfection',
+  'story.arccaster.ch3.body':
+    'Hold still long enough and the beam stops being a weapon and becomes a signature. Overcharge is not patience; it is a refusal to smudge the work. Hundreds of finished pieces later, even the skeptics have gone quiet.',
+  'story.arccaster.quest.ch2': 'Clear Arke, the capital archive, at least once.',
+  'story.arccaster.quest.ch3': 'Finish enough kills mid-Overcharge to earn the title of artist.',
+
+  // 사연 — 팬텀(지워진 자, 미스터리)
+  'story.phantom.tagline': 'The pilot the Archive forgot to keep.',
+  'story.phantom.ch1.title': 'File Not Found',
+  'story.phantom.ch1.body':
+    'When Oscar fell, one record was deleted — not damaged, deleted, cleanly, as though someone meant it. Phantom is what remains when a whole existence goes unfiled. No one recalls the face beneath the cloak, and on most nights, neither does Phantom.',
+  'story.phantom.ch2.title': 'The Cold Trail',
+  'story.phantom.ch2.body':
+    'Niflheim is a frozen world of ghost ships and dead signals, the last place the record of Phantom was seen intact. Cloaked and silent, it slipped past every guardian to reach the vault. The file it wanted was gone. Something worse remained: a note that the deletion had been requested.',
+  'story.phantom.ch3.title': 'The Strike That Remembers',
+  'story.phantom.ch3.body':
+    'The Cloak works because there is nothing to target — you cannot lock onto a person who was erased. But the shot that ends the cloak lands like the universe suddenly recalls that you exist. Again and again, someone learns the name of Phantom a half-second before it matters.',
+  'story.phantom.quest.ch2': 'Clear Niflheim, where your record was last seen, at least once.',
+  'story.phantom.quest.ch3': 'Land enough cloak-breaking strikes to be remembered, if only for a moment.',
+
+  // 사연 — 해츨링(어미 생체함선, 감동)
+  'story.hatchling.tagline': 'She is looking for the way home.',
+  'story.hatchling.ch1.title': 'The Last Nursery',
+  'story.hatchling.ch1.body':
+    'Hatchling is a living ship, the only one to leave her nursery world before it went dark. Her brood rides inside her hull, too young to remember the sky they were born under. She keeps flying so that one day she can show them.',
+  'story.hatchling.ch2.title': 'The Green Coordinates',
+  'story.hatchling.ch2.body':
+    'Berdan is a restless world, its archive guarded and its skies thick with defenders. Buried inside is a star chart — a map of nurseries, one of which might be home. Hatchling tore through to reach it. The coordinates were only partial. It is more than she had the day before.',
+  'story.hatchling.ch3.title': 'A Brood That Flies',
+  'story.hatchling.ch3.body':
+    'Every kill fills the nest a little more, and when it is full a chick launches on its own — old enough now to fight beside her instead of hiding within. Hundreds of launches on, the little ones lead as often as they follow. Wherever home turns out to be, they will arrive together.',
+  'story.hatchling.quest.ch2': 'Clear Berdan, where the star chart is sealed, at least once.',
+  'story.hatchling.quest.ch3': 'Launch enough of your brood to raise a flight that flies on its own.',
+
+  // 사연 — 말로우(먹보 생체함선, 재미)
+  'story.mallow.tagline': 'It turns a punch into pudding.',
+  'story.mallow.ch1.title': 'The Sweet Tooth',
+  'story.mallow.ch1.body':
+    'Mallow is a soft, round living ship with a talent that baffles every engineer who studies it: it takes a hit, holds it, and somehow gives back sugar. No one knows how. Mallow will not explain — its mouth is full.',
+  'story.mallow.ch2.title': 'The Sealed Recipe',
+  'story.mallow.ch2.body':
+    'Toxar is a world of corrosion and rot, a strange place to hunt for dessert. But Oscar sealed its greatest recipe there, and Mallow could smell it through the decay. It ate a path to the vault. Worth it.',
+  'story.mallow.ch3.title': 'Sweet by the Thousand',
+  'story.mallow.ch3.body':
+    'Every blow Mallow cushions is stored, then softened, then handed back as healing — pain in, sweetness out. Tens of thousands of points of hurt digested so far. It turns out the best dessert was never in the vault; it was the trick of making anything taste good.',
+  'story.mallow.quest.ch2': 'Clear Toxar, where the recipe is sealed, at least once.',
+  'story.mallow.quest.ch3': 'Cushion and recover enough damage to perfect the sweetest recipe.',
+
+  // 사연 — 버블(겁쟁이 비눗방울, 귀여움+감동)
+  'story.bubble.tagline': 'It was so afraid to pop.',
+  'story.bubble.ch1.title': 'Afraid of the Pop',
+  'story.bubble.ch1.body':
+    'Bubble is exactly what it sounds like: a small, drifting film of a ship, terrified of the one thing that bubbles do. For a long time it hung at the back of every fight, holding its breath, hoping not to burst.',
+  'story.bubble.ch2.title': 'Kargon Taught It to Burst',
+  'story.bubble.ch2.body':
+    'The fire of Kargon allows little hiding, and one day Bubble popped — and the shockwave shoved an enemy clear off a friend who was about to be hit. Bubble stared at the space where the danger had been. Oh. So that is what popping is for.',
+  'story.bubble.ch3.title': 'Three Hundred Bursts',
+  'story.bubble.ch3.body':
+    'Now Bubble reforms its film every few seconds and pops it on purpose, hurling danger away from whoever stands behind it. Hundreds of bursts later, it is not afraid anymore. A bubble that bursts to protect someone does not vanish — it did exactly what it was for.',
+  'story.bubble.quest.ch2': 'Clear Kargon, where you first learned to burst, at least once.',
+  'story.bubble.quest.ch3': 'Burst your film enough times to stop being afraid of it.',
+
+  // 기록 파편 도감(에코 신호로 수집 — 오스카 문명 붕괴의 전말)
+  'shard.first-archive.title': 'Fragment: The First Archive',
+  'shard.first-archive.body':
+    'The very first record of Oscar was not a weapon or a city. It was a promise: "Nothing we make will ever be truly lost." They kept that promise. They did not keep themselves.',
+  'shard.the-curators.title': 'Fragment: The Curators',
+  'shard.the-curators.body':
+    'The archive planets were tended by the Curators — automated keepers built to guard the records forever. Forever ran longer than anyone designed for. The Curators are still on duty, and have forgotten they were ever meant to let anyone in.',
+  'shard.overflow.title': 'Fragment: Overflow',
+  'shard.overflow.body':
+    'The late records grow frantic: too much to store, too little time. Oscar had begun archiving things that should never be kept — including, one fragment hints, the design of whatever ended them.',
+  'shard.the-silence.title': 'Fragment: The Silence',
+  'shard.the-silence.body':
+    'There was no war, no plague, no impact. One day the transmissions simply stopped, mid-sentence, across every world at once. The Archive logged the silence as an event to be recorded. Then it, too, went quiet — for a while.',
+  'shard.copy-of-a-copy.title': 'Fragment: Copy of a Copy',
+  'shard.copy-of-a-copy.body':
+    'A record can be copied without end and the original takes no harm. This is why pilots raid without destroying, and why the ledger never forgets. Oscar meant it as mercy. It became a game.',
+  'shard.the-last-curator.title': 'Fragment: The Last Curator',
+  'shard.the-last-curator.body':
+    'One Curator, deep within Arke, still speaks. It insists the civilization never fell — that everyone simply stepped into the records to wait out the danger, and will return once it is safe. It has been saying this for a very long time.',
+  'shard.echoes.title': 'Fragment: Echoes',
+  'shard.echoes.body':
+    'Now and then a run flickers with a signal that should not be there — a stray record still trying to finish sending, long after the sender is gone. Hold steady beside one and it stabilizes, handing you a shard of what it meant to say.',
+  'shard.your-name-here.title': 'Fragment: Your Name Here',
+  'shard.your-name-here.body':
+    'The final shard is blank. Not lost — blank, waiting. The Archive leaves one entry open on every ledger it keeps. It seems to believe your story is still being filed.',
+
   // --- 정제소 ---
   'refine.title': 'Refinery',
   'refine.bar.minerals': 'Minerals',
@@ -1260,6 +1420,162 @@ export const KO: Record<MessageKey, string> = {
     '현재 기체(Lv {level})가 수호기로 넘어갑니다. 레벨·스킬 포인트·장착 슬롯이 초기화되고 장비는 창고로 돌아옵니다. 새 {name}(으)로 출격하게 됩니다.',
   'champion.retire.yes': '퇴역하고 교체',
   'champion.retire.no': '취소',
+
+  // --- 서사(스토리) — 사연·인트로·기록 파편 (ADR-0023) ---
+  // 인트로 슬라이드
+  'intro.collapse.title': '오스카 문명의 붕괴',
+  'intro.collapse.body':
+    '아득한 옛날, 오스카 문명은 자신이 만든 모든 것을 기록으로 남겼다 — 그리고 단 하루 만에 침묵 속으로 사라졌다. 그들의 도시는 먼지가 되었다. 그들의 설계도는 그러지 않았다.',
+  'intro.records.title': '기록만이 유일한 화폐',
+  'intro.records.body':
+    '폐허 속에서 아직 가치를 지닌 것은 단 하나, 기록이다. 봉인된 설계, 잃어버린 지식의 조각. 가장 많이 모으는 자가 기록 보관소의 공적부에서 가장 높이 오른다.',
+  'intro.archives.title': '봉인된 여섯 세계',
+  'intro.archives.body':
+    '오스카는 자신의 지식을 여섯 아카이브 행성에 봉인했고, 그 하나하나를 결코 꺼지지 않은 시스템이 지킨다. 파일럿들은 그곳으로 몰려들고 — 서로의 금고를 침공해, 원본은 건드리지 않은 채 기록을 복제해 간다.',
+  'intro.launch.title': '이제 당신이 출격할 차례',
+  'intro.launch.body':
+    '당신에겐 기체 한 대와 텅 빈 항해일지, 그리고 아직 아무도 들어보지 못한 이름이 있다. 공적부는 열려 있다. 가서 그것이 당신을 기억하게 만들어라.',
+
+  // 기록 보관소 화면 크롬
+  'archive.title': '기록 보관소',
+  'archive.subtitle': '당신이 밝혀낸 이야기와 비밀들.',
+  'archive.tab.stories': '파일럿 파일',
+  'archive.tab.shards': '기록 파편',
+  'archive.tab.intro': '프롤로그',
+  'archive.shards.progress': '기록 파편 {n} / {total} 수집',
+  'archive.shards.locked': '아직 수집하지 못했습니다. 에코 신호를 안정화해 찾아내세요.',
+  'archive.story.locked': '잠김',
+  'archive.story.chapter': '{n}장',
+  'archive.intro.replay': '프롤로그 다시 보기',
+  'archive.empty': '아직 아무것도 없습니다.',
+
+  // 챔피언 선택 화면 — 사연 열람 버튼/팝업
+  'champion.story.open': '사연 읽기',
+  'champion.story.title': '{name} — 파일럿 파일',
+
+  // 사연 — 스트라이커
+  'story.striker.tagline': '항해일지가 텅 빈 파일럿.',
+  'story.striker.ch1.title': '내세울 기록 하나 없이',
+  'story.striker.ch1.body':
+    '당신은 아무것도 기록하지 못한 세계 출신이다 — 설계도 하나, 기념비 하나, 기록 보관소가 굳이 정리해 둘 이름 하나 남기지 못한 사람들. 스트라이커는 이렇다 할 시그니처 재주 하나 없는 평범한 기체다. 그게 요점이다: 당신의 이야기는 아직 쓰이지 않았다.',
+  'story.striker.ch2.title': '첫 줄',
+  'story.striker.ch2.body':
+    '카르곤의 용암 금고는 당신이 어디서 왔는지 따위 신경 쓰지 않는다. 그래도 당신은 그곳을 클리어했고, 처음으로 공적부에 당신의 콜사인이 적힌 한 줄이 남았다. 짧은 한 줄이다. 그래도 당신의 것이다.',
+  'story.striker.ch3.title': '정리해 둘 만한 사람',
+  'story.striker.ch3.body':
+    '열두 번의 승리를 거두자, 다른 파일럿들이 당신의 이름을 제대로 부르기 시작했다. 당신의 문명 전체를 무시했던 기록 보관소가 이제 당신 앞으로 폴더 하나를 둔다. 기억되는 길은 기록을 물려받는 것이 아니라 — 만들어내는 것이었다.',
+  'story.striker.quest.ch2': '당신의 첫 시험장 카르곤을 한 번 이상 클리어하세요.',
+  'story.striker.quest.ch3': '공적부가 당신 이름을 제대로 적을 만큼 런에서 승리하세요.',
+
+  // 사연 — 브루저
+  'story.bruiser.tagline': '그는 그들의 이름을 싣고 매 전투에 나선다.',
+  'story.bruiser.ch1.title': '장갑판에 새긴 이름들',
+  'story.bruiser.ch1.body':
+    '브루저는 삼십 년간 수송선단을 호위했고, 한 번 잃었다. 그는 자신이 지켜낸 배들 이야기는 하지 않는다, 지키지 못한 그 한 척 이야기만 한다. 그의 선체 장갑판마다 그 잃어버린 선단의 이름이 하나씩 새겨져 있다.',
+  'story.bruiser.ch2.title': '크라스는 무게를 기억한다',
+  'story.bruiser.ch2.body':
+    '크라스는 공성과 잔해의 세계이고, 되받아치는 힘이 거세다. 브루저는 일부러 그 안으로 걸어 들어갔다 — 타격이 무거울수록 더 많은 이름을 떠올릴 수 있으니까. 그는 더 느려지고 찌그러진 채, 그래도 서서 걸어 나왔다.',
+  'story.bruiser.ch3.title': '빈 판 하나 없이',
+  'story.bruiser.ch3.body':
+    '충분히 얻어맞으면 선체 전체가 뒤덮인다 — 맨 장갑판 하나 남지 않고, 모든 이름이 제자리를 얻는다. 장갑 스택은 방어 재주가 아니다. 그것은 한 대 맞을 때마다 한 명씩, 소리 내어 부르는 점호다.',
+  'story.bruiser.quest.ch2': '공성의 세계 크라스를 한 번 이상 클리어하세요.',
+  'story.bruiser.quest.ch3': '장갑판에 마지막 이름까지 새길 만큼 피격을 견뎌내세요.',
+
+  // 사연 — 아크 캐스터
+  'story.arccaster.tagline': '움직이며 쏘는 건 그냥 낙서다.',
+  'story.arccaster.ch1.title': '광선 조각가',
+  'story.arccaster.ch1.body':
+    '아크 캐스터는 움직이며 쏘는 것은 끄적임일 뿐이고, 진짜 예술은 발을 딱 붙이고 섰을 때만 나온다고 우긴다. 평론가들은 이걸 허세라 부른다. 아크 캐스터는 그 평론가들을 「너무 많이 움직이는 사람들」이라 부른다.',
+  'story.arccaster.ch2.title': '걸작의 금고',
+  'story.arccaster.ch2.body':
+    '아르케는 오스카의 수도 아카이브로, 가장 뛰어난 봉인 설계들이 보관된 곳이다 — 아크 캐스터는 아주 오래전부터 그것을 한 번 보고 싶어 했다. 빗발치는 포화 속에 완벽히 멈춰 선 채, 금고로 곧장 이어지는 길을 조각해냈다. 아름다웠다, 본인 말로는.',
+  'story.arccaster.ch3.title': '과충전된 완성',
+  'story.arccaster.ch3.body':
+    '충분히 오래 멈춰 있으면 광선은 무기이길 그만두고 서명이 된다. 과충전은 인내가 아니다; 작품을 뭉개지 않겠다는 거부다. 수백 점의 완성작을 남긴 뒤엔, 회의론자들조차 조용해졌다.',
+  'story.arccaster.quest.ch2': '수도 아카이브 아르케를 한 번 이상 클리어하세요.',
+  'story.arccaster.quest.ch3': '과충전 상태로 충분히 처치해 예술가라는 칭호를 얻으세요.',
+
+  // 사연 — 팬텀
+  'story.phantom.tagline': '기록 보관소가 보관하길 잊은 파일럿.',
+  'story.phantom.ch1.title': '파일을 찾을 수 없음',
+  'story.phantom.ch1.body':
+    '오스카가 무너질 때 한 기록이 삭제됐다 — 손상된 게 아니라, 삭제됐다, 깔끔하게, 마치 누군가 작정한 것처럼. 팬텀은 한 존재 전체가 정리되지 못한 채 남았을 때 남는 것이다. 은신막 아래의 얼굴을 아무도 기억하지 못한다, 그리고 대개의 밤엔, 팬텀 자신도 그렇다.',
+  'story.phantom.ch2.title': '차가운 흔적',
+  'story.phantom.ch2.body':
+    '니플헤임은 유령선과 죽은 신호의 얼어붙은 세계로, 팬텀 자신의 기록이 온전히 목격된 마지막 장소다. 은신한 채 소리 없이, 모든 수호자를 지나쳐 금고에 닿았다. 원하던 파일은 사라지고 없었다. 더 나쁜 것이 남아 있었다: 그 삭제가 요청된 것이었다는 기록.',
+  'story.phantom.ch3.title': '기억하게 만드는 일격',
+  'story.phantom.ch3.body':
+    '은신막이 통하는 건 조준할 대상이 없기 때문이다 — 지워진 사람에게는 락온이 걸리지 않는다. 하지만 은신을 끝내는 그 한 발은, 우주가 문득 당신의 존재를 떠올린 것처럼 내리꽂힌다. 몇 번이고, 누군가는 그것이 중요해지기 반 초 전에 팬텀의 이름을 알게 된다.',
+  'story.phantom.quest.ch2': '당신의 기록이 마지막으로 목격된 니플헤임을 한 번 이상 클리어하세요.',
+  'story.phantom.quest.ch3': '은신을 끝내는 일격을 충분히 꽂아, 잠깐이라도 기억되세요.',
+
+  // 사연 — 해츨링
+  'story.hatchling.tagline': '그녀는 집으로 가는 길을 찾고 있다.',
+  'story.hatchling.ch1.title': '마지막 부화장',
+  'story.hatchling.ch1.body':
+    '해츨링은 살아있는 함선이고, 부화장 세계가 어둠에 잠기기 전에 그곳을 떠난 유일한 하나다. 그녀의 새끼들은 선체 안에 타고 있는데, 자기들이 태어난 하늘을 기억하기엔 너무 어리다. 그녀는 언젠가 그 하늘을 보여주려고 계속 날아간다.',
+  'story.hatchling.ch2.title': '초록빛 좌표',
+  'story.hatchling.ch2.body':
+    '베르단은 잠들지 않는 세계로, 아카이브는 굳게 지켜지고 하늘은 수호자들로 빽빽하다. 그 안 깊숙이 성도(星圖)가 묻혀 있다 — 부화장들의 지도, 그중 하나가 어쩌면 집일지도 모른다. 해츨링은 그것을 향해 뚫고 들어갔다. 좌표는 일부뿐이었다. 그래도 어제보다는 많다.',
+  'story.hatchling.ch3.title': '스스로 나는 새끼들',
+  'story.hatchling.ch3.body':
+    '처치할 때마다 둥지가 조금씩 차오르고, 가득 차면 병아리 한 마리가 스스로 출격한다 — 이제는 안에 숨는 대신 그녀 곁에서 싸울 만큼 자랐다. 수백 번의 출격을 지나, 어린것들은 따라오는 만큼 앞장선다. 집이 결국 어디로 밝혀지든, 그들은 함께 도착할 것이다.',
+  'story.hatchling.quest.ch2': '성도가 봉인된 베르단을 한 번 이상 클리어하세요.',
+  'story.hatchling.quest.ch3': '새끼들을 충분히 출격시켜 스스로 나는 편대를 길러내세요.',
+
+  // 사연 — 말로우
+  'story.mallow.tagline': '주먹을 푸딩으로 바꾼다.',
+  'story.mallow.ch1.title': '단것 애호가',
+  'story.mallow.ch1.body':
+    '말로우는 부드럽고 둥근 살아있는 함선으로, 연구하는 기술자마다 어리둥절하게 만드는 재주를 지녔다: 한 대 맞으면, 그걸 머금었다가, 어떻게든 설탕으로 되돌려준다. 아무도 방법을 모른다. 말로우는 설명하지 않는다 — 입이 꽉 차 있어서.',
+  'story.mallow.ch2.title': '봉인된 레시피',
+  'story.mallow.ch2.body':
+    '톡사르는 부식과 부패의 세계라, 디저트를 찾기엔 이상한 곳이다. 하지만 오스카는 자신의 최고 레시피를 그곳에 봉인했고, 말로우는 그 부패를 뚫고 냄새를 맡았다. 금고까지 먹어 치우며 길을 냈다. 그럴 만했다.',
+  'story.mallow.ch3.title': '수만 번의 달콤함',
+  'story.mallow.ch3.body':
+    '말로우가 완충한 모든 타격은 적립되고, 부드러워졌다가, 회복으로 되돌아온다 — 아픔이 들어가고, 달콤함이 나온다. 지금까지 삼켜 소화한 아픔이 수만 점. 최고의 디저트는 애초에 금고에 있던 게 아니었다; 무엇이든 맛있게 만드는 그 재주였다.',
+  'story.mallow.quest.ch2': '레시피가 봉인된 톡사르를 한 번 이상 클리어하세요.',
+  'story.mallow.quest.ch3': '피해를 충분히 완충하고 회복해 가장 달콤한 레시피를 완성하세요.',
+
+  // 사연 — 버블
+  'story.bubble.tagline': '터지는 게 너무 무서웠다.',
+  'story.bubble.ch1.title': '터짐이 두려워',
+  'story.bubble.ch1.body':
+    '버블은 말 그대로다: 작고, 떠다니는 막 한 겹짜리 함선으로, 비눗방울이 하는 바로 그 한 가지를 두려워한다. 오랫동안 그것은 모든 전투의 맨 뒤에 매달려, 숨을 참으며, 터지지 않기만을 바랐다.',
+  'story.bubble.ch2.title': '카르곤이 터지는 법을 가르쳤다',
+  'story.bubble.ch2.body':
+    '카르곤의 불길은 숨을 곳을 거의 허락하지 않고, 어느 날 버블은 터졌다 — 그리고 그 충격파가 막 맞으려던 동료에게서 적을 밀쳐냈다. 버블은 방금 위험이 있던 자리를 바라보았다. 아. 터진다는 건 이럴 때 쓰는 거구나.',
+  'story.bubble.ch3.title': '삼백 번의 파열',
+  'story.bubble.ch3.body':
+    '이제 버블은 몇 초마다 막을 다시 만들고 일부러 터뜨려, 뒤에 선 누구에게서든 위험을 밀쳐낸다. 수백 번의 파열을 지나, 그것은 더 이상 두렵지 않다. 누군가를 지키려 터지는 비눗방울은 사라지는 게 아니다 — 자기가 할 일을 정확히 해낸 것이다.',
+  'story.bubble.quest.ch2': '당신이 처음 터지는 법을 배운 카르곤을 한 번 이상 클리어하세요.',
+  'story.bubble.quest.ch3': '막을 충분히 터뜨려 더 이상 그것을 두려워하지 않게 되세요.',
+
+  // 기록 파편 도감
+  'shard.first-archive.title': '파편: 최초의 아카이브',
+  'shard.first-archive.body':
+    '오스카의 가장 첫 기록은 무기도 도시도 아니었다. 그것은 약속이었다: "우리가 만든 것은 무엇도 결코 완전히 사라지지 않는다." 그들은 그 약속을 지켰다. 자기 자신은 지키지 못했다.',
+  'shard.the-curators.title': '파편: 큐레이터들',
+  'shard.the-curators.body':
+    '아카이브 행성들은 큐레이터들이 돌봤다 — 기록을 영원히 지키도록 만들어진 자동 관리자들. 「영원」은 누구의 설계보다도 길었다. 큐레이터들은 여전히 근무 중이고, 애초에 누군가를 들여보내도록 되어 있었다는 사실을 잊었다.',
+  'shard.overflow.title': '파편: 과적',
+  'shard.overflow.body':
+    '후기 기록들은 다급해진다: 저장할 것은 너무 많고, 시간은 너무 없다. 오스카는 결코 보관해선 안 될 것들까지 저장하기 시작했다 — 한 파편이 암시하기로는, 자신들을 끝장낸 무언가의 설계까지도.',
+  'shard.the-silence.title': '파편: 침묵',
+  'shard.the-silence.body':
+    '전쟁도, 역병도, 충돌도 없었다. 어느 날 송신이 그냥 멈췄다, 문장 한가운데서, 모든 세계에서 동시에. 기록 보관소는 그 침묵을 기록해야 할 사건으로 남겼다. 그러고는 그것마저 조용해졌다 — 한동안.',
+  'shard.copy-of-a-copy.title': '파편: 사본의 사본',
+  'shard.copy-of-a-copy.body':
+    '기록은 끝없이 복제해도 원본이 상하지 않는다. 파일럿들이 파괴하지 않고 침공하는 이유이고, 공적부가 결코 잊지 않는 이유다. 오스카는 이를 자비로 뜻했다. 그것은 게임이 되었다.',
+  'shard.the-last-curator.title': '파편: 마지막 큐레이터',
+  'shard.the-last-curator.body':
+    '아르케 깊은 곳의 한 큐레이터는 여전히 말한다. 그것은 문명이 무너진 적 없다고 우긴다 — 모두가 그저 위험이 지나가길 기다리려 기록 속으로 걸어 들어갔을 뿐이며, 안전해지면 돌아올 거라고. 아주 오랫동안 그 말을 되풀이해 왔다.',
+  'shard.echoes.title': '파편: 메아리',
+  'shard.echoes.body':
+    '이따금 런이 있어선 안 될 신호로 깜빡인다 — 보낸 이가 사라진 지 오래인데도 전송을 마치려 애쓰는 떠도는 기록. 그 곁에 굳건히 머물면 신호가 안정화되며, 그것이 전하려던 말의 파편 하나를 건넨다.',
+  'shard.your-name-here.title': '파편: 여기 당신의 이름',
+  'shard.your-name-here.body':
+    '마지막 파편은 비어 있다. 잃어버린 게 아니라 — 비어서, 기다리는 중이다. 기록 보관소는 자신이 관리하는 모든 공적부에 한 칸을 비워 둔다. 당신의 이야기가 아직 정리되는 중이라고 여기는 모양이다.',
 
   'refine.title': '정제소',
   'refine.bar.minerals': '광물',
