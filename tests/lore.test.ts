@@ -52,6 +52,13 @@ const LORE_CHROME_KEYS = [
   'archive.empty',
   'champion.story.open',
   'champion.story.title',
+  // 인트로 슬라이드 네비게이션(슬라이드 파생 아님 — 고정 크롬).
+  'intro.skip',
+  'intro.next',
+  'intro.begin',
+  // 기지 맵 기록 보관소 건물 타일.
+  'base.bld.archive.name',
+  'base.bld.archive.desc',
 ];
 
 function allDerivedStoryKeys(): string[] {
@@ -178,6 +185,10 @@ describe('서사 i18n 완전성 (배열 파생)', () => {
       ...allDerivedStoryKeys(),
       ...allDerivedIntroKeys(),
       ...allDerivedShardKeys(),
+      // intro.* 는 슬라이드 파생 외에 네비게이션 크롬(skip/next/begin)도 있다 — 허용 목록에.
+      'intro.skip',
+      'intro.next',
+      'intro.begin',
     ]);
     for (const [label, table] of [
       ['EN', enT],

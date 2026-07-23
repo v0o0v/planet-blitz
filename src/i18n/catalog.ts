@@ -107,6 +107,8 @@ export const EN = {
   'base.bld.defense.desc': 'Defense Layout · Maintenance',
   'base.bld.control.name': 'Control Tower',
   'base.bld.control.desc': 'Ladder · Invasion · Replay',
+  'base.bld.archive.name': 'Record Vault',
+  'base.bld.archive.desc': 'Pilot Files · Record Shards · Prologue',
   'base.lock.pre': 'Locked',
   'base.lock.level': 'Requires Ship Lv {lvl}',
   'base.lock.clear': 'Clear a planet first',
@@ -381,6 +383,9 @@ export const EN = {
   'intro.launch.title': 'Your Turn to Launch',
   'intro.launch.body':
     'You have a ship, an empty logbook, and a name no one has heard yet. The ledger is open. Go make it remember you.',
+  'intro.skip': 'Skip',
+  'intro.next': 'Next',
+  'intro.begin': 'Begin',
 
   // 기록 보관소(기지 시설) 화면 크롬
   'archive.title': 'Record Vault',
@@ -1188,6 +1193,8 @@ export const KO: Record<MessageKey, string> = {
   'base.bld.defense.desc': '방어 배치 · 정비',
   'base.bld.control.name': '관제탑',
   'base.bld.control.desc': '래더 · 침공 · 리플레이',
+  'base.bld.archive.name': '기록 보관소',
+  'base.bld.archive.desc': '파일럿 파일 · 기록 파편 · 프롤로그',
   'base.lock.pre': '해금 전',
   'base.lock.level': '기체 Lv {lvl} 필요',
   'base.lock.clear': '행성 1회 클리어 필요',
@@ -1435,6 +1442,9 @@ export const KO: Record<MessageKey, string> = {
   'intro.launch.title': '이제 당신이 출격할 차례',
   'intro.launch.body':
     '당신에겐 기체 한 대와 텅 빈 항해일지, 그리고 아직 아무도 들어보지 못한 이름이 있다. 공적부는 열려 있다. 가서 그것이 당신을 기억하게 만들어라.',
+  'intro.skip': '건너뛰기',
+  'intro.next': '다음',
+  'intro.begin': '시작',
 
   // 기록 보관소 화면 크롬
   'archive.title': '기록 보관소',

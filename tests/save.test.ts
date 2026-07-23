@@ -258,6 +258,37 @@ function v3Blob(invest: unknown, ships = 1): Record<string, unknown> {
   };
 }
 
+describe('introSeen — 세계관 인트로 1회 노출 플래그 (스토리 시스템)', () => {
+  it('신규 프로필은 introSeen=false 로 시작한다(첫 실행 시 인트로 노출)', () => {
+    expect(defaultProfile().introSeen).toBe(false);
+  });
+
+  it('기존 세이브(필드 부재)는 introSeen=false 로 정규화된다 — 스토리 리빌을 1회 본다', () => {
+    // 마이그레이션은 끝에서 normalizeProfile 을 거친다. tutorialDone 과 달리 강제 스탬프하지
+    // 않으므로 기존 유저도 다음 부팅에 인트로를 1회 본다(언제든 스킵·기록 보관소 재생 가능).
+    const p = migrate(v3Blob(zeroSkillInvest(0)));
+    expect(p.introSeen).toBe(false);
+  });
+
+  it('introSeen:true 세이브는 유지된다(재노출 안 함)', () => {
+    const blob = { ...v3Blob(zeroSkillInvest(0)), introSeen: true };
+    expect(migrate(blob).introSeen).toBe(true);
+  });
+
+  it('save→load 왕복이 introSeen 을 보존한다', () => {
+    const store = new Map<string, string>();
+    const kv: KeyValueStore = {
+      getItem: (k) => store.get(k) ?? null,
+      setItem: (k, v) => void store.set(k, v),
+      removeItem: (k) => void store.delete(k),
+    };
+    const p = defaultProfile();
+    p.introSeen = true;
+    saveProfile(p, kv);
+    expect(loadProfile(kv).introSeen).toBe(true);
+  });
+});
+
 describe('마이그레이션 v3 → v4 — 계정 투자가 기체로 승계된다 (검증①)', () => {
   it('기존 유저의 투자가 활성 기체 벡터로 그대로 옮겨진다', () => {
     const invest = zeroSkillInvest(0);

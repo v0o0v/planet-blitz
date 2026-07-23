@@ -190,6 +190,7 @@ export const UI_ASSET_NAMES: readonly string[] = [
   'ui_bld_refinery.png',
   'ui_bld_defense.png',
   'ui_bld_control.png',
+  'ui_bld_archive.png',
   // 정제소 어픽스 잠금 토글(카툰나무풍 롤아웃 #3) — DOM 판이 쓰던 32px 자물쇠 아이콘 재사용.
   'ui_lock.png',
   'ui_unlock.png',
