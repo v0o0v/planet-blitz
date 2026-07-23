@@ -1,0 +1,9 @@
+# pnpm 설정 파일 (pnpm 10+ 에서 package.json 의 "pnpm" 필드를 대체하는 새 위치).
+#
+# allowBuilds: 설치 시 postinstall 등 빌드 스크립트 실행을 허용할 의존성 목록.
+# pnpm 은 공급망 보안상 기본적으로 모든 빌드 스크립트를 차단한다. esbuild(vite 의 트랜스파일러)는
+# 플랫폼 네이티브 바이너리 준비에 빌드 스크립트가 필요하다 — 허용하지 않으면 vite dev/build 가
+# esbuild 바이너리를 못 찾아 실패한다. 이 목록으로 새 워크트리의 `pnpm install` 도 대화형
+# `pnpm approve-builds` 없이 결정론적으로 동작한다.
+allowBuilds:
+  esbuild: true

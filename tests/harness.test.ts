@@ -18,7 +18,7 @@ import { createHarness } from '../src/harness/core.js';
 import type { HarnessHost, HarnessInvasionResolved } from '../src/harness/core.js';
 import { createWorld, DEFAULT_CONFIG, emptyInput } from '../src/sim/world.js';
 import type { WorldConfig, WorldState } from '../src/sim/world.js';
-import { PLANET_MODE } from '../src/sim/planetMode.js';
+import { PLANET_MODE, type PlanetMode } from '../src/sim/planetMode.js';
 import {
   INVASION_CORE_HP,
   INVASION_SOCKET_COUNTS,
@@ -335,9 +335,9 @@ describe('Harness.jumpInvasionLayer (레이어 점프)', () => {
 
 describe('Harness.snapshot().mode (행성 모드 표면 — ADR-0021)', () => {
   /** 지정 planetMode 로 라이브 월드를 세운 하네스를 만든다. */
-  function harnessWithMode(mode: number): ReturnType<typeof createHarness> {
+  function harnessWithMode(mode: PlanetMode): ReturnType<typeof createHarness> {
     const host = fakeHost();
-    host.world = createWorld(123, { ...DEFAULT_CONFIG, planetMode: mode as WorldConfig['planetMode'] });
+    host.world = createWorld(123, { ...DEFAULT_CONFIG, planetMode: mode });
     return createHarness(host);
   }
 
