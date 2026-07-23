@@ -126,6 +126,13 @@ export interface Profile {
    */
   tutorialDone: boolean;
   /**
+   * 세계관 인트로 슬라이드(스토리 시스템)를 본 적 있는가. 첫 실행 1회 노출용. 신규 프로필은
+   * `false` 로 시작한다. **기존 세이브도 필드 부재 → false 로 정규화**되므로 다음 부팅에 인트로를
+   * 1회 본다(스토리 리빌은 현 플레이어에게도 닿아야 한다 — 언제든 스킵 가능하고 기록 보관소에서
+   * 다시 볼 수 있다). tutorialDone 과 별도 축이다(튜토리얼 스킵 유저도 인트로는 봐야 하므로).
+   */
+  introSeen: boolean;
+  /**
    * 방어 사령부가 저장한 3레이어 방어 배치(M7a, ADR-0017). 침공(비동기 PvP)의 정적 스폰
    * 데이터가 된다. 미배치 = `undefined`. 서버 정본은 `defenses.layout` jsonb 이고 여기는
    * 오프라인 표시·즉시 반영용 로컬 미러다.
@@ -245,6 +252,7 @@ export function defaultProfile(): Profile {
     minerals: 0,
     skillPoints: 0,
     tutorialDone: false,
+    introSeen: false,
     lineage: emptyLineage(),
     guardians: [],
   };
@@ -581,6 +589,7 @@ function normalizeProfile(d: Record<string, unknown>): Profile {
     minerals: numOr(d.minerals, 0),
     skillPoints: numOr(d.skillPoints, 0),
     tutorialDone: d.tutorialDone === true,
+    introSeen: d.introSeen === true,
     lineage: normalizeLineage(d.lineage),
     guardians: normalizeGuardianRecords(d.guardians),
     ...normalizeStoredLayout(d.defenseLayout),

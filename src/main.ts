@@ -499,6 +499,26 @@ async function main(): Promise<void> {
     });
   }
 
+  /**
+   * 부팅 진입 — 첫 실행이면 세계관 인트로를 1회 보여준 뒤 타이틀로, 이미 봤으면 곧장 타이틀.
+   * `introSeen` 은 튜토리얼과 별도 축이라 튜토리얼을 스킵한 유저도 인트로는 1회 본다. 인트로는
+   * 언제든 스킵 가능하고 기록 보관소에서 다시 볼 수 있다(introSlides.finish → onDone).
+   * `saveProfile` 은 로컬 저장이면 충분하다(introSeen 은 서버 권위 필드가 아니다).
+   */
+  function openIntroOrTitle(): void {
+    if (!profile.introSeen) {
+      introSlides.show({
+        onDone: () => {
+          profile.introSeen = true;
+          saveProfile(profile);
+          openTitle();
+        },
+      });
+      return;
+    }
+    openTitle();
+  }
+
   /** Base map hub — the meta home. Buildings gate by unlock (plan D1/E2). */
   function openBaseMap(): void {
     clearToMenu();
@@ -1104,8 +1124,8 @@ async function main(): Promise<void> {
     endRun(w);
   }
 
-  // Kick off at the title screen (first launch forces the tutorial → base map).
-  openTitle();
+  // 부팅 — 첫 실행이면 세계관 인트로를 먼저 1회, 그 뒤 타이틀(첫 실행은 튜토리얼 강제 → 기지 맵).
+  openIntroOrTitle();
 
   gameApp.app.ticker.add((ticker) => {
     // 설정은 모든 화면 위에 떠 있는 크롬 UI 다 — 다른 캔버스 화면이 show() 에서 자기를 맨
