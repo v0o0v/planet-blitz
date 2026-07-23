@@ -18,6 +18,7 @@
 
 import type { Profile } from '../save/profile.js';
 import { migrate } from '../save/profile.js';
+import type { PveSettleSummary } from './gateway.js';
 
 /** 서버 `profiles` 행에서 이관에 필요한 최소 형태. */
 export interface ServerProfile {
@@ -25,6 +26,13 @@ export interface ServerProfile {
   save: unknown;
   /** DB 의 profiles.save_version. */
   saveVersion: number;
+  /**
+   * DB 의 profiles.credits **컬럼**(재화 정본, ADR-0027). 있으면 deserializeProfile 이
+   * save 의 낡은 credits 를 이 값으로 덮어쓴다(서버 권위). 구 서버(컬럼 없음)면 undefined.
+   */
+  credits?: number;
+  /** DB 의 profiles.minerals **컬럼**(재화 정본, ADR-0027). credits 와 동일 규율. */
+  minerals?: number;
 }
 
 /** 이관 계획: 업로드할지/스킵할지 + 업로드할 프로필. */
@@ -45,9 +53,20 @@ export function serializeProfile(profile: Profile): { save: Profile; save_versio
 /**
  * 서버 행 → Profile. 손상/구버전 blob 도 `migrate` 를 거쳐 항상 유효한 현행
  * Profile 로 복원한다(로컬 로딩과 동일 규율).
+ *
+ * 재화 서버 권위(ADR-0027): `credits`/`minerals` **컬럼**이 내려오면 migrate 된 프로필의
+ * 표시 미러를 컬럼값으로 덮어쓴다 — save jsonb 안의 낡은 재화가 아니라 서버 정본 잔액을
+ * 미러 초기값으로 삼기 위함. 컬럼이 null/부재(구 서버)면 save 값을 유지한다(하위호환).
  */
 export function deserializeProfile(row: ServerProfile): Profile {
-  return migrate(row.save);
+  const profile = migrate(row.save);
+  if (typeof row.credits === 'number' && Number.isFinite(row.credits)) {
+    profile.credits = row.credits;
+  }
+  if (typeof row.minerals === 'number' && Number.isFinite(row.minerals)) {
+    profile.minerals = row.minerals;
+  }
+  return profile;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,18 +77,17 @@ export function deserializeProfile(row: ServerProfile): Profile {
  * 프로필 진행도 점수(단조 성격의 대략 지표). 기체 레벨을 가장 크게 가중해, 재설치
  * 등으로 두 프로필이 충돌할 때 더 많이 진행된 쪽을 고르는 데 쓴다. 정확한 경제
  * 총량이 아니라 "누가 더 진행했나" 판정용이다.
+ *
+ * 재화 서버 권위 이관(ADR-0027): credits·minerals 는 점수에서 **제외**한다. 재화가 서버
+ * 컬럼 정본이 된 뒤로는 save 미러의 재화가 잘못된 순위 신호이고(낡은 미러가 sync 방향을
+ * 왜곡), 특히 소비 직전에 stash 된 stale-high 크레딧 스냅샷이 `shouldPushPending` 을 통과해
+ * 서버 차감을 되돌리던 정비 이중 권위 결함의 뿌리였다. 순위는 순수 진행도(기체 레벨·스킬
+ * 포인트·아이템)만으로 판정한다.
  */
 export function progressScore(p: Profile): number {
   let shipLevels = 0;
   for (const s of p.ships) shipLevels += s.level;
-  return (
-    shipLevels * 1000 +
-    p.credits +
-    p.minerals +
-    p.skillPoints +
-    p.inventory.length +
-    p.stash.length
-  );
+  return shipLevels * 1000 + p.skillPoints + p.inventory.length + p.stash.length;
 }
 
 /**
@@ -185,15 +203,137 @@ export function clearPendingProfile(store: KeyValueStore): void {
  * 대기 슬롯에 스냅샷이 **이미 남아 있을 때만** 최신 프로필로 교체한다(없으면 아무것도
  * 안 함 — 새 push 를 만들지 않는다). 반환: 교체했는지.
  *
- * 용도(정비 이중 권위 방어, Phase E 리뷰 MED): 서버가 크레딧을 차감하는 정비
+ * 유래(정비 이중 권위 방어, Phase E 리뷰 MED): 서버가 크레딧을 차감하는 정비
  * (`repair_defense`) 직후, 정비 **전**에 stash 된 낡은 스냅샷이 대기 슬롯에 남아 있으면
- * (PvE 정산이 오프라인/일시 실패로 미전송) 다음 {@link flushPendingSync} 재시도가 정비 전
- * 크레딧을 서버로 되밀어 차감을 복구시킨다 — `progressScore` 가 credits 를 포함해
- * stale-high 스냅샷이 `shouldPushPending` 을 통과하기 때문. 슬롯이 원래 last-write-wins
- * 단일 슬롯이므로, 정비 후 상태로 교체하는 것이 슬롯 의미론에 정합하는 최소 방어다.
+ * 다음 {@link flushPendingSync} 재시도가 정비 전 크레딧을 서버로 되밀던 밴드에이드였다.
+ *
+ * ⚠️ ADR-0027 이후: 재화가 서버 컬럼 권위로 이관되고 {@link progressScore} 에서 credits 를
+ * 제거해, 이 밴드에이드의 **원래 위험(stale-high 크레딧 재push)은 해소됐다** — stale-high
+ * 미러는 더 이상 `shouldPushPending` 을 통과하지 못하고, 서버는 save 미러가 아니라 컬럼만
+ * 읽는다. 호출부(modulesView 등)를 깨지 않기 위해 함수는 그대로 둔다(무해한 no-risk 갱신).
  */
 export function refreshPendingProfile(store: KeyValueStore, profile: Profile): boolean {
   if (readPendingProfile(store) === null) return false;
   stashPendingProfile(store, profile);
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// 대기 정산 큐(온라인이지만 전송 실패한 재화 정산 재시도, ADR-0026 E)
+// ---------------------------------------------------------------------------
+
+/**
+ * 전송 실패한 PvE 정산 요약 대기 큐. 프로필 스냅샷 슬롯과 달리 **누적 목록**이다 — 각
+ * 정산은 독립 지급이라 last-write-wins 로 덮으면 지급이 유실되기 때문. flushPendingSync 가
+ * 서버 회복 시 순서대로 재지급한다. 재화 컬럼 정본이라 미러는 다음 fetchProfile 이 맞춘다.
+ */
+const PENDING_SETTLEMENTS_KEY = 'planet-blitz:net:pending-settlements';
+
+/**
+ * 대기 정산 1건. `summary` 가 null 이면 story 보상만 남은 재시도(settle 은 이미 성공,
+ * story grant 만 실패). storyRewardCredits>0 이면 story 보상 grant 를 재시도한다.
+ */
+export interface PendingSettlement {
+  summary: PveSettleSummary | null;
+  storyRewardCredits: number;
+}
+
+/** 대기 정산 목록을 읽는다(손상/부재 시 빈 배열). */
+export function readPendingSettlements(store: KeyValueStore): PendingSettlement[] {
+  let raw: string | null;
+  try {
+    raw = store.getItem(PENDING_SETTLEMENTS_KEY);
+  } catch {
+    return [];
+  }
+  if (raw === null) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (e): e is PendingSettlement =>
+        typeof e === 'object' && e !== null && typeof (e as PendingSettlement).storyRewardCredits === 'number',
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** 대기 정산 목록을 통째로 저장한다(비었으면 슬롯 제거). */
+export function writePendingSettlements(store: KeyValueStore, list: readonly PendingSettlement[]): void {
+  try {
+    if (list.length === 0) store.removeItem(PENDING_SETTLEMENTS_KEY);
+    else store.setItem(PENDING_SETTLEMENTS_KEY, JSON.stringify(list));
+  } catch {
+    // best-effort — 저장 실패는 삼킨다.
+  }
+}
+
+/** 대기 정산 1건을 큐 끝에 추가한다. */
+export function stashPendingSettlement(store: KeyValueStore, entry: PendingSettlement): void {
+  const list = readPendingSettlements(store);
+  list.push(entry);
+  writePendingSettlements(store, list);
+}
+
+// ---------------------------------------------------------------------------
+// 대기 재화 가산 큐(온라인이지만 전송 실패한 grant 재시도, MED-1 수정)
+// ---------------------------------------------------------------------------
+
+/**
+ * 전송 실패한 재화 가산(살베지 등) 대기 큐. 살베지는 아이템을 이미 로컬 제거한 뒤 재화를
+ * 서버에 얹는데, 온라인 일시 오류로 grant 가 실패하면 서버 원장에 반영되지 않아 다음
+ * fetchProfile 이 미러를 서버값으로 되돌려 재화가 소멸한다(아이템은 이미 사라진 채). 이 큐가
+ * 실패한 grant 를 남겨 {@link flushPendingSync} 가 재지급한다 — 정산 큐(PendingSettlement)와
+ * 같은 규율의 grant 판이다. 누적 목록이라 다건 살베지가 유실되지 않는다.
+ */
+const PENDING_GRANTS_KEY = 'planet-blitz:net:pending-grants';
+
+/** 대기 재화 가산 1건(source 별 credits/minerals). */
+export interface PendingGrant {
+  credits: number;
+  minerals: number;
+  source: string;
+}
+
+/** 대기 가산 목록을 읽는다(손상/부재 시 빈 배열). */
+export function readPendingGrants(store: KeyValueStore): PendingGrant[] {
+  let raw: string | null;
+  try {
+    raw = store.getItem(PENDING_GRANTS_KEY);
+  } catch {
+    return [];
+  }
+  if (raw === null) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (e): e is PendingGrant =>
+        typeof e === 'object' &&
+        e !== null &&
+        typeof (e as PendingGrant).credits === 'number' &&
+        typeof (e as PendingGrant).minerals === 'number' &&
+        typeof (e as PendingGrant).source === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** 대기 가산 목록을 통째로 저장한다(비었으면 슬롯 제거). */
+export function writePendingGrants(store: KeyValueStore, list: readonly PendingGrant[]): void {
+  try {
+    if (list.length === 0) store.removeItem(PENDING_GRANTS_KEY);
+    else store.setItem(PENDING_GRANTS_KEY, JSON.stringify(list));
+  } catch {
+    // best-effort — 저장 실패는 삼킨다.
+  }
+}
+
+/** 대기 가산 1건을 큐 끝에 추가한다. */
+export function stashPendingGrant(store: KeyValueStore, entry: PendingGrant): void {
+  const list = readPendingGrants(store);
+  list.push(entry);
+  writePendingGrants(store, list);
 }

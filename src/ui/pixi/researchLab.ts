@@ -36,6 +36,7 @@ import { shipTreeName, AFFINITY_ACCENT } from './shipLabels.js';
 import {
   investSkill,
   respecSkills,
+  applyRespecRefund,
   respecCost,
   totalInvested,
   saveProfile,
@@ -43,6 +44,7 @@ import {
   type KeyValueStore,
   type Profile,
 } from '../../save/profile.js';
+import { spendCurrencyOnServer } from '../../net/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, UI_FONT, TEXT_SHADOW, iconContrastRingBands } from './theme.js';
 import { loadUiTextures, skillIconName, type UiTextures } from './uiTextures.js';
@@ -409,12 +411,34 @@ export class ResearchLabScreen {
     this.investNode(index);
   }
 
-  private respec(): void {
-    if (!respecSkills(this.profile)) {
-      this.hint =
-        totalInvested(this.profile) === 0
-          ? t('lab.err.noInvest')
-          : t('lab.err.noCredits', { n: respecCost(this.profile) });
+  private async respec(): Promise<void> {
+    // 사전 게이트(투자 有 · 로컬 미러 잔액 충분)는 그대로 — 재화 서버 권위(ADR-0027)에서도
+    // UX 즉시성을 위해 미러로 먼저 거른다(서버가 최종 재검증).
+    if (totalInvested(this.profile) === 0) {
+      this.hint = t('lab.err.noInvest');
+      this.render();
+      return;
+    }
+    const cost = respecCost(this.profile);
+    if (this.profile.credits < cost) {
+      this.hint = t('lab.err.noCredits', { n: cost });
+      this.render();
+      return;
+    }
+    // 온라인 → spend_currency 로 차감 확정(ok 일 때만 환급). 미설정 → 기존 로컬 차감(respecSkills).
+    // 잔액 부족·오프라인(rejected)이면 환급하지 않는다(스킬 포인트 무상 환급 위조 차단).
+    const res = await spendCurrencyOnServer(cost, 0, 'respec');
+    if (res.status === 'ok') {
+      this.profile.credits = res.creditsLeft;
+      this.profile.minerals = res.mineralsLeft;
+      applyRespecRefund(this.profile);
+    } else if (res.status === 'unconfigured') {
+      if (!respecSkills(this.profile)) {
+        this.render();
+        return;
+      }
+    } else {
+      this.hint = t('lab.err.noCredits', { n: cost });
       this.render();
       return;
     }
@@ -1058,7 +1082,7 @@ export class ResearchLabScreen {
       height: RESPEC_H,
       fontSize: 18,
       label: t('lab.respecBtn', { n: cost }),
-      onClick: () => this.respec(),
+      onClick: () => void this.respec(),
     });
     respec.container.position.set(RESPEC_X, RESPEC_Y);
     this.root.addChild(respec.container);

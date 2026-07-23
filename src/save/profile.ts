@@ -405,10 +405,33 @@ export function respecCost(profile: Profile): number {
 }
 
 /**
+ * 리스펙 환급 **본체**(재화 무관): 투자 포인트를 전부 뱅크로 되돌리고 트리를 0 으로 만든다.
+ * 스킬 포인트는 보존된다(환급 == 투자) — 리스펙은 진행도를 만들거나 없애지 않는다. 반환은
+ * 환급한 포인트 수(투자가 없으면 0, 아무 변화 없음).
+ *
+ * 재화 서버 권위(ADR-0027): 크레딧 차감과 분리했다 — 온라인 경로는 서버 `spend_currency` 로
+ * 먼저 차감을 확정한 뒤 이 함수로 환급만 하고, 오프라인은 {@link respecSkills} 가 로컬 차감 +
+ * 이 함수를 함께 태운다.
+ */
+export function applyRespecRefund(profile: Profile): number {
+  const invested = totalInvested(profile);
+  if (invested === 0) return 0;
+  profile.skillPoints += invested;
+  // 제자리 0 채움. 새 배열로 갈아끼워도 지금은 무해하지만(M8-L7 이 별칭 필드를 삭제했다),
+  // 화면이 렌더 도중 배열 참조를 들고 있는 경우가 있어 인스턴스를 유지하는 편이 안전하다.
+  activeShip(profile).skillInvest.fill(0);
+  return invested;
+}
+
+/**
  * Refund every invested point back to the banked pool and zero the tree, charging
- * `respecCost` credits. No-ops (returns false) when nothing is invested or the
- * player cannot afford the cost. Skill points are conserved (refunded == spent),
+ * `respecCost` credits **locally**. No-ops (returns false) when nothing is invested or
+ * the player cannot afford the cost. Skill points are conserved (refunded == spent),
  * so a respec never creates or destroys progression.
+ *
+ * 재화 서버 권위(ADR-0027): 이 함수는 **미설정(오프라인 단일플레이) 폴백**이다 — 로컬 미러에서
+ * 직접 차감한다. 온라인 경로(researchLab UI)는 서버 `spend_currency` 로 차감을 확정한 뒤
+ * {@link applyRespecRefund} 로 환급만 한다(미러는 서버 잔액으로 세팅).
  */
 export function respecSkills(profile: Profile): boolean {
   const invested = totalInvested(profile);
@@ -416,10 +439,7 @@ export function respecSkills(profile: Profile): boolean {
   const cost = respecCost(profile);
   if (profile.credits < cost) return false;
   profile.credits -= cost;
-  profile.skillPoints += invested;
-  // 제자리 0 채움. 새 배열로 갈아끼워도 지금은 무해하지만(M8-L7 이 별칭 필드를 삭제했다),
-  // 화면이 렌더 도중 배열 참조를 들고 있는 경우가 있어 인스턴스를 유지하는 편이 안전하다.
-  activeShip(profile).skillInvest.fill(0);
+  applyRespecRefund(profile);
   return true;
 }
 

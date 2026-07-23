@@ -114,11 +114,13 @@ describe('배선 — main.ts 호스트가 settleIfRunOver 를 실제로 구현�
     const endRun = functionBody(MAIN_CODE, 'endRun');
     const guard = endRun.indexOf('if (!w.tainted && !harnessInvasionRun)');
     expect(guard).toBeGreaterThan(-1);
+    // ADR-0026: recordPveRun(리플레이 업로드)은 폐기됐다 — 재화 서버 권위 이관으로 사후 샘플링
+    // 재검증이 불필요. 재화 지급(settlePveRunCurrency)·설계도·세이브 동기화가 격리 가드 뒤에 남는다.
     for (const gated of [
       'settleRun(profile',
+      'settlePveRunCurrency(',
       'grantBlueprintDrops(',
       'recordPveRunResult(',
-      'recordPveRun(',
     ]) {
       expect(endRun.indexOf(gated), `${gated} 은 격리 가드 뒤에 있어야 한다`).toBeGreaterThan(
         guard,

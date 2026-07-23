@@ -116,9 +116,10 @@ export function settleRun(profile: Profile, result: RunResult): SettlementOutcom
   const skillPointsGained = levelsGained;
   profile.skillPoints += skillPointsGained;
 
-  // 4. Resources → credits.
+  // 4. Resources → credits. 재화 서버 권위(ADR-0027): 순수 정산은 델타를 **계산·반환만** 하고
+  //    프로필 미러에 가산하지 않는다 — 재화 지급은 호출부가 온라인=서버 RPC(settle_pve_run) /
+  //    미설정=로컬 미러 가산으로 가른다(위조 불가: 클라가 정산으로 재화를 창조 못 함).
   const creditsGained = Math.max(0, Math.floor(result.resources));
-  profile.credits += creditsGained;
 
   // 5. On victory, record the planet clear (drives 정제소 unlock + 단계 개방 상한, ADR-0022).
   //    승리한 단계가 실제로 기록돼야 개방이 진행된다(핵심 배선 — 누락 시 개방 영영 안 됨).
@@ -204,7 +205,9 @@ function applyStoryProgress(
       if (!chapterUnlocked(chapter, progress)) continue;
       const claimId = `${shipStory.slug}-ch${chapter.index + 1}`;
       if (profile.storyRewardsClaimed.includes(claimId)) continue;
-      profile.credits += chapter.reward.credits;
+      // claim 원장(storyRewardsClaimed)은 여기서 1회성으로 기록하되(재청구 방지), 크레딧 **지급**은
+      // 호출부로 위임한다(ADR-0027): 미러에 직접 가산하지 않고 rewardCredits 로 반환만 한다 —
+      // 온라인은 grant_currency(source='story'), 미설정은 로컬 미러 가산.
       profile.storyRewardsClaimed.push(claimId);
       rewardCredits += chapter.reward.credits;
     }
@@ -256,9 +259,13 @@ export function salvageValue(item: Item, mineralFindMult = 1): SalvageYield {
 }
 
 /**
- * Bulk-disenchant the given items: sum their yield, credit the profile, and
- * remove them from inventory + stash. Items not present in either list are still
- * counted toward the yield (caller is trusted to pass owned items).
+ * Bulk-disenchant the given items: sum their yield and remove them from inventory +
+ * stash. Items not present in either list are still counted toward the yield (caller
+ * is trusted to pass owned items).
+ *
+ * 재화 서버 권위(ADR-0027): 아이템 제거(로컬 인벤토리 상태 — 서버가 봉인하지 않음)는 여기서
+ * 하되, 획득 credits/minerals 는 **반환만** 하고 프로필 미러에 가산하지 않는다. 재화 지급은
+ * 호출부가 온라인=grant_currency(source='salvage') / 미설정=로컬 미러 가산으로 가른다.
  */
 export function salvageItems(
   profile: Profile,
@@ -277,7 +284,5 @@ export function salvageItems(
   }
   profile.inventory = profile.inventory.filter((it) => !removeIds.has(it.id));
   profile.stash = profile.stash.filter((it) => !removeIds.has(it.id));
-  profile.credits += credits;
-  profile.minerals += minerals;
   return { credits, minerals };
 }

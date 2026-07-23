@@ -53,6 +53,30 @@ function json(body: unknown, status: number): Response {
   });
 }
 
+/**
+ * 리플레이 jsonb 문자열을 gzip 압축해 base64 로 인코딩한다(ADR-0026 · 플랫폼 I/O 계층 헬퍼).
+ *
+ * Deno 표준 `CompressionStream('gzip')` 만 쓴다(외부 의존성 0). 코어(verifyInvasionCore.ts)가
+ * 아니라 여기(index.ts)에 두는 이유: 코어는 플랫폼 전역 무참조 규율이라 CompressionStream 을
+ * 참조하면 안 된다. bytea 저장은 store_invasion_replay_gz RPC 가 base64 를 decode 한다
+ * (supabase-js REST 가 raw bytea 바이너리를 직접 못 실어 base64 를 경유한다). 클라 관전 경로의
+ * DecompressionStream 해제(src/net/invasionGateway.ts decompressReplayGz)와 왕복 계약을 이룬다
+ * (tests/invasionReplayGz.test.ts 가 왕복 동치를 강제한다 — 같은 gzip 을 클라가 풀 수 있는가).
+ */
+async function gzipToBase64(text: string): Promise<string> {
+  const input = new TextEncoder().encode(text);
+  const compressed = new Response(input).body!.pipeThrough(new CompressionStream('gzip'));
+  const buf = new Uint8Array(await new Response(compressed).arrayBuffer());
+  // Uint8Array → binary string → base64. 큰 입력에서 String.fromCharCode(...) apply 스택
+  // 초과를 피하려 32KB 청크로 누적한다(리플레이 압축본은 대개 수십 KB 수준).
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < buf.length; i += CHUNK) {
+    bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method !== 'POST') {
     return json({ status: 'rejected', reason: 'method-not-allowed', attackerWon: false, ladder: null, loot: [] }, 405);
@@ -325,6 +349,26 @@ Deno.serve(async (req: Request): Promise<Response> => {
     },
   };
 
+  // 검증 확정 후 리플레이 압축 보존(ADR-0026, best-effort). 검증이 accept 든 reject 든 **확정된
+  // 뒤**에 원본 replay 를 gzip 압축해 replay_gz(bytea)에 넣고 replay·client_result 를 null 화한다
+  // (store_invasion_replay_gz RPC). 이미 확정된 뒤라 압축 저장 실패가 검증 결과를 무효화하면 안
+  // 된다 — 실패 시 로그만 남기고 삼킨다(48h TTL cron 이 백스톱). inv.replay 가 없으면 no-op.
+  const archiveReplay = async (): Promise<void> => {
+    try {
+      if (inv.replay === null || inv.replay === undefined) return;
+      const gz = await gzipToBase64(JSON.stringify(inv.replay));
+      const { error: gzErr } = await service.rpc('store_invasion_replay_gz', {
+        p_id: invasionId,
+        p_gz: gz,
+      });
+      if (gzErr !== null) {
+        console.error(`store_invasion_replay_gz 실패 (invasion=${invasionId}):`, gzErr.message);
+      }
+    } catch (e) {
+      console.error(`리플레이 압축 저장 예외 (invasion=${invasionId}):`, e);
+    }
+  };
+
   // (5) 서버 권위로 전수 재실행 검증(방어 배치 대조 + 재실행 + 해시/결과 대조).
   // try/catch(리뷰 MED-3): 손상된 서버 layout 이 정규화 게이트를 지나도 재실행에서
   // 예외를 던지면 500 이 아니라 명시적 rejected(server-layout-invalid)로 수렴시킨다.
@@ -362,6 +406,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       })
       .eq('id', invasionId)
       .eq('verified_status', 'pending');
+    // 확정 후 리플레이 압축 보존(ADR-0026).
+    await archiveReplay();
     return json({ status: 'rejected', reason: verdict.reason, attackerWon: false, ladder: null, loot: [] }, 200);
   }
 
@@ -436,6 +482,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     res.swapped === true
       ? { attackerRank: res.attacker_rank ?? null, defenderRank: res.defender_rank ?? null }
       : null;
+  // 확정(래더 스왑·약탈 완료) 후 리플레이 압축 보존(ADR-0026). apply_invasion_result·
+  // loot_defense_blueprint 는 replay/client_result 를 읽지 않으므로 이 시점 null 화가 안전하다.
+  await archiveReplay();
   return json(
     {
       status: 'verified',

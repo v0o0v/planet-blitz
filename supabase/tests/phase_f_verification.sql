@@ -72,8 +72,9 @@ declare
   a_rank int; b_rank int; a_min numeric; cs boolean; isr boolean; rep text := '';
 begin
   insert into auth.users(id,is_sso_user,is_anonymous) values (a,false,true),(b,false,true);
-  insert into public.profiles(id,save,display_name) values
-    (a,'{"minerals":100,"credits":0}'::jsonb,'revenger'),(b,'{"minerals":0,"credits":0}'::jsonb,'target');
+  -- ADR-0027: 재화가 서버 권위 컬럼(profiles.minerals)으로 이관됨 → 초기 광물을 컬럼에 세팅.
+  insert into public.profiles(id,save,display_name,minerals) values
+    (a,'{"minerals":100,"credits":0}'::jsonb,'revenger',100),(b,'{"minerals":0,"credits":0}'::jsonb,'target',0);
   insert into public.defenses(id,profile_id,layout,budget_spent,maintenance,active) values
     (defa,a,'{"core":{},"turrets":[],"obstacles":[]}'::jsonb,0,100,true),
     (defb,b,'{"core":{},"turrets":[],"obstacles":[]}'::jsonb,0,100,true);
@@ -97,12 +98,13 @@ begin
   if (r->>'is_revenge')<>'true' then raise exception 'TF2-FAIL is_revenge=%', r; end if;
   if (r->>'swapped')<>'true' then raise exception 'TF2-FAIL swapped(격차40 복수 예외)=%', r; end if;
   if (r->>'bonus_minerals')<>'50' then raise exception 'TF2-FAIL bonus=%', r; end if;
+  if (r->>'attacker_minerals_left')<>'150' then raise exception 'TF2-FAIL att_min_left(ADR-0027)=%', r; end if;
   if (r->>'attacker_rank')<>'500' or (r->>'defender_rank')<>'540' then raise exception 'TF2-FAIL ranks=%', r; end if;
   rep := rep || 'apply-revenge(swap+bonus50)=ok; ';
 
   select rank into a_rank from public.ladder where profile_id=a;
   select rank into b_rank from public.ladder where profile_id=b;
-  select (save->>'minerals')::numeric into a_min from public.profiles where id=a;
+  select minerals into a_min from public.profiles where id=a;  -- ADR-0027: 컬럼 정본에서 읽음.
   select caused_swap, is_revenge into cs, isr from public.invasions where id=rev;
   if a_rank<>500 or b_rank<>540 then raise exception 'TF2-FAIL post ranks a=% b=%', a_rank, b_rank; end if;
   if a_min<>150 then raise exception 'TF2-FAIL minerals=%', a_min; end if;
@@ -194,11 +196,12 @@ declare
   fo boolean; fn boolean; fnew boolean; fnpc boolean;
 begin
   insert into auth.users(id,is_sso_user,is_anonymous) values (o,false,true),(nmo,false,true),(nw,false,true),(np,false,true);
-  insert into public.profiles(id,save,display_name,is_npc,created_at) values
-    (o,'{"credits":300000,"minerals":300000}'::jsonb,'outlier',false, now()-interval '2 hour'),
-    (nmo,'{"credits":100000,"minerals":100000}'::jsonb,'normal',false, now()-interval '100 hour'),
-    (nw,'{"credits":30000,"minerals":30000}'::jsonb,'new',false, now()-interval '6 min'),
-    (np,'{"credits":9999999,"minerals":9999999}'::jsonb,'npc',true, now()-interval '100 hour');
+  -- ADR-0027: flag_pve_anomalies 는 이제 profiles.credits/minerals 컬럼을 읽는다 → 컬럼에 세팅.
+  insert into public.profiles(id,save,display_name,is_npc,created_at,credits,minerals) values
+    (o,'{"credits":300000,"minerals":300000}'::jsonb,'outlier',false, now()-interval '2 hour',300000,300000),
+    (nmo,'{"credits":100000,"minerals":100000}'::jsonb,'normal',false, now()-interval '100 hour',100000,100000),
+    (nw,'{"credits":30000,"minerals":30000}'::jsonb,'new',false, now()-interval '6 min',30000,30000),
+    (np,'{"credits":9999999,"minerals":9999999}'::jsonb,'npc',true, now()-interval '100 hour',9999999,9999999);
   perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   perform public.flag_pve_anomalies();
   select flagged into fo from public.profiles where id=o;

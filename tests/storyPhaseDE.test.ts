@@ -235,37 +235,44 @@ describe('코스메틱 — 해금 상태에서 순수 파생', () => {
 // ---------------------------------------------------------------------------
 
 describe('챕터 보상 — claim 원장으로 크레딧 1회만 지급', () => {
-  it('스트라이커 챕터3(runsWon>=12) 해금 보상이 정확히 1회만 지급된다', () => {
+  // ADR-0027: 순수 정산은 챕터 보상 크레딧을 미러에 가산하지 않고 out.storyRewardCredits 로
+  // 반환만 한다(claim 원장 storyRewardsClaimed 는 1회성으로 계속 기록). "정확히 1회"는 반환값
+  // 합계 + 원장으로 검증한다(지급 자체는 호출부가 온라인=grant_currency('story')/미설정=로컬).
+  it('스트라이커 챕터3(runsWon>=12) 해금 보상이 정확히 1회만 반환된다(claim 원장)', () => {
     const striker = shipStory('striker')!;
     const reward = striker.chapters[2].reward!.credits; // 800
     const profile = defaultProfile();
     expect(profile.credits).toBe(0);
 
-    // 12승(자원 0·전리품 0 → 챕터 보상 외 크레딧 변동 없음). planet 9 는 어느 기체의 인연
-    // 행성도 아니라 챕터2 를 열지 않는다 → 스트라이커 챕터3(runsWon) 단일 보상만 격리 측정.
+    // 12승(자원 0·전리품 0). planet 9 는 어느 기체의 인연 행성도 아니라 챕터2 를 열지 않는다
+    // → 스트라이커 챕터3(runsWon) 단일 보상만 격리 측정.
+    let granted = 0;
     for (let i = 0; i < 12; i++) {
-      settleRun(profile, baseResult({ victory: true, planet: 9, stage: 1 }));
+      const out = settleRun(profile, baseResult({ victory: true, planet: 9, stage: 1 }));
+      granted += out.storyRewardCredits ?? 0;
     }
     expect(profile.storyMetrics.runsWon).toBe(12);
     expect(storyProgressFromProfile(profile, striker).milestoneReached).toBe(true);
-    expect(profile.credits).toBe(reward); // 정확히 1회 지급
+    expect(granted).toBe(reward); // 반환값 합계 = 정확히 1회 지급분
+    expect(profile.credits).toBe(0); // 순수 정산은 미러를 만지지 않는다
     expect(profile.storyRewardsClaimed).toContain('striker-ch3');
     expect(profile.storyRewardsClaimed.filter((id) => id === 'striker-ch3')).toHaveLength(1);
 
-    // 13번째 승리: 챕터는 여전히 해금 상태지만 원장이 재지급을 막는다.
-    settleRun(profile, baseResult({ victory: true, planet: 9, stage: 1 }));
+    // 13번째 승리: 챕터는 여전히 해금 상태지만 원장이 재청구(재반환)를 막는다.
+    const out13 = settleRun(profile, baseResult({ victory: true, planet: 9, stage: 1 }));
     expect(profile.storyMetrics.runsWon).toBe(13);
-    expect(profile.credits).toBe(reward); // 그대로 — 재지급 없음
+    expect(out13.storyRewardCredits).toBeUndefined(); // 재지급 없음
+    expect(profile.credits).toBe(0);
   });
 
-  it('해금과 동시에(같은 정산에서) 보상이 지급된다 — 임계값을 넘긴 그 런이 claim 한다', () => {
+  it('해금과 동시에(같은 정산에서) 보상이 반환된다 — 임계값을 넘긴 그 런이 claim 한다', () => {
     const striker = shipStory('striker')!;
     const reward = striker.chapters[2].reward!.credits;
     const profile = defaultProfile();
     profile.storyMetrics.runsWon = 11; // 다음 1승이 12번째
     const out = settleRun(profile, baseResult({ victory: true, planet: 9, stage: 1 }));
     expect(profile.storyMetrics.runsWon).toBe(12);
-    expect(profile.credits).toBe(reward);
+    expect(profile.credits).toBe(0); // 미러 미가산(반환값으로 지급)
     expect(out.storyRewardCredits).toBe(reward);
   });
 });

@@ -124,17 +124,18 @@ declare tp uuid := '000000aa-0000-4000-8000-00000000ab02'; res jsonb; c_after nu
 begin
   insert into auth.users(id,instance_id,aud,role,created_at,updated_at,is_sso_user,is_anonymous)
     values (tp,'00000000-0000-0000-0000-000000000000','authenticated','authenticated',now(),now(),false,false);
-  insert into public.profiles(id,save,display_name) values (tp, jsonb_build_object('credits',1000), 'REPAIRTESTER');
+  -- ADR-0027: 재화가 서버 권위 컬럼(profiles.credits)으로 이관됨 → 초기 크레딧을 컬럼에 세팅.
+  insert into public.profiles(id,save,display_name,credits) values (tp, jsonb_build_object('credits',1000), 'REPAIRTESTER', 1000);
   insert into public.defenses(profile_id,layout,budget_spent,maintenance,active)
     values (tp, '{"core":{"x":0,"y":0},"turrets":[],"obstacles":[]}'::jsonb, 0, 70.00, true);
   perform set_config('request.jwt.claims', json_build_object('sub',tp::text,'role','authenticated')::text, true);
   select public.repair_defense(null) into res;
-  select (save->>'credits')::numeric into c_after from public.profiles where id=tp;
+  select credits into c_after from public.profiles where id=tp;  -- ADR-0027: 컬럼 정본에서 읽음.
   select maintenance into m_after from public.defenses where profile_id=tp and active;
   raise exception 'T-E6 res=% credits_after=% maint_after=%', res, c_after, m_after;
 end $$;
--- 실측: res={"cost":150,"note":"repaired","credits":850,"repaired":true,"maintenance":100.00}
---       credits_after=850 maint_after=100.00
+-- 실측: res={"cost":150,"note":"repaired","credits":850,"credits_left":850,"repaired":true,"maintenance":100.00}
+--       credits_after=850 maint_after=100.00 (credits_after 는 profiles.credits 컬럼)
 
 -- -----------------------------------------------------------------------------
 -- T-E7. 비활성 침하 — #011(rank10) 40일 미접속 → rank13(-3), 아래 3명 상승, 상대순서 보존
