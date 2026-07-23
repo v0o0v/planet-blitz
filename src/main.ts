@@ -47,6 +47,8 @@ import { DefenseCommandScreen } from './ui/pixi/defenseCommand.js';
 
 import type { ControlTowerShowOpts, InvasionResultView } from './ui/controlTower.js';
 import { TitleScreen } from './ui/pixi/titleScreen.js';
+import { RecordsArchiveScreen } from './ui/pixi/recordsArchive.js';
+import { IntroSlidesScreen } from './ui/pixi/introSlides.js';
 import {
   TutorialOverlay,
   FtueTracker,
@@ -263,6 +265,10 @@ async function main(): Promise<void> {
   // visible + 콜백·옵션 타입 동일). 다른 캔버스 화면과 같은 블록에서 만들어야
   // entityRenderer·radar 레이어보다 **뒤에** stage 에 붙어 위로 그려진다(z 순서).
   const controlTower = new ControlTowerScreen(gameApp.stage);
+  // 스토리 시스템 Phase C2/C3: 기록 보관소(서사 열람 시설) + 세계관 인트로 슬라이드. 다른 캔버스
+  // 화면과 같은 블록에서 만들어야 entityRenderer·radar 레이어보다 뒤에 붙어 위로 그려진다(z 순서).
+  const recordsArchive = new RecordsArchiveScreen(gameApp.stage);
+  const introSlides = new IntroSlidesScreen(gameApp.stage);
   // 코어 모듈 화면(M7b — 구 카드 화면 계승). 진입은 방어 사령부의 모듈 탭 버튼이고, 사령부는
   // 자기 화면만 suspend 로 감췄다가 닫힐 때 resume 한다(미저장 배치 편집을 지키기 위해 show 를
   // 다시 부르지 않는다). 다른 캔버스 화면과 같은 블록에서 만들어야 z 순서가 맞는다.
@@ -436,6 +442,9 @@ async function main(): Promise<void> {
       case 'controlTower':
         openControlTower();
         break;
+      case 'archive':
+        openArchive();
+        break;
       // inventory/research/refinery/defense 는 각 오버레이가 자체 콜백으로 기지 복귀하므로
       // 언어 전환 즉시 반영은 다음 진입 때 이뤄진다(안전한 기본 동작).
       default:
@@ -463,6 +472,8 @@ async function main(): Promise<void> {
     defenseCommand.hide();
     defensePreview.stop();
     controlTower.hide();
+    recordsArchive.hide();
+    introSlides.hide();
     spectateOverlay.hide();
     stickerPicker.hide();
     spectateReplay = null; // 관전 종료(화면 전환 시 항상 해제)
@@ -514,7 +525,24 @@ async function main(): Promise<void> {
         baseMap.hide();
         openControlTower();
       },
+      onArchive: () => {
+        baseMap.hide();
+        openArchive();
+      },
       onStarMap: () => openStarMap(),
+    });
+  }
+
+  /** 기록 보관소(서사 열람 시설) — 사연 도감 · 기록 파편 도감 · 프롤로그 다시보기. */
+  function openArchive(): void {
+    clearToMenu();
+    setScreen('archive');
+    recordsArchive.show(profile, {
+      onBack: () => openBaseMap(),
+      onReplayIntro: () => {
+        // 인트로는 보관소 위 오버레이로 띄우고, 끝나면 보관소로 복귀한다(첫 실행 경로와 별개).
+        introSlides.show({ onDone: () => openArchive() });
+      },
     });
   }
 
@@ -1444,6 +1472,10 @@ async function main(): Promise<void> {
       // 관제탑은 서버 왕복 화면이라 로그인 없이는 안내 상태만 뜬다 — 채워진 화면을
       // 검증하려면 이 참조로 뷰를 직접 띄운다(카툰나무풍 롤아웃 #6 검증 절차).
       controlTower,
+      // 기록 보관소(서사 열람) + 인트로 슬라이드 — 검증 시 이 참조로 직접 show 한다.
+      recordsArchive,
+      introSlides,
+      openArchive,
       // 코어 모듈 화면도 로그인해야 채워진다(미로그인이면 안내 상태) — 검증 시 이 참조로
       // 상태를 직접 넣고 render() 를 부른다.
       modulesScreen,

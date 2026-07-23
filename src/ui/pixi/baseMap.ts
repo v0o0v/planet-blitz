@@ -23,7 +23,7 @@ import type { BaseMapCallbacks } from '../baseMap.js';
 
 /** 건물 타일 정의. 아이콘은 UI 킷 텍스처 basename 으로 참조한다. */
 interface Building {
-  key: 'hangar' | 'research' | 'refinery' | 'defense' | 'control';
+  key: 'hangar' | 'research' | 'refinery' | 'defense' | 'control' | 'archive';
   nameKey: MessageKey;
   descKey: MessageKey;
   tex: string;
@@ -37,6 +37,8 @@ const BUILDINGS: readonly Building[] = [
   { key: 'refinery', nameKey: 'base.bld.refinery.name', descKey: 'base.bld.refinery.desc', tex: 'ui_bld_refinery.png', accent: 0xffd24c },
   { key: 'defense', nameKey: 'base.bld.defense.name', descKey: 'base.bld.defense.desc', tex: 'ui_bld_defense.png', accent: 0x8fd94c },
   { key: 'control', nameKey: 'base.bld.control.name', descKey: 'base.bld.control.desc', tex: 'ui_bld_control.png', accent: 0xc86aff },
+  // 기록 보관소(스토리 시스템 Phase C2) — 상시 개방 서사 열람 시설. 아이콘 미도착 시 accent 폴백.
+  { key: 'archive', nameKey: 'base.bld.archive.name', descKey: 'base.bld.archive.desc', tex: 'ui_bld_archive.png', accent: 0xffb24c },
 ];
 
 // --- 레이아웃 상수(디자인 스페이스). 목업 좌표를 그대로 옮긴다 — 재유도 금지(스킬 §2-3). ---
@@ -65,10 +67,13 @@ const LAUNCH_H = 84;
 const LAUNCH_Y = 872;
 const META_Y = 996;
 
-/** i 번째 건물 타일의 좌상단(3+2 배치, 각 행 가운데 정렬). */
+/**
+ * i 번째 건물 타일의 좌상단(2행 배치, 각 행 가운데 정렬). 첫 행은 최대 3칸, 나머지는 둘째 행.
+ * 6건물이면 3+3, 5건물이면 3+2 로 각 행이 스스로 가운데 정렬된다(기록 보관소 추가로 6칸).
+ */
 function tilePosition(i: number): { x: number; y: number } {
   const row = i < 3 ? 0 : 1;
-  const cols = row === 0 ? 3 : 2;
+  const cols = row === 0 ? Math.min(3, BUILDINGS.length) : BUILDINGS.length - 3;
   const col = row === 0 ? i : i - 3;
   const rowW = cols * TILE_W + (cols - 1) * TILE_GAP;
   const x0 = (DESIGN_WIDTH - rowW) / 2;
@@ -130,6 +135,9 @@ export class BaseMapScreen {
       case 'control':
         // 관제탑(침공·래더) — 방어 사령부와 동일 해금 조건(행성 1회 클리어).
         return u.defenseCommand ? null : t('base.lock.clear');
+      case 'archive':
+        // 기록 보관소 — 서사 열람 시설이라 상시 개방(잠금 없음).
+        return null;
       default:
         return null;
     }
@@ -153,6 +161,9 @@ export class BaseMapScreen {
         break;
       case 'control':
         cb.onControl();
+        break;
+      case 'archive':
+        cb.onArchive();
         break;
     }
   }

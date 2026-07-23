@@ -70,6 +70,8 @@ export interface BaseMapCallbacks {
   onDefense: () => void;
   onControl: () => void;
   onStarMap: () => void;
+  /** 기록 보관소(서사 열람 시설) 진입 — 상시 개방(스토리 시스템 Phase C2). */
+  onArchive: () => void;
 }
 
 export class BaseMap {
