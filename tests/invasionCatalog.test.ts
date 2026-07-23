@@ -135,6 +135,10 @@ describe('침공 카탈로그 — 인덱스 계약', () => {
       'formation.shield-escort',
       'formation.sniper-nest',
       'formation.support-escort',
+      'formation.toxar-corrosion',
+      'formation.toxar-blight',
+      'formation.kras-breaker',
+      'formation.kras-piercer',
       'fac.rapid',
       'fac.rail',
       'fac.mortar',
@@ -144,6 +148,14 @@ describe('침공 카탈로그 — 인덱스 계약', () => {
       'fac.press',
       'fac.gravwell',
       'fac.shock',
+      'fac.venomvent',
+      'fac.blightpool',
+      'fac.corrosivemist',
+      'fac.toxinturret',
+      'fac.heavyrail',
+      'fac.siegecannon',
+      'fac.breachturret',
+      'fac.demolisher',
       'prop.shieldGenerator',
       'prop.gravityAnchor',
       'prop.fixedCannon',
@@ -162,7 +174,7 @@ describe('침공 카탈로그 — 인덱스 계약', () => {
   /**
    * 종류별 등록 수는 **원본 배열 length 파생**이어야 한다. 여기서 개수를 하드코딩하면 카탈로그가
    * 늘 때마다 두 곳을 고쳐야 하고, 한쪽만 고치면 `catalogEntriesOfKind` 가 조용히 잘린다.
-   * (M7c 확장분 = 편대 8 · 설비 9 · 기물 6 · 보스 3 · 맵 3 — 아래 골든이 정본이다.)
+   * (Lane9 확장분 = 편대 12 · 설비 17 · 기물 6 · 보스 3 · 맵 3 — 아래 골든이 정본이다.)
    */
   it('CATALOG_KIND_COUNTS 는 원본 배열 length 에서 파생된다(하드코딩 금지)', () => {
     expect(CATALOG_KIND_COUNTS).toEqual([

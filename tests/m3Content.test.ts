@@ -109,7 +109,7 @@ function addEnemy(state: WorldState, dx: number, dy = 0, hp = 1_000_000) {
 
 describe('행성 레지스트리 확장 (B1/B2, AC4)', () => {
   it('니플헤임(2)·아르케(3)가 성계 지도에 등록된다', () => {
-    expect(PLANETS.length).toBe(4);
+    expect(PLANETS.length).toBe(6); // Lane9: 톡사르(4)·크라스(5) append
     expect(PLANETS[2]).toBe(NIFLHEIM);
     expect(PLANETS[3]).toBe(ARKE);
     expect(planetContent(2).id).toBe('niflheim');
@@ -135,8 +135,8 @@ describe('행성 레지스트리 확장 (B1/B2, AC4)', () => {
     expect(arkKinds).toContain('polygonSpin');
   });
 
-  it('ENEMY_BY_TYPE가 22종(카르곤~아르케)으로 연속 typeIndex를 유지한다', () => {
-    expect(ENEMY_BY_TYPE.length).toBe(22);
+  it('ENEMY_BY_TYPE가 34종(카르곤~크라스)으로 연속 typeIndex를 유지한다', () => {
+    expect(ENEMY_BY_TYPE.length).toBe(34); // Lane9: 톡사르 22~27 · 크라스 28~33 append
     ENEMY_BY_TYPE.forEach((def, i) => expect(def.typeIndex).toBe(i));
   });
 });

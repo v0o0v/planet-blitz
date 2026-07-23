@@ -49,6 +49,10 @@ import {
   FORMATION_SHIELD_ESCORT,
   FORMATION_SNIPER_NEST,
   FORMATION_SUPPORT_ESCORT,
+  FORMATION_TOXAR_CORROSION,
+  FORMATION_TOXAR_BLIGHT,
+  FORMATION_KRAS_BREAKER,
+  FORMATION_KRAS_PIERCER,
   formationById,
   formationPowerCp,
   ENTRY_PATTERN_COUNT,
@@ -122,9 +126,9 @@ describe('편대 카탈로그 — append-only 계약', () => {
     FORMATIONS.forEach((f, i) => expect(f.catalogId).toBe(i));
   });
 
-  it('풀 카탈로그는 8종이고 id 가 전역 유일', () => {
-    expect(FORMATION_COUNT).toBe(8);
-    expect(new Set(FORMATIONS.map((f) => f.id)).size).toBe(8);
+  it('풀 카탈로그는 12종이고 id 가 전역 유일', () => {
+    expect(FORMATION_COUNT).toBe(12); // Lane9: 톡사르 8~9 · 크라스 10~11 append
+    expect(new Set(FORMATIONS.map((f) => f.id)).size).toBe(12);
   });
 
   /**
@@ -142,6 +146,10 @@ describe('편대 카탈로그 — append-only 계약', () => {
       'formation-shield-escort',
       'formation-sniper-nest',
       'formation-support-escort',
+      'formation-toxar-corrosion',
+      'formation-toxar-blight',
+      'formation-kras-breaker',
+      'formation-kras-piercer',
     ]);
     expect(FORMATION_SCOUT_DRONES).toBe(0);
     expect(FORMATION_INTERCEPTORS).toBe(1);
@@ -151,6 +159,10 @@ describe('편대 카탈로그 — append-only 계약', () => {
     expect(FORMATION_SHIELD_ESCORT).toBe(5);
     expect(FORMATION_SNIPER_NEST).toBe(6);
     expect(FORMATION_SUPPORT_ESCORT).toBe(7);
+    expect(FORMATION_TOXAR_CORROSION).toBe(8);
+    expect(FORMATION_TOXAR_BLIGHT).toBe(9);
+    expect(FORMATION_KRAS_BREAKER).toBe(10);
+    expect(FORMATION_KRAS_PIERCER).toBe(11);
   });
 
   /**
@@ -158,8 +170,8 @@ describe('편대 카탈로그 — append-only 계약', () => {
    * 계약이라 늘리는 순간 스프라이트 매핑·조준 술어·EF 재실행까지 표면이 넓어진다 —
    * 이 가드는 "편대를 늘리다가 적을 슬쩍 끼워 넣는" 변경을 즉시 빨간불로 만든다.
    */
-  it('ENEMY_BY_TYPE 골든 — 22종·연속 typeIndex·기존 0~21 불변', () => {
-    expect(ENEMY_BY_TYPE.length).toBe(22);
+  it('ENEMY_BY_TYPE 골든 — 34종·연속 typeIndex·기존 0~21 불변', () => {
+    expect(ENEMY_BY_TYPE.length).toBe(34); // Lane9: 톡사르 22~27 · 크라스 28~33 append
     ENEMY_BY_TYPE.forEach((def, i) => expect(def.typeIndex).toBe(i));
     expect(ENEMY_BY_TYPE.map((d) => d.id)).toEqual([
       'kargon-charger',
@@ -184,6 +196,18 @@ describe('편대 카탈로그 — append-only 계약', () => {
       'arke-restore-droid',
       'arke-guardian-battery',
       'arke-ancient-breaker',
+      'toxar-corroder',
+      'toxar-venom-spitter',
+      'toxar-blight-gland',
+      'toxar-plague-tender',
+      'toxar-toxin-sentinel',
+      'toxar-rot-behemoth',
+      'kras-breaker',
+      'kras-piercer',
+      'kras-crusher-totem',
+      'kras-salvage-drone',
+      'kras-siege-battery',
+      'kras-devastator',
     ]);
   });
 

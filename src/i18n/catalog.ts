@@ -684,6 +684,19 @@ export const EN = {
   'def3.formation.support-escort.name': 'Support Escort',
   'def3.formation.support-escort.desc':
     'A heavy brood ship travels with repair droids that keep healing it from close range. Kill the healers first or the brood never drops.',
+  // Lane9 신규 편대(톡사르·크라스)
+  'def3.formation.toxar-corrosion.name': 'Corrosion Assault',
+  'def3.formation.toxar-corrosion.desc':
+    'Acid rushers flank in from both sides with spitters and blight glands stacked behind. Stand still and the acid keeps eating away at you.',
+  'def3.formation.toxar-blight.name': 'Blight Drift',
+  'def3.formation.toxar-blight.desc':
+    'A slow drifting swarm of spitters and blight glands seals the lane in toxin and lingers on screen far longer than most.',
+  'def3.formation.kras-breaker.name': 'Breaker Charge',
+  'def3.formation.kras-breaker.desc':
+    'Three crusher golems ram in a tight column while two ancient breakers accelerate in behind. Push through the wall or go around.',
+  'def3.formation.kras-piercer.name': 'Piercer Nest',
+  'def3.formation.kras-piercer.desc':
+    'Guardian batteries perch up top painting warning lines while precision turrets and a golem follow. Close in fast or keep getting pierced.',
   // L2 설비
   'def3.fac.rapid.name': 'Rapid Cannon',
   'def3.fac.rapid.desc': 'Wall-mounted autocannon with a steady stream of short-range fire.',
@@ -706,6 +719,23 @@ export const EN = {
   'def3.fac.shock.name': 'Shock Emitter',
   'def3.fac.shock.desc':
     'Charges for a long beat, then detonates a huge blast for a fraction of a second. One dodge, correctly timed.',
+  // Lane9 신규 설비(톡사르 부식 · 크라스 파괴)
+  'def3.fac.venomvent.name': 'Venom Vent',
+  'def3.fac.venomvent.desc': 'Pours a constant acid field just inside the wall, wearing down anything that lingers.',
+  'def3.fac.blightpool.name': 'Blight Pool',
+  'def3.fac.blightpool.desc': 'Raises a wide slowing sludge on a cycle. It barely stings, but it strips your room to dodge.',
+  'def3.fac.corrosivemist.name': 'Corrosive Mist',
+  'def3.fac.corrosivemist.desc': 'Spreads a broad low-damage haze that covers the lane for a long beat after a short warmup.',
+  'def3.fac.toxinturret.name': 'Toxin Autogun',
+  'def3.fac.toxinturret.desc': 'Sweeps close range with a fast stream of low-damage toxic rounds.',
+  'def3.fac.heavyrail.name': 'Heavy Railgun',
+  'def3.fac.heavyrail.desc': 'Locks its aim, paints a warning line, then drives one massive piercing round down the lane.',
+  'def3.fac.siegecannon.name': 'Siege Cannon',
+  'def3.fac.siegecannon.desc': 'Slow but heavy — lobs a single high-impact shell that hits like a wrecking ball.',
+  'def3.fac.breachturret.name': 'Breach Scattergun',
+  'def3.fac.breachturret.desc': 'Fires a mid-power fan of shells to blanket the corridor with breaching fire.',
+  'def3.fac.demolisher.name': 'Demolition Charge',
+  'def3.fac.demolisher.desc': 'Charges for a long beat, then blows a huge blast for an instant. One dodge, correctly timed.',
   // L3 기물
   'def3.prop.shieldGenerator.name': 'Shield Generator',
   'def3.prop.shieldGenerator.desc':
@@ -1524,6 +1554,19 @@ export const KO: Record<MessageKey, string> = {
   'def3.formation.support-escort.name': '지원 편대',
   'def3.formation.support-escort.desc':
     '두꺼운 모체를 복원 드로이드가 따라다니며 근거리에서 계속 회복시킨다. 치유원을 먼저 지우지 않으면 모체가 내려가지 않는다.',
+  // Lane9 신규 편대(톡사르·크라스)
+  'def3.formation.toxar-corrosion.name': '부식 강습편대',
+  'def3.formation.toxar-corrosion.desc':
+    '산성 돌격체가 좌우에서 파고들고 그 뒤로 독액 분사체·부식 분비강이 협공으로 붙는다. 가만히 있으면 산성이 계속 갉아먹는다.',
+  'def3.formation.toxar-blight.name': '역병 살포편대',
+  'def3.formation.toxar-blight.desc':
+    '독액 분사체와 부식 분비강이 느리게 흘러내리며 통로를 오염으로 봉쇄한다. 화면에 오래 남아 지속 피해로 길을 좁힌다.',
+  'def3.formation.kras-breaker.name': '파쇄 돌격편대',
+  'def3.formation.kras-breaker.desc':
+    '파쇄 골렘 3기가 밀집 종대로 들이받고 고대 파괴자 2기가 뒤에서 가속 진입한다. 전열을 뚫을지 우회할지 고르게 만든다.',
+  'def3.formation.kras-piercer.name': '관통 저격편대',
+  'def3.formation.kras-piercer.desc':
+    '수호 포대가 상단에 눌러앉아 예고선을 긋고 정밀 포탑과 골렘이 뒤따른다. 빨리 붙지 않으면 계속 관통당한다.',
   // L2 설비
   'def3.fac.rapid.name': '속사포',
   'def3.fac.rapid.desc': '벽에 붙어 근거리를 꾸준히 훑는 기본 연사 포대.',
@@ -1546,6 +1589,23 @@ export const KO: Record<MessageKey, string> = {
   'def3.fac.shock.name': '충격파 발생기',
   'def3.fac.shock.desc':
     '길게 예열한 뒤 아주 짧은 순간에 거대한 광역 폭발을 터뜨린다. 회피 타이밍 한 번을 정확히 묻는다.',
+  // Lane9 신규 설비(톡사르 부식 · 크라스 파괴)
+  'def3.fac.venomvent.name': '부식 분사구',
+  'def3.fac.venomvent.desc': '벽 안쪽에 꺼지지 않는 산성 장판을 계속 뿜어 오래 머무는 것을 갉아먹는다.',
+  'def3.fac.blightpool.name': '오염 늪',
+  'def3.fac.blightpool.desc': '주기적으로 넓은 감속 오염 늪을 세운다. 피해는 미미하지만 회피 여유를 깎는다.',
+  'def3.fac.corrosivemist.name': '부식 안개',
+  'def3.fac.corrosivemist.desc': '짧은 예열 뒤 넓은 저피해 안개를 오래 깔아 회랑을 덮는다.',
+  'def3.fac.toxinturret.name': '독성 연사포',
+  'def3.fac.toxinturret.desc': '근거리를 빠르게 훑는 저피해 독성 연사 포대.',
+  'def3.fac.heavyrail.name': '중장 레일포',
+  'def3.fac.heavyrail.desc': '조준을 잠그고 예고선을 그은 뒤 초고피해 관통탄 한 발을 회랑으로 내리꽂는다.',
+  'def3.fac.siegecannon.name': '공성 주포',
+  'def3.fac.siegecannon.desc': '느리지만 무거운 단발 고화력 포격으로 육중하게 후려친다.',
+  'def3.fac.breachturret.name': '돌파 산탄포',
+  'def3.fac.breachturret.desc': '중간 화력의 부채꼴 다발을 뿌려 회랑을 면으로 돌파 제압한다.',
+  'def3.fac.demolisher.name': '파괴 폭뢰기',
+  'def3.fac.demolisher.desc': '길게 예열한 뒤 한순간에 거대한 광역 폭발을 터뜨린다. 회피 타이밍 한 번을 정확히 묻는다.',
   // L3 기물
   'def3.prop.shieldGenerator.name': '실드 발생기',
   'def3.prop.shieldGenerator.desc': '코어를 보호막으로 감싼다. 이걸 먼저 부수지 않으면 코어에 흠집도 안 난다.',

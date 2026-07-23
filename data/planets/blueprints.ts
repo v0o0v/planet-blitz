@@ -129,12 +129,42 @@ export const ARKE_BLUEPRINTS: readonly BlueprintSpecialty[] = [
   { kind: CATALOG_BOSS, catalogId: 2, weight: 1 },
 ];
 
+/**
+ * 톡사르(4) — 부식·중독(Lane9). 지속 해저드로 지역을 잠식하는 계열이 여기서만 나온다.
+ * 부식 강습편대(8) · 역병 살포편대(9) · 부식 분사구(설비 9) · 오염 늪(설비 10) ·
+ * 부식 안개(설비 11) · 독성 연사포(설비 12). 가중치는 플레이스홀더(// TODO(밸런스)).
+ */
+export const TOXAR_BLUEPRINTS: readonly BlueprintSpecialty[] = [
+  { kind: CATALOG_FORMATION, catalogId: 8, weight: 3 }, // TODO(밸런스)
+  { kind: CATALOG_FORMATION, catalogId: 9, weight: 2 }, // TODO(밸런스)
+  { kind: CATALOG_FACILITY, catalogId: 9, weight: 3 }, // TODO(밸런스)
+  { kind: CATALOG_FACILITY, catalogId: 10, weight: 2 }, // TODO(밸런스)
+  { kind: CATALOG_FACILITY, catalogId: 11, weight: 2 }, // TODO(밸런스)
+  { kind: CATALOG_FACILITY, catalogId: 12, weight: 3 }, // TODO(밸런스)
+];
+
+/**
+ * 크라스(5) — 파괴·관통(Lane9). 벽을 부수는 고화력 계열이 여기서만 나온다.
+ * 파쇄 돌격편대(10) · 관통 저격편대(11) · 중장 레일포(설비 13) · 공성 주포(설비 14) ·
+ * 돌파 산탄포(설비 15) · 파괴 폭뢰기(설비 16). 가중치는 플레이스홀더(// TODO(밸런스)).
+ */
+export const KRAS_BLUEPRINTS: readonly BlueprintSpecialty[] = [
+  { kind: CATALOG_FORMATION, catalogId: 10, weight: 3 }, // TODO(밸런스)
+  { kind: CATALOG_FORMATION, catalogId: 11, weight: 2 }, // TODO(밸런스)
+  { kind: CATALOG_FACILITY, catalogId: 13, weight: 3 }, // TODO(밸런스)
+  { kind: CATALOG_FACILITY, catalogId: 14, weight: 2 }, // TODO(밸런스)
+  { kind: CATALOG_FACILITY, catalogId: 15, weight: 2 }, // TODO(밸런스)
+  { kind: CATALOG_FACILITY, catalogId: 16, weight: 3 }, // TODO(밸런스)
+];
+
 /** 행성 index → 특산 목록(가중치 미전개). PLANETS 와 같은 순서. */
 export const PLANET_BLUEPRINT_SPECIALTIES: readonly (readonly BlueprintSpecialty[])[] = [
   KARGON_BLUEPRINTS,
   BERDAN_BLUEPRINTS,
   NIFLHEIM_BLUEPRINTS,
   ARKE_BLUEPRINTS,
+  TOXAR_BLUEPRINTS,
+  KRAS_BLUEPRINTS,
 ];
 
 // ---------------------------------------------------------------------------
