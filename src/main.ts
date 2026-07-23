@@ -83,6 +83,7 @@ import { runBench } from './bench/bench.js';
 // 런 설정 조립 **단일 정본**(M8 설계서 §10-2). PvE·정식 침공·하네스 침공 세 경로가 전부
 // 이것만 쓴다 — main.ts 안에서 config 를 다시 조립하지 마라(3중복이 배선 누락의 원인이었다).
 import { buildRunConfig } from './run/runConfig.js';
+import { buildCallupPilot } from './run/callupPilot.js';
 import { loadProfile, saveProfile, activeShip } from './save/profile.js';
 import { settleRun } from './save/settlement.js';
 import type { SettlementOutcome } from './save/settlement.js';
@@ -594,7 +595,8 @@ async function main(): Promise<void> {
     controlTower.show(
       profile,
       {
-        onInvade: (target, layout) => void startInvasionRun(target, layout),
+        onInvade: (target, layout, pilotGuardianId) =>
+          void startInvasionRun(target, layout, pilotGuardianId),
         onSpectate: (invasionId, attackerName) => void startSpectate(invasionId, attackerName),
         onSticker: (invasionId, attackerName) => promptSticker(invasionId, t('sticker.prompt.defend'), attackerName),
         onBack: () => openBaseMap(),
@@ -712,8 +714,15 @@ async function main(): Promise<void> {
    * 침공 런 시작. 대상의 방어 배치(서버 raw)를 3레이어 정규화해 침공 config 로 넣어
    * 결정론 런을 돌린다(갈림길③A). 승리=코어 파괴, 패배=시간초과/격추. 런 종료 시
    * endRun 이 invasionTarget 을 보고 서버 제출로 분기한다.
+   *
+   * `pilotGuardianId`(ADR-0024): 관제탑 출격 기체 선택 결과. null/undefined = 활성 기체,
+   * 문자열 = 그 수호기 id 로 예비역 소집(활성 기체 대신 잠긴 빌드로 출격).
    */
-  async function startInvasionRun(target: InvasionTarget, layout: unknown): Promise<void> {
+  async function startInvasionRun(
+    target: InvasionTarget,
+    layout: unknown,
+    pilotGuardianId?: string | null,
+  ): Promise<void> {
     // 관제탑 경유 시작 — 켜져 있을 수 있는 메뉴를 먼저 내린다(harness startRun 참조).
     planetSelect.hide();
     inventory.hide();
@@ -771,9 +780,21 @@ async function main(): Promise<void> {
       ...(maintenance !== undefined ? { maintenance } : {}),
       ...(runModules !== null ? { modules: runModules } : {}),
     };
+    // 예비역 소집(ADR-0024): 호출부가 고른 수호기 id 가 있으면 그 잠긴 실물 빌드로 출격한다.
+    // id 가 null/undefined 이거나(활성 기체 출격) 조회 실패·build 부재(구 수호기)면 pilot 은
+    // undefined 로 두어 buildRunConfig 가 기존 활성 기체 경로를 **바이트 그대로** 탄다. 장비는
+    // `EQUIP_SLOTS` 순서 배열로 모은다(runConfig.equippedItems 와 동일한 순서 계약).
+    const pilot = buildCallupPilot(profile, pilotGuardianId);
     // 런 조립은 단일 정본(`buildRunConfig`)만 쓴다 — 여기서 config 를 손보지 마라(설계서 §10-2).
-    const config = buildRunConfig(profile, { planet: 0, stage: 1, invasion3 });
-    // 활성 기체 스프라이트 교체(렌더 전용) — `createWorld` 앞. PvE `startRun` 과 동일 규약.
+    // 소집은 4번째 조립 사이트를 만들지 않고 **기존 호출의 opts 에만** pilot 을 얹는다(§10-2 grep 게이트).
+    const config = buildRunConfig(profile, {
+      planet: 0,
+      stage: 1,
+      invasion3,
+      ...(pilot !== null ? { pilot } : {}),
+    });
+    // 기체 스프라이트 교체(렌더 전용) — `createWorld` 앞. PvE `startRun` 과 동일 규약. 소집이면
+    // config.shipType 이 이미 pilot.typeId 라(buildRunConfig 가 스탬프) 스프라이트가 자동으로 따라간다.
     applyShipSprite(textures, config.shipType ?? 0);
     // 레이어별 배경(L1 대기권 → L2 회랑 → L3 코어방). 전환은 렌더 루프가 페이즈를 보고 건다.
     applyInvasionBackdrop(PHASE_L1);

@@ -181,6 +181,24 @@ export interface Profile {
   storyRewardsClaimed: string[];
 }
 
+/**
+ * 예비역 소집·장비 잠김용 실물 빌드(ADR-0024). {@link GuardianRecord.snapshot}의 **형제** 필드로,
+ * 퇴역 순간의 실제 기체 loadout(타입·장착 장비·스킬 투자)을 통째로 복사해 고정한다. 소집(예비역
+ * 출격) 시 이 빌드로 런 loadout 을 파생하고, 소멸(dismiss) 시 `equipped` 의 장비를 stash 로 반환한다.
+ *
+ * ⚠️ snapshot(방어 배치·해시 경로의 정본) 안에 넣지 않고 **형제로만** 둔다 — snapshot 필드 열거는
+ * 결정론 계약(tests/invasionHash·shipHashBaseline)이라 build 를 그 안에 섞으면 방어 배치 바이트가
+ * 변한다. build 는 순수 additive 라 방어/해시 경로를 건드리지 않는다.
+ */
+export interface GuardianBuild {
+  /** 런 loadout 파생용 기체 타입(퇴역 순간 활성 기체의 typeId 복사). */
+  readonly typeId: number;
+  /** 잠긴 장비(퇴역 순간 복사) — 소멸 시 stash 로 반환된다. */
+  readonly equipped: Partial<Record<EquipSlotId, Item>>;
+  /** 스킬 투자 벡터 복사(길이 = shipTypeNodes(typeId).length). */
+  readonly skillInvest: number[];
+}
+
 /** 로컬 세이브의 수호 기체 레코드(서버 guardians 미러, ADR-0007). */
 export interface GuardianRecord {
   /** 식별자(서버 guardians.id 또는 로컬 생성 id). */
@@ -195,6 +213,11 @@ export interface GuardianRecord {
   preset: number;
   /** 소멸됨(계보 포인트로 회수 완료). true 면 방어 참전·재소멸 불가. */
   retired: boolean;
+  /**
+   * 예비역 소집·장비 잠김용 실물 빌드(ADR-0024, 신규 v7). snapshot 의 형제로 퇴역 순간 고정된다.
+   * **부재 = 소집 비활성**(ADR-0024 이전에 퇴역한 구 수호기 — build 없이 정규화된다).
+   */
+  build?: GuardianBuild;
 }
 
 /** Which base-map buildings are currently unlocked (derived, GDD §7 / plan E2). */
@@ -479,7 +502,18 @@ export function migrate(raw: unknown): Profile {
   if (version < 4) data = migrateV3toV4(data);
   if (version < 5) data = migrateV4toV5(data);
   if (version < 6) data = migrateV5toV6(data);
+  if (version < 7) data = migrateV6toV7(data);
   return normalizeProfile(data);
+}
+
+/**
+ * v6 → v7 (예비역 소집·장비 잠김, ADR-0024): `GuardianRecord.build`(퇴역 순간 고정 실물 빌드)
+ * 신설. build 는 snapshot 의 형제 additive-optional 필드라 구 수호기는 그냥 build 가 없다(=소집
+ * 비활성). 실제 파싱은 `normalizeGuardianRecords`(build 부재 → undefined)가 맡으므로 마이그레이션은
+ * 스탬프만 올린다(migrateV1toV2·migrateV5toV6 선례). 기존 진행 상태(수호 로스터 포함)는 그대로 통과.
+ */
+function migrateV6toV7(v6: Record<string, unknown>): Record<string, unknown> {
+  return { ...v6, saveVersion: 7 };
 }
 
 /**
@@ -704,6 +738,25 @@ function normalizeGuardianSnapshot(v: unknown): GuardianSnapshot | null {
   return out as unknown as GuardianSnapshot;
 }
 
+/**
+ * 저장된 수호 기체 실물 빌드(ADR-0024, v7)를 정규화한다. build 블롭이 객체가 아니면(부재·손상)
+ * undefined 를 돌려주고, 이때 레코드 자체는 유지된다(소집 비활성 = 구 수호기와 동일 상태).
+ * typeId·equipped·skillInvest 는 **기존 정본 헬퍼로만** 정규화한다(규칙 중복 금지 — equipped 루프는
+ * {@link normalizeShip} 과 동일 필터, typeId 는 normalizeShipTypeId, 벡터는 normalizeSkillInvest).
+ */
+function normalizeGuardianBuild(v: unknown): GuardianBuild | undefined {
+  if (typeof v !== 'object' || v === null) return undefined;
+  const d = v as Record<string, unknown>;
+  const typeId = normalizeShipTypeId(d.typeId);
+  const equipped: Partial<Record<EquipSlotId, Item>> = {};
+  if (typeof d.equipped === 'object' && d.equipped !== null) {
+    for (const [slot, item] of Object.entries(d.equipped as Record<string, unknown>)) {
+      if (isValidItem(item)) equipped[slot as EquipSlotId] = item;
+    }
+  }
+  return { typeId, equipped, skillInvest: normalizeSkillInvest(d.skillInvest, typeId) };
+}
+
 /** 저장된 수호 기체 레코드 배열을 정규화(손상 항목은 스킵). */
 function normalizeGuardianRecords(v: unknown): GuardianRecord[] {
   if (!Array.isArray(v)) return [];
@@ -714,6 +767,8 @@ function normalizeGuardianRecords(v: unknown): GuardianRecord[] {
     const snapshot = normalizeGuardianSnapshot(d.snapshot);
     if (snapshot === null) continue;
     const id = typeof d.id === 'string' && d.id.length > 0 ? d.id : `g-${out.length}`;
+    // build 는 snapshot 의 형제(additive) — 부재/손상이어도 레코드는 유지(소집 비활성).
+    const build = normalizeGuardianBuild(d.build);
     out.push({
       id,
       snapshot,
@@ -721,6 +776,7 @@ function normalizeGuardianRecords(v: unknown): GuardianRecord[] {
       combatScore: clampInt(d.combatScore, 0, Number.MAX_SAFE_INTEGER, 0),
       preset: normalizeGuardianPreset(numOr(d.preset, snapshot.preset)),
       retired: d.retired === true,
+      ...(build !== undefined ? { build } : {}),
     });
   }
   return out;

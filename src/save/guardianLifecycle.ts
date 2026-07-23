@@ -13,7 +13,7 @@
  * 유일한 비결정 요소는 신규 수호 레코드의 로컬 id(표시용) — 서버 생성 시 서버 id 로 대체된다.
  */
 
-import type { Profile, GuardianRecord, Ship } from './profile.js';
+import type { Profile, GuardianRecord, GuardianBuild, Ship } from './profile.js';
 import { totalCombatPower } from './combatPower.js';
 import type { Item } from '../items/types.js';
 import {
@@ -68,9 +68,11 @@ export interface RetireResult {
 }
 
 /**
- * 활성 기체를 퇴역시킨다(ADR-0007 R8 + M8 세대 교체): 전투력 점수로 복사 스냅샷 생성 →
- * 수호 기체 추가(성능 100%) → 계보 기본 지급(+{@link RETIRE_LINEAGE_GRANT}) → 장착 장비
- * 창고 반환 → **`nextTypeId` 의 신규 기체를 push 하고 활성으로 이동**.
+ * 활성 기체를 퇴역시킨다(ADR-0007 R8 + M8 세대 교체 + ADR-0024 장비 잠김): 전투력 점수로 복사
+ * 스냅샷 생성 → 실물 빌드(타입·장착 장비·스킬 투자)를 수호기에 잠금 → 수호 기체 추가(성능 100%)
+ * → 계보 기본 지급(+{@link RETIRE_LINEAGE_GRANT}) → 활성 기체 장착 슬롯 비우기(장비는 stash 가
+ * 아니라 `guardian.build.equipped` 에 봉인 — 소멸 시에만 stash 로 반환) →
+ * **`nextTypeId` 의 신규 기체를 push 하고 활성으로 이동**.
  *
  * preset(0 타이탄/1 인터셉터)은 수호 기체 프리셋 선택제(OQ-M5-3). `nextTypeId` 는 다음 세대로
  * 탈 기체 타입(ADR-0019 — 전체 개방, 해금 조건 없음); 범위 밖이면 0(스트라이커)으로 clamp 된다.
@@ -90,6 +92,14 @@ export function retireActiveShip(
   const p = normalizeGuardianPreset(preset);
   const score = retirementCombatScore(profile);
   const snapshot = makeGuardianSnapshot(p, score);
+  // 퇴역 순간의 실물 빌드를 통째로 복사해 잠근다(ADR-0024) — 비우기 전에 캡처해야 한다.
+  // equipped 는 얕은 복사(Item 은 불변 데이터라 참조 공유 안전), skillInvest 는 벡터 복사.
+  const ship = activeShip(profile);
+  const build: GuardianBuild = {
+    typeId: ship.typeId,
+    equipped: { ...ship.equipped },
+    skillInvest: ship.skillInvest.slice(),
+  };
   const guardian: GuardianRecord = {
     id: makeLocalGuardianId(profile),
     snapshot,
@@ -97,14 +107,14 @@ export function retireActiveShip(
     combatScore: score,
     preset: p,
     retired: false,
+    build,
   };
   profile.guardians.push(guardian);
   profile.lineage = grantPoints(profile.lineage, RETIRE_LINEAGE_GRANT);
-  // 장비 원본 자동 창고 반환(ADR-0007) — 장착 슬롯을 비우고 stash 로 옮긴다.
-  const ship = activeShip(profile);
+  // 장비 잠김(ADR-0024) — 장착 장비는 stash 로 반환하지 않고 `guardian.build.equipped` 에
+  // 봉인된다(소멸 시에만 stash 로 반환). 퇴역한 기체 로스터에 잔여 장비가 보이지 않도록
+  // 활성 기체의 장착 슬롯만 비운다.
   for (const key of Object.keys(ship.equipped) as (keyof typeof ship.equipped)[]) {
-    const it = ship.equipped[key];
-    if (it !== undefined) profile.stash.push(it);
     delete ship.equipped[key];
   }
   // 세대 교체: 신규 기체를 만들어 활성으로 옮긴다. 타입은 레지스트리 유효 범위로 clamp 한다.
@@ -133,7 +143,8 @@ export interface DismissResult {
 
 /**
  * 수호 기체를 소멸(회수)한다(ADR-0007 R3/R5): 계보 포인트 = 전투력 × 남은 성능(dismissPoints).
- * 상시 가능하되 이미 소멸했거나 없는 id 는 no-op. 성공 시 retired=true + 계보 available 증가.
+ * 상시 가능하되 이미 소멸했거나 없는 id 는 no-op. 성공 시 retired=true + 계보 available 증가 +
+ * 잠긴 장비(build.equipped)를 stash 로 반환(ADR-0024, build 없는 구 수호기는 반환 없음).
  */
 export function dismissGuardianRecord(profile: Profile, id: string): DismissResult {
   const g = profile.guardians.find((x) => x.id === id);
@@ -141,12 +152,14 @@ export function dismissGuardianRecord(profile: Profile, id: string): DismissResu
   const points = dismissPoints(g.combatScore, g.performanceCP);
   g.retired = true;
   profile.lineage = grantPoints(profile.lineage, points);
+  returnLockedGear(profile, g);
   return { dismissed: true, points };
 }
 
 /**
  * 활성 수호 기체를 일괄 소멸한다(퇴역 플로우의 "기존 수호 일괄 소멸" UI, ADR-0007 R3). 각 개체의
- * 성능 비례 포인트를 합산 회수한다. 반환: {count, points}.
+ * 성능 비례 포인트를 합산 회수하고, 잠긴 장비(build.equipped)를 각각 stash 로 반환한다(ADR-0024).
+ * 반환: {count, points}.
  */
 export function bulkDismissGuardians(profile: Profile): { count: number; points: number } {
   let count = 0;
@@ -155,10 +168,24 @@ export function bulkDismissGuardians(profile: Profile): { count: number; points:
     if (g.retired) continue;
     points += dismissPoints(g.combatScore, g.performanceCP);
     g.retired = true;
+    returnLockedGear(profile, g);
     count++;
   }
   if (points > 0) profile.lineage = grantPoints(profile.lineage, points);
   return { count, points };
+}
+
+/**
+ * 소멸된 수호기의 잠긴 장비(build.equipped)를 stash 로 반환한다(ADR-0024). build 없는 구
+ * 수호기(ADR-0024 이전 퇴역)는 반환할 장비가 없어 no-op. Item 은 불변이라 참조 그대로 옮긴다.
+ */
+function returnLockedGear(profile: Profile, g: GuardianRecord): void {
+  const equipped = g.build?.equipped;
+  if (equipped === undefined) return;
+  for (const key of Object.keys(equipped) as (keyof typeof equipped)[]) {
+    const it = equipped[key];
+    if (it !== undefined) profile.stash.push(it);
+  }
 }
 
 /** 계보 한 가지에 1레벨 투자(포인트 부족 시 no-op, 리스펙 없음 — ADR-0007 R2/R4). */

@@ -478,8 +478,13 @@ const STYLE = `
 
 /** 관제탑 콜백(main 이 침공 런/뒤로가기를 구동). */
 export interface ControlTowerCallbacks {
-  /** 침공 시작 — 정규화된 3레이어 배치를 침공 런 config 로 넘긴다(normalizeTargetLayers 완료본). */
-  onInvade: (target: InvasionTarget, layout: InvasionLayers) => void;
+  /**
+   * 침공 시작 — 정규화된 3레이어 배치를 침공 런 config 로 넘긴다(normalizeTargetLayers 완료본).
+   * `pilotGuardianId`(ADR-0024 예비역 소집): null/undefined = 활성 기체 출격(기존 거동),
+   * 문자열 = 그 `GuardianRecord.id` 의 예비역 빌드로 출격. 소집 대상이 없으면 호출부가 이
+   * 인자를 아예 넘기지 않아 기존 침공 경로가 바이트 그대로 유지된다.
+   */
+  onInvade: (target: InvasionTarget, layout: InvasionLayers, pilotGuardianId?: string | null) => void;
   /** 리플레이 관전 진입 — invasionId 로 리플레이를 로드해 재생한다(F3). */
   onSpectate: (invasionId: string, attackerName: string) => void;
   /** 방어 성공한 침공에 도발 스티커 달기(F2 방어자 몫) — 스티커 선택 UI 를 연다. */
