@@ -46,6 +46,14 @@ import {
 } from '../sim/invasion/index.js';
 import type { InvasionLayers, InvasionPhase } from '../sim/invasion/index.js';
 import { MAINTENANCE_FULL } from '../sim/invasion/guardian.js';
+// 행성 모드 런타임 조회(ADR-0021, Lane2~9). 전부 순수 read-only 판정이라 스냅샷에서 불러도
+// 시뮬 상태·해시에 영향이 없다(오염도 아님). 각 모드 게이트 밖에서는 0/false 를 돌려준다.
+import { PLANET_MODE } from '../sim/planetMode.js';
+import { shrinkSafeRadius } from '../sim/modes/shrink.js';
+import { blockBreakProgress, blockBreakSection } from '../sim/modes/blockBreak.js';
+import { racingProgress, racingSection } from '../sim/modes/racing.js';
+import { chaseAliveCounterDevices, chaseVisionRadius } from '../sim/modes/chase.js';
+import { contaminationCritical } from '../sim/modes/contamination.js';
 import { EventRing, diffWorldEvents, emptyWorldEventSummary } from './events.js';
 import type { HarnessEvent, WorldEventSummary } from './events.js';
 
@@ -116,6 +124,31 @@ export interface HarnessInvasionState {
   bombs: number;
 }
 
+/**
+ * 행성 모드 런타임 요약(ADR-0021 — 스냅샷·인스펙터 표시용). planetMode 코드와, **그 모드에서만
+ * 의미 있는** 진행 수치 하나씩을 담는다. 모드에 무관한 필드는 항상 중립값(0 / -1 / false)이므로
+ * 스냅샷 소비자는 `mode`(또는 `slug`)로 어느 필드가 유효한지 판별한다.
+ */
+export interface HarnessModeState {
+  /** planetMode 코드(0..5). 미지정 런 = 0(vampire). */
+  mode: number;
+  /** 모드 slug(vampire·blockBreak·racing·chase·shrink·contamination). */
+  slug: string;
+  /** 수축: 현재 안전 반경(월드 유닛). 수축 모드가 아니면 0. */
+  safeRadius: number;
+  /** 추격: 시야 반경. 추격 모드가 아니면 0. */
+  visionRadius: number;
+  /** 추격: 살아있는 반격 장치 수. 추격 모드가 아니면 0. */
+  counterDevices: number;
+  /** 강제 스크롤(블록격파·레이싱): 현재 진행 구간 인덱스(0-based). 스크롤 모드가 아니면 -1. */
+  scrollSection: number;
+  /** 오염: 임계 오염 도달 여부(맵 실패 조건). 오염 모드가 아니면 false. */
+  contaminationCritical: boolean;
+}
+
+/** planetMode 코드 → slug(인덱스 = 코드, `PLANET_MODE` 와 정합). */
+const MODE_SLUG: readonly string[] = ['vampire', 'blockBreak', 'racing', 'chase', 'shrink', 'contamination'];
+
 /** Structured state dump returned by {@link Harness.snapshot}. */
 export interface HarnessSnapshot {
   /** Current screen / overlay state (last reported by the host). */
@@ -138,6 +171,8 @@ export interface HarnessSnapshot {
   tainted: boolean;
   /** 침공 3레이어 런타임 요약(침공 런이 아니면 null). */
   invasion: HarnessInvasionState | null;
+  /** 행성 모드 런타임 요약(ADR-0021 — 항상 존재, 뱀서류 런이면 slug='vampire'·중립값). */
+  mode: HarnessModeState;
   profileSummary: { credits: number; minerals: number; shipLevel: number };
   /**
    * 활성 기체의 타입 id(`SHIP_TYPES` 인덱스). **런의 `config.shipType` 이 아니라 프로필 값**
@@ -369,6 +404,55 @@ function invasionStateOf(world: WorldState): HarnessInvasionState | null {
   };
 }
 
+/** 런이 없을 때의 중립 모드 요약(뱀서류·전 필드 중립값). */
+function emptyModeState(): HarnessModeState {
+  return {
+    mode: PLANET_MODE.vampire,
+    slug: MODE_SLUG[PLANET_MODE.vampire] ?? 'vampire',
+    safeRadius: 0,
+    visionRadius: 0,
+    counterDevices: 0,
+    scrollSection: -1,
+    contaminationCritical: false,
+  };
+}
+
+/**
+ * 라이브 월드의 행성 모드 요약 추출(순수 read-only). 모드 게이트에 맞는 진행 수치 하나만
+ * 채우고 나머지는 중립값으로 둔다 — 각 모드 헬퍼가 게이트 밖에서 0/false 를 돌려주므로
+ * 뱀서류·침공 런에서도 안전하다(모드 필드가 전부 중립값).
+ */
+function modeStateOf(world: WorldState): HarnessModeState {
+  const mode = (world.config.planetMode ?? PLANET_MODE.vampire) as number;
+  const state = emptyModeState();
+  state.mode = mode;
+  state.slug = MODE_SLUG[mode] ?? String(mode);
+  switch (mode) {
+    case PLANET_MODE.shrink:
+      state.safeRadius = shrinkSafeRadius(world);
+      break;
+    case PLANET_MODE.chase:
+      state.visionRadius = chaseVisionRadius(world.config.planetMode);
+      state.counterDevices = chaseAliveCounterDevices(world);
+      break;
+    case PLANET_MODE.blockBreak:
+      // scrollRuntime 은 강제 스크롤 모드에만 선다(scroll.ts ScrollWindow 를 구조적으로 만족).
+      // `+ 0` 은 -0 정규화: 진행도 0(런 시작) → `blockBreakProgress` 가 `-0` 을 내고
+      // `Math.floor(-0) = -0` 이라, 소비자(Object.is 비교·표시)에 음의 0 이 새는 것을 막는다.
+      if (world.scrollRuntime !== undefined)
+        state.scrollSection = blockBreakSection(blockBreakProgress(world.scrollRuntime)) + 0;
+      break;
+    case PLANET_MODE.racing:
+      if (world.scrollRuntime !== undefined)
+        state.scrollSection = racingSection(racingProgress(world.scrollRuntime)) + 0;
+      break;
+    case PLANET_MODE.contamination:
+      state.contaminationCritical = contaminationCritical(world);
+      break;
+  }
+  return state;
+}
+
 /**
  * Build the harness. `main.ts` supplies the {@link HarnessHost} (its loop
  * closures + screen functions); this factory returns the object attached to
@@ -528,6 +612,7 @@ export function createHarness(host: HarnessHost): Harness {
           seed: host.getCurrentSeed(),
           tainted: false,
           invasion: null,
+          mode: emptyModeState(),
           profileSummary: summary,
           shipTypeId: normalizeShipTypeId(activeShip(host.getProfile()).typeId),
         };
@@ -549,6 +634,7 @@ export function createHarness(host: HarnessHost): Harness {
         seed: host.getCurrentSeed(),
         tainted: host.isTainted(),
         invasion: invasionStateOf(world),
+        mode: modeStateOf(world),
         profileSummary: summary,
         shipTypeId: normalizeShipTypeId(activeShip(host.getProfile()).typeId),
       };

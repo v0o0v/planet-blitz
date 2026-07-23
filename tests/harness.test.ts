@@ -18,6 +18,7 @@ import { createHarness } from '../src/harness/core.js';
 import type { HarnessHost, HarnessInvasionResolved } from '../src/harness/core.js';
 import { createWorld, DEFAULT_CONFIG, emptyInput } from '../src/sim/world.js';
 import type { WorldConfig, WorldState } from '../src/sim/world.js';
+import { PLANET_MODE } from '../src/sim/planetMode.js';
 import {
   INVASION_CORE_HP,
   INVASION_SOCKET_COUNTS,
@@ -329,6 +330,63 @@ describe('Harness.jumpInvasionLayer (레이어 점프)', () => {
     host.world = createWorld(1, { ...DEFAULT_CONFIG });
     expect(harness.jumpInvasionLayer(2)).toBe(false);
     expect(harness.snapshot().invasion).toBeNull();
+  });
+});
+
+describe('Harness.snapshot().mode (행성 모드 표면 — ADR-0021)', () => {
+  /** 지정 planetMode 로 라이브 월드를 세운 하네스를 만든다. */
+  function harnessWithMode(mode: number): ReturnType<typeof createHarness> {
+    const host = fakeHost();
+    host.world = createWorld(123, { ...DEFAULT_CONFIG, planetMode: mode as WorldConfig['planetMode'] });
+    return createHarness(host);
+  }
+
+  it('뱀서류(기본)는 slug=vampire·전 필드 중립', () => {
+    const m = harnessWithMode(PLANET_MODE.vampire).snapshot().mode;
+    expect(m).toMatchObject({
+      mode: PLANET_MODE.vampire,
+      slug: 'vampire',
+      safeRadius: 0,
+      visionRadius: 0,
+      counterDevices: 0,
+      scrollSection: -1,
+      contaminationCritical: false,
+    });
+  });
+
+  it('런이 없으면 중립 모드 요약(vampire)을 낸다', () => {
+    const host = fakeHost(); // world = null
+    expect(createHarness(host).snapshot().mode.slug).toBe('vampire');
+  });
+
+  it('수축은 안전 반경을 노출한다(시작 시 > 0)', () => {
+    const m = harnessWithMode(PLANET_MODE.shrink).snapshot().mode;
+    expect(m.slug).toBe('shrink');
+    expect(m.safeRadius).toBeGreaterThan(0);
+  });
+
+  it('추격은 시야 반경·살아있는 반격 장치 수를 노출한다', () => {
+    const m = harnessWithMode(PLANET_MODE.chase).snapshot().mode;
+    expect(m.slug).toBe('chase');
+    expect(m.visionRadius).toBeGreaterThan(0);
+    expect(m.counterDevices).toBeGreaterThan(0);
+  });
+
+  it('블록격파·레이싱은 강제 스크롤 구간 인덱스를 노출한다(시작 구간 0)', () => {
+    expect(harnessWithMode(PLANET_MODE.blockBreak).snapshot().mode).toMatchObject({
+      slug: 'blockBreak',
+      scrollSection: 0,
+    });
+    expect(harnessWithMode(PLANET_MODE.racing).snapshot().mode).toMatchObject({
+      slug: 'racing',
+      scrollSection: 0,
+    });
+  });
+
+  it('오염은 임계 플래그를 노출한다(시작 시 false)', () => {
+    const m = harnessWithMode(PLANET_MODE.contamination).snapshot().mode;
+    expect(m.slug).toBe('contamination');
+    expect(m.contaminationCritical).toBe(false);
   });
 });
 
