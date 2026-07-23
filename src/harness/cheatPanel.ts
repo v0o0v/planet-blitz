@@ -29,6 +29,7 @@ import type { EntitySnapshot } from '../sim/snapshot.js';
 import { xpToNext } from '../sim/world.js';
 import { spawnLoot } from '../sim/entities.js';
 import { SEGMENTS } from '../../data/waves.js';
+import { PLANETS } from '../../data/planets/index.js';
 import { makeElite, ELITE_AFFIX_COUNT, isElite } from '../sim/elite.js';
 import { rollItem } from '../items/roll.js';
 import type { Item, Rarity, SlotKind, EquipSlotId } from '../items/types.js';
@@ -96,8 +97,16 @@ const SLOT_LABEL: Record<EquipSlotId, string> = {
 
 const RARITIES: readonly Rarity[] = ['normal', 'magic', 'rare', 'unique'];
 
-/** 씬 런처 셀렉트용 행성 이름(planet index = 배열 인덱스, data/planets/index.ts와 정합). */
-const PLANET_NAMES: readonly string[] = ['카르곤', '베르단', '니플헤임', '아르케'];
+/** planetMode 코드 → 한글 라벨(인덱스 = 코드, src/sim/planetMode.ts `PLANET_MODE` 와 정합). */
+const MODE_LABEL: readonly string[] = ['뱀서류', '블록격파', '레이싱', '추격', '수축', '오염'];
+/**
+ * 씬 런처 셀렉트용 행성 이름(planet index = 배열 인덱스). **PLANETS 레지스트리에서 파생**한다 —
+ * 하드코딩하면 신규 행성(Lane9 톡사르·크라스 등) 추가 시 하네스 목록만 뒤처져 실행할 수 없게
+ * 된다(재발 방지, ADR-0021).
+ */
+const PLANET_NAMES: readonly string[] = PLANETS.map((p) => p.name);
+/** 행성 index → 모드 한글 라벨(런처 셀렉트에 "행성 · 모드"로 표시해 어느 모드를 띄우는지 알려 준다). */
+const PLANET_MODE_LABELS: readonly string[] = PLANETS.map((p) => MODE_LABEL[p.mode] ?? String(p.mode));
 /** 일반 전투 세그먼트 수(보스 세그먼트 제외 — 마지막 인덱스는 보스). */
 const NORMAL_SEGMENTS = SEGMENTS.length - 1;
 
@@ -648,10 +657,12 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         seedStr = seedIn.value;
       });
       const planetSel = document.createElement('select');
+      planetSel.title = '행성 = 게임플레이 모드(ADR-0021). 괄호가 이 행성이 도는 모드다.';
       for (let i = 0; i < PLANET_NAMES.length; i++) {
         const o = document.createElement('option');
         o.value = String(i);
-        o.textContent = PLANET_NAMES[i] ?? String(i);
+        const modeLbl = PLANET_MODE_LABELS[i];
+        o.textContent = `${PLANET_NAMES[i] ?? i}${modeLbl !== undefined ? ` · ${modeLbl}` : ''}`;
         if (i === planetIdx) o.selected = true;
         planetSel.appendChild(o);
       }
@@ -1059,10 +1070,23 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       const counts = Object.entries(snap.entityCounts)
         .map(([k, v]) => `${k}:${v}`)
         .join(' ');
+      // 행성 모드 라인(ADR-0021): 도는 모드에서만 의미 있는 수치 하나를 붙인다(그 외는 slug 만).
+      const m = snap.mode;
+      const modeDetail =
+        m.slug === 'shrink'
+          ? ` 안전R ${m.safeRadius}`
+          : m.slug === 'chase'
+            ? ` 반격장치 ${m.counterDevices} 시야R ${m.visionRadius}`
+            : m.slug === 'blockBreak' || m.slug === 'racing'
+              ? ` 구간 ${m.scrollSection}`
+              : m.slug === 'contamination'
+                ? ` 임계 ${m.contaminationCritical ? 'YES' : 'no'}`
+                : '';
       dump.textContent =
         `screen ${snap.screen}  tick ${snap.tick}\n` +
         `hp ${Math.ceil(snap.hp)}/${snap.maxHp}  lv ${snap.level}  xp ${snap.xp}\n` +
         `seg ${snap.segment}  kills ${snap.kills}  combo ${snap.combo}\n` +
+        `모드 ${m.slug}(${m.mode})${modeDetail}\n` +
         `${bossLine}\n` +
         `hash ${snap.hash || '-'}  seed ${snap.seed}\n` +
         `프로필 c${snap.profileSummary.credits} m${snap.profileSummary.minerals} ` +
