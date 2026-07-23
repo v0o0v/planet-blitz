@@ -21,6 +21,7 @@ import { defaultProfile, activeShip } from '../src/save/profile.js';
 import type { Profile } from '../src/save/profile.js';
 import { createWorld, stepWorld } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig } from '../src/sim/world.js';
+import { PLANET_MODE } from '../src/sim/planetMode.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { hasCapstone } from '../src/sim/capstones.js';
 import {
@@ -112,7 +113,10 @@ interface Observed {
 }
 
 function runObserved(seed: number, cfg: WorldConfig, ticks: number): Observed {
-  const state = createWorld(seed, { ...cfg, playerHp: DURABLE_HP });
+  // 함선 시그니처 관측은 **중립 서바이벌 아레나**(vampire)에서 돈다. planet 2(니플헤임)는 Lane6 에서
+  // chase 로 배정돼 무적 포식자가 정지·저속 플레이어를 접촉 즉사시키므로(MED-1 수정 후 치명적),
+  // planetMode 를 vampire 로 덮어 장시간 관측 런이 조기 종료되지 않게 한다(로스터는 유지, chase 만 끔).
+  const state = createWorld(seed, { ...cfg, planetMode: PLANET_MODE.vampire, playerHp: DURABLE_HP });
   let maxAux0 = 0;
   let maxAux1 = 0;
   let settlements = 0;

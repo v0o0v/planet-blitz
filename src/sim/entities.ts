@@ -49,7 +49,9 @@ export type EntityKind =
   | 'prop' // L3 기물(실드 발생기·중력 앵커·고정 주포). aux0=기물 카탈로그 id
   | 'defenseBoss' // L3 방어 보스. PvE 'boss' 와 별도 kind — compact() 의 boss→victory 함정을 피한다
   // --- 레이싱(Lane5, ADR-0021 §2.3) — 부스트 패드 -----------------------------------
-  | 'boostPad'; // 레이싱 지름길 채널의 순간가속 오버레이. 충돌·이동 차단·grid 등록 없음(inert) — racingCleared 가 플레이어 overlap 만 판정해 가속
+  | 'boostPad' // 레이싱 지름길 채널의 순간가속 오버레이. 충돌·이동 차단·grid 등록 없음(inert) — racingCleared 가 플레이어 overlap 만 판정해 가속
+  // --- 추격·탈출(Lane6, ADR-0021 §2.4) — 대피소 -------------------------------------
+  | 'shelter'; // 추격 모드 대피소. boostPad 선례(inert): 충돌·이동 차단·grid 등록·isGimmick 어디에도 없음 — chaseShelterReached 가 플레이어 overlap 만 판정해 세그먼트 전진. aux0=대피소 인덱스(세그먼트 대응)
 
 /**
  * Stable integer per kind, folded into the state hash. Never renumber existing
@@ -100,6 +102,9 @@ export const KIND_CODE: Record<EntityKind, number> = {
   // Appended for 레이싱(Lane5, never renumber 1..26). 부스트 패드는 레이싱 런에만 등장하므로
   // PvE·구 침공·블록격파 리플레이의 해시에는 나타나지 않는다(기존 fixtures 회귀 0).
   boostPad: 27,
+  // Appended for 추격·탈출(Lane6, never renumber 1..27). 대피소는 추격 런에만 등장하므로
+  // PvE·구 침공·블록격파·레이싱·오염 리플레이의 해시에는 나타나지 않는다(기존 fixtures 회귀 0).
+  shelter: 28,
 };
 
 export interface Entity {
@@ -455,4 +460,19 @@ export function spawnBoostPad(sink: EntitySink, x: number, y: number, radius: nu
   b.y = y;
   b.radius = radius;
   return addEntity(sink, b);
+}
+
+/**
+ * 대피소(추격·탈출 Lane6). `radius` 는 도달 판정용 접촉 반경. boostPad 정본과 같은 순수
+ * 오버레이 — resolveCollisions 격자·rebuildActiveWalls·isGimmick·피해목록 어디에도 등록되지
+ * 않아 충돌·이동 차단이 없다(inert). chaseShelterReached 가 플레이어 overlap 을 판정해
+ * 세그먼트를 전진시킨다. hp=0 이라 파괴되지 않는다(compact 는 dead 만 수거하는데 대피소는
+ * dead 가 되는 경로가 없다). `aux0` = 대피소 인덱스(세그먼트 대응)는 배치 시 세팅한다.
+ */
+export function spawnShelter(sink: EntitySink, x: number, y: number, radius: number): Entity {
+  const s = blankEntity('shelter');
+  s.x = x;
+  s.y = y;
+  s.radius = radius;
+  return addEntity(sink, s);
 }

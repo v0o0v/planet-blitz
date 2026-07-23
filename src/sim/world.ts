@@ -240,6 +240,9 @@ import {
   CONTAMINATION_NODE_MARK,
   HAZARD_CONTAMINATION,
 } from './modes/contamination.js';
+// --- 추격·탈출 콘텐츠(Lane6 · ADR-0021 §2.4) — 비-스크롤 자유추적. 무적 포식자(boss.aux0=0)가
+//     끝없이 추격, 대피소 도달로 진행, 반격 장치 전부 파괴로 취약화(aux0=1)→보스전, 접촉 시 실패 ---
+import { placeChaseCourse, updateChasePredator, COUNTER_DEVICE_MARK } from './modes/chase.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -865,6 +868,12 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     // 노드 필드(고정 링)를 1회 배치한다. contamination 런에만 — 뱀서류·블록격파·레이싱·침공은
     // 조건 밖이라 오염 노드가 하나도 안 생겨 골든 바이트 불변.
     placeContaminationField(state);
+  } else if (cfg.planetMode === PLANET_MODE.chase) {
+    // PvE 추격(Lane6): 비-스크롤 자유추적이라 scrollRuntime 이 없다(위 두 분기 조건 밖). 무적
+    // 포식자(boss, aux0=0) + 반격 장치 + 대피소 코스를 1회 배치하고 bossSpawned 을 세운다(포식자가
+    // 곧 보스다 — stepBoss 가 두 번째 보스를 안 세운다). chase 런에만 — 뱀서류·블록격파·레이싱·
+    // 오염·침공은 조건 밖이라 포식자·장치·대피소가 하나도 안 생겨 골든 바이트 불변.
+    placeChaseCourse(state);
   }
   return state;
 }
@@ -986,6 +995,10 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   stepHazards(state);
   resolveCollisions(state, player);
   compact(state);
+  // 추격(Lane6): 살아있는 반격 장치가 0개면 포식자를 취약화(aux0=1)한다. **compact 이후**라
+  // 이번 틱 파괴된 장치가 반영된다. planetMode 게이트라 뱀서류·블록격파·레이싱·오염·침공은
+  // 미실행(골든 바이트 불변). 취약화 후엔 아군탄이 포식자 hp 를 깎아 다음 compact 가 처치→victory.
+  if (state.config.planetMode === PLANET_MODE.chase) updateChasePredator(state);
   updateCombo(state);
   checkLevelUp(state);
   checkGameOver(state, player);
@@ -1022,7 +1035,12 @@ function isGimmick(e: Entity): boolean {
     // 컬 반경(3000) 밖으로 벗어날 때 노드가 dead 로 지워지고, `contaminationPurifyRate` 가 그
     // 컬링된 노드를 "정화됨"으로 세어 **도망만으로 정화율이 오르는** 코어 루프 붕괴가 난다
     // (리뷰 CRITICAL 확증). 절차 청크 destructible 은 ownerId=0 이라 조건 그대로 성립 → 불변.
-    (e.kind === 'destructible' && e.ownerId !== CONTAMINATION_NODE_MARK) ||
+    // ⚠️ 반격 장치(Lane6 · destructible + COUNTER_DEVICE_MARK)도 같은 이유로 제외한다(AND 결합) —
+    // 제외하지 않으면 추격 자유추적 플레이어가 필드 밖으로 도망칠 때 장치가 컬링돼 `chaseAlive
+    // CounterDevices` 가 0 이 되고 포식자가 **무노력 취약화**된다(Lane8 도망 exploit 동형).
+    (e.kind === 'destructible' &&
+      e.ownerId !== CONTAMINATION_NODE_MARK &&
+      e.ownerId !== COUNTER_DEVICE_MARK) ||
     e.kind === 'magnetEmitter' ||
     e.kind === 'bombDevice' ||
     (e.kind === 'turretPickup' && e.ownerId !== DRONE_MARK && e.ownerId !== BROOD_MARK) ||
@@ -2639,6 +2657,11 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       // 받지 않고 탄도 소비하지 않는다(다른 표적을 계속 노릴 수 있게 return). defense.stepGuardians
       // 가 iframes 를 감소시켜 딜레이가 끝나면 다시 피격 가능해진다.
       if (t.kind === 'guardian' && t.iframes > 0) return;
+      // 추격(Lane6): 무적 포식자(boss.aux0===0)는 아군탄에 무피해다 — 반격 장치를 전부 파괴해
+      // 취약화(aux0===1)하기 전까지는 처치할 수 없다(수호 재기동 무적 선례). 탄도 소비하지 않고
+      // return 해 다른 표적을 계속 노릴 수 있게 한다. ⚠️ boss `iframes>0` 은 과열=피해 2배라
+      // 무적 재활용이 불가하므로 **aux0 로만** 판정한다. planetMode 게이트라 타 모드는 미진입(불변).
+      if (state.config.planetMode === PLANET_MODE.chase && t.kind === 'boss' && t.aux0 === 0) return;
       // Boss takes double damage while overheated (iframes > 0), spec.
       // 방어 보스도 시그니처 캐스트 뒤 과열 창(iframes>0)을 연다 — PvE 보스와 같은 규칙.
       const mult = (t.kind === 'boss' || t.kind === 'defenseBoss') && t.iframes > 0 ? 2 : 1;
@@ -2825,6 +2848,13 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     }
     // 이하 해로운 접촉: 판정점(hitR)으로만 판정 — 기체를 스쳐도 판정점에 안 닿으면 무해.
     if (!circlesOverlap(px, py, hitR, t.x, t.y, t.radius)) return;
+    // 추격(Lane6): 무적 포식자(boss.aux0===0) 접촉 = 회피 불가 죽음. iframes(무적 프레임)를
+    // 무시하고 즉시 실패다 — 포식자는 피격 무적으로 흘려보낼 수 없다. 취약화(aux0===1) 후엔
+    // 아래 일반 접촉 피해(보스전)로 떨어진다. planetMode 게이트라 타 모드는 미진입(불변).
+    if (state.config.planetMode === PLANET_MODE.chase && t.kind === 'boss' && t.aux0 === 0) {
+      state.gameOver = true;
+      return;
+    }
     // 감속 지대(plan B1): 활성 HAZARD_SLOW 장판에 닿으면 감속 부여(무적 여부와 무관 —
     // 이동 디버프이지 피해가 아니다). 소량 피해는 아래 일반 hazard 분기가 처리한다.
     if (t.kind === 'hazard' && t.enemyType === HAZARD_SLOW && hazardActive(t)) {

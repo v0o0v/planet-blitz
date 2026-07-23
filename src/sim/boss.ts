@@ -30,6 +30,8 @@ import { DT, VIEW_HEIGHT, HAZARD_LINE_SPAN, SPAWN_RING_RADIUS } from './constant
 import type { BossAttack, BossDef } from '../../data/boss.js';
 import { planetContent } from '../../data/planets/index.js';
 import { summonEnemy } from './waves.js';
+import { PLANET_MODE } from './planetMode.js';
+import { chasePredatorPursue } from './modes/chase.js';
 import { applyBehavior, accelBehavior, splitBehavior, homingBehavior } from './bullets.js';
 
 /**
@@ -83,7 +85,15 @@ export function updateBoss(state: WorldState, boss: Entity, player: Entity): voi
     return;
   }
 
-  moveBoss(boss, player, bossDef);
+  // 추격(Lane6): 취약화 전(aux0===0) 무적 포식자는 머리 위 hover(moveBoss)가 아니라 플레이어
+  // 실좌표로 수렴해 접촉 즉사가 조직적 위협이 되게 한다(리뷰 MED — '끝없이 추격·회피 불가 즉사'
+  // 시그니처 발현). 취약화(aux0===1) 후엔 일반 보스전(moveBoss hover + 패턴)으로 복귀한다.
+  // planetMode 게이트라 뱀서류·침공·블록격파·레이싱·오염은 else 경로(moveBoss)로 바이트 불변.
+  if (state.config.planetMode === PLANET_MODE.chase && boss.aux0 === 0) {
+    chasePredatorPursue(boss, player);
+  } else {
+    moveBoss(boss, player, bossDef);
+  }
 
   if (boss.iframes > 0) boss.iframes--;
   if (boss.dashCooldown > 0) boss.dashCooldown--;
