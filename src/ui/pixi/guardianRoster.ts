@@ -299,7 +299,8 @@ export class GuardianRosterScreen {
     name.position.set(18, 16);
     row.addChild(name);
 
-    const pct = (g.performanceCP / 100).toFixed(1);
+    const perfVal = g.performanceCP / 100;
+    const pct = Number.isInteger(perfVal) ? String(perfVal) : perfVal.toFixed(1);
     const gear = countLockedGear(g);
     const recover = dismissPoints(g.combatScore, g.performanceCP);
     const info = new Text({

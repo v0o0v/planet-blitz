@@ -1894,7 +1894,8 @@ export class ControlTowerScreen {
       typeId = build?.typeId ?? 0;
       const gearCount =
         build !== undefined ? Object.values(build.equipped).filter((it) => it !== undefined).length : 0;
-      const perfPct = Math.round(guardian.performanceCP / 100);
+      const perfVal = guardian.performanceCP / 100;
+      const perfPct = Number.isInteger(perfVal) ? String(perfVal) : perfVal.toFixed(1);
       desc = `${t('sortie.guardian')} · ${t('sortie.perf', { n: perfPct })} · ${t('sortie.gear', { n: gearCount })}`;
     }
     const gid = active ? null : guardian.id;

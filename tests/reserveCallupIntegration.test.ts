@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { buildRunConfig } from '../src/run/runConfig.js';
-import type { RunConfigOpts } from '../src/run/runConfig.js';
+import { buildCallupPilot } from '../src/run/callupPilot.js';
 import { defaultProfile, activeShip, investSkill, migrate } from '../src/save/profile.js';
 import type { Profile } from '../src/save/profile.js';
 import { EQUIP_SLOTS } from '../src/items/types.js';
@@ -71,32 +71,6 @@ function profileWithLoadedActiveShip(): Profile {
   profile.skillPoints = 3;
   investSkill(profile, 0);
   return profile;
-}
-
-/**
- * `src/main.ts` buildCallupPilot(:724-742) 미러. pilotGuardianId 가 유효한 소집 대상(존재 +
- * build 有)이면 잠긴 실물 빌드를 buildRunConfig pilot 스냅샷으로 변환, 아니면 null(활성 기체 출격).
- * equipped 는 EQUIP_SLOTS 순서로 모은다(runConfig 의 equippedItems 와 동일한 순서 계약).
- */
-function buildCallupPilot(
-  profile: Profile,
-  pilotGuardianId: string | null | undefined,
-): NonNullable<RunConfigOpts['pilot']> | null {
-  if (typeof pilotGuardianId !== 'string' || pilotGuardianId.length === 0) return null;
-  const guardian = profile.guardians.find((g) => g.id === pilotGuardianId);
-  const build = guardian?.build;
-  if (guardian === undefined || build === undefined) return null;
-  const equipped: Item[] = [];
-  for (const slot of EQUIP_SLOTS) {
-    const it = build.equipped[slot];
-    if (it !== undefined) equipped.push(it);
-  }
-  return {
-    equipped,
-    skillInvest: build.skillInvest,
-    typeId: build.typeId,
-    performanceCP: guardian.performanceCP,
-  };
 }
 
 describe('예비역 소집 정규경로 통합 — 퇴역→build 캡처→소집 왕복 (ADR-0024, Task #7)', () => {
@@ -244,6 +218,21 @@ describe('장비 잠김 경제 — 소멸이 잠긴 장비를 stash 로 반환 (
     for (const it of lockedItems) {
       expect(profile.stash).toContain(it);
     }
+  });
+});
+
+describe('소집 가드 — 소멸된 수호기는 소집 대상이 아니다 (리뷰 MED-1)', () => {
+  it('dismiss 된 수호기는 build 가 남아 있어도 pilot 조립이 거부된다(장비 stash 반환 후 복제 방지)', () => {
+    const profile = profileWithLoadedActiveShip();
+    const { guardian } = retireActiveShip(profile, GUARDIAN_TITAN, 0);
+    // 소멸 전: 소집 가능.
+    expect(buildCallupPilot(profile, guardian.id)).not.toBeNull();
+    // 소멸: 잠긴 장비가 stash 로 반환된다.
+    dismissGuardianRecord(profile, guardian.id);
+    expect(guardian.retired).toBe(true);
+    expect(guardian.build).toBeDefined(); // build 레코드 자체는 남지만
+    // 소집은 거부한다 — 반환된 장비가 stash(재장착 가능)와 소집 빌드에 동시 존재하는 복제를 막는다.
+    expect(buildCallupPilot(profile, guardian.id)).toBeNull();
   });
 });
 

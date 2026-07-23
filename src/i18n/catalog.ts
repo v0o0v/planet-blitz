@@ -375,7 +375,7 @@ export const EN = {
   'guardians.dismiss': 'Dismiss',
   'guardians.dismiss.title': 'Dismiss Guardian?',
   'guardians.dismiss.confirm':
-    'Dismiss this {name}? Its {gear} locked gear return to your stash and you recover {points} lineage points. This cannot be undone.',
+    'Dismiss this {name}? Its {gear} locked item(s) return to your stash and you recover {points} lineage points. This cannot be undone.',
   'guardians.cancel': 'Cancel',
   'guardians.dismissed': '{n} gear returned to stash · {points} points recovered',
 
