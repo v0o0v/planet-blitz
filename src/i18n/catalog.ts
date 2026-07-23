@@ -308,6 +308,7 @@ export const EN = {
   'hangar.desc.element.lightning': 'Chains damage to nearby enemies.',
   'hangar.desc.lineage': 'Account-wide boost to your active ship.',
   'hangar.act.swapShip': 'Change Ship',
+  'hangar.act.guardians': 'Guardians',
 
   // --- 기체 타입(M8, ADR-0019) ---
   // 키의 축은 `ShipTypeDef.slug` 다(`src/ui/pixi/shipLabels.ts` 가 유도한다). 하드코딩 목록이
@@ -361,9 +362,22 @@ export const EN = {
   'champion.tree.meta': '{n} nodes · capstone gate {g}pt',
   'champion.retire.title': 'Retire your ship?',
   'champion.retire.body':
-    'Your current ship (Lv {level}) becomes a Guardian. Level, skill points and gear slots reset; equipment returns to the stash. You will pilot a fresh {name}.',
+    'Your current ship (Lv {level}) becomes a Guardian. Level, skill points and gear slots reset; your equipped gear stays locked to that Guardian and returns to your stash only when you dismiss it. You will pilot a fresh {name}.',
   'champion.retire.yes': 'Retire and switch',
   'champion.retire.no': 'Cancel',
+
+  // --- 예비역 수호기 로스터·소멸(ADR-0024 Task #8) ---
+  'guardians.title': 'Reserve Guardians',
+  'guardians.empty': 'No guardians yet. Retire a ship to leave one in reserve.',
+  'guardians.perf': 'Performance {pct}%',
+  'guardians.gear': 'Locked gear {n}',
+  'guardians.recover': 'Recover {points} pts',
+  'guardians.dismiss': 'Dismiss',
+  'guardians.dismiss.title': 'Dismiss Guardian?',
+  'guardians.dismiss.confirm':
+    'Dismiss this {name}? Its {gear} locked gear return to your stash and you recover {points} lineage points. This cannot be undone.',
+  'guardians.cancel': 'Cancel',
+  'guardians.dismissed': '{n} gear returned to stash · {points} points recovered',
 
   // --- 서사(스토리) — 사연·인트로·기록 파편 (ADR-0023) ---
   // 키는 `data/lore` 정본 파생이다(`src/ui/pixi/loreLabels.ts` 가 유도). 사연 캐스트는 혼합 —
@@ -1409,6 +1423,7 @@ export const KO: Record<MessageKey, string> = {
   'hangar.desc.element.lightning': '명중 시 인접 적에게 연쇄 피해를 줍니다.',
   'hangar.desc.lineage': '현역 기체를 강화하는 계정 단위 보너스입니다.',
   'hangar.act.swapShip': '기체 교체',
+  'hangar.act.guardians': '예비역',
 
   'ship.striker.name': '스트라이커',
   'ship.striker.role': '균형 잡힌 기준점. 어느 축으로도 섀시 보정이 없습니다.',
@@ -1453,9 +1468,22 @@ export const KO: Record<MessageKey, string> = {
   'champion.tree.meta': '노드 {n}개 · 캡스톤 게이트 {g}pt',
   'champion.retire.title': '기체를 퇴역시킬까요?',
   'champion.retire.body':
-    '현재 기체(Lv {level})가 수호기로 넘어갑니다. 레벨·스킬 포인트·장착 슬롯이 초기화되고 장비는 창고로 돌아옵니다. 새 {name}(으)로 출격하게 됩니다.',
+    '현재 기체(Lv {level})가 수호기로 넘어갑니다. 레벨·스킬 포인트·장착 슬롯이 초기화되고, 장착한 장비는 그 수호기에 잠긴 채 소멸시킬 때에만 창고로 돌아옵니다. 새 {name}(으)로 출격하게 됩니다.',
   'champion.retire.yes': '퇴역하고 교체',
   'champion.retire.no': '취소',
+
+  // --- 예비역 수호기 로스터·소멸(ADR-0024 Task #8) ---
+  'guardians.title': '예비역 수호기',
+  'guardians.empty': '아직 수호기가 없습니다. 기체를 퇴역시키면 예비역으로 남습니다.',
+  'guardians.perf': '성능 {pct}%',
+  'guardians.gear': '잠긴 장비 {n}개',
+  'guardians.recover': '회수 {points}pt',
+  'guardians.dismiss': '소멸',
+  'guardians.dismiss.title': '수호기를 소멸시킬까요?',
+  'guardians.dismiss.confirm':
+    '이 {name}을(를) 소멸시킬까요? 잠긴 장비 {gear}개가 창고로 돌아오고 계보 포인트 {points}점을 회수합니다. 되돌릴 수 없습니다.',
+  'guardians.cancel': '취소',
+  'guardians.dismissed': '장비 {n}개 창고 회수 · 포인트 {points}점 회수',
 
   // --- 서사(스토리) — 사연·인트로·기록 파편 (ADR-0023) ---
   // 인트로 슬라이드

@@ -733,7 +733,8 @@ export class ChampionSelectScreen {
 
   /**
    * 퇴역 확인 팝업. 되돌릴 수 없는 세대 리셋이므로 **무엇을 잃는지 먼저 말한다** —
-   * 레벨·투자·장착이 사라지고 장비는 창고로 돌아온다(계보는 남는다).
+   * 레벨·투자가 초기화되고, 장착 장비는 창고로 돌아오지 않고 **그 수호기에 잠긴다**(ADR-0024).
+   * 잠긴 장비는 그 수호기를 소멸시킬 때에만 창고로 반환된다(계보는 남는다).
    */
   private renderConfirmModal(): void {
     const def = shipTypeDef(this.selected);
@@ -755,7 +756,7 @@ export class ChampionSelectScreen {
       resolution: 2,
       text: tShipKey(
         'champion.retire.body',
-        'Your current ship (Lv {level}) becomes a Guardian. Level, skill points and gear slots reset; equipment returns to the stash. You will pilot a fresh {name}.',
+        'Your current ship (Lv {level}) becomes a Guardian. Level, skill points and gear slots reset; your equipped gear stays locked to that Guardian and returns to your stash only when you dismiss it. You will pilot a fresh {name}.',
         { level: ship.level, name: shipTypeName(def) },
       ),
       style: {

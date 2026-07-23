@@ -36,6 +36,7 @@ import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, RARITY_COLOR_NUM, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, shipShowcaseName, LEGACY_SHOWCASE, type UiTextures } from './uiTextures.js';
 import { ChampionSelectScreen } from './championSelect.js';
+import { GuardianRosterScreen } from './guardianRoster.js';
 import { shipTypeName, tShipKey } from './shipLabels.js';
 import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
@@ -120,12 +121,18 @@ export class HangarScreen {
    * 로 자리를 주고받는다 — `show()` 로 되돌리면 미저장 장비 편집이 사라진다(defenseCommand 선례).
    */
   private readonly champion: ChampionSelectScreen;
+  /**
+   * 예비역 수호기 로스터(소멸 표면, ADR-0024). 챔피언 선택과 같은 하위 화면 규약
+   * (`suspend()`/`resume()`)으로 자리를 주고받는다.
+   */
+  private readonly roster: GuardianRosterScreen;
 
   constructor(profile: Profile, stage: Container, store: KeyValueStore | null = null) {
     this.profile = profile;
     this.store = store;
     this.stage = stage;
     this.champion = new ChampionSelectScreen(profile, stage, store);
+    this.roster = new GuardianRosterScreen(profile, stage, store);
     this.root.visible = false;
     this.root.eventMode = 'static';
     this.stage.addChild(this.root);
@@ -183,6 +190,17 @@ export class HangarScreen {
   private openChampionSelect(): void {
     this.suspend();
     this.champion.show(this.profile, {
+      onClose: () => this.resume(),
+    });
+  }
+
+  /**
+   * 예비역 수호기 로스터로 내려간다(소멸 표면). 소멸은 profile.guardians·stash·lineage 를
+   * 변형하므로 돌아올 때 `resume()` 의 `render()` 가 갱신된 창고를 다시 읽는다.
+   */
+  private openGuardianRoster(): void {
+    this.suspend();
+    this.roster.show(this.profile, {
       onClose: () => this.resume(),
     });
   }
@@ -406,19 +424,36 @@ export class HangarScreen {
     minerals.position.set((DESIGN_WIDTH + bannerW) / 2 + 20, 18);
     this.root.addChild(minerals);
 
-    // 기체 교체(챔피언 선택) 진입 — 크레딧 칩과 닫기 버튼 사이의 빈 자리.
-    const swapW = 260;
+    // 기체 교체(챔피언 선택) · 예비역 로스터(소멸) 진입 — 광물 칩과 닫기 버튼 사이의 빈 자리에
+    // 나란히 둔다(닫기 왼쪽부터 [기체 교체][예비역] 순). 폭은 광물 칩(우단 ~1550)과 겹치지 않도록
+    // 128px 로 잡는다 — 둘 다 이보다 넓으면 칩을 침범한다(우측 상단은 이미 칩 2개로 붐빈다).
+    const actW = 128;
+    const actH = 52;
+    const actY = 18;
+    const swapX = DESIGN_WIDTH - 24 - 56 - 12 - actW;
     const swap = new PixiButton({
       texture: this.ui['ui_btn_wood.png'],
       fallbackColor: 0x4a3a24,
-      width: swapW,
-      height: 52,
-      fontSize: 17,
+      width: actW,
+      height: actH,
+      fontSize: 15,
       label: tShipKey('hangar.act.swapShip', 'Change Ship'),
       onClick: () => this.openChampionSelect(),
     });
-    swap.container.position.set(DESIGN_WIDTH - 24 - 56 - 12 - swapW, 18);
+    swap.container.position.set(swapX, actY);
     this.root.addChild(swap.container);
+
+    const guardians = new PixiButton({
+      texture: this.ui['ui_btn_wood.png'],
+      fallbackColor: 0x4a3a24,
+      width: actW,
+      height: actH,
+      fontSize: 15,
+      label: tShipKey('hangar.act.guardians', 'Guardians'),
+      onClick: () => this.openGuardianRoster(),
+    });
+    guardians.container.position.set(swapX - 12 - actW, actY);
+    this.root.addChild(guardians.container);
 
     const close = makeIconButton(
       56,
