@@ -134,11 +134,18 @@ beforeEach(() => {
 // ===========================================================================
 
 describe('AC-4.1 · 데미지 숫자 배선 (보스·엘리트 HP-델타, sim 0 변경)', () => {
-  it('보스가 피해를 입으면(HP 델타) 데미지 숫자가 뜬다', () => {
+  // 감지는 렌더러가 유지하는 tracked.hp 로 한다(스냅샷 보간 p.hp 아님, 리뷰 HIGH-1). 따라서 피해는
+  // **프레임 간**(기준선 render → 낮은 hp render)에 감지된다 — 한 render 로는 안 뜬다(생성 프레임엔
+  // tracked.hp=e.hp 라 델타 0). 이 형태가 곧 프로덕션 거동(스냅샷이 프레임마다 반복되어도 1회)이다.
+
+  it('보스가 피해를 입으면(프레임 간 HP 델타) 데미지 숫자가 뜬다', () => {
     const r = new EntityRenderer(realTextures());
     lockTier('high');
-    // prev=hp100, curr=hp80 → 한 render 로 델타 20 감지(prevById 대 e).
-    r.render(world([entity('boss', { id: 1, hp: 100 })]), world([entity('boss', { id: 1, hp: 80 })]), 1);
+    const w100 = world([entity('boss', { id: 1, hp: 100 })]);
+    const w80 = world([entity('boss', { id: 1, hp: 80 })]);
+    r.render(w100, w100, 1); // 기준선(tracked.hp=100), 델타 0
+    expect(r.damageNumberCount).toBe(0);
+    r.render(w80, w80, 1); // tracked.hp(100) > 80 → 피해 20 방출
     expect(r.damageNumberCount).toBeGreaterThan(0); // 미배선이면 0
     r.destroy();
   });
@@ -146,11 +153,10 @@ describe('AC-4.1 · 데미지 숫자 배선 (보스·엘리트 HP-델타, sim 0 
   it('엘리트 잡몹(elite>=0)이 피해를 입으면 데미지 숫자가 뜬다', () => {
     const r = new EntityRenderer(realTextures());
     lockTier('high');
-    r.render(
-      world([entity('enemy', { id: 2, elite: 0, hp: 100 })]),
-      world([entity('enemy', { id: 2, elite: 0, hp: 60 })]),
-      1,
-    );
+    const a = world([entity('enemy', { id: 2, elite: 0, hp: 100 })]);
+    const b = world([entity('enemy', { id: 2, elite: 0, hp: 60 })]);
+    r.render(a, a, 1);
+    r.render(b, b, 1);
     expect(r.damageNumberCount).toBeGreaterThan(0);
     r.destroy();
   });
@@ -158,11 +164,10 @@ describe('AC-4.1 · 데미지 숫자 배선 (보스·엘리트 HP-델타, sim 0 
   it('일반 잡몹(elite<0)은 피해를 입어도 데미지 숫자가 없다(보스·엘리트만)', () => {
     const r = new EntityRenderer(realTextures());
     lockTier('high');
-    r.render(
-      world([entity('enemy', { id: 3, elite: -1, hp: 100 })]),
-      world([entity('enemy', { id: 3, elite: -1, hp: 60 })]),
-      1,
-    );
+    const a = world([entity('enemy', { id: 3, elite: -1, hp: 100 })]);
+    const b = world([entity('enemy', { id: 3, elite: -1, hp: 60 })]);
+    r.render(a, a, 1);
+    r.render(b, b, 1);
     expect(r.damageNumberCount).toBe(0);
     r.destroy();
   });
@@ -170,7 +175,10 @@ describe('AC-4.1 · 데미지 숫자 배선 (보스·엘리트 HP-델타, sim 0 
   it('힐(HP 델타<0)은 데미지 숫자를 내지 않는다(Critic m3 ②)', () => {
     const r = new EntityRenderer(realTextures());
     lockTier('high');
-    r.render(world([entity('boss', { id: 1, hp: 60 })]), world([entity('boss', { id: 1, hp: 90 })]), 1);
+    const low = world([entity('boss', { id: 1, hp: 60 })]);
+    const high = world([entity('boss', { id: 1, hp: 90 })]);
+    r.render(low, low, 1); // 기준선 tracked.hp=60
+    r.render(high, high, 1); // tracked.hp(60) > 90? 거짓(힐) → 숫자 없음
     expect(r.damageNumberCount).toBe(0);
     r.destroy();
   });
@@ -178,11 +186,10 @@ describe('AC-4.1 · 데미지 숫자 배선 (보스·엘리트 HP-델타, sim 0 
   it('플레이어 피격은 데미지 숫자를 내지 않는다(대상 아님)', () => {
     const r = new EntityRenderer(realTextures());
     lockTier('high');
-    r.render(
-      world([entity('player', { id: 1, hp: 100 })]),
-      world([entity('player', { id: 1, hp: 70 })]),
-      1,
-    );
+    const a = world([entity('player', { id: 1, hp: 100 })]);
+    const b = world([entity('player', { id: 1, hp: 70 })]);
+    r.render(a, a, 1);
+    r.render(b, b, 1);
     expect(r.damageNumberCount).toBe(0);
     r.destroy();
   });
@@ -191,7 +198,10 @@ describe('AC-4.1 · 데미지 숫자 배선 (보스·엘리트 HP-델타, sim 0 
     const r = new EntityRenderer(realTextures());
     lockTier('high');
     graphicsSettings.set({ damageNumbers: false });
-    r.render(world([entity('boss', { id: 1, hp: 100 })]), world([entity('boss', { id: 1, hp: 50 })]), 1);
+    const a = world([entity('boss', { id: 1, hp: 100 })]);
+    const b = world([entity('boss', { id: 1, hp: 50 })]);
+    r.render(a, a, 1);
+    r.render(b, b, 1);
     expect(r.damageNumberCount).toBe(0);
     r.destroy();
   });
@@ -205,6 +215,45 @@ describe('AC-4.1 · 데미지 숫자 배선 (보스·엘리트 HP-델타, sim 0 
     // 2) 보스 소멸 → curr 스냅샷 없음. 킬 루프가 tracked.hp(50) 잔량을 최종 숫자로.
     r.render(world([]), world([]), 1);
     expect(r.damageNumberCount).toBeGreaterThan(0); // 미배선이면 0
+    r.destroy();
+  });
+
+  it('HIGH-1 회귀: 같은 스냅샷을 반복 render 해도 데미지 숫자가 중복 발화하지 않는다', () => {
+    // render 는 sim(60Hz)과 분리돼 sim-step 없는 프레임에 **같은 스냅샷 쌍**으로 다시 호출된다.
+    // p.hp 델타로 감지하면 그 프레임마다 새 숫자가 쏟아진다(HIGH-1). tracked.hp 델타는 1회만 발화해야.
+    const r = new EntityRenderer(realTextures());
+    lockTier('high');
+    const w100 = world([entity('boss', { id: 1, hp: 100 })]);
+    const w80 = world([entity('boss', { id: 1, hp: 80 })]);
+    r.render(w100, w100, 1); // 기준선
+    r.render(w80, w80, 1); // 피해 감지 → 1개
+    const afterHit = r.damageNumberCount;
+    expect(afterHit).toBeGreaterThan(0);
+    // sim-step 없는 프레임을 흉내: **동일한** (prev=w80, curr=w80) 을 여러 번 더 render.
+    r.render(w80, w80, 1);
+    r.render(w80, w80, 1);
+    r.render(w80, w80, 1);
+    // 추가 숫자가 생기면 안 된다(중복 발화 X). 기존 숫자는 수명 진행 중이라 수는 늘지만 말아야.
+    expect(r.damageNumberCount).toBeLessThanOrEqual(afterHit);
+    r.destroy();
+  });
+
+  it('MEDIUM: 연사·DoT(매 프레임 피해)여도 스로틀로 숫자가 프레임당 1개씩 쏟아지지 않는다', () => {
+    // 매 프레임 hp 를 10 씩 깎아 12프레임 피해를 준다 → 스로틀(THROTTLE_FRAMES=8) 로 방출이 합쳐져
+    // 프레임 수보다 훨씬 적은 숫자만 생성돼야 한다(예산 고갈·겹침 방지, 리뷰 MEDIUM).
+    const r = new EntityRenderer(realTextures());
+    lockTier('high');
+    let hp = 1000;
+    const step = () => {
+      hp -= 10;
+      const w = world([entity('boss', { id: 1, hp })]);
+      r.render(w, w, 1);
+    };
+    r.render(world([entity('boss', { id: 1, hp: 1000 })]), world([entity('boss', { id: 1, hp: 1000 })]), 1); // 기준선
+    for (let i = 0; i < 12; i++) step();
+    // 12프레임 연속 피해지만 스로틀로 방출은 소수(넉넉히 6 이하)여야 한다(프레임당 1개면 12개).
+    expect(r.damageNumberCount).toBeLessThanOrEqual(6);
+    expect(r.damageNumberCount).toBeGreaterThan(0);
     r.destroy();
   });
 });

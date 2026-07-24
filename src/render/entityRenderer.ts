@@ -69,9 +69,19 @@ interface TrackedSprite {
   /**
    * 직전 프레임 스냅샷 HP(데미지 숫자 킬블로우용, AC-4.1). 소멸(처치) 시점엔 curr 스냅샷이 없어
    * 치사 델타를 못 얻으므로, 매 프레임 갱신해 두었다가 킬 루프에서 이 잔량을 최종 피해 숫자로 띄운다
-   * (Critic m3 엣지 ①). 보스·엘리트만 숫자를 띄우지만 필드는 전 kind 가 들고 있어도 무해하다.
+   * (Critic m3 엣지 ①). 보스·엘리트만 숫자를 띄우지만 필드는 전 kind 가 들고 있어도 무해하다. **데미지
+   * 감지도 이 필드로** 한다(스냅샷 보간 델타 p.hp 대신) — render 가 sim(60Hz)과 분리돼 sim-step 없는
+   * 프레임에 같은 스냅샷이 재계수되는 HIGH-1 결함을 막는다(no-step 프레임엔 직전 프레임이 이미
+   * tracked.hp=e.hp 로 낮춰 재발화가 자연 차단된다).
    */
   hp: number;
+  /**
+   * 아직 숫자로 방출하지 않은 누적 피해(AC-4.1 스로틀). 대상별로 `tracked.hp - e.hp`(>0)를 모았다가
+   * {@link DAMAGE_NUMBER_THROTTLE_FRAMES} 창마다 한 숫자로 합쳐 방출한다(고빈도 피해 정돈·예산 보호).
+   */
+  dmgAccum: number;
+  /** 마지막 데미지 숫자 방출 프레임(스로틀 기준). 생성 시 음수로 둬 첫 피해는 즉시 방출된다. */
+  dmgEmitTick: number;
   /**
    * 히트 플래시 창의 종료 프레임(AC-2.3). `frameTick < flashUntilTick` 이면 가산 흰 오버레이를
    * 유지하고, 창이 끝나면(`frameTick >= flashUntilTick`) 오버레이를 떼고 파괴한다. 0 = 비활성.
@@ -144,6 +154,14 @@ const MAX_BULLET_TRAILS = 64;
 const GRAZE_BAND = 14;
 /** 데미지 숫자를 대상 머리 위로 띄우는 y 오프셋(월드 유닛, AC-4.1). placeholder, defer-balance-tuning. */
 const DAMAGE_NUMBER_Y_OFFSET = 22;
+/**
+ * 데미지 숫자 방출 스로틀(render 프레임, AC-4.1). 대상별로 이 프레임 수 안에 들어온 피해를 **한 숫자로
+ * 합쳐** 방출한다. 두 목적: ①연사·DoT(매 sim tick 피해)로 숫자가 프레임마다 쏟아져 겹쳐 뭉개지고
+ * oneShots 예산(MAX_ONESHOTS)을 통째 고갈시켜 머즐·수집·레벨업이 굶는 것을 막는다(리뷰 MEDIUM).
+ * ②render 가 sim(60Hz)과 분리돼 sim-step 없는 프레임에 같은 피해가 재계수되는 것은 tracked.hp 델타가
+ * 이미 막지만(리뷰 HIGH-1), 스로틀이 고빈도 피해까지 정돈한다. placeholder, defer-balance-tuning.
+ */
+const DAMAGE_NUMBER_THROTTLE_FRAMES = 8;
 /** render 벽시계 프레임 델타 상한(초) — 탭 복귀 spike 방어. ShardBurst.MAX_DT(0.05)와 정합. */
 const MAX_RENDER_DT = 0.05;
 /** 프레임 델타 nominal(초, 60Hz). 첫 프레임·비정상 dt 폴백값. */
@@ -844,6 +862,9 @@ export class EntityRenderer {
           flashOverlay: null,
           elite: e.elite >= 0,
           hp: e.hp,
+          dmgAccum: 0,
+          // 첫 피해가 즉시 방출되도록 스로틀 창을 이미 지난 값으로 초기화.
+          dmgEmitTick: this.frameTick - DAMAGE_NUMBER_THROTTLE_FRAMES,
         };
         this.sprites.set(e.id, tracked);
         // 머즐 플래시(AC-4.7) — 신규 **플레이어 탄**('bullet', 주무기·보조 포함) 등장 = 발사. 프레임당
@@ -923,22 +944,33 @@ export class EntityRenderer {
         }
       }
 
-      // 데미지 숫자(AC-4.1) — 보스·엘리트 저빈도 한정 + 토글. 렌더측 HP-델타 추론(sim 0 변경): 직전
-      // 스냅샷 대비 hp 가 줄었으면(피해) 그 양을 머리 위에 띄운다. 힐(델타<0, 서포트 빔이 적 회복)은
-      // 무시(Critic m3 ②). id 는 런 내 단조 증가·재사용 없음이라 다중 엘리트 귀속이 안전하다.
-      if (
-        showDamageNumbers &&
-        (e.kind === 'boss' || e.kind === 'defenseBoss' || e.elite >= 0) &&
-        p.hp > e.hp
-      ) {
-        this.addOneShot(
-          new DamageNumber(tracked.sprite.x, tracked.sprite.y - DAMAGE_NUMBER_Y_OFFSET, p.hp - e.hp, {
-            crit: e.kind === 'boss' && e.active, // 보스 과열 창(2배 피해) 피격 = 치명타 강조.
-          }),
-        );
+      // 데미지 숫자(AC-4.1) — 보스·엘리트 저빈도 한정 + 토글. 렌더측 HP-델타 추론(sim 0 변경). **감지는
+      // 스냅샷 보간 델타(p.hp)가 아니라 렌더러가 유지하는 tracked.hp 로** 한다(리뷰 HIGH-1): render 는
+      // sim(60Hz)과 분리돼 매 rAF 프레임 호출되는데, sim-step 없는 프레임엔 prev/curr 스냅샷이 그대로여서
+      // p.hp 델타는 같은 피해를 프레임마다 재계수한다(120/144Hz·위상 지터에서 중복 숫자·예산 고갈). tracked.hp
+      // 는 직전 프레임이 이미 e.hp 로 낮췄으므로 no-step 프레임엔 tracked.hp>e.hp 가 거짓 → 재발화가 자연
+      // 차단되고, 프레임 드랍(다중 step) 시 소실 델타도 누적된다. 힐(델타<0)은 무시(Critic m3 ②).
+      const isDmgTarget = e.kind === 'boss' || e.kind === 'defenseBoss' || e.elite >= 0;
+      if (showDamageNumbers && isDmgTarget) {
+        if (tracked.hp > e.hp) tracked.dmgAccum += tracked.hp - e.hp; // 피해 누적(프레임 드랍 소실분 포함).
+        // 스로틀 방출(리뷰 MEDIUM): 누적 피해를 THROTTLE 창마다 한 숫자로 합쳐 방출한다 — 연사·DoT 로
+        // 매 sim tick 피해가 들어와도 숫자가 프레임마다 쏟아져 겹치거나 oneShots 예산을 통째 고갈시켜
+        // 머즐·수집·레벨업을 굶기지 않게 한다(합산 표기라 가독도 낫다).
+        if (tracked.dmgAccum > 0 && this.frameTick - tracked.dmgEmitTick >= DAMAGE_NUMBER_THROTTLE_FRAMES) {
+          this.addOneShot(
+            new DamageNumber(
+              tracked.sprite.x,
+              tracked.sprite.y - DAMAGE_NUMBER_Y_OFFSET,
+              tracked.dmgAccum,
+              { crit: e.kind === 'boss' && e.active }, // 보스 과열 창(2배 피해) 피격 = 치명타 강조.
+            ),
+          );
+          tracked.dmgAccum = 0;
+          tracked.dmgEmitTick = this.frameTick;
+        }
       }
-      // 킬블로우용 직전 hp 갱신(AC-4.1 엣지 ①) — 소멸 시점엔 curr 스냅샷이 없어 치사 델타를 못 얻으므로,
-      // 매 프레임 실어 뒀다가 킬 루프에서 이 잔량을 최종 피해 숫자로 띄운다.
+      // 킬블로우용 + 데미지 감지 기준선 갱신(AC-4.1). 이 대입이 tracked.hp 델타 감지의 다음-프레임 기준이자,
+      // 소멸 시 킬 루프가 읽을 잔량이다(엣지 ①). 반드시 위 감지 뒤에 온다.
       tracked.hp = e.hp;
 
       // 탄 트레일(AC-4.4) — 티어 게이트(trails, med+) on 이고 트레일 대상 탄(플레이어 탄 전부 + 유도/
