@@ -14,6 +14,8 @@
 import type { Profile, KeyValueStore } from '../save/profile.js';
 import { readSupabaseConfig, type SupabaseConfig } from './config.js';
 import type { ServerGateway, PveSettleSummary } from './gateway.js';
+import { normalizeCatalystArray } from '../data/catalysts.js';
+import type { CatalystDrop } from '../data/catalystDrops.js';
 import {
   serializeProfile,
   deserializeProfile,
@@ -253,6 +255,140 @@ export async function spendCurrencyOnServer(
     return { status: 'rejected' };
   } catch {
     return { status: 'rejected' };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 촉매 시스템(ADR-0029) — 소모(consume)·분해(salvage)·드랍 적립·보유 조회 오케스트레이션
+// ---------------------------------------------------------------------------
+
+/** 촉매 보유 원장 스냅샷(catalyst_id → qty). 픽커·관리 UI 표시용. */
+export type CatalystInventory = ReadonlyMap<number, number>;
+
+/**
+ * `consumeCatalystsOnServer` 결과.
+ *  - `unconfigured`: 서버 미설정/구버전 게이트웨이(오프라인) — 호출부가 무촉매 폴백을 태운다.
+ *  - `ok`: 소모 확정 — 발급된 `runId`(정산 관통용)·서버 확정 `resourceMult` 를 실어 런을 시작한다.
+ *  - `failed`: 온라인인데 소모 거부(슬롯 상한·보유 부족·특산 정합·오프라인/오류). 서버 트랜잭션이
+ *    롤백돼 **아이템은 미차감**이므로 호출부는 [재시도]/[촉매 빼고 출격] 을 물으면 된다.
+ */
+export type ConsumeCatalystOutcome =
+  | { status: 'unconfigured' }
+  | { status: 'ok'; runId: string; resourceMult: number }
+  | { status: 'failed' };
+
+/**
+ * 출격 직전 촉매 소모(ADR-0029) — 서버 `consume_catalysts` 로 보유 원장을 차감하고 pending 런 +
+ * 영수증을 받는다. 서버 권위 계약(가드레일):
+ *  - 미설정/구버전 → `unconfigured`(호출부가 무촉매로 폴백; 촉매는 온라인 전용 = 보유 원장이 서버).
+ *  - 성공 → `ok` + runId·resourceMult. runId 를 `buildRunConfig` → `settle_pve_run` 까지 관통시켜
+ *    정직한 고배율 런이 개연성 캡에서 절삭되지 않게 한다.
+ *  - 실패(예외) → `failed`. **서버 트랜잭션 롤백이라 아이템 미차감** — 클라는 상태를 만지지 않고
+ *    보유 재조회만 하면 정합이다(낙관적 로컬 차감을 하지 않는다). 절대 throw 하지 않음.
+ * 침공 런은 촉매가 없어 이 경로를 애초에 부르지 않는다.
+ */
+export async function consumeCatalystsOnServer(
+  catalystIds: readonly number[],
+  planet: number,
+  deps: NetDeps = {},
+): Promise<ConsumeCatalystOutcome> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.consumeCatalysts === undefined) return { status: 'unconfigured' };
+  // 정규화(오름차순·중복 보존·미지 id 제거)는 서버 검증과 동일 정본(catalysts.ts)을 쓴다 — 빈
+  // 배열이면 소모할 게 없으므로 폴백으로 되돌린다(무촉매 경로 = consume 미호출 계약).
+  const ids = normalizeCatalystArray([...catalystIds]);
+  if (ids.length === 0) return { status: 'unconfigured' };
+  try {
+    // 익명 세션 보장(auth.uid() 필요) — 이미 있으면 즉시 반환된다.
+    await gateway.getUserId();
+    const res = await gateway.consumeCatalysts(ids, planet);
+    return { status: 'ok', runId: res.run_id, resourceMult: res.resource_mult };
+  } catch {
+    // 소모 거부/오프라인/오류 — 서버 롤백으로 아이템 미차감. 재시도/촉매 제외는 호출부가 결정.
+    return { status: 'failed' };
+  }
+}
+
+/**
+ * `salvageCatalystOnServer` 결과. unconfigured=미설정(오프라인·촉매 원장 없음), ok=분해 확정+갱신
+ * 잔액, rejected=보유/잔액 부족·오프라인/오류(미차감).
+ */
+export type SalvageCatalystOutcome =
+  | { status: 'unconfigured' }
+  | { status: 'ok'; salvaged: number; creditsLeft: number; mineralsLeft: number }
+  | { status: 'rejected' };
+
+/**
+ * 촉매 분해(ADR-0029) — 서버 `salvage_catalyst` 로 보유를 차감하고 재화를 지급받는다. 재화 서버
+ * 권위(ADR-0027): 갱신 잔액을 서버가 낸다(salvage 캡은 촉매 배율로 느슨해지지 않음 — 가드레일 #2).
+ * 미설정이면 `unconfigured`(촉매 보유는 서버 원장이라 오프라인 분해는 성립하지 않음). 절대 throw 안 함.
+ */
+export async function salvageCatalystOnServer(
+  catalystId: number,
+  qty: number,
+  deps: NetDeps = {},
+): Promise<SalvageCatalystOutcome> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.salvageCatalyst === undefined) return { status: 'unconfigured' };
+  try {
+    const res = await gateway.salvageCatalyst(catalystId, qty);
+    if (!res.ok) return { status: 'rejected' };
+    return {
+      status: 'ok',
+      salvaged: res.salvaged,
+      creditsLeft: res.credits_left,
+      mineralsLeft: res.minerals_left,
+    };
+  } catch {
+    return { status: 'rejected' };
+  }
+}
+
+/**
+ * 촉매 드랍 적립(ADR-0029) — 정산이 파생한 촉매 드랍 목록을 서버 `grant_catalyst` 로 본인 원장에
+ * 얹는다(적립 총 건수 반환). 규율은 `grantBlueprintDrops` 와 동일한 **fire-and-forget**:
+ *  - 미설정/구버전/오프라인/오류 → 0(재시도 큐 없음 — 드랍은 다음 런에서 다시 나온다).
+ *  - 절대 throw 하지 않는다(정산은 오프라인에서도 끝나야 한다).
+ */
+export async function grantCatalystDrops(
+  drops: readonly CatalystDrop[],
+  deps: NetDeps = {},
+): Promise<number> {
+  if (drops.length === 0) return 0;
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.grantCatalyst === undefined) return 0;
+  let granted = 0;
+  for (const d of drops) {
+    if (d.qty <= 0) continue;
+    try {
+      await gateway.grantCatalyst(d.id, d.qty);
+      granted += d.qty;
+    } catch {
+      // 개별 실패는 삼킨다(부분 적립 허용 — 다음 런에서 다시 나온다). 다음 드랍 계속.
+    }
+  }
+  return granted;
+}
+
+/**
+ * 촉매 보유 원장 조회(ADR-0029). 온라인이면 `catalyst_inventory` 를 읽어 catalyst_id→qty 맵을
+ * 낸다. 미설정/구버전/오프라인/오류면 `null`(→ 호출부가 빈 보유로 취급 = 주입 불가). throw 안 함.
+ */
+export async function fetchCatalystInventoryOnline(
+  deps: NetDeps = {},
+): Promise<CatalystInventory | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.fetchCatalystInventory === undefined) return null;
+  try {
+    await gateway.getUserId();
+    const rows = await gateway.fetchCatalystInventory();
+    const map = new Map<number, number>();
+    for (const row of rows) {
+      if (row.qty > 0) map.set(row.catalyst_id, row.qty);
+    }
+    return map;
+  } catch {
+    return null;
   }
 }
 

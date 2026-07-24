@@ -38,6 +38,7 @@ import { COLOR, RARITY_COLOR_NUM, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, shipShowcaseName, LEGACY_SHOWCASE, type UiTextures } from './uiTextures.js';
 import { ChampionSelectScreen } from './championSelect.js';
 import { GuardianRosterScreen } from './guardianRoster.js';
+import { CatalystArchiveScreen } from './catalystArchive.js';
 import { shipTypeName, tShipKey } from './shipLabels.js';
 import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
@@ -133,6 +134,10 @@ export class HangarScreen {
    * (`suspend()`/`resume()`)으로 자리를 주고받는다.
    */
   private readonly roster: GuardianRosterScreen;
+  /**
+   * 촉매 보관함(분해 표면, ADR-0029). 챔피언·로스터와 같은 하위 화면 규약(`suspend()`/`resume()`).
+   */
+  private readonly catalystArchive: CatalystArchiveScreen;
 
   constructor(profile: Profile, stage: Container, store: KeyValueStore | null = null) {
     this.profile = profile;
@@ -140,6 +145,7 @@ export class HangarScreen {
     this.stage = stage;
     this.champion = new ChampionSelectScreen(profile, stage, store);
     this.roster = new GuardianRosterScreen(profile, stage, store);
+    this.catalystArchive = new CatalystArchiveScreen(profile, stage, store);
     this.root.visible = false;
     this.root.eventMode = 'static';
     this.stage.addChild(this.root);
@@ -208,6 +214,17 @@ export class HangarScreen {
   private openGuardianRoster(): void {
     this.suspend();
     this.roster.show(this.profile, {
+      onClose: () => this.resume(),
+    });
+  }
+
+  /**
+   * 촉매 보관함으로 내려간다(분해 표면). 분해는 서버 보유·재화를 변형하므로 돌아올 때 `resume()`
+   * 의 `render()` 가 갱신된 재화 미러를 다시 읽는다(보유는 보관함이 서버에서 재조회).
+   */
+  private openCatalystArchive(): void {
+    this.suspend();
+    this.catalystArchive.show(this.profile, {
       onClose: () => this.resume(),
     });
   }
@@ -493,6 +510,19 @@ export class HangarScreen {
     });
     guardians.container.position.set(swapX - 12 - actW, actY);
     this.root.addChild(guardians.container);
+
+    // 촉매 보관함 진입 — 우측 상단은 칩 2개 + 버튼 2개로 붐비므로 좌측 상단 빈 자리에 둔다.
+    const catBtn = new PixiButton({
+      texture: this.ui['ui_btn_wood.png'],
+      fallbackColor: 0x4a3a24,
+      width: actW,
+      height: actH,
+      fontSize: 15,
+      label: t('catalyst.manage.open'),
+      onClick: () => this.openCatalystArchive(),
+    });
+    catBtn.container.position.set(24, actY);
+    this.root.addChild(catBtn.container);
 
     const close = makeIconButton(
       56,

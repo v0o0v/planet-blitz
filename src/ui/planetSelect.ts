@@ -11,6 +11,7 @@
 
 import { PLANETS, planetById } from '../../data/planets.js';
 import { stageOpenCap } from '../../data/waves.js';
+import { SLOT_CAP } from '../data/catalysts.js';
 import { t } from '../i18n/index.js';
 
 /** What the player chose on the star map. */
@@ -20,6 +21,17 @@ export interface LaunchSelection {
   stage: number;
   /** 보스 이전 일반 세그먼트 수 상한(튜토리얼 단축판). absent = 풀 런. */
   maxSegments?: number;
+  /**
+   * 이 런에 주입한 촉매 id 배열(ADR-0029, Lane 4 픽커 산출). 미지정/빈 배열 = 무촉매.
+   * 출격 오케스트레이터(main.ts)가 이 배열이 비지 않으면 `consume_catalysts` 를 거쳐 런을 시작하고,
+   * 서버가 발급한 `runId` 를 아래에 실어 다시 startRun 을 부른다. 침공 런은 이 경로를 타지 않는다.
+   */
+  catalysts?: number[];
+  /**
+   * 서버 소모 영수증 런 id(ADR-0029). `consume_catalysts` 성공 시에만 채워지며, 정산이 이 값으로
+   * 서버측 영수증(자원 배율)을 관통 조회한다. 무촉매/오프라인 폴백 런은 미지정.
+   */
+  runId?: string;
 }
 
 /** 선택한 행성의 개방 상한을 산정하는 콜백(행성별 최고 클리어 단계 → 상한). */
@@ -59,6 +71,11 @@ export class PlanetSelect {
   private onLaunch: ((sel: LaunchSelection) => void) | null = null;
   private onInventory: (() => void) | null = null;
   private onBack: (() => void) | null = null;
+  /**
+   * 이 런에 주입한 촉매 id(ADR-0029). 레거시 DOM 판은 픽커가 없어 항상 빈 배열이지만, Pixi 판과
+   * `LaunchSelection.catalysts` 계약을 맞추기 위해 상태·요약 패널·출격 전달만 갖춘다(회귀 대비 최소).
+   */
+  private injectedCatalysts: number[] = [];
 
   constructor() {
     const style = document.createElement('style');
@@ -192,7 +209,15 @@ export class PlanetSelect {
     stageDesc.textContent = t('planet.stageDesc', { stage: this.stage, cap });
     this.root.appendChild(stageDesc);
 
-    // 촉매 주입 패널(변칙 패널 자리, ADR-0029)은 Lane 4 픽커가 얹는다 — 이 레거시 DOM 판엔 없다.
+    // 촉매 주입 요약 패널(변칙 패널 자리, ADR-0029). 레거시 DOM 판은 픽커가 없어 현재 주입 상태만
+    // 읽어 보여 준다(실사용 Pixi 판이 픽커/주입/해제를 담당). `LaunchSelection.catalysts` 계약 유지용.
+    const catRow = document.createElement('div');
+    catRow.className = 'pb-tierdesc';
+    catRow.textContent =
+      this.injectedCatalysts.length === 0
+        ? t('catalyst.panel.none')
+        : t('catalyst.panel.count', { n: this.injectedCatalysts.length, cap: SLOT_CAP });
+    this.root.appendChild(catRow);
 
     // Actions.
     const actions = document.createElement('div');
@@ -217,10 +242,12 @@ export class PlanetSelect {
     launch.textContent = t('planet.launch', { name: planetById(this.planet).name });
     launch.addEventListener('click', () => {
       const cb = this.onLaunch;
+      const cats = this.injectedCatalysts.slice();
       this.hide();
       cb?.({
         planet: this.planet,
         stage: this.stage,
+        ...(cats.length > 0 ? { catalysts: cats } : {}),
       });
     });
     actions.appendChild(invBtn);

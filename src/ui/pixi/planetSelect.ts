@@ -18,9 +18,11 @@
 import { Container, Graphics, Sprite, Text } from 'pixi.js';
 import { PLANETS, planetById, type PlanetMeta } from '../../../data/planets.js';
 import { stageOpenCap } from '../../../data/waves.js';
-import { t } from '../../i18n/index.js';
+import { catalystById, normalizeCatalystArray, SLOT_CAP } from '../../data/catalysts.js';
+import { t, type MessageKey } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import type { LaunchSelection, BestStageClearedFn } from '../planetSelect.js';
+import type { CatalystInventory } from '../../net/index.js';
 import { COLOR, UI_FONT, TEXT_SHADOW, hexColor } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { panelContent, PANEL_BORDER, nineSlicePanel } from './nineSlicePanel.js';
@@ -28,6 +30,7 @@ import { makePanelCard } from './card.js';
 import { PixiButton } from './button.js';
 import { makeBanner } from './titleBar.js';
 import { stripEmoji } from './text.js';
+import { CatalystPicker } from './catalystPicker.js';
 
 export type { LaunchSelection };
 
@@ -51,11 +54,15 @@ const ORB_D = 128;
 const CARD_NAME_Y = 212;
 const CARD_SUB_Y = 254;
 
-// 하단 패널 행(단계 스텝퍼). 콘텐츠가 상자(60..220)를 꽉 채우는 높이다. 촉매 픽커(Lane 4)가
-// 얹히면 이 행을 좁혀 옆에 촉매 패널을 둔다(구 변칙 패널 레이아웃 참고 — 지금은 단계만).
+// 하단 패널 행: 단계 스텝퍼(좌) + 촉매 주입 패널(우, ADR-0029 Lane 4 — 구 변칙 패널 자리).
 const LOW_Y = 546;
 const LOW_H = 280;
-const TIER_W_ALONE = 1200;
+/** 단계 패널 폭(좌). 티어 3버튼 행(884)이 콘텐츠 상자에 들어가는 최소 폭 이상. */
+const STAGE_W = 1040;
+/** 촉매 주입 패널 폭(우). */
+const CAT_W = 560;
+/** 두 하단 패널 사이 간격. */
+const LOW_GAP = 40;
 const TIER_BTN_W = 280;
 const TIER_BTN_H = 64;
 const TIER_BTN_GAP = 22;
@@ -128,9 +135,18 @@ export class PlanetSelectScreen {
   private onLaunch: ((sel: LaunchSelection) => void) | null = null;
   private onInventory: (() => void) | null = null;
   private onBack: (() => void) | null = null;
+  /** 이 런에 주입한 촉매 id(중복=스택, ADR-0029). 픽커가 편집하고 launch 가 sel 에 실어 넘긴다. */
+  private injectedCatalysts: number[] = [];
+  /** 보유 수량 스냅샷(서버 권위 — show 시 온라인 조회). 없으면 빈 맵(주입 불가). */
+  private inventory: CatalystInventory = new Map<number, number>();
+  /** 보유 원장 조회 provider(온라인=net, 하네스=모의). 미지정이면 조회하지 않는다. */
+  private fetchInventory: (() => Promise<CatalystInventory | null>) | null = null;
+  /** 촉매 주입 픽커 팝업(하위 컴포넌트). */
+  private readonly picker: CatalystPicker;
 
   constructor(stage: Container) {
     this.stage = stage;
+    this.picker = new CatalystPicker(stage);
     this.root.visible = false;
     this.root.eventMode = 'static';
     this.stage.addChild(this.root);
@@ -157,6 +173,11 @@ export class PlanetSelectScreen {
     onInventory: () => void;
     /** 기지 맵 복귀(왕복 동선). */
     onBack?: () => void;
+    /**
+     * 촉매 보유 원장 조회 provider(ADR-0029). 온라인은 net `fetchCatalystInventoryOnline`,
+     * 하네스는 모의를 넘긴다. 미지정이면 조회하지 않는다(빈 보유 = 주입 불가, 오프라인 폴백 보존).
+     */
+    fetchCatalystInventory?: () => Promise<CatalystInventory | null>;
   }): void {
     this.bestStageCleared = opts.bestStageCleared ?? (() => 0);
     // 선택 단계를 현재 행성 개방 상한으로 클램프한다(DOM 판과 동일).
@@ -165,8 +186,19 @@ export class PlanetSelectScreen {
     this.onLaunch = opts.onLaunch;
     this.onInventory = opts.onInventory;
     this.onBack = opts.onBack ?? null;
+    this.fetchInventory = opts.fetchCatalystInventory ?? null;
+    // 이전 런 주입이 이번 행성 특산 정합을 깨지 않게 정리(무촉매로 시작하는 것이 안전하다).
+    this.pruneInjectedForPlanet();
     this.render();
     this.root.visible = true;
+    // 보유 원장은 서버 권위라 비동기 조회한다 — 도착하면 픽커·패널이 반영한다(그 전엔 빈 보유).
+    const fetchInv = this.fetchInventory;
+    if (fetchInv !== null) {
+      void fetchInv().then((inv) => {
+        if (inv !== null) this.inventory = inv;
+        if (this.root.visible) this.render();
+      });
+    }
     // DOM HUD 는 런 전용 — 캔버스 메타 화면 위에 떠 보이므로 숨긴다(스킬 §7).
     const hud = document.getElementById('pb-hud');
     if (hud !== null) hud.style.visibility = 'hidden';
@@ -174,6 +206,7 @@ export class PlanetSelectScreen {
 
   hide(): void {
     this.root.visible = false;
+    this.picker.hide(); // 픽커 모달이 떠 있으면 함께 내린다(화면 전환 시 잔상 방지).
     this.onLaunch = null;
     this.onInventory = null;
     this.onBack = null;
@@ -187,7 +220,18 @@ export class PlanetSelectScreen {
     this.planet = id;
     // 행성마다 개방 상한이 다르므로 선택 단계를 새 행성 상한으로 클램프한다.
     this.selectedStage = this.clampStage(this.selectedStage);
+    // 특산 촉매는 출신 행성 전용이라 행성이 바뀌면 정합이 깨진 특산 주입을 걷어낸다(consume 거부 예방).
+    this.pruneInjectedForPlanet();
     this.render();
+  }
+
+  /** 현재 선택 행성에서 잠기는 특산 촉매 주입을 제거한다(공용은 유지). */
+  private pruneInjectedForPlanet(): void {
+    this.injectedCatalysts = this.injectedCatalysts.filter((id) => {
+      const def = catalystById(id);
+      if (def === undefined) return false;
+      return def.kind === 'common' || def.planet === this.planet;
+    });
   }
 
   /** 현재 선택 행성의 개방 상한(max(10, 최고 클리어 + 5), ADR-0022). */
@@ -208,9 +252,13 @@ export class PlanetSelectScreen {
 
   private launch(): void {
     const cb = this.onLaunch;
+    // 주입 촉매를 sel 에 실어 넘긴다(중복=스택). 출격 오케스트레이터(main.ts)가 비지 않으면
+    // consume_catalysts 를 거쳐 런을 시작한다. 무촉매면 catalysts 를 싣지 않아 기존 경로 불변.
+    const cats = this.injectedCatalysts.slice();
     const sel: LaunchSelection = {
       planet: this.planet,
       stage: this.selectedStage,
+      ...(cats.length > 0 ? { catalysts: cats } : {}),
     };
     this.hide();
     cb?.(sel);
@@ -328,14 +376,113 @@ export class PlanetSelectScreen {
     return card;
   }
 
-  /** 하단 패널 행: 단계 스텝퍼. 촉매 픽커(Lane 4)가 얹히면 이 행을 좁혀 옆에 촉매 패널을 둔다. */
+  /** 하단 패널 행: 단계 스텝퍼(좌) + 촉매 주입 패널(우, ADR-0029). */
   private renderLowPanels(): void {
-    const tierW = TIER_W_ALONE;
-    const x0 = (DESIGN_WIDTH - tierW) / 2;
+    const rowW = STAGE_W + LOW_GAP + CAT_W;
+    const x0 = Math.round((DESIGN_WIDTH - rowW) / 2);
 
-    const stage = this.makeStagePanel(tierW);
+    const stage = this.makeStagePanel(STAGE_W);
     stage.position.set(x0, LOW_Y);
     this.root.addChild(stage);
+
+    const cat = this.makeCatalystPanel(CAT_W);
+    cat.position.set(x0 + STAGE_W + LOW_GAP, LOW_Y);
+    this.root.addChild(cat);
+  }
+
+  /**
+   * 촉매 주입 패널(구 변칙 패널 자리, ADR-0029). 현재 주입 요약 + [주입 편집] 버튼. 편집은 픽커
+   * 팝업(`CatalystPicker`)에서 하고, 확정된 배열을 여기 상태에 반영해 출격 때 sel 로 넘긴다.
+   */
+  private makeCatalystPanel(w: number): Container {
+    const panel = new Container();
+    panel.addChild(nineSlicePanel(w, LOW_H, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER }));
+    const box = panelContent(w, LOW_H);
+    this.panelTitle(panel, w, t('catalyst.panel.title'));
+
+    // 주입 요약: 개수 + 주입한 촉매 이름(잘림). 없으면 안내 문구.
+    const n = this.injectedCatalysts.length;
+    const summary =
+      n === 0
+        ? t('catalyst.panel.none')
+        : `${t('catalyst.panel.count', { n, cap: SLOT_CAP })}\n${this.injectedNames()}`;
+    const sumText = new Text({
+      resolution: 2,
+      text: summary,
+      style: {
+        fontFamily: UI_FONT,
+        fontSize: 18,
+        fill: n === 0 ? COLOR.muted : COLOR.cream,
+        wordWrap: true,
+        wordWrapWidth: box.w,
+        lineHeight: 24,
+        dropShadow: TEXT_SHADOW,
+      },
+    });
+    sumText.position.set(box.x, box.y + 44);
+    panel.addChild(sumText);
+
+    const edit = new PixiButton({
+      texture: this.ui['ui_btn_wood.png'],
+      fallbackColor: 0x4a3a24,
+      width: box.w,
+      height: 56,
+      fontSize: 22,
+      label: t('catalyst.panel.edit'),
+      onClick: () => this.openCatalystPicker(),
+    });
+    edit.container.position.set(box.x, box.bottom - 56);
+    panel.addChild(edit.container);
+
+    return panel;
+  }
+
+  /** 주입한 촉매 이름을 콤마로 이어 붙인다(패널 요약용, i18n name). */
+  private injectedNames(): string {
+    return this.injectedCatalysts
+      .map((id) => {
+        const def = catalystById(id);
+        return def === undefined ? '' : t(`catalyst.${def.slug}.name` as MessageKey);
+      })
+      .filter((s) => s !== '')
+      .join(', ');
+  }
+
+  /**
+   * 촉매 주입 픽커 팝업을 연다(하네스 훅 지점 — public). 확정된 배열을 주입 상태에 반영하고
+   * 성계 지도를 다시 그린다. 보유 스냅샷·현재 행성을 픽커에 넘겨 슬롯 상한·특산 정합을 강제한다.
+   */
+  openCatalystPicker(): void {
+    this.picker.show({
+      planet: this.planet,
+      injected: this.injectedCatalysts,
+      inventory: this.inventory,
+      onConfirm: (ids) => {
+        // 정규화(오름차순·중복 보존·미지 제거)로 저장 — consume·해시 정본과 같은 형태.
+        this.injectedCatalysts = normalizeCatalystArray(ids);
+        this.render();
+      },
+    });
+  }
+
+  // --- 하네스 훅(Lane 5 접점) ----------------------------------------------
+
+  /** 현재 주입된 촉매 id(복사본). 하네스가 출격 상태를 읽는 접점. */
+  getInjectedCatalysts(): number[] {
+    return this.injectedCatalysts.slice();
+  }
+
+  /** 주입 촉매를 직접 세팅한다(하네스 셋업용). 현재 행성 특산 정합에 맞게 정리한다. */
+  setInjectedCatalysts(ids: readonly number[]): void {
+    this.injectedCatalysts = normalizeCatalystArray([...ids]);
+    this.pruneInjectedForPlanet();
+    if (this.root.visible) this.render();
+  }
+
+  /** 보유 원장 스냅샷을 직접 주입한다(하네스 모의 — 서버 조회 우회). */
+  setCatalystInventory(inv: CatalystInventory): void {
+    this.inventory = inv;
+    if (this.root.visible) this.render();
   }
 
   /** 패널 제목 — top = 콘텐츠 상자 top(스킬 §4, 제목이 나무 테두리에 붙던 결함 재발 방지). */

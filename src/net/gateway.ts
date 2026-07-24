@@ -32,6 +32,43 @@ export interface PveSettleSummary {
   /** 런 광물(→minerals 지급 주장액). */
   minerals: number;
   kills: number;
+  /**
+   * 촉매 소모 영수증 런 id(ADR-0029, Lane 3). `consume_catalysts` 성공 시 발급된 uuid 를
+   * 실으면 서버 `settle_pve_run` 이 이 id 로 pending 영수증(자원 배율)을 조회해 캡을 상향한다.
+   * **무촉매/오프라인 런은 미지정** — 그러면 서버가 기존 무배율 base 경로로 정산한다(위조 방지:
+   * 클라가 실은 resourceMult 는 서버가 무시하고 자기 영수증만 신뢰). exactOptionalPropertyTypes
+   * 규율상 값이 있을 때만 스탬프한다(undefined 대입 금지).
+   */
+  runId?: string;
+}
+
+/** `consume_catalysts` 반환 — 발급된 런 id 와 서버 확정 자원 배율. */
+export interface CatalystConsumeResult {
+  /** pending pve_runs 행 id(uuid). settle 이 이 값으로 영수증을 관통 조회한다. */
+  run_id: string;
+  /** 서버 영수증 자원 배율([1, CAP_RESOURCE_MULT_MAX] 클램프). 표시용(정본은 서버 pending 행). */
+  resource_mult: number;
+}
+
+/** `grant_catalyst` / 드랍 적립 반환 — 적립 후 그 촉매의 보유 수량. */
+export interface CatalystGrantResult {
+  catalyst_id: number;
+  qty_after: number;
+}
+
+/** `salvage_catalyst` 반환 — 분해 성공 여부 + 갱신 재화 잔액(ok=false 면 미차감). */
+export interface CatalystSalvageResult {
+  ok: boolean;
+  /** 실제 분해된 수량(ok=false 면 0). */
+  salvaged: number;
+  credits_left: number;
+  minerals_left: number;
+}
+
+/** `catalyst_inventory` 한 행(본인 보유 원장). */
+export interface CatalystInventoryRow {
+  catalyst_id: number;
+  qty: number;
 }
 
 /** `grant_currency` / `settle_pve_run` 이 반환하는 갱신 잔액 계약(jsonb). */
@@ -88,6 +125,28 @@ export interface ServerGateway {
     minerals: number,
     reason: string,
   ): Promise<SpendCurrencyResult>;
+  /**
+   * 촉매 소모(ADR-0029) — 서버 `consume_catalysts` RPC. 슬롯 상한·미지 id·특산-행성 정합·보유량을
+   * 서버가 2차 검증하고, 통과 시 보유 원장을 차감한 뒤 pending 런 + 영수증을 심어 `{ run_id,
+   * resource_mult }` 를 낸다. **실패 시 예외**(서버 트랜잭션 롤백 = 아이템 미차감). 구버전 게이트웨이면
+   * `undefined` — 호출부가 no-op 처리(오프라인 폴백). 침공 런은 이 경로를 타지 않는다(촉매 PvE 전용).
+   */
+  consumeCatalysts?(catalystIds: number[], planet: number): Promise<CatalystConsumeResult>;
+  /**
+   * 촉매 드랍 적립(ADR-0029) — 서버 `grant_catalyst` RPC. 엘리트·보스 런 드랍으로 얻은 촉매를
+   * 본인 보유 원장에 upsert 적립하고 갱신 수량을 낸다. 미지 id 는 서버가 거부(예외). 구버전이면 undefined.
+   */
+  grantCatalyst?(catalystId: number, qty: number): Promise<CatalystGrantResult>;
+  /**
+   * 촉매 분해(ADR-0029) — 서버 `salvage_catalyst` RPC. 보유 차감 + `grant_currency(salvage)` 로
+   * 재화를 지급하고 갱신 잔액을 낸다. 잔액/보유 부족이면 `ok=false`(미차감). 구버전이면 undefined.
+   */
+  salvageCatalyst?(catalystId: number, qty: number): Promise<CatalystSalvageResult>;
+  /**
+   * 촉매 보유 원장 조회 — `catalyst_inventory` select(RLS 로 본인 행만). 픽커·관리 UI 표시용.
+   * 구버전 게이트웨이면 undefined(→ 빈 보유로 취급).
+   */
+  fetchCatalystInventory?(): Promise<CatalystInventoryRow[]>;
 }
 
 /** raw jsonb 에서 안전하게 값 추출(RPC 응답 방어적 파싱). */
@@ -218,5 +277,54 @@ export class SupabaseGateway implements ServerGateway {
       credits_left: num(r.credits_left),
       minerals_left: num(r.minerals_left),
     };
+  }
+
+  async consumeCatalysts(catalystIds: number[], planet: number): Promise<CatalystConsumeResult> {
+    const { data, error } = await this.client.rpc('consume_catalysts', {
+      p_catalyst_ids: catalystIds,
+      p_planet: planet,
+    });
+    if (error !== null) throw error;
+    const r = asRec(data);
+    const runId = typeof r.run_id === 'string' ? r.run_id : '';
+    if (runId === '') throw new Error('consume_catalysts: run_id 미발급');
+    return { run_id: runId, resource_mult: num(r.resource_mult, 1) };
+  }
+
+  async grantCatalyst(catalystId: number, qty: number): Promise<CatalystGrantResult> {
+    const { data, error } = await this.client.rpc('grant_catalyst', {
+      p_catalyst_id: catalystId,
+      p_qty: qty,
+    });
+    if (error !== null) throw error;
+    const r = asRec(data);
+    return { catalyst_id: num(r.catalyst_id, catalystId), qty_after: num(r.qty_after) };
+  }
+
+  async salvageCatalyst(catalystId: number, qty: number): Promise<CatalystSalvageResult> {
+    const { data, error } = await this.client.rpc('salvage_catalyst', {
+      p_catalyst_id: catalystId,
+      p_qty: qty,
+    });
+    if (error !== null) throw error;
+    const r = asRec(data);
+    return {
+      ok: r.ok === true,
+      salvaged: num(r.salvaged),
+      credits_left: num(r.credits_left),
+      minerals_left: num(r.minerals_left),
+    };
+  }
+
+  async fetchCatalystInventory(): Promise<CatalystInventoryRow[]> {
+    const { data, error } = await this.client
+      .from('catalyst_inventory')
+      .select('catalyst_id, qty');
+    if (error !== null) throw error;
+    if (!Array.isArray(data)) return [];
+    return data.map((row) => {
+      const r = asRec(row);
+      return { catalyst_id: num(r.catalyst_id), qty: num(r.qty) };
+    });
   }
 }
