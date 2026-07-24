@@ -30,6 +30,7 @@ import { graphicsTierController } from './render/graphicsRuntime.js';
 import { graphicsSettings } from './render/graphicsSettings.js';
 import { Radar } from './render/radar.js';
 import { UniqueCeremony } from './render/ceremony.js';
+import { ScreenTransition } from './render/screenTransition.js';
 import { InputController } from './input/controller.js';
 import { Hud } from './ui/hud.js';
 import type { BossHudState } from './ui/hud.js';
@@ -279,6 +280,11 @@ async function main(): Promise<void> {
   // visible + ResultState 동일). 다른 캔버스 화면과 같은 이유로 여기서 만든다 — 앞쪽(텍스처
   // 로드 전)에서 만들면 entityRenderer·radar 보다 먼저 stage 에 붙어 아레나 아래에 깔린다.
   const resultOverlay = new ResultOverlayScreen(gameApp.stage);
+  // AC-5.1 메타 화면 전환 커튼(카툰나무 슬라이드, ADR-0031). clearToMenu() 단일 초크포인트가 play() 로
+  // 트리거하고, 렌더 루프가 매 프레임 update(진행) + 재생 중엔 stage 최상단으로 raise 해 전 화면·크롬 UI
+  // 위를 덮는다. render-only(sim 무관). 비재생 시 커튼은 화면 밖·invisible 로 파킹된다.
+  const screenTransition = new ScreenTransition();
+  gameApp.stage.addChild(screenTransition.container);
   // 카툰나무풍 롤아웃 #6: DOM `ControlTower` 대신 Pixi 캔버스 관제탑으로 교체(show/hide/
   // visible + 콜백·옵션 타입 동일). 다른 캔버스 화면과 같은 블록에서 만들어야
   // entityRenderer·radar 레이어보다 **뒤에** stage 에 붙어 위로 그려진다(z 순서).
@@ -517,6 +523,11 @@ async function main(): Promise<void> {
 
   /** Clear the live run + all menu overlays (called before every screen swap). */
   function clearToMenu(): void {
+    // AC-5.1 균일 전환 커튼(카툰나무 슬라이드) — 전 메타 화면 swap 의 단일 초크포인트라 여기서 1회 트리거해
+    // 모든 화면 전환에 균일 적용한다. 화면 teardown(아래)+호출자의 새 화면 show()는 같은 프레임에 동기로
+    // 끝나 swap 이 원자적이므로(플래시 없음), 커튼은 그 위를 카툰 결로 쓸어 전환을 읽히게 하는 연출이다.
+    // play()는 멱등·재진입 안전이라 여러 초크포인트에서 불려도 안전(처음부터 재시작). render-only.
+    screenTransition.play();
     world = null;
     recorder = null;
     prevSnap = emptySnap;
@@ -1325,6 +1336,17 @@ async function main(): Promise<void> {
 
     let frame = ticker.deltaMS / 1000;
     if (frame > 0.25) frame = 0.25; // clamp to avoid spiral-of-death after stalls
+
+    // AC-5.1 화면 전환 커튼: 매 프레임 진행(비재생 시 no-op) + 재생 중엔 stage 최상단으로 올려
+    // 전 화면·크롬 UI 위를 덮는다(settings.raise 뒤라 커튼이 그 위). render-only.
+    screenTransition.update(frame);
+    if (screenTransition.active) {
+      const st = gameApp.stage;
+      st.setChildIndex(screenTransition.container, st.children.length - 1);
+    }
+    // AC-5.2 보상 세리머니 진행 — 정산 화면엔 자체 프레임 루프가 없어 여기서 매 프레임 구동한다
+    // (비표시 시 no-op). 공개→유지→페이드아웃 흐름을 굴려 결과 패널을 드러낸다.
+    resultOverlay.update(frame);
 
     const w = world;
     const runOver = w !== null && (w.gameOver || w.victory);
