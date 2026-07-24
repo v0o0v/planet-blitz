@@ -581,6 +581,11 @@ begin
   -- 재화 지급(3중 캡 강제). 중첩 definer 호출에서도 auth.uid()=원 호출자라 본인에게 가산.
   v_grant := public.grant_currency(v_claim_credits, v_claim_minerals, 'pve_run', v_metrics);
 
+  -- 플래그 즉시 해제 — 배율 적용 창을 위 grant 1회로 최소화한다. is_local 은 트랜잭션 종료까지
+  -- 유지되므로, 같은 트랜잭션에 후속 grant 가 생겨도 배율을 상속하지 않게 방어한다(정상 클라 경로는
+  -- 요청당 단일 트랜잭션·단일 RPC 라 영향 없지만, 심화 방어로 명시 해제).
+  perform set_config('app.in_settle', '', true);
+
   if v_run_id is not null then
     -- UPSERT-by-runId: pending 행을 verified 로 1회성 봉인(재사용 거부는 위 조회 게이트가 담당).
     update public.pve_runs
