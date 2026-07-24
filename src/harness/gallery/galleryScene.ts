@@ -270,3 +270,9 @@ export class GalleryScene {
     this.app = null;
   }
 }
+
+/**
+ * 공유 갤러리 씬 싱글턴. 치트 패널의 갤러리 탭 토글과 `?gallery=1` 딥링크(main.ts)가 **같은 인스턴스**를
+ * 구동해 이중 마운트를 막는다(둘 중 하나가 열면 다른 쪽의 isOpen 이 그 상태를 반영).
+ */
+export const galleryScene = new GalleryScene();

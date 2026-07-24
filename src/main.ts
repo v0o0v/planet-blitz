@@ -1856,6 +1856,13 @@ async function main(): Promise<void> {
       }
     }
 
+    // URL 딥링크(DEV): ?gallery=1 로 부팅 후 프로토타입 갤러리(6종 변형 라이브 비교)를 게임 화면 위에
+    // 바로 띄운다 — 치트 패널 '갤러리' 탭과 같은 공유 씬 싱글턴을 마운트. render-only.
+    if (params.get('gallery') === '1') {
+      const { galleryScene } = await import('./harness/gallery/galleryScene.js');
+      galleryScene.mount(gameApp.stage, gameApp.app);
+    }
+
     // URL 딥링크(DEV): `?invasion=def3-mid&invasionLayer=2` 로 3레이어 침공 런에 바로 진입.
     // `?invasion=1` 은 def3-empty(기본 수비대 전면 충원) 와 같다. 레이어 점프는 무대
     // 꾸미기라 오염 런으로 표시된다(ADR-0008).
