@@ -18,7 +18,7 @@
 
 import { Container, Graphics, NineSliceSprite, Rectangle, Sprite, Text } from 'pixi.js';
 import type { FederatedPointerEvent } from 'pixi.js';
-import type { GameAudio } from '../../render/audio.js';
+import type { GameAudio, AudioBus } from '../../render/audio.js';
 import { getLocale, setLocale, LOCALES, t, type Locale, type MessageKey } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
@@ -261,20 +261,29 @@ export class SettingsScreen {
     content.addChild(soundBtn.container);
     y += BTN_H + 26;
 
-    // 볼륨: 라벨 + 현재 값(%) + 드래그 슬라이더.
-    content.addChild(this.row(t('settings.volume'), y, 0));
-    const pct = label(`${Math.round(s.volume * 100)}%`, ROW_LABEL, COLOR.gold);
-    pct.anchor.set(1, 0);
-    pct.position.set(CW, y);
-    content.addChild(pct);
-    y += 36;
-    const slider = this.buildSlider(s.volume, (v) => {
-      this.audio.setVolume(v);
-      pct.text = `${Math.round(v * 100)}%`;
-    });
-    slider.position.set(0, y);
-    content.addChild(slider);
-    y += KNOB_H + 30;
+    // 볼륨: 버스별(BGM/SFX/UI) 라벨 + 현재 값(%) + 드래그 슬라이더 3벌. 각 버스 게인을 독립
+    // 조절한다. "음악만 끄기"는 별도 버튼 없이 BGM 슬라이더를 0 으로 내려 달성한다.
+    const busRows: ReadonlyArray<{ bus: AudioBus; key: MessageKey; value: number }> = [
+      { bus: 'bgm', key: 'settings.bgmVolume', value: s.bgmVolume },
+      { bus: 'sfx', key: 'settings.sfxVolume', value: s.sfxVolume },
+      { bus: 'ui', key: 'settings.uiVolume', value: s.uiVolume },
+    ];
+    for (const { bus, key, value } of busRows) {
+      content.addChild(this.row(t(key), y, 0));
+      // 값(%)·드래그 상태는 각 반복이 자기 것을 클로저로 잡는다(버스 간 간섭 없음).
+      const pct = label(`${Math.round(value * 100)}%`, ROW_LABEL, COLOR.gold);
+      pct.anchor.set(1, 0);
+      pct.position.set(CW, y);
+      content.addChild(pct);
+      y += 36;
+      const slider = this.buildSlider(value, (v) => {
+        this.audio.setBusVolume(bus, v);
+        pct.text = `${Math.round(v * 100)}%`;
+      });
+      slider.position.set(0, y);
+      content.addChild(slider);
+      y += KNOB_H + 30;
+    }
 
     // 언어: 라벨 한 줄 + 버튼 2개(좁은 열에서 문구 옆에 붙이면 눌려 읽히지 않는다).
     content.addChild(this.row(t('settings.language'), y, 0));

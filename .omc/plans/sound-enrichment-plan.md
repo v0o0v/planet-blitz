@@ -139,6 +139,8 @@ CrazyGames 상업 배포 제약(라이선스·번들) · 탄막 밀도 청감(�
 - 행성/모드별 전투곡 변주.
 - 밸런스 패스에서 지터·스로틀·crossfade·보이스 상한·버스 기본값 튜닝.
 - weaponType 6번째 추가 시 발사음 확장.
+- **AC19 보스 직진탄 경고(문서화된 v1 한계)**: 경고음은 특수 거동탄(`enemyBullet.enemyType` ≠ BK_NONE)만 낸다. 보스의 직진 패턴탄(예: `laserNet`·`polygonSpin`, `applyBehavior` 미적용 = BK_NONE)은 render 가 소유주를 식별할 신호(`ownerId` 미설정)가 없어 경고에서 빠진다. 계획의 "render 관측만 · 신규 sim 플래그 추가 금지"(AC19) 제약에 내재된 한계다. 개선하려면 보스탄에 render 가 읽을 수 있는 소유 태그(결정론 무관한 render 파생 신호 또는 별도 sim 필드)가 필요 — 후속 검토. 특수 거동 보스탄(ring/spiral/aimedBurst 등)은 v1 에서 이미 커버된다.
+- **AC16 메타 UI음 의미 범주 세분 배선**: 현재 공유 `PixiButton` 이 기본 `uiNavigate` 를, 주요 출격 CTA(PvE 출격·소집 출격)가 `uiConfirm` 을 낸다(팔레트 5범주 정의 완료·UI 버스 라우팅 완료). `uiPositive`/`uiNegative`/`uiCelebrate` 의 화면별 세분 매핑(예: 확인 다이얼로그 긍정/부정, 연구 해금·승급 축하)은 UX 폴리시 정리 대상 — 팔레트·버스·훅은 확정됐고 세부 배정만 남았다.
 
 ## Changelog (합의 정제 반영)
 Architect + Critic 리뷰에서 수용한 개선:

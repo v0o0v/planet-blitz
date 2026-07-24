@@ -1926,6 +1926,7 @@ export class ControlTowerScreen {
       // 노란 버튼은 바탕이 밝아 흰 라벨이 묻힌다(관제탑 다른 노란 버튼과 동일 처리).
       labelColor: COLOR.darkLabel,
       label: t('sortie.launch'),
+      sound: 'uiConfirm', // 소집 출격 = 결정성 확정 액션(AC16 팔레트 재사용).
       onClick: () => this.launchSortie(gid),
     });
     btn.container.position.set(w - SORTIE_BTN_W - 16, (SORTIE_ROW_H - SORTIE_BTN_H) / 2);

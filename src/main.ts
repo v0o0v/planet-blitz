@@ -129,7 +129,9 @@ import { StickerPicker } from './ui/stickerPicker.js';
 import type { Replay } from './sim/replay.js';
 // M5 Phase C: 사운드(C1)·정산 완성판(C2)·로컬라이즈(C3). 전부 render/UI 레이어(sim 무수정).
 import { GameAudio } from './render/audio.js';
-import { RunSoundObserver } from './render/soundScape.js';
+import { RunSoundObserver, DropObserver } from './render/soundScape.js';
+import { MusicDirector, type MusicZone } from './render/musicDirector.js';
+import { setUiAudio } from './render/uiSound.js';
 import { SettingsScreen } from './ui/pixi/settingsPanel.js';
 import { t } from './i18n/index.js';
 import { totalCombatPower } from './save/combatPower.js';
@@ -322,10 +324,21 @@ async function main(): Promise<void> {
   const ftue = new FtueTracker();
   // M5 C1: 절차 합성 사운드 + 런 사운드 관찰자(sim 스냅샷 델타 → SFX, 단방향 render).
   const audio = new GameAudio();
+  // 메타 UI 음(AC16)이 흐를 사운드 보드를 UI 훅에 1회 주입 — PixiButton 등 공유 UI 가 playUi 로 낸다.
+  setUiAudio(audio);
   const soundObserver = new RunSoundObserver(audio);
-  // 자동재생 정책: 아무 첫 사용자 제스처에서 오디오 컨텍스트를 잠금 해제한다.
+  // 이원 드랍 관측자(바닥 loot 엔티티 등장 + state.loot 직행 증분 — AC13·R8). 런마다 reset.
+  const dropObserver = new DropObserver();
+  // BGM 존 디렉터(사운드 풍성화 Phase 3 — 화면/보스 상태를 관찰해 존 전환·정산 스팅어). 순수 render.
+  const music = new MusicDirector(audio);
+  // 초기 존을 큐잉한다 — ctx 미준비라 pendingZone='menu' 로 대기하다 첫 제스처(unlock)에서 재생된다
+  // (타이틀 메뉴곡 자동재생 정책 지연, AC7).
+  music.setZone('menu');
+  // 자동재생 정책: 아무 첫 사용자 제스처에서 오디오 컨텍스트를 잠금 해제한다. 음악도 같은
+  // 제스처에서 핸드셰이크(unlock)로 큐잉된 존을 시작한다.
   const unlockAudioOnce = (): void => {
     audio.unlock();
+    music.unlock();
     window.removeEventListener('pointerdown', unlockAudioOnce);
     window.removeEventListener('keydown', unlockAudioOnce);
   };
@@ -399,10 +412,38 @@ async function main(): Promise<void> {
   let harnessPaused = false;
   /** 스냅샷/이벤트용 현재 스크린 이름. */
   let currentScreenName = 'title';
+  /**
+   * 현재 런 종류(BGM 존 분기용 — `run` 화면은 다형성이라 화면 이름만으론 PvE/침공을 못 가른다,
+   * AC3). 각 런 진입점이 `setScreen('run')` 직전에 세운다(정식 침공·하네스 침공=invasion, PvE=pve).
+   */
+  let currentRunKind: 'pve' | 'invasion' = 'pve';
 
-  /** 스크린 전환 시 하네스에 통지(스냅샷 screen + screenChange 이벤트). */
+  /** 화면 안 판정용 뷰 반폭(월드 단위). entityRenderer 가 월드↔디자인px 를 1:1 로 그려(줌 없음). */
+  const VIEW_HALF_WIDTH = DESIGN_WIDTH / 2;
+
+  /** 화면 이름 → BGM 존(AC2·AC3·AC5). `result` 는 정산 스팅어가 음악을 소유하므로 null(존 미변경). */
+  function zoneForScreen(name: string): MusicZone | null {
+    switch (name) {
+      case 'run':
+        return currentRunKind === 'invasion' ? 'invasion' : 'combatPvE';
+      case 'spectate':
+        return 'invasion';
+      case 'result':
+        return null; // 스팅어(playStinger)가 존 정지→one-shot→menu 복귀를 담당(AC6).
+      default:
+        // title·base·defense·archive·controlTower·starMap·inventory·research·refinery → 메뉴·기지(AC2).
+        return 'menu';
+    }
+  }
+
+  /** 스크린 전환 시 BGM 존 갱신 + 하네스에 통지(스냅샷 screen + screenChange 이벤트). */
   function setScreen(name: string): void {
     currentScreenName = name;
+    const zone = zoneForScreen(name);
+    if (zone !== null) music.setZone(zone);
+    // 런 진입 시 boss 트랙을 미리 fetch+decode 해 둔다 — 보스 등장 크로스페이드의 로드 지연 제거
+    // (AC7 "화면 전환 직전 프리페치"; 보스는 런 도중 전환이라 미리 데워 두는 게 가장 값지다).
+    if (name === 'run') music.prefetch('boss');
     harness?.observeScreen(name);
   }
 
@@ -661,6 +702,7 @@ async function main(): Promise<void> {
     settled = false;
     ceremony.reset();
     soundObserver.reset();
+    dropObserver.reset();
     // 관전 아레나 배경(침공 아레나와 동일 규칙 — 기본 배경, autotile 없음).
     const planet = world.config.planet ?? 0;
     background.texture = planetBackground(planet);
@@ -814,10 +856,12 @@ async function main(): Promise<void> {
     settled = false;
     ceremony.reset();
     soundObserver.reset();
+    dropObserver.reset();
     lastOutcome = null;
     resultOverlay.hide();
     invasionTarget = target;
     harnessInvasionRun = false; // 정식 침공: 정산·제출 경로를 탄다
+    currentRunKind = 'invasion'; // 정식 침공 런 → invasion 존(AC3).
     setScreen('run');
   }
 
@@ -864,10 +908,12 @@ async function main(): Promise<void> {
     settled = false;
     ceremony.reset();
     soundObserver.reset();
+    dropObserver.reset();
     lastOutcome = null;
     resultOverlay.hide();
     invasionTarget = null;
     harnessInvasionRun = true;
+    currentRunKind = 'invasion'; // 하네스 침공도 침공 런 → invasion 존(AC3).
     setScreen('run');
   }
 
@@ -879,6 +925,9 @@ async function main(): Promise<void> {
   async function finishInvasionRun(w: WorldState): Promise<void> {
     if (settled) return;
     settled = true;
+    // 정산 스팅어(AC6): 전투·보스존 정지 → 승/패 one-shot → 종료 후 menu 존 복귀. 침공 런당 1회.
+    // 서버 판정은 잠정 결과 이후 확정되지만, 스팅어는 런 종료 순간의 클라 연출이다(PvE 와 동형).
+    music.playStinger(w.victory ? 'victory' : 'defeat');
     const target = invasionTarget;
     const rec = recorder;
     const snapshotId = invasionSnapshotId;
@@ -985,6 +1034,7 @@ async function main(): Promise<void> {
     tutorialActive = false; // normal run unless startTutorial re-flags it
     invasionTarget = null; // PvE 런: 침공 컨텍스트 해제(endRun 이 정산 경로로 분기)
     harnessInvasionRun = false;
+    currentRunKind = 'pve'; // PvE 런 → combatPvE 존(AC3).
     shownInvasionPhase = -1; // 침공 배경 추적 해제(PvE 는 행성 배경)
     shownLevel = 0; // 새 런: 레벨업 오버레이 표시 상태 초기화
     echoToastShown = false; // 새 런: 에코 안정화 로어 토스트 재무장
@@ -1019,6 +1069,7 @@ async function main(): Promise<void> {
     settled = false;
     ceremony.reset();
     soundObserver.reset();
+    dropObserver.reset();
     lastOutcome = null;
     resultOverlay.hide();
     setScreen('run');
@@ -1053,6 +1104,9 @@ async function main(): Promise<void> {
       // M5 C1: 승/패 연출 사운드(런당 1회). 격추 사출음(eject)은 피격 관찰에서 이미 났으므로
       // 여기서는 결과 팡파레/하강음만 낸다.
       audio.play(w.victory ? 'victory' : 'defeat');
+      // 정산 스팅어(AC6, 음악 계층 — 위 SFX victory/defeat 와 공존): 전투·보스존 정지 → 승/패
+      // one-shot → 종료 후 menu 존 복귀. PvE·하네스 침공 런(invasionTarget 없음)이 이 경로를 탄다.
+      music.playStinger(w.victory ? 'victory' : 'defeat');
       // 오염 런(ADR-0008): 하네스/치트 개입이 있었던 런은 정산하지 않는다 — 전리품·XP·
       // 튜토리얼 완료 플래그 모두 프로필에 반영되지 않고, 리플레이도 제출 대상에서
       // 빠진다(리플레이는 아직 어디에도 제출되지 않으므로 recorder 결과를 그냥 버린다).
@@ -1324,26 +1378,55 @@ async function main(): Promise<void> {
       let playerBulletN = 0;
       let bossEnt: (typeof w.entities)[number] | undefined;
       let supplyActive = false;
+      // 사운드 파생용 per-entity 스캔(원칙2: SoundFrame 은 스칼라만, per-entity 는 호출부 도출).
+      const lootEntities: { id: number; x: number; rarity: number }[] = [];
+      // 적 특수탄/보스탄 경고(AC19): 규칙(특수 거동탄 = 거동코드 ≠ BK_NONE)은 순수함수 shouldWarn
+      // 이 테스트로 고정하고, 여기 hot path(탄막 밀도, R4·드라이버2)에서는 배열 할당 없이 인라인
+      // 단락 판정한다. **한계**: 보스 직진탄(BK_NONE)은 render 가 소유주를 식별할 신호(ownerId 미설정)
+      // 가 없어 경고에서 빠진다 — 신규 sim 플래그 추가 금지 제약에 내재된 것으로 문서화(plan Follow-up).
+      // 특수 거동 보스탄(ring/spiral/aimedBurst 등)은 커버된다.
+      let warnPresent = false;
       for (const e of w.entities) {
         if (e.kind === 'enemy') enemyN++;
-        else if (e.kind === 'enemyBullet' || e.kind === 'bullet') {
+        else if (e.kind === 'enemyBullet') {
           bulletN++;
-          if (e.kind === 'bullet') playerBulletN++;
+          if (e.enemyType !== -1) warnPresent = true; // -1 = BK_NONE(직진 잡몹탄, bullets.ts:32) → 무음.
+        } else if (e.kind === 'bullet') {
+          bulletN++;
+          playerBulletN++;
         } else if (e.kind === 'boss') bossEnt = e;
         else if (e.kind === 'supply') supplyActive = true;
+        else if (e.kind === 'loot') {
+          // 바닥 드랍 loot 엔티티(id·좌표 x·rarity=enemyType) — 이원 드랍 관측 입력(AC13·R8).
+          lootEntities.push({ id: e.id, x: e.x, rarity: e.enemyType });
+        }
       }
-      // M5 C1: 사운드 트리거 파생(render 관찰, sim 무수정). 프레임당 1회 — 처치·레벨업·
-      // 피격·픽업·보스 등장·발사 델타를 감지해 SFX 를 낸다. 세리머니와 동일 관찰 패턴.
-      soundObserver.observe({
-        kills: w.kills,
-        level: w.level,
-        playerHp: p?.hp ?? 0,
-        resources: w.resources,
-        hasBoss: bossEnt !== undefined,
-        bulletCount: playerBulletN,
-        gameOver: w.gameOver,
-        victory: w.victory,
-      });
+      // M5 C1 + 사운드 풍성화(P2/P4): 사운드 트리거 파생(render 관찰, sim 무수정). 프레임당 1회.
+      // 이원 드랍 관측(바닥 loot 엔티티 등장 + state.loot 직행 증분 — 더블카운트 금지, AC13·R8),
+      // 적 특수탄/보스탄 경고(AC19), 발사음 5종 변주(weaponType, AC12), 관전 SFX 억제(suppressSfx, AC21).
+      const drops = dropObserver.observe(lootEntities, w.loot, p?.x ?? 0, VIEW_HALF_WIDTH);
+      const warn = warnPresent;
+      soundObserver.observe(
+        {
+          kills: w.kills,
+          level: w.level,
+          playerHp: p?.hp ?? 0,
+          resources: w.resources,
+          hasBoss: bossEnt !== undefined,
+          bulletCount: playerBulletN,
+          weaponType: w.weapon.weaponType,
+          gameOver: w.gameOver,
+          victory: w.victory,
+        },
+        { drops, warn, suppressSfx: spectating },
+      );
+      // 보스 존 전환(AC4): 라이브 런에서만 보스 등장→boss 존, 처치→런종류 존 복귀(짧은 보스전
+      // thrash 방지 최소유지 가드는 MusicDirector 내부). 관전은 invasion 존 고정이라 제외(AC21).
+      if (currentScreenName === 'run' && !spectating) {
+        music.setZone(
+          bossEnt !== undefined ? 'boss' : currentRunKind === 'invasion' ? 'invasion' : 'combatPvE',
+        );
+      }
       const boss: BossHudState | undefined =
         bossEnt !== undefined
           ? {

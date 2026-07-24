@@ -575,6 +575,7 @@ export class PlanetSelectScreen {
       // 노란 버튼은 바탕이 밝아 흰 라벨이 묻힌다(롤아웃 #1~#3 과 동일 처리).
       labelColor: COLOR.darkLabel,
       label: t('planet.launch', { name: planetById(this.planet).name }),
+      sound: 'uiConfirm', // 출격 = 결정성 확정 액션(AC16 팔레트 재사용 — 기본 navigate 와 구분).
       onClick: () => this.launch(),
     });
     launch.container.position.set(launchX, LAUNCH_Y);

@@ -127,14 +127,20 @@ export class SettingsPanel {
   }
 
   private volumeSlider(s: AudioSettings): HTMLElement {
+    // 이 DOM 패널은 ADR-0014 로 사문화됐고(라이브 UI 는 Pixi SettingsScreen — 버스별 슬라이더
+    // 3개), 미참조 DOM 클래스 일괄 삭제 대기 상태다. 3버스 도입 후에도 컴파일만 유지하도록,
+    // 남은 단일 슬라이더는 3버스를 동일 볼륨으로 일괄 조절한다(대표값은 SFX 버스로 표시).
     const input = document.createElement('input');
     input.type = 'range';
     input.min = '0';
     input.max = '100';
     input.step = '1';
-    input.value = String(Math.round(s.volume * 100));
+    input.value = String(Math.round(s.sfxVolume * 100));
     input.addEventListener('input', () => {
-      this.audio.setVolume(Number(input.value) / 100);
+      const v = Number(input.value) / 100;
+      this.audio.setBusVolume('bgm', v);
+      this.audio.setBusVolume('sfx', v);
+      this.audio.setBusVolume('ui', v);
     });
     return input;
   }
