@@ -39,6 +39,7 @@ export const EN = {
   'settings.quality.high': 'High',
   'settings.reducedMotion': 'Reduced Motion',
   'settings.reducedGlow': 'Reduced Glow',
+  'settings.damageNumbers': 'Damage Numbers',
 
   // --- 정산 화면(C2) ---
   'result.win.title': 'Planet Conquered',
@@ -1309,6 +1310,7 @@ export const KO: Record<MessageKey, string> = {
   'settings.quality.high': '높음',
   'settings.reducedMotion': '모션 감소',
   'settings.reducedGlow': '발광 감소',
+  'settings.damageNumbers': '데미지 숫자',
 
   'result.win.title': '행성 정복',
   'result.lose.title': '격추당했다…',

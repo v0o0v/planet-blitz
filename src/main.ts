@@ -361,6 +361,9 @@ async function main(): Promise<void> {
   let tutorialActive = false;
   // 현재 오버레이가 띄운 레벨업의 기체 레벨(멀티 레벨업 시 신규 레벨업 감지용). 0 = 미표시.
   let shownLevel = 0;
+  // 레벨업 링(AC-4.6) 발화용 직전 프레임 레벨. -1 = 미관측(첫 관측은 기준선만, 링 없음 — soundObserver
+  // baseline 패턴). 런은 항상 레벨 1로 시작하므로 이전 런의 max 가 남아 있어도 새 런에서 오발하지 않는다.
+  let prevRingLevel = -1;
 
   // An empty snapshot rendered on menu frames clears the arena behind overlays.
   const emptySnap: WorldSnapshot = {
@@ -1389,6 +1392,14 @@ async function main(): Promise<void> {
     // 관찰만 한다 — 전환 크로스페이드는 L10 의 invasionBackdrop 이 붙으면 이 자리에서 건다.
     const inv3 = w?.invasion3;
     if (inv3 !== undefined && inv3.phase !== shownInvasionPhase) applyInvasionBackdrop(inv3.phase);
+
+    // 레벨업 링(AC-4.6) — 런 레벨이 오르면 렌더러에 링을 예약(soundObserver 의 levelUp 과 동일 신호,
+    // render-only). 스냅샷엔 level 이 없어 렌더가 스스로 감지 못 하므로 여기서 imperative 로 넘긴다.
+    // 첫 관측(prevRingLevel<0)은 기준선만 세우고 링을 내지 않는다. 다음 render 가 플레이어 위치에 방출.
+    if (w !== null) {
+      if (prevRingLevel >= 0 && w.level > prevRingLevel) entityRenderer.pulseLevelUp();
+      prevRingLevel = w.level;
+    }
 
     // --- Render ---
     const alpha = accumulator / DT;

@@ -17,7 +17,12 @@ import {
 import type { GraphicsSettings } from '../src/render/graphicsSettings.js';
 
 /** 감소 토글 없는 기본 그래픽 설정(effectGates 티어 게이팅 검증용). */
-const NO_REDUCE: GraphicsSettings = { quality: 'auto', reducedMotion: false, reducedGlow: false };
+const NO_REDUCE: GraphicsSettings = {
+  quality: 'auto',
+  reducedMotion: false,
+  reducedGlow: false,
+  damageNumbers: true,
+};
 
 /** 강등 임계보다 확실히 낮은 FPS(강등 유발). */
 const LOW_FPS = TIER_DOWNGRADE_FPS - 5;
@@ -147,7 +152,7 @@ describe('effectGates — 티어 게이팅', () => {
 describe('effectGates — 감소 토글 직교', () => {
   it('reducedMotion 은 어느 티어든 shake·hitFlash 를 끈다', () => {
     for (const tier of ['low', 'med', 'high'] as QualityTier[]) {
-      const g = effectGates(tier, { quality: 'auto', reducedMotion: true, reducedGlow: false });
+      const g = effectGates(tier, { quality: 'auto', reducedMotion: true, reducedGlow: false, damageNumbers: true });
       expect(g.shake).toBe(false);
       expect(g.hitFlash).toBe(false);
     }
@@ -155,26 +160,26 @@ describe('effectGates — 감소 토글 직교', () => {
 
   it('reducedGlow 는 어느 티어든 halo·bloom 을 끈다', () => {
     for (const tier of ['low', 'med', 'high'] as QualityTier[]) {
-      const g = effectGates(tier, { quality: 'auto', reducedMotion: false, reducedGlow: true });
+      const g = effectGates(tier, { quality: 'auto', reducedMotion: false, reducedGlow: true, damageNumbers: true });
       expect(g.halo).toBe(false);
       expect(g.bloom).toBe(false);
     }
   });
 
   it('reducedMotion 은 발광(halo/bloom)에 영향 없음(직교)', () => {
-    const g = effectGates('high', { quality: 'auto', reducedMotion: true, reducedGlow: false });
+    const g = effectGates('high', { quality: 'auto', reducedMotion: true, reducedGlow: false, damageNumbers: true });
     expect(g.halo).toBe(true);
     expect(g.bloom).toBe(true);
   });
 
   it('reducedGlow 는 모션(shake/hitFlash)에 영향 없음(직교)', () => {
-    const g = effectGates('high', { quality: 'auto', reducedMotion: false, reducedGlow: true });
+    const g = effectGates('high', { quality: 'auto', reducedMotion: false, reducedGlow: true, damageNumbers: true });
     expect(g.shake).toBe(true);
     expect(g.hitFlash).toBe(true);
   });
 
   it('두 토글 동시: 네 이펙트 모두 꺼지고 나머지는 티어대로', () => {
-    const g = effectGates('high', { quality: 'auto', reducedMotion: true, reducedGlow: true });
+    const g = effectGates('high', { quality: 'auto', reducedMotion: true, reducedGlow: true, damageNumbers: true });
     expect(g.shake).toBe(false);
     expect(g.hitFlash).toBe(false);
     expect(g.halo).toBe(false);

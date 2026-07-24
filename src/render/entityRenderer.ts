@@ -41,11 +41,37 @@ import { buildGlowHalo, createGlowBloomFilter, isGlowEmitter } from './effects/g
 // (재작성 금지). render-only(sim·hashWorld/hashEntity 무접촉, ADR-0005). 전부 eventShaders 게이트
 // (High 티어 전용) 뒤에 격리 — 저티어에선 기존 즉시 destroy·헤일로만 거동 유지(AC-3.6 폴백).
 import { ShockwaveEffect, DissolveEffect, ShimmerEffect } from './effects/shaderEffects.js';
+// Phase 4 전투 부가 연출 배선 — 선행 레인 모듈(effects/*)을 소비만 한다(재작성 금지). 전부
+// render-only(sim·hashWorld/hashEntity 무접촉, ADR-0005). 데미지 숫자는 스냅샷 HP-델타 추론이라
+// sim 0 변경(AC-4.1). 이펙트는 effectLayer(스프라이트 위)에 얹는다(폭발과 동일 규율, AC-0.8).
+import { DamageNumber } from './effects/damageNumber.js';
+import { isTrailBullet, BulletTrail } from './effects/bulletTrail.js';
+import { isGraze, GrazeTracker, GrazeSpark } from './effects/grazeSpark.js';
+import { PickupPop, LevelUpRing } from './effects/pickupPop.js';
+import { MuzzleFlash } from './effects/muzzleFlash.js';
+
+/**
+ * effectLayer 원샷 이펙트의 공통 계약(ShardBurst 동형). 데미지 숫자·그레이징 스파크·수집 팝·레벨업
+ * 링·머즐 플래시가 이 모양을 만족해 한 목록({@link EntityRenderer.oneShots})에서 함께 수명 관리된다
+ * (탄 트레일은 위치를 먹여야 해 update 시그니처가 달라 별도 관리). update 가 false 를 돌려주면
+ * 호출측이 effectLayer 에서 떼고 destroy 한다.
+ */
+interface OneShotEffect {
+  readonly container: Container;
+  update(dt: number): boolean;
+  destroy(): void;
+}
 
 interface TrackedSprite {
   sprite: Sprite;
   seenTick: number;
   kind: EntityKind;
+  /**
+   * 직전 프레임 스냅샷 HP(데미지 숫자 킬블로우용, AC-4.1). 소멸(처치) 시점엔 curr 스냅샷이 없어
+   * 치사 델타를 못 얻으므로, 매 프레임 갱신해 두었다가 킬 루프에서 이 잔량을 최종 피해 숫자로 띄운다
+   * (Critic m3 엣지 ①). 보스·엘리트만 숫자를 띄우지만 필드는 전 kind 가 들고 있어도 무해하다.
+   */
+  hp: number;
   /**
    * 히트 플래시 창의 종료 프레임(AC-2.3). `frameTick < flashUntilTick` 이면 가산 흰 오버레이를
    * 유지하고, 창이 끝나면(`frameTick >= flashUntilTick`) 오버레이를 떼고 파괴한다. 0 = 비활성.
@@ -100,6 +126,24 @@ const MAX_DISSOLVES = 12;
  * defer-balance-tuning(출시 직전 프레임 예산으로 조정).
  */
 const MAX_SHOCKWAVES = 4;
+/**
+ * 동시 원샷 이펙트(데미지 숫자·그레이징 스파크·수집 팝·레벨업 링·머즐 플래시) 상한(AC-4.*). 이
+ * 수를 넘는 신규 이펙트는 생략한다 — 탄막 밀도·연사에서 effectLayer 가 무한 성장하는 성능 붕괴
+ * 방어선(MAX_DISSOLVES·MAX_SHOCKWAVES 와 동형 정신). placeholder, defer-balance-tuning.
+ */
+const MAX_ONESHOTS = 48;
+/**
+ * 동시 탄 트레일 상한(AC-4.4). 트레일 대상 탄(플레이어 탄 + 특수 거동 적탄)이 이 수를 넘으면 신규 탄은
+ * 트레일 없이 렌더된다(스트릭 Graphics 무한 성장 방어). placeholder, defer-balance-tuning.
+ */
+const MAX_BULLET_TRAILS = 64;
+/**
+ * 그레이징 판정 대역폭(월드 유닛, AC-4.5). 플레이어↔적탄 거리가 (충돌 반경, 충돌 반경+이 값] 이면
+ * "스칠 뻔"으로 본다 — 판정점 안(충돌)도 아니고 멀지도 않은 근접 링. placeholder, defer-balance-tuning.
+ */
+const GRAZE_BAND = 14;
+/** 데미지 숫자를 대상 머리 위로 띄우는 y 오프셋(월드 유닛, AC-4.1). placeholder, defer-balance-tuning. */
+const DAMAGE_NUMBER_Y_OFFSET = 22;
 /** render 벽시계 프레임 델타 상한(초) — 탭 복귀 spike 방어. ShardBurst.MAX_DT(0.05)와 정합. */
 const MAX_RENDER_DT = 0.05;
 /** 프레임 델타 nominal(초, 60Hz). 첫 프레임·비정상 dt 폴백값. */
@@ -505,6 +549,27 @@ export class EntityRenderer {
    * update 가 no-op 이지만 부착/detach 수명은 동일하게 관리된다(AC-3.6).
    */
   private shimmer: ShimmerEffect | null = null;
+  /**
+   * effectLayer 원샷 이펙트 목록(Phase 4, AC-4.1/4.5/4.6/4.7). 데미지 숫자·그레이징 스파크·수집 팝·
+   * 레벨업 링·머즐 플래시가 {@link OneShotEffect} 계약으로 함께 산다. {@link updateOneShots} 가 dt 로
+   * 진행하고 update→false 인 것을 effectLayer 에서 떼고 destroy 한다(ShardBurst 동형). {@link MAX_ONESHOTS}
+   * 상한으로 탄막 밀도·연사에서 무한 성장 방어. 전부 render-only.
+   */
+  private readonly oneShots: OneShotEffect[] = [];
+  /**
+   * 탄 트레일(AC-4.4) — 탄 id → BulletTrail. 살아있는 트레일 대상 탄(isTrailBullet)마다 하나를 유지하며
+   * 엔티티 루프가 매 프레임 보간 위치를 먹이고(update(dt,x,y)), 탄이 사라지면 잔상만 페이드해 소진 시
+   * 회수한다. effectLayer(월드 좌표계). update 시그니처가 위치를 받아 oneShots 와 별도 관리한다.
+   */
+  private readonly bulletTrails = new Map<number, BulletTrail>();
+  /** 그레이징 스파크 rising-edge 게이트(AC-4.5) — 탄 id 별 근접 진입 순간 1회만 발화(매 프레임 재발화 방지). */
+  private readonly grazeTracker = new GrazeTracker();
+  /**
+   * 레벨업 링 대기 플래그(AC-4.6). main.ts 가 레벨 델타를 감지해 {@link pulseLevelUp} 을 부르면 켜지고,
+   * 다음 render 가 플레이어 위치를 확정하는 시점에 링을 방출하고 되돌린다(스냅샷엔 level 이 없어 렌더가
+   * 위치를 모르므로 imperative 신호 → 다음 프레임 배치). render-only.
+   */
+  private pendingLevelUp = false;
   /** 화면 흔들림 트라우마 컨트롤러(AC-2.1). render-only 파생 — sim 되먹임 없음(카메라 오프셋만). */
   private readonly trauma = new TraumaController();
   /** 직전 render 벽시계(ms). 프레임 델타 자체 추적용(render 는 dt 를 받지 않음). undefined=첫 프레임. */
@@ -615,6 +680,58 @@ export class EntityRenderer {
     return this.shimmer !== null;
   }
 
+  // ── Phase 4 관측창(읽기 전용) — 자동 배선 통합 테스트가 각 이펙트 트리거의 실효를 수치로 못 박는다
+  //    (#1 반복결함 "유닛 그린인데 배선 없음" 방어). 렌더 거동에는 관여하지 않는다.
+
+  /** 현재 살아있는 데미지 숫자 개수(AC-4.1). 보스·엘리트 피격/처치가 실제로 숫자를 띄우는지 검증. */
+  get damageNumberCount(): number {
+    let n = 0;
+    for (const fx of this.oneShots) if (fx instanceof DamageNumber) n++;
+    return n;
+  }
+
+  /** 현재 살아있는 탄 트레일 개수(AC-4.4). 트레일 대상 탄만 스트릭을 남기는지 검증. */
+  get bulletTrailCount(): number {
+    return this.bulletTrails.size;
+  }
+
+  /** 현재 살아있는 그레이징 스파크 개수(AC-4.5). 근접 회피 진입이 스파크를 내는지 검증. */
+  get grazeSparkCount(): number {
+    let n = 0;
+    for (const fx of this.oneShots) if (fx instanceof GrazeSpark) n++;
+    return n;
+  }
+
+  /** 현재 살아있는 수집 팝 개수(AC-4.6). gem/loot 소멸(수집)이 팝을 내는지 검증. */
+  get pickupPopCount(): number {
+    let n = 0;
+    for (const fx of this.oneShots) if (fx instanceof PickupPop) n++;
+    return n;
+  }
+
+  /** 현재 살아있는 레벨업 링 개수(AC-4.6). pulseLevelUp 신호가 링을 내는지 검증. */
+  get levelUpRingCount(): number {
+    let n = 0;
+    for (const fx of this.oneShots) if (fx instanceof LevelUpRing) n++;
+    return n;
+  }
+
+  /** 현재 살아있는 머즐 플래시 개수(AC-4.7). 신규 플레이어 탄 등장이 총구 섬광을 내는지 검증. */
+  get muzzleFlashCount(): number {
+    let n = 0;
+    for (const fx of this.oneShots) if (fx instanceof MuzzleFlash) n++;
+    return n;
+  }
+
+  /**
+   * 레벨업 링 방출을 예약한다(AC-4.6). main.ts 가 런 레벨 델타(soundObserver 와 동일 신호)를 감지해
+   * 부른다 — 스냅샷엔 level 이 없어 렌더가 레벨업을 스스로 감지 못 하므로 이 imperative 훅으로 받는다.
+   * 실제 링은 다음 render 가 플레이어 보간 위치를 확정한 뒤 그 자리에 방출한다(위치 정합). render-only.
+   */
+  pulseLevelUp(): void {
+    this.pendingLevelUp = true;
+  }
+
   /** 스냅샷 1건의 텍스처. 매핑 판단은 순수 함수({@link spriteSlotFor})가 하고 여기서는 해석만 한다. */
   private textureFor(e: EntitySnapshot): Texture {
     return resolveSpriteSlot(this.textures, spriteSlotFor(e.kind, e.enemyType, this.planet));
@@ -634,7 +751,10 @@ export class EntityRenderer {
     else if (dt > MAX_RENDER_DT) dt = MAX_RENDER_DT;
 
     // 이펙트 게이트(티어 × 감소 토글) — 프레임당 1회만 산출해 흔들림·히트 플래시·발광이 공유한다.
-    const gates = effectGates(graphicsTierController.getActiveTier(), graphicsSettings.getSettings());
+    const settings = graphicsSettings.getSettings();
+    const gates = effectGates(graphicsTierController.getActiveTier(), settings);
+    // 데미지 숫자(AC-4.1)는 티어 예산이 아니라 순수 사용자 토글이라 effectGates 밖에서 직접 읽는다.
+    const showDamageNumbers = settings.damageNumbers;
 
     // 발광체 블룸(High 티어 1패스, AC-3.1) — 필터는 지연 1회 생성해 캐시하고 게이트 전이 시점에만
     // glowLayer.filters 를 재설정한다(매 프레임 재생성/재배열 금지). null 폴백(GL 없음)이면 헤일로만.
@@ -650,6 +770,10 @@ export class EntityRenderer {
     // 생성하는 원샷은 다음 프레임부터 진행된다(생성 시점이 이 호출 뒤라 dt 이중 적용 없음).
     this.updateShockwaves(dt);
     this.updateDyingSprites(dt);
+    // 원샷 부가 이펙트(데미지 숫자·그레이징·수집 팝·레벨업 링·머즐 플래시, Phase 4) 진행. 이번 프레임에
+    // 엔티티/킬 루프가 새로 만드는 것은 다음 프레임부터 진행된다(생성이 이 호출 뒤 — dt 이중 적용 없음,
+    // updateBursts 와 동형).
+    this.updateOneShots(dt);
     // 용암 해저드 히트 시머(지속형, AC-3.2) — eventShaders on 이고 용암이 화면에 있는 동안만 부착.
     // overlay 는 이미 이번 프레임 drawOverlay 로 다시 그려졌다(시머는 그 위 필터).
     this.syncShimmer(gates.eventShaders && hasLavaHazard(curr), dt);
@@ -662,6 +786,14 @@ export class EntityRenderer {
 
     const prevById = new Map<number, EntitySnapshot>();
     for (const e of prev.entities) prevById.set(e.id, e);
+
+    // Phase 4 프레임 누적기 — 엔티티 루프가 채우고, 루프 뒤 후처리(트레일 페이드·그레이징·머즐·레벨업)가 읽는다.
+    let playerX = 0;
+    let playerY = 0;
+    let playerR = 0;
+    let hasPlayer = false;
+    let newPlayerBullet = false; // 이번 프레임 신규 플레이어 탄 등장(머즐 플래시 근사, AC-4.7).
+    const trailSeen = new Set<number>(); // 이번 프레임 살아있는 트레일 대상 탄 id(트레일 페이드 판정).
 
     for (const e of curr.entities) {
       if (e.kind === 'hazard') continue; // drawn in the overlay
@@ -711,8 +843,12 @@ export class EntityRenderer {
           flashUntilTick: 0,
           flashOverlay: null,
           elite: e.elite >= 0,
+          hp: e.hp,
         };
         this.sprites.set(e.id, tracked);
+        // 머즐 플래시(AC-4.7) — 신규 **플레이어 탄**('bullet', 주무기·보조 포함) 등장 = 발사. 프레임당
+        // 1회 총구 섬광으로 근사한다(정밀 위치·연사별 개별 섬광은 범위 밖). 적탄('enemyBullet')은 제외.
+        if (e.kind === 'bullet') newPlayerBullet = true;
       }
       tracked.seenTick = this.frameTick;
       // 엘리트 여부를 매 프레임 갱신 — 소멸(처치) 시점엔 스냅샷이 없어 흔들림 세기를 못 고른다.
@@ -729,6 +865,11 @@ export class EntityRenderer {
         tracked.sprite.rotation = facing;
         // 화면 흔들림 트리거 ① 플레이어 피격(중) — HP 델타(AC-2.1). p 는 직전 스냅샷.
         if (p.hp > e.hp) this.trauma.addTrauma(TRAUMA_PLAYER_HIT);
+        // 플레이어 보간 위치·반경 캡처 — 루프 뒤 그레이징(AC-4.5)·머즐(AC-4.7)·레벨업 링(AC-4.6)이 쓴다.
+        playerX = tracked.sprite.x;
+        playerY = tracked.sprite.y;
+        playerR = e.radius;
+        hasPlayer = true;
       } else {
         // Gems, boss, supply and the static gimmicks keep a fixed facing; others
         // face their travel/aim angle. 목록은 isFixedFacing 이 정본이다.
@@ -782,10 +923,81 @@ export class EntityRenderer {
         }
       }
 
+      // 데미지 숫자(AC-4.1) — 보스·엘리트 저빈도 한정 + 토글. 렌더측 HP-델타 추론(sim 0 변경): 직전
+      // 스냅샷 대비 hp 가 줄었으면(피해) 그 양을 머리 위에 띄운다. 힐(델타<0, 서포트 빔이 적 회복)은
+      // 무시(Critic m3 ②). id 는 런 내 단조 증가·재사용 없음이라 다중 엘리트 귀속이 안전하다.
+      if (
+        showDamageNumbers &&
+        (e.kind === 'boss' || e.kind === 'defenseBoss' || e.elite >= 0) &&
+        p.hp > e.hp
+      ) {
+        this.addOneShot(
+          new DamageNumber(tracked.sprite.x, tracked.sprite.y - DAMAGE_NUMBER_Y_OFFSET, p.hp - e.hp, {
+            crit: e.kind === 'boss' && e.active, // 보스 과열 창(2배 피해) 피격 = 치명타 강조.
+          }),
+        );
+      }
+      // 킬블로우용 직전 hp 갱신(AC-4.1 엣지 ①) — 소멸 시점엔 curr 스냅샷이 없어 치사 델타를 못 얻으므로,
+      // 매 프레임 실어 뒀다가 킬 루프에서 이 잔량을 최종 피해 숫자로 띄운다.
+      tracked.hp = e.hp;
+
+      // 탄 트레일(AC-4.4) — 티어 게이트(trails, med+) on 이고 트레일 대상 탄(플레이어 탄 전부 + 유도/
+      // 곡사/가속/분열 적탄)만 짧은 가산 스트릭. 조밀 직진 잡몹탄(behavior=-1)은 제외(가독성). 살아있는
+      // 동안 매 프레임 보간 위치를 먹이고, 소멸 후엔 updateBulletTrails 가 잔상을 페이드해 회수한다.
+      if (gates.trails && isTrailBullet(e.kind, e.enemyType)) {
+        let tr = this.bulletTrails.get(e.id);
+        if (tr === undefined && this.bulletTrails.size < MAX_BULLET_TRAILS) {
+          tr = new BulletTrail({ tier: graphicsTierController.getActiveTier() });
+          this.effectLayer.addChild(tr.container);
+          this.bulletTrails.set(e.id, tr);
+        }
+        if (tr !== undefined) {
+          tr.update(dt, tracked.sprite.x, tracked.sprite.y);
+          trailSeen.add(e.id);
+        }
+      }
+
       // 발광체 헤일로(glowLayer, 스프라이트 아래·가산, AC-3.1) — 게이트 on 이고 발광체일 때만
       // 유지한다. 헤일로는 스프라이트와 별개 레이어라 보간 위치를 매 프레임 미러한다. 탄·적
       // 실루엣은 isGlowEmitter=false 라 헤일로가 없다(탄막 가독성 계약).
       if (gates.halo && isGlowEmitter(e.kind)) this.syncGlowHalo(e.id, tracked.sprite);
+    }
+
+    // ── 엔티티 루프 후처리(Phase 4) — 플레이어 위치·신규 탄 정보가 확정된 뒤 수행 ──────────────
+    // 탄 트레일 잔상 페이드: 이번 프레임에 안 보인(소멸한) 탄의 트레일만 위치 없이 진행해 소진 시 회수.
+    this.updateBulletTrails(dt, trailSeen);
+
+    // 그레이징 스파크(AC-4.5) — render-only 근접 회피 감지(보상 없음). 플레이어↔적탄 거리가 판정점
+    // 밖의 근접 대역이면, 그 탄이 대역에 **진입하는 순간 1회**(GrazeTracker rising-edge) 스파크. 티어
+    // 파티클 게이트 뒤. 탄 위치는 엔티티 루프가 세운 보간 스프라이트에서 읽는다.
+    if (hasPlayer && gates.particles !== 'off') {
+      for (const e of curr.entities) {
+        if (e.kind !== 'enemyBullet') continue;
+        const bt = this.sprites.get(e.id);
+        if (bt === undefined) continue;
+        const grazing = isGraze(playerX, playerY, playerR, bt.sprite.x, bt.sprite.y, e.radius, GRAZE_BAND);
+        if (this.grazeTracker.shouldSpark(e.id, grazing)) {
+          // 스파크는 플레이어↔탄 중점에 — 스치는 지점 근처.
+          this.addOneShot(
+            new GrazeSpark((playerX + bt.sprite.x) / 2, (playerY + bt.sprite.y) / 2, {
+              tier: graphicsTierController.getActiveTier(),
+              seed: e.id, // 탄 id 로 시드 고정(결정론·탄마다 다른 흩뿌림).
+            }),
+          );
+        }
+      }
+    }
+
+    // 머즐 플래시(AC-4.7) — 이번 프레임 신규 플레이어 탄이 있었으면 총구(플레이어) 위치에 1회 섬광.
+    if (newPlayerBullet && hasPlayer && gates.particles !== 'off') {
+      this.addOneShot(new MuzzleFlash(playerX, playerY, this.lastPlayerAngle));
+    }
+
+    // 레벨업 링(AC-4.6) — main.ts 가 예약(pulseLevelUp)한 링을 플레이어 위치에 방출. 플레이어가 없으면
+    // 다음 프레임까지 예약을 유지한다(레벨업 순간엔 플레이어가 살아있어 보통 즉시 소비).
+    if (this.pendingLevelUp && hasPlayer) {
+      this.addOneShot(new LevelUpRing(playerX, playerY));
+      this.pendingLevelUp = false;
     }
 
     for (const [id, tracked] of this.sprites) {
@@ -810,6 +1022,25 @@ export class EntityRenderer {
         // 발광체 헤일로는 스프라이트 생사와 무관하게 즉시 회수(디졸브로 넘겨도 헤일로는 남기지
         // 않는다 — 발광은 살아있는 발광체만). 발광체가 아니었으면 no-op.
         this.removeGlowHalo(id);
+        // 킬블로우 데미지 숫자(AC-4.1 엣지 ①) — 보스·엘리트가 사라지면 마지막 잔량(tracked.hp)을 치사
+        // 피해로 띄운다(curr 스냅샷이 없어 델타를 못 얻는 경우 보정). 토글 on 한정. sprite.destroy 전이라
+        // 위치가 유효하다.
+        if (
+          showDamageNumbers &&
+          (tracked.kind === 'boss' || tracked.kind === 'defenseBoss' || tracked.elite) &&
+          tracked.hp > 0
+        ) {
+          this.addOneShot(
+            new DamageNumber(tracked.sprite.x, tracked.sprite.y - DAMAGE_NUMBER_Y_OFFSET, tracked.hp),
+          );
+        }
+        // 수집 팝(AC-4.6) — gem/loot 소멸 = 수집. 작은 가산 팝으로 획득을 피드백한다(파티클 게이트 뒤).
+        if ((tracked.kind === 'gem' || tracked.kind === 'loot') && gates.particles !== 'off') {
+          this.addOneShot(new PickupPop(tracked.sprite.x, tracked.sprite.y));
+        }
+        // 그레이징 rising-edge 상태 정리(탄 소멸) — id 재사용은 없지만 맵 성장을 막는다(no-op if 미등록).
+        this.grazeTracker.forget(id);
+        // 트레일도 이 탄이 이번 프레임 unseen 이라 updateBulletTrails 가 이미 페이드를 시작했다(별도 처리 불필요).
         // 사망 디졸브(AC-3.4) — eventShaders on 이고 전투체(scale>0)면 즉시 destroy 대신 디졸브로
         // 수명을 이관해 스프라이트를 spriteLayer 에 잠깐 잔류시키며 디더 소멸시킨다. 상한 초과분·
         // gem/loot(scale 0)·저티어(eventShaders off)는 기존대로 즉시 destroy. 어느 경로든 sprites
@@ -861,6 +1092,71 @@ export class EntityRenderer {
         this.bursts.splice(i, 1);
       }
     }
+  }
+
+  /**
+   * 원샷 이펙트(Phase 4) 1개를 effectLayer(스프라이트 위)에 얹고 추적 목록에 등록한다. {@link MAX_ONESHOTS}
+   * 상한에 도달하면 즉시 destroy 하고 등록하지 않는다(탄막 밀도·연사 성능 방어) — 호출측은 반환값을
+   * 신경 쓸 필요 없이 "방출을 시도"하면 된다. 위치는 호출측이 fx.container.position 으로 이미 잡아 둔다.
+   */
+  private addOneShot(fx: OneShotEffect): void {
+    if (this.oneShots.length >= MAX_ONESHOTS) {
+      fx.destroy(); // 상한 초과 — 등록 없이 즉시 폐기(effectLayer 무한 성장 방어).
+      return;
+    }
+    this.effectLayer.addChild(fx.container);
+    this.oneShots.push(fx);
+  }
+
+  /**
+   * 살아있는 원샷 이펙트를 dt 만큼 진행하고, 끝난 것(update→false)은 effectLayer 에서 떼고 destroy+splice
+   * 한다(updateBursts 동형 수명 관리). 데미지 숫자·그레이징·수집 팝·레벨업 링·머즐 플래시 공통.
+   */
+  private updateOneShots(dt: number): void {
+    for (let i = this.oneShots.length - 1; i >= 0; i--) {
+      const fx = this.oneShots[i];
+      if (fx === undefined) continue;
+      if (!fx.update(dt)) {
+        this.effectLayer.removeChild(fx.container);
+        fx.destroy();
+        this.oneShots.splice(i, 1);
+      }
+    }
+  }
+
+  /**
+   * 탄 트레일(AC-4.4) 잔상 페이드 + 회수. 이번 프레임에 살아있는 탄으로 갱신된(seen) 트레일은
+   * 엔티티 루프가 이미 위치를 먹였으므로 건너뛰고, 소멸한 탄(unseen)의 트레일만 위치 없이 update 해
+   * 잔상을 페이드시킨다 — 다 사라지면(update→false) effectLayer 에서 떼고 destroy 한다.
+   * `seen` 은 이번 프레임 트레일 대상 탄 id 집합(엔티티 루프가 채운다).
+   */
+  private updateBulletTrails(dt: number, seen: ReadonlySet<number>): void {
+    for (const [id, tr] of this.bulletTrails) {
+      if (seen.has(id)) continue; // 살아있는 탄 — 엔티티 루프가 이미 update(dt,x,y) 했다.
+      if (!tr.update(dt)) {
+        this.effectLayer.removeChild(tr.container);
+        tr.destroy();
+        this.bulletTrails.delete(id);
+      }
+    }
+  }
+
+  /** 모든 원샷 이펙트를 destroy 하고 목록을 비운다(reset·destroy 정리, 누수 0). */
+  private clearOneShots(): void {
+    for (const fx of this.oneShots) {
+      this.effectLayer.removeChild(fx.container);
+      fx.destroy();
+    }
+    this.oneShots.length = 0;
+  }
+
+  /** 모든 탄 트레일을 destroy 하고 맵을 비운다(reset·destroy 정리, 누수 0). grazeTracker 도 리셋. */
+  private clearBulletTrails(): void {
+    for (const tr of this.bulletTrails.values()) {
+      this.effectLayer.removeChild(tr.container);
+      tr.destroy();
+    }
+    this.bulletTrails.clear();
   }
 
   /**
@@ -1096,6 +1392,11 @@ export class EntityRenderer {
     this.clearShockwaves();
     this.clearDyingSprites();
     this.clearShimmer();
+    // Phase 4 원샷 이펙트·탄 트레일 전량 정리(누수 0) + 그레이징 rising-edge·레벨업 예약 리셋.
+    this.clearOneShots();
+    this.clearBulletTrails();
+    this.grazeTracker.reset();
+    this.pendingLevelUp = false;
     // 발광체 헤일로 전량 회수 + 블룸 필터 해제(누수 0). 캐시된 블룸 필터 인스턴스(this.glowBloom)는
     // 살려 둔다 — 렌더러는 런 사이 재사용되고 필터 재생성은 비싸다. 다음 런 첫 프레임에 게이트가
     // 켜지면 syncGlowBloom 이 캐시된 필터를 다시 붙인다(glowBloomAttached 로 전이만 관리).
@@ -1120,6 +1421,11 @@ export class EntityRenderer {
     this.clearShockwaves();
     this.clearDyingSprites();
     this.clearShimmer();
+    // Phase 4 원샷 이펙트·탄 트레일 전량 정리(누수 0).
+    this.clearOneShots();
+    this.clearBulletTrails();
+    this.grazeTracker.reset();
+    this.pendingLevelUp = false;
     // 발광체 헤일로·블룸 필터를 명시 회수한다(Container.destroy 는 filters 를 파괴하지 않는다).
     this.clearGlowHalos();
     this.glowLayer.filters = [];
