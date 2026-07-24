@@ -85,7 +85,12 @@ export class GraphicsTierController {
     this.evalAccumulator += deltaSeconds;
 
     const manual = manualOverride !== 'auto';
-    if (manual || this.evalAccumulator >= TIER_EVAL_INTERVAL_SECONDS) {
+    // auto 판정은 창에 유효 표본이 하나라도 있을 때만(sumDt>0). 워밍업(fps<=0 만 유입) 구간엔 창이
+    // 비어 windowFps 가 0 을 반환하므로 그걸로 판정하면 근거 없이 강등된다 → 판정 보류(evalAccumulator
+    // 는 리셋하지 않아 첫 유효 표본이 들어오는 즉시 판정한다). 수동 오버라이드는 fps 무관(selectTier 가
+    // 그 값으로 잠금)이라 즉시 판정한다.
+    const dueForAuto = this.evalAccumulator >= TIER_EVAL_INTERVAL_SECONDS && this.sumDt > 0;
+    if (manual || dueForAuto) {
       this.evalAccumulator = 0;
       // 순수 판정 위임 — 이력현상·단조 1단계·오버라이드 잠금·NaN 방어는 전부 selectTier 소관.
       this.activeTier = selectTier(this.activeTier, this.windowFps(), manualOverride);
@@ -105,9 +110,12 @@ export class GraphicsTierController {
 
   /** 표본을 창에 추가하고, 창 길이를 넘긴 오래된 표본을 앞에서 밀어낸다(최신 1개는 항상 보존). */
   private pushSample(fps: number, dt: number): void {
-    // 비유한/음수 dt 는 시간축을 오염시키므로 무시(방어). fps 비유한값은 selectTier 가 방어하지만
-    // 창 평균이 NaN 이 되지 않도록 여기서도 걸러 유한 표본만 누적한다.
-    if (!Number.isFinite(fps) || !Number.isFinite(dt) || dt <= 0) return;
+    // 비유한/음수 dt 는 시간축을 오염시키므로 무시(방어). fps 는 유한·양수만 누적한다:
+    // FpsMeter 는 기동 후 첫 ~0.5초간 워밍업 0 을 반환하는데(fpsMeter.ts), 그 0 을 창에 넣으면
+    // 첫 판정에서 평균이 0 근처가 돼 high→med 로 근거 없이 순간 강등된다(Phase 2+ 이펙트 게이트에서
+    // 기동 깜빡임으로 드러남). fps<=0 표본을 배제해 워밍업 구간은 창을 비운 채 두고, 자동 판정은
+    // tick 에서 sumDt>0(유효 표본 존재)일 때만 한다.
+    if (!Number.isFinite(fps) || fps <= 0 || !Number.isFinite(dt) || dt <= 0) return;
     this.samples.push({ fps, dt });
     this.sumDt += dt;
     this.sumWeighted += fps * dt;

@@ -71,7 +71,8 @@ describe('GraphicsTierController — 자동 강등(저 FPS 지속)', () => {
 
   it('아무리 낮아도 한 판정에 1단계씩(high 에서 한 번에 low 로 건너뛰지 않음)', () => {
     const ctrl = new GraphicsTierController('high');
-    expect(ctrl.tick(0, STEP_DT, 'auto')).toBe('med'); // low 아님
+    // 극저 FPS(유효 표본 1 — 0 은 워밍업으로 배제되므로 1 을 쓴다)라도 한 판정엔 1단계만.
+    expect(ctrl.tick(1, STEP_DT, 'auto')).toBe('med'); // low 아님
   });
 });
 
@@ -184,6 +185,30 @@ describe('GraphicsTierController — 비유한 표본 방어', () => {
     ctrl.tick(HIGH_FPS, 0, 'auto'); // dt=0 무시
     ctrl.tick(HIGH_FPS, -1, 'auto'); // 음수 dt 무시
     expect(ctrl.getWindowFps()).toBe(0); // 유효 표본 0
+  });
+});
+
+describe('GraphicsTierController — FpsMeter 워밍업 0 FPS 방어', () => {
+  it('워밍업 0 FPS 표본만으로는 판정하지 않아 기동 티어가 강등되지 않는다', () => {
+    const ctrl = new GraphicsTierController('high');
+    // FpsMeter 는 첫 ~0.5초간 0 을 반환한다. 그 0 이 창을 채워 근거 없는 강등을 유발하면 안 된다.
+    for (let i = 0; i < 10; i++) {
+      expect(ctrl.tick(0, STEP_DT, 'auto')).toBe('high');
+    }
+    expect(ctrl.getWindowFps()).toBe(0); // 창은 비어 있음(fps<=0 표본 배제)
+  });
+
+  it('워밍업(0) 이후 첫 유효 FPS 표본이 들어오면 그때 판정한다', () => {
+    const ctrl = new GraphicsTierController('high');
+    drive(ctrl, 0, STEP_DT, 4); // 워밍업 — 판정 보류로 high 유지
+    expect(ctrl.getActiveTier()).toBe('high');
+    // 첫 유효 저 FPS 표본: evalAccumulator 가 워밍업 동안 쌓여 즉시 판정 → 1단계 강등.
+    expect(ctrl.tick(LOW_FPS, STEP_DT, 'auto')).toBe('med');
+  });
+
+  it('워밍업 중이라도 수동 오버라이드는 fps 무관하게 즉시 잠긴다', () => {
+    const ctrl = new GraphicsTierController('high');
+    expect(ctrl.tick(0, 0.001, 'low')).toBe('low'); // 창 비어도 오버라이드 즉시
   });
 });
 
