@@ -35,6 +35,7 @@ import { InputController } from './input/controller.js';
 import { Hud } from './ui/hud.js';
 import type { BossHudState } from './ui/hud.js';
 import { PowerupOverlay } from './ui/powerupOverlay.js';
+import { EncounterOverlay, encounterPromptView } from './ui/encounterOverlay.js';
 import { levelUpOverlayAction, readBuildStatus } from './ui/buildStatus.js';
 import { shouldEnterSettlement } from './ui/runFlow.js';
 import type { LaunchSelection } from './ui/planetSelect.js';
@@ -69,6 +70,7 @@ import {
   comboMultiplier,
   DEFAULT_CONFIG,
   echoStabilizedOf,
+  encounterShardOf,
   runStoryMetrics,
 } from './sim/world.js';
 import type { WorldState, InputFrame } from './sim/world.js';
@@ -236,6 +238,17 @@ async function main(): Promise<void> {
   }
 
   const controller = new InputController(gameApp);
+  // 조우 프롬프트(ADR-0033). 파워업 오버레이(레벨업 3택)와 **완전히 같은 짝**이다 —
+  // 오버레이는 선택을 컨트롤러 큐에 넣기만 하고, 실제 반영은 다음 입력 프레임의
+  // `SPECIAL_ENCOUNTER_*` 비트를 sim 이 읽으면서 일어난다. 이 짝이 없어서 조우 5종 중
+  // 3종이 실제 플레이에서 도달 불가였다(리뷰 CRITICAL). `stepWorld` 직접 호출 금지 —
+  // 입력 프레임에 실리지 않은 선택은 리플레이·서버 재검증에 존재하지 않는 사건이 된다.
+  const encounterOverlay = new EncounterOverlay({
+    onEnter: () => controller.queueEncounterEnter(),
+    onDecline: () => controller.queueEncounterDecline(),
+    onAltarPick: (index) => controller.queueEncounterAltarPick(index),
+    onExit: () => controller.queueEncounterExit(),
+  });
   const fps = new FpsMeter();
   // 유니크 드랍 세리머니(렌더 전용): 슬로모 + 금빛 플래시. 시뮬 결과 무영향.
   const ceremony = new UniqueCeremony();
@@ -556,6 +569,9 @@ async function main(): Promise<void> {
     // 레벨업 오버레이는 런 종료(정산) 경로에서만 숨겨 왔다 — 런을 정산 없이 벗어나면
     // (하네스 goto 등) 메뉴 화면 위에 남는다. 런 전용 UI 이므로 화면 전환에서도 숨긴다.
     if (powerupOverlay.visible) powerupOverlay.hide();
+    // 조우 프롬프트도 런 전용 UI 다. 렌더 루프가 매 프레임 재도출하므로 보통은 저절로
+    // 사라지지만, 화면 전환과 다음 프레임 사이에 프롬프트가 남는 한 프레임을 없앤다.
+    encounterOverlay.hide();
     shownLevel = 0;
   }
 
@@ -1202,7 +1218,10 @@ async function main(): Promise<void> {
           // 실어 프로필에 누적한다. 헬퍼는 world.js(→echo.js) 재수출 순수 리더 — sim 무수정.
           // 침공 런은 이 블록에 도달하지 않는다(위 invasionTarget return · !harnessInvasionRun
           // 가드) — PvE 런만 조립하며, 에코도 PvE 전용(echoRuntime 미장착)이다.
-          echoStabilized: echoStabilizedOf(w),
+          // 조우 프레임워크(ADR-0033): 기록 파편우도 **같은 기록 파편 축**으로 합류한다
+          // (명세의 "신규 보상 시스템 0" 제약 — 파편 슬롯 소비 로직을 두 벌로 만들지 않는다).
+          // 둘 다 순수 리더라 sim 무수정이고, OR 라서 에코 단독 런의 거동은 그대로다.
+          echoStabilized: echoStabilizedOf(w) || encounterShardOf(w),
           storyMetricDeltas: runStoryMetrics(w),
         });
         // Completing the tutorial (win or lose) reveals the base and makes the run
@@ -1470,6 +1489,20 @@ async function main(): Promise<void> {
         shownLevel = 0;
         powerupOverlay.hide();
       }
+    }
+
+    // 조우 프롬프트(ADR-0033): 파워업과 같은 규율 — 오버레이가 스스로 토글하지 않고 sim
+    // 상태(`encounterRuntime`)에서 매 프레임 순수 도출한다(encounterPromptView). 선택은
+    // 컨트롤러 큐 → 다음 입력 프레임의 SPECIAL_ENCOUNTER_* 비트로만 sim 에 들어간다.
+    //
+    // ⚠️ **레벨업 오버레이가 떠 있으면 무조건 숨긴다.** 두 오버레이가 `Digit1~3` 을 공유하는
+    // 유일한 충돌 지점이고, 프리즈 중에는 `stepWorld` 가 파워업만 처리하고 return 하므로
+    // 그 프레임의 조우 비트는 어차피 sim 이 읽지 않는다(컨트롤러도 같은 이유로 큐를 유지한다).
+    // 관전(spectating)은 남의 리플레이를 보는 화면이라 입력 자체가 sim 에 들어가지 않는다.
+    if (!spectating && w !== null && !resultOverlay.visible && !powerupOverlay.visible) {
+      encounterOverlay.update(encounterPromptView(w.encounterRuntime));
+    } else {
+      encounterOverlay.update(null);
     }
 
     // Settlement screen on death or clear. `settled`로 게이트한다(런 종료당 정확히 1회
@@ -1749,6 +1782,9 @@ async function main(): Promise<void> {
       autotile,
       hud,
       powerupOverlay,
+      // 조우 프롬프트 — 조우 롤이 ≈2% 라 자연 발생을 기다릴 수 없다. 하네스에서 이 참조로
+      // 프롬프트를 직접 띄워 문구·버튼을 눈으로 확인한다(조우 런타임 주입은 sim 쪽 몫).
+      encounterOverlay,
       resultOverlay,
       planetSelect,
       inventory,

@@ -319,6 +319,12 @@ export function spriteSlotFor(kind: EntityKind, enemyType: number, planet = 0): 
       // TODO(art): 전용 에코 신호 비콘 아트는 후속. 지금은 자석 이미터 텍스처를 placeholder 로
       // 재사용한다(sim 정합만 필수 — boostPad 선례). 안정화 반경·게이지 UI 는 W3 렌더 몫이다.
       return { kind: 'single', slot: 'magnetEmitter' };
+    // --- 조우 프레임워크(ADR-0033) ---
+    case 'encounterPortal':
+    case 'encounterAltar':
+      // TODO(art): 전용 포탈·제단 아트는 후속. 지금은 에코 선례대로 자석 이미터 텍스처를
+      // placeholder 로 재사용한다(sim 정합만 필수). 진입 프롬프트·3택 UI 는 렌더 레인 몫이다.
+      return { kind: 'single', slot: 'magnetEmitter' };
   }
 }
 

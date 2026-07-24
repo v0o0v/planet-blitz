@@ -3,6 +3,7 @@ import { createWorld, stepWorld, emptyInput, packPowerupPick, DEFAULT_CONFIG } f
 import type { WorldConfig, WorldState, InputFrame } from '../src/sim/world.js';
 import { atan2, length } from '../src/sim/math.js';
 import { runReplay } from '../src/sim/replay.js';
+import { SEGMENTS } from '../data/waves.js';
 
 /**
  * Drive a full run to completion with a durable pilot.
@@ -43,12 +44,14 @@ describe('full run to victory (task 15, e2e)', () => {
   // Durable pilot: survives the whole run so the boss segment is always reached.
   const durable: WorldConfig = { ...DEFAULT_CONFIG, playerHp: 100_000_000 };
 
-  it('clears six segments, defeats the boss, and reaches victory without throwing', () => {
+  it('clears every segment, defeats the boss, and reaches victory without throwing', () => {
     const { state } = playToEnd(0x50c1a1, durable);
     expect(state.victory).toBe(true);
     expect(state.gameOver).toBe(false);
-    // Reached the boss segment (index 5) and spawned + killed the boss.
-    expect(state.wave.segmentIndex).toBe(5);
+    // 보스 세그먼트(= 마지막 슬롯)에 도달해 보스를 스폰·처치했다. 인덱스를 하드코딩하지 않고
+    // SEGMENTS 에서 파생한다 — 중반 격전(ADR-0032) 삽입처럼 세그먼트 수가 바뀌어도 이 단언은
+    // "마지막 = 보스" 계약만 검사한다.
+    expect(state.wave.segmentIndex).toBe(SEGMENTS.length - 1);
     expect(state.bossSpawned).toBe(true);
     expect(state.entities.some((e) => e.kind === 'boss')).toBe(false); // boss dead
     // A real run: enemies were killed and levels were gained along the way.

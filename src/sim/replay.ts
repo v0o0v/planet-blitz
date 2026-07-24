@@ -520,6 +520,32 @@ export function hashWorld(state: WorldState): number {
       for (const id of norm) h = hashU32(h, id >>> 0);
     }
   }
+  // --- 조우 런타임(APPEND-ONLY, 조건부 꼬리 · ADR-0033) ---
+  // 에코 폴드와 완전히 같은 규율이다. 존재할 때만 접는다(조우 미발생 런 = 기존 전 PvE 모드·
+  // 침공 전부 → encounterRuntime 미존재 → 무폴드 → **바이트 불변**, AC1). 조우 보상이 런
+  // 경제(크레딧·전리품)에 영향을 주므로 서버(EF)가 시드+입력로그 재실행으로 재검증해야 하고,
+  // 그러려면 조우 진행 상태가 해시에 봉인돼 있어야 한다(ADR-0005).
+  //  · 아홉 필드 전부 **정수**라 `>>> 0` uint32 접기가 결정론적이다(정수 전용 규율).
+  //    `inDetour` 가 boolean 이 아니라 0/1 정수인 것도 이 규율의 산물이다.
+  //  · `savedX/savedY` 는 워프 전 플레이어 좌표를 `Math.round` 한 값이고 음수일 수 있으나,
+  //    `>>> 0` 이 2의 보수 uint32 로 결정론적으로 접는다(scrollRuntime 음수 폴드 선례).
+  //  · detour 중에는 방 안 엔티티가 `state.entities` 에 실려 hashEntity 로 이미 접히고,
+  //    메인 엔티티는 프리즈된 채 계속 접힌다 — 그래서 detour 상태 재현이 이 아홉 필드만으로
+  //    닫힌다.
+  // **append-only 맨 꼬리**(촉매 폴드 뒤)라 위 폴드 순서를 하나도 건드리지 않는다(재배치
+  // 금지). 신규 조우 필드는 이 아래에만 append.
+  const enc = state.encounterRuntime;
+  if (enc !== undefined) {
+    h = hashU32(h, enc.state >>> 0);
+    h = hashU32(h, enc.type >>> 0);
+    h = hashU32(h, enc.spawnTick >>> 0);
+    h = hashU32(h, enc.entityId >>> 0);
+    h = hashU32(h, enc.inDetour >>> 0);
+    h = hashU32(h, enc.savedX >>> 0);
+    h = hashU32(h, enc.savedY >>> 0);
+    h = hashU32(h, enc.detourTimer >>> 0);
+    h = hashU32(h, enc.aux >>> 0);
+  }
   return h >>> 0;
 }
 

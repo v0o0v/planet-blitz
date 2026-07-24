@@ -31,6 +31,7 @@ import type { Entity, EntitySink } from '../src/sim/entities.js';
 import { INVASION_WINDOW_HALF_W } from '../src/sim/invasion/scroll.js';
 import { SEGMENTS } from '../data/waves.js';
 import { isBreakableWall } from '../src/sim/modes/blockBreak.js';
+import { MID_CLASH_LEADER_MARK } from '../src/sim/modes/midClash.js';
 import {
   racingProgress,
   racingSection,
@@ -238,24 +239,47 @@ describe('레이싱 — 정규경로 통합(배선 실도달)', () => {
   it('(c) 세그먼트가 스크롤 거리로 전진한다(killGoal 아님) — 인덱스가 진행도 구간과 정확히 일치', () => {
     const w = createWorld(9, durableRacing());
     const seen = new Set<number>();
+    // 중반 격전(ADR-0032) 세그먼트부터는 전진 게이트가 스크롤 거리가 아니라 **리더 처치**라
+    // 거리↔인덱스 등식이 성립하지 않는다(격전 게이트 자체는 tests/midClash.test.ts 소관).
+    // 그래서 이 등식은 격전 진입 전 구간에서만 단언한다 — 거리 게이트 배선 증거로는 충분하다.
+    const clashIndex = SEGMENTS.findIndex((s) => s.clash === true);
     for (let i = 0; i < 2000; i++) {
       stepRacing(w);
+      if (w.wave.segmentIndex >= clashIndex || w.wave.boss) break;
       const progress = w.scrollRuntime!.scrollX;
       // 거리 게이트라면 인덱스는 진행도 구간에 딱 묶인다. killGoal 게이트라면 처치 수에
       // 좌우돼 이 등식이 성립할 수 없다(=배선 증거).
       const expected = Math.min(SEGMENTS.length - 1, racingSection(progress));
       expect(w.wave.segmentIndex).toBe(expected);
       seen.add(w.wave.segmentIndex);
-      if (w.wave.boss) break;
     }
     expect(seen.size).toBeGreaterThan(1); // 여러 구간을 실제로 전진(정체 아님)
   });
+
+  /**
+   * 중반 격전(ADR-0032) 세그먼트는 **리더 처치**로만 전진한다. 유휴 입력 런은 강화 정예
+   * (HP×8)를 깎을 화력이 없으므로, 코스 배선을 보려는 테스트에서는 리더가 뜨는 즉시
+   * `compact` 의 처치 규율(`hp<=0` → `dead` → kills++)대로 처치를 대역한다.
+   *
+   * ⚠️ 예전에는 이 대역이 없어도 통과했다 — 강제 스크롤 컬링이 리더를 **hp>0 인 채로** 지워
+   * 격전 세그먼트가 **공짜 통과**했기 때문이다(리뷰 HIGH-2). 그 결함을 막은 뒤로는 어떤 런도
+   * 리더를 실제로 잡아야 하므로 대역이 필요하다.
+   */
+  function killClashLeader(w: WorldState): void {
+    const leader = w.entities.find(
+      (e) => e.kind === 'enemy' && !e.dead && e.aux1 === MID_CLASH_LEADER_MARK,
+    );
+    if (leader === undefined) return;
+    leader.hp = 0;
+    leader.dead = true;
+  }
 
   it('(d)(e) 코스 끝(+X)에서 보스가 소환되고 처치 시 공통 승리(compact 재사용)로 victory 가 선다', () => {
     const w = createWorld(9, durableRacing());
     let boss: Entity | undefined;
     for (let i = 0; i < 2000; i++) {
       stepRacing(w);
+      killClashLeader(w); // 아래 헬퍼 주석 참조(격전 세그먼트는 리더 처치로만 전진한다).
       boss = w.entities.find((e) => e.kind === 'boss');
       if (boss !== undefined) break;
     }

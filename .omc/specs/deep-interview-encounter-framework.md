@@ -10,7 +10,7 @@
 - Threshold Source: default
 - Initial Context Summarized: no
 - Status: PASSED
-- 선행 산출물: [CONTEXT.md](../../CONTEXT.md) glossary · [ADR-0031](../../docs/adr/0031-encounter-framework-generalizes-echo.md) · [ADR-0032](../../docs/adr/0032-mid-run-clash-extends-par.md) (PR #129, main 머지)
+- 선행 산출물: [CONTEXT.md](../../CONTEXT.md) glossary · [ADR-0033](../../docs/adr/0033-encounter-framework-generalizes-echo.md) (구 0031 — 그래픽 이펙트 ADR과 번호 충돌로 리넘버) · [ADR-0032](../../docs/adr/0032-mid-run-clash-extends-par.md) (PR #129, main 머지)
 
 ## Clarity Breakdown
 | Dimension | Score | Weight | Weighted |
@@ -77,7 +77,7 @@ Brownfield 배선 지점(전부 기존 재사용):
 - **롤/런타임**: `echo.ts` `rollEcho`(`worldRng.fork`) → `encounterRuntime`(state 0/1/2 + type + spawnTick + entityId + detour 필드). `world.ts createWorld`의 `if (cfg.invasion3 === undefined) echoRuntime = rollEcho(...)` 지점 옆에 `rollEncounter`.
 - **해시**: `hashWorld`의 조건부 꼬리 폴드(echoRuntime/shrinkRuntime/scrollRuntime 선례) → `encounterRuntime` 존재 시에만 폴드.
 - **보상**: `spawnLoot` + `LootRecord{seed,rarity,planet,stage}`(rarity 강제) · `state.resources`(크레딧) · 기록 파편 플래그(에코 `echoStabilizedOf` 선례) · `catalystMods.drop`(제단 부스트 배율).
-- **정산**: 기존 정산 요약 + **3중 캡**(지표 개연성·런당·시간당) 계수 재조정(ADR-0031 consequence).
+- **정산**: 기존 정산 요약 + **3중 캡**(지표 개연성·런당·시간당) 계수 재조정(ADR-0033 consequence).
 - **중반 격전**: `data/waves.ts` `SEGMENTS`에 전용 격전 세그먼트 삽입 + `src/sim/waves.ts` `updateWaves`의 `cleared` 분기에 리더-처치 게이트 추가. 서지=특별 카드, 리더=`summonEnemy`(RNG 미소비 소환 선례).
 - **검증**: vitest 해시 골든 재생성 + `verify-pve-sample`/`verify-invasion` EF 재배포(마이그레이션 절차, 이 프로젝트 반복 패턴).
 

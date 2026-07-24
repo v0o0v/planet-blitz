@@ -38,6 +38,10 @@ import { racingProgress, RACING_SECTION_LENGTH, RACING_SPAWN_AHEAD } from './mod
 import { contaminationPurifyRate, CONTAMINATION_PURIFY_THRESHOLD } from './modes/contamination.js';
 import { chaseShelterReached } from './modes/chase.js';
 import { shrinkRingCleared, shrinkSpawnRadius, SHRINK_GRACE_TICKS } from './modes/shrink.js';
+// 중반 격전(ADR-0032). ⚠️ midClash 는 이 모듈의 `summonEnemy` 를 되가져오므로 모듈 순환이
+// 하나 생긴다 — 양쪽 다 호이스팅되는 함수 선언이고 모듈 평가 시점이 아니라 **호출 시점**에만
+// 서로를 참조하므로 안전하다(midClash.ts 헤더 "순환 의존 주의" 참조).
+import { spawnMidClash, midClashCleared } from './modes/midClash.js';
 
 export interface WaveRuntime {
   segmentIndex: number;
@@ -96,11 +100,27 @@ export function updateWaves(state: WorldState, player: Entity): void {
     w.boss = true; // Phase 3 hook: boss encounter begins here.
   }
 
+  // 중반 격전(ADR-0032): 전용 세그먼트 **진입 틱**에 리더 + 정예 서지를 1회 소환한다. 진입 틱
+  // 판정을 `segmentElapsed === 0` 으로 두는 이유는 아래 전진 게이트와 짝을 이루기 때문이다 —
+  // 여기서 소환하고 나서야 `segmentElapsed++` 를 지나 게이트를 평가하므로, "아직 리더가 없는데
+  // cleared" 오판이 구조적으로 불가능하다(midClashCleared 주석). 소환은 RNG 미소비(summonEnemy)
+  // 라 waveRng/eliteRng/dropRng 스트림이 밀리지 않는다 — 기존 카드 추첨 시퀀스가 그대로다.
+  // 중반 격전 소환은 **강제 스크롤 모드를 제외**한다(아래 cleared 분기의 게이트 제외와 같은
+  // 조건 — 둘은 반드시 함께 움직인다). 근거는 그쪽 주석 참조.
+  if (seg.clash === true && w.segmentElapsed === 0 && state.scrollRuntime === undefined) {
+    spawnMidClash(state, player);
+  }
+
   // 급행 소환 램프(ADR-0011): 세그먼트에 오래 머물수록(=처치 할당 미달) 유효 적 상한↑·
   // 카드 간격↓ 으로 압박을 누적한다. 정수 연산·RNG 미소비라 결정론 불변. 단 보스 세그먼트
   // 에는 램프를 적용하지 않는다(rushSteps=0) — 보스전에도 일반몹은 계속 등장하되(아래 카드
   // 추첨은 보스 포함 매 세그먼트 실행), 완만한 고정 간격이라 화력이 충분하면 보스에 집중
   // 가능하고 부족하면 몹이 서서히 쌓여 자연 사망으로 긴 꼬리가 캡된다(별도 enrage 없음).
+  //
+  // 중반 격전 세그먼트(ADR-0032)에는 램프를 **그대로 적용한다**(보스처럼 끄지 않는다). 격전의
+  // 전진 게이트는 리더 처치인데, 리더를 못 잡는 동안 압박이 누적돼야 "약하면 길어지다 사망"
+  // 이라는 창발적 캡(ADR-0011)이 격전에도 성립한다. 램프를 끄면 화력이 부족한 빌드가 리더를
+  // 못 잡은 채 무한히 머무는 정체 구간이 생긴다.
   const rushSteps = seg.boss ? 0 : Math.floor(w.segmentElapsed / RUSH_RAMP_TICKS);
   const rushEnemyBonus = Math.min(rushSteps * RUSH_ENEMY_STEP, RUSH_ENEMY_MAX);
   // 촉매 적 수 페널티 × 침략 단계 밀도↑: raise the onscreen enemy cap. 단계 밀도는
@@ -134,7 +154,24 @@ export function updateWaves(state: WorldState, player: Entity): void {
     // 그대로라 뱀서류·침공 거동이 불변이다. 블록격파=−scrollY 진행도, 레이싱=+scrollX 진행도.
     const sw = state.scrollRuntime;
     let cleared: boolean;
-    if (sw !== undefined && state.config.planetMode === PLANET_MODE.blockBreak)
+    // 중반 격전(ADR-0032)은 **모드 게이트보다 먼저** 판정한다. 격전 세그먼트에서는 스크롤
+    // 주파 거리·정화율·대피소 도달·링 전멸이 아니라 **리더 처치**가 유일한 전진 조건이다 —
+    // 매 런 확정 등장하는 구조 비트라 모드와 무관하게 같은 규칙으로 서야 한다(모드별 리더의
+    // 정체·연출 변형은 다운스트림, ADR-0032 §Consequences). 판정은 마커 엔티티 생존 스캔
+    // 파생이라 WaveRuntime 신규 필드가 0 이다(계획 AC9/MAJ-3).
+    //
+    // ⚠️ **강제 스크롤 모드(블록격파·레이싱)는 예외**다. 그 두 모드는 세그먼트 전진이 창 주파
+    // **거리**에 묶여 있는데, 격전만 **처치**로 게이트하면 두 축이 어긋난다 — 창은 모드 정체성상
+    // 계속 전진하지만 세그먼트는 리더를 잡을 때까지 멈춰서, 창이 미리 깔아둔 코스 끝을 지나
+    // 벽도 부스트 패드도 없는 빈 공간으로 무한히 나아간다(하네스 실측: 격전 진입 후 5,700틱 동안
+    // 전진 0, 진행도는 코스 길이 12,000 을 넘어 30,000+). 게다가 컬링 예외로 창에 결속된 리더가
+    // 그 내내 따라붙어 사실상 런이 그 자리에서 끝난다.
+    // 그래서 두 모드에서는 격전 세그먼트도 **기존 거리 게이트를 그대로 쓰고**, 리더·서지를 아예
+    // 소환하지 않는다(위 spawnMidClash 게이트와 한 쌍). 세그먼트가 하나 늘어난 만큼 코스도
+    // `SEGMENTS.length - 1` 파생으로 한 구간 길어져 있어 거리 축은 이미 정합이다.
+    // 모드별 격전 변형(스크롤 창 정지 등)은 다운스트림이다(ADR-0032 §Consequences).
+    if (seg.clash === true && sw === undefined) cleared = midClashCleared(state, w);
+    else if (sw !== undefined && state.config.planetMode === PLANET_MODE.blockBreak)
       cleared = blockBreakProgress(sw) >= (w.segmentIndex + 1) * BLOCKBREAK_SECTION_LENGTH;
     else if (sw !== undefined && state.config.planetMode === PLANET_MODE.racing)
       cleared = racingProgress(sw) >= (w.segmentIndex + 1) * RACING_SECTION_LENGTH;
@@ -143,6 +180,11 @@ export function updateWaves(state: WorldState, player: Entity): void {
       // 통과 = 정화율 ≥ 임계 × (i+1)/일반세그먼트수. 일반 세그먼트 수 = SEGMENTS.length − 1
       // (마지막은 보스). 마지막 일반 세그먼트 통과 = 정화 임계 도달 → 보스 세그먼트 → 오염원
       // 코어 보스(stepBoss 공통 경로). 곡선·임계는 TODO(밸런스), 구조는 "정화 진행 → 보스".
+      // ⚠️ 중반 격전(ADR-0032) 삽입 후 `SEGMENTS.length − 1` 은 6 이다(격전 세그먼트 포함).
+      // 격전 세그먼트는 위 clash 분기가 먼저 잡아 이 마일스톤을 소비하지 않으므로, 실제로
+      // 정화율이 통과해야 하는 지점은 5곳(index 0·1·2·4·5)이고 마지막 통과가 정확히 임계
+      // (6/6)에 걸린다 — "정화 임계 도달 → 보스" 구조는 그대로다. 중간 간격만 살짝 불균등해지는데
+      // 이는 밸런스 사안이다(TODO(밸런스)).
       const normalSegments = SEGMENTS.length - 1;
       const milestone = (CONTAMINATION_PURIFY_THRESHOLD * (w.segmentIndex + 1)) / normalSegments;
       cleared = contaminationPurifyRate(state) >= milestone;
