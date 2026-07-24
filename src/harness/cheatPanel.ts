@@ -303,7 +303,6 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     harness.startRun({
       planet: planetIdx,
       stage: stageValue,
-      anomaly: false,
       ...(seed !== undefined ? { seed } : {}),
     });
   }

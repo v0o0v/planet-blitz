@@ -1,10 +1,16 @@
 /**
  * M8-L0 — 스트라이커 해시 골든 게이트.
  *
- * `tests/fixtures/striker-prem8.json` 은 **M8 착수 전** 스트라이커 빌드의 상태를 못 박은
- * 골든이다. 이 테스트는 그 골든을 **읽어서 비교만** 한다 — 절대 다시 쓰지 않는다.
+ * `tests/fixtures/striker-prem8.json` 은 스트라이커 빌드의 per-tick 해시를 못 박은 골든이다.
+ * 이 테스트는 그 골든을 **읽어서 비교만** 한다 — 절대 다시 쓰지 않는다.
  * (재생성형 픽스처인 scripts/deno-verify/fixtures.json 과 정반대 성격이다. 그쪽은 테스트가
  * 매번 다시 굳히므로 시뮬 변경을 통과시키고, 이쪽은 통과시키면 안 된다.)
+ *
+ * ⚠️ **촉매 시대 기준선(ADR-0029, 2026-07-24 rebase)**: 원래 이 골든은 "M8 이전과 바이트 동일"을
+ * 주장했으나, anomaly 폐지가 `hashWorld` 의 무조건 anomaly 폴드 3개 + `anomalyAccepted` 폴드 1개를
+ * 제거하는 **1회 포맷 범프**여서 그 불변식은 더 이상 성립하지 않는다(계획 이슈 A). 골든을 촉매 시대
+ * 기준으로 **재생성**했다(`RECORD_STRIKER_BASELINE=1`). 회귀 탐지 역할은 그대로다 — 스킬 슬라이스·
+ * loadout 파생·폴드 레이아웃이 이후 조용히 바뀌면 여전히 여기서 터진다.
  *
  * ## 무엇을 막는가
  * 1. `data/skills.ts` 인덱스/트리 슬라이스가 밀려 파워업 추첨 스트림이 갈리는 회귀
@@ -206,17 +212,19 @@ function assembleRunConfigLikeMain(
 }
 
 /**
- * 골든 조립(`baselineConfig`)에 앱 경로가 **명시**하는 두 필드를 더한 형태.
- * 둘 다 값 의미가 미지정과 동일해 해시가 불변이다:
- *  - `anomalyAccepted: false` → `cfg.anomalyAccepted ?? false` · 폴드는 `? 1 : 0`
- *  - `shipType: 0`            → `state.config.shipType ?? 0` · 0 이면 꼬리 폴드 미실행
- * 즉 이 두 줄은 "앱이 더 명시적으로 쓴다"는 사실만 나타내고, 스트라이커 해시 동결
- * (`expectSameStream`)은 아래에서 그대로 증명된다.
+ * 골든 조립(`baselineConfig`)에 앱 경로(`buildRunConfig`)가 **명시**하는 필드를 더한 형태.
+ * 전부 값 의미가 미지정과 동일해 해시가 불변이다:
+ *  - `catalysts: []`  → `hashWorld` 촉매 꼬리는 빈 배열이면 무폴드(조건부 꼬리) · resolveCatalystMods 중립
+ *  - `shipType: 0`    → `state.config.shipType ?? 0` · 0 이면 꼬리 폴드 미실행
+ *  - `planetMode: vampire(0)` → 0 이면 모드 꼬리 폴드 미실행
+ * 즉 이 줄들은 "앱이 더 명시적으로 쓴다"는 사실만 나타내고, 스트라이커 해시 동결
+ * (`expectSameStream`)은 아래에서 그대로 증명된다. (구 `anomalyAccepted: false` 는 anomaly
+ * 폐지(ADR-0029)로 삭제됐고, `catalysts: []` 가 그 자리를 대신한다.)
  */
 function goldenConfigAsApp(planet: PlanetSpec, invest: readonly number[]): WorldConfig {
   return {
     ...baselineConfig(planet, invest),
-    anomalyAccepted: false,
+    catalysts: [],
     shipType: 0,
     planetMode: PLANET_MODE.vampire,
   };

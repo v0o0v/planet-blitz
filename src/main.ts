@@ -7,7 +7,7 @@
  * so motion is smooth on any refresh rate.
  *
  * M2 wraps the run in a meta loop (plan Phase C/D): a persistent `Profile`
- * (localStorage) feeds the star-map screen (planet/stage/anomaly) and the
+ * (localStorage) feeds the star-map screen (planet/stage/catalysts) and the
  * inventory/equip screen. The active ship's equipped gear becomes a `LoadoutConfig`
  * (computeLoadoutStats) injected into the run's WorldConfig; when the run ends the
  * collected loot + XP are settled back into the profile and saved, then the
@@ -77,8 +77,6 @@ import type { Harness, HarnessScreen } from './harness/core.js';
 import { snapshotWorld } from './sim/snapshot.js';
 import type { WorldSnapshot } from './sim/snapshot.js';
 import { ReplayRecorder, hashWorld } from './sim/replay.js';
-import { SeededRng } from './sim/rng.js';
-import { rollAnomaly } from './sim/anomaly.js';
 import { runBench } from './bench/bench.js';
 // 런 설정 조립 **단일 정본**(M8 설계서 §10-2). PvE·정식 침공·하네스 침공 세 경로가 전부
 // 이것만 쓴다 — main.ts 안에서 config 를 다시 조립하지 마라(3중복이 배선 누락의 원인이었다).
@@ -949,11 +947,9 @@ async function main(): Promise<void> {
     // 이번 출격의 시드(pendingRunSeed 참조 — 화면을 오가도 같은 제안이 유지된다).
     pendingRunSeed ??= nextSeed();
     const seed = pendingRunSeed;
-    // Pre-compute the anomaly the seed offers (same fork the sim uses) so the
-    // player can accept/reject it before the run (OQ-M2-3).
-    const offer = rollAnomaly(new SeededRng(seed).fork('anomaly'), false);
+    // 촉매 주입 패널(변칙 패널 자리, ADR-0029)은 Lane 4 픽커가 채운다 — 여기서는 성계 지도만
+    // 열고, 촉매 배열은 startRun 이 buildRunConfig 에 넘기는 지점에서 주입된다(현재는 무촉매 `[]`).
     planetSelect.show({
-      anomalyOffered: offer.kind,
       meta: metaLine(),
       // 행성별 개방 상한 산정(ADR-0022): 그 행성 최고 클리어 단계 → max(10, +5).
       bestStageCleared: (planet) => profile.planetProgress[planet]?.bestStageCleared ?? 0,
@@ -971,7 +967,6 @@ async function main(): Promise<void> {
     startRun(TUTORIAL_SEED, {
       planet: TUTORIAL_PLANET,
       stage: TUTORIAL_STAGE,
-      anomalyAccepted: false,
       maxSegments: TUTORIAL_MAX_SEGMENTS,
     });
     tutorialActive = true; // startRun cleared it; mark this run as the tutorial.
@@ -981,7 +976,7 @@ async function main(): Promise<void> {
 
   /** Assemble the run config from the selection + active loadout, then start. */
   function startRun(seed: number, sel: LaunchSelection): void {
-    pendingRunSeed = null; // 이번 시드 소진 — 다음 성계 지도는 새 변칙 제안을 굴린다
+    pendingRunSeed = null; // 이번 시드 소진 — 다음 성계 지도는 새 시드를 굴린다
     tutorialActive = false; // normal run unless startTutorial re-flags it
     invasionTarget = null; // PvE 런: 침공 컨텍스트 해제(endRun 이 정산 경로로 분기)
     harnessInvasionRun = false;
@@ -990,10 +985,11 @@ async function main(): Promise<void> {
     echoToastShown = false; // 새 런: 에코 안정화 로어 토스트 재무장
     // 런 조립 단일 정본. 투자 벡터·기체 타입·계보 보너스는 전부 이 안에서 접힌다 —
     // 튜토리얼 단축판(maxSegments)도 여기로 넘겨 config 후처리를 남기지 않는다.
+    // 촉매 주입(ADR-0029): Lane 4 픽커가 `sel` 에 촉매 배열·runId 를 실으면 여기로 전달한다
+    // (`consume_catalysts` 성공 시). 현재는 무촉매 — buildRunConfig 가 `catalysts: []` 로 스탬프한다.
     const config = buildRunConfig(profile, {
       planet: sel.planet,
       stage: sel.stage,
-      anomalyAccepted: sel.anomalyAccepted,
       ...(sel.maxSegments !== undefined ? { maxSegments: sel.maxSegments } : {}),
     });
     // 활성 기체의 인게임 스프라이트로 플레이어 슬롯을 교체(렌더 전용, sim 무영향).
@@ -1503,7 +1499,6 @@ async function main(): Promise<void> {
         startRun(opts.seed, {
           planet: opts.planet,
           stage: opts.stage,
-          anomalyAccepted: opts.anomaly,
           ...(opts.maxSegments !== undefined ? { maxSegments: opts.maxSegments } : {}),
         });
       },

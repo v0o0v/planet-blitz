@@ -33,7 +33,6 @@ import {
   UQ_GREED_HEART,
 } from '../../src/sim/uniques.js';
 import { atan2, length } from '../../src/sim/math.js';
-import { SeededRng } from '../../src/sim/rng.js';
 import { SKILL_NODE_COUNT } from '../../data/skills.js';
 import type { Rarity, ItemSource } from '../../src/items/types.js';
 
@@ -99,30 +98,6 @@ function driveDurable(seed: number, config: WorldConfig, maxTicks: number): Inpu
   return inputs;
 }
 
-/** 시드 기반 로밍 입력(대각 드리프트 + 노이즈) — 청크/기믹/벽/LOS까지 자극. */
-function driveRoam(inputSeed: number, ticks: number): InputFrame[] {
-  const gen = new SeededRng(inputSeed);
-  const inputs: InputFrame[] = [];
-  for (let t = 0; t < ticks; t++) {
-    inputs.push({
-      moveX: 0.7 + gen.range(-0.5, 0.5),
-      moveY: -0.7 + gen.range(-0.5, 0.5),
-      aim: gen.range(-Math.PI, Math.PI),
-      dash: gen.chance(0.06),
-      special: 0,
-    });
-  }
-  return inputs;
-}
-
-/** 이상현상을 제안하는 시드를 결정론적으로 탐색(anomalyAccepted 검증용). */
-function findAnomalySeed(base: WorldConfig): number {
-  for (let s = 1; s < 4000; s++) {
-    const w = createWorld(s, { ...base, anomalyAccepted: false });
-    if (w.anomaly.kind !== 0 /* ANOMALY_NONE */) return s;
-  }
-  return 1;
-}
 
 const DURABLE = 100_000_000;
 const MAX_RUN_TICKS = 60 * 240; // 4분 상한(내구 파일럿은 보스까지 충분히 도달).
@@ -168,21 +143,26 @@ const BERDAN_ENGAGE: WorldConfig = {
   loadout: BERDAN_LOADOUT,
 };
 
-const ANOMALY_BASE: WorldConfig = {
-  ...DEFAULT_CONFIG,
-  planet: 0,
-  stage: 1,
-  playerHp: DURABLE,
-  anomalyAccepted: true,
-};
-const ANOMALY_SEED = findAnomalySeed(ANOMALY_BASE);
-
 const UNIQUE_RUN: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 1,
   stage: 11,
   playerHp: DURABLE,
   loadout: UNIQUE_LOADOUT,
+};
+
+// --- 시나리오 ③: 촉매 주입 런(ADR-0029) — 구 변칙 로밍 런 자리 -----------------------
+// 촉매 시대 교차 검증: `hashWorld` 촉매 조건부 꼬리 폴드 + resolveCatalystMods 배선(드랍량·희귀도·
+// 자원·파워·페널티)이 Node↔Deno 재실행에서 bit-identical 한지 자극한다. 여러 보상축(drop/rarity/
+// resource/power-damage) + 페널티(enemyHp/enemyCount) 를 한 배열에 스택해 fold·배율을 한 번에 관통한다.
+// 단계 11(교전)이라 엘리트 드랍이 실제로 발생 → 촉매 rarity·drop 관측 경로가 살아 있다.
+const CATALYST_RUN: WorldConfig = {
+  ...DEFAULT_CONFIG,
+  planet: 0,
+  stage: 11,
+  playerHp: DURABLE,
+  // abundance(drop)·plunder(drop)·refinement(rarity)·extraction(resource)·overdrive(power dmg).
+  catalysts: [0, 1, 5, 15, 25],
 };
 
 /** 몇 노드에만 투자한 길이 SKILL_NODE_COUNT 스킬 벡터(파워업 가중·결정론 필드 자극). */
@@ -424,14 +404,14 @@ export const SCENARIOS: readonly Scenario[] = [
     ],
   },
   {
-    name: '③ 변칙(이상현상) 수락 런',
-    seed: ANOMALY_SEED,
-    config: ANOMALY_BASE,
+    name: '③ 촉매 주입 런(드랍/희귀도/자원/파워 + 페널티, ADR-0029)',
+    seed: 0xca7a,
+    config: CATALYST_RUN,
     checkpointInterval: 600,
-    buildInputs: () => driveRoam(0xa0a0, 60 * 40),
+    buildInputs: () => driveDurable(0xca7a, CATALYST_RUN, MAX_RUN_TICKS),
     rolls: [
-      { dropSeed: 0xa0_21, rarity: 'magic', source: { planet: 0, stage: 1 } },
-      { dropSeed: 0xa0_22, rarity: 'unique', source: { planet: 0, stage: 1 } },
+      { dropSeed: 0xca7a_21, rarity: 'rare', source: { planet: 0, stage: 11 } },
+      { dropSeed: 0xca7a_22, rarity: 'unique', source: { planet: 0, stage: 11 } },
     ],
   },
   {

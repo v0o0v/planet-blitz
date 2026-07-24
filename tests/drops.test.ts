@@ -19,8 +19,8 @@ function countKind(state: { entities: { kind: string }[] }, kind: string): numbe
 
 describe('drop rolls (AC3)', () => {
   it('rollEliteDrop is deterministic and yields a valid rarity', () => {
-    const a = rollEliteDrop(new SeededRng(5), 1, { kind: -1, active: false });
-    const b = rollEliteDrop(new SeededRng(5), 1, { kind: -1, active: false });
+    const a = rollEliteDrop(new SeededRng(5), 1, 1); // rarityMult 1 = 무촉매
+    const b = rollEliteDrop(new SeededRng(5), 1, 1);
     expect(a).toEqual(b);
     expect(a.rarityCode).toBeGreaterThanOrEqual(1);
     expect(a.rarityCode).toBeLessThanOrEqual(3);
@@ -28,7 +28,7 @@ describe('drop rolls (AC3)', () => {
 
   it('rollBossDrop always yields rare or unique (guaranteed high-tier)', () => {
     for (let s = 1; s <= 300; s++) {
-      const roll = rollBossDrop(new SeededRng(s), 1, { kind: -1, active: false });
+      const roll = rollBossDrop(new SeededRng(s), 1, 1); // rarityMult 1 = 무촉매
       expect([RARITY_RARE, RARITY_UNIQUE]).toContain(roll.rarityCode);
     }
   });

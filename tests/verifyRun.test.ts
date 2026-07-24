@@ -186,7 +186,7 @@ describe('verify-run 검증 코어 (M4 Phase A)', () => {
   });
 
   // --- 대표 리플레이(실제 시나리오)로 accept 확인 --------------------------
-  it('대표 시나리오(③ 변칙 로밍 런)를 재실행해 accept', () => {
+  it('대표 시나리오(③ 촉매 주입 런)를 재실행해 accept', () => {
     const sc = SCENARIOS.find((s) => s.name.startsWith('③'))!;
     const inputs = sc.buildInputs();
     const replay: Replay = { seed: sc.seed, config: sc.config, inputs };

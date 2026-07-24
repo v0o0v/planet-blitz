@@ -34,8 +34,9 @@ import {
   spawnEventObject,
   spawnLoot,
 } from './entities.js';
-import type { AnomalyState } from './anomaly.js';
-import { rollAnomaly, enemyBulletSpeedMult } from './anomaly.js';
+import { catalystPowerMult } from '../data/catalysts.js';
+import { resolveCatalystMods } from './catalystMods.js';
+import type { CatalystMods } from './catalystMods.js';
 import {
   isElite,
   eliteAffix,
@@ -46,7 +47,7 @@ import {
   ELITE_SPLIT,
   ELITE_VOLATILE,
 } from './elite.js';
-import { rollEliteDrop, rollBossDrop } from './drops.js';
+import { rollEliteDrop, rollBossDrop, bonusLootSeeds } from './drops.js';
 import {
   hasUnique,
   overheatCooldown,
@@ -500,8 +501,19 @@ export interface WorldConfig {
    * 구간 마일스톤 + 연속 곡선으로 올린다(구 `tier` 리네임 — append-only 위치 유지).
    */
   stage?: number;
-  /** Player accepted the offered anomaly (OQ-M2-3 pre-run flag). */
-  anomalyAccepted?: boolean;
+  /**
+   * 이 런에 주입된 촉매 id 배열(런 1회 소모품, ADR-0029). 미지정/빈 배열 = 무촉매(거동·해시
+   * 완전 불변). 중복(스택) 허용 — 정규화·배율 해석은 `resolveCatalystMods`/`hashWorld` 가 한다.
+   * 침공 런은 항상 `[]`(촉매는 PvE 전용). append-only 규율: 신규 필드는 이 아래에만.
+   */
+  catalysts?: number[];
+  /**
+   * 서버 소모 영수증 런 id(Lane 3, ADR-0029). 촉매 소모 RPC(`consume_catalysts`)가 발급해
+   * `buildRunConfig` 가 스탬프하며, 정산(`settle_pve_run`)이 이 id 로 서버측 영수증을 조회한다.
+   * **sim 은 이 값을 읽지 않는다**(거동·해시 무영향 — `hashWorld` 가 접지 않는다). 무촉매/오프라인
+   * 런은 미지정. append-only.
+   */
+  runId?: string;
   /** Loadout-derived stats; absent = neutral (no equipment). */
   loadout?: LoadoutConfig;
   /**
@@ -589,12 +601,20 @@ export interface WorldState {
   /** Elite-affix stream (rng.fork('elite'), OQ-M2-4) — independent of wave draws. */
   eliteRng: SeededRng;
   /**
-   * Anomaly stream (rng.fork('anomaly')). Advanced ONCE at creation to roll the
-   * offer; its resting state is folded into the hash for symmetry.
+   * 이 런의 촉매 배율 번들(ADR-0029). `createWorld` 가 `config.catalysts` 로부터 한 번 해석해
+   * 싣는다. 적 스폰·드랍·자원·경험치 적용점이 여기서 배율을 읽는다(단일 정본, 배선 누락 방어).
+   * `config.catalysts` 의 순수 파생값이라 `hashWorld` 에 따로 접지 않는다(catalysts 배열 자체가
+   * 꼬리에서 접힘 — sigBit/grid 와 같은 파생·스크래치 규율).
    */
-  anomalyRng: SeededRng;
-  /** Resolved run anomaly (offer + acceptance). */
-  anomaly: AnomalyState;
+  catalystMods: CatalystMods;
+  /**
+   * 자원 배율(catalystMods.resource)의 **소수 누적 캐리**(milli 단위 정수). 보급 습격마다
+   * 배율×1000 을 더해 1000 이상이면 정수 자원으로 승격하고 나머지를 이월한다(소수 자원의 정수
+   * 결정론 모델). 촉매 무주입(배율 1) 이면 매번 +1000 → +1 자원으로 기존 `resources++` 와 바이트
+   * 동일. `state.resources`(정수)가 관측·해시 대상이고 이 캐리는 그를 구동하는 결정론 스크래치라
+   * `hashWorld` 에 접지 않는다(grid 선례 — 재실행 시 같은 이벤트열로 동일 재계산).
+   */
+  catalystResourceMilli: number;
   /**
    * Loot picked up this run (drop seed + rarity + source). Consumed at settlement
    * (Lane 2) where `rollItem` confirms each item. Folded into the hash so replay
@@ -778,6 +798,11 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   const entities: Entity[] = [];
   let nextEntityId = 1;
 
+  // 촉매 배율 번들(ADR-0029) — config.catalysts 로부터 한 번 해석한다. 무촉매면 중립 번들이라
+  // 아래 모든 촉매 배율이 1 → 산술 무연산(기존 경로와 바이트 동일). 적 스폰·드랍·자원 등 런 중
+  // 적용점은 state.catalystMods 로 이걸 읽는다(아래 state 리터럴에 싣는다).
+  const catalystMods = resolveCatalystMods(cfg.catalysts);
+
   // Loadout-derived stats (plan B1): apply once here so the run starts strengthened
   // and the effect is captured in the initial weapon/config/player/magnet — all of
   // which are already hashed. The loadout block itself is folded into the hash too.
@@ -800,6 +825,30 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     cfg.dashCooldownTicks = Math.max(12, Math.round(cfg.dashCooldownTicks * lo.dashCdMult));
     cfg.playerHp += lo.maxHpAdd;
     magnetRadius = Math.round(magnetRadius * lo.magnetMult);
+  }
+
+  // 촉매 파워 보상축(런 한정 스탯 강화, ADR-0029) — **적용 지점 1곳**. loadout 파생(위)과
+  // 이중 적용 금지: 여기서 별개 인자로 한 번만 곱한다(파워업 적용 지점과 같은 지위). 결과는
+  // weapon/cfg 에 반영돼 이미 해시에 접힌다(파워축은 별도 폴드 불필요). 무촉매면 전 배율 1 →
+  // 무연산이라 기존 골든이 바이트 불변이다.
+  //  · damage/moveSpeed/maxHp = 상향 곱, fireRate = 쿨다운 하향 나눗셈(연사 상승).
+  //  · skillAll("모든 스킬 +N" 계열)은 전용 런타임 스킬-효과 노브가 없어(스킬은 buildRunConfig
+  //    에서 loadout 에 이미 접힘) 네 전투 스탯의 **공동 인자**로 얹는다 — loadout 파생과는 별개
+  //    인자라 이중 적용이 아니다(완전한 스킬-효과 배선은 후속). 무주입이면 1 → 무연산.
+  const cats = cfg.catalysts;
+  if (cats !== undefined && cats.length > 0) {
+    const skillAll = catalystPowerMult(cats, 'skillAll');
+    const dmgMul = catalystPowerMult(cats, 'damage') * skillAll;
+    const fireMul = catalystPowerMult(cats, 'fireRate') * skillAll;
+    const moveMul = catalystPowerMult(cats, 'moveSpeed') * skillAll;
+    const hpMul = catalystPowerMult(cats, 'maxHp') * skillAll;
+    weapon.damage = Math.round(weapon.damage * dmgMul * 100) / 100;
+    weapon.fireCooldown = Math.max(2, Math.round(weapon.fireCooldown / fireMul));
+    cfg.playerSpeed = Math.round(cfg.playerSpeed * moveMul);
+    // 파워 maxHp 상향 → 촉매 playerHpDown 페널티 하향 순으로 소비한다. playerHpDown ≥ 1 이라
+    // **나눗셈**이 페널티 방향(HP 감소)이다(부호 규약: 배율 클수록 페널티 큼). catalystMods 는
+    // cats 와 같은 배열에서 나오므로, cats 가 비었으면 이 블록에 오지 않고 playerHpDown 도 1 이다.
+    cfg.playerHp = Math.round((cfg.playerHp * hpMul) / catalystMods.playerHpDown);
   }
 
   const player = blankEntity('player');
@@ -850,10 +899,6 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   let echoRuntime: EchoRuntime | undefined;
   if (cfg.invasion3 === undefined) echoRuntime = rollEcho(worldRng);
 
-  // Anomaly: roll the seed-only offer, gate it on the config acceptance flag.
-  const anomalyRng = rng.fork('anomaly');
-  const anomaly = rollAnomaly(anomalyRng, cfg.anomalyAccepted ?? false);
-
   const state: WorldState = {
     tick: 0,
     config: cfg,
@@ -864,8 +909,8 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     worldRng,
     dropRng: rng.fork('drops'),
     eliteRng: rng.fork('elite'),
-    anomalyRng,
-    anomaly,
+    catalystMods,
+    catalystResourceMilli: 0,
     loot: [],
     weapon,
     wave: createWaveRuntime(),
@@ -1765,9 +1810,9 @@ function stepEnemies(state: WorldState, player: Entity): void {
     applyEliteRegen(e);
     let def = enemyDefFor(e);
     if (def === undefined) continue;
-    // 가속하는 elite(×1.6) × 냉기 감속(<1)을 곱해 이동 속도를 조정한다(공유 데이터
-    // 행은 절대 변형하지 않고 def를 복제). 둘 다 없으면 mult 1(거동 불변).
-    const sm = eliteSpeedMult(e) * enemyStatusSlowMult(e);
+    // 가속하는 elite(×1.6) × 냉기 감속(<1) × 촉매 적 속도 페널티(≥1)를 곱해 이동 속도를
+    // 조정한다(공유 데이터 행은 절대 변형하지 않고 def를 복제). 전부 없으면/무촉매면 mult 1(불변).
+    const sm = eliteSpeedMult(e) * enemyStatusSlowMult(e) * state.catalystMods.enemySpeed;
     if (sm !== 1) def = { ...def, speed: def.speed * sm };
     updateEnemy(state, e, def, player);
     if (singularityOn) applySingularityPull(e, player);
@@ -1811,8 +1856,10 @@ function stepBoss(state: WorldState, player: Entity): void {
     } else if (state.config.planetMode === PLANET_MODE.racing)
       bossX += VIEW_WIDTH * 0.55; // 코스 끝(+X)
     else bossY -= VIEW_HEIGHT * 0.55; // 블록격파 top(−Y)·뱀서류 기존
-    const boss = spawnBoss(state, bossX, bossY, bossDef.hp, bossDef.radius);
-    boss.damage = bossDef.contactDamage;
+    // 촉매 적 HP·접촉 피해 페널티는 보스에도 적용한다(잡몹과 같은 규율). 무촉매면 ×1(불변).
+    const bossHp = Math.round(bossDef.hp * state.catalystMods.enemyHp);
+    const boss = spawnBoss(state, bossX, bossY, bossHp, bossDef.radius);
+    boss.damage = bossDef.contactDamage * state.catalystMods.enemyDamage;
     boss.enemyType = state.config.planet ?? 0;
     state.bossSpawned = true;
   }
@@ -2510,9 +2557,9 @@ function stepProjectiles(state: WorldState, player: Entity): void {
   const cullY = scrollWin !== undefined ? windowCenterY(scrollWin) : player.y;
   const walls = state.activeWalls;
   const wallIndex = state.wallIndex;
-  // 중력 폭풍 변칙: enemy bullets travel slower (single application point so no
-  // emitter needs touching). Friendly bullets are unaffected (mult = 1).
-  const enemyBulletMult = enemyBulletSpeedMult(state.anomaly);
+  // 촉매 적탄 속도 페널티(≥1): enemy bullets travel faster (single application point so no
+  // emitter needs touching). Friendly bullets are unaffected (mult = 1). 무촉매면 1(불변).
+  const enemyBulletMult = state.catalystMods.enemyBulletSpeed;
   // 적탄 거동(탄막 다양성 Lane 1): BK_SPLIT 만료 시 방사할 자탄을 모아 루프 뒤 스폰
   // (엔티티 배열 순회 중 push 회피). 거동 없는 적탄(enemyType === BK_NONE)은 no-op.
   const bulletSplits: BulletSplit[] = [];
@@ -3157,7 +3204,8 @@ function collectGem(state: WorldState, gem: Entity): void {
   }
   const baseXp = gem.damage; // gem carries its XP value in `damage`
   const xpMult = state.config.loadout?.xpMult ?? 1; // affix 경험치+%
-  let gained = Math.floor(baseXp * comboMultiplier(state.combo) * xpMult);
+  // 촉매 경험치 보상축(≥1)을 함께 곱한다(무촉매면 1 → 불변). loadout affix 와는 별개 인자.
+  let gained = Math.floor(baseXp * comboMultiplier(state.combo) * xpMult * state.catalystMods.xp);
   // ⑭ 유물 증폭기(plan B4): 경험치 소폭↑(광물·유니크 드랍률은 정산 메타에서 처리).
   if (hasUnique(mask, UQ_RELIC_AMP)) gained = Math.floor(gained * RELIC_XP_MULT);
   state.xp += gained;
@@ -3220,15 +3268,26 @@ function compact(state: WorldState): void {
       // Elites are the only rank-and-file loot source (GDD §3). They always drop
       // one item; a 분열하는 elite additionally bursts fragments on death (B4).
       if (isElite(e)) {
-        const roll = rollEliteDrop(state.dropRng, stage, state.anomaly, dropOdds);
+        // 촉매 희귀도 보상축을 드랍 롤에 곱한다(무촉매 rarity===1 → 구 경로와 바이트 동일).
+        const roll = rollEliteDrop(state.dropRng, stage, state.catalystMods.rarity, dropOdds);
         lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
+        // 촉매 드랍량 보상축: 배율 > 1 이면 같은 등급의 추가 루팅을 결정론적으로 파생한다
+        // (dropRng 미소비 → 기존 드랍 스트림·골든 불변). 무촉매면 빈 배열이라 무연산.
+        for (const bs of bonusLootSeeds(roll.seed, state.catalystMods.drop)) {
+          lootDrops.push({ x: e.x, y: e.y, seed: bs, rarity: roll.rarityCode });
+        }
         // 분열하는·폭발성의 엘리트는 사망 시 방사 폭발을 남긴다(spawnEliteDeathFx).
         const ea = eliteAffix(e);
         if (ea === ELITE_SPLIT || ea === ELITE_VOLATILE) splitElites.push(e);
       }
     } else if (e.kind === 'supply' && e.hp <= 0) {
-      // Shot down (vs. escaped with hp > 0): grant the raid reward.
-      state.resources++;
+      // Shot down (vs. escaped with hp > 0): grant the raid reward. 촉매 자원 보상축(≥1)을
+      // milli 캐리로 반영한다 — 무촉매(배율 1)면 매번 +1000 → +1 자원으로 구 `resources++` 와
+      // 바이트 동일. 배율>1 이면 소수분이 누적돼 여러 습격에 걸쳐 추가 자원으로 승격된다.
+      state.catalystResourceMilli += Math.round(state.catalystMods.resource * 1000);
+      const whole = Math.floor(state.catalystResourceMilli / 1000);
+      state.resources += whole;
+      state.catalystResourceMilli -= whole * 1000;
       supplyDrops.push({ x: e.x, y: e.y });
     } else if (e.kind === 'destructible' && e.hp <= 0) {
       // Broken (vs. culled with hp > 0): drop a gem worth its stored XP value.
@@ -3251,8 +3310,12 @@ function compact(state: WorldState): void {
       bossKilled = true;
       // Boss guaranteed rare+ drop (GDD §3, plan B3). 승리 tick이라 바닥 스폰→접촉 수거가
       // 불가능하므로 state.loot에 직접 기록해 정산에 포함시킨다(해시 포함, replay.ts).
-      const roll = rollBossDrop(state.dropRng, stage, state.anomaly, dropOdds);
+      // 촉매 희귀도 배율을 드랍 롤에 곱하고(무촉매 1 → 불변), 드랍량 배율로 추가 루팅을 파생한다.
+      const roll = rollBossDrop(state.dropRng, stage, state.catalystMods.rarity, dropOdds);
       state.loot.push({ seed: roll.seed >>> 0, rarity: roll.rarityCode, planet, stage });
+      for (const bs of bonusLootSeeds(roll.seed, state.catalystMods.drop)) {
+        state.loot.push({ seed: bs >>> 0, rarity: roll.rarityCode, planet, stage });
+      }
     }
   }
   state.entities = survivors;

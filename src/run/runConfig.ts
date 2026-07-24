@@ -45,8 +45,16 @@ export interface RunConfigOpts {
   planet: number;
   /** 침략 단계(1..∞, ADR-0022). 침공 런은 1(단계 무관). */
   stage: number;
-  /** 시드가 제안한 변칙을 수락했는가(침공은 항상 false). */
-  anomalyAccepted?: boolean;
+  /**
+   * 이 런에 주입된 촉매 id 배열(런 1회 소모품, ADR-0029). 미지정 = `[]`(무촉매). **침공 런은
+   * 항상 `[]`**(촉매는 PvE 전용). Lane 4 픽커가 성계 지도에서 이 배열을 채워 넘긴다.
+   */
+  catalysts?: number[];
+  /**
+   * 서버 소모 영수증 런 id(Lane 3). 촉매 소모 RPC 성공 시 발급되며, 정산이 이 id 로 서버측
+   * 영수증을 조회한다. 무촉매/오프라인 런은 미지정. sim 은 읽지 않는 순수 메타(해시 무영향).
+   */
+  runId?: string;
   /** 보스 전 세그먼트 상한(튜토리얼 단축판). 미지정 = 무제한. */
   maxSegments?: number;
   /** 3레이어 침공 설정(ADR-0017). 있으면 침공 런, 없으면 PvE. */
@@ -128,7 +136,11 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
     // 단계 정본 클램프: [1,∞) 정수. sim(stageParams: s<1→1)과 hashWorld 폴드(replay.ts)를
     // 대칭으로 맞춰 stage:0/음수가 흘러도 결정론이 어긋나지 않게 한다(리뷰 LOW — 잠재 지뢰).
     stage: Math.max(1, opts.stage | 0),
-    anomalyAccepted: opts.anomalyAccepted ?? false,
+    // 촉매 주입 배열(ADR-0029) — **단일 정본 스탬프**. 미지정 = `[]`(무촉매). 침공 런은 호출부가
+    // `[]` 를 넘긴다. 정규화·배율 해석은 sim(resolveCatalystMods)·해시(hashWorld)가 한다.
+    catalysts: opts.catalysts ?? [],
+    // 서버 소모 영수증 런 id — 있을 때만 스탬프(exactOptionalPropertyTypes: undefined 대입 금지).
+    ...(opts.runId !== undefined ? { runId: opts.runId } : {}),
     loadout,
     skillInvest,
     // **항상 명시한다** — 스트라이커도 `shipType: 0` 을 싣는다. 값 의미는 미지정과 동일하고
