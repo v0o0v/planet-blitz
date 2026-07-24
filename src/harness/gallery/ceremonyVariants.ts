@@ -26,6 +26,7 @@ import type {
 } from './types.js';
 import type { Rarity } from '../../items/types.js';
 import { RARITY_COLOR_NUM, COLOR, UI_FONT, TEXT_SHADOW } from '../../ui/pixi/theme.js';
+import { stripEmoji } from '../../ui/pixi/text.js';
 
 // ── 순수 진행 함수 ─────────────────────────────────────────────────────────
 
@@ -117,7 +118,7 @@ type Weight = '400' | '600' | '700' | '800';
 function mkText(text: string, size: number, fill: number, weight: Weight = '700'): Text {
   const tx = new Text({
     resolution: 2,
-    text,
+    text: stripEmoji(text),
     style: {
       fontFamily: UI_FONT,
       fontSize: size,

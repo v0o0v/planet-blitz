@@ -60,7 +60,9 @@ function ringEnvelope(p: number): number {
 
 /** GLSL 필터 유니폼 갱신(resources 는 Record<string, any> — 캐스팅 불필요). */
 function setShockwaveUniforms(filter: Filter, progress: number, amplitude: number): void {
-  const uniforms = filter.resources.shockwaveUniforms.uniforms;
+  // dissolve 의 setDissolveProgress 와 동형으로 옵셔널 가드(리소스 그룹 부재 방어·일관성).
+  const uniforms = filter.resources.shockwaveUniforms?.uniforms;
+  if (!uniforms) return;
   uniforms.uProgress = progress;
   uniforms.uAmplitude = amplitude;
 }
