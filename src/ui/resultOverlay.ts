@@ -36,6 +36,8 @@ export interface SettlementSummary {
   combatPower: number;
   /** 획득 장비 표시 목록(등급별 색상 칩, M5 C2). */
   drops: ResultDrop[];
+  /** 이번 런에 얻은 촉매 총량(ADR-0029). > 0 일 때만 정산 항목으로 표시. */
+  catalystDrops?: number;
 }
 
 export interface ResultState {

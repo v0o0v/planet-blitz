@@ -21,7 +21,6 @@ import {
   RARITY_UNIQUE,
 } from '../src/sim/drops.js';
 import { SeededRng } from '../src/sim/rng.js';
-import { rollAnomaly } from '../src/sim/anomaly.js';
 import {
   PLANETS,
   planetContent,
@@ -71,9 +70,9 @@ describe('설계도 드랍 판정(sim)', () => {
 
   it('RNG 를 한 번도 소비하지 않는다(드랍 스트림 불변 = 해시·fixture 불변)', () => {
     const rng = new SeededRng(0xfeed);
-    const anomaly = rollAnomaly(new SeededRng(7), false);
     const odds = planetContent(1).dropTable;
-    const drop = rollEliteDrop(rng, 1, anomaly, odds);
+    // 촉매 희귀도 배율 1(무촉매) — 구 무변칙 경로와 동일 소비.
+    const drop = rollEliteDrop(rng, 1, 1, odds);
     const before = rng.getState();
     for (let i = 0; i < 50; i++) rollBlueprintDrop(drop, odds);
     expect(rng.getState()).toBe(before);

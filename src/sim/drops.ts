@@ -13,8 +13,6 @@
  */
 
 import type { SeededRng } from './rng.js';
-import type { AnomalyState } from './anomaly.js';
-import { dropRateMult, uniqueChanceMult } from './anomaly.js';
 
 export const RARITY_MAGIC = 1;
 export const RARITY_RARE = 2;
@@ -137,17 +135,19 @@ export function stageUniqueMult(stage: number): number {
  * rarity tier first, then the seed, so the sequence is fixed per RNG position.
  * `odds`(행성 드랍 테이블) 미지정 시 카르곤 기본값을 쓴다(하위 호환).
  *
- * 단계1(구 정찰)은 배율 1.0 이라 RNG 소비 순서·threshold 가 구 tier0 과 동일 → 드랍 불변.
+ * `rarityMult`(촉매 희귀도 보상축, ≥1)는 rare/unique 확률에 균일하게 곱한다 — 구 변칙
+ * `dropRateMult`·`uniqueChanceMult` 자리를 촉매 배율이 승계한다. **rarityMult===1 이면**
+ * threshold·RNG 소비 순서가 구 무변칙 경로와 바이트 동일하므로, 촉매 무주입 골든이 불변이다.
+ * 단계1(구 정찰)도 배율 1.0 이라 구 tier0 과 동일.
  */
 export function rollEliteDrop(
   dropRng: SeededRng,
   stage: number,
-  anomaly: AnomalyState,
+  rarityMult: number,
   odds: DropOdds = DEFAULT_DROP_ODDS,
 ): DropRoll {
-  const boost = dropRateMult(anomaly); // 중력 폭풍: better rarity odds
-  const uniqueChance = odds.eliteUniqueBase * stageUniqueMult(stage) * boost * uniqueChanceMult(anomaly);
-  const rareChance = odds.eliteRareBase * stageRareMult(stage) * boost;
+  const uniqueChance = odds.eliteUniqueBase * stageUniqueMult(stage) * rarityMult;
+  const rareChance = odds.eliteRareBase * stageRareMult(stage) * rarityMult;
   const r = dropRng.nextFloat();
   const seed = dropRng.nextU32();
   let rarityCode = RARITY_MAGIC;
@@ -158,17 +158,48 @@ export function rollEliteDrop(
 
 /**
  * Roll the boss's guaranteed drop: always rare, occasionally unique. Elevated
- * unique odds vs elites; 높은 침략 단계와 암흑 성운이 더 밀어 올린다.
+ * unique odds vs elites; 높은 침략 단계와 촉매 희귀도(rarityMult)가 더 밀어 올린다.
+ * rarityMult===1 이면 구 무변칙 경로와 바이트 동일(RNG 소비·threshold 불변).
  */
 export function rollBossDrop(
   dropRng: SeededRng,
   stage: number,
-  anomaly: AnomalyState,
+  rarityMult: number,
   odds: DropOdds = DEFAULT_DROP_ODDS,
 ): DropRoll {
-  const uniqueChance = odds.bossUniqueBase * stageUniqueMult(stage) * uniqueChanceMult(anomaly);
+  const uniqueChance = odds.bossUniqueBase * stageUniqueMult(stage) * rarityMult;
   const r = dropRng.nextFloat();
   const seed = dropRng.nextU32();
   const rarityCode = r < uniqueChance ? RARITY_UNIQUE : RARITY_RARE;
   return { seed, rarityCode };
+}
+
+// ---------------------------------------------------------------------------
+// 드랍량(촉매 'drop' 보상축) — RNG 미소비 순수 파생
+// ---------------------------------------------------------------------------
+
+/** 드랍량 파생 salt(rollBlueprintDrop 과 같은 철학 — 이미 뽑힌 드랍 시드를 되풀어 쓴다). */
+const SALT_BONUS_GATE = 0x1b56c4e9;
+const SALT_BONUS_SEED = 0x27d4eb2f;
+
+/**
+ * 이미 확정된 드랍 1건에 촉매 드랍량 배율(`mult` ≥ 1)만큼 **추가 루팅 시드**를 파생한다(순수).
+ *
+ * ## 왜 dropRng 를 소비하지 않는가
+ * `dropRng` 에서 한 번이라도 더 뽑으면 드랍 스트림 전체가 밀려 기존 fixture·해시가 갈린다
+ * (rollBlueprintDrop 과 동일 규율). 그래서 이미 뽑아 둔 드랍 시드를 정수 해시로 되풀어 쓴다 —
+ * **mult ≤ 1 이면 빈 배열**이라 촉매 무주입 런은 드랍 스폰이 한 건도 늘지 않는다(바이트 불변).
+ *
+ * 정수부(mult−1)는 확정 추가분, 소수부는 시드 파생 확률로 1건 더(결정론). 각 추가 시드는
+ * 원 시드에서 서로 다른 salt 로 파생해 유니크하다(같은 등급으로 스폰 — 등급은 rarity 축 소관).
+ */
+export function bonusLootSeeds(seed: number, mult: number): number[] {
+  if (!(mult > 1)) return [];
+  const whole = Math.floor(mult - 1);
+  const frac = mult - 1 - whole;
+  let count = whole;
+  if (frac > 1e-9 && mix32(seed >>> 0, SALT_BONUS_GATE) % 10000 < Math.round(frac * 10000)) count++;
+  const out: number[] = [];
+  for (let i = 0; i < count; i++) out.push(mix32(seed >>> 0, (SALT_BONUS_SEED + i) >>> 0));
+  return out;
 }

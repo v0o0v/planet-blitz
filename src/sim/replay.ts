@@ -17,6 +17,7 @@ import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } from './world.js';
 import type { Entity } from './entities.js';
 import { KIND_CODE } from './entities.js';
 import { normalizeShipTypeId } from '../../data/ships/index.js';
+import { normalizeCatalystArray } from '../data/catalysts.js';
 import { normalizeMaintenance } from './invasion/guardian.js';
 import { INVASION_HASH_VERSION } from './invasion/constants.js';
 import { GUARDIAN_SNAPSHOT_FIELDS } from './invasion/normalize.js';
@@ -325,22 +326,22 @@ export function hashWorld(state: WorldState): number {
     h = hashEntity(h, e);
   }
   // --- M2 farming loop (APPEND-ONLY; never reorder the folds above) ---
-  // Weapon archetype, the new RNG streams, the resolved anomaly, the loadout-
-  // derived config block and the collected loot are all determinism inputs, so
-  // they must be captured. Appended at the very end so M1's field order is
-  // untouched (a format bump vs recorded M1 hashes is accepted, plan §2/§6).
+  // Weapon archetype, the new RNG streams, the loadout-derived config block and the
+  // collected loot are all determinism inputs, so they must be captured. Appended at
+  // the very end so M1's field order is untouched.
+  // ⚠️ 촉매 시대(ADR-0029): 구 anomaly 폴드 3개(anomalyRng·anomaly.kind·anomaly.active)와 아래
+  // cfg2.anomalyAccepted 폴드 1개가 **제거**됐다. anomaly 는 무조건 중간 폴드였으므로(조건부 꼬리가
+  // 아님) 제거는 침공 포함 전 런의 per-tick 해시를 한 칸씩 앞당기는 **1회 포맷 범프**다(계획 이슈 A).
+  // 촉매는 대신 echo 폴드 뒤 **조건부 꼬리**로 신설된다(맨 아래). 전 골든 재생성 + verify-invasion
+  // EF 재배포로 흡수한다.
   h = hashU32(h, state.weapon.weaponType >>> 0);
   h = hashU32(h, state.dropRng.getState());
   h = hashU32(h, state.eliteRng.getState());
-  h = hashU32(h, state.anomalyRng.getState());
-  h = hashU32(h, (state.anomaly.kind & 0xffff) >>> 0);
-  h = hashU32(h, state.anomaly.active ? 1 : 0);
   const cfg2 = state.config;
   h = hashU32(h, (cfg2.planet ?? 0) >>> 0);
   // 0-기반 난이도 인덱스 — 단계1 ≡ 구 정찰(tier0) 바이트 보존(ADR-0022). `-1` 오프셋으로
   // 미지정/단계1 → 0 = 구 `(cfg2.tier ?? 0)` 이라 shipHashBaseline/determinism 골든이 불변이다.
   h = hashU32(h, (Math.max(1, cfg2.stage ?? 1) - 1) >>> 0);
-  h = hashU32(h, cfg2.anomalyAccepted ? 1 : 0);
   const lo = cfg2.loadout;
   h = hashU32(h, lo ? 1 : 0);
   if (lo !== undefined) {
@@ -502,6 +503,22 @@ export function hashWorld(state: WorldState): number {
     h = hashU32(h, echo.spawnTick >>> 0);
     h = hashU32(h, echo.dwell >>> 0);
     h = hashU32(h, echo.entityId >>> 0);
+  }
+  // --- 촉매(APPEND-ONLY, 조건부 꼬리 · ADR-0029) ---
+  // 주입 촉매가 있을 때만 접는다(빈 배열/미지정 = 무폴드 → 촉매 무관 런은 서로 바이트 동형,
+  // 기존 조건부 꼬리 규율). 정규화(오름차순+중복 보존+미지 id 제거)를 거쳐 접으므로 **입력 순서와
+  // 무관**하게 같은 집합이면 동일 hash 이고, 다른 배열은 분기한다. 정수 전용 `>>> 0` 폴드 —
+  // 배율(부동소수)은 접지 않는다(id 만 접는다, catalysts.ts 계약). 위 폴드 순서는 하나도 건드리지
+  // 않는다(맨 꼬리 append, 재배치 금지). 신규 촉매 필드는 이 아래에만.
+  const cats = state.config.catalysts;
+  if (cats !== undefined && cats.length > 0) {
+    const norm = normalizeCatalystArray(cats);
+    // 정규화가 전부 미지 id 를 걸러내 빈 배열이 될 수 있다 — 그 경우도 무폴드로 두어 "유효 촉매
+    // 없음"이 무촉매와 동형이게 한다(length 프리픽스만 접으면 0 이라도 폴드가 실행돼 갈린다).
+    if (norm.length > 0) {
+      h = hashU32(h, norm.length >>> 0);
+      for (const id of norm) h = hashU32(h, id >>> 0);
+    }
   }
   return h >>> 0;
 }

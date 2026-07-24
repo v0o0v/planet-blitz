@@ -1,41 +1,41 @@
 /**
  * Star-map / planet-select overlay (DOM — 레거시. 실사용은 Pixi 판 `pixi/planetSelect.ts`).
  *
- * The pre-run screen: pick a planet (data-driven from data/planets.ts), 침략 단계
- * (ADR-0022 — 행성별 1..개방 상한), and — when the seed offers one — accept or reject the
- * run's anomaly (OQ-M2-3: chosen before the run, carried as a config flag so the sim stays a
- * function of [seed + inputs + config]). "출격" hands a `LaunchSelection` back to
- * the caller, which assembles the WorldConfig (planet/stage/anomaly + loadout).
+ * The pre-run screen: pick a planet (data-driven from data/planets.ts) and 침략 단계
+ * (ADR-0022 — 행성별 1..개방 상한). "출격" hands a `LaunchSelection` back to the caller,
+ * which assembles the WorldConfig (planet/stage + loadout). 촉매 주입(ADR-0029)은 Lane 4 픽커
+ * 소관 — 이 레거시 DOM 판에는 아직 없다(Pixi 판 자리에 얹힌다).
  *
- * Pure view: no sim import at runtime beyond the anomaly kind CONSTANTS (numbers)
- * used to label the offer. Never touches the simulation.
+ * Pure view: never touches the simulation.
  */
 
 import { PLANETS, planetById } from '../../data/planets.js';
 import { stageOpenCap } from '../../data/waves.js';
-import { ANOMALY_GRAVITY, ANOMALY_SWARM, ANOMALY_NEBULA, ANOMALY_NONE } from '../sim/anomaly.js';
-import { t, type MessageKey } from '../i18n/index.js';
+import { SLOT_CAP } from '../data/catalysts.js';
+import { t } from '../i18n/index.js';
 
 /** What the player chose on the star map. */
 export interface LaunchSelection {
   planet: number;
   /** 침략 단계(1..개방 상한, ADR-0022). */
   stage: number;
-  /** Whether the offered anomaly was accepted (false when none offered). */
-  anomalyAccepted: boolean;
   /** 보스 이전 일반 세그먼트 수 상한(튜토리얼 단축판). absent = 풀 런. */
   maxSegments?: number;
+  /**
+   * 이 런에 주입한 촉매 id 배열(ADR-0029, Lane 4 픽커 산출). 미지정/빈 배열 = 무촉매.
+   * 출격 오케스트레이터(main.ts)가 이 배열이 비지 않으면 `consume_catalysts` 를 거쳐 런을 시작하고,
+   * 서버가 발급한 `runId` 를 아래에 실어 다시 startRun 을 부른다. 침공 런은 이 경로를 타지 않는다.
+   */
+  catalysts?: number[];
+  /**
+   * 서버 소모 영수증 런 id(ADR-0029). `consume_catalysts` 성공 시에만 채워지며, 정산이 이 값으로
+   * 서버측 영수증(자원 배율)을 관통 조회한다. 무촉매/오프라인 폴백 런은 미지정.
+   */
+  runId?: string;
 }
 
 /** 선택한 행성의 개방 상한을 산정하는 콜백(행성별 최고 클리어 단계 → 상한). */
 export type BestStageClearedFn = (planet: number) => number;
-
-/** Anomaly kind → i18n 키(render-only, 로케일화). */
-const ANOMALY_LABEL: Record<number, { nameKey: MessageKey; descKey: MessageKey }> = {
-  [ANOMALY_GRAVITY]: { nameKey: 'anomaly.gravity.name', descKey: 'anomaly.gravity.desc' },
-  [ANOMALY_SWARM]: { nameKey: 'anomaly.swarm.name', descKey: 'anomaly.swarm.desc' },
-  [ANOMALY_NEBULA]: { nameKey: 'anomaly.nebula.name', descKey: 'anomaly.nebula.desc' },
-};
 
 const STYLE = `
 #pb-planet { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; background:radial-gradient(circle at 50% 30%,#0a1226,#03050c 70%); font-family:'Segoe UI',system-ui,sans-serif; z-index:25; overflow:auto; }
@@ -54,10 +54,6 @@ const STYLE = `
 #pb-planet .pb-seg button.sel { color:#04121a; background:linear-gradient(90deg,#4cd7ff,#7affea); border-color:transparent; }
 #pb-planet .pb-seg button.locked { opacity:.45; cursor:not-allowed; border-style:dashed; }
 #pb-planet .pb-tierdesc { color:#8896b8; font-size:12px; min-height:16px; }
-#pb-planet .pb-anomaly { display:flex; flex-direction:column; align-items:center; gap:8px; background:rgba(40,16,50,.5); border:1px solid #6a3a7a; border-radius:14px; padding:14px 22px; }
-#pb-planet .pb-anomaly .pb-atitle { color:#e6a8ff; font-weight:800; letter-spacing:1px; }
-#pb-planet .pb-anomaly .pb-adesc { color:#c9b6d6; font-size:13px; }
-#pb-planet .pb-anomaly .pb-seg button.sel { background:linear-gradient(90deg,#c86aff,#e6a8ff); }
 #pb-planet .pb-launch { pointer-events:auto; cursor:pointer; margin-top:6px; padding:13px 46px; font-size:17px; font-weight:900; letter-spacing:2px; color:#04121a; background:linear-gradient(90deg,#4cd7ff,#7affea); border:none; border-radius:12px; transition:transform .1s ease,box-shadow .1s ease; }
 #pb-planet .pb-launch:hover { transform:translateY(-2px); box-shadow:0 8px 26px rgba(76,215,255,.4); }
 #pb-planet .pb-meta { color:#68789c; font-size:12px; }
@@ -70,13 +66,16 @@ export class PlanetSelect {
   private planet = 0;
   /** 선택된 침략 단계(1..개방 상한). */
   private stage = 1;
-  private anomalyKind = ANOMALY_NONE;
-  private anomalyAccepted = false;
   /** 행성별 개방 상한 산정 콜백(미지정 = 최고 클리어 0 → 상한 10). */
   private bestStageCleared: BestStageClearedFn = () => 0;
   private onLaunch: ((sel: LaunchSelection) => void) | null = null;
   private onInventory: (() => void) | null = null;
   private onBack: (() => void) | null = null;
+  /**
+   * 이 런에 주입한 촉매 id(ADR-0029). 레거시 DOM 판은 픽커가 없어 항상 빈 배열이지만, Pixi 판과
+   * `LaunchSelection.catalysts` 계약을 맞추기 위해 상태·요약 패널·출격 전달만 갖춘다(회귀 대비 최소).
+   */
+  private injectedCatalysts: number[] = [];
 
   constructor() {
     const style = document.createElement('style');
@@ -94,12 +93,10 @@ export class PlanetSelect {
 
   /**
    * Show the star map for an upcoming run.
-   * @param anomalyOffered the anomaly kind the seed rolled (ANOMALY_NONE = none).
    * @param meta a short status line (credits / active ship level).
    */
   show(
     opts: {
-      anomalyOffered: number;
       meta: string;
       /** 행성별 개방 상한 산정 콜백(ADR-0022). 생략 시 최고 클리어 0(상한 10). */
       bestStageCleared?: BestStageClearedFn;
@@ -109,8 +106,6 @@ export class PlanetSelect {
       onBack?: () => void;
     },
   ): void {
-    this.anomalyKind = opts.anomalyOffered;
-    this.anomalyAccepted = false;
     this.bestStageCleared = opts.bestStageCleared ?? (() => 0);
     // 선택 단계를 현재 행성 개방 상한으로 클램프한다.
     this.stage = this.clampStage(this.stage);
@@ -214,41 +209,15 @@ export class PlanetSelect {
     stageDesc.textContent = t('planet.stageDesc', { stage: this.stage, cap });
     this.root.appendChild(stageDesc);
 
-    // Anomaly offer (only when the seed rolled one).
-    if (this.anomalyKind !== ANOMALY_NONE) {
-      const info = ANOMALY_LABEL[this.anomalyKind];
-      const box = document.createElement('div');
-      box.className = 'pb-anomaly';
-      const atitle = document.createElement('div');
-      atitle.className = 'pb-atitle';
-      const anomalyName = info !== undefined ? t(info.nameKey) : t('planet.anomaly.unknown');
-      atitle.textContent = t('planet.anomaly.title', { name: anomalyName });
-      const adesc = document.createElement('div');
-      adesc.className = 'pb-adesc';
-      adesc.textContent = info !== undefined ? t(info.descKey) : '';
-      const achoice = document.createElement('div');
-      achoice.className = 'pb-seg';
-      const accept = document.createElement('button');
-      accept.className = this.anomalyAccepted ? 'sel' : '';
-      accept.textContent = t('planet.anomaly.accept');
-      accept.addEventListener('click', () => {
-        this.anomalyAccepted = true;
-        this.render(meta);
-      });
-      const reject = document.createElement('button');
-      reject.className = !this.anomalyAccepted ? 'sel' : '';
-      reject.textContent = t('planet.anomaly.reject');
-      reject.addEventListener('click', () => {
-        this.anomalyAccepted = false;
-        this.render(meta);
-      });
-      achoice.appendChild(accept);
-      achoice.appendChild(reject);
-      box.appendChild(atitle);
-      box.appendChild(adesc);
-      box.appendChild(achoice);
-      this.root.appendChild(box);
-    }
+    // 촉매 주입 요약 패널(변칙 패널 자리, ADR-0029). 레거시 DOM 판은 픽커가 없어 현재 주입 상태만
+    // 읽어 보여 준다(실사용 Pixi 판이 픽커/주입/해제를 담당). `LaunchSelection.catalysts` 계약 유지용.
+    const catRow = document.createElement('div');
+    catRow.className = 'pb-tierdesc';
+    catRow.textContent =
+      this.injectedCatalysts.length === 0
+        ? t('catalyst.panel.none')
+        : t('catalyst.panel.count', { n: this.injectedCatalysts.length, cap: SLOT_CAP });
+    this.root.appendChild(catRow);
 
     // Actions.
     const actions = document.createElement('div');
@@ -273,11 +242,12 @@ export class PlanetSelect {
     launch.textContent = t('planet.launch', { name: planetById(this.planet).name });
     launch.addEventListener('click', () => {
       const cb = this.onLaunch;
+      const cats = this.injectedCatalysts.slice();
       this.hide();
       cb?.({
         planet: this.planet,
         stage: this.stage,
-        anomalyAccepted: this.anomalyKind !== ANOMALY_NONE && this.anomalyAccepted,
+        ...(cats.length > 0 ? { catalysts: cats } : {}),
       });
     });
     actions.appendChild(invBtn);

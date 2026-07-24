@@ -350,12 +350,11 @@ function fakeHost(): HarnessHost & {
     setPaused: () => undefined,
     isPaused: () => false,
     goto: () => undefined,
-    startRun: (opts: { seed: number; planet: number; stage: number; anomaly: boolean }) => {
+    startRun: (opts: { seed: number; planet: number; stage: number }) => {
       h.calls.push('startRun');
       const config = buildRunConfig(h.profile, {
         planet: opts.planet,
         stage: opts.stage,
-        anomalyAccepted: opts.anomaly,
       });
       h.lastConfig = config;
       h.world = createWorld(opts.seed, { ...config, playerHp: DURABLE_HP });

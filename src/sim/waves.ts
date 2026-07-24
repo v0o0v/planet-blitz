@@ -27,7 +27,6 @@ import type { WaveCard, Formation } from '../../data/waves.js';
 import { planetContent } from '../../data/planets/index.js';
 import { cos, sin, PI, TWO_PI } from './math.js';
 import { OFFSCREEN_X, OFFSCREEN_Y, SPAWN_RING_RADIUS, VIEW_HEIGHT } from './constants.js';
-import { maxEnemiesMult, enemyHpMult } from './anomaly.js';
 import { makeElite, ELITE_AFFIX_COUNT } from './elite.js';
 import { PLANET_MODE } from './planetMode.js';
 import {
@@ -104,11 +103,12 @@ export function updateWaves(state: WorldState, player: Entity): void {
   // 가능하고 부족하면 몹이 서서히 쌓여 자연 사망으로 긴 꼬리가 캡된다(별도 enrage 없음).
   const rushSteps = seg.boss ? 0 : Math.floor(w.segmentElapsed / RUSH_RAMP_TICKS);
   const rushEnemyBonus = Math.min(rushSteps * RUSH_ENEMY_STEP, RUSH_ENEMY_MAX);
-  // 군체 대발생 변칙 × 침략 단계 밀도↑: raise the onscreen enemy cap. 단계 밀도는
+  // 촉매 적 수 페널티 × 침략 단계 밀도↑: raise the onscreen enemy cap. 단계 밀도는
   // 데이터 주도(STAGE_MILESTONES.densityMult) — 밴드0/1(단계1..20)은 1(거동 불변), 밴드2(21+)는 ×1.5.
+  // catalystMods.enemyCount 는 촉매 무주입 시 1(무연산 → 바이트 불변).
   const tp = stageParams(state.config.stage ?? 1);
   const maxEnemies = Math.round(
-    (seg.maxEnemies + rushEnemyBonus) * maxEnemiesMult(state.anomaly) * tp.densityMult,
+    (seg.maxEnemies + rushEnemyBonus) * state.catalystMods.enemyCount * tp.densityMult,
   );
   const cardInterval = Math.max(RUSH_MIN_INTERVAL, seg.cardInterval - rushSteps * RUSH_INTERVAL_STEP);
 
@@ -265,11 +265,15 @@ function spawnEnemy(state: WorldState, def: EnemyDef, x: number, y: number): Ent
   e.x = x;
   e.y = y;
   e.radius = def.radius;
-  // 군체 대발생 변칙 × 침략 단계 HP 배율. 단계1 ×1(불변), 연속 상향(밴드 대표 1/2.2/4.5).
-  const hp = Math.round(def.hp * enemyHpMult(state.anomaly) * stageParams(state.config.stage ?? 1).hpMult);
+  // 촉매 적 HP 페널티 × 침략 단계 HP 배율. 단계1·촉매 무주입 ×1(불변), 연속 상향(밴드 대표 1/2.2/4.5).
+  const hp = Math.round(
+    def.hp * state.catalystMods.enemyHp * stageParams(state.config.stage ?? 1).hpMult,
+  );
   e.hp = hp;
   e.maxHp = hp;
-  e.damage = def.contactDamage;
+  // 촉매 적 피해 페널티 — 접촉 피해에 곱한다(무주입 ×1 → 불변). 적탄 피해는 def.attack 파생이라
+  // 여기서 건드리지 않는다(patterns 소관).
+  e.damage = def.contactDamage * state.catalystMods.enemyDamage;
   e.enemyType = def.typeIndex;
   // Stagger first fire so a freshly spawned pack does not volley in lockstep.
   e.cooldown = def.fireCooldown + state.waveRng.int(0, 30);
@@ -284,17 +288,19 @@ export function enemyDefFor(e: Entity): EnemyDef | undefined {
 /**
  * 보스 소환(plan E2)용 결정론 잡몹 스폰. spawnEnemy와 달리 RNG(waveRng)를 소비하지
  * 않고 첫 발사 쿨다운을 정의값으로 고정해, 보스 공격 컴포넌트가 스트림 분리 규율을
- * 깨지 않고 무리개체를 부를 수 있게 한다. 변칙 HP 배율은 동일하게 적용한다.
+ * 깨지 않고 무리개체를 부를 수 있게 한다. 촉매 HP·접촉 피해 배율은 동일하게 적용한다.
  */
 export function summonEnemy(state: WorldState, def: EnemyDef, x: number, y: number): Entity {
   const e = blankEntity('enemy');
   e.x = x;
   e.y = y;
   e.radius = def.radius;
-  const hp = Math.round(def.hp * enemyHpMult(state.anomaly) * stageParams(state.config.stage ?? 1).hpMult);
+  const hp = Math.round(
+    def.hp * state.catalystMods.enemyHp * stageParams(state.config.stage ?? 1).hpMult,
+  );
   e.hp = hp;
   e.maxHp = hp;
-  e.damage = def.contactDamage;
+  e.damage = def.contactDamage * state.catalystMods.enemyDamage;
   e.enemyType = def.typeIndex;
   e.cooldown = def.fireCooldown; // 고정 쿨다운(결정론, RNG 미소비)
   return addEntity(state, e);

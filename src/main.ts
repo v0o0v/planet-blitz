@@ -7,7 +7,7 @@
  * so motion is smooth on any refresh rate.
  *
  * M2 wraps the run in a meta loop (plan Phase C/D): a persistent `Profile`
- * (localStorage) feeds the star-map screen (planet/stage/anomaly) and the
+ * (localStorage) feeds the star-map screen (planet/stage/catalysts) and the
  * inventory/equip screen. The active ship's equipped gear becomes a `LoadoutConfig`
  * (computeLoadoutStats) injected into the run's WorldConfig; when the run ends the
  * collected loot + XP are settled back into the profile and saved, then the
@@ -77,8 +77,6 @@ import type { Harness, HarnessScreen } from './harness/core.js';
 import { snapshotWorld } from './sim/snapshot.js';
 import type { WorldSnapshot } from './sim/snapshot.js';
 import { ReplayRecorder, hashWorld } from './sim/replay.js';
-import { SeededRng } from './sim/rng.js';
-import { rollAnomaly } from './sim/anomaly.js';
 import { runBench } from './bench/bench.js';
 // 런 설정 조립 **단일 정본**(M8 설계서 §10-2). PvE·정식 침공·하네스 침공 세 경로가 전부
 // 이것만 쓴다 — main.ts 안에서 config 를 다시 조립하지 마라(3중복이 배선 누락의 원인이었다).
@@ -95,7 +93,14 @@ import {
   settlePveRunCurrency,
   isNetConfigured,
   pushProfileToServer,
+  consumeCatalystsOnServer,
+  fetchCatalystInventoryOnline,
+  grantCatalystDrops,
+  setHarnessCatalystGateway,
 } from './net/index.js';
+// 촉매 시스템(ADR-0029, Lane 4): 드랍 파생(순수) + 출격 폴백 모달.
+import { catalystDropsFromRun } from './data/catalystDrops.js';
+import { CatalystSortieModal } from './ui/pixi/catalystSortieModal.js';
 // M4 침공(비동기 PvP) 제출: 미설정 시 submitInvasion 은 null(잠정 결과만 표시).
 import {
   submitInvasion,
@@ -263,6 +268,9 @@ async function main(): Promise<void> {
   // visible + LaunchSelection 동일). 다른 캔버스 메타 화면과 같은 블록에서 만들어야
   // entityRenderer·radar 레이어보다 **뒤에** stage 에 붙어 위로 그려진다(z 순서).
   const planetSelect = new PlanetSelectScreen(gameApp.stage);
+  // 촉매 소모 실패 폴백 모달(ADR-0029) — 출격 직전 consume_catalysts 가 거부/오프라인이면
+  // [재시도]/[촉매 빼고 출격] 을 묻는다. 성계 지도 위에 얹히므로 같은 stage 에 뒤늦게 붙인다.
+  const catalystSortieModal = new CatalystSortieModal(gameApp.stage);
   // 카툰나무풍 롤아웃 #5: DOM `ResultOverlay` 대신 Pixi 캔버스 정산 화면으로 교체(show/hide/
   // visible + ResultState 동일). 다른 캔버스 화면과 같은 이유로 여기서 만든다 — 앞쪽(텍스처
   // 로드 전)에서 만들면 entityRenderer·radar 보다 먼저 stage 에 붙어 아레나 아래에 깔린다.
@@ -474,6 +482,7 @@ async function main(): Promise<void> {
     // 캔버스 화면(정산·성계 지도·격납고·연구소·정제소)은 DOM 오버레이와 달리 다음 화면이
     // 자동으로 덮지 않는다 — 같은 stage 위에 계속 그려지므로 화면 전환마다 명시적으로 숨긴다.
     planetSelect.hide();
+    catalystSortieModal.hide(); // 촉매 폴백 모달이 떠 있으면 함께 내린다(화면 전환 잔상 방지).
     inventory.hide();
     researchLab.hide();
     refinery.hide();
@@ -949,20 +958,64 @@ async function main(): Promise<void> {
     // 이번 출격의 시드(pendingRunSeed 참조 — 화면을 오가도 같은 제안이 유지된다).
     pendingRunSeed ??= nextSeed();
     const seed = pendingRunSeed;
-    // Pre-compute the anomaly the seed offers (same fork the sim uses) so the
-    // player can accept/reject it before the run (OQ-M2-3).
-    const offer = rollAnomaly(new SeededRng(seed).fork('anomaly'), false);
+    // 촉매 주입 패널·픽커(ADR-0029)는 성계 지도가 소유하고, 주입 촉매는 sel.catalysts 로 온다.
+    // 보유 원장은 서버 권위라 온라인 조회 provider 를 넘긴다(미설정이면 null → 빈 보유 = 주입 불가).
     planetSelect.show({
-      anomalyOffered: offer.kind,
       meta: metaLine(),
       // 행성별 개방 상한 산정(ADR-0022): 그 행성 최고 클리어 단계 → max(10, +5).
       bestStageCleared: (planet) => profile.planetProgress[planet]?.bestStageCleared ?? 0,
-      onLaunch: (sel) => startRun(seed, sel),
+      // 촉매가 주입돼 있으면 출격 직전 consume 를 거치고, 아니면 즉시 startRun(무촉매 경로 불변).
+      onLaunch: (sel) => beginSortie(seed, sel),
       onInventory: () => {
         planetSelect.hide();
         inventory.show(profile, () => openStarMap());
       },
       onBack: () => openBaseMap(),
+      fetchCatalystInventory: () => fetchCatalystInventoryOnline(),
+    });
+  }
+
+  /**
+   * 출격 진입(ADR-0029) — 주입 촉매가 없으면 즉시 startRun(무촉매·오프라인 경로 **불변**), 있으면
+   * 출격 직전 `consume_catalysts` 를 거친다. buildRunConfig 조립은 언제나 startRun 안 단일 정본만
+   * 쓴다(여기서 config 를 손대지 않는다 — 설계서 §10-2, shipIntegration grep 게이트).
+   */
+  function beginSortie(seed: number, sel: LaunchSelection): void {
+    const cats = sel.catalysts ?? [];
+    if (cats.length === 0) {
+      startRun(seed, sel);
+      return;
+    }
+    void consumeAndLaunch(seed, sel, cats);
+  }
+
+  /**
+   * 촉매 소모 → 성공 시 발급 runId·촉매를 sel 에 실어 런 시작, 실패 시 [재시도]/[촉매 빼고 출격]
+   * 모달. **실패 경로에서 아이템은 미소모**다 — consume 실패는 서버 트랜잭션 롤백이라 클라가 상태를
+   * 만지지 않는다(낙관적 로컬 차감 없음). [촉매 빼고 출격]은 무촉매(runId 없음)로 시작해 오프라인
+   * 폴백을 보존하고, X/취소는 성계 지도로 되돌린다(주입은 그대로 남아 재시도 가능).
+   */
+  async function consumeAndLaunch(
+    seed: number,
+    sel: LaunchSelection,
+    cats: number[],
+  ): Promise<void> {
+    const outcome = await consumeCatalystsOnServer(cats, sel.planet);
+    if (outcome.status === 'ok') {
+      startRun(seed, { ...sel, catalysts: cats, runId: outcome.runId });
+      return;
+    }
+    // unconfigured(영구 오프라인)·failed(거부/일시 오프라인) 모두 2선택 모달로 처리한다.
+    catalystSortieModal.show({
+      onRetry: () => void consumeAndLaunch(seed, sel, cats),
+      // 촉매·runId 를 뺀 무촉매 sel 로 시작(오프라인 폴백 보존). 명시 재조립으로 잔여 필드 누락 방지.
+      onSkip: () =>
+        startRun(seed, {
+          planet: sel.planet,
+          stage: sel.stage,
+          ...(sel.maxSegments !== undefined ? { maxSegments: sel.maxSegments } : {}),
+        }),
+      onCancel: () => openStarMap(),
     });
   }
 
@@ -971,7 +1024,6 @@ async function main(): Promise<void> {
     startRun(TUTORIAL_SEED, {
       planet: TUTORIAL_PLANET,
       stage: TUTORIAL_STAGE,
-      anomalyAccepted: false,
       maxSegments: TUTORIAL_MAX_SEGMENTS,
     });
     tutorialActive = true; // startRun cleared it; mark this run as the tutorial.
@@ -981,7 +1033,7 @@ async function main(): Promise<void> {
 
   /** Assemble the run config from the selection + active loadout, then start. */
   function startRun(seed: number, sel: LaunchSelection): void {
-    pendingRunSeed = null; // 이번 시드 소진 — 다음 성계 지도는 새 변칙 제안을 굴린다
+    pendingRunSeed = null; // 이번 시드 소진 — 다음 성계 지도는 새 시드를 굴린다
     tutorialActive = false; // normal run unless startTutorial re-flags it
     invasionTarget = null; // PvE 런: 침공 컨텍스트 해제(endRun 이 정산 경로로 분기)
     harnessInvasionRun = false;
@@ -990,11 +1042,15 @@ async function main(): Promise<void> {
     echoToastShown = false; // 새 런: 에코 안정화 로어 토스트 재무장
     // 런 조립 단일 정본. 투자 벡터·기체 타입·계보 보너스는 전부 이 안에서 접힌다 —
     // 튜토리얼 단축판(maxSegments)도 여기로 넘겨 config 후처리를 남기지 않는다.
+    // 촉매 주입(ADR-0029): 성계 지도 픽커가 `sel.catalysts` 를, consume 성공이 `sel.runId` 를 실어
+    // 여기로 온다. 무촉매면 둘 다 미지정이라 buildRunConfig 가 `catalysts: []` 로 스탬프(경로 불변).
+    // exactOptionalPropertyTypes 규율상 값이 있을 때만 전달한다.
     const config = buildRunConfig(profile, {
       planet: sel.planet,
       stage: sel.stage,
-      anomalyAccepted: sel.anomalyAccepted,
       ...(sel.maxSegments !== undefined ? { maxSegments: sel.maxSegments } : {}),
+      ...(sel.catalysts !== undefined && sel.catalysts.length > 0 ? { catalysts: sel.catalysts } : {}),
+      ...(sel.runId !== undefined ? { runId: sel.runId } : {}),
     });
     // 활성 기체의 인게임 스프라이트로 플레이어 슬롯을 교체(렌더 전용, sim 무영향).
     // `createWorld` **앞**이어야 이번 런의 플레이어 스프라이트가 올바른 기체로 생성된다.
@@ -1048,6 +1104,9 @@ async function main(): Promise<void> {
       void finishInvasionRun(w);
       return;
     }
+    // 이번 런에서 파생·적립한 촉매 드랍 총량(결과 오버레이 표시용). 오염/하네스 침공 런은
+    // 정산 블록에 들어가지 않으므로 0 으로 남는다(격리면 안에서만 적립·표시).
+    let catalystDropTotal = 0;
     if (!settled) {
       settled = true;
       // M5 C1: 승/패 연출 사운드(런당 1회). 격추 사출음(eject)은 피격 관찰에서 이미 났으므로
@@ -1096,6 +1155,10 @@ async function main(): Promise<void> {
               resources: creditsGained,
               minerals: 0,
               kills: w.kills,
+              // 촉매 소모 영수증 런 id 관통(ADR-0029): consume 성공 시 buildRunConfig 가
+              // config.runId 로 스탬프한 값을 그대로 실어, 서버 settle_pve_run 이 이 id 로 pending
+              // 영수증(자원 배율)을 조회해 캡을 상향한다. 무촉매 런은 undefined → 기존 base 경로.
+              ...(w.config.runId !== undefined ? { runId: w.config.runId } : {}),
             },
             storyRewardCredits: storyReward,
           });
@@ -1107,6 +1170,16 @@ async function main(): Promise<void> {
         // no-op 이고 throw 하지 않는다. 오염 런·하네스 침공 런은 이 블록에 들어오지 않으므로
         // 설계도도 함께 차단된다(ADR-0008 과 같은 격리면).
         void grantBlueprintDrops(lastOutcome.blueprintsGained);
+        // 촉매 드랍 적립(ADR-0029): 장비 드랍 시드에서 **순수 파생**한 촉매 목록을 서버 원장에 얹는다.
+        // catalystDropsFromRun 은 dropRng 를 소비하지 않고 이미 뽑힌 시드를 되풀어 쓰므로 sim 해시·
+        // 리플레이가 불변이다(blueprintDropsFromLoot 와 같은 규율). 미설정/오프라인이면 no-op·throw X.
+        const catalystDrops = catalystDropsFromRun({
+          loot: w.loot,
+          planet: w.config.planet ?? 0,
+          catalysts: w.config.catalysts ?? [],
+        });
+        catalystDropTotal = catalystDrops.reduce((n, d) => n + d.qty, 0);
+        void grantCatalystDrops(catalystDrops);
         // PvE 런 결과(정산된 메타: 아이템·XP·진행도 — 재화는 서버 컬럼 정본이라 미러만)를 서버
         // save 에 반영. 미설정이면 no-op, 실패 시 로컬 대기 슬롯에 남아 재시도(오프라인 우선).
         // ADR-0026: 리플레이 업로드(recordPveRun/pve_runs)는 폐기했다 — 재화가 서버 권위라
@@ -1139,6 +1212,8 @@ async function main(): Promise<void> {
                 skillPointsGained: o.skillPointsGained,
                 creditsGained: o.creditsGained,
                 overflow: o.overflow,
+                // 이번 런에 얻은 촉매 총량(ADR-0029) — 있을 때만 정산 항목으로 노출.
+                ...(catalystDropTotal > 0 ? { catalystDrops: catalystDropTotal } : {}),
                 // M5 C2: 획득 전투력 합계 + 등급별 장비 칩 목록(정산 완성판).
                 combatPower: totalCombatPower(o.itemsGained),
                 drops: o.itemsGained.map(
@@ -1503,7 +1578,6 @@ async function main(): Promise<void> {
         startRun(opts.seed, {
           planet: opts.planet,
           stage: opts.stage,
-          anomalyAccepted: opts.anomaly,
           ...(opts.maxSegments !== undefined ? { maxSegments: opts.maxSegments } : {}),
         });
       },
@@ -1606,11 +1680,50 @@ async function main(): Promise<void> {
       },
     };
 
+    // 촉매 하네스 모의(ADR-0029, DEV): 실 Supabase 없이도 "보유 시드→픽커 주입→출격→정산"
+    // 정규경로를 관측하려면 촉매 4함수(consume/salvage/grant/fetch)가 모의 성공해야 한다. 인메모리
+    // 원장 게이트웨이를 net 에 폴백 주입한다(실 서버가 있으면 그쪽이 이긴다 — 폴백은 미설정 때만).
+    // 동적 import 라 프로덕션 번들에서 제거되고, 프로덕션은 이 setter 를 아예 호출하지 않아 불변.
+    // 재화 리더는 라이브 하네스 프로필을 가리킨다(분해 잔액을 현재 재화 기준으로 산정).
+    const catalystMockMod = await import('./harness/catalystMock.js');
+    const catalystMock = new catalystMockMod.HarnessCatalystGateway({
+      credits: () => profile.credits,
+      minerals: () => profile.minerals,
+    });
+    setHarnessCatalystGateway(catalystMock);
+    const catalystControl: import('./harness/cheatPanel.js').HarnessCatalystControl = {
+      seedAll: (qty) => {
+        catalystMock.seedAll(qty);
+        // 픽커 즉시 표시: 성계 지도에 모의 원장 스냅샷을 직접 주입(fetch 비동기 대기 없이).
+        planetSelect.setCatalystInventory(catalystMock.snapshot());
+      },
+      clear: () => {
+        catalystMock.clear();
+        planetSelect.setCatalystInventory(new Map<number, number>());
+      },
+      stock: () => {
+        const snap = catalystMock.snapshot();
+        let total = 0;
+        for (const q of snap.values()) total += q;
+        return { types: snap.size, total };
+      },
+      setConsumeFail: (fail) => catalystMock.setConsumeFail(fail),
+      consumeFail: () => catalystMock.isConsumeFail(),
+      openStarMapPicker: () => {
+        // 성계 지도로 이동(fetch 는 모의로 라우팅) 후 픽커를 연다. seedAll 이 이미
+        // setCatalystInventory 로 보유를 직접 넣어, fetch 비동기 완료 전에도 픽커가 수량을 보인다.
+        openStarMap();
+        planetSelect.openCatalystPicker();
+      },
+      injectedCount: () => planetSelect.getInjectedCatalysts().length,
+    };
+
     // DEV 치트 패널(개발 도구): 하네스를 구동하는 우하단 접이식 오버레이(백틱 ` 토글).
     // 동적 import라 프로덕션 번들에서 완전히 제거된다(import.meta.env.DEV 정적 false).
     const cheatPanel = await import('./harness/cheatPanel.js');
     const panel = cheatPanel.createCheatPanel({
       harness,
+      catalyst: catalystControl,
       getEntities: () => currSnap.entities,
       getProfile: () => profile,
       // 로컬 저장 + 서버 push(하네스 재화 치트를 서버 권위 경로에 반영 — 위 helper 주석 참조).

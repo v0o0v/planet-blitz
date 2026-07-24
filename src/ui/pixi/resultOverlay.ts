@@ -305,6 +305,9 @@ export class ResultOverlayScreen {
     if (st.overflow > 0) {
       entries.push({ key: t('result.loot.overflow'), value: t('result.loot.overflowVal', { n: st.overflow }) });
     }
+    if (st.catalystDrops !== undefined && st.catalystDrops > 0) {
+      entries.push({ key: t('result.loot.catalysts'), value: `+${st.catalystDrops}`, accent: true });
+    }
 
     // 열 우선 배치(위→아래로 읽고 다음 열). 열 폭은 콘텐츠 상자를 정확히 반으로 나눈다.
     const rows = Math.ceil(entries.length / LOOT_COLS);

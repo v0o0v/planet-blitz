@@ -67,7 +67,8 @@ describe('Deno 교차 검증 픽스처 (M4 스파이크)', () => {
       writeFileSync(FIXTURE_PATH, JSON.stringify(fixture, null, 2) + '\n', 'utf8');
     }
 
-    // 12종 시나리오(M2 4 + M3 표면 2 + M8 비스트라이커 6 = 로스터 전량), 최종 해시가 유효 u32.
+    // 12종 시나리오(M2 3 + 촉매 1(ADR-0029, 구 변칙 자리) + M3 표면 2 + M8 비스트라이커 6 =
+    // 로스터 전량), 최종 해시가 유효 u32.
     expect(scenarios.length).toBe(12);
     for (const s of scenarios) {
       expect(Number.isInteger(s.finalHash)).toBe(true);
