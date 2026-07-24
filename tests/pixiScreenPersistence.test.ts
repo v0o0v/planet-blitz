@@ -170,6 +170,9 @@ describe('Pixi 메타 화면 — store 없이 생성해도 프로필이 저장�
     const profile = defaultProfile();
     const item = itemOfSlot(11, 'engine');
     profile.inventory.push(item);
+    // 요구 레벨 게이트(ADR-0030): rare engine 은 req≥32 라 Lv1 신규 기체로는 잠긴다.
+    // 이 테스트는 게이트가 아니라 persist 경로를 검증하므로 기체 레벨을 올려 착용을 통과시킨다.
+    activeShip(profile).level = 100;
 
     // ⚠️ main.ts:243 과 **똑같이** store 인자 없이 만든다. 여기서 store 를 넘기면
     // 이 테스트는 결함을 잡을 능력을 잃는다.
