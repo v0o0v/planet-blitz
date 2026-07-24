@@ -400,19 +400,25 @@ export class PlanetSelectScreen {
     const box = panelContent(w, LOW_H);
     this.panelTitle(panel, w, t('catalyst.panel.title'));
 
-    // 주입 요약: 개수 + 주입한 촉매 이름(잘림). 없으면 안내 문구.
+    // 주입 요약: 개수 + 주입한 촉매 이름(잘림). 미주입인데 보유가 있으면 첫 주입을 유도하는 힌트
+    // (해금 게이트 부재 — 첫 획득 즉시 주입 가능, ADR-0029 온보딩). 보유도 없으면 기본 안내.
     const n = this.injectedCatalysts.length;
+    const ownedTypes = this.inventory.size;
     const summary =
-      n === 0
-        ? t('catalyst.panel.none')
-        : `${t('catalyst.panel.count', { n, cap: SLOT_CAP })}\n${this.injectedNames()}`;
+      n > 0
+        ? `${t('catalyst.panel.count', { n, cap: SLOT_CAP })}\n${this.injectedNames()}`
+        : ownedTypes > 0
+          ? t('catalyst.panel.available', { n: ownedTypes })
+          : t('catalyst.panel.none');
+    // 색: 주입 있으면 크림, 보유만 있으면 골드(첫 주입 넛지), 둘 다 없으면 뮤트.
+    const summaryFill = n > 0 ? COLOR.cream : ownedTypes > 0 ? COLOR.gold : COLOR.muted;
     const sumText = new Text({
       resolution: 2,
       text: summary,
       style: {
         fontFamily: UI_FONT,
         fontSize: 18,
-        fill: n === 0 ? COLOR.muted : COLOR.cream,
+        fill: summaryFill,
         wordWrap: true,
         wordWrapWidth: box.w,
         lineHeight: 24,

@@ -48,10 +48,37 @@ import {
 } from '../../data/lineage.js';
 
 /**
+ * 촉매 하네스 제어(ADR-0029, DEV). main.ts 가 인메모리 모의 원장(`HarnessCatalystGateway`)과
+ * 성계 지도 촉매 픽커를 위임한다 — 하네스가 실 Supabase 없이도 "보유 시드→픽커 주입→출격→정산"
+ * 정규경로를 관측할 수 있게 한다. 로직은 전부 main/net/mock 쪽에 있고 여기 UI 는 버튼만 건다.
+ */
+export interface HarnessCatalystControl {
+  /** 모의 원장에 48종을 각 qty 개 시드하고 성계 지도 픽커 표시(inventory)에 반영한다. */
+  seedAll(qty: number): void;
+  /** 모의 원장을 비운다(픽커·보관함이 빈 보유로 돌아간다). */
+  clear(): void;
+  /** 현재 모의 보유 요약(보유 종류 수·총 개수). */
+  stock(): { types: number; total: number };
+  /** consume 강제 실패 토글 — 출격 시 폴백 모달([재시도]/[촉매 빼고 출격])을 재현한다. */
+  setConsumeFail(fail: boolean): void;
+  /** 현재 consume 강제 실패 여부. */
+  consumeFail(): boolean;
+  /** 성계 지도로 이동한 뒤 촉매 주입 픽커를 연다(48종·보유 수량 확인 → 주입). */
+  openStarMapPicker(): void;
+  /** 현재 성계 지도에 주입된 촉매 총 개수(중복 스택 포함). */
+  injectedCount(): number;
+}
+
+/**
  * main.ts가 주입하는 치트 패널 호스트. 하네스 공개 API로는 닿지 않는 프로필 지급·
  * 엔티티 스냅샷 접근·튜토리얼 흐름을 최소 위임으로 열어 준다(로직은 전부 이 파일에 있음).
  */
 export interface CheatPanelHost {
+  /**
+   * 촉매 하네스 제어(ADR-0029, DEV). 촉매 배선이 없는 호스트(구버전·테스트 fake)에서는
+   * 미주입(undefined)이라 촉매 탭이 안내만 띄운다.
+   */
+  catalyst?: HarnessCatalystControl;
   /** window.__pb.harness (재생/점프/치트/인스펙터 구동). */
   harness: Harness;
   /** 렌더 스냅샷의 엔티티 목록(read-only, 오염 없음 — 인스펙터용). */
@@ -111,10 +138,20 @@ const PLANET_MODE_LABELS: readonly string[] = PLANETS.map((p) => MODE_LABEL[p.mo
 const NORMAL_SEGMENTS = SEGMENTS.length - 1;
 
 /** 씬 탭 id — 패널은 씬 단위로 테스트 도구를 묶는다. */
-type SceneTab = 'run' | 'invasion' | 'boss' | 'fx' | 'result' | 'menus' | 'guardian' | 'inspect';
+type SceneTab =
+  | 'run'
+  | 'catalyst'
+  | 'invasion'
+  | 'boss'
+  | 'fx'
+  | 'result'
+  | 'menus'
+  | 'guardian'
+  | 'inspect';
 /** 씬 탭 정의(표시 순서). */
 const SCENE_TABS: readonly { id: SceneTab; label: string }[] = [
   { id: 'run', label: '런' },
+  { id: 'catalyst', label: '촉매' },
   { id: 'invasion', label: '침공' },
   { id: 'boss', label: '보스전' },
   { id: 'fx', label: '연출' },
@@ -220,6 +257,8 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   // 씬 탭 선택 — 자동 갱신 재렌더를 넘어 보존(클로저 상태). 한 번에 한 씬의 도구만
   // 보여주는 씬 중심 레이아웃의 축.
   let activeTab: SceneTab = 'run';
+  // 촉매 탭 시드 수량(각 48종 지급 개수 — 250ms 자동 재렌더를 넘어 보존).
+  let catalystSeedQty = 3;
   // 침공 탭 입력값(250ms 자동 재렌더를 넘어 보존되는 클로저 상태).
   let invasionPreset: InvasionPresetKind = 'def3-mid';
   /** 침공 시작 시 걸 정비도(centi-percent). 100% = 완전 정비. */
@@ -618,6 +657,9 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         case 'run':
           buildRunTab(pane);
           break;
+        case 'catalyst':
+          buildCatalystTab(pane);
+          break;
         case 'invasion':
           buildInvasionTab(pane);
           break;
@@ -746,6 +788,90 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
 
       appendCombatCheats(s);
       appendLiveStatusLine(s);
+    }
+
+    /**
+     * 촉매 탭(ADR-0029, Lane 5): "보유 시드→픽커 주입→출격→정산" 정규경로를 하네스에서 실증한다.
+     * 실 Supabase 없이도 main 이 인메모리 모의 원장(`HarnessCatalystGateway`)을 net 촉매 4함수에
+     * 폴백 주입하므로, 여기 버튼은 그 원장을 시드/비우고 성계 지도 픽커를 여는 접점만 건다.
+     *  ① 48종×N 시드 → ② 성계 지도+픽커(48종·수량 확인·주입) → ③ 출격 버튼(consume 모의 성공 =
+     *  실제 주입 출격) → ④ ff 로 정산(촉매 드랍 적립 → 다음 주입). consume 강제 실패로 폴백 모달도.
+     */
+    function buildCatalystTab(s: HTMLElement): void {
+      const cat = host.catalyst;
+      if (cat === undefined) {
+        const note = document.createElement('div');
+        note.className = 'pb-c-lbl';
+        note.textContent = '이 호스트에는 촉매 하네스 배선이 없습니다(구버전/테스트).';
+        s.appendChild(note);
+        return;
+      }
+
+      // ① 모의 보유 원장 시드/비우기.
+      s.appendChild(subLabel('① 모의 보유 원장 (서버 조회 우회)'));
+      const seedRow = document.createElement('div');
+      seedRow.className = 'pb-c-row';
+      const qtyIn = numInput(catalystSeedQty, 56);
+      qtyIn.min = '1';
+      qtyIn.title = '48종 각각 몇 개씩 지급할지';
+      qtyIn.addEventListener('input', () => {
+        const n = Math.floor(Number(qtyIn.value));
+        catalystSeedQty = Number.isFinite(n) && n >= 1 ? n : 1;
+      });
+      seedRow.append(
+        qtyIn,
+        btn('48종×N 시드', () => {
+          cat.seedAll(catalystSeedQty);
+          const st = cat.stock();
+          setHint(`촉매 원장 시드: ${st.types}종 · 총 ${st.total}개`);
+        }, '48종을 각 N개씩 모의 원장에 지급(픽커·보관함이 읽는다)'),
+        btn('원장 비우기', () => {
+          cat.clear();
+          setHint('촉매 원장 비움(빈 보유)');
+        }),
+      );
+      s.appendChild(seedRow);
+      const stock = cat.stock();
+      const stockLine = document.createElement('div');
+      stockLine.className = 'pb-c-lbl';
+      stockLine.textContent = `보유 ${stock.types}종 · 총 ${stock.total}개 · 주입 ${cat.injectedCount()}개`;
+      s.appendChild(stockLine);
+
+      // ② 성계 지도 + 픽커.
+      s.appendChild(subLabel('② 주입 (성계 지도 픽커)'));
+      const pickRow = document.createElement('div');
+      pickRow.className = 'pb-c-row';
+      pickRow.append(
+        btn('성계 지도 + 픽커 열기', () => {
+          cat.openStarMapPicker();
+          setHint('성계 지도 픽커 — 48종·보유 수량 확인 후 주입, 확정 뒤 [출격]');
+        }, '성계 지도로 이동해 촉매 주입 픽커를 연다', 'play'),
+      );
+      s.appendChild(pickRow);
+
+      // ③ 출격 폴백 실증(consume 강제 실패).
+      s.appendChild(subLabel('③ 출격 폴백 (RPC 실패 재현)'));
+      const failRow = document.createElement('div');
+      failRow.className = 'pb-c-row';
+      const failChk = document.createElement('label');
+      failChk.className = 'pb-c-chk';
+      const failInput = document.createElement('input');
+      failInput.type = 'checkbox';
+      failInput.checked = cat.consumeFail();
+      failInput.addEventListener('change', () => {
+        cat.setConsumeFail(failInput.checked);
+        setHint(failInput.checked ? 'consume 강제 실패 ON — 출격 시 폴백 모달' : 'consume 강제 실패 OFF');
+      });
+      failChk.append(failInput, document.createTextNode('consume 강제 실패'));
+      failRow.appendChild(failChk);
+      s.appendChild(failRow);
+
+      const flow = document.createElement('div');
+      flow.className = 'pb-c-lbl';
+      flow.textContent =
+        '흐름: 시드 → 픽커 주입 → [출격](consume 모의 성공=실제 주입 출격) → ▶▶ff 로 정산' +
+        '(촉매 드랍 적립) → 메뉴>인벤토리>촉매 보관함에서 분해.';
+      s.appendChild(flow);
     }
 
     /**

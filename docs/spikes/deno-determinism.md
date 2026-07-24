@@ -77,6 +77,12 @@ scenarios.ts  ─┬─ (Node/vitest) denoFixture.test.ts → fixtures.json  [gr
 로밍으로 자극한다. rollItem 프로브는 rarity 4종 전부 + 유니크 레지스트리 resolve +
 reroll(잠금/무잠금)을 커버한다.
 
+> **역사적 각주(2026-07-24, ADR-0029)**: 시나리오 ③의 "변칙(이상현상)"과 아래 결과의
+> 해시들은 **anomaly 폴드가 있던 pre-촉매 hashWorld 포맷**에서 채집된 기록이다. 변칙 경보는
+> 이후 **촉매** 시스템으로 대체됐고(anomaly 중간 폴드 4개 제거 = 1회 포맷 범프), 지금 소스로는
+> 이 해시들이 재현되지 않는다. 이 문서는 당시 Node↔Deno bit-identical 을 증거화한 **스파이크
+> 스냅샷**이므로 값을 보존한다 — 현행 결정론 골든은 재생성분을 정본으로 쓴다.
+
 ## 4. 수학 표면 점검(과업 4)
 
 sim이 쓰는 연산이 V8(Node) ↔ V8(Deno)에서 동일함을 단일 u32 해시로 증거화했다

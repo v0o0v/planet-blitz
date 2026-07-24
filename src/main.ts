@@ -96,6 +96,7 @@ import {
   consumeCatalystsOnServer,
   fetchCatalystInventoryOnline,
   grantCatalystDrops,
+  setHarnessCatalystGateway,
 } from './net/index.js';
 // 촉매 시스템(ADR-0029, Lane 4): 드랍 파생(순수) + 출격 폴백 모달.
 import { catalystDropsFromRun } from './data/catalystDrops.js';
@@ -1679,11 +1680,50 @@ async function main(): Promise<void> {
       },
     };
 
+    // 촉매 하네스 모의(ADR-0029, DEV): 실 Supabase 없이도 "보유 시드→픽커 주입→출격→정산"
+    // 정규경로를 관측하려면 촉매 4함수(consume/salvage/grant/fetch)가 모의 성공해야 한다. 인메모리
+    // 원장 게이트웨이를 net 에 폴백 주입한다(실 서버가 있으면 그쪽이 이긴다 — 폴백은 미설정 때만).
+    // 동적 import 라 프로덕션 번들에서 제거되고, 프로덕션은 이 setter 를 아예 호출하지 않아 불변.
+    // 재화 리더는 라이브 하네스 프로필을 가리킨다(분해 잔액을 현재 재화 기준으로 산정).
+    const catalystMockMod = await import('./harness/catalystMock.js');
+    const catalystMock = new catalystMockMod.HarnessCatalystGateway({
+      credits: () => profile.credits,
+      minerals: () => profile.minerals,
+    });
+    setHarnessCatalystGateway(catalystMock);
+    const catalystControl: import('./harness/cheatPanel.js').HarnessCatalystControl = {
+      seedAll: (qty) => {
+        catalystMock.seedAll(qty);
+        // 픽커 즉시 표시: 성계 지도에 모의 원장 스냅샷을 직접 주입(fetch 비동기 대기 없이).
+        planetSelect.setCatalystInventory(catalystMock.snapshot());
+      },
+      clear: () => {
+        catalystMock.clear();
+        planetSelect.setCatalystInventory(new Map<number, number>());
+      },
+      stock: () => {
+        const snap = catalystMock.snapshot();
+        let total = 0;
+        for (const q of snap.values()) total += q;
+        return { types: snap.size, total };
+      },
+      setConsumeFail: (fail) => catalystMock.setConsumeFail(fail),
+      consumeFail: () => catalystMock.isConsumeFail(),
+      openStarMapPicker: () => {
+        // 성계 지도로 이동(fetch 는 모의로 라우팅) 후 픽커를 연다. seedAll 이 이미
+        // setCatalystInventory 로 보유를 직접 넣어, fetch 비동기 완료 전에도 픽커가 수량을 보인다.
+        openStarMap();
+        planetSelect.openCatalystPicker();
+      },
+      injectedCount: () => planetSelect.getInjectedCatalysts().length,
+    };
+
     // DEV 치트 패널(개발 도구): 하네스를 구동하는 우하단 접이식 오버레이(백틱 ` 토글).
     // 동적 import라 프로덕션 번들에서 완전히 제거된다(import.meta.env.DEV 정적 false).
     const cheatPanel = await import('./harness/cheatPanel.js');
     const panel = cheatPanel.createCheatPanel({
       harness,
+      catalyst: catalystControl,
       getEntities: () => currSnap.entities,
       getProfile: () => profile,
       // 로컬 저장 + 서버 push(하네스 재화 치트를 서버 권위 경로에 반영 — 위 helper 주석 참조).

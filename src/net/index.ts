@@ -262,6 +262,36 @@ export async function spendCurrencyOnServer(
 // 촉매 시스템(ADR-0029) — 소모(consume)·분해(salvage)·드랍 적립·보유 조회 오케스트레이션
 // ---------------------------------------------------------------------------
 
+/**
+ * 하네스 전용 촉매 게이트웨이 오버라이드(DEV, ADR-0008·ADR-0029). 설정되면 아래 촉매 4함수
+ * (consume/salvage/grant/fetch)가 **실 서버가 없을 때만** 이 게이트웨이로 폴백한다. 존재 이유:
+ * 촉매 보유·소모의 정본은 서버 원장이라, 실 Supabase 없이 도는 하네스에서는 4함수가 전부
+ * `unconfigured` 로 떨어져 "보유 시드→주입→출격→정산" 정규경로 데모가 아예 성립하지 않는다.
+ * 하네스가 인메모리 원장 모의를 주입하면 정규경로 그대로(무촉매 폴백이 아니라 실제 주입 출격)를
+ * 관측할 수 있다. `setProfileStoreOverride`(save 계층)와 같은 DEV 오버라이드 문법이다.
+ *
+ * 프로덕션 안전: 프로덕션 번들은 이 setter 를 절대 호출하지 않으므로(하네스 배선은 DEV 전용
+ * 동적 import 라 트리셰이킹) 값이 항상 null → 폴백이 없어 동작 100% 불변. 재화·프로필 경로는
+ * 이 폴백을 쓰지 않아(그쪽은 `resolveGateway` 그대로) 로컬 폴백 성질을 유지한다(catalyst 전용).
+ */
+let harnessCatalystGateway: ServerGateway | null = null;
+
+/** 하네스 촉매 게이트웨이 모의를 설치/해제한다(DEV). null 이면 폴백 없음(기본). */
+export function setHarnessCatalystGateway(gateway: ServerGateway | null): void {
+  harnessCatalystGateway = gateway;
+}
+
+/**
+ * 촉매 함수 전용 게이트웨이 해석. 실 서버(주입 gateway 또는 설정된 Supabase)가 있으면 **그것이
+ * 언제나 이기고**, 없을 때만 하네스 모의로 폴백한다. 테스트가 `{ gateway }`/`{ config: null }` 을
+ * 넘기면 real 이 그 값으로 확정되므로(모의는 기본 null) 기존 계약이 그대로 유지된다.
+ */
+async function resolveCatalystGateway(deps: NetDeps): Promise<ServerGateway | null> {
+  const real = await resolveGateway(deps);
+  if (real !== null) return real;
+  return harnessCatalystGateway;
+}
+
 /** 촉매 보유 원장 스냅샷(catalyst_id → qty). 픽커·관리 UI 표시용. */
 export type CatalystInventory = ReadonlyMap<number, number>;
 
@@ -292,7 +322,7 @@ export async function consumeCatalystsOnServer(
   planet: number,
   deps: NetDeps = {},
 ): Promise<ConsumeCatalystOutcome> {
-  const gateway = await resolveGateway(deps);
+  const gateway = await resolveCatalystGateway(deps);
   if (gateway === null || gateway.consumeCatalysts === undefined) return { status: 'unconfigured' };
   // 정규화(오름차순·중복 보존·미지 id 제거)는 서버 검증과 동일 정본(catalysts.ts)을 쓴다 — 빈
   // 배열이면 소모할 게 없으므로 폴백으로 되돌린다(무촉매 경로 = consume 미호출 계약).
@@ -328,7 +358,7 @@ export async function salvageCatalystOnServer(
   qty: number,
   deps: NetDeps = {},
 ): Promise<SalvageCatalystOutcome> {
-  const gateway = await resolveGateway(deps);
+  const gateway = await resolveCatalystGateway(deps);
   if (gateway === null || gateway.salvageCatalyst === undefined) return { status: 'unconfigured' };
   try {
     const res = await gateway.salvageCatalyst(catalystId, qty);
@@ -355,7 +385,7 @@ export async function grantCatalystDrops(
   deps: NetDeps = {},
 ): Promise<number> {
   if (drops.length === 0) return 0;
-  const gateway = await resolveGateway(deps);
+  const gateway = await resolveCatalystGateway(deps);
   if (gateway === null || gateway.grantCatalyst === undefined) return 0;
   let granted = 0;
   for (const d of drops) {
@@ -377,7 +407,7 @@ export async function grantCatalystDrops(
 export async function fetchCatalystInventoryOnline(
   deps: NetDeps = {},
 ): Promise<CatalystInventory | null> {
-  const gateway = await resolveGateway(deps);
+  const gateway = await resolveCatalystGateway(deps);
   if (gateway === null || gateway.fetchCatalystInventory === undefined) return null;
   try {
     await gateway.getUserId();
