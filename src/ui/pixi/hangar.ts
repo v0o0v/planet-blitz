@@ -17,6 +17,7 @@ import type { Item, EquipSlotId, SlotKind, Rarity } from '../../items/types.js';
 import { EQUIP_SLOTS } from '../../items/types.js';
 import { AFFIX_BY_ID } from '../../../data/affixes.js';
 import { computeLoadoutStats } from '../../items/loadout.js';
+import { canEquip, requiredLevel } from '../../items/requiredLevel.js';
 import { UNIQUE_REGISTRY } from '../../items/uniques.js';
 import { shipBonusBp } from '../../../data/lineage.js';
 import { shipTypeDef } from '../../../data/ships/index.js';
@@ -241,6 +242,7 @@ export class HangarScreen {
 
   private equip(item: Item): void {
     const ship = activeShip(this.profile);
+    if (!canEquip(ship.level, item)) return; // 요구 레벨 미달 — no-op(에러·토스트 없음)
     const kind = item.slot;
     let target: EquipSlotId;
     if (kind === 'module') {
@@ -398,12 +400,17 @@ export class HangarScreen {
       compareTo !== undefined && compareTo !== item
         ? t('inv.tip.compare', { name: this.itemName(compareTo), n: compareTo.affixes.length })
         : undefined;
+    // 요구 레벨 줄(AC9): 미달이면 빨강, 충족이면 무채색. 미달 아이템도 툴팁·비교는 정상 노출.
+    const ship = activeShip(this.profile);
+    const req = requiredLevel(item);
+    const met = ship.level >= req;
     const p = this.root.toLocal({ x: globalX, y: globalY });
     this.tooltip.show(
       {
         title: this.itemName(item),
         titleColor: RARITY_COLOR_NUM[item.rarity],
         subtitle: `${slotLabel(item.slot)} · ${t(`item.rarity.${item.rarity}` as MessageKey)}`,
+        reqLine: { text: t('item.reqLevel', { n: req }), color: met ? 0x8896b8 : 0xff5a5a },
         lines,
         compare,
       },
@@ -811,14 +818,18 @@ export class HangarScreen {
     const content = new Container();
     clip.addChild(content);
 
+    const ship = activeShip(this.profile);
     const positions = gridPositions(cap, cols, cell, gap);
     for (let i = 0; i < cap; i++) {
       const item = this.profile.stash[i];
+      const locked = item !== undefined && !canEquip(ship.level, item);
       const c = makeSlotCell({
         size: cell,
         item,
         slotTex: this.ui['ui_slot.png'],
         iconTex: equipIconTexture(this.ui, item),
+        reqLevel: item !== undefined ? requiredLevel(item) : undefined,
+        locked,
         onHover: item !== undefined ? (gx, gy) => this.showTip(item, gx, gy) : undefined,
         onMove: (gx, gy) => this.moveTip(gx, gy),
         onOut: () => this.tooltip.hide(),
@@ -912,16 +923,20 @@ export class HangarScreen {
     const content = new Container();
     clip.addChild(content);
 
+    const ship = activeShip(this.profile);
     const positions = gridPositions(INVENTORY_CAP, cols, cell, gap);
     for (let i = 0; i < INVENTORY_CAP; i++) {
       const item = this.profile.inventory[i];
       const compareTo = item !== undefined ? this.equippedFor(item.slot) : undefined;
+      const locked = item !== undefined && !canEquip(ship.level, item);
       const c = makeSlotCell({
         size: cell,
         item,
         slotTex: this.ui['ui_slot.png'],
         iconTex: equipIconTexture(this.ui, item),
-        onClick: item !== undefined ? () => this.equip(item) : undefined,
+        reqLevel: item !== undefined ? requiredLevel(item) : undefined,
+        locked,
+        onClick: item !== undefined && !locked ? () => this.equip(item) : undefined,
         onHover: item !== undefined ? (gx, gy) => this.showTip(item, gx, gy, compareTo) : undefined,
         onMove: (gx, gy) => this.moveTip(gx, gy),
         onOut: () => this.tooltip.hide(),

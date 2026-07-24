@@ -149,6 +149,13 @@ export interface SlotCellOptions {
   onHover?: ((globalX: number, globalY: number) => void) | undefined;
   onMove?: ((globalX: number, globalY: number) => void) | undefined;
   onOut?: (() => void) | undefined;
+  /** 요구 레벨(빨강 배지 텍스트). {@link locked} 일 때만 셀에 표기한다. */
+  reqLevel?: number | undefined;
+  /**
+   * 요구 레벨 미달로 착용 불가한 셀. `true` 면 dim(어두운 오버레이) + 요구 레벨 빨강 배지를
+   * 얹는다(ADR-0030 AC8). 아이템 자체는 흐릿하게라도 보이며, 툴팁 이벤트는 그대로 유지한다.
+   */
+  locked?: boolean | undefined;
 }
 
 /**
@@ -226,6 +233,31 @@ export function makeSlotCell(opts: SlotCellOptions): Container {
       glyph.anchor.set(0.5);
       glyph.position.set(size / 2, size / 2);
       root.addChild(glyph);
+    }
+
+    // 요구 레벨 미달(잠김): 어두운 오버레이로 dim + 요구 레벨 빨강 배지(AC8). 오버레이는 아이템
+    // 위에 반투명으로 얹혀 무엇인지는 보이되 착용 불가를 알린다. 배지는 오버레이보다 위라 선명하다.
+    // theme 에 danger 계열 색이 없어 스펙 기본값 0xff5a5a 를 쓴다.
+    if (opts.locked === true) {
+      const dim = new Graphics();
+      dim.roundRect(0, 0, size, size, 8).fill({ color: 0x000000, alpha: 0.5 });
+      root.addChild(dim);
+      if (opts.reqLevel !== undefined) {
+        const badge = new Text({
+          resolution: 2,
+          text: `Lv${opts.reqLevel}`,
+          style: {
+            fontFamily: UI_FONT,
+            fontSize: Math.max(11, Math.round(size * 0.26)),
+            fontWeight: '800',
+            fill: 0xff5a5a,
+            dropShadow: TEXT_SHADOW,
+          },
+        });
+        badge.anchor.set(0.5, 1);
+        badge.position.set(size / 2, size - 3);
+        root.addChild(badge);
+      }
     }
 
     root.eventMode = 'static';
