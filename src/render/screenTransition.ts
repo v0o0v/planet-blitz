@@ -1,10 +1,18 @@
 /**
  * 균일 화면 전환 프리미티브 — 슬라이드 커튼 (Phase 5 — plan §AC-5.1 · ADR-0031, meta 레지스터).
  *
- * 전 메타 화면 swap 을 **하나의 균일한 슬라이드 커튼**으로 덮는다. main.ts clearToMenu()
- * (동기 swap)가 {@link ScreenTransition.play} 를 부르면, 카툰나무 나무판(커튼)이 오른쪽에서
- * 밀려들어와 화면을 **덮고(cover)** 짧게 유지(hold)한 뒤 왼쪽으로 밀려나가며 **드러낸다
- * (reveal)** → 사용자는 old → 커튼 → new 를 본다(중간의 동기 swap 은 커튼 밑에서 일어난다).
+ * 전 메타 화면 swap 에 **하나의 균일한 슬라이드 커튼**을 얹는다. main.ts clearToMenu() 가
+ * {@link ScreenTransition.play} 를 부르면, 카툰나무 나무판(커튼)이 오른쪽에서 밀려들어와 화면을
+ * **덮고(cover)** 짧게 유지(hold)한 뒤 왼쪽으로 밀려나가며 **드러낸다(reveal)**.
+ *
+ * ── ⚠️ 실제 배선 거동(오해 방지) ────────────────────────────────────────────────
+ *  clearToMenu 의 화면 teardown 과 **호출자의 새 화면 show() 는 같은 프레임에 동기로 완결**되므로
+ *  swap 은 원자적이다(끊김·플래시 없음). 커튼은 그 swap 을 은닉하는 게 아니라, 이미 바뀐 **새 화면
+ *  위를 카툰 나무결로 한 번 쓸어 전환을 읽히게 하는 장식 와이프**다(균일 적용이 목적). 실사용은
+ *  {@link ScreenTransition.play} 를 콜백 없이 부른다. {@link ScreenTransition.play} 의 `onCovered`
+ *  훅(cover 정점 발화)은 훗날 "커튼 밑에서 swap 을 은닉"하는 old→커튼→new 확장을 위해 구현·유닛
+ *  검증만 해 둔 것이고 **현재 프로덕션은 쓰지 않는다**(그 은닉은 호출자 show() 까지 커튼 밑으로
+ *  옮기는 리팩터가 필요해 defer-balance-tuning 이후 별도 검토 대상).
  *
  * ── 정본 룩 = harness 갤러리 `transition-slide` ──────────────────────────────
  *  갤러리 원본([src/harness/gallery/transitionVariants.ts]`spawnSlide`)의 "B 가 오른쪽 → 제자리
@@ -131,8 +139,9 @@ function coverageAt(containerX: number): number {
 // ScreenTransition — 전 메타 화면 swap 을 균일하게 덮는 슬라이드 커튼.
 //
 // lead 배선(단일 레인): stage 최상단에 container 를 mount, 매 프레임 raise() +
-// update(dt). clearToMenu() 가 play(onCovered) 를 부르고 onCovered 콜백에서 동기 swap 을
-// 수행하면 old→커튼→new 시퀀스가 완성된다(swap 이 hold 구간의 완전 덮힘 밑에서 일어남).
+// update(dt). 현재 clearToMenu() 는 play() 를 **콜백 없이** 불러 새 화면 위 장식 와이프로 쓴다(swap
+// 은 clearToMenu+호출자 show 동기 완결이라 원자적). onCovered 로 커튼 밑 swap 은닉(old→커튼→new)을
+// 하려면 호출자 show() 까지 콜백 안으로 옮기는 리팩터가 필요하다 — 훅만 준비돼 있고 미사용이다.
 // ---------------------------------------------------------------------------
 
 export class ScreenTransition {
@@ -167,9 +176,11 @@ export class ScreenTransition {
    * 안전**하다 — 이미 재생 중이어도 색판을 중복 생성하지 않고 **처음부터 재시작**한다(elapsed·
    * onCovered 발화 플래그 리셋). 커튼은 생성자에서 한 번만 만들어 재사용하므로 child 증가 없음.
    *
-   * @param onCovered (선택) cover 정점(완전 덮힘)에 **정확히 1회** 호출되는 콜백. lead 가 여기서
-   *   동기 화면 swap 을 수행하면 swap 이 커튼 밑에서 일어나 old→커튼→new 가 또렷해진다. 미지정
-   *   시 커튼만 재생한다. ⚠️ 이 콜백 안에서 다시 play() 를 부르지 말 것(재귀 재시작 유발).
+   * @param onCovered (선택·**현재 프로덕션 미사용**) cover 정점(완전 덮힘)에 **정확히 1회** 호출되는
+   *   콜백. lead 가 여기서 동기 화면 swap 을 수행하면 swap 이 커튼 밑에서 일어나 old→커튼→new 은닉이
+   *   된다 — 다만 현 clearToMenu 는 콜백 없이 부른다(장식 와이프). 훗날 은닉 확장을 위한 훅으로
+   *   구현·유닛 검증만 해 둔 상태다. 미지정 시 커튼만 재생한다. ⚠️ 이 콜백 안에서 다시 play() 를
+   *   부르지 말 것(재귀 재시작 유발).
    */
   play(onCovered?: () => void): void {
     if (this.destroyed) return;

@@ -189,10 +189,16 @@ export class ResultOverlayScreen {
     if (!this.root.visible) return;
     this.lootCeremony.update(dt);
     if (!this.lootCeremony.revealing) {
-      this.ceremonyElapsed += dt;
+      // lootCeremony.update 내부 DT_CLAMP(0.1)와 동일 캡 — 탭 복귀 등 큰 프레임에 HOLD/FADE 가 공개
+      // 진행보다 앞서 급페이드하지 않게 타이밍을 맞춘다(리뷰 LOW).
+      this.ceremonyElapsed += Math.min(dt, 0.1);
       const fade = this.ceremonyElapsed - CEREMONY_HOLD_S;
       if (fade > 0) {
-        this.lootCeremony.container.alpha = Math.max(0, 1 - fade / CEREMONY_FADE_S);
+        const alpha = Math.max(0, 1 - fade / CEREMONY_FADE_S);
+        this.lootCeremony.container.alpha = alpha;
+        // 페이드 완료 시 세리머니를 정리해 이후 매 프레임 공회전(유니크 헤일로 계산)을 멈춘다(리뷰 LOW).
+        // hide()는 멱등이라 반복 호출 무해하고, 이후 lootCeremony.update 는 조기 반환한다.
+        if (alpha <= 0) this.lootCeremony.hide();
       }
     }
   }
