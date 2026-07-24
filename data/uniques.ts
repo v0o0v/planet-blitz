@@ -36,12 +36,14 @@ import {
  * 주무기 파생은 weaponType으로 페어링(리뷰 MED-1): 과열 드럼=발칸(0)·분열 코어=스프레드(1)·
  * 관통 자이로=레일건(2). 무기타입 코드는 src/items/loadout.ts(WEAPON_*)와 일치.
  */
+// reqLevel: 전투형 유니크(무기·공격 장갑)는 高(~65-75), 유틸형(드론·위상 회피)은 低(~15-30).
+// 값은 placeholder — 밴드 안에서 분산. TODO(밸런스): 출시 전 튜닝.
 export const M2_UNIQUES: readonly UniqueDef[] = [
-  { id: 'overheat-drum', name: '과열 드럼', slot: 'main', bit: UQ_OVERHEAT_DRUM, weaponType: 0 },
-  { id: 'split-core', name: '분열 코어', slot: 'main', bit: UQ_SPLIT_CORE, weaponType: 1 },
-  { id: 'pierce-gyro', name: '관통 자이로', slot: 'main', bit: UQ_PIERCE_GYRO, weaponType: 2 },
-  { id: 'drone-bay', name: '자율 드론 베이', slot: 'sub', bit: UQ_DRONE_BAY },
-  { id: 'phase-armor', name: '위상 장갑', slot: 'armor', bit: UQ_PHASE_ARMOR },
+  { id: 'overheat-drum', name: '과열 드럼', slot: 'main', bit: UQ_OVERHEAT_DRUM, weaponType: 0, reqLevel: 66 },
+  { id: 'split-core', name: '분열 코어', slot: 'main', bit: UQ_SPLIT_CORE, weaponType: 1, reqLevel: 68 },
+  { id: 'pierce-gyro', name: '관통 자이로', slot: 'main', bit: UQ_PIERCE_GYRO, weaponType: 2, reqLevel: 70 },
+  { id: 'drone-bay', name: '자율 드론 베이', slot: 'sub', bit: UQ_DRONE_BAY, reqLevel: 22 },
+  { id: 'phase-armor', name: '위상 장갑', slot: 'armor', bit: UQ_PHASE_ARMOR, reqLevel: 18 },
 ];
 
 /**
@@ -50,17 +52,19 @@ export const M2_UNIQUES: readonly UniqueDef[] = [
  * 의존(도박사의 칩)은 Lane1/Lane4가 발사·파워업 경로에서 통합하며, 여기서는 슬롯·비트
  * 만 확정해 롤·장착 시 uniqueMask에 실린다.
  */
+// reqLevel: 전투형(무기·공격 장갑·차폐막)은 高(~65-75), 유틸형(추진·자원·모듈)은 低(~15-30).
+// 값은 placeholder — 밴드 안에서 분산. TODO(밸런스): 출시 전 튜닝.
 export const M3_UNIQUES: readonly UniqueDef[] = [
-  { id: 'hive-swarm', name: '군집 벌통', slot: 'main', bit: UQ_HIVE_SWARM, weaponType: 3 },
-  { id: 'converge-prism', name: '수렴 프리즘', slot: 'main', bit: UQ_CONVERGE_PRISM, weaponType: 4 },
-  { id: 'twin-star', name: '쌍둥이 항성', slot: 'main', bit: UQ_TWIN_STAR, weaponType: 1 },
-  { id: 'singularity', name: '특이점 발생기', slot: 'sub', bit: UQ_SINGULARITY },
-  { id: 'reactive-armor', name: '반응 장갑', slot: 'armor', bit: UQ_REACTIVE_ARMOR },
-  { id: 'phase-membrane', name: '위상 전환막', slot: 'shield', bit: UQ_PHASE_MEMBRANE },
-  { id: 'afterimage-thruster', name: '잔상 추진기', slot: 'engine', bit: UQ_AFTERIMAGE },
-  { id: 'greed-heart', name: '탐욕의 심장', slot: 'core', bit: UQ_GREED_HEART },
-  { id: 'gambler-chip', name: '도박사의 칩', slot: 'module', bit: UQ_GAMBLER_CHIP },
-  { id: 'relic-amplifier', name: '유물 증폭기', slot: 'module', bit: UQ_RELIC_AMP },
+  { id: 'hive-swarm', name: '군집 벌통', slot: 'main', bit: UQ_HIVE_SWARM, weaponType: 3, reqLevel: 72 },
+  { id: 'converge-prism', name: '수렴 프리즘', slot: 'main', bit: UQ_CONVERGE_PRISM, weaponType: 4, reqLevel: 74 },
+  { id: 'twin-star', name: '쌍둥이 항성', slot: 'main', bit: UQ_TWIN_STAR, weaponType: 1, reqLevel: 69 },
+  { id: 'singularity', name: '특이점 발생기', slot: 'sub', bit: UQ_SINGULARITY, reqLevel: 75 },
+  { id: 'reactive-armor', name: '반응 장갑', slot: 'armor', bit: UQ_REACTIVE_ARMOR, reqLevel: 65 },
+  { id: 'phase-membrane', name: '위상 전환막', slot: 'shield', bit: UQ_PHASE_MEMBRANE, reqLevel: 71 },
+  { id: 'afterimage-thruster', name: '잔상 추진기', slot: 'engine', bit: UQ_AFTERIMAGE, reqLevel: 24 },
+  { id: 'greed-heart', name: '탐욕의 심장', slot: 'core', bit: UQ_GREED_HEART, reqLevel: 28 },
+  { id: 'gambler-chip', name: '도박사의 칩', slot: 'module', bit: UQ_GAMBLER_CHIP, reqLevel: 16 },
+  { id: 'relic-amplifier', name: '유물 증폭기', slot: 'module', bit: UQ_RELIC_AMP, reqLevel: 20 },
 ];
 
 /** 전체 15점(M2 5 + M3 10)을 레지스트리에 등록(idempotent by id). */
