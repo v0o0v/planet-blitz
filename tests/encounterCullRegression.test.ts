@@ -61,6 +61,14 @@ function blockBreakConfig(): WorldConfig {
   };
 }
 
+/** 카르곤(planet 0) = 뱀서류(비-스크롤) — 격전 게이트가 실제 전진 조건인 모드. */
+function vampireConfig(): WorldConfig {
+  return {
+    ...buildRunConfig(defaultProfile(), { planet: 0, stage: 1 }),
+    playerHp: DURABLE_HP,
+  };
+}
+
 function playerOf(w: WorldState): Entity {
   const p = w.entities[0];
   if (p === undefined) throw new Error('player missing');
@@ -101,9 +109,17 @@ describe('실측: blockBreak 런에서 마커 엔티티가 컬링 경로에 실�
     const w = createWorld(0xc0117, blockBreakConfig());
     expect(w.scrollRuntime).toBeDefined(); // 강제 스크롤 창이 있는 모드인지 먼저 확인
     enterClash(w);
-    stepWorld(w, emptyInput()); // 진입 틱 — 리더 + 정예 서지 소환
-    const leader = markedEnemy(w, MID_CLASH_LEADER_MARK);
-    if (leader === undefined) throw new Error('leader missing');
+    stepWorld(w, emptyInput());
+    // ⚠️ 강제 스크롤 모드에서는 `updateWaves` 가 격전 리더를 **소환하지 않는다**(거리 게이트와
+    // 처치 게이트가 어긋나 코스가 소진되는 문제 때문 — waves.ts 의 clash 분기 주석 참조).
+    // 그래도 `cullScrollEnemies` 의 마커 예외는 그 사실과 **독립적으로** 성립해야 한다: 예외가
+    // 사라지면 조우 수호자가 곧바로 공짜 보상 경로로 되돌아가고, 훗날 격전이 이 모드로 확장될 때
+    // 같은 결함이 조용히 되살아난다. 그래서 리더 마커를 손으로 세워 예외 자체를 못 박는다.
+    const leaderDef = ENEMY_BY_TYPE[0];
+    if (leaderDef === undefined) throw new Error('enemy catalog empty');
+    const player = playerOf(w);
+    const leader = summonEnemy(w, leaderDef, player.x, player.y - 1100);
+    leader.aux1 = MID_CLASH_LEADER_MARK;
     w.weapon.damage = 0; // 아무도 죽지 않는다 — 소멸 원인을 "컬링"으로 고정한다
 
     // 수호자도 같은 런에 얹어 함께 관측한다(둘 다 같은 컬링 경로에 노출된다).
@@ -273,9 +289,12 @@ describe('봉인 수호자 보상은 처치로 사라진 경우에만 나간다'
 
 describe('격전 전진 게이트는 처치 진행을 함께 요구한다', () => {
   it('리더만 사라지고 세그먼트 처치가 0 이면 cleared 가 아니다', () => {
-    const w = createWorld(0xc011b, blockBreakConfig());
+    // 격전 게이트가 **실제로 전진 조건인 모드**에서 본다 — 강제 스크롤 모드는 거리 게이트를
+    // 그대로 쓰고 리더를 소환하지 않으므로(waves.ts clash 분기), 뱀서류(카르곤)로 세운다.
+    const w = createWorld(0xc011b, vampireConfig());
+    expect(w.scrollRuntime).toBeUndefined();
     enterClash(w);
-    stepWorld(w, emptyInput());
+    stepWorld(w, emptyInput()); // 진입 틱 — 리더 + 정예 서지 소환
     const leader = markedEnemy(w, MID_CLASH_LEADER_MARK);
     if (leader === undefined) throw new Error('leader missing');
 

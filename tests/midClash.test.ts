@@ -22,6 +22,8 @@ import {
 } from '../src/sim/modes/midClash.js';
 import { SEGMENTS } from '../data/waves.js';
 import type { Entity } from '../src/sim/entities.js';
+import { buildRunConfig } from '../src/run/runConfig.js';
+import { defaultProfile } from '../src/save/profile.js';
 
 /** 격전 세그먼트 인덱스(데이터 파생 — 하드코딩 금지). */
 const CLASH_INDEX = SEGMENTS.findIndex((s) => s.clash === true);
@@ -166,5 +168,56 @@ describe('중반 격전 소환은 RNG 를 소비하지 않는다 (스트림 분�
     spawnMidClash(state, player);
     expect(state.entities.length).toBe(n);
     expect(leaders(state).length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (e) 강제 스크롤 모드 예외 — 격전이 거리 축 진행을 막아 세우지 않는다
+// ---------------------------------------------------------------------------
+
+describe('강제 스크롤 모드에서 격전은 거리 게이트를 가로채지 않는다', () => {
+  /**
+   * ## 왜 이 예외가 필요한가 (하네스 실측으로 발견)
+   * 블록격파·레이싱은 세그먼트 전진이 창 주파 **거리**에 묶여 있다. 격전만 **처치**로 게이트하면
+   * 두 축이 어긋난다 — 창은 모드 정체성상 계속 전진하는데 세그먼트는 리더를 잡을 때까지 멈춰서,
+   * 미리 깔아둔 코스(`SECTION_LENGTH × (SEGMENTS.length-1)` = 12,000)를 지나 벽도 부스트 패드도
+   * 없는 빈 공간으로 무한히 나아간다. 실제 앱 관측: 격전 진입 후 **5,700틱 동안 전진 0**,
+   * 진행도는 30,000 초과. 게다가 컬링 예외로 창에 결속된 리더가 그 내내 따라붙는다.
+   *
+   * 그래서 두 모드에서는 격전 세그먼트도 거리 게이트를 그대로 쓰고 리더를 소환하지 않는다.
+   * 이 테스트는 **정체가 재발하면 실패**한다.
+   */
+  it('블록격파 런이 격전 세그먼트에서 멈추지 않고 거리로 통과한다', () => {
+    // ⚠️ `planetMode` 는 행성 레지스트리에서 파생되므로 `DEFAULT_CONFIG` 에 planet 만 얹으면
+    // 스크롤 런타임이 서지 않는다. 프로덕션과 같은 조립(`buildRunConfig`)을 거쳐야 한다.
+    const state = createWorld(0xb10c, {
+      ...buildRunConfig(defaultProfile(), { planet: 5, stage: 1 }),
+      playerHp: 100_000_000,
+    });
+    expect(state.scrollRuntime).toBeDefined(); // 강제 스크롤 창이 있는 모드인지 먼저 확인
+    enterClash(state);
+    const startIndex = state.wave.segmentIndex;
+    // 창 전진만으로 통과해야 하므로 아무도 죽이지 않는다(무기 무력화) — 처치 게이트에 기대면
+    // 이 테스트가 예외를 검증하지 못한다.
+    state.weapon.damage = 0;
+    let advancedAt = -1;
+    for (let t = 0; t < 60 * 60 && advancedAt < 0; t++) {
+      stepWorld(state, emptyInput());
+      if (state.wave.segmentIndex > startIndex) advancedAt = t;
+    }
+    expect(advancedAt, '격전 세그먼트에서 거리 게이트로 전진하지 못했다(정체 재발)').toBeGreaterThanOrEqual(0);
+    // 리더를 아예 소환하지 않는다 — 창에 결속된 무적 추격자가 남지 않아야 한다.
+    expect(leaders(state).length).toBe(0);
+  });
+
+  it('뱀서류(비-스크롤)에서는 격전이 그대로 리더 처치 게이트다(예외가 과확산되지 않았다)', () => {
+    const state = createWorld(0xb10d, DURABLE);
+    expect(state.scrollRuntime).toBeUndefined();
+    enterClash(state);
+    const startIndex = state.wave.segmentIndex;
+    state.weapon.damage = 0; // 리더가 죽지 않으면 영원히 전진하지 않아야 한다
+    for (let t = 0; t < 60 * 30; t++) stepWorld(state, emptyInput());
+    expect(leaders(state).length).toBe(1);
+    expect(state.wave.segmentIndex).toBe(startIndex);
   });
 });

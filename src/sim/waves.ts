@@ -105,7 +105,11 @@ export function updateWaves(state: WorldState, player: Entity): void {
   // 여기서 소환하고 나서야 `segmentElapsed++` 를 지나 게이트를 평가하므로, "아직 리더가 없는데
   // cleared" 오판이 구조적으로 불가능하다(midClashCleared 주석). 소환은 RNG 미소비(summonEnemy)
   // 라 waveRng/eliteRng/dropRng 스트림이 밀리지 않는다 — 기존 카드 추첨 시퀀스가 그대로다.
-  if (seg.clash === true && w.segmentElapsed === 0) spawnMidClash(state, player);
+  // 중반 격전 소환은 **강제 스크롤 모드를 제외**한다(아래 cleared 분기의 게이트 제외와 같은
+  // 조건 — 둘은 반드시 함께 움직인다). 근거는 그쪽 주석 참조.
+  if (seg.clash === true && w.segmentElapsed === 0 && state.scrollRuntime === undefined) {
+    spawnMidClash(state, player);
+  }
 
   // 급행 소환 램프(ADR-0011): 세그먼트에 오래 머물수록(=처치 할당 미달) 유효 적 상한↑·
   // 카드 간격↓ 으로 압박을 누적한다. 정수 연산·RNG 미소비라 결정론 불변. 단 보스 세그먼트
@@ -155,7 +159,18 @@ export function updateWaves(state: WorldState, player: Entity): void {
     // 매 런 확정 등장하는 구조 비트라 모드와 무관하게 같은 규칙으로 서야 한다(모드별 리더의
     // 정체·연출 변형은 다운스트림, ADR-0032 §Consequences). 판정은 마커 엔티티 생존 스캔
     // 파생이라 WaveRuntime 신규 필드가 0 이다(계획 AC9/MAJ-3).
-    if (seg.clash === true) cleared = midClashCleared(state, w);
+    //
+    // ⚠️ **강제 스크롤 모드(블록격파·레이싱)는 예외**다. 그 두 모드는 세그먼트 전진이 창 주파
+    // **거리**에 묶여 있는데, 격전만 **처치**로 게이트하면 두 축이 어긋난다 — 창은 모드 정체성상
+    // 계속 전진하지만 세그먼트는 리더를 잡을 때까지 멈춰서, 창이 미리 깔아둔 코스 끝을 지나
+    // 벽도 부스트 패드도 없는 빈 공간으로 무한히 나아간다(하네스 실측: 격전 진입 후 5,700틱 동안
+    // 전진 0, 진행도는 코스 길이 12,000 을 넘어 30,000+). 게다가 컬링 예외로 창에 결속된 리더가
+    // 그 내내 따라붙어 사실상 런이 그 자리에서 끝난다.
+    // 그래서 두 모드에서는 격전 세그먼트도 **기존 거리 게이트를 그대로 쓰고**, 리더·서지를 아예
+    // 소환하지 않는다(위 spawnMidClash 게이트와 한 쌍). 세그먼트가 하나 늘어난 만큼 코스도
+    // `SEGMENTS.length - 1` 파생으로 한 구간 길어져 있어 거리 축은 이미 정합이다.
+    // 모드별 격전 변형(스크롤 창 정지 등)은 다운스트림이다(ADR-0032 §Consequences).
+    if (seg.clash === true && sw === undefined) cleared = midClashCleared(state, w);
     else if (sw !== undefined && state.config.planetMode === PLANET_MODE.blockBreak)
       cleared = blockBreakProgress(sw) >= (w.segmentIndex + 1) * BLOCKBREAK_SECTION_LENGTH;
     else if (sw !== undefined && state.config.planetMode === PLANET_MODE.racing)
