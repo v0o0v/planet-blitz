@@ -1,0 +1,4 @@
+# BGM 트랙 placeholder 디렉터리
+#
+# 실제 음악 파일(ogg+mp3)은 사람이 큐레이션해 여기 넣는다. assets/audio/CREDITS.md 참조.
+# 파일이 없어도 musicDirector 는 조용히 무음 처리하고 빌드는 통과한다(placeholder 계약).

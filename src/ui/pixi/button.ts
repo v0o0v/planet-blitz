@@ -8,6 +8,7 @@
 
 import { Container, Graphics, NineSliceSprite, Text, type Texture } from 'pixi.js';
 import { UI_FONT, TEXT_SHADOW } from './theme.js';
+import { playUi, type UiSoundCategory } from '../../render/uiSound.js';
 
 export interface ButtonOptions {
   texture?: Texture | null | undefined;
@@ -21,6 +22,11 @@ export interface ButtonOptions {
   /** 캡(좌우 9-slice 폭). 기본 30. */
   cap?: number;
   /**
+   * 탭 시 낼 UI 음 의미 범주(AC16 — UI 버스). 기본 `uiNavigate`(탭·이동). 확정/긍정/부정
+   * 버튼은 `uiConfirm`/`uiPositive`/`uiNegative` 를 넘겨 팔레트를 재사용한다.
+   */
+  sound?: UiSoundCategory;
+  /**
    * 라벨 색. 기본은 흰색 — 빨강/파랑처럼 어두운 버튼 기준이다. 노란 버튼(ui_btn_yellow)
    * 처럼 밝은 바탕에는 흰 글씨가 묻히므로 진한 갈색 등을 넘겨 대비를 확보한다.
    */
@@ -31,11 +37,14 @@ export class PixiButton {
   readonly container = new Container();
   private readonly labelText: Text;
   private readonly onClick: () => void;
+  /** 탭 시 낼 UI 음 범주(AC16). 기본 navigate. */
+  private readonly sound: UiSoundCategory;
   private enabled = true;
 
   constructor(opts: ButtonOptions) {
     const { width: w, height: h, cap = 30 } = opts;
     this.onClick = opts.onClick;
+    this.sound = opts.sound ?? 'uiNavigate';
 
     if (opts.texture) {
       const bg = new NineSliceSprite({
@@ -76,7 +85,9 @@ export class PixiButton {
     this.container.eventMode = 'static';
     this.container.cursor = 'pointer';
     this.container.on('pointertap', () => {
-      if (this.enabled) this.onClick();
+      if (!this.enabled) return;
+      playUi(this.sound); // AC16: UI 버스 피드백음(음소거·미주입이면 no-op).
+      this.onClick();
     });
     this.container.on('pointerover', () => {
       if (this.enabled) this.container.alpha = 0.85;
