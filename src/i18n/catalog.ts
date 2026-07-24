@@ -73,6 +73,8 @@ export const EN = {
   'item.rarity.magic': 'Magic',
   'item.rarity.rare': 'Rare',
   'item.rarity.unique': 'Unique',
+  'item.reqLevel': 'Req. Lv{n}',
+  'item.levelLocked': 'Requires ship Lv{n}',
 
   // --- 성계 지도 ---
   'planet.title': 'Star Map',
@@ -1329,6 +1331,8 @@ export const KO: Record<MessageKey, string> = {
   'item.rarity.magic': '매직',
   'item.rarity.rare': '레어',
   'item.rarity.unique': '유니크',
+  'item.reqLevel': '요구 레벨 Lv{n}',
+  'item.levelLocked': '기체 Lv{n} 필요',
 
   'planet.title': '성계 지도',
   'planet.sub': '행성과 침략 단계를 선택하라.',
