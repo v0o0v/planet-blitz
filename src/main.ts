@@ -26,6 +26,8 @@ import type { DefensePreviewControls } from './render/defensePreview.js';
 import { AutotileBackground, loadWangTiles } from './render/autotile.js';
 import type { WangTiles } from './render/autotile.js';
 import { FpsMeter } from './render/fpsMeter.js';
+import { graphicsTierController } from './render/graphicsRuntime.js';
+import { graphicsSettings } from './render/graphicsSettings.js';
 import { Radar } from './render/radar.js';
 import { UniqueCeremony } from './render/ceremony.js';
 import { InputController } from './input/controller.js';
@@ -1445,6 +1447,9 @@ async function main(): Promise<void> {
 
     // --- HUD (only during a live run) ---
     const f = fps.tick(frame);
+    // 품질 티어 런타임 감시(Phase 0 — AC-0.4): 평활 FPS·프레임 델타·수동 오버라이드를 넘겨
+    // 활성 티어를 갱신한다(롤링 창·판정 페이싱은 컨트롤러 소관). 활성 티어의 이펙트 소비는 후속 Phase.
+    graphicsTierController.tick(f, frame, graphicsSettings.getSettings().quality);
     frameCount++;
     if (w !== null) {
       const p = w.entities[0];

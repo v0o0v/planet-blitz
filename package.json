@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",
+    "pixi-filters": "^6.1.5",
     "pixi.js": "^8.6.6"
   },
   "devDependencies": {

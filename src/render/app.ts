@@ -28,6 +28,11 @@ export async function createGameApp(mount: HTMLElement): Promise<GameApp> {
 
   const app = new Application();
   await app.init({
+    // WebGL 고정(plan §AC-0.1; ADR-0031). WebGPU 는 규율 있는 글로우/후처리 파이프라인의
+    // 셰이더·블렌드 동작이 브라우저별로 갈려 검증 부담이 크다 — 이펙트 풍성화 전 구간을
+    // 단일 백엔드로 고정해 결정론적 렌더 동작을 확보한다. 픽셀 크리스프(nearest·AA off)는
+    // 그대로 보존한다.
+    preference: 'webgl',
     background: 0x0a0c14,
     resizeTo: window,
     antialias: false,

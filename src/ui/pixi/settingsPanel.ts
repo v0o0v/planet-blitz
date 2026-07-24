@@ -26,6 +26,7 @@ import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { nineSlicePanel, panelContent } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
 import { stripEmoji } from './text.js';
+import { graphicsSettings, type Quality } from '../../render/graphicsSettings.js';
 
 const LANG_KEY: Record<Locale, MessageKey> = {
   en: 'settings.lang.en',
@@ -310,6 +311,78 @@ export class SettingsScreen {
       content.addChild(b.container);
     });
     y += BTN_H + 26;
+
+    // 그래픽 품질 셀렉터(Phase 0 — plan §AC-0.7). 언어 버튼과 같은 관용구로 auto/low/med/high
+    // 4버튼을 그린다. 좁은 열이라 문구가 짧고(자동/낮음/보통/높음), 선택된 티어만 노란 버튼.
+    // 설정은 render-only(graphicsSettings 싱글턴에 저장만) — 이펙트 게이트 소비는 후속 phase.
+    const g = graphicsSettings.getSettings();
+    content.addChild(this.row(t('settings.graphics'), y, 0));
+    y += 34;
+    const qGap = 10;
+    const qW = Math.floor((CW - qGap * 3) / 4);
+    const qualities: ReadonlyArray<{ q: Quality; key: MessageKey }> = [
+      { q: 'auto', key: 'settings.quality.auto' },
+      { q: 'low', key: 'settings.quality.low' },
+      { q: 'med', key: 'settings.quality.med' },
+      { q: 'high', key: 'settings.quality.high' },
+    ];
+    qualities.forEach(({ q, key }, i) => {
+      const sel = q === g.quality;
+      const b = new PixiButton({
+        texture: this.ui[sel ? 'ui_btn_yellow.png' : 'ui_btn_wood.png'],
+        width: qW,
+        height: BTN_H,
+        label: stripEmoji(t(key)),
+        fontSize: 18,
+        ...(sel ? { labelColor: COLOR.darkLabel } : {}),
+        onClick: () => {
+          if (q === graphicsSettings.getSettings().quality) return;
+          graphicsSettings.setQuality(q);
+          this.render();
+        },
+      });
+      b.container.position.set(i * (qW + qGap), y);
+      content.addChild(b.container);
+    });
+    y += BTN_H + 26;
+
+    // 접근성 감소 토글 2종(모션·발광). 사운드 토글과 같은 on/off 관용구 — 켜짐(감소 활성)이면
+    // 노란 버튼. 광과민·멀미·저사양 대응이라 티어와 직교하며, 이 역시 저장만 한다.
+    const reducedRows: ReadonlyArray<{
+      key: MessageKey;
+      get: () => boolean;
+      set: (v: boolean) => void;
+    }> = [
+      {
+        key: 'settings.reducedMotion',
+        get: () => graphicsSettings.getSettings().reducedMotion,
+        set: (v) => graphicsSettings.setReducedMotion(v),
+      },
+      {
+        key: 'settings.reducedGlow',
+        get: () => graphicsSettings.getSettings().reducedGlow,
+        set: (v) => graphicsSettings.setReducedGlow(v),
+      },
+    ];
+    for (const { key, get, set } of reducedRows) {
+      const on = get();
+      content.addChild(this.row(t(key), y));
+      const toggle = new PixiButton({
+        texture: this.ui[on ? 'ui_btn_yellow.png' : 'ui_btn_wood.png'],
+        width: 150,
+        height: BTN_H,
+        label: stripEmoji(on ? t('settings.on') : t('settings.off')),
+        fontSize: 20,
+        ...(on ? { labelColor: COLOR.darkLabel } : {}),
+        onClick: () => {
+          set(!get());
+          this.render();
+        },
+      });
+      toggle.container.position.set(CW - 150, y);
+      content.addChild(toggle.container);
+      y += BTN_H + 26;
+    }
 
     const close = new PixiButton({
       texture: this.ui['ui_btn_wood.png'],

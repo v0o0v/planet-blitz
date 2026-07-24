@@ -11,7 +11,8 @@
 
 import type { GameAudio, AudioSettings } from '../render/audio.js';
 import { getLocale, setLocale, LOCALES, type Locale } from '../i18n/index.js';
-import { t } from '../i18n/index.js';
+import { t, type MessageKey } from '../i18n/index.js';
+import { graphicsSettings, type Quality } from '../render/graphicsSettings.js';
 
 const STYLE = `
 #pb-settings-btn { position:fixed; left:16px; top:14px; z-index:60; width:38px; height:38px; display:flex; align-items:center; justify-content:center; font-size:20px; cursor:pointer; color:#aab6d6; background:rgba(8,12,24,.72); border:1px solid #2a3552; border-radius:10px; transition:color .1s ease,border-color .1s ease,transform .1s ease; pointer-events:auto; }
@@ -92,6 +93,27 @@ export class SettingsPanel {
     this.panel.appendChild(this.row(t('settings.volume'), this.volumeSlider(s)));
     // 언어 전환.
     this.panel.appendChild(this.row(t('settings.language'), this.langButtons()));
+    // 그래픽 품질 셀렉터 + 접근성 감소 토글(Phase 0 — plan §AC-0.7). ADR-0014 로 사문화된 DOM
+    // 판이지만 컴파일 유지 중이라 Pixi 판과 1:1 동등하게 graphicsSettings 싱글턴에 미러링한다.
+    this.panel.appendChild(this.row(t('settings.graphics'), this.qualityButtons()));
+    this.panel.appendChild(
+      this.row(
+        t('settings.reducedMotion'),
+        this.reducedToggle(
+          () => graphicsSettings.getSettings().reducedMotion,
+          (v) => graphicsSettings.setReducedMotion(v),
+        ),
+      ),
+    );
+    this.panel.appendChild(
+      this.row(
+        t('settings.reducedGlow'),
+        this.reducedToggle(
+          () => graphicsSettings.getSettings().reducedGlow,
+          (v) => graphicsSettings.setReducedGlow(v),
+        ),
+      ),
+    );
 
     const close = document.createElement('button');
     close.className = 'pb-close';
@@ -162,5 +184,52 @@ export class SettingsPanel {
       wrap.appendChild(b);
     }
     return wrap;
+  }
+
+  /**
+   * 그래픽 품질 셀렉터(auto/low/med/high). 언어 버튼(`pb-langs`/`pb-lang`) 스타일을 재사용해
+   * Pixi 판과 동등하게 그린다. 선택값은 `graphicsSettings` 싱글턴에서 읽고 클릭 시 저장·재렌더.
+   */
+  private qualityButtons(): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'pb-langs';
+    const cur = graphicsSettings.getSettings().quality;
+    const quals: ReadonlyArray<{ q: Quality; key: MessageKey }> = [
+      { q: 'auto', key: 'settings.quality.auto' },
+      { q: 'low', key: 'settings.quality.low' },
+      { q: 'med', key: 'settings.quality.med' },
+      { q: 'high', key: 'settings.quality.high' },
+    ];
+    for (const { q, key } of quals) {
+      const b = document.createElement('button');
+      b.className = `pb-lang${q === cur ? ' sel' : ''}`;
+      b.textContent = t(key);
+      b.addEventListener('click', () => {
+        if (q === graphicsSettings.getSettings().quality) return;
+        graphicsSettings.setQuality(q);
+        this.render();
+      });
+      wrap.appendChild(b);
+    }
+    return wrap;
+  }
+
+  /**
+   * 접근성 감소 토글(모션·발광 공용). 음소거 토글(`pb-toggle`) 스타일 — 값이 켜짐(감소 활성)
+   * 이면 `on` 클래스. get/set 클로저로 두 토글이 각자 `graphicsSettings` 필드에 배선된다.
+   */
+  private reducedToggle(get: () => boolean, set: (v: boolean) => void): HTMLElement {
+    const btn = document.createElement('button');
+    const paint = (on: boolean): void => {
+      btn.className = `pb-toggle${on ? ' on' : ''}`;
+      btn.textContent = on ? t('settings.on') : t('settings.off');
+    };
+    paint(get());
+    btn.addEventListener('click', () => {
+      const next = !get();
+      set(next);
+      paint(next);
+    });
+    return btn;
   }
 }
