@@ -12,7 +12,7 @@
  * so they are drawn into a Graphics overlay from the current snapshot each frame.
  */
 
-import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
+import { Container, Graphics, Sprite, type Texture, type Filter } from 'pixi.js';
 import type { WorldSnapshot, EntitySnapshot } from '../sim/snapshot.js';
 import type { EntityKind } from '../sim/entities.js';
 import type { PlaceholderTextures } from './textures.js';
@@ -34,6 +34,13 @@ import {
 import { effectGates } from './qualityTier.js';
 import { graphicsSettings } from './graphicsSettings.js';
 import { graphicsTierController } from './graphicsRuntime.js';
+// Phase 3 발광체 글로우 배선 — 선행 레인 모듈(effects/glow.ts)을 소비만 한다(재작성 금지).
+// render-only(sim·hashWorld/hashEntity 무접촉, ADR-0005). glowLayer=스프라이트 아래·가산(AC-0.8).
+import { buildGlowHalo, createGlowBloomFilter, isGlowEmitter } from './effects/glow.js';
+// Phase 3 사망/해저드 이벤트 셰이더 배선 — 선행 레인 모듈(effects/shaderEffects.ts)을 소비만 한다
+// (재작성 금지). render-only(sim·hashWorld/hashEntity 무접촉, ADR-0005). 전부 eventShaders 게이트
+// (High 티어 전용) 뒤에 격리 — 저티어에선 기존 즉시 destroy·헤일로만 거동 유지(AC-3.6 폴백).
+import { ShockwaveEffect, DissolveEffect, ShimmerEffect } from './effects/shaderEffects.js';
 
 interface TrackedSprite {
   sprite: Sprite;
@@ -60,6 +67,13 @@ interface TrackedSprite {
 
 /** Sprite display diameter relative to the sim hitbox (art reads a bit larger). */
 const ART_SCALE = 1.5;
+/**
+ * 발광체 헤일로 외곽 반경 = 스프라이트 **표시 반경**(sprite.width/2)의 배수. >1 이라 빛이 코어
+ * 밖으로 새어 나온다(발광 룩). sim radius 가 아니라 표시 크기 기준인 이유: loot 의 sim radius 는
+ * 픽업 사거리(큰 값)라 glyph 크기와 어긋나기 때문(LOOT_SIZE 선례). placeholder, defer-balance-tuning
+ * (색온도·세기와 함께 출시 직전 일괄 조정).
+ */
+const GLOW_HALO_RADIUS_SCALE = 1.6;
 /** 히트 플래시 지속 프레임(2~3). placeholder, defer-balance-tuning. */
 const HIT_FLASH_FRAMES = 3;
 /** 히트 플래시 가산 오버레이 색(화이트). blendMode='add' 라 대상 실루엣을 흰빛으로 밝힌다(AC-2.3). */
@@ -71,6 +85,12 @@ const HIT_FLASH_ALPHA = 0.85;
  * `>=2` 를 "대형"으로 본다 — 잡몹(1) 폭발은 흔들림 제외. placeholder, defer-balance-tuning.
  */
 const BIG_EXPLOSION_SCALE = 2;
+/**
+ * 동시 디졸브(사망 지연 소멸) 상한(AC-3.4). 이 수를 넘는 사망은 디졸브로 넘기지 않고 즉시 destroy
+ * 한다 — 폭탄 밀도(수십 개 동시 사망)에서 필터 부착 스프라이트가 무한 누적하는 성능 붕괴를 막는
+ * 방어선이다. placeholder, defer-balance-tuning(출시 직전 프레임 예산으로 조정).
+ */
+const MAX_DISSOLVES = 12;
 /** render 벽시계 프레임 델타 상한(초) — 탭 복귀 spike 방어. ShardBurst.MAX_DT(0.05)와 정합. */
 const MAX_RENDER_DT = 0.05;
 /** 프레임 델타 nominal(초, 60Hz). 첫 프레임·비정상 dt 폴백값. */
@@ -313,6 +333,18 @@ function explosionScale(kind: EntityKind): number {
 }
 
 /**
+ * 스냅샷에 활성/예열 무관하게 **용암 해저드**(HAZARD_LAVA)가 하나라도 있는가(AC-3.2 히트 시머
+ * 게이트). 시머는 지속형이라 용암류가 화면에 있는 동안만 켜고(있으면 부착), 사라지면 detach 한다.
+ * render-only 순수 판정 — 스냅샷만 읽는다.
+ */
+function hasLavaHazard(curr: WorldSnapshot): boolean {
+  for (const e of curr.entities) {
+    if (e.kind === 'hazard' && e.enemyType === HAZARD_LAVA) return true;
+  }
+  return false;
+}
+
+/**
  * 회전하지 않는(고정 방향) kind 집합. 여기 없는 kind 는 이동 렌더 규약(`rotation = e.angle`)을
  * 따른다.
  *
@@ -419,6 +451,21 @@ export class EntityRenderer {
    * order 삽입, "glow=아래·폭발=위" 비대칭 규율(AC-0.8)은 생성자 주석이 정본이다.
    */
   private readonly glowLayer = new Container();
+  /**
+   * 발광체 id → glowLayer 헤일로 Container(AC-3.1). 발광체(isGlowEmitter)마다 하나를 유지한다:
+   * 첫 등장 시 {@link buildGlowHalo} 로 만들어 glowLayer.addChild, 매 프레임 엔티티 보간 위치로
+   * 미러(헤일로는 스프라이트와 별개 레이어라 좌표 동기 필요), 소멸·발광체 아님·헤일로 게이트
+   * off 시 removeChild+destroy. {@link sprites} 캐시와 평행한 생명주기다.
+   */
+  private readonly glowHalos = new Map<number, Container>();
+  /**
+   * High 티어 타이트 블룸 필터(AC-3.1) — **지연 1회 생성**해 캐시한다. undefined=아직 미생성,
+   * Filter=생성 성공, null=GL 부재/컴파일 실패 폴백(헤일로만, AC-3.6). 매 프레임 재생성 금지
+   * ({@link syncGlowBloom} 이 캐시·전이만 관리한다).
+   */
+  private glowBloom: Filter | null | undefined = undefined;
+  /** glowLayer.filters 에 블룸이 현재 붙어 있는지 — 게이트 전이 시에만 filters 배열을 재설정하기 위한 상태. */
+  private glowBloomAttached = false;
   private readonly spriteLayer = new Container();
   private readonly effectLayer = new Container();
   /**
@@ -427,6 +474,28 @@ export class EntityRenderer {
    * 돌려주면 effectLayer 에서 떼고 destroy 한다. render-only.
    */
   private readonly bursts: ShardBurst[] = [];
+  /**
+   * 살아 있는 충격파 링(ShockwaveEffect) 목록(AC-3.3). 보스·대형 폭발 킬 순간 {@link layer}(카메라
+   * 팬 레이어) 전체에 짧은 원형 왜곡을 건다. 저빈도(보스/대형)라 가독 레이어 순간 왜곡을 허용한다
+   * (plan 규율). 각 원샷은 `update(dt)` 가 false 를 돌려주면 destroy(자기 필터만 detach)+splice.
+   * eventShaders 게이트(High 티어) off 면 아예 생성되지 않는다.
+   */
+  private readonly shockwaves: ShockwaveEffect[] = [];
+  /**
+   * 사망 디졸브 중인 스프라이트 목록(AC-3.4). eventShaders on 이고 전투체(explosionScale>0)가 죽으면
+   * 즉시 destroy 대신 여기로 수명을 이관한다: 스프라이트는 spriteLayer 에 잔류한 채 {@link DissolveEffect}
+   * 가 디더 알파로 소멸시키고, 완료(update→false)되면 그때 sprite.destroy 한다. {@link sprites} Map
+   * 에서는 즉시 빼(중복 렌더·재추적 방지) 수명만 이 목록으로 넘긴다. {@link MAX_DISSOLVES} 초과분은
+   * 이관하지 않고 즉시 destroy(폭탄 밀도 성능 방어).
+   */
+  private readonly dyingSprites: { sprite: Sprite; effect: DissolveEffect }[] = [];
+  /**
+   * 용암 해저드 히트 시머(AC-3.2) — 지속형. eventShaders on 이고 스냅샷에 용암 해저드가 있는 동안만
+   * {@link overlay}(해저드/빔/예고선 Graphics)에 국소 변위 필터를 부착한다. 용암이 사라지거나 게이트
+   * 가 꺼지면 detach 하고 null 로 되돌린다. null = 미부착. GL 부재(node)면 필터가 null 폴백이라
+   * update 가 no-op 이지만 부착/detach 수명은 동일하게 관리된다(AC-3.6).
+   */
+  private shimmer: ShimmerEffect | null = null;
   /** 화면 흔들림 트라우마 컨트롤러(AC-2.1). render-only 파생 — sim 되먹임 없음(카메라 오프셋만). */
   private readonly trauma = new TraumaController();
   /** 직전 render 벽시계(ms). 프레임 델타 자체 추적용(render 는 dt 를 받지 않음). undefined=첫 프레임. */
@@ -500,6 +569,33 @@ export class EntityRenderer {
     return n;
   }
 
+  /**
+   * 현재 살아 있는 충격파 링 개수(AC-3.3). **읽기 전용 관측창** — 보스·대형 폭발 킬이 실제로
+   * 충격파를 방출하는지, eventShaders off 에선 하나도 안 생기는지 자동 통합 테스트가 수치로
+   * 확인하게 노출한다. 렌더 거동에는 관여하지 않는다.
+   */
+  get shockwaveCount(): number {
+    return this.shockwaves.length;
+  }
+
+  /**
+   * 현재 디졸브 소멸 중인 스프라이트 개수(AC-3.4). **읽기 전용 관측창** — eventShaders on 에서
+   * 전투체 사망이 즉시 destroy 되지 않고 디졸브로 이관되는지(그리고 완료 후 정리되는지)를 자동
+   * 통합 테스트가 수치로 확인하게 노출한다. 렌더 거동에는 관여하지 않는다.
+   */
+  get dyingCount(): number {
+    return this.dyingSprites.length;
+  }
+
+  /**
+   * 용암 해저드 시머가 현재 부착돼 있는가(AC-3.2). **읽기 전용 관측창** — 용암 스냅샷 + High 티어
+   * 에서 시머가 붙고, 용암이 없거나 게이트 off 면 떨어지는지 자동 통합 테스트가 확인하게 노출한다.
+   * 렌더 거동에는 관여하지 않는다.
+   */
+  get shimmerActive(): boolean {
+    return this.shimmer !== null;
+  }
+
   /** 스냅샷 1건의 텍스처. 매핑 판단은 순수 함수({@link spriteSlotFor})가 하고 여기서는 해석만 한다. */
   private textureFor(e: EntitySnapshot): Texture {
     return resolveSpriteSlot(this.textures, spriteSlotFor(e.kind, e.enemyType, this.planet));
@@ -518,12 +614,32 @@ export class EntityRenderer {
     if (!Number.isFinite(dt) || dt <= 0) dt = NOMINAL_DT;
     else if (dt > MAX_RENDER_DT) dt = MAX_RENDER_DT;
 
-    // 이펙트 게이트(티어 × 감소 토글) — 프레임당 1회만 산출해 흔들림·히트 플래시가 공유한다.
+    // 이펙트 게이트(티어 × 감소 토글) — 프레임당 1회만 산출해 흔들림·히트 플래시·발광이 공유한다.
     const gates = effectGates(graphicsTierController.getActiveTier(), graphicsSettings.getSettings());
+
+    // 발광체 블룸(High 티어 1패스, AC-3.1) — 필터는 지연 1회 생성해 캐시하고 게이트 전이 시점에만
+    // glowLayer.filters 를 재설정한다(매 프레임 재생성/재배열 금지). null 폴백(GL 없음)이면 헤일로만.
+    this.syncGlowBloom(gates.bloom);
+    // 헤일로 게이트가 꺼지면(Low·reducedGlow) 남은 헤일로를 전부 회수한다(발광 0). 켜져 있으면
+    // 엔티티 루프가 발광체별로 헤일로를 생성·미러하고, 킬 루프가 소멸분을 제거한다.
+    if (!gates.halo) this.clearGlowHalos();
 
     this.drawOverlay(curr);
     this.drawFieldOverlays(curr);
     this.updateBursts(dt);
+    // 이벤트 셰이더 원샷 진행(충격파·디졸브) — updateBursts 와 동형. 이번 프레임에 킬 루프가 새로
+    // 생성하는 원샷은 다음 프레임부터 진행된다(생성 시점이 이 호출 뒤라 dt 이중 적용 없음).
+    this.updateShockwaves(dt);
+    this.updateDyingSprites(dt);
+    // 용암 해저드 히트 시머(지속형, AC-3.2) — eventShaders on 이고 용암이 화면에 있는 동안만 부착.
+    // overlay 는 이미 이번 프레임 drawOverlay 로 다시 그려졌다(시머는 그 위 필터).
+    this.syncShimmer(gates.eventShaders && hasLavaHazard(curr), dt);
+
+    // 카메라 팬(순수 보간) — 킬 루프의 충격파 center(스크린 정규화) 계산에 미리 쓰고, 프레임 끝에서
+    // 흔들림 오프셋만 더해 layer.position 에 적용한다. prev/curr/alpha 만의 함수라 위치를 앞당겨도
+    // 결과가 불변이다(트라우마 흔들림 sh 만 루프 뒤에서 가산).
+    const camX = prev.cameraX + (curr.cameraX - prev.cameraX) * alpha;
+    const camY = prev.cameraY + (curr.cameraY - prev.cameraY) * alpha;
 
     const prevById = new Map<number, EntitySnapshot>();
     for (const e of prev.entities) prevById.set(e.id, e);
@@ -646,6 +762,11 @@ export class EntityRenderer {
           tracked.flashOverlay = null;
         }
       }
+
+      // 발광체 헤일로(glowLayer, 스프라이트 아래·가산, AC-3.1) — 게이트 on 이고 발광체일 때만
+      // 유지한다. 헤일로는 스프라이트와 별개 레이어라 보간 위치를 매 프레임 미러한다. 탄·적
+      // 실루엣은 isGlowEmitter=false 라 헤일로가 없다(탄막 가독성 계약).
+      if (gates.halo && isGlowEmitter(e.kind)) this.syncGlowHalo(e.id, tracked.sprite);
     }
 
     for (const [id, tracked] of this.sprites) {
@@ -661,18 +782,35 @@ export class EntityRenderer {
         } else if (tracked.elite) {
           this.trauma.addTrauma(TRAUMA_ELITE_KILL);
         }
-        // children:true 로 파괴 — 히트 플래시 오버레이·낙하산 등 소유 자식까지 함께 회수(누수 0).
-        tracked.sprite.destroy({ children: true });
+        // 충격파 링(AC-3.3) — eventShaders on 이고 대형(보스류=3·설비/기물=2, 즉 scale>=대형임계)
+        // 킬만. layer(카메라 팬 레이어) 전체에 짧은 원형 왜곡. center 는 킬 월드 위치의 스크린
+        // 정규화(camX/camY 는 위에서 선계산). 잡몹(scale 1)은 제외.
+        if (gates.eventShaders && scale >= BIG_EXPLOSION_SCALE) {
+          this.spawnShockwave(tracked.sprite.x, tracked.sprite.y, camX, camY);
+        }
+        // 발광체 헤일로는 스프라이트 생사와 무관하게 즉시 회수(디졸브로 넘겨도 헤일로는 남기지
+        // 않는다 — 발광은 살아있는 발광체만). 발광체가 아니었으면 no-op.
+        this.removeGlowHalo(id);
+        // 사망 디졸브(AC-3.4) — eventShaders on 이고 전투체(scale>0)면 즉시 destroy 대신 디졸브로
+        // 수명을 이관해 스프라이트를 spriteLayer 에 잠깐 잔류시키며 디더 소멸시킨다. 상한 초과분·
+        // gem/loot(scale 0)·저티어(eventShaders off)는 기존대로 즉시 destroy. 어느 경로든 sprites
+        // Map 에서는 즉시 빼(중복 렌더·재추적 방지) 수명만 갈라진다.
+        if (gates.eventShaders && scale > 0 && this.dyingSprites.length < MAX_DISSOLVES) {
+          // 이관: spriteLayer 에 그대로 두고(destroy 하지 않음) 디졸브 필터만 붙인다. sprite 는
+          // 이제 dyingSprites 가 소유하며, 디졸브 완료 시 updateDyingSprites 가 destroy 한다.
+          this.dyingSprites.push({ sprite: tracked.sprite, effect: new DissolveEffect(tracked.sprite) });
+        } else {
+          // children:true 로 파괴 — 히트 플래시 오버레이·낙하산 등 소유 자식까지 함께 회수(누수 0).
+          tracked.sprite.destroy({ children: true });
+        }
         this.sprites.delete(id);
       }
     }
 
-    // 카메라 팬 + 화면 흔들림(AC-2.1). 카메라는 보간된 render-only 파생(sim 무권위)이라 흔들림
-    // 오프셋을 그 위에 가산해도 sim 되먹임이 없다. 이 프레임에 누적된 트라우마(피격·처치·대형
-    // 폭발)가 같은 프레임에 반영되도록 엔티티/킬 루프 **뒤**에서 적용한다. drawOverlay/필드
+    // 화면 흔들림(AC-2.1)만 프레임 끝에서 카메라에 가산. 카메라 팬(camX/camY)은 위에서 선계산했고
+    // (render-only 파생·sim 무권위), 이 프레임에 누적된 트라우마(피격·처치·대형 폭발)가 같은
+    // 프레임에 반영되도록 엔티티/킬 루프 **뒤**에서 흔들림 오프셋을 더한다. drawOverlay/필드
     // 오버레이는 layer 자식에 월드 좌표로 그리므로 position 설정 시점과 무관하다.
-    const camX = prev.cameraX + (curr.cameraX - prev.cameraX) * alpha;
-    const camY = prev.cameraY + (curr.cameraY - prev.cameraY) * alpha;
     const sh = this.trauma.tick(dt, gates.shake);
     this.layer.position.set(DESIGN_WIDTH / 2 - camX + sh.dx, DESIGN_HEIGHT / 2 - camY + sh.dy);
   }
@@ -704,6 +842,151 @@ export class EntityRenderer {
         this.bursts.splice(i, 1);
       }
     }
+  }
+
+  /**
+   * 충격파 링 1개를 {@link layer}(카메라 팬 레이어) 전체에 건다(AC-3.3). GL 있으면 필터의 원형
+   * 왜곡, node/폴백이면 layer 자식으로 팽창 링 Graphics(AC-3.6). center 는 킬 월드 위치를 스크린
+   * 정규화(0..1)한 값 — layer 는 스크린좌표 = 월드 + (DESIGN/2 - cam) 이므로 그 사상으로 구한다.
+   * 폴백 링은 layer 자식(월드 좌표계)이라 fallbackCenterPx 는 킬 월드 좌표 그대로 넘긴다. 룩
+   * 파라미터(durationS/amplitude/width)는 shockwave-thick-slow 승격 기본값(placeholder).
+   */
+  private spawnShockwave(worldX: number, worldY: number, camX: number, camY: number): void {
+    const sx = (worldX + DESIGN_WIDTH / 2 - camX) / DESIGN_WIDTH;
+    const sy = (worldY + DESIGN_HEIGHT / 2 - camY) / DESIGN_HEIGHT;
+    const cx = sx < 0 ? 0 : sx > 1 ? 1 : sx;
+    const cy = sy < 0 ? 0 : sy > 1 ? 1 : sy;
+    this.shockwaves.push(
+      new ShockwaveEffect(this.layer, { center: [cx, cy], fallbackCenterPx: [worldX, worldY] }),
+    );
+  }
+
+  /**
+   * 살아 있는 충격파를 dt 만큼 진행하고, 원샷이 끝난 것(update→false)은 destroy(자기 필터/폴백 링만
+   * 제거, 다른 필터 보존)+splice 한다. updateBursts 와 동형 수명 관리.
+   */
+  private updateShockwaves(dt: number): void {
+    for (let i = this.shockwaves.length - 1; i >= 0; i--) {
+      const s = this.shockwaves[i];
+      if (s === undefined) continue;
+      if (!s.update(dt)) {
+        s.destroy();
+        this.shockwaves.splice(i, 1);
+      }
+    }
+  }
+
+  /**
+   * 디졸브 소멸 중인 스프라이트를 dt 만큼 진행하고, 소멸 완료(update→false)면 그때 필터를 떼고
+   * (effect.destroy) 스프라이트를 destroy({children:true})해 spriteLayer 에서 회수한다(누수 0).
+   * effect.destroy 는 대상 표시 객체를 파괴하지 않으므로(호출측 소유), 여기서 sprite 도 함께 destroy.
+   */
+  private updateDyingSprites(dt: number): void {
+    for (let i = this.dyingSprites.length - 1; i >= 0; i--) {
+      const d = this.dyingSprites[i];
+      if (d === undefined) continue;
+      if (!d.effect.update(dt)) {
+        d.effect.destroy();
+        d.sprite.destroy({ children: true });
+        this.dyingSprites.splice(i, 1);
+      }
+    }
+  }
+
+  /**
+   * 용암 시머(지속형, AC-3.2)를 게이트·용암 유무에 맞춰 부착/detach 하고, 부착돼 있으면 uTime 을
+   * 진행한다. `want` = eventShaders on AND 용암 해저드 존재. 전이 시점에만 attach/detach 하고
+   * (매 프레임 재생성 금지), 부착 상태면 매 프레임 update(node/폴백이면 no-op).
+   */
+  private syncShimmer(want: boolean, dt: number): void {
+    if (want && this.shimmer === null) {
+      this.shimmer = new ShimmerEffect(this.overlay);
+    } else if (!want && this.shimmer !== null) {
+      this.shimmer.detach();
+      this.shimmer = null;
+    }
+    if (this.shimmer !== null) this.shimmer.update(dt);
+  }
+
+  /** 살아 있는 충격파를 전부 destroy 하고 목록을 비운다(reset·destroy 정리). 자기 필터만 detach. */
+  private clearShockwaves(): void {
+    for (const s of this.shockwaves) s.destroy();
+    this.shockwaves.length = 0;
+  }
+
+  /**
+   * 디졸브 중인 스프라이트를 전부 정리한다(reset·destroy). 각 필터를 떼고 스프라이트를
+   * destroy({children:true})해 spriteLayer 잔류분까지 회수한다(누수 0).
+   */
+  private clearDyingSprites(): void {
+    for (const d of this.dyingSprites) {
+      d.effect.destroy();
+      d.sprite.destroy({ children: true });
+    }
+    this.dyingSprites.length = 0;
+  }
+
+  /** 용암 시머를 detach 하고 null 로 되돌린다(reset·destroy). 미부착이면 no-op. */
+  private clearShimmer(): void {
+    if (this.shimmer !== null) {
+      this.shimmer.detach();
+      this.shimmer = null;
+    }
+  }
+
+  /**
+   * High 티어 발광체 블룸(AC-3.1)을 glowLayer.filters 로 관리한다. 필터는 **지연 1회 생성**해
+   * ({@link glowBloom}) 캐시하고, 게이트 전이 시점에만 filters 배열을 재설정한다 — 매 프레임
+   * 재생성/재배열하면 필터 시스템이 불필요하게 재빌드된다. GL 부재/컴파일 실패(null 폴백)면
+   * 아무것도 붙이지 않아 헤일로만 남는다(AC-3.6, headless node 안전).
+   */
+  private syncGlowBloom(want: boolean): void {
+    if (want && !this.glowBloomAttached) {
+      // 지연 생성: 처음 필요할 때 딱 한 번. 이후 null(폴백)이어도 undefined 가 아니라 재호출 없음.
+      if (this.glowBloom === undefined) this.glowBloom = createGlowBloomFilter();
+      if (this.glowBloom !== null) {
+        this.glowLayer.filters = [this.glowBloom];
+        this.glowBloomAttached = true;
+      }
+      // null 폴백이면 attach 하지 않는다 — 헤일로만으로 계속(캐시된 null 유지, 재생성 안 함).
+    } else if (!want && this.glowBloomAttached) {
+      this.glowLayer.filters = [];
+      this.glowBloomAttached = false;
+    }
+  }
+
+  /**
+   * 발광체 하나의 헤일로를 유지·미러한다(AC-3.1). 첫 등장 시 스프라이트 **표시 반경**(sprite.width/2)
+   * 기반으로 {@link buildGlowHalo} 를 만들어 glowLayer(스프라이트 아래·가산)에 붙이고, 매 프레임
+   * 스프라이트의 보간 위치로 옮긴다(별개 레이어라 좌표 동기 필요). 반경을 sim radius 가 아니라
+   * 실제 표시 크기에서 파생하는 이유는 {@link GLOW_HALO_RADIUS_SCALE} 주석 참조.
+   */
+  private syncGlowHalo(id: number, sprite: Sprite): void {
+    let halo = this.glowHalos.get(id);
+    if (halo === undefined) {
+      halo = buildGlowHalo((sprite.width / 2) * GLOW_HALO_RADIUS_SCALE);
+      this.glowLayer.addChild(halo);
+      this.glowHalos.set(id, halo);
+    }
+    halo.position.set(sprite.x, sprite.y);
+  }
+
+  /** 발광체 헤일로 하나를 glowLayer 에서 떼고 destroy 한다(소멸 회수). 헤일로가 없으면 no-op. */
+  private removeGlowHalo(id: number): void {
+    const halo = this.glowHalos.get(id);
+    if (halo === undefined) return;
+    this.glowLayer.removeChild(halo);
+    halo.destroy({ children: true });
+    this.glowHalos.delete(id);
+  }
+
+  /** 모든 발광체 헤일로를 회수한다(게이트 off·리셋·파괴). glowLayer 컨테이너 자체는 살려 둔다. */
+  private clearGlowHalos(): void {
+    for (const halo of this.glowHalos.values()) {
+      this.glowLayer.removeChild(halo);
+      halo.destroy({ children: true });
+    }
+    this.glowHalos.clear();
   }
 
   private drawOverlay(curr: WorldSnapshot): void {
@@ -774,6 +1057,18 @@ export class EntityRenderer {
     // (defensePreviewFrame 계약). 트라우마·프레임 시계도 초기화해 잔류 흔들림·dt spike 를 막는다.
     for (const b of this.bursts) b.destroy();
     this.bursts.length = 0;
+    // 이벤트 셰이더 원샷·지속형 전량 정리(누수 0) — 충격파 필터/폴백 링 detach, 디졸브 중인
+    // 스프라이트(spriteLayer 잔류분) destroy, 시머 detach. 다른 월드(런/프리뷰) 좌표의 왜곡·소멸
+    // 잔류를 막는다(defensePreviewFrame 계약, ShardBurst 와 동일 정신).
+    this.clearShockwaves();
+    this.clearDyingSprites();
+    this.clearShimmer();
+    // 발광체 헤일로 전량 회수 + 블룸 필터 해제(누수 0). 캐시된 블룸 필터 인스턴스(this.glowBloom)는
+    // 살려 둔다 — 렌더러는 런 사이 재사용되고 필터 재생성은 비싸다. 다음 런 첫 프레임에 게이트가
+    // 켜지면 syncGlowBloom 이 캐시된 필터를 다시 붙인다(glowBloomAttached 로 전이만 관리).
+    this.clearGlowHalos();
+    this.glowLayer.filters = [];
+    this.glowBloomAttached = false;
     this.trauma.reset();
     this.lastFrameMs = undefined;
     this.overlay.clear();
@@ -786,6 +1081,17 @@ export class EntityRenderer {
     this.sprites.clear();
     for (const b of this.bursts) b.destroy();
     this.bursts.length = 0;
+    // 이벤트 셰이더 정리 — overlay/layer.destroy **전**에 필터를 명시 detach 한다(Container.destroy
+    // 는 filters 를 파괴하지 않는다). 시머=overlay 필터, 충격파=layer 필터, 디졸브=spriteLayer 잔류.
+    this.clearShockwaves();
+    this.clearDyingSprites();
+    this.clearShimmer();
+    // 발광체 헤일로·블룸 필터를 명시 회수한다(Container.destroy 는 filters 를 파괴하지 않는다).
+    this.clearGlowHalos();
+    this.glowLayer.filters = [];
+    if (this.glowBloom) this.glowBloom.destroy();
+    this.glowBloom = undefined;
+    this.glowBloomAttached = false;
     this.overlay.destroy();
     this.fog.destroy();
     this.layer.destroy({ children: true });
