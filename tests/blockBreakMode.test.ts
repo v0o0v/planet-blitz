@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
+import { createWorld, stepWorld, emptyInput, packPowerupPick } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig, WorldState } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
@@ -26,6 +26,7 @@ import { blankEntity, spawnBreakableWall, spawnBullet } from '../src/sim/entitie
 import type { Entity, EntitySink } from '../src/sim/entities.js';
 import { INVASION_WINDOW_HALF_W } from '../src/sim/invasion/scroll.js';
 import { SEGMENTS } from '../data/waves.js';
+import { MID_CLASH_LEADER_MARK } from '../src/sim/modes/midClash.js';
 import {
   blockBreakProgress,
   blockBreakSection,
@@ -57,6 +58,17 @@ function durableBlockBreak(): WorldConfig {
 
 function runTicks(state: WorldState, ticks: number, input: InputFrame = idle): void {
   for (let i = 0; i < ticks; i++) stepWorld(state, input);
+}
+
+/**
+ * 한 틱 진행하되 **레벨업 프리즈를 자동 해소**한다(`racingMode.test.ts` 의 `stepRacing` 과
+ * 동일한 정본 패턴). idle 파일럿도 오토어택으로 적을 잡아 결국 레벨업하는데, 픽을 주지 않으면
+ * `stepWorld` 가 최상단 가드에서 `tick++` 만 하고 즉시 return 해 **월드가 통째로 언다** —
+ * 창 전진(accelCp 포함)까지 멈추므로 코스가 영영 끝나지 않는다. 픽(0)을 넣어 즉시 해소한다.
+ */
+function stepBlockBreak(state: WorldState, base: InputFrame = idle): void {
+  const input = state.pendingLevelUp ? { ...emptyInput(), special: packPowerupPick(0) } : base;
+  stepWorld(state, input);
 }
 
 function emptySink(): EntitySink {
@@ -237,11 +249,30 @@ describe('블록격파 — 정규경로 통합(배선 실도달)', () => {
     expect(seen.size).toBeGreaterThan(1); // 여러 구간을 실제로 전진(정체 아님)
   });
 
+  /**
+   * 중반 격전(ADR-0032) 세그먼트는 **리더 처치**로만 전진한다. 유휴 입력 런은 강화 정예
+   * (HP×8)를 깎을 화력이 없으므로, 코스 배선을 보려는 테스트에서는 리더가 뜨는 즉시
+   * `compact` 의 처치 규율(`hp<=0` → `dead` → kills++)대로 처치를 대역한다.
+   *
+   * ⚠️ 예전에는 이 대역이 없어도 통과했다 — 강제 스크롤 컬링이 리더를 **hp>0 인 채로** 지워
+   * 격전 세그먼트가 **공짜 통과**했기 때문이다(리뷰 HIGH-2). 그 결함을 막은 뒤로는 어떤 런도
+   * 리더를 실제로 잡아야 하므로 대역이 필요하다.
+   */
+  function killClashLeader(w: WorldState): void {
+    const leader = w.entities.find(
+      (e) => e.kind === 'enemy' && !e.dead && e.aux1 === MID_CLASH_LEADER_MARK,
+    );
+    if (leader === undefined) return;
+    leader.hp = 0;
+    leader.dead = true;
+  }
+
   it('(d)(e) 코스 끝에서 보스가 소환되고 처치 시 공통 승리(compact 재사용)로 victory 가 선다', () => {
     const w = createWorld(9, durableBlockBreak());
     let boss: Entity | undefined;
     for (let i = 0; i < 1600; i++) {
-      stepWorld(w, idle);
+      stepBlockBreak(w);
+      killClashLeader(w); // 위 헬퍼 주석 참조(격전 세그먼트는 리더 처치로만 전진한다).
       boss = w.entities.find((e) => e.kind === 'boss');
       if (boss !== undefined) break;
     }
@@ -257,7 +288,7 @@ describe('블록격파 — 정규경로 통합(배선 실도달)', () => {
     for (let i = 0; i < 30 && !w.victory; i++) {
       const b = w.entities.find((e) => e.kind === 'boss');
       if (b !== undefined) spawnBullet(w, b.x, b.y, 0, 0, 1_000_000, 0, b.radius + 100, 120, 1, 0);
-      stepWorld(w, idle);
+      stepBlockBreak(w);
     }
     expect(w.victory).toBe(true);
   });

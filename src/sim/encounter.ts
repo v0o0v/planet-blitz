@@ -141,9 +141,25 @@ export function rollEncounter(worldRng: SeededRng, allowWarp: boolean): Encounte
 /**
  * 스폰 틱 도달 시 조우 오브젝트 1개를 플레이어 곁 고정 오프셋에 스폰한다(런당 1회, state
  * 게이트). maybeSpawnEcho 선례 — **RNG 미소비·고정 좌표**라 웨이브·드랍 시퀀스를 밀지
- * 않는다. 유형에 따라 포탈(보물 격실) 또는 제단(오스카 제단)을 놓고, 오브젝트가 필요 없는
- * 인라인 유형(파편우·보급선단·봉인 수호자)은 여기서 오브젝트를 만들지 않고 state 만 1 로
- * 올려 경량 조우 모듈이 스스로 연출을 세우게 한다.
+ * 않는다.
+ *
+ * ## 오브젝트가 서는 유형 / 서지 않는 유형
+ * 포탈(보물 격실) · 제단(오스카 제단) · **봉인(봉인 수호자)** 은 전부 월드 오브젝트를 세운다.
+ * 근접 판정(`ENCOUNTER_INTERACT_RADIUS`)이 **실체**를 갖는 유형이 정확히 이 셋이기 때문이다.
+ *
+ * ⚠️ 봉인이 없던 시절의 결함(리뷰 MEDIUM-4): 수호자는 `entityId = 0` 이라 근접 판정 헬퍼가
+ * "오브젝트 없음 → 무조건 근접"으로 폴백했고, 그 결과 "봉인 근접 + ENTER" 계약이 실제로는
+ * **"ENTER 만"** 이었다. 화면에 아무것도 없는데 키 한 번으로 임의 위치에서 HP ×12 미니보스가
+ * 튀어나오는, opt-in 계약(ADR-0033: 진입은 자발적이고 위치가 보여야 공정하다)의 정면 위반이다.
+ * 봉인 실체를 세워 "보이는 것을 향해 다가가 누른다"를 코드로 강제한다.
+ *
+ * 봉인은 **신규 kind 를 만들지 않고 `encounterPortal` kind 를 재사용**한다 — `KIND_CODE` 는
+ * append-only 해시 계약이라 신규 kind 는 골든(`tests/invasionHash.test.ts`) 재생성을 강제하는데,
+ * 여기서 필요한 것은 "inert 한 근접 판정 실체" 하나뿐이고 포탈이 정확히 그것이다. 연출 구분이
+ * 필요한 렌더 층은 kind 가 아니라 `state.encounterRuntime.type`(= sealedGuardian)으로 가른다.
+ *
+ * 나머지 인라인 2종(파편우·보급선단)만 오브젝트 없이 state 를 1 로 올린다 — 그 둘은 근접
+ * 판정 자체가 없고(입력을 요구하지 않는다) 거부 대기 창으로만 게이트된다.
  */
 function maybeSpawnEncounter(state: WorldState, player: Entity): void {
   const rt = state.encounterRuntime;
@@ -151,12 +167,12 @@ function maybeSpawnEncounter(state: WorldState, player: Entity): void {
   if (state.tick < rt.spawnTick) return;
   const x = player.x + ENCOUNTER_SPAWN_OFFSET;
   const y = player.y;
-  if (rt.type === ENCOUNTER_TYPE.treasureVault) {
+  if (rt.type === ENCOUNTER_TYPE.treasureVault || rt.type === ENCOUNTER_TYPE.sealedGuardian) {
     rt.entityId = spawnEncounterPortal(state, x, y, ENCOUNTER_OBJECT_RADIUS).id;
   } else if (rt.type === ENCOUNTER_TYPE.oscarAltar) {
     rt.entityId = spawnEncounterAltar(state, x, y, ENCOUNTER_OBJECT_RADIUS).id;
   }
-  // 그 외 유형은 오브젝트 없이 출현 상태만 세운다(entityId = 0 유지).
+  // 인라인 2종(파편우·보급선단)은 오브젝트 없이 출현 상태만 세운다(entityId = 0 유지).
   rt.state = 1;
 }
 

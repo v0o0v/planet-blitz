@@ -32,6 +32,7 @@
  * ## rt.aux 패킹 규약 (정수 1개 — 전 유형 공용, 해시 대상)
  * ```
  *   비트 0..7    카운터 A  — shardRain: 스폰한 파편 수 / ghostConvoy: 스폰한 보급선 수
+ *                            / sealedGuardian: **마지막 생존 관측 시점의 state.kills 하위 8비트**
  *   비트 8..15   카운터 B  — shardRain: 크레딧 정산이 끝난 수집 수 / sealedGuardian: 처치 수
  *   비트 16..17  제단 선택 인덱스(0..3) — oscarAltar 전용
  *   비트 18      플래그 ①  — 개방/스폰 완료(수호자 봉인 개방·선단 스폰)
@@ -39,6 +40,8 @@
  * ```
  * 카운터는 8비트(0..255)다 — 아래 개수 상수는 전부 그보다 훨씬 작은 플레이스홀더이며, 늘릴
  * 때는 폭이 아니라 **상수를 이 범위 안에서** 조정한다(폭을 바꾸면 해시 의미가 갈린다).
+ * 수호자의 카운터 A 만 "개수"가 아니라 **처치 영수증 지문**이다(비트 폭·필드 수는 그대로 —
+ * `stepGuardian` 의 "공짜 보상 차단" 문단이 정본).
  *
  * ## 순환 의존 주의
  * `world.ts` → `encounter.ts` → 이 파일 순으로 런타임 import 되므로, 이 파일은 `world.ts` 와
@@ -64,6 +67,7 @@ import { ENEMY_BY_TYPE } from '../../../data/enemies.js';
 import {
   ENCOUNTER_TYPE,
   ENCOUNTER_INTERACT_RADIUS,
+  ENCOUNTER_DECLINE_WINDOW_TICKS,
   SPECIAL_ENCOUNTER_ENTER,
   SPECIAL_ENCOUNTER_DECLINE,
   SPECIAL_ENCOUNTER_ALTAR_PICK,
@@ -247,12 +251,31 @@ export const GHOST_CONVOY_HP = 120;
 export const GHOST_CONVOY_LIFE_TICKS = 900;
 /** 보급선 횡단 속도(units/second — 기존 supply 와 같은 축). TODO(밸런스). */
 export const GHOST_CONVOY_SPEED = 220;
-/** 편대 스폰 X 오프셋(플레이어 기준 — 오른쪽에서 등장해 왼쪽으로 흐른다). TODO(밸런스). */
-export const GHOST_CONVOY_SPAWN_X = 900;
+/**
+ * 편대 스폰 X 오프셋(플레이어 기준 — 오른쪽에서 등장해 왼쪽으로 흐른다).
+ *
+ * ⚠️ **구조적 부등식(밸런스 아님 — 엔티티 존재 경계 조건, 리뷰 MEDIUM-1)**:
+ * ```
+ *   GHOST_CONVOY_SPAWN_X + (GHOST_CONVOY_COUNT − 1) × GHOST_CONVOY_STAGGER_X
+ *     <  OFFSCREEN_X + 120           ( = 1100 + 120 = 1220 )
+ * ```
+ * 우변은 `stepSupply`(world.ts)의 despawn 경계 `Math.abs(e.x − player.x) > OFFSCREEN_X + 120`
+ * 다. 그리고 `stepSupply` 는 같은 틱에 `stepEncounter` **뒤에** 돈다 — 즉 경계를 넘겨 스폰한
+ * 편대원은 **생기자마자 같은 틱에 이탈 처리**된다(보상 없는 despawn). 옛 값(SPAWN_X 900 ·
+ * STAGGER_X 140)은 i=3 이 1320 이라 4기 중 1기가 항상 즉사했고, i=2(1180)는 여유가 40 유닛뿐
+ * 이었다. 현재 값은 최대 {@link GHOST_CONVOY_SPAWN_X} + 3×{@link GHOST_CONVOY_STAGGER_X}
+ * = 960 + 180 = **1140**(여유 80). 이 부등식은 튜닝과 무관하게 유지돼야 하며 정적 단언
+ * 테스트가 지킨다(`BLOCKBREAK_ENEMY_CULL_RADIUS` 의 "구조적 불변식" 선례).
+ *
+ * 960 = `VIEW_WIDTH / 2` — 화면 경계 바로 밖이라 편대가 시야 밖에서 등장한다. 여유 80 은
+ * "스폰 틱 즉사"를 막는 값이고, 그 뒤 플레이어가 편대 반대 방향으로 계속 달아나면 후미가
+ * 떨어져 나가 이탈할 수 있다 — 그건 정규 보급 습격과 동일한 정상 거동이다. TODO(밸런스).
+ */
+export const GHOST_CONVOY_SPAWN_X = 960;
 /** 편대원 간 Y 간격(사다리꼴이 아니라 단순 종대 — 고정 패턴). TODO(밸런스). */
 export const GHOST_CONVOY_SPACING_Y = 180;
-/** 편대 X 계단 오프셋(종대가 일직선으로 겹쳐 보이지 않게). TODO(밸런스). */
-export const GHOST_CONVOY_STAGGER_X = 140;
+/** 편대 X 계단 오프셋(종대가 일직선으로 겹쳐 보이지 않게). 위 부등식에 묶인다. TODO(밸런스). */
+export const GHOST_CONVOY_STAGGER_X = 60;
 /** 선단 소멸(전멸/이탈) 시 보너스 크레딧. TODO(밸런스). */
 export const GHOST_CONVOY_BONUS_CREDITS = 10;
 /**
@@ -276,15 +299,44 @@ function encounterObject(state: WorldState, rt: EncounterRuntime): Entity | unde
 }
 
 /**
- * 플레이어가 상호작용 반경 안에 있는가. 오브젝트가 없는 유형(인라인 — 파편우·선단)은 애초에
- * 근접 판정 대상이 아니므로 **true** 를 돌려준다(입력 게이트만 남는다).
+ * 플레이어가 상호작용 반경 안에 있는가.
+ *
+ * ⚠️ **오브젝트가 없으면 false 다**(리뷰 MEDIUM-4 수정). 이전 구현은 `undefined → true` 로
+ * 폴백했는데, 그 폴백은 "인라인 유형은 근접 판정 대상이 아니다"를 노린 것이었지만 실제로는
+ * **인라인 유형이 이 함수를 호출하지 않는다** — 호출자는 제단(`stepAltar`)과 수호자
+ * (`stepGuardian`)뿐이고 둘 다 이제 월드 오브젝트를 갖는다(`maybeSpawnEncounter`). 즉 폴백이
+ * 덮던 유일한 실사용 경로가 **오브젝트가 있어야 마땅한 수호자**였고, 그래서 "봉인 근접 +
+ * ENTER" 계약이 조용히 "ENTER 만"으로 무너져 있었다. 여기서는 근접 판정을 **실체 필수**로
+ * 좁힌다: 오브젝트가 없으면(스폰 실패·이미 소멸) 상호작용은 성립하지 않는다.
+ *
+ * 이 방향의 실패는 안전하다 — 상호작용이 안 될 뿐 보상이 새지 않는다(반대 방향, 즉 폴백
+ * true 는 보상이 새는 쪽이었다).
  */
 function withinInteract(player: Entity, obj: Entity | undefined): boolean {
-  if (obj === undefined) return true;
+  if (obj === undefined) return false;
   const dx = player.x - obj.x;
   const dy = player.y - obj.y;
   const r = ENCOUNTER_INTERACT_RADIUS;
   return dx * dx + dy * dy <= r * r;
+}
+
+/**
+ * 인라인 유형(파편우·선단)의 **개시 틱** — 출현 틱 + 거부 대기 창. 파편 간격·하드 타임아웃 등
+ * 이 유형들의 모든 스케줄은 `rt.spawnTick` 이 아니라 이 값 기준이다(창 만큼 통째로 밀린다).
+ * 그렇게 하지 않으면 창이 끝난 순간 `tick >= spawnTick + i*간격` 이 i 여러 개에 대해 이미
+ * 참이라 파편이 연속 틱에 몰려 쏟아진다(창 도입의 부수 결함).
+ */
+function beginTickOf(rt: EncounterRuntime): number {
+  return rt.spawnTick + ENCOUNTER_DECLINE_WINDOW_TICKS;
+}
+
+/**
+ * `state.kills` 의 하위 8비트 — "처치가 일어났는가"를 카운터 A(8비트)에 담기 위한 지문.
+ * 절대값이 아니라 **변화 여부**만 쓰므로 폭이 8비트여도 충분하다(근거·한계는 `stepGuardian`
+ * 의 "처치 영수증 지문" 문단이 정본). 순수 함수 — 상태를 바꾸지 않는다.
+ */
+function killsFingerprint(state: WorldState): number {
+  return state.kills & AUX_BYTE_MASK;
 }
 
 /** 이 마커를 단 살아 있는 엔티티 수(kind 로 한 번 더 좁혀 오탐을 막는다). */
@@ -347,9 +399,46 @@ function stepAltar(state: WorldState, player: Entity, rt: EncounterRuntime, inpu
 /**
  * 수호자 한 틱. 개방(출현→진행중)과 처치 판정(진행중→완료) 두 단계뿐이다.
  *
- * 처치 판정은 **마커 엔티티 생존 스캔 파생**이다(계획 AC9 의 리더 게이트와 같은 규율) —
- * "죽었다"는 신규 폴드 필드를 만들지 않고, 마커를 단 적이 `state.entities` 에서 사라졌다는
- * 사실로부터 판정한다. 사라지는 경로는 `compact`(hp<=0 → dead 수거) 하나뿐이라 창발이 보존된다.
+ * ## ⚠️ "마커가 사라졌다" ≠ "처치했다" — 공짜 보상 차단 (리뷰 HIGH-1)
+ * 처치 판정은 여전히 **마커 엔티티 생존 스캔 파생**이지만(계획 AC9 의 리더 게이트와 같은
+ * 규율 — 신규 폴드 필드 0), 소멸을 곧바로 처치로 인정하면 **한 발도 안 맞히고 확정 rarity 3
+ * 전리품 + 크레딧**이 나가는 경로가 열린다:
+ *
+ *  - `cullScrollEnemies`(modes/blockBreak.ts)는 강제 스크롤 창 뒤로 흘러간 적을 **hp > 0 인
+ *    채로 `dead = true`** 로 표시한다. racing/blockBreak 런에서 수호자가 창을 못 따라가면
+ *    컬 반경 밖으로 밀려 그대로 소멸하고, 다음 틱 마커 스캔은 0 이 된다.
+ *  - `compact`(world.ts)는 이 경우를 **알고 있어서** `if (e.kind === 'enemy' && e.hp <= 0)`
+ *    게이트로 공짜 kills·젬·엘리트 루팅을 정확히 배제한다("도망쳐 창 뒤로 빠진 적이라 처치가
+ *    아니다"). 마커 부재 파생은 그 게이트를 우회한다 — 보상이 정산 경제로 직행해 프로필
+ *    아이템으로 굳으므로 되돌릴 수도 없다.
+ *
+ * 그래서 **`compact` 와 같은 규율(hp<=0 인 소멸만 처치)** 로 정렬하되, 이중으로 막는다.
+ *
+ * ### ① 컬링 예외 (구조적 1차 방어)
+ * `cullScrollEnemies` 가 `SEALED_GUARDIAN_MARK` 를 단 적을 건너뛴다(`RACING_WALL_MARK`·
+ * `CONTAMINATION_NODE_MARK` 가 `isGimmick` 에서 제외되는 선례와 동형). 수호자는 절차 스폰이
+ * 아니라 **플레이어가 명시적으로 개방한 조우 실체**라 "흘러간 잡몹 정리"의 대상이 아니다.
+ *
+ * ### ② 처치 영수증 지문 (2차 방어 — 다른 컬링 경로가 생겨도 샌다)
+ * ①만으로는 **미래에 다른 제거 경로가 추가되면 그대로 재발**한다. 그래서 보상 판정을
+ * "마커가 사라졌다"가 아니라 "마커가 **처치로** 사라졌다"로 좁힌다.
+ *
+ * 관측 창의 제약부터 못 박아 두자: `stepEncounter` 는 틱 **앞부분**(stepPlayer 직후)에서
+ * 돌고, 적의 사망은 전부 그 **뒤**(stepEnemies 의 DoT · resolveCollisions · events 폭탄)에서
+ * `hp<=0` + `dead=true` 로 확정된 다음 **같은 틱 끝의 `compact`** 가 수거한다. 즉 이 함수는
+ * `dead === true` 인 수호자를 **한 번도 볼 수 없다** — "소멸 직전 프레임의 hp 를 직접 읽는"
+ * 관측은 이 호출 지점에서 원리적으로 불가능하다.
+ *
+ * 대신 소멸을 통과해 살아남는 신호를 쓴다: **`state.kills`**. `compact` 는 `hp<=0` 인 적에만
+ * kills 를 올리므로(컬링 소멸은 절대 올리지 않는다) "수호자가 사라진 그 틱에 처치가 한 건도
+ * 없었다"면 그 소멸은 **처치가 아니다**. 그래서 살아 있는 동안 매 틱 `state.kills` 의 하위
+ * 8비트를 카운터 A 에 새겨 두고(=마지막 생존 관측 지문), 소멸을 감지한 틱에 지문이 그대로면
+ * 보상 없이 `state=4`(미완)로 닫는다.
+ *
+ * 한계도 명시한다 — 같은 틱에 다른 적이 죽었다면 지문이 움직여 통과한다(그 구멍은 ①이
+ * 막는다). 하위 8비트만 보므로 한 틱에 정확히 256 의 배수만큼 죽으면 오탐이지만, 한 틱에
+ * 256 처치는 이 sim 의 온스크린 상한상 불가능하다. **두 방어는 서로의 사각을 덮는 짝이고,
+ * 어느 한쪽만 남기면 안 된다.**
  */
 function stepGuardian(state: WorldState, player: Entity, rt: EncounterRuntime, input: InputFrame): void {
   if (rt.state === ENC_STATE_APPEARED) {
@@ -365,13 +454,26 @@ function stepGuardian(state: WorldState, player: Entity, rt: EncounterRuntime, i
     g.maxHp = g.hp;
     g.damage = Math.round(g.damage * GUARDIAN_DAMAGE_MULT);
     g.aux1 = SEALED_GUARDIAN_MARK; // ownerId 가 아닌 이유는 상수 주석 참조(냉기 충돌).
-    rt.aux |= AUX_FLAG_OPENED;
+    // 개방 틱의 처치 지문을 새긴다(아래 ② 의 기준점).
+    rt.aux = withCounterA(rt.aux, killsFingerprint(state)) | AUX_FLAG_OPENED;
     rt.state = ENC_STATE_ACTIVE;
     if (seal !== undefined) seal.dead = true;
     return; // 개방 틱에는 스캔하지 않는다(방금 세운 수호자가 살아 있는 게 당연하다).
   }
   if (rt.state !== ENC_STATE_ACTIVE) return;
-  if (countMarked(state, 'enemy', SEALED_GUARDIAN_MARK, 'aux1') > 0) return;
+  if (countMarked(state, 'enemy', SEALED_GUARDIAN_MARK, 'aux1') > 0) {
+    // 아직 살아 있다 — 지문을 이번 틱 값으로 갱신한다(마지막 생존 관측).
+    rt.aux = withCounterA(rt.aux, killsFingerprint(state));
+    return;
+  }
+  if (killsFingerprint(state) === auxCounterA(rt.aux)) {
+    // 사라졌는데 처치가 한 건도 없었다 = 컬링 등 비-처치 소멸. 보상 없이 미완으로 닫는다.
+    // `ENC_STATE_DONE`(3) 이 아니라 4 인 것이 핵심이다 — `encounterCompletedOf` 가 3 을
+    // "완수"로 읽어 정산 개연성 캡에 넘기므로, 처치하지 못한 조우가 3 으로 남으면 보상만
+    // 빠진 반쪽 완수가 된다. 4 = "안 했다"가 이 사건의 정확한 의미다.
+    rt.state = ENC_STATE_DECLINED;
+    return;
+  }
   // 처치됨 — 등급 강제 전리품 + 크레딧. 처치 자체의 kills++·젬은 `compact` 가 이미 정상
   // 경로로 처리했다(파일 상단 "격리하지 않는다" 문단의 근거).
   grantLoot(state, rt, GUARDIAN_LOOT_COUNT, GUARDIAN_LOOT_RARITY);
@@ -394,14 +496,25 @@ function stepGuardian(state: WorldState, player: Entity, rt: EncounterRuntime, i
  *
  * 수집 정산은 "스폰 수 − 생존 수" 파생이다. 카운터 A(스폰)와 B(정산 완료)의 차이만큼만
  * 크레딧을 주므로 매 틱 재계산해도 2중 지급이 없다(멱등).
+ *
+ * ⚠️ **거부 대기 창**(리뷰 MEDIUM-2): 인라인 유형이라 opt-in 입력을 요구하지 않지만, 출현
+ * 즉시 개시하면 `DECLINE` 이 먹는 `state===1` 구간이 **1틱**뿐이라 AC5("무시한 런 = 조우
+ * 미발생 런")가 성립하지 않는다(무시해도 파편이 뿌려지고 자동 수거 반경에 닿으면 `state.loot`
+ * 에 들어간다). 그래서 `ENCOUNTER_DECLINE_WINDOW_TICKS` 동안 출현 상태로 대기하고, 그 창이
+ * 지난 뒤에야 개시한다. 창 동안 DECLINE 이 오면 상위 진입점이 `state=4` 로 닫고 **파편을 단
+ * 하나도 스폰하지 않는다**.
  */
 function stepShardRain(state: WorldState, player: Entity, rt: EncounterRuntime): void {
-  if (rt.state === ENC_STATE_APPEARED) rt.state = ENC_STATE_ACTIVE; // 인라인 — opt-in 없이 개시.
+  const begin = beginTickOf(rt);
+  if (rt.state === ENC_STATE_APPEARED) {
+    if (state.tick < begin) return; // 거부 대기 창 — 아직 아무것도 스폰하지 않는다.
+    rt.state = ENC_STATE_ACTIVE;
+  }
   if (rt.state !== ENC_STATE_ACTIVE) return;
 
   // 1) 스폰: 고정 원형 패턴(각도 = i/총개수, 결정론 cos/sin). 난수 좌표 금지.
   const spawned = auxCounterA(rt.aux);
-  if (spawned < SHARD_RAIN_COUNT && state.tick >= rt.spawnTick + spawned * SHARD_RAIN_INTERVAL_TICKS) {
+  if (spawned < SHARD_RAIN_COUNT && state.tick >= begin + spawned * SHARD_RAIN_INTERVAL_TICKS) {
     const ang = (spawned * TWO_PI) / SHARD_RAIN_COUNT;
     const shard = spawnLoot(
       state,
@@ -426,7 +539,7 @@ function stepShardRain(state: WorldState, player: Entity, rt: EncounterRuntime):
 
   // 3) 종료: 전부 뿌렸고 남은 파편이 없거나, 하드 타임아웃(전부 무시한 플레이어)에 걸리면 완료.
   const allSpawned = auxCounterA(rt.aux) >= SHARD_RAIN_COUNT;
-  const timedOut = state.tick >= rt.spawnTick + SHARD_RAIN_TIMEOUT_TICKS;
+  const timedOut = state.tick >= begin + SHARD_RAIN_TIMEOUT_TICKS;
   if ((allSpawned && alive === 0) || timedOut) rt.state = ENC_STATE_DONE;
 }
 
@@ -441,9 +554,13 @@ function stepShardRain(state: WorldState, player: Entity, rt: EncounterRuntime):
  *
  * 격추 보상은 기존 `compact` 의 supply 분기가 그대로 처리한다(크레딧 milli 캐리 + 보상 젬).
  * 이 함수는 그 위에 **선단 소멸 보너스**만 얹는다.
+ *
+ * ⚠️ 파편우와 같은 **거부 대기 창**을 둔다(리뷰 MEDIUM-2) — 창이 지나야 편대를 스폰하므로,
+ * 창 안에서 DECLINE 하면 보급선이 단 한 기도 뜨지 않는다(AC5).
  */
 function stepGhostConvoy(state: WorldState, player: Entity, rt: EncounterRuntime): void {
   if (rt.state === ENC_STATE_APPEARED) {
+    if (state.tick < beginTickOf(rt)) return; // 거부 대기 창 — 아직 편대를 세우지 않는다.
     for (let i = 0; i < GHOST_CONVOY_COUNT; i++) {
       const ship = spawnSupply(
         state,
@@ -477,6 +594,12 @@ function stepGhostConvoy(state: WorldState, player: Entity, rt: EncounterRuntime
  * `state = 4` 로 끝나고 오브젝트도 치운다 → **그 이후 이 함수는 어떤 상태도 건드리지 않으므로
  * 조우 미발생 런과 결과가 완전히 같다**(AC5). 이미 개시된(진행중) 조우는 되돌릴 수 없으므로
  * 거부를 받지 않는다 — 소환된 수호자를 입력 한 번으로 지우면 그게 곧 무적 탈출이 된다.
+ *
+ * ⚠️ 그래서 **출현 상태가 실질적으로 유지되는 시간이 AC5 의 실효 폭**이다. 오브젝트 유형
+ * (제단·수호자)은 플레이어가 누를 때까지 출현에 머물지만, 인라인 2종(파편우·선단)은 아무
+ * 입력도 요구하지 않아 창을 명시적으로 만들어 줘야 한다 — `ENCOUNTER_DECLINE_WINDOW_TICKS`
+ * (data/encounters.ts)가 그 창이고, 각 step 함수가 그 창이 지나기 전에는 **엔티티를 하나도
+ * 스폰하지 않는다**(리뷰 MEDIUM-2).
  *
  * 보물 격실(`treasureVault`)은 detour 유형이라 레인 A 의 `stepDetour` 소관이고 여기선 no-op 이다.
  */

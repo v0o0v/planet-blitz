@@ -98,9 +98,6 @@ describe('AC2 — invasion per-tick 해시 바이트 불변', () => {
 });
 
 describe('AC1 — 조우 미발생 PvE 런의 per-tick 해시 바이트 불변 (중반 격전 이전 구간)', () => {
-  /** 대조에 실제로 쓰인 런 수 — 0 이면 이 스위트는 공회전이므로 아래에서 실패시킨다. */
-  let compared = 0;
-
   for (const [planetIndex, planet] of BASELINE_PLANETS.entries()) {
     for (let b = 0; b < BASELINE_BUILDS.length; b++) {
       const build = BASELINE_BUILDS[b] as BuildSpec;
@@ -133,12 +130,21 @@ describe('AC1 — 조우 미발생 PvE 런의 per-tick 해시 바이트 불변 (
           .slice(0, limit)
           .findIndex((h, i) => h !== baseRun.hashes[i]);
         expect(firstDiff, `첫 발산 틱 (기대: 발산 없음, 대조 구간 0..${limit})`).toBe(-1);
-        compared++;
       });
     }
   }
 
-  it('조우 미발생 런이 최소 1개 대조됐다(공회전 방지)', () => {
-    expect(compared).toBeGreaterThan(0);
+  it('조우 미발생 런이 최소 1개 대조된다(공회전 방지)', () => {
+    // ⚠️ 위 `it` 들이 세는 카운터에 의존하지 않는다 — 그러면 선언 순서(순차 실행)에 묶여
+    // `--sequence.concurrent` 로 돌릴 때 잘못 통과/실패한다. 대신 여기서 독립적으로 다시
+    // 판정한다. `createWorld` 만 하면 되므로(스텝 불필요) 비용이 거의 없다.
+    const absent = BASELINE.pve.filter((run) => {
+      const planet = BASELINE_PLANETS.find((p) => run.key.startsWith(p.id + '/'));
+      const build = BASELINE_BUILDS.find((b) => run.key.endsWith('/' + b.id));
+      if (planet === undefined || build === undefined) return false;
+      const world = createWorld(run.seed, baselineConfig(planet, build.invest));
+      return (world as { encounterRuntime?: unknown }).encounterRuntime === undefined;
+    });
+    expect(absent.length).toBeGreaterThan(0);
   });
 });

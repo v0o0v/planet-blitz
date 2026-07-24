@@ -131,14 +131,36 @@ export function spawnMidClash(state: WorldState, player: Entity): void {
 }
 
 /**
- * 격전 세그먼트 전진 게이트(리더 처치 파생).
+ * 격전 세그먼트 전진 게이트(리더 **처치** 파생).
  *
  * `segmentElapsed > 0` 조건이 "아직 소환 전인데 cleared" 오판을 **구조적으로** 막는다:
  * 리더는 세그먼트 진입 틱(`segmentElapsed === 0`)에 소환되고, `updateWaves` 는 그 소환을
  * 마친 뒤에야 `segmentElapsed++` 를 거쳐 이 게이트를 평가한다. 즉 이 함수가 호출되는 시점의
  * `segmentElapsed` 는 항상 1 이상이고 리더는 이미 존재한다. 조건 자체는 방어적 이중 안전장치다
  * (호출 순서가 바뀌더라도 게이트가 헛돌지 않는다).
+ *
+ * ## ⚠️ "리더가 사라졌다" ≠ "리더를 처치했다" (리뷰 HIGH-2 — 조우 봉인 수호자와 같은 결함축)
+ * `cullScrollEnemies`(modes/blockBreak.ts)는 강제 스크롤 창 뒤로 밀린 적을 **`hp > 0` 인 채로
+ * `dead = true`** 로 만든다. 리더가 그렇게 사라지면 마커 스캔이 0 이 되어 이 게이트가 즉시
+ * 열리고, 격전 세그먼트는 `killGoal = 0` 이라 처치 게이트조차 없어서 **"매 런 확정 par 연장
+ * 비트"(ADR-0032)가 racing/blockBreak 2 모드에서만 조용히 무효화**된다. `compact`(world.ts)가
+ * `hp <= 0` 게이트로 공짜 처치·젬·루팅을 배제하는 것과 **같은 규율**로 정렬해야 한다.
+ *
+ * 방어는 두 겹이다.
+ *  - **①(1차·구조적)** `cullScrollEnemies` 가 `MID_CLASH_LEADER_MARK` 를 컬링에서 제외한다
+ *    (`isCullExemptEnemy`). 리더는 흘러간 잡몹이 아니라 전진 게이트 그 자체다.
+ *  - **②(2차·여기)** 게이트가 **"이 세그먼트에서 처치가 최소 1건 있었다"** 를 함께 요구한다.
+ *    `state.kills` 는 `compact` 의 `hp <= 0` 분기에서만 오르므로(컬링 소멸은 절대 올리지
+ *    않는다), 리더를 실제로 잡았다면 이 조건은 **반드시** 참이다 → 데드락이 원리적으로 없다.
+ *    반대로 아무도 죽지 않은 세그먼트에서 리더만 조용히 증발한 경우는 걷어낸다.
+ *    `w.segmentBaseKills` 는 세그먼트 진입 시 찍힌 `state.kills` 스냅샷이라 **WaveRuntime
+ *    신규 필드가 0** 이다(계획 AC9/MAJ-3 — 필드가 늘면 전 PvE + 침공 해시가 갈린다).
+ *
+ * ②의 한계도 적어 둔다: 서지 잡몹을 하나라도 잡은 뒤 리더만 비-처치 소멸하면 통과한다. 그
+ * 사각은 ①이 덮는다. **두 방어는 짝이고 한쪽만 남기면 안 된다.**
  */
 export function midClashCleared(state: WorldState, w: WaveRuntime): boolean {
-  return w.segmentElapsed > 0 && !midClashLeaderAlive(state);
+  return (
+    w.segmentElapsed > 0 && !midClashLeaderAlive(state) && state.kills > w.segmentBaseKills
+  );
 }

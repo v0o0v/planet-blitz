@@ -20,6 +20,13 @@ import { SEGMENTS } from '../../../data/waves.js';
 import { INVASION_WINDOW_HALF_W, INVASION_WINDOW_HALF_H } from '../invasion/scroll.js';
 import type { ScrollWindow } from '../invasion/scroll.js';
 import type { WorldState } from '../world.js';
+// 컬링 예외 마커 2종. ⚠️ 여기서 생기는 모듈 순환(blockBreak → light → waves → blockBreak,
+// blockBreak → midClash → waves → blockBreak)은 waves↔midClash 의 기존 순환과 같은 안전한
+// 형태다 — 세 모듈 모두 **최상위 평가 시점에 상대 모듈의 값을 읽지 않고** 호출 시점에만
+// 참조한다(midClash.ts 헤더 "순환 의존 주의" 참조). 이 파일의 최상위 `SEGMENTS.length` 는
+// 순환 밖의 순수 데이터 모듈이라 무관하다.
+import { SEALED_GUARDIAN_MARK } from '../encounters/light.js';
+import { MID_CLASH_LEADER_MARK } from './midClash.js';
 
 // --- 플레이스홀더 계수 (TODO(밸런스): 출시 전 일괄 튜닝, 구조만 고정) ---
 /** 구간 1개의 −Y 스크롤 거리(월드 유닛). TODO(밸런스). */
@@ -155,10 +162,80 @@ export function isPinnedByWall(player: Entity, walls: readonly Entity[]): boolea
 }
 
 /**
+ * 이 적은 **컬링 대상이 아닌가**(= 처치로만 사라져야 하는 연출 실체인가).
+ *
+ * ⚠️ **왜 예외가 필요한가(리뷰 HIGH-1/HIGH-2 — 이 파일이 결함의 발원지였다)**
+ * `cullScrollEnemies` 는 창 뒤로 흘러간 적을 **`hp > 0` 인 채로 `dead = true`** 로 만든다.
+ * `compact`(world.ts)는 그 사실을 알고 `if (e.kind === 'enemy' && e.hp <= 0)` 게이트로 공짜
+ * kills·젬·엘리트 루팅을 배제하지만, **"마커 엔티티가 사라졌다"를 성공으로 읽는 상위 게이트**
+ * 들은 그 게이트를 우회한다:
+ *  - `SEALED_GUARDIAN_MARK`(조우 봉인 수호자) → 한 발도 안 맞히고 확정 rarity 3 전리품 +
+ *    크레딧이 정산 경제로 직행한다.
+ *  - `MID_CLASH_LEADER_MARK`(중반 격전 리더, ADR-0032) → 격전 세그먼트가 **공짜 통과**한다.
+ *    격전 세그먼트는 `killGoal = 0` 이라 처치 게이트도 없어서, "매 런 확정 par 연장 비트"가
+ *    racing/blockBreak 2 모드에서만 조용히 무효화된다.
+ *
+ * 둘 다 **절차 스폰된 잡몹이 아니라 연출된 실체**다(하나는 플레이어가 명시적으로 개방한 조우,
+ * 하나는 세그먼트 전진 게이트 그 자체). "뒤로 밀려난 적 정리"라는 이 함수의 목적에 애초에
+ * 해당하지 않으므로 스캔에서 뺀다 — `isGimmick`(world.ts)이 `RACING_WALL_MARK`·
+ * `CONTAMINATION_NODE_MARK`·`COUNTER_DEVICE_MARK` 를 청크 컬링에서 빼는 것과 동형의 선례다.
+ * 마커 없는 일반 적은 `aux1 === 0` 이라 조건이 그대로 성립 → **거동·해시 완전 불변**이다.
+ *
+ * 이 예외만으로 끝내지 않는다 — 각 소비자 쪽에도 "처치로 사라진 것만 인정"하는 2차 방어가
+ * 있다(`stepGuardian` 의 처치 영수증 지문 · `midClashCleared` 의 세그먼트 처치 진행 요구).
+ * 미래에 다른 제거 경로가 추가되면 이 예외 목록은 그 경로에도 적용돼야 한다.
+ */
+function isCullExemptEnemy(e: Entity): boolean {
+  return e.aux1 === SEALED_GUARDIAN_MARK || e.aux1 === MID_CLASH_LEADER_MARK;
+}
+
+/**
+ * 예외 대상을 창에 묶어 둘 때 창 경계 바깥으로 허용하는 여유(월드 유닛). 창 **가장자리 바로
+ * 밖**까지만 벌어지게 두어 화면 안으로 걸어 들어오게 한다 — 창 안으로 끌어당기면 플레이어
+ * 코앞에 순간이동해 억울한 접촉 피해가 된다. TODO(밸런스).
+ */
+const CULL_EXEMPT_WINDOW_MARGIN = 200;
+
+/**
+ * 컬링 예외 대상을 **삭제하는 대신 스크롤 창에 묶어 둔다**(창 ± 여유 밖으로 못 벌어진다).
+ *
+ * ⚠️ **왜 "그냥 안 죽이기"로 끝나면 안 되는가(실측으로 확인한 2차 결함)**
+ * 강제 스크롤 모드의 창은 고정 속도로 전진하는데 격전 리더의 이동 속도는 그보다 **느리다**.
+ * 실측상 blockBreak 격전 세그먼트 진입 후 **250틱**이면 리더가 컬 반경(3000) 밖으로 영구히
+ * 밀린다(봉인 수호자는 230틱). 컬링만 막고 두면 리더는 **살아 있지만 영원히 닿을 수 없는
+ * 곳**에 남고, 격전 세그먼트의 전진 조건은 리더 처치뿐이므로 런이 그 자리에서 **데드락**한다
+ * (blockBreak·racing 의 "코스 끝 보스" 통합 테스트가 정확히 이 형태로 멈춘다). 공짜 통과를
+ * 막으려다 통과 자체를 막으면 더 나쁘다.
+ *
+ * ⚠️ 그리고 **"컬 반경 밖으로 밀렸을 때만 되돌리기"로도 부족하다.** 컬 반경(3000)은 창
+ * (±960/±540)보다 훨씬 크므로, 되돌린 리더는 곧바로 다시 뒤처져 화면 밖 구간을 왕복할 뿐
+ * 사거리에 거의 들어오지 않는다 — 실측으로 20,000틱을 돌려도 리더 HP 가 16% 밖에 깎이지
+ * 않아 사실상 데드락이 남았다. 그래서 **매 틱 창에 묶는다**(밀렸을 때만이 아니라 상시).
+ *
+ * 결과적인 규칙은 한 줄이다: **연출 실체는 강제 스크롤 창을 벗어나지 않는다.** 이는 "리더가
+ * 정점에 수렴한다"는 격전의 연출 의도(ADR-0032)와 정확히 같은 말이고, 강제 스크롤 모드가
+ * 애초에 적을 창 가장자리에 스폰시키는 것과도 같은 성격의 조작이다. 창 안에서는 자유롭게
+ * 움직이므로 추적 AI 는 그대로다. 축별 clamp 뿐이라 나눗셈·제곱근·RNG 가 없다(결정론 불변).
+ */
+function keepExemptEnemyInWindow(e: Entity, cx: number, cy: number): void {
+  const limitX = INVASION_WINDOW_HALF_W + CULL_EXEMPT_WINDOW_MARGIN;
+  const limitY = INVASION_WINDOW_HALF_H + CULL_EXEMPT_WINDOW_MARGIN;
+  const dx = e.x - cx;
+  const dy = e.y - cy;
+  if (dx > limitX) e.x = cx + limitX;
+  else if (dx < -limitX) e.x = cx - limitX;
+  if (dy > limitY) e.y = cy + limitY;
+  else if (dy < -limitY) e.y = cy - limitY;
+}
+
+/**
  * 창 중심에서 컬 반경 밖(뒤로 흘러간) 적을 dead 표시한다(강제 스크롤 모드 전용). 보스는
  * 제외 — 코스 끝 보스는 창을 벗어나도 유지된다. compact 가 dead 를 수거한다. scrollRuntime
  * 미존재면 no-op(뱀서류·침공 무영향). `cullRadius` 는 모드별 컬 반경(Lane5) — 호출부가 각
  * 모드의 상수를 넘긴다. 미지정 시 블록격파 기본값(단위 테스트 호환).
+ *
+ * 연출 실체(조우 수호자·격전 리더)는 {@link isCullExemptEnemy} 로 제외한다 — 근거는 그쪽
+ * doc 이 정본이다.
  */
 export function cullScrollEnemies(
   state: WorldState,
@@ -171,6 +248,11 @@ export function cullScrollEnemies(
   const r2 = cullRadius * cullRadius;
   for (const e of state.entities) {
     if (e.dead || e.kind !== 'enemy') continue;
+    // 예외 대상은 삭제하지 않고 창에 묶는다(삭제 = 공짜 통과 / 방치 = 데드락, 둘 다 불가).
+    if (isCullExemptEnemy(e)) {
+      keepExemptEnemyInWindow(e, cx, cy);
+      continue;
+    }
     const dx = e.x - cx;
     const dy = e.y - cy;
     if (dx * dx + dy * dy > r2) e.dead = true;

@@ -16,12 +16,14 @@ import { describe, it, expect } from 'vitest';
 import { createWorld, emptyInput } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig, WorldState } from '../src/sim/world.js';
 import type { Entity } from '../src/sim/entities.js';
-import { spawnEncounterAltar } from '../src/sim/entities.js';
+import { spawnEncounterAltar, spawnEncounterPortal } from '../src/sim/entities.js';
 import type { EncounterRuntime } from '../src/sim/encounter.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile } from '../src/save/profile.js';
+import { OFFSCREEN_X } from '../src/sim/constants.js';
 import {
   ENCOUNTER_TYPE,
+  ENCOUNTER_DECLINE_WINDOW_TICKS,
   SPECIAL_ENCOUNTER_ENTER,
   SPECIAL_ENCOUNTER_DECLINE,
   packEncounterAltar,
@@ -50,6 +52,8 @@ import {
   GHOST_CONVOY_COUNT,
   GHOST_CONVOY_BONUS_CREDITS,
   GHOST_CONVOY_MARK,
+  GHOST_CONVOY_SPAWN_X,
+  GHOST_CONVOY_STAGGER_X,
 } from '../src/sim/encounters/light.js';
 
 /** 런이 접촉·피격으로 조기 종료되지 않게 버티는 무대 HP. */
@@ -71,9 +75,9 @@ function playerOf(w: WorldState): Entity {
 }
 
 /**
- * 출현(state=1) 상태의 런타임을 만든다. `entityId=0` 은 오브젝트 없는 유형용 — 레인 A 의
- * `maybeSpawnEncounter` 는 보물 격실/제단에만 오브젝트를 세우고 나머지 3종은 `entityId=0`
- * 인 채로 state 만 1 로 올린다. 이 팩토리는 그 실제 계약을 그대로 흉내 낸다.
+ * 출현(state=1) 상태의 런타임을 만든다. `entityId=0` 은 오브젝트 없는 **인라인 2종**
+ * (파편우·선단)용이다 — `maybeSpawnEncounter` 는 보물 격실·제단·**봉인 수호자**에 오브젝트를
+ * 세우고(리뷰 MEDIUM-4 수정), 인라인 2종만 `entityId=0` 인 채로 state 를 1 로 올린다.
  */
 function runtime(type: number, entityId = 0, spawnTick = 0): EncounterRuntime {
   return {
@@ -116,6 +120,31 @@ function placeAltar(w: WorldState, rt: EncounterRuntime): Entity {
   const a = spawnEncounterAltar(w, p.x, p.y, 120);
   rt.entityId = a.id;
   return a;
+}
+
+/**
+ * 봉인(수호자 조우 오브젝트)을 세우고 런타임에 물린다. `maybeSpawnEncounter` 가 수호자에도
+ * `encounterPortal` kind 로 실체를 세우는 계약을 대역한다(리뷰 MEDIUM-4 — 신규 KIND_CODE 를
+ * 만들지 않으려고 포탈 kind 를 재사용한다).
+ */
+function placeSeal(w: WorldState, rt: EncounterRuntime, offsetX = 0): Entity {
+  const p = playerOf(w);
+  const s = spawnEncounterPortal(w, p.x + offsetX, p.y, 120);
+  rt.entityId = s.id;
+  return s;
+}
+
+/**
+ * `compact`(world.ts)의 **처치** 경로를 그대로 흉내 낸다: `hp <= 0` → `dead` → `state.kills++`.
+ *
+ * ⚠️ 단순히 `dead = true` 만 세우는 것은 처치가 아니라 **컬링**(hp>0 소멸)의 흉내다 — 그쪽은
+ * 보상이 나가면 안 되는 경로이고, 전용 회귀 가드가 `tests/encounterCullRegression.test.ts` 에
+ * 있다. 이 헬퍼를 써서 "처치를 흉내 낸다"는 의도를 코드로 못 박는다.
+ */
+function simulateKill(w: WorldState, e: Entity): void {
+  e.hp = 0;
+  e.dead = true;
+  w.kills++;
 }
 
 // ---------------------------------------------------------------------------
@@ -223,8 +252,8 @@ describe('오스카 제단 3택', () => {
 describe('봉인 수호자', () => {
   it('개방 → 마커 정예 소환(진행중) → 처치 → 등급 강제 전리품 + 크레딧(완료)', () => {
     const w = makeWorld();
-    // 레인 A 는 수호자에 오브젝트를 세우지 않는다(entityId=0) — 개방은 입력 게이트만이다.
     const rt = runtime(ENCOUNTER_TYPE.sealedGuardian);
+    placeSeal(w, rt);
     const credits0 = w.resources;
 
     // 입력 없이는 개방되지 않는다.
@@ -247,8 +276,8 @@ describe('봉인 수호자', () => {
     expect(rt.state).toBe(2);
     expect(w.loot).toHaveLength(0);
 
-    // 처치(=엔티티 소멸)를 대역하고 나면 보상이 나간다.
-    g.dead = true;
+    // 처치(compact 규율: hp<=0 → dead → kills++)를 대역하고 나면 보상이 나간다.
+    simulateKill(w, g);
     step(w, rt);
     expect(rt.state).toBe(3);
     expect(auxCounterB(rt.aux)).toBe(1);
@@ -265,6 +294,7 @@ describe('봉인 수호자', () => {
   it('마커는 aux1 이다 — ownerId(냉기 감속 잔여 틱)와 충돌하지 않는다', () => {
     const w = makeWorld();
     const rt = runtime(ENCOUNTER_TYPE.sealedGuardian);
+    placeSeal(w, rt);
     step(w, rt, inputWith(SPECIAL_ENCOUNTER_ENTER));
 
     const g = w.entities.find((e) => e.kind === 'enemy' && e.aux1 === SEALED_GUARDIAN_MARK);
@@ -272,17 +302,48 @@ describe('봉인 수호자', () => {
     // 냉기 상태이상이 쓰는 슬롯은 비어 있어야 한다(마커가 거기 없다).
     expect(g.ownerId).toBe(0);
   });
+
+  it('봉인 실체가 있어야 개방된다 — 반경 밖 ENTER 는 무효(리뷰 MEDIUM-4)', () => {
+    const w = makeWorld();
+    const rt = runtime(ENCOUNTER_TYPE.sealedGuardian);
+    placeSeal(w, rt, 100_000); // 봉인은 있지만 아득히 멀다
+
+    for (let i = 0; i < 10; i++) step(w, rt, inputWith(SPECIAL_ENCOUNTER_ENTER));
+
+    expect(rt.state).toBe(1); // 여전히 출현 상태 — 미니보스가 튀어나오지 않는다
+    expect(w.entities.filter((e) => e.aux1 === SEALED_GUARDIAN_MARK)).toHaveLength(0);
+  });
+
+  it('봉인 실체가 아예 없으면 개방되지 않는다 — "오브젝트 없으면 근접" 폴백 제거', () => {
+    const w = makeWorld();
+    // entityId=0 = 실체 없음. 옛 폴백(`undefined → true`)에서는 이것만으로 개방됐다.
+    const rt = runtime(ENCOUNTER_TYPE.sealedGuardian);
+
+    for (let i = 0; i < 10; i++) step(w, rt, inputWith(SPECIAL_ENCOUNTER_ENTER));
+
+    expect(rt.state).toBe(1);
+    expect(w.entities.filter((e) => e.aux1 === SEALED_GUARDIAN_MARK)).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
 // ③ 기록 파편우
 // ---------------------------------------------------------------------------
 
+/**
+ * 인라인 유형(파편우·선단)의 **거부 대기 창**을 소진시킨다 — 창이 지나야 개시한다
+ * (리뷰 MEDIUM-2). 창 안에서는 어떤 엔티티도 스폰되지 않는 것이 계약이다.
+ */
+function passDeclineWindow(w: WorldState, rt: EncounterRuntime): void {
+  w.tick = rt.spawnTick + ENCOUNTER_DECLINE_WINDOW_TICKS;
+}
+
 describe('기록 파편우', () => {
   it('젬을 하나도 스폰하지 않고 xp/level/combo 가 불변이다(xp 누수 회귀 가드)', () => {
     const w = makeWorld();
     const rt = runtime(ENCOUNTER_TYPE.shardRain, 0, w.tick);
     const before = { xp: w.xp, xpTotal: w.xpTotal, level: w.level, combo: w.combo, kills: w.kills };
+    passDeclineWindow(w, rt);
 
     for (let i = 0; i < SHARD_RAIN_COUNT; i++) {
       step(w, rt);
@@ -300,6 +361,7 @@ describe('기록 파편우', () => {
   it('간격에 맞춰 마커 loot 을 하나씩 뿌리고 카운터 A 가 따라 오른다', () => {
     const w = makeWorld();
     const rt = runtime(ENCOUNTER_TYPE.shardRain, 0, w.tick);
+    passDeclineWindow(w, rt);
 
     step(w, rt);
     expect(auxCounterA(rt.aux)).toBe(1);
@@ -321,6 +383,7 @@ describe('기록 파편우', () => {
     const w = makeWorld();
     const rt = runtime(ENCOUNTER_TYPE.shardRain, 0, w.tick);
     const credits0 = w.resources;
+    passDeclineWindow(w, rt);
 
     // 전부 뿌린다.
     for (let i = 0; i < SHARD_RAIN_COUNT; i++) {
@@ -356,6 +419,8 @@ describe('기록 파편우', () => {
     const w = makeWorld();
     const rt = runtime(ENCOUNTER_TYPE.shardRain, 0, w.tick);
 
+    // 타임아웃은 출현 틱이 아니라 **개시 틱**(출현 + 거부 대기 창) 기준이다.
+    passDeclineWindow(w, rt);
     w.tick += SHARD_RAIN_TIMEOUT_TICKS;
     step(w, rt);
 
@@ -370,9 +435,37 @@ describe('기록 파편우', () => {
 // ---------------------------------------------------------------------------
 
 describe('유령 보급선단', () => {
+  it('편대 스폰 X 는 supply despawn 경계 안이다 — 4번기 즉시 삭제 회귀 가드(MEDIUM-1)', () => {
+    // `stepSupply`(world.ts)의 despawn 경계는 `|x − player.x| > OFFSCREEN_X + 120` 이고,
+    // `stepSupply` 는 같은 틱에 `stepEncounter` **뒤에** 돈다 → 경계를 넘겨 스폰한 편대원은
+    // 생기자마자 이탈 처리된다(보상 없는 despawn). 이 부등식은 밸런스가 아니라 **엔티티
+    // 존재 경계 조건**이므로 상수를 나중에 만져도 여기서 터져야 한다.
+    const despawnDist = OFFSCREEN_X + 120;
+    const farthest = GHOST_CONVOY_SPAWN_X + (GHOST_CONVOY_COUNT - 1) * GHOST_CONVOY_STAGGER_X;
+    expect(farthest).toBeLessThan(despawnDist);
+    // 스폰 틱 즉사만 겨우 면하는 값이 되지 않게 실질 여유도 요구한다(옛 값 i=2 는 40 뿐이었다).
+    expect(despawnDist - farthest).toBeGreaterThanOrEqual(60);
+  });
+
+  it('스폰된 편대원이 모두 despawn 경계 안에 있다(부등식의 실제 좌표 확인)', () => {
+    const w = makeWorld();
+    const rt = runtime(ENCOUNTER_TYPE.ghostConvoy, 0, w.tick);
+    passDeclineWindow(w, rt);
+    const p = playerOf(w);
+
+    step(w, rt);
+
+    const convoy = w.entities.filter((e) => e.kind === 'supply' && e.ownerId === GHOST_CONVOY_MARK);
+    expect(convoy).toHaveLength(GHOST_CONVOY_COUNT);
+    for (const s of convoy) {
+      expect(Math.abs(s.x - p.x)).toBeLessThan(OFFSCREEN_X + 120);
+    }
+  });
+
   it('편대를 고정 오프셋에 한 번에 스폰하고 마커를 단다', () => {
     const w = makeWorld();
     const rt = runtime(ENCOUNTER_TYPE.ghostConvoy, 0, w.tick);
+    passDeclineWindow(w, rt);
 
     step(w, rt);
 
@@ -389,6 +482,7 @@ describe('유령 보급선단', () => {
     const w = makeWorld();
     const rt = runtime(ENCOUNTER_TYPE.ghostConvoy, 0, w.tick);
     const credits0 = w.resources;
+    passDeclineWindow(w, rt);
 
     step(w, rt);
     // 살아 있는 동안엔 보너스가 없다.
@@ -410,30 +504,82 @@ describe('유령 보급선단', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 거부 대기 창 — 인라인 2종의 AC5 성립 조건 (리뷰 MEDIUM-2)
+// ---------------------------------------------------------------------------
+
+describe('인라인 조우의 거부 대기 창 (AC5)', () => {
+  for (const type of [ENCOUNTER_TYPE.shardRain, ENCOUNTER_TYPE.ghostConvoy]) {
+    it(`type=${type}: 창 동안은 출현 상태를 유지하고 엔티티를 하나도 스폰하지 않는다`, () => {
+      const w = makeWorld();
+      const rt = runtime(type, 0, w.tick);
+      const entities0 = w.entities.length;
+
+      // 창이 끝나기 직전까지 아무 일도 일어나지 않는다.
+      for (let t = 0; t < ENCOUNTER_DECLINE_WINDOW_TICKS; t++) {
+        step(w, rt);
+        w.tick++;
+      }
+      expect(rt.state).toBe(1);
+      expect(rt.aux).toBe(0);
+      expect(w.entities).toHaveLength(entities0);
+
+      // 창이 지나야 개시한다.
+      step(w, rt);
+      expect(rt.state).toBe(2);
+      expect(w.entities.length).toBeGreaterThan(entities0);
+    });
+
+    it(`type=${type}: 창 안의 DECLINE 은 무발생으로 끝난다(조우 미발생 런과 동일 결과)`, () => {
+      const w = makeWorld();
+      const rt = runtime(type, 0, w.tick);
+      const entities0 = w.entities.length;
+      const credits0 = w.resources;
+
+      // 창 한복판에서 거부.
+      w.tick = rt.spawnTick + Math.floor(ENCOUNTER_DECLINE_WINDOW_TICKS / 2);
+      step(w, rt, inputWith(SPECIAL_ENCOUNTER_DECLINE));
+      expect(rt.state).toBe(4);
+
+      // 이후 아무리 오래 돌려도 파편·보급선이 뜨지 않고 크레딧·전리품도 그대로다.
+      for (let t = 0; t < ENCOUNTER_DECLINE_WINDOW_TICKS * 4; t++) {
+        step(w, rt);
+        w.tick++;
+      }
+      expect(w.entities).toHaveLength(entities0);
+      expect(w.loot).toHaveLength(0);
+      expect(w.resources).toBe(credits0);
+      expect(rt.aux).toBe(0);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // 공통 규율 — RNG 미소비 · 보물 격실 no-op
 // ---------------------------------------------------------------------------
 
 describe('결정론 규율', () => {
   it('4종 전부 실행 전후로 7개 RNG 스트림 상태가 불변이다', () => {
-    const cases: { type: number; withObject: boolean; inputs: InputFrame[] }[] = [
+    const cases: { type: number; object: 'altar' | 'seal' | 'none'; inputs: InputFrame[] }[] = [
       {
         type: ENCOUNTER_TYPE.oscarAltar,
-        withObject: true,
+        object: 'altar',
         inputs: [inputWith(packEncounterAltar(0)), emptyInput()],
       },
       {
         type: ENCOUNTER_TYPE.sealedGuardian,
-        withObject: false, // 레인 A 는 수호자에 오브젝트를 세우지 않는다.
+        object: 'seal', // 수호자도 봉인 실체를 갖는다(MEDIUM-4).
         inputs: [inputWith(SPECIAL_ENCOUNTER_ENTER), emptyInput(), emptyInput()],
       },
-      { type: ENCOUNTER_TYPE.shardRain, withObject: false, inputs: [] },
-      { type: ENCOUNTER_TYPE.ghostConvoy, withObject: false, inputs: [] },
+      { type: ENCOUNTER_TYPE.shardRain, object: 'none', inputs: [] },
+      { type: ENCOUNTER_TYPE.ghostConvoy, object: 'none', inputs: [] },
     ];
 
     for (const c of cases) {
       const w = makeWorld();
       const rt = runtime(c.type, 0, w.tick);
-      if (c.withObject) placeAltar(w, rt);
+      if (c.object === 'altar') placeAltar(w, rt);
+      else if (c.object === 'seal') placeSeal(w, rt);
+      else passDeclineWindow(w, rt); // 인라인 2종은 창을 넘겨 실제 스폰 경로를 태운다.
       const before = rngStates(w);
 
       for (const input of c.inputs) step(w, rt, input);
