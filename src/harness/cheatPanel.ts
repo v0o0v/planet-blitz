@@ -47,7 +47,7 @@ import {
   MILESTONE_SHIELD_SHARE,
 } from '../../data/lineage.js';
 import type { Application, Container } from 'pixi.js';
-import { GalleryScene } from './gallery/galleryScene.js';
+import { galleryScene } from './gallery/galleryScene.js';
 
 /**
  * 촉매 하네스 제어(ADR-0029, DEV). main.ts 가 인메모리 모의 원장(`HarnessCatalystGateway`)과
@@ -281,9 +281,9 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   // 갱신 손실은 사실상 없다.
   let pointerActive = false;
 
-  // 프로토타입 갤러리 씬(Phase 1, DEV) — 패널 수명 동안 인스턴스 1개를 유지한다. 갤러리 탭의
-  // 열기/닫기 토글이 mount/unmount 를 부르고, 패널 destroy(HMR) 시에도 정리한다.
-  const galleryScene = new GalleryScene();
+  // 프로토타입 갤러리 씬(Phase 1, DEV) — 모듈 공유 싱글턴 galleryScene 을 쓴다(위 import). 갤러리 탭의
+  // 열기/닫기 토글과 ?gallery=1 딥링크(main.ts)가 같은 인스턴스를 구동해 이중 마운트를 막고, 패널
+  // destroy(HMR) 시에도 unmount 로 정리한다.
 
   // --- DOM 빌더 헬퍼 --------------------------------------------------------
 
