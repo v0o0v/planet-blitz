@@ -21,22 +21,60 @@ import { shipFacing } from './shipFacing.js';
 import { facilitySpecFor } from '../../data/invasion/facilities.js';
 import { HAZARD_LAVA, HAZARD_MORTAR, HAZARD_SLOW } from '../sim/patterns/types.js';
 import { HAZARD_CONTAMINATION } from '../sim/modes/contamination.js';
+// Phase 2 전투 피드백 배선 — 전부 render-only(sim·hashWorld/hashEntity 무접촉, ADR-0005).
+// 선행 레인 모듈을 소비만 한다(재작성 금지).
+import { ShardBurst } from './effects/explosion.js';
+import {
+  TraumaController,
+  TRAUMA_PLAYER_HIT,
+  TRAUMA_BOSS_KILL,
+  TRAUMA_ELITE_KILL,
+  TRAUMA_BIG_EXPLOSION,
+} from './screenShake.js';
+import { effectGates } from './qualityTier.js';
+import { graphicsSettings } from './graphicsSettings.js';
+import { graphicsTierController } from './graphicsRuntime.js';
 
 interface TrackedSprite {
   sprite: Sprite;
   seenTick: number;
   kind: EntityKind;
-}
-
-interface DeathEffect {
-  sprite: Sprite;
-  life: number;
+  /**
+   * 히트 플래시 창의 종료 프레임(AC-2.3). `frameTick < flashUntilTick` 이면 가산 흰 오버레이를
+   * 유지하고, 창이 끝나면(`frameTick >= flashUntilTick`) 오버레이를 떼고 파괴한다. 0 = 비활성.
+   */
+  flashUntilTick: number;
+  /**
+   * 히트 플래시용 가산 흰 오버레이 자식 스프라이트(있으면 표시 중). Pixi v8 tint 는 곱연산이라
+   * 흰색은 항등원 → 무틴트 스프라이트에 곱하면 화면 변화가 없다(MED-1). 대신 같은 텍스처를
+   * `blendMode='add'` 자식으로 얹어 실루엣을 실제로 밝힌다. 부모 destroy 시 함께 파괴되고
+   * (킬 누수 0), 창 종료 시 명시적으로도 회수한다. null = 오버레이 없음.
+   */
+  flashOverlay: Sprite | null;
+  /**
+   * 엘리트 여부(스냅샷 `elite >= 0`). 처치 시 화면 흔들림 세기를 고르기 위해 매 프레임 갱신한다
+   * (엘리트 처치=TRAUMA_ELITE_KILL). 소멸 시점엔 스냅샷이 없으므로 tracked 에 실어 둔다.
+   */
+  elite: boolean;
 }
 
 /** Sprite display diameter relative to the sim hitbox (art reads a bit larger). */
 const ART_SCALE = 1.5;
-/** Frames a death burst stays alive (render-only, not sim time). */
-const EFFECT_LIFE = 24;
+/** 히트 플래시 지속 프레임(2~3). placeholder, defer-balance-tuning. */
+const HIT_FLASH_FRAMES = 3;
+/** 히트 플래시 가산 오버레이 색(화이트). blendMode='add' 라 대상 실루엣을 흰빛으로 밝힌다(AC-2.3). */
+const HIT_FLASH_TINT = 0xffffff;
+/** 히트 플래시 오버레이 알파(가산 세기). placeholder, defer-balance-tuning(프레임 감쇠는 후속). */
+const HIT_FLASH_ALPHA = 0.85;
+/**
+ * 대형 폭발 흔들림 임계 스케일(AC-2.1). {@link explosionScale} 이 설비/기물=2·보스류=3 을 내므로
+ * `>=2` 를 "대형"으로 본다 — 잡몹(1) 폭발은 흔들림 제외. placeholder, defer-balance-tuning.
+ */
+const BIG_EXPLOSION_SCALE = 2;
+/** render 벽시계 프레임 델타 상한(초) — 탭 복귀 spike 방어. ShardBurst.MAX_DT(0.05)와 정합. */
+const MAX_RENDER_DT = 0.05;
+/** 프레임 델타 nominal(초, 60Hz). 첫 프레임·비정상 dt 폴백값. */
+const NOMINAL_DT = 1 / 60;
 /** Fixed on-screen size (px) of a floor loot glyph — the sim `radius` is the
  *  pickup range (44), far larger than the icon should read. */
 const LOOT_SIZE = 48;
@@ -383,7 +421,16 @@ export class EntityRenderer {
   private readonly glowLayer = new Container();
   private readonly spriteLayer = new Container();
   private readonly effectLayer = new Container();
-  private readonly effects: DeathEffect[] = [];
+  /**
+   * 살아 있는 파편 폭발(ShardBurst) 목록. 기존 단일 스프라이트 페이드(`effects[]`)를 대체한다
+   * (AC-2.4). 각 burst.container 는 effectLayer(스프라이트 **위**)에 붙고, `update(dt)` 가 false 를
+   * 돌려주면 effectLayer 에서 떼고 destroy 한다. render-only.
+   */
+  private readonly bursts: ShardBurst[] = [];
+  /** 화면 흔들림 트라우마 컨트롤러(AC-2.1). render-only 파생 — sim 되먹임 없음(카메라 오프셋만). */
+  private readonly trauma = new TraumaController();
+  /** 직전 render 벽시계(ms). 프레임 델타 자체 추적용(render 는 dt 를 받지 않음). undefined=첫 프레임. */
+  private lastFrameMs: number | undefined = undefined;
   private readonly overlay = new Graphics();
   /**
    * 필드 오버레이(시야 암흑·안전 반경 압박존). **엔티티 스프라이트보다 위**에 그려 시야 밖 적을
@@ -425,9 +472,32 @@ export class EntityRenderer {
    * 현재 살아 있는 사망 연출(폭발) 개수. **읽기 전용 관측창** — 렌더 거동에 전혀 관여하지 않고
    * 상태를 노출만 한다. 정지 1프레임 렌더(방어 배치 프리뷰)는 이펙트가 페이드아웃될 프레임을
    * 얻지 못해 누적이 눈에 보이는 결함이 되므로, 그 계약을 테스트가 수치로 못 박을 수 있어야 한다.
+   *
+   * Phase 2(AC-2.4)에서 사망 폭발이 단일 스프라이트 → 파편 버스트(ShardBurst)로 바뀌었지만,
+   * "살아 있는 사망 폭발 개수"라는 의미는 그대로다 — 이제 {@link bursts} 길이를 센다. burst 하나가
+   * effectLayer 자식 하나(container)라 `effectLayer.children.length` 와도 일치한다.
    */
   get effectCount(): number {
-    return this.effects.length;
+    return this.bursts.length;
+  }
+
+  /**
+   * 현재 화면 흔들림 트라우마([0,1]). **읽기 전용 관측창** — 흔들림 배선(AC-2.1)이 실제로 트리거를
+   * 받는지 자동 통합 테스트가 수치로 확인할 수 있게 노출한다. 렌더 거동에는 관여하지 않는다.
+   */
+  get shakeTrauma(): number {
+    return this.trauma.getTrauma();
+  }
+
+  /**
+   * 현재 히트 플래시 가산 오버레이가 붙어 있는 스프라이트 수. **읽기 전용 관측창** — 히트 플래시
+   * 배선(AC-2.3)이 tint 상태값이 아니라 **실제 가산 오버레이 자식**을 만들고(가시 메커니즘) 창 종료
+   * 시 회수하는지 자동 통합 테스트가 수치로 확인하게 노출한다. 렌더 거동에는 관여하지 않는다.
+   */
+  get hitFlashOverlayCount(): number {
+    let n = 0;
+    for (const t of this.sprites.values()) if (t.flashOverlay !== null) n++;
+    return n;
   }
 
   /** 스냅샷 1건의 텍스처. 매핑 판단은 순수 함수({@link spriteSlotFor})가 하고 여기서는 해석만 한다. */
@@ -438,15 +508,22 @@ export class EntityRenderer {
   render(prev: WorldSnapshot, curr: WorldSnapshot, alpha: number): void {
     this.frameTick++;
     this.planet = curr.planet;
-    // Camera follow: pan the whole layer so the interpolated camera (= player)
-    // sits at the viewport centre. Sprites keep their absolute world coordinates;
-    // only the layer is translated (vampire-survivors-style scrolling).
-    const camX = prev.cameraX + (curr.cameraX - prev.cameraX) * alpha;
-    const camY = prev.cameraY + (curr.cameraY - prev.cameraY) * alpha;
-    this.layer.position.set(DESIGN_WIDTH / 2 - camX, DESIGN_HEIGHT / 2 - camY);
+
+    // 프레임 델타(초) — render 는 dt 를 받지 않으므로 벽시계로 자체 추적한다(render-only 파생,
+    // sim·해시 무관). 첫 프레임·비정상·탭 복귀는 nominal 또는 상한으로 클램프해 파티클·트라우마가
+    // 순간이동하지 않게 한다. TraumaController.tick 과 ShardBurst.update 가 같은 dt 를 쓴다.
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    let dt = this.lastFrameMs === undefined ? NOMINAL_DT : (now - this.lastFrameMs) / 1000;
+    this.lastFrameMs = now;
+    if (!Number.isFinite(dt) || dt <= 0) dt = NOMINAL_DT;
+    else if (dt > MAX_RENDER_DT) dt = MAX_RENDER_DT;
+
+    // 이펙트 게이트(티어 × 감소 토글) — 프레임당 1회만 산출해 흔들림·히트 플래시가 공유한다.
+    const gates = effectGates(graphicsTierController.getActiveTier(), graphicsSettings.getSettings());
+
     this.drawOverlay(curr);
     this.drawFieldOverlays(curr);
-    this.updateEffects();
+    this.updateBursts(dt);
 
     const prevById = new Map<number, EntitySnapshot>();
     for (const e of prev.entities) prevById.set(e.id, e);
@@ -492,10 +569,19 @@ export class EntityRenderer {
           sprite.addChild(chute);
         }
         this.spriteLayer.addChild(sprite);
-        tracked = { sprite, seenTick: this.frameTick, kind: e.kind };
+        tracked = {
+          sprite,
+          seenTick: this.frameTick,
+          kind: e.kind,
+          flashUntilTick: 0,
+          flashOverlay: null,
+          elite: e.elite >= 0,
+        };
         this.sprites.set(e.id, tracked);
       }
       tracked.seenTick = this.frameTick;
+      // 엘리트 여부를 매 프레임 갱신 — 소멸(처치) 시점엔 스냅샷이 없어 흔들림 세기를 못 고른다.
+      tracked.elite = e.elite >= 0;
 
       const p = prevById.get(e.id) ?? e;
       tracked.sprite.x = p.x + (e.x - p.x) * alpha;
@@ -506,6 +592,8 @@ export class EntityRenderer {
         const facing = shipFacing(e.x, e.y, curr.entities, e.x - p.x, e.y - p.y, this.lastPlayerAngle);
         this.lastPlayerAngle = facing;
         tracked.sprite.rotation = facing;
+        // 화면 흔들림 트리거 ① 플레이어 피격(중) — HP 델타(AC-2.1). p 는 직전 스냅샷.
+        if (p.hp > e.hp) this.trauma.addTrauma(TRAUMA_PLAYER_HIT);
       } else {
         // Gems, boss, supply and the static gimmicks keep a fixed facing; others
         // face their travel/aim angle. 목록은 isFixedFacing 이 정본이다.
@@ -514,6 +602,8 @@ export class EntityRenderer {
 
       if (e.kind === 'boss') {
         // Phase transition = white flash; overheat = bright red pulse (spec).
+        // 보스는 기존 flash/과열 로직이 tint 를 전유한다 — 히트 플래시(아래 else if)를 태우지 않아
+        // 두 로직이 tint 를 두고 다투지 않게 한다(AC-2.3: 보스 기존 로직 우선).
         if (e.flash) {
           tracked.sprite.tint = (this.frameTick >> 2) % 2 === 0 ? 0xffffff : 0xff8080;
         } else if (e.active) {
@@ -524,6 +614,37 @@ export class EntityRenderer {
           tracked.sprite.tint = 0xffffff;
           tracked.sprite.alpha = 1;
         }
+      } else if (e.kind !== 'player') {
+        // 히트 플래시(AC-2.3) — HP 델타로 피해를 감지해 2~3프레임 동안 **가산 흰 오버레이**로 대상
+        // 실루엣을 실제로 번쩍이게 한다. Pixi v8 tint 는 곱연산이라 흰색(0xffffff)은 항등원 →
+        // 무틴트(대개 흰) 스프라이트에 곱하면 화면 변화가 0 이다(MED-1). 그래서 같은 텍스처를
+        // blendMode='add' 자식으로 얹어 가산합성으로 밝힌다. 트리거는 데미지 숫자와 동일 소스(HP
+        // 델타)라 sim 표면 불확대. 보스는 위 기존 로직, 플레이어는 적 kind 아님 → 제외. reducedMotion
+        // 은 effectGates.hitFlash 가 반영(감소 시 false → 오버레이가 아예 안 생긴다).
+        if (gates.hitFlash && p.hp > e.hp) {
+          tracked.flashUntilTick = this.frameTick + HIT_FLASH_FRAMES;
+          if (tracked.flashOverlay === null) {
+            // 자식이라 부모 스프라이트의 위치·회전·스케일을 그대로 따르고(같이 움직임), 부모
+            // destroy({children:true}) 시 함께 파괴된다(킬 누수 0). setSize 를 안 하는 이유: 부모
+            // 스케일이 이미 텍스처→표시크기를 맞추므로, 자식은 네이티브 텍스처 크기로 두면 부모
+            // 스케일 아래에서 부모와 정확히 같은 실루엣으로 렌더된다(sprite.width 로 setSize 하면
+            // 부모 스케일이 이중 적용돼 오히려 작아진다).
+            const ov = new Sprite(tracked.sprite.texture);
+            ov.anchor.set(0.5);
+            ov.tint = HIT_FLASH_TINT;
+            ov.blendMode = 'add';
+            ov.alpha = HIT_FLASH_ALPHA;
+            tracked.sprite.addChild(ov);
+            tracked.flashOverlay = ov;
+          }
+          // 이미 오버레이가 있으면 위에서 창(flashUntilTick)만 연장된다 — 중복 생성 금지.
+        }
+        // 창 종료면 오버레이를 떼고 파괴(딱 한 번). 재피격 없이 프레임이 흐르면 여기서 회수된다.
+        if (tracked.flashOverlay !== null && this.frameTick >= tracked.flashUntilTick) {
+          tracked.sprite.removeChild(tracked.flashOverlay);
+          tracked.flashOverlay.destroy();
+          tracked.flashOverlay = null;
+        }
       }
     }
 
@@ -533,35 +654,55 @@ export class EntityRenderer {
         // 침공 3레이어의 설비·기물·보스도 파괴 연출을 받는다(스케일은 explosionScale).
         const scale = explosionScale(tracked.kind);
         if (scale > 0) this.spawnExplosion(tracked.sprite.x, tracked.sprite.y, scale);
-        tracked.sprite.destroy();
+        // 화면 흔들림 트리거 ② 보스/엘리트 처치(강) — 잡몹 처치는 제외(AC-2.1). 보스류(boss·
+        // defenseBoss)는 TRAUMA_BOSS_KILL, 엘리트 잡몹은 TRAUMA_ELITE_KILL.
+        if (tracked.kind === 'boss' || tracked.kind === 'defenseBoss') {
+          this.trauma.addTrauma(TRAUMA_BOSS_KILL);
+        } else if (tracked.elite) {
+          this.trauma.addTrauma(TRAUMA_ELITE_KILL);
+        }
+        // children:true 로 파괴 — 히트 플래시 오버레이·낙하산 등 소유 자식까지 함께 회수(누수 0).
+        tracked.sprite.destroy({ children: true });
         this.sprites.delete(id);
       }
     }
+
+    // 카메라 팬 + 화면 흔들림(AC-2.1). 카메라는 보간된 render-only 파생(sim 무권위)이라 흔들림
+    // 오프셋을 그 위에 가산해도 sim 되먹임이 없다. 이 프레임에 누적된 트라우마(피격·처치·대형
+    // 폭발)가 같은 프레임에 반영되도록 엔티티/킬 루프 **뒤**에서 적용한다. drawOverlay/필드
+    // 오버레이는 layer 자식에 월드 좌표로 그리므로 position 설정 시점과 무관하다.
+    const camX = prev.cameraX + (curr.cameraX - prev.cameraX) * alpha;
+    const camY = prev.cameraY + (curr.cameraY - prev.cameraY) * alpha;
+    const sh = this.trauma.tick(dt, gates.shake);
+    this.layer.position.set(DESIGN_WIDTH / 2 - camX + sh.dx, DESIGN_HEIGHT / 2 - camY + sh.dy);
   }
 
+  /**
+   * 파편 폭발(ShardBurst) 1개를 effectLayer(스프라이트 위)에 방출한다(AC-2.4). 기존 단일 스프라이트
+   * 24프레임 페이드를 대체 — 절차적 가산 파티클이라 텍스처 의존이 없다. 티어를 전달해 Low 에서
+   * 파티클이 최소가 되게 한다. `scale >= 대형임계` 면 화면 흔들림 트리거 ③(대형 폭발)도 건다.
+   */
   private spawnExplosion(x: number, y: number, scale: number): void {
-    const sprite = new Sprite(this.textures.explosion);
-    sprite.anchor.set(0.5);
-    sprite.x = x;
-    sprite.y = y;
-    sprite.setSize(46 * scale, 46 * scale);
-    this.effectLayer.addChild(sprite);
-    this.effects.push({ sprite, life: EFFECT_LIFE });
+    const burst = new ShardBurst(x, y, scale, { tier: graphicsTierController.getActiveTier() });
+    this.effectLayer.addChild(burst.container);
+    this.bursts.push(burst);
+    // 화면 흔들림 트리거 ③ 대형 폭발(중) — 설비/기물/보스류(scale>=2)만. 잡몹(1) 제외(AC-2.1).
+    if (scale >= BIG_EXPLOSION_SCALE) this.trauma.addTrauma(TRAUMA_BIG_EXPLOSION);
   }
 
-  private updateEffects(): void {
-    for (let i = this.effects.length - 1; i >= 0; i--) {
-      const fx = this.effects[i];
-      if (fx === undefined) continue;
-      fx.life--;
-      if (fx.life <= 0) {
-        fx.sprite.destroy();
-        this.effects.splice(i, 1);
-        continue;
+  /**
+   * 살아 있는 파편 폭발을 dt(초)만큼 진행하고, 원샷이 끝난 것(update→false)은 effectLayer 에서
+   * 떼고 destroy 한다. dt 는 render 가 벽시계로 산출해 넘긴다(TraumaController 와 동일 dt).
+   */
+  private updateBursts(dt: number): void {
+    for (let i = this.bursts.length - 1; i >= 0; i--) {
+      const b = this.bursts[i];
+      if (b === undefined) continue;
+      if (!b.update(dt)) {
+        this.effectLayer.removeChild(b.container);
+        b.destroy();
+        this.bursts.splice(i, 1);
       }
-      const t = fx.life / EFFECT_LIFE; // 1 → 0
-      fx.sprite.alpha = t;
-      fx.sprite.scale.set(fx.sprite.scale.x * (1 + 0.04 * (1 - t)));
     }
   }
 
@@ -627,20 +768,24 @@ export class EntityRenderer {
    * `destroy()` 와 달리 레이어·오버레이는 살려 둔다 — 렌더러 인스턴스는 앱 수명 내내 유지된다.
    */
   reset(): void {
-    for (const { sprite } of this.sprites.values()) sprite.destroy();
+    for (const { sprite } of this.sprites.values()) sprite.destroy({ children: true });
     this.sprites.clear();
-    for (const { sprite } of this.effects) sprite.destroy();
-    this.effects.length = 0;
+    // 사망 폭발도 비운다 — 남기면 다른 월드(런/프리뷰 레이어) 좌표의 폭발이 화면에 떠 있다
+    // (defensePreviewFrame 계약). 트라우마·프레임 시계도 초기화해 잔류 흔들림·dt spike 를 막는다.
+    for (const b of this.bursts) b.destroy();
+    this.bursts.length = 0;
+    this.trauma.reset();
+    this.lastFrameMs = undefined;
     this.overlay.clear();
     this.fog.clear();
     this.lastPlayerAngle = 0;
   }
 
   destroy(): void {
-    for (const { sprite } of this.sprites.values()) sprite.destroy();
+    for (const { sprite } of this.sprites.values()) sprite.destroy({ children: true });
     this.sprites.clear();
-    for (const { sprite } of this.effects) sprite.destroy();
-    this.effects.length = 0;
+    for (const b of this.bursts) b.destroy();
+    this.bursts.length = 0;
     this.overlay.destroy();
     this.fog.destroy();
     this.layer.destroy({ children: true });
