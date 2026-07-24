@@ -46,6 +46,8 @@ import {
   MILESTONE_CORE_GUARD,
   MILESTONE_SHIELD_SHARE,
 } from '../../data/lineage.js';
+import type { Application, Container } from 'pixi.js';
+import { GalleryScene } from './gallery/galleryScene.js';
 
 /**
  * 촉매 하네스 제어(ADR-0029, DEV). main.ts 가 인메모리 모의 원장(`HarnessCatalystGateway`)과
@@ -144,6 +146,7 @@ type SceneTab =
   | 'invasion'
   | 'boss'
   | 'fx'
+  | 'gallery'
   | 'result'
   | 'menus'
   | 'guardian'
@@ -155,6 +158,7 @@ const SCENE_TABS: readonly { id: SceneTab; label: string }[] = [
   { id: 'invasion', label: '침공' },
   { id: 'boss', label: '보스전' },
   { id: 'fx', label: '연출' },
+  { id: 'gallery', label: '갤러리' },
   { id: 'result', label: '정산' },
   { id: 'menus', label: '메뉴' },
   { id: 'guardian', label: '수호·계보' },
@@ -276,6 +280,10 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   // 특히 잘 씹힌다. 억제 구간은 버튼을 누르고 있는 짧은 순간뿐이라 인스펙터 실시간
   // 갱신 손실은 사실상 없다.
   let pointerActive = false;
+
+  // 프로토타입 갤러리 씬(Phase 1, DEV) — 패널 수명 동안 인스턴스 1개를 유지한다. 갤러리 탭의
+  // 열기/닫기 토글이 mount/unmount 를 부르고, 패널 destroy(HMR) 시에도 정리한다.
+  const galleryScene = new GalleryScene();
 
   // --- DOM 빌더 헬퍼 --------------------------------------------------------
 
@@ -669,6 +677,9 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         case 'fx':
           buildFxTab(pane);
           break;
+        case 'gallery':
+          buildGalleryTab(pane);
+          break;
         case 'result':
           buildResultTab(pane);
           break;
@@ -989,6 +1000,53 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         btn('유니크 세리머니', sceneUnique, '근처에 유니크 loot 드랍 → 금빛 슬로모'),
       );
       s.appendChild(row);
+    }
+
+    /**
+     * 갤러리 탭(Phase 1, DEV — plan §AC-1.1): 6종 변형군을 게임 화면 위 반투명 갤러리로 열어
+     * 라이브 비교하고 셀 클릭으로 variant id 를 콘솔에 로그한다. window.__pb.gameApp(stage/app)에
+     * 씬을 마운트한다 — main.ts 의 접근 방식(캐스팅)을 모방한다. render-only.
+     */
+    function buildGalleryTab(s: HTMLElement): void {
+      const pb = (window as unknown as { __pb?: { gameApp?: { stage: Container; app: Application } } }).__pb;
+      const gameApp = pb?.gameApp;
+      const open = galleryScene.isOpen();
+
+      s.appendChild(subLabel('프로토타입 갤러리 (6종 변형 · 라이브 비교)'));
+      const row = document.createElement('div');
+      row.className = 'pb-c-row';
+      const toggle = btn(
+        open ? '갤러리 닫기' : '갤러리 열기',
+        () => {
+          if (gameApp === undefined) {
+            setHint('갤러리: __pb.gameApp 미배선(구버전/테스트 호스트)');
+            return;
+          }
+          if (galleryScene.isOpen()) {
+            galleryScene.unmount();
+            setHint('갤러리 닫음');
+          } else {
+            galleryScene.mount(gameApp.stage, gameApp.app);
+            setHint('갤러리 열림 — 셀 클릭 시 variant id 가 콘솔에 찍힙니다');
+          }
+          render();
+        },
+        '6종 변형군(폭발·글로우·디졸브·충격파·전환·세리머니)을 한 화면에서 라이브 비교',
+        open ? 'on' : 'play',
+      );
+      if (gameApp === undefined) {
+        toggle.disabled = true;
+        toggle.title = '__pb.gameApp 미배선(구버전/테스트 호스트)';
+      }
+      row.appendChild(toggle);
+      s.appendChild(row);
+
+      const note = document.createElement('div');
+      note.className = 'pb-c-lbl';
+      note.textContent = open
+        ? '열림: 시안 테두리=추천 기본값. 셀 클릭 → 콘솔에 variant id. 고른 뒤 알려주세요.'
+        : 'DEV 전용 · render-only. 게임 화면 위에 반투명 갤러리를 띄웁니다.';
+      s.appendChild(note);
     }
 
     /** 정산 탭: 승/패 결과 오버레이(오염 런은 settlement 생략, 화면 표시만). */
@@ -1329,6 +1387,8 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
 
   return {
     destroy(): void {
+      // 갤러리 씬이 열려 있으면 함께 정리(ticker 콜백·핸들·백드롭 누수 0).
+      galleryScene.unmount();
       window.clearInterval(timer);
       window.removeEventListener('keydown', onKey);
       root.removeEventListener('pointerdown', onPointerDown);
