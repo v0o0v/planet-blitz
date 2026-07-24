@@ -31,6 +31,14 @@ export const EN = {
   'settings.language': 'Language',
   'settings.lang.en': 'English',
   'settings.lang.ko': '한국어',
+  // --- 그래픽/접근성(Phase 0 — plan §AC-0.7; ADR-0031) ---
+  'settings.graphics': 'Graphics',
+  'settings.quality.auto': 'Auto',
+  'settings.quality.low': 'Low',
+  'settings.quality.med': 'Medium',
+  'settings.quality.high': 'High',
+  'settings.reducedMotion': 'Reduced Motion',
+  'settings.reducedGlow': 'Reduced Glow',
 
   // --- 정산 화면(C2) ---
   'result.win.title': 'Planet Conquered',
@@ -1294,6 +1302,13 @@ export const KO: Record<MessageKey, string> = {
   'settings.language': '언어',
   'settings.lang.en': 'English',
   'settings.lang.ko': '한국어',
+  'settings.graphics': '그래픽',
+  'settings.quality.auto': '자동',
+  'settings.quality.low': '낮음',
+  'settings.quality.med': '보통',
+  'settings.quality.high': '높음',
+  'settings.reducedMotion': '모션 감소',
+  'settings.reducedGlow': '발광 감소',
 
   'result.win.title': '행성 정복',
   'result.lose.title': '격추당했다…',

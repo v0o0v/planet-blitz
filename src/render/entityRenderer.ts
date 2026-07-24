@@ -374,6 +374,13 @@ export function drawSafeZone(
 export class EntityRenderer {
   readonly layer = new Container();
   private readonly sprites = new Map<number, TrackedSprite>();
+  /**
+   * 발광(글로우/블룸 헤일로) 레이어 — 가산 blend, 스프라이트 **아래**에 그려 발광이 불투명
+   * 코어·탄막을 덮지 않게 한다(탄막 가독성 계약). Phase 0(현재)에서는 **빈 상태**(자식 0)로만
+   * 두어 렌더 출력·골든 해시가 불변이다 — 발광 이펙트 배선은 Phase 3 몫이다. blend 설정과 draw
+   * order 삽입, "glow=아래·폭발=위" 비대칭 규율(AC-0.8)은 생성자 주석이 정본이다.
+   */
+  private readonly glowLayer = new Container();
   private readonly spriteLayer = new Container();
   private readonly effectLayer = new Container();
   private readonly effects: DeathEffect[] = [];
@@ -391,9 +398,24 @@ export class EntityRenderer {
   private lastPlayerAngle = 0;
 
   constructor(private readonly textures: PlaceholderTextures) {
-    // Draw order (bottom → top): hazard/beam overlay, entity sprites, death bursts,
-    // then the field overlay (시야 암흑·안전 반경) on top so it dims out-of-vision entities.
+    // Draw order (bottom → top): hazard/beam overlay, [glow halos], entity sprites,
+    // death bursts, then the field overlay (시야 암흑·안전 반경) on top so it dims
+    // out-of-vision entities.
+    //
+    // ── 발광 비대칭 규율 (AC-0.8 / ADR-0031) ────────────────────────────────
+    // glowLayer 는 스프라이트 **아래**다: 발광 헤일로가 불투명 코어·탄막을 덮으면 판정점
+    // 가독성이 무너진다(탄막 가독성 계약 — 흰 코어+유색 아웃라인, 색=거동). 정확히 반대로
+    // 폭발 파티클(effectLayer)은 스프라이트 **위**다 — 사망 유닛 위 순간 폭발은 가독 레이어를
+    // 잠깐 덮어도 허용되고(살아있는 적 피드백은 tint 방식이라 안전), 그래야 폭발이 읽힌다.
+    // 요컨대 **glow=아래(스프라이트 밑), 폭발/effectLayer=위(스프라이트 위)** — 이 비대칭을
+    // 깨서 glow 를 스프라이트 위로 올리거나 effectLayer 를 아래로 내리지 말 것.
+    //
+    // glowLayer 는 가산 blend(additive) Container 이며, Phase 0(현재)에서는 **빈 상태**(자식
+    // 0)로만 둔다 → 빈 컨테이너는 아무것도 그리지 않으므로 렌더 출력·골든 해시가 불변이다
+    // (발광 이펙트 배선은 Phase 3 몫). fog 는 계속 최상단이라 필드 오버레이 계약도 그대로다.
+    this.glowLayer.blendMode = 'add';
     this.layer.addChild(this.overlay);
+    this.layer.addChild(this.glowLayer);
     this.layer.addChild(this.spriteLayer);
     this.layer.addChild(this.effectLayer);
     this.layer.addChild(this.fog);

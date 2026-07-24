@@ -171,7 +171,7 @@ describe('B-1 · 세션 중 기체 교체가 인게임 스프라이트에 반영
     renderer.reset();
     expect(sprites.size).toBe(0);
     expect(renderer.layer.destroyed).toBe(false);
-    expect(renderer.layer.children.length).toBe(4); // overlay · sprite · effect · fog(시야/안전반경) 레이어
+    expect(renderer.layer.children.length).toBe(5); // overlay · glow(발광, 빈 상태) · sprite · effect · fog(시야/안전반경) 레이어
   });
 });
 
