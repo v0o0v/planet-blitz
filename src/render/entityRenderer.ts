@@ -88,12 +88,21 @@ interface TrackedSprite {
    */
   flashUntilTick: number;
   /**
-   * 히트 플래시용 가산 흰 오버레이 자식 스프라이트(있으면 표시 중). Pixi v8 tint 는 곱연산이라
-   * 흰색은 항등원 → 무틴트 스프라이트에 곱하면 화면 변화가 없다(MED-1). 대신 같은 텍스처를
-   * `blendMode='add'` 자식으로 얹어 실루엣을 실제로 밝힌다. 부모 destroy 시 함께 파괴되고
-   * (킬 누수 0), 창 종료 시 명시적으로도 회수한다. null = 오버레이 없음.
+   * 히트 플래시용 가산 흰 오버레이 스프라이트(있으면 표시 중). Pixi v8 tint 는 곱연산이라 흰색은
+   * 항등원 → 무틴트 스프라이트에 곱하면 화면 변화가 없다(MED-1). 대신 같은 텍스처를 `blendMode='add'`
+   * 로 얹어 실루엣을 실제로 밝힌다. **Pixi v8 은 Sprite 를 컨테이너로 쓰는 것을 deprecate 했으므로
+   * (Sprite.addChild 경고), 부모의 자식이 아니라 spriteLayer 형제로 두고 매 프레임 부모 위치·회전·
+   * 스케일을 미러**한다(발광 헤일로와 동형). 형제라 부모 destroy 로는 안 딸려 오므로 창 종료·킬·
+   * reset·destroy 시 명시 회수한다({@link detachFromSpriteLayer}). null = 오버레이 없음.
    */
   flashOverlay: Sprite | null;
+  /**
+   * 낙하산(보급 수송체 위 고정 매닮) 형제 스프라이트. 히트 플래시 오버레이와 같은 이유로 부모
+   * Sprite 의 자식이 아니라 spriteLayer 형제로 두고(Pixi v8 Sprite.addChild deprecate 회피), 매
+   * 프레임 부모 위치로 미러한다(수송체는 fixed facing 이라 회전 0). 형제라 킬·reset·destroy 시
+   * 명시 회수해야 한다(부모 destroy 로 안 딸려 온다). null = 낙하산 없음(에셋 부재·비-보급).
+   */
+  chute: Sprite | null;
   /**
    * 엘리트 여부(스냅샷 `elite >= 0`). 처치 시 화면 흔들림 세기를 고르기 위해 매 프레임 갱신한다
    * (엘리트 처치=TRAUMA_ELITE_KILL). 소멸 시점엔 스냅샷이 없으므로 tracked 에 실어 둔다.
@@ -116,6 +125,17 @@ const HIT_FLASH_FRAMES = 3;
 const HIT_FLASH_TINT = 0xffffff;
 /** 히트 플래시 오버레이 알파(가산 세기). placeholder, defer-balance-tuning(프레임 감쇠는 후속). */
 const HIT_FLASH_ALPHA = 0.85;
+/**
+ * 낙하산 폭 = 수송체 **표시 폭**(sprite.width)의 배수. 낙하산이 부모 Sprite 의 자식이던 시절
+ * `setSize(tw*0.95)`(부모 텍스처 로컬)을 부모 스케일이 곱해 표시하던 크기를, 이제 형제로 두므로
+ * 부모 표시 치수에 직접 곱해 동일 크기로 재현한다(자식 세팅과 수치 동치). placeholder.
+ */
+const PARACHUTE_WIDTH_SCALE = 0.95;
+/**
+ * 낙하산을 수송체 중심 **위로** 매다는 오프셋 = 수송체 **표시 높이**(sprite.height)의 배수. 자식
+ * 이던 시절 로컬 `position(0, -th*0.35)`(부모 스케일 곱)와 수치 동치(부모 표시 높이 × 0.35).
+ */
+const PARACHUTE_OFFSET_SCALE = 0.35;
 /**
  * 대형 폭발 흔들림 임계 스케일(AC-2.1). {@link explosionScale} 이 설비/기물=2·보스류=3 을 내므로
  * `>=2` 를 "대형"으로 본다 — 잡몹(1) 폭발은 흔들림 제외. placeholder, defer-balance-tuning.
@@ -662,8 +682,9 @@ export class EntityRenderer {
 
   /**
    * 현재 히트 플래시 가산 오버레이가 붙어 있는 스프라이트 수. **읽기 전용 관측창** — 히트 플래시
-   * 배선(AC-2.3)이 tint 상태값이 아니라 **실제 가산 오버레이 자식**을 만들고(가시 메커니즘) 창 종료
-   * 시 회수하는지 자동 통합 테스트가 수치로 확인하게 노출한다. 렌더 거동에는 관여하지 않는다.
+   * 배선(AC-2.3)이 tint 상태값이 아니라 **실제 가산 오버레이**(spriteLayer 형제)를 만들고(가시
+   * 메커니즘) 창 종료 시 회수하는지 자동 통합 테스트가 수치로 확인하게 노출한다. 렌더 거동에는
+   * 관여하지 않는다.
    */
   get hitFlashOverlayCount(): number {
     let n = 0;
@@ -844,22 +865,27 @@ export class EntityRenderer {
         }
         // Supply drop: pin a parachute canopy above the transport when the
         // fx_parachute.png asset is present (render-only; no PNG → unchanged).
+        // 낙하산은 부모 Sprite 의 **자식이 아니라 spriteLayer 형제**다(Pixi v8 Sprite.addChild
+        // deprecate 회피). 자식일 때는 부모 스케일이 곱해져 표시됐으므로, 형제는 부모의 **표시
+        // 치수**(sprite.width — 이미 위 setSize 로 확정)에 배수를 직접 곱해 같은 크기로 만든다.
+        // 위치는 아래 엔티티 루프가 매 프레임 미러한다(생성 시엔 미배치 — 첫 미러에서 자리 잡는다).
+        let chute: Sprite | null = null;
         if (e.kind === 'supply' && this.textures.parachute !== null) {
-          const tw = sprite.texture.width;
-          const th = sprite.texture.height;
-          const chute = new Sprite(this.textures.parachute);
+          chute = new Sprite(this.textures.parachute);
           chute.anchor.set(0.5, 1);
-          chute.setSize(tw * 0.95, tw * 0.95);
-          chute.position.set(0, -th * 0.35);
-          sprite.addChild(chute);
+          const chuteSize = sprite.width * PARACHUTE_WIDTH_SCALE;
+          chute.setSize(chuteSize, chuteSize);
         }
         this.spriteLayer.addChild(sprite);
+        // 낙하산은 sprite **뒤에** 붙여 수송체 위에 렌더한다(기존 자식일 때의 상하 관계 보존).
+        if (chute !== null) this.spriteLayer.addChild(chute);
         tracked = {
           sprite,
           seenTick: this.frameTick,
           kind: e.kind,
           flashUntilTick: 0,
           flashOverlay: null,
+          chute,
           elite: e.elite >= 0,
           hp: e.hp,
           dmgAccum: 0,
@@ -897,6 +923,17 @@ export class EntityRenderer {
         tracked.sprite.rotation = isFixedFacing(e.kind) ? 0 : e.angle;
       }
 
+      // 낙하산 형제 미러(있으면) — 부모 보간 위치를 따라가되 수송체 **위** 고정 오프셋으로 매단다.
+      // 부모(supply)는 fixed facing 이라 회전 0이지만 안전하게 부모 회전을 그대로 따른다. 크기는
+      // 생성 시 확정(수송체 스케일 불변)이라 여기선 위치·회전만 갱신한다.
+      if (tracked.chute !== null) {
+        tracked.chute.position.set(
+          tracked.sprite.x,
+          tracked.sprite.y - tracked.sprite.height * PARACHUTE_OFFSET_SCALE,
+        );
+        tracked.chute.rotation = tracked.sprite.rotation;
+      }
+
       if (e.kind === 'boss') {
         // Phase transition = white flash; overheat = bright red pulse (spec).
         // 보스는 기존 flash/과열 로직이 tint 를 전유한다 — 히트 플래시(아래 else if)를 태우지 않아
@@ -915,32 +952,37 @@ export class EntityRenderer {
         // 히트 플래시(AC-2.3) — HP 델타로 피해를 감지해 2~3프레임 동안 **가산 흰 오버레이**로 대상
         // 실루엣을 실제로 번쩍이게 한다. Pixi v8 tint 는 곱연산이라 흰색(0xffffff)은 항등원 →
         // 무틴트(대개 흰) 스프라이트에 곱하면 화면 변화가 0 이다(MED-1). 그래서 같은 텍스처를
-        // blendMode='add' 자식으로 얹어 가산합성으로 밝힌다. 트리거는 데미지 숫자와 동일 소스(HP
-        // 델타)라 sim 표면 불확대. 보스는 위 기존 로직, 플레이어는 적 kind 아님 → 제외. reducedMotion
-        // 은 effectGates.hitFlash 가 반영(감소 시 false → 오버레이가 아예 안 생긴다).
+        // blendMode='add' 로 얹어 가산합성으로 밝힌다. 트리거는 데미지 숫자와 동일 소스(HP 델타)라
+        // sim 표면 불확대. 보스는 위 기존 로직, 플레이어는 적 kind 아님 → 제외. reducedMotion 은
+        // effectGates.hitFlash 가 반영(감소 시 false → 오버레이가 아예 안 생긴다).
+        //
+        // **Pixi v8 은 Sprite 를 컨테이너로 쓰는 것을 deprecate**(Sprite.addChild 경고)했으므로,
+        // 오버레이는 부모의 자식이 아니라 spriteLayer **형제**로 두고 매 프레임 부모 위치·회전·
+        // 스케일을 미러한다(같은 텍스처·앵커라 동일 실루엣으로 겹친다 — 발광 헤일로와 동형). 형제라
+        // 부모 destroy 로는 안 딸려 오므로 창 종료·킬·reset·destroy 시 명시 회수한다.
         if (gates.hitFlash && p.hp > e.hp) {
           tracked.flashUntilTick = this.frameTick + HIT_FLASH_FRAMES;
           if (tracked.flashOverlay === null) {
-            // 자식이라 부모 스프라이트의 위치·회전·스케일을 그대로 따르고(같이 움직임), 부모
-            // destroy({children:true}) 시 함께 파괴된다(킬 누수 0). setSize 를 안 하는 이유: 부모
-            // 스케일이 이미 텍스처→표시크기를 맞추므로, 자식은 네이티브 텍스처 크기로 두면 부모
-            // 스케일 아래에서 부모와 정확히 같은 실루엣으로 렌더된다(sprite.width 로 setSize 하면
-            // 부모 스케일이 이중 적용돼 오히려 작아진다).
             const ov = new Sprite(tracked.sprite.texture);
             ov.anchor.set(0.5);
             ov.tint = HIT_FLASH_TINT;
             ov.blendMode = 'add';
             ov.alpha = HIT_FLASH_ALPHA;
-            tracked.sprite.addChild(ov);
+            this.spriteLayer.addChild(ov);
             tracked.flashOverlay = ov;
           }
           // 이미 오버레이가 있으면 위에서 창(flashUntilTick)만 연장된다 — 중복 생성 금지.
         }
-        // 창 종료면 오버레이를 떼고 파괴(딱 한 번). 재피격 없이 프레임이 흐르면 여기서 회수된다.
-        if (tracked.flashOverlay !== null && this.frameTick >= tracked.flashUntilTick) {
-          tracked.sprite.removeChild(tracked.flashOverlay);
-          tracked.flashOverlay.destroy();
-          tracked.flashOverlay = null;
+        // 오버레이가 있으면: 창이 살아 있는 동안 매 프레임 부모 변환을 미러하고(생성 프레임 포함 —
+        // 여기서 자리·크기를 잡는다), 창이 끝나면 떼고 파괴한다(딱 한 번, 재피격 없이 프레임이
+        // 흐르면 여기서 회수). 형제라 부모 스케일이 자동 적용되지 않으므로 스케일도 직접 미러한다.
+        if (tracked.flashOverlay !== null) {
+          if (this.frameTick >= tracked.flashUntilTick) {
+            this.detachFromSpriteLayer(tracked.flashOverlay);
+            tracked.flashOverlay = null;
+          } else {
+            this.mirrorTransform(tracked.flashOverlay, tracked.sprite);
+          }
         }
       }
 
@@ -1073,6 +1115,18 @@ export class EntityRenderer {
         // 그레이징 rising-edge 상태 정리(탄 소멸) — id 재사용은 없지만 맵 성장을 막는다(no-op if 미등록).
         this.grazeTracker.forget(id);
         // 트레일도 이 탄이 이번 프레임 unseen 이라 updateBulletTrails 가 이미 페이드를 시작했다(별도 처리 불필요).
+        // 히트 플래시 오버레이·낙하산은 spriteLayer **형제**라 부모 destroy({children}) 로 안 딸려
+        // 오고, 디졸브 경로는 애초에 부모 sprite 를 destroy 하지 않는다. 따라서 **어느 사망 경로든**
+        // 여기서 부착물을 명시 회수한다(누수 0). 발광 헤일로가 스프라이트 생사와 무관하게 회수되는
+        // 것과 같은 규율이다.
+        if (tracked.flashOverlay !== null) {
+          this.detachFromSpriteLayer(tracked.flashOverlay);
+          tracked.flashOverlay = null;
+        }
+        if (tracked.chute !== null) {
+          this.detachFromSpriteLayer(tracked.chute);
+          tracked.chute = null;
+        }
         // 사망 디졸브(AC-3.4) — eventShaders on 이고 전투체(scale>0)면 즉시 destroy 대신 디졸브로
         // 수명을 이관해 스프라이트를 spriteLayer 에 잠깐 잔류시키며 디더 소멸시킨다. 상한 초과분·
         // gem/loot(scale 0)·저티어(eventShaders off)는 기존대로 즉시 destroy. 어느 경로든 sprites
@@ -1082,7 +1136,8 @@ export class EntityRenderer {
           // 이제 dyingSprites 가 소유하며, 디졸브 완료 시 updateDyingSprites 가 destroy 한다.
           this.dyingSprites.push({ sprite: tracked.sprite, effect: new DissolveEffect(tracked.sprite) });
         } else {
-          // children:true 로 파괴 — 히트 플래시 오버레이·낙하산 등 소유 자식까지 함께 회수(누수 0).
+          // 부착물(형제)은 위에서 이미 회수했다. children:true 는 낙하산/오버레이가 아니라, 스프라이트가
+          // 소유할 수 있는 진짜 자식(예: 없음)까지 안전히 회수하려는 방어적 유지다.
           tracked.sprite.destroy({ children: true });
         }
         this.sprites.delete(id);
@@ -1344,6 +1399,28 @@ export class EntityRenderer {
     this.glowHalos.clear();
   }
 
+  /**
+   * spriteLayer 형제 부착물(히트 플래시 오버레이·낙하산)을 부모 스프라이트의 위치·회전·스케일에
+   * 맞춘다. 같은 텍스처·앵커(0.5)를 쓰는 오버레이는 이 세 값만 맞추면 부모와 정확히 겹친다. 부모가
+   * 자식일 때 자동 상속하던 변환을 형제에선 이렇게 직접 미러한다(스케일 미러가 특히 중요 — 형제는
+   * 부모 스케일을 자동으로 받지 않으므로 벽처럼 비정방 스케일도 x·y 를 각각 복사해야 실루엣이 맞다).
+   */
+  private mirrorTransform(child: Sprite, parent: Sprite): void {
+    child.position.set(parent.x, parent.y);
+    child.rotation = parent.rotation;
+    child.scale.set(parent.scale.x, parent.scale.y);
+  }
+
+  /**
+   * spriteLayer 형제 부착물(히트 플래시 오버레이·낙하산)을 레이어에서 떼고 destroy 한다(누수 0).
+   * 형제라 부모 sprite.destroy({children}) 로는 회수되지 않으므로, 창 종료·킬·reset·destroy 의
+   * 모든 경로가 이 헬퍼로 명시 회수한다.
+   */
+  private detachFromSpriteLayer(child: Sprite): void {
+    this.spriteLayer.removeChild(child);
+    child.destroy();
+  }
+
   private drawOverlay(curr: WorldSnapshot): void {
     const g = this.overlay;
     const lg = this.lavaOverlay;
@@ -1412,7 +1489,14 @@ export class EntityRenderer {
    * `destroy()` 와 달리 레이어·오버레이는 살려 둔다 — 렌더러 인스턴스는 앱 수명 내내 유지된다.
    */
   reset(): void {
-    for (const { sprite } of this.sprites.values()) sprite.destroy({ children: true });
+    for (const t of this.sprites.values()) {
+      // 형제 부착물(히트 플래시 오버레이·낙하산)을 먼저 회수한다 — 형제라 부모 destroy 로는 안
+      // 딸려 온다(누수 0). reset 은 spriteLayer 를 살려 두므로 removeChild 가 필수, destroy 는 뒤에서
+      // layer 를 통째로 파괴하지만 여기서 미리 떼도 무해하다(이미 뗀 것은 재파괴 대상이 아니다).
+      if (t.flashOverlay !== null) this.detachFromSpriteLayer(t.flashOverlay);
+      if (t.chute !== null) this.detachFromSpriteLayer(t.chute);
+      t.sprite.destroy({ children: true });
+    }
     this.sprites.clear();
     // 사망 폭발도 비운다 — 남기면 다른 월드(런/프리뷰 레이어) 좌표의 폭발이 화면에 떠 있다
     // (defensePreviewFrame 계약). 트라우마·프레임 시계도 초기화해 잔류 흔들림·dt spike 를 막는다.
@@ -1444,7 +1528,14 @@ export class EntityRenderer {
   }
 
   destroy(): void {
-    for (const { sprite } of this.sprites.values()) sprite.destroy({ children: true });
+    for (const t of this.sprites.values()) {
+      // 형제 부착물(히트 플래시 오버레이·낙하산)을 먼저 회수한다 — 형제라 부모 destroy 로는 안
+      // 딸려 온다(누수 0). reset 은 spriteLayer 를 살려 두므로 removeChild 가 필수, destroy 는 뒤에서
+      // layer 를 통째로 파괴하지만 여기서 미리 떼도 무해하다(이미 뗀 것은 재파괴 대상이 아니다).
+      if (t.flashOverlay !== null) this.detachFromSpriteLayer(t.flashOverlay);
+      if (t.chute !== null) this.detachFromSpriteLayer(t.chute);
+      t.sprite.destroy({ children: true });
+    }
     this.sprites.clear();
     for (const b of this.bursts) b.destroy();
     this.bursts.length = 0;

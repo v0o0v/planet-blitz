@@ -119,6 +119,9 @@ interface RendererInternals {
     { sprite: Sprite; flashUntilTick: number; flashOverlay: Sprite | null; elite: boolean }
   >;
   effectLayer: Container;
+  // 히트 플래시 오버레이는 Pixi v8 Sprite.addChild deprecate 회피로 부모의 자식이 아니라
+  // spriteLayer **형제**다 → 가시 메커니즘(오버레이가 실제 렌더 트리에 있는지)은 여기서 확인한다.
+  spriteLayer: Container;
   frameTick: number;
 }
 function priv(r: EntityRenderer): RendererInternals {
@@ -152,39 +155,50 @@ describe('AC-6.3 · 파편 폭발 배선 (사망 = ShardBurst)', () => {
 describe('AC-6.3 · 히트 플래시 배선 (HP-델타 → 가산 흰 오버레이)', () => {
   it('적이 생존 피해(hp 100→50)를 받으면 그 프레임에 가산 흰 오버레이가 실제로 얹힌다', () => {
     const renderer = new EntityRenderer(realTextures());
+    const spriteLayer = priv(renderer).spriteLayer;
 
-    // 프레임 1: 적 hp 100 — 아직 피해 없음. 플래시 창 닫힘, 오버레이 없음(자식 0).
-    const f1 = world([ent({ id: 5, kind: 'enemy', hp: 100, maxHp: 100 })]);
+    // 적은 원점이 아닌 (300,200)에 둔다 — 오버레이가 부모 위치로 **미러**되는지(단순 생성만이
+    // 아니라 배치까지) 확인하려면 좌표가 0이 아니어야 한다(미러 누락 시 오버레이는 기본 0,0에 남는다).
+    // 프레임 1: 적 hp 100 — 아직 피해 없음. 플래시 창 닫힘, 오버레이 없음(spriteLayer 에 적 하나뿐).
+    const f1 = world([ent({ id: 5, kind: 'enemy', hp: 100, maxHp: 100, x: 300, y: 200 })]);
     renderer.render(f1, f1, 1);
     const t1 = priv(renderer).sprites.get(5);
     expect(t1).toBeDefined();
     expect(t1!.flashUntilTick).toBe(0); // 무피해 프레임엔 플래시가 안 열린다(오탐 방지 디스크리미네이터)
     expect(t1!.flashOverlay).toBeNull();
-    expect(t1!.sprite.children.length).toBe(0);
+    expect(spriteLayer.children.length).toBe(1); // 적 스프라이트만, 오버레이 형제 없음
     expect(renderer.hitFlashOverlayCount).toBe(0);
 
     // 프레임 2: 직전 hp 100 → 현재 hp 50 = 생존 피해 → HP-델타 감지가 플래시를 열어야 한다.
-    const prev = world([ent({ id: 5, kind: 'enemy', hp: 100, maxHp: 100 })]);
-    const curr = world([ent({ id: 5, kind: 'enemy', hp: 50, maxHp: 100 })]);
+    const prev = world([ent({ id: 5, kind: 'enemy', hp: 100, maxHp: 100, x: 300, y: 200 })]);
+    const curr = world([ent({ id: 5, kind: 'enemy', hp: 50, maxHp: 100, x: 300, y: 200 })]);
     renderer.render(prev, curr, 1);
 
     const t2 = priv(renderer).sprites.get(5);
     expect(t2).toBeDefined();
     // 배선 증명 ①(상태): 플래시 창이 현재 프레임보다 미래로 설정돼 있어야 한다(미배선이면 0).
     expect(t2!.flashUntilTick).toBeGreaterThan(priv(renderer).frameTick);
-    // 배선 증명 ②(**가시 메커니즘** — MED-1 방어): tint 상태값만이 아니라, 대상 스프라이트에
-    // 실제 가산(blendMode==='add') 흰 오버레이 자식이 추가돼야 한다. "상태값만 그린, 화면엔 안
+    // 배선 증명 ②(**가시 메커니즘** — MED-1 방어): tint 상태값만이 아니라, 실제 가산
+    // (blendMode==='add') 흰 오버레이가 **렌더 트리(spriteLayer)에 형제로 추가**돼야 한다. Pixi v8
+    // 은 Sprite.addChild 를 deprecate 했으므로 자식이 아닌 형제로 얹는다. "상태값만 그린, 화면엔 안
     // 보임" 재발을 이 assert 가 막는다.
     expect(t2!.flashOverlay).not.toBeNull();
-    expect(t2!.sprite.children.length).toBeGreaterThan(0);
+    expect(spriteLayer.children).toContain(t2!.flashOverlay); // 실제 렌더 트리에 있어야 보인다
+    expect(spriteLayer.children.length).toBe(2); // 적 스프라이트 + 오버레이 형제
     expect(t2!.flashOverlay!.blendMode).toBe('add');
     expect(t2!.flashOverlay!.tint).toBe(0xffffff);
     expect(t2!.flashOverlay!.alpha).toBeGreaterThan(0);
+    // 배선 증명 ③(**미러** — 형제는 부모 변환을 자동 상속하지 않으므로 직접 미러해야 한다): 오버레이가
+    // 부모 스프라이트의 보간 위치(300,200)에 정확히 얹혀야 한다(미러 누락이면 0,0에 남아 빨개진다).
+    expect(t2!.flashOverlay!.position.x).toBe(t2!.sprite.position.x);
+    expect(t2!.flashOverlay!.position.y).toBe(t2!.sprite.position.y);
+    expect(t2!.sprite.position.x).toBe(300); // 보간 위치가 실제로 원점이 아님을 못박는다
     expect(renderer.hitFlashOverlayCount).toBe(1);
   });
 
-  it('플래시 창이 끝나면 가산 오버레이가 제거된다(자식 원복 · 누수 0)', () => {
+  it('플래시 창이 끝나면 가산 오버레이가 spriteLayer 에서 제거된다(형제 회수 · 누수 0)', () => {
     const renderer = new EntityRenderer(realTextures());
+    const spriteLayer = priv(renderer).spriteLayer;
 
     // 피격 프레임 — 오버레이 생성.
     const prev = world([ent({ id: 5, kind: 'enemy', hp: 100, maxHp: 100 })]);
@@ -192,6 +206,9 @@ describe('AC-6.3 · 히트 플래시 배선 (HP-델타 → 가산 흰 오버레�
     renderer.render(prev, prev, 1); // 스프라이트 세우기(무피해)
     renderer.render(prev, curr, 1); // 피격 → 오버레이 열림
     expect(renderer.hitFlashOverlayCount).toBe(1);
+    const ov = priv(renderer).sprites.get(5)!.flashOverlay; // 회수 확인용으로 참조를 붙잡아 둔다
+    expect(ov).not.toBeNull();
+    expect(spriteLayer.children).toContain(ov);
 
     // 재피격 없이 무피해 프레임을 충분히 흘려 창(HIT_FLASH_FRAMES)을 넘긴다 → 오버레이 회수.
     const still = world([ent({ id: 5, kind: 'enemy', hp: 50, maxHp: 100 })]);
@@ -200,7 +217,9 @@ describe('AC-6.3 · 히트 플래시 배선 (HP-델타 → 가산 흰 오버레�
     const t = priv(renderer).sprites.get(5);
     expect(t).toBeDefined();
     expect(t!.flashOverlay).toBeNull();
-    expect(t!.sprite.children.length).toBe(0);
+    // 형제 오버레이가 렌더 트리에서 실제로 빠졌는지(누수 0) — spriteLayer 엔 적 스프라이트만 남는다.
+    expect(spriteLayer.children).not.toContain(ov);
+    expect(spriteLayer.children.length).toBe(1);
     expect(renderer.hitFlashOverlayCount).toBe(0);
   });
 });
