@@ -305,13 +305,13 @@ describe('정리 — 누수 0', () => {
     r.destroy();
   });
 
-  it('layer 자식 수는 헤일로 유무와 무관하게 5(overlay·glow·sprite·effect·fog) 로 불변', () => {
+  it('layer 자식 수는 헤일로 유무와 무관하게 6(lavaOverlay·overlay·glow·sprite·effect·fog) 로 불변', () => {
     const r = new EntityRenderer(realTextures());
     lockTier('high');
     const w = world([entity('gem', { id: 1 })]);
     r.render(w, w, 0);
     // 헤일로는 glowLayer 자식이지 layer 자식이 아니다 — 기존 레이어 스택 계약 회귀 가드.
-    expect(r.layer.children.length).toBe(5);
+    expect(r.layer.children.length).toBe(6);
     r.destroy();
   });
 });

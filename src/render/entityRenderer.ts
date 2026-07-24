@@ -91,6 +91,15 @@ const BIG_EXPLOSION_SCALE = 2;
  * 방어선이다. placeholder, defer-balance-tuning(출시 직전 프레임 예산으로 조정).
  */
 const MAX_DISSOLVES = 12;
+/**
+ * 동시 충격파 링 상한(AC-3.3). 충격파는 {@link layer}(루트 카메라 레이어) **전체**에 변위 필터를
+ * 거는 풀스크린 post-process 1패스라, 대형 킬이 한 프레임에 여럿(폭탄이 다수 설비·기물을 동시
+ * 파괴; 둘 다 scale 2) 나면 필터가 layer.filters 에 누적돼 1.15초 동안 N중 풀스크린 패스가 겹친다
+ * ({@link MAX_DISSOLVES} 가 막는 바로 그 폭탄 밀도 시나리오가 충격파엔 무방비였다 — 리뷰 MEDIUM).
+ * 이 상한에 도달하면 새 충격파를 생략한다(저빈도·고임팩트 규율 유지). placeholder,
+ * defer-balance-tuning(출시 직전 프레임 예산으로 조정).
+ */
+const MAX_SHOCKWAVES = 4;
 /** render 벽시계 프레임 델타 상한(초) — 탭 복귀 spike 방어. ShardBurst.MAX_DT(0.05)와 정합. */
 const MAX_RENDER_DT = 0.05;
 /** 프레임 델타 nominal(초, 60Hz). 첫 프레임·비정상 dt 폴백값. */
@@ -502,6 +511,14 @@ export class EntityRenderer {
   private lastFrameMs: number | undefined = undefined;
   private readonly overlay = new Graphics();
   /**
+   * 용암 해저드 **전용** 오버레이 Graphics(AC-3.2 히트 시머 대상). 시머(변위 필터)는 이 컨테이너
+   * 에만 붙어 용암류만 국소로 흔든다 — {@link overlay}(빔·비-용암 해저드·관통 예고선을 함께 그림)에
+   * 붙이면 회피 판정에 직결되는 **박격/레일 예고선까지 흔들려 가독성이 무너진다**(리뷰 MEDIUM).
+   * {@link overlay} 바로 **아래**에 깔아(스프라이트보다 아래) 예고선·비-용암 해저드가 용암 위에
+   * 또렷이 남게 한다. render-only — sim/해시 무관.
+   */
+  private readonly lavaOverlay = new Graphics();
+  /**
    * 필드 오버레이(시야 암흑·안전 반경 압박존). **엔티티 스프라이트보다 위**에 그려 시야 밖 적을
    * 어둡게 가린다(hazard 오버레이는 아래). 렌더 전용 — sim/해시와 무관하며 스냅샷의 render-only
    * 필드(visionRadius·safeRadius)만 읽는다(결정론 골든 불변).
@@ -514,9 +531,10 @@ export class EntityRenderer {
   private lastPlayerAngle = 0;
 
   constructor(private readonly textures: PlaceholderTextures) {
-    // Draw order (bottom → top): hazard/beam overlay, [glow halos], entity sprites,
-    // death bursts, then the field overlay (시야 암흑·안전 반경) on top so it dims
-    // out-of-vision entities.
+    // Draw order (bottom → top): lava overlay (시머 대상), hazard/beam overlay, [glow halos],
+    // entity sprites, death bursts, then the field overlay (시야 암흑·안전 반경) on top so it dims
+    // out-of-vision entities. lavaOverlay 는 overlay **아래**라 예고선·비-용암 해저드가 용암 위에
+    // 또렷이 남는다(시머 국소화 — 예고선 가독성 계약).
     //
     // ── 발광 비대칭 규율 (AC-0.8 / ADR-0031) ────────────────────────────────
     // glowLayer 는 스프라이트 **아래**다: 발광 헤일로가 불투명 코어·탄막을 덮으면 판정점
@@ -530,6 +548,7 @@ export class EntityRenderer {
     // 0)로만 둔다 → 빈 컨테이너는 아무것도 그리지 않으므로 렌더 출력·골든 해시가 불변이다
     // (발광 이펙트 배선은 Phase 3 몫). fog 는 계속 최상단이라 필드 오버레이 계약도 그대로다.
     this.glowLayer.blendMode = 'add';
+    this.layer.addChild(this.lavaOverlay);
     this.layer.addChild(this.overlay);
     this.layer.addChild(this.glowLayer);
     this.layer.addChild(this.spriteLayer);
@@ -850,8 +869,12 @@ export class EntityRenderer {
    * 정규화(0..1)한 값 — layer 는 스크린좌표 = 월드 + (DESIGN/2 - cam) 이므로 그 사상으로 구한다.
    * 폴백 링은 layer 자식(월드 좌표계)이라 fallbackCenterPx 는 킬 월드 좌표 그대로 넘긴다. 룩
    * 파라미터(durationS/amplitude/width)는 shockwave-thick-slow 승격 기본값(placeholder).
+   *
+   * {@link MAX_SHOCKWAVES} 상한에 도달하면 생략한다 — 폭탄 밀도(한 프레임 다수 대형 킬)에서 풀스크린
+   * 변위 패스가 무한 누적하는 성능 붕괴 방어(디졸브 캡과 동형 정신).
    */
   private spawnShockwave(worldX: number, worldY: number, camX: number, camY: number): void {
+    if (this.shockwaves.length >= MAX_SHOCKWAVES) return; // 풀스크린 필터 스택 상한(성능 방어)
     const sx = (worldX + DESIGN_WIDTH / 2 - camX) / DESIGN_WIDTH;
     const sy = (worldY + DESIGN_HEIGHT / 2 - camY) / DESIGN_HEIGHT;
     const cx = sx < 0 ? 0 : sx > 1 ? 1 : sx;
@@ -897,10 +920,14 @@ export class EntityRenderer {
    * 용암 시머(지속형, AC-3.2)를 게이트·용암 유무에 맞춰 부착/detach 하고, 부착돼 있으면 uTime 을
    * 진행한다. `want` = eventShaders on AND 용암 해저드 존재. 전이 시점에만 attach/detach 하고
    * (매 프레임 재생성 금지), 부착 상태면 매 프레임 update(node/폴백이면 no-op).
+   *
+   * 시머는 {@link lavaOverlay}(용암 전용 Graphics)에만 붙는다 — {@link overlay}(예고선·비-용암 해저드)
+   * 는 흔들리지 않는다(국소 시머 계약). **보스 과열 창**(AC-3.2 문구의 다른 대상)은 시머가 아니라
+   * 히트 플래시 tint 펄스로 처리하므로 여기 트리거에 포함하지 않는다(의도된 대체 — 스펙 문구 분업).
    */
   private syncShimmer(want: boolean, dt: number): void {
     if (want && this.shimmer === null) {
-      this.shimmer = new ShimmerEffect(this.overlay);
+      this.shimmer = new ShimmerEffect(this.lavaOverlay);
     } else if (!want && this.shimmer !== null) {
       this.shimmer.detach();
       this.shimmer = null;
@@ -991,22 +1018,28 @@ export class EntityRenderer {
 
   private drawOverlay(curr: WorldSnapshot): void {
     const g = this.overlay;
+    const lg = this.lavaOverlay;
     g.clear();
+    lg.clear(); // 용암 전용 오버레이(시머 대상)도 매 프레임 재그린다.
     // Support heal beams.
     for (const b of curr.beams) {
       g.moveTo(b.x1, b.y1).lineTo(b.x2, b.y2).stroke({ color: 0x33ffcc, width: 3, alpha: 0.5 });
     }
     // Hazard zones: telegraph = outlined warning ring; active = filled danger.
     // 주기 온오프 해저드(L2 설비·L3 중력 앵커)는 이 예열↔활성 대비가 리듬을 읽게 한다.
+    // **용암(HAZARD_LAVA)만 lavaOverlay 로 분리** — 시머가 용암류만 국소로 흔들고 예고선·비-용암
+    // 해저드는 overlay 에 남겨 흔들리지 않게 한다(AC-3.2 국소 시머 계약).
     for (const e of curr.entities) {
       if (e.kind !== 'hazard') continue;
       const st = hazardStyle(e.enemyType, e.active);
+      const target = e.enemyType === HAZARD_LAVA ? lg : g;
       if (st.fillAlpha > 0) {
-        g.circle(e.x, e.y, e.radius)
+        target
+          .circle(e.x, e.y, e.radius)
           .fill({ color: st.color, alpha: st.fillAlpha })
           .stroke({ color: st.color, width: 2, alpha: st.strokeAlpha });
       } else {
-        g.circle(e.x, e.y, e.radius).stroke({ color: st.color, width: 2, alpha: st.strokeAlpha });
+        target.circle(e.x, e.y, e.radius).stroke({ color: st.color, width: 2, alpha: st.strokeAlpha });
       }
     }
     // 예고선(관통 레일포 텔레그래프): 조준각이 잠긴 예고 구간에만 나온다. 탄보다 먼저 선이
@@ -1072,6 +1105,7 @@ export class EntityRenderer {
     this.trauma.reset();
     this.lastFrameMs = undefined;
     this.overlay.clear();
+    this.lavaOverlay.clear();
     this.fog.clear();
     this.lastPlayerAngle = 0;
   }
@@ -1082,7 +1116,7 @@ export class EntityRenderer {
     for (const b of this.bursts) b.destroy();
     this.bursts.length = 0;
     // 이벤트 셰이더 정리 — overlay/layer.destroy **전**에 필터를 명시 detach 한다(Container.destroy
-    // 는 filters 를 파괴하지 않는다). 시머=overlay 필터, 충격파=layer 필터, 디졸브=spriteLayer 잔류.
+    // 는 filters 를 파괴하지 않는다). 시머=lavaOverlay 필터, 충격파=layer 필터, 디졸브=spriteLayer 잔류.
     this.clearShockwaves();
     this.clearDyingSprites();
     this.clearShimmer();
@@ -1093,6 +1127,7 @@ export class EntityRenderer {
     this.glowBloom = undefined;
     this.glowBloomAttached = false;
     this.overlay.destroy();
+    this.lavaOverlay.destroy();
     this.fog.destroy();
     this.layer.destroy({ children: true });
   }

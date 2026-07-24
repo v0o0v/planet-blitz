@@ -1,9 +1,17 @@
 /**
- * 셰이더 진행도 순수함수 — 프로덕션 정본 (Phase 3 · AC-3.5).
+ * 셰이더 진행도 순수함수 — AC-3.5 유닛 참조 구현 (Phase 3).
  *
  * 이벤트 셰이더 3종(충격파 링·사망 디졸브·용암/보스 과열 시머)의 시간→진행도 사상을 렌더 상태와
- * 완전히 분리한 **순수함수**로 모은다. 셰이더 유니폼(`uProgress`·`uTime` 등)에 매 프레임 공급되는
- * 값은 오직 **경과 시간의 함수**이지, 프레임 수·wall clock·난수에 의존하지 않는다.
+ * 완전히 분리한 **순수함수**로 모은다. 셰이더 유니폼(`uProgress`·`uTime` 등)에 공급될 값은 오직
+ * **경과 시간의 함수**이지, 프레임 수·wall clock·난수에 의존하지 않는다.
+ *
+ * ⚠️ **배선 현황(오해 방지):** 이 모듈은 AC-3.5 순수함수 유닛(`tests/shaderProgress.test.ts`)의
+ * 참조 구현이며, **현재 어떤 프로덕션 코드도 import 하지 않는다**. 실 이벤트 컨트롤러
+ * ([src/render/effects/shaderEffects.ts])는 레인 병렬 레이스 회피를 위해 자체 로컬 진행 로직
+ * (`oneShotProgress`·`ringEnvelope`)을 인라인한다. 특히 아래 {@link dissolveProgress} 는 HOLD→DISSOLVE
+ * **2구간** 모델인데, 배선된 `DissolveEffect` 는 HOLD 없는 단순 원샷이다 — **의미가 다르므로**,
+ * 훗날 "정본" 이라 여겨 shaderEffects.ts 를 이 모듈로 통합하면 디졸브에 0.4초 HOLD 가 조용히 생기는
+ * 거동 회귀가 든다. 통합하려면 먼저 HOLD 의미차부터 정합할 것.
  *
  * ## 왜 순수함수인가
  * - **결정론 불변(ADR-0005):** 이 모듈은 render-only 다 — sim 상태·`hashWorld`/`hashEntity` 에
@@ -15,9 +23,9 @@
  *
  * ## 갤러리 변형과의 관계
  * 갤러리 변형([src/harness/gallery/shockwaveVariants.ts]·[dissolveVariants.ts])은 DEV 전용이며
- * 각자 로컬 진행도 함수를 갖는다. 여기 있는 것이 **프로덕션 정본**이다 — `shockwaveProgress` 는
- * 갤러리판과 동형(이식)이고, `dissolveProgress` 는 갤러리의 주기 반복형(`dissolveCycleProgress`)과
- * 달리 **원샷 사망 연출용**이라 0→1 을 한 번만 밟고 이후 1 에 머문다(재발화 없음).
+ * 각자 로컬 진행도 함수를 갖는다. `shockwaveProgress` 는 갤러리판과 동형(이식)이고, `dissolveProgress`
+ * 는 갤러리의 주기 반복형(`dissolveCycleProgress`)과 달리 **원샷 사망 연출용**이라 0→1 을 한 번만
+ * 밟고 이후 1 에 머문다(재발화 없음). 위 배선 현황 주석대로 이 구현들은 참조·검증용이다.
  *
  * 굵기·주기·시머 속도 등 밸런스 상수는 전부 **placeholder** 다(defer-balance-tuning — 출시 직전 일괄).
  */

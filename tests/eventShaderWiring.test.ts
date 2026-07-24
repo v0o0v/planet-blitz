@@ -133,6 +133,12 @@ interface RendererInternals {
   shockwaves: { update(dt: number): boolean }[];
   updateDyingSprites(dt: number): void;
   updateShockwaves(dt: number): void;
+  // 시머 국소화 검증용(리뷰 MEDIUM): 시머는 lavaOverlay 에만 붙고 overlay(예고선)엔 안 붙어야 한다.
+  // node-env 는 GL 이 없어 실 필터가 null 폴백이라 `.filters` 로는 못 본다 — 대신 컨트롤러가 **어느
+  // 컨테이너를 target 으로 잡았는지**(구조적 사실)를 본다(TS private 은 런타임 미강제).
+  overlay: object;
+  lavaOverlay: object;
+  shimmer: { target: object } | null;
 }
 function priv(r: EntityRenderer): RendererInternals {
   return r as unknown as RendererInternals;
@@ -342,6 +348,26 @@ describe('AC-3.2 · 용암 시머 배선 (해저드 지속형)', () => {
     r.destroy();
   });
 
+  it('용암+박격 공존 시 시머는 lavaOverlay 에만 붙는다(예고선 unshimmered — 국소 시머 계약)', () => {
+    // 리뷰 MEDIUM: 시머를 overlay 통째에 걸면 회피 판정에 직결되는 박격/레일 예고선까지 흔들려
+    // 가독성이 무너진다. 용암과 박격 예고선이 공존하는 프레임에서 시머 target 이 lavaOverlay(용암
+    // 전용)여야지 overlay(예고선 포함)가 아니어야 한다. node-env 는 GL 폴백이라 실 필터 대신 컨트롤러
+    // 의 target(구조적 사실)을 본다 — 이 target 이 곧 어떤 픽셀이 흔들릴지를 결정한다.
+    const r = new EntityRenderer(realTextures());
+    lockTier('high');
+    const w = world([
+      entity('hazard', { id: 1, enemyType: HAZARD_LAVA, radius: 80, active: true }),
+      entity('hazard', { id: 2, enemyType: HAZARD_MORTAR, x: 300, radius: 80, active: true }),
+    ]);
+    r.render(w, w, 0);
+    expect(r.shimmerActive).toBe(true); // 용암 존재 → 시머 on
+    const p = priv(r);
+    expect(p.shimmer).not.toBeNull();
+    expect(p.shimmer!.target).toBe(p.lavaOverlay); // 용암 전용 오버레이에만
+    expect(p.shimmer!.target).not.toBe(p.overlay); // 예고선을 담은 overlay 에는 안 붙는다
+    r.destroy();
+  });
+
   it('용암이 사라지면 시머가 detach 된다(지속형 전이)', () => {
     const r = new EntityRenderer(realTextures());
     lockTier('high');
@@ -394,17 +420,17 @@ describe('정리 — 누수 0', () => {
     r.destroy();
   });
 
-  it('layer 자식 수는 이벤트 셰이더 유무와 무관하게 5로 불변(레이어 스택 회귀 가드)', () => {
+  it('layer 자식 수는 이벤트 셰이더 유무와 무관하게 6으로 불변(레이어 스택 회귀 가드)', () => {
     const r = new EntityRenderer(realTextures());
     lockTier('high');
     const alive = world([entity('boss', { id: 1, hp: 100 })]);
     r.render(alive, alive, 1);
     r.render(world([]), world([]), 1); // 보스 킬 → 충격파는 layer.filters(자식 아님)·폴백 링은 자식
-    // 충격파 폴백 링은 layer 의 **자식**으로 추가될 수 있다(GL 없을 때). 그래도 기본 5 레이어는
-    // 유지되어야 한다 — 폴백 링은 원샷 종료 시 회수된다. 여기선 배선 직후라 링이 있을 수 있으므로
-    // 진행시켜 회수한 뒤 스택을 확인한다.
+    // 기본 6 레이어(lavaOverlay·overlay·glowLayer·spriteLayer·effectLayer·fog)가 유지되어야 한다.
+    // 충격파 폴백 링은 layer 의 **자식**으로 추가될 수 있다(GL 없을 때)지만 원샷 종료 시 회수된다.
+    // 여기선 배선 직후라 링이 있을 수 있으므로 진행시켜 회수한 뒤 스택을 확인한다.
     advanceShockwaves(r);
-    expect(r.layer.children.length).toBe(5);
+    expect(r.layer.children.length).toBe(6);
     r.destroy();
   });
 });
