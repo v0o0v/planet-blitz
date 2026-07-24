@@ -19,11 +19,12 @@ import {
 } from '../src/render/graphicsSettings.js';
 
 describe('DEFAULT_GRAPHICS_SETTINGS', () => {
-  it('기본값(품질 auto, 감소 토글 해제)', () => {
+  it('기본값(품질 auto, 감소 토글 해제, 데미지 숫자 on)', () => {
     expect(DEFAULT_GRAPHICS_SETTINGS).toEqual({
       quality: 'auto',
       reducedMotion: false,
       reducedGlow: false,
+      damageNumbers: true,
     });
   });
 
@@ -34,7 +35,12 @@ describe('DEFAULT_GRAPHICS_SETTINGS', () => {
 
 describe('clamp(손상값 방어)', () => {
   it('유효 설정은 그대로 통과', () => {
-    const s: GraphicsSettings = { quality: 'high', reducedMotion: true, reducedGlow: false };
+    const s: GraphicsSettings = {
+      quality: 'high',
+      reducedMotion: true,
+      reducedGlow: false,
+      damageNumbers: false,
+    };
     expect(clamp(s)).toEqual(s);
   });
 
@@ -50,12 +56,18 @@ describe('clamp(손상값 방어)', () => {
     expect(clamp({ quality: null, reducedMotion: false, reducedGlow: false }).quality).toBe('auto');
   });
 
-  it('bool 이 아닌 감소 토글은 각 기본값(false)으로 강제', () => {
+  it('bool 이 아닌 감소·데미지숫자 토글은 각 기본값으로 강제', () => {
+    // damageNumbers 미제공 → 기본 true; reducedMotion/reducedGlow 타입오류 → false.
     expect(clamp({ quality: 'low', reducedMotion: 'yes', reducedGlow: 1 })).toEqual({
       quality: 'low',
       reducedMotion: false,
       reducedGlow: false,
+      damageNumbers: true,
     });
+    // damageNumbers 타입오류(문자열) → 기본 true 로 강제.
+    expect(clamp({ quality: 'low', damageNumbers: 'nope' }).damageNumbers).toBe(true);
+    // damageNumbers 명시 false 는 보존.
+    expect(clamp({ quality: 'low', damageNumbers: false }).damageNumbers).toBe(false);
   });
 
   it('누락 필드는 각 기본값으로 대체', () => {
@@ -63,6 +75,7 @@ describe('clamp(손상값 방어)', () => {
       quality: 'med',
       reducedMotion: false,
       reducedGlow: false,
+      damageNumbers: true,
     });
     expect(clamp({})).toEqual(DEFAULT_GRAPHICS_SETTINGS);
   });
@@ -81,11 +94,23 @@ describe('parse(방어적)', () => {
     expect(parse('null')).toEqual(DEFAULT_GRAPHICS_SETTINGS);
   });
 
-  it('유효 JSON 문자열을 읽고 클램프', () => {
+  it('유효 JSON 문자열을 읽고 클램프(damageNumbers 명시)', () => {
+    expect(
+      parse('{"quality":"high","reducedMotion":true,"reducedGlow":true,"damageNumbers":false}'),
+    ).toEqual({
+      quality: 'high',
+      reducedMotion: true,
+      reducedGlow: true,
+      damageNumbers: false,
+    });
+  });
+
+  it('damageNumbers 누락 JSON 은 기본 true 로', () => {
     expect(parse('{"quality":"high","reducedMotion":true,"reducedGlow":true}')).toEqual({
       quality: 'high',
       reducedMotion: true,
       reducedGlow: true,
+      damageNumbers: true,
     });
   });
 
@@ -94,35 +119,47 @@ describe('parse(방어적)', () => {
       quality: 'auto',
       reducedMotion: false,
       reducedGlow: true,
+      damageNumbers: true,
     });
   });
 
   it('이미 파싱된 객체도 관대하게 수용', () => {
-    expect(parse({ quality: 'med', reducedMotion: true, reducedGlow: false })).toEqual({
+    expect(parse({ quality: 'med', reducedMotion: true, reducedGlow: false, damageNumbers: false })).toEqual({
       quality: 'med',
       reducedMotion: true,
       reducedGlow: false,
+      damageNumbers: false,
     });
   });
 });
 
 describe('serialize', () => {
   it('round-trip 이 보존된다(parse∘serialize)', () => {
-    const s: GraphicsSettings = { quality: 'low', reducedMotion: true, reducedGlow: false };
+    const s: GraphicsSettings = {
+      quality: 'low',
+      reducedMotion: true,
+      reducedGlow: false,
+      damageNumbers: false,
+    };
     expect(parse(serialize(s))).toEqual(s);
   });
 
   it('모든 품질 값이 round-trip 보존', () => {
     for (const q of ['auto', 'low', 'med', 'high'] as const) {
-      const s: GraphicsSettings = { quality: q, reducedMotion: false, reducedGlow: true };
+      const s: GraphicsSettings = {
+        quality: q,
+        reducedMotion: false,
+        reducedGlow: true,
+        damageNumbers: true,
+      };
       expect(parse(serialize(s))).toEqual(s);
     }
   });
 
-  it('직렬화는 3필드 JSON', () => {
-    expect(serialize({ quality: 'high', reducedMotion: false, reducedGlow: true })).toBe(
-      '{"quality":"high","reducedMotion":false,"reducedGlow":true}',
-    );
+  it('직렬화는 4필드 JSON', () => {
+    expect(
+      serialize({ quality: 'high', reducedMotion: false, reducedGlow: true, damageNumbers: false }),
+    ).toBe('{"quality":"high","reducedMotion":false,"reducedGlow":true,"damageNumbers":false}');
   });
 });
 

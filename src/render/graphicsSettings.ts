@@ -20,7 +20,7 @@
 /** 품질 선택값. 'auto'=FPS 자동 적응, 나머지=수동 오버라이드(자동을 잠금). */
 export type Quality = 'auto' | 'low' | 'med' | 'high';
 
-/** 지속 저장되는 그래픽 설정(품질 오버라이드 + 접근성 감소 토글 2종). */
+/** 지속 저장되는 그래픽 설정(품질 오버라이드 + 접근성 감소 토글 2종 + 데미지 숫자 토글). */
 export interface GraphicsSettings {
   /** 품질 티어 선택. 'auto' 면 런타임 FPS 로 자동 적응, 구체 티어면 수동 잠금. */
   quality: Quality;
@@ -28,13 +28,24 @@ export interface GraphicsSettings {
   reducedMotion: boolean;
   /** 발광 감소: 헤일로·블룸을 끈다(광과민·저사양 대응, 티어와 직교). */
   reducedGlow: boolean;
+  /**
+   * 데미지 숫자 표시(AC-4.1). 보스·엘리트 피격 시 뜨는 부동 피해 숫자(render-only HP-델타 추론)를
+   * 켜고 끈다. 기본 on(보스·엘리트 저빈도라 스팸이 아니다). 티어와 직교인 순수 사용자 선호라
+   * effectGates(티어 예산)가 아니라 이 설정을 renderer 가 직접 읽는다.
+   */
+  damageNumbers: boolean;
 }
 
 /**
  * clamp/parse 가 받는 느슨한 입력(런타임 손상값 방어). 실제 {@link GraphicsSettings} 는
  * 각 필드가 이 unknown 슬롯의 서브타입이라 그대로 대입 가능하고, 손상된 저장본도 받아낸다.
  */
-type LooseGraphics = { quality?: unknown; reducedMotion?: unknown; reducedGlow?: unknown };
+type LooseGraphics = {
+  quality?: unknown;
+  reducedMotion?: unknown;
+  reducedGlow?: unknown;
+  damageNumbers?: unknown;
+};
 
 /** localStorage 키. */
 export const STORAGE_KEY = 'pb.graphics';
@@ -50,6 +61,7 @@ export const DEFAULT_GRAPHICS_SETTINGS: GraphicsSettings = {
   quality: 'auto',
   reducedMotion: false,
   reducedGlow: false,
+  damageNumbers: true,
 };
 
 /** 품질 값을 유효 집합으로 강제(손상/미지값 → 'auto'). 순수. */
@@ -73,6 +85,7 @@ export function clamp(s: LooseGraphics): GraphicsSettings {
     quality: coerceQuality(s.quality),
     reducedMotion: coerceBool(s.reducedMotion, DEFAULT_GRAPHICS_SETTINGS.reducedMotion),
     reducedGlow: coerceBool(s.reducedGlow, DEFAULT_GRAPHICS_SETTINGS.reducedGlow),
+    damageNumbers: coerceBool(s.damageNumbers, DEFAULT_GRAPHICS_SETTINGS.damageNumbers),
   };
 }
 
@@ -100,6 +113,7 @@ export function serialize(s: GraphicsSettings): string {
     quality: c.quality,
     reducedMotion: c.reducedMotion,
     reducedGlow: c.reducedGlow,
+    damageNumbers: c.damageNumbers,
   });
 }
 
@@ -171,6 +185,11 @@ export class GraphicsSettingsStore {
   /** 발광 감소 토글(헤일로·블룸 억제). */
   setReducedGlow(reducedGlow: boolean): void {
     this.set({ reducedGlow });
+  }
+
+  /** 데미지 숫자 토글(보스·엘리트 부동 피해 숫자 on/off, AC-4.1). */
+  setDamageNumbers(damageNumbers: boolean): void {
+    this.set({ damageNumbers });
   }
 }
 

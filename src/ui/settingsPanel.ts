@@ -114,6 +114,17 @@ export class SettingsPanel {
         ),
       ),
     );
+    // 데미지 숫자 토글(AC-4.1). 감소 토글과 같은 on/off 위젯(reducedToggle 재사용)이지만 의미는
+    // 반대다 — 켜짐(on)이 "데미지 숫자 표시"다. Pixi 판과 1:1 동등(AC-0.7)하게 미러링한다.
+    this.panel.appendChild(
+      this.row(
+        t('settings.damageNumbers'),
+        this.reducedToggle(
+          () => graphicsSettings.getSettings().damageNumbers,
+          (v) => graphicsSettings.setDamageNumbers(v),
+        ),
+      ),
+    );
 
     const close = document.createElement('button');
     close.className = 'pb-close';

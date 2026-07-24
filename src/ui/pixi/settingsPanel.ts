@@ -384,6 +384,31 @@ export class SettingsScreen {
       y += BTN_H + 26;
     }
 
+    // 데미지 숫자 토글(AC-4.1). 위 감소 토글과 완전히 같은 on/off 관용구지만 의미는 반대다 —
+    // 켜짐(on=노란 버튼)이 "데미지 숫자 표시"다(감소가 아니라 표시 선호). 기본 on 이라 처음엔
+    // 노란 버튼으로 뜬다. 이 역시 render-only 로 graphicsSettings 싱글턴에 저장만 한다. 리스너는
+    // render() 안에서 매번 새 버튼에 붙고 render() 시작의 removeChildren 으로 옛 버튼이 버려지므로
+    // (톱니와 달리) 중복 등록 문제가 없다 — 위 토글들과 동일한 안전 경로다.
+    {
+      const on = graphicsSettings.getSettings().damageNumbers;
+      content.addChild(this.row(t('settings.damageNumbers'), y));
+      const toggle = new PixiButton({
+        texture: this.ui[on ? 'ui_btn_yellow.png' : 'ui_btn_wood.png'],
+        width: 150,
+        height: BTN_H,
+        label: stripEmoji(on ? t('settings.on') : t('settings.off')),
+        fontSize: 20,
+        ...(on ? { labelColor: COLOR.darkLabel } : {}),
+        onClick: () => {
+          graphicsSettings.setDamageNumbers(!graphicsSettings.getSettings().damageNumbers);
+          this.render();
+        },
+      });
+      toggle.container.position.set(CW - 150, y);
+      content.addChild(toggle.container);
+      y += BTN_H + 26;
+    }
+
     const close = new PixiButton({
       texture: this.ui['ui_btn_wood.png'],
       width: CW,
