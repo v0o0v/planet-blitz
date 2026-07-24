@@ -84,7 +84,7 @@ describe('rollItem — unique draw stream-shape invariance (리뷰 LOW-2)', () =
   it('populates uniqueId once a unique is registered for the rolled slot', () => {
     // 모든 슬롯에 유니크를 하나씩 등록 → 어떤 슬롯이 굴려져도 uniqueId가 채워진다.
     for (const slot of SLOT_KINDS) {
-      registerUnique({ id: `u-${slot}`, name: slot, slot, bit: 0 });
+      registerUnique({ id: `u-${slot}`, name: slot, slot, bit: 0, reqLevel: 1 });
     }
     for (const seed of [1, 999, 0xdeadbeef, 424242]) {
       const item = rollItem(seed, 'unique', SRC);
@@ -98,7 +98,7 @@ describe('rollItem — unique draw stream-shape invariance (리뷰 LOW-2)', () =
     // 레지스트리를 채운 뒤 같은 시드를 다시 롤: 유니크 추첨은 무조건 draw 1회이므로
     // 앞선 슬롯·무기타입·어픽스 롤이 밀리지 않고 동일해야 한다. uniqueId만 새로 붙는다.
     for (const slot of SLOT_KINDS) {
-      registerUnique({ id: `u-${slot}`, name: slot, slot, bit: 0 });
+      registerUnique({ id: `u-${slot}`, name: slot, slot, bit: 0, reqLevel: 1 });
     }
     const after = [1, 999, 0xdeadbeef, 424242].map((s) => rollItem(s, 'unique', SRC));
     for (let i = 0; i < before.length; i++) {

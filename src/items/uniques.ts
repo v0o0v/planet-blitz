@@ -25,6 +25,8 @@ export interface UniqueDef {
    * reads the mask to gate the unique's deterministic behaviour (Lane 3).
    */
   readonly bit: number;
+  /** 요구 레벨(전투형 高·유틸형 低). TODO(밸런스). */
+  readonly reqLevel: number;
   /**
    * 주무기 파생 유니크(빔·미사일·스프레드…)의 요구 weaponType. 지정되면 rollItem이
    * 이 유니크를 **같은 weaponType의 main 아이템에만** 롤한다(비대응 무기에 붙어 죽은

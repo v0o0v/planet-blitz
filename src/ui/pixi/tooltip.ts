@@ -15,6 +15,8 @@ export interface TooltipContent {
   titleColor: number;
   subtitle: string;
   lines: string[];
+  /** 요구 레벨 줄(부제 다음). 미달이면 빨강, 충족이면 무채색(ADR-0030 AC9). 없으면 생략. */
+  reqLine?: { text: string; color: number } | undefined;
   /** 장착 장비 비교 줄(없으면 생략). */
   compare?: string | undefined;
 }
@@ -60,6 +62,9 @@ export class PixiTooltip {
     let maxW = 0;
     maxW = Math.max(maxW, makeLine(content.title, 20, content.titleColor, '800'));
     maxW = Math.max(maxW, makeLine(content.subtitle, 14, 0x8896b8, '400'));
+    if (content.reqLine !== undefined) {
+      maxW = Math.max(maxW, makeLine(content.reqLine.text, 14, content.reqLine.color, '700'));
+    }
     for (const line of content.lines) {
       maxW = Math.max(maxW, makeLine(line, 15, 0xc9d3ea, '400'));
     }

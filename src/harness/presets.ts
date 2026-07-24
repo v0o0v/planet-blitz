@@ -50,8 +50,21 @@ import { FACILITY_CATALOG_COUNT } from '../../data/invasion/facilities.js';
 import { L3_PROP_COUNT } from '../../data/invasion/props.js';
 import { DEFENSE_BOSS_COUNT } from '../../data/invasion/defenseBosses.js';
 
-/** 프로필 프리셋 종류. `fresh` = brand-new pilot; `maxed` = endgame. */
-export type ProfilePresetKind = 'fresh' | 'maxed';
+/**
+ * 프로필 프리셋 종류.
+ *  - `fresh`       brand-new pilot(기본 프로필).
+ *  - `maxed`       endgame(만렙 기체·풀 장비).
+ *  - `gearLocked`  저레벨(Lv10) 기체 + 인벤토리에 **요구 레벨 미달** 고급 장비 다수(ADR-0030).
+ *    격납고 인벤토리 셀 회색화·req 빨강·클릭 무동작을 실측하기 위한 프리셋(Verification Step 3·AC4).
+ */
+export type ProfilePresetKind = 'fresh' | 'maxed' | 'gearLocked';
+
+/** 프로필 프리셋 목록(치트 패널 셀렉트·테스트 파생용 — {@link INVASION_PRESET_KINDS} 와 대칭). */
+export const PROFILE_PRESET_KINDS: readonly ProfilePresetKind[] = [
+  'fresh',
+  'maxed',
+  'gearLocked',
+];
 
 /**
  * 3레이어 배치 프리셋 종류(M7a L8).
@@ -92,19 +105,30 @@ const SLOT_KIND_FOR: Record<EquipSlotId, SlotKind> = {
  * Roll an item of a specific slot kind + rarity by scanning drop seeds until the
  * generator yields the wanted slot. `rollItem` picks the slot from the seed, so
  * we brute-force forward from `startSeed` (bounded) — deterministic in
- * (startSeed, slotKind, rarity). Falls back to the last roll if no match is found
- * within the cap (never happens for the seven slot kinds in practice).
+ * (startSeed, slotKind, rarity, wantAffixes). Falls back to the last roll if no
+ * match is found within the cap (never happens for the seven slot kinds in
+ * practice).
+ *
+ * `wantAffixes` (선택): 어픽스 개수까지 고정하고 싶을 때 지정한다(예: rare 6개 → reqLevel 50).
+ * 지정하면 슬롯 + 어픽스 개수가 모두 맞는 첫 시드를 쓴다. 24종 어픽스 풀이면 6-어픽스 rare
+ * 는 스캔 창 안에서 항상 나온다(rare 어픽스 수는 3~6 균등).
  */
 function rollItemForSlot(
   startSeed: number,
   slotKind: SlotKind,
   rarity: Rarity,
+  wantAffixes?: number,
 ): Item {
   const source = { planet: 0, stage: 11 };
   let last = rollItem(startSeed >>> 0, rarity, source);
   for (let i = 0; i < 4096; i++) {
     const item = rollItem((startSeed + i) >>> 0, rarity, source);
-    if (item.slot === slotKind) return item;
+    if (
+      item.slot === slotKind &&
+      (wantAffixes === undefined || item.affixes.length === wantAffixes)
+    ) {
+      return item;
+    }
     last = item;
   }
   return last;
@@ -126,14 +150,63 @@ function buildMaxedEquip(): Partial<Record<EquipSlotId, Item>> {
 }
 
 /**
+ * 격납고 '장비 잠김' 인벤토리를 만든다(ADR-0030). Lv10 기체로는 착용 불가한 고 reqLevel
+ * 장비와, 대조용으로 착용 가능한 저 reqLevel 장비를 섞는다. 모두 실제 게임과 같은 결정론
+ * 생성기(`rollItem`)로 만들어 손으로 빚은 `Item` 구조체가 아니다(어픽스 개수로 req 가 파생됨).
+ *
+ * reqLevel 산식(src/items/requiredLevel.ts): normal=1, rare=32+어픽스×3, unique=저작값.
+ * 유니크 id 는 `rollItem`(rarity=unique)이 슬롯별 레지스트리(data/uniques.ts)에서 뽑으므로
+ * 항상 실재 등록 id 라 `requiredLevel` 이 throw 하지 않는다.
+ */
+function buildGearLockedInventory(): Item[] {
+  const items: Item[] = [];
+  let seed = 0x10c_0001; // "loc(ked)"
+  /** 슬롯·등급(선택적 어픽스 수)으로 1점 굴려 담고 시드를 스캔 창 밖으로 전진시킨다. */
+  const push = (slotKind: SlotKind, rarity: Rarity, wantAffixes?: number): void => {
+    items.push(rollItemForSlot(seed, slotKind, rarity, wantAffixes));
+    seed = (seed + 0x1_0000) >>> 0;
+  };
+
+  // 착용 가능 대조군: normal 은 항상 reqLevel = 1 이라 Lv10 기체로 착용 가능(경계 확인용).
+  push('main', 'normal');
+  push('engine', 'normal');
+
+  // 미달(locked) rare 다수: reqLevel = 32 + 어픽스×3. 6어픽스 → 50, 3어픽스여도 41 > 10.
+  push('armor', 'rare', 6); // reqLevel 50
+  push('shield', 'rare', 5); // reqLevel 47
+  push('core', 'rare', 4); // reqLevel 44
+
+  // 미달(locked) unique: 슬롯별 저작 reqLevel. sub={drone-bay 22 · singularity 75},
+  // armor={phase-armor 18 · reactive-armor 65}. 어느 쪽이 뽑혀도 전부 10 초과라 잠긴다.
+  push('sub', 'unique');
+  push('armor', 'unique');
+
+  return items;
+}
+
+/**
  * Build a fresh profile for `kind`. `fresh` is the game's default profile (new
  * pilot, tutorial pending). `maxed` is an endgame account: a level-100 ship in
  * full rare/unique gear, a big currency + skill-point float, and the tutorial
- * already cleared so the base map is the hub.
+ * already cleared so the base map is the hub. `gearLocked` is a low-level (Lv10)
+ * pilot whose inventory holds high-reqLevel gear it cannot yet equip — the
+ * 격납고 잠금 셀(회색화·req 빨강·클릭 무동작)을 실측하기 위한 프리셋(ADR-0030).
  */
 export function buildPreset(kind: ProfilePresetKind): Profile {
   const profile = defaultProfile();
   if (kind === 'fresh') return profile;
+
+  if (kind === 'gearLocked') {
+    const lowShip = profile.ships[0];
+    if (lowShip !== undefined) {
+      lowShip.level = 10;
+      lowShip.xp = 0;
+    }
+    // 격납고(항상 해금)에서 인벤토리를 바로 보도록 튜토리얼은 완료 처리.
+    profile.tutorialDone = true;
+    profile.inventory = buildGearLockedInventory();
+    return profile;
+  }
 
   // maxed
   const ship = profile.ships[0];
