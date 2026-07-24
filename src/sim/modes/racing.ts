@@ -20,13 +20,22 @@ import { INVASION_WINDOW_HALF_W, INVASION_WINDOW_HALF_H } from '../invasion/scro
 import type { ScrollWindow } from '../invasion/scroll.js';
 import type { Entity, EntitySink } from '../entities.js';
 import { spawnWall, spawnBoostPad } from '../entities.js';
+import { SEGMENTS } from '../../../data/waves.js';
 import type { WorldState } from '../world.js';
 
 // --- 플레이스홀더 계수 (TODO(밸런스): 출시 전 일괄 튜닝, 구조만 고정) ---
 /** 체크포인트(구간) 1개의 +X 스크롤 거리(월드 유닛). TODO(밸런스). */
 export const RACING_SECTION_LENGTH = 2000;
-/** 보스 전 구간 수(= 일반 세그먼트 5개와 정렬). TODO(밸런스). */
-export const RACING_SECTION_COUNT = 5;
+/**
+ * 보스 전 구간 수 — **일반 세그먼트 수에서 파생한다**(밸런스 상수가 아니라 구조 정합).
+ *
+ * ⚠️ 하드코딩하면 안 되는 이유(실증): 세그먼트 전진 게이트가 `racingProgress(sw) >=
+ * (segmentIndex + 1) × RACING_SECTION_LENGTH` 라, **일반 세그먼트가 하나 늘면 코스도 한 구간
+ * 늘어야** 마지막 세그먼트가 실제로 깔린 코스 위에서 끝난다. 중반 격전(ADR-0032)이 세그먼트를
+ * 하나 삽입했을 때 이 값이 5 로 고정돼 있어, 보스 직전에 분기벽·부스트 패드가 없는 빈 구간이
+ * 생겼다. 파생으로 바꿔 이 desync 자체를 구조적으로 없앤다(`SEGMENTS` 마지막은 보스 슬롯).
+ */
+export const RACING_SECTION_COUNT = SEGMENTS.length - 1;
 /** 적 스폰 기준을 창 중심에서 전방(+X)으로 미는 거리(앞에서 다가오는 정체성). TODO(밸런스). */
 export const RACING_SPAWN_AHEAD = 700;
 /**

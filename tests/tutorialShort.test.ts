@@ -46,10 +46,11 @@ describe('튜토리얼 단축판 (maxSegments)', () => {
     expect(trace).toEqual([0, 1, 2, BOSS_INDEX]);
   });
 
-  it('필드 부재 시 풀 런 순서(0→1→2→3→4→보스)가 보존된다(회귀 0)', () => {
+  it('필드 부재 시 풀 런 순서(0→1→2→3→4→5→보스)가 보존된다(회귀 0)', () => {
     const trace = segmentTrace({ ...DURABLE }, ampleTicks);
-    // 상한 부재 → 조기 보스 점프 없이 5개 일반 세그먼트를 순서대로 소화 후 보스.
-    expect(trace).toEqual([0, 1, 2, 3, 4, BOSS_INDEX]);
+    // 상한 부재 → 조기 보스 점프 없이 일반 세그먼트를 순서대로 소화 후 보스. index 3 은 중반
+    // 격전(ADR-0032)이라 리더 처치로 넘어간다 — 궤적에는 다른 세그먼트와 똑같이 한 칸 찍힌다.
+    expect(trace).toEqual([0, 1, 2, 3, 4, 5, BOSS_INDEX]);
   });
 
   it('단축 런은 동일 시드·입력으로 per-tick 해시가 재현된다(ADR-0005)', () => {

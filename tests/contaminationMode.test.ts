@@ -28,6 +28,7 @@ import { PLANET_MODE } from '../src/sim/planetMode.js';
 import { blankEntity, spawnBullet } from '../src/sim/entities.js';
 import type { Entity, EntitySink } from '../src/sim/entities.js';
 import { isBreakableWall } from '../src/sim/modes/blockBreak.js';
+import { MID_CLASH_LEADER_MARK } from '../src/sim/modes/midClash.js';
 import {
   placeContaminationField,
   stepContamination,
@@ -256,7 +257,9 @@ describe('오염 — 정규경로 통합(배선 실도달)', () => {
     for (let i = 0; i < 12; i++) stepContam(w);
     expect(w.kills).toBe(0); // 처치 0 — killGoal 로는 절대 전진 못 함
     expect(contaminationPurifyRate(w)).toBeCloseTo(0.6, 10);
-    // 정화율 0.6 → 마일스톤 0.2·0.4·0.6 통과 → 세그먼트 3 에 정착(0.8 미달).
+    // 정화율 0.6 → 마일스톤 1/6·2/6·3/6 통과 → 세그먼트 3 에 정착. index 3 은 중반 격전
+    // (ADR-0032)이라 그 다음 전진은 정화율이 아니라 리더 처치인데, 무기가 무력화돼 있어
+    // 리더가 살아남는다 → 여기서 멈춘다(정화율 게이트가 실제로 3칸을 밀었다는 증거).
     expect(w.wave.segmentIndex).toBe(3);
   });
 
@@ -265,8 +268,17 @@ describe('오염 — 정규경로 통합(배선 실도달)', () => {
     w.weapon.damage = 0;
     blastNodes(w, CONTAMINATION_NODE_COUNT); // 전량 파괴 → 정화율 1.0
     let boss: Entity | undefined;
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 240; i++) {
       stepContam(w);
+      // 중반 격전(ADR-0032) 리더는 정화율과 무관한 별도 전진 게이트다 — 무기를 무력화한
+      // 이 테스트에서는 저절로 죽지 않으므로, 보스(아래)와 같은 방식으로 거대 아군탄을 쏴
+      // **실제 피해 경로로** 처치해 격전 세그먼트를 통과시킨다(수동 dead 세팅 금지).
+      const leader = w.entities.find(
+        (e) => e.kind === 'enemy' && !e.dead && e.aux1 === MID_CLASH_LEADER_MARK,
+      );
+      if (leader !== undefined) {
+        spawnBullet(w, leader.x, leader.y, 0, 0, 1_000_000, 0, leader.radius + 100, 120, 1, 0);
+      }
       boss = w.entities.find((e) => e.kind === 'boss');
       if (boss !== undefined) break;
     }

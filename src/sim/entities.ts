@@ -53,7 +53,10 @@ export type EntityKind =
   // --- 추격·탈출(Lane6, ADR-0021 §2.4) — 대피소 -------------------------------------
   | 'shelter' // 추격 모드 대피소. boostPad 선례(inert): 충돌·이동 차단·grid 등록·isGimmick 어디에도 없음 — chaseShelterReached 가 플레이어 overlap 만 판정해 세그먼트 전진. aux0=대피소 인덱스(세그먼트 대응)
   // --- 에코 신호(story Phase D, ADR-0023) — 서사 이벤트 오브젝트 ----------------------
-  | 'echo'; // 에코 신호. boostPad/shelter 선례(inert): 충돌·이동 차단·grid 등록·isGimmick 어디에도 없음 — echo.ts stepEchoStabilize 가 플레이어 반경 내 체류를 판정해 안정화. 에코 런(≈3%)에만 등장
+  | 'echo' // 에코 신호. boostPad/shelter 선례(inert): 충돌·이동 차단·grid 등록·isGimmick 어디에도 없음 — echo.ts stepEchoStabilize 가 플레이어 반경 내 체류를 판정해 안정화. 에코 런(≈3%)에만 등장
+  // --- 조우 프레임워크(ADR-0033) — 에코를 일반화한 opt-in 희귀 이벤트 오브젝트 ---------
+  | 'encounterPortal' // 보물 격실 진입 포탈. echo 정본과 같은 inert — encounter.ts 가 플레이어 근접 + SPECIAL_ENCOUNTER_ENTER 입력을 판정해 detour 로 보낸다. 조우 런(≈2%)의 treasureVault 유형에만 등장
+  | 'encounterAltar'; // 오스카 제단(3택 도박). 마찬가지로 inert — 근접 + SPECIAL_ENCOUNTER_ALTAR_PICK 입력만 판정한다. 조우 런의 oscarAltar 유형에만 등장
 
 /**
  * Stable integer per kind, folded into the state hash. Never renumber existing
@@ -111,6 +114,13 @@ export const KIND_CODE: Record<EntityKind, number> = {
   // 에만 등장하므로 에코 미발생 런(뱀서류·침공·블록격파·레이싱·추격·수축·오염 전부)의 해시에는
   // 나타나지 않는다(기존 fixtures 회귀 0). 신규 kind 는 30 부터 append.
   echo: 29,
+  // Appended for 조우 프레임워크(ADR-0033, never renumber 1..29). 두 오브젝트는 조우 런(≈2%)
+  // 중에서도 해당 유형이 뽑힌 런에만 스폰되므로, 조우 미발생 런(기존 전 모드·침공 포함)의
+  // 해시에는 이 코드가 등장하지 않는다(조건부 접기 · 기존 fixtures 회귀 0).
+  // **append-only 규율**: 신규 kind 는 32 부터. 30/31 을 다른 kind 로 재사용하지 않는다 —
+  // 재사용하면 이 코드로 기록된 리플레이가 다른 kind 로 재해석돼 서버 재검증이 갈린다.
+  encounterPortal: 30,
+  encounterAltar: 31,
 };
 
 export interface Entity {
@@ -497,4 +507,43 @@ export function spawnEcho(sink: EntitySink, x: number, y: number, radius: number
   e.y = y;
   e.radius = radius;
   return addEntity(sink, e);
+}
+
+/**
+ * 보물 격실 진입 포탈(조우 프레임워크, ADR-0033). `radius` 는 렌더/풋프린트 반경일 뿐
+ * 충돌엔 쓰지 않는다 — spawnEcho 정본과 완전히 같은 inert 오브젝트다: resolveCollisions
+ * 격자·rebuildActiveWalls·isGimmick·피해목록 어디에도 등록되지 않아 충돌·이동 차단·청크
+ * 컬링이 없다. 진입 판정은 encounter.ts 가 플레이어 거리 + `SPECIAL_ENCOUNTER_ENTER`
+ * 입력으로 직접 한다(격자를 타지 않는 이유는 "접촉 즉발"이 아니라 **명시적 opt-in 입력**
+ * 이기 때문이다 — 스치기만 해서 딴 세상에 끌려가면 안 된다).
+ */
+export function spawnEncounterPortal(
+  sink: EntitySink,
+  x: number,
+  y: number,
+  radius: number,
+): Entity {
+  const p = blankEntity('encounterPortal');
+  p.x = x;
+  p.y = y;
+  p.radius = radius;
+  return addEntity(sink, p);
+}
+
+/**
+ * 오스카 제단(조우 프레임워크, ADR-0033). 포탈과 동일한 inert 오브젝트이며, 판정은
+ * 근접 + `SPECIAL_ENCOUNTER_ALTAR_PICK` 입력(선택 인덱스는 비트 6..7)뿐이다. 3택 결과
+ * 적용은 경량 조우 모듈(`src/sim/encounters/light.ts`)이 소유한다 — 이 파일은 스폰만 한다.
+ */
+export function spawnEncounterAltar(
+  sink: EntitySink,
+  x: number,
+  y: number,
+  radius: number,
+): Entity {
+  const a = blankEntity('encounterAltar');
+  a.x = x;
+  a.y = y;
+  a.radius = radius;
+  return addEntity(sink, a);
 }

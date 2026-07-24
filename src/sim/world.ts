@@ -261,6 +261,14 @@ import { rollEcho, stepEcho, type EchoRuntime } from './echo.js';
 // RunResult 리더 헬퍼는 W3(정산·main.ts)이 `from './world.js'` 로 소비할 수 있게 재수출한다
 // (playerCloaked 재수출 선례). sim 내부 배선은 stepEcho 뿐이고 이 둘은 순수 리더다.
 export { echoStabilizedOf, runStoryMetrics } from './echo.js';
+// --- 조우 프레임워크(ADR-0033) — 에코를 일반화한 런 중 opt-in 희귀 이벤트. 롤은 에코와 같은
+//     fork 전용이고(부모 미전진), positive 런에만 encounterRuntime 이 서서 hashWorld 가 조건부
+//     폴드한다 → 조우 미발생 런 바이트 불변(AC1). detour(보물 격실)만 신규 제어흐름이라 아래
+//     stepWorld 최상단 단일 분기로 격리한다. --------------------------------------------------
+import { rollEncounter, stepEncounter, type EncounterRuntime } from './encounter.js';
+import { stepDetour } from './encounterDetour.js';
+// 정산·관측이 소비하는 순수 리더 재수출(echoStabilizedOf 선례).
+export { encounterCompletedOf, encounterTypeOf, encounterShardOf } from './encounter.js';
 
 export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
 
@@ -293,6 +301,19 @@ export const SPECIAL_POWERUP_PICK = 1 << 0;
 export function packPowerupPick(index: number): number {
   return SPECIAL_POWERUP_PICK | ((index & 0x3) << 1);
 }
+
+// --- 조우 입력 비트(ADR-0033) — 정의는 `data/encounters.ts` 에 있고 여기서는 **재수출만**
+//     한다. 정의를 이 파일에 두면 encounter.ts/encounterDetour.ts 가 비트를 읽으려고 world.ts
+//     를 런타임 import 해야 하는데, world.ts 는 이미 그 둘을 런타임 import 하므로 순환이 된다.
+//     leaf 데이터 층에 정의를 두는 것이 그 순환을 원천 차단한다. 비트 배치(0..2 = 파워업 점유,
+//     3 이상 = 조우)와 append-only 규율은 data/encounters.ts 주석이 정본이다.
+export {
+  SPECIAL_ENCOUNTER_ENTER,
+  SPECIAL_ENCOUNTER_DECLINE,
+  SPECIAL_ENCOUNTER_ALTAR_PICK,
+  SPECIAL_ENCOUNTER_EXIT,
+  packEncounterAltar,
+} from '../../data/encounters.js';
 
 // --- Progression / feel tuning (M1 prototype values; spec fixes only the
 //     structure — combo cap x1.5, 20s supply window, boss 3-phase/overheat). ---
@@ -760,6 +781,12 @@ export interface WorldState {
    * 조건부 폴드 → 에코 미발생 런(뱀서류·침공·타 모드 전부) 바이트 불변. append-only.
    */
   echoRuntime?: EchoRuntime;
+  /**
+   * 조우 런타임(ADR-0033). echoRuntime 과 완전히 같은 규율 — **조우 발생(positive) 런에만**
+   * 존재하고(그 외 필드 자체를 두지 않는다), hashWorld 가 존재 시에만 조건부 꼬리 폴드 →
+   * 조우 미발생 런(기존 전 PvE 모드·침공) 바이트 불변(AC1). append-only.
+   */
+  encounterRuntime?: EncounterRuntime;
   // --- 사연 마일스톤 관측 카운터(story Phase D · 비-해시 · 설계서 §4) ----------------------
   // ⚠️ **반드시 hashWorld 에서 접지 않는다**(tainted 선례 — 순수 메타데이터라 결정론·해시 무영향).
   // 각 기체 시그니처 훅 발동 지점에서만 누적되고, 정산(W3)이 RunResult 델타로 읽어 프로필의
@@ -899,6 +926,26 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   let echoRuntime: EchoRuntime | undefined;
   if (cfg.invasion3 === undefined) echoRuntime = rollEcho(worldRng);
 
+  // PvE 조우(ADR-0033). 에코와 같은 fork 전용 롤(`worldRng.fork('encounter')`)이라 worldRng 을
+  // 한 번도 소비하지 않는다 — 조우 발생 런에서도 웨이브·드랍·파워업 스트림이 전부 그대로다.
+  // 침공(invasion3)엔 붙이지 않는다(설계된 방어전 + 침공 해시 골든 불변 단언 AC2 · 에코와 같은
+  // 상호 배타 가드). **positive 일 때만** encounterRuntime 을 세운다 → 조건부 폴드 성립(AC1).
+  //
+  // `allowWarp` = v1 워프 detour 모드 게이트(Principle 5 · 계획 R2). 워프는 플레이어 좌표를
+  // 12만 유닛 밖으로 옮기는데, 강제 스크롤 창(clampToWindow)·수축 안전 반경(shrinkOutOfBounds)·
+  // 추격 포식자·오염 확산은 전부 좌표계에 기대는 규칙이라 워프를 되돌리거나 즉사 판정을 낸다.
+  // 그래서 v1 은 **뱀서류**(스크롤·수축 런타임 미존재 + 비-추격 + 비-오염)에서만 워프 유형을
+  // 후보에 넣고, 나머지 모드는 인라인/오버레이 조우 4종만 뽑는다. 모드별 detour 변형은 다운스트림.
+  let encounterRuntime: EncounterRuntime | undefined;
+  if (cfg.invasion3 === undefined) {
+    const allowWarp =
+      scrollRuntime === undefined &&
+      shrinkRuntime === undefined &&
+      cfg.planetMode !== PLANET_MODE.chase &&
+      cfg.planetMode !== PLANET_MODE.contamination;
+    encounterRuntime = rollEncounter(worldRng, allowWarp);
+  }
+
   const state: WorldState = {
     tick: 0,
     config: cfg,
@@ -965,6 +1012,9 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     // PvE 에코 신호 런타임도 positive 런에만 싣는다(exactOptionalPropertyTypes · 조건부 폴드 정합).
     // 침공엔 위 롤 가드로 애초에 세우지 않으므로 invasion3 과 공존하지 않는다.
     ...(echoRuntime !== undefined ? { echoRuntime } : {}),
+    // PvE 조우 런타임도 positive 런에만 싣는다(exactOptionalPropertyTypes · 조건부 폴드 정합).
+    // 침공엔 위 롤 가드로 애초에 세우지 않으므로 invasion3 과 공존하지 않는다.
+    ...(encounterRuntime !== undefined ? { encounterRuntime } : {}),
   };
 
   // L1 진입 훅(정적 배치 스폰)은 상태가 완성된 뒤에 태운다 — 훅이 state.entities 에 스폰하기
@@ -1038,6 +1088,26 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
 
   const player = getPlayer(state);
 
+  // 보물 격실 detour(조우 프레임워크 · ADR-0033 · 계획 CRIT-1): 메인 파이프라인을 통째로
+  // 건너뛰는 **단일 분기**다. 바로 위 레벨업 프리즈와 동형이라, 이 한 줄로 updateWaves·
+  // stepEnemies·stepBoss·autoAttack·clampToWindow·shrinkOutOfBounds·advanceScroll/Shrink·
+  // applySingularityPull·updateChasePredator·resolveCollisions·compact 가 **전부 자연 생략**
+  // 된다. 메인 엔티티는 state.entities 에 프리즈된 채 남아 hashWorld 가 계속 접으므로
+  // 결정론과 AC6(detour 중 메인 월드 tick 외 바이트 동결)이 동시에 성립한다.
+  //
+  // ⚠️ 산발적 `if (!inDetour)` 게이트를 코드 곳곳에 흩뿌리는 원안은 컨센서스에서 REJECT
+  // 됐다 — 충돌점이 최소 7곳이라 열거로는 반드시 새기 때문이다. **이 분기가 유일한 게이트**
+  // 라는 것이 계약이니, detour 관련 조건문을 아래 루프에 추가하지 마라.
+  //
+  // stepPlayer 는 이 모듈의 내부 함수라 encounterDetour.ts 가 import 할 수 없다. 순환을 피해
+  // **의존성 주입**으로 넘긴다(world.ts → encounterDetour.ts 단방향 유지). 방 안에서도
+  // 이동 감각(대시 쿨다운·무적 프레임·감속)이 메인과 완전히 같아야 해서 복제하지 않는다.
+  if (state.encounterRuntime?.inDetour === 1) {
+    stepDetour(state, player, input, stepPlayer);
+    state.tick++;
+    return;
+  }
+
   // 침공 3레이어(M7a): config·런타임이 모두 있을 때만 활성. 컨텍스트는 런타임을 참조로 담아
   // 페이즈 머신 갱신이 훅에 즉시 보이게 한다.
   const invasion3 = state.config.invasion3;
@@ -1097,6 +1167,13 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // stepPlayer 직후라 이번 틱의 최신 플레이어 좌표로 판정한다. echoRuntime 미존재(에코 미발생
   // 런·침공)면 즉시 no-op → 거동·해시 불변. 안정화 보상(resources)은 hashWorld 에 접힌다.
   stepEcho(state, player);
+  // 조우(ADR-0033): 스폰 틱 도달 시 조우 오브젝트 스폰 + 유형별 한 틱 진행. 에코와 같은 성격의
+  // 시드 이벤트라 바로 뒤에 둔다(이번 틱 최신 플레이어 좌표로 근접 판정). encounterRuntime
+  // 미존재(조우 미발생 런·침공)면 즉시 no-op → 거동·해시 불변. 보물 격실 진입이 확정되면
+  // 좌표만 저장하고 실제 워프는 **다음 틱** detour 분기가 한다 — 진입 틱에 워프하면 아래
+  // updateWaves·stepSupply 가 포켓 좌표 주위에 메인 적을 스폰해 버리기 때문이다
+  // (encounterDetour.ts `enterDetour` 주석이 정본).
+  stepEncounter(state, player, input);
   if (!designedRun) updateWaves(state, player);
   stepEnemies(state, player);
   // 강제 스크롤(Lane4/5): 창 뒤로 흘러간 적을 정리한다(보스 제외). 컬 반경은 모드별로 고른다 —

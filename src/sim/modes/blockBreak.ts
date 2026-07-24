@@ -16,6 +16,7 @@
 import type { Entity, EntitySink } from '../entities.js';
 import { spawnBreakableWall } from '../entities.js';
 import { circleOverlapsWall } from '../los.js';
+import { SEGMENTS } from '../../../data/waves.js';
 import { INVASION_WINDOW_HALF_W, INVASION_WINDOW_HALF_H } from '../invasion/scroll.js';
 import type { ScrollWindow } from '../invasion/scroll.js';
 import type { WorldState } from '../world.js';
@@ -23,8 +24,13 @@ import type { WorldState } from '../world.js';
 // --- 플레이스홀더 계수 (TODO(밸런스): 출시 전 일괄 튜닝, 구조만 고정) ---
 /** 구간 1개의 −Y 스크롤 거리(월드 유닛). TODO(밸런스). */
 export const BLOCKBREAK_SECTION_LENGTH = 2000;
-/** 보스 전 구간 수(= 일반 세그먼트 5개와 정렬). TODO(밸런스). */
-export const BLOCKBREAK_SECTION_COUNT = 5;
+/**
+ * 보스 전 구간 수 — **일반 세그먼트 수에서 파생한다**(밸런스 상수가 아니라 구조 정합).
+ * 근거는 `RACING_SECTION_COUNT` 와 동일: 전진 게이트가 `blockBreakProgress(sw) >=
+ * (segmentIndex + 1) × BLOCKBREAK_SECTION_LENGTH` 라 일반 세그먼트가 늘면 코스도 늘어야 한다.
+ * 중반 격전 삽입 때 5 고정이 빈 구간을 만든 실증이 있어 파생으로 고정했다.
+ */
+export const BLOCKBREAK_SECTION_COUNT = SEGMENTS.length - 1;
 /** 파괴가능 벽 세그먼트 HP. TODO(밸런스). */
 export const BLOCKBREAK_WALL_HP = 60;
 /** 압사 틱당 피해(iframes 간격 적용, 즉사 아님). TODO(밸런스). */

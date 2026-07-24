@@ -2,7 +2,7 @@
 
 - **상태: pending approval** (컨센서스 1회전 REJECT→정제 완료, Architect+Critic 발견 전부 반영)
 - 입력 명세: [.omc/specs/deep-interview-encounter-framework.md](../specs/deep-interview-encounter-framework.md)
-- 설계 근거: ADR-0031·ADR-0032·CONTEXT.md glossary
+- 설계 근거: ADR-0033(조우 — 구 0031, 그래픽 이펙트 ADR과 번호 충돌로 리넘버)·ADR-0032(중반 격전)·CONTEXT.md glossary
 - 모드: RALPLAN-DR **deliberate**(고위험 — 해시 계약 변경 + 라이브 EF 재배포)
 - ⚠️ 자동 실행 금지: 실행은 별도 명시 승인 필요(팀/ralph/autopilot 자동 호출 안 함).
 

@@ -31,6 +31,7 @@ import { spawnBoss, spawnDestructible, spawnShelter } from '../entities.js';
 import type { WorldState } from '../world.js';
 import { PLANET_MODE, type PlanetMode } from '../planetMode.js';
 import { planetContent } from '../../../data/planets/index.js';
+import { SEGMENTS } from '../../../data/waves.js';
 import { cos, sin, atan2, clamp, TWO_PI } from '../math.js';
 import { DT } from '../constants.js';
 
@@ -51,8 +52,18 @@ export const CHASE_COUNTER_DEVICE_RADIUS = 70;
 export const CHASE_COUNTER_DEVICE_GEM_XP = 6;
 /** 반격 장치 배치 링 반경(플레이어 시작 0,0 주변). TODO(밸런스). */
 export const CHASE_COUNTER_DEVICE_RING_RADIUS = 1100;
-/** 대피소 수(= 일반 세그먼트 수 5, 각 aux0=세그먼트 인덱스). TODO(밸런스). */
-export const CHASE_SHELTER_COUNT = 5;
+/**
+ * 대피소 수(= 보스를 뺀 세그먼트 수 6, 각 aux0=세그먼트 인덱스). TODO(밸런스).
+ *
+ * ⚠️ `SEGMENTS.length - 1` 에서 **파생한다**(하드코딩 금지) — 대피소 aux0 가 세그먼트 인덱스와
+ * 1:1 이라, 모자라면 초과 세그먼트에서 영영 전진하지 못한다. 중반 격전(ADR-0032)이 세그먼트를
+ * 하나 늘렸을 때 이 값이 5 로 고정돼 있어 실제로 desync 가 났고, 같은 사고가 racing·blockBreak
+ * 구간 수에서도 동시에 났다. 세 곳 전부 파생으로 바꿔 이 결함 부류를 구조적으로 없앤다.
+ * 격전 세그먼트(index 3)에 대응하는 대피소는 전진 게이트가 리더 처치로 대체돼 쓰이지 않지만,
+ * 인덱스 정합을 위해 자리를 비우지 않고 그대로 배치한다(배치가 인덱스만의 함수라 특례를 두면
+ * 결정론 배치가 복잡해진다).
+ */
+export const CHASE_SHELTER_COUNT = SEGMENTS.length - 1;
 /** 대피소 반경(도달 판정, 관대). TODO(밸런스). */
 export const CHASE_SHELTER_RADIUS = 140;
 /** 대피소 배치 링 반경(플레이어 시작 0,0 주변). TODO(밸런스). */

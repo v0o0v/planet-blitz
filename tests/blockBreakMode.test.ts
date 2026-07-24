@@ -220,15 +220,19 @@ describe('블록격파 — 정규경로 통합(배선 실도달)', () => {
   it('(c) 세그먼트가 스크롤 거리로 전진한다(killGoal 아님) — 인덱스가 진행도 구간과 정확히 일치', () => {
     const w = createWorld(9, durableBlockBreak());
     const seen = new Set<number>();
+    // 중반 격전(ADR-0032) 세그먼트부터는 전진 게이트가 스크롤 거리가 아니라 **리더 처치**라
+    // 거리↔인덱스 등식이 성립하지 않는다(격전 게이트 자체는 tests/midClash.test.ts 소관).
+    // 그래서 이 등식은 격전 진입 전 구간에서만 단언한다 — 거리 게이트 배선 증거로는 충분하다.
+    const clashIndex = SEGMENTS.findIndex((s) => s.clash === true);
     for (let i = 0; i < 1600; i++) {
       stepWorld(w, idle);
+      if (w.wave.segmentIndex >= clashIndex || w.wave.boss) break;
       const progress = -w.scrollRuntime!.scrollY;
       // 거리 게이트라면 인덱스는 진행도 구간에 딱 묶인다. killGoal 게이트라면 처치 수에
       // 좌우돼 이 등식이 성립할 수 없다(=배선 증거).
       const expected = Math.min(SEGMENTS.length - 1, blockBreakSection(progress));
       expect(w.wave.segmentIndex).toBe(expected);
       seen.add(w.wave.segmentIndex);
-      if (w.wave.boss) break;
     }
     expect(seen.size).toBeGreaterThan(1); // 여러 구간을 실제로 전진(정체 아님)
   });

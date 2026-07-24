@@ -69,6 +69,7 @@ import {
   comboMultiplier,
   DEFAULT_CONFIG,
   echoStabilizedOf,
+  encounterShardOf,
   runStoryMetrics,
 } from './sim/world.js';
 import type { WorldState, InputFrame } from './sim/world.js';
@@ -1202,7 +1203,10 @@ async function main(): Promise<void> {
           // 실어 프로필에 누적한다. 헬퍼는 world.js(→echo.js) 재수출 순수 리더 — sim 무수정.
           // 침공 런은 이 블록에 도달하지 않는다(위 invasionTarget return · !harnessInvasionRun
           // 가드) — PvE 런만 조립하며, 에코도 PvE 전용(echoRuntime 미장착)이다.
-          echoStabilized: echoStabilizedOf(w),
+          // 조우 프레임워크(ADR-0033): 기록 파편우도 **같은 기록 파편 축**으로 합류한다
+          // (명세의 "신규 보상 시스템 0" 제약 — 파편 슬롯 소비 로직을 두 벌로 만들지 않는다).
+          // 둘 다 순수 리더라 sim 무수정이고, OR 라서 에코 단독 런의 거동은 그대로다.
+          echoStabilized: echoStabilizedOf(w) || encounterShardOf(w),
           storyMetricDeltas: runStoryMetrics(w),
         });
         // Completing the tutorial (win or lose) reveals the base and makes the run
