@@ -28,8 +28,15 @@ import { makeSlotCell, gridPositions, equipIconTexture } from './slotGrid.js';
 import { PixiTooltip } from './tooltip.js';
 import { makeBanner } from './titleBar.js';
 import { stripEmoji } from './text.js';
+import { LootCeremony } from '../../render/effects/lootCeremony.js';
 
 export type { ResultDrop, SettlementSummary, ResultState };
+
+// --- 보상 세리머니(AC-5.2, ADR-0031) 타이밍(placeholder, defer-balance-tuning) ---
+/** 세리머니가 다 공개된 뒤 마지막 카드를 보여주는 유지 시간(초). 이후 페이드아웃해 결과 화면을 드러낸다. */
+const CEREMONY_HOLD_S = 1.2;
+/** 유지 후 세리머니 컨테이너 alpha 페이드아웃 시간(초). 페이드 완료 시 결과 패널·버튼이 온전히 드러난다. */
+const CEREMONY_FADE_S = 0.5;
 
 /** 승리/패배 배너 제목색. 세트 팔레트 안에서 고른다(DOM 판 네온 시안/핑크는 나무와 겉돈다). */
 const WIN_COLOR = COLOR.gold;
@@ -103,6 +110,14 @@ export class ResultOverlayScreen {
   private readonly stage: Container;
   private readonly root = new Container();
   private readonly tooltip = new PixiTooltip();
+  /**
+   * 보상 세리머니(AC-5.2) — 정산 진입 시 이번 런 드랍 등급을 카드 플립+광택으로 공개하는 전이 연출.
+   * 전체 화면 중앙에서 공개 후 마지막 카드를 잠시 보여주다 페이드아웃해 결과 패널·버튼을 드러낸다
+   * (reveal→results 흐름). render() 재빌드 루프에서 tooltip 처럼 예외 보존한다. 카툰나무풍(전투 글로우 X).
+   */
+  private readonly lootCeremony = new LootCeremony({ width: DESIGN_WIDTH, height: DESIGN_HEIGHT });
+  /** 세리머니 공개 완료(revealing=false) 후 경과(초). CEREMONY_HOLD_S 뒤 CEREMONY_FADE_S 동안 페이드아웃. */
+  private ceremonyElapsed = 0;
   private ui: UiTextures = {};
   private state: ResultState | null = null;
   private onRestart: (() => void) | null = null;
@@ -114,6 +129,7 @@ export class ResultOverlayScreen {
     this.root.eventMode = 'static';
     this.stage.addChild(this.root);
     this.root.addChild(this.tooltip.container);
+    this.root.addChild(this.lootCeremony.container);
     // UI 킷 텍스처 비동기 로드 — 완료 후 열려 있으면 실 아트로 다시 그린다(그 전엔 폴백).
     void loadUiTextures().then((tex) => {
       this.ui = tex;
@@ -137,22 +153,56 @@ export class ResultOverlayScreen {
     this.render();
     this.root.visible = true;
     setDomHidden(true);
+    // AC-5.2 보상 세리머니 — 이번 런 드랍 등급(settlement.drops)을 카드 플립+광택으로 공개한다. 드랍이
+    // 있을 때만 발동하고, 세리머니를 결과 패널 **위**·tooltip **아래**로 올린다(공개 중 화면 중앙을 덮었다
+    // update 가 CEREMONY_HOLD_S 뒤 페이드아웃해 결과 패널·버튼을 온전히 드러낸다).
+    const tiers = (s.settlement?.drops ?? []).map((d) => d.rarity);
+    this.ceremonyElapsed = 0;
+    this.lootCeremony.container.alpha = 1;
+    if (tiers.length > 0) {
+      this.lootCeremony.show(tiers);
+      this.root.setChildIndex(this.lootCeremony.container, this.root.children.length - 1);
+      this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
+    } else {
+      this.lootCeremony.hide();
+    }
   }
 
   hide(): void {
     this.root.visible = false;
     this.tooltip.hide();
+    this.lootCeremony.reset(); // 세리머니 정리(다음 정산 재사용).
+    this.ceremonyElapsed = 0;
     this.state = null;
     this.onRestart = null;
     this.onInventory = null;
     setDomHidden(false);
   }
 
+  /**
+   * 보상 세리머니(AC-5.2)를 프레임마다 진행한다 — 정산 화면엔 자체 프레임 루프가 없어 main.ts 렌더
+   * 루프가 매 프레임 호출한다(비표시 시 no-op). 공개(revealing) 중엔 카드 플립·광택을 굴리고, 공개
+   * 완료 후엔 {@link CEREMONY_HOLD_S} 유지 뒤 {@link CEREMONY_FADE_S} 동안 세리머니 컨테이너를
+   * 페이드아웃해 결과 패널·버튼을 온전히 드러낸다(reveal→results 흐름). render-only.
+   */
+  update(dt: number): void {
+    if (!this.root.visible) return;
+    this.lootCeremony.update(dt);
+    if (!this.lootCeremony.revealing) {
+      this.ceremonyElapsed += dt;
+      const fade = this.ceremonyElapsed - CEREMONY_HOLD_S;
+      if (fade > 0) {
+        this.lootCeremony.container.alpha = Math.max(0, 1 - fade / CEREMONY_FADE_S);
+      }
+    }
+  }
+
   // --- 렌더 ----------------------------------------------------------------
 
   private render(): void {
     for (const child of [...this.root.children]) {
-      if (child !== this.tooltip.container) {
+      // tooltip·세리머니 컨테이너는 렌더러가 소유·재사용하므로 재빌드 루프에서 파괴하지 않는다.
+      if (child !== this.tooltip.container && child !== this.lootCeremony.container) {
         this.root.removeChild(child);
         child.destroy({ children: true });
       }
@@ -182,6 +232,9 @@ export class ResultOverlayScreen {
     }
     this.renderActions();
 
+    // 세리머니를 결과 패널 **위**로, tooltip 을 **그 위**로 올린다 — 매 렌더 유지해, 텍스처 지연 로드로
+    // render() 가 다시 불려 패널이 재빌드돼도(addChild 로 맨 위에 쌓임) 세리머니가 뒤로 가려지지 않게 한다.
+    this.root.setChildIndex(this.lootCeremony.container, this.root.children.length - 1);
     this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
   }
 
