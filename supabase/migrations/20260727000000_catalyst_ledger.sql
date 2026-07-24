@@ -129,6 +129,33 @@ on conflict (catalyst_id) do update
 alter table public.pve_runs add column if not exists catalyst_receipt jsonb;
 
 -- -----------------------------------------------------------------------------
+-- 3b. guard_pve_runs_client_insert 재정의 — 클라 직접 insert 시 catalyst_receipt 봉인 (보안 HIGH)
+-- -----------------------------------------------------------------------------
+-- ⚠️ 20260718 의 guard 는 verified_* 3필드만 비우고, 이번에 추가된 catalyst_receipt 는 손대지 않았다.
+-- pve_runs_insert_own 정책(20260718)이 클라(authenticated) 직접 insert 를 허용하므로, 클라가 PostgREST
+-- 직타로 { "catalyst_receipt": {"resourceMult":2.2} } 를 심으면 guard 가 verified_status 만 'pending'
+-- 으로 강제하고 영수증은 통과 → settle_pve_run 이 이를 '서버 영수증'으로 신뢰해 촉매 소모 없이 배율을
+-- 얻는다(consume 의 슬롯상한·특산-행성·보유·클램프 전부 우회). 여기서 guard 를 재정의해 **클라 컨텍스트
+-- (current_user=authenticated → is_service_role()=false)에서 catalyst_receipt 도 null 강제**한다.
+-- consume_catalysts(SECURITY DEFINER, 소유자 postgres)의 insert 는 그 문장이 postgres 로 실행돼
+-- is_service_role()=true → guard 스킵 → 영수증 정상 보존(트리거는 INVOKER 라 INSERT 문장의 역할을 상속).
+create or replace function public.guard_pve_runs_client_insert()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if not public.is_service_role() then
+    new.verified_status  := 'pending';
+    new.verified_result  := null;
+    new.verified_at      := null;
+    new.catalyst_receipt := null;   -- ★ 영수증은 서버 RPC(consume_catalysts)만 심는다(클라 위조 차단).
+  end if;
+  return new;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
 -- 4. grant_catalyst — 엘리트·보스 촉매 드랍 적립 (user JWT, SECURITY DEFINER)
 -- -----------------------------------------------------------------------------
 -- 호출자(auth.uid()) 본인 원장에 catalyst_id 를 p_qty(음수 방어) 만큼 적립(upsert). 미지 id 는 거부
@@ -140,8 +167,11 @@ security definer
 set search_path = ''
 as $$
 declare
+  -- 1회 적립 상한(드랍 1건의 합리적 상한) — 클라가 grant_catalyst 를 직접 대량 호출해 원장을 부풀리고
+  -- salvage 로 현금화하는 것을 유계화한다(보안 MEDIUM-2). // BALANCE
+  CAP_GRANT_PER_CALL constant int := 100;
   v_me    uuid := auth.uid();
-  v_qty   int  := greatest(0, coalesce(p_qty, 0));
+  v_qty   int  := least(greatest(0, coalesce(p_qty, 0)), CAP_GRANT_PER_CALL);
   v_after int;
 begin
   if v_me is null then
@@ -278,7 +308,10 @@ begin
   select array_agg(cid order by cid) into v_norm_ids from unnest(p_catalyst_ids) as cid;
 
   -- pending pve_runs 행 생성(pve_runs_pending_idx 부분 인덱스와 정합). settle 이 runId 로 봉인.
-  -- definer(postgres) 라 guard_pve_runs_client_insert 트리거를 통과(verified_status 유지).
+  -- 이 함수는 SECURITY DEFINER(소유자 postgres)라 INSERT 문장이 postgres 로 실행돼 guard_pve_runs_
+  -- client_insert 트리거의 is_service_role()=true → guard 스킵 → verified_status 와 catalyst_receipt
+  -- 를 그대로 보존한다. 반대로 클라 직접 insert(authenticated)는 guard 가 catalyst_receipt 를 null 로
+  -- 봉인하므로(위 3b), 서버 RPC 만 영수증을 심는다(위조 차단).
   insert into public.pve_runs (profile_id, verified_status, catalyst_receipt)
     values (
       v_me, 'pending',
@@ -377,7 +410,13 @@ begin
     v_stage := greatest(0, case
       when (p_metrics->>'stage') ~ '^-?[0-9]+(\.[0-9]+)?$'
         then (p_metrics->>'stage')::numeric else 0 end);
-    if (p_metrics->>'resourceMult') ~ '^-?[0-9]+(\.[0-9]+)?$' then
+    -- resourceMult 는 settle_pve_run 이 set_config('app.in_settle','1',true) 로 표시한 정상 정산
+    -- 경로에서만 읽는다(보안 MEDIUM-1). 클라가 grant_currency 를 직접(settle 우회) 불러 metrics 에
+    -- resourceMult 를 실어도 플래그가 없어 무시된다(v_res_mult=1). grant_currency 는 SECURITY DEFINER
+    -- 라 current_user=postgres 로 고정돼 is_service_role() 로는 직접호출/중첩호출을 구분할 수 없으므로,
+    -- settle 이 세우는 트랜잭션-로컬 GUC 플래그로 정상 경로를 식별한다.
+    if current_setting('app.in_settle', true) = '1'
+       and (p_metrics->>'resourceMult') ~ '^-?[0-9]+(\.[0-9]+)?$' then
       v_res_mult := (p_metrics->>'resourceMult')::numeric;
     end if;
     v_res_mult := least(greatest(1, v_res_mult), CAP_RESOURCE_MULT_MAX);
@@ -531,6 +570,13 @@ begin
       v_run_id := null;  -- pending 부재(GC/재사용/위조 runId) → 무배율 base 경로.
     end if;
   end if;
+
+  -- 정상 정산 경로 표시(트랜잭션-로컬 GUC) — grant_currency 가 resourceMult 를 이 플래그가 있을 때만
+  -- 읽어, 클라의 grant_currency 직접호출(settle 우회)로 배율을 얻는 경로를 차단한다(보안 MEDIUM-1).
+  -- is_local=true 라 이 정산 트랜잭션 종료 시 자동 해제되고, 클라는 PostgREST 로 여러 RPC 를 한 트랜잭션에
+  -- 묶을 수 없으므로 이 플래그는 settle 내부의 grant 호출에만 유효하다. 무촉매 런은 v_metrics 에
+  -- resourceMult 가 없어(위에서 stripped·미재삽입) 플래그가 있어도 배율 미적용.
+  perform set_config('app.in_settle', '1', true);
 
   -- 재화 지급(3중 캡 강제). 중첩 definer 호출에서도 auth.uid()=원 호출자라 본인에게 가산.
   v_grant := public.grant_currency(v_claim_credits, v_claim_minerals, 'pve_run', v_metrics);
