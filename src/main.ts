@@ -71,6 +71,7 @@ import {
   DEFAULT_CONFIG,
   echoStabilizedOf,
   encounterShardOf,
+  encounterTypeOf,
   runStoryMetrics,
 } from './sim/world.js';
 import type { WorldState, InputFrame } from './sim/world.js';
@@ -235,6 +236,22 @@ async function main(): Promise<void> {
     }
     if (blackoutBanner.style.display !== 'none') blackoutBanner.style.display = 'none';
     radar.render(currSnap);
+  }
+
+  /**
+   * 이번 런의 조우 유형을 렌더러에 먹인다(ADR-0033 아트 배선). **render 직전에 반드시** 부른다.
+   *
+   * 왜 필요한가: 봉인 수호자는 신규 `EntityKind` 를 만들지 않고 보물 격실 포탈과 **같은 kind**
+   * 를 쓴다(`src/sim/encounter.ts`: `KIND_CODE` 는 append-only 해시 계약). 그래서 렌더가 포탈
+   * 아트와 봉인석 아트를 가르는 유일한 근거가 `encounterRuntime.type` 이다. 스냅샷에 실어
+   * 보내려면 sim 파일을 고쳐야 하므로(이 레인은 render-only) 여기서 imperative 로 넘긴다 —
+   * 레벨업 링(`pulseLevelUp`)과 같은 규율이다. 조우 미발생·침공 런은 0 이라 무영향.
+   *
+   * 호출 지점이 둘(정규 렌더 루프·하네스 renderOnce)이라 한 함수로 묶어 둔다 — 한쪽만 배선하는
+   * 것이 이 저장소의 반복 결함이다.
+   */
+  function syncEncounterArt(): void {
+    entityRenderer.setEncounterType(world === null ? 0 : encounterTypeOf(world));
   }
 
   const controller = new InputController(gameApp);
@@ -1444,6 +1461,7 @@ async function main(): Promise<void> {
 
     // --- Render ---
     const alpha = accumulator / DT;
+    syncEncounterArt();
     entityRenderer.render(prevSnap, currSnap, alpha);
     // 우상단 레이더(렌더 전용): 현재 스냅샷만 읽어 보스·엘리트·드랍·기믹·해저드를 표시.
     // 블랙아웃 카드 발동 중이면 숨긴다(renderRadarGated — 렌더 게이트).
@@ -1707,6 +1725,7 @@ async function main(): Promise<void> {
         return controller.sample(p?.x ?? 0, p?.y ?? 0);
       },
       renderOnce: () => {
+        syncEncounterArt();
         entityRenderer.render(prevSnap, currSnap, 1);
         renderRadarGated();
         gameApp.app.renderer.render(gameApp.app.stage);

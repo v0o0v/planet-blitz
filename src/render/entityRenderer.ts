@@ -20,6 +20,9 @@ import { DESIGN_WIDTH, DESIGN_HEIGHT } from './app.js';
 import { shipFacing } from './shipFacing.js';
 import { facilitySpecFor } from '../../data/invasion/facilities.js';
 import { HAZARD_LAVA, HAZARD_MORTAR, HAZARD_SLOW } from '../sim/patterns/types.js';
+// 조우 유형 상수(ADR-0033). `data/encounters.ts` 는 다른 sim 모듈을 import 하지 않는 leaf
+// 데이터라 렌더가 읽어도 순환·결정론 위험이 없다(facilities/props 카탈로그 참조 선례).
+import { ENCOUNTER_TYPE } from '../../data/encounters.js';
 import { HAZARD_CONTAMINATION } from '../sim/modes/contamination.js';
 // Phase 2 전투 피드백 배선 — 전부 render-only(sim·hashWorld/hashEntity 무접촉, ADR-0005).
 // 선행 레인 모듈을 소비만 한다(재작성 금지).
@@ -220,6 +223,9 @@ export type SingleTextureSlot =
   | 'bombDevice'
   | 'turretPickup'
   | 'shelter'
+  | 'encounterPortal'
+  | 'encounterSeal'
+  | 'encounterAltar'
   | 'core'
   | 'formation'
   | 'formationDrone'
@@ -247,8 +253,16 @@ export type SpriteSlot =
  * 인덱스 → 0)은 텍스처 해석 단계가 맡고, 여기서는 "어느 배열의 몇 번" 만 정한다.
  *
  * @param planet `boss` 전용(행성별 보스 아트). 그 외 kind 는 무시된다.
+ * @param encounterType `encounterPortal` 전용. 이번 런의 조우 유형(`ENCOUNTER_TYPE` 값,
+ *   미발생·무관이면 0). **봉인 수호자가 포탈과 같은 kind 를 쓰기 때문에** 필요한 인자다 —
+ *   자세한 사유는 아래 `encounterPortal` 분기 주석 참조.
  */
-export function spriteSlotFor(kind: EntityKind, enemyType: number, planet = 0): SpriteSlot {
+export function spriteSlotFor(
+  kind: EntityKind,
+  enemyType: number,
+  planet = 0,
+  encounterType = 0,
+): SpriteSlot {
   switch (kind) {
     case 'player':
       return { kind: 'single', slot: 'player' };
@@ -321,10 +335,17 @@ export function spriteSlotFor(kind: EntityKind, enemyType: number, planet = 0): 
       return { kind: 'single', slot: 'magnetEmitter' };
     // --- 조우 프레임워크(ADR-0033) ---
     case 'encounterPortal':
+      // ⚠️ **이 kind 하나에 두 조우가 산다.** 봉인 수호자는 신규 `EntityKind` 를 만들지 않고
+      // 포탈 kind 를 재사용한다(`src/sim/encounter.ts` 의 `maybeSpawnEncounter`: `KIND_CODE` 가
+      // append-only 해시 계약이라 신규 kind 는 골든 재생성을 강제하는데, 필요한 것은 inert 한
+      // 근접 판정 실체뿐이고 포탈이 정확히 그것이다). 그래서 연출 구분은 kind 가 아니라
+      // **조우 유형**(`encounterRuntime.type`)으로 가른다 — sim 은 그대로 두고 렌더만 갈린다.
+      // 런당 조우는 최대 1회라 유형 하나로 화면의 실체가 유일하게 결정된다.
+      return encounterType === ENCOUNTER_TYPE.sealedGuardian
+        ? { kind: 'single', slot: 'encounterSeal' }
+        : { kind: 'single', slot: 'encounterPortal' };
     case 'encounterAltar':
-      // TODO(art): 전용 포탈·제단 아트는 후속. 지금은 에코 선례대로 자석 이미터 텍스처를
-      // placeholder 로 재사용한다(sim 정합만 필수). 진입 프롬프트·3택 UI 는 렌더 레인 몫이다.
-      return { kind: 'single', slot: 'magnetEmitter' };
+      return { kind: 'single', slot: 'encounterAltar' };
   }
 }
 
@@ -636,6 +657,16 @@ export class EntityRenderer {
   private frameTick = 0;
   /** Active planet index (from the current snapshot) — selects boss art. */
   private planet = 0;
+  /**
+   * 이번 런의 조우 유형(`ENCOUNTER_TYPE` 값, 미발생·침공이면 0). **포탈 kind 하나가 보물 격실
+   * 포탈과 봉인석 둘 다를 실어 나르므로**(사유는 {@link spriteSlotFor} 의 `encounterPortal`
+   * 분기) 어느 아트를 쓸지 이 값으로 가른다.
+   *
+   * planet 처럼 스냅샷에서 읽지 **못한다** — 스냅샷 필드를 늘리려면 `src/sim/snapshot.ts` 를
+   * 건드려야 하는데 이 레인은 render-only 이기 때문이다. 대신 main.ts 가 매 프레임
+   * {@link setEncounterType} 로 먹인다(레벨업 링 `pulseLevelUp` 과 같은 imperative 훅 규율).
+   */
+  private encounterType = 0;
   /** 기체가 마지막으로 향한 각도(대상·이동이 없을 때 유지). shipFacing 참조. */
   private lastPlayerAngle = 0;
 
@@ -777,9 +808,21 @@ export class EntityRenderer {
     this.pendingLevelUp = true;
   }
 
+  /**
+   * 이번 런의 조우 유형을 렌더에 알린다(`ENCOUNTER_TYPE` 값, 미발생·관전·침공이면 0).
+   * main.ts 가 매 프레임 sim 상태에서 읽어 먹인다 — 근거는 {@link encounterType} 주석.
+   * render-only(sim·해시 무접촉).
+   */
+  setEncounterType(type: number): void {
+    this.encounterType = type;
+  }
+
   /** 스냅샷 1건의 텍스처. 매핑 판단은 순수 함수({@link spriteSlotFor})가 하고 여기서는 해석만 한다. */
   private textureFor(e: EntitySnapshot): Texture {
-    return resolveSpriteSlot(this.textures, spriteSlotFor(e.kind, e.enemyType, this.planet));
+    return resolveSpriteSlot(
+      this.textures,
+      spriteSlotFor(e.kind, e.enemyType, this.planet, this.encounterType),
+    );
   }
 
   render(prev: WorldSnapshot, curr: WorldSnapshot, alpha: number): void {
@@ -1531,6 +1574,10 @@ export class EntityRenderer {
     this.lavaOverlay.clear();
     this.fog.clear();
     this.lastPlayerAngle = 0;
+    // 조우 유형도 되돌린다 — 남기면 다음 런의 첫 프레임(main.ts 가 아직 새 값을 먹이기 전)에
+    // 이전 런의 유형으로 조우 오브젝트가 그려질 수 있다. 스프라이트는 생성 시점에 텍스처가
+    // 묶이므로 그 한 프레임의 오분류가 그 런 내내 고정된다.
+    this.encounterType = 0;
   }
 
   destroy(): void {
