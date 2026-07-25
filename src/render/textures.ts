@@ -186,6 +186,24 @@ export interface PlaceholderTextures {
   prop: Texture[];
   /** L3 방어 보스. **index = 보스 catalogId**(DEFENSE_BOSSES 배열 인덱스). */
   defenseBoss: Texture[];
+  // --- 조우 프레임워크(ADR-0033) ---
+  /**
+   * 보물 격실 포탈(`encounterPortal` kind + `encounterRuntime.type === treasureVault`).
+   * 진입하면 별도 공간으로 워프하는 관문이라 "빨려 들어가는" 소용돌이로 읽혀야 한다.
+   * fixedFacing(회전 없음).
+   */
+  encounterPortal: Texture;
+  /**
+   * 봉인 수호자의 봉인석(`encounterPortal` kind + `encounterRuntime.type === sealedGuardian`).
+   *
+   * ⚠️ **kind 가 포탈과 같다** — 봉인은 신규 `EntityKind` 를 만들지 않고 포탈 kind 를 재사용하기
+   * 때문이다(`src/sim/encounter.ts` 의 `maybeSpawnEncounter` 주석: `KIND_CODE` 는 append-only
+   * 해시 계약이라 신규 kind 는 골든 재생성을 강제한다). 그래서 이 슬롯의 선택은 kind 가 아니라
+   * **조우 유형**으로 갈린다({@link spriteSlotFor} 의 `encounterType` 인자). fixedFacing.
+   */
+  encounterSeal: Texture;
+  /** 오스카 제단(`encounterAltar` kind). 3택 공물을 바치는 제단. fixedFacing. */
+  encounterAltar: Texture;
   /** L1 편대 리더(진형 기준점). 이동 렌더 규약(+x 향 저작). */
   formation: Texture;
   /** L1 편대원. 이동 렌더 규약(+x 향 저작). */
@@ -461,6 +479,90 @@ function guardianTexture(renderer: Renderer, titan: boolean): Texture {
     drawTriangle(g, 34, 0x1f7a5c);
     g.circle(6, 0, 8).fill({ color: 0x5affc0 });
   }
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+// ---------------------------------------------------------------------------
+// 조우 오브젝트(ADR-0033) — 포탈 · 봉인석 · 제단
+//
+// 셋 다 실 PNG(`encounter_*.png`)가 정본이고 아래는 부재 시 폴백이다. **셋이 화면에서 서로
+// 달라 보이는 것**이 이 절의 유일한 요구다(포탈=관문 / 봉인=억눌린 것 / 제단=공물) — 폴백에서도
+// 실루엣·색으로 구분된다. 전부 fixedFacing(회전 없음).
+// ---------------------------------------------------------------------------
+
+/**
+ * 보물 격실 포탈 폴백: 어두운 관문 링 + 안으로 빨려드는 보라 소용돌이 + 밝은 중심점.
+ * 나선을 안쪽으로 감아 "빨려 들어간다"는 방향성이 정지 화면에서도 읽힌다.
+ */
+function encounterPortalTexture(renderer: Renderer): Texture {
+  const g = new Graphics();
+  g.circle(0, 0, 46).fill({ color: 0x160a28 }).stroke({ color: 0xb060ff, width: 5, alignment: 0 }); // 관문 링
+  // 안으로 감기는 나선 2줄(각 4분의 1 바퀴씩 반경을 줄여 그린다).
+  for (const phase of [0, Math.PI]) {
+    let first = true;
+    for (let i = 0; i <= 24; i++) {
+      const a = phase + (i / 24) * Math.PI * 1.8;
+      const r = 40 - (i / 24) * 30;
+      const x = Math.cos(a) * r;
+      const y = Math.sin(a) * r;
+      if (first) {
+        g.moveTo(x, y);
+        first = false;
+      } else g.lineTo(x, y);
+    }
+    g.stroke({ color: 0xd79bf0, width: 4, alpha: 0.85 });
+  }
+  g.circle(0, 0, 8).fill({ color: 0xffffff, alpha: 0.95 }); // 목구멍(빨려드는 중심)
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+/**
+ * 봉인석 폴백: 각진 석판 + 십자로 두른 사슬 + 균열로 새는 진홍 빛. 포탈(보라 원형 소용돌이)과
+ * **형태·색이 모두** 갈려, 같은 kind 를 공유해도 화면에서 헷갈리지 않는다.
+ */
+function encounterSealTexture(renderer: Renderer): Texture {
+  const g = new Graphics();
+  g.rect(-42, -42, 84, 84).fill({ color: 0x2a2430 }).stroke({ color: 0x8a8090, width: 4, alignment: 0 }); // 석판
+  // 균열로 새는 진홍 빛(안에 억눌린 것).
+  g.moveTo(-30, -34).lineTo(-6, -4).lineTo(-22, 16).lineTo(4, 38).stroke({ color: 0xff3355, width: 5 });
+  g.moveTo(30, -30).lineTo(10, 2).lineTo(28, 22).stroke({ color: 0xff6a70, width: 4 });
+  // 십자 사슬(억누르는 구속) + 중앙 자물쇠.
+  g.rect(-46, -10, 92, 20).fill({ color: 0x6a7080 }).stroke({ color: 0x2a2f3a, width: 3, alignment: 0 });
+  g.rect(-10, -46, 20, 92).fill({ color: 0x6a7080 }).stroke({ color: 0x2a2f3a, width: 3, alignment: 0 });
+  g.circle(0, 0, 13).fill({ color: 0x3a3040 }).stroke({ color: 0xffb020, width: 4, alignment: 0 });
+  g.circle(0, 0, 5).fill({ color: 0xff3355 });
+  const tex = renderer.generateTexture(g);
+  g.destroy();
+  return tex;
+}
+
+/**
+ * 오스카 제단 폴백: 사다리꼴 대좌 + **3개**의 금빛 공물 그릇. 그릇이 셋인 것은 3택이라는
+ * 게임 규칙을 실루엣으로 예고하기 위함이다(제단 UI 를 열기 전에 읽힌다).
+ */
+function encounterAltarTexture(renderer: Renderer): Texture {
+  const g = new Graphics();
+  // 대좌(위가 좁은 사다리꼴 — 제단의 고전 실루엣).
+  g.moveTo(-30, -34)
+    .lineTo(30, -34)
+    .lineTo(44, 40)
+    .lineTo(-44, 40)
+    .closePath()
+    .fill({ color: 0x2e2a1e })
+    .stroke({ color: 0xffd24a, width: 4, alignment: 0 });
+  g.rect(-48, 34, 96, 12).fill({ color: 0x4a4230 }).stroke({ color: 0xffd24a, width: 3, alignment: 0 }); // 기단
+  // 금빛 공물 그릇 3(좌·중·우) — 중앙이 조금 크다.
+  for (const [x, r] of [[-24, 9], [0, 12], [24, 9]] as const) {
+    g.circle(x, -28, r).fill({ color: 0xffb020 }).stroke({ color: 0xfff0b0, width: 3, alignment: 0 });
+    g.circle(x, -28, r * 0.4).fill({ color: 0xffffff, alpha: 0.9 });
+  }
+  // 대좌 룬 각인(앰버 가로선 2줄).
+  g.moveTo(-24, 4).lineTo(24, 4).stroke({ color: 0xffd24a, width: 3, alpha: 0.75 });
+  g.moveTo(-30, 20).lineTo(30, 20).stroke({ color: 0xffd24a, width: 3, alpha: 0.6 });
   const tex = renderer.generateTexture(g);
   g.destroy();
   return tex;
@@ -842,6 +944,10 @@ export function createPlaceholderTextures(renderer: Renderer): PlaceholderTextur
     bombDevice: renderer.generateTexture(bombG),
     turretPickup: renderer.generateTexture(turretG),
     shelter: shelterTexture(renderer),
+    // 조우 3종(ADR-0033). 봉인석은 포탈과 kind 를 공유하고 조우 유형으로 갈린다(슬롯 주석 참조).
+    encounterPortal: encounterPortalTexture(renderer),
+    encounterSeal: encounterSealTexture(renderer),
+    encounterAltar: encounterAltarTexture(renderer),
 
     core: coreTexture(renderer),
     guardian: [guardianTexture(renderer, true), guardianTexture(renderer, false)],
@@ -981,6 +1087,9 @@ export async function loadGameTextures(
     bombDevice,
     turretPickup,
     shelter,
+    encounterPortal,
+    encounterSeal,
+    encounterAltar,
     bosses,
     backgrounds,
     enemies,
@@ -1009,6 +1118,11 @@ export async function loadGameTextures(
     tryLoad('bomb_device.png'),
     tryLoad('turret_pickup.png'),
     tryLoad('shelter.png'),
+    // 조우 3종(ADR-0033). 파일명은 **유형** 기준이다 — 봉인석이 포탈과 같은 kind 를 쓰므로
+    // kind 기준으로 이름 지으면 두 자산이 한 이름을 다투게 된다.
+    tryLoad('encounter_portal.png'),
+    tryLoad('encounter_seal.png'),
+    tryLoad('encounter_altar.png'),
     Promise.all(bossFiles.map((f) => tryLoad(f))),
     Promise.all(bgFiles.map((f) => tryLoad(f))),
     Promise.all(enemyFiles.map((f) => tryLoad(f))),
@@ -1045,6 +1159,9 @@ export async function loadGameTextures(
   if (bombDevice !== null) tex.bombDevice = bombDevice;
   if (turretPickup !== null) tex.turretPickup = turretPickup;
   if (shelter !== null) tex.shelter = shelter;
+  if (encounterPortal !== null) tex.encounterPortal = encounterPortal;
+  if (encounterSeal !== null) tex.encounterSeal = encounterSeal;
+  if (encounterAltar !== null) tex.encounterAltar = encounterAltar;
   bosses.forEach((t, i) => {
     if (t !== null) tex.boss[i] = t;
   });

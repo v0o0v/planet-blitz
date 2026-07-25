@@ -44,6 +44,7 @@ import {
 import { PROP_ROLE_COUNT } from '../data/invasion/props.js';
 import { DEFENSE_BOSS_COUNT } from '../data/invasion/defenseBosses.js';
 import { HAZARD_LAVA, HAZARD_SLOW } from '../src/sim/patterns/types.js';
+import { ENCOUNTER_TYPE } from '../data/encounters.js';
 
 // ---------------------------------------------------------------------------
 // 스텁 — 실제 Renderer 없이 슬롯 해석만 검증하기 위한 표식 텍스처
@@ -83,6 +84,9 @@ function stubTextures(): PlaceholderTextures {
     bombDevice: tex('bombDevice'),
     turretPickup: tex('turretPickup'),
     shelter: tex('shelter'),
+    encounterPortal: tex('encounterPortal'),
+    encounterSeal: tex('encounterSeal'),
+    encounterAltar: tex('encounterAltar'),
     core: tex('core'),
     guardian: arr('guardian', 2),
     invasionBackdrop: arr('invasionBackdrop', 3),
@@ -198,6 +202,44 @@ describe('신규 kind 스프라이트 매핑 (전수)', () => {
     expect(labelOf(resolveSpriteSlot(t, spriteSlotFor('prop', -1)))).toBe('prop[0]');
     // 보스는 enemyType 이 아니라 planet 인덱스로 고른다(기존 계약 회귀 가드).
     expect(labelOf(resolveSpriteSlot(t, spriteSlotFor('boss', 0, 2)))).toBe('boss[2]');
+  });
+});
+
+describe('조우 오브젝트 아트 매핑 (ADR-0033)', () => {
+  // 이 describe 가 지키는 계약 하나: **포탈 kind 하나가 두 조우를 실어 나른다.** 봉인 수호자는
+  // 신규 EntityKind 를 만들지 않고 encounterPortal 을 재사용하므로(KIND_CODE 는 append-only 해시
+  // 계약), 렌더가 둘을 가르는 유일한 근거가 조우 유형이다. kind 로 가르도록 되돌아가면 화면에서
+  // 포탈과 봉인석이 같아지는데, 그건 예외를 내지 않아 조용히 넘어간다 — 그래서 테스트로 못 박는다.
+  it('조우 유형이 같은 kind 를 포탈/봉인 아트로 가른다', () => {
+    const t = stubTextures();
+    const at = (encounterType: number): string =>
+      labelOf(resolveSpriteSlot(t, spriteSlotFor('encounterPortal', 0, 0, encounterType)));
+    expect(at(ENCOUNTER_TYPE.treasureVault)).toBe('encounterPortal');
+    expect(at(ENCOUNTER_TYPE.sealedGuardian)).toBe('encounterSeal');
+    // 유형 미상(0)·무관 유형은 포탈로 폴백한다 — 화면이 비지 않는다.
+    expect(at(0)).toBe('encounterPortal');
+    expect(at(ENCOUNTER_TYPE.ghostConvoy)).toBe('encounterPortal');
+  });
+
+  it('제단은 kind 로 갈리고 포탈·봉인과 다른 텍스처를 쓴다', () => {
+    const t = stubTextures();
+    expect(labelOf(resolveSpriteSlot(t, spriteSlotFor('encounterAltar', 0)))).toBe('encounterAltar');
+    // 3종이 서로 다른 슬롯이라는 것이 이 레인의 요구다(placeholder 시절엔 셋이 전부 magnetEmitter 였다).
+    const slots = new Set([
+      slotName(spriteSlotFor('encounterPortal', 0, 0, ENCOUNTER_TYPE.treasureVault)),
+      slotName(spriteSlotFor('encounterPortal', 0, 0, ENCOUNTER_TYPE.sealedGuardian)),
+      slotName(spriteSlotFor('encounterAltar', 0)),
+    ]);
+    expect(slots.size).toBe(3);
+    expect(slots.has('magnetEmitter')).toBe(false);
+  });
+
+  it('조우 아트는 조우 kind 밖으로 새지 않는다(자석 이미터 회귀 가드)', () => {
+    // 자석 이미터는 자기 전용 텍스처를 그대로 쓴다 — 조우 유형이 켜져 있어도 무영향.
+    const t = stubTextures();
+    expect(
+      labelOf(resolveSpriteSlot(t, spriteSlotFor('magnetEmitter', 0, 0, ENCOUNTER_TYPE.sealedGuardian))),
+    ).toBe('magnetEmitter');
   });
 });
 
