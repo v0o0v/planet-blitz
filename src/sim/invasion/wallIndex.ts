@@ -24,7 +24,7 @@
  */
 
 import type { Entity } from '../entities.js';
-import { circleOverlapsWall } from '../los.js';
+import { circleOverlapsWall, sweptCircleOverlapsWall } from '../los.js';
 
 /**
  * 기본 셀 크기(월드 유닛). 회랑 벽 두께(240)·소켓 간격(~1800)·탄 반지름(≤12) 사이에서
@@ -41,6 +41,25 @@ export function sweepWallsDirect(
 ): Entity | null {
   for (const w of walls) {
     if (circleOverlapsWall(cx, cy, cr, w)) return w;
+  }
+  return null;
+}
+
+/**
+ * 선분 버전 직접 스윕(참조 구현). {@link InvasionWallIndex.firstBlockingSwept} 가 이것과
+ * **항상 같은 벽**을 돌려주는지가 격자 구현의 계약이고, `tests/invasionMovingWall.test.ts`
+ * 계열이 그 동치를 대조한다(지점 버전 선례와 동형).
+ */
+export function sweepWallsDirectSwept(
+  walls: readonly Entity[],
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  r: number,
+): Entity | null {
+  for (const w of walls) {
+    if (sweptCircleOverlapsWall(x1, y1, x2, y2, r, w)) return w;
   }
   return null;
 }
@@ -171,6 +190,52 @@ export class InvasionWallIndex {
           if (best >= 0 && i > best) continue;
           this.probes++;
           if (circleOverlapsWall(cx, cy, cr, this.walls[i]!)) {
+            if (best < 0 || i < best) best = i;
+          }
+        }
+      }
+    }
+    return best >= 0 ? this.walls[best]! : null;
+  }
+
+  /**
+   * 반경 `r` 인 원이 (x1,y1)→(x2,y2) 로 **이동하는 동안** 겹치는 벽 중 배열 인덱스가 가장
+   * 작은 것(없으면 null). {@link firstBlocking} 의 선분 버전이고,
+   * {@link sweepWallsDirectSwept} 의 first-hit 와 결과가 항상 동일하다.
+   *
+   * ## 왜 지점 질의로는 안 되는가
+   * 탄 대 적 판정이 선분인데 탄 대 벽이 지점이면, 빠른 탄이 한 틱에 벽을 통째로 건너뛰어
+   * **벽 뒤 적을 때린다**(근거·실측은 `los.sweptCircleOverlapsWall` 주석). 침공 회랑 벽은
+   * 전폭 240 인데 상위 기체 만점 빌드의 탄 스텝은 261~168 유닛/틱이라 실제로 도달한다.
+   *
+   * ## broad-phase 도 함께 넓혀야 한다
+   * 셀 질의 범위를 **선분 전체의 AABB**(양 끝점 + 반경)로 잡는다. 끝점 주변 셀만 보면 경로
+   * 중간 셀에만 등록된 벽을 놓쳐 선분 판정이 무의미해진다 — `collision` 쪽 선분 판정 도입에서
+   * 같은 실수를 경계했던 지점과 동형이다.
+   */
+  firstBlockingSwept(x1: number, y1: number, x2: number, y2: number, r: number): Entity | null {
+    if (this.walls.length === 0) return null;
+    const stamp = ++this.queryId;
+    const stamps = this.stamps;
+    const loX = (x1 < x2 ? x1 : x2) - r;
+    const hiX = (x1 > x2 ? x1 : x2) + r;
+    const loY = (y1 < y2 ? y1 : y2) - r;
+    const hiY = (y1 > y2 ? y1 : y2) + r;
+    const minCx = Math.floor(loX / this.cellSize);
+    const maxCx = Math.floor(hiX / this.cellSize);
+    const minCy = Math.floor(loY / this.cellSize);
+    const maxCy = Math.floor(hiY / this.cellSize);
+    let best = -1;
+    for (let gy = minCy; gy <= maxCy; gy++) {
+      for (let gx = minCx; gx <= maxCx; gx++) {
+        const bucket = this.cells.get(this.cellKey(gx, gy));
+        if (bucket === undefined) continue;
+        for (const i of bucket) {
+          if (stamps[i] === stamp) continue;
+          stamps[i] = stamp;
+          if (best >= 0 && i > best) continue;
+          this.probes++;
+          if (sweptCircleOverlapsWall(x1, y1, x2, y2, r, this.walls[i]!)) {
             if (best < 0 || i < best) best = i;
           }
         }

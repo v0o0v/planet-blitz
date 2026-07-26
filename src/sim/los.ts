@@ -238,6 +238,69 @@ export function segmentIntersectsWall(
   return true;
 }
 
+/**
+ * 반경 `r` 인 원이 (x1,y1)→(x2,y2) 로 **이동하는 동안** 벽 AABB 와 겹치는가.
+ *
+ * ## 왜 필요한가 — 탄 판정의 비대칭 (실측 결함)
+ * 플레이어탄 **대 적** 판정은 선분(`collision.sweptCircleOverlap`)인데 탄 **대 벽** 판정은
+ * 이동 **후 한 점**이었다. 그러면 탄이 한 틱에 벽을 통째로 건너뛰어 끝점이 벽 밖일 때 벽에
+ * 걸리지 않고, 그 다음 선분 판정이 **경로 위 아무 곳**의 적을 때린다 → **벽 뒤 적에게 피해가
+ * 들어간다**(선분 판정에는 가림 개념이 없다).
+ *
+ * 도달 가능성은 이론이 아니다. 전 기체 만점 빌드의 한 틱 탄 이동량 실측
+ * (`tests/bulletTunnelInvariant.test.ts`):
+ *   bubble 261.6 · arccaster 219.0 · phantom 179.0 · striker 168.2 · hatchling 164.9 ·
+ *   mallow 141.4 · bruiser 132.1 (유닛/틱)
+ * **가장 낮은 브루저조차** 청크 벽 최소 전폭 120 을 넘고, 상위 5기체는 침공 회랑 벽 240 도
+ * 넘는다. 하네스 중간 빌드가 62 였으니 통상 성장 구간에서 경계를 지난다.
+ *
+ * ## 산술
+ * 원 대 AABB 는 Minkowski 로 **모서리가 둥근** 사각형이지만, 여기서는 AABB 를 사방 `r` 만큼
+ * 늘린 사각형으로 근사한다 — 면에서는 정확하고 모서리에서만 살짝 과검출(보수적)이다.
+ * {@link slideCircleWalls} 가 쓰는 근사와 **같은 규율**이라 두 판정이 어긋나지 않는다.
+ * 판정 자체는 {@link segmentIntersectsWall} 과 같은 Liang-Barsky 이고 기본 산술만 쓴다
+ * (결정론 — 플랫폼 무관 비트 동일).
+ *
+ * 길이 0 인 선분(정지 탄·빔 세그먼트)은 확장 AABB 안 점 판정으로 자연 축퇴한다.
+ */
+export function sweptCircleOverlapsWall(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  r: number,
+  w: Entity,
+): boolean {
+  const minX = w.x - w.radius - r;
+  const maxX = w.x + w.radius + r;
+  const minY = w.y - w.targetX - r;
+  const maxY = w.y + w.targetX + r;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  let t0 = 0;
+  let t1 = 1;
+  const p = [-dx, dx, -dy, dy];
+  const q = [x1 - minX, maxX - x1, y1 - minY, maxY - y1];
+  for (let i = 0; i < 4; i++) {
+    const pi = p[i] as number;
+    const qi = q[i] as number;
+    if (pi === 0) {
+      // 이 슬랩에 평행: 슬랩 밖이면 교차 없음.
+      if (qi < 0) return false;
+    } else {
+      const t = qi / pi;
+      if (pi < 0) {
+        if (t > t1) return false;
+        if (t > t0) t0 = t;
+      } else {
+        if (t < t0) return false;
+        if (t < t1) t1 = t;
+      }
+    }
+  }
+  return true;
+}
+
 /** True when any wall blocks the segment (from)->(to). */
 export function segmentBlocked(
   fromX: number,
