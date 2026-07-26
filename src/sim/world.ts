@@ -144,7 +144,7 @@ import {
   filmBurstPush,
 } from './shipSignature.js';
 import { shipTypeDef } from '../../data/ships/index.js';
-import { SpatialHash, circlesOverlap, sweptCircleOverlap } from './collision.js';
+import { SpatialHash, circlesOverlap, sweptCircleHitT } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
 import { updateBoss } from './boss.js';
 import { drawPowerupChoices, applyPowerup } from './powerups.js';
@@ -2941,6 +2941,17 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   const splitSpawns: { x: number; y: number; angle: number }[] = [];
   // ⑤ 군집 벌통: 미사일 격추 위치를 모아 루프 뒤 방사 스폰(엔티티 배열 순회 중 안전).
   const hiveSpawns: { x: number; y: number }[] = [];
+  // ── 한 틱 다중 명중은 **경로 순서**로 해소한다 ─────────────────────────────────
+  // 선분 판정을 도입한 뒤 탄 하나가 62유닛 경로 위 여러 표적을 한 틱에 후보로 갖는다. 그런데
+  // `grid.query` 는 셀을 고정 `(cy, cx)` 순으로 훑으므로 콜백 순서는 **경로 순서가 아니다**.
+  // 정렬 없이 해소하면 ① `pierce === 0` 인 기본 탄이 가까운 적을 지나쳐 먼 적을 때리고(탄이 앞
+  // 적을 통과하는 것처럼 보인다), ② 관통 자이로·수렴 프리즘의 관통 증폭타가 공간과 무관한 적에게
+  // 간다. 그래서 후보를 진입 매개변수와 함께 모아 오름차순으로 해소한다.
+  //
+  // 버퍼는 탄마다 새로 만들지 않고 재사용한다 — 틱당 최대 ~2,000발이라 발당 할당은 GC 부담이다.
+  // 객체 배열 대신 병렬 배열을 쓰는 이유도 같다.
+  const hitTargets: Entity[] = [];
+  const hitParams: number[] = [];
   for (const b of state.entities) {
     if (b.kind !== 'bullet' || b.dead) continue;
     // 선분(swept) 판정 — 이 틱의 **이동 경로 전체**를 본다. 이동 후 한 점만 보면 틱당 62 유닛을
@@ -2960,8 +2971,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     const bMidX = (bPrevX + b.x) / 2;
     const bMidY = (bPrevY + b.y) / 2;
     const bQueryR = length(b.x - bPrevX, b.y - bPrevY) / 2 + b.radius;
+    hitTargets.length = 0;
+    hitParams.length = 0;
     grid.query(bMidX, bMidY, bQueryR, (t) => {
-      if (b.dead || t.dead) return;
+      if (t.dead) return;
       if (
         t.kind !== 'enemy' &&
         t.kind !== 'boss' &&
@@ -2978,16 +2991,36 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         t.kind !== 'prop'
       )
         return;
-      if (!sweptCircleOverlap(bPrevX, bPrevY, b.x, b.y, b.radius, t.x, t.y, t.radius)) return;
+      const hitT = sweptCircleHitT(bPrevX, bPrevY, b.x, b.y, b.radius, t.x, t.y, t.radius);
+      if (hitT === undefined) return;
+      // 삽입 정렬로 t 오름차순 유지. 후보는 보통 0~2개라 비용이 사실상 없고, 비교자 콜백 없이
+      // 정수 인덱스만 옮기므로 플랫폼 무관하게 같은 순서가 나온다(`Array.sort` 의 구현 재량을
+      // 피한다). `>` 비교라 **안정 정렬** — t 동률은 격자 순회 순서를 그대로 보존하고, 그 순서
+      // 자체가 결정론적이다(`SpatialHash` 주석).
+      let i = hitTargets.length;
+      while (i > 0 && (hitParams[i - 1] as number) > hitT) {
+        hitTargets[i] = hitTargets[i - 1] as Entity;
+        hitParams[i] = hitParams[i - 1] as number;
+        i--;
+      }
+      hitTargets[i] = t;
+      hitParams[i] = hitT;
+    });
+    for (const t of hitTargets) {
+      // 앞선 명중으로 탄이 소멸했으면 남은 후보는 보지 않는다(경로 뒤쪽이므로 도달 못 한다).
+      if (b.dead) break;
+      // 같은 틱에 다른 경로로 죽은 표적(전격 연쇄·앞 후보의 처치 등)은 건너뛴다.
+      if (t.dead) continue;
       // 마일스톤 ① 격추 재기동 딜레이(M5): 재기동 중(iframes>0)인 수호 기체는 무적이라 피해를
-      // 받지 않고 탄도 소비하지 않는다(다른 표적을 계속 노릴 수 있게 return). defense.stepGuardians
+      // 받지 않고 탄도 소비하지 않는다(다음 표적을 계속 노릴 수 있게 continue). defense.stepGuardians
       // 가 iframes 를 감소시켜 딜레이가 끝나면 다시 피격 가능해진다.
-      if (t.kind === 'guardian' && t.iframes > 0) return;
+      if (t.kind === 'guardian' && t.iframes > 0) continue;
       // 추격(Lane6): 무적 포식자(boss.aux0===0)는 아군탄에 무피해다 — 반격 장치를 전부 파괴해
       // 취약화(aux0===1)하기 전까지는 처치할 수 없다(수호 재기동 무적 선례). 탄도 소비하지 않고
-      // return 해 다른 표적을 계속 노릴 수 있게 한다. ⚠️ boss `iframes>0` 은 과열=피해 2배라
+      // continue 해 다음 표적을 계속 노릴 수 있게 한다. ⚠️ boss `iframes>0` 은 과열=피해 2배라
       // 무적 재활용이 불가하므로 **aux0 로만** 판정한다. planetMode 게이트라 타 모드는 미진입(불변).
-      if (state.config.planetMode === PLANET_MODE.chase && t.kind === 'boss' && t.aux0 === 0) return;
+      if (state.config.planetMode === PLANET_MODE.chase && t.kind === 'boss' && t.aux0 === 0)
+        continue;
       // Boss takes double damage while overheated (iframes > 0), spec.
       // 방어 보스도 시그니처 캐스트 뒤 과열 창(iframes>0)을 연다 — PvE 보스와 같은 규칙.
       const mult = (t.kind === 'boss' || t.kind === 'defenseBoss') && t.iframes > 0 ? 2 : 1;
@@ -3063,8 +3096,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         if (player.phase < OVERHEAT_MAX_STACK) player.phase++;
       }
       // ② 분열 코어: 원본 아군탄(마커 없는)이 명중하면 파편 2발 예약(무한 연쇄 방지).
+      // 좌표는 탄 끝점(b.x, b.y)이 아니라 **맞은 표적**을 쓴다 — 선분 판정이라 명중은 경로
+      // 앞부분에서 일어날 수 있고, 끝점을 쓰면 파편이 표적보다 최대 62유닛 앞에서 태어난다.
       if (splitOn && b.ownerId !== SPLIT_FRAGMENT_MARK) {
-        splitSpawns.push({ x: b.x, y: b.y, angle: b.angle });
+        splitSpawns.push({ x: t.x, y: t.y, angle: b.angle });
       }
       // 관통 처리: 자이로는 무한 관통(수명으로만 소멸). 프리즘은 관통 카운트를 위해
       // phase를 올리되 세그먼트의 기존 pierce 예산(9999)을 소비 → 짧은 수명으로 소멸.
@@ -3080,7 +3115,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       } else {
         b.dead = true;
       }
-    });
+    }
   }
   // ② 분열 파편 스폰(진행 방향 ± SPLIT_SPREAD). 파편은 마커를 달아 재분열하지 않는다.
   for (const s of splitSpawns) {

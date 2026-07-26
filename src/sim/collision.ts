@@ -139,22 +139,65 @@ export function sweptCircleOverlap(
   cy: number,
   cr: number,
 ): boolean {
+  return sweptCircleHitT(ax, ay, bx, by, mr, cx, cy, cr) !== undefined;
+}
+
+/**
+ * {@link sweptCircleOverlap} 과 **같은 판정**을 하되, 겹칠 때 그 경로 위 **진입 매개변수 t**
+ * (0 = 시작점, 1 = 끝점)를 함께 돌려준다. 겹치지 않으면 `undefined`.
+ *
+ * ## 왜 t 가 필요한가 (해소 순서)
+ * 선분 판정을 쓰면 탄 하나가 한 틱에 경로 위 **여러** 표적을 후보로 갖는다. 그런데
+ * {@link SpatialHash.query} 의 콜백 순서는 격자 `(cy, cx)` 순이라 **경로 순서와 무관**하다.
+ * `pierce === 0` 인 기본 탄은 첫 명중에서 소멸하므로, 정렬 없이 해소하면 가까운 적을 지나쳐
+ * 먼 적을 때린다(결정론은 유지되지만 시각적으로 탄이 앞 적을 통과한다). 호출자는 이 t 로
+ * 후보를 오름차순 정렬한 뒤 해소한다.
+ *
+ * ## 산술
+ * 판정 자체는 **클램프된 최근접점**으로 한다(위 함수와 비트 동일한 술어). t 는 무한 직선에서의
+ * 정확한 진입해 `t = t_raw − √((r² − d⊥²) / |s|²)` 를 쓰고 `[0, 1]` 로 클램프한다. 최근접점의
+ * t 를 그대로 쓰지 않는 이유는 표적 반지름이 서로 다를 때 순서가 뒤집히기 때문이다 — 반지름이
+ * 큰 보스는 중심이 뒤에 있어도 표면에 먼저 닿는다.
+ *
+ * `Math.sqrt` 는 IEEE-754 로 정확히 반올림되도록 규정돼 있어 플랫폼 무관하다(결정론 규약).
+ * `sin`/`cos` 같은 초월함수와 달리 구현 재량이 없다.
+ */
+export function sweptCircleHitT(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  mr: number,
+  cx: number,
+  cy: number,
+  cr: number,
+): number | undefined {
   const sx = bx - ax;
   const sy = by - ay;
   const len2 = sx * sx + sy * sy;
-  let px = ax;
-  let py = ay;
-  if (len2 > 0) {
-    let t = ((cx - ax) * sx + (cy - ay) * sy) / len2;
-    if (t < 0) t = 0;
-    else if (t > 1) t = 1;
-    px = ax + sx * t;
-    py = ay + sy * t;
-  }
-  const dx = px - cx;
-  const dy = py - cy;
+  const acx = cx - ax;
+  const acy = cy - ay;
   const rr = mr + cr;
-  return dx * dx + dy * dy <= rr * rr;
+  const rr2 = rr * rr;
+  // 길이 0 인 선분(정지한 탄·생성 직후)은 지점 판정으로 되돌아간다.
+  if (len2 <= 0) {
+    return acx * acx + acy * acy <= rr2 ? 0 : undefined;
+  }
+  const tRaw = (acx * sx + acy * sy) / len2;
+  let tc = tRaw;
+  if (tc < 0) tc = 0;
+  else if (tc > 1) tc = 1;
+  const dx = ax + sx * tc - cx;
+  const dy = ay + sy * tc - cy;
+  if (dx * dx + dy * dy > rr2) return undefined;
+  // 직선까지의 수직거리². 술어가 참이면 수학적으로 rr2 이하다(최근접점 거리 ≤ 어떤 점 거리).
+  // 부동소수 오차로 음수가 나올 수 있어 아래 `rem <= 0` 가드가 그 경우를 t_raw 로 흡수한다.
+  const perp2 = acx * acx + acy * acy - tRaw * tRaw * len2;
+  const rem = rr2 - perp2;
+  let t = rem > 0 ? tRaw - Math.sqrt(rem / len2) : tRaw;
+  if (t < 0) t = 0;
+  else if (t > 1) t = 1;
+  return t;
 }
 
 /** True when two circles overlap. Basic ops only (deterministic). */
