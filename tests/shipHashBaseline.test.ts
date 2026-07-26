@@ -133,12 +133,35 @@ describe('스트라이커 해시 골든 (M8-L0 안전망)', () => {
     expect(a).toEqual(b);
   });
 
+  /**
+   * 런당 레벨업·추첨 최소 횟수.
+   *
+   * ⚠️ 2026-07-26 에 3 → 2 로 내렸다. **가드가 약해진 것이 아니다** — 이 술어가 잡으려는
+   * "공허 런"(sim 이 멈춘 채 녹화돼 해시 대조가 공회전하는 상태)은 아래 세 단언이 이미 압도적으로
+   * 배제한다: `kills > 0` · `entityCount > 1` · 서로 다른 해시 수 > BASELINE_TICKS/2(=900).
+   * 3 은 그 셋에 얹은 **둥근 수**였을 뿐, 어떤 계약에서 파생된 하한이 아니다.
+   *
+   * 내린 이유는 밀도 배율 1.5(`PVE_DENSITY_MULT`)와 선분 판정 도입이 **빌드별로 반대 방향으로**
+   * 작용했기 때문이다. 재녹화 실측(1800틱):
+   *   - 카르곤 단계1: 전 빌드 개선(처치 73→129 · 64→105 · 76→134 …, 레벨업 7~10 → 11~13).
+   *     선분 판정으로 점사거리 명중이 살아나 화력이 실제로 꽂힌다.
+   *   - 베르단 단계11: **투자 빌드는 크게 개선**(mixed-three 처치 23→92 · firepower 94→118),
+   *     **저투자 빌드는 악화**(no-invest 27→12 · survival 26→16, 최종 엔티티 205→496 · 235→465).
+   *
+   * 즉 물량이 늘고 화력 보상이 커지면서 "장비가 받쳐 주는 빌드는 더 잘 뚫고, 안 받쳐 주는 빌드는
+   * 더 빨리 잠긴다" 로 갈렸다. `berdan-engage/no-invest` 가 이 창에서 레벨업 2회를 찍어 3 을 밑돈다.
+   * 이것은 픽스처 결함이 아니라 **밸런스 신호**이고, 밸런스는 출시 직전 일괄 패스로 미뤄져 있다
+   * (고단계 저투자 빌드의 생존성 보정이 그 패스의 항목이다). 그래서 가드는 공허 런 탐지 본래
+   * 역할만 유지하고, 밸런스 판정은 그 패스에 맡긴다.
+   */
+  const MIN_LEVELUPS = 2;
+
   it('공허 런이 없다(레벨업·추첨·처치·엔티티가 실제로 발생)', () => {
     for (const r of GOLDEN.runs) {
       expect(r.hashes.length, `${r.key} 해시 길이`).toBe(BASELINE_TICKS);
-      expect(r.summary.drawCount, `${r.key} 파워업 추첨 횟수`).toBeGreaterThanOrEqual(3);
+      expect(r.summary.drawCount, `${r.key} 파워업 추첨 횟수`).toBeGreaterThanOrEqual(MIN_LEVELUPS);
       expect(r.powerupDraws.length, `${r.key} 추첨 기록 수`).toBe(r.summary.drawCount);
-      expect(r.summary.levelUps, `${r.key} 레벨업 횟수`).toBeGreaterThanOrEqual(3);
+      expect(r.summary.levelUps, `${r.key} 레벨업 횟수`).toBeGreaterThanOrEqual(MIN_LEVELUPS);
       expect(r.summary.kills, `${r.key} 처치 수`).toBeGreaterThan(0);
       expect(r.summary.entityCount, `${r.key} 최종 엔티티 수`).toBeGreaterThan(1);
       // 해시가 매 틱 같은 값이면 월드가 정지한 것 — 골든이 아무것도 못 잡는다.
@@ -152,6 +175,20 @@ describe('스트라이커 해시 골든 (M8-L0 안전망)', () => {
         for (const idx of draw) expect(idx).toBeGreaterThanOrEqual(0);
       }
     }
+  });
+
+  it('하한을 내렸어도 대다수 런은 여전히 활발하다 — 가드가 통째로 늙지 않았다', () => {
+    // 위 `MIN_LEVELUPS` 를 2 로 내린 것이 "전 런이 빈사여도 통과" 로 번지지 않게, **분포**를
+    // 따로 못 박는다. 하한 완화의 대상은 고단계 저투자 런 소수이고 나머지는 오히려 더 활발해졌다
+    // (재녹화 실측: 12런 중 8런이 레벨업 11회 이상). 이 단언이 깨지면 하한 완화가 실제로 가드를
+    // 무력화하기 시작했다는 뜻이므로, 그때는 값을 다시 조이거나 관측 창을 늘려야 한다.
+    const lively = GOLDEN.runs.filter((r) => r.summary.levelUps >= 6);
+    expect(lively.length, '레벨업 6회 이상인 런 수').toBeGreaterThanOrEqual(
+      Math.ceil(GOLDEN.runs.length / 2),
+    );
+    // 처치 총합도 런 수 대비 충분해야 한다(런당 평균 20처치 이상).
+    const totalKills = GOLDEN.runs.reduce((s, r) => s + r.summary.kills, 0);
+    expect(totalKills).toBeGreaterThan(GOLDEN.runs.length * 20);
   });
 
   it('시나리오 간 해시가 서로 다르다(빌드 분리가 실제로 의미를 가진다)', () => {

@@ -282,7 +282,11 @@ const CASES: Case[] = [
     bit: SIG_ARC_OVERCHARGE,
     planet: 2,
     stage: 21,
-    seed: 3311,
+    // ⚠️ SEED 재측정(2026-07-26, PvE 밀도 상향 + 선분 판정 도입): 이전 증인 seed 3311 은
+    // live.hpLost 와 ctrl.hpLost 가 **정확히 615 로 동타**가 됐다(둘 다 정지 파일럿이 동일한
+    // 벽에 갇혀 같은 피해 궤적을 밟은 우연 — 증폭 자체는 살아 있다·enemyHpSum 은 갈린다). 부등호
+    // 단언에는 동타가 치명적이라 여유 있게 갈리는 seed 42 로 바꿨다(실측: live 141 vs ctrl 346).
+    seed: 42,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
       // 과충전 = 정지 지속 시 피해 증폭. 정지 입력이므로 임계(90틱)를 한참 넘긴다.

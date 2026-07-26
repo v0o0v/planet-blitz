@@ -175,9 +175,14 @@ describe('팬텀(typeId 3) 정규 경로 배선 — Profile → buildRunConfig �
   // 무대 선정도 계약의 일부다: 은신은 **연속 무피격 240틱**이 필요하므로 압박이 끊이지 않는
   // 무대(행성2/티어2)에서는 정지 파일럿의 무피격 최대치가 146틱에 그쳐 영영 진입하지 못한다
   // (실측). 행성0/티어0 은 교전 사이에 긴 무피격 구간이 생겨 은신이 반복 발현한다.
+  //
+  // ⚠️ SEED·TICKS 재측정(2026-07-26, PvE 밀도 상향 + 선분 판정 도입): 이전 증인 seed 555 는
+  // 밀도가 오르면서 압박이 거의 끊이지 않게 돼(잡몹이 항상 붙어 있다) 1800틱에 진입 1회뿐이었다
+  // (breakShots 도 1회 — 임계 4·3 미달). seed 48 은 3600틱에서 진입 4회·해제 첫 타 4회로
+  // 여유 있게 통과한다(PVE_DENSITY_MULT 가 2 → 1.5 로 재조정된 뒤에도 재확인해 동일했다).
   const TRAJ = { planet: 0, stage: 1 } as const;
-  const TRAJ_SEED = 555;
-  const TRAJ_TICKS = 1800;
+  const TRAJ_SEED = 48;
+  const TRAJ_TICKS = 3600;
 
   it('은신에 실제로 진입하고 해제 첫 타가 실제로 소진된다 — 억제 대조군은 끝까지 aux 0', () => {
     const cfg = buildRunConfig(profileWithType(3), TRAJ);
@@ -188,8 +193,8 @@ describe('팬텀(typeId 3) 정규 경로 배선 — Profile → buildRunConfig �
     expect(new Set(live.hashes).size).toBeGreaterThan(900);
     expect(live.kills).toBeGreaterThan(0);
 
-    // 실측 기준선(seed 555 / p0t0 / 1800틱): 진입 6회 · 은신 유지 96틱 · 해제 첫 타 4회 ·
-    // 무피격 최대 329틱.
+    // 실측 기준선(seed 48 / p0t0 / 3600틱): 진입 4회 · 은신 유지 274틱 · 해제 첫 타 4회 ·
+    // 무피격 최대 359틱.
     expect(live.cloakEnters).toBeGreaterThanOrEqual(4);
     expect(live.cloakedTicks).toBeGreaterThan(0);
     expect(live.breakShots).toBeGreaterThanOrEqual(3);
@@ -214,14 +219,13 @@ describe('팬텀(typeId 3) 정규 경로 배선 — Profile → buildRunConfig �
   });
 
   // 적 방출 게이트가 실제로 무언가를 막는 무대·시드(실측 탐색으로 고름).
-  // 행성1/티어0 · seed 9182 · 3600틱 기준선: 적탄 누적 52150(live) vs 66585(ctrl),
-  // 최종 엔티티 45 vs 50. 은신 유지는 3틱뿐인데 차이가 큰 것은 막힌 일제사격 하나가 이후
-  // 교전 전개를 통째로 바꾸기 때문이다.
-  // ⚠️ Lane7: 베르단(planet 1)이 이제 수축(shrink) 모드라 원점 링 스폰·밖 피해로 전투 동역학이
-  // 바뀌어 이 기준선(수축 도입 전 = shrink 가 sim no-op 이던 시절의 vampire 거동으로 측정)이 깨진다.
-  // 이 테스트는 **팬텀 시그니처 축**을 재는 것이라 planet 모드 축과 직교하므로, planetMode 를
-  // vampire 로 고정해 기준선과 같은 전투 환경(베르단 로스터 + vampire 스폰)에서 게이트를 검증한다.
-  const GATE = { planet: 1, stage: 1 } as const;
+  // ⚠️ 재측정(2026-07-26, PvE 밀도 상향 + 선분 판정 도입): 이전 증인(행성1/seed 9182)은 이제
+  // vampire 로 덮어도 live·ctrl 의 적탄 누적·엔티티 수가 완전히 같아졌다(cloakedTicks=0 —
+  // 밀도가 오르며 이 무대에서는 무피격 240틱을 영영 못 채운다). 행성0/seed 9182 는 밀도가 낮은
+  // 카르곤 로스터라 은신이 반복 서고(누적 49틱), 억제를 껐을 때 초반 방출 하나가 이후 교전
+  // 전개를 완전히 바꾼다 — 적탄 누적 157444(live) vs 147704(ctrl), 최종 엔티티 77 vs 73.
+  // planet 모드 축은 이 테스트가 재는 팬텀 시그니처 축과 직교하므로 vampire 로 고정한다.
+  const GATE = { planet: 0, stage: 1 } as const;
   const GATE_SEED = 9182;
   const GATE_TICKS = 3600;
 

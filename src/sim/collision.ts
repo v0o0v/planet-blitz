@@ -90,6 +90,59 @@ export class SpatialHash<T extends Spatial> {
   }
 }
 
+/**
+ * True when the **swept capsule** of a moving circle overlaps a static circle —
+ * i.e. the circle of radius `mr` travelling from (ax, ay) to (bx, by) touches the
+ * circle (cx, cy, cr) at any point along the way.
+ *
+ * ## 왜 지점 판정만으로는 안 되는가 (실측 결함)
+ * 플레이어 탄은 속도 3732/s = **틱당 62 유닛**을 나아가고, 히트 창은 탄 반경 5 + 잡몹 반경
+ * 32 = **37 유닛**이다. 판정을 이동 **후** 좌표 한 점에서만 하면, 플레이어 위치에서 태어난 탄은
+ * 첫 틱에 62 유닛을 건너뛰어 그 창을 **완전히 지나친다** — 플레이어에 37 유닛 이내로 붙은
+ * 적은 자기 탄에 구조적으로 맞지 않았다(하네스 실측: 300틱 동안 플레이어 40 유닛 안에 존재한
+ * 탄 0발 · 최소 거리 62 = 정확히 한 틱 이동량 · 추가 처치 0). 기존 밀도에서는 적이 붙기 전에
+ * 죽어 드러나지 않았고, 밀도를 올리자 무리가 플레이어에 도달해 132마리가 불사로 쌓인 채 런이
+ * 교착됐다.
+ *
+ * 벽에 대해서는 이 리포가 이미 터널링을 알고 막아 뒀다(`WALL_HALF_MIN` 이 최대 대시 스텝보다
+ * 크게 잡혀 있다 — `chunks.ts`). 탄 대 적에는 그 방어가 없었다.
+ *
+ * ## 산술
+ * 선분 위 최근접점을 매개변수 `t = clamp(((c−a)·(b−a)) / |b−a|², 0, 1)` 로 구해 그 점과 원
+ * 중심의 거리를 반지름 합과 비교한다. 제곱 비교만 쓰므로 `sqrt` 가 없고, 길이가 0 인 선분
+ * (정지한 탄·생성 직후)은 분모 0 가드가 지점 판정으로 되돌린다 — 즉 이 함수는
+ * {@link circlesOverlap} 의 상위 호환이다(선분이 한 점이면 결과가 동일).
+ *
+ * 전부 f64 기본 연산이라 플랫폼 무관하게 비트 동일하다(결정론 규약).
+ */
+export function sweptCircleOverlap(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  mr: number,
+  cx: number,
+  cy: number,
+  cr: number,
+): boolean {
+  const sx = bx - ax;
+  const sy = by - ay;
+  const len2 = sx * sx + sy * sy;
+  let px = ax;
+  let py = ay;
+  if (len2 > 0) {
+    let t = ((cx - ax) * sx + (cy - ay) * sy) / len2;
+    if (t < 0) t = 0;
+    else if (t > 1) t = 1;
+    px = ax + sx * t;
+    py = ay + sy * t;
+  }
+  const dx = px - cx;
+  const dy = py - cy;
+  const rr = mr + cr;
+  return dx * dx + dy * dy <= rr * rr;
+}
+
 /** True when two circles overlap. Basic ops only (deterministic). */
 export function circlesOverlap(
   ax: number,

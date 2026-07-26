@@ -27,6 +27,24 @@ export const MODAL_SCRIM_ALPHA = 0.78;
 /** 닫기 아이콘 한 변. */
 export const MODAL_CLOSE_SIZE = 44;
 
+/**
+ * 제목이 쓰는 세로 밴드(px) — **콘텐츠는 이 아래에서 시작해야 한다**.
+ *
+ * `makeModal` 은 제목을 `box.y` 에 놓는다. 그래서 호출자가 콘텐츠도 `box.y` 에 놓으면
+ * 제목과 정확히 겹친다 — 파일럿 파일 팝업에서 태그라인이 제목 위에 덮쳐 둘 다 못 읽게 됐던
+ * 실측 결함이다(초상 스프라이트도 같은 y 였지만 위쪽이 투명해 겹침이 눈에 덜 띄었다).
+ *
+ * 값은 제목 글자 크기(26) + 숨 쉴 틈에서 나온다. 다른 팝업들은 각자 40~60 을 눈대중으로
+ * 박아 두고 있었는데, 새 팝업이 그 관례를 모르면 다시 겹친다 — 그래서 상수로 올려 두고
+ * `tests/modalTitleBand.test.ts` 가 "이 값 이상"이라는 부등식을 지킨다.
+ */
+export const MODAL_TITLE_BAND = 44;
+
+/** 제목 밴드를 제외한 **본문 시작 y**(패널 로컬). 콘텐츠 배치의 기준점. */
+export function modalBodyTop(box: PanelContentBox): number {
+  return box.y + MODAL_TITLE_BAND;
+}
+
 /** 팝업 사각형(디자인 스페이스 기준 좌표). */
 export interface ModalGeometry {
   readonly x: number;

@@ -81,11 +81,25 @@ describe('① 과열 드럼 (AC7)', () => {
 
 describe('② 분열 코어 (AC7)', () => {
   it('아군탄이 명중하면 파편(마커 부착)이 분열해 생성된다', () => {
+    // ⚠️ 재측정(2026-07-26, 아군탄 판정을 점 → 선분(swept)으로 교체 — collision.ts 참고):
+    // 파편은 명중 지점에서 태어나 표적(hp 1,000,000, 무한 표적이라 안 죽음)에 이미 겹친 채로
+    // 시작한다. 예전(점 판정)에는 파편이 태어난 뒤 다음 이동분만큼 벌어져야 다시 겹쳤지만,
+    // 선분 판정은 "이 틱 이동 경로 전체" 를 보므로 파편이 태어난 그 틱 안에서 곧바로 다시
+    // 표적과 겹쳐 관통 예산 없이 소멸한다(재분열 방지 마커가 있어 다시 쪼개지지 않는다).
+    // 그 결과 파편은 정확히 "명중한 그 틱" 에만 살아 있고, 원본 탄의 재장전 주기(5틱)마다
+    // 반짝였다 사라지길 반복한다 — 20틱 루프의 **마지막 틱**에 스냅샷을 한 번만 찍으면 우연히
+    // 그 틱에 파편이 없을 확률이 높다(실측: t=3·8·13·18 에 2발씩 있었지만 t=19 에는 0).
+    // 그래서 매 틱 관측해 **누적 최댓값**을 본다 — 최종 스냅샷 하나에 기대는 대신 배선이 실제로
+    // 발화한 순간을 놓치지 않는다(단언 자체는 그대로 "0보다 크다" — 약화가 아니라 관측 방식 교체).
     const state = createWorld(1, uniqueCfg(UQ_SPLIT_CORE));
     addTarget(state, 150);
-    for (let t = 0; t < 20; t++) stepWorld(state, emptyInput());
-    const frags = state.entities.filter((e) => e.kind === 'bullet' && e.ownerId === SPLIT_FRAGMENT_MARK);
-    expect(frags.length).toBeGreaterThan(0);
+    let maxFrags = 0;
+    for (let t = 0; t < 20; t++) {
+      stepWorld(state, emptyInput());
+      const frags = state.entities.filter((e) => e.kind === 'bullet' && e.ownerId === SPLIT_FRAGMENT_MARK);
+      if (frags.length > maxFrags) maxFrags = frags.length;
+    }
+    expect(maxFrags).toBeGreaterThan(0);
   });
 
   it('유니크 미장착이면 파편이 생기지 않는다', () => {

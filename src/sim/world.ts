@@ -144,7 +144,7 @@ import {
   filmBurstPush,
 } from './shipSignature.js';
 import { shipTypeDef } from '../../data/ships/index.js';
-import { SpatialHash, circlesOverlap } from './collision.js';
+import { SpatialHash, circlesOverlap, sweptCircleOverlap } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
 import { updateBoss } from './boss.js';
 import { drawPowerupChoices, applyPowerup } from './powerups.js';
@@ -2895,7 +2895,24 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   const hiveSpawns: { x: number; y: number }[] = [];
   for (const b of state.entities) {
     if (b.kind !== 'bullet' || b.dead) continue;
-    grid.query(b.x, b.y, b.radius, (t) => {
+    // 선분(swept) 판정 — 이 틱의 **이동 경로 전체**를 본다. 이동 후 한 점만 보면 틱당 62 유닛을
+    // 나아가는 탄이 37 유닛짜리 히트 창을 건너뛰어, 플레이어에 붙은 적이 자기 탄에 구조적으로
+    // 맞지 않는다(근거·실측은 `sweptCircleOverlap` 주석).
+    //
+    // 이전 좌표는 **속도로 역산**한다 — 엔티티에 prevX/prevY 를 새로 달면 해시 필드가 늘어나기
+    // 때문이다(신규 해시 필드 최소화 규율). `stepProjectiles` 가 바로 앞에서 `x += vx*DT` 로
+    // 적분했고 아군탄은 적탄 배율(enemyBulletMult)을 타지 않으므로, `x − vx*DT` 는 적분 직전
+    // 좌표를 **정확히** 되돌린다(유도 미사일도 각도 갱신이 적분 **이전**이라 같은 등식이 성립).
+    // 이 틱에 태어난 탄도 같은 적분을 거치므로 역산 결과가 곧 발사 지점이다 — 점사거리 구멍이
+    // 닫히는 지점이 바로 여기다.
+    const bPrevX = b.x - b.vx * DT;
+    const bPrevY = b.y - b.vy * DT;
+    // broad-phase 는 선분 전체를 덮는 원으로 질의한다(중점 + 반길이 + 탄 반경). 좁은 원으로
+    // 질의하면 경로 중간 칸의 후보를 못 봐서 선분 판정이 무의미해진다.
+    const bMidX = (bPrevX + b.x) / 2;
+    const bMidY = (bPrevY + b.y) / 2;
+    const bQueryR = length(b.x - bPrevX, b.y - bPrevY) / 2 + b.radius;
+    grid.query(bMidX, bMidY, bQueryR, (t) => {
       if (b.dead || t.dead) return;
       if (
         t.kind !== 'enemy' &&
@@ -2913,7 +2930,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         t.kind !== 'prop'
       )
         return;
-      if (!circlesOverlap(b.x, b.y, b.radius, t.x, t.y, t.radius)) return;
+      if (!sweptCircleOverlap(bPrevX, bPrevY, b.x, b.y, b.radius, t.x, t.y, t.radius)) return;
       // 마일스톤 ① 격추 재기동 딜레이(M5): 재기동 중(iframes>0)인 수호 기체는 무적이라 피해를
       // 받지 않고 탄도 소비하지 않는다(다른 표적을 계속 노릴 수 있게 return). defense.stepGuardians
       // 가 iframes 를 감소시켜 딜레이가 끝나면 다시 피격 가능해진다.

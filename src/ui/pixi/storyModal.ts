@@ -16,7 +16,7 @@ import { Container, Graphics, Sprite, Text } from 'pixi.js';
 import type { ShipTypeDef } from '../../../data/ships/index.js';
 import type { ShipStory } from '../../../data/lore/index.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
-import { makeModal } from './modal.js';
+import { makeModal, modalBodyTop } from './modal.js';
 import { makeScrollArea } from './scrollArea.js';
 import { shipPortraitName, type UiTextures } from './uiTextures.js';
 import { shipTypeName, tShipKey } from './shipLabels.js';
@@ -30,9 +30,17 @@ import {
 import { chapterUnlocked, type StoryProgress } from './storyUnlock.js';
 
 const MODAL_W = 900;
-const MODAL_H = 640;
+/**
+ * 세로 640 → 700. 초상·태그라인·챕터를 제목 밴드({@link modalBodyTop}) 아래로 내리면서
+ * 그만큼 잃는 챕터 스크롤 높이를 되메운 값이다(순증 +60 > 밴드 44 라 이전보다 넓다).
+ */
+const MODAL_H = 700;
 const PORTRAIT = 208;
 const GAP = 24;
+
+// 기하 상수 재수출 — `tests/modalTitleBand.test.ts` 가 "본문이 제목 밴드 아래에서 시작한다"를
+// 대조한다. 값을 테스트에 베껴 적으면 두 갈래 진실이 생겨 회귀 가드가 조용히 늙는다.
+export { MODAL_W as PILOT_FILE_MODAL_W, MODAL_H as PILOT_FILE_MODAL_H, PORTRAIT as PILOT_FILE_PORTRAIT };
 
 export interface PilotFileModalOptions {
   ui: UiTextures;
@@ -76,8 +84,12 @@ export function makePilotFileModal(opts: PilotFileModalOptions): Container {
   const box = parts.box;
 
   // 초상(좌상) + 태그라인(우측). 초상은 폴백이 있어 아트가 없어도 자리를 지킨다.
+  //
+  // ⚠️ y 기준은 `box.y` 가 아니라 **`modalBodyTop(box)`** 다. 제목도 `box.y` 에 놓이므로
+  // 그대로 쓰면 태그라인이 제목을 덮어 둘 다 못 읽는다(실측 결함 — 사용자 신고).
+  const bodyTop = modalBodyTop(box);
   const portrait = portraitNode(ui, def);
-  portrait.position.set(box.x, box.y);
+  portrait.position.set(box.x, bodyTop);
   parts.panel.addChild(portrait);
 
   const tagline = new Text({
@@ -94,11 +106,11 @@ export function makePilotFileModal(opts: PilotFileModalOptions): Container {
       dropShadow: TEXT_SHADOW,
     },
   });
-  tagline.position.set(box.x + PORTRAIT + GAP, box.y + 8);
+  tagline.position.set(box.x + PORTRAIT + GAP, bodyTop + 8);
   parts.panel.addChild(tagline);
 
   // 챕터 스크롤 영역 — 초상 아래 남는 세로 전부.
-  const listY = box.y + PORTRAIT + GAP;
+  const listY = bodyTop + PORTRAIT + GAP;
   const listH = box.bottom - listY;
   const contentW = box.w - 18; // thumb 자리 확보
 
