@@ -16,10 +16,11 @@ import {
   spriteSlotFor,
   resolveSpriteSlot,
   railTelegraph,
-  hazardStyle,
   TELEGRAPH_COLOR,
   type SpriteSlot,
 } from '../src/render/entityRenderer.js';
+// 해저드 표시 규칙은 `hazardVisual.ts` 로 옮겼다(색=성질·형태=상태, 2026-07-26).
+import { hazardVisual } from '../src/render/hazardVisual.js';
 import {
   backdropCrossfadeAlpha,
   invasionBackdropTexture,
@@ -344,22 +345,24 @@ describe('예고선(관통 레일포 텔레그래프)', () => {
 
 describe('주기 해저드 온오프 표현', () => {
   it('예열은 테두리만, 활성은 채움 — 리듬이 눈에 읽힌다', () => {
-    const warm = hazardStyle(HAZARD_LAVA, false);
-    const hot = hazardStyle(HAZARD_LAVA, true);
+    const warm = hazardVisual(HAZARD_LAVA, false);
+    const hot = hazardVisual(HAZARD_LAVA, true);
     expect(warm.fillAlpha).toBe(0);
     expect(hot.fillAlpha).toBeGreaterThan(0);
-    expect(hot.color).toBe(warm.color); // 색 = subtype(상태로 색이 바뀌면 종류를 잃는다)
+    expect(hot.color).toBe(warm.color); // 색 = 종류(상태로 색이 바뀌면 종류를 잃는다)
+    expect(warm.dashed).toBe(true); // 상태는 형태로 — 예열은 점선
+    expect(hot.dashed).toBe(false);
   });
 
   it('색이 subtype 별로 갈린다(용암/감속/박격)', () => {
-    const lava = hazardStyle(HAZARD_LAVA, true).color;
-    const slow = hazardStyle(HAZARD_SLOW, true).color;
-    const mortar = hazardStyle(0, true).color;
+    const lava = hazardVisual(HAZARD_LAVA, true).color;
+    const slow = hazardVisual(HAZARD_SLOW, true).color;
+    const mortar = hazardVisual(0, true).color;
     expect(new Set([lava, slow, mortar]).size).toBe(3);
   });
 
   it('미지의 subtype 도 보이는 색으로 폴백한다', () => {
-    const st = hazardStyle(9999, true);
+    const st = hazardVisual(9999, true);
     expect(st.strokeAlpha).toBeGreaterThan(0);
     expect(st.color).toBeGreaterThan(0);
   });

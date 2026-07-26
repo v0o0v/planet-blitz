@@ -34,11 +34,17 @@ import { animatedKindOf, animFrameIndex, phaseForEntity } from './spriteAnimatio
 // 사거리 밖 표적을 가리킨다. 값만 읽을 뿐 sim 을 실행하지 않는다.
 import { TURRET_RANGE } from '../sim/events.js';
 import { facilitySpecFor } from '../../data/invasion/facilities.js';
-import { HAZARD_LAVA, HAZARD_MORTAR, HAZARD_SLOW } from '../sim/patterns/types.js';
+import { HAZARD_LAVA } from '../sim/patterns/types.js';
+// 해저드 장판 표시 규칙(색=성질·형태=상태) — render-only 순수 모듈을 소비만 한다.
+import {
+  DECOR_MIN_RADIUS,
+  MAX_DECORATED_HAZARDS,
+  drawHazardZone,
+  hazardVisual,
+} from './hazardVisual.js';
 // 조우 유형 상수(ADR-0033). `data/encounters.ts` 는 다른 sim 모듈을 import 하지 않는 leaf
 // 데이터라 렌더가 읽어도 순환·결정론 위험이 없다(facilities/props 카탈로그 참조 선례).
 import { ENCOUNTER_TYPE } from '../../data/encounters.js';
-import { HAZARD_CONTAMINATION } from '../sim/modes/contamination.js';
 // Phase 2 전투 피드백 배선 — 전부 render-only(sim·hashWorld/hashEntity 무접촉, ADR-0005).
 // 선행 레인 모듈을 소비만 한다(재작성 금지).
 import { ShardBurst } from './effects/explosion.js';
@@ -439,35 +445,8 @@ export function railTelegraph(e: EntitySnapshot, frameTick: number): TelegraphRa
   };
 }
 
-/** 해저드 장판 1개의 표시 스타일. */
-export interface HazardStyle {
-  readonly color: number;
-  /** 채움 알파(0 = 테두리만 = 예열 중). */
-  readonly fillAlpha: number;
-  readonly strokeAlpha: number;
-}
-
-/**
- * 해저드 subtype·활성 여부 → 표시 스타일. 주기 온오프 설비(L2)·중력 앵커(L3)가 이 장판을
- * 반복 융기시키므로, **예열(테두리만) ↔ 활성(채움)** 대비가 리듬을 읽게 하는 핵심이다.
- *
- * 색 = subtype: 박격 red / 용암 orange / 감속 cyan. 미지의 subtype 은 박격 색으로 폴백한다.
- */
-export function hazardStyle(subtype: number, active: boolean): HazardStyle {
-  const color =
-    subtype === HAZARD_LAVA
-      ? 0xff7a1a
-      : subtype === HAZARD_SLOW
-        ? 0x39d0ff
-        : subtype === HAZARD_CONTAMINATION
-          ? 0x7fd43a // TODO(art): 오염 지형 임시 색(독성 녹색) — Lane8, 전용 아트 이관 전 placeholder
-          : subtype === HAZARD_MORTAR
-            ? 0xff3355
-            : 0xff3355; // 미지의 subtype = 박격 색 폴백(장판이 보이지 않는 것보다 낫다)
-  return active
-    ? { color, fillAlpha: 0.4, strokeAlpha: 0.9 }
-    : { color, fillAlpha: 0, strokeAlpha: 0.85 };
-}
+// 해저드 장판의 표시 규칙(색=성질·형태=상태)은 `hazardVisual.ts` 가 정본이다 — 구 `hazardStyle`
+// (색=subtype 하나뿐)은 피해 지형을 아군 시안으로 칠하던 규칙이라 폐기했다(2026-07-26 피드백).
 
 /** 사망 폭발 스케일. 등록되지 않은 kind 는 폭발 없음(0). */
 function explosionScale(kind: EntityKind): number {
@@ -1606,18 +1585,17 @@ export class EntityRenderer {
     // 주기 온오프 해저드(L2 설비·L3 중력 앵커)는 이 예열↔활성 대비가 리듬을 읽게 한다.
     // **용암(HAZARD_LAVA)만 lavaOverlay 로 분리** — 시머가 용암류만 국소로 흔들고 예고선·비-용암
     // 해저드는 overlay 에 남겨 흔들리지 않게 한다(AC-3.2 국소 시머 계약).
+    // 장식 예산: 프레임당 상한을 넘긴 장판은 채움+테두리만 그린다(오염 셀 다수 성능 방어).
+    let decorBudget = MAX_DECORATED_HAZARDS;
     for (const e of curr.entities) {
       if (e.kind !== 'hazard') continue;
-      const st = hazardStyle(e.enemyType, e.active);
+      // 색 = 성질(아프다/방해만), 형태 = 상태(예열 점선 / 활성 실선+빗금). `permanent` 는 같은
+      // 코드를 쓰는 감속 지대와 피해 지형을 가르는 유일한 신호다(hazardVisual.ts 주석 참조).
+      const v = hazardVisual(e.enemyType, e.active, e.permanent === true);
       const target = e.enemyType === HAZARD_LAVA ? lg : g;
-      if (st.fillAlpha > 0) {
-        target
-          .circle(e.x, e.y, e.radius)
-          .fill({ color: st.color, alpha: st.fillAlpha })
-          .stroke({ color: st.color, width: 2, alpha: st.strokeAlpha });
-      } else {
-        target.circle(e.x, e.y, e.radius).stroke({ color: st.color, width: 2, alpha: st.strokeAlpha });
-      }
+      const decor = decorBudget > 0;
+      if (decor && e.radius >= DECOR_MIN_RADIUS) decorBudget--;
+      drawHazardZone(target, e.x, e.y, e.radius, v, this.frameTick, decor);
     }
     // 예고선(관통 레일포 텔레그래프): 조준각이 잠긴 예고 구간에만 나온다. 탄보다 먼저 선이
     // 보이므로 플레이어가 사계를 벗어날 시간을 얻는다(예고 중에는 피해가 없다 — facility.ts).

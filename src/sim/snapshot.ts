@@ -40,6 +40,16 @@ export interface EntitySnapshot {
    * rarity code lives in `enemyType`.
    */
   elite: number;
+  /**
+   * 해저드 전용(render-only): **영구 지형인가**(`life < 0`). `HAZARD_SLOW` 와 `HAZARD_TERRAIN` 이
+   * 같은 코드(2)라 subtype 만으로는 "청크 배치 피해 지형"과 "보스 감속 지대"를 가를 수 없다 —
+   * 앞은 아프고 뒤는 안 아프므로 화면에서 반드시 달라야 한다(`hazardVisual`).
+   *
+   * **선택 필드**인 이유: 테스트 여럿이 `EntitySnapshot` 을 객체 리터럴로 직접 만든다. 필수로
+   * 두면 해저드와 무관한 파일까지 전부 고쳐야 하는데, 렌더는 부재를 기존 거동(감속)으로 다룬다.
+   * 스냅샷은 해시 대상이 아니라 sim 계약은 불변이다.
+   */
+  permanent?: boolean;
 }
 
 /** A support heal beam, for render only. */
@@ -124,6 +134,8 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
               : false,
       flash: e.kind === 'boss' && e.timer > 0,
       elite: eliteAffix(e),
+      // 영구 지형 해저드(life < 0 = 청크 배치·만료 없음). 렌더가 감속 지대와 가르는 유일한 신호다.
+      permanent: e.kind === 'hazard' && e.life < 0,
     });
     if (e.kind === 'enemy' && e.enemyType === SUPPORT_TYPE && e.phase === 1) {
       beams.push({ x1: e.x, y1: e.y, x2: e.targetX, y2: e.targetY });
