@@ -71,6 +71,31 @@ pnpm run build
 - `lint`: ESLint — `src/sim/**`에서 `pixi.js` import·`Math.random`·`Date.now`·`performance.now` 사용을 에러로 차단 (ADR-0005)
 - `build`: `tsc --noEmit`(strict) + `vite build`
 
+## 서버 배포
+
+원격 Supabase(프로젝트 ref `qxgbxwyccbxokdgwxcuw`)에 마이그레이션·Edge Function 을 올리는 절차다.
+**전체 절차·함정은 `.omc/skills/planet-blitz-supabase-deploy-workflow.md` 가 정본이다** — 아래는
+"언제 필요한지"와 "무엇을 놓치면 안 되는지"만 짚는다. 백엔드 설계·테이블·마이그레이션 목록은
+`supabase/README.md` 가 담당한다.
+
+**`src/sim/**` 을 건드렸으면 `verify-invasion` 재배포가 필수다.** 그 Edge Function 이 `src/sim` 을
+직접 import 해 번들에 시뮬 코어가 통째로 들어가고, 서버는 침공 리플레이를 그 번들로 재계산한다.
+방치하면 서버가 옛 시뮬로 계산해 **모든 침공이 해시 불일치로 거부**된다.
+
+배포 대상은 `verify-invasion` 하나뿐이다 — `verify-run` 은 로컬 전용(`bundle` 태스크 없음),
+`modules` 는 type-only import 라 시뮬을 번들하지 않는다.
+
+놓치기 쉬운 것 셋:
+
+- **`pnpm test` 와 `scripts/deno-verify/fixtures.json` 이 전부 그린이어도 재배포는 필요하다.**
+  그 12 시나리오는 침공 경로를 태우지 않아 침공 시뮬이 바뀌어도 통과한다.
+- **번들은 폐기용 detached 워크트리에서 만들고, 번들 소스 커밋이 `origin/main` 과 같은지 대조한다.**
+  배포 절차가 `index.ts` 를 자립 번들로 덮어쓰기 때문에 본 부준치에서 하면 오염이 남고, 커밋 대조를
+  빼먹으면 스테일 번들이 올라가 "배포했는데 안 고쳐진" 상태가 된다(실제 발생 이력 있음).
+- **인증 없이 엔드포인트를 때려 본 것은 부팅 검증이 아니다.** Authorization 헤더가 없으면 Supabase
+  게이트웨이가 `401 UNAUTHORIZED_NO_AUTH_HEADER` 를 돌려주는데 함수는 부팅조차 하지 않은 상태다.
+  anon 키로 게이트를 통과시켜 함수 본체의 응답을 받아야 검증이 성립한다(스킬 문서의 부팅 스모크 절).
+
 ## 프로젝트 구조
 
 ```
@@ -94,6 +119,9 @@ src/
 tests/              # vitest — 결정론·RNG·math·충돌·전투 테스트
 data/               # 적·웨이브 데이터 정의 (enemies.ts, waves.ts)
 assets/             # PixelLab 픽셀아트 스프라이트(기체·적4·보스·젬·이펙트) — Phase 4
+supabase/
+├── migrations/     # 원격 DB 스키마 (적용법은 위 "서버 배포")
+└── functions/      # Edge Function — verify-invasion(배포 대상·src/sim 번들), verify-run(로컬 전용), modules(type-only)
 ```
 
 ## 코어 게임플레이 (Phase 2)
