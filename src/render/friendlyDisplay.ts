@@ -22,11 +22,15 @@ import type { EntitySnapshot } from '../sim/snapshot.js';
 import { t, type MessageKey } from '../i18n/index.js';
 
 /**
- * 플레이어 기체의 표시 지름(px). 기체는 sim radius 16 이고 렌더가 `radius * 2 * ART_SCALE(1.5)`
- * 로 환산하므로 48px 이다(entityRenderer 주석의 "player r16 → 48px" 와 같은 수). 아군·이익
- * 오브젝트의 표시 크기 상한 = 이 값 — 사용자 요구가 "원래 기체 사이즈보다는 크지 않게" 였다.
+ * 아군·이익 오브젝트의 표시 지름 상한(px).
+ *
+ * 사용자 요구는 "원래 기체 사이즈보다는 크지 않게" 였다. 기체는 sim radius 32 → 표시 96px
+ * 이므로(`world.ts` 의 `player.radius = 32`; entityRenderer 주석의 "player r16 → 48px" 는 낡았다)
+ * 96 이 상한의 상한이지만, 그 크기의 픽업은 여전히 화면을 지배한다. 그래서 **이미 게임에서
+ * 검증된 픽업 글리프 크기**인 `LOOT_SIZE`(48px — 전리품이 오래 이 크기로 읽혀 왔다)를 상한으로
+ * 쓴다: 기체보다 확실히 작고, 실측으로 가독이 확인된 유일한 수다.
  */
-export const PLAYER_DISPLAY_SIZE = 48;
+export const PICKUP_DISPLAY_SIZE = 48;
 
 /**
  * 표시 크기를 기체 이하로 묶는 kind. 전부 **플레이어에게 이롭거나 아군인** 실체다.
@@ -41,11 +45,23 @@ const SIZE_CAPPED_KINDS: ReadonlySet<EntityKind> = new Set<EntityKind>([
   'supply',
   'loot',
   'echo',
+  // 젬도 상한 대상이다 — sim radius 20 → 60px 라 기체보다 컸다(하네스 실측으로 확인). 화면에
+  // 수십 개가 동시에 깔리는 실체라 과대 표시가 곧 화면 오염이었다.
+  'gem',
 ]);
 
-/** 이름표를 붙이는 kind. 크기 상한 대상 + 대피소(넓이는 그대로 두고 이름만 붙인다). */
+/**
+ * 이름표를 붙이는 kind. **크기 상한 목록과 일부러 다르다**: 젬은 상한 대상이지만 라벨은 안 붙인다
+ * (한 화면에 수십 개라 이름표가 곧 글자 폭탄이다). 대피소는 반대로 넓이는 그대로 두고 이름만 붙인다.
+ */
 const LABELED_KINDS: ReadonlySet<EntityKind> = new Set<EntityKind>([
-  ...SIZE_CAPPED_KINDS,
+  'turretPickup',
+  'magnetEmitter',
+  'bombDevice',
+  'boostPad',
+  'supply',
+  'loot',
+  'echo',
   'shelter',
 ]);
 
@@ -73,7 +89,7 @@ export function isSizeCapped(kind: EntityKind): boolean {
  */
 export function displaySize(kind: EntityKind, radius: number, artScale: number): number {
   const base = radius * 2 * artScale;
-  return isSizeCapped(kind) ? Math.min(base, PLAYER_DISPLAY_SIZE) : base;
+  return isSizeCapped(kind) ? Math.min(base, PICKUP_DISPLAY_SIZE) : base;
 }
 
 /** 휴면 접촉 기믹이라 트리거 링을 그려야 하는가(`active` = 활성 포탑이면 false). */

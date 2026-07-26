@@ -17,7 +17,7 @@ import type { PlaceholderTextures } from '../src/render/textures.js';
 import type { EntityKind } from '../src/sim/entities.js';
 import type { EntitySnapshot, WorldSnapshot } from '../src/sim/snapshot.js';
 import {
-  PLAYER_DISPLAY_SIZE,
+  PICKUP_DISPLAY_SIZE,
   displaySize,
   friendlyLabel,
   isSizeCapped,
@@ -123,18 +123,24 @@ function sprites(r: EntityRenderer): Map<number, { sprite: { width: number; rota
 describe('표시 크기 상한 — 순수', () => {
   it('포탑 픽업의 sim radius 는 트리거 반경(70)이라 환산 크기가 기체의 4배가 넘는다', () => {
     // 이 수치가 결함의 실체다: 210px vs 기체 48px.
-    expect(EVENT_TRIGGER_RADIUS * 2 * ART_SCALE).toBeGreaterThan(PLAYER_DISPLAY_SIZE * 4);
+    expect(EVENT_TRIGGER_RADIUS * 2 * ART_SCALE).toBeGreaterThan(PICKUP_DISPLAY_SIZE * 4);
   });
 
   it('아군·이익 kind 는 기체 크기 이하로 묶인다', () => {
     for (const kind of ['turretPickup', 'magnetEmitter', 'bombDevice', 'supply'] as EntityKind[]) {
       expect(isSizeCapped(kind)).toBe(true);
-      expect(displaySize(kind, EVENT_TRIGGER_RADIUS, ART_SCALE)).toBe(PLAYER_DISPLAY_SIZE);
+      expect(displaySize(kind, EVENT_TRIGGER_RADIUS, ART_SCALE)).toBe(PICKUP_DISPLAY_SIZE);
     }
   });
 
   it('작은 아군 오브젝트는 상한에 걸리지 않고 기존 환산 그대로다', () => {
     expect(displaySize('turretPickup', 10, ART_SCALE)).toBe(30);
+  });
+
+  it('젬은 상한 대상이지만 이름표는 붙지 않는다(화면에 수십 개)', () => {
+    // 젬 sim radius 20 → 60px 로 기체보다 컸다(하네스 실측 회귀 가드).
+    expect(displaySize('gem', 20, ART_SCALE)).toBe(PICKUP_DISPLAY_SIZE);
+    expect(friendlyLabel('gem', false)).toBeNull();
   });
 
   it('적·보스는 상한 대상이 아니다(전투체 크기 계약 불변)', () => {
@@ -195,7 +201,7 @@ describe('배선 — EntityRenderer 정규 render 경로', () => {
     const r = new EntityRenderer(realTextures());
     const w = world([entity('turretPickup', { id: 1, radius: EVENT_TRIGGER_RADIUS })]);
     r.render(w, w, 0);
-    expect(sprites(r).get(1)?.sprite.width).toBe(PLAYER_DISPLAY_SIZE);
+    expect(sprites(r).get(1)?.sprite.width).toBe(PICKUP_DISPLAY_SIZE);
     r.destroy();
   });
 
