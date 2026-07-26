@@ -17,9 +17,9 @@
  */
 
 import { Container, Graphics, Text } from 'pixi.js';
-import { t, type MessageKey } from '../../i18n/index.js';
+import { t } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
-import { dropName, type ResultDrop, type ResultState, type SettlementSummary } from '../resultOverlay.js';
+import type { ResultDrop, ResultState, SettlementSummary } from '../resultOverlay.js';
 import { COLOR, RARITY_COLOR_NUM, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
@@ -29,6 +29,7 @@ import { PixiTooltip } from './tooltip.js';
 import { makeBanner } from './titleBar.js';
 import { stripEmoji } from './text.js';
 import { LootCeremony } from '../../render/effects/lootCeremony.js';
+import { dropTipContent } from '../dropTip.js';
 
 export type { ResultDrop, SettlementSummary, ResultState };
 
@@ -473,20 +474,18 @@ export class ResultOverlayScreen {
 
   // --- 툴팁 ----------------------------------------------------------------
 
+  /**
+   * 획득 장비 hover 상세 팝업(사용자 요청 2026-07-26).
+   *
+   * 실물 아이템(`ResultDrop.item`)이 실려 있으면 격납고 툴팁과 **같은 정보**를 보여준다 —
+   * 어픽스 제목·설명 줄(`affixLines`), 요구 레벨(충족 여부 색), 전투력. 정산에서 곧장 "이게
+   * 쓸 만한가"를 판단할 수 있어야 격납고를 왕복하지 않는다. 아이템이 없으면(구 경로) 기존
+   * 최소 표시로 내려앉는다.
+   */
   private showTip(d: ResultDrop, globalX: number, globalY: number): void {
     const p = this.root.toLocal({ x: globalX, y: globalY });
-    const title = dropName(d);
-    const slot = t(`item.slot.${d.slot}` as MessageKey);
-    const rarity = t(`item.rarity.${d.rarity}` as MessageKey);
     this.tooltip.show(
-      {
-        title,
-        titleColor: RARITY_COLOR_NUM[d.rarity],
-        // 비무기 슬롯은 제목이 곧 슬롯명이라 부제에 또 적으면 "코어 / 코어 · 매직"이 된다.
-        // 주무기만 제목이 무기 종류("발칸")라 슬롯을 함께 알려 줄 값이 있다.
-        subtitle: title === slot ? rarity : `${slot} · ${rarity}`,
-        lines: [],
-      },
+      dropTipContent(d, this.state?.level ?? 0),
       p.x,
       p.y,
       RARITY_COLOR_NUM[d.rarity],

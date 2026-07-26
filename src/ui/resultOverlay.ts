@@ -15,7 +15,7 @@
  */
 
 import { t } from '../i18n/index.js';
-import type { Rarity, SlotKind } from '../items/types.js';
+import type { Item, Rarity, SlotKind } from '../items/types.js';
 
 /** 정산 화면에 표시할 획득 장비 1개(표시 전용 요약). */
 export interface ResultDrop {
@@ -23,6 +23,17 @@ export interface ResultDrop {
   slot: SlotKind;
   /** 주무기 종류 코드(0..2) — `main` 슬롯일 때만. */
   weaponType?: number;
+  /**
+   * 확정된 실물 아이템(사용자 요청 2026-07-26 — 정산 획득 장비 hover 상세 팝업).
+   *
+   * 이 요약이 등급·슬롯만 담고 있어 툴팁이 "코어 · 매직" 두 줄에서 멈췄고, 무엇을 주웠는지
+   * 격납고에 들어가 봐야만 알 수 있었다. 어픽스·요구 레벨·전투력을 그 자리에서 읽히게 하려면
+   * 정산이 이미 손에 쥔 `Item` 을 그대로 넘겨주는 것이 가장 단순하다(재도출·재조회 없음).
+   *
+   * **optional** 이라 이 필드를 채우지 않는 호출부(구 경로·테스트 픽스처)는 무영향이고,
+   * 툴팁은 기존 최소 표시로 우아하게 내려앉는다. 표시 전용이며 sim·세이브와 무관하다.
+   */
+  item?: Item;
 }
 
 /** Settlement summary (M2 — what the run added to the profile). */
