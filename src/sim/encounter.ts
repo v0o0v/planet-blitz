@@ -48,6 +48,16 @@ import {
 } from '../../data/encounters.js';
 import { stepLightEncounter, encounterShardCollectedOf } from './encounters/light.js';
 import { enterDetour } from './encounterDetour.js';
+import {
+  windowCenterX,
+  windowCenterY,
+  INVASION_WINDOW_HALF_W,
+  INVASION_WINDOW_HALF_H,
+  type ScrollWindow,
+} from './invasion/scroll.js';
+import { sqrt } from './math.js';
+import { scrollModeAxisDir } from './scrollMode.js';
+import { SCROLL_AXIS_VERTICAL, SCROLL_AXIS_HORIZONTAL } from './invasion/constants.js';
 
 /**
  * 조우 런타임(정수 필드 전용). positive 런에만 존재한다(그 외 WorldState.encounterRuntime
@@ -88,34 +98,37 @@ export interface EncounterRuntime {
  * 이 런의 조우 출현 여부·유형·스폰 틱을 롤한다. **positive 일 때만** EncounterRuntime 을
  * 돌려주고(그 외 undefined) 호출부는 조건부 스프레드로 세운다.
  *
- * `allowWarp=false` 면 `warp:true` 유형(보물 격실)을 가중 후보에서 **제외**한다 — 워프
- * detour 는 강제 스크롤 창·수축 안전 반경·추격 포식자 같은 모드별 좌표계와 구조적으로
- * 충돌하기 때문이다(계획 R2 · Principle 5). v1 은 뱀서류만 워프를 허용한다.
+ * ## `allowWarp` 게이트를 없앤 이유 (전 모드 개방)
+ * 예전에는 `warp:true` 유형(보물 격실)을 뱀서류 외 모드에서 후보에서 뺐다 — 워프 detour 가
+ * 강제 스크롤 창·수축 안전 반경 같은 모드별 좌표계와 충돌한다고 봤기 때문이다. 그 전제는
+ * detour 격리가 완성되면서 사라졌다: **모드 규칙(창 클램프·수축 밖 피해·블록격파 압사·
+ * 레이싱 후방 압박)은 전부 `stepWorld` 의 경계 블록에 모여 있고, detour 분기는 그 블록에
+ * 닿기 전에 return 한다.** 즉 detour 중에는 모드 규칙이 아예 실행되지 않으므로 포켓 방
+ * (창 밖 12만 유닛) 좌표가 어떤 모드에서도 안전하다 → 워프를 항상 후보에 넣는다.
  *
  * 롤 순서는 **해시 계약**이다: ①등장 chance ②유형 가중 ③spawnTick int. 순서를 바꾸면
- * 같은 시드가 다른 조우를 낳아 기록된 리플레이가 갈린다.
+ * 같은 시드가 다른 조우를 낳아 기록된 리플레이가 갈린다. 게이트 제거는 **후보 필터만**
+ * 없앤 것이라 롤 횟수(chance 1 · 가중 1 · spawnTick 1)와 RNG 소비량은 그대로다.
  *
  * ⚠️ 반드시 `worldRng.fork('encounter')` 로 롤한다 — fork 는 부모를 전진시키지 않으므로
  * 이 함수는 worldRng 을 **한 번도 소비하지 않는다**(rollEcho 선례). 라벨 변경 금지.
  */
-export function rollEncounter(worldRng: SeededRng, allowWarp: boolean): EncounterRuntime | undefined {
+export function rollEncounter(worldRng: SeededRng): EncounterRuntime | undefined {
   const r = worldRng.fork('encounter');
   if (!r.chance(ENCOUNTER_SPAWN_PROB)) return undefined;
-  // 유형 가중 롤. allowWarp=false 면 warp 유형을 후보에서 뺀다. **후보를 걸러도 롤 횟수는
-  // 정확히 1 회**라 RNG 소비량이 모드와 무관하게 같다(소비량이 갈리면 이후 spawnTick 롤이
-  // 어긋나 같은 fork 에서 다른 시퀀스가 나온다).
+  // 유형 가중 롤 — 카탈로그 전체가 후보다(warp 포함). 롤 횟수는 **정확히 1 회**라 모드와
+  // 무관하게 RNG 소비량이 같다(소비량이 갈리면 이후 spawnTick 롤이 어긋나 같은 fork 에서
+  // 다른 시퀀스가 나온다).
   let total = 0;
   for (const d of ENCOUNTERS) {
-    if (!allowWarp && d.warp) continue;
     total += d.weight;
   }
-  // 후보가 전멸하는 구성은 현재 카탈로그상 불가능하지만(비-warp 유형이 4종), 데이터가
-  // 바뀌어 0 이 되면 조우 없음으로 안전 착지한다 — 0 나눗셈·무한 루프를 만들지 않는다.
+  // 카탈로그가 비거나 가중치가 전부 0 인 구성은 현재 불가능하지만, 데이터가 바뀌어 0 이
+  // 되면 조우 없음으로 안전 착지한다 — 0 나눗셈·무한 루프를 만들지 않는다.
   if (total <= 0) return undefined;
   let pick = r.int(0, total - 1);
   let type = 0;
   for (const d of ENCOUNTERS) {
-    if (!allowWarp && d.warp) continue;
     if (pick < d.weight) {
       type = d.id;
       break;
@@ -138,10 +151,148 @@ export function rollEncounter(worldRng: SeededRng, allowWarp: boolean): Encounte
   };
 }
 
+// ---------------------------------------------------------------------------
+// 근접 오브젝트 도달성 보장 (모드 좌표계 대응 — 스크롤 창 고정 · 수축 반경 클램프)
+// ---------------------------------------------------------------------------
+
+/**
+ * 경계(스크롤 창 테두리·수축 안전 반경)에서 조우 오브젝트를 안쪽으로 떼어 놓는 여유.
+ *
+ * 오브젝트 풋프린트({@link ENCOUNTER_OBJECT_RADIUS})가 경계를 삐져나오지 않게 하는 동시에,
+ * 경계 안쪽에 갇힌 플레이어가 **상호작용 반경({@link ENCOUNTER_INTERACT_RADIUS}) 안으로 들어올
+ * 여지**를 남긴다 — 오브젝트가 테두리에 딱 붙으면 근접 자체는 가능해도 그 지점이 곧 벽이라
+ * 접근 여유가 0 이 된다. 두 반경의 합을 쓰는 것은 그 두 요구를 한 값으로 만족시키는 가장
+ * 보수적인 선택이다. TODO(밸런스).
+ */
+const ENCOUNTER_BOUND_MARGIN = ENCOUNTER_OBJECT_RADIUS + ENCOUNTER_INTERACT_RADIUS;
+
+/**
+ * 창 **뒤 경계**에서 오브젝트를 안쪽으로 당기는 인셋. 오브젝트 풋프린트만큼만 당긴다 —
+ * 여기서 {@link ENCOUNTER_BOUND_MARGIN}(= 풋프린트 + 상호작용 반경)을 쓰면 앵커가 뒤 경계에서
+ * 너무 멀어져, 창이 가속해 플레이어가 뒤 경계에 눌려 있는 동안 상호작용 반경 밖으로 벗어난다
+ * (아래 {@link windowAnchorOf} 의 실측 근거). TODO(밸런스).
+ */
+const ENCOUNTER_WINDOW_REAR_INSET = ENCOUNTER_OBJECT_RADIUS;
+
+/**
+ * 창 중심 기준 고정 앵커(창 상대 좌표) — **스크롤 축의 뒤쪽 경계 부근, 수직 축 성분 0**.
+ *
+ * ## 왜 앞쪽에 두면 안 되는가 (실측으로 잡은 결함)
+ * 창 전진 속도(`scrollStep(100)` = 12 유닛/틱)는 **플레이어 최대 이동 속도(720 u/s = 12 유닛/틱)와
+ * 정확히 같다**. 즉 플레이어가 스크롤 방향으로 전력 질주해도 창 대비 **상대 속도가 0**이라, 창
+ * 상대 좌표로 앞쪽에 고정된 오브젝트와의 간격은 영원히 좁혀지지 않는다. 구간 전멸·부스트 패드
+ * 가속(최대 200cp = 24 유닛/틱)이 붙으면 창이 플레이어를 **앞질러** 간격이 오히려 벌어지고,
+ * 플레이어는 뒤 경계에 눌린 채 아무것도 할 수 없다. 실측(레이싱 정규 런, 900틱):
+ *   앵커 +520(앞) → 최소 거리 **1276** · 앵커 0(중심) → 최소 거리 **868** (둘 다 반경 320 밖)
+ *
+ * ## 왜 "뒤 경계"인가
+ * 뒤로 처지는 것은 **항상 가능하다** — 가만히 있어도 창이 플레이어를 뒤 경계로 밀어 주고, 경계에
+ * 닿으면 창 클램프가 스크롤 축 이동을 대신 해 준다. 즉 창 안에서 **속도 예산 없이 도달할 수 있는
+ * 유일한 지점이 뒤 경계**다. 그래서 앵커를 뒤 경계에서 풋프린트만큼만 안으로 당긴 자리에 둔다:
+ *  - 레이싱(+X 스크롤) → 앵커 x = −(960 − 120) = −840
+ *  - 블록격파(−Y 스크롤) → 앵커 y = +(540 − 120) = +420
+ * 뒤 경계에 눌린 플레이어(경계에서 자기 반경만큼 안쪽)와의 간격이 ~88 이라 상호작용 반경 320
+ * 안에 확실히 든다. 반대로 플레이어는 오브젝트를 만지려고 **압박 구역(뒤 경계 120 이내)에 들어갈
+ * 필요가 없다** — 반경 320 이 압박 구역 밖까지 닿는다.
+ *
+ * 블록격파에서 뒤쪽은 **이미 지나온 공간**이라 파괴가능 벽 줄에 막힐 확률도 낮다(앞쪽 앵커는
+ * 실측에서 벽에 막혀 425 에서 더 못 붙었다).
+ *
+ * 축·방향을 모르는 경우(침공 3레이어 — 애초에 조우가 서지 않는다)는 창 중심(0,0)으로 안전
+ * 착지한다. 전부 상수 산술이라 난수·삼각함수가 없다.
+ */
+function windowAnchorOf(state: WorldState): { x: number; y: number } {
+  const axisDir = scrollModeAxisDir(state.config.planetMode);
+  if (axisDir === undefined) return { x: 0, y: 0 };
+  // 뒤쪽 = 스크롤 방향의 반대(−dir).
+  if (axisDir.axis === SCROLL_AXIS_VERTICAL) {
+    const span = INVASION_WINDOW_HALF_H - ENCOUNTER_WINDOW_REAR_INSET;
+    return { x: 0, y: span <= 0 ? 0 : -span * axisDir.dir };
+  }
+  if (axisDir.axis === SCROLL_AXIS_HORIZONTAL) {
+    const span = INVASION_WINDOW_HALF_W - ENCOUNTER_WINDOW_REAR_INSET;
+    return { x: span <= 0 ? 0 : -span * axisDir.dir, y: 0 };
+  }
+  return { x: 0, y: 0 };
+}
+
+/**
+ * 이 런의 강제 스크롤 창(있으면). 침공 3레이어와 PvE 강제 스크롤(블록격파·레이싱)이 같은
+ * `scrollX/scrollY` 구조를 공유하므로 world.ts 의 `scrollWin` 선택과 **같은 우선순위**로
+ * 고른다. 뱀서류·추격·오염·수축은 둘 다 미존재 → undefined.
+ *
+ * (침공 런에는 애초에 `encounterRuntime` 이 서지 않지만, 창 선택 규칙을 world.ts 와 다르게
+ * 적어 두면 훗날 한쪽만 바뀌었을 때 조용히 어긋난다 — 같은 식을 쓴다.)
+ */
+function encounterScrollWindow(state: WorldState): ScrollWindow | undefined {
+  return state.invasion3 ?? state.scrollRuntime;
+}
+
+/**
+ * 좌표를 수축 안전 반경 안쪽(여유 포함)으로 끌어당긴다. 반경 밖이 아니면 좌표를 그대로 돌려
+ * 준다(불필요한 이동 없음). 아레나 중심은 원점 0,0 이다(modes/shrink.ts 규율).
+ *
+ * 방향을 보존한 축소라 `sqrt` 한 번만 쓴다(`math.js` 의 IEEE-754 correctly-rounded 래퍼 —
+ * 결정론). 삼각함수·난수는 쓰지 않는다.
+ */
+function clampToSafeRadius(x: number, y: number, safeRadius: number): { x: number; y: number } {
+  const limit = safeRadius - ENCOUNTER_BOUND_MARGIN;
+  // 반경이 여유보다도 좁으면 중심이 유일한 안전 지점이다(수축 말기 방어).
+  if (limit <= 0) return { x: 0, y: 0 };
+  const d2 = x * x + y * y;
+  if (d2 <= limit * limit) return { x, y };
+  const d = sqrt(d2);
+  return { x: (x * limit) / d, y: (y * limit) / d };
+}
+
+/**
+ * 근접이 필요한 조우 오브젝트(보물 격실 포탈 · 오스카 제단 · **봉인 수호자의 봉인**)를 이번 틱의
+ * 모드 좌표계 안에 붙들어 둔다. `stepEncounter` 가 유형 디스패치 **직전에** 부르므로, 이번 틱의
+ * 근접 판정은 항상 갱신된 좌표를 본다.
+ *
+ * ## 왜 필요한가 (실측 결함)
+ * 조우 오브젝트는 정적 엔티티인데 강제 스크롤 모드의 창은 매 틱 12 유닛(가속 시 더) 전진한다.
+ * 창 반폭 960 · 반높이 540 이므로 스폰 직후부터 창 기준으로 뒤로 흘러가, 블록격파(−Y)는 최대
+ * **90틱(≈1.5초)**, 레이싱(+X)은 최대 **160틱(≈2.7초)** 만에 창 밖으로 빠진다. 플레이어는 창
+ * 안에 클램프되므로 그 순간부터 상호작용 반경 320 에 **영원히 닿을 수 없다** — 즉 오스카 제단·
+ * 봉인이 크라스·아르케에서 사실상 도달 불가였다. 수축 모드도 같은 형태다: 안전 반경이 매 틱
+ * 조여 오므로 스폰 위치가 결국 반경 밖으로 남겨진다(다가가면 지속 피해).
+ *
+ * ## 모드별 분기 (골든 불변의 근거)
+ *  - 강제 스크롤 창 존재 → 창 중심 + 고정 앵커로 **매 틱 재고정**(화면상 정지).
+ *  - 수축 런타임 존재 → 현재 안전 반경 안으로 클램프(이미 안이면 좌표 무변).
+ *  - **둘 다 없으면 좌표를 한 줄도 건드리지 않는다** — 뱀서류·추격·오염은 창도 안전 반경도
+ *    없으므로 이 함수가 사실상 조기 반환이고, 기존 런의 거동·해시가 바이트 불변이다.
+ *
+ * 오브젝트가 없는 유형(파편우·보급선단, `entityId === 0`)도 조기 반환이다.
+ */
+function keepEncounterObjectReachable(state: WorldState, rt: EncounterRuntime): void {
+  const obj = findObject(state, rt);
+  if (obj === undefined) return;
+  const win = encounterScrollWindow(state);
+  if (win !== undefined) {
+    const anchor = windowAnchorOf(state);
+    obj.x = windowCenterX(win) + anchor.x;
+    obj.y = windowCenterY(win) + anchor.y;
+    return;
+  }
+  const shrink = state.shrinkRuntime;
+  if (shrink === undefined) return; // 뱀서류·추격·오염 — 좌표 무변(위 문단).
+  const p = clampToSafeRadius(obj.x, obj.y, shrink.safeRadius);
+  obj.x = p.x;
+  obj.y = p.y;
+}
+
 /**
  * 스폰 틱 도달 시 조우 오브젝트 1개를 플레이어 곁 고정 오프셋에 스폰한다(런당 1회, state
  * 게이트). maybeSpawnEcho 선례 — **RNG 미소비·고정 좌표**라 웨이브·드랍 시퀀스를 밀지
  * 않는다.
+ *
+ * ## 스폰 좌표도 모드 좌표계를 따른다
+ * 기본은 플레이어 곁 고정 오프셋이지만, 강제 스크롤 창이 있으면 **창 상대 고정 앵커**로,
+ * 수축 런타임이 있으면 **안전 반경 안쪽**으로 놓는다({@link keepEncounterObjectReachable} 의
+ * 같은 규칙 — 스폰과 매 틱 고정이 같은 식이라 상대 좌표가 저장 없이 보존된다). 창·반경이
+ * 둘 다 없는 모드(뱀서류·추격·오염)는 기존 좌표 그대로다.
  *
  * ## 오브젝트가 서는 유형 / 서지 않는 유형
  * 포탈(보물 격실) · 제단(오스카 제단) · **봉인(봉인 수호자)** 은 전부 월드 오브젝트를 세운다.
@@ -165,8 +316,18 @@ function maybeSpawnEncounter(state: WorldState, player: Entity): void {
   const rt = state.encounterRuntime;
   if (rt === undefined || rt.state !== 0) return;
   if (state.tick < rt.spawnTick) return;
-  const x = player.x + ENCOUNTER_SPAWN_OFFSET;
-  const y = player.y;
+  let x = player.x + ENCOUNTER_SPAWN_OFFSET;
+  let y = player.y;
+  const win = encounterScrollWindow(state);
+  if (win !== undefined) {
+    const anchor = windowAnchorOf(state);
+    x = windowCenterX(win) + anchor.x;
+    y = windowCenterY(win) + anchor.y;
+  } else if (state.shrinkRuntime !== undefined) {
+    const p = clampToSafeRadius(x, y, state.shrinkRuntime.safeRadius);
+    x = p.x;
+    y = p.y;
+  }
   if (rt.type === ENCOUNTER_TYPE.treasureVault || rt.type === ENCOUNTER_TYPE.sealedGuardian) {
     rt.entityId = spawnEncounterPortal(state, x, y, ENCOUNTER_OBJECT_RADIUS).id;
   } else if (rt.type === ENCOUNTER_TYPE.oscarAltar) {
@@ -227,6 +388,10 @@ export function stepEncounter(state: WorldState, player: Entity, input: InputFra
   if (rt === undefined) return;
   maybeSpawnEncounter(state, player);
   if (rt.state !== 1 && rt.state !== 2) return; // 대기·완료·거부는 할 일이 없다.
+  // 근접 오브젝트를 이번 틱의 모드 좌표계(스크롤 창·수축 반경) 안에 붙든다. **유형 디스패치
+  // 이전**이라 이번 틱의 근접 판정이 갱신된 좌표를 본다. 창·반경이 없는 모드(뱀서류·추격·
+  // 오염)와 오브젝트 없는 유형(파편우·보급선단)에서는 좌표를 건드리지 않는다.
+  keepEncounterObjectReachable(state, rt);
   if (rt.type === ENCOUNTER_TYPE.treasureVault) {
     stepVault(state, player, rt, input);
     return;
