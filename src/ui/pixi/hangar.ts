@@ -1013,20 +1013,30 @@ export class HangarScreen {
   // --- 하단 두 패널(창고·인벤토리) 공통 기하 ---------------------------------
   //
   // 상단 패널이 y 608 에서 끝나므로 하단을 624 로 올려 432 높이를 확보한다. 그 432 안에서
-  // 제목/액션 행(60..108) · 분류 탭 행(112..152) · 그리드(158..372 = 정확히 3행)가 프레임을
-  // 침범하지 않고 맞아떨어진다 — 탭 한 줄을 넣느라 그리드 행이 줄지 않게 역산한 값이다.
+  // 제목/액션 행(60..104) · 안내 한 줄(106..124) · 분류 탭 행(128..164) ·
+  // 그리드(170..372 = 정확히 3행)가 프레임을 침범하지 않고 맞아떨어진다.
+  //
+  // ⚠️ 이 네 줄은 **서로 겹치면 안 되는 세로 띠**다. 예전에는 안내 한 줄을 제목 바로 아래
+  // (로컬 98) 에 얹어 두었는데, 액션 버튼(60..108)·분류 탭(112..152) 과 같은 띠를 나눠 써서
+  // 실제로 글자가 버튼과 탭 밑으로 파묻혔다(사용자 신고 2026-07-27: "글자가 겹쳐서 안보임").
+  // 안내 줄은 패널 폭 전체를 쓰므로 **자기 줄을 통째로 가져야 한다** — 액션 행 높이를 44 로
+  // 줄이고 셀을 66→62 로 줄여 그 한 줄(18px)을 만들고도 그리드 3행을 지켰다.
 
   /** 하단 패널 상단 y(디자인 스페이스). */
   private static readonly BOTTOM_PY = 624;
   /** 하단 패널 높이. */
   private static readonly BOTTOM_PH = 432;
+  /** 제목·액션 버튼 행의 높이(패널 로컬 y 는 콘텐츠 상자 상단 = 60). */
+  private static readonly ACTION_H = 44;
+  /** 조작 안내 한 줄의 패널 로컬 y(액션 행 아래 자기 줄). */
+  private static readonly HELP_Y = 106;
   /** 분류 탭 행의 패널 로컬 y 와 높이. */
-  private static readonly FILTER_Y = 112;
-  private static readonly FILTER_H = 40;
+  private static readonly FILTER_Y = 128;
+  private static readonly FILTER_H = 36;
   /** 그리드 시작(패널 로컬 y). */
-  private static readonly GRID_TOP = 158;
+  private static readonly GRID_TOP = 170;
   /** 슬롯 셀 한 변과 세로 간격(가로 간격은 {@link fitGridCols} 가 폭에 맞춰 넓힌다). */
-  private static readonly CELL = 66;
+  private static readonly CELL = 62;
   private static readonly GAP = 8;
 
   /**
@@ -1067,12 +1077,16 @@ export class HangarScreen {
    * 패널 조작 안내 한 줄(제목 아래). 좌/우클릭에 서로 다른 동작이 걸려 있으면 **화면이 그것을
    * 말해야 한다** — 보관함↔인벤토리 이동 수단이 있어도 알 수 없으면 없는 것과 같다(사용자 신고
    * 2026-07-27: "이동을 할 수 있는 방법이 없어").
+   *
+   * ⚠️ 이 줄은 패널 폭 전체를 쓴다 — 액션 버튼·분류 탭과 같은 세로 띠에 두면 반드시 겹친다
+   * ({@link HangarScreen.HELP_Y} 가 그 전용 줄이다). 폰트 14 = 줄 높이 약 18px 로, 106..124
+   * 안에 들어가 분류 탭(128) 을 침범하지 않는다.
    */
   private renderPanelHelp(x: number, y: number, text: string): void {
     const help = new Text({
       resolution: 2,
       text,
-      style: { fontFamily: UI_FONT, fontSize: 15, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+      style: { fontFamily: UI_FONT, fontSize: 14, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
     });
     help.position.set(x, y);
     this.root.addChild(help);
@@ -1091,7 +1105,7 @@ export class HangarScreen {
       texture: this.ui['ui_btn_wood.png'],
       fallbackColor: 0x4a3a24,
       width,
-      height: 48,
+      height: HangarScreen.ACTION_H,
       fontSize: 16,
       label: t('inv.act.sort', { v: t(SORT_LABEL_KEY[mode]) }),
       onClick: () => onCycle(next),
@@ -1113,18 +1127,18 @@ export class HangarScreen {
     const cap = stashCapacity(this.profile.stashExpansions);
     const title = new Text({ resolution: 2,
       text: t('inv.stashHeader', { n: this.profile.stash.length, cap }),
-      style: { fontFamily: UI_FONT, fontSize: 26, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
+      style: { fontFamily: UI_FONT, fontSize: 24, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
     });
-    title.position.set(px + box.x, py + box.y);
+    title.position.set(px + box.x, py + box.y + 6);
     this.root.addChild(title);
-    this.renderPanelHelp(px + box.x, py + box.y + 38, t('inv.help.stash'));
+    this.renderPanelHelp(px + box.x, py + HangarScreen.HELP_Y, t('inv.help.stash'));
 
     // 헤더 우측 액션 줄: [하급 분해][상급 분해][정렬][확장]. 창고 패널은 인벤토리보다 좁아
     // (콘텐츠 780 vs 832) 인벤토리의 210px 버튼을 그대로 쓰면 제목 자리가 사라진다 — 같은
     // 동작이므로 **양쪽 다** 등급을 밝힌 짧은 라벨을 쓰고, 창고 쪽만 폭을 조인다.
-    const SALV_W = 132;
-    const SORT_W = 120;
-    const EXPAND_W = 180;
+    const SALV_W = 126;
+    const SORT_W = 116;
+    const EXPAND_W = 196;
     const AGAP = 10;
     const rowY = py + box.y;
     let cursorX = px + box.right;
@@ -1137,7 +1151,7 @@ export class HangarScreen {
       texture: this.ui['ui_btn_blue.png'],
       fallbackColor: 0x2a5a9a,
       width: EXPAND_W,
-      height: 48,
+      height: HangarScreen.ACTION_H,
       fontSize: 16,
       label: maxed ? t('inv.act.expandMax') : t('inv.act.expand', { n: nextCost }),
       onClick: () => void this.expandStash(),
@@ -1165,7 +1179,7 @@ export class HangarScreen {
         texture: this.ui['ui_btn_red.png'],
         fallbackColor: 0x9a2a2a,
         width: SALV_W,
-        height: 48,
+        height: HangarScreen.ACTION_H,
         fontSize: 15,
         label: t(spec.key),
         onClick: () => void this.salvageByRarities('stash', spec.rarities),
@@ -1277,15 +1291,15 @@ export class HangarScreen {
 
     const title = new Text({ resolution: 2,
       text: t('inv.invHeader', { n: this.profile.inventory.length, cap: INVENTORY_CAP }),
-      style: { fontFamily: UI_FONT, fontSize: 26, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
+      style: { fontFamily: UI_FONT, fontSize: 24, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
     });
-    title.position.set(px + box.x, py + box.y);
+    title.position.set(px + box.x, py + box.y + 6);
     this.root.addChild(title);
-    this.renderPanelHelp(px + box.x, py + box.y + 38, t('inv.help.inventory'));
+    this.renderPanelHelp(px + box.x, py + HangarScreen.HELP_Y, t('inv.help.inventory'));
 
     // 일괄 분해 버튼 2종(빨강) — 패널 우상단 나란히.
     const bw = 210;
-    const bh = 48;
+    const bh = HangarScreen.ACTION_H;
     const salvageHigh = new PixiButton({
       texture: this.ui['ui_btn_red.png'],
       fallbackColor: 0x9a2a2a,
