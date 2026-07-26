@@ -12,7 +12,8 @@
 
 import { Container, Graphics, Rectangle, NineSliceSprite, Text } from 'pixi.js';
 import type { Item } from '../../items/types.js';
-import { AFFIX_BY_ID, AFFIXES } from '../../../data/affixes.js';
+import { AFFIXES } from '../../../data/affixes.js';
+import { affixLines, affixTitleLine } from '../affixText.js';
 import { rerollAffixes } from '../../items/roll.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../../save/profile.js';
 import { spendCurrencyOnServer } from '../../net/index.js';
@@ -293,14 +294,14 @@ export class RefineryScreen {
   private affixText(item: Item, i: number): string {
     const a = item.affixes[i];
     if (a === undefined) return '';
-    const def = AFFIX_BY_ID.get(a.id);
-    return def !== undefined ? `${def.name} (${a.stat} +${a.value})` : `${a.stat} +${a.value}`;
+    return affixTitleLine(a);
   }
 
   // --- 툴팁 ----------------------------------------------------------------
 
   private showTip(item: Item, globalX: number, globalY: number): void {
-    const lines = item.affixes.map((_, i) => this.affixText(item, i));
+    // 툴팁은 제목 + 설명 2줄 묶음(목록 행은 한 줄짜리 affixText 그대로).
+    const lines = affixLines(item.affixes);
     const p = this.root.toLocal({ x: globalX, y: globalY });
     this.tooltip.show(
       {

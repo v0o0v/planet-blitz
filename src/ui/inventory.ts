@@ -13,7 +13,7 @@
 
 import type { Item, EquipSlotId, SlotKind, Rarity } from '../items/types.js';
 import { EQUIP_SLOTS } from '../items/types.js';
-import { AFFIX_BY_ID } from '../../data/affixes.js';
+import { affixTitleLine, affixDescLine } from './affixText.js';
 import { computeLoadoutStats } from '../items/loadout.js';
 import {
   saveProfile,
@@ -254,11 +254,15 @@ export class InventoryOverlay {
     this.tip.appendChild(name);
     this.tip.appendChild(slot);
     for (const a of item.affixes) {
-      const def = AFFIX_BY_ID.get(a.id);
       const row = document.createElement('div');
       row.className = 't-affix';
-      row.textContent = def !== undefined ? `${def.name} (${a.stat} +${a.value})` : `${a.stat} +${a.value}`;
+      row.textContent = affixTitleLine(a);
       this.tip.appendChild(row);
+      // 설명 줄(무엇이 좋아지는지) — raw StatKey 만 보이던 문제의 수정(2026-07-26 지적).
+      const desc = document.createElement('div');
+      desc.className = 't-affix-desc';
+      desc.textContent = affixDescLine(a);
+      this.tip.appendChild(desc);
     }
     if (compareTo !== undefined && compareTo !== item) {
       const cmp = document.createElement('div');

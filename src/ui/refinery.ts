@@ -13,7 +13,8 @@
  */
 
 import type { Item, Rarity } from '../items/types.js';
-import { AFFIX_BY_ID, AFFIXES } from '../../data/affixes.js';
+import { AFFIXES } from '../../data/affixes.js';
+import { affixTitleLine } from './affixText.js';
 import { rerollAffixes } from '../items/roll.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../save/profile.js';
 import { UI_LOCK_URL, UI_UNLOCK_URL, pixelIcon } from './uiIcons.js';
@@ -225,8 +226,7 @@ export class Refinery {
   private affixText(item: Item, i: number): string {
     const a = item.affixes[i];
     if (a === undefined) return '';
-    const def = AFFIX_BY_ID.get(a.id);
-    return def !== undefined ? `${def.name} (${a.stat} +${a.value})` : `${a.stat} +${a.value}`;
+    return affixTitleLine(a);
   }
 
   // --- Render --------------------------------------------------------------

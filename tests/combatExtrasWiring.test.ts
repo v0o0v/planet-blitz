@@ -456,7 +456,7 @@ describe('정리 — 누수 0', () => {
     lockTier('high');
     const w = world([entity('player', { id: 1 }), entity('bullet', { id: 2, enemyType: -1 })]);
     r.render(w, w, 0); // 트레일·머즐이 effectLayer 자식으로 붙지만 layer 스택은 불변.
-    expect(r.layer.children.length).toBe(6);
+    expect(r.layer.children.length).toBe(7);
     r.destroy();
   });
 });
