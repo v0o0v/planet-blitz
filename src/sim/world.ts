@@ -158,7 +158,7 @@ import {
   MAX_ACTIVE_GIMMICKS,
   chunkPlacements,
 } from './chunks.js';
-import { circleOverlapsWall, slideCircleWalls, segmentBlocked } from './los.js';
+import { slideCircleWalls, segmentBlocked, sweptCircleOverlapsWall } from './los.js';
 import type { SlidePin } from './los.js';
 import { HAZARD_SLOW } from './patterns/types.js';
 import { stepEnemyBulletBehavior, BK_NONE, type BulletSplit } from './bullets.js';
@@ -2723,6 +2723,10 @@ function stepProjectiles(state: WorldState, player: Entity): void {
       if (stepEnemyBulletBehavior(e, player, bulletSplits)) continue;
     }
     const m = e.kind === 'enemyBullet' ? enemyBulletMult : 1;
+    // 벽 판정용 이동 **전** 좌표. 적 판정이 선분인데 벽 판정만 지점이면 빠른 탄이 벽을 통째로
+    // 건너뛰어 **벽 뒤 적을 때린다**(근거·실측은 `sweptCircleOverlapsWall` 주석).
+    const preX = e.x;
+    const preY = e.y;
     e.x += e.vx * DT * m;
     e.y += e.vy * DT * m;
     if (e.life > 0) e.life--;
@@ -2746,11 +2750,11 @@ function stepProjectiles(state: WorldState, player: Entity): void {
     // 성능용 wallIndex 를 붙이면 파괴가능 벽이 조용히 불파괴가 되어 모드 클리어 불가가 되므로,
     // 그때는 이 분기에도 벽 피해를 적용해야 한다(firstBlocking 이 벽 참조를 반환하도록 확장).
     if (wallIndex !== null) {
-      if (wallIndex.firstBlocking(e.x, e.y, e.radius) !== null) e.dead = true;
+      if (wallIndex.firstBlockingSwept(preX, preY, e.x, e.y, e.radius) !== null) e.dead = true;
       continue;
     }
     for (const w of walls) {
-      if (circleOverlapsWall(e.x, e.y, e.radius, w)) {
+      if (sweptCircleOverlapsWall(preX, preY, e.x, e.y, e.radius, w)) {
         // 블록격파(Lane4): 아군탄(bullet)이 파괴가능 벽(hp>0)에 피해를 주고 hp≤0 이면 벽을
         // 파괴한다(관통 무시 = 밸런스, 첫 겹침에서 탄 소멸). 적탄·hp=0 벽(침공/뱀서류)은
         // isBreakableWall=false → 탄만 소멸(기존 거동·해시 완전 불변). 파괴된 벽은 **의도적으로
