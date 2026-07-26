@@ -17,7 +17,12 @@ import {
   investLineageBranch,
   buildGuardianPlacements,
   activeGuardians,
+  canRetireActiveShip,
+  retireGate,
+  RETIRE_REQUIRED_LEVEL,
 } from '../src/save/guardianLifecycle.js';
+import { retireAtCap } from './support/retireAtCap.js';
+import { LEVEL_CAP } from '../data/waves.js';
 import { RETIRE_LINEAGE_GRANT, guardianBonusBp } from '../data/lineage.js';
 import { GUARDIAN_TITAN, GUARDIAN_INTERCEPTOR, PERFORMANCE_FLOOR, dismissPoints } from '../data/guardian.js';
 import type { Item } from '../src/items/types.js';
@@ -39,12 +44,68 @@ function profileWithGear(): Profile {
   return p;
 }
 
+// ---------------------------------------------------------------------------
+// 만렙 게이트 — 퇴역은 활성 기체가 만렙일 때만 열린다.
+//
+// 이 저장소의 반복 결함이 "UI 게이트만 있고 모델에는 없다" 이므로, 화면을 거치지 않는 모델
+// 호출(하네스·치트·후속 코드)에서도 막히는지를 여기서 못박는다. 그리고 `retireActiveShip` 은
+// 수호 스냅샷·계보 지급·장착 비우기·신규 기체 push 를 한 덩어리로 하므로, 거부가 **부분
+// 변형조차 남기지 않는지**(프로필 전후 스냅샷 동일)까지 본다.
+// ---------------------------------------------------------------------------
+describe('퇴역 만렙 게이트', () => {
+  it('필요 레벨은 LEVEL_CAP 정본을 그대로 쓴다(만렙 상수 이중화 금지)', () => {
+    expect(RETIRE_REQUIRED_LEVEL).toBe(LEVEL_CAP);
+  });
+
+  it('만렙 미만이면 거부하고 프로필을 **전혀** 변형하지 않는다', () => {
+    for (const level of [1, 2, 50, LEVEL_CAP - 1]) {
+      const p = profileWithGear();
+      activeShip(p).level = level;
+      const before = JSON.stringify(p);
+
+      expect(canRetireActiveShip(p)).toBe(false);
+      expect(retireActiveShip(p, GUARDIAN_TITAN, 3)).toBeNull();
+
+      // 부분 변형 금지: 계보 지급·수호 push·장착 비우기·신규 기체 push 중 무엇도 남으면 안 된다.
+      expect(JSON.stringify(p), `level ${level}`).toBe(before);
+    }
+  });
+
+  it('게이트 결과는 왜 막혔는지(현재/필요 레벨)를 담는다', () => {
+    const p = profileWithGear();
+    activeShip(p).level = 12;
+    expect(retireGate(p)).toEqual({ ok: false, level: 12, required: LEVEL_CAP });
+    activeShip(p).level = LEVEL_CAP;
+    expect(retireGate(p)).toEqual({ ok: true, level: LEVEL_CAP, required: LEVEL_CAP });
+  });
+
+  it('만렙이면 기존대로 퇴역이 성립한다(게이트가 정상 경로를 막지 않는다)', () => {
+    const p = profileWithGear();
+    activeShip(p).level = LEVEL_CAP;
+    expect(canRetireActiveShip(p)).toBe(true);
+    const r = retireActiveShip(p, GUARDIAN_TITAN, 2);
+    expect(r).not.toBeNull();
+    expect(r!.granted).toBe(RETIRE_LINEAGE_GRANT);
+    expect(p.guardians).toHaveLength(1);
+    expect(r!.ship.typeId).toBe(2);
+    // 새 세대는 level 1 이라 곧바로 다시 퇴역할 수 없다(연속 퇴역 차단).
+    expect(canRetireActiveShip(p)).toBe(false);
+    expect(retireActiveShip(p, GUARDIAN_TITAN, 0)).toBeNull();
+  });
+
+  it('만렙 초과 레벨도 통과한다(경계는 >= 다)', () => {
+    const p = profileWithGear();
+    activeShip(p).level = LEVEL_CAP + 5;
+    expect(canRetireActiveShip(p)).toBe(true);
+  });
+});
+
 describe('퇴역 — 수호 기체 생성 + 계보 지급 (AC1)', () => {
   it('퇴역하면 수호 기체가 생기고 계보 포인트가 지급된다', () => {
     const p = profileWithGear();
     const score = retirementCombatScore(p);
     expect(score).toBeGreaterThan(0);
-    const r = retireActiveShip(p, GUARDIAN_TITAN);
+    const r = retireAtCap(p, GUARDIAN_TITAN);
     expect(r.granted).toBe(RETIRE_LINEAGE_GRANT);
     expect(p.guardians.length).toBe(1);
     expect(p.guardians[0]!.combatScore).toBe(score);
@@ -62,7 +123,7 @@ describe('퇴역 — 수호 기체 생성 + 계보 지급 (AC1)', () => {
     const armorItem = retiring.equipped.armor!;
     const investSnapshot = retiring.skillInvest.slice();
     const stashBefore = p.stash.length;
-    const r = retireActiveShip(p, GUARDIAN_INTERCEPTOR);
+    const r = retireAtCap(p, GUARDIAN_INTERCEPTOR);
     // 장비 잠김: stash 로 반환되지 않고 수호기에 봉인된다(구 ADR-0007 stash+2 를 뒤집음).
     expect(p.stash.length).toBe(stashBefore);
     // ⚠️ M8: 퇴역이 기체를 **교체**하므로 활성 기체는 더 이상 퇴역한 그 기체가 아니다.
@@ -82,8 +143,8 @@ describe('퇴역 — 수호 기체 생성 + 계보 지급 (AC1)', () => {
   it('프리셋은 이동 AI 성향만 정한다: 같은 빌드면 파워 동일, 거동만 다르다 (ADR-0025)', () => {
     const titan = profileWithGear();
     const inter = profileWithGear();
-    retireActiveShip(titan, GUARDIAN_TITAN);
-    retireActiveShip(inter, GUARDIAN_INTERCEPTOR);
+    retireAtCap(titan, GUARDIAN_TITAN);
+    retireAtCap(inter, GUARDIAN_INTERCEPTOR);
     const ts = titan.guardians[0]!.snapshot;
     const is = inter.guardians[0]!.snapshot;
     // ADR-0025: 프리셋은 파워(hp·피해·발사간격)를 결정하지 않는다 — 실물 빌드가 결정하므로
@@ -112,7 +173,7 @@ describe('퇴역 — 세대 교체 (M8)', () => {
     const before = p.ships.length;
     const retiring = p.ships[p.activeShipIndex]!;
 
-    const r = retireActiveShip(p, GUARDIAN_TITAN, 0);
+    const r = retireAtCap(p, GUARDIAN_TITAN, 0);
 
     expect(p.ships.length).toBe(before + 1);
     expect(p.activeShipIndex).toBe(p.ships.length - 1);
@@ -126,7 +187,7 @@ describe('퇴역 — 세대 교체 (M8)', () => {
       const p = profileWithGear();
       p.skillPoints = 5;
       investSkill(p, 0); // 퇴역 전 기체에 투자를 남겨 둔다
-      const r = retireActiveShip(p, GUARDIAN_TITAN, t);
+      const r = retireAtCap(p, GUARDIAN_TITAN, t);
 
       expect(r.ship.typeId).toBe(t);
       expect(r.ship.level).toBe(1);
@@ -149,7 +210,7 @@ describe('퇴역 — 세대 교체 (M8)', () => {
     // 투자 깊이는 기체 벡터에서 읽어야 한다 — 계정 벡터를 읽으면 이 차이가 사라진다.
     expect(scoreInvested).toBeGreaterThan(scoreBare);
 
-    const r = retireActiveShip(invested, GUARDIAN_TITAN, 0);
+    const r = retireAtCap(invested, GUARDIAN_TITAN, 0);
     expect(invested.guardians.length).toBe(1);
     expect(invested.guardians[0]!).toBe(r.guardian);
     expect(r.guardian.combatScore).toBe(scoreInvested);
@@ -159,7 +220,7 @@ describe('퇴역 — 세대 교체 (M8)', () => {
   it('퇴역 후 연구소 투자는 새 기체에 쌓인다(별칭 재바인딩 누락 방지)', () => {
     const p = profileWithGear();
     const retiring = p.ships[p.activeShipIndex]!;
-    const r = retireActiveShip(p, GUARDIAN_TITAN, 0);
+    const r = retireAtCap(p, GUARDIAN_TITAN, 0);
     p.skillPoints = 3;
     investSkill(p, 0);
     expect(r.ship.skillInvest[0]).toBe(1);
@@ -171,13 +232,13 @@ describe('퇴역 — 세대 교체 (M8)', () => {
   it('범위 밖 nextTypeId 는 0(스트라이커)으로 clamp 된다', () => {
     for (const bad of [SHIP_TYPES.length, 999, -1, NaN]) {
       const p = profileWithGear();
-      expect(retireActiveShip(p, GUARDIAN_TITAN, bad).ship.typeId).toBe(0);
+      expect(retireAtCap(p, GUARDIAN_TITAN, bad).ship.typeId).toBe(0);
     }
   });
 
   it('퇴역 결과가 저장→로드 왕복을 견딘다(신규 기체·활성 인덱스 보존)', () => {
     const p = profileWithGear();
-    retireActiveShip(p, GUARDIAN_TITAN, 0);
+    retireAtCap(p, GUARDIAN_TITAN, 0);
     const back = migrate(JSON.parse(JSON.stringify(p)));
     expect(back.ships.length).toBe(p.ships.length);
     expect(back.activeShipIndex).toBe(p.activeShipIndex);
@@ -189,7 +250,7 @@ describe('퇴역 — 세대 교체 (M8)', () => {
 describe('소멸 — 상시 회수 + 계보 포인트 (AC3)', () => {
   it('소멸하면 전투력×성능 포인트를 회수하고 retired=true', () => {
     const p = profileWithGear();
-    retireActiveShip(p, GUARDIAN_TITAN);
+    retireAtCap(p, GUARDIAN_TITAN);
     const g = p.guardians[0]!;
     const expected = dismissPoints(g.combatScore, g.performanceCP);
     const before = p.lineage.available;
@@ -209,7 +270,7 @@ describe('소멸 — 상시 회수 + 계보 포인트 (AC3)', () => {
     const armorItem = retiring.equipped.armor!;
     const n = Object.keys(retiring.equipped).length; // 2 (main + armor)
     const stashBefore = p.stash.length;
-    const r = retireActiveShip(p, GUARDIAN_TITAN);
+    const r = retireAtCap(p, GUARDIAN_TITAN);
     // 퇴역 직후: 장비는 수호기에 잠기고 stash 는 그대로.
     expect(p.stash.length).toBe(stashBefore);
     expect(Object.keys(r.guardian.build!.equipped).length).toBe(n);
@@ -222,7 +283,7 @@ describe('소멸 — 상시 회수 + 계보 포인트 (AC3)', () => {
 
   it('풍화된(성능 낮은) 수호는 회수 포인트가 적다', () => {
     const p = profileWithGear();
-    retireActiveShip(p, GUARDIAN_TITAN);
+    retireAtCap(p, GUARDIAN_TITAN);
     p.guardians[0]!.performanceCP = PERFORMANCE_FLOOR; // 풍화 바닥
     const g = p.guardians[0]!;
     const r = dismissGuardianRecord(p, g.id);
@@ -231,8 +292,8 @@ describe('소멸 — 상시 회수 + 계보 포인트 (AC3)', () => {
 
   it('일괄 소멸: 활성 수호를 모두 소멸하고 포인트 합산 회수', () => {
     const p = profileWithGear();
-    retireActiveShip(p, GUARDIAN_TITAN);
-    retireActiveShip(p, GUARDIAN_INTERCEPTOR);
+    retireAtCap(p, GUARDIAN_TITAN);
+    retireAtCap(p, GUARDIAN_INTERCEPTOR);
     expect(activeGuardians(p).length).toBe(2);
     const r = bulkDismissGuardians(p);
     expect(r.count).toBe(2);
@@ -246,7 +307,7 @@ describe('계보 투자 (AC4)', () => {
     const p = profileWithGear();
     // 넉넉히 지급되도록 여러 번 퇴역·소멸(포인트 축적).
     for (let i = 0; i < 5; i++) {
-      retireActiveShip(p, GUARDIAN_TITAN);
+      retireAtCap(p, GUARDIAN_TITAN);
       bulkDismissGuardians(p);
     }
     const bonusBefore = guardianBonusBp(p.lineage);
@@ -263,8 +324,8 @@ describe('계보 투자 (AC4)', () => {
 describe('방어 배치 수호 (갈림길①A)', () => {
   it('활성 수호로 방어 배치를 만든다(최대 2기, 스냅샷+성능+계보 보너스 포함)', () => {
     const p = profileWithGear();
-    retireActiveShip(p, GUARDIAN_TITAN);
-    retireActiveShip(p, GUARDIAN_INTERCEPTOR);
+    retireAtCap(p, GUARDIAN_TITAN);
+    retireAtCap(p, GUARDIAN_INTERCEPTOR);
     investLineageBranch(p, 'guardian'); // 실패해도 무방(포인트 지급됨)
     const placements = buildGuardianPlacements(p, [{ x: 100, y: 0 }, { x: 100, y: 200 }]);
     expect(placements.length).toBe(2);
@@ -275,7 +336,7 @@ describe('방어 배치 수호 (갈림길①A)', () => {
 
   it('소멸된 수호는 방어 배치에서 제외된다', () => {
     const p = profileWithGear();
-    retireActiveShip(p, GUARDIAN_TITAN);
+    retireAtCap(p, GUARDIAN_TITAN);
     dismissGuardianRecord(p, p.guardians[0]!.id);
     const placements = buildGuardianPlacements(p, [{ x: 0, y: 0 }]);
     expect(placements.length).toBe(0);
@@ -285,7 +346,7 @@ describe('방어 배치 수호 (갈림길①A)', () => {
 describe('세이브 라운드트립 — 계보·수호 정규화', () => {
   it('저장→로드가 계보·수호를 보존하고 손상 세이브는 안전 복구', () => {
     const p = profileWithGear();
-    retireActiveShip(p, GUARDIAN_TITAN);
+    retireAtCap(p, GUARDIAN_TITAN);
     investLineageBranch(p, 'guardian');
     const restored = migrate(JSON.parse(JSON.stringify(p)));
     expect(restored.guardians.length).toBe(1);

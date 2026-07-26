@@ -137,6 +137,34 @@ export function gridPositions(
   return rectGridPositions(n, cols, cell, cell, gap, gap);
 }
 
+/** {@link fitGridCols} 결과: 열 수와 **넓혀진 가로 간격**. 셀 크기는 건드리지 않는다. */
+export interface GridFit {
+  readonly cols: number;
+  /** 가로 간격(px). 남는 폭을 흡수해 그리드 오른쪽 끝이 콘텐츠 폭에 거의 맞는다. */
+  readonly gapX: number;
+  /** 실제 그리드가 차지하는 폭(cols·cell + (cols-1)·gapX). 콘텐츠 폭 이하가 보장된다. */
+  readonly width: number;
+}
+
+/**
+ * 콘텐츠 폭에 맞춰 열 수를 정하고, **남는 폭을 열 간격에 나눠 넣는다**(순수 — 테스트 대상).
+ *
+ * 왜 필요한가: 인벤토리 그리드가 `cols = 8` 하드코딩이라 폭 832px 패널에 584px 만 그려져
+ * **오른쪽 248px 이 통째로 빈 채** 남아 있었다(용량 표기 48칸과도 안 맞아 보였다). 열 수를 폭에서
+ * 유도하면 그 여백이 사라진다. 그런데 열 수만 늘리면 이번엔 나눗셈 나머지(최대 cell+gap-1 px)가
+ * 오른쪽에 남으므로, 나머지를 간격에 균등 분배해 오른쪽 끝을 콘텐츠 폭에 붙인다.
+ *
+ * 셀 크기를 키우지 않는 이유: 셀을 키우면 **세로로도** 커져 패널 안에 들어가는 행 수가 줄고
+ * (격납고 하단 패널은 3행이 딱 맞다) 등급 테두리·아이콘 비율까지 같이 흔들린다. 간격만 늘리면
+ * 세로 레이아웃은 완전히 불변이다.
+ */
+export function fitGridCols(contentW: number, cell: number, minGap: number): GridFit {
+  const cols = Math.max(1, Math.floor((contentW + minGap) / (cell + minGap)));
+  if (cols <= 1) return { cols: 1, gapX: minGap, width: Math.min(cell, contentW) };
+  const gapX = Math.max(minGap, Math.floor((contentW - cols * cell) / (cols - 1)));
+  return { cols, gapX, width: cols * cell + (cols - 1) * gapX };
+}
+
 export interface SlotCellOptions {
   size: number;
   item?: SlotCellItem | undefined;

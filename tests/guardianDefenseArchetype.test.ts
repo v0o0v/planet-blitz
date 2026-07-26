@@ -38,7 +38,7 @@ import {
   WEAPON_MISSILE,
   WEAPON_BEAM,
 } from '../src/items/loadout.js';
-import { retireActiveShip } from '../src/save/guardianLifecycle.js';
+import { retireAtCap } from './support/retireAtCap.js';
 import { defaultProfile } from '../src/save/profile.js';
 import type { Item } from '../src/items/types.js';
 
@@ -109,17 +109,17 @@ describe('retireActiveShip — 실물 빌드 무기 타입이 방어 스냅샷�
   it('레일건 장착으로 퇴역하면 수호 스냅샷 weaponType 이 레일건이다', () => {
     const p = defaultProfile();
     p.ships[p.activeShipIndex]!.equipped = { main: mainWeaponItem(WEAPON_RAILGUN) };
-    retireActiveShip(p, GUARDIAN_TITAN);
+    retireAtCap(p, GUARDIAN_TITAN);
     expect(p.guardians[0]!.snapshot.weaponType).toBe(WEAPON_RAILGUN);
   });
 
   it('빔 장착 vs 벌컨 장착은 서로 다른 방어 발사체 서술자를 낳는다', () => {
     const beam = defaultProfile();
     beam.ships[beam.activeShipIndex]!.equipped = { main: mainWeaponItem(WEAPON_BEAM) };
-    retireActiveShip(beam, GUARDIAN_TITAN);
+    retireAtCap(beam, GUARDIAN_TITAN);
     const vulcan = defaultProfile();
     vulcan.ships[vulcan.activeShipIndex]!.equipped = { main: mainWeaponItem(WEAPON_VULCAN) };
-    retireActiveShip(vulcan, GUARDIAN_TITAN);
+    retireAtCap(vulcan, GUARDIAN_TITAN);
     expect(beam.guardians[0]!.snapshot.weaponType).toBe(WEAPON_BEAM);
     expect(vulcan.guardians[0]!.snapshot.weaponType).toBe(WEAPON_VULCAN);
   });

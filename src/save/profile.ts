@@ -49,8 +49,17 @@ export const INVENTORY_CAP = 48;
 export const STASH_BASE = 32;
 /** Extra stash slots granted per credit-bought expansion. */
 export const STASH_PER_EXPANSION = 32;
-/** Max stash expansions (2 → 32 + 64 = 96 total, plan D1 / AC6). */
-export const MAX_STASH_EXPANSIONS = 2;
+/**
+ * Max stash expansions (4 → 32 + 128 = 160 total).
+ *
+ * 구 값은 2(=96칸)였다. `stashExpansionCost` 를 제곱 곡선(1000/4000/9000/16000)으로 세우면서
+ * 회차를 4로 늘렸다 — 회차가 2뿐이면 "점점 비싸지는 곡선"이 사실상 두 점밖에 없어 곡선이
+ * 무의미하고, 후반 크레딧 싱크로도 약하다. 상한은 세 곳에서 일관되게 강제된다:
+ *   ① 정규화 — `stashCapacity`/`deserialize` 의 `clampInt(.., 0, MAX_STASH_EXPANSIONS, 0)`
+ *   ② UI — 격납고/인벤토리 확장 버튼이 상한에서 `inv.act.expandMax` 로 비활성
+ *   ③ 소비 경로 — `expandStash()` 가 상한 도달 시 서버 왕복 전에 즉시 거부
+ */
+export const MAX_STASH_EXPANSIONS = 4;
 
 /** localStorage key the profile is serialized under. */
 const STORAGE_KEY = 'planet-blitz:profile';

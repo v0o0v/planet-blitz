@@ -45,7 +45,7 @@ import type { WorldConfig, InputFrame } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { defaultProfile, activeShip } from '../src/save/profile.js';
 import type { Profile } from '../src/save/profile.js';
-import { retireActiveShip } from '../src/save/guardianLifecycle.js';
+import { retireAtCap } from './support/retireAtCap.js';
 
 /** 타입 1~6 (스트라이커는 L1 이 동결을 지킨다 — 여기서는 신규분만 본다). */
 const NEW_TYPES: readonly ShipTypeDef[] = SHIP_TYPES.slice(1);
@@ -414,7 +414,7 @@ function runTicks(seed: number, config: WorldConfig, ticks: number): number[] {
 function profileWithType(typeId: number): Profile {
   const p = defaultProfile();
   if (typeId === 0) return p;
-  retireActiveShip(p, undefined, typeId);
+  retireAtCap(p, undefined, typeId);
   return p;
 }
 

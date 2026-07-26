@@ -13,6 +13,10 @@
  *    (`ui_btn_yellow.png`)로 올리고, 바 바닥을 가로지르는 금색 연결선을 **선택 탭 밑에서만
  *    끊는다**. 종이 폴더 탭과 같은 원리로, 색 대비가 아니라 "선이 끊긴다"는 기하가 선택을
  *    말하므로 색약·저채도 환경에서도 성립한다.
+ *    ⚠ 이 연결선은 **탭 바로 아래에 같은 폭 패널이 맞붙는 화면**(방어 사령부)에서만 뜻이
+ *    있다. 폭이 다르거나 사이가 떠 있으면 아무 데도 닿지 않는 노란 줄로 남으므로 그런
+ *    화면은 {@link TabBarOptions.connector} 를 `false` 로 끈다(기록 보관소). 연결선을 꺼도
+ *    선택 신호는 ② 의 가라앉힘(기하)이 그대로 진다 — 색 단독 신호로 퇴화하지 않는다.
  * ② **비선택 탭은 아래로 가라앉힌다**({@link TAB_SINK}). 높이를 줄이는 게 아니라 y 를 내리고
  *    바닥을 바 밖으로 흘려 보내 위쪽만 보이게 한다 — 판때기 텍스처를 세로로 눌러 늘리면
  *    나무결 비율이 깨진다(9-slice 캡이 좌우뿐이라 세로는 그냥 늘어난다).
@@ -111,6 +115,11 @@ export interface TabBarOptions {
   fontSize?: number;
   /** 비활성(잠금) 탭 인덱스 — 클릭 불가·흐림. */
   disabled?: readonly number[];
+  /**
+   * 바 바닥 금색 연결선을 그릴지(기본 `true` — 기존 호출부 동작 불변).
+   * 탭 아래에 같은 폭 패널이 **맞붙지 않는** 화면은 `false`(모듈 주석 ①).
+   */
+  connector?: boolean;
 }
 
 /**
@@ -125,11 +134,13 @@ export function makeTabBar(opts: TabBarOptions): Container {
   });
 
   // ① 바 바닥 금색 연결선 — 선택 탭 밑에서만 끊긴다(모듈 주석 ①).
-  const line = new Graphics();
-  for (const span of connectorSpans(rects, opts.width)) {
-    line.rect(span.x, TAB_H - TAB_CONNECTOR_H, span.w, TAB_CONNECTOR_H).fill({ color: COLOR.connector });
+  if (opts.connector !== false) {
+    const line = new Graphics();
+    for (const span of connectorSpans(rects, opts.width)) {
+      line.rect(span.x, TAB_H - TAB_CONNECTOR_H, span.w, TAB_CONNECTOR_H).fill({ color: COLOR.connector });
+    }
+    root.addChild(line);
   }
-  root.addChild(line);
 
   rects.forEach((r, i) => {
     const locked = opts.disabled?.includes(i) === true;

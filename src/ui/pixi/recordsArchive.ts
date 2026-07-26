@@ -20,7 +20,7 @@ import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, shipPortraitName, type UiTextures } from './uiTextures.js';
 import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { makeBanner, makeIconButton } from './titleBar.js';
-import { makeTabBar } from './tabs.js';
+import { makeTabBar, TAB_H } from './tabs.js';
 import { makeScrollArea } from './scrollArea.js';
 import { listRowBg, attachRowClick } from './listRow.js';
 import { PixiButton } from './button.js';
@@ -41,7 +41,23 @@ const BANNER_H = 72;
 const TAB_W = 900;
 const CONTENT_W = 1400;
 const CONTENT_H = 760;
-const CONTENT_Y = 210;
+
+/**
+ * 탭 바 상단 y. 위 크롬(배너 12..84 · 부제 96..~118)과 겹치지 않는 자리.
+ */
+const TAB_Y = 140;
+/**
+ * 탭 바 ↔ 아래 보드 패널 사이 세로 여백.
+ *
+ * 이 화면의 탭은 **폴더 탭이 아니다**. 탭 바 폭({@link TAB_W} 900)과 보드 폭
+ * ({@link CONTENT_W} 1400)이 다르고 사이가 떠 있어, `makeTabBar` 의 금색 연결선은
+ * 아무 패널에도 닿지 않는 노란 줄로 남았다(그래서 `connector: false`). 연결선을 끈 이상
+ * 붙여 둘 이유도 없으므로, 12px 로 어정쩡하게 붙어 있던 것을 넉넉히 띄워 "탭 줄"과
+ * "내용 보드"를 서로 다른 밴드로 읽히게 한다.
+ */
+const TAB_PANEL_GAP = 36;
+/** 보드 패널 상단 y = 탭 바 바닥 + 여백 (140 + 58 + 36 = 234, 바닥 234+760=994 < 1080). */
+const CONTENT_Y = TAB_Y + TAB_H + TAB_PANEL_GAP;
 const ROW_H = 108;
 
 export interface RecordsArchiveCallbacks {
@@ -157,8 +173,10 @@ export class RecordsArchiveScreen {
       onSelect: (i) => this.setTab(i),
       activeTexture: this.ui['ui_btn_yellow.png'],
       idleTexture: this.ui['ui_btn_wood.png'],
+      // 아래 보드와 폭도 다르고 떨어져 있다 — 연결선을 그리면 닿는 데 없는 노란 줄이 된다.
+      connector: false,
     });
-    tabs.position.set((DESIGN_WIDTH - TAB_W) / 2, 140);
+    tabs.position.set((DESIGN_WIDTH - TAB_W) / 2, TAB_Y);
     this.root.addChild(tabs);
 
     const panel = new Container();

@@ -228,17 +228,34 @@ export async function grantCurrencyToServer(
   }
 }
 
-/** {@link spendCurrencyOnServer} 결과. unconfigured=미설정(로컬 폴백), ok=차감 확정, rejected=잔액부족/오프라인(미적용). */
+/**
+ * 거부 사유(ADR-0027 유지 + 사유 구분).
+ *  - `insufficient`: 서버 원장이 **잔액 부족**으로 거부(`ok=false`). 서버가 낸 잔액을 함께 싣는다 —
+ *    로컬 미러(치트·오프라인 가산으로 부풀 수 있다)와 어긋난 경우를 호출부가 그대로 보여줄 수 있다.
+ *  - `unavailable`: 애초에 **판정을 받지 못했다**(오프라인·네트워크 오류·RPC 예외). 잔액과 무관.
+ */
+export type SpendRejectReason = 'insufficient' | 'unavailable';
+
+/**
+ * {@link spendCurrencyOnServer} 결과. unconfigured=미설정(로컬 폴백), ok=차감 확정,
+ * rejected=미적용(사유는 {@link SpendRejectReason}).
+ *
+ * ⚠️ `rejected` 를 한 덩어리로 두면 호출부가 전부 "재화 부족"으로 뭉갠다 — 실제로 오프라인이거나
+ * 서버 원장이 로컬 미러와 어긋난 것뿐인데 유저에게는 거짓말이 나간다(하네스 창고 확장 오탐).
+ */
 export type SpendOutcome =
   | { status: 'unconfigured' }
   | { status: 'ok'; creditsLeft: number; mineralsLeft: number }
-  | { status: 'rejected' };
+  | { status: 'rejected'; reason: 'insufficient'; creditsLeft: number; mineralsLeft: number }
+  | { status: 'rejected'; reason: 'unavailable' };
 
 /**
  * 재화 차감(리스펙·스태시 확장·어픽스 리롤)을 서버 `spend_currency` 로 확정한다. 서버 권위:
  *  - 미설정(오프라인) → `unconfigured` → 호출부가 기존 로컬 차감으로 폴백(단일플레이 보존).
  *  - 온라인 성공(ok) → `ok` + 갱신 잔액 → 호출부가 효과 적용 + 미러를 서버값으로 세팅.
- *  - 잔액 부족·오프라인/오류 → `rejected` → 호출부는 효과를 적용하지 않는다(위조 차단).
+ *  - 잔액 부족(`ok=false`) → `rejected/insufficient` + 서버 잔액.
+ *  - 오프라인/전송 오류/예외 → `rejected/unavailable`.
+ * 두 `rejected` 모두 호출부는 효과를 적용하지 않는다(위조 차단 — 서버 권위 불변).
  * 절대 throw 하지 않음.
  */
 export async function spendCurrencyOnServer(
@@ -252,9 +269,16 @@ export async function spendCurrencyOnServer(
   try {
     const res = await gateway.spendCurrency(credits, minerals, reason);
     if (res.ok) return { status: 'ok', creditsLeft: res.credits_left, mineralsLeft: res.minerals_left };
-    return { status: 'rejected' };
+    // 서버가 판정해서 거부했다 = 원장 잔액 부족. 서버 잔액을 실어 호출부가 정확히 말하게 한다.
+    return {
+      status: 'rejected',
+      reason: 'insufficient',
+      creditsLeft: res.credits_left,
+      mineralsLeft: res.minerals_left,
+    };
   } catch {
-    return { status: 'rejected' };
+    // 판정 자체를 못 받았다(오프라인·네트워크·RPC 예외) — 잔액 부족이라고 단정하면 안 된다.
+    return { status: 'rejected', reason: 'unavailable' };
   }
 }
 

@@ -38,6 +38,7 @@ import { shipShowcaseName, LEGACY_SHOWCASE, UI_ASSET_NAMES, SHIP_SHOWCASE_NAMES 
 import { SHIP_TYPES, selectableShipTypes, shipSkillNodeCount } from '../data/ships/index.js';
 import { clampScroll } from '../src/ui/pixi/scrollArea.js';
 import { defaultProfile, activeShip, type KeyValueStore, type Profile } from '../src/save/profile.js';
+import { LEVEL_CAP } from '../data/waves.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
 import { hasSignature } from '../src/sim/shipSignature.js';
@@ -58,6 +59,16 @@ function memStore(): KeyValueStore & { data: Map<string, string>; writes: number
     },
   };
   return store;
+}
+
+/**
+ * 만렙 프로필. 확정(퇴역+세대 교체)에는 **만렙 게이트**가 걸려 있어, 게이트가
+ * 관심사가 아닌 케이스는 전부 만렙에서 출발해야 한다 — 게이트 자체는 아래 전용 describe 가 본다.
+ */
+function maxedProfile(): Profile {
+  const p = defaultProfile();
+  activeShip(p).level = LEVEL_CAP;
+  return p;
 }
 
 describe('로스터는 전체 개방이다 (ADR-0019 — 해금 게이트 없음)', () => {
@@ -182,8 +193,7 @@ describe('쇼케이스 아트 이름 (§10-7 의 쇼케이스 판)', () => {
 describe('확정은 실제로 저장된다 (§10-5)', () => {
   it('ships 증가 · activeShipIndex 이동 · 새 기체가 선택 타입 · store 에 write', () => {
     const store = memStore();
-    const profile = defaultProfile();
-    activeShip(profile).level = 7;
+    const profile = maxedProfile();
     const before = profile.ships.length;
     const writesBefore = store.writes;
 
@@ -208,7 +218,7 @@ describe('확정은 실제로 저장된다 (§10-5)', () => {
 
   it('선택 직후 다시 로드해도 그 타입이 살아 있다(왕복 무손실)', () => {
     const store = memStore();
-    const profile = defaultProfile();
+    const profile = maxedProfile();
     applyChampionChoice(profile, 1, store);
     // loadProfile 은 기본 스토어를 쓰므로 migrate 를 직접 태워 왕복을 본다.
     const raw = store.getItem('planet-blitz:profile');
@@ -220,7 +230,7 @@ describe('확정은 실제로 저장된다 (§10-5)', () => {
 
   it('손상 typeId 는 스트라이커로 되돌린다(clamp 가 아니라 0)', () => {
     const store = memStore();
-    const profile = defaultProfile();
+    const profile = maxedProfile();
     expect(applyChampionChoice(profile, 999, store)).toBe(0);
     expect(activeShip(profile).typeId).toBe(0);
   });
@@ -229,7 +239,7 @@ describe('확정은 실제로 저장된다 (§10-5)', () => {
     // W1 의 임시 장치였던 `Profile.skillInvest` 별칭은 M8-L7 이 삭제했다. 정본은 기체 벡터
     // 하나뿐이므로, 화면(연구소)이 `activeShip(profile).skillInvest` 를 읽는 한 갈릴 수 없다.
     const store = memStore();
-    const profile = defaultProfile();
+    const profile = maxedProfile();
     const old = activeShip(profile).skillInvest;
     applyChampionChoice(profile, 4, store);
     const next = activeShip(profile).skillInvest;
@@ -239,10 +249,32 @@ describe('확정은 실제로 저장된다 (§10-5)', () => {
   });
 });
 
+describe('확정은 만렙에서만 열린다', () => {
+  it('만렙 미만이면 저장도 변형도 없이 null 을 돌려준다', () => {
+    const store = memStore();
+    const profile = defaultProfile();
+    activeShip(profile).level = LEVEL_CAP - 1;
+    const before = JSON.stringify(profile);
+
+    expect(applyChampionChoice(profile, 2, store)).toBeNull();
+
+    // 화면이 저장을 무조건 부르면 "아무것도 안 바뀐 프로필" 이 덮어써져 거부가 성공처럼 보인다.
+    expect(store.writes).toBe(0);
+    expect(JSON.stringify(profile)).toBe(before);
+  });
+
+  it('만렙이면 그대로 통과한다', () => {
+    const store = memStore();
+    const profile = maxedProfile();
+    expect(applyChampionChoice(profile, 3, store)).toBe(3);
+    expect(store.writes).toBeGreaterThan(0);
+  });
+});
+
 describe('정규 경로 통합 — 선택 → buildRunConfig → createWorld → stepWorld (§10-2)', () => {
   it('선택한 타입이 WorldConfig.shipType 과 시그니처 비트까지 실제로 도달한다', () => {
     const store = memStore();
-    const profile = defaultProfile();
+    const profile = maxedProfile();
     applyChampionChoice(profile, 1, store); // 브루저
 
     const cfg = buildRunConfig(profile, { planet: 0, stage: 1 });
@@ -261,7 +293,7 @@ describe('정규 경로 통합 — 선택 → buildRunConfig → createWorld →
 
   it('스트라이커는 시그니처 비트를 하나도 세우지 않는다(회귀 탐지기 보존)', () => {
     const store = memStore();
-    const profile = defaultProfile();
+    const profile = maxedProfile();
     applyChampionChoice(profile, 0, store);
     const cfg = buildRunConfig(profile, { planet: 0, stage: 1 });
     expect(cfg.shipType).toBe(0);
@@ -272,9 +304,9 @@ describe('정규 경로 통합 — 선택 → buildRunConfig → createWorld →
   });
 
   it('타입이 다르면 같은 seed·입력에서도 관측 결과가 갈린다(파생이 죽어 있지 않다)', () => {
-    const a = defaultProfile();
+    const a = maxedProfile();
     applyChampionChoice(a, 0, memStore());
-    const b = defaultProfile();
+    const b = maxedProfile();
     applyChampionChoice(b, 1, memStore());
 
     const wa = createWorld(999, buildRunConfig(a, { planet: 0, stage: 1 }));
