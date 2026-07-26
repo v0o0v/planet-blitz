@@ -12,6 +12,7 @@ import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } from '../src/sim/w
 import { autopilotInput } from '../src/sim/autopilot.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { SEGMENTS } from '../data/waves.js';
+import { PVE_DENSITY_MULT } from '../src/sim/waves.js';
 
 const BOSS_INDEX = SEGMENTS.length - 1;
 /** 내구(글래스캐논 방지) — 게이트/스폰 관찰이 사망으로 중단되지 않게. */
@@ -71,6 +72,26 @@ describe('급행 소환 (ADR-0011)', () => {
     expect(late).toBeGreaterThan(early);
     expect(late).toBeGreaterThan(SEGMENTS[0]!.maxEnemies);
   });
+
+  it('밀도 배율이 화면 위 적 수에 실제로 반영된다 (사용자 요청 2026-07-26)', () => {
+    // 배율은 상한·유입 두 축에 걸려 있는데(waves.ts `PVE_DENSITY_MULT` 주석), 한쪽만 걸리면
+    // 체감이 거의 안 바뀌므로 "상수는 1.5 인데 화면은 그대로" 라는 조용한 회귀가 가능하다.
+    // 그래서 상수를 되읽는 대신 **실제 누적 적 수**를 상한 파생값과 대조한다.
+    expect(PVE_DENSITY_MULT).toBeGreaterThan(1); // 배율이 켜져 있다(0 배율 회귀 방지).
+    const state = createWorld(3, DURABLE);
+    state.weapon.damage = 0; // 아무도 안 죽으니 적 수가 유효 상한까지 단조 증가한다.
+    let peak = 0;
+    for (let t = 0; t < 60 * 30; t++) {
+      stepWorld(state, emptyInput());
+      const n = countEnemies(state);
+      if (n > peak) peak = n;
+    }
+    // 램프 없는 세그먼트0 원본 상한(12)에 배율만 걸어도 18 이다. 배율이 유입·상한 양쪽에
+    // 실제로 걸렸다면 램프까지 얹혀 그보다 확실히 많이 쌓인다.
+    expect(peak).toBeGreaterThan(Math.round(SEGMENTS[0]!.maxEnemies * PVE_DENSITY_MULT));
+    // 배율이 1 이었을 때의 실측 상한(램프 포함 ~28)을 넘는다 — 배율이 없으면 통과할 수 없다.
+    expect(peak).toBeGreaterThan(28);
+  });
 });
 
 describe('보스전 몹 등장 (ADR-0011)', () => {
@@ -101,7 +122,15 @@ describe('오토파일럿 완주 (ADR-0011, par 창발)', () => {
     // (무제한 조준 폐지)로 0x50c1a1 → 0x50c1a2 로 갈았다 — 무장갑 오토파일럿의 완주는
     // 원래 시드마다 갈리는 값이고(kargon-t0 P0 클리어율 33~63%), 표본 12시드 중 7시드가
     // 여전히 40~70초에 완주하므로 단언이 약해진 것이 아니라 증인만 바뀐 것이다.
-    const state = createWorld(0x50c1a2, { ...DEFAULT_CONFIG, planet: 0, stage: 1 });
+    //
+    // 2026-07-26 에 0x50c1a2 → **0x50c1a3** 으로 다시 갈았다. 원인은 같은 브랜치의 두 변경이다:
+    // PvE 밀도 배율 1.5(`PVE_DENSITY_MULT`)와 플레이어탄 선분 판정(`sweptCircleOverlap`).
+    // 재표본(0x50c1a0..0x50c1c7 연속 40시드): 완주 **8/40**, 그리고 **완주한 8시드 전부가
+    // 44~59초** 로 이 테스트의 40~150초 밴드 안에 들어온다. 즉 "짧고 강렬한 루프" 라는 계약은
+    // 그대로고 시드 운만 빡빡해졌다. 클리어율이 기록된 33~63% 보다 낮아진 것은 밀도 상승의
+    // 직접 결과이며, 고단계·저투자 빌드 생존성 보정과 함께 출시 직전 밸런스 패스에서 다룬다
+    // (tests/shipHashBaseline.test.ts 의 `MIN_LEVELUPS` 주석에 같은 신호가 기록돼 있다).
+    const state = createWorld(0x50c1a3, { ...DEFAULT_CONFIG, planet: 0, stage: 1 });
     let ticks = 0;
     for (let t = 0; t < 60 * 300; t++) {
       stepWorld(state, autopilotInput(state));

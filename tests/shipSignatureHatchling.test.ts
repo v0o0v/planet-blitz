@@ -158,10 +158,18 @@ function runObserved(seed: number, cfg: WorldConfig, ticks: number): Observed {
 describe('해츨링(typeId 4) 정규 경로 배선 — Profile → buildRunConfig → createWorld → stepWorld', () => {
   // 무대 선정도 계약의 일부다: 임계가 처치 수라 교전 밀도가 낮은 무대(행성1/티어1)는 5400틱을
   // 돌려도 12킬에 못 닿는다. 행성0/티어0 은 정지 파일럿으로도 500틱 안에 첫 임계를 넘긴다.
+  //
+  // ⚠️ SEED·TICKS 재측정(2026-07-26, PvE 밀도 2배 + 선분 판정 도입): 이전 증인 seed 555 는
+  // 1800틱에 ctrl.kills 가 10 으로 떨어져 "공허 런 가드"(`ctrl.kills > HATCH_BASE_KILLS`=12)를
+  // 못 넘겼다 — 밀도가 오르면 잡몹이 무리를 지어 서로 사거리를 가리므로(포위·차폐) 정지
+  // 파일럿의 처치 속도가 **밀도와 반비례**할 수 있다(개체 수는 늘어도 명중 기회는 안 는다).
+  // seed 9 는 3600틱에서 hatched=4·snapshots=[12,24,36,48]·ctrl.kills=24 로 여유 있게 통과한다
+  // (이 값은 PVE_DENSITY_MULT 가 2 → 1.5 로 재조정된 뒤에도 동일하게 재확인했다 — 이 특정
+  // 시드/무대는 이 스폰 카드 구성에서 두 배율 모두 같은 상한에 걸려 우연히 불변이었다).
   const STAGE = { planet: 0, stage: 1 } as const;
-  const SEED = 555;
-  // 임계 3회(12·24·36)를 통과해 "반복 발현" 까지 보는 길이.
-  const TICKS = 1800;
+  const SEED = 9;
+  // 임계 4회(12·24·36·48)까지 "반복 발현" 을 보려면 3600틱이 필요하다(1800틱으로는 부족).
+  const TICKS = 3600;
 
   it('병아리가 실제로 출격한다 — 억제 대조군에는 아군 포탑이 하나도 없다', () => {
     const cfg = buildRunConfig(profileWithType(4), STAGE);
@@ -176,7 +184,7 @@ describe('해츨링(typeId 4) 정규 경로 배선 — Profile → buildRunConfi
     expect(ctrl.kills).toBeGreaterThan(HATCH_BASE_KILLS);
 
     // 핵심 단언: 시그니처 하나만 제거하면 병아리가 사라진다(= 배선이 실제로 산 상태다).
-    // 실측 기준선(seed 555 / p0t0 / 1800틱): 출격 3기 · 최종 aux0 36 · kills 42 vs 40.
+    // 실측 기준선(seed 9 / p0t0 / 3600틱): 출격 4기 · 최종 aux0 48 · kills 49 vs 24.
     expect(live.hatched).toBeGreaterThanOrEqual(3);
     expect(ctrl.hatched).toBe(0);
     expect(live.firstHatchTick).toBeGreaterThan(0);

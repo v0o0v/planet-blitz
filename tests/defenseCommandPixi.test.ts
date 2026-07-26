@@ -53,6 +53,7 @@ import {
   testInvadeAction,
   TABS_Y,
   TOP_CHROME_BOTTOM,
+  BOARD_TOP,
   type DefenseSlotRef,
 } from '../src/ui/pixi/defenseCommand.js';
 import { defaultProfile } from '../src/save/profile.js';
@@ -160,6 +161,16 @@ describe('방어 사령부 상단 크롬 밴드(겹침 불가)', () => {
     expect(TABS_Y - TOP_CHROME_BOTTOM).toBeGreaterThanOrEqual(20);
     // 톱니 상자와의 교차 = 0. 가로는 겹치지만(탭 바 x 36.., 톱니 x 24..100) 세로가 끊긴다.
     expect(Math.max(0, Math.min(GEAR.bottom, TABS_Y + TAB_H) - Math.max(GEAR.top, TABS_Y))).toBe(0);
+  });
+
+  it('보드 패널이 탭 바에 딱 붙지 않는다 — 사이에 여백이 있다', () => {
+    // 예전에는 `BOARD_TOP = TABS_Y + TAB_H` 라 보드 나무 프레임이 탭 버튼 바닥에 **0px 로**
+    // 붙어, 활성 탭이 테두리에 얹힌 것처럼 보였다(사용자 신고: "위 버튼과 밑에 내용이 너무
+    // 붙어 있다"). 크롬↔탭 경계와 같은 방식으로 부등식으로 막는다.
+    expect(BOARD_TOP).toBeGreaterThan(TABS_Y + TAB_H);
+    expect(BOARD_TOP - (TABS_Y + TAB_H)).toBeGreaterThanOrEqual(12);
+    // 다만 탭과 보드는 한 묶음이라 크롬↔탭 간격(28)만큼 벌어지면 끊겨 보인다 — 상한도 둔다.
+    expect(BOARD_TOP - (TABS_Y + TAB_H)).toBeLessThan(TABS_Y - TOP_CHROME_BOTTOM);
   });
 });
 

@@ -565,7 +565,20 @@ const TOP_CHROME_GAP = 28;
 
 /** 탭 바 상단 = 크롬 밴드 바닥 + 여백 (96 + 28 = 124). 크롬과 세로로 겹칠 수 없다. */
 export const TABS_Y = TOP_CHROME_BOTTOM + TOP_CHROME_GAP;
-const BOARD_TOP = TABS_Y + TAB_H;
+/**
+ * 탭 바 바닥과 보드 패널 사이 숨 쉴 틈(px).
+ *
+ * 예전에는 `BOARD_TOP = TABS_Y + TAB_H` 라 보드 나무 프레임이 탭 버튼 바닥에 **0px 로 붙어**
+ * 있었다 — 활성 탭이 보드 테두리에 얹힌 것처럼 보이고, 탭과 그 아래 내용의 소속 관계가
+ * 시각적으로 뭉개진다(사용자 신고: "위 버튼과 밑에 내용이 너무 붙어 있다").
+ *
+ * 값은 위쪽 크롬 밴드가 쓰는 {@link TOP_CHROME_GAP}(28)보다 작게 잡았다 — 탭과 보드는 같은
+ * 계층에 속한 한 묶음이라 크롬↔탭 경계만큼 벌어지면 오히려 끊겨 보인다.
+ */
+const TABS_BOARD_GAP = 18;
+
+/** 보드 상단 = 탭 바 바닥 + 여백. 보드 높이는 여기서 파생되므로 여백이 커지면 보드가 줄어든다. */
+export const BOARD_TOP = TABS_Y + TAB_H + TABS_BOARD_GAP;
 const BOARD_BOTTOM = 930;
 const BOARD_W = DESIGN_WIDTH - MARGIN * 2;
 const BOARD_H = BOARD_BOTTOM - BOARD_TOP;

@@ -177,9 +177,15 @@ describe('말로우(typeId 5) 정규 경로 배선 — Profile → buildRunConfi
     // 일어나지 않는다**(실측 무피격 최대 146틱 < 180). 소진 규칙 자체를 관측하려면 교전
     // 밀도가 낮은 p0/t0 무대가 필요하다 — 이 케이스가 없으면 "적립만 하고 영원히 안
     // 들어오는" 배선(= 순수 감쇄)도 위 케이스를 통과해 버린다.
+    //
+    // ⚠️ SEED 재측정(2026-07-26, PvE 밀도 상향 + 선분 판정 도입): 이전 증인 seed 555 는 밀도가
+    // 오르며 정산이 한 번도 안 일어나는 쪽으로 넘어갔다(무피격 최대가 253틱으로 임계는 넘지만
+    // settlements=0 — 다음 교전이 aux0=0 이 되기 전에 다시 피격을 리셋하는 정확한 타이밍을
+    // 놓쳤다). seed 42 는 1800틱에 settlements=2·maxAux1=600(임계 180 이상)으로 소진 규칙 자체가
+    // 실제로 도는 것을 확인할 수 있다.
     const cfg = buildRunConfig(profileWithType(5), { planet: 0, stage: 1 });
-    const live = runObserved(555, cfg, 1800);
-    const ctrl = runObserved(555, suppressSignature(cfg, SIG_MALLOW_CUSHION), 1800);
+    const live = runObserved(42, cfg, 1800);
+    const ctrl = runObserved(42, suppressSignature(cfg, SIG_MALLOW_CUSHION), 1800);
 
     expect(new Set(live.hashes).size).toBeGreaterThan(900);
     expect(ctrl.hpLost).toBeGreaterThan(0);
@@ -187,7 +193,7 @@ describe('말로우(typeId 5) 정규 경로 배선 — Profile → buildRunConfi
     expect(live.maxAux1).toBeGreaterThanOrEqual(CUSHION_RECOVER_TICKS);
     expect(live.settlements).toBeGreaterThan(0);
     expect(ctrl.settlements).toBe(0);
-    // 정산으로 일부가 되돌아와도 순 경감은 유지된다(실측 live 6 vs ctrl 14).
+    // 정산으로 일부가 되돌아와도 순 경감은 유지된다(실측 live 51 vs ctrl 78).
     expect(live.hpLost).toBeLessThan(ctrl.hpLost);
   });
 

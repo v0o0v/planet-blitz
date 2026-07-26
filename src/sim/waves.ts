@@ -77,6 +77,45 @@ export function createWaveRuntime(): WaveRuntime {
   };
 }
 
+/**
+ * PvE 적 밀도 배율 (사용자 요청 2026-07-26 — "몹 개수가 현재보다 두배 정도").
+ *
+ * ## 왜 배율이 두 곳에 걸려야 하는가
+ * 화면 위 적 수는 **상한**(`seg.maxEnemies`)과 **유입**(카드 스폰 수) 두 축의 곱으로 결정된다.
+ * 상한만 올리면 카드가 그 상한을 못 채워 체감이 거의 안 바뀌고, 유입만 올리면 상한에서 잘려
+ * 나가 그것도 안 바뀐다. 그래서 같은 배율을 둘에 똑같이 걸어 **채움 동역학은 그대로 두고
+ * 규모만** 키운다(상한 도달 시간·상한 대비 점유율이 배율 전과 동일하다).
+ *
+ * ## 왜 2 가 아니라 1.5 인가 (실측 근거 — 사용자 확인 2026-07-26)
+ * 요청은 "두배 정도"였지만 2 는 난이도를 요청 취지 밖으로 밀어낸다. 무장갑 오토파일럿(적정
+ * 티어 기준 빌드)으로 카르곤 단계1 을 18시드 돌린 클리어율:
+ *
+ * | 배율 | 클리어 | 비고 |
+ * |---|---|---|
+ * | 1.0 | 5/18 (28%) | 기준선(문서 기록 밴드 33~63%) |
+ * | 1.5 | 5/18 (28%) | **기준선과 동일 — 사실상 무비용** |
+ * | 2.0 | 2/18 (11%) | 기준 빌드가 평균 26초에 사망 |
+ *
+ * 비선형인 이유: 1.5 까지는 무리가 플레이어에 도달하기 전에 죽지만, 2 에서는 무리가 플레이어를
+ * **포위**해 화력이 분산되고 그대로 무너진다. 그래서 "체감 물량은 오르지만 난이도 곡선은
+ * 건드리지 않는" 지점인 1.5 를 택했다. 물량을 더 올리려면 밸런스 보정(적 HP·killGoal·생존성)이
+ * 같이 와야 한다 — 그건 출시 직전 일괄 밸런스 패스의 몫이다.
+ *
+ * ⚠️ 유입 축은 `s.count * MULT` 를 루프 상한으로 쓰므로 소수 배율에서 **내림**이 된다
+ * (count 3 → 4마리). 의도된 동작이다 — 반올림하면 작은 그룹이 과대 증폭된다.
+ *
+ * ## 침공(invasion3)은 왜 영향이 없는가
+ * `updateWaves` 자체가 `stepWorld` 의 `!designedRun` 게이트 안에서만 불린다 — 침공은 절차
+ * 생성 웨이브를 아예 돌리지 않고 설계된 방어 기지만 상대한다. 따라서 `data/waves.ts`
+ * SEGMENTS 원본 값을 건드리지 않는 이 방식은 **침공 해시에 한 바이트도 닿지 않는다**(그쪽
+ * baseline 이 SEGMENTS 값에 걸려 있다는 경고는 원본 상수를 고칠 때의 이야기다).
+ * 이 브랜치가 침공 해시를 바꾼 것은 이 상수가 아니라 **선분 판정**(`sweptCircleOverlap`)
+ * 때문이다 — `resolveCollisions` 는 침공도 타기 때문이고, 그래서 EF 재배포가 필요하다.
+ *
+ * PvE 해시 기준선은 당연히 바뀐다 — 이 값을 고치면 PvE 골든을 재녹화해야 한다.
+ */
+export const PVE_DENSITY_MULT = 1.5;
+
 /** Count live enemies (excludes bullets/hazards/gems). */
 export function countEnemies(state: WorldState): number {
   let n = 0;
@@ -127,8 +166,9 @@ export function updateWaves(state: WorldState, player: Entity): void {
   // 데이터 주도(STAGE_MILESTONES.densityMult) — 밴드0/1(단계1..20)은 1(거동 불변), 밴드2(21+)는 ×1.5.
   // catalystMods.enemyCount 는 촉매 무주입 시 1(무연산 → 바이트 불변).
   const tp = stageParams(state.config.stage ?? 1);
+  // PVE_DENSITY_MULT: 상한 축. 짝인 유입 축은 spawnCard 안에 있다(둘은 함께 움직인다).
   const maxEnemies = Math.round(
-    (seg.maxEnemies + rushEnemyBonus) * state.catalystMods.enemyCount * tp.densityMult,
+    (seg.maxEnemies + rushEnemyBonus) * state.catalystMods.enemyCount * tp.densityMult * PVE_DENSITY_MULT,
   );
   const cardInterval = Math.max(RUSH_MIN_INTERVAL, seg.cardInterval - rushSteps * RUSH_INTERVAL_STEP);
 
@@ -232,7 +272,8 @@ function spawnCard(state: WorldState, card: WaveCard, maxEnemies: number, player
   for (const s of card.spawns) {
     const def = 'elite' in s ? planet.elites[s.elite] : planet.roster[s.role];
     if (def === undefined) continue; // 정의되지 않은 정예 인덱스는 무시(안전).
-    for (let i = 0; i < s.count; i++) defs.push(def);
+    // PVE_DENSITY_MULT: 유입 축. 짝인 상한 축은 updateWaves 의 maxEnemies 에 있다.
+    for (let i = 0; i < s.count * PVE_DENSITY_MULT; i++) defs.push(def);
   }
   const positions = formationPositions(state, card.formation, defs.length, player);
   const room = maxEnemies - countEnemies(state);

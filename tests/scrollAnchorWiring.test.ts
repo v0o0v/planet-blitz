@@ -112,7 +112,14 @@ describe('창 뒤 경계 탈출 — 사용자 보고 버그의 직접 회귀', (
     const parked = createWorld(1234, blockBreakConfig());
     playerOf(parked).y = parked.scrollRuntime!.scrollY + rear;
     const idleRel = recordPlayerRelative(parked, idle, 120, 'y');
-    expect(idleRel[idleRel.length - 1]!).toBe(rear); // 정지하면 뒤 경계에 붙어 있다.
+    // 정지하면 뒤 경계 **근처에 머문다**. 예전에는 `toBe(rear)` 로 정확한 고정을 요구했는데,
+    // PvE 밀도 배율(1.5) 이후에는 창 안 적이 정지한 플레이어를 접촉으로 몇 유닛 밀어낸다
+    // (실측 508 → 497, 11유닛). 그건 앵커·클램프 결함이 아니라 정상적인 충돌 밀림이다.
+    // 이 대조군의 역할은 "전방 입력이 실제로 일을 했다"를 보이는 것이므로, 정확한 좌표가 아니라
+    // **경계에서 벗어나지 못했다**는 성질로 단언한다 — 전방 런이 요구하는 300유맛 전진과 비교하면
+    // 30유닛 허용은 여전히 한 자릿수 대비 열 배 이상 엄격한 대비다.
+    expect(idleRel[idleRel.length - 1]!).toBeLessThanOrEqual(rear);
+    expect(rear - idleRel[idleRel.length - 1]!).toBeLessThan(30);
     expect(fwdBest).toBeLessThan(Math.min(...idleRel) - 200);
   });
 
@@ -131,7 +138,10 @@ describe('창 뒤 경계 탈출 — 사용자 보고 버그의 직접 회귀', (
     const parked = createWorld(4242, racingConfig());
     playerOf(parked).x = parked.scrollRuntime!.scrollX + rear;
     const idleRel = recordPlayerRelative(parked, idle, 120, 'x');
-    expect(idleRel[idleRel.length - 1]!).toBe(rear);
+    // 블록격파 쪽과 같은 이유로 정확한 고정 대신 "경계 근처를 못 벗어난다"로 단언한다
+    // (그쪽 주석 참조 — 정지한 플레이어를 적 접촉이 몇 유닛 밀어낸다).
+    expect(idleRel[idleRel.length - 1]!).toBeGreaterThanOrEqual(rear);
+    expect(idleRel[idleRel.length - 1]! - rear).toBeLessThan(30);
     expect(fwdBest).toBeGreaterThan(Math.max(...idleRel) + 200);
   });
 });
