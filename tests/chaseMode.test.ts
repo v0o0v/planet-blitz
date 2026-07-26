@@ -21,6 +21,9 @@ import { describe, it, expect } from 'vitest';
 import { createWorld, stepWorld, emptyInput, packPowerupPick } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig, WorldState } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
+import { snapshotWorld } from '../src/sim/snapshot.js';
+import { classifyRadar } from '../src/render/radar.js';
+import { shelterArrow, SHELTER_ARROW_RADIUS } from '../src/render/entityRenderer.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile } from '../src/save/profile.js';
 import { SEGMENTS } from '../data/waves.js';
@@ -301,6 +304,52 @@ describe('추격 — 정규경로 full-path 통합(니플헤임=chase)', () => {
     expect(predatorOf(w)).toBeDefined(); // ★ 포식자 미컬링
     const predator = predatorOf(w) as Entity;
     expect(predator.aux0).toBe(0); // 무노력 취약화가 일어나지 않았다
+  });
+
+  it('(g2) 이번 세그먼트의 대피소만 스냅샷에서 목표로 표시된다(사용자 신고 2026-07-27 "어디인지 안 보임")', () => {
+    // 대피소 6개가 전부 같은 모습이고 링 반경 1600 은 화면(1920×1080) 밖이라, 화면만 봐서는
+    // 어디로 가야 하는지 알 수 없었다. sim 전진 게이트와 **같은 식**(aux0 === segmentIndex)을
+    // 스냅샷 `active` 로 펴서 렌더·레이더가 목표를 가르게 한다.
+    const w = createWorld(11, chaseConfig());
+    const snapShelters = (): { aux0: number; active: boolean }[] => {
+      const snap = snapshotWorld(w);
+      const live = shelters(w);
+      return snap.entities
+        .filter((e) => e.kind === 'shelter')
+        .map((e) => ({
+          aux0: (live.find((s) => s.id === e.id) as Entity).aux0,
+          active: e.active,
+        }));
+    };
+    const s0 = snapShelters();
+    expect(s0.length).toBe(CHASE_SHELTER_COUNT);
+    expect(s0.filter((s) => s.active).length).toBe(1); // ★ 목표는 언제나 정확히 하나
+    expect(s0.find((s) => s.active)?.aux0).toBe(w.wave.segmentIndex);
+    // 레이더는 활성 대피소만 목표(objective)로 찍는다 — 6개를 다 찍으면 안 갈린다.
+    const snap = snapshotWorld(w);
+    const blips = snap.entities.filter((e) => e.kind === 'shelter').map(classifyRadar);
+    expect(blips.filter((c) => c === 'objective').length).toBe(1);
+    expect(blips.filter((c) => c === null).length).toBe(CHASE_SHELTER_COUNT - 1);
+
+    // 세그먼트가 전진하면 목표도 따라 옮겨간다(다음 대피소).
+    w.wave.segmentIndex = 2;
+    const s1 = snapShelters();
+    expect(s1.filter((s) => s.active).length).toBe(1);
+    expect(s1.find((s) => s.active)?.aux0).toBe(2);
+  });
+
+  it('(g3) 화면 밖 대피소는 방향 화살표로 지시하고, 화면 안이면 그리지 않는다', () => {
+    // 대피소 링 반경 1600 > 화면 절반(960×540) → 시작 시점부터 대개 화면 밖이다.
+    const far = shelterArrow(0, 0, 1600, 0);
+    expect(far).not.toBeNull();
+    expect(far!.angle).toBeCloseTo(0, 6);
+    expect(Math.hypot(far!.x, far!.y)).toBeCloseTo(SHELTER_ARROW_RADIUS, 6);
+    // 대각선 방향도 카메라 중심 링 위에 놓인다(방향만 남기고 거리 정보는 없다).
+    const diag = shelterArrow(100, 200, 100 - 1200, 200 - 1200);
+    expect(diag).not.toBeNull();
+    expect(Math.hypot(diag!.x - 100, diag!.y - 200)).toBeCloseTo(SHELTER_ARROW_RADIUS, 6);
+    // 화면 안(여유 마진 안쪽)이면 실물 대피소가 이미 보이므로 화살표 없음.
+    expect(shelterArrow(0, 0, 300, 100)).toBeNull();
   });
 
   it('(g) full-path config 는 실제로 chase 를 스탬프한다(planetContent 정본, 브릿지 없음)', () => {

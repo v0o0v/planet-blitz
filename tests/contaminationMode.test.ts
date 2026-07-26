@@ -22,6 +22,7 @@ import { describe, it, expect } from 'vitest';
 import { createWorld, stepWorld, emptyInput, packPowerupPick } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig, WorldState } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
+import { snapshotWorld } from '../src/sim/snapshot.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile } from '../src/save/profile.js';
 import { PLANET_MODE } from '../src/sim/planetMode.js';
@@ -385,6 +386,53 @@ describe('오염 — 정규경로 통합(배선 실도달)', () => {
     expect(nodes(w).length).toBe(CONTAMINATION_NODE_COUNT); // ★ 노드가 하나도 안 지워졌다
     expect(contaminationPurifyRate(w)).toBe(0); // ★ 도망으로 정화율이 오르지 않는다(파괴 없음)
     expect(w.bossSpawned).toBe(false); // 무노력 보스 소환도 없다
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §2b — 정화 되돌림(사용자 신고 2026-07-27 "일정 시간 넘으면 갑자기 실패")
+//
+// 결함의 성질: 오염 셀이 영구라 실패 게이지가 **단조 증가**였다 — 노드를 부숴도 이미 깔린
+// 오염은 그대로였으므로 실패는 플레이로 되돌릴 수 없는 숨은 카운트다운이었다. 아래 두
+// 테스트는 "노드를 부수면 오염이 **줄어든다**"와 "그 줄어듦이 실패 게이트에 반영된다"를
+// 못박는다. 수정 전 코드에서는 첫 단언(cells 감소)이 반드시 실패한다.
+// ---------------------------------------------------------------------------
+
+describe('오염 — 정화 되돌림(purifyContamination)', () => {
+  it('노드를 파괴하면 그 노드가 뿌린 오염 셀이 걷힌다(오염도 감소)', () => {
+    const w = createWorld(11, durableContamination());
+    w.weapon.damage = 0; // 오토어택 개입 배제 — 노드 파괴는 아래 blastNodes 로만.
+    // 확산을 두 번 돌려 노드당 2셀(총 20셀)을 깐다.
+    for (let i = 0; i < CONTAMINATION_SPREAD_INTERVAL * 2 + 2; i++) stepContam(w);
+    const before = cells(w).length;
+    expect(before).toBeGreaterThan(0);
+    // 모든 셀이 자기를 뿌린 **살아있는 노드**를 가리킨다(정화 되돌림의 연결 고리).
+    const aliveIds = new Set(nodes(w).map((n) => n.id));
+    for (const c of cells(w)) expect(aliveIds.has(c.ownerId)).toBe(true);
+
+    blastNodes(w, 3); // 노드 3개 파괴
+    for (let i = 0; i < 60; i++) stepContam(w); // 다음 확산 틱 전(60 < 150)에 정화만 관찰
+    const after = cells(w).length;
+    // ★ 수정 전에는 절대 줄어들지 않았다(영구 셀) — 이 단언이 회귀 증인이다.
+    expect(after).toBeLessThan(before);
+    // 죽은 노드의 셀은 하나도 남지 않는다(노드당 1셀/판정 × 충분한 틱).
+    const stillAlive = new Set(nodes(w).map((n) => n.id));
+    for (const c of cells(w)) expect(stillAlive.has(c.ownerId)).toBe(true);
+    // 살아있는 노드의 셀은 그대로다(무차별 삭제가 아니다).
+    expect(after).toBeGreaterThan(0);
+  });
+
+  it('오염도 게이지가 스냅샷에 실린다(오염 런만) — 실패가 예고 없이 뜨지 않는다', () => {
+    const w = createWorld(12, durableContamination());
+    for (let i = 0; i < CONTAMINATION_SPREAD_INTERVAL + 2; i++) stepContam(w);
+    const snap = snapshotWorld(w);
+    expect(snap.contamination).toBeDefined();
+    expect(snap.contamination!.critical).toBe(CONTAMINATION_CRITICAL_CELLS);
+    expect(snap.contamination!.cells).toBe(cells(w).length);
+    expect(snap.contamination!.cells).toBeGreaterThan(0);
+    // 뱀서류 런은 게이지가 없다(HUD 가 감춘다).
+    const v = createWorld(12, buildRunConfig(defaultProfile(), { planet: 0, stage: 1 }));
+    expect(snapshotWorld(v).contamination).toBeUndefined();
   });
 });
 

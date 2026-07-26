@@ -242,6 +242,7 @@ import {
 import {
   placeContaminationField,
   stepContamination,
+  purifyContamination,
   contaminationCritical,
   CONTAMINATION_NODE_MARK,
   HAZARD_CONTAMINATION,
@@ -1242,7 +1243,13 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // 오염 확산(Lane8): 살아있는 오염 노드가 결정론 확산으로 오염 지형 셀을 뿌린다(확산 틱마다).
   // stepEnemies~stepHazards 사이라 이번 틱 스폰된 지형이 resolveCollisions 판정에 든다. planetMode
   // 게이트라 뱀서류·블록격파·레이싱·침공은 미실행(골든 바이트 불변). 스폰은 노드 순회 후 일괄 append.
-  if (state.config.planetMode === PLANET_MODE.contamination) stepContamination(state);
+  // 정화 되돌림(Lane8): 파괴된 노드가 뿌려 둔 오염 셀을 차례로 걷는다. 확산과 **한 쌍**이라
+  // 같은 게이트 안에서 이어 돈다 — 이게 없으면 오염이 단조 증가라 실패가 되돌릴 수 없는
+  // 숨은 카운트다운이 된다(purifyContamination 주석 참조, 사용자 신고 2026-07-27).
+  if (state.config.planetMode === PLANET_MODE.contamination) {
+    stepContamination(state);
+    purifyContamination(state);
+  }
   stepBoss(state, player);
   autoAttack(state, player);
   capstoneLaser(state, player);

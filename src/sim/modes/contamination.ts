@@ -11,6 +11,7 @@
  *   - 오염 노드 = `destructible` + `ownerId === CONTAMINATION_NODE_MARK`(센티넬, RACING_WALL_MARK
  *     선례). `aux0` = 지금까지 뿌린 오염 지형 셀 수(확산 진척, 정수, 상한 MAX_CELLS).
  *   - 오염 지형 = `hazard`(life=-1 영구·phase=1 continuous) + `enemyType === HAZARD_CONTAMINATION`.
+ *     `ownerId` = 이 셀을 뿌린 **노드 id**(정화 되돌림의 연결 고리 — {@link purifyContamination}).
  *   - 정화율(게이트) = (NODE_COUNT − 살아있는 마킹 노드)/NODE_COUNT. 분모는 상수(createWorld 가
  *     정확히 그만큼 배치) → 필드 불요.
  *   - 임계 오염(실패) = 마킹된 오염 지형 수 ≥ CRITICAL_CELLS.
@@ -54,6 +55,12 @@ export const CONTAMINATION_NODE_MAX_CELLS = 6;
  * 깨 확산원을 줄이는 것이 실제 선택지가 된다. TODO(밸런스): 출시 전 튜닝.
  */
 export const CONTAMINATION_SPREAD_INTERVAL = 150;
+/**
+ * 정화(dead 노드가 뿌린 셀 걷기) 판정 간격(틱). 6틱 = 0.1초마다 **소유 노드가 죽은 셀을
+ * 노드당 1개씩** 지운다 → 노드 하나가 뿌린 최대 6셀이 0.6초에 걷힌다(눈에 보이는 되돌림).
+ * {@link purifyContamination} 참조.
+ */
+export const CONTAMINATION_PURGE_INTERVAL = 6;
 /** 오염 지형 셀 반경(지속 피해 판정). TODO(밸런스). */
 export const CONTAMINATION_CELL_RADIUS = 100;
 /** 오염 지형 셀 지속 피해(iframes 간격 적용, 즉사 아님). TODO(밸런스). */
@@ -135,7 +142,7 @@ export function stepContamination(state: WorldState): void {
   // 확산 케이던스: 이 틱이 확산 틱이 아니면 무연산(노드 순회조차 하지 않는다).
   if (state.tick % CONTAMINATION_SPREAD_INTERVAL !== 0) return;
   // 노드 순회 중에는 좌표만 모으고(배열 push 회피), aux0 증가만 in-place 로 한다.
-  const cells: { x: number; y: number }[] = [];
+  const cells: { x: number; y: number; owner: number }[] = [];
   for (const e of state.entities) {
     if (e.dead || !isContaminationNode(e)) continue;
     if (e.aux0 >= CONTAMINATION_NODE_MAX_CELLS) continue;
@@ -144,6 +151,7 @@ export function stepContamination(state: WorldState): void {
     cells.push({
       x: e.x + cos(angle) * CONTAMINATION_CELL_SPACING,
       y: e.y + sin(angle) * CONTAMINATION_CELL_SPACING,
+      owner: e.id, // 정화 되돌림의 연결 고리({@link purifyContamination})
     });
     e.aux0 = idx + 1; // 정수 유지(hashU32 로 접힘 — 소수 금지)
   }
@@ -160,9 +168,56 @@ export function stepContamination(state: WorldState): void {
       -1, // life: 영구 지형 해저드(청크 컬링만 소멸)
       CONTAMINATION_CELL_DAMAGE,
       true, // continuous
-      0, // ownerId(오염 지형은 소유자 없음)
+      c.owner, // ownerId = 이 셀을 뿌린 오염 노드({@link purifyContamination})
     );
   }
+}
+
+/**
+ * 정화 되돌림 한 틱(stepWorld 배선, {@link stepContamination} 과 한 쌍).
+ *
+ * ## 왜 필요한가 — "일정 시간 넘으면 갑자기 실패"의 근본 원인
+ * 원래 오염 셀은 **한 번 깔리면 영원히 남았다**. 노드를 부수면 *앞으로의* 확산만 멎을 뿐
+ * 이미 깔린 셀은 그대로였으므로, 실패 게이지(`contaminationCritical`)는 **단조 증가**였다 —
+ * 즉 톡사르의 실패는 플레이로 되돌릴 수 없는 **숨은 카운트다운**이었고, 임계를 넘는 순간
+ * 예고 없이 gameOver 가 떴다(사용자 신고 2026-07-27 "일정 시간 넘으면 갑자기 실패").
+ * 확산 간격을 늘리는 것(PR#155, 30→150틱)은 시계를 늦출 뿐 성질을 바꾸지 못한다.
+ *
+ * 그래서 셀에 **뿌린 노드**를 새긴다(`hazard.ownerId` = 노드 `id`, {@link purifyContamination}).
+ * 노드가 죽으면 그 노드의 셀이 차례로 걷힌다 → 정화가 오염을 **되돌린다**. 실패 게이지가 양방향이
+ * 되어 "밀리는 중"과 "만회하는 중"이 플레이 중에 읽히고, 실패는 되돌릴 수 없는 시계가 아니라
+ * 플레이어가 진 싸움의 결과가 된다. HUD 오염도 게이지(render 전용)가 그 값을 보여준다.
+ *
+ * 한 판정 틱에 **노드당 최대 1셀**만 지운다(전멸 즉시 걷힘이 아니라 눈에 보이는 후퇴). 순수·결정론
+ * (엔티티 배열 순서만 읽고 RNG·wall-clock 없음, dead 마킹만).
+ */
+export function purifyContamination(state: WorldState): void {
+  if (state.tick % CONTAMINATION_PURGE_INTERVAL !== 0) return;
+  const aliveNodes = new Set<number>();
+  for (const e of state.entities) {
+    if (!e.dead && isContaminationNode(e)) aliveNodes.add(e.id);
+  }
+  // 이번 판정에서 이미 1셀을 지운 소유자(노드당 1셀 상한).
+  const purgedOwners = new Set<number>();
+  for (const e of state.entities) {
+    if (e.dead || !isContaminationCell(e)) continue;
+    // ownerId 0 = 소유 노드 기록 이전 경로(방어적) → 걷지 않는다.
+    if (e.ownerId === 0 || aliveNodes.has(e.ownerId) || purgedOwners.has(e.ownerId)) continue;
+    e.dead = true;
+    purgedOwners.add(e.ownerId);
+  }
+}
+
+/**
+ * 살아있는 오염 지형 셀 수(실패 게이지의 분자). HUD 오염도 게이지(render 전용)와
+ * {@link contaminationCritical} 가 같은 정의를 쓰도록 여기 한 곳에 둔다. 순수 판정.
+ */
+export function contaminationCellCount(state: WorldState): number {
+  let cells = 0;
+  for (const e of state.entities) {
+    if (!e.dead && isContaminationCell(e)) cells++;
+  }
+  return cells;
 }
 
 /**
@@ -182,9 +237,5 @@ export function contaminationPurifyRate(state: WorldState): number {
  * 이상이면 true. 순수 판정 — 상태를 바꾸지 않는다.
  */
 export function contaminationCritical(state: WorldState): boolean {
-  let cells = 0;
-  for (const e of state.entities) {
-    if (!e.dead && isContaminationCell(e)) cells++;
-  }
-  return cells >= CONTAMINATION_CRITICAL_CELLS;
+  return contaminationCellCount(state) >= CONTAMINATION_CRITICAL_CELLS;
 }
