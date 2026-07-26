@@ -18,7 +18,8 @@
  * purpose (a textured bullet would undermine the readability contract).
  */
 
-import { Assets, Graphics, type Renderer, type Texture } from 'pixi.js';
+import { Assets, Graphics, Rectangle, Texture, type Renderer } from 'pixi.js';
+import type { AnimatedKind } from './spriteAnimation.js';
 import {
   INVASION_FACILITIES,
   FACILITY_BEHAVIOR_HAZARD,
@@ -210,6 +211,16 @@ export interface PlaceholderTextures {
   formationDrone: Texture;
   /** L2 스포너가 소환한 드론. 편대원과 구분되는 색(스포너 계열 톤). */
   spawnedDrone: Texture;
+  /**
+   * 아군·이익 오브젝트의 루프 애니메이션 프레임(2026-07-26). `assets/anim_<name>.png` 가로
+   * 스트립을 프레임 사각형으로 잘라 담는다. 파일이 없으면 그 슬롯은 null 이고 렌더는 기존 정지
+   * 스프라이트를 그대로 쓴다(회귀 0).
+   *
+   * **선택 필드**인 이유: 테스트 여럿이 이 인터페이스를 객체 리터럴로 직접 만든다. 필수로 두면
+   * 애니메이션과 무관한 테스트 파일까지 전부 고쳐야 하는데, 렌더는 부재를 이미 정상 경로로
+   * 다룬다(에셋 부재와 같은 취급).
+   */
+  anim?: Partial<Record<AnimatedKind, Texture[] | null>>;
 }
 
 /**
@@ -990,6 +1001,38 @@ function assetUrl(basename: string): string | undefined {
   return undefined;
 }
 
+/**
+ * 애니메이션 슬롯 → 스트립 파일명. 파일명은 정지 스프라이트 이름에 `anim_` 접두를 붙인 규약이라
+ * (`turret_pickup.png` ↔ `anim_turret_pickup.png`) 두 자산이 항상 짝으로 읽힌다.
+ */
+const ANIM_STRIP_FILES: readonly (readonly [AnimatedKind, string])[] = [
+  ['turretPickup', 'anim_turret_pickup.png'],
+  ['magnetEmitter', 'anim_magnet_emitter.png'],
+  ['bombDevice', 'anim_bomb_device.png'],
+  ['supply', 'anim_supply.png'],
+  ['loot', 'anim_loot.png'],
+  ['gem', 'anim_gem.png'],
+];
+
+/**
+ * 가로 스트립 PNG 를 프레임 텍스처 배열로 자른다(애니메이션 로더). 스트립 폭이 높이의 정수배가
+ * 아니면 손상으로 보고 null 을 돌려준다 — 프레임 경계가 어긋난 채 재생되면 스프라이트가 옆
+ * 프레임을 물고 흔들린다. 파일 부재·로드 실패도 null(정지 스프라이트 유지, 회귀 0).
+ */
+async function tryLoadStrip(basename: string): Promise<Texture[] | null> {
+  const sheet = await tryLoad(basename);
+  if (sheet === null) return null;
+  const h = sheet.height;
+  if (h <= 0 || sheet.width % h !== 0) return null;
+  const count = sheet.width / h;
+  if (count < 2) return null;
+  const frames: Texture[] = [];
+  for (let i = 0; i < count; i++) {
+    frames.push(new Texture({ source: sheet.source, frame: new Rectangle(i * h, 0, h, h) }));
+  }
+  return frames;
+}
+
 /** Load one PNG as a nearest-filtered texture; null on any failure (graceful). */
 async function tryLoad(basename: string): Promise<Texture | null> {
   const url = assetUrl(basename);
@@ -1138,6 +1181,13 @@ export async function loadGameTextures(
     tryLoad('def3_formation_drone.png'),
     tryLoad('def3_spawned_drone.png'),
   ]);
+
+  // 아군·이익 오브젝트 루프 애니메이션(2026-07-26). 정지 스프라이트 로드와 별개로 스트립을
+  // 읽는다 — 스트립이 없으면 슬롯이 null 이라 렌더가 정지 스프라이트를 그대로 쓴다(회귀 0).
+  const animStrips = await Promise.all(
+    ANIM_STRIP_FILES.map(async ([slot, file]) => [slot, await tryLoadStrip(file)] as const),
+  );
+  tex.anim = Object.fromEntries(animStrips) as Partial<Record<AnimatedKind, Texture[] | null>>;
 
   // 우선순위: 타입 전용 → 레거시 → 절차적. 타입 전용이 null 인 경우(파일 미존재·로드 실패·
   // 타입 0)에도 아무 예외 없이 다음 단으로 내려간다.

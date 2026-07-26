@@ -27,6 +27,9 @@ import {
   turretAimAngle,
   TRIGGER_RING_COLOR,
 } from './friendlyDisplay.js';
+// 루프 애니메이션(아군·이익 오브젝트). 프레임 선택은 순수 함수, 프레임 텍스처는 textures 가
+// 스트립에서 잘라 실어 온다. 스트립이 없으면 슬롯이 없어 기존 정지 스프라이트 그대로다.
+import { animatedKindOf, animFrameIndex, phaseForEntity } from './spriteAnimation.js';
 // 포탑 사거리(조준 회전 반경). sim 상수를 재선언하지 않고 그대로 읽는다 — 갈라지면 포신이
 // 사거리 밖 표적을 가리킨다. 값만 읽을 뿐 sim 을 실행하지 않는다.
 import { TURRET_RANGE } from '../sim/events.js';
@@ -134,6 +137,13 @@ interface TrackedSprite {
    * 규율 — 표적이 사라질 때마다 포신이 0도로 튀지 않게 한다.
    */
   aimAngle: number;
+  /**
+   * 루프 애니메이션 프레임(있으면 매 프레임 텍스처를 갈아 끼운다). null = 정지 스프라이트.
+   * 모든 프레임이 같은 치수라 표시 크기(setSize 로 확정)는 교체에도 불변이다.
+   */
+  animFrames: readonly Texture[] | null;
+  /** 이 엔티티의 애니메이션 시작 위상(프레임) — 같은 kind 가 동시에 깜빡이지 않게 흩뜨린다. */
+  animPhase: number;
   /**
    * 엘리트 여부(스냅샷 `elite >= 0`). 처치 시 화면 흔들림 세기를 고르기 위해 매 프레임 갱신한다
    * (엘리트 처치=TRAUMA_ELITE_KILL). 소멸 시점엔 스냅샷이 없으므로 tracked 에 실어 둔다.
@@ -704,6 +714,11 @@ export class EntityRenderer {
   private encounterType = 0;
   /** 기체가 마지막으로 향한 각도(대상·이동이 없을 때 유지). shipFacing 참조. */
   private lastPlayerAngle = 0;
+  /**
+   * 루프 애니메이션 시계(초). 렌더 프레임 dt 를 누적한 render-only 값 — sim tick 과 무관하다
+   * (배속·일시정지와 독립적으로 아트가 계속 살아 움직인다). reset 에서 0 으로 되돌린다.
+   */
+  private animClock = 0;
 
   constructor(private readonly textures: PlaceholderTextures) {
     // Draw order (bottom → top): lava overlay (시머 대상), hazard/beam overlay, [glow halos],
@@ -873,6 +888,7 @@ export class EntityRenderer {
     this.lastFrameMs = now;
     if (!Number.isFinite(dt) || dt <= 0) dt = NOMINAL_DT;
     else if (dt > MAX_RENDER_DT) dt = MAX_RENDER_DT;
+    this.animClock += dt; // 루프 애니메이션 시계(엔티티 루프가 프레임 인덱스를 뽑는다)
 
     // 이펙트 게이트(티어 × 감소 토글) — 프레임당 1회만 산출해 흔들림·히트 플래시·발광이 공유한다.
     const settings = graphicsSettings.getSettings();
@@ -952,6 +968,10 @@ export class EntityRenderer {
           const size = displaySize(e.kind, e.radius, ART_SCALE);
           sprite.setSize(size, size);
         }
+        // 루프 애니메이션 프레임(있으면). 첫 텍스처는 위 `new Sprite(this.textureFor(e))` 가 이미
+        // 정지 스프라이트로 잡아 뒀고, 아래 프레임 진행이 이번 프레임부터 바로 갈아 끼운다.
+        const animSlot = animatedKindOf(e.kind);
+        const animFrames = animSlot === null ? null : (this.textures.anim?.[animSlot] ?? null);
         // 이름표(아군·이익 오브젝트) — labelLayer 형제로 만든다. 라벨 없는 kind 면 null.
         // 포탑은 휴면/활성으로 이름이 갈리므로 스냅샷 `active` 를 함께 넘긴다.
         let label: Text | null = null;
@@ -991,6 +1011,8 @@ export class EntityRenderer {
           label,
           labelText: labelText ?? '',
           aimAngle: 0,
+          animFrames,
+          animPhase: animFrames === null ? 0 : phaseForEntity(e.id, animFrames.length),
           elite: e.elite >= 0,
           hp: e.hp,
           dmgAccum: 0,
@@ -1033,6 +1055,15 @@ export class EntityRenderer {
         // Gems, boss, supply and the static gimmicks keep a fixed facing; others
         // face their travel/aim angle. 목록은 isFixedFacing 이 정본이다.
         tracked.sprite.rotation = isFixedFacing(e.kind) ? 0 : e.angle;
+      }
+
+      // 루프 애니메이션 프레임 진행(render-only). 프레임 텍스처는 전부 같은 치수라 setSize 로
+      // 확정한 표시 크기는 교체에도 불변이다. 히트 플래시 오버레이는 생성 시점 텍스처에 고정돼
+      // 있지만 창이 2~3프레임뿐이라 눈에 띄지 않는다(의도적 단순화).
+      if (tracked.animFrames !== null) {
+        const idx = animFrameIndex(this.animClock, tracked.animFrames.length, tracked.animPhase);
+        const frame = tracked.animFrames[idx];
+        if (frame !== undefined && tracked.sprite.texture !== frame) tracked.sprite.texture = frame;
       }
 
       // 이름표 미러(형제라 부모 변환이 자동 적용되지 않는다) — 스프라이트 **아래**에 수평으로
@@ -1667,6 +1698,7 @@ export class EntityRenderer {
     this.glowBloomAttached = false;
     this.trauma.reset();
     this.lastFrameMs = undefined;
+    this.animClock = 0;
     this.overlay.clear();
     this.lavaOverlay.clear();
     this.fog.clear();
