@@ -18,7 +18,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import '../data/uniques.js'; // side-effect: UNIQUE_REGISTRY 에 유니크 15종 등록
 
-import { requiredLevel, canEquip } from '../src/items/requiredLevel.js';
+import { requiredLevel, canEquip, stageLevelCap } from '../src/items/requiredLevel.js';
 import { rollItem, rerollAffixes } from '../src/items/roll.js';
 import { UNIQUE_REGISTRY, registerUnique } from '../src/items/uniques.js';
 import { M2_UNIQUES, M3_UNIQUES } from '../data/uniques.js';
@@ -30,16 +30,21 @@ import type { AffixRoll, Item, Rarity, SlotKind, StatKey } from '../src/items/ty
 // 공통 헬퍼
 // ---------------------------------------------------------------------------
 
-const SOURCE = { planet: 0, stage: 1 } as const;
+/**
+ * 등급 산식을 그대로 보게 하는 드랍처. 요구 레벨은 **드랍처 상한**(단계×5, 만렙 클램프)으로
+ * 낮아지므로(2026-07-27 수정), 등급 산식 자체를 보려면 상한이 안 무는 단계를 써야 한다 —
+ * 20단계 = 상한 100 = 무효. 상한이 무는 쪽은 아래 별도 describe 에서 본다.
+ */
+const SOURCE = { planet: 0, stage: 20 } as const;
 
 /**
- * 어픽스 개수를 정확히 통제한 최소 Item 리터럴. reqLevel 산식은 `affixes.length` 만
- * 읽으므로(값·stat 무관) 개수만 맞추면 등급별 산식을 결정론으로 검증할 수 있다.
+ * 어픽스 개수를 정확히 통제한 최소 Item 리터럴. reqLevel 산식은 `affixes.length` 와
+ * `source.stage` 만 읽으므로(값·stat 무관) 둘만 맞추면 결정론으로 검증할 수 있다.
  */
 function litItem(
   rarity: Rarity,
   affixCount: number,
-  opts?: { slot?: SlotKind; uniqueId?: string },
+  opts?: { slot?: SlotKind; uniqueId?: string; stage?: number },
 ): Item {
   const affixes: AffixRoll[] = Array.from({ length: affixCount }, (_, i) => ({
     id: `affix-${i}`,
@@ -51,7 +56,7 @@ function litItem(
     slot: opts?.slot ?? 'armor',
     rarity,
     affixes,
-    source: SOURCE,
+    source: opts?.stage !== undefined ? { planet: 0, stage: opts.stage } : SOURCE,
   };
   return opts?.uniqueId !== undefined ? { ...base, uniqueId: opts.uniqueId } : base;
 }
@@ -100,6 +105,60 @@ describe('AC1 requiredLevel 순수·결정론 (등급별 산식)', () => {
     const first = requiredLevel(item);
     for (let i = 0; i < 5; i++) expect(requiredLevel(item)).toBe(first);
     expect(first).toBe(47);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 드랍처 상한 — 그 단계를 도는 조종사가 영영 못 입는 전리품이 나오지 않는다
+// (사용자 신고 2026-07-27: "기체 레벨보다 높은 아이템이 획득됨")
+// ---------------------------------------------------------------------------
+
+describe('드랍처(침략 단계) 상한', () => {
+  it('상한 = 단계 × 5, [1,100] 클램프', () => {
+    expect(stageLevelCap({ planet: 0, stage: 1 })).toBe(5);
+    expect(stageLevelCap({ planet: 0, stage: 11 })).toBe(55);
+    expect(stageLevelCap({ planet: 0, stage: 20 })).toBe(100);
+    expect(stageLevelCap({ planet: 0, stage: 999 })).toBe(100); // 단계 축은 1..∞
+  });
+
+  it('출처 미상(source 없음·비유한 단계)은 상한을 걸지 않는다 — 구 거동 보존', () => {
+    expect(stageLevelCap(undefined)).toBe(100);
+    expect(stageLevelCap({ planet: 0, stage: Number.NaN })).toBe(100);
+  });
+
+  it('1단계 레어(등급 산식 41~50)는 상한 5 로 낮아진다 = 그 단계 조종사가 입을 수 있다', () => {
+    expect(requiredLevel(litItem('rare', 3, { stage: 1 }))).toBe(5);
+    expect(requiredLevel(litItem('rare', 6, { stage: 1 }))).toBe(5);
+    // 등급 산식이 상한보다 낮으면 그대로다 — 노말은 어디서 나와도 1.
+    expect(requiredLevel(litItem('normal', 0, { stage: 1 }))).toBe(1);
+  });
+
+  it('상한이 등급 산식을 넘어서면 등급 서열이 그대로 산다 (11단계 상한 55)', () => {
+    expect(requiredLevel(litItem('magic', 2, { stage: 11 }))).toBe(14);
+    expect(requiredLevel(litItem('rare', 3, { stage: 11 }))).toBe(41);
+    expect(requiredLevel(litItem('rare', 6, { stage: 11 }))).toBe(50);
+  });
+
+  it('유니크 저작값도 드랍처 상한으로 낮아진다 (저작값이 상한 이하면 그대로)', () => {
+    const high = M2_UNIQUES[0]; // overheat-drum, reqLevel 66
+    expect(high?.reqLevel).toBe(66);
+    // 6단계 상한 30 → 66 이 아니라 30.
+    expect(requiredLevel(litItem('unique', 4, { slot: high!.slot, uniqueId: high!.id, stage: 6 }))).toBe(30);
+    // 20단계 상한 100 → 저작값 그대로.
+    expect(
+      requiredLevel(litItem('unique', 4, { slot: high!.slot, uniqueId: high!.id, stage: 20 })),
+    ).toBe(66);
+  });
+
+  it('불변식: 어떤 등급·어픽스 조합도 드랍 단계 상한을 넘지 않는다', () => {
+    for (const stage of [1, 2, 5, 9, 13, 21, 40]) {
+      const cap = stageLevelCap({ planet: 0, stage });
+      for (const rarity of ['normal', 'magic', 'rare'] as const) {
+        for (let a = 0; a <= 6; a++) {
+          expect(requiredLevel(litItem(rarity, a, { stage })), `${rarity}/${a}/${stage}`).toBeLessThanOrEqual(cap);
+        }
+      }
+    }
   });
 });
 

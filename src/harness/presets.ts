@@ -155,6 +155,8 @@ function buildMaxedEquip(): Partial<Record<EquipSlotId, Item>> {
  * 생성기(`rollItem`)로 만들어 손으로 빚은 `Item` 구조체가 아니다(어픽스 개수로 req 가 파생됨).
  *
  * reqLevel 산식(src/items/requiredLevel.ts): normal=1, rare=32+어픽스×3, unique=저작값.
+ * 단, **드랍처 상한**(단계×5)으로 낮아진다 — 여기 아이템은 `rollItemForSlot` 이 11단계로
+ * 굴리므로 상한 55 다. 아래 주석의 값들은 그 상한을 반영한 것이고, 전부 Lv10 을 넘는다.
  * 유니크 id 는 `rollItem`(rarity=unique)이 슬롯별 레지스트리(data/uniques.ts)에서 뽑으므로
  * 항상 실재 등록 id 라 `requiredLevel` 이 throw 하지 않는다.
  */
@@ -176,8 +178,8 @@ function buildGearLockedInventory(): Item[] {
   push('shield', 'rare', 5); // reqLevel 47
   push('core', 'rare', 4); // reqLevel 44
 
-  // 미달(locked) unique: 슬롯별 저작 reqLevel. sub={drone-bay 22 · singularity 75},
-  // armor={phase-armor 18 · reactive-armor 65}. 어느 쪽이 뽑혀도 전부 10 초과라 잠긴다.
+  // 미달(locked) unique: 슬롯별 저작 reqLevel(11단계 상한 55 로 클램프). sub={drone-bay 22 ·
+  // singularity 75→55}, armor={phase-armor 18 · reactive-armor 65→55}. 전부 10 초과라 잠긴다.
   push('sub', 'unique');
   push('armor', 'unique');
 

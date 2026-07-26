@@ -15,7 +15,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Container, Text, DOMAdapter } from 'pixi.js';
 
 import { HangarScreen } from '../src/ui/pixi/hangar.js';
-import { defaultProfile, activeShip, type Profile } from '../src/save/profile.js';
+import { PixiButton } from '../src/ui/pixi/button.js';
+import {
+  defaultProfile,
+  activeShip,
+  stashCapacity,
+  INVENTORY_CAP,
+  type Profile,
+} from '../src/save/profile.js';
 import { rollItem } from '../src/items/roll.js';
 import type { Item, SlotKind } from '../src/items/types.js';
 import { LEVEL_CAP } from '../data/waves.js';
@@ -643,5 +650,142 @@ describe('장착 장비 팝업 동시 표시', () => {
 
     expect(tips().tooltip.container.visible).toBe(false);
     expect(tips().equippedTip.container.visible).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (5) 헤더 3줄 비겹침 · 버튼 라벨 넘침 (사용자 신고 2026-07-27:
+//     "글자가 겹쳐서 안보임. 창고확장 글자가 버튼 크기를 넘어감.")
+//
+// 좌표 상수를 눈으로 맞추는 방식은 라벨 길이·폰트가 바뀔 때마다 다시 깨진다. 그래서 실제
+// 씬 그래프의 **bounds 교차**로 단언한다 — 겹치면 무조건 빨간불이다.
+// ---------------------------------------------------------------------------
+
+/** 자손 중 정확히 이 문자열인 Text 노드(없으면 throw). */
+function textByLabel(node: Container, label: string): Text {
+  if (node instanceof Text && node.text === label) return node;
+  for (const c of node.children) {
+    if (c instanceof Container) {
+      try {
+        return textByLabel(c, label);
+      } catch {
+        /* 다음 형제로 */
+      }
+    }
+  }
+  throw new Error(`Text "${label}" 를 씬 그래프에서 찾지 못했다`);
+}
+
+describe('패널 헤더가 서로 겹치지 않는다', () => {
+  /** 안내 한 줄이 같은 패널의 헤더 컨트롤 전부와 떨어져 있는지 본다. */
+  function expectHelpClear(helpKey: string, region: { maxX?: number; minX?: number; minY?: number }, labels: string[]): void {
+    const help = rectOf(textByLabel(root(), helpKey));
+    for (const label of labels) {
+      const btn = rectOf(buttonByLabel(root(), label, region));
+      expect(intersects(help, btn), `안내 문구가 "${label}" 와 겹친다`).toBe(false);
+    }
+  }
+
+  it('창고: 안내 문구가 확장·정렬·분해 버튼과 분류 탭 어디에도 겹치지 않는다', () => {
+    open();
+    expectHelpClear(t('inv.help.stash'), STASH_PANEL, [
+      t('inv.act.expand', { n: stashExpansionCost(0) }),
+      t('inv.act.sort', { v: t('inv.sort.default') }),
+      t('inv.act.salvageLowShort'),
+      t('inv.act.salvageHighShort'),
+      t('inv.filter.all'),
+      t('item.slot.module'), // 탭 줄의 오른쪽 끝 — 줄 전체를 훑는 두 번째 표본
+    ]);
+  });
+
+  it('인벤토리: 같은 검사(라벨이 더 길어 겹침이 먼저 터지던 쪽)', () => {
+    open();
+    expectHelpClear(t('inv.help.inventory'), INV_PANEL, [
+      t('inv.act.salvageHigh'),
+      t('inv.act.salvageLow'),
+      t('inv.act.sort', { v: t('inv.sort.default') }),
+      t('inv.filter.all'),
+      t('item.slot.module'),
+    ]);
+  });
+
+  it('제목 줄도 안내 줄과 겹치지 않는다(두 줄은 서로 다른 띠다)', () => {
+    open();
+    for (const [titleKey, helpKey] of [
+      [t('inv.stashHeader', { n: 0, cap: stashCapacity(0) }), t('inv.help.stash')],
+      [t('inv.invHeader', { n: 0, cap: INVENTORY_CAP }), t('inv.help.inventory')],
+    ] as const) {
+      const title = rectOf(textByLabel(root(), titleKey));
+      const help = rectOf(textByLabel(root(), helpKey));
+      expect(intersects(title, help), `"${titleKey}" 제목이 안내 줄과 겹친다`).toBe(false);
+    }
+  });
+
+  it('세로 띠 계산 자체가 겹치지 않는다(측정 스텁에 기대지 않는 산술 단언)', () => {
+    // ⚠️ 위 bounds 단언은 node 스텁의 글자 폭·높이(문자당 8px, 높이 10px)로 재므로 **실제
+    // 폰트보다 작게** 나온다 — 실화면에서 겹치던 조합이 여기서는 통과할 수 있다. 그래서 띠
+    // 경계 자체를 산술로 못 박는다. 값은 패널 로컬 y(콘텐츠 상자 상단 = 프레임 46 + 여백 14).
+    const C = HangarScreen as unknown as {
+      ACTION_H: number;
+      HELP_Y: number;
+      FILTER_Y: number;
+      FILTER_H: number;
+      GRID_TOP: number;
+      BOTTOM_PH: number;
+      CELL: number;
+      GAP: number;
+    };
+    const CONTENT_TOP = 60; // PANEL_BORDER 46 + PANEL_INNER_PAD 14
+    const HELP_LINE_H = 20; // 폰트 14 의 실제 줄 높이(≈18)에 여유 2
+    expect(CONTENT_TOP + C.ACTION_H, '액션 행이 안내 줄을 침범한다').toBeLessThanOrEqual(C.HELP_Y);
+    expect(C.HELP_Y + HELP_LINE_H, '안내 줄이 분류 탭을 침범한다').toBeLessThanOrEqual(C.FILTER_Y);
+    expect(C.FILTER_Y + C.FILTER_H, '분류 탭이 그리드를 침범한다').toBeLessThanOrEqual(C.GRID_TOP);
+    // 그리드는 여전히 3행이 콘텐츠 상자 안에 들어간다(헤더에 줄을 더하느라 행을 잃지 않았다).
+    const contentBottom = C.BOTTOM_PH - CONTENT_TOP;
+    const rows = Math.floor((contentBottom - C.GRID_TOP + C.GAP) / (C.CELL + C.GAP));
+    expect(rows, '그리드 3행이 유지돼야 한다').toBe(3);
+  });
+
+  it('그리드 첫 행이 분류 탭 줄을 침범하지 않는다', () => {
+    const p = defaultProfile();
+    p.stash.push(itemOfSlot(11, 'engine'));
+    p.inventory.push(itemOfSlot(31, 'main'));
+    open(p);
+    for (const [panel, region] of [
+      ['stash', STASH_PANEL],
+      ['inventory', INV_PANEL],
+    ] as const) {
+      const cell = rectOf(gridCells(panel)[0] as Container);
+      const tab = rectOf(buttonByLabel(root(), t('inv.filter.all'), region));
+      expect(intersects(cell, tab), `${panel}: 첫 셀이 분류 탭과 겹친다`).toBe(false);
+    }
+  });
+});
+
+describe('PixiButton 라벨은 판때기 밖으로 새지 않는다', () => {
+  /** 버튼 내부의 라벨 Text(inner 의 마지막 자식). */
+  function labelOf(btn: PixiButton): Text {
+    const inner = btn.container.children[0] as Container;
+    return inner.children[inner.children.length - 1] as Text;
+  }
+
+  it('폭을 넘치는 라벨은 줄여 맞춘다', () => {
+    const long = '창고 확장 (16000 크레딧)'.repeat(2); // 확실히 넘치는 길이
+    const btn = new PixiButton({ width: 180, height: 44, fontSize: 16, label: long, onClick: () => {} });
+    const label = labelOf(btn);
+    expect(label.scale.x, '넘치는데도 축소가 안 걸렸다').toBeLessThan(1);
+    expect(label.width, '축소 후에도 버튼 폭을 넘는다').toBeLessThanOrEqual(180);
+  });
+
+  it('폭 안에 드는 라벨은 건드리지 않는다(기존 버튼 무회귀)', () => {
+    const btn = new PixiButton({ width: 200, height: 44, fontSize: 16, label: '정렬', onClick: () => {} });
+    expect(labelOf(btn).scale.x).toBe(1);
+  });
+
+  it('setLabel 로 길어져도 다시 맞춘다(비용 자릿수 증가 경로)', () => {
+    const btn = new PixiButton({ width: 180, height: 44, fontSize: 16, label: '확장', onClick: () => {} });
+    expect(labelOf(btn).scale.x).toBe(1);
+    btn.setLabel('창고 확장 (16000 크레딧)'.repeat(2));
+    expect(labelOf(btn).scale.x).toBeLessThan(1);
   });
 });

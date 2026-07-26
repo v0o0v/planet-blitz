@@ -26,6 +26,11 @@ import {
   type SpringState,
 } from './tactile.js';
 
+/** 라벨 좌우 안전 여백(9-slice 캡 안쪽 나무 테두리를 침범하지 않는 값). */
+const LABEL_PAD_X = 10;
+/** 라벨 축소 하한 배율 — 이보다 더 줄여야 하면 문구·버튼 폭 설계가 잘못된 것이다. */
+const LABEL_MIN_SCALE = 0.6;
+
 export interface ButtonOptions {
   texture?: Texture | null | undefined;
   width: number;
@@ -66,6 +71,8 @@ export class PixiButton {
   private readonly sound: UiSoundCategory;
   /** 집기 lift 옵션(호버 시 떠오름). 기본 off. */
   private readonly lift: boolean;
+  /** 버튼 폭(라벨 넘침 축소의 기준). */
+  private readonly w: number;
   private enabled = true;
 
   // ── 촉각 스프링 상태(render-only) ─────────────────────────────────────────
@@ -80,6 +87,7 @@ export class PixiButton {
 
   constructor(opts: ButtonOptions) {
     const { width: w, height: h, cap = 30 } = opts;
+    this.w = w;
     this.onClick = opts.onClick;
     this.sound = opts.sound ?? 'uiNavigate';
     this.lift = opts.lift ?? false;
@@ -131,6 +139,7 @@ export class PixiButton {
     });
     this.labelText.anchor.set(0.5);
     this.labelText.position.set(w / 2, h / 2);
+    this.fitLabel();
     this.inner.addChild(this.labelText);
 
     // hitArea 를 외부 container 에 고정(w×h) — inner 가 스쿼시/lift 로 스케일돼도 클릭 판정이
@@ -171,6 +180,34 @@ export class PixiButton {
 
   setLabel(text: string): void {
     this.labelText.text = text;
+    this.fitLabel();
+  }
+
+  /**
+   * 라벨이 버튼 폭을 넘으면 **그 자리에서 줄여 맞춘다**(넘침 방지, 사용자 신고 2026-07-27:
+   * "창고확장 글자가 버튼 크기를 넘어감").
+   *
+   * 라벨 길이는 언어(i18n)·숫자 자릿수(예: 확장 비용 1000 → 16000)에 따라 런타임에 변한다 —
+   * 호출자가 폭을 손으로 맞춰 두는 방식은 언제든 다시 깨진다. 그래서 폭 초과분만큼 **Text 를
+   * 축소**해 어떤 라벨이 와도 판때기 밖으로 새지 않게 한다. 축소는 {@link LABEL_MIN_SCALE}
+   * 까지만 — 그보다 더 줄여야 할 만큼 긴 라벨은 문구·버튼 폭 자체가 잘못된 것이라 잘리는 대신
+   * 눈에 띄게 남긴다.
+   */
+  private fitLabel(): void {
+    this.labelText.scale.set(1);
+    const max = this.w - LABEL_PAD_X * 2;
+    if (max <= 0) return;
+    // ⚠️ `Text.width` 는 캔버스 측정을 강제한다 — 캔버스가 없는 환경(node 테스트·SSR)에서는
+    // Pixi 가 `document.createElement is not a function` 으로 던진다. 라벨 맞춤은 순수 장식이라
+    // 측정이 안 되면 조용히 포기한다(버튼 생성 자체가 실패하면 화면이 통째로 죽는다).
+    let measured = 0;
+    try {
+      measured = this.labelText.width;
+    } catch {
+      return;
+    }
+    if (measured <= 0 || measured <= max) return;
+    this.labelText.scale.set(Math.max(LABEL_MIN_SCALE, max / measured));
   }
 
   setEnabled(enabled: boolean): void {
