@@ -159,6 +159,7 @@ import {
   chunkPlacements,
 } from './chunks.js';
 import { circleOverlapsWall, slideCircleWalls, segmentBlocked } from './los.js';
+import type { SlidePin } from './los.js';
 import { HAZARD_SLOW } from './patterns/types.js';
 import { stepEnemyBulletBehavior, BK_NONE, type BulletSplit } from './bullets.js';
 import {
@@ -190,13 +191,15 @@ import type { ModuleRuntime } from './moduleEffects.js';
 import { initModuleRuntime, stepModuleRuntime } from './moduleEffects.js';
 // --- 침공 3레이어(M7a) — 강제 스크롤 카메라 · 페이즈 머신 -----------------------------
 import type { Invasion3Config, InvasionRuntime } from './invasion/types.js';
-import { PHASE_L3 } from './invasion/constants.js';
+import { PHASE_L3, SCROLL_AXIS_NONE } from './invasion/constants.js';
 import { normalizeInvasionLayers } from './invasion/normalize.js';
 import {
   clampToWindow,
   createInvasionRuntime,
   windowCenterX,
   windowCenterY,
+  scrollAxisFor,
+  INVASION_SCROLL_DIR,
 } from './invasion/scroll.js';
 import {
   advanceInvasionPhase,
@@ -1450,6 +1453,30 @@ function rebuildActiveWalls(state: WorldState): void {
 // Player
 // ---------------------------------------------------------------------------
 
+/**
+ * 벽 슬라이드 끼임 규칙에 넘길 창 전진 축·방향(없으면 `undefined` = 기존 최소 침투 경로).
+ *
+ * ⚠️ **창이 실제로 전진하는 방식에서 파생해야 한다.** 값을 베껴 적으면 창 방향이 바뀔 때
+ * 끼임 되밀 방향이 반대가 되어 관통이 되돌아온다. 그래서 침공은 `scrollAxisFor(phase)` +
+ * `INVASION_SCROLL_DIR[phase]`(= `advanceScrollOffset` 이 쓰는 바로 그 두 값), PvE 스크롤은
+ * `scrollModeAxisDir(planetMode)`(= `advanceScrollRuntime` 이 받는 그 값)를 그대로 읽는다.
+ *
+ * 침공의 코어방 페이즈는 축이 `SCROLL_AXIS_NONE`(창 정지)이라 `undefined` 를 돌려준다 —
+ * 창이 밀지 않으면 끼임 규칙이 필요 없고, 그 구간 해시도 건드리지 않는다.
+ */
+function slidePinFor(state: WorldState): SlidePin | undefined {
+  const inv = state.invasion3;
+  if (inv !== undefined) {
+    const axis = scrollAxisFor(inv.phase);
+    if (axis === SCROLL_AXIS_NONE) return undefined;
+    const dir = INVASION_SCROLL_DIR[inv.phase] ?? 0;
+    if (dir === 0) return undefined;
+    return { axis, dir };
+  }
+  if (state.scrollRuntime !== undefined) return scrollModeAxisDir(state.config.planetMode);
+  return undefined;
+}
+
 function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void {
   const config = state.config;
   let mx = input.moveX;
@@ -1511,13 +1538,30 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     }
   }
 
+  // 벽 슬라이드의 "직전 좌표" — 속도 적분 **이전**. 강제 스크롤에서는 이 시점의 좌표가 이미
+  // 창 앵커에 밀려 벽 안일 수 있고, 그 "끼임" 판정이 곧 관통 방지의 트리거다(los.ts 규칙 2).
+  const preMoveX = player.x;
+  const preMoveY = player.y;
   player.x += player.vx * DT;
   player.y += player.vy * DT;
   // Infinite map: no arena clamp. Movement obstruction is the job of gimmick
   // walls — slide out of any overlapped wall (dash included; the max dash step
   // ~59u/tick is far below a wall's minimum full width 120u, so no tunnelling).
+  //
+  // 창이 있는 모드(강제 스크롤 PvE · 침공)에서는 창 전진 축·방향을 함께 넘긴다. 창이 플레이어를
+  // 벽 안으로 밀어 넣은 상태에서 최소 침투가 **먼 쪽 면**을 골라 플레이어를 벽 반대편으로 뱉는
+  // 관통을 막는다(근거·실측은 `slideCircleWalls` 주석). 창이 없으면 `undefined` 를 넘겨 기존
+  // 최소 침투 경로가 그대로 돈다 — 뱀서류·수축·추격·오염은 해시 바이트 불변.
   if (state.activeWalls.length > 0) {
-    const slid = slideCircleWalls(player.x, player.y, player.radius, state.activeWalls);
+    const slid = slideCircleWalls(
+      player.x,
+      player.y,
+      player.radius,
+      state.activeWalls,
+      preMoveX,
+      preMoveY,
+      slidePinFor(state),
+    );
     player.x = slid.x;
     player.y = slid.y;
   }
