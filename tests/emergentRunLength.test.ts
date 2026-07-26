@@ -73,6 +73,26 @@ describe('급행 소환 (ADR-0011)', () => {
     expect(late).toBeGreaterThan(SEGMENTS[0]!.maxEnemies);
   });
 
+  it('유입 축 배율은 올림이다 — 단일 스폰 역할은 실효 2배 (waves.ts 주석과 코드 정합)', () => {
+    // `spawnCard` 는 `for (let i = 0; i < s.count * PVE_DENSITY_MULT; i++)` 로 유입을 늘린다.
+    // 루프 상한이 소수면 **올림**이 되는데, 이 사실이 한때 주석에 정반대로("내림, 3 → 4") 적혀
+    // 있어 리뷰에서 잡혔다. 주석은 다시 어긋날 수 있으니 실효 배율 표 자체를 여기서 고정한다.
+    // 배율을 바꾸는 사람은 이 표가 함께 깨지는 것을 보고 유입 축을 다시 계산하게 된다.
+    const spawnedFor = (count: number): number => {
+      let n = 0;
+      for (let i = 0; i < count * PVE_DENSITY_MULT; i++) n++;
+      return n;
+    };
+    // data/waves.ts 에 실재하는 count 값들.
+    expect(spawnedFor(1)).toBe(2); // 단일 스폰 역할 = 실효 2배
+    expect(spawnedFor(2)).toBe(3);
+    expect(spawnedFor(3)).toBe(5); // 내림이면 4 였을 것
+    expect(spawnedFor(4)).toBe(6);
+    expect(spawnedFor(6)).toBe(9);
+    // 어떤 count 에서도 유입이 줄어들지는 않는다(배율이 1 미만으로 잘못 설정되는 회귀 방지).
+    for (const c of [1, 2, 3, 4, 6]) expect(spawnedFor(c)).toBeGreaterThanOrEqual(c);
+  });
+
   it('밀도 배율이 화면 위 적 수에 실제로 반영된다 (사용자 요청 2026-07-26)', () => {
     // 배율은 상한·유입 두 축에 걸려 있는데(waves.ts `PVE_DENSITY_MULT` 주석), 한쪽만 걸리면
     // 체감이 거의 안 바뀌므로 "상수는 1.5 인데 화면은 그대로" 라는 조용한 회귀가 가능하다.
@@ -89,8 +109,12 @@ describe('급행 소환 (ADR-0011)', () => {
     // 램프 없는 세그먼트0 원본 상한(12)에 배율만 걸어도 18 이다. 배율이 유입·상한 양쪽에
     // 실제로 걸렸다면 램프까지 얹혀 그보다 확실히 많이 쌓인다.
     expect(peak).toBeGreaterThan(Math.round(SEGMENTS[0]!.maxEnemies * PVE_DENSITY_MULT));
-    // 배율이 1 이었을 때의 실측 상한(램프 포함 ~28)을 넘는다 — 배율이 없으면 통과할 수 없다.
-    expect(peak).toBeGreaterThan(28);
+    // 배율이 1 이었을 때의 실측 상한(램프 포함 ~28)도 넘어야 한다 — 그래야 "배율 상수만 켜고
+    // 실제 스폰에는 안 걸린 상태" 를 잡는다. 28 을 상수로 박으면 무관한 스폰 변경이 배율 1
+    // 에서도 29 를 만들 때 가드가 조용히 무의미해지므로, 원본 상한에서 파생시켜 여유를 둔다
+    // (12 × 1.5 × 1.6 = 28.8 — 배율 1 실측 상한 28 바로 위).
+    const noMultCeiling = Math.round(SEGMENTS[0]!.maxEnemies * PVE_DENSITY_MULT * 1.6);
+    expect(peak).toBeGreaterThan(noMultCeiling);
   });
 });
 

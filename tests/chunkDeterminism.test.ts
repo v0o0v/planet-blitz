@@ -182,7 +182,10 @@ describe('chunk placement determinism (plan E, AC3)', () => {
     expect(share('hazard')).toBeLessThan(5);
     // 해저드에서 뺀 7% 는 벽으로 갔다(피해 없는 순수 지형). 파괴체·이벤트 비율은 불변이라
     // 성장·보상 곡선이 이 변경에 끌려가지 않는다 — 그것이 벽에 넘긴 이유다.
+    // 벽은 하한·상한 양쪽을 잠근다 — 하한만 두면 "벽이 폭주하는 오배분" 을 이 단언이 못 잡고
+    // 다른 종류 밴드로 간접 검출되기만 한다(경계 합 100 불변식이 한 방향으로만 걸린다).
     expect(share('wall')).toBeGreaterThan(42);
+    expect(share('wall')).toBeLessThan(52);
     expect(share('destructible')).toBeGreaterThan(16);
     expect(share('destructible')).toBeLessThan(24);
     for (const k of ['magnetEmitter', 'bombDevice', 'turretPickup']) {
