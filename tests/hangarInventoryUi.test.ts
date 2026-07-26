@@ -315,6 +315,50 @@ describe('격납고 인벤토리 — 분류 탭이 그리드에 연결돼 있다
     tap(buttonByLabel(root(), t('item.slot.shield'), INV_PANEL));
     expect(hasLabel(root(), t('inv.filter.empty'))).toBe(true);
   });
+
+  /**
+   * 필터가 켜져 있으면 일괄 분해는 **보이는 것만** 지워야 한다.
+   *
+   * 분해는 되돌릴 수 없다. 등급만 걸러 인벤토리 전체를 대상으로 삼으면, `주무기` 탭을 켜서
+   * 무기만 보고 있던 사용자가 화면에 없던 방어구까지 통째로 잃는다(분류 필터 도입이 만든
+   * 위험 — 그 전에는 "인벤토리 전체 = 보이는 것" 이라 괴리가 없었다).
+   */
+  it('필터가 켜져 있으면 일괄 분해가 화면 밖 아이템을 건드리지 않는다', async () => {
+    const p = defaultProfile();
+    const weapon = itemOfSlot(11, 'main', 'normal');
+    const armorA = itemOfSlot(31, 'armor', 'normal');
+    const armorB = itemOfSlot(41, 'armor', 'normal');
+    p.inventory.push(weapon, armorA, armorB);
+    open(p);
+
+    // 주무기 탭 — 화면에는 무기 1개만 보인다.
+    tap(buttonByLabel(root(), t('item.slot.main'), INV_PANEL));
+
+    await (hangar as unknown as {
+      salvageByRarities(r: readonly Item['rarity'][]): Promise<void>;
+    }).salvageByRarities(['normal', 'magic']);
+
+    expect(profile.inventory, '보이지 않던 방어구 2개가 함께 분해됐다').toHaveLength(2);
+    expect(profile.inventory.map((it) => it.slot).sort()).toEqual(['armor', 'armor']);
+    expect(profile.inventory.some((it) => it.id === weapon.id), '보이던 무기는 분해됐어야 한다')
+      .toBe(false);
+  });
+
+  it('필터가 없으면 종전대로 인벤토리 전체가 대상이다', async () => {
+    const p = defaultProfile();
+    p.inventory.push(
+      itemOfSlot(11, 'main', 'normal'),
+      itemOfSlot(31, 'armor', 'normal'),
+      itemOfSlot(41, 'armor', 'normal'),
+    );
+    open(p);
+
+    await (hangar as unknown as {
+      salvageByRarities(r: readonly Item['rarity'][]): Promise<void>;
+    }).salvageByRarities(['normal', 'magic']);
+
+    expect(profile.inventory, '필터 없을 때는 전부 분해돼야 한다').toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

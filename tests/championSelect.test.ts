@@ -39,6 +39,7 @@ import { SHIP_TYPES, selectableShipTypes, shipSkillNodeCount } from '../data/shi
 import { clampScroll } from '../src/ui/pixi/scrollArea.js';
 import { defaultProfile, activeShip, type KeyValueStore, type Profile } from '../src/save/profile.js';
 import { LEVEL_CAP } from '../data/waves.js';
+import { t, setLocale } from '../src/i18n/index.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
 import { hasSignature } from '../src/sim/shipSignature.js';
@@ -268,6 +269,24 @@ describe('확정은 만렙에서만 열린다', () => {
     const profile = maxedProfile();
     expect(applyChampionChoice(profile, 3, store)).toBe(3);
     expect(store.writes).toBeGreaterThan(0);
+  });
+
+  /**
+   * 잠금 사유 문구는 **카탈로그에 등재돼 있어야** 한다.
+   *
+   * `tShipKey` 폴백은 `params` 를 치환하지 않으므로, 키가 빠지면 화면에 `Lv {level}` 리터럴이
+   * 그대로 나간다. 만렙 미만은 사실상 전 사용자라 이 문구는 상시 보인다 — 조용히 깨지면
+   * 아무 테스트도 안 잡는 자리라 여기서 못 박는다.
+   */
+  it('잠금 사유 문구가 두 로케일 모두에서 실제 값으로 치환된다', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      setLocale(locale);
+      const msg = t('champion.retire.needMaxLevel', { level: 7, required: LEVEL_CAP });
+      expect(msg, `${locale}: 치환 안 된 자리표시자가 남았다`).not.toMatch(/\{(level|required)\}/);
+      expect(msg).toContain('7');
+      expect(msg).toContain(String(LEVEL_CAP));
+    }
+    setLocale('ko');
   });
 });
 

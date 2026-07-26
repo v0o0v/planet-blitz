@@ -540,6 +540,10 @@ export const EN = {
     'Your current ship (Lv {level}) becomes a Guardian. Level, skill points and gear slots reset; your equipped gear stays locked to that Guardian and returns to your stash only when you dismiss it. You will pilot a fresh {name}.',
   'champion.retire.yes': 'Retire and switch',
   'champion.retire.no': 'Cancel',
+  // 만렙 게이트 사유(ADR-0007 + 만렙 게이트). 격납고의 `hangar.err.swapNeedMaxLevel` 과 같은 게이트를
+  // 챔피언 선택 화면에서 설명한다 — 반드시 카탈로그에 있어야 한다. `tShipKey` 폴백은 `params` 를
+  // 치환하지 않으므로, 키가 없으면 화면에 `{level}` 리터럴이 그대로 노출된다.
+  'champion.retire.needMaxLevel': 'Retirement unlocks at max level (Lv {required}). Active ship: Lv {level}.',
 
   // --- 예비역 수호기 로스터·소멸(ADR-0024 Task #8) ---
   'guardians.title': 'Reserve Guardians',
@@ -1818,6 +1822,7 @@ export const KO: Record<MessageKey, string> = {
     '현재 기체(Lv {level})가 수호기로 넘어갑니다. 레벨·스킬 포인트·장착 슬롯이 초기화되고, 장착한 장비는 그 수호기에 잠긴 채 소멸시킬 때에만 창고로 돌아옵니다. 새 {name}(으)로 출격하게 됩니다.',
   'champion.retire.yes': '퇴역하고 교체',
   'champion.retire.no': '취소',
+  'champion.retire.needMaxLevel': '퇴역은 만렙(Lv {required})부터 가능합니다. 현역 기체: Lv {level}.',
 
   // --- 예비역 수호기 로스터·소멸(ADR-0024 Task #8) ---
   'guardians.title': '예비역 수호기',

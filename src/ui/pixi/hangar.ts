@@ -366,9 +366,21 @@ export class HangarScreen {
 
   // --- 분해 / 창고 ---------------------------------------------------------
 
+  /**
+   * 일괄 분해 — **화면에 보이는 것만** 지운다.
+   *
+   * ⚠️ 슬롯 분류 필터가 생기기 전에는 "인벤토리 전체 = 보이는 것" 이라 등급만 보면 됐다. 필터가
+   * 생긴 뒤로는 그 전제가 깨진다: `주무기` 탭을 켜서 무기 3개만 보이는 상태에서 하급 일괄 분해를
+   * 누르면, 등급만 걸렀을 때 **화면에 없던 방어구까지 함께 분해된다**. 분해는 되돌릴 수 없으므로
+   * 활성 필터를 반드시 함께 적용해 "보이는 것 = 대상" 을 유지한다(그리드가 쓰는 `arrangeItems`
+   * 의 필터 조건과 같은 술어여야 한다).
+   */
   private async salvageByRarities(rarities: readonly Rarity[]): Promise<void> {
     const set = new Set(rarities);
-    const targets = this.profile.inventory.filter((it) => set.has(it.rarity));
+    const slot = this.invFilter;
+    const targets = this.profile.inventory.filter(
+      (it) => set.has(it.rarity) && (slot === null || it.slot === slot),
+    );
     if (targets.length === 0) {
       this.hint = t('inv.err.noSalvage');
       this.render();

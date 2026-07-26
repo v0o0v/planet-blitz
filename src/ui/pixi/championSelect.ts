@@ -55,6 +55,7 @@ import {
   tShipKey,
   AFFINITY_ACCENT,
 } from './shipLabels.js';
+import { t } from '../../i18n/index.js';
 import { shipStory } from '../../../data/lore/index.js';
 import { makePilotFileModal } from './storyModal.js';
 import { storyProgressFromProfile } from './storyUnlock.js';
@@ -307,15 +308,17 @@ export class ChampionSelectScreen {
     cb?.onClose();
   }
 
-  /** 왜 퇴역이 막혔는지(현재/필요 레벨) 한 줄. 게이트가 열려 있으면 빈 문자열. */
+  /**
+   * 왜 퇴역이 막혔는지(현재/필요 레벨) 한 줄. 게이트가 열려 있으면 빈 문자열.
+   *
+   * ⚠️ 일반 `t()` 를 쓴다 — `tShipKey` 는 **폴백 경로에서 `params` 를 치환하지 않으므로**,
+   * 카탈로그에 키가 없으면 화면에 `Lv {level} / {required}` 리터럴이 그대로 노출된다.
+   * 만렙 미만은 사실상 전 사용자라 이 문구는 상시 보인다(`champion.retire.needMaxLevel`).
+   */
   private retireBlockedHint(): string {
     const gate = retireGate(this.profile);
     if (gate.ok) return '';
-    return tShipKey(
-      'champion.retire.needMaxLevel',
-      'Retirement unlocks at max level — Lv {level} / {required}.',
-      { level: gate.level, required: gate.required },
-    );
+    return t('champion.retire.needMaxLevel', { level: gate.level, required: gate.required });
   }
 
   private close(): void {
