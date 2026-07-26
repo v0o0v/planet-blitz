@@ -9,10 +9,11 @@
  *   - 리롤 기본 = 광물 12(구 REFINERY_REROLL_COST) → 매직·어픽스 1개일 때.
  *   - 잠금 리롤 = 기본 ×3(GDD §9 "잠금 시 비용 3배").
  *   - 리스펙 = 기체 레벨 × 100 크레딧(구 RESPEC_COST_PER_LEVEL).
- *   - 창고 확장 1회차 = 200 크레딧(구 STASH_EXPANSION_COST). 2회차부터 회차 비례 증가.
+ *   - 창고 확장 = 1회차 1000 · 2회차 4000 · 3회차 9000 · 4회차 16000 크레딧(제곱 곡선).
+ *     상한은 `MAX_STASH_EXPANSIONS`(4회) — 전부 사면 누적 30000 크레딧이 빠진다.
  *
  * 재화 싱크 설계(GDD §9): 리롤은 무한 싱크(등급·어픽스 수↑ → 비용↑), 리스펙은 주기 싱크
- * (레벨↑ → 비용↑ — 만렙에서 교정이 신중해지도록), 창고는 유한 싱크(2회 한정·회차 비례).
+ * (레벨↑ → 비용↑ — 만렙에서 교정이 신중해지도록), 창고는 유한 싱크(회차 한정 · 제곱 곡선).
  */
 
 import type { Rarity } from '../src/items/types.js';
@@ -96,14 +97,21 @@ export function respecCostCredits(shipLevel: number): number {
 // 창고 확장 비용(크레딧)
 // ---------------------------------------------------------------------------
 
-/** 창고 확장 1회차 기준 비용(크레딧). 앵커: 구 STASH_EXPANSION_COST = 200. */
-export const STASH_EXPANSION_BASE = 200;
+/** 창고 확장 1회차 기준 비용(크레딧). 구 값 200 → 1000 상향(후반 크레딧 싱크 강화). */
+export const STASH_EXPANSION_BASE = 1000;
 
 /**
- * 다음 창고 확장 비용(크레딧). 회차 비례 증가(1회차 200, 2회차 400, …)로
- * 유한 싱크를 회차마다 무겁게 한다(GDD §9 "크레딧으로 2회 확장").
+ * 다음 창고 확장 비용(크레딧) = BASE × (회차)². 1회차 1000 · 2회차 4000 · 3회차 9000 ·
+ * 4회차 16000.
+ *
+ * 선형(BASE×회차)에서 **제곱**으로 바꾼 이유: 창고는 상한(`MAX_STASH_EXPANSIONS`)이 있는 유한
+ * 싱크라, 선형이면 마지막 회차도 초반 크레딧으로 바로 살 수 있어 "확장은 그냥 사면 되는 것"이
+ * 된다. 제곱은 회차마다 증가폭 자체가 커져(+3000 → +5000 → +7000) 마지막 확장이 후반 목표가
+ * 된다. 정수 제곱이라 결정론이 그대로 유지된다(무작위·시계 없음).
+ *
  * currentExpansions = 이미 구매한 확장 수(다음 구매는 그 다음 회차).
  */
 export function stashExpansionCost(currentExpansions: number): number {
-  return STASH_EXPANSION_BASE * (nonNegInt(currentExpansions) + 1);
+  const n = nonNegInt(currentExpansions) + 1;
+  return STASH_EXPANSION_BASE * n * n;
 }

@@ -240,8 +240,16 @@ export class RefineryScreen {
         this.profile.minerals = res.mineralsLeft;
       } else if (res.status === 'unconfigured') {
         this.profile.minerals -= cost;
+      } else if (res.reason === 'insufficient') {
+        // 서버 원장이 판정해 거부했다. 로컬 미러는 치트·오프라인 가산으로 부풀 수 있으므로
+        // **서버 잔액을 그대로 보여준다** — "광물이 부족합니다" 한 줄만 내면 광물을 잔뜩 든
+        // 유저에게 거짓말이 된다(격납고 창고 확장에서 실제로 신고된 오탐과 같은 부류).
+        this.hint = t('spend.err.rejectedMinerals', { n: cost, have: res.mineralsLeft });
+        this.render();
+        return;
       } else {
-        this.hint = t('refine.err.noMinerals', { n: cost });
+        // 판정 자체를 못 받았다(오프라인·네트워크 오류). 차감도 리롤도 없다.
+        this.hint = t('spend.err.unavailable');
         this.render();
         return;
       }

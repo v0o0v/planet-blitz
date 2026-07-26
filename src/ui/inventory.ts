@@ -30,7 +30,12 @@ import { stashExpansionCost, canAfford, STASH_EXPANSION_BASE } from '../../data/
 
 /**
  * Credit cost of the *first* stash expansion (앵커). 실제 회차별 비용은
- * data/economy.ts stashExpansionCost(currentExpansions) 가 산출한다(1회차 200, 2회차 400).
+ * data/economy.ts stashExpansionCost(currentExpansions) 가 산출한다 — 제곱 곡선이라
+ * 1회차 1000 · 2회차 4000 · 3회차 9000 · 4회차 16000 이다.
+ *
+ * 이 DOM 화면(구 InventoryOverlay)의 `expandStash()` 는 **서버를 부르지 않는다**(로컬 차감).
+ * 그래서 Pixi 격납고가 겪은 "rejected 를 전부 크레딧 부족으로 뭉갠다" 결함이 여기엔 없다 —
+ * 서버 권위(ADR-0027) 경로는 Pixi 격납고(`src/ui/pixi/hangar.ts`)가 정본이다.
  */
 export const STASH_EXPANSION_COST = STASH_EXPANSION_BASE;
 

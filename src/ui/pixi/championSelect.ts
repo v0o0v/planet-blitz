@@ -36,7 +36,7 @@ import {
   type KeyValueStore,
   type Profile,
 } from '../../save/profile.js';
-import { retireActiveShip } from '../../save/guardianLifecycle.js';
+import { retireActiveShip, retireGate } from '../../save/guardianLifecycle.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, shipShowcaseName, LEGACY_SHOWCASE, type UiTextures } from './uiTextures.js';
@@ -55,6 +55,7 @@ import {
   tShipKey,
   AFFINITY_ACCENT,
 } from './shipLabels.js';
+import { t } from '../../i18n/index.js';
 import { shipStory } from '../../../data/lore/index.js';
 import { makePilotFileModal } from './storyModal.js';
 import { storyProgressFromProfile } from './storyUnlock.js';
@@ -143,14 +144,20 @@ export const ROSTER_LIST_AVAIL = ROSTER_BOX.bottom - CONFIRM_H - 16 - ROSTER_LIS
  * `activeShipIndex` 이동 · 폐기 예정 별칭(`profile.skillInvest`) 재바인딩까지 처리한다.
  * 여기서 `saveProfile` 을 빠뜨리면 화면상으로는 정상이고 **다음 실행에서만** 드러난다.
  *
- * @returns 실제로 활성이 된 타입 id(손상 입력은 레지스트리가 0 으로 되돌린다).
+ * ⚠️ **만렙 게이트**(`retireGate`): 현역 기체가 만렙이 아니면 `retireActiveShip` 이 Profile 을
+ * 전혀 변형하지 않고 거부한다. 그때는 저장도 하지 않고 `null` 을 돌려준다 — 여기서 `saveProfile`
+ * 을 무조건 부르면 아무것도 안 바뀐 프로필을 덮어써 거부가 성공처럼 보인다.
+ *
+ * @returns 실제로 활성이 된 타입 id(손상 입력은 레지스트리가 0 으로 되돌린다). 게이트에
+ *   막히면 `null`.
  */
 export function applyChampionChoice(
   profile: Profile,
   typeId: number,
   store: KeyValueStore | null,
-): number {
+): number | null {
   const result = retireActiveShip(profile, undefined, typeId);
+  if (result === null) return null;
   // ⚠️ `store` 가 null 이면 **기본 인자가 적용되지 않는다** — `saveProfile` 은 명시적 null 을
   // 즉시 return 으로 처리한다. 화면은 store 없이 생성되므로(main.ts → HangarScreen → 여기)
   // null 을 그대로 넘기면 세대 교체가 저장되지 않는다. `?? undefined` 로 기본 store 를 태운다.
@@ -289,10 +296,29 @@ export class ChampionSelectScreen {
   private confirm(): void {
     const typeId = applyChampionChoice(this.profile, this.selected, this.store);
     this.confirming = false;
+    // 만렙 게이트에 막히면 아무 변형도 일어나지 않았다 — 화면을 닫지 말고 이유만 띄운다.
+    if (typeId === null) {
+      this.hint = this.retireBlockedHint();
+      this.render();
+      return;
+    }
     const cb = this.cb;
     this.hide();
     cb?.onConfirmed?.(typeId);
     cb?.onClose();
+  }
+
+  /**
+   * 왜 퇴역이 막혔는지(현재/필요 레벨) 한 줄. 게이트가 열려 있으면 빈 문자열.
+   *
+   * ⚠️ 일반 `t()` 를 쓴다 — `tShipKey` 는 **폴백 경로에서 `params` 를 치환하지 않으므로**,
+   * 카탈로그에 키가 없으면 화면에 `Lv {level} / {required}` 리터럴이 그대로 노출된다.
+   * 만렙 미만은 사실상 전 사용자라 이 문구는 상시 보인다(`champion.retire.needMaxLevel`).
+   */
+  private retireBlockedHint(): string {
+    const gate = retireGate(this.profile);
+    if (gate.ok) return '';
+    return t('champion.retire.needMaxLevel', { level: gate.level, required: gate.required });
   }
 
   private close(): void {
@@ -396,6 +422,10 @@ export class ChampionSelectScreen {
     // 확정 버튼 — 콘텐츠 상자 바닥에 붙인다(목록과의 간격이 자동으로 남는다).
     const current = shipTypeDef(activeShip(this.profile).typeId);
     const def = shipTypeDef(this.selected);
+    // 만렙 게이트: 확정(= 되돌릴 수 없는 세대 리셋)은 만렙에서만 연다. **팝업이 뜨기 전에**
+    // 막고, 왜 막혔는지(현재/필요 레벨)를 버튼 위에 상시 보여 준다 — 죽은 버튼만 있으면
+    // 사용자는 고장으로 읽는다. 모델(`retireActiveShip`)에도 같은 게이트가 있다(이중 방어).
+    const gate = retireGate(this.profile);
     const btn = new PixiButton({
       texture: this.ui['ui_btn_yellow.png'],
       fallbackColor: 0x9a7a2a,
@@ -405,24 +435,52 @@ export class ChampionSelectScreen {
       labelColor: COLOR.darkLabel,
       label: tShipKey('champion.confirm', 'Retire & Switch', { name: shipTypeName(def) }),
       onClick: () => {
+        if (!gate.ok) {
+          this.hint = this.retireBlockedHint();
+          this.render();
+          return;
+        }
         this.confirming = true;
         this.render();
       },
     });
+    btn.setEnabled(gate.ok);
     btn.container.position.set(
       ROSTER_BOX.x + Math.round((ROSTER_BOX.w - Math.min(CONFIRM_W, ROSTER_BOX.w)) / 2),
       ROSTER_BOX.bottom - CONFIRM_H,
     );
     panel.addChild(btn.container);
 
+    const noteY = ROSTER_BOX.bottom - CONFIRM_H - 8;
     const note = new Text({
       resolution: 2,
       text: tShipKey('champion.current', 'Current: {name}', { name: shipTypeName(current) }),
       style: { fontFamily: UI_FONT, fontSize: 14, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
     });
     note.anchor.set(0.5, 1);
-    note.position.set(ROSTER_W / 2, ROSTER_BOX.bottom - CONFIRM_H - 8);
+    note.position.set(ROSTER_W / 2, noteY);
     panel.addChild(note);
+
+    if (!gate.ok) {
+      const locked = new Text({
+        resolution: 2,
+        text: this.retireBlockedHint(),
+        style: {
+          fontFamily: UI_FONT,
+          fontSize: 15,
+          fontWeight: '700',
+          fill: 0xff9a7a,
+          align: 'center',
+          wordWrap: true,
+          wordWrapWidth: ROSTER_BOX.w,
+          lineHeight: 20,
+          dropShadow: TEXT_SHADOW,
+        },
+      });
+      locked.anchor.set(0.5, 1);
+      locked.position.set(ROSTER_W / 2, noteY - 20);
+      panel.addChild(locked);
+    }
   }
 
   private makeRosterRow(def: ShipTypeDef): Container {

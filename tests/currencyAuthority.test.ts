@@ -246,18 +246,30 @@ describe('재화 권위 — 스펜드(spend_currency) 거부 시 상태 불변',
     expect(gw.spendCalls).toEqual([{ credits: 200, minerals: 0, reason: 'respec' }]);
   });
 
-  it('ok=false(잔액 부족)면 rejected — 호출부는 효과를 적용하지 않는다', async () => {
+  it('ok=false(잔액 부족)면 rejected/insufficient + 서버 잔액 — 호출부는 효과를 적용하지 않는다', async () => {
     const gw = new FakeCurrencyGateway();
     gw.spendOk = false;
+    gw.credits = 17;
+    gw.minerals = 3;
     const res = await spendCurrencyOnServer(999999, 0, 'stash', { gateway: gw });
-    expect(res).toEqual({ status: 'rejected' });
+    // 사유가 갈려야 호출부가 "크레딧 부족"과 "서버 못 붙음"을 다르게 말할 수 있다.
+    expect(res).toEqual({ status: 'rejected', reason: 'insufficient', creditsLeft: 17, mineralsLeft: 3 });
   });
 
-  it('전송 실패(오프라인)도 rejected — 위조 창구를 열지 않는다', async () => {
+  it('전송 실패(오프라인)는 rejected/unavailable — 잔액 부족이라고 단정하지 않는다', async () => {
     const gw = new FakeCurrencyGateway();
     gw.failSpend = true;
     const res = await spendCurrencyOnServer(10, 0, 'reroll', { gateway: gw });
-    expect(res).toEqual({ status: 'rejected' });
+    expect(res).toEqual({ status: 'rejected', reason: 'unavailable' });
+  });
+
+  it('두 거부 모두 status=rejected 라 기존 "거부면 효과 미적용" 호출부 계약이 유지된다', async () => {
+    const insufficient = new FakeCurrencyGateway();
+    insufficient.spendOk = false;
+    const offline = new FakeCurrencyGateway();
+    offline.failSpend = true;
+    expect((await spendCurrencyOnServer(1, 0, 'stash', { gateway: insufficient })).status).toBe('rejected');
+    expect((await spendCurrencyOnServer(1, 0, 'stash', { gateway: offline })).status).toBe('rejected');
   });
 });
 

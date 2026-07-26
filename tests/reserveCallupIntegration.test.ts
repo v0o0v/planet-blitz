@@ -4,7 +4,7 @@
  * 이 저장소의 시그니처 결함("단위 테스트는 그린인데 배선이 통째로 없다")을 정면으로 겨냥한다.
  * 목킹 없이 **실제 export 함수만** 엮어 퇴역→소집 왕복을 end-to-end 로 증명한다:
  *
- *   retireActiveShip(profile) → guardian.build 캡처 → buildCallupPilot(guardian) → buildRunConfig(pilot)
+ *   retireAtCap(profile) → guardian.build 캡처 → buildCallupPilot(guardian) → buildRunConfig(pilot)
  *
  * pilot 조립은 `src/main.ts` 의 `buildCallupPilot`(:724-742)을 그대로 미러링한다(그 파일을
  * import 하면 main.ts 의 렌더/DOM 의존이 딸려오므로 순수 로직만 복제 — 계약이 어긋나면 이
@@ -21,11 +21,8 @@ import { defaultProfile, activeShip, investSkill, migrate } from '../src/save/pr
 import type { Profile } from '../src/save/profile.js';
 import { EQUIP_SLOTS } from '../src/items/types.js';
 import type { Item, SlotKind, StatKey } from '../src/items/types.js';
-import {
-  retireActiveShip,
-  dismissGuardianRecord,
-  activeGuardians,
-} from '../src/save/guardianLifecycle.js';
+import { dismissGuardianRecord, activeGuardians } from '../src/save/guardianLifecycle.js';
+import { retireAtCap } from './support/retireAtCap.js';
 import { GUARDIAN_TITAN, PERFORMANCE_FULL, PERFORMANCE_FLOOR } from '../data/guardian.js';
 import { SHIP_TYPES } from '../data/ships/index.js';
 
@@ -95,7 +92,7 @@ describe('예비역 소집 정규경로 통합 — 퇴역→build 캡처→소�
     // ⚠️ 활성 기체와 **다른 타입**(브루저 1)의 후속 기체로 세대 교체한다 — buildRunConfig 가
     // pilot.typeId 를 읽는지(활성 기체 typeId 를 잘못 읽지 않는지) 를 shipType 으로 판별하기 위함.
     const nextTypeId = SHIP_TYPES.length > 1 ? 1 : 0;
-    const { guardian } = retireActiveShip(profile, GUARDIAN_TITAN, nextTypeId);
+    const { guardian } = retireAtCap(profile, GUARDIAN_TITAN, nextTypeId);
 
     // 1) 수호기 build 가 퇴역 순간 빌드를 그대로 잠갔다: typeId · 장착(참조 동일) · 스킬 벡터.
     expect(guardian.build).toBeDefined();
@@ -128,7 +125,7 @@ describe('예비역 소집 정규경로 통합 — 퇴역→build 캡처→소�
 
   it('풍화(성능 바닥 5000) 소집은 피해·HP 만 절반이고 기하는 불변이다', () => {
     const profile = profileWithLoadedActiveShip();
-    const { guardian } = retireActiveShip(profile, GUARDIAN_TITAN, 0);
+    const { guardian } = retireAtCap(profile, GUARDIAN_TITAN, 0);
 
     // 완전 성능 소집(퇴역 직후 performanceCP = 10000)을 기준선으로 잡는다.
     const fullPilot = buildCallupPilot(profile, guardian.id)!;
@@ -159,7 +156,7 @@ describe('예비역 소집 정규경로 통합 — 퇴역→build 캡처→소�
 describe('소집 가드레일 — 활성 기체 정체성/XP 귀속 불변 (Task #5)', () => {
   it('pilot 조립 + buildRunConfig(pilot) 는 activeShipIndex 와 활성 기체를 전혀 건드리지 않는다', () => {
     const profile = profileWithLoadedActiveShip();
-    const { guardian } = retireActiveShip(profile, GUARDIAN_TITAN, 0);
+    const { guardian } = retireAtCap(profile, GUARDIAN_TITAN, 0);
 
     // 퇴역 후 활성 기체(신규 세대)에 성장 상태를 실어 뮤테이션 탐지 감도를 높인다.
     const liveShip = activeShip(profile);
@@ -206,7 +203,7 @@ describe('장비 잠김 경제 — 소멸이 잠긴 장비를 stash 로 반환 (
     expect(n).toBeGreaterThan(0);
     const stashBefore = profile.stash.length;
 
-    const { guardian } = retireActiveShip(profile, GUARDIAN_TITAN, 0);
+    const { guardian } = retireAtCap(profile, GUARDIAN_TITAN, 0);
     // 퇴역 직후: 장비는 수호기에 잠기고 stash 는 불변.
     expect(profile.stash.length).toBe(stashBefore);
     expect(Object.keys(guardian.build!.equipped).length).toBe(n);
@@ -224,7 +221,7 @@ describe('장비 잠김 경제 — 소멸이 잠긴 장비를 stash 로 반환 (
 describe('소집 가드 — 소멸된 수호기는 소집 대상이 아니다 (리뷰 MED-1)', () => {
   it('dismiss 된 수호기는 build 가 남아 있어도 pilot 조립이 거부된다(장비 stash 반환 후 복제 방지)', () => {
     const profile = profileWithLoadedActiveShip();
-    const { guardian } = retireActiveShip(profile, GUARDIAN_TITAN, 0);
+    const { guardian } = retireAtCap(profile, GUARDIAN_TITAN, 0);
     // 소멸 전: 소집 가능.
     expect(buildCallupPilot(profile, guardian.id)).not.toBeNull();
     // 소멸: 잠긴 장비가 stash 로 반환된다.
@@ -242,7 +239,7 @@ describe('하위 호환 — 구 수호기(build 부재)는 소집 비대상 (ADR
     // migrate(normalizeGuardianRecords)가 build 없이 로드(=소집 비활성). 손으로 snapshot 을
     // 조작하지 않고 실 함수만 사용해 하위 호환 경로 자체를 exercise 한다.
     const seed = profileWithLoadedActiveShip();
-    retireActiveShip(seed, GUARDIAN_TITAN, 0);
+    retireAtCap(seed, GUARDIAN_TITAN, 0);
     const raw = JSON.parse(JSON.stringify(seed)) as { guardians: Record<string, unknown>[] };
     delete raw.guardians[0]!.build; // 디스크상 pre-ADR-0024 레코드 재현
     const profile = migrate(raw);

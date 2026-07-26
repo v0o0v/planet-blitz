@@ -28,7 +28,7 @@ import {
   zeroSkillInvest,
   normalizeSkillInvest,
 } from '../src/save/profile.js';
-import { retireActiveShip } from '../src/save/guardianLifecycle.js';
+import { retireAtCap } from './support/retireAtCap.js';
 import { makeGuardianSnapshot } from '../data/guardian.js';
 import { SAVE_VERSION } from '../src/items/types.js';
 import { SKILL_NODE_COUNT, SKILLS } from '../data/skills.js';
@@ -142,11 +142,16 @@ describe('profile — migration v0 → v1 (AC5)', () => {
 });
 
 describe('stashCapacity (AC6)', () => {
-  it('grows 32 → 64 → 96 across two expansions and clamps', () => {
+  it('grows 32 slots per expansion up to the cap and clamps beyond it', () => {
     expect(stashCapacity(0)).toBe(32);
     expect(stashCapacity(1)).toBe(64);
     expect(stashCapacity(2)).toBe(96);
-    expect(stashCapacity(5)).toBe(96); // clamped to MAX
+    expect(stashCapacity(3)).toBe(128);
+    expect(stashCapacity(4)).toBe(160);
+    // 상한(MAX_STASH_EXPANSIONS=4) 초과 입력은 정규화가 잘라낸다 — 비용 함수·UI 와 같은 상한.
+    expect(stashCapacity(MAX_STASH_EXPANSIONS)).toBe(160);
+    expect(stashCapacity(9)).toBe(160);
+    expect(stashCapacity(-1)).toBe(32);
   });
 });
 
@@ -751,7 +756,7 @@ describe('기체 타입 선택 — 해금 게이트 부재 (검증⑤)', () => {
   it('갓 시작한 프로필도 모든 타입으로 퇴역·전환할 수 있다', () => {
     for (let t = 0; t < SHIP_TYPES.length; t++) {
       const p = defaultProfile(); // level 1 · 진행도 0 · 계보 0 — 가장 약한 상태
-      const r = retireActiveShip(p, 0, t);
+      const r = retireAtCap(p, 0, t);
       expect(r.ship.typeId).toBe(t);
       expect(activeShip(p).typeId).toBe(t);
     }
@@ -791,7 +796,7 @@ describe('M8 — investSkill 은 활성 기체 타입의 노드·캡스톤 게�
   it('모든 타입의 모든 노드가 투자 가능하다 (노드 수 63 하드코딩이면 비온이 실패)', () => {
     for (const def of SHIP_TYPES) {
       const p = defaultProfile();
-      retireActiveShip(p, 0, def.id);
+      retireAtCap(p, 0, def.id);
       const nodes = flattenShipNodes(def);
       const inv = maxOut(p, def.id);
       expect(inv.length, `${def.slug} 벡터 길이`).toBe(nodes.length);
@@ -804,7 +809,7 @@ describe('M8 — investSkill 은 활성 기체 타입의 노드·캡스톤 게�
   it('노드별 상한은 그 타입의 maxPoints 다 (스트라이커 상한을 빌려 쓰면 과투자/조기차단)', () => {
     for (const def of SHIP_TYPES) {
       const p = defaultProfile();
-      retireActiveShip(p, 0, def.id);
+      retireAtCap(p, 0, def.id);
       const nodes = flattenShipNodes(def);
       const inv = maxOut(p, def.id);
       for (let i = 0; i < nodes.length; i++) {
@@ -816,7 +821,7 @@ describe('M8 — investSkill 은 활성 기체 타입의 노드·캡스톤 게�
   it('캡스톤은 그 타입의 계열 게이트를 통과해야만 찍힌다 (레이아웃·게이트 폭이 타입별)', () => {
     for (const def of SHIP_TYPES) {
       const p = defaultProfile();
-      retireActiveShip(p, 0, def.id);
+      retireAtCap(p, 0, def.id);
       p.skillPoints = 100_000;
       for (let ti = 0; ti < def.trees.length; ti++) {
         const ci = shipCapstoneIndex(def, ti);

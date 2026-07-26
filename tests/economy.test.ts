@@ -27,6 +27,7 @@ import {
   respecSkills,
   activeShip,
   investSkill,
+  MAX_STASH_EXPANSIONS,
 } from '../src/save/profile.js';
 
 describe('economy: 어픽스 리롤 비용', () => {
@@ -104,18 +105,40 @@ describe('economy: 리스펙 비용', () => {
 });
 
 describe('economy: 창고 확장 비용', () => {
-  it('앵커: 1회차(확장 0개) = 200 크레딧', () => {
-    expect(STASH_EXPANSION_BASE).toBe(200);
-    expect(stashExpansionCost(0)).toBe(200);
+  it('앵커: 1회차(확장 0개) = 1000 크레딧', () => {
+    expect(STASH_EXPANSION_BASE).toBe(1000);
+    expect(stashExpansionCost(0)).toBe(1000);
   });
 
-  it('회차 비례: 2회차(확장 1개) = 400', () => {
-    expect(stashExpansionCost(1)).toBe(400);
+  it('제곱 곡선: BASE×회차² (1000 · 4000 · 9000 · 16000)', () => {
+    expect(stashExpansionCost(1)).toBe(4000);
+    expect(stashExpansionCost(2)).toBe(9000);
+    expect(stashExpansionCost(3)).toBe(16000);
   });
 
   it('회차 단조: 확장 수↑ → 비용↑', () => {
     expect(stashExpansionCost(1)).toBeGreaterThan(stashExpansionCost(0));
     expect(stashExpansionCost(2)).toBeGreaterThan(stashExpansionCost(1));
+  });
+
+  it('가속: 증가폭 자체가 회차마다 커진다(선형이 아니다)', () => {
+    const d1 = stashExpansionCost(1) - stashExpansionCost(0);
+    const d2 = stashExpansionCost(2) - stashExpansionCost(1);
+    const d3 = stashExpansionCost(3) - stashExpansionCost(2);
+    expect(d2).toBeGreaterThan(d1);
+    expect(d3).toBeGreaterThan(d2);
+  });
+
+  it('상한(MAX_STASH_EXPANSIONS)까지 전부 사면 누적 30000 크레딧', () => {
+    let total = 0;
+    for (let n = 0; n < MAX_STASH_EXPANSIONS; n++) total += stashExpansionCost(n);
+    expect(total).toBe(30_000);
+  });
+
+  it('결정론 정수: 같은 입력은 항상 같은 정수, 음수는 1회차로 방어', () => {
+    expect(Number.isInteger(stashExpansionCost(3))).toBe(true);
+    expect(stashExpansionCost(2)).toBe(stashExpansionCost(2));
+    expect(stashExpansionCost(-5)).toBe(STASH_EXPANSION_BASE);
   });
 });
 

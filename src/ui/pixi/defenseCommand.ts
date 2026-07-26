@@ -45,6 +45,7 @@ import { PixiButton } from './button.js';
 import { makeBanner, makeCurrencyChip, makeIconButton } from './titleBar.js';
 import { stripEmoji } from './text.js';
 import { makeTabBar, TAB_H } from './tabs.js';
+import { GEAR_RECT } from './settingsPanel.js';
 import { makeScrollArea, rowBounds, clampToRows } from './scrollArea.js';
 import { listRowBg, attachRowClick, stopRowPropagation } from './listRow.js';
 import { makeModal, type ModalParts } from './modal.js';
@@ -525,7 +526,45 @@ const BANNER_Y = 10;
 const CHIP_W = 180;
 const CHIP_H = 52;
 
-const TABS_Y = 100;
+// --- 상단 크롬 밴드 --------------------------------------------------------
+//
+// 이 화면 위쪽에는 성격이 다른 것 다섯이 몰려 있다: **설정 톱니**(좌상단 · 이 화면 소유가
+// 아니라 매 프레임 맨 앞으로 올라오는 전역 크롬), 재화 칩 2, 배너, 닫기 X, 그리고 탭 바.
+// 예전에는 `TABS_Y = 100` 이 하드코딩돼 있었는데 톱니 바닥이 96 이라 **탭 바와 4px 차이**로
+// 붙어 있었고(x 도 36..100 구간이 겹친다) 첫 탭 'L1 대기권' 이 톱니에 닿아 보였다.
+//
+// 그래서 크롬이 쓰는 세로 구간을 상수에서 **계산**하고 탭 바를 그 아래로 내린다. 겹침은
+// 더 이상 눈대중이 아니라 `TABS_Y >= TOP_CHROME_BOTTOM` 라는 부등식으로 막힌다 —
+// 크롬 요소 중 어느 하나라도 커지면 탭 바가 따라 내려간다.
+
+/**
+ * 좌상단 설정 톱니 상자의 **바닥**. 값을 베껴 적지 않고 톱니 소유 모듈이 export 하는 단일
+ * 정본({@link GEAR_RECT})에서 읽는다 — 톱니가 움직이면 아래 밴드 계산이 자동으로 따라온다.
+ */
+const GEAR_BOTTOM = GEAR_RECT.bottom;
+
+/** 닫기 X — 오른쪽 가장자리에서 24 안쪽. */
+const CLOSE_SIZE = 56;
+const CLOSE_Y = 12;
+const CLOSE_X = DESIGN_WIDTH - 24 - CLOSE_SIZE;
+
+/** 재화 칩 y — 배너 높이 안에서 세로 중앙. */
+const CHIP_Y = BANNER_Y + (BANNER_H - CHIP_H) / 2;
+
+/**
+ * 상단 크롬이 쓰는 세로 구간의 바닥. 톱니 96 · 배너 82 · 칩 72 · 닫기 68 중 최댓값 = **96**.
+ */
+export const TOP_CHROME_BOTTOM = Math.max(
+  GEAR_BOTTOM,
+  BANNER_Y + BANNER_H,
+  CHIP_Y + CHIP_H,
+  CLOSE_Y + CLOSE_SIZE,
+);
+/** 크롬 밴드와 탭 바 사이 숨 쉴 틈. */
+const TOP_CHROME_GAP = 28;
+
+/** 탭 바 상단 = 크롬 밴드 바닥 + 여백 (96 + 28 = 124). 크롬과 세로로 겹칠 수 없다. */
+export const TABS_Y = TOP_CHROME_BOTTOM + TOP_CHROME_GAP;
 const BOARD_TOP = TABS_Y + TAB_H;
 const BOARD_BOTTOM = 930;
 const BOARD_W = DESIGN_WIDTH - MARGIN * 2;
@@ -958,7 +997,7 @@ export class DefenseCommandScreen {
     banner.position.set((DESIGN_WIDTH - BANNER_W) / 2, BANNER_Y);
     this.root.addChild(banner);
 
-    const chipY = BANNER_Y + (BANNER_H - CHIP_H) / 2;
+    const chipY = CHIP_Y;
     const credits = makeCurrencyChip(
       CHIP_W,
       CHIP_H,
@@ -979,8 +1018,8 @@ export class DefenseCommandScreen {
     minerals.position.set((DESIGN_WIDTH + BANNER_W) / 2 + 16, chipY);
     this.root.addChild(minerals);
 
-    const close = makeIconButton(56, () => this.close(), this.ui['ui_icon_close.png']);
-    close.position.set(DESIGN_WIDTH - 24 - 56, 12);
+    const close = makeIconButton(CLOSE_SIZE, () => this.close(), this.ui['ui_icon_close.png']);
+    close.position.set(CLOSE_X, CLOSE_Y);
     this.root.addChild(close);
   }
 

@@ -28,7 +28,7 @@ import { MAINTENANCE_FULL } from '../sim/invasion/guardian.js';
 import type { EntitySnapshot } from '../sim/snapshot.js';
 import { xpToNext } from '../sim/world.js';
 import { spawnLoot } from '../sim/entities.js';
-import { SEGMENTS } from '../../data/waves.js';
+import { SEGMENTS, LEVEL_CAP } from '../../data/waves.js';
 import { PLANETS } from '../../data/planets/index.js';
 import { makeElite, ELITE_AFFIX_COUNT, isElite } from '../sim/elite.js';
 import { rollItem } from '../items/roll.js';
@@ -1195,21 +1195,30 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
 
       const retireRow = document.createElement('div');
       retireRow.className = 'pb-c-row';
+      /**
+       * 치트 퇴역 = **만렙 강제 후 퇴역**. 퇴역은 만렙 게이트(`retireActiveShip`)가 걸려 있어
+       * 레벨을 올려 주지 않으면 치트 버튼이 조용히 아무 일도 안 한다(치트 패널의 존재 이유가
+       * "조건 없이 상태를 만들어 본다" 이므로 게이트를 우회하는 쪽이 의도에 맞다).
+       */
+      const cheatRetire = (preset: number, label: string): void => {
+        const profile = host.getProfile();
+        activeShip(profile).level = LEVEL_CAP;
+        const r = retireActiveShip(profile, preset);
+        if (r === null) {
+          setHint(`퇴역(${label}) 거부 — 만렙 게이트`);
+          return;
+        }
+        host.saveProfile();
+        refreshStatus();
+        setHint(`퇴역(${label}) → 수호 생성 전투력 ${r.guardian.combatScore}, 계보 +${r.granted}pt`);
+      };
       retireRow.appendChild(
-        btn('퇴역 · 타이탄', () => {
-          const r = retireActiveShip(host.getProfile(), GUARDIAN_TITAN);
-          host.saveProfile();
-          refreshStatus();
-          setHint(`퇴역(타이탄) → 수호 생성 전투력 ${r.guardian.combatScore}, 계보 +${r.granted}pt`);
-        }, '만렙 퇴역 → 타이탄형 수호 기체 생성 + 계보 지급'),
+        btn('퇴역 · 타이탄', () => cheatRetire(GUARDIAN_TITAN, '타이탄'),
+          '만렙 강제 후 퇴역 → 타이탄형 수호 기체 생성 + 계보 지급'),
       );
       retireRow.appendChild(
-        btn('퇴역 · 인터셉터', () => {
-          const r = retireActiveShip(host.getProfile(), GUARDIAN_INTERCEPTOR);
-          host.saveProfile();
-          refreshStatus();
-          setHint(`퇴역(인터셉터) → 수호 생성 전투력 ${r.guardian.combatScore}, 계보 +${r.granted}pt`);
-        }, '만렙 퇴역 → 인터셉터형 수호 기체 생성 + 계보 지급'),
+        btn('퇴역 · 인터셉터', () => cheatRetire(GUARDIAN_INTERCEPTOR, '인터셉터'),
+          '만렙 강제 후 퇴역 → 인터셉터형 수호 기체 생성 + 계보 지급'),
       );
       s.appendChild(retireRow);
 

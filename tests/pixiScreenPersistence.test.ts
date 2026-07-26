@@ -41,6 +41,7 @@ import {
 import { rollItem } from '../src/items/roll.js';
 import type { Item } from '../src/items/types.js';
 import { stashExpansionCost, rerollCost } from '../data/economy.js';
+import { LEVEL_CAP } from '../data/waves.js';
 import * as net from '../src/net/index.js';
 
 // ---------------------------------------------------------------------------
@@ -205,6 +206,8 @@ describe('Pixi 메타 화면 — store 없이 생성해도 프로필이 저장�
 
   it('챔피언 선택: 확정(퇴역 + 세대 교체)이 저장된다', () => {
     const profile = defaultProfile();
+    // 확정(퇴역)에는 만렙 게이트가 있다 — 여기서 보려는 것은 게이트가 아니라 **저장 배선**이다.
+    activeShip(profile).level = LEVEL_CAP;
     const before = profile.ships.length;
     const stage = new Container();
     // main.ts → HangarScreen 이 store 없이 만들고, 격납고가 그대로 물려준다.

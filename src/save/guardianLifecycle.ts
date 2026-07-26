@@ -37,6 +37,7 @@ import {
 import type { LineageBranch } from '../../data/lineage.js';
 import { activeShip, zeroSkillInvest } from './profile.js';
 import { normalizeShipTypeId } from '../../data/ships/index.js';
+import { LEVEL_CAP } from '../../data/waves.js';
 
 /** 스킬 투자 1점당 전투력 가산(빌드 깊이 반영, OQ-M5-2 기본안). 튜닝 대상(§5). */
 const SKILL_DEPTH_WEIGHT = 4;
@@ -58,6 +59,44 @@ export function retirementCombatScore(profile: Profile): number {
   for (const v of ship.skillInvest) skillDepth += v;
   const score = totalCombatPower(equipped) + skillDepth * SKILL_DEPTH_WEIGHT;
   return score < 1 ? 1 : score;
+}
+
+/**
+ * 퇴역에 필요한 활성 기체 레벨 = **만렙**({@link LEVEL_CAP}, `data/waves.ts` 정본).
+ *
+ * 별도 상수를 새로 만들지 않는다 — 만렙이 두 곳에 적히면 레벨 상한을 조정할 때 한쪽만 바뀌어
+ * "퇴역이 영원히 잠기거나 만렙 전에 열리는" 조용한 결함이 된다.
+ */
+export const RETIRE_REQUIRED_LEVEL = LEVEL_CAP;
+
+/** 퇴역 게이트 판정 결과 — 왜 막혔는지(현재/필요 레벨)를 화면이 그대로 보여줄 수 있게 담는다. */
+export interface RetireGate {
+  /** 퇴역 가능 여부. `level >= required` 와 동치. */
+  ok: boolean;
+  /** 현재 활성 기체 레벨. */
+  level: number;
+  /** 필요 레벨(= {@link RETIRE_REQUIRED_LEVEL}). */
+  required: number;
+}
+
+/**
+ * 활성 기체를 퇴역시킬 수 있는가 — **순수 판정**(Profile 무변형).
+ *
+ * 세대 교체는 되돌릴 수 없는 리셋(레벨·투자 초기화, 장비는 수호기에 잠김)이라, 성장을 다 쓰기
+ * 전에 실행하면 그 세대의 진행이 통째로 사라진다. 그래서 만렙에서만 연다.
+ *
+ * 화면은 이 함수로 버튼을 잠그지만, 강제는 {@link retireActiveShip} 안에도 있다 — 이 프로젝트의
+ * 반복 결함이 "UI 게이트만 있고 모델에는 없다" 이기 때문이다(하네스·치트·후속 호출부는 UI 를
+ * 거치지 않는다).
+ */
+export function retireGate(profile: Profile): RetireGate {
+  const level = activeShip(profile).level;
+  return { ok: level >= RETIRE_REQUIRED_LEVEL, level, required: RETIRE_REQUIRED_LEVEL };
+}
+
+/** {@link retireGate} 의 불리언 축약. */
+export function canRetireActiveShip(profile: Profile): boolean {
+  return retireGate(profile).ok;
 }
 
 /** 결과: 생성된 수호 기체 + 지급 계보 포인트 + 새로 배치된 후속 기체. */
@@ -84,12 +123,20 @@ export interface RetireResult {
  * CONTEXT.md §86-87). 세대를 관통하는 성장은 계보가 담당한다.
  *
  * Profile 을 제자리 변형하고 결과를 반환한다.
+ *
+ * ⚠️ **만렙 게이트**: 활성 기체가 {@link RETIRE_REQUIRED_LEVEL} 미만이면 `null` 을 돌려주고
+ * **Profile 을 전혀 건드리지 않는다**. 이 함수는 수호 스냅샷 · 계보 지급 · 장착 비우기 · 신규
+ * 기체 push 를 한 덩어리로 하므로, 판정은 반드시 **모든 변형보다 앞**에 있어야 부분 변형이
+ * 남지 않는다(중간에 거부하면 계보만 받고 기체는 그대로인 상태가 세이브된다).
+ * 반환 타입이 nullable 인 것도 의도다 — 호출부가 거부를 무시하면 **컴파일이 막는다**.
  */
 export function retireActiveShip(
   profile: Profile,
   preset: number = GUARDIAN_TITAN,
   nextTypeId = 0,
-): RetireResult {
+): RetireResult | null {
+  // 게이트는 어떤 변형보다도 먼저(부분 변형 금지 — 위 주석 참조).
+  if (!canRetireActiveShip(profile)) return null;
   const p = normalizeGuardianPreset(preset);
   const score = retirementCombatScore(profile);
   // 퇴역 순간의 실물 빌드를 통째로 복사해 잠근다(ADR-0024) — 스냅샷 파생·장착 비우기 전에 캡처.

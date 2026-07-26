@@ -34,10 +34,30 @@ const LANG_KEY: Record<Locale, MessageKey> = {
 };
 
 // --- 레이아웃 상수(디자인 스페이스) ---
-/** 좌상단 톱니 버튼. DOM 판(left:16 top:14, 38px)의 자리를 디자인 좌표로 옮긴 값. */
+/**
+ * 좌상단 톱니 버튼. DOM 판(left:16 top:14, 38px)의 자리를 디자인 좌표로 옮긴 값.
+ *
+ * ⚠️ 톱니는 이 화면 소유가 아니라 **매 프레임 맨 앞으로 올라오는 전역 크롬**이라, 아래에
+ * 깔리는 화면들이 좌상단을 비워 두려면 이 자리를 알아야 한다(격납고의 촉매 버튼이 여기
+ * 겹쳐 클릭 불가였고, 방어 사령부 탭 바가 4px 차이로 붙어 있었다). 그래서 좌표를 각 화면이
+ * 베껴 적는 대신 {@link GEAR_RECT} 하나를 정본으로 export 한다 — 톱니가 움직이면 비켜야
+ * 하는 화면들이 자동으로 따라온다.
+ */
 const GEAR_X = 24;
 const GEAR_Y = 20;
 const GEAR_SIZE = 76;
+
+/**
+ * 전역 톱니가 점유하는 사각형(디자인 스페이스). 다른 화면이 좌상단을 피할 때 쓰는 **단일
+ * 정본** — 값을 베껴 적지 말고 이걸 import 해라.
+ */
+export const GEAR_RECT = {
+  x: GEAR_X,
+  y: GEAR_Y,
+  size: GEAR_SIZE,
+  right: GEAR_X + GEAR_SIZE,
+  bottom: GEAR_Y + GEAR_SIZE,
+} as const;
 /** 톱니 안 아이콘(정사각). */
 const GEAR_ICON = 44;
 

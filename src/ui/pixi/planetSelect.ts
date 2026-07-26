@@ -56,18 +56,26 @@ const CARD_SUB_Y = 254;
 
 // 하단 패널 행: 단계 스텝퍼(좌) + 촉매 주입 패널(우, ADR-0029 Lane 4 — 구 변칙 패널 자리).
 const LOW_Y = 546;
-const LOW_H = 280;
+export const LOW_H = 280;
 /** 단계 패널 폭(좌). 티어 3버튼 행(884)이 콘텐츠 상자에 들어가는 최소 폭 이상. */
-const STAGE_W = 1040;
+export const STAGE_W = 1040;
 /** 촉매 주입 패널 폭(우). */
 const CAT_W = 560;
 /** 두 하단 패널 사이 간격. */
 const LOW_GAP = 40;
-const TIER_BTN_W = 280;
-const TIER_BTN_H = 64;
-const TIER_BTN_GAP = 22;
-const TIER_BTN_Y = 108;
-const TIER_DESC_Y = 186;
+/** 단계 조절 행 높이/세로 위치(콘텐츠 상자 안 — 제목 아래, 캡션 위). */
+export const STAGE_ROW_H = 64;
+export const STAGE_ROW_Y = 108;
+export const STAGE_DESC_Y = 186;
+/** 최소/최대 점프 버튼 폭(`≪` / `≫`). */
+const STAGE_JUMP_W = 96;
+/** 큰 걸음 버튼 폭(`−5` / `+5` — 걸음 폭은 상한에서 파생, {@link stageBigStep}). */
+const STAGE_BIG_W = 120;
+/** 한 칸 조절 버튼 폭(`−` / `+` — 정밀 조정용, 절대 없애지 않는다). */
+const STAGE_STEP_W = 96;
+/** 현재 단계 표시 버튼 폭(노란 버튼·비활성). */
+const STAGE_VALUE_W = 200;
+const STAGE_BTN_GAP = 14;
 
 // 하단 액션.
 const LAUNCH_W = 460;
@@ -83,6 +91,75 @@ const META_Y = 1000;
 function cardWidth(n: number): number {
   if (n <= 0) return CARD_MAX_W;
   return Math.min(CARD_MAX_W, Math.floor((CARD_ROW_MAX_W - CARD_GAP * (n - 1)) / n));
+}
+
+// --- 침략 단계 조절 컨트롤(순수 층) ---------------------------------------
+//
+// 단계 조절의 **의미**를 픽시와 분리해 여기 순수 함수로 둔다. 렌더는 이 사양을 버튼으로
+// 옮겨 그릴 뿐이고, 모든 이동은 예외 없이 `clampStageTo` 를 통과한 절대 목표 단계다 —
+// "새 컨트롤이 클램프를 우회한다"는 결함이 구조적으로 불가능해지고, 단위 테스트가 캔버스
+// 없이 전 컨트롤의 도달 범위를 검사할 수 있다.
+
+/** 단계를 [1, cap] 안으로 가둔다(모든 단계 이동의 유일한 관문). */
+export function clampStageTo(stage: number, cap: number): number {
+  const lo = 1;
+  const hi = cap < lo ? lo : cap;
+  const s = Number.isFinite(stage) ? Math.round(stage) : lo;
+  return s < lo ? lo : s > hi ? hi : s;
+}
+
+/**
+ * 큰 걸음 폭. 개방 상한은 클리어가 쌓이면 계속 커지므로(`stageOpenCap` = max(10, best+5))
+ * 고정 5로 두면 상한 100 에서 다시 "여러 번 눌러야" 문제로 돌아간다. 상한의 1/10 로 두되
+ * 하한 5 를 지켜 초반(상한 10~50)에는 익숙한 ±5 가 유지된다.
+ */
+export function stageBigStep(cap: number): number {
+  return Math.max(5, Math.ceil((cap < 1 ? 1 : cap) / 10));
+}
+
+/** 단계 조절 버튼 한 칸의 사양(좌→우 순서로 배열). */
+export interface StageControlSpec {
+  /** 안정 식별자(테스트·하네스가 라벨 문자열에 의존하지 않게). */
+  key: 'min' | 'bigDec' | 'dec' | 'value' | 'inc' | 'bigInc' | 'max';
+  label: string;
+  width: number;
+  fontSize: number;
+  /** 누르면 도달할 **절대** 단계(이미 클램프됨). */
+  target: number;
+  /** 눌러서 의미가 있는가(끝에 닿았으면 false → 비활성). */
+  enabled: boolean;
+  /** 현재 단계 표시 칸인가(노란 버튼·클릭 없음). */
+  readonly current?: true;
+}
+
+/**
+ * 현재 단계·상한에서 조절 행 사양을 만든다. `−`/`+` 한 칸 조절은 정밀 조정용으로 항상 남고,
+ * 큰 걸음(±{@link stageBigStep})과 최소/최대 점프(`≪`/`≫`)가 먼 단계로의 도달을 짧게 만든다.
+ * 라벨은 기호·숫자뿐이라 새 i18n 문자열이 필요 없다(걸음 폭이 라벨에 그대로 드러난다).
+ */
+export function stageControlSpecs(stage: number, cap: number): StageControlSpec[] {
+  const cur = clampStageTo(stage, cap);
+  const hi = clampStageTo(cap, cap);
+  const big = stageBigStep(cap);
+  const canDec = cur > 1;
+  const canInc = cur < hi;
+  return [
+    { key: 'min', label: '≪', width: STAGE_JUMP_W, fontSize: 28, target: 1, enabled: canDec },
+    { key: 'bigDec', label: `−${big}`, width: STAGE_BIG_W, fontSize: 24, target: clampStageTo(cur - big, cap), enabled: canDec },
+    { key: 'dec', label: '−', width: STAGE_STEP_W, fontSize: 34, target: clampStageTo(cur - 1, cap), enabled: canDec },
+    { key: 'value', label: String(cur), width: STAGE_VALUE_W, fontSize: 26, target: cur, enabled: false, current: true },
+    { key: 'inc', label: '+', width: STAGE_STEP_W, fontSize: 34, target: clampStageTo(cur + 1, cap), enabled: canInc },
+    { key: 'bigInc', label: `+${big}`, width: STAGE_BIG_W, fontSize: 24, target: clampStageTo(cur + big, cap), enabled: canInc },
+    { key: 'max', label: '≫', width: STAGE_JUMP_W, fontSize: 28, target: hi, enabled: canInc },
+  ];
+}
+
+/** 조절 행 전체 폭(버튼 폭 합 + 간격). 콘텐츠 상자 폭을 넘으면 안 된다. */
+export function stageRowWidth(specs: readonly StageControlSpec[]): number {
+  if (specs.length === 0) return 0;
+  let w = 0;
+  for (const s of specs) w += s.width;
+  return w + STAGE_BTN_GAP * (specs.length - 1);
 }
 
 /** 두 색을 tt(0=a, 1=b) 로 섞는다 — 오브 그라데이션용. */
@@ -241,13 +318,21 @@ export class PlanetSelectScreen {
 
   /** 단계를 [1, 개방 상한]으로 클램프한다. */
   private clampStage(stage: number): number {
-    const cap = this.openCap();
-    return stage < 1 ? 1 : stage > cap ? cap : stage;
+    return clampStageTo(stage, this.openCap());
   }
 
-  private stepStage(delta: number): void {
-    this.selectedStage = this.clampStage(this.selectedStage + delta);
+  /**
+   * 목표 단계로 이동한다(절대값). 큰 걸음·점프·한 칸 조절이 전부 이 한 지점을 지나므로
+   * 클램프 불변이 컨트롤 종류와 무관하게 유지된다.
+   */
+  private setStage(stage: number): void {
+    this.selectedStage = this.clampStage(stage);
     this.render();
+  }
+
+  /** 현재 선택 단계(하네스·테스트가 읽는 접점). */
+  getSelectedStage(): number {
+    return this.selectedStage;
   }
 
   private launch(): void {
@@ -536,8 +621,13 @@ export class PlanetSelectScreen {
   }
 
   /**
-   * 침략 단계 스텝퍼 패널(ADR-0022). 3버튼 티어를 대체한다 — `−` / 현재 단계 / `+` 세 버튼으로
-   * 1..개방 상한 사이를 오간다. 상한은 선택 행성의 최고 클리어 단계에서 파생한다(`openCap`).
+   * 침략 단계 조절 패널(ADR-0022). 초기 3버튼(`−`/값/`+`)은 한 번에 한 단계만 움직여, 개방
+   * 상한이 10 이상인 지금은 목표 단계까지 여러 번 눌러야 했다. 그래서 같은 한 행에 **큰 걸음
+   * (±{@link stageBigStep})과 최소/최대 점프(`≪`/`≫`)** 를 더한다 — `−`/`+` 한 칸 조절은
+   * 정밀 조정용으로 그대로 남는다. 사양은 순수 함수({@link stageControlSpecs})가 만들고 여기서는
+   * 버튼으로 옮겨 그릴 뿐이라, 모든 이동이 `setStage`(→ clamp) 한 지점을 지난다.
+   *
+   * 새 아트 없이 기존 나무/노란 버튼 어휘만 쓰고, 라벨은 기호·숫자라 새 i18n 문자열도 없다.
    */
   private makeStagePanel(w: number): Container {
     const panel = new Container();
@@ -546,43 +636,26 @@ export class PlanetSelectScreen {
     this.panelTitle(panel, w, t('planet.stageLabel'));
 
     const cap = this.openCap();
-    const rowW = TIER_BTN_W * 3 + TIER_BTN_GAP * 2;
-    const bx = box.x + Math.floor((box.w - rowW) / 2);
+    const specs = stageControlSpecs(this.selectedStage, cap);
+    // 행 전체를 콘텐츠 상자 안에서 가운데 정렬 — 상자 밖(나무 테두리)으로는 절대 나가지 않는다.
+    const rowW = stageRowWidth(specs);
+    let bx = box.x + Math.max(0, Math.floor((box.w - rowW) / 2));
 
-    const dec = this.choiceButton({
-      label: '−',
-      width: TIER_BTN_W,
-      height: TIER_BTN_H,
-      selected: false,
-      onClick: () => this.stepStage(-1),
-      fontSize: 34,
-    });
-    dec.container.position.set(bx, TIER_BTN_Y);
-    if (this.selectedStage <= 1) dec.setEnabled(false);
-    panel.addChild(dec.container);
-
-    const cur = this.choiceButton({
-      label: String(this.selectedStage),
-      width: TIER_BTN_W,
-      height: TIER_BTN_H,
-      selected: true,
-      onClick: () => {}, // 현재 단계 표시(비활성 클릭).
-    });
-    cur.setEnabled(false);
-    cur.container.position.set(bx + TIER_BTN_W + TIER_BTN_GAP, TIER_BTN_Y);
-    panel.addChild(cur.container);
-
-    const inc = this.choiceButton({
-      label: '+',
-      width: TIER_BTN_W,
-      height: TIER_BTN_H,
-      selected: false,
-      onClick: () => this.stepStage(1),
-      fontSize: 34,
-    });
-    inc.container.position.set(bx + (TIER_BTN_W + TIER_BTN_GAP) * 2, TIER_BTN_Y);
-    if (this.selectedStage >= cap) inc.setEnabled(false);
-    panel.addChild(inc.container);
+    for (const spec of specs) {
+      const btn = this.choiceButton({
+        label: spec.label,
+        width: spec.width,
+        height: STAGE_ROW_H,
+        selected: spec.current === true,
+        fontSize: spec.fontSize,
+        // 현재 단계 칸은 표시 전용(비활성). 나머지는 절대 목표 단계로 이동한다.
+        onClick: spec.current === true ? () => {} : () => this.setStage(spec.target),
+      });
+      if (!spec.enabled) btn.setEnabled(false);
+      btn.container.position.set(bx, STAGE_ROW_Y);
+      panel.addChild(btn.container);
+      bx += spec.width + STAGE_BTN_GAP;
+    }
 
     const desc = new Text({
       resolution: 2,
@@ -596,7 +669,7 @@ export class PlanetSelectScreen {
     });
     desc.anchor.set(0.5, 0);
     if (desc.width > box.w) desc.scale.x = box.w / desc.width;
-    desc.position.set(w / 2, TIER_DESC_Y);
+    desc.position.set(w / 2, STAGE_DESC_Y);
     panel.addChild(desc);
 
     return panel;

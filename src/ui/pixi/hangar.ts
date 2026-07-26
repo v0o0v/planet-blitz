@@ -14,7 +14,8 @@
 
 import { Container, Graphics, Rectangle, Sprite, Text } from 'pixi.js';
 import type { Item, EquipSlotId, SlotKind, Rarity } from '../../items/types.js';
-import { EQUIP_SLOTS } from '../../items/types.js';
+import { EQUIP_SLOTS, RARITY_CODE } from '../../items/types.js';
+import { LEVEL_CAP } from '../../../data/waves.js';
 import { AFFIX_BY_ID } from '../../../data/affixes.js';
 import { computeLoadoutStats } from '../../items/loadout.js';
 import { canEquip, requiredLevel } from '../../items/requiredLevel.js';
@@ -43,7 +44,7 @@ import { CatalystArchiveScreen } from './catalystArchive.js';
 import { shipTypeName, tShipKey } from './shipLabels.js';
 import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
-import { makeSlotCell, gridPositions, equipIconTexture } from './slotGrid.js';
+import { makeSlotCell, rectGridPositions, fitGridCols, equipIconTexture } from './slotGrid.js';
 import { PixiTooltip } from './tooltip.js';
 import { makeBanner, makeCurrencyChip, makeIconButton } from './titleBar.js';
 
@@ -99,6 +100,81 @@ export function attachWheelScroll(
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// 인벤토리·창고 분류 보기(슬롯 필터 + 정렬 토글)
+//
+// 두 패널 모두 "아이템이 쌓이면 원하는 것을 못 찾는다"가 문제였다. 신규 자산 없이(카툰나무풍
+// 어휘 = PixiButton) 필터 탭 한 줄 + 정렬 순환 버튼 하나로 해결한다. 실제 걸러내기·정렬은
+// Pixi 없이 도는 순수 함수({@link arrangeItems})로 분리해 UI 없이 검증한다.
+// ---------------------------------------------------------------------------
+
+/** 슬롯 분류 탭 순서. 인덱스 0 = 전체(필터 없음), 나머지는 슬롯 종류. */
+export const FILTER_KINDS: readonly (SlotKind | null)[] = [
+  null,
+  'main',
+  'sub',
+  'armor',
+  'shield',
+  'engine',
+  'core',
+  'module',
+];
+
+/** 정렬 모드. default = 획득순(배열 그대로), rarity = 희귀도 높은 순, slot = 슬롯 종류 순. */
+export type ItemSortMode = 'default' | 'rarity' | 'slot';
+
+/** 정렬 순환 순서(버튼을 누를 때마다 다음으로). */
+export const SORT_MODES: readonly ItemSortMode[] = ['default', 'rarity', 'slot'];
+
+const SORT_LABEL_KEY: Record<ItemSortMode, MessageKey> = {
+  default: 'inv.sort.default',
+  rarity: 'inv.sort.rarity',
+  slot: 'inv.sort.slot',
+};
+
+/** 슬롯 정렬 기준 순서(장착 슬롯 나열 순 — 필터 탭 순서와 같다). */
+const SLOT_ORDER: readonly SlotKind[] = ['main', 'sub', 'armor', 'shield', 'engine', 'core', 'module'];
+
+/**
+ * 필터·정렬을 적용해 **그리드에 그릴 셀 목록**을 만든다(순수 — 테스트 대상).
+ *
+ * 규율 둘:
+ *  ① **원본 배열을 절대 건드리지 않는다.** 장착(`equip`)은 `inventory.indexOf(item)` 로 원본에서
+ *     아이템을 빼므로 셀이 정렬된 사본을 들고 있어도 정확히 동작한다. 반대로 원본을 정렬해 버리면
+ *     저장 파일의 순서가 화면 조작으로 바뀐다(= 표시 상태가 데이터로 새어나간다).
+ *  ② 동률은 **획득순 유지**(안정 정렬) — 같은 등급끼리 매 렌더마다 순서가 흔들리면 클릭을 놓친다.
+ *
+ * 빈 칸 정책: 필터가 없으면 용량(cap)까지 빈 칸을 채워 "남은 자리"를 보여준다. 필터 중에는 남은
+ * 자리라는 개념이 없으므로 마지막 행만 채워 그리드 모양을 유지한다.
+ */
+export function arrangeItems(
+  source: readonly Item[],
+  cap: number,
+  filter: SlotKind | null,
+  sort: ItemSortMode,
+  cols: number,
+): (Item | undefined)[] {
+  const items = filter === null ? [...source] : source.filter((it) => it.slot === filter);
+  if (sort !== 'default') {
+    const rank =
+      sort === 'rarity'
+        ? (it: Item): number => -RARITY_CODE[it.rarity] // 유니크(3) → -3 이 앞
+        : (it: Item): number => SLOT_ORDER.indexOf(it.slot);
+    const decorated = items.map((it, i) => ({ it, i, k: rank(it) }));
+    decorated.sort((a, b) => a.k - b.k || a.i - b.i);
+    items.length = 0;
+    for (const d of decorated) items.push(d.it);
+  }
+  const cells: (Item | undefined)[] = [...items];
+  const perRow = Math.max(1, cols);
+  const target =
+    filter === null
+      ? Math.max(cap, cells.length)
+      : Math.ceil(cells.length / perRow) * perRow;
+  while (cells.length < target) cells.push(undefined);
+  return cells;
+}
+
 /** 스탯 행 정의: 라벨 · 값 · 1줄 설명(결정 7). */
 interface StatRow {
   label: string;
@@ -125,6 +201,15 @@ export class HangarScreen {
    * 두 번째 클릭이 끼면 둘 다 같은(싼) 가격으로 과금돼 2차 확장을 언더페이한다(이 플래그로 차단).
    */
   private busy = false;
+  /**
+   * 분류 보기 상태(창고·인벤토리 각각). **화면 인스턴스 필드**라 wipe-then-rebuild 규약
+   * (`render()` 가 자식을 통째로 지우고 다시 만든다)에서도 살아남는다 — 장착 한 번에 필터가
+   * 풀리면 쓸 수 없는 기능이 된다.
+   */
+  private stashFilter: SlotKind | null = null;
+  private stashSort: ItemSortMode = 'default';
+  private invFilter: SlotKind | null = null;
+  private invSort: ItemSortMode = 'default';
   /**
    * 챔피언(기체) 선택 화면. 격납고의 **하위 화면**이라 `show()` 가 아니라 `suspend()`/`resume()`
    * 로 자리를 주고받는다 — `show()` 로 되돌리면 미저장 장비 편집이 사라진다(defenseCommand 선례).
@@ -281,9 +366,21 @@ export class HangarScreen {
 
   // --- 분해 / 창고 ---------------------------------------------------------
 
+  /**
+   * 일괄 분해 — **화면에 보이는 것만** 지운다.
+   *
+   * ⚠️ 슬롯 분류 필터가 생기기 전에는 "인벤토리 전체 = 보이는 것" 이라 등급만 보면 됐다. 필터가
+   * 생긴 뒤로는 그 전제가 깨진다: `주무기` 탭을 켜서 무기 3개만 보이는 상태에서 하급 일괄 분해를
+   * 누르면, 등급만 걸렀을 때 **화면에 없던 방어구까지 함께 분해된다**. 분해는 되돌릴 수 없으므로
+   * 활성 필터를 반드시 함께 적용해 "보이는 것 = 대상" 을 유지한다(그리드가 쓰는 `arrangeItems`
+   * 의 필터 조건과 같은 술어여야 한다).
+   */
   private async salvageByRarities(rarities: readonly Rarity[]): Promise<void> {
     const set = new Set(rarities);
-    const targets = this.profile.inventory.filter((it) => set.has(it.rarity));
+    const slot = this.invFilter;
+    const targets = this.profile.inventory.filter(
+      (it) => set.has(it.rarity) && (slot === null || it.slot === slot),
+    );
     if (targets.length === 0) {
       this.hint = t('inv.err.noSalvage');
       this.render();
@@ -333,8 +430,16 @@ export class HangarScreen {
         this.profile.minerals = res.mineralsLeft;
       } else if (res.status === 'unconfigured') {
         this.profile.credits -= cost;
+      } else if (res.reason === 'insufficient') {
+        // 서버 원장이 판정해 거부했다. 로컬 미러(this.profile.credits)는 하네스 치트·오프라인
+        // 가산으로 부풀어 있을 수 있으므로 **서버 잔액을 그대로 보여준다** — "크레딧이 부족합니다"
+        // 한 줄만 내면 11201 크레딧을 든 유저에게 거짓말이 된다(하네스 오탐의 정체).
+        this.hint = t('spend.err.rejectedCredits', { n: cost, have: res.creditsLeft });
+        this.render();
+        return;
       } else {
-        this.hint = t('inv.err.noCredits', { n: cost });
+        // 판정 자체를 못 받았다(오프라인·네트워크 오류). 차감도 확장도 없다.
+        this.hint = t('spend.err.unavailable');
         this.render();
         return;
       }
@@ -494,6 +599,9 @@ export class HangarScreen {
     const actH = 52;
     const actY = 18;
     const swapX = DESIGN_WIDTH - 24 - 56 - 12 - actW;
+    // 기체 교체 = 퇴역·세대 교체다. 만렙(LEVEL_CAP) 전에는 성장 여지를 남긴 기체를 버리는 셈이라
+    // 잠근다. 여기는 **버튼 게이트**일 뿐이고 실제 강제는 championSelect/guardianLifecycle 몫이다.
+    const canSwap = activeShip(this.profile).level >= LEVEL_CAP;
     const swap = new PixiButton({
       texture: this.ui['ui_btn_wood.png'],
       fallbackColor: 0x4a3a24,
@@ -501,10 +609,33 @@ export class HangarScreen {
       height: actH,
       fontSize: 15,
       label: tShipKey('hangar.act.swapShip', 'Change Ship'),
-      onClick: () => this.openChampionSelect(),
+      // 비활성 버튼은 클릭이 안 오지만, 게이트가 두 곳에서 어긋나도 진입만은 막히도록 한 번 더 본다.
+      onClick: () => {
+        if (!canSwap) {
+          this.hint = t('hangar.err.swapNeedMaxLevel', {
+            n: LEVEL_CAP,
+            lv: activeShip(this.profile).level,
+          });
+          this.render();
+          return;
+        }
+        this.openChampionSelect();
+      },
     });
     swap.container.position.set(swapX, actY);
     this.root.addChild(swap.container);
+    if (!canSwap) {
+      swap.setEnabled(false);
+      // 비활성 버튼은 hover 이벤트도 죽으므로(툴팁 불가) 잠긴 이유를 버튼 바로 아래 한 줄로 남긴다.
+      const why = new Text({
+        resolution: 2,
+        text: t('hangar.err.swapNeedMaxLevel', { n: LEVEL_CAP, lv: activeShip(this.profile).level }),
+        style: { fontFamily: UI_FONT, fontSize: 14, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+      });
+      why.anchor.set(1, 0);
+      why.position.set(swapX + actW, actY + actH + 4);
+      this.root.addChild(why);
+    }
 
     const guardians = new PixiButton({
       texture: this.ui['ui_btn_wood.png'],
@@ -518,7 +649,14 @@ export class HangarScreen {
     guardians.container.position.set(swapX - 12 - actW, actY);
     this.root.addChild(guardians.container);
 
-    // 촉매 보관함 진입 — 우측 상단은 칩 2개 + 버튼 2개로 붐비므로 좌측 상단 빈 자리에 둔다.
+    // 촉매 보관함 진입 — 우측 상단은 칩 2개 + 버튼 2개로 붐비므로 좌측 상단에 둔다. 단 좌상단
+    // 꼭짓점은 **설정 톱니**(main.ts SettingsScreen)가 쓰는 전 화면 공용 자리다: 톱니는 격납고보다
+    // 나중에 stage 최상위로 그려져 항상 위에 얹히므로, 겹치면 촉매 버튼이 통째로 클릭 불가가 된다
+    // (하네스 실측: 톱니 CSS (16,13,51,51) ↔ 촉매 CSS (16,12,85,35) — 거의 완전 겹침).
+    // 톱니의 디자인 스페이스 점유는 대략 x 24..101 · y 20..96(CSS×1/0.664)이고, 여유를 둔 예약
+    // 밴드는 x<120 · y<120 이다. 그래서 x 를 밴드 밖(132)으로 민다 — 오른쪽으로는 크레딧 칩
+    // (x 370 부터)까지 110px 이 남아 128px 버튼이 겹치지 않고 들어간다(132+128=260 < 370).
+    const CATALYST_X = 132;
     const catBtn = new PixiButton({
       texture: this.ui['ui_btn_wood.png'],
       fallbackColor: 0x4a3a24,
@@ -528,7 +666,7 @@ export class HangarScreen {
       label: t('catalyst.manage.open'),
       onClick: () => this.openCatalystArchive(),
     });
-    catBtn.container.position.set(24, actY);
+    catBtn.container.position.set(CATALYST_X, actY);
     this.root.addChild(catBtn.container);
 
     const close = makeIconButton(
@@ -763,11 +901,80 @@ export class HangarScreen {
     });
   }
 
+  // --- 하단 두 패널(창고·인벤토리) 공통 기하 ---------------------------------
+  //
+  // 상단 패널이 y 608 에서 끝나므로 하단을 624 로 올려 432 높이를 확보한다. 그 432 안에서
+  // 제목/액션 행(60..108) · 분류 탭 행(112..152) · 그리드(158..372 = 정확히 3행)가 프레임을
+  // 침범하지 않고 맞아떨어진다 — 탭 한 줄을 넣느라 그리드 행이 줄지 않게 역산한 값이다.
+
+  /** 하단 패널 상단 y(디자인 스페이스). */
+  private static readonly BOTTOM_PY = 624;
+  /** 하단 패널 높이. */
+  private static readonly BOTTOM_PH = 432;
+  /** 분류 탭 행의 패널 로컬 y 와 높이. */
+  private static readonly FILTER_Y = 112;
+  private static readonly FILTER_H = 40;
+  /** 그리드 시작(패널 로컬 y). */
+  private static readonly GRID_TOP = 158;
+  /** 슬롯 셀 한 변과 세로 간격(가로 간격은 {@link fitGridCols} 가 폭에 맞춰 넓힌다). */
+  private static readonly CELL = 66;
+  private static readonly GAP = 8;
+
+  /**
+   * 슬롯 분류 탭 한 줄(전체 + 슬롯 7종). `makeTabBar` 는 높이가 58 고정이라 여기 쓰면 그리드가
+   * 한 행 줄어든다 — 같은 어휘(PixiButton + 노란 판때기 = 선택)로 40px 짜리를 직접 깐다.
+   */
+  private renderFilterBar(
+    x: number,
+    y: number,
+    w: number,
+    active: SlotKind | null,
+    onSelect: (kind: SlotKind | null) => void,
+  ): void {
+    const n = FILTER_KINDS.length;
+    const gap = 6;
+    const bw = Math.floor((w - gap * (n - 1)) / n);
+    FILTER_KINDS.forEach((kind, i) => {
+      const isActive = kind === active;
+      const last = i === n - 1;
+      const btn = new PixiButton({
+        texture: this.ui[isActive ? 'ui_btn_yellow.png' : 'ui_btn_wood.png'],
+        fallbackColor: isActive ? 0x9a7a2a : 0x4a3a24,
+        // 반올림 오차는 마지막 칸이 흡수한다 — 오른쪽 끝이 콘텐츠 폭과 정확히 맞는다.
+        width: last ? w - (bw + gap) * (n - 1) : bw,
+        height: HangarScreen.FILTER_H,
+        fontSize: 15,
+        // 노란 판때기 위 흰 라벨은 묻힌다(카툰나무풍 세트 규칙).
+        ...(isActive ? { labelColor: COLOR.darkLabel } : {}),
+        label: kind === null ? t('inv.filter.all') : slotLabel(kind),
+        onClick: () => onSelect(kind),
+      });
+      btn.container.position.set(x + i * (bw + gap), y);
+      this.root.addChild(btn.container);
+    });
+  }
+
+  /** 정렬 순환 버튼(획득순 → 희귀도 → 슬롯 → …). 현재 모드를 라벨에 그대로 보여준다. */
+  private renderSortButton(x: number, y: number, mode: ItemSortMode, onCycle: (next: ItemSortMode) => void): void {
+    const next = SORT_MODES[(SORT_MODES.indexOf(mode) + 1) % SORT_MODES.length] ?? 'default';
+    const btn = new PixiButton({
+      texture: this.ui['ui_btn_wood.png'],
+      fallbackColor: 0x4a3a24,
+      width: 160,
+      height: 48,
+      fontSize: 16,
+      label: t('inv.act.sort', { v: t(SORT_LABEL_KEY[mode]) }),
+      onClick: () => onCycle(next),
+    });
+    btn.container.position.set(x, y);
+    this.root.addChild(btn.container);
+  }
+
   private renderStashPanel(): void {
     const px = 24;
-    const py = 652;
+    const py = HangarScreen.BOTTOM_PY;
     const pw = 900;
-    const ph = 404;
+    const ph = HangarScreen.BOTTOM_PH;
     const box = panelContent(pw, ph);
     const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER });
     panel.position.set(px, py);
@@ -797,15 +1004,36 @@ export class HangarScreen {
     this.root.addChild(expandBtn.container);
     if (maxed || !canAfford(this.profile.credits, nextCost)) expandBtn.setEnabled(false);
 
+    // 정렬 순환(확장 버튼 왼쪽) + 슬롯 분류 탭(그 아래 한 줄).
+    this.renderSortButton(px + box.right - 260 - 12 - 160, py + box.y, this.stashSort, (next) => {
+      this.stashSort = next;
+      this.stashScrollY = 0;
+      this.render();
+    });
+    this.renderFilterBar(
+      px + box.x,
+      py + HangarScreen.FILTER_Y,
+      box.w,
+      this.stashFilter,
+      (kind) => {
+        this.stashFilter = kind;
+        this.stashScrollY = 0;
+        this.render();
+      },
+    );
+
     // 스크롤 그리드(마스크 클립 + 휠, 스크롤바 없음).
     const contentX = px + box.x;
-    const contentTop = py + 118; // 제목/확장 버튼(60..108) 아래
+    const contentTop = py + HangarScreen.GRID_TOP;
     const contentW = box.w;
-    const cell = 66;
-    const gap = 8;
+    const cell = HangarScreen.CELL;
+    const gap = HangarScreen.GAP;
     // 마스크 하한 = 콘텐츠 상자 바닥, 셀 행 배수로 클램프(반토막 셀 금지).
-    const contentH = Math.floor((box.bottom - 118 + gap) / (cell + gap)) * (cell + gap) - gap;
-    const cols = Math.max(1, Math.floor((contentW + gap) / (cell + gap)));
+    const contentH =
+      Math.floor((box.bottom - HangarScreen.GRID_TOP + gap) / (cell + gap)) * (cell + gap) - gap;
+    // 열 수는 폭에서 유도하고 남는 폭은 열 간격이 흡수한다(우측 여백 제거).
+    const fit = fitGridCols(contentW, cell, gap);
+    const cols = fit.cols;
 
     const clip = new Container();
     clip.position.set(contentX, contentTop);
@@ -819,9 +1047,10 @@ export class HangarScreen {
     clip.addChild(content);
 
     const ship = activeShip(this.profile);
-    const positions = gridPositions(cap, cols, cell, gap);
-    for (let i = 0; i < cap; i++) {
-      const item = this.profile.stash[i];
+    const cells = arrangeItems(this.profile.stash, cap, this.stashFilter, this.stashSort, cols);
+    const positions = rectGridPositions(cells.length, cols, cell, cell, fit.gapX, gap);
+    for (let i = 0; i < cells.length; i++) {
+      const item = cells[i];
       const locked = item !== undefined && !canEquip(ship.level, item);
       const c = makeSlotCell({
         size: cell,
@@ -839,7 +1068,18 @@ export class HangarScreen {
       content.addChild(c);
     }
 
-    const rows = Math.ceil(cap / cols);
+    // 필터 중이면 걸러진 결과가 하나도 없을 수 있다 — 빈 그리드만 두면 고장으로 읽힌다.
+    if (cells.length === 0) {
+      const empty = new Text({
+        resolution: 2,
+        text: t('inv.filter.empty'),
+        style: { fontFamily: UI_FONT, fontSize: 18, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+      });
+      empty.position.set(0, 8);
+      content.addChild(empty);
+    }
+
+    const rows = Math.ceil(cells.length / cols);
     const total = rows * (cell + gap);
     const maxScroll = Math.max(0, total - contentH);
     this.stashScrollY = Math.min(this.stashScrollY, maxScroll);
@@ -859,9 +1099,9 @@ export class HangarScreen {
 
   private renderInventoryPanel(): void {
     const px = 944;
-    const py = 652;
+    const py = HangarScreen.BOTTOM_PY;
     const pw = 952;
-    const ph = 404;
+    const ph = HangarScreen.BOTTOM_PH;
     const box = panelContent(pw, ph);
     const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER });
     panel.position.set(px, py);
@@ -901,16 +1141,37 @@ export class HangarScreen {
     salvageLow.container.position.set(px + box.right - bw * 2 - 12, py + box.y);
     this.root.addChild(salvageLow.container);
 
-    // 8열 그리드(48칸) — 창고와 동일하게 마스크 클립 + 휠 스크롤(패널 프레임 침범 0,
-    // 스크롤바 시각 요소 없음). 48칸(6행)이 패널 안쪽 높이를 넘치므로 필수(결함 #2 수정).
+    // 정렬 순환(일괄 분해 버튼 왼쪽) + 슬롯 분류 탭(그 아래 한 줄).
+    this.renderSortButton(px + box.right - bw * 2 - 12 - 12 - 160, py + box.y, this.invSort, (next) => {
+      this.invSort = next;
+      this.inventoryScrollY = 0;
+      this.render();
+    });
+    this.renderFilterBar(
+      px + box.x,
+      py + HangarScreen.FILTER_Y,
+      box.w,
+      this.invFilter,
+      (kind) => {
+        this.invFilter = kind;
+        this.inventoryScrollY = 0;
+        this.render();
+      },
+    );
+
+    // 마스크 클립 + 휠 스크롤(패널 프레임 침범 0, 스크롤바 시각 요소 없음). 열 수는 **폭에서
+    // 유도**한다 — 예전에는 `cols = 8` 하드코딩이라 832px 폭에 584px 만 그려져 오른쪽 248px 이
+    // 통째로 비어 있었다(용량 표기 48칸과도 안 맞아 보였다).
     const contentX = px + box.x;
-    const contentTop = py + 118; // 제목/일괄 분해 버튼(60..108) 아래
+    const contentTop = py + HangarScreen.GRID_TOP;
     const contentW = box.w;
-    const cols = 8;
-    const cell = 66;
-    const gap = 8;
+    const cell = HangarScreen.CELL;
+    const gap = HangarScreen.GAP;
+    const fit = fitGridCols(contentW, cell, gap);
+    const cols = fit.cols;
     // 마스크 하한 = 콘텐츠 상자 바닥, 셀 행 배수로 클램프(반토막 셀 금지).
-    const contentH = Math.floor((box.bottom - 118 + gap) / (cell + gap)) * (cell + gap) - gap;
+    const contentH =
+      Math.floor((box.bottom - HangarScreen.GRID_TOP + gap) / (cell + gap)) * (cell + gap) - gap;
 
     const clip = new Container();
     clip.position.set(contentX, contentTop);
@@ -924,9 +1185,10 @@ export class HangarScreen {
     clip.addChild(content);
 
     const ship = activeShip(this.profile);
-    const positions = gridPositions(INVENTORY_CAP, cols, cell, gap);
-    for (let i = 0; i < INVENTORY_CAP; i++) {
-      const item = this.profile.inventory[i];
+    const cells = arrangeItems(this.profile.inventory, INVENTORY_CAP, this.invFilter, this.invSort, cols);
+    const positions = rectGridPositions(cells.length, cols, cell, cell, fit.gapX, gap);
+    for (let i = 0; i < cells.length; i++) {
+      const item = cells[i];
       const compareTo = item !== undefined ? this.equippedFor(item.slot) : undefined;
       const locked = item !== undefined && !canEquip(ship.level, item);
       const c = makeSlotCell({
@@ -946,7 +1208,17 @@ export class HangarScreen {
       content.addChild(c);
     }
 
-    const rows = Math.ceil(INVENTORY_CAP / cols);
+    if (cells.length === 0) {
+      const empty = new Text({
+        resolution: 2,
+        text: t('inv.filter.empty'),
+        style: { fontFamily: UI_FONT, fontSize: 18, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+      });
+      empty.position.set(0, 8);
+      content.addChild(empty);
+    }
+
+    const rows = Math.ceil(cells.length / cols);
     const total = rows * (cell + gap);
     const maxScroll = Math.max(0, total - contentH);
     this.inventoryScrollY = Math.min(this.inventoryScrollY, maxScroll);

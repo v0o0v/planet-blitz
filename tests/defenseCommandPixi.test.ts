@@ -51,10 +51,12 @@ import {
   guardianFallbackKey,
   placeGuardian,
   testInvadeAction,
+  TABS_Y,
+  TOP_CHROME_BOTTOM,
   type DefenseSlotRef,
 } from '../src/ui/pixi/defenseCommand.js';
 import { defaultProfile } from '../src/save/profile.js';
-import { retireActiveShip } from '../src/save/guardianLifecycle.js';
+import { retireAtCap } from './support/retireAtCap.js';
 import type { InvasionGuardianPlacement } from '../src/sim/invasion/types.js';
 import { defenseUniqueNameKey, type DefenseUnitInstance } from '../data/defenseUnits.js';
 import { CATALOG } from '../src/i18n/catalog.js';
@@ -139,6 +141,25 @@ describe('탭 바 기하(신규 카툰나무풍 탭)', () => {
   it('탭 라벨 키가 탭 수와 일치한다(키 누락 = 빈 탭)', () => {
     expect(DEF_TAB_KEYS.length).toBe(DEF_TAB_COUNT);
     for (const k of DEF_TAB_KEYS) expect(k.startsWith('def3.cmd.tab.')).toBe(true);
+  });
+});
+
+describe('방어 사령부 상단 크롬 밴드(겹침 불가)', () => {
+  // 설정 톱니는 이 화면 소유가 아니라 매 프레임 맨 앞으로 올라오는 전역 크롬이다.
+  // 좌표 정본은 src/ui/pixi/settingsPanel.ts 의 GEAR_X/GEAR_Y/GEAR_SIZE = 24/20/76.
+  const GEAR = { left: 24, top: 20, right: 24 + 76, bottom: 20 + 76 };
+
+  it('크롬 밴드 바닥이 톱니 바닥(가장 아래 크롬 요소)까지 내려온다', () => {
+    expect(TOP_CHROME_BOTTOM).toBe(GEAR.bottom);
+  });
+
+  it('탭 바가 크롬 밴드 아래로 완전히 내려간다 — 세로 구간이 서로 겹치지 않는다', () => {
+    // 탭 바가 쓰는 세로 구간은 [TABS_Y, TABS_Y + TAB_H). 크롬 밴드는 [0, TOP_CHROME_BOTTOM).
+    expect(TABS_Y).toBeGreaterThanOrEqual(TOP_CHROME_BOTTOM);
+    // 붙지 않고 여백이 있다(예전 TABS_Y = 100 은 톱니 바닥 96 과 4px 차이였다).
+    expect(TABS_Y - TOP_CHROME_BOTTOM).toBeGreaterThanOrEqual(20);
+    // 톱니 상자와의 교차 = 0. 가로는 겹치지만(탭 바 x 36.., 톱니 x 24..100) 세로가 끊긴다.
+    expect(Math.max(0, Math.min(GEAR.bottom, TABS_Y + TAB_H) - Math.max(GEAR.top, TABS_Y))).toBe(0);
   });
 });
 
@@ -498,8 +519,8 @@ describe('수호 슬롯 신원(중복 판정)', () => {
   /** 연속 퇴역 2회 — 실제 게임이 수호를 만드는 그 경로. */
   function twoIdenticalGuardians() {
     const profile = defaultProfile();
-    retireActiveShip(profile);
-    retireActiveShip(profile);
+    retireAtCap(profile);
+    retireAtCap(profile);
     return profile;
   }
 

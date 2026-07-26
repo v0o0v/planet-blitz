@@ -445,6 +445,18 @@ export const EN = {
   'inv.act.expand': 'Expand Stash ({n} credits)',
   'inv.act.expandMax': 'Stash Fully Expanded',
   'inv.act.backToMap': '◀ To Star Map',
+  // 서버 원장 거부 사유 구분(SpendOutcome.reason) — 전부 "재화 부족"으로 뭉개지 않는다.
+  // 재화를 쓰는 세 화면(격납고 창고 확장 · 정제소 리롤 · 연구소 리스펙)이 공유한다.
+  'spend.err.rejectedCredits': 'The server ledger rejected it: need {n} credits, server balance {have}.',
+  'spend.err.rejectedMinerals': 'The server ledger rejected it: need {n} minerals, server balance {have}.',
+  'spend.err.unavailable': "Couldn't reach the server. Nothing was charged — try again later.",
+  // 인벤토리/창고 분류 보기(슬롯 필터 + 정렬 토글).
+  'inv.filter.all': 'All',
+  'inv.filter.empty': 'No items in this category.',
+  'inv.act.sort': 'Sort: {v}',
+  'inv.sort.default': 'Newest',
+  'inv.sort.rarity': 'Rarity',
+  'inv.sort.slot': 'Slot',
 
   // --- 격납고 카툰 UI (Pixi 리스킨) ---
   'hangar.title': 'Hangar',
@@ -470,6 +482,8 @@ export const EN = {
   'hangar.desc.lineage': 'Account-wide boost to your active ship.',
   'hangar.act.swapShip': 'Change Ship',
   'hangar.act.guardians': 'Guardians',
+  // 기체 교체(퇴역·세대 교체)는 현역이 만렙일 때만 열린다 — 잠긴 이유를 화면에 남긴다.
+  'hangar.err.swapNeedMaxLevel': 'Change Ship unlocks at max level (Lv {n}). Active ship: Lv {lv}.',
 
   // --- 기체 타입(M8, ADR-0019) ---
   // 키의 축은 `ShipTypeDef.slug` 다(`src/ui/pixi/shipLabels.ts` 가 유도한다). 하드코딩 목록이
@@ -526,6 +540,10 @@ export const EN = {
     'Your current ship (Lv {level}) becomes a Guardian. Level, skill points and gear slots reset; your equipped gear stays locked to that Guardian and returns to your stash only when you dismiss it. You will pilot a fresh {name}.',
   'champion.retire.yes': 'Retire and switch',
   'champion.retire.no': 'Cancel',
+  // 만렙 게이트 사유(ADR-0007 + 만렙 게이트). 격납고의 `hangar.err.swapNeedMaxLevel` 과 같은 게이트를
+  // 챔피언 선택 화면에서 설명한다 — 반드시 카탈로그에 있어야 한다. `tShipKey` 폴백은 `params` 를
+  // 치환하지 않으므로, 키가 없으면 화면에 `{level}` 리터럴이 그대로 노출된다.
+  'champion.retire.needMaxLevel': 'Retirement unlocks at max level (Lv {required}). Active ship: Lv {level}.',
 
   // --- 예비역 수호기 로스터·소멸(ADR-0024 Task #8) ---
   'guardians.title': 'Reserve Guardians',
@@ -1718,6 +1736,18 @@ export const KO: Record<MessageKey, string> = {
   'inv.act.expand': '창고 확장 ({n} 크레딧)',
   'inv.act.expandMax': '창고 최대 확장됨',
   'inv.act.backToMap': '◀ 성계 지도로',
+  // 서버 원장 거부 사유 구분(SpendOutcome.reason) — 전부 "재화 부족"으로 뭉개지 않는다.
+  // 재화를 쓰는 세 화면(격납고 창고 확장 · 정제소 리롤 · 연구소 리스펙)이 공유한다.
+  'spend.err.rejectedCredits': '서버 원장이 거부했습니다 (필요 크레딧 {n}, 서버 잔액 {have}).',
+  'spend.err.rejectedMinerals': '서버 원장이 거부했습니다 (필요 광물 {n}, 서버 잔액 {have}).',
+  'spend.err.unavailable': '서버와 통신하지 못했습니다. 차감된 것은 없으니 잠시 후 다시 시도하세요.',
+  // 인벤토리/창고 분류 보기(슬롯 필터 + 정렬 토글).
+  'inv.filter.all': '전체',
+  'inv.filter.empty': '이 분류에 아이템이 없습니다.',
+  'inv.act.sort': '정렬: {v}',
+  'inv.sort.default': '획득순',
+  'inv.sort.rarity': '희귀도',
+  'inv.sort.slot': '슬롯',
 
   // --- 격납고 카툰 UI (Pixi 리스킨) ---
   'hangar.title': '격납고',
@@ -1743,6 +1773,8 @@ export const KO: Record<MessageKey, string> = {
   'hangar.desc.lineage': '현역 기체를 강화하는 계정 단위 보너스입니다.',
   'hangar.act.swapShip': '기체 교체',
   'hangar.act.guardians': '예비역',
+  // 기체 교체(퇴역·세대 교체)는 현역이 만렙일 때만 열린다 — 잠긴 이유를 화면에 남긴다.
+  'hangar.err.swapNeedMaxLevel': '기체 교체는 만렙(Lv {n})부터 가능합니다. 현역 기체: Lv {lv}.',
 
   'ship.striker.name': '스트라이커',
   'ship.striker.role': '균형 잡힌 기준점. 어느 축으로도 섀시 보정이 없습니다.',
@@ -1790,6 +1822,7 @@ export const KO: Record<MessageKey, string> = {
     '현재 기체(Lv {level})가 수호기로 넘어갑니다. 레벨·스킬 포인트·장착 슬롯이 초기화되고, 장착한 장비는 그 수호기에 잠긴 채 소멸시킬 때에만 창고로 돌아옵니다. 새 {name}(으)로 출격하게 됩니다.',
   'champion.retire.yes': '퇴역하고 교체',
   'champion.retire.no': '취소',
+  'champion.retire.needMaxLevel': '퇴역은 만렙(Lv {required})부터 가능합니다. 현역 기체: Lv {level}.',
 
   // --- 예비역 수호기 로스터·소멸(ADR-0024 Task #8) ---
   'guardians.title': '예비역 수호기',
