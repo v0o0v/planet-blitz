@@ -1,14 +1,17 @@
 /**
- * 메타 UI 연출 **배선** 통합 테스트 (Phase 5 — plan §AC-5.1/5.2 · AC-6.3; ADR-0031).
+ * 메타 UI 연출 **배선** 통합 테스트 (Phase 5 — plan §AC-5.1 · AC-6.3; ADR-0031).
  *
  * ## 왜 이 형태인가
  * 이 프로젝트의 #1 반복 결함은 "순수함수 유닛은 그린인데 정규 경로에 배선이 통째로 없다"이다.
- * ScreenTransition·LootCeremony 각각의 유닛(tests/screenTransition·lootCeremony)이 다 통과해도,
- * main.ts clearToMenu/렌더 루프·resultOverlay 가 그것들을 **실제로 호출하지 않으면** 게임엔 아무
- * 전환·세리머니도 안 뜬다. 그래서 여기서는 ①실제 `ResultOverlayScreen` 을 세워 정산 show→세리머니
- * 공개→페이드 흐름을 관측하고, ②main.ts 의 배선 계약(clearToMenu play·렌더 루프 update·stage mount)을
- * 소스 그렙으로 못박는다(entityRendererShipSwap 의 main.ts 계약 테스트 선례 — 배선이 리팩터로 사라지면
- * 빨개진다). main.ts 는 앱 부트스트랩이라 인스턴스화가 안 되므로 소스 그렙이 정본 방어다.
+ * `ScreenTransition` 유닛(tests/screenTransition)이 통과해도 main.ts clearToMenu/렌더 루프가
+ * 그것을 **실제로 호출하지 않으면** 게임엔 아무 전환도 안 뜬다. 그래서 ①실제 `ResultOverlayScreen`
+ * 을 세워 정산이 show 즉시 온전히 서는지 관측하고, ②main.ts 의 배선 계약(clearToMenu play·렌더 루프
+ * update·stage mount)을 소스 그렙으로 못박는다(entityRendererShipSwap 의 main.ts 계약 테스트 선례 —
+ * 배선이 리팩터로 사라지면 빨개진다). main.ts 는 앱 부트스트랩이라 인스턴스화가 안 되므로 소스 그렙이
+ * 정본 방어다.
+ *
+ * ⚠️ **보상 세리머니(AC-5.2)는 삭제됐다**(사용자 요청 2026-07-27). 그 자리에는 "부활 방지" 회귀
+ * 가드가 들어간다 — 모듈 부재 · 내부 필드 부재 · 렌더 루프 구동 호출 부재.
  *
  * render-only(ADR-0005) — sim·hashWorld/hashEntity 무접촉. 메타 UI라 결정론과 무관하다.
  */
@@ -55,9 +58,10 @@ function stateWithDrops(rarities: Rarity[]): ResultState {
   };
 }
 
-/** 세리머니 비공개 상태 관측(private 되읽기 — 배선 결함은 실제 내부 상태를 봐야 드러난다). */
+/** private 되읽기 — 배선/삭제 결함은 실제 내부 상태를 봐야 드러난다. */
 interface OverlayInternals {
-  lootCeremony: { revealing: boolean; container: { alpha: number } };
+  root: { children: readonly unknown[] };
+  lootCeremony?: unknown;
 }
 function priv(o: ResultOverlayScreen): OverlayInternals {
   return o as unknown as OverlayInternals;
@@ -65,43 +69,32 @@ function priv(o: ResultOverlayScreen): OverlayInternals {
 
 // ===========================================================================
 
-describe('AC-5.2 · 보상 세리머니 배선 (resultOverlay 통합)', () => {
-  it('드랍이 있으면 정산 show 가 세리머니를 공개한다', () => {
+describe('보상 세리머니 삭제 회귀 가드 (사용자 요청 2026-07-27)', () => {
+  // 세리머니는 정산 진입 시 화면 중앙을 덮어 결과 패널을 가리고 페이드를 기다리게 만들었다.
+  // 삭제 후 "정산은 show 즉시 온전히 보인다"가 계약이다 — 프레임 구동 없이 패널이 서야 한다.
+  it('show 즉시 결과 패널이 서고, 화면을 덮는 세리머니 카드가 없다', () => {
     const overlay = new ResultOverlayScreen(new Container());
-    expect(priv(overlay).lootCeremony.revealing).toBe(false); // 초기: 미공개
     overlay.show(stateWithDrops(['rare', 'unique']), () => {});
-    expect(priv(overlay).lootCeremony.revealing).toBe(true); // 배선 없으면 false
+    expect(overlay.visible).toBe(true);
+    // 암막 + 배너 + 패널 + 버튼 + tooltip → 자식이 여럿 서 있다(프레임 진행 0회로).
+    expect(priv(overlay).root.children.length).toBeGreaterThan(3);
+    // 세리머니 컨테이너·페이드 상태가 남아 있지 않다(부활 방지).
+    expect(priv(overlay).lootCeremony).toBeUndefined();
+    expect((overlay as unknown as { update?: unknown }).update).toBeUndefined();
     overlay.hide();
   });
 
-  it('공개 완료 후 유지+페이드로 세리머니가 사라진다(결과 화면 드러남)', () => {
-    const overlay = new ResultOverlayScreen(new Container());
-    overlay.show(stateWithDrops(['normal']), () => {});
-    // 공개 + HOLD + FADE 를 넉넉히 넘기도록 진행(0.05s × 400 = 20s).
-    for (let i = 0; i < 400; i++) overlay.update(0.05);
-    expect(priv(overlay).lootCeremony.revealing).toBe(false);
-    expect(priv(overlay).lootCeremony.container.alpha).toBeLessThanOrEqual(0.01); // 페이드아웃 완료
-    overlay.hide();
-  });
-
-  it('드랍이 없으면 세리머니를 공개하지 않는다', () => {
-    const overlay = new ResultOverlayScreen(new Container());
-    overlay.show(stateWithDrops([]), () => {});
-    expect(priv(overlay).lootCeremony.revealing).toBe(false);
-    overlay.hide();
-  });
-
-  it('hide 는 세리머니를 리셋한다(다음 정산 재사용)', () => {
-    const overlay = new ResultOverlayScreen(new Container());
-    overlay.show(stateWithDrops(['unique']), () => {});
-    overlay.hide();
-    expect(priv(overlay).lootCeremony.revealing).toBe(false);
-  });
-
-  it('update 는 정산이 안 떠 있으면 no-op(비표시 세리머니 무진행)', () => {
-    const overlay = new ResultOverlayScreen(new Container());
-    for (let i = 0; i < 10; i++) overlay.update(0.05); // show 안 함 → 비표시
-    expect(priv(overlay).lootCeremony.revealing).toBe(false);
+  it('세리머니 모듈 자체가 리포에서 사라졌다', () => {
+    // `existsSync` 는 이 프로젝트의 node 타입에 없다 — 읽기 실패로 부재를 판정한다.
+    const modUrl = new URL('../src/render/effects/lootCeremony.ts', import.meta.url);
+    const path = modUrl.pathname.replace(/^\/([A-Za-z]:)/, '$1');
+    let exists = true;
+    try {
+      readFileSync(path);
+    } catch {
+      exists = false;
+    }
+    expect(exists).toBe(false);
   });
 });
 
@@ -119,8 +112,11 @@ describe('AC-5.1/5.2 · main.ts 배선 계약 (소스 그렙 — 앱 부트스�
     expect(src).toMatch(/function clearToMenu\(\)[\s\S]{0,600}?screenTransition\.play\(\)/);
   });
 
-  it('렌더 루프가 screenTransition.update 와 resultOverlay.update 를 매 프레임 구동한다', () => {
+  it('렌더 루프가 screenTransition.update 를 매 프레임 구동한다', () => {
     expect(src).toMatch(/screenTransition\.update\(/);
-    expect(src).toMatch(/resultOverlay\.update\(/);
+  });
+
+  it('정산 세리머니 구동 호출이 렌더 루프에서 사라졌다(삭제 회귀 가드)', () => {
+    expect(src).not.toMatch(/resultOverlay\.update\(/);
   });
 });

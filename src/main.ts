@@ -1384,9 +1384,6 @@ async function main(): Promise<void> {
       const st = gameApp.stage;
       st.setChildIndex(screenTransition.container, st.children.length - 1);
     }
-    // AC-5.2 보상 세리머니 진행 — 정산 화면엔 자체 프레임 루프가 없어 여기서 매 프레임 구동한다
-    // (비표시 시 no-op). 공개→유지→페이드아웃 흐름을 굴려 결과 패널을 드러낸다.
-    resultOverlay.update(frame);
 
     const w = world;
     const runOver = w !== null && (w.gameOver || w.victory);

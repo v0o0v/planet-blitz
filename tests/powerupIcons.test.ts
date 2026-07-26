@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { POWERUPS } from '../src/sim/powerups.js';
 import {
   powerupIconKeys,
@@ -39,14 +40,36 @@ describe('powerupIcons — 24종 매핑 커버리지', () => {
   });
 
   it('모든 키(스탯·배지)가 텍스처 로더에 등재된 실재 자산을 가리킨다', () => {
-    // 5구간 유니온에 없는 티어대(예: skill_range_flat_low — rangeFlat 은 tier 0 수요가 없다)를
-    // 가리키면 텍스처가 없어 아이콘이 조용히 사라진다 — 그 회귀를 여기서 잡는다.
+    // 로더 등재 목록에 없는 이름을 가리키면 텍스처를 아예 찾지 않는다 — 그 회귀를 여기서 잡는다.
     const registered = new Set<string>(UI_ASSET_NAMES);
     for (const def of POWERUPS) {
       const keys = powerupIconKeysById(def.id);
       expect(registered.has(`${keys?.statKey ?? '?'}.png`), `${def.id} statKey 미등재`).toBe(true);
       if (keys?.badgeKey !== undefined) {
         expect(registered.has(`${keys.badgeKey}.png`), `${def.id} badgeKey 미등재`).toBe(true);
+      }
+    }
+  });
+
+  it('모든 키가 **실물 PNG 파일**을 가리킨다 (2026-07-27 사용자 신고 회귀 가드)', () => {
+    // ⚠️ 위 "등재" 테스트만으로는 부족하다 — 등재 목록은 *이름* 축이고 PNG 는 *파일* 축이라,
+    // 이름만 있고 파일이 없는 조합이 성립한다. 실제로 '집속 렌즈'(beam-focuser)가
+    // `skill_range_flat_lowmid`(이름 O · 파일 X)를 가리켜 3택 카드에 그림이 통째로 안 떴고,
+    // 그때도 이 파일의 다른 테스트는 전부 그린이었다. 그래서 파일 존재를 직접 확인한다.
+    const assetsDir = new URL('../assets/', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+    const has = (name: string): boolean => {
+      try {
+        readFileSync(`${assetsDir}${name}.png`);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    for (const def of POWERUPS) {
+      const keys = powerupIconKeysById(def.id);
+      expect(has(keys?.statKey ?? '?'), `${def.id} statKey PNG 부재: ${keys?.statKey}`).toBe(true);
+      if (keys?.badgeKey !== undefined) {
+        expect(has(keys.badgeKey), `${def.id} badgeKey PNG 부재: ${keys.badgeKey}`).toBe(true);
       }
     }
   });

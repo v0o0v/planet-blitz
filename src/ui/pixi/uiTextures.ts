@@ -250,6 +250,11 @@ export const UI_ASSET_NAMES: readonly string[] = [
   'equip_unique_relic_amplifier.png',
   // 연구소 스킬 노드 아이콘 62종 — 규칙은 {@link skillIconName}, 목록은 {@link SKILL_ICON_NAMES}.
   ...SKILL_ICON_NAMES,
+  // 파워업 전용 재사용 아트(스킬 노드는 부르지 않는다 — 그래서 SKILL_ICON_NAMES 에 넣으면
+  // "죽은 아트 금지" 계약(tests/skillIcons)이 깨진다). `skill_range_flat_low.png` 는 tier 1 이
+  // lowmid 로 옮겨가며 사문서가 된 실물 아트인데, 파워업 '집속 렌즈'(beam-focuser)가 이걸 되쓴다 —
+  // 유니온에 있던 `skill_range_flat_lowmid` 는 PNG 가 없어 카드에 그림이 안 떴다(2026-07-27).
+  'skill_range_flat_low.png',
 ];
 
 /** StatKey(camelCase) → 파일명 조각(snake_case). `maxHpFlat` → `max_hp_flat`. */

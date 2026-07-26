@@ -14,6 +14,7 @@
 import type { Item, EquipSlotId, SlotKind, Rarity } from '../items/types.js';
 import { EQUIP_SLOTS } from '../items/types.js';
 import { affixTitleLine, affixDescLine } from './affixText.js';
+import { itemDisplayName, slotLabel, weaponLabel } from './itemNames.js';
 import { computeLoadoutStats } from '../items/loadout.js';
 import {
   saveProfile,
@@ -47,30 +48,7 @@ const RARITY_COLOR: Record<Rarity, string> = {
   unique: '#ff8a3c',
 };
 
-/** Slot-kind → i18n key for the equip row (reuses the shared item.slot.* catalog). */
-const SLOT_LABEL_KEY: Record<SlotKind, MessageKey> = {
-  main: 'item.slot.main',
-  sub: 'item.slot.sub',
-  armor: 'item.slot.armor',
-  shield: 'item.slot.shield',
-  engine: 'item.slot.engine',
-  core: 'item.slot.core',
-  module: 'item.slot.module',
-};
-
-/** Localised slot label. */
-function slotLabel(kind: SlotKind): string {
-  return t(SLOT_LABEL_KEY[kind]);
-}
-
-/** Weapon-type i18n keys for `main` items (reuses shared item.weapon.* catalog). */
-const WEAPON_KEY: readonly MessageKey[] = ['item.weapon.0', 'item.weapon.1', 'item.weapon.2'];
-
-/** Localised weapon label (falls back to '?' when the type is out of range). */
-function weaponLabel(type: number): string {
-  const key = WEAPON_KEY[type];
-  return key !== undefined ? t(key) : '?';
-}
+// 슬롯·무기 표시명은 `src/ui/itemNames.ts` 단일 정본을 쓴다(사본이 무기 3종에서 낡아 있었다).
 
 /** Which SlotKind an equip position accepts. */
 function slotKindOf(id: EquipSlotId): SlotKind {
@@ -291,10 +269,7 @@ export class InventoryOverlay {
   }
 
   private itemName(item: Item): string {
-    if (item.slot === 'main' && item.weaponType !== undefined) {
-      return `${t('item.slot.main')} · ${weaponLabel(item.weaponType)}`;
-    }
-    return slotLabel(item.slot);
+    return itemDisplayName(item);
   }
 
   // --- Render --------------------------------------------------------------
@@ -455,7 +430,8 @@ export class InventoryOverlay {
     panel.appendChild(h);
     const { loadout, worldMods } = computeLoadoutStats(this.equippedItems());
     const rows: [string, string][] = [
-      [t('inv.stat.weapon'), t(WEAPON_KEY[loadout.weaponType] ?? 'item.weapon.0')],
+      // 폴백을 발칸으로 두면 표가 낡았을 때 다른 무기를 발칸이라 적는다 — `?` 로 드러낸다.
+      [t('inv.stat.weapon'), weaponLabel(loadout.weaponType)],
       [t('inv.stat.damage'), `×${loadout.damageMult.toFixed(2)}`],
       [t('inv.stat.fireRate'), `×${(1 / loadout.fireRateMult).toFixed(2)}`],
       [t('inv.stat.bullets'), `+${loadout.bulletCountAdd}`],

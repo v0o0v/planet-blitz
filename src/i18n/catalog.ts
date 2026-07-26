@@ -380,6 +380,12 @@ export const EN = {
   // --- 아이템 무기 확장(정제소 5타입) ---
   'item.weapon.3': 'Missile',
   'item.weapon.4': 'Beam',
+  // 보조무기 5종(world.ts SUB_TYPE_*) — 이름이 없어 인벤토리에서 구별이 안 됐다(2026-07-27).
+  'item.subWeapon.0': 'Sidekick',
+  'item.subWeapon.1': 'Scattergun',
+  'item.subWeapon.2': 'Mine Layer',
+  'item.subWeapon.3': 'Sentry Drone',
+  'item.subWeapon.4': 'Homing Flare',
 
   // --- HUD ---
   'hud.supplyRaid': '⚠ Supply Raid — Shoot it down!',
@@ -491,6 +497,12 @@ export const EN = {
   'inv.stat.xp': 'XP',
   'inv.stat.mineralFind': 'Mineral Find',
   'inv.tip.compare': 'Equipped: {name} ({n} affixes)',
+  // 장착 비교 블록(사용자 요청 2026-07-27).
+  'inv.tip.compareTitle': '— vs equipped —',
+  'inv.tip.comparePower': 'Combat Power {n}',
+  'inv.tip.compareSame': 'Same as equipped',
+  'inv.tip.compareAdded': '▲ added',
+  'inv.tip.compareLost': '▼ lost',
   'inv.err.full': 'Inventory is full. Salvage something or expand the stash first.',
   'inv.err.noSalvage': 'No items to salvage.',
   'inv.salvageDone': 'Salvaged {n} → Credits +{credits}, Minerals +{minerals}',
@@ -1731,6 +1743,11 @@ export const KO: Record<MessageKey, string> = {
 
   'item.weapon.3': '미사일',
   'item.weapon.4': '빔',
+  'item.subWeapon.0': '사이드킥',
+  'item.subWeapon.1': '산탄 발사기',
+  'item.subWeapon.2': '기뢰 살포기',
+  'item.subWeapon.3': '센트리 드론',
+  'item.subWeapon.4': '유도 플레어',
 
   'hud.supplyRaid': '⚠ 보급선 습격 — 격추하라!',
   'hud.combo': '콤보 x{mult} ({combo})',
@@ -1834,6 +1851,11 @@ export const KO: Record<MessageKey, string> = {
   'inv.stat.xp': '경험치',
   'inv.stat.mineralFind': '광물 발견',
   'inv.tip.compare': '장착 중: {name} (어픽스 {n}개)',
+  'inv.tip.compareTitle': '— 장착 장비와 비교 —',
+  'inv.tip.comparePower': '전투력 {n}',
+  'inv.tip.compareSame': '장착 장비와 동일',
+  'inv.tip.compareAdded': '▲ 추가',
+  'inv.tip.compareLost': '▼ 사라짐',
   'inv.err.full': '인벤토리가 가득 찼습니다. 먼저 분해하거나 창고를 확장하세요.',
   'inv.err.noSalvage': '분해할 아이템이 없습니다.',
   'inv.salvageDone': '{n}개 분해 → 크레딧 +{credits}, 광물 +{minerals}',
