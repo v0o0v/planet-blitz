@@ -49,6 +49,12 @@ export interface HudState {
    * 체력바가 이어받는다.
    */
   bossEta?: BossProgress | undefined;
+  /**
+   * 오염도(톡사르=오염 모드). `cells`/`critical` 에 닿으면 즉시 실패다. 그 외 런은 undefined 고
+   * 게이지를 감춘다. 예전엔 이 값을 화면 어디에도 안 보여줘서 실패가 예고 없이 떴다
+   * (사용자 신고 2026-07-27 "일정 시간 넘으면 갑자기 실패").
+   */
+  contamination?: { cells: number; critical: number } | undefined;
 }
 
 function bar(label: string, colorClass: string): { root: HTMLElement; fill: HTMLElement; text: HTMLElement } {
@@ -96,6 +102,16 @@ const STYLE = `
 #pb-bossmeter .pb-etafill { position:absolute; inset:0; width:0%; background:linear-gradient(90deg,#ff8a2a,#ffd24c); transition:width .12s linear; }
 #pb-bossmeter .pb-etamark { position:absolute; top:0; bottom:0; width:2px; background:rgba(0,0,0,.55); }
 #pb-bossmeter .pb-etadetail { display:flex; justify-content:space-between; font-size:11px; font-weight:700; color:#d8c9a8; margin-top:3px; text-shadow:0 1px 2px #000; }
+#pb-contam { position:absolute; top:84px; left:50%; transform:translateX(-50%); width:420px; max-width:70vw; font-family:'Segoe UI',sans-serif; color:#fff; pointer-events:none; user-select:none; }
+#pb-contam .pb-contamhead { display:flex; justify-content:space-between; align-items:baseline; font-size:12px; font-weight:800; letter-spacing:1.5px; color:#b6ff8a; text-shadow:0 1px 3px #000; margin-bottom:3px; }
+#pb-contam .pb-contamtrack { position:relative; height:12px; background:rgba(8,14,10,.78); border:2px solid rgba(120,220,110,.55); border-radius:4px; overflow:hidden; }
+#pb-contam .pb-contamfill { position:absolute; inset:0; width:0%; background:linear-gradient(90deg,#7bd44a,#c8e05a); transition:width .12s linear; }
+#pb-contam.warn .pb-contamfill { background:linear-gradient(90deg,#e0a63a,#ffd24c); }
+#pb-contam.danger .pb-contamfill { background:linear-gradient(90deg,#ff3b30,#ff8a3c); }
+#pb-contam.danger { animation:pb-contam-pulse .9s ease-in-out infinite; }
+#pb-contam.danger .pb-contamhead { color:#ff9a8a; }
+#pb-contam .pb-contammsg { font-size:11px; font-weight:700; color:#ffb0a0; margin-top:3px; height:13px; text-shadow:0 1px 2px #000; }
+@keyframes pb-contam-pulse { 0%,100%{opacity:1;} 50%{opacity:.55;} }
 #pb-lore { position:absolute; top:140px; left:50%; transform:translateX(-50%); max-width:80vw; background:rgba(18,24,44,.82); border:1px solid rgba(120,200,255,.55); box-shadow:0 0 18px 2px rgba(60,140,220,.35) inset; color:#dbe8ff; padding:10px 22px; border-radius:12px; font-family:'Segoe UI',system-ui,sans-serif; text-align:center; pointer-events:none; user-select:none; }
 #pb-lore .pb-lore-line { font-size:14px; font-weight:600; letter-spacing:.4px; text-shadow:0 1px 3px #000; line-height:1.5; }
 #pb-lore .pb-lore-line + .pb-lore-line { font-size:12px; font-weight:500; color:#a9c6ff; }
@@ -125,6 +141,11 @@ export class Hud {
   private readonly etaGate: HTMLElement;
   /** 현재 트랙에 그려 둔 구간 눈금 수(바뀔 때만 다시 그린다). */
   private etaMarks = -1;
+  /** 오염도 게이지(톡사르=오염 모드). 그 외 런에서는 숨는다. */
+  private readonly contamRoot: HTMLElement;
+  private readonly contamFill: HTMLElement;
+  private readonly contamPct: HTMLElement;
+  private readonly contamMsg: HTMLElement;
   /** 스토리 로어 토스트 배너(에코 안정화 등). 기본 숨김, {@link showLore} 로 잠깐 표시. */
   private readonly loreToast: HTMLElement;
   private loreTimer: ReturnType<typeof setTimeout> | null = null;
@@ -213,6 +234,29 @@ export class Hud {
     this.etaRoot.style.display = 'none';
     document.body.appendChild(this.etaRoot);
 
+    // 오염도 게이지 — 제목/수치 줄 + 트랙 + 경고 줄. 임계에 가까워지면 색이 오르고 맥동한다.
+    this.contamRoot = document.createElement('div');
+    this.contamRoot.id = 'pb-contam';
+    const contamHead = document.createElement('div');
+    contamHead.className = 'pb-contamhead';
+    const contamTitle = document.createElement('span');
+    contamTitle.textContent = t('hud.contamination.title');
+    this.contamPct = document.createElement('span');
+    contamHead.appendChild(contamTitle);
+    contamHead.appendChild(this.contamPct);
+    const contamTrack = document.createElement('div');
+    contamTrack.className = 'pb-contamtrack';
+    this.contamFill = document.createElement('div');
+    this.contamFill.className = 'pb-contamfill';
+    contamTrack.appendChild(this.contamFill);
+    this.contamMsg = document.createElement('div');
+    this.contamMsg.className = 'pb-contammsg';
+    this.contamRoot.appendChild(contamHead);
+    this.contamRoot.appendChild(contamTrack);
+    this.contamRoot.appendChild(this.contamMsg);
+    this.contamRoot.style.display = 'none';
+    document.body.appendChild(this.contamRoot);
+
     this.loreToast = document.createElement('div');
     this.loreToast.id = 'pb-lore';
     this.loreToast.style.display = 'none';
@@ -284,6 +328,30 @@ export class Hud {
     }
 
     this.updateBossEta(s.bossEta);
+    this.updateContamination(s.contamination);
+  }
+
+  /** 오염도 경고 단계 임계(0..1). 이 위는 주의색, {@link CONTAM_DANGER} 위는 위험색+맥동. */
+  private static readonly CONTAM_WARN = 0.55;
+  private static readonly CONTAM_DANGER = 0.8;
+
+  /**
+   * 오염도 게이지를 갱신한다(오염 모드 전용, 그 외 런은 감춘다). 단계별 색 전환으로 "임계에
+   * 가까워지고 있다"를 실패 **전에** 알린다 — 이 표시가 없어서 실패가 갑자기 뜨는 것으로
+   * 보였다(사용자 신고 2026-07-27). 순수 표시(값 파생은 sim/modes/contamination).
+   */
+  private updateContamination(c: { cells: number; critical: number } | undefined): void {
+    if (c === undefined || c.critical <= 0) {
+      this.contamRoot.style.display = 'none';
+      return;
+    }
+    this.contamRoot.style.display = 'block';
+    const frac = Math.max(0, Math.min(1, c.cells / c.critical));
+    this.contamFill.style.width = `${frac * 100}%`;
+    this.contamPct.textContent = `${c.cells} / ${c.critical}`;
+    const danger = frac >= Hud.CONTAM_DANGER;
+    this.contamRoot.className = danger ? 'danger' : frac >= Hud.CONTAM_WARN ? 'warn' : '';
+    this.contamMsg.textContent = danger ? t('hud.contamination.warn') : '';
   }
 
   /**

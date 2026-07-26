@@ -13,6 +13,8 @@ import { eliteAffix } from './elite.js';
 import { windowCenterX, windowCenterY } from './invasion/scroll.js';
 import { chaseVisionRadius } from './modes/chase.js';
 import { shrinkSafeRadius } from './modes/shrink.js';
+import { contaminationCellCount, CONTAMINATION_CRITICAL_CELLS } from './modes/contamination.js';
+import { PLANET_MODE } from './planetMode.js';
 
 export interface EntitySnapshot {
   id: number;
@@ -89,6 +91,17 @@ export interface WorldSnapshot {
    * 렌더 전용이라 hashWorld 와 무관하다(planet·visionRadius 필드 선례).
    */
   safeRadius: number;
+  /**
+   * 오염도(톡사르=오염 모드 Lane8). `cells` = 살아있는 오염 셀 수, `critical` = 실패 임계.
+   * 그 외 모드는 undefined 고 HUD 가 게이지를 감춘다.
+   *
+   * 왜 스냅샷에 싣는가: 오염 실패는 화면 어디에도 표시가 없어 임계를 넘는 순간 예고 없이
+   * gameOver 가 떴다(사용자 신고 2026-07-27 "일정 시간 넘으면 갑자기 실패"). 게이지가 보이면
+   * 밀리는 중인지 만회하는 중인지 플레이 도중에 읽힌다. 렌더 전용이라 hashWorld 와 무관하다
+   * (planet·visionRadius·safeRadius 필드 선례). 선택 필드인 이유는 EntitySnapshot.permanent 와
+   * 같다 — 스냅샷 리터럴을 직접 만드는 테스트가 여럿이다.
+   */
+  contamination?: { cells: number; critical: number } | undefined;
   entities: EntitySnapshot[];
   beams: Beam[];
 }
@@ -131,7 +144,13 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
               // 링을 이 값으로 가른다. 스냅샷은 해시 대상이 아니라 sim 계약 불변이다.
               e.kind === 'turretPickup'
               ? e.phase === 1
-              : false,
+              : // 대피소(추격 Lane6)는 **지금 세그먼트의 것만** 전진 게이트다(`chaseShelterReached`
+                // 는 `aux0 === segmentIndex` 만 본다). 6개가 전부 같은 모습으로 서 있으면 어디로
+                // 가야 하는지 화면에서 알 수 없었다(사용자 신고 2026-07-27) — 렌더·레이더가
+                // 목표 대피소를 가르도록 sim 판정과 **같은 식**을 여기서 한 번만 편다.
+                e.kind === 'shelter'
+                ? e.aux0 === state.wave.segmentIndex
+                : false,
       flash: e.kind === 'boss' && e.timer > 0,
       elite: eliteAffix(e),
       // 영구 지형 해저드(life < 0 = 청크 배치·만료 없음). 렌더가 감속 지대와 가르는 유일한 신호다.
@@ -150,6 +169,10 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
     planet: state.config.planet ?? 0,
     visionRadius: chaseVisionRadius(state.config.planetMode),
     safeRadius: shrinkSafeRadius(state),
+    contamination:
+      state.config.planetMode === PLANET_MODE.contamination
+        ? { cells: contaminationCellCount(state), critical: CONTAMINATION_CRITICAL_CELLS }
+        : undefined,
     entities,
     beams,
   };

@@ -15,7 +15,7 @@ import { atan2 } from '../sim/math.js';
 import type { WorldSnapshot, EntitySnapshot } from '../sim/snapshot.js';
 
 /** 레이더에 찍히는 대상군. 색·도형으로 구분한다(탄의 시각 문법과 별개 체계). */
-export type RadarCategory = 'boss' | 'elite' | 'loot' | 'hazard' | 'gimmick';
+export type RadarCategory = 'boss' | 'elite' | 'loot' | 'hazard' | 'gimmick' | 'objective';
 
 /** 레이더 기하 설정. `scale = radius / range`. */
 export interface RadarConfig {
@@ -48,6 +48,7 @@ const CATEGORY_COLOR: Record<RadarCategory, number> = {
   loot: 0xffd24a, // 금색 — 드랍 장비
   hazard: 0xff7a1a, // 주황색 — 해저드(위험 지대)
   gimmick: 0x33ffcc, // 청록색 — 상호작용 기믹 장치
+  objective: 0x7dff5a, // 연두색 — 지금 가야 할 목표(추격 대피소). 위협 색과 안 겹친다.
 };
 
 /** 대상군별 블립 반지름(px). 보스가 가장 크게 읽히도록 우선순위 부여. */
@@ -57,6 +58,7 @@ const CATEGORY_SIZE: Record<RadarCategory, number> = {
   loot: 4,
   hazard: 3.5,
   gimmick: 3.5,
+  objective: 7, // 보스보다 크게 — 목표는 화면 밖에 있을 때도 가장 먼저 읽혀야 한다.
 };
 
 /**
@@ -81,6 +83,11 @@ export function classifyRadar(e: EntitySnapshot): RadarCategory | null {
     case 'bombDevice':
     case 'turretPickup':
       return 'gimmick';
+    case 'shelter':
+      // 추격(Lane6) 대피소. **지금 세그먼트의 대피소만**(snapshot `active`) 찍는다 — 6개 전부
+      // 찍으면 어느 것이 목표인지 레이더에서도 갈리지 않는다. 대피소 링 반경(1600)은 화면
+      // 절반(960×540) 밖이라 레이더가 유일한 방향 단서다(사거리 밖이면 테두리 화살표).
+      return e.active ? 'objective' : null;
     default:
       return null;
   }
@@ -149,6 +156,11 @@ function drawInner(g: Graphics, b: RadarBlip): void {
     case 'gimmick':
       // 작은 원.
       g.circle(x, y, s).fill({ color });
+      break;
+    case 'objective':
+      // 이중 링 + 중심 점(웨이포인트). 채운 도형들 사이에서 형태로도 구분된다.
+      g.circle(x, y, s).stroke({ color, width: 2 });
+      g.circle(x, y, s * 0.55).fill({ color });
       break;
   }
 }

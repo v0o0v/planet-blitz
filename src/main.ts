@@ -1625,6 +1625,9 @@ async function main(): Promise<void> {
         // 보스 등장 예고 게이지(사용자 요청 2026-07-26) — 읽기 전용 파생이라 sim 무영향.
         // 침공 런은 undefined 를 돌려주고 HUD 가 게이지를 감춘다.
         bossEta: bossProgress(w),
+        // 오염도(톡사르). 스냅샷의 render-only 필드 그대로 — 오염 런이 아니면 undefined 라
+        // HUD 가 게이지를 감춘다.
+        contamination: currSnap.contamination,
       });
 
       const seg = w.wave.segmentIndex + 1;

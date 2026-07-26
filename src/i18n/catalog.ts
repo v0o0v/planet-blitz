@@ -414,6 +414,9 @@ export const EN = {
   'hud.bossEta.purify': 'Purify the zone',
   'hud.bossEta.shelter': 'Reach the shelter',
   'hud.bossEta.ring': 'Clear the safe ring',
+  // 오염도 게이지(톡사르=오염 모드). 실패 임계를 실패 전에 보여 준다.
+  'hud.contamination.title': 'CONTAMINATION',
+  'hud.contamination.warn': 'Critical contamination imminent — destroy the nodes',
 
   // --- 리플레이 관전 ---
   'replay.badge': 'Spectate',
@@ -1793,6 +1796,8 @@ export const KO: Record<MessageKey, string> = {
   'hud.bossEta.purify': '구역을 정화하라',
   'hud.bossEta.shelter': '대피소에 도달하라',
   'hud.bossEta.ring': '안전권을 소탕하라',
+  'hud.contamination.title': '오염도',
+  'hud.contamination.warn': '임계 오염 임박 — 오염 노드를 파괴하라',
 
   'replay.badge': '관전',
   'replay.titleBody': '{who} 침공 리플레이 (렌더 전용·기록에 영향 없음)',

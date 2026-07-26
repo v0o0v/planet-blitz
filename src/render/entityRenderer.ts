@@ -545,6 +545,52 @@ export function drawVisionFog(g: Graphics, cx: number, cy: number, radius: numbe
   }
 }
 
+// ---------------------------------------------------------------------------
+// 대피소 표식(추격 Lane6)
+//
+// 대피소 링 반경은 1600 월드 유닛인데 화면은 1920×1080(월드=화면 1:1, 카메라 줌 없음)이라
+// **대피소는 대개 화면 밖에 있다**. 게다가 6개가 전부 같은 스프라이트로 서 있고 전진 게이트는
+// `aux0 === segmentIndex` 인 하나뿐이라, 화면만 봐서는 어디로 가야 하는지 알 수 없었다
+// (사용자 신고 2026-07-27 "대피소가 어디인지 잘 보이지 않음"). 세 가지로 나눠 답한다:
+//   ① 활성 대피소 = 맥동 링으로 강조, 비활성 = 톤 다운 → 가까이 가면 어느 것이 목표인지 즉시 읽힌다.
+//   ② 화면 밖이면 카메라 중심 둘레에 **방향 화살표** → 어느 쪽으로 달릴지 항상 보인다.
+//   ③ 레이더 `objective` 블립(radar.ts) → 사거리 밖이면 테두리 화살표로 방향.
+// 전부 렌더 전용(스냅샷 `active` 만 읽는다) — sim·해시 무관.
+// ---------------------------------------------------------------------------
+
+/** 활성 대피소(이번 세그먼트 목표) 강조 색 — 레이더 objective 와 같은 연두. */
+export const SHELTER_ACTIVE_COLOR = 0x7dff5a;
+/** 비활성 대피소 링 색(존재만 알리는 톤). */
+export const SHELTER_IDLE_COLOR = 0x4a6a80;
+/** 화면 밖 대피소 화살표를 띄우는 카메라 중심 반경(월드 유닛 = px). */
+export const SHELTER_ARROW_RADIUS = 260;
+
+/**
+ * 화면 밖 활성 대피소를 가리키는 화살표의 위치·각도. 대피소가 뷰포트(디자인 1920×1080) 안이면
+ * null 을 돌려 화살표를 그리지 않는다(그 자리에 실물 대피소가 이미 보이므로). 순수 함수 —
+ * 카메라·대상 좌표만의 함수라 vitest 로 단위 검증한다.
+ */
+export function shelterArrow(
+  camX: number,
+  camY: number,
+  sx: number,
+  sy: number,
+): { x: number; y: number; angle: number } | null {
+  const dx = sx - camX;
+  const dy = sy - camY;
+  // 뷰포트 안이면 화살표 불요(살짝 여유를 둬 가장자리에서 깜빡이지 않게 한다).
+  const margin = 80;
+  if (Math.abs(dx) <= DESIGN_WIDTH / 2 - margin && Math.abs(dy) <= DESIGN_HEIGHT / 2 - margin) {
+    return null;
+  }
+  const angle = Math.atan2(dy, dx);
+  return {
+    x: camX + Math.cos(angle) * SHELTER_ARROW_RADIUS,
+    y: camY + Math.sin(angle) * SHELTER_ARROW_RADIUS,
+    angle,
+  };
+}
+
 /** 안전 반경 경계 링 색(시안 — 아군/안전 톤). */
 export const SAFE_RING_COLOR = 0x39d0ff;
 /** 안전 반경 밖 압박존 색(어두운 적자). */
@@ -1587,6 +1633,40 @@ export class EntityRenderer {
     for (const e of curr.entities) {
       if (!showsTriggerRing(e.kind, e.active)) continue;
       g.circle(e.x, e.y, e.radius).stroke({ color: TRIGGER_RING_COLOR, width: 2, alpha: 0.35 });
+    }
+    // 대피소 표식(추격 Lane6). 활성(이번 세그먼트 목표)만 맥동 링으로 세우고 나머지는 낮춘다.
+    // 화면 밖이면 카메라 둘레에 방향 화살표를 띄운다(SHELTER_ARROW_RADIUS).
+    const shelterPulse = 0.5 + 0.5 * Math.sin(this.frameTick * 0.08);
+    for (const e of curr.entities) {
+      if (e.kind !== 'shelter') continue;
+      if (!e.active) {
+        g.circle(e.x, e.y, e.radius).stroke({ color: SHELTER_IDLE_COLOR, width: 2, alpha: 0.22 });
+        continue;
+      }
+      g.circle(e.x, e.y, e.radius).stroke({
+        color: SHELTER_ACTIVE_COLOR,
+        width: 4,
+        alpha: 0.5 + 0.4 * shelterPulse,
+      });
+      // 바깥으로 퍼지는 맥동 링(멀리서도 "여기다"로 읽히는 신호).
+      g.circle(e.x, e.y, e.radius + 20 + 34 * shelterPulse).stroke({
+        color: SHELTER_ACTIVE_COLOR,
+        width: 3,
+        alpha: 0.42 * (1 - shelterPulse),
+      });
+      const arrow = shelterArrow(curr.cameraX, curr.cameraY, e.x, e.y);
+      if (arrow === null) continue;
+      const ca = Math.cos(arrow.angle);
+      const sa = Math.sin(arrow.angle);
+      const tip = 34;
+      const half = 18;
+      const bx = arrow.x - ca * tip;
+      const by = arrow.y - sa * tip;
+      g.moveTo(arrow.x, arrow.y)
+        .lineTo(bx - sa * half, by + ca * half)
+        .lineTo(bx + sa * half, by - ca * half)
+        .closePath()
+        .fill({ color: SHELTER_ACTIVE_COLOR, alpha: 0.55 + 0.35 * shelterPulse });
     }
     // Hazard zones: telegraph = outlined warning ring; active = filled danger.
     // 주기 온오프 해저드(L2 설비·L3 중력 앵커)는 이 예열↔활성 대비가 리듬을 읽게 한다.

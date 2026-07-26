@@ -8,7 +8,7 @@
  * GDD §10 pixel scale rule).
  */
 
-import { Application, Container, TextureSource } from 'pixi.js';
+import { Application, Container, Graphics, TextureSource } from 'pixi.js';
 
 export const DESIGN_WIDTH = 1920;
 export const DESIGN_HEIGHT = 1080;
@@ -47,6 +47,21 @@ export async function createGameApp(mount: HTMLElement): Promise<GameApp> {
 
   const stage = new Container();
   app.stage.addChild(stage);
+
+  // 디자인 스페이스(1920×1080) 밖은 **잘라낸다**.
+  //
+  // ⚠️ 레터박스 띠는 "빈 공간"이 아니라 **stage 가 계속 그리는 영역**이다. stage 는 창 중앙에
+  // 1920×1080 만큼 자리를 잡을 뿐 클립되지 않으므로, 그 밖으로 삐져나온 자식(카메라 팬 레이어의
+  // 월드 스프라이트)이 띠 위에 그대로 보인다. 격납고 같은 전체화면 UI 는 배경을 정확히
+  // 1920×1080 으로만 깔기 때문에 위/아래 띠에 **직전 게임 화면이 비쳐 보였다**(사용자 신고
+  // 2026-07-27). 화면비가 16:9 가 아닌 창에서 항상 재현된다.
+  //
+  // 개별 화면마다 배경을 키우는 대신 루트에서 한 번 잘라 모든 화면(격납고·타이틀·정산·런)에
+  // 같은 프레이밍을 강제한다. 마스크는 stage 의 자식이라 stage 변환을 그대로 받는다 —
+  // fitToWindow 가 스케일·위치를 바꿔도 마스크는 항상 디자인 사각형에 정확히 붙는다.
+  const frameMask = new Graphics().rect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT).fill({ color: 0xffffff });
+  stage.addChild(frameMask);
+  stage.mask = frameMask;
 
   function fitToWindow(): void {
     // Pixi v8: app.screen 은 이미 논리(CSS) 픽셀이다. renderer.width 를 resolution 으로
