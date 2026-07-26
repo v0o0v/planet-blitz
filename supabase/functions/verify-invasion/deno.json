@@ -1,5 +1,6 @@
 {
   "//": "verify-invasion Edge Function (M4 Phase D). sloppy-imports(unstable)로 verifyInvasionCore가 src/sim의 .js specifier를 .ts에 resolve해 공유 소스를 무수정 import(갈림길①A). verify-run과 동일 패턴.",
+  "//deploy": "배포는 `deno task bundle` 후 dist.index.js를 index.ts로 치환해 올린다 — sloppy-imports를 CLI 배포 번들러가 못 따라가고 `--entrypoint` 플래그도 없다. src/sim이 바뀌면 재배포가 필수다(방치하면 서버가 옛 sim으로 재계산해 모든 침공이 해시 불일치로 거부된다). 절차 정본: .omc/skills/planet-blitz-supabase-deploy-workflow.md · 요약: 리포 루트 README.md '서버 배포' 절.",
   "unstable": ["sloppy-imports"],
   "lock": false,
   "tasks": {

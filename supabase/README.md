@@ -181,7 +181,9 @@ Phase A(verify-run)의 결정론 재실행 검증을 침공(PvP)에 배선하고
 | `functions/verify-invasion/index.ts` | `Deno.serve` HTTP·Auth·DB I/O 배선 | `Deno` |
 | `functions/verify-invasion/deno.json` | sloppy-imports + `check`/`bundle` 태스크 | — |
 
-> 배포용 자립 번들 `dist.index.js`(36모듈·70KB)는 `deno task bundle`로 생성한다.
+> 배포용 자립 번들 `dist.index.js`는 `deno task bundle`로 생성한다(규모는 `src/sim` 그래프에
+> 따라 변한다 — 2026-07-26 기준 95모듈·210KB). 배포 절차 정본은
+> `.omc/skills/planet-blitz-supabase-deploy-workflow.md`.
 > ⚠️ **[2026-07-21 갱신] `.gitignore`(`supabase/functions/**/dist.index.js`)에 걸려
 > 있어 git 추적·커밋 대상이 아니다** — 워킹트리에 파일로 남아 있을 수는 있으나 보장되지
 > 않는다(새 클론·`git clean`·다른 세션·`src/sim` 변경 이후에는 아예 없거나 낡아 있다).
@@ -373,24 +375,37 @@ service_role 만)과 (b) `request.jwt.claims` role 을 읽는 `caller_is_service
   `defense_layout_cost` 모두 더 이상 존재하지 않는다 — 3레이어 무결성은 슬롯 수 상한
   (L1 6 / L2 12·10·8 / L3 보스1·수호2·기물6·모듈2)만으로 검증한다.
 
-### 배포 (핸드오프 — deploy 자격 필요)
+### 배포
+
+> **절차 정본은 `.omc/skills/planet-blitz-supabase-deploy-workflow.md` 다.** 명령·함정·부팅
+> 스모크가 거기 있다. 이 절은 왜 자립 번들이 필요한지와 배포 후 확인만 남긴다. 요약 진입점은
+> 리포 루트 `README.md` 의 "서버 배포" 절.
 
 verify-invasion 은 `src/sim` 전체 그래프를 import 하고 배포 경로는 sloppy-imports 를
 못 쓰므로 **자립 번들**로 배포한다. `deno task bundle`(functions/verify-invasion 에서)이
-`dist.index.js`(36모듈·70KB, Supabase 런타임 jsr import 는 external 유지)를 산출하며,
-로컬에서 `deno check`·`deno bundle` 통과·Deno/vitest 로 검증 코어 동형 확인을 마쳤다.
+`dist.index.js`(Supabase 런타임 jsr import 는 external 유지)를 산출한다. 번들 규모는
+`src/sim` 그래프에 따라 변한다 — 2026-07-26 기준 95모듈·210KB(2026-07-17 최초 기록은
+36모듈·70KB였다. 이 수치를 불변식으로 쓰지 말고 증감 방향만 보라).
 
-원격 배포는 deploy 자격이 필요해(이 워커 환경엔 CLI 액세스 토큰 없음, EF invoke 는
-사용자 JWT 필요) 리드/사용자 몫으로 남긴다. 방법 중 하나:
+⚠️ **[2026-07-26 갱신] "리드/사용자 몫"이라는 종전 기술은 더 이상 맞지 않는다.** `$PROFILE` 의
+`spb` 래퍼(PAT DPAPI 보관)가 있어 **Claude 가 사용자 손 없이 배포를 완주할 수 있다**. 또
+supabase MCP 의 `deploy_edge_function` 은 OAuth 인증이 필요해 비대화형 세션에서 못 쓰므로
+권장 경로가 아니고, `supabase functions deploy` 에 **`--entrypoint` 플래그는 존재하지 않는다**
+(그래서 `dist.index.js` 를 `index.ts` 로 **치환**해 올린다 — 정본 문서 참조).
 
-- MCP: `deploy_edge_function(name='verify-invasion', entrypoint_path='index.ts',
-  verify_jwt=true, files=[{name:'index.ts', content:<dist.index.js 내용>}])`.
-- CLI(로그인 후): `supabase functions deploy verify-invasion --project-ref
-  qxgbxwyccbxokdgwxcuw`(단, CLI 번들러가 부모 경로 import 를 포함하도록 dist 번들을
-  entrypoint 로 지정하거나 사전 번들 사용).
+**`src/sim/**` 이 바뀌면 재배포는 선택이 아니다.** 서버가 침공 리플레이를 이 번들로 재계산하므로
+방치하면 옛 sim 으로 계산해 **모든 침공이 해시 불일치로 거부**된다. `pnpm test` 와
+`scripts/deno-verify/fixtures.json` 이 전부 그린이어도 마찬가지다 — 그 12 시나리오는 침공 경로를
+태우지 않는다(2026-07-26 ADR-0034 에서 실증).
 
-배포 후 스모크: 유효 사용자 JWT 로 `POST {invasion_id}` → 정직 제출 accept·위조 reject
-확인, `apply_invasion_result` 스왑·복제 약탈 e2e(AC3).
+배포 후 확인 순서:
+1. `spb functions list --project-ref qxgbxwyccbxokdgwxcuw` VERSION 증가.
+2. 번들 소스 커밋 == `origin/main` 대조(M8 1회차가 이걸 빼먹어 스테일 번들이 올라갔다).
+3. **부팅 스모크** — anon 키로 `POST {}` → `400 malformed-invasion-id`. ⚠️ 인증 없이 때리면
+   게이트웨이가 `401 UNAUTHORIZED_NO_AUTH_HEADER` 를 돌려주는데 **함수는 부팅조차 하지 않은
+   상태**라 아무것도 증명하지 못한다(정본 문서의 "부팅 스모크" 절).
+4. 기능 e2e: 유효 사용자 JWT 로 `POST {invasion_id}` → 정직 제출 accept·위조 reject 확인,
+   `apply_invasion_result` 스왑·복제 약탈(AC3).
 
 ## Phase E — 배치전·NPC 시드·풍화/정비·비활성 침하 (계획 §4 Phase E, 2026-07-17)
 
