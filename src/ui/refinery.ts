@@ -15,6 +15,7 @@
 import type { Item, Rarity } from '../items/types.js';
 import { AFFIXES } from '../../data/affixes.js';
 import { affixTitleLine } from './affixText.js';
+import { itemDisplayName, slotLabel } from './itemNames.js';
 import { rerollAffixes } from '../items/roll.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../save/profile.js';
 import { UI_LOCK_URL, UI_UNLOCK_URL, pixelIcon } from './uiIcons.js';
@@ -30,37 +31,7 @@ const RARITY_COLOR: Record<Rarity, string> = {
   unique: '#ff8a3c',
 };
 
-/** Slot id → i18n key (reuses the shared item.slot.* catalog). */
-const SLOT_LABEL_KEY: Record<string, MessageKey> = {
-  main: 'item.slot.main',
-  sub: 'item.slot.sub',
-  armor: 'item.slot.armor',
-  shield: 'item.slot.shield',
-  engine: 'item.slot.engine',
-  core: 'item.slot.core',
-  module: 'item.slot.module',
-};
-
-/** Localised slot label (falls back to the raw slot id). */
-function slotLabel(slot: string): string {
-  const key = SLOT_LABEL_KEY[slot];
-  return key !== undefined ? t(key) : slot;
-}
-
-/** Weapon-type i18n keys (0 발칸 … 4 빔; M3 무기 5타입 — reuses shared item.weapon.*). */
-const WEAPON_KEY: readonly MessageKey[] = [
-  'item.weapon.0',
-  'item.weapon.1',
-  'item.weapon.2',
-  'item.weapon.3',
-  'item.weapon.4',
-];
-
-/** Localised weapon label (falls back to '?' when out of range). */
-function weaponLabel(type: number): string {
-  const key = WEAPON_KEY[type];
-  return key !== undefined ? t(key) : '?';
-}
+// 슬롯·무기 표시명은 `src/ui/itemNames.ts` 단일 정본을 쓴다(화면마다 다른 이름 금지).
 
 const STYLE = `
 #pb-ref { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; gap:14px; padding:24px 16px; box-sizing:border-box; background:radial-gradient(circle at 50% 20%,#0a1220,#03050c 75%); backdrop-filter:blur(3px); font-family:'Segoe UI',system-ui,sans-serif; z-index:29; overflow:auto; }
@@ -217,10 +188,7 @@ export class Refinery {
   }
 
   private itemName(item: Item): string {
-    if (item.slot === 'main' && item.weaponType !== undefined) {
-      return `${t('item.slot.main')} · ${weaponLabel(item.weaponType)}`;
-    }
-    return slotLabel(item.slot);
+    return itemDisplayName(item);
   }
 
   private affixText(item: Item, i: number): string {

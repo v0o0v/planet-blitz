@@ -18,13 +18,14 @@
  *  1. 같은 스탯을 올리는 파워업을 `PowerupDef.apply` 의 실제 수치로 오름차순 정렬한다.
  *  2. **기존 아트가 있는 밴드(low/mid/high = 스킬 tier 0/2/4)를 우선 쓴다.** Lane 10 이 티어대를
  *     3→5구간(low·lowmid·mid·midhigh·high)으로 넓혔지만 `lowmid`(tier 1)·`midhigh`(tier 3)는
- *     아직 PNG 가 없는 신규 밴드라, 여기로 내려보내는 항목은 회귀(null 폴백)가 된다 —
- *     low/mid/high 로 충돌이 이미 풀리므로 굳이 신규 밴드를 쓰지 않는다.
- *  3. statKey 는 반드시 `SKILL_ICON_NAMES`(전 SHIP_TYPES 수요 유니온)에 **실재**해야 한다.
- *     밴드가 다 있는 것은 아니다 — `range_flat` 은 어느 기체에서도 tier 0 이 없어 5구간 유니온에
- *     `low` 밴드 자체가 없다(그래서 단독 파워업 `beam-focuser` 는 최저 실재 밴드 `lowmid` 를
- *     쓴다 — 배지로 갈리므로 충돌 없음, 단 신규 밴드라 아트 부채). 유니온에 없는 이름을 가리키면
- *     텍스처가 없어 아이콘이 조용히 사라진다.
+ *     아직 PNG 가 **하나도 없는** 신규 밴드다 — 여기를 가리키면 아이콘이 안 뜬다(아래 3번).
+ *     low/mid/high 로 충돌이 이미 풀리므로 신규 밴드는 쓰지 않는다.
+ *  3. statKey 는 반드시 **`assets/<statKey>.png` 파일이 실재**해야 한다. ⚠️ 이름 유니온
+ *     (`SKILL_ICON_NAMES`/`UI_ASSET_NAMES`)에 있는 것만으로는 부족하다 — 유니온은 "수요가 있는
+ *     이름" 목록이고 PNG 는 별개 축이라, 유니온에만 있고 파일이 없는 이름을 가리키면 카드에서
+ *     아이콘이 **조용히 사라진다**(`iconUrl` 이 undefined 를 돌려주고 소비 측이 폴백). 실제로
+ *     `beam-focuser` 가 `skill_range_flat_lowmid`(유니온 O · PNG X)를 가리켜 '집속 렌즈' 카드에
+ *     그림이 안 떴다(사용자 신고 2026-07-27). 그래서 테스트를 **실물 파일 대조**로 올렸다.
  *  4. 수치가 같으면(탄환 +1 셋) 같은 밴드에 둔다 — 이들은 배지로 갈린다.
  *
  * 결과는 24종 전부가 서로 다른 조합이다(충돌 0). 매핑의 진실의 원천은 이 파일이다 —
@@ -87,9 +88,13 @@ const POWERUP_ICONS: Readonly<Record<string, PowerupIconKeys>> = {
   'gem-magnet': { statKey: 'skill_magnet_pct_mid' },
 
   // 단독 스탯 2종 — 비교 대상이 없어 최저 실재 밴드. bullet_speed 는 low(기존 아트) 사용.
-  // range_flat 은 5구간 유니온에 low 가 없어(tier 0 수요 없음) 최저 밴드가 lowmid(신규·아트 부채).
   'muzzle-velocity': { statKey: 'skill_bullet_speed_pct_low' },
-  'beam-focuser': { statKey: 'skill_range_flat_lowmid', badgeKey: 'equip_main_beam' },
+  // range_flat: 5구간 유니온의 최저 밴드는 lowmid 지만 그 PNG 가 **없다**(아트 부채). 실제 결과는
+  // '집속 렌즈' 카드에 그림이 통째로 안 뜨는 것이었다(사용자 신고 2026-07-27). 유니온 이름과
+  // 실물 PNG 는 다른 축이므로, 여기서는 **실재하는 PNG**(`skill_range_flat_low.png`)를 가리킨다 —
+  // range_flat 파워업은 이 하나뿐이라 밴드 충돌도 없다. 아래 아이콘 자산 존재 테스트가 이 규율을
+  // 강제한다(tests/powerupIcons — 키가 PNG 로 해석되지 않으면 빨개진다).
+  'beam-focuser': { statKey: 'skill_range_flat_low', badgeKey: 'equip_main_beam' },
 };
 
 /** 파워업 id 로 아이콘 키를 얻는다(미등록이면 undefined → 텍스트 폴백). */

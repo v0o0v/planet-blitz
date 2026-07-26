@@ -19,6 +19,11 @@ export interface TooltipContent {
   reqLine?: { text: string; color: number } | undefined;
   /** 장착 장비 비교 줄(없으면 생략). */
   compare?: string | undefined;
+  /**
+   * 장착 장비 스탯 증감 블록(사용자 요청 2026-07-27). 줄마다 색이 다르므로(증가 초록·감소 빨강)
+   * `lines`(단색)와 달리 색을 함께 받는다. 빈 배열/미지정이면 구분선까지 통째로 생략한다.
+   */
+  compareLines?: readonly { text: string; color: number }[] | undefined;
 }
 
 const PAD = 14;
@@ -71,6 +76,13 @@ export class PixiTooltip {
     if (content.compare !== undefined) {
       y += 4;
       maxW = Math.max(maxW, makeLine(content.compare, 14, 0x8896b8, '400'));
+    }
+    // 장착 비교 블록 — 어픽스 목록과 시각적으로 떼기 위해 위에 여백을 준다.
+    if (content.compareLines !== undefined && content.compareLines.length > 0) {
+      y += 6;
+      for (const line of content.compareLines) {
+        maxW = Math.max(maxW, makeLine(line.text, 14, line.color, '700'));
+      }
     }
 
     const w = Math.min(MAX_W, maxW + PAD * 2);

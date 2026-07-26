@@ -17,6 +17,8 @@ import type { Item, EquipSlotId, SlotKind, Rarity } from '../../items/types.js';
 import { EQUIP_SLOTS, RARITY_CODE } from '../../items/types.js';
 import { LEVEL_CAP } from '../../../data/waves.js';
 import { affixLines } from '../affixText.js';
+import { itemDisplayName, slotLabel, weaponLabel } from '../itemNames.js';
+import { compareLines } from '../itemCompare.js';
 import { computeLoadoutStats } from '../../items/loadout.js';
 import { canEquip, requiredLevel } from '../../items/requiredLevel.js';
 import { UNIQUE_REGISTRY } from '../../items/uniques.js';
@@ -48,26 +50,8 @@ import { makeSlotCell, rectGridPositions, fitGridCols, equipIconTexture } from '
 import { PixiTooltip } from './tooltip.js';
 import { makeBanner, makeCurrencyChip, makeIconButton } from './titleBar.js';
 
-const SLOT_LABEL_KEY: Record<SlotKind, MessageKey> = {
-  main: 'item.slot.main',
-  sub: 'item.slot.sub',
-  armor: 'item.slot.armor',
-  shield: 'item.slot.shield',
-  engine: 'item.slot.engine',
-  core: 'item.slot.core',
-  module: 'item.slot.module',
-};
-
-function slotLabel(kind: SlotKind): string {
-  return t(SLOT_LABEL_KEY[kind]);
-}
-
-const WEAPON_KEY: readonly MessageKey[] = ['item.weapon.0', 'item.weapon.1', 'item.weapon.2'];
-
-function weaponLabel(type: number): string {
-  const key = WEAPON_KEY[type];
-  return key !== undefined ? t(key) : '?';
-}
+// 슬롯·무기 표시명은 `src/ui/itemNames.ts` 단일 정본을 쓴다 — 이 파일에 있던 사본은 무기 3종에서
+// 멈춰 있어 미사일·빔이 `?`/`발칸` 으로 표시됐다(사용자 신고 2026-07-27).
 
 function slotKindOf(id: EquipSlotId): SlotKind {
   return (id === 'module0' || id === 'module1' ? 'module' : id) as SlotKind;
@@ -487,10 +471,7 @@ export class HangarScreen {
   }
 
   private itemName(item: Item): string {
-    if (item.slot === 'main' && item.weaponType !== undefined) {
-      return `${t('item.slot.main')} · ${weaponLabel(item.weaponType)}`;
-    }
-    return slotLabel(item.slot);
+    return itemDisplayName(item);
   }
 
   // --- 툴팁 ----------------------------------------------------------------
@@ -498,8 +479,13 @@ export class HangarScreen {
   private showTip(item: Item, globalX: number, globalY: number, compareTo?: Item): void {
     // 어픽스 = 제목 줄(이름 · 표시명 +수치) + 설명 줄. raw StatKey 노출을 없앤다(2026-07-26 지적).
     const lines = affixLines(item.affixes);
+    // 장착 장비 대비 스탯 증감(사용자 요청 2026-07-27). 어픽스 **개수**만 알려 주던 한 줄로는
+    // 좋고 나쁨을 판단할 수 없었다 — 무슨 수치가 얼마나 오르내리는지를 색으로 보여준다.
+    const cmp = compareTo !== undefined ? compareLines(item, compareTo) : [];
+    // 구 요약 줄(`장착 중: 엔진 (어픽스 3개)`)은 증감 블록이 있으면 생략한다 — 같은 자리에서
+    // 같은 것을 두 번 말하게 되고, 개수는 증감 앞에서 판단에 기여하지 않는다(실측 중복).
     const compare =
-      compareTo !== undefined && compareTo !== item
+      cmp.length === 0 && compareTo !== undefined && compareTo !== item
         ? t('inv.tip.compare', { name: this.itemName(compareTo), n: compareTo.affixes.length })
         : undefined;
     // 요구 레벨 줄(AC9): 미달이면 빨강, 충족이면 무채색. 미달 아이템도 툴팁·비교는 정상 노출.
@@ -515,6 +501,7 @@ export class HangarScreen {
         reqLine: { text: t('item.reqLevel', { n: req }), color: met ? 0x8896b8 : 0xff5a5a },
         lines,
         compare,
+        compareLines: cmp,
       },
       p.x,
       p.y,
@@ -682,7 +669,10 @@ export class HangarScreen {
   private statRows(): StatRow[] {
     const { loadout, worldMods } = this.computeStats();
     const rows: StatRow[] = [
-      { label: t('inv.stat.weapon'), value: t(WEAPON_KEY[loadout.weaponType] ?? 'item.weapon.0'), desc: t('hangar.desc.weapon'), color: COLOR.gold },
+      // ⚠️ 폴백을 `item.weapon.0`(발칸)으로 두면 표가 낡았을 때 **다른 무기를 발칸이라고 적는다**.
+      // 실제로 표가 3종에서 멈춰 빔·미사일 장착이 "발칸"으로 표시됐다(2026-07-27). weaponLabel 은
+      // 범위 밖을 `?` 로 낸다 — 조용한 오표기보다 눈에 띄는 물음표가 낫다.
+      { label: t('inv.stat.weapon'), value: weaponLabel(loadout.weaponType), desc: t('hangar.desc.weapon'), color: COLOR.gold },
       { label: t('inv.stat.damage'), value: `×${loadout.damageMult.toFixed(2)}`, desc: t('hangar.desc.damage'), color: COLOR.gold },
       { label: t('inv.stat.fireRate'), value: `×${(1 / loadout.fireRateMult).toFixed(2)}`, desc: t('hangar.desc.fireRate'), color: COLOR.gold },
       { label: t('inv.stat.bullets'), value: `+${loadout.bulletCountAdd}`, desc: t('hangar.desc.bullets'), color: COLOR.gold },
@@ -1048,6 +1038,8 @@ export class HangarScreen {
     const positions = rectGridPositions(cells.length, cols, cell, cell, fit.gapX, gap);
     for (let i = 0; i < cells.length; i++) {
       const item = cells[i];
+      // 보관함 장비도 장착 후보다 — 인벤토리와 같은 기준으로 현재 장착과 비교해 보여준다.
+      const compareTo = item !== undefined ? this.equippedFor(item.slot) : undefined;
       const locked = item !== undefined && !canEquip(ship.level, item);
       const c = makeSlotCell({
         size: cell,
@@ -1056,7 +1048,7 @@ export class HangarScreen {
         iconTex: equipIconTexture(this.ui, item),
         reqLevel: item !== undefined ? requiredLevel(item) : undefined,
         locked,
-        onHover: item !== undefined ? (gx, gy) => this.showTip(item, gx, gy) : undefined,
+        onHover: item !== undefined ? (gx, gy) => this.showTip(item, gx, gy, compareTo) : undefined,
         onMove: (gx, gy) => this.moveTip(gx, gy),
         onOut: () => this.tooltip.hide(),
       });

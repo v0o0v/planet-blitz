@@ -14,6 +14,7 @@ import { Container, Graphics, Rectangle, NineSliceSprite, Text } from 'pixi.js';
 import type { Item } from '../../items/types.js';
 import { AFFIXES } from '../../../data/affixes.js';
 import { affixLines, affixTitleLine } from '../affixText.js';
+import { itemDisplayName, slotLabel } from '../itemNames.js';
 import { rerollAffixes } from '../../items/roll.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../../save/profile.js';
 import { spendCurrencyOnServer } from '../../net/index.js';
@@ -29,35 +30,7 @@ import { PixiTooltip } from './tooltip.js';
 import { makeBanner, makeCurrencyChip, makeIconButton } from './titleBar.js';
 import { stripEmoji } from './text.js';
 
-/** 슬롯 id → i18n 키(공용 item.slot.* 카탈로그 재사용, DOM 판과 동일). */
-const SLOT_LABEL_KEY: Record<string, MessageKey> = {
-  main: 'item.slot.main',
-  sub: 'item.slot.sub',
-  armor: 'item.slot.armor',
-  shield: 'item.slot.shield',
-  engine: 'item.slot.engine',
-  core: 'item.slot.core',
-  module: 'item.slot.module',
-};
-
-function slotLabel(slot: string): string {
-  const key = SLOT_LABEL_KEY[slot];
-  return key !== undefined ? t(key) : slot;
-}
-
-/** 무기 타입 i18n 키(0 발칸 … 4 빔 — M3 무기 5타입). */
-const WEAPON_KEY: readonly MessageKey[] = [
-  'item.weapon.0',
-  'item.weapon.1',
-  'item.weapon.2',
-  'item.weapon.3',
-  'item.weapon.4',
-];
-
-function weaponLabel(type: number): string {
-  const key = WEAPON_KEY[type];
-  return key !== undefined ? t(key) : '?';
-}
+// 슬롯·무기 표시명은 `src/ui/itemNames.ts` 단일 정본을 쓴다(화면마다 다른 이름 금지).
 
 // --- 레이아웃 상수(디자인 스페이스) ---
 /** 배너 폭은 제목("정제소") 길이에 맞춘다 — 짧은 제목에 넓은 배너는 허전하다. */
@@ -285,10 +258,7 @@ export class RefineryScreen {
   }
 
   private itemName(item: Item): string {
-    if (item.slot === 'main' && item.weaponType !== undefined) {
-      return `${t('item.slot.main')} · ${weaponLabel(item.weaponType)}`;
-    }
-    return slotLabel(item.slot);
+    return itemDisplayName(item);
   }
 
   private affixText(item: Item, i: number): string {

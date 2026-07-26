@@ -15,6 +15,7 @@
  */
 
 import { t } from '../i18n/index.js';
+import { slotLabel, weaponKindLabel } from './itemNames.js';
 import type { Item, Rarity, SlotKind } from '../items/types.js';
 
 /** 정산 화면에 표시할 획득 장비 1개(표시 전용 요약). */
@@ -115,14 +116,10 @@ function row(k: string, v: string, valueClass?: string): HTMLElement {
  * 갈리면 같은 드랍이 화면마다 다른 이름으로 보인다.
  */
 export function dropName(d: ResultDrop): string {
-  if (d.slot === 'main' && d.weaponType !== undefined) {
-    const key = `item.weapon.${d.weaponType}` as 'item.weapon.0' | 'item.weapon.1' | 'item.weapon.2';
-    return t(key);
-  }
-  const slotKey = `item.slot.${d.slot}` as
-    | 'item.slot.main' | 'item.slot.sub' | 'item.slot.armor' | 'item.slot.shield'
-    | 'item.slot.engine' | 'item.slot.core' | 'item.slot.module';
-  return t(slotKey);
+  // 무기(주/보조)는 종류명으로 부른다 — `itemNames.ts` 단일 정본(사용자 요청 2026-07-27:
+  // "무기일 경우 유도탄/빔 등 장비 이름"). 슬롯명은 부제가 따로 말하므로 여기선 종류만 쓴다.
+  const kind = weaponKindLabel(d);
+  return kind ?? slotLabel(d.slot);
 }
 
 export class ResultOverlay {
