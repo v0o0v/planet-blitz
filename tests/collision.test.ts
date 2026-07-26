@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { SpatialHash, circlesOverlap, sweptCircleOverlap } from '../src/sim/collision.js';
+import {
+  SpatialHash,
+  circlesOverlap,
+  sweptCircleOverlap,
+  sweptCircleHitT,
+} from '../src/sim/collision.js';
 
 interface P {
   x: number;
@@ -144,5 +149,62 @@ describe('sweptCircleOverlap', () => {
     expect(sweptCircleOverlap(250, 0, 350, 0, 5, 300, 0, 32)).toBe(
       sweptCircleOverlap(350, 0, 250, 0, 5, 300, 0, 32),
     );
+  });
+});
+
+/**
+ * 진입 매개변수 t — 한 틱 다중 명중을 **경로 순서**로 해소하기 위한 정렬 키.
+ *
+ * 격자 순회 순서는 `(cy, cx)` 고정이라 경로 순서가 아니다. 정렬하지 않으면 관통 없는 탄이
+ * 가까운 적을 지나쳐 먼 적을 때린다.
+ */
+describe('sweptCircleHitT', () => {
+  it('겹침 판정이 sweptCircleOverlap 과 완전히 일치한다 (술어는 하나다)', () => {
+    const cases: readonly [number, number, number, number, number, number, number, number][] = [
+      [0, 0, 62, 0, 5, 0, 0, 32], // 출발점이 표적 안
+      [250, 0, 350, 0, 5, 300, 0, 32], // 경로 중간
+      [250, 0, 350, 0, 5, 300, 100, 32], // 옆으로 벗어남
+      [0, 0, 100, 0, 5, 50, 37, 32], // 경계 안(접촉)
+      [0, 0, 100, 0, 5, 50, 38, 32], // 경계 밖
+      [0, 0, 50, 0, 5, 200, 0, 32], // 선분 앞 밖
+      [0, 0, 50, 0, 5, -200, 0, 32], // 선분 뒤 밖
+      [10, 10, 10, 10, 5, 12, 12, 32], // 길이 0 · 겹침
+      [10, 10, 10, 10, 5, 200, 200, 32], // 길이 0 · 미겹침
+    ];
+    for (const c of cases) {
+      expect(sweptCircleHitT(...c) !== undefined, JSON.stringify(c)).toBe(sweptCircleOverlap(...c));
+    }
+  });
+
+  it('경로 순서대로 t 가 커진다 (가까운 표적이 작은 t)', () => {
+    // 탄이 x=0 → x=250 으로 간다. 표적 세 개가 경로 위에 x 순으로 놓여 있다.
+    const near = sweptCircleHitT(0, 0, 250, 0, 5, 60, 0, 32) as number;
+    const mid = sweptCircleHitT(0, 0, 250, 0, 5, 140, 0, 32) as number;
+    const far = sweptCircleHitT(0, 0, 250, 0, 5, 220, 0, 32) as number;
+    expect(near).toBeLessThan(mid);
+    expect(mid).toBeLessThan(far);
+  });
+
+  it('진입 시점이다 — 최근접점이 아니라 표면에 닿는 순간을 돌려준다', () => {
+    // 표적 중심 x=125(경로 한가운데), 반지름 합 37 → 진입은 x=88 = t 0.352.
+    const t = sweptCircleHitT(0, 0, 250, 0, 5, 125, 0, 32) as number;
+    expect(t).toBeCloseTo((125 - 37) / 250, 10);
+  });
+
+  it('큰 표적이 뒤에 있어도 표면에 먼저 닿으면 t 가 더 작다 (반지름 역전)', () => {
+    // 중심은 잡몹(x=100)이 보스(x=160)보다 앞이지만, 보스 반지름 120 이라 표면은 x=35 에서
+    // 닿는다. 최근접점 t 로 정렬했다면 순서가 뒤집혔을 케이스다.
+    const grunt = sweptCircleHitT(0, 0, 250, 0, 5, 100, 0, 32) as number;
+    const boss = sweptCircleHitT(0, 0, 250, 0, 5, 160, 0, 120) as number;
+    expect(boss).toBeLessThan(grunt);
+  });
+
+  it('t 는 항상 [0, 1] 이다 (출발점에서 이미 겹쳐 있으면 0)', () => {
+    expect(sweptCircleHitT(0, 0, 62, 0, 5, 0, 0, 32)).toBe(0);
+    expect(sweptCircleHitT(0, 0, 62, 0, 5, -10, 0, 32)).toBe(0);
+    // 끝점에서 겨우 닿는 표적: t 가 1 을 넘지 않는다.
+    const t = sweptCircleHitT(0, 0, 100, 0, 5, 137, 0, 32) as number;
+    expect(t).toBeGreaterThanOrEqual(0);
+    expect(t).toBeLessThanOrEqual(1);
   });
 });
