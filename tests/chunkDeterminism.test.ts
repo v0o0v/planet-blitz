@@ -152,4 +152,42 @@ describe('chunk placement determinism (plan E, AC3)', () => {
     );
     expect(gimmicks.length).toBeGreaterThan(0);
   });
+
+  /**
+   * 기믹 종류 분포 — 사용자 요청 2026-07-26("바닥에 깔리는 데미지 주는 것들을 현재의 30% 정도
+   * 수준으로")으로 지형 해저드를 10% → **3%** 로 내렸다. 굴림을 `int(0,9)` 10구간에서
+   * `int(0,99)` 100구간으로 바꿔야 3% 가 표현된다.
+   *
+   * 이 분포는 눈대중으로 확인할 수 없다 — 게임 화면의 `hazard` 엔티티에는 적 패턴이 만드는
+   * **한시적** 박격포·용암 장판이 섞여 있어서(지형 해저드만 `life < 0`), 화면 카운트로는
+   * 청크 배분을 못 읽는다. 그래서 순수 함수를 대량 표본해 비율 자체를 못 박는다.
+   */
+  it('지형 해저드가 전체 기믹의 3% 수준이다 (10%에서 내렸다)', () => {
+    const rng = new SeededRng(0xd1571b);
+    const counts: Record<string, number> = {};
+    let total = 0;
+    // 안전 청크(|cx|,|cy| <= 1)를 피해 넓게 훑는다. 표본이 커야 3% 를 좁은 구간으로 단언할 수 있다.
+    for (let cx = 2; cx < 62; cx++) {
+      for (let cy = 2; cy < 62; cy++) {
+        for (const g of chunkPlacements(rng, cx, cy)) {
+          counts[g.kind] = (counts[g.kind] ?? 0) + 1;
+          total++;
+        }
+      }
+    }
+    expect(total).toBeGreaterThan(4000); // 표본이 충분하다(공회전 방지).
+    const share = (k: string): number => ((counts[k] ?? 0) / total) * 100;
+    // 해저드 3% — 표본 오차를 감안해 1.5~5% 구간. 예전 값(10%)은 이 구간 밖이라 회귀를 잡는다.
+    expect(share('hazard')).toBeGreaterThan(1.5);
+    expect(share('hazard')).toBeLessThan(5);
+    // 해저드에서 뺀 7% 는 벽으로 갔다(피해 없는 순수 지형). 파괴체·이벤트 비율은 불변이라
+    // 성장·보상 곡선이 이 변경에 끌려가지 않는다 — 그것이 벽에 넘긴 이유다.
+    expect(share('wall')).toBeGreaterThan(42);
+    expect(share('destructible')).toBeGreaterThan(16);
+    expect(share('destructible')).toBeLessThan(24);
+    for (const k of ['magnetEmitter', 'bombDevice', 'turretPickup']) {
+      expect(share(k), `${k} 비율`).toBeGreaterThan(7);
+      expect(share(k), `${k} 비율`).toBeLessThan(13);
+    }
+  });
 });

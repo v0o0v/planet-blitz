@@ -12,6 +12,7 @@ import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } from '../src/sim/w
 import { autopilotInput } from '../src/sim/autopilot.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { SEGMENTS } from '../data/waves.js';
+import { PVE_DENSITY_MULT } from '../src/sim/waves.js';
 
 const BOSS_INDEX = SEGMENTS.length - 1;
 /** 내구(글래스캐논 방지) — 게이트/스폰 관찰이 사망으로 중단되지 않게. */
@@ -70,6 +71,26 @@ describe('급행 소환 (ADR-0011)', () => {
     // 급행 램프로 유효 상한이 올라 세그먼트0 기본 상한(12)을 넘어 더 쌓인다.
     expect(late).toBeGreaterThan(early);
     expect(late).toBeGreaterThan(SEGMENTS[0]!.maxEnemies);
+  });
+
+  it('밀도 배율이 화면 위 적 수에 실제로 반영된다 (사용자 요청 2026-07-26)', () => {
+    // 배율은 상한·유입 두 축에 걸려 있는데(waves.ts `PVE_DENSITY_MULT` 주석), 한쪽만 걸리면
+    // 체감이 거의 안 바뀌므로 "상수는 1.5 인데 화면은 그대로" 라는 조용한 회귀가 가능하다.
+    // 그래서 상수를 되읽는 대신 **실제 누적 적 수**를 상한 파생값과 대조한다.
+    expect(PVE_DENSITY_MULT).toBeGreaterThan(1); // 배율이 켜져 있다(0 배율 회귀 방지).
+    const state = createWorld(3, DURABLE);
+    state.weapon.damage = 0; // 아무도 안 죽으니 적 수가 유효 상한까지 단조 증가한다.
+    let peak = 0;
+    for (let t = 0; t < 60 * 30; t++) {
+      stepWorld(state, emptyInput());
+      const n = countEnemies(state);
+      if (n > peak) peak = n;
+    }
+    // 램프 없는 세그먼트0 원본 상한(12)에 배율만 걸어도 18 이다. 배율이 유입·상한 양쪽에
+    // 실제로 걸렸다면 램프까지 얹혀 그보다 확실히 많이 쌓인다.
+    expect(peak).toBeGreaterThan(Math.round(SEGMENTS[0]!.maxEnemies * PVE_DENSITY_MULT));
+    // 배율이 1 이었을 때의 실측 상한(램프 포함 ~28)을 넘는다 — 배율이 없으면 통과할 수 없다.
+    expect(peak).toBeGreaterThan(28);
   });
 });
 
