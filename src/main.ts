@@ -34,6 +34,7 @@ import { ScreenTransition } from './render/screenTransition.js';
 import { InputController } from './input/controller.js';
 import { Hud } from './ui/hud.js';
 import type { BossHudState } from './ui/hud.js';
+import { bossProgress } from './sim/bossProgress.js';
 import { PowerupOverlay } from './ui/powerupOverlay.js';
 import { EncounterOverlay, encounterPromptView } from './ui/encounterOverlay.js';
 import { levelUpOverlayAction, readBuildStatus } from './ui/buildStatus.js';
@@ -1327,6 +1328,9 @@ async function main(): Promise<void> {
                     rarity: it.rarity,
                     slot: it.slot,
                     ...(it.weaponType !== undefined ? { weaponType: it.weaponType } : {}),
+                    // 실물 아이템을 그대로 실어 정산 hover 툴팁이 어픽스·요구 레벨·전투력까지
+                    // 보여준다(사용자 요청 2026-07-26). 표시 전용이라 sim·세이브와 무관.
+                    item: it,
                   }),
                 ),
               },
@@ -1612,6 +1616,9 @@ async function main(): Promise<void> {
         multiplier: comboMultiplier(w.combo),
         boss,
         supplyActive,
+        // 보스 등장 예고 게이지(사용자 요청 2026-07-26) — 읽기 전용 파생이라 sim 무영향.
+        // 침공 런은 undefined 를 돌려주고 HUD 가 게이지를 감춘다.
+        bossEta: bossProgress(w),
       });
 
       const seg = w.wave.segmentIndex + 1;

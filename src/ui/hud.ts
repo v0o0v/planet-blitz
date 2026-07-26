@@ -10,6 +10,7 @@
  */
 
 import { t } from '../i18n/index.js';
+import type { BossProgress } from '../sim/bossProgress.js';
 
 export interface BossHudState {
   hp: number;
@@ -35,6 +36,12 @@ export interface HudState {
   boss?: BossHudState | undefined;
   /** A supply raider is currently on screen. */
   supplyActive: boolean;
+  /**
+   * 보스 등장까지 남은 진행도(사용자 요청 2026-07-26). 침공 런은 세그먼트 축이 없어 undefined
+   * 이고, 그때는 게이지를 아예 감춘다. 보스 진입(`bossActive`) 후에도 감춘다 — 그 자리는 보스
+   * 체력바가 이어받는다.
+   */
+  bossEta?: BossProgress | undefined;
 }
 
 function bar(label: string, colorClass: string): { root: HTMLElement; fill: HTMLElement; text: HTMLElement } {
@@ -75,6 +82,13 @@ const STYLE = `
 #pb-boss .pb-bossfill.overheat { background:linear-gradient(90deg,#ffdd44,#ff5522); box-shadow:0 0 16px 4px rgba(255,120,20,.8) inset; }
 #pb-boss .pb-bossmark { position:absolute; top:0; bottom:0; width:2px; background:rgba(255,255,255,.7); }
 #pb-boss .pb-bossmsg { font-size:12px; font-weight:700; color:#ffd98a; margin-top:3px; height:14px; text-shadow:0 1px 2px #000; }
+#pb-bossmeter { position:absolute; top:20px; left:50%; transform:translateX(-50%); width:640px; max-width:80vw; font-family:'Segoe UI',sans-serif; color:#fff; pointer-events:none; user-select:none; }
+#pb-bossmeter .pb-etahead { display:flex; justify-content:space-between; align-items:baseline; font-size:12px; font-weight:800; letter-spacing:1.5px; color:#ffd98a; text-shadow:0 1px 3px #000; margin-bottom:3px; }
+#pb-bossmeter .pb-etapct { font-size:12px; font-weight:800; color:#ffb84c; }
+#pb-bossmeter .pb-etatrack { position:relative; height:14px; background:rgba(10,8,14,.78); border:2px solid rgba(255,150,60,.65); border-radius:4px; overflow:hidden; }
+#pb-bossmeter .pb-etafill { position:absolute; inset:0; width:0%; background:linear-gradient(90deg,#ff8a2a,#ffd24c); transition:width .12s linear; }
+#pb-bossmeter .pb-etamark { position:absolute; top:0; bottom:0; width:2px; background:rgba(0,0,0,.55); }
+#pb-bossmeter .pb-etadetail { display:flex; justify-content:space-between; font-size:11px; font-weight:700; color:#d8c9a8; margin-top:3px; text-shadow:0 1px 2px #000; }
 #pb-lore { position:absolute; top:140px; left:50%; transform:translateX(-50%); max-width:80vw; background:rgba(18,24,44,.82); border:1px solid rgba(120,200,255,.55); box-shadow:0 0 18px 2px rgba(60,140,220,.35) inset; color:#dbe8ff; padding:10px 22px; border-radius:12px; font-family:'Segoe UI',system-ui,sans-serif; text-align:center; pointer-events:none; user-select:none; }
 #pb-lore .pb-lore-line { font-size:14px; font-weight:600; letter-spacing:.4px; text-shadow:0 1px 3px #000; line-height:1.5; }
 #pb-lore .pb-lore-line + .pb-lore-line { font-size:12px; font-weight:500; color:#a9c6ff; }
@@ -95,6 +109,15 @@ export class Hud {
   private readonly bossFill: HTMLElement;
   private readonly bossName: HTMLElement;
   private readonly bossMsg: HTMLElement;
+  /** 보스 등장 예고 게이지(사용자 요청 2026-07-26). 보스전 시작 전까지만 보인다. */
+  private readonly etaRoot: HTMLElement;
+  private readonly etaTrack: HTMLElement;
+  private readonly etaFill: HTMLElement;
+  private readonly etaPct: HTMLElement;
+  private readonly etaSegment: HTMLElement;
+  private readonly etaGate: HTMLElement;
+  /** 현재 트랙에 그려 둔 구간 눈금 수(바뀔 때만 다시 그린다). */
+  private etaMarks = -1;
   /** 스토리 로어 토스트 배너(에코 안정화 등). 기본 숨김, {@link showLore} 로 잠깐 표시. */
   private readonly loreToast: HTMLElement;
   private loreTimer: ReturnType<typeof setTimeout> | null = null;
@@ -154,6 +177,34 @@ export class Hud {
     this.bossRoot.appendChild(this.bossMsg);
     this.bossRoot.style.display = 'none';
     document.body.appendChild(this.bossRoot);
+
+    // 보스 등장 예고 게이지 — 제목/퍼센트 줄 + 구간 눈금 트랙 + 상세(구간·게이트) 줄.
+    this.etaRoot = document.createElement('div');
+    this.etaRoot.id = 'pb-bossmeter';
+    const etaHead = document.createElement('div');
+    etaHead.className = 'pb-etahead';
+    const etaTitle = document.createElement('span');
+    etaTitle.textContent = t('hud.bossEta.title');
+    this.etaPct = document.createElement('span');
+    this.etaPct.className = 'pb-etapct';
+    etaHead.appendChild(etaTitle);
+    etaHead.appendChild(this.etaPct);
+    this.etaTrack = document.createElement('div');
+    this.etaTrack.className = 'pb-etatrack';
+    this.etaFill = document.createElement('div');
+    this.etaFill.className = 'pb-etafill';
+    this.etaTrack.appendChild(this.etaFill);
+    const etaDetail = document.createElement('div');
+    etaDetail.className = 'pb-etadetail';
+    this.etaSegment = document.createElement('span');
+    this.etaGate = document.createElement('span');
+    etaDetail.appendChild(this.etaSegment);
+    etaDetail.appendChild(this.etaGate);
+    this.etaRoot.appendChild(etaHead);
+    this.etaRoot.appendChild(this.etaTrack);
+    this.etaRoot.appendChild(etaDetail);
+    this.etaRoot.style.display = 'none';
+    document.body.appendChild(this.etaRoot);
 
     this.loreToast = document.createElement('div');
     this.loreToast.id = 'pb-lore';
@@ -223,5 +274,42 @@ export class Hud {
     } else {
       this.bossRoot.style.display = 'none';
     }
+
+    this.updateBossEta(s.bossEta);
+  }
+
+  /**
+   * 보스 등장 예고 게이지를 갱신한다. 보스전이 시작됐거나(bossActive) 세그먼트 축이 없는 런
+   * (침공)이면 감춘다 — 그 자리는 보스 체력바가 이어받는다. 순수 표시(값 파생은 sim/bossProgress).
+   */
+  private updateBossEta(eta: BossProgress | undefined): void {
+    if (eta === undefined || eta.bossActive) {
+      this.etaRoot.style.display = 'none';
+      return;
+    }
+    this.etaRoot.style.display = 'block';
+
+    // 구간 눈금: 구간 경계마다 한 줄(마지막 경계 = 보스라 트랙 끝이므로 그리지 않는다).
+    if (this.etaMarks !== eta.totalSegments) {
+      for (const m of [...this.etaTrack.querySelectorAll('.pb-etamark')]) m.remove();
+      for (let i = 1; i < eta.totalSegments; i++) {
+        const m = document.createElement('div');
+        m.className = 'pb-etamark';
+        m.style.left = `${(i / eta.totalSegments) * 100}%`;
+        this.etaTrack.appendChild(m);
+      }
+      this.etaMarks = eta.totalSegments;
+    }
+
+    this.etaFill.style.width = `${eta.frac * 100}%`;
+    this.etaPct.textContent = `${Math.floor(eta.frac * 100)}%`;
+    this.etaSegment.textContent = t('hud.bossEta.segment', {
+      n: eta.segment,
+      total: eta.totalSegments,
+    });
+    this.etaGate.textContent =
+      eta.gate === 'kills'
+        ? t('hud.bossEta.kills', { n: eta.current, goal: eta.goal })
+        : t(`hud.bossEta.${eta.gate}` as const);
   }
 }
