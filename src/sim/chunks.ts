@@ -49,9 +49,17 @@ export const MAX_ACTIVE_GIMMICKS = 48;
 /** Keep a placement this far inside the chunk so its centre's chunk is unambiguous. */
 const PLACE_MARGIN = 170;
 
-/** Wall half-extent bounds. Min ≥ 60 so a full width (120) exceeds the max dash
- *  step (~59u/tick at dashSpeed 2800) and the player cannot tunnel a wall. */
-const WALL_HALF_MIN = 60;
+/**
+ * Wall half-extent bounds. Min ≥ 60 so a full width (120) exceeds the max dash
+ * step (~59u/tick at dashSpeed 2800) and the player cannot tunnel a wall.
+ *
+ * ⚠️ **이 부등식은 대시에만 성립한다 — 탄에는 성립하지 않는다.** 만점 빌드의 한 틱 탄 이동량은
+ * 132~262 유닛/틱으로 **전 기체가** 이 전폭 120 을 넘는다(실측 표는
+ * `tests/bulletTunnelInvariant.test.ts`). 그래서 탄 대 벽 판정은 지점이 아니라 **선분**이어야
+ * 하고, 실제로 그렇게 돼 있다(`los.sweptCircleOverlapsWall`). 이 상수를 올려 탄 터널링을 막으려는
+ * 시도는 하지 마라 — 262 를 덮으려면 전폭 524 가 필요해 청크 배치가 무너진다. 판정 차원이 답이다.
+ */
+export const WALL_HALF_MIN = 60;
 const WALL_HALF_MAX = 150;
 
 /** Gimmick tuning constants (world units / hit points). */
