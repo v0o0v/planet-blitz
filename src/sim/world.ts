@@ -212,6 +212,7 @@ import {
   advanceScrollRuntime,
   scrollModeAxisDir,
   isScrollMode,
+  applyScrollAnchor,
   type ScrollRuntime,
 } from './scrollMode.js';
 // --- 블록격파 콘텐츠(Lane4 · ADR-0021 §2.2) — Lane3 스크롤 위에 파괴가능 벽·진행 게이트·압사 ---
@@ -1136,6 +1137,13 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
 
   // 강제 스크롤: 가속 갱신 + 창 전진을 **플레이어 이동 이전에** 처리한다. 창이 먼저 밀고,
   // 플레이어는 갱신된 창 안에서 움직인다(같은 틱 안에서 창 밖으로 튀는 프레임이 없다).
+  //
+  // 앵커(ADR-0034): 창을 전진시킨 **직후·stepPlayer 이전에** 창 이동량을 ANCHOR 엔티티에
+  // 가산한다. 창이 없는 모드(뱀서류·수축·추격·오염)는 anchorWin 이 undefined 라 아래 호출
+  // 자체가 없다 → 해시 바이트 불변(ADR-0005).
+  const anchorWin = inv3Runtime ?? scrollRuntime;
+  const beforeX = anchorWin?.scrollX ?? 0;
+  const beforeY = anchorWin?.scrollY ?? 0;
   if (inv3Runtime !== undefined) advanceInvasionScroll(state, inv3Runtime);
   else if (scrollRuntime !== undefined && scrollAxisDir !== undefined) {
     // 전멸 가속 신호: 블록격파(Lane4)는 창 안 적·보스 전멸 시, 레이싱(Lane5)은 전멸 OR 부스트
@@ -1147,6 +1155,17 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
           ? racingCleared(state)
           : false;
     advanceScrollRuntime(scrollRuntime, scrollAxisDir, cleared);
+  }
+  // 델타를 scrollStep(accelCp) 로 **재계산하지 않는다** — advanceScrollRuntime·
+  // advanceInvasionScroll 이 같은 호출 안에서 accelCp 를 갱신하므로 재계산하면 한 틱 어긋난다.
+  // 전/후 오프셋 차이가 정본이고, 두 오프셋 모두 정수 누적이라 차이도 정수다.
+  //
+  // 위치가 중요하다: 앵커는 stepPlayer **이전**이어야 한다. 그래야 앵커로 밀린 플레이어에
+  // stepPlayer 안의 slideCircleWalls(벽 슬라이드) → clampToWindow(창 클램프)가 최종 권위를
+  // 갖는다 — 앵커가 벽에 박힌 상태를 남기지 않고, 블록격파에서 벽에 막히면 isPinnedByWall
+  // 압사 판정이 정상 발동한다(압박이 "속도 열세"에서 "장애물"로 이동하는 것이 설계 의도).
+  if (anchorWin !== undefined) {
+    applyScrollAnchor(state.entities, anchorWin, anchorWin.scrollX - beforeX, anchorWin.scrollY - beforeY);
   }
 
   // 수축지대(Lane7): 안전 반경을 한 틱 전진(유예 소진 후 정수 감소)한다. **stepPlayer 이전에**

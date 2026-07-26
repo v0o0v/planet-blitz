@@ -11,9 +11,21 @@
  *  - **AC1 (조우-absent 불변)**: `worldRng.fork('encounter')` 도입이 기존 RNG 스트림을 한 칸도
  *    밀지 않고, `hashWorld` 의 조우 폴드가 **조건부 꼬리**라서 조우 미발생 런에서는 한 바이트도
  *    추가되지 않는다.
- *  - **AC2 (invasion 불변)**: 중반 격전 세그먼트 삽입이 침공 per-tick 해시를 **바이트 하나도**
- *    바꾸지 않는다. 침공은 `updateWaves` 를 실행하지 않으므로(`world.ts` 의 `if (!designedRun)`)
- *    구조적으로 그래야 하고, 여기서 물증으로 못 박는다.
+ *  - **AC2 (invasion 회귀 가드)**: 침공 per-tick 해시가 조용히 갈리지 않는다.
+ *
+ * ## ⚠️ invasion 항목은 2026-07-26 에 재녹화됐다 (ADR-0034)
+ * 원래 AC2 는 "중반 격전 세그먼트 삽입이 침공 해시를 한 바이트도 바꾸지 않는다"는 **불변**
+ * 주장이었다(침공은 `updateWaves` 를 실행하지 않으므로 — `world.ts` 의 `if (!designedRun)`).
+ * `feat/scroll-anchor-policy`(ADR-0034 강제 스크롤 정책 축 ANCHOR/WORLD)가 그 전제를 정당하게
+ * 깼다: 침공 3레이어는 강제 스크롤 창을 쓰는 모드이고 ANCHOR 정책이 창 이동량의 일부를
+ * 엔티티 좌표에 가산하므로 **틱 0 부터** 해시가 달라진다(창이 틱 0 에 이미 전진하고 앵커가
+ * 돈다). 그래서 invasion 항목만 현 코드로 재녹화했고, 이 블록의 성격은 "삽입 전과의 불변
+ * 증명"에서 **"이후의 조용한 발산을 잡는 회귀 가드"** 로 바뀌었다.
+ *
+ * **PvE 항목은 손대지 않았다 — 재녹화 전후 직렬화 바이트가 완전히 동일하다**(235078 bytes).
+ * 창이 없는 모드(뱀서류·수축)는 ANCHOR 코드 경로 자체를 타지 않아 해시가 바이트 불변이며,
+ * 아래 AC1 블록이 그 불변식을 계속 대조한다. 다음에 invasion 을 재녹화할 때도 같은 방식으로
+ * (invasion 배열만 교체) 해야 하고, PvE 값이 함께 움직이면 그건 게이트가 새고 있다는 뜻이다.
  *
  * ## 왜 PvE 는 `seg3Tick` 앞까지만 대조하나
  * 중반 격전은 **매 런 등장**이라 PvE 비-invasion baseline 해시를 의도적으로 바꾼다(AC3 —
@@ -65,9 +77,9 @@ describe('조우 기준선 픽스처', () => {
   });
 });
 
-describe('AC2 — invasion per-tick 해시 바이트 불변', () => {
+describe('AC2 — invasion per-tick 해시 회귀 가드 (기준선: ADR-0034 이후)', () => {
   for (const run of BASELINE.invasion) {
-    it(`${run.key} 가 중반 격전 삽입 전과 바이트 동일하다`, () => {
+    it(`${run.key} 가 기준선과 바이트 동일하다`, () => {
       const state = makeInvasionState(run.seed);
       const inputs = idleInputs(run.ticks);
       const hashes: number[] = [];
