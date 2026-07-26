@@ -34,6 +34,7 @@ import { ScreenTransition } from './render/screenTransition.js';
 import { InputController } from './input/controller.js';
 import { Hud } from './ui/hud.js';
 import type { BossHudState } from './ui/hud.js';
+import { bossHudName } from './ui/bossLabels.js';
 import { bossProgress } from './sim/bossProgress.js';
 import { PowerupOverlay } from './ui/powerupOverlay.js';
 import { EncounterOverlay, encounterPromptView } from './ui/encounterOverlay.js';
@@ -1311,6 +1312,8 @@ async function main(): Promise<void> {
         resources: w.resources,
         level: activeShip(profile).level,
         timeSec: w.tick / 60,
+        // 승리 문구가 격파한 보스 이름을 이 값에서 파생한다(카르곤 고정 결함 — 2026-07-27).
+        planet: w.config.planet ?? 0,
         ...(o !== null
           ? {
               settlement: {
@@ -1337,7 +1340,11 @@ async function main(): Promise<void> {
             }
           : {}),
       },
-      () => openBaseMap(),
+      // '다시 출격' = 다음 런으로 바로 간다 → 성계 지도(행성·단계·촉매 선택). 예전에는 기지
+      // 지도로 돌아가 다시 성계 지도를 열어야 했다(사용자 신고 2026-07-27) — 버튼 문구가
+      // 약속하는 동작과 실제 이동이 어긋나 있었다. 정비하러 갈 길은 옆 '격납고' 버튼과
+      // 성계 지도의 '뒤로'(→ 기지)가 그대로 제공한다.
+      () => openStarMap(),
       () => {
         resultOverlay.hide();
         inventory.show(profile, () => openBaseMap());
@@ -1600,6 +1607,8 @@ async function main(): Promise<void> {
               phase: bossEnt.phase,
               overheat: bossEnt.iframes > 0,
               transitioning: bossEnt.timer > 0,
+              // 머리글은 **이 런의 행성**에서 파생한다(하드코딩 금지 — 사용자 신고 2026-07-27).
+              name: bossHudName(w.config.planet),
             }
           : undefined;
       hud.update({

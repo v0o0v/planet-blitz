@@ -30,6 +30,7 @@ import {
 // 루프 애니메이션(아군·이익 오브젝트). 프레임 선택은 순수 함수, 프레임 텍스처는 textures 가
 // 스트립에서 잘라 실어 온다. 스트립이 없으면 슬롯이 없어 기존 정지 스프라이트 그대로다.
 import { animatedKindOf, animFrameIndex, phaseForEntity } from './spriteAnimation.js';
+import { tiledWallTexture } from './wallTexture.js';
 // 포탑 사거리(조준 회전 반경). sim 상수를 재선언하지 않고 그대로 읽는다 — 갈라지면 포신이
 // 사거리 밖 표적을 가리킨다. 값만 읽을 뿐 sim 을 실행하지 않는다.
 import { TURRET_RANGE } from '../sim/events.js';
@@ -924,7 +925,13 @@ export class EntityRenderer {
           // Walls render at their EXACT AABB (radius = half-width, aabbH =
           // half-height) — no ART_SCALE, so the cover the player sees matches the
           // collision box exactly.
-          sprite.setSize(e.radius * 2, e.aabbH * 2);
+          //
+          // 무늬는 **반복**한다(늘리지 않는다) — 절차 벽은 크기를 굴려서 만들기 때문에 한 장을
+          // AABB 로 늘리면 벽마다 무늬 배율이 달라 흐물거렸다(사용자 신고 2026-07-27).
+          const w = e.radius * 2;
+          const h = e.aabbH * 2;
+          sprite.texture = tiledWallTexture(sprite.texture, w, h);
+          sprite.setSize(w, h);
         } else if (e.kind === 'loot') {
           // Loot: fixed icon size (sim radius is the large pickup range, not the
           // glyph). Tint by rarity so the drop's grade always reads — whether the

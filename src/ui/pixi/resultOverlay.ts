@@ -32,6 +32,7 @@ import { makeSlotCell, gridPositions, equipIconTexture } from './slotGrid.js';
 import { PixiTooltip } from './tooltip.js';
 import { makeBanner } from './titleBar.js';
 import { stripEmoji } from './text.js';
+import { bossName } from '../bossLabels.js';
 import { dropTipContent } from '../dropTip.js';
 
 export type { ResultDrop, SettlementSummary, ResultState };
@@ -206,7 +207,8 @@ export class ResultOverlayScreen {
 
     const sub = new Text({
       resolution: 2,
-      text: s.victory ? t('result.win.sub') : t('result.lose.sub'),
+      // 승리 문구의 보스 이름은 런의 행성에서 파생한다(카르곤 고정 결함 — 2026-07-27).
+      text: s.victory ? t('result.win.sub', { name: bossName(s.planet) }) : t('result.lose.sub'),
       style: { fontFamily: UI_FONT, fontSize: 20, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
     });
     sub.anchor.set(0.5, 0);

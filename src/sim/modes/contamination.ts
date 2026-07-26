@@ -44,16 +44,31 @@ export const CONTAMINATION_NODE_GEM_XP = 5;
 export const CONTAMINATION_NODE_RING_RADIUS = 900;
 /** 노드당 확산 상한(뿌릴 수 있는 오염 지형 셀 수). TODO(밸런스). */
 export const CONTAMINATION_NODE_MAX_CELLS = 6;
-/** 확산 틱 간격(이 배수 틱마다 살아있는 노드가 1셀씩 확장). TODO(밸런스). */
-export const CONTAMINATION_SPREAD_INTERVAL = 30;
+/**
+ * 확산 틱 간격(이 배수 틱마다 살아있는 노드가 1셀씩 확장).
+ *
+ * ⚠️ 30(0.5초)이면 노드 10개가 매 0.5초에 10셀을 뿌려 **틱 120(2.0초)에 임계 50셀**을 넘겼다 —
+ * 톡사르는 무엇을 하든 시작 2초에 지는 모드였다(사용자 신고 2026-07-27, 실측 3시드 전부 tick 121
+ * gameOver·플레이어 HP 만피). 노드 하나를 깨는 데 실측 약 1.2초가 걸리므로 0.5초 케이던스로는
+ * 개입 자체가 성립하지 않는다. 150(2.5초)이면 방치 시 임계까지 12.5초가 걸려 그 사이에 노드를
+ * 깨 확산원을 줄이는 것이 실제 선택지가 된다. TODO(밸런스): 출시 전 튜닝.
+ */
+export const CONTAMINATION_SPREAD_INTERVAL = 150;
 /** 오염 지형 셀 반경(지속 피해 판정). TODO(밸런스). */
 export const CONTAMINATION_CELL_RADIUS = 100;
 /** 오염 지형 셀 지속 피해(iframes 간격 적용, 즉사 아님). TODO(밸런스). */
 export const CONTAMINATION_CELL_DAMAGE = 6;
 /** 노드 중심에서 셀을 뿌리는 거리(셀 간격). TODO(밸런스). */
 export const CONTAMINATION_CELL_SPACING = 160;
-/** 임계 오염 실패 셀 수(마킹 오염 지형 수 ≥ 이 값이면 gameOver). TODO(밸런스). */
-export const CONTAMINATION_CRITICAL_CELLS = 50;
+/**
+ * 임계 오염 실패 셀 수(마킹 오염 지형 수 ≥ 이 값이면 gameOver).
+ *
+ * 확산 총량의 상한은 `NODE_COUNT × NODE_MAX_CELLS`(= 10 × 6 = 60)이라, 임계는 **그 상한에서
+ * 얼마를 남기는가**로 읽어야 한다. 42 = 상한의 70% → 노드를 4개 이상 일찍 깨면 남은 예산이
+ * 42 아래로 떨어져 실패가 구조적으로 닫힌다(= "정화가 확산을 앞질렀다"). 하나도 못 깨면
+ * 12.5초(= 5 × SPREAD_INTERVAL)에 진다. TODO(밸런스): 출시 전 튜닝.
+ */
+export const CONTAMINATION_CRITICAL_CELLS = 42;
 /**
  * 보스 소환 정화율(0..1). 마지막 일반 세그먼트 통과 = 정화율이 이 값 이상 도달 → 보스 세그먼트.
  * 구간별 마일스톤은 이 임계를 세그먼트 수로 나눈 곡선이다(waves.ts). TODO(밸런스).

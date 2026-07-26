@@ -21,6 +21,13 @@ export interface BossHudState {
   overheat: boolean;
   /** Phase-transition animation in progress. */
   transitioning: boolean;
+  /**
+   * 체력바 머리글(`행성 · 보스`). **런의 행성에서 파생해 호출부가 넣는다**
+   * (`src/ui/bossLabels.ts` bossHudName). 예전에는 생성자에서 카르곤 보스를 하드코딩하고
+   * 한 번도 갱신하지 않아 어느 행성을 돌아도 "카르곤 · 용암 요새 전차" 가 떴다
+   * (사용자 신고 2026-07-27).
+   */
+  name: string;
 }
 
 export interface HudState {
@@ -157,7 +164,7 @@ export class Hud {
     this.bossRoot.id = 'pb-boss';
     this.bossName = document.createElement('div');
     this.bossName.className = 'pb-bossname';
-    this.bossName.textContent = '카르곤 · 용암 요새 전차';
+    // 초기값은 비워 둔다 — 이름은 매 갱신마다 런의 행성에서 파생돼 들어온다(BossHudState.name).
     const track = document.createElement('div');
     track.className = 'pb-bosstrack';
     this.bossFill = document.createElement('div');
@@ -263,6 +270,7 @@ export class Hud {
 
     if (s.boss !== undefined) {
       this.bossRoot.style.display = 'block';
+      this.bossName.textContent = s.boss.name;
       const pct = s.boss.maxHp > 0 ? Math.max(0, (s.boss.hp / s.boss.maxHp) * 100) : 0;
       this.bossFill.style.width = `${pct}%`;
       this.bossFill.className = `pb-bossfill${s.boss.overheat ? ' overheat' : ''}`;
