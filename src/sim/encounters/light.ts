@@ -47,7 +47,9 @@
  * `world.ts` → `encounter.ts` → 이 파일 순으로 런타임 import 되므로, 이 파일은 `world.ts` 와
  * `encounter.ts` 에서 **타입만** 가져온다(`import type`). 런타임 의존은 leaf 모듈로만 —
  * `entities.ts`(스폰 팩토리)·`waves.ts`(summonEnemy, world 를 타입으로만 참조)·`math.ts`·
- * `data/encounters.ts`(다른 sim 모듈을 절대 import 하지 않는 순수 데이터)·`data/enemies.ts`.
+ * `data/encounters.ts`(다른 sim 모듈을 절대 import 하지 않는 순수 데이터)·`data/enemies.ts`·
+ * `invasion/scroll.ts`·`invasion/constants.ts`·`scrollMode.ts`(전부 world 를 import 하지 않는
+ * 순수 창 수학/축 상수 — waves.ts 가 스폰 기준점을 옮길 때 쓰는 것과 같은 leaf 집합이다).
  * echo.ts 상단의 같은 주의문과 동일 규율이다.
  *
  * ## 수치 규율
@@ -63,6 +65,9 @@ import type { EnemyDef } from '../patterns/types.js';
 import { spawnLoot, spawnSupply } from '../entities.js';
 import { summonEnemy } from '../waves.js';
 import { cos, sin, TWO_PI } from '../math.js';
+import { windowCenterX, windowCenterY } from '../invasion/scroll.js';
+import { scrollModeAxisDir } from '../scrollMode.js';
+import { SCROLL_AXIS_VERTICAL, SCROLL_AXIS_HORIZONTAL } from '../invasion/constants.js';
 import { ENEMY_BY_TYPE } from '../../../data/enemies.js';
 import {
   ENCOUNTER_TYPE,
@@ -229,8 +234,31 @@ export const SHARD_RAIN_COUNT = 8;
 export const SHARD_RAIN_INTERVAL_TICKS = 30;
 /** 파편우 하드 타임아웃(스폰 틱 기준). 플레이어가 전부 무시해도 여기서 종료한다. TODO(밸런스). */
 export const SHARD_RAIN_TIMEOUT_TICKS = 1800;
-/** 파편 배치 반경(플레이어 기준 고정 원형 패턴). TODO(밸런스). */
+/** 파편 배치 반경(배치 기준점 중심의 고정 원형 패턴). TODO(밸런스). */
 export const SHARD_RAIN_RADIUS = 360;
+/**
+ * 강제 스크롤 모드에서 파편 배치 기준점을 창 중심에서 **진행 방향 전방**으로 미는 거리.
+ *
+ * `BLOCKBREAK_SPAWN_AHEAD`(=700, modes/blockBreak.ts) · `RACING_SPAWN_AHEAD`(=700,
+ * modes/racing.ts) 와 **같은 관용구·같은 값**이다 — `waves.ts` 의 `formationPositions` 가
+ * 적 스폰 기준점을 `scrollWin.scrollY − BLOCKBREAK_SPAWN_AHEAD` / `scrollWin.scrollX +
+ * RACING_SPAWN_AHEAD` 로 옮기는 그 방식 그대로를 파편에 적용한다.
+ *
+ * ⚠️ **구조적 부등식(밸런스 아님 — 수집 가능 시간 경계)**:
+ * ```
+ *   SHARD_RAIN_SPAWN_AHEAD − SHARD_RAIN_RADIUS  >  −(창 반폭/반높이)
+ * ```
+ * 창은 진행 방향으로 계속 밀려나므로, 파편의 전방 오프셋은 매 틱 `scrollStep`(기준 12유닛)
+ * 만큼 줄어들어 결국 창 뒤 경계를 넘어간다. 즉 파편은 **전방에서 플레이어 쪽으로 흘러오고**
+ * 그동안이 수집 창이다. 스폰 시점에 이미 뒤 경계 밖이면 뜨자마자 놓친 것과 같으므로 위
+ * 부등식이 필요하다 — 현재 700 − 360 = 340 이고 뒤 경계는 −540(반높이)·−960(반폭)이라
+ * 두 축 모두 성립한다. 튜닝과 무관하게 유지돼야 한다(`GHOST_CONVOY_SPAWN_X` 선례).
+ *
+ * ⚠️ 파편을 **창에 고정하지는 않는다**(시설 3종과 의도적으로 다르다) — 수집물이 화면에
+ * 붙어 따라다니면 "주우러 간다"는 행위 자체가 사라진다. 파편은 월드에 정적으로 놓인다.
+ * TODO(밸런스).
+ */
+export const SHARD_RAIN_SPAWN_AHEAD = 700;
 /** 파편 전리품 등급 코드(최저 등급 — 파편은 장비가 아니라 "부스러기"다). TODO(밸런스). */
 export const SHARD_RAIN_LOOT_RARITY = 0;
 /** 파편 1개 수집당 크레딧. TODO(밸런스). */
@@ -487,6 +515,40 @@ function stepGuardian(state: WorldState, player: Entity, rt: EncounterRuntime, i
 // ---------------------------------------------------------------------------
 
 /**
+ * 파편 1개의 배치 기준점.
+ *
+ * ## 왜 모드마다 다른가
+ * 강제 스크롤 모드(블록격파 −Y · 레이싱 +X)는 창이 매 틱 `scrollStep`(기준 12유닛) 전진한다.
+ * 플레이어 주위에 정적으로 뿌린 파편은 창 뒤로 흘러가 **부분 유실**된다 — 뒤쪽 절반은 뜨자마자
+ * 멀어지기만 한다. 그래서 적 스폰과 **같은 관용구**로 기준점을 창 중심 + 진행 방향 ×
+ * {@link SHARD_RAIN_SPAWN_AHEAD} 로 옮긴다(`waves.ts` `formationPositions` 의 baseX/baseY
+ * 교체와 동형). 파편은 여전히 월드에 정적으로 놓이므로, 창이 전진하는 동안 상대적으로
+ * 플레이어 쪽으로 흘러와 수집 시간이 확보된다(창 고정이 아니다 — 상수 주석 참조).
+ *
+ * ## 비-스크롤 모드는 한 줄도 바뀌지 않는다
+ * 창(`state.invasion3 ?? state.scrollRuntime`)이 없거나 모드가 강제 스크롤이 아니면
+ * **플레이어 좌표를 그대로** 돌려준다. 호출부 산술이 `player.x + cos(ang)*R` 그대로라
+ * 뱀서류·추격·수축·오염 런은 부동소수 바이트까지 동일하다(골든 불변의 근거).
+ * 침공(invasion3)은 애초에 `encounterRuntime` 을 세우지 않아 이 경로에 도달하지 않지만,
+ * 창 판정은 리포 관용구(`invasion3 ?? scrollRuntime`)를 그대로 따른다.
+ *
+ * RNG 미소비·`Math.random`/`Date.now` 미사용의 순수 함수다(축·방향은 모드 상수 파생).
+ */
+function shardRainOrigin(state: WorldState, player: Entity): { x: number; y: number } {
+  const win = state.invasion3 ?? state.scrollRuntime;
+  const axisDir = scrollModeAxisDir(state.config.planetMode);
+  if (win === undefined || axisDir === undefined) return { x: player.x, y: player.y };
+  const ahead = SHARD_RAIN_SPAWN_AHEAD * axisDir.dir;
+  if (axisDir.axis === SCROLL_AXIS_VERTICAL) {
+    return { x: windowCenterX(win), y: windowCenterY(win) + ahead };
+  }
+  if (axisDir.axis === SCROLL_AXIS_HORIZONTAL) {
+    return { x: windowCenterX(win) + ahead, y: windowCenterY(win) };
+  }
+  return { x: player.x, y: player.y }; // 축 없음(미래 모드) — 기존 배치로 안전 폴백.
+}
+
+/**
  * 파편우 한 틱. 스폰 틱부터 `SHARD_RAIN_INTERVAL_TICKS` 간격으로 파편을 하나씩 뿌리고, 수집된
  * 만큼 크레딧을 정산한다.
  *
@@ -513,13 +575,16 @@ function stepShardRain(state: WorldState, player: Entity, rt: EncounterRuntime):
   if (rt.state !== ENC_STATE_ACTIVE) return;
 
   // 1) 스폰: 고정 원형 패턴(각도 = i/총개수, 결정론 cos/sin). 난수 좌표 금지.
+  //    기준점은 스크롤 모드에서만 창 전방으로 옮겨진다(아래 헬퍼 — 비-스크롤은 플레이어 좌표
+  //    그대로라 산술이 바이트 동일하다).
   const spawned = auxCounterA(rt.aux);
   if (spawned < SHARD_RAIN_COUNT && state.tick >= begin + spawned * SHARD_RAIN_INTERVAL_TICKS) {
     const ang = (spawned * TWO_PI) / SHARD_RAIN_COUNT;
+    const base = shardRainOrigin(state, player);
     const shard = spawnLoot(
       state,
-      player.x + cos(ang) * SHARD_RAIN_RADIUS,
-      player.y + sin(ang) * SHARD_RAIN_RADIUS,
+      base.x + cos(ang) * SHARD_RAIN_RADIUS,
+      base.y + sin(ang) * SHARD_RAIN_RADIUS,
       encounterLootSeed(rt, spawned),
       SHARD_RAIN_LOOT_RARITY,
     );

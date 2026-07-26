@@ -81,9 +81,10 @@ export const ENCOUNTER_BUCKET = {
 
 /**
  * 조우 유형 정의. `warp: true` 는 **플레이어 좌표를 워프하는 detour 유형**이라는 뜻이고,
- * v1 에서는 보물 격실 하나뿐이다. 워프는 모드별 좌표계(강제 스크롤 창·수축 안전 반경·
- * 추격 포식자)와 구조적으로 충돌하므로 `rollEncounter(rng, allowWarp)` 의 `allowWarp=false`
- * 에서 후보에서 통째로 빠진다(ADR-0033 Principle 5 · 계획 R2).
+ * v1 에서는 보물 격실 하나뿐이다. v1 에는 워프가 모드별 좌표계(강제 스크롤 창·수축 안전
+ * 반경)와 충돌한다고 보고 뱀서류 외 모드에서 후보를 빼는 `allowWarp` 게이트가 있었으나,
+ * 경계 규칙이 `stepWorld` 로 모여 detour 가 구조적으로 제외되면서 근거가 사라져 **제거**됐다
+ * (ADR-0034). 이제 워프 유형은 6개 행성 모드 전부에서 후보에 든다.
  */
 export interface EncounterDef {
   /** ENCOUNTER_TYPE 값. */

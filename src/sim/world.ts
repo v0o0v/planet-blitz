@@ -931,19 +931,17 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   // 침공(invasion3)엔 붙이지 않는다(설계된 방어전 + 침공 해시 골든 불변 단언 AC2 · 에코와 같은
   // 상호 배타 가드). **positive 일 때만** encounterRuntime 을 세운다 → 조건부 폴드 성립(AC1).
   //
-  // `allowWarp` = v1 워프 detour 모드 게이트(Principle 5 · 계획 R2). 워프는 플레이어 좌표를
-  // 12만 유닛 밖으로 옮기는데, 강제 스크롤 창(clampToWindow)·수축 안전 반경(shrinkOutOfBounds)·
-  // 추격 포식자·오염 확산은 전부 좌표계에 기대는 규칙이라 워프를 되돌리거나 즉사 판정을 낸다.
-  // 그래서 v1 은 **뱀서류**(스크롤·수축 런타임 미존재 + 비-추격 + 비-오염)에서만 워프 유형을
-  // 후보에 넣고, 나머지 모드는 인라인/오버레이 조우 4종만 뽑는다. 모드별 detour 변형은 다운스트림.
+  // v1 에 있던 `allowWarp` 모드 게이트는 **제거**했다. 그 게이트의 근거는 "워프가 플레이어를
+  // 창 밖 12만 유닛으로 옮기는데, 강제 스크롤 창 클램프(clampToWindow)·수축 안전 반경
+  // (shrinkOutOfBounds)·블록격파 압사·레이싱 후방압박이 전부 좌표에 기대는 규칙이라 워프를
+  // 되돌리거나 즉사를 낸다"였다. 그런데 그 경계 규칙 3블록이 stepPlayer 꼬리에서 stepWorld 의
+  // `stepPlayer(...)` 호출 **직후**로 빠졌고, detour 분기는 그 줄 이전에 return 한다 —
+  // 즉 **detour 중에는 모드 규칙이 아예 실행되지 않는다**. 근거가 사라졌으니 게이트도 없앤다.
+  // 이제 워프는 모든 행성 모드에서 안전하고, 조우는 6개 모드 전부에서 도달 가능하다.
+  // 롤 구조(chance → 유형 가중 → 스폰 틱 3회 소비)는 그대로라 RNG 소비량은 불변이다.
   let encounterRuntime: EncounterRuntime | undefined;
   if (cfg.invasion3 === undefined) {
-    const allowWarp =
-      scrollRuntime === undefined &&
-      shrinkRuntime === undefined &&
-      cfg.planetMode !== PLANET_MODE.chase &&
-      cfg.planetMode !== PLANET_MODE.contamination;
-    encounterRuntime = rollEncounter(worldRng, allowWarp);
+    encounterRuntime = rollEncounter(worldRng);
   }
 
   const state: WorldState = {
@@ -1160,6 +1158,39 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   if (state.moduleRuntime !== undefined) stepModuleRuntime(state, player);
 
   stepPlayer(state, player, input);
+  // ── 모드별 플레이어 경계 규칙 (원래 stepPlayer 꼬리에 있던 3블록을 그대로 옮겨 왔다) ──
+  // 조우 detour 는 stepPlayer 를 재사용하지만 포켓 방(창 밖 12만 유닛)에서는 이 규칙들이
+  // 전부 오작동한다(창 클램프가 좌표를 되돌리고, 수축 밖 판정이 즉사를 낸다). detour 분기는
+  // 위에서 이미 return 했으므로, 호출 직후인 이 자리에 두면 **플래그 하나 없이** 방 안에서만
+  // 규칙이 빠진다(ADR-0033 "산발 게이트 금지" 규율). 벽 슬라이드 다음 실행 지점 그대로라
+  // 메인 경로 실행 순서는 이동 전후로 동일하다 — 기존 런 해시 바이트 불변.
+  //
+  // 강제 스크롤(침공 3레이어 또는 PvE 스크롤 모드=Lane3): 창 밖으로 나갈 수 없다. PvE 의
+  // "무한 맵, 아레나 클램프 없음" 규율은 그대로고(창 미존재 → 이 블록 자체를 건너뜀),
+  // 강제 스크롤에서만 창이 경계가 된다. 벽 슬라이드 **이후**에 적용해 창 경계가 항상 최종
+  // 권위를 갖게 한다(벽이 플레이어를 창 밖으로 밀어내는 상태를 허용하지 않는다).
+  const scrollWin = state.invasion3 ?? state.scrollRuntime;
+  if (scrollWin !== undefined) {
+    const clamped = clampToWindow(player.x, player.y, player.radius, scrollWin);
+    player.x = clamped.x;
+    player.y = clamped.y;
+  }
+  // 블록격파 압사(Lane4): 벽 슬라이드·창 클램프 이후에도 파괴가능 벽에 끼여 있으면 누적 피해.
+  // 창 경계와 부술 수 있는 벽 사이에 몰렸다는 뜻이다(불파괴 벽 hp=0 은 대상 아님). 레이싱
+  // (Lane5)은 벽이 아니라 창 뒤(−X) 경계에 몰리면 누적 피해(즉사 아님). 뱀서류·침공은 두 조건
+  // 모두 밖이라 미실행 → 거동·해시 불변.
+  if (
+    state.config.planetMode === PLANET_MODE.blockBreak &&
+    isPinnedByWall(player, state.activeWalls)
+  ) {
+    crushBlockBreak(state, player);
+  } else if (state.config.planetMode === PLANET_MODE.racing) {
+    racingRearPressure(state, player);
+  } else if (state.config.planetMode === PLANET_MODE.shrink) {
+    // 수축지대(Lane7): 아레나 중심(원점 0,0) 안전 반경 밖이면 지속 피해(하드 클램프 없음 —
+    // 밖으로 나갈 수는 있고 피해만 받는다). iframes 존중·즉사 아님. shrinkRuntime 미존재면 no-op.
+    shrinkOutOfBounds(state, player);
+  }
   // 기체 시그니처 카운터는 이동 직후·발사 이전에 갱신한다 — autoAttack 이 이번 틱의 과충전
   // 값을 읽고, 피격 판정(resolveCollisions)이 이번 틱의 장갑 스택을 읽는다.
   stepShipSignature(state, player, input);
@@ -1471,32 +1502,12 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     player.x = slid.x;
     player.y = slid.y;
   }
-  // 강제 스크롤(침공 3레이어 또는 PvE 스크롤 모드=Lane3): 창 밖으로 나갈 수 없다. PvE 의
-  // "무한 맵, 아레나 클램프 없음" 규율은 그대로고(창 미존재 → 이 블록 자체를 건너뜀),
-  // 강제 스크롤에서만 창이 경계가 된다. 벽 슬라이드 **이후**에 적용해 창 경계가 항상 최종
-  // 권위를 갖게 한다(벽이 플레이어를 창 밖으로 밀어내는 상태를 허용하지 않는다).
-  const scrollWin = state.invasion3 ?? state.scrollRuntime;
-  if (scrollWin !== undefined) {
-    const clamped = clampToWindow(player.x, player.y, player.radius, scrollWin);
-    player.x = clamped.x;
-    player.y = clamped.y;
-  }
-  // 블록격파 압사(Lane4): 벽 슬라이드·창 클램프 이후에도 파괴가능 벽에 끼여 있으면 누적 피해.
-  // 창 경계와 부술 수 있는 벽 사이에 몰렸다는 뜻이다(불파괴 벽 hp=0 은 대상 아님). 레이싱
-  // (Lane5)은 벽이 아니라 창 뒤(−X) 경계에 몰리면 누적 피해(즉사 아님). 뱀서류·침공은 두 조건
-  // 모두 밖이라 미실행 → 거동·해시 불변.
-  if (
-    state.config.planetMode === PLANET_MODE.blockBreak &&
-    isPinnedByWall(player, state.activeWalls)
-  ) {
-    crushBlockBreak(state, player);
-  } else if (state.config.planetMode === PLANET_MODE.racing) {
-    racingRearPressure(state, player);
-  } else if (state.config.planetMode === PLANET_MODE.shrink) {
-    // 수축지대(Lane7): 아레나 중심(원점 0,0) 안전 반경 밖이면 지속 피해(하드 클램프 없음 —
-    // 밖으로 나갈 수는 있고 피해만 받는다). iframes 존중·즉사 아님. shrinkRuntime 미존재면 no-op.
-    shrinkOutOfBounds(state, player);
-  }
+  // ⚠️ 모드별 경계 규칙(창 클램프·압사·후방압박·수축 밖 판정)은 **여기 있지 않다**. 조우
+  // detour(ADR-0033)가 stepPlayer 를 의존성 주입으로 재사용하는데, 포켓 방 안에서는 그 규칙이
+  // 하나도 성립하지 않기 때문이다(포켓 좌표는 창 밖 12만 유닛). 그래서 stepWorld 의
+  // `stepPlayer(...)` 호출 **직후**로 통째로 옮겼다 — detour 분기는 그 줄에 닿기 전에 return
+  // 하므로 플래그 없이 구조적으로 제외된다. 옮긴 위치는 벽 슬라이드 바로 다음 실행 지점이라
+  // 메인 경로의 실행 순서는 바이트 단위로 동일하다. 되돌려 넣지 마라.
 }
 
 // ---------------------------------------------------------------------------
