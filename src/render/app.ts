@@ -40,6 +40,10 @@ export async function createGameApp(mount: HTMLElement): Promise<GameApp> {
     resolution: Math.min(window.devicePixelRatio || 1, 2),
   });
   mount.appendChild(app.canvas);
+  // 캔버스 우클릭 메뉴 억제 — 격납고가 우클릭을 조작(인벤토리 → 보관함 이동)에 쓴다. 브라우저
+  // 기본 메뉴가 뜨면 그 조작이 매번 메뉴에 가려진다. 게임 캔버스의 표준 처리이고 DOM 오버레이
+  // (설정·정산 등)는 캔버스 밖이라 영향이 없다.
+  app.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   const stage = new Container();
   app.stage.addChild(stage);

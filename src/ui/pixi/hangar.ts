@@ -171,6 +171,11 @@ export class HangarScreen {
   private readonly stage: Container;
   private readonly root = new Container();
   private readonly tooltip = new PixiTooltip();
+  /**
+   * 현재 장착 장비 팝업(사용자 요청 2026-07-27) — 후보 팝업 옆에 나란히 선다. 별도 인스턴스인
+   * 이유는 두 장이 **동시에** 떠 있어야 하기 때문이다(하나를 재사용하면 후보를 덮어쓴다).
+   */
+  private readonly equippedTip = new PixiTooltip();
   private profile: Profile;
   private readonly store: KeyValueStore | null;
   private onClose: (() => void) | null = null;
@@ -219,6 +224,7 @@ export class HangarScreen {
     this.root.visible = false;
     this.root.eventMode = 'static';
     this.stage.addChild(this.root);
+    this.root.addChild(this.equippedTip.container);
     this.root.addChild(this.tooltip.container);
     // UI 킷 텍스처를 비동기 로드; 완료 후 열려 있으면 실 아트로 다시 그린다(그 전엔 폴백).
     void loadUiTextures().then((tex) => {
@@ -238,7 +244,8 @@ export class HangarScreen {
     this.hint = '';
     this.render();
     this.root.visible = true;
-    // 툴팁은 최상위로.
+    // 툴팁 두 장은 최상위로(후보를 마지막에 = 겹칠 때 위로).
+    this.root.setChildIndex(this.equippedTip.container, this.root.children.length - 1);
     this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
     // DOM HUD(HP/LV, 좌하단)는 런 전용이라 캔버스 격납고 위에 떠 보인다 — 표시 중 숨긴다.
     // (기존 메뉴 화면들은 전면 DOM 오버레이라 자연히 가려졌던 것을 캔버스 화면에서 명시 처리.)
@@ -248,7 +255,7 @@ export class HangarScreen {
 
   hide(): void {
     this.root.visible = false;
-    this.tooltip.hide();
+    this.hideTips();
     this.onClose = null;
     const hud = document.getElementById('pb-hud');
     if (hud !== null) hud.style.visibility = '';
@@ -257,7 +264,7 @@ export class HangarScreen {
   /** 다른 캔버스 화면(챔피언 선택)에 자리를 내주고 잠시 감춘다 — **상태는 그대로 남는다**. */
   suspend(): void {
     this.root.visible = false;
-    this.tooltip.hide();
+    this.hideTips();
   }
 
   resume(): void {
@@ -348,6 +355,46 @@ export class HangarScreen {
     this.render();
   }
 
+  // --- 창고 ↔ 인벤토리 이동 (사용자 요청 2026-07-27) ------------------------
+
+  /**
+   * 보관함 → 인벤토리. 보관함 장비는 **장착 후보인데 꺼낼 방법이 없었다** — 런 정산이 인벤토리를
+   * 채운 뒤 넘친 것을 보관함에 넣기만 하고, 그 뒤로는 화면에서 되돌릴 수단이 아예 없었다.
+   *
+   * 용량 초과는 조용히 실패하지 않고 힌트로 말한다(분해와 달리 되돌릴 수 있는 조작이라, 막힌
+   * 이유를 알려 주면 사용자가 자리를 만들고 다시 시도할 수 있다).
+   */
+  private moveToInventory(item: Item): void {
+    if (this.profile.inventory.length >= INVENTORY_CAP) {
+      this.hint = t('inv.err.full');
+      this.render();
+      return;
+    }
+    const idx = this.profile.stash.indexOf(item);
+    if (idx < 0) return;
+    this.profile.stash.splice(idx, 1);
+    this.profile.inventory.push(item);
+    this.hint = t('inv.moved.toInventory', { name: this.itemName(item) });
+    this.persist();
+    this.render();
+  }
+
+  /** 인벤토리 → 보관함. 용량은 확장 수에 따라 달라지므로 매번 계산한다. */
+  private moveToStash(item: Item): void {
+    if (this.profile.stash.length >= stashCapacity(this.profile.stashExpansions)) {
+      this.hint = t('inv.err.stashFull');
+      this.render();
+      return;
+    }
+    const idx = this.profile.inventory.indexOf(item);
+    if (idx < 0) return;
+    this.profile.inventory.splice(idx, 1);
+    this.profile.stash.push(item);
+    this.hint = t('inv.moved.toStash', { name: this.itemName(item) });
+    this.persist();
+    this.render();
+  }
+
   // --- 분해 / 창고 ---------------------------------------------------------
 
   /**
@@ -358,11 +405,19 @@ export class HangarScreen {
    * 누르면, 등급만 걸렀을 때 **화면에 없던 방어구까지 함께 분해된다**. 분해는 되돌릴 수 없으므로
    * 활성 필터를 반드시 함께 적용해 "보이는 것 = 대상" 을 유지한다(그리드가 쓰는 `arrangeItems`
    * 의 필터 조건과 같은 술어여야 한다).
+   *
+   * `source` 로 인벤토리/보관함을 가른다(사용자 요청 2026-07-27 — 보관함에도 분해 버튼).
+   * **각 목록은 자기 패널의 필터를 쓴다** — 보관함 분해가 인벤토리 탭 상태를 보면 "보이는 것 =
+   * 대상" 규율이 그 자리에서 깨진다.
    */
-  private async salvageByRarities(rarities: readonly Rarity[]): Promise<void> {
+  private async salvageByRarities(
+    source: 'inventory' | 'stash',
+    rarities: readonly Rarity[],
+  ): Promise<void> {
     const set = new Set(rarities);
-    const slot = this.invFilter;
-    const targets = this.profile.inventory.filter(
+    const slot = source === 'stash' ? this.stashFilter : this.invFilter;
+    const pool = source === 'stash' ? this.profile.stash : this.profile.inventory;
+    const targets = pool.filter(
       (it) => set.has(it.rarity) && (slot === null || it.slot === slot),
     );
     if (targets.length === 0) {
@@ -476,6 +531,69 @@ export class HangarScreen {
 
   // --- 툴팁 ----------------------------------------------------------------
 
+  /**
+   * 후보 툴팁 옆에 **현재 장착 장비 팝업**을 나란히 세운다(사용자 요청 2026-07-27).
+   *
+   * 증감 블록만으로는 "무엇에서 무엇으로" 가 안 보인다 — 델타는 차이만 말하고 현재 장비의 실제
+   * 어픽스·요구 레벨·이름은 여전히 격납고 슬롯을 따로 hover 해야 알 수 있었다. 두 장을 나란히
+   * 두면 그 왕복이 사라진다(디아블로류 관용구).
+   *
+   * 배치는 후보 팝업의 **왼쪽**이 기본이다 — 후보는 포인터 오른쪽·아래에 붙으므로, 장착 팝업을
+   * 오른쪽에 두면 화면 밖으로 밀리기 쉽다. 왼쪽 공간이 부족하면 오른쪽으로 뒤집고, 그것도 안 되면
+   * 화면 안으로 클램프한다.
+   */
+  private showEquippedTip(equipped: Item): void {
+    const ship = activeShip(this.profile);
+    const req = requiredLevel(equipped);
+    const met = ship.level >= req;
+    // 좌표는 아래에서 후보 팝업 기준으로 다시 잡는다 — 여기서는 내용만 세운다(0,0 임시).
+    this.equippedTip.show(
+      {
+        title: this.itemName(equipped),
+        titleColor: RARITY_COLOR_NUM[equipped.rarity],
+        subtitle: t('inv.tip.equippedNow'),
+        reqLine: { text: t('item.reqLevel', { n: req }), color: met ? 0x8896b8 : 0xff5a5a },
+        lines: affixLines(equipped.affixes),
+      },
+      0,
+      0,
+      RARITY_COLOR_NUM[equipped.rarity],
+    );
+  }
+
+  /** 두 팝업을 포인터 기준으로 배치한다(후보=포인터 옆, 장착=후보 왼쪽). */
+  private placeTips(designX: number, designY: number): void {
+    const cand = this.tooltip.container;
+    const eq = this.equippedTip.container;
+    const PAD = 14;
+    const candW = cand.width;
+    const candH = cand.height;
+    let cx = designX + PAD;
+    const cy = Math.max(0, Math.min(designY + PAD, DESIGN_HEIGHT - candH));
+
+    if (!eq.visible) {
+      cand.position.set(Math.max(0, Math.min(cx, DESIGN_WIDTH - candW)), cy);
+      return;
+    }
+
+    const eqW = eq.width;
+    const GAP = 8;
+    // 두 장을 합친 폭이 포인터 오른쪽에 안 들어가면 통째로 왼쪽으로 넘긴다.
+    if (cx + candW > DESIGN_WIDTH) cx = designX - candW - PAD;
+    cx = Math.max(eqW + GAP, Math.min(cx, DESIGN_WIDTH - candW));
+    let ex = cx - GAP - eqW;
+    if (ex < 0) ex = Math.min(cx + candW + GAP, DESIGN_WIDTH - eqW); // 왼쪽이 없으면 오른쪽으로
+    cand.position.set(cx, cy);
+    // 장착 팝업은 후보와 위쪽을 맞춘다(두 장을 한 덩어리로 읽히게).
+    eq.position.set(Math.max(0, ex), Math.max(0, Math.min(cy, DESIGN_HEIGHT - eq.height)));
+  }
+
+  /** 두 팝업을 함께 감춘다(셀 밖으로 나갈 때). */
+  private hideTips(): void {
+    this.tooltip.hide();
+    this.equippedTip.hide();
+  }
+
   private showTip(item: Item, globalX: number, globalY: number, compareTo?: Item): void {
     // 어픽스 = 제목 줄(이름 · 표시명 +수치) + 설명 줄. raw StatKey 노출을 없앤다(2026-07-26 지적).
     const lines = affixLines(item.affixes);
@@ -507,16 +625,19 @@ export class HangarScreen {
       p.y,
       RARITY_COLOR_NUM[item.rarity],
     );
+    // 현재 장착 장비 팝업을 함께 띄운다 — 비교 대상이 있고, 그것이 후보 자신이 아닐 때만.
+    if (compareTo !== undefined && compareTo.id !== item.id) this.showEquippedTip(compareTo);
+    else this.equippedTip.hide();
+    this.placeTips(p.x, p.y);
+    // 두 팝업 모두 맨 앞으로(패널 재빌드로 뒤에 깔리지 않게). 후보를 마지막에 올려 겹칠 때 위로.
+    this.root.setChildIndex(this.equippedTip.container, this.root.children.length - 1);
     this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
   }
 
   private moveTip(globalX: number, globalY: number): void {
     if (!this.tooltip.container.visible) return;
     const p = this.root.toLocal({ x: globalX, y: globalY });
-    this.tooltip.container.position.set(
-      Math.min(p.x + 14, DESIGN_WIDTH - this.tooltip.container.width),
-      Math.min(p.y + 14, DESIGN_HEIGHT - this.tooltip.container.height),
-    );
+    this.placeTips(p.x, p.y);
   }
 
   // --- 렌더 ----------------------------------------------------------------
@@ -524,12 +645,12 @@ export class HangarScreen {
   private render(): void {
     // 툴팁 컨테이너는 유지하고 나머지를 지운다.
     for (const child of [...this.root.children]) {
-      if (child !== this.tooltip.container) {
+      if (child !== this.tooltip.container && child !== this.equippedTip.container) {
         this.root.removeChild(child);
         child.destroy({ children: true });
       }
     }
-    this.tooltip.hide();
+    this.hideTips();
 
     // 배경(불투명 — 뒤 아레나를 가린다).
     const bg = new Graphics();
@@ -544,6 +665,7 @@ export class HangarScreen {
     this.renderInventoryPanel();
     this.renderHint();
 
+    this.root.setChildIndex(this.equippedTip.container, this.root.children.length - 1);
     this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
   }
 
@@ -870,7 +992,7 @@ export class HangarScreen {
         onClick: item !== undefined ? () => this.unequip(id) : undefined,
         onHover: item !== undefined ? (gx, gy) => this.showTip(item, gx, gy) : undefined,
         onMove: (gx, gy) => this.moveTip(gx, gy),
-        onOut: () => this.tooltip.hide(),
+        onOut: () => this.hideTips(),
       });
       cell.position.set(sx, sy);
       this.root.addChild(cell);
@@ -941,13 +1063,34 @@ export class HangarScreen {
     });
   }
 
+  /**
+   * 패널 조작 안내 한 줄(제목 아래). 좌/우클릭에 서로 다른 동작이 걸려 있으면 **화면이 그것을
+   * 말해야 한다** — 보관함↔인벤토리 이동 수단이 있어도 알 수 없으면 없는 것과 같다(사용자 신고
+   * 2026-07-27: "이동을 할 수 있는 방법이 없어").
+   */
+  private renderPanelHelp(x: number, y: number, text: string): void {
+    const help = new Text({
+      resolution: 2,
+      text,
+      style: { fontFamily: UI_FONT, fontSize: 15, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+    });
+    help.position.set(x, y);
+    this.root.addChild(help);
+  }
+
   /** 정렬 순환 버튼(획득순 → 희귀도 → 슬롯 → …). 현재 모드를 라벨에 그대로 보여준다. */
-  private renderSortButton(x: number, y: number, mode: ItemSortMode, onCycle: (next: ItemSortMode) => void): void {
+  private renderSortButton(
+    x: number,
+    y: number,
+    mode: ItemSortMode,
+    onCycle: (next: ItemSortMode) => void,
+    width = 160,
+  ): void {
     const next = SORT_MODES[(SORT_MODES.indexOf(mode) + 1) % SORT_MODES.length] ?? 'default';
     const btn = new PixiButton({
       texture: this.ui['ui_btn_wood.png'],
       fallbackColor: 0x4a3a24,
-      width: 160,
+      width,
       height: 48,
       fontSize: 16,
       label: t('inv.act.sort', { v: t(SORT_LABEL_KEY[mode]) }),
@@ -974,29 +1117,62 @@ export class HangarScreen {
     });
     title.position.set(px + box.x, py + box.y);
     this.root.addChild(title);
+    this.renderPanelHelp(px + box.x, py + box.y + 38, t('inv.help.stash'));
+
+    // 헤더 우측 액션 줄: [하급 분해][상급 분해][정렬][확장]. 창고 패널은 인벤토리보다 좁아
+    // (콘텐츠 780 vs 832) 인벤토리의 210px 버튼을 그대로 쓰면 제목 자리가 사라진다 — 같은
+    // 동작이므로 **양쪽 다** 등급을 밝힌 짧은 라벨을 쓰고, 창고 쪽만 폭을 조인다.
+    const SALV_W = 132;
+    const SORT_W = 120;
+    const EXPAND_W = 180;
+    const AGAP = 10;
+    const rowY = py + box.y;
+    let cursorX = px + box.right;
 
     // 창고 확장 버튼(파랑) — 패널 우상단.
     const nextCost = stashExpansionCost(this.profile.stashExpansions);
     const maxed = this.profile.stashExpansions >= MAX_STASH_EXPANSIONS;
+    cursorX -= EXPAND_W;
     const expandBtn = new PixiButton({
       texture: this.ui['ui_btn_blue.png'],
       fallbackColor: 0x2a5a9a,
-      width: 260,
+      width: EXPAND_W,
       height: 48,
-      fontSize: 18,
+      fontSize: 16,
       label: maxed ? t('inv.act.expandMax') : t('inv.act.expand', { n: nextCost }),
       onClick: () => void this.expandStash(),
     });
-    expandBtn.container.position.set(px + box.right - 260, py + box.y);
+    expandBtn.container.position.set(cursorX, rowY);
     this.root.addChild(expandBtn.container);
     if (maxed || !canAfford(this.profile.credits, nextCost)) expandBtn.setEnabled(false);
 
-    // 정렬 순환(확장 버튼 왼쪽) + 슬롯 분류 탭(그 아래 한 줄).
-    this.renderSortButton(px + box.right - 260 - 12 - 160, py + box.y, this.stashSort, (next) => {
+    // 정렬 순환(확장 버튼 왼쪽).
+    cursorX -= AGAP + SORT_W;
+    this.renderSortButton(cursorX, rowY, this.stashSort, (next) => {
       this.stashSort = next;
       this.stashScrollY = 0;
       this.render();
-    });
+    }, SORT_W);
+
+    // 보관함 일괄 분해 2종(빨강) — 인벤토리와 같은 규칙(활성 필터 + 등급). 보관함에만 쌓아 둔
+    // 하급 장비를 꺼내지 않고 그 자리에서 정리할 수 있어야 한다(사용자 요청 2026-07-27).
+    for (const spec of [
+      { key: 'inv.act.salvageHighShort' as const, rarities: ['rare', 'unique'] as const },
+      { key: 'inv.act.salvageLowShort' as const, rarities: ['normal', 'magic'] as const },
+    ]) {
+      cursorX -= AGAP + SALV_W;
+      const btn = new PixiButton({
+        texture: this.ui['ui_btn_red.png'],
+        fallbackColor: 0x9a2a2a,
+        width: SALV_W,
+        height: 48,
+        fontSize: 15,
+        label: t(spec.key),
+        onClick: () => void this.salvageByRarities('stash', spec.rarities),
+      });
+      btn.container.position.set(cursorX, rowY);
+      this.root.addChild(btn.container);
+    }
     this.renderFilterBar(
       px + box.x,
       py + HangarScreen.FILTER_Y,
@@ -1048,9 +1224,12 @@ export class HangarScreen {
         iconTex: equipIconTexture(this.ui, item),
         reqLevel: item !== undefined ? requiredLevel(item) : undefined,
         locked,
+        // 보관함 셀은 좌클릭이 비어 있었다 — 꺼내기(→ 인벤토리)를 그 자리에 얹는다. 요구 레벨
+        // 미달이어도 꺼낼 수는 있어야 한다(레벨을 올린 뒤 장착하는 흐름) — locked 게이트 없음.
+        onClick: item !== undefined ? () => this.moveToInventory(item) : undefined,
         onHover: item !== undefined ? (gx, gy) => this.showTip(item, gx, gy, compareTo) : undefined,
         onMove: (gx, gy) => this.moveTip(gx, gy),
-        onOut: () => this.tooltip.hide(),
+        onOut: () => this.hideTips(),
       });
       const pos = positions[i];
       if (pos !== undefined) c.position.set(pos.x, pos.y);
@@ -1102,6 +1281,7 @@ export class HangarScreen {
     });
     title.position.set(px + box.x, py + box.y);
     this.root.addChild(title);
+    this.renderPanelHelp(px + box.x, py + box.y + 38, t('inv.help.inventory'));
 
     // 일괄 분해 버튼 2종(빨강) — 패널 우상단 나란히.
     const bw = 210;
@@ -1113,7 +1293,7 @@ export class HangarScreen {
       height: bh,
       fontSize: 16,
       label: t('inv.act.salvageHigh'),
-      onClick: () => void this.salvageByRarities(['rare', 'unique']),
+      onClick: () => void this.salvageByRarities('inventory', ['rare', 'unique']),
     });
     salvageHigh.container.position.set(px + box.right - bw, py + box.y);
     this.root.addChild(salvageHigh.container);
@@ -1125,7 +1305,7 @@ export class HangarScreen {
       height: bh,
       fontSize: 16,
       label: t('inv.act.salvageLow'),
-      onClick: () => void this.salvageByRarities(['normal', 'magic']),
+      onClick: () => void this.salvageByRarities('inventory', ['normal', 'magic']),
     });
     salvageLow.container.position.set(px + box.right - bw * 2 - 12, py + box.y);
     this.root.addChild(salvageLow.container);
@@ -1188,9 +1368,12 @@ export class HangarScreen {
         reqLevel: item !== undefined ? requiredLevel(item) : undefined,
         locked,
         onClick: item !== undefined && !locked ? () => this.equip(item) : undefined,
+        // 좌클릭이 장착에 묶여 있으므로 보관함으로 보내기는 우클릭에 얹는다(패널 안내 문구가
+        // 이를 알린다). 요구 레벨 미달이라 장착이 막힌 아이템도 보관은 되어야 한다.
+        onRightClick: item !== undefined ? () => this.moveToStash(item) : undefined,
         onHover: item !== undefined ? (gx, gy) => this.showTip(item, gx, gy, compareTo) : undefined,
         onMove: (gx, gy) => this.moveTip(gx, gy),
-        onOut: () => this.tooltip.hide(),
+        onOut: () => this.hideTips(),
       });
       const pos = positions[i];
       if (pos !== undefined) c.position.set(pos.x, pos.y);

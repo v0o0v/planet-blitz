@@ -284,6 +284,63 @@ function inventoryCellCount(): number {
   return found;
 }
 
+/** 창고 그리드 클립(좌측 px=24)의 셀 수. */
+function stashCellCount(): number {
+  let found = -1;
+  for (const child of root().children) {
+    if (!(child instanceof Container)) continue;
+    if (child.children.length !== 1 || child.y < 700) continue; // 하단 패널만(스탯 스크롤 배제)
+    const content = child.children[0];
+    if (!(content instanceof Container) || content.children.length === 0) continue;
+    if (child.x < 900) found = content.children.length;
+  }
+  if (found < 0) throw new Error('창고 그리드 클립을 찾지 못했다');
+  return found;
+}
+
+/** 창고 패널(좌측 하단) 안의 컨트롤만 고른다. */
+const STASH_PANEL = { maxX: 900, minY: 620 } as const;
+
+/** 일괄 분해 호출(private — 출처 인자 포함). */
+function salvage(
+  source: 'inventory' | 'stash',
+  rarities: readonly Item['rarity'][],
+): Promise<void> {
+  return (
+    hangar as unknown as {
+      salvageByRarities(s: 'inventory' | 'stash', r: readonly Item['rarity'][]): Promise<void>;
+    }
+  ).salvageByRarities(source, rarities);
+}
+
+/** 그리드 클립 안에서 i 번째 **아이템 있는** 셀(= 포인터 리스너가 달린 것)을 고른다. */
+function gridCells(side: 'stash' | 'inventory'): Container[] {
+  // ⚠️ "자식이 하나인 Container" 는 화면에 여럿이고, **스탯 패널의 스크롤 영역이 창고 그리드와
+  // x 가 같다**(둘 다 좌측 px=24 → contentX=84). 자식 수가 가장 많은 것을 고르는 식으로 찾으면
+  // 스탯 스크롤(41칸)이 창고 그리드(32칸)를 이겨 빈 배열이 나오고, 그러면 **테스트가 조용히
+  // 아무것도 검증하지 않는다**(하네스 실측으로 드러난 함정). 하단 패널 y 로 못 박는다.
+  let best: Container | null = null;
+  for (const child of root().children) {
+    if (!(child instanceof Container) || child.children.length !== 1) continue;
+    if (child.y < 700) continue; // 하단(창고·인벤토리) 패널의 그리드 클립만
+    const content = child.children[0];
+    if (!(content instanceof Container) || content.children.length === 0) continue;
+    const isStash = child.x < 900;
+    if ((side === 'stash') !== isStash) continue;
+    if (best === null || content.children.length > best.children.length) best = content;
+  }
+  if (best === null) throw new Error(`${side} 그리드를 찾지 못했다`);
+  const cells = best.children.filter(
+    (c): c is Container => c instanceof Container && c.eventMode === 'static',
+  );
+  if (cells.length === 0) throw new Error(`${side} 그리드에 아이템 셀이 없다`);
+  return cells;
+}
+
+function rightClick(node: Container): void {
+  (node as unknown as { emit(ev: string): void }).emit('rightclick');
+}
+
 describe('격납고 인벤토리 — 분류 탭이 그리드에 연결돼 있다', () => {
   it('슬롯 탭을 누르면 그려지는 셀 수가 필터 결과로 줄어든다', () => {
     const p = defaultProfile();
@@ -334,9 +391,7 @@ describe('격납고 인벤토리 — 분류 탭이 그리드에 연결돼 있다
     // 주무기 탭 — 화면에는 무기 1개만 보인다.
     tap(buttonByLabel(root(), t('item.slot.main'), INV_PANEL));
 
-    await (hangar as unknown as {
-      salvageByRarities(r: readonly Item['rarity'][]): Promise<void>;
-    }).salvageByRarities(['normal', 'magic']);
+    await salvage('inventory', ['normal', 'magic']);
 
     expect(profile.inventory, '보이지 않던 방어구 2개가 함께 분해됐다').toHaveLength(2);
     expect(profile.inventory.map((it) => it.slot).sort()).toEqual(['armor', 'armor']);
@@ -353,9 +408,7 @@ describe('격납고 인벤토리 — 분류 탭이 그리드에 연결돼 있다
     );
     open(p);
 
-    await (hangar as unknown as {
-      salvageByRarities(r: readonly Item['rarity'][]): Promise<void>;
-    }).salvageByRarities(['normal', 'magic']);
+    await salvage('inventory', ['normal', 'magic']);
 
     expect(profile.inventory, '필터 없을 때는 전부 분해돼야 한다').toHaveLength(0);
   });
@@ -415,3 +468,180 @@ describe('창고 확장 — 서버 거부 사유가 문구로 갈린다', () => 
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// (4) 보관함 ↔ 인벤토리 이동 · 보관함 분해 · 장착 팝업 동시 표시
+//     (사용자 요청 2026-07-27 — 셋 다 "배선이 없으면 화면에서 아무 일도 안 일어난다" 부류라
+//      순수 함수가 아니라 실제 화면을 세워 확인한다.)
+// ---------------------------------------------------------------------------
+
+describe('보관함 ↔ 인벤토리 이동', () => {
+  it('보관함 셀을 클릭하면 인벤토리로 옮겨진다', () => {
+    const p = defaultProfile();
+    const it = itemOfSlot(11, 'engine');
+    p.stash.push(it);
+    open(p);
+
+    tap(gridCells('stash')[0] as Container);
+
+    expect(profile.stash, '보관함에서 빠져야 한다').toHaveLength(0);
+    expect(profile.inventory.map((i) => i.id)).toEqual([it.id]);
+  });
+
+  it('인벤토리 셀을 우클릭하면 보관함으로 옮겨진다', () => {
+    const p = defaultProfile();
+    const it = itemOfSlot(11, 'engine');
+    p.inventory.push(it);
+    open(p);
+
+    rightClick(gridCells('inventory')[0] as Container);
+
+    expect(profile.inventory, '인벤토리에서 빠져야 한다').toHaveLength(0);
+    expect(profile.stash.map((i) => i.id)).toEqual([it.id]);
+  });
+
+  it('좌클릭 장착은 그대로다 — 우클릭 추가가 기존 동작을 빼앗지 않는다', () => {
+    const p = defaultProfile();
+    const it = itemOfSlot(11, 'engine');
+    p.inventory.push(it);
+    open(p);
+
+    tap(gridCells('inventory')[0] as Container);
+
+    expect(activeShip(profile).equipped.engine?.id).toBe(it.id);
+    expect(profile.stash, '좌클릭이 보관함으로 새면 안 된다').toHaveLength(0);
+  });
+
+  it('인벤토리가 가득 차면 꺼내지 않고 이유를 알린다', () => {
+    const p = defaultProfile();
+    for (let i = 0; i < 48; i++) p.inventory.push(itemOfSlot(1000 + i * 7, 'engine'));
+    const stashed = itemOfSlot(11, 'armor');
+    p.stash.push(stashed);
+    open(p);
+
+    tap(gridCells('stash')[0] as Container);
+
+    expect(profile.stash, '조용히 사라지면 안 된다').toHaveLength(1);
+    expect(hasLabel(root(), t('inv.err.full')), '막힌 이유가 화면에 떠야 한다').toBe(true);
+  });
+
+  it('두 패널 모두 조작 방법을 화면에 적는다(발견 가능성)', () => {
+    open();
+    expect(hasLabel(root(), t('inv.help.stash'))).toBe(true);
+    expect(hasLabel(root(), t('inv.help.inventory'))).toBe(true);
+  });
+});
+
+describe('보관함 일괄 분해', () => {
+  it('보관함 패널에 분해 버튼이 있고, 보관함 아이템을 지운다', async () => {
+    const p = defaultProfile();
+    p.stash.push(itemOfSlot(11, 'engine', 'normal'), itemOfSlot(21, 'armor', 'normal'));
+    p.inventory.push(itemOfSlot(31, 'main', 'normal'));
+    open(p);
+
+    // 버튼이 **창고 패널 안에** 있어야 한다(인벤토리 것과 라벨이 다르므로 영역 확인이 이중 방어).
+    const btn = buttonByLabel(root(), t('inv.act.salvageLowShort'), STASH_PANEL);
+    expect(btn).toBeDefined();
+
+    await salvage('stash', ['normal', 'magic']);
+
+    expect(profile.stash, '보관함이 비어야 한다').toHaveLength(0);
+    expect(profile.inventory, '인벤토리는 건드리면 안 된다').toHaveLength(1);
+  });
+
+  it('보관함 분해는 **보관함 필터**를 따른다(인벤토리 탭 상태를 보지 않는다)', async () => {
+    const p = defaultProfile();
+    const engine = itemOfSlot(11, 'engine', 'normal');
+    const armor = itemOfSlot(21, 'armor', 'normal');
+    p.stash.push(engine, armor);
+    open(p);
+
+    // 인벤토리 탭만 '주무기' 로 바꾼다 — 보관함 분해가 이걸 보면 대상이 0개가 된다.
+    tap(buttonByLabel(root(), t('item.slot.main'), INV_PANEL));
+    // 보관함 탭은 '엔진' 으로 — 보이는 것(엔진)만 분해돼야 한다.
+    tap(buttonByLabel(root(), t('item.slot.engine'), STASH_PANEL));
+
+    await salvage('stash', ['normal', 'magic']);
+
+    expect(profile.stash.map((i) => i.id), '보이던 엔진만 분해돼야 한다').toEqual([armor.id]);
+  });
+
+  it('보관함 셀 수가 필터에 반응한다(분해 대상 = 보이는 것 규율의 렌더 측 근거)', () => {
+    const p = defaultProfile();
+    p.stash.push(itemOfSlot(11, 'engine'), itemOfSlot(21, 'armor'));
+    open(p);
+    const all = stashCellCount();
+    tap(buttonByLabel(root(), t('item.slot.engine'), STASH_PANEL));
+    expect(stashCellCount()).toBeLessThan(all);
+  });
+});
+
+describe('장착 장비 팝업 동시 표시', () => {
+  interface Tips {
+    tooltip: { container: Container };
+    equippedTip: { container: Container };
+  }
+  const tips = (): Tips => hangar as unknown as Tips;
+
+  function hover(cell: Container, x = 900, y = 700): void {
+    (cell as unknown as { emit(ev: string, e: unknown): void }).emit('pointerover', {
+      global: { x, y },
+    });
+  }
+
+  it('장착 중인 같은 슬롯이 있으면 팝업 두 장이 함께 뜬다', () => {
+    const p = defaultProfile();
+    const equipped = itemOfSlot(11, 'engine');
+    const candidate = itemOfSlot(101, 'engine');
+    activeShip(p).equipped.engine = equipped;
+    p.inventory.push(candidate);
+    open(p);
+
+    hover(gridCells('inventory')[0] as Container);
+
+    expect(tips().tooltip.container.visible, '후보 팝업').toBe(true);
+    expect(tips().equippedTip.container.visible, '장착 팝업이 함께 떠야 한다').toBe(true);
+  });
+
+  it('두 팝업은 겹치지 않고 화면 안에 있다', () => {
+    const p = defaultProfile();
+    activeShip(p).equipped.engine = itemOfSlot(11, 'engine');
+    p.inventory.push(itemOfSlot(101, 'engine'));
+    open(p);
+
+    hover(gridCells('inventory')[0] as Container);
+
+    const a = rectOf(tips().tooltip.container);
+    const b = rectOf(tips().equippedTip.container);
+    expect(intersects(a, b), '두 장이 겹치면 아래 것을 못 읽는다').toBe(false);
+    for (const r of [a, b]) {
+      expect(r.x).toBeGreaterThanOrEqual(0);
+      expect(r.y).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('빈 슬롯이면 장착 팝업은 뜨지 않는다', () => {
+    const p = defaultProfile();
+    p.inventory.push(itemOfSlot(101, 'engine')); // 엔진 미장착
+    open(p);
+
+    hover(gridCells('inventory')[0] as Container);
+
+    expect(tips().tooltip.container.visible).toBe(true);
+    expect(tips().equippedTip.container.visible).toBe(false);
+  });
+
+  it('셀에서 벗어나면 두 장 모두 사라진다', () => {
+    const p = defaultProfile();
+    activeShip(p).equipped.engine = itemOfSlot(11, 'engine');
+    p.inventory.push(itemOfSlot(101, 'engine'));
+    open(p);
+
+    const cell = gridCells('inventory')[0] as Container;
+    hover(cell);
+    (cell as unknown as { emit(ev: string): void }).emit('pointerout');
+
+    expect(tips().tooltip.container.visible).toBe(false);
+    expect(tips().equippedTip.container.visible).toBe(false);
+  });
+});

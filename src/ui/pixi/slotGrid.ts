@@ -174,6 +174,12 @@ export interface SlotCellOptions {
   /** 장비 아이콘 텍스처({@link equipIconTexture}). null 이면 텍스트 글리프로 폴백한다. */
   iconTex?: Texture | null | undefined;
   onClick?: (() => void) | undefined;
+  /**
+   * 우클릭 보조 동작(격납고: 인벤토리 → 보관함 이동). 좌클릭(`onClick`)이 이미 주 동작에
+   * 묶여 있는 셀에 두 번째 동작을 얹기 위한 것이다 — ARPG 관용구라 발견 가능성도 높고,
+   * 패널 안내 문구가 이를 함께 알린다. 캔버스 우클릭 메뉴는 `render/app.ts` 가 막는다.
+   */
+  onRightClick?: (() => void) | undefined;
   onHover?: ((globalX: number, globalY: number) => void) | undefined;
   onMove?: ((globalX: number, globalY: number) => void) | undefined;
   onOut?: (() => void) | undefined;
@@ -289,8 +295,9 @@ export function makeSlotCell(opts: SlotCellOptions): Container {
     }
 
     root.eventMode = 'static';
-    root.cursor = opts.onClick !== undefined ? 'pointer' : 'default';
+    root.cursor = opts.onClick !== undefined || opts.onRightClick !== undefined ? 'pointer' : 'default';
     if (opts.onClick !== undefined) root.on('pointertap', opts.onClick);
+    if (opts.onRightClick !== undefined) root.on('rightclick', opts.onRightClick);
     root.on('pointerover', (e) => opts.onHover?.(e.global.x, e.global.y));
     root.on('pointermove', (e) => opts.onMove?.(e.global.x, e.global.y));
     root.on('pointerout', () => opts.onOut?.());
