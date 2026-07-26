@@ -110,6 +110,29 @@ export interface GimmickPlacement {
   sub: number;
 }
 
+/** 겹침 회피 재시도 상한(한 기믹당). 넘으면 그 기믹은 놓지 않는다. */
+const PLACE_ATTEMPTS = 8;
+/**
+ * 기믹 사이 최소 여백(월드 유닛). 0 이면 딱 붙어 한 덩어리로 보이므로 눈에 띄는 간격을 둔다.
+ * 플레이어 전폭(반경 16 × 2 = 32)보다 커서 붙은 두 벽 사이로 지나갈 수 있다는 뜻이기도 하다.
+ */
+const PLACE_GAP = 40;
+
+/**
+ * 두 배치가 (여백 포함) 겹치는가. 벽은 `radius`=반폭·`halfH`=반높이의 AABB 이고, 나머지는
+ * `radius` 반경의 원인데 **원도 AABB 로 근사**한다 — 겹침 판정을 보수적으로(조금 넉넉하게)
+ * 하는 쪽이 안전하고, 판정이 축정렬 사각 하나로 통일돼 결정론·정수 규율이 단순해진다.
+ */
+export function placementsOverlap(a: GimmickPlacement, b: GimmickPlacement): boolean {
+  const ahw = a.radius;
+  const ahh = a.kind === 'wall' ? a.halfH : a.radius;
+  const bhw = b.radius;
+  const bhh = b.kind === 'wall' ? b.halfH : b.radius;
+  return (
+    Math.abs(a.x - b.x) < ahw + bhw + PLACE_GAP && Math.abs(a.y - b.y) < ahh + bhh + PLACE_GAP
+  );
+}
+
 /**
  * Derive the independent, order-independent RNG for one chunk. Pure in
  * (worldRng state, cx, cy) — `fork` never advances `worldRng`.
@@ -135,10 +158,13 @@ export function chunkPlacements(worldRng: SeededRng, cx: number, cy: number): Gi
   const baseY = cy * CHUNK_SIZE;
   const count = rng.int(0, 3);
   for (let i = 0; i < count; i++) {
-    const x = baseX + rng.range(PLACE_MARGIN, CHUNK_SIZE - PLACE_MARGIN);
-    const y = baseY + rng.range(PLACE_MARGIN, CHUNK_SIZE - PLACE_MARGIN);
+    // ⚠️ 굴림 순서가 **종류·크기 먼저, 위치 나중**인 이유: 겹침 판정을 하려면 후보의 크기를
+    // 알아야 한다. 예전에는 위치를 먼저 굴리고 종류를 나중에 굴렸는데, 그러면 겹침을 알아도
+    // 다시 굴릴 수가 없어 한 청크 안 기믹 4개가 서로 겹친 채 그대로 스폰됐다(사용자 신고
+    // 2026-07-27: "벽이 겹쳐서 나올 때가 있음"). 청크 RNG 는 좌표에서 fork 된 독립 스트림이라
+    // 순서를 바꿔도 **경로 독립성**(AC3)은 그대로다 — 같은 좌표는 항상 같은 배치다.
     const roll = rng.int(0, 99);
-    const g: GimmickPlacement = { kind: 'wall', x, y, radius: 0, halfH: 0, hp: 0, value: 0, sub: 0 };
+    const g: GimmickPlacement = { kind: 'wall', x: 0, y: 0, radius: 0, halfH: 0, hp: 0, value: 0, sub: 0 };
     if (roll < ROLL_WALL) {
       // Wall (most common): rectangular cover.
       g.kind = 'wall';
@@ -166,7 +192,19 @@ export function chunkPlacements(worldRng: SeededRng, cx: number, cy: number): Gi
       g.kind = 'turretPickup';
       g.radius = EVENT_TRIGGER_RADIUS;
     }
-    out.push(g);
+    // 위치는 **이미 놓인 것과 겹치지 않는 자리**를 찾을 때까지 다시 굴린다(거절 표집). 시도
+    // 상한을 넘으면 그 기믹은 **놓지 않는다** — 겹쳐 놓느니 비우는 편이 낫다(청크당 최대 4개라
+    // 밀도 손실은 미미하다). 굴림 횟수가 늘어도 청크 스트림은 독립이라 다른 청크에 영향이 없다.
+    let placed = false;
+    for (let attempt = 0; attempt < PLACE_ATTEMPTS; attempt++) {
+      g.x = baseX + rng.range(PLACE_MARGIN, CHUNK_SIZE - PLACE_MARGIN);
+      g.y = baseY + rng.range(PLACE_MARGIN, CHUNK_SIZE - PLACE_MARGIN);
+      if (!out.some((o) => placementsOverlap(o, g))) {
+        placed = true;
+        break;
+      }
+    }
+    if (placed) out.push(g);
   }
   return out;
 }

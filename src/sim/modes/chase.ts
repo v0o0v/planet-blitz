@@ -40,8 +40,23 @@ import { DT } from '../constants.js';
 export const CHASE_VISION_RADIUS = 1400;
 /** 포식자 초기 스폰 위치(플레이어 시작 0,0 대비 위쪽 offset). chasePredatorPursue 가 곧 플레이어 실좌표로 당긴다. TODO(밸런스). */
 export const CHASE_PREDATOR_SPAWN_OFFSET = 1200;
-/** 무적 포식자 추격 속도(월드 유닛/초). 취약화 전 플레이어 실좌표로 수렴 — 정지·저속 플레이어는 접촉 즉사(도주 긴장). TODO(밸런스). */
+/** 무적 포식자 추격 속도(월드 유닛/초). 접근 하한 링까지만 수렴한다({@link CHASE_PREDATOR_STANDOFF}). TODO(밸런스). */
 export const CHASE_PREDATOR_SPEED = 540;
+/**
+ * 무적 포식자의 **접근 하한**(월드 유닛). 포식자는 플레이어를 끝없이 쫓되 이 거리 안쪽으로는
+ * 스스로 들어오지 않는다 — 멀면 다가오고, 가까우면 물러난다.
+ *
+ * ## 왜 하한이 필요한가
+ * 원래는 플레이어 실좌표로 그냥 수렴했다(하한 0). 포식자 속도 540 u/s 는 플레이어 기본
+ * 720 u/s 보다 느리지만, 적을 쏘거나 반격 장치를 깨느라 **잠깐만 서 있어도** 접촉 판정 안으로
+ * 들어와 무적 포식자 접촉 = 회피 불가 즉사가 성립했다. 플레이 결과는 "니플헤임이 손도 못 대게
+ * 어렵다"였다(사용자 신고 2026-07-27). 하한을 두면 압박은 **시야·시간·반격 장치**로 남고,
+ * 즉사는 플레이어가 스스로 링 안으로 들어갔을 때만 일어난다(회피 가능 = 학습 가능).
+ *
+ * 값은 화면 반폭보다 크게 잡아, 정상적으로 도망 다니는 동안에는 포식자가 화면 가장자리 밖
+ * 그림자로 남게 한다. TODO(밸런스): 출시 전 튜닝.
+ */
+export const CHASE_PREDATOR_STANDOFF = 900;
 /** 반격 장치 수(전부 파괴 = 포식자 취약화 조건). TODO(밸런스). */
 export const CHASE_COUNTER_DEVICE_COUNT = 5;
 /** 반격 장치 HP(아군탄이 깎아 파괴). TODO(밸런스). */
@@ -164,19 +179,31 @@ export function updateChasePredator(state: WorldState): void {
 
 /**
  * 취약화 전(aux0===0) 무적 포식자의 추격 이동 한 틱(boss.ts `updateBoss` 배선). 공용 `moveBoss` 의
- * 머리 위 hover 오프셋(`player.y − VIEW_HEIGHT*0.28`)을 쓰지 않고 **플레이어 실좌표로 직접 수렴**한다
- * — 정지하거나 느린 플레이어는 결국 접촉 판정 안으로 들어와 즉사하므로 "끝없이 추격·회피 불가 즉사"
- * (ADR §2.4)가 조직적으로 성립한다(리뷰 MED — 시그니처 메커닉 발현). 취약화(aux0===1) 후엔 boss.ts 가
- * 일반 `moveBoss`(hover + 패턴 보스전)로 되돌린다. 속도는 플레이스홀더 — TODO(밸런스). 순수·결정론
- * (RNG·wall-clock 없음, `clamp`/`atan2` 는 moveBoss 와 동일 정수-안전 프리미티브).
+ * 머리 위 hover 오프셋(`player.y − VIEW_HEIGHT*0.28`)을 쓰지 않고 **플레이어를 중심으로 한 접근 하한
+ * 링**({@link CHASE_PREDATOR_STANDOFF})으로 수렴한다 — 플레이어가 어디로 도망가든 따라붙지만 링
+ * 안쪽으로는 스스로 들어오지 않는다(멀면 접근, 가까우면 후퇴).
+ *
+ * ## 왜 실좌표 수렴이 아닌가
+ * 예전에는 플레이어 실좌표로 직접 수렴해, 반격 장치를 깨느라 잠깐 서 있기만 해도 무적 포식자가
+ * 겹쳐 즉사했다(사용자 신고 2026-07-27 "덥쳐서 게임이 너무 어려움"). 링 수렴은 위협의 **지속**은
+ * 그대로 두고 즉사를 **플레이어가 링 안으로 들어간 경우**로 한정한다.
+ *
+ * 취약화(aux0===1) 후엔 boss.ts 가 일반 `moveBoss`(hover + 패턴 보스전)로 되돌린다. 순수·결정론
+ * (RNG·wall-clock 없음, `clamp`/`atan2`/`cos`/`sin` 은 moveBoss 와 동일 정수-안전 프리미티브).
  */
 export function chasePredatorPursue(boss: Entity, player: Entity): void {
   const stepMax = CHASE_PREDATOR_SPEED * DT;
-  const dx = player.x - boss.x;
-  const dy = player.y - boss.y;
-  boss.x += clamp(dx, -stepMax, stepMax);
-  boss.y += clamp(dy, -stepMax, stepMax);
-  boss.angle = atan2(dy, dx);
+  // 플레이어 → 포식자 방향의 링 위 지점이 목표다. 포식자가 플레이어와 정확히 겹쳐 있으면
+  // atan2(0,0)=0 이라 +X 쪽으로 밀려나 링을 회복한다(0 나눗셈·NaN 없음).
+  const outX = boss.x - player.x;
+  const outY = boss.y - player.y;
+  const outAngle = atan2(outY, outX);
+  const targetX = player.x + cos(outAngle) * CHASE_PREDATOR_STANDOFF;
+  const targetY = player.y + sin(outAngle) * CHASE_PREDATOR_STANDOFF;
+  boss.x += clamp(targetX - boss.x, -stepMax, stepMax);
+  boss.y += clamp(targetY - boss.y, -stepMax, stepMax);
+  // 바라보는 방향은 여전히 플레이어다(위협 표현 · 렌더 각도).
+  boss.angle = atan2(player.y - boss.y, player.x - boss.x);
 }
 
 /**

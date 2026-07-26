@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createWorld, stepWorld } from '../src/sim/world.js';
 import type { WorldState } from '../src/sim/world.js';
-import { chunkPlacements, CHUNK_SIZE } from '../src/sim/chunks.js';
+import { chunkPlacements, placementsOverlap, CHUNK_SIZE } from '../src/sim/chunks.js';
 import type { GimmickPlacement } from '../src/sim/chunks.js';
 import type { Entity } from '../src/sim/entities.js';
 import { runReplay } from '../src/sim/replay.js';
@@ -191,6 +191,59 @@ describe('chunk placement determinism (plan E, AC3)', () => {
     for (const k of ['magnetEmitter', 'bombDevice', 'turretPickup']) {
       expect(share(k), `${k} 비율`).toBeGreaterThan(7);
       expect(share(k), `${k} 비율`).toBeLessThan(13);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 겹침 금지 (사용자 신고 2026-07-27: "벽이 겹쳐서 나올 때가 있음")
+// ---------------------------------------------------------------------------
+
+describe('청크 기믹은 서로 겹치지 않는다', () => {
+  it('넓은 좌표 표본에서 같은 청크 안 배치가 하나도 겹치지 않는다', () => {
+    const w = createWorld(0x51ee);
+    let checked = 0;
+    let placements = 0;
+    for (let cx = -12; cx <= 12; cx++) {
+      for (let cy = -12; cy <= 12; cy++) {
+        const gs = chunkPlacements(w.worldRng, cx, cy);
+        placements += gs.length;
+        for (let i = 0; i < gs.length; i++) {
+          for (let j = i + 1; j < gs.length; j++) {
+            checked++;
+            const a = gs[i] as GimmickPlacement;
+            const b = gs[j] as GimmickPlacement;
+            expect(
+              placementsOverlap(a, b),
+              `청크(${cx},${cy})의 ${a.kind}@${a.x},${a.y} 와 ${b.kind}@${b.x},${b.y} 가 겹친다`,
+            ).toBe(false);
+          }
+        }
+      }
+    }
+    // 표본이 비어 있으면 위 단언이 공회전한다 — 실제로 배치와 쌍이 존재했음을 못박는다.
+    expect(placements).toBeGreaterThan(200);
+    expect(checked).toBeGreaterThan(100);
+  });
+
+  it('청크 경계를 넘는 겹침도 불가능하다(여백 ≥ 최대 반폭)', () => {
+    // PLACE_MARGIN(170) > WALL_HALF_MAX(150) 이라 모든 배치는 자기 청크 안에 완전히 들어간다.
+    // 이 불변식이 깨지면 이웃 청크끼리 겹칠 수 있고, 청크 RNG 는 서로를 볼 수 없어 거절 표집으로도
+    // 막을 수 없다. 그래서 좌표 범위 자체를 단언한다.
+    const w = createWorld(0x51ee);
+    for (let cx = -6; cx <= 6; cx++) {
+      for (let cy = -6; cy <= 6; cy++) {
+        for (const g of chunkPlacements(w.worldRng, cx, cy)) {
+          const halfW = g.radius;
+          const halfH = g.kind === 'wall' ? g.halfH : g.radius;
+          const loX = cx * CHUNK_SIZE;
+          const loY = cy * CHUNK_SIZE;
+          expect(g.x - halfW).toBeGreaterThanOrEqual(loX);
+          expect(g.x + halfW).toBeLessThanOrEqual(loX + CHUNK_SIZE);
+          expect(g.y - halfH).toBeGreaterThanOrEqual(loY);
+          expect(g.y + halfH).toBeLessThanOrEqual(loY + CHUNK_SIZE);
+        }
+      }
     }
   });
 });

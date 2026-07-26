@@ -315,11 +315,56 @@ describe('오염 — 정규경로 통합(배선 실도달)', () => {
   it('(g) 임계 오염 셀 초과 시 gameOver 가 선다(hp 사망 아님)', () => {
     const w = createWorld(13, durableContamination());
     w.weapon.damage = 0; // 노드를 살려 확산이 임계까지 쌓이게 한다.
-    for (let i = 0; i < 400 && !w.gameOver; i++) stepContam(w);
+    // 임계 도달까지 필요한 확산 틱 수를 **상수에서 파생**한다(하드코딩 금지 — 케이던스를
+    // 바꾸면 이 루프도 함께 따라와야 한다).
+    const spreadsToCritical = Math.ceil(CONTAMINATION_CRITICAL_CELLS / CONTAMINATION_NODE_COUNT);
+    const budget = (spreadsToCritical + 1) * CONTAMINATION_SPREAD_INTERVAL;
+    for (let i = 0; i < budget && !w.gameOver; i++) stepContam(w);
     expect(w.gameOver).toBe(true);
     expect(contaminationCritical(w)).toBe(true);
     // hp 사망이 아니라 임계 오염 실패임을 못박는다(durableHP 라 hp 는 아직 크다).
     expect((w.entities[0] as Entity).hp).toBeGreaterThan(0);
+  });
+
+  it('(g2) 시작 직후에는 절대 실패하지 않는다 — "톡사르는 5초 안에 무조건 진다" 회귀 가드', () => {
+    // 사용자 신고 2026-07-27. 확산 케이던스가 30틱(0.5초)이라 노드 10개가 **틱 120(2.0초)에**
+    // 임계 50셀을 넘겼다 — 노드 하나 깨는 데 실측 약 1.2초가 걸리므로 개입 자체가 불가능했다.
+    // 게이트가 열리기 전에 최소한 이만큼은 손댈 시간이 있어야 한다.
+    const MIN_GRACE_TICKS = 5 * 60;
+    const w = createWorld(13, durableContamination());
+    w.weapon.damage = 0; // 최악의 경우(노드 10개 전부 생존)로 확산 최대 속도를 준다.
+    for (let i = 0; i < MIN_GRACE_TICKS; i++) {
+      stepContam(w);
+      expect(w.gameOver, `틱 ${w.tick} 에 이미 실패했다(개입 여지 없음)`).toBe(false);
+    }
+  });
+
+  it('(g3) 노드를 충분히 정화하면 임계가 구조적으로 닫힌다(남은 확산 예산 < 임계)', () => {
+    // 확산 총량의 상한 = 살아있는 노드 수 × 노드당 예산. 이 값이 임계 아래로 떨어지면 이후
+    // 무엇을 하든 실패할 수 없다 — "정화가 확산을 앞질렀다" 가 수치로 성립하는지 본다.
+    const killed = Math.ceil(
+      (CONTAMINATION_NODE_COUNT * CONTAMINATION_NODE_MAX_CELLS - CONTAMINATION_CRITICAL_CELLS + 1) /
+        CONTAMINATION_NODE_MAX_CELLS,
+    );
+    expect(killed, '노드를 절반 넘게 깨야 겨우 닫히면 게이트가 너무 가혹하다').toBeLessThanOrEqual(
+      CONTAMINATION_NODE_COUNT / 2,
+    );
+    const w = createWorld(13, durableContamination());
+    // 정화(파괴)를 직접 표현한다 — 이 테스트가 보는 것은 확산 예산 산술이지 사격 경로가 아니다.
+    let done = 0;
+    for (const e of w.entities) {
+      if (done >= killed) break;
+      if (isContaminationNode(e) && !e.dead) {
+        e.dead = true;
+        done++;
+      }
+    }
+    w.weapon.damage = 0;
+    for (let i = 0; i < CONTAMINATION_SPREAD_INTERVAL * (CONTAMINATION_NODE_MAX_CELLS + 2); i++) {
+      stepContam(w);
+    }
+    expect(contaminationCritical(w), '남은 예산이 임계 아래인데도 실패가 섰다').toBe(false);
+    expect(w.gameOver).toBe(false);
   });
 
   it('(h) 필드에서 컬 반경 밖으로 도망가도 노드가 컬링되지 않아 정화율이 0을 유지한다 — 도망 exploit 회귀 가드(리뷰 CRITICAL)', () => {

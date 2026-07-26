@@ -41,15 +41,26 @@ import {
 const OFFSET_WIN: ScrollWindow = { scrollX: 5000, scrollY: -3000 };
 const ORIGIN_WIN: ScrollWindow = { scrollX: 0, scrollY: 0 };
 
-/** phase 무관 앵커 대상(정책 표 정본). turretPickup 은 phase 로 갈리므로 여기 없다. */
-const ALWAYS_ANCHORED: readonly EntityKind[] = [
-  'player',
-  'gem',
-  'loot',
-  'supply',
-  'echo',
-  'encounterPortal',
-  'encounterAltar',
+/**
+ * WORLD 축 정본 — **월드에 깔린 지형·구조물**(2026-07-27 정책 개정). 창이 지나가며 흘려보내는
+ * 것은 이것들뿐이고, 살아 움직이는 실체(플레이어·적·보스·탄·편대·드론·회수물)는 전부 ANCHOR 다.
+ * `turretPickup` 만 이중 정책(미활성=지형, 활성=아군 실체)이라 아래 별도 테스트로 다룬다.
+ */
+const WORLD_KINDS: readonly EntityKind[] = [
+  'wall',
+  'destructible',
+  'hazard',
+  'magnetEmitter',
+  'bombDevice',
+  'boostPad',
+  'shelter',
+  'core',
+  'decoyCore',
+  'facilityGun',
+  'facilityHazard',
+  'facilitySpawner',
+  'prop',
+  'turretPickup', // phase 0(미활성 픽업) 기준. 활성(phase 1)은 ANCHOR — 아래 테스트.
 ];
 
 /** 창 중심에 놓인 kind 엔티티(앵커가 실제로 도는 위치). */
@@ -61,24 +72,24 @@ function at(kind: EntityKind, win: ScrollWindow, dx = 0, dy = 0): Entity {
 }
 
 describe('scrollAnchored — 정책 표(KIND_CODE 전건 순회)', () => {
-  it('앵커 대상은 정확히 7종 + 활성 turretPickup 이고, 나머지 전부 WORLD 다', () => {
-    const anchored = new Set<EntityKind>(ALWAYS_ANCHORED);
+  it('WORLD 는 지형·구조물뿐이고 나머지 kind 는 전부 ANCHOR 다', () => {
+    const world = new Set<EntityKind>(WORLD_KINDS);
     const kinds = Object.keys(KIND_CODE) as EntityKind[];
     // 정책 표가 실제 kind 카탈로그를 덮고 있다는 최소 확인(오타로 순회가 비어도 통과하지 않게).
-    expect(kinds.length).toBeGreaterThan(ALWAYS_ANCHORED.length);
+    expect(kinds.length).toBeGreaterThan(WORLD_KINDS.length);
     for (const kind of kinds) {
-      const e = blankEntity(kind); // phase = 0 (turretPickup 은 미활성 픽업 = 지형).
-      if (anchored.has(kind)) {
-        expect(scrollAnchored(e), `${kind} 는 ANCHOR 여야 한다`).toBe(true);
+      const e = blankEntity(kind);
+      if (world.has(kind)) {
+        expect(scrollAnchored(e), `${kind} 는 WORLD 여야 한다`).toBe(false);
       } else {
-        // 여기가 깨지면 새 kind 가 추가된 것이다. ANCHOR/WORLD 를 의식적으로 분류하고
-        // ALWAYS_ANCHORED(또는 이중 정책 케이스)에 반영해라.
-        expect(scrollAnchored(e), `${kind} 는 WORLD 여야 한다(신규 kind면 분류하라)`).toBe(false);
+        // 여기가 깨지면 새 kind 가 WORLD 로 분류된 것이다. 지형(창이 흘려보내는 것)이 아니라면
+        // ANCHOR 여야 한다 — 적·탄·해저드가 창 뒤로 쓸려 나가면 교전이 끊긴다.
+        expect(scrollAnchored(e), `${kind} 는 ANCHOR 여야 한다`).toBe(true);
       }
     }
   });
 
-  it('turretPickup 은 이중 정책이다 — phase 0=WORLD(지형), phase 1=ANCHOR(활성 포탑)', () => {
+  it('turretPickup 은 이중 정책이다 — phase 0=WORLD(지형), phase 1=ANCHOR(아군 포탑)', () => {
     const inactive = blankEntity('turretPickup');
     inactive.phase = 0;
     expect(scrollAnchored(inactive)).toBe(false);
@@ -93,8 +104,7 @@ describe('anchorPercentFor — 플레이어만 부분 앵커', () => {
     expect(PLAYER_ANCHOR_PERCENT).toBe(70);
     expect(FULL_ANCHOR_PERCENT).toBe(100);
     expect(anchorPercentFor(blankEntity('player'))).toBe(PLAYER_ANCHOR_PERCENT);
-    for (const kind of ALWAYS_ANCHORED) {
-      if (kind === 'player') continue;
+    for (const kind of ['gem', 'loot', 'supply', 'enemy', 'boss', 'bullet'] as EntityKind[]) {
       expect(anchorPercentFor(blankEntity(kind)), kind).toBe(FULL_ANCHOR_PERCENT);
     }
     const turret = blankEntity('turretPickup');
@@ -177,13 +187,18 @@ describe('applyScrollAnchor — 적용 게이트', () => {
     expect(far.y).toBe(-2400); // 월드 고정 — 창이 따라잡아야 회수 가능해진다.
   });
 
-  it('WORLD 대상은 창 안에 있어도 불변이다(적·보스·탄·벽·부스트패드)', () => {
-    const worldKinds: EntityKind[] = ['enemy', 'boss', 'bullet', 'wall', 'boostPad'];
-    const list = worldKinds.map((k) => at(k, OFFSET_WIN, 100, -50));
-    applyScrollAnchor(list, OFFSET_WIN, 24, -24);
-    for (const e of list) {
-      expect(e.x, `${e.kind}.x`).toBe(OFFSET_WIN.scrollX + 100);
-      expect(e.y, `${e.kind}.y`).toBe(OFFSET_WIN.scrollY - 50);
+  it('WORLD(지형)는 창 안에 있어도 불변이고, 살아 움직이는 실체는 창을 따라간다', () => {
+    const wall = at('wall', OFFSET_WIN, 100, -50);
+    const movers = (['enemy', 'boss', 'bullet', 'enemyBullet', 'formation', 'guardian'] as EntityKind[]).map(
+      (k) => at(k, OFFSET_WIN, 100, -50),
+    );
+    applyScrollAnchor([wall, ...movers], OFFSET_WIN, 24, -24);
+    // 벽만 월드 고정 — 창이 지나가며 뒤로 흘려보내는 유일한 축이다.
+    expect(wall.x).toBe(OFFSET_WIN.scrollX + 100);
+    expect(wall.y).toBe(OFFSET_WIN.scrollY - 50);
+    for (const e of movers) {
+      expect(e.x, `${e.kind}.x`).toBe(OFFSET_WIN.scrollX + 100 + 24);
+      expect(e.y, `${e.kind}.y`).toBe(OFFSET_WIN.scrollY - 50 - 24);
     }
   });
 
@@ -202,7 +217,7 @@ describe('applyScrollAnchor — 적용 게이트', () => {
       at('player', OFFSET_WIN, 5, 5),
       at('gem', OFFSET_WIN, -5, 5),
       at('loot', OFFSET_WIN, 5, -5),
-      at('enemy', OFFSET_WIN),
+      at('wall', OFFSET_WIN),
     ];
     const before = list.map((e) => [e.x, e.y] as const);
     applyScrollAnchor(list, OFFSET_WIN, 0, 0);

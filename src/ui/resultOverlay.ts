@@ -16,6 +16,7 @@
 
 import { t } from '../i18n/index.js';
 import { slotLabel, weaponKindLabel } from './itemNames.js';
+import { bossName } from './bossLabels.js';
 import type { Item, Rarity, SlotKind } from '../items/types.js';
 
 /** 정산 화면에 표시할 획득 장비 1개(표시 전용 요약). */
@@ -61,6 +62,12 @@ export interface ResultState {
   resources: number;
   level: number;
   timeSec: number;
+  /**
+   * 이 런의 행성 인덱스. 승리 문구가 **격파한 보스 이름**을 여기서 파생한다 — 예전에는
+   * 카르곤 보스가 문구에 박혀 있어 어느 행성을 정복해도 "용암 요새 전차" 였다
+   * (사용자 신고 2026-07-27, HUD 체력바 머리글과 같은 뿌리).
+   */
+  planet?: number;
   /** Present once the run has been settled into the profile (M2). */
   settlement?: SettlementSummary;
 }
@@ -157,7 +164,9 @@ export class ResultOverlay {
 
     const sub = document.createElement('div');
     sub.className = 'pb-sub';
-    sub.textContent = s.victory ? t('result.win.sub') : t('result.lose.sub');
+    sub.textContent = s.victory
+      ? t('result.win.sub', { name: bossName(s.planet) })
+      : t('result.lose.sub');
     this.root.appendChild(sub);
 
     const min = Math.floor(s.timeSec / 60);

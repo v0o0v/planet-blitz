@@ -74,28 +74,53 @@ export const FULL_ANCHOR_PERCENT = 100;
 /**
  * 이 엔티티가 ANCHOR 축인가(창과 함께 흘러간다). false 면 WORLD 축(월드 고정).
  *
- * ANCHOR = 플레이어 + 플레이어가 회수해야 하는 것들(젬·전리품·보급·에코·조우 오브젝트 2종)
- * + **활성 포탑**. 미활성 turretPickup 은 맵에 깔린 지형이라 WORLD 다.
- * 그 외 전부 WORLD — 적·보스·탄 2종·wall·boostPad·hazard·destructible·core·decoyCore·
- * guardian·shelter·침공 8종.
+ * ## 정책(2026-07-27 개정): **월드에 깔린 지형·구조물만 WORLD, 살아 움직이는 것은 전부 ANCHOR**
+ * 사용자 지시는 "강제 스크롤 되는 곳에서는 **벽 빼고는 다** 강제 스크롤 안되게" 였다. 취지는
+ * 적·탄처럼 **교전 상대가 플레이어 의지와 무관하게 창 뒤로 쓸려 사라지는 것**을 없애는 것이고,
+ * 그 취지대로 적·보스·탄 2종·적 공격 해저드·편대·드론이 이제 창과 함께 간다.
  *
- * 활성 포탑 판정은 `src/sim/events.ts` 의 `isActiveTurret` 과 동일하지만, scrollMode →
- * events 순환을 피하려고 여기서 kind+phase 를 직접 본다(그 함수를 import 하지 않는다).
+ * 다만 "벽만" 을 **문자 그대로** 적용하면 월드가 고장난다(실측):
+ *  - 청크 기믹(파괴체·영구 지형 해저드·자석·폭탄·미활성 포탑 픽업)의 **컬링은 엔티티 위치에서
+ *    청크를 역산**한다(`world.ts` activateChunks). 이것들이 창을 따라오면 영영 컬 반경 밖으로
+ *    나가지 않아 `MAX_ACTIVE_GIMMICKS`(48) 가 포화되고, 그러면 **새 청크 생성이 지연돼 지형이
+ *    더 이상 나오지 않는다**. 블록격파 실측에서 벽 도착이 120틱 → 175틱 이후로 밀렸다.
+ *  - 침공 설비·코어(기지 구조물)와 레이싱 부스트 패드·추격 대피소는 **통과해야 하는 코스**다.
+ *    창을 따라오면 기지가 플레이어를 쫓아다니고 부스트 패드가 영구 가속이 된다.
+ * 그래서 WORLD 는 "벽" 이 아니라 **"월드에 깔린 지형·구조물"** 로 읽는다 — 화면에서 벽과 똑같이
+ * 지나가는 것들이고, 사용자가 겪던 증상(교전 상대가 쓸려 나감)은 그대로 해소된다.
+ *
+ * 예전 정책은 그 반대에 가까웠다 — 플레이어·회수물·활성 포탑만 ANCHOR 였고 **적·보스·탄이
+ * 전부 WORLD** 라 교전 중이던 무리가 창 뒤로 흘러가 `cullScrollEnemies` 에 정리됐다.
+ *
+ * 적용 범위는 PvE 강제 스크롤(블록격파·레이싱)과 **침공 3레이어 모두**다(사용자 확인). 침공
+ * 해시가 바뀌므로 골든 재녹화 + `verify-invasion` EF 재배포를 동반해야 한다.
  */
 export function scrollAnchored(e: Entity): boolean {
   switch (e.kind) {
-    case 'player':
-    case 'gem':
-    case 'loot':
-    case 'supply':
-    case 'echo':
-    case 'encounterPortal':
-    case 'encounterAltar':
-      return true;
-    case 'turretPickup':
-      return e.phase === 1; // 1 = 활성 포탑(0 = 미활성 픽업 = 지형)
-    default:
+    // ── WORLD: 월드에 깔린 지형·구조물(창이 지나가며 흘려보낸다) ──────────────
+    case 'wall':
+    case 'destructible':
+    case 'magnetEmitter':
+    case 'bombDevice':
+    case 'boostPad':
+    case 'shelter':
+    case 'core':
+    case 'decoyCore':
+    case 'facilityGun':
+    case 'facilityHazard':
+    case 'facilitySpawner':
+    case 'prop':
       return false;
+    // 해저드는 **월드 좌표에 깔리는 장판**이다(지형 해저드든 적이 깐 박격포 자국이든). 앵커하면
+    // 장판이 플레이어를 따라다녀 회피가 성립하지 않는다 — 탄처럼 스스로 움직이는 실체가 아니다.
+    case 'hazard':
+      return false;
+    case 'turretPickup':
+      // 활성 포탑은 플레이어가 세운 아군 실체라 함께 간다. 미활성 픽업은 맵에 깔린 지형이다.
+      return e.phase === 1;
+    // ── ANCHOR: 그 외 전부(플레이어·회수물·적·보스·탄·편대·드론·수호기 등) ────
+    default:
+      return true;
   }
 }
 

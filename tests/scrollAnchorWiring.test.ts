@@ -142,7 +142,13 @@ describe('창 뒤 경계 탈출 — 사용자 보고 버그의 직접 회귀', (
     for (const d of diffs(fwdRel).slice(0, CLEAN_TICKS)) expect(d).toBeGreaterThan(0);
     const fwdBest = Math.max(...fwdRel);
     expect(fwdBest).toBeGreaterThanOrEqual(rear + 300);
-    expect(fwdRel[fwdRel.length - 1]!).toBeGreaterThan(rear);
+    // ⚠️ "마지막 표본이 뒤 경계보다 앞" 은 **못 쓴다**(2026-07-27 앵커 정책 개정). 전방 입력으로
+    // 나아가다 코스 벽에 막히면 그 동안 창이 계속 전진하므로 다시 뒤 경계까지 밀린다 — 어느
+    // 틱에 막히느냐는 그 시드의 벽 배치가 정하는 우연이고, 이 테스트가 지키는 계약(뒤 경계에
+    // 붙어도 전방 입력으로 빠져나올 수 있다)과 무관하다. 그래서 **관측 구간의 대부분을 경계보다
+    // 앞에서 보냈는가**로 단언한다(막히기 전까지 실제로 전진했다는 뜻).
+    const aheadTicks = fwdRel.filter((v) => v > rear).length;
+    expect(aheadTicks).toBeGreaterThan(fwdRel.length / 2);
 
     const parked = createWorld(4242, racingConfig());
     playerOf(parked).x = parked.scrollRuntime!.scrollX + rear;

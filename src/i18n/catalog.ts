@@ -44,7 +44,19 @@ export const EN = {
   // --- 정산 화면(C2) ---
   'result.win.title': 'Planet Conquered',
   'result.lose.title': 'Shot Down…',
-  'result.win.sub': 'The lava fortress tank is destroyed.',
+  'result.win.sub': '{name} destroyed.',
+
+  // --- 행성 보스 표시명 (HUD 체력바 머리글 · 승리 문구) ---
+  // ⚠️ 한 곳에 카르곤 보스를 하드코딩하면 어느 행성을 돌아도 카르곤이 뜬다 — 실제로 그랬다
+  //     (사용자 신고 2026-07-27). 키는 `BossDef.id` 를 그대로 쓴다(데이터 ↔ 표시 1:1).
+  'boss.kargon-lava-fortress': 'Lava Fortress Tank',
+  'boss.berdan-swarm-queen': 'Swarm Queen',
+  'boss.niflheim-ghost-flagship': 'Ghost Flagship',
+  'boss.arke-guardian-obelisk': 'Guardian Obelisk',
+  'boss.toxar-rot-matriarch': 'Rot Matriarch',
+  'boss.kras-siege-colossus': 'Siege Colossus',
+  /** 보스 체력바 머리글 = 행성 · 보스. */
+  'boss.hudName': '{planet} · {boss}',
   'result.lose.sub': 'The pilot ejected safely. Time to sortie again.',
   'result.stat.title': 'Battle Log',
   'result.stat.time': 'Survival Time',
@@ -1432,7 +1444,17 @@ export const KO: Record<MessageKey, string> = {
 
   'result.win.title': '행성 정복',
   'result.lose.title': '격추당했다…',
-  'result.win.sub': '용암 요새 전차를 격파했다.',
+  // 조사(을/를)는 앞 글자 받침에 따라 갈리는데 `{name}` 이 데이터라 고를 수 없다 — 명사구로 끝낸다.
+  'result.win.sub': '{name} 격파 완료.',
+
+  // --- 행성 보스 표시명 (HUD 체력바 머리글 · 승리 문구) ---
+  'boss.kargon-lava-fortress': '용암 요새 전차',
+  'boss.berdan-swarm-queen': '군체 여왕',
+  'boss.niflheim-ghost-flagship': '유령 기함',
+  'boss.arke-guardian-obelisk': '수호 오벨리스크',
+  'boss.toxar-rot-matriarch': '부패의 모체',
+  'boss.kras-siege-colossus': '공성 콜로서스',
+  'boss.hudName': '{planet} · {boss}',
   'result.lose.sub': '파일럿은 무사히 사출했다. 다시 출격하자.',
   'result.stat.title': '전투 기록',
   'result.stat.time': '생존 시간',

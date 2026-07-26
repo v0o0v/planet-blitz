@@ -41,6 +41,8 @@ import {
   CHASE_COUNTER_DEVICE_COUNT,
   CHASE_SHELTER_COUNT,
   CHASE_VISION_RADIUS,
+  CHASE_PREDATOR_SPEED,
+  CHASE_PREDATOR_STANDOFF,
   COUNTER_DEVICE_MARK,
 } from '../src/sim/modes/chase.js';
 
@@ -306,25 +308,49 @@ describe('추격 — 정규경로 full-path 통합(니플헤임=chase)', () => {
     expect(cfg.planetMode).toBe(PLANET_MODE.chase);
   });
 
-  it('(h) 무적 포식자가 hover 오프셋이 아니라 플레이어 실좌표로 수렴한다 — 정지 플레이어는 접촉 즉사(리뷰 MED-1)', () => {
-    // 수정 전엔 포식자가 공용 moveBoss 로 머리 위 302유닛 hover 를 유지해, 정지·도주 플레이어에게
-    // 접촉이 **구조적으로 절대 발생하지 않았다**(도주 긴장 부재). 이제 취약화 전(aux0=0) 포식자는
-    // chasePredatorPursue 로 플레이어 실좌표에 수렴하므로, 가만히 선 플레이어는 결국 접촉 즉사한다.
+  it('(h) 무적 포식자는 접근 하한 링을 지킨다 — 정지 플레이어를 덮치지 않는다(사용자 신고 2026-07-27)', () => {
+    // 이력: ① 최초에는 공용 moveBoss 의 머리 위 hover 라 접촉이 **구조적으로 불가능**했고,
+    //       ② 그 반작용으로 플레이어 실좌표에 직접 수렴시켰더니 잠깐만 서 있어도 무적 포식자가
+    //          겹쳐 즉사해 "손도 못 대게 어렵다" 는 신고가 나왔다.
+    // 지금은 플레이어 중심 CHASE_PREDATOR_STANDOFF 링으로 수렴한다 — 따라붙되 덮치지 않는다.
     const w = createWorld(13, chaseConfig());
     w.weapon.damage = 0; // 반격 장치 파괴 배제 → 포식자 무적(aux0=0) 유지(무노력 취약화 없음)
     const player = w.entities[0] as Entity;
     const predator = predatorOf(w) as Entity;
     expect(predator.aux0).toBe(0);
-    // 원점에서 떨어진 곳에 플레이어를 매 틱 "정지" 고정한다. hover 라면 절대 못 닿지만 실좌표
-    // 수렴이면 포식자가 다가와 접촉 판정 안으로 들어온다.
+    // 원점에서 떨어진 곳에 플레이어를 매 틱 "정지" 고정한다. 실좌표 수렴이면 여기서 즉사했다.
+    let minDist = Number.POSITIVE_INFINITY;
     for (let i = 0; i < 800 && !w.gameOver; i++) {
       player.x = 600;
       player.y = 0;
       stepChase(w);
+      const p = predatorOf(w);
+      if (p !== undefined) {
+        minDist = Math.min(minDist, Math.hypot(p.x - player.x, p.y - player.y));
+      }
     }
-    // 무적 유지(도중에 취약화되지 않았다) + 포식자 실좌표 수렴으로 접촉 즉사.
-    expect(chaseAliveCounterDevices(w)).toBe(CHASE_COUNTER_DEVICE_COUNT);
-    expect(w.gameOver).toBe(true);
+    expect(chaseAliveCounterDevices(w)).toBe(CHASE_COUNTER_DEVICE_COUNT); // 무적 유지
+    expect(w.gameOver, '정지해 있다고 덮쳐 죽으면 안 된다').toBe(false);
+    // 링 안쪽으로 들어오지 않는다(한 틱 이동량만큼의 오버슈트만 허용).
+    const overshoot = CHASE_PREDATOR_SPEED / 60;
+    expect(minDist).toBeGreaterThan(CHASE_PREDATOR_STANDOFF - overshoot * 2);
+  });
+
+  it('(h2) 멀리 도망쳐도 포식자가 링까지 따라붙는다(위협 지속 — 배경이 되지 않는다)', () => {
+    const w = createWorld(13, chaseConfig());
+    w.weapon.damage = 0;
+    const player = w.entities[0] as Entity;
+    // 링보다 훨씬 먼 곳에 정지 고정 → 포식자가 접근해 링 근방까지 좁혀야 한다.
+    for (let i = 0; i < 600 && !w.gameOver; i++) {
+      player.x = 6000;
+      player.y = 0;
+      stepChase(w);
+    }
+    const p = predatorOf(w) as Entity;
+    expect(p).toBeDefined();
+    const dist = Math.hypot(p.x - player.x, p.y - player.y);
+    // 하한 링 근방으로 수렴(추격은 계속된다). 상한은 링 + 한 틱 여유.
+    expect(dist).toBeLessThan(CHASE_PREDATOR_STANDOFF + CHASE_PREDATOR_SPEED / 60 + 1);
   });
 });
 
