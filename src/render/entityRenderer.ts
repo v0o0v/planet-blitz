@@ -12,12 +12,27 @@
  * so they are drawn into a Graphics overlay from the current snapshot each frame.
  */
 
-import { Container, Graphics, Sprite, type Texture, type Filter } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, type Texture, type Filter } from 'pixi.js';
 import type { WorldSnapshot, EntitySnapshot } from '../sim/snapshot.js';
 import type { EntityKind } from '../sim/entities.js';
 import type { PlaceholderTextures } from './textures.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from './app.js';
 import { shipFacing } from './shipFacing.js';
+// 아군·이익 오브젝트 표시 규약(크기 상한·이름표·포탑 조준, 2026-07-26 사용자 피드백).
+// 전부 render-only 순수 함수 — 스냅샷만 읽는다.
+import {
+  displaySize,
+  friendlyLabel,
+  showsTriggerRing,
+  turretAimAngle,
+  TRIGGER_RING_COLOR,
+} from './friendlyDisplay.js';
+// 루프 애니메이션(아군·이익 오브젝트). 프레임 선택은 순수 함수, 프레임 텍스처는 textures 가
+// 스트립에서 잘라 실어 온다. 스트립이 없으면 슬롯이 없어 기존 정지 스프라이트 그대로다.
+import { animatedKindOf, animFrameIndex, phaseForEntity } from './spriteAnimation.js';
+// 포탑 사거리(조준 회전 반경). sim 상수를 재선언하지 않고 그대로 읽는다 — 갈라지면 포신이
+// 사거리 밖 표적을 가리킨다. 값만 읽을 뿐 sim 을 실행하지 않는다.
+import { TURRET_RANGE } from '../sim/events.js';
 import { facilitySpecFor } from '../../data/invasion/facilities.js';
 import { HAZARD_LAVA, HAZARD_MORTAR, HAZARD_SLOW } from '../sim/patterns/types.js';
 // 조우 유형 상수(ADR-0033). `data/encounters.ts` 는 다른 sim 모듈을 import 하지 않는 leaf
@@ -107,6 +122,29 @@ interface TrackedSprite {
    */
   chute: Sprite | null;
   /**
+   * 이름표(아군·이익 오브젝트 아래 표시, 2026-07-26 피드백). 낙하산·히트 플래시와 같은 이유로
+   * 부모 Sprite 의 자식이 아니라 **labelLayer 형제**다(Pixi v8 Sprite.addChild deprecate 회피)
+   * — 부모 destroy 로 안 딸려 오므로 킬·reset·destroy 에서 명시 회수한다. null = 라벨 없는 kind.
+   */
+  label: Text | null;
+  /**
+   * 이름표에 현재 찍혀 있는 문자열. 포탑은 휴면↔활성 전이로 이름이 바뀌므로 매 프레임 비교해
+   * **달라졌을 때만** `Text.text` 를 갱신한다(매 프레임 대입은 텍스트 리빌드를 유발한다).
+   */
+  labelText: string;
+  /**
+   * 활성 포탑이 마지막으로 향한 각도(표적이 없을 때 유지). 플레이어의 `lastPlayerAngle` 과 같은
+   * 규율 — 표적이 사라질 때마다 포신이 0도로 튀지 않게 한다.
+   */
+  aimAngle: number;
+  /**
+   * 루프 애니메이션 프레임(있으면 매 프레임 텍스처를 갈아 끼운다). null = 정지 스프라이트.
+   * 모든 프레임이 같은 치수라 표시 크기(setSize 로 확정)는 교체에도 불변이다.
+   */
+  animFrames: readonly Texture[] | null;
+  /** 이 엔티티의 애니메이션 시작 위상(프레임) — 같은 kind 가 동시에 깜빡이지 않게 흩뜨린다. */
+  animPhase: number;
+  /**
    * 엘리트 여부(스냅샷 `elite >= 0`). 처치 시 화면 흔들림 세기를 고르기 위해 매 프레임 갱신한다
    * (엘리트 처치=TRAUMA_ELITE_KILL). 소멸 시점엔 스냅샷이 없으므로 tracked 에 실어 둔다.
    */
@@ -192,6 +230,8 @@ const NOMINAL_DT = 1 / 60;
 /** Fixed on-screen size (px) of a floor loot glyph — the sim `radius` is the
  *  pickup range (44), far larger than the icon should read. */
 const LOOT_SIZE = 48;
+/** 이름표를 스프라이트 아래로 띄우는 간격(px). placeholder, defer-balance-tuning. */
+const LABEL_GAP = 4;
 /** Rarity → tint for loot (render-only): normal grey, magic blue, rare gold,
  *  unique orange. Indexed by the rarity code carried in `enemyType`. */
 const LOOT_TINT = [0xcfd6e0, 0x5aa0ff, 0xffd24a, 0xff8a2a];
@@ -585,6 +625,11 @@ export class EntityRenderer {
   /** glowLayer.filters 에 블룸이 현재 붙어 있는지 — 게이트 전이 시에만 filters 배열을 재설정하기 위한 상태. */
   private glowBloomAttached = false;
   private readonly spriteLayer = new Container();
+  /**
+   * 이름표 레이어 — 스프라이트 **위**, 이펙트 **아래**. 위에 둬야 겹친 스프라이트에 이름이
+   * 가려지지 않고, 이펙트 아래라 폭발·충격파가 이름표를 덮는 기존 연출 우선순위는 유지된다.
+   */
+  private readonly labelLayer = new Container();
   private readonly effectLayer = new Container();
   /**
    * 살아 있는 파편 폭발(ShardBurst) 목록. 기존 단일 스프라이트 페이드(`effects[]`)를 대체한다
@@ -669,6 +714,11 @@ export class EntityRenderer {
   private encounterType = 0;
   /** 기체가 마지막으로 향한 각도(대상·이동이 없을 때 유지). shipFacing 참조. */
   private lastPlayerAngle = 0;
+  /**
+   * 루프 애니메이션 시계(초). 렌더 프레임 dt 를 누적한 render-only 값 — sim tick 과 무관하다
+   * (배속·일시정지와 독립적으로 아트가 계속 살아 움직인다). reset 에서 0 으로 되돌린다.
+   */
+  private animClock = 0;
 
   constructor(private readonly textures: PlaceholderTextures) {
     // Draw order (bottom → top): lava overlay (시머 대상), hazard/beam overlay, [glow halos],
@@ -692,6 +742,7 @@ export class EntityRenderer {
     this.layer.addChild(this.overlay);
     this.layer.addChild(this.glowLayer);
     this.layer.addChild(this.spriteLayer);
+    this.layer.addChild(this.labelLayer);
     this.layer.addChild(this.effectLayer);
     this.layer.addChild(this.fog);
   }
@@ -837,6 +888,7 @@ export class EntityRenderer {
     this.lastFrameMs = now;
     if (!Number.isFinite(dt) || dt <= 0) dt = NOMINAL_DT;
     else if (dt > MAX_RENDER_DT) dt = MAX_RENDER_DT;
+    this.animClock += dt; // 루프 애니메이션 시계(엔티티 루프가 프레임 인덱스를 뽑는다)
 
     // 이펙트 게이트(티어 × 감소 토글) — 프레임당 1회만 산출해 흔들림·히트 플래시·발광이 공유한다.
     const settings = graphicsSettings.getSettings();
@@ -909,8 +961,29 @@ export class EntityRenderer {
         } else {
           // Real sprites are 64/128px; scale to the sim hitbox so art matches
           // collisions (player r16 → 48px, matching the GDD ship size).
-          const size = e.radius * 2 * ART_SCALE;
+          //
+          // 예외: 아군·이익 오브젝트는 sim radius 가 **트리거 반경**이라 그대로 환산하면 기체의
+          // 몇 배로 부풀어 화면을 덮는다(포탑 픽업 r70 → 210px). displaySize 가 기체 크기(48px)로
+          // 묶는다 — 사라진 반경 정보는 아래 트리거 링이 대신 그린다(friendlyDisplay.ts).
+          const size = displaySize(e.kind, e.radius, ART_SCALE);
           sprite.setSize(size, size);
+        }
+        // 루프 애니메이션 프레임(있으면). 첫 텍스처는 위 `new Sprite(this.textureFor(e))` 가 이미
+        // 정지 스프라이트로 잡아 뒀고, 아래 프레임 진행이 이번 프레임부터 바로 갈아 끼운다.
+        const animSlot = animatedKindOf(e.kind);
+        const animFrames = animSlot === null ? null : (this.textures.anim?.[animSlot] ?? null);
+        // 이름표(아군·이익 오브젝트) — labelLayer 형제로 만든다. 라벨 없는 kind 면 null.
+        // 포탑은 휴면/활성으로 이름이 갈리므로 스냅샷 `active` 를 함께 넘긴다.
+        let label: Text | null = null;
+        const labelText = friendlyLabel(e.kind, e.active);
+        if (labelText !== null) {
+          label = new Text({
+            text: labelText,
+            resolution: 2,
+            style: { fontFamily: 'sans-serif', fontSize: 12, fontWeight: '700', fill: 0xdfe8ff },
+          });
+          label.anchor.set(0.5, 0);
+          this.labelLayer.addChild(label);
         }
         // Supply drop: pin a parachute canopy above the transport when the
         // fx_parachute.png asset is present (render-only; no PNG → unchanged).
@@ -935,6 +1008,11 @@ export class EntityRenderer {
           flashUntilTick: 0,
           flashOverlay: null,
           chute,
+          label,
+          labelText: labelText ?? '',
+          aimAngle: 0,
+          animFrames,
+          animPhase: animFrames === null ? 0 : phaseForEntity(e.id, animFrames.length),
           elite: e.elite >= 0,
           hp: e.hp,
           dmgAccum: 0,
@@ -966,10 +1044,41 @@ export class EntityRenderer {
         playerY = tracked.sprite.y;
         playerR = e.radius;
         hasPlayer = true;
+      } else if (e.kind === 'turretPickup' && e.active) {
+        // 활성 아군 포탑: 포신이 **실제 사격 방향**을 향한다(2026-07-26 피드백). sim 은 조준각을
+        // 저장하지 않으므로(해시 계약 — friendlyDisplay.turretAimAngle 주석) 렌더가 같은 규칙으로
+        // 다시 구한다. 표적이 없으면 직전 각도를 유지해 포신이 0도로 튀지 않게 한다.
+        const aim = turretAimAngle(e.x, e.y, curr.entities, TURRET_RANGE);
+        if (aim !== null) tracked.aimAngle = aim;
+        tracked.sprite.rotation = tracked.aimAngle;
       } else {
         // Gems, boss, supply and the static gimmicks keep a fixed facing; others
         // face their travel/aim angle. 목록은 isFixedFacing 이 정본이다.
         tracked.sprite.rotation = isFixedFacing(e.kind) ? 0 : e.angle;
+      }
+
+      // 루프 애니메이션 프레임 진행(render-only). 프레임 텍스처는 전부 같은 치수라 setSize 로
+      // 확정한 표시 크기는 교체에도 불변이다. 히트 플래시 오버레이는 생성 시점 텍스처에 고정돼
+      // 있지만 창이 2~3프레임뿐이라 눈에 띄지 않는다(의도적 단순화).
+      if (tracked.animFrames !== null) {
+        const idx = animFrameIndex(this.animClock, tracked.animFrames.length, tracked.animPhase);
+        const frame = tracked.animFrames[idx];
+        if (frame !== undefined && tracked.sprite.texture !== frame) tracked.sprite.texture = frame;
+      }
+
+      // 이름표 미러(형제라 부모 변환이 자동 적용되지 않는다) — 스프라이트 **아래**에 수평으로
+      // 붙인다(회전은 따라가지 않는다: 포신이 돌아도 글자는 읽혀야 한다). 포탑처럼 상태로 이름이
+      // 바뀌는 kind 는 달라졌을 때만 텍스트를 교체한다.
+      if (tracked.label !== null) {
+        const next = friendlyLabel(e.kind, e.active);
+        if (next !== null && next !== tracked.labelText) {
+          tracked.labelText = next;
+          tracked.label.text = next;
+        }
+        tracked.label.position.set(
+          tracked.sprite.x,
+          tracked.sprite.y + tracked.sprite.height / 2 + LABEL_GAP,
+        );
       }
 
       // 낙하산 형제 미러(있으면) — 부모 보간 위치를 따라가되 수송체 **위** 고정 오프셋으로 매단다.
@@ -1175,6 +1284,13 @@ export class EntityRenderer {
         if (tracked.chute !== null) {
           this.detachFromSpriteLayer(tracked.chute);
           tracked.chute = null;
+        }
+        // 이름표도 labelLayer 형제라 같은 규율로 회수한다(디졸브 경로 포함 — 사라지는 실체에
+        // 이름만 남으면 안 된다).
+        if (tracked.label !== null) {
+          this.labelLayer.removeChild(tracked.label);
+          tracked.label.destroy();
+          tracked.label = null;
         }
         // 사망 디졸브(AC-3.4) — eventShaders on 이고 전투체(scale>0)면 즉시 destroy 대신 디졸브로
         // 수명을 이관해 스프라이트를 spriteLayer 에 잠깐 잔류시키며 디더 소멸시킨다. 상한 초과분·
@@ -1479,6 +1595,13 @@ export class EntityRenderer {
     for (const b of curr.beams) {
       g.moveTo(b.x1, b.y1).lineTo(b.x2, b.y2).stroke({ color: 0x33ffcc, width: 3, alpha: 0.5 });
     }
+    // 휴면 접촉 기믹(포탑 키트·자석 발신기·폭탄 장치)의 **트리거 반경 링**. 스프라이트를 기체
+    // 크기로 줄이면서(friendlyDisplay.displaySize) 화면에서 사라진 "어디까지 다가가면 켜지는가"를
+    // 얇은 링으로 되돌린다. 활성 포탑에는 그리지 않는다(이미 발동한 실체).
+    for (const e of curr.entities) {
+      if (!showsTriggerRing(e.kind, e.active)) continue;
+      g.circle(e.x, e.y, e.radius).stroke({ color: TRIGGER_RING_COLOR, width: 2, alpha: 0.35 });
+    }
     // Hazard zones: telegraph = outlined warning ring; active = filled danger.
     // 주기 온오프 해저드(L2 설비·L3 중력 앵커)는 이 예열↔활성 대비가 리듬을 읽게 한다.
     // **용암(HAZARD_LAVA)만 lavaOverlay 로 분리** — 시머가 용암류만 국소로 흔들고 예고선·비-용암
@@ -1544,6 +1667,11 @@ export class EntityRenderer {
       // layer 를 통째로 파괴하지만 여기서 미리 떼도 무해하다(이미 뗀 것은 재파괴 대상이 아니다).
       if (t.flashOverlay !== null) this.detachFromSpriteLayer(t.flashOverlay);
       if (t.chute !== null) this.detachFromSpriteLayer(t.chute);
+      if (t.label !== null) {
+        this.labelLayer.removeChild(t.label);
+        t.label.destroy();
+        t.label = null;
+      }
       t.sprite.destroy({ children: true });
     }
     this.sprites.clear();
@@ -1570,6 +1698,7 @@ export class EntityRenderer {
     this.glowBloomAttached = false;
     this.trauma.reset();
     this.lastFrameMs = undefined;
+    this.animClock = 0;
     this.overlay.clear();
     this.lavaOverlay.clear();
     this.fog.clear();
@@ -1587,6 +1716,11 @@ export class EntityRenderer {
       // layer 를 통째로 파괴하지만 여기서 미리 떼도 무해하다(이미 뗀 것은 재파괴 대상이 아니다).
       if (t.flashOverlay !== null) this.detachFromSpriteLayer(t.flashOverlay);
       if (t.chute !== null) this.detachFromSpriteLayer(t.chute);
+      if (t.label !== null) {
+        this.labelLayer.removeChild(t.label);
+        t.label.destroy();
+        t.label = null;
+      }
       t.sprite.destroy({ children: true });
     }
     this.sprites.clear();

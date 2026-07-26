@@ -116,7 +116,12 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
           ? e.timer <= 0 && e.life !== 0 // life<0 permanent terrain hazard is active
           : e.kind === 'boss'
             ? e.iframes > 0
-            : false,
+            : // 포탑 픽업은 phase 로 두 상태를 산다: 0 = 휴면 배치물, 1 = 자동 사격 중인 아군
+              // 포탑(events.ts `isActiveTurret` 과 동일 판정). 렌더가 이름표·조준 회전·트리거
+              // 링을 이 값으로 가른다. 스냅샷은 해시 대상이 아니라 sim 계약 불변이다.
+              e.kind === 'turretPickup'
+              ? e.phase === 1
+              : false,
       flash: e.kind === 'boss' && e.timer > 0,
       elite: eliteAffix(e),
     });

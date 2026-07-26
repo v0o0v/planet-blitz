@@ -16,7 +16,7 @@ import { Container, Graphics, Rectangle, Sprite, Text } from 'pixi.js';
 import type { Item, EquipSlotId, SlotKind, Rarity } from '../../items/types.js';
 import { EQUIP_SLOTS, RARITY_CODE } from '../../items/types.js';
 import { LEVEL_CAP } from '../../../data/waves.js';
-import { AFFIX_BY_ID } from '../../../data/affixes.js';
+import { affixLines } from '../affixText.js';
 import { computeLoadoutStats } from '../../items/loadout.js';
 import { canEquip, requiredLevel } from '../../items/requiredLevel.js';
 import { UNIQUE_REGISTRY } from '../../items/uniques.js';
@@ -496,11 +496,8 @@ export class HangarScreen {
   // --- 툴팁 ----------------------------------------------------------------
 
   private showTip(item: Item, globalX: number, globalY: number, compareTo?: Item): void {
-    const lines: string[] = [];
-    for (const a of item.affixes) {
-      const def = AFFIX_BY_ID.get(a.id);
-      lines.push(def !== undefined ? `${def.name} (${a.stat} +${a.value})` : `${a.stat} +${a.value}`);
-    }
+    // 어픽스 = 제목 줄(이름 · 표시명 +수치) + 설명 줄. raw StatKey 노출을 없앤다(2026-07-26 지적).
+    const lines = affixLines(item.affixes);
     const compare =
       compareTo !== undefined && compareTo !== item
         ? t('inv.tip.compare', { name: this.itemName(compareTo), n: compareTo.affixes.length })
