@@ -18,6 +18,7 @@ import type { Entity } from './entities.js';
 import { KIND_CODE } from './entities.js';
 import { normalizeShipTypeId } from '../../data/ships/index.js';
 import { normalizeCatalystArray } from '../data/catalysts.js';
+import { NEUTRAL_MULT_CENTI } from '../economy/planetPopularity.js';
 import { normalizeMaintenance } from './invasion/guardian.js';
 import { INVASION_HASH_VERSION } from './invasion/constants.js';
 import { GUARDIAN_SNAPSHOT_FIELDS } from './invasion/normalize.js';
@@ -545,6 +546,26 @@ export function hashWorld(state: WorldState): number {
     h = hashU32(h, enc.savedY >>> 0);
     h = hashU32(h, enc.detourTimer >>> 0);
     h = hashU32(h, enc.aux >>> 0);
+  }
+  // --- 행성 인기 보상 배율(APPEND-ONLY, 조건부 꼬리 · ADR-0038) ---
+  // shipType·planetMode·촉매 꼬리와 완전히 같은 규율이다. **중립(centi 100)이거나 미지정이면 한
+  // 폴드도 실행하지 않는다** → 기존 PvE 골든·침공 해시가 **바이트 불변**이고, 그래서
+  // `verify-invasion` EF 재배포가 필요 없다(침공 런은 이 필드를 항상 미지정으로 둔다).
+  //
+  // 접어야 하는 이유: 배율이 sim 산술(엘리트 드랍 게이트 threshold · 메타 풀 XP · 자원 milli
+  // 캐리)에 실제로 들어가므로, 같은 시드·같은 입력로그라도 배율이 다르면 다른 런이다. 서버(EF)가
+  // 리플레이를 재실행해 검증하려면 그 값이 봉인돼 있어야 한다(ADR-0005).
+  //
+  // **centi 정수를 접는다** — 부동소수 배율(`state.planetMult`)은 파생값이라 접지 않는다(촉매가
+  // id 만 접고 배율은 안 접는 것과 같은 계약). `>>> 0` 정규화로 "100"(문자열)·소수 같은 비정상
+  // 입력이 0/다른 값으로 접혀도 결정론적이다.
+  // **append-only 맨 꼬리**(조우 폴드 뒤)라 위 폴드 순서를 하나도 건드리지 않는다(재배치 금지).
+  //
+  // ⚠️ `planetMultEpoch` 는 **접지 않는다** — sim 이 읽지 않는 순수 메타(runId 와 같은 성격)이고,
+  // 서버는 클라가 실은 배율이 아니라 자기 스냅샷을 신뢰하므로 해시에 봉인할 이유가 없다.
+  const pmc = (state.config.planetMultCenti ?? NEUTRAL_MULT_CENTI) >>> 0;
+  if (pmc !== NEUTRAL_MULT_CENTI) {
+    h = hashU32(h, pmc);
   }
   return h >>> 0;
 }

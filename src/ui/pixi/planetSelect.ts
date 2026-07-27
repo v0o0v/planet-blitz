@@ -18,6 +18,8 @@
 import { Container, Graphics, Sprite, Text } from 'pixi.js';
 import { PLANETS, planetById, type PlanetMeta } from '../../../data/planets.js';
 import { stageOpenCap } from '../../../data/waves.js';
+import { multCentiFor } from '../../net/planetMultipliers.js';
+import { NEUTRAL_MULT_CENTI } from '../../economy/planetPopularity.js';
 import { catalystById, normalizeCatalystArray, SLOT_CAP } from '../../data/catalysts.js';
 import { t, type MessageKey } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
@@ -53,6 +55,13 @@ const CARD_ROW_MAX_W = 1824;
 const ORB_D = 128;
 const CARD_NAME_Y = 212;
 const CARD_SUB_Y = 254;
+/**
+ * 행성 인기 배율 줄의 세로 띠(ADR-0038). 카드는 **겹치면 안 되는 세로 띠**로 설계돼 있다
+ * (오브 → 이름 212 → 부제 254~ → 배율 318). 부제는 2줄까지 감기므로(18px × 2 ≈ 44) 바닥이
+ * 약 298 이고, 318 은 그 아래 20px 여유를 둔 자리다. **부제 폰트·wordWrap 을 키우면 이 값을
+ * 함께 내려라** — 안 그러면 두 줄이 겹친다(격납고 헤더에서 두 번 재발한 결함 유형).
+ */
+const CARD_MULT_Y = 318;
 
 // 하단 패널 행: 단계 스텝퍼(좌) + 촉매 주입 패널(우, ADR-0029 Lane 4 — 구 변칙 패널 자리).
 const LOW_Y = 546;
@@ -457,6 +466,31 @@ export class PlanetSelectScreen {
     sub.anchor.set(0.5, 0);
     sub.position.set(w / 2, CARD_SUB_Y);
     card.addChild(sub);
+
+    // 행성 인기 보상 배율(ADR-0038) — **실수치 상시 노출**이 결정 사항이다. 감추면 플레이어가
+    // "왜 여기가 더 잘 나오지?"를 추측하게 되고, 그 추측은 대개 미신이 된다. 중립(×1.00)이든
+    // 아니든 항상 같은 자리에 같은 형식으로 찍어 비교 가능하게 둔다.
+    // 색은 방향 신호: 상향=금색(가라), 하향=흐림(덜 준다), 중립=크림.
+    const centi = multCentiFor(p.id);
+    const mult = new Text({
+      resolution: 2,
+      text: `보상 ×${(centi / 100).toFixed(2)}`,
+      style: {
+        fontFamily: UI_FONT,
+        fontSize: 20,
+        fontWeight: '700',
+        fill:
+          centi > NEUTRAL_MULT_CENTI
+            ? COLOR.gold
+            : centi < NEUTRAL_MULT_CENTI
+              ? COLOR.muted
+              : COLOR.cream,
+        dropShadow: TEXT_SHADOW,
+      },
+    });
+    mult.anchor.set(0.5, 0);
+    mult.position.set(w / 2, CARD_MULT_Y);
+    card.addChild(mult);
 
     return card;
   }

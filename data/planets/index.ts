@@ -35,7 +35,7 @@ import {
   type BlueprintSpecialty,
 } from './blueprints.js';
 import { CATALOG_BOSS, CATALOG_KIND_COUNTS } from '../invasion/catalog.js';
-import { rollBlueprintDrop } from '../../src/sim/drops.js';
+import { rollBlueprintDrop, DEFAULT_BLUEPRINT_CHANCE_CP } from '../../src/sim/drops.js';
 
 /**
  * 행성 드랍 rarity 기준 확률(src/sim/drops.ts가 소비).
@@ -47,6 +47,11 @@ import { rollBlueprintDrop } from '../../src/sim/drops.js';
  * ⚠️ **전 행성 동일값은 계약이다.** 유니크 base 를 조정할 때 `src/sim/drops.ts` 의
  * `DEFAULT_DROP_ODDS` 만 고치고 여기를 빼먹으면 "카르곤만 유니크가 안 나온다" 류의 행성별
  * 편차 결함이 된다 — 두 곳을 **항상 같은 배수로** 움직인다(2026-07-27 유니크 base 1/7.5 패스).
+ *
+ * ⚠️ **계약의 범위가 좁아졌다(ADR-0038, 2026-07-27).** "전 행성 동일"은 이제 **품질(rarity) 축
+ * 한정**이다 — 위 세 base 와 단계 곡선은 여전히 전 행성 동일이고 행성 인기 배율이 절대 닿지
+ * 않는다. 반면 **수량·XP·자원 축은 행성별로 갈린다**(행성 인기 배율). 이 문장이 ADR-0022 ·
+ * ADR-0035 · 이 주석 세 곳에 같이 적혀 있으니 하나만 고치지 마라.
  */
 export interface PlanetDropTable {
   /** 엘리트 레어 기본 확률(단계1 기준, 전 행성 동일 — 단계 상향은 sim). */
@@ -383,19 +388,47 @@ export interface LootLike {
   readonly seed: number;
   readonly rarity: number;
   readonly planet: number;
+  /** 엘리트 유래 표식(ADR-0038). 미지정 = 보스 확정 드랍 → 수량 배율 보정 대상 아님. */
+  readonly elite?: 1;
 }
 
 /**
  * 런이 수거한 장비 드랍 목록 → 동반 설계도 목록(순수).
  *
  * 정산이 `LootRecord` 를 장비로 확정하는 것과 **같은 입력**에서 파생한다 — 설계도용 추가
- * RNG 소비도, `LootRecord` 스키마 확장도 없다(그래서 해시·fixture 가 그대로다). 판정은
- * 드랍이 난 행성의 특산 테이블로 하므로 "이 방어체는 이 행성" 규칙이 자동으로 지켜진다.
+ * RNG 소비도 없다(그래서 해시·fixture 가 그대로다). 판정은 드랍이 난 행성의 특산 테이블로
+ * 하므로 "이 방어체는 이 행성" 규칙이 자동으로 지켜진다.
+ *
+ * ## `planetMult` 역수 보정 — 특산 설계도는 배율 밖이다(ADR-0038)
+ * 원칙은 **"대체 가능한 보상에만 배율"** 이다. 특산 설계도는 그 행성에서만 나오므로 대체 불가라
+ * 배율 대상이 아닌데, 수량 배율이 엘리트 드랍 **건수**를 ×m 으로 바꾸면 설계도 기대 획득량도
+ * 자동으로 ×m 이 돼 버린다. 그래서 **엘리트 유래 레코드의 동반 확률만 ×(1/m)** 로 되돌려
+ * 기대 획득률을 불변으로 만든다.
+ *
+ * ⚠️ **보스 확정 드랍은 보정하지 않는다** — 그 1개는 애초에 수량 배율 밖(ADR-0035 확정성 계약)
+ * 이라 건수가 변하지 않았고, 함께 보정하면 오히려 ∓m 만큼 틀어진다. 두 출처의 구분은
+ * `LootRecord.elite` 표식이 한다.
+ *
+ * `planetMult === 1`(중립)이면 `chanceCp` 가 원본 배열 그대로라 산술·분기가 구 경로와 동일하다.
  */
-export function blueprintDropsFromLoot(loot: readonly LootLike[]): BlueprintGrant[] {
+export function blueprintDropsFromLoot(
+  loot: readonly LootLike[],
+  planetMult = 1,
+): BlueprintGrant[] {
   const grants: BlueprintGrant[] = [];
   for (const rec of loot) {
-    const odds = planetContent(rec.planet).dropTable;
+    const base = planetContent(rec.planet).dropTable;
+    // 엘리트 유래 + 비중립 배율일 때만 동반 확률을 역수 보정한다. `Math.round` 로 centi-percent
+    // 정수 규율을 지키고(테이블이 정수 배열), 상한 10000(=100%)으로 클램프한다.
+    const odds =
+      rec.elite === 1 && planetMult !== 1
+        ? {
+            ...base,
+            blueprintChanceCp: (base.blueprintChanceCp ?? DEFAULT_BLUEPRINT_CHANCE_CP).map((cp) =>
+              Math.min(10000, Math.round(cp / planetMult)),
+            ),
+          }
+        : base;
     const code = rollBlueprintDrop({ seed: rec.seed, rarityCode: rec.rarity }, odds);
     if (code === null) continue;
     const grant = resolvePlanetBlueprintDrop(rec.planet, code);

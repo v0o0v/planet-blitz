@@ -106,6 +106,12 @@ import {
   grantCatalystDrops,
   setHarnessCatalystGateway,
 } from './net/index.js';
+// 행성 인기 배율(ADR-0038): 30분 폴링 캐시. 출격 경로를 블로킹하지 않는 **동기** 리더만 쓴다.
+import {
+  startPlanetMultiplierPolling,
+  currentMultipliers,
+  multCentiFor,
+} from './net/planetMultipliers.js';
 // 촉매 시스템(ADR-0029, Lane 4): 드랍 파생(순수) + 출격 폴백 모달.
 import { catalystDropsFromRun } from './data/catalystDrops.js';
 import { CatalystSortieModal } from './ui/pixi/catalystSortieModal.js';
@@ -276,6 +282,9 @@ async function main(): Promise<void> {
   const profile = loadProfile();
   // 로컬 세이브 → 서버 1회 이관(멱등, 무손실). 미설정이면 no-op. 비차단.
   void migrateLocalProfileToServer(profile);
+  // 행성 인기 배율표 폴링 시작(ADR-0038). 즉시 1회 + 30분 간격. 미설정·실패는 전 행성 1.0
+  // 폴백이라 오프라인 단일플레이가 그대로다(출격 경로는 이 결과를 기다리지 않는다).
+  startPlanetMultiplierPolling();
   // M7b: 방어체 보관함·강화 게이트웨이 팩토리 등록. 등록 전에는 net/defenseUnits 의 모든
   // 공개 함수가 no-op 이라 방어 사령부가 영구 '오프라인'으로 보인다. **설정이 있을 때만**
   // 동적 import 하는 이유는 Supabase SDK 를 메인 청크에 싣지 않기 위해서다(modules.ts 와
@@ -1152,6 +1161,11 @@ async function main(): Promise<void> {
       ...(sel.maxSegments !== undefined ? { maxSegments: sel.maxSegments } : {}),
       ...(sel.catalysts !== undefined && sel.catalysts.length > 0 ? { catalysts: sel.catalysts } : {}),
       ...(sel.runId !== undefined ? { runId: sel.runId } : {}),
+      // 행성 인기 배율 스탬프(ADR-0038) — **PvE 출격 경로에만** 있다. 침공(정식·하네스)·예비역
+      // 소집은 각자의 buildRunConfig 호출부에서 이 옵션을 넘기지 않으므로 미지정 → 해시 폴드
+      // 미실행 → 침공 골든 바이트 불변(verify-invasion EF 재배포 불필요).
+      // 캐시는 동기 리더라 출격이 서버를 기다리지 않는다(무촉매 오프라인 런 보존).
+      planetMult: { centi: multCentiFor(sel.planet), epoch: currentMultipliers().epoch },
     });
     // 활성 기체의 인게임 스프라이트로 플레이어 슬롯을 교체(렌더 전용, sim 무영향).
     // `createWorld` **앞**이어야 이번 런의 플레이어 스프라이트가 올바른 기체로 생성된다.
@@ -1242,6 +1256,12 @@ async function main(): Promise<void> {
           // 둘 다 순수 리더라 sim 무수정이고, OR 라서 에코 단독 런의 거동은 그대로다.
           echoStabilized: echoStabilizedOf(w) || encounterShardOf(w),
           storyMetricDeltas: runStoryMetrics(w),
+          // 행성 인기 배율 관통(ADR-0038): 정산이 ① XP 30% 하한을 **감쇠×배율 합성**에 다시
+          // 걸고 ② 특산 설계도 동반 확률을 역수 보정하는 데 쓴다. 침공·오프라인 런은 config 에
+          // 필드가 없어 undefined → 중립(구 경로 산술 동일).
+          ...(w.config.planetMultCenti !== undefined
+            ? { planetMultCenti: w.config.planetMultCenti }
+            : {}),
         });
         // Completing the tutorial (win or lose) reveals the base and makes the run
         // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.
@@ -1267,6 +1287,13 @@ async function main(): Promise<void> {
               // config.runId 로 스탬프한 값을 그대로 실어, 서버 settle_pve_run 이 이 id 로 pending
               // 영수증(자원 배율)을 조회해 캡을 상향한다. 무촉매 런은 undefined → 기존 base 경로.
               ...(w.config.runId !== undefined ? { runId: w.config.runId } : {}),
+              // 행성 인기 배율 epoch 관통(ADR-0038): **배율값이 아니라 epoch 만** 보낸다.
+              // 서버 settle_pve_run 이 그 epoch 의 자기 스냅샷에서 배율을 읽어 자원 지급 상한을
+              // 재산정한다 — 클라 주장 배율은 위조 표면이라 애초에 전송하지 않는다(촉매
+              // resource_mult 영수증과 같은 규율, 추가 RPC 0). 오프라인 런은 undefined.
+              ...(w.config.planetMultEpoch !== undefined
+                ? { epoch: w.config.planetMultEpoch }
+                : {}),
             },
             storyRewardCredits: storyReward,
           });

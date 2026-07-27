@@ -74,6 +74,16 @@ async function resolveGateway(deps: NetDeps): Promise<ServerGateway | null> {
 }
 
 /**
+ * 배율 폴링 전용 게이트웨이 해석(ADR-0038). `resolveGateway` 는 모듈 private 이라, 순환 import
+ * 없이 `planetMultipliers.ts` 가 같은 캐시된 게이트웨이를 쓰도록 얇게 노출한다. 미설정이면 null.
+ */
+export async function resolvePlanetMultiplierGateway(
+  deps: NetDeps = {},
+): Promise<ServerGateway | null> {
+  return resolveGateway(deps);
+}
+
+/**
  * 서버(Supabase)가 설정됐는지 **동기** 판정한다. 주입 gateway 가 있으면 설정된 것으로,
  * 아니면 `readSupabaseConfig()` 로 판정. 재화 정산 분기(온라인=서버 RPC / 미설정=로컬 가산)를
  * 게임루프 밖 정산 시점에서 즉시 가르는 데 쓴다(오프라인 단일플레이 보존).

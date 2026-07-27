@@ -35,6 +35,23 @@ import type { Profile, Ship } from './profile.js';
 import { INVENTORY_CAP, activeShip, stashCapacity, recordPlanetClear } from './profile.js';
 import { SHIP_STORIES, RECORD_SHARDS } from '../../data/lore/index.js';
 import { storyProgressFromProfile, chapterUnlocked } from './storyProgress.js';
+import { multFromCenti, NEUTRAL_MULT_CENTI } from '../economy/planetPopularity.js';
+
+/**
+ * ADR-0035 XP 안전망의 **하한 30%** 를 저단계 감쇠 × 행성 인기 배율의 **합성 결과**에 다시 건다.
+ * 반환값은 `result.xpTotal`(이미 행성 배율이 곱해진 값)에 적용할 퍼센트다. 상세 근거는 호출부
+ * 주석 참조.
+ */
+const XP_FLOOR_PERCENT = 30;
+
+function xpAppliedPercent(decayPct: number, result: RunResult): number {
+  const centi = result.planetMultCenti ?? NEUTRAL_MULT_CENTI;
+  // 중립이면 구 경로와 **바이트 동일**하게 감쇠만 반환한다(부동소수 왕복조차 만들지 않는다).
+  if (centi === NEUTRAL_MULT_CENTI) return decayPct;
+  const m = multFromCenti(centi);
+  const targetPct = Math.max(XP_FLOOR_PERCENT, (decayPct * centi) / 100);
+  return targetPct / m;
+}
 
 /** What the sim reports at run end (all plain numbers/records — no sim types). */
 export interface RunResult {
@@ -64,6 +81,16 @@ export interface RunResult {
    * ⚠️ `runsWon` 은 여기 담지 않는다 — sim 관측이 아니라 정산 메타(victory 카운트)라 정산이 센다.
    */
   storyMetricDeltas?: Readonly<Record<string, number>>;
+  /**
+   * 이 런에 적용된 행성 인기 보상 배율(**centi 정수**, 중립 100, ADR-0038). `WorldConfig
+   * .planetMultCenti` 를 그대로 넘긴다. 미지정 = 중립(침공·오프라인·구 세이브).
+   *
+   * 정산이 이걸 받는 이유는 **두 가지**다:
+   *  ① XP 30% 하한 재적용 — sim 이 메타 풀에 이미 배율을 곱해 뒀으므로, 저단계 감쇠와의 **합성**
+   *     결과가 30% 아래로 내려가지 않도록 하려면 여기서 배율을 알아야 한다(아래 상세).
+   *  ② 특산 설계도 역수 보정 — `blueprintDropsFromLoot` 이 엘리트 유래 동반 확률을 ×(1/m) 한다.
+   */
+  planetMultCenti?: number;
 }
 
 /** Summary of what a run added to the profile (for the result overlay). */
@@ -120,10 +147,23 @@ export function settleRun(profile: Profile, result: RunResult): SettlementOutcom
   //    파밍하는 경로의 효율을 깎되 진행을 멈추지는 않는다(하한 30%).
   //    ⚠️ 감쇠는 **적립 전 레벨** 기준으로 한 번만 곱한다 — 이 정산에서 레벨업이 여러 번
   //    일어나도 배율이 도중에 변하지 않아야 결정론·설명가능성이 선다("이 런은 ×0.7"이 한 문장).
+  //
+  //    ## 행성 인기 배율과의 합성 + 30% 하한 재적용 (ADR-0038)
+  //    `result.xpTotal` 은 sim 이 **이미 행성 배율 m 을 곱해 둔** 값이다. 그대로 감쇠까지 곱하면
+  //    최종 배율이 `decay × m` 이 되는데, m 이 1 미만(예: 0.85)이면 `0.30 × 0.85 = 0.255` 처럼
+  //    ADR-0035 의 30% 안전망 **아래로 뚫린다**. 하한은 "이 런의 XP 효율이 어떤 조합에서도
+  //    30% 밑으로는 안 간다"는 약속이라, 축 하나가 아니라 **합성 결과**에 걸려야 한다.
+  //
+  //    그래서 여기서 적용할 퍼센트를 되푼다:
+  //      목표 최종 배율  target = max(0.30, decay × m)
+  //      이미 곱해진 m 을 감안한 적용 퍼센트 appliedPct = 100 × target / m
+  //      ⇒ 실제 최종 = m × appliedPct/100 = target  ✓
+  //    m === 1(중립)이면 `target = max(0.30, decay)` 이고 `decay` 는 이미 30 이상이므로
+  //    `appliedPct === decayPct` — 산술이 구 경로와 **정확히 동일**하다(early-return 으로 명시).
   const ship = activeShip(profile);
   const decayPct = lowStageXpDecayPercent(ship.level, result.stage);
   const rawXp = Math.max(0, Math.floor(result.xpTotal));
-  const levelsGained = grantXp(ship, Math.floor((rawXp * decayPct) / 100));
+  const levelsGained = grantXp(ship, Math.floor((rawXp * xpAppliedPercent(decayPct, result)) / 100));
   const skillPointsGained = levelsGained;
   profile.skillPoints += skillPointsGained;
 
@@ -140,7 +180,9 @@ export function settleRun(profile: Profile, result: RunResult): SettlementOutcom
 
   // 6. 설계도 파생(M7b) — 장비 확정과 같은 드랍 시드에서 되풀어 쓰는 순수 함수라 RNG 커서를
   //    건드리지 않는다. 지급(서버 RPC)은 호출부 몫이다(위 SettlementOutcome 주석 참조).
-  const blueprintsGained = blueprintDropsFromLoot(result.loot);
+  //    행성 인기 수량 배율(ADR-0038)이 엘리트 드랍 **건수**를 바꿨으므로, 특산 설계도 기대
+  //    획득률이 불변이도록 동반 확률을 역수 보정한다(보스 확정 드랍은 제외 — LootRecord.elite).
+  const blueprintsGained = blueprintDropsFromLoot(result.loot, multFromCenti(result.planetMultCenti));
 
   // 7. 스토리 시스템(Phase E, ADR-0023) — 마일스톤 누적 · 파편 수집 · 챕터 보상 claim.
   //    전부 비-sim 메타 경로라 해시·리플레이 무관이다. 오염 런·하네스 침공 런은 호출부(main.ts)가
