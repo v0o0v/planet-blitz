@@ -308,5 +308,49 @@ tests/denoFixture.test.ts` 로 정상 경로 재생성이 된다.
 ⚠️ 이 리포가 반복적으로 확인한 함정 — **골든/픽스처 그린은 재배포 불필요의 근거가 못 된다.**
 서버는 번들에 들어간 sim 으로 침공 리플레이를 재계산하므로, `src/sim` 이 바뀐 채 EF 를 방치하면
 **모든 침공이 해시 불일치로 거부**된다.
+(이번에는 골든 자신이 재배포 필요를 보고했다 — §5 의 invasion 3/3.)
 
-<!-- FILL: 배포 결과 -->
+### 6-1. ✅ `verify-invasion` EF 재배포 완료
+
+| 항목 | 값 |
+|---|---|
+| 번들 소스 커밋 | `c3f61af` (= `origin/main`, **대조 확인함**) |
+| 번들 | 96 모듈 · 214.93KB (2026-07-26 기준 210KB 에서 증가 = sim 변경 실증) |
+| 버전 | **v35 → v36** · ACTIVE |
+| 업로드 자산 | `deno.json` + `index.ts` **둘뿐** (자립 번들 치환이 제대로 됐다는 방증) |
+
+부팅 스모크(anon 키로 게이트 통과):
+
+```
+POST /functions/v1/verify-invasion  body {}
+→ 400 {"status":"rejected","reason":"malformed-invasion-id","attackerWon":false,...}
+```
+
+그리고 그 `reason` 문자열이 **배포한 번들에 정확히 1회** 존재하고 게이트웨이 문자열
+(`UNAUTHORIZED_NO_AUTH_HEADER`)은 **0회** 임을 대조했다 — 게이트웨이가 아니라 우리 코드가
+실행됐다는 확증은 이 대조까지 해야 성립한다.
+
+**함정 하나 추가** — `spb functions deploy` 는 entrypoint 를 **프로젝트 루트 기준**으로 찾는다.
+절차 문서대로 `supabase/functions/verify-invasion` 에서 실행하면
+`Entrypoint path does not exist - .../verify-invasion/supabase/functions/verify-invasion/index.ts`
+로 **400** 이 난다. 번들·치환은 그 디렉터리에서 하되 **배포는 워크트리 루트에서** 해야 한다.
+
+### 6-2. ⏳ 마이그레이션 — 사용자 실행 대기
+
+`supabase/migrations/20260728000000_invasion_props_rebalance.sql` 은 **아직 원격에 적용되지
+않았다.** 절차 정본대로 Management API 경로는 PAT 를 인라인 복호화해 외부로 POST 하므로
+안전 분류기가 차단한다(차단 의도를 존중해 우회하지 않는다). 실행 스크립트를 만들어 뒀다:
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\apply-invasion-props-rebalance-migration.ps1
+```
+
+선행 스크립트와 같은 규율을 따른다 — 오배포 가드(프로젝트 이름에 `planet` 포함 확인) ·
+NPC 20행 존재 확인 · `[IO.File]::ReadAllText(..., UTF8)` 로 읽고 **UTF-8 바이트로 전송**
+(문자열로 보내면 한글 주석이 깨져 400 파싱 오류가 난다) · `schema_migrations` 기록 ·
+적용 후 20행 전수 검증(boss / props / rarity / ascension). 콘솔 출력은 **ASCII 전용**이다.
+
+⚠️ **적용 전까지 원격 NPC 기지는 여전히 기물 5개 배치**다. 즉 클라이언트 sim 은 고쳐졌지만
+원격 시드 난이도는 아직 재조정 전이라, 지금 침공을 돌리면 §4-3 의 "수정 직후" 열
+(중하 52.38 · 중위 17.36)에 해당하는 난이도가 나온다. **리플레이 검증은 정상 동작한다**
+(EF 와 클라 sim 이 같은 커밋이므로) — 어긋난 것은 난이도뿐이다.
