@@ -1189,7 +1189,8 @@ export const EN = {
   'def3.fac.flame.name': 'Flame Vent',
   'def3.fac.flame.desc': 'Pours a constant burning field just inside the wall.',
   'def3.fac.spawner.name': 'Drone Launcher',
-  'def3.fac.spawner.desc': 'Keeps producing small drones until the launcher itself is destroyed.',
+  'def3.fac.spawner.desc':
+    'Launches small drones down the corridor ahead of the intruder while they are in range.',
   'def3.fac.press.name': 'Crusher Press',
   'def3.fac.press.desc':
     'An indestructible plate that sweeps out into the corridor and back on a fixed cycle. Get caught with no room to give and it grinds you down.',
@@ -2520,7 +2521,8 @@ export const KO: Record<MessageKey, string> = {
   'def3.fac.flame.name': '화염 방사구',
   'def3.fac.flame.desc': '벽 안쪽에 꺼지지 않는 화염 장판을 계속 뿜는다.',
   'def3.fac.spawner.name': '드론 사출구',
-  'def3.fac.spawner.desc': '사출구가 부서지기 전까지 소형 드론을 끊임없이 찍어낸다.',
+  'def3.fac.spawner.desc':
+    '침입자가 사거리 안에 있는 동안, 회랑 앞쪽으로 소형 드론을 사출해 정면에서 맞부딪히게 한다.',
   'def3.fac.press.name': '압축 프레스',
   'def3.fac.press.desc':
     '부술 수 없는 압축 판이 정해진 주기로 회랑 안쪽까지 뻗었다 되돌아온다. 밀려날 자리가 없으면 그대로 짓눌린다.',

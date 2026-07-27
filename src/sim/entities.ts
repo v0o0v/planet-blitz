@@ -44,7 +44,7 @@ export type EntityKind =
   | 'formationDrone' // L1 편대원. 리더 기준 절대 오프셋으로 배치되는 실전투 유닛
   | 'facilityGun' // L2 벽부착 방어포. 방향 제한 사격(facingDeg/arcDeg 는 설비 스펙에서 파생)
   | 'facilityHazard' // L2 기믹 해저드. 주기 온오프 상태머신(period/on/phaseOffset)
-  | 'facilitySpawner' // L2 드론 스포너. aux0=남은 소환 수, aux1=다음 소환까지 틱
+  | 'facilitySpawner' // L2 드론 스포너. aux0=남은 소환 수, aux1=다음 소환까지 틱, timer=드론 내구도
   | 'spawnedDrone' // facilitySpawner 가 소환한 드론(모체 파괴와 무관하게 독립 생존)
   | 'prop' // L3 기물(실드 발생기·중력 앵커·고정 주포). aux0=기물 카탈로그 id
   | 'defenseBoss' // L3 방어 보스. PvE 'boss' 와 별도 kind — compact() 의 boss→victory 함정을 피한다

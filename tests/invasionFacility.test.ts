@@ -21,6 +21,7 @@ import {
   emptyInvasionLayers,
 } from '../src/sim/invasion/normalize.js';
 import type { InvasionLayers, InvasionStepContext, FacilityRef } from '../src/sim/invasion/types.js';
+import { INVASION_WINDOW_HALF_W } from '../src/sim/invasion/scroll.js';
 import {
   INVASION_SOCKET_COUNTS,
   MAP_TEMPLATE_STRAIGHT,
@@ -482,6 +483,126 @@ describe('드론 스포너', () => {
       );
     };
     expect(run()).toBe(run());
+  });
+
+  // -------------------------------------------------------------------------
+  // 전방 사출 재설계(2026-07-28) — 정본
+  // `.omc/research/invasion-spawner-redesign-2026-07-28.md`
+  // -------------------------------------------------------------------------
+
+  /**
+   * 스포너 1기를 창 앞 사출 조건에서 N틱 돌리고, **이번 틱에 새로 태어난 드론**만 모은다.
+   * 스크롤 창을 매 틱 전진시켜 실제 L2 와 같은 좌표계를 만든다.
+   */
+  function launchTrace(
+    templateId: number,
+    socketIndex: number,
+    ticks: number,
+    withWalls: boolean,
+  ): { tick: number; x: number; y: number; hp: number; damage: number }[] {
+    const template = mapTemplateFor(templateId);
+    const socket = template.sockets[socketIndex]!;
+    const state = createWorld(7);
+    if (withWalls) {
+      for (const w of template.walls) spawnWall(state, w.x, w.y, w.halfW, w.halfH);
+      rebuildWalls(state);
+    }
+    spawnFacility(state, socket, socketIndex, ref(5), MAINTENANCE_FULL);
+    const ctx = ctxOf(layersWith(templateId, []));
+    const out: { tick: number; x: number; y: number; hp: number; damage: number }[] = [];
+    let seen = state.entities.length;
+    for (let t = 0; t < ticks; t++) {
+      state.tick = t;
+      // 창을 소켓 근처에 두어 활성 사거리 안에 머물게 한다(사거리 게이트는 아래에서 따로 잰다).
+      ctx.runtime.scrollX = socket.x;
+      movePlayer(state, socket.x, 0);
+      stepFacility(state, ctx);
+      for (let i = seen; i < state.entities.length; i++) {
+        const e = state.entities[i]!;
+        if (e.kind === 'enemy') out.push({ tick: t, x: e.x, y: e.y, hp: e.hp, damage: e.damage });
+      }
+      seen = state.entities.length;
+      // 상한에 걸리지 않게 이번 틱 산출물을 회수한다(사출 좌표만 보는 계측이다).
+      for (const e of state.entities) if (e.kind === 'enemy') e.dead = true;
+    }
+    return out;
+  }
+
+  it('사출 좌표가 스크롤 창 진행 방향 **밖**이다(예고 없는 눈앞 스폰이 기하로 불가능)', () => {
+    const trace = launchTrace(MAP_TEMPLATE_STRAIGHT, 0, 900, false);
+    expect(trace.length).toBeGreaterThan(3);
+    const template = mapTemplateFor(MAP_TEMPLATE_STRAIGHT);
+    for (const p of trace) {
+      // 창 중심(= 소켓 x)에서 창 반폭보다 더 앞이어야 화면 밖에서 태어난다.
+      expect(p.x - template.sockets[0]!.x).toBeGreaterThan(INVASION_WINDOW_HALF_W);
+      // 레인은 회랑 안이다(드론 반경 36 을 더해도 벽 안쪽 면 540 을 넘지 않는다).
+      expect(Math.abs(p.y)).toBeLessThanOrEqual(540 - 36);
+    }
+  });
+
+  it('사출 좌표가 벽·프레스에 겹치지 않는다(전 템플릿)', () => {
+    for (const templateId of [MAP_TEMPLATE_STRAIGHT, MAP_TEMPLATE_CURVED, MAP_TEMPLATE_CHOKE]) {
+      const template = mapTemplateFor(templateId);
+      const trace = launchTrace(templateId, 0, 900, true);
+      expect(trace.length).toBeGreaterThan(0);
+      for (const p of trace) {
+        for (const w of template.walls) {
+          const wall = { x: w.x, y: w.y, radius: w.halfW, targetX: w.halfH } as unknown as Entity;
+          expect(circleOverlapsWall(p.x, p.y, 36, wall)).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('활성 사거리 밖이면 사출하지 않는다', () => {
+    const template = mapTemplateFor(MAP_TEMPLATE_STRAIGHT);
+    const socket = template.sockets[0]!;
+    const spec = facilitySpecFor(5)!;
+    expect(spec.range).toBeGreaterThan(0);
+    const state = createWorld(11);
+    spawnFacility(state, socket, 0, ref(5), MAINTENANCE_FULL);
+    const ctx = ctxOf(layersWith(MAP_TEMPLATE_STRAIGHT, []));
+    for (let t = 0; t < spec.spawnIntervalTicks * 6; t++) {
+      state.tick = t;
+      ctx.runtime.scrollX = socket.x + spec.range * 2;
+      movePlayer(state, socket.x + spec.range * 2, 0);
+      stepFacility(state, ctx);
+    }
+    expect(countKind(state, 'enemy')).toBe(0);
+  });
+
+  it('강화 3축이 **생산물**(드론 내구도·접촉 피해)에 실린다', () => {
+    const template = mapTemplateFor(MAP_TEMPLATE_STRAIGHT);
+    const socket = template.sockets[0]!;
+    const first = (r: FacilityRef): { hp: number; damage: number } => {
+      const state = createWorld(13);
+      spawnFacility(state, socket, 0, r, MAINTENANCE_FULL);
+      const ctx = ctxOf(layersWith(MAP_TEMPLATE_STRAIGHT, []));
+      for (let t = 0; t < 600; t++) {
+        state.tick = t;
+        ctx.runtime.scrollX = socket.x;
+        movePlayer(state, socket.x, 0);
+        stepFacility(state, ctx);
+        const drone = state.entities.find((e) => e.kind === 'enemy');
+        if (drone !== undefined) return { hp: drone.hp, damage: drone.damage };
+      }
+      throw new Error('드론이 사출되지 않았다');
+    };
+    const lv1 = first(ref(5));
+    const lv30 = first(ref(5, 30));
+    const lv30r3 = first(ref(5, 30, 3));
+    const lv30r3a3 = first(ref(5, 30, 3, 3));
+    // 레벨 → 등급 → 승급 순으로 **셋 다** 단조 증가여야 한다.
+    expect(lv30.hp).toBeGreaterThan(lv1.hp);
+    expect(lv30.damage).toBeGreaterThan(lv1.damage);
+    expect(lv30r3.hp).toBeGreaterThan(lv30.hp);
+    expect(lv30r3a3.hp).toBeGreaterThan(lv30r3.hp);
+    // 카탈로그 기본 내구도(`spawnDroneHp`)가 로스터 값을 이긴다.
+    expect(lv1.hp).toBe(facilitySpecFor(5)!.spawnDroneHp);
+    // 접촉 피해는 참조 플레이어 최대 HP(160) 아래로 못박혀 있다 — 넘으면 "L2 누적 피해"
+    // 지표가 설비가 아니라 HP 풀을 재기 시작한다(난이도 복원 레인 §3.2).
+    const lv99 = first(ref(5, 99, 3, 3));
+    expect(lv99.damage).toBeLessThan(160);
   });
 });
 

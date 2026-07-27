@@ -12,7 +12,8 @@
  * ② **주기 온오프 해저드.** 구 해저드는 windup 1회 → active 1회로 끝났다. 여기서는 주기의 시작
  *    틱마다 장판을 다시 융기시켜 반복 리듬을 만든다(src/sim/invasion/hazardCycle.ts).
  * ③ **드론 스포너.** `summonEnemy`(RNG 미소비 결정론) 경유. `spawnEnemy` 는 waveRng 를 소비하므로
- *    침공에서 절대 쓰지 않는다.
+ *    침공에서 절대 쓰지 않는다. 사출 지점은 소켓 옆이 아니라 **스크롤 창 진행 방향 앞**이고
+ *    (근거는 {@link stepSpawnerFacility}), 강화 3축은 설비가 아니라 **생산물**에 실린다.
  *
  * ## 결정론(ADR-0005)
  * RNG·wall-clock 미소비. 모든 거동은 (틱, 소켓 좌표, 배치 Ref, 정비도)의 순수 함수다. 각도는
@@ -28,7 +29,7 @@
  * | `dashCooldown` | 소켓 인덱스 | 소켓 인덱스(주기 위상 파생 키) | 소켓 인덱스 |
  * | `targetX` | 사계 기준 방향(라디안) | 장판 융기 방향(라디안) | 사출 방향(라디안) |
  * | `pierce` | 사계 전체 폭(**정수 도**) | — | — |
- * | `timer` | 발사 카운트다운 | — (주기는 틱의 순수 함수) | — |
+ * | `timer` | 발사 카운트다운 | — (주기는 틱의 순수 함수) | 사출 드론 실효 내구도 |
  * | `phase` | 0 대기 / 1 예고선(조준각 잠금) | — | — |
  * | `angle` | 조준각(예고 중 잠긴 값 · 렌더) | — | — |
  * | `aux0` | — | 해저드 subtype(렌더) | 남은 소환 수(-1 = 무한) |
@@ -46,7 +47,16 @@ import type { Entity, EntityKind } from '../entities.js';
 import { blankEntity, addEntity, spawnEnemyBullet, spawnHazard, spawnWall } from '../entities.js';
 import type { WorldState } from '../world.js';
 import { atan2, cos, sin, wrapAngle, PI } from '../math.js';
-import { segmentBlocked } from '../los.js';
+import { segmentBlocked, circleOverlapsWall } from '../los.js';
+import {
+  INVASION_SCROLL_DIR,
+  INVASION_WINDOW_HALF_H,
+  INVASION_WINDOW_HALF_W,
+  scrollAxisFor,
+  windowCenterX,
+  windowCenterY,
+} from './scroll.js';
+import { SCROLL_AXIS_HORIZONTAL, SCROLL_AXIS_VERTICAL } from './constants.js';
 import { PLAYER_SLOW_DURATION } from '../status.js';
 import { normalizeMaintenance } from './guardian.js';
 import { invasionFireCooldown } from './guardianBridge.js';
@@ -136,6 +146,12 @@ export interface FacilityStats {
   readonly damage: number;
   readonly fireCooldown: number;
   readonly spawnInterval: number;
+  /**
+   * 사출 드론 1기의 실효 내구도(스포너 전용, 그 외 0). 강화 3축이 여기 실린다 —
+   * 스포너의 기여를 나르는 것은 설비 내구도가 아니라 **생산물**이기 때문이다
+   * (`.omc/research/invasion-spawner-redesign-2026-07-28.md`).
+   */
+  readonly droneHp: number;
 }
 
 /** 정수 배율 1단계: round(base * cp / 100). base·cp 가 정수면 결과도 정수다. */
@@ -173,17 +189,32 @@ export function resolveFacilityStats(
   // 거동마다 피해가 실리는 필드가 다르다. 프레스는 `pressCrushDamage` 다 — 예전에는 이 분기가
   // 없어 `spec.damage`(프레스는 0)를 읽었고, 그래서 프레스만 강화 3축이 통째로 무효했다
   // (실측: lv1·lv17·lv50·lv99 전부 L2 누적 피해 **804 고정**).
+  //
+  // 스포너도 같은 계열의 누락이었다 — 스펙 `damage` 가 0 이라 `scale(0) === 0` 이고, 그래서
+  // 레벨·등급·승급이 바꾸는 것이 **설비 내구도뿐**이었다. 스포너의 피해를 나르는 값은
+  // 카탈로그가 아니라 **생산물의 접촉 피해**(`ENEMY_BY_TYPE[spawnEnemyType].contactDamage`)라
+  // 그 값을 원본으로 삼는다. 실제로 드론에 실리는 지점은 `stepSpawnerFacility` 다.
   const rawDamage =
     spec.behavior === FACILITY_BEHAVIOR_HAZARD
       ? spec.hazardDamage
       : spec.behavior === FACILITY_BEHAVIOR_PRESS
         ? spec.pressCrushDamage
-        : spec.damage;
+        : spec.behavior === FACILITY_BEHAVIOR_SPAWNER
+          ? (ENEMY_BY_TYPE[spec.spawnEnemyType]?.contactDamage ?? 0)
+          : spec.damage;
   return {
     hp: scale(spec.hp),
     damage: scale(rawDamage),
     fireCooldown: invasionFireCooldown(spec.fireCooldown, maintenance),
     spawnInterval: invasionFireCooldown(spec.spawnIntervalTicks, maintenance),
+    droneHp:
+      spec.behavior === FACILITY_BEHAVIOR_SPAWNER
+        ? scale(
+            spec.spawnDroneHp > 0
+              ? spec.spawnDroneHp
+              : (ENEMY_BY_TYPE[spec.spawnEnemyType]?.hp ?? 0),
+          )
+        : 0,
   };
 }
 
@@ -300,6 +331,7 @@ export function spawnFacility(
     case FACILITY_BEHAVIOR_SPAWNER:
       e.aux0 = SPAWN_BUDGET_UNLIMITED; // 파괴 전까지 무제한 생산
       e.aux1 = affixCooldown(stats.spawnInterval, mods); // 다음 소환까지 틱
+      e.timer = stats.droneHp; // 사출 드론 실효 내구도(강화 3축 반영)
       break;
     case FACILITY_BEHAVIOR_HAZARD:
       e.aux0 = spec.hazardSubtype; // 렌더 분화용 subtype
@@ -392,7 +424,9 @@ export function stepFacility(state: WorldState, ctx: InvasionStepContext): void 
       // 강화 3축을 실을 자리가 없어서, 반경·활성 길이에 직접 태운다({@link isUtilityHazard}).
       stepHazardFacility(state, e, spec, socketCount, ref);
     } else {
-      stepSpawnerFacility(state, e, spec, maintenance, mods);
+      // 스포너는 사출 좌표가 **스크롤 창**에서 나오므로 런타임(ctx)과 플레이어를 받는다.
+      // `ref` 는 강화 3축을 생산물(드론 내구도)에 싣기 위한 것이다.
+      stepSpawnerFacility(state, e, spec, maintenance, mods, ctx, player);
     }
   }
 }
@@ -867,11 +901,80 @@ function stepHazardFacility(
 }
 
 /**
+ * 사출 지점을 창 진행 방향 앞으로 얼마나 더 밀어낼지(유닛). 창 반폭(960) **밖**이라
+ * 드론은 화면 오른쪽 경계 밖에서 태어나 스스로 걸어 들어온다 — "예고 없이 눈앞에 나타나는"
+ * 부당 스폰이 기하로 불가능하다(드론 반경 36 이라 여유 84).
+ */
+const SPAWNER_LEAD_MARGIN = 120;
+
+/**
+ * 사출 레인 삼각파의 반주기(틱). 소수라 소켓 위상 오프셋과 맞물려도 레인이 금방 겹치지 않는다.
+ * RNG 미소비 규율(ADR-0005)상 흔들림은 `tick`·소켓 인덱스의 순수 삼각파로만 만든다.
+ */
+const SPAWNER_LANE_PERIOD = 97;
+
+/** 소켓마다 레인 위상을 어긋내는 상수(틱). 12소켓이 한 줄로 사출하는 것을 막는다. */
+const SPAWNER_LANE_SOCKET_PHASE = 37;
+
+/**
+ * 사출 레인의 y 진폭(유닛). 회랑 반높이 540 − 드론 반경 36 − 여유 84.
+ * 이 값을 넘기면 직선형 회랑에서도 태어나자마자 벽에 겹친다.
+ */
+const SPAWNER_LANE_HALF = 420;
+
+/** 사출 지점이 벽·프레스에 막혔을 때의 재시도 간격(틱). 레인 삼각파가 그 사이 옮겨간다. */
+const SPAWNER_BLOCKED_RETRY_TICKS = 3;
+
+/**
+ * 드론 접촉 피해 상한. 참조 플레이어 최대 HP **160**
+ * (`DEFAULT_CONFIG.playerHp` 100 + `GEAR_REFERENCE.maxHpAdd` 60) 아래로 못박는다.
+ *
+ * ⚠️ 넘기면 "L2 누적 피해" 지표가 설비가 아니라 **플레이어 HP 풀**을 재기 시작하고
+ * (지문: `hits === deaths`) 그 위로 레벨·등급·승급이 전부 무효가 된다 —
+ * `.omc/research/invasion-difficulty-restore-lane-2026-07-27.md` §3.2 가 정본이다.
+ * 시드 램프 상한(lv29 · 등급 3 · 승급 3)의 실효값은 77 이라 이 상한에 닿지 않는다.
+ * 상한이 무는 곳은 lv99 외삽 + 등급·승급 최대(207)뿐이다.
+ */
+const SPAWNER_DRONE_DAMAGE_CAP = 120;
+
+
+/**
+ * 이번 틱의 사출 레인 y(정수, 창 중심 기준 상대). `tick`·소켓 인덱스만의 순수 삼각파라
+ * RNG·wall-clock 을 소비하지 않는다(ADR-0005).
+ */
+function launchLaneY(tick: number, socketIndex: number): number {
+  const span = SPAWNER_LANE_PERIOD * 2;
+  const t = (((tick + socketIndex * SPAWNER_LANE_SOCKET_PHASE) % span) + span) % span;
+  const tri = t < SPAWNER_LANE_PERIOD ? t : span - t; // 0 .. PERIOD
+  return Math.trunc((tri * 2 * SPAWNER_LANE_HALF) / SPAWNER_LANE_PERIOD) - SPAWNER_LANE_HALF;
+}
+
+/** 좌표가 활성 벽(정적 회랑 벽 + 프레스 이동 벽)에 겹치는가. */
+function launchBlocked(state: WorldState, x: number, y: number, radius: number): boolean {
+  for (const w of state.activeWalls) {
+    if (circleOverlapsWall(x, y, radius, w)) return true;
+  }
+  return false;
+}
+
+/**
  * 드론 스포너 1기. 파괴 전까지 소형 드론을 생산한다. 스폰은 반드시 `summonEnemy`(RNG 미소비)
  * 경유 — `spawnEnemy` 는 `waveRng` 를 소비해 침공 결정론 규율을 깬다.
  *
  * 동시 생존 상한은 {@link SPAWNER_OWNER_FIELD 자식 표식}으로 자기 자식만 세어 판정한다
  * (다른 스포너와 간섭 없음).
+ *
+ * ## 왜 소켓이 아니라 **창 앞**에 사출하는가 (2026-07-28 재설계)
+ * 예전에는 소켓 옆(`spawnOffset`)에 낳았다. 그런데 L2 는 **강제 스크롤 720 u/s** 이고 로스터
+ * 최고 적 이동 속도가 **420 u/s** 다 — 뒤에 태어난 드론은 초당 420유닛씩 영구히 뒤처진다.
+ * 24시드에 1,327기를 낳고도 최근접 드론 평균 거리가 **15,203 유닛**, L2 누적 피해가
+ * **12**(= 사실상 0)였고, 레벨·등급·승급을 아무리 올려도 값이 움직이지 않았다.
+ * 정본: `.omc/research/invasion-spawner-redesign-2026-07-28.md`.
+ *
+ * 그래서 사출 지점을 **스크롤 창 진행 방향 바로 앞**(창 밖 {@link SPAWNER_LEAD_MARGIN})으로
+ * 옮겼다. 속도 문제를 우회하면서 "회랑에 병력을 흩뿌린다"는 정체성은 그대로다 — 드론은 화면
+ * 경계 밖에서 태어나 정면으로 마주 온다. 대신 소켓과의 공간 인과가 끊기지 않도록
+ * **활성 사거리(`spec.range`)** 를 뒀다: 플레이어가 그 안에 있는 동안만 사출한다.
  */
 function stepSpawnerFacility(
   state: WorldState,
@@ -879,11 +982,23 @@ function stepSpawnerFacility(
   spec: FacilitySpec,
   maintenance: number,
   mods: DefenseAffixMods,
+  ctx: InvasionStepContext,
+  player: Entity,
 ): void {
   if (e.aux0 === 0) return; // 소환 수 소진(무한이면 -1 이라 여기 걸리지 않는다)
   if (e.aux1 > 0) {
     e.aux1--;
     return;
+  }
+  // 활성 사거리 — 밖이면 생산하지 않는다(방어포와 같은 규율). `range === 0` 은 사거리 개념이
+  // 없던 시절의 스펙이라 무제한으로 둔다(구 카탈로그 호환).
+  if (spec.range > 0) {
+    const dx = player.x - e.x;
+    const dy = player.y - e.y;
+    if (dx * dx + dy * dy > spec.range * spec.range) {
+      e.aux1 = SPAWNER_RETRY_TICKS;
+      return;
+    }
   }
   let alive = 0;
   for (const other of state.entities) {
@@ -896,16 +1011,66 @@ function stepSpawnerFacility(
   }
   const def = ENEMY_BY_TYPE[spec.spawnEnemyType];
   if (def === undefined) return;
-  const sx = e.x + cos(e.targetX) * spec.spawnOffset;
-  const sy = e.y + sin(e.targetX) * spec.spawnOffset;
-  const drone = summonEnemy(state, def, sx, sy);
+  const point = launchPoint(state, ctx, e, spec, def.radius);
+  if (point === undefined) {
+    // 이번 틱 레인이 벽·프레스에 막혔다. 쿨다운을 태우지 않고 곧 다시 시도한다.
+    e.aux1 = SPAWNER_BLOCKED_RETRY_TICKS;
+    return;
+  }
+  const drone = summonEnemy(state, def, point.x, point.y);
   // 생산자 표식 — 필드 선택 근거는 {@link SPAWNER_OWNER_FIELD} 주석(`ownerId` 금지).
   drone.aux1 = e.id;
+  // 강화 3축·어픽스를 **생산물**에 싣는다. 예전에는 스포너의 레벨·등급·승급이 설비 내구도만
+  // 바꿔 기여 축이 통째로 사문화돼 있었다(`gravwell` 과 같은 계열의 누락).
+  //   - 접촉 피해: 설비 `e.damage`(= 드론 접촉 피해의 실효값, `resolveFacilityStats` 가 파생하고
+  //     어픽스가 매 틱 다시 접는다). 상한은 {@link SPAWNER_DRONE_DAMAGE_CAP}.
+  //   - 내구도: 스폰 시 `e.timer` 에 굳혀 둔 `FacilityStats.droneHp`.
+  // 촉매·스테이지 배율은 `summonEnemy` 가 로스터 기본값에 이미 곱해 뒀으므로 **비율로** 옮겨
+  // 실어 그 효력을 잃지 않는다(촉매 중립이면 비율이 1 이라 항등).
+  if (e.damage > 0) {
+    const capped = e.damage > SPAWNER_DRONE_DAMAGE_CAP ? SPAWNER_DRONE_DAMAGE_CAP : e.damage;
+    drone.damage = capped * state.catalystMods.enemyDamage;
+  }
+  if (e.timer > 0 && def.hp > 0) {
+    const hp = Math.round((drone.hp * e.timer) / def.hp);
+    drone.hp = hp;
+    drone.maxHp = hp;
+  }
   if (e.aux0 > 0) e.aux0--;
   e.aux1 = affixCooldown(
     invasionFireCooldown(spec.spawnIntervalTicks, affixMaintenance(maintenance, mods)),
     mods,
   );
+}
+
+/**
+ * 이번 틱의 사출 좌표. 스크롤 축이 있으면 **창 진행 방향 앞**, 없으면(고정 카메라·단위 테스트)
+ * 예전과 같은 소켓 옆 `spawnOffset` 자리다. 벽·프레스에 겹치면 `undefined`.
+ */
+function launchPoint(
+  state: WorldState,
+  ctx: InvasionStepContext,
+  e: Entity,
+  spec: FacilitySpec,
+  droneRadius: number,
+): { readonly x: number; readonly y: number } | undefined {
+  const axis = scrollAxisFor(ctx.runtime.phase);
+  let x: number;
+  let y: number;
+  if (axis === SCROLL_AXIS_HORIZONTAL) {
+    const dir = INVASION_SCROLL_DIR[ctx.runtime.phase] ?? 1;
+    x = windowCenterX(ctx.runtime) + dir * (INVASION_WINDOW_HALF_W + SPAWNER_LEAD_MARGIN);
+    y = windowCenterY(ctx.runtime) + launchLaneY(state.tick, e.dashCooldown);
+  } else if (axis === SCROLL_AXIS_VERTICAL) {
+    const dir = INVASION_SCROLL_DIR[ctx.runtime.phase] ?? -1;
+    x = windowCenterX(ctx.runtime) + launchLaneY(state.tick, e.dashCooldown);
+    y = windowCenterY(ctx.runtime) + dir * (INVASION_WINDOW_HALF_H + SPAWNER_LEAD_MARGIN);
+  } else {
+    x = e.x + cos(e.targetX) * spec.spawnOffset;
+    y = e.y + sin(e.targetX) * spec.spawnOffset;
+  }
+  if (launchBlocked(state, x, y, droneRadius)) return undefined;
+  return { x, y };
 }
 
 /** 템플릿 조회 재수출(하네스·렌더가 소켓 좌표를 읽을 때 쓴다). */
