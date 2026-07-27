@@ -260,10 +260,16 @@ export const EXPECTED_CARDS_PER_RUN = 42;
  * ⚠️ `eliteCount` 를 **인자로 받는다** — `stageParams` 를 여기서 부르면 sim 코어가 데이터
  * 레이어(`data/waves.ts`)에 런타임 의존하게 되고, 그 경계는 `tests/planetDrops.test.ts` ⑤ 가
  * 못박고 있다. 단계 → `eliteCount` 해석은 호출부(`src/sim/world.ts`)의 책임이다.
+ *
+ * ## `planetMult` — 행성 인기 수량 배율(ADR-0038)
+ * 이 게이트 확률에 그대로 곱한다. **양방향 대칭**이 이 지점을 고른 이유다: 촉매 드랍량축이
+ * 쓰는 `bonusLootSeeds` 는 배율 > 1 만 다룰 수 있어(추가 시드 파생) 0.85 같은 하향을 표현할
+ * 수 없는데, 게이트 확률은 위아래로 똑같이 움직인다. 기본값 1 이면 산술이 구 경로와 **바이트
+ * 동일**하다(`p * 1` 은 IEEE754 에서 정확). 상한 클램프(p > 1 → 1)는 그대로 뒤에서 걸린다.
  */
-export function eliteDropChance(eliteCount: number): number {
+export function eliteDropChance(eliteCount: number, planetMult = 1): number {
   if (!(eliteCount > 0)) return 0;
-  const p = TARGET_ELITE_DROPS_PER_RUN / (EXPECTED_CARDS_PER_RUN * eliteCount);
+  const p = (TARGET_ELITE_DROPS_PER_RUN / (EXPECTED_CARDS_PER_RUN * eliteCount)) * planetMult;
   if (!(p > 0)) return 0;
   return p > 1 ? 1 : p;
 }
@@ -276,8 +282,14 @@ export function eliteDropChance(eliteCount: number): number {
  * `updateWaves`(`src/sim/waves.ts`) 안에만 있고 침공은 `if (!designedRun) updateWaves(...)`
  * (`src/sim/world.ts`)로 그것을 아예 실행하지 않으므로 이 게이트가 호출되지 않는다.
  */
-export function rollEliteDropGate(dropRng: SeededRng, eliteCount: number): boolean {
-  return dropRng.nextFloat() < eliteDropChance(eliteCount);
+export function rollEliteDropGate(
+  dropRng: SeededRng,
+  eliteCount: number,
+  planetMult = 1,
+): boolean {
+  // ⚠️ **RNG 는 배율과 무관하게 항상 정확히 1회 소비된다** — 배율은 threshold 만 움직인다.
+  // 소비 횟수가 배율에 따라 갈리면 드랍 스트림 전체가 밀려 같은 시드가 다른 런이 된다.
+  return dropRng.nextFloat() < eliteDropChance(eliteCount, planetMult);
 }
 
 /**

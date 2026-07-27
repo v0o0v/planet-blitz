@@ -35,6 +35,7 @@ import {
   spawnLoot,
 } from './entities.js';
 import { catalystPowerMult } from '../data/catalysts.js';
+import { multFromCenti } from '../economy/planetPopularity.js';
 import { resolveCatalystMods } from './catalystMods.js';
 import type { CatalystMods } from './catalystMods.js';
 import {
@@ -664,6 +665,24 @@ export interface WorldConfig {
    * 않는다(각 모드 거동은 Lane3~8). append-only: 신규 필드는 이 아래에만.
    */
   planetMode?: PlanetMode;
+  /**
+   * 행성 인기 보상 배율(**centi 정수**, 중립 = 100, ADR-0038). 런 시작에 클라가 서버 스냅샷에서
+   * 받아 `buildRunConfig` 가 스탬프한다 — 런이 도는 동안 배율이 바뀌어도 이 런은 출격 시점 값에
+   * 묶인다(설명가능성 + 서버 재검증 가능).
+   *
+   * shipType·planetMode 와 같은 **조건부 폴드 규율**: 미지정/100 이면 `hashWorld` 꼬리 폴드가
+   * 실행되지 않고 sim 산술도 `× 1` 무연산이라 기존 PvE 골든·침공 해시가 **바이트 불변**이다
+   * (그래서 `verify-invasion` EF 재배포가 필요 없다). 침공·예비역 소집 런은 항상 미지정이다.
+   * append-only: 신규 필드는 이 아래에만.
+   */
+  planetMultCenti?: number;
+  /**
+   * 위 배율이 나온 스냅샷 **epoch**(30분 단위 정수, ADR-0038). **sim 은 읽지 않는 순수 메타**로
+   * `runId` 와 같은 성격이다(`hashWorld` 가 접지 않는다) — 정산이 `p_summary.epoch` 로 서버에
+   * 실어 보내면 서버가 **그 epoch 의 자기 스냅샷**으로 자원 지급 상한을 재산정한다(클라가 실은
+   * 배율값 자체는 서버가 신뢰하지 않는다). 오프라인·미설정 런은 미지정. append-only.
+   */
+  planetMultEpoch?: number;
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {
@@ -689,6 +708,18 @@ export interface LootRecord {
   planet: number;
   /** Source 침략 단계(from config, 1..∞). */
   stage: number;
+  /**
+   * 이 드랍이 **엘리트 유래**인가(1 = 엘리트, 미지정 = 보스 확정 드랍, ADR-0038).
+   *
+   * 정산의 설계도 파생(`blueprintDropsFromLoot`)이 행성 인기 **수량** 배율을 역수로 보정할 때
+   * 필요하다: 배율은 엘리트 게이트에만 걸리고 **보스 확정 드랍 1개는 배율 밖**(ADR-0035 확정성
+   * 계약)이라, 두 출처를 구분하지 않으면 보스 몫까지 과보정돼 기대 설계도 획득률이 되레 흔들린다.
+   *
+   * ⚠️ `hashWorld` 는 이 필드를 **접지 않는다** — 이미 접히는 상태(어느 코드 경로가 이 레코드를
+   * 만들었는가)에서 완전히 결정되는 순수 파생값이라, 접지 않아도 결정론 구멍이 없다(`sigBit`·
+   * `grid` 와 같은 파생/스크래치 규율). 접지 않는 덕에 기존 loot 폴드가 **바이트 불변**이다.
+   */
+  elite?: 1;
 }
 
 export interface WorldState {
@@ -727,6 +758,18 @@ export interface WorldState {
    * `hashWorld` 에 접지 않는다(grid 선례 — 재실행 시 같은 이벤트열로 동일 재계산).
    */
   catalystResourceMilli: number;
+  /**
+   * 이 런의 행성 인기 보상 배율(ADR-0038) — `config.planetMultCenti / 100` 을 `createWorld` 가
+   * **한 번** 해석해 싣는다(catalystMods 와 같은 "단일 정본" 규율 — 적용점이 셋이라 배선 누락을
+   * 구조적으로 줄인다). `config` 의 순수 파생값이라 `hashWorld` 에 따로 접지 않는다.
+   *
+   * ⚠️ 중립(centi 100)이면 **정확히 1.0** 이다(`100 / 100` 은 IEEE754 정확) — 세 적용점의
+   * 곱셈이 전부 무연산이라 기존 골든이 바이트 불변이다.
+   *
+   * 적용점은 셋뿐이다: 엘리트 드랍 게이트(수량) · 메타 풀 XP · 보급 습격 자원.
+   * **품질(rarity) 축에는 절대 곱하지 않는다** — ADR-0022 "품질은 전 행성 동일"이 계약이다.
+   */
+  planetMult: number;
   /**
    * Loot picked up this run (drop seed + rarity + source). Consumed at settlement
    * (Lane 2) where `rollItem` confirms each item. Folded into the hash so replay
@@ -921,6 +964,10 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   // 적용점은 state.catalystMods 로 이걸 읽는다(아래 state 리터럴에 싣는다).
   const catalystMods = resolveCatalystMods(cfg.catalysts);
 
+  // 행성 인기 보상 배율(ADR-0038) — centi 정수를 여기서 **한 번** 배율로 푼다. 미지정/100 이면
+  // 정확히 1.0 이라 세 적용점(드랍 게이트·메타 XP·자원)의 곱셈이 무연산 → 기존 골든 바이트 불변.
+  const planetMult = multFromCenti(cfg.planetMultCenti);
+
   // Loadout-derived stats (plan B1): apply once here so the run starts strengthened
   // and the effect is captured in the initial weapon/config/player/magnet — all of
   // which are already hashed. The loadout block itself is folded into the hash too.
@@ -1047,6 +1094,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     eliteRng: rng.fork('elite'),
     catalystMods,
     catalystResourceMilli: 0,
+    planetMult,
     loot: [],
     weapon,
     wave: createWaveRuntime(),
@@ -3530,7 +3578,12 @@ function collectGem(state: WorldState, gem: Entity): void {
   //  · 런 풀(state.xp)   = 단계 무관 고정 → 런 내 리듬이 단계에 흔들리지 않는다.
   //  · 메타 풀(state.xpTotal) = 단계 비례 → 고단계일수록 기체 레벨이 빨리 오른다.
   state.xp += gained;
-  state.xpTotal += gained * stageMetaXpMult(state.config.stage);
+  // 행성 인기 XP 배율(ADR-0038)은 **메타 풀에만** 곱한다. 런 풀(state.xp)은 ADR-0036 이 "단계
+  // 무관 고정 → 런 내 리듬이 외부 축에 흔들리지 않는다"로 정의한 축이라, 플레이어가 고르지 않은
+  // 앰비언트 배율이 레벨업 리듬을 ±20% 흔드는 것은 그 정의를 깬다. 촉매 xp 축이 두 풀에 다 걸리는
+  // 것과의 차이는 **능동 소비 여부**다(촉매는 플레이어가 넣은 것, 인기 배율은 전체 통계 파생).
+  // 중립(planetMult === 1)이면 곱셈이 정확히 무연산 → 기존 골든 바이트 불변.
+  state.xpTotal += gained * stageMetaXpMult(state.config.stage) * state.planetMult;
 }
 
 /** Collect a loot drop: record its seed + rarity + provenance for settlement. */
@@ -3541,6 +3594,9 @@ function collectLoot(state: WorldState, loot: Entity): void {
     rarity: loot.enemyType, // rarity code stored in `enemyType`
     planet: state.config.planet ?? 0,
     stage: state.config.stage ?? 1,
+    // 바닥에서 주운 전리품은 전부 엘리트 유래다(`spawnLoot` 호출부가 엘리트 드랍 하나뿐).
+    // 보스 확정 드랍은 승리 tick 이라 바닥을 거치지 않고 `state.loot` 에 직접 들어간다.
+    elite: 1,
   });
 }
 
@@ -3592,7 +3648,10 @@ function compact(state: WorldState): void {
         // 엘리트 드랍은 **확정이 아니라 확률**이다(ADR-0035). eliteDropChance 가 eliteCount 에
         // 반비례해 런당 기대 수량을 고정하므로, 적 곡선 레인이 eliteCount 를 움직여도 인벤
         // 유입은 그대로다. 게이트 실패면 등급 롤 자체를 하지 않는다(드랍이 없으면 등급도 없다).
-        if (rollEliteDropGate(state.dropRng, stageParams(stage).eliteCount)) {
+        // 행성 인기 수량 배율(ADR-0038)은 이 **게이트 확률**에만 곱한다 — 등급 롤(rollEliteDrop)
+        // 은 품질 축이라 절대 건드리지 않는다(ADR-0022 "품질은 전 행성 동일"). RNG 소비 횟수는
+        // 배율과 무관하게 1회 고정이라 드랍 스트림이 밀리지 않는다.
+        if (rollEliteDropGate(state.dropRng, stageParams(stage).eliteCount, state.planetMult)) {
           // 촉매 희귀도 보상축을 드랍 롤에 곱한다(무촉매 rarity===1 → 등급 threshold 불변).
           const roll = rollEliteDrop(state.dropRng, stage, state.catalystMods.rarity, dropOdds);
           lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
@@ -3611,7 +3670,11 @@ function compact(state: WorldState): void {
       // Shot down (vs. escaped with hp > 0): grant the raid reward. 촉매 자원 보상축(≥1)을
       // milli 캐리로 반영한다 — 무촉매(배율 1)면 매번 +1000 → +1 자원으로 구 `resources++` 와
       // 바이트 동일. 배율>1 이면 소수분이 누적돼 여러 습격에 걸쳐 추가 자원으로 승격된다.
-      state.catalystResourceMilli += Math.round(state.catalystMods.resource * 1000);
+      // 행성 인기 자원 배율(ADR-0038)도 같은 milli 캐리에 함께 실린다 — 두 배율은 그냥 곱이다
+      // (상한 캡 없음). 중립(planetMult === 1)이면 곱셈이 정확히 무연산이라 구 경로와 바이트 동일.
+      state.catalystResourceMilli += Math.round(
+        state.catalystMods.resource * 1000 * state.planetMult,
+      );
       const whole = Math.floor(state.catalystResourceMilli / 1000);
       state.resources += whole;
       state.catalystResourceMilli -= whole * 1000;
@@ -3651,7 +3714,8 @@ function compact(state: WorldState): void {
     // 보스와 같은 tick에 죽은 엘리트 loot도 승리 tick이라 바닥에서 수거될 수 없다.
     // 보스 드랍과 동일하게 state.loot에 직접 기록해 유실을 막는다(결정론: 배열 순서 고정).
     for (const d of lootDrops) {
-      state.loot.push({ seed: d.seed >>> 0, rarity: d.rarity, planet, stage });
+      // 엘리트 유래 표식(ADR-0038) — 바닥을 못 거쳤을 뿐 출처는 엘리트다.
+      state.loot.push({ seed: d.seed >>> 0, rarity: d.rarity, planet, stage, elite: 1 });
     }
   } else {
     for (const d of lootDrops) spawnLoot(state, d.x, d.y, d.seed, d.rarity);

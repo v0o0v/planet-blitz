@@ -38,6 +38,7 @@ import type { Profile } from '../save/profile.js';
 import { normalizeShipTypeId } from '../../data/ships/index.js';
 import { planetContent } from '../../data/planets/index.js';
 import { normalizePerformance } from '../../data/guardian.js';
+import { NEUTRAL_MULT_CENTI } from '../economy/planetPopularity.js';
 
 /** 무대 선택값 — 프로필에서 파생되지 **않는** 입력만 여기 온다. */
 export interface RunConfigOpts {
@@ -66,6 +67,16 @@ export interface RunConfigOpts {
    * 배열이다(무기/보조 선택이 순서 계약). 미지정 = 활성 기체 출격(기존 거동 불변).
    */
   pilot?: { equipped: Item[]; skillInvest: number[]; typeId: number; performanceCP: number };
+  /**
+   * 행성 인기 보상 배율 스탬프(ADR-0038). `{ centi, epoch }` 를 통째로 넘기며, **PvE 경로에서만**
+   * 전달한다 — 침공·예비역 소집·하네스는 미지정이라 `planetMultCenti` 가 스탬프되지 않고
+   * `hashWorld` 꼬리 폴드도 실행되지 않는다(바이트 불변, EF 재배포 불필요).
+   *
+   * ⚠️ 두 필드를 **한 객체로** 받는 것이 계약이다: 배율과 그 배율이 나온 epoch 은 짝이라야
+   * 정산이 서버에 "이 epoch 의 표로 재산정하라"고 말할 수 있다. 따로 받으면 한쪽만 스탬프되는
+   * 배선 누락이 열린다(이 저장소가 8번 겪은 결함 유형).
+   */
+  planetMult?: { centi: number; epoch: number };
 }
 
 /**
@@ -152,6 +163,15 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
     // shipType 과 같이 **항상 명시** — 서버(EF)가 추론이 아니라 명시로 읽는다. 침공 런은
     // planet 0(카르곤=vampire) 이라 mode 0 → 폴드 미실행 → verify-invasion 무영향.
     planetMode: planetContent(opts.planet).mode,
+    // 행성 인기 배율(ADR-0038) — **중립(100)이면 아예 스탬프하지 않는다.** shipType/planetMode 처럼
+    // "항상 명시"하지 않는 이유는 조건부 해시 폴드의 불변식을 **필드 부재로도** 성립시켜, 침공·
+    // 오프라인 런의 config 직렬화(리플레이 스냅샷)까지 기존과 바이트 동일하게 두기 위함이다.
+    ...(opts.planetMult !== undefined && opts.planetMult.centi !== NEUTRAL_MULT_CENTI
+      ? { planetMultCenti: opts.planetMult.centi | 0 }
+      : {}),
+    // epoch 은 배율이 중립이어도 싣는다 — 정산이 "어느 표를 봤는가"를 서버에 말해야 서버가 자기
+    // 스냅샷으로 재산정할 수 있고, 중립 배율도 그 표의 정당한 값이기 때문이다. sim 미사용·비해시.
+    ...(opts.planetMult !== undefined ? { planetMultEpoch: opts.planetMult.epoch | 0 } : {}),
     ...(opts.maxSegments !== undefined ? { maxSegments: opts.maxSegments } : {}),
     ...(opts.invasion3 !== undefined ? { invasion3: opts.invasion3 } : {}),
   };

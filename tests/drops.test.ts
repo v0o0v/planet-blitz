@@ -59,7 +59,15 @@ describe('loot pickup accumulation (AC3, OQ-M2-1 contact auto-collect)', () => {
     spawnLoot(state, player.x, player.y, 0xabcdef, RARITY_RARE);
     stepWorld(state, emptyInput());
     expect(state.loot.length).toBe(1);
-    expect(state.loot[0]).toEqual({ seed: 0xabcdef, rarity: RARITY_RARE, planet: 1, stage: 11 });
+    // `elite: 1` = 바닥에서 주운 전리품은 엘리트 유래라는 표식(ADR-0038 — 특산 설계도 역수
+    // 보정이 보스 확정 드랍과 구분하는 데 쓴다). `hashWorld` 는 이 필드를 접지 않는다.
+    expect(state.loot[0]).toEqual({
+      seed: 0xabcdef,
+      rarity: RARITY_RARE,
+      planet: 1,
+      stage: 11,
+      elite: 1,
+    });
     expect(countKind(state, 'loot')).toBe(0); // consumed
   });
 });
@@ -155,6 +163,10 @@ describe('런당 장비 유입 통합 가드 (ADR-0035 §3.1 — 정규 경로 �
     s.level = stage * 5;
     s.skillInvest = standardSkillInvest(s.typeId, s.level);
     s.equipped = standardEquipped(s.level, 0xbeef, planet);
+    // ⚠️ **행성 인기 배율 1.0 기준으로 고정한다**(ADR-0038). `planetMult` 를 넘기지 않으므로
+    // `planetMultCenti` 가 스탬프되지 않아 배율이 정확히 1 이다. 이 가드가 검증하는 것은
+    // "런당 장비 유입 설계값"이지 배율 합성 결과가 아니다 — 배율 1.20 × 촉매 2.2 같은 조합의
+    // 유입 재보정은 밸런스 큐(출시 전 일괄) 소관이고, 여기서 흔들리면 상수 재측정 신호가 흐려진다.
     const state = createWorld(seed, buildRunConfig(p, { planet, stage }));
     for (let i = 0; i < 60 * 400; i++) {
       stepWorld(state, autopilotInput(state));

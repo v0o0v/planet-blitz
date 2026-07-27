@@ -40,6 +40,21 @@ export interface PveSettleSummary {
    * 규율상 값이 있을 때만 스탬프한다(undefined 대입 금지).
    */
   runId?: string;
+  /**
+   * 이 런이 스탬프한 행성 인기 배율 **epoch**(30분 단위 정수, ADR-0038). 서버 `settle_pve_run`
+   * 이 이 epoch 의 **자기 스냅샷**에서 해당 행성 배율을 읽어 자원 지급 상한을 재산정한다.
+   * **클라가 배율값 자체를 보내지 않는 것이 계약이다** — 보내면 위조 표면이 되고, 서버는 어차피
+   * 자기 표만 신뢰한다(촉매 `resource_mult` 영수증과 같은 규율). epoch 이 현재/직전이 아니면
+   * 서버가 배율 1.0 으로 취급한다. 미지정 = 오프라인/구 클라 → 서버 기본(1.0) 경로.
+   */
+  epoch?: number;
+}
+
+/** `planet_popularity_current` 한 행 — 행성별 확정 배율(centi)과 그 스냅샷의 epoch. */
+export interface PlanetMultiplierRow {
+  planet: number;
+  mult_centi: number;
+  epoch: number;
 }
 
 /** `consume_catalysts` 반환 — 발급된 런 id 와 서버 확정 자원 배율. */
@@ -147,6 +162,12 @@ export interface ServerGateway {
    * 구버전 게이트웨이면 undefined(→ 빈 보유로 취급).
    */
   fetchCatalystInventory?(): Promise<CatalystInventoryRow[]>;
+  /**
+   * 행성 인기 배율표 조회(ADR-0038) — `planet_popularity_current` 뷰 select. **로그인 없이도
+   * 읽힌다**(anon/authenticated select). 30분 주기 폴링의 유일한 서버 접점이며, 실패·구버전
+   * (undefined)이면 호출부가 전 행성 1.0 폴백으로 떨어진다(무촉매 오프라인 런 보존).
+   */
+  fetchPlanetMultipliers?(): Promise<PlanetMultiplierRow[]>;
 }
 
 /** raw jsonb 에서 안전하게 값 추출(RPC 응답 방어적 파싱). */
@@ -325,6 +346,22 @@ export class SupabaseGateway implements ServerGateway {
     return data.map((row) => {
       const r = asRec(row);
       return { catalyst_id: num(r.catalyst_id), qty: num(r.qty) };
+    });
+  }
+
+  async fetchPlanetMultipliers(): Promise<PlanetMultiplierRow[]> {
+    const { data, error } = await this.client
+      .from('planet_popularity_current')
+      .select('planet, mult_centi, epoch');
+    if (error !== null) throw error;
+    if (!Array.isArray(data)) return [];
+    return data.map((row) => {
+      const r = asRec(row);
+      return {
+        planet: num(r.planet),
+        mult_centi: num(r.mult_centi, 100),
+        epoch: num(r.epoch),
+      };
     });
   }
 }
