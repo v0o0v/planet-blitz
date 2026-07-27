@@ -3378,7 +3378,11 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // 감속 지대(plan B1): 활성 HAZARD_SLOW 장판에 닿으면 감속 부여(무적 여부와 무관 —
     // 이동 디버프이지 피해가 아니다). 소량 피해는 아래 일반 hazard 분기가 처리한다.
     if (t.kind === 'hazard' && t.enemyType === HAZARD_SLOW && hazardActive(t)) {
-      state.playerSlowTicks = PLAYER_SLOW_DURATION;
+      // `aux0` 는 침공 **효용 해저드**(피해 0 · 견인 자기장)가 실어 보내는 감속 지속 틱이다 —
+      // 그 설비는 피해가 0 이라 강화 3축(레벨·등급·승급)을 실을 자리가 damage 에 없어서, 축을
+      // 감속 지속에 태운다(`src/sim/invasion/facility.ts` `utilityHazardSlowTicks`).
+      // 다른 모든 `HAZARD_SLOW` 생산자는 `aux0` 를 건드리지 않아 0 → 기본값 그대로다(비트 동일).
+      state.playerSlowTicks = t.aux0 > 0 ? t.aux0 : PLAYER_SLOW_DURATION;
     }
     if (invulnerable) return;
     if (t.kind === 'enemyBullet') {
