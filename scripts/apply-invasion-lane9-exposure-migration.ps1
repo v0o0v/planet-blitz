@@ -130,7 +130,8 @@ $rows | Format-Table -AutoSize | Out-String | Write-Host
 foreach ($r in $rows) {
   $nn = [int]$r.nn
   $expBoss   = if ($nn -le 4) { $null } elseif ($nn -le 10) { '2' } elseif ($nn -le 16) { '0' } else { '1' }
-  $expProps  = if ($nn -le 4) { 0 } elseif ($nn -le 7) { 2 } else { 5 }
+  # props ramp comes from 20260728000000 (props rebalance): 0 / 2 / 4 / 3.
+  $expProps  = if ($nn -le 4) { 0 } elseif ($nn -le 7) { 2 } elseif ($nn -le 14) { 4 } else { 3 }
   $expRarity = if ($nn -le 4) { '0' } elseif ($nn -le 8) { '1' } elseif ($nn -le 11) { '2' } else { '3' }
   $expAsc    = if ($nn -le 7) { '0' } elseif ($nn -le 10) { '1' } elseif ($nn -le 16) { '2' } else { '3' }
   # socket 0 catalogId == facilityShift for the lower band, 0 for nn>=8.
