@@ -140,6 +140,25 @@
  * 리플레이가 전부 거부된다. 골든이 조용한 것은 골든이 그 구간을 안 밟기 때문이지 sim 이
  * 안 바뀌어서가 아니다.
  *
+ * ## ⚠️ 2026-07-28 (8차) — PvE·invasion 을 **둘 다** 재녹화했다 (공간 해시 broad-phase 수정)
+ * `fix/spatial-hash-large-radius-broadphase` 가 `src/sim/collision.ts` 의 broad-phase 결함을
+ * 고쳤다. `SpatialHash.insert` 는 엔티티를 **중심 셀 한 칸**에만 넣는데 `query` 는 **탐침
+ * 반경**으로만 셀을 훑어서, 접촉 조건(`중심거리 <= 탐침반경 + 엔티티반경`) 중 **엔티티 반경
+ * 만큼의 띠가 broad-phase 에서 통째로 빠져 있었다.** 즉 적·탄·해저드가 셀 경계 너머에서
+ * 판정을 흘리고 있었고, 이제 흘리지 않는다.
+ *
+ * `resolveCollisions` 는 PvE 와 침공이 **공유**하는 경로라 두 배열이 함께 움직였다.
+ * 재녹화 **직전** 실측(현 코드 vs 커밋된 기준선): **AC2(invasion) 3/3 전부 갈림 ·
+ * AC1(PvE) 12건 중 11건 갈림**(`berdan-engage/mixed-three` 만 우연히 일치).
+ *
+ * **3·4·6차와 갈리는 지점이 여기다.** 그 세 세대에서는 invasion 배열이 바이트 동일이라
+ * "골든이 그 구간을 안 밟는다" 는 단서를 따로 붙여야 했다. 이번에는 **무입력 900틱 침공 런
+ * 3개가 전부 갈렸다** — 셀 경계 누락은 특정 국면(벽·다중 명중·L3 실드)에서만 나는 것이 아니라
+ * **모든 틱의 모든 접촉 판정**에 걸려 있었다는 직접 증거다. 결함의 파급이 그만큼 넓었다.
+ *
+ * **`verify-invasion` EF 재배포는 필수다** — 이번엔 골든 자신이 그렇게 보고한다(위 3/3).
+ * 상세·분리 실측은 `.omc/research/spatial-hash-large-radius-broadphase-2026-07-28.md`.
+ *
  * ## 왜 PvE 는 `seg3Tick` 앞까지만 대조하나
  * 중반 격전은 **매 런 등장**이라 PvE 비-invasion baseline 해시를 의도적으로 바꾼다(AC3 —
  * `tests/fixtures/striker-prem8.json` 골든 재생성으로 흡수). 다만 격전 세그먼트는 **중반
