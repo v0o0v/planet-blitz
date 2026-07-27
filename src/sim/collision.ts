@@ -20,8 +20,22 @@ export interface Spatial {
   radius: number;
 }
 
+/**
+ * 셀 등록 대상과 **초대형 목록** 을 가르는 반경 임계의 기본값(셀 크기 대비 비율이 아니라
+ * 절대값이다 — 아래 근거가 카탈로그 실측이라서).
+ *
+ * 임계 위 엔티티는 셀에 넣지 않고 {@link SpatialHash} 의 선형 목록으로 보낸다. 값을 160 으로
+ * 잡은 근거는 카탈로그 실측이다 — 적 최대 반경 140 · 보스 최대 130 · 설비 38 이라 **전투
+ * 엔티티는 전부 임계 아래**로 들어가고, 임계를 넘는 것은 사실상 해저드 장판뿐이다(침공 4기지
+ * × 6,000틱 실측: 반경 > 256 인 엔티티는 **틱당 최대 1개** · 평균 0.04개). 즉 선형 목록은
+ * 거의 비어 있어 비용이 없고, 셀 질의 확장폭({@link SpatialHash.maxHashedRadius})은 침공에서
+ * 54 · PvE 에서 140 수준이라 셀 한 칸(256)을 넘지 않는다.
+ */
+export const OVERSIZED_RADIUS_THRESHOLD = 160;
+
 export class SpatialHash<T extends Spatial> {
   private readonly cellSize: number;
+  private readonly oversizedThreshold: number;
   /**
    * Sparse bucket map keyed by an integer cell key. Unbounded (infinite map):
    * only occupied cells are allocated, so the grid tracks entities at any
@@ -30,13 +44,42 @@ export class SpatialHash<T extends Spatial> {
    * (cy, cx) order (see `query`), preserving the determinism contract above.
    */
   private readonly cells = new Map<number, T[]>();
+  /**
+   * 셀에 등록된 엔티티 반경의 최댓값. {@link query} 가 셀 범위를 이만큼 **넓혀서** 훑는다.
+   *
+   * ## 왜 필요한가 — 이게 없어서 큰 엔티티가 판정에서 통째로 빠져 있었다
+   * `insert` 는 엔티티를 **중심 좌표의 셀 한 칸**에만 넣는다. 그런데 `query` 가 **탐침 반경**
+   * 으로만 셀을 훑으면, 접촉 조건은 `|중심거리| <= 탐침반경 + 엔티티반경` 인데 탐침이 훑는
+   * 범위는 `탐침반경` 뿐이라 **엔티티 반경만큼의 띠가 통째로 사라진다**. 엔티티 중심이
+   * 탐침 셀 밖이면 반경이 아무리 커도 후보로 들어오지 않는다.
+   *
+   * 실측 증상: 침공 해저드 `hazardRadius` 를 760 으로 두나 1,520 으로 두나 96시드 9행이
+   * **바이트 동일**이었다(반경 약 650 위로는 기여가 정확히 0). 다만 결함은 해저드 전용이
+   * **아니다** — 반경 54 짜리 잡몹도 셀 경계를 사이에 두면 접촉 거리 안에서 후보에서 빠졌다.
+   * 즉 모든 큰 엔티티가 셀 경계에서 확률적으로 판정을 흘리고 있었다.
+   *
+   * 확장폭을 상수가 아니라 **실제 등록된 최댓값**으로 두는 이유는 비용이다. 상수 256 으로
+   * 두면 점 질의가 항상 3×3 셀을 훑지만, 실측 최댓값은 침공 54 · PvE 140 이라 대개 셀
+   * 경계 근처에서만 한 칸이 늘어난다.
+   */
+  private maxHashedRadius = 0;
+  /**
+   * {@link oversizedThreshold} 를 넘는 엔티티의 선형 목록. 셀 확장폭은 이 임계 아래로
+   * 묶여 있어야 질의가 폭발하지 않으므로(반경 1,520 짜리 장판 하나 때문에 모든 질의가
+   * 13×13 셀을 훑게 된다), 임계 위는 셀을 쓰지 않고 질의마다 원-원 판정으로 걸러 낸다.
+   * 목록이 항상 한 자릿수라 선형 주사가 셀 순회보다 싸다({@link OVERSIZED_RADIUS_THRESHOLD}).
+   */
+  private readonly oversized: T[] = [];
 
-  constructor(cellSize: number) {
+  constructor(cellSize: number, oversizedThreshold = OVERSIZED_RADIUS_THRESHOLD) {
     this.cellSize = cellSize;
+    this.oversizedThreshold = oversizedThreshold;
   }
 
   clear(): void {
     this.cells.clear();
+    this.oversized.length = 0;
+    this.maxHashedRadius = 0;
   }
 
   /**
@@ -53,8 +96,16 @@ export class SpatialHash<T extends Spatial> {
     return ((a * 73856093) ^ (b * 19349663)) >>> 0;
   }
 
-  /** Insert an entity into the cell containing its current position. */
+  /**
+   * Insert an entity into the cell containing its current position — 단, 반경이
+   * {@link oversizedThreshold} 를 넘으면 셀 대신 {@link oversized} 목록으로 보낸다.
+   */
   insert(entity: T): void {
+    if (entity.radius > this.oversizedThreshold) {
+      this.oversized.push(entity);
+      return;
+    }
+    if (entity.radius > this.maxHashedRadius) this.maxHashedRadius = entity.radius;
     const cx = Math.floor(entity.x / this.cellSize);
     const cy = Math.floor(entity.y / this.cellSize);
     const key = this.cellKey(cx, cy);
@@ -67,17 +118,25 @@ export class SpatialHash<T extends Spatial> {
   }
 
   /**
-   * Visit every inserted entity whose cell overlaps the circle (x, y, radius).
+   * Visit every inserted entity that can possibly overlap the circle (x, y, radius).
    * The callback may be invoked for entities slightly outside the circle (the
-   * grid is broad-phase only) — callers do the exact distance test. Iteration
-   * order is deterministic: cells in a fixed (cy, cx) nested order, entities
-   * within a cell in insertion order.
+   * grid is broad-phase only) — callers do the exact distance test.
+   *
+   * 셀 범위는 탐침 반경이 아니라 **탐침 반경 + {@link maxHashedRadius}** 로 넓힌다. 엔티티가
+   * 중심 셀 한 칸에만 등록되므로, 그만큼 넓히지 않으면 자기 반경 안에 탐침이 들어와 있는데도
+   * 후보에서 빠진다(그 주석에 실측 근거가 있다). {@link oversized} 는 셀을 쓰지 않으므로
+   * 목록 전체를 원-원 판정으로 훑는다 — `|중심거리| <= 탐침반경 + 엔티티반경` 은 어떤 형태의
+   * 겹침에도 필요한 조건이라 이 걸러 내기는 **후보를 놓치지 않는다**(broad-phase 계약 유지).
+   *
+   * Iteration order is deterministic: cells in a fixed (cy, cx) nested order, entities
+   * within a cell in insertion order, **그다음** oversized 목록이 삽입 순서로 뒤따른다.
    */
   query(x: number, y: number, radius: number, cb: (entity: T) => void): void {
-    const minCx = Math.floor((x - radius) / this.cellSize);
-    const maxCx = Math.floor((x + radius) / this.cellSize);
-    const minCy = Math.floor((y - radius) / this.cellSize);
-    const maxCy = Math.floor((y + radius) / this.cellSize);
+    const reach = radius + this.maxHashedRadius;
+    const minCx = Math.floor((x - reach) / this.cellSize);
+    const maxCx = Math.floor((x + reach) / this.cellSize);
+    const minCy = Math.floor((y - reach) / this.cellSize);
+    const maxCy = Math.floor((y + reach) / this.cellSize);
     for (let cy = minCy; cy <= maxCy; cy++) {
       for (let cx = minCx; cx <= maxCx; cx++) {
         const bucket = this.cells.get(this.cellKey(cx, cy));
@@ -86,6 +145,12 @@ export class SpatialHash<T extends Spatial> {
           cb(entity);
         }
       }
+    }
+    for (const entity of this.oversized) {
+      const dx = entity.x - x;
+      const dy = entity.y - y;
+      const rr = radius + entity.radius;
+      if (dx * dx + dy * dy <= rr * rr) cb(entity);
     }
   }
 }
