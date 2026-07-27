@@ -135,8 +135,8 @@
  *     중하 99.4 · 중위 91.0). T1~T4a 가 레버를 되살리고 T4b 가 시드 램프를 옮겨 세 밴드가
  *     목표 안에 착지했다(위 ②-5세대). **이 절은 이제 역사 기록이다.**
  * 램프를 실제로 바꾸려면 **최신 재시드 마이그레이션**이 정본이고(현재
- * `supabase/migrations/20260728000000_invasion_props_rebalance.sql`) 아래 `RAMP_SQL_LINES`
- * 미러 13줄을 **동시에** 고쳐야 한다(드리프트 가드 참고).
+ * `supabase/migrations/20260728013000_invasion_lane9_exposure.sql`) 아래 `RAMP_SQL_LINES`
+ * 미러 14줄을 **동시에** 고쳐야 한다(드리프트 가드 참고).
  *
  * ### ⑥ T1 보스 램프 배정 역전 — **해소됨** (2026-07-27)
  * 위 ⑤ 의 "⛔ 남음"이던 §5.5 다. 재측정(96시드)으로 난이도 순서를 다시 확정하고
@@ -197,6 +197,32 @@
  * 붙으면 **완전한 무효과**. `#15` 는 5기 중 **3기**가 이런 사문화 유니크였고 `#16` 은 1기뿐).
  * ⚠️ 그 변경은 분산을 줄이는 대신 **평균 난이도를 올리고** `#16` 자체는 쉬워지지 않으므로,
  * 밴드 재기준화 + EF 재배포와 한 묶음인 별도 레인이다. 연구 문서 §6 참고.
+ *
+ * ### ⑨ Lane9 콘텐츠 가시성 — 노출은 넓히되 난이도는 건드리지 않는다 (2026-07-28)
+ * 정본은 `.omc/research/invasion-lane9-exposure-2026-07-28.md`.
+ *
+ * 램프의 `kinds` 상한이 카탈로그 뒷부분을 잘라내 **Lane9 신규 방어체 12종(편대 8~11 ·
+ * 설비 9~16)이 20기지 전부에서 한 번도 안 나왔다**. 이 레인은 그 가시성만 고쳤다 —
+ * ⑦ 의 레인이 "가장 큰 난이도 레버"로 보고 시도했다가 **실측 기각**한 항목이라(중위
+ * 74.31 → 75.69 제자리 · `#16` 4.2 → 0%), 목적을 난이도에서 **가시성**으로 다시 분류한 것이다.
+ *
+ * 설계 판단은 **"여유가 있는 밴드에만, 문수가 아니라 창(shift)으로"** 였다:
+ *   · 하위 밴드(nn 1..7)만 창 크기를 전 카탈로그로 열고 shift 를 누적합으로 밀어 순회시킨다.
+ *     하위 설비 슬롯 합 22 ≥ 17 · 웨이브 슬롯 합 12 = 12 라 두 카탈로그를 빈틈없이 덮는다.
+ *   · **nn>=8 은 식 수준에서 손대지 않았다** → 중하·중위는 입력이 **바이트 동일**이다.
+ *     난이도 중립이 "다시 쟀더니 같더라"가 아니라 **입력이 같아서 같다**로 성립하고,
+ *     최저 기지 `#16`(6세대 5/24)도 정의상 보존된다. 아래 ⑤-2 커버리지 단언 옆의 회귀
+ *     테스트가 그 바이트 동일성을 계약으로 굳힌다.
+ *   · 문수·레벨·등급·승급·기물·보스는 한 줄도 안 바꿨다. 바뀐 건 "어느 종류가 서느냐"뿐.
+ * 실측(**6세대 기준선** 위): 하위를 base·expose 각각 96시드로 재측정해 7기지 전부
+ * **96/96**(100.00%) 로 일치 — 판정이 세진 6세대 sim 에서도 신규 종이 하위를 밀어 올리지
+ * 않는다. **상쇄 조정이 필요 없었다.**
+ * ⚠️ 이 레인은 처음에 5세대 기준선(71.43 / 31.94) 위에서 측정했다가 리베이스 후 **전량
+ * 재측정**했다. 밴드 수치를 인용할 때 세대를 반드시 확인해라 — 6세대가 값을 통째로 옮겼다.
+ *
+ * 부수 효과로 커버리지 단언이 **풀 카탈로그로 복원**됐다(종전에는 편대·설비만 "램프 상한
+ * 까지"라는 약한 형태였다). 이제 카탈로그에 종을 append 하고 램프를 안 열면 그 단언이
+ * 먼저 깨진다 — 이것이 이 레인의 진짜 완료 신호다.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -229,16 +255,27 @@ import type { AffixRoll, Item } from '../src/items/types.js';
  * 원격 DB 와 무관한 숫자가 되므로, 아래 `드리프트 가드` 테스트가 SQL 안의
  * `-- RAMP:` 주석과 이 표를 문자열로 대조한다.
  */
+/**
+ * 하위 밴드(nn 1..7)가 카탈로그를 순회 노출할 때 쓰는 창 시작점. **1-기반 첨자**라
+ * SQL 의 `array[...]` 와 같은 방식으로 읽는다(`LOWER_*_SHIFT[nn - 1]`).
+ * 값은 "nn 미만 기지들이 소비한 슬롯 수의 누적합" 이다 — 그래서 창이 이어붙어
+ * 카탈로그를 빈틈없이 한 바퀴 덮는다. 근거는 `MIGRATION_PATH` 헤더 "왜 하위 밴드인가".
+ */
+const LOWER_FACILITY_SHIFT: readonly number[] = [0, 2, 4, 7, 10, 14, 1];
+const LOWER_FORMATION_SHIFT: readonly number[] = [0, 1, 2, 3, 5, 7, 9];
+
 const RAMP = {
   level: (nn: number) => 1 + Math.floor((3 * (nn - 1)) / 2),
   rarity: (nn: number) => (nn <= 4 ? 0 : nn <= 8 ? 1 : nn <= 11 ? 2 : 3),
   ascension: (nn: number) => (nn <= 7 ? 0 : nn <= 10 ? 1 : nn <= 16 ? 2 : 3),
   template: (nn: number) => (nn <= 7 ? 0 : nn <= 14 ? 2 : 1),
   waves: (nn: number) => Math.min(6, 1 + Math.floor((nn - 1) / 3)),
-  formationKinds: (nn: number) => Math.min(8, 1 + Math.floor((nn + 1) / 3)),
-  formationShift: (nn: number) => (nn >= 17 ? 2 : 0),
+  formationKinds: (nn: number) => (nn <= 7 ? 12 : Math.min(8, 1 + Math.floor((nn + 1) / 3))),
+  formationShift: (nn: number) =>
+    nn <= 7 ? (LOWER_FORMATION_SHIFT[nn - 1] as number) : nn >= 17 ? 2 : 0,
   facilities: (nn: number, socketN: number) => Math.min(socketN, 2 + Math.floor((nn - 1) / 2)),
-  facilityKinds: (nn: number) => Math.min(9, 2 + Math.floor((nn * 2) / 5)),
+  facilityKinds: (nn: number) => (nn <= 7 ? 17 : Math.min(9, 2 + Math.floor((nn * 2) / 5))),
+  facilityShift: (nn: number) => (nn <= 7 ? (LOWER_FACILITY_SHIFT[nn - 1] as number) : 0),
   props: (nn: number) => (nn <= 4 ? 0 : nn <= 7 ? 2 : nn <= 14 ? 4 : 3),
   propKinds: (nn: number) => Math.min(6, 1 + Math.floor(nn / 4)),
   propShift: (nn: number) => (nn >= 18 ? 3 : 0),
@@ -252,10 +289,11 @@ const RAMP_SQL_LINES: readonly string[] = [
   '-- RAMP: ascension = nn<=7 ? 0 : nn<=10 ? 1 : nn<=16 ? 2 : 3',
   '-- RAMP: template = nn<=7 ? 0 : nn<=14 ? 2 : 1',
   '-- RAMP: waves = min(6, 1 + (nn-1)/3)',
-  '-- RAMP: formationKinds = min(8, 1 + (nn+1)/3)',
-  '-- RAMP: formationShift = nn>=17 ? 2 : 0',
+  '-- RAMP: formationKinds = nn<=7 ? 12 : min(8, 1 + (nn+1)/3)',
+  '-- RAMP: formationShift = nn<=7 ? [0,1,2,3,5,7,9][nn] : (nn>=17 ? 2 : 0)',
   '-- RAMP: facilities = min(socketN, 2 + (nn-1)/2)',
-  '-- RAMP: facilityKinds = min(9, 2 + (nn*2)/5)',
+  '-- RAMP: facilityKinds = nn<=7 ? 17 : min(9, 2 + (nn*2)/5)',
+  '-- RAMP: facilityShift = nn<=7 ? [0,2,4,7,10,14,1][nn] : 0',
   '-- RAMP: props = nn<=4 ? 0 : nn<=7 ? 2 : nn<=14 ? 4 : 3',
   '-- RAMP: propKinds = min(6, 1 + nn/4)',
   '-- RAMP: propShift = nn>=18 ? 3 : 0',
@@ -265,10 +303,11 @@ const RAMP_SQL_LINES: readonly string[] = [
 /**
  * 램프 정본 SQL. **최신 재시드 파일을 가리켜야 한다** — 이미 원격에 적용된 마이그레이션은
  * 본문을 고쳐도 재실행되지 않으므로, 램프를 바꿀 때마다 "덮어쓰는 신규 파일"이 새 정본이
- * 된다(이 리포의 선례: 20260721010000 → 20260723000000 → 20260727011000 → 20260727020000 → 20260728000000).
+ * 된다(이 리포의 선례: 20260721010000 → 20260723000000 → 20260727011000 → 20260727020000
+ * → 20260728000000 → 20260728013000).
  */
 const MIGRATION_PATH = fileURLToPath(
-  new URL('../supabase/migrations/20260728000000_invasion_props_rebalance.sql', import.meta.url),
+  new URL('../supabase/migrations/20260728013000_invasion_lane9_exposure.sql', import.meta.url),
 );
 
 /**
@@ -298,6 +337,7 @@ export function seedBaseLayers(nn: number): InvasionLayers {
   const sf1 = RAMP.formationShift(nn);
   const facils = RAMP.facilities(nn, socketN);
   const kf2 = RAMP.facilityKinds(nn);
+  const sf2 = RAMP.facilityShift(nn);
   const props = RAMP.props(nn);
   const kp = RAMP.propKinds(nn);
   const sp = RAMP.propShift(nn);
@@ -311,7 +351,7 @@ export function seedBaseLayers(nn: number): InvasionLayers {
     l2: {
       templateId: tpl,
       sockets: Array.from({ length: socketN }, (_, i) =>
-        i < facils ? ref(i % kf2, nn, nn * 2000 + i * 13) : null,
+        i < facils ? ref((i + sf2) % kf2, nn, nn * 2000 + i * 13) : null,
       ),
     },
     l3: {
@@ -833,40 +873,60 @@ describe('시드 재조정 — SQL 정본과의 정합', () => {
       for (const s of l.l3.props) if (s !== null) props.add(s.catalogId);
       if (l.l3.boss !== null) bosses.add(l.l3.boss.catalogId);
     }
-    // 시드 램프(RAMP)가 **목표로 하는** 카탈로그 대역을 빠짐없이 노출하는지 본다(대역 안에
-    // 구멍이 있으면 그 콘텐츠는 NPC 기지에서 영영 안 보인다). 대역 상한은 램프에서 파생한다
-    // (하드코딩 금지) — 편대·설비는 램프 상한까지, 기물·보스는 전량이다.
+    // ✅ **풀 카탈로그로 복원됐다**(Lane9 콘텐츠 가시성 레인, 2026-07-28). 이전에는 네 축 중
+    // 편대·설비만 "램프 상한까지"라는 약한 단언이었다 — 램프가 카탈로그 뒷부분(편대 8~11 ·
+    // 설비 9~16, 톡사르·크라스 Lane9 12종)을 통째로 잘라내고 있었기 때문이다. 하위 밴드가
+    // 카탈로그를 순회 노출하도록 창(shift)을 열어 이제 **네 축 모두 전량**을 요구한다.
+    // 대역 상한을 램프에서 파생시키던 우회가 사라졌으므로, 카탈로그에 종을 append 하고
+    // 램프를 안 열면 **이 단언이 먼저 깨진다** — 그게 이 테스트가 원래 재려던 것이다.
     //
-    // ⚠️ Lane9 신규 방어체(편대 8~11 · 설비 9~16)는 램프 대역 **밖**이다: 톡사르·크라스
-    // 특산 설계도라 획득 경로가 **행성 파밍**이고, 그 도달은 tests/planetDrops.test.ts ③·⑥ 이
-    // 보장한다(미사용 콘텐츠 0 은 전역적으로 여전히 성립 — 죽은 콘텐츠가 아니다). NPC 시드
-    // 기지 노출까지 넓히는 것은 서버 시드 램프(최신 재시드 마이그레이션) 수정 +
-    // 클리어율 밴드 재측정을 동반하는 별도 밸런스 패스 소관이다(defer-balance-tuning).
-    //
-    // ⚠️ **2026-07-27 밴드 목표 복원 레인이 이 확장을 실제로 재 보고 기각했다.** 램프 상한을
-    // `facilityKinds = min(17, 2 + nn*4/5)` 로 열고 shift 로 Lane9 8종을 노출시켜 재면 24시드
-    // 밴드가 74.31 → **75.69**(중위) 로 사실상 제자리였다 — 신규 8종의 실효 화력이 0~8 과
-    // 비슷해서 **난이도 레버가 아니다**. 게다가 목표 착지 구성 위에 얹으면 최저 기지 #16 이
-    // 4.2% → **0%** 로 내려가 "클리어 불가 기지 없음" 불변식을 깬다. 노출을 넓히고 싶다면
-    // **난이도 튜닝과 분리해서**(콘텐츠 가시성 목적으로) 하고, #16 을 먼저 밴드 안으로
-    // 되돌려 여유를 만든 뒤에 해라. 근거: `.omc/research/invasion-band-restore-2026-07-27.md`.
-    const seedFormationKinds = Math.max(
-      ...Array.from({ length: SEED_BASE_COUNT }, (_, i) => RAMP.formationKinds(i + 1)),
-    );
-    const seedFacilityKinds = Math.max(
-      ...Array.from({ length: SEED_BASE_COUNT }, (_, i) => RAMP.facilityKinds(i + 1)),
-    );
-    expect([...formations].sort((a, b) => a - b)).toEqual(
-      Array.from({ length: seedFormationKinds }, (_, i) => i),
-    );
-    expect([...facilities].sort((a, b) => a - b)).toEqual(
-      Array.from({ length: seedFacilityKinds }, (_, i) => i),
-    );
+    // ⚠️ 이 확장은 **난이도 레버가 아니다**(2026-07-27 복원 레인 실측 기각 — 신규 8종의 실효
+    // 화력이 기존 0~8 과 비슷하다). 그래서 이번에는 난이도가 움직이지 않는 자리에만 열었다:
+    // nn>=8 의 배치는 **바이트 동일**이라 중하 70.83 · 중위 40.28 과 `#16` 의 5/24 가 입력
+    // 수준에서 보존되고, 하위는 96시드 7기지 전부 96/96 으로 100.00% 를 유지한다(6세대 기준).
+    // 근거: `.omc/research/invasion-lane9-exposure-2026-07-28.md`.
+    expect([...formations].sort((a, b) => a - b)).toEqual(FORMATIONS.map((_, i) => i));
+    expect([...facilities].sort((a, b) => a - b)).toEqual(INVASION_FACILITIES.map((_, i) => i));
     expect([...props].sort((a, b) => a - b)).toEqual(L3_PROPS.map((_, i) => i));
     expect([...bosses].sort((a, b) => a - b)).toEqual(DEFENSE_BOSSES.map((_, i) => i));
     // 시드가 참조하는 편대·설비 id 는 전부 실재 카탈로그다(댕글링 시드 0).
     for (const id of formations) expect(FORMATIONS[id]).toBeDefined();
     for (const id of facilities) expect(INVASION_FACILITIES[id]).toBeDefined();
+  });
+
+  it('하위 밴드 창 크기가 카탈로그 길이와 같다(종을 append 하면 램프가 먼저 깨진다)', () => {
+    // 하위 밴드는 창 크기를 **전 카탈로그**로 열고 shift 로 순회한다. 그 창 크기가 SQL 에
+    // 상수(`c_form_len` · `c_fac_len`)로 박혀 있으므로, 카탈로그에 종을 append 하고 SQL
+    // 상수를 안 올리면 새 종은 다시 안 보인다. 이 단언이 그 순간을 잡는다.
+    expect(RAMP.formationKinds(1)).toBe(FORMATIONS.length);
+    expect(RAMP.facilityKinds(1)).toBe(INVASION_FACILITIES.length);
+    const sql = readMigrationSql();
+    expect(sql).toContain(`c_form_len constant integer := ${FORMATIONS.length};`);
+    expect(sql).toContain(`c_fac_len  constant integer := ${INVASION_FACILITIES.length};`);
+  });
+
+  it('중하·중위(nn 8..20) 배치가 Lane9 노출 확장 전과 바이트 동일하다', () => {
+    // 이 레인의 난이도 중립은 "다시 쟀더니 같더라"가 아니라 **입력이 동일해서 같다**로
+    // 성립한다. 확장 전 식(shift 없음 · 상한 min(8,…)/min(9,…))을 여기 그대로 두고
+    // nn>=8 의 catalogId 를 대조한다 — 미래에 하위 창을 손대다 중하·중위로 새면 즉시 깨진다.
+    const beforeFormationKinds = (nn: number) => Math.min(8, 1 + Math.floor((nn + 1) / 3));
+    const beforeFacilityKinds = (nn: number) => Math.min(9, 2 + Math.floor((nn * 2) / 5));
+    const beforeFormationShift = (nn: number) => (nn >= 17 ? 2 : 0);
+    for (let nn = 8; nn <= SEED_BASE_COUNT; nn++) {
+      const l = seedBaseLayers(nn);
+      l.l1.waveSlots.forEach((s, i) => {
+        if (s !== null) {
+          expect(s.catalogId, `#${nn} 웨이브 ${i}`).toBe(
+            (i + beforeFormationShift(nn)) % beforeFormationKinds(nn),
+          );
+        }
+      });
+      l.l2.sockets.forEach((s, i) => {
+        if (s !== null) {
+          expect(s.catalogId, `#${nn} 소켓 ${i}`).toBe(i % beforeFacilityKinds(nn));
+        }
+      });
+    }
   });
 
   it('시드 배치가 전부 정규형이다(정규화 멱등)', () => {
