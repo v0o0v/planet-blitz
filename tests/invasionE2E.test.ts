@@ -122,7 +122,7 @@ function playRun(seed: number, layers: InvasionLayers): RunResult {
  * 침공은 이길 수도 질 수도 있어야 한다). 여기 박아 둔 시드는 아래 두 케이스가 실제로
  * 승리에 도달하는 것으로 확인된 값이다.
  *
- * ⚠️ **sim 이 바뀌면 증인 시드도 다시 골라야 한다.** 채운 배치는 두 번 갈았다 —
+ * ⚠️ **sim 이 바뀌면 증인 시드도 다시 골라야 한다.** 채운 배치는 네 번 갈았다 —
  * 단언을 약화한 것이 아니라 매번 **같은 성질의 증인을 다시 고른 것**이다.
  *   - `fix/weapon-range-semantics`(무제한 조준 폐지): 7 → 10.
  *   - `feat/scroll-anchor-policy`(ADR-0034 강제 스크롤 정책 축 ANCHOR/WORLD): 10 → 9.
@@ -136,11 +136,20 @@ function playRun(seed: number, layers: InvasionLayers): RunResult {
  *     9 → 4. 같은 절차로 1~120 을 순차 탐색해 1·4·16·53·66·74 가 전 단언을 만족했고,
  *     **1 은 위와 같은 이유로 제외**해 그다음 값인 4 를 골랐다. 시드 9 는 이 변경 뒤
  *     발생기까지는 부수지만(형제 단언 통과) 코어 파괴 전에 18,000틱 예산이 소진된다.
+ *   - `fix/spatial-hash-large-radius-broadphase`(공간 해시 broad-phase 가 큰 반경 엔티티를
+ *     후보에서 누락하던 결함): 4 → **53**. 이번 변경은 **판정이 세지는 방향**이라 만석 배치가
+ *     전반적으로 어려워졌다 — 적·해저드가 셀 경계 너머에서도 제대로 맞히기 시작했기 때문이다
+ *     (근거·분리 실측은 `.omc/research/spatial-hash-large-radius-broadphase-2026-07-28.md`).
+ *     같은 절차로 1~120 을 순차 탐색해 만족하는 시드는 **53·108 둘뿐**이었고 작은 53 을 골랐다
+ *     (1 과 겹치지 않으므로 위와 같은 제외는 필요 없었다). 앞선 네 세대는 후보가 3~6개였는데
+ *     이번엔 120개 중 2개다 — 만석 배치가 그만큼 어려워졌다는 신호이고, 다음에 sim 이 또
+ *     세지는 방향으로 바뀌면 **증인이 아예 없을 수 있으니** 그때는 시드 교체가 아니라 배치
+ *     난이도 자체를 재검토해야 한다.
  *
- * 빈 배치 1 은 네 번의 sim 변경을 모두 넘겨 그대로 승리한다.
+ * 빈 배치 1 은 다섯 번의 sim 변경을 모두 넘겨 그대로 승리한다.
  */
 const WINNING_SEED_EMPTY = 1;
-const WINNING_SEED_FILLED = 4;
+const WINNING_SEED_FILLED = 53;
 
 /** 코어 파괴 승리를 공통 단언으로 묶는다. */
 function expectCoreKillVictory(run: RunResult): void {

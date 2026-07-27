@@ -27,6 +27,49 @@ describe('SpatialHash', () => {
     expect(hits).not.toContain(2);
   });
 
+  // ── 큰 반경 엔티티가 broad-phase 에서 사라지던 결함 (fix/spatial-hash-large-radius-broadphase)
+  //
+  // `insert` 는 엔티티를 중심 셀 **한 칸**에만 넣는다. 예전 `query` 는 셀 범위를 **탐침 반경**
+  // 으로만 넓혀서, 접촉 조건(`중심거리 <= 탐침반경 + 엔티티반경`) 중 엔티티 반경만큼의 띠가
+  // 통째로 판정에서 빠졌다. 아래 세 케이스는 전부 수정 전 코드에서 실패한다.
+
+  it('엔티티 반경이 셀보다 커도 후보로 들어온다 (해저드 장판)', () => {
+    // 셀 256 · 장판 반경 900 · 탐침은 장판 중심에서 700 떨어진 점. 접촉 거리 안(700 < 900)인데
+    // 중심 셀이 두 칸 밖이라 예전에는 후보에 들어오지도 않았다 — 실효 반경 상한 약 650 의 정체.
+    const grid = new SpatialHash<P>(256);
+    const hazard: P = { x: 0, y: 0, radius: 900, id: 7 };
+    grid.insert(hazard);
+    const hits: number[] = [];
+    grid.query(700, 0, 8, (e) => hits.push(e.id));
+    expect(hits).toContain(7);
+  });
+
+  it('반경을 더 키우면 그만큼 더 멀리서 잡힌다 (상한이 없다)', () => {
+    // "반경 760 과 1,520 이 바이트 동일" 이던 증상의 직접 반증.
+    const near = new SpatialHash<P>(256);
+    near.insert({ x: 0, y: 0, radius: 760, id: 1 });
+    const far = new SpatialHash<P>(256);
+    far.insert({ x: 0, y: 0, radius: 1520, id: 1 });
+    const probe = (g: SpatialHash<P>): boolean => {
+      let found = false;
+      g.query(1200, 0, 8, () => (found = true));
+      return found;
+    };
+    expect(probe(near)).toBe(false); // 1200 > 760 → 정말로 밖이다
+    expect(probe(far)).toBe(true); // 1200 < 1520 → 잡혀야 한다
+  });
+
+  it('셀 경계 너머의 보통 잡몹도 접촉 거리 안이면 잡힌다', () => {
+    // 결함은 초대형 전용이 아니었다. 잡몹 반경 54 · 플레이어 판정점 8 이면 접촉 거리는 62 인데,
+    // 셀 경계(256)를 사이에 두면 예전 질의는 탐침 반경 28 만큼만 넓혀서 이 잡몹을 놓쳤다.
+    const grid = new SpatialHash<P>(256);
+    const grunt: P = { x: 258, y: 0, radius: 54, id: 3 };
+    grid.insert(grunt);
+    const hits: number[] = [];
+    grid.query(200, 0, 28, (e) => hits.push(e.id)); // 중심거리 58 <= 28+54
+    expect(hits).toContain(3);
+  });
+
   it('iterates candidates in deterministic insertion order', () => {
     const grid = new SpatialHash<P>(64);
     // Same cell, inserted in a known order.
