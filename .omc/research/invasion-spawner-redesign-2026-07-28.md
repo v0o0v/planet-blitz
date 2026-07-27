@@ -474,7 +474,7 @@ L3 `affixSeed` 추첨"으로 좁혔다), 램프·시드 마이그레이션이 �
 | `npx vitest run` | **189 파일 / 3,601 테스트 전량 통과** |
 | `npx vite build` | ✓ |
 | 임시 계측 파일 | 삭제 완료 |
-| `verify-invasion` EF 재배포 | **필수**(`src/sim/**` · `data/**` 변경). 절차 정본은 `.omc/skills/planet-blitz-supabase-deploy-workflow.md` + 루트 `README.md` `## 서버 배포` |
+| `verify-invasion` EF 재배포 | ✅ **완료 — v38**(2026-07-28). 상세는 §11 |
 
 ## 10. 재현 방법
 
@@ -497,3 +497,29 @@ L3 `affixSeed` 추첨"으로 좁혔다), 램프·시드 마이그레이션이 �
 > 조용히 진행돼 "전 = 후"를 자기 자신과 비교하게 된다(이 레인에서 한 번 밟았다).
 > `git worktree add <경로> <기준커밋>` 으로 별도 트리를 만들고 **`corepack pnpm install` 을
 > 그 트리에서 다시 돌려라** — `node_modules` 를 복사하면 pnpm 심링크가 깨진다.
+
+---
+
+## 11. `verify-invasion` EF 재배포 — 완료 (v38)
+
+`src/sim/invasion/facility.ts` · `data/invasion/facilities.ts` 가 바뀌었고 실제 침공 기지
+#10~#20 이 스포너를 스폰하므로 재배포가 **필수**였다(골든 바이트 불변은 근거가 못 된다).
+절차 정본은 `.omc/skills/planet-blitz-supabase-deploy-workflow.md` + 루트 `README.md`
+`## 서버 배포`.
+
+| 항목 | 값 |
+|---|---|
+| 함수 | `verify-invasion` |
+| 버전 | v37 → **v38** (2026-07-27 18:03 UTC) |
+| 번들 | `deno task bundle` · **96 모듈 / 215.95KB** |
+| 번들 소스 커밋 | `076bfd1` — `git rev-parse origin/main` 과 **대조 확인** |
+| 업로드 자산 | `deno.json` + `index.ts` 둘뿐(자립 번들 치환이 제대로 됐다는 방증) |
+
+**부팅 스모크 통과.** anon 키로 게이트를 통과시켜 본체까지 닿게 한 결과
+`400 {"status":"rejected","reason":"malformed-invasion-id","attackerWon":false,...}` 를 받았고,
+그 `reason` 문자열이 배포 번들에 **정확히 1회** 존재한다 — 게이트웨이가 아니라 우리 코드가
+실행됐다는 확증이다.
+
+> ⚠️ 이 배포에는 같은 날 먼저 머지된 **Lane9 설비 노출**(PR #178)도 함께 들어간다
+> (`origin/main` 기준으로 번들했다). 머지 후 합본 트리에서 `vitest run` **189 파일 /
+> 3,603 테스트 전량 통과**를 확인한 뒤 배포했다.
