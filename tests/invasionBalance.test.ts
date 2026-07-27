@@ -104,8 +104,17 @@
  *     중하 99.4 · 중위 91.0). 목표 85+/55~80/25~55 와의 거리가 **그 어느 때보다 멀다.**
  *     결함을 덮고 있던 수치를 걷어낸 결과이므로 이제야 방어측 난이도를 정직하게 올릴 수 있다 —
  *     m8 인계 §5 의 사문화 5건(단발 포탑 무-편차사격 등)이 그 첫 후보다.
- * 램프를 실제로 바꾸려면 `supabase/migrations/20260723000000_m7c_seed_rebalance.sql` 이
- * 정본이고 아래 `RAMP_SQL_LINES` 미러 13줄을 **동시에** 고쳐야 한다(드리프트 가드 참고).
+ * 램프를 실제로 바꾸려면 **최신 재시드 마이그레이션**이 정본이고(현재
+ * `supabase/migrations/20260727010000_invasion_boss_ramp_order.sql`) 아래 `RAMP_SQL_LINES`
+ * 미러 13줄을 **동시에** 고쳐야 한다(드리프트 가드 참고).
+ *
+ * ### ⑥ T1 보스 램프 배정 역전 — **해소됨** (2026-07-27)
+ * 위 ⑤ 의 "⛔ 남음"이던 §5.5 다. 재측정(96시드)으로 난이도 순서를 다시 확정하고
+ * (`sporeQueen` ≫ `steelGoliath` ≥ `phaseWarden`) 램프를 그 순서로 재배정했다:
+ * `boss = nn<=4 ? none : nn<=10 ? 2 : nn<=16 ? 0 : 1`. 24시드 밴드는
+ * 중하 99.40 → **100.00** · 중위 85.42 → **74.31**(중위 sd 12.2 → 25.8)로 이동했다.
+ * 카탈로그 배열은 append-only 계약이라 손대지 않았다 — 바뀐 것은 순번→catalogId 매핑뿐이다.
+ * 아래 밴드 상한·sd 상한은 **이 레인이 건드리지 않았다**(재기준화는 레인 마지막에 일괄).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -133,7 +142,7 @@ import type { AffixRoll, Item } from '../src/items/types.js';
 // ---------------------------------------------------------------------------
 
 /**
- * `supabase/migrations/20260723000000_m7c_seed_rebalance.sql` 의 시드 생성 규칙 미러.
+ * {@link MIGRATION_PATH} 가 가리키는 재시드 마이그레이션의 시드 생성 규칙 미러.
  * **정본은 SQL 이고 이건 사본이다.** 사본이 조용히 갈라지면 이 파일의 승률 측정이
  * 원격 DB 와 무관한 숫자가 되므로, 아래 `드리프트 가드` 테스트가 SQL 안의
  * `-- RAMP:` 주석과 이 표를 문자열로 대조한다.
@@ -151,7 +160,7 @@ const RAMP = {
   props: (nn: number) => (nn <= 4 ? 0 : nn <= 8 ? 1 : nn <= 15 ? 2 : nn <= 17 ? 3 : 4),
   propKinds: (nn: number) => Math.min(6, 1 + Math.floor(nn / 4)),
   propShift: (nn: number) => (nn >= 18 ? 3 : 0),
-  boss: (nn: number) => (nn <= 4 ? -1 : nn <= 10 ? 0 : nn <= 16 ? 1 : 2),
+  boss: (nn: number) => (nn <= 4 ? -1 : nn <= 10 ? 2 : nn <= 16 ? 0 : 1),
 };
 
 /** SQL 헤더가 반드시 담고 있어야 하는 램프 식(문자열 그대로 대조). */
@@ -168,11 +177,16 @@ const RAMP_SQL_LINES: readonly string[] = [
   '-- RAMP: props = nn<=4 ? 0 : nn<=8 ? 1 : nn<=15 ? 2 : nn<=17 ? 3 : 4',
   '-- RAMP: propKinds = min(6, 1 + nn/4)',
   '-- RAMP: propShift = nn>=18 ? 3 : 0',
-  '-- RAMP: boss = nn<=4 ? none : nn<=10 ? 0 : nn<=16 ? 1 : 2',
+  '-- RAMP: boss = nn<=4 ? none : nn<=10 ? 2 : nn<=16 ? 0 : 1',
 ];
 
+/**
+ * 램프 정본 SQL. **최신 재시드 파일을 가리켜야 한다** — 이미 원격에 적용된 마이그레이션은
+ * 본문을 고쳐도 재실행되지 않으므로, 램프를 바꿀 때마다 "덮어쓰는 신규 파일"이 새 정본이
+ * 된다(이 리포의 선례: 20260721010000 → 20260723000000 → 20260727010000).
+ */
 const MIGRATION_PATH = fileURLToPath(
-  new URL('../supabase/migrations/20260723000000_m7c_seed_rebalance.sql', import.meta.url),
+  new URL('../supabase/migrations/20260727010000_invasion_boss_ramp_order.sql', import.meta.url),
 );
 
 /**
@@ -724,7 +738,7 @@ describe('시드 재조정 — SQL 정본과의 정합', () => {
     // ⚠️ Lane9 신규 방어체(편대 8~11 · 설비 9~16)는 램프 대역 **밖**이다: 톡사르·크라스
     // 특산 설계도라 획득 경로가 **행성 파밍**이고, 그 도달은 tests/planetDrops.test.ts ③·⑥ 이
     // 보장한다(미사용 콘텐츠 0 은 전역적으로 여전히 성립 — 죽은 콘텐츠가 아니다). NPC 시드
-    // 기지 노출까지 넓히는 것은 서버 시드 램프(20260723000000_m7c_seed_rebalance.sql) 수정 +
+    // 기지 노출까지 넓히는 것은 서버 시드 램프(최신 재시드 마이그레이션) 수정 +
     // 클리어율 밴드 재측정을 동반하는 별도 밸런스 패스 소관이다(defer-balance-tuning).
     const seedFormationKinds = Math.max(
       ...Array.from({ length: SEED_BASE_COUNT }, (_, i) => RAMP.formationKinds(i + 1)),
