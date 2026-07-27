@@ -103,8 +103,6 @@ declare
   WINDOW_INTERVAL constant interval := interval '1 hour';
 
   v_epoch   bigint := floor(extract(epoch from now()) / 1800)::bigint;
-  v_total   numeric := 0;
-  v_weighted numeric := 0;
 begin
   -- 같은 epoch 을 두 번 굳히지 않는다(cron 중복 실행·수동 재실행 방어). 스냅샷은 그 30분
   -- 슬롯의 **확정값**이라, 이미 있으면 다시 계산해 값이 흔들리는 쪽이 더 나쁘다.
@@ -112,98 +110,97 @@ begin
     return;
   end if;
 
-  create temporary table if not exists _pp (
-    planet int primary key,
-    c numeric not null default 0,
-    contributors bigint not null default 0,
-    top_runs bigint not null default 0,
-    m_clamp numeric,
-    m_target numeric,
-    prev numeric,
-    m_new numeric
-  ) on commit drop;
-  delete from _pp;
-
-  -- 행성 0..5 를 항상 채운다(관측이 0 인 행성도 행이 있어야 산식이 성립).
-  insert into _pp (planet) select generate_series(0, PLANET_COUNT - 1);
-
-  -- 최근 창의 행성별 정산 건수 + 계정별 기여 통계.
-  with w as (
+  -- ⚠️ **임시 테이블을 쓰지 않는다.** 이 함수는 `set search_path = ''` 라 `pg_temp` 가 검색
+  -- 경로에 없고, 수식어 없는 임시 테이블 참조가 런타임에 깨진다. 전 단계를 CTE 하나로 엮어
+  -- 그 함정을 아예 없앤다(부수 효과로 전체가 단일 문장 = 원자적).
+  with planets as (
+    select generate_series(0, PLANET_COUNT - 1) as planet
+  ),
+  -- 최근 창의 (행성, 계정)별 런 수.
+  per_account as (
     select
       (r.summary->>'planet')::int as planet,
-      r.profile_id
+      r.profile_id,
+      count(*) as runs
     from public.pve_runs r
     where r.created_at > now() - WINDOW_INTERVAL
       and (r.summary->>'planet') ~ '^[0-9]+$'
       and (r.summary->>'planet')::int between 0 and PLANET_COUNT - 1
+    group by 1, 2
   ),
-  per_account as (
-    select planet, profile_id, count(*) as runs from w group by planet, profile_id
-  )
-  update _pp t
-    set c            = coalesce(a.total_runs, 0),
-        contributors = coalesce(a.accounts, 0),
-        top_runs     = coalesce(a.max_runs, 0)
-    from (
+  -- 행성별 집계 + 계정별 기여 통계(어뷰징 소급 판단용).
+  agg as (
+    select
+      p.planet,
+      coalesce(a.total_runs, 0)::numeric as c,
+      coalesce(a.accounts, 0)::bigint    as contributors,
+      coalesce(a.max_runs, 0)::bigint    as top_runs
+    from planets p
+    left join (
       select planet, sum(runs) as total_runs, count(*) as accounts, max(runs) as max_runs
       from per_account group by planet
-    ) a
-    where a.planet = t.planet;
-
-  select coalesce(sum(c), 0) into v_total from _pp;
-
+    ) a on a.planet = p.planet
+  ),
+  tot as (select coalesce(sum(c), 0) as total from agg),
   -- ŵ → 역비례 → 클램프.
-  update _pp
-    set m_clamp = least(CLAMP_HI, greatest(CLAMP_LO,
-      (1.0 / PLANET_COUNT) / ((c + PRIOR_K) / (v_total + PLANET_COUNT * PRIOR_K))
-    ));
-
+  clamped as (
+    select
+      agg.planet, agg.c, agg.contributors, agg.top_runs, tot.total,
+      least(CLAMP_HI, greatest(CLAMP_LO,
+        (1.0 / PLANET_COUNT) / ((agg.c + PRIOR_K) / (tot.total + PLANET_COUNT * PRIOR_K))
+      )) as m_clamp
+    from agg cross join tot
+  ),
   -- 런가중 합 Σ(wᵢ · mᵢ_clamp). 가중치는 **실측 점유율** cᵢ/R 이다(사전표본이 섞인 ŵ 가 아니라).
-  -- 표본이 없으면(R=0) 균등 가중 1/6 으로 떨어뜨린다 — 이때 모든 m_clamp 가 1 이라 합도 1 이다.
-  if v_total > 0 then
-    select coalesce(sum((c / v_total) * m_clamp), 0) into v_weighted from _pp;
-  else
-    select coalesce(sum(m_clamp / PLANET_COUNT), 0) into v_weighted from _pp;
-  end if;
-
-  update _pp
-    set m_target = case when v_weighted > 0 then m_clamp / v_weighted else m_clamp end;
-
-  -- 직전 스냅샷 배율(없으면 중립 1.0)에서 지수평활.
-  update _pp t
-    set prev = coalesce((
-      select p.mult_centi / 100.0
-        from public.planet_popularity p
-        where p.planet = t.planet
-        order by p.epoch desc
-        limit 1
-    ), 1.0);
-
-  update _pp set m_new = prev + ALPHA * (m_target - prev);
-
-  -- ⚠️ **정수 격자 평활의 정지 지점(stall) 보정** — TS `refreshMultipliersCenti` 와 같은 규율.
-  -- prev 가 목표에 가까워지면 한 주기 스텝이 0.5 centi 밑으로 내려가고, round() 가 결과를 prev 로
-  -- 되돌려 **영원히 멈춘다**(목표에 몇 centi 못 미친 채 수렴한 척한다 → 런가중 평균 = 1 불변식이
-  -- 깨진다). 목표가 아직 1 centi 이상 떨어져 있는데 반올림이 제자리면 최소 1 centi 전진시킨다.
-  update _pp
-    set m_new = case
-      when round(m_new * 100) = round(prev * 100)
-       and round(m_target * 100) <> round(prev * 100)
-      then (round(prev * 100) + sign(round(m_target * 100) - round(prev * 100))) / 100.0
-      else m_new
-    end;
-
+  -- 표본이 없으면(R=0) 균등 가중 1/6 — 이때 모든 m_clamp 가 1 이라 합도 1 이다.
+  wsum as (
+    select coalesce(sum(
+      case when total > 0 then (c / total) * m_clamp else m_clamp / PLANET_COUNT end
+    ), 0) as weighted
+    from clamped
+  ),
+  -- 재정규화 + 직전 스냅샷 배율(없으면 중립 1.0) 조회.
+  targeted as (
+    select
+      cl.*,
+      case when ws.weighted > 0 then cl.m_clamp / ws.weighted else cl.m_clamp end as m_target,
+      coalesce((
+        select pp.mult_centi / 100.0
+          from public.planet_popularity pp
+          where pp.planet = cl.planet
+          order by pp.epoch desc
+          limit 1
+      ), 1.0) as prev
+    from clamped cl cross join wsum ws
+  ),
+  -- 지수평활 + **정수 격자 정지 지점(stall) 보정**.
+  -- ⚠️ TS `refreshMultipliersCenti` 와 같은 규율이다. prev 가 목표에 가까워지면 한 주기 스텝이
+  -- 0.5 centi 밑으로 내려가고, round() 가 결과를 prev 로 되돌려 **영원히 멈춘다**(목표에 몇 centi
+  -- 못 미친 채 수렴한 척한다 → 런가중 평균 = 1 불변식이 깨진다). 목표가 아직 1 centi 이상
+  -- 떨어져 있는데 반올림이 제자리면 최소 1 centi 전진시킨다.
+  smoothed as (
+    select
+      t.*,
+      round((t.prev + ALPHA * (t.m_target - t.prev)) * 100) as raw_centi,
+      round(t.prev * 100)     as prev_centi,
+      round(t.m_target * 100) as target_centi
+    from targeted t
+  )
   insert into public.planet_popularity
     (epoch, planet, run_count, share_ppm, mult_centi, contributors, top_contributor_runs)
   select
     v_epoch,
-    planet,
-    c::bigint,
-    case when v_total > 0 then round(c / v_total * 1000000)::bigint else 0 end,
-    round(m_new * 100)::int,
-    contributors,
-    top_runs
-  from _pp;
+    s.planet,
+    s.c::bigint,
+    case when s.total > 0 then round(s.c / s.total * 1000000)::bigint else 0 end,
+    (case
+       when s.raw_centi = s.prev_centi and s.target_centi <> s.prev_centi
+         then s.prev_centi + sign(s.target_centi - s.prev_centi)
+       else s.raw_centi
+     end)::int,
+    s.contributors,
+    s.top_runs
+  from smoothed s;
 end;
 $$;
 
