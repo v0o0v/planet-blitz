@@ -271,8 +271,21 @@ export const INVASION_FACILITIES: readonly FacilitySpec[] = [
     hazardDamage: 0,
     hazardOffset: 300,
   },
-  // 8 — 충격파 발생기: 긴 예열(60틱) 뒤 8틱만 터지는 초고피해 광역. 상시 압박(화염)이나
+  // 8 — 충격파 발생기: 긴 예열(60틱) 뒤 짧게 터지는 고피해 광역. 상시 압박(화염)이나
   //     중간 리듬(레이저)과 달리 **한 번의 회피 타이밍**을 묻는다.
+  //
+  //     ⚠️ `onTicks`·`hazardDamage` 는 밸런스 손잡이가 아니라 **강화축의 생사를 가르는 값**이다
+  //     (`.omc/research/invasion-nonmonotonic-hazards-2026-07-27.md`). 예전 값 8틱 · 40피해는
+  //     두 가지를 동시에 깼다:
+  //       ① **즉사 포화** — 3축(레벨·등급·승급)을 태운 실효 피해가 시드 램프 nn≥15 에서 161~254
+  //          가 되어 참조 플레이어 최대 HP **160** 을 넘었다. 그 위로는 161 이나 254 나 똑같이
+  //          접촉 즉사라 **강화축이 아무 일도 하지 않는다.**
+  //       ② **표본 붕괴** — 활성 듀티가 8/300 = 2.7% 라 96시드에서도 피격 틱이 24~68 개뿐이었다.
+  //          그래서 "레벨을 올렸는데 누적 피해가 줄어드는" 비단조가 관측됐다.
+  //     듀티를 3배로 넓히고 발당 피해를 그만큼 내려 **lv1 출력은 그대로 두고**(96시드 2560 →
+  //     2552) 축만 되살렸다: lv99 4070 → **7914** · 사망 시드 24 → **46**(96 중).
+  //     피격 무적창(`hitIframes` 40틱)이 `onTicks` 보다 여전히 길어 **주기당 최대 1히트**라는
+  //     "한 번의 회피 타이밍" 정체성은 보존된다 — 넓어진 것은 붙잡히는 창뿐이다.
   {
     ...BASE,
     key: 'fac.shock',
@@ -283,8 +296,8 @@ export const INVASION_FACILITIES: readonly FacilitySpec[] = [
     hazardRadius: 520,
     periodTicks: 300,
     windupTicks: 60,
-    onTicks: 8,
-    hazardDamage: 40,
+    onTicks: 24,
+    hazardDamage: 22,
     hazardOffset: 420,
   },
   // -------------------------------------------------------------------------
@@ -400,7 +413,11 @@ export const INVASION_FACILITIES: readonly FacilitySpec[] = [
     pellets: 3, // TODO(밸런스)
     spreadDeg: 30, // TODO(밸런스)
   },
-  // 16 — 파괴 폭뢰기(크라스): 긴 예열 뒤 짧게 터지는 초고피해 광역(충격파 발생기 계열).
+  // 16 — 파괴 폭뢰기(크라스): 긴 예열 뒤 짧게 터지는 고피해 광역(충격파 발생기 계열).
+  //      `onTicks`·`hazardDamage` 의 근거는 8번(충격파 발생기) 주석과 같다 — 예전 값 10틱 ·
+  //      42피해는 3축을 태우면 169~265 로 참조 플레이어 최대 HP 160 을 넘어 즉사 포화였고,
+  //      듀티 3.3% 라 표본도 붕괴했다. 듀티 3배 · 발당 피해 하향으로 lv1 출력을 유지한 채
+  //      (96시드 2856 → 2806) 축을 되살렸다: lv99 4070 → **8403** · 사망 시드 24 → **49**.
   {
     ...BASE,
     key: 'fac.demolisher',
@@ -411,8 +428,8 @@ export const INVASION_FACILITIES: readonly FacilitySpec[] = [
     hazardRadius: 500, // TODO(밸런스)
     periodTicks: 300, // TODO(밸런스)
     windupTicks: 60, // TODO(밸런스)
-    onTicks: 10, // TODO(밸런스)
-    hazardDamage: 42, // TODO(밸런스)
+    onTicks: 30,
+    hazardDamage: 23,
     hazardOffset: 420, // TODO(밸런스)
   },
 ];
