@@ -21,6 +21,7 @@ import { itemDisplayName, slotLabel, weaponLabel } from '../itemNames.js';
 import { compareLines } from '../itemCompare.js';
 import { computeLoadoutStats } from '../../items/loadout.js';
 import { canEquip, requiredLevel } from '../../items/requiredLevel.js';
+import { duplicateUniqueSlot, redundantUniqueIndices } from '../../items/uniqueEquip.js';
 import { UNIQUE_REGISTRY } from '../../items/uniques.js';
 import { shipBonusBp } from '../../../data/lineage.js';
 import { shipTypeDef } from '../../../data/ships/index.js';
@@ -330,6 +331,17 @@ export class HangarScreen {
             : 'module0';
     } else {
       target = kind as EquipSlotId;
+    }
+    // 같은 유니크를 두 칸에 꽂는 것을 막는다(`src/items/uniqueEquip.ts`). `uniqueMask` 는 비트 OR 라
+    // 두 번째 사본의 유니크 효과가 통째로 무효가 되고 그 칸이 낭비된다 — 어픽스는 정상 합산되므로
+    // 화면상 아무 경고 없이 조용히 손해만 본다. 요구 레벨 게이트와 달리 **무음 거부를 하지 않는다**:
+    // 잠김 셀은 dim + Lv 배지로 이유가 보이지만 중복 유니크는 겉모습이 멀쩡해서, 아무 반응이 없으면
+    // 클릭이 먹통이라는 버그로 신고된다(요구 레벨 게이트 도입 때의 교훈).
+    const dupSlot = duplicateUniqueSlot(ship.equipped, item, target);
+    if (dupSlot !== null) {
+      this.hint = t('inv.err.duplicateUnique', { name: this.itemName(item) });
+      this.render();
+      return;
     }
     const idx = this.profile.inventory.indexOf(item);
     if (idx >= 0) this.profile.inventory.splice(idx, 1);
@@ -816,12 +828,22 @@ export class HangarScreen {
     const bp = shipBonusBp(this.profile.lineage);
     if (bp > 0)
       rows.push({ label: t('hangar.stat.lineage'), value: `+${(bp / 100).toFixed(1)}%`, desc: t('hangar.desc.lineage'), color: 0x8affc0 });
-    // 유니크 효과(장착 유니크별 1행).
-    for (const it of this.equippedItems()) {
-      if (it.uniqueId === undefined) continue;
+    // 유니크 효과(장착 유니크별 1행). 게이트(equip)가 생기기 **전에 저장된 세이브**에는 같은
+    // 유니크가 두 칸에 남아 있을 수 있다 — 자동 해제 대신 유지가 정책이므로(uniqueEquip.ts
+    // LEGACY_DUPLICATE_POLICY), 무효가 된 사본을 여기서 명시해 사용자가 스스로 갈아끼우게 한다.
+    const equippedItems = this.equippedItems();
+    const redundant = redundantUniqueIndices(equippedItems);
+    for (let i = 0; i < equippedItems.length; i++) {
+      const it = equippedItems[i];
+      if (it?.uniqueId === undefined) continue;
       const def = UNIQUE_REGISTRY.get(it.uniqueId);
       if (def !== undefined)
-        rows.push({ label: t('hangar.stat.unique'), value: def.name, desc: '', color: RARITY_COLOR_NUM.unique });
+        rows.push({
+          label: t('hangar.stat.unique'),
+          value: redundant.has(i) ? t('hangar.stat.uniqueDup', { name: def.name }) : def.name,
+          desc: '',
+          color: redundant.has(i) ? COLOR.muted : RARITY_COLOR_NUM.unique,
+        });
     }
     return rows;
   }

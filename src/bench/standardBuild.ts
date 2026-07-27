@@ -430,6 +430,12 @@ function rarityPlan(design: BandGearDesign): Rarity[] {
  * `usedUniqueIds` 는 이미 배정된 유니크 id 집합이다. **같은 유니크를 두 칸에 꽂으면 안 된다** —
  * `computeLoadoutStats` 가 `uniqueMask` 를 OR 하므로 두 번째 사본은 효과가 중복 적용되지 않고
  * 그 칸이 통째로 낭비된다(모듈 2칸처럼 같은 종류를 두 번 채울 때 실제로 발생한다).
+ *
+ * ⚠️ 여기서 회피하는 그 결함은 **실제 게임의 장착 경로에도 있었고**, 2026-07-28 에 장착 게이트
+ * (`src/items/uniqueEquip.ts` `duplicateUniqueSlot` → 격납고 `equip`)로 막혔다. 조립기는 게이트를
+ * 부르지 않고 지금의 "후보를 버리고 다시 굴린다" 방식을 유지한다 — 게이트는 *거부*(사용자에게
+ * 사유 표시)가 목적이고 여기는 *조건을 만족하는 롤을 찾는 것*이 목적이라 성격이 다르다. 두 축은
+ * 같은 불변식("장착 표에 같은 uniqueId 둘 없음")을 다른 방식으로 지킨다.
  */
 function rollForSlot(
   base: number,
