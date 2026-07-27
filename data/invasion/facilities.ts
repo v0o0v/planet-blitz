@@ -98,8 +98,16 @@ export interface FacilitySpec {
   readonly spawnEnemyType: number;
   /** 동시 생존 상한. 초과하면 생산을 보류한다(폭주 방지). */
   readonly spawnMaxAlive: number;
-  /** 생산 지점의 facing 방향 오프셋(유닛). */
+  /** 생산 지점의 facing 방향 오프셋(유닛). **스크롤 축이 없는 경로 전용**(카탈로그 5번 주석). */
   readonly spawnOffset: number;
+  /**
+   * 사출 드론의 기본 내구도(0 = 로스터 `EnemyDef.hp` 그대로). 강화 3축은 이 값에 곱해진다.
+   *
+   * 방어 설비의 사출 드론은 같은 typeIndex 의 야생 개체보다 단단해야 한다 — 실측에서 로스터
+   * 기본값(파쇄차 34)은 참조봇 화력에 **평균 800유닛 밖에서 전멸**해 접촉 자체가 일어나지
+   * 않았고, 그래서 레벨을 올려도 lv17 까지 누적 피해가 0 이었다.
+   */
+  readonly spawnDroneHp: number;
 
   // --- 압축 프레스(이동 벽) ---
   /** 압축 판의 **이동 축 방향** 반두께(유닛). 벽 AABB 의 절반 두께다. */
@@ -136,6 +144,7 @@ const BASE = {
   spawnEnemyType: 0,
   spawnMaxAlive: 0,
   spawnOffset: 0,
+  spawnDroneHp: 0,
   pressHalfAlong: 0,
   pressHalfAcross: 0,
   pressTravel: 0,
@@ -237,17 +246,31 @@ export const INVASION_FACILITIES: readonly FacilitySpec[] = [
     hazardDamage: 5,
     hazardOffset: 240,
   },
-  // 5 — 드론 사출구: 파괴 전까지 소형 드론(파쇄차, typeIndex 0)을 계속 생산.
+  // 5 — 드론 사출구: 플레이어가 활성 사거리 안에 있는 동안 소형 드론(파쇄차, typeIndex 0)을
+  //     **회랑 전방으로** 사출한다.
+  //
+  //     ⚠️ 사출 지점은 소켓 옆이 아니라 **스크롤 창 진행 방향 앞**이다(2026-07-28 재설계).
+  //     예전에는 소켓 옆(`spawnOffset`)에 낳았는데, L2 강제 스크롤 720 u/s 가 로스터 최고 적
+  //     이동 속도 420 u/s 보다 빨라 드론이 **구조적으로 영원히 못 따라붙었다** — 24시드에
+  //     1,327기를 낳고도 L2 누적 피해가 12(사실상 0)였고 lv1~lv99 전 구간이 평탄했다.
+  //     정본은 `.omc/research/invasion-spawner-redesign-2026-07-28.md`.
+  //     → `spawnOffset` 은 이제 **스크롤 축이 없는 경로**(고정 카메라·단위 테스트) 전용이다.
+  //
+  //     `range` 는 방어포와 같은 활성 사거리다. 이게 없으면 회랑을 20,000유닛 지나친 뒤에도
+  //     사출이 계속돼(레이어 예산 5,400틱 중 플레이어가 회랑 안에 있는 시간은 17%뿐이다)
+  //     소켓과의 공간 인과가 끊긴다.
   {
     ...BASE,
     key: 'fac.spawner',
     behavior: FACILITY_BEHAVIOR_SPAWNER,
     hp: 340,
     radius: 38,
+    range: 2600,
     spawnIntervalTicks: 150,
     spawnEnemyType: 0,
     spawnMaxAlive: 3,
     spawnOffset: 120,
+    spawnDroneHp: 75,
   },
   // -------------------------------------------------------------------------
   // M7c 확장분 (append-only — 6..8). 위 0..5 를 한 칸도 옮기지 않는다.
