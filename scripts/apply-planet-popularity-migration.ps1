@@ -72,7 +72,15 @@ Write-Host ("[OK] table={0} view={1} function={2} cron_jobs={3}" -f $objs.tbl, $
 # Seed the first snapshot immediately so the client stops falling back to 1.0.
 # Safe to run more than once: the function is a no-op if this epoch already exists.
 Invoke-Sql "select public.refresh_planet_popularity();" | Out-Null
-$rows = Invoke-Sql "select planet, mult_centi, epoch, run_count from public.planet_popularity_current order by planet;"
+# Read run_count/contributors from the BASE TABLE, not the view. The view deliberately
+# exposes only what the client polls (planet, mult_centi, epoch) -- selecting run_count
+# from it fails with 42703. Keep the view minimal; widen the query instead.
+$rows = Invoke-Sql @"
+select p.planet, p.mult_centi, p.epoch, p.run_count, p.contributors
+  from public.planet_popularity p
+  where p.epoch = (select max(epoch) from public.planet_popularity)
+  order by p.planet;
+"@
 Write-Host "[OK] first snapshot:"
 $rows | Format-Table -AutoSize | Out-String | Write-Host
 
