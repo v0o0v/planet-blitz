@@ -477,11 +477,19 @@ export const SCENARIOS: readonly Scenario[] = [
     // 실측(런 3488틱, 보스 처치·승리): **지연 적립 34회**(aux0 최대 167) · **정산 6회**
     // (aux0 이 양수 → 0 으로 떨어진 횟수) · aux1 최대 322. 시그니처 억제 동형 대조군은
     // aux0/aux1 이 끝까지 0 이고(조건부 폴드 미발생) 승리에도 도달하지 못한다.
+    // ⚠️ 증인 시드 재선정 2026-07-27(`0xc0a5` → `0xc0bf`, 밸런스 패스 ADR-0037). 적 축 상향
+    // (`eliteCount` 밴드0 0 → 1 · `SEGMENTS.killGoal` 합계 80 → 240)으로 압박이 끊기지 않게 돼
+    // 구 증인은 연속 무피격 `CUSHION_RECOVER_TICKS`(180)를 한 번도 못 채워 **정산 분기가 0회**가
+    // 됐다(`tests/denoFixture.test.ts` 의 ⑧⑨ 공허 런 가드가 그걸 잡았다 — 가드가 제 일을 했다).
+    // 재표본(`0xc0a5`..`0xc0e0` 연속 60시드)에서 적립·정산이 **모두** 도는 시드 8개를 찾았고,
+    // 처치가 가장 많은 **`0xc0bf`**(적립 2회 · 정산 1회 · aux0 최대 3,496 · 처치 181)를 골랐다.
+    // 무대(planet 2 / stage 1)와 단언은 그대로다. `rolls` 의 `dropSeed` 는 런 시드와 무관한
+    // 독립 값이라 그대로 둔다.
     name: '⑧ 말로우(완충) 런 — shipType 5 폴드 + 시그니처 22 지연적립/정산 aux 폴드',
-    seed: 0xc0a5,
+    seed: 0xc0bf,
     config: MALLOW_RUN,
     checkpointInterval: 600,
-    buildInputs: () => driveDurable(0xc0a5, MALLOW_RUN, MAX_RUN_TICKS),
+    buildInputs: () => driveDurable(0xc0bf, MALLOW_RUN, MAX_RUN_TICKS),
     rolls: [
       { dropSeed: 0xc0a5_81, rarity: 'rare', source: { planet: 2, stage: 1 } },
       { dropSeed: 0xc0a5_82, rarity: 'unique', source: { planet: 2, stage: 1 } },

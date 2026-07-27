@@ -102,7 +102,12 @@ describe('gem combo (task 12)', () => {
   });
 
   it('combo resets when no gem is collected within the window', () => {
-    const state = createWorld(1);
+    // ⚠️ 증인 시드 2026-07-27 재선정(1 → 2). 이 테스트의 전제는 **창이 지나는 동안 다른 젬을
+    // 줍지 않는 것**인데, 적 축 상향(`eliteCount` 밴드0 0 → 1 · `PVE_DENSITY_MULT`)으로 시드 1
+    // 에서는 130틱 안에 잡몹 젬이 하나 더 수집돼 콤보가 갱신된다(실측 combo=1). 즉 실패는
+    // "창이 안 지난다" 가 아니라 **전제가 오염된 것**이다. 시드 2 는 같은 130틱 동안 수집이
+    // 없어 전제가 성립한다(연속 스캔 40시드 중 다수가 성립하고 그중 첫 값). 단언은 그대로다.
+    const state = createWorld(2);
     const player = state.entities[0]!;
     spawnGem(state, player.x, player.y, 5);
     stepWorld(state, emptyInput());

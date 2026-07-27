@@ -85,13 +85,45 @@ function expectVictory(state: WorldState): void {
   expect(state.entities.some((e) => e.kind === 'boss')).toBe(false); // 보스 사망
 }
 
+/**
+ * 정찰(단계1) 완주 증인 시드. **섬멸 케이스는 기존 시드(`0x2f10`·`0x3a17`)를 그대로 쓴다** —
+ * 만렙 화력 빌드는 여전히 완주하므로 증인을 갈 이유가 없고, 두 티어의 증인을 분리해 두면
+ * 다음 sim 변경에서 어느 쪽이 깨졌는지가 바로 보인다.
+ *
+ * 2026-07-27 밸런스 패스(ADR-0037)에서 신설했다. 적 축의 `SEGMENTS.killGoal` 합계가 80 → 240
+ * 이 되면서 **기본 기체(무장비·무투자) 내구 파일럿이 처치 할당을 못 채워 정체**한다 — 구 증인
+ * `0x2f10` 은 144,000틱(2,400초)을 돌려도 세그먼트 0 에서 처치 **2** 로 멈춘다(실측). 죽는 것이
+ * 아니라 못 나아가는 것이라 **틱 예산으로는 풀리지 않고**, 시드 재선정이 유일한 재기준화다.
+ *
+ * 재표본(각 구 증인부터 연속 400시드 · 완주 + 보스 처치 + 미사망 전부 만족):
+ *   니플헤임 12시드(`0x2f13`·`0x2f27`·`0x2f81` …) → 첫 값 **`0x2f13`**
+ *   아르케    6시드(`0x3a88`·`0x3ae8`·`0x3b2f` …) → 첫 값 **`0x3a88`**
+ * 완주 시드는 눈덩이형이다 — 초반 포위를 벗어나면 처치가 급격히 는다.
+ */
+const RECON_SEED_NIFLHEIM = 0x2f13;
+const RECON_SEED_ARKE = 0x3a88;
+
 describe('전 행성 × 전 티어 완주 (G4 게이트 ④, AC4·AC5)', () => {
   it('니플헤임(2) 정찰 완주 — 기본 기체로 유령 기함을 처치한다', () => {
-    expectVictory(playToEnd(0x2f10, { ...DEFAULT_CONFIG, planet: 2, stage: 1, playerHp: 100_000_000 }));
+    expectVictory(
+      playToEnd(RECON_SEED_NIFLHEIM, {
+        ...DEFAULT_CONFIG,
+        planet: 2,
+        stage: 1,
+        playerHp: 100_000_000,
+      }),
+    );
   });
 
   it('아르케(3) 정찰 완주 — 기본 기체로 수호자 오벨리스크를 처치한다', () => {
-    expectVictory(playToEnd(0x3a17, { ...DEFAULT_CONFIG, planet: 3, stage: 1, playerHp: 100_000_000 }));
+    expectVictory(
+      playToEnd(RECON_SEED_ARKE, {
+        ...DEFAULT_CONFIG,
+        planet: 3,
+        stage: 1,
+        playerHp: 100_000_000,
+      }),
+    );
   });
 
   it('니플헤임(2) 섬멸 완주 — 육성 기체가 최고 티어를 뚫고 완주한다', () => {

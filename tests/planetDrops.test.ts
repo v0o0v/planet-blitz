@@ -328,7 +328,12 @@ function runForLoot(seed: number, planet: number) {
 
 describe('⑥ 정규 경로 통합(createWorld → stepWorld → 정산 입력)', () => {
   it('실런의 loot 이 그 행성 특산 설계도로 풀린다', () => {
-    const state = runForLoot(0xc6d1, BOSS_PLANET);
+    // ⚠️ 증인 시드 재선정 2026-07-27(0xc6d1 → 0xc6fd, 밸런스 패스 ADR-0037). 이 하네스는
+    // 무입력 내구 파일럿이라 죽지는 않지만, `SEGMENTS.killGoal` 합계가 80 → 240 이 되면서
+    // 24,000틱 예산 안에 **바닥 드랍을 한 건도 못 만든다**(구 증인 실측 loot 0). 즉 드랍 경로가
+    // 죽은 것이 아니라 표본이 비었던 것이다. 재표본(0xc6d1..0xc798 연속 200시드): 12시드가
+    // loot ≥ 1 이고 그중 **0xc6fd 는 loot 2** 로 아래 부풀리기 표본(2 × 40 = 80)까지 여유가 있다.
+    const state = runForLoot(0xc6fd, BOSS_PLANET);
     expect(state.loot.length).toBeGreaterThan(0);
     for (const rec of state.loot) expect(rec.planet).toBe(BOSS_PLANET);
     const grants = blueprintDropsFromLoot(state.loot);

@@ -170,18 +170,43 @@ describe('감속 지대 (B1 유령 기함, AC4)', () => {
 // ---------------------------------------------------------------------------
 
 describe('침략 단계 파라미터 (ADR-0022)', () => {
-  it('단계 1 은 구 정찰(tier0) 파라미터를 정확히 보존한다(결정론 규율 1)', () => {
+  it('단계 1 은 구 정찰(tier0)의 연속 축을 정확히 보존한다(결정론 규율 1)', () => {
     // 부동소수 오차 금지 — hpMult 는 정확히 1.
     expect(stageHpMult(1)).toBe(1);
-    expect(stageParams(1)).toEqual({ hpMult: 1, densityMult: 1, eliteCount: 0, subBullets: 0 });
+    // ⚠️ eliteCount 만 ADR-0035 로 0 → 1 이다(저단계 드랍원 확보). 나머지 축은 불변.
+    expect(stageParams(1)).toEqual({ hpMult: 1, densityMult: 1, eliteCount: 1, subBullets: 0 });
   });
 
-  it('밴드 대표 단계(1/11/21)가 구 3티어(정찰/교전/섬멸) 값을 재배치한다', () => {
+  it('전 밴드에 정예가 존재한다(ADR-0035 — 드랍원 없는 밴드 금지)', () => {
+    // 구 밴드0 은 eliteCount 0 이라 단계 1~10 에 잡몹 전리품 드랍원이 아예 없었다.
+    for (const m of STAGE_MILESTONES) expect(m.eliteCount, `minStage ${m.minStage}`).toBeGreaterThanOrEqual(1);
+  });
+
+  it('밴드 대표 단계(1/11/21)가 질적 요소를 밴드 경계에서 해금한다', () => {
     expect(STAGE_MILESTONES.length).toBe(3);
-    // 밴드1(단계11) = 구 교전: HP ×2.2·정예 1·서브탄 0·밀도 1.
-    expect(stageParams(11)).toEqual({ hpMult: 2.2, densityMult: 1, eliteCount: 1, subBullets: 0 });
-    // 밴드2(단계21) = 구 섬멸: HP ×4.5·정예 2·서브탄 3·밀도 1.5.
-    expect(stageParams(21)).toEqual({ hpMult: 4.5, densityMult: 1.5, eliteCount: 2, subBullets: 3 });
+    // 질적 요소(정예·서브탄·밀도)가 이 테스트의 **구조 계약**이다.
+    //
+    // ⚠️ `hpMult` 는 값을 고정하지 않는다. `HP_ANCHOR_STAGE_*` 는 적 곡선 레인이 튜닝하는
+    // 밸런스 수치이고(ADR-0037 "난이도 곡선은 적 축에서만"), 여기에 숫자를 박으면 정당한 튜닝
+    // 때마다 무관한 구조 테스트가 깨진다(2026-07-27 앵커 2.2→4·4.5→30 에서 실제로 깨졌다).
+    // 불변식은 유지하되 표현만 파생으로 바꾼다 — ①`stageParams` 가 `stageHpMult` 를 그대로
+    // 싣는가(배선 일치) ②밴드가 오를수록 오르는가(방향).
+    expect(stageParams(11)).toEqual({
+      hpMult: stageHpMult(11),
+      densityMult: 1,
+      eliteCount: 1,
+      subBullets: 0,
+    });
+    // 밴드2(단계21) = 구 섬멸: 정예 2·서브탄 3·밀도 1.5.
+    expect(stageParams(21)).toEqual({
+      hpMult: stageHpMult(21),
+      densityMult: 1.5,
+      eliteCount: 2,
+      subBullets: 3,
+    });
+    // 값이 아니라 방향이 계약이다(연속 상향은 아래 별도 테스트가 1<11<21<31 로 못박는다).
+    expect(stageHpMult(21)).toBeGreaterThan(stageHpMult(11));
+    expect(stageHpMult(11)).toBeGreaterThan(stageHpMult(1));
   });
 
   it('hpMult 가 단계마다 연속 상향한다(단계1 < 단계11 < 단계21 < 단계31)', () => {

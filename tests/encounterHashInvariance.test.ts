@@ -94,6 +94,33 @@
  * **`verify-invasion` EF 재배포를 동반한다** — 앵커 정책은 침공 sim 을 틱 0 부터 바꾸므로,
  * 서버가 옛 sim 을 들고 있으면 정상 침공 리플레이가 전부 거부된다(선택이 아니라 필수).
  *
+ * ## ⚠️ 2026-07-27 (6차) — **PvE 만** 재녹화했다 (밸런스 패스 ADR-0035·0036·0037)
+ * 이번 패스는 sim 을 PvE 축에서만 정당하게 바꿨다:
+ *  1. **경험치 이원화 재보정**(`src/sim/world.ts` `xpToNext` `10+6L` → **`10+66L`**) — 런당
+ *     레벨업을 5\~8회로 맞춘 값(ADR-0036 · 경제 재보정 5회차 수렴). 파워업 픽 횟수가 바뀌므로
+ *     `powerupRng` 소비와 그 뒤 전개가 통째로 갈린다.
+ *  2. **적 축**(`data/waves.ts`) — `SEGMENTS.killGoal` 합계 80 → **240**, `HP_ANCHOR_STAGE_11`
+ *     2.2 → **4**, `HP_ANCHOR_STAGE_21` 4.5 → **22**, `eliteCount` 밴드0 0 → **1**.
+ *  3. **전리품 축**(`src/sim/drops.ts` · `data/planets/index.ts`) — 유니크 base 확률 재조정.
+ *
+ * **invasion 배열은 손대지 않았다 — 재녹화 전후 바이트 완전 동일**(29,222 bytes). 이번에는
+ * 그것이 관측이 아니라 **설계**다: `xpToNext` 를 침공에서 갈라 레인 이전 값(`10+6L`)으로
+ * 되돌렸고(`src/sim/world.ts` 의 `xpToNextInvasion`), 나머지 축은 전부 침공에 닿지 않는다 —
+ * 드랍·`eliteCount`·품질 곡선은 `!designedRun` 이라 `updateWaves` 가 안 돌고, `HP_ANCHOR_*` 는
+ * `stageHpMult` 미사용, `stageMetaXpMult` 는 침공 stage 1 이라 ×1 이다.
+ *
+ * 물증 셋:
+ *  · **AC1(PvE) 12건 전부 실패 · AC2(invasion) 6건 전부 통과** — 재녹화 **직전** 이 파일의
+ *    실측이다. 갈린 배열이 PvE 뿐임을 이 게이트 자신이 먼저 보고했다.
+ *  · 재녹화본을 스크래치에 먼저 뽑아 커밋본과 대조: **invasion 29,222 bytes 바이트 동일 ·
+ *    PvE 12/12 런 전부 갈림**.
+ *  · `bc73201`(레인 이전) detached 워크트리와 침공 per-tick 해시 대조: 시드 기지
+ *    #1·#8·#12·#16·#20 × 승패가 갈리는 시드, 합계 **48,477틱 · 520,844 bytes 완전 일치**.
+ *
+ * **그래도 `verify-invasion` EF 재배포는 필요하다** — 3·4차와 같은 이유이고, 루트 `README.md`
+ * `## 서버 배포` 가 명시한 규율이다: **골든 바이트 불변은 EF 재배포 불필요의 근거가 못 된다.**
+ * 번들 소스가 바뀌었으면 번들도 바꾼다.
+ *
  * ## 왜 PvE 는 `seg3Tick` 앞까지만 대조하나
  * 중반 격전은 **매 런 등장**이라 PvE 비-invasion baseline 해시를 의도적으로 바꾼다(AC3 —
  * `tests/fixtures/striker-prem8.json` 골든 재생성으로 흡수). 다만 격전 세그먼트는 **중반

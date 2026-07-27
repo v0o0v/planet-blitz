@@ -19,6 +19,35 @@
  * 3. `hashWorld` 폴드 레이아웃 변경이 스트라이커 런에 새는 것(신규 폴드는 `shipType !== 0`
  *    조건부여야 스트라이커가 한 폴드도 실행하지 않는다).
  * 4. `Profile` → 런 설정 조립 경로가 골든과 다른 config 를 만드는 배선 결함.
+ *
+ * ## ⚠️ 2026-07-27 재생성 — 이 골든은 이제 **표준 장비 세트에 의존한다** (밸런스 패스)
+ *
+ * ### 새로 생긴 결합 (다음 사람이 실패를 보면 여기부터 의심해라)
+ * 녹화 런이 `src/bench/standardBuild.ts` 의 **밴드 표**로 장비를 조립한다
+ * (`gearedBaselineConfig`). **그 표가 바뀌면 이 골든을 재생성해야 한다.** 다행히 대조형 골든이라
+ * 어긋나면 조용히 낡지 않고 **큰 소리로 실패**한다 — 이 저장소가 반복해 밟은 함정은 전부
+ * *조용히* 낡는 쪽이었다. 관측 창도 `BASELINE_TICKS` 3,000 → **6,000틱**으로 넓혔다.
+ *
+ * ### 왜 장비를 실었나
+ * 런 풀 커브가 `10+6L` → **`10+66L`** 로 오르고 적 축이 함께 오르면서 **무장비 저투자 런이
+ * 골든으로서 정보를 잃었다.** 재생성 직후 실측: `berdan-engage/capstone-survival` 이 9,000틱
+ * (150초)을 돌려도 **레벨업 0회 · 처치 7**, 12런 중 레벨업 6회 이상이 **0런**. 파워업 추첨이
+ * 거의 안 나면 위 (1)번 계약(트리 슬라이스 가중 회귀 탐지)이 공회전한다.
+ * **틱만 늘려서는 안 풀렸다** — 3,000 / 6,000 / 9,000 / 12,000틱에서 활발 런이 0 / 3 / 5 / **5**
+ * 로 정체한다(죽는 런은 더 못 큰다). 장비 + 6,000틱에서 **11/12 런이 레벨업 6회 이상**이 된다.
+ *
+ * ### 잃은 것
+ * **무장비 저투자 조합의 해시 커버리지.** 다만 그 조합은 위 실측대로 **골든으로서 이미 죽어
+ * 있었다**(레벨업 0회 = 추첨 0회 = 이 파일의 핵심 계약을 한 번도 안 밟는다). 죽은 커버리지를
+ * 살아 있는 것과 맞바꾼 것이지 커버리지를 버린 것이 아니다.
+ *
+ * ### 바뀌지 않은 것
+ * `BASELINE_BUILDS`(스킬 투자 축)는 **불변**이고 그것이 이 골든의 **대조 축**이다. 장비는 런을
+ * 살려 두는 **환경**이지 관측 대상이 아니다 — 전 런에 같은 규칙으로 실린다.
+ * `gearSeed` 는 **런 시드와 같다**. 고정 상수로 두면 "장비 세트 한 벌의 운"을 재게 되므로
+ * (같은 설계값에서도 `gearSeed` 만 바꾸면 클리어율이 48.3~100.0% 로 갈린다 —
+ * `.omc/research/economy-recalibrated-2026-07-27.md` §0.1) 이 config 는 **증인 시드와 같은 성질**
+ * 을 가진다.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -29,7 +58,8 @@ import {
   BASELINE_PLANETS,
   BASELINE_TICKS,
   BASELINE_FORMAT,
-  baselineConfig,
+  gearedBaselineConfig,
+  STANDARD_GEAR_LEVEL,
   buildBaseline,
   driveBaseline,
   recordRun,
@@ -41,6 +71,7 @@ import type { WorldConfig, InputFrame } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile, activeShip } from '../src/save/profile.js';
+import { standardEquipped } from '../src/bench/standardBuild.js';
 import type { Profile } from '../src/save/profile.js';
 import { SKILL_NODE_COUNT } from '../data/skills.js';
 import { PLANET_MODE } from '../src/sim/planetMode.js';
@@ -258,13 +289,27 @@ function assembleRunConfigLikeMain(
  * (`expectSameStream`)은 아래에서 그대로 증명된다. (구 `anomalyAccepted: false` 는 anomaly
  * 폐지(ADR-0029)로 삭제됐고, `catalysts: []` 가 그 자리를 대신한다.)
  */
-function goldenConfigAsApp(planet: PlanetSpec, invest: readonly number[]): WorldConfig {
+function goldenConfigAsApp(
+  planet: PlanetSpec,
+  invest: readonly number[],
+  gearSeed: number,
+): WorldConfig {
   return {
-    ...baselineConfig(planet, invest),
+    ...gearedBaselineConfig(planet, invest, gearSeed),
     catalysts: [],
     shipType: 0,
     planetMode: PLANET_MODE.vampire,
   };
+}
+
+/**
+ * 앱 프로필에 **골든과 같은 표준 장비**를 장착한다(2026-07-27). 골든 녹화가 장비를 싣게 되면서
+ * (`gearedBaselineConfig`) 프로필도 같은 세트를 들어야 "앱 경로 == 골든" 이 성립한다.
+ * 장착 자리는 실제 앱과 같은 `activeShip(profile).equipped` 이고 `buildRunConfig` 가 거기서
+ * 아이템을 수집한다 — 즉 이 줄이 늘어난 것 자체가 **장비 수집 배선까지 게이트에 들어왔다**는 뜻이다.
+ */
+function equipStandardGear(profile: Profile, planet: PlanetSpec, gearSeed: number): void {
+  activeShip(profile).equipped = standardEquipped(STANDARD_GEAR_LEVEL, gearSeed, planet.planet);
 }
 
 /** 골든과 같은 조건으로 실제 sim 을 굴려 per-tick 해시를 모은다. */
@@ -290,10 +335,11 @@ describe('정규 경로 통합 — Profile → 런 설정 → createWorld/stepWo
     // 연구소가 저장하는 것과 같은 자리에 투자를 넣는다.
     const profile = defaultProfile();
     activeShip(profile).skillInvest = build.invest.slice();
+    equipStandardGear(profile, planet, golden.seed);
 
     const config = assembleRunConfigLikeMain(profile, planet.planet, planet.stage, DURABLE_HP);
     // 앱 경로가 만든 config 가 골든 시나리오 config 와 실제로 같은가(배선 증명).
-    expect(config).toEqual(goldenConfigAsApp(planet, build.invest));
+    expect(config).toEqual(goldenConfigAsApp(planet, build.invest, golden.seed));
     // 캡스톤 비트가 실제로 켜졌는가(투자 → 파생 → sim 게이트).
     expect(config.loadout?.uniqueMask).toBe(golden.summary.uniqueMask);
 
@@ -304,8 +350,9 @@ describe('정규 경로 통합 — Profile → 런 설정 → createWorld/stepWo
     const planet = BASELINE_PLANETS[0]!;
     const golden = findRun(GOLDEN, `${planet.id}/no-invest`);
     const profile = defaultProfile();
+    equipStandardGear(profile, planet, golden.seed);
     const config = assembleRunConfigLikeMain(profile, planet.planet, planet.stage, DURABLE_HP);
-    expect(config).toEqual(goldenConfigAsApp(planet, BASELINE_BUILDS[0]!.invest));
+    expect(config).toEqual(goldenConfigAsApp(planet, BASELINE_BUILDS[0]!.invest, golden.seed));
     expect(config.skillInvest?.length).toBe(SKILL_NODE_COUNT);
     expectSameStream(runHashes(golden.seed, config), golden.hashes, 'profile-path/no-invest');
   });

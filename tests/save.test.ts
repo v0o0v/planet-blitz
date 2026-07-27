@@ -19,7 +19,7 @@ import {
   salvageItems,
 } from '../src/save/settlement.js';
 import { rollItem } from '../src/items/roll.js';
-import { xpToNext } from '../src/sim/world.js';
+import { xpToNextMeta } from '../src/save/progressionPath.js';
 import type { LootRecord } from '../src/sim/world.js';
 import {
   investSkill,
@@ -169,8 +169,9 @@ describe('settleRun — loot → items + leveling (AC3/AC11)', () => {
 
   it('banks XP onto the active ship and grants one skill point per level', () => {
     const p = defaultProfile();
-    // Enough XP for exactly two levels from level 1.
-    const need = xpToNext(1) + xpToNext(2);
+    // Enough XP for exactly two levels from level 1. 기체 레벨은 **메타 풀** 커브를 탄다
+    // (ADR-0036) — 런 내 성장 커브(`xpToNext`)와 별개 축이라 여기서 섞으면 안 된다.
+    const need = xpToNextMeta(1) + xpToNextMeta(2);
     const out = settleRun(p, { victory: false, loot: [], xpTotal: need, resources: 0 });
     expect(activeShip(p).level).toBe(3);
     expect(out.levelsGained).toBe(2);
@@ -201,7 +202,7 @@ describe('settleRun — loot → items + leveling (AC3/AC11)', () => {
 describe('grantXp — level curve', () => {
   it('does not level when XP is insufficient', () => {
     const ship = activeShip(defaultProfile());
-    expect(grantXp(ship, xpToNext(1) - 1)).toBe(0);
+    expect(grantXp(ship, xpToNextMeta(1) - 1)).toBe(0);
     expect(ship.level).toBe(1);
   });
 });

@@ -26,6 +26,8 @@ import type { WorldConfig, WorldState, InputFrame } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { blankEntity, addEntity } from '../src/sim/entities.js';
 import { makeElite, ELITE_AFFIX_COUNT } from '../src/sim/elite.js';
+import { eliteDropChance } from '../src/sim/drops.js';
+import { stageParams } from '../data/waves.js';
 import { catalystPowerMult } from '../src/data/catalysts.js';
 import { atan2, length } from '../src/sim/math.js';
 
@@ -220,10 +222,31 @@ describe('촉매 페널티 6축 — sim 노브 부호 관측', () => {
 // ③ 보상 4축 — 결정론 주입 하네스로 축 격리
 // ---------------------------------------------------------------------------
 
-/** 죽은 엘리트 N기를 플레이어 위치에 주입 → sweep 이 드랍 롤(rollEliteDrop + bonusLootSeeds)을
- *  돌고, 스폰된 루팅을 몇 틱 안에 수거한다. 주입은 dropRng 소비가 촉매와 무관하게 동일하므로,
- *  무촉매 대비 차이는 촉매 drop(추가 루팅)·rarity(등급) 축만 격리한다. */
-function harvestElites(cfg: WorldConfig, count = 220): { count: number; avgRarity: number } {
+/**
+ * 목표 **드랍** 표본 수. 구 구현(엘리트 처치 = 확정 드랍)에서 주입 220기가 내던 표본 크기다.
+ */
+const TARGET_DROP_SAMPLES = 220;
+
+/**
+ * 목표 표본을 내는 주입 엘리트 수 — **`eliteDropChance` 에서 역산한다**(하드코딩 금지).
+ *
+ * ADR-0035 가 엘리트 드랍을 확정 → 확률로 바꾸면서 같은 주입 수가 내는 드랍이 약 28배 줄었고,
+ * rarity 축 관측이 표본 부족으로 뭉개졌다(무촉매·유촉매 평균 등급이 **둘 다 정확히 2.0** 으로
+ * 나와 부호 판정 자체가 불가능해졌다). 확률에서 역산해 두면 앞으로 `eliteDropChance` 가 다시
+ * 바뀌어도 표본 크기가 자동으로 따라간다 — 단언(부호 방향)은 한 글자도 약화하지 않는다.
+ */
+const ELITE_INJECT_COUNT = Math.ceil(
+  TARGET_DROP_SAMPLES / eliteDropChance(stageParams(11).eliteCount),
+);
+
+/** 죽은 엘리트 N기를 플레이어 위치에 주입 → sweep 이 드랍 게이트(rollEliteDropGate)와 드랍 롤
+ *  (rollEliteDrop + bonusLootSeeds)을 돌고, 스폰된 루팅을 몇 틱 안에 수거한다. 주입은 dropRng
+ *  소비가 촉매와 무관하게 동일하므로, 무촉매 대비 차이는 촉매 drop(추가 루팅)·rarity(등급) 축만
+ *  격리한다. */
+function harvestElites(
+  cfg: WorldConfig,
+  count = ELITE_INJECT_COUNT,
+): { count: number; avgRarity: number } {
   const state = createWorld(SEED, cfg);
   const p = state.entities[0]!;
   for (let k = 0; k < count; k++) {

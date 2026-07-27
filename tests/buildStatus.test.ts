@@ -53,9 +53,18 @@ describe('levelUpOverlayAction — 표시/숨김 결정(레이스 회귀 가드)
   });
 });
 
-/** XP를 임계까지 채워 레벨업(pendingLevelUp)을 유도한 월드를 만든다. */
+/**
+ * XP를 임계까지 채워 레벨업(pendingLevelUp)을 유도한 월드를 만든다.
+ *
+ * ⚠️ **내구 파일럿이어야 한다**(2026-07-27 밸런스 패스). 기본 HP(100)로는 런 풀 커브 상향
+ * (`xpToNext` 10+6L → 10+66L, ADR-0036 · Lane F)과 적 축 상향이 겹쳐 **무입력 파일럿이
+ * 레벨업 임계 전에 죽는다** — 죽으면 `stepWorld` 가 즉시 반환해 XP 가 더 안 쌓이므로
+ * 36,000틱을 돌려도 `pendingLevelUp` 이 서지 않는다(실측). 이 헬퍼가 재려는 것은 난이도가
+ * 아니라 **레벨업 시점의 스냅샷**이므로, 파일럿을 죽지 않게 두는 것이 관측 조건의 정정이다.
+ * 내구로 두면 같은 시드에서 **1,103틱**에 레벨업이 선다(실측).
+ */
 function worldAtLevelUp(): WorldState {
-  const state = createWorld(0x1234, { ...DEFAULT_CONFIG });
+  const state = createWorld(0x1234, { ...DEFAULT_CONFIG, playerHp: 100_000_000 });
   // 무입력으로 진행하며 XP가 쌓여 레벨업이 걸릴 때까지 스텝(잡몹 처치 XP).
   for (let t = 0; t < 4000 && !state.pendingLevelUp; t++) stepWorld(state, emptyInput());
   return state;

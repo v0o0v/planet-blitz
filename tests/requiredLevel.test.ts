@@ -19,6 +19,8 @@ import { readFileSync } from 'node:fs';
 import '../data/uniques.js'; // side-effect: UNIQUE_REGISTRY 에 유니크 15종 등록
 
 import { requiredLevel, canEquip, stageLevelCap } from '../src/items/requiredLevel.js';
+import { LEVEL_PER_STAGE, MAX_STANDARD_STAGE } from '../src/save/progressionPath.js';
+import { LEVEL_CAP } from '../data/waves.js';
 import { rollItem, rerollAffixes } from '../src/items/roll.js';
 import { UNIQUE_REGISTRY, registerUnique } from '../src/items/uniques.js';
 import { M2_UNIQUES, M3_UNIQUES } from '../data/uniques.js';
@@ -31,11 +33,13 @@ import type { AffixRoll, Item, Rarity, SlotKind, StatKey } from '../src/items/ty
 // ---------------------------------------------------------------------------
 
 /**
- * 등급 산식을 그대로 보게 하는 드랍처. 요구 레벨은 **드랍처 상한**(단계×5, 만렙 클램프)으로
- * 낮아지므로(2026-07-27 수정), 등급 산식 자체를 보려면 상한이 안 무는 단계를 써야 한다 —
- * 20단계 = 상한 100 = 무효. 상한이 무는 쪽은 아래 별도 describe 에서 본다.
+ * 등급 산식을 그대로 보게 하는 드랍처. 요구 레벨은 **드랍처 상한**(밴드 시작 레벨 =
+ * `5×(단계-1)+1`, 만렙 클램프)으로 낮아지므로, 등급 산식 자체를 보려면 상한이 **안 무는**
+ * 단계를 써야 한다. 2026-07-27 개정으로 상한 기준이 밴드 끝 → 밴드 시작으로 내려가면서
+ * 20단계 상한이 100 → 96 이 됐으므로, 무효 단계도 20 → **21**(상한 101 → 만렙 클램프 100)로
+ * 함께 내린다. 상한이 무는 쪽은 아래 별도 describe 에서 본다.
  */
-const SOURCE = { planet: 0, stage: 20 } as const;
+const SOURCE = { planet: 0, stage: 21 } as const;
 
 /**
  * 어픽스 개수를 정확히 통제한 최소 Item 리터럴. reqLevel 산식은 `affixes.length` 와
@@ -114,11 +118,34 @@ describe('AC1 requiredLevel 순수·결정론 (등급별 산식)', () => {
 // ---------------------------------------------------------------------------
 
 describe('드랍처(침략 단계) 상한', () => {
-  it('상한 = 단계 × 5, [1,100] 클램프', () => {
-    expect(stageLevelCap({ planet: 0, stage: 1 })).toBe(5);
-    expect(stageLevelCap({ planet: 0, stage: 11 })).toBe(55);
-    expect(stageLevelCap({ planet: 0, stage: 20 })).toBe(100);
+  it('상한 = 그 단계 밴드의 **시작** 레벨, [1,100] 클램프', () => {
+    // 2026-07-27 개정: 밴드 끝(5×stage) → 밴드 시작(5×(stage-1)+1). 리터럴이 아니라
+    // LEVEL_PER_STAGE 에서 파생해 못박는다 — 대응 축이 바뀌면 함께 움직여야 한다.
+    for (let stage = 1; stage <= MAX_STANDARD_STAGE; stage++) {
+      expect(stageLevelCap({ planet: 0, stage }), `stage ${stage}`).toBe(
+        Math.min(LEVEL_PER_STAGE * (stage - 1) + 1, LEVEL_CAP),
+      );
+    }
+    expect(stageLevelCap({ planet: 0, stage: 1 })).toBe(1);
+    expect(stageLevelCap({ planet: 0, stage: 11 })).toBe(51);
     expect(stageLevelCap({ planet: 0, stage: 999 })).toBe(100); // 단계 축은 1..∞
+  });
+
+  it('불변식: 밴드에 **들어서는 순간** 그 단계 전리품을 입을 수 있다 (ADR-0030 개정 취지)', () => {
+    // 상한을 둔 이유가 "그 단계를 도는 동안 입게 된다"이므로, 밴드 첫 레벨에서 이미 참이어야
+    // 한다. 구식(밴드 끝 기준)은 이 단언을 단계1 에서 깼다 — Lv1~4 가 전량 착용 불가였다.
+    for (let stage = 1; stage <= MAX_STANDARD_STAGE; stage++) {
+      const bandFirstLevel = LEVEL_PER_STAGE * (stage - 1) + 1;
+      for (const rarity of ['normal', 'magic', 'rare'] as const) {
+        for (let a = 0; a <= 6; a++) {
+          const item = litItem(rarity, a, { stage });
+          expect(
+            canEquip(bandFirstLevel, item),
+            `stage ${stage} 밴드 첫 레벨 Lv${bandFirstLevel} / ${rarity}/${a}어픽스 (요구 ${requiredLevel(item)})`,
+          ).toBe(true);
+        }
+      }
+    }
   });
 
   it('출처 미상(source 없음·비유한 단계)은 상한을 걸지 않는다 — 구 거동 보존', () => {
@@ -126,14 +153,14 @@ describe('드랍처(침략 단계) 상한', () => {
     expect(stageLevelCap({ planet: 0, stage: Number.NaN })).toBe(100);
   });
 
-  it('1단계 레어(등급 산식 41~50)는 상한 5 로 낮아진다 = 그 단계 조종사가 입을 수 있다', () => {
-    expect(requiredLevel(litItem('rare', 3, { stage: 1 }))).toBe(5);
-    expect(requiredLevel(litItem('rare', 6, { stage: 1 }))).toBe(5);
+  it('1단계 레어(등급 산식 41~50)는 상한 1 로 낮아진다 = 첫 런 드랍부터 바로 입는다', () => {
+    expect(requiredLevel(litItem('rare', 3, { stage: 1 }))).toBe(1);
+    expect(requiredLevel(litItem('rare', 6, { stage: 1 }))).toBe(1);
     // 등급 산식이 상한보다 낮으면 그대로다 — 노말은 어디서 나와도 1.
     expect(requiredLevel(litItem('normal', 0, { stage: 1 }))).toBe(1);
   });
 
-  it('상한이 등급 산식을 넘어서면 등급 서열이 그대로 산다 (11단계 상한 55)', () => {
+  it('상한이 등급 산식을 넘어서면 등급 서열이 그대로 산다 (11단계 상한 51)', () => {
     expect(requiredLevel(litItem('magic', 2, { stage: 11 }))).toBe(14);
     expect(requiredLevel(litItem('rare', 3, { stage: 11 }))).toBe(41);
     expect(requiredLevel(litItem('rare', 6, { stage: 11 }))).toBe(50);
@@ -142,9 +169,9 @@ describe('드랍처(침략 단계) 상한', () => {
   it('유니크 저작값도 드랍처 상한으로 낮아진다 (저작값이 상한 이하면 그대로)', () => {
     const high = M2_UNIQUES[0]; // overheat-drum, reqLevel 66
     expect(high?.reqLevel).toBe(66);
-    // 6단계 상한 30 → 66 이 아니라 30.
-    expect(requiredLevel(litItem('unique', 4, { slot: high!.slot, uniqueId: high!.id, stage: 6 }))).toBe(30);
-    // 20단계 상한 100 → 저작값 그대로.
+    // 6단계 상한 26(= 5×5+1) → 66 이 아니라 26.
+    expect(requiredLevel(litItem('unique', 4, { slot: high!.slot, uniqueId: high!.id, stage: 6 }))).toBe(26);
+    // 20단계 상한 96 → 저작값 66 은 그 아래라 그대로.
     expect(
       requiredLevel(litItem('unique', 4, { slot: high!.slot, uniqueId: high!.id, stage: 20 })),
     ).toBe(66);

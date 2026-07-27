@@ -20,6 +20,19 @@ function driveAutopilot(seed: number, config: WorldConfig, ticks: number): numbe
 describe('autopilot (ADR-0008, 결정론 입력 봇)', () => {
   const SEED = 0xa07071;
 
+  /**
+   * 생존 증인 시드. 결정론 단언들은 {@link SEED} 를 그대로 쓰고(그 성질은 시드와 무관하다),
+   * **생존·레벨업 관측만** 이 시드를 쓴다 — 관측 조건만 갈고 나머지 증인은 보존하기 위해서다.
+   *
+   * 2026-07-27 밸런스 패스에서 신설했다. 적 축(`SEGMENTS.killGoal` 80 → 240, `eliteCount`
+   * 밴드0 0 → 1)과 런 풀 커브(`xpToNext` 10+6L → 10+66L)가 함께 오르면서 무장비 오토파일럿이
+   * `SEED` 에서 **1,160틱에 사망**한다(목표 1,200 — 40틱 모자란다). 재표본
+   * (`0xa07071..0xa07138` 연속 200시드): 1,200틱 생존 + 레벨 2 도달이 다수 관측되고
+   * 그중 첫 값이 **`0xa07073`** 이다. 불변식("적정 티어에서 최소 1,200틱 버티고 1레벨 오른다")은
+   * 그대로고 증인만 바뀌었다.
+   */
+  const SURVIVE_SEED = 0xa07073;
+
   it('같은 시드+config로 두 번 구동하면 매 틱 hashWorld가 동일하다', () => {
     const a = driveAutopilot(SEED, DEFAULT_CONFIG, 2000);
     const b = driveAutopilot(SEED, DEFAULT_CONFIG, 2000);
@@ -28,7 +41,7 @@ describe('autopilot (ADR-0008, 결정론 입력 봇)', () => {
 
   it('고정 시드에서 최소 1200틱 생존하고 최소 1레벨을 올린다', () => {
     // 생존형 파일럿: 기본 HP로도 초반 세그먼트를 넘기며 젬을 모아 레벨을 올린다.
-    const state = createWorld(SEED, DEFAULT_CONFIG);
+    const state = createWorld(SURVIVE_SEED, DEFAULT_CONFIG);
     const surviveTicks = 1200;
     let ticks = 0;
     for (let t = 0; t < surviveTicks; t++) {

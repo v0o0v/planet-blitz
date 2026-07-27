@@ -303,9 +303,12 @@ function spawnCard(state: WorldState, card: WaveCard, maxEnemies: number, player
     const e = spawnEnemy(state, def, adj.x, adj.y);
     spawned.push(e);
   }
-  // 단계별 정예 승격(밴드1=1 / 밴드2=2, STAGE_MILESTONES.eliteCount). 카드에서 먼저 스폰된
-  // eliteCount마리를 전용 스트림(OQ-M2-4)에서 뽑은 어픽스로 엘리트화한다. spawnEnemy
-  // 뒤라 변칙/단계 HP 배율이 이미 반영된 상태에서 승격된다. 단계1(밴드0)은 승격 없음(불변).
+  // 단계별 정예 승격(밴드0=1 / 밴드1=1 / 밴드2=2, STAGE_MILESTONES.eliteCount). 카드에서 먼저
+  // 스폰된 eliteCount마리를 전용 스트림(OQ-M2-4)에서 뽑은 어픽스로 엘리트화한다. spawnEnemy
+  // 뒤라 변칙/단계 HP 배율이 이미 반영된 상태에서 승격된다.
+  // ⚠️ 밴드0(단계1~10)도 ADR-0035 로 승격이 생겼다 — 구 "단계1 승격 없음(불변)" 계약은 저단계에
+  // 드랍원을 만들기 위해 의도적으로 폐기됐다(data/waves.ts STAGE_MILESTONES 주석 참조).
+  // eliteCount 는 이제 **난이도 노브 전용**이고 드랍 수량은 eliteDropChance 가 고정한다.
   const eliteCount = stageParams(state.config.stage ?? 1).eliteCount;
   const promote = eliteCount < spawned.length ? eliteCount : spawned.length;
   for (let i = 0; i < promote; i++) {

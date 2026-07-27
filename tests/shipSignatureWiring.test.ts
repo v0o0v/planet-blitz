@@ -259,13 +259,44 @@ interface Case {
   signatureEffect: (live: Observed, ctrl: Observed) => void;
 }
 
+/**
+ * ## ⚠️ 무대 재기준화 2026-07-27 — `stage 21` → `stage 11` (밸런스 패스 ADR-0037)
+ *
+ * 니플헤임 무대 4건(브루저·아크캐스터·말로우·버블)의 단계를 21 → 11 로 내렸다. **관측 조건만**
+ * 바꾼 것이고 단언은 한 글자도 안 바뀌었다.
+ *
+ * 원인: 적 축 재보정이 `HP_ANCHOR_STAGE_21` 을 4.5 → **22**(×4.9)로 올렸다. 이 하네스의
+ * 파일럿은 **무투자·무장비·정지(NEUTRAL)** 라 단계 21 에서는 **한 마리도 죽이지 못한다** —
+ * 60,000틱(1,000초)까지 늘려도 `kills` 가 **0** 이다(실측). 그래서 이 블록의 "공허 런 가드"
+ * (`kills > 0`)가 구조적으로 통과 불가가 됐다. **틱 예산으로는 풀리지 않는다**는 것이 실측으로
+ * 확정됐으므로(1,800 / 5,400 / 10,800 / 18,000 / 36,000 / 60,000틱 전부 kills 0) 무대를 옮기는
+ * 것이 유일한 재기준화다.
+ *
+ * 왜 하필 11 인가: `stageHpMult(11) = 4.0` 이 **구 `stageHpMult(21) = 4.5` 와 거의 같다** —
+ * 즉 이 하네스가 원래 보정돼 있던 적 강도를 그대로 복원한다. 단계를 내린 것이 무대를 쉽게
+ * 만든 것이 아니라 앵커 상향 **이전의 유효 난이도로 되돌린 것**이다.
+ * 대가: 밴드2 의 질적 요소(`subBullets 3` · `densityMult 1.5` · `eliteCount 2`)를 이 하네스가
+ * 더는 밟지 않는다. 그 축은 `tests/m3Content.test.ts` 계열이 단계 파라미터로 직접 검사한다.
+ *
+ * 단계 11 실측(1,800틱 · live vs 억제 대조군):
+ *   브루저     k=13 · hpLost **419 < 515** · aux0 8 (≤ ARMOR_MAX_STACKS 8)
+ *   아크캐스터 k=22 · hpLost **289 < 318** · aux0 600 (> OVERCHARGE_STILL_TICKS) · ehp 8264 ≠ 8345
+ *   말로우     k=12 · hpLost **399 < 612** · aux0 213
+ *   버블       k=18 · hpLost **464 < 554** · aux0 60 (= FILM_ABSORB_FLAT) · aux1 419
+ * 네 건 모두 대조군 `kills > 0` 도 성립한다(공허 런 가드 양쪽 충족).
+ *
+ * ⚠️ 아크캐스터의 구 실패는 별개 증상이었다 — 단계 21 에서 live·ctrl 의 `hpLost` 가 **446.4 로
+ * 동타**가 돼 부등호가 깨졌다(2026-07-26 에 같은 이유로 seed 를 갈았던 그 현상의 재발). 단계 11
+ * 에서는 289 vs 318 로 여유 있게 갈린다.
+ */
 const CASES: Case[] = [
   {
     typeId: 1,
     slug: 'bruiser',
     bit: SIG_BRUISER_ARMOR,
     planet: 2,
-    stage: 21,
+    // 단계 21 → 11: 위 "무대 재기준화" 주석 참조.
+    stage: 11,
     seed: 3311,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
@@ -281,7 +312,8 @@ const CASES: Case[] = [
     slug: 'arccaster',
     bit: SIG_ARC_OVERCHARGE,
     planet: 2,
-    stage: 21,
+    // 단계 21 → 11: 위 "무대 재기준화" 주석 참조.
+    stage: 11,
     // ⚠️ SEED 재측정(2026-07-26, PvE 밀도 상향 + 선분 판정 도입): 이전 증인 seed 3311 은
     // live.hpLost 와 ctrl.hpLost 가 **정확히 615 로 동타**가 됐다(둘 다 정지 파일럿이 동일한
     // 벽에 갇혀 같은 피해 궤적을 밟은 우연 — 증폭 자체는 살아 있다·enemyHpSum 은 갈린다). 부등호
@@ -289,6 +321,7 @@ const CASES: Case[] = [
     seed: 42,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
+      // ⚠️ 무대 단계 21 → 11(2026-07-27) — 위 CASES 머리 주석 참조.
       // 과충전 = 정지 지속 시 피해 증폭. 정지 입력이므로 임계(90틱)를 한참 넘긴다.
       expect(live.maxAux0, '아크캐스터: 정지 카운터가 임계에 못 닿았다').toBeGreaterThan(
         OVERCHARGE_STILL_TICKS,
@@ -358,7 +391,14 @@ const CASES: Case[] = [
     bit: SIG_HATCHLING_BROOD,
     planet: 0,
     stage: 1,
-    seed: 3311,
+    // ⚠️ SEED 재선정 2026-07-27(3311 → 3331). 무대는 그대로 p0s1 이다 — 여기서 깨진 것은 적
+    // 강도가 아니라 **관측 끝 시점에 병아리가 살아 있는가**다. 구 증인 3311 은 처치가 20 에서
+    // 정체해(적 축 상향으로 정지 파일럿이 포위된다) 부화가 1회(aux0 12)뿐이고, 그 한 기가
+    // `TURRET_LIFE_TICKS` 로 만료된 뒤 관측이 끝나 `droneCount` 가 0 이 됐다. 즉 시그니처는
+    // 살아 있었고 **관측 창이 비었을 뿐**이다.
+    // 재표본(3311..3340 연속 30시드, 1,800틱): 3331 이 live 처치 **52** vs 대조군 **33**,
+    // 종료 시 생존 병아리 **2기**, aux0 **48**(부화 4회)로 네 단언 전부에 여유가 가장 크다.
+    seed: 3331,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
       // 부화 = 누적 처치 임계마다 병아리 출격. 대조군에는 드론 소환원이 없다(유니크 미장착).
@@ -375,7 +415,8 @@ const CASES: Case[] = [
     slug: 'mallow',
     bit: SIG_MALLOW_CUSHION,
     planet: 2,
-    stage: 21,
+    // 단계 21 → 11: 위 "무대 재기준화" 주석 참조.
+    stage: 11,
     seed: 3311,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
@@ -393,7 +434,8 @@ const CASES: Case[] = [
     slug: 'bubble',
     bit: SIG_BUBBLE_FILM,
     planet: 2,
-    stage: 21,
+    // 단계 21 → 11: 위 "무대 재기준화" 주석 참조.
+    stage: 11,
     seed: 3311,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
