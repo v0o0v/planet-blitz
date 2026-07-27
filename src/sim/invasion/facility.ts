@@ -93,6 +93,21 @@ const DEG_TO_RAD = PI / 180;
 /** 스포너가 동시 생존 상한에 걸렸을 때의 재시도 간격(틱, 결정론 상수). */
 const SPAWNER_RETRY_TICKS = 12;
 
+/**
+ * 스포너 자식 드론의 **생산자 표식 필드는 `aux1`** 이다(`ownerId` 가 아니다).
+ *
+ * ⚠️ 예전에는 `drone.ownerId = 스포너 id` 였는데, `enemy` kind 에서 `ownerId` 는 이미
+ * **냉기 감속 잔여 틱**으로 재활용돼 있다(src/sim/status.ts 필드 재활용 규율). 그래서 두 가지가
+ * 동시에 깨져 있었다:
+ *   ① `tickEnemyStatus` 가 매 틱 `ownerId--` 하므로 표식이 `id` 틱 만에 0 이 되고, 그때부터
+ *      `spawnMaxAlive` 상한이 **아무도 세지 못한다** → 무제한 생산. 실측(24시드 · 설비 단독
+ *      12소켓)에서 설계 상한 36기 대비 **동시 생존 평균 181기**였다.
+ *   ② 표식이 살아 있는 동안 `enemyStatusSlowMult` 가 드론을 **냉기 감속 상태로 오인**해
+ *      스폰 직후 `id` 틱 동안 이동 속도를 깎았다.
+ * `aux1` 은 범용 정수 슬롯이고 `enemy` kind 에서 쓰는 곳이 없다(편대 표식은 `aux0`).
+ */
+export const SPAWNER_OWNER_FIELD = 'aux1';
+
 /** `aux0` 의 "소환 수 무제한" 표식(파괴 전까지 계속 생산). */
 export const SPAWN_BUDGET_UNLIMITED = -1;
 
@@ -456,12 +471,93 @@ const AIM_JITTER_PERIOD = 97;
  */
 function turretAimAngle(state: WorldState, e: Entity, spec: FacilitySpec, aimNow: number): number {
   if (spec.pellets > 1) return aimNow;
+  return aimNow + aimJitter(state, e, TURRET_AIM_JITTER_DEG);
+}
+
+/**
+ * 결정론 조준 흔들림(라디안). `tick`·`id` 의 순수 삼각파라 RNG 미소비다(ADR-0005).
+ *
+ * ## 왜 흔들림이 "정확도 저하"가 아니라 **측정 가능성**의 문제인가
+ * L2 참조봇 궤적은 사실상 **시드 불변**이다 — 승패 분산의 출처가 파워업 추첨이라(밸런스
+ * 스모크 헤더 ①) 회랑 통과 경로는 시드가 달라도 거의 같다. 그래서 조준이 한 점에 고정된
+ * 포탑은 12소켓 × 24시드가 **한 덩이로** 맞거나 빗나간다. 실측에서 그 성질이 그대로 보였다:
+ * 최소 접근 거리가 시드·레벨에 걸쳐 소수점까지 동일했고, 예고 길이를 2틱 옮기는 것만으로
+ * 누적 피해가 0 ↔ 최대치로 통째로 뒤집혔다. 그런 상태에서 고른 수치는 **하나의 기하학적
+ * 우연에 과적합**이라 다음 sim 변경에서 다시 0 이 된다.
+ * 흔들림은 발마다 조준을 어긋내 그 상관을 끊는다 — 그래서 강화축이 "코인"이 아니라
+ * 레벨에 비례하는 연속량이 된다.
+ */
+function aimJitter(state: WorldState, e: Entity, ampDeg: number): number {
   const raw = (state.tick + e.id * 13) % AIM_JITTER_PERIOD;
   const phase = raw < 0 ? raw + AIM_JITTER_PERIOD : raw;
   const half = AIM_JITTER_PERIOD / 2;
   // 삼각파 0→1→0 을 −1..+1 로 편다(단일 나눗셈 · f64 누적 없음).
   const tri = phase < half ? phase / half : 2 - phase / half;
-  return aimNow + (tri * 2 - 1) * TURRET_AIM_JITTER_DEG * DEG_TO_RAD;
+  return (tri * 2 - 1) * ampDeg * DEG_TO_RAD;
+}
+
+/**
+ * 예고선 포탑의 조준 흔들림 진폭(도). 단발 포탑(4도)보다 크다 — 예고 + 비행 동안 쌓이는 잔여
+ * 오차가 100~230 유닛이라, 그 폭을 덮지 못하면 명중이 전부-또는-전무로 갈린다
+ * ({@link aimJitter} 주석). 사거리 900 기준 10도는 약 157 유닛에 해당한다.
+ */
+const TELEGRAPH_AIM_JITTER_DEG = 10;
+
+/** 1초 = 60틱(속도 필드가 유닛/초라 편차 계산에서 틱↔초 환산이 필요하다). */
+const TICKS_PER_SECOND = 60;
+
+/**
+ * 예고선 포탑(`telegraphTicks > 0`)이 겨눌 각도 — **예고 + 탄 비행 시간만큼 앞을 겨눈다**.
+ *
+ * ## 왜 예고 포탑만 편차 사격인가
+ * 예고선은 조준각을 잠근 뒤 `telegraphTicks` 이 지나야 탄이 나간다. 그 사이 표적은 계속
+ * 움직이므로, 잠금 시점의 방향을 그대로 쏘면 **오차 = 표적 속도 × (예고 + 비행) 틱** 이 된다.
+ * 실측(24시드 · 설비 단독 배치 · L2 누적 피해)은 그 오차가 히트 창을 압도한다는 것을
+ * 예외 없이 보여줬다:
+ *   `rail`(예고 36틱 · 사거리 1600) — 탄이 플레이어에 **331 유닛 이내로 들어온 적이 없다**.
+ *   예고를 12틱으로 줄이고 사거리를 900 으로 좁혀도 최소 거리 173 유닛으로 여전히 못 닿는다.
+ *   탄 반경으로 메우는 길도 막혀 있다 — 소켓(y=±500)과 벽 안쪽 면(y=±540) 사이 여유가
+ *   40 유닛뿐이라 반경 40 이상은 **자기 벽에 즉사**해 발사 수가 0 이 된다(실측: r=24 는 144발,
+ *   r=40 은 0발). 즉 lv1~lv99 전 구간 0 은 정확도 저하가 아니라 **구조적 무명중**이었다.
+ *
+ * ## 설계 의도(회피 가능한 강타)를 죽이지 않는다 — 오히려 되살린다
+ * 앞을 겨누면 예고선이 **탄이 실제로 갈 곳**을 가리키게 된다. 그래서 회피는 "계속 움직이기"가
+ * 아니라 **"움직임을 바꾸기"** 가 된다 — 예고를 0 으로 줄이거나 피할 수 없는 폭을 주는 것과
+ * 달리 회피 여지는 그대로 남는다. 참조봇은 예고를 인지하지 않고 등속으로 흐르므로 지금까지
+ * 100% 회피가 **공짜**였다(사람은 조준을 위해 멈추거나 방향을 바꾸므로 이미 맞고 있었다 —
+ * 봇 기준 회피율과 사람 기준 회피 난이도는 다른 값이다).
+ *
+ * ## 앞선 레인의 편차 사격 기각과 충돌하지 않는다
+ * PR#161 이 기각한 것은 **연사 포탑 전반**(`rapid` 등)에 건 편차 사격이다. 그쪽은 비행 시간이
+ * 짧고 봇이 카이팅으로 진동해 순간 속도 외삽이 해로웠다. 여기 게이트는 `telegraphTicks > 0`
+ * 이라 카탈로그에서 `rail`·`heavyrail` **두 종에만** 닿는다 — 나머지 15종은 호출 지점조차
+ * 바뀌지 않아 비트 동일이다.
+ *
+ * 결정론(ADR-0005): RNG·wall-clock 미소비. 표적 좌표·속도와 스펙 상수만 쓴다.
+ */
+function telegraphLeadAngle(
+  e: Entity,
+  spec: FacilitySpec,
+  player: Entity,
+  dx: number,
+  dy: number,
+): number {
+  // 요격점은 **2회 반복**으로 푼다. 1회로 끝내면 비행 시간을 "지금 거리"로 재게 되는데,
+  // 표적은 예고 동안 이미 멀어져 있어 체계적으로 **덜 겨눈다**. 실측에서 그 부족분이 100~230
+  // 유닛이라 히트 창(반경 90 + 판정점 8 = 98)을 넘나들며 예고 길이 1~2틱 차이로 명중이
+  // 켜졌다 꺼졌다 했다 — 2회 반복이 그 요동을 없앤다.
+  let px = player.x;
+  let py = player.y;
+  for (let i = 0; i < 2; i++) {
+    const ax = i === 0 ? dx : px - e.x;
+    const ay = i === 0 ? dy : py - e.y;
+    const dist = Math.sqrt(ax * ax + ay * ay);
+    const flight = spec.bulletSpeed > 0 ? (dist / spec.bulletSpeed) * TICKS_PER_SECOND : 0;
+    const lead = (spec.telegraphTicks + flight) / TICKS_PER_SECOND;
+    px = player.x + player.vx * lead;
+    py = player.y + player.vy * lead;
+  }
+  return atan2(py - e.y, px - e.x);
 }
 
 /**
@@ -502,8 +598,13 @@ function stepTurretFacility(
   // 교전 판정은 표적의 **실제 방향**으로 한다(사계 = 이 포탑이 담당하는 구역).
   const aimNow = atan2(dy, dx);
   if (!withinArc(e.targetX, e.pierce, aimNow)) return;
-  // 실제로 겨누는 각도만 흔들고, 사계 밖으로 나가면 경계로 접는다(거부하지 않는다).
-  const ang = clampToArc(e.targetX, e.pierce, turretAimAngle(state, e, spec, aimNow));
+  // 실제로 겨누는 각도만 흔들고(또는 예고 포탑이면 앞을 겨누고), 사계 밖으로 나가면 경계로
+  // 접는다(거부하지 않는다).
+  const desired =
+    spec.telegraphTicks > 0
+      ? aimJitter(state, e, TELEGRAPH_AIM_JITTER_DEG) + telegraphLeadAngle(e, spec, player, dx, dy)
+      : turretAimAngle(state, e, spec, aimNow);
+  const ang = clampToArc(e.targetX, e.pierce, desired);
   if (state.activeWalls.length > 0 && segmentBlocked(e.x, e.y, player.x, player.y, state.activeWalls)) {
     return;
   }
@@ -553,6 +654,28 @@ function moduleFacilityCooldown(state: WorldState, cd: number): number {
   return scaled < 1 ? 1 : scaled;
 }
 
+/**
+ * 소켓 중심에서 회랑 벽 안쪽 면까지의 여유(유닛). 직선형 템플릿 기준 소켓 y=±500 · 벽 안쪽 면
+ * y=±540 이다(data/invasion/mapTemplates.ts). 굵은 탄이 이 여유를 넘으면 **발사 즉시 자기 벽에
+ * 겹쳐 소멸**한다 — 적탄도 벽에 막히기 때문이다(world.ts `sweptCircleOverlapsWall`).
+ * 실측: 반경 24 는 24시드에서 144발이 살아남고 반경 40 은 **0발**이다.
+ */
+const SOCKET_WALL_CLEARANCE = 40;
+
+/**
+ * 총구 오프셋(유닛) — 굵은 탄만 소켓 정면 방향으로 밀어 내보낸다.
+ *
+ * 반경이 {@link SOCKET_WALL_CLEARANCE} 이하인 탄은 **0** 을 돌려주므로 기존 카탈로그 15종은
+ * 발사 좌표가 한 비트도 바뀌지 않는다(현행 최대 반경은 공성 주포 20). 예고 포탑처럼 히트 창을
+ * 폭으로 벌어야 하는 설비만 이 경로에 들어온다.
+ *
+ * 방향은 **조준각이 아니라 소켓 정면(`e.targetX`)** 이다 — 사계 가장자리를 겨눌 때 조준 방향으로
+ * 밀면 벽과 나란히 나가서 여유가 생기지 않는다.
+ */
+function muzzleOffset(spec: FacilitySpec): number {
+  return spec.bulletRadius > SOCKET_WALL_CLEARANCE ? spec.bulletRadius : 0;
+}
+
 /** 단발 또는 부채꼴 다발 발사(정수 도 → 라디안 변환은 여기서 1회). */
 function fireFacilityBullets(state: WorldState, e: Entity, spec: FacilitySpec, ang: number): void {
   const damage = moduleFacilityDamage(state, e.damage);
@@ -560,12 +683,15 @@ function fireFacilityBullets(state: WorldState, e: Entity, spec: FacilitySpec, a
   const spread = spec.spreadDeg * DEG_TO_RAD;
   const start = pellets > 1 ? ang - spread / 2 : ang;
   const step = pellets > 1 ? spread / (pellets - 1) : 0;
+  const muzzle = muzzleOffset(spec);
+  const ox = muzzle === 0 ? e.x : e.x + cos(e.targetX) * muzzle;
+  const oy = muzzle === 0 ? e.y : e.y + sin(e.targetX) * muzzle;
   for (let i = 0; i < pellets; i++) {
     const a = start + step * i;
     spawnEnemyBullet(
       state,
-      e.x,
-      e.y,
+      ox,
+      oy,
       cos(a) * spec.bulletSpeed,
       sin(a) * spec.bulletSpeed,
       a,
@@ -611,7 +737,8 @@ function stepHazardFacility(
  * 드론 스포너 1기. 파괴 전까지 소형 드론을 생산한다. 스폰은 반드시 `summonEnemy`(RNG 미소비)
  * 경유 — `spawnEnemy` 는 `waveRng` 를 소비해 침공 결정론 규율을 깬다.
  *
- * 동시 생존 상한은 `ownerId` 로 자기 자식만 세어 판정한다(다른 스포너와 간섭 없음).
+ * 동시 생존 상한은 {@link SPAWNER_OWNER_FIELD 자식 표식}으로 자기 자식만 세어 판정한다
+ * (다른 스포너와 간섭 없음).
  */
 function stepSpawnerFacility(
   state: WorldState,
@@ -627,7 +754,7 @@ function stepSpawnerFacility(
   }
   let alive = 0;
   for (const other of state.entities) {
-    if (other.kind === 'enemy' && !other.dead && other.ownerId === e.id) alive++;
+    if (other.kind === 'enemy' && !other.dead && other.aux1 === e.id) alive++;
   }
   // 방어체 어픽스 `defSpawnCapFlat` — 동시 생존 상한을 절대량으로 늘린다(미보유면 스펙 그대로).
   if (alive >= affixSpawnCap(spec.spawnMaxAlive, mods)) {
@@ -639,7 +766,8 @@ function stepSpawnerFacility(
   const sx = e.x + cos(e.targetX) * spec.spawnOffset;
   const sy = e.y + sin(e.targetX) * spec.spawnOffset;
   const drone = summonEnemy(state, def, sx, sy);
-  drone.ownerId = e.id; // 생산자 표식(동시 생존 상한 판정 키)
+  // 생산자 표식 — 필드 선택 근거는 {@link SPAWNER_OWNER_FIELD} 주석(`ownerId` 금지).
+  drone.aux1 = e.id;
   if (e.aux0 > 0) e.aux0--;
   e.aux1 = affixCooldown(
     invasionFireCooldown(spec.spawnIntervalTicks, affixMaintenance(maintenance, mods)),

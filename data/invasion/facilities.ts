@@ -163,21 +163,33 @@ export const INVASION_FACILITIES: readonly FacilitySpec[] = [
     bulletLife: 70,
     pellets: 1,
   },
-  // 1 — 관통 레일포: 조준각을 잠그고 예고선을 그린 뒤 관통 고속탄 1발.
+  // 1 — 관통 레일포: 조준각을 잠그고 예고선을 그린 뒤 굵은 관통 고속탄 1발.
+  //
+  //     ⚠️ lv1~lv99 전 구간 L2 누적 피해가 **0** 이던 설비다(2026-07-27 실측). 근인은 명중률
+  //     저하가 아니라 기하다 — 예고 36틱 + 사거리 1600 의 비행 37틱 동안 표적이 470유닛
+  //     움직이는데 히트 창은 탄 반경 7 + 플레이어 판정점 8 = **15유닛**이었다. 실측 최소
+  //     접근 거리 331유닛(24시드 · 144발 전량이 그 밖). 세 축을 함께 옮겨 살렸다:
+  //       · 조준 — `telegraphLeadAngle` + 예고 전용 흔들림(sim). 앞을 겨누고 발마다 어긋낸다.
+  //       · 예고 32틱 — 36 에서 소폭만 줄였다. **의도(회피 가능한 강타)는 그대로다.**
+  //       · 사거리 1200 · 탄 반경 60 — 비행 시간을 줄이고 히트 창을 68유닛으로 넓힌다.
+  //         반경 40 초과는 `muzzleOffset`(sim)이 총구 밖으로 내보내야 성립한다 — 소켓(y=±500)과
+  //         회랑 벽 안쪽 면(y=±540) 사이 여유가 40뿐이라, 그 처리가 없으면 굵은 탄이 자기 벽에
+  //         즉사해 발사 수가 **0** 이 된다(실측: r=24 는 144발, r=40 은 0발).
+  //     발당 피해·연사는 원본 그대로다(34 / 110틱).
   {
     ...BASE,
     key: 'fac.rail',
     behavior: FACILITY_BEHAVIOR_TURRET,
     hp: 220,
     radius: 32,
-    range: 1600,
+    range: 1200,
     fireCooldown: 110,
     damage: 34,
     bulletSpeed: 2600,
-    bulletRadius: 7,
+    bulletRadius: 60,
     bulletLife: 90,
     pellets: 1,
-    telegraphTicks: 36,
+    telegraphTicks: 32,
   },
   // 2 — 곡사 박격포: 부채꼴 다발(회랑 폭을 덮는 면 제압).
   {
@@ -354,33 +366,42 @@ export const INVASION_FACILITIES: readonly FacilitySpec[] = [
     pellets: 1,
   },
   // 13 — 중장 레일포(크라스): 조준을 잠그고 예고선을 그은 뒤 초고피해 관통탄 1발(관통 레일포 계열).
+  //      전 구간 0 이던 이유·복구 근거는 위 1번(관통 레일포) 주석과 동일하다. 예고가 더 길고
+  //      (36틱) 발당 피해가 무겁다 — 계열 차별화는 그대로 두고 기하만 사격 가능 범위로 옮겼다.
   {
     ...BASE,
     key: 'fac.heavyrail',
     behavior: FACILITY_BEHAVIOR_TURRET,
     hp: 220, // TODO(밸런스)
     radius: 32, // TODO(밸런스)
-    range: 1600, // TODO(밸런스)
+    range: 1200,
     fireCooldown: 120, // TODO(밸런스)
     damage: 40, // TODO(밸런스)
     bulletSpeed: 2600, // TODO(밸런스)
-    bulletRadius: 8, // TODO(밸런스)
+    bulletRadius: 60, // 40 초과 = 총구 오프셋 경로(위 1번 주석)
     bulletLife: 90, // TODO(밸런스)
     pellets: 1,
-    telegraphTicks: 40, // TODO(밸런스)
+    telegraphTicks: 36,
   },
   // 14 — 공성 주포(크라스): 느리지만 무거운 단발 고화력 포격.
+  //
+  //      ⚠️ 전 구간 0 이던 설비다. 예고선은 없지만 근인은 같은 계열이다 — 탄속 1000(=17유닛/틱)
+  //      으로 사거리 1200 을 날면 비행만 72틱이라, 조준 흔들림(PR#161)을 얹어도 표적이 그 사이
+  //      1000유닛 가까이 이동한다. 실측 최소 접근 거리 45유닛 대 히트 창 20유닛(탄 반경 12 +
+  //      판정점 8) — 아깝게 빗나가는 것이 아니라 **항상** 빗나갔다.
+  //      복구: 사거리 1200 → 800(비행 시간 절반) · 탄속 1000 → 1800 · 탄 반경 12 → 20.
+  //      "느리고 무거운 한 방"이라는 성격은 연사(80틱)와 발당 피해로 유지한다.
   {
     ...BASE,
     key: 'fac.siegecannon',
     behavior: FACILITY_BEHAVIOR_TURRET,
     hp: 320, // TODO(밸런스)
     radius: 36, // TODO(밸런스)
-    range: 1200, // TODO(밸런스)
+    range: 800,
     fireCooldown: 80, // TODO(밸런스)
     damage: 30, // TODO(밸런스)
-    bulletSpeed: 1000, // TODO(밸런스)
-    bulletRadius: 12, // TODO(밸런스)
+    bulletSpeed: 1800,
+    bulletRadius: 20,
     bulletLife: 120, // TODO(밸런스)
     pellets: 1,
   },
