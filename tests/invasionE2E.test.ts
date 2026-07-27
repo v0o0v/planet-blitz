@@ -132,11 +132,15 @@ function playRun(seed: number, layers: InvasionLayers): RunResult {
  *     (3페이즈 통과·코어 실파괴·발생기 실파괴·예산 안 종료·L3 도달이 빈 배치보다 늦음)을
  *     만족하는 시드는 1·9·21 이었다. **1 은 빈 배치 증인과 값이 겹쳐** 두 상수가 뒤바뀌는
  *     회귀를 못 잡게 되므로 그다음 값인 9 를 골랐다.
+ *   - `fix/invasion-shielded-core-blocks-bullets`(발생기 국면 코어가 아군탄을 통과시킴):
+ *     9 → 4. 같은 절차로 1~120 을 순차 탐색해 1·4·16·53·66·74 가 전 단언을 만족했고,
+ *     **1 은 위와 같은 이유로 제외**해 그다음 값인 4 를 골랐다. 시드 9 는 이 변경 뒤
+ *     발생기까지는 부수지만(형제 단언 통과) 코어 파괴 전에 18,000틱 예산이 소진된다.
  *
- * 빈 배치 1 은 세 번의 sim 변경을 모두 넘겨 그대로 승리한다.
+ * 빈 배치 1 은 네 번의 sim 변경을 모두 넘겨 그대로 승리한다.
  */
 const WINNING_SEED_EMPTY = 1;
-const WINNING_SEED_FILLED = 9;
+const WINNING_SEED_FILLED = 4;
 
 /** 코어 파괴 승리를 공통 단언으로 묶는다. */
 function expectCoreKillVictory(run: RunResult): void {
