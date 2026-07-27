@@ -47,7 +47,7 @@ import {
   ELITE_SPLIT,
   ELITE_VOLATILE,
 } from './elite.js';
-import { rollEliteDrop, rollBossDrop, bonusLootSeeds } from './drops.js';
+import { rollEliteDrop, rollEliteDropGate, rollBossDrop, bonusLootSeeds } from './drops.js';
 import {
   hasUnique,
   overheatCooldown,
@@ -151,6 +151,9 @@ import { drawPowerupChoices, applyPowerup } from './powerups.js';
 import type { WaveRuntime } from './waves.js';
 import { createWaveRuntime, updateWaves, enemyDefFor } from './waves.js';
 import { planetContent } from '../../data/planets/index.js';
+// 단계 → eliteCount 해석은 sim 코어(world)의 책임이다 — `src/sim/drops.ts` 는 데이터 레이어를
+// import 하지 않는 계약이라(tests/planetDrops.test.ts ⑤) 드랍 확률 함수에 값으로 넘긴다.
+import { stageParams } from '../../data/waves.js';
 import {
   CHUNK_SIZE,
   CHUNK_GEN_RADIUS,
@@ -356,9 +359,92 @@ const SUPPLY_SPAWN_TICKS: readonly number[] = [1800, 6000];
  */
 export const PLAYER_HIT_RADIUS = 8;
 
-/** XP required to reach the next level from the current one. */
+/**
+ * **런 풀** 커브 — 런 안에서 다음 레벨(= 파워업 3택 1회)까지 필요한 XP.
+ *
+ * ⚠️ 이 함수는 **런 내 성장 전용**이다. 기체 레벨(메타 풀)은 완전히 별개 커브
+ * `xpToNextMeta`(`src/save/progressionPath.ts`)를 쓴다 — 경험치 이원화(ADR-0036).
+ * 둘을 한 커브로 묶으면 파밍 속도를 바꾸려는 모든 시도가 런 체감을 함께 부순다.
+ *
+ * 계수(10 + 66L)는 **런당 레벨업 5~8회**를 목표로 잡았다(ADR-0036 §런 내 리듬).
+ *
+ * ⚠️ 이 계수는 **적 축 `SEGMENTS.killGoal` 합계에 종속된다** — 런이 길어지면 처치·젬이 비례해
+ * 늘어 같은 커브에서 레벨업 횟수가 함께 오른다. 실제로 한 번 어긋났다: 초깃값 `10 + 13L` 은
+ * `killGoal` 합계가 80 이던 시절 기준이었는데, 적 곡선 레인이 합계를 240 으로 올리자 런당
+ * 레벨업이 **14~18회**로 폭주했다(목표 5~8). 그동안 단위 테스트는 전부 초록이었다.
+ *
+ * 현재값의 근거(2026-07-27 경제 재보정 · 표준 빌드 96시드 · planet 0 · 밴드 20점):
+ * 런 풀 누적 XP 가 단계1 1,724 → 단계20 약 2,500 이고, 이 커브에서 레벨업이 **5.6~7.6회**로
+ * 전 구간 대역 안에 떨어진다. 상세·수렴 이력은
+ * `.omc/research/economy-recalibrated-2026-07-27.md`.
+ *
+ * **`killGoal` 합계를 다시 만지면 이 계수를 다시 재야 한다.** `tests/progressionPath.test.ts`
+ * 의 정규 경로 실런 가드가 어긋나면 큰 소리로 실패한다.
+ *
+ * ⚠️ **이 커브는 PvE(설계 런) 전용이다.** 침공(3레이어 단판)은 {@link xpToNextInvasion} 을 쓴다 —
+ * 아래 그 함수의 주석에 갈라 놓은 근거가 있다.
+ */
 export function xpToNext(level: number): number {
+  return 10 + level * 66;
+}
+
+/**
+ * **침공 런 전용** 런 풀 커브 — 3레이어 단판(PvP 배치전)에서 다음 파워업까지 필요한 XP.
+ *
+ * ## 왜 PvE 와 갈랐는가 (2026-07-27, 사용자 결정)
+ * {@link xpToNext} 의 `10 + 66L` 은 **PvE 의 처치 볼륨(`SEGMENTS.killGoal` 합계 240)** 위에서
+ * 잡은 값이다. 침공은 런 구조가 전혀 다르다 — 웨이브 세그먼트가 없고(`!designedRun` 이라
+ * `updateWaves` 를 아예 돌리지 않는다), 3레이어 단판이며, 젬 획득량이 훨씬 적다. **한 커브가
+ * 두 다른 런 구조를 같이 모시는 것 자체가 구조적 불일치**였다.
+ *
+ * 실제로 그 불일치가 계약을 깼다: `10 + 66L` 을 침공에도 적용하자 침공 런 내 레벨업이 약 1회로
+ * 줄었고(실측 종료 레벨 2.00), 그 결과 **기지 #16 이 96시드 전패**(0/96 · 24시드 전부 코어
+ * 무피해 사망)가 되어 `tests/invasionBalance.test.ts` 의 "클리어 불가 기지가 없다" 불변식이
+ * 깨졌다. 침공 승률 분산은 통째로 파워업 추첨(`rng.fork('powerups')`)에서 나오므로
+ * (그 파일 헤더 ①), 추첨 횟수가 줄면 최저 기지가 분포 바닥 밖으로 밀려난다.
+ *
+ * ## 값의 출처
+ * - PvE `10 + 66L` — Lane F 5회차 수렴값(`.omc/research/economy-recalibrated-2026-07-27.md` §1).
+ * - 침공 `10 + 6L` — **2026-07-27 밸런싱 레인 이전 값의 복원**이다. `tests/invasionBalance.test.ts`
+ *   의 24시드 밴드·상한은 전부 `10 + 6L` 위에서 재기준화된 것이라(그 파일 헤더 ②·③),
+ *   되돌리면 그 재기준화가 그대로 유효해진다 — 침공을 다시 튜닝하지 않는다.
+ *
+ * 분기는 **호출부**(`checkLevelUp`)에서 기존 술어 `state.config.invasion3 !== undefined` 로만
+ * 한다. 새 `WorldConfig` 필드를 만들지 않는다 — `src/run/runConfig.ts` 단일 정본 규율에 걸리고
+ * 리플레이 제출 스키마·`verify-invasion` EF 계약이 연쇄로 붙기 때문이다.
+ *
+ * ## ✅ 실측 — 이 분리로 침공 sim 이 밸런싱 레인 **이전과 바이트 동일**해졌다
+ * `bc73201`(레인 이전) detached 워크트리와 현 트리에서 같은 녹화기를 돌려 침공 per-tick 해시를
+ * 대조했다: 기지 #1·#8·#12·#16·#20 × 승패가 갈리는 시드 5개, 합계 **48,477틱**, 직렬화
+ * **520,844 bytes 가 완전히 일치**했다. 즉 이 레인의 다른 변경은 침공 경로에 한 바이트도 닿지
+ * 않는다 — 드랍 확률화·`eliteCount`·품질 곡선은 `!designedRun` 이라 `updateWaves` 가 안 돌고,
+ * `HP_ANCHOR_*` 는 `stageHpMult` 미사용, `stageMetaXpMult` 는 침공 stage 1 이라 ×1,
+ * `stageLevelCap` 은 메타 계층이다. `tests/encounterHashInvariance.test.ts` 의 AC2(invasion)
+ * 6건이 픽스처(레인 이전 녹화본) 대비 전량 통과하는 것이 같은 사실의 독립 확인이다.
+ *
+ * ⚠️ **그래도 `verify-invasion` EF 재배포는 필요하다.** 골든 바이트 불변은 재배포 불필요의
+ * 근거가 못 된다(루트 `README.md` `## 서버 배포`) — 번들 소스가 바뀌었으면 번들도 바꾼다.
+ */
+export function xpToNextInvasion(level: number): number {
   return 10 + level * 6;
+}
+
+/**
+ * **메타 풀** 단계 배율 — 젬 1회 수집이 기체 레벨(영구)에 넣는 값의 배수(ADR-0036).
+ *
+ * 런 풀은 단계 무관 고정이고, 메타 풀만 침략 단계에 비례한다. 이렇게 해야 "고단계일수록
+ * 파밍이 빠르다"가 성립한다 — 기준선 실측에서는 정반대였다(젬 XP 가 적 종류별 고정값이라
+ * 단계가 오를수록 XP/시간이 급락, `.omc/research/economy-baseline-2026-07-27.md` §3-1).
+ *
+ * 정수 배율이라 부동소수 오차가 없다. 단계 1 = ×1 이므로 단계1 메타 적립은 구 거동과 같다.
+ * 단계는 `WorldConfig.stage` 에서 이미 클램프된 [1,∞) 정수다(`runConfig.ts`) — 손상 세이브
+ * 방어로 여기서도 하한 1 을 건다.
+ *
+ * ⚠️ **저단계 감쇠는 여기 없다.** 감쇠는 기체 레벨을 알아야 해서 정산 계층이 맡는다
+ * (`src/save/progressionPath.ts` `lowStageXpDecay`, ADR-0036 §계층 배치).
+ */
+export function stageMetaXpMult(stage: number | undefined): number {
+  return stage !== undefined && stage > 1 ? stage | 0 : 1;
 }
 
 /** Combo multiplier for the current stack, capped at x1.5 (spec). */
@@ -3422,8 +3508,11 @@ function collectGem(state: WorldState, gem: Entity): void {
   let gained = Math.floor(baseXp * comboMultiplier(state.combo) * xpMult * state.catalystMods.xp);
   // ⑭ 유물 증폭기(plan B4): 경험치 소폭↑(광물·유니크 드랍률은 정산 메타에서 처리).
   if (hasUnique(mask, UQ_RELIC_AMP)) gained = Math.floor(gained * RELIC_XP_MULT);
+  // 경험치 이원화(ADR-0036): 같은 젬이 두 풀에 **서로 다른 값**을 넣는다.
+  //  · 런 풀(state.xp)   = 단계 무관 고정 → 런 내 리듬이 단계에 흔들리지 않는다.
+  //  · 메타 풀(state.xpTotal) = 단계 비례 → 고단계일수록 기체 레벨이 빨리 오른다.
   state.xp += gained;
-  state.xpTotal += gained;
+  state.xpTotal += gained * stageMetaXpMult(state.config.stage);
 }
 
 /** Collect a loot drop: record its seed + rarity + provenance for settlement. */
@@ -3479,18 +3568,24 @@ function compact(state: WorldState): void {
       if (ocKill) state.overchargeKills++; // 사연 관측(비-해시): 과충전 활성 중 처치.
       const def = enemyDefFor(e);
       drops.push({ x: e.x, y: e.y, xp: def?.xpValue ?? 1 });
-      // Elites are the only rank-and-file loot source (GDD §3). They always drop
-      // one item; a 분열하는 elite additionally bursts fragments on death (B4).
+      // Elites are the only rank-and-file loot source (GDD §3); a 분열하는 elite
+      // additionally bursts fragments on death (B4).
       if (isElite(e)) {
-        // 촉매 희귀도 보상축을 드랍 롤에 곱한다(무촉매 rarity===1 → 구 경로와 바이트 동일).
-        const roll = rollEliteDrop(state.dropRng, stage, state.catalystMods.rarity, dropOdds);
-        lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
-        // 촉매 드랍량 보상축: 배율 > 1 이면 같은 등급의 추가 루팅을 결정론적으로 파생한다
-        // (dropRng 미소비 → 기존 드랍 스트림·골든 불변). 무촉매면 빈 배열이라 무연산.
-        for (const bs of bonusLootSeeds(roll.seed, state.catalystMods.drop)) {
-          lootDrops.push({ x: e.x, y: e.y, seed: bs, rarity: roll.rarityCode });
+        // 엘리트 드랍은 **확정이 아니라 확률**이다(ADR-0035). eliteDropChance 가 eliteCount 에
+        // 반비례해 런당 기대 수량을 고정하므로, 적 곡선 레인이 eliteCount 를 움직여도 인벤
+        // 유입은 그대로다. 게이트 실패면 등급 롤 자체를 하지 않는다(드랍이 없으면 등급도 없다).
+        if (rollEliteDropGate(state.dropRng, stageParams(stage).eliteCount)) {
+          // 촉매 희귀도 보상축을 드랍 롤에 곱한다(무촉매 rarity===1 → 등급 threshold 불변).
+          const roll = rollEliteDrop(state.dropRng, stage, state.catalystMods.rarity, dropOdds);
+          lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
+          // 촉매 드랍량 보상축: 배율 > 1 이면 같은 등급의 추가 루팅을 결정론적으로 파생한다
+          // (dropRng 미소비 → 드랍 스트림 무영향). 무촉매면 빈 배열이라 무연산.
+          for (const bs of bonusLootSeeds(roll.seed, state.catalystMods.drop)) {
+            lootDrops.push({ x: e.x, y: e.y, seed: bs, rarity: roll.rarityCode });
+          }
         }
         // 분열하는·폭발성의 엘리트는 사망 시 방사 폭발을 남긴다(spawnEliteDeathFx).
+        // 드랍 게이트와 무관 — 어픽스 연출은 전리품 축이 아니다.
         const ea = eliteAffix(e);
         if (ea === ELITE_SPLIT || ea === ELITE_VOLATILE) splitElites.push(e);
       }
@@ -3566,7 +3661,13 @@ function updateCombo(state: WorldState): void {
 /** Level up when XP crosses the threshold; opens the powerup pick (one level). */
 function checkLevelUp(state: WorldState): void {
   if (state.pendingLevelUp) return;
-  const need = xpToNext(state.level);
+  // 런 풀 커브는 런 구조에 따라 갈린다(2026-07-27) — PvE 는 처치 볼륨 240 기준 `10+66L`,
+  // 침공(3레이어 단판)은 `10+6L`. 판정은 `stepWorld` 의 `designedRun` 과 **같은 술어**를 쓴다
+  // (`invasion3` 유무). 근거는 `xpToNextInvasion` 주석.
+  const need =
+    state.config.invasion3 === undefined
+      ? xpToNext(state.level)
+      : xpToNextInvasion(state.level);
   if (state.xp < need) return;
   state.xp -= need;
   state.level++;

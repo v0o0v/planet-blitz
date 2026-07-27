@@ -45,11 +45,27 @@ export interface DropOdds {
   readonly blueprintChanceCp?: readonly number[];
 }
 
-/** 기본 드랍 확률(카르곤 = M1 기존 상수). 테이블 미지정 시 폴백. */
+/**
+ * 기본 드랍 확률. 테이블 미지정 시 폴백이며 `data/planets/index.ts` 의 전 행성 `dropTable` 과
+ * **항상 같은 값**이어야 한다(ADR-0022 품질⟂종류 직교 — 행성별 유니크 편차 금지).
+ *
+ * ## 유니크 base 1/7.5 하향 (2026-07-27 밸런스 패스)
+ * 구값(`eliteUniqueBase 0.03` · `bossUniqueBase 0.15`)은 표준 진행 경로 240런 기준
+ * **career 기대 유니크 약 83개**를 냈다 — 저작된 유니크가 **15종**뿐이라 5.6배 과잉이고,
+ * 만렙 표준 빌드가 8칸 전부 유니크로 차 버린다(Lane C 정량화). 목표는 **만렙 1~2칸**이라
+ * 두 base 를 같은 배수(약 1/7.5)로 내렸다.
+ *
+ * ⚠️ **base 만 내렸고 단계 점근 곡선({@link stageUniqueMult})은 그대로다** — ADR-0035 의
+ * "품질은 단계와 함께 오르되 상한에 점근"은 유지된다. 저단계가 더 희소해지고 고단계에서
+ * 회복되는 형태가 된다.
+ *
+ * ⚠️ `rollBossDrop` 은 유니크가 아니면 **rare** 를 낸다 — base 하향으로 보스 드랍이 거의
+ * 항상 rare 가 되는 것은 의도된 귀결이다(보스 확정 드랍 1개 계약은 그대로).
+ */
 export const DEFAULT_DROP_ODDS: DropOdds = {
   eliteRareBase: 0.25,
-  eliteUniqueBase: 0.03,
-  bossUniqueBase: 0.15,
+  eliteUniqueBase: 0.004,
+  bossUniqueBase: 0.02,
 };
 
 // ---------------------------------------------------------------------------
@@ -110,30 +126,168 @@ export function rollBlueprintDrop(drop: DropRoll, odds: DropOdds = DEFAULT_DROP_
   return { tableIndex: mix32(seed, SALT_INDEX) % size, seed: mix32(seed, SALT_SEED) };
 }
 
-// 단계 기반 품질 배율 계수. 밴드1(단계11+)에서 구 교전 배율이 켜진다. TODO(밸런스): 출시 전 일괄 튜닝.
-const ENGAGE_RARE_MULT = 1.6;
-const ENGAGE_UNIQUE_MULT = 1.5;
+// ---------------------------------------------------------------------------
+// 단계 품질 곡선 (ADR-0035 — 연속 곡선 + 상한 점근)
+// ---------------------------------------------------------------------------
 
 /**
- * 단계 기반 레어 배율(ADR-0022 품질 축). 단계1..10 = 1.0(구 정찰), 11+ = 구 교전 배율.
- * TODO(밸런스): 출시 전 일괄 튜닝(경계·계수 전부 플레이스홀더).
+ * 품질 배율 곡선(유리함수):
+ *
+ * ```
+ * mult(stage) = 1 + (CAP - 1) × (stage - 1) / ((stage - 1) + K)
+ * ```
+ *
+ * - `stage = 1` 에서 **정확히 1.0** — 단계1 불변 계약(ADR-0022 결정론 규율 1)을 산술로 보장한다
+ *   (`stage <= 1` early-return 이라 부동소수 오차조차 없다).
+ * - 단조 증가, `stage → ∞` 에서 `CAP` 에 점근한다. 상한은 있으나 **평평해지지 않는다** — 침략
+ *   단계가 무한히 깊어진다는 구조(CONTEXT.md)와 정합.
+ * - `K` = 중간점: `stage = 1 + K` 에서 `1 + (CAP-1)/2`.
+ *
+ * ⚠️ **사칙연산만 쓴다.** `Math.exp`/`Math.pow`/`Math.log` 는 EF(Deno)↔브라우저 IEEE754 정확
+ * 재현 계약을 깨므로 결정론 경로에 넣지 않는다(ADR-0005).
+ */
+function stageQualityMult(stage: number, cap: number, k: number): number {
+  if (stage <= 1) return 1; // 단계1 ≡ 정확히 1.0(오차 없음).
+  const t = stage - 1;
+  return 1 + ((cap - 1) * t) / (t + k);
+}
+
+/**
+ * 레어 배율 곡선 계수. `K` 는 **단계 11 에서 구 계단값 1.6 과 정확히 일치**하도록 잡았다
+ * (`1 + 1.8 × 10/30 = 1.6`) — 곡선 도입이 중간 밴드를 급변시키지 않는다.
+ * 점근 레어 확률 = `eliteRareBase 0.25 × 2.8 = 0.70`.
+ */
+const RARE_MULT_CAP = 2.8;
+const RARE_MULT_K = 20;
+
+/**
+ * 유니크 배율 곡선 계수. 단계 11 ≈ 1.857(구 계단값 1.5 보다 높다 — 유니크는 곡선 도입으로
+ * 중간 밴드부터 완만히 오른다). 점근 유니크 확률 = `eliteUniqueBase 0.004 × 4.0 = 0.016`
+ * (base 1/7.5 하향 반영 — 곡선 계수 자체는 그대로다).
+ */
+const UNIQUE_MULT_CAP = 4.0;
+const UNIQUE_MULT_K = 25;
+
+/**
+ * 단계 기반 레어 배율(ADR-0022 품질 축 · ADR-0035 연속화). 단계1 = 1.0, 이후 연속 상승해
+ * {@link RARE_MULT_CAP} 에 점근한다.
  */
 export function stageRareMult(stage: number): number {
-  return stage >= 11 ? ENGAGE_RARE_MULT : 1;
+  return stageQualityMult(stage, RARE_MULT_CAP, RARE_MULT_K);
 }
 
 /**
- * 단계 기반 유니크 배율(ADR-0022 품질 축). 단계1..10 = 1.0(구 정찰), 11+ = 구 교전 배율.
- * TODO(밸런스): 출시 전 일괄 튜닝(경계·계수 전부 플레이스홀더).
+ * 단계 기반 유니크 배율(ADR-0022 품질 축 · ADR-0035 연속화). 단계1 = 1.0, 이후 연속 상승해
+ * {@link UNIQUE_MULT_CAP} 에 점근한다.
  */
 export function stageUniqueMult(stage: number): number {
-  return stage >= 11 ? ENGAGE_UNIQUE_MULT : 1;
+  return stageQualityMult(stage, UNIQUE_MULT_CAP, UNIQUE_MULT_K);
+}
+
+// ---------------------------------------------------------------------------
+// 엘리트 드랍 확률화 (ADR-0035 — 수량은 전 단계 고정, 단계는 품질만 올린다)
+// ---------------------------------------------------------------------------
+
+/**
+ * 런당 목표 엘리트 드랍 수(설계값). 보스 확정 드랍 1개와 합쳐 **런당 장비 2~3개**가 된다
+ * (ADR-0035 §전리품 수량 — 인벤 유입 3~5 = 장비 2~3 + 촉매 1~2 + 설계도 희소).
+ */
+export const TARGET_ELITE_DROPS_PER_RUN = 1.5;
+
+/**
+ * 완주 런의 카드 스폰 수(실측). 엘리트 승격은 **카드 1장당 `eliteCount` 마리**
+ * (`src/sim/waves.ts`)이므로 런당 엘리트 수 ≈ `이 값 × eliteCount` 다.
+ *
+ * ## ⚠️ 이 값은 `data/waves.ts` 의 `SEGMENTS.killGoal` 예산에 종속된다 — 함께 재측정하라
+ * 카드는 세그먼트가 진행되는 동안 계속 뽑히므로 **런이 길어지면 비례해 늘어난다**. 그리고 런
+ * 길이는 처치 할당(`killGoal`) 합계가 정한다(ADR-0011 창발 런 길이).
+ *
+ * 실제로 한 번 어긋났다: 초깃값 15 는 `killGoal` 합계가 **80**(`[10,14,16,18,22]`)이던 시절의
+ * 실측(단계1 완주 런 14.87, `.omc/research/economy-baseline-2026-07-27.md` §1)이었는데, 적 곡선
+ * 레인이 합계를 **240** 으로 올리자 런이 33초 → 약 100초가 되면서 카드가 **41.8장**이 됐다.
+ * 15 를 그대로 뒀다면 런당 엘리트 드랍이 1.5개가 아니라 **약 4.4개**가 됐을 것이다(재보정 전
+ * 실측 rolled 5.38 = 보스1 + 엘리트4.38). 그동안 단위 테스트는 전부 초록이었다.
+ *
+ * ## 현재값 42 의 근거 (2026-07-27 적 곡선 확정본에서 실측)
+ * `SEGMENTS.killGoal = [10,46,53,59,72]`(합계 240) 기준, 표준 빌드 60시드(1000..1059) planet 0
+ * **완주 런** 평균. 장비 시드는 `runCurveSweep` 기본 규약대로 **런 시드를 그대로** 썼다:
+ *
+ * | 단계 | Lv | 초 | 처치 | 카드 | 엘리트 처치 | 장비 드랍 |
+ * |---|---|---|---|---|---|---|
+ * | 1  | 5   | 97.2  | 262.6 | 41.92 | 40.67 | 2.50 |
+ * | 11 | 55  | 98.2  | 261.6 | 42.29 | 40.64 | 2.60 |
+ * | 21 | 100 | 102.4 | 268.3 | 43.52 | 82.56 | 2.59 |
+ *
+ * 카드 수를 직접 셀 수 없는 하네스라면 **처치 수**를 대리 지표로 써도 된다(위 표에 함께 실었다 —
+ * 카드와 거의 비례한다).
+ *
+ * ⚠️ **승률은 일부러 싣지 않았다.** 위 값들은 장비 시드 규약에 **거의 무관**하지만(고정 시드
+ * `0xbeef` 로 재면 카드 41.75 / 42.40 / 47.07 · 드랍 2.50 / 2.53 / 2.21 로 사실상 동일) **승률만은
+ * 규약에 크게 흔들린다** — 단계1 이 66.7%(런 시드) ↔ 93.3%(고정 `0xbeef`)로 갈린다. 클리어율의
+ * 정본은 이 파일이 아니라 적 곡선 레인의 `runCurveSweep`(96시드 · 장비 시드 = 런 시드)이다.
+ * **밸런스 판단에 이 주석의 수치로 클리어율을 논하지 마라.** 드랍 축 결론이 그 규약과 무관하다는
+ * 사실이 곧 이 상수를 신뢰할 수 있는 근거다.
+ *
+ * **`SEGMENTS.killGoal` 의 *합계*를 다시 만지면 이 상수를 다시 재야 한다.** 세그먼트 간 재배분은
+ * 합계가 같으면 카드 수를 거의 안 흔든다 — `[30,42,48,54,66]` → `[10,46,53,59,72]` 재배분에서
+ * 위 값이 바이트 동일하게 재현됐다. `tests/drops.test.ts` 의 "런당 장비 유입" 통합 가드가
+ * 어긋나면 큰 소리로 실패한다.
+ */
+export const EXPECTED_CARDS_PER_RUN = 42;
+
+/**
+ * 엘리트 처치 1회의 드랍 확률(ADR-0035).
+ *
+ * ## 왜 확정 1개가 아니라 확률인가
+ * 구 구현은 엘리트 처치 = **확정 1개**였다. 그래서 `eliteCount`(0/1/2)가 난이도와 드랍 수량을
+ * **동시에** 정하는 이중 노브였고, 런당 유입이 0개(단계1~10) → 약 15개(11~20) → 약 30개(21+)로
+ * 계단 폭주했다(economy-baseline §3). 확률화하면 `eliteCount` 는 **순수 난이도 노브**로 환원되고
+ * 런당 기대 수량은 이 함수 하나가 지정한다.
+ *
+ * ## 왜 `eliteCount` 에 반비례하는가
+ * 적 곡선 레인이 `eliteCount` 를 자유롭게 움직여도 **런당 장비 유입이 고정**되어야 하기 때문이다:
+ *
+ * ```
+ * 기대 드랍/런 = (카드 수 × eliteCount) × p = TARGET   ⇒   p = TARGET / (카드 수 × eliteCount)
+ * ```
+ *
+ * `eliteCount === 0` 이면 드랍원이 없으므로 0(0 나눗셈 가드). 현행 밴드는 전부 1 이상이라
+ * 이 분기는 방어용이다.
+ *
+ * ⚠️ **보스 확정 드랍 1개는 확률화하지 않는다** — GDD 의 "사망 페널티 = 보스 보상 상실"이 그
+ * 확정성 하나에 걸려 있어, 보스까지 확률화하면 사망 페널티가 통째로 사라진다(ADR-0035).
+ *
+ * ⚠️ `eliteCount` 를 **인자로 받는다** — `stageParams` 를 여기서 부르면 sim 코어가 데이터
+ * 레이어(`data/waves.ts`)에 런타임 의존하게 되고, 그 경계는 `tests/planetDrops.test.ts` ⑤ 가
+ * 못박고 있다. 단계 → `eliteCount` 해석은 호출부(`src/sim/world.ts`)의 책임이다.
+ */
+export function eliteDropChance(eliteCount: number): number {
+  if (!(eliteCount > 0)) return 0;
+  const p = TARGET_ELITE_DROPS_PER_RUN / (EXPECTED_CARDS_PER_RUN * eliteCount);
+  if (!(p > 0)) return 0;
+  return p > 1 ? 1 : p;
 }
 
 /**
- * Roll an elite's drop (always drops — elites yield equipment, GDD §3). Draws the
- * rarity tier first, then the seed, so the sequence is fixed per RNG position.
+ * 엘리트 드랍 게이트 롤. 통과하면 호출부가 {@link rollEliteDrop} 으로 등급·시드를 확정한다.
+ *
+ * ⚠️ **드랍 스트림이 밀린다.** 엘리트 처치마다 `dropRng` 를 한 번 더 소비하므로 PvE 골든 해시가
+ * 갈린다 — 확정 비용이고 골든 재생성으로 흡수한다. **침공(PvP)은 무영향**이다: 엘리트 승격은
+ * `updateWaves`(`src/sim/waves.ts`) 안에만 있고 침공은 `if (!designedRun) updateWaves(...)`
+ * (`src/sim/world.ts`)로 그것을 아예 실행하지 않으므로 이 게이트가 호출되지 않는다.
+ */
+export function rollEliteDropGate(dropRng: SeededRng, eliteCount: number): boolean {
+  return dropRng.nextFloat() < eliteDropChance(eliteCount);
+}
+
+/**
+ * Roll an elite's drop rarity + seed. Draws the rarity tier first, then the seed,
+ * so the sequence is fixed per RNG position.
  * `odds`(행성 드랍 테이블) 미지정 시 카르곤 기본값을 쓴다(하위 호환).
+ *
+ * ⚠️ **드랍 여부는 이 함수가 정하지 않는다** — 구 구현은 "엘리트 = 확정 1개"였으나 ADR-0035 가
+ * 확률화했다. 호출부는 {@link rollEliteDropGate} 로 먼저 게이트를 굴리고, 통과한 경우에만 이
+ * 함수로 등급·시드를 확정한다. 이 함수 자체는 등급 축 단독이라 계약이 그대로다.
  *
  * `rarityMult`(촉매 희귀도 보상축, ≥1)는 rare/unique 확률에 균일하게 곱한다 — 구 변칙
  * `dropRateMult`·`uniqueChanceMult` 자리를 촉매 배율이 승계한다. **rarityMult===1 이면**

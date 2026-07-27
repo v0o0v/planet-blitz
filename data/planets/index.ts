@@ -43,6 +43,10 @@ import { rollBlueprintDrop } from '../../src/sim/drops.js';
  * 품질(침략 단계)⟂종류(행성) 직교(ADR-0022): 드랍 rarity 배율은 **전 행성 동일**이고,
  * 단계별 상향은 sim(`stageRareMult`/`stageUniqueMult`)이 얹는다. 종류(특산 설계도·광물)만
  * 행성별로 갈린다 — 그래서 `eliteRareBase` 등은 전 행성 동일값이다(심층 사다리 폐기).
+ *
+ * ⚠️ **전 행성 동일값은 계약이다.** 유니크 base 를 조정할 때 `src/sim/drops.ts` 의
+ * `DEFAULT_DROP_ODDS` 만 고치고 여기를 빼먹으면 "카르곤만 유니크가 안 나온다" 류의 행성별
+ * 편차 결함이 된다 — 두 곳을 **항상 같은 배수로** 움직인다(2026-07-27 유니크 base 1/7.5 패스).
  */
 export interface PlanetDropTable {
   /** 엘리트 레어 기본 확률(단계1 기준, 전 행성 동일 — 단계 상향은 sim). */
@@ -221,8 +225,8 @@ export const KARGON: PlanetContent = {
   // 카르곤 드랍 기준값 = src/sim/drops.ts 기존 상수(정합). 변경 시 함께 유지.
   dropTable: {
     eliteRareBase: 0.25,
-    eliteUniqueBase: 0.03,
-    bossUniqueBase: 0.15,
+    eliteUniqueBase: 0.004,
+    bossUniqueBase: 0.02,
     blueprintTableSize: planetBlueprintTableSize(0),
     blueprintChanceCp: [0, 0, 500, 2000],
   },
@@ -247,8 +251,8 @@ export const BERDAN: PlanetContent = {
   // DEFAULT_DROP_ODDS). 심층 사다리(0.27/0.04/0.18)는 폐기 — 종류(특산 설계도·광물)만 행성별.
   dropTable: {
     eliteRareBase: 0.25,
-    eliteUniqueBase: 0.03,
-    bossUniqueBase: 0.15,
+    eliteUniqueBase: 0.004,
+    bossUniqueBase: 0.02,
     blueprintTableSize: planetBlueprintTableSize(1),
     blueprintChanceCp: [0, 0, 600, 2200],
   },
@@ -273,8 +277,8 @@ export const NIFLHEIM: PlanetContent = {
   // 심층 사다리(0.28/0.05/0.20)는 폐기 — 종류(특산 설계도·광물)만 행성별.
   dropTable: {
     eliteRareBase: 0.25,
-    eliteUniqueBase: 0.03,
-    bossUniqueBase: 0.15,
+    eliteUniqueBase: 0.004,
+    bossUniqueBase: 0.02,
     blueprintTableSize: planetBlueprintTableSize(2),
     blueprintChanceCp: [0, 0, 700, 2400],
   },
@@ -299,8 +303,8 @@ export const ARKE: PlanetContent = {
   // 심층 사다리(0.30/0.06/0.22)는 폐기 — 종류(특산 설계도·광물)만 행성별.
   dropTable: {
     eliteRareBase: 0.25,
-    eliteUniqueBase: 0.03,
-    bossUniqueBase: 0.15,
+    eliteUniqueBase: 0.004,
+    bossUniqueBase: 0.02,
     blueprintTableSize: planetBlueprintTableSize(3),
     blueprintChanceCp: [0, 0, 800, 2600],
   },
@@ -325,8 +329,8 @@ export const TOXAR: PlanetContent = {
   // 종류(특산 설계도·광물)만 행성별. blueprintChanceCp 는 플레이스홀더(// TODO(밸런스)).
   dropTable: {
     eliteRareBase: 0.25,
-    eliteUniqueBase: 0.03,
-    bossUniqueBase: 0.15,
+    eliteUniqueBase: 0.004,
+    bossUniqueBase: 0.02,
     blueprintTableSize: planetBlueprintTableSize(4),
     blueprintChanceCp: [0, 0, 600, 2200], // TODO(밸런스)
   },
@@ -351,8 +355,8 @@ export const KRAS: PlanetContent = {
   // 종류(특산 설계도·광물)만 행성별. blueprintChanceCp 는 플레이스홀더(// TODO(밸런스)).
   dropTable: {
     eliteRareBase: 0.25,
-    eliteUniqueBase: 0.03,
-    bossUniqueBase: 0.15,
+    eliteUniqueBase: 0.004,
+    bossUniqueBase: 0.02,
     blueprintTableSize: planetBlueprintTableSize(5),
     blueprintChanceCp: [0, 0, 700, 2400], // TODO(밸런스)
   },

@@ -24,6 +24,7 @@
 import type { Item, ItemSource, Rarity } from './types.js';
 import { UNIQUE_REGISTRY } from './uniques.js';
 import { LEVEL_CAP } from '../../data/waves.js';
+import { LEVEL_PER_STAGE } from '../save/progressionPath.js';
 
 /**
  * 등급별 요구 레벨 상수 테이블(유니크 제외). `floor` = 등급 바닥, `per` = 어픽스 1개당 가산.
@@ -35,11 +36,10 @@ const REQ_TABLE: Record<Exclude<Rarity, 'unique'>, { floor: number; per: number 
   rare: { floor: 32, per: 3 },
 }; // TODO(밸런스): 출시 전 튜닝
 
-/**
- * 침략 단계 1당 기대 기체 레벨(드랍처 상한 기울기). 단계 20 에서 만렙에 닿는다.
- * TODO(밸런스): 출시 전 튜닝 — 성장 곡선(xpToNext)과 함께 실측으로 맞춘다.
- */
-const LEVEL_PER_STAGE = 5;
+// 침략 단계 1당 기대 기체 레벨(드랍처 상한 기울기)의 **정본은 표준 진행 경로**다
+// (`src/save/progressionPath.ts`, ADR-0035). 여기서 재정의하면 두 축이 조용히 갈라진다 —
+// ADR-0035 가 개정한 것이 정확히 그 상황(GDD `Lv≈단계` vs 게이트 `Lv≈단계×5`)이었다.
+// progressionPath 는 `data/waves.ts` 만 import 하는 순수 모듈이라 위 결정론 경계를 깨지 않는다.
 
 /** 정수 클램프(로컬 인라인 — sim/math 미의존). 반올림 후 [lo, hi] 로 제한. */
 const clampInt = (v: number, lo: number, hi: number): number =>
@@ -47,6 +47,23 @@ const clampInt = (v: number, lo: number, hi: number): number =>
 
 /**
  * 드랍처(침략 단계)에서 기대되는 **기체 레벨 상한**. 아이템 요구 레벨의 천장이다.
+ *
+ * ## 기준은 밴드의 **시작** 레벨이다 (2026-07-27 개정)
+ * 단계 s 는 기체 레벨 `5s-4 .. 5s` 를 도는 밴드에 대응한다(ADR-0035). 상한은 그 밴드의
+ * **첫 레벨**이다 — `LEVEL_PER_STAGE × (stage - 1) + 1`. 단계1 → **1**, 단계11 → 51, 단계20 → 96.
+ *
+ * ⚠️ **구식은 밴드의 끝**(`LEVEL_PER_STAGE × stage`)이었고, 그것이 온보딩을 무너뜨렸다.
+ * ADR-0030 개정이 상한을 둔 취지는 *"내가 딴 곳의 전리품은 **그 단계를 도는 동안** 입게 된다"*
+ * 인데, 밴드 끝을 기준으로 하면 그 약속이 **한 밴드 늦게** 실현된다. 단계1 드랍은 등급·어픽스와
+ * 무관하게 전부 요구 레벨 5 로 수렴했고(매직 바닥 10·레어 바닥 32 가 전부 5 로 클램프),
+ * 그래서 **Lv1~4 는 어떤 파밍 장비도 착용할 수 없었다.** 실측 귀결은 가혹했다 — 무장비 Lv1~5 는
+ * 단계1 클리어율이 **0.0%**(96시드 × 3조건 = 288런 중 승리 0건)인데 표준 장비를 입으면
+ * 66.7% 다. 즉 신규·퇴역 세대 조종사는 Lv5 에 닿을 때까지 **전패 구간**을 지나야 했다.
+ * 밴드 시작 기준이면 단계1 상한이 1 이라 **첫 드랍부터 바로 입는다.**
+ *
+ * 상한이 등급 산식을 넘어서는 후반 단계에서는 기존 등급 서열이 그대로 살아난다(예: 단계11
+ * 상한 51 — rare 41~50 · magic 10~14 는 손대지 않는다). 즉 이 개정이 실제로 바꾸는 것은
+ * **등급 산식이 상한에 눌리던 저단계 구간뿐**이다.
  *
  * ⚠️ 행성 index 는 난이도 사다리가 아니다 — 6행성은 모드 성격(뱀서류·수축·추격·레이싱·오염·
  * 블록격파)이 다를 뿐이고 아르케(3)는 보스 설계도 고정 행성일 뿐 더 깊은 층이 아니다
@@ -59,7 +76,8 @@ const clampInt = (v: number, lo: number, hi: number): number =>
 export function stageLevelCap(source: ItemSource | undefined): number {
   const stage = source?.stage;
   if (typeof stage !== 'number' || !Number.isFinite(stage)) return LEVEL_CAP;
-  return clampInt(LEVEL_PER_STAGE * stage, 1, LEVEL_CAP);
+  // 밴드 시작 레벨. `- 4` 같은 리터럴을 쓰지 않는다 — LEVEL_PER_STAGE 가 정본이다(ADR-0035).
+  return clampInt(LEVEL_PER_STAGE * (stage - 1) + 1, 1, LEVEL_CAP);
 }
 
 /**
@@ -68,9 +86,9 @@ export function stageLevelCap(source: ItemSource | undefined): number {
  *
  * ── 왜 드랍처 상한인가 ── 등급·어픽스만으로 요구 레벨을 정하면 1단계 정예가 떨군 레어가
  * 요구 41 이 되어, 그 단계를 도는 Lv5 조종사에게는 **영영 못 입는 전리품**이 된다(사용자 신고
- * 2026-07-27). 상한을 걸면 "내가 딴 곳의 전리품은 그 단계를 도는 동안 입게 된다"가 성립하고,
- * 상한이 등급 산식을 넘어서는 후반 단계에서는 기존 등급 서열이 그대로 살아난다(예: 11단계
- * 상한 55 — rare 41~50·magic 10~14 는 손대지 않는다).
+ * 2026-07-27). 상한을 걸면 "내가 딴 곳의 전리품은 그 단계를 도는 **동안** 입게 된다"가
+ * 성립하고, 상한이 등급 산식을 넘어서는 후반 단계에서는 기존 등급 서열이 그대로 살아난다
+ * (예: 11단계 상한 51 — rare 41~50·magic 10~14 는 손대지 않는다).
  *
  * 순수성은 유지된다: `item.source` 는 롤 시점에 아이템에 박히는 저장 필드라 같은 아이템은
  * 언제·어디서 계산해도 같은 값을 낸다(서버 재도출 가능).

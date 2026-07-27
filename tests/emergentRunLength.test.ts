@@ -13,6 +13,10 @@ import { autopilotInput } from '../src/sim/autopilot.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { SEGMENTS } from '../data/waves.js';
 import { PVE_DENSITY_MULT } from '../src/sim/waves.js';
+import { buildRunConfig } from '../src/run/runConfig.js';
+import { defaultProfile, activeShip } from '../src/save/profile.js';
+import { standardEquipped, standardSkillInvest } from '../src/bench/standardBuild.js';
+import { LEVEL_PER_STAGE } from '../src/save/progressionPath.js';
 
 const BOSS_INDEX = SEGMENTS.length - 1;
 /** 내구(글래스캐논 방지) — 게이트/스폰 관찰이 사망으로 중단되지 않게. */
@@ -154,7 +158,45 @@ describe('오토파일럿 완주 (ADR-0011, par 창발)', () => {
     // 그대로고 시드 운만 빡빡해졌다. 클리어율이 기록된 33~63% 보다 낮아진 것은 밀도 상승의
     // 직접 결과이며, 고단계·저투자 빌드 생존성 보정과 함께 출시 직전 밸런스 패스에서 다룬다
     // (tests/shipHashBaseline.test.ts 의 `MIN_LEVELUPS` 주석에 같은 신호가 기록돼 있다).
-    const state = createWorld(0x50c1a3, { ...DEFAULT_CONFIG, planet: 0, stage: 1 });
+    //
+    // 2026-07-27 에 0x50c1a3 → **0x50c1af** 로 다시 갈았다. 원인은 경험치 이원화(ADR-0036)의
+    // 런 풀 커브 상향(`xpToNext` 10+6L → 10+13L)이다 — 런당 레벨업이 줄어 파워업이 덜 쌓이므로
+    // 무장갑 오토파일럿이 약해진다. 재표본(0x50c1a0..0x50c1ff 연속 96시드): 완주 **3/96**,
+    // 완주 3시드 전부가 **49.7·63.6·66.4초** 로 이 테스트의 40~150초 밴드 안에 들어온다.
+    // 즉 "짧고 강렬한 루프" 계약은 그대로고 시드 운만 더 빡빡해졌다. 클리어율 자체(20%→3%)는
+    // **적 축에서** 되돌린다(ADR-0037 — 난이도 곡선은 적 축에서만) — 표준 진행 경로의 합격선은
+    // "표준 레벨·표준 장비·표준 투자 봇의 클리어율 60~80%"이고 무장갑 무투자 봇은 그 기준이
+    // 아니다(ADR-0035 2026-07-27 개정).
+    //
+    // ⚠️ 2026-07-27 (밸런스 패스 ADR-0037): **시드가 아니라 파일럿을 갈았다.**
+    // 무장갑 무투자 오토파일럿은 이제 이 무대를 **구조적으로 완주하지 못한다** — 적 축
+    // `SEGMENTS.killGoal` 합계가 80 → 240(×3)이 되면서 96시드 실측 **승리 0 · 사망 96 ·
+    // 최장 생존 43.9초**이고, `0x50c1a0` 부터 연속 **2,000시드**를 더 훑어도 완주 0건이다.
+    // 즉 증인 재선정으로는 풀리지 않는다.
+    //
+    // 그래서 파일럿을 **ADR-0035 표준 빌드**(표준 레벨 5 = 단계1 · 표준 장비 · 표준 투자)로
+    // 바꿨다. 이것은 밴드 완화가 아니라 **"적정 화력"의 정의를 따라간 것**이다 — ADR-0035
+    // 2026-07-27 개정이 합격선을 "표준 레벨·표준 장비·표준 투자 봇"으로 재정의했고, 바로 위
+    // 문단이 이미 "무장갑 무투자 봇은 그 기준이 아니다"라고 적어 두고 있었다.
+    // **40~150초 밴드와 단언은 한 글자도 바꾸지 않았고, 증인 시드 `0x50c1af` 도 그대로다**
+    // (표준 빌드 실측 **93.3초** — 32시드 중 22승, 승리 런 86.4~116.0초로 전부 밴드 안).
+    //
+    // ## 이제 커버되지 않는 것
+    // **무장갑 무투자 파일럿의 완주 경로.** 현 밸런스에 그 경로는 존재하지 않는다(위 2,096시드
+    // 실측). 무장갑 거동 자체는 `tests/autopilot.test.ts`(1,200틱 생존)가 계속 밟는다.
+    //
+    // ## ⚠️ `gearSeed` 는 런 시드와 같게 둔다
+    // 상수로 고정하면 "그 장비 세트 한 벌의 운"을 재게 된다 — 같은 설계값에서도 `gearSeed`
+    // 만 바꾸면 클리어율이 48.3~100.0% 로 갈린다
+    // (`.omc/research/economy-recalibrated-2026-07-27.md` §0.1).
+    const RUN_SEED = 0x50c1af;
+    const STANDARD_LEVEL = LEVEL_PER_STAGE * 1; // 표준 레벨 = 5 × 단계
+    const profile = defaultProfile();
+    const ship = activeShip(profile);
+    ship.level = STANDARD_LEVEL;
+    ship.skillInvest = standardSkillInvest(ship.typeId, STANDARD_LEVEL);
+    ship.equipped = standardEquipped(STANDARD_LEVEL, RUN_SEED, 0);
+    const state = createWorld(RUN_SEED, buildRunConfig(profile, { planet: 0, stage: 1 }));
     let ticks = 0;
     for (let t = 0; t < 60 * 300; t++) {
       stepWorld(state, autopilotInput(state));

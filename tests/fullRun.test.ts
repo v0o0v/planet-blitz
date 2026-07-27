@@ -40,12 +40,28 @@ function playToEnd(seed: number, config: WorldConfig): { state: WorldState; inpu
   return { state, inputs };
 }
 
+/**
+ * 완주 증인 시드. **sim 이 바뀌면 다시 골라야 한다** — 단언을 약화하는 것이 아니라 같은 성질의
+ * 증인을 다시 고르는 것이다(저장소 관행: `tests/invasionE2E.test.ts` · `tests/emergentRunLength.test.ts`).
+ *
+ * 2026-07-27 밸런스 패스에서 `0x50c1a1` → **`0x50c1d1`** 로 갈았다. 원인은 적 축의
+ * `SEGMENTS.killGoal` 합계 상향(80 → 240, ADR-0037 Lane D)이다. 내구 파일럿은 죽지 않지만
+ * **처치 할당을 못 채워 정체**한다 — 구 증인 `0x50c1a1` 은 144,000틱(2,400초)을 돌려도
+ * 세그먼트 1 에서 처치 30 으로 멈춘다(실측). 즉 틱 예산을 늘려도 풀리지 않는 성질이라 시드를
+ * 다시 고르는 것이 유일한 재기준화다.
+ *
+ * 재표본(`0x50c1a0..0x50c1df` 연속 64시드, 이 파일의 단언 전부 — 승리·보스 처치·처치>0·레벨>1·
+ * rare+ 드랍 1건 — 을 만족): **`0x50c1d1`(처치 1,261 · Lv12) · `0x50c1d6`(처치 1,759 · Lv12)**.
+ * 앞의 값을 골랐다. 완주 시드는 눈덩이형이다 — 초반에 포위를 벗어나면 처치가 1,200+ 로 는다.
+ */
+const FULL_RUN_SEED = 0x50c1d1;
+
 describe('full run to victory (task 15, e2e)', () => {
   // Durable pilot: survives the whole run so the boss segment is always reached.
   const durable: WorldConfig = { ...DEFAULT_CONFIG, playerHp: 100_000_000 };
 
   it('clears every segment, defeats the boss, and reaches victory without throwing', () => {
-    const { state } = playToEnd(0x50c1a1, durable);
+    const { state } = playToEnd(FULL_RUN_SEED, durable);
     expect(state.victory).toBe(true);
     expect(state.gameOver).toBe(false);
     // 보스 세그먼트(= 마지막 슬롯)에 도달해 보스를 스폰·처치했다. 인덱스를 하드코딩하지 않고
@@ -62,7 +78,7 @@ describe('full run to victory (task 15, e2e)', () => {
   it('records the boss guaranteed rare+ drop into finalState.loot on victory (리뷰 HIGH)', () => {
     // 회귀: 승리 tick에는 다음 stepWorld가 즉시 return해 바닥 loot가 수거되지 않는다.
     // 보스 확정 드랍은 compact에서 state.loot에 직접 기록돼야 정산에서 유실되지 않는다.
-    const { state } = playToEnd(0x50c1a1, durable);
+    const { state } = playToEnd(FULL_RUN_SEED, durable);
     expect(state.victory).toBe(true);
     // rare(2) 이상 엔트리가 최소 1개(보스 확정 드랍) 존재해야 한다.
     const rarePlus = state.loot.filter((r) => r.rarity >= 2);
@@ -70,9 +86,9 @@ describe('full run to victory (task 15, e2e)', () => {
   });
 
   it('the winning run replays deterministically to the same victory', () => {
-    const { inputs } = playToEnd(0x50c1a1, durable);
-    const a = runReplay({ seed: 0x50c1a1, config: durable, inputs });
-    const b = runReplay({ seed: 0x50c1a1, config: durable, inputs });
+    const { inputs } = playToEnd(FULL_RUN_SEED, durable);
+    const a = runReplay({ seed: FULL_RUN_SEED, config: durable, inputs });
+    const b = runReplay({ seed: FULL_RUN_SEED, config: durable, inputs });
     expect(a.hashes).toEqual(b.hashes);
     expect(a.finalState.victory).toBe(true);
     expect(b.finalState.victory).toBe(true);

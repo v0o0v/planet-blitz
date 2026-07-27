@@ -22,6 +22,8 @@ import {
   RETIRE_REQUIRED_LEVEL,
 } from '../src/save/guardianLifecycle.js';
 import { retireAtCap } from './support/retireAtCap.js';
+import { grantXp } from '../src/save/settlement.js';
+import { xpToNextMeta } from '../src/save/progressionPath.js';
 import { LEVEL_CAP } from '../data/waves.js';
 import { RETIRE_LINEAGE_GRANT, guardianBonusBp } from '../data/lineage.js';
 import { GUARDIAN_TITAN, GUARDIAN_INTERCEPTOR, PERFORMANCE_FLOOR, dismissPoints } from '../data/guardian.js';
@@ -93,10 +95,31 @@ describe('퇴역 만렙 게이트', () => {
     expect(retireActiveShip(p, GUARDIAN_TITAN, 0)).toBeNull();
   });
 
-  it('만렙 초과 레벨도 통과한다(경계는 >= 다)', () => {
+  // 불변식은 그대로다 — **퇴역 경계는 `>=` 이지 `===` 가 아니다.** 다만 ADR-0036 이 캡을
+  // 하드 강제하면서 `LEVEL_CAP + 5` 라는 상태가 정산으로 **도달 불가능**해졌으므로, 경계
+  // 검증은 도달 가능한 최댓값(= 정확히 LEVEL_CAP)으로 하고 "초과가 불가능하다"는 사실 자체를
+  // 아래 별도 테스트로 못박는다(둘을 합치면 캡이 풀려도 아무도 눈치채지 못한다).
+  it('경계는 >= 다 — 도달 가능한 최댓값(LEVEL_CAP 정확히)에서 열린다', () => {
     const p = profileWithGear();
-    activeShip(p).level = LEVEL_CAP + 5;
+    activeShip(p).level = LEVEL_CAP - 1;
+    expect(canRetireActiveShip(p)).toBe(false);
+    activeShip(p).level = LEVEL_CAP;
     expect(canRetireActiveShip(p)).toBe(true);
+  });
+
+  it('정산으로는 LEVEL_CAP 을 넘길 수 없다(ADR-0036 하드 강제)', () => {
+    const p = profileWithGear();
+    const ship = activeShip(p);
+    ship.level = LEVEL_CAP - 1;
+    // 캡을 한참 넘길 XP 를 몰아넣어도 정확히 만렙에서 멈추고 초과분은 버려진다.
+    const gained = grantXp(ship, xpToNextMeta(LEVEL_CAP - 1) * 1000);
+    expect(gained).toBe(1);
+    expect(ship.level).toBe(LEVEL_CAP);
+    expect(ship.xp).toBe(0);
+    // 만렙 기체에 더 부어도 레벨도 저금도 늘지 않는다(퇴역이 유일한 출구).
+    expect(grantXp(ship, 1_000_000)).toBe(0);
+    expect(ship.level).toBe(LEVEL_CAP);
+    expect(ship.xp).toBe(0);
   });
 });
 

@@ -32,8 +32,14 @@ export const LEVEL_CAP = 100;
  * "수치만 다른 단계" 금지(원칙4): 질적 요소(정예·서브탄·밀도)는 구간 마일스톤에서만 오르고,
  * 그 사이는 HP만 연속 상향한다.
  *
- * 단계 1 은 구 정찰(tier 0) 거동을 그대로 보존한다(hpMult 1·subBullets 0·densityMult 1·
- * eliteCount 0 → 기존 스폰/패턴/해시 불변, ADR-0022 결정론 규율 1).
+ * 단계 1 은 구 정찰(tier 0)의 **연속 축**(hpMult 1·subBullets 0·densityMult 1)을 그대로 보존한다.
+ *
+ * ⚠️ **`eliteCount` 만은 예외다** — 구 계약은 "단계1 = eliteCount 0 → 기존 스폰/패턴/해시 불변"
+ * (ADR-0022 결정론 규율 1)이었으나 **ADR-0035 가 이를 의도적으로 깼다**. 근거: 엘리트가 잡몹
+ * 전리품의 유일한 드랍원인데 밴드0(단계1~10)이 0 이라 그 구간에 **드랍원이 아예 없었다**
+ * (보스 확정 1개뿐 — `.omc/research/economy-baseline-2026-07-27.md` §3). ADR-0035 Consequences
+ * 가 "저단계(1~10)도 `eliteCount ≥ 1` 로 올려야 드랍원이 생긴다"고 명시적으로 요구한다.
+ * 대가는 단계1 PvE 골든 해시 재생성이고, 침공(PvP)은 `updateWaves` 를 아예 돌리지 않아 무영향이다.
  */
 export interface StageParams {
   /** 적 스폰 HP 배율(연속 상향). */
@@ -56,27 +62,58 @@ export interface StageMilestone {
 
 /**
  * 구간 마일스톤: 정한 경계에서 질적 요소 해금(구 정찰/교전/섬멸을 밴드로 재배치).
- * 경계값(11,21)·계수는 TODO(밸런스): 출시 전 일괄 튜닝.
+ *
+ * `eliteCount` 는 ADR-0035 이후 **순수 난이도 노브**다 — 드랍 수량은 여기서 나오지 않고
+ * `eliteDropChance`(`src/sim/drops.ts`)가 이 값에 **반비례**해 런당 기대 수량을 고정한다.
+ * 그래서 적 곡선 레인은 이 값을 자유롭게 움직여도 인벤 유입을 흔들지 않는다.
+ *
+ * ## ⚠️ 세 노브 전부 난이도 레버로는 쓸 수 없다 (2026-07-27 Lane D 실측)
+ * 표준 빌드 96시드 스윕에서 **셋 다 클리어율을 못 움직이거나 오히려 거꾸로 갔다**:
+ *  - `densityMult` 1 → 3: 결과가 **바이트 동일**. 이 값은 온스크린 **상한**만 올리는데 상한이
+ *    애초에 binding 이 아니다(짝인 유입 축은 `src/sim/waves.ts` 의 `PVE_DENSITY_MULT` 로 따로 있다).
+ *  - `eliteCount` 1 → 4 / `subBullets` 0 → 6: 각각 |Δ| ≤ 3pp(SE ±4.7pp 안 — 유의하지 않다).
+ *  - 셋을 **동시에** 올리면(단계11 에서 elite 4·sub 4·density 2) 클리어율이 71.9% → 88.5% 로
+ *    **16.6pp 올라간다**. 적을 더 많이·더 세게 내보낼수록 처치·젬이 늘어 런 내 파워업이 앞당겨지는
+ *    쪽이 더 크다 — 즉 **역방향 레버**다.
+ * 그래서 이 표는 2026-07-27 밸런스 패스에서 **손대지 않고 그대로 뒀다**. 난이도는 `killGoal`(절대
+ * 수준)과 `HP_ANCHOR_*`(단계 기울기)가 진다. 상세는 `.omc/research/enemy-curve-tuned-2026-07-27.md`.
  */
 export const STAGE_MILESTONES: readonly StageMilestone[] = [
-  { minStage: 1, eliteCount: 0, subBullets: 0, densityMult: 1 }, // 밴드0 (구 정찰)
+  // 밴드0(구 정찰): eliteCount 는 ADR-0035 로 0 → 1(저단계 드랍원 확보). 위 StageParams 주석 참조.
+  { minStage: 1, eliteCount: 1, subBullets: 0, densityMult: 1 }, // 밴드0 (구 정찰)
   { minStage: 11, eliteCount: 1, subBullets: 0, densityMult: 1 }, // 밴드1 (구 교전)
   { minStage: 21, eliteCount: 2, subBullets: 3, densityMult: 1.5 }, // 밴드2 (구 섬멸)
 ];
 
 // hpMult 앵커: 밴드 대표값(구 정찰/교전/섬멸의 HP 배율). 곡선은 이 앵커들을 지나는 구간선형.
-// TODO(밸런스): 출시 전 일괄 튜닝(앵커값·경계·21+ 기울기 전부 플레이스홀더).
+//
+// 2026-07-27 밸런스 패스(ADR-0037 · Lane D)에서 플레이스홀더 `1 / 2.2 / 4.5` 를 실측으로 확정했다.
+// 근거·스윕 이력은 `.omc/research/enemy-curve-tuned-2026-07-27.md`.
+//
+// ⚠️ **HP 는 약한 레버다** — 표준 빌드 96시드 실측에서 hpMult 를 ×1.9 해도 클리어율이 약 3pp 밖에
+// 안 내려간다(런 진행이 TTK 가 아니라 **스폰 카덴스**에 묶여 있어, 적 HP 를 올려도 처치 속도가
+// 거의 그대로다). 그래서 절대 난이도는 `SEGMENTS.killGoal` 이 지고, 이 앵커들은 **단계 축 기울기**
+// (레벨이 오를수록 함께 오르는 부분)만 담당한다. 그 역할에 필요한 크기가 구 플레이스홀더보다
+// 훨씬 커서 21 앵커가 4.5 → 22 로 올라갔다.
+//
+// ⚠️ 21 앵커는 **런 풀 커브(`xpToNext`)와 함께 수렴시킨 값이다.** 런 내 레벨업이 줄면 파워업
+// 픽이 줄어 고단계가 먼저 무너지므로, 두 축은 따로 튜닝할 수 없다(적 축만 보면 30 이 맞고,
+// `xpToNext` 재보정을 반영하면 22 가 맞다). 최종 확정값·수렴 이력·곡선표는
+// `.omc/research/economy-recalibrated-2026-07-27.md` 가 정본이다.
 const HP_ANCHOR_STAGE_1 = 1; // 밴드0 대표(구 정찰)
-const HP_ANCHOR_STAGE_11 = 2.2; // 밴드1 대표(구 교전)
-const HP_ANCHOR_STAGE_21 = 4.5; // 밴드2 대표(구 섬멸)
+const HP_ANCHOR_STAGE_11 = 4; // 밴드1 대표(구 교전)
+const HP_ANCHOR_STAGE_21 = 22; // 밴드2 대표(구 섬멸)
 
 /**
- * hpMult: 단계마다 연속 상향. **단계 1 = 정확히 1.0**(구 정찰, 결정론 불변 — 부동소수 오차
- * 금지라 `stage <= 1` 은 early-return 1). 곡선 계수 TODO(밸런스): 출시 전 일괄 튜닝.
- * 플레이스홀더: 밴드 대표값(1 / 2.2 / 4.5)을 지나는 구간선형(21+ 는 마지막 기울기 연장).
+ * hpMult: 단계마다 연속 상향. 앵커 `1 / 4 / 22` 를 지나는 구간선형이고 21+ 는 마지막 기울기
+ * (1.8/단계)를 연장한다 — 침략 단계가 무한히 깊어지는 구조라 상한을 두지 않는다.
+ *
+ * **단계 1 은 `HP_ANCHOR_STAGE_1` 을 그대로 돌려준다**(early-return). 구간선형 식으로 계산하면
+ * `(x - 1) * 0 / 10` 경로에서 부동소수 오차가 샐 수 있는데, 단계1 은 골든 해시가 걸린 기준
+ * 무대라 **정확한 값**이어야 한다(ADR-0022 결정론 규율 1).
  */
 export function stageHpMult(stage: number): number {
-  if (stage <= 1) return 1; // 단계1 ≡ 구 정찰: 정확히 1.0(오차 없음).
+  if (stage <= 1) return HP_ANCHOR_STAGE_1; // 단계1 은 앵커 상수를 그대로(구간선형 오차 없음).
   if (stage <= 11) return HP_ANCHOR_STAGE_1 + ((HP_ANCHOR_STAGE_11 - HP_ANCHOR_STAGE_1) * (stage - 1)) / 10;
   if (stage <= 21) return HP_ANCHOR_STAGE_11 + ((HP_ANCHOR_STAGE_21 - HP_ANCHOR_STAGE_11) * (stage - 11)) / 10;
   return HP_ANCHOR_STAGE_21 + ((HP_ANCHOR_STAGE_21 - HP_ANCHOR_STAGE_11) * (stage - 21)) / 10;
@@ -86,7 +123,8 @@ export function stageHpMult(stage: number): number {
  * 단계 파라미터 조회. hpMult 는 연속 함수, 나머지(정예·서브탄·밀도)는 `stage` 이하 최대
  * `minStage` 밴드에서 온다. 범위 밖(<1)은 단계 1로 클램프.
  *
- * `stageParams(1)` = `{hpMult:1, densityMult:1, eliteCount:0, subBullets:0}` (구 정찰과 동일).
+ * `stageParams(1)` = `{hpMult:1, densityMult:1, eliteCount:1, subBullets:0}` — 연속 축은 구 정찰과
+ * 동일하고 `eliteCount` 만 ADR-0035 로 1 이 됐다(저단계 드랍원 확보 — 위 StageParams 주석).
  */
 export function stageParams(stage: number): StageParams {
   const s = stage < 1 ? 1 : stage;
@@ -180,10 +218,39 @@ export const RUSH_MIN_INTERVAL = 45;
 /**
  * 7 segments; index 3 은 중반 격전(ADR-0032), 마지막은 보스 슬롯.
  *
- * killGoal 튜닝(ADR-0011): 적정 레벨·적정 티어(정찰·기본 로드아웃) 오토파일럿 실측으로
- * 5개 일반 세그먼트 합계 ≈ 60초(웨이브 par)에 맞춘 값. 합계 80처치 = [10,14,16,18,22].
- * 후반일수록 적 상한↑(밀도↑)으로 처치가 빨라지므로 목표를 완만히만 올린다. 강한 빌드는
- * 이보다 빨리 채워 런이 짧아지고(창발), 약하면 급행 소환으로 몹이 쌓여 길어진다.
+ * killGoal 튜닝(ADR-0011): 후반일수록 적 상한↑(밀도↑)으로 처치가 빨라지므로 목표를 완만히만
+ * 올린다. 강한 빌드는 이보다 빨리 채워 런이 짧아지고(창발), 약하면 급행 소환으로 몹이 쌓여 길어진다.
+ *
+ * ## 2026-07-27 밸런스 패스 — 합계 80 → 240 처치 (ADR-0037 · Lane D)
+ * 구값 `[10,14,16,18,22]`(합계 80)는 **무장비 기본 로드아웃** 기준으로 잡힌 것이었다. 표준 진행
+ * 경로(ADR-0035)가 정의한 **표준 레벨·표준 장비·표준 투자** 빌드로 재보니 런이 **33초**만에
+ * 끝났다(par 150초 대비 22%) — 클리어율도 전 밴드 92~100% 로 합격선(60~80%)을 통째로 넘겼다.
+ *
+ * `killGoal` 합계를 **80 → 240(×3)** 으로 올린 것이 이 레인의 **주 레버**다. 다른 후보 레버
+ * (HP·밀도·정예·서브탄·급행 램프)는 전부 효과가 3pp 이하이거나 역방향이었다
+ * (`STAGE_MILESTONES` 주석 참조). 근본 원인은 런 진행이 **처치 속도가 아니라 스폰 카덴스**에
+ * 묶여 있다는 것이다 — 그래서 "얼마나 오래 버티나"를 정하는 것은 처치 **할당량**뿐이다.
+ *
+ * ⚠️ **합계 240 만이 레버다.** 세그먼트 간 재배분은 카드 수·드랍 수량을 바이트 동일하게
+ * 재현한다(실증). 반대로 **합계를 바꾸면** `src/sim/drops.ts` 의 `EXPECTED_CARDS_PER_RUN` 과
+ * `src/sim/world.ts` 의 `xpToNext` 계수를 **둘 다 다시 재야 한다** — 런 길이가 카드 수와
+ * 런 풀 XP 를 동시에 끌기 때문이다.
+ *
+ * ⚠️ par 150초에는 아직 못 닿았다(실측 약 90~102초). 닿으려면 추가로 약 ×1.5 가 필요한데
+ * 그러면 저밴드가 60% 아래로 떨어져 합격선을 깬다.
+ *
+ * 최종 확정 곡선표(밴드 1~20 클리어율·레벨업·런 길이)와 수렴 이력의 정본은
+ * `.omc/research/economy-recalibrated-2026-07-27.md` 다.
+ *
+ * ## ⚠️ 침공 해시 — `SEGMENTS[0].killGoal` 은 10 그대로 둔다
+ * 증가분 160 을 index 1·2·4·5 에만 분배했다(`[10,46,53,59,72]`). **index 0 만은 못 건드린다** —
+ * `initWaveRuntime`(`src/sim/waves.ts:76`)이 `segmentKillGoal` 을 `SEGMENTS[0].killGoal` 로
+ * 초기화하고 `hashWorld` 가 그 필드를 접기 때문에(`src/sim/replay.ts:398`), 이 값을 바꾸면
+ * **침공(PvP) per-tick 해시가 통째로 달라진다**. 침공은 `updateWaves` 를 아예 안 돌려 이 값이
+ * **거동상 죽은 값**인데도 그렇다. 실측 확인: index 0 을 30 으로 올렸을 때
+ * `tests/encounterHashInvariance.test.ts` 의 AC2 침공 해시 가드 3건(`invasion/4242`·`48879`·`4951`)과
+ * `tests/midClash.test.ts` 의 `SEGMENTS[0]` 불변 계약이 깨졌고, 10 으로 되돌리자 전부 복구됐다.
+ * 원래 비율(14:16:18:22)을 유지해 230 을 분배했으므로 뒤 4개 세그먼트의 상대 램프는 그대로다.
  *
  * ## 중반 격전 삽입(ADR-0032) — 왜 index 3 인가
  * "보스전까지 플레이 타임 +30초" 요구는 처치 할당 패딩(같은 잡몹을 더 죽이기)이 아니라
@@ -207,14 +274,15 @@ export const RUSH_MIN_INTERVAL = 45;
  * `index` 는 정보용 필드라(런타임은 배열 위치로만 조회한다) 삽입 후 0..6 으로 재번호했다.
  */
 export const SEGMENTS: readonly WaveSegment[] = [
+  // ⚠️ index 0 의 killGoal 10 은 **의도적으로 불변**이다 — 아래 "침공 해시" 절 참조.
   { index: 0, killGoal: 10, maxEnemies: 12, bulletCap: 300, cardInterval: 220, boss: false },
-  { index: 1, killGoal: 14, maxEnemies: 20, bulletCap: 600, cardInterval: 200, boss: false },
-  { index: 2, killGoal: 16, maxEnemies: 28, bulletCap: 900, cardInterval: 180, boss: false },
+  { index: 1, killGoal: 46, maxEnemies: 20, bulletCap: 600, cardInterval: 200, boss: false },
+  { index: 2, killGoal: 53, maxEnemies: 28, bulletCap: 900, cardInterval: 180, boss: false },
   // 중반 격전 세그먼트(ADR-0032). killGoal 0 = 처치 할당 게이트 미사용(리더 처치가 게이트).
   // 예산은 index 2 ↔ index 4 사이 값 — TODO(밸런스): 출시 전 일괄 튜닝.
   { index: 3, killGoal: 0, maxEnemies: 32, bulletCap: 1000, cardInterval: 170, boss: false, clash: true },
-  { index: 4, killGoal: 18, maxEnemies: 36, bulletCap: 1200, cardInterval: 160, boss: false },
-  { index: 5, killGoal: 22, maxEnemies: 44, bulletCap: 1600, cardInterval: 150, boss: false },
+  { index: 4, killGoal: 59, maxEnemies: 36, bulletCap: 1200, cardInterval: 160, boss: false },
+  { index: 5, killGoal: 72, maxEnemies: 44, bulletCap: 1600, cardInterval: 150, boss: false },
   // 보스 세그먼트: killGoal 0(보스 처치로만 종료). cardInterval을 실제 값으로 낮춰
   // 보스전에도 일반몹이 계속 등장한다(급행 소환 램프가 여기서도 돌아 긴 꼬리를 캡).
   { index: 6, killGoal: 0, maxEnemies: 14, bulletCap: 2000, cardInterval: 200, boss: true },

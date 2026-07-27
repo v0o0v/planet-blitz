@@ -39,6 +39,8 @@ import type { WorldConfig, WorldState, InputFrame } from '../src/sim/world.js';
 import type { Entity } from '../src/sim/entities.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { computeLoadoutStats } from '../src/items/loadout.js';
+import { EQUIP_SLOTS } from '../src/items/types.js';
+import { standardEquipped } from '../src/bench/standardBuild.js';
 import { SeededRng } from '../src/sim/rng.js';
 import { atan2, length } from '../src/sim/math.js';
 import {
@@ -56,8 +58,16 @@ export const BASELINE_FIXTURE_PATH = fileURLToPath(
   new URL('../tests/fixtures/striker-prem8.json', import.meta.url),
 );
 
-/** 런당 틱 수. 3000틱 = 50초 — 레벨업이 여러 번 나고 웨이브 세그먼트가 몇 번 도는 길이. */
-export const BASELINE_TICKS = 3000;
+/**
+ * 런당 틱 수. **6000틱 = 100초** — 레벨업이 여러 번 나고 웨이브 세그먼트가 몇 번 도는 길이.
+ *
+ * ⚠️ 2026-07-27 밸런스 패스(ADR-0035·0036·0037)에서 3000 → **6000** 으로 넓혔다. 런 풀 커브가
+ * `10+6L` → **`10+66L`** 로 오르면서 3,000틱(50초) 창에서는 레벨업이 거의 안 나게 돼
+ * 골든이 파워업 추첨 시퀀스를 거의 담지 못했다(재녹화 직후 실측: 12런 중 레벨업 6회 이상
+ * **0런**). `tests/shipHashBaseline.test.ts` 의 활력 가드가 그걸 잡았고, 그 가드 주석이 명시한
+ * 처방("값을 다시 조이거나 **관측 창을 늘려야 한다**")을 그대로 따랐다.
+ */
+export const BASELINE_TICKS = 6000;
 
 /**
  * 골든 포맷 버전. 이 값을 올리는 것은 "M8 이전 상태를 못 박는다"는 계약을 스스로 깨는
@@ -65,6 +75,13 @@ export const BASELINE_TICKS = 3000;
  * 것이고 별도 승인 사안이다).
  */
 export const BASELINE_FORMAT = 1;
+
+/**
+ * 골든 녹화에 실리는 표준 장비의 **밴드 1 레벨**({@link gearedBaselineConfig}).
+ * 밴드 1 세트는 레어 8칸·유니크 0 이라 장비가 `uniqueMask` 에 비트를 더하지 않는다 —
+ * 그 성질이 이 골든의 캐프스톤 단언을 그대로 살려 둔다(그 함수 주석 참조).
+ */
+export const STANDARD_GEAR_LEVEL = 5;
 
 /** 사망으로 런이 조기 종료되지 않도록 하는 내구 HP(scripts/deno-verify 와 같은 관용구). */
 const DURABLE = 100_000_000;
@@ -173,7 +190,9 @@ export const BASELINE_PLANETS: readonly PlanetSpec[] = [
 
 /**
  * 런 설정 조립 — `src/main.ts:930-940`(PvE 런 시작)의 조립과 **같은 순서·같은 함수**다.
- * 장비는 비운다(골든의 목적은 스킬트리·파워업 슬라이스 불변 증명이라 장비 축은 잡음).
+ * 여기서는 장비를 비운다 — 이 함수는 `scripts/recordEncounterBaseline.ts` 와 **공유**되므로
+ * 여기에 장비를 실으면 조우 베이스라인까지 함께 움직인다. striker 골든 전용 장비는
+ * {@link gearedBaselineConfig} 가 이 결과 위에 덧씌우고, 그 호출은 {@link recordRun} 안에만 있다.
  * 계보 보너스 0 = `applyShipLineageBonus` 조기 반환 → 중립.
  */
 export function baselineConfig(planet: PlanetSpec, invest: readonly number[]): WorldConfig {
@@ -187,6 +206,49 @@ export function baselineConfig(planet: PlanetSpec, invest: readonly number[]): W
     loadout,
     skillInvest,
   };
+}
+
+/**
+ * **striker 골든 전용** — {@link baselineConfig} 위에 **ADR-0035 표준 장비 세트**를 덮어쓴다.
+ *
+ * ## 왜 장비를 싣는가 (2026-07-27 밸런스 패스)
+ * 런 풀 커브 `10+6L` → **`10+66L`** 와 적 축 상향이 겹치면서 **무장비 저투자 런이 골든으로서
+ * 정보를 잃었다** — 재녹화 실측에서 `berdan-engage/capstone-survival` 은 9,000틱(150초)을 돌려도
+ * **레벨업 0회 · 처치 7** 이고, 12런 중 레벨업 6회 이상이 **0런** 이었다. 파워업 추첨이 거의
+ * 안 나면 이 골든의 목적(트리 슬라이스 가중 회귀 탐지)이 공회전한다.
+ * **틱만 늘려서는 안 풀렸다**: 3,000 / 6,000 / 9,000 / 12,000틱에서 활발 런이 0 / 3 / 5 / **5** 로
+ * 정체한다(죽는 런은 더 못 큰다). 장비 + 6,000틱에서 **11/12 런이 레벨업 6회 이상**이 된다.
+ *
+ * ## 무엇을 관측 대상으로 남기는가
+ * {@link BASELINE_BUILDS}(스킬 투자 축)는 **불변**이고 그것이 이 골든의 대조 축이다. 장비는
+ * 런을 살려 두는 **환경**이지 관측 대상이 아니다 — 전 런에 같은 규칙으로 실린다.
+ *
+ * ## ⚠️ 새로 생긴 결합
+ * 이 골든은 이제 `src/bench/standardBuild.ts` 의 **밴드 표에 의존한다** — 그 표가 바뀌면
+ * 골든을 **재생성해야 한다**. 다행히 대조형 골든이라 어긋나면 큰 소리로 실패한다.
+ * `gearSeed` 는 **런 시드와 같다** — 고정 상수로 두면 "장비 세트 한 벌의 운"을 재게 된다
+ * (같은 설계값에서도 `gearSeed` 만 바꾸면 클리어율이 48.3~100.0% 로 갈린다).
+ *
+ * ## ⚠️ 장비 레벨은 단계가 아니라 **밴드 1 고정**이다 ({@link STANDARD_GEAR_LEVEL})
+ * 그래야 장비가 `uniqueMask` 를 오염하지 않는다 — 밴드 1 표준 세트는 **레어 8칸**이고
+ * 유니크가 없다(ADR-0035 장비 산술). 그래서 '캐프스톤 빌드가 실제로 uniqueMask 비트를 켠다'
+ * 단언이 **그대로 산다** — 마스크에 드는 비트가 여전히 투자 기원뿐이다(실측: 무투자·혼합
+ * 런은 mask 0, 캐프스톤 런은 각각 32768 / 65536 / 131072). 단계별 레벨(5 × stage)로 실으면
+ * 베르단(단계 11 → Lv55)이 유니크 2칸을 받아 무투자 런의 mask 가 288 이 된다(실측).
+ * 밴드 1 장비만으로도 활력 목표는 충분히 달성된다(11/12 런 레벨업 6회 이상 · 전 런 처치 240+).
+ */
+export function gearedBaselineConfig(
+  planet: PlanetSpec,
+  invest: readonly number[],
+  gearSeed: number,
+): WorldConfig {
+  const skillInvest = invest.slice();
+  const equipped = standardEquipped(STANDARD_GEAR_LEVEL, gearSeed, planet.planet);
+  const items = EQUIP_SLOTS.map((slot) => equipped[slot]).filter(
+    (it): it is NonNullable<typeof it> => it !== undefined && it !== null,
+  );
+  const { loadout } = computeLoadoutStats(items, skillInvest, 0);
+  return { ...baselineConfig(planet, invest), loadout, skillInvest };
 }
 
 // ---------------------------------------------------------------------------
@@ -317,8 +379,8 @@ export interface Baseline {
 
 /** 런 1건을 녹화한다(입력 생성 → 재생 → per-tick 해시 + 파워업 추첨 시퀀스). */
 export function recordRun(planet: PlanetSpec, build: BuildSpec, buildIndex: number): BaselineRun {
-  const config = baselineConfig(planet, build.invest);
   const seed = (planet.seedBase + buildIndex * 0x1_0001) >>> 0;
+  const config = gearedBaselineConfig(planet, build.invest, seed);
   const inputs = driveBaseline(seed, config, BASELINE_TICKS);
 
   const state = createWorld(seed, config);

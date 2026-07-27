@@ -9,67 +9,108 @@
     {
       "name": "① 카르곤 정찰 기본(로밍)",
       "seed": 27161,
-      "ticks": 7686,
-      "inputsHash": 163965340,
+      "ticks": 14400,
+      "inputsHash": 2254193564,
       "checkpoints": [
         {
           "tick": 600,
-          "hash": 1842031269
+          "hash": 3225372361
         },
         {
           "tick": 1200,
-          "hash": 870656878
+          "hash": 2871565009
         },
         {
           "tick": 1800,
-          "hash": 902383023
+          "hash": 2278528876
         },
         {
           "tick": 2400,
-          "hash": 2951825791
+          "hash": 2710125069
         },
         {
           "tick": 3000,
-          "hash": 1754302405
+          "hash": 1294132002
         },
         {
           "tick": 3600,
-          "hash": 4288515759
+          "hash": 3982324213
         },
         {
           "tick": 4200,
-          "hash": 2333468417
+          "hash": 20893870
         },
         {
           "tick": 4800,
-          "hash": 3421694380
+          "hash": 43141721
         },
         {
           "tick": 5400,
-          "hash": 2118421017
+          "hash": 4229742776
         },
         {
           "tick": 6000,
-          "hash": 3028716511
+          "hash": 1757977691
         },
         {
           "tick": 6600,
-          "hash": 3851555125
+          "hash": 289154630
         },
         {
           "tick": 7200,
-          "hash": 1021532251
-        }
-      ],
-      "finalHash": 3978239971,
-      "loot": [
+          "hash": 315070882
+        },
         {
-          "seed": 328084127,
-          "rarity": 2,
-          "planet": 0,
-          "stage": 1
+          "tick": 7800,
+          "hash": 1520276960
+        },
+        {
+          "tick": 8400,
+          "hash": 2779119501
+        },
+        {
+          "tick": 9000,
+          "hash": 2608860934
+        },
+        {
+          "tick": 9600,
+          "hash": 2622796255
+        },
+        {
+          "tick": 10200,
+          "hash": 2279154371
+        },
+        {
+          "tick": 10800,
+          "hash": 3861459264
+        },
+        {
+          "tick": 11400,
+          "hash": 1806515667
+        },
+        {
+          "tick": 12000,
+          "hash": 335867481
+        },
+        {
+          "tick": 12600,
+          "hash": 1073787309
+        },
+        {
+          "tick": 13200,
+          "hash": 1479543283
+        },
+        {
+          "tick": 13800,
+          "hash": 3562353565
+        },
+        {
+          "tick": 14400,
+          "hash": 2363840630
         }
       ],
+      "finalHash": 2363840630,
+      "loot": [],
       "rolls": [
         {
           "id": "it-6953217",
@@ -129,127 +170,71 @@
         }
       ],
       "summary": {
-        "victory": true,
+        "victory": false,
         "gameOver": false,
-        "kills": 536,
-        "level": 30,
-        "bossSpawned": true,
-        "entityCount": 216
+        "kills": 49,
+        "level": 2,
+        "bossSpawned": false,
+        "entityCount": 337
       }
     },
     {
       "name": "② 베르단 교전 + 로드아웃 + 엘리트 어픽스",
       "seed": 53477,
-      "ticks": 14400,
-      "inputsHash": 1865224690,
+      "ticks": 6015,
+      "inputsHash": 1008497506,
       "checkpoints": [
         {
           "tick": 600,
-          "hash": 833851355
+          "hash": 2722129970
         },
         {
           "tick": 1200,
-          "hash": 3704699956
+          "hash": 766055596
         },
         {
           "tick": 1800,
-          "hash": 2257596046
+          "hash": 2744679043
         },
         {
           "tick": 2400,
-          "hash": 2294719283
+          "hash": 325295043
         },
         {
           "tick": 3000,
-          "hash": 2294719283
+          "hash": 1001487529
         },
         {
           "tick": 3600,
-          "hash": 2294719283
+          "hash": 368092504
         },
         {
           "tick": 4200,
-          "hash": 2294719283
+          "hash": 2648181563
         },
         {
           "tick": 4800,
-          "hash": 2294719283
+          "hash": 2699334241
         },
         {
           "tick": 5400,
-          "hash": 2294719283
+          "hash": 4210568115
         },
         {
           "tick": 6000,
-          "hash": 2294719283
-        },
-        {
-          "tick": 6600,
-          "hash": 2294719283
-        },
-        {
-          "tick": 7200,
-          "hash": 2294719283
-        },
-        {
-          "tick": 7800,
-          "hash": 2294719283
-        },
-        {
-          "tick": 8400,
-          "hash": 2294719283
-        },
-        {
-          "tick": 9000,
-          "hash": 2294719283
-        },
-        {
-          "tick": 9600,
-          "hash": 2294719283
-        },
-        {
-          "tick": 10200,
-          "hash": 2294719283
-        },
-        {
-          "tick": 10800,
-          "hash": 2294719283
-        },
-        {
-          "tick": 11400,
-          "hash": 2294719283
-        },
-        {
-          "tick": 12000,
-          "hash": 2294719283
-        },
-        {
-          "tick": 12600,
-          "hash": 2294719283
-        },
-        {
-          "tick": 13200,
-          "hash": 2294719283
-        },
-        {
-          "tick": 13800,
-          "hash": 2294719283
-        },
-        {
-          "tick": 14400,
-          "hash": 2294719283
+          "hash": 1759140068
         }
       ],
-      "finalHash": 2294719283,
+      "finalHash": 1759140068,
       "loot": [
         {
-          "seed": 3003630397,
+          "seed": 279185282,
           "rarity": 1,
           "planet": 1,
           "stage": 11
         },
         {
-          "seed": 2520895308,
+          "seed": 758229129,
           "rarity": 2,
           "planet": 1,
           "stage": 11
@@ -347,130 +332,117 @@
       "summary": {
         "victory": true,
         "gameOver": false,
-        "kills": 108,
-        "level": 11,
+        "kills": 294,
+        "level": 8,
         "bossSpawned": true,
-        "entityCount": 170
+        "entityCount": 120
       }
     },
     {
       "name": "③ 촉매 주입 런(드랍/희귀도/자원/파워 + 페널티, ADR-0029)",
       "seed": 51834,
       "ticks": 14400,
-      "inputsHash": 2743025325,
+      "inputsHash": 216427309,
       "checkpoints": [
         {
           "tick": 600,
-          "hash": 3395662873
+          "hash": 3033742543
         },
         {
           "tick": 1200,
-          "hash": 250383180
+          "hash": 342342602
         },
         {
           "tick": 1800,
-          "hash": 1314396080
+          "hash": 2810199176
         },
         {
           "tick": 2400,
-          "hash": 266974032
+          "hash": 1808735539
         },
         {
           "tick": 3000,
-          "hash": 1739044
+          "hash": 911791544
         },
         {
           "tick": 3600,
-          "hash": 1467258725
+          "hash": 345846132
         },
         {
           "tick": 4200,
-          "hash": 1310136838
+          "hash": 510174084
         },
         {
           "tick": 4800,
-          "hash": 1492272535
+          "hash": 1235831566
         },
         {
           "tick": 5400,
-          "hash": 223692030
+          "hash": 3426117055
         },
         {
           "tick": 6000,
-          "hash": 1439636689
+          "hash": 3867417778
         },
         {
           "tick": 6600,
-          "hash": 1588358534
+          "hash": 1151455676
         },
         {
           "tick": 7200,
-          "hash": 2041859022
+          "hash": 3614134845
         },
         {
           "tick": 7800,
-          "hash": 3155817119
+          "hash": 2575167942
         },
         {
           "tick": 8400,
-          "hash": 172234272
+          "hash": 3724608593
         },
         {
           "tick": 9000,
-          "hash": 3520176130
+          "hash": 2376978574
         },
         {
           "tick": 9600,
-          "hash": 1413392906
+          "hash": 3408992355
         },
         {
           "tick": 10200,
-          "hash": 1045444664
+          "hash": 2297103780
         },
         {
           "tick": 10800,
-          "hash": 3061457500
+          "hash": 1973905723
         },
         {
           "tick": 11400,
-          "hash": 3356951475
+          "hash": 1963974697
         },
         {
           "tick": 12000,
-          "hash": 1024935917
+          "hash": 2969676900
         },
         {
           "tick": 12600,
-          "hash": 2568089872
+          "hash": 287205284
         },
         {
           "tick": 13200,
-          "hash": 3017847981
+          "hash": 2661769649
         },
         {
           "tick": 13800,
-          "hash": 3558085377
+          "hash": 2792851859
         },
         {
           "tick": 14400,
-          "hash": 721520506
+          "hash": 1552837804
         }
       ],
-      "finalHash": 721520506,
-      "loot": [
-        {
-          "seed": 3074606537,
-          "rarity": 1,
-          "planet": 0,
-          "stage": 11
-        },
-        {
-          "seed": 2076299437,
-          "rarity": 1,
-          "planet": 0,
-          "stage": 11
-        }
-      ],
+      "finalHash": 1552837804,
+      "loot": [],
       "rolls": [
         {
           "id": "it-13269537",
@@ -534,119 +506,125 @@
       "summary": {
         "victory": false,
         "gameOver": false,
-        "kills": 22,
-        "level": 3,
+        "kills": 7,
+        "level": 1,
         "bossSpawned": false,
-        "entityCount": 441
+        "entityCount": 410
       }
     },
     {
       "name": "④ 유니크 장착 런(과열 드럼 / 관통 자이로)",
       "seed": 40471,
       "ticks": 14400,
-      "inputsHash": 1192616261,
+      "inputsHash": 542782850,
       "checkpoints": [
         {
           "tick": 600,
-          "hash": 4014949004
+          "hash": 4025233465
         },
         {
           "tick": 1200,
-          "hash": 928986310
+          "hash": 2210995574
         },
         {
           "tick": 1800,
-          "hash": 2544885948
+          "hash": 1943854389
         },
         {
           "tick": 2400,
-          "hash": 1292641817
+          "hash": 429296526
         },
         {
           "tick": 3000,
-          "hash": 1292641817
+          "hash": 2070117005
         },
         {
           "tick": 3600,
-          "hash": 1292641817
+          "hash": 592347317
         },
         {
           "tick": 4200,
-          "hash": 1292641817
+          "hash": 2320559056
         },
         {
           "tick": 4800,
-          "hash": 1292641817
+          "hash": 122295275
         },
         {
           "tick": 5400,
-          "hash": 1292641817
+          "hash": 4222518179
         },
         {
           "tick": 6000,
-          "hash": 1292641817
+          "hash": 973089592
         },
         {
           "tick": 6600,
-          "hash": 1292641817
+          "hash": 86651159
         },
         {
           "tick": 7200,
-          "hash": 1292641817
+          "hash": 128946803
         },
         {
           "tick": 7800,
-          "hash": 1292641817
+          "hash": 128946803
         },
         {
           "tick": 8400,
-          "hash": 1292641817
+          "hash": 128946803
         },
         {
           "tick": 9000,
-          "hash": 1292641817
+          "hash": 128946803
         },
         {
           "tick": 9600,
-          "hash": 1292641817
+          "hash": 128946803
         },
         {
           "tick": 10200,
-          "hash": 1292641817
+          "hash": 128946803
         },
         {
           "tick": 10800,
-          "hash": 1292641817
+          "hash": 128946803
         },
         {
           "tick": 11400,
-          "hash": 1292641817
+          "hash": 128946803
         },
         {
           "tick": 12000,
-          "hash": 1292641817
+          "hash": 128946803
         },
         {
           "tick": 12600,
-          "hash": 1292641817
+          "hash": 128946803
         },
         {
           "tick": 13200,
-          "hash": 1292641817
+          "hash": 128946803
         },
         {
           "tick": 13800,
-          "hash": 1292641817
+          "hash": 128946803
         },
         {
           "tick": 14400,
-          "hash": 1292641817
+          "hash": 128946803
         }
       ],
-      "finalHash": 1292641817,
+      "finalHash": 128946803,
       "loot": [
         {
-          "seed": 3549851097,
+          "seed": 3033066749,
+          "rarity": 1,
+          "planet": 1,
+          "stage": 11
+        },
+        {
+          "seed": 3080445655,
           "rarity": 2,
           "planet": 1,
           "stage": 11
@@ -739,185 +717,119 @@
       "summary": {
         "victory": true,
         "gameOver": false,
-        "kills": 112,
-        "level": 8,
+        "kills": 300,
+        "level": 6,
         "bossSpawned": true,
-        "entityCount": 152
+        "entityCount": 246
       }
     },
     {
       "name": "⑤ 니플헤임 섬멸 + 미사일 + 원소 어픽스 + 스킬투자",
       "seed": 20897,
       "ticks": 14400,
-      "inputsHash": 790116715,
+      "inputsHash": 3983589037,
       "checkpoints": [
         {
           "tick": 600,
-          "hash": 3755671532
+          "hash": 3313309979
         },
         {
           "tick": 1200,
-          "hash": 2845009676
+          "hash": 554244640
         },
         {
           "tick": 1800,
-          "hash": 4166961080
+          "hash": 2176717360
         },
         {
           "tick": 2400,
-          "hash": 419039687
+          "hash": 4111196846
         },
         {
           "tick": 3000,
-          "hash": 3463501180
+          "hash": 1975115838
         },
         {
           "tick": 3600,
-          "hash": 3463501180
+          "hash": 3801906411
         },
         {
           "tick": 4200,
-          "hash": 3463501180
+          "hash": 4208606943
         },
         {
           "tick": 4800,
-          "hash": 3463501180
+          "hash": 1511009097
         },
         {
           "tick": 5400,
-          "hash": 3463501180
+          "hash": 626014011
         },
         {
           "tick": 6000,
-          "hash": 3463501180
+          "hash": 2195183568
         },
         {
           "tick": 6600,
-          "hash": 3463501180
+          "hash": 2605314157
         },
         {
           "tick": 7200,
-          "hash": 3463501180
+          "hash": 1894196953
         },
         {
           "tick": 7800,
-          "hash": 3463501180
+          "hash": 1577627813
         },
         {
           "tick": 8400,
-          "hash": 3463501180
+          "hash": 53207418
         },
         {
           "tick": 9000,
-          "hash": 3463501180
+          "hash": 2877709533
         },
         {
           "tick": 9600,
-          "hash": 3463501180
+          "hash": 1735921801
         },
         {
           "tick": 10200,
-          "hash": 3463501180
+          "hash": 2910192890
         },
         {
           "tick": 10800,
-          "hash": 3463501180
+          "hash": 2454519704
         },
         {
           "tick": 11400,
-          "hash": 3463501180
+          "hash": 867318137
         },
         {
           "tick": 12000,
-          "hash": 3463501180
+          "hash": 3923640205
         },
         {
           "tick": 12600,
-          "hash": 3463501180
+          "hash": 546294944
         },
         {
           "tick": 13200,
-          "hash": 3463501180
+          "hash": 3029459409
         },
         {
           "tick": 13800,
-          "hash": 3463501180
+          "hash": 3012627694
         },
         {
           "tick": 14400,
-          "hash": 3463501180
+          "hash": 3180671969
         }
       ],
-      "finalHash": 3463501180,
+      "finalHash": 3180671969,
       "loot": [
         {
-          "seed": 232444852,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 21
-        },
-        {
-          "seed": 2107921432,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 21
-        },
-        {
-          "seed": 2659477725,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 21
-        },
-        {
-          "seed": 3820504707,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 21
-        },
-        {
-          "seed": 2581027837,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 21
-        },
-        {
-          "seed": 2543079164,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 21
-        },
-        {
-          "seed": 1454696156,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 21
-        },
-        {
-          "seed": 1723169648,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 21
-        },
-        {
-          "seed": 3766179748,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 21
-        },
-        {
-          "seed": 3785126252,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 21
-        },
-        {
-          "seed": 907433118,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 21
-        },
-        {
-          "seed": 440158657,
+          "seed": 2393010401,
           "rarity": 2,
           "planet": 2,
           "stage": 21
@@ -1018,150 +930,119 @@
         }
       ],
       "summary": {
-        "victory": true,
+        "victory": false,
         "gameOver": false,
-        "kills": 150,
-        "level": 13,
-        "bossSpawned": true,
-        "entityCount": 109
+        "kills": 321,
+        "level": 7,
+        "bossSpawned": false,
+        "entityCount": 677
       }
     },
     {
       "name": "⑥ 아르케 교전 + 빔 + M3 유니크(수렴 프리즘 / 탐욕의 심장)",
       "seed": 32302,
       "ticks": 14400,
-      "inputsHash": 1470643501,
+      "inputsHash": 3184482093,
       "checkpoints": [
         {
           "tick": 600,
-          "hash": 3889481474
+          "hash": 1666260968
         },
         {
           "tick": 1200,
-          "hash": 3997735520
+          "hash": 3195801042
         },
         {
           "tick": 1800,
-          "hash": 2332107367
+          "hash": 3635230120
         },
         {
           "tick": 2400,
-          "hash": 3326446104
+          "hash": 666218323
         },
         {
           "tick": 3000,
-          "hash": 1697085174
+          "hash": 4238348260
         },
         {
           "tick": 3600,
-          "hash": 3220008224
+          "hash": 4058487558
         },
         {
           "tick": 4200,
-          "hash": 3220008224
+          "hash": 3665068309
         },
         {
           "tick": 4800,
-          "hash": 3220008224
+          "hash": 1832280283
         },
         {
           "tick": 5400,
-          "hash": 3220008224
+          "hash": 1496871999
         },
         {
           "tick": 6000,
-          "hash": 3220008224
+          "hash": 3904715448
         },
         {
           "tick": 6600,
-          "hash": 3220008224
+          "hash": 395698776
         },
         {
           "tick": 7200,
-          "hash": 3220008224
+          "hash": 3459146681
         },
         {
           "tick": 7800,
-          "hash": 3220008224
+          "hash": 4155360968
         },
         {
           "tick": 8400,
-          "hash": 3220008224
+          "hash": 3184164801
         },
         {
           "tick": 9000,
-          "hash": 3220008224
+          "hash": 1901422312
         },
         {
           "tick": 9600,
-          "hash": 3220008224
+          "hash": 3085284313
         },
         {
           "tick": 10200,
-          "hash": 3220008224
+          "hash": 3844118660
         },
         {
           "tick": 10800,
-          "hash": 3220008224
+          "hash": 1045372840
         },
         {
           "tick": 11400,
-          "hash": 3220008224
+          "hash": 1595780739
         },
         {
           "tick": 12000,
-          "hash": 3220008224
+          "hash": 286168648
         },
         {
           "tick": 12600,
-          "hash": 3220008224
+          "hash": 1180288798
         },
         {
           "tick": 13200,
-          "hash": 3220008224
+          "hash": 4175105458
         },
         {
           "tick": 13800,
-          "hash": 3220008224
+          "hash": 1733263297
         },
         {
           "tick": 14400,
-          "hash": 3220008224
+          "hash": 912575561
         }
       ],
-      "finalHash": 3220008224,
-      "loot": [
-        {
-          "seed": 1467684836,
-          "rarity": 2,
-          "planet": 3,
-          "stage": 11
-        },
-        {
-          "seed": 232916765,
-          "rarity": 1,
-          "planet": 3,
-          "stage": 11
-        },
-        {
-          "seed": 2338428852,
-          "rarity": 1,
-          "planet": 3,
-          "stage": 11
-        },
-        {
-          "seed": 1255269489,
-          "rarity": 2,
-          "planet": 3,
-          "stage": 11
-        },
-        {
-          "seed": 1913494121,
-          "rarity": 3,
-          "planet": 3,
-          "stage": 11
-        }
-      ],
+      "finalHash": 912575561,
+      "loot": [],
       "rolls": [
         {
           "id": "it-8269409",
@@ -1267,168 +1148,119 @@
         }
       ],
       "summary": {
-        "victory": true,
+        "victory": false,
         "gameOver": false,
-        "kills": 131,
-        "level": 18,
-        "bossSpawned": true,
-        "entityCount": 116
+        "kills": 528,
+        "level": 13,
+        "bossSpawned": false,
+        "entityCount": 477
       }
     },
     {
       "name": "⑦ 해츨링(비스트라이커 기체) 런 — shipType 폴드 + 시그니처 + 78길이 벡터",
       "seed": 45327,
       "ticks": 14400,
-      "inputsHash": 3316376237,
+      "inputsHash": 4166930460,
       "checkpoints": [
         {
           "tick": 600,
-          "hash": 3215917613
+          "hash": 719016103
         },
         {
           "tick": 1200,
-          "hash": 3473154948
+          "hash": 1238833357
         },
         {
           "tick": 1800,
-          "hash": 1512570962
+          "hash": 1769492302
         },
         {
           "tick": 2400,
-          "hash": 2558178645
+          "hash": 3100069262
         },
         {
           "tick": 3000,
-          "hash": 1390420188
+          "hash": 4199666633
         },
         {
           "tick": 3600,
-          "hash": 2020655463
+          "hash": 1584215631
         },
         {
           "tick": 4200,
-          "hash": 90274918
+          "hash": 715644244
         },
         {
           "tick": 4800,
-          "hash": 3532394634
+          "hash": 3474133098
         },
         {
           "tick": 5400,
-          "hash": 28391110
+          "hash": 3754636039
         },
         {
           "tick": 6000,
-          "hash": 2915548461
+          "hash": 324648542
         },
         {
           "tick": 6600,
-          "hash": 692079621
+          "hash": 4173839044
         },
         {
           "tick": 7200,
-          "hash": 2149275025
+          "hash": 1291286606
         },
         {
           "tick": 7800,
-          "hash": 3829806337
+          "hash": 3378923426
         },
         {
           "tick": 8400,
-          "hash": 920748786
+          "hash": 2051555213
         },
         {
           "tick": 9000,
-          "hash": 4154827348
+          "hash": 3259822262
         },
         {
           "tick": 9600,
-          "hash": 1409996239
+          "hash": 465498063
         },
         {
           "tick": 10200,
-          "hash": 3251030117
+          "hash": 3027863911
         },
         {
           "tick": 10800,
-          "hash": 1090966363
+          "hash": 131512057
         },
         {
           "tick": 11400,
-          "hash": 24865373
+          "hash": 3229847158
         },
         {
           "tick": 12000,
-          "hash": 1578678882
+          "hash": 556542949
         },
         {
           "tick": 12600,
-          "hash": 2534981685
+          "hash": 3106199651
         },
         {
           "tick": 13200,
-          "hash": 775755694
+          "hash": 286723392
         },
         {
           "tick": 13800,
-          "hash": 631142804
+          "hash": 1357674159
         },
         {
           "tick": 14400,
-          "hash": 2596160847
+          "hash": 2095702931
         }
       ],
-      "finalHash": 2596160847,
-      "loot": [
-        {
-          "seed": 2503720499,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 1505253724,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 2459103096,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 4103502411,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 1243582780,
-          "rarity": 3,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 2879006522,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 897808207,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 520725850,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        }
-      ],
+      "finalHash": 2095702931,
+      "loot": [],
       "rolls": [
         {
           "id": "it-11603825",
@@ -1492,52 +1324,117 @@
       "summary": {
         "victory": false,
         "gameOver": false,
-        "kills": 77,
-        "level": 9,
+        "kills": 38,
+        "level": 2,
         "bossSpawned": false,
-        "entityCount": 336
+        "entityCount": 361
       }
     },
     {
       "name": "⑧ 말로우(완충) 런 — shipType 5 폴드 + 시그니처 22 지연적립/정산 aux 폴드",
-      "seed": 49317,
-      "ticks": 3993,
-      "inputsHash": 2922525737,
+      "seed": 49343,
+      "ticks": 14400,
+      "inputsHash": 3045505709,
       "checkpoints": [
         {
           "tick": 600,
-          "hash": 2080892733
+          "hash": 3297309769
         },
         {
           "tick": 1200,
-          "hash": 2594524912
+          "hash": 3222957702
         },
         {
           "tick": 1800,
-          "hash": 70683531
+          "hash": 1234820645
         },
         {
           "tick": 2400,
-          "hash": 4091290245
+          "hash": 66463859
         },
         {
           "tick": 3000,
-          "hash": 3523708267
+          "hash": 1351585981
         },
         {
           "tick": 3600,
-          "hash": 2722131960
-        }
-      ],
-      "finalHash": 3291174457,
-      "loot": [
+          "hash": 3983960378
+        },
         {
-          "seed": 1568656846,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 1
+          "tick": 4200,
+          "hash": 2991358667
+        },
+        {
+          "tick": 4800,
+          "hash": 3904800887
+        },
+        {
+          "tick": 5400,
+          "hash": 2868441587
+        },
+        {
+          "tick": 6000,
+          "hash": 3014733658
+        },
+        {
+          "tick": 6600,
+          "hash": 3871611921
+        },
+        {
+          "tick": 7200,
+          "hash": 409013255
+        },
+        {
+          "tick": 7800,
+          "hash": 2440587985
+        },
+        {
+          "tick": 8400,
+          "hash": 385022370
+        },
+        {
+          "tick": 9000,
+          "hash": 2769555456
+        },
+        {
+          "tick": 9600,
+          "hash": 2054721463
+        },
+        {
+          "tick": 10200,
+          "hash": 708529348
+        },
+        {
+          "tick": 10800,
+          "hash": 3408054589
+        },
+        {
+          "tick": 11400,
+          "hash": 1295438146
+        },
+        {
+          "tick": 12000,
+          "hash": 2095149423
+        },
+        {
+          "tick": 12600,
+          "hash": 3174762258
+        },
+        {
+          "tick": 13200,
+          "hash": 245664974
+        },
+        {
+          "tick": 13800,
+          "hash": 620306239
+        },
+        {
+          "tick": 14400,
+          "hash": 1757858370
         }
       ],
+      "finalHash": 1757858370,
+      "loot": [],
       "rolls": [
         {
           "id": "it-12625281",
@@ -1604,246 +1501,119 @@
         }
       ],
       "summary": {
-        "victory": true,
+        "victory": false,
         "gameOver": false,
-        "kills": 168,
-        "level": 17,
-        "bossSpawned": true,
-        "entityCount": 97
+        "kills": 181,
+        "level": 5,
+        "bossSpawned": false,
+        "entityCount": 399
       }
     },
     {
       "name": "⑨ 버블(방막) 런 — shipType 6 폴드 + 시그니처 23 흡수/파열 aux 폴드",
       "seed": 61722,
       "ticks": 14400,
-      "inputsHash": 1540011083,
+      "inputsHash": 216427309,
       "checkpoints": [
         {
           "tick": 600,
-          "hash": 701220626
+          "hash": 2214047304
         },
         {
           "tick": 1200,
-          "hash": 1789984935
+          "hash": 2912370854
         },
         {
           "tick": 1800,
-          "hash": 588335569
+          "hash": 613037967
         },
         {
           "tick": 2400,
-          "hash": 2361585357
+          "hash": 715410893
         },
         {
           "tick": 3000,
-          "hash": 3106152780
+          "hash": 3995064111
         },
         {
           "tick": 3600,
-          "hash": 3423029978
+          "hash": 2935076555
         },
         {
           "tick": 4200,
-          "hash": 3454213103
+          "hash": 1956692657
         },
         {
           "tick": 4800,
-          "hash": 2533201163
+          "hash": 2000590994
         },
         {
           "tick": 5400,
-          "hash": 2292996460
+          "hash": 4274712657
         },
         {
           "tick": 6000,
-          "hash": 1097224399
+          "hash": 575021690
         },
         {
           "tick": 6600,
-          "hash": 156560296
+          "hash": 1181571793
         },
         {
           "tick": 7200,
-          "hash": 1825375749
+          "hash": 2807468012
         },
         {
           "tick": 7800,
-          "hash": 1497354834
+          "hash": 1601392600
         },
         {
           "tick": 8400,
-          "hash": 1497354834
+          "hash": 4137028301
         },
         {
           "tick": 9000,
-          "hash": 1497354834
+          "hash": 3568829783
         },
         {
           "tick": 9600,
-          "hash": 1497354834
+          "hash": 761668771
         },
         {
           "tick": 10200,
-          "hash": 1497354834
+          "hash": 4028170742
         },
         {
           "tick": 10800,
-          "hash": 1497354834
+          "hash": 3371711167
         },
         {
           "tick": 11400,
-          "hash": 1497354834
+          "hash": 4154884898
         },
         {
           "tick": 12000,
-          "hash": 1497354834
+          "hash": 2300880604
         },
         {
           "tick": 12600,
-          "hash": 1497354834
+          "hash": 1258810707
         },
         {
           "tick": 13200,
-          "hash": 1497354834
+          "hash": 941408758
         },
         {
           "tick": 13800,
-          "hash": 1497354834
+          "hash": 2820760916
         },
         {
           "tick": 14400,
-          "hash": 1497354834
+          "hash": 940290868
         }
       ],
-      "finalHash": 1497354834,
-      "loot": [
-        {
-          "seed": 551753669,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 1342737689,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 3192752265,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 370428777,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 2973594117,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 1022417182,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 3894348747,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 3312275451,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 2385926749,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 2315423647,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 3003117532,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 112189318,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 3624186109,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 2203955685,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 1374431438,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 1541114980,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 1716648263,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 244020041,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 2079243068,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 4257165811,
-          "rarity": 3,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 3735966462,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        }
-      ],
+      "finalHash": 940290868,
+      "loot": [],
       "rolls": [
         {
           "id": "it-15800977",
@@ -1900,174 +1670,119 @@
         }
       ],
       "summary": {
-        "victory": true,
+        "victory": false,
         "gameOver": false,
-        "kills": 603,
-        "level": 32,
-        "bossSpawned": true,
-        "entityCount": 347
+        "kills": 22,
+        "level": 1,
+        "bossSpawned": false,
+        "entityCount": 537
       }
     },
     {
       "name": "⑩ 브루저(장갑) 런 — shipType 1 폴드 + 시그니처 18 스택/소멸 aux 폴드",
       "seed": 35585,
       "ticks": 14400,
-      "inputsHash": 1228287485,
+      "inputsHash": 216427309,
       "checkpoints": [
         {
           "tick": 600,
-          "hash": 3730773911
+          "hash": 3049769770
         },
         {
           "tick": 1200,
-          "hash": 2295710265
+          "hash": 4041316054
         },
         {
           "tick": 1800,
-          "hash": 1990856794
+          "hash": 2938250120
         },
         {
           "tick": 2400,
-          "hash": 3030807726
+          "hash": 3394908666
         },
         {
           "tick": 3000,
-          "hash": 2310338926
+          "hash": 3021063566
         },
         {
           "tick": 3600,
-          "hash": 2303653108
+          "hash": 3699191246
         },
         {
           "tick": 4200,
-          "hash": 2303653108
+          "hash": 3988975263
         },
         {
           "tick": 4800,
-          "hash": 2303653108
+          "hash": 3218454818
         },
         {
           "tick": 5400,
-          "hash": 2303653108
+          "hash": 2613861860
         },
         {
           "tick": 6000,
-          "hash": 2303653108
+          "hash": 835026649
         },
         {
           "tick": 6600,
-          "hash": 2303653108
+          "hash": 3177026935
         },
         {
           "tick": 7200,
-          "hash": 2303653108
+          "hash": 1343946576
         },
         {
           "tick": 7800,
-          "hash": 2303653108
+          "hash": 3372174878
         },
         {
           "tick": 8400,
-          "hash": 2303653108
+          "hash": 3780534616
         },
         {
           "tick": 9000,
-          "hash": 2303653108
+          "hash": 3034426909
         },
         {
           "tick": 9600,
-          "hash": 2303653108
+          "hash": 1034105551
         },
         {
           "tick": 10200,
-          "hash": 2303653108
+          "hash": 3147198279
         },
         {
           "tick": 10800,
-          "hash": 2303653108
+          "hash": 2240949295
         },
         {
           "tick": 11400,
-          "hash": 2303653108
+          "hash": 823521449
         },
         {
           "tick": 12000,
-          "hash": 2303653108
+          "hash": 1787441719
         },
         {
           "tick": 12600,
-          "hash": 2303653108
+          "hash": 228163488
         },
         {
           "tick": 13200,
-          "hash": 2303653108
+          "hash": 3008767745
         },
         {
           "tick": 13800,
-          "hash": 2303653108
+          "hash": 3477758855
         },
         {
           "tick": 14400,
-          "hash": 2303653108
+          "hash": 700442554
         }
       ],
-      "finalHash": 2303653108,
-      "loot": [
-        {
-          "seed": 2166981486,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 3393142888,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 2243339743,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 914053880,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 1289965779,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 601689220,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 526605086,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 3905477291,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 750619482,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        }
-      ],
+      "finalHash": 700442554,
+      "loot": [],
       "rolls": [
         {
           "id": "it-9109921",
@@ -2149,174 +1864,119 @@
         }
       ],
       "summary": {
-        "victory": true,
+        "victory": false,
         "gameOver": false,
-        "kills": 169,
-        "level": 17,
-        "bossSpawned": true,
-        "entityCount": 134
+        "kills": 16,
+        "level": 1,
+        "bossSpawned": false,
+        "entityCount": 480
       }
     },
     {
       "name": "⑪ 아크캐스터(과충전) 런 — shipType 2 폴드 + 시그니처 19 정지카운터 aux 폴드",
       "seed": 41676,
       "ticks": 14400,
-      "inputsHash": 3143425663,
+      "inputsHash": 216427309,
       "checkpoints": [
         {
           "tick": 600,
-          "hash": 4161818575
+          "hash": 3064518343
         },
         {
           "tick": 1200,
-          "hash": 3654036131
+          "hash": 3901997927
         },
         {
           "tick": 1800,
-          "hash": 61667704
+          "hash": 1881022958
         },
         {
           "tick": 2400,
-          "hash": 676288639
+          "hash": 2792932658
         },
         {
           "tick": 3000,
-          "hash": 3719947265
+          "hash": 1061899911
         },
         {
           "tick": 3600,
-          "hash": 3719947265
+          "hash": 1801483135
         },
         {
           "tick": 4200,
-          "hash": 3719947265
+          "hash": 4222419798
         },
         {
           "tick": 4800,
-          "hash": 3719947265
+          "hash": 2854953489
         },
         {
           "tick": 5400,
-          "hash": 3719947265
+          "hash": 1204088540
         },
         {
           "tick": 6000,
-          "hash": 3719947265
+          "hash": 387960738
         },
         {
           "tick": 6600,
-          "hash": 3719947265
+          "hash": 40556103
         },
         {
           "tick": 7200,
-          "hash": 3719947265
+          "hash": 1754637442
         },
         {
           "tick": 7800,
-          "hash": 3719947265
+          "hash": 3990046894
         },
         {
           "tick": 8400,
-          "hash": 3719947265
+          "hash": 991189997
         },
         {
           "tick": 9000,
-          "hash": 3719947265
+          "hash": 89427540
         },
         {
           "tick": 9600,
-          "hash": 3719947265
+          "hash": 785040649
         },
         {
           "tick": 10200,
-          "hash": 3719947265
+          "hash": 1344618450
         },
         {
           "tick": 10800,
-          "hash": 3719947265
+          "hash": 278341778
         },
         {
           "tick": 11400,
-          "hash": 3719947265
+          "hash": 3546917050
         },
         {
           "tick": 12000,
-          "hash": 3719947265
+          "hash": 3037577658
         },
         {
           "tick": 12600,
-          "hash": 3719947265
+          "hash": 1360856532
         },
         {
           "tick": 13200,
-          "hash": 3719947265
+          "hash": 1882718002
         },
         {
           "tick": 13800,
-          "hash": 3719947265
+          "hash": 597532722
         },
         {
           "tick": 14400,
-          "hash": 3719947265
+          "hash": 3377470707
         }
       ],
-      "finalHash": 3719947265,
-      "loot": [
-        {
-          "seed": 2248286515,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 2802424162,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 1256793428,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 3196554570,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 1265226885,
-          "rarity": 3,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 1211828716,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 1528985470,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 2744358747,
-          "rarity": 1,
-          "planet": 2,
-          "stage": 11
-        },
-        {
-          "seed": 3012544013,
-          "rarity": 2,
-          "planet": 2,
-          "stage": 11
-        }
-      ],
+      "finalHash": 3377470707,
+      "loot": [],
       "rolls": [
         {
           "id": "it-10669233",
@@ -2393,69 +2053,121 @@
         }
       ],
       "summary": {
-        "victory": true,
+        "victory": false,
         "gameOver": false,
-        "kills": 148,
-        "level": 15,
-        "bossSpawned": true,
-        "entityCount": 115
+        "kills": 21,
+        "level": 1,
+        "bossSpawned": false,
+        "entityCount": 539
       }
     },
     {
       "name": "⑫ 팬텀(은신) 런 — shipType 3 폴드 + 시그니처 20 은신 aux 폴드 + 적 AI 방출 게이트",
       "seed": 40867,
-      "ticks": 6837,
-      "inputsHash": 3846858220,
+      "ticks": 14400,
+      "inputsHash": 3794267565,
       "checkpoints": [
         {
           "tick": 600,
-          "hash": 1648749010
+          "hash": 3561257285
         },
         {
           "tick": 1200,
-          "hash": 1394666286
+          "hash": 3880748787
         },
         {
           "tick": 1800,
-          "hash": 3589821822
+          "hash": 2669838053
         },
         {
           "tick": 2400,
-          "hash": 851516453
+          "hash": 4022452286
         },
         {
           "tick": 3000,
-          "hash": 3676096849
+          "hash": 2446784373
         },
         {
           "tick": 3600,
-          "hash": 1796632336
+          "hash": 726915271
         },
         {
           "tick": 4200,
-          "hash": 1993872057
+          "hash": 3489754827
         },
         {
           "tick": 4800,
-          "hash": 2898494538
+          "hash": 3189768313
         },
         {
           "tick": 5400,
-          "hash": 4180717072
+          "hash": 4066136599
         },
         {
           "tick": 6000,
-          "hash": 363196225
+          "hash": 347539900
         },
         {
           "tick": 6600,
-          "hash": 2149766921
+          "hash": 1370248150
+        },
+        {
+          "tick": 7200,
+          "hash": 4110349319
+        },
+        {
+          "tick": 7800,
+          "hash": 2868880790
+        },
+        {
+          "tick": 8400,
+          "hash": 3766687294
+        },
+        {
+          "tick": 9000,
+          "hash": 2040984228
+        },
+        {
+          "tick": 9600,
+          "hash": 3290545541
+        },
+        {
+          "tick": 10200,
+          "hash": 3072199733
+        },
+        {
+          "tick": 10800,
+          "hash": 1891401908
+        },
+        {
+          "tick": 11400,
+          "hash": 898656954
+        },
+        {
+          "tick": 12000,
+          "hash": 3680410592
+        },
+        {
+          "tick": 12600,
+          "hash": 3025222203
+        },
+        {
+          "tick": 13200,
+          "hash": 2688372156
+        },
+        {
+          "tick": 13800,
+          "hash": 1325126586
+        },
+        {
+          "tick": 14400,
+          "hash": 556676038
         }
       ],
-      "finalHash": 308032774,
+      "finalHash": 556676038,
       "loot": [
         {
-          "seed": 1443267532,
+          "seed": 893550193,
           "rarity": 2,
           "planet": 0,
           "stage": 1
@@ -2522,12 +2234,12 @@
         }
       ],
       "summary": {
-        "victory": true,
+        "victory": false,
         "gameOver": false,
-        "kills": 435,
-        "level": 21,
-        "bossSpawned": true,
-        "entityCount": 241
+        "kills": 1210,
+        "level": 11,
+        "bossSpawned": false,
+        "entityCount": 753
       }
     }
   ]

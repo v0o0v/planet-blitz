@@ -19,6 +19,9 @@ import {
 } from '../src/sim/world.js';
 import type { WorldConfig, WorldState, InputFrame } from '../src/sim/world.js';
 import { runReplay } from '../src/sim/replay.js';
+import { buildRunConfig } from '../src/run/runConfig.js';
+import { standardEquipped, standardSkillInvest } from '../src/bench/standardBuild.js';
+import { LEVEL_PER_STAGE } from '../src/save/progressionPath.js';
 import { atan2, length } from '../src/sim/math.js';
 import { blankEntity, addEntity } from '../src/sim/entities.js';
 import { defaultProfile, activeShip } from '../src/save/profile.js';
@@ -29,19 +32,52 @@ import {
   computeLoadoutStats,
   neutralLoadout,
   WEAPON_SPREAD,
-  WEAPON_VULCAN,
 } from '../src/items/loadout.js';
 import { RARITY_RARE, RARITY_UNIQUE } from '../src/sim/drops.js';
 
 // 베르단 교전 티어 + 유니크 로드아웃(과열 드럼 bit0) — 베르단·티어·로드아웃·유니크를 한
 // config에 모아 드랍 시퀀스 결정론을 종합 게이트한다. 불멸 파일럿으로 보스까지 완주 보장.
-const BERDAN_ENGAGE: WorldConfig = {
-  ...DEFAULT_CONFIG,
-  planet: 1,
-  stage: 11,
-  playerHp: 100_000_000,
-  loadout: { ...neutralLoadout(), weaponType: WEAPON_VULCAN, uniqueMask: 1 << 0 },
-};
+//
+// ## ⚠️ 파일럿을 **ADR-0035 표준 빌드**로 바꿨다 (2026-07-27 밸런스 패스)
+// 이 파일의 불변식은 난이도가 아니라 **파밍 루프 배선**이다(완주 → 드랍 → 정산 큐 → 인벤).
+// 그런데 적 축 재보정으로 무장비 파일럿이 **구조적으로 완주 불가**가 됐다:
+//   · `SEGMENTS.killGoal` 합계 80 → **240**(×3, ADR-0037 Lane D)
+//   · `stageHpMult(11)` 2.2 → **4.0**(×1.8)
+// 실측: 구 하네스(무장비 + 유니크 bit0, 내구)는 증인 `0xfa11` 로 **144,000틱(2,400초)** 을 돌려도
+// 세그먼트 1 · 처치 13 에서 **정체**한다(죽지 않고 못 나아간다). `0xfa11` 부터 연속 **400시드**
+// 스캔에서 완주 0건 — 틱 예산도 시드도 답이 아니다.
+// ADR-0035 가 "적정 티어"를 표준 레벨·표준 장비·표준 투자로 재정의했으므로 하네스를 그 정의에
+// 맞춘다. **구 증인 시드 두 개(`0xfa11`·`0xd0e5`)가 그대로 산다**(표준 빌드로 각각 t=1,387 ·
+// 1,496틱에 승리 · loot 1 · rare+ 1 · planet/stage 스탬프 정합, 실측). 단언은 한 글자도 안 바꿨다.
+//
+// **유니크 축은 보존한다** — 표준 빌드가 만든 `uniqueMask` 에 과열 드럼(bit0)을 OR 해 이 config
+// 의 원래 목적(유니크 훅까지 함께 게이트)을 유지한다.
+//
+// ## 이제 커버되지 않는 것
+// **무장비 + 발칸 고정 조합의 파밍 루프.** 무기 타입은 이제 표준 장비 롤이 정한다(발칸 고정이
+// 아니다). 무기별 경로는 아래 ③ 블록(`WEAPON_SPREAD` 장착 검증)과 `tests/drops.test.ts`·
+// `tests/combat.test.ts` 계열이 계속 밟는다.
+//
+// ## ⚠️ `gearSeed` 는 런 시드와 같게 둔다
+// 상수로 고정하면 "그 장비 세트 한 벌의 운"을 재게 된다 — 같은 설계값에서도 `gearSeed` 만 바꾸면
+// 클리어율이 **48.3~100.0%** 로 갈린다(`.omc/research/economy-recalibrated-2026-07-27.md` §0.1).
+// 런 시드와 묶으면 증인을 갈 때 장비 운도 함께 갈리므로 **이 config 는 증인 시드와 같은 성질**
+// (sim 이 바뀌면 다시 골라야 하는 값)이다.
+function berdanEngageConfig(seed: number): WorldConfig {
+  const STAGE = 11;
+  const profile = defaultProfile();
+  const ship = activeShip(profile);
+  ship.level = LEVEL_PER_STAGE * STAGE; // 표준 레벨 = 5 × 단계 (ADR-0035)
+  ship.skillInvest = standardSkillInvest(ship.typeId, ship.level);
+  ship.equipped = standardEquipped(ship.level, seed, 1);
+  const base = buildRunConfig(profile, { planet: 1, stage: STAGE });
+  const lo = base.loadout!;
+  return {
+    ...base,
+    playerHp: 100_000_000,
+    loadout: { ...lo, uniqueMask: (lo.uniqueMask | (1 << 0)) >>> 0 }, // 과열 드럼 보존
+  };
+}
 
 /**
  * 보스까지 완주하고, 승리 후 바닥 loot(보스 확정 드랍 등)를 실제로 주워 담을 때까지
@@ -91,7 +127,8 @@ function playAndLoot(seed: number, config: WorldConfig): {
 }
 
 describe('파밍 루프 end-to-end (G1, AC8/AC3)', () => {
-  const { state } = playAndLoot(0xfa11, BERDAN_ENGAGE);
+  const BERDAN_ENGAGE_FA11 = berdanEngageConfig(0xfa11);
+  const { state } = playAndLoot(0xfa11, BERDAN_ENGAGE_FA11);
 
   it('베르단 교전 런이 완주하고 실제 드랍이 정산 큐에 쌓인다', () => {
     expect(state.victory).toBe(true);
@@ -126,10 +163,11 @@ describe('파밍 루프 end-to-end (G1, AC8/AC3)', () => {
 
 describe('드랍 시드 시퀀스 결정론 (G2, AC2)', () => {
   it('동일 [시드+입력+로드아웃+베르단] 2회 실행이 해시·드랍 시퀀스 모두 일치한다', () => {
-    const { state, inputs } = playAndLoot(0xd0e5, BERDAN_ENGAGE);
+    const cfg = berdanEngageConfig(0xd0e5);
+    const { state, inputs } = playAndLoot(0xd0e5, cfg);
     expect(state.loot.length).toBeGreaterThan(0);
-    const a = runReplay({ seed: 0xd0e5, config: BERDAN_ENGAGE, inputs });
-    const b = runReplay({ seed: 0xd0e5, config: BERDAN_ENGAGE, inputs });
+    const a = runReplay({ seed: 0xd0e5, config: cfg, inputs });
+    const b = runReplay({ seed: 0xd0e5, config: cfg, inputs });
     // 틱별 해시 100% 일치.
     expect(a.hashes).toEqual(b.hashes);
     // 드랍 시드 시퀀스(정산 입력)도 bit-identical — 서버 재현이 같은 아이템을 낳는 근거.

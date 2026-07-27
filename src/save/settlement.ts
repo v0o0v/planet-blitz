@@ -9,8 +9,9 @@
  *     (same seed → same item, so a server re-run reproduces the reward);
  *   - items fill the inventory, then the stash, then overflow (surfaced so the UI
  *     can nudge the player to make room — plan D2);
- *   - run XP is banked onto the active ship, leveling it along the `xpToNext`
- *     curve; each level grants one skill point (accrued only, spent in M3);
+ *   - run XP is banked onto the active ship, leveling it along the **메타 풀** curve
+ *     `xpToNextMeta` (ADR-0036 — 런 내 성장 커브 `xpToNext` 와는 별개 축); each level
+ *     grants one skill point (accrued only, spent in M3);
  *   - raid resources convert to credits.
  *
  * ADR-0003 / plan: collected loot is always preserved. On death the boss's
@@ -28,7 +29,8 @@ import type { BlueprintGrant } from '../../data/planets/blueprints.js';
 import { RARITY_BY_CODE } from '../items/types.js';
 import type { Item } from '../items/types.js';
 import type { LootRecord } from '../sim/world.js';
-import { xpToNext } from '../sim/world.js';
+import { xpToNextMeta, lowStageXpDecayPercent } from './progressionPath.js';
+import { LEVEL_CAP } from '../../data/waves.js';
 import type { Profile, Ship } from './profile.js';
 import { INVENTORY_CAP, activeShip, stashCapacity, recordPlanetClear } from './profile.js';
 import { SHIP_STORIES, RECORD_SHARDS } from '../../data/lore/index.js';
@@ -45,7 +47,10 @@ export interface RunResult {
   resources: number;
   /** Planet index the run took place on (records a clear on victory, plan E2). */
   planet?: number;
-  /** 침략 단계 the run took place on (records a clear on victory, ADR-0022). */
+  /**
+   * 침략 단계 the run took place on (records a clear on victory, ADR-0022).
+   * 저단계 XP 감쇠(ADR-0036)의 입력이기도 하다 — 미지정(침공·구 세이브)이면 무감쇠.
+   */
   stage?: number;
   /**
    * 이번 런에 에코 신호를 안정화해 기록 파편을 획득했는가(스토리 Phase E — sim `echoStabilizedOf`
@@ -110,9 +115,15 @@ export function settleRun(profile: Profile, result: RunResult): SettlementOutcom
     else overflow++;
   }
 
-  // 3. Bank XP onto the active ship, leveling along the xpToNext curve.
+  // 3. Bank XP onto the active ship, leveling along the xpToNextMeta curve (메타 풀 — ADR-0036).
+  //    저단계 감쇠는 **여기서만** 걸린다: 표준 진행 경로(ADR-0035)보다 한참 아래 단계를 반복해
+  //    파밍하는 경로의 효율을 깎되 진행을 멈추지는 않는다(하한 30%).
+  //    ⚠️ 감쇠는 **적립 전 레벨** 기준으로 한 번만 곱한다 — 이 정산에서 레벨업이 여러 번
+  //    일어나도 배율이 도중에 변하지 않아야 결정론·설명가능성이 선다("이 런은 ×0.7"이 한 문장).
   const ship = activeShip(profile);
-  const levelsGained = grantXp(ship, Math.max(0, Math.floor(result.xpTotal)));
+  const decayPct = lowStageXpDecayPercent(ship.level, result.stage);
+  const rawXp = Math.max(0, Math.floor(result.xpTotal));
+  const levelsGained = grantXp(ship, Math.floor((rawXp * decayPct) / 100));
   const skillPointsGained = levelsGained;
   profile.skillPoints += skillPointsGained;
 
@@ -216,18 +227,31 @@ function applyStoryProgress(
   return { ...(shardGained !== undefined ? { shardGained } : {}), rewardCredits };
 }
 
-/** Add XP to a ship and resolve level-ups. Returns the number of levels gained. */
+/**
+ * Add XP to a ship and resolve level-ups along the **메타 풀** curve. Returns the number
+ * of levels gained.
+ *
+ * `LEVEL_CAP` 하드 강제(ADR-0036): 만렙에서 `xpToNextMeta` 가 0 을 내므로 루프가 멈추고,
+ * 아래에서 남은 `ship.xp` 를 **0 으로 버린다**. 초과 XP 를 남겨두지 않는 이유는 그게 곧
+ * "만렙 기체에 저금해 두면 다음 세대가 빨리 큰다"는 우회로가 되기 때문이다 — 만렙의 유일한
+ * 출구는 퇴역이고(ADR-0007·0024 세대 순환), 그 문 앞에 저금통을 두면 순환 의도가 무너진다.
+ */
 export function grantXp(ship: Ship, xp: number): number {
   ship.xp += xp;
   let levels = 0;
-  // Consume banked XP up the curve. Terminates: xpToNext grows with level and xp
-  // is finite, so the loop bound is xp / xpToNext(1).
+  // Consume banked XP up the curve. Terminates: xpToNextMeta grows with level and xp
+  // is finite, so the loop bound is xp / xpToNextMeta(1); 만렙에서는 need === 0 으로 즉시 종료.
   for (;;) {
-    const need = xpToNext(ship.level);
+    if (ship.level >= LEVEL_CAP) break;
+    const need = xpToNextMeta(ship.level);
     if (need <= 0 || ship.xp < need) break;
     ship.xp -= need;
     ship.level++;
     levels++;
+  }
+  if (ship.level >= LEVEL_CAP) {
+    ship.level = LEVEL_CAP;
+    ship.xp = 0; // 초과 XP 는 버린다(위 주석).
   }
   return levels;
 }
