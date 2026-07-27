@@ -141,7 +141,15 @@ export function resolveFacilityStats(
   const rarityCp = RARITY_CP[ref.rarity] ?? 100;
   const ascCp = 100 + ref.ascension * ASCENSION_STEP_CP;
   const scale = (base: number): number => scaleCp(scaleCp(scaleCp(base, levelCp), rarityCp), ascCp);
-  const rawDamage = spec.behavior === FACILITY_BEHAVIOR_HAZARD ? spec.hazardDamage : spec.damage;
+  // 거동마다 피해가 실리는 필드가 다르다. 프레스는 `pressCrushDamage` 다 — 예전에는 이 분기가
+  // 없어 `spec.damage`(프레스는 0)를 읽었고, 그래서 프레스만 강화 3축이 통째로 무효했다
+  // (실측: lv1·lv17·lv50·lv99 전부 L2 누적 피해 **804 고정**).
+  const rawDamage =
+    spec.behavior === FACILITY_BEHAVIOR_HAZARD
+      ? spec.hazardDamage
+      : spec.behavior === FACILITY_BEHAVIOR_PRESS
+        ? spec.pressCrushDamage
+        : spec.damage;
   return {
     hp: scale(spec.hp),
     damage: scale(rawDamage),
@@ -164,6 +172,23 @@ export function withinArc(facingRad: number, arcDeg: number, targetRad: number):
   const half = (arcDeg * DEG_TO_RAD) / 2;
   const d = wrapAngle(targetRad - facingRad);
   return d >= -half && d <= half;
+}
+
+/**
+ * 사계 안으로 접은 각도. **편차 사격 전용** — 교전 판정({@link withinArc})은 표적의 실제
+ * 방향으로 하고, 실제로 겨누는 각도만 이걸로 접는다.
+ *
+ * ⚠️ 교전 판정을 편차 각도로 하면 안 된다. 그러면 예측각이 사계를 조금만 벗어나도 **발사 자체를
+ * 거부**해, 사계 안에 뻔히 있는 표적을 놓친다. 실측으로 밟은 함정이다 — `breachturret` 의 L2
+ * 누적 피해가 2226 → **정확히 0** 이 됐다(정확도 저하가 아니라 구조적 무발사).
+ */
+function clampToArc(facingRad: number, arcDeg: number, ang: number): number {
+  if (arcDeg >= 360) return ang;
+  const half = (arcDeg * DEG_TO_RAD) / 2;
+  const d = wrapAngle(ang - facingRad);
+  if (d > half) return facingRad + half;
+  if (d < -half) return facingRad - half;
+  return ang;
 }
 
 // ---------------------------------------------------------------------------
@@ -204,11 +229,23 @@ export function spawnFacility(
 ): Entity | undefined {
   const spec = facilitySpecFor(ref.catalogId);
   if (spec === undefined) return undefined;
-  // 압축 프레스는 설비 엔티티가 아니라 **이동 벽**이다(M7c). 스탯·어픽스·정비도 축을 타지
-  // 않으므로 여기서 갈라 전용 스폰으로 넘긴다 — 아래 어픽스·조준 경로가 프레스를 보면
-  // `facilitySpecFor` 수치가 전부 0 이라 조용히 무력한 포탑이 하나 생긴다.
+  // 압축 프레스는 설비 엔티티가 아니라 **이동 벽**이다(M7c). 좌표·주기 축이 완전히 달라서
+  // 여기서 갈라 전용 스폰으로 넘긴다 — 아래 어픽스·조준 경로가 프레스를 보면 `facilitySpecFor`
+  // 수치가 전부 0 이라 조용히 무력한 포탑이 하나 생긴다.
+  //
+  // 다만 **끼임 피해는 다른 설비와 같은 강화 3축·어픽스를 탄다.** 예전에는 이 갈래가 스탯 축을
+  // 통째로 건너뛰어 프레스만 레벨·등급·승급이 전부 무효였다(실측: lv1~lv99 L2 누적 피해 804
+  // 고정). 이동 벽 구조는 그대로 두고 피해 값만 정본 경로로 다시 실어 준다.
   if (spec.behavior === FACILITY_BEHAVIOR_PRESS) {
-    return spawnMovingWall(state, socket, socketIndex, ref, spec);
+    const press = spawnMovingWall(state, socket, socketIndex, ref, spec);
+    if (press !== undefined) {
+      const pressMods = defenseAffixSet(CATALOG_FACILITY, ref).always;
+      press.damage = affixDamage(
+        resolveFacilityStats(spec, ref, affixMaintenance(maintenance, pressMods)).damage,
+        pressMods,
+      );
+    }
+    return press;
   }
   // 방어체 어픽스는 **접두(상시)만** 스폰 시점에 싣는다. 접미(조건부)는 스텝이 매 틱 얹는다
   // (src/sim/invasion/affix.ts 머리말 "적용 시점 규율"). 어픽스 미보유면 배율 1 → 비트 동일.
@@ -381,10 +418,60 @@ function syncFacilityAffixStats(
 }
 
 /**
+ * 단발 포탑 조준 흔들림 진폭(도). **`pellets === 1` 에만 건다** —
+ * `fireFacilityBullets` 의 `spreadDeg` 는 `pellets > 1` 일 때만 부채꼴을 펴므로, 단발 포탑에는
+ * 확산이라는 축이 아예 없었다. 그래서 단발은 조준이 한 점에 고정돼 **움직이는 표적을 구조적으로
+ * 못 맞혔고**, 다발 포탑만 확산으로 그 오차를 우회하고 있었다.
+ *
+ * 실측(24시드 · 어픽스 제외 레벨 단독 스윕 · L2 누적 피해)이 그 분리를 예외 없이 보여줬다:
+ *   `pellets 1` — `rapid` 240 → 420 → 0 → 0 · `toxinturret` 55 → 44 → 0 → 0 ·
+ *                 `rail`·`heavyrail`·`siegecannon` 전 구간 0
+ *   `pellets 3+` — `mortar`(5발 44도) 8 → 3195 · `breachturret`(3발 30도) 252 → 2226 정상 단조
+ *
+ * 이 흔들림을 넣으면 `rapid` 174 → 238 → 270 → 477 · `toxinturret` 15 → 44 → 75 → 132 로
+ * **역전이 사라지고 단조로 돌아온다**. 다발 포탑에는 걸지 않는다 — 자체 확산 위에 덧대면
+ * 명중률이 되레 떨어진다(실측: `mortar` 3195 → 2676 · `breachturret` 2226 → 318).
+ */
+export const TURRET_AIM_JITTER_DEG = 4;
+
+/** 흔들림 주기(틱). 소수라 한 회랑의 12소켓이 같은 위상으로 겹치지 않는다. */
+const AIM_JITTER_PERIOD = 97;
+
+/**
+ * 포탑이 실제로 겨눌 각도. 단발 포탑이면 {@link TURRET_AIM_JITTER_DEG} 만큼 결정론적으로
+ * 흔들고, 다발 포탑이면 표적 방향 그대로 돌려준다(자체 확산이 이미 있다).
+ *
+ * ## 편차 사격(lead)을 넣지 않은 이유 — 실측으로 기각했다
+ * 표적의 속도로 도달 지점을 예측하는 편차 사격을 구현해 재 봤으나, 참조봇 기준으로 **해로웠다**:
+ *   `rapid` 240/420/0/0 → **24/70/0/0**(역전 그대로) · `mortar` 3195 → 3053 · lv1 구간 하락.
+ * 참조봇은 탄도(ballistic)로 움직이지 않고 카이팅·회피로 **진동**하기 때문에, 순간 속도를
+ * 외삽하면 표적이 지키지 않을 방향을 겨누게 된다. 흔들림만 넣은 쪽이 모든 축에서 우월했다.
+ *
+ * ⚠️ **이 판정은 참조봇 기준이다.** 사람은 봇보다 탄도에 가깝게 움직이므로 편차 사격이 사람에게는
+ * 유효할 수 있다(m8 인계 §1.4 — 이 리포의 모든 난이도 수치는 봇 기준이다). 플레이테스트
+ * 데이터가 생기면 다시 판단할 항목이지, "편차 사격은 틀렸다"로 굳히지 마라.
+ *
+ * 결정론(ADR-0005): RNG 미소비. 흔들림은 `tick`·`id` 의 순수 삼각파다(해저드 위상을 소켓
+ * 인덱스에서 파생하는 선례와 같은 규율).
+ */
+function turretAimAngle(state: WorldState, e: Entity, spec: FacilitySpec, aimNow: number): number {
+  if (spec.pellets > 1) return aimNow;
+  const raw = (state.tick + e.id * 13) % AIM_JITTER_PERIOD;
+  const phase = raw < 0 ? raw + AIM_JITTER_PERIOD : raw;
+  const half = AIM_JITTER_PERIOD / 2;
+  // 삼각파 0→1→0 을 −1..+1 로 편다(단일 나눗셈 · f64 누적 없음).
+  const tri = phase < half ? phase / half : 2 - phase / half;
+  return aimNow + (tri * 2 - 1) * TURRET_AIM_JITTER_DEG * DEG_TO_RAD;
+}
+
+/**
  * 방향 제한 방어포 1기. 사거리 → **사계** → 벽 LOS 순으로 게이트하고, 예고선 스펙이 있으면
  * 조준각을 잠근 뒤 예고 구간을 소화하고 쏜다(예고 중에는 탄이 없어 피해도 없다).
  *
  * 사거리·사계 밖이면 카운트다운을 **유지**한다(구 포탑과 동일 규율 — 사정권 진입 시 즉발).
+ *
+ * 사거리·LOS 게이트는 플레이어의 **현재 위치**로 판정하고(교전 성립 여부), 사계·발사는
+ * {@link turretAimAngle} 의 **편차 각도**를 쓴다(포탑이 실제로 겨누는 방향).
  */
 function stepTurretFacility(
   state: WorldState,
@@ -412,8 +499,11 @@ function stepTurretFacility(
   const dx = player.x - e.x;
   const dy = player.y - e.y;
   if (dx * dx + dy * dy > spec.range * spec.range) return;
-  const ang = atan2(dy, dx);
-  if (!withinArc(e.targetX, e.pierce, ang)) return;
+  // 교전 판정은 표적의 **실제 방향**으로 한다(사계 = 이 포탑이 담당하는 구역).
+  const aimNow = atan2(dy, dx);
+  if (!withinArc(e.targetX, e.pierce, aimNow)) return;
+  // 실제로 겨누는 각도만 흔들고, 사계 밖으로 나가면 경계로 접는다(거부하지 않는다).
+  const ang = clampToArc(e.targetX, e.pierce, turretAimAngle(state, e, spec, aimNow));
   if (state.activeWalls.length > 0 && segmentBlocked(e.x, e.y, player.x, player.y, state.activeWalls)) {
     return;
   }
