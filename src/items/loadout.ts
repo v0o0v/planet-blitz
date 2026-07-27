@@ -273,6 +273,10 @@ export function computeLoadoutStats(
   applyShipTypeBase(lo, shipType.baseBp);
 
   // Sum every equipped item's affixes, then OR in unique bits.
+  // ⚠️ 유니크는 **비트 OR** 이므로 같은 `uniqueId` 를 두 칸에 꽂으면 두 번째 사본의 효과가 통째로
+  // 무효다(어픽스만 합산된다). 이 함수는 그 사실을 그대로 두고, 중복 자체를 **장착 시점에서**
+  // 막는다 — `src/items/uniqueEquip.ts`(격납고 equip 게이트). 여기서 중첩 규칙을 만들면 sim 의
+  // 비트 분기를 유니크 15종마다 갈라야 해서 골든 재생성·EF 재배포가 따라붙는다.
   const sums = zeroSums();
   let uniqueMask = 0;
   for (const it of equipped) {

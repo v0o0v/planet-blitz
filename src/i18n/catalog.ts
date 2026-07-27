@@ -534,6 +534,9 @@ export const EN = {
   'inv.moved.toInventory': 'Moved {name} to the inventory.',
   'inv.moved.toStash': 'Moved {name} to the stash.',
   'inv.err.stashFull': 'The stash is full. Expand it or salvage something first.',
+  // 같은 유니크 중복 장착 차단(src/items/uniqueEquip.ts) — 무음 거부 금지.
+  'inv.err.duplicateUnique':
+    '{name} — the same unique is already equipped. Unique effects do not stack, so the second copy would waste the slot.',
   'inv.tip.equippedNow': 'Currently equipped',
   'inv.act.expand': 'Expand Stash ({n} credits)',
   'inv.act.expandMax': 'Stash Fully Expanded',
@@ -559,6 +562,8 @@ export const EN = {
   'hangar.stat.element.lightning': 'Lightning',
   'hangar.stat.lineage': 'Lineage Boost',
   'hangar.stat.unique': 'Unique Effects',
+  // 게이트 도입 전 세이브에 남아 있는 중복 사본(uniqueMask 가 OR 라 효과가 없다) 표기.
+  'hangar.stat.uniqueDup': '{name} (duplicate — no effect)',
   'hangar.desc.weapon': 'Your ship’s primary fire pattern.',
   'hangar.desc.damage': 'Multiplier on all outgoing damage.',
   'hangar.desc.fireRate': 'How fast your weapon cycles.',
@@ -1910,6 +1915,9 @@ export const KO: Record<MessageKey, string> = {
   'inv.moved.toInventory': '{name} → 인벤토리로 이동',
   'inv.moved.toStash': '{name} → 보관함으로 이동',
   'inv.err.stashFull': '보관함이 가득 찼습니다. 확장하거나 먼저 분해하세요.',
+  // 조사(을/를) 회피는 위 이동 문구와 같은 이유 — `{name}` 이 데이터라 받침을 고를 수 없다.
+  'inv.err.duplicateUnique':
+    '{name} — 같은 유니크를 이미 장착 중입니다. 유니크 효과는 중첩되지 않아 두 번째 칸이 낭비됩니다.',
   'inv.tip.equippedNow': '현재 장착 중',
   'inv.act.expand': '창고 확장 ({n} 크레딧)',
   'inv.act.expandMax': '창고 최대 확장됨',
@@ -1935,6 +1943,7 @@ export const KO: Record<MessageKey, string> = {
   'hangar.stat.element.lightning': '전격',
   'hangar.stat.lineage': '계보 강화',
   'hangar.stat.unique': '유니크 효과',
+  'hangar.stat.uniqueDup': '{name} (중복 — 효과 없음)',
   'hangar.desc.weapon': '기체의 기본 발사 방식입니다.',
   'hangar.desc.damage': '모든 피해에 곱해지는 배율입니다.',
   'hangar.desc.fireRate': '무기가 재장전되는 속도입니다.',
