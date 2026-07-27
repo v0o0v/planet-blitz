@@ -35,6 +35,11 @@
  * | `aux1` | — | — | 다음 소환까지 틱 |
  * | `damage` | 실효 발당 피해 | 실효 틱당 장판 피해 | — |
  * | `hp`/`maxHp`/`radius` | 실효 내구도·히트박스 | 〃 | 〃 |
+ *
+ * 해저드가 **융기시키는 `hazard` 엔티티**는 위 표 밖이다. 그쪽에서 이 모듈이 쓰는 슬롯은
+ * `aux0` 하나뿐이며 의미는 **감속 지속 틱(0 = 기본값)** 이다 — 효용 해저드 전용
+ * ({@link isUtilityHazard}). `hazard` kind 는 원래 `aux0` 를 쓰지 않고, 해시는 `aux0`·`aux1`
+ * 이 둘 다 0 이면 폴드를 생략하므로(src/sim/replay.ts) 다른 장판은 바이트 불변이다.
  */
 
 import type { Entity, EntityKind } from '../entities.js';
@@ -42,6 +47,7 @@ import { blankEntity, addEntity, spawnEnemyBullet, spawnHazard, spawnWall } from
 import type { WorldState } from '../world.js';
 import { atan2, cos, sin, wrapAngle, PI } from '../math.js';
 import { segmentBlocked } from '../los.js';
+import { PLAYER_SLOW_DURATION } from '../status.js';
 import { normalizeMaintenance } from './guardian.js';
 import { invasionFireCooldown } from './guardianBridge.js';
 import { summonEnemy } from '../waves.js';
@@ -139,6 +145,17 @@ function scaleCp(base: number, cp: number): number {
 }
 
 /**
+ * 배치 Ref 의 강화 3축(레벨 → 등급 → 승급)을 **단계마다 정수 반올림**하며 곱한다.
+ * 순서가 계약이다 — 바꾸면 값이 달라져 클라·서버 재실행이 갈린다.
+ */
+function scaleByRef(base: number, ref: FacilityRef): number {
+  const levelCp = 100 + (ref.level - 1) * LEVEL_STEP_CP;
+  const rarityCp = RARITY_CP[ref.rarity] ?? 100;
+  const ascCp = 100 + ref.ascension * ASCENSION_STEP_CP;
+  return scaleCp(scaleCp(scaleCp(base, levelCp), rarityCp), ascCp);
+}
+
+/**
  * 배치 Ref(레벨·승급·등급)와 정비도로 실효 스탯을 파생한다.
  *
  * 배율은 곱을 f64 로 누적하지 않고 **단계마다 정수로 반올림**한다(레벨 → 등급 → 승급 순).
@@ -152,10 +169,7 @@ export function resolveFacilityStats(
   ref: FacilityRef,
   maintenance: number,
 ): FacilityStats {
-  const levelCp = 100 + (ref.level - 1) * LEVEL_STEP_CP;
-  const rarityCp = RARITY_CP[ref.rarity] ?? 100;
-  const ascCp = 100 + ref.ascension * ASCENSION_STEP_CP;
-  const scale = (base: number): number => scaleCp(scaleCp(scaleCp(base, levelCp), rarityCp), ascCp);
+  const scale = (base: number): number => scaleByRef(base, ref);
   // 거동마다 피해가 실리는 필드가 다르다. 프레스는 `pressCrushDamage` 다 — 예전에는 이 분기가
   // 없어 `spec.damage`(프레스는 0)를 읽었고, 그래서 프레스만 강화 3축이 통째로 무효했다
   // (실측: lv1·lv17·lv50·lv99 전부 L2 누적 피해 **804 고정**).
@@ -374,7 +388,9 @@ export function stepFacility(state: WorldState, ctx: InvasionStepContext): void 
       // 해저드는 연사 어픽스를 받지 않는다 — 주기가 **틱의 순수 함수**(위상은 소켓 인덱스 파생)
       // 라서 개체마다 주기를 흔들면 예열 예고 리듬이 소켓 간에 엇갈려 읽을 수 없게 된다.
       // 어픽스는 장판 피해(`e.damage`)와 내구도로 실린다(위 syncFacilityAffixStats).
-      stepHazardFacility(state, e, spec, socketCount);
+      // `ref` 를 넘기는 것은 **효용 해저드**(피해 0) 전용 경로 때문이다 — 그쪽은 피해가 0 이라
+      // 강화 3축을 실을 자리가 없어서, 반경·활성 길이에 직접 태운다({@link isUtilityHazard}).
+      stepHazardFacility(state, e, spec, socketCount, ref);
     } else {
       stepSpawnerFacility(state, e, spec, maintenance, mods);
     }
@@ -703,6 +719,115 @@ function fireFacilityBullets(state: WorldState, e: Entity, spec: FacilitySpec, a
 }
 
 /**
+ * **효용 해저드**(피해 0 의 순수 디버프 장판)인가. 현행 카탈로그에서는 견인 자기장
+ * (`fac.gravwell`, catalogId 7) 하나뿐이다.
+ *
+ * ## 왜 이 게이트가 필요한가 — 강화 3축이 통째로 죽어 있었다
+ * {@link resolveFacilityStats} 가 스케일하는 것은 `hp` · `damage` · 발사/생산 간격 셋이고,
+ * 해저드의 `damage` 는 `spec.hazardDamage` 다. 그런데 견인 자기장은 그 값이 **0** 이라
+ * `scale(0) === 0` — 레벨·등급·승급이 바꾸는 것이 **내구도뿐**이었다.
+ *
+ * 실측(24시드 · `rarity 0` · `ascension 0` 레벨 단독 스윕 · L2 감속 틱 비율)이 그 귀결을
+ * 그대로 보여줬다 — 축이 **역전**이다:
+ *
+ *   lv1 12.05% → lv17 8.75% → lv50 8.13% → lv99 8.14%
+ *
+ * 장판 자체는 레벨과 함께 늘어난다(장판 엔티티-틱 627,473 → 1,016,648 — 설비가 안 부서지니까).
+ * 그런데 플레이어가 실제로 감속당한 비율은 내려간다. 원인은 `invasion-nonmonotonic-hazards`
+ * 문서가 밝힌 **교전 소멸**과 같다: 내구도만 오르면 설비가 안 부서지고 → 참조봇이 접근할
+ * 이유가 사라지고 → 장판에 닿는 경로가 통째로 없어진다(참조봇에는 해저드 회피/접근 항이
+ * 아예 없어 장판에 닿는 길이 "설비를 부수러 가는 동안"뿐이다). 즉 **내구도 상승이 유일한
+ * 강화축인 설비는 강화할수록 기여가 준다.**
+ *
+ * 그래서 피해가 0 인 해저드에 한해, 기여를 실제로 나르는 값 — **감속 지속**(본체) ·
+ * 활성 길이 · 반경 — 에 강화축을 태운다. 96시드 실측 12.71% → **20.14%**(lv25)로 축이
+ * 시드 램프 구간(lv1~29)에서 단조로 돌아왔다.
+ *
+ * ## 왜 `hazardSubtype === HAZARD_SLOW` 이 아니라 `hazardDamage === 0` 인가
+ * 오염 늪(`fac.blightpool`, 10)도 감속 장판이지만 `hazardDamage` 가 2 라 **강화축이 살아
+ * 있다**(lv29·rarity3·asc3 에서 12). 죽어 있는 것은 정확히 "곱해도 0 인" 종뿐이므로 게이트를
+ * 그 사실에 맞춘다. 덕분에 나머지 16종은 이 경로에서 **한 비트도 바뀌지 않는다**.
+ */
+function isUtilityHazard(spec: FacilitySpec): boolean {
+  return spec.behavior === FACILITY_BEHAVIOR_HAZARD && spec.hazardDamage === 0;
+}
+
+/**
+ * 효용 해저드 반경 상한 배율(centi-percent). 강화 3축의 곱은 시드 램프 최상단
+ * (lv29 · rarity 3 · ascension 3)에서 **6.3배**까지 가는데, 반경 380 을 그대로 6.3배 하면
+ * 2,394 가 되어 회랑(반높이 540)을 통째로 덮는다. 그러면 감속이 **상시**가 되어
+ * ① 회피라는 축이 사라지고 ② 지표가 100% 에 붙어 강화축이 다시 포화한다
+ * (`invasion-nonmonotonic-hazards` 의 즉사 포화와 같은 실패 방식이다).
+ *
+ * ⚠️ **다만 이 축은 사실상 무효다.** 상한을 200cp(760)로 두나 400cp(1,520)로 두나 96시드
+ * 9행이 **한 자리도 같았다**. 원인은 밸런스가 아니라 broad-phase 다 — 공간 해시
+ * (`src/sim/collision.ts`, 셀 256)는 엔티티를 **중심 좌표의 셀 한 칸**에만 넣고 플레이어
+ * 접촉 질의는 **플레이어 반경**으로만 셀을 훑으므로(`src/sim/world.ts` `resolveCollisions`),
+ * 장판 중심이 한두 셀 밖이면 반경이 아무리 커도 후보로 들어오지 않는다. 실효 상한은 약 650 이다.
+ * 전역 broad-phase 를 고치면 화염·레이저·충격파 등 **모든 해저드의 명중이 한꺼번에** 바뀌므로
+ * 이 레인에서는 손대지 않았다(`.omc/research/invasion-gravwell-slow-axis-2026-07-27.md` §2-1).
+ * 그래서 곡선을 실제로 세우는 것은 {@link utilityHazardSlowTicks} 다.
+ */
+const UTILITY_HAZARD_RADIUS_CAP_CP = 200;
+
+/** 효용 해저드의 실효 장판 반경. 강화 3축을 태우되 {@link UTILITY_HAZARD_RADIUS_CAP_CP} 로 자른다. */
+function utilityHazardRadius(spec: FacilitySpec, ref: FacilityRef): number {
+  const cap = scaleCp(spec.hazardRadius, UTILITY_HAZARD_RADIUS_CAP_CP);
+  const scaled = scaleByRef(spec.hazardRadius, ref);
+  return scaled > cap ? cap : scaled;
+}
+
+/**
+ * 효용 해저드의 실효 활성 길이(틱). 강화 3축을 태우되 카탈로그 계약
+ * `windupTicks + onTicks <= periodTicks` 를 넘지 않게 자른다 — 넘기면 다음 주기의 융기가
+ * 이전 장판과 겹쳐 예열 리듬이 읽히지 않는다.
+ *
+ * 견인 자기장 기준 상한은 180 − 20 = **160**(기본 100 대비 1.6배)이라 lv7 부근에서 이미
+ * 포화한다. 그래서 이 축 **단독으로는 강화축을 살리지 못하고**(실측 §연구 문서), 반경 축과
+ * 함께 태워야 한다. 그럼에도 함께 태우는 이유는, 활성 길이가 늘면 "지나가다 스치는" 확률이
+ * 저레벨 구간에서 먼저 올라 곡선의 앞부분이 매끄러워지기 때문이다.
+ */
+function utilityHazardOnTicks(spec: FacilitySpec, ref: FacilityRef): number {
+  const cap = spec.periodTicks - spec.windupTicks;
+  const scaled = scaleByRef(spec.onTicks, ref);
+  return scaled > cap ? cap : scaled;
+}
+
+/**
+ * 효용 해저드가 부여하는 감속 지속 상한 배율(centi-percent). 강화 3축의 곱은 시드 램프 최상단
+ * (lv29 · rarity 3 · ascension 3)에서 6.3배까지 가는데, 기본 90틱(1.5초)을 그대로 6.3배 하면
+ * 567틱(9.5초)이 되어 한 번 스치면 회랑 절반을 감속 상태로 지난다 — 회피라는 축이 사라진다.
+ * 상한 300cp = 최대 270틱(4.5초)으로 자른다.
+ */
+const UTILITY_HAZARD_SLOW_CAP_CP = 300;
+
+/**
+ * 효용 해저드 1장이 부여할 감속 지속 틱. 0 이면 기본값(`PLAYER_SLOW_DURATION`)이라는 뜻이고,
+ * 그 표식이 `hazard` 엔티티의 `aux0` 에 실린다(아래 {@link stepHazardFacility}).
+ *
+ * ## 왜 반경·활성 길이가 아니라 **이 축**이 본체인가 — 실측으로 고른 결과다
+ * 세 후보를 따로 재 봤다(24시드 · `rarity 0` · `ascension 0` 레벨 단독 스윕):
+ *   - **활성 길이(`onTicks`)** — 카탈로그 계약 `windup + on <= period` 때문에 상한이
+ *     180 − 20 = **160**(기본 100 대비 1.6배)이라 **lv8 부근에서 포화**한다. 그 위로는 평탄.
+ *   - **반경(`hazardRadius`)** — 상한을 200cp 로 두나 400cp 로 두나 **결과가 한 자리도 같았다.**
+ *     원인은 밸런스가 아니라 broad-phase 다: 공간 해시(`SpatialHash`, 셀 256)는 엔티티를
+ *     **중심 좌표의 셀 한 칸**에만 넣고, 플레이어 접촉 질의는 **플레이어 반경**으로만 셀을
+ *     훑는다(`src/sim/world.ts` `resolveCollisions`). 그래서 장판 중심이 플레이어에서 대략
+ *     한두 셀 밖이면 반경이 아무리 커도 **후보로 들어오지도 않는다** — 반경은 약 650 부근에서
+ *     실효 상한을 만난다. (전역 broad-phase 를 고치면 화염·레이저·충격파 등 모든 해저드의
+ *     명중이 한꺼번에 바뀐다. 이 레인 범위 밖이라 손대지 않는다.)
+ *   - **감속 지속** — 기하와 무관하게 "한 번 잡히면 얼마나 오래 끌려 있나"를 직접 늘린다.
+ *     세 후보 중 유일하게 시드 램프 전 구간(lv1~29)에서 여유가 남는다.
+ * 그래서 셋 다 태우되 **곡선을 실제로 세우는 것은 감속 지속**이고, 앞의 둘은 저레벨 구간을
+ * 매끄럽게 하는 보조축이다.
+ */
+function utilityHazardSlowTicks(ref: FacilityRef): number {
+  const cap = scaleCp(PLAYER_SLOW_DURATION, UTILITY_HAZARD_SLOW_CAP_CP);
+  const scaled = scaleByRef(PLAYER_SLOW_DURATION, ref);
+  return scaled > cap ? cap : scaled;
+}
+
+/**
  * 주기 온오프 해저드 1기. 주기의 시작 틱마다 장판을 새로 융기시킨다 — 예열·활성 처리는 기존
  * `stepHazards`/`hazardActive`(world.ts)가 그대로 해 준다. 설비가 파괴되면 융기가 멈춰 장판이
  * 남은 활성 시간만큼만 지속된 뒤 사라진다.
@@ -714,23 +839,31 @@ function stepHazardFacility(
   e: Entity,
   spec: FacilitySpec,
   socketCount: number,
+  ref: FacilityRef | null | undefined,
 ): void {
   const offset = socketPhaseOffset(e.dashCooldown, spec.periodTicks, socketCount);
   if (!isCycleSpawnTick(state.tick, spec.periodTicks, offset)) return;
   const hx = e.x + cos(e.targetX) * spec.hazardOffset;
   const hy = e.y + sin(e.targetX) * spec.hazardOffset;
-  spawnHazard(
+  const utility = isUtilityHazard(spec) && ref !== null && ref !== undefined;
+  const radius = utility ? utilityHazardRadius(spec, ref) : spec.hazardRadius;
+  const onTicks = utility ? utilityHazardOnTicks(spec, ref) : spec.onTicks;
+  const h = spawnHazard(
     state,
     spec.hazardSubtype,
     hx,
     hy,
-    spec.hazardRadius,
+    radius,
     spec.windupTicks,
-    spec.onTicks,
+    onTicks,
     e.damage,
     true, // 지속 피해 장판
     e.id,
   );
+  // 감속 지속 표식. `hazard` kind 는 `aux0` 를 쓰지 않아 신규 해시 필드 없이 실을 수 있고,
+  // **0 이면 기본값**이라 다른 모든 `HAZARD_SLOW` 생산자(니플헤임 보스 감속 지대 등)는
+  // 이 줄을 지나지 않는다 → 비트 동일.
+  if (utility) h.aux0 = utilityHazardSlowTicks(ref);
 }
 
 /**

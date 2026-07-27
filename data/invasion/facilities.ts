@@ -271,6 +271,14 @@ export const INVASION_FACILITIES: readonly FacilitySpec[] = [
   //     다른 설비의 명중률을 올린다(레이저 격자·화염과 역할이 겹치지 않는다).
   {
     ...BASE,
+    //
+    //      ⚠️ **이 설비만 `hazardDamage` 가 0 이다.** 실효 스탯 파생(`resolveFacilityStats`)은
+    //      해저드의 강화 3축을 `hazardDamage` 한 곳에만 싣기 때문에, 예전에는 레벨·등급·승급이
+    //      바꾸는 것이 **내구도뿐**이었고 그래서 축이 **역전**돼 있었다(96시드 감속 비율
+    //      12.71% → 8.36%). 지금은 `src/sim/invasion/facility.ts` 의 **효용 해저드** 경로가
+    //      감속 지속 · `onTicks` · `hazardRadius` 에 3축을 태운다(12.71% → 20.14%).
+    //      상세는 `.omc/research/invasion-gravwell-slow-axis-2026-07-27.md`.
+    //      → **`hazardDamage` 를 0 이 아닌 값으로 바꾸면 그 경로가 통째로 꺼진다.**
     key: 'fac.gravwell',
     behavior: FACILITY_BEHAVIOR_HAZARD,
     hp: 210,
