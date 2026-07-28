@@ -59,9 +59,10 @@ const REGISTERED: readonly string[] = [
  *    인덱스가 통째로 밀린다. **여기에 아트를 채우지 마라. 낭비다.**
  *
  * ② 침공 배경 3장 — 2026-07-28 아트 레인의 명시적 범위 밖(사용자 결정). 대형 배경은
- *    오브젝트 생성기와 규격·비용 성격이 완전히 달라 별도 설계가 필요하다.
+ *    오브젝트 생성기와 규격·비용 성격이 완전히 달라 별도 설계가 필요하다. 배경은 엔티티와
+ *    달리 화면 전체를 덮으므로 64/128px 규약이 통하지 않는다.
  *
- * ③ 편대·사출 드론 3장 — 같은 레인의 범위 밖(방어체 25장으로 한정). 다음 아트 레인 후보다.
+ * ③ 편대·사출 드론 3장 — **2026-07-28 해소**(방어체 25장 직후 이어서 생성).
  */
 const KNOWN_MISSING: readonly string[] = [
   // ① 이동 벽이라 스프라이트 슬롯을 타지 않는다 — 영구 예외.
@@ -70,10 +71,6 @@ const KNOWN_MISSING: readonly string[] = [
   'bg_invasion_l1.png',
   'bg_invasion_l2.png',
   'bg_invasion_l3.png',
-  // ③ 편대 리더·편대 드론·사출 드론(범위 밖).
-  'def3_formation_leader.png',
-  'def3_formation_drone.png',
-  'def3_spawned_drone.png',
 ];
 
 describe('침공 방어 자산 등재 이름 ↔ assets/ 실물', () => {
