@@ -25,6 +25,7 @@ import { DefensePreviewController } from './render/defensePreview.js';
 import type { DefensePreviewControls } from './render/defensePreview.js';
 import { AutotileBackground, loadWangTiles } from './render/autotile.js';
 import type { WangTiles } from './render/autotile.js';
+import { InvasionBackdrop } from './render/invasionBackdrop.js';
 import { FpsMeter } from './render/fpsMeter.js';
 import { graphicsTierController } from './render/graphicsRuntime.js';
 import { graphicsSettings } from './render/graphicsSettings.js';
@@ -200,6 +201,12 @@ async function main(): Promise<void> {
   // fallback and below entities. Each run's planet tileset + seed is applied in
   // `startRun`; a planet with no bundled tileset keeps the TilingSprite backdrop.
   const autotile = new AutotileBackground();
+  // 침공 3레이어 전용 배경(L10-render). flat TilingSprite 바로 위·autotile 아래에 둔다 —
+  // 침공은 `autotile.configure(null, …)` 로 Wang 바닥을 끄므로 순서 다툼이 없고, 침공이
+  // 아닐 때는 `visible = false` 라 기존 화면이 한 픽셀도 바뀌지 않는다.
+  const invasionBackdrop = new InvasionBackdrop(textures, DESIGN_WIDTH, DESIGN_HEIGHT);
+  invasionBackdrop.visible = false;
+  gameApp.stage.addChild(invasionBackdrop.view);
   gameApp.stage.addChild(autotile.layer);
   // Load all six planet Wang tilesets up front (missing ones resolve to null →
   // that planet falls back to the procedural TilingSprite, regression 0).
@@ -779,10 +786,11 @@ async function main(): Promise<void> {
     ceremony.reset();
     soundObserver.reset();
     dropObserver.reset();
-    // 관전 아레나 배경(침공 아레나와 동일 규칙 — 기본 배경, autotile 없음).
+    // 관전 아레나 배경(기본 배경, autotile 없음).
     const planet = world.config.planet ?? 0;
     background.texture = planetBackground(planet);
     autotile.configure(null, seed);
+    clearInvasionBackdrop();
     background.visible = true;
     spectateOverlay.show(
       {
@@ -813,20 +821,25 @@ async function main(): Promise<void> {
   }
 
   /**
-   * 레이어별 배경 텍스처 인덱스(L1 대기권 · L2 회랑 · L3 코어방).
+   * 침공 런 시작 — 레이어 배경을 페이드 없이 즉시 확정하고 전용 배경으로 갈아탄다.
    *
-   * **L10 통합 지점**: 정식 배경 3종 + 전환 크로스페이드는 L10-render 가
-   * `src/render/invasionBackdrop.ts` 로 제공한다. 그 모듈이 붙기 전까지는 기존 행성 배경을
-   * 레이어마다 갈라 써서 전환이 눈에 보이게 한다(연출 없는 폴백 — 무결함 동작).
+   * ⚠️ 예전에는 여기서 **행성 배경을 레이어마다 갈라 쓰는 폴백**이었다
+   * (`INVASION_BACKDROP_PLANET = [2, 1, 3]`). `src/render/invasionBackdrop.ts` 는 M7a L10
+   * 에서 이미 만들어졌는데 **main.ts 에 붙은 적이 없어**, 전용 배경 3종도 레이어 전환
+   * 크로스페이드도 통째로 죽어 있었다(그 모듈을 import 하는 곳이 테스트 하나뿐이었다).
+   * 그래서 `assets/bg_invasion_l*.png` 를 넣어도 화면에 나오지 않았다 — 자산이 로드되는
+   * 것과 표시되는 것은 다른 문제다.
    */
-  const INVASION_BACKDROP_PLANET: readonly number[] = [2, 1, 3];
-  /** 마지막으로 배경에 반영한 침공 페이즈(-1 = 침공 아님). */
-  let shownInvasionPhase = -1;
+  function beginInvasionBackdrop(phase: number, tick: number): void {
+    invasionBackdrop.begin(phase, tick);
+    invasionBackdrop.visible = true;
+    // flat 배경은 침공 동안 완전히 가려지므로 끈다(중첩 렌더 낭비 제거).
+    background.visible = false;
+  }
 
-  /** 침공 레이어 배경 적용(렌더 전용 — sim 무영향). */
-  function applyInvasionBackdrop(phase: number): void {
-    shownInvasionPhase = phase;
-    background.texture = planetBackground(INVASION_BACKDROP_PLANET[phase] ?? 0);
+  /** 침공이 아닌 런으로 돌아갈 때 전용 배경을 내린다. */
+  function clearInvasionBackdrop(): void {
+    invasionBackdrop.visible = false;
   }
 
   /**
@@ -915,10 +928,10 @@ async function main(): Promise<void> {
     // 기체 스프라이트 교체(렌더 전용) — `createWorld` 앞. PvE `startRun` 과 동일 규약. 소집이면
     // config.shipType 이 이미 pilot.typeId 라(buildRunConfig 가 스탬프) 스프라이트가 자동으로 따라간다.
     applyShipSprite(textures, config.shipType ?? 0);
-    // 레이어별 배경(L1 대기권 → L2 회랑 → L3 코어방). 전환은 렌더 루프가 페이즈를 보고 건다.
-    applyInvasionBackdrop(PHASE_L1);
+    // 레이어별 배경(L1 대기권 → L2 회랑 → L3 코어방). 전환 크로스페이드는 렌더 루프가
+    // 페이즈를 보고 건다(`invasionBackdrop.sync` 는 멱등이라 매 프레임 불러도 무해하다).
+    beginInvasionBackdrop(PHASE_L1, 0);
     autotile.configure(null, seed);
-    background.visible = true;
     currentSeed = seed;
     // 스프라이트 캐시 리셋(B-1) — `createWorld` 앞. 렌더러가 엔티티 id 로 스프라이트를 캐시하고
     // 텍스처를 생성 시점에 묶으므로, 비우지 않으면 바로 위 `applyShipSprite` 가 갈아끼운 기체가
@@ -971,9 +984,8 @@ async function main(): Promise<void> {
     // "하네스에서는 되는데 실제 런에서는 안 되는" 결함이 생긴다.
     const config = buildRunConfig(profile, { planet: 0, stage: 1, invasion3 });
     applyShipSprite(textures, config.shipType ?? 0);
-    applyInvasionBackdrop(PHASE_L1);
+    beginInvasionBackdrop(PHASE_L1, 0);
     autotile.configure(null, opts.seed);
-    background.visible = true;
     currentSeed = opts.seed;
     // 스프라이트 캐시 리셋(B-1) — `createWorld` 앞(정식 침공·PvE 와 같은 규약).
     entityRenderer.reset();
@@ -1156,7 +1168,7 @@ async function main(): Promise<void> {
     invasionTarget = null; // PvE 런: 침공 컨텍스트 해제(endRun 이 정산 경로로 분기)
     harnessInvasionRun = false;
     currentRunKind = 'pve'; // PvE 런 → combatPvE 존(AC3).
-    shownInvasionPhase = -1; // 침공 배경 추적 해제(PvE 는 행성 배경)
+    clearInvasionBackdrop(); // PvE 는 행성 배경 — 침공 전용 레이어를 내린다
     shownLevel = 0; // 새 런: 레벨업 오버레이 표시 상태 초기화
     echoToastShown = false; // 새 런: 에코 안정화 로어 토스트 재무장
     // 런 조립 단일 정본. 투자 벡터·기체 타입·계보 보너스는 전부 이 안에서 접힌다 —
@@ -1185,6 +1197,8 @@ async function main(): Promise<void> {
     background.texture = planetBackground(sel.planet);
     const tiles = wangTiles[sel.planet] ?? null;
     autotile.configure(tiles, seed);
+    // 직전 런이 침공이었으면 전용 배경이 남아 PvE 아레나를 덮는다 — 반드시 내린다.
+    clearInvasionBackdrop();
     background.visible = !autotile.active;
     currentSeed = seed;
     // 스프라이트 캐시 리셋(B-1) — `createWorld` 앞. 위 `applyShipSprite` 가 `textures.player` 를
@@ -1360,7 +1374,7 @@ async function main(): Promise<void> {
     if (powerupOverlay.visible) powerupOverlay.hide();
     shownLevel = 0; // 정산 화면 진입: 오버레이 표시 상태 초기화
     harnessInvasionRun = false; // 하네스 침공 런 종료(다음 런은 정식 경로)
-    shownInvasionPhase = -1;
+    clearInvasionBackdrop(); // 정산 화면은 침공 배경을 쓰지 않는다
     setScreen('result');
     const o = lastOutcome;
     resultOverlay.show(
@@ -1518,10 +1532,11 @@ async function main(): Promise<void> {
       hud.showLore(lines);
     }
 
-    // 침공 레이어 전환 → 배경 교체(렌더 전용, sim 무영향). 페이즈는 sim 권위라 여기서는
-    // 관찰만 한다 — 전환 크로스페이드는 L10 의 invasionBackdrop 이 붙으면 이 자리에서 건다.
+    // 침공 레이어 전환 → 배경 크로스페이드(렌더 전용, sim 무영향). 페이즈는 sim 권위라
+    // 여기서는 관찰만 한다. `sync` 는 멱등이라 매 프레임 불러도 되고, 그래서 "페이즈 비교를
+    // 잊어 전환이 조용히 사라지는" 결함이 구조적으로 불가능하다(invasionBackdrop.ts 머리말).
     const inv3 = w?.invasion3;
-    if (inv3 !== undefined && inv3.phase !== shownInvasionPhase) applyInvasionBackdrop(inv3.phase);
+    if (inv3 !== undefined && w !== null) invasionBackdrop.sync(inv3.phase, w.tick);
 
     // 레벨업 링(AC-4.6) — 런 레벨이 오르면 렌더러에 링을 예약(soundObserver 의 levelUp 과 동일 신호,
     // render-only). 스냅샷엔 level 이 없어 렌더가 스스로 감지 못 하므로 여기서 imperative 로 넘긴다.
@@ -1558,6 +1573,9 @@ async function main(): Promise<void> {
       const tileH = background.texture.height;
       background.tilePosition.set(-camX % tileW, -camY % tileH);
     }
+    // 침공 전용 배경도 같은 카메라로 흘린다(자체 모듈로 규율 — f32 UV swim 방지).
+    // 침공이 아니면 레이어가 `visible = false` 라 이 호출은 화면에 영향이 없다.
+    if (invasionBackdrop.visible) invasionBackdrop.scroll(camX, camY);
 
     // Level-up: freeze is handled in the sim. 오버레이 표시/숨김은 sim의
     // pendingLevelUp을 근거로 순수 결정한다(levelUpOverlayAction). 클릭으로 낙관적
