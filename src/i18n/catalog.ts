@@ -450,6 +450,21 @@ export const EN = {
   // 오염도 게이지(톡사르=오염 모드). 실패 임계를 실패 전에 보여 준다.
   'hud.contamination.title': 'CONTAMINATION',
   'hud.contamination.warn': 'Critical contamination imminent — destroy the nodes',
+  // 침공 진행 패널(사용자 요청 2026-07-29). `hud.inv.layer{0,1,2}` 는 페이즈 코드로 조립되므로
+  // 세 키가 반드시 연속으로 존재해야 한다(src/ui/invasionProgress.ts).
+  'hud.inv.title': 'INVASION PROGRESS',
+  'hud.inv.layer0': 'L1 · Atmospheric Breach',
+  'hud.inv.layer1': 'L2 · Corridor Push',
+  'hud.inv.layer2': 'L3 · Core Chamber',
+  'hud.inv.layerTime': 'Layer',
+  'hud.inv.totalTime': 'Total',
+  'hud.inv.core': 'CORE',
+  'hud.inv.boss': 'GUARDIAN BOSS',
+  'hud.inv.defense': 'Defenders left',
+  'hud.inv.facilities': 'Emplacements',
+  'hud.inv.guardians': 'Guardians',
+  'hud.inv.props': 'Fixtures',
+  'hud.inv.enemies': 'Hostiles',
 
   // --- 리플레이 관전 ---
   'replay.badge': 'Spectate',
@@ -1881,6 +1896,19 @@ export const KO: Record<MessageKey, string> = {
   'hud.bossEta.ring': '안전권을 소탕하라',
   'hud.contamination.title': '오염도',
   'hud.contamination.warn': '임계 오염 임박 — 오염 노드를 파괴하라',
+  'hud.inv.title': '침공 진행',
+  'hud.inv.layer0': 'L1 · 대기권 돌파',
+  'hud.inv.layer1': 'L2 · 회랑 돌파',
+  'hud.inv.layer2': 'L3 · 코어방',
+  'hud.inv.layerTime': '레이어',
+  'hud.inv.totalTime': '총 제한',
+  'hud.inv.core': '코어',
+  'hud.inv.boss': '방어 보스',
+  'hud.inv.defense': '방어 잔존',
+  'hud.inv.facilities': '설비',
+  'hud.inv.guardians': '수호',
+  'hud.inv.props': '기물',
+  'hud.inv.enemies': '적',
 
   'replay.badge': '관전',
   'replay.titleBody': '{who} 침공 리플레이 (렌더 전용·기록에 영향 없음)',

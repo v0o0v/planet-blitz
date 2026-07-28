@@ -27,7 +27,8 @@
 
 import type { InputFrame, WorldState } from '../sim/world.js';
 import { emptyInput } from '../sim/world.js';
-import { hashWorld } from '../sim/replay.js';
+import { hashWorld, runReplay } from '../sim/replay.js';
+import type { Replay } from '../sim/replay.js';
 import { autopilotInput } from '../sim/autopilot.js';
 import type { EntityKind } from '../sim/entities.js';
 import type { KeyValueStore } from '../save/profile.js';
@@ -43,6 +44,7 @@ import {
   enterInvasionLayer,
   enterLayerFrame,
   makeInvasionContext,
+  normalizeInvasionLayers,
 } from '../sim/invasion/index.js';
 import type { InvasionLayers, InvasionPhase } from '../sim/invasion/index.js';
 import { MAINTENANCE_FULL } from '../sim/invasion/guardian.js';
@@ -251,6 +253,62 @@ export interface HarnessHost {
    * 건너뛴다(종전 동작).
    */
   settleIfRunOver?(): void;
+
+  /**
+   * 지금 도는 런의 리플레이 스냅샷(recorder 의 현재까지 기록). 런이 없거나 recorder 가
+   * 안 붙은 화면(관전 재생 등)이면 null.
+   *
+   * 하네스 침공 런도 정식 런과 **같은 record 경로**를 타므로(main.ts
+   * `startHarnessInvasionRun` 이 ReplayRecorder 를 붙인다) 여기서 꺼낸 리플레이는 그대로
+   * 재현·검증에 쓸 수 있다.
+   */
+  getLiveRun?(): HarnessRunReplay | null;
+  /** 마지막으로 **끝난** 런의 리플레이 + 종료 시점 해시. 없으면 null. */
+  getLastRun?(): HarnessRunReplay | null;
+  /**
+   * 리플레이를 관전 재생 화면으로 띄운다(실시간 렌더 재생 — 기존 F3 관전 경로 재사용).
+   * 관전 월드는 진입 즉시 오염되어 정산·제출 대상에서 빠진다(ADR-0008 패턴).
+   *
+   * @returns 재생을 시작했으면 true, 리플레이가 재생 불가 shape 면 false.
+   */
+  playReplay?(replay: Replay, name: string): boolean;
+}
+
+/**
+ * 리플레이 + **그 리플레이를 재실행하면 나와야 하는 해시**. 두 값을 한 훅에서 **함께** 낸다.
+ *
+ * 왜 한 덩어리인가: 따로 뽑으면 그 사이에 ticker 가 sim 을 한 틱 더 밀 수 있다. 그러면
+ * 리플레이는 N틱인데 기준선은 N+1틱의 해시가 되어, 멀쩡한 런이 "해시 불일치"로 뜬다
+ * (실제로 밟았다 — 실시간 탭에서 `ff` 직후 검증하면 재현됐다). 원자적으로 잡아야 한다.
+ */
+export interface HarnessRunReplay {
+  replay: Replay;
+  /** 그 리플레이 끝의 월드 해시(hex 8자리). */
+  hash: string;
+}
+
+/**
+ * {@link Harness.verifyReplay} 결과 — 결정론 재현 대조.
+ *
+ * ⚠️ **`ok` 는 "throw 하지 않았다"가 아니다.** `Replay` 자체는 해시를 담지 않으므로
+ * (`src/sim/replay.ts` — seed·config·inputs 뿐), 재실행 결과를 **기준선과 대조해야만**
+ * 재현 여부를 말할 수 있다. 기준선은 호스트가 보관한 그 런의 월드 해시다. 붙여넣은 외부
+ * 리플레이처럼 기준선이 없는 경우에는 `compared === false` 이고 `ok` 는 항상 false —
+ * 해시를 **출력만** 한 것이지 검증한 것이 아니다(UI 문구도 그렇게 낮춘다).
+ */
+export interface HarnessReplayVerdict {
+  /** 기준선과 대조해 일치했는가. `compared === false` 면 항상 false. */
+  ok: boolean;
+  /** 기준선이 있어 실제로 대조했는가. */
+  compared: boolean;
+  /** 재실행 최종 해시(hex 8자리). 재실행 실패 시 ''. */
+  finalHash: string;
+  /** 기준선 해시(hex 8자리). 없으면 ''. */
+  expectedHash: string;
+  /** 재실행 틱 수. */
+  ticks: number;
+  /** 실패·미대조 사유(대조 통과 시 ''). */
+  reason: string;
 }
 
 /** The public `window.__pb.harness` API surface. */
@@ -298,6 +356,14 @@ export interface Harness {
   preset(kind: PresetKind): void;
   /** 현재 예약된 3레이어 배치(프리셋 미적용이면 `def3-empty` 정규형). */
   invasionLayers(): InvasionLayers;
+  /**
+   * 다음 침공 런의 방어 배치를 통째로 예약한다(치트 패널의 슬롯 편집기가 쓴다).
+   * 프리셋과 같은 규율 — **런 시작 전에** 걸어야 비오염이고, 라이브 런이 있으면 오염된다
+   * (이미 도는 런의 배치는 바꿀 수 없는데 예약만 갈아 두면 "무엇을 검증했는지"가 어긋난다).
+   *
+   * @returns 정규화되어 실제로 예약된 배치.
+   */
+  setInvasionLayers(layers: InvasionLayers): InvasionLayers;
   /** Structured state dump. */
   snapshot(): HarnessSnapshot;
   /** The last 200 notable events (oldest first). */
@@ -324,6 +390,30 @@ export interface Harness {
   setShipType(typeId: number): number;
   /** 선택 가능한 기체 타입 slug 목록(치트 패널 셀렉트·테스트 파생용). 인덱스 = typeId. */
   shipTypeSlugs(): readonly string[];
+  /**
+   * 지금 도는 런의 리플레이(진행 중 스냅샷). 런이 없으면 null.
+   * 침공 런을 돌다가 중간에 꺼내 `playReplay` 로 되돌려 볼 수 있다.
+   */
+  replay(): Replay | null;
+  /** 마지막으로 끝난 런의 리플레이. 없으면 null. */
+  lastReplay(): Replay | null;
+  /**
+   * 리플레이를 관전 재생한다. 인자를 생략하면 `lastReplay()` → `replay()` 순으로 고른다.
+   * 재생할 리플레이가 없거나 shape 가 깨졌으면 false.
+   */
+  playReplay(replay?: Replay, name?: string): boolean;
+  /**
+   * 리플레이를 **헤드리스로 재실행**해 결정론 재현을 확인한다(화면 무변경).
+   * 인자를 생략하면 `playReplay` 와 같은 순서로 고른다.
+   *
+   * 재실행은 `runReplay`(sim 정본)를 그대로 쓰므로, 여기서 나온 최종 해시는 서버
+   * 재실행(verify-invasion)이 보는 값과 같은 축이다 — 하네스에서 먼저 갈라짐을 잡는 용도다.
+   *
+   * **대조 없이는 검증이 아니다**: 리플레이에는 해시가 들어 있지 않으므로, 호스트가 보관한
+   * 그 런의 월드 해시를 기준선으로 써야 재현 여부를 말할 수 있다. 기준선이 없으면
+   * ({@link HarnessReplayVerdict.compared} === false) 해시를 출력만 한다.
+   */
+  verifyReplay(replay?: Replay): HarnessReplayVerdict;
   /** Report a screen change (fires a `screenChange` event). Used by main.ts. */
   observeScreen(screen: string): void;
   /** Per-tick observation hook — main.ts calls this from `stepOnce`. */
@@ -489,6 +579,24 @@ export function createHarness(host: HarnessHost): Harness {
     return true;
   }
 
+  /**
+   * 리플레이 인자 해소: 명시 인자 > 마지막으로 끝난 런 > 지금 도는 런.
+   *
+   * 끝난 런을 먼저 보는 이유: "방금 돌린 침공을 되돌려 본다"가 주 용도인데, 런이 끝나면
+   * `getLiveReplay` 는 이미 null 이거나 다음 런의 것으로 갈려 있을 수 있다. 진행 중인
+   * 런에서 불렀다면 마지막 완주 런이 없을 테니 자연스럽게 라이브로 떨어진다.
+   */
+  function pickReplay(explicit?: Replay): { replay: Replay; baseline: string | null } | null {
+    // 명시 인자는 밖에서 온 리플레이다 — 호스트가 보관한 해시는 **자기 런의 것**이라
+    // 기준선으로 쓰면 안 된다(항상 불일치가 뜬다). 그래서 baseline 은 null 이다.
+    if (explicit !== undefined) return { replay: explicit, baseline: null };
+    const last = host.getLastRun?.() ?? null;
+    if (last !== null) return { replay: last.replay, baseline: last.hash };
+    const live = host.getLiveRun?.() ?? null;
+    if (live !== null) return { replay: live.replay, baseline: live.hash };
+    return null;
+  }
+
   return {
     goto(screen) {
       host.goto(screen);
@@ -529,6 +637,12 @@ export function createHarness(host: HarnessHost): Harness {
     },
 
     invasionLayers() {
+      return pendingLayers;
+    },
+
+    setInvasionLayers(layers) {
+      host.markTaintedIfLive();
+      pendingLayers = normalizeInvasionLayers(layers);
       return pendingLayers;
     },
 
@@ -664,6 +778,72 @@ export function createHarness(host: HarnessHost): Harness {
       if (world === null) return;
       host.markTaintedIfLive();
       mutate(world);
+    },
+
+    replay() {
+      return host.getLiveRun?.()?.replay ?? null;
+    },
+
+    lastReplay() {
+      return host.getLastRun?.()?.replay ?? null;
+    },
+
+    playReplay(replay, name = '하네스 리플레이') {
+      const picked = pickReplay(replay);
+      if (picked === null) return false;
+      return host.playReplay?.(picked.replay, name) ?? false;
+    },
+
+    verifyReplay(replay) {
+      const picked = pickReplay(replay);
+      if (picked === null) {
+        return {
+          ok: false,
+          compared: false,
+          finalHash: '',
+          expectedHash: '',
+          ticks: 0,
+          reason: '재생할 리플레이가 없습니다',
+        };
+      }
+      const { replay: target, baseline } = picked;
+      const ticks = target.inputs.length;
+      let finalHash: string;
+      try {
+        finalHash = (runReplay(target).finalHash >>> 0).toString(16).padStart(8, '0');
+      } catch (err) {
+        // 재실행 중 예외 = 재현 불가(설정 불일치·손상 리플레이). 던지지 않고 사유만 돌려준다 —
+        // 치트 패널이 이 결과를 그대로 한 줄로 표시하기 때문이다.
+        return {
+          ok: false,
+          compared: false,
+          finalHash: '',
+          expectedHash: baseline ?? '',
+          ticks,
+          reason: err instanceof Error ? err.message : String(err),
+        };
+      }
+      if (baseline === null) {
+        // 기준선 없음 = **대조하지 않았다**. 예전에는 여기서 ok:true 를 돌려줬는데, 그건
+        // "throw 하지 않았다"와 동치라 어떤 발산도 잡을 수 없는 항진이었다(리뷰 HIGH).
+        return {
+          ok: false,
+          compared: false,
+          finalHash,
+          expectedHash: '',
+          ticks,
+          reason: '기준선 해시가 없어 대조하지 않았습니다(해시 출력만)',
+        };
+      }
+      const ok = finalHash === baseline;
+      return {
+        ok,
+        compared: true,
+        finalHash,
+        expectedHash: baseline,
+        ticks,
+        reason: ok ? '' : `해시 불일치 — 기준선 ${baseline} · 재실행 ${finalHash}`,
+      };
     },
 
     observeScreen(screen) {

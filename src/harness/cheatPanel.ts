@@ -22,9 +22,18 @@
  */
 
 import type { Harness, HarnessScreen } from './core.js';
+import { parseReplay, replaySummary, serializeReplay } from './replayStore.js';
 import { INVASION_PRESET_KINDS } from './presets.js';
 import type { InvasionPresetKind } from './presets.js';
 import { MAINTENANCE_FULL } from '../sim/invasion/guardian.js';
+import {
+  INVASION_ASCENSION_MAX,
+  INVASION_LEVEL_MAX,
+  INVASION_LEVEL_MIN,
+  INVASION_RARITY_COUNT,
+  INVASION_TOTAL_TICKS,
+} from '../sim/invasion/index.js';
+import { catalogSizeFor, clearSlot, fillAll, listSlots, setSlot } from './invasionEdit.js';
 import type { EntitySnapshot } from '../sim/snapshot.js';
 import { xpToNext } from '../sim/world.js';
 import { spawnLoot } from '../sim/entities.js';
@@ -72,6 +81,32 @@ export interface HarnessCatalystControl {
 }
 
 /**
+ * 방어체 강화 하네스 제어(DEV). 방어 사령부의 강화(레벨업·승급·리롤·등급 승급·제작)는
+ * **서버 권위**라 로그인 없이는 한 줄도 돌지 않는다 — 그래서 하네스는 인메모리 모의
+ * 게이트웨이(`src/harness/defenseMock.ts`)를 `setDefenseUnitsGatewayOverride` 로 끼워 넣고,
+ * 그 모의 원장의 재화(크레딧·희귀 광물·설계도)를 이 제어로 조절한다.
+ *
+ * 로직은 전부 mock/main 쪽에 있고 여기 UI 는 숫자를 넣고 버튼만 건다
+ * ({@link HarnessCatalystControl} 과 같은 규율).
+ */
+export interface HarnessDefenseControl {
+  /** 모의 게이트웨이 사용 여부(끄면 실제 서버 경로로 되돌아간다). */
+  enabled(): boolean;
+  /** 모의 게이트웨이 on/off. 켜면 방어 사령부가 오프라인에서도 채워진다. */
+  setEnabled(on: boolean): void;
+  /** 현재 모의 원장의 재화. */
+  currency(): { credits: number; minerals: number; blueprints: number };
+  /** 모의 원장의 재화를 설정한다(지정한 항목만). */
+  setCurrency(next: Partial<{ credits: number; minerals: number; blueprints: number }>): void;
+  /** 모의 보관함에 방어체 n기를 결정론 시드로 채운다. */
+  seedUnits(count: number): void;
+  /** 모의 원장을 초기 상태로 되돌린다. */
+  reset(): void;
+  /** 모의 보관함 보유 수(표시용). */
+  unitCount(): number;
+}
+
+/**
  * main.ts가 주입하는 치트 패널 호스트. 하네스 공개 API로는 닿지 않는 프로필 지급·
  * 엔티티 스냅샷 접근·튜토리얼 흐름을 최소 위임으로 열어 준다(로직은 전부 이 파일에 있음).
  */
@@ -81,6 +116,11 @@ export interface CheatPanelHost {
    * 미주입(undefined)이라 촉매 탭이 안내만 띄운다.
    */
   catalyst?: HarnessCatalystControl;
+  /**
+   * 방어체 강화 모의 제어(DEV). 미주입이면 침공 탭의 재화 줄이 안내만 띄운다
+   * ({@link HarnessCatalystControl} 과 같은 규율).
+   */
+  defense?: HarnessDefenseControl;
   /** window.__pb.harness (재생/점프/치트/인스펙터 구동). */
   harness: Harness;
   /** 렌더 스냅샷의 엔티티 목록(read-only, 오염 없음 — 인스펙터용). */
@@ -264,9 +304,40 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   // 촉매 탭 시드 수량(각 48종 지급 개수 — 250ms 자동 재렌더를 넘어 보존).
   let catalystSeedQty = 3;
   // 침공 탭 입력값(250ms 자동 재렌더를 넘어 보존되는 클로저 상태).
-  let invasionPreset: InvasionPresetKind = 'def3-mid';
+  //
+  // 기본값이 `def3-empty` 인 이유: 하네스의 예약 배치 기본값(`createHarness` 의 pendingLayers)과
+  // **같아야** 한다. 다른 값을 기본으로 두면 셀렉트가 가리키는 것과 실제 예약이 어긋나고,
+  // 그렇다고 패널 생성 시 `harness.preset()` 으로 맞추면 이번엔 **패널이 존재한다는 이유만으로**
+  // 콘솔의 `__pb.harness.startInvasion()` 기본 무대가 바뀐다(재현 스크립트가 조용히 다른 배치를
+  // 돌게 된다). 기본값을 일치시키는 쪽이 어느 방향으로도 거짓말을 안 한다.
+  let invasionPreset: InvasionPresetKind = 'def3-empty';
+  /**
+   * 라이브 런 중에 고른 프리셋을 아직 예약에 반영하지 못했는가. 반영은 `harness.preset` 이
+   * 하는데 그것이 라이브 런을 오염시키므로, 런이 도는 동안에는 미뤘다가 다음 런 시작 직전에
+   * 건다({@link sceneInvasion}).
+   */
+  let presetPending = false;
+
+  /**
+   * 지금 월드가 살아 있는가(런 또는 관전 재생 중). 스냅샷 해시는 월드가 없을 때만 빈 문자열
+   * 이므로(`core.ts` snapshot), 화면 이름을 열거하지 않고도 정확히 판별된다.
+   */
+  function liveRun(): boolean {
+    return harness.snapshot().hash !== '';
+  }
   /** 침공 시작 시 걸 정비도(centi-percent). 100% = 완전 정비. */
   let invasionMaintCP: number = MAINTENANCE_FULL;
+  /** 침공 시작 시 걸 총 제한 시간(틱). 기본값은 sim 정본 상수. */
+  let invasionTimeLimit: number = INVASION_TOTAL_TICKS;
+  /** 리플레이 붙여넣기 상자의 내용(250ms 자동 재렌더를 넘어 보존). */
+  let replayPaste = '';
+  // 배치 슬롯 편집기 상태(250ms 자동 재렌더를 넘어 보존). 인덱스는 `listSlots()` 순서다.
+  let slotIdx = 0;
+  let slotCatalogId = 0;
+  let slotLevel: number = INVASION_LEVEL_MIN;
+  let slotRarity = 0;
+  let slotAscension = 0;
+  let slotAffixSeed = 0;
   // 런 식별 추적: 새 런이 시작되면 런 스코프 치트 상태(무적)를 리셋한다.
   // 무적은 일회성 world 변형이라 런을 넘어가면 실제 효과가 없는데 UI만 ON으로
   // 남고, OFF 시 이전 런의 savedMaxHp를 새 런에 덮어쓰는 desync가 생긴다(리뷰 LOW).
@@ -405,15 +476,27 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
    */
   function sceneInvasion(layer: 1 | 2 | 3): void {
     const seed = readSeedOpt();
+    // 라이브 런 중에 고른 프리셋이 있으면 여기서 반영한다. 이 시점의 오염은 무해하다 —
+    // 지금 도는 런은 바로 다음 줄에서 새 런으로 교체된다.
+    if (presetPending) {
+      harness.preset(invasionPreset);
+      presetPending = false;
+    }
+    // 배치는 **예약된 것**(`harness.invasionLayers()`)을 쓴다 — 프리셋은 셀렉트를 바꾼 순간
+    // 이미 예약에 반영됐고, 그 위에 슬롯 편집기가 한 칸씩 얹기 때문이다. 여기서 다시
+    // `preset` 을 넘기면 슬롯 편집이 매 시작마다 조용히 되돌려진다.
     harness.startInvasion({
-      preset: invasionPreset,
       maintenance: invasionMaintCP,
+      timeLimitTicks: invasionTimeLimit,
       layer,
       ...(seed !== undefined ? { seed } : {}),
     });
     handOver();
     const tail = layer === 1 ? '비오염' : `L${layer} 점프 · 오염`;
-    setHint(`침공 ${invasionPreset} · 정비도 ${invasionMaintCP / 100}% (${tail})`);
+    setHint(
+      `침공 ${invasionPreset}(+편집) · 정비도 ${invasionMaintCP / 100}% · ` +
+        `${Math.round(invasionTimeLimit / 60)}초 (${tail})`,
+    );
   }
 
   /** 튜토리얼 무대: 정식 튜토리얼 흐름(고정 시드 + 힌트 오버레이 + FTUE, 비오염). */
@@ -913,7 +996,20 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         'def3-empty = 전 슬롯 비움(기본 수비대 충원) · def3-mid = 절반 배치 · def3-maxed = 만렙 전 슬롯';
       presetSel.addEventListener('change', () => {
         const v = INVASION_PRESET_KINDS.find((k) => k === presetSel.value);
-        if (v !== undefined) invasionPreset = v;
+        if (v === undefined) return;
+        invasionPreset = v;
+        // 프리셋은 예약 배치에 즉시 반영해야 슬롯 편집기가 "지금 무엇이 예약돼 있는지"를
+        // 보여줄 수 있다. 그런데 `harness.preset` 은 라이브 런을 **오염**시킨다 — 런 중에
+        // 드롭다운을 훑기만 해도 그 런이 정산·제출에서 조용히 빠지는 회귀가 된다(리뷰 MEDIUM).
+        // 그래서 라이브 런이 있으면 반영을 미루고(`presetPending`), 런 시작 직전에 건다.
+        if (liveRun()) {
+          presetPending = true;
+          setHint(`라이브 런 중 — 프리셋 ${v} 는 다음 침공 런 시작 때 반영됩니다`);
+          return;
+        }
+        presetPending = false;
+        harness.preset(v);
+        render();
       });
       const maintIn = numInput(invasionMaintCP / 100, 56);
       maintIn.title = '방어 정비도(%) — 0%면 설비 발사 간격이 2배(풍화 상한)';
@@ -926,7 +1022,24 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       const maintLbl = document.createElement('span');
       maintLbl.className = 'pb-c-lbl';
       maintLbl.textContent = '정비도%';
-      cfgRow.append(seedIn, presetSel, maintLbl, maintIn);
+      const limitMaxSec = (INVASION_TOTAL_TICKS * 4) / 60;
+      const limitIn = numInput(Math.round(invasionTimeLimit / 60), 56);
+      limitIn.min = '1';
+      limitIn.max = String(limitMaxSec);
+      limitIn.title =
+        `총 제한 시간(초, 1..${limitMaxSec}). 기본 ${INVASION_TOTAL_TICKS / 60}초 — 도달하면 패배(hard)`;
+      limitIn.addEventListener('input', () => {
+        const sec = Number(limitIn.value);
+        if (!Number.isFinite(sec)) return;
+        // 하한 1초: 0 이하면 런이 시작하자마자 끝나 무대가 아예 안 선다.
+        // 상한 기본의 4배: 실수로 자릿수를 하나 더 찍었을 때 ff 가 끝나지 않는 런을 만들지 않는다.
+        const ticks = Math.round(sec * 60);
+        invasionTimeLimit = ticks < 60 ? 60 : ticks > INVASION_TOTAL_TICKS * 4 ? INVASION_TOTAL_TICKS * 4 : ticks;
+      });
+      const limitLbl = document.createElement('span');
+      limitLbl.className = 'pb-c-lbl';
+      limitLbl.textContent = '제한초';
+      cfgRow.append(seedIn, presetSel, maintLbl, maintIn, limitLbl, limitIn);
       s.appendChild(cfgRow);
 
       s.appendChild(subLabel('띄우기 (클릭 → 직접 조작)'));
@@ -965,8 +1078,397 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
             `가속 ${inv.accelCp}cp · 폭탄 ${inv.bombs}`;
       s.appendChild(line);
 
+      appendLayoutEditor(s);
+      appendDefenseCurrency(s);
+      appendReplaySection(s);
       appendCombatCheats(s);
       appendLiveStatusLine(s);
+    }
+
+    /**
+     * 배치 슬롯 편집기(침공 탭). 프리셋이 "시작점"이라면 이쪽은 **한 칸씩 찍어 무대를 만드는**
+     * 도구다 — L1 편대 6칸 · L2 소켓(템플릿 종속) · L3 보스 1 + 기물 6 을 카탈로그·레벨·등급·
+     * 승급·어픽스 시드 다섯 정수로 직접 지정한다.
+     *
+     * 편집 결과는 `harness.setInvasionLayers` 로 **다음 런에 예약**된다. 프리셋과 같은 규율로
+     * 런 시작 **전에** 걸어야 비오염이다(라이브 런 중에 걸면 그 런이 오염된다).
+     */
+    function appendLayoutEditor(s: HTMLElement): void {
+      const slots = listSlots(harness.invasionLayers());
+      if (slotIdx >= slots.length) slotIdx = 0;
+      const current = slots[slotIdx];
+
+      s.appendChild(subLabel('배치 슬롯 편집 (다음 런에 예약)'));
+
+      const pickRow = document.createElement('div');
+      pickRow.className = 'pb-c-row';
+      const slotSel = document.createElement('select');
+      slotSel.style.flex = '1';
+      slots.forEach((slot, i) => {
+        const o = document.createElement('option');
+        o.value = String(i);
+        const state = slot.ref === null ? '비움' : `${slot.catalogName} Lv${slot.ref.level}`;
+        o.textContent = `${slot.label} — ${state}`;
+        if (i === slotIdx) o.selected = true;
+        slotSel.appendChild(o);
+      });
+      slotSel.title = 'L1 편대 · L2 설비 소켓 · L3 보스/기물. 소켓 수는 맵 템플릿에 종속된다.';
+      slotSel.addEventListener('change', () => {
+        slotIdx = Number(slotSel.value) || 0;
+        // 선택한 슬롯의 현재 값을 입력칸으로 끌어온다 — 한 칸을 살짝 고치는 것이 주 조작이라
+        // 매번 다섯 값을 새로 찍게 하면 실수로 다른 슬롯 값을 덮어쓰기 쉽다.
+        const picked = listSlots(harness.invasionLayers())[slotIdx];
+        if (picked?.ref != null) {
+          slotCatalogId = picked.ref.catalogId;
+          slotLevel = picked.ref.level;
+          slotRarity = picked.ref.rarity;
+          slotAscension = picked.ref.ascension;
+          slotAffixSeed = picked.ref.affixSeed;
+        } else {
+          // 빈 슬롯: 기본값으로 되돌린다. 직전 슬롯 값을 남겨 두면 곧바로 [슬롯 적용]을 눌렀을 때
+          // **다른 슬롯의 스펙**이 들어간다 — 이 핸들러가 막으려던 실수가 여기서 그대로 난다.
+          slotCatalogId = 0;
+          slotLevel = INVASION_LEVEL_MIN;
+          slotRarity = 0;
+          slotAscension = 0;
+          slotAffixSeed = 0;
+        }
+        render();
+      });
+      pickRow.appendChild(slotSel);
+      s.appendChild(pickRow);
+
+      /** 라벨 + 숫자 입력 한 쌍(편집기 전용 — 값은 클로저 상태에 바로 반영). */
+      function field(
+        label: string,
+        value: number,
+        max: number,
+        title: string,
+        set: (n: number) => void,
+      ): HTMLElement {
+        const wrap = document.createElement('span');
+        wrap.style.display = 'inline-flex';
+        wrap.style.alignItems = 'center';
+        wrap.style.gap = '3px';
+        const lbl = document.createElement('span');
+        lbl.className = 'pb-c-lbl';
+        lbl.textContent = label;
+        const input = numInput(value, 56);
+        input.min = '0';
+        input.max = String(max);
+        input.title = title;
+        input.addEventListener('input', () => {
+          const n = Number(input.value);
+          if (Number.isFinite(n)) set(n);
+        });
+        wrap.append(lbl, input);
+        return wrap;
+      }
+
+      const editRow = document.createElement('div');
+      editRow.className = 'pb-c-row';
+      const group = current?.path.group ?? 'wave';
+      editRow.append(
+        field(
+          '카탈로그',
+          slotCatalogId,
+          Math.max(0, catalogSizeFor(group) - 1),
+          `이 그룹의 카탈로그 인덱스(0..${Math.max(0, catalogSizeFor(group) - 1)})`,
+          (n) => {
+            slotCatalogId = n;
+          },
+        ),
+        field('레벨', slotLevel, INVASION_LEVEL_MAX, `${INVASION_LEVEL_MIN}..${INVASION_LEVEL_MAX}`, (n) => {
+          slotLevel = n;
+        }),
+        field('등급', slotRarity, INVASION_RARITY_COUNT - 1, '0=일반 · 1=마법 · 2=희귀 · 3=유니크', (n) => {
+          slotRarity = n;
+        }),
+      );
+      s.appendChild(editRow);
+
+      const editRow2 = document.createElement('div');
+      editRow2.className = 'pb-c-row';
+      editRow2.append(
+        field('승급', slotAscension, INVASION_ASCENSION_MAX, `0..${INVASION_ASCENSION_MAX}`, (n) => {
+          slotAscension = n;
+        }),
+        field('어픽스시드', slotAffixSeed, 0xffffffff, '같은 시드 → 같은 어픽스(결정론 재현)', (n) => {
+          slotAffixSeed = n;
+        }),
+      );
+      s.appendChild(editRow2);
+
+      /** 현재 입력칸이 가리키는 Ref 스펙. */
+      function spec(): {
+        catalogId: number;
+        level: number;
+        rarity: number;
+        ascension: number;
+        affixSeed: number;
+      } {
+        return {
+          catalogId: slotCatalogId,
+          level: slotLevel,
+          rarity: slotRarity,
+          ascension: slotAscension,
+          affixSeed: slotAffixSeed,
+        };
+      }
+
+      const applyRow = document.createElement('div');
+      applyRow.className = 'pb-c-row';
+      applyRow.append(
+        btn(
+          '슬롯 적용',
+          () => {
+            if (current === undefined) return;
+            harness.setInvasionLayers(setSlot(harness.invasionLayers(), current.path, spec()));
+            setHint(`${current.label} 적용 — 다음 침공 런에 반영`);
+          },
+          '선택한 슬롯을 위 값으로 채운다(다음 런에 예약)',
+        ),
+        btn(
+          '슬롯 비움',
+          () => {
+            if (current === undefined) return;
+            harness.setInvasionLayers(clearSlot(harness.invasionLayers(), current.path));
+            setHint(`${current.label} 비움 — 기본 수비대가 충원한다`);
+          },
+          '선택한 슬롯을 비운다(빈 슬롯은 기본 수비대가 충원)',
+        ),
+        btn(
+          '전체 채움',
+          () => {
+            harness.setInvasionLayers(fillAll(harness.invasionLayers(), spec()));
+            // 카탈로그 id 상한은 **그룹마다 다르다** — 입력칸의 max 는 지금 선택한 그룹 기준이라
+            // 편대 기준으로 큰 id 를 찍으면 보스·기물에서는 조용히 낮은 id 로 접힌다. 그 사실을
+            // 힌트에 적어 "왜 다른 게 나왔지"를 없앤다.
+            setHint(
+              `전 슬롯을 Lv${slotLevel}·등급${slotRarity} 로 채움 ` +
+                '(카탈로그 id 는 그룹별 상한으로 접힘)',
+            );
+          },
+          '전 슬롯을 위 값으로 덮는다(최악 부하 배치 만들기). 카탈로그 id 는 그룹별 상한으로 클램프된다.',
+        ),
+      );
+      s.appendChild(applyRow);
+
+      const filled = slots.filter((x) => x.ref !== null).length;
+      const summary = document.createElement('div');
+      summary.className = 'pb-c-lbl';
+      summary.textContent = `예약 배치: ${filled}/${slots.length} 슬롯 채움`;
+      s.appendChild(summary);
+    }
+
+    /**
+     * 방어체 강화 재화 섹션(침공 탭). 방어 사령부의 강화는 **서버 권위**라 로그인 없이는
+     * 아무것도 안 돌아간다 — 모의 게이트웨이를 켜면 오프라인에서도 레벨업·승급·리롤·등급
+     * 승급·제작 흐름을 그대로 밟을 수 있고, 그 원장의 크레딧·희귀 광물·설계도를 여기서 준다.
+     */
+    function appendDefenseCurrency(s: HTMLElement): void {
+      s.appendChild(subLabel('방어체 강화 재화 (모의 원장)'));
+      const control = host.defense;
+      if (control === undefined) {
+        const note = document.createElement('div');
+        note.className = 'pb-c-lbl';
+        note.textContent = '방어 모의 배선이 없는 호스트입니다(main.ts 주입 필요).';
+        s.appendChild(note);
+        return;
+      }
+
+      const toggleRow = document.createElement('div');
+      toggleRow.className = 'pb-c-row';
+      const on = control.enabled();
+      const toggle = btn(
+        on ? '모의 ON' : '모의 OFF',
+        () => {
+          control.setEnabled(!control.enabled());
+          setHint(control.enabled() ? '방어체 모의 원장 사용' : '실제 서버 경로로 복귀');
+        },
+        '켜면 방어 사령부가 인메모리 모의 원장을 쓴다(로그인 불필요)',
+        on ? 'on' : undefined,
+      );
+      toggleRow.append(
+        toggle,
+        btn('보관함 12기 시드', () => {
+          control.seedUnits(12);
+          setHint(`모의 보관함 ${control.unitCount()}기`);
+        }),
+        btn('초기화', () => {
+          control.reset();
+          setHint('모의 원장 초기화');
+        }),
+      );
+      s.appendChild(toggleRow);
+
+      const cur = control.currency();
+      const curRow = document.createElement('div');
+      curRow.className = 'pb-c-row';
+      const crIn = numInput(cur.credits, 84);
+      const minIn = numInput(cur.minerals, 72);
+      const bpIn = numInput(cur.blueprints, 64);
+      crIn.title = '크레딧(레벨업·승급 비용)';
+      minIn.title = '희귀 광물(레벨업·리롤 비용)';
+      bpIn.title = '설계도(승급·등급 승급·제작 재료)';
+      const crLbl = document.createElement('span');
+      crLbl.className = 'pb-c-lbl';
+      crLbl.textContent = 'cr / min / bp';
+      curRow.append(
+        crLbl,
+        crIn,
+        minIn,
+        bpIn,
+        btn('적용', () => {
+          control.setCurrency({
+            credits: Number(crIn.value) || 0,
+            minerals: Number(minIn.value) || 0,
+            blueprints: Number(bpIn.value) || 0,
+          });
+          const next = control.currency();
+          setHint(`재화 ${next.credits}cr / ${next.minerals}min / ${next.blueprints}bp`);
+        }),
+      );
+      s.appendChild(curRow);
+
+      const line = document.createElement('div');
+      line.className = 'pb-c-lbl';
+      line.textContent = `보관함 ${control.unitCount()}기 · ${cur.credits}cr / ${cur.minerals}min / ${cur.blueprints}bp`;
+      s.appendChild(line);
+    }
+
+    /**
+     * 리플레이 섹션(침공 탭). 방금 돌린 침공을 **관전 재생**으로 되돌려 보고, 결정론 재현을
+     * 해시로 확인하고, JSON 으로 주고받는다.
+     *
+     * 재생은 정식 관전(F3)과 **같은 경로**(main.ts `beginSpectate`)를 탄다 — 재생 루프를
+     * 하네스가 따로 갖지 않아야 "하네스에서는 되는데 실제 관전은 깨지는" 갈림이 안 생긴다.
+     * 관전 월드는 진입 즉시 오염되어 정산·제출 대상에서 빠진다(ADR-0008).
+     *
+     * 해시 검증(`verifyReplay`)은 sim 정본 `runReplay` 를 그대로 쓰므로, 여기서 나온 최종
+     * 해시는 서버 재실행(verify-invasion)이 보는 값과 같은 축이다.
+     */
+    function appendReplaySection(s: HTMLElement): void {
+      s.appendChild(subLabel('리플레이 (관전 재생 · 결정론 검증)'));
+
+      const live = harness.replay();
+      const last = harness.lastReplay();
+
+      const row = document.createElement('div');
+      row.className = 'pb-c-row';
+      const playLast = btn(
+        '▶ 마지막 런 재생',
+        () => {
+          setHint(harness.playReplay() ? '리플레이 재생 시작' : '재생할 리플레이가 없습니다');
+        },
+        '마지막으로 끝난 런(없으면 지금 도는 런)의 리플레이를 관전 재생',
+        'play',
+      );
+      if (last === null && live === null) playLast.disabled = true;
+      const playLive = btn(
+        '▶ 현재 런 재생',
+        () => {
+          const r = harness.replay();
+          setHint(
+            r !== null && harness.playReplay(r)
+              ? '현재 런의 리플레이 재생 시작'
+              : '진행 중인 런의 리플레이가 없습니다',
+          );
+        },
+        '지금 도는 런을 여기까지 기록한 리플레이를 관전 재생(런은 중단된다)',
+      );
+      if (live === null) playLive.disabled = true;
+      const verify = btn(
+        '해시 검증',
+        () => {
+          const v = harness.verifyReplay();
+          // 문구를 세 갈래로 나눈다. `compared === false` 를 "재현 OK" 로 적으면 **검증하지
+          // 않은 것을 검증했다고 표시**하는 셈이다(리뷰 HIGH) — 이 저장소에서 해시 발산은
+          // 서버 거부로 직결되는 축이라 그 오도가 특히 비싸다.
+          setHint(
+            v.compared
+              ? v.ok
+                ? `재현 OK · ${v.ticks}틱 · hash ${v.finalHash}`
+                : `재현 실패 · ${v.reason}`
+              : `해시 출력 ${v.finalHash || '—'} · ${v.ticks}틱 (${v.reason})`,
+          );
+        },
+        '리플레이를 헤드리스로 재실행해 최종 해시를 내고, 기준선이 있으면 대조한다(화면 무변경)',
+      );
+      if (last === null && live === null) verify.disabled = true;
+      row.append(playLast, playLive, verify);
+      s.appendChild(row);
+
+      const ioRow = document.createElement('div');
+      ioRow.className = 'pb-c-row';
+      ioRow.append(
+        btn(
+          'JSON 복사',
+          () => {
+            const r = last ?? live;
+            if (r === null) {
+              setHint('복사할 리플레이가 없습니다');
+              return;
+            }
+            const json = serializeReplay(r);
+            // 클립보드는 두 가지로 실패한다: ① 권한 거부(reject) ② **API 자체 부재**.
+            // ②는 비보안 컨텍스트(하네스를 `http://<LAN-IP>:5185` 로 다른 기기에서 열 때)에서
+            // 흔한데, `navigator.clipboard?.writeText(...).then(...)` 은 옵셔널 체이닝이 체인
+            // **전체**를 단락시켜 폴백도 힌트도 안 도는 완전 무반응이 된다. 두 경로를 갈라 둔다.
+            const fallback = (): void => {
+              replayPaste = json;
+              setHint('클립보드 사용 불가 — 아래 상자에 넣었습니다');
+            };
+            const p = navigator.clipboard?.writeText(json);
+            if (p === undefined) fallback();
+            else void p.then(() => setHint(`리플레이 JSON 복사(${json.length}자)`), fallback);
+          },
+          '리플레이를 JSON 문자열로 클립보드에 복사',
+        ),
+        btn(
+          '붙여넣기 재생',
+          () => {
+            const r = parseReplay(replayPaste);
+            if (r === null) {
+              setHint('리플레이 JSON 을 읽을 수 없습니다(형식 확인)');
+              return;
+            }
+            setHint(harness.playReplay(r, '붙여넣은 리플레이') ? '리플레이 재생 시작' : '재생 실패');
+          },
+          '아래 상자의 JSON 을 리플레이로 읽어 관전 재생',
+        ),
+        btn(
+          '상자 비움',
+          () => {
+            replayPaste = '';
+            setHint('붙여넣기 상자를 비웠습니다');
+          },
+        ),
+      );
+      s.appendChild(ioRow);
+
+      const paste = document.createElement('textarea');
+      paste.value = replayPaste;
+      paste.rows = 2;
+      paste.placeholder = '리플레이 JSON 붙여넣기';
+      paste.style.width = '100%';
+      paste.style.boxSizing = 'border-box';
+      paste.title = '다른 세션·서버에서 받은 리플레이 JSON 을 넣고 [붙여넣기 재생]';
+      paste.addEventListener('input', () => {
+        replayPaste = paste.value;
+      });
+      s.appendChild(paste);
+
+      const line = document.createElement('div');
+      line.className = 'pb-c-lbl';
+      const describe = (label: string, r: ReturnType<Harness['replay']>): string => {
+        if (r === null) return `${label} 없음`;
+        const sum = replaySummary(r);
+        const kind = sum.invasion ? '침공' : 'PvE';
+        return `${label} ${kind} · seed ${sum.seed} · ${sum.ticks}틱(${sum.durationSec}초)`;
+      };
+      line.textContent = `${describe('현재', live)} / ${describe('마지막', last)}`;
+      s.appendChild(line);
     }
 
     /** 보스전 탭: 보스 세그먼트 진입 + 보스 상태 라인 + 전투 치트. */

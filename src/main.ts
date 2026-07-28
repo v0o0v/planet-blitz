@@ -35,6 +35,7 @@ import { ScreenTransition } from './render/screenTransition.js';
 import { InputController } from './input/controller.js';
 import { Hud } from './ui/hud.js';
 import type { BossHudState, RunInfoState } from './ui/hud.js';
+import { invasionHudState } from './ui/invasionProgress.js';
 import { bossHudName } from './ui/bossLabels.js';
 import { bossProgress } from './sim/bossProgress.js';
 import { PowerupOverlay } from './ui/powerupOverlay.js';
@@ -131,7 +132,7 @@ import {
 import type { InvasionTarget } from './net/invasion.js';
 // M7b 방어체 경제: 설계도 지급(정산 파생) + 보관함·강화 게이트웨이 팩토리 등록.
 import { grantBlueprintDrops } from './net/blueprints.js';
-import { setDefenseUnitsGatewayFactory } from './net/defenseUnits.js';
+import { setDefenseUnitsGatewayFactory, setDefenseUnitsGatewayOverride } from './net/defenseUnits.js';
 import { readSupabaseConfig } from './net/config.js';
 // M7a 침공 3레이어(ADR-0017): 침공 런은 구 단일 아레나 `WorldConfig.invasion` 이 아니라
 // `invasion3`(L1 대기권 → L2 회랑 → L3 코어방) 로 만든다. 두 필드를 함께 지정하면 방어
@@ -439,6 +440,18 @@ async function main(): Promise<void> {
   // --- Live run state (null while in menus) ---
   let world: WorldState | null = null;
   let recorder: ReplayRecorder | null = null;
+  /**
+   * 마지막으로 **끝난** 런의 리플레이(DEV 하네스 리플레이 재생용). `recorder` 는 다음 런
+   * 시작에서 즉시 갈리므로 종료 시점의 것을 따로 잡아 둬야 "방금 돌린 침공을 되돌려 본다"가
+   * 성립한다. 읽는 곳은 하네스 호스트 훅(`getLastReplay`)뿐이다.
+   */
+  let lastFinishedReplay: Replay | null = null;
+  /**
+   * 그 런이 끝난 시점의 월드 해시(hex 8자리). {@link lastFinishedReplay} 와 **짝**이며
+   * 하네스 `verifyReplay` 의 기준선이다 — 리플레이 자체는 해시를 담지 않으므로 이 값이
+   * 없으면 재실행 결과를 대조할 대상이 없다(검증이 아니라 해시 출력이 된다).
+   */
+  let lastFinishedHash: string | null = null;
   let currentSeed = 0;
   let settled = false;
   let lastOutcome: SettlementOutcome | null = null;
@@ -1259,6 +1272,14 @@ async function main(): Promise<void> {
 
   /** Settle a finished run into the profile once, then show the result screen. */
   function endRun(w: WorldState): void {
+    // 끝난 런의 리플레이 + **그 시점 월드 해시**를 짝으로 잡아 둔다(DEV 하네스 재생·재현
+    // 대조용). 정식 침공 분기(finishInvasionRun)도 이 함수를 거쳐 들어오므로 여기 한 자리면
+    // PvE·침공·하네스 침공이 모두 덮인다. 순수 보관이라 정산·제출 경로와 무관하고, 오염 런도
+    // **재생만** 가능하다(제출은 별개 가드).
+    if (recorder !== null) {
+      lastFinishedReplay = recorder.toReplay();
+      lastFinishedHash = hashWorld(w).toString(16).padStart(8, '0');
+    }
     // 침공 런은 PvE 정산이 아니라 서버 제출로 분기한다(서버 권위). finishInvasionRun 이
     // settled 를 즉시 세워 프레임당 재진입을 막는다.
     if (invasionTarget !== null) {
@@ -1630,6 +1651,9 @@ async function main(): Promise<void> {
     // 진행 바가 결과 화면 위에 그대로 남는다(사용자 신고 2026-07-28). 화면 이름으로 게이트해
     // 메뉴 복귀 시 stale HUD 가 남는 경로까지 한 번에 막는다.
     hud.setVisible(currentScreenName === 'run' || currentScreenName === 'spectate');
+    // 침공 진행 패널(사용자 요청 2026-07-29) — 읽기 전용 파생이라 sim 무영향. 침공 런이 아니면
+    // `invasionHudState` 가 null 을 돌려주고 패널이 감춰진다(런이 없을 때도 동일).
+    hud.setInvasion(w !== null ? invasionHudState(w) : null);
     if (w !== null) {
       const p = w.entities[0];
       let enemyN = 0;
@@ -1893,6 +1917,33 @@ async function main(): Promise<void> {
       // **같은 함수**를 부른다 — 판정을 복제하면 두 경로가 갈라진다. sim 을 스텝하지 않아
       // ff 의 틱 결정론은 그대로고, 오염/하네스 침공 격리(ADR-0008)도 endRun 가드가 유지한다.
       settleIfRunOver: () => settleIfRunOver(),
+      // --- 리플레이(DEV 하네스) ---
+      // 라이브는 recorder 에서 그대로 뽑는다 — 하네스 침공 런도 정식 런과 같은 record 경로를
+      // 타므로(startHarnessInvasionRun 이 ReplayRecorder 를 붙인다) 재현·검증에 바로 쓸 수 있다.
+      // 리플레이와 그 끝의 해시를 **한 호출에서 함께** 낸다. 따로 뽑으면 그 사이에 ticker 가
+      // 한 틱 더 밀어 멀쩡한 런이 "해시 불일치"로 뜬다(실시간 탭에서 실제로 재현됐다).
+      getLiveRun: () =>
+        recorder === null || world === null
+          ? null
+          : { replay: recorder.toReplay(), hash: hashWorld(world).toString(16).padStart(8, '0') },
+      getLastRun: () =>
+        lastFinishedReplay === null || lastFinishedHash === null
+          ? null
+          : { replay: lastFinishedReplay, hash: lastFinishedHash },
+      // 재생은 정식 관전(F3)과 **같은 경로**를 탄다 — 재생 루프를 하네스가 따로 가지면
+      // "하네스에서는 되는데 실제 관전은 깨지는" 갈림이 생긴다. 관전 월드는 beginSpectate 가
+      // 진입 즉시 markTainted 하므로 정산·제출 대상에서 빠진다(ADR-0008).
+      playReplay: (replay, name) => {
+        if (!isPlayableReplay(replay)) return false;
+        // 관전 진입은 `clearToMenu` 로 world·recorder 를 버린다 — 진행 중이던 런은 endRun 을
+        // 거치지 않으므로 여기서 잡아 두지 않으면 통째로 사라진다(잘못 누르면 복구 불가).
+        if (recorder !== null && world !== null) {
+          lastFinishedReplay = recorder.toReplay();
+          lastFinishedHash = hashWorld(world).toString(16).padStart(8, '0');
+        }
+        beginSpectate(replay, name);
+        return true;
+      },
     };
 
     harness = core.createHarness(host);
@@ -1997,12 +2048,41 @@ async function main(): Promise<void> {
       injectedCount: () => planetSelect.getInjectedCatalysts().length,
     };
 
+    // 방어체 강화 모의 원장(DEV). 방어 사령부의 강화는 서버 권위라 로그인 없이는 한 줄도
+    // 돌지 않는다 — 인메모리 게이트웨이를 전역 대체로 끼우면 오프라인에서도 레벨업·승급·
+    // 리롤·등급 승급·제작 흐름을 그대로 밟을 수 있다. 끄면 즉시 원래 경로로 돌아온다.
+    const defenseMockMod = await import('./harness/defenseMock.js');
+    const defenseMock = defenseMockMod.createDefenseMock(0xdef3);
+    let defenseMockOn = false;
+    const defenseControl = {
+      enabled: () => defenseMockOn,
+      setEnabled: (on: boolean) => {
+        defenseMockOn = on;
+        setDefenseUnitsGatewayOverride(on ? defenseMock.gateway : null);
+        harnessRefreshScreen(); // 사령부가 열려 있으면 새 원장으로 다시 그린다
+      },
+      currency: () => defenseMock.state(),
+      setCurrency: (next: Partial<{ credits: number; minerals: number; blueprints: number }>) => {
+        defenseMock.setCurrency(next);
+      },
+      seedUnits: (count: number) => {
+        defenseMock.seedUnits(count);
+        harnessRefreshScreen();
+      },
+      reset: () => {
+        defenseMock.reset();
+        harnessRefreshScreen();
+      },
+      unitCount: () => defenseMock.unitCount(),
+    };
+
     // DEV 치트 패널(개발 도구): 하네스를 구동하는 우하단 접이식 오버레이(백틱 ` 토글).
     // 동적 import라 프로덕션 번들에서 완전히 제거된다(import.meta.env.DEV 정적 false).
     const cheatPanel = await import('./harness/cheatPanel.js');
     const panel = cheatPanel.createCheatPanel({
       harness,
       catalyst: catalystControl,
+      defense: defenseControl,
       getEntities: () => currSnap.entities,
       getProfile: () => profile,
       // 로컬 저장 + 서버 push(하네스 재화 치트를 서버 권위 경로에 반영 — 위 helper 주석 참조).

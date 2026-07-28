@@ -11,6 +11,7 @@
 
 import { t } from '../i18n/index.js';
 import type { BossProgress } from '../sim/bossProgress.js';
+import type { InvasionHudState } from './invasionProgress.js';
 
 export interface BossHudState {
   hp: number;
@@ -101,6 +102,38 @@ function bar(label: string, colorClass: string): { root: HTMLElement; fill: HTML
   return { root, fill, text };
 }
 
+/**
+ * 침공 진행 패널의 게이지 한 줄(라벨 + 트랙 + 트랙 위 수치). {@link bar} 와 달리 트랙 폭이 좁고
+ * 라벨이 고정폭이라, 레이어·코어·보스 세 줄이 같은 세로 격자에 정렬된다.
+ */
+function invRow(
+  name: string,
+  colorClass: string,
+): { root: HTMLElement; label: HTMLElement; fill: HTMLElement; text: HTMLElement } {
+  const root = document.createElement('div');
+  root.className = 'pb-ip-row';
+  const label = document.createElement('div');
+  label.className = 'pb-ip-name';
+  label.textContent = name;
+  const track = document.createElement('div');
+  track.className = 'pb-ip-track';
+  const fill = document.createElement('div');
+  fill.className = `pb-ip-fill ${colorClass}`;
+  const text = document.createElement('div');
+  text.className = 'pb-ip-text';
+  track.appendChild(fill);
+  track.appendChild(text);
+  root.appendChild(label);
+  root.appendChild(track);
+  return { root, label, fill, text };
+}
+
+/** 잔여 초 → `M:SS`. 침공은 분 단위(최대 5분)라 시간 자리는 두지 않는다. */
+function mmss(sec: number): string {
+  const s = sec > 0 ? Math.ceil(sec) : 0;
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+}
+
 const STYLE = `
 #pb-hud { position:absolute; left:16px; bottom:16px; width:340px; font-family:'Segoe UI',system-ui,sans-serif; color:#e8ecff; pointer-events:none; user-select:none; }
 #pb-hud .pb-bar { display:flex; align-items:center; gap:8px; margin:4px 0; }
@@ -148,6 +181,22 @@ const STYLE = `
 #pb-runinfo .pb-ri-row .v { font-weight:800; }
 #pb-runinfo .pb-ri-row.pen .v { color:#ff9a8a; }
 #pb-runinfo .pb-ri-row.rew .v { color:#8affc0; }
+#pb-invprog { position:absolute; left:16px; top:16px; width:260px; background:rgba(12,16,30,.74); border:1px solid rgba(120,190,255,.35); border-radius:10px; padding:9px 11px; font-family:'Segoe UI',system-ui,sans-serif; color:#e8ecff; pointer-events:none; user-select:none; }
+#pb-invprog .pb-ip-head { display:flex; justify-content:space-between; align-items:baseline; font-size:11px; font-weight:800; letter-spacing:1.2px; color:#8ec8ff; text-shadow:0 1px 3px #000; }
+#pb-invprog .pb-ip-layer { font-size:13px; font-weight:800; color:#dbe8ff; margin-top:3px; text-shadow:0 1px 3px #000; }
+#pb-invprog .pb-ip-row { display:flex; align-items:center; gap:7px; margin-top:5px; }
+#pb-invprog .pb-ip-name { width:52px; flex:none; font-size:10px; font-weight:800; letter-spacing:.6px; color:#a9c6ff; text-shadow:0 1px 2px #000; }
+#pb-invprog .pb-ip-track { position:relative; flex:1; height:13px; background:rgba(8,10,20,.8); border:1px solid rgba(255,255,255,.18); border-radius:7px; overflow:hidden; }
+#pb-invprog .pb-ip-fill { position:absolute; inset:0; width:0%; border-radius:7px 0 0 7px; transition:width .12s linear; }
+#pb-invprog .pb-ip-fill.layer { background:linear-gradient(90deg,#3f9bff,#8affea); }
+#pb-invprog .pb-ip-fill.core { background:linear-gradient(90deg,#ffb84c,#ffe98a); }
+#pb-invprog .pb-ip-fill.boss { background:linear-gradient(90deg,#ff3020,#ff7a1a); }
+#pb-invprog .pb-ip-text { position:relative; z-index:1; text-align:center; line-height:13px; font-size:10px; font-weight:700; text-shadow:0 1px 2px #000; }
+#pb-invprog .pb-ip-time { display:flex; justify-content:space-between; font-size:11px; font-weight:700; color:#d8c9a8; margin-top:6px; text-shadow:0 1px 2px #000; }
+#pb-invprog .pb-ip-time.urgent { color:#ff9a8a; }
+#pb-invprog .pb-ip-defhead { font-size:10px; font-weight:800; letter-spacing:1px; color:#8affc0; margin-top:7px; text-shadow:0 1px 2px #000; }
+#pb-invprog .pb-ip-def { display:flex; flex-wrap:wrap; gap:4px 10px; font-size:11px; font-weight:700; margin-top:2px; text-shadow:0 1px 2px #000; }
+#pb-invprog .pb-ip-def span b { color:#8affc0; font-weight:800; }
 #pb-lore { position:absolute; top:140px; left:50%; transform:translateX(-50%); max-width:80vw; background:rgba(18,24,44,.82); border:1px solid rgba(120,200,255,.55); box-shadow:0 0 18px 2px rgba(60,140,220,.35) inset; color:#dbe8ff; padding:10px 22px; border-radius:12px; font-family:'Segoe UI',system-ui,sans-serif; text-align:center; pointer-events:none; user-select:none; }
 #pb-lore .pb-lore-line { font-size:14px; font-weight:600; letter-spacing:.4px; text-shadow:0 1px 3px #000; line-height:1.5; }
 #pb-lore .pb-lore-line + .pb-lore-line { font-size:12px; font-weight:500; color:#a9c6ff; }
@@ -184,6 +233,21 @@ export class Hud {
   private readonly contamMsg: HTMLElement;
   /** 런 중 침공 정보판(우측 가운데). 기본 숨김, {@link setRunInfo} 로 런 시작 때 채운다. */
   private readonly runInfo: HTMLElement;
+  /**
+   * 침공 진행 패널(좌상단). 침공 런에서만 뜬다 — {@link setInvasion} 이 `null` 을 받으면 감춘다.
+   * 좌하단 `#pb-hud`·상단중앙 `#pb-boss`/`#pb-bossmeter`·그 아래 `#pb-contam`·우중앙 `#pb-runinfo`
+   * 와 자리가 겹치지 않는다.
+   */
+  private readonly invRoot: HTMLElement;
+  private readonly invLayer: HTMLElement;
+  private readonly invLayerBar: ReturnType<typeof invRow>;
+  private readonly invCoreBar: ReturnType<typeof invRow>;
+  private readonly invBossBar: ReturnType<typeof invRow>;
+  private readonly invTime: HTMLElement;
+  private readonly invTimeLayer: HTMLElement;
+  private readonly invTimeTotal: HTMLElement;
+  /** 방어 잔존 4항목 값 노드(설비·수호·기물·적 순). 라벨은 생성 시 한 번만 쓴다. */
+  private readonly invDefValues: readonly HTMLElement[];
   /** 스토리 로어 토스트 배너(에코 안정화 등). 기본 숨김, {@link showLore} 로 잠깐 표시. */
   private readonly loreToast: HTMLElement;
   private loreTimer: ReturnType<typeof setTimeout> | null = null;
@@ -301,6 +365,59 @@ export class Hud {
     this.runInfo.style.display = 'none';
     document.body.appendChild(this.runInfo);
 
+    // 침공 진행 패널(좌상단) — 구조는 여기서 한 번만 짓고 매 프레임 값만 갈아끼운다.
+    // `setRunInfo` 처럼 매번 다시 지으면 프레임당 DOM 재구축이 되므로(HP/XP 와 같은 성격의
+    // 실시간 값이다) 갱신 경로를 값 대입으로만 남긴다.
+    this.invRoot = document.createElement('div');
+    this.invRoot.id = 'pb-invprog';
+    const invHead = document.createElement('div');
+    invHead.className = 'pb-ip-head';
+    const invTitle = document.createElement('span');
+    invTitle.textContent = t('hud.inv.title');
+    invHead.appendChild(invTitle);
+    this.invLayer = document.createElement('div');
+    this.invLayer.className = 'pb-ip-layer';
+    this.invLayerBar = invRow('', 'layer');
+    this.invCoreBar = invRow(t('hud.inv.core'), 'core');
+    this.invBossBar = invRow(t('hud.inv.boss'), 'boss');
+    this.invTime = document.createElement('div');
+    this.invTime.className = 'pb-ip-time';
+    this.invTimeLayer = document.createElement('span');
+    this.invTimeTotal = document.createElement('span');
+    this.invTime.appendChild(this.invTimeLayer);
+    this.invTime.appendChild(this.invTimeTotal);
+    const invDefHead = document.createElement('div');
+    invDefHead.className = 'pb-ip-defhead';
+    invDefHead.textContent = t('hud.inv.defense');
+    const invDef = document.createElement('div');
+    invDef.className = 'pb-ip-def';
+    const defValues: HTMLElement[] = [];
+    for (const key of [
+      'hud.inv.facilities',
+      'hud.inv.guardians',
+      'hud.inv.props',
+      'hud.inv.enemies',
+    ] as const) {
+      const cell = document.createElement('span');
+      cell.append(`${t(key)} `);
+      const v = document.createElement('b');
+      v.textContent = '0';
+      cell.appendChild(v);
+      invDef.appendChild(cell);
+      defValues.push(v);
+    }
+    this.invDefValues = defValues;
+    this.invRoot.appendChild(invHead);
+    this.invRoot.appendChild(this.invLayer);
+    this.invRoot.appendChild(this.invLayerBar.root);
+    this.invRoot.appendChild(this.invCoreBar.root);
+    this.invRoot.appendChild(this.invBossBar.root);
+    this.invRoot.appendChild(this.invTime);
+    this.invRoot.appendChild(invDefHead);
+    this.invRoot.appendChild(invDef);
+    this.invRoot.style.display = 'none';
+    document.body.appendChild(this.invRoot);
+
     this.loreToast = document.createElement('div');
     this.loreToast.id = 'pb-lore';
     this.loreToast.style.display = 'none';
@@ -314,8 +431,9 @@ export class Hud {
    * 소관이므로 건드리지 않고, 직교 축인 `visibility` 로만 덮어쓴다 — 두 축이 섞이지 않아
    * "감췄다가 다시 보이면 원래 표시 규칙이 그대로 복원"된다.
    *
-   * 런 중 침공 정보판({@link setRunInfo})도 같이 덮는다 — 런에만 뜨는 판이라 정산 위에 남으면
-   * 같은 결함이다.
+   * 런 중 침공 정보판({@link setRunInfo})·침공 진행 패널({@link setInvasion})도 같이 덮는다 —
+   * 둘 다 런에만 뜨는 판이라 정산 위에 남으면 같은 결함이다. 특히 진행 패널은 매 프레임
+   * 상태에서 파생돼 다시 켜지므로(정산 후에도 world 가 살아 있다) `display` 만으로는 못 막는다.
    */
   setVisible(visible: boolean): void {
     const v = visible ? '' : 'hidden';
@@ -328,6 +446,7 @@ export class Hud {
       this.contamRoot,
       this.loreToast,
       this.runInfo,
+      this.invRoot,
     ]) {
       el.style.visibility = v;
     }
@@ -393,6 +512,64 @@ export class Hud {
       row.appendChild(value);
       this.runInfo.appendChild(row);
     }
+  }
+
+  /**
+   * 침공 진행 패널을 갱신한다(`null` = 감춤 — 침공 런이 아니거나 런이 없을 때).
+   *
+   * `setRunInfo` 와 달리 **매 프레임** 부른다 — 레이어 진행·잔여 시간·잔존 수가 전부 실시간
+   * 값이라 HP/XP 와 같은 성격이다. 대신 DOM 구조는 생성자에서 한 번만 짓고 여기서는 값만
+   * 대입한다(프레임당 재구축 금지).
+   *
+   * 순수 뷰다 — 파생은 전부 `src/ui/invasionProgress.ts` 가 한다({@link RunInfoState} 와 같은 규율).
+   */
+  setInvasion(s: InvasionHudState | null): void {
+    if (s === null) {
+      this.invRoot.style.display = 'none';
+      return;
+    }
+    this.invRoot.style.display = 'block';
+    this.invLayer.textContent = s.layerLabel;
+
+    const pct = Math.round(Math.max(0, Math.min(1, s.layerFraction)) * 100);
+    this.invLayerBar.fill.style.width = `${pct}%`;
+    this.invLayerBar.text.textContent = `${pct}%`;
+
+    Hud.updateInvBar(this.invCoreBar, s.core);
+    Hud.updateInvBar(this.invBossBar, s.boss);
+
+    this.invTimeLayer.textContent = `${t('hud.inv.layerTime')} ${mmss(s.layerRemainSec)}`;
+    this.invTimeTotal.textContent = `${t('hud.inv.totalTime')} ${mmss(s.totalRemainSec)}`;
+    // 총 제한시간이 임박하면 색으로 알린다 — hard 상한이라 도달하면 그 자리에서 실패다.
+    this.invTime.className = `pb-ip-time${s.totalRemainSec <= Hud.INV_TIME_URGENT_SEC ? ' urgent' : ''}`;
+
+    const d = s.defense;
+    for (const [i, n] of [d.facilities, d.guardians, d.props, d.enemies].entries()) {
+      const cell = this.invDefValues[i];
+      if (cell !== undefined) cell.textContent = `${n}`;
+    }
+  }
+
+  /** 총 제한시간 경고 임계(초). 이 아래로 내려가면 시간 줄이 경고색으로 바뀐다. */
+  private static readonly INV_TIME_URGENT_SEC = 30;
+
+  /**
+   * 침공 패널의 체력 게이지 한 줄(코어·보스)을 갱신한다. 값이 없으면 줄을 통째로 감춘다 —
+   * L1/L2 에는 코어도 방어 보스도 존재하지 않아, 0% 로 굳은 빈 게이지를 남기면 "이미 다
+   * 깎았다"로 오독된다.
+   */
+  private static updateInvBar(
+    row: ReturnType<typeof invRow>,
+    v: { hp: number; maxHp: number } | undefined,
+  ): void {
+    if (v === undefined || v.maxHp <= 0) {
+      row.root.style.display = 'none';
+      return;
+    }
+    row.root.style.display = 'flex';
+    const frac = Math.max(0, Math.min(1, v.hp / v.maxHp));
+    row.fill.style.width = `${frac * 100}%`;
+    row.text.textContent = `${Math.ceil(Math.max(0, v.hp))} / ${v.maxHp}`;
   }
 
   /**
