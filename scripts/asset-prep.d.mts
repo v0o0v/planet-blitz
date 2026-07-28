@@ -48,3 +48,47 @@ export type ParsedSliceSheetArgs = {
 };
 
 export function parseSliceSheetArgs(args: string[]): ParsedSliceSheetArgs;
+
+// --- backdrop (침공 3레이어 배경) -------------------------------------------
+
+export type WangCorner = 'upper' | 'lower';
+export type WangTileMeta = {
+  name: string;
+  corners: { NE: WangCorner; NW: WangCorner; SE: WangCorner; SW: WangCorner };
+  bounding_box: { x: number; y: number; width: number; height: number };
+};
+export type TilesetMeta = { tileset_data: { tiles: WangTileMeta[] } };
+
+export const BACKDROP_SIZE: number;
+export const BACKDROP_GRAIN: number;
+export const BACKDROP_PALETTES: readonly { base: number; line: number; accent: number }[];
+export const BACKDROP_TILESET_IDS: Readonly<Record<'l1' | 'l2' | 'l3', string>>;
+
+export function extractFillTile(sheet: PngImage, meta: TilesetMeta): PngImage & { name: string };
+export function grainBase(tile: PngImage, size: number, baseColor: number, gain: number): Uint8Array;
+export function drawBackdropStructure(px: Uint8Array, size: number, layer: number): void;
+export function composeBackdrop(
+  sheetBuf: Uint8Array,
+  meta: TilesetMeta,
+  layer: number,
+  gain?: number,
+): { buf: Uint8Array; tileName: string };
+export type SeamReport = {
+  wrapX: number;
+  wrapY: number;
+  limitX: number;
+  limitY: number;
+  seamless: boolean;
+};
+
+export function seamReport(img: PngImage): SeamReport;
+
+export type ParsedBackdropArgs = {
+  sheetPath: string;
+  metaPath: string;
+  layer: number;
+  out: string;
+  gain: number;
+};
+
+export function parseBackdropArgs(args: string[]): ParsedBackdropArgs;
