@@ -9,6 +9,12 @@
  * - tests/denoFixture.test.ts: fs.writeFileSync, url.fileURLToPath, process.version.
  * - tests/assetPrepSliceSheet.test.ts: fs 읽기/쓰기·임시 디렉터리 생성, os.tmpdir,
  *   path.join (scripts/asset-prep.mjs `slice-sheet` PNG 왕복 테스트용).
+ * - tests/uiAssetPresence.test.ts · tests/catalystIconAssets.test.ts:
+ *   path.dirname/resolve (테스트 파일 위치 기준으로 `assets/` 절대경로 유도).
+ *
+ * ⚠️ 여기 없는 API 를 테스트에서 쓰면 **vitest 는 통과하는데 `tsc --noEmit` 만 깨진다**
+ * (런타임은 실제 Node 라 잘 돈다). `pnpm build` 가 `tsc --noEmit && vite build` 라
+ * 빌드가 통째로 막히므로, 새 node 빌트인을 쓸 때는 이 선언을 먼저 넓혀라.
  */
 
 declare module 'node:fs' {
@@ -25,6 +31,8 @@ declare module 'node:os' {
 
 declare module 'node:path' {
   export function join(...segments: string[]): string;
+  export function resolve(...segments: string[]): string;
+  export function dirname(path: string): string;
 }
 
 declare module 'node:url' {
