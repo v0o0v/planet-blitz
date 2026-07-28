@@ -116,38 +116,77 @@ export function rollItem(dropSeed: number, rarity: Rarity, source: ItemSource): 
   };
 }
 
+/** 정련 공정(ADR-0040)의 재단조 옵션. */
+export interface ReforgeOpts {
+  /** 재추첨에서 제외할 어픽스 인덱스(누적 고착). 중복·범위 밖은 무시. */
+  readonly fastened?: readonly number[];
+  /** 값 품질 밴드 하한 비율 [0,1]. 0 = 현행 균등 분포. */
+  readonly band?: number;
+}
+
+/** `band` 를 [0,1] 로 클램프(NaN 은 0 취급). */
+function clampBand(band: number | undefined): number {
+  if (band === undefined || !Number.isFinite(band)) return 0;
+  if (band <= 0) return 0;
+  if (band >= 1) return 1;
+  return band;
+}
+
 /**
- * Reforge an item's affixes at the refinery (M3 Phase A4 — plan §4, AC3). PURE in
- * (`item`'s affix shape, `rerollSeed`, `lockedIndex`): a local RNG seeded from
- * `rerollSeed` redraws every affix EXCEPT the one at `lockedIndex` (locked-reroll,
- * the 광물 3배 option — cost is meta, handled by the caller). The locked affix is
- * preserved in place and excluded from the redraw pool so it is never duplicated.
- * The affix COUNT is preserved (a reroll reforges, it does not add/remove slots).
- *
- * Everything else (id, slot, rarity, weaponType, uniqueId, source) is carried
- * unchanged — it is the same item, reforged. Deterministic: same inputs → same
- * result on the client and the verification Edge Function alike (ADR-0005).
+ * `fastened` 정규화 — 정수·범위 안·실재하는 어픽스만 남기고 중복 제거 후 오름차순 정렬.
  */
-export function rerollAffixes(item: Item, rerollSeed: number, lockedIndex?: number): Item {
+function normalizeFastened(item: Item, fastened: readonly number[] | undefined): number[] {
   const count = item.affixes.length;
-  const hasLock =
-    lockedIndex !== undefined &&
-    lockedIndex >= 0 &&
-    lockedIndex < count &&
-    item.affixes[lockedIndex] !== undefined;
-  // Nothing to reroll (0 affixes, or a single locked affix): return an identical
-  // copy so the call is still a pure, side-effect-free reforge.
-  if (count === 0 || (hasLock && count === 1)) {
+  const out: number[] = [];
+  for (const raw of fastened ?? []) {
+    if (!Number.isInteger(raw)) continue;
+    if (raw < 0 || raw >= count) continue;
+    if (item.affixes[raw] === undefined) continue;
+    if (out.indexOf(raw) >= 0) continue;
+    out.push(raw);
+  }
+  out.sort((a, b) => a - b);
+  return out;
+}
+
+/**
+ * 정련 공정의 재단조(ADR-0040). 순수 함수 — (`item` 의 어픽스 형태, `rerollSeed`, `opts`)
+ * 에만 의존한다. `rerollSeed` 로 시드한 로컬 RNG 가 **고착되지 않은** 어픽스를 전부 다시
+ * 뽑는다. 고착된 어픽스는 값·인덱스가 그대로 유지되고, 그 `def.id` 가 재추첨 풀에서 빠져
+ * 중복이 생기지 않는다. 어픽스 **개수**는 언제나 보존된다(재단조는 슬롯을 늘리거나 줄이지
+ * 않는다 — `requiredLevel` 이 개수 파생이라 구조적 불변이 여기 걸려 있다).
+ *
+ * ## RNG 스트림 형태 불변 (최우선 제약)
+ * 값 밴드가 걸려도 값 추첨은 `rng.int()` **정확히 1회**다:
+ * ```ts
+ * const lo = def.min + Math.round((def.max - def.min) * band);
+ * const value = rng.int(lo, def.max);
+ * ```
+ * `band = 0` 이면 `lo === def.min` 이라 밴드 도입 이전과 **바이트 동일**한 결과가 나온다.
+ * 퇴화 범위(`min === max`: `multibarrel`·`piercing`·`freezing`)는 `lo === def.max` 라
+ * 밴드와 무관하게 항상 같은 값을 낸다 — 별도 분기 없이 산식에서 자연히 성립한다.
+ *
+ * 나머지(id, slot, rarity, weaponType, uniqueId, source)는 그대로 실려 나간다 — 같은
+ * 아이템을 다시 벼린 것이다. 결정론: 같은 입력 → 클라와 검증 런타임에서 같은 결과(ADR-0005).
+ */
+export function reforgeAffixes(item: Item, rerollSeed: number, opts?: ReforgeOpts): Item {
+  const count = item.affixes.length;
+  const band = clampBand(opts?.band);
+  const fastened = normalizeFastened(item, opts?.fastened);
+
+  // 다시 뽑을 것이 없다(어픽스 0개, 또는 전부 고착): 순수·부작용 없는 재단조가 되도록
+  // 동일한 복사본을 돌려준다.
+  if (count === 0 || fastened.length >= count) {
     return { ...item, affixes: item.affixes.slice() };
   }
 
   const rng = new SeededRng(rerollSeed >>> 0);
-  const locked = hasLock ? item.affixes[lockedIndex as number] : undefined;
 
-  // Redraw pool excludes the locked affix's def so it is never re-rolled onto
-  // another slot (distinctness across the whole item is preserved).
-  const pool: AffixDef[] = AFFIXES.filter((d) => d.id !== locked?.id);
-  const needed = count - (hasLock ? 1 : 0);
+  // 재추첨 풀에서 고착 어픽스의 def 를 뺀다 → 다른 슬롯에 다시 뽑히지 않는다(아이템 전체
+  // 어픽스 중복 없음이 보존된다).
+  const keptIds = new Set<string>(fastened.map((i) => (item.affixes[i] as AffixRoll).id));
+  const pool: AffixDef[] = AFFIXES.filter((d) => !keptIds.has(d.id));
+  const needed = count - fastened.length;
   const fresh: AffixRoll[] = [];
   const n = needed < pool.length ? needed : pool.length;
   for (let k = 0; k < n; k++) {
@@ -155,22 +194,44 @@ export function rerollAffixes(item: Item, rerollSeed: number, lockedIndex?: numb
     const def = pool[j];
     pool.splice(j, 1);
     if (def === undefined) continue;
-    const value = rng.int(def.min, def.max);
+    // 값 추첨은 밴드 유무와 무관하게 int() 1회 — 스트림 형태 불변.
+    const lo = def.min + Math.round((def.max - def.min) * band);
+    const value = rng.int(lo, def.max);
     fresh.push({ id: def.id, stat: def.stat, value });
   }
 
-  // Reassemble: keep the locked affix at its index, fill the rest in order.
+  // 재조립: 고착 어픽스는 제자리에 두고, 나머지를 순서대로 채운다.
+  const isFastened = new Set<number>(fastened);
   const out: AffixRoll[] = new Array<AffixRoll>(count);
   let f = 0;
   for (let i = 0; i < count; i++) {
-    if (hasLock && i === lockedIndex && locked !== undefined) {
-      out[i] = locked;
+    if (isFastened.has(i)) {
+      out[i] = item.affixes[i] as AffixRoll;
     } else {
       const r = fresh[f++];
-      // Pool smaller than needed (only with an exhausted affix table): fall back
-      // to the original affix at this slot rather than leaving a hole.
+      // 풀이 필요한 수보다 작은 경우(어픽스 테이블이 고갈된 경우에만): 구멍을 남기지 말고
+      // 이 슬롯의 원래 어픽스로 되돌린다.
       out[i] = r ?? (item.affixes[i] as AffixRoll);
     }
   }
   return { ...item, affixes: out };
+}
+
+/**
+ * Reforge an item's affixes at the refinery (M3 Phase A4 — plan §4, AC3). PURE in
+ * (`item`'s affix shape, `rerollSeed`, `lockedIndex`): a local RNG seeded from
+ * `rerollSeed` redraws every affix EXCEPT the one at `lockedIndex`. The locked affix
+ * is preserved in place and excluded from the redraw pool so it is never duplicated.
+ * The affix COUNT is preserved (a reroll reforges, it does not add/remove slots).
+ *
+ * ADR-0040 이후 이 함수는 {@link reforgeAffixes} 의 **얇은 위임**이다(단일 고착 · 밴드 0).
+ * 시그니처·동작은 그대로 유지된다 — deno-verify 시나리오와 `tests/reroll.test.ts` 의 기존
+ * 케이스가 회귀 기준선이다.
+ */
+export function rerollAffixes(item: Item, rerollSeed: number, lockedIndex?: number): Item {
+  return reforgeAffixes(
+    item,
+    rerollSeed,
+    lockedIndex === undefined ? undefined : { fastened: [lockedIndex] },
+  );
 }

@@ -16,7 +16,7 @@
  *   검사 대상 목록을 손으로 적지 않는다. `src/main.ts` 에서 상대 import 를 따라가 **실제 앱에
  *   도달하는 모듈 집합**을 구한 뒤, 그 안의 모든 `saveProfile(` 호출을 검사한다. 새 화면
  *   파일이 추가돼 main 에 배선되는 순간 자동으로 검사 대상이 된다. 반대로 아무 데서도 import
- *   되지 않는 죽은 모듈(레거시 DOM 화면 3종)은 대상이 아니다 — 배선되는 순간 걸린다.
+ *   되지 않는 죽은 모듈(레거시 DOM 화면 2종)은 대상이 아니다 — 배선되는 순간 걸린다.
  *
  * 경로 처리는 `node:path`/`existsSync` 대신 URL 로만 한다 — 이 저장소는 `@types/node` 를 두지
  * 않고 `tests/node-shims.d.ts` 의 최소 표면만 선언하기 때문이다(readFileSync + fileURLToPath).
@@ -230,11 +230,12 @@ describe('saveProfile 저장 관용구 가드', () => {
     }
   });
 
-  it('레거시 DOM 화면 3종은 도달 불가라 검사 대상이 아니다 (배선하면 먼저 고쳐야 한다)', () => {
-    // 이 셋은 ADR-0014 로 Pixi 에 자리를 내준 뒤 아무 데서도 import 되지 않는다. 같은
+  it('레거시 DOM 화면 2종은 도달 불가라 검사 대상이 아니다 (배선하면 먼저 고쳐야 한다)', () => {
+    // 이 둘은 ADR-0014 로 Pixi 에 자리를 내준 뒤 아무 데서도 import 되지 않는다. 같은
     // `saveProfile(this.profile, this.store)` 함정을 그대로 갖고 있으므로, 다시 배선하려면
     // `?? undefined` 를 붙인 뒤에 해야 한다(그때 위 가드가 빨간불로 알려 준다).
-    for (const rel of ['src/ui/inventory.ts', 'src/ui/researchLab.ts', 'src/ui/refinery.ts']) {
+    // (DOM 정제소 `src/ui/refinery.ts` 는 ADR-0040 에서 아예 삭제됐다 — 목록에서 뺀다.)
+    for (const rel of ['src/ui/inventory.ts', 'src/ui/researchLab.ts']) {
       expect(REACHABLE, `${rel} 가 배선됐다면 store 인자를 먼저 고쳐라`).not.toContain(rel);
     }
   });

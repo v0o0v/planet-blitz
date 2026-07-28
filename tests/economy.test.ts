@@ -1,25 +1,31 @@
 /**
  * 경제 비용 공식 테스트(data/economy.ts).
  *
- * 단조성(등급↑→비용↑, 어픽스↑→비용↑, 레벨↑→리스펙↑, 회차↑→확장↑), 잠금 배수(GDD §9),
- * 경계값(0레벨·잠금0·회차0), 앵커(구 하드코딩 값 보존), 재화 부족 시 실행 거부를 검증한다.
+ * 단조성(등급↑→비용↑, 어픽스↑→비용↑, 레벨↑→리스펙↑, 회차↑→확장↑), 노 출력 3축(ADR-0040),
+ * 경계값(0레벨·고착0·회차0), 앵커(구 하드코딩 값 보존), 재화 부족 시 실행 거부를 검증한다.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
   rerollBaseCost,
-  rerollCost,
-  lockMultiplier,
+  rollCost,
+  baseRisk,
+  meltRisk,
   respecCostCredits,
   stashExpansionCost,
   canAfford,
   REROLL_BASE,
   REROLL_PER_RARITY,
   REROLL_PER_AFFIX,
-  LOCKED_REROLL_MULT,
+  HEAT,
+  HEATS,
+  RISK_CAP,
+  RISK_EXP,
+  RISK_MAX,
   RESPEC_CREDITS_PER_LEVEL,
   STASH_EXPANSION_BASE,
 } from '../data/economy.js';
+import type { Heat } from '../data/economy.js';
 import type { Rarity } from '../src/items/types.js';
 import {
   defaultProfile,
@@ -57,29 +63,140 @@ describe('economy: 어픽스 리롤 비용', () => {
   });
 });
 
-describe('economy: 잠금 배수(GDD §9)', () => {
-  it('잠금 0 → ×1(일반 리롤)', () => {
-    expect(lockMultiplier(0)).toBe(1);
+describe('economy: 노 출력 배수(ADR-0040)', () => {
+  it('테이블 키 집합이 HEATS 와 정확히 일치한다', () => {
+    expect(HEATS).toEqual(['low', 'mid', 'high']);
+    expect(Object.keys(HEAT).sort()).toEqual([...HEATS].sort());
   });
 
-  it('잠금 1 → ×3(GDD "잠금 시 비용 3배")', () => {
-    expect(lockMultiplier(1)).toBe(LOCKED_REROLL_MULT);
-    expect(lockMultiplier(1)).toBe(3);
+  it('앵커: mid 는 현행 단발 리롤과 동일 비용(×1)', () => {
+    expect(HEAT.mid.costMult).toBe(1);
+    expect(HEAT.mid.riskMult).toBe(1);
+    expect(rollCost('magic', 1, 'mid')).toBe(rerollBaseCost('magic', 1));
+    expect(rollCost('magic', 1, 'mid')).toBe(12);
   });
 
-  it('잠금 수 비례: 잠금 2 → ×6', () => {
-    expect(lockMultiplier(2)).toBe(LOCKED_REROLL_MULT * 2);
+  it('세 축이 한 몸으로 움직인다: 비용·위험·밴드 모두 low < mid < high 단조 증가', () => {
+    for (let i = 1; i < HEATS.length; i++) {
+      const prev = HEAT[HEATS[i - 1]!];
+      const cur = HEAT[HEATS[i]!];
+      expect(cur.costMult).toBeGreaterThan(prev.costMult);
+      expect(cur.riskMult).toBeGreaterThan(prev.riskMult);
+      expect(cur.band).toBeGreaterThan(prev.band);
+    }
   });
 
-  it('rerollCost: 잠금 리롤 = 기본 × 잠금 배수', () => {
-    const base = rerollBaseCost('rare', 3);
-    expect(rerollCost('rare', 3, 0)).toBe(base);
-    expect(rerollCost('rare', 3, 1)).toBe(base * 3);
-    expect(rerollCost('rare', 3, 2)).toBe(base * 6);
+  it('밴드는 [0,1] 안에 있다(레인 A 의 band 계약 전제)', () => {
+    for (const h of HEATS) {
+      expect(HEAT[h].band).toBeGreaterThanOrEqual(0);
+      expect(HEAT[h].band).toBeLessThanOrEqual(1);
+    }
   });
 
-  it('rerollCost 기본 인자(lockCount 생략) = 잠금 없음', () => {
-    expect(rerollCost('magic', 1)).toBe(rerollBaseCost('magic', 1));
+  it('rollCost: 노 출력↑ → 비용 단조 증가', () => {
+    for (let i = 1; i < HEATS.length; i++) {
+      expect(rollCost('rare', 3, HEATS[i]!)).toBeGreaterThan(rollCost('rare', 3, HEATS[i - 1]!));
+    }
+  });
+
+  it('rollCost 는 항상 정수를 돌려준다(올림)', () => {
+    for (const h of HEATS) {
+      for (const rarity of ['normal', 'magic', 'rare', 'unique'] as Rarity[]) {
+        for (let a = 0; a <= 6; a++) {
+          const c = rollCost(rarity, a, h);
+          expect(Number.isInteger(c)).toBe(true);
+          expect(c).toBe(Math.ceil(rerollBaseCost(rarity, a) * HEAT[h].costMult));
+        }
+      }
+    }
+  });
+
+  it('rollCost 올림 경계: 소수 배수여도 절삭이 아니라 올림이다', () => {
+    // low(×0.6) · magic·어픽스 1개(기본 12) → 7.2 → 8
+    expect(rollCost('magic', 1, 'low')).toBe(8);
+  });
+
+  it('결정론: 같은 입력은 항상 같은 값', () => {
+    expect(rollCost('rare', 4, 'high')).toBe(rollCost('rare', 4, 'high'));
+  });
+});
+
+describe('economy: 용해 위험(ADR-0040)', () => {
+  it('고착 0 → baseRisk 가 어떤 어픽스 수에서도 정확히 0(하위 호환)', () => {
+    for (let count = 0; count <= 8; count++) {
+      expect(baseRisk(0, count)).toBe(0);
+    }
+    expect(baseRisk(-3, 4)).toBe(0); // 음수 방어
+  });
+
+  it('고착 0 → meltRisk 가 모든 heat 에서 정확히 0(하위 호환의 핵심 한 줄)', () => {
+    for (const h of HEATS) {
+      for (let count = 0; count <= 8; count++) {
+        expect(meltRisk(0, count, h)).toBe(0);
+      }
+    }
+  });
+
+  it('어픽스 0 → 0(0 나눗셈 방어)', () => {
+    expect(baseRisk(2, 0)).toBe(0);
+    for (const h of HEATS) expect(meltRisk(2, 0, h)).toBe(0);
+  });
+
+  it('고착 수 단조: 고착이 늘수록 위험이 커진다', () => {
+    const count = 6;
+    for (let n = 1; n <= count; n++) {
+      expect(baseRisk(n, count)).toBeGreaterThan(baseRisk(n - 1, count));
+    }
+    for (const h of HEATS) {
+      for (let n = 1; n < count; n++) {
+        // 클램프에 닿기 전 구간에서 단조(닿은 뒤에는 같아질 수 있다)
+        expect(meltRisk(n, count, h)).toBeGreaterThanOrEqual(meltRisk(n - 1, count, h));
+      }
+    }
+  });
+
+  it('공식 일치: RISK_CAP × (n/count)^RISK_EXP', () => {
+    expect(baseRisk(3, 6)).toBeCloseTo(RISK_CAP * Math.pow(0.5, RISK_EXP), 12);
+    expect(baseRisk(6, 6)).toBeCloseTo(RISK_CAP, 12);
+  });
+
+  it('전부 고착이어도 baseRisk 는 RISK_CAP 을 넘지 않는다(비율 클램프)', () => {
+    expect(baseRisk(6, 6)).toBeLessThanOrEqual(RISK_CAP);
+    expect(baseRisk(99, 6)).toBe(RISK_CAP); // n > count 방어
+  });
+
+  it('노 출력 단조: heat↑ → 같은 고착 수에서 위험↑', () => {
+    for (let i = 1; i < HEATS.length; i++) {
+      expect(meltRisk(2, 6, HEATS[i]!)).toBeGreaterThan(meltRisk(2, 6, HEATS[i - 1]!));
+    }
+  });
+
+  it('RISK_MAX 클램프가 실제로 걸린다: high·전부 고착 = 0.85×1.8 = 1.53 → RISK_MAX', () => {
+    const raw = RISK_CAP * HEAT.high.riskMult;
+    expect(raw).toBeGreaterThan(RISK_MAX); // 클램프가 유효한 경계인지 먼저 확인
+    expect(meltRisk(6, 6, 'high')).toBe(RISK_MAX);
+  });
+
+  it('클램프 직전 구간은 클램프되지 않는다(무조건 상한이 아니다)', () => {
+    expect(meltRisk(1, 6, 'low')).toBeLessThan(RISK_MAX);
+    expect(meltRisk(1, 6, 'low')).toBeCloseTo(baseRisk(1, 6) * HEAT.low.riskMult, 12);
+  });
+
+  it('확률은 언제나 [0,1] 안에 있다', () => {
+    for (const h of HEATS) {
+      for (let count = 1; count <= 8; count++) {
+        for (let n = 0; n <= count; n++) {
+          const r = meltRisk(n, count, h);
+          expect(r).toBeGreaterThanOrEqual(0);
+          expect(r).toBeLessThanOrEqual(1);
+        }
+      }
+    }
+  });
+
+  it('결정론: 무작위·시계 없이 같은 입력은 같은 값', () => {
+    const h: Heat = 'mid';
+    expect(meltRisk(3, 5, h)).toBe(meltRisk(3, 5, h));
   });
 });
 
