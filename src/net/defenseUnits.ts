@@ -118,12 +118,32 @@ export function setDefenseUnitsGatewayFactory(factory: DefenseUnitsGatewayFactor
 /** 테스트 격리용 캐시 초기화(등록된 팩토리는 유지하지 않는다). */
 export function resetDefenseUnitsGateway(): void {
   gatewayFactory = null;
+  gatewayOverride = null;
   cachedGateway = null;
   cachedConfigKey = null;
 }
 
+let gatewayOverride: DefenseUnitsGateway | null = null;
+
+/**
+ * 게이트웨이 **전역 대체**(DEV 하네스 전용 — `src/save/profile.ts` 의
+ * `setProfileStoreOverride` 와 같은 규율).
+ *
+ * 왜 팩토리로는 안 되는가: {@link setDefenseUnitsGatewayFactory} 로 등록한 팩토리는
+ * `readSupabaseConfig()` 가 설정을 돌려줄 때만 호출된다. 즉 **로그인·설정이 없는 개발
+ * 환경에서는 모의 게이트웨이를 끼울 방법이 없어**, 방어 사령부의 강화 흐름(레벨업·승급·
+ * 리롤·등급 승급·제작)을 하네스로 한 번도 밟아볼 수 없었다.
+ *
+ * 이 대체는 설정 유무보다 **먼저** 검사되며, `null` 을 넣으면 즉시 원래 경로로 돌아온다.
+ * 프로덕션 코드에는 호출부가 없다(하네스 치트 패널만 부른다).
+ */
+export function setDefenseUnitsGatewayOverride(gateway: DefenseUnitsGateway | null): void {
+  gatewayOverride = gateway;
+}
+
 function resolveGateway(deps: DefenseUnitsDeps): DefenseUnitsGateway | null {
   if (deps.gateway !== undefined) return deps.gateway;
+  if (gatewayOverride !== null) return gatewayOverride;
   const config = deps.config !== undefined ? deps.config : readSupabaseConfig();
   if (config === null) return null;
   if (gatewayFactory === null) return null;
