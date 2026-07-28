@@ -852,6 +852,20 @@ export const INVASION_BACKDROP_ASSET_FILES: readonly string[] = [
   'bg_invasion_l3.png',
 ];
 
+/**
+ * 침공 단일 슬롯 유닛 자산 파일명 — 편대 리더 · 편대 드론 · 스포너 사출 드론(index 0/1/2).
+ *
+ * 카탈로그 파생 배열들과 달리 이 셋은 슬롯이 하나씩이라 원래 로더에 문자열로 박혀 있었다.
+ * 배열로 끌어올린 이유는 **결손 대조 테스트가 훑을 수 있게** 하기 위해서다 — 로더가 부르는
+ * 이름이 소스 어디에도 목록으로 없으면, 아트가 빠져도 조용한 null 폴백만 남는다
+ * (tests/invasionAssetPresence.test.ts 머리말).
+ */
+export const DEF3_UNIT_ASSET_FILES: readonly string[] = [
+  'def3_formation_leader.png',
+  'def3_formation_drone.png',
+  'def3_spawned_drone.png',
+];
+
 /** 역할별 기물 반지름(카탈로그에서 파생 — 없으면 기본 48). */
 function propRadius(role: number): number {
   return L3_PROPS.find((p) => p.role === role)?.radius ?? 48;
@@ -1109,7 +1123,12 @@ export async function loadGameTextures(
   const bgFiles = ['bg_kargon.png', 'bg_berdan.png', 'bg_niflheim.png', 'bg_arke.png', 'bg_toxar.png', 'bg_kras.png'];
 
   // 방어 엔티티(파일명 계약, spec 레인 A). 없는 파일은 절차적 플레이스홀더 유지(tryLoad 패턴).
-  // 구 포탑 6종(turret_*.png)은 M7a L11 에서 삭제 — 설비 아트는 FACILITY_ASSET_FILES 가 정본.
+  //
+  // 구 포탑 6종(turret_*.png)은 M7a L11 에서 로드 목록에서 빠졌고, 설비 아트의 정본은
+  // FACILITY_ASSET_FILES 다. ⚠️ 그런데 **대체 아트를 만들지 않은 채로 목록만 지웠다** — 누락이
+  // 조용한 절차적 폴백이라 신호가 없었고, 침공 방어체 전체가 도형으로 보이는 상태로 남았다
+  // (사용자 신고 2026-07-28). 아트는 그때 채웠고, 재발은 tests/invasionAssetPresence.test.ts 가
+  // 막는다. `assets/turret_*.png` 6장은 아무도 참조하지 않는 사자산이라 함께 삭제했다.
   const guardianFiles = ['guardian_titan.png', 'guardian_interceptor.png']; // preset 0/1
 
   // 기체 스프라이트는 2단 폴백이다: `ship_<slug>.png`(신규 타입) → `player.png` → 절차적.
@@ -1177,9 +1196,9 @@ export async function loadGameTextures(
     Promise.all(FACILITY_ASSET_FILES.map((f) => tryLoad(f))),
     Promise.all(PROP_ASSET_FILES.map((f) => tryLoad(f))),
     Promise.all(DEFENSE_BOSS_ASSET_FILES.map((f) => tryLoad(f))),
-    tryLoad('def3_formation_leader.png'),
-    tryLoad('def3_formation_drone.png'),
-    tryLoad('def3_spawned_drone.png'),
+    tryLoad(DEF3_UNIT_ASSET_FILES[0]!),
+    tryLoad(DEF3_UNIT_ASSET_FILES[1]!),
+    tryLoad(DEF3_UNIT_ASSET_FILES[2]!),
   ]);
 
   // 아군·이익 오브젝트 루프 애니메이션(2026-07-26). 정지 스프라이트 로드와 별개로 스트립을
