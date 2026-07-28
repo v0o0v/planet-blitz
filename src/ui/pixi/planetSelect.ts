@@ -45,8 +45,16 @@ const SUB_Y = 94;
 
 // 행성 카드 행.
 const CARD_Y = 126;
-/** 콘텐츠(오브 → 이름 → 부제 2줄)가 콘텐츠 상자 바닥에 딱 맞는 높이. */
-const CARD_H = 364;
+/**
+ * 콘텐츠(오브 → 이름 → 부제 2줄 → 보상 배율)가 콘텐츠 상자 안에 다 들어가는 높이.
+ *
+ * ⚠️ 364 였을 때 배율 줄이 상자 **밖으로** 나가 프레임에 걸쳐 그려졌다(사용자 신고 2026-07-28):
+ * `panelContent` 의 inset 은 46+14=60 이라 364 짜리 카드의 콘텐츠 바닥은 304 인데, 배율 줄이
+ * 318 에서 시작했다. 배율 줄을 상자 바닥에 붙여 앵커하도록 고치면서(아래 {@link makePlanetCard})
+ * 부제 2줄(바닥 ≈ 298)과 겹치지 않을 여유까지 확보한 높이가 404 다 — 콘텐츠 바닥 344.
+ * 카드 행 바닥은 {@link CARD_Y}+404 = 530 이라 하단 패널({@link LOW_Y}=546) 과도 안 겹친다.
+ */
+const CARD_H = 404;
 const CARD_MAX_W = 460;
 const CARD_GAP = 32;
 /** 카드 행이 쓸 수 있는 최대 폭(좌우 48px 여백). */
@@ -56,12 +64,17 @@ const ORB_D = 128;
 const CARD_NAME_Y = 212;
 const CARD_SUB_Y = 254;
 /**
- * 행성 인기 배율 줄의 세로 띠(ADR-0038). 카드는 **겹치면 안 되는 세로 띠**로 설계돼 있다
- * (오브 → 이름 212 → 부제 254~ → 배율 318). 부제는 2줄까지 감기므로(18px × 2 ≈ 44) 바닥이
- * 약 298 이고, 318 은 그 아래 20px 여유를 둔 자리다. **부제 폰트·wordWrap 을 키우면 이 값을
- * 함께 내려라** — 안 그러면 두 줄이 겹친다(격납고 헤더에서 두 번 재발한 결함 유형).
+ * 행성 인기 배율 줄(ADR-0038)은 세로 좌표를 **상수로 두지 않는다** — 콘텐츠 상자 바닥에
+ * 바닥맞춤(anchor y=1)으로 붙인다. 상수로 두면 카드 높이·프레임 두께가 바뀔 때마다 상자
+ * 밖으로 새는데, 실제로 그렇게 샜다(사용자 신고 2026-07-28 — {@link CARD_H} 주석 참조).
+ * 바닥맞춤이면 "상자 밖으로 나간다"가 구조적으로 불가능하다.
+ *
+ * 카드는 여전히 **겹치면 안 되는 세로 띠**다(오브 → 이름 212 → 부제 254~ → 배율=바닥).
+ * 부제는 2줄까지 감기므로(18px × 2 ≈ 44) 바닥이 약 298 이고, 배율 줄 상단은 약 320 이다.
+ * **부제 폰트·wordWrap 을 키우면 {@link CARD_H} 를 함께 키워라** — 안 그러면 두 줄이 겹친다
+ * (격납고 헤더에서 두 번 재발한 결함 유형).
  */
-const CARD_MULT_Y = 318;
+const CARD_SUB_MAX_BOTTOM = 298;
 
 // 하단 패널 행: 단계 스텝퍼(좌) + 촉매 주입 패널(우, ADR-0029 Lane 4 — 구 변칙 패널 자리).
 const LOW_Y = 546;
@@ -95,6 +108,36 @@ const SIDE_H = 64;
 const SIDE_GAP = 24;
 const SIDE_Y = LAUNCH_Y + (LAUNCH_H - SIDE_H) / 2;
 const META_Y = 1000;
+
+/** 배율 줄 한 줄 높이(fontSize 20 의 실측 근사 — 겹침 여유 계산용). */
+const CARD_MULT_LINE_H = 24;
+
+/**
+ * 카드 세로 띠 기하(순수). 캔버스 없이 단위 테스트가 "배율 줄이 상자 안에 있고 부제와 겹치지
+ * 않는다"를 고정하기 위해 노출한다 — 격납고 헤더에서 두 번 재발한 겹침 결함과 같은 유형이라
+ * 코드로 잠근다.
+ */
+export function planetCardBands(cardH: number = CARD_H): {
+  /** 콘텐츠 상자 바닥(배율 줄이 바닥맞춤될 자리). */
+  contentBottom: number;
+  /** 부제 2줄이 차지하는 최대 바닥. */
+  subMaxBottom: number;
+  /** 바닥맞춤된 배율 줄의 상단. */
+  multTop: number;
+  /** 카드 행이 화면에서 끝나는 y. */
+  rowBottom: number;
+  /** 하단 패널 행이 시작되는 y(카드 행이 여기를 넘으면 겹친다). */
+  lowPanelTop: number;
+} {
+  const contentBottom = panelContent(CARD_MAX_W, cardH).bottom;
+  return {
+    contentBottom,
+    subMaxBottom: CARD_SUB_MAX_BOTTOM,
+    multTop: contentBottom - CARD_MULT_LINE_H,
+    rowBottom: CARD_Y + cardH,
+    lowPanelTop: LOW_Y,
+  };
+}
 
 /** 카드 n 장이 한 행에 들어가도록 카드 폭을 정한다(행성이 늘어도 삐져나가지 않게). */
 function cardWidth(n: number): number {
@@ -488,8 +531,10 @@ export class PlanetSelectScreen {
         dropShadow: TEXT_SHADOW,
       },
     });
-    mult.anchor.set(0.5, 0);
-    mult.position.set(w / 2, CARD_MULT_Y);
+    // 바닥맞춤(anchor y=1) — 상자 바닥에 붙어서 프레임을 절대 넘지 않는다. 위쪽 여유는
+    // CARD_H 가 책임진다({@link CARD_SUB_MAX_BOTTOM} 주석).
+    mult.anchor.set(0.5, 1);
+    mult.position.set(w / 2, box.bottom);
     card.addChild(mult);
 
     return card;

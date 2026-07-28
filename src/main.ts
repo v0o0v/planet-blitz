@@ -1607,6 +1607,11 @@ async function main(): Promise<void> {
     // 활성 티어를 갱신한다(롤링 창·판정 페이싱은 컨트롤러 소관). 활성 티어의 이펙트 소비는 후속 Phase.
     graphicsTierController.tick(f, frame, graphicsSettings.getSettings().quality);
     frameCount++;
+    // HUD 는 **실제 런 화면에서만** 보인다. 정산(`result`)은 런이 끝난 뒤에도 world 를 살려 두므로
+    // (shouldEnterSettlement 참조) 아래 `w !== null` 갱신이 계속 돌고, 게이트가 없으면 보스 예고
+    // 진행 바가 결과 화면 위에 그대로 남는다(사용자 신고 2026-07-28). 화면 이름으로 게이트해
+    // 메뉴 복귀 시 stale HUD 가 남는 경로까지 한 번에 막는다.
+    hud.setVisible(currentScreenName === 'run' || currentScreenName === 'spectate');
     if (w !== null) {
       const p = w.entities[0];
       let enemyN = 0;

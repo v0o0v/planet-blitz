@@ -308,6 +308,32 @@ export class Hud {
   }
 
   /**
+   * 런 HUD 전체를 보이거나 감춘다. **정산 화면이 뜬 뒤에도 world 는 살아 있어서** 렌더 루프가
+   * `hud.update` 를 계속 부르고, 그러면 보스 예고 게이지 같은 진행 바가 결과 화면 위에 그대로
+   * 남는다(사용자 신고 2026-07-28). 각 게이지의 `display` 토글은 update 가 상태에서 파생하는
+   * 소관이므로 건드리지 않고, 직교 축인 `visibility` 로만 덮어쓴다 — 두 축이 섞이지 않아
+   * "감췄다가 다시 보이면 원래 표시 규칙이 그대로 복원"된다.
+   *
+   * 런 중 침공 정보판({@link setRunInfo})도 같이 덮는다 — 런에만 뜨는 판이라 정산 위에 남으면
+   * 같은 결함이다.
+   */
+  setVisible(visible: boolean): void {
+    const v = visible ? '' : 'hidden';
+    for (const el of [
+      this.el,
+      this.root,
+      this.supplyBanner,
+      this.bossRoot,
+      this.etaRoot,
+      this.contamRoot,
+      this.loreToast,
+      this.runInfo,
+    ]) {
+      el.style.visibility = v;
+    }
+  }
+
+  /**
    * 런 중 침공 정보판을 채운다(`null` = 감춤). **매 프레임이 아니라 런 시작 때 한 번** 부른다 —
    * 행성·단계·주입 촉매는 런 도중 바뀌지 않는 값이라 `update()` 경로에 넣으면 매 프레임 DOM 을
    * 다시 짓는 낭비가 된다(HP/XP 와 성격이 다르다).

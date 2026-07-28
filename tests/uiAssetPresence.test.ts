@@ -36,44 +36,14 @@ const ASSETS = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'assets');
  * **아직 아트가 없는 등재 이름**(= 로더가 null 폴백하는 슬롯). 새 이름을 여기 넣기 전에
  * 정말 부채인지, 아니면 그냥 아트를 넣어야 하는지 먼저 따져라.
  *
- * ① 스킬 노드 5밴드 확장 잔여 28장 — `uiTextures.ts` `SKILL_ICON_NAMES` 주석의 아트 부채.
- *    기존 아트를 tier 0/2/4(low·mid·high)에 보존한 채 밴드만 갈랐기 때문에, 새로 생긴
- *    `lowmid`·`midhigh` 2밴드와 기존 결손 4장이 비어 있다.
+ * ① 스킬 노드 5밴드 확장 잔여 28장 — **2026-07-28 해소**(PixelLab 생성). 이 테스트가 잡아 준
+ *    첫 부채였고, 사용자가 "스킬 중에 아이콘이 없는 것들이 있어"로 신고한 그 결손이다.
  * ② 촉매 **보상축 폴백** 10장 — 설계상 처음부터 비어 있다. 48종 개별 아트가 전부 있으므로
  *    (`catalystIconKey`) 이 폴백은 사다리 두 번째 칸으로만 존재한다. 그래도 등재해 두는
  *    이유는 `catalystIconFallbackKey` 가 실제 코드 경로(픽커·재고·정산 3곳)이기 때문 —
  *    나중에 축 아트가 들어오면 코드 변경 0으로 살아난다.
  */
 const KNOWN_MISSING: readonly string[] = [
-  // ① 스킬 노드 아이콘 아트 부채 28장.
-  'skill_damage_pct_lowmid.png',
-  'skill_damage_pct_midhigh.png',
-  'skill_fire_rate_pct_lowmid.png',
-  'skill_fire_rate_pct_midhigh.png',
-  'skill_bullet_count_low.png',
-  'skill_bullet_count_lowmid.png',
-  'skill_bullet_count_midhigh.png',
-  'skill_bullet_speed_pct_lowmid.png',
-  'skill_bullet_speed_pct_midhigh.png',
-  'skill_bullet_speed_pct_high.png',
-  'skill_pierce_lowmid.png',
-  'skill_pierce_midhigh.png',
-  'skill_range_flat_lowmid.png',
-  'skill_range_flat_mid.png',
-  'skill_range_flat_midhigh.png',
-  'skill_range_flat_high.png',
-  'skill_max_hp_flat_lowmid.png',
-  'skill_max_hp_flat_midhigh.png',
-  'skill_max_hp_pct_lowmid.png',
-  'skill_max_hp_pct_midhigh.png',
-  'skill_dash_cd_pct_lowmid.png',
-  'skill_dash_cd_pct_midhigh.png',
-  'skill_move_speed_pct_lowmid.png',
-  'skill_move_speed_pct_midhigh.png',
-  'skill_magnet_pct_lowmid.png',
-  'skill_magnet_pct_midhigh.png',
-  'skill_xp_pct_lowmid.png',
-  'skill_xp_pct_midhigh.png',
   // ② 촉매 보상축 폴백 10장(설계상 비어 있음 — 개별 아트 48종이 정본).
   'catalyst_axis_drop.png',
   'catalyst_axis_rarity.png',

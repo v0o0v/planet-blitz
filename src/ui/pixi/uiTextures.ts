@@ -23,15 +23,17 @@ import { SHIP_TYPES, DEFAULT_SHIP_TYPE, shipTypeDef } from '../../../data/ships/
  * 5밴드로 1:1 접는다(ADR-0022 §7-R #6 단계 앵커). 12스탯 × 5밴드지만 전 SHIP_TYPES 를 통틀어
  * `rangeFlat` 만 tier 0(low) 수요가 없어 4밴드라 59다(= 5×11 + 4).
  *
- * ⚠️ **아트 부채 28장(Lane 10 확장분 24 + 기존 결손 4).** `assets/skill_*.png` 는 여전히
- * 32장(스탯)뿐이고 그 슬러그는 `_low`·`_mid`·`_high` 로만 존재한다. 5밴드 확장은 **기존 아트를
- * tier 0/2/4(=low/mid/high 슬러그)에 그대로 보존**해 회귀를 최소화했다 — tier 0/2/4 노드는 그림이
- * 바뀌지 않는다. 새로 갈라진 `lowmid`(tier 1)·`midhigh`(tier 3) 2밴드만 아직 PNG 가 없어 로더가
- * 조용히 null 폴백한다. 기존 결손 4장(`bullet_count_low`·`bullet_speed_pct_high`·
- * `range_flat_mid`·`range_flat_high`, M8-L9 부채)도 그대로다. 목록에 등재하지 않으면 설계서 §10-7
- * 이 예측한 "조용한 null 폴백"(빈 셀인데 예외도 로그도 없음)이 되므로 먼저 등재하고, 아트는 후속
- * 아트패스가 채운다. `tests/skillIcons.test.ts` 가 목록 ↔ 노드 수요를 전 SHIP_TYPES 에 대해
- * 대조하므로 부채가 코드에 명시된다.
+ * ✅ **아트 부채 28장 해소(2026-07-28).** Lane 10 이 티어대를 3구간 → 5구간으로 넓히면서 새로
+ * 갈라진 `lowmid`(tier 1)·`midhigh`(tier 3) 24장과, 그 전부터 비어 있던 4장
+ * (`bullet_count_low`·`bullet_speed_pct_high`·`range_flat_mid`·`range_flat_high`, M8-L9 부채)이
+ * 오랫동안 **등재만 되고 PNG 가 없는** 상태였다. 로더는 이름으로만 찾고 없으면 조용히 null 을
+ * 돌려주며 렌더가 그 null 을 예외 없이 삼키므로, 결함은 연구소 화면의 **빈 셀**로만 드러났다
+ * (사용자 신고로 발견 — 테스트도 타입체커도 못 잡았다). 28장을 PixelLab 로 생성해 채웠고,
+ * 재발은 `tests/uiAssetPresence.test.ts` 가 **등재 = 실물 존재**를 강제해 막는다.
+ *
+ * 5밴드 확장은 **기존 아트를 tier 0/2/4(=low/mid/high 슬러그)에 그대로 보존**했다 — tier 0/2/4
+ * 노드의 그림은 바뀌지 않았다. `tests/skillIcons.test.ts` 가 목록 ↔ 노드 수요를 전 SHIP_TYPES 에
+ * 대해 대조하므로, 신규 기체가 새 (스탯, 티어대) 조합을 만들면 즉시 깨진다.
  *
  * `assets/skill_range_flat_low.png` 는 디스크에 남아 있으나 tier 1 이 `lowmid` 로 이동하며
  * 어느 노드도 이 슬러그를 부르지 않는 **사문서 아트**가 됐다(무해 — 로더가 이름으로만 찾는다).
@@ -45,7 +47,7 @@ import { SHIP_TYPES, DEFAULT_SHIP_TYPE, shipTypeDef } from '../../../data/ships/
  */
 export const SKILL_ICON_NAMES = [
   // 각 스탯 5구간(저·중·상·최상·초월 = low·lowmid·mid·midhigh·high). low/mid/high 는
-  // 기존 아트 보존(tier 0/2/4), lowmid/midhigh 는 신규 밴드 아트 부채(후속 아트패스).
+  // 기존 아트 보존(tier 0/2/4), lowmid/midhigh 는 2026-07-28 에 채운 신규 밴드 아트.
   'skill_damage_pct_low.png',
   'skill_damage_pct_lowmid.png',
   'skill_damage_pct_mid.png',
