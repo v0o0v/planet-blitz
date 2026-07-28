@@ -951,7 +951,8 @@ async function main(): Promise<void> {
     // 화면에 반영되지 않고 직전 런의 그림이 남는다.
     entityRenderer.reset();
     world = createWorld(seed, config);
-    recorder = new ReplayRecorder(seed, world.config);
+    // recorder 에는 **createWorld 에 넣은 그 config** 를 준다(`world.config` 아님 — 아래 주석).
+    recorder = new ReplayRecorder(seed, config);
     prevSnap = snapshotWorld(world);
     currSnap = prevSnap;
     accumulator = 0;
@@ -1003,7 +1004,8 @@ async function main(): Promise<void> {
     // 스프라이트 캐시 리셋(B-1) — `createWorld` 앞(정식 침공·PvE 와 같은 규약).
     entityRenderer.reset();
     world = createWorld(opts.seed, config);
-    recorder = new ReplayRecorder(opts.seed, world.config);
+    // recorder 에는 **createWorld 에 넣은 그 config** 를 준다(`world.config` 아님 — 아래 주석).
+    recorder = new ReplayRecorder(opts.seed, config);
     prevSnap = snapshotWorld(world);
     currSnap = prevSnap;
     accumulator = 0;
@@ -1219,7 +1221,25 @@ async function main(): Promise<void> {
     // 옛 기체 그림이 그대로 뜬다(세션 중 기체 교체 5종 전부 재현된 결함).
     entityRenderer.reset();
     world = createWorld(seed, config);
-    recorder = new ReplayRecorder(seed, world.config);
+    /**
+     * ⚠️ recorder 에는 **`createWorld` 에 넣은 그 config** 를 준다 — `world.config` 가 아니다.
+     *
+     * `createWorld` 는 받은 config 를 얕게 복사한 뒤(`world.ts` `const cfg = { ...config }`)
+     * 그 사본에 **로드아웃·촉매 파생을 적용해서** `state.config` 로 삼는다
+     * (`cfg.playerSpeed = Math.round(cfg.playerSpeed * lo.moveSpeedMult)` 등). 게다가 런 중
+     * 파워업이 같은 사본을 또 바꾼다(`sim/powerups.ts` 이동 속도 +12%/+10%).
+     *
+     * 그래서 `world.config` 를 리플레이에 실으면 재실행이 **파생을 두 번 적용**하고 파워업
+     * 결과까지 시작값으로 물고 출발한다 — 제출된 리플레이가 실제로 플레이한 런이 아니게 된다.
+     * `buildClientResult` 도 서버 `verify-invasion` 도 그 리플레이를 다시 돌려 승패를 정하므로,
+     * 둘은 서로 일치하면서 **둘 다 실제 플레이와 다른** 런을 판정하게 된다(공격자에게 유리한
+     * 방향으로 기운다). 로드아웃 배율이 전부 1 이고 파워업을 안 먹은 런에서는 두 값이 같아
+     * 지금까지 드러나지 않았다.
+     *
+     * 원본 config 는 `buildRunConfig` 가 매 런 새로 만들고 sim 은 사본만 건드리므로, 이 참조는
+     * 런 시작 시점 값 그대로 남는다.
+     */
+    recorder = new ReplayRecorder(seed, config);
     prevSnap = snapshotWorld(world);
     currSnap = prevSnap;
     accumulator = 0;
