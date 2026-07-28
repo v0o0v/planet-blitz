@@ -20,8 +20,13 @@
  * 순수 render/UI 레이어(ADR-0005 · ADR-0014) — sim 은 이 파일을 모른다.
  */
 
-import { Container, Graphics, Text } from 'pixi.js';
-import { t } from '../../i18n/index.js';
+import { Container, Graphics, Sprite, Text } from 'pixi.js';
+import { t, type MessageKey } from '../../i18n/index.js';
+import {
+  catalystById,
+  catalystIconFallbackKey,
+  catalystIconKey,
+} from '../../data/catalysts.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import type { ResultDrop, ResultState, SettlementSummary } from '../resultOverlay.js';
 import { COLOR, RARITY_COLOR_NUM, UI_FONT, TEXT_SHADOW } from './theme.js';
@@ -29,7 +34,7 @@ import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
 import { makeSlotCell, gridPositions, equipIconTexture } from './slotGrid.js';
-import { PixiTooltip } from './tooltip.js';
+import { PixiTooltip, type TooltipContent } from './tooltip.js';
 import { makeBanner } from './titleBar.js';
 import { stripEmoji } from './text.js';
 import { bossName } from '../bossLabels.js';
@@ -335,7 +340,97 @@ export class ResultOverlayScreen {
       );
     });
 
-    this.renderDrops(panel, st, box.bottom, ROW_TOP + rows * LOOT_STEP);
+    const afterRows = ROW_TOP + rows * LOOT_STEP;
+    const catH = this.renderCatalystChips(panel, st, afterRows);
+    this.renderDrops(panel, st, box.bottom, afterRows + catH);
+  }
+
+  /**
+   * 이번 런에 얻은 **촉매 아이콘 칩 줄**(사용자 요청 2026-07-28). 소비한 세로 높이를 돌려준다
+   * (0 = 안 그림) — 아래 '획득 장비' 그리드가 그만큼 밀려 내려간다.
+   *
+   * 예전 정산은 "촉매 +3" 이라는 숫자 하나였다. 무엇을 얻었는지 알려면 성계 지도 → 촉매 재고까지
+   * 가야 했고, 그 사이에 정산 화면은 이미 닫혀 있었다. 픽커·재고와 **같은 아이콘 사다리**
+   * (개별 아트 → 보상축 폴백 → 축 토큰)를 써서 세 화면에서 같은 그림으로 보이게 한다.
+   */
+  private renderCatalystChips(panel: Container, st: SettlementSummary, topY: number): number {
+    const list = st.catalystDropList ?? [];
+    if (list.length === 0) return 0;
+    const box = panelContent(LOOT_W, PANEL_H);
+
+    const title = new Text({
+      resolution: 2,
+      text: t('result.loot.catalystList'),
+      style: { fontFamily: UI_FONT, fontSize: 20, fontWeight: '700', fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+    });
+    title.position.set(box.x, topY);
+    panel.addChild(title);
+
+    const size = 52;
+    const gap = 10;
+    const perRow = Math.max(1, Math.floor((box.w + gap) / (size + gap)));
+    // 한 줄만 그린다 — 정산 패널 세로가 '획득 장비' 그리드와 공유라 두 줄까지 주면 장비가 밀린다.
+    // 넘치는 종류는 개수로만 알린다(조용히 잘리지 않게).
+    const shown = Math.min(list.length, perRow);
+    const iconTop = topY + 30;
+
+    for (let i = 0; i < shown; i++) {
+      const entry = list[i];
+      if (entry === undefined) continue;
+      const def = catalystById(entry.id);
+      if (def === undefined) continue;
+      const chip = new Container();
+      chip.position.set(box.x + i * (size + gap), iconTop);
+
+      const tex = this.ui[`${catalystIconKey(def)}.png`] ?? this.ui[`${catalystIconFallbackKey(def)}.png`];
+      if (tex) {
+        const sp = new Sprite(tex);
+        sp.width = size;
+        sp.height = size;
+        chip.addChild(sp);
+      } else {
+        const token = new Graphics();
+        token.roundRect(0, 0, size, size, 8).fill({ color: 0x2a2440 }).stroke({ color: COLOR.muted, width: 2, alignment: 1 });
+        chip.addChild(token);
+      }
+
+      if (entry.qty > 1) {
+        const qty = new Text({
+          resolution: 2,
+          text: `×${entry.qty}`,
+          style: { fontFamily: UI_FONT, fontSize: 15, fontWeight: '800', fill: COLOR.gold, dropShadow: TEXT_SHADOW },
+        });
+        qty.anchor.set(1, 1);
+        qty.position.set(size, size);
+        chip.addChild(qty);
+      }
+
+      // hover → 촉매 이름 + 페널티/보상 설명(장비 칩 툴팁과 같은 자리·같은 조작).
+      chip.eventMode = 'static';
+      const tip: TooltipContent = {
+        title: t(`catalyst.${def.slug}.name` as MessageKey),
+        titleColor: COLOR.gold,
+        subtitle: t(def.kind === 'signature' ? 'catalyst.kind.signature' : 'catalyst.kind.common'),
+        lines: [stripEmoji(t(`catalyst.${def.slug}.desc` as MessageKey))],
+      };
+      chip.on('pointerover', (e) => this.showCatalystTip(tip, e.global.x, e.global.y));
+      chip.on('pointermove', (e) => this.moveTip(e.global.x, e.global.y));
+      chip.on('pointerout', () => this.tooltip.hide());
+      panel.addChild(chip);
+    }
+
+    if (list.length > shown) {
+      const more = new Text({
+        resolution: 2,
+        text: t('result.drops.more', { n: list.length - shown }),
+        style: { fontFamily: UI_FONT, fontSize: 18, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+      });
+      more.anchor.set(1, 0);
+      more.position.set(box.right, topY + 3);
+      panel.addChild(more);
+    }
+
+    return 30 + size + 14;
   }
 
   /** 획득 장비 소제목 + 슬롯 그리드(등급색 + hover 툴팁). 없으면 안내 문구. */
@@ -440,6 +535,13 @@ export class ResultOverlayScreen {
       p.y,
       RARITY_COLOR_NUM[d.rarity],
     );
+    this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
+  }
+
+  /** 촉매 칩 hover 툴팁(장비 칩 `showTip` 과 같은 좌표 변환·같은 z 올림). */
+  private showCatalystTip(content: TooltipContent, globalX: number, globalY: number): void {
+    const p = this.root.toLocal({ x: globalX, y: globalY });
+    this.tooltip.show(content, p.x, p.y, COLOR.gold);
     this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
   }
 

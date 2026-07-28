@@ -21,6 +21,7 @@ import { Container, Graphics, Sprite, Text } from 'pixi.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../../save/profile.js';
 import {
   CATALYSTS,
+  catalystIconFallbackKey,
   catalystIconKey,
   type CatalystDef,
 } from '../../data/catalysts.js';
@@ -356,8 +357,8 @@ export class CatalystArchiveScreen {
       listRowBg(BOX.w, ROW_H, def.kind === 'signature' ? { accent: 0x6a5a30 } : {}),
     );
 
-    // 아이콘(텍스처 있으면 스프라이트, 없으면 축 토큰).
-    const iconTex = this.ui[`${catalystIconKey(def)}.png`];
+    // 아이콘: 개별 아트 → 보상축 폴백 → 축 토큰 글리프 순(픽커와 같은 사다리).
+    const iconTex = this.ui[`${catalystIconKey(def)}.png`] ?? this.ui[`${catalystIconFallbackKey(def)}.png`];
     const iconSize = 56;
     if (iconTex) {
       const sp = new Sprite(iconTex);
