@@ -23,6 +23,8 @@ declare module 'node:fs' {
   export function readFileSync(path: string, encoding: string): string;
   export function mkdtempSync(prefix: string): string;
   export function readdirSync(path: string): string[];
+  /** 디렉터리 재귀 순회용 최소 표면(tests/renderWiring.test.ts). */
+  export function statSync(path: string): { isDirectory(): boolean };
 }
 
 declare module 'node:os' {
