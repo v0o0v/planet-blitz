@@ -57,6 +57,31 @@ export interface HudState {
   contamination?: { cells: number; critical: number } | undefined;
 }
 
+/**
+ * 런 중 **침공 정보판**(화면 우측 가운데, 사용자 요청 2026-07-28).
+ *
+ * 지금 어느 행성 몇 단계를 돌고 있고, 주입한 촉매가 이 런에 어떤 페널티/보상을 걸고 있는지를
+ * 한자리에 모은다. 예전에는 이 정보가 **출격 전 성계 지도에만** 있었다 — 런에 들어오면
+ * 무엇을 걸고 싸우는지 확인할 방법이 없었다.
+ *
+ * 값은 전부 호출부가 파생해 넣는다(HUD 는 순수 뷰 — `BossHudState.name` 과 같은 규율).
+ */
+export interface RunInfoState {
+  /** 행성 이름(`planetById(planet).name`). */
+  planetName: string;
+  /** `3단계` 등 이미 번역된 단계 문구. */
+  stageLabel: string;
+  /** `촉매 3장` / `주입 촉매 없음` — 이미 번역된 문구. */
+  catalystLabel: string;
+  /** 페널티 줄(라벨 + `+40%`). 비어 있으면 그 열을 감춘다. */
+  penalties: readonly { label: string; value: string }[];
+  /** 보상 줄(라벨 + `+30%`). 비어 있으면 그 열을 감춘다. */
+  rewards: readonly { label: string; value: string }[];
+  /** 소제목 문구(`페널티`/`보상`) — i18n 은 호출부가 푼다. */
+  penaltyHead: string;
+  rewardHead: string;
+}
+
 function bar(label: string, colorClass: string): { root: HTMLElement; fill: HTMLElement; text: HTMLElement } {
   const root = document.createElement('div');
   root.className = 'pb-bar';
@@ -112,6 +137,17 @@ const STYLE = `
 #pb-contam.danger .pb-contamhead { color:#ff9a8a; }
 #pb-contam .pb-contammsg { font-size:11px; font-weight:700; color:#ffb0a0; margin-top:3px; height:13px; text-shadow:0 1px 2px #000; }
 @keyframes pb-contam-pulse { 0%,100%{opacity:1;} 50%{opacity:.55;} }
+#pb-runinfo { position:absolute; right:16px; top:50%; transform:translateY(-50%); width:250px; background:rgba(14,12,26,.74); border:1px solid rgba(255,200,120,.35); border-radius:10px; padding:10px 12px; font-family:'Segoe UI',system-ui,sans-serif; color:#e8ecff; pointer-events:none; user-select:none; }
+#pb-runinfo .pb-ri-planet { font-size:15px; font-weight:800; color:#ffd98a; letter-spacing:.5px; text-shadow:0 1px 3px #000; }
+#pb-runinfo .pb-ri-stage { font-size:12px; font-weight:700; color:#d8c9a8; margin-top:1px; text-shadow:0 1px 2px #000; }
+#pb-runinfo .pb-ri-cat { font-size:12px; font-weight:700; color:#8affc0; margin-top:6px; text-shadow:0 1px 2px #000; }
+#pb-runinfo .pb-ri-head { font-size:11px; font-weight:800; letter-spacing:1px; margin-top:8px; text-shadow:0 1px 2px #000; }
+#pb-runinfo .pb-ri-head.pen { color:#ff9a8a; }
+#pb-runinfo .pb-ri-head.rew { color:#8affc0; }
+#pb-runinfo .pb-ri-row { display:flex; justify-content:space-between; gap:10px; font-size:12px; font-weight:600; margin-top:2px; text-shadow:0 1px 2px #000; }
+#pb-runinfo .pb-ri-row .v { font-weight:800; }
+#pb-runinfo .pb-ri-row.pen .v { color:#ff9a8a; }
+#pb-runinfo .pb-ri-row.rew .v { color:#8affc0; }
 #pb-lore { position:absolute; top:140px; left:50%; transform:translateX(-50%); max-width:80vw; background:rgba(18,24,44,.82); border:1px solid rgba(120,200,255,.55); box-shadow:0 0 18px 2px rgba(60,140,220,.35) inset; color:#dbe8ff; padding:10px 22px; border-radius:12px; font-family:'Segoe UI',system-ui,sans-serif; text-align:center; pointer-events:none; user-select:none; }
 #pb-lore .pb-lore-line { font-size:14px; font-weight:600; letter-spacing:.4px; text-shadow:0 1px 3px #000; line-height:1.5; }
 #pb-lore .pb-lore-line + .pb-lore-line { font-size:12px; font-weight:500; color:#a9c6ff; }
@@ -146,6 +182,8 @@ export class Hud {
   private readonly contamFill: HTMLElement;
   private readonly contamPct: HTMLElement;
   private readonly contamMsg: HTMLElement;
+  /** 런 중 침공 정보판(우측 가운데). 기본 숨김, {@link setRunInfo} 로 런 시작 때 채운다. */
+  private readonly runInfo: HTMLElement;
   /** 스토리 로어 토스트 배너(에코 안정화 등). 기본 숨김, {@link showLore} 로 잠깐 표시. */
   private readonly loreToast: HTMLElement;
   private loreTimer: ReturnType<typeof setTimeout> | null = null;
@@ -257,10 +295,78 @@ export class Hud {
     this.contamRoot.style.display = 'none';
     document.body.appendChild(this.contamRoot);
 
+    // 런 중 침공 정보판(우측 가운데) — 런 시작 때 setRunInfo 로 채워지고, 그 전까지 숨는다.
+    this.runInfo = document.createElement('div');
+    this.runInfo.id = 'pb-runinfo';
+    this.runInfo.style.display = 'none';
+    document.body.appendChild(this.runInfo);
+
     this.loreToast = document.createElement('div');
     this.loreToast.id = 'pb-lore';
     this.loreToast.style.display = 'none';
     document.body.appendChild(this.loreToast);
+  }
+
+  /**
+   * 런 중 침공 정보판을 채운다(`null` = 감춤). **매 프레임이 아니라 런 시작 때 한 번** 부른다 —
+   * 행성·단계·주입 촉매는 런 도중 바뀌지 않는 값이라 `update()` 경로에 넣으면 매 프레임 DOM 을
+   * 다시 짓는 낭비가 된다(HP/XP 와 성격이 다르다).
+   *
+   * 침공(수비 시설 공략)·튜토리얼처럼 행성/촉매 축이 없는 런은 호출부가 `null` 을 준다.
+   */
+  setRunInfo(info: RunInfoState | null): void {
+    if (info === null) {
+      this.runInfo.style.display = 'none';
+      this.runInfo.replaceChildren();
+      return;
+    }
+    this.runInfo.replaceChildren();
+
+    const planet = document.createElement('div');
+    planet.className = 'pb-ri-planet';
+    planet.textContent = info.planetName;
+    this.runInfo.appendChild(planet);
+
+    const stage = document.createElement('div');
+    stage.className = 'pb-ri-stage';
+    stage.textContent = info.stageLabel;
+    this.runInfo.appendChild(stage);
+
+    const cat = document.createElement('div');
+    cat.className = 'pb-ri-cat';
+    cat.textContent = info.catalystLabel;
+    this.runInfo.appendChild(cat);
+
+    // 줄이 없는 축은 소제목까지 통째로 생략한다 — 무촉매 런에서 빈 '페널티'/'보상' 머리글만
+    // 남으면 "효과가 있는데 표시가 안 된다"로 오해된다.
+    this.appendRunInfoRows(info.penaltyHead, 'pen', info.penalties);
+    this.appendRunInfoRows(info.rewardHead, 'rew', info.rewards);
+
+    this.runInfo.style.display = 'block';
+  }
+
+  private appendRunInfoRows(
+    heading: string,
+    kind: 'pen' | 'rew',
+    rows: readonly { label: string; value: string }[],
+  ): void {
+    if (rows.length === 0) return;
+    const head = document.createElement('div');
+    head.className = `pb-ri-head ${kind}`;
+    head.textContent = heading;
+    this.runInfo.appendChild(head);
+    for (const r of rows) {
+      const row = document.createElement('div');
+      row.className = `pb-ri-row ${kind}`;
+      const label = document.createElement('span');
+      label.textContent = r.label;
+      const value = document.createElement('span');
+      value.className = 'v';
+      value.textContent = r.value;
+      row.appendChild(label);
+      row.appendChild(value);
+      this.runInfo.appendChild(row);
+    }
   }
 
   /**

@@ -33,7 +33,7 @@ import { UniqueCeremony } from './render/ceremony.js';
 import { ScreenTransition } from './render/screenTransition.js';
 import { InputController } from './input/controller.js';
 import { Hud } from './ui/hud.js';
-import type { BossHudState } from './ui/hud.js';
+import type { BossHudState, RunInfoState } from './ui/hud.js';
 import { bossHudName } from './ui/bossLabels.js';
 import { bossProgress } from './sim/bossProgress.js';
 import { PowerupOverlay } from './ui/powerupOverlay.js';
@@ -114,6 +114,9 @@ import {
 } from './net/planetMultipliers.js';
 // 촉매 시스템(ADR-0029, Lane 4): 드랍 파생(순수) + 출격 폴백 모달.
 import { catalystDropsFromRun } from './data/catalystDrops.js';
+import { catalystSummary } from './data/catalystSummary.js';
+import { planetById } from '../data/planets.js';
+import { penaltyRow, rewardRow } from './ui/catalystLabels.js';
 import { CatalystSortieModal } from './ui/pixi/catalystSortieModal.js';
 // M4 침공(비동기 PvP) 제출: 미설정 시 submitInvasion 은 null(잠정 결과만 표시).
 import {
@@ -499,6 +502,10 @@ async function main(): Promise<void> {
   /** 스크린 전환 시 BGM 존 갱신 + 하네스에 통지(스냅샷 screen + screenChange 이벤트). */
   function setScreen(name: string): void {
     currentScreenName = name;
+    // 런 중 침공 정보판은 런에서만 뜬다. DOM HUD 는 화면 전환으로 자동으로 사라지지 않으므로
+    // (스크린 개념이 캔버스 쪽에만 있다) 여기서 명시적으로 내린다 — 안 그러면 정산·성계 지도
+    // 위에 직전 런의 행성/촉매가 그대로 남는다.
+    if (name !== 'run') hud.setRunInfo(null);
     const zone = zoneForScreen(name);
     if (zone !== null) music.setZone(zone);
     // 런 진입 시 boss 트랙을 미리 fetch+decode 해 둔다 — 보스 등장 크로스페이드의 로드 지연 제거
@@ -931,6 +938,7 @@ async function main(): Promise<void> {
     invasionTarget = target;
     harnessInvasionRun = false; // 정식 침공: 정산·제출 경로를 탄다
     currentRunKind = 'invasion'; // 정식 침공 런 → invasion 존(AC3).
+    hud.setRunInfo(null); // 침공은 행성/촉매 축이 없다 — 정보판을 세우지 않는다.
     setScreen('run');
   }
 
@@ -983,6 +991,7 @@ async function main(): Promise<void> {
     invasionTarget = null;
     harnessInvasionRun = true;
     currentRunKind = 'invasion'; // 하네스 침공도 침공 런 → invasion 존(AC3).
+    hud.setRunInfo(null); // 정식 침공과 동일 — 행성/촉매 축 없음.
     setScreen('run');
   }
 
@@ -1193,7 +1202,29 @@ async function main(): Promise<void> {
     dropObserver.reset();
     lastOutcome = null;
     resultOverlay.hide();
+    // 런 중 침공 정보판(우측 가운데, 사용자 요청 2026-07-28). 행성·단계는 이번 출격 선택에서,
+    // 촉매 효과는 **실제 런에 스탬프된 배열**(`config.catalysts`)에서 접는다 — sel 이 아니라
+    // config 를 읽는 이유는 무촉매/consume 실패 폴백에서 둘이 갈릴 수 있어서다(표시가 곧 계약).
+    hud.setRunInfo(runInfoFor(sel.planet, sel.stage, config.catalysts ?? []));
     setScreen('run');
+  }
+
+  /**
+   * 런 중 정보판 상태를 만든다(순수 조립 — i18n·라벨 유도만). 배율은 `catalystSummary` 가
+   * sim 과 같은 함수로 접으므로 화면 수치와 실제 적용 값이 어긋나지 않는다.
+   */
+  function runInfoFor(planet: number, stage: number, catalysts: readonly number[]): RunInfoState {
+    const sum = catalystSummary(catalysts);
+    return {
+      planetName: planetById(planet).name,
+      stageLabel: t('runinfo.stage', { n: stage }),
+      catalystLabel:
+        sum.count > 0 ? t('runinfo.catalysts', { n: sum.count }) : t('runinfo.noCatalysts'),
+      penaltyHead: t('catalyst.summary.penalty'),
+      rewardHead: t('catalyst.summary.reward'),
+      penalties: sum.penalties.map(penaltyRow),
+      rewards: sum.rewards.map(rewardRow),
+    };
   }
 
   /**
@@ -1220,9 +1251,11 @@ async function main(): Promise<void> {
       void finishInvasionRun(w);
       return;
     }
-    // 이번 런에서 파생·적립한 촉매 드랍 총량(결과 오버레이 표시용). 오염/하네스 침공 런은
-    // 정산 블록에 들어가지 않으므로 0 으로 남는다(격리면 안에서만 적립·표시).
+    // 이번 런에서 파생·적립한 촉매 드랍(결과 오버레이 표시용). 오염/하네스 침공 런은
+    // 정산 블록에 들어가지 않으므로 0·빈 배열로 남는다(격리면 안에서만 적립·표시).
+    // 총량과 내역을 **둘 다** 남긴다 — 총량은 정산 수치 줄, 내역은 아이콘 칩 줄이 쓴다.
     let catalystDropTotal = 0;
+    let catalystDropList: readonly { readonly id: number; readonly qty: number }[] = [];
     if (!settled) {
       settled = true;
       // M5 C1: 승/패 연출 사운드(런당 1회). 격추 사출음(eject)은 피격 관찰에서 이미 났으므로
@@ -1314,6 +1347,7 @@ async function main(): Promise<void> {
           catalysts: w.config.catalysts ?? [],
         });
         catalystDropTotal = catalystDrops.reduce((n, d) => n + d.qty, 0);
+        catalystDropList = catalystDrops;
         void grantCatalystDrops(catalystDrops);
         // PvE 런 결과(정산된 메타: 아이템·XP·진행도 — 재화는 서버 컬럼 정본이라 미러만)를 서버
         // save 에 반영. 미설정이면 no-op, 실패 시 로컬 대기 슬롯에 남아 재시도(오프라인 우선).
@@ -1349,8 +1383,11 @@ async function main(): Promise<void> {
                 skillPointsGained: o.skillPointsGained,
                 creditsGained: o.creditsGained,
                 overflow: o.overflow,
-                // 이번 런에 얻은 촉매 총량(ADR-0029) — 있을 때만 정산 항목으로 노출.
-                ...(catalystDropTotal > 0 ? { catalystDrops: catalystDropTotal } : {}),
+                // 이번 런에 얻은 촉매 총량 + 내역(ADR-0029) — 있을 때만 정산 항목으로 노출.
+                // 내역이 있으면 정산이 개별 아이콘 칩으로 편다(사용자 요청 2026-07-28).
+                ...(catalystDropTotal > 0
+                  ? { catalystDrops: catalystDropTotal, catalystDropList }
+                  : {}),
                 // M5 C2: 획득 전투력 합계 + 등급별 장비 칩 목록(정산 완성판).
                 combatPower: totalCombatPower(o.itemsGained),
                 drops: o.itemsGained.map(

@@ -26,6 +26,8 @@ import {
   resourceMultOf,
   catalystPowerMult,
   catalystIconKey,
+  catalystIconFallbackKey,
+  CATALYST_ICON_NAMES,
   type RewardAxis,
   type PenaltyAxis,
   type PowerStat,
@@ -298,21 +300,34 @@ describe('CATALYST_RESOURCE_MIRROR — SQL 시드 형태', () => {
   });
 });
 
-describe('catalystIconKey — slug 기반 축별 placeholder', () => {
-  it('비파워 촉매는 catalyst_axis_<rewardAxis>', () => {
-    expect(catalystIconKey(catalystById(0)!)).toBe('catalyst_axis_drop'); // drop
-    expect(catalystIconKey(catalystById(5)!)).toBe('catalyst_axis_rarity'); // rarity
-    expect(catalystIconKey(catalystById(15)!)).toBe('catalyst_axis_resource'); // resource
+describe('catalystIconKey — slug 기반 개별 아트 (2026-07-28 아트 패스)', () => {
+  it('slug 를 파일명 규약(- → _)으로 옮긴다', () => {
+    expect(catalystIconKey(catalystById(0)!)).toBe('catalyst_abundance');
+    expect(catalystIconKey(catalystById(25)!)).toBe('catalyst_overdrive');
+    // 특산은 slug 에 `-` 가 있다 — `equip_unique_*` 와 같은 규칙으로 `_` 가 된다.
+    expect(catalystIconKey(catalystById(30)!)).toBe('catalyst_kargon_swarmcall');
   });
 
-  it('파워 촉매는 catalyst_axis_power_<powerStat>', () => {
-    expect(catalystIconKey(catalystById(25)!)).toBe('catalyst_axis_power_damage');
-    expect(catalystIconKey(catalystById(29)!)).toBe('catalyst_axis_power_skillAll');
+  it('48종 전부 서로 다른 키를 갖는다(개별 아트 = 1:1)', () => {
+    const keys = CATALYSTS.map((c) => catalystIconKey(c));
+    expect(new Set(keys).size).toBe(CATALYSTS.length);
+    for (const k of keys) expect(k.length).toBeGreaterThan(0);
   });
 
-  it('48종 전부 아이콘 키를 반환한다(빈 문자열 없음)', () => {
+  it('폴백 키는 보상축(파워는 스탯)별 공용이다 — 아트 결손 시 사다리 두 번째 칸', () => {
+    expect(catalystIconFallbackKey(catalystById(0)!)).toBe('catalyst_axis_drop');
+    expect(catalystIconFallbackKey(catalystById(5)!)).toBe('catalyst_axis_rarity');
+    expect(catalystIconFallbackKey(catalystById(15)!)).toBe('catalyst_axis_resource');
+    expect(catalystIconFallbackKey(catalystById(25)!)).toBe('catalyst_axis_power_damage');
+    expect(catalystIconFallbackKey(catalystById(29)!)).toBe('catalyst_axis_power_skillAll');
+  });
+
+  it('로더 목록은 개별 48 + 축 폴백 10 을 모두 담고 중복이 없다', () => {
+    expect(CATALYST_ICON_NAMES.length).toBe(48 + 10);
+    expect(new Set(CATALYST_ICON_NAMES).size).toBe(CATALYST_ICON_NAMES.length);
     for (const c of CATALYSTS) {
-      expect(catalystIconKey(c).length).toBeGreaterThan(0);
+      expect(CATALYST_ICON_NAMES).toContain(`${catalystIconKey(c)}.png`);
+      expect(CATALYST_ICON_NAMES).toContain(`${catalystIconFallbackKey(c)}.png`);
     }
   });
 });

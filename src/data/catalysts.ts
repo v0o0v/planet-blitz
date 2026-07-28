@@ -294,15 +294,37 @@ export const CATALYST_RESOURCE_MIRROR: readonly { readonly id: number; readonly 
 // ---------------------------------------------------------------------------
 
 /**
- * 촉매 → 아이콘 키(assets/<key>.png 규약, uiIcons.iconUrl 로 해석·없으면 텍스트 폴백).
+ * 촉매 → **개별 아트** 아이콘 키(`assets/catalyst_<slug>.png`). slug 의 `-` 는 파일명 규약상
+ * `_` 로 바꾼다(`kargon-swarmcall` → `catalyst_kargon_swarmcall`) — 기존 유니크 장비 아트
+ * (`equip_unique_*`)가 쓰는 것과 같은 규칙이다.
  *
- * 신규 아트는 아직 없다. slug 전용 아트(`catalyst_<slug>`)가 캐시에 생기면 그것을 우선 쓰도록
- * 확장하되, 지금은 **보상축별 공용 placeholder** 로 폴백한다(파워는 스탯별로 한 단계 더 가른다).
- * UI(Lane 4)는 이 키를 iconUrl 로 해석해 렌더한다. // ICON — 추후 아트 패스에서 slug 전용으로 승격.
+ * 2026-07-28 아트 패스에서 48종 전부 개별 아이콘이 생겼다(사용자 요청). 그 전에는 보상축별
+ * 공용 placeholder 뿐이었고, 같은 축 촉매 5종이 한 그림을 공유해 화면에서 구별되지 않았다.
  */
 export function catalystIconKey(def: CatalystDef): string {
+  return `catalyst_${def.slug.replace(/-/g, '_')}`;
+}
+
+/**
+ * 개별 아트가 없을 때의 **보상축별 공용 폴백** 키. 아트가 코드보다 늦게 오는 경우를 위해
+ * 남겨 둔다 — 소비 측은 {@link catalystIconKey} → 이 키 → 텍스트 글리프 순으로 내려간다
+ * (`uiTextures.ts` 의 "없으면 null 폴백" 규약과 같은 정신).
+ */
+export function catalystIconFallbackKey(def: CatalystDef): string {
   if (def.reward.axis === 'power') {
     return `catalyst_axis_power_${def.reward.powerStat ?? 'damage'}`;
   }
   return `catalyst_axis_${def.reward.axis}`;
 }
+
+/**
+ * 로더가 잡아야 할 촉매 아이콘 basename 전체(개별 48 + 축 폴백 10). **레지스트리 파생**이라
+ * 촉매가 추가되면 자동으로 목록에 든다 — 하드코딩하면 새 촉매 한 장이 조용히 null 폴백된다
+ * (`SHIP_SHOWCASE_NAMES` 가 같은 이유로 파생이다).
+ */
+export const CATALYST_ICON_NAMES: readonly string[] = [
+  ...new Set([
+    ...CATALYSTS.map((d) => `${catalystIconKey(d)}.png`),
+    ...CATALYSTS.map((d) => `${catalystIconFallbackKey(d)}.png`),
+  ]),
+];
