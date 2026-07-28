@@ -11,6 +11,7 @@
 
 import { Assets, type Texture } from 'pixi.js';
 import { stickerByIndex } from '../../../data/stickers.js';
+import { CATALYST_ICON_NAMES } from '../../data/catalysts.js';
 import type { SkillNode } from '../../../data/skills.js';
 import { SHIP_TYPES, DEFAULT_SHIP_TYPE, shipTypeDef } from '../../../data/ships/index.js';
 
@@ -252,6 +253,9 @@ export const UI_ASSET_NAMES: readonly string[] = [
   'equip_unique_relic_amplifier.png',
   // 연구소 스킬 노드 아이콘 62종 — 규칙은 {@link skillIconName}, 목록은 {@link SKILL_ICON_NAMES}.
   ...SKILL_ICON_NAMES,
+  // 촉매 아이콘(개별 48 + 보상축 폴백 10) — 목록은 `data/catalysts.ts` 레지스트리 파생.
+  // 픽커·재고 보관소·정산 획득 목록이 같은 키로 읽는다.
+  ...CATALYST_ICON_NAMES,
   // 파워업 전용 재사용 아트(스킬 노드는 부르지 않는다 — 그래서 SKILL_ICON_NAMES 에 넣으면
   // "죽은 아트 금지" 계약(tests/skillIcons)이 깨진다). `skill_range_flat_low.png` 는 tier 1 이
   // lowmid 로 옮겨가며 사문서가 된 실물 아트인데, 파워업 '집속 렌즈'(beam-focuser)가 이걸 되쓴다 —

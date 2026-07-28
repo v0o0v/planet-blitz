@@ -51,6 +51,14 @@ export interface SettlementSummary {
   drops: ResultDrop[];
   /** 이번 런에 얻은 촉매 총량(ADR-0029). > 0 일 때만 정산 항목으로 표시. */
   catalystDrops?: number;
+  /**
+   * 이번 런에 얻은 촉매의 **내역**(id + 수량, `catalystDropsFromRun` 결과 그대로).
+   *
+   * 총량만 있던 시절에는 정산이 "촉매 +3" 이라고만 말해서 **무엇을** 얻었는지 알 수 없었고,
+   * 확인하려면 촉매 재고 화면까지 가야 했다(사용자 요청 2026-07-28). 정산 화면이 이 목록을
+   * 개별 아이콘 칩으로 편다. 비었거나 없으면 칩 줄 자체를 그리지 않는다.
+   */
+  catalystDropList?: readonly { readonly id: number; readonly qty: number }[];
 }
 
 export interface ResultState {

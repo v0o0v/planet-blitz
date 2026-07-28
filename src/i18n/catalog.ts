@@ -193,6 +193,39 @@ export const EN = {
   'catalyst.manage.filterCommon': 'Common',
   'catalyst.manage.filterSignature': 'Signature',
   'result.loot.catalysts': 'Catalysts',
+  'result.loot.catalystList': 'Catalysts Gained',
+
+  // --- 촉매 전체 효과 집계(사용자 요청 2026-07-28) — 픽커 하단 요약 + 런 중 정보판 공용 ---
+  'catalyst.summary.title': 'Combined Effect',
+  'catalyst.summary.injected': 'Injected {n} · {kinds} kinds',
+  'catalyst.summary.none': 'Nothing injected — no penalty, no bonus.',
+  'catalyst.summary.penalty': 'Penalty',
+  'catalyst.summary.reward': 'Reward',
+  'catalyst.summary.emptyCol': '—',
+  // 페널티 축(값이 클수록 난이도 상승 — `PenaltyAxis` 6종).
+  'catalyst.pen.enemyHp': 'Enemy HP',
+  'catalyst.pen.enemyDamage': 'Enemy Damage',
+  'catalyst.pen.enemyCount': 'Enemy Count',
+  'catalyst.pen.enemySpeed': 'Enemy Speed',
+  'catalyst.pen.enemyBulletSpeed': 'Enemy Bullet Speed',
+  'catalyst.pen.playerHpDown': 'Ship HP Penalty',
+  // 보상 축(`RewardAxis` 5종 + power 세부 5스탯).
+  'catalyst.rew.drop': 'Drop Rate',
+  'catalyst.rew.rarity': 'Rarity',
+  'catalyst.rew.xp': 'XP',
+  'catalyst.rew.resource': 'Resources',
+  'catalyst.rew.catalystDrop': 'Catalyst Drops',
+  'catalyst.rew.power.damage': 'Damage',
+  'catalyst.rew.power.fireRate': 'Fire Rate',
+  'catalyst.rew.power.moveSpeed': 'Move Speed',
+  'catalyst.rew.power.maxHp': 'Max HP',
+  'catalyst.rew.power.skillAll': 'All Skills',
+
+  // --- 런 중 침공 정보판(우측 가운데, 사용자 요청 2026-07-28) ---
+  'runinfo.title': 'Current Sortie',
+  'runinfo.stage': 'Stage {n}',
+  'runinfo.catalysts': 'Catalysts {n}',
+  'runinfo.noCatalysts': 'No catalysts injected',
 
   // --- 촉매 카탈로그(catalyst.<slug>.name/desc — src/data/catalysts.ts 48종) ---
   'catalyst.abundance.name': 'Abundance',
@@ -1594,6 +1627,39 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.manage.filterCommon': '공용',
   'catalyst.manage.filterSignature': '특산',
   'result.loot.catalysts': '촉매',
+  'result.loot.catalystList': '획득 촉매',
+
+  // --- 촉매 전체 효과 집계(사용자 요청 2026-07-28) ---
+  'catalyst.summary.title': '전체 효과',
+  'catalyst.summary.injected': '주입 {n}장 · {kinds}종',
+  'catalyst.summary.none': '주입한 촉매가 없다 — 페널티도 보상도 없다.',
+  'catalyst.summary.penalty': '페널티',
+  'catalyst.summary.reward': '보상',
+  'catalyst.summary.emptyCol': '—',
+  // 어휘는 촉매 개별 설명(`catalyst.<slug>.desc`)과 **같은 말**을 쓴다 — 같은 화면에서
+  // 셀은 "적 내구도", 요약은 "적 체력" 이면 다른 축으로 읽힌다.
+  'catalyst.pen.enemyHp': '적 내구도',
+  'catalyst.pen.enemyDamage': '적 공격력',
+  'catalyst.pen.enemyCount': '적 수',
+  'catalyst.pen.enemySpeed': '적 이동 속도',
+  'catalyst.pen.enemyBulletSpeed': '적 탄속',
+  'catalyst.pen.playerHpDown': '기체 내구도 감소',
+  'catalyst.rew.drop': '드랍량',
+  'catalyst.rew.rarity': '드랍 희귀도',
+  'catalyst.rew.xp': '경험치',
+  'catalyst.rew.resource': '자원',
+  'catalyst.rew.catalystDrop': '촉매 드랍률',
+  'catalyst.rew.power.damage': '공격력',
+  'catalyst.rew.power.fireRate': '연사',
+  'catalyst.rew.power.moveSpeed': '이동속도',
+  'catalyst.rew.power.maxHp': '최대 체력',
+  'catalyst.rew.power.skillAll': '전 스킬',
+
+  // --- 런 중 침공 정보판(우측 가운데, 사용자 요청 2026-07-28) ---
+  'runinfo.title': '현재 침공',
+  'runinfo.stage': '{n}단계',
+  'runinfo.catalysts': '촉매 {n}장',
+  'runinfo.noCatalysts': '주입 촉매 없음',
 
   // --- 촉매 카탈로그(catalyst.<slug>.name/desc — src/data/catalysts.ts 48종) ---
   'catalyst.abundance.name': '풍요',
