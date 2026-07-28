@@ -21,7 +21,8 @@ import '../data/uniques.js'; // side-effect: UNIQUE_REGISTRY 에 유니크 15종
 import { requiredLevel, canEquip, stageLevelCap } from '../src/items/requiredLevel.js';
 import { LEVEL_PER_STAGE, MAX_STANDARD_STAGE } from '../src/save/progressionPath.js';
 import { LEVEL_CAP } from '../data/waves.js';
-import { rollItem, rerollAffixes } from '../src/items/roll.js';
+import { rollItem, rerollAffixes, reforgeAffixes } from '../src/items/roll.js';
+import { AFFIX_BY_ID } from '../data/affixes.js';
 import { UNIQUE_REGISTRY, registerUnique } from '../src/items/uniques.js';
 import { M2_UNIQUES, M3_UNIQUES } from '../data/uniques.js';
 import { buildPreset } from '../src/harness/presets.js';
@@ -249,6 +250,159 @@ describe('AC6 rerollAffixes 후 requiredLevel 불변 (어픽스 개수 보존)',
     const rerolled = rerollAffixes(rare, 5555, 0);
     expect(rerolled.affixes.length).toBe(rare.affixes.length);
     expect(requiredLevel(rerolled)).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC6-확장 — 정련 공정(ADR-0040) 재단조 후에도 requiredLevel 불변
+//
+// ADR-0040 이 "어픽스 칸 추가"를 금지 구역으로 둔 이유가 여기 있다. `requiredLevel` 은
+// 등급 + 어픽스 **개수** + 드랍 단계에서만 파생하고 **어픽스 값은 읽지 않는다**. 정련은
+// 값만 바꾸고 개수·등급·`source` 를 전부 보존하므로 요구 레벨이 **구조적으로** 불변이다 —
+// 그래서 CONTEXT 의 "한번 착용한 장비가 부적격이 되는 일이 없다" 가 지켜진다.
+//
+// "우연히 같았다"가 아니라 "입력이 보존돼서 같다"를 증명하려고, 모든 케이스에서
+// `affixes.length` · `rarity` · `source` 가 원본과 같음을 함께 단언한다. 그리고 값 밴드
+// `band = 1`(전 어픽스가 `def.max`)에서도 req 가 안 움직이는 것으로 **값 무의존**을 못박는다.
+// ---------------------------------------------------------------------------
+
+describe('AC6-확장 reforgeAffixes(정련) 후 requiredLevel 불변 (ADR-0040 금지 구역의 근거)', () => {
+  /** 드랍처 상한이 **무는** 저단계 2종 + **안 무는** 고단계 2종. 두 경로를 다 밟아야 의미가 있다. */
+  const STAGES = [1, 3, 11, 21] as const;
+  /** 0 = 현행 균등, 1 = 전 어픽스가 def.max. 그 사이 두 지점을 함께 훑는다. */
+  const BANDS = [0, 0.25, 0.55, 1] as const;
+
+  /**
+   * 원본과 재단조본이 **개수·등급·source(=req 의 세 입력)** 를 전부 공유하는지 단언한다.
+   * 이 세 가지가 같다는 것이 곧 "req 가 같아야 한다"의 전제다.
+   */
+  function expectReqInputsPreserved(before: Item, after: Item, label: string): void {
+    expect(after.affixes.length, `${label}: 어픽스 개수 보존`).toBe(before.affixes.length);
+    expect(after.rarity, `${label}: 등급 보존`).toBe(before.rarity);
+    expect(after.source, `${label}: source(드랍 단계) 보존`).toEqual(before.source);
+    expect(requiredLevel(after), `${label}: requiredLevel 불변`).toBe(requiredLevel(before));
+  }
+
+  /** 등급별 표본 아이템. unique 는 롤 슬롯이 유동적이라 저작 유니크를 명시 부착한다. */
+  function sample(rarity: Rarity, seed: number, stage: number): Item {
+    const source = { planet: 0, stage };
+    if (rarity !== 'unique') return rollItem(seed, rarity, source);
+    // rollItem(unique) 는 슬롯 추첨에 따라 uniqueId 가 안 붙을 수 있다(그러면 req 가 throw).
+    // 레지스트리에 실재하는 저작 유니크를 붙여 결정론 표본으로 만든다 — 어픽스는 롤 그대로다.
+    const def = M2_UNIQUES[0]!; // overheat-drum, reqLevel 66
+    const rolled = rollItem(seed, 'rare', source);
+    return { ...rolled, rarity: 'unique', slot: def.slot, uniqueId: def.id };
+  }
+
+  it('다중 고착(0개·1개·여러 개·전량) × 등급 × 단계 전 조합에서 req 불변', () => {
+    for (const stage of STAGES) {
+      for (const rarity of ['normal', 'magic', 'rare', 'unique'] as const) {
+        const item = sample(rarity, 20260728 + stage, stage);
+        const n = item.affixes.length;
+        // 0개 · 1개 · 여러 개(짝수 인덱스) · 전량. n 이 작으면 자연히 중복되지만 무해하다.
+        const fastenSets: readonly number[][] = [
+          [],
+          n > 0 ? [0] : [],
+          Array.from({ length: n }, (_, i) => i).filter((i) => i % 2 === 0),
+          Array.from({ length: n }, (_, i) => i),
+        ];
+        for (const fastened of fastenSets) {
+          const out = reforgeAffixes(item, 777 + fastened.length, { fastened });
+          expectReqInputsPreserved(item, out, `${rarity}/stage${stage}/고착${fastened.length}`);
+          // 고착 어픽스는 값·인덱스가 그대로여야 한다(정련의 계약).
+          for (const i of fastened) {
+            expect(out.affixes[i], `${rarity}/stage${stage}/고착 인덱스 ${i}`).toEqual(
+              item.affixes[i],
+            );
+          }
+        }
+      }
+    }
+  });
+
+  it('값 밴드 0 / 0.25 / 0.55 / 1 전 구간에서 req 불변 — 값이 최대여도 요구 레벨은 그대로', () => {
+    for (const stage of STAGES) {
+      for (const rarity of ['normal', 'magic', 'rare', 'unique'] as const) {
+        const item = sample(rarity, 555000 + stage, stage);
+        for (const band of BANDS) {
+          const out = reforgeAffixes(item, 31337, { band });
+          expectReqInputsPreserved(item, out, `${rarity}/stage${stage}/band${band}`);
+        }
+      }
+    }
+  });
+
+  it('band=1 이면 전 어픽스가 def.max 인데도 req 가 안 움직인다 (값 무의존의 직접 증거)', () => {
+    const item = rollItem(864213, 'rare', SOURCE);
+    expect(item.affixes.length).toBeGreaterThanOrEqual(3);
+    const before = requiredLevel(item);
+
+    const maxed = reforgeAffixes(item, 24680, { band: 1 }); // 고착 없음 = 전량 재추첨
+    for (const roll of maxed.affixes) {
+      const def = AFFIX_BY_ID.get(roll.id);
+      expect(def, `어픽스 def 조회 ${roll.id}`).toBeDefined();
+      expect(roll.value, `${roll.id} 는 밴드 1 에서 최댓값`).toBe(def!.max);
+    }
+    expectReqInputsPreserved(item, maxed, 'band=1 최대값');
+    expect(requiredLevel(maxed)).toBe(before);
+  });
+
+  it('band 0 과 1 은 어픽스 값 총합이 실제로 다른데(대조) req 는 같다', () => {
+    // "req 가 같은 건 결과가 안 바뀌어서"라는 반론을 차단한다 — 값은 확실히 움직였다.
+    const item = rollItem(191919, 'rare', SOURCE);
+    const lo = reforgeAffixes(item, 4242, { band: 0 });
+    const hi = reforgeAffixes(item, 4242, { band: 1 });
+    const sum = (it: Item): number => it.affixes.reduce((a, r) => a + r.value, 0);
+    expect(sum(hi), '밴드 1 총합이 밴드 0 보다 커야 대조가 성립한다').toBeGreaterThan(sum(lo));
+    expect(requiredLevel(lo)).toBe(requiredLevel(item));
+    expect(requiredLevel(hi)).toBe(requiredLevel(item));
+  });
+
+  it('연쇄 반복: 같은 아이템을 12회 연속 재단조해도 누적 드리프트가 없다', () => {
+    for (const stage of STAGES) {
+      for (const rarity of ['normal', 'magic', 'rare', 'unique'] as const) {
+        const origin = sample(rarity, 130000 + stage, stage);
+        const req0 = requiredLevel(origin);
+        let cur = origin;
+        for (let step = 1; step <= 12; step++) {
+          // 스텝마다 시드·밴드·고착을 바꿔가며 굴린다(실제 공정의 누적 고착을 흉내).
+          const fastened = Array.from({ length: Math.min(step, cur.affixes.length) }, (_, i) => i);
+          cur = reforgeAffixes(cur, 900 + step * 37, {
+            fastened,
+            band: BANDS[step % BANDS.length]!,
+          });
+          expectReqInputsPreserved(origin, cur, `${rarity}/stage${stage}/연쇄 ${step}회`);
+          expect(requiredLevel(cur), `${rarity}/stage${stage}/연쇄 ${step}회 누적`).toBe(req0);
+        }
+      }
+    }
+  });
+
+  it('상한이 무는 저단계와 안 무는 고단계 양쪽에서 정련 전후 값이 실제로 다른 구간을 밟는다', () => {
+    // 두 경로가 정말 갈리는지 확인(무의미한 동어반복 방지): 1단계 rare 는 상한 1 로 눌리고,
+    // 21단계 rare 는 등급 산식 그대로다. 어느 쪽이든 정련은 그 값을 건드리지 않는다.
+    const low = rollItem(70707, 'rare', { planet: 0, stage: 1 });
+    const high = rollItem(70707, 'rare', { planet: 0, stage: 21 });
+    expect(requiredLevel(low), '1단계는 드랍처 상한 1 로 눌린다').toBe(1);
+    expect(requiredLevel(high), '21단계는 상한이 안 물어 등급 산식 그대로').toBeGreaterThan(1);
+
+    for (const band of BANDS) {
+      expectReqInputsPreserved(low, reforgeAffixes(low, 1111, { band }), `저단계 band${band}`);
+      expectReqInputsPreserved(high, reforgeAffixes(high, 1111, { band }), `고단계 band${band}`);
+    }
+  });
+
+  it('canEquip 도 정련 전후로 뒤집히지 않는다 (착용 중 장비가 부적격이 되지 않는다)', () => {
+    // ADR-0040 이 지키려는 사용자 약속을 술어 층에서 직접 단언한다.
+    for (const stage of STAGES) {
+      for (const rarity of ['normal', 'magic', 'rare', 'unique'] as const) {
+        const item = sample(rarity, 424242 + stage, stage);
+        const level = requiredLevel(item); // 딱 착용 가능한 최저 레벨
+        expect(canEquip(level, item)).toBe(true);
+        const out = reforgeAffixes(item, 606060, { fastened: [0], band: 1 });
+        expect(canEquip(level, out), `${rarity}/stage${stage}: 정련 후에도 착용 가능`).toBe(true);
+      }
+    }
   });
 });
 

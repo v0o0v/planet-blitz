@@ -325,6 +325,164 @@
           ]
         }
       ],
+      "reforges": [
+        {
+          "id": "it-13690131",
+          "slot": "shield",
+          "rarity": "rare",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "of-wisdom",
+              "stat": "xpPct",
+              "value": 22
+            },
+            {
+              "id": "of-learning",
+              "stat": "xpPct",
+              "value": 9
+            },
+            {
+              "id": "multibarrel",
+              "stat": "bulletCount",
+              "value": 1
+            },
+            {
+              "id": "ranging",
+              "stat": "rangeFlat",
+              "value": 263
+            },
+            {
+              "id": "of-celerity",
+              "stat": "moveSpeedPct",
+              "value": 13
+            },
+            {
+              "id": "overclocked",
+              "stat": "fireRatePct",
+              "value": 17
+            }
+          ]
+        },
+        {
+          "id": "it-13690131",
+          "slot": "shield",
+          "rarity": "rare",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "of-wisdom",
+              "stat": "xpPct",
+              "value": 25
+            },
+            {
+              "id": "of-learning",
+              "stat": "xpPct",
+              "value": 9
+            },
+            {
+              "id": "multibarrel",
+              "stat": "bulletCount",
+              "value": 1
+            },
+            {
+              "id": "ranging",
+              "stat": "rangeFlat",
+              "value": 219
+            },
+            {
+              "id": "of-celerity",
+              "stat": "moveSpeedPct",
+              "value": 12
+            },
+            {
+              "id": "overclocked",
+              "stat": "fireRatePct",
+              "value": 17
+            }
+          ]
+        },
+        {
+          "id": "it-13690131",
+          "slot": "shield",
+          "rarity": "rare",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "of-wisdom",
+              "stat": "xpPct",
+              "value": 25
+            },
+            {
+              "id": "of-learning",
+              "stat": "xpPct",
+              "value": 9
+            },
+            {
+              "id": "multibarrel",
+              "stat": "bulletCount",
+              "value": 1
+            },
+            {
+              "id": "ranging",
+              "stat": "rangeFlat",
+              "value": 326
+            },
+            {
+              "id": "of-celerity",
+              "stat": "moveSpeedPct",
+              "value": 15
+            },
+            {
+              "id": "overclocked",
+              "stat": "fireRatePct",
+              "value": 22
+            }
+          ]
+        },
+        {
+          "id": "it-13690131",
+          "slot": "shield",
+          "rarity": "rare",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "of-magnetism",
+              "stat": "magnetPct",
+              "value": 20
+            },
+            {
+              "id": "of-celerity",
+              "stat": "moveSpeedPct",
+              "value": 16
+            },
+            {
+              "id": "shocking",
+              "stat": "lightning",
+              "value": 10
+            },
+            {
+              "id": "of-warding",
+              "stat": "maxHpPct",
+              "value": 9
+            },
+            {
+              "id": "deadly",
+              "stat": "damagePct",
+              "value": 35
+            },
+            {
+              "id": "rapid",
+              "stat": "fireRatePct",
+              "value": 12
+            }
+          ]
+        }
+      ],
       "summary": {
         "victory": true,
         "gameOver": false,
@@ -875,6 +1033,124 @@
               "id": "of-swiftness",
               "stat": "moveSpeedPct",
               "value": 8
+            }
+          ]
+        }
+      ],
+      "reforges": [
+        {
+          "id": "it-5349715",
+          "slot": "engine",
+          "rarity": "rare",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "rapid",
+              "stat": "fireRatePct",
+              "value": 9
+            },
+            {
+              "id": "of-magnetism",
+              "stat": "magnetPct",
+              "value": 20
+            },
+            {
+              "id": "of-greed",
+              "stat": "magnetPct",
+              "value": 39
+            },
+            {
+              "id": "piercing",
+              "stat": "pierce",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "id": "it-5349715",
+          "slot": "engine",
+          "rarity": "rare",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "flaming",
+              "stat": "fireDmg",
+              "value": 5
+            },
+            {
+              "id": "of-the-dash",
+              "stat": "dashCdPct",
+              "value": 10
+            },
+            {
+              "id": "rapid",
+              "stat": "fireRatePct",
+              "value": 7
+            },
+            {
+              "id": "piercing",
+              "stat": "pierce",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "id": "it-5349715",
+          "slot": "engine",
+          "rarity": "rare",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "flaming",
+              "stat": "fireDmg",
+              "value": 5
+            },
+            {
+              "id": "of-the-dash",
+              "stat": "dashCdPct",
+              "value": 10
+            },
+            {
+              "id": "rapid",
+              "stat": "fireRatePct",
+              "value": 7
+            },
+            {
+              "id": "piercing",
+              "stat": "pierce",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "id": "it-5349714",
+          "slot": "main",
+          "rarity": "unique",
+          "weaponType": 4,
+          "uniqueId": "converge-prism",
+          "affixes": [
+            {
+              "id": "multibarrel",
+              "stat": "bulletCount",
+              "value": 1
+            },
+            {
+              "id": "of-wisdom",
+              "stat": "xpPct",
+              "value": 16
+            },
+            {
+              "id": "of-prospecting",
+              "stat": "mineralFindPct",
+              "value": 25
+            },
+            {
+              "id": "of-magnetism",
+              "stat": "magnetPct",
+              "value": 18
             }
           ]
         }

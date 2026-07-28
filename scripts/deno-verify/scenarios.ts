@@ -45,6 +45,25 @@ export interface RollProbe {
   readonly reroll?: { readonly rerollSeed: number; readonly lockedIndex?: number };
 }
 
+/**
+ * `reforgeAffixes` 교차 검증용 재단조 스펙(ADR-0040 정련 공정).
+ *
+ * `RollProbe.reroll` 은 **단일 고착 · 밴드 0** 축만 밟는다 — 정련 공정이 새로 연
+ * **다중 고착**과 **값 밴드** 경로는 그 프로브로는 한 번도 실행되지 않는다(커버리지 0).
+ * 밴드는 `rng.int(lo, max)` 의 하한을 바꾸는데, `int` 는 `nextU32() % span` 이라 **span 이
+ * 달라지면 나머지 연산 결과가 달라진다** — 두 런타임의 정수 산술이 어긋나면 여기서 갈린다.
+ */
+export interface ReforgeProbe {
+  readonly dropSeed: number;
+  readonly rarity: Rarity;
+  readonly source: ItemSource;
+  readonly reforgeSeed: number;
+  /** 누적 고착 인덱스(중복·범위 밖은 구현이 무시한다 — 그 정규화도 함께 검증). */
+  readonly fastened?: readonly number[];
+  /** 값 품질 밴드 하한 [0,1]. */
+  readonly band?: number;
+}
+
 export interface Scenario {
   readonly name: string;
   readonly seed: number;
@@ -55,6 +74,8 @@ export interface Scenario {
   buildInputs(): InputFrame[];
   /** roll.ts 교차 검증용 롤 스펙 묶음. */
   readonly rolls: readonly RollProbe[];
+  /** 정련 공정(다중 고착·밴드) 교차 검증용 재단조 스펙. 없으면 빈 목록으로 취급. */
+  readonly reforges?: readonly ReforgeProbe[];
 }
 
 /**
@@ -402,6 +423,15 @@ export const SCENARIOS: readonly Scenario[] = [
         reroll: { rerollSeed: 0xbeef11, lockedIndex: 1 },
       },
     ],
+    // 정련 공정: 밴드 3단계(약불 0 / 중불 0.25 / 강불 0.55)를 **같은 아이템·같은 시드**로
+    // 훑어 하한만 달라졌을 때의 정수 나머지 연산이 두 런타임에서 같은지 본다. band 0 은
+    // 회귀 기준선(위 `reroll` 프로브와 바이트 동일해야 한다).
+    reforges: [
+      { dropSeed: 0xd0e5_13, rarity: 'rare', source: { planet: 1, stage: 11 }, reforgeSeed: 0xbeef11, fastened: [1], band: 0 },
+      { dropSeed: 0xd0e5_13, rarity: 'rare', source: { planet: 1, stage: 11 }, reforgeSeed: 0xbeef11, fastened: [1], band: 0.25 },
+      { dropSeed: 0xd0e5_13, rarity: 'rare', source: { planet: 1, stage: 11 }, reforgeSeed: 0xbeef11, fastened: [1], band: 0.55 },
+      { dropSeed: 0xd0e5_13, rarity: 'rare', source: { planet: 1, stage: 11 }, reforgeSeed: 0xbeef11, band: 1 },
+    ],
   },
   {
     name: '③ 촉매 주입 런(드랍/희귀도/자원/파워 + 페널티, ADR-0029)',
@@ -446,6 +476,14 @@ export const SCENARIOS: readonly Scenario[] = [
         source: { planet: 2, stage: 21 },
         reroll: { rerollSeed: 0x5150c0, lockedIndex: 0 },
       },
+    ],
+    // 다중 고착 축: 고착 0 → 1 → 2 → 3 개로 재추첨 풀이 줄어드는 경로와, 정규화(중복·범위
+    // 밖·역순 인덱스)를 함께 태운다. 유니크 롤은 `uniqueId` 가 재단조를 타고 살아남는지도 본다.
+    reforges: [
+      { dropSeed: 0x51a1_53, rarity: 'rare', source: { planet: 2, stage: 21 }, reforgeSeed: 0x5150c0, band: 0.55 },
+      { dropSeed: 0x51a1_53, rarity: 'rare', source: { planet: 2, stage: 21 }, reforgeSeed: 0x5150c0, fastened: [0, 2], band: 0.25 },
+      { dropSeed: 0x51a1_53, rarity: 'rare', source: { planet: 2, stage: 21 }, reforgeSeed: 0x5150c0, fastened: [2, 0, 0, 99, -1], band: 0.25 },
+      { dropSeed: 0x51a1_52, rarity: 'unique', source: { planet: 2, stage: 21 }, reforgeSeed: 0x5150c1, fastened: [0, 1, 2], band: 0.55 },
     ],
   },
   {

@@ -29,7 +29,8 @@ import { Container, DOMAdapter } from 'pixi.js';
 import { HangarScreen } from '../src/ui/pixi/hangar.js';
 import { ChampionSelectScreen } from '../src/ui/pixi/championSelect.js';
 import { ResearchLabScreen } from '../src/ui/pixi/researchLab.js';
-import { RefineryScreen } from '../src/ui/pixi/refinery.js';
+import { RefineryScreen, refineryDetailLayout } from '../src/ui/pixi/refinery.js';
+import type { ChainState } from '../src/items/refiningChain.js';
 import {
   defaultProfile,
   loadProfile,
@@ -38,9 +39,9 @@ import {
   type Profile,
   type KeyValueStore,
 } from '../src/save/profile.js';
-import { rollItem } from '../src/items/roll.js';
+import { rollItem, reforgeAffixes } from '../src/items/roll.js';
 import type { Item } from '../src/items/types.js';
-import { stashExpansionCost, rerollCost } from '../data/economy.js';
+import { stashExpansionCost, rollCost, HEAT, type Heat } from '../data/economy.js';
 import { LEVEL_CAP } from '../data/waves.js';
 import * as net from '../src/net/index.js';
 
@@ -328,7 +329,8 @@ describe('동시(재진입) 클릭이 재화를 이중 차감하지 않는다 (L
     const item = itemOfSlot(31, 'main');
     expect(item.affixes.length).toBeGreaterThan(0);
     profile.inventory.push(item);
-    const cost = rerollCost(item.rarity, item.affixes.length, 0); // 잠금 없음
+    // 중불(mid)이 비용 배수 ×1 앵커라 구 단발 리롤과 같은 값이 나온다 — 기대값 산술이 그대로 성립한다.
+    const cost = rollCost(item.rarity, item.affixes.length, 'mid');
 
     const stage = new Container();
     const refinery = new RefineryScreen(profile, stage);
@@ -377,5 +379,384 @@ describe('동시(재진입) 클릭이 재화를 이중 차감하지 않는다 (L
     await Promise.all([p1, p2]);
 
     expect(spendCalls, '리스펙 서버 차감이 두 번 일어났다(재진입 가드 부재)').toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 정련 공정(ADR-0040) — 레이아웃 넘침 · 하위 호환 · 서버 거부.
+// ---------------------------------------------------------------------------
+
+/** 정제소 상세 패널의 private 표면(회귀 테스트가 실제 클릭 경로를 직접 찌른다). */
+interface RefineryProbe {
+  select(i: Item): void;
+  reroll(): Promise<void>;
+  fasten(index: number): void;
+  chain: ChainState | null;
+  /** 서버 왕복 창 재현용 — 진입점 가드를 우회하는 외부 경로(main.ts 의 직접 `hide()` 등)를 흉내낸다. */
+  selectedId: string | null;
+  heat: Heat;
+  spinning: boolean;
+}
+
+function makeRefinery(profile: Profile): { screen: RefineryScreen; probe: RefineryProbe } {
+  const stage = new Container();
+  const screen = new RefineryScreen(profile, stage);
+  screen.show(profile, () => {});
+  return { screen, probe: screen as unknown as RefineryProbe };
+}
+
+describe('정련 공정: 상세 패널이 어떤 어픽스 수에서도 나무 테두리를 넘지 않는다', () => {
+  // 레어는 어픽스 3~6개라 6은 흔한 경우지 예외가 아니다. 정련 공정이 노 출력 3버튼 · 위험 표시 ·
+  // 공정 멈추기 버튼을 새로 얹으면서 구 레이아웃(어픽스 행 60px 간격)은 6어픽스에서 실제로 넘쳤다.
+  // 좌표를 하드코딩하지 않고 `refineryDetailLayout` 이 파생하므로, 여기서는 그 부등식만 잠근다.
+  for (const n of [1, 2, 3, 6]) {
+    it(`어픽스 ${n}개: 마지막 요소 bottom <= 콘텐츠 상자 bottom`, () => {
+      const L = refineryDetailLayout(n);
+      expect(
+        L.lastBottom,
+        `어픽스 ${n}개에서 버튼 행(${L.lastBottom})이 콘텐츠 상자 바닥(${L.boxBottom})을 뚫었다`,
+      ).toBeLessThanOrEqual(L.boxBottom);
+    });
+
+    it(`어픽스 ${n}개: 노 출력 행이 어픽스 목록과 겹치지 않는다`, () => {
+      const L = refineryDetailLayout(n);
+      // 바닥 클램프가 뭉치를 위로 밀어 올려 어픽스 행 위에 겹쳐 그리면, 넘침은 사라지고
+      // 겹침이 생긴다 — 부등식 하나만 보면 그 교환을 놓친다.
+      expect(L.heatY, `어픽스 ${n}개에서 노 출력 행이 어픽스 목록 위로 겹쳤다`).toBeGreaterThanOrEqual(L.rowsEnd);
+    });
+  }
+
+  it('세 요소의 세로 순서가 항상 보존된다(노 출력 → 비용·위험 → 버튼)', () => {
+    for (const n of [1, 2, 3, 6]) {
+      const L = refineryDetailLayout(n);
+      expect(L.heatY).toBeLessThan(L.costY);
+      expect(L.costY).toBeLessThan(L.actionY);
+    }
+  });
+});
+
+describe('정련 공정: UI 경로 규칙', () => {
+  it('고착 0개면 최악의 주사위(0)로 굴려도 용해하지 않는다 — 하위 호환', async () => {
+    vi.useFakeTimers();
+    // riskRoll = 0 은 용해 판정의 최악값이다. 고착이 0개면 meltRisk 가 정확히 0 이라
+    // `0 < 0` 이 false → 절대 용해하지 않는다. 그것이 정확히 구 단발 리롤이다.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    const profile = defaultProfile();
+    profile.minerals = 1_000_000;
+    const item = itemOfSlot(31, 'main');
+    expect(item.affixes.length).toBeGreaterThan(0);
+    profile.inventory.push(item);
+
+    const { probe } = makeRefinery(profile);
+    probe.select(item);
+    await probe.reroll();
+
+    const chain = probe.chain;
+    expect(chain, '공정이 열리지 않았다 — 테스트 전제 실패').not.toBeNull();
+    expect(chain?.fastened.length, '고착이 없는데 무언가 풀렸다').toBe(0);
+    // 용해면 `current === baseline`(참조 동일) + `canFasten === false` 다. 성공 굴림은 그 반대.
+    expect(chain?.canFasten, '굴림이 성공했는데 고착 창이 열리지 않았다(= 용해로 처리됐다)').toBe(true);
+    expect(chain?.current, '용해해서 시작 상태로 되돌아갔다').not.toBe(chain?.baseline);
+    expect(chain?.current.affixes.length).toBe(item.affixes.length);
+  });
+
+  it('서버가 거부하면(insufficient) 굴림도 용해도 고착 변화도 없다', async () => {
+    vi.useFakeTimers();
+    const profile = defaultProfile();
+    profile.minerals = 1_000_000;
+    const item = itemOfSlot(31, 'main');
+    profile.inventory.push(item);
+
+    vi.spyOn(net, 'spendCurrencyOnServer').mockResolvedValue({
+      status: 'rejected',
+      reason: 'insufficient',
+      creditsLeft: 0,
+      mineralsLeft: 3,
+    });
+
+    const { probe } = makeRefinery(profile);
+    probe.select(item);
+    const before = probe.chain;
+    await probe.reroll();
+
+    expect(profile.minerals, '거부됐는데 광물이 빠졌다').toBe(1_000_000);
+    expect(profile.inventory.find((it) => it.id === item.id), '거부됐는데 어픽스가 굴려졌다').toBe(item);
+    expect(probe.chain, '거부됐는데 공정 상태가 움직였다').toBe(before);
+    expect(probe.chain?.fastened.length).toBe(0);
+    expect(probe.chain?.canFasten, '거부됐는데 고착 창이 열렸다').toBe(false);
+  });
+
+  it('굴리기 전에는 고착할 수 없고, 굴린 뒤에는 굴림당 1개만 고착된다', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const profile = defaultProfile();
+    profile.minerals = 1_000_000;
+    const item = itemOfSlot(31, 'main');
+    expect(item.affixes.length).toBeGreaterThanOrEqual(2);
+    profile.inventory.push(item);
+
+    const { probe } = makeRefinery(profile);
+    probe.select(item);
+
+    probe.fasten(0);
+    expect(probe.chain?.fastened.length, '굴리지도 않았는데 고착됐다').toBe(0);
+
+    await probe.reroll();
+    // 굴림 연출이 도는 동안에는 고착이 잠긴다(결과가 화면에 안착하기 전 클릭 차단) —
+    // 연출을 끝까지 돌려야 고착 창이 열린다. setInterval 프레임을 전부 소진시킨다.
+    vi.advanceTimersByTime(2000);
+    probe.fasten(0);
+    expect(probe.chain?.fastened).toEqual([0]);
+    probe.fasten(1);
+    expect(probe.chain?.fastened, '한 굴림에서 두 개가 고착됐다').toEqual([0]);
+  });
+
+  it('오프라인(unavailable)이면 굴림도 용해도 차감도 없다 (AC12)', async () => {
+    // `insufficient` 와 **다른 return** 이라 한쪽만 덮으면 나머지 분기는 커버리지 0 이다.
+    vi.useFakeTimers();
+    const profile = defaultProfile();
+    profile.minerals = 1_000_000;
+    const item = itemOfSlot(31, 'main');
+    profile.inventory.push(item);
+
+    vi.spyOn(net, 'spendCurrencyOnServer').mockResolvedValue({
+      status: 'rejected',
+      reason: 'unavailable',
+    });
+
+    const { probe } = makeRefinery(profile);
+    probe.select(item);
+    const before = probe.chain;
+    await probe.reroll();
+
+    expect(profile.minerals, '판정을 못 받았는데 광물이 빠졌다').toBe(1_000_000);
+    expect(profile.inventory.find((it) => it.id === item.id), '판정을 못 받았는데 어픽스가 굴려졌다').toBe(item);
+    expect(probe.chain, '판정을 못 받았는데 공정 상태가 움직였다').toBe(before);
+    expect(probe.chain?.canFasten, '판정을 못 받았는데 고착 창이 열렸다').toBe(false);
+    expect(store.getItem(STORAGE_KEY), '판정을 못 받았는데 저장이 일어났다').toBeNull();
+  });
+
+  it('용해가 인벤토리를 baseline 으로 되돌리고 저장한다 (UI 배선)', async () => {
+    // 상태기계의 용해는 촘촘히 덮여 있지만 "그 결과가 인벤토리·저장까지 갔는가"는 별개다
+    // (이 리포에 "단위 테스트 그린인데 배선이 통째로 없다"가 8건 누적돼 있다).
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0); // seed=0 · riskRoll=0 → 위험>0 이면 확정 용해.
+    const profile = defaultProfile();
+    profile.minerals = 1_000_000;
+    const item = itemOfSlot(31, 'main');
+    expect(item.affixes.length).toBeGreaterThanOrEqual(2);
+    profile.inventory.push(item);
+
+    const { probe } = makeRefinery(profile);
+    probe.select(item);
+
+    await probe.reroll(); // 1굴림(고착 0 → 무위험)
+    vi.advanceTimersByTime(2000);
+    probe.fasten(0); // 고착 1 → 다음 굴림은 위험 > 0
+    expect(probe.chain?.fastened, '고착이 성립하지 않아 테스트 전제 실패').toEqual([0]);
+    const rolled = profile.inventory.find((it) => it.id === item.id);
+    expect(rolled, '1굴림 결과가 인벤토리에 없다').toBeDefined();
+
+    await probe.reroll(); // 2굴림 → 용해
+
+    expect(probe.chain?.fastened, '용해했는데 고착이 남았다').toEqual([]);
+    const after = profile.inventory.find((it) => it.id === item.id);
+    expect(after, '용해했는데 인벤토리가 baseline 으로 되돌아가지 않았다').toBe(item);
+    expect(persisted().inventory.find((it) => it.id === item.id)?.affixes).toEqual(item.affixes);
+  });
+
+  it('저장이 연출보다 먼저다 — persist() → startFx() 순서 (AC11)', async () => {
+    // 누가 startFx 를 persist 위로 올려도 지금까지는 어떤 테스트도 빨개지지 않았다.
+    // 새로고침으로 나쁜 롤을 무를 수 없는 근거가 이 순서 하나다(ADR-0040 §결과 확정과 연출의 순서).
+    const profile = defaultProfile();
+    profile.minerals = 1_000_000;
+    const item = itemOfSlot(31, 'main');
+    profile.inventory.push(item);
+
+    const order: string[] = [];
+    const realSetItem = store.setItem.bind(store);
+    store.setItem = (k: string, v: string): void => {
+      order.push('persist');
+      realSetItem(k, v);
+    };
+    // 실제 타이머를 돌리지 않고 **호출 시점만** 기록한다(스핀 프레임은 이 테스트의 관심사가 아니다).
+    vi.spyOn(globalThis, 'setInterval').mockImplementation(
+      (() => {
+        order.push('fx');
+        return 0;
+      }) as unknown as typeof setInterval,
+    );
+
+    const { probe } = makeRefinery(profile);
+    probe.select(item);
+    await probe.reroll();
+
+    expect(order, '저장도 연출도 일어나지 않았다 — 테스트 전제 실패').toEqual(['persist', 'fx']);
+  });
+
+  it('나갔다 돌아와도 마지막 굴림 결과가 인벤토리에 남는다 (AC10)', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const profile = defaultProfile();
+    profile.minerals = 1_000_000;
+    const item = itemOfSlot(31, 'main');
+    profile.inventory.push(item);
+
+    const { screen, probe } = makeRefinery(profile);
+    probe.select(item);
+    await probe.reroll();
+    vi.advanceTimersByTime(2000);
+
+    const rolled = profile.inventory.find((it) => it.id === item.id);
+    expect(rolled, '굴림 결과가 인벤토리에 없다').toBeDefined();
+
+    // 공정 상태만 버리고 인벤토리는 이미 최신이다(ADR-0040 — 이탈 = 암묵적 멈추기).
+    screen.hide();
+    expect(probe.chain, '나갔는데 공정 상태가 남았다').toBeNull();
+    screen.show(profile, () => {});
+
+    expect(profile.inventory.find((it) => it.id === item.id), '왕복 후 굴림 결과가 사라졌다').toBe(rolled);
+    expect(persisted().inventory.find((it) => it.id === item.id)?.affixes).toEqual(rolled?.affixes);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// [CRITICAL 재현] 서버 왕복(await) 창 동안 외부가 상태를 바꾼다.
+//
+// 순차 단위 테스트로는 이 창이 열리지 않아 3,715개가 전부 그린이었다. `spend` 를 **수동 resolve**
+// 로 세워 창을 인위적으로 열어 두고, 그 안에서 ① 다른 장비 선택 ② 노 출력 변경 ③ 화면 나가기를
+// 수행한다. 진입점 가드는 창을 좁힐 뿐 없애지 못한다 — `main.ts` 가 `close()` 를 거치지 않고
+// `refinery.hide()` 를 직접 부르는 곳만 5군데다. 그래서 `await` 복귀 후 재검증이 본체다.
+// ---------------------------------------------------------------------------
+
+describe('정련 공정: 서버 왕복 창 동안 상태가 바뀌어도 장비가 소실되지 않는다 (CRITICAL)', () => {
+  interface Fixture {
+    profile: Profile;
+    screen: RefineryScreen;
+    probe: RefineryProbe;
+    itemA: Item;
+    itemB: Item;
+    idsBefore: string[];
+    /** 아직 resolve 되지 않은 spend 왕복들(호출 순서대로). */
+    pending: ((out: net.SpendOutcome) => void)[];
+  }
+
+  function setup(): Fixture {
+    const profile = defaultProfile();
+    profile.minerals = 1_000_000;
+    const itemA = itemOfSlot(31, 'main');
+    const itemB = itemOfSlot(931, 'armor');
+    expect(itemA.id, '두 장비의 id 가 같아 테스트 전제 실패').not.toBe(itemB.id);
+    expect(itemA.affixes.length).toBeGreaterThan(0);
+    expect(itemB.affixes.length).toBeGreaterThan(0);
+    profile.inventory.push(itemA, itemB);
+    const idsBefore = profile.inventory.map((it) => it.id);
+
+    const pending: ((out: net.SpendOutcome) => void)[] = [];
+    vi.spyOn(net, 'spendCurrencyOnServer').mockImplementation(
+      () => new Promise<net.SpendOutcome>((res) => pending.push(res)),
+    );
+
+    const { screen, probe } = makeRefinery(profile);
+    return { profile, screen, probe, itemA, itemB, idsBefore, pending };
+  }
+
+  /** id 중복 없음 + 개수 보존 + 원래 장비 전부 생존. */
+  function expectInventorySane(f: Fixture): void {
+    const got = f.profile.inventory.map((it) => it.id);
+    expect(new Set(got).size, `인벤토리에 id 가 중복됐다: ${got.join(',')}`).toBe(got.length);
+    expect(got.length, '장비 개수가 보존되지 않았다').toBe(f.idsBefore.length);
+    for (const id of f.idsBefore) expect(got, `장비 ${id} 가 소실됐다`).toContain(id);
+  }
+
+  it('① 왕복 중 다른 장비 선택 → id 중복도 소실도 없다', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const f = setup();
+    f.probe.select(f.itemA);
+
+    const p1 = f.probe.reroll(); // await spend 에서 정지
+    f.probe.select(f.itemB); // ← 왕복 중 목록에서 B 클릭
+    f.pending[0]?.({ status: 'unconfigured' });
+    await p1;
+    vi.advanceTimersByTime(2000);
+
+    // 결정적 순간은 **다음 굴림**이다. selectedId 와 chain 이 갈리면 A 의 결과가 B 의 슬롯에 쓰인다.
+    const p2 = f.probe.reroll();
+    f.pending[f.pending.length - 1]?.({ status: 'unconfigured' });
+    await p2;
+    vi.advanceTimersByTime(2000);
+
+    expectInventorySane(f);
+  });
+
+  it('①-b 가드를 우회해 selectedId 가 바뀌어도 chain 이 남의 슬롯을 덮지 않는다', async () => {
+    // `main.ts` 처럼 진입점을 거치지 않는 외부 경로를 흉내낸다 — 가드가 아니라 **복귀 후 재검증**이
+    // 이 경우를 막는 유일한 장치다.
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const f = setup();
+    f.probe.select(f.itemA);
+
+    const p1 = f.probe.reroll();
+    f.probe.selectedId = f.itemB.id; // 가드 우회
+    f.pending[0]?.({ status: 'unconfigured' });
+    await p1;
+
+    // A 는 값을 치렀으므로 결과가 반영돼야 하고, B 의 chain 을 A 의 chain 으로 덮으면 안 된다.
+    expect(f.profile.inventory.find((it) => it.id === f.itemA.id), 'A 가 값을 치렀는데 결과가 삼켜졌다').not.toBe(
+      f.itemA,
+    );
+    expect(f.profile.inventory.find((it) => it.id === f.itemB.id), 'B 가 굴리지도 않았는데 바뀌었다').toBe(f.itemB);
+
+    // 다음 굴림이 결정적이다 — `selectedId`(B)와 `chain`(A 소유)이 갈린 채 굴리면 A 의 결과가
+    // B 의 슬롯에 쓰여 B 가 사라지고 A 의 id 가 둘이 된다.
+    vi.advanceTimersByTime(2000);
+    const p2 = f.probe.reroll();
+    f.pending[f.pending.length - 1]?.({ status: 'unconfigured' });
+    await p2;
+    vi.advanceTimersByTime(2000);
+    expectInventorySane(f);
+  });
+
+  it('② 왕복 중 노 출력 변경 → 지불한 열과 적용된 열이 같다', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0); // seed = 0 · riskRoll = 0
+    const f = setup();
+    f.probe.select(f.itemA); // 기본 mid
+    const paid = rollCost(f.itemA.rarity, f.itemA.affixes.length, 'mid');
+
+    const p1 = f.probe.reroll();
+    f.probe.heat = 'high'; // 가드 우회 — 구조가 고쳐졌는지를 본다(스냅샷 vs 재조회)
+    f.pending[0]?.({ status: 'unconfigured' });
+    await p1;
+
+    expect(f.profile.minerals, 'mid 비용으로 결제되지 않았다 — 테스트 전제 실패').toBe(1_000_000 - paid);
+    const after = f.profile.inventory.find((it) => it.id === f.itemA.id);
+    // 고착 0 · riskRoll 0 → 용해 없음. 결과는 mid 밴드로 재단조된 것이어야 한다.
+    expect(after?.affixes, '약불로 결제하고 강불 밴드를 샀다(지불한 열 ≠ 적용된 열)').toEqual(
+      reforgeAffixes(f.itemA, 0, { fastened: [], band: HEAT.mid.band }).affixes,
+    );
+    expectInventorySane(f);
+  });
+
+  it('③ 왕복 중 화면 나가기 → 결과는 반영되고 연출은 시작되지 않는다', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const f = setup();
+    f.probe.select(f.itemA);
+
+    const p1 = f.probe.reroll();
+    f.screen.hide(); // main.ts 가 close() 를 거치지 않고 직접 부르는 경로
+    f.pending[0]?.({ status: 'unconfigured' });
+    await p1;
+
+    // 플레이어는 이미 값을 치렀다 — 결과를 삼키면 안 된다.
+    expect(f.profile.inventory.find((it) => it.id === f.itemA.id), '값을 치렀는데 결과가 삼켜졌다').not.toBe(f.itemA);
+    expect(persisted().minerals).toBe(f.profile.minerals);
+    // 숨겨진 화면에서 연출을 돌리면 Ticker·setInterval 이 샌다.
+    expect(f.probe.spinning, '숨겨진 화면에서 연출이 시작됐다').toBe(false);
+    expectInventorySane(f);
   });
 });

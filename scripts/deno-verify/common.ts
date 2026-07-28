@@ -9,9 +9,10 @@
 import { createWorld, stepWorld } from '../../src/sim/world.js';
 import type { InputFrame } from '../../src/sim/world.js';
 import { hashWorld } from '../../src/sim/replay.js';
-import { rollItem, rerollAffixes } from '../../src/items/roll.js';
+import { rollItem, rerollAffixes, reforgeAffixes } from '../../src/items/roll.js';
+import type { ReforgeOpts } from '../../src/items/roll.js';
 import { atan2, sin, cos, length } from '../../src/sim/math.js';
-import type { Scenario, RollProbe } from './scenarios.js';
+import type { Scenario, RollProbe, ReforgeProbe } from './scenarios.js';
 
 // ---------------------------------------------------------------------------
 // FNV-1a(32-bit) — 임의 수열을 raw IEEE-754 비트로 접는다(replay.ts와 동일 방식).
@@ -108,6 +109,28 @@ export function snapshotRoll(p: RollProbe): RollSnapshot {
   };
 }
 
+/**
+ * 정련 공정(ADR-0040) 재단조 스냅샷 — 다중 고착·값 밴드 경로의 Node↔Deno bit-identical 증거.
+ *
+ * `exactOptionalPropertyTypes` 때문에 `fastened`/`band` 는 존재할 때만 실어 보낸다.
+ */
+export function snapshotReforge(p: ReforgeProbe): RollSnapshot {
+  const base = rollItem(p.dropSeed, p.rarity, p.source);
+  const opts: ReforgeOpts = {
+    ...(p.fastened !== undefined ? { fastened: p.fastened } : {}),
+    ...(p.band !== undefined ? { band: p.band } : {}),
+  };
+  const item = reforgeAffixes(base, p.reforgeSeed, opts);
+  return {
+    id: item.id,
+    slot: item.slot,
+    rarity: item.rarity,
+    weaponType: item.weaponType ?? null,
+    uniqueId: item.uniqueId ?? null,
+    affixes: item.affixes.map((a) => ({ id: a.id, stat: a.stat, value: a.value })),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 시나리오 실행 → 기대 결과(fixtures.json 엔트리).
 // ---------------------------------------------------------------------------
@@ -125,6 +148,11 @@ export interface ScenarioResult {
   /** 드랍 시드 시퀀스(정산 입력) — bit-identical이어야 서버 재현이 같은 아이템. */
   loot: { seed: number; rarity: number; planet: number; stage: number }[];
   rolls: RollSnapshot[];
+  /**
+   * 정련 공정 재단조 스냅샷. 프로브가 **있는 시나리오에만** 실린다 — 빈 배열을 항상 쓰면
+   * 프로브가 없는 시나리오의 픽스처 바이트까지 흔들려 회귀 기준선이 통째로 움직인다.
+   */
+  reforges?: RollSnapshot[];
   /** 최종 상태 요약(가독 확인용, 해시 비교에는 미포함). */
   summary: {
     victory: boolean;
@@ -162,6 +190,9 @@ export function computeScenario(sc: Scenario): ScenarioResult {
       stage: r.stage,
     })),
     rolls: sc.rolls.map(snapshotRoll),
+    ...(sc.reforges !== undefined && sc.reforges.length > 0
+      ? { reforges: sc.reforges.map(snapshotReforge) }
+      : {}),
     summary: {
       victory: state.victory,
       gameOver: state.gameOver,
