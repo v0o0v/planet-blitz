@@ -264,6 +264,28 @@ export class Hud {
   }
 
   /**
+   * 런 HUD 전체를 보이거나 감춘다. **정산 화면이 뜬 뒤에도 world 는 살아 있어서** 렌더 루프가
+   * `hud.update` 를 계속 부르고, 그러면 보스 예고 게이지 같은 진행 바가 결과 화면 위에 그대로
+   * 남는다(사용자 신고 2026-07-28). 각 게이지의 `display` 토글은 update 가 상태에서 파생하는
+   * 소관이므로 건드리지 않고, 직교 축인 `visibility` 로만 덮어쓴다 — 두 축이 섞이지 않아
+   * "감췄다가 다시 보이면 원래 표시 규칙이 그대로 복원"된다.
+   */
+  setVisible(visible: boolean): void {
+    const v = visible ? '' : 'hidden';
+    for (const el of [
+      this.el,
+      this.root,
+      this.supplyBanner,
+      this.bossRoot,
+      this.etaRoot,
+      this.contamRoot,
+      this.loreToast,
+    ]) {
+      el.style.visibility = v;
+    }
+  }
+
+  /**
    * 스토리 로어 토스트를 잠깐 띄운다(에코 안정화·파편 획득 등, 스토리 Phase E). 각 줄이 별도
    * 라인으로 표시되고 약 5초 후 자동으로 사라진다. 연달아 부르면 이전 타이머를 취소하고 재무장한다
    * (겹침 방지). 순수 표시 — sim·정산과 무관하며, 표시할 줄이 없으면 no-op.

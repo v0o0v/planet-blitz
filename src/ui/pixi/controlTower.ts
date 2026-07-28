@@ -131,10 +131,22 @@ const RECON_TAG_W = 46;
 /** 한 줄 전체 높이(칩 + 승급 별 + 줄 간격). */
 const RECON_ROW_H = RECON_CHIP + 26;
 
-// 알림 버튼(우상단).
+// 나가기(빨간 X) 버튼 — 다른 메타 화면(연구소·격납고 등)과 같은 크기·같은 자리.
+const CLOSE_SIZE = 56;
+const CLOSE_MARGIN = 24;
+const CLOSE_Y = 12;
+/** 나가기 버튼과 알림 버튼 사이 최소 간격. */
+const CLOSE_GAP = 16;
+
+// 알림 버튼(우상단 — 나가기 버튼 왼쪽).
 const ALERT_BTN_W = 240;
 const ALERT_BTN_H = 56;
 const ALERT_BTN_Y = 22;
+/**
+ * 알림 버튼 x. 나가기 버튼의 왼쪽 경계에서 {@link CLOSE_GAP} 만큼 더 왼쪽 — 상수로 박지 않고
+ * 나가기 기하에서 **파생**시켜, 버튼 크기가 바뀌어도 둘이 겹치는 일이 없게 한다.
+ */
+const ALERT_BTN_X = DESIGN_WIDTH - CLOSE_MARGIN - CLOSE_SIZE - CLOSE_GAP - ALERT_BTN_W;
 /** 알림 행의 도발 스티커 아이콘 크기 — 첫 줄(상대 도발) · 상세 줄(내 회신 도발). */
 const ALERT_ICON_H = 28;
 const ALERT_ICON_SUB = 22;
@@ -795,6 +807,12 @@ export class ControlTowerScreen {
     sub.position.set(DESIGN_WIDTH / 2, SUB_Y);
     this.root.addChild(sub);
 
+    // 나가기(빨간 X) — 다른 메타 화면(연구소 등)과 같은 자리·같은 크기로 우상단에 둔다
+    // (사용자 요청 2026-07-28). 동작은 하단 '뒤로'와 동일한 `back()` 이라 경로가 갈리지 않는다.
+    const close = makeIconButton(CLOSE_SIZE, () => this.back(), this.ui['ui_icon_close.png']);
+    close.position.set(DESIGN_WIDTH - CLOSE_MARGIN - CLOSE_SIZE, CLOSE_Y);
+    this.root.addChild(close);
+
     // 알림 버튼은 **내용이 있을 때만** 우상단에 뜬다(빈 알림 버튼은 누를 이유가 없다).
     const incoming = this.incoming;
     if (incoming === null || incoming.length === 0) return;
@@ -809,7 +827,8 @@ export class ControlTowerScreen {
       label: unseen ? t('ctl.btn.alerts', { n: this.unseenCount }) : t('ctl.notif.title'),
       onClick: () => this.openModal('alerts'),
     });
-    alerts.container.position.set(DESIGN_WIDTH - MARGIN - ALERT_BTN_W, ALERT_BTN_Y);
+    // 나가기 버튼이 우상단을 먼저 차지하므로 알림은 그 왼쪽으로 밀린다(겹치면 X 가 안 눌린다).
+    alerts.container.position.set(ALERT_BTN_X, ALERT_BTN_Y);
     this.root.addChild(alerts.container);
   }
 
