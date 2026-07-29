@@ -15,11 +15,11 @@
 
 import { Container } from 'pixi.js';
 import type { EnvContext, EnvFrame, EnvLayer, EnvSlot } from './types.js';
-import { KargonParallaxLayer } from './kargonParallax.js';
-import { KargonDecalLayer } from './kargonDecals.js';
-import { KargonLavaLightLayer } from './kargonLavaLight.js';
-import { KargonAtmosphereLayer } from './kargonAtmosphere.js';
-import { KargonGradeLayer } from './kargonGrade.js';
+import { ParallaxLayer } from './parallax.js';
+import { DecalLayer } from './decals.js';
+import { TerrainLightLayer } from './terrainLight.js';
+import { AtmosphereLayer } from './atmosphere.js';
+import { GradeLayer } from './grade.js';
 
 /** 카르곤 행성 인덱스. 레이어들이 자기 담당 행성을 판정할 때 쓴다. */
 export const KARGON = 0;
@@ -33,11 +33,11 @@ export const ENV_SLOTS: readonly EnvSlot[] = ['far', 'floor', 'over', 'post'];
  */
 export function createEnvLayers(): EnvLayer[] {
   return [
-    new KargonParallaxLayer(),
-    new KargonDecalLayer(),
-    new KargonLavaLightLayer(),
-    new KargonAtmosphereLayer(),
-    new KargonGradeLayer(),
+    new ParallaxLayer(),
+    new DecalLayer(),
+    new TerrainLightLayer(),
+    new AtmosphereLayer(),
+    new GradeLayer(),
   ];
 }
 

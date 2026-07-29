@@ -1857,8 +1857,8 @@ export class ScatterGrid {
 // 레이어
 // ─────────────────────────────────────────────────────────────────────────────
 
-export class KargonDecalLayer implements EnvLayer {
-  readonly name = 'kargon-decals';
+export class DecalLayer implements EnvLayer {
+  readonly name = 'decals';
   readonly slot = 'floor' as const;
   readonly view = new Container();
   /**

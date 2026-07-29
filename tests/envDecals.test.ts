@@ -82,12 +82,12 @@ import {
   compositeLumaSum,
   darkening,
   lumaSum,
-  KargonDecalLayer,
+  DecalLayer,
   type DecalKind,
   type DecalPlacement,
   type GridSpec,
   type Silhouette,
-} from '../src/render/env/kargonDecals.js';
+} from '../src/render/env/decals.js';
 
 /**
  * **잔·중·대 산포 격자 셋.** 통계적 단언(방향 12계급 균등 · 모양 조합 수 · 알파 대역 훑기)은
@@ -969,7 +969,7 @@ describe('화면 세기 (1차 기각 사유의 회귀 방지선)', () => {
 
 describe('레이어 계약', () => {
   it('렌더러가 없으면(캔버스 없는 환경) 던지지 않고 비활성으로 떨어진다', () => {
-    const layer = new KargonDecalLayer();
+    const layer = new DecalLayer();
     expect(layer.configure({ planet: 0, seed: 1 })).toBe(false);
     expect(() =>
       layer.update({
@@ -987,16 +987,16 @@ describe('레이어 계약', () => {
   });
 
   it('카르곤이 아닌 행성에서는 비활성이다', () => {
-    const layer = new KargonDecalLayer();
+    const layer = new DecalLayer();
     for (let planet = 1; planet <= 5; planet++) {
       expect(layer.configure({ planet, seed: 1 })).toBe(false);
     }
   });
 
   it('슬롯은 floor(지형 위·엔티티 아래)다', () => {
-    const layer = new KargonDecalLayer();
+    const layer = new DecalLayer();
     expect(layer.slot).toBe('floor');
-    expect(layer.name).toBe('kargon-decals');
+    expect(layer.name).toBe('decals');
   });
 });
 
@@ -1529,7 +1529,7 @@ describe('부조 ⑦ — 배선(이 리포의 반복 결함: 테스트는 그린
   }
 
   it('레이어가 부조 격자를 실제로 돌린다(목록에서 지우면 화면에서만 사라진다)', () => {
-    const specs = new KargonDecalLayer().gridSpecs;
+    const specs = new DecalLayer().gridSpecs;
     expect(specs).toContain(RELIEF_GRID);
     for (const [name, spec] of ALL_GRIDS) expect(specs, name).toContain(spec);
     // 잔 데칼(균열·자갈)은 암괴 **아래**를 지나야 한다 → 부조가 맨 앞.

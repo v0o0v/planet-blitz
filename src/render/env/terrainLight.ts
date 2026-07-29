@@ -96,7 +96,7 @@
  *  - **테스트가 못 잡은 이유:** 3차 단언은 전부 *레코드 속성*(`seg.ao > 0`, `seg.rim > 0.3`)
  *    이거나 *스프라이트 알파*였다. **"이 픽셀이 다른 겹에 덮이는가"를 아무도 안 쟀다.**
  *    그래서 4차는 **자취(오프셋·폭)와 합성 순서 자체를 불변식으로 잠근다**
- *    ({@link KargonLavaLightLayer.layerOrder}·`*SideViolations`·{@link AO_BAND_WIDTH}).
+ *    ({@link TerrainLightLayer.layerOrder}·`*SideViolations`·{@link AO_BAND_WIDTH}).
  *
  * 부수로 **방향 신호가 서로를 상쇄하고 있었다**: 3차는 `ao = AO_FLOOR + (1−AO_FLOOR)·up` 이라
  * **림이 가장 밝은 면이 동시에 AO 도 가장 짙었다**. 빛과 그림자가 같은 쪽에 몰리면 방향 정보는
@@ -1018,8 +1018,8 @@ function makeSprite(tex: Texture, blend: 'add' | 'multiply', parent: Container):
 // 레이어
 // ---------------------------------------------------------------------------
 
-export class KargonLavaLightLayer implements EnvLayer {
-  readonly name = 'kargon-lava-light';
+export class TerrainLightLayer implements EnvLayer {
+  readonly name = 'terrain-light';
   readonly slot = 'floor' as const;
   readonly view = new Container();
 

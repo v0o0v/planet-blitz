@@ -43,7 +43,7 @@ import {
   HALO_OFF_CORE_SCALE,
   HEAT_ALPHA,
   HOSTILE_HUE_GAP,
-  KargonLavaLightLayer,
+  TerrainLightLayer,
   LAVA_HUE_MAX,
   LAVA_HUE_MIN,
   LAVA_PALETTE,
@@ -73,7 +73,7 @@ import {
   segmentLit,
   terrainFieldAt,
   terrainGradient,
-} from '../src/render/env/kargonLavaLight.js';
+} from '../src/render/env/terrainLight.js';
 import { graphicsSettings } from '../src/render/graphicsSettings.js';
 import { graphicsTierController } from '../src/render/graphicsRuntime.js';
 
@@ -712,14 +712,14 @@ describe('레이어 계약', () => {
   });
 
   it('카르곤이 아니면 스스로 꺼진다', () => {
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     expect(layer.configure({ planet: 1, seed: 5 })).toBe(false);
     expect(layer.slot).toBe('floor');
     layer.destroy();
   });
 
   it('렌더러가 없어도(캔버스 없는 테스트) 던지지 않는다', () => {
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     expect(layer.configure({ planet: 0, seed: 5 })).toBe(true);
     expect(() => layer.update(frame(0, 0, 12.5))).not.toThrow();
     expect(layer.segmentCount).toBeGreaterThan(0);
@@ -727,7 +727,7 @@ describe('레이어 계약', () => {
   });
 
   it('화면 하나에 채널이 충분히 깔린다(얼룩 몇 개가 아니다)', () => {
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     layer.configure({ planet: 0, seed: 20260729 });
     layer.update(frame(0, 0, 0));
     // 1920×1080 ≈ 30×17 타일. 등고선이 화면을 가로지르면 수십 개가 나온다.
@@ -736,7 +736,7 @@ describe('레이어 계약', () => {
   });
 
   it('④ 카메라가 떠났다 돌아오면 같은 세그먼트 집합이 복원된다(월드 고정)', () => {
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     layer.configure({ planet: 0, seed: 909 });
     layer.update(frame(0, 0, 0));
     const home = layer.segmentCount;
@@ -747,7 +747,7 @@ describe('레이어 계약', () => {
   });
 
   it('비활성 상태에서 update 는 무비용·무해하다', () => {
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     layer.configure({ planet: 3, seed: 1 });
     layer.update(frame(0, 0, 1));
     expect(layer.segmentCount).toBe(0);
@@ -755,7 +755,7 @@ describe('레이어 계약', () => {
   });
 
   it('⑦ 정상 티어에서 **모든** 세그먼트가 발광한다(꺼진 경계 0)', () => {
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     layer.configure({ planet: 0, seed: 20260729 });
     layer.update(frame(0, 0, 0));
     expect(layer.segmentCount).toBeGreaterThan(30);
@@ -768,7 +768,7 @@ describe('레이어 계약', () => {
 
   it('⑦ 띠 두께가 세기에 따라 변한다(식은 균열=가는 선, 뜨거운 채널=넓은 강)', () => {
     graphicsTierController.tick(120, 1, 'high');
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     layer.configure({ planet: 0, seed: 20260729 });
     layer.update(frame(0, 0, 0));
     // wScale = 0.55 + 0.45·heat 이므로 heat∈[0.28,1] 에서 비는 최소 ≈1.4 배.
@@ -778,7 +778,7 @@ describe('레이어 계약', () => {
 
   it('⑦ 열기 기둥은 잔열에 붙지 않는다(균일한 주황 안개 방지)', () => {
     graphicsTierController.tick(120, 1, 'high');
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     layer.configure({ planet: 0, seed: 20260729 });
     layer.update(frame(0, 0, 0));
     const plumes = layer.visiblePlumeCount;
@@ -793,7 +793,7 @@ describe('레이어 계약', () => {
     // 2차는 여기서 가시 발광 4종 157개 중 **0개**였다.
     graphicsTierController.tick(20, 1, 'low');
     try {
-      const layer = new KargonLavaLightLayer();
+      const layer = new TerrainLightLayer();
       layer.configure({ planet: 0, seed: 20260729 });
       layer.update(frame(0, 0, 0));
       expect(layer.segmentCount).toBeGreaterThan(10);
@@ -806,7 +806,7 @@ describe('레이어 계약', () => {
   });
 
   it('⑨ `reducedGlow` 에서도 가시 발광이 남고, 밝기는 확실히 줄어든다', () => {
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     layer.configure({ planet: 0, seed: 20260729 });
     layer.update(frame(0, 0, 0));
     const normal = layer.peakCoreAlpha;
@@ -839,7 +839,7 @@ describe('레이어 계약', () => {
     // 3차의 결함이 정확히 이 순서였다: `ao` → `glow`. AO 의 자취는 헤일로의 진부분집합이라
     // 나중에 칠해진 가산 헤일로가 곱연산 어둠을 통째로 되돌렸다 — 알파를 올려도 안 보인다.
     // 이 단언은 스프라이트 속성으로는 원리적으로 표현 불가능하다. 순서 자체를 잠근다.
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     layer.configure({ planet: 0, seed: 20260729 });
     const order = layer.layerOrder;
     const at = (n: string) => order.indexOf(n);
@@ -855,7 +855,7 @@ describe('레이어 계약', () => {
 
   it('⑩ [AO 띠] 모든 세그먼트에 붙고, 폭이 목표 범위이며, 실제로 어둡게 한다', () => {
     graphicsTierController.tick(120, 1, 'high');
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     layer.configure({ planet: 0, seed: 20260729 });
     layer.update(frame(0, 0, 0));
     expect(layer.segmentCount).toBeGreaterThan(30);
@@ -897,7 +897,7 @@ describe('레이어 계약', () => {
 
   it('⑩ [자취] AO 는 고지(+n) 쪽, 드롭 섀도·림은 저지(−n) 쪽에 놓인다', () => {
     graphicsTierController.tick(120, 1, 'high');
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     layer.configure({ planet: 0, seed: 909 });
     layer.update(frame(0, 0, 0));
     expect(layer.sideViolations).toEqual({ ao: 0, shadow: 0, rim: 0 });
@@ -918,7 +918,7 @@ describe('레이어 계약', () => {
 
   it('⑩ [드롭 섀도] 저지 쪽에만 생기고, 세그먼트의 일부에만 붙는다', () => {
     graphicsTierController.tick(120, 1, 'high');
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     layer.configure({ planet: 0, seed: 20260729 });
     layer.update(frame(0, 0, 0));
     const n = layer.visibleShadowCount;
@@ -933,7 +933,7 @@ describe('레이어 계약', () => {
     // 비평 ④: "림 발광이 모든 방위에서 세기·폭이 동일하다". 알파만 변조하는 구현으로
     // 되돌리면 `litSpread` 가 1 이 되어 이 단언이 깨진다.
     graphicsTierController.tick(120, 1, 'high');
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     layer.configure({ planet: 0, seed: 20260729 });
     layer.update(frame(0, 0, 0));
     const r = layer.rimByFacing;
@@ -965,7 +965,7 @@ describe('레이어 계약', () => {
     expect(DUSK_ALPHA).toBeGreaterThan(0.32);
     const duskF = 1 - DUSK_ALPHA * (1 - 0x4a / 255);
     expect(duskF).toBeLessThan(0.78);
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     layer.configure({ planet: 0, seed: 42 });
     layer.update(frame(0, 0, 0));
     expect(layer.layerOrder[0]).toBe('dusk');
@@ -973,7 +973,7 @@ describe('레이어 계약', () => {
   });
 
   it('반복 update 가 세그먼트 수를 흔들지 않는다(재구성 캐시가 안정적)', () => {
-    const layer = new KargonLavaLightLayer();
+    const layer = new TerrainLightLayer();
     layer.configure({ planet: 0, seed: 42 });
     layer.update(frame(0, 0, 0));
     const n = layer.segmentCount;

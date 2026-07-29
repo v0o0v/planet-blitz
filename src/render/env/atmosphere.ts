@@ -740,8 +740,8 @@ function bakeProfileTexture(ctx: EnvContext, kind: TextureKind, rings = 28): Tex
   return tex;
 }
 
-export class KargonAtmosphereLayer implements EnvLayer {
-  readonly name = 'kargon-atmosphere';
+export class AtmosphereLayer implements EnvLayer {
+  readonly name = 'atmosphere';
   readonly slot = 'over' as const;
   readonly view = new Container();
 

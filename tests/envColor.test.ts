@@ -18,7 +18,7 @@ import {
   paletteHueViolations,
 } from '../src/render/env/color.js';
 import { FOREGROUND_SIGNAL_COLORS } from '../src/render/textures.js';
-import { LAVA_PALETTE, LAVA_HUE_MIN, LAVA_HUE_MAX, HOSTILE_HUE_GAP } from '../src/render/env/kargonLavaLight.js';
+import { LAVA_PALETTE, LAVA_HUE_MIN, LAVA_HUE_MAX, HOSTILE_HUE_GAP } from '../src/render/env/terrainLight.js';
 
 describe('색상각 기본', () => {
   it('무채색은 0, 원색은 알려진 각도', () => {

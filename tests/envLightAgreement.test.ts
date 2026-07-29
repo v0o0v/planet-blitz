@@ -21,8 +21,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { TO_LIGHT_Y } from '../src/render/env/kargonLavaLight.js';
-import { LIGHT_X, LIGHT_Y } from '../src/render/env/kargonDecals.js';
+import { TO_LIGHT_Y } from '../src/render/env/terrainLight.js';
+import { LIGHT_X, LIGHT_Y } from '../src/render/env/decals.js';
 
 /** 두 레인의 광원 벡터가 이 코사인 유사도 이상으로 같은 방향을 가리켜야 한다. */
 const MIN_AGREEMENT = 0.9;

@@ -23,7 +23,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ATMOSPHERE_FIELDS,
   ATMOSPHERE_TUNING,
-  KargonAtmosphereLayer,
+  AtmosphereLayer,
   BULLET_DISPLAY_RADIUS,
   EMBER_ALPHA,
   EMBER_MAX_RADIUS,
@@ -41,7 +41,7 @@ import {
   textureProfile,
   type FieldSpec,
   type ViewRect,
-} from '../src/render/env/kargonAtmosphere.js';
+} from '../src/render/env/atmosphere.js';
 
 /** 1920×1080 design 화면(레터박스 없음). */
 const VIEW: ViewRect = { minX: 0, minY: 0, maxX: 1920, maxY: 1080 };
@@ -346,8 +346,8 @@ describe('화면 기여도 — "보이는가"를 곱셈 결과로 감시한다',
 
 describe('카르곤 대기 레이어 — 실제로 그린다', () => {
   /** 렌더러 없이(=테스트 환경) 굴린다. 레이어는 이 상황에서 던지면 안 된다(types.ts 계약). */
-  function run(): KargonAtmosphereLayer {
-    const layer = new KargonAtmosphereLayer();
+  function run(): AtmosphereLayer {
+    const layer = new AtmosphereLayer();
     expect(layer.configure({ planet: 0, seed: SEED })).toBe(true);
     layer.resize(1920, 1080);
     layer.update({
@@ -364,7 +364,7 @@ describe('카르곤 대기 레이어 — 실제로 그린다', () => {
   }
 
   it('카르곤에서 켜지고, 다른 행성에서는 스스로 꺼진다', () => {
-    const layer = new KargonAtmosphereLayer();
+    const layer = new AtmosphereLayer();
     expect(layer.configure({ planet: 1, seed: SEED })).toBe(false);
     expect(layer.configure({ planet: 0, seed: SEED })).toBe(true);
     layer.destroy();
