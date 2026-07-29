@@ -540,9 +540,14 @@ describe('카르곤 그레이딩 — 품질 티어 대응', () => {
 
 describe('그레이딩 레이어 계약', () => {
   it('담당 테마가 없는 행성에서는 스스로 꺼진다', () => {
+    // 행성 인덱스를 리터럴로 적으면 그 행성에 테마가 생기는 순간 이 단언이 "레이어가 꺼진다"가
+    // 아니라 "아직 아무도 안 만들었다"를 재게 된다(Phase 2 에서 실제로 그렇게 깨졌다).
+    // 등록된 담당 행성에서 **파생**해 영원히 비어 있는 인덱스를 쓴다.
+    const claimed = new Set(ENV_THEMES.flatMap((t) => t.planets));
+    let unclaimed = 0;
+    while (claimed.has(unclaimed)) unclaimed += 1;
     const layer = new GradeLayer();
-    expect(layer.configure({ planet: 1, seed: 1 })).toBe(false);
-    expect(layer.configure({ planet: 5, seed: 1 })).toBe(false);
+    expect(layer.configure({ planet: unclaimed, seed: 1 })).toBe(false);
     expect(layer.configure({ planet: 0, seed: 1 })).toBe(true);
     layer.destroy();
   });

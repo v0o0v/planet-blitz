@@ -733,8 +733,13 @@ describe('ParallaxLayer', () => {
   });
 
   it('담당 테마가 없는 행성에서는 스스로 꺼진다', () => {
+    // 리터럴 행성 인덱스를 쓰면 그 행성에 테마가 생기는 순간 의미가 뒤집힌다 —
+    // 등록된 담당 행성에서 파생해 영원히 비어 있는 인덱스를 고른다(Phase 2 에서 실제로 깨졌다).
+    const claimed = new Set(ENV_THEMES.flatMap((t) => t.planets));
+    let unclaimed = 0;
+    while (claimed.has(unclaimed)) unclaimed += 1;
     const l = new ParallaxLayer();
-    expect(l.configure({ planet: 1, seed: 7 })).toBe(false);
+    expect(l.configure({ planet: unclaimed, seed: 7 })).toBe(false);
     expect(l.themeId).toBeNull();
     l.destroy();
   });
