@@ -1,1 +1,406 @@
-{"id":"cf1a0727-219a-49e2-bcbc-f8f422bb5eab","name":"dark desaturated frozen basalt rock, low saturation, subtle detail → pale desaturated ice snowfield with faint cracks, low saturation pastel blue-white","lower_description":"dark desaturated frozen basalt rock, low saturation, subtle detail","upper_description":"pale desaturated ice snowfield with faint cracks, low saturation pastel blue-white","transition_description":"frost rime edge","tile_size":{"width":32,"height":32},"transition_size":0.25,"view":"high top-down","style_settings":{"detail":"medium detail","outline":"lineless","shading":"medium shading"},"generation_parameters":{"tile_strength":1.0,"tileset_adherence":100.0,"text_guidance_scale":8.0,"tileset_adherence_freedom":500},"base_tile_ids":{"lower":"2d5f551a-3eee-4f07-9583-3deb0626d7ab","upper":"d60c9560-dccb-44be-836f-222a4c3a50b7"},"tileset_data":{"tiles":[{"id":"13","name":"wang_13","corners":{"NE":"upper","NW":"upper","SE":"upper","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,1,255],"row_2":[255,1,0,255],"row_3":[255,255,255,255]},"original_position":{"col":2,"row":4},"bounding_box":{"x":0,"y":0,"width":32,"height":32}},{"id":"10","name":"wang_10","corners":{"NE":"lower","NW":"upper","SE":"lower","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,0,255],"row_2":[255,1,0,255],"row_3":[255,255,255,255]},"original_position":{"col":6,"row":2},"bounding_box":{"x":32,"y":0,"width":32,"height":32}},{"id":"4","name":"wang_4","corners":{"NE":"upper","NW":"lower","SE":"lower","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,1,255],"row_2":[255,1,0,255],"row_3":[255,255,255,255]},"original_position":{"col":1,"row":4},"bounding_box":{"x":64,"y":0,"width":32,"height":32}},{"id":"12","name":"wang_12","corners":{"NE":"upper","NW":"upper","SE":"lower","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,1,255],"row_2":[255,1,1,255],"row_3":[255,255,255,255]},"original_position":{"col":5,"row":3},"bounding_box":{"x":96,"y":0,"width":32,"height":32}},{"id":"6","name":"wang_6","corners":{"NE":"upper","NW":"lower","SE":"lower","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,0,255],"row_2":[255,0,0,255],"row_3":[255,255,255,255]},"original_position":{"col":2,"row":5},"bounding_box":{"x":0,"y":32,"width":32,"height":32}},{"id":"8","name":"wang_8","corners":{"NE":"lower","NW":"upper","SE":"lower","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,0,255],"row_2":[255,1,1,255],"row_3":[255,255,255,255]},"original_position":{"col":6,"row":3},"bounding_box":{"x":32,"y":32,"width":32,"height":32}},{"id":"2d5f551a-3eee-4f07-9583-3deb0626d7ab","name":"wang_0","corners":{"NE":"lower","NW":"lower","SE":"lower","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,1,255],"row_2":[255,0,1,255],"row_3":[255,255,255,255]},"original_position":{"col":3,"row":6},"bounding_box":{"x":64,"y":32,"width":32,"height":32}},{"id":"1","name":"wang_1","corners":{"NE":"lower","NW":"lower","SE":"upper","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,0,255],"row_2":[255,1,0,255],"row_3":[255,255,255,255]},"original_position":{"col":1,"row":1},"bounding_box":{"x":96,"y":32,"width":32,"height":32}},{"id":"11","name":"wang_11","corners":{"NE":"lower","NW":"upper","SE":"upper","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,1,255],"row_2":[255,0,1,255],"row_3":[255,255,255,255]},"original_position":{"col":3,"row":2},"bounding_box":{"x":0,"y":64,"width":32,"height":32}},{"id":"3","name":"wang_3","corners":{"NE":"lower","NW":"lower","SE":"upper","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,1,255],"row_2":[255,0,0,255],"row_3":[255,255,255,255]},"original_position":{"col":2,"row":1},"bounding_box":{"x":32,"y":64,"width":32,"height":32}},{"id":"2","name":"wang_2","corners":{"NE":"lower","NW":"lower","SE":"lower","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,1,255],"row_2":[255,0,0,255],"row_3":[255,255,255,255]},"original_position":{"col":3,"row":1},"bounding_box":{"x":64,"y":64,"width":32,"height":32}},{"id":"5","name":"wang_5","corners":{"NE":"upper","NW":"lower","SE":"upper","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,0,255],"row_2":[255,0,0,255],"row_3":[255,255,255,255]},"original_position":{"col":1,"row":2},"bounding_box":{"x":96,"y":64,"width":32,"height":32}},{"id":"d60c9560-dccb-44be-836f-222a4c3a50b7","name":"wang_15","corners":{"NE":"upper","NW":"upper","SE":"upper","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,1,255],"row_2":[255,1,1,255],"row_3":[255,255,255,255]},"original_position":{"col":2,"row":2},"bounding_box":{"x":0,"y":96,"width":32,"height":32}},{"id":"14","name":"wang_14","corners":{"NE":"upper","NW":"upper","SE":"lower","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,0,255],"row_2":[255,0,1,255],"row_3":[255,255,255,255]},"original_position":{"col":4,"row":3},"bounding_box":{"x":32,"y":96,"width":32,"height":32}},{"id":"9","name":"wang_9","corners":{"NE":"lower","NW":"upper","SE":"upper","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,0,255],"row_2":[255,1,1,255],"row_3":[255,255,255,255]},"original_position":{"col":4,"row":4},"bounding_box":{"x":64,"y":96,"width":32,"height":32}},{"id":"7","name":"wang_7","corners":{"NE":"upper","NW":"lower","SE":"upper","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,0,255],"row_2":[255,0,1,255],"row_3":[255,255,255,255]},"original_position":{"col":4,"row":2},"bounding_box":{"x":96,"y":96,"width":32,"height":32}}],"tile_size":{"width":32,"height":32},"total_tiles":16,"terrain_types":["lower","upper"],"spritesheet_url":"https://backblaze.pixellab.ai/file/pixellab-tiles/a7299adc-c359-40dc-9dec-7580b0a7221b/cf1a0727-219a-49e2-bcbc-f8f422bb5eab/spritesheet.png","spritesheet_grid":{"cols":4,"rows":4},"spritesheet_layout":"tileset15_4x4"},"metadata":{"terrain_prompts":{"lower":"dark desaturated frozen basalt rock, low saturation, subtle detail","upper":"pale desaturated ice snowfield with faint cracks, low saturation pastel blue-white","transition":"frost rime edge"}},"created_at":"2026-07-16T05:30:49.664742+00:00","format":"tileset15","layout":{"type":"tileset15","description":"4x4 grid of 16 unique Wang tiles","grid_size":{"width":4,"height":4},"tile_count":16},"pattern_system":{"type":"4x4_wildcard","description":"4×4 patterns with wildcards for flexible tile matching","wildcard_value":255,"pattern_layout":{"description":"4×4 grid where center 2×2 matches tile corners, outer ring uses wildcards","example":{"row_0":"All wildcards (*)","row_1":"Wildcard + NW corner + NE corner + Wildcard","row_2":"Wildcard + SW corner + SE corner + Wildcard","row_3":"All wildcards (*)"}},"terrain_encoding":{"lower":0,"upper":1,"transition":2,"wildcard":255},"usage":{"description":"Sample 4×4 terrain around tile position, encode as pattern key, lookup in cache","benefits":["O(1) lookup performance","Flexible edge matching","Unified pattern system"]}},"tileset_image":{"filename":"tileset_cf1a0727-219a-49e2-bcbc-f8f422bb5eab.png","format":"PNG","dimensions":{"width":128,"height":128}}}
+{
+ "name": "niflheim — 오프라인 합성 Wang 타일셋 (빙원)",
+ "note": "오프라인 합성. 재생성기는 scripts/tileset-gen.mjs --planet niflheim (프로파일: scripts/tileset-profiles/niflheim.mjs).",
+ "tile_size": {
+  "width": 32,
+  "height": 32
+ },
+ "sheet": {
+  "width": 128,
+  "height": 256,
+  "cols": 4,
+  "rows": 8
+ },
+ "tileset_data": {
+  "tiles": [
+   {
+    "name": "wang_0",
+    "corners": {
+     "NW": "lower",
+     "NE": "lower",
+     "SE": "lower",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 0,
+     "y": 0,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_1",
+    "corners": {
+     "NW": "lower",
+     "NE": "lower",
+     "SE": "lower",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 32,
+     "y": 0,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_2",
+    "corners": {
+     "NW": "lower",
+     "NE": "lower",
+     "SE": "upper",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 64,
+     "y": 0,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_3",
+    "corners": {
+     "NW": "lower",
+     "NE": "lower",
+     "SE": "upper",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 96,
+     "y": 0,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_4",
+    "corners": {
+     "NW": "lower",
+     "NE": "upper",
+     "SE": "lower",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 0,
+     "y": 32,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_5",
+    "corners": {
+     "NW": "lower",
+     "NE": "upper",
+     "SE": "lower",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 32,
+     "y": 32,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_6",
+    "corners": {
+     "NW": "lower",
+     "NE": "upper",
+     "SE": "upper",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 64,
+     "y": 32,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_7",
+    "corners": {
+     "NW": "lower",
+     "NE": "upper",
+     "SE": "upper",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 96,
+     "y": 32,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_8",
+    "corners": {
+     "NW": "upper",
+     "NE": "lower",
+     "SE": "lower",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 0,
+     "y": 64,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_9",
+    "corners": {
+     "NW": "upper",
+     "NE": "lower",
+     "SE": "lower",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 32,
+     "y": 64,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_10",
+    "corners": {
+     "NW": "upper",
+     "NE": "lower",
+     "SE": "upper",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 64,
+     "y": 64,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_11",
+    "corners": {
+     "NW": "upper",
+     "NE": "lower",
+     "SE": "upper",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 96,
+     "y": 64,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_12",
+    "corners": {
+     "NW": "upper",
+     "NE": "upper",
+     "SE": "lower",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 0,
+     "y": 96,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_13",
+    "corners": {
+     "NW": "upper",
+     "NE": "upper",
+     "SE": "lower",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 32,
+     "y": 96,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_14",
+    "corners": {
+     "NW": "upper",
+     "NE": "upper",
+     "SE": "upper",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 64,
+     "y": 96,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_15",
+    "corners": {
+     "NW": "upper",
+     "NE": "upper",
+     "SE": "upper",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 96,
+     "y": 96,
+     "width": 32,
+     "height": 32
+    }
+   }
+  ],
+  "tile_size": {
+   "width": 32,
+   "height": 32
+  },
+  "total_tiles": 16
+ },
+ "base_band": 1,
+ "fill_variants": [
+  {
+   "key": 0,
+   "band": 0,
+   "bounding_box": {
+    "x": 0,
+    "y": 128,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 1,
+   "bounding_box": {
+    "x": 32,
+    "y": 128,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 2,
+   "bounding_box": {
+    "x": 64,
+    "y": 128,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 0,
+   "bounding_box": {
+    "x": 96,
+    "y": 128,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 2,
+   "bounding_box": {
+    "x": 0,
+    "y": 160,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 0,
+   "bounding_box": {
+    "x": 32,
+    "y": 160,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 1,
+   "bounding_box": {
+    "x": 64,
+    "y": 160,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 0,
+   "bounding_box": {
+    "x": 96,
+    "y": 160,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 1,
+   "bounding_box": {
+    "x": 0,
+    "y": 192,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 2,
+   "bounding_box": {
+    "x": 32,
+    "y": 192,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 0,
+   "bounding_box": {
+    "x": 64,
+    "y": 192,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 2,
+   "bounding_box": {
+    "x": 96,
+    "y": 192,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 0,
+   "bounding_box": {
+    "x": 0,
+    "y": 224,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 1,
+   "bounding_box": {
+    "x": 32,
+    "y": 224,
+    "width": 32,
+    "height": 32
+   }
+  }
+ ]
+}
