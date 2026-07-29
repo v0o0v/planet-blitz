@@ -398,6 +398,20 @@ describe('장식자 배선 — 화면에 실제로 붙는다', () => {
     expect(labeled(h.below, 'playerThrust')[0]!.x).toBeGreaterThan(s.x);
   });
 
+  it('대각 기수에서도 두 축 모두 기수 반대다(축 정렬 기수만 보면 한 축 부호 오류를 놓친다)', () => {
+    // ⚠️ 이 케이스가 없으면 y 오프셋 부호를 뒤집는 뮤테이션이 **살아남는다**(실제로 살아남았다).
+    // 위 두 테스트는 facing 0·π 라 sin(f)=0 이어서 y 항을 아예 안 밟는다.
+    const h = harness();
+    const s = playerSprite();
+    const f = Math.PI / 4; // 우하단을 봄 → 불꽃은 좌상단
+    run(h, playerAdorners(), 2, { sprite: s, facing: f });
+    const flame = labeled(h.below, 'playerThrust')[0]!;
+    expect(flame.x).toBeLessThan(s.x);
+    expect(flame.y).toBeLessThan(s.y);
+    // 오프셋 방향이 기수의 정확한 반대(각도 일치)여야 한다 — 부호만 맞고 축이 섞이면 잡힌다.
+    expect(Math.atan2(flame.y - s.y, flame.x - s.x)).toBeCloseTo(f - Math.PI, 6);
+  });
+
   it('테마가 null 이면 림이 스스로 꺼진다(광원 없음)', () => {
     const h = harness({ theme: null });
     const a = playerAdorners();
