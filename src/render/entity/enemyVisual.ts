@@ -205,16 +205,33 @@ function releaseDebrisIfOrphaned(): void {
   if (liveAdorners <= 0) clearDebris();
 }
 
+/** 지금까지 **방출된** 파편 누적 수(회수와 무관). {@link deathDebrisEmitted} 참조. */
+let debrisEmitted = 0;
+
 /** 파편 하나를 풀에 넣는다. 상한 초과 시 가장 오래된 것부터 밀어낸다. */
 function pushDebris(d: Debris): void {
   while (debris.length >= MAX_DEATH_DEBRIS) dropDebris(0);
   d.layer.addChild(d.node);
   debris.push(d);
+  debrisEmitted += 1;
 }
 
 /** 현재 살아 있는 파편 수(읽기 전용 관측창 — 테스트가 회수를 수치로 못 박는다). */
 export function deathDebrisCount(): number {
   return debris.length;
+}
+
+/**
+ * 지금까지 **방출된** 파편 누적 수(읽기 전용 관측창).
+ *
+ * 왜 살아 있는 수와 따로 필요한가: 고아 방지에는 두 장치가 있는데
+ * ({@link EnemyAdorner.emitDeath} 의 사전 가드 + {@link releaseDebrisIfOrphaned} 의 사후 회수)
+ * **살아 있는 수만 보면 둘을 구분할 수 없다** — 뿌린 뒤 즉시 걷어도 0 이기 때문이다. 그러면
+ * "만들지 않는다" 를 검증한다고 믿으면서 실제로는 "걷는다" 만 검증하게 되고, 사전 가드는
+ * 뮤테이션에서 살아남는다(실제로 살아남았다). 이 창이 그 구분을 만든다.
+ */
+export function deathDebrisEmitted(): number {
+  return debrisEmitted;
 }
 
 /** 현재 살아 있는 적 장식자 수(읽기 전용 관측창). */
@@ -779,6 +796,7 @@ for (const kind of ENEMY_VISUAL_KINDS) {
 export function resetEnemyVisualState(): void {
   clearDebris();
   debrisPumpedTick = -1;
+  debrisEmitted = 0;
   liveAdorners = 0;
   decoratedGrunts = 0;
 }

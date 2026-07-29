@@ -27,6 +27,7 @@ import {
   MAX_DECORATED_ENEMIES,
   MAX_DEATH_DEBRIS,
   deathDebrisCount,
+  deathDebrisEmitted,
   enemyAdornerCount,
   movementOf,
   resetEnemyVisualState,
@@ -753,11 +754,25 @@ describe('예산 — 개체당 비용이 20~40 배로 곱해진다', () => {
     r.destroy();
   });
 
-  it('low 티어는 잡몹 장식을 만들지 않는다(티어 게이트)', () => {
+  it('low 티어는 잡몹 장식을 **두 레이어 모두** 만들지 않는다(티어 게이트)', () => {
+    // 가산 레이어만 보면 티어 게이트를 무력화해도 통과한다 — low 티어는 `gates.halo` 가
+    // 이미 false 라 가산 쪽이 저절로 비기 때문이다(뮤테이션에서 실제로 살아남았다).
+    // 잡몹 림이 사는 **상위 레이어**까지 봐야 티어 사다리가 검증된다.
     lockTier('low');
     const r = new EntityRenderer(realTextures());
     const w = world([ent({ id: 1 }), ent({ id: 2 })]);
     r.render(w, w, 0);
+    expect(layers(r).glowLayer.children.length).toBe(0);
+    expect(layers(r).effectLayer.children.length).toBe(0);
+    r.destroy();
+  });
+
+  it('low 티어에서도 엘리트 계급장은 남는다(정보는 티어 사다리에서 마지막에 잘린다)', () => {
+    lockTier('low');
+    const r = new EntityRenderer(realTextures());
+    const w = world([ent({ id: 1, elite: 5 })]);
+    r.render(w, w, 0);
+    expect(layers(r).effectLayer.children.length).toBeGreaterThan(0);
     expect(layers(r).glowLayer.children.length).toBe(0);
     r.destroy();
   });
@@ -788,12 +803,15 @@ describe('사망 연출 — 고아 이펙트가 구조적으로 불가능하다'
     r.destroy();
   });
 
-  it('마지막 적을 처치하면 파편이 남지 않는다(굴려 줄 주체가 없다)', () => {
+  it('마지막 적을 처치하면 파편을 **방출조차 하지 않는다**(굴려 줄 주체가 없다)', () => {
+    // 살아 있는 수(=0)만 보면 "뿌린 뒤 즉시 걷었다" 와 구분이 안 된다 — 사전 가드를 검증하려면
+    // 누적 방출 수를 봐야 한다. 실제로 이 구분이 없을 때 사전 가드가 뮤테이션에서 살아남았다.
     const r = new EntityRenderer(realTextures());
     const one = world([ent({ id: 1 })]);
     r.render(one, one, 0);
     const none = world([]);
     r.render(none, none, 0);
+    expect(deathDebrisEmitted()).toBe(0);
     expect(deathDebrisCount()).toBe(0);
     expect(layers(r).effectLayer.children.length).toBe(r.effectCount);
     r.destroy();
