@@ -28,6 +28,7 @@ import {
   type AdornerContext,
   type EntityAdorner,
 } from '../src/render/entity/adorner.js';
+import { clearHazardMaterialFactories } from '../src/render/entity/hazardHost.js';
 import { graphicsSettings } from '../src/render/graphicsSettings.js';
 import { graphicsTierController } from '../src/render/graphicsRuntime.js';
 import { effectGates, type QualityTier } from '../src/render/qualityTier.js';
@@ -314,6 +315,15 @@ describe('회수 계약 — dispose 가 네 경로 전부에서 불린다', () =
 
 describe('거동 불변 — 팩토리가 없으면 아무 일도 일어나지 않는다', () => {
   it('등록 0인 상태의 정규 render 는 장식자를 하나도 만들지 않는다', () => {
+    // ⚠️ **영 상태를 명시적으로 세운다.** 스캐폴딩 시점에는 등록이 하나도 없어 그냥 render 하면
+    // 됐지만, 지금은 `entityRenderer.ts` 가 등록 허브(`entity/index.ts`)를 import 하므로
+    // **이 파일을 로드하는 것만으로 해저드 재질이 이미 등록돼 있다**. 그 상태로 재면 이 테스트는
+    // "팩토리가 없으면"이 아니라 "프로덕션 등록이 몇 개인가"를 재게 된다 — 물으려는 질문이 아니다.
+    //
+    // 두 레지스트리를 모두 비우는 것이 전제이고, 그래야 아래 0 단언이 **심의 거동 불변**
+    // (등록 없으면 할당·호출 0)을 재는 원래 의미를 유지한다.
+    clearAdornerFactories();
+    clearHazardMaterialFactories();
     const renderer = new EntityRenderer(realTextures());
     const f = world([
       ent({ id: 1, kind: 'player' }),

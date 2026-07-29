@@ -47,6 +47,9 @@ import {
 // 해저드 렌더 진입점(entity/hazardHost.ts) — 장판 그리기(구 drawOverlay 루프)와 재질 확장 지점.
 // 표시 규칙 자체는 여전히 hazardVisual.ts 가 정본이고 호스트가 그것을 소비한다.
 import { HazardHost, type HazardHostContext } from './entity/hazardHost.js';
+// 엔티티 비주얼 등록 허브 — 값 없는 부수효과 import 다. 이 한 줄이 없으면 비주얼 레인 모듈들이
+// 등록되지 않아 **완성된 채로 화면에 없다**(이 리포가 8번 밟은 결함). 근거는 entity/index.ts 헤더.
+import './entity/index.js';
 // 조우 유형 상수(ADR-0033). `data/encounters.ts` 는 다른 sim 모듈을 import 하지 않는 leaf
 // 데이터라 렌더가 읽어도 순환·결정론 위험이 없다(facilities/props 카탈로그 참조 선례).
 import { ENCOUNTER_TYPE } from '../../data/encounters.js';

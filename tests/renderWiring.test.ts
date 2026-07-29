@@ -43,16 +43,26 @@ function collectSources(dir: string, out: string[] = []): string[] {
 }
 
 /**
- * 한 소스가 `import ... from '<상대경로>.js'` 로 부르는 **파일들의 절대 경로**(.ts 로 되돌린 것).
+ * 한 소스가 import 하는 **파일들의 절대 경로**(.ts 로 되돌린 것).
  *
  * 이름 매칭(정규식 접미사 비교)이 아니라 **경로 해석**이다 — 하위 디렉터리가 생기면 같은 모듈을
  * `./entity/adorner.js` · `../entity/adorner.js` · `../../render/entity/adorner.js` 처럼 서로 다른
  * 형태로 부르게 되고, 접미사 비교로는 그 변형을 다 못 잡거나 동명 모듈을 잘못 잡는다.
  * 해석해서 파일 경로로 비교하면 두 문제가 동시에 사라진다.
+ *
+ * ⚠️ **두 가지 형태를 모두 잡는다.** `import x from '...'` 뿐 아니라 값을 받지 않는
+ * **부수효과 import**(`import '...';`)도 배선이다 — 오히려 이 가드가 지키려는 결함에서는
+ * 그쪽이 더 중요하다. 비주얼 레인 모듈들은 최상위 `registerAdornerFactory` /
+ * `registerHazardMaterialFactory` 호출로 스스로 등록하므로, 그것들을 붙이는 허브
+ * (`entity/index.ts`)는 값을 하나도 import 하지 않는다.
+ *
+ * `from` 형태만 보던 시절 이 가드는 **허브 자신을 고아로 신고했다** — 허브가 프로덕션에서
+ * 정확히 한 번 import 되고 있는데도. 배선을 검사한다면서 배선의 한 형태를 못 보고 있었던 것이다.
  */
 function importedFiles(source: string, dir: string): Set<string> {
   const out = new Set<string>();
-  const re = /from\s+'(\.[^']*)'/g;
+  // ① `from '<상대경로>'`  ② 부수효과 `import '<상대경로>'`(from 없음)
+  const re = /(?:from|^\s*import)\s+'(\.[^']*)'/gm;
   let m: RegExpExecArray | null;
   while ((m = re.exec(source)) !== null) {
     const spec = m[1];
