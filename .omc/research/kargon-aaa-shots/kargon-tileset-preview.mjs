@@ -4,12 +4,20 @@
  * 1920×1080 화면 한 장을 PNG 로 굽는다(브라우저·개발서버 없이 판정하기 위함).
  * 재현 대상: upperAt/keyAt, rot180 변형, 채움 타일 변형 선택, macroTint 곱연산.
  *
- * 사용법: node kargon-preview.mjs <out.png> [seed] [DISPLAY_TILE] [NOISE_SCALE] [UPPER_THRESHOLD]
+ * 사용법: node kargon-tileset-preview.mjs <out.png> [seed] [DISPLAY_TILE] [NOISE_SCALE]
+ *                                        [UPPER_THRESHOLD] [tilesetDir] [planet]
+ *
+ * ⚠️ 경로는 **스크립트 자기 위치 기준**으로 잡는다. 예전엔 메인 체크아웃 절대경로가 박혀 있어
+ * 워크트리에서 돌려도 다른 체크아웃의 자산을 읽었다(같은 결함이 생성기 쪽에도 있었다).
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import { decodePng, encodePng } from 'file:///D:/ClaudeCowork/shooting/scripts/lib/png.mjs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
+import { decodePng, encodePng } from '../../../scripts/lib/png.mjs';
 
-const [, , outPath, seedArg, dtArg, nsArg, thArg, dirArg] = process.argv;
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const [, , outPath, seedArg, dtArg, nsArg, thArg, dirArg, planetArg] = process.argv;
+const PLANET = planetArg ?? 'kargon';
 const SEED = Number(seedArg ?? 12345) >>> 0;
 const DISPLAY_TILE = Number(dtArg ?? 64);
 const NOISE_SCALE = Number(nsArg ?? 8);
@@ -20,9 +28,9 @@ const MACRO_SCALE_FINE = 3.7;
 const W = 1920;
 const H = 1080;
 
-const DIR = dirArg ?? 'D:/ClaudeCowork/shooting/assets/tilesets/';
-const sheet = decodePng(readFileSync(DIR + 'kargon.png'));
-const meta = JSON.parse(readFileSync(DIR + 'kargon.json', 'utf8'));
+const DIR = dirArg ? resolve(dirArg) : join(REPO, 'assets', 'tilesets');
+const sheet = decodePng(readFileSync(join(DIR, `${PLANET}.png`)));
+const meta = JSON.parse(readFileSync(join(DIR, `${PLANET}.json`), 'utf8'));
 
 const cornerKey = (nw, ne, se, sw) => (nw << 3) | (ne << 2) | (se << 1) | sw;
 const rot180Key = (k) =>

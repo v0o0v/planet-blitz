@@ -59,3 +59,10 @@ supabase/functions/**/dist.index.js
 
 # Supabase CLI 로컬 상태(연결된 프로젝트 정보·CLI 버전) — 머신마다 다르고 리포에 들어갈 물건이 아니다
 supabase/.temp/
+
+# env-verify 캡처 스크린샷(장당 ~2.8MB). 수치는 BASELINE.md 에 남고 이미지는 세션 내 대조용이라
+# 커밋하지 않는다. **디렉터리를 하나만 적으면 안 된다** — `env-shots-after`/`env-baseline` 처럼
+# 비교 대상 디렉터리가 늘어나는데, 좁게 적었다가 실제로 16장(약 40MB)이 커밋된 적이 있다.
+.omc/research/env-shots*/**/*.png
+.omc/research/env-shots*/*.png
+.omc/research/env-baseline/*.png

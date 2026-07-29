@@ -15,14 +15,16 @@
 
 import { Container } from 'pixi.js';
 import type { EnvContext, EnvFrame, EnvLayer, EnvSlot } from './types.js';
-import { KargonParallaxLayer } from './kargonParallax.js';
-import { KargonDecalLayer } from './kargonDecals.js';
-import { KargonLavaLightLayer } from './kargonLavaLight.js';
-import { KargonAtmosphereLayer } from './kargonAtmosphere.js';
-import { KargonGradeLayer } from './kargonGrade.js';
+import { ParallaxLayer } from './parallax.js';
+import { DecalLayer } from './decals.js';
+import { TerrainLightLayer } from './terrainLight.js';
+import { AtmosphereLayer } from './atmosphere.js';
+import { GradeLayer } from './grade.js';
 
-/** 카르곤 행성 인덱스. 레이어들이 자기 담당 행성을 판정할 때 쓴다. */
-export const KARGON = 0;
+// 여기 있던 `export const KARGON = 0` 은 사라졌다. 레이어는 더 이상 자기 담당 행성을 알지
+// 않는다 — `themes/index.ts` 의 `themeFor(ctx.planet)` 가 `undefined` 면 스스로 꺼진다.
+// 그 상수는 순환 import 를 피하려고 레이어 5장이 각각 복제하고 있었고(같은 값이 6곳),
+// 레지스트리를 별도 모듈로 빼면서 순환 자체가 없어져 복제할 이유도 사라졌다.
 
 /** 슬롯 순서(뒤 → 앞). main.ts 가 이 순서대로 stage 에 끼워 넣는다. */
 export const ENV_SLOTS: readonly EnvSlot[] = ['far', 'floor', 'over', 'post'];
@@ -33,11 +35,11 @@ export const ENV_SLOTS: readonly EnvSlot[] = ['far', 'floor', 'over', 'post'];
  */
 export function createEnvLayers(): EnvLayer[] {
   return [
-    new KargonParallaxLayer(),
-    new KargonDecalLayer(),
-    new KargonLavaLightLayer(),
-    new KargonAtmosphereLayer(),
-    new KargonGradeLayer(),
+    new ParallaxLayer(),
+    new DecalLayer(),
+    new TerrainLightLayer(),
+    new AtmosphereLayer(),
+    new GradeLayer(),
   ];
 }
 
