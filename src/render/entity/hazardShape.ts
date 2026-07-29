@@ -162,16 +162,27 @@ export function stepCharge(prev: number, active: boolean, dt: number): number {
 /** 경계 폴리곤 꼭짓점 수. 24 면 반경 200 에서 변 길이 약 52px — 곡선으로 읽히는 하한. */
 export const EDGE_POINTS = 24;
 /**
- * 불규칙 가장자리가 오갈 수 있는 반경 비율의 **하한**. 이보다 안으로 들어가면 장판이
- * 실제보다 작아 보여 회피가 헐거워진다.
+ * 불규칙 가장자리가 오갈 수 있는 반경 비율의 **하한**.
+ *
+ * 이 값과 {@link EDGE_MAX_RATIO} 의 **차이가 곧 화면에서 보이는 굴곡의 크기**다. 2차 구현은
+ * 이 대역을 별도의 좁은 경계 대역(0.94~0.985)으로 또 한 번 좁혔다가 실측 진폭 2.41px 로
+ * 자기 선 두께(4px)에도 못 미쳤다(반려 CRIT-2). 지금은 대역이 하나이고, 그 폭이
+ * `0.13 × 반경` = 반경 100 에서 13px 라 선 두께의 3배를 넘는다.
+ *
+ * 안쪽으로 파이는 만큼 화면은 안전지대를 과장한다 — 그 오차의 정밀 보정은 판정 반경에 정확히
+ * 놓이는 **맥동 립**이 맡는다(`hazardVisual.LIP_RATIO`). 립이 울타리고, 이 대역은 물질이다.
  */
-export const EDGE_MIN_RATIO = 0.78;
+export const EDGE_MIN_RATIO = 0.83;
 /**
- * **상한. 1 을 넘길 수 없다.** 이 상수가 이 파일에서 가장 중요한 한 줄이다 — 재질이 판정
- * 반경 밖으로 한 픽셀이라도 나가면 "밟으면 아픈 곳"이 화면에서 거짓말을 한다. `drawHazardZone`
- * 이 그리는 정확한 원과 안쪽 립이 진짜 경계이고, 재질은 언제나 그 **안쪽**에서만 논다.
+ * **상한. 1 을 넘길 수 없다.** 재질이 판정 반경 밖으로 한 픽셀이라도 나가면 "밟으면 아픈 곳"이
+ * 화면에서 거짓말을 한다.
+ *
+ * 1 이 아니라 0.96 인 이유는 따로 있다: 판정 반경에는 **맥동 립**이 놓이고, 채움 윤곽선이
+ * (두께 4px 의 절반만큼 밖으로 번지므로) 거기까지 올라오면 두 선이 붙어 하나로 뭉친다.
+ * 0.96 이면 최대치에서도 립과 2px 이상 떨어진다 — 세 선이 같은 5px 안에서 꼬여 **밧줄처럼**
+ * 보이던 결함(반려 CRIT-3)의 처방이다.
  */
-export const EDGE_MAX_RATIO = 0.985;
+export const EDGE_MAX_RATIO = 0.96;
 /** 경계 노이즈 주파수(원 위 샘플링 좌표의 배율). 낮을수록 큰 굴곡. */
 const EDGE_NOISE_FREQ = 2.6;
 /** 경계가 출렁이는 속도(프레임당 라디안). 두 옥타브를 반대로 돌려 회전이 아니라 요동이 된다. */
@@ -197,49 +208,58 @@ export function edgeRatioAt(seed: number, a: number, frameTick: number, wobble: 
     0.38 * valueNoise(seed ^ 0x5bf03635, c1 * EDGE_NOISE_FREQ * 2.1 + 3, s1 * EDGE_NOISE_FREQ * 2.1 + 3);
   // wobble=0 이면 상한에 붙어 정확한 원이 된다(재질이 꺼진 상태와 매끄럽게 이어진다).
   const span = (EDGE_MAX_RATIO - EDGE_MIN_RATIO) * sat(wobble);
-  return EDGE_MAX_RATIO - span * sat(n);
+  return EDGE_MAX_RATIO - span * stretch(n);
 }
 
 /**
- * **판정 경계선**이 오갈 수 있는 반경 비율의 하한. {@link EDGE_MIN_RATIO}(0.78)보다 훨씬
- * 1 에 가깝다 — 이유가 이 상수의 전부다.
+ * 노이즈 대비 스트레치. **이 함수가 없으면 선언한 대역이 거짓말이 된다.**
  *
- * 장판을 정의하는 선이 안쪽으로 크게 파이면 **화면이 안전지대를 과장한다**. 과장의 방향이
- * 문제다: 위험을 넓게 그리면 플레이어가 손해를 보지만, **좁게 그리면 죽는다.** 그래서 재질
- * 내부(로브·채움)는 크게 출렁여도 되지만 경계선만은 반경에 붙어 있어야 한다.
+ * `valueNoise` 두 옥타브의 가중 평균은 중심극한 효과로 0.5 근처에 몰린다 — 2차 구현은 대역을
+ * `[0.94, 0.985]` 로 **선언**했는데 실측 진폭이 2.41px(@r=100)에 그쳤고, 그건 자기 선 두께
+ * (4px)보다 작아 **흔들림이 선 안에 묻혔다**(2차 반려 CRIT-2). 선언한 대역과 실제로 쓰이는
+ * 대역이 달랐던 것이다.
  *
- * 0.94 는 반경 100 에서 최대 6px, 200 에서 12px 안쪽이다 — 테두리 두께와 같은 규모라 "완전한
- * 원"이라는 인상은 깨면서 회피 판단은 바꾸지 않는다.
+ * 0.5 를 중심으로 늘려 구간 양끝까지 실제로 도달하게 한다. 클램프 때문에 분포가 양끝에 살짝
+ * 쌓이는데, 가장자리 굴곡에서는 그게 오히려 "덩어리진" 인상을 만들어 유리하다.
  */
-export const BOUNDARY_MIN_RATIO = 0.94;
+function stretch(n: number): number {
+  return sat((n - 0.5) * NOISE_CONTRAST + 0.5);
+}
 
 /**
- * 판정 경계선용 폴리곤. {@link edgePolygon} 과 같은 노이즈를 쓰되 진폭만
- * {@link BOUNDARY_MIN_RATIO} 대역으로 좁힌다 — 같은 시드를 쓰므로 채움의 굴곡과 **위상이
- * 맞아** 한 덩어리로 읽힌다(다른 시드를 쓰면 두 개의 다른 윤곽이 겹쳐 보인다).
+ * 대비 계수. 값이 클수록 굴곡이 선언 대역을 꽉 채운다. 2.6 은 실측 진폭이 대역의 약 90% 에
+ * 도달하는 값이다(테스트가 "선 두께의 3배 이상"으로 직접 재서 잠근다).
  */
-export function boundaryPolygon(
+const NOISE_CONTRAST = 2.6;
+
+/**
+ * 임의 대역 `[minRatio, maxRatio]` 의 유기 폴리곤(중심 기준 로컬 좌표).
+ *
+ * 세 선(경계·립·글로우)이 **같은 5px 안에서 서로 넘나들어 꼬인 밧줄로 보이던 결함**(2차 반려
+ * CRIT-3)을 푸는 도구다. 각 선이 자기 대역을 명시적으로 갖고, 대역끼리 겹치지 않게 배치한다.
+ * 같은 `seed` 를 주면 각도별 위상이 맞아 한 덩어리로 읽힌다.
+ */
+export function bandPolygon(
   seed: number,
   radius: number,
   frameTick: number,
-  points = BOUNDARY_POINTS,
+  minRatio: number,
+  maxRatio: number,
+  points = EDGE_POINTS,
 ): number[] {
   const n = points < 3 ? 3 : points;
   const out: number[] = new Array<number>(n * 2);
-  const span = EDGE_MAX_RATIO - BOUNDARY_MIN_RATIO;
+  const span = maxRatio - minRatio;
   for (let i = 0; i < n; i++) {
     const a = (i / n) * TAU;
-    // edgeRatioAt 을 [EDGE_MIN,EDGE_MAX] 에서 [BOUNDARY_MIN,EDGE_MAX] 로 되사상한다.
+    // edgeRatioAt 의 [EDGE_MIN, EDGE_MAX] 출력을 [0,1] 로 되돌린 뒤 원하는 대역에 다시 실는다.
     const t = (EDGE_MAX_RATIO - edgeRatioAt(seed, a, frameTick, 1)) / (EDGE_MAX_RATIO - EDGE_MIN_RATIO);
-    const r = radius * (EDGE_MAX_RATIO - span * t);
+    const r = radius * (maxRatio - span * t);
     out[i * 2] = Math.cos(a) * r;
     out[i * 2 + 1] = Math.sin(a) * r;
   }
   return out;
 }
-
-/** 경계선 폴리곤 꼭짓점 수. 채움보다 적어도 된다 — 선은 굴곡이 덜해도 유기적으로 읽힌다. */
-export const BOUNDARY_POINTS = 18;
 
 /**
  * 애니메이션 위상을 몇 프레임 단위로 양자화할 것인가. 경계 요동은 프레임당 0.006 라디안이라
@@ -431,9 +451,9 @@ export function materialIntensity(heat: number): HazardIntensity {
 export type HazardLod =
   /** 전 겹. */
   | 'full'
-  /** 입자·접지 없음(로브·환경·고조는 유지). */
+  /** 입자·접지 없음(로브는 절반, 환경·고조는 유지). */
   | 'mid'
-  /** 환경·고조만. */
+  /** 로브 최소 + 환경·고조. **비어 있지 않다** — 아래 주석이 이유다. */
   | 'lite';
 
 /** `full` 을 받는 장판 수. */
@@ -448,18 +468,31 @@ export const LOD_MID_COUNT = 18;
 export const MAX_FIELD_MATERIALS = 64;
 
 /**
- * 부착 순번 → LOD. **부착 시점에 한 번 정해지고 바뀌지 않는다.** 매 프레임 예산으로 정하면
- * 장판 수가 경계를 넘나들 때 겹이 켜졌다 꺼지며 한 프레임에 튄다(`decorated` 가 그랬다).
+ * **동시 생존 수** → LOD. 부착 시점에 한 번 정해지고 그 재질의 수명 내내 바뀌지 않는다.
+ *
+ * ## 인자가 "세션 누적 순번"이면 안 되는 이유 (2차 반려 CRIT-1 — 이 레인 최악의 결함)
+ * 2차 구현은 단조 증가하는 `attachCursor` 를 넘겼다. 되돌리는 곳이 프로덕션에 **한 군데도
+ * 없었고**(`resetHazardFieldBudget` 호출은 테스트뿐), 박격 장판이 몇 초마다 생기고 사라지며
+ * 순번을 태웠다. 결과: 톡사르 seed1 **첫 런부터** `full 0 · mid 9 · lite 32`, 새 런을 열어도
+ * 전부 `lite`. 당시 `lite` 는 로브 0 · 접지 0 · 입자 0 이었으므로 **항목 1·3·6 이 통째로 화면에서
+ * 사라졌다.** 1차의 동시 개수 상한보다 나빴다 — 그건 상한이었고 이건 **세션 수명 누적**이라
+ * 시간이 지날수록 나빠졌다.
+ *
+ * 더 나쁜 것은 **테스트가 구조적으로 못 잡았다**는 점이다: 케이스마다 카운터를 0 으로 되돌리는
+ * `beforeEach` 가 있어서 "두 번째 런"이 존재하지 않았다. 82건 전부 그린인데 결함은 전량 통과했다.
+ * 그래서 지금은 **연속 두 런의 LOD 분포가 같은지**를 재는 테스트가 따로 있다.
+ *
+ * 동시 생존 수는 재질이 회수되면 자연히 줄어들므로 세션 드리프트가 원리적으로 없다.
  */
-export function hazardLod(attachIndex: number): HazardLod {
-  if (attachIndex < LOD_FULL_COUNT) return 'full';
-  if (attachIndex < LOD_MID_COUNT) return 'mid';
+export function hazardLod(liveCount: number): HazardLod {
+  if (liveCount < LOD_FULL_COUNT) return 'full';
+  if (liveCount < LOD_MID_COUNT) return 'mid';
   return 'lite';
 }
 
-/** 이 LOD 가 로브를 그리는가. */
-export function lodHasLobes(lod: HazardLod): boolean {
-  return lod !== 'lite';
+/** 이 LOD 가 로브를 그리는가. **전부 그린다** — 아래 {@link lodLobeCount} 주석이 이유다. */
+export function lodHasLobes(_lod: HazardLod): boolean {
+  return true;
 }
 /** 이 LOD 가 접지(접촉 그늘·림)를 그리는가. */
 export function lodHasGrounding(lod: HazardLod): boolean {
@@ -469,9 +502,23 @@ export function lodHasGrounding(lod: HazardLod): boolean {
 export function lodHasMotes(lod: HazardLod): boolean {
   return lod === 'full';
 }
-/** 이 LOD 의 로브 수(낮은 LOD 는 개수를 줄인다 — 겹을 빼는 것과 같은 축). */
+/** `lite` 가 유지하는 최소 로브 수. **0 이 아니다.** */
+export const LOD_LITE_LOBES = 4;
+
+/**
+ * 이 LOD 의 로브 수. **어떤 LOD 도 0 이 아니다.**
+ *
+ * 2차 구현은 `lite` 에서 로브를 0 으로 만들었고, CRIT-1 과 겹쳐 실전 화면의 41장 중 32장이
+ * 재질 본체 없이 그려졌다. 설령 CRIT-1 이 없었더라도 이건 **MAJOR-1(같은 해저드 두 스타일)**
+ * 을 자리만 옮긴 것이다 — 나란히 붙은 같은 오염 셀 중 하나만 물질이고 셋은 도형이면, 관객은
+ * 그것을 LOD 로 읽지 않고 **렌더링 버그**로 읽는다.
+ *
+ * 로브가 스프라이트로 바뀌어(`hazardTexture.ts`) 배치되므로 전 셀에 최소분을 둘 여유가 생겼다:
+ * 톡사르 41장 = 6×14 + 12×8 + 23×4 = 272 스프라이트지만 텍스처·블렌드가 같아 드로우콜은
+ * 사실상 하나다. 개수가 아니라 **드로우콜**이 비용이었다.
+ */
 export function lodLobeCount(lod: HazardLod): number {
-  return lod === 'full' ? LOBE_COUNT : lod === 'mid' ? Math.round(LOBE_COUNT / 2) : 0;
+  return lod === 'full' ? LOBE_COUNT : lod === 'mid' ? 8 : LOD_LITE_LOBES;
 }
 
 // ---------------------------------------------------------------------------
