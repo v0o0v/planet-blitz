@@ -427,6 +427,33 @@ describe('뱅킹/롤 — 횡이동에 기운다(§3 레인 A ①)', () => {
     expect(s.scale.x).toBeCloseTo(baseScaleX(s), 6); // 길이 방향은 안 눌린다
   });
 
+  it('**모듈의 실제 롤 튜닝이 오버슈트한다** — 계단 입력에서 정상상태를 지나쳤다 돌아온다', () => {
+    // ⚠️ 이 단언이 `springStep` 순수 함수 테스트와 다른 이유: 저쪽은 테스트가 강성·감쇠를
+    // 직접 넘기므로 **모듈이 실제로 쓰는 ROLL_STIFFNESS/ROLL_DAMPING 이 임계감쇠로 바뀌어도
+    // 초록으로 남는다**(뮤테이션 검증에서 실제로 살아남았다). 2차 운동은 계약 §3 공통원칙이라
+    // 실 튜닝 자체를 잠근다.
+    const h = harness();
+    const a = playerAdorners();
+    const s = playerSprite();
+    let prev = ent();
+    let curr = ent();
+    for (const ad of a) ad.onAttach?.(s, curr, h.ctx);
+    let peak = 0;
+    for (let i = 0; i < 240; i++) {
+      prev = curr;
+      curr = ent({ y: prev.y + 12 }); // 일정한 우현 미끄러짐 = 계단 입력
+      placeSprite(s, curr, 0);
+      for (const ad of a) ad.onFrame(s, curr, prev, h.ctx);
+      if (s.rotation > peak) peak = s.rotation;
+      h.advance();
+    }
+    const steady = s.rotation; // 4초 뒤 = 정상상태
+    expect(steady).toBeGreaterThan(0);
+    // 임계값 8% 는 실측 20% 대와 "화면에서 지연과 구분 안 되는" 2% 대 사이에 있다 — 감쇠를
+    // 임계 근처로 올리는 뮤테이션을 잡되 수치 잡음에는 안 걸린다.
+    expect(peak).toBeGreaterThan(steady * 1.08);
+  });
+
   it('좌현 미끄러짐은 반대 부호로 기운다', () => {
     const h = harness();
     const s = playerSprite();
