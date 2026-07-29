@@ -59,3 +59,6 @@ supabase/functions/**/dist.index.js
 
 # Supabase CLI 로컬 상태(연결된 프로젝트 정보·CLI 버전) — 머신마다 다르고 리포에 들어갈 물건이 아니다
 supabase/.temp/
+
+# env-verify 기준선 스크린샷(장당 ~2.8MB). 수치는 BASELINE.md 에 남고 이미지는 세션 내 대조용이다.
+.omc/research/env-shots/*.png
