@@ -13,6 +13,7 @@ import { NIFLHEIM_THEME } from './niflheim/index.js';
 import { ARKE_THEME } from './arke/index.js';
 import { TOXAR_THEME } from './toxar/index.js';
 import { KRAS_THEME } from './kras/index.js';
+import { INVASION_THEMES } from './invasion/index.js';
 
 /**
  * 등록된 테마 전부. 테스트가 이 배열을 돌며 계약 검증을 강제한다.
@@ -29,6 +30,10 @@ export const ENV_THEMES: readonly EnvTheme[] = [
   ARKE_THEME,
   TOXAR_THEME,
   KRAS_THEME,
+  // 침공 3레이어. 행성이 아니라 **합성 인덱스**(6·7·8)를 담당한다 — 침공 런의 `config.planet`
+  // 은 항상 0(카르곤)이라 행성 축을 그대로 쓰면 "침공인데 카르곤 화면" 이 된다.
+  // 인덱스 체계와 근거는 `themes/invasion/index.ts` 에 있다.
+  ...INVASION_THEMES,
 ];
 
 /** 행성 인덱스 → 테마. 담당 테마가 없으면 `undefined`(레이어가 스스로 꺼진다). */
