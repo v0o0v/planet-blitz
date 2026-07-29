@@ -106,8 +106,11 @@ const ROLL_STIFFNESS = 120;
 const ROLL_DAMPING = 10;
 
 // ── 6. 아이들 부유 ──────────────────────────────────────────────────────────
-/** 부유 진폭(표시 반치수 배율). 아주 작아야 한다 — 크면 조준선이 흔들려 보인다. */
-const BOB_AMPLITUDE = 0.055;
+/**
+ * 부유 진폭(표시 반치수 배율). 크면 조준선이 흔들려 보이지만, 0.055 는 실측 4.59px(4.7%)로
+ * 비평가가 "확인되나 약함"으로 봤다. 0.09 로 올려 정지 상태의 "살아 있음"을 읽히게 한다.
+ */
+const BOB_AMPLITUDE = 0.09;
 /** 부유 각속도(rad/s). 호흡에 가까운 느린 주기. */
 const BOB_RATE = 2.1;
 /** 이 속도(u/s) 이상이면 부유가 완전히 꺼진다. 그 아래는 선형으로 살아난다. */
@@ -130,16 +133,33 @@ const HIT_LATERAL = 0.45;
 const SHIELD_WINDOW_S = 40 / SIM_HZ;
 /** 실드 셸 시작 반지름(표시 반치수 배율). 선체 **밖**이라 실루엣을 덮지 않는다. */
 const SHIELD_R_START = 1.62;
-/** 실드 셸 종료 반지름. 선체에 닿기 직전까지 **닫혀 들어온다** = 남은 시간이 읽힌다. */
-const SHIELD_R_END = 1.08;
+/**
+ * 실드 셸 종료 반지름. 선체에 닿기 직전까지 **닫혀 들어온다** = 남은 시간이 읽힌다.
+ *
+ * 하한은 기하가 정한다: 셸의 가장 안쪽 요소가 {@link SHIELD_INNER_BAND} 이므로
+ * `SHIELD_INNER_BAND × SHIELD_R_END > 1` 이어야 어떤 요소도 선체 위로 안 올라간다
+ * (0.86 × 1.22 = 1.049). 이 부등식은 테스트가 잠근다.
+ */
+const SHIELD_R_END = 1.22;
+/**
+ * 셸 요소가 놓이는 가장 안쪽 반지름(단위 반지름 기준). 바깥 링·육각은 1.0 근처, 안쪽 육각이
+ * 여기다 — 셸 전체가 얇은 띠 안에 모여 있어야 창 끝에서도 선체를 안 덮는다.
+ */
+const SHIELD_INNER_BAND = 0.86;
 /** 실드 셸 최대 알파. 획뿐이라 이 값이어도 몸통 가독을 해치지 않는다. */
 const SHIELD_ALPHA = 0.85;
 /** 실드 셸 자전 각속도(rad/s). 깜빡임 대신 **회전**으로 "살아 있는 보호막"을 만든다. */
 const SHIELD_SPIN = 2.4;
 /** 실드 셸 색 — 아군 시안. 적탄 흰 코어와 헷갈리지 않는다(계약 §2-2). */
 const SHIELD_COLOR = 0x39d0ff;
-/** 실드 셸 패싯(면) 개수. 육각 이상이면 "에너지 막"으로 읽히고 그 아래면 조준 링으로 오독된다. */
-const SHIELD_FACETS = 8;
+/**
+ * 실드 셸 패싯(면) 개수. 육각 **셀 메시**를 만든다.
+ *
+ * 1차에는 링 위에 8개의 **방사 눈금**을 그렸는데, 비평가가 계약 §2-5(UI 어휘 금지)에 근접한다고
+ * 지적했다 — 방사 눈금은 조준 레티클·게이지의 어휘라 디제틱 보호막이 아니라 HUD 로 읽힐 수 있다.
+ * 육각 셀은 같은 "색 외 채널"(색약 대응)을 유지하면서 **재질**로 읽힌다.
+ */
+const SHIELD_FACETS = 6;
 
 // ── 2. 엔진 추진 ────────────────────────────────────────────────────────────
 /** 정지 시 불꽃 길이 배율(아이들 코어). 0 이 아니어야 "시동이 걸린 기체"로 읽힌다. */
@@ -154,8 +174,14 @@ const THRUST_LENGTH = 1.15;
 const THRUST_HALF_WIDTH = 0.3;
 /** 노즐이 기체 중심에서 뒤로 물러난 거리(표시 반치수 배율). 선체 뒤끝에 붙인다. */
 const NOZZLE_BACK = 0.72;
-/** 외현 노즐의 횡 오프셋(표시 반치수 배율). 중앙 1 + 좌우 2 의 3구 공통 배치. */
-const NOZZLE_SIDE = 0.34;
+/**
+ * 외현 노즐의 횡 오프셋(표시 반치수 배율). 중앙 1 + 좌우 2 의 3구 공통 배치.
+ *
+ * 중앙 노즐 반폭이 {@link THRUST_HALF_WIDTH}(0.3), 외현 반폭이 그 {@link NOZZLE_SIDE_SCALE}
+ * 배(0.156)라, 이 값이 작으면 세 불꽃이 중앙에서 겹쳐 **가산이 3중으로 쌓인다** — CRIT-1 의
+ * 순백 포화에 실제로 기여한 항이다. 0.44 면 겹침 구간이 0.264~0.3 로 거의 사라진다.
+ */
+const NOZZLE_SIDE = 0.44;
 /** 외현 노즐의 크기 배율(중앙 대비). */
 const NOZZLE_SIDE_SCALE = 0.52;
 /** 열기 요동 각속도(rad/s) 2종 — 서로소에 가까운 비율이라 눈에 띄는 반복 주기가 안 생긴다. */
@@ -164,18 +190,35 @@ const HEAT_RATE_B = 14.7;
 /** 열기 요동 진폭(길이·폭). 정지 시 최대, 대시 시 최소(빠를수록 불꽃이 곧게 뻗는다). */
 const HEAT_WOBBLE = 0.14;
 
-/** 불꽃 외곽(가장 넓고 어두운 층) 색·알파 — 아군 시안 계열. */
-const FLAME_OUTER = 0x1c7fe0;
-const FLAME_OUTER_ALPHA = 0.34;
-/** 불꽃 중간층. */
-const FLAME_MID = 0x39d0ff;
-const FLAME_MID_ALPHA = 0.46;
 /**
- * 불꽃 심. **순백이 아니다** — 적탄 흰 코어와 같은 색으로 포화하면 탄막에서 둘이 섞인다
- * (계약 §2-2). 아주 옅은 시안-화이트로 두면 "뜨겁다"는 읽히면서 색 정체는 아군으로 남는다.
+ * 불꽃 3층(외곽→중간→심). **색 상수가 아니라 이 배열이 정본**이고, 굽는 코드와 검증이 둘 다
+ * 여기를 읽는다 — 그 이유가 이 레인에서 가장 비싸게 배운 교훈이다.
+ *
+ * ## 왜 상수 단언으로는 부족한가 (비평가 CRIT-1)
+ * 1차 구현의 심 색은 `0xbfefff`(191,239,255)였고, 그 옆 주석은 "**순백이 아니다** — 적탄 흰
+ * 코어와 같은 색으로 포화하면 탄막에서 둘이 섞인다"라고 스스로 금지하고 있었다. **상수는
+ * 의도대로였는데 화면은 순백이었다.** 3층 가산이 3노즐로 중첩되면서 이미 클리핑된 G/B 위에
+ * R 을 191·k → 255 까지 밀어올렸기 때문이다. 실측된 불꽃 최상위 픽셀은 `(255,251,250)` 이고,
+ * 같은 컷의 적탄 흰 코어는 `(251.1,241.7,241.3)` — **RGB 4~5 차이**로 둘이 같은 색이었다.
+ *
+ * 즉 **코드 상수는 맞았는데 렌더 결과가 틀렸다.** 상수를 단언하는 테스트는 이걸 영영 못 잡는다.
+ * 그래서 여기서는 층 목록을 데이터로 두고 {@link addLayers} 로 **합성 결과를 계산**한 다음,
+ * 그 합성값의 채도·광도를 테스트가 잠근다(§검증은 합성에 걸어라).
+ *
+ * ## 색 선택 규칙: R 기여를 최소로
+ * 가산 합성에서 채도를 죽이는 것은 **R 채널**이다(배경이 밝을수록 R 이 먼저 255 에 닿는다).
+ * 그래서 세 층 모두 R 이 거의 0 인 시안-블루로 잡고, 알파 합도 1차의 절반 아래로 내렸다.
+ * 합성 결과는 대략 `(18, 123, 176)` — R 기여가 18 뿐이라 어지간히 밝은 바닥 위에서도
+ * 시안 정체가 남는다.
  */
-const FLAME_CORE = 0xbfefff;
-const FLAME_CORE_ALPHA = 0.5;
+const FLAME_LAYERS: readonly LightLayer[] = [
+  /** 외곽 — 가장 넓고 어둡다. */
+  { color: 0x004a9c, alpha: 0.24 },
+  /** 중간. */
+  { color: 0x00a6f0, alpha: 0.3 },
+  /** 심 — "뜨겁다"를 담당하되 R 이 낮아 포화해도 시안으로 남는다. */
+  { color: 0x46d6ff, alpha: 0.26 },
+];
 
 // ── 0. 실루엣 외곽선 (탄막 속 자기 위치 확보) ───────────────────────────────
 /**
@@ -184,19 +227,42 @@ const FLAME_CORE_ALPHA = 0.5;
  * 탄막 슈터에서 자기 기체를 못 찾는 것은 미관 문제가 아니라 **조작 불능**이다.
  *
  * 해법으로 밝기를 올리면 안 된다 — 그건 같은 문제의 다른 얼굴이다(계약 §2-2: 이펙트가 본체보다
- * 밝으면 자기 실루엣을 자기 이펙트에 잃는다). 그래서 **면적이 아니라 경계**를 준다: 스프라이트를
- * 조금 키운 가산 복제를 **아래**에 깔아, 선체 밖으로 삐져나온 부분만 얇은 시안 테두리로 남긴다.
- * 추가되는 빛의 총량은 테두리 폭만큼이라 본체보다 밝아질 수 없는데, **실루엣의 형태**가
- * 살아나므로 군집 속에서 한눈에 분리된다(계약 §3 공통원칙 "실루엣 우선").
+ * 밝으면 자기 실루엣을 자기 이펙트에 잃는다). 그래서 **면적이 아니라 경계**를 준다.
  *
- * 이미 있는 원형 헤일로와 다른 일을 한다 — 헤일로는 방향도 형태도 없는 둥근 얼룩이고,
- * 이건 기체 **모양 그대로**의 경계다.
+ * ## 1차 구현이 왜 실패했는가 (비평가 MAJ-3)
+ * 처음엔 스프라이트를 16% 키운 복제 **한 장**을 아래에 깔았다. 이건 **dilate 가 아니다** —
+ * 앵커(0.5,0.5) 기준 균일 스케일은 앵커에서 멀어지는 방향으로만 띠를 만들고, **앵커를 향한
+ * 가장자리에는 원리적으로 띠가 안 생긴다**. 둘레 36섹터 픽셀 분포를 재니 `33,25,24,7,0,13,…`
+ * 로 **약 1/4 이 통째로 비어 있었다.** 게다가 색이 본체와 같은 `#39d0ff` 라 대비를 못 만들어
+ * "경계"가 아니라 "발광"으로 읽혔고, 비평가는 보스 컷에서 기체를 찾기 쉽게 만든 것이
+ * 이 외곽선이 아니라 **원래 있던 시안 헤일로**라고 판정했다.
+ *
+ * ## 지금 방식 — 8방향 오프셋 컨투어(진짜 dilate)
+ * 같은 복제를 8방향으로 각각 {@link OUTLINE_OFFSET} 만큼 밀어 겹친다. 실루엣 밖 어느 방향에도
+ * 같은 폭의 띠가 생기므로 섹터 결손이 구조적으로 사라진다. 한 장당 알파는 아주 낮고(겹치는
+ * 지점에서만 눈에 띄는 값이 된다) 색은 본체의 밝은 시안보다 **깊은 청색**이라, 선체와 테두리가
+ * 같은 재질로 뭉치지 않는다.
  */
-const OUTLINE_GROW = 0.16;
-/** 외곽선 색 — 아군 시안(계약 §2-2 아군 전용색). */
-const OUTLINE_COLOR = 0x39d0ff;
-/** 외곽선 알파(가산). 본체보다 확실히 어둡게. */
-const OUTLINE_ALPHA = 0.5;
+const OUTLINE_DIRECTIONS = 8;
+/** 컨투어 띠 폭 = 표시 반치수 × 이 값. 이게 곧 dilate 반경이다. */
+const OUTLINE_OFFSET = 0.12;
+/**
+ * 외곽선 색 — 아군 시안 계열(계약 §2-2)이되 본체의 밝은 시안보다 **깊은 청색**이다. 같은 색이면
+ * 테두리가 본체와 한 덩어리로 읽혀 경계 노릇을 못 한다(MAJ-3). R 이 10 뿐이라 밝은 바닥 위에서도
+ * 채도가 살아남는다.
+ */
+const OUTLINE_COLOR = 0x0aa8ff;
+/**
+ * 복제 **한 장**의 알파. 8장을 겹치므로 실제 화면값은 이 값의 3~4배다(어느 지점이든 그 방향
+ * ±90° 안의 복제만 덮는다). 1차의 0.5 단일 복제 대비 총 기여 광도가 절반 아래로 내려가
+ * CRIT-2(기여 픽셀이 본체보다 밝다)의 최대 지분을 없앤다.
+ */
+const OUTLINE_ALPHA = 0.07;
+/**
+ * 컨투어 겹침의 대표값. 실루엣 밖 한 점은 그 방향 ±90° 안의 복제들만 덮으므로 8방향 중
+ * 대략 4장이 겹친다 — 검증이 "화면에 실제로 나타나는 값"을 계산할 때 쓰는 층 수다.
+ */
+export const OUTLINE_TYPICAL_OVERLAP = 4;
 /** 숨쉬기 진폭·각속도. 미세한 변조가 정지 화면에서도 눈을 끈다(깜빡임이 아니라 연속 변조다). */
 const OUTLINE_BREATH = 0.16;
 const OUTLINE_BREATH_RATE = 3;
@@ -210,8 +276,11 @@ const OUTLINE_REDUCED_GLOW = 0.55;
  * 행성에서도 튀지 않는 차가운 화이트를 쓴다.
  */
 const RIM_COLOR = 0xcfe6ff;
-/** 림 알파(가산). 낮게 — 림은 실루엣을 **세우는** 것이지 본체를 밝히는 것이 아니다. */
-const RIM_ALPHA = 0.42;
+/**
+ * 림 알파(가산). 림은 실루엣을 **세우는** 것이지 본체를 밝히는 것이 아니다. 1차의 0.42 는
+ * 외곽선·불꽃과 겹치는 지점에서 기여 광도를 본체 상위 1%(211.6) 위로 밀어올렸다(CRIT-2).
+ */
+const RIM_ALPHA = 0.2;
 /** 림 오프셋(표시 반치수 배율). 광원 **쪽**으로 밀어 그 방향 가장자리만 삐져나오게 한다. */
 const RIM_OFFSET = 0.14;
 
@@ -221,8 +290,8 @@ const GHOSTS_HIGH = 5;
 const GHOSTS_MED = 3;
 /** 고스트 갱신 간격(프레임). 매 프레임 찍으면 겹쳐서 한 덩어리가 된다. */
 const GHOST_INTERVAL = 2;
-/** 고스트 최초 알파. 본체보다 확실히 어두워야 한다(계약 §2-2). */
-const GHOST_ALPHA = 0.3;
+/** 고스트 최초 알파. 본체보다 확실히 어두워야 한다(계약 §2-2 · CRIT-2 로 0.3 에서 내렸다). */
+const GHOST_ALPHA = 0.18;
 /** 고스트 감쇠 시간상수(초). */
 const GHOST_TAU = 0.11;
 /** 고스트 색(가산). 시안 계열이되 어둡게 — 잔상이 본체보다 밝으면 자기 위치를 잃는다. */
@@ -235,6 +304,99 @@ const GHOST_TINT = 0x2f8fd0;
 /** [0,1] 클램프. */
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+// ── 가산 합성 모델 — "상수가 아니라 결과"를 검증하기 위한 최소 모델 ─────────────
+
+/** 가산으로 얹히는 한 층(색 + 알파). */
+export interface LightLayer {
+  readonly color: number;
+  readonly alpha: number;
+}
+
+/** 가산 기여량(0..255 스케일, 클리핑 전). 배경에 **더해지는** 양이다. */
+export interface AddedLight {
+  readonly r: number;
+  readonly g: number;
+  readonly b: number;
+}
+
+/**
+ * 가산 층들이 배경에 더하는 총량. 알파 곱을 채널별로 누적할 뿐이지만, **이 한 줄이 있어야
+ * 검증이 상수가 아니라 합성 결과에 걸린다**(CRIT-1 의 교훈 — 상수는 맞고 화면은 틀릴 수 있다).
+ */
+export function addLayers(layers: readonly LightLayer[], repeat = 1): AddedLight {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (const l of layers) {
+    r += ((l.color >> 16) & 0xff) * l.alpha * repeat;
+    g += ((l.color >> 8) & 0xff) * l.alpha * repeat;
+    b += (l.color & 0xff) * l.alpha * repeat;
+  }
+  return { r, g, b };
+}
+
+/** 여러 기여의 합(같은 픽셀에 겹쳐 얹힐 때). */
+export function sumLight(...parts: readonly AddedLight[]): AddedLight {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (const p of parts) {
+    r += p.r;
+    g += p.g;
+    b += p.b;
+  }
+  return { r, g, b };
+}
+
+/** ITU-R BT.601 광도. 비평가가 본체/기여 픽셀 밝기를 잰 것과 같은 축이다. */
+export function luminance(l: AddedLight): number {
+  return 0.299 * l.r + 0.587 * l.g + 0.114 * l.b;
+}
+
+/**
+ * HSV 채도를 0..255 로. **적탄 흰 코어의 실측 채도 중앙값이 9** 였고 불꽃 상위 5% 의 44.8% 가
+ * 30 미만이었다 — 그래서 합격선이 60 이다(둘이 확실히 갈려야 한다).
+ */
+export function saturation255(l: AddedLight): number {
+  const max = Math.max(l.r, l.g, l.b);
+  if (max <= 0) return 0;
+  const min = Math.min(l.r, l.g, l.b);
+  return ((max - min) / max) * 255;
+}
+
+/**
+ * 본체 밝기 기준선(비평가 실측, 변경 전 컷의 플레이어 박스 160×160).
+ * `p99` 는 선체 상위 1%, `p95` 는 상위 5%. 계약 §2-2 "이펙트가 본체보다 밝으면 안 된다"를
+ * **국소 픽셀 단위로** 판정하는 유일한 수치다(§2-4 는 화면 총량 조항이라 국소를 못 잡는다).
+ */
+export const BODY_LUMA_P99 = 211.6;
+export const BODY_LUMA_P95 = 148.7;
+
+/** 이 레인이 화면에 더하는 가산 기여의 종류. */
+export type PlayerLightPart = 'flame' | 'outline' | 'rim' | 'ghost';
+
+/**
+ * 각 기여가 **화면에 실제로 얹는 양**. 상수 하나가 아니라 그 기여를 만드는 층·겹침을 전부
+ * 반영한다 — 검증은 이 함수에만 걸고 색 상수에는 걸지 않는다(CRIT-1: 상수는 맞고 화면은 틀릴
+ * 수 있다).
+ *
+ * - `flame` — 3층이 한 노즐 안에서 전부 겹치는 최내곽 지점.
+ * - `outline` — 8방향 복제 중 {@link OUTLINE_TYPICAL_OVERLAP} 장이 겹치는 띠.
+ * - `ghost` — 대시 중 잔상 두 장이 겹치는 지점(연속 두 샘플은 실제로 겹친다).
+ */
+export function partLight(part: PlayerLightPart): AddedLight {
+  switch (part) {
+    case 'flame':
+      return addLayers(FLAME_LAYERS);
+    case 'outline':
+      return addLayers([{ color: OUTLINE_COLOR, alpha: OUTLINE_ALPHA }], OUTLINE_TYPICAL_OVERLAP);
+    case 'rim':
+      return addLayers([{ color: RIM_COLOR, alpha: RIM_ALPHA }]);
+    case 'ghost':
+      return addLayers([{ color: GHOST_TINT, alpha: GHOST_ALPHA }], 2);
+  }
 }
 
 /**
@@ -324,6 +486,15 @@ export interface ShieldShellState {
  * 피격 후 경과 시간 → 실드 셸 상태. **깜빡임이 아니다** — 반지름이 시간의 단조 감소 함수라
  * 화면만 보고 무적이 얼마나 남았는지 읽을 수 있다(계약 §3 레인 A ④ "읽히는 표현").
  */
+/**
+ * 셸에서 **선체에 가장 가까운 요소**가 놓이는 반지름(표시 반치수 배율). 1 보다 커야 셸이
+ * 실루엣을 한 픽셀도 덮지 않는다 — `shieldShell(t).radius` 는 셸의 **바깥** 반지름이라
+ * 그것만 1 초과인지 봐서는 안쪽 요소가 몸통을 가로지르는 것을 놓친다(실제로 놓쳤다).
+ */
+export function shieldInnermostRadius(shell: ShieldShellState): number {
+  return shell.radius * SHIELD_INNER_BAND;
+}
+
 export function shieldShell(elapsed: number): ShieldShellState | null {
   if (!(elapsed >= 0) || elapsed >= SHIELD_WINDOW_S) return null;
   const t = elapsed / SHIELD_WINDOW_S;
@@ -342,9 +513,15 @@ export function shieldGate(gates: EffectGates, tier: QualityTier): 'plain' | 'fu
   return tier === 'low' || reducedMotion(gates) ? 'plain' : 'full';
 }
 
-/** 티어별 대시 고스트 개수. `trails` 게이트가 꺼졌거나 모션 감소면 0. */
+/**
+ * 티어별 대시 고스트 개수. `trails` 게이트가 꺼졌거나 모션 감소·발광 감소면 0.
+ *
+ * ⚠️ `reducedGlow` 조건이 **빠져 있었다**(비평가 MAJ-2): `quality:high + reducedGlow` 에서
+ * 림·불꽃은 0 인데 고스트 5개가 그대로 남았다. 고스트는 `blendMode:'add'` + 시안 tint 라
+ * 명백한 발광축이고, 대시마다 5개가 동시에 명멸하므로 광과민 대응에서 가장 나쁜 형태다.
+ */
 export function ghostBudget(gates: EffectGates, tier: QualityTier): number {
-  if (!gates.trails || reducedMotion(gates)) return 0;
+  if (!gates.trails || reducedMotion(gates) || reducedGlow(gates)) return 0;
   return tier === 'high' ? GHOSTS_HIGH : tier === 'med' ? GHOSTS_MED : 0;
 }
 
@@ -449,7 +626,8 @@ class PlayerBodyAdorner implements EntityAdorner {
 
   private shield: Container | null = null;
   private rim: Sprite | null = null;
-  private outline: Sprite | null = null;
+  /** 8방향 컨투어 복제를 담는 형제 컨테이너(MAJ-3 — 단일 스케일 복제는 dilate 가 아니었다). */
+  private outline: Container | null = null;
 
   constructor(motion: PlayerMotion) {
     this.motion = motion;
@@ -520,25 +698,39 @@ class PlayerBodyAdorner implements EntityAdorner {
     }
     sprite.position.set(sprite.x + ox, sprite.y + oy);
 
-    // ── 0. 실루엣 외곽선 ────────────────────────────────────────────────────
+    // ── 0. 실루엣 외곽선(8방향 컨투어) ──────────────────────────────────────
     // 티어·테마와 무관하게 **항상** 있다(상수 주석이 근거). 발광 감소에서는 알파만 낮춘다.
     let outline = this.outline;
     if (outline === null) {
-      outline = new Sprite(sprite.texture);
+      outline = new Container();
       outline.label = 'playerOutline';
-      outline.anchor.set(0.5);
-      outline.blendMode = 'add';
-      outline.tint = OUTLINE_COLOR;
+      for (let i = 0; i < OUTLINE_DIRECTIONS; i++) {
+        const copy = new Sprite(sprite.texture);
+        copy.anchor.set(0.5);
+        copy.blendMode = 'add';
+        copy.tint = OUTLINE_COLOR;
+        outline.addChild(copy);
+      }
       ctx.belowLayer.addChild(outline);
       this.outline = outline;
     }
-    if (outline.texture !== sprite.texture) outline.texture = sprite.texture;
-    outline.position.set(sprite.x, sprite.y);
-    outline.rotation = sprite.rotation;
-    // 스프라이트 스케일에 성장분을 곱한다 — 뱅킹 압축까지 따라가야 테두리가 실루엣에 붙는다.
-    outline.scale.set(sprite.scale.x * (1 + OUTLINE_GROW), sprite.scale.y * (1 + OUTLINE_GROW));
     const breath = motionOn ? 1 + Math.sin(this.clock * OUTLINE_BREATH_RATE) * OUTLINE_BREATH : 1;
-    outline.alpha = OUTLINE_ALPHA * breath * (reducedGlow(ctx.gates) ? OUTLINE_REDUCED_GLOW : 1);
+    const outlineAlpha =
+      OUTLINE_ALPHA * breath * (reducedGlow(ctx.gates) ? OUTLINE_REDUCED_GLOW : 1);
+    const band = this.halfSpan * OUTLINE_OFFSET;
+    for (let i = 0; i < outline.children.length; i++) {
+      const copy = outline.children[i];
+      if (!(copy instanceof Sprite)) continue;
+      if (copy.texture !== sprite.texture) copy.texture = sprite.texture;
+      // 8방향 균등 오프셋 = 진짜 dilate. 앵커 기준 스케일과 달리 **어느 방향에도 같은 폭**의
+      // 띠가 생겨 둘레 섹터 결손(MAJ-3 의 1/4 공백)이 구조적으로 불가능하다.
+      const a = (i / OUTLINE_DIRECTIONS) * Math.PI * 2;
+      copy.position.set(sprite.x + Math.cos(a) * band, sprite.y + Math.sin(a) * band);
+      copy.rotation = sprite.rotation;
+      // 크기는 본체와 **같다** — 키우지 않는다. 띠는 전적으로 오프셋이 만든다.
+      copy.scale.set(sprite.scale.x, sprite.scale.y);
+      copy.alpha = outlineAlpha;
+    }
 
     // ── 3. 림라이트 ─────────────────────────────────────────────────────────
     // 테마가 없으면(=담당 배경이 없는 행성) 광원이 없는 것이므로 스스로 꺼진다(계약 §3 광원 일관성).
@@ -611,7 +803,7 @@ class PlayerBodyAdorner implements EntityAdorner {
     if (outline === null) return;
     this.outline = null;
     outline.parent?.removeChild(outline);
-    if (!outline.destroyed) outline.destroy();
+    if (!outline.destroyed) outline.destroy({ children: true });
   }
 
   private destroyShield(): void {
@@ -635,18 +827,26 @@ function buildShieldShell(): Container {
   c.label = 'playerShield';
   c.blendMode = 'add';
   const g = new Graphics();
-  // 바깥 실선 링 + 안쪽 얇은 링(이중 링이 "막"으로 읽히게 한다).
+  // ⚠️ **모든 요소는 반지름 SHIELD_INNER_BAND 이상**에 있어야 한다. 셸은 창 끝에
+  // `SHIELD_R_END` 배까지 닫혀 들어오므로, 단위 반지름 r 인 요소의 최종 위치는
+  // `r × SHIELD_R_END × 반치수` 다 — 이 곱이 1 미만이면 그 요소는 **선체 위로 올라간다**.
+  // 육각 메시를 0.6 에 뒀다가 이 계산을 놓쳐 창 끝에서 몸통을 가로지르고 있었다("획뿐이라
+  // 선체를 한 픽셀도 가리지 않는다"는 이 함수 자신의 계약 위반).
   g.circle(0, 0, 1).stroke({ color: SHIELD_COLOR, width: 0.055, alpha: 0.8 });
-  g.circle(0, 0, 0.9).stroke({ color: SHIELD_COLOR, width: 0.025, alpha: 0.45 });
-  // 패싯 — 링 위의 짧은 방사 눈금. 색 외 채널로 "에너지 막"을 구분하게 한다(색약 대응 규율).
-  for (let i = 0; i < SHIELD_FACETS; i++) {
-    const a = (i / SHIELD_FACETS) * Math.PI * 2;
-    const cx = Math.cos(a);
-    const sy = Math.sin(a);
-    g.moveTo(cx * 0.9, sy * 0.9)
-      .lineTo(cx * 1.08, sy * 1.08)
-      .stroke({ color: SHIELD_COLOR, width: 0.05, alpha: 0.7 });
-  }
+  g.circle(0, 0, SHIELD_INNER_BAND).stroke({ color: SHIELD_COLOR, width: 0.025, alpha: 0.45 });
+  // 패싯 셀 — 육각 메시 두 겹(바깥 육각 + 30° 돌린 안쪽 육각). 방사 눈금이 아니라 **셀 경계**라
+  // 조준 레티클로 오독되지 않으면서(§2-5 UI 어휘 금지) 색 외 채널은 그대로 남는다(색약 대응).
+  const hexagon = (radius: number, phase: number, alpha: number): void => {
+    for (let i = 0; i < SHIELD_FACETS; i++) {
+      const a0 = phase + (i / SHIELD_FACETS) * Math.PI * 2;
+      const a1 = phase + ((i + 1) / SHIELD_FACETS) * Math.PI * 2;
+      g.moveTo(Math.cos(a0) * radius, Math.sin(a0) * radius)
+        .lineTo(Math.cos(a1) * radius, Math.sin(a1) * radius)
+        .stroke({ color: SHIELD_COLOR, width: 0.035, alpha });
+    }
+  };
+  hexagon(0.97, 0, 0.7);
+  hexagon(SHIELD_INNER_BAND, Math.PI / SHIELD_FACETS, 0.4);
   c.addChild(g);
   return c;
 }
@@ -714,8 +914,14 @@ class PlayerThrustAdorner implements EntityAdorner {
     const extent = thrustExtent(this.motion.speed, this.motion.dashing);
     // ── 6(부수). 엔진 열기 요동 ── 정지 시 최대, 대시 시 최소. 서로 다른 두 각속도의 합이라
     // 눈에 띄는 반복 주기가 생기지 않는다. 결정적(Math.random 없음).
-    const heat =
-      HEAT_WOBBLE * (0.35 + 0.65 * idleness(this.motion.speed)) * (this.motion.dashing ? 0.3 : 1);
+    //
+    // ⚠️ `motionOn` 게이트가 여기 **빠져 있었다**(비평가 MAJ-1): 외곽선 숨쉬기·부유는 정확히
+    // 0 이 되는데 불꽃 요동만 reducedMotion 에서 0.2% 밖에 안 줄어 광과민 대응이 반쪽이었다.
+    // 진폭이 아니라 **위상 전진**을 막아야 완전히 정지한다 — 진폭만 0 으로 두면 되지만, 여기서는
+    // heat 자체를 0 으로 만들어 두 요동 항이 동시에 상수 1 이 된다.
+    const heat = reducedMotion(ctx.gates)
+      ? 0
+      : HEAT_WOBBLE * (0.35 + 0.65 * idleness(this.motion.speed)) * (this.motion.dashing ? 0.3 : 1);
     const wobbleL = 1 + Math.sin(this.clock * HEAT_RATE_A) * heat;
     const wobbleW = 1 + Math.sin(this.clock * HEAT_RATE_B + 1.7) * heat;
     flame.scale.set(this.halfSpan * extent * wobbleL, this.halfSpan * wobbleW);
@@ -807,13 +1013,21 @@ function buildThrustFlame(): Container {
     const g = new Graphics();
     const L = THRUST_LENGTH * scale;
     const W = THRUST_HALF_WIDTH * scale;
-    const layer = (len: number, half: number, color: number, alpha: number): void => {
+    // 층은 {@link FLAME_LAYERS} 가 정본이다 — 굽는 쪽과 검증하는 쪽이 같은 데이터를 읽어야
+    // "상수는 맞는데 화면은 틀린" CRIT-1 이 재발하지 않는다. 바깥 층일수록 길고 넓다.
+    const SHRINK = [1, 0.72, 0.4];
+    const NARROW = [1, 0.62, 0.3];
+    for (let i = 0; i < FLAME_LAYERS.length; i++) {
+      const layer = FLAME_LAYERS[i];
+      if (layer === undefined) continue;
+      const len = L * (SHRINK[i] ?? 1);
+      const half = W * (NARROW[i] ?? 1);
       // 로컬 -x 로 뻗는 삼각 화염. 뒤끝을 살짝 +x 로 물려(0.12) 노즐 입구가 선체에 붙어 보인다.
-      g.poly([len * 0.12, -half, -len, 0, len * 0.12, half]).fill({ color, alpha });
-    };
-    layer(L, W, FLAME_OUTER, FLAME_OUTER_ALPHA);
-    layer(L * 0.72, W * 0.62, FLAME_MID, FLAME_MID_ALPHA);
-    layer(L * 0.4, W * 0.3, FLAME_CORE, FLAME_CORE_ALPHA);
+      g.poly([len * 0.12, -half, -len, 0, len * 0.12, half]).fill({
+        color: layer.color,
+        alpha: layer.alpha,
+      });
+    }
     g.position.set(sx, sy);
     c.addChild(g);
   };
