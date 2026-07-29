@@ -78,6 +78,10 @@ const LOW: EffectGates = effectGates('low', DEFAULT_GRAPHICS_SETTINGS);
 
 describe('경계 처리 — 불규칙하되 판정을 넘지 않는다', () => {
   it('모든 시드·프레임·불규칙도에서 경계 꼭짓점이 판정 반경 안에 있다', () => {
+    // ⚠️ 기준은 **판정 반경**(`radius * scale`)이지 `EDGE_MAX_RATIO` 가 아니다. 상수를 기준으로
+    // 쓰면 상수를 키우는 순간 테스트가 같이 커져 통과한다 — 뮤테이션 검증에서 실제로
+    // `EDGE_MAX_RATIO = 1.15` 가 이 단언을 그대로 통과했다(항진 테스트). 게임 규칙("밟으면
+    // 아픈 곳은 여기까지")은 상수가 아니라 반경이므로 반경으로 잰다.
     const radius = 140;
     let worst = 0;
     for (const seed of [0, 1, 7, 1234, -99, 0x7fffffff]) {
@@ -91,7 +95,7 @@ describe('경계 처리 — 불규칙하되 판정을 넘지 않는다', () => {
               const d = Math.hypot(x, y);
               if (d > worst) worst = d;
               expect(d, `seed=${seed} tick=${tick} wob=${wobble} scale=${scale}`).toBeLessThanOrEqual(
-                radius * scale * EDGE_MAX_RATIO + 1e-9,
+                radius * scale + 1e-9,
               );
             }
           }
@@ -100,14 +104,25 @@ describe('경계 처리 — 불규칙하되 판정을 넘지 않는다', () => {
     }
     // 상한이 실제로 근처까지 쓰이는지도 본다 — 전부 반경의 절반이면 "안 넘음"은 무의미하다.
     expect(worst).toBeGreaterThan(radius * 0.9);
+    expect(worst).toBeLessThanOrEqual(radius);
+  });
+
+  it('경계 상한 상수 자체가 판정 반경을 넘지 않는다(상수를 키워도 새지 않는다)', () => {
+    // 위 테스트가 반경으로 재므로 이 단언은 중복처럼 보이지만, 상한을 키우는 변경이 **왜**
+    // 안 되는지를 한 줄로 못 박아 둔다. 1 을 넘기는 순간 재질이 판정 밖에서 아픈 척을 한다.
+    expect(EDGE_MAX_RATIO).toBeLessThanOrEqual(1);
+    expect(EDGE_MIN_RATIO).toBeLessThan(EDGE_MAX_RATIO);
   });
 
   it('경계가 장판을 실제보다 작게 만들지 않는다(하한도 지킨다)', () => {
+    // 기준은 상수가 아니라 **구체 비율**이다(위 항진 교훈). 하한을 낮추는 변경이 이 단언을
+    // 통과하려면 실제로 장판이 눈에 띄게 작아져야 한다.
     const poly = edgePolygon(42, 200, 123, 1, 1);
     for (let i = 0; i < poly.length; i += 2) {
       const d = Math.hypot(poly[i] ?? 0, poly[i + 1] ?? 0);
-      expect(d).toBeGreaterThanOrEqual(200 * EDGE_MIN_RATIO - 1e-9);
+      expect(d).toBeGreaterThanOrEqual(200 * 0.7);
     }
+    expect(EDGE_MIN_RATIO).toBeGreaterThanOrEqual(0.7);
   });
 
   it('불규칙도 0 이면 정확한 원이다(재질이 꺼진 상태와 매끄럽게 잇는다)', () => {
@@ -425,9 +440,8 @@ describe('본체 로브', () => {
     for (const seed of [0, 5, 777, -3]) {
       for (let i = 0; i < LOBE_COUNT; i++) {
         const l = lobeAt(seed, i, 150);
-        expect(Math.hypot(l.cx, l.cy) + l.r, `seed=${seed} i=${i}`).toBeLessThanOrEqual(
-          150 * EDGE_MAX_RATIO + 1e-9,
-        );
+        // 기준은 판정 반경 자체다(상수를 기준으로 쓰면 상수를 키울 때 같이 커진다 — 항진).
+        expect(Math.hypot(l.cx, l.cy) + l.r, `seed=${seed} i=${i}`).toBeLessThanOrEqual(150 + 1e-9);
         expect(l.r).toBeGreaterThan(0);
       }
     }

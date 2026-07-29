@@ -169,6 +169,9 @@ describe('겹침 처리 — 셀이 여럿 깔려도 하드 엣지가 쌓이지 �
   };
 
   it('채움이 한 겹이 아니라 여러 겹이다(가장자리가 계단식으로 옅어진다)', () => {
+    // `FILL_RINGS` 를 기준으로만 재면 상수를 1 로 되돌려도 통과한다(항진) — 그래서 "1 보다
+    // 많다"를 먼저 못 박는다. 이 레인의 뮤테이션 검증에서 실제로 드러난 함정이다.
+    expect(fillsOf(120).length).toBeGreaterThan(1);
     expect(fillsOf(120).length).toBe(FILL_RINGS);
   });
 
