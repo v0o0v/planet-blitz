@@ -66,3 +66,6 @@ supabase/.temp/
 .omc/research/env-shots*/**/*.png
 .omc/research/env-shots*/*.png
 .omc/research/env-baseline/*.png
+# 엔티티 AAA 레인(플레이어·적·해저드)의 before/after 컷. 같은 이유로 커밋하지 않는다 —
+# 여기는 `bg` 가 아니라 엔티티가 보이는 컷이라 장당 ~2MB 다.
+.omc/research/entity-aaa-shots/**/*.png
