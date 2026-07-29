@@ -253,14 +253,24 @@ describe('실루엣 — 완전한 원을 쓰지 않는다 (계약 §2-5 UI 어�
   it('경계선이 안전지대를 과장하지 않는다(안쪽 파임에 상한이 있다)', () => {
     // 위험을 넓게 그리면 플레이어가 손해를 보지만 **좁게 그리면 죽는다.** 그래서 경계선의
     // 안쪽 파임은 채움보다 훨씬 좁은 대역으로 묶여 있어야 한다.
+    //
+    // ⚠️ 기준은 **구체 비율(0.9)** 이지 `BOUNDARY_MIN_RATIO` 가 아니다. 상수를 기준으로 쓰면
+    // 상수를 낮추는 순간 기대값이 같이 내려가 통과한다 — 이 레인은 그 항진을 **두 번** 밟았다
+    // (1차: `EDGE_MAX_RATIO = 1.15`, 2차: `BOUNDARY_MIN_RATIO = 0.7` 이 각각 이 자리를 그대로
+    // 통과했다). 게임 규칙은 상수가 아니라 반경에 대해 서술된다.
     for (const r of [60, 120, 300]) {
       const { canvas, calls } = recorder();
       drawHazardZone(canvas, 0, 0, r, hazardVisual(HAZARD_LAVA, true), 0);
       // 채움 겹 FILL_RINGS 개 다음이 경계선 폴리곤이다.
       const boundary = polyRadii(calls.filter((c) => c.op === 'poly')[FILL_RINGS]?.args ?? [], 0, 0);
       expect(Math.max(...boundary), `r=${r}`).toBeLessThanOrEqual(r);
-      expect(Math.min(...boundary), `r=${r}`).toBeGreaterThanOrEqual(r * BOUNDARY_MIN_RATIO - 1e-9);
+      expect(Math.min(...boundary), `r=${r}`).toBeGreaterThanOrEqual(r * 0.9);
     }
+  });
+
+  it('경계선 대역 상수 자체가 반경에 붙어 있다(상수를 낮춰도 새지 않는다)', () => {
+    expect(BOUNDARY_MIN_RATIO).toBeGreaterThanOrEqual(0.9);
+    expect(BOUNDARY_MIN_RATIO).toBeLessThan(1);
   });
 
   it('장판마다 실루엣이 다르다(같은 도장을 찍지 않는다)', () => {
