@@ -16,10 +16,13 @@ import type { EntitySnapshot, WorldSnapshot } from '../src/sim/snapshot.js';
 import { snapshotWorld } from '../src/sim/snapshot.js';
 import { createWorld } from '../src/sim/world.js';
 import { spawnHazard } from '../src/sim/entities.js';
+import { BOUNDARY_MIN_RATIO } from '../src/render/entity/hazardShape.js';
 import {
+  BOUNDARY_ALPHA_SCALE,
   DECOR_MIN_RADIUS,
   FILL_RINGS,
   FILL_SOFT_SPAN,
+  GLOW_ALPHA_SCALE,
   HAZARD_COLOR_SLOW,
   HAZARD_COLOR_TERRAIN,
   drawHazardZone,
@@ -41,9 +44,20 @@ const FRIENDLY_CYAN = 0x39d0ff;
 // ---------------------------------------------------------------------------
 
 interface Call {
-  op: 'circle' | 'arc' | 'moveTo' | 'lineTo' | 'fill' | 'stroke';
+  op: 'circle' | 'arc' | 'moveTo' | 'lineTo' | 'poly' | 'fill' | 'stroke';
   args: readonly number[];
   style?: { color: number; width?: number; alpha: number };
+  /** `poly` 전용 — 경로를 닫았는가. Pixi 는 생략 시 열어 두고, 열린 경로는 stroke 에서 벌어진다. */
+  close?: boolean | undefined;
+}
+
+/** 폴리곤 꼭짓점들의 중심(x,y)까지의 거리 — 실루엣이 판정 반경을 넘는지 재는 도구. */
+function polyRadii(args: readonly number[], cx: number, cy: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < args.length; i += 2) {
+    out.push(Math.hypot((args[i] ?? 0) - cx, (args[i + 1] ?? 0) - cy));
+  }
+  return out;
 }
 
 function recorder(): { canvas: HazardCanvas; calls: Call[] } {
@@ -63,6 +77,10 @@ function recorder(): { canvas: HazardCanvas; calls: Call[] } {
     },
     lineTo(x, y) {
       calls.push({ op: 'lineTo', args: [x, y] });
+      return canvas;
+    },
+    poly(points, close) {
+      calls.push({ op: 'poly', args: [...points], close });
       return canvas;
     },
     fill(style) {
@@ -135,7 +153,9 @@ describe('형태 = 상태', () => {
     drawHazardZone(canvas, 0, 0, 100, hazardVisual(HAZARD_LAVA, true), 0);
     expect(calls.some((c) => c.op === 'fill')).toBe(true);
     expect(calls.filter((c) => c.op === 'lineTo').length).toBeGreaterThan(0); // 빗금
-    expect(calls.filter((c) => c.op === 'circle').length).toBeGreaterThan(1); // 본체 + 립/글로우
+    // 실루엣은 폴리곤(채움 겹 + 경계선 + 글로우), 정밀 채널인 안쪽 립만 원이다.
+    expect(calls.filter((c) => c.op === 'poly').length).toBeGreaterThan(FILL_RINGS);
+    expect(calls.filter((c) => c.op === 'circle').length).toBe(1);
   });
 
   it('빗금은 시간이 지나면 흐른다(같은 장판이 다른 그림이 된다)', () => {
@@ -192,13 +212,116 @@ describe('겹침 처리 — 셀이 여럿 깔려도 하드 엣지가 쌓이지 �
     expect(acc).toBeCloseTo(v.fillAlpha, 10);
   });
 
-  it('바깥 겹이 정확히 판정 반경까지 닿는다(장판이 실제보다 작아 보이지 않는다)', () => {
+  it('바깥 겹이 판정 반경에 닿되 넘지 않는다(작아 보이지도, 거짓말하지도 않는다)', () => {
     const rec = recorder();
     drawHazardZone(rec.canvas, 0, 0, 200, hazardVisual(HAZARD_LAVA, true), 0);
-    const radii = rec.calls.filter((c) => c.op === 'circle').map((c) => c.args[2] ?? 0);
-    expect(Math.max(...radii.slice(0, FILL_RINGS))).toBe(200);
+    const polys = rec.calls.filter((c) => c.op === 'poly');
+    const outer = polyRadii(polys[0]?.args ?? [], 0, 0);
+    expect(Math.max(...outer)).toBeLessThanOrEqual(200);
+    // 채움은 경계선보다 크게 출렁여도 된다(정의하는 선이 아니다) — 다만 장판이 통째로
+    // 작아 보이면 안 되므로 최댓값은 반경 근처까지 올라와야 한다. 반경에 **붙어 있어야**
+    // 하는 것은 경계선 쪽 계약이다(아래 '실루엣' describe).
+    expect(Math.max(...outer)).toBeGreaterThan(200 * 0.9);
     // 안쪽 겹은 소프트 밴드 안에서만 줄어든다(그 이상 줄면 장판이 작아 보인다).
-    expect(Math.min(...radii.slice(0, FILL_RINGS))).toBeCloseTo(200 * (1 - FILL_SOFT_SPAN), 10);
+    const inner = polyRadii(polys[FILL_RINGS - 1]?.args ?? [], 0, 0);
+    expect(Math.max(...inner) / Math.max(...outer)).toBeCloseTo(1 - FILL_SOFT_SPAN, 6);
+  });
+});
+
+describe('실루엣 — 완전한 원을 쓰지 않는다 (계약 §2-5 UI 어휘 금지)', () => {
+  // 1차 통합 반려 사유: `edgePolygon` 은 옳게 구현됐는데 그 위에 alpha 0.95·width 4 의
+  // **정확한 원 stroke** 가 그대로 남아 있어, 가산 alpha ≤0.34 폴리곤이 이길 수 없었다.
+  // 화면에 남은 것은 여전히 완전한 원이었다.
+
+  it('활성 장판의 채움·경계·글로우가 전부 폴리곤이다', () => {
+    const { canvas, calls } = recorder();
+    drawHazardZone(canvas, 0, 0, 150, hazardVisual(HAZARD_LAVA, true), 0);
+    // 원은 안쪽 맥동 립 하나뿐이다(정보 채널이라 §2-5 예외 — 계약이 명시적으로 허용).
+    const circles = calls.filter((c) => c.op === 'circle');
+    expect(circles.length).toBe(1);
+    expect(circles[0]?.args[2]).toBeLessThan(150); // 립은 반경 안쪽이다
+  });
+
+  it('경계선이 실제로 불규칙하다(폴리곤이지만 사실은 원이면 무의미)', () => {
+    const { canvas, calls } = recorder();
+    drawHazardZone(canvas, 0, 0, 200, hazardVisual(HAZARD_LAVA, true), 0);
+    const polys = calls.filter((c) => c.op === 'poly');
+    const outer = polyRadii(polys[0]?.args ?? [], 0, 0);
+    expect(Math.max(...outer) - Math.min(...outer)).toBeGreaterThan(200 * 0.02);
+  });
+
+  it('경계선이 안전지대를 과장하지 않는다(안쪽 파임에 상한이 있다)', () => {
+    // 위험을 넓게 그리면 플레이어가 손해를 보지만 **좁게 그리면 죽는다.** 그래서 경계선의
+    // 안쪽 파임은 채움보다 훨씬 좁은 대역으로 묶여 있어야 한다.
+    for (const r of [60, 120, 300]) {
+      const { canvas, calls } = recorder();
+      drawHazardZone(canvas, 0, 0, r, hazardVisual(HAZARD_LAVA, true), 0);
+      // 채움 겹 FILL_RINGS 개 다음이 경계선 폴리곤이다.
+      const boundary = polyRadii(calls.filter((c) => c.op === 'poly')[FILL_RINGS]?.args ?? [], 0, 0);
+      expect(Math.max(...boundary), `r=${r}`).toBeLessThanOrEqual(r);
+      expect(Math.min(...boundary), `r=${r}`).toBeGreaterThanOrEqual(r * BOUNDARY_MIN_RATIO - 1e-9);
+    }
+  });
+
+  it('장판마다 실루엣이 다르다(같은 도장을 찍지 않는다)', () => {
+    const shape = (x: number, y: number): string => {
+      const rec = recorder();
+      drawHazardZone(rec.canvas, x, y, 120, hazardVisual(HAZARD_CONTAMINATION, true, true), 0);
+      const p = rec.calls.filter((c) => c.op === 'poly')[0]?.args ?? [];
+      return JSON.stringify(polyRadii(p, x, y).map((d) => d.toFixed(2)));
+    };
+    expect(shape(0, 0)).not.toBe(shape(400, 0));
+    expect(shape(0, 0)).not.toBe(shape(0, 400));
+  });
+
+  it('같은 자리의 장판은 프레임이 지나도 같은 실루엣 계열이다(떨지 않는다)', () => {
+    // 위치 기반 시드라 미세한 좌표 흔들림이 실루엣을 바꾸면 안 된다(4px 격자 양자화).
+    const shape = (x: number): string => {
+      const rec = recorder();
+      drawHazardZone(rec.canvas, x, 0, 120, hazardVisual(HAZARD_LAVA, true), 0);
+      const p = rec.calls.filter((c) => c.op === 'poly')[0]?.args ?? [];
+      return JSON.stringify(polyRadii(p, x, 0).map((d) => d.toFixed(4)));
+    };
+    expect(shape(100)).toBe(shape(100.9));
+  });
+
+  it('안쪽 맥동 립은 장식 예산과 무관하게 항상 그려진다(판정 정보는 안 깎는다)', () => {
+    for (const allowDecor of [true, false]) {
+      const { canvas, calls } = recorder();
+      drawHazardZone(canvas, 0, 0, 300, hazardVisual(HAZARD_LAVA, true), 0, allowDecor);
+      expect(calls.filter((c) => c.op === 'circle').length, `decor=${allowDecor}`).toBe(1);
+    }
+    // 작은 장판도 마찬가지다.
+    const { canvas, calls } = recorder();
+    drawHazardZone(canvas, 0, 0, DECOR_MIN_RADIUS - 1, hazardVisual(HAZARD_LAVA, true), 0);
+    expect(calls.filter((c) => c.op === 'circle').length).toBe(1);
+  });
+
+  it('모든 폴리곤이 닫힌 경로다(열린 경로는 stroke 에서 틈이 벌어진다)', () => {
+    // Pixi 의 `poly` 는 `polygon.closePath = close` 를 그대로 대입한다 — 생략하면 undefined 라
+    // stroke 에서 마지막 꼭짓점과 첫 꼭짓점 사이가 벌어진다. 채움에서는 자동으로 닫혀 안
+    // 드러나므로, 경계선에만 생기는 틈을 육안으로 잡기 어렵다.
+    for (const active of [false, true]) {
+      for (const sub of [HAZARD_LAVA, HAZARD_CONTAMINATION, HAZARD_SLOW]) {
+        const { canvas, calls } = recorder();
+        drawHazardZone(canvas, 0, 0, 150, hazardVisual(sub, active, true), 7);
+        for (const c of calls.filter((k) => k.op === 'poly')) {
+          expect(c.close, `sub=${sub} active=${active}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('밝기 총량 순감 — 경계선·글로우 알파가 이전보다 낮다 (계약 §2-4)', () => {
+    const v = hazardVisual(HAZARD_LAVA, true);
+    const { canvas, calls } = recorder();
+    drawHazardZone(canvas, 0, 0, 150, v, 0);
+    const strokes = calls.filter((c) => c.op === 'stroke');
+    // 경계선 stroke 는 원래 strokeAlpha(0.95) 그대로였다. 지금은 배율이 곱해져 있어야 한다.
+    const boundary = strokes.find((s) => s.style?.width === v.strokeWidth);
+    expect(boundary?.style?.alpha).toBeLessThan(v.strokeAlpha);
+    expect(BOUNDARY_ALPHA_SCALE).toBeLessThan(1);
+    expect(GLOW_ALPHA_SCALE).toBeLessThan(1);
   });
 });
 
@@ -207,16 +330,19 @@ describe('성능 가드 — 작고 많은 장판', () => {
     const { canvas, calls } = recorder();
     drawHazardZone(canvas, 0, 0, DECOR_MIN_RADIUS - 1, hazardVisual(HAZARD_CONTAMINATION, true), 0);
     expect(calls.filter((c) => c.op === 'lineTo').length).toBe(0);
-    // 채움 겹 + 테두리(원 1개)만 남는다 — 작아도 장판이 보이기는 해야 한다.
-    expect(calls.filter((c) => c.op === 'circle').length).toBe(FILL_RINGS + 1);
+    // 채움 겹 + 경계선(폴리곤) + 립(원 1개)만 남는다 — 작아도 장판이 보이기는 해야 한다.
+    // 글로우 링은 장식이라 빠진다.
+    expect(calls.filter((c) => c.op === 'poly').length).toBe(FILL_RINGS + 1);
+    expect(calls.filter((c) => c.op === 'circle').length).toBe(1);
     expect(calls.some((c) => c.op === 'fill')).toBe(true);
   });
 
-  it('allowDecor=false 면 큰 장판도 채움+테두리만 그린다(프레임 예산 소진)', () => {
+  it('allowDecor=false 면 큰 장판도 채움+경계+립만 그린다(프레임 예산 소진)', () => {
     const { canvas, calls } = recorder();
     drawHazardZone(canvas, 0, 0, 300, hazardVisual(HAZARD_LAVA, true), 0, false);
     expect(calls.filter((c) => c.op === 'lineTo').length).toBe(0);
-    expect(calls.filter((c) => c.op === 'circle').length).toBe(FILL_RINGS + 1); // 채움 겹 + 테두리
+    expect(calls.filter((c) => c.op === 'poly').length).toBe(FILL_RINGS + 1);
+    expect(calls.filter((c) => c.op === 'circle').length).toBe(1);
   });
 
   it('반경이 커져도 빗금 선 개수에 상한이 있다', () => {

@@ -25,6 +25,7 @@
 
 import { HAZARD_LAVA, HAZARD_MORTAR, HAZARD_SLOW } from '../sim/patterns/types.js';
 import { HAZARD_CONTAMINATION } from '../sim/modes/contamination.js';
+import { boundaryPolygon, edgePolygon, quantizeTick } from './entity/hazardShape.js';
 
 /** 장판 1개의 표시 서술(순수 데이터 — 그리기는 {@link drawHazardZone} 이 한다). */
 export interface HazardVisual {
@@ -136,6 +137,20 @@ export const FILL_RINGS = 3;
  * 겹이 하나씩 빠지며 옅어진다. 넓히면 장판이 실제보다 작아 보이므로 좁게 둔다.
  */
 export const FILL_SOFT_SPAN = 0.22;
+/**
+ * 채움 폴리곤 꼭짓점 수. 장판이 40개를 넘는 모드(톡사르 41 · 크라스 23)에서 프레임당 꼭짓점
+ * 총량이 여기에 비례하므로 필요한 만큼만 쓴다. 16 이면 반경 200 에서 변 길이 약 78px — 큰
+ * 굴곡은 살고 잔결은 노이즈 진폭이 만든다.
+ */
+export const FILL_POINTS = 16;
+/**
+ * 경계선 알파 배율. 유기 폴리곤은 완전한 원보다 **낮은 밝기로 같은 가독성**을 낸다(눈은 직선·
+ * 정원 같은 인공 형태를 배경으로 흘려보내고 불규칙 윤곽에 더 붙는다). 밝기 총량 예산(§2-4)에
+ * 대한 이 레인의 주된 순감 항목이다.
+ */
+export const BOUNDARY_ALPHA_SCALE = 0.76;
+/** 바깥 글로우 링 알파 배율(§2-4 순감). */
+export const GLOW_ALPHA_SCALE = 0.7;
 
 /** 빗금 간격(px). 반경이 커져도 선 개수가 선형으로만 늘도록 상한과 함께 쓴다. */
 const HATCH_SPACING = 18;
@@ -160,8 +175,48 @@ export interface HazardCanvas {
   arc(x: number, y: number, radius: number, start: number, end: number): HazardCanvas;
   moveTo(x: number, y: number): HazardCanvas;
   lineTo(x: number, y: number): HazardCanvas;
+  /**
+   * 폴리곤(flat `[x0,y0,x1,y1,...]`). 유기적 실루엣의 유일한 수단이다.
+   *
+   * ⚠️ `close` 를 **반드시 넘겨라.** Pixi 의 `poly` 는 `polygon.closePath = close` 를 그대로
+   * 대입하므로 생략하면 `undefined`(거짓)가 되고, `stroke` 에서 **마지막 꼭짓점과 첫 꼭짓점
+   * 사이가 벌어진다** — 경계선에 틈이 나는데 채움에서는 안 드러나 놓치기 쉽다.
+   */
+  poly(points: number[], close?: boolean): HazardCanvas;
   fill(style: { color: number; alpha: number }): HazardCanvas;
   stroke(style: { color: number; width: number; alpha: number }): HazardCanvas;
+}
+
+/**
+ * 장판 위치에서 뽑는 형태 시드. **호출 시그니처를 늘리지 않기 위한 장치다** — 장판마다 다른
+ * 실루엣이 필요한데 `drawHazardZone` 은 엔티티 id 를 받지 않고, 그 인자를 늘리면 호출측
+ * (`hazardHost.ts`, 다른 레인 소유)을 건드려야 한다.
+ *
+ * 4px 격자로 양자화한다: 해저드는 스폰 위치에 고정되므로 값이 안정적이고, 부동소수 미세
+ * 흔들림이 실루엣을 떨게 만들지 않는다.
+ */
+function shapeSeed(x: number, y: number): number {
+  return Math.imul(Math.round(x / 4) | 0, 0x27d4eb2d) ^ Math.imul(Math.round(y / 4) | 0, 0x165667b1);
+}
+
+/** 폴리곤 점들을 원점 기준에서 (x,y) 로 옮긴 새 배열. `edgePolygon` 결과는 로컬 좌표다. */
+function translated(poly: number[], x: number, y: number): number[] {
+  const out: number[] = new Array<number>(poly.length);
+  for (let i = 0; i < poly.length; i += 2) {
+    out[i] = (poly[i] ?? 0) + x;
+    out[i + 1] = (poly[i + 1] ?? 0) + y;
+  }
+  return out;
+}
+
+/** 폴리곤을 원점 기준으로 배율 조정해 (x,y) 로 옮긴 새 배열. */
+function scaledTo(poly: number[], x: number, y: number, k: number): number[] {
+  const out: number[] = new Array<number>(poly.length);
+  for (let i = 0; i < poly.length; i += 2) {
+    out[i] = (poly[i] ?? 0) * k + x;
+    out[i + 1] = (poly[i + 1] ?? 0) * k + y;
+  }
+  return out;
 }
 
 /**
@@ -188,6 +243,10 @@ export function drawHazardZone(
   allowDecor = true,
 ): void {
   const decorated = allowDecor && radius >= DECOR_MIN_RADIUS;
+  // 형태 시드는 위치에서, 애니메이션 위상은 양자화한 프레임에서 — 둘 다 인자를 늘리지 않고
+  // 장판별로 다른 실루엣과 저비용 요동을 얻기 위한 장치다.
+  const seed = shapeSeed(x, y);
+  const qTick = quantizeTick(frameTick);
 
   if (v.dashed) {
     // ── 예열 ──────────────────────────────────────────────────────────────
@@ -211,13 +270,17 @@ export function drawHazardZone(
   }
 
   // ── 활성 ────────────────────────────────────────────────────────────────
-  // 소프트 엣지 채움(겹침 방어 — {@link FILL_RINGS} 주석이 근거). 겹 알파는 누적이 정확히
-  // `fillAlpha` 에 수렴하도록 역산한다: 1-(1-p)^N = fillAlpha (buildGroundShadow 와 같은 역산).
-  // 바깥 밴드는 겹이 하나뿐이라 알파가 p 이고, 두 셀이 겹쳐도 2p < fillAlpha 라 이음매가 없다.
+  // 소프트 엣지 **유기 폴리곤** 채움. 두 결함을 한 번에 푼다:
+  //  ① 겹침 — 겹 알파는 누적이 정확히 `fillAlpha` 에 수렴하도록 역산한다(1-(1-p)^N = fillAlpha).
+  //     바깥 밴드는 겹이 하나뿐이라 알파가 p 이고, 두 셀이 겹쳐도 2p < fillAlpha 라 이음매가 없다.
+  //  ② 실루엣 — 완전한 원이 아니라 노이즈로 흔든 폴리곤이다. **이것이 전 장판에 적용되는
+  //     유일한 유기 신호**이고, 그래서 재질(LOD)이 낮은 장판도 정체성이 같다. 개체 상한으로
+  //     재질을 빼던 1차 설계에서 "같은 해저드가 두 스타일"로 보이던 결함이 여기서 사라진다.
+  const fillPoly = edgePolygon(seed, radius, qTick, 1, 1, FILL_POINTS);
   const perRing = 1 - Math.pow(1 - v.fillAlpha, 1 / FILL_RINGS);
   for (let i = 0; i < FILL_RINGS; i++) {
-    const rr = radius * (1 - (FILL_SOFT_SPAN * i) / (FILL_RINGS - 1 || 1));
-    g.circle(x, y, rr).fill({ color: v.color, alpha: perRing });
+    const k = 1 - (FILL_SOFT_SPAN * i) / (FILL_RINGS - 1 || 1);
+    g.poly(scaledTo(fillPoly, x, y, k), true).fill({ color: v.color, alpha: perRing });
   }
 
   if (v.hatch && decorated) {
@@ -250,21 +313,39 @@ export function drawHazardZone(
     }
   }
 
-  g.circle(x, y, radius).stroke({ color: v.color, width: v.strokeWidth, alpha: v.strokeAlpha });
+  // 경계선 — **완전한 원이 아니라 유기 폴리곤**이다(계약 §2-5 UI 어휘 금지).
+  // 진폭은 채움보다 훨씬 좁은 대역({@link BOUNDARY_MIN_RATIO})으로 묶는다: 장판을 정의하는
+  // 선이 안으로 크게 파이면 화면이 **안전지대를 과장**하고, 그 방향의 오차는 플레이어를 죽인다.
+  // 알파도 0.95 → BOUNDARY_ALPHA_SCALE 배로 낮췄다(밝기 총량 예산 §2-4) — 선이 유기적이면
+  // 같은 가독성을 더 낮은 밝기로 얻는다.
+  g.poly(translated(boundaryPolygon(seed, radius, qTick), x, y), true).stroke({
+    color: v.color,
+    width: v.strokeWidth,
+    alpha: v.strokeAlpha * BOUNDARY_ALPHA_SCALE,
+  });
+
+  // 안쪽 맥동 립 — **판정 경계의 정밀 채널**이자 색 외 채널이다. 완전한 원인 것이 여기서는
+  // 의도적이다: 유기적 경계선이 어디가 진짜 반경인지 ±6% 흔들리므로, 흔들리지 않는 기준선이
+  // 하나 필요하다. 계약 §2-5 는 "정보를 안 나르는 기하학 장식"을 금지하는 것이고 이건 정보다.
+  //
+  // **`decorated` 조건을 뗐다.** 1차 설계에서는 장식 예산에 밀린 장판이 정밀 채널을 통째로
+  // 잃었다 — 예산은 디테일을 깎는 것이지 판정 정보를 깎는 것이 아니다. 원 하나 값이다.
+  const pulse = 0.5 + 0.5 * Math.sin(frameTick * 0.12);
+  g.circle(x, y, radius - v.strokeWidth).stroke({
+    color: v.accent,
+    width: 1.5,
+    alpha: (0.35 + 0.3 * pulse) * (v.harmful ? 1 : 0.7),
+  });
 
   if (v.harmful && decorated) {
-    // 안쪽 립(맥동) — 경계가 정확히 어디인지 한 픽셀 수준으로 읽히게 한다.
-    const pulse = 0.5 + 0.5 * Math.sin(frameTick * 0.12);
-    g.circle(x, y, radius - v.strokeWidth).stroke({
-      color: v.accent,
-      width: 1.5,
-      alpha: 0.35 + 0.3 * pulse,
-    });
-    // 바깥 글로우 링(맥동으로 반경이 숨쉰다) — 멀리서도 "저기 위험"이 먼저 눈에 든다.
-    g.circle(x, y, radius + 3 + 3 * pulse).stroke({
+    // 바깥 글로우 링 — 멀리서도 "저기 위험"이 먼저 눈에 든다. 폴리곤이라 본체 실루엣을 따르고
+    // (원이면 유기적 본체 밖에 완전한 원이 하나 더 그려져 정확히 UI 어휘가 된다), 알파는
+    // 밝기 총량 예산에 맞춰 낮췄다.
+    const glowK = 1 + (3 + 3 * pulse) / radius;
+    g.poly(scaledTo(fillPoly, x, y, glowK), true).stroke({
       color: v.color,
       width: 2,
-      alpha: 0.18 + 0.14 * pulse,
+      alpha: (0.18 + 0.14 * pulse) * GLOW_ALPHA_SCALE,
     });
   }
 }

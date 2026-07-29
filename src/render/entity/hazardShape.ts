@@ -201,6 +201,59 @@ export function edgeRatioAt(seed: number, a: number, frameTick: number, wobble: 
 }
 
 /**
+ * **판정 경계선**이 오갈 수 있는 반경 비율의 하한. {@link EDGE_MIN_RATIO}(0.78)보다 훨씬
+ * 1 에 가깝다 — 이유가 이 상수의 전부다.
+ *
+ * 장판을 정의하는 선이 안쪽으로 크게 파이면 **화면이 안전지대를 과장한다**. 과장의 방향이
+ * 문제다: 위험을 넓게 그리면 플레이어가 손해를 보지만, **좁게 그리면 죽는다.** 그래서 재질
+ * 내부(로브·채움)는 크게 출렁여도 되지만 경계선만은 반경에 붙어 있어야 한다.
+ *
+ * 0.94 는 반경 100 에서 최대 6px, 200 에서 12px 안쪽이다 — 테두리 두께와 같은 규모라 "완전한
+ * 원"이라는 인상은 깨면서 회피 판단은 바꾸지 않는다.
+ */
+export const BOUNDARY_MIN_RATIO = 0.94;
+
+/**
+ * 판정 경계선용 폴리곤. {@link edgePolygon} 과 같은 노이즈를 쓰되 진폭만
+ * {@link BOUNDARY_MIN_RATIO} 대역으로 좁힌다 — 같은 시드를 쓰므로 채움의 굴곡과 **위상이
+ * 맞아** 한 덩어리로 읽힌다(다른 시드를 쓰면 두 개의 다른 윤곽이 겹쳐 보인다).
+ */
+export function boundaryPolygon(
+  seed: number,
+  radius: number,
+  frameTick: number,
+  points = BOUNDARY_POINTS,
+): number[] {
+  const n = points < 3 ? 3 : points;
+  const out: number[] = new Array<number>(n * 2);
+  const span = EDGE_MAX_RATIO - BOUNDARY_MIN_RATIO;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * TAU;
+    // edgeRatioAt 을 [EDGE_MIN,EDGE_MAX] 에서 [BOUNDARY_MIN,EDGE_MAX] 로 되사상한다.
+    const t = (EDGE_MAX_RATIO - edgeRatioAt(seed, a, frameTick, 1)) / (EDGE_MAX_RATIO - EDGE_MIN_RATIO);
+    const r = radius * (EDGE_MAX_RATIO - span * t);
+    out[i * 2] = Math.cos(a) * r;
+    out[i * 2 + 1] = Math.sin(a) * r;
+  }
+  return out;
+}
+
+/** 경계선 폴리곤 꼭짓점 수. 채움보다 적어도 된다 — 선은 굴곡이 덜해도 유기적으로 읽힌다. */
+export const BOUNDARY_POINTS = 18;
+
+/**
+ * 애니메이션 위상을 몇 프레임 단위로 양자화할 것인가. 경계 요동은 프레임당 0.006 라디안이라
+ * 4프레임 계단은 눈에 안 보이면서 노이즈 평가를 4분의 1로 줄인다. 장판이 40개를 넘는 모드
+ * (톡사르 41 · 크라스 23)에서 이 상수가 프레임 예산을 지킨다.
+ */
+export const SHAPE_TICK_QUANTUM = 4;
+
+/** 위상 양자화(순수). */
+export function quantizeTick(frameTick: number): number {
+  return Math.floor(frameTick / SHAPE_TICK_QUANTUM) * SHAPE_TICK_QUANTUM;
+}
+
+/**
  * 불규칙 경계 폴리곤(중심 기준 로컬 좌표, flat `[x0,y0,x1,y1,...]`).
  *
  * @param scale 반경 배율(겹겹이 안쪽으로 깔 때 1 미만을 준다). 결과는 항상
@@ -240,23 +293,43 @@ export interface HazardLobe {
   readonly phase: number;
 }
 
-/** 장판 하나에 놓는 흐름 로브 수. 이 이상은 화면에서 구별되지 않으면서 비용만 는다. */
-export const LOBE_COUNT = 5;
+/**
+ * 장판 하나에 놓는 로브 수.
+ *
+ * ## 왜 5 가 아니라 14 인가 (1차 통합 반려 사유)
+ * 처음엔 5개였고 각각이 컸다(여유 반경의 40~92%). 다섯 개가 서로 겹쳐 **하나의 큰 덩어리**가
+ * 됐고, 각 로브 안에 밝은 `inner` 코어를 또 얹어서 그 위에 흰 점이 찍혔다. 결과는 "부글거리는
+ * 포자"가 아니라 **렌즈 플레어 스티커**였다.
+ *
+ * 물질감은 큰 덩어리 몇 개가 아니라 **작은 개체 여럿의 통계**에서 나온다. 작고(0.12~0.30r)
+ * 많고(14개) 각자 다른 주기로 태어나-부풀고-사라져야 표면이 살아 있는 것으로 읽힌다.
+ * 개수가 늘었으므로 개당 알파는 크게 내렸다(가산 누적 밝기 예산 — 계약 §2-4).
+ */
+export const LOBE_COUNT = 14;
+
+/** 로브 반지름의 하한·상한(판정 반경 대비). 작아야 개체로 읽힌다. */
+export const LOBE_MIN_R = 0.12;
+export const LOBE_MAX_R = 0.3;
+/** 로브 중심이 놓일 수 있는 최대 거리(판정 반경 대비). */
+const LOBE_SPREAD = 0.62;
 
 /**
- * 로브 배치(정적 — 부팅 시 한 번). **로브는 전부 판정 반경 안에 완전히 들어간다**:
- * `|중심| + r ≤ radius * EDGE_MAX_RATIO` 를 구성적으로 만족시킨다.
+ * 로브 배치(정적 — 부착 시 한 번). **로브는 전부 판정 반경 안에 완전히 들어간다**:
+ * `|중심| + r ≤ radius * EDGE_MAX_RATIO` 를 구성적으로 만족시킨다(마지막 클램프가 보증).
+ *
+ * 중심 거리에 `sqrt` 를 씌워 **면적 균일 분포**로 뿌린다. 안 씌우면 중앙에 몰려 다시 하나의
+ * 덩어리가 된다 — 5개 시절의 실패를 개수만 늘려 재현하는 함정이다.
  */
 export function lobeAt(seed: number, i: number, radius: number): HazardLobe {
   const ang = hash3(seed, i, 0, 1) * TAU;
-  // 중심 거리는 반경의 0~52%, 로브 반지름은 나머지 여유의 40~92% — 합이 상한을 넘지 못한다.
-  const dist = radius * 0.52 * hash3(seed, i, 0, 2);
+  const dist = radius * LOBE_SPREAD * Math.sqrt(hash3(seed, i, 0, 2));
+  const want = radius * (LOBE_MIN_R + (LOBE_MAX_R - LOBE_MIN_R) * hash3(seed, i, 0, 3));
   const room = radius * EDGE_MAX_RATIO - dist;
-  const r = room * (0.4 + 0.52 * hash3(seed, i, 0, 3));
+  const r = want < room ? want : room;
   return {
     cx: Math.cos(ang) * dist,
     cy: Math.sin(ang) * dist,
-    r,
+    r: r > 0 ? r : 0.001,
     bright: 0.35 + 0.65 * hash3(seed, i, 0, 4),
     phase: hash3(seed, i, 0, 5) * TAU,
   };
@@ -265,6 +338,140 @@ export function lobeAt(seed: number, i: number, radius: number): HazardLobe {
 /** 로브가 도는 속도(프레임당 라디안). 로브마다 부호·크기가 달라야 흐름으로 읽힌다. */
 export function lobeSpin(seed: number, i: number): number {
   return (hash3(seed, i, 0, 6) - 0.5) * 0.018;
+}
+
+/** 로브 하나의 이번 프레임 수명 상태. */
+export interface HazardLobeLife {
+  /** 크기 배율. **단조 증가**한다 — 계속 자라다 알파가 죽어 "터진" 것으로 읽힌다. */
+  readonly scale: number;
+  /** 알파 배율 [0,1]. 양 끝에서 정확히 0 이라 팝인·팝아웃이 없다. */
+  readonly alpha: number;
+}
+
+/** 로브 수명 주기의 하한·상한(프레임). 로브마다 달라야 전체가 동시에 숨쉬지 않는다. */
+const LOBE_PERIOD_MIN = 80;
+const LOBE_PERIOD_SPAN = 90;
+
+/**
+ * 로브 하나의 수명(순수 함수 — 상태 없음, `atmosphere.ts` 규율).
+ *
+ * 태어나서(scale 작고 alpha 0) → 부풀고(둘 다 오름) → 터진다(scale 은 최대인데 alpha 0).
+ * 크기를 단조 증가로 둔 것이 핵심이다: 크기가 알파를 따라 되돌아오면 "숨쉬는 원"이 되어
+ * 다시 도형으로 읽힌다.
+ *
+ * @param speed 운동 속도 배율. 예열 중에는 느리게(<1) 굴려 "아직 끓지 않는다"를 만든다.
+ */
+export function lobeLife(seed: number, i: number, frameTick: number, speed = 1): HazardLobeLife {
+  const period = LOBE_PERIOD_MIN + LOBE_PERIOD_SPAN * hash3(seed, i, 2, 0);
+  const phase = hash3(seed, i, 2, 1);
+  const u = ((((frameTick * speed) / period + phase) % 1) + 1) % 1;
+  return { scale: 0.28 + 0.85 * u, alpha: Math.sin(Math.PI * u) };
+}
+
+// ---------------------------------------------------------------------------
+// 존재감 — 재질은 예열 중에도 화면에 있어야 한다
+// ---------------------------------------------------------------------------
+
+/**
+ * 열이 0 일 때도 남는 재질의 최소 존재감.
+ *
+ * ## 왜 0 이면 안 되는가 (1차 통합 반려의 근본 원인)
+ * 1차 구현은 재질 여섯 겹 중 다섯을 `heat` 에 곱했다. 그런데 **박격 장판은 예열로 등장해
+ * 활성 창이 8틱(≈0.13초)뿐이고 그 직후 엔티티가 소멸한다.** 상승률 3.2/s 로 8프레임이면
+ * 피크가 0.43 이고, 예열 내내는 정확히 0 이다 → 화면에 재질이 없었다. 실측 겹별 알파가
+ * `로브 5개 전부 0 · edge visible=false · motes visible=false` 였다.
+ *
+ * **예열은 탄막 게임에서 가장 오래 보이는 상태다.** 거기에 예산을 덜 쓰는 설계가 틀렸다.
+ * 그래서 존재는 열과 무관하게 보장하고, 예열↔활성은 **강도·색·운동 속도**로 가른다
+ * ({@link materialIntensity}).
+ */
+export const MATERIAL_PRESENCE_FLOOR = 0.28;
+
+/** 열 → 이번 프레임 존재감 [FLOOR, 1]. */
+export function materialPresence(heat: number): number {
+  return MATERIAL_PRESENCE_FLOOR + (1 - MATERIAL_PRESENCE_FLOOR) * sat(heat);
+}
+
+/** 예열↔활성을 가르는 세 축(존재 여부가 **아니다**). */
+export interface HazardIntensity {
+  /** 겹 알파 배율 [FLOOR,1]. */
+  readonly presence: number;
+  /** 색 보간 배율 [0.35,1] — 예열은 종류색에 가깝고(탁하고) 활성은 강조색 쪽으로 밝아진다. */
+  readonly warmth: number;
+  /** 운동 속도 배율 [0.35,1] — 예열은 느리게 끓고 활성은 빠르게 휘몰아친다. */
+  readonly speed: number;
+}
+
+/** 열 → 강도 3축. 예열(heat=0)에서도 셋 다 0 이 아니다. */
+export function materialIntensity(heat: number): HazardIntensity {
+  const h = sat(heat);
+  return {
+    presence: materialPresence(h),
+    warmth: 0.35 + 0.65 * h,
+    speed: 0.35 + 0.65 * h,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 겹 LOD — 예산은 "개체를 빼는" 것이 아니라 "겹을 빼는" 것이다
+// ---------------------------------------------------------------------------
+
+/**
+ * 재질 상세 단계.
+ *
+ * ## 왜 개수 상한이 아니라 LOD 인가 (1차 통합 반려 사유)
+ * 1차는 `MAX_FIELD_MATERIALS = 10` 개체 상한이었다. 그런데 실제 장판이 톡사르 **41개**,
+ * 크라스 **23개**다. 나란히 붙은 동일 오염 셀 넷 중 **하나만** 재질을 갖고 셋은 변경 전
+ * 그대로라, 화면에서 같은 해저드가 두 가지 스타일로 그려져 **렌더링 버그로 읽혔다.**
+ *
+ * 개체를 빼면 "종류가 다른 것"으로 보이고, 겹을 빼면 "멀리 있는 것"으로 보인다. 후자만이
+ * 정당한 예산 절감이다. 게다가 유기적 실루엣(불규칙 채움·경계선)은 이제 `drawHazardZone` 이
+ * **전 장판에** 그리므로, LOD 가 낮아져도 **정체성은 동일**하다 — 빠지는 것은 디테일뿐이다.
+ */
+export type HazardLod =
+  /** 전 겹. */
+  | 'full'
+  /** 입자·접지 없음(로브·환경·고조는 유지). */
+  | 'mid'
+  /** 환경·고조만. */
+  | 'lite';
+
+/** `full` 을 받는 장판 수. */
+export const LOD_FULL_COUNT = 6;
+/** `full`+`mid` 누적 수. 이 위는 전부 `lite`. */
+export const LOD_MID_COUNT = 18;
+/**
+ * 재질을 붙일 장판 수의 **안전 밸브**. 상한이 아니라 폭주 방어다 — 실측 최대가 톡사르 41개라
+ * 그 위로 넉넉히 잡았다. 넘어가도 `drawHazardZone` 의 유기적 실루엣은 그대로라 스타일이
+ * 갈리지 않는다(개체 상한의 원죄였던 문제가 구조적으로 사라졌다).
+ */
+export const MAX_FIELD_MATERIALS = 64;
+
+/**
+ * 부착 순번 → LOD. **부착 시점에 한 번 정해지고 바뀌지 않는다.** 매 프레임 예산으로 정하면
+ * 장판 수가 경계를 넘나들 때 겹이 켜졌다 꺼지며 한 프레임에 튄다(`decorated` 가 그랬다).
+ */
+export function hazardLod(attachIndex: number): HazardLod {
+  if (attachIndex < LOD_FULL_COUNT) return 'full';
+  if (attachIndex < LOD_MID_COUNT) return 'mid';
+  return 'lite';
+}
+
+/** 이 LOD 가 로브를 그리는가. */
+export function lodHasLobes(lod: HazardLod): boolean {
+  return lod !== 'lite';
+}
+/** 이 LOD 가 접지(접촉 그늘·림)를 그리는가. */
+export function lodHasGrounding(lod: HazardLod): boolean {
+  return lod === 'full';
+}
+/** 이 LOD 가 입자를 그리는가. */
+export function lodHasMotes(lod: HazardLod): boolean {
+  return lod === 'full';
+}
+/** 이 LOD 의 로브 수(낮은 LOD 는 개수를 줄인다 — 겹을 빼는 것과 같은 축). */
+export function lodLobeCount(lod: HazardLod): number {
+  return lod === 'full' ? LOBE_COUNT : lod === 'mid' ? Math.round(LOBE_COUNT / 2) : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -280,12 +487,23 @@ export interface HazardMote {
 }
 
 /**
- * 티어·게이트 → 장판 하나의 입자 수. `particles: 'off'` 면 0(접근성·저사양에서 통째로 사라진다).
+ * 티어·게이트 → 장판 하나의 입자 수.
+ *
+ * ## 분기 순서가 계약이다 (1차 통합 반려 사유)
+ * 1차 구현은 `'min'` 을 `tier === 'low'` **보다 먼저** 봤다. 그런데 low 티어의 기본 게이트가
+ * 바로 `particles: 'min'` 이라, `tier === 'low' ? 0` 분기가 **영영 도달하지 않았다** —
+ * quality low 에서 입자 3개가 그대로 떴다. 단위 테스트도 같은 착각을 그대로 단언해
+ * (`moteBudget('low', LOW) === 3`) 결함을 굳혀 놓고 있었고, 보고서의 "low: 입자 소멸"은
+ * 그래서 **거짓 주장**이었다.
+ *
+ * 티어를 먼저 본다. 저사양에서 입자는 가장 먼저 버릴 것이고, 그 판단이 게이트의 세부 단계에
+ * 가려지면 안 된다.
  */
 export function moteBudget(tier: QualityTier, gates: EffectGates): number {
   if (gates.particles === 'off') return 0;
+  if (tier === 'low') return 0;
   if (gates.particles === 'min') return 3;
-  return tier === 'low' ? 0 : tier === 'med' ? 5 : 10;
+  return tier === 'med' ? 5 : 10;
 }
 
 /** 입자 한 주기의 프레임 수(기본). 입자마다 위상이 달라 뭉치지 않는다. */
@@ -438,16 +656,5 @@ export function hazardAmbience(
   return tier === 'low' ? null : shape;
 }
 
-// ---------------------------------------------------------------------------
-// 예산 — 오염 모드는 반경 100 짜리 셀이 화면에 여럿 깔린다
-// ---------------------------------------------------------------------------
-
-/**
- * 한 프레임에 **재질을 붙일 장판 수 상한**. `MAX_DECORATED_HAZARDS`(12)보다 작게 둬서 재질
- * 집합이 장식 집합의 진부분집합이 되게 한다 — 재질만 있고 빗금이 없는 장판이 생기면 색 외
- * 채널이 사라진 것처럼 보이기 때문이다.
- *
- * 상한을 넘는 장판은 팩토리가 **빈 배열**을 돌려주고, 그러면 `HazardHost` 는 그 장판을 추적조차
- * 하지 않는다(Map 성장 0 · 매 프레임 호출 0). 채움·테두리는 그대로라 장판이 안 보이는 일은 없다.
- */
-export const MAX_FIELD_MATERIALS = 10;
+// 예산은 개체 상한이 아니라 겹 LOD 다 — 위 `hazardLod` 절이 정본이고, 안전 밸브
+// `MAX_FIELD_MATERIALS` 도 거기 있다.

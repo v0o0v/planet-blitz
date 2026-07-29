@@ -29,10 +29,21 @@ import {
   hazardAmbience,
   hazardAmbienceShape,
   hazardGrounding,
+  hazardLod,
   hazardMaterialKind,
   kindIsHarmful,
   lobeAt,
+  lobeLife,
+  lodHasGrounding,
+  lodHasLobes,
+  lodHasMotes,
+  lodLobeCount,
   LOBE_COUNT,
+  LOD_FULL_COUNT,
+  LOD_MID_COUNT,
+  MATERIAL_PRESENCE_FLOOR,
+  materialIntensity,
+  materialPresence,
   mixColor,
   moteAt,
   moteBudget,
@@ -257,6 +268,69 @@ describe('재질 종류', () => {
 // 4. 예열 → 활성 연속 전이
 // ---------------------------------------------------------------------------
 
+describe('예열에도 재질이 화면에 있다 — 1차 반려의 근본 원인', () => {
+  // 박격 장판은 예열(active=false)로 등장하고 활성 창이 8틱(≈0.13초)뿐이며 직후 소멸한다.
+  // 1차 구현은 재질 여섯 겹 중 다섯을 `heat` 에 곱해서, 예열 내내 알파가 정확히 0 이었다.
+  // 실측: 로브 5개 전부 0 · edge visible=false · motes visible=false.
+  // **예열은 탄막 게임에서 가장 오래 보이는 상태다.**
+
+  it('열이 0 이어도 존재감이 0 이 아니다', () => {
+    expect(materialPresence(0)).toBeGreaterThan(0.2);
+    expect(MATERIAL_PRESENCE_FLOOR).toBeGreaterThan(0.2);
+  });
+
+  it('8틱 활성 창의 피크 열에서도, 그 전 예열 구간에서도 재질이 보인다', () => {
+    // 60fps 8프레임 동안만 active=true 인 실제 박격 시나리오를 그대로 굴린다.
+    let h = 0;
+    const warmPresence = materialPresence(h);
+    for (let i = 0; i < 8; i++) h = stepHeat(h, true, 1 / 60);
+    // 1차 설계에서 이 피크는 0.43 이었고, 예열 구간은 0 이었다.
+    expect(materialPresence(h)).toBeGreaterThan(warmPresence);
+    expect(warmPresence).toBeGreaterThan(0.2); // ← 1차에서는 여기가 0 이었다
+  });
+
+  it('예열↔활성은 존재가 아니라 강도·색·운동 속도로 갈린다', () => {
+    const warm = materialIntensity(0);
+    const hot = materialIntensity(1);
+    // 셋 다 예열에서 0 이 아니고, 셋 다 활성에서 더 크다 — 그것이 "연속 전이"의 정의다.
+    expect(warm.presence).toBeGreaterThan(0);
+    expect(warm.warmth).toBeGreaterThan(0);
+    expect(warm.speed).toBeGreaterThan(0);
+    expect(hot.presence).toBeGreaterThan(warm.presence);
+    expect(hot.warmth).toBeGreaterThan(warm.warmth);
+    expect(hot.speed).toBeGreaterThan(warm.speed);
+    expect(hot.presence).toBeLessThanOrEqual(1);
+  });
+
+  it('로브가 태어나-부풀고-터진다(크기는 단조 증가, 알파는 양 끝에서 0)', () => {
+    // 크기가 알파를 따라 되돌아오면 "숨쉬는 원"이 되어 다시 도형으로 읽힌다.
+    let prevScale = -1;
+    let sawPeak = false;
+    for (let t = 0; t < 400; t++) {
+      const l = lobeLife(7, 0, t);
+      if (l.scale < prevScale) {
+        // 주기가 넘어간 지점 — 여기서만 감소가 허용된다.
+        expect(l.scale).toBeLessThan(0.5);
+      }
+      prevScale = l.scale;
+      if (l.alpha > 0.9) sawPeak = true;
+      expect(l.alpha).toBeGreaterThanOrEqual(0);
+      expect(l.alpha).toBeLessThanOrEqual(1);
+    }
+    expect(sawPeak).toBe(true);
+  });
+
+  it('로브마다 주기가 달라 전체가 동시에 숨쉬지 않는다', () => {
+    const at = (i: number): number => lobeLife(3, i, 40).alpha;
+    const vals = [0, 1, 2, 3, 4, 5].map(at);
+    expect(new Set(vals.map((v) => v.toFixed(3))).size).toBeGreaterThan(3);
+  });
+
+  it('운동 속도가 느려지면 같은 프레임에서 다른 위상이다(예열은 천천히 끓는다)', () => {
+    expect(lobeLife(5, 0, 60, 1).scale).not.toBeCloseTo(lobeLife(5, 0, 60, 0.35).scale, 3);
+  });
+});
+
 describe('예열→활성 전이 — 불리언 데이터에서 연속 화면을 만든다', () => {
   it('활성 진입이 한 프레임에 끝나지 않는다', () => {
     let h = 0;
@@ -386,11 +460,20 @@ describe('입자', () => {
     }
   });
 
-  it('입자 예산이 티어·게이트를 따른다', () => {
-    expect(moteBudget('low', LOW)).toBe(3); // low 티어 게이트는 particles:'min'
-    expect(moteBudget('high', { ...HIGH, particles: 'off' })).toBe(0);
+  it('low 티어에서는 입자가 통째로 사라진다 (1차 구현의 도달 불가 분기)', () => {
+    // 1차 구현은 `'min'` 을 `tier === 'low'` 보다 **먼저** 봤다. low 티어의 기본 게이트가 바로
+    // `particles: 'min'` 이라 low 분기가 영영 도달하지 않았고, 이 테스트의 옛 버전은 그 결함을
+    // 그대로 단언해(`toBe(3)`) 굳혀 놓고 있었다. 보고서의 "low: 입자 소멸"은 그래서 거짓이었다.
+    expect(moteBudget('low', LOW)).toBe(0);
     expect(moteBudget('low', { ...HIGH, particles: 'normal' })).toBe(0);
+    expect(moteBudget('low', { ...HIGH, particles: 'min' })).toBe(0);
+  });
+
+  it('입자 예산이 티어·게이트를 따른다', () => {
+    expect(moteBudget('high', { ...HIGH, particles: 'off' })).toBe(0);
+    expect(moteBudget('med', { ...HIGH, particles: 'min' })).toBe(3);
     expect(moteBudget('med', HIGH)).toBeLessThan(moteBudget('high', HIGH));
+    expect(moteBudget('high', HIGH)).toBeGreaterThan(0);
   });
 });
 
@@ -463,6 +546,7 @@ function stubCanvas(): HazardCanvas {
     arc: () => c,
     moveTo: () => c,
     lineTo: () => c,
+    poly: () => c,
     fill: () => c,
     stroke: () => c,
   };
@@ -516,26 +600,41 @@ describe('배선 · 비용 상한', () => {
     host.clear(ctxFor(layer));
   });
 
-  it('오염 셀이 몇 개가 깔려도 재질은 상한에서 멈춘다', () => {
+  it('오염 셀이 41개여도 **전부** 재질을 받는다 (개체를 빼면 스타일이 갈린다)', () => {
+    // 1차 반려 사유: `MAX_FIELD_MATERIALS = 10` 개체 상한 때문에 실제 41개인 톡사르에서
+    // 나란한 셀 넷 중 하나만 재질을 갖고 셋은 변경 전 그대로였다 → 같은 해저드가 두 스타일로
+    // 그려져 **렌더링 버그로 읽혔다.** 예산은 개체가 아니라 겹에서 깎는다.
     const layer = new Container();
     const host = new HazardHost();
-    const cells = Array.from({ length: 40 }, (_, i) => hazardEntity(i + 1, { radius: 100 }));
+    const cells = Array.from({ length: 41 }, (_, i) => hazardEntity(i + 1, { radius: 100 }));
     host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer));
-    expect(host.materialCount).toBe(MAX_FIELD_MATERIALS);
-    expect(layer.children.length).toBe(MAX_FIELD_MATERIALS);
-    expect(hazardFieldLiveCount()).toBe(MAX_FIELD_MATERIALS);
+    expect(host.materialCount).toBe(41);
+    expect(layer.children.length).toBe(41);
     host.clear(ctxFor(layer));
   });
 
-  it('재질 상한이 장식 예산보다 작다(재질만 있고 색 외 채널이 없는 장판을 만들지 않는다)', () => {
-    // MAX_FIELD_MATERIALS < MAX_DECORATED_HAZARDS 라 재질 집합은 장식 집합의 진부분집합이다.
-    const layer = new Container();
-    const host = new HazardHost();
-    const cells = Array.from({ length: 40 }, (_, i) => hazardEntity(i + 1, { radius: 100 }));
-    host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer));
-    // 장식을 못 받은 장판(13번째 이후)은 재질도 못 받았다.
-    expect(host.materialCount).toBeLessThanOrEqual(12);
-    host.clear(ctxFor(layer));
+  it('안전 밸브는 실측 최대(톡사르 41)보다 넉넉하다', () => {
+    // 상한이 아니라 폭주 방어다 — 실제 장면을 깎으면 안 된다.
+    expect(MAX_FIELD_MATERIALS).toBeGreaterThan(41);
+  });
+
+  it('상세는 부착 순번이 정한 LOD 로 갈린다(겹을 뺀다, 개체가 아니라)', () => {
+    expect(hazardLod(0)).toBe('full');
+    expect(hazardLod(LOD_FULL_COUNT - 1)).toBe('full');
+    expect(hazardLod(LOD_FULL_COUNT)).toBe('mid');
+    expect(hazardLod(LOD_MID_COUNT - 1)).toBe('mid');
+    expect(hazardLod(LOD_MID_COUNT)).toBe('lite');
+    expect(hazardLod(999)).toBe('lite');
+  });
+
+  it('LOD 가 낮아져도 로브는 먼저 얇아지고 마지막에 사라진다(순서가 있다)', () => {
+    expect(lodLobeCount('full')).toBeGreaterThan(lodLobeCount('mid'));
+    expect(lodLobeCount('mid')).toBeGreaterThan(lodLobeCount('lite'));
+    expect(lodLobeCount('lite')).toBe(0);
+    // 입자·접지가 로브보다 먼저 빠진다(가장 비싸고 가장 덜 정체성적이다).
+    expect(lodHasMotes('mid')).toBe(false);
+    expect(lodHasGrounding('mid')).toBe(false);
+    expect(lodHasLobes('mid')).toBe(true);
   });
 
   it('작은 장판은 재질을 받지 않는다(장식 하한과 같은 판단)', () => {
@@ -608,6 +707,40 @@ describe('배선 · 비용 상한', () => {
     expect(layer.children.length).toBe(3);
     host.clear(ctxFor(layer));
     expect(layer.children.length).toBe(0);
+  });
+
+  it('장식 예산이 매 프레임 뒤집혀도 재질은 튀지 않는다', () => {
+    // 1차 반려 사유 ④: 재질은 부착 후 고착인데 `decorated` 는 매 프레임 예산이라, 재질 가진
+    // 장판이 예산에서 밀리면 겹이 on→off 로 **한 프레임에 튀었다.** 장판 수가 호스트 예산(12)을
+    // 넘나드는 톡사르·크라스에서 실제로 발생한다. 지금은 재질이 `decorated` 를 보지 않는다.
+    const layer = new Container();
+    const host = new HazardHost();
+    // 13개 — 호스트 장식 예산(12) 경계를 넘어 마지막 장판의 decorated 가 흔들리는 구간.
+    const cells = Array.from({ length: 13 }, (_, i) => hazardEntity(i + 1, { radius: 100 }));
+    host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer, 'high', 0));
+    const before = layer.children.length;
+    // 순서를 뒤집으면 어느 장판이 예산을 받는지가 통째로 바뀐다.
+    for (let t = 1; t < 6; t++) {
+      const shuffled = t % 2 === 0 ? cells : [...cells].reverse();
+      host.draw(shuffled, stubCanvas(), stubCanvas(), ctxFor(layer, 'high', t));
+      expect(layer.children.length, `t=${t}`).toBe(before);
+      expect(host.materialCount, `t=${t}`).toBe(13);
+    }
+    host.clear(ctxFor(layer));
+  });
+
+  it('LOD 는 부착 시 정해지고 수명 내내 바뀌지 않는다', () => {
+    const layer = new Container();
+    const host = new HazardHost();
+    const cells = Array.from({ length: 3 }, (_, i) => hazardEntity(i + 1, { radius: 100 }));
+    host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer, 'high', 0));
+    const names = layer.children.map((c) => c.label);
+    for (let t = 1; t < 5; t++) {
+      // 티어가 오르내려도 LOD 는 그대로다(티어는 겹의 내용을, LOD 는 겹의 유무를 정한다).
+      host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer, t % 2 === 0 ? 'low' : 'high', t));
+    }
+    expect(layer.children.map((c) => c.label)).toEqual(names);
+    host.clear(ctxFor(layer));
   });
 
   it('티어가 바뀌어도 재질이 늘어나지 않는다(재구성이 컨테이너를 새로 붙이지 않는다)', () => {
