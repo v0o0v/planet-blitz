@@ -23,9 +23,12 @@ import { loadGameTextures, applyShipSprite } from './render/textures.js';
 import { EntityRenderer } from './render/entityRenderer.js';
 import { DefensePreviewController } from './render/defensePreview.js';
 import type { DefensePreviewControls } from './render/defensePreview.js';
-import { AutotileBackground, loadWangTiles } from './render/autotile.js';
+import { AutotileBackground, loadWangTiles, loadInvasionWangTiles } from './render/autotile.js';
 import type { WangTiles } from './render/autotile.js';
 import { PlanetEnvironment } from './render/env/planetEnvironment.js';
+// 침공 환경 테마의 합성 행성 인덱스(6·7·8). 침공 런의 `config.planet` 은 항상 0(카르곤)이라
+// 행성 축을 그대로 넘기면 "침공인데 카르곤 화면" 이 된다 — 그 자리를 이 함수가 막는다.
+import { invasionEnvPlanet } from './render/env/themes/invasion/index.js';
 import { InvasionBackdrop } from './render/invasionBackdrop.js';
 import { FpsMeter } from './render/fpsMeter.js';
 import { graphicsTierController } from './render/graphicsRuntime.js';
@@ -142,6 +145,8 @@ import {
   INVASION_TOTAL_TICKS,
   MAINTENANCE_FULL,
   PHASE_L1,
+  PHASE_L2,
+  PHASE_L3,
   normalizeInvasionLayers,
 } from './sim/invasion/index.js';
 import type { Invasion3Config } from './sim/invasion/index.js';
@@ -203,12 +208,8 @@ async function main(): Promise<void> {
   // fallback and below entities. Each run's planet tileset + seed is applied in
   // `startRun`; a planet with no bundled tileset keeps the TilingSprite backdrop.
   const autotile = new AutotileBackground();
-  // 침공 3레이어 전용 배경(L10-render). flat TilingSprite 바로 위·autotile 아래에 둔다 —
-  // 침공은 `autotile.configure(null, …)` 로 Wang 바닥을 끄므로 순서 다툼이 없고, 침공이
-  // 아닐 때는 `visible = false` 라 기존 화면이 한 픽셀도 바뀌지 않는다.
   const invasionBackdrop = new InvasionBackdrop(textures, DESIGN_WIDTH, DESIGN_HEIGHT);
   invasionBackdrop.visible = false;
-  gameApp.stage.addChild(invasionBackdrop.view);
   gameApp.stage.addChild(autotile.layer);
   // 행성 환경 레이어 스택(카르곤 AAA 배경). 슬롯 컨테이너 4개만 여기서 stage 깊이에 끼우고,
   // 실제 레이어 등록은 planetEnvironment.ts 의 레지스트리 한 곳에서 한다 — "모듈은 있는데
@@ -217,6 +218,14 @@ async function main(): Promise<void> {
   // far 는 지형 바닥(autotile) **뒤**여야 하므로 이미 붙은 autotile 아래 인덱스로 끼운다.
   gameApp.stage.addChildAt(env.slot('far'), gameApp.stage.getChildIndex(autotile.layer));
   gameApp.stage.addChild(env.slot('floor'));
+  // 침공 3레이어 배경 — **지형·환경 위, 엔티티 아래**. 예전에는 flat TilingSprite 바로 위·
+  // autotile 아래였고, 그 깊이의 근거는 "침공은 `autotile.configure(null, …)` 로 Wang 바닥을
+  // 끄므로 순서 다툼이 없다"였다. 침공에도 Wang 지형을 켜면서 그 전제가 깨졌다 — Wang 타일은
+  // 알파 255 불투명이라 예전 깊이에 두면 배경 3종과 전환 연출이 통째로 가려진다.
+  // 그래서 이 레이어는 배경이 아니라 **페이즈 전환 베일**이 됐다(평상시 `view.alpha = 0`,
+  // 전환 45틱 동안만 떠올라 타일셋 스왑의 하드 컷을 가린다 — `invasionBackdrop.ts` 머리말).
+  // 엔티티 **아래**인 이유: 베일이 절정일 때도 함선·탄·적은 가려지면 안 된다.
+  gameApp.stage.addChild(invasionBackdrop.view);
   // Load all six planet Wang tilesets up front (missing ones resolve to null →
   // that planet falls back to the procedural TilingSprite, regression 0).
   const wangTiles: (WangTiles | null)[] = await Promise.all([
@@ -226,6 +235,13 @@ async function main(): Promise<void> {
     loadWangTiles(3),
     loadWangTiles(4),
     loadWangTiles(5),
+  ]);
+  // 침공 페이즈별 지형(L1 대기권 · L2 회랑 · L3 코어방). 행성 인덱스가 아니라 페이즈 코드로
+  // 인덱싱한다 — 침공 런의 `config.planet` 은 항상 0(카르곤)이라 행성 축을 쓰면 화면이 틀린다.
+  const invasionWangTiles: (WangTiles | null)[] = await Promise.all([
+    loadInvasionWangTiles(PHASE_L1),
+    loadInvasionWangTiles(PHASE_L2),
+    loadInvasionWangTiles(PHASE_L3),
   ]);
   const entityRenderer = new EntityRenderer(textures);
   gameApp.stage.addChild(entityRenderer.layer);
@@ -859,8 +875,21 @@ async function main(): Promise<void> {
   function beginInvasionBackdrop(phase: number, tick: number): void {
     invasionBackdrop.begin(phase, tick);
     invasionBackdrop.visible = true;
-    // flat 배경은 침공 동안 완전히 가려지므로 끈다(중첩 렌더 낭비 제거).
-    background.visible = false;
+    // flat 배경 규칙을 PvE(`startRun`)와 **하나로 통일**한다. 예전에는 침공만 `false` 고정이라
+    // 침공 타일셋 로드가 실패하면 바닥이 통째로 비었다(베일은 평상시 알파 0 이라 안 덮는다).
+    // 지형이 켜졌으면 가려지므로 끄고, 없으면 폴백을 남긴다 — 규칙이 하나면 갈릴 수 없다.
+    background.visible = !autotile.active;
+  }
+
+  /**
+   * 침공 페이즈의 지형·환경을 건다. 런 개시와 페이즈 전환(베일 절정) **양쪽이 같은 함수**를
+   * 탄다 — 두 경로가 갈리면 "시작은 맞는데 전환하면 틀린" 결함이 생긴다(이 리포의 단골).
+   */
+  function applyInvasionPhaseScenery(phase: number, seed: number): void {
+    autotile.configure(invasionWangTiles[phase] ?? null, seed);
+    // 합성 행성 인덱스 — 침공 config.planet(항상 0=카르곤)을 그대로 넘기면 화산 화면이 나온다.
+    env.configure({ planet: invasionEnvPlanet(phase), seed, renderer: gameApp.app.renderer });
+    background.visible = !autotile.active;
   }
 
   /** 침공이 아닌 런으로 돌아갈 때 전용 배경을 내린다. */
@@ -954,11 +983,10 @@ async function main(): Promise<void> {
     // 기체 스프라이트 교체(렌더 전용) — `createWorld` 앞. PvE `startRun` 과 동일 규약. 소집이면
     // config.shipType 이 이미 pilot.typeId 라(buildRunConfig 가 스탬프) 스프라이트가 자동으로 따라간다.
     applyShipSprite(textures, config.shipType ?? 0);
-    // 레이어별 배경(L1 대기권 → L2 회랑 → L3 코어방). 전환 크로스페이드는 렌더 루프가
-    // 페이즈를 보고 건다(`invasionBackdrop.sync` 는 멱등이라 매 프레임 불러도 무해하다).
+    // 레이어별 지형·환경(L1 대기권 → L2 회랑 → L3 코어방). 페이즈 전환은 렌더 루프가
+    // 베일 절정에서 갈아 끼운다(`invasionBackdrop.sync` 는 멱등이라 매 프레임 불러도 무해하다).
+    applyInvasionPhaseScenery(PHASE_L1, seed);
     beginInvasionBackdrop(PHASE_L1, 0);
-    autotile.configure(null, seed);
-    env.disable();
     currentSeed = seed;
     // 스프라이트 캐시 리셋(B-1) — `createWorld` 앞. 렌더러가 엔티티 id 로 스프라이트를 캐시하고
     // 텍스처를 생성 시점에 묶으므로, 비우지 않으면 바로 위 `applyShipSprite` 가 갈아끼운 기체가
@@ -1012,9 +1040,10 @@ async function main(): Promise<void> {
     // "하네스에서는 되는데 실제 런에서는 안 되는" 결함이 생긴다.
     const config = buildRunConfig(profile, { planet: 0, stage: 1, invasion3 });
     applyShipSprite(textures, config.shipType ?? 0);
+    // 정식 침공과 같은 지형·환경 경로(단일 정본) — 하네스에서만 다른 화면이 나오면
+    // "하네스에서는 되는데 실제 런에서는 안 되는" 결함이 그대로 숨는다.
+    applyInvasionPhaseScenery(PHASE_L1, opts.seed);
     beginInvasionBackdrop(PHASE_L1, 0);
-    autotile.configure(null, opts.seed);
-    env.disable();
     currentSeed = opts.seed;
     // 스프라이트 캐시 리셋(B-1) — `createWorld` 앞(정식 침공·PvE 와 같은 규약).
     entityRenderer.reset();
@@ -1595,7 +1624,13 @@ async function main(): Promise<void> {
     // 여기서는 관찰만 한다. `sync` 는 멱등이라 매 프레임 불러도 되고, 그래서 "페이즈 비교를
     // 잊어 전환이 조용히 사라지는" 결함이 구조적으로 불가능하다(invasionBackdrop.ts 머리말).
     const inv3 = w?.invasion3;
-    if (inv3 !== undefined && w !== null) invasionBackdrop.sync(inv3.phase, w.tick);
+    if (inv3 !== undefined && w !== null) {
+      invasionBackdrop.sync(inv3.phase, w.tick);
+      // 지형 타일셋 교체는 **베일이 가장 불투명한 순간**에만 일어난다(1회 통지). 페이즈 변화
+      // 순간에 갈면 교체가 맨눈에 보이고, 매 프레임 갈면 뷰포트 전체가 매 프레임 재타일된다.
+      const swapPhase = invasionBackdrop.takeTerrainSwap();
+      if (swapPhase >= 0) applyInvasionPhaseScenery(swapPhase, currentSeed);
+    }
 
     // 레벨업 링(AC-4.6) — 런 레벨이 오르면 렌더러에 링을 예약(soundObserver 의 levelUp 과 동일 신호,
     // render-only). 스냅샷엔 level 이 없어 렌더가 스스로 감지 못 하므로 여기서 imperative 로 넘긴다.

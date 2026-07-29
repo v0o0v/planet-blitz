@@ -176,6 +176,16 @@ const MACRO_SCALE_FINE = 3.7;
 /** Planet index → tileset asset basename (matches assets/tilesets/<name>.*). */
 const PLANET_TILESET = ['kargon', 'berdan', 'niflheim', 'arke', 'toxar', 'kras'] as const;
 
+/**
+ * 침공 페이즈 코드 → 타일셋 basename. **페이즈 코드가 곧 인덱스다** — `invasionBackdrop.ts` 의
+ * `INVASION_BACKDROP_INDEX` 와 같은 계약이라 둘이 어긋날 수 없다.
+ *
+ * 침공은 행성 인덱스를 갖지 않는다(`config.planet` 이 항상 0 = 카르곤이라 행성 축을 그대로 쓰면
+ * "침공인데 카르곤 화면" 이 된다). 그래서 행성 배열이 아니라 별도 배열이고, 로더도 이름으로
+ * 부르는 경로를 쓴다.
+ */
+export const INVASION_TILESET = ['invasion_l1', 'invasion_l2', 'invasion_l3'] as const;
+
 type Corner = 'upper' | 'lower';
 interface WangTileMeta {
   corners: { NE: Corner; NW: Corner; SE: Corner; SW: Corner };
@@ -306,7 +316,18 @@ const BAND_SCALE = 5;
  * procedural TilingSprite.
  */
 export async function loadWangTiles(planet: number): Promise<WangTiles | null> {
-  const name = PLANET_TILESET[planet];
+  return loadWangTilesNamed(PLANET_TILESET[planet]);
+}
+
+/**
+ * 침공 페이즈(L1/L2/L3)의 Wang 타일셋. 행성 로더와 **같은 함수**를 타므로 자산 누락 내성·
+ * 변형·밴드 처리가 갈릴 수 없다. 범위 밖 페이즈는 `null` → 호출부가 TilingSprite 폴백을 유지한다.
+ */
+export async function loadInvasionWangTiles(phase: number): Promise<WangTiles | null> {
+  return loadWangTilesNamed(INVASION_TILESET[phase]);
+}
+
+async function loadWangTilesNamed(name: string | undefined): Promise<WangTiles | null> {
   if (name === undefined) return null;
   const url = lookup(TILESET_URLS, `${name}.png`);
   const meta = lookup(TILESET_META, `${name}.json`);

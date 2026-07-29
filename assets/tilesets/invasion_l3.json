@@ -1,0 +1,406 @@
+{
+ "name": "invasion L3 — 코어방",
+ "note": "오프라인 합성. 재생성기는 scripts/tileset-gen.mjs --planet invasion_l3 (프로파일: scripts/tileset-profiles/invasion_l3.mjs).",
+ "tile_size": {
+  "width": 32,
+  "height": 32
+ },
+ "sheet": {
+  "width": 128,
+  "height": 256,
+  "cols": 4,
+  "rows": 8
+ },
+ "tileset_data": {
+  "tiles": [
+   {
+    "name": "wang_0",
+    "corners": {
+     "NW": "lower",
+     "NE": "lower",
+     "SE": "lower",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 0,
+     "y": 0,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_1",
+    "corners": {
+     "NW": "lower",
+     "NE": "lower",
+     "SE": "lower",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 32,
+     "y": 0,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_2",
+    "corners": {
+     "NW": "lower",
+     "NE": "lower",
+     "SE": "upper",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 64,
+     "y": 0,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_3",
+    "corners": {
+     "NW": "lower",
+     "NE": "lower",
+     "SE": "upper",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 96,
+     "y": 0,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_4",
+    "corners": {
+     "NW": "lower",
+     "NE": "upper",
+     "SE": "lower",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 0,
+     "y": 32,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_5",
+    "corners": {
+     "NW": "lower",
+     "NE": "upper",
+     "SE": "lower",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 32,
+     "y": 32,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_6",
+    "corners": {
+     "NW": "lower",
+     "NE": "upper",
+     "SE": "upper",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 64,
+     "y": 32,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_7",
+    "corners": {
+     "NW": "lower",
+     "NE": "upper",
+     "SE": "upper",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 96,
+     "y": 32,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_8",
+    "corners": {
+     "NW": "upper",
+     "NE": "lower",
+     "SE": "lower",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 0,
+     "y": 64,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_9",
+    "corners": {
+     "NW": "upper",
+     "NE": "lower",
+     "SE": "lower",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 32,
+     "y": 64,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_10",
+    "corners": {
+     "NW": "upper",
+     "NE": "lower",
+     "SE": "upper",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 64,
+     "y": 64,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_11",
+    "corners": {
+     "NW": "upper",
+     "NE": "lower",
+     "SE": "upper",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 96,
+     "y": 64,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_12",
+    "corners": {
+     "NW": "upper",
+     "NE": "upper",
+     "SE": "lower",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 0,
+     "y": 96,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_13",
+    "corners": {
+     "NW": "upper",
+     "NE": "upper",
+     "SE": "lower",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 32,
+     "y": 96,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_14",
+    "corners": {
+     "NW": "upper",
+     "NE": "upper",
+     "SE": "upper",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 64,
+     "y": 96,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_15",
+    "corners": {
+     "NW": "upper",
+     "NE": "upper",
+     "SE": "upper",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 96,
+     "y": 96,
+     "width": 32,
+     "height": 32
+    }
+   }
+  ],
+  "tile_size": {
+   "width": 32,
+   "height": 32
+  },
+  "total_tiles": 16
+ },
+ "base_band": 1,
+ "fill_variants": [
+  {
+   "key": 0,
+   "band": 0,
+   "bounding_box": {
+    "x": 0,
+    "y": 128,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 1,
+   "bounding_box": {
+    "x": 32,
+    "y": 128,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 2,
+   "bounding_box": {
+    "x": 64,
+    "y": 128,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 0,
+   "bounding_box": {
+    "x": 96,
+    "y": 128,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 2,
+   "bounding_box": {
+    "x": 0,
+    "y": 160,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 0,
+   "bounding_box": {
+    "x": 32,
+    "y": 160,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 1,
+   "bounding_box": {
+    "x": 64,
+    "y": 160,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 0,
+   "bounding_box": {
+    "x": 96,
+    "y": 160,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 1,
+   "bounding_box": {
+    "x": 0,
+    "y": 192,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 2,
+   "bounding_box": {
+    "x": 32,
+    "y": 192,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 0,
+   "bounding_box": {
+    "x": 64,
+    "y": 192,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 2,
+   "bounding_box": {
+    "x": 96,
+    "y": 192,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 0,
+   "bounding_box": {
+    "x": 0,
+    "y": 224,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 1,
+   "bounding_box": {
+    "x": 32,
+    "y": 224,
+    "width": 32,
+    "height": 32
+   }
+  }
+ ]
+}

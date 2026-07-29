@@ -1,6 +1,19 @@
 /**
  * 침공 3레이어 배경 · 레이어 전환 크로스페이드 (M7a · L10-render).
  *
+ * ## ⚠️ 이 모듈의 역할이 바뀌었다 — 배경이 아니라 **페이즈 전환 베일**이다
+ * 침공에도 Wang 지형(`autotile`)을 켜면서 이 레이어는 스테이지 깊이상 **지형 위**로 올라갔다.
+ * Wang 타일은 알파 255 불투명이라 예전 깊이(지형 아래)에 두고 지형을 켜면 배경 3종과
+ * 크로스페이드가 통째로 가려져 사라진다 — "지형 추가"가 아니라 "배경 삭제"가 되는 것이다.
+ *
+ * 그래서 평상시 `view.alpha = 0`(화면 기여 0)이고, 페이즈가 바뀌는 45틱 동안만 떠올랐다
+ * 가라앉아 **타일셋 스왑의 하드 컷을 가린다**({@link backdropVeilAlpha}). 베일이 가장
+ * 불투명한 순간에 지형을 갈아 끼우면 교체가 화면에서 보이지 않는다 —
+ * 그 시점 통지가 {@link InvasionBackdrop.takeTerrainSwap} 이다.
+ *
+ * `backdropCrossfadeAlpha`·`invasionBackdropTexture`·`INVASION_BACKDROP_INDEX` 는 그대로다.
+ * 베일 곡선도 그 순수 함수에서 파생한다(두 개의 감쇠 곡선을 손으로 적으면 갈라진다).
+ *
  * ## 왜 별도 모듈인가
  * 정찰 결론대로 **스크롤 방향 파라미터화는 불필요**하다 — 배경은 이미 카메라(camX/camY)
  * 구동이고, 침공에서는 sim 이 권위 카메라(강제 스크롤 창 중심)를 스냅샷에 실어 주므로
@@ -46,6 +59,25 @@ export function backdropCrossfadeAlpha(elapsed: number): number {
 }
 
 /**
+ * 전이 경과 틱 → **베일** 알파(0..1). 순수 함수이고 {@link backdropCrossfadeAlpha} 에서 파생한다.
+ *
+ * 앞 절반에서 0 → 1 로 떠오르고 뒤 절반에서 1 → 0 으로 가라앉는다. 전이 밖(경과 ≤ 0 또는
+ * ≥ {@link INVASION_CROSSFADE_TICKS})은 **정확히 0** 이다 — 침공 중 대부분의 프레임에서 이
+ * 레이어가 화면에 한 픽셀도 기여하지 않는다는 뜻이고, 그래야 그 아래 Wang 지형이 보인다.
+ *
+ * 감쇠 곡선을 새로 적지 않고 크로스페이드 함수를 반으로 접어 쓴다. 두 벌을 손으로 적으면
+ * 한쪽만 손보다 갈라지는 것이 이 리포의 반복 결함이다.
+ */
+export function backdropVeilAlpha(elapsed: number): number {
+  if (!(elapsed > 0)) return 0; // NaN 방어 포함
+  if (elapsed >= INVASION_CROSSFADE_TICKS) return 0;
+  const half = INVASION_CROSSFADE_TICKS / 2;
+  return elapsed <= half
+    ? backdropCrossfadeAlpha(elapsed * 2)
+    : backdropCrossfadeAlpha((INVASION_CROSSFADE_TICKS - elapsed) * 2);
+}
+
+/**
  * 페이즈에 해당하는 배경 텍스처. 범위 밖 페이즈는 L1(0)로 폴백하고, 침공 배경 슬롯이 비어
  * 있으면 행성 배경 0 번으로 폴백한다(자산 누락에도 화면이 검게 남지 않는다).
  */
@@ -65,9 +97,11 @@ export function invasionBackdropTexture(textures: PlaceholderTextures, phase: nu
  *
  * ```ts
  * const backdrop = new InvasionBackdrop(textures, DESIGN_WIDTH, DESIGN_HEIGHT);
- * stage.addChildAt(backdrop.view, 0);
- * backdrop.begin(PHASE_L1, 0);              // 런 시작 — 페이드 없이 즉시 확정
+ * stage.addChild(backdrop.view);            // ⚠️ autotile.layer 와 env 슬롯 **위**(베일)
+ * backdrop.begin(PHASE_L1, 0);              // 런 시작 — 베일 없이 즉시 확정(alpha 0)
  * backdrop.sync(world.invasion3.phase, tick); // 매 프레임(멱등)
+ * const swap = backdrop.takeTerrainSwap();  // 베일 절정에서 1회만 페이즈를 돌려준다
+ * if (swap >= 0) autotile.configure(invasionTiles[swap], seed);
  * backdrop.scroll(camX, camY);
  * ```
  */
@@ -83,6 +117,13 @@ export class InvasionBackdrop {
   private transitionTick = 0;
   /** 전이 진행 중인지(끝나면 false — 매 프레임 알파를 다시 쓰지 않는다). */
   private fading = false;
+  /**
+   * 베일이 절정을 지났고 아직 호출부가 가져가지 않은 지형 교체 대상 페이즈(-1 = 없음).
+   * {@link takeTerrainSwap} 이 **한 번만** 돌려준다 — 매 프레임 재타일을 유발하지 않는다.
+   */
+  private pendingSwap = -1;
+  /** 이번 전이의 교체 통지가 이미 준비 큐로 넘어갔는가(절정 판정 1회용). */
+  private swapArmed = false;
 
   constructor(
     private readonly textures: PlaceholderTextures,
@@ -107,15 +148,34 @@ export class InvasionBackdrop {
     return this.fading;
   }
 
-  /** 런 시작 — 페이드 없이 해당 레이어로 즉시 확정한다. */
+  /**
+   * 런 시작 — 베일 없이 해당 레이어로 즉시 확정한다. 베일이므로 `view.alpha` 는 0 이고,
+   * 이 시점의 지형 타일셋은 호출부가 직접 건다(전환이 아니라 시작이라 가릴 하드 컷이 없다).
+   */
   begin(phase: number, tick: number): void {
     const tex = invasionBackdropTexture(this.textures, phase);
     this.back.texture = tex;
     this.front.texture = tex;
     this.front.alpha = 1;
+    this.view.alpha = 0;
     this.phase = phase;
     this.transitionTick = tick;
     this.fading = false;
+    this.pendingSwap = -1;
+    this.swapArmed = false;
+  }
+
+  /**
+   * 지형 타일셋을 갈아 끼울 시점 통지. 베일이 절정(불투명)을 지난 프레임에 **한 번만**
+   * 그 페이즈를 돌려주고, 그 밖에는 -1 이다.
+   *
+   * 왜 호출부가 페이즈를 직접 보고 갈지 않는가: 페이즈 변화 순간에 갈면 교체가 **맨눈에**
+   * 보인다(베일이 아직 투명하다). 이 통지 하나로 "언제 가려지는가"의 정본이 베일 쪽에 남는다.
+   */
+  takeTerrainSwap(): number {
+    const p = this.pendingSwap;
+    this.pendingSwap = -1;
+    return p;
   }
 
   /**
@@ -138,14 +198,24 @@ export class InvasionBackdrop {
       this.phase = phase;
       this.transitionTick = tick;
       this.fading = true;
+      this.swapArmed = false;
+      this.view.alpha = 0;
       return;
     }
     if (!this.fading) return;
-    const a = backdropCrossfadeAlpha(tick - this.transitionTick);
-    this.front.alpha = a;
-    if (a >= 1) {
+    const elapsed = tick - this.transitionTick;
+    // 베일 안에서 두 장이 교차 디졸브한다 — 베일이 걷힐 때 앞 장(새 레이어)만 남는다.
+    this.front.alpha = backdropCrossfadeAlpha(elapsed);
+    this.view.alpha = backdropVeilAlpha(elapsed);
+    // 절정(절반)을 지나면 지형 교체를 예약한다. 이 순간 베일이 가장 불투명하다.
+    if (!this.swapArmed && elapsed >= INVASION_CROSSFADE_TICKS / 2) {
+      this.swapArmed = true;
+      this.pendingSwap = this.phase;
+    }
+    if (elapsed >= INVASION_CROSSFADE_TICKS) {
       this.fading = false;
       this.back.texture = this.front.texture;
+      this.view.alpha = 0;
     }
   }
 
