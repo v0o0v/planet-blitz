@@ -62,6 +62,9 @@ import { graphicsTierController } from './graphicsRuntime.js';
 // Phase 3 발광체 글로우 배선 — 선행 레인 모듈(effects/glow.ts)을 소비만 한다(재작성 금지).
 // render-only(sim·hashWorld/hashEntity 무접촉, ADR-0005). glowLayer=스프라이트 아래·가산(AC-0.8).
 import { buildGlowHalo, createGlowBloomFilter, isGlowEmitter } from './effects/glow.js';
+import { buildGroundShadow, castsGroundShadow, groundShadowGeometry } from './groundShadow.js';
+import { themeFor } from './env/themes/index.js';
+import type { EnvTheme } from './env/theme.js';
 // Phase 3 사망/해저드 이벤트 셰이더 배선 — 선행 레인 모듈(effects/shaderEffects.ts)을 소비만 한다
 // (재작성 금지). render-only(sim·hashWorld/hashEntity 무접촉, ADR-0005). 전부 eventShaders 게이트
 // (High 티어 전용) 뒤에 격리 — 저티어에선 기존 즉시 destroy·헤일로만 거동 유지(AC-3.6 폴백).
@@ -215,6 +218,22 @@ const MAX_ONESHOTS = 48;
  * 트레일 없이 렌더된다(스트릭 Graphics 무한 성장 방어). placeholder, defer-balance-tuning.
  */
 const MAX_BULLET_TRAILS = 64;
+/**
+ * 동시 접지 그림자 상한. 그림자 대상은 이미 "부피 있는 실체"로 좁혀져 있어(탄·젬 제외) 보통
+ * 수십 개지만, 군집 스폰·설비 다수 화면에서 shadowLayer 가 무한 성장하지 않게 못 박는다
+ * (MAX_ONESHOTS·MAX_BULLET_TRAILS 와 동형 정신). placeholder, defer-balance-tuning.
+ */
+const MAX_GROUND_SHADOWS = 160;
+
+/**
+ * 접지 그림자 1개의 추적 레코드. `dx`/`dy` 는 테마 광원에서 파생된 **불변** 오프셋이라 생성 시
+ * 한 번만 구한다 — 매 프레임 cos/sin 을 다시 돌리지 않기 위한 캐시다.
+ */
+interface GroundShadowEntry {
+  readonly view: Container;
+  readonly dx: number;
+  readonly dy: number;
+}
 /**
  * 그레이징 판정 대역폭(월드 유닛, AC-4.5). 플레이어↔적탄 거리가 (충돌 반경, 충돌 반경+이 값] 이면
  * "스칠 뻔"으로 본다 — 판정점 안(충돌)도 아니고 멀지도 않은 근접 링. placeholder, defer-balance-tuning.
@@ -643,6 +662,32 @@ export class EntityRenderer {
    */
   private readonly glowHalos = new Map<number, Container>();
   /**
+   * 접지 그림자 레이어 — 곱연산, **지형 오버레이 위 · 스프라이트 아래**. 그림자는 빛의 차폐라
+   * 곱연산이고(색을 더하는 게 아니라 바닥을 누른다), 지형·해저드 위에 얹혀야 "지면에 떨어진
+   * 그림자"로 읽힌다. glowLayer 보다 아래라 발광 헤일로가 자기 그림자에 눌리지 않는다.
+   *
+   * 컨테이너 단위 blend 라 겹친 그림자가 이중으로 어두워지지 않는다(glowLayer 가산 규율과 동형).
+   */
+  private readonly shadowLayer = new Container();
+  /**
+   * 엔티티 id → 접지 그림자 Container. {@link glowHalos} 와 **완전히 평행한 생명주기**다:
+   * 첫 등장 시 굽고, 매 프레임 보간 위치로 미러하고, 소멸·테마 없음·상한 초과 시 회수한다.
+   *
+   * ⚠️ 그림자는 스프라이트의 **자식이 아니라 형제**다(Pixi v8 `Sprite.addChild` deprecate).
+   * 형제는 부모 `destroy` 로 회수되지 않으므로 킬 루프·reset·destroy 가 명시 회수해야 누수가
+   * 0 이다 — 히트 플래시 오버레이·낙하산·이름표가 밟았던 자리와 같다.
+   */
+  private readonly groundShadows = new Map<number, GroundShadowEntry>();
+  /**
+   * 이번 런의 환경 테마(그림자 광원 정본). `null` = 담당 테마 없음 → 그림자를 **한 개도** 안 그린다.
+   *
+   * `curr.planet` 에서 못 읽는다 — 침공 런의 `config.planet` 은 항상 0(카르곤)이고 환경 테마는
+   * **합성 인덱스**(6·7·8)를 쓰기 때문이다(`themes/invasion/index.ts` 의 `invasionEnvPlanet`).
+   * 그래서 `env.configure` 와 **같은 인덱스**를 main.ts 가 {@link setEnvPlanet} 으로 먹인다
+   * (`setEncounterType` 과 같은 imperative 훅 규율). 두 소스가 갈리면 화면에 태양이 둘이 된다.
+   */
+  private envTheme: EnvTheme | null = null;
+  /**
    * High 티어 타이트 블룸 필터(AC-3.1) — **지연 1회 생성**해 캐시한다. undefined=아직 미생성,
    * Filter=생성 성공, null=GL 부재/컴파일 실패 폴백(헤일로만, AC-3.6). 매 프레임 재생성 금지
    * ({@link syncGlowBloom} 이 캐시·전이만 관리한다).
@@ -766,6 +811,10 @@ export class EntityRenderer {
     this.glowLayer.blendMode = 'add';
     this.layer.addChild(this.lavaOverlay);
     this.layer.addChild(this.overlay);
+    // 접지 그림자는 지형·해저드 오버레이 **위**, 발광 헤일로·스프라이트 **아래**다. 위 발광
+    // 비대칭 규율의 연장선이며 이유는 {@link shadowLayer} 주석이 정본이다.
+    this.shadowLayer.blendMode = 'multiply';
+    this.layer.addChild(this.shadowLayer);
     this.layer.addChild(this.glowLayer);
     this.layer.addChild(this.spriteLayer);
     this.layer.addChild(this.labelLayer);
@@ -833,6 +882,16 @@ export class EntityRenderer {
     return this.shimmer !== null;
   }
 
+  /**
+   * 현재 살아 있는 접지 그림자 개수. **읽기 전용 관측창** — 테마가 있는 행성에서 부피 있는
+   * 실체에만 그림자가 붙고, 소멸 시 회수되며(형제라 부모 destroy 로 안 걷힌다 — 누수 자리),
+   * 테마 없는 행성에선 0 인지를 자동 통합 테스트가 수치로 못 박게 노출한다. 렌더 거동에는
+   * 관여하지 않는다.
+   */
+  get groundShadowCount(): number {
+    return this.groundShadows.size;
+  }
+
   // ── Phase 4 관측창(읽기 전용) — 자동 배선 통합 테스트가 각 이펙트 트리거의 실효를 수치로 못 박는다
   //    (#1 반복결함 "유닛 그린인데 배선 없음" 방어). 렌더 거동에는 관여하지 않는다.
 
@@ -892,6 +951,24 @@ export class EntityRenderer {
    */
   setEncounterType(type: number): void {
     this.encounterType = type;
+  }
+
+  /**
+   * 이번 런의 **환경 행성 인덱스**를 먹인다(접지 그림자 광원 정본). `null` 이면 그림자를 끄고
+   * 남은 그림자를 전부 회수한다.
+   *
+   * **반드시 `env.configure({ planet })` 와 같은 값을 넘겨라** — 침공은 합성 인덱스(6·7·8)이고
+   * `curr.planet`(항상 0)과 다르다. 두 소스가 갈리면 배경의 광원과 그림자의 광원이 어긋나
+   * 화면에 태양이 둘이 된다(이 리포가 데칼↔지형광에서 이미 겪은 실패의 재현).
+   * render-only(sim·해시 무접촉).
+   */
+  setEnvPlanet(planet: number | null): void {
+    const next = planet === null ? null : (themeFor(planet) ?? null);
+    if (next === this.envTheme) return;
+    this.envTheme = next;
+    // 테마가 바뀌면 광원이 바뀐 것이다 — 이전 광원으로 구운 그림자는 전부 버린다(다음 프레임에
+    // 새 기하로 다시 굽는다). 남기면 오프셋만 옛 방향인 그림자가 그 런 내내 고정된다.
+    this.clearGroundShadows();
   }
 
   /** 스냅샷 1건의 텍스처. 매핑 판단은 순수 함수({@link spriteSlotFor})가 하고 여기서는 해석만 한다. */
@@ -1225,6 +1302,12 @@ export class EntityRenderer {
       // 유지한다. 헤일로는 스프라이트와 별개 레이어라 보간 위치를 매 프레임 미러한다. 탄·적
       // 실루엣은 isGlowEmitter=false 라 헤일로가 없다(탄막 가독성 계약).
       if (gates.halo && isGlowEmitter(e.kind)) this.syncGlowHalo(e.id, tracked.sprite);
+
+      // 접지 그림자 — 담당 테마가 있고(=배경이 켜진 행성) 부피를 가진 실체일 때만. 한 번 굽고
+      // 이후엔 위치만 미러한다(매 프레임 Graphics 재빌드 금지).
+      if (this.envTheme !== null && castsGroundShadow(e.kind)) {
+        this.syncGroundShadow(e.id, tracked.sprite, this.envTheme);
+      }
     }
 
     // ── 엔티티 루프 후처리(Phase 4) — 플레이어 위치·신규 탄 정보가 확정된 뒤 수행 ──────────────
@@ -1286,6 +1369,11 @@ export class EntityRenderer {
         // 발광체 헤일로는 스프라이트 생사와 무관하게 즉시 회수(디졸브로 넘겨도 헤일로는 남기지
         // 않는다 — 발광은 살아있는 발광체만). 발광체가 아니었으면 no-op.
         this.removeGlowHalo(id);
+        // 접지 그림자도 스프라이트 생사와 무관하게 즉시 회수한다. **디졸브 경로에서도** 그렇다:
+        // 디졸브는 스프라이트를 spriteLayer 에 잔류시키지만 그림자는 그 자리에 얼어붙은 채
+        // 남아(위치 미러가 끊긴다) 사라진 실체의 그림자만 바닥에 남는다. 형제라 부모 destroy
+        // 로는 절대 안 걷힌다 — 여기가 누수 자리다.
+        this.removeGroundShadow(id);
         // 킬블로우 데미지 숫자(AC-4.1 엣지 ①) — 보스·엘리트가 사라지면 마지막 잔량(tracked.hp)을 치사
         // 피해로 띄운다(curr 스냅샷이 없어 델타를 못 얻는 경우 보정). 토글 on 한정. sprite.destroy 전이라
         // 위치가 유효하다.
@@ -1587,6 +1675,50 @@ export class EntityRenderer {
     this.glowHalos.delete(id);
   }
 
+  /**
+   * 접지 그림자 하나를 유지·미러한다. 첫 등장 시 스프라이트의 **표시 반치수**(width/2·height/2)와
+   * 테마 광원으로 기하를 구해 굽고, 이후 매 프레임 보간 위치 + 테마 오프셋으로 옮긴다.
+   *
+   * 반치수를 sim radius 가 아니라 표시 크기에서 뽑는 이유는 둘이 다르기 때문이다 — 아군·이익
+   * 오브젝트의 sim radius 는 트리거 반경이고(`friendlyDisplay.displaySize`), 벽은 비정방이다.
+   * 스프라이트 표시 크기는 생성 시 `setSize` 로 확정되고 애니메이션 프레임 교체에도 불변이라,
+   * 여기서 한 번 굽는 것으로 충분하다.
+   *
+   * 상한({@link MAX_GROUND_SHADOWS})을 넘으면 새로 굽지 않는다 — 이미 있는 것은 계속 미러한다
+   * (탄막·군집 밀도에서 스프라이트 수가 무한 성장하지 않게 하는 방어, oneShots 규율과 동형).
+   */
+  private syncGroundShadow(id: number, sprite: Sprite, theme: EnvTheme): void {
+    let sh = this.groundShadows.get(id);
+    if (sh === undefined) {
+      if (this.groundShadows.size >= MAX_GROUND_SHADOWS) return;
+      const geo = groundShadowGeometry(theme.light, sprite.width / 2, sprite.height / 2);
+      sh = { view: buildGroundShadow(geo.rx, geo.ry, geo.alpha), dx: geo.dx, dy: geo.dy };
+      this.shadowLayer.addChild(sh.view);
+      this.groundShadows.set(id, sh);
+    }
+    // 오프셋은 테마 광원의 함수라 엔티티 수명 동안 불변이다 — 생성 시 한 번 구해 두고 매 프레임
+    // 보간 위치에 더하기만 한다(cos/sin 재계산 금지).
+    sh.view.position.set(sprite.x + sh.dx, sprite.y + sh.dy);
+  }
+
+  /** 접지 그림자 하나를 shadowLayer 에서 떼고 destroy 한다(소멸 회수). 없으면 no-op. */
+  private removeGroundShadow(id: number): void {
+    const sh = this.groundShadows.get(id);
+    if (sh === undefined) return;
+    this.shadowLayer.removeChild(sh.view);
+    sh.view.destroy({ children: true });
+    this.groundShadows.delete(id);
+  }
+
+  /** 모든 접지 그림자를 회수한다(테마 전환·리셋·파괴). shadowLayer 컨테이너 자체는 살려 둔다. */
+  private clearGroundShadows(): void {
+    for (const sh of this.groundShadows.values()) {
+      this.shadowLayer.removeChild(sh.view);
+      sh.view.destroy({ children: true });
+    }
+    this.groundShadows.clear();
+  }
+
   /** 모든 발광체 헤일로를 회수한다(게이트 off·리셋·파괴). glowLayer 컨테이너 자체는 살려 둔다. */
   private clearGlowHalos(): void {
     for (const halo of this.glowHalos.values()) {
@@ -1759,6 +1891,9 @@ export class EntityRenderer {
     // 살려 둔다 — 렌더러는 런 사이 재사용되고 필터 재생성은 비싸다. 다음 런 첫 프레임에 게이트가
     // 켜지면 syncGlowBloom 이 캐시된 필터를 다시 붙인다(glowBloomAttached 로 전이만 관리).
     this.clearGlowHalos();
+    // 접지 그림자 전량 회수(누수 0). 형제라 부모 destroy 로는 안 걷힌다. reset 에서는 남기면
+    // 다른 월드(런/프리뷰) 좌표의 그림자가 바닥에 떠 있다(ShardBurst·헤일로와 같은 규율).
+    this.clearGroundShadows();
     this.glowLayer.filters = [];
     this.glowBloomAttached = false;
     this.trauma.reset();
@@ -1803,6 +1938,9 @@ export class EntityRenderer {
     this.pendingLevelUp = false;
     // 발광체 헤일로·블룸 필터를 명시 회수한다(Container.destroy 는 filters 를 파괴하지 않는다).
     this.clearGlowHalos();
+    // 접지 그림자 전량 회수(누수 0). 형제라 부모 destroy 로는 안 걷힌다. reset 에서는 남기면
+    // 다른 월드(런/프리뷰) 좌표의 그림자가 바닥에 떠 있다(ShardBurst·헤일로와 같은 규율).
+    this.clearGroundShadows();
     this.glowLayer.filters = [];
     if (this.glowBloom) this.glowBloom.destroy();
     this.glowBloom = undefined;

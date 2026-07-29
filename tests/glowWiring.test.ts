@@ -314,7 +314,8 @@ describe('정리 — 누수 0', () => {
     const w = world([entity('gem', { id: 1 })]);
     r.render(w, w, 0);
     // 헤일로는 glowLayer 자식이지 layer 자식이 아니다 — 기존 레이어 스택 계약 회귀 가드.
-    expect(r.layer.children.length).toBe(7);
+    // 8 = lavaOverlay·overlay·shadowLayer·glowLayer·spriteLayer·labelLayer·effectLayer·fog.
+    expect(r.layer.children.length).toBe(8);
     r.destroy();
   });
 });
