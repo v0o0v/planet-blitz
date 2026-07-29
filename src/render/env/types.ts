@@ -20,7 +20,7 @@
  * 무시하고 {@link EnvFrame} 의 view 사각형만 쓰면 된다.
  */
 
-import type { Container } from 'pixi.js';
+import type { Container, Renderer } from 'pixi.js';
 
 /**
  * 레이어가 붙는 스테이지 슬롯. 이름이 곧 렌더 순서(뒤 → 앞)다.
@@ -38,6 +38,13 @@ export interface EnvContext {
   planet: number;
   /** 런 시드. 위치 의존 난수의 **유일한** 허용 근원(Math.random 금지). */
   seed: number;
+  /**
+   * Pixi 렌더러. 절차적 스프라이트 텍스처를 `generateTexture` 로 굽는 용도다.
+   * **텍스처는 첫 configure 에서 한 번만 굽고 캐시**한다 — 매 프레임/매 런 굽으면 GPU 메모리가
+   * 샌다(런을 반복하면 누적된다). 테스트에서는 캔버스가 없어 이 값이 없을 수 있으므로
+   * 레이어는 `renderer === undefined` 에서도 던지지 않아야 한다.
+   */
+  renderer?: Renderer;
 }
 
 /** 매 프레임 주어지는 동적 상태. */

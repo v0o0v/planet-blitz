@@ -1229,7 +1229,7 @@ async function main(): Promise<void> {
     autotile.configure(tiles, seed);
     // 행성 환경 레이어(시차 원경·데칼·용암 발광·대기·그레이딩). 각 레이어가 자기 담당 행성인지
     // 스스로 판정하므로, 카르곤이 아니면 전부 꺼져 화면이 한 픽셀도 바뀌지 않는다.
-    env.configure({ planet: sel.planet, seed });
+    env.configure({ planet: sel.planet, seed, renderer: gameApp.app.renderer });
     // 직전 런이 침공이었으면 전용 배경이 남아 PvE 아레나를 덮는다 — 반드시 내린다.
     clearInvasionBackdrop();
     background.visible = !autotile.active;
