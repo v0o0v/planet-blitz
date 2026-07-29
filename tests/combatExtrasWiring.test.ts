@@ -451,13 +451,25 @@ describe('정리 — 누수 0', () => {
     r.destroy();
   });
 
-  it('layer 자식 수는 Phase 4 이펙트 유무와 무관하게 6으로 불변(레이어 스택 회귀 가드)', () => {
+  it('layer 자식 수는 Phase 4 이펙트 유무와 무관하게 불변이다(레이어 스택 회귀 가드)', () => {
     const r = new EntityRenderer(realTextures());
     lockTier('high');
     const w = world([entity('player', { id: 1 }), entity('bullet', { id: 2, enemyType: -1 })]);
     r.render(w, w, 0); // 트레일·머즐이 effectLayer 자식으로 붙지만 layer 스택은 불변.
     // 9 = lava·hazardMaterial(해저드 재질 심)·overlay·shadow(접지 그림자)·glow·sprite·label·effect·fog.
-    expect(r.layer.children.length).toBe(9);
+    // +1 = 플레이어 **감산 컨투어**(레인 A). 이것만 layer 직결인 이유: 곱연산이라 glowLayer 안에
+    // 두면 high 티어 블룸 필터의 투명 렌더 텍스처를 곱해 화면에서 통째로 사라진다. 그래서
+    // glowLayer 바로 위(=필터 밖·스프라이트 아래)에 꽂는다(playerVisual.ts 컨투어 헤더가 정본).
+    // 플레이어가 없으면 이 자식도 없다 — 아래 두 단언이 그 조건부를 함께 잠근다.
+    expect(r.layer.children.length).toBe(10);
+    const contour = r.layer.children.filter((c) => c.label === 'playerContour');
+    expect(contour).toHaveLength(1);
+    // 스택 순서(생성자 addChild 순): lava·hazard·overlay·shadow·**glow**·sprite·label·effect·fog.
+    // 컨투어는 glow(4) 바로 다음인 5 = spriteLayer 바로 앞이어야 한다 — 그래야 곱연산이 필터
+    // 밖에서 실제 화면 픽셀에 걸리면서 선체 내부는 본체에 덮인다.
+    expect(r.layer.getChildIndex(contour[0]!)).toBe(5);
     r.destroy();
+    // 회수 후 컨투어가 남지 않는다(형제 누수 0).
+    expect(r.layer.children.filter((c) => c.label === 'playerContour')).toHaveLength(0);
   });
 });

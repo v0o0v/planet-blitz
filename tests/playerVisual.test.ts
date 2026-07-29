@@ -41,9 +41,27 @@ import {
   sumLight,
   luminance,
   saturation255,
+  fitsUnderBody,
+  contourFactor,
+  contourDelta,
+  multiplyFactor,
+  contourInsertIndex,
+  dashHeatStep,
+  dashRing,
+  damageIntensity,
+  isCriticalHp,
+  damageAlpha,
+  vaporStrength,
+  playerHaloAniso,
+  isDashSpeed,
+  HEAVY_STACKS,
   BODY_LUMA_P99,
-  BODY_LUMA_P95,
+  BODY_LUMA_P99_CLEAN,
+  BODY_LUMA_P99_DENSE,
+  PLAYER_DASH_TRAUMA,
+  type PlayerLightPart,
 } from '../src/render/entity/playerVisual.js';
+import { TRAUMA_PLAYER_HIT } from '../src/render/screenShake.js';
 import { effectGates, type EffectGates, type QualityTier } from '../src/render/qualityTier.js';
 import type { GraphicsSettings } from '../src/render/graphicsSettings.js';
 import type { AdornerContext } from '../src/render/entity/adorner.js';
@@ -117,6 +135,21 @@ function harness(over: Partial<AdornerContext> = {}): Harness {
 function labeled(layer: Container, label: string): Container[] {
   return layer.children.filter((c): c is Container => c instanceof Container && c.label === label);
 }
+
+/**
+ * 이 레인의 **가산** 기여 전량. 항목이 늘면 여기 한 줄만 더하면 밝기 단언이 자동으로 따라온다 —
+ * 목록을 테스트마다 따로 쓰면 새 이펙트가 조용히 예산 밖에 남는다(실제로 그럴 뻔했다).
+ * 감산 컨투어는 여기 **없다**(가산 기여가 0 이라서 — 그 자체가 계약이다).
+ */
+const PARTS: readonly PlayerLightPart[] = [
+  'flame',
+  'rim',
+  'ghost',
+  'dashCore',
+  'dashRing',
+  'vapor',
+  'damage',
+];
 
 function ent(over: Partial<EntitySnapshot> = {}): EntitySnapshot {
   return {
@@ -285,22 +318,113 @@ describe('가산 합성 결과 (CRIT-1·CRIT-2) — 상수가 아니라 **화면
     expect(f.r).toBeLessThan(f.b * 0.35);
   });
 
-  it('모든 개별 기여가 본체 상위 5%(148.7)보다 어둡다', () => {
-    for (const part of ['flame', 'outline', 'rim', 'ghost'] as const) {
-      expect(luminance(partLight(part))).toBeLessThan(BODY_LUMA_P95);
+  it('모든 개별 기여가 **관측된 가장 엄한** 본체 p99(clean 149.8)보다 어둡다', () => {
+    // ⚠️ 여기서 BODY_LUMA_P95(148.7)가 아니라 통합 빌드 실측(149.8)을 쓰는 이유가 3차 경고다.
+    // 148.7 은 "변경 전 컷"의 값이고 장면이 바뀌면 따라가지 못한다 — 자기가 박은 값으로 자기를
+    // 증명하게 된다. 통합 빌드 clean 컷 실측이 관측된 것 중 가장 엄하므로 그쪽을 쓴다.
+    for (const part of PARTS) {
+      expect(fitsUnderBody(partLight(part), BODY_LUMA_P99_CLEAN)).toBe(true);
     }
   });
 
-  it('겹치는 기여 3종을 다 더해도 본체 상위 1%(211.6)를 넘지 않는다 (CRIT-2 합격 기준)', () => {
-    // 실제로 한 점에 동시에 얹힐 수 있는 가장 무거운 조합들. 1차 구현은 여기서 235.1 이었다.
-    const flameSide = sumLight(partLight('flame'), partLight('outline'), partLight('rim'));
-    const dashSide = sumLight(partLight('flame'), partLight('outline'), partLight('ghost'));
-    expect(luminance(flameSide)).toBeLessThan(BODY_LUMA_P99);
-    expect(luminance(dashSide)).toBeLessThan(BODY_LUMA_P99);
+  it('실제로 겹칠 수 있는 조합을 다 더해도 본체 상위 1%를 넘지 않는다 (CRIT-2 합격 기준)', () => {
+    // 임의 조합 전수가 아니라 **기하로 가능한 것만**(HEAVY_STACKS 주석이 정본). 1차는 235.1 이었다.
+    for (const stack of HEAVY_STACKS) {
+      const sum = sumLight(...stack.map((p) => partLight(p)));
+      expect(luminance(sum)).toBeLessThan(BODY_LUMA_P99);
+    }
   });
 
-  it('외곽선 컨투어도 채도가 살아 있다(본체와 같은 색으로 뭉치지 않는다)', () => {
-    expect(saturation255(partLight('outline'))).toBeGreaterThanOrEqual(60);
+  it('상수 211.6 이 판정 장면(dense) 실측보다 보수적이다 — 느슨해지는 쪽으로 틀릴 수 없다', () => {
+    // 자기증명 제거의 핵심: 단언 기준이 실제 장면보다 **엄한** 쪽임을 코드가 증명한다.
+    expect(BODY_LUMA_P99).toBeLessThan(BODY_LUMA_P99_DENSE);
+    expect(BODY_LUMA_P99_CLEAN).toBeLessThan(BODY_LUMA_P99);
+  });
+
+  it('fitsUnderBody 는 **넘겨받은 실측치**로 판정한다(고정 상수 미사용)', () => {
+    // 같은 기여라도 기준 프레임이 어두우면 탈락해야 한다 — 그래야 장면 변화를 잡는다.
+    const flame = partLight('flame');
+    expect(fitsUnderBody(flame, 300)).toBe(true);
+    expect(fitsUnderBody(flame, 10)).toBe(false);
+  });
+
+  it('대시 심을 얹어도 불꽃 합성 채도가 60 이상이다 — 백열로 가지 않는다(§요구 ②)', () => {
+    // 2차에 확립한 분리(불꽃 195.9 vs 적탄 흰 코어 10.0)를 대시 중에도 지킨다는 단언.
+    const hot = sumLight(partLight('flame'), partLight('dashCore'));
+    expect(saturation255(hot)).toBeGreaterThanOrEqual(60);
+    // 그리고 R 이 여전히 가장 낮은 채널이다(가산에서 채도를 죽이는 것은 R 이다).
+    expect(hot.r).toBeLessThan(hot.g);
+    expect(hot.r).toBeLessThan(hot.b);
+  });
+
+  it('대시 심은 **채도를 버리지 않고 휘도만** 올린다', () => {
+    const base = partLight('flame');
+    const hot = sumLight(base, partLight('dashCore'));
+    expect(luminance(hot)).toBeGreaterThan(luminance(base) * 1.3); // 눈에 띄게 뜨겁다
+    expect(saturation255(hot)).toBeGreaterThan(150); // 그런데도 시안 정체가 남는다
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 감산 컨투어 — 3차 반려 사유 ①(가산은 경계를 못 만들었다)
+// ---------------------------------------------------------------------------
+
+describe('감산 컨투어 — 빛을 더하지 않고 경계를 만든다(§2-2 · §2-4)', () => {
+  it('가산 기여 목록에 컨투어가 **없다** — 밝기 총량 예산에 구조적으로 0 이다', () => {
+    expect(PARTS).not.toContain('outline' as never);
+    expect(PARTS).not.toContain('contour' as never);
+  });
+
+  it('모든 채널의 감쇠 계수가 1 미만이다 = 어둡게만 한다(밝힐 수 없다)', () => {
+    const f = contourFactor();
+    for (const ch of [f.r, f.g, f.b]) {
+      expect(ch).toBeGreaterThan(0);
+      expect(ch).toBeLessThan(1);
+    }
+  });
+
+  it('대표 겹침에서 바닥을 **절반 이하**로 떨어뜨린다 — 2차의 "육안 구별 불가"를 닫는다', () => {
+    const f = contourFactor();
+    const lumaFactor = 0.299 * f.r + 0.587 * f.g + 0.114 * f.b;
+    expect(lumaFactor).toBeLessThan(0.5);
+  });
+
+  it('R 을 G·B 보다 더 깎는다 = 검은 테두리가 아니라 **차가운 그림자**로 읽힌다', () => {
+    const f = contourFactor();
+    expect(f.r).toBeLessThan(f.g);
+    expect(f.r).toBeLessThan(f.b);
+  });
+
+  it('국소 델타가 얼린 화면 노이즈 바닥(0.10)의 3배를 **크게** 넘는다 (비평가 ① 합격 기준)', () => {
+    // §2-4 가 못 박은 얼린 상태 노이즈 바닥은 0.10 이다. 헤일로가 깔린 바닥(L≈90)에서 재면
+    // 델타가 그 500배 이상이라 "기여는 있는데 안 보인다"가 재발할 수 없다.
+    expect(contourDelta(90)).toBeGreaterThan(0.1 * 3);
+    expect(contourDelta(90)).toBeGreaterThan(40);
+    // 어두운 바닥에서는 작다 — 그게 맞다(거기서는 헤일로가 일한다). 다만 부호는 항상 감산이다.
+    expect(contourDelta(8)).toBeGreaterThan(0);
+    expect(contourDelta(0)).toBe(0);
+  });
+
+  it('한 장의 알파가 0 이면 정확히 항등원이다 — 투명 영역이 배경을 안 건드린다', () => {
+    const id = multiplyFactor(0x000000, 0, 8);
+    expect(id.r).toBeCloseTo(1, 12);
+    expect(id.g).toBeCloseTo(1, 12);
+    expect(id.b).toBeCloseTo(1, 12);
+  });
+
+  it('겹칠수록 단조 감소한다(겹침 수 파생이 실제로 곱으로 쌓인다)', () => {
+    const one = multiplyFactor(0x081428, 0.2, 1).g;
+    const four = multiplyFactor(0x081428, 0.2, 4).g;
+    expect(four).toBeLessThan(one);
+    expect(four).toBeCloseTo(Math.pow(one, 4), 12);
+  });
+
+  it('삽입 자리가 glowLayer **바로 다음**이다 — high 티어 블룸 필터가 곱연산을 삼키지 않는다', () => {
+    // ⚠️ belowLayer(=glowLayer)에 넣으면 필터가 붙는 순간 투명 렌더 텍스처를 곱해 화면에서
+    // 통째로 사라진다. 그 티어가 하필 비평가가 재는 티어다.
+    const kids = ['shadow', 'glow', 'sprite', 'effect'];
+    expect(contourInsertIndex(kids, 'glow')).toBe(2); // sprite 바로 앞 = 스프라이트 아래
+    expect(contourInsertIndex(kids, 'nope')).toBe(-1); // 못 찾으면 폴백 신호
   });
 });
 
@@ -428,7 +552,7 @@ describe('장식자 배선 — 화면에 실제로 붙는다', () => {
     // 발광은 전부 스프라이트 **아래** 레이어다(계약 §2-2 — 실루엣을 덮지 않는다).
     expect(labeled(h.below, 'playerThrust')).toHaveLength(1);
     expect(labeled(h.below, 'playerRim')).toHaveLength(1);
-    expect(labeled(h.below, 'playerOutline')).toHaveLength(1);
+    expect(labeled(h.below, 'playerContour')).toHaveLength(1);
     expect(h.above.children.length).toBe(0); // 무피격이면 실드 셸 없음
   });
 
@@ -648,7 +772,7 @@ describe('대시 잔상 (§3 레인 A ⑤)', () => {
     expect(labeled(h.below, 'playerGhost')).toHaveLength(0);
     // low 는 halo 도 off → 불꽃·림도 없다. 외곽선만 남는다(자기 위치 확보는 티어 무관).
     expect(labeled(h.below, 'playerThrust')).toHaveLength(0);
-    expect(labeled(h.below, 'playerOutline')).toHaveLength(1);
+    expect(labeled(h.below, 'playerContour')).toHaveLength(1);
   });
 });
 
@@ -695,8 +819,8 @@ function baseScaleX(s: Sprite): number {
 // 실루엣 외곽선 — 기준선 문서가 잡은 "보스 컷에서 플레이어를 못 찾는다"의 해법
 // ---------------------------------------------------------------------------
 
-describe('실루엣 외곽선 — 밝기가 아니라 경계로 자기 위치를 확보한다(§2-2)', () => {
-  it('항상 belowLayer 에 있다 — 테마 없음·low 티어·발광 감소 어디서도 사라지지 않는다', () => {
+describe('실루엣 컨투어 — 밝기가 아니라 경계로 자기 위치를 확보한다(§2-2)', () => {
+  it('항상 붙는다 — 테마 없음·low 티어·발광 감소 어디서도 사라지지 않는다', () => {
     for (const ctx of [
       {},
       { theme: null },
@@ -706,17 +830,46 @@ describe('실루엣 외곽선 — 밝기가 아니라 경계로 자기 위치를
     ]) {
       const h = harness(ctx);
       run(h, playerAdorners(), 3, { sprite: playerSprite() });
-      expect(labeled(h.below, 'playerOutline')).toHaveLength(1);
+      expect(labeled(h.below, 'playerContour')).toHaveLength(1);
     }
   });
 
-  it('본체보다 어둡다 — 이펙트가 실루엣을 먹지 않는다', () => {
+  it('복제가 전부 **곱연산**이다 — 가산이면 밝은 헤일로 위에서 경계를 못 만든다(3차 반려 ①)', () => {
+    // 이게 3차의 핵심 수정이다. 2차는 기하(8방향)는 옳았는데 합성이 가산이라 기여 픽셀이
+    // 726~821px 실재하면서도 7× 확대에서 육안 구별 불가였다.
     const h = harness();
-    const s = playerSprite();
-    run(h, playerAdorners(), 20, { sprite: s });
-    for (const c of labeled(h.below, 'playerOutline')[0]!.children) {
-      expect(c.alpha).toBeLessThan(s.alpha);
-    }
+    run(h, playerAdorners(), 3, { sprite: playerSprite() });
+    const copies = labeled(h.below, 'playerContour')[0]!.children;
+    expect(copies.length).toBe(8);
+    for (const c of copies) expect((c as unknown as { blendMode: string }).blendMode).toBe('multiply');
+  });
+
+  it('부모가 있으면 glowLayer **바로 위**에 꽂힌다(필터 밖) · 없으면 belowLayer 폴백', () => {
+    // 실제 렌더러 레이어 스택을 재현한다. belowLayer 안에 넣으면 high 티어 블룸이 삼킨다.
+    const root = new Container();
+    const shadow = new Container();
+    const below = new Container();
+    const sprites = new Container();
+    root.addChild(shadow, below, sprites);
+    const h = harness({ belowLayer: below });
+    run(h, playerAdorners(), 3, { sprite: playerSprite() });
+    expect(labeled(below, 'playerContour')).toHaveLength(0); // belowLayer 안이 아니다
+    const idx = root.children.findIndex((c) => c.label === 'playerContour');
+    expect(idx).toBe(root.getChildIndex(below) + 1); // glowLayer 바로 다음
+    expect(idx).toBeLessThan(root.getChildIndex(sprites)); // 그리고 스프라이트 아래
+  });
+
+  it('발광 감소·low 티어에서 세기가 **안 낮아진다** — 이건 빛이 아니라 그림자다', () => {
+    // 2차까지는 reducedGlow 에서 알파를 0.55배로 내렸다. 곱연산 컨투어는 빛을 더하지 않으므로
+    // 광과민 축이 아니고, 오히려 헤일로가 꺼진 상태에서 유일하게 남는 경계 신호다.
+    const read = (over: Parameters<typeof harness>[0]): number => {
+      const h = harness(over);
+      run(h, playerAdorners(), 1, { sprite: playerSprite() });
+      return labeled(h.below, 'playerContour')[0]!.children[0]!.alpha;
+    };
+    const full = read({});
+    expect(read({ gates: gatesFor('high', { reducedGlow: true }) })).toBeCloseTo(full, 12);
+    expect(read({ tier: 'low', gates: gatesFor('low') })).toBeCloseTo(full, 12);
   });
 
   it('**8방향 컨투어다** — 어느 방향에도 같은 폭의 띠가 생긴다 (MAJ-3)', () => {
@@ -725,7 +878,7 @@ describe('실루엣 외곽선 — 밝기가 아니라 경계로 자기 위치를
     const h = harness();
     const s = playerSprite();
     run(h, playerAdorners(), 3, { sprite: s });
-    const copies = labeled(h.below, 'playerOutline')[0]!.children;
+    const copies = labeled(h.below, 'playerContour')[0]!.children;
     expect(copies.length).toBe(8);
 
     const angles = copies.map((c) => Math.atan2(c.y - s.y, c.x - s.x));
@@ -744,7 +897,7 @@ describe('실루엣 외곽선 — 밝기가 아니라 경계로 자기 위치를
     const h = harness();
     const s = playerSprite();
     run(h, playerAdorners(), 3, { sprite: s });
-    for (const c of labeled(h.below, 'playerOutline')[0]!.children) {
+    for (const c of labeled(h.below, 'playerContour')[0]!.children) {
       expect(c.scale.x).toBeCloseTo(s.scale.x, 6);
       expect(c.scale.y).toBeCloseTo(s.scale.y, 6);
     }
@@ -754,21 +907,217 @@ describe('실루엣 외곽선 — 밝기가 아니라 경계로 자기 위치를
     const h = harness();
     const s = playerSprite();
     run(h, playerAdorners(), 30, { sprite: s, facing: 0, move: { dx: 0, dy: 12 } });
-    for (const c of labeled(h.below, 'playerOutline')[0]!.children) {
+    for (const c of labeled(h.below, 'playerContour')[0]!.children) {
       expect(c.scale.y).toBeCloseTo(s.scale.y, 6);
       expect(c.rotation).toBeCloseTo(s.rotation, 6);
     }
   });
+});
 
-  it('발광 감소에서 알파가 낮아지되 0 이 되지 않는다(조작 가능성 보장)', () => {
-    const full = harness();
-    run(full, playerAdorners(), 3, { sprite: playerSprite() });
-    const bright = full.below.children[0]!.children[0]!.alpha;
-    const dim = harness({ gates: gatesFor('high', { reducedGlow: true }) });
-    run(dim, playerAdorners(), 3, { sprite: playerSprite() });
-    const a = labeled(dim.below, 'playerOutline')[0]!.children[0]!.alpha;
-    expect(a).toBeGreaterThan(0);
-    expect(a).toBeLessThan(bright);
+// ---------------------------------------------------------------------------
+// 대시를 사건으로 (3차 요구 ②) · 손상 상태 (③) · 이방성 헤일로 (⑤) · 익단 증기 (⑥)
+// ---------------------------------------------------------------------------
+
+describe('대시가 **사건**이다 — 축이 길이 하나뿐이면 "불꽃이 길어졌다"로 읽힌다 (§요구 ②)', () => {
+  it('열기가 켜질 때 훨씬 빠르게 붙고 느리게 빠진다(사건 ↔ 여운)', () => {
+    const dt = 1 / 60;
+    const up = dashHeatStep(0, true, dt);
+    const down = dashHeatStep(1, false, dt);
+    expect(up).toBeGreaterThan(0.5); // 한 프레임에 절반 넘게 붙는다 = 사건
+    expect(1 - down).toBeLessThan(up * 0.4); // 하강은 훨씬 완만
+  });
+
+  it('열기가 [0,1] 안에서 단조 수렴한다(발산·오버슈트 없음)', () => {
+    let h = 0;
+    for (let i = 0; i < 200; i++) {
+      const next = dashHeatStep(h, true, 1 / 60);
+      expect(next).toBeGreaterThanOrEqual(h);
+      expect(next).toBeLessThanOrEqual(1);
+      h = next;
+    }
+    expect(h).toBeGreaterThan(0.99);
+  });
+
+  it('개시 링 반지름이 **단조 증가**한다 = 고정 반지름 표식(§2-5 UI 어휘)이 아니다', () => {
+    let prev = -1;
+    for (let t = 0; t < 0.27; t += 0.01) {
+      const r = dashRing(t)!;
+      expect(r.radius).toBeGreaterThan(prev);
+      prev = r.radius;
+    }
+    expect(dashRing(0.28)).toBeNull(); // 정지 화면에 남지 않는다
+    expect(dashRing(-1)).toBeNull();
+  });
+
+  it('링 알파·두께가 단조 감소해 툭 끊기지 않는다', () => {
+    expect(dashRing(0)!.alpha).toBeGreaterThan(dashRing(0.2)!.alpha);
+    expect(dashRing(0)!.width).toBeGreaterThan(dashRing(0.2)!.width);
+    expect(dashRing(0.27)!.alpha).toBeGreaterThanOrEqual(0);
+  });
+
+  it('대시 중 심·링·잔상이 **동시에** 화면에 붙는다(축이 셋 이상이어야 사건이다)', () => {
+    const h = harness();
+    const a = playerAdorners();
+    run(h, a, 8, { sprite: playerSprite(), facing: 0, move: { dx: 46.7, dy: 0 } });
+    const flame = labeled(h.below, 'playerThrust')[0]!;
+    const core = flame.children.find((c) => c.label === 'playerDashCore');
+    expect(core).toBeDefined();
+    expect(core!.alpha).toBeGreaterThan(0.5); // 색이 이동했다
+    expect(labeled(h.below, 'playerDashRing')).toHaveLength(1); // 링이 터졌다
+    expect(labeled(h.below, 'playerGhost').length).toBeGreaterThan(0); // 잔상이 남았다
+  });
+
+  it('순항에서는 심이 0 이고 링도 없다(대시 전용 축)', () => {
+    const h = harness();
+    run(h, playerAdorners(), 20, { sprite: playerSprite(), facing: 0, move: { dx: 12, dy: 0 } });
+    const flame = labeled(h.below, 'playerThrust')[0]!;
+    const core = flame.children.find((c) => c.label === 'playerDashCore')!;
+    expect(core.alpha).toBeCloseTo(0, 6);
+    expect(labeled(h.below, 'playerDashRing')).toHaveLength(0);
+  });
+
+  it('링은 **상승 에지 1회**다 — 대시가 이어져도 다시 안 터진다', () => {
+    const h = harness();
+    const a = playerAdorners();
+    // 링 수명(0.28s ≈ 17프레임)을 넘겨 계속 대시하면 링이 회수돼 있어야 한다.
+    run(h, a, 40, { sprite: playerSprite(), facing: 0, move: { dx: 46.7, dy: 0 } });
+    expect(labeled(h.below, 'playerDashRing')).toHaveLength(0);
+  });
+
+  it('대시 트라우마가 피격보다 **작다** — 내가 하는 일이 당하는 일보다 세면 안 된다(§요구 ④)', () => {
+    expect(PLAYER_DASH_TRAUMA).toBeGreaterThan(0);
+    expect(PLAYER_DASH_TRAUMA).toBeLessThan(TRAUMA_PLAYER_HIT);
+  });
+
+  it('대시 판정이 렌더러와 장식자에서 **같은 함수**다(흔들림과 불꽃이 같은 프레임에 붙는다)', () => {
+    expect(isDashSpeed(2800)).toBe(true);
+    expect(isDashSpeed(900)).toBe(false);
+  });
+});
+
+describe('손상 상태 — HP 1 이든 만피든 똑같이 생기면 안 된다 (§요구 ③)', () => {
+  it('강도가 **누진**이다 — 단계로 자르면 경계에서 깜빡임이 된다', () => {
+    expect(damageIntensity(100, 100)).toBe(0);
+    expect(damageIntensity(60, 100)).toBe(0);
+    expect(damageIntensity(30, 100)).toBeGreaterThan(0);
+    expect(damageIntensity(10, 100)).toBeGreaterThan(damageIntensity(30, 100));
+    expect(damageIntensity(0, 100)).toBe(1);
+    expect(damageIntensity(50, 0)).toBe(0); // maxHp 방어
+  });
+
+  it('위독 구간에서만 맥동이 붙는다', () => {
+    expect(isCriticalHp(50, 100)).toBe(false);
+    expect(isCriticalHp(20, 100)).toBe(true);
+  });
+
+  it('발광 감소에서 옅어지되 **0 이 되지 않는다** — 손상도는 전투 정보다', () => {
+    const full = damageAlpha(1, 1, false);
+    const dim = damageAlpha(1, 1, true);
+    expect(dim).toBeGreaterThan(0);
+    expect(dim).toBeLessThan(full);
+  });
+
+  it('오버레이가 **가산**이다 — tint 로 밀면 Pixi 곱연산이라 기체가 어두워진다(레인 B 결론)', () => {
+    const h = harness();
+    const s = playerSprite();
+    run(h, playerAdorners(), 3, { sprite: s, hpAt: new Map([[1, 20]]) });
+    const ov = h.above.children.find((c) => c.label === 'playerDamage');
+    expect(ov).toBeDefined();
+    expect((ov as unknown as { blendMode: string }).blendMode).toBe('add');
+    expect(ov!.alpha).toBeGreaterThan(0);
+    // 실루엣을 한 픽셀도 안 바꾼다: 같은 변환·같은 스케일.
+    expect(ov!.rotation).toBeCloseTo(s.rotation, 6);
+    expect(ov!.scale.x).toBeCloseTo(s.scale.x, 6);
+    // 그리고 본체 tint 는 손대지 않는다(어두워짐 금지).
+    expect(s.tint).toBe(0xffffff);
+  });
+
+  it('만피에서는 오버레이가 아예 없다(정상 상태에 노이즈를 안 얹는다)', () => {
+    const h = harness();
+    run(h, playerAdorners(), 3, { sprite: playerSprite() });
+    expect(h.above.children.find((c) => c.label === 'playerDamage')).toBeUndefined();
+  });
+
+  it('low 티어·모션 감소에서도 **꺼지지 않고** 맥동만 멎는다(정보 축 보존)', () => {
+    for (const over of [
+      { tier: 'low' as QualityTier, gates: gatesFor('low') },
+      { gates: gatesFor('high', { reducedMotion: true }) },
+    ]) {
+      const h = harness(over);
+      run(h, playerAdorners(), 6, { sprite: playerSprite(), hpAt: new Map([[1, 10]]) });
+      const ov = h.above.children.find((c) => c.label === 'playerDamage');
+      expect(ov).toBeDefined();
+      expect(ov!.alpha).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('이방성 헤일로 — 등방 blob 은 면적을 다 쓰고 정보를 0 비트 준다 (§요구 ⑤)', () => {
+  it('정지에서도 기수 축으로 늘어나 있다(정지야말로 기수를 확인하는 순간이다)', () => {
+    const a = playerHaloAniso(0, 0, 0.7, 24);
+    expect(a.scaleX).toBeGreaterThan(1.2);
+    expect(a.rotation).toBeCloseTo(0.7, 12);
+    expect(a.ox).toBeCloseTo(0, 12); // 정지에서는 편심 0
+  });
+
+  it('빠를수록 더 늘어나고 더 좁아지고 더 앞으로 밀린다', () => {
+    const slow = playerHaloAniso(100, 0, 0, 24);
+    const fast = playerHaloAniso(900, 0, 0, 24);
+    expect(fast.scaleX).toBeGreaterThan(slow.scaleX);
+    expect(fast.scaleY).toBeLessThan(slow.scaleY);
+    expect(fast.ox).toBeGreaterThan(slow.ox);
+  });
+
+  it('편심이 **기수 방향**이다(대각에서도 두 축 부호가 맞다)', () => {
+    const f = Math.PI / 4;
+    const a = playerHaloAniso(900, 900, f, 24);
+    expect(a.ox).toBeGreaterThan(0);
+    expect(a.oy).toBeGreaterThan(0);
+    const back = playerHaloAniso(900, 900, f + Math.PI, 24);
+    expect(back.ox).toBeLessThan(0);
+    expect(back.oy).toBeLessThan(0);
+  });
+
+  it('편심이 표시 반치수에 비례한다(픽셀 하드코딩 금지)', () => {
+    expect(playerHaloAniso(900, 0, 0, 48).ox).toBeCloseTo(playerHaloAniso(900, 0, 0, 24).ox * 2, 6);
+  });
+
+  it('속도 상한에서 포화한다(순간이동이 헤일로를 폭주시키지 않는다)', () => {
+    expect(playerHaloAniso(1e6, 0, 0, 24).scaleX).toBeCloseTo(playerHaloAniso(900, 0, 0, 24).scaleX, 6);
+    expect(playerHaloAniso(1e6, 0, 0, 24).scaleY).toBeGreaterThan(0);
+  });
+});
+
+describe('익단 증기 — 가장 싼 2차 운동 한 겹 (§요구 ⑥)', () => {
+  it('순한 이동에서는 0 이고 급선회에서만 살아난다(노이즈가 아니라 정보)', () => {
+    expect(vaporStrength(0)).toBe(0);
+    expect(vaporStrength(200)).toBe(0);
+    expect(vaporStrength(900)).toBeGreaterThan(0);
+    expect(vaporStrength(-900)).toBeCloseTo(vaporStrength(900), 12); // 좌우 대칭
+    expect(vaporStrength(1e6)).toBe(1);
+  });
+
+  it('급선회에서 belowLayer 에 붙고, 직진에서는 회수된다', () => {
+    const turn = harness();
+    run(turn, playerAdorners(), 30, { sprite: playerSprite(), facing: 0, move: { dx: 0, dy: 14 } });
+    expect(labeled(turn.below, 'playerVapor')).toHaveLength(1);
+
+    const straight = harness();
+    run(straight, playerAdorners(), 30, { sprite: playerSprite(), facing: 0, move: { dx: 12, dy: 0 } });
+    expect(labeled(straight.below, 'playerVapor')).toHaveLength(0);
+  });
+
+  it('low 티어·발광 감소·모션 감소에서 전부 꺼진다(연출 축이라 정보가 아니다)', () => {
+    for (const over of [
+      { tier: 'low' as QualityTier, gates: gatesFor('low') },
+      { gates: gatesFor('high', { reducedGlow: true }) },
+      { gates: gatesFor('high', { reducedMotion: true }) },
+    ]) {
+      const h = harness(over);
+      run(h, playerAdorners(), 30, { sprite: playerSprite(), facing: 0, move: { dx: 0, dy: 14 } });
+      expect(labeled(h.below, 'playerVapor')).toHaveLength(0);
+      expect(labeled(h.below, 'playerDashRing')).toHaveLength(0);
+    }
   });
 });
 
@@ -815,7 +1164,7 @@ describe('reducedMotion 이 **모든** 운동을 끈다 (MAJ-1)', () => {
     const reduced = harness({ gates: gatesFor('high', { reducedMotion: true }) });
     const sw = swing(
       reduced,
-      () => labeled(reduced.below, 'playerOutline')[0]?.children[0]?.alpha ?? 0,
+      () => labeled(reduced.below, 'playerContour')[0]?.children[0]?.alpha ?? 0,
       120,
     );
     expect(sw).toBeCloseTo(0, 9);
