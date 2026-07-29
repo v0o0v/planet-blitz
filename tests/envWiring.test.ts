@@ -24,8 +24,13 @@ import { ENV_SLOTS, PlanetEnvironment } from '../src/render/env/planetEnvironmen
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ENV_DIR = join(ROOT, 'src', 'render', 'env');
 
-/** 레이어 모듈만 추린다(계약·유틸 모듈은 레지스트리 등록 대상이 아니다). */
-const NON_LAYER = new Set(['types', 'planetEnvironment', 'noise']);
+/**
+ * 레이어 모듈만 추린다(계약·유틸 모듈은 레지스트리 등록 대상이 아니다).
+ *
+ * `contracts/`·`themes/` 는 디렉터리라 아래 `.endsWith('.ts')` 필터에서 자동으로 빠진다 —
+ * 여기 나열할 필요가 없다. 이 집합에는 **`src/render/env/` 최상위의 비-레이어 `.ts` 파일**만 넣는다.
+ */
+const NON_LAYER = new Set(['types', 'planetEnvironment', 'noise', 'color', 'theme']);
 
 describe('행성 환경 레이어 배선', () => {
   const registry = readFileSync(join(ENV_DIR, 'planetEnvironment.ts'), 'utf8');
