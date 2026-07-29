@@ -162,7 +162,11 @@ describe('발광체 헤일로 배선(glowLayer)', () => {
     const w = world([entity('boss', { id: 1 }), entity('gem', { id: 2 })]);
     r.render(w, w, 0);
     // 헤일로는 glowLayer 자식이다(스프라이트는 spriteLayer, 블룸은 filters). 발광체 2 → 헤일로 2.
-    expect(glowLayer(r).children.length).toBe(2);
+    //
+    // **자식 수가 아니라 전용 관측창으로 센다.** glowLayer 에는 장식자(src/render/entity/)도
+    // 살 수 있어, 자식 수로 재면 헤일로와 무관한 변경이 이 단언을 깬다. 이 테스트가 물으려는
+    // 것은 "발광체 수만큼 헤일로가 붙었는가"이지 "레이어 자식이 몇인가"가 아니다.
+    expect(r.glowHaloCount).toBe(2);
     r.destroy();
   });
 
@@ -174,7 +178,7 @@ describe('발광체 헤일로 배선(glowLayer)', () => {
       entity('enemyBullet', { id: 2, enemyType: -1 }),
     ]);
     r.render(w, w, 0);
-    expect(glowLayer(r).children.length).toBe(0);
+    expect(r.glowHaloCount).toBe(0);
     r.destroy();
   });
 
@@ -183,7 +187,7 @@ describe('발광체 헤일로 배선(glowLayer)', () => {
     lockTier('high');
     const w = world([entity('enemy', { id: 1 }), entity('wall', { id: 2, aabbH: 20 })]);
     r.render(w, w, 0);
-    expect(glowLayer(r).children.length).toBe(0);
+    expect(r.glowHaloCount).toBe(0);
     r.destroy();
   });
 
@@ -193,11 +197,11 @@ describe('발광체 헤일로 배선(glowLayer)', () => {
     const gem = entity('gem', { id: 2 });
     const w1 = world([entity('boss', { id: 1 }), gem]);
     r.render(w1, w1, 0);
-    expect(glowLayer(r).children.length).toBe(2);
+    expect(r.glowHaloCount).toBe(2);
     // boss 소멸 → gem 만 남는다. 킬 루프가 boss 헤일로를 회수한다.
     const w2 = world([gem]);
     r.render(w2, w2, 0);
-    expect(glowLayer(r).children.length).toBe(1);
+    expect(r.glowHaloCount).toBe(1);
     r.destroy();
   });
 
