@@ -88,3 +88,97 @@ describe('전 테마 광원 계약', () => {
     expect(kargon!.light.shadowBias).toBeCloseTo(0.55, 12);
   });
 });
+
+/**
+ * 행성별 광원 **골든 표**.
+ *
+ * ## 왜 필요한가 — 부호가 뒤집혀도 전 테스트가 그린이었다
+ * 위의 "전 테마 광원 계약"이 보는 것은 단위 벡터인지와 `shadowBias ∈ [0,1]` 뿐이다. 니플헤임
+ * 레인이 뮤테이션으로 확인했다: **광원 각도의 부호를 반전(태양을 발밑으로)해도 전 테스트가
+ * 그린이었다.** 못 박는 테스트는 위의 카르곤 것 하나뿐이었기 때문이다. 그런데 광원 방향은
+ * 지형광의 띠 방향과 데칼의 림·드롭 섀도를 동시에 결정하므로, 뒤집히면 그 행성의 조명 서사가
+ * 통째로 반대가 된다(눈 행성의 태양이 설면 아래에서 뜬다).
+ *
+ * ## 표를 고칠 때 무엇을 고치는 것인가
+ * 각 줄의 `story` 는 장식이 아니라 **그 부호가 왜 그 부호인지의 근거**다. 여기 숫자를 바꾸려는
+ * 사람은 서사도 함께 고쳐야 하고, 그 순간 "나는 이 행성의 조명을 바꾸고 있다"를 자각한다.
+ * 값만 슬쩍 옮기는 경로를 없애는 것이 이 표의 목적이다.
+ *
+ * `vertical` 이 `angle` 과 별도 필드인 것도 같은 이유다. 테마와 골든 `angle` 을 **함께** 고쳐
+ * 검사를 통과시키려 해도 세로 방향 검사가 따로 남아 있어, 조명이 뒤집히는 변경은 반드시
+ * 두 자리를 명시적으로 고쳐야 통과한다(실측: 그 이중 뮤테이션에서 세로 검사만 단독 발화한다).
+ *
+ * 새 테마를 등록하고 여기 줄을 안 넣으면 "표가 전 테마를 덮는다"가 실패한다.
+ */
+const LIGHT_GOLDEN: readonly {
+  id: string;
+  angle: number;
+  shadowBias: number;
+  /** 광원의 세로 방향. `+1` = 화면 아래(발밑), `-1` = 화면 위(하늘). */
+  vertical: 1 | -1;
+  story: string;
+}[] = [
+  {
+    id: 'kargon', angle: Math.PI / 2 + 0.32, shadowBias: 0.55, vertical: 1,
+    story: '지형 저지의 용암이 유일한 광원이고 하늘은 검다 → 발밑',
+  },
+  {
+    id: 'berdan', angle: -Math.PI / 2 + 0.26, shadowBias: 0.62, vertical: -1,
+    story: '포자 안개를 통과한 확산 천공광 → 위. 0.26 rad 기울기는 데칼 하이라이트의 좌우 대칭을 깨기 위한 것',
+  },
+  {
+    id: 'niflheim', angle: -Math.PI / 2 + 0.28, shadowBias: 0.82, vertical: -1,
+    story: '지평선에 걸린 저각 태양이 유일한 광원, 설면은 빛을 내지 않는다 → 위. bias 0.82 가 "저각"을 기하로 만든다',
+  },
+  {
+    id: 'arke', angle: -Math.PI / 2 - 0.43, shadowBias: 0.62, vertical: -1,
+    story: '무너진 상부 구조 사이로 드는 저각 태양·하늘광 → 위. 기울기가 음수(왼쪽)인 것이 저녁 유적의 방향감',
+  },
+  {
+    id: 'toxar', angle: Math.PI / 2 - 0.24, shadowBias: 0.38, vertical: 1,
+    story: '저지에 고인 독성 웅덩이·개천이 광원이고 하늘은 독무에 덮였다 → 발밑. 기울기 부호만 카르곤과 반대(두 행성이 같아 보이지 않게)',
+  },
+  {
+    id: 'kras', angle: -Math.PI / 2 + 0.28, shadowBias: 0.45, vertical: -1,
+    story: '무너진 천장 사이 흐린 하늘의 확산광 → 위. 바닥 잔불은 국소 광원일 뿐 장면을 조명하지 않는다',
+  },
+  {
+    id: 'invasion_l1', angle: -Math.PI / 2 + 0.3, shadowBias: 0.5, vertical: -1,
+    story: '구름 갑판은 위에서 조명된다 → 위',
+  },
+  {
+    id: 'invasion_l2', angle: -Math.PI / 2 + 0.55, shadowBias: 0.45, vertical: -1,
+    story: '천장 조명 → 위. 실내라 광원이 가깝고 그림자가 길어 L1 보다 비스듬하다',
+  },
+  {
+    id: 'invasion_l3', angle: Math.PI / 2 - 0.25, shadowBias: 0.6, vertical: 1,
+    story: '코어가 바닥에서 뛴다 → 발밑',
+  },
+];
+
+describe('행성별 광원 서사 골든', () => {
+  it('표가 등록된 전 테마를 정확히 덮는다', () => {
+    // 테마를 새로 등록하고 서사를 안 적으면 여기서 걸린다. 반대로 표에만 남은 유령 줄도 걸린다.
+    expect([...LIGHT_GOLDEN.map((g) => g.id)].sort()).toEqual([...ENV_THEMES.map((t) => t.id)].sort());
+    expect(LIGHT_GOLDEN.every((g) => g.story.length > 10)).toBe(true);
+  });
+
+  it.each(LIGHT_GOLDEN.map((g) => [g.id, g] as const))('%s 의 광원 각도·편향이 골든과 같다', (_id, g) => {
+    const t = ENV_THEMES.find((x) => x.id === g.id);
+    expect(t).toBeDefined();
+    expect(t!.light.angle, `${g.id} 광원 각도: ${g.story}`).toBeCloseTo(g.angle, 12);
+    expect(t!.light.shadowBias, `${g.id} 그림자 편향: ${g.story}`).toBeCloseTo(g.shadowBias, 12);
+  });
+
+  it.each(LIGHT_GOLDEN.map((g) => [g.id, g] as const))('%s 의 광원이 서사가 말하는 쪽에 있다', (_id, g) => {
+    const t = ENV_THEMES.find((x) => x.id === g.id);
+    expect(t).toBeDefined();
+    expect(Math.sign(lightY(t!.light)), `${g.id}: ${g.story}`).toBe(g.vertical);
+  });
+
+  it('세로 방향이 전부 같은 값이 아니다(검사가 항진이 아님의 증거)', () => {
+    // 만약 전 행성이 같은 방향이면 위 검사는 "부호 하나"만 잠그는 것이라 힘이 약하다.
+    const dirs = new Set(LIGHT_GOLDEN.map((g) => g.vertical));
+    expect(dirs.size).toBe(2);
+  });
+});
