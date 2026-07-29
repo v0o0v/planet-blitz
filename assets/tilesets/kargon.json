@@ -1,1 +1,406 @@
-{"id":"81ddeb91-2486-4f82-8566-90978642b575","name":"dark desaturated basalt volcanic rock, low saturation, subtle detail → dark grey cooled lava field with faint dull orange cracks, low saturation","lower_description":"dark desaturated basalt volcanic rock, low saturation, subtle detail","upper_description":"dark grey cooled lava field with faint dull orange cracks, low saturation","transition_description":"crumbled basalt edge with faint ember glow","tile_size":{"width":32,"height":32},"transition_size":0.25,"view":"high top-down","style_settings":{"detail":"medium detail","outline":"lineless","shading":"medium shading"},"generation_parameters":{"tile_strength":1.0,"tileset_adherence":100.0,"text_guidance_scale":8.0,"tileset_adherence_freedom":500},"base_tile_ids":{"lower":"a81a90c1-78c6-4183-8e21-fcc27668b27c","upper":"c8f71fd8-ba8d-47b1-afbb-d850d3d17d36"},"tileset_data":{"tiles":[{"id":"13","name":"wang_13","corners":{"NE":"upper","NW":"upper","SE":"upper","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,1,255],"row_2":[255,1,0,255],"row_3":[255,255,255,255]},"original_position":{"col":2,"row":4},"bounding_box":{"x":0,"y":0,"width":32,"height":32}},{"id":"10","name":"wang_10","corners":{"NE":"lower","NW":"upper","SE":"lower","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,0,255],"row_2":[255,1,0,255],"row_3":[255,255,255,255]},"original_position":{"col":6,"row":2},"bounding_box":{"x":32,"y":0,"width":32,"height":32}},{"id":"4","name":"wang_4","corners":{"NE":"upper","NW":"lower","SE":"lower","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,1,255],"row_2":[255,1,0,255],"row_3":[255,255,255,255]},"original_position":{"col":1,"row":4},"bounding_box":{"x":64,"y":0,"width":32,"height":32}},{"id":"12","name":"wang_12","corners":{"NE":"upper","NW":"upper","SE":"lower","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,1,255],"row_2":[255,1,1,255],"row_3":[255,255,255,255]},"original_position":{"col":5,"row":3},"bounding_box":{"x":96,"y":0,"width":32,"height":32}},{"id":"6","name":"wang_6","corners":{"NE":"upper","NW":"lower","SE":"lower","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,0,255],"row_2":[255,0,0,255],"row_3":[255,255,255,255]},"original_position":{"col":2,"row":5},"bounding_box":{"x":0,"y":32,"width":32,"height":32}},{"id":"8","name":"wang_8","corners":{"NE":"lower","NW":"upper","SE":"lower","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,0,255],"row_2":[255,1,1,255],"row_3":[255,255,255,255]},"original_position":{"col":6,"row":3},"bounding_box":{"x":32,"y":32,"width":32,"height":32}},{"id":"a81a90c1-78c6-4183-8e21-fcc27668b27c","name":"wang_0","corners":{"NE":"lower","NW":"lower","SE":"lower","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,1,255],"row_2":[255,0,1,255],"row_3":[255,255,255,255]},"original_position":{"col":3,"row":6},"bounding_box":{"x":64,"y":32,"width":32,"height":32}},{"id":"1","name":"wang_1","corners":{"NE":"lower","NW":"lower","SE":"upper","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,0,255],"row_2":[255,1,0,255],"row_3":[255,255,255,255]},"original_position":{"col":1,"row":1},"bounding_box":{"x":96,"y":32,"width":32,"height":32}},{"id":"11","name":"wang_11","corners":{"NE":"lower","NW":"upper","SE":"upper","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,1,255],"row_2":[255,0,1,255],"row_3":[255,255,255,255]},"original_position":{"col":3,"row":2},"bounding_box":{"x":0,"y":64,"width":32,"height":32}},{"id":"3","name":"wang_3","corners":{"NE":"lower","NW":"lower","SE":"upper","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,1,255],"row_2":[255,0,0,255],"row_3":[255,255,255,255]},"original_position":{"col":2,"row":1},"bounding_box":{"x":32,"y":64,"width":32,"height":32}},{"id":"2","name":"wang_2","corners":{"NE":"lower","NW":"lower","SE":"lower","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,1,255],"row_2":[255,0,0,255],"row_3":[255,255,255,255]},"original_position":{"col":3,"row":1},"bounding_box":{"x":64,"y":64,"width":32,"height":32}},{"id":"5","name":"wang_5","corners":{"NE":"upper","NW":"lower","SE":"upper","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,0,255],"row_2":[255,0,0,255],"row_3":[255,255,255,255]},"original_position":{"col":1,"row":2},"bounding_box":{"x":96,"y":64,"width":32,"height":32}},{"id":"c8f71fd8-ba8d-47b1-afbb-d850d3d17d36","name":"wang_15","corners":{"NE":"upper","NW":"upper","SE":"upper","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,1,255],"row_2":[255,1,1,255],"row_3":[255,255,255,255]},"original_position":{"col":2,"row":2},"bounding_box":{"x":0,"y":96,"width":32,"height":32}},{"id":"14","name":"wang_14","corners":{"NE":"upper","NW":"upper","SE":"lower","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,1,0,255],"row_2":[255,0,1,255],"row_3":[255,255,255,255]},"original_position":{"col":4,"row":3},"bounding_box":{"x":32,"y":96,"width":32,"height":32}},{"id":"9","name":"wang_9","corners":{"NE":"lower","NW":"upper","SE":"upper","SW":"lower"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,0,255],"row_2":[255,1,1,255],"row_3":[255,255,255,255]},"original_position":{"col":4,"row":4},"bounding_box":{"x":64,"y":96,"width":32,"height":32}},{"id":"7","name":"wang_7","corners":{"NE":"upper","NW":"lower","SE":"upper","SW":"upper"},"pattern_4x4":{"row_0":[255,255,255,255],"row_1":[255,0,0,255],"row_2":[255,0,1,255],"row_3":[255,255,255,255]},"original_position":{"col":4,"row":2},"bounding_box":{"x":96,"y":96,"width":32,"height":32}}],"tile_size":{"width":32,"height":32},"total_tiles":16,"terrain_types":["lower","upper"],"spritesheet_url":"https://backblaze.pixellab.ai/file/pixellab-tiles/a7299adc-c359-40dc-9dec-7580b0a7221b/81ddeb91-2486-4f82-8566-90978642b575/spritesheet.png","spritesheet_grid":{"cols":4,"rows":4},"spritesheet_layout":"tileset15_4x4"},"metadata":{"terrain_prompts":{"lower":"dark desaturated basalt volcanic rock, low saturation, subtle detail","upper":"dark grey cooled lava field with faint dull orange cracks, low saturation","transition":"crumbled basalt edge with faint ember glow"}},"created_at":"2026-07-16T05:35:27.855689+00:00","format":"tileset15","layout":{"type":"tileset15","description":"4x4 grid of 16 unique Wang tiles","grid_size":{"width":4,"height":4},"tile_count":16},"pattern_system":{"type":"4x4_wildcard","description":"4×4 patterns with wildcards for flexible tile matching","wildcard_value":255,"pattern_layout":{"description":"4×4 grid where center 2×2 matches tile corners, outer ring uses wildcards","example":{"row_0":"All wildcards (*)","row_1":"Wildcard + NW corner + NE corner + Wildcard","row_2":"Wildcard + SW corner + SE corner + Wildcard","row_3":"All wildcards (*)"}},"terrain_encoding":{"lower":0,"upper":1,"transition":2,"wildcard":255},"usage":{"description":"Sample 4×4 terrain around tile position, encode as pattern key, lookup in cache","benefits":["O(1) lookup performance","Flexible edge matching","Unified pattern system"]}},"tileset_image":{"filename":"tileset_81ddeb91-2486-4f82-8566-90978642b575.png","format":"PNG","dimensions":{"width":128,"height":128}}}
+{
+ "name": "kargon — 오프라인 합성 Wang 타일셋 (4차)",
+ "note": "실루엣·내부 전부 오프라인 합성. 재생성기는 .omc/research/kargon-aaa-shots/kargon-tileset-gen.mjs.",
+ "tile_size": {
+  "width": 32,
+  "height": 32
+ },
+ "sheet": {
+  "width": 128,
+  "height": 256,
+  "cols": 4,
+  "rows": 8
+ },
+ "tileset_data": {
+  "tiles": [
+   {
+    "name": "wang_0",
+    "corners": {
+     "NW": "lower",
+     "NE": "lower",
+     "SE": "lower",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 0,
+     "y": 0,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_1",
+    "corners": {
+     "NW": "lower",
+     "NE": "lower",
+     "SE": "lower",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 32,
+     "y": 0,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_2",
+    "corners": {
+     "NW": "lower",
+     "NE": "lower",
+     "SE": "upper",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 64,
+     "y": 0,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_3",
+    "corners": {
+     "NW": "lower",
+     "NE": "lower",
+     "SE": "upper",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 96,
+     "y": 0,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_4",
+    "corners": {
+     "NW": "lower",
+     "NE": "upper",
+     "SE": "lower",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 0,
+     "y": 32,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_5",
+    "corners": {
+     "NW": "lower",
+     "NE": "upper",
+     "SE": "lower",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 32,
+     "y": 32,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_6",
+    "corners": {
+     "NW": "lower",
+     "NE": "upper",
+     "SE": "upper",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 64,
+     "y": 32,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_7",
+    "corners": {
+     "NW": "lower",
+     "NE": "upper",
+     "SE": "upper",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 96,
+     "y": 32,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_8",
+    "corners": {
+     "NW": "upper",
+     "NE": "lower",
+     "SE": "lower",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 0,
+     "y": 64,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_9",
+    "corners": {
+     "NW": "upper",
+     "NE": "lower",
+     "SE": "lower",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 32,
+     "y": 64,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_10",
+    "corners": {
+     "NW": "upper",
+     "NE": "lower",
+     "SE": "upper",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 64,
+     "y": 64,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_11",
+    "corners": {
+     "NW": "upper",
+     "NE": "lower",
+     "SE": "upper",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 96,
+     "y": 64,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_12",
+    "corners": {
+     "NW": "upper",
+     "NE": "upper",
+     "SE": "lower",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 0,
+     "y": 96,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_13",
+    "corners": {
+     "NW": "upper",
+     "NE": "upper",
+     "SE": "lower",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 32,
+     "y": 96,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_14",
+    "corners": {
+     "NW": "upper",
+     "NE": "upper",
+     "SE": "upper",
+     "SW": "lower"
+    },
+    "bounding_box": {
+     "x": 64,
+     "y": 96,
+     "width": 32,
+     "height": 32
+    }
+   },
+   {
+    "name": "wang_15",
+    "corners": {
+     "NW": "upper",
+     "NE": "upper",
+     "SE": "upper",
+     "SW": "upper"
+    },
+    "bounding_box": {
+     "x": 96,
+     "y": 96,
+     "width": 32,
+     "height": 32
+    }
+   }
+  ],
+  "tile_size": {
+   "width": 32,
+   "height": 32
+  },
+  "total_tiles": 16
+ },
+ "base_band": 1,
+ "fill_variants": [
+  {
+   "key": 0,
+   "band": 0,
+   "bounding_box": {
+    "x": 0,
+    "y": 128,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 1,
+   "bounding_box": {
+    "x": 32,
+    "y": 128,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 2,
+   "bounding_box": {
+    "x": 64,
+    "y": 128,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 0,
+   "bounding_box": {
+    "x": 96,
+    "y": 128,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 2,
+   "bounding_box": {
+    "x": 0,
+    "y": 160,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 0,
+   "bounding_box": {
+    "x": 32,
+    "y": 160,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 0,
+   "band": 1,
+   "bounding_box": {
+    "x": 64,
+    "y": 160,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 0,
+   "bounding_box": {
+    "x": 96,
+    "y": 160,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 1,
+   "bounding_box": {
+    "x": 0,
+    "y": 192,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 2,
+   "bounding_box": {
+    "x": 32,
+    "y": 192,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 0,
+   "bounding_box": {
+    "x": 64,
+    "y": 192,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 2,
+   "bounding_box": {
+    "x": 96,
+    "y": 192,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 0,
+   "bounding_box": {
+    "x": 0,
+    "y": 224,
+    "width": 32,
+    "height": 32
+   }
+  },
+  {
+   "key": 15,
+   "band": 1,
+   "bounding_box": {
+    "x": 32,
+    "y": 224,
+    "width": 32,
+    "height": 32
+   }
+  }
+ ]
+}
