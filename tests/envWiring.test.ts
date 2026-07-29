@@ -67,4 +67,33 @@ describe('행성 환경 레이어 배선', () => {
     expect(main).toContain('env.update(');
     expect(main).toContain('env.disable()');
   });
+
+  /**
+   * 런의 **월드 표현**이 화면 전환에서 걷히는가.
+   *
+   * `clearToMenu()` 는 `world = null` 로 sim 을 버리지만 지형·환경·접지 그림자는 world 가
+   * 아니라 각자의 배선이 수명을 쥔다. 그 배선을 푸는 곳이 런 시작과 관전 진입뿐이었던 탓에,
+   * 런을 마치고 메뉴로 나가면 **Wang 타일 714장과 환경 레이어 5장이 불투명 메뉴 뒤에서 매
+   * 프레임 계속 갱신·렌더되고** 사라진 엔티티의 접지 그림자가 바닥에 남았다(하네스 실측).
+   *
+   * `world = null` 만 검사하면 이 결함이 안 잡힌다 — 그 줄은 처음부터 있었다. 그래서
+   * **`clearToMenu` 함수 본문 안에서** 네 배선이 전부 풀리는지를 본다. 함수 경계를 안 잡고
+   * 파일 전체에서 문자열을 찾으면 런 시작 쪽 호출이 대신 걸려 항진이 된다.
+   */
+  it('clearToMenu() 가 지형·환경·접지 그림자를 함께 내린다', () => {
+    const start = main.indexOf('function clearToMenu()');
+    expect(start).toBeGreaterThan(0);
+    // 다음 함수 선언 전까지를 본문으로 본다.
+    const rest = main.slice(start + 'function clearToMenu()'.length);
+    const end = rest.indexOf('\n  function ');
+    const body = end > 0 ? rest.slice(0, end) : rest;
+
+    expect(body).toContain('autotile.configure(null,');
+    expect(body).toContain('env.disable()');
+    expect(body).toContain('entityRenderer.setEnvPlanet(null)');
+    expect(body).toContain('entityRenderer.reset()');
+    // 지형을 끈 뒤 평면 배경이 다시 켜져야 한다. 리터럴 `true` 가 아니라 파생식이어야
+    // PvE 런 시작 쪽 규칙과 갈라지지 않는다.
+    expect(body).toContain('background.visible = !autotile.active');
+  });
 });
