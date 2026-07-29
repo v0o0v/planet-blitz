@@ -433,8 +433,8 @@ describe('정리 — 누수 0', () => {
     // 충격파 폴백 링은 layer 의 **자식**으로 추가될 수 있다(GL 없을 때)지만 원샷 종료 시 회수된다.
     // 여기선 배선 직후라 링이 있을 수 있으므로 진행시켜 회수한 뒤 스택을 확인한다.
     advanceShockwaves(r);
-    // 8 = lava·overlay·shadow(접지 그림자)·glow·sprite·label·effect·fog.
-    expect(r.layer.children.length).toBe(8);
+    // 9 = lava·hazardMaterial(해저드 재질 심)·overlay·shadow(접지 그림자)·glow·sprite·label·effect·fog.
+    expect(r.layer.children.length).toBe(9);
     r.destroy();
   });
 });

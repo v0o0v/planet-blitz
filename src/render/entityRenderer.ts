@@ -36,13 +36,17 @@ import { tiledWallTexture } from './wallTexture.js';
 import { TURRET_RANGE } from '../sim/events.js';
 import { facilitySpecFor } from '../../data/invasion/facilities.js';
 import { HAZARD_LAVA } from '../sim/patterns/types.js';
-// 해저드 장판 표시 규칙(색=성질·형태=상태) — render-only 순수 모듈을 소비만 한다.
+// 엔티티 장식자 심(entity/adorner.ts) — 플레이어·적 비주얼 레인이 이 공유 파일을 건드리지 않고
+// 자기 모듈에서 등록만 하는 확장 지점. 등록된 팩토리가 없으면 장식자 0개라 거동이 완전히 불변이다.
 import {
-  DECOR_MIN_RADIUS,
-  MAX_DECORATED_HAZARDS,
-  drawHazardZone,
-  hazardVisual,
-} from './hazardVisual.js';
+  createAdorners,
+  NO_ADORNERS,
+  type AdornerContext,
+  type EntityAdorner,
+} from './entity/adorner.js';
+// 해저드 렌더 진입점(entity/hazardHost.ts) — 장판 그리기(구 drawOverlay 루프)와 재질 확장 지점.
+// 표시 규칙 자체는 여전히 hazardVisual.ts 가 정본이고 호스트가 그것을 소비한다.
+import { HazardHost, type HazardHostContext } from './entity/hazardHost.js';
 // 조우 유형 상수(ADR-0033). `data/encounters.ts` 는 다른 sim 모듈을 import 하지 않는 leaf
 // 데이터라 렌더가 읽어도 순환·결정론 위험이 없다(facilities/props 카탈로그 참조 선례).
 import { ENCOUNTER_TYPE } from '../../data/encounters.js';
@@ -56,7 +60,7 @@ import {
   TRAUMA_ELITE_KILL,
   TRAUMA_BIG_EXPLOSION,
 } from './screenShake.js';
-import { effectGates } from './qualityTier.js';
+import { effectGates, type EffectGates, type QualityTier } from './qualityTier.js';
 import { graphicsSettings } from './graphicsSettings.js';
 import { graphicsTierController } from './graphicsRuntime.js';
 // Phase 3 발광체 글로우 배선 — 선행 레인 모듈(effects/glow.ts)을 소비만 한다(재작성 금지).
@@ -159,6 +163,15 @@ interface TrackedSprite {
    * (엘리트 처치=TRAUMA_ELITE_KILL). 소멸 시점엔 스냅샷이 없으므로 tracked 에 실어 둔다.
    */
   elite: boolean;
+  /**
+   * 이 엔티티에 붙은 장식자(비주얼 레인 확장, {@link file://./entity/adorner.ts}). 등록된 팩토리가
+   * 없는 kind 는 {@link NO_ADORNERS}(공유 빈 배열)라 할당도 호출도 없다.
+   *
+   * ⚠️ 장식자가 만드는 컨테이너는 스프라이트의 **형제**라 부모 `destroy` 로 회수되지 않는다 —
+   * 킬 루프·디졸브·reset·destroy 네 경로가 전부 {@link EntityRenderer.disposeAdorners} 를 불러야
+   * 한다. 회수한 뒤에는 이 필드를 `NO_ADORNERS` 로 되돌려 이중 회수가 no-op 이 되게 한다.
+   */
+  adorners: readonly EntityAdorner[];
 }
 
 /** Sprite display diameter relative to the sim hitbox (art reads a bit larger). */
@@ -695,6 +708,12 @@ export class EntityRenderer {
   private glowBloom: Filter | null | undefined = undefined;
   /** glowLayer.filters 에 블룸이 현재 붙어 있는지 — 게이트 전이 시에만 filters 배열을 재설정하기 위한 상태. */
   private glowBloomAttached = false;
+  /**
+   * 해저드 렌더 호스트(구 `drawOverlay` 의 장판 루프). 재질 레이어({@link HazardHost.view})는
+   * 생성자가 장판 오버레이 **위** · 스프라이트 **아래**에 끼운다. 재질 팩토리가 하나도 등록되지
+   * 않으면 자식 0 인 빈 컨테이너라 화면이 불변이다(glowLayer Phase 0 과 같은 규율).
+   */
+  private readonly hazardHost = new HazardHost();
   private readonly spriteLayer = new Container();
   /**
    * 이름표 레이어 — 스프라이트 **위**, 이펙트 **아래**. 위에 둬야 겹친 스프라이트에 이름이
@@ -810,6 +829,9 @@ export class EntityRenderer {
     // (발광 이펙트 배선은 Phase 3 몫). fog 는 계속 최상단이라 필드 오버레이 계약도 그대로다.
     this.glowLayer.blendMode = 'add';
     this.layer.addChild(this.lavaOverlay);
+    // 해저드 재질 레이어 — 용암 채움 **위**, 비-용암 오버레이(예고선 포함) **아래**. 재질이
+    // 예고선을 덮으면 회피 판정 가독성이 무너진다(시머 국소화 계약과 같은 이유).
+    this.layer.addChild(this.hazardHost.view);
     this.layer.addChild(this.overlay);
     // 접지 그림자는 지형·해저드 오버레이 **위**, 발광 헤일로·스프라이트 **아래**다. 위 발광
     // 비대칭 규율의 연장선이며 이유는 {@link shadowLayer} 주석이 정본이다.
@@ -890,6 +912,22 @@ export class EntityRenderer {
    */
   get groundShadowCount(): number {
     return this.groundShadows.size;
+  }
+
+  /**
+   * 현재 살아 있는 장식자 개수. **읽기 전용 관측창** — 등록된 kind 에만 붙고, 소멸·reset·destroy
+   * 에서 회수되는지(형제 컨테이너라 부모 destroy 로 안 걷힌다 — 누수 자리)를 자동 통합 테스트가
+   * 수치로 못 박게 노출한다. 렌더 거동에는 관여하지 않는다.
+   */
+  get adornerCount(): number {
+    let n = 0;
+    for (const t of this.sprites.values()) n += t.adorners.length;
+    return n;
+  }
+
+  /** 현재 살아 있는 해저드 재질 묶음 수(읽기 전용 관측창). */
+  get hazardMaterialCount(): number {
+    return this.hazardHost.materialCount;
   }
 
   // ── Phase 4 관측창(읽기 전용) — 자동 배선 통합 테스트가 각 이펙트 트리거의 실효를 수치로 못 박는다
@@ -995,7 +1033,12 @@ export class EntityRenderer {
 
     // 이펙트 게이트(티어 × 감소 토글) — 프레임당 1회만 산출해 흔들림·히트 플래시·발광이 공유한다.
     const settings = graphicsSettings.getSettings();
-    const gates = effectGates(graphicsTierController.getActiveTier(), settings);
+    const tier = graphicsTierController.getActiveTier();
+    const gates = effectGates(tier, settings);
+    // 장식자·해저드 재질 맥락 — 프레임당 **한 번**만 만들어 전 장식자가 공유한다(엔티티 수만큼
+    // 게이트를 재산출하지 않는다).
+    const adornCtx = this.adornerCtx(gates, tier, dt, alpha);
+    const hazardCtx = this.hazardCtx(gates, tier, dt);
     // 데미지 숫자(AC-4.1)는 티어 예산이 아니라 순수 사용자 토글이라 effectGates 밖에서 직접 읽는다.
     const showDamageNumbers = settings.damageNumbers;
 
@@ -1006,7 +1049,7 @@ export class EntityRenderer {
     // 엔티티 루프가 발광체별로 헤일로를 생성·미러하고, 킬 루프가 소멸분을 제거한다.
     if (!gates.halo) this.clearGlowHalos();
 
-    this.drawOverlay(curr);
+    this.drawOverlay(curr, hazardCtx);
     this.drawFieldOverlays(curr);
     this.updateBursts(dt);
     // 이벤트 셰이더 원샷 진행(충격파·디졸브) — updateBursts 와 동형. 이번 프레임에 킬 루프가 새로
@@ -1127,8 +1170,11 @@ export class EntityRenderer {
           dmgAccum: 0,
           // 첫 피해가 즉시 방출되도록 스로틀 창을 이미 지난 값으로 초기화.
           dmgEmitTick: this.frameTick - DAMAGE_NUMBER_THROTTLE_FRAMES,
+          // 장식자 생성(비주얼 레인 확장). 등록된 팩토리가 없으면 공유 빈 배열이라 비용 0.
+          adorners: createAdorners(e),
         };
         this.sprites.set(e.id, tracked);
+        for (const ad of tracked.adorners) ad.onAttach?.(sprite, e, adornCtx);
         // 머즐 플래시(AC-4.7) — 신규 **플레이어 탄**('bullet', 주무기·보조 포함) 등장 = 발사. 프레임당
         // 1회 총구 섬광으로 근사한다(정밀 위치·연사별 개별 섬광은 범위 밖). 적탄('enemyBullet')은 제외.
         if (e.kind === 'bullet') newPlayerBullet = true;
@@ -1308,6 +1354,10 @@ export class EntityRenderer {
       if (this.envTheme !== null && castsGroundShadow(e.kind)) {
         this.syncGroundShadow(e.id, tracked.sprite, this.envTheme);
       }
+
+      // 장식자 프레임 갱신 — 스프라이트의 보간 위치·회전이 확정된 **뒤**여야 한다(장식자가
+      // 그 값을 미러한다). 등록이 없으면 배열이 비어 있어 루프가 0회다.
+      for (const ad of tracked.adorners) ad.onFrame(tracked.sprite, e, p, adornCtx);
     }
 
     // ── 엔티티 루프 후처리(Phase 4) — 플레이어 위치·신규 탄 정보가 확정된 뒤 수행 ──────────────
@@ -1374,6 +1424,10 @@ export class EntityRenderer {
         // 남아(위치 미러가 끊긴다) 사라진 실체의 그림자만 바닥에 남는다. 형제라 부모 destroy
         // 로는 절대 안 걷힌다 — 여기가 누수 자리다.
         this.removeGroundShadow(id);
+        // 장식자도 같은 규율로 즉시 회수한다 — **디졸브 경로 포함**. 디졸브는 스프라이트를
+        // spriteLayer 에 잔류시키지만 장식자의 형제 컨테이너는 위치 미러가 끊긴 채 화면에
+        // 얼어붙는다(접지 그림자가 실제로 낸 결함). 이 한 줄이 킬·디졸브 두 경로를 함께 덮는다.
+        this.disposeAdorners(tracked, adornCtx);
         // 킬블로우 데미지 숫자(AC-4.1 엣지 ①) — 보스·엘리트가 사라지면 마지막 잔량(tracked.hp)을 치사
         // 피해로 띄운다(curr 스냅샷이 없어 델타를 못 얻는 경우 보정). 토글 on 한정. sprite.destroy 전이라
         // 위치가 유효하다.
@@ -1750,7 +1804,63 @@ export class EntityRenderer {
     child.destroy();
   }
 
-  private drawOverlay(curr: WorldSnapshot): void {
+  /**
+   * 이번 프레임의 장식자 맥락을 만든다. 레이어는 **발광(아래)·이펙트(위)** 를 그대로 재사용한다 —
+   * 새 레이어를 추가하면 draw order 가 바뀌어 "거동 변화 0" 계약이 깨진다.
+   */
+  private adornerCtx(
+    gates: EffectGates,
+    tier: QualityTier,
+    dt: number,
+    alpha: number,
+  ): AdornerContext {
+    return {
+      belowLayer: this.glowLayer,
+      aboveLayer: this.effectLayer,
+      frameTick: this.frameTick,
+      dt,
+      gates,
+      tier,
+      theme: this.envTheme,
+      alpha,
+    };
+  }
+
+  /** 이번 프레임의 해저드 재질 맥락. `layer` 는 항상 호스트 자신의 view 다. */
+  private hazardCtx(gates: EffectGates, tier: QualityTier, dt: number): HazardHostContext {
+    return {
+      layer: this.hazardHost.view,
+      frameTick: this.frameTick,
+      dt,
+      gates,
+      tier,
+      theme: this.envTheme,
+    };
+  }
+
+  /**
+   * 장식자 하나의 묶음을 회수한다. 회수 뒤 {@link NO_ADORNERS} 로 되돌려 **두 번 불려도 no-op**
+   * 이 되게 한다(킬 루프 뒤 같은 프레임에 reset 이 오는 경로가 실제로 있다).
+   */
+  private disposeAdorners(tracked: TrackedSprite, ctx: AdornerContext): void {
+    if (tracked.adorners.length === 0) return;
+    for (const ad of tracked.adorners) ad.dispose(ctx);
+    tracked.adorners = NO_ADORNERS;
+  }
+
+  /**
+   * 살아있는 장식자·해저드 재질을 전부 회수한다(reset·destroy 공통). 두 경로가 각각 맥락을
+   * 조립하면 한쪽만 고쳐지는 사고가 나므로 여기 한 곳에 모은다.
+   */
+  private disposeAllAdorners(): void {
+    const tier = graphicsTierController.getActiveTier();
+    const gates = effectGates(tier, graphicsSettings.getSettings());
+    const ctx = this.adornerCtx(gates, tier, 0, 0);
+    for (const t of this.sprites.values()) this.disposeAdorners(t, ctx);
+    this.hazardHost.clear(this.hazardCtx(gates, tier, 0));
+  }
+
+  private drawOverlay(curr: WorldSnapshot, hazardCtx: HazardHostContext): void {
     const g = this.overlay;
     const lg = this.lavaOverlay;
     g.clear();
@@ -1804,18 +1914,9 @@ export class EntityRenderer {
     // 주기 온오프 해저드(L2 설비·L3 중력 앵커)는 이 예열↔활성 대비가 리듬을 읽게 한다.
     // **용암(HAZARD_LAVA)만 lavaOverlay 로 분리** — 시머가 용암류만 국소로 흔들고 예고선·비-용암
     // 해저드는 overlay 에 남겨 흔들리지 않게 한다(AC-3.2 국소 시머 계약).
-    // 장식 예산: 프레임당 상한을 넘긴 장판은 채움+테두리만 그린다(오염 셀 다수 성능 방어).
-    let decorBudget = MAX_DECORATED_HAZARDS;
-    for (const e of curr.entities) {
-      if (e.kind !== 'hazard') continue;
-      // 색 = 성질(아프다/방해만), 형태 = 상태(예열 점선 / 활성 실선+빗금). `permanent` 는 같은
-      // 코드를 쓰는 감속 지대와 피해 지형을 가르는 유일한 신호다(hazardVisual.ts 주석 참조).
-      const v = hazardVisual(e.enemyType, e.active, e.permanent === true);
-      const target = e.enemyType === HAZARD_LAVA ? lg : g;
-      const decor = decorBudget > 0;
-      if (decor && e.radius >= DECOR_MIN_RADIUS) decorBudget--;
-      drawHazardZone(target, e.x, e.y, e.radius, v, this.frameTick, decor);
-    }
+    // 장판 루프는 {@link HazardHost} 로 이관했다(해저드 레인 확장 지점). 그리기 순서·장식 예산·
+    // 용암 분리는 그대로다 — 이관은 거동 변화 0 이다.
+    this.hazardHost.draw(curr.entities, g, lg, hazardCtx);
     // 예고선(관통 레일포 텔레그래프): 조준각이 잠긴 예고 구간에만 나온다. 탄보다 먼저 선이
     // 보이므로 플레이어가 사계를 벗어날 시간을 얻는다(예고 중에는 피해가 없다 — facility.ts).
     for (const e of curr.entities) {
@@ -1858,6 +1959,9 @@ export class EntityRenderer {
    * `destroy()` 와 달리 레이어·오버레이는 살려 둔다 — 렌더러 인스턴스는 앱 수명 내내 유지된다.
    */
   reset(): void {
+    // 장식자·해저드 재질 전량 회수(누수 0) — 형제 컨테이너라 아래 sprite.destroy 로는 안 걷힌다.
+    // 스프라이트를 파괴하기 **전**에 부른다: 장식자가 dispose 에서 부모 스프라이트를 읽을 수 있다.
+    this.disposeAllAdorners();
     for (const t of this.sprites.values()) {
       // 형제 부착물(히트 플래시 오버레이·낙하산)을 먼저 회수한다 — 형제라 부모 destroy 로는 안
       // 딸려 온다(누수 0). reset 은 spriteLayer 를 살려 두므로 removeChild 가 필수, destroy 는 뒤에서
@@ -1910,6 +2014,9 @@ export class EntityRenderer {
   }
 
   destroy(): void {
+    // 장식자·해저드 재질 전량 회수(누수 0). layer.destroy 는 형제 컨테이너를 걷지 않으며
+    // 필터도 파괴하지 않는다 — 명시 회수가 유일한 경로다.
+    this.disposeAllAdorners();
     for (const t of this.sprites.values()) {
       // 형제 부착물(히트 플래시 오버레이·낙하산)을 먼저 회수한다 — 형제라 부모 destroy 로는 안
       // 딸려 온다(누수 0). reset 은 spriteLayer 를 살려 두므로 removeChild 가 필수, destroy 는 뒤에서
