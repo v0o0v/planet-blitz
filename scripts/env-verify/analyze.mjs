@@ -405,7 +405,15 @@ function main() {
   if (CMD === 'regress') {
     const [baseDir, newDir] = POSITIONAL;
     const max = num('--max', 0.12);
-    const names = readdirSync(baseDir).filter((f) => f.endsWith('.png'));
+    // `--match` 로 비교 대상을 좁힌다(부분 문자열). 두 가지 이유로 필요하다:
+    //  1. 기준선 디렉터리에는 solo·noise 진단 컷도 함께 있는데, 그것까지 "없으면 실패"로 세면
+    //     게이트가 무관한 이유로 빨개진다.
+    //  2. **게이트는 `-bg` 컷으로 잡아야 한다.** `full` 컷은 엔티티를 포함하는데, sim 해시가
+    //     같아도 엔티티 렌더 보간 계수가 벽시계 누산기 기반이라 프레임마다 달라진다
+    //     (실측: bg 는 mean 0.00 인데 같은 런의 full 은 mean 1.5~3.3 · 국소 32~84).
+    //     full 은 육안 검토용이고 판정용이 아니다.
+    const match = opt('--match', '');
+    const names = readdirSync(baseDir).filter((f) => f.endsWith('.png') && f.includes(match));
     const rows = [];
     let worst = 0, missing = 0;
     for (const n of names) {
