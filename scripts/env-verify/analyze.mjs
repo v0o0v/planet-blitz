@@ -23,7 +23,10 @@
  *    부조는 평균이 아니라 국소 대비다. 그래서 평균과 함께 **국소 최대**(타일 격자 블록별
  *    평균 델타의 상위값)를 같이 낸다. 지표 하나로 모든 레이어를 재면 오판한다.
  *
- * 의존성 0(`scripts/lib/png.mjs` 공유 코덱만 쓴다).
+ * 의존성 0(`scripts/lib/png.mjs` 공유 코덱만 쓴다). 자산 픽셀에서 색을 뽑는 부분(적 몸통색
+ * 추출·PNG 로딩·색 유틸)은 {@link file://./assetColor.mjs} 로 빠졌다 — **테스트도 같은 질문을
+ * 물으므로**(테마 선언 배경색 ↔ 실제 타일셋, 테마 팔레트 ↔ 적 몸통색) 추출기가 두 벌이 되면
+ * 하한값이 갈라진다. 여기서는 그 모듈을 부르기만 한다.
  *
  * ## 사용법
  *   node scripts/env-verify/analyze.mjs tone   <shot.png>
@@ -36,13 +39,16 @@
  * 공통 옵션: `--crop-top 0.08 --crop-bottom 0.12` (HUD 띠 배제 비율), `--json`.
  */
 
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { resolve, join, basename } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { dirname } from 'node:path';
-import { decodePng } from '../lib/png.mjs';
-
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+import { readdirSync, existsSync } from 'node:fs';
+import { join, basename } from 'node:path';
+import {
+  ENEMY_SPRITE_FILES,
+  enemyBodyColors,
+  hue,
+  loadRgba,
+  luma,
+  rgbDeltaSum,
+} from './assetColor.mjs';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 인자 파싱
@@ -71,46 +77,6 @@ const JSON_OUT = flag('--json');
 // ─────────────────────────────────────────────────────────────────────────────
 // 이미지 로딩 · 색 유틸
 // ─────────────────────────────────────────────────────────────────────────────
-
-/** PNG → `{ w, h, rgba: Uint8Array }` (항상 RGBA 4채널로 정규화). */
-function loadRgba(path) {
-  const png = decodePng(readFileSync(path));
-  const { width: w, height: h, channels, pixels: data } = png;
-  const rgba = new Uint8Array(w * h * 4);
-  for (let i = 0, n = w * h; i < n; i++) {
-    let r, g, b, a;
-    if (channels === 1) { r = g = b = data[i]; a = 255; }
-    else if (channels === 2) { r = g = b = data[i * 2]; a = data[i * 2 + 1]; }
-    else if (channels === 3) { r = data[i * 3]; g = data[i * 3 + 1]; b = data[i * 3 + 2]; a = 255; }
-    else { r = data[i * 4]; g = data[i * 4 + 1]; b = data[i * 4 + 2]; a = data[i * 4 + 3]; }
-    rgba[i * 4] = r; rgba[i * 4 + 1] = g; rgba[i * 4 + 2] = b; rgba[i * 4 + 3] = a;
-  }
-  return { w, h, rgba };
-}
-
-/** Rec.709 상대휘도(0~255 스케일). */
-function luma(r, g, b) {
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-/** HSV 채도(0~1). max=0 이면 0. */
-function sat(r, g, b) {
-  const mx = Math.max(r, g, b);
-  if (mx === 0) return 0;
-  return (mx - Math.min(r, g, b)) / mx;
-}
-
-/** HSV 색상각(도, 0~360). 무채색이면 NaN. */
-function hue(r, g, b) {
-  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
-  if (d === 0) return Number.NaN;
-  let h;
-  if (mx === r) h = ((g - b) / d) % 6;
-  else if (mx === g) h = (b - r) / d + 2;
-  else h = (r - g) / d + 4;
-  h *= 60;
-  return h < 0 ? h + 360 : h;
-}
 
 /**
  * HUD 띠를 제외한 세로 구간. 배경 판정은 화면 상·하단의 UI 오버레이를 재면 안 된다
@@ -226,60 +192,17 @@ function grid(img, period, control) {
 // camo — 전경 가독성 (적이 배경에 묻히는가)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 행성 → 적 스프라이트 파일 목록. 카르곤만 접두 없이 저장돼 있다. */
-const ENEMY_FILES = {
-  kargon: ['enemy_charger.png', 'enemy_mortar.png', 'enemy_lavaspring.png', 'enemy_support.png'],
-  berdan: ['enemy_berdan_charger.png', 'enemy_berdan_gunner.png', 'enemy_berdan_special.png', 'enemy_berdan_support.png'],
-  niflheim: ['enemy_niflheim_charger.png', 'enemy_niflheim_gunner.png', 'enemy_niflheim_special.png', 'enemy_niflheim_support.png'],
-  arke: ['enemy_arke_charger.png', 'enemy_arke_gunner.png', 'enemy_arke_special.png', 'enemy_arke_support.png'],
-  toxar: ['enemy_toxar_charger.png', 'enemy_toxar_gunner.png', 'enemy_toxar_special.png', 'enemy_toxar_support.png'],
-  kras: ['enemy_kras_charger.png', 'enemy_kras_gunner.png', 'enemy_kras_special.png', 'enemy_kras_support.png'],
-};
-
-/** 외곽선을 배제하는 하한. 이 두 줄이 위장 지표의 전부다(없으면 97.6% 같은 허수가 나온다). */
-const BODY_MIN_LUMA = 60;
-const BODY_MIN_SAT = 0.25;
-
-/**
- * 적 스프라이트 **한 장**의 몸통 대표색 1개.
- *
- * 불투명 픽셀을 전부 후보로 삼으면 어두운 외곽선이 최다 색으로 뽑혀 어두운 배경 거의
- * 전부와 매칭된다. 플레이어가 적을 발견하는 단서는 밝고 채도 높은 면이므로 휘도·채도
- * 하한을 통과한 픽셀만 세고, 32단계 양자화 격자의 최빈 1색을 쓴다.
- *
- * **적별 색을 하나로 합치지 않는다.** 4종 × 상위 3색을 OR 로 묶으면 12색 중 아무거나
- * 걸리기만 해도 세어져 값이 구조적으로 부풀고(실측 24% → 적별로는 대부분 한 자리),
- * 무엇보다 "어느 적이 안 보이는가"라는 실제로 고쳐야 할 정보가 사라진다.
- */
-function enemyBodyColor(file) {
-  const path = join(ROOT, 'assets', file);
-  if (!existsSync(path)) return null;
-  const img = loadRgba(path);
-  const bins = new Map();
-  for (let i = 0; i < img.w * img.h; i++) {
-    if (img.rgba[i * 4 + 3] < 200) continue;
-    const r = img.rgba[i * 4], g = img.rgba[i * 4 + 1], b = img.rgba[i * 4 + 2];
-    if (luma(r, g, b) < BODY_MIN_LUMA) continue;
-    if (sat(r, g, b) < BODY_MIN_SAT) continue;
-    const key = `${r >> 5},${g >> 5},${b >> 5}`;
-    const e = bins.get(key) ?? { n: 0, r: 0, g: 0, b: 0 };
-    e.n++; e.r += r; e.g += g; e.b += b;
-    bins.set(key, e);
-  }
-  let best = null;
-  for (const e of bins.values()) if (best === null || e.n > best.n) best = e;
-  if (best === null) return null;
-  return { file, r: best.r / best.n, g: best.g / best.n, b: best.b / best.n, n: best.n };
-}
-
 /**
  * 배경 픽셀 중 **각 적의** 몸통색과 ΔRGB(합) 미만으로 가까운 비율. 낮을수록 잘 읽힌다.
  * 판정은 최악 적 기준이며, 어느 적인지 함께 낸다(고칠 대상이 그 적의 색 대비이므로).
+ *
+ * 몸통색 추출은 {@link file://./assetColor.mjs} 가 정본이다(테스트와 공유).
  */
 function camo(img, planet, threshold = 70) {
-  const files = ENEMY_FILES[planet];
-  if (!files) throw new Error(`unknown planet: ${planet} (${Object.keys(ENEMY_FILES).join('|')})`);
-  const bodies = files.map(enemyBodyColor).filter(Boolean);
+  if (ENEMY_SPRITE_FILES[planet] === undefined) {
+    throw new Error(`unknown planet: ${planet} (${Object.keys(ENEMY_SPRITE_FILES).join('|')})`);
+  }
+  const bodies = enemyBodyColors(planet);
   if (bodies.length === 0) throw new Error(`몸통색을 못 뽑았다 (${planet}) — 하한이 너무 높거나 자산이 없다`);
   const [y0, y1] = cropRows(img.h);
   const near = new Array(bodies.length).fill(0);
@@ -290,8 +213,7 @@ function camo(img, planet, threshold = 70) {
       const r = img.rgba[i], g = img.rgba[i + 1], b = img.rgba[i + 2];
       total++;
       for (let k = 0; k < bodies.length; k++) {
-        const c = bodies[k];
-        if (Math.abs(r - c.r) + Math.abs(g - c.g) + Math.abs(b - c.b) < threshold) near[k]++;
+        if (rgbDeltaSum({ r, g, b }, bodies[k]) < threshold) near[k]++;
       }
     }
   }
