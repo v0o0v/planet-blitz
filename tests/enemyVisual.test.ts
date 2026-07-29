@@ -26,14 +26,23 @@ import {
   ENEMY_VISUAL_KINDS,
   MAX_DECORATED_ENEMIES,
   MAX_DEATH_DEBRIS,
+  MAX_BODY_GLOW,
+  MAX_CONCURRENT_SPAWNS,
+  REATTACH_WINDOW,
+  activeBodyGlowCount,
+  activeSpawnCount,
   deathDebrisCount,
-  deathDebrisEmitted,
   enemyAdornerCount,
+  deathDebrisEmitted,
+  deathSignatureCounts,
+  observedPlayerPos,
   movementOf,
   resetEnemyVisualState,
 } from '../src/render/entity/enemyVisual.js';
 import {
+  AIM_LOCK,
   BAND_TOL,
+  COMMIT_RANGE,
   BOSS_ACCENT,
   COMMIT_RATIO,
   DMG_CRITICAL,
@@ -65,7 +74,18 @@ import {
   threatAccent,
   threatTier,
 } from '../src/render/entity/enemyPosture.js';
-import { buildRim, buildSmoke, buildFlame } from '../src/render/entity/enemyParts.js';
+import {
+  buildRimLight,
+  buildSmoke,
+  buildFlame,
+  buildMuzzleCharge,
+  buildDashSmear,
+  buildSpawnHalo,
+  buildBossInsignia,
+} from '../src/render/entity/enemyParts.js';
+import { createWorld, stepWorld, DEFAULT_CONFIG } from '../src/sim/world.js';
+import { autopilotInput } from '../src/sim/autopilot.js';
+import { snapshotWorld } from '../src/sim/snapshot.js';
 import { graphicsSettings } from '../src/render/graphicsSettings.js';
 import { graphicsTierController } from '../src/render/graphicsRuntime.js';
 import { ELITE_AFFIX_COUNT } from '../src/sim/elite.js';
@@ -179,6 +199,20 @@ function withClock(body: () => void): void {
   } finally {
     perf.now = original;
   }
+}
+
+/**
+ * 라벨로 센 개체 소유 컨테이너 수. 레이어 자식 수를 그냥 세면 **사망 파편**(같은 레이어에
+ * 산다)이 섞여 예산 단언이 조용히 틀린다 — 실제로 한 번 그렇게 틀렸다. §2-4 귀속 라벨이
+ * 여기서 그대로 쓰인다.
+ */
+function ownCount(r: EntityRenderer, label: string): number {
+  const l = layers(r);
+  let n = 0;
+  for (const c of [...l.glowLayer.children, ...l.effectLayer.children]) {
+    if (c.label === label) n += 1;
+  }
+  return n;
 }
 
 /** 실 티어를 못 박는다(glowWiring.test.ts 와 같은 관용구). 자동 강등이 게이트를 흔들면 안 된다. */
@@ -311,8 +345,9 @@ describe('가독성 계약 §2-2 · 시안 금지', () => {
     const r = 40;
     const g = buildSmoke(r);
     const b = g.getLocalBounds();
-    // 가장 왼쪽 가장자리가 원점 오른쪽에 있어야 한다 = 몸통 중심을 덮지 않는다.
-    expect(b.minX).toBeGreaterThan(0);
+    // **원반의 가장자리까지** 몸통 반경 밖이어야 한다. 1차는 `minX > 0`(중심만 밖)이라
+    // 원반이 0.85r 까지 몸통을 파고들어도 통과했다 — 주석이 코드보다 강했던 자리다.
+    expect(b.minX).toBeGreaterThanOrEqual(r);
   });
 
   it('화염은 위로만 뻗는다(아래 실루엣을 남긴다)', () => {
@@ -321,10 +356,21 @@ describe('가독성 계약 §2-2 · 시안 금지', () => {
     expect(b.maxY).toBeLessThanOrEqual(0.001);
   });
 
-  it('림은 몸통 바깥 원이다(안쪽을 채우지 않는다)', () => {
+  it('림은 완전한 원이 아니라 광원 쪽 **반쪽 호**다(§2-5 선택 링 금지)', () => {
     const r = 40;
-    const b = buildRim(r, GRUNT_RIM).getLocalBounds();
-    expect(b.maxX).toBeGreaterThan(r);
+    // 광원이 +x 쪽(각 0)일 때 호는 오른쪽에만 있어야 한다. 완전한 원이면 왼쪽 끝이 -r 까지 간다.
+    const b = buildRimLight(r, GRUNT_RIM, 0).getLocalBounds();
+    expect(b.maxX).toBeGreaterThan(r * 0.9);
+    expect(b.minX).toBeGreaterThan(-r * 0.9);
+  });
+
+  it('림 호가 광원 각을 실제로 따라간다(접지 그림자와 같은 태양)', () => {
+    const r = 40;
+    const right = buildRimLight(r, GRUNT_RIM, 0).getLocalBounds();
+    const left = buildRimLight(r, GRUNT_RIM, Math.PI).getLocalBounds();
+    // 광원이 반대편이면 호도 반대편에 있어야 한다.
+    expect(right.maxX + right.minX).toBeGreaterThan(0);
+    expect(left.maxX + left.minX).toBeLessThan(0);
   });
 });
 
@@ -376,8 +422,9 @@ function step(
   next: EntitySnapshot,
   movement: Parameters<typeof observePosture>[3],
   tick: number,
+  player: { x: number; y: number } | null = null,
 ): number {
-  return observePosture(s, next, prev, movement, tick);
+  return observePosture(s, next, prev, movement, tick, player);
 }
 
 /**
@@ -477,16 +524,66 @@ describe('항목 3 · 예비 동작 — standoff(사수형)', () => {
 });
 
 describe('항목 3 · 예비 동작 — chargeStraight(돌격형)', () => {
-  it('직진 순항은 커밋으로 읽는다', () => {
+  /** 조준선 위에 선 플레이어(진행 방향 앞 400u). */
+  const ON_LINE = { x: 400, y: 0 };
+
+  it('나를 조준선 안에 두고 달려오면 커밋으로 읽는다', () => {
     const s = createPostureState();
     let prev = ent({ id: 2, x: 0, y: 0, angle: 0 });
     let posture = POSTURE_NONE;
     for (let i = 0; i < 6; i++) {
       const next = ent({ id: 2, x: (i + 1) * 5, y: 0, angle: 0 });
-      posture = step(s, prev, next, 'chargeStraight', i);
+      posture = step(s, prev, next, 'chargeStraight', i, ON_LINE);
       prev = next;
     }
     expect(posture).toBe(POSTURE_COMMIT);
+  });
+
+  it('**같은 속도로 달려도 조준선이 빗나가면 커밋이 아니다** — 1차 88.9% 듀티의 원인', () => {
+    // 1차는 "빠르게 직진 중" 만으로 커밋을 냈다. `moveCharge` 는 속도를 바꾸지 않으므로 그
+    // 조건은 순항 내내 참이고, 그래서 예고가 상시 켜져 배경이 됐다. 같은 궤적·같은 속도에서
+    // 표적만 옆으로 치우면 꺼져야 한다.
+    const s = createPostureState();
+    let prev = ent({ id: 2, x: 0, y: 0, angle: 0 });
+    let posture = POSTURE_NONE;
+    const OFF_LINE = { x: 400, y: 400 }; // 조준선에서 45° 벗어남
+    for (let i = 0; i < 6; i++) {
+      const next = ent({ id: 2, x: (i + 1) * 5, y: 0, angle: 0 });
+      posture = step(s, prev, next, 'chargeStraight', i, OFF_LINE);
+      prev = next;
+    }
+    expect(posture).toBe(POSTURE_NONE);
+  });
+
+  it('조준선 안이어도 너무 멀면 커밋이 아니다(피할 시간이 충분하다)', () => {
+    const s = createPostureState();
+    let prev = ent({ id: 2, x: 0, y: 0, angle: 0 });
+    let posture = POSTURE_NONE;
+    const FAR = { x: COMMIT_RANGE + 200, y: 0 };
+    for (let i = 0; i < 6; i++) {
+      const next = ent({ id: 2, x: (i + 1) * 5, y: 0, angle: 0 });
+      posture = step(s, prev, next, 'chargeStraight', i, FAR);
+      prev = next;
+    }
+    expect(posture).toBe(POSTURE_NONE);
+  });
+
+  it('플레이어를 못 봤으면 커밋을 주장하지 않는다', () => {
+    const s = createPostureState();
+    let prev = ent({ id: 2, x: 0, y: 0, angle: 0 });
+    let posture = POSTURE_NONE;
+    for (let i = 0; i < 6; i++) {
+      const next = ent({ id: 2, x: (i + 1) * 5, y: 0, angle: 0 });
+      posture = step(s, prev, next, 'chargeStraight', i, null);
+      prev = next;
+    }
+    expect(posture).toBe(POSTURE_NONE);
+  });
+
+  it('조준선 오차 임계가 판정을 무력화하지 않는 범위다', () => {
+    expect(AIM_LOCK).toBeGreaterThan(0);
+    expect(AIM_LOCK).toBeLessThan(Math.PI / 8); // 22.5° 를 넘으면 사실상 항상 참이 된다
+    expect(COMMIT_RANGE).toBeGreaterThan(0);
   });
 
   it('각도가 크게 꺾이면 재조준으로 읽고 그 표시가 여러 프레임 유지된다', () => {
@@ -494,22 +591,25 @@ describe('항목 3 · 예비 동작 — chargeStraight(돌격형)', () => {
     let prev = ent({ id: 2, x: 0, y: 0, angle: 0 });
     for (let i = 0; i < 6; i++) {
       const next = ent({ id: 2, x: (i + 1) * 5, y: 0, angle: 0 });
-      step(s, prev, next, 'chargeStraight', i);
+      step(s, prev, next, 'chargeStraight', i, ON_LINE);
       prev = next;
     }
     // 벽 슬라이드/재조준: 한 틱에 90° 꺾인다.
     const turn = ent({ id: 2, x: 35, y: 5, angle: Math.PI / 2 });
-    expect(step(s, prev, turn, 'chargeStraight', 6)).toBe(POSTURE_RELOCK);
+    expect(step(s, prev, turn, 'chargeStraight', 6, ON_LINE)).toBe(POSTURE_RELOCK);
     prev = turn;
     // 이후 각도가 안정돼도 잔여 창 동안 재조준이 유지된다(한 프레임 번쩍임은 눈이 못 잡는다).
     for (let i = 7; i < 6 + RELOCK_FRAMES; i++) {
       const next = ent({ id: 2, x: 35, y: 5 + (i - 6) * 5, angle: Math.PI / 2 });
-      expect(step(s, prev, next, 'chargeStraight', i)).toBe(POSTURE_RELOCK);
+      expect(step(s, prev, next, 'chargeStraight', i, ON_LINE)).toBe(POSTURE_RELOCK);
       prev = next;
     }
-    // 창이 끝나면 다시 커밋.
+    // 창이 끝나면 새 진행 방향(+y) 위의 표적에 대해 다시 커밋.
+    const below = { x: 35, y: 400 };
     const after = ent({ id: 2, x: 35, y: 5 + (RELOCK_FRAMES + 1) * 5, angle: Math.PI / 2 });
-    expect(step(s, prev, after, 'chargeStraight', 6 + RELOCK_FRAMES + 1)).toBe(POSTURE_COMMIT);
+    expect(step(s, prev, after, 'chargeStraight', 6 + RELOCK_FRAMES + 1, below)).toBe(
+      POSTURE_COMMIT,
+    );
   });
 
   it('부동소수 잡음 수준의 각도 흔들림은 재조준으로 오독하지 않는다(오탐 대조군)', () => {
@@ -519,7 +619,7 @@ describe('항목 3 · 예비 동작 — chargeStraight(돌격형)', () => {
     for (let i = 0; i < 40; i++) {
       const jitter = Math.sin(i) * 1e-6;
       const next = ent({ id: 2, x: (i + 1) * 5, y: 0, angle: jitter });
-      if (step(s, prev, next, 'chargeStraight', i) === POSTURE_RELOCK) relocks += 1;
+      if (step(s, prev, next, 'chargeStraight', i, ON_LINE) === POSTURE_RELOCK) relocks += 1;
       prev = next;
     }
     expect(relocks).toBe(0);
@@ -530,7 +630,7 @@ describe('항목 3 · 예비 동작 — chargeStraight(돌격형)', () => {
     let prev = ent({ id: 2, x: 0, y: 0, angle: 0 });
     for (let i = 0; i < 6; i++) {
       const next = ent({ id: 2, x: (i + 1) * 10, y: 0, angle: 0 });
-      step(s, prev, next, 'chargeStraight', i);
+      step(s, prev, next, 'chargeStraight', i, ON_LINE);
       prev = next;
     }
     // 벽에 눌려 순항의 COMMIT_RATIO 미만으로 기어간다(각도는 유지).
@@ -538,10 +638,68 @@ describe('항목 3 · 예비 동작 — chargeStraight(돌격형)', () => {
     let posture = POSTURE_NONE;
     for (let i = 6; i < 12; i++) {
       const next = ent({ id: 2, x: prev.x + crawl, y: 0, angle: 0 });
-      posture = step(s, prev, next, 'chargeStraight', i);
+      posture = step(s, prev, next, 'chargeStraight', i, ON_LINE);
       prev = next;
     }
     expect(posture).toBe(POSTURE_NONE);
+  });
+});
+
+// ===========================================================================
+// 항목 3 · 예비 동작 듀티 — **진짜 sim 을 돌려서 잰다**
+// ===========================================================================
+
+describe('항목 3 · 돌진 예고 듀티 (실 sim 3시드)', () => {
+  /**
+   * 합성 궤적은 "내가 만든 상황" 이라 듀티를 증명하지 못한다. 1차가 정확히 그래서 통과했고
+   * 하네스 실측에서 **88.9%** 가 나왔다. 그래서 여기서는 오토파일럿으로 **진짜 sim 을 돌려**
+   * 매 틱 스냅샷을 뜨고, 차저 개체별 자세를 실제 판정기로 계산해 듀티를 센다.
+   *
+   * 게이트는 비평가가 정한 **15%** 다. 예고는 드물어야 예고다.
+   */
+  function commitDuty(seed: number, ticks: number): { commit: number; total: number } {
+    const state = createWorld(seed, DEFAULT_CONFIG);
+    const states = new Map<number, ReturnType<typeof createPostureState>>();
+    let prevSnap = snapshotWorld(state);
+    let commit = 0;
+    let total = 0;
+    for (let t = 0; t < ticks; t++) {
+      stepWorld(state, autopilotInput(state));
+      const snap = snapshotWorld(state);
+      const player = snap.entities.find((x) => x.kind === 'player') ?? null;
+      const prevById = new Map(prevSnap.entities.map((x) => [x.id, x]));
+      for (const e of snap.entities) {
+        if (e.kind !== 'enemy') continue;
+        const mv = movementOf(e.kind, e.enemyType);
+        if (mv !== 'chargeStraight') continue;
+        let ps = states.get(e.id);
+        if (ps === undefined) {
+          ps = createPostureState();
+          states.set(e.id, ps);
+        }
+        const posture = observePosture(ps, e, prevById.get(e.id) ?? e, mv, t, player);
+        total += 1;
+        if (posture === POSTURE_COMMIT) commit += 1;
+      }
+      prevSnap = snap;
+      if (state.gameOver || state.victory) break;
+    }
+    return { commit, total };
+  }
+
+  it('차저 커밋 듀티가 15% 이하다(3시드 × 120틱)', () => {
+    let commit = 0;
+    let total = 0;
+    for (const seed of [0xa07071, 0xa07073, 0xa07077]) {
+      const r = commitDuty(seed, 120);
+      commit += r.commit;
+      total += r.total;
+    }
+    // 표본이 실제로 있다 — 차저가 한 마리도 안 나왔으면 0/0 으로 "통과" 하는 항진이 된다.
+    expect(total).toBeGreaterThan(200);
+    // 실측 5.57%(33/592, 3시드×120틱) — 1차 88.9% 에서 내려왔다.
+    const duty = commit / total;
+    expect(duty).toBeLessThanOrEqual(0.15);
   });
 });
 
@@ -723,7 +881,9 @@ describe('예산 — 개체당 비용이 20~40 배로 곱해진다', () => {
     r.render(w, w, 0);
     // 장식자는 전부 붙지만(회수 계약을 위해) 컨테이너를 만든 것은 정원까지다.
     expect(r.adornerCount).toBe(many.length);
-    expect(layers(r).glowLayer.children.length).toBe(MAX_DECORATED_ENEMIES);
+    // 개체당 **항상** 생기는 것은 상위 레이어의 림 컨테이너다(가산 쪽은 스폰 정원 때문에
+    // 일부만 만들어진다 — 그것도 §2-4 예산 장치라 정상이다).
+    expect(ownCount(r, 'enemyAbove')).toBe(MAX_DECORATED_ENEMIES);
     r.destroy();
   });
 
@@ -735,7 +895,7 @@ describe('예산 — 개체당 비용이 20~40 배로 곱해진다', () => {
     const w = world([...grunts, ent({ id: 9001, elite: 3, x: -500 })]);
     r.render(w, w, 0);
     // 정원이 이미 잡몹으로 가득 찼는데도 엘리트 몫이 더 붙어 있다.
-    expect(layers(r).glowLayer.children.length).toBe(MAX_DECORATED_ENEMIES + 1);
+    expect(ownCount(r, 'enemyAbove')).toBe(MAX_DECORATED_ENEMIES + 1);
     r.destroy();
   });
 
@@ -744,13 +904,13 @@ describe('예산 — 개체당 비용이 20~40 배로 곱해진다', () => {
     const many = Array.from({ length: MAX_DECORATED_ENEMIES }, (_, i) => ent({ id: i + 1 }));
     const full = world(many);
     r.render(full, full, 0);
-    expect(layers(r).glowLayer.children.length).toBe(MAX_DECORATED_ENEMIES);
+    expect(ownCount(r, 'enemyAbove')).toBe(MAX_DECORATED_ENEMIES);
     // 전부 죽이고 새 무리를 세운다 — 반납이 없으면 여기서 0 이 된다.
     const empty = world([]);
     r.render(empty, empty, 0);
     const fresh = world(Array.from({ length: 5 }, (_, i) => ent({ id: 5000 + i })));
     r.render(fresh, fresh, 0);
-    expect(layers(r).glowLayer.children.length).toBe(5);
+    expect(ownCount(r, 'enemyAbove')).toBe(5);
     r.destroy();
   });
 
@@ -874,6 +1034,301 @@ describe('사망 연출 — 고아 이펙트가 구조적으로 불가능하다'
     const one = world([ent({ id: 2, x: 200 })]);
     r.render(one, one, 0);
     expect(deathDebrisCount()).toBe(0);
+    r.destroy();
+  });
+});
+
+// ===========================================================================
+// §2-5 UI 어휘 금지 — 1차 반려의 본체
+// ===========================================================================
+
+describe('§2-5 · UI 어휘 금지', () => {
+  /**
+   * 이 절의 테스트는 "예쁨" 을 재지 않는다. **어휘가 구조로 드러나는 성질**만 잰다 —
+   * 십자선은 사방 대칭 눈금이고, 조준 마커는 몸에서 멀리 뻗는 선이며, 선택 링은 완전한 원이다.
+   * 그 성질을 도형의 경계 상자와 도달 거리로 못 박아, 다음 사람이 "링 하나만 더" 를 넣으면
+   * 빨개지게 한다.
+   */
+
+  it('스폰 연출이 몸에서 멀리 뻗는 축을 만들지 않는다(레티클 수직선 금지)', () => {
+    const r = 40;
+    const b = buildSpawnHalo(r, GRUNT_RIM).getLocalBounds();
+    // 세로/가로 종횡비가 1 에 가깝다 = 방향축이 없는 등방 헤일로. 1차의 워프 기둥은
+    // 세로가 가로의 5배가 넘어 레티클 수직선으로 읽혔다.
+    const ratio = (b.maxY - b.minY) / (b.maxX - b.minX);
+    expect(ratio).toBeGreaterThan(0.8);
+    expect(ratio).toBeLessThan(1.25);
+  });
+
+  it('사격 예고가 몸 앞 1.2r 안에 머문다(HUD 조준선 금지)', () => {
+    const r = 40;
+    const b = buildMuzzleCharge(r, GRUNT_RIM).getLocalBounds();
+    // 1차 조준선은 5.5r 까지 뻗어 화면에 선을 그었다.
+    expect(b.maxX).toBeLessThanOrEqual(r * 1.25);
+  });
+
+  it('돌진 예고가 **뒤로** 흐른다(앞을 가리키는 표식이 아니다)', () => {
+    const r = 40;
+    const b = buildDashSmear(r, GRUNT_RIM).getLocalBounds();
+    // 진행 방향(+x) 앞쪽 도달이 뒤쪽보다 훨씬 작아야 한다 = 속도 잔상이지 조준 쐐기가 아니다.
+    expect(Math.abs(b.minX)).toBeGreaterThan(Math.abs(b.maxX) * 2);
+  });
+
+  it('보스 룬이 본체 가장자리에 붙는다(허공에 뜬 사각형 금지)', () => {
+    const r = 100;
+    const b = buildBossInsignia(r, GRUNT_RIM).getLocalBounds();
+    // 1차는 궤도 1.45r 이라 보스 r=192 기준 278px 바깥에 떠 정체 불명 도형으로 읽혔다.
+    expect(b.maxX).toBeLessThanOrEqual(r * 1.25);
+  });
+});
+
+// ===========================================================================
+// 스폰 시점 — 화면 재구성은 스폰이 아니다 (1차 CRITICAL)
+// ===========================================================================
+
+describe('스폰 시점 · reset 은 스폰이 아니다', () => {
+  it('reset 직후 재부착에서는 스폰 연출이 재생되지 않는다', () => {
+    // 1차는 `onAttach` 를 탄생으로 쳐서 화면 전환마다 전 적이 동시에 물질화했다
+    // (보스전 실측 bright 1.88% → 12.22%, §2-4 상한 7% 의 1.75배).
+    const r = new EntityRenderer(realTextures());
+    const w = world([ent({ id: 1 }), ent({ id: 2, x: 200 }), ent({ id: 3, x: 400 })]);
+    r.render(w, w, 0);
+    expect(activeSpawnCount()).toBe(3); // 진짜 스폰
+    // 연출을 끝까지 돌린 뒤 화면 전환(reset) → 다음 프레임 재부착.
+    for (let i = 0; i <= SPAWN_FRAMES + 2; i++) r.render(w, w, 0);
+    expect(activeSpawnCount()).toBe(0);
+    r.reset();
+    r.render(w, w, 0);
+    expect(activeSpawnCount()).toBe(0); // 재부착은 신생이 아니다
+    r.destroy();
+  });
+
+  it('재부착 창이 지난 뒤 같은 id 가 다시 나오면 신생으로 본다(id 재사용)', () => {
+    const r = new EntityRenderer(realTextures());
+    const w = world([ent({ id: 1 })]);
+    const empty = world([]);
+    r.render(w, w, 0);
+    for (let i = 0; i <= SPAWN_FRAMES + 2; i++) r.render(w, w, 0);
+    r.render(empty, empty, 0);
+    // 창(REATTACH_WINDOW)보다 넉넉히 지나간다.
+    for (let i = 0; i < REATTACH_WINDOW + 5; i++) r.render(empty, empty, 0);
+    r.render(w, w, 0);
+    expect(activeSpawnCount()).toBe(1);
+    r.destroy();
+  });
+
+  it('한 프레임에 대량 스폰해도 동시 연출은 정원까지다(§2-4 화면 총량)', () => {
+    const r = new EntityRenderer(realTextures());
+    const many = Array.from({ length: 20 }, (_, i) => ent({ id: i + 1, x: i * 40 }));
+    const w = world(many);
+    r.render(w, w, 0);
+    expect(activeSpawnCount()).toBe(MAX_CONCURRENT_SPAWNS);
+    r.destroy();
+  });
+
+  it('재조준 스쿼시가 끝나면 본체가 원래 비율로 돌아온다(자세가 계속 켜져 있어도)', () => {
+    // 이 원복은 자세가 **꺼질 때**(show=false)의 원복과 별개 경로다. 커밋 → 재조준 → 커밋
+    // 처럼 예고가 내내 켜진 채 자세만 갈리면, 웅크림에서 편 몸을 되돌리는 것은 이 한 줄뿐이다.
+    // 그 시나리오를 안 만들면 지워도 그린이다(뮤테이션에서 실제로 살아남았다).
+    const r = new EntityRenderer(realTextures());
+    const sprites = (
+      r as unknown as { sprites: Map<number, { sprite: { scale: { x: number; y: number } } }> }
+    ).sprites;
+    // typeIndex 0 = 카르곤 차저(chargeStraight).
+    const charger = (x: number, y: number, angle: number): EntitySnapshot =>
+      ent({ id: 2, enemyType: 0, x, y, angle });
+    const player = (x: number, y: number): EntitySnapshot => ent({ id: 1, kind: 'player', x, y });
+
+    // ① +x 로 순항하며 조준선 위의 플레이어를 향해 커밋. 스폰 창을 넘긴다.
+    let prev = world([player(300, 0), charger(0, 0, 0)]);
+    r.render(prev, prev, 0);
+    let x = 0;
+    for (let i = 1; i <= SPAWN_FRAMES + 8; i++) {
+      x = i * 8;
+      const w = world([player(x + 300, 0), charger(x, 0, 0)]);
+      r.render(prev, w, 1);
+      prev = w;
+    }
+    const base = sprites.get(2)!.sprite.scale.y;
+
+    // ② 한 틱에 90° 꺾인다 = 재조준. 몸이 눌린다.
+    let y = 8;
+    let w = world([player(x, y + 300), charger(x, y, Math.PI / 2)]);
+    r.render(prev, w, 1);
+    prev = w;
+    expect(sprites.get(2)!.sprite.scale.y).not.toBeCloseTo(base, 6);
+
+    // ③ 새 방향으로 계속 달린다 → 재조준 창이 끝나고 다시 커밋(예고는 내내 켜져 있다).
+    for (let i = 0; i < RELOCK_FRAMES + 4; i++) {
+      y += 8;
+      w = world([player(x, y + 300), charger(x, y, Math.PI / 2)]);
+      r.render(prev, w, 1);
+      prev = w;
+    }
+    expect(sprites.get(2)!.sprite.scale.y).toBeCloseTo(base, 6);
+    r.destroy();
+  });
+
+  it('연출이 **중간에 끊겨도** 본체 변환이 원래대로 돌아온다(발광 감소 토글)', () => {
+    // 정상 종료만 보면 이 원복은 검증되지 않는다 — 마지막 프레임의 물질화 스케일이 이미
+    // 1.0 이라 원복이 수치상 no-op 이기 때문이다(뮤테이션에서 실제로 살아남았다). 원복이
+    // 유일하게 관측되는 자리는 **연출이 도중에 잘리는** 경로다.
+    const r = new EntityRenderer(realTextures());
+    const sprites = (
+      r as unknown as {
+        sprites: Map<number, { sprite: { alpha: number; scale: { x: number; y: number } } }>;
+      }
+    ).sprites;
+
+    // ① 대조군 — 같은 반경의 적이 연출을 끝까지 마쳤을 때의 기준 스케일.
+    const a = world([ent({ id: 1 })]);
+    for (let i = 0; i <= SPAWN_FRAMES + 2; i++) r.render(a, a, 0);
+    const base = sprites.get(1)!.sprite.scale.x;
+
+    // ② 물질화 **도중에** 발광을 끈다 → finishSpawn 이 즉시 불린다.
+    const b = world([ent({ id: 1 }), ent({ id: 2, x: 300 })]);
+    r.render(b, b, 0);
+    r.render(b, b, 0);
+    expect(sprites.get(2)!.sprite.scale.x).toBeLessThan(base); // 실제로 작아져 있었다
+    graphicsSettings.set({ quality: 'auto', reducedMotion: false, reducedGlow: true });
+    r.render(b, b, 0);
+    expect(sprites.get(2)!.sprite.scale.x).toBeCloseTo(base, 6);
+    expect(sprites.get(2)!.sprite.alpha).toBe(1);
+    r.destroy();
+  });
+
+  it('스폰 연출이 끝나면 본체 변환·밝기가 정확히 원래대로 돌아온다', () => {
+    const r = new EntityRenderer(realTextures());
+    const w = world([ent({ id: 1 })]);
+    r.render(w, w, 0);
+    const sprites = (
+      r as unknown as {
+        sprites: Map<number, { sprite: { alpha: number; scale: { x: number; y: number } } }>;
+      }
+    ).sprites;
+    const t = sprites.get(1)!;
+    const scaleDuringSpawn = t.sprite.scale.x;
+    for (let i = 0; i <= SPAWN_FRAMES + 2; i++) r.render(w, w, 0);
+    expect(t.sprite.alpha).toBe(1);
+    // 물질화가 실제로 크기를 건드렸다가 되돌렸다(둘 다 확인해야 항진이 아니다).
+    expect(scaleDuringSpawn).toBeLessThan(t.sprite.scale.x);
+    r.destroy();
+  });
+});
+
+// ===========================================================================
+// 손상 = 몸의 상태 (1차 MAJOR — 화면에 없었다)
+// ===========================================================================
+
+describe('항목 2 · 손상은 몸의 상태다', () => {
+  it('대파 이상에서 본체 전체를 덮는 가산 열 오버레이가 붙는다', () => {
+    // 1차는 3.8px 불티뿐이라 카르곤 용암 위에서 화면 델타가 노이즈 바닥 **밑**이었다.
+    const r = new EntityRenderer(realTextures());
+    const ok = world([ent({ id: 1, hp: 100, maxHp: 100 })]);
+    r.render(ok, ok, 0);
+    expect(activeBodyGlowCount()).toBe(0);
+    const wrecked = world([ent({ id: 1, hp: 15, maxHp: 100 })]);
+    r.render(wrecked, wrecked, 0);
+    expect(activeBodyGlowCount()).toBe(1);
+    r.destroy();
+  });
+
+  it('열 오버레이는 본체 텍스처를 쓰고 가산이라 실루엣을 어둡게 만들지 않는다', () => {
+    const r = new EntityRenderer(realTextures());
+    const wrecked = world([ent({ id: 1, hp: 15, maxHp: 100 })]);
+    r.render(wrecked, wrecked, 0);
+    const above = layers(r).effectLayer.children[0] as Container;
+    const glow = above.children.find((c) => c.label === 'enemyBodyGlow') as
+      | (Container & { blendMode: string; texture: Texture })
+      | undefined;
+    expect(glow).toBeDefined();
+    expect(glow!.blendMode).toBe('add');
+    const sprites = (r as unknown as { sprites: Map<number, { sprite: { texture: Texture } }> })
+      .sprites;
+    expect(glow!.texture).toBe(sprites.get(1)!.sprite.texture);
+    r.destroy();
+  });
+
+  it('열 오버레이 동시 수가 정원을 넘지 않는다(§2-4 화면 총량)', () => {
+    const r = new EntityRenderer(realTextures());
+    const many = Array.from({ length: 25 }, (_, i) =>
+      ent({ id: i + 1, x: i * 40, hp: 8, maxHp: 100 }),
+    );
+    const w = world(many);
+    r.render(w, w, 0);
+    expect(activeBodyGlowCount()).toBe(MAX_BODY_GLOW);
+    r.destroy();
+  });
+
+  it('회복하면 열 오버레이가 걷힌다(정원도 반납된다)', () => {
+    const r = new EntityRenderer(realTextures());
+    const hurt = world([ent({ id: 1, hp: 15, maxHp: 100 })]);
+    r.render(hurt, hurt, 0);
+    expect(activeBodyGlowCount()).toBe(1);
+    const healed = world([ent({ id: 1, hp: 95, maxHp: 100 })]);
+    r.render(healed, healed, 0);
+    expect(activeBodyGlowCount()).toBe(0);
+    r.destroy();
+  });
+
+  it('보스 본체는 건드리지 않는다(렌더러 보스 분기가 alpha·tint 를 전유한다)', () => {
+    const r = new EntityRenderer(realTextures());
+    const w = world([ent({ id: 9, kind: 'boss', hp: 100, maxHp: 9000, active: true })]);
+    r.render(w, w, 0);
+    expect(activeBodyGlowCount()).toBe(0);
+    r.destroy();
+  });
+});
+
+// ===========================================================================
+// 플레이어 관측 · 종별 사망 서명 관측창
+// ===========================================================================
+
+describe('관측창', () => {
+  it('플레이어 위치를 정규 render 경로에서 관측한다(돌진 커밋의 유일한 입력)', () => {
+    const r = new EntityRenderer(realTextures());
+    const w = world([ent({ id: 1, kind: 'player', x: 120, y: -40 })]);
+    r.render(w, w, 0);
+    const p = observedPlayerPos();
+    expect(p).not.toBeNull();
+    // 레인 A 의 아이들 부유가 본체를 서브픽셀로 흔든다 — 관측 대상은 그 **표시 위치**가
+    // 맞으므로(같은 스프라이트를 적이 조준한다) 픽셀 단위로 확인한다.
+    expect(p!.x).toBeCloseTo(120, 0);
+    expect(p!.y).toBeCloseTo(-40, 0);
+    r.destroy();
+  });
+
+  it('플레이어가 사라지면 관측을 버린다(없는 표적을 향한 예고 금지)', () => {
+    const r = new EntityRenderer(realTextures());
+    const w = world([ent({ id: 1, kind: 'player', x: 120, y: -40 })]);
+    r.render(w, w, 0);
+    const gone = world([]);
+    r.render(gone, gone, 0);
+    expect(observedPlayerPos()).toBeNull();
+    r.destroy();
+  });
+
+  it('사망 서명이 종별로 갈린다(검증 불가능한 항목은 검증되지 않은 항목이다)', () => {
+    // 1차 검증에서 비평가가 cheat 로 hp 를 밀어도 sim 이 처치로 처리하지 않아 종별 서명을
+    // 확인할 방법이 없었다. 이 창이 하네스에서도 그대로 읽힌다.
+    const r = new EntityRenderer(realTextures());
+    // typeIndex 0 = 카르곤 차저(chargeStraight), 1 = 박격포(standoff),
+    // 2 = 용암샘(stationary), 3 = 수리드론(seekWounded)
+    const all = world([
+      ent({ id: 1, enemyType: 0 }),
+      ent({ id: 2, enemyType: 1, x: 200 }),
+      ent({ id: 3, enemyType: 3, x: 400 }),
+      ent({ id: 4, enemyType: 2, x: 600 }),
+      ent({ id: 5, enemyType: 0, x: 800 }),
+    ]);
+    r.render(all, all, 0);
+    const survivor = world([ent({ id: 5, enemyType: 0, x: 800 })]);
+    r.render(survivor, survivor, 0);
+    const counts = deathSignatureCounts();
+    expect(counts['chargeStraight']).toBe(1);
+    expect(counts['standoff']).toBe(1);
+    expect(counts['seekWounded']).toBe(1);
+    expect(counts['stationary']).toBe(1);
     r.destroy();
   });
 });

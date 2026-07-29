@@ -3,38 +3,44 @@
  *
  * ## 등록은 모듈 최상위 부수효과다
  * 이 파일을 **import 하는 것만으로** 장식자가 등록된다({@link registerAdornerFactory}). 초기화
- * 함수를 따로 부를 필요가 없다 — 배선 허브는 `import './enemyVisual.js';` 한 줄이면 끝이고,
- * 세 레인이 서로 다른 방식을 쓰면 허브가 지저분해진다.
+ * 함수를 따로 부를 필요가 없다.
  *
- * ## 무엇을 그리고 무엇을 안 그리는가 (가독성 계약 §2-2)
- * 이 게임은 탄막 슈터고 **예쁨이 가독성을 이기면 그 변경은 실패다.** 그래서:
- * - 적 몸통을 덮거나 어둡게 하는 것이 없다. 오라·불티·화염·예비동작은 전부 **가산**이고,
- *   림·휘장은 몸통 **바깥**에 산다. 유일한 어두운 도형인 연기는 진행 방향 **반대쪽**으로만
- *   밀려나며 알파 상한이 낮다({@link file://./enemyParts.ts} `buildSmoke` 참조).
- * - **시안은 아군 전용**이라 적 팔레트에 없다({@link file://./enemyPosture.ts} 가 정본이고
- *   테스트가 색상각으로 못 박는다).
- * - **적탄에 손대지 않는다.** 조준선은 몸통에서 뻗는 얇은 장식이라 탄으로 오독될 굵기·밝기를
- *   넘지 않는다.
+ * ## 2차 개정(비평가 반려 반영, 2026-07-30) — **정보를 몸으로 옮겼다**
+ * 1차는 여섯 항목을 전부 "스프라이트 둘레에 기하 도형" 으로 풀었고, 그 결과가 §2-5 가 금지한
+ * 것 자체였다(십자선·괄호·조준선·선택 링). AAA 는 같은 정보를 **몸**에 싣는다 —
+ * *Gungeon* 의 발사 예고는 몸을 젖히고 스프라이트가 명멸하는 것이고, *Nova Drift* 의 등급은
+ * 링이 아니라 실루엣과 팔레트다. 그래서 이 개정은 도형을 **줄이고** 다음을 몸으로 옮겼다:
+ *
+ * - **스폰 인** = 본체 스케일·알파 물질화 (+ 눈금 없는 소프트 헤일로 하나)
+ * - **재조준(웅크림)** = 본체 **스쿼시** + 가산 명멸
+ * - **손상** = 본체 전체를 덮는 **가산 열 오버레이**(같은 텍스처) — 1차의 3.8px 불티는
+ *   카르곤 용암 위에서 화면 델타가 노이즈 바닥 **밑**이었다(§4-2 = 화면에 없는 것)
+ * - **개체 경계** = 완전한 원이 아니라 `theme.light` 방향 **반쪽 림라이트**
+ *
+ * ## 스폰 시점은 렌더 부착 시점이 아니다 (1차 CRITICAL)
+ * `onAttach` 는 `entityRenderer.reset()` 마다 다시 불린다(`main.ts` 화면 전환 5곳). 1차는 거기서
+ * 태어난 것으로 쳐서 **화면 전환마다 전 적이 동시에 스폰 인을 재생**했고, 보스전 실측 bright
+ * 1.88% → 12.22% 로 §2-4 상한(7%)을 1.75배 넘겼다. 그래서 {@link lastAliveFrame} 로 "직전
+ * 프레임까지 살아 있던 id" 를 기억해 **재부착과 신생을 가른다**. 화면 재구성은 스폰이 아니다.
  *
  * ## 예산 — 개체당 비용이 20~40 배로 곱해진다
- * 1. **장식 정원제**({@link MAX_DECORATED_ENEMIES}). 정원을 넘긴 잡몹은 장식자가 붙되 아무것도
- *    만들지 않는다(할당 0). **보스·엘리트는 정원과 무관하게 항상 장식**한다 — 잘려야 할 것은
- *    수가 많은 쪽이지 정보량이 큰 쪽이 아니다.
- * 2. **정적 기하 + 변환 애니메이션.** `Graphics` 재빌드는 상태 전이에서만 일어나고, 매 프레임
- *    움직이는 것은 position/rotation/scale/alpha 뿐이다.
- * 3. **티어 사다리.** low = 엘리트·보스 표식만(잡몹 장식 0), med = + 오라·예비동작·손상·스폰,
- *    high = + 화염·사망 파편·보스 궤도.
+ * 1. **장식 정원제**({@link MAX_DECORATED_ENEMIES}). 보스·엘리트는 정원 밖(항상 장식).
+ * 2. **동시 연출 정원** — 스폰({@link MAX_CONCURRENT_SPAWNS})·열 오버레이
+ *    ({@link MAX_BODY_GLOW}). §2-4 는 개체당이 아니라 **화면 총량** 예산이라 동시 수를 막아야 한다.
+ * 3. **정적 기하 + 변환 애니메이션.** 재빌드는 상태 전이에서만.
+ * 4. **티어 사다리.** low = 엘리트·보스 표식만, med = + 오라·예비동작·손상, high = + 화염·파편.
  *
- * ## 형제 컨테이너 회수
+ * ## 형제 컨테이너 회수 · 귀속 라벨
  * 여기서 만드는 컨테이너는 스프라이트의 **형제**라 부모 `destroy` 로 걷히지 않는다.
- * {@link EnemyAdorner.dispose} 가 자기 것을 전부 떼고 파괴한다(회수 4경로는 스캐폴딩이 부른다).
+ * {@link EnemyAdorner.dispose} 가 전부 떼고 파괴한다. 모든 표시 객체에 `label` 을 박아
+ * (§2-4 귀속 규약) 하네스에서 하나씩 꺼 밝기 기여를 가를 수 있게 한다.
  *
  * ## 결정론(ADR-0005)
- * render-only 다. `src/sim/` 는 타입 전용 import 이고, `data/enemies.js` 는 leaf 카탈로그를
- * **읽기만** 한다(`data/invasion/facilities.js` 선례). `hashWorld` 에 아무것도 더하지 않는다.
+ * render-only 다. `src/sim/` 는 타입 전용 import 이고 `data/enemies.js` 는 leaf 카탈로그를
+ * 읽기만 한다. `hashWorld` 에 아무것도 더하지 않는다.
  */
 
-import { Container, Graphics, type Sprite } from 'pixi.js';
+import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 
 import { ENEMY_BY_TYPE } from '../../../data/enemies.js';
 import type { EntitySnapshot } from '../../sim/snapshot.js';
@@ -64,35 +70,41 @@ import {
   threatTier,
 } from './enemyPosture.js';
 import {
-  buildAimThread,
   buildBossAura,
   buildBossInsignia,
-  buildChargeCore,
-  buildDashLance,
+  buildDashSmear,
   buildEliteAura,
   buildEliteInsignia,
   buildFlame,
-  buildMendRing,
-  buildRelockBracket,
-  buildRim,
-  buildRootedVents,
+  buildMendAura,
+  buildMuzzleCharge,
+  buildRimLight,
+  buildRootedHeat,
   buildShard,
   buildShockRing,
   buildSmoke,
   buildSparks,
-  buildSpawnColumn,
-  buildSpawnRing,
+  buildSpawnHalo,
 } from './enemyParts.js';
 
 // ---------------------------------------------------------------------------
 // 예산 상수 (placeholder, defer-balance-tuning)
 // ---------------------------------------------------------------------------
 
-/**
- * 동시에 장식할 수 있는 **잡몹** 최대 수. 보스·엘리트는 이 정원 밖이다(항상 장식).
- * `MAX_DECORATED_HAZARDS` · `MAX_BULLET_TRAILS` 와 같은 규율이다.
- */
+/** 동시에 장식할 수 있는 **잡몹** 최대 수. 보스·엘리트는 이 정원 밖이다. */
 export const MAX_DECORATED_ENEMIES = 28;
+
+/**
+ * 동시에 재생할 수 있는 스폰 인 최대 수. 웨이브가 한 프레임에 20기를 낳으면 물질화 발광이
+ * 한꺼번에 켜져 §2-4 밝기 상한을 넘는다 — 정원 밖은 즉시 완료 처리해 **본체만 나타난다**.
+ */
+export const MAX_CONCURRENT_SPAWNS = 6;
+
+/**
+ * 동시에 켤 수 있는 본체 열 오버레이 최대 수. 화면 전체가 대파 상태가 되는 구간이 실제로 있고
+ * (보스전 후반), 몸 전체를 덮는 가산이라 개당 밝기 기여가 크다.
+ */
+export const MAX_BODY_GLOW = 10;
 
 /** 동시에 살아 있을 수 있는 사망 파편 수. 넘치면 가장 오래된 것부터 회수한다. */
 export const MAX_DEATH_DEBRIS = 48;
@@ -100,16 +112,20 @@ export const MAX_DEATH_DEBRIS = 48;
 /** 사망 파편 수명(초). */
 const DEBRIS_LIFE = 0.55;
 
-/** 조준선 길이 = 표시 반경의 배수. sim 의 선호 사거리(380u)를 다 그리면 화면이 실로 덮인다. */
-const AIM_THREAD_SCALE = 5.5;
-/** 돌진 창 길이 = 표시 반경의 배수. */
-const LANCE_SCALE = 3.4;
+/**
+ * 재부착 판정 창(프레임). 이 프레임 수 안에 살아 있던 id 가 다시 부착되면 **신생이 아니다**
+ * (`reset()` 은 다음 렌더 프레임에 전 엔티티를 재부착한다 — 간격 1프레임).
+ */
+export const REATTACH_WINDOW = 3;
+
+/** `theme` 가 없을 때 쓰는 광원 각(좌상단). 림라이트가 방향을 잃지 않게 한다. */
+const DEFAULT_LIGHT_ANGLE = -2.2;
 
 // ---------------------------------------------------------------------------
 // 종 정보 — leaf 카탈로그에서 읽는다(sim 상태 아님)
 // ---------------------------------------------------------------------------
 
-/** 이 kind 가 이 모듈의 대상인가. 등록 목록과 반드시 같아야 한다(테스트가 대조한다). */
+/** 이 kind 가 이 모듈의 장식 대상인가. 등록 목록과 반드시 같아야 한다(테스트가 대조한다). */
 export const ENEMY_VISUAL_KINDS = [
   'enemy',
   'boss',
@@ -129,12 +145,51 @@ export function movementOf(kind: string, enemyType: number): ObservedMovement | 
 }
 
 // ---------------------------------------------------------------------------
-// 사망 파편 풀 — **고아 이펙트를 구조적으로 불가능하게 만든다**
+// 플레이어 위치 관측 — 돌진 커밋 판정의 유일한 입력
 // ---------------------------------------------------------------------------
 
 /**
- * 파편 하나. 장식자가 죽은 뒤에도 살아 있어야 하므로 개체가 아니라 **모듈 풀**이 소유한다.
+ * 직전 프레임의 플레이어 보간 위치. `null` = 아직 못 봤다.
+ *
+ * 왜 필요한가: 돌진 커밋의 뜻은 "빠르다" 가 아니라 **"이 선 위에 있으면 맞는다"** 이고, 그
+ * 판정에는 플레이어 위치가 있어야 한다. 그런데 장식자의 `onFrame` 은 자기 엔티티만 받는다.
+ * 그래서 `player` kind 에 **위치만 기록하는 최소 장식자**({@link PlayerProbeAdorner})를 하나
+ * 등록한다 — 그리는 것이 하나도 없어 레인 A(`playerVisual.ts`)와 화면에서 겹치지 않고,
+ * 레지스트리는 kind 당 여러 팩토리를 누적하므로 등록도 다투지 않는다.
  */
+let playerPos: { x: number; y: number } | null = null;
+
+/** 플레이어 위치 관측창(테스트·하네스용). */
+export function observedPlayerPos(): { x: number; y: number } | null {
+  return playerPos;
+}
+
+// ---------------------------------------------------------------------------
+// 신생 판별 — 재부착(화면 전환)과 진짜 스폰을 가른다
+// ---------------------------------------------------------------------------
+
+/**
+ * id → 마지막으로 살아 있던 렌더 프레임. `dispose` 로 지우지 **않는다** — `reset()` 이
+ * 전 장식자를 회수한 직후에도 "직전 프레임엔 있었다" 를 기억해야 재부착을 알아본다.
+ * {@link prunePresence} 가 오래된 항목을 걷어 무한 성장을 막는다.
+ */
+const lastAliveFrame = new Map<number, number>();
+
+/** 이 프레임 수보다 오래된 재적 기록은 버린다(id 재사용 시 다시 신생으로 취급되도록). */
+const PRESENCE_TTL = 240;
+
+function prunePresence(frameTick: number): void {
+  if (frameTick % 120 !== 0) return; // 2초에 한 번이면 충분하다(맵 크기 = 동시 적 수 수준).
+  for (const [id, t] of lastAliveFrame) {
+    if (frameTick - t > PRESENCE_TTL) lastAliveFrame.delete(id);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 사망 파편 풀 — **고아 이펙트를 구조적으로 불가능하게 만든다**
+// ---------------------------------------------------------------------------
+
+/** 파편 하나. 장식자가 죽은 뒤에도 살아야 하므로 개체가 아니라 **모듈 풀**이 소유한다. */
 interface Debris {
   node: Container;
   vx: number;
@@ -146,22 +201,25 @@ interface Debris {
 }
 
 const debris: Debris[] = [];
-/** 이번 프레임에 이미 풀을 진행했는가(프레임당 1회 보장 — 장식자 수만큼 돌면 안 된다). */
+/** 이번 프레임에 이미 풀을 진행했는가(프레임당 1회 보장). */
 let debrisPumpedTick = -1;
 /** 살아 있는 장식자 수(장식 여부 무관). 풀을 굴려 줄 주체가 남아 있는지의 유일한 근거다. */
 let liveAdorners = 0;
+/** 지금까지 방출된 파편 누적 수. */
+let debrisEmitted = 0;
+/** 사망 서명별 방출 횟수 — 종별 사망 연출이 실제로 갈리는지의 관측창. */
+const deathSignatures = new Map<string, number>();
 
 /**
  * 파편 풀을 dt 만큼 진행한다. 프레임당 1회.
  *
  * ⚠️ 이 풀은 **자기 티커가 없다** — 살아 있는 장식자의 `onFrame` 이 굴려 준다. 그래서
  * {@link releaseDebrisIfOrphaned} 가 "굴려 줄 사람이 없으면 즉시 전부 회수" 를 강제한다.
- * 이 한 쌍이 없으면 마지막 적이 죽은 화면에 파편이 **얼어붙는다**(접지 그림자가 낸 결함과
- * 정확히 같은 형태).
  */
 function pumpDebris(ctx: AdornerContext): void {
   if (ctx.frameTick === debrisPumpedTick) return;
   debrisPumpedTick = ctx.frameTick;
+  prunePresence(ctx.frameTick);
   const dt = ctx.dt;
   for (let i = debris.length - 1; i >= 0; i--) {
     const d = debris[i];
@@ -182,7 +240,6 @@ function pumpDebris(ctx: AdornerContext): void {
   }
 }
 
-/** 파편 하나를 레이어에서 떼고 파괴한다. */
 function dropDebris(i: number): void {
   const d = debris[i];
   if (d === undefined) return;
@@ -191,24 +248,18 @@ function dropDebris(i: number): void {
   debris.splice(i, 1);
 }
 
-/** 파편을 전부 즉시 회수한다. */
 function clearDebris(): void {
   for (let i = debris.length - 1; i >= 0; i--) dropDebris(i);
 }
 
 /**
  * 장식자가 하나도 안 남았으면 파편을 전부 회수한다. 굴려 줄 주체가 사라진 파편은 **화면에
- * 얼어붙기 때문에**, "예뻐 보이는 잔상" 보다 "확실히 사라짐" 을 택한다. reset·destroy 경로도
- * 전 장식자를 회수하므로 이 한 함수가 그 경로까지 함께 덮는다.
+ * 얼어붙기 때문에**, "예뻐 보이는 잔상" 보다 "확실히 사라짐" 을 택한다.
  */
 function releaseDebrisIfOrphaned(): void {
   if (liveAdorners <= 0) clearDebris();
 }
 
-/** 지금까지 **방출된** 파편 누적 수(회수와 무관). {@link deathDebrisEmitted} 참조. */
-let debrisEmitted = 0;
-
-/** 파편 하나를 풀에 넣는다. 상한 초과 시 가장 오래된 것부터 밀어낸다. */
 function pushDebris(d: Debris): void {
   while (debris.length >= MAX_DEATH_DEBRIS) dropDebris(0);
   d.layer.addChild(d.node);
@@ -216,7 +267,7 @@ function pushDebris(d: Debris): void {
   debrisEmitted += 1;
 }
 
-/** 현재 살아 있는 파편 수(읽기 전용 관측창 — 테스트가 회수를 수치로 못 박는다). */
+/** 현재 살아 있는 파편 수(읽기 전용 관측창). */
 export function deathDebrisCount(): number {
   return debris.length;
 }
@@ -224,25 +275,49 @@ export function deathDebrisCount(): number {
 /**
  * 지금까지 **방출된** 파편 누적 수(읽기 전용 관측창).
  *
- * 왜 살아 있는 수와 따로 필요한가: 고아 방지에는 두 장치가 있는데
- * ({@link EnemyAdorner.emitDeath} 의 사전 가드 + {@link releaseDebrisIfOrphaned} 의 사후 회수)
- * **살아 있는 수만 보면 둘을 구분할 수 없다** — 뿌린 뒤 즉시 걷어도 0 이기 때문이다. 그러면
- * "만들지 않는다" 를 검증한다고 믿으면서 실제로는 "걷는다" 만 검증하게 되고, 사전 가드는
- * 뮤테이션에서 살아남는다(실제로 살아남았다). 이 창이 그 구분을 만든다.
+ * 왜 살아 있는 수와 따로 필요한가: 고아 방지에는 두 장치가 있는데(사전 가드 + 사후 회수)
+ * **살아 있는 수만 보면 둘을 구분할 수 없다** — 뿌린 뒤 즉시 걷어도 0 이기 때문이다.
  */
 export function deathDebrisEmitted(): number {
   return debrisEmitted;
 }
+
+/**
+ * 사망 서명별 방출 횟수(읽기 전용 관측창) — 키는 이동 종류(`chargeStraight` 등)나 `'boss'`.
+ *
+ * 왜 필요한가: 1차 검증에서 비평가가 `cheat` 로 hp 를 0 으로 밀어도 sim 이 처치로 처리하지
+ * 않아 **종별 사망 서명을 확인할 방법이 없었다.** "검증 불가능한 항목은 검증되지 않은 항목"
+ * 이므로 자연 사망에서도 종을 특정할 수 있는 창을 연다(하네스에서 그대로 읽을 수 있다).
+ */
+export function deathSignatureCounts(): Record<string, number> {
+  return Object.fromEntries(deathSignatures);
+}
+
+/** 결정적 의사난수 [0,1). 시드만으로 정해져 프레임마다 흔들리지 않는다. */
+function hash01(seed: number): number {
+  const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+// ---------------------------------------------------------------------------
+// 동시 연출 정원 (§2-4 화면 총량)
+// ---------------------------------------------------------------------------
+
+let activeSpawns = 0;
+let activeBodyGlows = 0;
 
 /** 현재 살아 있는 적 장식자 수(읽기 전용 관측창). */
 export function enemyAdornerCount(): number {
   return liveAdorners;
 }
 
-/** 결정적 의사난수 [0,1) — 시드(id·인덱스)만으로 정해져 프레임마다 흔들리지 않는다. */
-function hash01(seed: number): number {
-  const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
-  return x - Math.floor(x);
+/** 현재 재생 중인 스폰 인 수(관측창). */
+export function activeSpawnCount(): number {
+  return activeSpawns;
+}
+/** 현재 켜진 본체 열 오버레이 수(관측창). */
+export function activeBodyGlowCount(): number {
+  return activeBodyGlows;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,26 +327,25 @@ function hash01(seed: number): number {
 class EnemyAdorner implements EntityAdorner {
   readonly name = 'enemy-visual';
 
-  /** 가산 레이어(스프라이트 **아래**) 소유 컨테이너. 필요할 때만 만든다. */
   private below: Container | null = null;
-  /** 상위 레이어(스프라이트 **위**) 소유 컨테이너. */
   private above: Container | null = null;
 
   private aura: Graphics | null = null;
   private insignia: Container | null = null;
   private rim: Graphics | null = null;
-  private spawnRing: Graphics | null = null;
-  private spawnColumn: Graphics | null = null;
+  private spawnHalo: Graphics | null = null;
   private telegraph: Container | null = null;
-  private chargeCore: Graphics | null = null;
   private sparks: Graphics | null = null;
   private flame: Graphics | null = null;
   private smoke: Graphics | null = null;
+  /** 본체 전체를 덮는 가산 열 오버레이(같은 텍스처). 손상이 **몸의 상태**로 읽히는 장치다. */
+  private bodyGlow: Sprite | null = null;
+  private bodyGlowOwned = false;
 
-  /** 현재 텔레그래프가 표현하는 자세. 바뀔 때만 기하를 다시 만든다. */
   private telegraphFor = -1;
-  /** 현재 불티/화염이 표현하는 손상 단계. */
   private damageFor = -1;
+  /** 현재 림이 표현하는 광원 각. 테마가 바뀌면 다시 굽는다. */
+  private rimForAngle = Number.NaN;
 
   private readonly posture: PostureState = createPostureState();
   private bornTick = 0;
@@ -282,9 +356,14 @@ class EnemyAdorner implements EntityAdorner {
   private headingX = 1;
   private headingY = 0;
   private spawnDone = false;
+  private spawnOwned = false;
   private disposed = false;
-  /** 이번 프레임 맥락. 지연 생성이 레이어를 찾을 유일한 경로다(프레임 밖에서는 `null`). */
   private ctx: AdornerContext | null = null;
+  /** 본체 기본 스케일(스폰 물질화·스쿼시가 되돌릴 기준). */
+  private baseScaleX = 1;
+  private baseScaleY = 1;
+  /** 본체 변환·밝기를 우리가 건드렸는가(회수 시 원복 판단). */
+  private spriteTouched = false;
 
   constructor(
     private readonly kind: string,
@@ -298,20 +377,41 @@ class EnemyAdorner implements EntityAdorner {
     liveAdorners += 1;
   }
 
+  /** 보스 계열은 `entityRenderer` 의 보스 분기가 `alpha`·`tint` 를 전유한다 — 몸을 건드리지 않는다. */
+  private get bodyOwnedByRenderer(): boolean {
+    return this.kind === 'boss' || this.kind === 'defenseBoss';
+  }
+
   onAttach(sprite: Sprite, e: EntitySnapshot, ctx: AdornerContext): void {
-    this.bornTick = ctx.frameTick;
-    // 표시 반경 — entityRenderer 가 setSize 로 이미 확정했다. 0 방어로 sim 반경 폴백.
     const w = sprite.width;
     this.radius = w > 0 ? w / 2 : Math.max(1, e.radius);
     this.lastX = sprite.x;
     this.lastY = sprite.y;
+    this.baseScaleX = sprite.scale.x;
+    this.baseScaleY = sprite.scale.y;
+    this.bornTick = ctx.frameTick;
+
+    // ── 신생인가 재부착인가 ────────────────────────────────────────────────
+    // `reset()` 은 다음 프레임에 전 엔티티를 다시 부착한다. 그때를 스폰으로 치면 화면 전환마다
+    // 전 적이 동시에 물질화해 §2-4 밝기 상한을 넘긴다(실측 1.88% → 12.22%).
+    const seen = lastAliveFrame.get(e.id);
+    const reattach = seen !== undefined && ctx.frameTick - seen <= REATTACH_WINDOW;
+    if (reattach || !this.decorated || activeSpawns >= MAX_CONCURRENT_SPAWNS) {
+      // 재부착·비장식·정원 초과 → 연출 없이 즉시 완료(본체만 나타난다).
+      this.spawnDone = true;
+    } else {
+      this.spawnOwned = true;
+      activeSpawns += 1;
+    }
   }
 
   onFrame(sprite: Sprite, e: EntitySnapshot, prev: EntitySnapshot, ctx: AdornerContext): void {
     pumpDebris(ctx);
     this.lastSeenTick = ctx.frameTick;
+    lastAliveFrame.set(e.id, ctx.frameTick);
     this.lastX = sprite.x;
     this.lastY = sprite.y;
+    this.ctx = ctx;
     if (!this.decorated) return;
 
     const low = ctx.tier === 'low';
@@ -320,7 +420,6 @@ class EnemyAdorner implements EntityAdorner {
     // 전부 여기에 매달아 광과민 대응이 한 곳에서 끝나게 한다.
     const motion = ctx.gates.shake;
 
-    // 진행 방향(단위 벡터) — 연기 꼬리·돌진 창이 쓴다. 정지 시엔 직전 방향을 유지한다.
     const dx = e.x - prev.x;
     const dy = e.y - prev.y;
     const d = Math.hypot(dx, dy);
@@ -329,31 +428,19 @@ class EnemyAdorner implements EntityAdorner {
       this.headingY = dy / d;
     }
 
-    const posture = observePosture(this.posture, e, prev, this.movement, ctx.frameTick);
+    const posture = observePosture(this.posture, e, prev, this.movement, ctx.frameTick, playerPos);
     const stage = damageStage(e.hp, e.maxHp);
     const t = ctx.frameTick * 0.1 + this.phase;
 
-    this.ctx = ctx;
     this.syncLayers(sprite);
-
-    // ── 항목 1 · 위협도 계층 ────────────────────────────────────────────────
     this.updateThreat(sprite, glow, motion, low, t);
-    // ── 항목 6 · 군집 가독성 (림은 low 티어에서도 엘리트·보스에 남긴다) ────────
-    this.updateRim(sprite, low, motion, t);
-    // ── 항목 4 · 스폰 인 ──────────────────────────────────────────────────
+    this.updateRim(sprite, ctx, low);
     this.updateSpawn(sprite, ctx, glow, low);
-    // ── 항목 3 · 예비 동작 ────────────────────────────────────────────────
     this.updateTelegraph(sprite, e, posture, glow, low, motion, t);
-    // ── 항목 2 · 손상 상태 ────────────────────────────────────────────────
     this.updateDamage(sprite, ctx, stage, glow, low, motion, t);
   }
 
-  /**
-   * 이미 만든 소유 컨테이너를 스프라이트 보간 위치로 미러한다. **만들지는 않는다** —
-   * 컨테이너 생성은 실제로 그릴 것이 생긴 순간({@link ensureBelow}/{@link ensureAbove})으로
-   * 미룬다. 미리 만들면 low 티어처럼 "아무것도 안 그리는" 구성에서도 개체 수만큼 빈 컨테이너가
-   * 레이어에 쌓여 티어 게이트가 사실상 무력해진다.
-   */
+  /** 이미 만든 소유 컨테이너를 스프라이트 보간 위치로 미러한다. **만들지는 않는다.** */
   private syncLayers(sprite: Sprite): void {
     this.below?.position.set(sprite.x, sprite.y);
     this.above?.position.set(sprite.x, sprite.y);
@@ -365,6 +452,7 @@ class EnemyAdorner implements EntityAdorner {
     if (ctx === null) return null;
     if (this.below === null) {
       this.below = new Container();
+      this.below.label = 'enemyBelow'; // §2-4 귀속 라벨
       this.below.position.set(sprite.x, sprite.y);
       ctx.belowLayer.addChild(this.below);
     }
@@ -377,6 +465,7 @@ class EnemyAdorner implements EntityAdorner {
     if (ctx === null) return null;
     if (this.above === null) {
       this.above = new Container();
+      this.above.label = 'enemyAbove';
       this.above.position.set(sprite.x, sprite.y);
       ctx.aboveLayer.addChild(this.above);
     }
@@ -394,34 +483,32 @@ class EnemyAdorner implements EntityAdorner {
     if (this.tier === 0) return;
     const boss = this.tier === THREAT_BOSS;
 
-    // 오라 — 가산이라 발광 감소축(halo)에 매단다. low 티어에서는 아예 만들지 않는다.
     if (glow && !low) {
       const below = this.aura === null ? this.ensureBelow(sprite) : this.below;
       if (this.aura === null && below !== null) {
         this.aura = boss
           ? buildBossAura(this.radius, this.accent)
           : buildEliteAura(this.radius, this.accent);
+        this.aura.label = 'enemyAura';
         below.addChild(this.aura);
       }
       if (this.aura !== null) {
         this.aura.visible = true;
-        // 맥동 — 등급이 높을수록 느리고 크게 숨 쉰다. 위상은 개체마다 달라(군집 가독성) 겹친
-        // 엘리트 둘이 한 몸처럼 보이지 않는다.
-        const pulse = motion ? 1 + 0.06 * Math.sin(t * (boss ? 0.45 : 0.7)) : 1;
+        const pulse = motion ? 1 + 0.05 * Math.sin(t * (boss ? 0.45 : 0.7)) : 1;
         this.aura.scale.set(pulse);
-        this.aura.rotation = motion && boss ? t * 0.05 : 0;
       }
     } else if (this.aura !== null) {
       this.aura.visible = false;
     }
 
-    // 휘장 — 발광이 아니라 **정보**라 halo 게이트에 매달지 않는다(발광을 껐다고 계급이
+    // 휘장은 발광이 아니라 **정보**라 halo 게이트에 매달지 않는다(발광을 껐다고 계급이
     // 사라지면 안 된다). low 티어에서도 남긴다: 정적 도형 하나라 사실상 공짜다.
     const above = this.insignia === null ? this.ensureAbove(sprite) : this.above;
     if (this.insignia === null && above !== null) {
       this.insignia = boss
         ? buildBossInsignia(this.radius, this.accent)
         : buildEliteInsignia(this.radius, this.accent);
+      this.insignia.label = 'enemyInsignia';
       above.addChild(this.insignia);
     }
     if (this.insignia !== null) {
@@ -430,60 +517,78 @@ class EnemyAdorner implements EntityAdorner {
     }
   }
 
-  /** 개체 림 — 겹친 군집에서 개체 경계를 남기는 유일한 채널. */
-  private updateRim(sprite: Sprite, low: boolean, motion: boolean, t: number): void {
+  /**
+   * 광원 방향 **반쪽 림라이트** — 겹친 군집에서 개체 경계를 남기는 채널. 완전한 원은 RTS
+   * 선택 링으로 읽히므로(§2-5) 호만 남기고, 방향을 `theme.light` 에서 받아 접지 그림자와
+   * 같은 태양을 증언한다.
+   */
+  private updateRim(sprite: Sprite, ctx: AdornerContext, low: boolean): void {
     // low 티어에서는 잡몹 림을 포기한다(개체당 도형 하나가 40배로 곱해진다). 엘리트·보스는 남긴다.
     if (low && this.tier === 0) return;
+    const angle = ctx.theme?.light.angle ?? DEFAULT_LIGHT_ANGLE;
+    if (this.rim !== null && angle !== this.rimForAngle) {
+      this.rim = destroyChild(this.above, this.rim);
+    }
     const above = this.rim === null ? this.ensureAbove(sprite) : this.above;
     if (this.rim === null && above !== null) {
-      this.rim = buildRim(this.radius, this.accent);
+      this.rim = buildRimLight(this.radius, this.accent, angle);
+      this.rim.label = 'enemyRim';
+      this.rimForAngle = angle;
       above.addChild(this.rim);
     }
-    if (this.rim === null) return;
-    // 위상 오프셋 — 같은 종이 겹쳐도 각자 다른 박자로 밝아져 개체 수가 읽힌다.
-    this.rim.alpha = motion ? 0.8 + 0.2 * Math.sin(t * 0.6) : 1;
   }
 
-  /** 스폰 인 — 지면 예고 링이 수축하고 워프 기둥이 접힌다. 끝나면 기하를 회수한다. */
+  /**
+   * 스폰 인 — **본체 스케일·알파 물질화** + 눈금 없는 소프트 헤일로. 1차의 십자 눈금 링과
+   * 흰 스트라이프 기둥은 §2-5 위반이라 삭제했다.
+   */
   private updateSpawn(sprite: Sprite, ctx: AdornerContext, glow: boolean, low: boolean): void {
     if (this.spawnDone) return;
-    const p = spawnProgress(this.bornTick, ctx.frameTick);
     if (low || !glow) {
-      // 저티어·발광 감소에서는 연출을 생략하되 **상태는 끝낸 것으로** 만든다(밝기 조작 잔여 0).
       this.finishSpawn(sprite);
       return;
     }
-    const below = this.spawnRing === null ? this.ensureBelow(sprite) : this.below;
-    if (this.spawnRing === null && below !== null) {
-      this.spawnRing = buildSpawnRing(this.radius, this.accent);
-      this.spawnColumn = buildSpawnColumn(this.radius, this.accent);
-      below.addChild(this.spawnRing);
-      below.addChild(this.spawnColumn);
+    const p = spawnProgress(this.bornTick, ctx.frameTick);
+    const below = this.spawnHalo === null ? this.ensureBelow(sprite) : this.below;
+    if (this.spawnHalo === null && below !== null) {
+      this.spawnHalo = buildSpawnHalo(this.radius, this.accent);
+      this.spawnHalo.label = 'enemySpawn';
+      below.addChild(this.spawnHalo);
     }
-    if (this.spawnRing !== null) {
-      // 2.6배에서 1배로 조여든다 — "여기 온다" 가 실체보다 먼저 읽힌다.
-      this.spawnRing.scale.set(2.6 - 1.6 * p);
-      this.spawnRing.alpha = 1 - p * p;
+    if (this.spawnHalo !== null) {
+      // 2.2배에서 1배로 조여든다 — "여기 온다" 가 실체보다 먼저 읽힌다.
+      this.spawnHalo.scale.set(2.2 - 1.2 * p);
+      this.spawnHalo.alpha = 1 - p * p;
     }
-    if (this.spawnColumn !== null) {
-      // 기둥은 세로로 접히고 가로로 번진다(워프 수축).
-      this.spawnColumn.scale.set(0.4 + 1.6 * p, 1 - p);
-      this.spawnColumn.alpha = 1 - p;
-    }
-    // 본체는 물질화하듯 떠오른다. **보스는 건드리지 않는다** — entityRenderer 의 보스 분기가
-    // alpha 를 전유하고 있어(과열 맥동) 두 로직이 같은 값을 다투면 안 된다.
-    if (this.kind !== 'boss' && this.kind !== 'defenseBoss') {
-      sprite.alpha = 0.35 + 0.65 * p;
+    // 본체가 작게·희미하게 시작해 제 크기로 자란다. 보스는 렌더러 보스 분기가 alpha 를
+    // 전유하므로 건드리지 않는다.
+    if (!this.bodyOwnedByRenderer) {
+      const s = 0.62 + 0.38 * p;
+      sprite.scale.set(this.baseScaleX * s, this.baseScaleY * s);
+      sprite.alpha = 0.4 + 0.6 * p;
+      this.spriteTouched = true;
     }
     if (p >= 1) this.finishSpawn(sprite);
   }
 
-  /** 스폰 연출 종료 — 기하를 회수하고 스프라이트 밝기를 정확히 1 로 되돌린다. */
+  /** 스폰 종료 — 헤일로를 회수하고 본체 변환·밝기를 정확히 원래대로 되돌린다. */
   private finishSpawn(sprite: Sprite): void {
+    if (this.spawnDone) return;
     this.spawnDone = true;
-    if (this.kind !== 'boss' && this.kind !== 'defenseBoss') sprite.alpha = 1;
-    this.spawnRing = destroyChild(this.below, this.spawnRing);
-    this.spawnColumn = destroyChild(this.below, this.spawnColumn);
+    if (this.spawnOwned) {
+      this.spawnOwned = false;
+      activeSpawns -= 1;
+    }
+    this.restoreBody(sprite);
+    this.spawnHalo = destroyChild(this.below, this.spawnHalo);
+  }
+
+  /** 본체 변환·밝기 원복(스폰·스쿼시가 건드린 것). */
+  private restoreBody(sprite: Sprite): void {
+    if (!this.spriteTouched || this.bodyOwnedByRenderer) return;
+    sprite.scale.set(this.baseScaleX, this.baseScaleY);
+    sprite.alpha = 1;
+    this.spriteTouched = false;
   }
 
   /** 예비 동작 — 관측된 자세를 그린다. 자세가 바뀔 때만 기하를 다시 만든다. */
@@ -499,74 +604,90 @@ class EnemyAdorner implements EntityAdorner {
     const show = glow && !low && posture !== 0;
     if (!show) {
       this.dropTelegraph();
+      if (this.spawnDone) this.restoreBody(sprite);
       return;
     }
     if (posture !== this.telegraphFor) {
       this.dropTelegraph();
       this.telegraphFor = posture;
       const below = this.ensureBelow(sprite);
-      if (below === null) return;
-      if (posture === POSTURE_FIRING_BAND) {
-        this.telegraph = buildAimThread(this.radius, this.accent, this.radius * AIM_THREAD_SCALE);
-        this.chargeCore = buildChargeCore(this.radius, this.accent);
-        below.addChild(this.telegraph);
-        below.addChild(this.chargeCore);
-      } else if (posture === POSTURE_COMMIT) {
-        this.telegraph = buildDashLance(this.radius, this.accent, this.radius * LANCE_SCALE);
-        below.addChild(this.telegraph);
-      } else if (posture === POSTURE_RELOCK) {
-        this.telegraph = new Container();
-        this.telegraph.addChild(buildRelockBracket(this.radius, this.accent));
-        below.addChild(this.telegraph);
-      } else if (posture === POSTURE_TENDING) {
-        this.telegraph = new Container();
-        this.telegraph.addChild(buildMendRing(this.radius, this.accent));
-        below.addChild(this.telegraph);
-      } else if (posture === POSTURE_ROOTED) {
-        this.telegraph = new Container();
-        this.telegraph.addChild(buildRootedVents(this.radius, this.accent));
-        below.addChild(this.telegraph);
+      if (below !== null) {
+        const made = this.buildTelegraph(posture);
+        if (made !== null) {
+          made.label = 'enemyTelegraph';
+          this.telegraph = made;
+          below.addChild(made);
+        }
       }
     }
-    const tel = this.telegraph;
-    if (tel === null) return;
 
     // 유지 시간에 비례해 세진다 — 순간 점멸이 아니라 "고조" 로 읽혀야 예고가 된다.
     const hold = Math.min(1, this.posture.holdFrames / 18);
+    const tel = this.telegraph;
+
+    if (posture === POSTURE_RELOCK) {
+      // **재조준 = 몸이 웅크린다.** 1차의 4모서리 괄호(락온 브래킷)를 몸으로 옮긴 것이다.
+      // 진행 방향으로 눌렸다 펴지고, 그 동안 몸이 가산으로 명멸한다(Gungeon 어휘).
+      const k = Math.min(1, this.posture.holdFrames / 10);
+      if (!this.bodyOwnedByRenderer && motion) {
+        const squash = 1 - 0.18 * (1 - k);
+        sprite.scale.set(this.baseScaleX * squash, this.baseScaleY * (2 - squash));
+        this.spriteTouched = true;
+      }
+      if (tel !== null) tel.alpha = (1 - k) * 0.9;
+    } else if (this.spawnDone) {
+      this.restoreBody(sprite);
+    }
+
+    if (tel === null) return;
     if (posture === POSTURE_FIRING_BAND) {
       tel.rotation = e.angle; // sim 의 standoff 는 angle 을 항상 플레이어 방향으로 둔다.
+      const breathe = motion ? 0.88 + 0.12 * Math.sin(t * 1.6) : 1;
+      tel.scale.set((0.55 + 0.65 * hold) * breathe);
       tel.alpha = 0.35 + 0.65 * hold;
-      if (this.chargeCore !== null) {
-        const breathe = motion ? 0.85 + 0.15 * Math.sin(t * 1.6) : 1;
-        this.chargeCore.scale.set((0.5 + 0.9 * hold) * breathe);
-        this.chargeCore.alpha = 0.3 + 0.7 * hold;
-      }
     } else if (posture === POSTURE_COMMIT) {
       tel.rotation = Math.atan2(this.headingY, this.headingX);
-      tel.alpha = 0.4 + 0.6 * hold;
-    } else if (posture === POSTURE_RELOCK) {
-      // 조여드는 괄호 — 재조준 프레임이 지날수록 몸통으로 붙으며 사라진다.
-      const k = Math.min(1, this.posture.holdFrames / 10);
-      tel.scale.set(1.7 - 0.7 * k);
-      tel.alpha = 1 - k;
-      tel.rotation = e.angle;
+      tel.alpha = 0.45 + 0.55 * hold;
     } else if (posture === POSTURE_TENDING) {
-      tel.rotation = motion ? t * 0.5 : 0;
-      tel.alpha = 0.5 + 0.5 * hold;
+      tel.alpha = (0.5 + 0.5 * hold) * (motion ? 0.85 + 0.15 * Math.sin(t * 1.1) : 1);
     } else if (posture === POSTURE_ROOTED) {
       tel.rotation = motion ? t * 0.12 : 0;
       tel.alpha = 0.85;
     }
   }
 
-  /** 텔레그래프 기하 회수(자세 전이·게이트 하강 공통). */
+  /** 자세별 텔레그래프 기하. 몸으로 표현하는 재조준은 발광 한 겹만 만든다. */
+  private buildTelegraph(posture: number): Container | null {
+    if (posture === POSTURE_FIRING_BAND) return buildMuzzleCharge(this.radius, this.accent);
+    if (posture === POSTURE_COMMIT) return buildDashSmear(this.radius, this.accent);
+    if (posture === POSTURE_RELOCK) {
+      const c = new Container();
+      c.addChild(buildSpawnHalo(this.radius * 0.9, this.accent));
+      return c;
+    }
+    if (posture === POSTURE_TENDING) {
+      const c = new Container();
+      c.addChild(buildMendAura(this.radius, this.accent));
+      return c;
+    }
+    if (posture === POSTURE_ROOTED) {
+      const c = new Container();
+      c.addChild(buildRootedHeat(this.radius, this.accent));
+      return c;
+    }
+    return null;
+  }
+
   private dropTelegraph(): void {
     this.telegraph = destroyChild(this.below, this.telegraph);
-    this.chargeCore = destroyChild(this.below, this.chargeCore);
     this.telegraphFor = -1;
   }
 
-  /** 손상 상태 — HP 비율 누진(불티 → 연기 → 화염 → 코어 과부하). */
+  /**
+   * 손상 상태 — HP 비율 누진. **핵심은 본체 열 오버레이**다: 1차의 3.8px 불티는 카르곤 용암
+   * 발광 위에서 화면 델타가 노이즈 바닥 밑이었다(§4-2 = 화면에 없는 것). 손상은 장식이 아니라
+   * **몸의 상태**이므로 몸 전체를 같은 텍스처의 가산 사본으로 덮어 달아오르게 한다.
+   */
   private updateDamage(
     sprite: Sprite,
     ctx: AdornerContext,
@@ -578,33 +699,40 @@ class EnemyAdorner implements EntityAdorner {
   ): void {
     if (low || stage === DMG_OK) {
       if (this.damageFor !== DMG_OK) this.dropDamage();
+      this.damageFor = DMG_OK;
       return;
     }
     if (stage !== this.damageFor) {
       this.dropDamage();
       this.damageFor = stage;
       const below = glow ? this.ensureBelow(sprite) : null;
-      const above =
-        stage >= DMG_SMOKE && ctx.gates.particles !== 'off' ? this.ensureAbove(sprite) : null;
-      if (below !== null && glow) {
+      if (below !== null) {
         this.sparks = buildSparks(this.radius, 0xffc46a, stage >= DMG_FIRE ? 7 : 4);
+        this.sparks.label = 'enemyDamage';
         below.addChild(this.sparks);
         if (stage >= DMG_FIRE && ctx.tier === 'high') {
           this.flame = buildFlame(this.radius);
+          this.flame.label = 'enemyDamage';
           below.addChild(this.flame);
         }
       }
       // 연기는 유일한 어두운 도형이라 파티클 게이트 뒤에 둔다(발광 감소와는 무관한 축).
-      if (above !== null && stage >= DMG_SMOKE && ctx.gates.particles !== 'off') {
-        this.smoke = buildSmoke(this.radius);
-        above.addChild(this.smoke);
+      if (stage >= DMG_SMOKE && ctx.gates.particles !== 'off') {
+        const above = this.ensureAbove(sprite);
+        if (above !== null) {
+          this.smoke = buildSmoke(this.radius);
+          this.smoke.label = 'enemyDamage';
+          above.addChild(this.smoke);
+        }
       }
+      // 본체 열 오버레이 — 대파(FIRE) 이상 + 발광 게이트 + 동시 정원 안에서만.
+      if (stage >= DMG_FIRE && glow && !this.bodyOwnedByRenderer) this.ensureBodyGlow(sprite);
     }
+
     if (this.sparks !== null) {
       this.sparks.rotation = motion ? t * 0.9 : 0;
-      // 치명 단계는 점멸이 빨라진다 — "한 대만 더" 가 읽힌다.
-      const flick = stage >= DMG_CRITICAL && motion ? (Math.sin(t * 3.1) > 0 ? 1 : 0.35) : 1;
-      this.sparks.alpha = (stage === DMG_SPARK ? 0.55 : 0.85) * flick;
+      const flick = stage >= DMG_CRITICAL && motion ? (Math.sin(t * 3.1) > 0 ? 1 : 0.4) : 1;
+      this.sparks.alpha = (stage === DMG_SPARK ? 0.6 : 0.9) * flick;
     }
     if (this.flame !== null) {
       this.flame.scale.set(1, motion ? 0.85 + 0.25 * Math.sin(t * 2.3) : 1);
@@ -615,13 +743,55 @@ class EnemyAdorner implements EntityAdorner {
       this.smoke.rotation = Math.atan2(-this.headingY, -this.headingX);
       this.smoke.alpha = stage >= DMG_FIRE ? 1 : 0.6;
     }
+    if (this.bodyGlow !== null) {
+      // 본체와 정확히 겹치게 변환을 미러한다(형제라 자동 상속이 없다). 애니메이션 프레임
+      // 교체도 따라간다 — 안 따라가면 팔다리가 어긋난 잔상이 생긴다.
+      const tex: Texture = sprite.texture;
+      if (this.bodyGlow.texture !== tex) this.bodyGlow.texture = tex;
+      this.bodyGlow.rotation = sprite.rotation;
+      this.bodyGlow.scale.set(sprite.scale.x, sprite.scale.y);
+      // 치명 단계는 맥동이 빨라진다 — "한 대만 더" 가 몸에서 읽힌다.
+      const beat = motion ? 0.75 + 0.25 * Math.sin(t * (stage >= DMG_CRITICAL ? 3.4 : 1.7)) : 1;
+      this.bodyGlow.alpha = (stage >= DMG_CRITICAL ? 0.5 : 0.32) * beat;
+    }
   }
 
-  /** 손상 기하 회수. */
+  /** 본체 열 오버레이 생성(동시 정원 안에서만). */
+  private ensureBodyGlow(sprite: Sprite): void {
+    if (this.bodyGlow !== null) return;
+    if (activeBodyGlows >= MAX_BODY_GLOW) return;
+    const above = this.ensureAbove(sprite);
+    if (above === null) return;
+    const s = new Sprite(sprite.texture);
+    s.label = 'enemyBodyGlow';
+    s.anchor.set(0.5);
+    s.blendMode = 'add';
+    // 웜 틴트 — 가산이라 곱해진 뒤 더해진다. 결과는 그 적의 색이 **달아오른** 모습이고,
+    // 어둡게 만들지 않으므로 위장률 게이트를 건드리지 않는다(tint 를 직접 미는 것과의 차이다).
+    s.tint = 0xff8a3c;
+    above.addChild(s);
+    this.bodyGlow = s;
+    this.bodyGlowOwned = true;
+    activeBodyGlows += 1;
+  }
+
+  private dropBodyGlow(): void {
+    if (this.bodyGlow !== null) {
+      this.above?.removeChild(this.bodyGlow);
+      this.bodyGlow.destroy();
+      this.bodyGlow = null;
+    }
+    if (this.bodyGlowOwned) {
+      this.bodyGlowOwned = false;
+      activeBodyGlows -= 1;
+    }
+  }
+
   private dropDamage(): void {
     this.sparks = destroyChild(this.below, this.sparks);
     this.flame = destroyChild(this.below, this.flame);
     this.smoke = destroyChild(this.above, this.smoke);
+    this.dropBodyGlow();
     this.damageFor = -1;
   }
 
@@ -629,6 +799,11 @@ class EnemyAdorner implements EntityAdorner {
     if (this.disposed) return; // 두 번 불려도 안전(회수 경로가 겹칠 수 있다).
     this.disposed = true;
     liveAdorners -= 1;
+    if (this.spawnOwned) {
+      this.spawnOwned = false;
+      activeSpawns -= 1;
+    }
+    this.dropBodyGlow();
 
     this.emitDeath(ctx);
 
@@ -646,10 +821,8 @@ class EnemyAdorner implements EntityAdorner {
     this.aura = null;
     this.insignia = null;
     this.rim = null;
-    this.spawnRing = null;
-    this.spawnColumn = null;
+    this.spawnHalo = null;
     this.telegraph = null;
-    this.chargeCore = null;
     this.sparks = null;
     this.flame = null;
     this.smoke = null;
@@ -661,11 +834,9 @@ class EnemyAdorner implements EntityAdorner {
    * 사망 연출 — 종별 파편. **세 겹의 가드**를 통과해야만 방출한다:
    *
    * 1. `ctx.dt > 0` — `reset`/`destroy` 경로는 `dt: 0` 으로 맥락을 만든다(`disposeAllAdorners`).
-   *    화면 정리에서 파편을 뿌리면 빈 화면에 잔해만 남는다.
-   * 2. **직전 프레임까지 살아 있었다** — 킬 루프는 스냅샷에서 사라진 프레임에 돌므로 마지막
-   *    `onFrame` 은 바로 앞 프레임이다. 한참 전이면 정상 처치가 아니다.
-   * 3. **다른 장식자가 남아 있다** — 파편 풀은 자기 티커가 없어 살아 있는 장식자가 굴려 준다.
-   *    아무도 안 남았으면 방출 자체를 하지 않는다(고아 이펙트가 구조적으로 불가능해진다).
+   * 2. **직전 프레임까지 살아 있었다** — 킬 루프는 스냅샷에서 사라진 프레임에 돈다.
+   * 3. **다른 장식자가 남아 있다** — 파편 풀은 자기 티커가 없다. 아무도 안 남았으면 방출조차
+   *    하지 않는다(고아 이펙트가 구조적으로 불가능해진다).
    */
   private emitDeath(ctx: AdornerContext): void {
     if (!this.decorated) return;
@@ -676,26 +847,19 @@ class EnemyAdorner implements EntityAdorner {
 
     const layer = ctx.aboveLayer;
     const r = this.radius;
-    // 종별 서명 — 돌격형은 진행 방향으로 무겁게 흩고, 사수형은 고리로 터지고, 지원형은 안으로
-    // 모였다 흩어지며, 특수형은 위로 분출한다. "무엇이 죽었는지" 가 잔해에서 읽힌다.
     const mv = this.movement;
     const boss = this.tier === THREAT_BOSS;
+    const signature = boss ? 'boss' : (mv ?? 'unknown');
+    deathSignatures.set(signature, (deathSignatures.get(signature) ?? 0) + 1);
     const count = boss ? 14 : this.tier === THREAT_ELITE ? 9 : 6;
 
     if (mv === 'standoff' || boss) {
       // 충격파 고리 — 사수형/보스의 서명.
       const ring = buildShockRing(r * 0.6, this.accent);
-      pushDebris({
-        node: wrap(ring, this.lastX, this.lastY),
-        vx: 0,
-        vy: 0,
-        spin: 0,
-        age: 0,
-        life: DEBRIS_LIFE * 0.7,
-        layer,
-      });
-      const ringNode = debris[debris.length - 1];
-      if (ringNode !== undefined) ringNode.node.scale.set(0.4);
+      ring.label = 'enemyDebris';
+      const node = wrap(ring, this.lastX, this.lastY);
+      node.scale.set(0.4);
+      pushDebris({ node, vx: 0, vy: 0, spin: 0, age: 0, life: DEBRIS_LIFE * 0.7, layer });
     }
 
     for (let i = 0; i < count; i++) {
@@ -711,11 +875,12 @@ class EnemyAdorner implements EntityAdorner {
         // 위로 분출 — 뿌리내린 설비는 옆으로 안 흩어진다.
         ang = -Math.PI / 2 + (h - 0.5) * 1.1;
       } else if (mv === 'seekWounded') {
-        // 안으로 모였다 나가는 내파 — 시작 지점을 바깥에 두고 중심으로 던진다.
+        // 안으로 모였다 나가는 내파.
         ang = h * Math.PI * 2 + Math.PI;
         speed *= 0.55;
       }
       const shard = buildShard(r * (0.28 + h2 * 0.3), r * 0.09, this.accent);
+      shard.label = 'enemyDebris';
       const node = wrap(shard, this.lastX, this.lastY);
       node.rotation = ang;
       pushDebris({
@@ -734,6 +899,7 @@ class EnemyAdorner implements EntityAdorner {
 /** 표시 객체를 위치 지정된 컨테이너로 감싼다(파편은 자기 위치·회전을 따로 굴린다). */
 function wrap(child: Container, x: number, y: number): Container {
   const c = new Container();
+  c.label = 'enemyDebris';
   c.position.set(x, y);
   c.addChild(child);
   return c;
@@ -745,6 +911,27 @@ function destroyChild<T extends Container>(parent: Container | null, child: T | 
   parent?.removeChild(child);
   child.destroy({ children: true });
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// 플레이어 위치 관측 장식자 — 그리는 것이 하나도 없다
+// ---------------------------------------------------------------------------
+
+/**
+ * `player` kind 에 붙는 **관측 전용** 장식자. 컨테이너를 만들지 않고 레이어에 아무것도 붙이지
+ * 않으므로 레인 A 의 플레이어 비주얼과 화면에서 겹치지 않는다(밝기 기여 0). 존재 이유는 돌진
+ * 커밋 판정이 필요로 하는 플레이어 위치 하나뿐이다.
+ */
+class PlayerProbeAdorner implements EntityAdorner {
+  readonly name = 'enemy-player-probe';
+  onFrame(sprite: Sprite): void {
+    playerPos = { x: sprite.x, y: sprite.y };
+  }
+  dispose(): void {
+    // 플레이어가 사라지면(사망·리셋) 마지막 위치를 들고 있으면 안 된다 — 없는 표적을 향한
+    // 커밋 예고가 화면에 남는다.
+    playerPos = null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -788,10 +975,11 @@ function makeEnemyAdorners(kind: string): (e: EntitySnapshot) => EntityAdorner[]
 for (const kind of ENEMY_VISUAL_KINDS) {
   registerAdornerFactory(kind, makeEnemyAdorners(kind));
 }
+registerAdornerFactory('player', () => [new PlayerProbeAdorner()]);
 
 /**
- * **테스트 전용** 모듈 상태 초기화. 파편 풀·정원·카운터를 비운다. 프로덕션 경로는 부르지 않는다
- * (프로덕션에서는 `dispose` 4경로가 이미 같은 일을 한다).
+ * **테스트 전용** 모듈 상태 초기화. 프로덕션 경로는 부르지 않는다(프로덕션에서는 `dispose`
+ * 4경로가 이미 같은 일을 한다).
  */
 export function resetEnemyVisualState(): void {
   clearDebris();
@@ -799,4 +987,9 @@ export function resetEnemyVisualState(): void {
   debrisEmitted = 0;
   liveAdorners = 0;
   decoratedGrunts = 0;
+  activeSpawns = 0;
+  activeBodyGlows = 0;
+  playerPos = null;
+  lastAliveFrame.clear();
+  deathSignatures.clear();
 }

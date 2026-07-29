@@ -181,8 +181,22 @@ export type ObservedMovement = 'chargeStraight' | 'standoff' | 'seekWounded' | '
 export const RELOCK_ANGLE = 0.35;
 /** 재조준 표시를 유지하는 렌더 프레임 수. 한 프레임 번쩍임은 눈이 못 잡는다. */
 export const RELOCK_FRAMES = 10;
-/** 순항 대비 이 비율 이상으로 움직이면 "커밋" 으로 본다. */
+/** 순항 대비 이 비율 이상으로 움직여야 "달리는 중" 이다(커밋의 필요조건이지 충분조건이 아니다). */
 export const COMMIT_RATIO = 0.7;
+/**
+ * 돌진 커밋으로 인정하는 **조준선 오차** 상한(라디안). 진행 방향과 "나를 향하는 방향" 의 차다.
+ *
+ * ⚠️ 1차 구현은 "빠르게 직진 중" 만으로 커밋을 냈고, 그래서 3시드 실측 듀티가 **88.9%** 였다 —
+ * `moveCharge` 는 속도를 바꾸지 않으므로 순항 판정이 사실상 항상 참이기 때문이다. 상시 켜진
+ * 예고는 예고가 아니라 배경이다. 커밋의 뜻은 "빠르다" 가 아니라 **"이 선 위에 있으면 맞는다"**
+ * 이므로, 판정을 속도에서 **조준선 오차**로 옮겼다. 0.28rad ≈ 16°.
+ */
+export const AIM_LOCK = 0.28;
+/**
+ * 커밋 판정 사거리(월드 유닛). 화면 밖에서 나를 향해 달리는 개체까지 예고를 켜면 듀티가 다시
+ * 올라가고 정보 가치도 없다(피할 시간이 충분하다).
+ */
+export const COMMIT_RANGE = 700;
 /** 순항 추정치의 감쇠(프레임당). 벽에 막혀 느려진 개체가 영영 "커밋 아님" 이 되지 않게 한다. */
 export const CRUISE_DECAY = 0.995;
 /** 이 이동량(유닛/틱) 밑은 "정지" 로 본다. 보간 잔여·부동소수 잡음 흡수. */
@@ -234,6 +248,7 @@ export function observePosture(
   prev: EntitySnapshot,
   movement: ObservedMovement | null,
   frameTick: number,
+  player: { readonly x: number; readonly y: number } | null = null,
 ): number {
   const dx = e.x - prev.x;
   const dy = e.y - prev.y;
@@ -243,7 +258,7 @@ export function observePosture(
   // 순항에 갇히지 않고, 반대로 순간 최고치가 영원히 기준이 되지도 않는다.
   s.cruise = Math.max(d, s.cruise * CRUISE_DECAY);
 
-  const next = classify(s, e, prev, movement, d, dx, dy, frameTick);
+  const next = classify(s, e, prev, movement, d, dx, dy, frameTick, player);
   if (next === s.posture) s.holdFrames += 1;
   else {
     s.posture = next;
@@ -262,6 +277,7 @@ function classify(
   dx: number,
   dy: number,
   frameTick: number,
+  player: { readonly x: number; readonly y: number } | null,
 ): number {
   if (movement === 'stationary') return POSTURE_ROOTED;
 
@@ -273,8 +289,15 @@ function classify(
       return POSTURE_RELOCK;
     }
     if (frameTick < s.relockUntil) return POSTURE_RELOCK;
-    if (s.cruise > MOVE_EPS && d >= s.cruise * COMMIT_RATIO) return POSTURE_COMMIT;
-    return POSTURE_NONE;
+    // 커밋 = "이 선 위에 있으면 맞는다" 가 참인 순간. 속도만으로는 순항 내내 참이라 예고가
+    // 배경이 된다(1차 실측 듀티 88.9%). 세 조건을 모두 만족해야 한다:
+    //   ① 실제로 달리고 있다  ② 나를 조준선 안에 두고 있다  ③ 피할 시간이 촉박한 거리다
+    if (!(s.cruise > MOVE_EPS && d >= s.cruise * COMMIT_RATIO)) return POSTURE_NONE;
+    if (player === null) return POSTURE_NONE; // 플레이어를 모르면 커밋을 주장할 수 없다
+    const toPlayer = Math.hypot(player.x - e.x, player.y - e.y);
+    if (toPlayer > COMMIT_RANGE) return POSTURE_NONE;
+    const err = Math.abs(wrapAngle(Math.atan2(player.y - e.y, player.x - e.x) - e.angle));
+    return err <= AIM_LOCK ? POSTURE_COMMIT : POSTURE_NONE;
   }
 
   if (movement === 'standoff') {
