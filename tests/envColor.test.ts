@@ -18,7 +18,24 @@ import {
   paletteHueViolations,
 } from '../src/render/env/color.js';
 import { FOREGROUND_SIGNAL_COLORS } from '../src/render/textures.js';
-import { LAVA_PALETTE, LAVA_HUE_MIN, LAVA_HUE_MAX, HOSTILE_HUE_GAP } from '../src/render/env/terrainLight.js';
+import {
+  terrainLightPalette,
+  TERRAIN_LIGHT_HUE_GAP as HOSTILE_HUE_GAP,
+} from '../src/render/env/contracts/terrainLight.js';
+import { KARGON_THEME } from '../src/render/env/themes/kargon/index.js';
+
+/** 카르곤 지형광이 화면에 얹는 모든 색. 파생값이므로 계산해서 얻는다. */
+const LAVA_PALETTE = terrainLightPalette(KARGON_THEME.terrainLight);
+
+/**
+ * 카르곤이 4라운드에 걸쳐 **손으로** 얻었던 허용 구간.
+ *
+ * 여기서는 일부러 **리터럴**로 적는다. 이 파일의 주장은 "이 두 숫자가 위험색으로부터 계산으로
+ * 재현된다"이므로, 값을 코드에서 import 해 오면 "상수가 자기 자신이 만든 창 안에 있다"는
+ * 동어반복이 된다. 역사적 입력은 역사적 입력으로 남겨야 대조가 성립한다.
+ */
+const LAVA_HUE_MIN = 10;
+const LAVA_HUE_MAX = 18.4;
 
 describe('색상각 기본', () => {
   it('무채색은 0, 원색은 알려진 각도', () => {
