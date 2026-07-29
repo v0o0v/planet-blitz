@@ -1,0 +1,248 @@
+# 엔티티 AAA 비주얼 레인 계약 (2026-07-29)
+
+플레이어 비행체 · 적 기체 · 해저드를 **AAA 수준 비주얼**로 끌어올리는 병렬 레인의 계약서다.
+레인이 시작하기 전에 이 문서가 먼저 있어야 하고, 개정하며 굴린다(정련 공정 레인 교훈).
+
+배경 레이어(지형·대기·등급)는 **이미 AAA 패스가 끝났다**(`.omc/research/env-theme-phase2-2026-07-29.md`,
+`.omc/research/kargon-aaa-backdrop-2026-07-29.md`). 이번 레인의 대상은 그 위에 서는 **실체**다.
+
+---
+
+## 0. 왜 이 계약이 먼저인가
+
+이 리포에서 반복된 결함 세 가지가 전부 "계약 없이 병렬로 굴렸을 때" 나왔다.
+
+1. **공유 등록 지점 충돌** — `entityRenderer.ts`(1,953줄)는 플레이어·적 루프가 한 함수 안에 있다.
+   두 레인이 같은 줄을 고치면 반드시 충돌한다. → **선행 스캐폴딩 커밋으로 심(seam)을 먼저 판다.**
+2. **"단위 테스트 그린인데 배선이 통째로 없다"** (이 프로젝트 8건) — 모듈을 만들고 아무도
+   호출하지 않는다. → **`tests/renderWiring.test.ts` 가 고아 렌더 모듈을 막는다. 신규 모듈은 반드시 등록.**
+3. **번들에 자산이 있다 ≠ 화면에 보인다** — 완료 기준은 **화면에서 본 것**이다.
+
+---
+
+## 1. 파일 소유권 (충돌 0 의 근거)
+
+| 레인 | 소유 파일 | 절대 건드리지 않는 것 |
+|---|---|---|
+| **선행(스캐폴딩)** | `src/render/entity/adorner.ts`, `entityRenderer.ts` 심 배선 | — |
+| **A · 플레이어** | `src/render/entity/playerVisual.ts`, `tests/playerVisual.test.ts` | `enemyVisual.ts`, `hazard*` |
+| **B · 적 기체** | `src/render/entity/enemyVisual.ts`, `tests/enemyVisual.test.ts` | `playerVisual.ts`, `hazard*` |
+| **C · 해저드** | `src/render/entity/hazardField.ts`, `src/render/hazardVisual.ts`, `tests/hazard*.test.ts` | `playerVisual.ts`, `enemyVisual.ts` |
+
+### 스캐폴딩 심 API (커밋 `75a8b08` — 레인이 쓸 정확한 시그니처)
+
+`src/render/entity/adorner.ts` — 엔티티 스프라이트 장식자:
+
+```ts
+interface AdornerContext {
+  readonly belowLayer: Container;   // 스프라이트 아래·가산(= glowLayer)
+  readonly aboveLayer: Container;   // 스프라이트 위(= effectLayer)
+  readonly frameTick: number; readonly dt: number;
+  readonly gates: EffectGates; readonly tier: QualityTier;
+  readonly theme: EnvTheme | null; readonly alpha: number;
+}
+interface EntityAdorner {
+  readonly name?: string;
+  onAttach?(sprite: Sprite, e: EntitySnapshot, ctx: AdornerContext): void;
+  onFrame(sprite: Sprite, e: EntitySnapshot, prev: EntitySnapshot, ctx: AdornerContext): void;
+  dispose(ctx: AdornerContext): void;   // 형제 컨테이너 명시 회수 — 4경로에서 불린다
+}
+function registerAdornerFactory(kind: EntityKind, factory: (e: EntitySnapshot) => EntityAdorner[]): void;
+```
+
+`src/render/entity/hazardHost.ts` — 해저드 장판 재질:
+
+```ts
+interface HazardZone { id; x; y; radius; subtype; active; permanent; visual: HazardVisual; decorated: boolean }
+interface HazardHostContext { layer: Container; frameTick; dt; gates: EffectGates; tier: QualityTier; theme: EnvTheme | null }
+interface HazardMaterial { onAttach?(zone, ctx); onFrame(zone, ctx); dispose(ctx); }
+function registerHazardMaterialFactory(subtype: number, factory: (zone: HazardZone) => HazardMaterial[]): void;
+```
+
+등록은 **함수 호출식**이라 3레인이 같은 줄을 다투지 않는다. 미등록 kind/subtype 은 할당·호출 0.
+관측창: `renderer.adornerCount`, `renderer.hazardMaterialCount`.
+회수 4경로(킬·디졸브·reset·destroy)는 스캐폴딩이 이미 배선했고 뮤테이션으로 검증됐다 —
+레인은 `dispose()` 안에서 **자기가 만든 형제 컨테이너를 실제로 떼고 파괴**하기만 하면 된다.
+
+**스캐폴딩이 머지되기 전에는 어떤 레인도 시작하지 않는다.** 세 레인이 각자 한 줄씩
+`entityRenderer.ts` 에 등록을 더하게 두면 정확히 같은 줄에서 3중 충돌한다.
+
+공유 파일을 고쳐야 할 이유가 생기면 **레인이 직접 고치지 말고 오케스트레이터에게 보고**해라.
+
+---
+
+## 2. 깨면 안 되는 불변 계약
+
+### 2-1. sim 불가침 (ADR-0005)
+
+- 전부 **render-only** 다. `src/sim/` 을 import 하지 않는다(타입 전용 import 는 허용).
+- `hashWorld` 에 새 필드가 들어가면 안 된다. 리플레이·골든이 즉시 깨진다.
+- **증명**: `tests/encounterHashInvariance.test.ts` 골든 파일 **수정 0** 으로 끝나야 한다.
+  골든이 바뀌었다면 그것만으로 그 레인은 실패다.
+- 렌더가 필요로 하는 정보가 스냅샷에 없으면 **렌더가 같은 규칙으로 다시 계산**한다
+  (`shipFacing`, `turretAimAngle` 이 이미 그 패턴이다). sim 에 필드를 더하지 마라.
+
+### 2-2. 색·가독성 안전 창
+
+이 게임은 탄막 슈터다. **예쁨이 가독성을 이기면 그 변경은 실패다.**
+
+- **시안(`#39d0ff` 계열)은 아군 전용**이다. 적·해저드가 쓰면 안 된다.
+- **적탄 = 흰 코어 + 유색 아웃라인.** 이 규칙은 협상 대상이 아니다(`textures.ts` 헤더 참조).
+  적탄에 텍스처·발광 헤일로를 붙이지 마라(`isGlowEmitter` 가 이미 막고 있다).
+- **적 몸통 ↔ 배경 위장**: 시드별 위장률(배경 상위색과 적 몸통색의 근접 픽셀 비율) 게이트가
+  이미 있다. 새 이펙트가 적 실루엣을 **어둡게·흐리게** 만들면 이 게이트가 빨개진다.
+- **해저드**: 난색=피해, 보라=방해. 색 외 채널(빗금·점선·수렴 링)을 **유지**해라 —
+  색약 사용자에게 정보가 남는 유일한 경로다.
+- 새 발광·오라를 더할 때 **플레이어 실루엣이 자기 이펙트에 먹히면 안 된다**. 대시 잔상·
+  엔진 불꽃이 기체 본체보다 밝으면 고밀도 탄막에서 자기 위치를 잃는다.
+
+### 2-3. 티어 게이트 · 성능 예산
+
+- 모든 신규 이펙트는 `effectGates(tier, settings)` 뒤에 있어야 한다. `low` 티어에서 꺼지거나
+  현저히 축소돼야 한다. **게이트 없는 이펙트는 리뷰에서 즉시 반려.**
+- `reducedMotion` / `reducedGlow` 접근성 토글을 존중해라(광과민 대응).
+- **프레임 예산**: 레인당 `sim 틱 + 렌더 1프레임` 벽시계 **+1.5ms 이내**(카르곤 1280×720,
+  quality high). 측정은 **A/B 교차 3라운드** — 단발 측정은 부하에 따라 2~3배 흔들린다.
+- 형제 컨테이너(Pixi v8 `Sprite.addChild` deprecate 회피)를 만들었다면 **부모 `destroy` 로
+  회수되지 않는다.** 킬 루프 · reset · destroy · 디졸브 네 경로에서 명시 회수해라.
+  안 하면 사라진 실체의 이펙트가 화면에 얼어붙는다(접지 그림자에서 실제로 겪었다).
+
+---
+
+## 3. AAA 판정 기준 — 무엇을 만들어야 "AAA" 인가
+
+"예쁘게" 는 판정 불가다. 아래는 실제 AAA 탑다운 슈터(Nova Drift, Returnal 탑다운 뷰,
+Hades, Enter the Gungeon, Vampire Survivors 상위 티어)가 **전부 갖고 있고 이 게임에 없는 것**의
+목록이다. 각 레인은 자기 항목을 전부 채워야 한다.
+
+### 공통 원칙 4가지 (전 레인 적용)
+
+| 원칙 | 뜻 | 없으면 생기는 증상 |
+|---|---|---|
+| **실루엣 우선** | 형태만으로 정체·상태·위협도가 읽힌다 | 화면이 붐비면 뭐가 뭔지 모른다 |
+| **반응성** | 모든 상태 변화에 시각 반응이 붙는다(입력·피격·사망·스폰) | "종이 인형" 느낌 — 조작감 상실 |
+| **광원 일관성** | 이펙트가 테마 광원(`envTheme.light`)에서 파생된다 | 붙여넣은 스티커처럼 보인다 |
+| **2차 운동** | 본체 움직임에 종속돼 지연·감쇠하는 부수 운동(뱅킹·잔상·요동) | 뻣뻣하고 값싸 보인다 |
+
+### 레인 A · 플레이어 비행체
+
+1. **뱅킹/롤** — 횡이동에 따라 기체가 기운다(스케일 Y 압축 + 미세 회전). 감쇠 스프링.
+2. **엔진 추진** — 속도 반응형 불꽃. 정지 시 아이들 코어, 가속 시 연장, 대시 시 폭발적 확장.
+   광원과 무관한 **자체 발광체**(가산 합성).
+3. **림라이트** — 테마 광원 방향에서 오는 가장자리 하이라이트. 어두운 행성에서 실루엣을 세운다.
+4. **피격 반응** — 방향성 있는 충격(피격 방향 반대로 튀는 오프셋) + 무적 프레임의
+   **읽히는** 표현(단순 깜빡임 금지 — 깜빡임은 실루엣을 지운다).
+5. **대시 잔상** — 위치 이력 기반 감쇠 잔상(고스트). 티어 게이트.
+6. **아이들 부유** — 정지 시 미세한 상하 부유 + 엔진 열기 요동. "살아 있다"를 만든다.
+
+### 레인 B · 적 기체
+
+1. **위협도 시각 계층** — 잡몹 / 엘리트 / 보스가 **한눈에** 구분된다. 엘리트는 현재
+   `elite >= 0` 만 있고 화면에 거의 안 드러난다. 오라·휘장·크기 계층을 세워라.
+2. **손상 상태** — HP 비율에 따른 누진 표현(스파크 → 연기 → 화염). 현재는 히트 플래시뿐이라
+   "얼마나 남았나"가 안 읽힌다.
+3. **예비 동작(telegraph)** — 차저의 돌진 전 웅크림, 거너의 발사 전 충전 발광. **탄막 게임에서
+   가장 중요한 단일 항목**이다. 예고 없는 공격은 불공정하게 느껴진다.
+4. **스폰 인** — 갑자기 나타나지 않는다. 워프/디졸브 인 + 지면 예고.
+5. **사망 연출** — 종별로 다르게. 현재 디졸브 셰이더가 있으니 그 위에 파편·충격파 계층.
+6. **군집 가독성** — 같은 종이 20마리 겹쳐도 개체 수가 읽혀야 한다(외곽선·위상 오프셋).
+
+### 레인 C · 해저드
+
+현재는 `Graphics` 원 + 45° 빗금이다. **기하학 도형이지 재질이 아니다.**
+
+1. **재질** — 용암은 흐르는 용융, 오염은 부글거리는 포자, 감속장은 굴절/왜곡.
+   노이즈 텍스처 + 셰이더(`src/render/shaders/` 에 이미 6종 있다) 기반.
+2. **경계 처리** — 딱딱한 원이 아니라 불규칙 가장자리 + 소프트 페이드. 단,
+   **판정 경계는 여전히 정확히 읽혀야 한다**(안쪽 립을 유지해라).
+3. **높이감** — 장판이 바닥에 깔린 것으로 보여야 한다(원근 압축·접지 그림자와 정합).
+4. **예열→활성 전이** — 현재 점선→실선 전환이 순간적이다. 예열이 고조되는 연속 연출.
+5. **환경 반응** — 용암은 주변 지형을 물들이고(테마 광원 기여), 독은 대기에 안개를 더한다.
+6. **입자** — 용암 불티, 독 포자, 냉기 결정. 티어 게이트 + 예산 상한.
+
+---
+
+## 4. 검증 계약 — "AAA다"를 어떻게 증명하는가
+
+### 4-1. 캡처 규율 (하나라도 빠지면 판정 무효)
+
+`.omc/research/env-shots/BASELINE.md` 의 6개 조건을 **그대로** 따른다. 요약:
+
+1. `quality: 'high'` 고정 — 안 하면 FPS 계측 10 → 티어 low → 발광이 통째로 꺼진 화면을 본다
+2. 캡처 전 `harness.pause()`
+3. 캔버스 고정 `resolution=1` + `resize(1280, 720)`
+4. `harness.preset('fresh')` 를 **런 전에**
+5. `post` 슬롯 뒤 stage 자식 전부 숨김
+6. 벤치·`env.solo()`·`env.disable()` 를 만졌으면 **새로고침 후 촬영**
+
+추가 (카르곤 AAA 레인 교훈): **탭이 포그라운드인지 확인**해라. 백그라운드면 rAF 1Hz 라
+"10배 성능 회귀"로 오진한다.
+
+도구: `scripts/env-verify/page-capture.js` 주입 → `shot-server.mjs` 로 POST → `analyze.mjs` 로 분석.
+
+### 4-2. 화면 증명 (배선 증명)
+
+**"코드에 있다"는 증명이 아니다.** 각 항목마다:
+
+- 그 이펙트가 **켜진 프레임**과 **꺼진 프레임**을 각각 캡처하고 `analyze.mjs` 로 델타를 낸다.
+- 델타의 **mean 과 국소 상위1% 가 둘 다 바닥이면 그 이펙트는 화면에 없는 것**이다.
+  (레이어별 기여도 서명 표가 `BASELINE.md` 에 있다 — 이펙트마다 지표 모양이 다르니
+  지표 하나로 전부 판정하면 오판한다.)
+- 스프라이트 자산을 교체했다면 바인딩된 `texture.source.label` 을 대조해라.
+
+### 4-3. 뮤테이션 검증 (필수 산출물)
+
+새로 쓴 테스트가 **실제로 무언가를 잡는지** 확인해라. 값을 일부러 깨고 테스트가 빨개지는 것을
+본 다음, **소스 파일만** `git checkout` 으로 되돌려라(테스트 파일을 같은 명령에 넣으면 방금 쓴
+테스트가 통째로 날아간다). 이 레인의 최대 수확이 여기서 나온 전례가 있다.
+
+⚠️ **뮤테이션은 반드시 커밋 뒤에 돌려라.** 스캐폴딩 레인이 커밋 전에 뮤테이션을 되돌리다
+`git checkout -- <소스>` 로 **미커밋 배선 15군데를 통째로 날렸다**. 위 경고는 "테스트 파일을
+같이 넣지 마라"지만 실제 함정은 더 넓다 — **미커밋 소스에는 checkout 자체가 파괴적이다.**
+
+**대조 없이 "OK"를 내는 검증 도구는 그 자체가 결함이다**(항진).
+
+### 4-4. 비평가 게이트
+
+각 레인은 **자기 작업을 자기가 승인하지 못한다.** 별도의 비평가 에이전트가 통과시켜야 한다.
+비평가의 판정 기준은 §3 의 항목표이며, 판정은 **스크린샷 실물**로 한다.
+
+비평가는 다음을 반려 사유로 삼는다:
+- 항목표의 어느 항목이 화면에서 확인되지 않음 (코드 존재는 무관)
+- 가독성 계약(§2-2) 위반
+- 티어 게이트 부재 (§2-3)
+- 델타가 바닥 = 이펙트가 화면에 없음
+- 성능 예산 초과
+- "그럴듯하지만 값싸 보임" — 이건 주관이지만 **비평가가 근거를 대면 유효한 반려**다.
+  근거의 형태: 실제 AAA 게임의 같은 상황과 비교해 무엇이 없는지 명시.
+
+---
+
+## 5. 산출물
+
+각 레인은 다음을 전부 내야 완료다.
+
+1. 구현 (소유 파일만)
+2. 테스트 + **뮤테이션 검증 로그**
+3. `pnpm test` 전체 그린 + `pnpm lint` + **`tsc` 별도 실행**
+   (테스트 추가 후 tsc 를 안 돌려 vitest 그린인데 main 빌드가 깨져 있던 전례가 두 번 있다)
+4. 골든 파일 수정 0 (§2-1)
+5. **캡처 증거**: 항목별 before/after 스크린샷 + `analyze.mjs` 델타 수치
+6. 성능 A/B 교차 3라운드 수치
+7. 비평가 통과 기록
+
+---
+
+## 6. 알려진 함정 (밟지 마라)
+
+- `requestAnimationFrame` 을 **await 하지 마라**. in-app Browser pane 은 `visibilityState==='hidden'`
+  이라 rAF 콜백이 영영 안 불려 교착한다. `app.ticker.update(performance.now())` 로 강제해라.
+- hidden pane 에서 Pixi 좌표는 화면 좌표의 **×0.667** 로 나온다.
+- `JSON.stringify(stage.children)` 은 순환 참조로 던진다.
+- `javascript_tool` 은 **30초 컷**이다. 긴 루프는 나눠라.
+- python 다중행 치환이 CRLF/LF 혼재 때문에 조용히 실패한다. 편집은 Edit 툴로 해라.
+- `pnpm` 은 PATH 에 없다. **`corepack pnpm`** 으로 불러라.
+- 서브에이전트가 산출물을 다 만들고 보고만 못 하고 멈추는 일이 반복된다. 판별은
+  **파일 mtime + `Get-Process node` 의 CPU 시간**이다.
+</content>
+</invoke>
