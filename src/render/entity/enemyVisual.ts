@@ -15,12 +15,24 @@
  * - **재조준(웅크림)** = 본체 **스쿼시** + 가산 명멸
  * - **손상** = 본체 전체를 덮는 **가산 열 오버레이**(같은 텍스처) — 1차의 3.8px 불티는
  *   카르곤 용암 위에서 화면 델타가 노이즈 바닥 **밑**이었다(§4-2 = 화면에 없는 것)
- * - **개체 경계** = 완전한 원이 아니라 `theme.light` 방향 **반쪽 림라이트**
+ * - **개체 경계** = 완전한 원이 아니라 광원 방향 림라이트
+ *
+ * ## 3차 개정 — **림라이트도 몸으로**, 그리고 게이트는 걷는다
+ * 2차의 "반쪽 림라이트" 는 여전히 `arc()` stroke, 즉 **고정 반경 원호**라 실루엣을 따라가지
+ * 않았다(1차의 완전한 원을 반으로 자른 것에 불과했다). 3차는 그 자리를 **본체 텍스처의 가산
+ * 사본**으로 바꿨다 — 이 레인의 `enemyBodyGlow` 가 수치로 성공시킨 바로 그 기법이고, 텍스처
+ * 사본은 정의상 실루엣을 따라간다. 함께 고친 것:
+ * - **보스 룬**: 원 궤도(기준량이 폭 하나) → **경계 상자 축별** 배치. 비정사각 스프라이트에서
+ *   배수를 아무리 줄여도 짧은 축은 몸 안·긴 축은 몸 밖이 되는 성질을 없앴다.
+ * - **엘리트 오라**: 외곽 1.45r → 1.12r. 몸에서 떨어진 동심 완전 원은 "선택 링" 그 자체였다.
+ * - **게이트 하강 시 철거**: 생성만 막고 걷지 않으면, 자동 티어 강등(= FPS 가 떨어져 완화가
+ *   가장 필요한 순간)에 이미 만든 장식이 그대로 남아 비용을 계속 낸다.
+ * - **런 경계**({@link lastAlive}): 재적 기록이 id 뿐이라 새 런의 스폰을 억제하고 있었다.
  *
  * ## 스폰 시점은 렌더 부착 시점이 아니다 (1차 CRITICAL)
  * `onAttach` 는 `entityRenderer.reset()` 마다 다시 불린다(`main.ts` 화면 전환 5곳). 1차는 거기서
  * 태어난 것으로 쳐서 **화면 전환마다 전 적이 동시에 스폰 인을 재생**했고, 보스전 실측 bright
- * 1.88% → 12.22% 로 §2-4 상한(7%)을 1.75배 넘겼다. 그래서 {@link lastAliveFrame} 로 "직전
+ * 1.88% → 12.22% 로 §2-4 상한(7%)을 1.75배 넘겼다. 그래서 {@link lastAlive} 로 "직전
  * 프레임까지 살아 있던 id" 를 기억해 **재부착과 신생을 가른다**. 화면 재구성은 스폰이 아니다.
  *
  * ## 예산 — 개체당 비용이 20~40 배로 곱해진다
@@ -69,6 +81,7 @@ import {
   threatAccent,
   threatTier,
 } from './enemyPosture.js';
+import { lightX, lightY } from '../env/theme.js';
 import {
   buildBossAura,
   buildBossInsignia,
@@ -78,7 +91,6 @@ import {
   buildFlame,
   buildMendAura,
   buildMuzzleCharge,
-  buildRimLight,
   buildRootedHeat,
   buildShard,
   buildShockRing,
@@ -118,8 +130,13 @@ const DEBRIS_LIFE = 0.55;
  */
 export const REATTACH_WINDOW = 3;
 
-/** `theme` 가 없을 때 쓰는 광원 각(좌상단). 림라이트가 방향을 잃지 않게 한다. */
-const DEFAULT_LIGHT_ANGLE = -2.2;
+/**
+ * 림라이트 오프셋(표시 반치수 배율). 본체 텍스처의 가산 사본을 광원 **쪽**으로 이만큼 밀어
+ * 그 방향 가장자리만 실루엣 밖으로 삐져나오게 한다(레인 A `playerRim` 과 같은 값·같은 원리).
+ */
+const RIM_OFFSET = 0.14;
+/** 림 사본 알파. 20기가 동시에 켜져도 §2-4 예산 안에 들도록 낮게 잡는다. */
+const RIM_ALPHA = 0.22;
 
 // ---------------------------------------------------------------------------
 // 종 정보 — leaf 카탈로그에서 읽는다(sim 상태 아님)
@@ -169,19 +186,48 @@ export function observedPlayerPos(): { x: number; y: number } | null {
 // ---------------------------------------------------------------------------
 
 /**
- * id → 마지막으로 살아 있던 렌더 프레임. `dispose` 로 지우지 **않는다** — `reset()` 이
- * 전 장식자를 회수한 직후에도 "직전 프레임엔 있었다" 를 기억해야 재부착을 알아본다.
- * {@link prunePresence} 가 오래된 항목을 걷어 무한 성장을 막는다.
+ * 개체 재적 기록 한 건. 프레임만으로는 부족하다 — 아래 {@link lastAlive} 참조.
  */
-const lastAliveFrame = new Map<number, number>();
+interface Presence {
+  /** 마지막으로 살아 있던 렌더 프레임. */
+  frame: number;
+  /** 그때의 종(typeIndex). */
+  type: number;
+  /** 그때의 최대 HP. */
+  maxHp: number;
+}
 
-/** 이 프레임 수보다 오래된 재적 기록은 버린다(id 재사용 시 다시 신생으로 취급되도록). */
+/**
+ * id → 마지막 재적. `dispose` 로 지우지 **않는다** — `reset()` 이 전 장식자를 회수한 직후에도
+ * "직전 프레임엔 있었다" 를 기억해야 재부착을 알아본다. {@link prunePresence} 가 오래된 항목을
+ * 걷어 무한 성장을 막는다.
+ *
+ * ## 왜 프레임만으로 부족한가
+ * 키가 `id` 뿐이면 **새 런의 id 1~N 이 앞 런의 id 1~N 으로 오인**돼 스폰 연출이 통째로
+ * 사라진다(실측: 연속 `startRun` 에서 `activeSpawnCount` 전 프레임 0). 그래서 종·최대 HP 까지
+ * 함께 대조한다 — 화면 전환은 **같은 실체**가 돌아오는 것이라 셋이 모두 일치하고, 새 런은
+ * 대개 다른 종·다른 HP 다.
+ *
+ * ⚠️ **완전한 해법은 아니다.** 새 런의 첫 적이 id·종·최대 HP 까지 우연히 일치하고 그것이 직전
+ * 런 종료로부터 {@link REATTACH_WINDOW} 프레임 안에 나타나면 여전히 억제된다. 그 경우를 확실히
+ * 가르려면 "런이 시작됐다" 는 신호가 필요한데, 그 신호를 주는 곳(`main.ts`·하네스)은 이 레인의
+ * 소유 파일이 아니다 — 잔여 위험으로 보고한다.
+ *
+ * ## 한 번 넣었다 뺀 것: "공백으로 런 경계를 가른다"
+ * 적이 0 인 프레임이 {@link REATTACH_WINDOW} 넘게 이어지면 맵을 통째로 비우는 장치를 넣었다가
+ * **뮤테이션이 죽지 않아 걷어냈다.** 아래 개별 판정이 `frameTick - seen <= REATTACH_WINDOW` 로
+ * 이미 **id 별로 같은 일**을 하므로 순수한 중복이었다. 지워도 아무 테스트가 안 깨지는 방어는
+ * 방어가 아니다.
+ */
+const lastAlive = new Map<number, Presence>();
+
+/** 이 프레임 수보다 오래된 재적 기록은 버린다(맵 무한 성장 방지). */
 const PRESENCE_TTL = 240;
 
 function prunePresence(frameTick: number): void {
   if (frameTick % 120 !== 0) return; // 2초에 한 번이면 충분하다(맵 크기 = 동시 적 수 수준).
-  for (const [id, t] of lastAliveFrame) {
-    if (frameTick - t > PRESENCE_TTL) lastAliveFrame.delete(id);
+  for (const [id, p] of lastAlive) {
+    if (frameTick - p.frame > PRESENCE_TTL) lastAlive.delete(id);
   }
 }
 
@@ -332,7 +378,7 @@ class EnemyAdorner implements EntityAdorner {
 
   private aura: Graphics | null = null;
   private insignia: Container | null = null;
-  private rim: Graphics | null = null;
+  private rim: Sprite | null = null;
   private spawnHalo: Graphics | null = null;
   private telegraph: Container | null = null;
   private sparks: Graphics | null = null;
@@ -344,12 +390,13 @@ class EnemyAdorner implements EntityAdorner {
 
   private telegraphFor = -1;
   private damageFor = -1;
-  /** 현재 림이 표현하는 광원 각. 테마가 바뀌면 다시 굽는다. */
-  private rimForAngle = Number.NaN;
 
   private readonly posture: PostureState = createPostureState();
   private bornTick = 0;
   private radius = 1;
+  /** 본체 표시 반치수. **원 궤도의 기준량이 폭 하나면 비정사각 스프라이트에서 축마다 어긋난다.** */
+  private halfW = 1;
+  private halfH = 1;
   private lastX = 0;
   private lastY = 0;
   private lastSeenTick = -1;
@@ -384,7 +431,10 @@ class EnemyAdorner implements EntityAdorner {
 
   onAttach(sprite: Sprite, e: EntitySnapshot, ctx: AdornerContext): void {
     const w = sprite.width;
+    const h = sprite.height;
     this.radius = w > 0 ? w / 2 : Math.max(1, e.radius);
+    this.halfW = w > 0 ? w / 2 : Math.max(1, e.radius);
+    this.halfH = h > 0 ? h / 2 : Math.max(1, e.radius);
     this.lastX = sprite.x;
     this.lastY = sprite.y;
     this.baseScaleX = sprite.scale.x;
@@ -394,8 +444,13 @@ class EnemyAdorner implements EntityAdorner {
     // ── 신생인가 재부착인가 ────────────────────────────────────────────────
     // `reset()` 은 다음 프레임에 전 엔티티를 다시 부착한다. 그때를 스폰으로 치면 화면 전환마다
     // 전 적이 동시에 물질화해 §2-4 밝기 상한을 넘긴다(실측 1.88% → 12.22%).
-    const seen = lastAliveFrame.get(e.id);
-    const reattach = seen !== undefined && ctx.frameTick - seen <= REATTACH_WINDOW;
+    const seen = lastAlive.get(e.id);
+    // 같은 실체가 돌아온 것인가 — 프레임 간격뿐 아니라 **종·최대 HP 까지** 같아야 한다.
+    const reattach =
+      seen !== undefined &&
+      ctx.frameTick - seen.frame <= REATTACH_WINDOW &&
+      seen.type === e.enemyType &&
+      seen.maxHp === e.maxHp;
     if (reattach || !this.decorated || activeSpawns >= MAX_CONCURRENT_SPAWNS) {
       // 재부착·비장식·정원 초과 → 연출 없이 즉시 완료(본체만 나타난다).
       this.spawnDone = true;
@@ -408,7 +463,7 @@ class EnemyAdorner implements EntityAdorner {
   onFrame(sprite: Sprite, e: EntitySnapshot, prev: EntitySnapshot, ctx: AdornerContext): void {
     pumpDebris(ctx);
     this.lastSeenTick = ctx.frameTick;
-    lastAliveFrame.set(e.id, ctx.frameTick);
+    lastAlive.set(e.id, { frame: ctx.frameTick, type: e.enemyType, maxHp: e.maxHp });
     this.lastX = sprite.x;
     this.lastY = sprite.y;
     this.ctx = ctx;
@@ -434,7 +489,7 @@ class EnemyAdorner implements EntityAdorner {
 
     this.syncLayers(sprite);
     this.updateThreat(sprite, glow, motion, low, t);
-    this.updateRim(sprite, ctx, low);
+    this.updateRim(sprite, ctx, low, glow);
     this.updateSpawn(sprite, ctx, glow, low);
     this.updateTelegraph(sprite, e, posture, glow, low, motion, t);
     this.updateDamage(sprite, ctx, stage, glow, low, motion, t);
@@ -493,12 +548,13 @@ class EnemyAdorner implements EntityAdorner {
         below.addChild(this.aura);
       }
       if (this.aura !== null) {
-        this.aura.visible = true;
         const pulse = motion ? 1 + 0.05 * Math.sin(t * (boss ? 0.45 : 0.7)) : 1;
         this.aura.scale.set(pulse);
       }
-    } else if (this.aura !== null) {
-      this.aura.visible = false;
+    } else {
+      // 게이트가 내려가면 **감추는 게 아니라 걷는다.** `visible=false` 로 두면 티어 강등
+      // (= FPS 가 떨어져 완화가 가장 필요한 순간)에 표시 객체가 그대로 남아 비용을 계속 낸다.
+      this.aura = destroyChild(this.below, this.aura);
     }
 
     // 휘장은 발광이 아니라 **정보**라 halo 게이트에 매달지 않는다(발광을 껐다고 계급이
@@ -506,7 +562,7 @@ class EnemyAdorner implements EntityAdorner {
     const above = this.insignia === null ? this.ensureAbove(sprite) : this.above;
     if (this.insignia === null && above !== null) {
       this.insignia = boss
-        ? buildBossInsignia(this.radius, this.accent)
+        ? buildBossInsignia(this.halfW, this.halfH, this.accent)
         : buildEliteInsignia(this.radius, this.accent);
       this.insignia.label = 'enemyInsignia';
       above.addChild(this.insignia);
@@ -518,24 +574,53 @@ class EnemyAdorner implements EntityAdorner {
   }
 
   /**
-   * 광원 방향 **반쪽 림라이트** — 겹친 군집에서 개체 경계를 남기는 채널. 완전한 원은 RTS
-   * 선택 링으로 읽히므로(§2-5) 호만 남기고, 방향을 `theme.light` 에서 받아 접지 그림자와
-   * 같은 태양을 증언한다.
+   * **림라이트 — 본체 텍스처의 가산 사본을 광원 쪽으로 민다.**
+   *
+   * 2차까지는 고정 반경 `arc()` stroke 였고, 그래서 **실루엣을 따라가지 않았다**: 확대하면
+   * 몸 경계에서 떨어진 구간과 몸을 가로지르는 구간이 동시에 생기고, 보스 스케일에서는 굵은
+   * 띠가 몸 아래 빈 공간을 가로질렀다. 원호로는 원리적으로 림라이트를 만들 수 없다.
+   *
+   * 텍스처 사본은 정의상 실루엣을 따라간다. 같은 기법이 이 레인의 `enemyBodyGlow` 에서 이미
+   * 수치로 통했고(HP5% 컷 단독 기여 mean 1.57 / 국소 49.82), 레인 A 의 `playerRim` 도 같다.
+   *
+   * **아래 레이어**에 둔다 — 위에 두면 사본이 본체를 통째로 밝혀 실루엣이 흐려진다. 아래면
+   * 광원 쪽으로 밀린 만큼만 삐져나와 초승달 하이라이트가 된다.
+   *
+   * 테마가 없으면(담당 배경 없는 행성) 광원이 없는 것이므로 **스스로 꺼진다**(계약 §3 광원 일관성).
    */
-  private updateRim(sprite: Sprite, ctx: AdornerContext, low: boolean): void {
-    // low 티어에서는 잡몹 림을 포기한다(개체당 도형 하나가 40배로 곱해진다). 엘리트·보스는 남긴다.
-    if (low && this.tier === 0) return;
-    const angle = ctx.theme?.light.angle ?? DEFAULT_LIGHT_ANGLE;
-    if (this.rim !== null && angle !== this.rimForAngle) {
-      this.rim = destroyChild(this.above, this.rim);
+  private updateRim(sprite: Sprite, ctx: AdornerContext, low: boolean, glow: boolean): void {
+    // low 티어에서는 잡몹 림을 포기한다(개체당 사본 하나가 40배로 곱해진다). 엘리트·보스는 남긴다.
+    // ⚠️ 게이트가 **내려갈 때 이미 만든 것을 걷는 분기**가 있어야 한다. 자동 티어 강등은 FPS 가
+    // 떨어지는 순간 — 완화가 가장 필요한 그 순간 — 에 발동하는데, 생성만 막으면 그때 안 걷힌다.
+    if ((low && this.tier === 0) || !glow || ctx.theme === null) {
+      this.dropRim();
+      return;
     }
-    const above = this.rim === null ? this.ensureAbove(sprite) : this.above;
+    const above = this.rim === null ? this.ensureBelow(sprite) : this.below;
     if (this.rim === null && above !== null) {
-      this.rim = buildRimLight(this.radius, this.accent, angle);
-      this.rim.label = 'enemyRim';
-      this.rimForAngle = angle;
-      above.addChild(this.rim);
+      const rim = new Sprite(sprite.texture);
+      rim.label = 'enemyRim';
+      rim.anchor.set(0.5);
+      rim.blendMode = 'add';
+      rim.tint = this.accent;
+      rim.alpha = RIM_ALPHA;
+      above.addChild(rim);
+      this.rim = rim;
     }
+    const rim = this.rim;
+    if (rim === null) return;
+    // 애니메이션 프레임 교체를 따라간다 — 안 따라가면 어긋난 잔상이 생긴다.
+    if (rim.texture !== sprite.texture) rim.texture = sprite.texture;
+    const mag = Math.max(this.halfW, this.halfH) * RIM_OFFSET;
+    // 컨테이너가 이미 본체 위치에 있으므로 오프셋만 로컬로 준다.
+    rim.position.set(lightX(ctx.theme.light) * mag, lightY(ctx.theme.light) * mag);
+    rim.rotation = sprite.rotation;
+    rim.scale.set(sprite.scale.x, sprite.scale.y);
+  }
+
+  /** 림 회수(게이트 하강·테마 소실 공통). */
+  private dropRim(): void {
+    this.rim = destroyChild(this.below, this.rim);
   }
 
   /**
@@ -627,7 +712,13 @@ class EnemyAdorner implements EntityAdorner {
 
     if (posture === POSTURE_RELOCK) {
       // **재조준 = 몸이 웅크린다.** 1차의 4모서리 괄호(락온 브래킷)를 몸으로 옮긴 것이다.
-      // 진행 방향으로 눌렸다 펴지고, 그 동안 몸이 가산으로 명멸한다(Gungeon 어휘).
+      // 그 동안 몸이 가산으로 명멸한다(Gungeon 어휘).
+      //
+      // 스쿼시는 **스프라이트 로컬 축**에 준다. `enemy` 는 고정 기수 kind 가 아니라
+      // (`entityRenderer` `FIXED_FACING_KINDS`) 렌더러가 `sprite.rotation = e.angle` 을 걸고,
+      // `moveCharge` 는 `angle = atan2(vy, vx)` 라 **로컬 +x 가 곧 진행 방향**이다. 즉 아래
+      // `scale.x` 압축은 화면 가로가 아니라 진행축 압축이다 — 다만 그 등식은 회전이 걸리는
+      // kind 에서만 성립하므로, 회전이 0 으로 고정되는 보스 계열은 애초에 제외돼 있다.
       const k = Math.min(1, this.posture.holdFrames / 10);
       if (!this.bodyOwnedByRenderer && motion) {
         const squash = 1 - 0.18 * (1 - k);
@@ -702,9 +793,13 @@ class EnemyAdorner implements EntityAdorner {
       this.damageFor = DMG_OK;
       return;
     }
-    if (stage !== this.damageFor) {
+    // 재빌드 키에 **게이트를 포함**한다. 단계만 키로 쓰면 런 중간에 `reducedGlow` 를 켜도
+    // 단계가 그대로라 재평가가 안 돌아 이미 만든 발광이 남는다(실측 잔존: bodyGlow 2 · damage 12).
+    const key =
+      stage + (glow ? 1000 : 0) + (ctx.gates.particles !== 'off' ? 100 : 0) + (ctx.tier === 'high' ? 10 : 0);
+    if (key !== this.damageFor) {
       this.dropDamage();
-      this.damageFor = stage;
+      this.damageFor = key;
       const below = glow ? this.ensureBelow(sprite) : null;
       if (below !== null) {
         this.sparks = buildSparks(this.radius, 0xffc46a, stage >= DMG_FIRE ? 7 : 4);
@@ -978,6 +1073,28 @@ for (const kind of ENEMY_VISUAL_KINDS) {
 registerAdornerFactory('player', () => [new PlayerProbeAdorner()]);
 
 /**
+ * 관측창을 **전역에 노출**한다 — `globalThis.__pbEnemy`.
+ *
+ * 왜 필요한가: 비평가가 이 창들을 읽으려고 Vite dev 서버의 동적 import 로 우회했는데,
+ * **프로덕션 빌드에서는 그 우회가 안 된다** — 검증 도구가 dev 서버에만 존재하는 셈이다.
+ * 모듈 최상위 부수효과로 붙이면 번들 어디서나 읽힌다.
+ *
+ * ⚠️ `window.__pb` 에 직접 합치지 않은 이유: `main.ts` 가 `__pb = { ... }` 로 **통째 대입**하므로
+ * (모듈 평가가 그보다 먼저다) 여기서 넣어도 덮인다. `__pb` 안으로 넣으려면 `main.ts` 에
+ * `enemy: __pbEnemy` 한 줄이 필요한데 그건 공유 파일이라 **오케스트레이터 몫**이다.
+ */
+const debugSurface = {
+  activeSpawnCount,
+  activeBodyGlowCount,
+  deathDebrisCount,
+  deathDebrisEmitted,
+  deathSignatureCounts,
+  enemyAdornerCount,
+  observedPlayerPos,
+};
+(globalThis as unknown as { __pbEnemy?: typeof debugSurface }).__pbEnemy = debugSurface;
+
+/**
  * **테스트 전용** 모듈 상태 초기화. 프로덕션 경로는 부르지 않는다(프로덕션에서는 `dispose`
  * 4경로가 이미 같은 일을 한다).
  */
@@ -990,6 +1107,6 @@ export function resetEnemyVisualState(): void {
   activeSpawns = 0;
   activeBodyGlows = 0;
   playerPos = null;
-  lastAliveFrame.clear();
+  lastAlive.clear();
   deathSignatures.clear();
 }

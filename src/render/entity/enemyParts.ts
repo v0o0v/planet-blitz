@@ -35,8 +35,14 @@ import { Container, Graphics } from 'pixi.js';
 
 /** 림·오라의 기준: 표시 반경의 배수. 1 = 몸통 경계. */
 const RIM_R = 1.04;
-/** 엘리트 오라 최외곽 반경 배수. */
-const ELITE_AURA_R = 1.45;
+/**
+ * 엘리트 오라 최외곽 반경 배수.
+ *
+ * 1.45 → 1.12 (3차). 1.45 는 몸통에서 확연히 떨어진 **동심 완전 원 3줄**이라, 1차에서 반려된
+ * "RTS 선택 링" 의 정의에 그대로 들어맞았다(삭제 목록에 없었다는 이유로 살아남았을 뿐이다).
+ * 몸 경계에 붙이면 같은 알파가 "링" 이 아니라 **몸에서 새어 나오는 발광**으로 읽힌다.
+ */
+const ELITE_AURA_R = 1.12;
 /**
  * 보스 오라 최외곽 반경 배수. 1차의 2.1배는 보스 r=192 에서 403px 짜리 링이 돼 **화면에서 식별
  * 불가**했다(알파가 넓은 면적에 흩어졌다). 좁히고 알파를 안쪽에 몰아 실제로 보이게 만든다.
@@ -90,36 +96,16 @@ export function buildBossAura(radius: number, color: number): Graphics {
 }
 
 /**
- * **광원 방향 반쪽 림라이트**(가산). 완전한 원은 RTS 선택 링으로 읽히므로(§2-5) 광원을 향한
- * 호만 남기고 반대쪽은 죽인다. 방향이 `theme.light` 에서 오므로 접지 그림자와 **같은 태양을
- * 증언**한다(계약 공통 원칙 "광원 일관성").
+ * (삭제됨) `buildRimLight` — 고정 반경 `arc()` stroke 로 만든 "반쪽 림라이트".
  *
- * 기준선 캡처가 지목한 두 결함의 처방이기도 하다 — 카르곤 암부에서 적이 배경에 잠기고
- * (`enemy_charger` 위장률 6.71%), 보스 컷에서 적 20기가 겹치면 개체 경계가 사라진다. **밝은**
- * 호가 그 둘을 동시에 되돌린다. 어두운 외곽선을 골랐다면 처방이 아니라 악화다.
+ * 2차에서 완전한 원(선택 링)을 반으로 자른 것이었고, 3차 비평에서 **여전히 림라이트가 아니라는**
+ * 판정을 받았다: 원호는 **실루엣을 따라가지 않는다.** 4× 확대에서 몸 경계에서 떨어진 구간과
+ * 몸을 가로지르는 구간이 동시에 생기고, 보스 스케일에서는 굵은 띠가 몸 아래 빈 공간을 가로질렀다.
  *
- * @param lightAngle 표면에서 광원을 향하는 각(라디안). 호의 중심이 여기 온다.
+ * 대체는 조립기가 아니라 **기법**이다 — `enemyVisual.ts` 가 본체 텍스처의 가산 사본을 광원
+ * 쪽으로 몇 px 밀어 붙인다(레인 A `playerRim` 과 같은 패턴, 그리고 이 레인의 `enemyBodyGlow` 가
+ * 수치로 성공시킨 바로 그 기법). 텍스처 사본은 원리적으로 실루엣을 따라간다.
  */
-export function buildRimLight(radius: number, color: number, lightAngle: number): Graphics {
-  const g = new Graphics();
-  g.blendMode = 'add';
-  const r = radius * RIM_R;
-  const w = Math.max(1.5, radius * 0.1);
-  // 광원 쪽 ±70° 만. 가운데가 밝고 끝으로 갈수록 얇아지도록 세 겹으로 좁혀 겹친다.
-  const spans = [
-    { half: 1.22, alpha: 0.16 },
-    { half: 0.82, alpha: 0.2 },
-    { half: 0.42, alpha: 0.26 },
-  ];
-  for (const s of spans) {
-    g.arc(0, 0, r, lightAngle - s.half, lightAngle + s.half).stroke({
-      color,
-      width: w,
-      alpha: s.alpha,
-    });
-  }
-  return g;
-}
 
 /**
  * 엘리트 휘장 — 몸통 위쪽에 뜨는 갈매기표 계급장. **비평가가 통과시킨 유일한 기하 표식**이다:
@@ -131,7 +117,9 @@ export function buildEliteInsignia(radius: number, color: number): Container {
   const w = radius * 0.5;
   const h = radius * 0.22;
   for (let i = 0; i < 2; i++) {
-    const y = -radius * 1.3 - i * h * 1.5;
+    // 본체 **상단에 겹쳐** 붙인다(1.3r 바깥 → 0.72r 안쪽). 몸에서 떨어져 뜨면 오라 링과 합쳐져
+    // "선택된 유닛" 인상을 굳힌다는 지적을 받았다 — 계급장은 몸에 달린 것이어야 한다.
+    const y = -radius * 0.72 - i * h * 1.5;
     g.moveTo(-w, y + h)
       .lineTo(0, y)
       .lineTo(w, y + h)
@@ -141,19 +129,38 @@ export function buildEliteInsignia(radius: number, color: number): Container {
   return c;
 }
 
+/** 룬이 앉는 위치 = 각 축 반치수의 이 배율(안쪽 가장자리). */
+const RUNE_INSET = 0.86;
+
 /**
- * 보스 휘장 — 몸통 **가장자리에 붙어** 도는 룬 넷. 1차는 궤도가 `1.45r`(보스 r=192 → 278px)
- * 이라 룬이 **본체 바깥 허공에 뜬 정체 불명 사각형**으로 읽혔다. 몸에 붙여야 몸의 일부가 된다.
+ * 보스 휘장 — 본체 **경계 상자의 네 가장자리 안쪽**에 박히는 룬 넷.
+ *
+ * ## 왜 원 궤도를 버렸나 (3차 CRIT)
+ * 1차 `1.45r` → 2차 `1.08r` 로 배수를 줄였는데도 룬이 허공에 남았다. **원인은 배수가 아니라
+ * 기준량이었다** — `radius = sprite.width/2` 인데 보스 스프라이트는 정사각형이 아니고 투명
+ * 여백까지 폭에 들어간다. 원 궤도를 폭 하나로 잡으면 **짧은 축에서는 몸 안, 긴 축에서는 몸
+ * 밖**이 되고, 배수를 아무리 줄여도 그 성질은 사라지지 않는다. 그래서 축마다 자기 반치수를
+ * 쓴다.
+ *
+ * 이걸 지키던 2차 테스트도 항진이었다: 룬 경계 상자를 **자기 궤도 파라미터**와 비교했으니
+ * `orbit + s <= 1.25r` 인 한 무조건 통과했다. **본체 치수와 대조하지 않는 단언은 "몸에 붙었다"를
+ * 증명하지 못한다** — 테스트는 이제 비정사각(3:4) 스프라이트를 주고 두 축 각각을 검사한다.
+ *
+ * @param halfW 본체 표시 반치수(가로).
+ * @param halfH 본체 표시 반치수(세로).
  */
-export function buildBossInsignia(radius: number, color: number): Container {
+export function buildBossInsignia(halfW: number, halfH: number, color: number): Container {
   const c = new Container();
   const g = new Graphics();
-  const orbit = radius * 1.08;
-  const s = radius * 0.11;
-  for (let i = 0; i < 4; i++) {
-    const a = (i * Math.PI) / 2;
-    const x = Math.cos(a) * orbit;
-    const y = Math.sin(a) * orbit;
+  const s = Math.min(halfW, halfH) * 0.13;
+  // 좌·우는 가로 반치수, 위·아래는 세로 반치수를 쓴다. 비정사각에서도 네 룬이 전부 몸 위에 앉는다.
+  const spots: readonly (readonly [number, number])[] = [
+    [halfW * RUNE_INSET, 0],
+    [-halfW * RUNE_INSET, 0],
+    [0, halfH * RUNE_INSET],
+    [0, -halfH * RUNE_INSET],
+  ];
+  for (const [x, y] of spots) {
     g.poly([x, y - s, x + s, y, x, y + s, x - s, y]).fill({ color, alpha: 0.8 });
   }
   c.addChild(g);
