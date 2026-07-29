@@ -283,6 +283,28 @@ const ENEMY_STYLE: { color: number; radius: number; shape: 'tri' | 'square' | 'd
  */
 const ENEMY_BULLET_BEHAVIOR_OUTLINE: readonly number[] = [0xff8a20, 0xff33cc, 0xffe033, 0xb060ff];
 
+/** 적탄 기본(거동 없음) 아웃라인 — hot-red. */
+const ENEMY_BULLET_BASE_OUTLINE = 0xff2233;
+/** 아군 진영색(플레이어·아군탄·자석 링). 가독성 규칙의 기준색. */
+const FRIENDLY_SIGNAL = 0x39d0ff;
+
+/**
+ * **전경 신호색 정본** — 플레이어가 "위험/이익"으로 읽어야 하는 작고 밝은 것들의 색.
+ *
+ * 배경 레이어(특히 카르곤 용암 발광)는 이 색들과 **색상각이 충분히 떨어져야** 한다. 배경의
+ * 주황 띠와 적탄의 앰버가 같은 색이면 플레이어는 배경을 위협으로, 위협을 배경으로 읽는다.
+ *
+ * ⚠️ 이 배열이 존재하는 이유: `kargonLavaLight.ts` 가 이 색들을 **복제**해 갖고 있었다. 같은
+ * 레인에서 `UPPER_THRESHOLD` 복제본이 실제로 갈라져 발광이 엉뚱한 등고선에 붙은 전례가 있어,
+ * 두 번째 복제가 생기기 전에 정본을 여기로 모은다. 색을 바꾸면 그 레이어의 분리 거리 테스트가
+ * 자동으로 재평가된다 — 그게 이 export 의 목적이다.
+ */
+export const FOREGROUND_SIGNAL_COLORS: readonly number[] = [
+  ENEMY_BULLET_BASE_OUTLINE,
+  ...ENEMY_BULLET_BEHAVIOR_OUTLINE,
+  FRIENDLY_SIGNAL,
+];
+
 /** 적탄 텍스처: 흰 코어 + 지정 아웃라인(가독성 규칙 유지). */
 function enemyBulletTexture(renderer: Renderer, outline: number): Texture {
   const g = new Graphics();
