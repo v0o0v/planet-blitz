@@ -56,6 +56,7 @@ import {
   hazardFieldLiveCount,
   installHazardMaterials,
   resetHazardFieldBudget,
+  resetHazardFieldStage,
 } from '../src/render/entity/hazardField.js';
 import {
   HazardHost,
@@ -573,6 +574,25 @@ function hazardEntity(id: number, over: Partial<EntitySnapshot> = {}): EntitySna
   };
 }
 
+/**
+ * 공유 겹 레이어의 자식 수를 센다.
+ *
+ * 재질은 이제 장판별 루트가 아니라 **겹 단위 공유 레이어**에 자기 하위 컨테이너를 넣는다
+ * (스프라이트 배치를 끊지 않기 위해서 — `hazardField.ts` 헤더 참조). 그래서 `layer.children` 은
+ * 항상 공유 stage 하나이고, 장판 수는 그 안쪽에서 세야 한다.
+ */
+function stageCount(layer: Container, label: string): number {
+  const stage = layer.children.find((c) => c.label === 'hazardFieldStage');
+  if (stage === undefined) return 0;
+  const band = (stage as Container).children.find((c) => c.label === label);
+  return band === undefined ? 0 : (band as Container).children.length;
+}
+
+/** 재질 하나가 반드시 갖는 겹(로브)의 자식 수 = 살아있는 장판 수. */
+function fieldNodeCount(layer: Container): number {
+  return stageCount(layer, 'hazardLobes');
+}
+
 function ctxFor(layer: Container, tier: QualityTier = 'high', tick = 0): HazardHostContext {
   return {
     layer,
@@ -584,9 +604,92 @@ function ctxFor(layer: Container, tier: QualityTier = 'high', tick = 0): HazardH
   };
 }
 
+/** 공유 stage 의 로브 레이어에서 LOD 별 장판 수를 센다(`label` = `hazardField:kind:lod`). */
+function lodDistribution(layer: Container): Record<string, number> {
+  const stage = layer.children.find((c) => c.label === 'hazardFieldStage');
+  const out: Record<string, number> = { full: 0, mid: 0, lite: 0 };
+  if (stage === undefined) return out;
+  const band = (stage as Container).children.find((c) => c.label === 'hazardLobes');
+  if (band === undefined) return out;
+  for (const child of (band as Container).children) {
+    const lod = String(child.label).split(':')[2] ?? '';
+    if (lod in out) out[lod] = (out[lod] ?? 0) + 1;
+  }
+  return out;
+}
+
+describe('LOD 는 세션이 흘러도 열화하지 않는다 (2차 반려 CRIT-1)', () => {
+  // 2차 구현은 단조 증가하는 `attachCursor` 로 LOD 를 정했고, 되돌리는 프로덕션 코드가 **한
+  // 군데도 없었다**(`resetHazardFieldBudget` 호출은 테스트뿐). 박격 장판이 생겼다 사라지며
+  // 순번을 태워 톡사르 첫 런부터 `full 0 · mid 9 · lite 32`, 새 런을 열어도 전부 `lite` 였다.
+  //
+  // **그리고 그 결함을 82건짜리 스위트가 통째로 통과시켰다** — 케이스마다 카운터를 0 으로
+  // 되돌리는 `beforeEach` 가 있어서 "두 번째 런"이라는 상황 자체가 존재하지 않았기 때문이다.
+  // 그래서 이 describe 는 **리셋 없이** 시간이 흐르는 것을 재현한다.
+
+  it('두 런을 연속 실행해도 두 번째 런의 LOD 분포가 첫 런과 같다', () => {
+    resetHazardFieldBudget();
+    resetHazardFieldStage();
+    const layer = new Container();
+    const host = new HazardHost();
+    const cells = Array.from({ length: 24 }, (_, i) => hazardEntity(i + 1, { radius: 100 }));
+
+    host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer, 'high', 0));
+    const first = lodDistribution(layer);
+    expect(first['full']).toBe(LOD_FULL_COUNT);
+
+    // 런 종료 — `entityRenderer.reset()` 이 하는 일은 `hazardHost.clear()` 하나뿐이다.
+    host.clear(ctxFor(layer));
+    // 런 2 — **예산 리셋 없이**. 여기서 분포가 달라지면 세션 누적 상태가 있다는 뜻이다.
+    host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer, 'high', 1));
+
+    expect(lodDistribution(layer)).toEqual(first);
+    host.clear(ctxFor(layer));
+  });
+
+  it('생겼다 사라지는 장판이 순번을 태우지 않는다(박격 장판 반복)', () => {
+    resetHazardFieldBudget();
+    resetHazardFieldStage();
+    const layer = new Container();
+    const host = new HazardHost();
+    // 박격 장판이 20번 생겼다 사라진다 — 2차 설계면 여기서 커서가 20 이나 전진한다.
+    for (let i = 0; i < 20; i++) {
+      host.draw(
+        [hazardEntity(1000 + i, { enemyType: HAZARD_MORTAR, permanent: false })],
+        stubCanvas(),
+        stubCanvas(),
+        ctxFor(layer, 'high', i),
+      );
+      host.draw([], stubCanvas(), stubCanvas(), ctxFor(layer, 'high', i + 1));
+    }
+    // 그 뒤에 깔리는 오염 셀들은 여전히 최고 상세부터 받아야 한다.
+    const cells = Array.from({ length: 24 }, (_, i) => hazardEntity(i + 1, { radius: 100 }));
+    host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer, 'high', 100));
+    expect(lodDistribution(layer)['full']).toBe(LOD_FULL_COUNT);
+    host.clear(ctxFor(layer));
+  });
+
+  it('어떤 LOD 도 로브 0 이 아니다(최저 상세도 물질이다)', () => {
+    resetHazardFieldBudget();
+    resetHazardFieldStage();
+    const layer = new Container();
+    const host = new HazardHost();
+    const cells = Array.from({ length: 41 }, (_, i) => hazardEntity(i + 1, { radius: 100 }));
+    host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer, 'high', 0));
+    const stage = layer.children.find((c) => c.label === 'hazardFieldStage') as Container;
+    const band = stage.children.find((c) => c.label === 'hazardLobes') as Container;
+    expect(band.children.length).toBe(41);
+    for (const node of band.children) {
+      expect((node as Container).children.length, String(node.label)).toBeGreaterThan(0);
+    }
+    host.clear(ctxFor(layer));
+  });
+});
+
 describe('배선 · 비용 상한', () => {
   beforeEach(() => {
     resetHazardFieldBudget();
+    resetHazardFieldStage();
   });
 
   it('등록은 멱등이다(두 번 불려도 재질이 두 배로 그려지지 않는다)', () => {
@@ -596,7 +699,7 @@ describe('배선 · 비용 상한', () => {
     const host = new HazardHost();
     host.draw([hazardEntity(1)], stubCanvas(), stubCanvas(), ctxFor(layer));
     // 재질이 중복 등록됐다면 장판 하나에 컨테이너가 둘 붙는다.
-    expect(layer.children.length).toBe(1);
+    expect(fieldNodeCount(layer)).toBe(1);
     host.clear(ctxFor(layer));
   });
 
@@ -609,7 +712,7 @@ describe('배선 · 비용 상한', () => {
     const cells = Array.from({ length: 41 }, (_, i) => hazardEntity(i + 1, { radius: 100 }));
     host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer));
     expect(host.materialCount).toBe(41);
-    expect(layer.children.length).toBe(41);
+    expect(fieldNodeCount(layer)).toBe(41);
     host.clear(ctxFor(layer));
   });
 
@@ -630,7 +733,9 @@ describe('배선 · 비용 상한', () => {
   it('LOD 가 낮아져도 로브는 먼저 얇아지고 마지막에 사라진다(순서가 있다)', () => {
     expect(lodLobeCount('full')).toBeGreaterThan(lodLobeCount('mid'));
     expect(lodLobeCount('mid')).toBeGreaterThan(lodLobeCount('lite'));
-    expect(lodLobeCount('lite')).toBe(0);
+    // `lite` 도 0 이 아니다 — 로브가 0 이면 그 셀은 물질이 아니라 도형으로 남고, 나란한
+    // 셀 사이에 스타일 차이가 생긴다(2차 반려 MAJOR-1 이 자리를 옮긴 형태).
+    expect(lodLobeCount('lite')).toBeGreaterThan(0);
     // 입자·접지가 로브보다 먼저 빠진다(가장 비싸고 가장 덜 정체성적이다).
     expect(lodHasMotes('mid')).toBe(false);
     expect(lodHasGrounding('mid')).toBe(false);
@@ -642,17 +747,17 @@ describe('배선 · 비용 상한', () => {
     const host = new HazardHost();
     host.draw([hazardEntity(1, { radius: 10 })], stubCanvas(), stubCanvas(), ctxFor(layer));
     expect(host.materialCount).toBe(0);
-    expect(layer.children.length).toBe(0);
+    expect(fieldNodeCount(layer)).toBe(0);
   });
 
   it('장판이 사라지면 재질이 화면에서 걷힌다(얼어붙지 않는다)', () => {
     const layer = new Container();
     const host = new HazardHost();
     host.draw([hazardEntity(1)], stubCanvas(), stubCanvas(), ctxFor(layer, 'high', 0));
-    expect(layer.children.length).toBe(1);
+    expect(fieldNodeCount(layer)).toBe(1);
     expect(hazardFieldLiveCount()).toBe(1);
     host.draw([], stubCanvas(), stubCanvas(), ctxFor(layer, 'high', 1));
-    expect(layer.children.length).toBe(0);
+    expect(fieldNodeCount(layer)).toBe(0);
     expect(host.materialCount).toBe(0);
     // 예산 카운터도 돌아와야 한다 — 안 돌아오면 런을 몇 번 돌린 뒤 재질이 통째로 사라진다.
     expect(hazardFieldLiveCount()).toBe(0);
@@ -666,7 +771,7 @@ describe('배선 · 비용 상한', () => {
       host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer, 'high', run));
       host.clear(ctxFor(layer));
       expect(hazardFieldLiveCount(), `run=${run}`).toBe(0);
-      expect(layer.children.length, `run=${run}`).toBe(0);
+      expect(fieldNodeCount(layer), `run=${run}`).toBe(0);
     }
   });
 
@@ -704,9 +809,9 @@ describe('배선 · 비용 상한', () => {
       const frame = cells.map((c) => ({ ...c, active: t % 13 < 7 }));
       expect(() => host.draw(frame, stubCanvas(), stubCanvas(), ctxFor(layer, 'high', t))).not.toThrow();
     }
-    expect(layer.children.length).toBe(3);
+    expect(fieldNodeCount(layer)).toBe(3);
     host.clear(ctxFor(layer));
-    expect(layer.children.length).toBe(0);
+    expect(fieldNodeCount(layer)).toBe(0);
   });
 
   it('장식 예산이 매 프레임 뒤집혀도 재질은 튀지 않는다', () => {
@@ -718,12 +823,12 @@ describe('배선 · 비용 상한', () => {
     // 13개 — 호스트 장식 예산(12) 경계를 넘어 마지막 장판의 decorated 가 흔들리는 구간.
     const cells = Array.from({ length: 13 }, (_, i) => hazardEntity(i + 1, { radius: 100 }));
     host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer, 'high', 0));
-    const before = layer.children.length;
+    const before = fieldNodeCount(layer);
     // 순서를 뒤집으면 어느 장판이 예산을 받는지가 통째로 바뀐다.
     for (let t = 1; t < 6; t++) {
       const shuffled = t % 2 === 0 ? cells : [...cells].reverse();
       host.draw(shuffled, stubCanvas(), stubCanvas(), ctxFor(layer, 'high', t));
-      expect(layer.children.length, `t=${t}`).toBe(before);
+      expect(fieldNodeCount(layer), `t=${t}`).toBe(before);
       expect(host.materialCount, `t=${t}`).toBe(13);
     }
     host.clear(ctxFor(layer));
@@ -750,7 +855,7 @@ describe('배선 · 비용 상한', () => {
     host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer, 'high', 0));
     host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer, 'low', 1));
     host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer, 'high', 2));
-    expect(layer.children.length).toBe(1);
+    expect(fieldNodeCount(layer)).toBe(1);
     host.clear(ctxFor(layer));
   });
 });
