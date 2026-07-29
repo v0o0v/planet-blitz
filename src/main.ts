@@ -629,6 +629,27 @@ async function main(): Promise<void> {
     prevSnap = emptySnap;
     currSnap = emptySnap;
     accumulator = 0;
+    // 런의 **월드 표현**도 여기서 함께 내린다. `world = null` 만으로는 아무것도 안 걷힌다 —
+    // 지형·환경·그림자는 world 가 아니라 각자의 배선이 수명을 쥐고 있고, 그 배선을 푸는 곳이
+    // 지금까지 런 시작(`startRun`/`startInvasionRun`)과 관전 진입뿐이었다. 그래서 런을 마치고
+    // 메뉴로 나가면 Wang 타일 714장과 환경 레이어 5장이 **불투명 메뉴 뒤에서 매 프레임 계속
+    // 갱신·렌더되고**, 사라진 엔티티의 접지 그림자가 바닥에 남았다(하네스 실측).
+    //
+    // 게다가 평면 배경은 `background.visible = !autotile.active` 규칙을 따르므로 지형을 안 끄면
+    // **메뉴용 배경이 꺼진 채로 남는다** — 지금은 메뉴가 전부 불투명해 가려지지만, 반투명한
+    // 화면이 하나만 생겨도 그때 아레나가 비친다.
+    //
+    // 이 파일이 같은 종류의 결함을 이미 두 번 기록해 뒀다(아래 레벨업·조우 오버레이 주석) —
+    // "런 전용인데 화면 전환에서 안 걷히는 것"이다. 관전 진입 경로가 쓰는 것과 **같은 3종 세트**를
+    // 여기서도 부른다.
+    autotile.configure(null, 0);
+    env.disable();
+    entityRenderer.setEnvPlanet(null);
+    // 접지 그림자·스프라이트 캐시 회수. 그림자는 스프라이트의 자식이 아니라 형제라 부모
+    // destroy 로 걷히지 않는다 — 명시 회수 경로 넷 중 하나가 이것이다.
+    entityRenderer.reset();
+    clearInvasionBackdrop();
+    background.visible = !autotile.active;
     tutorialOverlay.hide();
     resultOverlay.hide();
     baseMap.hide();
