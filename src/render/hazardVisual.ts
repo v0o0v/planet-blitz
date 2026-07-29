@@ -119,6 +119,24 @@ export const DECOR_MIN_RADIUS = 40;
  */
 export const MAX_DECORATED_HAZARDS = 12;
 
+/**
+ * 채움을 몇 겹의 동심원으로 나눌 것인가. **1 이 아닌 이유가 이 상수의 전부다.**
+ *
+ * 오염 지형은 반경 100 짜리 셀이 화면에 여럿 깔리고 **서로 겹친다**. 채움이 한 겹의 하드 엣지
+ * 원이면 겹친 자리에서 알파가 그대로 누적돼 경계선이 이중으로 그어지고, 화면이 "포토샵 선택
+ * 영역을 붙여 놓은 것"으로 읽힌다(2026-07-30 기준선 캡처의 톡사르 컷이 이 증거다).
+ *
+ * 겹을 나누면 **가장자리 밴드의 알파가 내부의 1/N 로 떨어진다.** 두 셀의 가장자리가 겹쳐도
+ * 합이 한 셀의 내부 알파를 넘지 못하므로 이음매가 생기지 않는다 — 겹침 문제가 합성 규칙이
+ * 아니라 **기하**로 풀린다(필터·마스크 0개).
+ */
+export const FILL_RINGS = 3;
+/**
+ * 부드러운 가장자리 밴드의 폭(반경 대비). 이 구간 **안쪽**은 완전한 두께이고, 이 구간에서만
+ * 겹이 하나씩 빠지며 옅어진다. 넓히면 장판이 실제보다 작아 보이므로 좁게 둔다.
+ */
+export const FILL_SOFT_SPAN = 0.22;
+
 /** 빗금 간격(px). 반경이 커져도 선 개수가 선형으로만 늘도록 상한과 함께 쓴다. */
 const HATCH_SPACING = 18;
 /** 장판 하나당 빗금 선 개수 상한(성능 방어선). */
@@ -150,7 +168,8 @@ export interface HazardCanvas {
  * 장판 하나를 그린다(render-only). `frameTick` 이 애니메이션의 유일한 입력이라 같은 프레임에
  * 항상 같은 그림이 나온다(순수 그리기 — 내부 상태 없음).
  *
- * - **활성 위험**: 채움 → 흐르는 빗금 → 굵은 실선 → 안쪽 맥동 립 → 바깥 글로우 링
+ * - **활성 위험**: 소프트 엣지 채움({@link FILL_RINGS} 겹) → 흐르는 빗금 → 굵은 실선 →
+ *   안쪽 맥동 립 → 바깥 글로우 링
  * - **활성 방해(감속)**: 옅은 채움 → 도는 소용돌이 호 → 얇은 실선
  * - **예열**: 도는 점선 링 → 안으로 수렴하는 예고 링
  *
@@ -192,7 +211,14 @@ export function drawHazardZone(
   }
 
   // ── 활성 ────────────────────────────────────────────────────────────────
-  g.circle(x, y, radius).fill({ color: v.color, alpha: v.fillAlpha });
+  // 소프트 엣지 채움(겹침 방어 — {@link FILL_RINGS} 주석이 근거). 겹 알파는 누적이 정확히
+  // `fillAlpha` 에 수렴하도록 역산한다: 1-(1-p)^N = fillAlpha (buildGroundShadow 와 같은 역산).
+  // 바깥 밴드는 겹이 하나뿐이라 알파가 p 이고, 두 셀이 겹쳐도 2p < fillAlpha 라 이음매가 없다.
+  const perRing = 1 - Math.pow(1 - v.fillAlpha, 1 / FILL_RINGS);
+  for (let i = 0; i < FILL_RINGS; i++) {
+    const rr = radius * (1 - (FILL_SOFT_SPAN * i) / (FILL_RINGS - 1 || 1));
+    g.circle(x, y, rr).fill({ color: v.color, alpha: perRing });
+  }
 
   if (v.hatch && decorated) {
     // 흐르는 빗금(45°). 원 안쪽만 그리도록 각 선의 y 범위를 원의 현(chord)으로 잘라 넣는다

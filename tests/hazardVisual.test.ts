@@ -18,6 +18,8 @@ import { createWorld } from '../src/sim/world.js';
 import { spawnHazard } from '../src/sim/entities.js';
 import {
   DECOR_MIN_RADIUS,
+  FILL_RINGS,
+  FILL_SOFT_SPAN,
   HAZARD_COLOR_SLOW,
   HAZARD_COLOR_TERRAIN,
   drawHazardZone,
@@ -157,13 +159,53 @@ describe('형태 = 상태', () => {
   });
 });
 
+describe('겹침 처리 — 셀이 여럿 깔려도 하드 엣지가 쌓이지 않는다', () => {
+  // 2026-07-30 기준선 캡처의 톡사르 컷: 오염 셀이 겹친 자리에서 알파가 그대로 누적돼 경계선이
+  // 이중으로 그어지고 "포토샵 선택 영역"으로 읽혔다. 이 계약이 그 결함의 재발을 막는다.
+  const fillsOf = (r: number, v = hazardVisual(HAZARD_CONTAMINATION, true, true)): Call[] => {
+    const rec = recorder();
+    drawHazardZone(rec.canvas, 0, 0, r, v, 0);
+    return rec.calls.filter((c) => c.op === 'fill');
+  };
+
+  it('채움이 한 겹이 아니라 여러 겹이다(가장자리가 계단식으로 옅어진다)', () => {
+    expect(fillsOf(120).length).toBe(FILL_RINGS);
+  });
+
+  it('두 셀의 가장자리가 겹쳐도 한 셀 내부보다 진해지지 않는다', () => {
+    const v = hazardVisual(HAZARD_CONTAMINATION, true, true);
+    const fills = fillsOf(120, v);
+    const per = fills[0]?.style?.alpha ?? 0;
+    // 가장자리 밴드는 겹이 하나뿐이므로 알파가 `per` 다. 두 셀이 겹쳐도 2*per 이고,
+    // 그 값이 한 셀 내부 누적(= fillAlpha)을 넘으면 이음매가 밝은 띠로 드러난다.
+    expect(per).toBeGreaterThan(0);
+    expect(2 * per).toBeLessThan(v.fillAlpha);
+  });
+
+  it('겹 알파의 누적이 원래 채움 알파에 수렴한다(장판이 옅어지지 않았다)', () => {
+    const v = hazardVisual(HAZARD_LAVA, true);
+    let acc = 0;
+    for (const f of fillsOf(120, v)) acc = acc + (f.style?.alpha ?? 0) * (1 - acc);
+    expect(acc).toBeCloseTo(v.fillAlpha, 10);
+  });
+
+  it('바깥 겹이 정확히 판정 반경까지 닿는다(장판이 실제보다 작아 보이지 않는다)', () => {
+    const rec = recorder();
+    drawHazardZone(rec.canvas, 0, 0, 200, hazardVisual(HAZARD_LAVA, true), 0);
+    const radii = rec.calls.filter((c) => c.op === 'circle').map((c) => c.args[2] ?? 0);
+    expect(Math.max(...radii.slice(0, FILL_RINGS))).toBe(200);
+    // 안쪽 겹은 소프트 밴드 안에서만 줄어든다(그 이상 줄면 장판이 작아 보인다).
+    expect(Math.min(...radii.slice(0, FILL_RINGS))).toBeCloseTo(200 * (1 - FILL_SOFT_SPAN), 10);
+  });
+});
+
 describe('성능 가드 — 작고 많은 장판', () => {
   it('작은 장판은 장식(빗금·립·글로우)을 생략한다', () => {
     const { canvas, calls } = recorder();
     drawHazardZone(canvas, 0, 0, DECOR_MIN_RADIUS - 1, hazardVisual(HAZARD_CONTAMINATION, true), 0);
     expect(calls.filter((c) => c.op === 'lineTo').length).toBe(0);
-    // 채움 + 테두리(원 1개)만 남는다 — 작아도 장판이 보이기는 해야 한다.
-    expect(calls.filter((c) => c.op === 'circle').length).toBe(2);
+    // 채움 겹 + 테두리(원 1개)만 남는다 — 작아도 장판이 보이기는 해야 한다.
+    expect(calls.filter((c) => c.op === 'circle').length).toBe(FILL_RINGS + 1);
     expect(calls.some((c) => c.op === 'fill')).toBe(true);
   });
 
@@ -171,7 +213,7 @@ describe('성능 가드 — 작고 많은 장판', () => {
     const { canvas, calls } = recorder();
     drawHazardZone(canvas, 0, 0, 300, hazardVisual(HAZARD_LAVA, true), 0, false);
     expect(calls.filter((c) => c.op === 'lineTo').length).toBe(0);
-    expect(calls.filter((c) => c.op === 'circle').length).toBe(2); // 채움 + 테두리
+    expect(calls.filter((c) => c.op === 'circle').length).toBe(FILL_RINGS + 1); // 채움 겹 + 테두리
   });
 
   it('반경이 커져도 빗금 선 개수에 상한이 있다', () => {
