@@ -703,6 +703,8 @@ describe('항목 3 · 돌진 예고 듀티 (실 sim · 실전투 구간)', () =>
       const r = commitDuty(seed, WARMUP, WINDOW);
       // **시드마다** 표본을 요구한다. 합산에만 걸면 표본 0 인 시드가 조용히 묻힌다(2차의 구멍).
       expect(r.total).toBeGreaterThan(50);
+      // 실측(3차): 시드 1/2/3/0xa07077 = 0.37% / 12.08% / 2.92% / 6.65%.
+      // 같은 창에서 2차 코드는 25.09% / 52.92% / 9.44% / 27.47% 였다.
       expect(r.commit / r.total).toBeLessThanOrEqual(0.15);
     });
   }
