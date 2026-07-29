@@ -817,6 +817,24 @@ describe('사망 연출 — 고아 이펙트가 구조적으로 불가능하다'
     r.destroy();
   });
 
+  it('이미 뿌려진 파편도 마지막 적이 죽는 순간 함께 걷힌다(사후 회수)', () => {
+    // 사전 가드만으로는 못 막는 경우다: 남은 적이 있을 때 뿌린 파편이 화면에 떠 있는 상태에서
+    // 나머지가 전멸하면, 굴려 줄 주체가 사라져 그 파편이 **얼어붙는다**. 사후 회수가 그 자리를
+    // 막는 유일한 장치이고, 이 시나리오를 만들지 않으면 회수를 지워도 테스트가 그린이다.
+    const r = new EntityRenderer(realTextures());
+    const three = world([ent({ id: 1 }), ent({ id: 2, x: 200 }), ent({ id: 3, x: 400 })]);
+    r.render(three, three, 0);
+    const two = world([ent({ id: 2, x: 200 }), ent({ id: 3, x: 400 })]);
+    r.render(two, two, 0);
+    expect(deathDebrisCount()).toBeGreaterThan(0); // 살아 있는 파편이 실제로 떠 있다
+    const none = world([]);
+    r.render(none, none, 0);
+    expect(deathDebrisEmitted()).toBeGreaterThan(0); // 방출은 있었고
+    expect(deathDebrisCount()).toBe(0); // 남은 것은 0 이어야 한다
+    expect(layers(r).effectLayer.children.length).toBe(r.effectCount);
+    r.destroy();
+  });
+
   it('파편은 시간이 지나면 스스로 사라진다(누적 없음)', () => {
     const r = new EntityRenderer(realTextures());
     const two = world([ent({ id: 1 }), ent({ id: 2, x: 200 })]);
