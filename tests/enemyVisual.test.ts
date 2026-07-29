@@ -1514,22 +1514,37 @@ describe('런 경계 · 새 런의 스폰을 억제하지 않는다', () => {
     r.destroy();
   });
 
-  it('**공백 없이** 새 런이 시작돼도 다른 실체면 물질화한다(id 재사용)', () => {
-    // 재적 판정이 프레임 간격만 보면 여기서 실패한다 — 연속 `startRun` 은 공백이 없어
-    // 화면 전환과 구분되지 않는다(실측: activeSpawnCount 전 프레임 0). 그래서 판정이
-    // **종·최대 HP 까지** 대조한다: 같은 id 라도 다른 실체면 신생이다.
+  /**
+   * **공백 없이** 새 런이 시작되는 경우(연속 `startRun`). 재적 판정이 프레임 간격만 보면 화면
+   * 전환과 구분되지 않아 스폰이 통째로 억제된다(실측: `activeSpawnCount` 전 프레임 0).
+   * 그래서 판정이 **종·최대 HP 까지** 대조하는데, 두 축을 한 테스트에서 동시에 바꾸면
+   * **한쪽을 지워도 다른 쪽이 통과시킨다** — 실제로 그렇게 두 뮤테이션이 살아남았다.
+   * 그래서 축마다 증인을 따로 세운다.
+   */
+  function newRunSameId(over: Partial<EntitySnapshot>): number {
     const r = new EntityRenderer(realTextures());
     const runA = world([ent({ id: 1, enemyType: 0, maxHp: 100 })]);
     r.render(runA, runA, 0);
     for (let i = 0; i <= SPAWN_FRAMES + 2; i++) r.render(runA, runA, 0);
     expect(activeSpawnCount()).toBe(0);
-
-    // 새 런: 같은 id, 다른 종·다른 최대 HP. 공백은 1프레임뿐이다.
-    r.reset();
-    const runB = world([ent({ id: 1, enemyType: 1, maxHp: 260 })]);
+    r.reset(); // 공백은 1프레임뿐 — 화면 전환과 구분 불가한 조건이다
+    const runB = world([ent({ id: 1, enemyType: 0, maxHp: 100, ...over })]);
     r.render(runB, runB, 0);
-    expect(activeSpawnCount()).toBe(1);
+    const n = activeSpawnCount();
     r.destroy();
+    return n;
+  }
+
+  it('공백 없이 새 런 — **종만** 달라도 물질화한다', () => {
+    expect(newRunSameId({ enemyType: 1 })).toBe(1);
+  });
+
+  it('공백 없이 새 런 — **최대 HP 만** 달라도 물질화한다', () => {
+    expect(newRunSameId({ maxHp: 260 })).toBe(1);
+  });
+
+  it('셋이 전부 같으면 재부착으로 본다(화면 전환 억제가 바로 이 경로다)', () => {
+    expect(newRunSameId({})).toBe(0);
   });
 
   it('화면 전환(1프레임 공백)은 여전히 억제된다(두 규칙이 서로를 무효화하지 않는다)', () => {
