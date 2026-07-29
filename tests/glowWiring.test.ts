@@ -303,8 +303,14 @@ describe('정리 — 누수 0', () => {
     lockTier('high');
     const w = world([entity('boss', { id: 1 }), entity('gem', { id: 2 })]);
     r.render(w, w, 0);
-    expect(glowLayer(r).children.length).toBe(2);
+    // 붙기 전: 헤일로만 센다(자식 수로 재면 장식자 등 다른 거주자와 결합한다 — 위 주석 참조).
+    expect(r.glowHaloCount).toBe(2);
     r.reset();
+    expect(r.glowHaloCount).toBe(0);
+    // 비운 뒤에는 **자식 수 0** 을 그대로 요구한다. 여기서는 절대값이 옳다 — 이 단언이 재는 것은
+    // "헤일로가 몇 개인가"가 아니라 "reset 이 이 레이어의 거주자를 하나도 안 남기는가"이고,
+    // 장식자·오라 같은 새 거주자까지 포함해서 참이어야 하는 누수 계약이다. 오히려 레인이
+    // 늘수록 이 단언은 강해진다.
     expect(glowLayer(r).children.length).toBe(0);
     expect(glowFilterCount(r)).toBe(0);
     // glowLayer 는 렌더러 layer 의 자식으로 살아 있어야 한다(앱 수명 내내 재사용).
