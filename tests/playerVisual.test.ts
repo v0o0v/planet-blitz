@@ -32,10 +32,17 @@ import {
   thrustExtent,
   idleness,
   shieldShell,
+  shieldInnermostRadius,
   shieldGate,
   ghostBudget,
   rimOffset,
   hitImpulseDir,
+  partLight,
+  sumLight,
+  luminance,
+  saturation255,
+  BODY_LUMA_P99,
+  BODY_LUMA_P95,
 } from '../src/render/entity/playerVisual.js';
 import { effectGates, type EffectGates, type QualityTier } from '../src/render/qualityTier.js';
 import type { GraphicsSettings } from '../src/render/graphicsSettings.js';
@@ -258,6 +265,45 @@ describe('엔진 추진 — 속도 반응(§3 레인 A ②)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// 가산 합성 결과 — 비평가 CRIT-1·CRIT-2 의 합격 기준을 그대로 옮긴 것
+// ---------------------------------------------------------------------------
+
+describe('가산 합성 결과 (CRIT-1·CRIT-2) — 상수가 아니라 **화면에 얹히는 값**을 잠근다', () => {
+  // ⚠️ 이 describe 가 존재하는 이유가 이 레인의 가장 비싼 교훈이다. 1차 구현의 불꽃 심 상수는
+  // `0xbfefff` 로 "순백이 아니다"라는 주석 그대로였는데, 3층 × 3노즐 가산이 겹치면서 **화면에서는
+  // 순백(255,251,250)** 이 됐다. 같은 컷의 적탄 흰 코어가 (251,242,241) 이라 RGB 4~5 차이였다.
+  // 색 상수를 단언하는 테스트는 이 결함을 영영 못 잡는다 — 합성 결과에 걸어야 잡힌다.
+
+  it('불꽃 합성 채도가 60 이상이다 — 적탄 흰 코어(실측 채도 9)와 확실히 갈린다', () => {
+    expect(saturation255(partLight('flame'))).toBeGreaterThanOrEqual(60);
+  });
+
+  it('불꽃 합성의 R 기여가 G·B 보다 현저히 낮다(가산에서 채도를 죽이는 것은 R 이다)', () => {
+    const f = partLight('flame');
+    expect(f.r).toBeLessThan(f.g * 0.35);
+    expect(f.r).toBeLessThan(f.b * 0.35);
+  });
+
+  it('모든 개별 기여가 본체 상위 5%(148.7)보다 어둡다', () => {
+    for (const part of ['flame', 'outline', 'rim', 'ghost'] as const) {
+      expect(luminance(partLight(part))).toBeLessThan(BODY_LUMA_P95);
+    }
+  });
+
+  it('겹치는 기여 3종을 다 더해도 본체 상위 1%(211.6)를 넘지 않는다 (CRIT-2 합격 기준)', () => {
+    // 실제로 한 점에 동시에 얹힐 수 있는 가장 무거운 조합들. 1차 구현은 여기서 235.1 이었다.
+    const flameSide = sumLight(partLight('flame'), partLight('outline'), partLight('rim'));
+    const dashSide = sumLight(partLight('flame'), partLight('outline'), partLight('ghost'));
+    expect(luminance(flameSide)).toBeLessThan(BODY_LUMA_P99);
+    expect(luminance(dashSide)).toBeLessThan(BODY_LUMA_P99);
+  });
+
+  it('외곽선 컨투어도 채도가 살아 있다(본체와 같은 색으로 뭉치지 않는다)', () => {
+    expect(saturation255(partLight('outline'))).toBeGreaterThanOrEqual(60);
+  });
+});
+
 describe('무적 표현 — 깜빡임이 아니라 닫혀 들어오는 셸(§3 레인 A ④)', () => {
   it('반지름이 시간의 단조 감소 함수다 = 남은 시간이 화면에서 읽힌다', () => {
     const a = shieldShell(0);
@@ -270,9 +316,14 @@ describe('무적 표현 — 깜빡임이 아니라 닫혀 들어오는 셸(§3 �
     expect(c!.radius).toBeLessThan(b!.radius);
   });
 
-  it('셸은 언제나 선체 밖에 있다(반지름 > 1) — 실루엣을 덮지 않는다', () => {
-    for (let t = 0; t < 0.66; t += 0.02) {
-      expect(shieldShell(t)!.radius).toBeGreaterThan(1);
+  it('셸의 **가장 안쪽 요소까지** 선체 밖에 있다 — 실루엣을 한 픽셀도 덮지 않는다', () => {
+    // ⚠️ 바깥 반지름만 보면 안 된다. 셸은 링·육각 메시가 있는 **띠**라, 바깥이 1 을 넘어도
+    // 안쪽 요소가 몸통을 가로지를 수 있다 — 육각 메시를 0.6 에 뒀을 때 실제로 그랬고
+    // "획뿐이라 선체를 안 가린다"는 자기 계약을 어기고 있었다.
+    for (let t = 0; t < 0.66; t += 0.01) {
+      const shell = shieldShell(t)!;
+      expect(shell.radius).toBeGreaterThan(1);
+      expect(shieldInnermostRadius(shell)).toBeGreaterThan(1);
     }
   });
 
@@ -663,32 +714,126 @@ describe('실루엣 외곽선 — 밝기가 아니라 경계로 자기 위치를
     const h = harness();
     const s = playerSprite();
     run(h, playerAdorners(), 20, { sprite: s });
-    for (const o of labeled(h.below, 'playerOutline')) expect(o.alpha).toBeLessThan(s.alpha);
+    for (const c of labeled(h.below, 'playerOutline')[0]!.children) {
+      expect(c.alpha).toBeLessThan(s.alpha);
+    }
   });
 
-  it('선체보다 크다 = 삐져나온 테두리만 보인다(면적이 아니라 경계)', () => {
+  it('**8방향 컨투어다** — 어느 방향에도 같은 폭의 띠가 생긴다 (MAJ-3)', () => {
+    // 1차 구현은 앵커 기준 균일 스케일 복제 한 장이었다. 그건 dilate 가 아니라서 앵커를 향한
+    // 가장자리에 띠가 원리적으로 안 생겼고, 둘레 36섹터 중 약 1/4 이 통째로 비어 있었다.
     const h = harness();
     const s = playerSprite();
     run(h, playerAdorners(), 3, { sprite: s });
-    const o = labeled(h.below, 'playerOutline')[0]!;
-    expect(o.scale.x).toBeGreaterThan(s.scale.x);
-    expect(o.scale.x).toBeLessThan(s.scale.x * 1.5); // 헤일로가 아니라 테두리다
+    const copies = labeled(h.below, 'playerOutline')[0]!.children;
+    expect(copies.length).toBe(8);
+
+    const angles = copies.map((c) => Math.atan2(c.y - s.y, c.x - s.x));
+    const dists = copies.map((c) => Math.hypot(c.x - s.x, c.y - s.y));
+    // ① 오프셋 거리가 전부 같다 = 띠 폭이 방향에 무관하다(섹터 결손 불가능).
+    for (const d of dists) expect(d).toBeCloseTo(dists[0]!, 6);
+    expect(dists[0]!).toBeGreaterThan(0);
+    // ② 방향이 8등분으로 고르게 퍼져 있다(한쪽으로 쏠리지 않는다).
+    const sorted = [...angles].sort((a, b) => a - b);
+    for (let i = 1; i < sorted.length; i++) {
+      expect(sorted[i]! - sorted[i - 1]!).toBeCloseTo((2 * Math.PI) / 8, 5);
+    }
   });
 
-  it('뱅킹 압축을 따라간다(테두리가 실루엣에서 떨어지지 않는다)', () => {
+  it('복제는 본체와 **같은 크기**다 — 띠는 전적으로 오프셋이 만든다', () => {
+    const h = harness();
+    const s = playerSprite();
+    run(h, playerAdorners(), 3, { sprite: s });
+    for (const c of labeled(h.below, 'playerOutline')[0]!.children) {
+      expect(c.scale.x).toBeCloseTo(s.scale.x, 6);
+      expect(c.scale.y).toBeCloseTo(s.scale.y, 6);
+    }
+  });
+
+  it('뱅킹 압축·회전을 따라간다(테두리가 실루엣에서 떨어지지 않는다)', () => {
     const h = harness();
     const s = playerSprite();
     run(h, playerAdorners(), 30, { sprite: s, facing: 0, move: { dx: 0, dy: 12 } });
-    const o = labeled(h.below, 'playerOutline')[0]!;
-    expect(o.scale.y / s.scale.y).toBeCloseTo(o.scale.x / s.scale.x, 6);
-    expect(o.rotation).toBeCloseTo(s.rotation, 6);
+    for (const c of labeled(h.below, 'playerOutline')[0]!.children) {
+      expect(c.scale.y).toBeCloseTo(s.scale.y, 6);
+      expect(c.rotation).toBeCloseTo(s.rotation, 6);
+    }
   });
 
   it('발광 감소에서 알파가 낮아지되 0 이 되지 않는다(조작 가능성 보장)', () => {
+    const full = harness();
+    run(full, playerAdorners(), 3, { sprite: playerSprite() });
+    const bright = full.below.children[0]!.children[0]!.alpha;
     const dim = harness({ gates: gatesFor('high', { reducedGlow: true }) });
     run(dim, playerAdorners(), 3, { sprite: playerSprite() });
-    const a = labeled(dim.below, 'playerOutline')[0]!.alpha;
+    const a = labeled(dim.below, 'playerOutline')[0]!.children[0]!.alpha;
     expect(a).toBeGreaterThan(0);
-    expect(a).toBeLessThan(0.5);
+    expect(a).toBeLessThan(bright);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 접근성 토글 — 비평가 MAJ-1·MAJ-2 (광과민 대응)
+// ---------------------------------------------------------------------------
+
+describe('reducedMotion 이 **모든** 운동을 끈다 (MAJ-1)', () => {
+  /** n 프레임 동안 값의 변동 폭(최댓값 − 최솟값). 0 이면 완전 정지다. */
+  function swing(h: Harness, read: () => number, frames: number): number {
+    const s = playerSprite();
+    const a = playerAdorners();
+    let prev = ent();
+    let curr = ent();
+    for (const ad of a) ad.onAttach?.(s, curr, h.ctx);
+    let lo = Number.POSITIVE_INFINITY;
+    let hi = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < frames; i++) {
+      prev = curr;
+      curr = ent();
+      placeSprite(s, curr, 0);
+      for (const ad of a) ad.onFrame(s, curr, prev, h.ctx);
+      const v = read();
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+      h.advance();
+    }
+    return hi - lo;
+  }
+
+  it('엔진 열기 요동이 정확히 0 이 된다 — 1차에는 0.2% 밖에 안 줄었다', () => {
+    // 비평가 실측: 통상 4.566 / reducedMotion 4.557. 외곽선 숨쉬기·부유는 정확히 0 이었는데
+    // 불꽃 요동만 `motionOn` 게이트 밖에 있었다.
+    const normal = harness();
+    const normalSwing = swing(normal, () => labeled(normal.below, 'playerThrust')[0]?.scale.x ?? 0, 120);
+    expect(normalSwing).toBeGreaterThan(0);
+
+    const reduced = harness({ gates: gatesFor('high', { reducedMotion: true }) });
+    const reducedSwing = swing(reduced, () => labeled(reduced.below, 'playerThrust')[0]?.scale.x ?? 0, 120);
+    expect(reducedSwing).toBeCloseTo(0, 9);
+  });
+
+  it('외곽선 숨쉬기도 정확히 0 이 된다(1차부터 지켜지던 것 — 회귀 방지)', () => {
+    const reduced = harness({ gates: gatesFor('high', { reducedMotion: true }) });
+    const sw = swing(
+      reduced,
+      () => labeled(reduced.below, 'playerOutline')[0]?.children[0]?.alpha ?? 0,
+      120,
+    );
+    expect(sw).toBeCloseTo(0, 9);
+  });
+});
+
+describe('reducedGlow 가 **모든** 가산 발광을 끈다 (MAJ-2)', () => {
+  it('대시 잔상이 0 이다 — 1차에는 rim 0·thrust 0 인데 ghost 5 가 남았다', () => {
+    const h = harness({ gates: gatesFor('high', { reducedGlow: true }) });
+    run(h, playerAdorners(), 12, { sprite: playerSprite(), facing: 0, move: { dx: 46.7, dy: 0 } });
+    expect(labeled(h.below, 'playerGhost')).toHaveLength(0);
+    expect(labeled(h.below, 'playerRim')).toHaveLength(0);
+    expect(labeled(h.below, 'playerThrust')).toHaveLength(0);
+  });
+
+  it('ghostBudget 이 발광 감소를 직접 존중한다(티어와 무관하게)', () => {
+    for (const tier of ['high', 'med'] as const) {
+      expect(ghostBudget(gatesFor(tier, { reducedGlow: true }), tier)).toBe(0);
+    }
   });
 });
