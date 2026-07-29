@@ -98,12 +98,37 @@ export default tseslint.config(
     rules: simCoreRestrictions,
   },
   {
-    // Build-time Node scripts (asset prep) run on Node, not in the browser.
-    files: ['scripts/**/*.mjs'],
+    // Build-time Node scripts (asset prep, tileset synthesis) run on Node, not in the browser.
+    // `.omc/research/**` 의 오프라인 검수 스크립트도 같은 환경이다 — `eslint .` 이 dot-디렉터리를
+    // 실제로 훑으므로 여기 넣지 않으면 `pnpm lint` 가 무관한 이유로 빨개진다.
+    files: ['scripts/**/*.mjs', '.omc/**/*.mjs'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
-      globals: { Buffer: 'readonly', process: 'readonly', console: 'readonly' },
+      globals: { Buffer: 'readonly', process: 'readonly', console: 'readonly', URL: 'readonly' },
+    },
+  },
+  {
+    // `scripts/env-verify/page-capture.js` 는 Node 가 아니라 **브라우저 콘솔에 붙여 넣는**
+    // 스니펫이다(배경 회귀 캡처용). 리포에 파일로 두는 이유는 캡처 규율 — 품질 티어 고정,
+    // rAF await 금지, 캔버스·프로필 고정 — 이 전부 실측으로 얻은 것이라 재현 가능해야 하기
+    // 때문이다. 실행 환경이 다르므로 전역도 다르다.
+    files: ['scripts/env-verify/page-capture.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'script',
+      globals: {
+        window: 'readonly',
+        document: 'readonly',
+        performance: 'readonly',
+        fetch: 'readonly',
+        Event: 'readonly',
+        localStorage: 'readonly',
+        // 스니펫이 스스로 `window` 에 심는 진입점들. 서로를 호출한다.
+        __pinCanvas: 'readonly',
+        __shot: 'readonly',
+        __pb: 'readonly',
+      },
     },
   },
 );

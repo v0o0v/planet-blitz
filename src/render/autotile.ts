@@ -86,11 +86,14 @@
  * regions so the floor has quiet stretches and shattered ones instead of one
  * uniform mesh, and the plates are anisotropic so a region reads as having flowed.
  *
- * Regenerating: `.omc/research/kargon-aaa-shots/kargon-tileset-gen.mjs` is the
- * synthesiser (with self-checks for seam continuity, rot180 invariance and a
- * coverage/luminance summary); `kargon-tileset-preview.mjs` in the same directory
- * lays a 1920×1080 frame offline and prints every number quoted above, so the art
- * can be judged without a browser.
+ * Regenerating: `node scripts/tileset-gen.mjs --planet <name>` is the synthesiser.
+ * Per-planet palettes and style tables live in `scripts/tileset-profiles/<name>.mjs`;
+ * the generator carries self-checks for seam continuity, rot180 invariance, band
+ * normalisation and — most importantly — the four invariants that keep the 64px
+ * quilt from coming back (see that file's header; violating them is an error, not a
+ * warning). `.omc/research/kargon-aaa-shots/kargon-tileset-preview.mjs` lays a
+ * 1920×1080 frame offline and prints every number quoted above, so the art can be
+ * judged without a browser.
  *
  * SIM SEPARATION: nothing here touches `src/sim`. The terrain is pure visual
  * decoration with no collision meaning; hashes are self-contained so the module
@@ -109,7 +112,7 @@ import { DESIGN_WIDTH, DESIGN_HEIGHT } from './app.js';
 /**
  * On-screen tile edge (px): 32px source upscaled 2x (nearest) per art spec.
  *
- * EXPORTED because `src/render/env/kargonLavaLight.ts` must place its glow on the
+ * EXPORTED because `src/render/env/terrainLight.ts` must place its glow on the
  * same lattice; it used to keep a private copy of this value (and of the three
  * field constants below), which silently went out of phase the moment either side
  * was retuned. Import from here — do not re-declare.
@@ -124,7 +127,7 @@ import { DESIGN_WIDTH, DESIGN_HEIGHT } from './app.js';
  * since the camera crosses a tile boundary every 32px instead of 64 — ≈8× the
  * re-tile work per unit of camera travel, against a whole-environment budget of
  * +0.5ms/frame — and it doubles the marching-squares contour resolution in
- * `kargonLavaLight` on top of that; (3) NOISE_SCALE is measured IN TILES, so
+ * `terrainLight` on top of that; (3) NOISE_SCALE is measured IN TILES, so
  * halving this halves the world-space size of every lava lake and silently
  * recomposes a map the other Kargon layers were tuned against.
  */
@@ -145,15 +148,20 @@ export const NOISE_SCALE_FINE = 3.2;
  * fix for that belongs in the art, not here. Upper is now cooled crust with
  * narrow veins (ART NOTE), so at 32.2% coverage only ~2% of frame pixels are
  * actually bright, and raising the threshold instead would have shrunk the lava
- * lakes — moving the contour `kargonLavaLight` rides and re-tuning that lane's
+ * lakes — moving the contour `terrainLight` rides and re-tuning that lane's
  * work for free. Measured coverage over 3 seeds × 9600 cells: 0.5 → 46.7% upper,
  * 0.57 → 32.2%, 0.62 → 22.7%, 0.68 → 13.3%. 32.2% is the "dark rock with lava
  * lakes in it" reading the volcanic stages of Hades / Dead Cells use; pushing on
  * to 0.62 starts leaving whole screens with nothing but basalt on them.
  *
- * ⚠️ `kargonLavaLight` finds cracks as `|field - UPPER_THRESHOLD| < CRACK_BAND`, so
- * it MUST import this constant rather than assume 0.5, or its glow lands on a
- * contour the floor does not draw.
+ * ⚠️ Two render layers ride this exact contour and MUST import this constant rather
+ * than assume a value:
+ *   - `env/terrainLight.ts` traces the boundary with marching squares (it needs the
+ *     continuous field, not `upperAt`, because it interpolates edge crossings).
+ *   - `env/decals.ts` gates relief placement on the dark side via `reliefSiteIsDark`.
+ * A duplicated copy that says 0.5 puts their work on a contour the floor does not
+ * draw — that exact defect happened once and every test stayed green, because each
+ * file was self-consistent with its own copy.
  */
 export const UPPER_THRESHOLD = 0.57;
 /**

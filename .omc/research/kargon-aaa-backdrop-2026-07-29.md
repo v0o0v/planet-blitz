@@ -121,5 +121,16 @@
 
 ## 재생성
 
-타일셋은 `.omc/research/kargon-aaa-shots/kargon-tileset-gen.mjs` 가 정본이다(PixelLab 없이 오프라인
-합성). `kargon-tileset-preview.mjs` 로 배치 프리뷰를 만들어 눈으로 검수한다.
+타일셋 생성기는 2026-07-29 리포 도구로 **승격**됐다(PixelLab 없이 오프라인 합성인 것은 그대로):
+
+- 메커니즘 — `scripts/tileset-gen.mjs` (불변식 I1~I4 를 런타임 검사로 강제)
+- 카르곤 값 — `scripts/tileset-profiles/kargon.mjs` (쓰는 법은 같은 폴더 README)
+- 회귀 게이트 — 카르곤 프로파일 산출물이 `assets/tilesets/kargon.*` 와 **바이트 동일**
+
+```
+node scripts/tileset-gen.mjs --planet kargon --out .tmp && cmp .tmp/kargon.png assets/tilesets/kargon.png
+```
+
+`.omc/research/kargon-aaa-shots/kargon-tileset-gen.mjs` 는 안내문만 남은 껍데기다(4차 원본은
+`git show bea9f32 -- <경로>`). 배치 프리뷰는 여전히 `kargon-tileset-preview.mjs` 로 굽는다 —
+이제 `<out.png> [seed] [tile] [ns] [th] [tilesetDir] [planet]` 로 행성을 고를 수 있다.
