@@ -1126,6 +1126,49 @@ describe('스폰 시점 · reset 은 스폰이 아니다', () => {
     r.destroy();
   });
 
+  it('재조준 스쿼시가 끝나면 본체가 원래 비율로 돌아온다(자세가 계속 켜져 있어도)', () => {
+    // 이 원복은 자세가 **꺼질 때**(show=false)의 원복과 별개 경로다. 커밋 → 재조준 → 커밋
+    // 처럼 예고가 내내 켜진 채 자세만 갈리면, 웅크림에서 편 몸을 되돌리는 것은 이 한 줄뿐이다.
+    // 그 시나리오를 안 만들면 지워도 그린이다(뮤테이션에서 실제로 살아남았다).
+    const r = new EntityRenderer(realTextures());
+    const sprites = (
+      r as unknown as { sprites: Map<number, { sprite: { scale: { x: number; y: number } } }> }
+    ).sprites;
+    // typeIndex 0 = 카르곤 차저(chargeStraight).
+    const charger = (x: number, y: number, angle: number): EntitySnapshot =>
+      ent({ id: 2, enemyType: 0, x, y, angle });
+    const player = (x: number, y: number): EntitySnapshot => ent({ id: 1, kind: 'player', x, y });
+
+    // ① +x 로 순항하며 조준선 위의 플레이어를 향해 커밋. 스폰 창을 넘긴다.
+    let prev = world([player(300, 0), charger(0, 0, 0)]);
+    r.render(prev, prev, 0);
+    let x = 0;
+    for (let i = 1; i <= SPAWN_FRAMES + 8; i++) {
+      x = i * 8;
+      const w = world([player(x + 300, 0), charger(x, 0, 0)]);
+      r.render(prev, w, 1);
+      prev = w;
+    }
+    const base = sprites.get(2)!.sprite.scale.y;
+
+    // ② 한 틱에 90° 꺾인다 = 재조준. 몸이 눌린다.
+    let y = 8;
+    let w = world([player(x, y + 300), charger(x, y, Math.PI / 2)]);
+    r.render(prev, w, 1);
+    prev = w;
+    expect(sprites.get(2)!.sprite.scale.y).not.toBeCloseTo(base, 6);
+
+    // ③ 새 방향으로 계속 달린다 → 재조준 창이 끝나고 다시 커밋(예고는 내내 켜져 있다).
+    for (let i = 0; i < RELOCK_FRAMES + 4; i++) {
+      y += 8;
+      w = world([player(x, y + 300), charger(x, y, Math.PI / 2)]);
+      r.render(prev, w, 1);
+      prev = w;
+    }
+    expect(sprites.get(2)!.sprite.scale.y).toBeCloseTo(base, 6);
+    r.destroy();
+  });
+
   it('연출이 **중간에 끊겨도** 본체 변환이 원래대로 돌아온다(발광 감소 토글)', () => {
     // 정상 종료만 보면 이 원복은 검증되지 않는다 — 마지막 프레임의 물질화 스케일이 이미
     // 1.0 이라 원복이 수치상 no-op 이기 때문이다(뮤테이션에서 실제로 살아남았다). 원복이
