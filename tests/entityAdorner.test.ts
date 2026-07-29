@@ -15,7 +15,7 @@
  * render-only 배선만 본다. sim·hashWorld/hashEntity 에 손대지 않는다.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Sprite, Texture } from 'pixi.js';
 
 import { EntityRenderer } from '../src/render/entityRenderer.js';
@@ -168,9 +168,23 @@ function forceTier(tier: QualityTier): void {
 /** 이 파일 시작 시점의 티어(테스트가 바꾼 뒤 되돌리기 위한 기준). */
 const BASE_TIER = graphicsTierController.getActiveTier();
 
+// ⚠️ **before 에서도 비운다.** 이 파일의 모든 테스트는 "빈 레지스트리에서 시작한다"를 전제로
+// 하는데, `entityRenderer.ts` 가 등록 허브(`entity/index.ts`)를 import 하는 순간 **이 파일을
+// 로드하는 것만으로 프로덕션 비주얼 레인 전부가 이미 등록돼 있다**(player·enemy·boss·
+// defenseBoss·formationDrone·spawnedDrone + 해저드 subtype 5종).
+//
+// after 만 비우면 파일에서 **첫 번째로 도는 테스트만** 오염된 상태를 본다 — 실행 순서에 따라
+// 빨개지는 테스트가 달라지는, 가장 진단하기 나쁜 형태의 결합이다. 심의 거동 불변을 재려면
+// 영 상태가 전제이므로 양쪽에서 비운다.
+beforeEach(() => {
+  clearAdornerFactories();
+  clearHazardMaterialFactories();
+});
+
 afterEach(() => {
   // 레지스트리·티어 컨트롤러 모두 모듈 전역이라 테스트 간 격리가 필수다.
   clearAdornerFactories();
+  clearHazardMaterialFactories();
   forceTier(BASE_TIER);
 });
 
@@ -315,15 +329,8 @@ describe('회수 계약 — dispose 가 네 경로 전부에서 불린다', () =
 
 describe('거동 불변 — 팩토리가 없으면 아무 일도 일어나지 않는다', () => {
   it('등록 0인 상태의 정규 render 는 장식자를 하나도 만들지 않는다', () => {
-    // ⚠️ **영 상태를 명시적으로 세운다.** 스캐폴딩 시점에는 등록이 하나도 없어 그냥 render 하면
-    // 됐지만, 지금은 `entityRenderer.ts` 가 등록 허브(`entity/index.ts`)를 import 하므로
-    // **이 파일을 로드하는 것만으로 해저드 재질이 이미 등록돼 있다**. 그 상태로 재면 이 테스트는
-    // "팩토리가 없으면"이 아니라 "프로덕션 등록이 몇 개인가"를 재게 된다 — 물으려는 질문이 아니다.
-    //
-    // 두 레지스트리를 모두 비우는 것이 전제이고, 그래야 아래 0 단언이 **심의 거동 불변**
-    // (등록 없으면 할당·호출 0)을 재는 원래 의미를 유지한다.
-    clearAdornerFactories();
-    clearHazardMaterialFactories();
+    // 영 상태는 파일 공통 `beforeEach` 가 세운다(그 주석이 근거의 정본). 여기서 재는 것은
+    // "등록이 없으면 정규 render 경로가 할당·호출을 0 으로 유지하는가"다.
     const renderer = new EntityRenderer(realTextures());
     const f = world([
       ent({ id: 1, kind: 'player' }),

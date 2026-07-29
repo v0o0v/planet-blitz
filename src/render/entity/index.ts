@@ -29,4 +29,5 @@
  */
 
 import './playerVisual.js';
+import './enemyVisual.js';
 import './hazardField.js';
