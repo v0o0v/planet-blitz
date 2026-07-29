@@ -429,11 +429,12 @@ describe('정리 — 누수 0', () => {
     const alive = world([entity('boss', { id: 1, hp: 100 })]);
     r.render(alive, alive, 1);
     r.render(world([]), world([]), 1); // 보스 킬 → 충격파는 layer.filters(자식 아님)·폴백 링은 자식
-    // 기본 6 레이어(lavaOverlay·overlay·glowLayer·spriteLayer·effectLayer·fog)가 유지되어야 한다.
+    // 기본 레이어(lavaOverlay·overlay·shadowLayer·glowLayer·spriteLayer·labelLayer·effectLayer·fog)가 유지되어야 한다.
     // 충격파 폴백 링은 layer 의 **자식**으로 추가될 수 있다(GL 없을 때)지만 원샷 종료 시 회수된다.
     // 여기선 배선 직후라 링이 있을 수 있으므로 진행시켜 회수한 뒤 스택을 확인한다.
     advanceShockwaves(r);
-    expect(r.layer.children.length).toBe(7);
+    // 8 = lava·overlay·shadow(접지 그림자)·glow·sprite·label·effect·fog.
+    expect(r.layer.children.length).toBe(8);
     r.destroy();
   });
 });
