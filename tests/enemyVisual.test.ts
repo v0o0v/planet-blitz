@@ -75,18 +75,20 @@ import {
   threatTier,
 } from '../src/render/entity/enemyPosture.js';
 import {
-  buildRimLight,
+  buildEliteAura,
   buildSmoke,
   buildFlame,
   buildMuzzleCharge,
   buildDashSmear,
   buildSpawnHalo,
   buildBossInsignia,
+  buildEliteInsignia,
 } from '../src/render/entity/enemyParts.js';
 import { createWorld, stepWorld, DEFAULT_CONFIG } from '../src/sim/world.js';
 import { autopilotInput } from '../src/sim/autopilot.js';
 import { snapshotWorld } from '../src/sim/snapshot.js';
 import { graphicsSettings } from '../src/render/graphicsSettings.js';
+import { themeFor } from '../src/render/env/themes/index.js';
 import { graphicsTierController } from '../src/render/graphicsRuntime.js';
 import { ELITE_AFFIX_COUNT } from '../src/sim/elite.js';
 import { ENEMY_BY_TYPE } from '../data/enemies.js';
@@ -356,21 +358,12 @@ describe('가독성 계약 §2-2 · 시안 금지', () => {
     expect(b.maxY).toBeLessThanOrEqual(0.001);
   });
 
-  it('림은 완전한 원이 아니라 광원 쪽 **반쪽 호**다(§2-5 선택 링 금지)', () => {
+  it('엘리트 오라가 몸 경계에 붙는다(§2-5 선택 링 금지)', () => {
+    // 1차 반려 사유의 정의가 "몸통 밖 완전한 원" 이었는데 오라는 삭제 목록에 없었다는 이유로
+    // 1.45r 동심 원 3줄로 살아남았다. 몸에 붙어야 링이 아니라 발광으로 읽힌다.
     const r = 40;
-    // 광원이 +x 쪽(각 0)일 때 호는 오른쪽에만 있어야 한다. 완전한 원이면 왼쪽 끝이 -r 까지 간다.
-    const b = buildRimLight(r, GRUNT_RIM, 0).getLocalBounds();
-    expect(b.maxX).toBeGreaterThan(r * 0.9);
-    expect(b.minX).toBeGreaterThan(-r * 0.9);
-  });
-
-  it('림 호가 광원 각을 실제로 따라간다(접지 그림자와 같은 태양)', () => {
-    const r = 40;
-    const right = buildRimLight(r, GRUNT_RIM, 0).getLocalBounds();
-    const left = buildRimLight(r, GRUNT_RIM, Math.PI).getLocalBounds();
-    // 광원이 반대편이면 호도 반대편에 있어야 한다.
-    expect(right.maxX + right.minX).toBeGreaterThan(0);
-    expect(left.maxX + left.minX).toBeLessThan(0);
+    const b = buildEliteAura(r, GRUNT_RIM).getLocalBounds();
+    expect(b.maxX).toBeLessThanOrEqual(r * 1.2);
   });
 });
 
@@ -649,21 +642,32 @@ describe('항목 3 · 예비 동작 — chargeStraight(돌격형)', () => {
 // 항목 3 · 예비 동작 듀티 — **진짜 sim 을 돌려서 잰다**
 // ===========================================================================
 
-describe('항목 3 · 돌진 예고 듀티 (실 sim 3시드)', () => {
+describe('항목 3 · 돌진 예고 듀티 (실 sim · 실전투 구간)', () => {
   /**
-   * 합성 궤적은 "내가 만든 상황" 이라 듀티를 증명하지 못한다. 1차가 정확히 그래서 통과했고
-   * 하네스 실측에서 **88.9%** 가 나왔다. 그래서 여기서는 오토파일럿으로 **진짜 sim 을 돌려**
-   * 매 틱 스냅샷을 뜨고, 차저 개체별 자세를 실제 판정기로 계산해 듀티를 센다.
+   * ## 이 테스트는 두 번 틀렸다 — 세 번째다
    *
-   * 게이트는 비평가가 정한 **15%** 다. 예고는 드물어야 예고다.
+   * 1차: **합성 궤적**으로 쟀다. "내가 만든 상황" 이라 아무것도 증명하지 못했고 하네스 실측이
+   *   88.9% 였다.
+   * 2차: 실 sim 으로 옮긴 것까지는 옳았는데 **측정 창을 `createWorld` 직후 첫 120틱**으로 잡았다.
+   *   그 구간엔 차저가 멀리 있어 조준선 오차가 커 커밋이 거의 안 뜬다 → 5.57%. 워밍업 300틱 뒤
+   *   실전투 구간에서 다시 재면 **25~53%** 였다. 게다가 "3시드" 중 둘이 **차저 표본 0** 이라
+   *   집계 592 가 전부 한 시드에서 나왔고, 합산에만 걸린 `total > 200` 항진 가드가 그 구멍을
+   *   못 막았다.
+   *
+   * 그래서 3차는 셋을 동시에 바꾼다:
+   *  - **워밍업 300틱 뒤**의 120틱을 잰다(플레이어가 예고를 실제로 필요로 하는 구간).
+   *  - 표본 하한을 **시드마다 개별로** 단언한다(합산 뒤에 숨지 못하게).
+   *  - 시드를 표본이 실제로 잡히는 것으로 고른다.
+   *
+   * 게이트는 **15%** 다. 예고는 드물어야 예고다(`enemyPosture.ts` 가 스스로 그렇게 쓰고 있다).
    */
-  function commitDuty(seed: number, ticks: number): { commit: number; total: number } {
+  function commitDuty(seed: number, warmup: number, ticks: number): { commit: number; total: number } {
     const state = createWorld(seed, DEFAULT_CONFIG);
     const states = new Map<number, ReturnType<typeof createPostureState>>();
     let prevSnap = snapshotWorld(state);
     let commit = 0;
     let total = 0;
-    for (let t = 0; t < ticks; t++) {
+    for (let t = 0; t < warmup + ticks; t++) {
       stepWorld(state, autopilotInput(state));
       const snap = snapshotWorld(state);
       const player = snap.entities.find((x) => x.kind === 'player') ?? null;
@@ -677,9 +681,12 @@ describe('항목 3 · 돌진 예고 듀티 (실 sim 3시드)', () => {
           ps = createPostureState();
           states.set(e.id, ps);
         }
+        // 자세 상태는 워밍업 동안에도 갱신해야 순항 추정이 실전투 구간에서 정확하다.
         const posture = observePosture(ps, e, prevById.get(e.id) ?? e, mv, t, player);
-        total += 1;
-        if (posture === POSTURE_COMMIT) commit += 1;
+        if (t >= warmup) {
+          total += 1;
+          if (posture === POSTURE_COMMIT) commit += 1;
+        }
       }
       prevSnap = snap;
       if (state.gameOver || state.victory) break;
@@ -687,19 +694,24 @@ describe('항목 3 · 돌진 예고 듀티 (실 sim 3시드)', () => {
     return { commit, total };
   }
 
-  it('차저 커밋 듀티가 15% 이하다(3시드 × 120틱)', () => {
+  const WARMUP = 300;
+  const WINDOW = 120;
+  const SEEDS = [1, 2, 3, 0xa07077];
+
+  for (const seed of SEEDS) {
+    it(`시드 ${seed}: 실전투 구간 커밋 듀티가 15% 이하다`, () => {
+      const r = commitDuty(seed, WARMUP, WINDOW);
+      // **시드마다** 표본을 요구한다. 합산에만 걸면 표본 0 인 시드가 조용히 묻힌다(2차의 구멍).
+      expect(r.total).toBeGreaterThan(50);
+      expect(r.commit / r.total).toBeLessThanOrEqual(0.15);
+    });
+  }
+
+  it('예고가 아예 안 뜨는 것도 아니다(듀티 0 은 기능 소실이다)', () => {
+    // 상한만 걸면 "항상 꺼짐" 이 만점이 된다. 네 시드 합산으로 하한도 건다.
     let commit = 0;
-    let total = 0;
-    for (const seed of [0xa07071, 0xa07073, 0xa07077]) {
-      const r = commitDuty(seed, 120);
-      commit += r.commit;
-      total += r.total;
-    }
-    // 표본이 실제로 있다 — 차저가 한 마리도 안 나왔으면 0/0 으로 "통과" 하는 항진이 된다.
-    expect(total).toBeGreaterThan(200);
-    // 실측 5.57%(33/592, 3시드×120틱) — 1차 88.9% 에서 내려왔다.
-    const duty = commit / total;
-    expect(duty).toBeLessThanOrEqual(0.15);
+    for (const seed of SEEDS) commit += commitDuty(seed, WARMUP, WINDOW).commit;
+    expect(commit).toBeGreaterThan(0);
   });
 });
 
@@ -874,6 +886,7 @@ describe('정규 render 경로 · 배선과 회수', () => {
 describe('예산 — 개체당 비용이 20~40 배로 곱해진다', () => {
   it('잡몹 장식은 정원까지만 붙는다(정원 밖은 할당 0)', () => {
     const r = new EntityRenderer(realTextures());
+    r.setEnvPlanet(0); // 림라이트는 광원(테마)이 있어야 켜진다 — 개체당 컨테이너의 근거다
     const many = Array.from({ length: MAX_DECORATED_ENEMIES + 25 }, (_, i) =>
       ent({ id: i + 1, x: i * 10 }),
     );
@@ -883,34 +896,36 @@ describe('예산 — 개체당 비용이 20~40 배로 곱해진다', () => {
     expect(r.adornerCount).toBe(many.length);
     // 개체당 **항상** 생기는 것은 상위 레이어의 림 컨테이너다(가산 쪽은 스폰 정원 때문에
     // 일부만 만들어진다 — 그것도 §2-4 예산 장치라 정상이다).
-    expect(ownCount(r, 'enemyAbove')).toBe(MAX_DECORATED_ENEMIES);
+    expect(ownCount(r, 'enemyBelow')).toBe(MAX_DECORATED_ENEMIES);
     r.destroy();
   });
 
   it('보스·엘리트는 정원과 무관하게 장식된다(자를 것은 수가 많은 쪽이다)', () => {
     const r = new EntityRenderer(realTextures());
+    r.setEnvPlanet(0);
     const grunts = Array.from({ length: MAX_DECORATED_ENEMIES + 10 }, (_, i) =>
       ent({ id: i + 1, x: i * 10 }),
     );
     const w = world([...grunts, ent({ id: 9001, elite: 3, x: -500 })]);
     r.render(w, w, 0);
     // 정원이 이미 잡몹으로 가득 찼는데도 엘리트 몫이 더 붙어 있다.
-    expect(ownCount(r, 'enemyAbove')).toBe(MAX_DECORATED_ENEMIES + 1);
+    expect(ownCount(r, 'enemyBelow')).toBe(MAX_DECORATED_ENEMIES + 1);
     r.destroy();
   });
 
   it('정원은 개체가 죽으면 반납된다(장시간 런에서 장식이 영영 사라지지 않는다)', () => {
     const r = new EntityRenderer(realTextures());
+    r.setEnvPlanet(0);
     const many = Array.from({ length: MAX_DECORATED_ENEMIES }, (_, i) => ent({ id: i + 1 }));
     const full = world(many);
     r.render(full, full, 0);
-    expect(ownCount(r, 'enemyAbove')).toBe(MAX_DECORATED_ENEMIES);
+    expect(ownCount(r, 'enemyBelow')).toBe(MAX_DECORATED_ENEMIES);
     // 전부 죽이고 새 무리를 세운다 — 반납이 없으면 여기서 0 이 된다.
     const empty = world([]);
     r.render(empty, empty, 0);
     const fresh = world(Array.from({ length: 5 }, (_, i) => ent({ id: 5000 + i })));
     r.render(fresh, fresh, 0);
-    expect(ownCount(r, 'enemyAbove')).toBe(5);
+    expect(ownCount(r, 'enemyBelow')).toBe(5);
     r.destroy();
   });
 
@@ -1074,11 +1089,28 @@ describe('§2-5 · UI 어휘 금지', () => {
     expect(Math.abs(b.minX)).toBeGreaterThan(Math.abs(b.maxX) * 2);
   });
 
-  it('보스 룬이 본체 가장자리에 붙는다(허공에 뜬 사각형 금지)', () => {
-    const r = 100;
-    const b = buildBossInsignia(r, GRUNT_RIM).getLocalBounds();
-    // 1차는 궤도 1.45r 이라 보스 r=192 기준 278px 바깥에 떠 정체 불명 도형으로 읽혔다.
-    expect(b.maxX).toBeLessThanOrEqual(r * 1.25);
+  it('보스 룬이 **비정사각** 본체에서도 두 축 모두 몸 위에 앉는다', () => {
+    // 2차 테스트는 항진이었다: 룬 경계 상자를 **자기 궤도 파라미터**와 비교해서
+    // `orbit + s <= 1.25r` 인 한 무조건 통과했다. 본체 치수와 대조하지 않는 단언은
+    // "몸에 붙었다"를 증명하지 못한다. 그래서 3:4 비정사각을 주고 축을 따로 잰다 —
+    // 원 궤도를 폭 하나로 잡던 구현은 짧은 축에서 몸 안, 긴 축에서 몸 밖으로 나가 여기서 깨진다.
+    const halfW = 60;
+    const halfH = 80;
+    const b = buildBossInsignia(halfW, halfH, GRUNT_RIM).getLocalBounds();
+    expect(b.maxX).toBeGreaterThanOrEqual(halfW * 0.8);
+    expect(b.maxX).toBeLessThanOrEqual(halfW * 1.05);
+    expect(b.maxY).toBeGreaterThanOrEqual(halfH * 0.8);
+    expect(b.maxY).toBeLessThanOrEqual(halfH * 1.05);
+    // 대칭 — 네 가장자리 전부에 앉는다.
+    expect(b.minX).toBeCloseTo(-b.maxX, 6);
+    expect(b.minY).toBeCloseTo(-b.maxY, 6);
+  });
+
+  it('엘리트 계급장이 본체에 겹쳐 붙는다(몸에서 떠 있으면 선택 링 인상을 굳힌다)', () => {
+    const r = 40;
+    const b = buildEliteInsignia(r, GRUNT_RIM).getLocalBounds();
+    // 1차는 -1.3r 부터 시작해 몸 위 허공에 떠 있었다.
+    expect(b.minY).toBeGreaterThan(-r * 1.25);
   });
 });
 
@@ -1329,6 +1361,201 @@ describe('관측창', () => {
     expect(counts['standoff']).toBe(1);
     expect(counts['seekWounded']).toBe(1);
     expect(counts['stationary']).toBe(1);
+    r.destroy();
+  });
+});
+
+// ===========================================================================
+// 림라이트 — 원호가 아니라 **본체 텍스처 사본** (3차 MAJOR-1)
+// ===========================================================================
+
+/** `below`(가산) 컨테이너 안에서 라벨로 자식을 찾는다. */
+function ownChild(
+  r: EntityRenderer,
+  layer: 'glowLayer' | 'effectLayer',
+  label: string,
+): (Container & { blendMode: string; texture?: Texture; tint?: number }) | undefined {
+  for (const c of layers(r)[layer].children) {
+    const hit = (c as Container).children.find((x) => x.label === label);
+    if (hit !== undefined)
+      return hit as Container & { blendMode: string; texture?: Texture; tint?: number };
+  }
+  return undefined;
+}
+
+describe('군집 가독성 · 림라이트는 실루엣을 따라간다', () => {
+  it('림이 본체와 **같은 텍스처**의 가산 사본이다(원호 stroke 가 아니다)', () => {
+    // 원호는 고정 반경이라 실루엣을 따라가지 않는다 — 몸 경계에서 떨어진 구간과 몸을 가로지르는
+    // 구간이 동시에 생긴다. 텍스처 사본은 정의상 실루엣을 따라간다.
+    const r = new EntityRenderer(realTextures());
+    r.setEnvPlanet(0);
+    const w = world([ent({ id: 1 })]);
+    r.render(w, w, 0);
+    const rim = ownChild(r, 'glowLayer', 'enemyRim');
+    expect(rim).toBeDefined();
+    expect(rim!.blendMode).toBe('add');
+    const sprites = (r as unknown as { sprites: Map<number, { sprite: { texture: Texture } }> })
+      .sprites;
+    expect(rim!.texture).toBe(sprites.get(1)!.sprite.texture);
+    r.destroy();
+  });
+
+  it('림이 광원 **쪽**으로 밀린다(접지 그림자와 같은 태양)', () => {
+    const r = new EntityRenderer(realTextures());
+    r.setEnvPlanet(0);
+    const w = world([ent({ id: 1 })]);
+    r.render(w, w, 0);
+    const rim = ownChild(r, 'glowLayer', 'enemyRim')!;
+    const theme = themeFor(0)!;
+    // 오프셋 방향이 광원 단위벡터와 같은 부호여야 한다(0 오프셋이면 초승달이 안 생긴다).
+    const dot = rim.x * Math.cos(theme.light.angle) + rim.y * Math.sin(theme.light.angle);
+    expect(dot).toBeGreaterThan(0);
+    r.destroy();
+  });
+
+  it('테마가 없으면 림이 없다(광원 없는 행성에서 스스로 꺼진다)', () => {
+    const r = new EntityRenderer(realTextures());
+    const w = world([ent({ id: 1 })]);
+    r.render(w, w, 0);
+    expect(ownChild(r, 'glowLayer', 'enemyRim')).toBeUndefined();
+    r.destroy();
+  });
+});
+
+// ===========================================================================
+// 게이트 하강 시 **철거** — 완화가 필요한 순간에 비용이 남으면 안 된다 (3차 MINOR-1)
+// ===========================================================================
+
+describe('게이트 하강 · 이미 만든 장식을 걷는다', () => {
+  /** 레이어 두 곳을 통틀어 그 라벨을 가진 표시 객체 수. */
+  function labelCount(r: EntityRenderer, label: string): number {
+    const l = layers(r);
+    let n = 0;
+    for (const c of [...l.glowLayer.children, ...l.effectLayer.children]) {
+      for (const x of (c as Container).children) if (x.label === label) n += 1;
+    }
+    return n;
+  }
+
+  it('런 중간에 reducedGlow 를 켜면 열 오버레이·손상 발광이 사라진다', () => {
+    const r = new EntityRenderer(realTextures());
+    r.setEnvPlanet(0);
+    const hurt = world([ent({ id: 1, hp: 12, maxHp: 100 }), ent({ id: 2, x: 300, hp: 12, maxHp: 100 })]);
+    r.render(hurt, hurt, 0);
+    expect(activeBodyGlowCount()).toBe(2);
+    expect(labelCount(r, 'enemyDamage')).toBeGreaterThan(0);
+
+    graphicsSettings.set({ quality: 'auto', reducedMotion: false, reducedGlow: true });
+    r.render(hurt, hurt, 0);
+    // 생성만 막는 구현은 여기서 잔존한다(실측 잔존: bodyGlow 2 · damage 12).
+    expect(activeBodyGlowCount()).toBe(0);
+    expect(labelCount(r, 'enemyBodyGlow')).toBe(0);
+    expect(labelCount(r, 'enemyRim')).toBe(0);
+    r.destroy();
+  });
+
+  it('런 중간에 low 로 강등되면 잡몹 림이 사라진다(FPS 가 떨어진 바로 그 순간이다)', () => {
+    const r = new EntityRenderer(realTextures());
+    r.setEnvPlanet(0);
+    const many = world(Array.from({ length: 12 }, (_, i) => ent({ id: i + 1, x: i * 60 })));
+    r.render(many, many, 0);
+    expect(labelCount(r, 'enemyRim')).toBe(12);
+
+    lockTier('low');
+    r.render(many, many, 0);
+    expect(labelCount(r, 'enemyRim')).toBe(0);
+    r.destroy();
+  });
+
+  it('엘리트 오라도 게이트가 내려가면 걷힌다(visible=false 로 남기지 않는다)', () => {
+    const r = new EntityRenderer(realTextures());
+    r.setEnvPlanet(0);
+    const w = world([ent({ id: 1, elite: 2 })]);
+    r.render(w, w, 0);
+    expect(labelCount(r, 'enemyAura')).toBe(1);
+    graphicsSettings.set({ quality: 'auto', reducedMotion: false, reducedGlow: true });
+    r.render(w, w, 0);
+    expect(labelCount(r, 'enemyAura')).toBe(0);
+    r.destroy();
+  });
+});
+
+// ===========================================================================
+// 런 경계 · 관측창 노출 · 보스 사망 서명 (3차 MINOR-2/4/5)
+// ===========================================================================
+
+describe('런 경계 · 새 런의 스폰을 억제하지 않는다', () => {
+  it('런 사이 공백이 지나면 같은 id 라도 다시 물질화한다', () => {
+    // 재적 기록의 키가 id 뿐이라, 앞 런의 id 1~N 이 남아 있으면 새 런의 id 1~N 이 재부착으로
+    // 오인돼 스폰 연출이 통째로 사라진다(실측: 연속 startRun 에서 activeSpawnCount 전 프레임 0).
+    const r = new EntityRenderer(realTextures());
+    const w = world([ent({ id: 1 }), ent({ id: 2, x: 200 })]);
+    const empty = world([]);
+    r.render(w, w, 0);
+    expect(activeSpawnCount()).toBe(2);
+    for (let i = 0; i <= SPAWN_FRAMES + 2; i++) r.render(w, w, 0);
+
+    // 런 종료 — 적 0 인 프레임이 재부착 창보다 길게 이어진다(정산·격납고).
+    for (let i = 0; i < REATTACH_WINDOW + 6; i++) r.render(empty, empty, 0);
+
+    // 새 런: 같은 id 가 다시 나온다.
+    r.render(w, w, 0);
+    expect(activeSpawnCount()).toBe(2);
+    r.destroy();
+  });
+
+  it('화면 전환(1프레임 공백)은 여전히 억제된다(두 규칙이 서로를 무효화하지 않는다)', () => {
+    const r = new EntityRenderer(realTextures());
+    const w = world([ent({ id: 1 }), ent({ id: 2, x: 200 })]);
+    r.render(w, w, 0);
+    for (let i = 0; i <= SPAWN_FRAMES + 2; i++) r.render(w, w, 0);
+    r.reset();
+    r.render(w, w, 0);
+    expect(activeSpawnCount()).toBe(0);
+    r.destroy();
+  });
+});
+
+describe('관측창이 프로덕션 번들에서도 읽힌다', () => {
+  it('전역 __pbEnemy 에 관측 함수가 붙어 있다', () => {
+    // 비평가가 이 창들을 Vite dev 의 동적 import 로 우회해 읽었는데, 프로덕션 빌드에선 그
+    // 우회가 안 된다 — 검증 도구가 dev 서버에만 존재하게 된다.
+    const g = (globalThis as unknown as { __pbEnemy?: Record<string, unknown> }).__pbEnemy;
+    expect(g).toBeDefined();
+    for (const k of [
+      'activeSpawnCount',
+      'activeBodyGlowCount',
+      'deathDebrisCount',
+      'deathDebrisEmitted',
+      'deathSignatureCounts',
+      'enemyAdornerCount',
+      'observedPlayerPos',
+    ]) {
+      expect(typeof g![k]).toBe('function');
+    }
+  });
+
+  it('전역이 실제 상태를 돌려준다(껍데기가 아니다)', () => {
+    const g = (globalThis as unknown as { __pbEnemy: { activeSpawnCount: () => number } }).__pbEnemy;
+    const r = new EntityRenderer(realTextures());
+    const w = world([ent({ id: 1 })]);
+    r.render(w, w, 0);
+    expect(g.activeSpawnCount()).toBe(activeSpawnCount());
+    expect(g.activeSpawnCount()).toBe(1);
+    r.destroy();
+  });
+});
+
+describe('보스 사망 서명', () => {
+  it("보스가 처치되면 'boss' 서명이 집계된다", () => {
+    // 하네스에서는 보스가 hp=0.5 로도 안 죽어(이 리포에 기록된 함정) 끝내 확인이 안 됐다.
+    // 정규 render 경로에서는 소멸이 곧 처치라 여기서 계약을 못 박을 수 있다.
+    const r = new EntityRenderer(realTextures());
+    const both = world([ent({ id: 9, kind: 'boss', hp: 100, maxHp: 9000 }), ent({ id: 1, x: 400 })]);
+    r.render(both, both, 0);
+    const survivor = world([ent({ id: 1, x: 400 })]);
+    r.render(survivor, survivor, 0);
+    expect(deathSignatureCounts()['boss']).toBe(1);
     r.destroy();
   });
 });
