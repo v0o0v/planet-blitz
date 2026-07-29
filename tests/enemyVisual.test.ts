@@ -1400,6 +1400,22 @@ describe('군집 가독성 · 림라이트는 실루엣을 따라간다', () => 
     r.destroy();
   });
 
+  it('본체 텍스처가 교체되면 림도 따라간다(애니메이션 프레임)', () => {
+    // 생성 시점 텍스처만 보면 이 동기화를 지워도 통과한다 — 뮤테이션에서 실제로 살아남았다.
+    // 안 따라가면 애니메이션 중 어긋난 잔상이 몸 옆에 남는다.
+    const r = new EntityRenderer(realTextures());
+    r.setEnvPlanet(0);
+    const w = world([ent({ id: 1 })]);
+    r.render(w, w, 0);
+    const sprites = (r as unknown as { sprites: Map<number, { sprite: { texture: Texture } }> })
+      .sprites;
+    const swapped = tex('enemy-frame-2');
+    sprites.get(1)!.sprite.texture = swapped; // 렌더러의 애니메이션 프레임 진행과 같은 동작
+    r.render(w, w, 0);
+    expect(ownChild(r, 'glowLayer', 'enemyRim')!.texture).toBe(swapped);
+    r.destroy();
+  });
+
   it('림이 광원 **쪽**으로 밀린다(접지 그림자와 같은 태양)', () => {
     const r = new EntityRenderer(realTextures());
     r.setEnvPlanet(0);
@@ -1485,22 +1501,34 @@ describe('게이트 하강 · 이미 만든 장식을 걷는다', () => {
 // ===========================================================================
 
 describe('런 경계 · 새 런의 스폰을 억제하지 않는다', () => {
-  it('런 사이 공백이 지나면 같은 id 라도 다시 물질화한다', () => {
-    // 재적 기록의 키가 id 뿐이라, 앞 런의 id 1~N 이 남아 있으면 새 런의 id 1~N 이 재부착으로
-    // 오인돼 스폰 연출이 통째로 사라진다(실측: 연속 startRun 에서 activeSpawnCount 전 프레임 0).
+  it('공백이 재부착 창보다 길면 같은 id 라도 다시 물질화한다', () => {
     const r = new EntityRenderer(realTextures());
     const w = world([ent({ id: 1 }), ent({ id: 2, x: 200 })]);
     const empty = world([]);
     r.render(w, w, 0);
     expect(activeSpawnCount()).toBe(2);
     for (let i = 0; i <= SPAWN_FRAMES + 2; i++) r.render(w, w, 0);
-
-    // 런 종료 — 적 0 인 프레임이 재부착 창보다 길게 이어진다(정산·격납고).
     for (let i = 0; i < REATTACH_WINDOW + 6; i++) r.render(empty, empty, 0);
-
-    // 새 런: 같은 id 가 다시 나온다.
     r.render(w, w, 0);
     expect(activeSpawnCount()).toBe(2);
+    r.destroy();
+  });
+
+  it('**공백 없이** 새 런이 시작돼도 다른 실체면 물질화한다(id 재사용)', () => {
+    // 재적 판정이 프레임 간격만 보면 여기서 실패한다 — 연속 `startRun` 은 공백이 없어
+    // 화면 전환과 구분되지 않는다(실측: activeSpawnCount 전 프레임 0). 그래서 판정이
+    // **종·최대 HP 까지** 대조한다: 같은 id 라도 다른 실체면 신생이다.
+    const r = new EntityRenderer(realTextures());
+    const runA = world([ent({ id: 1, enemyType: 0, maxHp: 100 })]);
+    r.render(runA, runA, 0);
+    for (let i = 0; i <= SPAWN_FRAMES + 2; i++) r.render(runA, runA, 0);
+    expect(activeSpawnCount()).toBe(0);
+
+    // 새 런: 같은 id, 다른 종·다른 최대 HP. 공백은 1프레임뿐이다.
+    r.reset();
+    const runB = world([ent({ id: 1, enemyType: 1, maxHp: 260 })]);
+    r.render(runB, runB, 0);
+    expect(activeSpawnCount()).toBe(1);
     r.destroy();
   });
 

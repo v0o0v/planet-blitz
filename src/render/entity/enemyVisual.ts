@@ -27,12 +27,12 @@
  * - **엘리트 오라**: 외곽 1.45r → 1.12r. 몸에서 떨어진 동심 완전 원은 "선택 링" 그 자체였다.
  * - **게이트 하강 시 철거**: 생성만 막고 걷지 않으면, 자동 티어 강등(= FPS 가 떨어져 완화가
  *   가장 필요한 순간)에 이미 만든 장식이 그대로 남아 비용을 계속 낸다.
- * - **런 경계**({@link lastLiveFrame}): 재적 기록이 id 뿐이라 새 런의 스폰을 억제하고 있었다.
+ * - **런 경계**({@link lastAlive}): 재적 기록이 id 뿐이라 새 런의 스폰을 억제하고 있었다.
  *
  * ## 스폰 시점은 렌더 부착 시점이 아니다 (1차 CRITICAL)
  * `onAttach` 는 `entityRenderer.reset()` 마다 다시 불린다(`main.ts` 화면 전환 5곳). 1차는 거기서
  * 태어난 것으로 쳐서 **화면 전환마다 전 적이 동시에 스폰 인을 재생**했고, 보스전 실측 bright
- * 1.88% → 12.22% 로 §2-4 상한(7%)을 1.75배 넘겼다. 그래서 {@link lastAliveFrame} 로 "직전
+ * 1.88% → 12.22% 로 §2-4 상한(7%)을 1.75배 넘겼다. 그래서 {@link lastAlive} 로 "직전
  * 프레임까지 살아 있던 id" 를 기억해 **재부착과 신생을 가른다**. 화면 재구성은 스폰이 아니다.
  *
  * ## 예산 — 개체당 비용이 20~40 배로 곱해진다
@@ -186,40 +186,49 @@ export function observedPlayerPos(): { x: number; y: number } | null {
 // ---------------------------------------------------------------------------
 
 /**
- * id → 마지막으로 살아 있던 렌더 프레임. `dispose` 로 지우지 **않는다** — `reset()` 이
- * 전 장식자를 회수한 직후에도 "직전 프레임엔 있었다" 를 기억해야 재부착을 알아본다.
- * {@link prunePresence} 가 오래된 항목을 걷어 무한 성장을 막는다.
+ * 개체 재적 기록 한 건. 프레임만으로는 부족하다 — 아래 {@link lastAlive} 참조.
  */
-const lastAliveFrame = new Map<number, number>();
-
-/** 이 프레임 수보다 오래된 재적 기록은 버린다(id 재사용 시 다시 신생으로 취급되도록). */
-const PRESENCE_TTL = 240;
+interface Presence {
+  /** 마지막으로 살아 있던 렌더 프레임. */
+  frame: number;
+  /** 그때의 종(typeIndex). */
+  type: number;
+  /** 그때의 최대 HP. */
+  maxHp: number;
+}
 
 /**
- * 마지막으로 **적이 한 기라도 화면에 있던** 렌더 프레임. 런 경계를 알아보는 신호다.
+ * id → 마지막 재적. `dispose` 로 지우지 **않는다** — `reset()` 이 전 장식자를 회수한 직후에도
+ * "직전 프레임엔 있었다" 를 기억해야 재부착을 알아본다. {@link prunePresence} 가 오래된 항목을
+ * 걷어 무한 성장을 막는다.
  *
- * 왜 필요한가: 재적 기록의 키가 `id` 뿐이라, 앞 런의 id 1~20 이 남아 있으면 **새 런의 id 1~20 이
- * 재부착으로 오인**돼 스폰 연출이 통째로 사라진다(실측: 연속 `startRun` 에서 `activeSpawnCount`
- * 가 전 프레임 0). 그렇다고 `reset()` 에서 지울 수는 없다 — 화면 전환 억제가 바로 그 기록에
- * 달려 있기 때문이다.
+ * ## 왜 프레임만으로 부족한가
+ * 키가 `id` 뿐이면 **새 런의 id 1~N 이 앞 런의 id 1~N 으로 오인**돼 스폰 연출이 통째로
+ * 사라진다(실측: 연속 `startRun` 에서 `activeSpawnCount` 전 프레임 0). 그래서 종·최대 HP 까지
+ * 함께 대조한다 — 화면 전환은 **같은 실체**가 돌아오는 것이라 셋이 모두 일치하고, 새 런은
+ * 대개 다른 종·다른 HP 다.
  *
- * 그래서 **공백으로 가른다.** `reset()` 은 다음 프레임에 곧바로 재부착하므로 공백이 1프레임이고,
- * 런 사이(정산·격납고·타이틀)에는 적이 0 인 프레임이 길게 이어진다. 공백이 {@link REATTACH_WINDOW}
- * 를 넘으면 이전 런의 기록을 버린다 — 웨이브 사이 빈 구간에서 지워져도 무해하다(다음 적이
- * 정상적으로 스폰 연출을 받는다).
+ * ⚠️ **완전한 해법은 아니다.** 새 런의 첫 적이 id·종·최대 HP 까지 우연히 일치하고 그것이 직전
+ * 런 종료로부터 {@link REATTACH_WINDOW} 프레임 안에 나타나면 여전히 억제된다. 그 경우를 확실히
+ * 가르려면 "런이 시작됐다" 는 신호가 필요한데, 그 신호를 주는 곳(`main.ts`·하네스)은 이 레인의
+ * 소유 파일이 아니다 — 잔여 위험으로 보고한다.
+ *
+ * ## 한 번 넣었다 뺀 것: "공백으로 런 경계를 가른다"
+ * 적이 0 인 프레임이 {@link REATTACH_WINDOW} 넘게 이어지면 맵을 통째로 비우는 장치를 넣었다가
+ * **뮤테이션이 죽지 않아 걷어냈다.** 아래 개별 판정이 `frameTick - seen <= REATTACH_WINDOW` 로
+ * 이미 **id 별로 같은 일**을 하므로 순수한 중복이었다. 지워도 아무 테스트가 안 깨지는 방어는
+ * 방어가 아니다.
  */
-let lastLiveFrame = -1;
+const lastAlive = new Map<number, Presence>();
+
+/** 이 프레임 수보다 오래된 재적 기록은 버린다(맵 무한 성장 방지). */
+const PRESENCE_TTL = 240;
 
 function prunePresence(frameTick: number): void {
   if (frameTick % 120 !== 0) return; // 2초에 한 번이면 충분하다(맵 크기 = 동시 적 수 수준).
-  for (const [id, t] of lastAliveFrame) {
-    if (frameTick - t > PRESENCE_TTL) lastAliveFrame.delete(id);
+  for (const [id, p] of lastAlive) {
+    if (frameTick - p.frame > PRESENCE_TTL) lastAlive.delete(id);
   }
-}
-
-/** 부착 시점에 런 경계를 판정해 이전 런의 재적 기록을 버린다. */
-function rollPresenceEpoch(frameTick: number): void {
-  if (lastLiveFrame >= 0 && frameTick - lastLiveFrame > REATTACH_WINDOW) lastAliveFrame.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -435,9 +444,13 @@ class EnemyAdorner implements EntityAdorner {
     // ── 신생인가 재부착인가 ────────────────────────────────────────────────
     // `reset()` 은 다음 프레임에 전 엔티티를 다시 부착한다. 그때를 스폰으로 치면 화면 전환마다
     // 전 적이 동시에 물질화해 §2-4 밝기 상한을 넘긴다(실측 1.88% → 12.22%).
-    rollPresenceEpoch(ctx.frameTick);
-    const seen = lastAliveFrame.get(e.id);
-    const reattach = seen !== undefined && ctx.frameTick - seen <= REATTACH_WINDOW;
+    const seen = lastAlive.get(e.id);
+    // 같은 실체가 돌아온 것인가 — 프레임 간격뿐 아니라 **종·최대 HP 까지** 같아야 한다.
+    const reattach =
+      seen !== undefined &&
+      ctx.frameTick - seen.frame <= REATTACH_WINDOW &&
+      seen.type === e.enemyType &&
+      seen.maxHp === e.maxHp;
     if (reattach || !this.decorated || activeSpawns >= MAX_CONCURRENT_SPAWNS) {
       // 재부착·비장식·정원 초과 → 연출 없이 즉시 완료(본체만 나타난다).
       this.spawnDone = true;
@@ -450,8 +463,7 @@ class EnemyAdorner implements EntityAdorner {
   onFrame(sprite: Sprite, e: EntitySnapshot, prev: EntitySnapshot, ctx: AdornerContext): void {
     pumpDebris(ctx);
     this.lastSeenTick = ctx.frameTick;
-    lastAliveFrame.set(e.id, ctx.frameTick);
-    lastLiveFrame = ctx.frameTick;
+    lastAlive.set(e.id, { frame: ctx.frameTick, type: e.enemyType, maxHp: e.maxHp });
     this.lastX = sprite.x;
     this.lastY = sprite.y;
     this.ctx = ctx;
@@ -1095,7 +1107,6 @@ export function resetEnemyVisualState(): void {
   activeSpawns = 0;
   activeBodyGlows = 0;
   playerPos = null;
-  lastAliveFrame.clear();
-  lastLiveFrame = -1;
+  lastAlive.clear();
   deathSignatures.clear();
 }
