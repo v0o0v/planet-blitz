@@ -1126,6 +1126,34 @@ describe('스폰 시점 · reset 은 스폰이 아니다', () => {
     r.destroy();
   });
 
+  it('연출이 **중간에 끊겨도** 본체 변환이 원래대로 돌아온다(발광 감소 토글)', () => {
+    // 정상 종료만 보면 이 원복은 검증되지 않는다 — 마지막 프레임의 물질화 스케일이 이미
+    // 1.0 이라 원복이 수치상 no-op 이기 때문이다(뮤테이션에서 실제로 살아남았다). 원복이
+    // 유일하게 관측되는 자리는 **연출이 도중에 잘리는** 경로다.
+    const r = new EntityRenderer(realTextures());
+    const sprites = (
+      r as unknown as {
+        sprites: Map<number, { sprite: { alpha: number; scale: { x: number; y: number } } }>;
+      }
+    ).sprites;
+
+    // ① 대조군 — 같은 반경의 적이 연출을 끝까지 마쳤을 때의 기준 스케일.
+    const a = world([ent({ id: 1 })]);
+    for (let i = 0; i <= SPAWN_FRAMES + 2; i++) r.render(a, a, 0);
+    const base = sprites.get(1)!.sprite.scale.x;
+
+    // ② 물질화 **도중에** 발광을 끈다 → finishSpawn 이 즉시 불린다.
+    const b = world([ent({ id: 1 }), ent({ id: 2, x: 300 })]);
+    r.render(b, b, 0);
+    r.render(b, b, 0);
+    expect(sprites.get(2)!.sprite.scale.x).toBeLessThan(base); // 실제로 작아져 있었다
+    graphicsSettings.set({ quality: 'auto', reducedMotion: false, reducedGlow: true });
+    r.render(b, b, 0);
+    expect(sprites.get(2)!.sprite.scale.x).toBeCloseTo(base, 6);
+    expect(sprites.get(2)!.sprite.alpha).toBe(1);
+    r.destroy();
+  });
+
   it('스폰 연출이 끝나면 본체 변환·밝기가 정확히 원래대로 돌아온다', () => {
     const r = new EntityRenderer(realTextures());
     const w = world([ent({ id: 1 })]);
