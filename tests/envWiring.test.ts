@@ -1,0 +1,65 @@
+/**
+ * 행성 환경 레이어 배선 가드.
+ *
+ * 이 리포가 반복해서 밟은 결함은 "모듈은 완성됐는데 아무도 안 부른다"였다
+ * (`invasionBackdrop` 이 배경 3장을 만들어 두고도 화면에 안 나온 건이 대표). 환경 레이어는
+ * 장수가 늘어날수록 같은 결함이 더 쉽게 숨는다 — 한 장이 조용히 빠져도 나머지가 그려지니
+ * 화면이 그럴싸하게 나오기 때문이다. 그래서 세 가지를 구조로 잠근다:
+ *
+ *  1. `src/render/env/` 의 모든 레이어 모듈은 레지스트리(`createEnvLayers`)에 등록돼 있다.
+ *  2. main.ts 가 슬롯 컨테이너 **4개 전부**를 stage 에 붙인다(한 슬롯만 빠져도 그 슬롯
+ *     레이어들이 통째로 안 보인다).
+ *  3. main.ts 가 런 시작에서 `env.configure` 를, 렌더 루프에서 `env.update` 를 부른다.
+ *
+ * 검사하지 않는 것: 호출 시점·인자의 정확성, 그리고 레이어가 실제로 무엇을 그리는지.
+ * 그건 눈으로 보는 검증의 몫이다 — 이 테스트는 하한선이다.
+ */
+
+import { describe, it, expect } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve, join } from 'node:path';
+import { ENV_SLOTS, PlanetEnvironment } from '../src/render/env/planetEnvironment.js';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const ENV_DIR = join(ROOT, 'src', 'render', 'env');
+
+/** 레이어 모듈만 추린다(계약·유틸 모듈은 레지스트리 등록 대상이 아니다). */
+const NON_LAYER = new Set(['types', 'planetEnvironment', 'noise']);
+
+describe('행성 환경 레이어 배선', () => {
+  const registry = readFileSync(join(ENV_DIR, 'planetEnvironment.ts'), 'utf8');
+  const main = readFileSync(join(ROOT, 'src', 'main.ts'), 'utf8');
+  const layerModules = readdirSync(ENV_DIR)
+    .filter((f) => f.endsWith('.ts') && !f.endsWith('.d.ts'))
+    .map((f) => f.replace(/\.ts$/, ''))
+    .filter((b) => !NON_LAYER.has(b));
+
+  it('레이어 모듈이 하나 이상 있다(디렉터리 오탐 방지)', () => {
+    expect(layerModules.length).toBeGreaterThan(0);
+  });
+
+  it.each(layerModules)('%s 가 레지스트리에 등록돼 있다', (base) => {
+    expect(registry).toContain(`./${base}.js`);
+  });
+
+  it('레지스트리가 만든 레이어 수 = 모듈 수', () => {
+    const env = new PlanetEnvironment();
+    expect(env.allNames.length).toBe(layerModules.length);
+  });
+
+  it('레이어 이름이 서로 겹치지 않는다(solo 토글이 모호해진다)', () => {
+    const env = new PlanetEnvironment();
+    expect(new Set(env.allNames).size).toBe(env.allNames.length);
+  });
+
+  it.each(ENV_SLOTS)('main.ts 가 슬롯 %s 를 stage 에 붙인다', (slot) => {
+    expect(main).toContain(`env.slot('${slot}')`);
+  });
+
+  it('main.ts 가 런 시작에서 configure, 매 프레임 update 를 부른다', () => {
+    expect(main).toContain('env.configure(');
+    expect(main).toContain('env.update(');
+    expect(main).toContain('env.disable()');
+  });
+});

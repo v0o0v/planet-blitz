@@ -25,6 +25,7 @@ import { DefensePreviewController } from './render/defensePreview.js';
 import type { DefensePreviewControls } from './render/defensePreview.js';
 import { AutotileBackground, loadWangTiles } from './render/autotile.js';
 import type { WangTiles } from './render/autotile.js';
+import { PlanetEnvironment } from './render/env/planetEnvironment.js';
 import { InvasionBackdrop } from './render/invasionBackdrop.js';
 import { FpsMeter } from './render/fpsMeter.js';
 import { graphicsTierController } from './render/graphicsRuntime.js';
@@ -209,6 +210,13 @@ async function main(): Promise<void> {
   invasionBackdrop.visible = false;
   gameApp.stage.addChild(invasionBackdrop.view);
   gameApp.stage.addChild(autotile.layer);
+  // 행성 환경 레이어 스택(카르곤 AAA 배경). 슬롯 컨테이너 4개만 여기서 stage 깊이에 끼우고,
+  // 실제 레이어 등록은 planetEnvironment.ts 의 레지스트리 한 곳에서 한다 — "모듈은 있는데
+  // 아무도 안 쓰는" 조용한 배선 결손이 구조적으로 불가능해진다.
+  const env = new PlanetEnvironment();
+  // far 는 지형 바닥(autotile) **뒤**여야 하므로 이미 붙은 autotile 아래 인덱스로 끼운다.
+  gameApp.stage.addChildAt(env.slot('far'), gameApp.stage.getChildIndex(autotile.layer));
+  gameApp.stage.addChild(env.slot('floor'));
   // Load all six planet Wang tilesets up front (missing ones resolve to null →
   // that planet falls back to the procedural TilingSprite, regression 0).
   const wangTiles: (WangTiles | null)[] = await Promise.all([
@@ -221,6 +229,10 @@ async function main(): Promise<void> {
   ]);
   const entityRenderer = new EntityRenderer(textures);
   gameApp.stage.addChild(entityRenderer.layer);
+  // 전경 대기(엔티티 위) → 화면 그레이딩(최상단). 레이더·HUD 는 이 뒤에 붙어 그레이딩 위에
+  // 남는다 — 게임플레이 정보는 절대 톤 보정에 먹히지 않는다.
+  gameApp.stage.addChild(env.slot('over'));
+  gameApp.stage.addChild(env.slot('post'));
 
   // 우상단 플레이어 중심 레이더(렌더 전용, ADR-0009). entityRenderer.layer는 카메라를
   // 따라 팬되지만 레이더는 stage에 직접 붙여 화면 고정 HUD로 둔다. 하단-좌 HUD·상단-중
@@ -803,6 +815,7 @@ async function main(): Promise<void> {
     const planet = world.config.planet ?? 0;
     background.texture = planetBackground(planet);
     autotile.configure(null, seed);
+    env.disable();
     clearInvasionBackdrop();
     background.visible = true;
     spectateOverlay.show(
@@ -945,6 +958,7 @@ async function main(): Promise<void> {
     // 페이즈를 보고 건다(`invasionBackdrop.sync` 는 멱등이라 매 프레임 불러도 무해하다).
     beginInvasionBackdrop(PHASE_L1, 0);
     autotile.configure(null, seed);
+    env.disable();
     currentSeed = seed;
     // 스프라이트 캐시 리셋(B-1) — `createWorld` 앞. 렌더러가 엔티티 id 로 스프라이트를 캐시하고
     // 텍스처를 생성 시점에 묶으므로, 비우지 않으면 바로 위 `applyShipSprite` 가 갈아끼운 기체가
@@ -1000,6 +1014,7 @@ async function main(): Promise<void> {
     applyShipSprite(textures, config.shipType ?? 0);
     beginInvasionBackdrop(PHASE_L1, 0);
     autotile.configure(null, opts.seed);
+    env.disable();
     currentSeed = opts.seed;
     // 스프라이트 캐시 리셋(B-1) — `createWorld` 앞(정식 침공·PvE 와 같은 규약).
     entityRenderer.reset();
@@ -1212,6 +1227,9 @@ async function main(): Promise<void> {
     background.texture = planetBackground(sel.planet);
     const tiles = wangTiles[sel.planet] ?? null;
     autotile.configure(tiles, seed);
+    // 행성 환경 레이어(시차 원경·데칼·용암 발광·대기·그레이딩). 각 레이어가 자기 담당 행성인지
+    // 스스로 판정하므로, 카르곤이 아니면 전부 꺼져 화면이 한 픽셀도 바뀌지 않는다.
+    env.configure({ planet: sel.planet, seed });
     // 직전 런이 침공이었으면 전용 배경이 남아 PvE 아레나를 덮는다 — 반드시 내린다.
     clearInvasionBackdrop();
     background.visible = !autotile.active;
@@ -1601,12 +1619,12 @@ async function main(): Promise<void> {
     // avoid f32 UV precision "swim" in PIXI. Render-only; the sim keeps full f64.
     const camX = prevSnap.cameraX + (currSnap.cameraX - prevSnap.cameraX) * alpha;
     const camY = prevSnap.cameraY + (currSnap.cameraY - prevSnap.cameraY) * alpha;
+    // 실제 보이는 design 사각형 = 화면(logical px) 네 모서리를 stage 역변환한 것.
+    // DPR·비율·레터박스와 무관하게 창 전체를 덮게 하여 가장자리 빈 곳을 없앤다.
+    const scr = gameApp.app.renderer.screen;
+    const vTL = gameApp.stage.toLocal({ x: scr.x, y: scr.y });
+    const vBR = gameApp.stage.toLocal({ x: scr.x + scr.width, y: scr.y + scr.height });
     if (autotile.active) {
-      // 실제 보이는 design 사각형 = 화면(logical px) 네 모서리를 stage 역변환한 것.
-      // DPR·비율·레터박스와 무관하게 창 전체를 덮게 하여 가장자리 빈 곳을 없앤다.
-      const scr = gameApp.app.renderer.screen;
-      const vTL = gameApp.stage.toLocal({ x: scr.x, y: scr.y });
-      const vBR = gameApp.stage.toLocal({ x: scr.x + scr.width, y: scr.y + scr.height });
       // Wang floor scrolls by panning its layer + re-tiling on boundary crossings.
       autotile.update(camX, camY, vTL.x, vTL.y, vBR.x, vBR.y);
     } else {
@@ -1617,6 +1635,20 @@ async function main(): Promise<void> {
     // 침공 전용 배경도 같은 카메라로 흘린다(자체 모듈로 규율 — f32 UV swim 방지).
     // 침공이 아니면 레이어가 `visible = false` 라 이 호출은 화면에 영향이 없다.
     if (invasionBackdrop.visible) invasionBackdrop.scroll(camX, camY);
+
+    // 행성 환경 레이어 갱신. 비활성(비카르곤·런 아님)이면 활성 목록이 비어 있어 무비용이다.
+    // 틱은 보간값을 넘긴다 — 애니메이션 위상이 sim 틱의 순수 함수라 리플레이가 재현된다.
+    env.resize(vBR.x - vTL.x, vBR.y - vTL.y);
+    env.update({
+      camX,
+      camY,
+      viewMinX: vTL.x,
+      viewMinY: vTL.y,
+      viewMaxX: vBR.x,
+      viewMaxY: vBR.y,
+      tick: prevSnap.tick + (currSnap.tick - prevSnap.tick) * alpha,
+      dt: frame,
+    });
 
     // Level-up: freeze is handled in the sim. 오버레이 표시/숨김은 sim의
     // pendingLevelUp을 근거로 순수 결정한다(levelUpOverlayAction). 클릭으로 낙관적
@@ -1973,6 +2005,9 @@ async function main(): Promise<void> {
       controller,
       entityRenderer,
       autotile,
+      // 행성 환경 레이어 스택. 레이어를 한 장씩만 켜 놓고 스크린샷을 찍어야 그 레이어가 실제로
+      // 무엇을 그리는지 대조할 수 있다(전부 켠 화면만 보면 어느 레이어의 기여인지 못 가린다).
+      env,
       hud,
       powerupOverlay,
       // 조우 프롬프트 — 조우 롤이 ≈2% 라 자연 발생을 기다릴 수 없다. 하네스에서 이 참조로
