@@ -126,10 +126,21 @@ main.ts 206~208 주석이 "침공은 autotile 을 끄니까 순서 다툼이 없
   하므로 `tests/invasionRender.test.ts` 계약이 살아남고, `tests/renderWiring.test.ts:77` 의
   "main.ts 가 invasionBackdrop 을 import 한다" 검사도 통과한다.
 
-### 함께 풀어야 하는 것
-- 침공은 `env.disable()` 을 부른다(main.ts 961·1017). 환경 레이어를 켜려면 이것도 푼다.
-- `background.visible` 규칙이 PvE(`!autotile.active`, 1235줄)와 침공(`false` 고정, 863줄)에서
-  갈려 있다 — 통일한다.
+### 변경 지점 (실측 확인 완료)
+`startInvasionRun`(정식) 과 `startHarnessInvasionRun`(하네스) 두 곳에서 **연속한 3줄**이 전부다:
+
+```ts
+beginInvasionBackdrop(PHASE_L1, 0);
+autotile.configure(null, seed);   // → 페이즈별 침공 타일셋
+env.disable();                    // → env.configure({ planet: <침공 테마>, seed, renderer })
+```
+
+여기에 stage 깊이 재배치 1건(`invasionBackdrop.view` 를 `autotile.layer` **위**로)이 더해진다.
+main.ts 205~208 주석이 현재 깊이의 근거를 명시적으로 적어 두었다 — *"침공은 `autotile.configure(null, …)`
+로 Wang 바닥을 끄므로 순서 다툼이 없고"*. **그 전제를 깨는 변경이므로 주석도 함께 고쳐야 한다.**
+
+부수로 `background.visible` 규칙이 PvE(`!autotile.active`, 1235줄)와 침공(`false` 고정, 863줄)에서
+갈려 있다 — 통일한다.
 
 ## 성능은 실측 대상이다 (메모리 누수는 없음)
 - `ensureCoverage` 는 뷰포트 크기에만 반응하고 카메라 위치와 무관하다. 스프라이트 풀 상한이
