@@ -27,7 +27,9 @@ import {
   HAZARD_COLOR_SLOW,
   HAZARD_COLOR_TERRAIN,
   drawHazardZone,
+  hazardFillPoints,
   hazardVisual,
+  visualHeat,
   type HazardCanvas,
 } from '../src/render/hazardVisual.js';
 import { HAZARD_LAVA, HAZARD_MORTAR, HAZARD_SLOW } from '../src/sim/patterns/types.js';
@@ -175,14 +177,23 @@ describe('형태 = 상태', () => {
     expect(calls.some((c) => c.op === 'fill')).toBe(false); // 예열은 채우지 않는다
   });
 
-  it('예열 경로에 완전한 원이 없다 — 립 하나뿐이다 (2차 반려 MAJOR-2)', () => {
+  it('예열 경로에 완전한 원이 하나도 없다 (2차 MAJOR-2 + 3차 MAJOR-6)', () => {
     // 2차까지 예열은 `arc(x,y,radius,...)` 18조각 + `circle` 수렴 링이라 **전부 정확한 원**이었다.
     // "예열이 가장 오래 보이는 상태"라고 논증해 놓고 그 상태의 경계만 안 고쳤던 자리다.
+    //
+    // 3차는 그 위에 정원 립을 **새로** 하나 넣었고, 오염 셀은 서로 겹치므로 셀 수만큼 정원이
+    // 포개져 예열 컷의 동심 윤곽이 2차보다 늘었다(3차 반려 MAJOR-6: 흰 정원 3 + 각진 수렴
+    // 폴리곤 3 + 붉은 점선 + 플레이어 시안 링 = 8줄). 예열은 아직 아프지 않으므로 판정 울타리의
+    // 정밀도 요구가 활성보다 낮고, 점선이 같은 시드의 유기 윤곽 위를 달려 위치를 이미 알려 준다.
     const { canvas, calls } = recorder();
     drawHazardZone(canvas, 0, 0, 100, hazardVisual(HAZARD_LAVA, false), 0);
     expect(calls.filter((c) => c.op === 'arc').length).toBe(0);
-    const circles = calls.filter((c) => c.op === 'circle');
-    expect(circles.length).toBe(1); // 판정 울타리(립)뿐
+    expect(calls.filter((c) => c.op === 'circle').length).toBe(0);
+    // 대신 활성에는 립이 있다 — "정원 = 지금 아프다"가 색 외 채널로 하나 늘어난 셈이다.
+    const hot = recorder();
+    drawHazardZone(hot.canvas, 0, 0, 100, hazardVisual(HAZARD_LAVA, true), 0);
+    const circles = hot.calls.filter((c) => c.op === 'circle');
+    expect(circles.length).toBe(1);
     expect(circles[0]?.args[2]).toBe(100 * LIP_RATIO);
   });
 
@@ -408,7 +419,8 @@ describe('실루엣 — 완전한 원을 쓰지 않는다 (계약 §2-5 UI 어�
     drawHazardZone(canvas, 0, 0, 150, v, 0);
     const strokes = calls.filter((c) => c.op === 'stroke');
     // 경계선 stroke 는 원래 strokeAlpha(0.95) 그대로였다. 지금은 배율이 곱해져 있어야 한다.
-    const boundary = strokes.find((s) => s.style?.width === v.strokeWidth);
+    // 두께는 `boundaryWidth` 파생이라 `strokeWidth` 와 같지 않다(반경에 따라 얇아진다).
+    const boundary = strokes.find((s) => s.style?.width === boundaryWidth(150, v.strokeWidth));
     expect(boundary?.style?.alpha).toBeLessThan(v.strokeAlpha);
     expect(BOUNDARY_ALPHA_SCALE).toBeLessThan(1);
     expect(GLOW_ALPHA_SCALE).toBeLessThan(1);
@@ -438,6 +450,104 @@ describe('성능 가드 — 작고 많은 장판', () => {
       return rec.calls.filter((c) => c.op === 'lineTo').length;
     };
     expect(count(2000)).toBeLessThanOrEqual(16);
+  });
+
+  it('빗금이 셀의 한쪽만 덮지 않는다 (3차 반려 MAJOR-4 — 3차에서 생긴 회귀)', () => {
+    // 3차는 `HATCH_MAX_LINES` 를 16→7 로 내리면서 루프 시작점을 `-2r` 로 그대로 뒀다. 그러면
+    // 처음 7줄만 그려지고 **모든 셀에서 좌상단만 빗금이 있고 반대쪽이 비었다**(r=200 에서 후보
+    // 27개 중 7개 = 26%). 빗금은 "아프다"의 색 외 채널이므로 셀 **내부** 정보량 불균형이다.
+    //
+    // 유효 오프셋 구간은 o ∈ (−r(1+√2), r(√2−1)) — 그 폭에 고르게 퍼졌는지를 잰다.
+    for (const r of [85, 200, 400]) {
+      const rec = recorder();
+      drawHazardZone(rec.canvas, 0, 0, r, hazardVisual(HAZARD_LAVA, true), 0);
+      // 빗금 선분의 중점 x 를 모은다(45° 선이라 중점 x 가 오프셋의 단조 함수다).
+      const mids: number[] = [];
+      const calls = rec.calls;
+      for (let i = 0; i < calls.length - 1; i++) {
+        if (calls[i]?.op !== 'moveTo' || calls[i + 1]?.op !== 'lineTo') continue;
+        mids.push(((calls[i]?.args[0] ?? 0) + (calls[i + 1]?.args[0] ?? 0)) / 2);
+      }
+      expect(mids.length, `r=${r}`).toBeGreaterThanOrEqual(5);
+      // 좌우 양쪽에 실제로 선이 있어야 한다(중앙 기준 분할).
+      expect(mids.some((m) => m < -r * 0.25), `r=${r} 좌측`).toBe(true);
+      expect(mids.some((m) => m > r * 0.25), `r=${r} 우측`).toBe(true);
+      // 덮는 폭이 지름의 절반을 넘는다 — 3차는 지름의 27% 였다.
+      const spread = Math.max(...mids) - Math.min(...mids);
+      expect(spread / (2 * r), `r=${r}`).toBeGreaterThan(0.5);
+    }
+  });
+
+  it('큰 장판에서 윤곽이 각져 보이지 않는다 — 변 길이를 상수로 잡는다 (3차 반려 MAJOR-6)', () => {
+    // 3차는 `FILL_POINTS = 16` 고정이라 반경 200 에서 변 길이 78px 였고 화면에서 그대로
+    // **16각형**으로 읽혔다. 개수 대신 **변 길이**를 상수로 잡으면 큰 장판만 촘촘해진다.
+    for (const r of [60, 120, 250]) {
+      const n = hazardFillPoints(r);
+      expect(n % 4, `r=${r}`).toBe(0); // 예열 윤곽(36점)과 사분점이 정렬돼야 한다
+      const edge = (2 * Math.PI * r) / n;
+      expect(edge, `r=${r} edge=${edge.toFixed(1)}`).toBeLessThanOrEqual(40);
+    }
+    // 큰 장판이 작은 장판보다 촘촘하다(비용은 둘레에 비례해서만 붙는다).
+    expect(hazardFillPoints(250)).toBeGreaterThan(hazardFillPoints(60));
+    // 상한이 있다(폭주 방어).
+    expect(hazardFillPoints(5000)).toBe(hazardFillPoints(1000));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 예열→활성 연속 — 형태 채널이 한 프레임에 뒤집히지 않는다 (3차 반려 MAJOR-4)
+// ---------------------------------------------------------------------------
+
+describe('형태 채널의 연속화 — 호스트의 열을 되읽는다', () => {
+  /** 호스트가 하는 일을 그대로 재현한다: 활성 서술의 채움 알파에 열을 곱해 넘긴다. */
+  const atHeat = (heat: number): ReturnType<typeof hazardVisual> => {
+    const base = hazardVisual(HAZARD_LAVA, true);
+    return { ...base, fillAlpha: base.fillAlpha * heat };
+  };
+
+  it('열을 채움 알파에서 정확히 되읽는다', () => {
+    for (const h of [0, 0.25, 0.5, 0.75, 1]) {
+      expect(visualHeat(atHeat(h))).toBeCloseTo(h, 9);
+    }
+    // 예열(점선)은 정의상 열 0 이다.
+    expect(visualHeat(hazardVisual(HAZARD_LAVA, false))).toBe(0);
+  });
+
+  const hatchAlphaAt = (heat: number): number => {
+    const rec = recorder();
+    drawHazardZone(rec.canvas, 0, 0, 120, atHeat(heat), 0);
+    // 빗금 stroke 는 두께 2 이고 경계선·글로우와 두께로 갈린다.
+    const dashes = rec.calls.filter(
+      (c, i) => c.op === 'stroke' && rec.calls[i - 1]?.op === 'lineTo' && c.style?.width === 2,
+    );
+    return dashes[0]?.style?.alpha ?? 0;
+  };
+
+  it('빗금이 열 0.35 부터 차오른다(채움과 같은 프레임에 팝인하지 않는다)', () => {
+    expect(hatchAlphaAt(0.1)).toBe(0);
+    expect(hatchAlphaAt(0.5)).toBeGreaterThan(0);
+    expect(hatchAlphaAt(0.5)).toBeLessThan(hatchAlphaAt(1));
+  });
+
+  const solidAlphaAt = (heat: number): number => {
+    const rec = recorder();
+    drawHazardZone(rec.canvas, 0, 0, 120, atHeat(heat), 0);
+    const w = boundaryWidth(120, 4);
+    return rec.calls.find((c) => c.op === 'stroke' && c.style?.width === w)?.style?.alpha ?? 0;
+  };
+
+  it('점선→실선이 교차 페이드다(한 프레임 스위치가 아니다)', () => {
+    // 열이 낮으면 실선이 옅고, 열이 차면 실선만 남는다.
+    expect(solidAlphaAt(0.2)).toBe(0);
+    expect(solidAlphaAt(0.55)).toBeGreaterThan(0);
+    expect(solidAlphaAt(0.55)).toBeLessThan(solidAlphaAt(1));
+    // 낮은 열에서는 점선 조각이 **아직 남아 있다**(같은 시드의 유기 윤곽 위).
+    const low = recorder();
+    drawHazardZone(low.canvas, 0, 0, 120, atHeat(0.4), 0);
+    const hot = recorder();
+    drawHazardZone(hot.canvas, 0, 0, 120, atHeat(1), 0);
+    const dashSegs = (r: { calls: Call[] }): number => r.calls.filter((c) => c.op === 'moveTo').length;
+    expect(dashSegs(low)).toBeGreaterThan(dashSegs(hot));
   });
 });
 

@@ -38,6 +38,12 @@ import {
   lodHasLobes,
   lodHasMotes,
   lodLobeCount,
+  lodMoteScale,
+  lobeAlphaScale,
+  hazardCrustSpec,
+  kindUsesDistortion,
+  MOTE_R_MAX,
+  MOTE_R_MIN,
   LOBE_COUNT,
   LOD_FULL_COUNT,
   LOD_MID_COUNT,
@@ -476,6 +482,132 @@ describe('입자', () => {
     expect(moteBudget('med', HIGH)).toBeLessThan(moteBudget('high', HIGH));
     expect(moteBudget('high', HIGH)).toBeGreaterThan(0);
   });
+
+  it('reducedMotion 에서 입자가 통째로 사라진다 (3차 반려 CRIT)', () => {
+    // `EffectGates` 에는 모션 축이 없다 — `effectGates()` 가 reducedMotion 을 shake·hitFlash 로만
+    // 흘려보내므로 입자는 게이트로 못 덮는다. 3차 실측이 reducedMotion 에서 `hazardMotes` 60개
+    // 그대로였던 것이 그 결과였고, 입자는 유일하게 매 프레임 **위치가 움직이는** 겹이다.
+    expect(moteBudget('high', HIGH, true)).toBe(0);
+    expect(moteBudget('med', HIGH, true)).toBe(0);
+    // 기본값은 켜진 상태여야 한다(인자를 안 넘긴 옛 호출이 조용히 입자를 죽이면 안 된다).
+    expect(moteBudget('high', HIGH)).toBeGreaterThan(0);
+  });
+
+  it('입자 크기가 반경에 비례한다 — 3차의 "화면에 없다" 판정의 실제 원인', () => {
+    // 3차 실측: 스프라이트 직경 2.4~6.8px, 총 면적이 화면의 0.08%. 개수(60개)가 아니라
+    // **규모**가 문제였다. 절대 px 였다면 반경이 두 배인 장판에서도 입자가 같은 크기다.
+    const small = moteAt(5, 0, 50, 40, 1);
+    const big = moteAt(5, 0, 200, 40, 1);
+    expect(big.r / small.r).toBeCloseTo(4, 5);
+    // 반경 100 장판에서 직경이 최소 8px(3차는 3px), 평균 16px 이상이어야 `analyze.mjs` 의
+    // 국소 지표가 바닥을 벗어난다. 3차 실측 직경 2.4~6.8px · 총 면적 화면의 0.08% 가 기준선이다.
+    let sum = 0;
+    for (let i = 0; i < 14; i++) {
+      const d = moteAt(9, i, 100, 0, 1).r * 2;
+      expect(d, `i=${i}`).toBeGreaterThanOrEqual(8);
+      sum += d;
+    }
+    expect(sum / 14).toBeGreaterThan(16);
+    // 산포 반경(0.82r)과 합쳐도 판정 반경을 넘지 않는다.
+    expect(0.82 + MOTE_R_MAX).toBeLessThan(1);
+    expect(MOTE_R_MIN).toBeLessThan(MOTE_R_MAX);
+  });
+
+  it('수명 알파에 고원이 있다(직경 3px 짜리 순간 점멸이 아니다)', () => {
+    // 순수 sin(πu) 면 알파 0.5 이상 구간이 수명의 50% 뿐이다. 고원이 있어야 같은 개수로
+    // 화면 지표를 움직인다.
+    //
+    // ⚠️ 표본을 정수 tick 400개로 잡으면 주기가 2~3바퀴뿐이라 **에일리어싱**으로 순수 sin 도
+    // 0.72 를 넘긴다(뮤테이션에서 실측했다). `frameTick` 은 실수를 받으므로 촘촘히·여러 주기를
+    // 훑어야 비율이 실제 값으로 수렴한다: 순수 sin = 2/3 · 지수 0.55 = 0.82.
+    let over = 0;
+    const N = 8000;
+    for (let i = 0; i < N; i++) {
+      if (moteAt(3, 0, 100, i * 0.37, 1).alpha >= 0.5) over++;
+    }
+    expect(over / N).toBeGreaterThan(0.75);
+    // 양 끝은 여전히 정확히 0 이다(팝인·팝아웃 없음).
+    expect(moteAt(3, 0, 100, 0, 1).alpha).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6-b. 티어 게이트 — 가장 크고 비싼 겹에 게이트가 없었다 (3차 반려 CRITICAL)
+// ---------------------------------------------------------------------------
+
+describe('로브 겹의 티어 게이트 (§2-3 — 게이트 없는 이펙트는 즉시 반려)', () => {
+  /** 톡사르 41장의 LOD 분포(실측): full 6 · mid 12 · lite 23. */
+  const TOXAR: readonly [HazardLod: 'full' | 'mid' | 'lite', count: number][] = [
+    ['full', 6],
+    ['mid', 12],
+    ['lite', 23],
+  ];
+  const total = (tier: QualityTier, gates: EffectGates): number =>
+    TOXAR.reduce((s, [lod, n]) => s + n * lodLobeCount(lod, tier, gates), 0);
+
+  it('low 티어가 로브 총량을 대폭 줄인다', () => {
+    // 3차 실측: high 272 / low **272(동일)** / reducedGlow+reducedMotion **272(동일)**.
+    const high = total('high', HIGH);
+    expect(high).toBe(272); // 6×14 + 12×8 + 23×4 — 회귀 감시용 실측 기준선
+    expect(total('low', LOW)).toBeLessThan(high * 0.25);
+  });
+
+  it('low 에서는 최저 LOD 의 로브가 0 이다(저사양은 "멀리"가 아니라 "성능 없음")', () => {
+    expect(lodLobeCount('lite', 'low', LOW)).toBe(0);
+    expect(lodLobeCount('full', 'low', LOW)).toBeGreaterThan(0);
+  });
+
+  it('reducedGlow 가 가산 로브의 개수와 강도를 함께 내린다(광과민 대응)', () => {
+    const dim: EffectGates = { ...HIGH, halo: false };
+    expect(lodLobeCount('full', 'high', dim)).toBeLessThan(lodLobeCount('full', 'high', HIGH));
+    expect(lobeAlphaScale(dim)).toBeLessThan(lobeAlphaScale(HIGH));
+    // 0 은 아니다 — 로브는 §3-C-1 의 재질 본체라 통째로 끄면 항목이 화면에서 사라진다.
+    expect(lobeAlphaScale(dim)).toBeGreaterThan(0);
+  });
+
+  it('med 티어가 high 와 low 사이에 있다(단조)', () => {
+    expect(total('med', HIGH)).toBeLessThan(total('high', HIGH));
+    expect(total('med', HIGH)).toBeGreaterThan(total('low', LOW));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6-c. 면적 재질 — 종류가 "색만 다르던" 결함 (3차 반려 MAJOR-5)
+// ---------------------------------------------------------------------------
+
+describe('재질 분화 — 종류마다 구성이 다르다', () => {
+  it('세 종의 면적 재질 구성이 서로 다르다(색조뿐이 아니다)', () => {
+    // 비평가가 세 종을 나란히 주입해 얻은 판정: **같은 구성**(평면 채움 + 45° 직선 빗금 +
+    // 16각 윤곽 + 흰 정원 립), 다른 것은 색조뿐. 구성이 갈리는지를 여기서 못 박는다.
+    const m = hazardCrustSpec('molten');
+    const r = hazardCrustSpec('refract');
+    const s = hazardCrustSpec('scorch');
+    const sig = (k: ReturnType<typeof hazardCrustSpec>): string => `${k.add}|${k.shade}|${k.flow}`;
+    expect(new Set([sig(m), sig(r), sig(s)]).size).toBe(3);
+  });
+
+  it('용암은 발광 균열(가산)과 굳은 껍질(곱연산)을 함께 갖는다', () => {
+    // "흐르는 용융이 아니라 주황 원판 — 껍질·균열·식은 자리·발광 코어가 없다"의 처방.
+    const m = hazardCrustSpec('molten');
+    expect(m.add).toBe('crackAdd');
+    expect(m.shade).toBe('plateShade');
+    // 두 장이 반대로 돌아야 무늬가 회전이 아니라 변형으로 읽힌다(돌아가는 도장 방지).
+    expect(m.flow).toBeGreaterThanOrEqual(2);
+    expect(m.spin).toBeGreaterThan(0);
+  });
+
+  it('그을음은 발광 겹이 없다 — 갈라진 검은 금이다', () => {
+    const s = hazardCrustSpec('scorch');
+    expect(s.add).toBeNull();
+    expect(s.shade).toBe('crackShade');
+    expect(s.spin).toBe(0); // 굳은 그을음은 흐르지 않는다
+  });
+
+  it('굴절만 실제 왜곡(변위 필터)을 쓴다 — 공유 필터 하나 (§2-3 예산)', () => {
+    for (const k of ALL_KINDS) {
+      expect(kindUsesDistortion(k), k).toBe(k === 'refract');
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -731,14 +863,19 @@ describe('배선 · 비용 상한', () => {
   });
 
   it('LOD 가 낮아져도 로브는 먼저 얇아지고 마지막에 사라진다(순서가 있다)', () => {
-    expect(lodLobeCount('full')).toBeGreaterThan(lodLobeCount('mid'));
-    expect(lodLobeCount('mid')).toBeGreaterThan(lodLobeCount('lite'));
+    expect(lodLobeCount('full', 'high', HIGH)).toBeGreaterThan(lodLobeCount('mid', 'high', HIGH));
+    expect(lodLobeCount('mid', 'high', HIGH)).toBeGreaterThan(lodLobeCount('lite', 'high', HIGH));
     // `lite` 도 0 이 아니다 — 로브가 0 이면 그 셀은 물질이 아니라 도형으로 남고, 나란한
     // 셀 사이에 스타일 차이가 생긴다(2차 반려 MAJOR-1 이 자리를 옮긴 형태).
-    expect(lodLobeCount('lite')).toBeGreaterThan(0);
-    // 입자·접지가 로브보다 먼저 빠진다(가장 비싸고 가장 덜 정체성적이다).
-    expect(lodHasMotes('mid')).toBe(false);
-    expect(lodHasGrounding('mid')).toBe(false);
+    // **단 그건 LOD 축의 이야기다** — 티어 축은 아래 별도 describe 가 잠근다.
+    expect(lodLobeCount('lite', 'high', HIGH)).toBeGreaterThan(0);
+    // 접지는 이제 전 LOD 다(3차 반려 MAJOR-3 — 41장 중 6장에만 있는 겹은 렌더링 버그로 읽힌다).
+    expect(lodHasGrounding('mid')).toBe(true);
+    expect(lodHasGrounding('lite')).toBe(true);
+    // 입자만 최저 LOD 에서 빠진다(유일하게 매 프레임 위치를 다시 쓰는 겹이다).
+    expect(lodHasMotes('mid')).toBe(true);
+    expect(lodHasMotes('lite')).toBe(false);
+    expect(lodMoteScale('mid')).toBeLessThan(lodMoteScale('full'));
     expect(lodHasLobes('mid')).toBe(true);
   });
 

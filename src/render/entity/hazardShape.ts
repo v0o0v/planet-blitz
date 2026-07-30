@@ -28,6 +28,7 @@ import { HAZARD_LAVA, HAZARD_MORTAR, HAZARD_SLOW } from '../../sim/patterns/type
 import { HAZARD_CONTAMINATION } from '../../sim/modes/contamination.js';
 import { lightX, lightY, type EnvLightSpec } from '../env/theme.js';
 import { valueNoise, hash3 } from '../env/noise.js';
+import type { CrustTextureId } from './hazardTexture.js';
 import type { EffectGates, QualityTier } from '../qualityTier.js';
 
 const TAU = Math.PI * 2;
@@ -171,8 +172,12 @@ export const EDGE_POINTS = 24;
  *
  * 안쪽으로 파이는 만큼 화면은 안전지대를 과장한다 — 그 오차의 정밀 보정은 판정 반경에 정확히
  * 놓이는 **맥동 립**이 맡는다(`hazardVisual.LIP_RATIO`). 립이 울타리고, 이 대역은 물질이다.
+ *
+ * 0.83 → 0.88 (3차 반려 MINOR): 최대 17% 과소 표시가 12% 로 줄었다. 대역 폭이 0.13r → 0.08r 로
+ * 좁아지므로 "진폭이 자기 선 두께의 3배"(2차 반려 CRIT-2)를 유지하려면 선 두께도 같이 내려야
+ * 한다 — {@link file://../hazardVisual.ts} 의 `BOUNDARY_WIDTH_PER_RADIUS` 가 그 짝이다.
  */
-export const EDGE_MIN_RATIO = 0.83;
+export const EDGE_MIN_RATIO = 0.88;
 /**
  * **상한. 1 을 넘길 수 없다.** 재질이 판정 반경 밖으로 한 픽셀이라도 나가면 "밟으면 아픈 곳"이
  * 화면에서 거짓말을 한다.
@@ -389,6 +394,61 @@ export function lobeLife(seed: number, i: number, frameTick: number, speed = 1):
 }
 
 // ---------------------------------------------------------------------------
+// 면적 재질 — 종류가 "색만 다르던" 결함의 처방 (3차 반려 MAJOR-5)
+// ---------------------------------------------------------------------------
+
+/**
+ * 종류별 면적 재질 서술. **§3-C-1 이 요구한 것은 "노이즈 텍스처 + 셰이더 기반 재질"이고
+ * 3차까지는 절차적 도형뿐이었다.**
+ *
+ * 비평가가 세 종을 나란히 주입해 본 결과가 판정의 근거다: 구성이 **같았고**(평면 채움 + 45°
+ * 직선 빗금 + 16각 윤곽 + 흰 정원 립) 다른 것은 색조뿐이었다. AAA 참조(Hades 용암 웅덩이 ·
+ * Returnal 산성 지대 · Nova Drift 장 이펙트)가 공통으로 갖는 셋 중 ⓑ **내부의 면적 텍스처**가
+ * 통째로 없었다 — 로브는 개체이고 빗금은 직선 격자라서 둘 다 면적 텍스처가 아니다.
+ *
+ * - `add` — 가산 겹(발광 균열·거품 막·집광 무늬). `gates.halo` 로 강도를 낮춘다.
+ * - `shade` — 곱연산 겹(식은 껍질·그을음의 검은 금). 밝기 총량에 **순감**으로 기여한다.
+ * - `flow` — 가산 겹을 몇 장 겹칠 것인가. 2 면 두 장이 서로 반대로 돌아 무늬가 **회전이 아니라
+ *   변형**으로 읽힌다(`edgeRatioAt` 가 두 옥타브를 반대로 흘리는 것과 같은 장치 — 한 장만
+ *   돌리면 "돌아가는 도장"이 된다).
+ */
+export interface HazardCrustSpec {
+  readonly add: CrustTextureId | null;
+  readonly shade: CrustTextureId | null;
+  readonly addAlpha: number;
+  readonly shadeAlpha: number;
+  readonly flow: number;
+  /** 가산 겹의 회전 속도(프레임당 라디안). 0 이면 정지(그을음은 흐르지 않는다). */
+  readonly spin: number;
+}
+
+const CRUST_SPEC: Readonly<Record<HazardMaterialKind, HazardCrustSpec>> = {
+  // 용암: 굳은 껍질(곱연산) 사이로 균열이 빛난다(가산 2장 역회전 = 흐름).
+  molten: { add: 'crackAdd', shade: 'plateShade', addAlpha: 0.5, shadeAlpha: 0.85, flow: 2, spin: 0.0022 },
+  // 박격 낙하점: 달궈진 자국. 껍질은 없다(막 생긴 자리라 굳을 시간이 없다).
+  ember: { add: 'crackAdd', shade: null, addAlpha: 0.42, shadeAlpha: 0, flow: 2, spin: 0.004 },
+  // 그을음: **갈라진 검은 금**. 발광이 아니라 감광이라 가산 겹이 아예 없다.
+  scorch: { add: null, shade: 'crackShade', addAlpha: 0, shadeAlpha: 0.95, flow: 0, spin: 0 },
+  // 오염: 부글거리는 거품 막.
+  spore: { add: 'bubbleAdd', shade: null, addAlpha: 0.4, shadeAlpha: 0, flow: 2, spin: 0.0015 },
+  // 감속장: 집광 무늬 + 유리 테두리. 실제 왜곡은 `hazardField` 의 공유 변위 필터가 준다.
+  refract: { add: 'lensAdd', shade: null, addAlpha: 0.46, shadeAlpha: 0, flow: 1, spin: 0.0026 },
+};
+
+/** 종류 → 면적 재질 서술. */
+export function hazardCrustSpec(kind: HazardMaterialKind): HazardCrustSpec {
+  return CRUST_SPEC[kind];
+}
+
+/**
+ * 이 종류가 **실제 왜곡**(변위 필터)을 쓰는가. `refract` 뿐이다 — 굴절은 정의상 "뒤가 휘어
+ * 보이는 것"이고, 그것만은 텍스처로 흉내 낼 수 없다.
+ */
+export function kindUsesDistortion(kind: HazardMaterialKind): boolean {
+  return kind === 'refract';
+}
+
+// ---------------------------------------------------------------------------
 // 존재감 — 재질은 예열 중에도 화면에 있어야 한다
 // ---------------------------------------------------------------------------
 
@@ -494,31 +554,66 @@ export function hazardLod(liveCount: number): HazardLod {
 export function lodHasLobes(_lod: HazardLod): boolean {
   return true;
 }
-/** 이 LOD 가 접지(접촉 그늘·림)를 그리는가. */
-export function lodHasGrounding(lod: HazardLod): boolean {
-  return lod === 'full';
+/**
+ * 이 LOD 가 접지(접촉 그늘·림)를 그리는가. **전부 그린다.**
+ *
+ * 3차는 `lod === 'full'` 이라 톡사르 41장 중 **6장에만** 접지가 있었다. 그건 이 레인이
+ * {@link lodLobeCount} 를 두고 스스로 세운 논리("나란한 같은 셀 중 일부만 다르면 관객은 LOD 가
+ * 아니라 렌더링 버그로 읽는다")를 그대로 위반한 것이다. 접지가 `Graphics` 두 개였던 것이
+ * 그 타협의 원인이었고, 공유 텍스처 스프라이트로 바뀌면서(`hazardTexture.contactTexture`)
+ * 이유가 사라졌다. 예산은 **겹**이 아니라 **개당 비용**에서 회수한다.
+ */
+export function lodHasGrounding(_lod: HazardLod): boolean {
+  return true;
 }
-/** 이 LOD 가 입자를 그리는가. */
+/**
+ * 이 LOD 가 입자를 그리는가. `lite` 만 뺀다 — 입자는 위로 솟는 개체라 없어도 "같은 물질의
+ * 원거리 표현"으로 읽히고(스타일이 갈리지 않는다), 유일하게 매 프레임 위치를 다시 쓰는 겹이다.
+ */
 export function lodHasMotes(lod: HazardLod): boolean {
-  return lod === 'full';
+  return lod !== 'lite';
 }
-/** `lite` 가 유지하는 최소 로브 수. **0 이 아니다.** */
+/** LOD 별 입자 수 배율. `mid` 는 절반이라 전이가 계단으로 읽히지 않는다. */
+export function lodMoteScale(lod: HazardLod): number {
+  return lod === 'full' ? 1 : lod === 'mid' ? 0.5 : 0;
+}
+/** `lite` 가 유지하는 최소 로브 수(고사양 기준). **0 이 아니다.** */
 export const LOD_LITE_LOBES = 4;
 
 /**
- * 이 LOD 의 로브 수. **어떤 LOD 도 0 이 아니다.**
+ * 이 LOD 의 로브 수. **티어를 게이트보다 먼저 본다**({@link moteBudget} 와 같은 규율).
  *
- * 2차 구현은 `lite` 에서 로브를 0 으로 만들었고, CRIT-1 과 겹쳐 실전 화면의 41장 중 32장이
- * 재질 본체 없이 그려졌다. 설령 CRIT-1 이 없었더라도 이건 **MAJOR-1(같은 해저드 두 스타일)**
- * 을 자리만 옮긴 것이다 — 나란히 붙은 같은 오염 셀 중 하나만 물질이고 셋은 도형이면, 관객은
- * 그것을 LOD 로 읽지 않고 **렌더링 버그**로 읽는다.
+ * ## 3차 반려 CRIT — 가장 크고 비싼 겹에 게이트가 없었다
+ * 3차의 시그니처는 `lodLobeCount(lod)` 였다. `tier`·`gates` 를 **아예 받지 않아서** 실측
+ * `hazardLobes` 겹이 high 272 스프라이트 / low **272(동일)** / `reducedGlow`+`reducedMotion`
+ * **272(동일)** 이었다. 전부 가산 합성이므로 정의상 발광이고, 광과민 대응 토글이 이 겹을 못
+ * 덮는 것은 미관이 아니라 **접근성 결함**이다. 계약 §2-3 은 "게이트 없는 이펙트는 즉시 반려"다.
  *
- * 로브가 스프라이트로 바뀌어(`hazardTexture.ts`) 배치되므로 전 셀에 최소분을 둘 여유가 생겼다:
- * 톡사르 41장 = 6×14 + 12×8 + 23×4 = 272 스프라이트지만 텍스처·블렌드가 같아 드로우콜은
- * 사실상 하나다. 개수가 아니라 **드로우콜**이 비용이었다.
+ * `low` 에서는 **`lite` 를 0 으로 만든다.** {@link lodLobeCount} 가 "어떤 LOD 도 0 이 아니다"를
+ * 지켰던 근거(MAJOR-1: 나란한 셀 중 일부만 다르면 렌더링 버그로 읽힌다)는 **LOD 축에만**
+ * 적용된다 — LOD 는 "멀리 있는 것"의 표현이지만 티어는 "성능이 없는 것"이고, 저사양에서는
+ * 화면 전체가 함께 내려가므로 셀 간 불균형이 생기지 않는다.
+ *
+ * 톡사르 41장 실측: high 6×14 + 12×8 + 23×4 = **272** → low 6×3 + 12×2 + 23×0 = **42**.
  */
-export function lodLobeCount(lod: HazardLod): number {
-  return lod === 'full' ? LOBE_COUNT : lod === 'mid' ? 8 : LOD_LITE_LOBES;
+export function lodLobeCount(lod: HazardLod, tier: QualityTier, gates: EffectGates): number {
+  if (tier === 'low') return lod === 'full' ? 3 : lod === 'mid' ? 2 : 0;
+  const base = lod === 'full' ? LOBE_COUNT : lod === 'mid' ? 8 : LOD_LITE_LOBES;
+  // 티어는 개수를, `reducedGlow`(= halo 차단)는 개수와 강도를 함께 깎는다. 가산 스프라이트는
+  // 겹칠 때마다 밝기가 누적되므로, 광과민 대응에서는 **장수 자체**를 줄이는 것이 알파만 내리는
+  // 것보다 효과가 크다(강도는 {@link lobeAlphaScale} 가 추가로 내린다).
+  const k = (tier === 'med' ? 0.7 : 1) * (gates.halo ? 1 : 0.6);
+  return k >= 1 ? base : Math.max(2, Math.round(base * k));
+}
+
+/**
+ * 가산 겹(로브·림·입자·균열)의 알파 배율. `reducedGlow` → `gates.halo === false` 에서 내린다.
+ *
+ * 0 이 아닌 이유: 로브는 §3-C-1 의 **재질 본체**라 통째로 끄면 항목이 화면에서 사라진다.
+ * 광과민 대응의 목적은 "번쩍임 억제"이므로 진폭을 낮추는 것으로 충족된다.
+ */
+export function lobeAlphaScale(gates: EffectGates): number {
+  return gates.halo ? 1 : 0.4;
 }
 
 // ---------------------------------------------------------------------------
@@ -546,12 +641,36 @@ export interface HazardMote {
  * 티어를 먼저 본다. 저사양에서 입자는 가장 먼저 버릴 것이고, 그 판단이 게이트의 세부 단계에
  * 가려지면 안 된다.
  */
-export function moteBudget(tier: QualityTier, gates: EffectGates): number {
+export function moteBudget(
+  tier: QualityTier,
+  gates: EffectGates,
+  /**
+   * 모션 감소 토글. **`EffectGates` 에는 이 축이 없다** — `effectGates()` 는 `reducedMotion` 을
+   * `shake`·`hitFlash` 로만 흘려보내므로 입자는 게이트로 못 덮는다. 3차 실측이 `reducedMotion`
+   * 에서 `hazardMotes` 60개 그대로였던 것이 그 결과다. 입자는 유일하게 매 프레임 **위치가
+   * 움직이는** 겹이므로 모션 축에서 먼저 꺼져야 한다.
+   */
+  reducedMotion = false,
+): number {
   if (gates.particles === 'off') return 0;
+  if (reducedMotion) return 0;
   if (tier === 'low') return 0;
   if (gates.particles === 'min') return 3;
-  return tier === 'med' ? 5 : 10;
+  return tier === 'med' ? 7 : MOTE_BUDGET_HIGH;
 }
+
+/**
+ * high 티어 장판당 입자 수.
+ *
+ * ## 3차 반려 — 개수가 문제가 아니었다
+ * 3차는 이 값이 10 이었고 화면 전체 60개였는데, 실측 mean·국소·변화블록이 **셋 다 노이즈
+ * 바닥과 동일**했다(카르곤 0.60/0.59 · 국소 31.64/31.64 · 3.00%/3.00%). 원인은 예산이 아니라
+ * **규모**다: 실측 스프라이트가 직경 2.4~6.8px, 총 면적이 화면의 **0.08%** 였다. 어떤 지표로도
+ * 안 잡히고 눈으로도 안 보인다.
+ *
+ * 그래서 개수는 조금만 올리고 {@link MOTE_R_MIN}/{@link MOTE_R_MAX} 를 **반경 비례**로 바꿨다.
+ */
+export const MOTE_BUDGET_HIGH = 14;
 
 /** 입자 한 주기의 프레임 수(기본). 입자마다 위상이 달라 뭉치지 않는다. */
 const MOTE_PERIOD = 150;
@@ -587,11 +706,29 @@ export function moteAt(
     x: Math.cos(ang) * rr + drift,
     // 화면 좌표는 +y 가 아래라 "떠오름"은 −y 다.
     y: Math.sin(ang) * rr * 0.72 - lift,
-    // 태어나고 사라지는 포물선 — 양끝에서 정확히 0 이라 팝인·팝아웃이 없다.
-    alpha: Math.sin(Math.PI * u),
-    r: (1.6 + 2.4 * hash3(seed, i, 1, 5)) * (1 - 0.45 * u),
+    // 태어나고 사라지는 곡선 — 양끝에서 정확히 0 이라 팝인·팝아웃이 없다.
+    //
+    // 3차는 순수 `sin(πu)` 였다. 그러면 알파 0.5 이상인 구간이 수명의 절반뿐이고, 그 절반이
+    // **직경 3px 짜리 점**에 실려 있어 화면 어디에도 흔적이 없었다. 지수 0.55 를 씌워 **고원**
+    // 을 만든다: 알파 0.5 이상 구간이 수명의 76% 로 늘고, 양 끝은 여전히 정확히 0 이다.
+    alpha: Math.pow(Math.sin(Math.PI * u), MOTE_ALPHA_SHAPE),
+    // 크기를 **반경 비례**로 뒤집은 것이 3차 반려 처방의 핵심이다(위 MOTE_BUDGET_HIGH 주석).
+    r: radius * (MOTE_R_MIN + (MOTE_R_MAX - MOTE_R_MIN) * hash3(seed, i, 1, 5)) * (1 - 0.3 * u),
   };
 }
+
+/**
+ * 입자 반지름의 하한·상한(**판정 반경 대비**). 3차는 절대 px(1.6~4.0)였고 반경 100 장판에서
+ * 직경 3~8px 였다. 지금은 반경 100 에서 직경 **11~24px** 다 — 총 면적이 화면의 0.08% 에서
+ * 3% 대로 올라 `analyze.mjs` 의 mean·국소 양쪽에서 바닥을 벗어난다.
+ *
+ * 상한은 `moteAt` 의 산포 반경(0.82r)과 합쳐도 판정 반경을 넘지 않도록 잡았다
+ * (0.82 + 0.13 = 0.95 < 1).
+ */
+export const MOTE_R_MIN = 0.065;
+export const MOTE_R_MAX = 0.13;
+/** 수명 알파 곡선의 지수. 1 미만이라 고원이 생긴다(값이 작을수록 평평). */
+const MOTE_ALPHA_SHAPE = 0.55;
 
 /** 재질 종류별 입자의 부양 계수(0=바닥에 눌림, 1=완전히 떠오름). */
 export function moteRise(kind: HazardMaterialKind): number {
@@ -625,10 +762,19 @@ export interface HazardGrounding {
   readonly shadowAlpha: number;
 }
 
-/** 림 하이라이트 기본 알파. 좁고 밝아야 "패인 가장자리"가 선다. */
-export const HAZARD_RIM_ALPHA = 0.34;
-/** 접촉 그늘 기본 알파. 곱연산이라 어두운 행성에서 스스로 약해진다(groundShadow 와 같은 성질). */
-export const HAZARD_CONTACT_ALPHA = 0.3;
+/**
+ * 림 하이라이트 기본 알파. 좁고 밝아야 "패인 가장자리"가 선다.
+ *
+ * 0.34 → 0.6. 3차 실측이 톡사르에서 **정확히 바닥**, 카르곤에서 mean +0.17 이었다(3차 반려
+ * MAJOR-3). 원인은 알파와 면적 둘 다였고, 면적은 텍스처가 고쳤다(`rimLuminance` 는 광원 쪽
+ * 절반 전체의 안쪽 띠를 채운다 — 3차의 `arc` 는 원주의 43% 였다).
+ */
+export const HAZARD_RIM_ALPHA = 0.6;
+/**
+ * 접촉 그늘 기본 알파. **곱연산**이라 어두운 행성에서 스스로 약해지고(groundShadow 와 같은
+ * 성질) 밝기 총량(§2-4)에는 순감으로 기여한다 — 3차의 `+0.76pp` 순기여를 되돌리는 항목이다.
+ */
+export const HAZARD_CONTACT_ALPHA = 0.62;
 
 /**
  * 테마 광원 → 장판 접지 기하. **테마가 없으면 방향 신호를 통째로 끈다**(0) — 광원을 모르면서

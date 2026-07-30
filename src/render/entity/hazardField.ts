@@ -32,7 +32,7 @@
  * - {@link HazardFieldMaterial.dispose} 가 자기 하위 컨테이너를 직접 떼고 파괴한다.
  */
 
-import { Container, Graphics, Sprite } from 'pixi.js';
+import { Container, DisplacementFilter, Graphics, Sprite } from 'pixi.js';
 
 import { HAZARD_LAVA, HAZARD_MORTAR, HAZARD_SLOW } from '../../sim/patterns/types.js';
 import { HAZARD_CONTAMINATION } from '../../sim/modes/contamination.js';
@@ -45,33 +45,42 @@ import {
 } from './hazardHost.js';
 import {
   BLOB_TEX_SIZE,
+  CRUST_TEX_SIZE,
   GLOW_TEX_SIZE,
+  GROUND_TEX_SIZE,
+  LENS_DISP_SIZE,
   MOTE_TEX_SIZE,
   blobTexture,
+  contactTexture,
+  crustTexture,
   glowTexture,
+  lensDisplacementTexture,
   moteTexture,
+  rimTexture,
 } from './hazardTexture.js';
 import {
   MAX_FIELD_MATERIALS,
-  bandPolygon,
   hazardAmbience,
   hazardAmbienceShape,
+  hazardCrustSpec,
   hazardGrounding,
   hazardLod,
   hazardMaterialKind,
+  kindUsesDistortion,
+  lobeAlphaScale,
   lobeAt,
   lobeLife,
   lobeSpin,
   lodHasGrounding,
   lodHasMotes,
   lodLobeCount,
+  lodMoteScale,
   materialIntensity,
   mixColor,
   moteAt,
   moteBudget,
   moteRise,
   stepCharge,
-  stepHeat,
   type HazardLod,
   type HazardMaterialKind,
 } from './hazardShape.js';
@@ -99,10 +108,16 @@ interface FieldStage {
   readonly ambientAdd: Container;
   readonly ambientFog: Container;
   readonly contact: Container;
+  readonly crustShade: Container;
+  readonly crustAdd: Container;
+  /** 굴절 전용 가산 겹. **공유 변위 필터가 여기 하나에만 걸린다**(§2-3 예산). */
+  readonly lens: Container;
   readonly lobes: Container;
   readonly rim: Container;
   readonly charge: Container;
   readonly motes: Container;
+  /** 변위맵 스프라이트(렌즈 겹의 자식). 필터를 못 만들면 null. */
+  readonly lensDisp: Sprite | null;
 }
 
 let stage: FieldStage | null = null;
@@ -119,17 +134,67 @@ function makeStage(): FieldStage {
   };
   // Pixi `label` 을 박는다 — 계약 §2-4 의 귀속 절차가 겹을 하나씩 `visible=false` 로 끄고
   // 같은 정지 프레임을 다시 찍을 것을 요구한다.
+  //
+  // 순서(아래→위)가 곧 물리다: 그늘·껍질(곱연산)이 먼저 바닥을 파고, 그 위에 발광 균열과
+  // 로브가 얹히고, 림이 가장자리를 세우고, 입자가 맨 위에서 솟는다.
+  const ambientAdd = mk('hazardAmbientAdd', 'add');
+  const ambientFog = mk('hazardAmbientFog', 'normal');
+  const contact = mk('hazardContact', 'multiply');
+  const crustShade = mk('hazardCrustShade', 'multiply');
+  const crustAdd = mk('hazardCrustAdd', 'add');
+  const lens = mk('hazardLens', 'add');
+  const lobes = mk('hazardLobes', 'add');
+  const rim = mk('hazardRim', 'add');
+  const charge = mk('hazardCharge', 'add');
+  const motes = mk('hazardMotes', 'add');
   return {
     root,
-    ambientAdd: mk('hazardAmbientAdd', 'add'),
-    ambientFog: mk('hazardAmbientFog', 'normal'),
-    contact: mk('hazardContact', 'multiply'),
-    lobes: mk('hazardLobes', 'add'),
-    rim: mk('hazardRim', 'add'),
-    charge: mk('hazardCharge', 'add'),
-    motes: mk('hazardMotes', 'add'),
+    ambientAdd,
+    ambientFog,
+    contact,
+    crustShade,
+    crustAdd,
+    lens,
+    lobes,
+    rim,
+    charge,
+    motes,
+    lensDisp: attachLensFilter(lens),
   };
 }
+
+/**
+ * 굴절 겹에 **공유 변위 필터 하나**를 건다(§2-3: 장판마다 필터를 만들면 예산이 무조건 터진다).
+ *
+ * ## 무엇이 실제로 휘는가 — 한계를 먼저 적는다
+ * 이 필터는 **자기 겹의 내용만** 휜다(집광 무늬·유리 테두리). 장판 **뒤의 포탑**이 휘려면
+ * 월드 컨테이너나 `overlay`/`lavaOverlay` 캔버스에 필터가 걸려야 하는데, 그 셋은 전부
+ * `entityRenderer.ts` 소유다(레인 C 밖). 열려야 하는 심은 정확히 하나다: **`lavaOverlay` 에
+ * 시머를 거는 자리와 같은 방식으로, 굴절 장판이 있을 때 월드 컨테이너에 변위 필터를 걸어 주는
+ * 훅.** 레인 C 는 변위맵({@link lensDisplacementTexture})과 필터 파라미터를 이미 갖고 있으므로,
+ * 그 심이 열리면 스프라이트 하나를 넘기는 것으로 끝난다.
+ *
+ * 실패해도 게임은 돈다(`tryCreateFilter` 정신) — 변위맵이 없거나 필터 생성이 던지면 `null` 을
+ * 돌려주고 겹은 왜곡 없이 그려진다.
+ */
+function attachLensFilter(lens: Container): Sprite | null {
+  const tex = lensDisplacementTexture();
+  if (tex === null) return null;
+  try {
+    const sp = new Sprite(tex);
+    sp.anchor.set(0.5);
+    sp.renderable = false; // 변위맵은 화면에 나오지 않는다(필터 입력일 뿐).
+    lens.addChild(sp);
+    lens.filters = [new DisplacementFilter({ sprite: sp, scale: LENS_DISP_SCALE })];
+    return sp;
+  } catch {
+    lens.filters = [];
+    return null;
+  }
+}
+
+/** 변위 세기(px). 크게 잡으면 유리가 아니라 열파(heat haze)로 읽힌다. */
+const LENS_DISP_SCALE = 14;
 
 /**
  * 공유 레이어를 얻는다(없거나 파괴됐으면 새로 만든다).
@@ -146,6 +211,42 @@ function fieldStage(layer: Container): FieldStage {
 /** 공유 레이어를 버린다. **테스트 격리 전용**. */
 export function resetHazardFieldStage(): void {
   stage = null;
+  lensFrame = -1;
+}
+
+/**
+ * 변위맵 스프라이트를 굴절 장판 전체가 덮이게 옮긴다.
+ *
+ * 변위 필터는 **변위 스프라이트의 화면 위치**로 좌표를 읽으므로, 월드가 스크롤하는 이 게임에서
+ * 고정 위치는 성립하지 않는다. 프레임마다 굴절 장판들의 경계 상자를 모아 씌운다 — 프레임의
+ * 첫 굴절 재질이 상자를 초기화하고, 이후 재질이 확장하며, **마지막 호출이 이긴다**(재질마다
+ * 필터를 만들지 않고 하나로 덮는 유일한 방법이다).
+ */
+let lensFrame = -1;
+let lensMinX = 0;
+let lensMinY = 0;
+let lensMaxX = 0;
+let lensMaxY = 0;
+
+function coverLens(frameTick: number, x: number, y: number, r: number): void {
+  const s = stage;
+  if (s === null || s.lensDisp === null) return;
+  if (lensFrame !== frameTick) {
+    lensFrame = frameTick;
+    lensMinX = x - r;
+    lensMinY = y - r;
+    lensMaxX = x + r;
+    lensMaxY = y + r;
+  } else {
+    if (x - r < lensMinX) lensMinX = x - r;
+    if (y - r < lensMinY) lensMinY = y - r;
+    if (x + r > lensMaxX) lensMaxX = x + r;
+    if (y + r > lensMaxY) lensMaxY = y + r;
+  }
+  const w = lensMaxX - lensMinX;
+  const h = lensMaxY - lensMinY;
+  s.lensDisp.position.set((lensMinX + lensMaxX) / 2, (lensMinY + lensMaxY) / 2);
+  s.lensDisp.scale.set(Math.max(w, h) / LENS_DISP_SIZE);
 }
 
 // ---------------------------------------------------------------------------
@@ -177,14 +278,12 @@ const KIND_STYLE: Readonly<Record<HazardMaterialKind, KindStyle>> = {
   ember: { motion: 'flow', brightMix: 0.4, lobeAlpha: 0.26 },
 };
 
-/** 반경 대비 접촉 그늘 띠 두께. */
-const CONTACT_BAND = 0.16;
-/** 반경 대비 림 하이라이트 띠 두께. 그늘보다 **좁아야** 가장자리가 선다. */
-const RIM_BAND = 0.055;
-/** 접지 겹이 덮는 호의 반각(라디안). */
-const GROUND_ARC_HALF = Math.PI * 0.52;
 /** 환경 기여 falloff 링 수(공유 텍스처를 못 만들 때만 쓰는 절차적 폴백). */
 const AMBIENT_FALLBACK_RINGS = 5;
+/** 면적 재질이 덮는 반경 비율. 물질 윤곽(`EDGE_MAX_RATIO`=0.96) 안쪽에 머문다. */
+const CRUST_COVER = 0.95;
+/** 접지 텍스처가 덮는 반경 비율. 판정 반경에 맞춰야 "가장자리가 파였다"가 립과 정합한다. */
+const GROUND_COVER = 0.99;
 
 // ---------------------------------------------------------------------------
 // 재질 본체
@@ -195,21 +294,35 @@ class HazardFieldMaterial implements HazardMaterial {
 
   /** 겹별 하위 컨테이너. 각각 공유 레이어의 자식이고, 위치만 매 프레임 옮긴다. */
   private readonly ambientNode = new Container();
+  private readonly crustShadeNode = new Container();
+  private readonly crustAddNode = new Container();
   private readonly lobeNode = new Container();
   private readonly moteNode = new Container();
-  private readonly contactG = new Graphics();
-  private readonly rimG = new Graphics();
-  private readonly chargeG = new Graphics();
+  private readonly groundNode = new Container();
+  /**
+   * 림 스프라이트의 컨테이너. 접촉 그늘(곱연산)과 림(가산)은 **블렌드가 달라** 같은 겹에
+   * 못 들어가므로 하위 컨테이너가 둘 필요하다.
+   */
+  private readonly rimHolder = new Container();
+  private readonly chargeNode = new Container();
 
   private readonly lobes: Sprite[] = [];
   private readonly motes: Sprite[] = [];
+  /** 면적 재질의 가산 겹(흐름 때문에 여러 장). */
+  private readonly crustAdds: Sprite[] = [];
+  private crustShadeSprite: Sprite | null = null;
+  private contactSprite: Sprite | null = null;
+  private rimSprite: Sprite | null = null;
+  private chargeSprite: Sprite | null = null;
   /** 폴백(텍스처 없음) 경로에서 쓰는 로브 도형. 스프라이트를 못 만들 때만 채워진다. */
   private readonly lobeShapes: Graphics[] = [];
 
+  /** 열은 **호스트가 소유한다**(`HazardZone.heat`). 재질은 읽기만 한다. */
   private heat = 0;
   private chargeLevel = 0;
   private builtRadius = 0;
   private builtMotes = -1;
+  private builtLobes = -1;
   private disposed = false;
   private attached = false;
 
@@ -220,25 +333,42 @@ class HazardFieldMaterial implements HazardMaterial {
     private readonly lod: HazardLod,
   ) {
     this.name = `hazardField:${kind}:${lod}`;
-    this.ambientNode.label = this.name;
-    this.lobeNode.label = this.name;
-    this.moteNode.label = this.name;
+    for (const n of this.nodes()) n.label = this.name;
+  }
+
+  /** 이 재질의 모든 하위 컨테이너(부착·위치 갱신·회수가 같은 목록을 쓴다). */
+  private nodes(): readonly Container[] {
+    return [
+      this.ambientNode,
+      this.crustShadeNode,
+      this.crustAddNode,
+      this.lobeNode,
+      this.moteNode,
+      this.groundNode,
+      this.rimHolder,
+      this.chargeNode,
+    ];
   }
 
   onAttach(zone: HazardZone, ctx: HazardHostContext): void {
     const s = fieldStage(ctx.layer);
     const shape = hazardAmbienceShape(this.kind);
     (shape.additive ? s.ambientAdd : s.ambientFog).addChild(this.ambientNode);
+    s.crustShade.addChild(this.crustShadeNode);
+    // 굴절만 변위 필터가 걸린 전용 겹으로 간다(다른 종류를 함께 넣으면 예산 없이 전부 왜곡된다).
+    (kindUsesDistortion(this.kind) ? s.lens : s.crustAdd).addChild(this.crustAddNode);
     s.lobes.addChild(this.lobeNode);
-    s.charge.addChild(this.chargeG);
+    s.charge.addChild(this.chargeNode);
+    // 접지는 이제 **전 LOD** 다 — 공유 텍스처 스프라이트라 41장에 붙여도 드로우콜이 안 늘어난다.
     if (lodHasGrounding(this.lod)) {
-      s.contact.addChild(this.contactG);
-      s.rim.addChild(this.rimG);
+      s.contact.addChild(this.groundNode);
+      s.rim.addChild(this.rimHolder);
     }
     if (lodHasMotes(this.lod)) s.motes.addChild(this.moteNode);
     this.attached = true;
     this.chargeLevel = zone.active ? 0 : 0.35;
-    this.heat = zone.active ? 1 : 0;
+    // 열은 호스트가 소유한다 — 처음 보는 장판도 이미 자기 목표값에서 시작해 넘어온다.
+    this.heat = zone.heat;
     this.build(zone, ctx);
   }
 
@@ -246,27 +376,27 @@ class HazardFieldMaterial implements HazardMaterial {
     if (this.disposed) return;
     const settings = graphicsSettings.getSettings();
     const tick = settings.reducedMotion ? 0 : ctx.frameTick;
-    this.heat = stepHeat(this.heat, zone.active, ctx.dt);
+    // 열은 읽는다. **적분하지 않는다** — 호스트가 단일 진실이라야 같은 장판의 겹들(재질 + 채움
+    // + 빗금 + 점선)이 같은 위상을 갖는다(3차 반려 MAJOR-4 의 처방).
+    this.heat = zone.heat;
     this.chargeLevel = stepCharge(this.chargeLevel, zone.active, ctx.dt);
 
     // 예열↔활성은 **존재 여부가 아니라 강도·색·운동 속도**로 갈린다(1차 반려의 핵심 교훈).
     const it = materialIntensity(this.heat);
 
-    const wantMotes = lodHasMotes(this.lod) ? moteBudget(ctx.tier, ctx.gates) : 0;
+    const wantMotes = this.moteTarget(ctx, settings.reducedMotion);
+    const wantLobes = lodLobeCount(this.lod, ctx.tier, ctx.gates);
     if (
       Math.abs(zone.radius - this.builtRadius) > this.builtRadius * 0.02 ||
-      wantMotes !== this.builtMotes
+      wantMotes !== this.builtMotes ||
+      wantLobes !== this.builtLobes
     ) {
       this.build(zone, ctx);
     }
 
     // 하위 컨테이너는 공유 레이어의 자식이라 각자 위치를 받는다(장판별 루트가 없다).
-    this.ambientNode.position.set(zone.x, zone.y);
-    this.lobeNode.position.set(zone.x, zone.y);
-    this.moteNode.position.set(zone.x, zone.y);
-    this.contactG.position.set(zone.x, zone.y);
-    this.rimG.position.set(zone.x, zone.y);
-    this.chargeG.position.set(zone.x, zone.y);
+    for (const n of this.nodes()) n.position.set(zone.x, zone.y);
+    if (kindUsesDistortion(this.kind)) coverLens(ctx.frameTick, zone.x, zone.y, zone.radius * 1.2);
 
     // ── 환경 기여 ────────────────────────────────────────────────────────────
     const amb = hazardAmbience(this.kind, ctx.tier, ctx.gates);
@@ -281,9 +411,35 @@ class HazardFieldMaterial implements HazardMaterial {
       this.ambientNode.scale.set(s, s * 0.88); // 세로 압축 = 바닥에 누운 빛무리.
     }
 
+    // ── 면적 재질(껍질·균열·거품·렌즈) ───────────────────────────────────────
+    // §3-C-1 이 요구한 "노이즈 텍스처 기반 재질"의 본체다. 종류마다 **다른 텍스처·다른 블렌드**
+    // 라 색조가 아니라 구성이 갈린다(3차 반려 MAJOR-5).
+    const crust = hazardCrustSpec(this.kind);
+    const glowScale = lobeAlphaScale(ctx.gates);
+    // 곱연산 겹은 발광이 아니므로 halo 게이트와 무관하고, 밝기 총량에는 순감으로 기여한다.
+    if (this.crustShadeSprite !== null) {
+      this.crustShadeSprite.alpha = crust.shadeAlpha * it.presence;
+    }
+    for (let i = 0; i < this.crustAdds.length; i++) {
+      const sp = this.crustAdds[i];
+      if (sp === undefined) continue;
+      // 두 장이 서로 **반대로** 돈다 → 무늬가 회전이 아니라 변형으로 읽힌다(돌아가는 도장 방지).
+      const dir = i % 2 === 0 ? 1 : -1.37;
+      sp.rotation = tick * crust.spin * dir * it.speed;
+      const k = (this.builtRadius * CRUST_COVER * 2) / CRUST_TEX_SIZE;
+      if (this.kind === 'refract') {
+        // 렌즈는 종횡비가 어긋난 채 숨쉬어야 "굴절"로 읽힌다(3차는 이 이방성이 로브에만 있었다).
+        const breathe = 0.86 + 0.2 * Math.cos(tick * 0.021 + i);
+        sp.scale.set(k * breathe, (k * 1.06) / breathe);
+      } else {
+        sp.scale.set(k * (i === 0 ? 1 : 0.78));
+      }
+      sp.alpha = crust.addAlpha * it.presence * glowScale * (i === 0 ? 1 : 0.7);
+    }
+
     // ── 본체 로브 ────────────────────────────────────────────────────────────
     const style = KIND_STYLE[this.kind];
-    this.lobeNode.alpha = it.presence;
+    this.lobeNode.alpha = it.presence * glowScale;
     // 색은 tint 로 민다: 예열은 어둡고 탁하게, 활성은 구운 그대로. tint 는 곱연산이라 **새 색을
     // 만들 수 없다** — 색=성질 규칙이 여기로 샐 구조적 여지가 없다.
     const w = Math.round(255 * (0.45 + 0.55 * it.warmth));
@@ -322,23 +478,30 @@ class HazardFieldMaterial implements HazardMaterial {
 
     // ── 접지 ─────────────────────────────────────────────────────────────────
     // 예열에도 접지가 남는다: 장판이 지면에 파여 있다는 사실은 뜨거운지와 무관하다.
-    this.contactG.alpha = it.presence;
-    this.rimG.alpha = it.presence * (ctx.gates.halo ? 1 : 0.45);
+    // 그늘은 곱연산이라 게이트와 무관하다(발광이 아니다). 림만 halo 를 따른다.
+    this.groundNode.alpha = it.presence;
+    this.rimHolder.alpha = it.presence * glowScale;
 
     // ── 예열 고조 ────────────────────────────────────────────────────────────
+    // 3차는 이 겹이 장판마다 `Graphics` 였고(41장 = 41 드로우콜) 폴리곤 **fill + stroke** 라
+    // 예열 컷의 "동심 윤곽 8줄"에 각진 수렴 폴리곤을 한 줄씩 보태고 있었다(3차 반려 MAJOR-6).
+    // 공유 그라디언트 스프라이트로 바꾸면 드로우콜이 사라지고 **윤곽선이 하나 줄어든다** —
+    // 고조는 게이지가 아니라 압력이므로 선이 아니라 번짐이 옳은 표현이기도 하다.
     const ch = this.chargeLevel;
-    this.chargeG.visible = ch > 0.02;
-    if (this.chargeG.visible) {
-      const grow = 0.2 + 0.8 * ch;
-      this.chargeG.scale.set(grow, grow * 0.94);
-      const beat = settings.reducedMotion ? 1 : 0.72 + 0.28 * Math.sin(tick * (0.05 + 0.09 * ch));
-      this.chargeG.alpha = ch * ch * beat;
+    if (this.chargeSprite !== null) {
+      this.chargeSprite.visible = ch > 0.02;
+      if (this.chargeSprite.visible) {
+        const grow = ((this.builtRadius * (0.5 + 0.5 * ch) * 2) / GLOW_TEX_SIZE) * 1.1;
+        this.chargeSprite.scale.set(grow, grow * 0.92);
+        const beat = settings.reducedMotion ? 1 : 0.72 + 0.28 * Math.sin(tick * (0.05 + 0.09 * ch));
+        this.chargeSprite.alpha = ch * ch * beat * 0.55 * glowScale;
+      }
     }
 
     // ── 입자 ─────────────────────────────────────────────────────────────────
     if (this.motes.length > 0) {
       const rise = moteRise(this.kind);
-      this.moteNode.alpha = it.presence;
+      this.moteNode.alpha = it.presence * glowScale;
       for (let i = 0; i < this.motes.length; i++) {
         const g = this.motes[i];
         if (g === undefined) continue;
@@ -350,19 +513,18 @@ class HazardFieldMaterial implements HazardMaterial {
     }
   }
 
+  /** 이번 프레임의 입자 목표 수(LOD 배율 × 티어·게이트·모션 예산). */
+  private moteTarget(ctx: HazardHostContext, reducedMotion: boolean): number {
+    if (!lodHasMotes(this.lod)) return 0;
+    return Math.round(moteBudget(ctx.tier, ctx.gates, reducedMotion) * lodMoteScale(this.lod));
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     liveMaterials--;
     if (this.attached) {
-      for (const n of [
-        this.ambientNode,
-        this.lobeNode,
-        this.moteNode,
-        this.contactG,
-        this.rimG,
-        this.chargeG,
-      ]) {
+      for (const n of this.nodes()) {
         n.removeFromParent();
         n.destroy({ children: true });
       }
@@ -370,7 +532,12 @@ class HazardFieldMaterial implements HazardMaterial {
     }
     this.lobes.length = 0;
     this.motes.length = 0;
+    this.crustAdds.length = 0;
     this.lobeShapes.length = 0;
+    this.crustShadeSprite = null;
+    this.contactSprite = null;
+    this.rimSprite = null;
+    this.chargeSprite = null;
   }
 
   // -------------------------------------------------------------------------
@@ -384,10 +551,50 @@ class HazardFieldMaterial implements HazardMaterial {
     const accent = zone.visual.accent;
 
     this.buildAmbient(r, color, accent);
-    this.buildGrounding(r, color, accent, ctx);
-    this.buildLobes(r, color, accent);
-    this.buildCharge(r, color, accent);
-    this.buildMotes(color, accent, lodHasMotes(this.lod) ? moteBudget(ctx.tier, ctx.gates) : 0);
+    this.buildCrust(color, accent);
+    this.buildGrounding(color, accent, ctx);
+    this.buildLobes(r, color, accent, ctx);
+    this.buildCharge(color, accent);
+    this.buildMotes(color, accent, this.moteTarget(ctx, graphicsSettings.getSettings().reducedMotion));
+  }
+
+  /**
+   * 면적 재질 겹. 종류별 텍스처를 스프라이트로 얹는다 — **가산·곱연산 두 겹이 따로**이므로
+   * "빛나는 균열 + 굳은 껍질"처럼 서로 반대 부호의 무늬가 한 장판에 공존할 수 있다.
+   */
+  private buildCrust(color: number, accent: number): void {
+    for (const sp of this.crustAdds) {
+      sp.removeFromParent();
+      sp.destroy();
+    }
+    this.crustAdds.length = 0;
+    this.crustShadeSprite?.removeFromParent();
+    this.crustShadeSprite?.destroy();
+    this.crustShadeSprite = null;
+
+    const crust = hazardCrustSpec(this.kind);
+    if (crust.shade !== null) {
+      const tex = crustTexture(crust.shade);
+      if (tex !== null) {
+        const sp = new Sprite(tex);
+        sp.anchor.set(0.5);
+        sp.scale.set((this.builtRadius * CRUST_COVER * 2) / CRUST_TEX_SIZE);
+        this.crustShadeNode.addChild(sp);
+        this.crustShadeSprite = sp;
+      }
+    }
+    if (crust.add === null) return;
+    const tex = crustTexture(crust.add);
+    if (tex === null) return;
+    // 균열·거품은 장판의 **같은 물질**로 보여야 한다 — 강조색 쪽으로 조금만 민다.
+    const tone = mixColor(color, accent, this.kind === 'scorch' ? 0.1 : 0.4);
+    for (let i = 0; i < crust.flow; i++) {
+      const sp = new Sprite(tex);
+      sp.anchor.set(0.5);
+      sp.tint = tone;
+      this.crustAddNode.addChild(sp);
+      this.crustAdds.push(sp);
+    }
   }
 
   /** 환경 기여. 공유 그라디언트 텍스처 스프라이트 **1장**(드로우콜 1 · 밴딩 0). */
@@ -407,38 +614,47 @@ class HazardFieldMaterial implements HazardMaterial {
     this.ambientNode.addChild(buildAmbientFallback(r * shape.scale, tint));
   }
 
-  /** 접촉 그늘 + 림. **방향은 전적으로 테마 광원에서 나온다**(여기 방향 상수는 없다). */
-  private buildGrounding(r: number, color: number, accent: number, ctx: HazardHostContext): void {
-    this.contactG.clear();
-    this.rimG.clear();
+  /**
+   * 접촉 그늘 + 림. **방향은 전적으로 테마 광원에서 나온다**(여기 방향 상수는 없다 — 텍스처는
+   * 광원이 +x 라고 가정해 굽고, 방향은 스프라이트 `rotation` 이 실는다).
+   *
+   * 3차는 `arc` stroke 세 겹 + 한 겹이었고 톡사르에서 실측이 **정확히 바닥**이었다. 원인은
+   * 알파가 아니라 면적이다: 호 하나가 원주의 33~43% 만 덮었고 띠 두께도 반경의 16%/5.5% 였다.
+   * 텍스처는 광원 반대쪽 **절반 전체**를 42% 두께로 채운다.
+   */
+  private buildGrounding(color: number, accent: number, ctx: HazardHostContext): void {
+    for (const old of [this.contactSprite, this.rimSprite]) {
+      old?.removeFromParent();
+      old?.destroy();
+    }
+    this.contactSprite = null;
+    this.rimSprite = null;
     if (!lodHasGrounding(this.lod)) return;
     const gr = hazardGrounding(ctx.theme?.light ?? null);
     if (gr.rimAlpha <= 0 && gr.shadowAlpha <= 0) return;
     const la = Math.atan2(gr.ly, gr.lx);
-    const shadowMid = la + Math.PI;
-    for (let i = 0; i < 3; i++) {
-      const t = i / 2;
-      this.contactG
-        .arc(
-          0,
-          0,
-          r * (0.94 - CONTACT_BAND * 0.5 * t),
-          shadowMid - GROUND_ARC_HALF * (1 - 0.18 * t),
-          shadowMid + GROUND_ARC_HALF * (1 - 0.18 * t),
-        )
-        .stroke({
-          color: 0x05070c,
-          width: r * CONTACT_BAND * (1 - 0.25 * t),
-          alpha: gr.shadowAlpha * (0.5 - 0.14 * t),
-        });
+    const k = (this.builtRadius * GROUND_COVER * 2) / GROUND_TEX_SIZE;
+    const cTex = contactTexture();
+    if (cTex !== null) {
+      const sp = new Sprite(cTex);
+      sp.anchor.set(0.5);
+      sp.rotation = la;
+      sp.scale.set(k);
+      sp.alpha = gr.shadowAlpha;
+      this.groundNode.addChild(sp);
+      this.contactSprite = sp;
     }
-    this.rimG
-      .arc(0, 0, r * 0.955, la - GROUND_ARC_HALF * 0.82, la + GROUND_ARC_HALF * 0.82)
-      .stroke({
-        color: mixColor(color, accent, 0.55),
-        width: r * RIM_BAND,
-        alpha: gr.rimAlpha,
-      });
+    const rTex = rimTexture();
+    if (rTex !== null) {
+      const sp = new Sprite(rTex);
+      sp.anchor.set(0.5);
+      sp.rotation = la;
+      sp.scale.set(k);
+      sp.tint = mixColor(color, accent, 0.55);
+      sp.alpha = gr.rimAlpha;
+      this.rimHolder.addChild(sp);
+      this.rimSprite = sp;
+    }
   }
 
   /**
@@ -447,7 +663,7 @@ class HazardFieldMaterial implements HazardMaterial {
    * 밝은 코어도 윤곽선도 없다 — 1차의 코어는 "렌즈 플레어"로, 2차의 `refract` 윤곽선은
    * "다이어그램 노드"로 읽혔다. 깊이감은 로브마다 다른 `bright` 와 겹침의 통계에서 나온다.
    */
-  private buildLobes(r: number, color: number, accent: number): void {
+  private buildLobes(r: number, color: number, accent: number, ctx: HazardHostContext): void {
     for (const g of this.lobes) {
       g.removeFromParent();
       g.destroy();
@@ -459,7 +675,8 @@ class HazardFieldMaterial implements HazardMaterial {
     this.lobes.length = 0;
     this.lobeShapes.length = 0;
     const style = KIND_STYLE[this.kind];
-    const count = lodLobeCount(this.lod);
+    const count = lodLobeCount(this.lod, ctx.tier, ctx.gates);
+    this.builtLobes = count;
     const tone = mixColor(color, accent, style.brightMix);
     const tex = blobTexture();
     for (let i = 0; i < count; i++) {
@@ -482,17 +699,25 @@ class HazardFieldMaterial implements HazardMaterial {
     }
   }
 
-  /** 예열 고조 원반(단위 크기로 굽고 매 프레임 `scale` 로 키운다 — 재굽기 0). */
-  private buildCharge(r: number, color: number, accent: number): void {
-    this.chargeG.clear();
-    // 완전한 원이 아니라 유기 폴리곤이다(§2-5 UI 어휘 금지). 고조는 압력이지 게이지가 아니다.
-    const poly = bandPolygon(this.seed ^ 0x51ed270b, r, 0, 0.72, 0.94, 18);
-    this.chargeG.poly(poly, true).fill({ color, alpha: 0.14 });
-    this.chargeG.poly(poly, true).stroke({
-      color: mixColor(color, accent, 0.6),
-      width: 2.5,
-      alpha: 0.5,
-    });
+  /**
+   * 예열 고조 — **선이 아니라 번짐**이다.
+   *
+   * 3차는 유기 폴리곤 `fill` + `stroke` 였다. 그 stroke 가 예열 컷에서 "각진 수렴 폴리곤"으로
+   * 세어졌고(3차 반려 MAJOR-6), 장판마다 `Graphics` 하나라 41장에서 드로우콜 41 이었다(MAJOR-7).
+   * 공유 그라디언트 스프라이트는 둘을 한 번에 없애고, 무엇보다 **고조는 게이지가 아니라 압력**
+   * 이라는 원래 논증에 표현이 더 맞다.
+   */
+  private buildCharge(color: number, accent: number): void {
+    this.chargeSprite?.removeFromParent();
+    this.chargeSprite?.destroy();
+    this.chargeSprite = null;
+    const tex = glowTexture();
+    if (tex === null) return;
+    const sp = new Sprite(tex);
+    sp.anchor.set(0.5);
+    sp.tint = mixColor(color, accent, 0.5);
+    this.chargeNode.addChild(sp);
+    this.chargeSprite = sp;
   }
 
   /** 입자. 공유 텍스처 스프라이트(배치됨). */
@@ -505,7 +730,7 @@ class HazardFieldMaterial implements HazardMaterial {
     this.builtMotes = count;
     const tex = moteTexture();
     if (tex === null) return;
-    const tint = mixColor(color, accent, 0.55);
+    const tint = mixColor(color, accent, 0.62);
     for (let i = 0; i < count; i++) {
       const sp = new Sprite(tex);
       sp.anchor.set(0.5);
