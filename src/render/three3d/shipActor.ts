@@ -40,6 +40,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { SLOT_SIZE, type Stage3D } from './stage3d.js';
 import {
+  buildOutlineShell,
   collectEmissive,
   disposeSubtree,
   fitOrthoToObject,
@@ -194,7 +195,7 @@ const DASH_EMISSIVE = 1.35;
 /** 피격 셰이크 길이(초). 짧아야 "충격"이지 "고장"이 아니다. */
 const HIT_SHAKE_S = 0.22;
 /** 피격 지터 진폭(프러스텀 반폭 배수). 슬롯 여유 안에 들어가야 실루엣이 안 잘린다. */
-const HIT_JITTER = 0.055;
+const HIT_JITTER = 0.046;
 /** 피격 롤 지터 진폭(rad). 위치 지터와 **다른 주파수**라 둘이 한 덩어리로 안 뭉친다. */
 const HIT_ROLL = 0.22;
 
@@ -208,6 +209,19 @@ const HIT_ROLL = 0.22;
  * 올라가는 여유분**으로 남겨 둔다(그래야 대시가 사건이 된다).
  */
 const BASE_EMISSIVE = 0.1;
+
+/**
+ * 아웃라인 셸 굵기(모델 최대 치수 배율)와 색({@link buildOutlineShell}).
+ *
+ * 이 게임의 스프라이트는 전부 어두운 외곽선을 가진 픽셀아트다. 3D 렌더에는 그 선이 없어서 같은
+ * 텍셀 밀도로 그려도 나란히 두면 물러 보인다 — 없는 것은 해상도가 아니라 **경계선**이다.
+ *
+ * 색은 순흑이 아니라 아주 어두운 청색이다. 2D 감산 컨투어(`playerVisual` `CONTOUR_COLOR`)와 같은
+ * 규율 — R 을 더 깎아 차갑게 기울이면 "만화적 아웃라인"이 아니라 **그림자**로 읽힌다. 두 표현이
+ * 같은 계열이라 3D 선과 2D 컨투어가 한 겹처럼 이어진다.
+ */
+const OUTLINE_THICKNESS = 0.035;
+const OUTLINE_COLOR = 0x07121f;
 
 /** 카메라 틸트(수평에서의 각도). 보스와 **같은 값**이어야 둘이 한 세계에 있는 것으로 읽힌다. */
 const CAMERA_TILT_RAD = (62 * Math.PI) / 180;
@@ -352,7 +366,12 @@ export class ShipActor {
         def.orient === undefined
           ? undefined
           : new THREE.Euler(def.orient[0], def.orient[1], def.orient[2]);
-      this.pivot.add(normalizeModel(root, orient));
+      const norm = normalizeModel(root, orient);
+      // ⚠️ 아웃라인 셸을 **본체보다 먼저** 넣는다. 뒷면만 그리므로 순서가 화면을 바꾸지는 않지만,
+      // 셸은 정규화가 끝난 `norm` 에서 복제해야 자세 보정·스케일이 그대로 따라온다.
+      this.pivot.add(buildOutlineShell(norm, OUTLINE_THICKNESS, OUTLINE_COLOR));
+      this.pivot.add(norm);
+      // 발광은 **본체에만** 건다 — 셸은 조명을 안 받는 `MeshBasicMaterial` 이라 대상이 아니다.
       for (const m of collectEmissive(root, BASE_EMISSIVE)) this.emissiveMaterials.push(m);
       this.engineLight.color.setHex(def.engineLight);
       this.unit = fitOrthoToObject(this.camera, this.pivot, FRAME_MARGIN);

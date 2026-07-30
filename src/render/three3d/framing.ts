@@ -110,6 +110,44 @@ export function collectEmissive(
 }
 
 /**
+ * **뒷면 아웃라인 셸** — 모델을 살짝 키운 복제를 `BackSide` 로 그려 실루엣 둘레에 잉크선을 남긴다.
+ *
+ * ## 왜 필요한가
+ * 이 게임의 스프라이트는 전부 **어두운 외곽선**을 가진 픽셀아트다. 3D 렌더에는 그 선이 없어서,
+ * 같은 텍셀 밀도로 그려도 나란히 두면 3D 쪽만 **물러 보인다**(사용자 신고 2026-07-30 "흐릿하다").
+ * 텍스처 해상도나 필터링으로는 해결되지 않는다 — 없는 것은 해상도가 아니라 **경계선**이다.
+ *
+ * ## 왜 후처리(엣지 검출)가 아니라 셸인가
+ * 후처리는 전체화면 패스가 하나 더 필요하고, 이 무대는 슬롯을 scissor 로 나눠 쓰는 구조라 패스를
+ * 슬롯별로 쪼개야 한다. 셸은 드로 콜 하나로 끝나고 슬롯 구조를 건드리지 않는다. 대가는 **닫힌
+ * 메시 전제**인데(열린 면에서는 안쪽이 비친다) Meshy 출력은 닫혀 있다.
+ *
+ * 굵기는 모델 단위(최대 치수 = 1) 배율이라 슬롯 해상도가 바뀌어도 화면상 굵기가 비율로 따라간다.
+ */
+export function buildOutlineShell(
+  source: THREE.Object3D,
+  thickness: number,
+  color: number,
+): THREE.Object3D {
+  // ⚠️ geometry 는 **공유**한다(복제 금지) — 아웃라인은 같은 형상을 뒤집어 그리는 것뿐이고,
+  // 복제하면 정점 버퍼가 두 배가 되면서 `disposeSubtree` 가 원본까지 두 번 해제하게 된다.
+  const shell = source.clone(true);
+  shell.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh)) return;
+    obj.material = new THREE.MeshBasicMaterial({
+      color,
+      side: THREE.BackSide,
+      // 깊이 기록은 하되 톤 매핑·안개는 받지 않는다 — 선은 조명 상태와 무관하게 같은 값이어야
+      // 실루엣이 일정하게 읽힌다.
+      fog: false,
+      toneMapped: false,
+    });
+  });
+  shell.scale.multiplyScalar(1 + thickness);
+  return shell;
+}
+
+/**
  * 액터의 GPU 자원을 회수한다. three 의 geometry/material/texture 는 GC 대상이 아니라 명시
  * `dispose()` 로만 GPU 에서 내려간다 — 모델을 갈아 끼우는 경로가 있으면 그대로 누적된다.
  *

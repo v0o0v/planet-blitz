@@ -29,7 +29,7 @@
       Meshy 로 만든 <b>플레이어 기체 GLB</b> 를 게임과 <b>동일한 경로</b>로 렌더한다 —
       오프스크린 three.js → 아틀라스 → Pixi 텍스처(<code>src/render/three3d/</code>).<br />
       각 칸은 조종 상황 하나를 <b>대본으로 재생</b>하고, 액터(<code>ShipActor.update</code>)를
-      직접 구동한다. 인게임과 같은 160px 슬롯을 nearest 확대해 픽셀감을 유지한다.<br />
+      직접 구동한다. 인게임과 <b>같은 해상도로 렌더한 원본</b>을 그대로 보여준다 — 화면에서는 이걸 nearest 로 약 2배 확대하므로 픽셀 경계가 선다.<br />
       ⚠️ <b>요(yaw)는 여기 없다</b> — 기수 방향은 인게임에서 Pixi 스프라이트 회전이 쥔다. 이
       뷰어의 기체는 늘 <b>기수가 오른쪽(+X)</b> 을 향한 채 뱅크·피치·대시·피격만 보여준다.
     </p>
@@ -38,7 +38,7 @@
 
     <script type="module">
       import * as THREE from 'three';
-      import { Stage3D, SLOT_SIZE } from '/src/render/three3d/stage3d.ts';
+      import { Stage3D, SLOT_SIZE, slotRes } from '/src/render/three3d/stage3d.ts';
       import { ShipActor } from '/src/render/three3d/shipActor.ts';
 
       // 결정적 모드는 칸마다 액터를 새로 로드한다(무대 슬롯이 하나뿐이라 순차여야 한다). 캐시가
@@ -47,6 +47,8 @@
       THREE.Cache.enabled = true;
 
       const CRUISE = 900;
+      /** 기체 슬롯의 렌더 해상도. 인게임에서 nearest 로 확대되는 그 원본 크기다. */
+      const RES = slotRes('player');
 
       // 각 칸은 [라벨, 설명, t(초) → ShipVisualState] 다. 대본이라 상태가 연속으로 흘러
       // 스프링·포락선이 실제 조종에서와 같은 방식으로 반응한다(정적 포즈로는 2차 운동이 안 보인다).
@@ -113,8 +115,10 @@
         const cell = document.createElement('div');
         cell.className = 'cell';
         const cv = document.createElement('canvas');
-        cv.width = SLOT_SIZE;
-        cv.height = SLOT_SIZE;
+        // ⚠️ 격자 칸(SLOT_SIZE)이 아니라 **그 슬롯의 렌더 해상도**다. 칸 크기로 잘라내면 빈
+        // 여백까지 끌어와 기체가 칸 구석에 작게 박힌다.
+        cv.width = RES;
+        cv.height = RES;
         cell.append(cv);
         const l = document.createElement('div');
         l.className = 'label';
@@ -175,8 +179,8 @@
         const SX = SLOT_SIZE;
         const draw = (c) => {
           c.stage.render();
-          c.ctx.clearRect(0, 0, SLOT_SIZE, SLOT_SIZE);
-          c.ctx.drawImage(c.stage.canvas, SX, 0, SLOT_SIZE, SLOT_SIZE, 0, 0, SLOT_SIZE, SLOT_SIZE);
+          c.ctx.clearRect(0, 0, RES, RES);
+          c.ctx.drawImage(c.stage.canvas, SX, 0, RES, RES, 0, 0, RES, RES);
         };
 
         // ── 결정적 스텝 모드(`?t=<초>`) ──

@@ -1356,10 +1356,21 @@ export class EntityRenderer {
               // 뒷부분에서 e.hp 로 갱신되므로 여기서는 아직 직전 프레임 값이다.
               hit: tracked.hp > e.hp,
             });
-            // 표시 크기는 **건드리지 않는다** — 헤일로·접지 그림자가 첫 등장 시 그 크기에서
-            // 파생되므로, 3D 로 갈아타는 시점에 따라 크기가 달라지는 순서 의존 결함이 된다.
             const tex = stage.textureOf('player');
-            if (tracked.sprite.texture !== tex) tracked.sprite.texture = tex;
+            if (tracked.sprite.texture !== tex) {
+              tracked.sprite.texture = tex;
+              // ⚠️ **표시 크기를 다시 못 박아야 한다.** Pixi v8 `Sprite` 는 `setSize` 의 결과를
+              // **스케일**로 들고 있고 `width` 는 `texture.orig.width × scale` 로 파생된다 — 즉
+              // 텍스처를 더 큰 프레임으로 갈아 끼우면 **화면 크기가 그 비율로 커진다**.
+              // `player.png` 는 64px 인데 3D 프레임은 슬롯 해상도라, 이걸 안 하면 기체가 조용히
+              // 2.5배로 부푼다(실측: 96 → 240 디자인 유닛, 사용자 신고 "흐릿하다"의 절반이 이것이었다 —
+              // 부푼 만큼 확대율이 1.0 이 돼 픽셀 경계가 사라졌다).
+              //
+              // 크기를 **생성 시점과 같은 식으로** 다시 계산한다(같은 함수·같은 인자) — 헤일로·접지
+              // 그림자가 첫 등장 시 파생한 크기와 어긋나지 않는다.
+              const size = displaySize(e.kind, e.radius, ART_SCALE);
+              tracked.sprite.setSize(size, size);
+            }
           }
         }
         // 플레이어 보간 위치·반경 캡처 — 루프 뒤 그레이징(AC-4.5)·머즐(AC-4.7)·레벨업 링(AC-4.6)이 쓴다.

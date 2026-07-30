@@ -25,6 +25,11 @@
  * (app.ts 전역 기본값)로 확대하면, 부드러운 3D 가 아니라 **움직이는 픽셀아트**가 나온다.
  * 주변 픽셀 적·배경과 톤이 충돌하지 않는 이유가 이것이다.
  *
+ * ⚠️ "작게"는 **화면 표시 크기 대비**다. 슬롯마다 표시 크기가 다르므로 렌더 해상도도 슬롯마다
+ * 달라야 한다({@link SLOT_RES}) — 격자 칸 크기(`SLOT_SIZE`)를 그대로 물려받으면 표시 크기가
+ * 작은 슬롯에서 **확대율이 1.0 이 되어 픽셀 경계가 아예 서지 않는다**. 플레이어 기체가 실제로
+ * 그랬고 화면에서 흐릿하다는 신고를 받았다(2026-07-30).
+ *
  * ── 결정론(ADR-0005) ── render-only. sim 에 아무것도 쓰지 않고 스냅샷만 읽으므로 골든 해시
  * 불변이다. 시간축도 sim 틱이 아니라 벽시계(연출 전용)를 쓴다.
  *
@@ -35,14 +40,53 @@
 import * as THREE from 'three';
 import { CanvasSource, Rectangle, Texture } from 'pixi.js';
 
-/** 슬롯 한 칸의 렌더 해상도(px). 표시 크기보다 작게 잡아 nearest 확대로 픽셀감을 만든다. */
+/** 아틀라스 격자 **한 칸의 크기**(px). 슬롯의 실제 렌더 해상도는 이 이하다({@link SLOT_RES}). */
 export const SLOT_SIZE = 160;
 
-/** 아틀라스 슬롯 이름 — 칸을 늘릴 때 여기에 추가한다(플레이어 기체가 다음 차례). */
+/** 아틀라스 슬롯 이름 — 칸을 늘릴 때 여기에 추가한다. */
 export type Slot3D = 'boss' | 'player';
 
 /** 슬롯 → 아틀라스 격자 열 인덱스. 캔버스는 `SLOT_ORDER.length × SLOT_SIZE` 폭이 된다. */
 const SLOT_ORDER: readonly Slot3D[] = ['boss', 'player'];
+
+/**
+ * 슬롯별 **렌더 해상도**(px). 격자 칸(`SLOT_SIZE`) 안의 좌상단 정사각형만 쓴다.
+ *
+ * ## 왜 슬롯마다 달라야 하는가 — 픽셀아트 정합은 **비율**의 문제다
+ * 이 레이어의 룩은 "슬롯을 표시 크기보다 **작게** 렌더하고 nearest 로 확대"에서 나온다(파일 헤더).
+ * 그런데 "작게"는 상대적이다 — 화면 표시 크기가 슬롯마다 다르기 때문이다:
+ *
+ * 기준은 **원래의 2D 아트가 가지고 있던 텍셀 밀도**다. 기체는 `player.png` 64px 이 표시 크기 96
+ * 디자인 유닛에 들어가 **1.5배 확대**로 그려졌다 — 그 확대가 픽셀 경계를 만들고, 그게 이 게임의
+ * 룩이다. 3D 슬롯을 그 원본과 같은 64px 으로 잡으면 텍셀 밀도가 정확히 같아진다.
+ *
+ * | | 표시(디자인 유닛) | 슬롯 | 확대 |
+ * |---|---|---|---|
+ * | `player.png` (기존 2D) | 96 | 64 | 1.5배 |
+ * | 기체 3D (수정 전) | **240**(부풀었다) | 160 | **1.0배 → 확대 없음** |
+ * | 기체 3D (수정 후) | 96 | **64** | **1.5배** |
+ * | 보스 | — | 160 | — |
+ *
+ * 수정 전에는 **두 결함이 겹쳐** 있었다: ⓐ 텍스처 프레임이 커지면서 스프라이트가 2.5배로 부풀었고
+ * (`entityRenderer` 의 `setSize` 재적용 주석이 정본) ⓑ 그래서 슬롯과 화면 크기가 같아져 확대가
+ * 아예 일어나지 않았다. 결과가 "흐릿하다"는 신고였다(2026-07-30).
+ *
+ * 즉 이건 튜닝이 아니라 **계약 복원**이다. 새 슬롯을 추가할 때는 그 엔티티의 **2D 아트 크기**를
+ * 그대로 슬롯 해상도로 잡아라 — `SLOT_SIZE` 를 물려받으면 조용히 확대율이 사라진다.
+ *
+ * ⚠️ 보스(160)는 이 레인에서 **건드리지 않았다**. `boss.png` 는 128px 이라 같은 유형의 부풀림
+ * (1.25배)이 남아 있지만, 보스의 `FRAME_MARGIN` 은 그 크기를 보면서 눈으로 맞춘 값이라 지금
+ * 고치면 화면의 보스가 20% 작아진다 — 사용자가 요청하지 않은 룩 변경이므로 별도 판단 사항이다.
+ */
+const SLOT_RES: Record<Slot3D, number> = {
+  boss: SLOT_SIZE,
+  player: 64,
+};
+
+/** 슬롯의 렌더 해상도(px). 뷰어·테스트가 아틀라스에서 그 칸을 잘라낼 때 쓴다. */
+export function slotRes(slot: Slot3D): number {
+  return SLOT_RES[slot];
+}
 
 /**
  * 한 장의 캔버스에 여러 3D 액터를 나눠 그리고 Pixi 텍스처로 넘기는 무대.
@@ -71,8 +115,10 @@ export class Stage3D {
     // 반드시 `renderer.extract` 로 **화면에 나간 스프라이트**를 재야 한다.
     this.source = new CanvasSource({ resource: canvas });
     for (const [i, slot] of SLOT_ORDER.entries()) {
-      // Pixi frame 은 좌상단 원점(이미지 좌표계)이라 슬롯 열을 그대로 x 로 쓴다.
-      const frame = new Rectangle(i * SLOT_SIZE, 0, SLOT_SIZE, SLOT_SIZE);
+      // Pixi frame 은 좌상단 원점(이미지 좌표계)이라 슬롯 열을 그대로 x 로 쓴다. 렌더 해상도가
+      // 칸보다 작은 슬롯은 칸의 **좌상단 정사각형**만 차지한다({@link SLOT_RES}).
+      const res = SLOT_RES[slot];
+      const frame = new Rectangle(i * SLOT_SIZE, 0, res, res);
       this.textures.set(slot, new Texture({ source: this.source, frame }));
     }
   }
@@ -147,26 +193,27 @@ export class Stage3D {
     const mounted = this.scenes.get(slot);
     if (mounted === undefined) return null;
     const i = SLOT_ORDER.indexOf(slot);
+    const res = SLOT_RES[slot];
     const x = i * SLOT_SIZE;
-    this.renderer.setViewport(x, this.canvas.height - SLOT_SIZE, SLOT_SIZE, SLOT_SIZE);
-    this.renderer.setScissor(x, this.canvas.height - SLOT_SIZE, SLOT_SIZE, SLOT_SIZE);
+    this.renderer.setViewport(x, this.canvas.height - res, res, res);
+    this.renderer.setScissor(x, this.canvas.height - res, res, res);
     this.renderer.clear(true, true, true);
     this.renderer.render(mounted.scene, mounted.camera);
 
     const probe = document.createElement('canvas');
-    probe.width = SLOT_SIZE;
-    probe.height = SLOT_SIZE;
+    probe.width = res;
+    probe.height = res;
     const ctx = probe.getContext('2d', { willReadFrequently: true });
     if (ctx === null) return null;
-    ctx.drawImage(this.canvas, x, 0, SLOT_SIZE, SLOT_SIZE, 0, 0, SLOT_SIZE, SLOT_SIZE);
-    const d = ctx.getImageData(0, 0, SLOT_SIZE, SLOT_SIZE).data;
-    let minX = SLOT_SIZE;
+    ctx.drawImage(this.canvas, x, 0, res, res, 0, 0, res, res);
+    const d = ctx.getImageData(0, 0, res, res).data;
+    let minX = res;
     let maxX = -1;
-    let minY = SLOT_SIZE;
+    let minY = res;
     let maxY = -1;
-    for (let py = 0; py < SLOT_SIZE; py++) {
-      for (let px = 0; px < SLOT_SIZE; px++) {
-        if (d[(py * SLOT_SIZE + px) * 4 + 3]! <= 8) continue;
+    for (let py = 0; py < res; py++) {
+      for (let px = 0; px < res; px++) {
+        if (d[(py * res + px) * 4 + 3]! <= 8) continue;
         if (px < minX) minX = px;
         if (px > maxX) maxX = px;
         if (py < minY) minY = py;
@@ -174,13 +221,13 @@ export class Stage3D {
       }
     }
     if (maxX < 0) return null;
-    // 슬롯 전체가 2×half 이므로 1px = 2/SLOT_SIZE (half 단위).
-    const k = 2 / SLOT_SIZE;
+    // 슬롯 전체가 2×half 이므로 1px = 2/res (half 단위).
+    const k = 2 / res;
     return {
       up: minY * k,
-      down: (SLOT_SIZE - 1 - maxY) * k,
+      down: (res - 1 - maxY) * k,
       left: minX * k,
-      right: (SLOT_SIZE - 1 - maxX) * k,
+      right: (res - 1 - maxX) * k,
     };
   }
 
@@ -200,10 +247,12 @@ export class Stage3D {
       if (!this.activeSlots.has(slot)) continue;
       const mounted = this.scenes.get(slot);
       if (mounted === undefined) continue;
-      // GL viewport 는 좌하단 원점이지만 슬롯이 한 줄이라 y=0 으로 Pixi frame 과 일치한다.
+      // GL viewport 는 좌하단 원점이라, 칸의 **좌상단**(Pixi frame 원점)에 맞추려면 y 를
+      // `h - res` 로 올려야 한다. 슬롯이 한 줄이므로 x 는 칸 시작 그대로다.
       const x = i * SLOT_SIZE;
-      this.renderer.setViewport(x, h - SLOT_SIZE, SLOT_SIZE, SLOT_SIZE);
-      this.renderer.setScissor(x, h - SLOT_SIZE, SLOT_SIZE, SLOT_SIZE);
+      const res = SLOT_RES[slot];
+      this.renderer.setViewport(x, h - res, res, res);
+      this.renderer.setScissor(x, h - res, res, res);
       this.renderer.clear(true, true, true);
       this.renderer.render(mounted.scene, mounted.camera);
     }
