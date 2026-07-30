@@ -36,8 +36,17 @@
  *  additive-optional 이라 마이그레이션은 스탬프만 올리고(`migrateV6toV7`) 실제 파싱은
  *  `normalizeGuardianRecords`(build 부재 = 소집 비활성)가 맡는다. 구 수호기는 build 없이 정규화된다.
  *  ⚠️ DB 변경 없음 — `profiles.save` 는 불투명 jsonb. (별개로 원격 guardians 테이블에 build
- *  jsonb 컬럼을 더하는 마이그레이션 파일은 작성하되 원격 적용은 Wave 2 로 이월한다.) */
-export const SAVE_VERSION = 7;
+ *  jsonb 컬럼을 더하는 마이그레이션 파일은 작성하되 원격 적용은 Wave 2 로 이월한다.)
+ *
+ *  v8 (액티브 스킬, ADR-0041): `Ship.activeSlots`(장착 2칸) 신설 + `GuardianBuild` 에도 같은
+ *  2칸 추가. additive 라 마이그레이션은 스탬프만 올리고(`migrateV7toV8`), 실제 채움은
+ *  `normalizeShip`(빈 슬롯 2칸)과 `normalizeGuardianRecords` 가 맡는다 — **기존 guardian
+ *  레코드까지 정규화**해야 "열려 있는데 안 끼워져 있는" 상태가 안 생긴다(계획 PM-3).
+ *  ⚠️ **V7 로의 다운그레이드 경로는 없다**(계획 B-9). 기능을 폐기해도 V8 은 유지하고
+ *  레지스트리를 비운다 — 슬롯이 항상 빈 배열이면 `activeSlots` 가 스탬프되지 않아
+ *  `runConfig`·`hashWorld` 가 전부 기존과 바이트 동일하다.
+ *  ⚠️ DB 변경 없음 — `profiles.save` 는 불투명 jsonb. */
+export const SAVE_VERSION = 8;
 
 // ---------------------------------------------------------------------------
 // Rarity

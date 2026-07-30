@@ -27,6 +27,8 @@ import {
   normalizeShipTypeId,
   zeroSkillInvest as registryZeroSkillInvest,
 } from '../../data/ships/index.js';
+import { activeById } from '../../data/ships/actives/index.js';
+import { ACTIVE_SLOT_COUNT } from '../../data/ships/actives/types.js';
 import type { InvasionLayers } from '../sim/invasion/types.js';
 import { emptyLineage } from '../../data/lineage.js';
 import type { LineageState } from '../../data/lineage.js';
@@ -102,6 +104,17 @@ export interface Ship {
    * 로 접혀 `WorldConfig.skillInvest` 가 된다.
    */
   skillInvest: number[];
+  /**
+   * 장착한 액티브 스킬 2칸(ADR-0041 · SAVE_VERSION 8). **길이 2 고정**, 빈 슬롯은 `null`.
+   * 사람이 읽는 문자열 id 를 저장한다(`data/ships/actives` 레지스트리의 `ActiveSkillDef.id`).
+   *
+   * 해금은 `skillInvest` 에서 **파생**하므로 여기 저장하지 않는다(AC-13) — 이 배열은 "열린 것
+   * 중 무엇을 끼웠는가"라는 독립 선택만 담는다. 그래서 예비역 소집(ADR-0024)에서 동결된
+   * `skillInvest` 만으로는 복원되지 않고 `GuardianBuild` 에 별도로 박제해야 한다(계획 PM-3).
+   *
+   * 정수 wire 값으로의 변환은 `buildRunConfig` **한 곳에서만** 일어난다(단일 정본).
+   */
+  activeSlots: (string | null)[];
 }
 
 /** Per-planet clear progress (drives 개방 상한 산정, ADR-0022). */
@@ -206,6 +219,15 @@ export interface GuardianBuild {
   readonly equipped: Partial<Record<EquipSlotId, Item>>;
   /** 스킬 투자 벡터 복사(길이 = shipTypeNodes(typeId).length). */
   readonly skillInvest: number[];
+  /**
+   * 퇴역 순간의 액티브 스킬 장착 2칸 **박제**(ADR-0041 · 계획 PM-3). 길이 2, 빈 슬롯 `null`.
+   *
+   * ⚠️ 이 필드가 없으면 "열려 있는데 안 끼워져 있는" 상태가 된다 — 장착 슬롯은 `skillInvest`
+   * 파생이 **아니라** `Ship` 의 독립 저장이라, 동결된 투자 벡터만으로는 복원되지 않는다.
+   * 소집 런에서 z/x 가 죽은 키가 되는 결함이 정확히 이 형태였다(ADR-0041 "예비역 소집" 절).
+   * 구 레코드(V7 이전)는 `normalizeGuardianRecords` 가 빈 슬롯 2칸으로 정규화한다.
+   */
+  readonly activeSlots: (string | null)[];
 }
 
 /** 로컬 세이브의 수호 기체 레코드(서버 guardians 미러, ADR-0007). */
@@ -277,7 +299,17 @@ function shipTypeNodes(typeId: number): readonly SkillNode[] {
 // ---------------------------------------------------------------------------
 
 function defaultShip(typeId = 0, id = 'ship-0', name = '초기 전투기'): Ship {
-  return { id, name, typeId, level: 1, xp: 0, equipped: {}, skillInvest: zeroSkillInvest(typeId) };
+  return {
+    id,
+    name,
+    typeId,
+    level: 1,
+    xp: 0,
+    equipped: {},
+    skillInvest: zeroSkillInvest(typeId),
+    // 액티브 스킬 장착 2칸(ADR-0041) — 신규 기체는 투자 0이라 아무것도 열려 있지 않다.
+    activeSlots: [null, null],
+  };
 }
 
 /**
@@ -532,7 +564,19 @@ export function migrate(raw: unknown): Profile {
   if (version < 5) data = migrateV4toV5(data);
   if (version < 6) data = migrateV5toV6(data);
   if (version < 7) data = migrateV6toV7(data);
+  if (version < 8) data = migrateV7toV8(data);
   return normalizeProfile(data);
+}
+
+/**
+ * v7 → v8 (액티브 스킬, ADR-0041): `Ship.activeSlots` 와 `GuardianBuild.activeSlots` 신설.
+ * 둘 다 additive 라 마이그레이션은 **스탬프만 올린다**(`migrateV6toV7`·`migrateV1toV2` 선례).
+ * 실제 채움은 `normalizeShip` → `normalizeActiveSlots`(빈 슬롯 2칸)와
+ * `normalizeGuardianRecords` 가 맡으며, **기존 guardian 레코드도 그 경로를 반드시 통과**하므로
+ * 구 수호기는 빈 슬롯 2칸으로 정규화된다(계획 PM-3 — "열려 있는데 안 끼워져 있는" 상태 방지).
+ */
+function migrateV7toV8(v7: Record<string, unknown>): Record<string, unknown> {
+  return { ...v7, saveVersion: 8 };
 }
 
 /**
@@ -783,7 +827,14 @@ function normalizeGuardianBuild(v: unknown): GuardianBuild | undefined {
       if (isValidItem(item)) equipped[slot as EquipSlotId] = item;
     }
   }
-  return { typeId, equipped, skillInvest: normalizeSkillInvest(d.skillInvest, typeId) };
+  return {
+    typeId,
+    equipped,
+    skillInvest: normalizeSkillInvest(d.skillInvest, typeId),
+    // 액티브 장착 박제(v8, 계획 PM-3). 구 레코드는 필드가 없으므로 빈 슬롯 2칸으로 정규화된다 —
+    // **기존 guardian 레코드까지 정규화**가 AC-15 의 요구다.
+    activeSlots: normalizeActiveSlots(d.activeSlots, typeId),
+  };
 }
 
 /** 저장된 수호 기체 레코드 배열을 정규화(손상 항목은 스킵). */
@@ -853,7 +904,32 @@ function normalizeShip(v: unknown): Ship | null {
     xp: Math.max(0, numOr(s.xp, 0)),
     equipped,
     skillInvest: normalizeSkillInvest(s.skillInvest, typeId),
+    activeSlots: normalizeActiveSlots(s.activeSlots, typeId),
   };
+}
+
+/**
+ * 액티브 스킬 장착 2칸을 정규화한다(ADR-0041 · SAVE_VERSION 8).
+ *
+ * **길이 2 고정 · 빈 슬롯 `null` · 중복 제거 · 그 기체 타입의 스킬이 아니면 탈락**.
+ * `typeId` 검사가 중요한 이유: 하네스 치트나 손상 세이브가 타입을 바꿔도 옛 타입의 스킬이
+ * 슬롯에 남으면 런에서 조용히 무발동이 된다(sim 이 `shipTypeId` 불일치를 걸러낸다).
+ * 여기서 미리 떨어뜨려 UI 와 sim 이 같은 것을 본다.
+ */
+function normalizeActiveSlots(v: unknown, typeId: number): (string | null)[] {
+  const out: (string | null)[] = [null, null];
+  if (!Array.isArray(v)) return out;
+  const seen = new Set<string>();
+  for (let i = 0; i < ACTIVE_SLOT_COUNT; i++) {
+    const raw = v[i];
+    if (typeof raw !== 'string') continue;
+    if (seen.has(raw)) continue;
+    const def = activeById(raw);
+    if (def === undefined || def.shipTypeId !== typeId) continue;
+    seen.add(raw);
+    out[i] = raw;
+  }
+  return out;
 }
 
 function normalizeItems(v: unknown): Item[] {

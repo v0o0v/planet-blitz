@@ -361,6 +361,7 @@ export const EN = {
   'tutorial.hint1': 'Defeat enemies to collect XP gems. Leveling up lets you pick a powerup.',
   'tutorial.hint2': 'Dash to dodge enemy fire. Dodging dense barrages is the smart play.',
   'tutorial.hint3': 'Grabbing your first gear reveals the base. Keep pushing!',
+  'tutorial.hint4': 'Press Z or X to trigger your active skills once unlocked.',
   'tutorial.drop': 'Gear acquired! Finish this run to maintain it at the base.',
 
   // --- 레벨업 파워업 선택 ---
@@ -398,7 +399,8 @@ export const EN = {
   'encounter.action.decline': 'Ignore (Q)',
   'encounter.detour.title': 'Inside the Treasure Vault',
   'encounter.detour.remain': 'Time left {sec}s',
-  'encounter.detour.exit': 'Leave now (X)',
+  // detour 이탈 키는 `KeyX` → `KeyQ` 로 이설됐다(ADR-0041 — `x` 는 액티브 슬롯 2가 쓴다).
+  'encounter.detour.exit': 'Leave now (Q)',
   'encounter.hint.keys': 'Click or keys {keys}',
 
   // --- 도발 스티커 12종(data/stickers.ts 인덱스 계약과 id 로 연결) ---
@@ -1479,6 +1481,126 @@ export const EN = {
   'def3.cmd.err.failed': 'Server rejected the request.',
   'def3.cmd.err.offline': 'Not connected.',
   'def3.cmd.ok.upgrade': 'Upgraded.',
+
+  // 액티브 스킬 42종 i18n (ADR-0041 · .omc/plans/active-skills-catalog.md 저작 카탈로그 정본).
+  'activeSkill.as_striker_firepower_lo.name': 'Straight Volley',
+  'activeSkill.as_striker_firepower_lo.desc':
+    'Fires 12 beam bolts in a fan toward the input direction.',
+  'activeSkill.as_striker_firepower_hi.name': 'Full Salvo',
+  'activeSkill.as_striker_firepower_hi.desc':
+    'Releases 24 beam bolts in every direction at once.',
+  'activeSkill.as_striker_survival_lo.name': 'Guard Field',
+  'activeSkill.as_striker_survival_lo.desc': 'Ignores all damage for 180 ticks.',
+  'activeSkill.as_striker_survival_hi.name': 'Bulwark Protocol',
+  'activeSkill.as_striker_survival_hi.desc':
+    'Invulnerable for 300 ticks; repairs some hull when it ends.',
+  'activeSkill.as_striker_mobility_lo.name': 'Assault Thrust',
+  'activeSkill.as_striker_mobility_lo.desc':
+    'Instantly surges 600 units along the input direction.',
+  'activeSkill.as_striker_mobility_hi.name': 'Double Vault',
+  'activeSkill.as_striker_mobility_hi.desc': 'Vaults twice for a total of 900 units.',
+  'activeSkill.as_bruiser_blade_lo.name': 'Plate Shatter',
+  'activeSkill.as_bruiser_blade_lo.desc':
+    'Burns every armor stack, hurling shrapnel in proportion.',
+  'activeSkill.as_bruiser_blade_hi.name': 'Overplate Cleave',
+  'activeSkill.as_bruiser_blade_hi.desc':
+    'Tops armor to maximum, then spends it all on 24 cleaving shots.',
+  'activeSkill.as_bruiser_morph_lo.name': 'Ram Charge',
+  'activeSkill.as_bruiser_morph_lo.desc': 'Plows 600 units forward and gains 3 armor stacks.',
+  'activeSkill.as_bruiser_morph_hi.name': 'Breaker Charge',
+  'activeSkill.as_bruiser_morph_hi.desc': 'Rams 900 units through and fills armor to maximum.',
+  'activeSkill.as_bruiser_fortify_lo.name': 'Locked Plating',
+  'activeSkill.as_bruiser_fortify_lo.desc': 'Armor stays pinned at maximum for 180 ticks.',
+  'activeSkill.as_bruiser_fortify_hi.name': 'Rupture Plating',
+  'activeSkill.as_bruiser_fortify_hi.desc':
+    'Pins armor for 300 ticks, then detonates all of it.',
+  'activeSkill.as_arccaster_chain_lo.name': 'Forced Charge',
+  'activeSkill.as_arccaster_chain_lo.desc':
+    'Enters overcharge without standing still and looses 12 arcs.',
+  'activeSkill.as_arccaster_chain_hi.name': 'Full Discharge',
+  'activeSkill.as_arccaster_chain_hi.desc':
+    'Dumps the whole overcharge as arcs scaled to what was stored.',
+  'activeSkill.as_arccaster_barrage_lo.name': 'Phase Blink',
+  'activeSkill.as_arccaster_barrage_lo.desc': 'Blinks 600 units without losing overcharge.',
+  'activeSkill.as_arccaster_barrage_hi.name': 'Apex Leap',
+  'activeSkill.as_arccaster_barrage_hi.desc':
+    'Leaps 900 units and lands at maximum overcharge.',
+  'activeSkill.as_arccaster_barrier_lo.name': 'Kinetic Charge',
+  'activeSkill.as_arccaster_barrier_lo.desc':
+    'Overcharge keeps building while moving for 180 ticks.',
+  'activeSkill.as_arccaster_barrier_hi.name': 'Locked Overcharge',
+  'activeSkill.as_arccaster_barrier_hi.desc':
+    'Overcharge is pinned at maximum for 300 ticks.',
+  'activeSkill.as_phantom_assassin_lo.name': 'Shadow Break',
+  'activeSkill.as_phantom_assassin_lo.desc':
+    'Snaps cloak early, throwing 12 daggers carrying the break bonus.',
+  'activeSkill.as_phantom_assassin_hi.name': 'Flicker Assassination',
+  'activeSkill.as_phantom_assassin_hi.desc':
+    'Enters and exits cloak instantly, loading all 24 shots with the break bonus.',
+  'activeSkill.as_phantom_phase_lo.name': 'Phase Glide',
+  'activeSkill.as_phantom_phase_lo.desc':
+    'Slides 600 units and advances the cloak timer by 120 ticks.',
+  'activeSkill.as_phantom_phase_hi.name': 'Abyss Step',
+  'activeSkill.as_phantom_phase_hi.desc':
+    'Phases 900 units and enters cloak the moment it lands.',
+  'activeSkill.as_phantom_disrupt_lo.name': 'Held Cloak',
+  'activeSkill.as_phantom_disrupt_lo.desc':
+    'Hits no longer reset the cloak cycle for 180 ticks.',
+  'activeSkill.as_phantom_disrupt_hi.name': 'Endless First Strike',
+  'activeSkill.as_phantom_disrupt_hi.desc':
+    'The cloak-break bonus never gets consumed for 300 ticks.',
+  'activeSkill.as_hatchling_brood_lo.name': 'Egg Scatter',
+  'activeSkill.as_hatchling_brood_lo.desc':
+    'Scatters 12 egg shots and pulls the next hatch much closer.',
+  'activeSkill.as_hatchling_brood_hi.name': 'Clutch Burn',
+  'activeSkill.as_hatchling_brood_hi.desc':
+    'Burns all hatch progress to erupt 24 egg shots at once.',
+  'activeSkill.as_hatchling_nurture_lo.name': 'Egg Roll',
+  'activeSkill.as_hatchling_nurture_lo.desc': 'Rolls 600 units and nudges the hatch timer forward.',
+  'activeSkill.as_hatchling_nurture_hi.name': 'Nest Leap',
+  'activeSkill.as_hatchling_nurture_hi.desc':
+    "Leaps 900 units and advances the hatch by 12 kills' worth.",
+  'activeSkill.as_hatchling_shelter_lo.name': 'Warm Brooding',
+  'activeSkill.as_hatchling_shelter_lo.desc':
+    'The hatch timer keeps creeping forward for 180 ticks.',
+  'activeSkill.as_hatchling_shelter_hi.name': 'Open Nest',
+  'activeSkill.as_hatchling_shelter_hi.desc':
+    'The hatch threshold stays satisfied for 300 ticks.',
+  'activeSkill.as_mallow_squish_lo.name': 'Returned Ache',
+  'activeSkill.as_mallow_squish_lo.desc':
+    'Converts all deferred damage into shots and gives it back.',
+  'activeSkill.as_mallow_squish_hi.name': 'Deferred Detonation',
+  'activeSkill.as_mallow_squish_hi.desc':
+    'Doubles the deferred debt to erupt 24 shots right now.',
+  'activeSkill.as_mallow_mend_lo.name': 'Bounce Recoil',
+  'activeSkill.as_mallow_mend_lo.desc':
+    'Bounces 600 units and settles deferred damage on landing.',
+  'activeSkill.as_mallow_mend_hi.name': 'Elastic Vault',
+  'activeSkill.as_mallow_mend_hi.desc':
+    'Vaults 900 units, halving the deferred pool before settling it.',
+  'activeSkill.as_mallow_cushion_lo.name': 'Rapid Mend',
+  'activeSkill.as_mallow_cushion_lo.desc':
+    'The recovery timer fills three times faster for 180 ticks.',
+  'activeSkill.as_mallow_cushion_hi.name': 'Total Deferral',
+  'activeSkill.as_mallow_cushion_hi.desc':
+    'Defers all damage for 300 ticks, then settles it in one go.',
+  'activeSkill.as_bubble_pop_lo.name': 'Forced Pop',
+  'activeSkill.as_bubble_pop_lo.desc':
+    'Bursts the film at once, spraying 12 bubbles and shoving foes back.',
+  'activeSkill.as_bubble_pop_hi.name': 'Film Conversion',
+  'activeSkill.as_bubble_pop_hi.desc': 'Turns every remaining point of film into bubble shots.',
+  'activeSkill.as_bubble_drift_lo.name': 'Buoyant Glide',
+  'activeSkill.as_bubble_drift_lo.desc':
+    'Floats 600 units and cuts half the film recharge wait.',
+  'activeSkill.as_bubble_drift_hi.name': 'Updraft Leap',
+  'activeSkill.as_bubble_drift_hi.desc':
+    'Rides 900 units and the film re-forms the instant it lands.',
+  'activeSkill.as_bubble_film_lo.name': 'Film Recharge',
+  'activeSkill.as_bubble_film_lo.desc':
+    'Refills the film instantly and doubles recharge for 180 ticks.',
+  'activeSkill.as_bubble_film_hi.name': 'Everlasting Film',
+  'activeSkill.as_bubble_film_hi.desc':
+    'The film refills every tick for 300 ticks, then bursts hard.',
 } as const;
 
 /** 카탈로그 키 = 영어 정본의 키 집합. */
@@ -1817,6 +1939,7 @@ export const KO: Record<MessageKey, string> = {
   'tutorial.hint1': '적을 처치해 경험치 젬을 모으세요. 레벨업하면 파워업을 고를 수 있습니다.',
   'tutorial.hint2': '대시로 적탄을 회피하세요. 밀집한 탄막은 피하는 게 상책입니다.',
   'tutorial.hint3': '첫 장비를 획득하면 기지가 공개됩니다. 계속 밀어붙이세요!',
+  'tutorial.hint4': '잠금 해제되면 Z 또는 X 키로 액티브 스킬을 발동할 수 있습니다.',
   'tutorial.drop': '장비 획득! 이 런을 마치면 기지에서 정비할 수 있습니다.',
 
   'powerup.title': '레벨 업! — 강화를 선택하라',
@@ -1851,7 +1974,7 @@ export const KO: Record<MessageKey, string> = {
   'encounter.action.decline': '무시 (Q)',
   'encounter.detour.title': '보물 격실 내부',
   'encounter.detour.remain': '남은 시간 {sec}초',
-  'encounter.detour.exit': '지금 이탈 (X)',
+  'encounter.detour.exit': '지금 이탈 (Q)',
   'encounter.hint.keys': '클릭 또는 {keys} 키',
 
   'sticker.good-game': 'GG! 다음 판도 부탁해',
@@ -2861,6 +2984,110 @@ export const KO: Record<MessageKey, string> = {
   'def3.cmd.err.failed': '서버가 요청을 거부했다.',
   'def3.cmd.err.offline': '서버에 연결돼 있지 않다.',
   'def3.cmd.ok.upgrade': '강화했다.',
+
+  // 액티브 스킬 42종 i18n (ADR-0041 · .omc/plans/active-skills-catalog.md 저작 카탈로그 정본).
+  'activeSkill.as_striker_firepower_lo.name': '직사 제압',
+  'activeSkill.as_striker_firepower_lo.desc': '발동 방향으로 광선탄 12발을 부채꼴로 발사한다.',
+  'activeSkill.as_striker_firepower_hi.name': '전탄 일제사',
+  'activeSkill.as_striker_firepower_hi.desc': '사방으로 광선탄 24발을 동시에 발사한다.',
+  'activeSkill.as_striker_survival_lo.name': '방호 전개',
+  'activeSkill.as_striker_survival_lo.desc': '180틱 동안 모든 피해를 무시한다.',
+  'activeSkill.as_striker_survival_hi.name': '불굴 방벽',
+  'activeSkill.as_striker_survival_hi.desc':
+    '300틱 동안 무적이 되고, 끝날 때 선체를 일부 회복한다.',
+  'activeSkill.as_striker_mobility_lo.name': '강습 추진',
+  'activeSkill.as_striker_mobility_lo.desc': '발동 방향으로 600 거리를 즉시 돌파한다.',
+  'activeSkill.as_striker_mobility_hi.name': '이중 도약',
+  'activeSkill.as_striker_mobility_hi.desc': '두 번 연속으로 도약해 900 거리를 이동한다.',
+  'activeSkill.as_bruiser_blade_lo.name': '장갑 파쇄',
+  'activeSkill.as_bruiser_blade_lo.desc': '쌓인 장갑 스택을 전부 태워 스택 수만큼 파편을 날린다.',
+  'activeSkill.as_bruiser_blade_hi.name': '전탄 참격',
+  'activeSkill.as_bruiser_blade_hi.desc':
+    '장갑을 최대치까지 채운 즉시 전량을 참격 24발로 쏟아낸다.',
+  'activeSkill.as_bruiser_morph_lo.name': '충각 돌진',
+  'activeSkill.as_bruiser_morph_lo.desc': '600 거리를 밀고 나가며 장갑 스택 3개를 얻는다.',
+  'activeSkill.as_bruiser_morph_hi.name': '관통 충각',
+  'activeSkill.as_bruiser_morph_hi.desc': '900 거리를 관통 돌진하고 장갑 스택을 최대치로 채운다.',
+  'activeSkill.as_bruiser_fortify_lo.name': '고정 장갑',
+  'activeSkill.as_bruiser_fortify_lo.desc': '180틱 동안 장갑 스택이 최대치로 고정되어 줄지 않는다.',
+  'activeSkill.as_bruiser_fortify_hi.name': '파열 장갑',
+  'activeSkill.as_bruiser_fortify_hi.desc':
+    '300틱 동안 장갑을 고정하고, 끝나는 순간 전량을 폭발로 터뜨린다.',
+  'activeSkill.as_arccaster_chain_lo.name': '강제 충전',
+  'activeSkill.as_arccaster_chain_lo.desc':
+    '정지하지 않고도 즉시 과충전에 진입하며 전격 12발을 흘린다.',
+  'activeSkill.as_arccaster_chain_hi.name': '전량 방전',
+  'activeSkill.as_arccaster_chain_hi.desc':
+    '모아둔 과충전을 한 번에 방전해 충전량만큼 전격을 쏟는다.',
+  'activeSkill.as_arccaster_barrage_lo.name': '위상 점멸',
+  'activeSkill.as_arccaster_barrage_lo.desc': '과충전을 잃지 않은 채 600 거리를 점멸 이동한다.',
+  'activeSkill.as_arccaster_barrage_hi.name': '상한 도약',
+  'activeSkill.as_arccaster_barrage_hi.desc':
+    '900 거리를 도약하고 착지와 동시에 과충전이 상한에 닿는다.',
+  'activeSkill.as_arccaster_barrier_lo.name': '유동 충전',
+  'activeSkill.as_arccaster_barrier_lo.desc': '180틱 동안 움직이면서도 과충전이 계속 쌓인다.',
+  'activeSkill.as_arccaster_barrier_hi.name': '고정 과충전',
+  'activeSkill.as_arccaster_barrier_hi.desc':
+    '300틱 동안 과충전이 상한에 고정되어 무엇을 해도 풀리지 않는다.',
+  'activeSkill.as_phantom_assassin_lo.name': '그림자 파열',
+  'activeSkill.as_phantom_assassin_lo.desc':
+    '은신을 즉시 끊어 해제 첫 타 배율이 실린 단검 12발을 던진다.',
+  'activeSkill.as_phantom_assassin_hi.name': '순간 암살',
+  'activeSkill.as_phantom_assassin_hi.desc':
+    '은신에 들어가는 즉시 빠져나오며 24발 전탄에 해제 배율을 싣는다.',
+  'activeSkill.as_phantom_phase_lo.name': '위상 활강',
+  'activeSkill.as_phantom_phase_lo.desc':
+    '600 거리를 미끄러지며 은신 진입 조건을 120틱만큼 앞당긴다.',
+  'activeSkill.as_phantom_phase_hi.name': '심연 도약',
+  'activeSkill.as_phantom_phase_hi.desc': '900 거리를 위상 이동하고 착지하는 순간 은신에 들어간다.',
+  'activeSkill.as_phantom_disrupt_lo.name': '은신 유지',
+  'activeSkill.as_phantom_disrupt_lo.desc': '180틱 동안 맞아도 은신 조건이 리셋되지 않는다.',
+  'activeSkill.as_phantom_disrupt_hi.name': '무한 초격',
+  'activeSkill.as_phantom_disrupt_hi.desc':
+    '300틱 동안 해제 첫 타 배율이 소모되지 않고 계속 실린다.',
+  'activeSkill.as_hatchling_brood_lo.name': '알 흩뿌리기',
+  'activeSkill.as_hatchling_brood_lo.desc': '알탄 12발을 흩뿌리고 다음 부화를 크게 앞당긴다.',
+  'activeSkill.as_hatchling_brood_hi.name': '부화 소각',
+  'activeSkill.as_hatchling_brood_hi.desc':
+    '쌓인 부화 진행도를 전부 태워 알탄 24발을 한 번에 터뜨린다.',
+  'activeSkill.as_hatchling_nurture_lo.name': '알 구르기',
+  'activeSkill.as_hatchling_nurture_lo.desc': '600 거리를 굴러 이동하고 부화를 조금 앞당긴다.',
+  'activeSkill.as_hatchling_nurture_hi.name': '둥지 도약',
+  'activeSkill.as_hatchling_nurture_hi.desc': '900 거리를 도약하고 부화를 12처치 분만큼 앞당긴다.',
+  'activeSkill.as_hatchling_shelter_lo.name': '온기 품기',
+  'activeSkill.as_hatchling_shelter_lo.desc': '180틱 동안 부화가 계속 조금씩 앞당겨진다.',
+  'activeSkill.as_hatchling_shelter_hi.name': '둥지 개방',
+  'activeSkill.as_hatchling_shelter_hi.desc':
+    '300틱 동안 부화 임계가 항상 충족된 상태로 유지된다.',
+  'activeSkill.as_mallow_squish_lo.name': '되돌린 아픔',
+  'activeSkill.as_mallow_squish_lo.desc': '미뤄둔 피해를 전부 탄으로 바꿔 되돌려준다.',
+  'activeSkill.as_mallow_squish_hi.name': '이월 폭발',
+  'activeSkill.as_mallow_squish_hi.desc':
+    '미룬 피해를 두 배로 늘리는 대가로 24발을 한 번에 터뜨린다.',
+  'activeSkill.as_mallow_mend_lo.name': '반동 튕김',
+  'activeSkill.as_mallow_mend_lo.desc':
+    '600 거리를 튕겨 이동하고 착지하는 순간 지연 피해를 정산한다.',
+  'activeSkill.as_mallow_mend_hi.name': '탄력 도약',
+  'activeSkill.as_mallow_mend_hi.desc': '900 거리를 도약하며 미룬 피해를 절반으로 줄이고 정산한다.',
+  'activeSkill.as_mallow_cushion_lo.name': '빠른 회복',
+  'activeSkill.as_mallow_cushion_lo.desc': '180틱 동안 회복 임계가 세 배 빠르게 채워진다.',
+  'activeSkill.as_mallow_cushion_hi.name': '전량 유예',
+  'activeSkill.as_mallow_cushion_hi.desc':
+    '300틱 동안 모든 피해를 미뤄두고, 끝나는 순간 한 번에 정산한다.',
+  'activeSkill.as_bubble_pop_lo.name': '강제 파열',
+  'activeSkill.as_bubble_pop_lo.desc': '막을 즉시 터뜨려 거품탄 12발과 함께 주변을 밀어낸다.',
+  'activeSkill.as_bubble_pop_hi.name': '막 환산',
+  'activeSkill.as_bubble_pop_hi.desc': '남은 막을 전부 거품탄으로 바꿔 쏟아낸다.',
+  'activeSkill.as_bubble_drift_lo.name': '부양 활공',
+  'activeSkill.as_bubble_drift_lo.desc': '600 거리를 떠서 이동하고 막 재생을 절반만큼 앞당긴다.',
+  'activeSkill.as_bubble_drift_hi.name': '기류 도약',
+  'activeSkill.as_bubble_drift_hi.desc': '900 거리를 떠서 이동하고 착지하는 순간 막이 다시 선다.',
+  'activeSkill.as_bubble_film_lo.name': '막 재충전',
+  'activeSkill.as_bubble_film_lo.desc':
+    '막을 즉시 가득 채우고 180틱 동안 재생이 두 배로 빨라진다.',
+  'activeSkill.as_bubble_film_hi.name': '불멸 막',
+  'activeSkill.as_bubble_film_hi.desc':
+    '300틱 동안 막이 매 틱 다시 차오르고, 끝날 때 크게 터진다.',
 };
 
 /** 로케일별 카탈로그 묶음. */

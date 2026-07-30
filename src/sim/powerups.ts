@@ -22,6 +22,8 @@ import type { Entity } from './entities.js';
 import { shipTypeDef, shipTreeRange } from '../../data/ships/index.js';
 import type { TreeAffinity } from '../../data/ships/index.js';
 import type { PlanetMode } from './planetMode.js';
+import { activeByWireId } from '../../data/ships/actives/index.js';
+import { ACTIVE_WIRE_EMPTY } from '../../data/ships/actives/types.js';
 
 export interface PowerupDef {
   readonly id: string;
@@ -37,6 +39,16 @@ export interface PowerupDef {
   readonly universal?: boolean;
   /** 행성 모드 문맥 태그(Lane2 훅, ADR-0021). 지정 시 그 모드 런에서만 후보. 미지정 = 전 모드. */
   readonly mode?: PlanetMode;
+  /**
+   * 액티브 스킬 슬롯 태그(ADR-0041 · 계획 0a-9). 지정 시 **그 슬롯에 무언가 장착돼 있을 때만**
+   * 후보에 오른다 — `weaponType`/`mode` 필터와 **같은 축의 `continue` 필터**다.
+   *
+   * ⚠️ 이 형태가 아니면 AC-G1 이 깨진다. `pool`/`weights` 는 매 호출 재구성되므로, 미장착 시
+   * pool 진입 자체를 막으면 길이·가중 총합이 **바이트 동일**하다. 반대로 항목만 append 하고
+   * 필터를 안 넣으면 가중 총합이 바뀌어 **같은 시드에서도 뽑히는 파워업이 통째로 달라진다**
+   * (계획 PM-2 — AC-25 가 보증하지 않는 스펙의 사각).
+   */
+  readonly activeSlot?: 0 | 1;
   /** Applies the effect to the world (deterministic, no RNG). */
   readonly apply: (state: WorldState) => void;
 }
@@ -288,7 +300,55 @@ export const POWERUPS: readonly PowerupDef[] = [
       s.config.playerHp += 15;
     },
   },
+  // --- 24..25: 액티브 스킬 강화(ADR-0041 · APPEND-ONLY) ---------------------------------------
+  // 장착한 슬롯에만 후보로 오른다(`activeSlot` 태그 + `drawPowerupChoices` 의 `continue` 필터).
+  // 미장착 런은 **pool 진입 자체가 없어** 길이·가중 총합이 바이트 동일하다(계획 PM-2).
+  //
+  // ## 왜 "계열 투자 +N" 인가 — 신규 상태 0
+  // 액티브의 위력·쿨다운은 이미 `investedInTree(config.skillInvest, def)` 에서만 파생한다
+  // (AC-13 "값은 `skillInvest` 에서만 파생한다"). 그래서 그 계열 투자를 올리는 것이
+  // **신규 필드·신규 해시 폴드 없이** 강화를 표현하는 형태다 — `skillInvest` 는 이미 매 틱
+  // 폴드되고(`replay.ts:383-390`), `config.skillInvest` 는 `buildRunConfig` 가 만든
+  // **복사본**이라 런 중 변형이 프로필로 새지 않는다.
+  // 부수로 파워업 가중(`investedInAffinity`)도 같이 오르는데, 그것도 결정론적 파생이라
+  // 리플레이·EF 재실행이 그대로 재현한다.
+  {
+    id: 'active-tune-1',
+    name: '슬롯 1 조율',
+    desc: '슬롯 1 액티브의 계열 투자 +4 (위력↑ · 쿨다운↓)',
+    activeSlot: 0,
+    apply: (s) => {
+      bumpActiveTree(s, 0);
+    },
+  },
+  {
+    id: 'active-tune-2',
+    name: '슬롯 2 조율',
+    desc: '슬롯 2 액티브의 계열 투자 +4 (위력↑ · 쿨다운↓)',
+    activeSlot: 1,
+    apply: (s) => {
+      bumpActiveTree(s, 1);
+    },
+  },
 ];
+
+/** 액티브 강화 파워업 1회당 올려 주는 계열 base 누적 포인트. */
+const ACTIVE_TUNE_POINTS = 4;
+
+/**
+ * 슬롯에 장착된 액티브가 속한 계열의 base 누적 투자를 올린다. 미장착·미지 wire 면 무연산.
+ * 누적 지점은 그 계열 base 구간의 **첫 인덱스**로 고정한다 — 합만 읽히므로 어느 칸이든
+ * 결과가 같지만, 고정해야 결정론과 감사 가능성이 유지된다.
+ */
+function bumpActiveTree(state: WorldState, slot: number): void {
+  const wire = state.config.activeSlots?.[slot] ?? -1;
+  const def = activeByWireId(wire);
+  if (def === undefined) return;
+  const invest = state.config.skillInvest;
+  if (invest === undefined) return;
+  const { start } = shipTreeRange(shipTypeDef(def.shipTypeId), def.treeIndex);
+  invest[start] = (invest[start] ?? 0) + ACTIVE_TUNE_POINTS;
+}
 
 // --- Soft-weighting tuning (integer weights → deterministic weighted draw) -----
 const WEIGHT_UNIVERSAL = 10;
@@ -296,6 +356,8 @@ const WEIGHT_WEAPON_MATCH = 28;
 const WEIGHT_TREE_BASE = 4;
 /** 행성 모드 매치 가중(Lane2 훅). 필터가 불일치를 이미 걷어내므로 도달분은 항상 일치다. */
 const WEIGHT_MODE_MATCH = 22;
+/** 액티브 슬롯 장착 매치 가중(ADR-0041). 모드 매치와 같은 결 — 필터가 미장착을 이미 걷어낸다. */
+const WEIGHT_ACTIVE_SLOT = 22;
 /** Points invested in a tree per +1 weight (fully-fed tree ≈ +20 weight). */
 const TREE_POINTS_PER_WEIGHT = 4;
 
@@ -336,6 +398,19 @@ function offBuildWeaponPowerup(def: PowerupDef, state: WorldState): boolean {
 }
 
 /**
+ * 이 강화가 **지금 장착 상태**에서 의미가 있는가(액티브 슬롯 전용 강화의 대칭 필터, ADR-0041).
+ *
+ * ⚠️ `config.activeSlots` 는 **미장착 시 필드 자체가 없다**(조건부 스탬프, `runConfig.ts`) —
+ * `?? []` 정규화가 필수다(`catalysts` 폴드와 같은 형태). 런 시작 config 만 읽으므로 결정론적
+ * 이고, 미장착 런에서는 인덱스 24·25 가 **pool 에 들어가지 않아** 가중 총합이 바이트 동일하다.
+ */
+function offSlotActivePowerup(def: PowerupDef, state: WorldState): boolean {
+  if (def.activeSlot === undefined) return false;
+  const slots = state.config.activeSlots ?? [];
+  return (slots[def.activeSlot] ?? ACTIVE_WIRE_EMPTY) === ACTIVE_WIRE_EMPTY;
+}
+
+/**
  * 이 강화가 **지금 행성 모드**에서 의미가 있는가(모드 전용 강화의 대칭 필터).
  * 런 시작 config 의 `planetMode`(런 내내 고정)만 읽으므로 결정론적이다 — 런 중 상태
  * (레벨·킬 등)를 절대 보지 않는다.
@@ -349,6 +424,8 @@ function powerupWeight(def: PowerupDef, state: WorldState): number {
   if (def.universal) return WEIGHT_UNIVERSAL;
   // 오프모드도 `drawPowerupChoices` 가 애초에 풀에 넣지 않으므로 여기 오면 항상 일치다.
   if (def.mode !== undefined) return WEIGHT_MODE_MATCH;
+  // 액티브 슬롯 전용도 마찬가지 — 여기 왔다는 것은 그 슬롯에 장착돼 있다는 뜻이다(AC-24).
+  if (def.activeSlot !== undefined) return WEIGHT_ACTIVE_SLOT;
   // 오프빌드는 `drawPowerupChoices` 가 애초에 풀에 넣지 않으므로 여기 오면 항상 일치다.
   if (def.weaponType !== undefined) return WEIGHT_WEAPON_MATCH;
   if (def.affinity !== undefined) {
@@ -373,6 +450,7 @@ export function drawPowerupChoices(state: WorldState, count: number): number[] {
     if (def === undefined) continue;
     if (offBuildWeaponPowerup(def, state)) continue;
     if (offModePowerup(def, state)) continue;
+    if (offSlotActivePowerup(def, state)) continue;
     pool.push(i);
     weights.push(powerupWeight(def, state));
   }

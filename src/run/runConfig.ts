@@ -39,6 +39,8 @@ import { normalizeShipTypeId } from '../../data/ships/index.js';
 import { planetContent } from '../../data/planets/index.js';
 import { normalizePerformance } from '../../data/guardian.js';
 import { NEUTRAL_MULT_CENTI } from '../economy/planetPopularity.js';
+import { activeById, wireIdOf } from '../../data/ships/actives/index.js';
+import { ACTIVE_SLOT_COUNT, ACTIVE_WIRE_EMPTY } from '../../data/ships/actives/types.js';
 
 /** 무대 선택값 — 프로필에서 파생되지 **않는** 입력만 여기 온다. */
 export interface RunConfigOpts {
@@ -66,7 +68,14 @@ export interface RunConfigOpts {
    * 만든 스냅샷이다. `equipped` 는 `equippedItems(profile)` 산출처럼 `EQUIP_SLOTS` 관련 순서의
    * 배열이다(무기/보조 선택이 순서 계약). 미지정 = 활성 기체 출격(기존 거동 불변).
    */
-  pilot?: { equipped: Item[]; skillInvest: number[]; typeId: number; performanceCP: number };
+  pilot?: {
+    equipped: Item[];
+    skillInvest: number[];
+    typeId: number;
+    performanceCP: number;
+    /** 퇴역 순간 박제된 액티브 장착 2칸(ADR-0041 · 계획 PM-3). 길이 2, 빈 슬롯 `null`. */
+    activeSlots: (string | null)[];
+  };
   /**
    * 행성 인기 보상 배율 스탬프(ADR-0038). `{ centi, epoch }` 를 통째로 넘기며, **PvE 경로에서만**
    * 전달한다 — 침공·예비역 소집·하네스는 미지정이라 `planetMultCenti` 가 스탬프되지 않고
@@ -136,6 +145,18 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
   // 동일(소집==활성 증명). maxHpAdd 는 단일 나눗셈+Math.round 로 정수 안정(scaleStat 규율).
   // 결과 loadout 은 config.loadout 로 스냅샷돼 EF 가 재파생 없이 그대로 리플레이한다 — 서버
   // 재해석이 없으므로 Node 내부 결정론만 필요하다(Math.random/Date.now 미사용).
+  // 액티브 장착 슬롯 → wire 정수 2칸. 소집이면 박제된 슬롯, 아니면 활성 기체 슬롯을 읽는다.
+  // 정규화 규율은 `normalizeShip` 과 같다 — 그 기체 타입의 스킬이 아니면 빈 슬롯으로 떨어진다
+  // (`wireIdOf` 가 -1 을 돌려주고, 아래에서 `shipTypeId` 를 한 번 더 검사한다).
+  // **둘 다 비면 빈 배열**이라 아래 조건부 스탬프가 필드를 아예 싣지 않는다 → 골든 JSON 바이트 불변.
+  const slotIds = pilot !== undefined ? pilot.activeSlots : ship.activeSlots;
+  const wire: number[] = [];
+  for (let i = 0; i < ACTIVE_SLOT_COUNT; i++) {
+    const id = slotIds[i];
+    const def = typeof id === 'string' ? activeById(id) : undefined;
+    wire.push(def !== undefined && def.shipTypeId === typeId ? wireIdOf(def.id) : ACTIVE_WIRE_EMPTY);
+  }
+  const activeSlotsWire = wire.some((w) => w !== ACTIVE_WIRE_EMPTY) ? wire : [];
   if (pilot !== undefined) {
     const perf = normalizePerformance(pilot.performanceCP);
     loadout.damageMult *= perf / 10000;
@@ -172,6 +193,11 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
     // epoch 은 배율이 중립이어도 싣는다 — 정산이 "어느 표를 봤는가"를 서버에 말해야 서버가 자기
     // 스냅샷으로 재산정할 수 있고, 중립 배율도 그 표의 정당한 값이기 때문이다. sim 미사용·비해시.
     ...(opts.planetMult !== undefined ? { planetMultEpoch: opts.planetMult.epoch | 0 } : {}),
+    // 액티브 스킬 장착 슬롯(ADR-0041) — **둘 다 비면 필드 자체를 싣지 않는다**(planetMultCenti
+    // 선례). 이것이 계획 PM-4("장착은 되는데 런에 안 닿는다", 이 저장소 지배적 실패 모드)의
+    // 유일한 배선 지점이다. `Ship`→`WorldConfig` 경로는 이 함수뿐이고, 소집(`opts.pilot`)
+    // 분기도 여기서 같이 처리된다. 문자열 id → wire 정수 변환도 **여기 한 곳에서만** 한다.
+    ...(activeSlotsWire.length > 0 ? { activeSlots: activeSlotsWire } : {}),
     ...(opts.maxSegments !== undefined ? { maxSegments: opts.maxSegments } : {}),
     ...(opts.invasion3 !== undefined ? { invasion3: opts.invasion3 } : {}),
   };

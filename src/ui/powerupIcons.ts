@@ -95,6 +95,12 @@ const POWERUP_ICONS: Readonly<Record<string, PowerupIconKeys>> = {
   // range_flat 파워업은 이 하나뿐이라 밴드 충돌도 없다. 아래 아이콘 자산 존재 테스트가 이 규율을
   // 강제한다(tests/powerupIcons — 키가 PNG 로 해석되지 않으면 빨개진다).
   'beam-focuser': { statKey: 'skill_range_flat_low', badgeKey: 'equip_main_beam' },
+
+  // 액티브 스킬 강화 2종(ADR-0041, 풀 인덱스 24·25). 효과가 "위력↑ · 쿨다운↓" 이라 쿨다운 축의
+  // **아직 아무도 안 쓰는 실재 밴드** 두 칸(lowmid·midhigh)을 슬롯 1/2 에 나눠 준다 —
+  // 생성 0장 규율(위 헤더)을 그대로 지키고 조합 충돌도 없다.
+  'active-tune-1': { statKey: 'skill_dash_cd_pct_lowmid' },
+  'active-tune-2': { statKey: 'skill_dash_cd_pct_midhigh' },
 };
 
 /** 파워업 id 로 아이콘 키를 얻는다(미등록이면 undefined → 텍스트 폴백). */

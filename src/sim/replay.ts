@@ -567,6 +567,41 @@ export function hashWorld(state: WorldState): number {
   if (pmc !== NEUTRAL_MULT_CENTI) {
     h = hashU32(h, pmc);
   }
+  // --- 액티브 스킬 ①: 런타임 정수 4개(APPEND-ONLY, 조건부 꼬리 · ADR-0041) ---
+  // 쿨다운 2 + 버프 잔여 틱 2. **넷이 전부 0이면 한 폴드도 실행하지 않는다** → 액티브를 쓰지
+  // 않은 런(기존 골든 전량·침공)의 해시가 **바이트 불변**이다.
+  //
+  // ⚠️ **부분 폴드 금지 — all-or-nothing.** 하나라도 0이 아니면 **넷 전부**를 고정 폭으로
+  // 접는다. 필드별로 "0이면 그 필드만 생략"하면 (1,0,0,0) 과 (0,1,0,0) 이 같은 바이트열을
+  // 낳아 충돌한다(`hashEntity` 의 `aux0/aux1` 꼬리 주석과 같은 규율).
+  //
+  // 이 폴드는 기존 조건부 꼬리와 달리 **런 도중 켜졌다 꺼졌다 한다**(쿨다운·버프가 자연 감소해
+  // 0으로 돌아온다). 안전한 근거: `hashWorld` 는 매 호출 `FNV_OFFSET` 에서 새로 시작하는
+  // **틱 스냅샷**이지 누적 체인이 아니고(`:270-272`), 클라와 EF 가 같은 `src/sim/replay.ts`
+  // 를 쓰며 같은 시드·입력으로 같은 결정을 내린다. 게다가 비단조 토글은 신규 형태가 아니다 —
+  // `hashEntity` 의 `aux0/aux1` 꼬리가 이미 엔티티마다·틱마다 켜졌다 꺼졌다 한다(AS-OQ14 실측).
+  //
+  // 순서 계약(AS-OQ11): **①(런타임) 먼저, ②(장착 id) 나중.** 영구 고정이며 재배치 금지.
+  const acd0 = state.activeCd0 >>> 0;
+  const acd1 = state.activeCd1 >>> 0;
+  const abf0 = state.activeBuff0 >>> 0;
+  const abf1 = state.activeBuff1 >>> 0;
+  if (acd0 !== 0 || acd1 !== 0 || abf0 !== 0 || abf1 !== 0) {
+    h = hashU32(h, acd0);
+    h = hashU32(h, acd1);
+    h = hashU32(h, abf0);
+    h = hashU32(h, abf1);
+  }
+  // --- 액티브 스킬 ②: 장착 슬롯 wire id 2개(APPEND-ONLY, 조건부 꼬리 · ADR-0041) ---
+  // `buildRunConfig` 가 **둘 다 빈 슬롯이면 필드 자체를 싣지 않는다**(조건부 스탬프) → 여기서도
+  // 무폴드다. 접는 이유는 `skillInvest` 폴드(`:383-390`)와 같다 — 장착이 `powerupRng` 소비를
+  // 바꾸므로(파워업 인덱스 24·25 의 pool 진입 여부) 같은 시드·같은 입력이라도 장착이 다르면
+  // 다른 런이다. `catalysts` 폴드(`:514-523`) 형태: 정규화 후 비면 무폴드.
+  const slots = state.config.activeSlots;
+  if (slots !== undefined && slots.length > 0) {
+    h = hashU32(h, (slots[0] ?? -1) >>> 0);
+    h = hashU32(h, (slots[1] ?? -1) >>> 0);
+  }
   return h >>> 0;
 }
 

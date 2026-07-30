@@ -35,6 +35,7 @@ import type { KeyValueStore } from '../save/profile.js';
 import { activeShip, setProfileStoreOverride } from '../save/profile.js';
 import type { Profile } from '../save/profile.js';
 import { SHIP_TYPES, normalizeShipTypeId, zeroSkillInvest } from '../../data/ships/index.js';
+import { ACTIVES_BY_SHIP } from '../../data/ships/actives/index.js';
 import { buildInvasionPreset, buildPreset, isInvasionPreset } from './presets.js';
 import type { PresetKind } from './presets.js';
 import {
@@ -180,6 +181,13 @@ export interface HarnessSnapshot {
    * `snapshot().hash` 와 시그니처 거동으로 판별한다.
    */
   shipTypeId: number;
+  /**
+   * 활성 기체(프로필)에 장착된 액티브 슬롯(z/x). 빈 슬롯은 `null`(ADR-0041). 모드 무관 —
+   * `HarnessModeState` 가 아니라 최상위에 붙는 이유는 액티브가 행성 모드와 무관하기 때문.
+   */
+  activeSlots: (string | null)[];
+  /** 슬롯별 남은 쿨다운(틱, `WorldState.activeCd0/1`). 라이브 런이 없으면 `[0, 0]`. */
+  activeCooldowns: [number, number];
 }
 
 /**
@@ -390,6 +398,26 @@ export interface Harness {
   setShipType(typeId: number): number;
   /** 선택 가능한 기체 타입 slug 목록(치트 패널 셀렉트·테스트 파생용). 인덱스 = typeId. */
   shipTypeSlugs(): readonly string[];
+  /**
+   * 활성 기체의 액티브 슬롯(z/x)을 강제 설정한다(ADR-0041 치트). 정규화(그 기체 타입의
+   * 스킬이 아니면 탈락)는 저장층 `normalizeShip` 이 하므로 여기서는 그대로 밀어 넣는다.
+   *
+   * `setShipType` 과 같은 규율 — 하네스 프로필 슬롯을 먼저 활성화하므로 본 세이브는
+   * 건드리지 않는다.
+   *
+   * @returns 적용을 시도한 슬롯 값(정규화 전 — 실제 저장된 값은 `snapshot().activeSlots` 로 확인).
+   */
+  setActiveSlots(slotIds: (string | null)[]): (string | null)[];
+  /**
+   * 활성 기체 타입이 쓸 수 있는 액티브 목록(치트 패널 셀렉트를 채우는 용도). 레지스트리가
+   * 비어 있으면(0a-14 시점 — 0b/E 레인이 채운다) 빈 배열.
+   */
+  activeSkillCatalog(): { id: string; shipTypeId: number; tier: string; kind: string }[];
+  /**
+   * 라이브 런의 액티브 쿨다운 두 슬롯을 즉시 0으로 되돌린다(오염 치트). 라이브 런이 없으면
+   * no-op.
+   */
+  resetActiveCooldowns(): void;
   /**
    * 지금 도는 런의 리플레이(진행 중 스냅샷). 런이 없으면 null.
    * 침공 런을 돌다가 중간에 꺼내 `playReplay` 로 되돌려 볼 수 있다.
@@ -726,6 +754,8 @@ export function createHarness(host: HarnessHost): Harness {
           mode: emptyModeState(),
           profileSummary: summary,
           shipTypeId: normalizeShipTypeId(activeShip(host.getProfile()).typeId),
+          activeSlots: [...activeShip(host.getProfile()).activeSlots],
+          activeCooldowns: [0, 0],
         };
       }
       const player = world.entities[0];
@@ -748,6 +778,8 @@ export function createHarness(host: HarnessHost): Harness {
         mode: modeStateOf(world),
         profileSummary: summary,
         shipTypeId: normalizeShipTypeId(activeShip(host.getProfile()).typeId),
+        activeSlots: [...activeShip(host.getProfile()).activeSlots],
+        activeCooldowns: [world.activeCd0, world.activeCd1],
       };
     },
 
@@ -764,6 +796,9 @@ export function createHarness(host: HarnessHost): Harness {
       const ship = activeShip(profile);
       ship.typeId = t;
       ship.skillInvest = zeroSkillInvest(t);
+      // 타입마다 액티브 42종 중 6종만 유효하다 — 옛 타입의 슬롯을 남기면 새 런에서 조용히
+      // 무발동(해당 스킬이 이 타입에 없음)이 된다. skillInvest 리셋과 같은 규율.
+      ship.activeSlots = [null, null];
       host.applyProfile(profile);
       host.refreshScreen();
       return t;
@@ -771,6 +806,33 @@ export function createHarness(host: HarnessHost): Harness {
 
     shipTypeSlugs() {
       return SHIP_TYPES.map((d) => d.slug);
+    },
+
+    setActiveSlots(slotIds) {
+      const applied = [...slotIds];
+      // 프로필 프리셋과 같은 순서: 격리 슬롯 활성화 → 오염 표시 → 편집 → 저장 → 화면 갱신.
+      host.activateHarnessProfile();
+      host.markTaintedIfLive();
+      const profile = host.getProfile();
+      const ship = activeShip(profile);
+      ship.activeSlots = applied;
+      host.applyProfile(profile);
+      host.refreshScreen();
+      return applied;
+    },
+
+    activeSkillCatalog() {
+      const typeId = normalizeShipTypeId(activeShip(host.getProfile()).typeId);
+      const list = ACTIVES_BY_SHIP[typeId] ?? [];
+      return list.map((d) => ({ id: d.id, shipTypeId: d.shipTypeId, tier: d.tier, kind: d.kind }));
+    },
+
+    resetActiveCooldowns() {
+      const world = host.getWorld();
+      if (world === null) return;
+      host.markTaintedIfLive();
+      world.activeCd0 = 0;
+      world.activeCd1 = 0;
     },
 
     cheat(mutate) {

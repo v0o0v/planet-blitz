@@ -31,7 +31,7 @@ const WEAPON_BADGE: Record<number, string> = {
 
 describe('powerupIcons — 24종 매핑 커버리지', () => {
   it('풀의 모든 파워업이 유효한 스탯 아이콘 키로 해석된다', () => {
-    expect(POWERUPS.length).toBe(24);
+    expect(POWERUPS.length).toBe(26); // 24 + 액티브 강화 2종(ADR-0041)
     for (let i = 0; i < POWERUPS.length; i++) {
       const keys = powerupIconKeys(i);
       expect(keys, `powerup #${i} 매핑 누락`).toBeDefined();
@@ -125,7 +125,7 @@ describe('powerupIcons — 조합 구별도', () => {
     // 각 2종 = 충돌 7건). 같은 스탯을 수치 크기 순으로 티어대(5구간 중 기존 아트 밴드
     // low/mid/high 우선)에 나눠 담아 해소했다. 이 수가 24 미만으로 떨어지면 3택 오버레이에
     // 같은 그림이 두 장 뜬다는 뜻이다.
-    expect(new Set(combos).size).toBe(24);
+    expect(new Set(combos).size).toBe(26);
   });
 
   it('같은 스탯의 배지 없는 파워업은 서로 다른 티어대를 쓴다', () => {

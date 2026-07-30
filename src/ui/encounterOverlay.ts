@@ -19,8 +19,11 @@
  *    않은 선택은 리플레이에 존재하지 않는 사건이 되고 서버 재검증(EF)이 갈린다.
  *
  * ## 키 바인딩과 충돌 검토
- * 진입/개방 `KeyE` · 거부 `KeyQ` · 제단 3택 `Digit1~3`(+`Numpad1~3`) · detour 이탈 `KeyX`.
- * `src/input/controller.ts` 는 `KeyW/A/S/D`·화살표·`Space` 만 쓰므로 이동/대시와 충돌이 없다.
+ * 진입/개방 `KeyE` · 거부 `KeyQ` · 제단 3택 `Digit1~3`(+`Numpad1~3`) · detour 이탈 `KeyQ`.
+ * `src/input/controller.ts` 는 `KeyW/A/S/D`·화살표·`Space`·`KeyZ`·`KeyX`(액티브 스킬,
+ * ADR-0041) 를 쓰므로 이동/대시/액티브와 충돌이 없다. detour 이탈이 예전엔 `KeyX` 였으나
+ * 액티브 슬롯 2(z/x) 와 겹쳐 `KeyQ` 로 이설했다 — 조우 거부와 같은 코드지만 detour 분기가
+ * 먼저 처리되고 조기 return 하므로 상호 배타라 비충돌이다(아래 {@link EncounterOverlay.onKeyDown}).
  * `Digit1~3` 은 파워업 오버레이도 쓰지만 **서로 동시에 뜨지 않는다** — 렌더 루프가 레벨업
  * 오버레이가 떠 있는 동안 이 오버레이에 `null` 을 먹여 숨기고, 아래 키 핸들러는 `visible`
  * 게이트로 즉시 return 한다. 컨트롤러 큐 자체도 파워업 픽이 대기 중이면 소비되지 않는다.
@@ -160,7 +163,9 @@ export class EncounterOverlay {
     const view = this.current;
     if (!this.visible || view === null) return;
     if (view.kind === 'detour') {
-      if (e.code === 'KeyX') {
+      // KeyX → KeyQ 이설(액티브 슬롯 2 와의 충돌 회피). 이 분기가 아래 KeyQ(조우 거부)보다
+      // 먼저 처리되고 조기 return 하므로 같은 코드를 써도 상호 배타라 비충돌이다.
+      if (e.code === 'KeyQ') {
         e.preventDefault();
         this.handlers.onExit();
       }
@@ -263,9 +268,9 @@ export class EncounterOverlay {
       this.timerEl = timer;
       desc.appendChild(timer);
       row.appendChild(
-        this.button('X', t('encounter.detour.exit'), '', '', () => this.handlers.onExit()),
+        this.button('Q', t('encounter.detour.exit'), '', '', () => this.handlers.onExit()),
       );
-      hint.textContent = t('encounter.hint.keys', { keys: 'X' });
+      hint.textContent = t('encounter.hint.keys', { keys: 'Q' });
     } else if (view.kind === 'altar') {
       title.textContent = t('encounter.altar.title');
       desc.textContent = t('encounter.altar.desc');

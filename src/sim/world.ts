@@ -276,6 +276,9 @@ export { echoStabilizedOf, runStoryMetrics } from './echo.js';
 //     stepWorld 최상단 단일 분기로 격리한다. --------------------------------------------------
 import { rollEncounter, stepEncounter, type EncounterRuntime } from './encounter.js';
 import { stepDetour } from './encounterDetour.js';
+// 액티브 스킬 발동 엔진(ADR-0041). 단방향: world.ts → actives.ts(그쪽은 world.ts 를 **타입으로만**
+// import 하므로 순환이 아니다).
+import { stepActives } from './actives.js';
 // 정산·관측이 소비하는 순수 리더 재수출(echoStabilizedOf 선례).
 export { encounterCompletedOf, encounterTypeOf, encounterShardOf } from './encounter.js';
 
@@ -323,6 +326,10 @@ export {
   SPECIAL_ENCOUNTER_EXIT,
   packEncounterAltar,
 } from '../../data/encounters.js';
+
+// --- 액티브 스킬 발동 비트(ADR-0041) — 정의는 `data/inputBits.ts` 에 있고 여기서는 **재수출만**
+//     한다. 이유는 위 조우 비트와 완전히 같다(leaf 층 정의로 순환 import 원천 차단).
+export { SPECIAL_ACTIVE_SLOT1, SPECIAL_ACTIVE_SLOT2, activeSlotBit } from '../../data/inputBits.js';
 
 // --- Progression / feel tuning (M1 prototype values; spec fixes only the
 //     structure — combo cap x1.5, 20s supply window, boss 3-phase/overheat). ---
@@ -683,6 +690,20 @@ export interface WorldConfig {
    * 배율값 자체는 서버가 신뢰하지 않는다). 오프라인·미설정 런은 미지정. append-only.
    */
   planetMultEpoch?: number;
+  /**
+   * 장착한 액티브 스킬 2칸의 **wire 정수**(ADR-0041 · 계획 0a-6). 길이 2 고정, 빈 슬롯은
+   * `ACTIVE_WIRE_EMPTY`(-1). `data/ships/actives` 의 `activeWireId(shipTypeId, indexInShip)`
+   * 가 정본이다.
+   *
+   * ⚠️ **둘 다 비면 `buildRunConfig` 가 이 필드 자체를 싣지 않는다**(`planetMultCenti` 선례).
+   * "항상 명시"하지 않는 이유는 조건부 해시 폴드의 불변식을 **필드 부재로도** 성립시켜,
+   * 기존 런의 config 직렬화(리플레이 스냅샷)까지 바이트 동일하게 두기 위함이다. 그래서
+   * `hashWorld` 꼬리 폴드와 `drawPowerupChoices` 필터가 둘 다 `?? []` 로 정규화해 읽는다.
+   *
+   * `Ship.activeSlots` 는 사람이 읽는 문자열 id 를 저장하고, 정수 변환은 `buildRunConfig`
+   * 한 곳에서만 일어난다(단일 정본).
+   */
+  activeSlots?: number[];
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {
@@ -938,6 +959,29 @@ export interface WorldState {
   cushionHealed: number;
   /** 방막 파열 횟수(버블 사연 metric). */
   filmPops: number;
+  // --- 액티브 스킬 런타임 정수 4개(ADR-0041 · 계획 0a-4) --------------------------------------
+  // ⚠️ **`aux0`/`aux1` 재사용 불가** — 그 두 칸은 기체별 시그니처 런타임 상태가 이미 점유했다
+  // (world.ts 의 인코딩 표). `Entity` 에 넣는 것도 불가다: `ENTITY_HASH_LAYOUT` 이 바뀌어
+  // 조건부 폴드 중립화가 **원리적으로 불가능**해진다. 그래서 `WorldState` 평평한 정수 4개다
+  // (`invasion3Bombs`·사연 카운터와 같은 선례).
+  //
+  // 넷은 `hashWorld` 맨 꼬리에서 **하나의 조건부 폴드**로 묶인다 — **넷이 전부 0이면 한 폴드도
+  // 실행하지 않는다**(액티브 미사용 런 = 기존 골든 전량 바이트 불변). 부분 폴드 금지: 하나라도
+  // 0이 아니면 **넷 전부**를 고정 폭으로 접는다(`aux0/aux1` 꼬리와 같은 규율 —
+  // (1,0,0,0) 과 (0,1,0,0) 이 갈려야 한다).
+  //
+  // ## 작성자 분리 (0c 계약 — 어기면 검증이 항진이 된다)
+  // **공통 발동 코드는 쿨다운 2개만 쓴다. 버프 잔여 틱 2개는 핸들러가 쓴다.** 공통 코드가
+  // 버프 틱까지 초기화하면 `buffTicks` 단언이 핸들러 본문과 무관하게 참이 되어 배선 전수
+  // 테스트 ②가 무의미해진다(계획 개정 3 CR-1 과 같은 기제의 재발).
+  /** 슬롯 1 액티브 쿨다운 잔여 틱(0 = 발동 가능). 공통 발동 코드가 쓴다. */
+  activeCd0: number;
+  /** 슬롯 2 액티브 쿨다운 잔여 틱(0 = 발동 가능). 공통 발동 코드가 쓴다. */
+  activeCd1: number;
+  /** 슬롯 1 `kind='buff'` 잔여 틱(0 = 비활성). **핸들러가 쓴다**(공통 코드 금지). */
+  activeBuff0: number;
+  /** 슬롯 2 `kind='buff'` 잔여 틱(0 = 비활성). **핸들러가 쓴다**(공통 코드 금지). */
+  activeBuff1: number;
 }
 
 /**
@@ -1134,6 +1178,12 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     cushionHealed: 0,
     filmPops: 0,
     invasion3Bombs: 0,
+    // 액티브 스킬 런타임 정수 4개(ADR-0041). 0 초기화 = 미장착·미발동 런에서 끝까지 0 →
+    // hashWorld 꼬리 폴드 미실행(바이트 불변).
+    activeCd0: 0,
+    activeCd1: 0,
+    activeBuff0: 0,
+    activeBuff1: 0,
     // 탄-벽 broad-phase 는 침공 3레이어에서만 쓴다. PvE 는 null → 기존 직접 스윕 그대로라
     // 해시가 바이트 불변이다(회랑 벽이 '활성 벽 ≤~19' 전제를 깨는 것은 침공 경로뿐).
     wallIndex: invasion3Runtime !== undefined ? new InvasionWallIndex() : null,
@@ -1315,6 +1365,11 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   if (state.moduleRuntime !== undefined) stepModuleRuntime(state, player);
 
   stepPlayer(state, player, input);
+  // 액티브 스킬(ADR-0041) — **이 자리가 계약이다.** `pendingLevelUp` 프리즈 블록과 detour
+  // 분기가 위에서 조기 return 하므로, 여기 두면 **플래그 하나 없이** 프리즈 중 z/x 가 구조적
+  // 으로 버려진다(AC-8·AC-9). 위로 옮기면 AC-8 이 즉시 깨진다. 미장착 런은 `stepActives` 가
+  // `config.activeSlots` 부재로 조기 반환하고 정수 4개가 끝까지 0 이라 해시 폴드가 미실행이다.
+  stepActives(state, player, input, activeDirOf(input, player));
   // ── 모드별 플레이어 경계 규칙 (원래 stepPlayer 꼬리에 있던 3블록을 그대로 옮겨 왔다) ──
   // 조우 detour 는 stepPlayer 를 재사용하지만 포켓 방(창 밖 12만 유닛)에서는 이 규칙들이
   // 전부 오작동한다(창 클램프가 좌표를 되돌리고, 수축 밖 판정이 즉사를 낸다). detour 분기는
@@ -1618,6 +1673,39 @@ function slidePinFor(state: WorldState): SlidePin | undefined {
   return undefined;
 }
 
+/**
+ * 발동 방향 폴백의 **단일 정본**(ADR-0041 · 계획 0a-10 ③).
+ *
+ * 이동 입력 방향을 쓰고, 길이가 0 에 가까우면 조준각(`player.angle`)으로 떨어진다. 대시가
+ * 원래 인라인으로 갖고 있던 규칙을 그대로 함수로 뺀 것이며(산술 동일 = 골든 바이트 불변),
+ * 액티브 스킬 `kind='dash'` 가 **이것을 재사용**한다 — ADR-0041 이 "대시와 동일 규칙"을
+ * 명시적으로 택했고, 복제하면 두 규칙이 나중에 조용히 갈린다.
+ *
+ * @param mx 이동 입력 x(길이 > 1 이면 **호출 전에** 정규화돼 있어야 한다)
+ * @param my 이동 입력 y(동상)
+ * @param angle 조준각(폴백)
+ */
+function resolveDirFallback(mx: number, my: number, angle: number): { x: number; y: number } {
+  if (length(mx, my) < 0.001) return { x: cos(angle), y: sin(angle) };
+  return { x: mx, y: my };
+}
+
+/**
+ * 이 틱의 액티브 발동 방향. `stepPlayer` 와 **같은 정규화**(길이 > 1 이면 나눈다)를 거친 뒤
+ * `resolveDirFallback` 을 태운다. `mx`/`my` 는 `stepPlayer` 의 지역 변수라 밖에서 볼 수 없어
+ * 여기서 다시 만든다 — 산술이 같으므로 결과는 동일하다.
+ */
+function activeDirOf(input: InputFrame, player: Entity): { x: number; y: number } {
+  let mx = input.moveX;
+  let my = input.moveY;
+  const mlen = length(mx, my);
+  if (mlen > 1) {
+    mx /= mlen;
+    my /= mlen;
+  }
+  return resolveDirFallback(mx, my, player.angle);
+}
+
 function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void {
   const config = state.config;
   let mx = input.moveX;
@@ -1645,12 +1733,9 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
   if (player.targetY > 0) player.targetY--;
 
   if (input.dash && player.dashCooldown === 0) {
-    let dx = mx;
-    let dy = my;
-    if (length(dx, dy) < 0.001) {
-      dx = cos(player.angle);
-      dy = sin(player.angle);
-    }
+    // 방향 폴백은 `resolveDirFallback` 이 정본이다 — 액티브 스킬(ADR-0041)이 **같은 규칙을
+    // 재사용**한다(복제하면 두 규칙이 조용히 갈린다). 산술은 이전 인라인 코드와 동일하다.
+    const { x: dx, y: dy } = resolveDirFallback(mx, my, player.angle);
     player.vx += dx * config.dashSpeed;
     player.vy += dy * config.dashSpeed;
     // ⑤ 위상 장갑: 대시 직후 무적 프레임 연장 + 대시 쿨다운 감소(장착 시).
