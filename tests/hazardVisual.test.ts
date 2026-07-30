@@ -197,6 +197,38 @@ describe('형태 = 상태', () => {
     expect(circles[0]?.args[2]).toBe(100 * LIP_RATIO);
   });
 
+  it('정원 립이 유기 윤곽보다 약하다 — 인공 형태가 화면을 지배하면 §2-5 위반이다', () => {
+    // ## 5차 반려의 실체
+    // 4차에 립이 `radius - strokeWidth` → **정확히 `radius`** 로 올라가면서 더 또렷해졌고,
+    // 알파도 0.45~0.75 였다. 유기 경계선(0.95 × 0.76 = 0.722)보다 **밝은 프레임이 존재**했다.
+    // 그 상태로 41셀이 겹치니 "흰 호가 교차한다"가 됐다.
+    //
+    // 계약 §2-5 는 립을 예외로 허용하지만 그건 "존재해도 된다"이지 "가장 강해도 된다"가 아니다.
+    // 립은 판정 정보라 지우지 않고, **지배력만** 뺀다. 맥동 최고점에서도 유기 윤곽보다 약해야 한다.
+    let lipPeak = 0;
+    let boundary = 0;
+    for (let t = 0; t < 60; t++) {
+      const { canvas, calls } = recorder();
+      drawHazardZone(canvas, 0, 0, 100, hazardVisual(HAZARD_LAVA, true), t);
+      for (let i = 0; i < calls.length; i++) {
+        if (calls[i]?.op !== 'circle') continue;
+        const st = calls[i + 1];
+        if (st?.op === 'stroke' && st.style !== undefined) lipPeak = Math.max(lipPeak, st.style.alpha);
+      }
+      // 유기 윤곽 = poly 를 stroke 한 것 중 가장 강한 것(채움 링·글로우 링보다 진하다).
+      for (let i = 0; i < calls.length; i++) {
+        if (calls[i]?.op !== 'poly') continue;
+        const st = calls[i + 1];
+        if (st?.op === 'stroke' && st.style !== undefined) {
+          boundary = Math.max(boundary, st.style.alpha);
+        }
+      }
+    }
+    expect(lipPeak).toBeGreaterThan(0.15); // 지우지는 않는다 — 판정 울타리다
+    expect(boundary).toBeGreaterThan(0);
+    expect(lipPeak).toBeLessThan(boundary * 0.6);
+  });
+
   it('예열 윤곽이 활성 윤곽과 같은 실루엣이다(전이가 형태의 도약이 아니다)', () => {
     // 같은 시드·같은 대역을 써야 예열→활성에서 모양이 튀지 않는다.
     const warmRec = recorder();

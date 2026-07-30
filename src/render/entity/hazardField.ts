@@ -59,11 +59,15 @@ import {
   rimTexture,
 } from './hazardTexture.js';
 import {
+  CRUST_COVER,
+  CRUST_FLOW_FALLOFF,
+  GROUND_COVER,
   MAX_FIELD_MATERIALS,
   hazardAmbience,
   hazardAmbienceShape,
   hazardCrustSpec,
   hazardGrounding,
+  hazardLobeStyle,
   hazardLod,
   hazardMaterialKind,
   kindUsesDistortion,
@@ -252,38 +256,13 @@ function coverLens(frameTick: number, x: number, y: number, r: number): void {
 // ---------------------------------------------------------------------------
 // 종류별 표현 파라미터 — "무엇이 어떻게 움직이는가"
 // ---------------------------------------------------------------------------
-
-/** 로브의 운동 방식. 재질감의 정체는 결국 **운동**이라, 종류마다 달라야 구분된다. */
-type LobeMotion = 'flow' | 'bubble' | 'lens' | 'still';
-
-interface KindStyle {
-  readonly motion: LobeMotion;
-  /**
-   * 로브 색의 보간 계수.
-   *
-   * 2차의 `molten` 0.72 는 `mixColor(0xff8412, 0xfff0e6, .72)` = (255,210,170) 로 **거의 흰색**
-   * 이었고, 주황 장판 위 창백한 얼룩이라 "용융"이 아니라 **렌즈 기름때**로 읽혔다(반려 MINOR).
-   * 지금은 종류색 쪽에 훨씬 가깝게 둬서 로브가 장판의 **같은 물질**로 보이게 한다.
-   */
-  readonly brightMix: number;
-  /** 로브 알파(가산). 개수가 많으므로 누적 밝기를 보고 낮게 잡는다(§2-4). */
-  readonly lobeAlpha: number;
-}
-
-const KIND_STYLE: Readonly<Record<HazardMaterialKind, KindStyle>> = {
-  molten: { motion: 'flow', brightMix: 0.38, lobeAlpha: 0.3 },
-  spore: { motion: 'bubble', brightMix: 0.28, lobeAlpha: 0.26 },
-  refract: { motion: 'lens', brightMix: 0.42, lobeAlpha: 0.3 },
-  scorch: { motion: 'still', brightMix: 0.15, lobeAlpha: 0.2 },
-  ember: { motion: 'flow', brightMix: 0.4, lobeAlpha: 0.26 },
-};
+//
+// 알파·보간 계수·덮는 비율은 전부 `hazardShape.ts` 소유다(5차): §2-4 가산 회계
+// (`additiveLayerSpecs`)가 같은 값을 읽어야 예산과 화면이 어긋나지 않고, 그 회계는 Pixi 를
+// 모르는 파일에 있어야 GL 없이 검증된다.
 
 /** 환경 기여 falloff 링 수(공유 텍스처를 못 만들 때만 쓰는 절차적 폴백). */
 const AMBIENT_FALLBACK_RINGS = 5;
-/** 면적 재질이 덮는 반경 비율. 물질 윤곽(`EDGE_MAX_RATIO`=0.96) 안쪽에 머문다. */
-const CRUST_COVER = 0.95;
-/** 접지 텍스처가 덮는 반경 비율. 판정 반경에 맞춰야 "가장자리가 파였다"가 립과 정합한다. */
-const GROUND_COVER = 0.99;
 
 // ---------------------------------------------------------------------------
 // 재질 본체
@@ -434,11 +413,11 @@ class HazardFieldMaterial implements HazardMaterial {
       } else {
         sp.scale.set(k * (i === 0 ? 1 : 0.78));
       }
-      sp.alpha = crust.addAlpha * it.presence * glowScale * (i === 0 ? 1 : 0.7);
+      sp.alpha = crust.addAlpha * it.presence * glowScale * (i === 0 ? 1 : CRUST_FLOW_FALLOFF);
     }
 
     // ── 본체 로브 ────────────────────────────────────────────────────────────
-    const style = KIND_STYLE[this.kind];
+    const style = hazardLobeStyle(this.kind);
     this.lobeNode.alpha = it.presence * glowScale;
     // 색은 tint 로 민다: 예열은 어둡고 탁하게, 활성은 구운 그대로. tint 는 곱연산이라 **새 색을
     // 만들 수 없다** — 색=성질 규칙이 여기로 샐 구조적 여지가 없다.
@@ -674,7 +653,7 @@ class HazardFieldMaterial implements HazardMaterial {
     }
     this.lobes.length = 0;
     this.lobeShapes.length = 0;
-    const style = KIND_STYLE[this.kind];
+    const style = hazardLobeStyle(this.kind);
     const count = lodLobeCount(this.lod, ctx.tier, ctx.gates);
     this.builtLobes = count;
     const tone = mixColor(color, accent, style.brightMix);

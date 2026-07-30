@@ -26,6 +26,7 @@
 import { BufferImageSource, Texture } from 'pixi.js';
 
 import { hash3, valueNoise } from '../env/noise.js';
+import type { AdditiveTextureId } from './hazardShape.js';
 
 /** 로브 텍스처 한 변(px). 로브는 화면에서 작아(0.12~0.30r) 64 면 충분하다. */
 export const BLOB_TEX_SIZE = 64;
@@ -329,9 +330,23 @@ export function plateShadeLuminance(nx: number, ny: number): number {
 /** 거품 개수(오염 포자). 그리드가 아니라 해시 배치라 규칙성이 안 읽힌다. */
 const BUBBLE_COUNT = 22;
 
+/** 거품 얼룩의 falloff 지수. 1 보다 크면 가장자리가 부드럽게 죽어 "링"이 안 생긴다. */
+const BUBBLE_FALLOFF = 1.4;
+/** 거품 하나의 최대 휘도. */
+const BUBBLE_PEAK = 0.62;
+
 /**
- * 부글거리는 거품의 **가산 휘도**. 막(membrane)이 안쪽보다 밝다 — 채워진 원은 다시 "도형"이지만
- * 테두리가 밝은 원은 거품으로 읽힌다.
+ * 부글거리는 거품의 **가산 휘도**.
+ *
+ * ## 4차는 막(membrane)이었고 그게 §2-5 위반이었다
+ * 4차는 `dd≈0.82` 에 좁은 가우시안 봉우리를 둬서 "테두리가 밝은 원"을 만들었다. 의도는
+ * "채워진 원은 다시 도형이다" 였는데, **테두리가 밝은 작은 원은 정확히 링**이다. 5차 계측의
+ * 육안 판정이 그것을 "기포가 여럿이라 동심 윤곽 인상에 더한다"로 잡았고, 같은 셀의 흰 립·가산
+ * 림과 겹쳐 "한 자리에 정원 윤곽 여러 줄"(§2-5)을 만들고 있었다.
+ *
+ * 처방은 **채워진 얼룩**이다. 윤곽선이 없으므로 링이 될 수 없고, 크기가 다른 얼룩들이 겹쳐
+ * 거품 무리로 읽힌다. 부수 효과로 원판 평균 휘도가 내려가 §2-4 순감에도 기여한다
+ * (막 경로는 봉우리가 좁고 높아 평균이 오히려 높았다).
  */
 export function bubbleLuminance(nx: number, ny: number): number {
   const m = discMask(Math.hypot(nx, ny));
@@ -342,11 +357,9 @@ export function bubbleLuminance(nx: number, ny: number): number {
     const cy = (hash3(0x5b8f2d11, k, 0, 2) * 2 - 1) * 0.74;
     const rr = 0.09 + 0.13 * hash3(0x5b8f2d11, k, 0, 3);
     const dd = Math.hypot(nx - cx, ny - cy) / rr;
-    if (dd >= 1.05) continue;
+    if (dd >= 1) continue;
     const bright = 0.5 + 0.5 * hash3(0x5b8f2d11, k, 0, 4);
-    // 막: dd≈0.82 에 좁은 봉우리. 내부는 옅게만 찬다.
-    const membrane = Math.exp(-Math.pow((dd - 0.82) / 0.15, 2));
-    v += (membrane * 0.9 + 0.16 * (1 - dd)) * bright;
+    v += Math.pow(1 - dd * dd, BUBBLE_FALLOFF) * BUBBLE_PEAK * bright;
   }
   return sat(v) * m;
 }
@@ -441,6 +454,93 @@ export function lensDisplacementTexture(): Texture | null {
   return lensDispTex;
 }
 
+// ---------------------------------------------------------------------------
+// 예산 회계용 평균 휘도 — §2-4 를 실측 파생으로 잠그는 입력
+// ---------------------------------------------------------------------------
+
+/** 환경 기여 그라디언트의 정지점(offset, alpha) — {@link glowTexture} 의 canvas 코드와 같은 값. */
+const GLOW_STOPS: readonly (readonly [number, number])[] = [
+  [0, 0.95],
+  [0.35, 0.42],
+  [0.7, 0.12],
+  [1, 0],
+];
+
+/**
+ * 환경 기여 그라디언트의 **순수 쌍둥이**.
+ *
+ * 화면 경로는 canvas 다(위 {@link glowTexture} 주석 — 비평가가 화면에서 통과 판정한 유일한
+ * 항목이라 경로를 바꾸지 않는다). 그런데 §2-4 회계는 이 겹의 평균 휘도를 알아야 하고, canvas 는
+ * node 에 없다. 그래서 같은 정지점을 선형 보간하는 순수 함수를 나란히 둔다 — 테스트가 두
+ * 표현이 같은 정지점을 쓰는지 직접 대조한다.
+ */
+export function glowLuminance(nx: number, ny: number): number {
+  const d = Math.hypot(nx, ny);
+  if (d >= 1) return 0;
+  for (let i = 1; i < GLOW_STOPS.length; i++) {
+    const a = GLOW_STOPS[i - 1];
+    const b = GLOW_STOPS[i];
+    if (a === undefined || b === undefined) break;
+    if (d <= b[0]) {
+      const t = b[0] === a[0] ? 0 : (d - a[0]) / (b[0] - a[0]);
+      return a[1] + (b[1] - a[1]) * t;
+    }
+  }
+  return 0;
+}
+
+/** 원판 위 평균 휘도(순수 — 샘플러를 격자로 적분한다). */
+export function meanDiscLuminance(
+  sample: (nx: number, ny: number) => number,
+  n = 96,
+): number {
+  let sum = 0;
+  let count = 0;
+  for (let iy = 0; iy < n; iy++) {
+    for (let ix = 0; ix < n; ix++) {
+      const nx = ((ix + 0.5) / n) * 2 - 1;
+      const ny = ((iy + 0.5) / n) * 2 - 1;
+      if (nx * nx + ny * ny >= 1) continue;
+      sum += sample(nx, ny);
+      count++;
+    }
+  }
+  return count === 0 ? 0 : sum / count;
+}
+
+/**
+ * 겹별 텍스처의 **원판 평균 휘도**. `hazardShape.additiveLoad` 의 입력이다.
+ *
+ * 여기가 회계와 실제 그림을 잇는 유일한 지점이다 — 텍스처를 밝게 다시 구우면 알파를 하나도
+ * 안 만졌는데도 예산 테스트가 빨개진다(§2-4 가 요구한 "상수가 아니라 실측 파생").
+ *
+ * ⚠️ 곱연산 텍스처(`crackShade`·`plateShade`·접촉 그늘)는 여기 없다. 어둡게 하는 겹은 밝기
+ * 총량에 **순감**으로 기여하므로 가산 회계의 항이 아니다.
+ */
+export function additiveTextureMean(texture: AdditiveTextureId): number {
+  const hit = meanCache.get(texture);
+  if (hit !== undefined) return hit;
+  const v = meanDiscLuminance(ADDITIVE_SAMPLERS[texture]);
+  meanCache.set(texture, v);
+  return v;
+}
+
+const meanCache = new Map<AdditiveTextureId, number>();
+
+const ADDITIVE_SAMPLERS: Readonly<
+  Record<AdditiveTextureId, (nx: number, ny: number) => number>
+> = {
+  glow: glowLuminance,
+  rim: rimLuminance,
+  blob: blobLuminance,
+  mote: moteLuminance,
+  crackAdd: crackLuminance,
+  crackShade: crackShadeLuminance,
+  plateShade: plateShadeLuminance,
+  bubbleAdd: bubbleLuminance,
+  lensAdd: lensLuminance,
+};
+
 /** 캐시를 비운다. **테스트 격리 전용**. */
 export function resetHazardTextures(): void {
   blobTex = undefined;
@@ -450,4 +550,5 @@ export function resetHazardTextures(): void {
   rimTex = undefined;
   lensDispTex = undefined;
   crustCache.clear();
+  meanCache.clear();
 }
