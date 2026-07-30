@@ -21,16 +21,25 @@
       .desc { font-size: 11px; color: #6d80a3; margin-top: 2px; }
       .status { margin-top: 20px; font-size: 12px; color: #7f92b5; }
       .err { color: #ff8080; }
+      .planets { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 18px; }
+      .planets button {
+        font: inherit; font-size: 12px; padding: 6px 12px; cursor: pointer;
+        background: #131a2c; color: #9fb4d8; border: 1px solid #22304a; border-radius: 4px;
+      }
+      .planets button[aria-pressed='true'] { background: #24406e; color: #e8f0ff; border-color: #3d6ab0; }
+      .planets button:disabled { opacity: 0.4; cursor: not-allowed; }
     </style>
   </head>
   <body>
     <h1>보스 3D 연출 뷰어 <span style="color:#6d80a3">(dev 전용)</span></h1>
     <p class="sub">
-      Meshy 로 만든 카르곤 보스 GLB 를 게임과 <b>동일한 경로</b>로 렌더한다 —
+      Meshy 로 만든 <b>행성별 보스 GLB</b> 를 게임과 <b>동일한 경로</b>로 렌더한다 —
       오프스크린 three.js → 아틀라스 → Pixi 텍스처(<code>src/render/three3d/</code>).<br />
       각 칸은 sim 의 보스 상태(<code>boss.phase</code> / 전환 프리즈 / 과열 창)에 대응하는 연출이며,
-      인게임과 같은 160px 슬롯을 nearest 확대해 픽셀감을 유지한다.
+      인게임과 같은 160px 슬롯을 nearest 확대해 픽셀감을 유지한다.<br />
+      연출 5종은 <b>전 행성 공용</b>이다 — 행성마다 다른 것은 모델·텍스처와 코어 점광 색뿐이다.
     </p>
+    <div class="planets" id="planets"></div>
     <div class="row" id="row"></div>
     <div class="status" id="status">로딩 중…</div>
 
@@ -66,26 +75,63 @@
         return cv.getContext('2d');
       });
 
+      // 행성 인덱스는 src/render/textures.ts 의 bossFiles 계약과 같다(0 카르곤 … 5 크라스).
+      const PLANETS = ['0 카르곤', '1 베르단', '2 니플헤임', '3 아르케', '4 톡사르', '5 크라스'];
+
       const stage = Stage3D.create();
       if (stage === null) {
         status.className = 'status err';
         status.textContent = 'WebGL 컨텍스트를 얻지 못했습니다 — 인게임에서도 2D 스프라이트로 폴백됩니다.';
       } else {
-        const actor = new BossActor(stage);
-        const ok = await actor.load('boss_kargon.glb');
-        if (!ok) {
-          status.className = 'status err';
-          status.textContent = 'assets/models/boss_kargon.glb 로드 실패 — 인게임에서는 기존 PNG 로 폴백됩니다.';
-        } else {
-          status.textContent = '재생 중 — 각 칸은 같은 모델·같은 시계이고 상태만 다르다.';
-          let last = performance.now();
-          // 전환은 2초 뒤 끝나는 일회성이라, 뷰어에서는 계속 되감아 반복 재생한다.
-          let transLoop = 2;
-          const tick = (now) => {
-            const dt = Math.min((now - last) / 1000, 0.1);
-            last = now;
-            transLoop -= dt;
-            if (transLoop <= 0) transLoop = 2;
+        // 무대(WebGL 컨텍스트)는 하나를 계속 재사용하고 **액터만** 갈아탄다 — 인게임의 행성 교체
+        // 경로(entityRenderer.ensureBoss3D)와 같은 규율이다.
+        let actor = null;
+        let planet = -1;
+
+        const buttons = PLANETS.map((name, i) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = name;
+          b.setAttribute('aria-pressed', 'false');
+          b.addEventListener('click', () => void select(i));
+          document.getElementById('planets').append(b);
+          return b;
+        });
+
+        async function select(next) {
+          if (planet === next) return;
+          for (const b of buttons) b.disabled = true;
+          if (actor !== null) {
+            actor.dispose(); // 모델 GPU 자원은 명시 해제로만 내려간다(6종 순회 시 누적).
+            actor = null;
+          }
+          planet = next;
+          for (const [i, b] of buttons.entries()) b.setAttribute('aria-pressed', String(i === next));
+          const a = new BossActor(stage);
+          if (await a.load(next)) {
+            actor = a;
+            status.className = 'status';
+            status.textContent = `${PLANETS[next]} 재생 중 — 각 칸은 같은 모델·같은 시계이고 상태만 다르다.`;
+          } else {
+            a.dispose();
+            status.className = 'status err';
+            status.textContent = `${PLANETS[next]} 모델 없음/로드 실패 — 인게임에서는 기존 PNG 로 폴백됩니다.`;
+          }
+          for (const b of buttons) b.disabled = false;
+        }
+
+        await select(0);
+
+        let last = performance.now();
+        // 전환은 2초 뒤 끝나는 일회성이라, 뷰어에서는 계속 되감아 반복 재생한다.
+        let transLoop = 2;
+        const tick = (now) => {
+          const dt = Math.min((now - last) / 1000, 0.1);
+          last = now;
+          transLoop -= dt;
+          if (transLoop <= 0) transLoop = 2;
+          // 로드 실패·교체 중에는 액터가 없다 — 마지막 프레임을 그대로 남긴다(화면을 비우지 않는다).
+          if (actor !== null) {
             for (const [i, [, , state, tl]] of STATES.entries()) {
               actor.transitionLeft = tl === null ? transLoop : 0;
               actor.wasTransitioning = state.transitioning;
@@ -95,10 +141,10 @@
               ctx.clearRect(0, 0, SLOT_SIZE, SLOT_SIZE);
               ctx.drawImage(stage.canvas, 0, 0, SLOT_SIZE, SLOT_SIZE, 0, 0, SLOT_SIZE, SLOT_SIZE);
             }
-            requestAnimationFrame(tick);
-          };
+          }
           requestAnimationFrame(tick);
-        }
+        };
+        requestAnimationFrame(tick);
       }
     </script>
   </body>
