@@ -29,6 +29,24 @@
  *   가장 필요한 순간)에 이미 만든 장식이 그대로 남아 비용을 계속 낸다.
  * - **런 경계**({@link lastAlive}): 재적 기록이 id 뿐이라 새 런의 스폰을 억제하고 있었다.
  *
+ * ## 4차 개정 — **기준량을 아트 알파 경계로 갈았다**
+ * 3차의 림 기법 전환은 통했지만(4× 확대에서 떨어진 초승달·가로지르는 구간·보스 빈 띠가 전부
+ * 사라졌다), **같은 근본 원인이 두 곳에 남아 있었다**: `radius = sprite.width / 2` 는 텍스처
+ * 반치수이고 아트 반치수가 아니다. 비평가의 알파 스윕 실측(`enemyParts.ts` 헤더 표)이
+ * 1.12r 궤도의 몸 위 비율을 **0%**, 0.86r 을 58.9% 로 확정했다. 그래서 4차는:
+ *
+ * - **엘리트/보스 오라**: 동심 링 → **등급색 틴트 본체 텍스처 가산 사본**(오프셋 0, 몇 % 부풀림).
+ *   허공에 고리가 생길 수단 자체를 없앴다.
+ * - **보스 룬**: 궤도를 {@link textureArtExtent} 실심 반경에서 파생. **회전 제거**(3차는 룬이
+ *   주기의 41% 를 빈 공간에서 보냈다). 형태도 불투명 사각 → 테두리 마름모 + 중심 점.
+ * - **잡몹 림**: 오프셋 0.14 → 0.22 · 알파 0.22 → 0.45. 기법은 옳았지만 1× 스케일에서 안 보여
+ *   §3 이 림에 맡긴 일이 실제로 일어나지 않았다.
+ * - **잡몹 티어에 형태 하나**: 위상 오프셋 아이들 호흡(부피 보존 → 밝기 기여 0, 표시 객체 0).
+ * - **손상 실루엣**: 대파 이상에서 몸이 비대칭으로 찌그러지고 기운다. AAA 는 손상 단계에서
+ *   실루엣이 변한다.
+ * - **본체 변환 단일 창구**({@link EnemyAdorner.applyBody}) — 네 연출이 각자 `sprite.scale` 을
+ *   쓰면 마지막 호출이 앞의 것을 지우고 "잔여 0" 판정도 갈린다.
+ *
  * ## 스폰 시점은 렌더 부착 시점이 아니다 (1차 CRITICAL)
  * `onAttach` 는 `entityRenderer.reset()` 마다 다시 불린다(`main.ts` 화면 전환 5곳). 1차는 거기서
  * 태어난 것으로 쳐서 **화면 전환마다 전 적이 동시에 스폰 인을 재생**했고, 보스전 실측 bright
@@ -83,10 +101,9 @@ import {
 } from './enemyPosture.js';
 import { lightX, lightY } from '../env/theme.js';
 import {
-  buildBossAura,
+  ART_EXTENT_FALLBACK,
   buildBossInsignia,
   buildDashSmear,
-  buildEliteAura,
   buildEliteInsignia,
   buildFlame,
   buildMendAura,
@@ -97,6 +114,9 @@ import {
   buildSmoke,
   buildSparks,
   buildSpawnHalo,
+  clearArtExtentCache,
+  textureArtExtent,
+  type ArtExtent,
 } from './enemyParts.js';
 
 // ---------------------------------------------------------------------------
@@ -132,11 +152,56 @@ export const REATTACH_WINDOW = 3;
 
 /**
  * 림라이트 오프셋(표시 반치수 배율). 본체 텍스처의 가산 사본을 광원 **쪽**으로 이만큼 밀어
- * 그 방향 가장자리만 실루엣 밖으로 삐져나오게 한다(레인 A `playerRim` 과 같은 값·같은 원리).
+ * 그 방향 가장자리만 실루엣 밖으로 삐져나오게 한다.
+ *
+ * 0.14 → 0.22 (4차). 기법은 3차에 이미 옳았지만 **세기가 1× 게임플레이 스케일에서 식별되지
+ * 않았다** — 그래서 §3 이 림에 맡긴 일(어두운 행성에서 실루엣을 세운다·개체 경계)이 실제로
+ * 일어나지 않고 기준선 결함("적 4기가 어두운 회갈색 덩어리")이 그대로 남았다. 밝기 예산에는
+ * 여유가 컸다(레인 단독 순기여 +0.36pp, 상한 7% / 최악 4.52%).
  */
-const RIM_OFFSET = 0.14;
-/** 림 사본 알파. 20기가 동시에 켜져도 §2-4 예산 안에 들도록 낮게 잡는다. */
-const RIM_ALPHA = 0.22;
+const RIM_OFFSET = 0.22;
+/** 림 사본 알파. 0.22 → 0.45 (4차, 위 오프셋과 같은 이유). */
+const RIM_ALPHA = 0.45;
+
+/**
+ * 등급 오라 = **등급색으로 틴트한 본체 텍스처 가산 사본**의 `[부풀림, 알파]` 겹.
+ *
+ * 3차까지의 동심 링은 4차 실측에서 **몸 위 0%** 였다(허공의 완전 원 = §2-5 위반의 정의).
+ * 텍스처 사본은 실루엣을 따라가므로 부풀린 만큼만 경계 밖으로 새어 나온다 — 같은 알파가
+ * "링" 이 아니라 "몸에서 나오는 발광" 으로 읽힌다.
+ */
+const ELITE_AURA_LAYERS: readonly (readonly [number, number])[] = [
+  [1.07, 0.3],
+  [1.17, 0.17],
+];
+/** 보스 오라 겹. 개체가 런에 하나뿐이라 조금 더 쓴다. */
+const BOSS_AURA_LAYERS: readonly (readonly [number, number])[] = [
+  [1.06, 0.34],
+  [1.15, 0.2],
+];
+/** 오라 부풀림 상한(테스트가 못 박는다) — 넘으면 다시 "몸에서 떨어진 고리" 가 된다. */
+export const MAX_AURA_SWELL = 1.25;
+
+/**
+ * 아이들 호흡 진폭(본체 스케일). **잡몹 티어에 남는 형태 언어**다.
+ *
+ * 3차는 잡몹에게 오라도 휘장도 없고 림도 안 보여서, 화면 적 28기 중 25기의 항목 ①(위협도)·
+ * ⑥(군집)이 기준선과 사실상 같았다 — "보스/엘리트만 표시" 는 계층이 아니라 예산 절감이다.
+ * 호흡은 {@link phaseForId} 위상 오프셋을 그대로 써서 같은 종 20기가 **각자 다른 박자**로 뛰게
+ * 하므로 겹쳐도 개체 경계가 드러난다(항목 ⑥ 이 스스로 지정한 기제). 부피 보존(가로↑세로↓)이라
+ * 밝기 기여가 0 이고 새 표시 객체도 0 이다.
+ */
+const BREATH_AMP = 0.035;
+
+/**
+ * 손상 실루엣 변형(본체 스케일 비대칭). **AAA 는 손상 단계에서 실루엣이 변한다**(패널 탈락·
+ * 기울기). 3차는 가산 열 오버레이만 있어 몸 자체는 원본 픽셀 그대로였고, 배경이 AAA 인 만큼
+ * 그 대비가 두드러졌다. 신규 자산 없이 가장 싼 것 하나 — 비대칭 압축 + 미세 기울기.
+ */
+const DEFORM_FIRE = 0.05;
+const DEFORM_CRITICAL = 0.1;
+/** 치명 단계 기울기(라디안). 개체별로 좌/우가 갈려 편대가 한 몸처럼 기울지 않는다. */
+const TILT_CRITICAL = 0.13;
 
 // ---------------------------------------------------------------------------
 // 종 정보 — leaf 카탈로그에서 읽는다(sim 상태 아님)
@@ -376,7 +441,8 @@ class EnemyAdorner implements EntityAdorner {
   private below: Container | null = null;
   private above: Container | null = null;
 
-  private aura: Graphics | null = null;
+  /** 등급 오라 겹(본체 텍스처 가산 사본). 링 `Graphics` 가 아니다 — 4차 CRIT. */
+  private auraLayers: Sprite[] = [];
   private insignia: Container | null = null;
   private rim: Sprite | null = null;
   private spawnHalo: Graphics | null = null;
@@ -411,6 +477,24 @@ class EnemyAdorner implements EntityAdorner {
   private baseScaleY = 1;
   /** 본체 변환·밝기를 우리가 건드렸는가(회수 시 원복 판단). */
   private spriteTouched = false;
+  /**
+   * 이 본체 텍스처의 **아트 알파 경계**. 몸에 앉아야 하는 기하는 전부 여기서 파생된다 —
+   * `sprite.width/2` 는 투명 여백을 포함한 텍스처 반치수라 기준량이 될 수 없다(4차 CRIT).
+   */
+  private extent: ArtExtent = ART_EXTENT_FALLBACK;
+  /** 개체별 기울기 방향(±1). 편대가 한 몸처럼 기울지 않게 한다. */
+  private lean = 1;
+
+  // ── 이번 프레임 본체 변환 계수 ──────────────────────────────────────────────
+  // 스폰 물질화 · 재조준 스쿼시 · 손상 변형 · 아이들 호흡이 **각자 곱해 넣고**, 프레임 끝에
+  // {@link applyBody} 가 한 번만 스프라이트에 쓴다. 네 곳이 각자 `sprite.scale` 을 직접 쓰면
+  // 마지막 호출이 앞의 것을 지우고 원복 판정도 갈린다.
+  private bScaleX = 1;
+  private bScaleY = 1;
+  private bAlpha = 1;
+  private bTilt = 0;
+  /** 이번 프레임 등급 오라 맥동 배율(부풀림에 곱해진다). */
+  private auraPulse = 1;
 
   constructor(
     private readonly kind: string,
@@ -440,6 +524,8 @@ class EnemyAdorner implements EntityAdorner {
     this.baseScaleX = sprite.scale.x;
     this.baseScaleY = sprite.scale.y;
     this.bornTick = ctx.frameTick;
+    this.extent = textureArtExtent(sprite.texture);
+    this.lean = Math.sin(this.phase) >= 0 ? 1 : -1;
 
     // ── 신생인가 재부착인가 ────────────────────────────────────────────────
     // `reset()` 은 다음 프레임에 전 엔티티를 다시 부착한다. 그때를 스폰으로 치면 화면 전환마다
@@ -487,12 +573,102 @@ class EnemyAdorner implements EntityAdorner {
     const stage = damageStage(e.hp, e.maxHp);
     const t = ctx.frameTick * 0.1 + this.phase;
 
+    // 본체 변환 계수를 매 프레임 중성으로 되돌린 뒤, 각 update* 가 자기 몫을 곱해 넣는다.
+    this.bScaleX = 1;
+    this.bScaleY = 1;
+    this.bAlpha = 1;
+    this.bTilt = 0;
+
     this.syncLayers(sprite);
     this.updateThreat(sprite, glow, motion, low, t);
     this.updateRim(sprite, ctx, low, glow);
     this.updateSpawn(sprite, ctx, glow, low);
     this.updateTelegraph(sprite, e, posture, glow, low, motion, t);
     this.updateDamage(sprite, ctx, stage, glow, low, motion, t);
+    this.updateBreath(posture, stage, motion, t);
+    this.applyBody(sprite);
+    this.mirrorBodyCopies(sprite);
+  }
+
+  /**
+   * 본체 텍스처 사본 3종(림·등급 오라·열 오버레이)의 **변환을 본체에 맞춘다**.
+   *
+   * ⚠️ 이것이 `applyBody` **뒤에** 있어야 하는 이유: 사본을 만든 자리(`updateRim` 등)에서 바로
+   * `sprite.scale` 을 읽으면 그 값은 **아직 이번 프레임 것이 아니다.** 4차 구현 중 실제로
+   * 그렇게 짰다가, 스폰 물질화 중인 첫 프레임에서 사본이 본체보다 1.9배로 커져 오라 부풀림
+   * 가드가 빨개졌다(사본은 직전 프레임 스케일 × 부풀림, 본체는 0.62배). 형제 컨테이너는 변환
+   * 상속이 없으니 **쓰는 순서가 곧 정합성**이다.
+   */
+  private mirrorBodyCopies(sprite: Sprite): void {
+    const tex: Texture = sprite.texture;
+    const rot = sprite.rotation;
+    const sx = sprite.scale.x;
+    const sy = sprite.scale.y;
+    const rim = this.rim;
+    if (rim !== null) {
+      if (rim.texture !== tex) rim.texture = tex;
+      rim.rotation = rot;
+      rim.scale.set(sx, sy);
+    }
+    const spec = this.tier === THREAT_BOSS ? BOSS_AURA_LAYERS : ELITE_AURA_LAYERS;
+    for (let i = 0; i < this.auraLayers.length; i++) {
+      const s = this.auraLayers[i];
+      const cfg = spec[i];
+      if (s === undefined || cfg === undefined) continue;
+      if (s.texture !== tex) s.texture = tex;
+      const swell = Math.min(MAX_AURA_SWELL, cfg[0] * this.auraPulse);
+      s.rotation = rot;
+      s.scale.set(sx * swell, sy * swell);
+    }
+    const bg = this.bodyGlow;
+    if (bg !== null) {
+      if (bg.texture !== tex) bg.texture = tex;
+      bg.rotation = rot;
+      bg.scale.set(sx, sy);
+    }
+  }
+
+  /**
+   * 아이들 호흡 + 손상 실루엣 변형. 둘 다 **본체 변환 계수만** 건드린다(표시 객체 0).
+   *
+   * 스폰·재조준 중에는 물러난다 — 그 두 연출이 이미 몸의 비례를 말하고 있어 겹치면 둘 다
+   * 안 읽힌다.
+   */
+  private updateBreath(posture: number, stage: number, motion: boolean, t: number): void {
+    if (this.bodyOwnedByRenderer) return;
+    if (stage >= DMG_FIRE) {
+      // 손상 변형은 모션 게이트와 무관하다 — 상태 표시이고 흔들리지 않는다(광과민 무관).
+      const dev = stage >= DMG_CRITICAL ? DEFORM_CRITICAL : DEFORM_FIRE;
+      this.bScaleX *= 1 + dev;
+      this.bScaleY *= 1 - dev * 0.7;
+      this.bTilt += this.lean * (stage >= DMG_CRITICAL ? TILT_CRITICAL : TILT_CRITICAL * 0.45);
+    }
+    if (!motion || !this.spawnDone || posture === POSTURE_RELOCK) return;
+    // 부피 보존 — 가로가 커지면 세로가 그만큼 준다. 실루엣 면적이 흔들리지 않아 위장률·밝기
+    // 지표에 기여가 없고, 그래도 "숨 쉬는" 이 읽힌다.
+    const k = 1 + BREATH_AMP * Math.sin(t * 0.9);
+    this.bScaleX *= k;
+    this.bScaleY *= 2 - k;
+  }
+
+  /**
+   * 이번 프레임 본체 변환을 **한 번만** 쓴다. 계수가 전부 중성이면 원복해 "잔여 0" 을 지킨다.
+   *
+   * 회전은 더하기만 한다 — `entityRenderer` 가 매 프레임 `sprite.rotation` 을 다시 대입하므로
+   * 누적되지 않는다(그래서 회수 시 회전 원복이 필요 없다).
+   */
+  private applyBody(sprite: Sprite): void {
+    if (this.bodyOwnedByRenderer) return;
+    const neutral =
+      this.bScaleX === 1 && this.bScaleY === 1 && this.bAlpha === 1 && this.bTilt === 0;
+    if (neutral) {
+      this.restoreBody(sprite);
+      return;
+    }
+    sprite.scale.set(this.baseScaleX * this.bScaleX, this.baseScaleY * this.bScaleY);
+    sprite.alpha = this.bAlpha;
+    sprite.rotation += this.bTilt;
+    this.spriteTouched = true;
   }
 
   /** 이미 만든 소유 컨테이너를 스프라이트 보간 위치로 미러한다. **만들지는 않는다.** */
@@ -527,7 +703,16 @@ class EnemyAdorner implements EntityAdorner {
     return this.above;
   }
 
-  /** 위협도 오라·휘장. 잡몹은 둘 다 없다(수가 많은 쪽을 자른다). */
+  /**
+   * 위협도 오라·휘장. 잡몹은 둘 다 없다(수가 많은 쪽을 자른다 — 대신 잡몹은 림 + 호흡을 받는다).
+   *
+   * ## 오라는 링이 아니라 **본체 텍스처 가산 사본**이다 (4차 CRIT)
+   * 1.45r → 1.12r 로 줄인 것은 원을 없앤 게 아니었다. 4차 알파 스윕 실측으로 그 궤도는
+   * `boss.png`·`enemy_charger` 둘 다 **몸 위 0%** — 3링 전체가 허공이었고 1× 게임플레이
+   * 스케일에서 화면에서 가장 UI 스럽게 읽히는 단일 요소였다. 이제 이 레인이 이미 수치로
+   * 성공시킨 기법(`enemyRim`·`enemyBodyGlow`)으로 옮겨, 등급색으로 틴트한 사본을 오프셋 0 으로
+   * 몇 % 부풀려 겹친다 — 허공에 고리가 생길 **수단 자체가 없다.**
+   */
   private updateThreat(
     sprite: Sprite,
     glow: boolean,
@@ -537,24 +722,35 @@ class EnemyAdorner implements EntityAdorner {
   ): void {
     if (this.tier === 0) return;
     const boss = this.tier === THREAT_BOSS;
+    const spec = boss ? BOSS_AURA_LAYERS : ELITE_AURA_LAYERS;
 
     if (glow && !low) {
-      const below = this.aura === null ? this.ensureBelow(sprite) : this.below;
-      if (this.aura === null && below !== null) {
-        this.aura = boss
-          ? buildBossAura(this.radius, this.accent)
-          : buildEliteAura(this.radius, this.accent);
-        this.aura.label = 'enemyAura';
-        below.addChild(this.aura);
+      const below = this.auraLayers.length === 0 ? this.ensureBelow(sprite) : this.below;
+      if (this.auraLayers.length === 0 && below !== null) {
+        for (const [, alpha] of spec) {
+          const s = new Sprite(sprite.texture);
+          s.label = 'enemyAura';
+          s.anchor.set(0.5);
+          s.blendMode = 'add';
+          s.tint = this.accent;
+          s.alpha = alpha;
+          below.addChild(s);
+          this.auraLayers.push(s);
+        }
       }
-      if (this.aura !== null) {
-        const pulse = motion ? 1 + 0.05 * Math.sin(t * (boss ? 0.45 : 0.7)) : 1;
-        this.aura.scale.set(pulse);
+      // 변환(회전·스케일·텍스처)은 {@link mirrorBodyCopies} 가 프레임 끝에 한 번에 맞춘다 —
+      // 여기서 읽으면 아직 이번 프레임 본체 변환이 아니다.
+      this.auraPulse = motion ? 1 + 0.02 * Math.sin(t * (boss ? 0.45 : 0.7)) : 1;
+      for (let i = 0; i < this.auraLayers.length; i++) {
+        const s = this.auraLayers[i];
+        const cfg = spec[i];
+        if (s === undefined || cfg === undefined) continue;
+        s.alpha = cfg[1] * (motion ? 0.88 + 0.12 * Math.sin(t * 0.6) : 1);
       }
     } else {
       // 게이트가 내려가면 **감추는 게 아니라 걷는다.** `visible=false` 로 두면 티어 강등
       // (= FPS 가 떨어져 완화가 가장 필요한 순간)에 표시 객체가 그대로 남아 비용을 계속 낸다.
-      this.aura = destroyChild(this.below, this.aura);
+      this.dropAura();
     }
 
     // 휘장은 발광이 아니라 **정보**라 halo 게이트에 매달지 않는다(발광을 껐다고 계급이
@@ -562,15 +758,32 @@ class EnemyAdorner implements EntityAdorner {
     const above = this.insignia === null ? this.ensureAbove(sprite) : this.above;
     if (this.insignia === null && above !== null) {
       this.insignia = boss
-        ? buildBossInsignia(this.halfW, this.halfH, this.accent)
-        : buildEliteInsignia(this.radius, this.accent);
+        ? buildBossInsignia(this.halfW, this.halfH, this.accent, this.extent)
+        : buildEliteInsignia(this.radius, this.accent, this.extent);
       this.insignia.label = 'enemyInsignia';
       above.addChild(this.insignia);
     }
     if (this.insignia !== null) {
-      if (boss) this.insignia.rotation = motion ? t * 0.12 : 0;
-      else this.insignia.y = motion ? Math.sin(t * 0.8) * this.radius * 0.06 : 0;
+      if (boss) {
+        // **회전하지 않는다** (4차 CRIT). 3차는 `rotation = t*0.12` 로 컨테이너를 계속 돌려,
+        // 축별 배치의 이점이 회전 0 인 순간에만 성립했고 룬이 주기의 41% 를 빈 공간에서 보냈다.
+        // 궤도가 이제 360° 알파 스윕 실심 반경이라 회전 불변이지만, 그래도 돌리지 않는다 —
+        // 도는 기하 표식은 그것만으로 HUD 어휘로 읽힌다(§2-5). 맥동은 알파로만 준다.
+        this.insignia.rotation = 0;
+        this.insignia.alpha = motion ? 0.82 + 0.18 * Math.sin(t * 0.5) : 1;
+      } else {
+        this.insignia.y = motion ? Math.sin(t * 0.8) * this.radius * 0.06 : 0;
+      }
     }
+  }
+
+  /** 등급 오라 회수(게이트 하강 공통). */
+  private dropAura(): void {
+    for (const s of this.auraLayers) {
+      this.below?.removeChild(s);
+      s.destroy();
+    }
+    this.auraLayers = [];
   }
 
   /**
@@ -609,13 +822,10 @@ class EnemyAdorner implements EntityAdorner {
     }
     const rim = this.rim;
     if (rim === null) return;
-    // 애니메이션 프레임 교체를 따라간다 — 안 따라가면 어긋난 잔상이 생긴다.
-    if (rim.texture !== sprite.texture) rim.texture = sprite.texture;
     const mag = Math.max(this.halfW, this.halfH) * RIM_OFFSET;
     // 컨테이너가 이미 본체 위치에 있으므로 오프셋만 로컬로 준다.
+    // 변환·텍스처는 {@link mirrorBodyCopies} 가 프레임 끝에 맞춘다.
     rim.position.set(lightX(ctx.theme.light) * mag, lightY(ctx.theme.light) * mag);
-    rim.rotation = sprite.rotation;
-    rim.scale.set(sprite.scale.x, sprite.scale.y);
   }
 
   /** 림 회수(게이트 하강·테마 소실 공통). */
@@ -646,13 +856,11 @@ class EnemyAdorner implements EntityAdorner {
       this.spawnHalo.alpha = 1 - p * p;
     }
     // 본체가 작게·희미하게 시작해 제 크기로 자란다. 보스는 렌더러 보스 분기가 alpha 를
-    // 전유하므로 건드리지 않는다.
-    if (!this.bodyOwnedByRenderer) {
-      const s = 0.62 + 0.38 * p;
-      sprite.scale.set(this.baseScaleX * s, this.baseScaleY * s);
-      sprite.alpha = 0.4 + 0.6 * p;
-      this.spriteTouched = true;
-    }
+    // 전유하므로 {@link applyBody} 가 알아서 물러난다.
+    const s = 0.62 + 0.38 * p;
+    this.bScaleX *= s;
+    this.bScaleY *= s;
+    this.bAlpha = 0.4 + 0.6 * p;
     if (p >= 1) this.finishSpawn(sprite);
   }
 
@@ -689,7 +897,6 @@ class EnemyAdorner implements EntityAdorner {
     const show = glow && !low && posture !== 0;
     if (!show) {
       this.dropTelegraph();
-      if (this.spawnDone) this.restoreBody(sprite);
       return;
     }
     if (posture !== this.telegraphFor) {
@@ -720,14 +927,12 @@ class EnemyAdorner implements EntityAdorner {
       // `scale.x` 압축은 화면 가로가 아니라 진행축 압축이다 — 다만 그 등식은 회전이 걸리는
       // kind 에서만 성립하므로, 회전이 0 으로 고정되는 보스 계열은 애초에 제외돼 있다.
       const k = Math.min(1, this.posture.holdFrames / 10);
-      if (!this.bodyOwnedByRenderer && motion) {
+      if (motion) {
         const squash = 1 - 0.18 * (1 - k);
-        sprite.scale.set(this.baseScaleX * squash, this.baseScaleY * (2 - squash));
-        this.spriteTouched = true;
+        this.bScaleX *= squash;
+        this.bScaleY *= 2 - squash;
       }
       if (tel !== null) tel.alpha = (1 - k) * 0.9;
-    } else if (this.spawnDone) {
-      this.restoreBody(sprite);
     }
 
     if (tel === null) return;
@@ -802,7 +1007,7 @@ class EnemyAdorner implements EntityAdorner {
       this.damageFor = key;
       const below = glow ? this.ensureBelow(sprite) : null;
       if (below !== null) {
-        this.sparks = buildSparks(this.radius, 0xffc46a, stage >= DMG_FIRE ? 7 : 4);
+        this.sparks = buildSparks(this.radius, 0xffc46a, stage >= DMG_FIRE ? 7 : 4, this.extent);
         this.sparks.label = 'enemyDamage';
         below.addChild(this.sparks);
         if (stage >= DMG_FIRE && ctx.tier === 'high') {
@@ -839,12 +1044,7 @@ class EnemyAdorner implements EntityAdorner {
       this.smoke.alpha = stage >= DMG_FIRE ? 1 : 0.6;
     }
     if (this.bodyGlow !== null) {
-      // 본체와 정확히 겹치게 변환을 미러한다(형제라 자동 상속이 없다). 애니메이션 프레임
-      // 교체도 따라간다 — 안 따라가면 팔다리가 어긋난 잔상이 생긴다.
-      const tex: Texture = sprite.texture;
-      if (this.bodyGlow.texture !== tex) this.bodyGlow.texture = tex;
-      this.bodyGlow.rotation = sprite.rotation;
-      this.bodyGlow.scale.set(sprite.scale.x, sprite.scale.y);
+      // 변환·텍스처는 {@link mirrorBodyCopies} 가 프레임 끝에 맞춘다(형제라 상속이 없다).
       // 치명 단계는 맥동이 빨라진다 — "한 대만 더" 가 몸에서 읽힌다.
       const beat = motion ? 0.75 + 0.25 * Math.sin(t * (stage >= DMG_CRITICAL ? 3.4 : 1.7)) : 1;
       this.bodyGlow.alpha = (stage >= DMG_CRITICAL ? 0.5 : 0.32) * beat;
@@ -913,7 +1113,7 @@ class EnemyAdorner implements EntityAdorner {
       this.above.destroy({ children: true });
       this.above = null;
     }
-    this.aura = null;
+    this.auraLayers = [];
     this.insignia = null;
     this.rim = null;
     this.spawnHalo = null;
@@ -1099,6 +1299,7 @@ const debugSurface = {
  * 4경로가 이미 같은 일을 한다).
  */
 export function resetEnemyVisualState(): void {
+  clearArtExtentCache();
   clearDebris();
   debrisPumpedTick = -1;
   debrisEmitted = 0;
