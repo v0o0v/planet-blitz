@@ -561,7 +561,9 @@ describe('로브 겹의 티어 게이트 (§2-3 — 게이트 없는 이펙트�
   it('low 티어가 로브 총량을 대폭 줄인다', () => {
     // 3차 실측: high 272 / low **272(동일)** / reducedGlow+reducedMotion **272(동일)**.
     const high = total('high', HIGH);
-    expect(high).toBe(272); // 6×14 + 12×8 + 23×4 — 회귀 감시용 실측 기준선
+    // 6차 반려 MAJOR-3 으로 5차의 272(6×14 + 12×8 + 23×4)에서 내려왔다: 로브가 셀 가산 부하의
+    // 20% 를 쓰면서 가시 기여는 재질 신호의 5% 미만이었다(mean maxCh 0.80 · ≥8레벨 3.3%).
+    expect(high).toBe(201); // 6×10 + 12×6 + 23×3 — 회귀 감시용 실측 기준선
     expect(total('low', LOW)).toBeLessThan(high * 0.25);
   });
 
@@ -607,6 +609,38 @@ describe('재질 분화 — 종류마다 구성이 다르다', () => {
     // 두 장이 반대로 돌아야 무늬가 회전이 아니라 변형으로 읽힌다(돌아가는 도장 방지).
     expect(m.flow).toBeGreaterThanOrEqual(2);
     expect(m.spin).toBeGreaterThan(0);
+  });
+
+  /**
+   * ## 6차 반려 CRITICAL-1 의 회귀 가드
+   * 5차의 `spore.shade` 는 `null` 이었다. 판정 장면(톡사르 41셀)이 전부 오염인데 그 종만 감산
+   * 축이 없어서, 이 레인의 겹을 통째로 꺼도 화면이 거의 같았다(셀 내부 델타 mean maxCh 6.32 ·
+   * ≥16레벨 9.4%). **판정 장면의 종류에 구조 축이 하나 빠져 있으면 그것이 곧 근인이다.**
+   */
+  it('오염이 감산 겹을 갖는다 — 밝은 원판 위에서 가산만으로는 대비가 안 생긴다', () => {
+    const s = hazardCrustSpec('spore');
+    expect(s.shade).toBe('sporeShade');
+    expect(s.shadeAlpha).toBeGreaterThan(0.8);
+    // 가산 겹은 그대로다 — 대비는 감산으로 얻고 밝기 총량(§2-4)은 건드리지 않는다.
+    expect(s.add).toBe('bubbleAdd');
+  });
+
+  it('모든 종류가 최소 하나의 면적 재질 축을 갖는다(가산이든 감산이든)', () => {
+    for (const k of ALL_KINDS) {
+      const c = hazardCrustSpec(k);
+      expect(c.add !== null || c.shade !== null, k).toBe(true);
+      if (c.shade !== null) expect(c.shadeAlpha, k).toBeGreaterThan(0);
+      if (c.add !== null) expect(c.addAlpha, k).toBeGreaterThan(0);
+    }
+  });
+
+  it('감산 겹은 가산 회계의 항이 아니다(어둡게 하는 겹은 밝기 총량에 순감이다)', () => {
+    const specs = additiveLayerSpecs('spore', 'full', 'high', HIGH, {
+      angle: 0.6,
+      shadowBias: 0.5,
+    });
+    expect(specs.some((s) => s.texture === 'sporeShade')).toBe(false);
+    expect(specs.some((s) => s.texture === 'bubbleAdd')).toBe(true);
   });
 
   it('그을음은 발광 겹이 없다 — 갈라진 검은 금이다', () => {
@@ -885,10 +919,13 @@ describe('배선 · 비용 상한', () => {
     // 접지는 이제 전 LOD 다(3차 반려 MAJOR-3 — 41장 중 6장에만 있는 겹은 렌더링 버그로 읽힌다).
     expect(lodHasGrounding('mid')).toBe(true);
     expect(lodHasGrounding('lite')).toBe(true);
-    // 입자만 최저 LOD 에서 빠진다(유일하게 매 프레임 위치를 다시 쓰는 겹이다).
+    // 입자도 전 LOD 다(6차 반려 MINOR-2 — 41셀 중 18셀에만 있는 겹은 접지·빗금과 같은 계열의
+    // 셀 간 정보량 불균형이다). **겹을 빼는 대신 밀도를 낮춘다.**
     expect(lodHasMotes('mid')).toBe(true);
-    expect(lodHasMotes('lite')).toBe(false);
+    expect(lodHasMotes('lite')).toBe(true);
     expect(lodMoteScale('mid')).toBeLessThan(lodMoteScale('full'));
+    expect(lodMoteScale('lite')).toBeLessThan(lodMoteScale('mid'));
+    expect(lodMoteScale('lite')).toBeGreaterThan(0);
     expect(lodHasLobes('mid')).toBe(true);
   });
 
@@ -1047,10 +1084,29 @@ describe('가산 밝기 총량 회계 (§2-4)', () => {
         for (const tier of ['high', 'med', 'low'] as const) {
           const gates = tier === 'low' ? LOW : HIGH;
           expect(gatedLoad(kind, lod, tier, gates), `${kind}/${lod}/${tier}`).toBeLessThanOrEqual(
-            MAX_CELL_ADDITIVE_LOAD,
+            MAX_CELL_ADDITIVE_LOAD[kind],
           );
         }
       }
+    }
+  });
+
+  /**
+   * ## 왜 "상한 안"만으로는 부족한가 (6차 반려 MINOR-3)
+   * 5차의 셀 상한은 단일 상수 0.32 였고 판정 장면인 오염 셀 실측은 0.138 이었다 — **2.3배**의
+   * 여유라 오염 셀의 어떤 알파 회귀도 이 테스트를 통과했다. 상한이 실측에서 파생됐다는 사실을
+   * 테스트가 직접 확인해야 그 함정이 다시 열리지 않는다.
+   */
+  it('상한이 실측에 붙어 있다 — 어떤 종류도 여유가 6% 를 넘지 않는다', () => {
+    for (const kind of KINDS) {
+      const worst = Math.max(
+        ...LODS.flatMap((lod) =>
+          (['high', 'med'] as const).map((tier) => gatedLoad(kind, lod, tier, HIGH)),
+        ),
+      );
+      const cap = MAX_CELL_ADDITIVE_LOAD[kind];
+      expect(worst, `${kind} 실측`).toBeGreaterThan(0);
+      expect(cap / worst, `${kind} 여유`).toBeLessThanOrEqual(1.06);
     }
   });
 
@@ -1066,15 +1122,30 @@ describe('가산 밝기 총량 회계 (§2-4)', () => {
     }
   });
 
-  it('판정 장면(톡사르 41셀)의 합계가 상한 안에 있다 — 셀 하나만 봐서는 못 잡는 축', () => {
+  /**
+   * **5종 전부** 돈다(6차 반려 MINOR-3). 5차는 `'spore'` 한 종만 훑어서, 다른 네 종의 겹 알파가
+   * 올라가도 장면 축에서는 아무도 보지 않았다 — 셀 수와 LOD 분포가 곱해지는 축은 셀 하나만
+   * 봐서는 절대 못 잡는다(4차가 정확히 그렇게 통과했다).
+   */
+  it('41셀 장면 합계가 종류별 상한 안에 있다 — 셀 하나만 봐서는 못 잡는 축', () => {
+    for (const kind of KINDS) {
+      let scene = 0;
+      for (const m of toxarLodMix(41)) {
+        scene += m.cells * gatedLoad(kind, m.lod, 'high', HIGH);
+      }
+      expect(scene, kind).toBeLessThanOrEqual(MAX_SCENE_ADDITIVE_LOAD[kind]);
+      // 상한이 실측에서 파생됐음을 여기서도 확인한다(여유 6% 이내).
+      expect(MAX_SCENE_ADDITIVE_LOAD[kind] / scene, `${kind} 여유`).toBeLessThanOrEqual(1.06);
+    }
+  });
+
+  it('판정 장면(톡사르 = 전부 오염)이 4차의 0.3배 아래다 — 순기여 ≤1.5pp 의 선형 상계', () => {
     let scene = 0;
     for (const m of toxarLodMix(41)) {
       scene += m.cells * gatedLoad('spore', m.lod, 'high', HIGH);
     }
-    expect(scene).toBeLessThanOrEqual(MAX_SCENE_ADDITIVE_LOAD);
-    // 4차는 같은 모델로 14.96 이었다. 0.35배 아래로 내려와 있어야 순기여 목표(≤1.5pp)의
-    // 선형 상계가 성립한다.
-    expect(scene).toBeLessThan(14.96 * 0.35);
+    // 4차는 같은 모델로 14.96 이었다.
+    expect(scene).toBeLessThan(14.96 * 0.3);
   });
 
   it('LOD 분포가 hazardLod 의 경계에서 파생된다(상수로 적어 두지 않는다)', () => {

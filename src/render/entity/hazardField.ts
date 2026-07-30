@@ -62,6 +62,7 @@ import {
   CRUST_COVER,
   CRUST_FLOW_FALLOFF,
   GROUND_COVER,
+  HAZARD_SQUASH_Y,
   MAX_FIELD_MATERIALS,
   hazardAmbience,
   hazardAmbienceShape,
@@ -374,7 +375,15 @@ class HazardFieldMaterial implements HazardMaterial {
     }
 
     // 하위 컨테이너는 공유 레이어의 자식이라 각자 위치를 받는다(장판별 루트가 없다).
-    for (const n of this.nodes()) n.position.set(zone.x, zone.y);
+    //
+    // 세로 압축은 **컨테이너에** 건다(스프라이트마다 걸지 않는다): 그러면 크기뿐 아니라 로브·입자의
+    // **위치**까지 같은 타원으로 눌려, 재질이 `drawHazardZone` 의 압축된 채움 밖으로 삐져나오지
+    // 않는다(같은 상수를 쓴다 — `hazardShape.HAZARD_SQUASH_Y` 주석이 정본). 환경 기여는 자기 압축
+    // (0.88)을 아래에서 다시 덮어쓴다.
+    for (const n of this.nodes()) {
+      n.position.set(zone.x, zone.y);
+      n.scale.set(1, HAZARD_SQUASH_Y);
+    }
     if (kindUsesDistortion(this.kind)) coverLens(ctx.frameTick, zone.x, zone.y, zone.radius * 1.2);
 
     // ── 환경 기여 ────────────────────────────────────────────────────────────

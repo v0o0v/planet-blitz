@@ -24,6 +24,8 @@ import {
   FILL_RINGS,
   FILL_SOFT_SPAN,
   GLOW_ALPHA_SCALE,
+  HATCH_MAX_LINES,
+  HAZARD_SQUASH_Y,
   HAZARD_COLOR_SLOW,
   HAZARD_COLOR_TERRAIN,
   drawHazardZone,
@@ -197,6 +199,26 @@ describe('형태 = 상태', () => {
     expect(circles[0]?.args[2]).toBe(100 * LIP_RATIO);
   });
 
+  /**
+   * 6차 반려 MINOR-1: 수렴 링이 점선 폴리곤(36점 **고정**)을 재사용해서, 반경 200 장판에서 변
+   * 길이 35px 로 **각진 다각형**으로 읽혔다. 점 수는 조각 개수에서 나온 값이라 반경과 무관하다.
+   * 채움과 같은 반경 파생 점 수를 쓰면 사라진다 — 그 파생을 여기서 못 박는다.
+   */
+  it('수렴 예고 링의 점 수가 반경에서 파생된다 (6차 MINOR-1 — 각진 수렴 링)', () => {
+    for (const r of [100, 200, 400]) {
+      const { canvas, calls } = recorder();
+      drawHazardZone(canvas, 0, 0, r, hazardVisual(HAZARD_LAVA, false), 0);
+      const polys = calls.filter((c) => c.op === 'poly');
+      // 예열 경로가 그리는 폴리곤은 수렴 링 하나뿐이다(점선은 moveTo/lineTo 다).
+      expect(polys.length, `r=${r}`).toBe(1);
+      const n = (polys[0]?.args.length ?? 0) / 2;
+      expect(n, `r=${r}`).toBe(hazardFillPoints(r) * 2);
+      // 5차의 고정 36점보다 항상 촘촘하고, 각도 해상도가 6° 안이라 꼭짓점이 도드라지지 않는다.
+      expect(n, `r=${r}`).toBeGreaterThan(36);
+      expect(360 / n, `r=${r}`).toBeLessThanOrEqual(6);
+    }
+  });
+
   it('정원 립이 유기 윤곽보다 약하다 — 인공 형태가 화면을 지배하면 §2-5 위반이다', () => {
     // ## 5차 반려의 실체
     // 4차에 립이 `radius - strokeWidth` → **정확히 `radius`** 로 올라가면서 더 또렷해졌고,
@@ -342,6 +364,55 @@ describe('실루엣 — 완전한 원을 쓰지 않는다 (계약 §2-5 UI 어�
     const circles = calls.filter((c) => c.op === 'circle');
     expect(circles.length).toBe(1);
     expect(circles[0]?.args[2]).toBe(150 * LIP_RATIO); // 립은 판정 반경에 정확히 놓인다
+  });
+
+  /**
+   * ## 6차 반려 MAJOR-2 — 높이감
+   * 5차까지 채움·경계·립에 원근 압축이 **0** 이었다(압축을 쓰는 것은 환경 기여 0.88 과 예열 고조
+   * 0.92 뿐). 그래서 장판이 바닥에 누운 웅덩이가 아니라 정면에서 본 평면 원으로 읽혔다.
+   *
+   * 압축 대상은 **물질**(채움·경계·점선·수렴 링)까지다. 립과 글로우는 각자의 이유로 제외이고,
+   * 그 제외가 지켜지는지를 여기서 함께 잠근다 — 립을 누르면 화면이 세로 방향 위험 범위를
+   * 실제보다 작게 말하고(§2-2), 글로우를 누르면 세 선의 대역 분리(2차 반려 CRIT-3)가 깨진다.
+   */
+  it('물질은 세로로 눌리고 립·글로우는 안 눌린다 (원근 vs 판정 정확도)', () => {
+    const r = 150;
+    const { canvas, calls } = recorder();
+    drawHazardZone(canvas, 0, 0, r, hazardVisual(HAZARD_LAVA, true), 0);
+    const extent = (args: readonly number[]): { x: number; y: number } => {
+      let mx = 0;
+      let my = 0;
+      for (let i = 0; i < args.length; i += 2) {
+        mx = Math.max(mx, Math.abs(args[i] ?? 0));
+        my = Math.max(my, Math.abs(args[i + 1] ?? 0));
+      }
+      return { x: mx, y: my };
+    };
+    // 채움 바깥 겹(= 경계선과 같은 배열)의 세로 범위가 가로 범위보다 압축비만큼 작다.
+    const fill = extent(polyAt(calls, 0).args);
+    expect(fill.y / fill.x).toBeLessThan(1);
+    expect(fill.y / fill.x).toBeCloseTo(HAZARD_SQUASH_Y, 2);
+
+    // 립은 정원이고 반경이 정확히 판정 반경이다(압축 0).
+    const circles = calls.filter((c) => c.op === 'circle');
+    expect(circles[0]?.args[2]).toBe(r * LIP_RATIO);
+
+    // 글로우 밴드는 압축되지 않아 세로에서도 립 **밖**에 남는다.
+    const glow = extent(polyAt(calls, FILL_RINGS + 1).args);
+    expect(glow.y).toBeGreaterThan(r);
+  });
+
+  it('압축이 빗금까지 같은 계수로 실린다 — 재질이 눌린 원판 밖으로 삐져나오면 안 된다', () => {
+    const r = 200;
+    const { canvas, calls } = recorder();
+    drawHazardZone(canvas, 0, 0, r, hazardVisual(HAZARD_LAVA, true), 0);
+    let maxY = 0;
+    for (const c of calls) {
+      if (c.op !== 'moveTo' && c.op !== 'lineTo') continue;
+      maxY = Math.max(maxY, Math.abs(c.args[1] ?? 0));
+    }
+    expect(maxY).toBeGreaterThan(0); // 빗금이 실제로 있다(색 외 채널이 사라지지 않았다)
+    expect(maxY).toBeLessThanOrEqual(r * HAZARD_SQUASH_Y + 1e-6);
   });
 
   it('경계선 흔들림이 자기 선 두께보다 확실히 크다 (2차 반려 CRIT-2)', () => {
@@ -500,13 +571,21 @@ describe('성능 가드 — 작고 많은 장판', () => {
         if (calls[i]?.op !== 'moveTo' || calls[i + 1]?.op !== 'lineTo') continue;
         mids.push(((calls[i]?.args[0] ?? 0) + (calls[i + 1]?.args[0] ?? 0)) / 2);
       }
-      expect(mids.length, `r=${r}`).toBeGreaterThanOrEqual(5);
+      // 하한을 상한에서 **파생**시킨다(고정 5 로 적으면 `HATCH_MAX_LINES` 를 내릴 때마다 이
+      // 단언이 무슨 뜻인지 모르는 채로 함께 내려간다). 흐름 오프셋 때문에 마지막 줄 하나가
+      // 유효 구간 밖으로 밀릴 수 있어 −1 이다.
+      expect(mids.length, `r=${r}`).toBeGreaterThanOrEqual(HATCH_MAX_LINES - 1);
       // 좌우 양쪽에 실제로 선이 있어야 한다(중앙 기준 분할).
       expect(mids.some((m) => m < -r * 0.25), `r=${r} 좌측`).toBe(true);
       expect(mids.some((m) => m > r * 0.25), `r=${r} 우측`).toBe(true);
-      // 덮는 폭이 지름의 절반을 넘는다 — 3차는 지름의 27% 였다.
+      // 덮는 폭도 **파생 하한**으로 잰다. 45° 선의 중점 x 는 `(o + r)/2` 이므로 유효 오프셋
+      // 구간(폭 2√2·r)이 중점 x 폭 √2·r 로 사상된다 → n 줄이면 이론 폭은
+      // `(n-1)/HATCH_MAX_LINES × √2 · r` 이고, 실제가 그 95% 이상이면 한쪽 편중이 없다.
+      // (고정 0.5 로 적으면 `HATCH_MAX_LINES` 를 내릴 때 뜻 모른 채 함께 내려간다 — 3차가
+      // 정확히 그렇게 좌상단 편중 회귀를 만들었다.)
       const spread = Math.max(...mids) - Math.min(...mids);
-      expect(spread / (2 * r), `r=${r}`).toBeGreaterThan(0.5);
+      const floor = ((mids.length - 1) / HATCH_MAX_LINES) * Math.SQRT2 * r * 0.95;
+      expect(spread, `r=${r}`).toBeGreaterThan(floor);
     }
   });
 

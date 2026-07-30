@@ -25,7 +25,7 @@
 
 import { HAZARD_LAVA, HAZARD_MORTAR, HAZARD_SLOW } from '../sim/patterns/types.js';
 import { HAZARD_CONTAMINATION } from '../sim/modes/contamination.js';
-import { bandPolygon, edgePolygon, quantizeTick } from './entity/hazardShape.js';
+import { HAZARD_SQUASH_Y, bandPolygon, edgePolygon, quantizeTick } from './entity/hazardShape.js';
 
 /** 장판 1개의 표시 서술(순수 데이터 — 그리기는 {@link drawHazardZone} 이 한다). */
 export interface HazardVisual {
@@ -178,16 +178,24 @@ export const GLOW_ALPHA_SCALE = 0.7;
 /** 빗금 간격(px). 반경이 커져도 선 개수가 선형으로만 늘도록 상한과 함께 쓴다. */
 const HATCH_SPACING = 18;
 /**
- * 장판 하나당 빗금 선 개수 상한(성능 방어선). 16 → 7 로 내렸다 — 빗금이 이제 **전 셀**에
- * 깔리므로(MAJOR-1) 셀당 개수를 줄여야 총량이 유지된다.
+ * 장판 하나당 빗금 선 개수 상한(성능 방어선). 16 → 7 → **5**.
+ *
+ * 6차 반려 MAJOR-1: 5차에도 이 45° 직선 격자가 **41/41 셀에서 가장 강한 내부 무늬**였다(기준선은
+ * 12셀). 알파만 내렸을 뿐 셀당 밀도는 그대로였기 때문이다. 개수를 함께 줄여 재질 뒤로 물린다 —
+ * 간격은 `span / HATCH_MAX_LINES` 로 파생되므로 개수를 줄이면 **전면을 덮는 성질은 유지되고**
+ * (3차 반려 MAJOR-4 의 좌상단 편중이 돌아오지 않는다) 밀도만 내려간다.
  */
-const HATCH_MAX_LINES = 7;
+export const HATCH_MAX_LINES = 5;
 /**
- * 빗금 알파. 0.55 → 0.42. "45° 직선 격자가 화면에서 가장 강한 무늬이고 직선 격자는 정의상
- * 재질이 아니다"는 지적에 대한 응답이자 §2-4 순감 항목이다. 색 외 채널이라 **지우지는 않는다** —
- * 존재는 유지하되 재질보다 뒤로 물린다.
+ * 빗금 알파. 0.55 → 0.42 → **0.30**. "45° 직선 격자가 화면에서 가장 강한 무늬이고 직선 격자는
+ * 정의상 재질이 아니다"는 지적(6차에도 유지된 MAJOR-1)에 대한 응답이자 §2-4 순감 항목이다.
+ * 색 외 채널이라 **지우지는 않는다** — 존재는 유지하되 재질보다 뒤로 물린다.
+ *
+ * 이 교환을 명시한다: 접근성(색 외 채널이 전 셀에 균일하게 있다)을 위해 채택한 표현이 재질보다
+ * 강했다. 지우면 색약 사용자의 "아프다" 채널이 사라지고, 그대로 두면 재질이 안 보인다. 개수와
+ * 알파를 함께 내려 **존재는 남기고 지배력만 뺀다**가 이 레인의 결론이다.
  */
-const HATCH_ALPHA = 0.42;
+const HATCH_ALPHA = 0.3;
 /**
  * 맥동 립이 놓이는 반경 비율. **정확히 1** — 이것이 판정 반경의 울타리다.
  * 물질 윤곽(`EDGE_MAX_RATIO` = 0.96)보다 밖, 글로우({@link GLOW_MIN_RATIO})보다 안이다.
@@ -252,9 +260,32 @@ const CONVERGE_PERIOD = 60;
  * 대한 응답이자 §2-4 순감 항목이다. **지우지는 않는다** — "곧 온다"의 리듬이고 색 외 채널이다.
  */
 const CONVERGE_ALPHA = 0.34;
+/**
+ * 수렴 링의 꼭짓점 배율(채움 점 수 대비). 6차 반려 MINOR-1.
+ *
+ * 5차는 점선 폴리곤(`DASH_SEGMENTS * 2` = **36점 고정**)을 재사용했다. 그 개수는 점선 조각
+ * 수에서 나온 값이라 반경과 무관하고, 채움 점 수 상한(`FILL_POINTS_MAX` = 40)도 큰 장판에서는
+ * 각도 해상도 9° 에 머문다 — 얇은 링 하나는 주변이 매끄러울수록 꼭짓점이 도드라진다.
+ *
+ * **왜 채움 점 수를 올리지 않고 링만 올리는가**: 채움은 반경 200 에서 41셀이 값을 함께 물지만
+ * (겹이 {@link FILL_RINGS} 장이다) 이 링은 예열 경로의 `poly` **하나**다. 비용이 붙는 자리와
+ * 각져 보이는 자리가 다르므로 상한도 달라야 한다.
+ */
+const CONVERGE_POINT_SCALE = 2;
 
-/** 활성 채움 알파(위험 / 방해). {@link visualHeat} 가 열을 되읽는 기준값이다. */
-export const FILL_ALPHA_HARMFUL = 0.3;
+/**
+ * 활성 채움 알파(위험 / 방해). {@link visualHeat} 가 열을 되읽는 기준값이다.
+ *
+ * ## 0.3 → 0.24 (6차 반려 CRITICAL-1 의 두 번째 처방)
+ * 판정 장면(톡사르)의 오염 셀에서 **원판 밝기의 지배항은 재질이 아니라 이 채움**이었다. 재질
+ * 겹의 알파(0.158 · 0.151)는 그 위에서 대비를 만들 수 없다 — 즉 재질이 안 보이는 원인의 절반은
+ * 재질이 약한 것이 아니라 **바탕이 밝은 것**이다. 채움을 내려 재질(특히 감산 겹
+ * `sporeShade`)이 올라올 자리를 만든다.
+ *
+ * 20% 만 내린다. 채움은 "지금 아프다"의 주 신호이고, 색 외 채널(빗금·경계·립·글로우)은 전부
+ * 제자리에 있으므로 이 정도는 §2-2 안이다. 더 내리면 난색 자체가 흐려져 색=성질 규칙이 약해진다.
+ */
+export const FILL_ALPHA_HARMFUL = 0.24;
 export const FILL_ALPHA_HINDER = 0.22;
 
 /** 빗금 알파가 차오르기 시작·완료하는 열. */
@@ -365,6 +396,38 @@ function translated(poly: number[], x: number, y: number): number[] {
   return out;
 }
 
+/**
+ * 원근 압축 계수(세로 / 가로) — 정본은 {@link file://./entity/hazardShape.ts} 다(재질 겹도 같은
+ * 값을 써야 채움과 재질이 같은 타원 안에 머문다). **물질 겹에만** 적용한다.
+ *
+ * ## 왜 필요한가 (6차 반려 MAJOR-2)
+ * 5차까지 채움·경계·립에 원근 압축이 **0** 이었다. 압축을 쓰는 것은 환경 기여(`ambient` 0.88)와
+ * 예열 고조(`charge` 0.92)뿐이라, 장판 본체는 위에서 정면으로 내려다본 **평면 원** 그대로였다.
+ * AAA 대조(Hades 용암 웅덩이 · Returnal 산성 지대)는 웅덩이 자체를 세로로 눌러 바닥에 누인다.
+ *
+ * ## 왜 립에는 걸지 않는가 (처방에서 의도적으로 하나를 뺀다)
+ * 맥동 립은 **판정 반경의 울타리**다(`LIP_RATIO === 1`). 세로로 누르면 화면이 위·아래 방향의
+ * 위험 범위를 실제보다 **작게** 말한다 — 물질 윤곽이 이미 최대 12% 과소 표시하는 것을 립이
+ * 정확히 보정하는 구조인데(`hazardShape.EDGE_MIN_RATIO` 주석 정본), 립까지 누르면 보정자가
+ * 사라지고 §2-2("예쁨이 가독성을 이기면 실패")를 깬다. 그래서 압축은 물질(채움·경계·점선·수렴
+ * 링)까지이고, 립은 정원으로 남는다. 결과적으로 물질이 립 안쪽에 **눌려 앉은** 형태가 되어
+ * 원근과 울타리가 동시에 성립한다.
+ *
+ * 바깥 글로우 링도 제외다 — 대역이 [1.02, 1.06] 이라 0.94 를 곱하면 세로에서 립 안쪽으로
+ * 내려와 세 선의 대역 분리(2차 반려 CRIT-3)가 깨진다.
+ */
+export { HAZARD_SQUASH_Y };
+
+/** 폴리곤의 y 성분만 {@link HAZARD_SQUASH_Y} 로 누른 새 배열(원점 기준 로컬 좌표 전용). */
+function squashY(poly: number[]): number[] {
+  const out: number[] = new Array<number>(poly.length);
+  for (let i = 0; i < poly.length; i += 2) {
+    out[i] = poly[i] ?? 0;
+    out[i + 1] = (poly[i + 1] ?? 0) * HAZARD_SQUASH_Y;
+  }
+  return out;
+}
+
 /** 폴리곤을 원점 기준으로 배율 조정해 (x,y) 로 옮긴 새 배열. */
 function scaledTo(poly: number[], x: number, y: number, k: number): number[] {
   const out: number[] = new Array<number>(poly.length);
@@ -421,12 +484,19 @@ export function drawHazardZone(
     // "예열이 가장 오래 보이는 상태"라고 스스로 논증해 놓고 그 상태의 경계만 안 고쳤던 것이다.
     // 지금은 활성 채움과 **같은 시드·같은 대역**의 폴리곤을 따라 조각을 끊으므로, 예열에서
     // 활성으로 넘어갈 때 실루엣이 이어진다(전이가 형태의 도약이 아니게 된다).
-    const dashPoly = edgePolygon(seed, radius, qTick, 1, 1, DASH_SEGMENTS * 2);
+    const dashPoly = squashY(edgePolygon(seed, radius, qTick, 1, 1, DASH_SEGMENTS * 2));
     drawDashRing(g, x, y, dashPoly, spin, v.color, v.strokeWidth, v.strokeAlpha);
     // 수렴 링: 바깥에서 안으로 줄어들며 반복 — 남은 시간이 아니라 "곧 온다"는 리듬을 준다.
     // 유기 폴리곤이고(§2-5), `decorated` 조건이 없다(전 셀 공통 — MAJOR-1).
+    //
+    // ⚠️ 점선 폴리곤(36점 고정)을 재사용하지 않는다 (6차 반려 MINOR-1). 점선의 점 수는 조각
+    // 개수(`DASH_SEGMENTS`)에서 나온 값이라 반경과 무관하고, 반경 200 장판에서 변 길이가 35px
+    // 이라 수렴 링이 **각진 다각형**으로 읽혔다. 채움과 같은 반경 파생 점 수를 쓰면 사라진다.
     const t = (frameTick % CONVERGE_PERIOD) / CONVERGE_PERIOD;
-    g.poly(scaledTo(dashPoly, x, y, 1 - 0.45 * t), true).stroke({
+    const convergePoly = squashY(
+      edgePolygon(seed, radius, qTick, 1, 1, points * CONVERGE_POINT_SCALE),
+    );
+    g.poly(scaledTo(convergePoly, x, y, 1 - 0.45 * t), true).stroke({
       color: v.accent,
       width: 2,
       alpha: CONVERGE_ALPHA * (1 - t),
@@ -449,7 +519,8 @@ export function drawHazardZone(
   //  ② 실루엣 — 완전한 원이 아니라 노이즈로 흔든 폴리곤이다. **이것이 전 장판에 적용되는
   //     유일한 유기 신호**이고, 그래서 재질(LOD)이 낮은 장판도 정체성이 같다. 개체 상한으로
   //     재질을 빼던 1차 설계에서 "같은 해저드가 두 스타일"로 보이던 결함이 여기서 사라진다.
-  const fillPoly = edgePolygon(seed, radius, qTick, 1, 1, points);
+  // 물질은 세로로 눌려 바닥에 누워 있다({@link HAZARD_SQUASH_Y} 주석이 정본 — 립·글로우는 제외).
+  const fillPoly = squashY(edgePolygon(seed, radius, qTick, 1, 1, points));
   const perRing = 1 - Math.pow(1 - v.fillAlpha, 1 / FILL_RINGS);
   for (let i = 0; i < FILL_RINGS; i++) {
     const k = 1 - (FILL_SOFT_SPAN * i) / (FILL_RINGS - 1 || 1);
@@ -487,8 +558,10 @@ export function drawHazardZone(
       // 45° 선: (x + o + t, y - radius + t). 원과의 교차 구간만 남긴다.
       const seg = chordSpan(o, radius);
       if (seg === null) continue;
-      g.moveTo(x + seg.x0, y + seg.y0)
-        .lineTo(x + seg.x1, y + seg.y1)
+      // y 를 물질과 같은 계수로 눌러야 빗금이 눌린 원판 **안에** 머문다(MAJOR-2). 누르지 않으면
+      // 세로 최대 1.0r 까지 뻗어 압축된 채움(≤0.90r) 밖으로 삐져나온다.
+      g.moveTo(x + seg.x0, y + seg.y0 * HAZARD_SQUASH_Y)
+        .lineTo(x + seg.x1, y + seg.y1 * HAZARD_SQUASH_Y)
         .stroke({ color: v.color, width: 2, alpha: hatchAlpha });
       lines++;
     }
@@ -531,7 +604,7 @@ export function drawHazardZone(
       g,
       x,
       y,
-      edgePolygon(seed, radius, qTick, 1, 1, DASH_SEGMENTS * 2),
+      squashY(edgePolygon(seed, radius, qTick, 1, 1, DASH_SEGMENTS * 2)),
       frameTick * DASH_SPIN,
       v.color,
       v.strokeWidth,
