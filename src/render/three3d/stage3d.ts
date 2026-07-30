@@ -1,0 +1,149 @@
+/**
+ * 런타임 3D 레이어 — **오프스크린 three.js → Pixi 텍스처 아틀라스**.
+ *
+ * 이 게임은 Pixi v8 2D 렌더러다. 3D 를 넣는 길은 넷이고(pixi3d = v7 까지라 탈락,
+ * Pixi 네이티브 3D = 로드맵, 공유 WebGL 컨텍스트, 오프스크린→텍스처) 이 파일은
+ * **오프스크린→텍스처**를 구현한다. 공유 컨텍스트를 고르지 않은 이유는 셋이다:
+ *
+ *  1. three 패스는 전체화면 레이어라 씬 그래프에 끼워지지 않는다. 보스는 배경 위·HUD
+ *     아래 **중간**에 있어야 하므로 렌더를 쪼개고 `Application` 자동 티커를 버려야 한다.
+ *  2. 루트 레터박스 마스크(`app.ts` `stage.mask`) 밖이라 **3D 가 레터박스 띠 위로
+ *     삐져나온다** — 같은 유형의 결함을 이미 한 번 신고받았다.
+ *  3. 텍스처가 공유되지 않으므로(공식 문서 명시) 컨텍스트를 공유해서 얻는 이득이 없다.
+ *
+ * 오프스크린 방식은 반대로 **엔티티가 끝까지 평범한 Pixi 스프라이트로 남는다**. 그래서
+ * tint 플래시·과열 펄스·스프라이트 풀·groundShadow·glow·radar·z-order 가 한 줄도 안 바뀐다.
+ *
+ * ── 아틀라스 ──
+ * 슬롯마다 캔버스를 만들면 프레임당 GPU 업로드가 슬롯 수만큼 생긴다. 대신 **캔버스 한 장**을
+ * 격자로 쪼개 slot 별 viewport+scissor 로 나눠 그리고, Pixi 쪽은 같은 `TextureSource` 를
+ * 가리키는 `frame` 만 다른 텍스처 N개를 만든다 → **프레임당 업로드 1회**. 보스 다음으로
+ * 플레이어 기체를 붙일 때 칸만 늘리면 된다.
+ *
+ * ── 픽셀아트 정합 ──
+ * 슬롯을 표시 크기보다 **작게** 렌더하고 `TextureSource.defaultOptions.scaleMode='nearest'`
+ * (app.ts 전역 기본값)로 확대하면, 부드러운 3D 가 아니라 **움직이는 픽셀아트**가 나온다.
+ * 주변 픽셀 적·배경과 톤이 충돌하지 않는 이유가 이것이다.
+ *
+ * ── 결정론(ADR-0005) ── render-only. sim 에 아무것도 쓰지 않고 스냅샷만 읽으므로 골든 해시
+ * 불변이다. 시간축도 sim 틱이 아니라 벽시계(연출 전용)를 쓴다.
+ *
+ * ── 폴백 ── WebGL 컨텍스트 생성 실패(테스트 환경·저사양·드라이버)면 `create()` 가 null 을
+ * 반환하고 호출자는 기존 PNG 스프라이트 경로를 그대로 쓴다. 3D 는 **덧붙임**이지 대체가 아니다.
+ */
+
+import * as THREE from 'three';
+import { Rectangle, Texture, TextureSource } from 'pixi.js';
+
+/** 슬롯 한 칸의 렌더 해상도(px). 표시 크기보다 작게 잡아 nearest 확대로 픽셀감을 만든다. */
+export const SLOT_SIZE = 160;
+
+/** 아틀라스 슬롯 이름 — 칸을 늘릴 때 여기에 추가한다(플레이어 기체가 다음 차례). */
+export type Slot3D = 'boss' | 'player';
+
+/** 슬롯 → 아틀라스 격자 열 인덱스. 캔버스는 `SLOT_ORDER.length × SLOT_SIZE` 폭이 된다. */
+const SLOT_ORDER: readonly Slot3D[] = ['boss', 'player'];
+
+/**
+ * 한 장의 캔버스에 여러 3D 액터를 나눠 그리고 Pixi 텍스처로 넘기는 무대.
+ *
+ * 액터(모델·연출)는 이 클래스가 모른다 — 슬롯별로 `THREE.Scene` 과 카메라만 쥐고 있고,
+ * 무엇을 넣고 어떻게 움직일지는 액터 모듈(`bossActor.ts`)이 정한다.
+ */
+export class Stage3D {
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly canvas: HTMLCanvasElement;
+  private readonly source: TextureSource;
+  private readonly scenes = new Map<Slot3D, { scene: THREE.Scene; camera: THREE.Camera }>();
+  private readonly textures = new Map<Slot3D, Texture>();
+  /** 이번 프레임에 그릴 슬롯. 매 프레임 비운다 — 화면에 없는 액터는 GPU 비용 0. */
+  private readonly activeSlots = new Set<Slot3D>();
+
+  private constructor(renderer: THREE.WebGLRenderer, canvas: HTMLCanvasElement) {
+    this.renderer = renderer;
+    this.canvas = canvas;
+    // 아틀라스 전체를 한 소스로 올린다. 슬롯 텍스처는 이 소스의 frame 만 다르다.
+    this.source = new TextureSource({ resource: canvas });
+    for (const [i, slot] of SLOT_ORDER.entries()) {
+      // Pixi frame 은 좌상단 원점(이미지 좌표계)이라 슬롯 열을 그대로 x 로 쓴다.
+      const frame = new Rectangle(i * SLOT_SIZE, 0, SLOT_SIZE, SLOT_SIZE);
+      this.textures.set(slot, new Texture({ source: this.source, frame }));
+    }
+  }
+
+  /**
+   * 무대를 만든다. WebGL 을 못 얻으면 **null** — 호출자는 조용히 2D 폴백으로 남는다.
+   * 게임 메인 컨텍스트와 별개의 컨텍스트라 Pixi 의 상태를 오염시키지 않는다(resetState 불요).
+   */
+  static create(): Stage3D | null {
+    if (typeof document === 'undefined') return null; // 노드(테스트) 환경.
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = SLOT_ORDER.length * SLOT_SIZE;
+      canvas.height = SLOT_SIZE;
+      const renderer = new THREE.WebGLRenderer({
+        canvas,
+        alpha: true, // 배경 투명 — 스프라이트로 합성되어야 한다.
+        antialias: false, // 픽셀 크리스프(app.ts 의 antialias:false 규율과 같은 축).
+        premultipliedAlpha: false,
+      });
+      renderer.setClearColor(0x000000, 0);
+      renderer.setPixelRatio(1); // 아틀라스는 논리 픽셀 = 실제 픽셀이어야 frame 이 맞는다.
+      renderer.autoClear = false; // 슬롯별 scissor 클리어를 직접 한다.
+      renderer.setScissorTest(true);
+      return new Stage3D(renderer, canvas);
+    } catch {
+      return null; // 컨텍스트 소진·미지원 — 2D 폴백.
+    }
+  }
+
+  /** 슬롯의 Pixi 텍스처. 스프라이트에 그대로 물리면 된다(프레임마다 갱신된다). */
+  textureOf(slot: Slot3D): Texture {
+    const tex = this.textures.get(slot);
+    if (tex === undefined) throw new Error(`unknown 3D slot: ${slot}`);
+    return tex;
+  }
+
+  /**
+   * 슬롯에 씬을 등록한다. 액터 모듈이 모델 로드를 마친 뒤 한 번 호출한다.
+   * 카메라는 액터가 정한다 — 보스와 기체는 프레이밍이 다르다.
+   */
+  mount(slot: Slot3D, scene: THREE.Scene, camera: THREE.Camera): void {
+    this.scenes.set(slot, { scene, camera });
+  }
+
+  /** 이 슬롯이 이번 프레임 화면에 있다고 표시한다. 표시되지 않은 슬롯은 그리지 않는다. */
+  markActive(slot: Slot3D): void {
+    this.activeSlots.add(slot);
+  }
+
+  /**
+   * 활성 슬롯을 아틀라스에 그리고 Pixi 텍스처를 갱신한다. 활성 슬롯이 없으면
+   * **업로드조차 하지 않는다**(보스가 없는 대부분의 런에서 비용 0).
+   */
+  render(): void {
+    if (this.activeSlots.size === 0) return;
+    const h = this.canvas.height;
+    for (const [i, slot] of SLOT_ORDER.entries()) {
+      if (!this.activeSlots.has(slot)) continue;
+      const mounted = this.scenes.get(slot);
+      if (mounted === undefined) continue;
+      // GL viewport 는 좌하단 원점이지만 슬롯이 한 줄이라 y=0 으로 Pixi frame 과 일치한다.
+      const x = i * SLOT_SIZE;
+      this.renderer.setViewport(x, h - SLOT_SIZE, SLOT_SIZE, SLOT_SIZE);
+      this.renderer.setScissor(x, h - SLOT_SIZE, SLOT_SIZE, SLOT_SIZE);
+      this.renderer.clear(true, true, true);
+      this.renderer.render(mounted.scene, mounted.camera);
+    }
+    this.activeSlots.clear();
+    this.source.update(); // 캔버스 → GPU 업로드 1회.
+  }
+
+  destroy(): void {
+    for (const tex of this.textures.values()) tex.destroy();
+    this.textures.clear();
+    this.scenes.clear();
+    this.source.destroy();
+    this.renderer.dispose();
+  }
+}

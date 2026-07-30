@@ -52,6 +52,15 @@ export interface EntitySnapshot {
    * 스냅샷은 해시 대상이 아니라 sim 계약은 불변이다.
    */
   permanent?: boolean;
+  /**
+   * 보스 전용(render-only): 현재 페이즈 인덱스 0/1/2(`src/sim/boss.ts` 의 `boss.phase`).
+   *
+   * `flash`(전환 중)·`active`(과열)만으로는 **어느 페이즈에 있는지** 알 수 없다 — 셋 다 다른
+   * 연출을 요구하는데(3D 액터의 페이즈별 거동, `render/three3d/bossActor.ts`) 페이즈 번호만
+   * 스냅샷에 없었다. `permanent` 와 같은 이유로 **선택 필드**다(테스트가 스냅샷 리터럴을 직접
+   * 만든다). 부재는 0(1페이즈)으로 다룬다. 스냅샷은 해시 대상이 아니라 골든 불변이다.
+   */
+  bossPhase?: number;
 }
 
 /** A support heal beam, for render only. */
@@ -152,6 +161,8 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
                 ? e.aux0 === state.wave.segmentIndex
                 : false,
       flash: e.kind === 'boss' && e.timer > 0,
+      // 보스 페이즈(0/1/2). 보스가 아니면 의미가 없으므로 0 — 렌더는 kind 로 먼저 가른다.
+      bossPhase: e.kind === 'boss' ? e.phase : 0,
       elite: eliteAffix(e),
       // 영구 지형 해저드(life < 0 = 청크 배치·만료 없음). 렌더가 감속 지대와 가르는 유일한 신호다.
       permanent: e.kind === 'hazard' && e.life < 0,
