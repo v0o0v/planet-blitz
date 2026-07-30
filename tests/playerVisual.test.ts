@@ -61,6 +61,13 @@ import {
   surfaceStripCenter,
   surfaceStripAlpha,
   surfaceShadeDelta,
+  surfaceLateralHalf,
+  surfaceStripBand,
+  surfaceStripInsidePx,
+  surfaceRampOuterEdgePx,
+  SURFACE_STRIP_COUNT,
+  PLAYER_SPRITE_DISPLAY,
+  PLAYER_OPAQUE_LATERAL_HALF,
   flameGate,
   PLAYER_TEX_MEAN,
   isDashSpeed,
@@ -1194,12 +1201,56 @@ describe('익단 증기는 **삭제됐다** — 화면에 없는 것을 코드�
 
 describe('판면 방향광 + 스페큘러 스윕 — 선체 자체가 빛에 반응한다 (4차 CRIT-3)', () => {
   it('스트립 중심이 횡축을 균등 분할한다(기체 타입 무관 공통 규칙)', () => {
-    const centers = [0, 1, 2, 3, 4].map(surfaceStripCenter);
-    const want = [-0.8, -0.4, 0, 0.4, 0.8];
-    // ⚠️ `toEqual` 로 비교하면 안 된다 — 균등 분할이 부동소수라 0.4 가 0.3999999999999999 다.
+    const centers = strips().map(surfaceStripCenter);
+    const want = [-0.75, -0.25, 0.25, 0.75];
+    // ⚠️ `toEqual` 로 비교하면 안 된다 — 균등 분할이 부동소수다.
+    expect(centers).toHaveLength(want.length);
     for (let i = 0; i < want.length; i++) expect(centers[i]).toBeCloseTo(want[i]!, 12);
     // 대칭이다 — 어느 쪽으로 롤해도 같은 세기의 음영이 나온다.
-    expect(centers[0]).toBeCloseTo(-centers[4]!, 12);
+    expect(centers[0]).toBeCloseTo(-centers[centers.length - 1]!, 12);
+  });
+
+  it('**모든 스트립이 어떤 L 에서는 알파를 받는다** — 홀수 분할의 영구 알파 0 스트립 금지', () => {
+    // ⚠️ 4차에는 `SURFACE_STRIPS = 5` 라 중앙 스트립 중심이 정확히 0 이었다. `s = center × L` 이
+    // 항상 0 이라 표시객체 2개가 어떤 조명에서도 그려지지 않았다(구조적 낭비 + 게이트 사각지대).
+    // 뮤테이션: 분할을 홀수로 되돌리면 중앙 스트립에서 이 단언이 빨개진다.
+    for (const i of strips()) {
+      const a = surfaceStripAlpha(i, 1, true);
+      const b = surfaceStripAlpha(i, -1, true);
+      const live = a.spec + a.shade + b.spec + b.shade;
+      expect(live, `스트립 ${i} 가 어떤 L 에서도 알파 0 이다`).toBeGreaterThan(0);
+    }
+  });
+
+  it('**모든 스트립이 실루엣 마스크 안에 픽셀을 남긴다** (5차 CRIT — 알파 게이트의 사각지대)', () => {
+    // 알파 진폭이 아니라 **화면 기여**를 재는 유일한 축이다. 4차 실측에서는 10개 스트립 중 2개만
+    // 그려졌고 설계 첨두를 지는 shade0·spec4 가 0픽셀이었다 — `surfaceShadeDelta` 는 그 스트립의
+    // 알파를 재고 있었으므로 기하를 고쳐도 안 고쳐도 초록인 자기증명이었다.
+    const { width, height } = PLAYER_SPRITE_DISPLAY;
+    for (const i of strips()) {
+      const px = surfaceStripInsidePx(i, width, height);
+      expect(px, `스트립 ${i} 의 마스크 내 횡 폭`).toBeGreaterThan(0);
+    }
+  });
+
+  it('램프 끝이 **실루엣 안**이다 — 기준 길이를 기수 축으로 되돌리면 밖으로 나간다', () => {
+    const { width, height } = PLAYER_SPRITE_DISPLAY;
+    // ⚠️ 이 단언이 뮤테이션 증인이다. `surfaceLateralHalf` 를 `max` 로 되돌리면 램프 끝이
+    // 0.62 × 48 = 29.76px 로 불투명 반폭 26px 을 넘어 최외곽 스트립이 잘린다(4차엔 55.2 대 26).
+    expect(surfaceRampOuterEdgePx(width, height)).toBeLessThanOrEqual(PLAYER_OPAQUE_LATERAL_HALF);
+    // 기준은 **짧은 축**이다. 정사각 스프라이트에서는 두 축이 같아 이 구별이 관측되지 않으므로
+    // 실측 치수(96 × 83.2)로 재야 한다.
+    expect(surfaceLateralHalf(width, height)).toBeCloseTo(height / 2, 9);
+    expect(surfaceLateralHalf(width, height)).toBeLessThan(width / 2);
+  });
+
+  it('스트립 구간이 틈·겹침 없이 이어진다(굽는 기하와 검증 기하가 한 함수에서 온다)', () => {
+    const bands = strips().map(surfaceStripBand);
+    for (let i = 1; i < bands.length; i++) {
+      expect(bands[i]!.lo).toBeCloseTo(bands[i - 1]!.hi, 12);
+    }
+    // 램프 전체가 정규 ±SURFACE_SPAN 을 정확히 채운다.
+    expect(bands[0]!.lo).toBeCloseTo(-bands[bands.length - 1]!.hi, 12);
   });
 
   it('**롤이 조명 계수를 넘긴다** — 광원 횡 성분이 0 인 행성에서도 뱅킹만으로 음영이 생긴다', () => {
@@ -1219,32 +1270,40 @@ describe('판면 방향광 + 스페큘러 스윕 — 선체 자체가 빛에 반
   });
 
   it('밝은 판면은 가산, 등지는 판면은 **곱연산**이다 — 한 스트립이 둘일 수는 없다', () => {
-    const lit = surfaceStripAlpha(4, 1, true); // center +0.8, light +1 → 빛을 본다
-    const dark = surfaceStripAlpha(0, 1, true); // center −0.8 → 등진다
+    const last = SURFACE_STRIP_COUNT - 1;
+    const lit = surfaceStripAlpha(last, 1, true); // center +0.75, light +1 → 빛을 본다
+    const dark = surfaceStripAlpha(0, 1, true); // center −0.75 → 등진다
     expect(lit.spec).toBeGreaterThan(0);
     expect(lit.shade).toBe(0);
     expect(dark.shade).toBeGreaterThan(0);
     expect(dark.spec).toBe(0);
     // 계수를 뒤집으면 밝은 쪽도 뒤집힌다(스윕의 실체).
-    expect(surfaceStripAlpha(4, -1, true).shade).toBeGreaterThan(0);
+    expect(surfaceStripAlpha(last, -1, true).shade).toBeGreaterThan(0);
   });
 
   it('하이라이트가 밝은 쪽에 **좁게 모인다**(지수 > 1 = 스페큘러, 램버트가 아니다)', () => {
-    const outer = surfaceStripAlpha(4, 1, true).spec; // |s| = 0.8
-    const inner = surfaceStripAlpha(3, 1, true).spec; // |s| = 0.4
+    const last = SURFACE_STRIP_COUNT - 1;
+    const outer = surfaceStripAlpha(last, 1, true).spec; // |s| = 0.75
+    const inner = surfaceStripAlpha(last - 1, 1, true).spec; // |s| = 0.25
     expect(inner).toBeGreaterThan(0);
-    // 선형이면 비율이 2 다. 지수 1.6 이면 그보다 크게 벌어진다.
-    expect(outer / inner).toBeGreaterThan(2.2);
+    // 선형이면 비율이 3 이다. 지수 1.6 이면 3^1.6 ≈ 5.8 로 그보다 크게 벌어진다.
+    expect(outer / inner).toBeGreaterThan(3.3);
   });
 
   it('가산 하이라이트는 발광 감소에서 꺼지고 **감산 그늘은 남는다**(빛이 아니라 그림자다)', () => {
-    const off = surfaceStripAlpha(4, 1, false);
+    const off = surfaceStripAlpha(SURFACE_STRIP_COUNT - 1, 1, false);
     expect(off.spec).toBe(0);
     expect(surfaceStripAlpha(0, 1, false).shade).toBeGreaterThan(0);
   });
 
   it('그늘이 선체 광도를 **25 이상** 떨어뜨린다(low 티어에서 기체가 커서로 안 보이는 근거)', () => {
+    // ⚠️ 이 단언 **단독은 자기증명이다**(5차 MAJ) — 알파 진폭만 재므로 그 스트립이 화면에 0픽셀
+    // 이어도 통과한다. 4차가 정확히 그 상태였다. 그래서 같은 스트립이 마스크 안에 픽셀을 남기는지를
+    // 여기서 함께 잠근다: 두 단언이 붙어 있어야 "화면에서 25 이상 어두워진다"가 참이 된다.
     expect(surfaceShadeDelta(BODY_LUMA_P99_CLEAN)).toBeGreaterThan(25);
+    expect(
+      surfaceStripInsidePx(0, PLAYER_SPRITE_DISPLAY.width, PLAYER_SPRITE_DISPLAY.height),
+    ).toBeGreaterThan(0);
     expect(surfaceShadeDelta(0)).toBeCloseTo(0, 12);
   });
 
@@ -1311,7 +1370,7 @@ describe('판면 방향광 + 스페큘러 스윕 — 선체 자체가 빛에 반
     const strips = surf.children.filter(
       (c) => c.label === 'playerSurfaceShade' || c.label === 'playerSurfaceSpec',
     );
-    expect(strips.length).toBe(10); // 5 스트립 × (가산 + 곱연산)
+    expect(strips.length).toBe(SURFACE_STRIP_COUNT * 2); // 스트립 × (가산 + 곱연산)
     for (const c of strips) expect(c.alpha).toBe(0);
   });
 
@@ -1334,11 +1393,19 @@ describe('판면 방향광 + 스페큘러 스윕 — 선체 자체가 빛에 반
     const strips = again!.children.filter(
       (c) => c.label === 'playerSurfaceShade' || c.label === 'playerSurfaceSpec',
     );
-    expect(strips).toHaveLength(10);
+    expect(strips).toHaveLength(SURFACE_STRIP_COUNT * 2);
     for (const c of strips) expect(c.destroyed).toBe(false);
     expect(strips.some((c) => c.alpha > 0)).toBe(true);
   });
 });
+
+/**
+ * 판면 스트립 인덱스 전체. 개수를 테스트에 다시 박으면 분할을 바꿔도 일부만 검사하게 되므로
+ * `SURFACE_STRIP_COUNT` 에서만 온다(5차 MAJ 가 잡은 자기증명과 같은 계열).
+ */
+function strips(): number[] {
+  return Array.from({ length: SURFACE_STRIP_COUNT }, (_, i) => i);
+}
 
 /** 광원이 +x 인 테마에서 기수 `facing` 일 때의 **광원 횡 성분**. `lateralSpeed` 와 같은 기하다. */
 function lateralOfLight(facing: number): number {

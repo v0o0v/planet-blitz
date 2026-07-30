@@ -492,12 +492,66 @@ const DAMAGE_REDUCED_GLOW = 0.6;
  * `EntitySnapshot` 에 `typeId` 가 없어(파일 헤더 §기체 타입) 기체별 판면 배치를 가를 수 없다.
  * 띠는 표시 반치수 배율의 균등 분할이라 어느 실루엣에서도 어긋나지 않는다. 기체별 음영이
  * 필요하면 스냅샷에 `typeId` 를 싣는 **공유 파일 변경이 선행**되어야 한다(오케스트레이터 보고 항목).
+ *
+ * ## 4차는 **화면에 없었다** — 기하가 자기 최강 요소를 잘라냈다 (5차 CRIT)
+ * 4차 실측: 국소 델타 게이트 25 대비 **0.62**(노이즈 바닥 0.00). 그것도 조명 계수가 포화한
+ * `L=1` 컷에서다. 스트립을 하나씩 끈 결과 **10개 중 실제로 그려지는 것이 2개**였고, 설계 첨두를
+ * 지는 두 스트립이 **0픽셀**이었다:
+ *
+ * | 스트립 | 알파 | 화면 기여 |
+ * |---|---|---|
+ * | shade 0 | 0.44 (전 계통 최강) | **0 px** |
+ * | shade 1 | 0.22 | 221 px |
+ * | shade 2 | 0 (구조적 항상 0) | 0 px |
+ * | spec 3 | 0.069 | 14 px |
+ * | spec 4 | 0.21 (하이라이트 최강) | **0 px** |
+ *
+ * **원인은 알파가 아니라 기하였다** — {@link FLAME_LAYERS}·§7 헤더가 두 번 정본으로 박아 둔
+ * "상수는 맞았는데 화면은 틀렸다" 계열의 **세 번째 재발**이다. 두 결함이 겹쳐 있었다:
+ *
+ * 1. **기준 길이가 축을 잘못 잡았다.** 스트립은 **횡축**(짧은 축)으로 깔리는데 배율 기준이
+ *    `halfSpan = max(width,height)/2 = 48`(**기수 축** = 긴 축)이었다. 실측 마스크는 64×64 텍스처에
+ *    `scale (1.5, 1.2997)` 이라 **횡 반치수가 41.6px**, 그중 불투명 실루엣은 **≈±26px** 이다.
+ *    거기에 `SURFACE_SPAN = 1.15`(마스크가 자를 것을 전제한 "넉넉히")를 곱하니 램프 양 끝
+ *    (`|y| 33.1~55.2`)이 **마스크 상자조차 넘었다**. 지금은 {@link surfaceLateralHalf} 가 **짧은
+ *    축**을 기준으로 삼고, `SURFACE_SPAN` 은 "넉넉히"가 아니라 **불투명 실루엣이 바운딩 상자에서
+ *    차지하는 비율**({@link PLAYER_OPAQUE_LATERAL_HALF} 기반)이 된다.
+ * 2. **홀수 분할은 중앙 스트립이 영구 알파 0 이다.** `surfaceStripCenter(2) = 0` 이라 어떤 `L`
+ *    에서도 `s = center × L = 0` 이다 — 표시객체 2개와 프레임당 알파 계산 2회가 구조적 낭비였다.
+ *    그래서 분할을 **짝수**로 바꿨다(중심이 0 인 스트립이 존재할 수 없다).
+ *
+ * ## 증인 (계약 §4-2·§4-3)
+ * 4차의 게이트는 `surfaceShadeDelta(...) > 25` 하나였는데, 그 함수가 재던 알파는 **화면 기여가
+ * 0픽셀인 스트립**의 것이었다 — 즉 게이트가 화면이 아니라 **설계 진폭**에 걸려 있어 기하를 고쳐도
+ * 안 고쳐도 초록인 **자기증명**이었다. 그래서 {@link surfaceStripInsidePx}·
+ * {@link surfaceRampOuterEdgePx} 를 순수 함수로 두고 **모든 스트립**에 대해 "마스크 안에 남기는
+ * 픽셀 폭 > 0" 과 "램프 끝이 실루엣 안" 을 잠근다. 기준 길이를 `max` 로 되돌리면 후자가 빨개진다.
  */
-const SURFACE_STRIPS = 5;
-/** 스트립이 덮는 기수 축 길이(표시 반치수 배율, 중심 기준 ±). 마스크가 자르므로 넉넉히 잡는다. */
+/**
+ * 횡 분할 수. **짝수여야 한다** — 홀수면 중앙 스트립의 중심이 정확히 0 이라 어떤 `L` 에서도
+ * 알파가 0 인 표시객체가 영구히 남는다(4차에 실제로 그랬다). 테스트가 짝수성을 알파로 잠근다.
+ */
+const SURFACE_STRIPS = 4;
+/**
+ * 분할 수의 **공개 사본**. 검증이 "모든 스트립"을 돌 때 개수를 다시 박으면 분할을 바꿔도 일부만
+ * 검사하게 된다 — 5차 MAJ 가 잡은 자기증명과 같은 계열이라 상수를 하나만 둔다.
+ */
+export const SURFACE_STRIP_COUNT = SURFACE_STRIPS;
+/**
+ * 스트립이 덮는 **기수 축** 길이(기수 반치수 `halfSpan` 배율, 중심 기준 ±). 이 축은 마스크가
+ * 자르는 것이 정상이라 넉넉히 잡는다(기수 방향으로는 램프가 없으므로 낭비도 없다).
+ */
 const SURFACE_EXTENT = 1.15;
-/** 스트립이 덮는 횡 반폭(표시 반치수 배율). 위와 같은 이유로 실루엣보다 크다. */
-const SURFACE_SPAN = 1.15;
+/**
+ * 스트립이 덮는 **횡 반폭**({@link surfaceLateralHalf} 배율). 4차의 1.15("마스크가 자를 것")가
+ * CRIT 의 절반이었다 — 램프의 양 끝이 실루엣 밖으로 나가면 그 스트립은 알파가 아무리 커도
+ * **0픽셀**이다.
+ *
+ * 지금 값은 실측에서 나온다: 불투명 실루엣 횡 반폭 {@link PLAYER_OPAQUE_LATERAL_HALF}(26px)를
+ * 바운딩 상자 횡 반치수(41.6px)로 나눈 **0.625** 의 보수적 하한이다. 램프 전체가 실루엣 안에
+ * 들어가므로 {@link SURFACE_STRIPS} 개 스트립이 **전부** 픽셀을 남긴다.
+ */
+const SURFACE_SPAN = 0.62;
 /** 가산 하이라이트 색 — 차가운 화이트. Graphics 라 텍스처 색에 갇히지 않는다(rim 과의 차이). */
 const SURFACE_SPEC_COLOR = 0xdfeeff;
 /**
@@ -590,6 +644,24 @@ export function addLayers(layers: readonly LightLayer[], repeat = 1): AddedLight
  * 단언은 전부 **부등식**(상한)이고, 등식으로 잠그지 않는다.
  */
 export const PLAYER_TEX_MEAN = { r: 50, g: 180, b: 200 } as const;
+
+/**
+ * 플레이어 스프라이트의 **표시 치수 실측**(px). 마스크 텍스처 64×64 에 `scale (1.5, 1.2997)` 이
+ * 걸린 결과다 — 즉 기수 축(x)이 96, **횡축(y)이 83.2** 로 두 축의 길이가 다르다.
+ *
+ * ⚠️ 이 값이 있어야 판면 스트립 기하를 **화면 좌표에서** 검증할 수 있다. 단위 테스트의 스프라이트는
+ * 48×48 **정사각**이라 `min`/`max` 가 같아 5차 CRIT 의 축 혼동을 구조적으로 못 잡는다.
+ */
+export const PLAYER_SPRITE_DISPLAY = { width: 96, height: 83.2 } as const;
+
+/**
+ * 불투명 실루엣의 **횡 반폭 실측**(px). 바운딩 상자 횡 반치수(83.2/2 = 41.6)보다 훨씬 작다 —
+ * 이 격차가 5차 CRIT 의 실체다(스트립이 상자 기준으로 깔려 실루엣 밖에 앉았다).
+ *
+ * {@link surfaceStripInsidePx} 의 판정 기준이 되며, 스트립 배치와 **독립적인 입력**이라
+ * 기준 길이를 긴 축으로 되돌리면 검증이 실제로 빨개진다(자기증명 아님).
+ */
+export const PLAYER_OPAQUE_LATERAL_HALF = 26;
 
 /**
  * **스프라이트** 기반 가산 부품이 화면에 얹는 양. Pixi 는 `src.rgb = texture.rgb × tint × alpha`
@@ -1057,11 +1129,63 @@ export function damageAlpha(intensity: number, pulse01: number, dim: boolean): n
 // ── 10. 판면 방향광 파생 (4차 CRIT-3) ───────────────────────────────────────
 
 /**
- * 스트립 `i` 의 **횡 방향 중심**(표시 반치수 배율, −1..1). 균등 분할의 중심점이라 기체 타입과
- * 무관하다(파일 헤더 §기체 타입 공통 규칙).
+ * 스트립 `i` 의 **횡 방향 중심**(정규 −1..1). 균등 분할의 중심점이라 기체 타입과 무관하다
+ * (파일 헤더 §기체 타입 공통 규칙).
+ *
+ * {@link SURFACE_STRIPS} 가 **짝수**라 이 값이 0 이 되는 `i` 가 없다 — 4차에는 홀수 분할의
+ * 중앙 스트립이 `0` 을 받아 어떤 `L` 에서도 알파 0 인 표시객체로 남아 있었다.
  */
 export function surfaceStripCenter(i: number): number {
-  return -1 + ((2 * i + 1) / SURFACE_STRIPS) * 1;
+  return -1 + (2 * i + 1) / SURFACE_STRIPS;
+}
+
+/**
+ * 판면 스트립의 **횡 기준 길이**(px). 스트립은 기수 축이 아니라 **횡축**으로 깔리므로 기준은
+ * 두 축 중 **짧은 쪽**이다.
+ *
+ * ⚠️ 4차는 여기가 `halfSpan = max(width,height)/2`(기수 축)였다 — 그래서 램프의 양 끝이 실루엣
+ * 밖에 앉아 전 계통 최강 스트립 둘이 **0픽셀**이었다(§10 헤더 표). 이 함수를 `max` 로 되돌리면
+ * {@link surfaceRampOuterEdgePx} 게이트가 빨개진다.
+ */
+export function surfaceLateralHalf(width: number, height: number): number {
+  return Math.min(width, height) / 2 || 1;
+}
+
+/** 스트립 `i` 가 덮는 횡 구간(정규, {@link surfaceLateralHalf} 배율). */
+export function surfaceStripBand(i: number): { readonly lo: number; readonly hi: number } {
+  const half = SURFACE_SPAN / SURFACE_STRIPS;
+  const c = surfaceStripCenter(i) * SURFACE_SPAN;
+  return { lo: c - half, hi: c + half };
+}
+
+/**
+ * 스트립 `i` 가 **실루엣 마스크 안에 남기는 횡 폭**(px). 0 이면 알파가 아무리 커도 화면 기여가
+ * 0픽셀이다 — 4차 CRIT 을 재는 물리량이고, {@link surfaceShadeDelta} 같은 알파 게이트가
+ * **혼자서는** 절대 잡지 못하는 축이다.
+ *
+ * `opaqueHalf` 는 스트립 배치와 **독립적으로 실측된** 불투명 실루엣 반폭이다(기본값
+ * {@link PLAYER_OPAQUE_LATERAL_HALF}). 배치에서 파생하면 다시 자기증명이 된다.
+ */
+export function surfaceStripInsidePx(
+  i: number,
+  width: number,
+  height: number,
+  opaqueHalf: number = PLAYER_OPAQUE_LATERAL_HALF,
+): number {
+  const lateral = surfaceLateralHalf(width, height);
+  const band = surfaceStripBand(i);
+  const lo = Math.max(band.lo * lateral, -opaqueHalf);
+  const hi = Math.min(band.hi * lateral, opaqueHalf);
+  return hi > lo ? hi - lo : 0;
+}
+
+/**
+ * 램프의 **가장 바깥 끝**이 놓이는 횡 좌표(px, 절대값). 이 값이 실측 불투명 반폭
+ * ({@link PLAYER_OPAQUE_LATERAL_HALF})을 넘으면 최외곽 스트립의 일부(또는 전부)가 실루엣 밖으로
+ * 나가 화면에서 잘린다 — 4차에는 55.2 대 26 이었다.
+ */
+export function surfaceRampOuterEdgePx(width: number, height: number): number {
+  return surfaceStripBand(SURFACE_STRIPS - 1).hi * surfaceLateralHalf(width, height);
 }
 
 /**
@@ -1100,9 +1224,13 @@ export function surfaceStripAlpha(i: number, light: number, specOn: boolean): Su
 /**
  * 판면 그늘이 광도 `bodyLuma` 인 선체 픽셀에 만드는 **최대 광도 하강량**(가장 그늘진 스트립).
  * 감산 부품의 게이트는 가산 예산이 아니라 이 값이 진다.
+ *
+ * ⚠️ **이 함수 혼자로는 게이트가 될 수 없다.** 알파 진폭만 재므로 그 스트립이 화면에 0픽셀이어도
+ * 값이 그대로 나온다 — 4차에 정확히 그랬다(5차 MAJ: 자기증명). {@link surfaceStripInsidePx} 가
+ * "그 스트립이 실제로 픽셀을 남기는가"를 함께 잠글 때만 이 값이 화면을 뜻한다.
  */
 export function surfaceShadeDelta(bodyLuma: number, light = 1): number {
-  // 스트립 0 은 중심이 가장 음수(−0.8)라 `light > 0` 에서 가장 깊게 그늘진다.
+  // 스트립 0 은 중심이 가장 음수(−0.75)라 `light > 0` 에서 가장 깊게 그늘진다.
   const a = surfaceStripAlpha(0, Math.abs(light), false).shade;
   const f = multiplyFactor(SURFACE_SHADE_COLOR, a);
   return bodyLuma * (1 - (0.299 * f.r + 0.587 * f.g + 0.114 * f.b));
@@ -1200,8 +1328,13 @@ class PlayerBodyAdorner implements EntityAdorner {
   /** 생성 시점의 스케일(setSize 결과). 압축은 항상 이 기준에 곱한다. */
   private baseScaleX = 1;
   private baseScaleY = 1;
-  /** 표시 반치수(px). 모든 배율 상수의 기준 길이. */
+  /** 표시 반치수(px, **긴 축** = 기수 축). 대부분의 배율 상수의 기준 길이. */
   private halfSpan = 1;
+  /**
+   * 표시 **횡** 반치수(px, 짧은 축). 판면 스트립은 횡축으로 깔리므로 기준이 다르다 —
+   * {@link surfaceLateralHalf} 헤더가 그 이유(5차 CRIT)의 정본이다.
+   */
+  private lateralHalf = 1;
 
   private roll = 0;
   private rollVel = 0;
@@ -1241,6 +1374,7 @@ class PlayerBodyAdorner implements EntityAdorner {
     this.baseScaleX = sprite.scale.x;
     this.baseScaleY = sprite.scale.y;
     this.halfSpan = Math.max(sprite.width, sprite.height) / 2 || 1;
+    this.lateralHalf = surfaceLateralHalf(sprite.width, sprite.height);
     this.hp = e.hp;
   }
 
@@ -1478,7 +1612,10 @@ class PlayerBodyAdorner implements EntityAdorner {
     const roll = motionOn ? this.roll : 0;
     const light = surfaceLight(lightLat, roll);
     const specOn = !reducedGlow(ctx.gates);
-    const scale = this.halfSpan;
+    // ⚠️ **비등방 스케일이다.** x(기수 축)는 `halfSpan`, y(횡축·램프가 깔리는 축)는 `lateralHalf` 다.
+    // 4차는 둘 다 `halfSpan` 이라 램프가 실루엣 밖에 앉았다(§10 헤더 CRIT).
+    const sx = this.halfSpan;
+    const sy = this.lateralHalf;
     for (let i = 0; i < SURFACE_STRIPS; i++) {
       const a = surfaceStripAlpha(i, light, specOn);
       const shade = this.shadeStrips[i];
@@ -1486,12 +1623,12 @@ class PlayerBodyAdorner implements EntityAdorner {
       if (shade !== undefined) {
         shade.alpha = a.shade;
         shade.visible = a.shade > 0;
-        shade.scale.set(scale);
+        shade.scale.set(sx, sy);
       }
       if (spec !== undefined) {
         spec.alpha = a.spec;
         spec.visible = a.spec > 0;
-        spec.scale.set(scale);
+        spec.scale.set(sx, sy);
       }
     }
   }
@@ -1579,9 +1716,10 @@ function buildSurfaceStrip(i: number, color: number, blend: 'add' | 'multiply'):
   const g = new Graphics();
   g.label = blend === 'add' ? 'playerSurfaceSpec' : 'playerSurfaceShade';
   g.blendMode = blend;
-  const half = SURFACE_SPAN / SURFACE_STRIPS;
-  const cy = surfaceStripCenter(i) * SURFACE_SPAN;
-  g.rect(-SURFACE_EXTENT, cy - half, SURFACE_EXTENT * 2, half * 2).fill({ color, alpha: 1 });
+  // ⚠️ 띠 구간은 {@link surfaceStripBand} 에서만 온다 — 여기서 다시 계산하면 굽는 기하와 검증하는
+  // 기하가 갈라져 "코드는 맞고 화면은 틀렸다"가 또 열린다(§10 헤더의 세 번 재발한 계열).
+  const band = surfaceStripBand(i);
+  g.rect(-SURFACE_EXTENT, band.lo, SURFACE_EXTENT * 2, band.hi - band.lo).fill({ color, alpha: 1 });
   g.alpha = 0;
   g.visible = false;
   return g;
