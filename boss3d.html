@@ -39,11 +39,11 @@
       import { BossActor } from '/src/render/three3d/bossActor.ts';
 
       const STATES = [
-        ['PHASE 0', '체력 100~70% · 잔잔한 부유', { phase: 0, transitioning: false, overheated: false }, 0],
-        ['PHASE 1', '체력 70~35% · 빠른 맥동 + 전방 기울임', { phase: 1, transitioning: false, overheated: false }, 0],
-        ['PHASE 2', '체력 35% 이하 · 격렬한 진동 + 강한 발광', { phase: 2, transitioning: false, overheated: false }, 0],
-        ['OVERHEAT', '과열 창(피해 2배) · 붉은 고주파 펄스', { phase: 2, transitioning: false, overheated: true }, 0],
-        ['TRANSITION', '페이즈 전환 2초 · 상승 + 스핀 + 발광 폭발', { phase: 1, transitioning: true, overheated: false }, null],
+        ['PHASE 0', '체력 100~70% · 상하 호흡만 (좌우 축 미사용)', { phase: 0, transitioning: false, overheated: false }, 0],
+        ['PHASE 1', '체력 70~35% · 좌우 무게 이동 + 롤 (상하 미사용)', { phase: 1, transitioning: false, overheated: false }, 0],
+        ['PHASE 2', '체력 35% 이하 · 회전 드리프트 + 비정수비 흔들림', { phase: 2, transitioning: false, overheated: false }, 0],
+        ['OVERHEAT', '과열 창(피해 2배) · 팽창 맥동 + 뒤로 젖힘', { phase: 2, transitioning: false, overheated: true }, 0],
+        ['TRANSITION', '전환 2초 · 충전 → 도약 → 착지 스쿼시', { phase: 1, transitioning: true, overheated: false }, null],
       ];
 
       const row = document.getElementById('row');

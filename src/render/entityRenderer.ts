@@ -1222,8 +1222,11 @@ export class EntityRenderer {
 
       if (e.kind === 'boss') {
         // 런타임 3D 액터(티어 게이트) — **텍스처만** 3D 아틀라스 프레임으로 갈아 끼운다.
-        // 스프라이트는 끝까지 평범한 Pixi Sprite 로 남으므로 아래 tint/alpha 연출, 스프라이트 풀,
-        // 접지 그림자·발광·레이더·z-order 가 한 줄도 바뀌지 않는다. 페이즈별 거동은 액터가 쥔다.
+        // 스프라이트는 끝까지 평범한 Pixi Sprite 로 남으므로 스프라이트 풀·접지 그림자·발광·
+        // 레이더·z-order 가 한 줄도 바뀌지 않는다. 페이즈별 거동은 액터가 쥔다.
+        //
+        // 단 **tint/alpha 연출만은 배타적**이다 — 아래 `driven3d` 분기 주석 참조.
+        let driven3d = false;
         if (gates.model3d) {
           this.ensureBoss3D();
           const actor = this.bossActor;
@@ -1236,13 +1239,20 @@ export class EntityRenderer {
             });
             const tex = stage.textureOf('boss');
             if (tracked.sprite.texture !== tex) tracked.sprite.texture = tex;
+            driven3d = true;
           }
         }
 
-        // Phase transition = white flash; overheat = bright red pulse (spec).
-        // 보스는 기존 flash/과열 로직이 tint 를 전유한다 — 히트 플래시(아래 else if)를 태우지 않아
-        // 두 로직이 tint 를 두고 다투지 않게 한다(AC-2.3: 보스 기존 로직 우선).
-        if (e.flash) {
+        if (driven3d) {
+          // 3D 액터가 전환·과열을 **자기 연출로** 표현하므로 아래 2D tint 처리를 태우지 않는다.
+          //
+          // ⚠️ 태우면 보스가 화면에서 사라진다(사용자 신고 2026-07-30). Pixi tint 는 곱연산이라
+          // 과열의 `0xff4020` 은 녹색을 0.25배·파랑을 0.125배로 깎는데, 이는 3D 액터가 발광으로
+          // 밝힌 것을 정확히 되돌리는 연산이다. 거기에 alpha 0.86 까지 겹쳐 어두운 배경과 섞인다.
+          // 즉 같은 상태를 두 시스템이 **반대 방향으로** 그리고 있었다.
+          tracked.sprite.tint = 0xffffff;
+          tracked.sprite.alpha = 1;
+        } else if (e.flash) {
           tracked.sprite.tint = (this.frameTick >> 2) % 2 === 0 ? 0xffffff : 0xff8080;
         } else if (e.active) {
           const pulse = 0.5 + 0.5 * Math.sin(this.frameTick * 0.4);

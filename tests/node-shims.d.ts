@@ -23,8 +23,15 @@ declare module 'node:fs' {
   export function readFileSync(path: string, encoding: string): string;
   export function mkdtempSync(prefix: string): string;
   export function readdirSync(path: string): string[];
-  /** 디렉터리 재귀 순회용 최소 표면(tests/renderWiring.test.ts). */
-  export function statSync(path: string): { isDirectory(): boolean };
+  /**
+   * 디렉터리 재귀 순회(tests/renderWiring.test.ts) + 자산 실물·크기 대조
+   * (tests/modelManifest.test.ts — 커밋된 GLB 가 웹 예산 안인지 잰다).
+   */
+  export function statSync(path: string): {
+    isDirectory(): boolean;
+    isFile(): boolean;
+    size: number;
+  };
 }
 
 declare module 'node:os' {

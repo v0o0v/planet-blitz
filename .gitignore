@@ -66,3 +66,6 @@ supabase/.temp/
 .omc/research/env-shots*/**/*.png
 .omc/research/env-shots*/*.png
 .omc/research/env-baseline/*.png
+
+# 3D 모델 원본(수십 MB) — Meshy 에 남아 있고 manifest.json 의 task id 로 다시 받는다.
+assets/models/_source/
