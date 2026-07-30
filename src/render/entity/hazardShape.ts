@@ -332,6 +332,48 @@ export interface HazardLobe {
  */
 export const LOBE_COUNT = 14;
 
+/** 로브의 운동 방식. 재질감의 정체는 결국 **운동**이라, 종류마다 달라야 구분된다. */
+export type HazardLobeMotion = 'flow' | 'bubble' | 'lens' | 'still';
+
+/** 종류별 로브 표현. **Pixi 를 모르는 순수 데이터**라 예산 회계가 같은 값을 읽을 수 있다. */
+export interface HazardLobeStyle {
+  readonly motion: HazardLobeMotion;
+  /**
+   * 로브 색의 보간 계수.
+   *
+   * 2차의 `molten` 0.72 는 `mixColor(0xff8412, 0xfff0e6, .72)` = (255,210,170) 로 **거의 흰색**
+   * 이었고, 주황 장판 위 창백한 얼룩이라 "용융"이 아니라 **렌즈 기름때**로 읽혔다(반려 MINOR).
+   * 지금은 종류색 쪽에 훨씬 가깝게 둬서 로브가 장판의 **같은 물질**로 보이게 한다.
+   */
+  readonly brightMix: number;
+  /**
+   * 로브 알파(가산).
+   *
+   * 4차는 0.2~0.3 이었고, 3차와 달리 **41셀 전부**가 로브를 갖게 되면서(`lodLobeCount` 가
+   * 어떤 LOD 도 0 으로 두지 않는다) 총량이 폭증했다 — 5차 계측에서 톡사르 해저드 순기여가
+   * `+0.37pp → +5.95pp`(16배)였다.
+   *
+   * **0.8배만** 내린다. {@link additiveLayerSpecs} 회계로 재 보면 로브는 톡사르 셀 부하의
+   * 15% 에 불과하고(지배항은 원판을 두 번 덮는 `crustAdd`), 로브를 더 깎아도 예산은 거의 안
+   * 내려가면서 3차 반려 사유("재질이 화면에 없다")에는 곧장 가까워진다. **개수가 아니라 알파**를
+   * 내리는 것도 같은 이유다 — 겹의 존재와 공간 분포는 유지하고 진폭만 뺀다.
+   */
+  readonly lobeAlpha: number;
+}
+
+const LOBE_STYLE: Readonly<Record<HazardMaterialKind, HazardLobeStyle>> = {
+  molten: { motion: 'flow', brightMix: 0.38, lobeAlpha: 0.24 },
+  spore: { motion: 'bubble', brightMix: 0.28, lobeAlpha: 0.21 },
+  refract: { motion: 'lens', brightMix: 0.42, lobeAlpha: 0.24 },
+  scorch: { motion: 'still', brightMix: 0.15, lobeAlpha: 0.16 },
+  ember: { motion: 'flow', brightMix: 0.4, lobeAlpha: 0.21 },
+};
+
+/** 종류 → 로브 표현. */
+export function hazardLobeStyle(kind: HazardMaterialKind): HazardLobeStyle {
+  return LOBE_STYLE[kind];
+}
+
 /** 로브 반지름의 하한·상한(판정 반경 대비). 작아야 개체로 읽힌다. */
 export const LOBE_MIN_R = 0.12;
 export const LOBE_MAX_R = 0.3;
@@ -422,17 +464,39 @@ export interface HazardCrustSpec {
   readonly spin: number;
 }
 
+/**
+ * 가산 겹을 여러 장 쌓을 때 둘째 장부터 곱하는 감쇠. 첫 장이 1, 이후가 이 값이다 —
+ * {@link additiveLayerSpecs} 가 부하를 셀 때 같은 식을 써야 예산 회계가 화면과 어긋나지 않는다.
+ */
+export const CRUST_FLOW_FALLOFF = 0.7;
+
+/**
+ * 면적 재질이 덮는 반경 비율. 물질 윤곽(`EDGE_MAX_RATIO`=0.96) 안쪽에 머문다.
+ * (굽는 쪽과 **예산 회계**가 같은 값을 봐야 하므로 기하 쪽에 둔다.)
+ */
+export const CRUST_COVER = 0.95;
+/** 접지 텍스처가 덮는 반경 비율. 판정 반경에 맞춰야 "가장자리가 파였다"가 립과 정합한다. */
+export const GROUND_COVER = 0.99;
+
 const CRUST_SPEC: Readonly<Record<HazardMaterialKind, HazardCrustSpec>> = {
   // 용암: 굳은 껍질(곱연산) 사이로 균열이 빛난다(가산 2장 역회전 = 흐름).
-  molten: { add: 'crackAdd', shade: 'plateShade', addAlpha: 0.5, shadeAlpha: 0.85, flow: 2, spin: 0.0022 },
+  //
+  // 4차의 가산 알파(0.5/0.42/0.4/0.46)는 **원판 전체를 한두 번 통째로 덮는** 겹이라 셀당 가산
+  // 부하의 **지배항**이었다({@link additiveLayerSpecs} 로 재면 톡사르 셀의 51%). 로브가 아니라
+  // 여기가 5차 초과분(+5.95pp)의 최대 기여다 — 알파만 세면 순위가 뒤집혀 보인다.
+  //
+  // 0.56배로 내린다. 무늬의 존재는 그대로고(3차 반려 "재질이 화면에 없다"로 되돌아가지 않는다)
+  // 총량만 빠진다. 오염은 텍스처까지 바뀌어(`bubbleLuminance` 막 → 얼룩) 원판 평균 휘도가
+  // 0.137 → 0.087 로 함께 내려가므로 실효 감산이 더 크다.
+  molten: { add: 'crackAdd', shade: 'plateShade', addAlpha: 0.28, shadeAlpha: 0.85, flow: 2, spin: 0.0022 },
   // 박격 낙하점: 달궈진 자국. 껍질은 없다(막 생긴 자리라 굳을 시간이 없다).
-  ember: { add: 'crackAdd', shade: null, addAlpha: 0.42, shadeAlpha: 0, flow: 2, spin: 0.004 },
+  ember: { add: 'crackAdd', shade: null, addAlpha: 0.23, shadeAlpha: 0, flow: 2, spin: 0.004 },
   // 그을음: **갈라진 검은 금**. 발광이 아니라 감광이라 가산 겹이 아예 없다.
   scorch: { add: null, shade: 'crackShade', addAlpha: 0, shadeAlpha: 0.95, flow: 0, spin: 0 },
-  // 오염: 부글거리는 거품 막.
-  spore: { add: 'bubbleAdd', shade: null, addAlpha: 0.4, shadeAlpha: 0, flow: 2, spin: 0.0015 },
+  // 오염: 부글거리는 거품.
+  spore: { add: 'bubbleAdd', shade: null, addAlpha: 0.22, shadeAlpha: 0, flow: 2, spin: 0.0015 },
   // 감속장: 집광 무늬 + 유리 테두리. 실제 왜곡은 `hazardField` 의 공유 변위 필터가 준다.
-  refract: { add: 'lensAdd', shade: null, addAlpha: 0.46, shadeAlpha: 0, flow: 1, spin: 0.0026 },
+  refract: { add: 'lensAdd', shade: null, addAlpha: 0.26, shadeAlpha: 0, flow: 1, spin: 0.0026 },
 };
 
 /** 종류 → 면적 재질 서술. */
@@ -607,13 +671,26 @@ export function lodLobeCount(lod: HazardLod, tier: QualityTier, gates: EffectGat
 }
 
 /**
- * 가산 겹(로브·림·입자·균열)의 알파 배율. `reducedGlow` → `gates.halo === false` 에서 내린다.
+ * 가산 겹 전체의 **기본** 알파 배율.
+ *
+ * 4차는 이 값이 1 이었다 — 즉 게이트가 열려 있으면 각 겹이 선언한 알파가 그대로 화면에 갔다.
+ * 5차 계측에서 톡사르 41셀 해저드 순기여가 `+5.95pp`(§2-4 상한을 셀 하나 없이 초과)였고,
+ * 초과분은 특정 겹 하나가 아니라 **가산 겹 전부의 합**이었다. 그래서 겹마다 개별 계수를
+ * 만지는 것과 별개로, **기본값 자체**를 1 미만으로 내려 총량에 천장을 만든다.
+ *
+ * 0.72 인 이유: 겹 사이 **상대 비율**을 건드리지 않는 유일한 감산이라 어떤 항목도 상대적으로
+ * 사라지지 않는다(3차 반려 "재질·입자·접지가 화면에 없다"로 되돌아가지 않기 위한 조건이다).
+ */
+export const ADDITIVE_ALPHA_BASE = 0.72;
+
+/**
+ * 가산 겹(로브·림·입자·균열)의 알파 배율. `reducedGlow` → `gates.halo === false` 에서 더 내린다.
  *
  * 0 이 아닌 이유: 로브는 §3-C-1 의 **재질 본체**라 통째로 끄면 항목이 화면에서 사라진다.
  * 광과민 대응의 목적은 "번쩍임 억제"이므로 진폭을 낮추는 것으로 충족된다.
  */
 export function lobeAlphaScale(gates: EffectGates): number {
-  return gates.halo ? 1 : 0.4;
+  return ADDITIVE_ALPHA_BASE * (gates.halo ? 1 : 0.4);
 }
 
 // ---------------------------------------------------------------------------
@@ -765,11 +842,15 @@ export interface HazardGrounding {
 /**
  * 림 하이라이트 기본 알파. 좁고 밝아야 "패인 가장자리"가 선다.
  *
- * 0.34 → 0.6. 3차 실측이 톡사르에서 **정확히 바닥**, 카르곤에서 mean +0.17 이었다(3차 반려
- * MAJOR-3). 원인은 알파와 면적 둘 다였고, 면적은 텍스처가 고쳤다(`rimLuminance` 는 광원 쪽
- * 절반 전체의 안쪽 띠를 채운다 — 3차의 `arc` 는 원주의 43% 였다).
+ * 0.34 → 0.6 → **0.26**. 3차 실측이 톡사르에서 정확히 바닥이었던 원인은 알파와 면적 **둘 다**
+ * 였는데, 4차에 둘을 동시에 올렸다: 면적은 텍스처가 고쳤고(`rimLuminance` 는 광원 쪽 절반
+ * 전체의 안쪽 띠를 채운다 — 3차의 `arc` 는 원주의 43% 였다) 알파도 1.76배가 됐다. 결과가
+ * 5차 계측의 "셀마다 강한 흰 호"이고, 겹친 셀에서 그 호들이 교차해 §2-5 의 동심 윤곽으로 읽혔다.
+ *
+ * 면적 수정만 남긴다. **접지감(§3-C 항목 3)은 곱연산 {@link HAZARD_CONTACT_ALPHA}(0.62)가 이미
+ * 지고 있고** 그쪽은 어둡게 하므로 밝기 총량 기여가 0 이다 — 즉 림을 내려도 접지는 안 죽는다.
  */
-export const HAZARD_RIM_ALPHA = 0.6;
+export const HAZARD_RIM_ALPHA = 0.26;
 /**
  * 접촉 그늘 기본 알파. **곱연산**이라 어두운 행성에서 스스로 약해지고(groundShadow 와 같은
  * 성질) 밝기 총량(§2-4)에는 순감으로 기여한다 — 3차의 `+0.76pp` 순기여를 되돌리는 항목이다.
@@ -851,3 +932,245 @@ export function hazardAmbience(
 
 // 예산은 개체 상한이 아니라 겹 LOD 다 — 위 `hazardLod` 절이 정본이고, 안전 밸브
 // `MAX_FIELD_MATERIALS` 도 거기 있다.
+
+// ---------------------------------------------------------------------------
+// 가산 밝기 총량 회계 — §2-4 를 상수가 아니라 실측 파생으로 잠근다
+// ---------------------------------------------------------------------------
+
+/**
+ * ## 왜 회계 모델이 필요한가 (5차 반려)
+ *
+ * 4차는 겹마다 "이 알파면 안 밝다"를 개별로 판단했고, 개별 판단은 전부 통과했다. 그런데
+ * **41셀 × 가산 겹 5종**이 같은 화면에 겹치자 해저드 순기여가 `+0.37pp → +5.95pp`(16배)로
+ * 튀어 §2-4 상한(전체 bright ≤ 7%)을 통째로 깼다. 겹 하나만 봐서는 절대 안 보이는 결함이다.
+ *
+ * 그래서 총량을 **모델로** 세운다. 셀 하나가 화면에 더하는 가산 부하를
+ *
+ * ```
+ * load = Σ_겹  (스프라이트 수) × (스프라이트 하나의 알파 × 면적) × (텍스처 평균 휘도)
+ * ```
+ *
+ * 로 정의한다(면적 단위는 **판정 반경²**). 세 인자가 곱해지는 것이 핵심이다 — 4차가 밟은 함정이
+ * 정확히 이것으로, `hazardRim` 은 알파가 0.6 이고 원판 전체를 덮지만 텍스처가 광원 쪽 좁은 띠만
+ * 채우고, 반대로 `crustAdd` 는 알파가 낮아도 **원판을 두 번 통째로** 덮는다. 알파만 세면 순위가
+ * 뒤집힌다.
+ *
+ * ## 왜 텍스처 휘도를 주입받는가
+ * 텍스처 굽기는 `hazardTexture.ts`(Pixi 를 import 한다) 소유이고, 이 파일은 Pixi 를 모르는 것이
+ * 존재 이유다(헤더 참조). 그래서 평균 휘도는 **인자로 받는다** — 테스트가
+ * `hazardTexture.additiveTextureMeans()` 로 실제 샘플러를 적분해 넘기므로, 텍스처를 밝게 다시
+ * 구우면 알파를 안 만져도 예산 테스트가 빨개진다.
+ *
+ * ## 왜 상수가 아니라 표본인가
+ * 로브·입자의 알파와 면적은 {@link lobeAt}·{@link lobeLife}·{@link moteAt} 의 수명 곡선에서
+ * 나온다. 그 평균을 손으로 적은 상수로 두면 곡선을 만졌을 때 회계가 조용히 거짓이 된다.
+ * {@link lobeUnitLoad}·{@link moteUnitLoad} 는 그 함수들을 **직접 표본**한다.
+ */
+
+/** 부하를 재는 가산 겹. */
+export type AdditiveLayerId = 'ambient' | 'crustAdd' | 'lobes' | 'rim' | 'motes';
+
+/** 그 겹이 쓰는 텍스처(평균 휘도의 조회 키). */
+export type AdditiveTextureId = 'glow' | 'rim' | 'blob' | 'mote' | CrustTextureId;
+
+/** 가산 겹 하나의 부하 서술. */
+export interface AdditiveLayerSpec {
+  readonly layer: AdditiveLayerId;
+  readonly texture: AdditiveTextureId;
+  /** 스프라이트 수. */
+  readonly count: number;
+  /** 스프라이트 **하나**의 알파 × 면적(판정 반경² 단위). 텍스처 휘도는 곱하지 않는다. */
+  readonly unit: number;
+}
+
+/** 부하 표본 수(로브·입자 수명 곡선). */
+const LOAD_SAMPLES = 48;
+/** 표본 구간(프레임). 로브 최장 주기(170)·입자 주기(150)의 여러 배라 위상이 골고루 섞인다. */
+const LOAD_SPAN = 1700;
+/** 표본에 쓰는 시드들. 배치는 시드 함수라 한 시드만 보면 우연에 걸린다. */
+const LOAD_SEEDS: readonly number[] = [1, 7, 23, 101];
+
+/**
+ * 로브 스프라이트 **하나**의 (알파 배율 × 면적) 기댓값 — 판정 반경 1 기준.
+ * `KIND_STYLE.lobeAlpha` 와 가산 게이트는 곱하지 않는다(호출측이 곱한다).
+ */
+export function lobeUnitLoad(count: number): number {
+  if (count <= 0) return 0;
+  let sum = 0;
+  let n = 0;
+  for (const seed of LOAD_SEEDS) {
+    for (let i = 0; i < count; i++) {
+      const lobe = lobeAt(seed, i, 1);
+      for (let t = 0; t < LOAD_SAMPLES; t++) {
+        const life = lobeLife(seed, i, (t / LOAD_SAMPLES) * LOAD_SPAN);
+        const r = lobe.r * life.scale;
+        // `hazardField.onFrame` 의 알파식과 같은 꼴이다: life.alpha × (0.55 + 0.45·bright).
+        sum += Math.PI * r * r * life.alpha * (0.55 + 0.45 * lobe.bright);
+        n++;
+      }
+    }
+  }
+  return sum / n;
+}
+
+/** 입자 스프라이트 **하나**의 (알파 × 면적) 기댓값 — 판정 반경 1 기준. */
+export function moteUnitLoad(count: number, kind: HazardMaterialKind): number {
+  if (count <= 0) return 0;
+  const rise = moteRise(kind);
+  let sum = 0;
+  let n = 0;
+  for (const seed of LOAD_SEEDS) {
+    for (let i = 0; i < count; i++) {
+      for (let t = 0; t < LOAD_SAMPLES; t++) {
+        const m = moteAt(seed, i, 1, (t / LOAD_SAMPLES) * LOAD_SPAN, rise);
+        sum += Math.PI * m.r * m.r * m.alpha;
+        n++;
+      }
+    }
+  }
+  return sum / n;
+}
+
+/**
+ * 셀 하나의 가산 겹 목록. **활성 최대치**(`presence = 1`)를 기준으로 한다 — 예산은 최악의
+ * 프레임에서 지켜져야 하고, 예열은 `presence` 가 더 낮으므로 자동으로 안쪽이다.
+ *
+ * 예열 고조(`hazardCharge`)는 활성에서 0 이라 여기 없다. 대신 예열 컷에서는 로브·입자가
+ * `presence` 만큼 내려가므로 총량이 활성보다 크지 않다.
+ */
+export function additiveLayerSpecs(
+  kind: HazardMaterialKind,
+  lod: HazardLod,
+  tier: QualityTier,
+  gates: EffectGates,
+  light: EnvLightSpec | null,
+  reducedMotion = false,
+): readonly AdditiveLayerSpec[] {
+  const glow = lobeAlphaScale(gates);
+  const out: AdditiveLayerSpec[] = [];
+
+  const amb = hazardAmbience(kind, tier, gates);
+  if (amb !== null && amb.additive) {
+    // 세로 0.88 압축(바닥에 누운 빛무리)까지 반영한 타원 면적이다.
+    out.push({
+      layer: 'ambient',
+      texture: 'glow',
+      count: 1,
+      unit: amb.alpha * Math.PI * amb.scale * amb.scale * 0.88,
+    });
+  }
+
+  const crust = hazardCrustSpec(kind);
+  if (crust.add !== null && crust.flow > 0) {
+    let fade = 0;
+    for (let i = 0; i < crust.flow; i++) fade += i === 0 ? 1 : CRUST_FLOW_FALLOFF;
+    out.push({
+      layer: 'crustAdd',
+      texture: crust.add,
+      count: crust.flow,
+      unit: ((crust.addAlpha * glow * fade) / crust.flow) * Math.PI * CRUST_COVER * CRUST_COVER,
+    });
+  }
+
+  const lobes = lodLobeCount(lod, tier, gates);
+  if (lobes > 0) {
+    out.push({
+      layer: 'lobes',
+      texture: 'blob',
+      count: lobes,
+      unit: hazardLobeStyle(kind).lobeAlpha * glow * lobeUnitLoad(lobes),
+    });
+  }
+
+  if (lodHasGrounding(lod)) {
+    const gr = hazardGrounding(light);
+    if (gr.rimAlpha > 0) {
+      out.push({
+        layer: 'rim',
+        texture: 'rim',
+        count: 1,
+        unit: gr.rimAlpha * glow * Math.PI * GROUND_COVER * GROUND_COVER,
+      });
+    }
+  }
+
+  const motes = lodHasMotes(lod)
+    ? Math.round(moteBudget(tier, gates, reducedMotion) * lodMoteScale(lod))
+    : 0;
+  if (motes > 0) {
+    out.push({
+      layer: 'motes',
+      texture: 'mote',
+      count: motes,
+      unit: glow * moteUnitLoad(motes, kind),
+    });
+  }
+
+  return out;
+}
+
+/** 겹 목록 × 텍스처 평균 휘도 → 셀 하나의 가산 부하(판정 반경² 단위). */
+export function additiveLoad(
+  specs: readonly AdditiveLayerSpec[],
+  meanLuminance: (texture: AdditiveTextureId) => number,
+): number {
+  let sum = 0;
+  for (const s of specs) sum += s.count * s.unit * meanLuminance(s.texture);
+  return sum;
+}
+
+/**
+ * 셀 하나의 **게이트 걸린** 가산 부하 상한(= `ambient` 를 뺀 합).
+ *
+ * 4차 값은 최악 조합(`molten`·`full`·`high`)에서 **0.689** 였다. 5차 감산 후 **0.291** 이고,
+ * 상한은 거기에 10% 여유를 준 값이다. 앞으로 어떤 겹의 알파를 올리든 여기 먼저 부딪친다.
+ *
+ * bright(L≥96)는 가산 누적의 **초선형** 함수라 부하를 3분의 1로 내리면 순기여는 그보다 더
+ * 떨어지지만, 회계는 보수적으로 선형 비례로 읽는다(4차 순기여 +5.95pp × 0.29 ≈ 1.7pp 가
+ * 선형 상계이고 실제는 그보다 낮게 나와야 한다 — 목표는 ≤1.5pp).
+ */
+export const MAX_CELL_ADDITIVE_LOAD = 0.32;
+
+/**
+ * 환경 기여(`hazardAmbience`) 겹의 셀당 상한. **왜 따로인가**: 이 겹은
+ * ① `lobeAlphaScale` 이 아니라 `gates.halo` **단독**으로만 게이팅되고(코드가 그렇다),
+ * ② 2차에 비평가가 화면에서 **통과 판정한 유일한 항목**이라 경로·수치를 건드리지 않았고,
+ * ③ 넓고 옅은 겹이라 밝기 총량의 성격이 다르다(면적 지배 · 국소 포화 아님).
+ *
+ * 5차 실측 최악은 `molten` 의 **0.418** 이고, 그 값을 쓰는 카르곤 보스전은 bright 3.58% ·
+ * p95 85.00 으로 §2-4 를 통과했다. 즉 이 겹은 **현재 값이 증거로 통과한 상태**이므로 감산
+ * 대상이 아니고, 상한은 회귀 방어다.
+ */
+export const MAX_AMBIENT_LOAD = 0.45;
+
+/**
+ * 판정 장면(톡사르 41셀)의 LOD 분포. `hazardLod` 의 경계에서 파생된다 — 6 full · 12 mid · 23 lite.
+ * 상수로 적지 않는 이유는 {@link LOD_FULL_COUNT}/{@link LOD_MID_COUNT} 를 만지면 여기가 따라
+ * 움직여야 하기 때문이다.
+ */
+export function toxarLodMix(cells = 41): readonly { lod: HazardLod; cells: number }[] {
+  let full = 0;
+  let mid = 0;
+  let lite = 0;
+  for (let i = 0; i < cells; i++) {
+    const lod = hazardLod(i);
+    if (lod === 'full') full++;
+    else if (lod === 'mid') mid++;
+    else lite++;
+  }
+  return [
+    { lod: 'full', cells: full },
+    { lod: 'mid', cells: mid },
+    { lod: 'lite', cells: lite },
+  ];
+}
+
+/**
+ * 판정 장면(톡사르 41셀) 합계 상한. **셀당 상한 × 41 이 아니다** — 41셀이 전부 최악 종류일 수는
+ * 없고(톡사르는 전부 `spore` 다) LOD 가 낮은 셀이 다수다. 톡사르 실제 구성으로 잰다.
+ *
+ * 4차 **14.96** → 5차 **4.39**(0.29배). 이 비가 §2-4 게이트("해저드 순기여 ≤1.5pp")의 근거이고,
+ * 셀당 상한과 별도로 존재하는 이유는 **셀 수와 LOD 분포가 곱해지는 축**을 셀 하나만 봐서는
+ * 절대 못 잡기 때문이다 — 4차가 정확히 그렇게 통과했다(겹마다 개별 판단은 전부 정당했다).
+ */
+export const MAX_SCENE_ADDITIVE_LOAD = 4.8;

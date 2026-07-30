@@ -195,6 +195,22 @@ const HATCH_ALPHA = 0.42;
 export const LIP_RATIO = 1;
 /** 맥동 립 두께. 세 선 중 유일하게 흔들리지 않으므로 얇아도 읽힌다. */
 export const LIP_WIDTH = 2;
+/**
+ * 립 알파의 바닥값과 맥동 진폭.
+ *
+ * ## 왜 내렸는가 (5차 반려 — §2-5)
+ * 립은 **판정 반경의 울타리**라 지울 수 없고 계약 §2-5 가 명시적으로 허용한 정원이다. 그런데
+ * 4차에 립이 `radius - strokeWidth` → **정확히 `radius`** 로 올라오면서 더 또렷해지고, 같은
+ * 셀의 가산 림(4차에 0.34 → 0.6)과 거품 막(작은 링)까지 겹쳐 **한 자리에 정원 윤곽 여러 줄**이
+ * 됐다. 겹친 셀끼리 흰 호가 교차하는 인상의 주 원인이 이 셋이다.
+ *
+ * 지우는 대신 **지배력만 뺀다**: 0.45~0.75 → 0.24~0.39. 폭은 그대로 2px 다 — 얇은 선의 알파를
+ * 내리는 것이 굵은 선을 지우는 것보다 판정 경계 가독성을 덜 깎는다(선의 위치는 변하지 않고
+ * 대비만 낮아진다). 나머지 둘은 각자의 자리에서 함께 내려간다
+ * ({@link file://./entity/hazardShape.ts} `HAZARD_RIM_ALPHA` · `hazardTexture.bubbleLuminance`).
+ */
+export const LIP_ALPHA_BASE = 0.24;
+export const LIP_ALPHA_PULSE = 0.15;
 /** 바깥 글로우 대역(판정 반경 대비). **립보다 확실히 바깥**이어야 세 선이 안 꼬인다. */
 export const GLOW_MIN_RATIO = 1.02;
 export const GLOW_MAX_RATIO = 1.06;
@@ -536,7 +552,7 @@ export function drawHazardZone(
   g.circle(x, y, radius * LIP_RATIO).stroke({
     color: v.accent,
     width: LIP_WIDTH,
-    alpha: (0.45 + 0.3 * pulse) * (v.harmful ? 1 : 0.7),
+    alpha: (LIP_ALPHA_BASE + LIP_ALPHA_PULSE * pulse) * (v.harmful ? 1 : 0.7),
   });
 
   if (v.harmful) {

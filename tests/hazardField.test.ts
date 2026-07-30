@@ -19,9 +19,21 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { Container } from 'pixi.js';
 
 import {
+  ADDITIVE_ALPHA_BASE,
   EDGE_MAX_RATIO,
   EDGE_MIN_RATIO,
+  HAZARD_CONTACT_ALPHA,
   HAZARD_DT_CAP,
+  HAZARD_RIM_ALPHA,
+  MAX_AMBIENT_LOAD,
+  MAX_CELL_ADDITIVE_LOAD,
+  MAX_SCENE_ADDITIVE_LOAD,
+  additiveLayerSpecs,
+  additiveLoad,
+  lobeUnitLoad,
+  moteUnitLoad,
+  toxarLodMix,
+  type HazardLod,
   MATERIAL_MIX_MAX,
   MAX_FIELD_MATERIALS,
   edgePolygon,
@@ -58,6 +70,7 @@ import {
   stepHeat,
   type HazardMaterialKind,
 } from '../src/render/entity/hazardShape.js';
+import { additiveTextureMean } from '../src/render/entity/hazardTexture.js';
 import {
   hazardFieldLiveCount,
   installHazardMaterials,
@@ -994,5 +1007,115 @@ describe('배선 · 비용 상한', () => {
     host.draw(cells, stubCanvas(), stubCanvas(), ctxFor(layer, 'high', 2));
     expect(fieldNodeCount(layer)).toBe(1);
     host.clear(ctxFor(layer));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 12. 가산 밝기 총량 (§2-4) — 4차가 통째로 깼고, 겹 하나만 봐서는 못 잡는다
+// ---------------------------------------------------------------------------
+
+/**
+ * ## 왜 이 절이 필요한가
+ * 4차는 겹마다 "이 알파면 안 밝다"를 개별로 판단했고 **개별 판단은 전부 정당했다**. 그런데
+ * 41셀 × 가산 겹 5종이 같은 화면에 겹치자 톡사르 해저드 순기여가 `+0.37pp → +5.95pp`(16배)로
+ * 튀어 §2-4(전체 bright ≤ 7% · p95 ≤ 128)를 통째로 깼다.
+ *
+ * 그래서 상수 하나에 단언을 걸지 않는다. `additiveLayerSpecs` × `additiveTextureMean` 으로
+ * **부하를 실제로 재고** 천장을 넘는지 본다 — 알파를 올리든, 개수를 올리든, 텍스처를 밝게
+ * 다시 굽든 같은 자리에서 빨개진다.
+ */
+describe('가산 밝기 총량 회계 (§2-4)', () => {
+  const BUDGET_LIGHT: EnvLightSpec = { angle: 0.6, shadowBias: 0.5 };
+  const KINDS: readonly HazardMaterialKind[] = ['molten', 'spore', 'refract', 'scorch', 'ember'];
+  const LODS: readonly HazardLod[] = ['full', 'mid', 'lite'];
+
+  /** 게이트 걸린 가산 겹만(= ambient 제외) 잰다 — 두 축의 상한이 다른 이유는 상수 주석에. */
+  const gatedLoad = (
+    kind: HazardMaterialKind,
+    lod: HazardLod,
+    tier: QualityTier,
+    gates: EffectGates,
+  ): number =>
+    additiveLoad(
+      additiveLayerSpecs(kind, lod, tier, gates, BUDGET_LIGHT).filter((s) => s.layer !== 'ambient'),
+      additiveTextureMean,
+    );
+
+  it('어떤 종류·LOD·티어 조합도 셀당 가산 상한을 넘지 않는다', () => {
+    for (const kind of KINDS) {
+      for (const lod of LODS) {
+        for (const tier of ['high', 'med', 'low'] as const) {
+          const gates = tier === 'low' ? LOW : HIGH;
+          expect(gatedLoad(kind, lod, tier, gates), `${kind}/${lod}/${tier}`).toBeLessThanOrEqual(
+            MAX_CELL_ADDITIVE_LOAD,
+          );
+        }
+      }
+    }
+  });
+
+  it('환경 기여 겹도 자기 상한 안에 있다(게이팅 축이 달라 따로 잰다)', () => {
+    for (const kind of KINDS) {
+      const amb = additiveLoad(
+        additiveLayerSpecs(kind, 'full', 'high', HIGH, BUDGET_LIGHT).filter(
+          (s) => s.layer === 'ambient',
+        ),
+        additiveTextureMean,
+      );
+      expect(amb, kind).toBeLessThanOrEqual(MAX_AMBIENT_LOAD);
+    }
+  });
+
+  it('판정 장면(톡사르 41셀)의 합계가 상한 안에 있다 — 셀 하나만 봐서는 못 잡는 축', () => {
+    let scene = 0;
+    for (const m of toxarLodMix(41)) {
+      scene += m.cells * gatedLoad('spore', m.lod, 'high', HIGH);
+    }
+    expect(scene).toBeLessThanOrEqual(MAX_SCENE_ADDITIVE_LOAD);
+    // 4차는 같은 모델로 14.96 이었다. 0.35배 아래로 내려와 있어야 순기여 목표(≤1.5pp)의
+    // 선형 상계가 성립한다.
+    expect(scene).toBeLessThan(14.96 * 0.35);
+  });
+
+  it('LOD 분포가 hazardLod 의 경계에서 파생된다(상수로 적어 두지 않는다)', () => {
+    const mix = toxarLodMix(41);
+    expect(mix.find((m) => m.lod === 'full')?.cells).toBe(LOD_FULL_COUNT);
+    expect(mix.find((m) => m.lod === 'mid')?.cells).toBe(LOD_MID_COUNT - LOD_FULL_COUNT);
+    expect(mix.reduce((s, m) => s + m.cells, 0)).toBe(41);
+  });
+
+  it('지배항은 로브가 아니라 원판을 통째로 덮는 crustAdd 다 (감산 우선순위의 근거)', () => {
+    // 4차는 로브를 의심했다. 알파만 세면 그렇게 보이지만, 부하는 알파 × 면적 × 텍스처 휘도라
+    // **원판 전체를 한두 번 덮는 겹**이 이긴다. 이 단언이 다음 사람의 감산 순서를 잡아 준다.
+    const specs = additiveLayerSpecs('spore', 'full', 'high', HIGH, BUDGET_LIGHT);
+    const by = new Map<string, number>();
+    for (const s of specs) by.set(s.layer, s.count * s.unit * additiveTextureMean(s.texture));
+    const crust = by.get('crustAdd') ?? 0;
+    const lobes = by.get('lobes') ?? 0;
+    expect(crust).toBeGreaterThan(lobes * 1.5);
+  });
+
+  it('가산 기본 배율이 1 미만이라 겹 총량에 천장이 있다', () => {
+    expect(ADDITIVE_ALPHA_BASE).toBeLessThan(1);
+    expect(ADDITIVE_ALPHA_BASE).toBeGreaterThan(0.5); // 0 으로 가면 3차 반려로 되돌아간다
+    expect(lobeAlphaScale(HIGH)).toBe(ADDITIVE_ALPHA_BASE);
+  });
+
+  it('부하가 로브·입자 수명 곡선의 함수다(상수로 굳어 있지 않다)', () => {
+    // lobeUnitLoad 가 lobeAt/lobeLife 를 직접 표본하므로 곡선을 만지면 값이 따라 움직인다.
+    expect(lobeUnitLoad(0)).toBe(0);
+    expect(lobeUnitLoad(14)).toBeGreaterThan(0);
+    expect(moteUnitLoad(0, 'spore')).toBe(0);
+    // 입자는 반경 비례라 로브(0.12~0.30r)보다 개당 면적이 작다 — 3차의 절대 px 로 되돌아가면
+    // 이 부등식이 뒤집힌다.
+    expect(moteUnitLoad(14, 'spore')).toBeLessThan(lobeUnitLoad(14));
+  });
+
+  it('접지감은 곱연산이 지고, 가산 림은 그 절반 이하다 (§2-5 흰 호 교차의 처방)', () => {
+    // 4차는 림(가산 0.6)과 그늘(곱연산 0.62)이 맞먹었고, 41셀이 겹치자 밝은 호만 누적됐다.
+    // 곱연산은 어둡게 하므로 겹쳐도 밝기 총량 기여가 0 이다 — 접지는 그쪽에 실려야 한다.
+    expect(HAZARD_RIM_ALPHA).toBeLessThan(HAZARD_CONTACT_ALPHA * 0.5);
+    const g = hazardGrounding(BUDGET_LIGHT);
+    expect(g.rimAlpha).toBeLessThan(g.shadowAlpha * 0.5);
   });
 });

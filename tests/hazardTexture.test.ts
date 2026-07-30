@@ -26,13 +26,16 @@ import {
   crackLuminance,
   crackShadeLuminance,
   discMask,
+  glowLuminance,
   lensDisplacement,
   lensLuminance,
+  meanDiscLuminance,
   moteLuminance,
   plateShadeLuminance,
   resetHazardTextures,
   rimLuminance,
 } from '../src/render/entity/hazardTexture.js';
+import { hash3 } from '../src/render/env/noise.js';
 
 /** 원판을 격자로 훑어 [0,1] 값을 모은다. 면적 재질의 통계를 재는 공용 도구. */
 function sampleDisc(f: (nx: number, ny: number) => number, n = 40): number[] {
@@ -235,9 +238,35 @@ describe('면적 재질 텍스처 — 무늬가 실제로 다르다', () => {
     expect(both / crackBright).toBeLessThan(0.6);
   });
 
-  it('거품은 막(테두리)이 안쪽보다 밝다 — 채워진 원은 다시 도형이다', () => {
+  it('거품이 채워진 얼룩이다 — 링 윤곽이 없다 (5차 §2-5)', () => {
+    // 4차는 `dd≈0.82` 에 좁은 봉우리를 둬 "테두리가 밝은 원"을 만들었다. 의도는 "채워진 원은
+    // 다시 도형이다" 였지만, 테두리가 밝은 작은 원은 **정확히 링**이고 41셀이 겹치면 §2-5 의
+    // 동심 윤곽이 된다.
+    //
+    // 링이 없음을 재는 법: 거품 하나를 골라 중심에서 밖으로 훑는다. 링이면 중간 반경에서
+    // 봉우리가 서고(중심 < 봉우리) 얼룩이면 **중심이 최대**이고 단조 감소한다.
+    // 22개 거품이 서로 겹쳐 있어 하나만 골라 재면 이웃 기울기가 섞인다. **전 거품 × 8방향의
+    // 평균 반경 프로파일**을 쓰면 이웃 기여가 평탄해져 커널의 성질만 남는다.
+    const STEPS = 10;
+    const prof = new Array<number>(STEPS).fill(0);
+    for (let k = 0; k < 22; k++) {
+      const cx = (hash3(0x5b8f2d11, k, 0, 1) * 2 - 1) * 0.74;
+      const cy = (hash3(0x5b8f2d11, k, 0, 2) * 2 - 1) * 0.74;
+      const rr = 0.09 + 0.13 * hash3(0x5b8f2d11, k, 0, 3);
+      for (let s = 0; s < STEPS; s++) {
+        const t = (s / STEPS) * rr;
+        for (let a = 0; a < 8; a++) {
+          const ang = (a / 8) * Math.PI * 2;
+          prof[s]! += bubbleLuminance(cx + Math.cos(ang) * t, cy + Math.sin(ang) * t) / (22 * 8);
+        }
+      }
+    }
+    expect(prof[0]).toBe(Math.max(...prof)); // 중심이 최대 = 링이 아니다
+    for (let i = 1; i < prof.length; i++) {
+      expect(prof[i]!, `i=${i}`).toBeLessThan(prof[i - 1]!);
+    }
     const s = sampleDisc(bubbleLuminance, 64);
-    expect(Math.max(...s)).toBeGreaterThan(0.5);
+    expect(Math.max(...s)).toBeGreaterThan(0.5); // 그래도 보인다(3차 반려로 안 돌아간다)
     expect(mean(s)).toBeLessThan(0.45); // 원판이 통째로 차 있지 않다
     expect(bubbleLuminance(1.3, 0)).toBe(0);
   });
@@ -281,5 +310,43 @@ describe('굴절 변위맵', () => {
       expect(px[i + 1]).toBe(128);
       expect(px[i + 3]).toBe(255);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 예산 회계 입력 — §2-4 를 실측 파생으로 잠그는 평균 휘도
+// ---------------------------------------------------------------------------
+
+describe('평균 휘도 — 가산 부하 회계의 입력', () => {
+  it('원판 평균이 상수 함수에서 정확하다(적분기가 원 밖을 세지 않는다)', () => {
+    expect(meanDiscLuminance(() => 1, 64)).toBeCloseTo(1, 6);
+    expect(meanDiscLuminance(() => 0, 64)).toBe(0);
+  });
+
+  it('환경 기여의 순수 쌍둥이가 canvas 정지점과 같은 값을 낸다', () => {
+    // 화면 경로는 canvas 라 node 에서 못 굽는다. 회계가 쓰는 쌍둥이가 같은 곡선인지 정지점에서 본다.
+    expect(glowLuminance(0, 0)).toBeCloseTo(0.95, 6);
+    expect(glowLuminance(0.35, 0)).toBeCloseTo(0.42, 6);
+    expect(glowLuminance(0.7, 0)).toBeCloseTo(0.12, 6);
+    expect(glowLuminance(1, 0)).toBe(0);
+    expect(glowLuminance(1.4, 0)).toBe(0);
+    // 정지점 사이는 단조 감소여야 "번짐"이다.
+    let prev = Infinity;
+    for (let i = 0; i <= 20; i++) {
+      const v = glowLuminance(i / 20, 0);
+      expect(v).toBeLessThanOrEqual(prev);
+      prev = v;
+    }
+  });
+
+  it('가산 겹의 평균 휘도 순위가 뒤집히지 않는다(회계 가중치의 근거)', () => {
+    // 림은 광원 쪽 좁은 띠뿐이라 **원판 평균이 가장 낮다** — 4차가 알파만 보고 0.6 까지 올렸다가
+    // §2-5 위반을 만든 자리다. 이 순위가 "알파 × 면적 × 휘도"를 곱해야 하는 이유의 물증이다.
+    const rim = meanDiscLuminance(rimLuminance);
+    const blob = meanDiscLuminance(blobLuminance);
+    expect(rim).toBeLessThan(blob * 0.3);
+    expect(rim).toBeGreaterThan(0); // 0 이면 겹이 화면에 없다는 뜻이다
+    // 거품 얼룩이 4차 막보다 어둡다(§2-4 순감). 막 경로는 봉우리가 좁고 높아 평균이 오히려 높았다.
+    expect(meanDiscLuminance(bubbleLuminance)).toBeLessThan(0.12);
   });
 });
