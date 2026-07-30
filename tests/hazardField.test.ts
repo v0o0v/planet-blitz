@@ -516,12 +516,16 @@ describe('입자', () => {
   it('수명 알파에 고원이 있다(직경 3px 짜리 순간 점멸이 아니다)', () => {
     // 순수 sin(πu) 면 알파 0.5 이상 구간이 수명의 50% 뿐이다. 고원이 있어야 같은 개수로
     // 화면 지표를 움직인다.
+    //
+    // ⚠️ 표본을 정수 tick 400개로 잡으면 주기가 2~3바퀴뿐이라 **에일리어싱**으로 순수 sin 도
+    // 0.72 를 넘긴다(뮤테이션에서 실측했다). `frameTick` 은 실수를 받으므로 촘촘히·여러 주기를
+    // 훑어야 비율이 실제 값으로 수렴한다: 순수 sin = 2/3 · 지수 0.55 = 0.82.
     let over = 0;
-    const N = 400;
-    for (let t = 0; t < N; t++) {
-      if (moteAt(3, 0, 100, t, 1).alpha >= 0.5) over++;
+    const N = 8000;
+    for (let i = 0; i < N; i++) {
+      if (moteAt(3, 0, 100, i * 0.37, 1).alpha >= 0.5) over++;
     }
-    expect(over / N).toBeGreaterThan(0.66);
+    expect(over / N).toBeGreaterThan(0.75);
     // 양 끝은 여전히 정확히 0 이다(팝인·팝아웃 없음).
     expect(moteAt(3, 0, 100, 0, 1).alpha).toBeGreaterThanOrEqual(0);
   });
