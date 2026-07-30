@@ -1469,13 +1469,24 @@ class PlayerBodyAdorner implements EntityAdorner {
     const motionOn = !reducedMotion(ctx.gates);
 
     // ── 1. 뱅킹/롤 (감쇠 스프링 = 2차 운동) ────────────────────────────────
+    // 롤 값 자체는 3D 구동 중에도 계속 적분한다 — 상태를 멈추면 3D 가 꺼지는 프레임(티어 강등)에
+    // 스프링이 죽은 값에서 다시 출발해 기체가 한 번 튄다.
     const target = motionOn ? bankTarget(this.motion.lateral) : 0;
     const st = springStep(this.roll, this.rollVel, target, ROLL_STIFFNESS, ROLL_DAMPING, dt);
     this.roll = st.value;
     this.rollVel = st.vel;
-    sprite.rotation = facing + this.roll * ROLL_ANGLE;
-    // 롤 축은 기체 **길이 방향**이라 눌리는 것은 로컬 y(횡폭)다. 기준 스케일에 곱한다(누적 금지).
-    sprite.scale.set(this.baseScaleX, this.baseScaleY * (1 - Math.abs(this.roll) * BANK_SQUASH));
+    if (ctx.ship3d) {
+      // ⚠️ 3D 액터가 뱅크를 **실제 자세**로 그린다(`three3d/shipActor.ts`). 여기서 회전·압축을 또
+      // 걸면 같은 축에 두 번 걸려 각도가 배가되고, 압축은 3D 모델을 납작하게 눌러 원근을 망친다.
+      // 기수 각도(`shipFacing`)만 남기고 기준 스케일로 되돌린다 — 되돌리지 않으면 런 도중 3D 가
+      // 켜지는 프레임에서 직전의 눌린 스케일이 그대로 얼어붙는다.
+      sprite.rotation = facing;
+      sprite.scale.set(this.baseScaleX, this.baseScaleY);
+    } else {
+      sprite.rotation = facing + this.roll * ROLL_ANGLE;
+      // 롤 축은 기체 **길이 방향**이라 눌리는 것은 로컬 y(횡폭)다. 기준 스케일에 곱한다(누적 금지).
+      sprite.scale.set(this.baseScaleX, this.baseScaleY * (1 - Math.abs(this.roll) * BANK_SQUASH));
+    }
 
     // ── 6. 아이들 부유 + 4. 피격 임펄스 감쇠 ───────────────────────────────
     let ox = 0;
@@ -1576,7 +1587,16 @@ class PlayerBodyAdorner implements EntityAdorner {
     }
 
     // ── 10. 판면 방향광 + 스페큘러 스윕 ─────────────────────────────────────
-    this.syncSurface(sprite, ctx, motionOn);
+    // ⚠️ 이 항목은 **납작한 스프라이트가 빛에 반응하지 않는다**는 결함을 스트립 램프로 흉내낸
+    // 것이다(§10 헤더). 3D 액터가 구동 중이면 선체가 **실제 조명·실제 법선**으로 음영을 받으므로
+    // 존재 이유가 사라지고, 남겨 두면 진짜 음영 위에 가짜 램프가 겹쳐 판면이 두 겹으로 읽힌다.
+    // 게다가 스트립 기하는 `assets/player.png` 실루엣 실측(`PLAYER_OPAQUE_LATERAL_HALF`)에서
+    // 파생돼 있어 3D 아틀라스 프레임과는 애초에 폭이 맞지 않는다.
+    if (ctx.ship3d) {
+      if (this.surface !== null) this.destroySurface();
+    } else {
+      this.syncSurface(sprite, ctx, motionOn);
+    }
 
     // ── 3. 림라이트 ─────────────────────────────────────────────────────────
     // 테마가 없으면(=담당 배경이 없는 행성) 광원이 없는 것이므로 스스로 꺼진다(계약 §3 광원 일관성).

@@ -130,6 +130,9 @@ function harness(over: Partial<AdornerContext> = {}): Harness {
     tier: 'high',
     theme: THEME_RIGHT,
     alpha: 1,
+    // 기본은 2D 경로다 — 기존 단언(뱅킹 변환·판면 스트립)이 전부 그 경로의 계약이라, 여기를
+    // true 로 바꾸면 그 항목들이 **의도적으로** 물러난다(3D 배타 처리 전용 스위트가 따로 있다).
+    ship3d: false,
     ...over,
   };
   const mutable = ctx as { frameTick: number };
@@ -684,6 +687,31 @@ describe('뱅킹/롤 — 횡이동에 기운다(§3 레인 A ①)', () => {
     // 임계값 8% 는 실측 20% 대와 "화면에서 지연과 구분 안 되는" 2% 대 사이에 있다 — 감쇠를
     // 임계 근처로 올리는 뮤테이션을 잡되 수치 잡음에는 안 걸린다.
     expect(peak).toBeGreaterThan(steady * 1.08);
+  });
+
+  it('**3D 구동 중에는 롤 변환이 스프라이트에 안 걸린다** — 같은 축을 두 시스템이 그리면 배가된다', () => {
+    // 3D 액터(`three3d/shipActor.ts`)가 뱅크를 실제 자세로 그린다. 여기서 회전·압축을 또 걸면
+    // 각도가 두 배가 되고, 압축은 3D 모델을 납작하게 눌러 원근을 망친다. 기수 각도(`shipFacing`)만
+    // 남아야 한다 — 그건 3D 가 **일부러 안 건드리는** 축이다(이중 회전 금지).
+    const h = harness({ ship3d: true });
+    const s = playerSprite();
+    const base = s.scale.y;
+    run(h, playerAdorners(), 30, { sprite: s, facing: 0.7, move: { dx: 0, dy: 12 } });
+    expect(s.rotation).toBeCloseTo(0.7, 6); // 기수만 — 롤이 안 얹혔다
+    expect(s.scale.y).toBeCloseTo(base, 6); // 뱅크 압축 없음
+  });
+
+  it('3D 가 꺼지면(티어 강등) 롤이 곧바로 되살아난다 — 상태가 얼어붙지 않는다', () => {
+    // 스프링은 3D 중에도 계속 적분된다. 멈춰 두면 강등되는 프레임에 죽은 값에서 다시 출발해
+    // 기체가 한 번 튄다.
+    const h = harness({ ship3d: true });
+    const a = playerAdorners();
+    const s = playerSprite();
+    run(h, a, 30, { sprite: s, facing: 0, move: { dx: 0, dy: 12 } });
+    expect(s.rotation).toBeCloseTo(0, 6);
+    h.advance({ ship3d: false });
+    run(h, a, 1, { sprite: s, facing: 0, move: { dx: 0, dy: 12 } });
+    expect(s.rotation).toBeGreaterThan(0.05); // 정상상태 롤이 이미 쌓여 있었다
   });
 
   it('좌현 미끄러짐은 반대 부호로 기운다', () => {
@@ -1348,6 +1376,34 @@ describe('판면 방향광 + 스페큘러 스윕 — 선체 자체가 빛에 반
     }
     // 컨테이너가 기수를 물고 있어야 띠가 기체 길이 방향으로 눕는다.
     expect(surf!.rotation).toBeCloseTo(s.rotation, 9);
+  });
+
+  it('**3D 구동 중에는 판면 스트립이 아예 없다** — 진짜 음영 위에 가짜 램프를 겹치지 않는다', () => {
+    // 이 항목은 "납작한 스프라이트가 빛에 반응하지 않는다"를 스트립 램프로 흉내낸 것이다(§10).
+    // 3D 액터는 실제 조명·실제 법선으로 음영을 받으므로 존재 이유가 사라진다. 게다가 스트립 기하는
+    // `assets/player.png` 실루엣 실측에서 파생돼 3D 아틀라스 프레임과는 폭이 애초에 안 맞는다.
+    const h = harness({ ship3d: true });
+    const s = playerSprite();
+    run(h, playerAdorners(), 5, { sprite: s, facing: 0.4 });
+    expect(labeled(h.above, 'playerSurface')).toHaveLength(0);
+  });
+
+  it('3D 가 켜졌다 꺼지면 스트립이 다시 굽힌다 — 회수가 상태를 망가뜨리지 않는다', () => {
+    const h = harness({ ship3d: true });
+    const a = playerAdorners();
+    const s = playerSprite();
+    run(h, a, 3, { sprite: s, facing: 0.4 });
+    expect(labeled(h.above, 'playerSurface')).toHaveLength(0);
+    h.advance({ ship3d: false });
+    run(h, a, 3, { sprite: s, facing: 0.4 });
+    const surf = labeled(h.above, 'playerSurface');
+    expect(surf).toHaveLength(1);
+    // 회수 시 스트립 목록을 비우지 않으면 여기서 개수가 두 배가 된다(형제 누수의 전형).
+    expect(
+      surf[0]!.children.filter(
+        (c) => c.label === 'playerSurfaceShade' || c.label === 'playerSurfaceSpec',
+      ).length,
+    ).toBe(SURFACE_STRIP_COUNT * 2);
   });
 
   it('기울면 표면 음영이 **실제로 바뀐다** — 변환만 바뀌는 뱅킹과의 차이 (CRIT-3 본문)', () => {

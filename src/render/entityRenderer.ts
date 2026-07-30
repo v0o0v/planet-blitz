@@ -97,6 +97,7 @@ import { MuzzleFlash } from './effects/muzzleFlash.js';
 // 정적 import 로 두면 three 전체가 메인 청크에 들어가 첫 로드가 무거워진다 — 실측 gzip 약 0.4MB.
 import type { Stage3D } from './three3d/stage3d.js';
 import type { BossActor } from './three3d/bossActor.js';
+import type { ShipActor } from './three3d/shipActor.js';
 
 /**
  * effectLayer 원샷 이펙트의 공통 계약(ShardBurst 동형). 데미지 숫자·그레이징 스파크·수집 팝·레벨업
@@ -856,6 +857,29 @@ export class EntityRenderer {
    */
   private boss3dPlanet: number | null = null;
 
+  /**
+   * 플레이어 기체 3D 액터(`three3d/shipActor.ts`). 보스와 **같은 무대·다른 슬롯**을 쓴다.
+   *
+   * ⚠️ 보스와 달리 기체는 런 내내 화면에 있으므로, 이 액터가 준비되는 순간부터 아틀라스 업로드가
+   * **매 프레임** 일어난다(보스는 보스 세그먼트에서만). 그래서 티어 게이트(`gates.model3d`) 뒤에
+   * 있는 것이 보스보다 더 중요하다.
+   */
+  private shipActor: ShipActor | null = null;
+  /**
+   * 현재 액터가 어느 기체 타입으로 로드됐는가(로드 중 포함). 시도 자체를 기록하기 때문에 **실패도
+   * 1회로 끝난다**(매 프레임 재시도 금지). 런 중에 기체는 안 바뀌므로 실제 교체는 **다음 런**에서만
+   * 일어난다 — 그래서 아틀라스 슬롯은 `player` 한 칸으로 충분하다.
+   */
+  private ship3dType: number | null = null;
+  /**
+   * 이번 런의 기체 타입. 스냅샷에서 못 읽는다(`EntitySnapshot` 에 `typeId` 가 없고, 넣으려면 sim
+   * 표면을 넓혀야 한다) — {@link setShipType} 으로 main.ts 가 먹인다(`setEncounterType` 과 같은
+   * imperative 훅 규율).
+   */
+  private shipType = 0;
+  /** 이번 프레임 기체가 3D 로 구동됐는가. 장식자 맥락(`AdornerContext.ship3d`)의 소스다. */
+  private shipDriven3d = false;
+
   constructor(private readonly textures: PlaceholderTextures) {
     // Draw order (bottom → top): lava overlay (시머 대상), hazard/beam overlay, [glow halos],
     // entity sprites, death bursts, then the field overlay (시야 암흑·안전 반경) on top so it dims
@@ -1076,6 +1100,17 @@ export class EntityRenderer {
   }
 
   /**
+   * 이번 런의 **기체 타입**을 먹인다(런타임 3D 모델 선택). `applyShipSprite` 와 **같은 값·같은
+   * 지점**에서 부른다 — 2D 스프라이트와 3D 모델이 갈리면 화면의 기체와 손상 오버레이·컨투어가
+   * 서로 다른 실루엣이 된다.
+   *
+   * 모델이 없는 타입이면 아무 일도 일어나지 않고 기존 2단 PNG 폴백이 그대로 쓰인다.
+   */
+  setShipType(typeId: number): void {
+    this.shipType = typeId;
+  }
+
+  /**
    * 이번 런의 **환경 행성 인덱스**를 먹인다(접지 그림자 광원 정본). `null` 이면 그림자를 끄고
    * 남은 그림자를 전부 회수한다.
    *
@@ -1119,6 +1154,11 @@ export class EntityRenderer {
     const settings = graphicsSettings.getSettings();
     const tier = graphicsTierController.getActiveTier();
     const gates = effectGates(tier, settings);
+    // 기체 3D 액터를 **장식자 맥락보다 먼저** 준비한다. 맥락의 `ship3d` 가 이 결과를 실어야
+    // 플레이어 장식자가 같은 프레임에 자기 몫을 물릴 수 있다(한 프레임 늦으면 뱅킹이 이중으로
+    // 걸린 프레임이 섞인다). `ensureShip3D` 는 타입이 그대로면 즉시 반환한다.
+    if (gates.model3d) this.ensureShip3D();
+    this.shipDriven3d = gates.model3d && (this.shipActor?.isReady ?? false);
     // 장식자·해저드 재질 맥락 — 프레임당 **한 번**만 만들어 전 장식자가 공유한다(엔티티 수만큼
     // 게이트를 재산출하지 않는다).
     const adornCtx = this.adornerCtx(gates, tier, dt, alpha);
@@ -1295,6 +1335,33 @@ export class EntityRenderer {
         // 헤일로 이방성(레인 A ⑤) — 등방 원 blob 은 면적을 가장 많이 쓰면서 정보를 0 비트 준다.
         // 기수 축으로 늘이고 전방으로 편심시키면 발광 자체가 방향 신호가 된다.
         this.playerAniso = playerHaloAniso(pv.vx, pv.vy, facing, tracked.sprite.width / 2);
+        // 런타임 3D 기체(티어 게이트) — 보스와 **같은 규율**로 텍스처만 아틀라스 프레임으로 갈아
+        // 끼운다. 스프라이트는 끝까지 평범한 Pixi Sprite 라 헤일로·접지 그림자·레이더·z-order 가
+        // 한 줄도 안 바뀌고, 장식자 복제(컨투어·림·잔상·손상)는 매 프레임 `sprite.texture` 를
+        // 되읽으므로 자동으로 3D 실루엣을 따라온다.
+        //
+        // ⚠️ **요(yaw)는 여기서 이미 끝났다** — 바로 위에서 `shipFacing` 이 스프라이트 회전에
+        // 들어갔다. 액터는 그 각도를 **미분해서 뱅크에만** 쓰고 3D 안에서 다시 돌리지 않는다.
+        // 돌리면 이중 회전이라 조준선과 기수가 어긋난다(shipActor 헤더 ①).
+        if (this.shipDriven3d) {
+          const actor = this.shipActor;
+          const stage = this.stage3d;
+          if (actor !== null && stage !== null) {
+            actor.update(dt, {
+              facing,
+              speed: Math.hypot(pv.vx, pv.vy),
+              dashing,
+              // 피격은 **`tracked.hp`** 로 판정한다 — `p.hp` 는 sim-step 없는 프레임에 같은 피해를
+              // 재발화한다(데미지 숫자가 밟았던 HIGH-1 과 같은 함정). tracked.hp 는 이 루프
+              // 뒷부분에서 e.hp 로 갱신되므로 여기서는 아직 직전 프레임 값이다.
+              hit: tracked.hp > e.hp,
+            });
+            // 표시 크기는 **건드리지 않는다** — 헤일로·접지 그림자가 첫 등장 시 그 크기에서
+            // 파생되므로, 3D 로 갈아타는 시점에 따라 크기가 달라지는 순서 의존 결함이 된다.
+            const tex = stage.textureOf('player');
+            if (tracked.sprite.texture !== tex) tracked.sprite.texture = tex;
+          }
+        }
         // 플레이어 보간 위치·반경 캡처 — 루프 뒤 그레이징(AC-4.5)·머즐(AC-4.7)·레벨업 링(AC-4.6)이 쓴다.
         playerX = tracked.sprite.x;
         playerY = tracked.sprite.y;
@@ -1701,6 +1768,53 @@ export class EntityRenderer {
   }
 
   /**
+   * **현재 기체 타입의** 3D 액터를 준비한다(지연 생성). 로드는 비동기라 이번 프레임에는 준비되지
+   * 않는다 — 그동안 호출자는 기존 PNG 스프라이트를 계속 쓰고, 로드가 끝난 다음 프레임부터 3D
+   * 텍스처로 자연스럽게 갈아탄다(로딩이 조작 대상을 화면에서 지우지 않는다).
+   *
+   * 기체가 바뀌면(다음 런) 이전 모델을 회수하고 새로 로드한다. 무대(WebGL 컨텍스트)는 보스와
+   * **공유**한다 — 브라우저의 컨텍스트 수 상한이 낮아 액터마다 새로 잡으면 몇 런 뒤에 3D 가
+   * 조용히 꺼진다. 그래서 두 액터가 같은 아틀라스의 다른 칸을 쓴다.
+   */
+  private ensureShip3D(): void {
+    const typeId = this.shipType;
+    if (this.ship3dType === typeId) return;
+    this.ship3dType = typeId;
+
+    // 이전 기체 모델을 먼저 내린다. `shipActor` 를 **즉시** null 로 만들어야 이번 프레임부터
+    // 2D 로 폴백한다 — 안 그러면 회수된 geometry 를 그리려 들거나 빈 아틀라스를 물린다.
+    const prev = this.shipActor;
+    this.shipActor = null;
+    prev?.dispose();
+
+    // three.js 는 무겁다 — **동적 import** 로 코드를 분할한다. 보스 청크와 무대를 공유하므로
+    // 보스전까지 간 런에서는 이 import 가 이미 캐시돼 있다.
+    void (async () => {
+      try {
+        const [{ Stage3D }, { ShipActor, hasShipModel }] = await Promise.all([
+          import('./three3d/stage3d.js'),
+          import('./three3d/shipActor.js'),
+        ]);
+        // 모델 없는 기체 타입에서는 **무대조차 세우지 않는다** — 아무 이득 없이 GL 컨텍스트를 점유한다.
+        if (!hasShipModel(typeId)) return;
+        // 청크를 받는 동안 기체가 또 바뀌었으면 이 로드는 사문이다(뒤에 온 호출이 이미 진행 중).
+        if (this.ship3dType !== typeId) return;
+        this.stage3d ??= Stage3D.create();
+        const stage = this.stage3d;
+        if (stage === null) return; // GL 없음 — 2D 폴백 유지.
+        const actor = new ShipActor(stage);
+        if (!(await actor.load(typeId)) || this.ship3dType !== typeId) {
+          actor.dispose(); // 로드 실패 또는 그 사이 기체 교체. 무대는 남겨 재사용한다.
+          return;
+        }
+        this.shipActor = actor;
+      } catch {
+        // 청크 로드 실패(오프라인·배포 불일치)는 화면을 막지 않는다 — 2D 스프라이트로 남는다.
+      }
+    })();
+  }
+
+  /**
    * 파편 폭발(ShardBurst) 1개를 effectLayer(스프라이트 위)에 방출한다(AC-2.4). 기존 단일 스프라이트
    * 24프레임 페이드를 대체 — 절차적 가산 파티클이라 텍스처 의존이 없다. 티어를 전달해 Low 에서
    * 파티클이 최소가 되게 한다. `scale >= 대형임계` 면 화면 흔들림 트리거 ③(대형 폭발)도 건다.
@@ -2053,6 +2167,7 @@ export class EntityRenderer {
       tier,
       theme: this.envTheme,
       alpha,
+      ship3d: this.shipDriven3d,
     };
   }
 
@@ -2281,9 +2396,13 @@ export class EntityRenderer {
     // (브라우저의 컨텍스트 수 상한은 낮다: 누수시 재진입에서 3D 가 조용히 꺼진다).
     this.bossActor?.dispose(); // 모델의 geometry/material/texture 는 명시 해제로만 GPU 에서 내려간다.
     this.bossActor = null;
+    this.shipActor?.dispose();
+    this.shipActor = null;
     this.stage3d?.destroy();
     this.stage3d = null;
     this.boss3dPlanet = null;
+    this.ship3dType = null;
+    this.shipDriven3d = false;
     // 발광체 헤일로·블룸 필터를 명시 회수한다(Container.destroy 는 filters 를 파괴하지 않는다).
     this.clearGlowHalos();
     // 접지 그림자 전량 회수(누수 0). 형제라 부모 destroy 로는 안 걷힌다. reset 에서는 남기면

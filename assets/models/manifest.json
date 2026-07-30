@@ -126,6 +126,26 @@
       },
       "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/boss_kras.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
       "geometry": { "triangles": 3085, "bytes": 351300, "baseColor": "256x256" }
+    },
+    {
+      "id": "ship_striker",
+      "file": "ship_striker.glb",
+      "title": "스트라이커 — 플레이어 기본 기체(청록 인터셉터)",
+      "usedBy": "src/render/three3d/shipActor.ts (기체 typeId 0)",
+      "meshy": {
+        "aiModel": "meshy-6",
+        "prompt": "Top-down view sci-fi game player fighter craft: sleek compact teal-cyan interceptor, sharp pointed nose cone at the front, swept-back delta wings, twin angled tail fins at the rear, two large cylindrical thruster engines mounted at the back, armored cockpit canopy in the center, symmetrical, agile, game asset",
+        "texturePrompt": "Bright teal and cyan armor plating with darker navy panel seams, polished metallic surfaces, glowing cyan engine intake vents, clean sci-fi fighter livery, no scratches",
+        "tasks": {
+          "preview": "019fb2eb-fcca-756c-8d03-9b977d41cc7a",
+          "refine": "019fb2f2-5b06-7378-830f-25f9f5c30623"
+        },
+        "credits": { "preview": 20, "refine": 10, "total": 30 },
+        "createdAt": "2026-07-30",
+        "note": "생성물의 기수가 −X 였다. 게임 규약은 +X 이므로 shipActor 의 SHIP_MODELS[0].orient 가 Y축 180° 로 되돌린다 — 모델을 다시 뽑지 않고 코드 상수 하나로 흡수했다."
+      },
+      "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/ship_striker.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
+      "geometry": { "triangles": 2975, "bytes": 308764, "baseColor": "256x256" }
     }
   ],
   "reuseRecipes": {

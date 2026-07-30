@@ -1009,6 +1009,9 @@ async function main(): Promise<void> {
     // 기체 스프라이트 교체(렌더 전용) — `createWorld` 앞. PvE `startRun` 과 동일 규약. 소집이면
     // config.shipType 이 이미 pilot.typeId 라(buildRunConfig 가 스탬프) 스프라이트가 자동으로 따라간다.
     applyShipSprite(textures, config.shipType ?? 0);
+    // 런타임 3D 기체 모델도 **같은 값·같은 지점**에서 먹인다 — 2D 스프라이트와 3D 모델이
+    // 갈리면 화면의 기체와 손상 오버레이·컨투어가 서로 다른 실루엣이 된다.
+    entityRenderer.setShipType(config.shipType ?? 0);
     // 레이어별 지형·환경(L1 대기권 → L2 회랑 → L3 코어방). 페이즈 전환은 렌더 루프가
     // 베일 절정에서 갈아 끼운다(`invasionBackdrop.sync` 는 멱등이라 매 프레임 불러도 무해하다).
     applyInvasionPhaseScenery(PHASE_L1, seed);
@@ -1066,6 +1069,9 @@ async function main(): Promise<void> {
     // "하네스에서는 되는데 실제 런에서는 안 되는" 결함이 생긴다.
     const config = buildRunConfig(profile, { planet: 0, stage: 1, invasion3 });
     applyShipSprite(textures, config.shipType ?? 0);
+    // 런타임 3D 기체 모델도 **같은 값·같은 지점**에서 먹인다 — 2D 스프라이트와 3D 모델이
+    // 갈리면 화면의 기체와 손상 오버레이·컨투어가 서로 다른 실루엣이 된다.
+    entityRenderer.setShipType(config.shipType ?? 0);
     // 정식 침공과 같은 지형·환경 경로(단일 정본) — 하네스에서만 다른 화면이 나오면
     // "하네스에서는 되는데 실제 런에서는 안 되는" 결함이 그대로 숨는다.
     applyInvasionPhaseScenery(PHASE_L1, opts.seed);
@@ -1276,6 +1282,9 @@ async function main(): Promise<void> {
     // 활성 기체의 인게임 스프라이트로 플레이어 슬롯을 교체(렌더 전용, sim 무영향).
     // `createWorld` **앞**이어야 이번 런의 플레이어 스프라이트가 올바른 기체로 생성된다.
     applyShipSprite(textures, config.shipType ?? 0);
+    // 런타임 3D 기체 모델도 **같은 값·같은 지점**에서 먹인다 — 2D 스프라이트와 3D 모델이
+    // 갈리면 화면의 기체와 손상 오버레이·컨투어가 서로 다른 실루엣이 된다.
+    entityRenderer.setShipType(config.shipType ?? 0);
     // Swap the arena backdrop to the launched planet's theme (render-only). The
     // Wang autotile floor takes over when the planet has a tileset; otherwise the
     // flat TilingSprite stays visible as the fallback.

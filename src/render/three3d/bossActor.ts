@@ -31,6 +31,13 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { SLOT_SIZE, type Stage3D } from './stage3d.js';
+import {
+  collectEmissive,
+  disposeSubtree,
+  fitOrthoToObject,
+  modelUrl,
+  normalizeModel,
+} from './framing.js';
 
 /** 렌더러가 넘기는 보스 연출 상태(전부 스냅샷 파생). */
 export interface BossVisualState {
@@ -239,28 +246,6 @@ const TRANSITION_ROOM = 0.32;
  */
 const MIN_ROOM_SCALE = 0.6;
 
-/**
- * GLB 자산 URL 로더 — **지연**(`eager: false`)이다. 행성마다 모델이 하나씩 있으므로 한 런에서
- * 실제로 필요한 것은 늘 1개다.
- *
- * ⚠️ 실측 주의: `query: '?url'` 글롭은 eager 여도 **GLB 바이너리를 내려받지 않는다** — 번들에
- * 들어가는 것은 해시된 URL **문자열**뿐이고, 실제 수십~수백 KB 전송은 아래 `GLTFLoader` 가
- * 그 URL 을 fetch 할 때 처음 일어난다. 그래서 지연화로 절약되는 것은 문자열 6개(수백 바이트)이고,
- * 대가로 URL 마다 작은 청크 + 왕복 1회가 생긴다. 그럼에도 지연을 택한 이유는 **자산 수가 늘어나도
- * 3D 청크 크기가 상수로 유지**되기 때문이다(행성이 더 붙으면 문자열도 같이 는다).
- */
-const MODEL_LOADERS = import.meta.glob('../../../assets/models/*.glb', {
-  query: '?url',
-  import: 'default',
-}) as Record<string, () => Promise<string>>;
-
-async function modelUrl(basename: string): Promise<string | undefined> {
-  for (const key in MODEL_LOADERS) {
-    if (key.endsWith(`/${basename}`)) return await MODEL_LOADERS[key]!();
-  }
-  return undefined;
-}
-
 /** 한 행성의 3D 보스 정의. `null` 슬롯은 모델 미제작 = 기존 PNG 스프라이트 유지. */
 interface BossModelDef {
   /** `assets/models/` 안의 GLB 파일명. */
@@ -385,36 +370,19 @@ export class BossActor {
       const root = gltf.scene;
 
       // 정규화: 바운딩박스 중심을 원점으로, 최대 치수를 1 로.
-      const box = new THREE.Box3().setFromObject(root);
-      const size = box.getSize(new THREE.Vector3());
-      const center = box.getCenter(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z) || 1;
-      root.position.sub(center);
-      const norm = new THREE.Group();
-      norm.add(root);
-      norm.scale.setScalar(1 / maxDim);
-      this.pivot.add(norm);
+      this.pivot.add(normalizeModel(root));
 
-      // 베이스 컬러를 그대로 발광 맵으로 재사용한다. Meshy refine 을 `remove_lighting: true`
-      // 로 뽑아 텍스처에 하이라이트가 구워져 있지 않으므로, 발광 세기를 올리면 용암 균열이
-      // 실제로 달아오르는 것처럼 보인다 — 페이즈 연출의 주 레버가 이것이다.
-      root.traverse((obj) => {
-        if (!(obj instanceof THREE.Mesh)) return;
-        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-        for (const m of mats) {
-          if (m instanceof THREE.MeshStandardMaterial) {
-            m.emissiveMap = m.map;
-            m.emissive = new THREE.Color(0xffffff);
-            m.emissiveIntensity = phase0Motion(0).emissive;
-            this.emissiveMaterials.push(m);
-          }
-        }
-      });
+      // 베이스 컬러를 그대로 발광 맵으로 재사용한다 — 용암 균열이 실제로 달아오르는 것처럼
+      // 보이게 하는 페이즈 연출의 주 레버다(근거는 {@link collectEmissive}).
+      for (const m of collectEmissive(root, phase0Motion(0).emissive)) {
+        this.emissiveMaterials.push(m);
+      }
 
       // 코어 점광을 행성 테마색으로 — 모델 발광이 주변으로 번지는 색이다({@link BossModelDef}).
       this.coreLight.color.setHex(def.coreLight);
 
-      this.fitCamera();
+      // 프러스텀을 투영 실루엣에 맞추고, 그 반폭을 이동 연출의 길이 단위로 삼는다({@link unit}).
+      this.unit = fitOrthoToObject(this.camera, this.pivot, FRAME_MARGIN);
       this.stage.mount('boss', this.scene, this.camera);
       // 프레이밍이 확정된 뒤에 **한 번 그려 보고** 실루엣 여유를 재 연출 진폭을 맞춘다.
       // mount 뒤여야 무대가 이 씬을 그릴 수 있다(measureSlotHeadroom 은 등록된 씬만 그린다).
@@ -443,69 +411,9 @@ export class BossActor {
     this.ready = false;
     this.roomScale = 1;
     this.stage.unmount('boss');
-    // 같은 텍스처를 여러 재질이 공유하므로(베이스컬러가 emissiveMap 으로도 쓰인다) 모아서 한 번만.
-    const textures = new Set<THREE.Texture>();
-    this.pivot.traverse((obj) => {
-      if (!(obj instanceof THREE.Mesh)) return;
-      obj.geometry.dispose();
-      for (const m of Array.isArray(obj.material) ? obj.material : [obj.material]) {
-        if (!(m instanceof THREE.Material)) continue;
-        for (const value of Object.values(m)) {
-          if (value instanceof THREE.Texture) textures.add(value);
-        }
-        m.dispose();
-      }
-    });
-    for (const t of textures) t.dispose();
+    disposeSubtree(this.pivot);
     this.pivot.clear();
     this.emissiveMaterials.length = 0;
-  }
-
-  /**
-   * 카메라 프러스텀을 **투영 실측**으로 모델에 맞춘다.
-   *
-   * ⚠️ 처음에는 모델을 "최대 치수 1" 로 정규화한 뒤 프러스텀 반폭을 상수(0.72)로 뒀는데,
-   * 그러면 화면에서 보스가 기존 2D 스프라이트의 **면적 대비 1/3.5 로 작게** 나온다
-   * (실측: 슬롯 점유 18.1% vs `boss.png` 62.6%). 어두운 배경에 작게 박히니 사용자 눈에는
-   * 보스가 아예 안 보였다(신고 2026-07-30).
-   *
-   * 원인은 바운딩박스 최대 치수가 **화면에 보이는 크기가 아니라는** 것이다 — 62° 로 내려다보면
-   * 세로로 긴 메카의 투영 실루엣은 박스 대각선보다 훨씬 작다. 그래서 박스 8모서리를 카메라
-   * 공간으로 투영해 실제 x/y 범위를 재고, 그 범위에 프러스텀을 맞춘다. 모델 비율이 어떻든
-   * 화면을 채우므로 다음 모델(플레이어 기체)에도 그대로 통한다.
-   */
-  private fitCamera(): void {
-    const box = new THREE.Box3().setFromObject(this.pivot);
-    this.camera.updateMatrixWorld();
-    const toCamera = new THREE.Matrix4().copy(this.camera.matrixWorld).invert();
-    const v = new THREE.Vector3();
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (const x of [box.min.x, box.max.x]) {
-      for (const y of [box.min.y, box.max.y]) {
-        for (const z of [box.min.z, box.max.z]) {
-          v.set(x, y, z).applyMatrix4(toCamera);
-          minX = Math.min(minX, v.x);
-          maxX = Math.max(maxX, v.x);
-          minY = Math.min(minY, v.y);
-          maxY = Math.max(maxY, v.y);
-        }
-      }
-    }
-    const half = (Math.max(maxX - minX, maxY - minY) / 2) * FRAME_MARGIN;
-    this.camera.left = -half;
-    this.camera.right = half;
-    this.camera.top = half;
-    this.camera.bottom = -half;
-    // 투영 중심을 슬롯 중앙에 맞춘다(카메라 로컬 평행이동 = 뷰 창 이동).
-    this.camera.translateX((minX + maxX) / 2);
-    this.camera.translateY((minY + maxY) / 2);
-    this.camera.updateProjectionMatrix();
-    this.camera.updateMatrixWorld();
-    // 이동 연출의 길이 단위. 프러스텀에 비례해야 프레이밍을 바꿔도 연출 크기가 그대로다.
-    this.unit = half;
   }
 
   /**
