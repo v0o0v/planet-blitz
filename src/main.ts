@@ -2077,6 +2077,12 @@ async function main(): Promise<void> {
       // 직전 `quality: 'high'` 로 고정할 수단을 노출한다. 프로덕션 미포함(DEV 블록).
       graphicsSettings,
       graphicsTierController,
+      // 적 비주얼 관측창(`src/render/entity/enemyVisual.ts` 가 모듈 최상위에서 채운다).
+      // **이 한 줄이 필요한 이유**: 여기 `__pb = {...}` 통짜 대입이 모듈 평가분을 덮으므로,
+      // 그 모듈이 `globalThis.__pbEnemy` 에 스스로 붙여도 `__pb` 안에서는 안 보인다. 비평가가
+      // 그걸 몰라 Vite dev 의 동적 import 로 우회했는데, **그 우회는 프로덕션 빌드에서 안 된다** —
+      // 검증 도구가 dev 서버에만 존재하는 상태였다.
+      enemy: (globalThis as unknown as { __pbEnemy?: unknown }).__pbEnemy,
       hud,
       powerupOverlay,
       // 조우 프롬프트 — 조우 롤이 ≈2% 라 자연 발생을 기다릴 수 없다. 하네스에서 이 참조로

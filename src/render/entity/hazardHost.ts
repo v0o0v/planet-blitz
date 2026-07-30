@@ -27,6 +27,8 @@ import type { EntitySnapshot } from '../../sim/snapshot.js';
 import { HAZARD_LAVA } from '../../sim/patterns/types.js';
 import type { EnvTheme } from '../env/theme.js';
 import type { EffectGates, QualityTier } from '../qualityTier.js';
+// 열 적분(순수 함수). 호스트가 이 값을 소유하는 근거는 HazardZone.heat 주석에 있다.
+import { stepHeat } from './hazardShape.js';
 import {
   DECOR_MIN_RADIUS,
   MAX_DECORATED_HAZARDS,
@@ -55,6 +57,20 @@ export interface HazardZone {
   readonly visual: HazardVisual;
   /** 이번 프레임 장식 예산을 받았는가. false 면 재질도 최소 표현으로 낮춰라. */
   readonly decorated: boolean;
+  /**
+   * 열(활성도) 적분값 0~1. **호스트가 소유하는 단일 진실**이다 — 재질이 각자 `stepHeat` 을
+   * 돌리면 같은 장판의 겹들이 서로 다른 위상을 갖게 되고, 무엇보다 `drawHazardZone`(채움·빗금·
+   * 점선)이 그 값을 못 본다.
+   *
+   * ## 이 필드가 생긴 이유
+   * 비평가 2·3차가 같은 것을 지적했다: `hazardVisual(active)` 가 `fillAlpha 0→0.3` ·
+   * `hatch false→true` · `dashed→solid` 를 **한 프레임에 동시에 뒤집어**, 재질이 아무리 연속으로
+   * 고조해도 그 끝에 "갑작스러운 스위치"가 온다. 재질 쪽만 고쳐서는 닫히지 않는 결함이고,
+   * 조립 지점인 이 파일이 열려야 풀린다(레인 C 가 소유권 밖이라 미해결로 남겼던 항목).
+   *
+   * 호스트가 여기서 적분해 ① `visual.fillAlpha` 를 연속으로 밀고 ② 이 값을 재질에게도 넘긴다.
+   */
+  readonly heat: number;
 }
 
 /** 매 프레임 재질에게 주어지는 읽기 전용 맥락. 프레임당 한 번 만들어 전 재질이 공유한다. */
@@ -147,6 +163,12 @@ export class HazardHost {
 
   /** 엔티티 id → 살아있는 재질. */
   private readonly materials = new Map<number, MaterialEntry>();
+
+  /** 장판 id → 열 적분값(0~1). {@link HazardZone.heat} 의 소유자다. */
+  private readonly heats = new Map<number, number>();
+
+  /** 이번 프레임에 본 장판 id(열 기록 가지치기용). 프레임마다 비운다. */
+  private readonly heatSeen = new Set<number>();
   /** 프레임 카운터(seen 판정용). {@link draw} 마다 1 증가한다. */
   private tick = 0;
 
@@ -177,7 +199,17 @@ export class HazardHost {
       // 색 = 성질(아프다/방해만), 형태 = 상태(예열 점선 / 활성 실선+빗금). `permanent` 는 같은
       // 코드를 쓰는 감속 지대와 피해 지형을 가르는 유일한 신호다(hazardVisual.ts 주석 참조).
       const permanent = e.permanent === true;
-      const v = hazardVisual(e.enemyType, e.active, permanent);
+      const base0 = hazardVisual(e.enemyType, e.active, permanent);
+      // 열 적분(호스트 소유). 처음 보는 장판은 자기 목표값에서 시작한다 — 0 에서 출발시키면
+      // 이미 활성인 채로 화면에 들어온 장판이 매번 "지금 켜졌다"처럼 페이드인한다(레인 B 가
+      // 스폰 연출에서 밟은 것과 같은 계열의 결함이다).
+      const prevHeat = this.heats.get(e.id) ?? (e.active ? 1 : 0);
+      const heat = stepHeat(prevHeat, e.active, ctx.dt);
+      this.heats.set(e.id, heat);
+      this.heatSeen.add(e.id);
+      // 채움만 연속으로 민다. `hatch`/`dashed` 는 `drawHazardZone` 안의 형태 분기라 여기서
+      // 못 바꾼다 — 그 둘의 연속화는 `hazardVisual.ts` 소유자의 몫이고, 이 필드가 그 입력이다.
+      const v: HazardVisual = base0.fillAlpha === 0 ? base0 : { ...base0, fillAlpha: base0.fillAlpha * heat };
       const target = e.enemyType === HAZARD_LAVA ? lava : base;
       const decor = decorBudget > 0;
       if (decor && e.radius >= DECOR_MIN_RADIUS) decorBudget--;
@@ -193,10 +225,12 @@ export class HazardHost {
         permanent,
         visual: v,
         decorated: decor && e.radius >= DECOR_MIN_RADIUS,
+        heat,
       };
       this.syncMaterials(zone, ctx);
     }
     this.pruneMaterials(ctx);
+    this.pruneHeats();
   }
 
   /** 장판 하나의 재질을 유지·갱신한다(없으면 만든다). 등록이 없으면 추적조차 하지 않는다. */
@@ -221,6 +255,19 @@ export class HazardHost {
       for (const m of entry.materials) m.dispose(ctx);
       this.materials.delete(id);
     }
+  }
+
+  /**
+   * 사라진 장판의 열 기록을 지운다. **재질과 별개 경로여야 한다** — 재질 팩토리가 등록되지 않은
+   * subtype 은 `materials` 에 아예 안 들어가지만 열은 모든 장판이 갖기 때문이다. 같은 루프에
+   * 얹으면 그 장판들의 기록이 영영 안 지워져 맵이 런 내내 자란다.
+   */
+  private pruneHeats(): void {
+    if (this.heats.size === 0) return;
+    for (const id of this.heats.keys()) {
+      if (!this.heatSeen.has(id)) this.heats.delete(id);
+    }
+    this.heatSeen.clear();
   }
 
   /**
