@@ -24,6 +24,8 @@ import {
   FILL_RINGS,
   FILL_SOFT_SPAN,
   GLOW_ALPHA_SCALE,
+  HATCH_ALPHA,
+  HATCH_INK_BUDGET,
   HATCH_MAX_LINES,
   HAZARD_SQUASH_Y,
   HAZARD_COLOR_SLOW,
@@ -553,6 +555,22 @@ describe('성능 가드 — 작고 많은 장판', () => {
       return rec.calls.filter((c) => c.op === 'lineTo').length;
     };
     expect(count(2000)).toBeLessThanOrEqual(16);
+  });
+
+  /**
+   * 6차 뮤테이션이 드러낸 구멍의 처방: §2-4 가산 회계는 재질 **스프라이트** 겹만 세므로
+   * `drawHazardZone` 의 `Graphics` 채널(빗금·채움·경계)에는 천장이 없었다. 실제로
+   * `HATCH_MAX_LINES` 를 5 → 7 로 되올렸을 때 **어떤 테스트도 빨개지지 않았다.**
+   *
+   * 개수와 알파의 **곱**을 재면 한쪽을 올릴 때 다른 쪽을 내려야 한다(상수 재기입이 아니다).
+   */
+  it('빗금 잉크 예산 — 개수와 알파의 곱에 천장이 있다 (6차: 45° 격자가 재질을 이기면 안 된다)', () => {
+    expect(HATCH_MAX_LINES * HATCH_ALPHA).toBeLessThanOrEqual(HATCH_INK_BUDGET);
+    // 0 으로 가면 색약 사용자의 "아프다" 채널이 사라진다 — 지우는 것은 처방이 아니다.
+    expect(HATCH_MAX_LINES).toBeGreaterThanOrEqual(4);
+    expect(HATCH_ALPHA).toBeGreaterThan(0.2);
+    // 5차(7 × 0.42 = 2.94)의 절반 이하다.
+    expect(HATCH_MAX_LINES * HATCH_ALPHA).toBeLessThan(2.94 * 0.55);
   });
 
   it('빗금이 셀의 한쪽만 덮지 않는다 (3차 반려 MAJOR-4 — 3차에서 생긴 회귀)', () => {
