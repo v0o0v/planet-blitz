@@ -451,6 +451,59 @@ describe('정리 — 누수 0', () => {
     r.destroy();
   });
 
+  it('대시가 화면 흔들림을 만든다 — 조작감은 기체가 아니라 카메라가 만든다(레인 A ④)', () => {
+    // ⚠️ 이 테스트가 없으면 `entityRenderer` 의 대시 trauma 훅을 통째로 지워도 레인 A 단위
+    // 테스트가 **전부 그린**이다(뮤테이션 M14 가 실제로 생존했다). 이 리포가 8번 밟은
+    // "코드에는 있는데 화면에는 없다" 계열이라 정규 경로 통합 테스트로만 잡힌다.
+    const r = new EntityRenderer(realTextures());
+    lockTier('high');
+    // 순항(12 u/tick = 720 u/s)은 대시가 아니다 — 흔들리면 안 된다.
+    const a = world([entity('player', { id: 1, x: 0, y: 0 })]);
+    const b = world([entity('player', { id: 1, x: 12, y: 0 })]);
+    r.render(a, b, 1);
+    expect(r.shakeTrauma).toBe(0);
+    // 대시(46.7 u/tick ≈ 2800 u/s)는 상승 에지에서 한 번 흔든다.
+    const c = world([entity('player', { id: 1, x: 12 + 46.7, y: 0 })]);
+    r.render(b, c, 1);
+    const first = r.shakeTrauma;
+    expect(first).toBeGreaterThan(0);
+    // 대시가 이어져도 재발화하지 않는다(감쇠만 남아 값이 안 오른다).
+    const d = world([entity('player', { id: 1, x: 12 + 46.7 * 2, y: 0 })]);
+    r.render(c, d, 1);
+    expect(r.shakeTrauma).toBeLessThanOrEqual(first);
+    r.destroy();
+  });
+
+  it('헤일로 이방성은 **플레이어에게만** 간다 — 젬·전리품은 픽셀 단위로 종전과 같다(레인 A ⑤)', () => {
+    // 뮤테이션 M13(조건을 지우고 모든 발광체에 적용)이 생존했던 자리다. 이방성이 젬까지
+    // 번지면 발광체 전체의 룩이 조용히 바뀌는데 레인 A 테스트는 플레이어만 본다.
+    const r = new EntityRenderer(realTextures());
+    lockTier('high');
+    const at = (px: number): WorldSnapshot =>
+      world([
+        entity('player', { id: 1, x: px, y: 0 }),
+        entity('gem', { id: 2, x: 900, y: 0 }),
+      ]);
+    r.render(at(0), at(46.7), 1); // 플레이어는 대시 중, 젬은 정지
+    const glow = r.layer.children[4]!; // 스택 순서: lava·hazard·overlay·shadow·**glow**
+    // ⚠️ glowLayer 는 헤일로 전용이 아니다 — 장식자 심의 `belowLayer` 이기도 해서 레인 A 의
+    // 불꽃·림·증기·링·잔상이 같은 레이어에 산다. 헤일로만 고르는 유일하게 안정적인 기준은
+    // **라벨 없음**이다(레인 컨테이너는 전부 라벨을 박는다 — 계약 §2-4 귀속 규율).
+    const halos = glow.children.filter((c) => c.label === null || c.label === undefined);
+    expect(halos.length).toBe(2);
+    expect(r.glowHaloCount).toBe(2);
+    // 젬 헤일로는 원 그대로다(등방·무회전).
+    const gemHalo = halos.find((h) => Math.abs(h.x - 900) < 1)!;
+    expect(gemHalo.scale.x).toBeCloseTo(1, 12);
+    expect(gemHalo.scale.y).toBeCloseTo(1, 12);
+    expect(gemHalo.rotation).toBeCloseTo(0, 12);
+    // 플레이어 헤일로는 기수 축으로 늘어나고 횡으로 좁아져 있다.
+    const playerHalo = halos.find((h) => h !== gemHalo)!;
+    expect(playerHalo.scale.x).toBeGreaterThan(1.2);
+    expect(playerHalo.scale.y).toBeLessThan(1);
+    r.destroy();
+  });
+
   it('layer 자식 수는 Phase 4 이펙트 유무와 무관하게 불변이다(레이어 스택 회귀 가드)', () => {
     const r = new EntityRenderer(realTextures());
     lockTier('high');
