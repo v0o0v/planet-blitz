@@ -69,6 +69,15 @@ import { graphicsTierController } from './graphicsRuntime.js';
 // Phase 3 발광체 글로우 배선 — 선행 레인 모듈(effects/glow.ts)을 소비만 한다(재작성 금지).
 // render-only(sim·hashWorld/hashEntity 무접촉, ADR-0005). glowLayer=스프라이트 아래·가산(AC-0.8).
 import { buildGlowHalo, createGlowBloomFilter, isGlowEmitter } from './effects/glow.js';
+// 플레이어 전용 파생(레인 A). **플레이어 경로에서만** 쓰인다 — 다른 발광체·엔티티의 거동은
+// 한 줄도 바뀌지 않는다. 튜닝값이 레인 A 파일에 남아 있어야 이 공유 파일이 밸런스 축을 안 먹는다.
+import {
+  PLAYER_DASH_TRAUMA,
+  isDashSpeed,
+  playerHaloAniso,
+  snapshotVelocity,
+  type HaloAniso,
+} from './entity/playerVisual.js';
 import { buildGroundShadow, castsGroundShadow, groundShadowGeometry } from './groundShadow.js';
 import { themeFor } from './env/themes/index.js';
 import type { EnvTheme } from './env/theme.js';
@@ -775,6 +784,14 @@ export class EntityRenderer {
   private pendingLevelUp = false;
   /** 화면 흔들림 트라우마 컨트롤러(AC-2.1). render-only 파생 — sim 되먹임 없음(카메라 오프셋만). */
   private readonly trauma = new TraumaController();
+
+  /**
+   * 이번 프레임 플레이어 헤일로의 이방성 변환(레인 A ⑤). 플레이어 스냅샷 델타에서 파생하며
+   * 플레이어가 화면에 없으면 `null` 이다. 다른 발광체는 이 값을 절대 안 받는다.
+   */
+  private playerAniso: HaloAniso | null = null;
+  /** 직전 프레임 플레이어 대시 여부 — 대시 트라우마는 **상승 에지**에서만 한 번 발화한다. */
+  private playerWasDashing = false;
   /** 직전 render 벽시계(ms). 프레임 델타 자체 추적용(render 는 dt 를 받지 않음). undefined=첫 프레임. */
   private lastFrameMs: number | undefined = undefined;
   private readonly overlay = new Graphics();
@@ -1212,6 +1229,21 @@ export class EntityRenderer {
         tracked.sprite.rotation = facing;
         // 화면 흔들림 트리거 ① 플레이어 피격(중) — HP 델타(AC-2.1). p 는 직전 스냅샷.
         if (p.hp > e.hp) this.trauma.addTrauma(TRAUMA_PLAYER_HIT);
+        // 화면 흔들림 트리거 ①-b **대시**(레인 A ④) — AAA 의 조작감은 기체가 아니라 카메라가
+        // 만든다. 피격은 이미 트라우마에 걸려 있었는데 대시는 비어 있어, 게임에서 가장 자주
+        // 누르는 조작이 화면에 아무 반응도 못 얻고 있었다. 대시 판정은 레인 A 와 **같은 함수**를
+        // 써야(isDashSpeed) 흔들림과 불꽃 확장이 같은 프레임에 붙는다. 상승 에지 1회 발화라
+        // 대시가 지속되는 동안 트라우마가 누적되지 않는다. `gates.shake` 는 TraumaController 를
+        // 소비하는 쪽(applyShake)이 이미 존중하므로 여기서 다시 볼 필요가 없다.
+        // 속도 파생은 레인 A 의 `snapshotVelocity` 를 **그대로** 쓴다(틱레이트·점프 상한이
+        // 그 파일에만 있어야 공유 파일이 밸런스 축을 안 먹는다).
+        const pv = snapshotVelocity(e, p);
+        const dashing = isDashSpeed(Math.hypot(pv.vx, pv.vy));
+        if (dashing && !this.playerWasDashing) this.trauma.addTrauma(PLAYER_DASH_TRAUMA);
+        this.playerWasDashing = dashing;
+        // 헤일로 이방성(레인 A ⑤) — 등방 원 blob 은 면적을 가장 많이 쓰면서 정보를 0 비트 준다.
+        // 기수 축으로 늘이고 전방으로 편심시키면 발광 자체가 방향 신호가 된다.
+        this.playerAniso = playerHaloAniso(pv.vx, pv.vy, facing, tracked.sprite.width / 2);
         // 플레이어 보간 위치·반경 캡처 — 루프 뒤 그레이징(AC-4.5)·머즐(AC-4.7)·레벨업 링(AC-4.6)이 쓴다.
         playerX = tracked.sprite.x;
         playerY = tracked.sprite.y;
@@ -1365,7 +1397,11 @@ export class EntityRenderer {
       // 발광체 헤일로(glowLayer, 스프라이트 아래·가산, AC-3.1) — 게이트 on 이고 발광체일 때만
       // 유지한다. 헤일로는 스프라이트와 별개 레이어라 보간 위치를 매 프레임 미러한다. 탄·적
       // 실루엣은 isGlowEmitter=false 라 헤일로가 없다(탄막 가독성 계약).
-      if (gates.halo && isGlowEmitter(e.kind)) this.syncGlowHalo(e.id, tracked.sprite);
+      if (gates.halo && isGlowEmitter(e.kind)) {
+        // 이방성은 **플레이어에게만** 넘긴다. 나머지 발광체(젬·전리품·보스)는 null 을 받아
+        // 종전과 픽셀 단위로 동일하다.
+        this.syncGlowHalo(e.id, tracked.sprite, e.kind === 'player' ? this.playerAniso : null);
+      }
 
       // 접지 그림자 — 담당 테마가 있고(=배경이 켜진 행성) 부피를 가진 실체일 때만. 한 번 굽고
       // 이후엔 위치만 미러한다(매 프레임 Graphics 재빌드 금지).
@@ -1728,14 +1764,23 @@ export class EntityRenderer {
    * 스프라이트의 보간 위치로 옮긴다(별개 레이어라 좌표 동기 필요). 반경을 sim radius 가 아니라
    * 실제 표시 크기에서 파생하는 이유는 {@link GLOW_HALO_RADIUS_SCALE} 주석 참조.
    */
-  private syncGlowHalo(id: number, sprite: Sprite): void {
+  private syncGlowHalo(id: number, sprite: Sprite, aniso: HaloAniso | null = null): void {
     let halo = this.glowHalos.get(id);
     if (halo === undefined) {
       halo = buildGlowHalo((sprite.width / 2) * GLOW_HALO_RADIUS_SCALE);
       this.glowLayer.addChild(halo);
       this.glowHalos.set(id, halo);
     }
-    halo.position.set(sprite.x, sprite.y);
+    if (aniso === null) {
+      halo.position.set(sprite.x, sprite.y);
+      return;
+    }
+    // 플레이어 전용 이방성(레인 A ⑤). 기수 축으로 늘이고 횡으로 좁히고 중심을 전방으로 민다 —
+    // 셋이 합쳐져야 원이 추진 원뿔이 되고 그 형태 자체가 방향 신호가 된다. `aniso` 가 null 인
+    // 다른 발광체는 위에서 이미 돌아갔으므로 rotation/scale 이 생성 시 기본값(0·1)에 머문다.
+    halo.position.set(sprite.x + aniso.ox, sprite.y + aniso.oy);
+    halo.rotation = aniso.rotation;
+    halo.scale.set(aniso.scaleX, aniso.scaleY);
   }
 
   /** 발광체 헤일로 하나를 glowLayer 에서 떼고 destroy 한다(소멸 회수). 헤일로가 없으면 no-op. */
@@ -2025,6 +2070,10 @@ export class EntityRenderer {
     this.lavaOverlay.clear();
     this.fog.clear();
     this.lastPlayerAngle = 0;
+    // 플레이어 파생 상태(레인 A ④⑤)도 되돌린다 — 남기면 다음 런 첫 프레임에 이전 런의 기수로
+    // 헤일로가 늘어나고, 대시 에지가 이미 true 라 첫 대시의 화면 흔들림이 통째로 유실된다.
+    this.playerAniso = null;
+    this.playerWasDashing = false;
     // 조우 유형도 되돌린다 — 남기면 다음 런의 첫 프레임(main.ts 가 아직 새 값을 먹이기 전)에
     // 이전 런의 유형으로 조우 오브젝트가 그려질 수 있다. 스프라이트는 생성 시점에 텍스처가
     // 묶이므로 그 한 프레임의 오분류가 그 런 내내 고정된다.
