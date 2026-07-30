@@ -13,6 +13,22 @@ import { Application, Container, Graphics, TextureSource } from 'pixi.js';
 export const DESIGN_WIDTH = 1920;
 export const DESIGN_HEIGHT = 1080;
 
+/** 렌더러 해상도 상한. 초고 dpr 에서 백버퍼가 폭주하지 않게 자른다. */
+export const MAX_RENDERER_RESOLUTION = 2;
+
+/** 주어진 devicePixelRatio 에서 써야 할 렌더러 해상도. 0·NaN 은 1 로 본다. */
+export function rendererResolutionFor(dpr: number): number {
+  return Math.min(Number.isFinite(dpr) && dpr > 0 ? dpr : 1, MAX_RENDERER_RESOLUTION);
+}
+
+/**
+ * 지금 해상도를 다시 잡아야 하는가. 부동소수 오차로 매 프레임 백버퍼를 재생성하지 않도록
+ * 1e-3 미만 차이는 같다고 본다.
+ */
+export function shouldResyncResolution(current: number, dpr: number): boolean {
+  return Math.abs(current - rendererResolutionFor(dpr)) >= 1e-3;
+}
+
 export interface GameApp {
   app: Application;
   /** Root container scaled/letterboxed to the design space. Add game layers here. */
@@ -37,7 +53,7 @@ export async function createGameApp(mount: HTMLElement): Promise<GameApp> {
     resizeTo: window,
     antialias: false,
     autoDensity: true,
-    resolution: Math.min(window.devicePixelRatio || 1, 2),
+    resolution: rendererResolutionFor(window.devicePixelRatio || 1),
   });
   mount.appendChild(app.canvas);
   // 캔버스 우클릭 메뉴 억제 — 격납고가 우클릭을 조작(인벤토리 → 보관함 이동)에 쓴다. 브라우저
@@ -63,7 +79,27 @@ export async function createGameApp(mount: HTMLElement): Promise<GameApp> {
   stage.addChild(frameMask);
   stage.mask = frameMask;
 
+  /**
+   * 렌더러 해상도를 **현재** devicePixelRatio 에 맞춘다.
+   *
+   * ⚠️ `app.init({ resolution })` 은 **초기화 순간의 dpr 을 한 번 읽고 굳는다**. 그런데 dpr 은
+   * 페이지가 떠 있는 동안 바뀐다 — 브라우저 확대/축소(Ctrl +/−), 창을 배율이 다른 모니터로
+   * 옮기기, Windows 디스플레이 배율 변경. `resizeTo: window` 는 캔버스 **크기**만 따라가고
+   * 해상도는 손대지 않으므로, dpr 이 1 → 1.25 로 바뀌면 캔버스는 1712×963 물리 픽셀만 그린 뒤
+   * 브라우저가 2140×1204 로 **늘려서** 표시한다. 그 결과 글자·픽셀아트 할 것 없이 **화면 전체가
+   * 보간되어 뿌옇게** 보인다(사용자 신고 2026-07-30 — 실측: dpr 1.25 / renderer.resolution 1).
+   *
+   * 창 크기가 그대로여도 dpr 만 바뀔 수 있으므로 resize 이벤트에만 기대지 않고 아래에서
+   * `matchMedia('(resolution: Xdppx)')` 로도 감시한다.
+   */
+  function syncResolution(): void {
+    const dpr = window.devicePixelRatio || 1;
+    if (!shouldResyncResolution(app.renderer.resolution, dpr)) return;
+    app.renderer.resize(window.innerWidth, window.innerHeight, rendererResolutionFor(dpr));
+  }
+
   function fitToWindow(): void {
+    syncResolution();
     // Pixi v8: app.screen 은 이미 논리(CSS) 픽셀이다. renderer.width 를 resolution 으로
     // 다시 나누면 dpr>1(Windows 배율) 환경에서 스케일이 과소 계산되어 화면 우/하단이
     // 비고 UI 가 축소되는 실결함이 있었다(격납고 파일럿 검증에서 실증).
@@ -91,6 +127,23 @@ export async function createGameApp(mount: HTMLElement): Promise<GameApp> {
   };
   window.addEventListener('resize', onWindowResize);
 
+  // dpr 변화 감시. `(resolution: Xdppx)` 질의는 **현재 dpr 에서만 참**이므로, 값이 바뀌면
+  // change 가 한 번 발동한다 — 그때 새 dpr 로 질의를 다시 걸어 다음 변화도 잡는다(1회용
+  // 리스너를 재무장하는 표준 패턴). 창 크기가 그대로인 모니터 이동·OS 배율 변경처럼 resize
+  // 이벤트가 없는 경로를 여기서 덮는다.
+  let dprQuery: MediaQueryList | null = null;
+  const onDprChange = (): void => {
+    fitToWindow();
+    watchDpr();
+  };
+  function watchDpr(): void {
+    dprQuery?.removeEventListener('change', onDprChange);
+    if (typeof window.matchMedia !== 'function') return;
+    dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    dprQuery.addEventListener('change', onDprChange);
+  }
+  watchDpr();
+
   return {
     app,
     stage,
@@ -103,6 +156,7 @@ export async function createGameApp(mount: HTMLElement): Promise<GameApp> {
       };
     },
     destroy() {
+      dprQuery?.removeEventListener('change', onDprChange);
       window.removeEventListener('resize', onWindowResize);
       app.renderer.off('resize', fitToWindow);
       app.destroy(true, { children: true });
