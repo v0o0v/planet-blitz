@@ -68,7 +68,7 @@ import { graphicsSettings } from './graphicsSettings.js';
 import { graphicsTierController } from './graphicsRuntime.js';
 // Phase 3 발광체 글로우 배선 — 선행 레인 모듈(effects/glow.ts)을 소비만 한다(재작성 금지).
 // render-only(sim·hashWorld/hashEntity 무접촉, ADR-0005). glowLayer=스프라이트 아래·가산(AC-0.8).
-import { buildGlowHalo, createGlowBloomFilter, isGlowEmitter } from './effects/glow.js';
+import { buildGlowHalo, createGlowBloomFilter, haloSpec, isGlowEmitter } from './effects/glow.js';
 // 플레이어 전용 파생(레인 A). **플레이어 경로에서만** 쓰인다 — 다른 발광체·엔티티의 거동은
 // 한 줄도 바뀌지 않는다. 튜닝값이 레인 A 파일에 남아 있어야 이 공유 파일이 밸런스 축을 안 먹는다.
 import {
@@ -951,6 +951,29 @@ export class EntityRenderer {
   }
 
   /**
+   * 플레이어 스프라이트를 `spriteLayer` 최상단으로 올린다. 근거는 호출부 주석에 있다.
+   *
+   * 플레이어에 딸린 형제(히트 플래시 오버레이 등)가 `spriteLayer` 에 있으면 그것도 함께 올려
+   * 순서를 보존한다 — 오버레이가 본체보다 아래로 내려가면 가산 번쩍임이 실루엣에 안 얹힌다.
+   */
+  private raisePlayerSprite(sprite: Sprite): void {
+    const layer = this.spriteLayer;
+    const last = layer.children.length - 1;
+    if (last < 0) return;
+    if (layer.children[last] !== sprite) layer.setChildIndex(sprite, last);
+  }
+
+  /** 플레이어가 스프라이트 레이어 최상단인가(읽기 전용 관측창 — z 우선순위 회귀 가드). */
+  get playerOnTop(): boolean {
+    const kids = this.spriteLayer.children;
+    if (kids.length === 0) return false;
+    for (const t of this.sprites.values()) {
+      if (t.kind === 'player') return kids[kids.length - 1] === t.sprite;
+    }
+    return false;
+  }
+
+  /**
    * 현재 살아 있는 발광 헤일로 개수. **읽기 전용 관측창.**
    *
    * 배선 테스트가 `glowLayer.children.length` 를 절대값으로 재던 것을 이 창으로 옮겼다.
@@ -1113,6 +1136,8 @@ export class EntityRenderer {
     let playerY = 0;
     let playerR = 0;
     let hasPlayer = false;
+    /** 플레이어 스프라이트(루프 뒤 최상단으로 올리기 위해 잡는다 — {@link raisePlayerSprite}). */
+    let playerSprite: Sprite | null = null;
     let newPlayerBullet = false; // 이번 프레임 신규 플레이어 탄 등장(머즐 플래시 근사, AC-4.7).
     const trailSeen = new Set<number>(); // 이번 프레임 살아있는 트레일 대상 탄 id(트레일 페이드 판정).
 
@@ -1249,6 +1274,7 @@ export class EntityRenderer {
         playerY = tracked.sprite.y;
         playerR = e.radius;
         hasPlayer = true;
+        playerSprite = tracked.sprite;
       } else if (e.kind === 'turretPickup' && e.active) {
         // 활성 아군 포탑: 포신이 **실제 사격 방향**을 향한다(2026-07-26 피드백). sim 은 조준각을
         // 저장하지 않으므로(해시 계약 — friendlyDisplay.turretAimAngle 주석) 렌더가 같은 규칙으로
@@ -1400,7 +1426,12 @@ export class EntityRenderer {
       if (gates.halo && isGlowEmitter(e.kind)) {
         // 이방성은 **플레이어에게만** 넘긴다. 나머지 발광체(젬·전리품·보스)는 null 을 받아
         // 종전과 픽셀 단위로 동일하다.
-        this.syncGlowHalo(e.id, tracked.sprite, e.kind === 'player' ? this.playerAniso : null);
+        this.syncGlowHalo(
+          e.id,
+          tracked.sprite,
+          e.kind === 'player' ? this.playerAniso : null,
+          e.kind,
+        );
       }
 
       // 접지 그림자 — 담당 테마가 있고(=배경이 켜진 행성) 부피를 가진 실체일 때만. 한 번 굽고
@@ -1413,6 +1444,22 @@ export class EntityRenderer {
       // 그 값을 미러한다). 등록이 없으면 배열이 비어 있어 루프가 0회다.
       for (const ad of tracked.adorners) ad.onFrame(tracked.sprite, e, p, adornCtx);
     }
+
+    // 플레이어를 스프라이트 레이어 최상단으로 — **잡몹이 아바타를 덮지 않게 한다.**
+    //
+    // ## 이 한 줄이 없으면 무슨 일이 나는가
+    // `spriteLayer` 에는 z 우선순위가 없어 **자식 추가 순서**가 그리는 순서다. 플레이어는
+    // 스냅샷 entities[0] 이라 거의 항상 **가장 먼저** 만들어지고, 따라서 **가장 아래**에 깔린다.
+    // 실측(비평가 3차, 카르곤 보스 컷): 플레이어가 적 몸통에 **약 70% 가려져 있었다.**
+    //
+    // 기준선 문서의 최고가 결함("보스 컷에서 플레이어를 찾는 데 시간이 걸린다")의 잔존분이
+    // 실은 여기였다 — 레인 A 가 세 라운드에 걸쳐 선체 **주변**의 가독을 올렸지만(외곽선·헤일로·
+    // 감산 컨투어) 선체 자체가 z 싸움에서 지고 있었다. **어떤 AAA 트윈스틱도 아바타를 잡몹이
+    // 덮게 두지 않는다.**
+    //
+    // 매 프레임 부르는 이유: 신규 스프라이트가 루프 도중 플레이어 **뒤에** 추가되므로 한 번
+    // 올려 두는 것으로는 부족하다. 이미 최상단이면 `setChildIndex` 를 건너뛰어 splice 를 아낀다.
+    if (playerSprite !== null) this.raisePlayerSprite(playerSprite);
 
     // ── 엔티티 루프 후처리(Phase 4) — 플레이어 위치·신규 탄 정보가 확정된 뒤 수행 ──────────────
     // 탄 트레일 잔상 페이드: 이번 프레임에 안 보인(소멸한) 탄의 트레일만 위치 없이 진행해 소진 시 회수.
@@ -1764,10 +1811,22 @@ export class EntityRenderer {
    * 스프라이트의 보간 위치로 옮긴다(별개 레이어라 좌표 동기 필요). 반경을 sim radius 가 아니라
    * 실제 표시 크기에서 파생하는 이유는 {@link GLOW_HALO_RADIUS_SCALE} 주석 참조.
    */
-  private syncGlowHalo(id: number, sprite: Sprite, aniso: HaloAniso | null = null): void {
+  private syncGlowHalo(
+    id: number,
+    sprite: Sprite,
+    aniso: HaloAniso | null = null,
+    kind = 'player',
+  ): void {
     let halo = this.glowHalos.get(id);
     if (halo === undefined) {
-      halo = buildGlowHalo((sprite.width / 2) * GLOW_HALO_RADIUS_SCALE);
+      // kind 별 색·알파. 이 인자를 넘기지 않던 동안 **보스가 아군 시안 헤일로를 두르고 있었고**
+      // (§2-2 위반) **젬이 화면 최고 명도**였다(위협보다 보상이 밝은 역전). 근거는 haloSpec 주석.
+      const spec = haloSpec(kind);
+      halo = buildGlowHalo(
+        (sprite.width / 2) * GLOW_HALO_RADIUS_SCALE,
+        spec.color,
+        spec.alphaScale,
+      );
       this.glowLayer.addChild(halo);
       this.glowHalos.set(id, halo);
     }

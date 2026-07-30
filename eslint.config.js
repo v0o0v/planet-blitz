@@ -70,7 +70,11 @@ const simCoreRestrictions = {
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**'],
+    // `.omc/**` 은 세션 산출물 보관소다(연구 노트·캡처 컷·비평가가 남긴 일회용 계측 스크립트).
+    // 프로덕션 그래프 밖이고 git 에도 대부분 안 들어가는데, lint 가 그 안의 `.mjs` 프로브를 잡아
+    // **소스가 멀쩡한데 `pnpm lint` 가 빨개졌다**(실제 발생: 비평가가 남긴 `tools/sat.mjs` 의 미사용
+    // 변수 1건). 검증 게이트가 검증 부산물 때문에 실패하는 것은 게이트를 무의미하게 만든다.
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '.omc/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
