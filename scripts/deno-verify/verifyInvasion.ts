@@ -29,7 +29,14 @@ import type {
 } from '../../supabase/functions/verify-invasion/verifyInvasionCore.ts';
 import { branchBonusBp, guardianMilestones, normalizeMilestones } from '../../data/lineage.ts';
 import { runReplay } from '../../src/sim/replay.ts';
-import { createWorld, stepWorld, SPECIAL_POWERUP_PICK } from '../../src/sim/world.ts';
+import {
+  createWorld,
+  stepWorld,
+  SPECIAL_POWERUP_PICK,
+  SPECIAL_ACTIVE_SLOT1,
+  SPECIAL_ACTIVE_SLOT2,
+} from '../../src/sim/world.ts';
+import { wireIdOf } from '../../data/ships/actives/index.ts';
 import type { InputFrame, WorldConfig } from '../../src/sim/world.ts';
 import {
   enumerateLayerFields,
@@ -385,6 +392,29 @@ function main(): number {
     const authCtx: InvasionServerContext = { layers: authLayers, timeLimitTicks: INVASION_TOTAL_TICKS };
     const authInputs = recordInputs(seed, authCfg, 300);
     expectAccept('수호 권위 주입 후 정직 침공(Node↔Deno)', honest(seed, authCfg, authInputs), authCtx);
+    // --- 액티브 스킬을 쓴 침공(ADR-0041 · 완료 게이트 ③) ---
+    // 위 케이스들은 전부 `activeSlots` 미탑재라 **신규 꼬리 폴드가 한 번도 실행되지 않는다** —
+    // 그게 구 EF 하위 호환의 근거인 동시에 신규 경로의 커버리지가 0 이라는 뜻이다.
+    // 서버가 액티브를 모르면 재실행 해시가 갈려 `final-hash-mismatch` 로 **거부**되므로,
+    // 여기서 accept 가 나오는 것 자체가 "재배포된 검증 코어가 액티브 발동을 재현한다"의 증명이다.
+    const activeCfg: WorldConfig = {
+      ...authCfg,
+      shipType: 1, // 브루저 — aux0(장갑 스택) 쓰기까지 같은 런에서 밟힌다
+      activeSlots: [wireIdOf('as_bruiser_blade_lo'), wireIdOf('as_bruiser_fortify_lo')],
+    };
+    const activeInputs = recordInputs(seed, activeCfg, 300).map((f, i) => {
+      // 프리즈 프레임에는 액티브 비트를 싣지 않는다(컨트롤러 규율과 동일).
+      if ((f.special & SPECIAL_POWERUP_PICK) !== 0) return f;
+      let special = f.special;
+      if (i > 0 && i % 60 === 0) special |= SPECIAL_ACTIVE_SLOT1;
+      if (i > 0 && i % 90 === 0) special |= SPECIAL_ACTIVE_SLOT2;
+      return special === f.special ? f : { ...f, special };
+    });
+    expectAccept(
+      '액티브 스킬 발동 침공 — 검증 코어가 꼬리 폴드 2건을 재현한다 (완료 게이트 ③)',
+      honest(seed, activeCfg, activeInputs),
+      authCtx,
+    );
     // 위조: 공격자가 저장 위조 배치(풀성능·풀보너스)로 런·제출 → 권위 주입본과 대조 → 거부.
     expectReject('수호 성능·보너스 위조 제출', base, ['defense-mismatch'], authCtx);
   }
