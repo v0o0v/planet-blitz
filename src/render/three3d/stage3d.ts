@@ -33,7 +33,7 @@
  */
 
 import * as THREE from 'three';
-import { Rectangle, Texture, TextureSource } from 'pixi.js';
+import { CanvasSource, Rectangle, Texture } from 'pixi.js';
 
 /** 슬롯 한 칸의 렌더 해상도(px). 표시 크기보다 작게 잡아 nearest 확대로 픽셀감을 만든다. */
 export const SLOT_SIZE = 160;
@@ -53,7 +53,7 @@ const SLOT_ORDER: readonly Slot3D[] = ['boss', 'player'];
 export class Stage3D {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly canvas: HTMLCanvasElement;
-  private readonly source: TextureSource;
+  private readonly source: CanvasSource;
   private readonly scenes = new Map<Slot3D, { scene: THREE.Scene; camera: THREE.Camera }>();
   private readonly textures = new Map<Slot3D, Texture>();
   /** 이번 프레임에 그릴 슬롯. 매 프레임 비운다 — 화면에 없는 액터는 GPU 비용 0. */
@@ -63,7 +63,13 @@ export class Stage3D {
     this.renderer = renderer;
     this.canvas = canvas;
     // 아틀라스 전체를 한 소스로 올린다. 슬롯 텍스처는 이 소스의 frame 만 다르다.
-    this.source = new TextureSource({ resource: canvas });
+    //
+    // ⚠️ **반드시 `CanvasSource`** 여야 한다. 베이스 클래스 `TextureSource` 로 감싸면 Pixi 가
+    // 업로드 방식을 결정하지 못해(uploadMethodId 미지정) GPU 텍스처가 **빈 채로 남는다** —
+    // 예외도 경고도 없다. 그러면 three 는 멀쩡히 그리고 캔버스에도 픽셀이 있는데 화면의 보스만
+    // 사라진다(사용자 신고 2026-07-30, 두 번째). 캔버스를 재서 검증하면 이 결함을 **못 잡는다** —
+    // 반드시 `renderer.extract` 로 **화면에 나간 스프라이트**를 재야 한다.
+    this.source = new CanvasSource({ resource: canvas });
     for (const [i, slot] of SLOT_ORDER.entries()) {
       // Pixi frame 은 좌상단 원점(이미지 좌표계)이라 슬롯 열을 그대로 x 로 쓴다.
       const frame = new Rectangle(i * SLOT_SIZE, 0, SLOT_SIZE, SLOT_SIZE);
