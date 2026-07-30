@@ -36,13 +36,20 @@ import { tiledWallTexture } from './wallTexture.js';
 import { TURRET_RANGE } from '../sim/events.js';
 import { facilitySpecFor } from '../../data/invasion/facilities.js';
 import { HAZARD_LAVA } from '../sim/patterns/types.js';
-// 해저드 장판 표시 규칙(색=성질·형태=상태) — render-only 순수 모듈을 소비만 한다.
+// 엔티티 장식자 심(entity/adorner.ts) — 플레이어·적 비주얼 레인이 이 공유 파일을 건드리지 않고
+// 자기 모듈에서 등록만 하는 확장 지점. 등록된 팩토리가 없으면 장식자 0개라 거동이 완전히 불변이다.
 import {
-  DECOR_MIN_RADIUS,
-  MAX_DECORATED_HAZARDS,
-  drawHazardZone,
-  hazardVisual,
-} from './hazardVisual.js';
+  createAdorners,
+  NO_ADORNERS,
+  type AdornerContext,
+  type EntityAdorner,
+} from './entity/adorner.js';
+// 해저드 렌더 진입점(entity/hazardHost.ts) — 장판 그리기(구 drawOverlay 루프)와 재질 확장 지점.
+// 표시 규칙 자체는 여전히 hazardVisual.ts 가 정본이고 호스트가 그것을 소비한다.
+import { HazardHost, type HazardHostContext } from './entity/hazardHost.js';
+// 엔티티 비주얼 등록 허브 — 값 없는 부수효과 import 다. 이 한 줄이 없으면 비주얼 레인 모듈들이
+// 등록되지 않아 **완성된 채로 화면에 없다**(이 리포가 8번 밟은 결함). 근거는 entity/index.ts 헤더.
+import './entity/index.js';
 // 조우 유형 상수(ADR-0033). `data/encounters.ts` 는 다른 sim 모듈을 import 하지 않는 leaf
 // 데이터라 렌더가 읽어도 순환·결정론 위험이 없다(facilities/props 카탈로그 참조 선례).
 import { ENCOUNTER_TYPE } from '../../data/encounters.js';
@@ -56,12 +63,21 @@ import {
   TRAUMA_ELITE_KILL,
   TRAUMA_BIG_EXPLOSION,
 } from './screenShake.js';
-import { effectGates } from './qualityTier.js';
+import { effectGates, type EffectGates, type QualityTier } from './qualityTier.js';
 import { graphicsSettings } from './graphicsSettings.js';
 import { graphicsTierController } from './graphicsRuntime.js';
 // Phase 3 발광체 글로우 배선 — 선행 레인 모듈(effects/glow.ts)을 소비만 한다(재작성 금지).
 // render-only(sim·hashWorld/hashEntity 무접촉, ADR-0005). glowLayer=스프라이트 아래·가산(AC-0.8).
-import { buildGlowHalo, createGlowBloomFilter, isGlowEmitter } from './effects/glow.js';
+import { buildGlowHalo, createGlowBloomFilter, haloSpec, isGlowEmitter } from './effects/glow.js';
+// 플레이어 전용 파생(레인 A). **플레이어 경로에서만** 쓰인다 — 다른 발광체·엔티티의 거동은
+// 한 줄도 바뀌지 않는다. 튜닝값이 레인 A 파일에 남아 있어야 이 공유 파일이 밸런스 축을 안 먹는다.
+import {
+  PLAYER_DASH_TRAUMA,
+  isDashSpeed,
+  playerHaloAniso,
+  snapshotVelocity,
+  type HaloAniso,
+} from './entity/playerVisual.js';
 import { buildGroundShadow, castsGroundShadow, groundShadowGeometry } from './groundShadow.js';
 import { themeFor } from './env/themes/index.js';
 import type { EnvTheme } from './env/theme.js';
@@ -159,6 +175,15 @@ interface TrackedSprite {
    * (엘리트 처치=TRAUMA_ELITE_KILL). 소멸 시점엔 스냅샷이 없으므로 tracked 에 실어 둔다.
    */
   elite: boolean;
+  /**
+   * 이 엔티티에 붙은 장식자(비주얼 레인 확장, {@link file://./entity/adorner.ts}). 등록된 팩토리가
+   * 없는 kind 는 {@link NO_ADORNERS}(공유 빈 배열)라 할당도 호출도 없다.
+   *
+   * ⚠️ 장식자가 만드는 컨테이너는 스프라이트의 **형제**라 부모 `destroy` 로 회수되지 않는다 —
+   * 킬 루프·디졸브·reset·destroy 네 경로가 전부 {@link EntityRenderer.disposeAdorners} 를 불러야
+   * 한다. 회수한 뒤에는 이 필드를 `NO_ADORNERS` 로 되돌려 이중 회수가 no-op 이 되게 한다.
+   */
+  adorners: readonly EntityAdorner[];
 }
 
 /** Sprite display diameter relative to the sim hitbox (art reads a bit larger). */
@@ -695,6 +720,12 @@ export class EntityRenderer {
   private glowBloom: Filter | null | undefined = undefined;
   /** glowLayer.filters 에 블룸이 현재 붙어 있는지 — 게이트 전이 시에만 filters 배열을 재설정하기 위한 상태. */
   private glowBloomAttached = false;
+  /**
+   * 해저드 렌더 호스트(구 `drawOverlay` 의 장판 루프). 재질 레이어({@link HazardHost.view})는
+   * 생성자가 장판 오버레이 **위** · 스프라이트 **아래**에 끼운다. 재질 팩토리가 하나도 등록되지
+   * 않으면 자식 0 인 빈 컨테이너라 화면이 불변이다(glowLayer Phase 0 과 같은 규율).
+   */
+  private readonly hazardHost = new HazardHost();
   private readonly spriteLayer = new Container();
   /**
    * 이름표 레이어 — 스프라이트 **위**, 이펙트 **아래**. 위에 둬야 겹친 스프라이트에 이름이
@@ -753,6 +784,14 @@ export class EntityRenderer {
   private pendingLevelUp = false;
   /** 화면 흔들림 트라우마 컨트롤러(AC-2.1). render-only 파생 — sim 되먹임 없음(카메라 오프셋만). */
   private readonly trauma = new TraumaController();
+
+  /**
+   * 이번 프레임 플레이어 헤일로의 이방성 변환(레인 A ⑤). 플레이어 스냅샷 델타에서 파생하며
+   * 플레이어가 화면에 없으면 `null` 이다. 다른 발광체는 이 값을 절대 안 받는다.
+   */
+  private playerAniso: HaloAniso | null = null;
+  /** 직전 프레임 플레이어 대시 여부 — 대시 트라우마는 **상승 에지**에서만 한 번 발화한다. */
+  private playerWasDashing = false;
   /** 직전 render 벽시계(ms). 프레임 델타 자체 추적용(render 는 dt 를 받지 않음). undefined=첫 프레임. */
   private lastFrameMs: number | undefined = undefined;
   private readonly overlay = new Graphics();
@@ -810,6 +849,9 @@ export class EntityRenderer {
     // (발광 이펙트 배선은 Phase 3 몫). fog 는 계속 최상단이라 필드 오버레이 계약도 그대로다.
     this.glowLayer.blendMode = 'add';
     this.layer.addChild(this.lavaOverlay);
+    // 해저드 재질 레이어 — 용암 채움 **위**, 비-용암 오버레이(예고선 포함) **아래**. 재질이
+    // 예고선을 덮으면 회피 판정 가독성이 무너진다(시머 국소화 계약과 같은 이유).
+    this.layer.addChild(this.hazardHost.view);
     this.layer.addChild(this.overlay);
     // 접지 그림자는 지형·해저드 오버레이 **위**, 발광 헤일로·스프라이트 **아래**다. 위 발광
     // 비대칭 규율의 연장선이며 이유는 {@link shadowLayer} 주석이 정본이다.
@@ -890,6 +932,60 @@ export class EntityRenderer {
    */
   get groundShadowCount(): number {
     return this.groundShadows.size;
+  }
+
+  /**
+   * 현재 살아 있는 장식자 개수. **읽기 전용 관측창** — 등록된 kind 에만 붙고, 소멸·reset·destroy
+   * 에서 회수되는지(형제 컨테이너라 부모 destroy 로 안 걷힌다 — 누수 자리)를 자동 통합 테스트가
+   * 수치로 못 박게 노출한다. 렌더 거동에는 관여하지 않는다.
+   */
+  get adornerCount(): number {
+    let n = 0;
+    for (const t of this.sprites.values()) n += t.adorners.length;
+    return n;
+  }
+
+  /** 현재 살아 있는 해저드 재질 묶음 수(읽기 전용 관측창). */
+  get hazardMaterialCount(): number {
+    return this.hazardHost.materialCount;
+  }
+
+  /**
+   * 플레이어 스프라이트를 `spriteLayer` 최상단으로 올린다. 근거는 호출부 주석에 있다.
+   *
+   * 플레이어에 딸린 형제(히트 플래시 오버레이 등)가 `spriteLayer` 에 있으면 그것도 함께 올려
+   * 순서를 보존한다 — 오버레이가 본체보다 아래로 내려가면 가산 번쩍임이 실루엣에 안 얹힌다.
+   */
+  private raisePlayerSprite(sprite: Sprite): void {
+    const layer = this.spriteLayer;
+    const last = layer.children.length - 1;
+    if (last < 0) return;
+    if (layer.children[last] !== sprite) layer.setChildIndex(sprite, last);
+  }
+
+  /** 플레이어가 스프라이트 레이어 최상단인가(읽기 전용 관측창 — z 우선순위 회귀 가드). */
+  get playerOnTop(): boolean {
+    const kids = this.spriteLayer.children;
+    if (kids.length === 0) return false;
+    for (const t of this.sprites.values()) {
+      if (t.kind === 'player') return kids[kids.length - 1] === t.sprite;
+    }
+    return false;
+  }
+
+  /**
+   * 현재 살아 있는 발광 헤일로 개수. **읽기 전용 관측창.**
+   *
+   * 배선 테스트가 `glowLayer.children.length` 를 절대값으로 재던 것을 이 창으로 옮겼다.
+   * 자식 수는 **그 레이어에 사는 다른 거주자와 결합한다** — 장식자(`src/render/entity/`)가
+   * 발광 레이어에 무엇이든 그리는 순간, 헤일로와 무관한 이유로 "헤일로 배선" 단언이 빨개진다.
+   * 자식을 안 만들면 화면에도 없으므로 장식자 쪽에서는 피할 방법이 없다.
+   *
+   * 그래서 단언을 **헤일로만 세는 창**으로 옮겨 결합을 끊는다. 잃는 것은 없다 — 원래 그 테스트가
+   * 물으려던 질문이 "발광체 수만큼 헤일로가 붙었는가"이지 "레이어에 자식이 몇인가"가 아니다.
+   */
+  get glowHaloCount(): number {
+    return this.glowHalos.size;
   }
 
   // ── Phase 4 관측창(읽기 전용) — 자동 배선 통합 테스트가 각 이펙트 트리거의 실효를 수치로 못 박는다
@@ -995,7 +1091,12 @@ export class EntityRenderer {
 
     // 이펙트 게이트(티어 × 감소 토글) — 프레임당 1회만 산출해 흔들림·히트 플래시·발광이 공유한다.
     const settings = graphicsSettings.getSettings();
-    const gates = effectGates(graphicsTierController.getActiveTier(), settings);
+    const tier = graphicsTierController.getActiveTier();
+    const gates = effectGates(tier, settings);
+    // 장식자·해저드 재질 맥락 — 프레임당 **한 번**만 만들어 전 장식자가 공유한다(엔티티 수만큼
+    // 게이트를 재산출하지 않는다).
+    const adornCtx = this.adornerCtx(gates, tier, dt, alpha);
+    const hazardCtx = this.hazardCtx(gates, tier, dt);
     // 데미지 숫자(AC-4.1)는 티어 예산이 아니라 순수 사용자 토글이라 effectGates 밖에서 직접 읽는다.
     const showDamageNumbers = settings.damageNumbers;
 
@@ -1006,7 +1107,7 @@ export class EntityRenderer {
     // 엔티티 루프가 발광체별로 헤일로를 생성·미러하고, 킬 루프가 소멸분을 제거한다.
     if (!gates.halo) this.clearGlowHalos();
 
-    this.drawOverlay(curr);
+    this.drawOverlay(curr, hazardCtx);
     this.drawFieldOverlays(curr);
     this.updateBursts(dt);
     // 이벤트 셰이더 원샷 진행(충격파·디졸브) — updateBursts 와 동형. 이번 프레임에 킬 루프가 새로
@@ -1035,6 +1136,8 @@ export class EntityRenderer {
     let playerY = 0;
     let playerR = 0;
     let hasPlayer = false;
+    /** 플레이어 스프라이트(루프 뒤 최상단으로 올리기 위해 잡는다 — {@link raisePlayerSprite}). */
+    let playerSprite: Sprite | null = null;
     let newPlayerBullet = false; // 이번 프레임 신규 플레이어 탄 등장(머즐 플래시 근사, AC-4.7).
     const trailSeen = new Set<number>(); // 이번 프레임 살아있는 트레일 대상 탄 id(트레일 페이드 판정).
 
@@ -1127,8 +1230,11 @@ export class EntityRenderer {
           dmgAccum: 0,
           // 첫 피해가 즉시 방출되도록 스로틀 창을 이미 지난 값으로 초기화.
           dmgEmitTick: this.frameTick - DAMAGE_NUMBER_THROTTLE_FRAMES,
+          // 장식자 생성(비주얼 레인 확장). 등록된 팩토리가 없으면 공유 빈 배열이라 비용 0.
+          adorners: createAdorners(e),
         };
         this.sprites.set(e.id, tracked);
+        for (const ad of tracked.adorners) ad.onAttach?.(sprite, e, adornCtx);
         // 머즐 플래시(AC-4.7) — 신규 **플레이어 탄**('bullet', 주무기·보조 포함) 등장 = 발사. 프레임당
         // 1회 총구 섬광으로 근사한다(정밀 위치·연사별 개별 섬광은 범위 밖). 적탄('enemyBullet')은 제외.
         if (e.kind === 'bullet') newPlayerBullet = true;
@@ -1148,11 +1254,27 @@ export class EntityRenderer {
         tracked.sprite.rotation = facing;
         // 화면 흔들림 트리거 ① 플레이어 피격(중) — HP 델타(AC-2.1). p 는 직전 스냅샷.
         if (p.hp > e.hp) this.trauma.addTrauma(TRAUMA_PLAYER_HIT);
+        // 화면 흔들림 트리거 ①-b **대시**(레인 A ④) — AAA 의 조작감은 기체가 아니라 카메라가
+        // 만든다. 피격은 이미 트라우마에 걸려 있었는데 대시는 비어 있어, 게임에서 가장 자주
+        // 누르는 조작이 화면에 아무 반응도 못 얻고 있었다. 대시 판정은 레인 A 와 **같은 함수**를
+        // 써야(isDashSpeed) 흔들림과 불꽃 확장이 같은 프레임에 붙는다. 상승 에지 1회 발화라
+        // 대시가 지속되는 동안 트라우마가 누적되지 않는다. `gates.shake` 는 TraumaController 를
+        // 소비하는 쪽(applyShake)이 이미 존중하므로 여기서 다시 볼 필요가 없다.
+        // 속도 파생은 레인 A 의 `snapshotVelocity` 를 **그대로** 쓴다(틱레이트·점프 상한이
+        // 그 파일에만 있어야 공유 파일이 밸런스 축을 안 먹는다).
+        const pv = snapshotVelocity(e, p);
+        const dashing = isDashSpeed(Math.hypot(pv.vx, pv.vy));
+        if (dashing && !this.playerWasDashing) this.trauma.addTrauma(PLAYER_DASH_TRAUMA);
+        this.playerWasDashing = dashing;
+        // 헤일로 이방성(레인 A ⑤) — 등방 원 blob 은 면적을 가장 많이 쓰면서 정보를 0 비트 준다.
+        // 기수 축으로 늘이고 전방으로 편심시키면 발광 자체가 방향 신호가 된다.
+        this.playerAniso = playerHaloAniso(pv.vx, pv.vy, facing, tracked.sprite.width / 2);
         // 플레이어 보간 위치·반경 캡처 — 루프 뒤 그레이징(AC-4.5)·머즐(AC-4.7)·레벨업 링(AC-4.6)이 쓴다.
         playerX = tracked.sprite.x;
         playerY = tracked.sprite.y;
         playerR = e.radius;
         hasPlayer = true;
+        playerSprite = tracked.sprite;
       } else if (e.kind === 'turretPickup' && e.active) {
         // 활성 아군 포탑: 포신이 **실제 사격 방향**을 향한다(2026-07-26 피드백). sim 은 조준각을
         // 저장하지 않으므로(해시 계약 — friendlyDisplay.turretAimAngle 주석) 렌더가 같은 규칙으로
@@ -1301,14 +1423,43 @@ export class EntityRenderer {
       // 발광체 헤일로(glowLayer, 스프라이트 아래·가산, AC-3.1) — 게이트 on 이고 발광체일 때만
       // 유지한다. 헤일로는 스프라이트와 별개 레이어라 보간 위치를 매 프레임 미러한다. 탄·적
       // 실루엣은 isGlowEmitter=false 라 헤일로가 없다(탄막 가독성 계약).
-      if (gates.halo && isGlowEmitter(e.kind)) this.syncGlowHalo(e.id, tracked.sprite);
+      if (gates.halo && isGlowEmitter(e.kind)) {
+        // 이방성은 **플레이어에게만** 넘긴다. 나머지 발광체(젬·전리품·보스)는 null 을 받아
+        // 종전과 픽셀 단위로 동일하다.
+        this.syncGlowHalo(
+          e.id,
+          tracked.sprite,
+          e.kind === 'player' ? this.playerAniso : null,
+          e.kind,
+        );
+      }
 
       // 접지 그림자 — 담당 테마가 있고(=배경이 켜진 행성) 부피를 가진 실체일 때만. 한 번 굽고
       // 이후엔 위치만 미러한다(매 프레임 Graphics 재빌드 금지).
       if (this.envTheme !== null && castsGroundShadow(e.kind)) {
         this.syncGroundShadow(e.id, tracked.sprite, this.envTheme);
       }
+
+      // 장식자 프레임 갱신 — 스프라이트의 보간 위치·회전이 확정된 **뒤**여야 한다(장식자가
+      // 그 값을 미러한다). 등록이 없으면 배열이 비어 있어 루프가 0회다.
+      for (const ad of tracked.adorners) ad.onFrame(tracked.sprite, e, p, adornCtx);
     }
+
+    // 플레이어를 스프라이트 레이어 최상단으로 — **잡몹이 아바타를 덮지 않게 한다.**
+    //
+    // ## 이 한 줄이 없으면 무슨 일이 나는가
+    // `spriteLayer` 에는 z 우선순위가 없어 **자식 추가 순서**가 그리는 순서다. 플레이어는
+    // 스냅샷 entities[0] 이라 거의 항상 **가장 먼저** 만들어지고, 따라서 **가장 아래**에 깔린다.
+    // 실측(비평가 3차, 카르곤 보스 컷): 플레이어가 적 몸통에 **약 70% 가려져 있었다.**
+    //
+    // 기준선 문서의 최고가 결함("보스 컷에서 플레이어를 찾는 데 시간이 걸린다")의 잔존분이
+    // 실은 여기였다 — 레인 A 가 세 라운드에 걸쳐 선체 **주변**의 가독을 올렸지만(외곽선·헤일로·
+    // 감산 컨투어) 선체 자체가 z 싸움에서 지고 있었다. **어떤 AAA 트윈스틱도 아바타를 잡몹이
+    // 덮게 두지 않는다.**
+    //
+    // 매 프레임 부르는 이유: 신규 스프라이트가 루프 도중 플레이어 **뒤에** 추가되므로 한 번
+    // 올려 두는 것으로는 부족하다. 이미 최상단이면 `setChildIndex` 를 건너뛰어 splice 를 아낀다.
+    if (playerSprite !== null) this.raisePlayerSprite(playerSprite);
 
     // ── 엔티티 루프 후처리(Phase 4) — 플레이어 위치·신규 탄 정보가 확정된 뒤 수행 ──────────────
     // 탄 트레일 잔상 페이드: 이번 프레임에 안 보인(소멸한) 탄의 트레일만 위치 없이 진행해 소진 시 회수.
@@ -1374,6 +1525,10 @@ export class EntityRenderer {
         // 남아(위치 미러가 끊긴다) 사라진 실체의 그림자만 바닥에 남는다. 형제라 부모 destroy
         // 로는 절대 안 걷힌다 — 여기가 누수 자리다.
         this.removeGroundShadow(id);
+        // 장식자도 같은 규율로 즉시 회수한다 — **디졸브 경로 포함**. 디졸브는 스프라이트를
+        // spriteLayer 에 잔류시키지만 장식자의 형제 컨테이너는 위치 미러가 끊긴 채 화면에
+        // 얼어붙는다(접지 그림자가 실제로 낸 결함). 이 한 줄이 킬·디졸브 두 경로를 함께 덮는다.
+        this.disposeAdorners(tracked, adornCtx);
         // 킬블로우 데미지 숫자(AC-4.1 엣지 ①) — 보스·엘리트가 사라지면 마지막 잔량(tracked.hp)을 치사
         // 피해로 띄운다(curr 스냅샷이 없어 델타를 못 얻는 경우 보정). 토글 on 한정. sprite.destroy 전이라
         // 위치가 유효하다.
@@ -1656,14 +1811,35 @@ export class EntityRenderer {
    * 스프라이트의 보간 위치로 옮긴다(별개 레이어라 좌표 동기 필요). 반경을 sim radius 가 아니라
    * 실제 표시 크기에서 파생하는 이유는 {@link GLOW_HALO_RADIUS_SCALE} 주석 참조.
    */
-  private syncGlowHalo(id: number, sprite: Sprite): void {
+  private syncGlowHalo(
+    id: number,
+    sprite: Sprite,
+    aniso: HaloAniso | null = null,
+    kind = 'player',
+  ): void {
     let halo = this.glowHalos.get(id);
     if (halo === undefined) {
-      halo = buildGlowHalo((sprite.width / 2) * GLOW_HALO_RADIUS_SCALE);
+      // kind 별 색·알파. 이 인자를 넘기지 않던 동안 **보스가 아군 시안 헤일로를 두르고 있었고**
+      // (§2-2 위반) **젬이 화면 최고 명도**였다(위협보다 보상이 밝은 역전). 근거는 haloSpec 주석.
+      const spec = haloSpec(kind);
+      halo = buildGlowHalo(
+        (sprite.width / 2) * GLOW_HALO_RADIUS_SCALE,
+        spec.color,
+        spec.alphaScale,
+      );
       this.glowLayer.addChild(halo);
       this.glowHalos.set(id, halo);
     }
-    halo.position.set(sprite.x, sprite.y);
+    if (aniso === null) {
+      halo.position.set(sprite.x, sprite.y);
+      return;
+    }
+    // 플레이어 전용 이방성(레인 A ⑤). 기수 축으로 늘이고 횡으로 좁히고 중심을 전방으로 민다 —
+    // 셋이 합쳐져야 원이 추진 원뿔이 되고 그 형태 자체가 방향 신호가 된다. `aniso` 가 null 인
+    // 다른 발광체는 위에서 이미 돌아갔으므로 rotation/scale 이 생성 시 기본값(0·1)에 머문다.
+    halo.position.set(sprite.x + aniso.ox, sprite.y + aniso.oy);
+    halo.rotation = aniso.rotation;
+    halo.scale.set(aniso.scaleX, aniso.scaleY);
   }
 
   /** 발광체 헤일로 하나를 glowLayer 에서 떼고 destroy 한다(소멸 회수). 헤일로가 없으면 no-op. */
@@ -1750,7 +1926,63 @@ export class EntityRenderer {
     child.destroy();
   }
 
-  private drawOverlay(curr: WorldSnapshot): void {
+  /**
+   * 이번 프레임의 장식자 맥락을 만든다. 레이어는 **발광(아래)·이펙트(위)** 를 그대로 재사용한다 —
+   * 새 레이어를 추가하면 draw order 가 바뀌어 "거동 변화 0" 계약이 깨진다.
+   */
+  private adornerCtx(
+    gates: EffectGates,
+    tier: QualityTier,
+    dt: number,
+    alpha: number,
+  ): AdornerContext {
+    return {
+      belowLayer: this.glowLayer,
+      aboveLayer: this.effectLayer,
+      frameTick: this.frameTick,
+      dt,
+      gates,
+      tier,
+      theme: this.envTheme,
+      alpha,
+    };
+  }
+
+  /** 이번 프레임의 해저드 재질 맥락. `layer` 는 항상 호스트 자신의 view 다. */
+  private hazardCtx(gates: EffectGates, tier: QualityTier, dt: number): HazardHostContext {
+    return {
+      layer: this.hazardHost.view,
+      frameTick: this.frameTick,
+      dt,
+      gates,
+      tier,
+      theme: this.envTheme,
+    };
+  }
+
+  /**
+   * 장식자 하나의 묶음을 회수한다. 회수 뒤 {@link NO_ADORNERS} 로 되돌려 **두 번 불려도 no-op**
+   * 이 되게 한다(킬 루프 뒤 같은 프레임에 reset 이 오는 경로가 실제로 있다).
+   */
+  private disposeAdorners(tracked: TrackedSprite, ctx: AdornerContext): void {
+    if (tracked.adorners.length === 0) return;
+    for (const ad of tracked.adorners) ad.dispose(ctx);
+    tracked.adorners = NO_ADORNERS;
+  }
+
+  /**
+   * 살아있는 장식자·해저드 재질을 전부 회수한다(reset·destroy 공통). 두 경로가 각각 맥락을
+   * 조립하면 한쪽만 고쳐지는 사고가 나므로 여기 한 곳에 모은다.
+   */
+  private disposeAllAdorners(): void {
+    const tier = graphicsTierController.getActiveTier();
+    const gates = effectGates(tier, graphicsSettings.getSettings());
+    const ctx = this.adornerCtx(gates, tier, 0, 0);
+    for (const t of this.sprites.values()) this.disposeAdorners(t, ctx);
+    this.hazardHost.clear(this.hazardCtx(gates, tier, 0));
+  }
+
+  private drawOverlay(curr: WorldSnapshot, hazardCtx: HazardHostContext): void {
     const g = this.overlay;
     const lg = this.lavaOverlay;
     g.clear();
@@ -1804,18 +2036,9 @@ export class EntityRenderer {
     // 주기 온오프 해저드(L2 설비·L3 중력 앵커)는 이 예열↔활성 대비가 리듬을 읽게 한다.
     // **용암(HAZARD_LAVA)만 lavaOverlay 로 분리** — 시머가 용암류만 국소로 흔들고 예고선·비-용암
     // 해저드는 overlay 에 남겨 흔들리지 않게 한다(AC-3.2 국소 시머 계약).
-    // 장식 예산: 프레임당 상한을 넘긴 장판은 채움+테두리만 그린다(오염 셀 다수 성능 방어).
-    let decorBudget = MAX_DECORATED_HAZARDS;
-    for (const e of curr.entities) {
-      if (e.kind !== 'hazard') continue;
-      // 색 = 성질(아프다/방해만), 형태 = 상태(예열 점선 / 활성 실선+빗금). `permanent` 는 같은
-      // 코드를 쓰는 감속 지대와 피해 지형을 가르는 유일한 신호다(hazardVisual.ts 주석 참조).
-      const v = hazardVisual(e.enemyType, e.active, e.permanent === true);
-      const target = e.enemyType === HAZARD_LAVA ? lg : g;
-      const decor = decorBudget > 0;
-      if (decor && e.radius >= DECOR_MIN_RADIUS) decorBudget--;
-      drawHazardZone(target, e.x, e.y, e.radius, v, this.frameTick, decor);
-    }
+    // 장판 루프는 {@link HazardHost} 로 이관했다(해저드 레인 확장 지점). 그리기 순서·장식 예산·
+    // 용암 분리는 그대로다 — 이관은 거동 변화 0 이다.
+    this.hazardHost.draw(curr.entities, g, lg, hazardCtx);
     // 예고선(관통 레일포 텔레그래프): 조준각이 잠긴 예고 구간에만 나온다. 탄보다 먼저 선이
     // 보이므로 플레이어가 사계를 벗어날 시간을 얻는다(예고 중에는 피해가 없다 — facility.ts).
     for (const e of curr.entities) {
@@ -1858,6 +2081,9 @@ export class EntityRenderer {
    * `destroy()` 와 달리 레이어·오버레이는 살려 둔다 — 렌더러 인스턴스는 앱 수명 내내 유지된다.
    */
   reset(): void {
+    // 장식자·해저드 재질 전량 회수(누수 0) — 형제 컨테이너라 아래 sprite.destroy 로는 안 걷힌다.
+    // 스프라이트를 파괴하기 **전**에 부른다: 장식자가 dispose 에서 부모 스프라이트를 읽을 수 있다.
+    this.disposeAllAdorners();
     for (const t of this.sprites.values()) {
       // 형제 부착물(히트 플래시 오버레이·낙하산)을 먼저 회수한다 — 형제라 부모 destroy 로는 안
       // 딸려 온다(누수 0). reset 은 spriteLayer 를 살려 두므로 removeChild 가 필수, destroy 는 뒤에서
@@ -1903,6 +2129,10 @@ export class EntityRenderer {
     this.lavaOverlay.clear();
     this.fog.clear();
     this.lastPlayerAngle = 0;
+    // 플레이어 파생 상태(레인 A ④⑤)도 되돌린다 — 남기면 다음 런 첫 프레임에 이전 런의 기수로
+    // 헤일로가 늘어나고, 대시 에지가 이미 true 라 첫 대시의 화면 흔들림이 통째로 유실된다.
+    this.playerAniso = null;
+    this.playerWasDashing = false;
     // 조우 유형도 되돌린다 — 남기면 다음 런의 첫 프레임(main.ts 가 아직 새 값을 먹이기 전)에
     // 이전 런의 유형으로 조우 오브젝트가 그려질 수 있다. 스프라이트는 생성 시점에 텍스처가
     // 묶이므로 그 한 프레임의 오분류가 그 런 내내 고정된다.
@@ -1910,6 +2140,9 @@ export class EntityRenderer {
   }
 
   destroy(): void {
+    // 장식자·해저드 재질 전량 회수(누수 0). layer.destroy 는 형제 컨테이너를 걷지 않으며
+    // 필터도 파괴하지 않는다 — 명시 회수가 유일한 경로다.
+    this.disposeAllAdorners();
     for (const t of this.sprites.values()) {
       // 형제 부착물(히트 플래시 오버레이·낙하산)을 먼저 회수한다 — 형제라 부모 destroy 로는 안
       // 딸려 온다(누수 0). reset 은 spriteLayer 를 살려 두므로 removeChild 가 필수, destroy 는 뒤에서

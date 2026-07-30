@@ -35,6 +35,8 @@ declare module 'node:path' {
   export function join(...segments: string[]): string;
   export function resolve(...segments: string[]): string;
   export function dirname(path: string): string;
+  /** `src/render/` 기준 상대 경로 산출용(tests/renderWiring.test.ts 의 하위 디렉터리 재귀 스캔). */
+  export function relative(from: string, to: string): string;
 }
 
 declare module 'node:url' {
