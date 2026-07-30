@@ -20,8 +20,13 @@
  * hashEntity 무접촉. 골든 해시 불변은 determinism.test.ts·invasionHash.test.ts 가 별도로 못 박는다.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Texture } from 'pixi.js';
+import {
+  ALL_ON_PLAYER_VISUAL_FLAGS,
+  resetPlayerVisualFlags,
+  setPlayerVisualFlags,
+} from '../src/render/entity/playerVisualFlags.js';
 
 import { EntityRenderer } from '../src/render/entityRenderer.js';
 import type { PlaceholderTextures } from '../src/render/textures.js';
@@ -132,6 +137,13 @@ beforeEach(() => {
     damageNumbers: true,
   });
   lockTier('high');
+  // 플레이어 비주얼 항목 스위치도 전부 켠다. 이 파일이 검증하는 것은 **배선이 존재하는가**
+  // (뮤테이션으로 훅을 지우면 빨개지는가)이지 기본값이 무엇인가가 아니다 — 기본값은
+  // 사용자 판정을 담는 자리라 바뀔 수 있고, 바뀔 때마다 배선 검증이 사라지면 안 된다.
+  setPlayerVisualFlags(ALL_ON_PLAYER_VISUAL_FLAGS);
+});
+afterEach(() => {
+  resetPlayerVisualFlags();
 });
 
 // ===========================================================================

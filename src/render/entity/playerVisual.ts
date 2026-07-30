@@ -79,6 +79,7 @@ import type { EnvLightSpec } from '../env/theme.js';
 import { lightX, lightY } from '../env/theme.js';
 import type { EffectGates, QualityTier } from '../qualityTier.js';
 import { registerAdornerFactory, type AdornerContext, type EntityAdorner } from './adorner.js';
+import { playerVisualFlags } from './playerVisualFlags.js';
 
 // ---------------------------------------------------------------------------
 // 튜닝 상수 — 전부 placeholder(defer-balance-tuning). 픽셀 절대값은 **표시 반치수의 배율**로만
@@ -1467,30 +1468,44 @@ class PlayerBodyAdorner implements EntityAdorner {
     if (this.sinceHit < SHIELD_WINDOW_S) this.sinceHit += dt;
 
     const motionOn = !reducedMotion(ctx.gates);
+    const on = playerVisualFlags();
 
     // ── 1. 뱅킹/롤 (감쇠 스프링 = 2차 운동) ────────────────────────────────
+    // 롤 상태는 스위치가 꺼져도 계속 적분한다 — ⑩ 판면 음영이 `this.roll` 을 읽으므로, 여기서
+    // 멈추면 두 항목이 서로의 스위치에 묶인다(항목별 비교가 목적이라 결합을 만들면 안 된다).
     const target = motionOn ? bankTarget(this.motion.lateral) : 0;
     const st = springStep(this.roll, this.rollVel, target, ROLL_STIFFNESS, ROLL_DAMPING, dt);
     this.roll = st.value;
     this.rollVel = st.vel;
-    sprite.rotation = facing + this.roll * ROLL_ANGLE;
-    // 롤 축은 기체 **길이 방향**이라 눌리는 것은 로컬 y(횡폭)다. 기준 스케일에 곱한다(누적 금지).
-    sprite.scale.set(this.baseScaleX, this.baseScaleY * (1 - Math.abs(this.roll) * BANK_SQUASH));
+    if (on.banking) {
+      sprite.rotation = facing + this.roll * ROLL_ANGLE;
+      // 롤 축은 기체 **길이 방향**이라 눌리는 것은 로컬 y(횡폭)다. 기준 스케일에 곱한다(누적 금지).
+      sprite.scale.set(this.baseScaleX, this.baseScaleY * (1 - Math.abs(this.roll) * BANK_SQUASH));
+    } else {
+      // 끄면 기수 각도만 남는다(레인 이전 거동). 스케일도 매 프레임 기준값으로 되돌린다 —
+      // 켠 채 눌러 놓은 스케일이 남으면 토글 직후 기체가 납작한 채로 굳는다.
+      sprite.rotation = facing;
+      sprite.scale.set(this.baseScaleX, this.baseScaleY);
+    }
 
     // ── 6. 아이들 부유 + 4. 피격 임펄스 감쇠 ───────────────────────────────
     let ox = 0;
     let oy = 0;
     if (motionOn) {
       this.bobPhase += dt * BOB_RATE;
-      oy += Math.sin(this.bobPhase) * this.halfSpan * BOB_AMPLITUDE * idleness(this.motion.speed);
+      if (on.idleBob) {
+        oy += Math.sin(this.bobPhase) * this.halfSpan * BOB_AMPLITUDE * idleness(this.motion.speed);
+      }
       const kx = springStep(this.kickX, this.kickVX, 0, HIT_STIFFNESS, HIT_DAMPING, dt);
       const ky = springStep(this.kickY, this.kickVY, 0, HIT_STIFFNESS, HIT_DAMPING, dt);
       this.kickX = kx.value;
       this.kickVX = kx.vel;
       this.kickY = ky.value;
       this.kickVY = ky.vel;
-      ox += this.kickX;
-      oy += this.kickY;
+      if (on.hitKick) {
+        ox += this.kickX;
+        oy += this.kickY;
+      }
     } else {
       this.kickX = 0;
       this.kickY = 0;
@@ -1500,8 +1515,102 @@ class PlayerBodyAdorner implements EntityAdorner {
     sprite.position.set(sprite.x + ox, sprite.y + oy);
 
     // ── 0. 실루엣 감산 컨투어(8방향 dilate × multiply) ──────────────────────
-    // 티어·감소 토글과 무관하게 **항상** 있다. 발광 감소에서도 안 내린다 — 이건 빛이 아니라
-    // 그림자라 광과민 축이 아니고, 자기 위치 확보는 장식이 아니라 조작 가능성이다.
+    if (on.contour) this.syncContour(sprite, motionOn, ctx);
+    else if (this.contour !== null) this.destroyContour();
+
+    // ── 7. 손상 상태(본체 텍스처의 **감산 그을림** 오버레이) ────────────────
+    // ⚠️ 3차는 `blendMode:'add'` 였고 화면 델타가 **1.98**(7× 육안 구별 불가)이었다 — 가산
+    // 스프라이트는 텍스처 색이 곱으로 들어가 청록 기체에서 R 이 죽는다(§7 헤더가 정본). 곱연산은
+    // 그 인자가 대비를 **더 벌리는** 방향이라 같은 알파대에서 광도 하강 33.9 를 만든다.
+    // `sprite.tint` 로 밀지 않는 이유는 그대로다 — tint 는 실루엣 전체를 균일하게 어둡게 만들어
+    // 위장률을 해친다. 연기·흐림도 금지다(플레이어는 실루엣을 잃으면 조작 불능, §2-2).
+    const dmg = on.damageScorch ? damageIntensity(e.hp, e.maxHp) : 0;
+    if (dmg <= 0) {
+      if (this.damage !== null) this.destroyDamage();
+    } else {
+      let overlay = this.damage;
+      if (overlay === null) {
+        overlay = new Sprite(sprite.texture);
+        overlay.label = 'playerDamage';
+        overlay.anchor.set(0.5);
+        overlay.blendMode = 'multiply';
+        overlay.tint = DAMAGE_SCORCH_COLOR;
+        // aboveLayer 다 — 선체 **위**에서 곱해야 하고, belowLayer 는 (a) 본체에 가려지고
+        // (b) high 티어에서 블룸 필터가 곱연산을 삼킨다(⓪ 컨투어 헤더가 정본).
+        // 실루엣을 덮지만 같은 텍스처·같은 변환이라 실루엣 **모양은 한 픽셀도** 안 바뀐다.
+        ctx.aboveLayer.addChild(overlay);
+        this.damage = overlay;
+      }
+      if (overlay.texture !== sprite.texture) overlay.texture = sprite.texture;
+      overlay.position.set(sprite.x, sprite.y);
+      overlay.rotation = sprite.rotation;
+      overlay.scale.set(sprite.scale.x, sprite.scale.y);
+      // 맥동은 **위독 구간 + 운동 허용**일 때만. 그 밖에서는 상수 세기(정보는 남고 운동만 꺼진다).
+      const pulse =
+        motionOn && ctx.tier !== 'low' && isCriticalHp(e.hp, e.maxHp)
+          ? 0.5 + 0.5 * Math.sin(this.clock * DAMAGE_PULSE_RATE)
+          : 1;
+      overlay.alpha = damageAlpha(dmg, pulse, reducedGlow(ctx.gates));
+    }
+
+    // ── 10. 판면 방향광 + 스페큘러 스윕 ─────────────────────────────────────
+    if (on.surface) this.syncSurface(sprite, ctx, motionOn);
+    else if (this.surface !== null) this.destroySurface();
+
+    // ── 3. 림라이트 ─────────────────────────────────────────────────────────
+    // 테마가 없으면(=담당 배경이 없는 행성) 광원이 없는 것이므로 스스로 꺼진다(계약 §3 광원 일관성).
+    if (on.rim && ctx.theme !== null && !reducedGlow(ctx.gates)) {
+      let rim = this.rim;
+      if (rim === null) {
+        rim = new Sprite(sprite.texture);
+        rim.label = 'playerRim';
+        rim.anchor.set(0.5);
+        rim.blendMode = 'add';
+        rim.tint = RIM_COLOR;
+        rim.alpha = RIM_ALPHA;
+        // 아래 레이어 — 광원 쪽으로 밀린 가산 복제가 **실루엣 밖으로만** 삐져나와 초승달
+        // 하이라이트가 된다. 위에 두면 본체를 통째로 밝혀 실루엣이 흐려진다.
+        ctx.belowLayer.addChild(rim);
+        this.rim = rim;
+      }
+      if (rim.texture !== sprite.texture) rim.texture = sprite.texture;
+      const off = rimOffset(ctx.theme.light, this.halfSpan);
+      rim.position.set(sprite.x + off.dx, sprite.y + off.dy);
+      rim.rotation = sprite.rotation;
+      rim.scale.set(sprite.scale.x, sprite.scale.y);
+    } else if (this.rim !== null) {
+      this.destroyRim();
+    }
+
+    // ── 4. 무적 실드 셸 (깜빡임 금지) ───────────────────────────────────────
+    const shell = on.shield ? shieldShell(this.sinceHit) : null;
+    if (shell === null) {
+      if (this.shield !== null) this.destroyShield();
+    } else {
+      let shield = this.shield;
+      if (shield === null) {
+        shield = buildShieldShell();
+        ctx.aboveLayer.addChild(shield);
+        this.shield = shield;
+      }
+      const full = shieldGate(ctx.gates, ctx.tier) === 'full';
+      shield.position.set(sprite.x, sprite.y);
+      shield.scale.set(shell.radius * this.halfSpan);
+      // 자전은 "살아 있는 막"의 신호다. 모션 감소·low 티어에서는 정지시킨다(정보는 반지름이 진다).
+      shield.rotation = full ? this.clock * SHIELD_SPIN : 0;
+      // 발광 감소에서는 알파를 낮추되 0 으로 만들지 않는다 — 무적 여부는 전투 정보다.
+      shield.alpha = shell.alpha * (reducedGlow(ctx.gates) ? 0.55 : 1);
+    }
+  }
+
+  /**
+   * ── 0. 실루엣 감산 컨투어 ── 8방향 dilate × 곱연산. 상세 근거는 {@link CONTOUR_DIRECTIONS} 헤더.
+   *
+   * 티어·감소 토글과 무관하게 유지된다 — 이건 빛이 아니라 그림자라 광과민 축이 아니고, 자기
+   * 위치 확보는 장식이 아니라 조작 가능성이다. 끄는 것은 사용자 스위치(`playerVisualFlags`)뿐이고
+   * 그때는 호출부가 {@link destroyContour} 로 회수한다.
+   */
+  private syncContour(sprite: Sprite, motionOn: boolean, ctx: AdornerContext): void {
     let contour = this.contour;
     if (contour === null) {
       contour = new Container();
@@ -1538,89 +1647,6 @@ class PlayerBodyAdorner implements EntityAdorner {
       // 크기는 본체와 **같다** — 키우지 않는다. 띠는 전적으로 오프셋이 만든다.
       copy.scale.set(sprite.scale.x, sprite.scale.y);
       copy.alpha = CONTOUR_ALPHA * breath;
-    }
-
-    // ── 7. 손상 상태(본체 텍스처의 **감산 그을림** 오버레이) ────────────────
-    // ⚠️ 3차는 `blendMode:'add'` 였고 화면 델타가 **1.98**(7× 육안 구별 불가)이었다 — 가산
-    // 스프라이트는 텍스처 색이 곱으로 들어가 청록 기체에서 R 이 죽는다(§7 헤더가 정본). 곱연산은
-    // 그 인자가 대비를 **더 벌리는** 방향이라 같은 알파대에서 광도 하강 33.9 를 만든다.
-    // `sprite.tint` 로 밀지 않는 이유는 그대로다 — tint 는 실루엣 전체를 균일하게 어둡게 만들어
-    // 위장률을 해친다. 연기·흐림도 금지다(플레이어는 실루엣을 잃으면 조작 불능, §2-2).
-    const dmg = damageIntensity(e.hp, e.maxHp);
-    if (dmg <= 0) {
-      if (this.damage !== null) this.destroyDamage();
-    } else {
-      let overlay = this.damage;
-      if (overlay === null) {
-        overlay = new Sprite(sprite.texture);
-        overlay.label = 'playerDamage';
-        overlay.anchor.set(0.5);
-        overlay.blendMode = 'multiply';
-        overlay.tint = DAMAGE_SCORCH_COLOR;
-        // aboveLayer 다 — 선체 **위**에서 곱해야 하고, belowLayer 는 (a) 본체에 가려지고
-        // (b) high 티어에서 블룸 필터가 곱연산을 삼킨다(⓪ 컨투어 헤더가 정본).
-        // 실루엣을 덮지만 같은 텍스처·같은 변환이라 실루엣 **모양은 한 픽셀도** 안 바뀐다.
-        ctx.aboveLayer.addChild(overlay);
-        this.damage = overlay;
-      }
-      if (overlay.texture !== sprite.texture) overlay.texture = sprite.texture;
-      overlay.position.set(sprite.x, sprite.y);
-      overlay.rotation = sprite.rotation;
-      overlay.scale.set(sprite.scale.x, sprite.scale.y);
-      // 맥동은 **위독 구간 + 운동 허용**일 때만. 그 밖에서는 상수 세기(정보는 남고 운동만 꺼진다).
-      const pulse =
-        motionOn && ctx.tier !== 'low' && isCriticalHp(e.hp, e.maxHp)
-          ? 0.5 + 0.5 * Math.sin(this.clock * DAMAGE_PULSE_RATE)
-          : 1;
-      overlay.alpha = damageAlpha(dmg, pulse, reducedGlow(ctx.gates));
-    }
-
-    // ── 10. 판면 방향광 + 스페큘러 스윕 ─────────────────────────────────────
-    this.syncSurface(sprite, ctx, motionOn);
-
-    // ── 3. 림라이트 ─────────────────────────────────────────────────────────
-    // 테마가 없으면(=담당 배경이 없는 행성) 광원이 없는 것이므로 스스로 꺼진다(계약 §3 광원 일관성).
-    if (ctx.theme !== null && !reducedGlow(ctx.gates)) {
-      let rim = this.rim;
-      if (rim === null) {
-        rim = new Sprite(sprite.texture);
-        rim.label = 'playerRim';
-        rim.anchor.set(0.5);
-        rim.blendMode = 'add';
-        rim.tint = RIM_COLOR;
-        rim.alpha = RIM_ALPHA;
-        // 아래 레이어 — 광원 쪽으로 밀린 가산 복제가 **실루엣 밖으로만** 삐져나와 초승달
-        // 하이라이트가 된다. 위에 두면 본체를 통째로 밝혀 실루엣이 흐려진다.
-        ctx.belowLayer.addChild(rim);
-        this.rim = rim;
-      }
-      if (rim.texture !== sprite.texture) rim.texture = sprite.texture;
-      const off = rimOffset(ctx.theme.light, this.halfSpan);
-      rim.position.set(sprite.x + off.dx, sprite.y + off.dy);
-      rim.rotation = sprite.rotation;
-      rim.scale.set(sprite.scale.x, sprite.scale.y);
-    } else if (this.rim !== null) {
-      this.destroyRim();
-    }
-
-    // ── 4. 무적 실드 셸 (깜빡임 금지) ───────────────────────────────────────
-    const shell = shieldShell(this.sinceHit);
-    if (shell === null) {
-      if (this.shield !== null) this.destroyShield();
-    } else {
-      let shield = this.shield;
-      if (shield === null) {
-        shield = buildShieldShell();
-        ctx.aboveLayer.addChild(shield);
-        this.shield = shield;
-      }
-      const full = shieldGate(ctx.gates, ctx.tier) === 'full';
-      shield.position.set(sprite.x, sprite.y);
-      shield.scale.set(shell.radius * this.halfSpan);
-      // 자전은 "살아 있는 막"의 신호다. 모션 감소·low 티어에서는 정지시킨다(정보는 반지름이 진다).
-      shield.rotation = full ? this.clock * SHIELD_SPIN : 0;
-      // 발광 감소에서는 알파를 낮추되 0 으로 만들지 않는다 — 무적 여부는 전투 정보다.
-      shield.alpha = shell.alpha * (reducedGlow(ctx.gates) ? 0.55 : 1);
     }
   }
 
@@ -1909,7 +1935,7 @@ class PlayerThrustAdorner implements EntityAdorner {
    * 정지 아이들 코어만 남긴다**({@link flameGate} — 4차 MINOR "low 에서 기체가 다시 커서가 된다").
    */
   private syncFlame(sprite: Sprite, ctx: AdornerContext): void {
-    const gate = flameGate(ctx.gates, ctx.tier);
+    const gate = playerVisualFlags().flame ? flameGate(ctx.gates, ctx.tier) : 'off';
     if (gate === 'off') {
       if (this.flame !== null) this.destroyFlame();
       return;
@@ -1924,7 +1950,9 @@ class PlayerThrustAdorner implements EntityAdorner {
     // ── 대시 색 이동 ── 길이(아래 extent)만으로는 "불꽃이 길어졌다"로 읽힌다. 채도를 유지한 채
     // 휘도를 올리는 밝은 시안 심이 붙어야 "뜨거워졌다"가 된다(§요구 ②).
     // low 아이들 코어에서는 대시 심을 켜지 않는다(감광 등급의 일부다).
-    if (this.dashCore !== null) this.dashCore.alpha = gate === 'idle' ? 0 : this.heat;
+    if (this.dashCore !== null) {
+      this.dashCore.alpha = gate === 'idle' || !playerVisualFlags().dashCore ? 0 : this.heat;
+    }
     flame.alpha = gate === 'idle' ? FLAME_LOW_ALPHA : 1;
     const f = sprite.rotation;
     // 노즐은 기수 **반대편**. 여기가 본체 실루엣을 침범하지 않는 유일한 자리다.
@@ -1961,7 +1989,10 @@ class PlayerThrustAdorner implements EntityAdorner {
    */
   private syncDashRing(sprite: Sprite, ctx: AdornerContext): void {
     const state =
-      reducedGlow(ctx.gates) || reducedMotion(ctx.gates) || ctx.tier === 'low'
+      !playerVisualFlags().dashRing ||
+      reducedGlow(ctx.gates) ||
+      reducedMotion(ctx.gates) ||
+      ctx.tier === 'low'
         ? null
         : dashRing(this.ringAge);
     if (state === null) {
@@ -1982,7 +2013,7 @@ class PlayerThrustAdorner implements EntityAdorner {
 
   /** ── 5. 대시 잔상 ── 위치 이력 기반 감쇠 고스트. 티어 예산 안에서만. */
   private syncGhosts(sprite: Sprite, ctx: AdornerContext, dt: number): void {
-    const budget = ghostBudget(ctx.gates, ctx.tier);
+    const budget = playerVisualFlags().dashGhosts ? ghostBudget(ctx.gates, ctx.tier) : 0;
     if (budget === 0) {
       if (this.ghosts.length > 0) this.destroyGhosts();
       return;

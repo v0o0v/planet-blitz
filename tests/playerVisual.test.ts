@@ -18,8 +18,13 @@
  * 수**를 센다.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Container, Graphics, Sprite, Texture } from 'pixi.js';
+import {
+  ALL_ON_PLAYER_VISUAL_FLAGS,
+  resetPlayerVisualFlags,
+  setPlayerVisualFlags,
+} from '../src/render/entity/playerVisualFlags.js';
 
 import {
   playerAdorners,
@@ -110,6 +115,19 @@ const THEME_RIGHT = {
   planets: [0],
   light: { angle: 0, shadowBias: 0.5 },
 } as unknown as EnvTheme;
+
+/**
+ * 이 파일은 각 항목이 **켜져 있을 때의 구현**을 검증한다. 프로덕션 기본값은 사용자 요청으로
+ * "불꽃만"({@link file://../src/render/entity/playerVisualFlags.ts})이 되었으므로, 여기서는
+ * 전부 켠 상태를 명시적으로 세운다 — 기본값이 바뀌었다고 구현 검증이 사라지면 안 되고, 반대로
+ * 기본값을 이 파일이 몰래 되돌려서도 안 된다. 스위치 자체의 의미는 `playerVisualFlags.test.ts`.
+ */
+beforeEach(() => {
+  setPlayerVisualFlags(ALL_ON_PLAYER_VISUAL_FLAGS);
+});
+afterEach(() => {
+  resetPlayerVisualFlags();
+});
 
 interface Harness {
   ctx: AdornerContext;
