@@ -801,14 +801,17 @@ describe('액티브 스킬 84키(ALL_ACTIVES 파생)', () => {
    * 막기 위해, `activeSkillNameKey`/`activeSkillDescKey` 호출이 소스에 실제로 존재하는지
    * 배선까지 대조한다("전용 문구" describe 의 배선 대조 패턴을 그대로 따른다).
    *
-   * ⚠️ **skip 해제 조건**: D 레인이 연구소(Pixi 연구소 화면)의 액티브 패널을 실제로 배선하면
-   * (호출부가 `src/ui/pixi/*` 등에 생기면) 이 `it.skip` 을 `it` 으로 바꾸고 그린인지 확인한다.
-   * 지금은 호출부가 아직 없으므로(레지스트리·i18n 만 존재) 항상 실패할 단언을 skip 으로 둔다.
+   * **해제 완료**: D 레인이 Pixi 연구소 액티브 패널과 HUD 를 배선했다.
+   *
+   * ⚠️ 대조 대상은 **살아 있는 화면 파일 두 개**다. 디렉터리를 통째로 `readFileSync` 하면
+   * `EISDIR` 로 던지고, 무엇보다 `src/ui/researchLab.ts`(DOM 레거시)는 **죽은 파일**이라
+   * 거기에 호출이 있어도 화면에는 아무것도 안 뜬다 — 그런 대조는 사문화를 못 막는다.
+   * `src/main.ts` 가 마운트하는 것은 `src/ui/pixi/researchLab.ts` 다.
    */
-  it.skip('activeSkillNameKey/activeSkillDescKey 호출부가 소스에 최소 1곳 존재한다(화면 배선 후 해제)', () => {
+  it('activeSkillNameKey/activeSkillDescKey 호출부가 살아 있는 화면 소스에 존재한다', () => {
     const readSource = (rel: string): string =>
       new TextDecoder().decode(readFileSync(fileURLToPath(new URL(rel, import.meta.url))));
-    const src = readSource('../src'); // 배선 완료 후 실제 화면 파일 경로로 교체.
+    const src = readSource('../src/ui/pixi/researchLab.ts') + readSource('../src/ui/hud.ts');
     expect(src).toMatch(/activeSkillNameKey\(/);
     expect(src).toMatch(/activeSkillDescKey\(/);
   });

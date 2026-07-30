@@ -31,8 +31,21 @@ import {
 } from '../../../data/ships/index.js';
 import type { StatKey } from '../../items/types.js';
 import { computeSkillStats, shipCapstoneUnlocked, shipTreeBaseInvested } from '../../items/skills.js';
+import {
+  activeSlotViews,
+  equipActive,
+  unequipActive,
+  type ActiveSlotView,
+} from '../../items/activeSkills.js';
+import { ACTIVES_BY_SHIP } from '../../../data/ships/actives/index.js';
+import {
+  ACTIVE_SLOT_COUNT,
+  activeSkillDescKey,
+  activeSkillIconName,
+  activeSkillNameKey,
+} from '../../../data/ships/actives/types.js';
 import { t, type MessageKey } from '../../i18n/index.js';
-import { shipTreeName, AFFINITY_ACCENT } from './shipLabels.js';
+import { shipTreeName, AFFINITY_ACCENT, tShipKey } from './shipLabels.js';
 import {
   investSkill,
   respecSkills,
@@ -136,6 +149,122 @@ const POP_CLOSE = 40;
 const POP_BAR_W = 14;
 const POP_ROW_W = PBOX.w - POP_BAR_W;
 
+// --- 액티브 스킬 팝업(ADR-0041 · AC-16·17) ---
+/**
+ * 왜 **팝업**인가. 본 화면은 이미 꽉 차 있다 — 계열 패널 3장(620×740)이 y=112..852 를 덮고
+ * 파생 스탯 띠가 864..1036 을 덮는다. 게다가 패널 안 투자 목록의 가용 세로 450 은
+ * `tests/researchLabLayout.test.ts` 가 "스트라이커 20노드(448)가 스크롤 없이 들어간다"로
+ * **2px 여유까지 못 박아 둔 값**이라, 액티브 칸을 패널 안에 끼우려고 목록을 줄이면 그 단언이
+ * 즉시 깨진다. 그래서 전체 스킬 팝업과 같은 관용구(막 + 중앙 패널)를 재사용한다.
+ */
+const ACT_W = 1040;
+const ACT_H = 820;
+const ACT_X = Math.round((DESIGN_WIDTH - ACT_W) / 2);
+const ACT_Y = Math.round((DESIGN_HEIGHT - ACT_H) / 2);
+/** 팝업 안쪽 콘텐츠 상자(920×700). 제목·슬롯 바·계열 격자를 전부 이 상자 기준으로 잡는다. */
+const ABOX = panelContent(ACT_W, ACT_H);
+const ACT_SUB_Y = 100;
+const ACT_SLOT_Y = 130;
+const ACT_SLOT_H = 78;
+const ACT_SLOT_GAP = 14;
+const ACT_SLOT_W = Math.floor((ABOX.w - ACT_SLOT_GAP * (ACTIVE_SLOT_COUNT - 1)) / ACTIVE_SLOT_COUNT);
+/** 계열 머리글 줄 → 그 아래가 (저티어/고티어) 2행 격자. */
+const ACT_TREE_HEAD_Y = ACT_SLOT_Y + ACT_SLOT_H + 22;
+const ACT_GRID_TOP = ACT_TREE_HEAD_Y + 32;
+const ACT_COL_GAP = 14;
+const ACT_CELL_H = 232;
+const ACT_CELL_GAP_Y = 12;
+const ACT_CLOSE = 40;
+const ACT_ICON = 52;
+/** 셀 안쪽 좌표(아이콘 상자 → 이름 → 상태 → 메타 → 설명). 겹침은 단위 테스트가 부등식으로 잠근다. */
+const ACT_PAD = 12;
+const ACT_NAME_X = ACT_PAD + ACT_ICON + 10;
+const ACT_NAME_Y = 14;
+const ACT_STATUS_Y = 82;
+const ACT_META_Y = 106;
+const ACT_DESC_Y = 130;
+/** 티어 배지가 차지하는 우측 폭(이름이 그 밑으로 들어가지 않도록 미리 뺀다). */
+const ACT_TIER_W = 58;
+
+/** 타이틀바 좌측 진입 버튼 — 우측 리스펙 버튼과 좌우 대칭(1920 − 1500 − 300 = 120). */
+const ACT_BTN_W = 300;
+const ACT_BTN_H = 52;
+const ACT_BTN_X = 120;
+const ACT_BTN_Y = BANNER_Y + (BANNER_H - ACT_BTN_H) / 2;
+
+/**
+ * 액티브 격자의 셀 폭. 열 수 = **그 기체의 계열 수**다 — 3계열을 상수로 박으면 계열 수가 다른
+ * 기체가 들어오는 순간 셀이 상자 밖으로 삐져나온다(본 화면이 M8 에서 겪은 것과 같은 부류).
+ */
+export function activeCellWidth(cols: number): number {
+  if (cols <= 0) return 0;
+  return Math.floor((ABOX.w - ACT_COL_GAP * (cols - 1)) / cols);
+}
+
+/** 액티브 팝업의 레이아웃 수치(단위 테스트가 좌표 부등식으로 겹침을 잠근다). */
+export const ACTIVES_PANEL = {
+  w: ACT_W,
+  h: ACT_H,
+  boxX: ABOX.x,
+  boxY: ABOX.y,
+  boxW: ABOX.w,
+  boxBottom: ABOX.bottom,
+  subY: ACT_SUB_Y,
+  slotY: ACT_SLOT_Y,
+  slotH: ACT_SLOT_H,
+  slotW: ACT_SLOT_W,
+  slotGap: ACT_SLOT_GAP,
+  treeHeadY: ACT_TREE_HEAD_Y,
+  gridTop: ACT_GRID_TOP,
+  cellH: ACT_CELL_H,
+  cellGapY: ACT_CELL_GAP_Y,
+  colGap: ACT_COL_GAP,
+  pad: ACT_PAD,
+  icon: ACT_ICON,
+  nameX: ACT_NAME_X,
+  nameY: ACT_NAME_Y,
+  statusY: ACT_STATUS_Y,
+  metaY: ACT_META_Y,
+  descY: ACT_DESC_Y,
+  tierW: ACT_TIER_W,
+  /** 격자 행 수 = 티어 2종(저/고). */
+  rows: 2,
+} as const;
+
+/** 액티브 한 칸의 격자 배치(계열 = 열, 티어 = 행). 순수 — 렌더와 테스트가 같은 식을 쓴다. */
+export interface ActiveGridCell {
+  readonly view: ActiveSlotView;
+  readonly col: number;
+  readonly row: number;
+  /** 팝업 로컬 좌표(콘텐츠 상자 기준으로 이미 더해진 값). */
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+}
+
+/**
+ * 6칸을 (계열 × 티어) 격자에 앉힌다. 계열 인덱스가 열, 저/고 티어가 행이다 — "계열별로
+ * 액티브 2칸이 보인다"(AC-16)를 배치로 직접 표현한다. 범위 밖 `treeIndex` 는 버린다(손상 방어).
+ */
+export function activeGridCells(views: readonly ActiveSlotView[], cols: number): ActiveGridCell[] {
+  const w = activeCellWidth(cols);
+  const out: ActiveGridCell[] = [];
+  for (const view of views) {
+    const col = view.def.treeIndex;
+    if (col < 0 || col >= cols) continue;
+    const row = view.def.tier === 'lo' ? 0 : 1;
+    out.push({
+      view,
+      col,
+      row,
+      x: ABOX.x + col * (w + ACT_COL_GAP),
+      y: ACT_GRID_TOP + row * (ACT_CELL_H + ACT_CELL_GAP_Y),
+      w,
+    });
+  }
+  return out;
+}
+
 // --- 파생 스탯 하단 가로 띠 ---
 const STRIP_W = PANEL_W * PANEL_COLS + PANEL_GAP * (PANEL_COLS - 1);
 const STRIP_X = PANEL_X0;
@@ -165,6 +294,17 @@ function listRowBg(w: number, h: number, accent: number, active: boolean): Graph
   g.roundRect(0, 0, w, h, 8).fill({ color: 0x241d33, alpha: 0.92 });
   g.roundRect(0, 0, w, h, 8).stroke({ color: active ? accent : 0x5a4630, width: 2, alignment: 1 });
   return g;
+}
+
+/**
+ * 액티브 한 칸의 파생 수치 한 줄(쿨다운 초 · 위력 %). 둘 다 `skillInvest` 파생이라
+ * 투자를 늘리면 그 자리에서 값이 바뀐다(AC-13 이 화면에 보이는 유일한 자리다).
+ */
+function activeMetaLine(view: ActiveSlotView): string {
+  return t('lab.actives.meta', {
+    cd: (view.cooldownTicks / 60).toFixed(1),
+    p: view.powerCenti,
+  });
 }
 
 function panelX(col: number): number {
@@ -319,6 +459,8 @@ export class ResearchLabScreen {
   /** 열려 있는 전체 스킬 팝업의 **계열 인덱스**(null = 닫힘). */
   private popupTree: number | null = null;
   private popupScrollY = 0;
+  /** 액티브 스킬 팝업이 열려 있는가(AC-16·17). 전체 스킬 팝업과 상호 배타다. */
+  private activesOpen = false;
   /** 본 패널 투자 목록의 계열별 스크롤 위치(노드가 많은 타입에서만 쓰인다). */
   private readonly listScrollY: number[] = [0, 0, 0];
   /**
@@ -370,6 +512,7 @@ export class ResearchLabScreen {
     // 캔버스 화면은 다음 화면이 자동으로 덮어 주지 않으므로 팝업 상태를 직접 되돌린다.
     this.popupTree = null;
     this.popupScrollY = 0;
+    this.activesOpen = false;
     this.render();
     this.root.visible = true;
     this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
@@ -384,6 +527,7 @@ export class ResearchLabScreen {
     this.onClose = null;
     this.popupTree = null;
     this.popupScrollY = 0;
+    this.activesOpen = false;
     const hud = document.getElementById('pb-hud');
     if (hud !== null) hud.style.visibility = '';
   }
@@ -473,6 +617,7 @@ export class ResearchLabScreen {
   private openPopup(tree: number): void {
     this.popupTree = tree;
     this.popupScrollY = 0;
+    this.activesOpen = false;
     this.hint = '';
     this.tooltip.hide();
     this.render();
@@ -481,6 +626,62 @@ export class ResearchLabScreen {
   private closePopup(): void {
     this.popupTree = null;
     this.popupScrollY = 0;
+    this.render();
+  }
+
+  // --- 액티브 스킬 장착(AC-16·17) -------------------------------------------
+
+  /** 지금 기체의 6칸 표시 상태. 해금·쿨다운·위력은 전부 `skillInvest` 파생이다(AC-13). */
+  private activeViews(): ActiveSlotView[] {
+    const ship = activeShip(this.profile);
+    return activeSlotViews(ship.typeId, this.invest(), ship.activeSlots);
+  }
+
+  private openActives(): void {
+    this.activesOpen = true;
+    this.popupTree = null;
+    this.hint = '';
+    this.tooltip.hide();
+    this.render();
+  }
+
+  private closeActives(): void {
+    this.activesOpen = false;
+    this.render();
+  }
+
+  /**
+   * 빈 슬롯에 끼운다. 거부 사유별로 다른 안내를 낸다 — "장착이 안 된다"는 한 줄만 내면
+   * 잠긴 것인지 슬롯이 찬 것인지 유저가 구분할 수 없다.
+   *
+   * 저장은 **연구소가 이미 쓰는 경로**(`persist()` → `saveProfile`) 그대로다. 새 저장 경로를
+   * 만들면 스킬 투자와 장착이 서로 다른 시점에 기록돼 한쪽만 살아남는 상태가 생긴다.
+   */
+  private equip(id: string): void {
+    const ship = activeShip(this.profile);
+    const res = equipActive(ship.typeId, this.invest(), ship.activeSlots, id);
+    if (!res.ok) {
+      this.hint =
+        res.reason === 'locked'
+          ? t('lab.err.activeLocked')
+          : res.reason === 'slots-full'
+            ? t('lab.err.activeFull')
+            : '';
+      this.render();
+      return;
+    }
+    ship.activeSlots = res.slots;
+    this.hint = '';
+    this.persist();
+    this.render();
+  }
+
+  private unequip(slotIndex: number): void {
+    const ship = activeShip(this.profile);
+    if ((ship.activeSlots[slotIndex] ?? null) === null) return;
+    ship.activeSlots = unequipActive(ship.activeSlots, slotIndex);
+    this.hint = '';
+    this.persist();
     this.render();
   }
 
@@ -531,7 +732,9 @@ export class ResearchLabScreen {
     this.renderStatsStrip();
     this.renderActions();
     // 팝업을 먼저 얹고 힌트를 그 위에 — 팝업에서 투자에 실패했을 때 안내가 막에 가리지 않는다.
+    // 두 팝업은 상호 배타다(여는 쪽이 상대를 닫는다) — 겹쳐 뜨면 뒤쪽 막이 앞쪽 클릭을 먹는다.
     if (this.popupTree !== null) this.renderPopup(this.popupTree);
+    else if (this.activesOpen) this.renderActives();
     this.renderHint();
 
     this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
@@ -572,6 +775,21 @@ export class ResearchLabScreen {
     sub.anchor.set(0.5, 0);
     sub.position.set(DESIGN_WIDTH / 2, SUB_Y);
     this.root.addChild(sub);
+
+    // 액티브 스킬 진입 버튼 — 우측 리스펙과 좌우 대칭 자리. 라벨에 장착 수를 실어 팝업을 열지
+    // 않고도 "2칸 중 몇 칸을 쓰고 있는가"가 보이게 한다.
+    const equipped = ship.activeSlots.filter((s) => s !== null).length;
+    const actives = new PixiButton({
+      texture: this.ui['ui_btn_blue.png'],
+      fallbackColor: 0x2a4a7a,
+      width: ACT_BTN_W,
+      height: ACT_BTN_H,
+      fontSize: 18,
+      label: `${t('lab.actives.btn')}  ${equipped}/${ACTIVE_SLOT_COUNT}`,
+      onClick: () => this.openActives(),
+    });
+    actives.container.position.set(ACT_BTN_X, ACT_BTN_Y);
+    this.root.addChild(actives.container);
 
     const close = makeIconButton(
       56,
@@ -997,6 +1215,304 @@ export class ResearchLabScreen {
     row.cursor = canInvest ? 'pointer' : 'default';
     row.on('pointertap', () => this.investNode(index));
     return row;
+  }
+
+  // --- 액티브 스킬 팝업 -----------------------------------------------------
+
+  /**
+   * 액티브 장착 팝업(AC-16·17). 위는 장착 슬롯 2칸(누르면 해제), 아래는 **계열 × 티어** 격자다 —
+   * 한 열이 한 계열이고 위/아래가 저티어·고티어라 "어느 계열에 투자하면 무엇이 열리는가"가
+   * 배치만으로 읽힌다. 잠긴 칸은 필요 투자량({@link ActiveSlotView.threshold})을 그대로 보여 준다.
+   */
+  private renderActives(): void {
+    const def = this.def();
+    const views = this.activeViews();
+    const ship = activeShip(this.profile);
+
+    const veil = new Graphics();
+    veil.rect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT).fill({ color: 0x000000, alpha: 0.62 });
+    veil.eventMode = 'static';
+    veil.on('pointertap', () => this.closeActives());
+    this.root.addChild(veil);
+
+    const panel = new Container();
+    panel.position.set(ACT_X, ACT_Y);
+    this.root.addChild(panel);
+    // 밝은 화면 위 팝업은 불투명이어야 한다(전체 스킬 팝업과 같은 규율).
+    panel.addChild(
+      nineSlicePanel(ACT_W, ACT_H, {
+        texture: this.ui['ui_panel.png'],
+        border: PANEL_BORDER,
+        fillAlpha: 1,
+      }),
+    );
+    const block = new Graphics();
+    block.rect(0, 0, ACT_W, ACT_H).fill({ color: 0x000000, alpha: 0.001 });
+    block.eventMode = 'static';
+    panel.addChild(block);
+
+    const title = new Text({
+      resolution: 2,
+      text: t('lab.actives.title'),
+      style: { fontFamily: UI_FONT, fontSize: 26, fontWeight: '800', fill: COLOR.gold, dropShadow: TEXT_SHADOW },
+    });
+    title.anchor.set(0, 0);
+    title.position.set(ABOX.x, ABOX.y);
+    panel.addChild(title);
+
+    const close = makeIconButton(ACT_CLOSE, () => this.closeActives(), this.ui['ui_icon_close.png']);
+    close.position.set(ABOX.right - ACT_CLOSE, ABOX.y);
+    panel.addChild(close);
+
+    const equipped = ship.activeSlots.filter((s) => s !== null).length;
+    const sub = new Text({
+      resolution: 2,
+      // 슬롯 수는 `ACTIVE_SLOT_COUNT` 파생이다 — 2 를 문구에 박으면 슬롯이 늘 때 조용히 거짓말이 된다.
+      text: t('lab.actives.sub', { n: equipped, m: ACTIVE_SLOT_COUNT }),
+      style: { fontFamily: UI_FONT, fontSize: 15, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+    });
+    sub.anchor.set(0, 0);
+    sub.position.set(ABOX.x, ACT_SUB_Y);
+    panel.addChild(sub);
+
+    const unequipHint = new Text({
+      resolution: 2,
+      text: t('lab.actives.unequipHint'),
+      style: { fontFamily: UI_FONT, fontSize: 13, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+    });
+    unequipHint.anchor.set(1, 0);
+    unequipHint.position.set(ABOX.right, ACT_SUB_Y + 2);
+    panel.addChild(unequipHint);
+
+    for (let slot = 0; slot < ACTIVE_SLOT_COUNT; slot++) {
+      const card = this.makeActiveSlotCard(slot, views);
+      card.position.set(ABOX.x + slot * (ACT_SLOT_W + ACT_SLOT_GAP), ACT_SLOT_Y);
+      panel.addChild(card);
+    }
+
+    if (views.length === 0) {
+      // 저작 전 기체(빈 레지스트리)에서 격자만 텅 비면 "고장났다"로 읽힌다 — 이유를 적는다.
+      const none = new Text({
+        resolution: 2,
+        text: t('lab.actives.none'),
+        style: { fontFamily: UI_FONT, fontSize: 16, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+      });
+      none.anchor.set(0.5, 0.5);
+      none.position.set(ACT_W / 2, (ACT_GRID_TOP + ABOX.bottom) / 2);
+      panel.addChild(none);
+      return;
+    }
+
+    const cols = def.trees.length;
+    const cellW = activeCellWidth(cols);
+    def.trees.forEach((treeDef, i) => {
+      const head = new Text({
+        resolution: 2,
+        text: shipTreeName(treeDef),
+        style: {
+          fontFamily: UI_FONT,
+          fontSize: 18,
+          fontWeight: '800',
+          fill: AFFINITY_ACCENT[treeDef.affinity],
+          dropShadow: TEXT_SHADOW,
+        },
+      });
+      head.anchor.set(0.5, 0);
+      head.position.set(ABOX.x + i * (cellW + ACT_COL_GAP) + cellW / 2, ACT_TREE_HEAD_Y);
+      if (head.width > cellW) head.scale.x = cellW / head.width;
+      panel.addChild(head);
+    });
+
+    for (const cell of activeGridCells(views, cols)) {
+      const treeDef = def.trees[cell.col];
+      const accent = treeDef === undefined ? COLOR.gold : AFFINITY_ACCENT[treeDef.affinity];
+      const box = this.makeActiveCell(cell, accent);
+      box.position.set(cell.x, cell.y);
+      panel.addChild(box);
+    }
+  }
+
+  /** 장착 슬롯 카드 1칸. 채워져 있으면 누를 때 해제, 비어 있으면 무연산. */
+  private makeActiveSlotCard(slot: number, views: readonly ActiveSlotView[]): Container {
+    const view = views.find((v) => v.equippedSlot === slot);
+    const accent = view === undefined ? 0x5a4630 : COLOR.gold;
+
+    const card = new Container();
+    card.addChild(listRowBg(ACT_SLOT_W, ACT_SLOT_H, accent, view !== undefined));
+
+    const label = new Text({
+      resolution: 2,
+      text: t('lab.actives.slot', { n: slot + 1 }),
+      style: { fontFamily: UI_FONT, fontSize: 12, fontWeight: '700', fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+    });
+    label.anchor.set(0, 0);
+    label.position.set(ACT_PAD, 8);
+    card.addChild(label);
+
+    if (view === undefined) {
+      const empty = new Text({
+        resolution: 2,
+        text: t('lab.actives.slotEmpty'),
+        style: { fontFamily: UI_FONT, fontSize: 16, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+      });
+      empty.anchor.set(0.5, 0.5);
+      empty.position.set(ACT_SLOT_W / 2, ACT_SLOT_H / 2 + 6);
+      card.addChild(empty);
+      return card;
+    }
+
+    const iconBox = 40;
+    card.addChild(
+      makeSkillIcon(
+        this.ui[activeSkillIconName(shipTypeDef(view.def.shipTypeId).slug, this.indexInShip(view))],
+        ACT_PAD,
+        ACT_SLOT_H - iconBox - 8,
+        iconBox,
+        COLOR.gold,
+        true,
+      ),
+    );
+
+    const nameX = ACT_PAD + iconBox + 10;
+    const name = new Text({
+      resolution: 2,
+      text: tShipKey(activeSkillNameKey(view.def.id), view.def.id),
+      style: { fontFamily: UI_FONT, fontSize: 17, fontWeight: '800', fill: COLOR.gold, dropShadow: TEXT_SHADOW },
+    });
+    name.anchor.set(0, 0);
+    name.position.set(nameX, 26);
+    const room = ACT_SLOT_W - nameX - ACT_PAD;
+    if (name.width > room) name.scale.x = room / name.width;
+    card.addChild(name);
+
+    const meta = new Text({
+      resolution: 2,
+      text: activeMetaLine(view),
+      style: { fontFamily: UI_FONT, fontSize: 12, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+    });
+    meta.anchor.set(0, 0);
+    meta.position.set(nameX, 50);
+    if (meta.width > room) meta.scale.x = room / meta.width;
+    card.addChild(meta);
+
+    // 클릭 판정은 **카드 Container** 에 — 바탕 Graphics 에만 걸면 위에 얹힌 텍스트가 삼킨다.
+    card.eventMode = 'static';
+    card.cursor = 'pointer';
+    card.on('pointertap', () => this.unequip(slot));
+    return card;
+  }
+
+  /** 6칸 안에서의 순번(0..5) — 아이콘 파일명 규약 `active_<slug>_<n>.png` 의 n−1 축. */
+  private indexInShip(view: ActiveSlotView): number {
+    return (ACTIVES_BY_SHIP[view.def.shipTypeId] ?? []).findIndex((d) => d.id === view.def.id);
+  }
+
+  /** 격자 셀 1칸: 아이콘 + 이름 + 티어 배지 + 상태(잠김/장착) + 쿨다운·위력 + 설명. */
+  private makeActiveCell(cell: ActiveGridCell, accent: number): Container {
+    const { view, w } = cell;
+    const equipped = view.equippedSlot >= 0;
+    const dim = !view.unlocked;
+
+    const box = new Container();
+    box.addChild(listRowBg(w, ACT_CELL_H, equipped ? COLOR.gold : accent, equipped));
+
+    box.addChild(
+      makeSkillIcon(
+        this.ui[activeSkillIconName(shipTypeDef(view.def.shipTypeId).slug, this.indexInShip(view))],
+        ACT_PAD,
+        ACT_PAD,
+        ACT_ICON,
+        accent,
+        view.unlocked,
+      ),
+    );
+
+    const tier = new Text({
+      resolution: 2,
+      text: t(view.def.tier === 'lo' ? 'lab.actives.tier.lo' : 'lab.actives.tier.hi'),
+      style: { fontFamily: UI_FONT, fontSize: 12, fontWeight: '800', fill: accent, dropShadow: TEXT_SHADOW },
+    });
+    tier.anchor.set(1, 0);
+    tier.position.set(w - ACT_PAD, ACT_NAME_Y);
+    box.addChild(tier);
+
+    const name = new Text({
+      resolution: 2,
+      // ⚠️ 이 호출이 존재해야 84키가 사문화되지 않는다(AC-22 · tests/i18n.test.ts 참조 단언).
+      text: tShipKey(activeSkillNameKey(view.def.id), view.def.id),
+      style: {
+        fontFamily: UI_FONT,
+        fontSize: 16,
+        fontWeight: '800',
+        fill: equipped ? COLOR.gold : COLOR.cream,
+        wordWrap: true,
+        wordWrapWidth: w - ACT_NAME_X - ACT_PAD - ACT_TIER_W,
+        lineHeight: 20,
+        dropShadow: TEXT_SHADOW,
+      },
+    });
+    name.anchor.set(0, 0);
+    name.position.set(ACT_NAME_X, ACT_NAME_Y);
+    box.addChild(name);
+
+    // 잠긴 칸은 **필요 투자량**을 그대로 보여 준다(AC-16). 임계는 `threshold` 파생이라
+    // 해츨링 고티어의 44 가 자동으로 따라온다 — 문구에 40 을 박으면 그 기체에서만 거짓말이 된다.
+    const status = new Text({
+      resolution: 2,
+      text: view.unlocked
+        ? equipped
+          ? t('lab.actives.ready')
+          : ''
+        : t('lab.actives.locked', { n: view.threshold }),
+      style: {
+        fontFamily: UI_FONT,
+        fontSize: 14,
+        fontWeight: '800',
+        fill: view.unlocked ? COLOR.gold : 0xff9a7a,
+        dropShadow: TEXT_SHADOW,
+      },
+    });
+    status.anchor.set(0, 0);
+    status.position.set(ACT_PAD, ACT_STATUS_Y);
+    box.addChild(status);
+
+    const meta = new Text({
+      resolution: 2,
+      text: activeMetaLine(view),
+      style: { fontFamily: UI_FONT, fontSize: 13, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+    });
+    meta.anchor.set(0, 0);
+    meta.position.set(ACT_PAD, ACT_META_Y);
+    if (meta.width > w - ACT_PAD * 2) meta.scale.x = (w - ACT_PAD * 2) / meta.width;
+    box.addChild(meta);
+
+    const desc = new Text({
+      resolution: 2,
+      text: tShipKey(activeSkillDescKey(view.def.id), ''),
+      style: {
+        fontFamily: UI_FONT,
+        fontSize: 12,
+        fill: COLOR.cream,
+        wordWrap: true,
+        wordWrapWidth: w - ACT_PAD * 2,
+        lineHeight: 16,
+        dropShadow: TEXT_SHADOW,
+      },
+    });
+    desc.anchor.set(0, 0);
+    desc.position.set(ACT_PAD, ACT_DESC_Y);
+    box.addChild(desc);
+
+    if (dim) box.alpha = 0.55;
+
+    // 클릭 판정은 셀 Container 에. 잠긴 칸도 클릭을 살려 이유를 안내한다(팝업 행과 같은 규칙).
+    box.eventMode = 'static';
+    box.cursor = view.unlocked && !equipped ? 'pointer' : 'default';
+    box.on('pointertap', () => {
+      if (equipped) this.unequip(view.equippedSlot);
+      else this.equip(view.def.id);
+    });
+    return box;
   }
 
   // --- 파생 스탯 하단 띠 ----------------------------------------------------
