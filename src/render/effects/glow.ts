@@ -82,23 +82,68 @@ const TIGHT_BLOOM: BloomFilterOptions = {
  * @param color  헤일로 색(0xRRGGBB). 미지정 시 {@link DEFAULT_HALO_COLOR}(시안). 발광체 톤에 맞춰 덮는다.
  * @returns add 블렌드 `Container`(자식 1 = 동심원 Graphics). 폐기 시 `container.destroy({ children: true })`.
  */
-export function buildGlowHalo(radius: number, color: number = DEFAULT_HALO_COLOR): Container {
+export function buildGlowHalo(
+  radius: number,
+  color: number = DEFAULT_HALO_COLOR,
+  alphaScale = 1,
+): Container {
   const halo = new Container();
   halo.blendMode = 'add';
 
   // 0 이하 방어: 최소 반경. (음수/0 이면 도형이 안 그려져 children 은 있으나 bounds 가 0 이 된다.)
   const maxR = radius > 0 ? radius : 0.001;
+  const a = RING_ALPHA * (alphaScale > 0 ? alphaScale : 0);
 
   const g = new Graphics();
   // 외곽(t=1)부터 중심(t=1/RING_COUNT)으로 큰 링을 먼저 깔고 작은 링을 위에 겹친다.
   // add 블렌드라 겹칠수록 밝아져 중심이 핫하고 가장자리로 부드럽게 falloff 한다(텍스처 불필요).
   for (let i = RING_COUNT; i >= 1; i--) {
     const t = i / RING_COUNT; // 1(외곽) .. 1/RING_COUNT(중심)
-    g.circle(0, 0, maxR * t).fill({ color, alpha: RING_ALPHA });
+    g.circle(0, 0, maxR * t).fill({ color, alpha: a });
   }
   halo.addChild(g);
 
   return halo;
+}
+
+/** 발광체 kind 별 헤일로 서술(색·알파 배율). 순수 데이터 — 그리기는 {@link buildGlowHalo} 가 한다. */
+export interface HaloSpec {
+  readonly color: number;
+  /** {@link RING_ALPHA} 에 곱하는 배율. 1 = 종전. */
+  readonly alphaScale: number;
+}
+
+/** 적대 발광체(보스) 헤일로 — 난색. **시안을 쓰지 않는다.** */
+export const HALO_COLOR_HOSTILE = 0xff5a3c;
+/** 보상 발광체(젬·전리품) 헤일로 — 금색. 아군 시안과도, 적 난색과도 구분된다. */
+export const HALO_COLOR_REWARD = 0xffc24a;
+
+/**
+ * kind → 헤일로 서술. **두 결함을 동시에 고친다**(둘 다 비평가 3차가 화면에서 잡았다).
+ *
+ * ① **보스 헤일로가 시안이었다.** 모든 발광체가 {@link DEFAULT_HALO_COLOR} 를 써서, 계약 §2-2 가
+ *    "시안은 아군 전용"으로 못박은 색을 **보스가 두르고 있었다.** 이 파일 헤더 주석이 이미
+ *    "발광체별로 색을 달리하려면 color 인자로 덮는다(젬=시안, 보스=웜 등)"고 적어 두었는데
+ *    **호출부가 그 인자를 한 번도 넘기지 않았다** — 의도만 문서에 있고 배선이 없던 자리다.
+ *
+ * ② **젬이 화면 최고 명도라 적보다 눈에 들었다**(위협보다 보상이 밝은 우선순위 역전). 기준선
+ *    문서가 지적한 결함이고 3차까지 살아 있었다. 보상 헤일로 알파를 절반으로 내려 위협 쪽에
+ *    시선 우선권을 돌려준다 — 젬은 자기 스프라이트로도 충분히 보인다.
+ *
+ * 미등록 kind 는 기본값(시안·1.0)이다. `isGlowEmitter` allowlist 밖은 애초에 헤일로가 없다.
+ */
+export function haloSpec(kind: string): HaloSpec {
+  switch (kind) {
+    case 'boss':
+    case 'defenseBoss':
+      return { color: HALO_COLOR_HOSTILE, alphaScale: 1 };
+    case 'gem':
+      return { color: HALO_COLOR_REWARD, alphaScale: 0.5 };
+    case 'loot':
+      return { color: HALO_COLOR_REWARD, alphaScale: 0.6 };
+    default:
+      return { color: DEFAULT_HALO_COLOR, alphaScale: 1 };
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -174,8 +174,9 @@ describe('B-1 · 세션 중 기체 교체가 인게임 스프라이트에 반영
     renderer.reset();
     expect(sprites.size).toBe(0);
     expect(renderer.layer.destroyed).toBe(false);
-    // lavaOverlay(시머) · overlay · shadow(접지 그림자) · glow · sprite · label(이름표) · effect · fog 레이어
-    expect(renderer.layer.children.length).toBe(8);
+    // lavaOverlay(시머) · hazardHost.view(해저드 재질 심) · overlay · shadow(접지 그림자) · glow · sprite ·
+    // label(이름표) · effect · fog 레이어
+    expect(renderer.layer.children.length).toBe(9);
   });
 });
 

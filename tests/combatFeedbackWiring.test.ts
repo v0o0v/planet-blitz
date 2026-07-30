@@ -140,18 +140,16 @@ describe('AC-6.3 · 파편 폭발 배선 (사망 = ShardBurst)', () => {
     const gone = world([]);
 
     // 프레임 1: 적을 세워 스프라이트를 만든다(아직 킬 없음).
+    // **자식 수가 아니라 전용 관측창(effectCount)으로 센다.** effectLayer 에는 장식자
+    // (src/render/entity/)·탄 트레일·머즐 같은 다른 거주자도 살아, 자식 수로 재면 폭발 배선과
+    // 무관한 변경이 이 단언을 깬다. 물으려는 것은 "킬이 폭발을 방출했는가"다.
     renderer.render(alive, alive, 1);
-    const before = priv(renderer).effectLayer.children.length;
+    const before = renderer.effectCount;
     expect(before).toBe(0);
-    expect(renderer.effectCount).toBe(0);
 
     // 프레임 2: 적이 사라짐 = 킬 → 정규 소멸 감지 경로가 ShardBurst 를 방출해야 한다.
     renderer.render(gone, gone, 1);
-    const after = priv(renderer).effectLayer.children.length;
-    expect(after).toBeGreaterThan(before); // 배선 없으면 여기서 빨개진다
-    // effectCount(= 살아 있는 사망 폭발)는 effectLayer 자식 수와 일치한다(burst 1개=container 1개).
-    expect(renderer.effectCount).toBe(after);
-    expect(renderer.effectCount).toBeGreaterThan(0);
+    expect(renderer.effectCount).toBeGreaterThan(before); // 배선 없으면 여기서 빨개진다
   });
 });
 
@@ -236,7 +234,8 @@ describe('AC-6.3 · 화면 흔들림 배선 (보스/엘리트 처치 → 트라�
     // 프레임 1: 보스 생존 — 트리거 없음. 트라우마 0, 카메라는 순수 팬(흔들림 없음).
     renderer.render(alive, alive, 1);
     expect(renderer.shakeTrauma).toBe(0);
-    expect(priv(renderer).effectLayer.children.length).toBe(0);
+    // 자식 수 대신 전용 관측창 — effectLayer 는 장식자·트레일과 공유된다(위 주석 참조).
+    expect(renderer.effectCount).toBe(0);
 
     // 프레임 2: 보스가 사라짐 = 처치 → 강 트라우마 트리거.
     renderer.render(gone, gone, 1);

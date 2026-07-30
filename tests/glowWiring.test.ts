@@ -162,7 +162,11 @@ describe('발광체 헤일로 배선(glowLayer)', () => {
     const w = world([entity('boss', { id: 1 }), entity('gem', { id: 2 })]);
     r.render(w, w, 0);
     // 헤일로는 glowLayer 자식이다(스프라이트는 spriteLayer, 블룸은 filters). 발광체 2 → 헤일로 2.
-    expect(glowLayer(r).children.length).toBe(2);
+    //
+    // **자식 수가 아니라 전용 관측창으로 센다.** glowLayer 에는 장식자(src/render/entity/)도
+    // 살 수 있어, 자식 수로 재면 헤일로와 무관한 변경이 이 단언을 깬다. 이 테스트가 물으려는
+    // 것은 "발광체 수만큼 헤일로가 붙었는가"이지 "레이어 자식이 몇인가"가 아니다.
+    expect(r.glowHaloCount).toBe(2);
     r.destroy();
   });
 
@@ -174,7 +178,7 @@ describe('발광체 헤일로 배선(glowLayer)', () => {
       entity('enemyBullet', { id: 2, enemyType: -1 }),
     ]);
     r.render(w, w, 0);
-    expect(glowLayer(r).children.length).toBe(0);
+    expect(r.glowHaloCount).toBe(0);
     r.destroy();
   });
 
@@ -183,7 +187,7 @@ describe('발광체 헤일로 배선(glowLayer)', () => {
     lockTier('high');
     const w = world([entity('enemy', { id: 1 }), entity('wall', { id: 2, aabbH: 20 })]);
     r.render(w, w, 0);
-    expect(glowLayer(r).children.length).toBe(0);
+    expect(r.glowHaloCount).toBe(0);
     r.destroy();
   });
 
@@ -193,11 +197,11 @@ describe('발광체 헤일로 배선(glowLayer)', () => {
     const gem = entity('gem', { id: 2 });
     const w1 = world([entity('boss', { id: 1 }), gem]);
     r.render(w1, w1, 0);
-    expect(glowLayer(r).children.length).toBe(2);
+    expect(r.glowHaloCount).toBe(2);
     // boss 소멸 → gem 만 남는다. 킬 루프가 boss 헤일로를 회수한다.
     const w2 = world([gem]);
     r.render(w2, w2, 0);
-    expect(glowLayer(r).children.length).toBe(1);
+    expect(r.glowHaloCount).toBe(1);
     r.destroy();
   });
 
@@ -299,8 +303,14 @@ describe('정리 — 누수 0', () => {
     lockTier('high');
     const w = world([entity('boss', { id: 1 }), entity('gem', { id: 2 })]);
     r.render(w, w, 0);
-    expect(glowLayer(r).children.length).toBe(2);
+    // 붙기 전: 헤일로만 센다(자식 수로 재면 장식자 등 다른 거주자와 결합한다 — 위 주석 참조).
+    expect(r.glowHaloCount).toBe(2);
     r.reset();
+    expect(r.glowHaloCount).toBe(0);
+    // 비운 뒤에는 **자식 수 0** 을 그대로 요구한다. 여기서는 절대값이 옳다 — 이 단언이 재는 것은
+    // "헤일로가 몇 개인가"가 아니라 "reset 이 이 레이어의 거주자를 하나도 안 남기는가"이고,
+    // 장식자·오라 같은 새 거주자까지 포함해서 참이어야 하는 누수 계약이다. 오히려 레인이
+    // 늘수록 이 단언은 강해진다.
     expect(glowLayer(r).children.length).toBe(0);
     expect(glowFilterCount(r)).toBe(0);
     // glowLayer 는 렌더러 layer 의 자식으로 살아 있어야 한다(앱 수명 내내 재사용).
@@ -314,8 +324,8 @@ describe('정리 — 누수 0', () => {
     const w = world([entity('gem', { id: 1 })]);
     r.render(w, w, 0);
     // 헤일로는 glowLayer 자식이지 layer 자식이 아니다 — 기존 레이어 스택 계약 회귀 가드.
-    // 8 = lavaOverlay·overlay·shadowLayer·glowLayer·spriteLayer·labelLayer·effectLayer·fog.
-    expect(r.layer.children.length).toBe(8);
+    // 9 = lavaOverlay·hazardHost.view·overlay·shadowLayer·glowLayer·spriteLayer·labelLayer·effectLayer·fog.
+    expect(r.layer.children.length).toBe(9);
     r.destroy();
   });
 });

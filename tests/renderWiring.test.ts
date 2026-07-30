@@ -26,7 +26,7 @@
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve, join } from 'node:path';
+import { dirname, relative, resolve, join } from 'node:path';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(ROOT, 'src');
@@ -43,37 +43,86 @@ function collectSources(dir: string, out: string[] = []): string[] {
 }
 
 /**
- * `import ... from '<...>/<base>.js'` 를 찾는다. 형제 import(`./foo.js`)와 외부
- * import(`../render/foo.js`) 를 모두 잡되, 이름이 겹치는 다른 디렉터리의 동명 모듈까지
- * 세지 않도록 경로 끝만 본다.
+ * 한 소스가 import 하는 **파일들의 절대 경로**(.ts 로 되돌린 것).
+ *
+ * 이름 매칭(정규식 접미사 비교)이 아니라 **경로 해석**이다 — 하위 디렉터리가 생기면 같은 모듈을
+ * `./entity/adorner.js` · `../entity/adorner.js` · `../../render/entity/adorner.js` 처럼 서로 다른
+ * 형태로 부르게 되고, 접미사 비교로는 그 변형을 다 못 잡거나 동명 모듈을 잘못 잡는다.
+ * 해석해서 파일 경로로 비교하면 두 문제가 동시에 사라진다.
+ *
+ * ⚠️ **두 가지 형태를 모두 잡는다.** `import x from '...'` 뿐 아니라 값을 받지 않는
+ * **부수효과 import**(`import '...';`)도 배선이다 — 오히려 이 가드가 지키려는 결함에서는
+ * 그쪽이 더 중요하다. 비주얼 레인 모듈들은 최상위 `registerAdornerFactory` /
+ * `registerHazardMaterialFactory` 호출로 스스로 등록하므로, 그것들을 붙이는 허브
+ * (`entity/index.ts`)는 값을 하나도 import 하지 않는다.
+ *
+ * `from` 형태만 보던 시절 이 가드는 **허브 자신을 고아로 신고했다** — 허브가 프로덕션에서
+ * 정확히 한 번 import 되고 있는데도. 배선을 검사한다면서 배선의 한 형태를 못 보고 있었던 것이다.
  */
-function importsModule(source: string, base: string): boolean {
-  const re = new RegExp(`from\\s+'(?:\\.\\.?/)+(?:render/)?${base}\\.js'`);
-  return re.test(source);
+function importedFiles(source: string, dir: string): Set<string> {
+  const out = new Set<string>();
+  // ① `from '<상대경로>'`  ② 부수효과 `import '<상대경로>'`(from 없음)
+  const re = /(?:from|^\s*import)\s+'(\.[^']*)'/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source)) !== null) {
+    const spec = m[1];
+    if (spec === undefined || !spec.endsWith('.js')) continue;
+    out.add(resolve(dir, spec.replace(/\.js$/, '.ts')));
+  }
+  return out;
 }
 
+/**
+ * 배선 면제 목록(`src/render/` 기준 상대 경로). **여기 넣는 것은 예외를 만드는 일이므로 사유를
+ * 반드시 적는다.**
+ *
+ * - `shaders/progress` — AC-3.5 순수함수 **참조 구현**이다. 배선된 `effects/shaderEffects.ts` 는
+ *   레인 병렬 레이스 회피로 자체 진행 로직을 인라인하고 있고, 특히 디졸브는 HOLD 구간 유무로
+ *   **의미가 다르다**(그 파일 헤더가 정본). 즉 "붙이면 되는 고아"가 아니라 붙이면 거동 회귀가
+ *   드는 모듈이라, 통합 전까지 의도적으로 비배선 상태다.
+ *
+ * 이 목록은 하위 디렉터리 재귀 스캔을 켜면서 드러났다 — 최상위만 훑던 시절엔 보이지 않았다.
+ */
+const WIRING_EXEMPT: ReadonlySet<string> = new Set(['shaders/progress']);
+
 describe('렌더 모듈 배선', () => {
-  const renderModules = readdirSync(RENDER)
-    .filter((f) => f.endsWith('.ts') && !f.endsWith('.d.ts'))
-    .map((f) => f.replace(/\.ts$/, ''));
+  // ⚠️ **재귀**다. 최상위 .ts 만 훑으면 `src/render/entity/` · `src/render/env/` 처럼 하위
+  // 디렉터리에 사는 모듈이 통째로 가드 밖에 남아, 이 테스트가 막으려던 결함("만들었는데
+  // 아무도 호출 안 함")이 새 디렉터리에서 그대로 재발한다.
+  const renderModules = collectSources(RENDER)
+    .filter((p) => !p.endsWith('.d.ts'))
+    .map((p) => ({ file: p, base: relative(RENDER, p).replace(/\\/g, '/').replace(/\.ts$/, '') }));
 
   const sources = collectSources(SRC).map((p) => ({ path: p, text: readFileSync(p, 'utf8') }));
+  /** 프로덕션 그래프가 실제로 부르는 파일 전체(자기 자신 제외는 아래에서 판정). */
+  const importsBy = new Map(sources.map((s) => [s.path, importedFiles(s.text, dirname(s.path))]));
 
   it('src/render/ 에 검사 대상 모듈이 실제로 있다(스캔이 조용히 비지 않는다)', () => {
     expect(renderModules.length).toBeGreaterThan(5);
   });
 
+  it('하위 디렉터리 모듈도 스캔한다(가드가 최상위에서 멈추지 않는다)', () => {
+    expect(renderModules.some((m) => m.base.includes('/'))).toBe(true);
+  });
+
   it('모든 렌더 모듈을 프로덕션 코드가 import 한다(테스트만 쓰는 모듈은 실패)', () => {
-    const orphans = renderModules.filter((base) => {
-      const self = join(RENDER, `${base}.ts`);
-      return !sources.some((s) => s.path !== self && importsModule(s.text, base));
-    });
+    const orphans = renderModules
+      .filter((m) => !WIRING_EXEMPT.has(m.base))
+      .filter(
+        (m) => !sources.some((s) => s.path !== m.file && importsBy.get(s.path)?.has(m.file)),
+      )
+      .map((m) => m.base);
     expect(orphans).toEqual([]);
+  });
+
+  it('면제 목록이 썩지 않는다(존재하지 않는 모듈을 면제하고 있으면 실패)', () => {
+    const known = new Set(renderModules.map((m) => m.base));
+    expect([...WIRING_EXEMPT].filter((b) => !known.has(b))).toEqual([]);
   });
 
   it('침공 배경은 main.ts 가 직접 붙인다(이 결함의 원점)', () => {
     const main = sources.find((s) => s.path === join(SRC, 'main.ts'));
     expect(main).toBeDefined();
-    expect(importsModule(main!.text, 'invasionBackdrop')).toBe(true);
+    expect(importsBy.get(main!.path)?.has(join(RENDER, 'invasionBackdrop.ts'))).toBe(true);
   });
 });
