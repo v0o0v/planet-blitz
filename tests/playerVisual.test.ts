@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { Container, Sprite, Texture } from 'pixi.js';
+import { Container, Graphics, Sprite, Texture } from 'pixi.js';
 
 import {
   playerAdorners,
@@ -1323,12 +1323,29 @@ describe('판면 방향광 + 스페큘러 스윕 — 선체 자체가 빛에 반
     run(h, playerAdorners(), 3, { sprite: s, facing: 0.4 });
     const surf = labeled(h.above, 'playerSurface')[0];
     expect(surf).toBeDefined();
-    expect(surf!.mask).not.toBeNull();
-    expect(surf!.mask).toBeDefined();
-    // 마스크는 본체와 같은 텍스처·같은 스케일이어야 실루엣과 겹친다.
-    const mask = surf!.mask as unknown as Sprite;
-    expect(mask.texture).toBe(s.texture);
-    expect(mask.scale.x).toBeCloseTo(s.scale.x, 9);
+
+    // ⚠️ **컨테이너 `Sprite` 마스크가 아니어야 한다.** Pixi v8 에서 `Sprite` 마스크는 알파마스크
+    // 필터라 오프스크린 렌더 타깃이 생기고, 그 안에서 `multiply`/`add` 가 씬이 아니라 빈 타깃에
+    // 블렌딩된다 — 실측으로 곱연산의 78% · 가산의 92% 가 죽었다(비평가 최종 3차). 그 상태에서는
+    // 어떤 알파 값으로도 게이트를 못 넘었다(전 스트립 α=1 강제에서도 mean 20.9 / 게이트 15).
+    expect(surf!.mask, '컨테이너 Sprite 마스크는 렌더 타깃을 만든다').toBeFalsy();
+
+    const strips = surf!.children.filter(
+      (c) => c.label === 'playerSurfaceShade' || c.label === 'playerSurfaceSpec',
+    );
+    expect(strips.length).toBe(SURFACE_STRIP_COUNT * 2);
+    for (const strip of strips) {
+      const kids = (strip as unknown as { children: unknown[] }).children;
+      const tex = kids[0] as Sprite;
+      const band = kids[1] as { mask?: unknown };
+      // 실루엣은 **본체 텍스처**가 준다(컨테이너 마스크가 아니라).
+      expect(tex.texture).toBe(s.texture);
+      expect(tex.scale.x).toBeCloseTo(s.scale.x, 9);
+      expect(tex.scale.y).toBeCloseTo(s.scale.y, 9);
+      // 띠 클리핑은 `Graphics` 마스크 = 스텐실이라 렌더 타깃을 만들지 않는다.
+      expect(tex.mask).toBe(band);
+      expect(band).toBeInstanceOf(Graphics);
+    }
     // 컨테이너가 기수를 물고 있어야 띠가 기체 길이 방향으로 눕는다.
     expect(surf!.rotation).toBeCloseTo(s.rotation, 9);
   });

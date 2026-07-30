@@ -595,7 +595,7 @@ const SURFACE_SHADE_COLOR = 0x1b2440;
  * `|L|=1` 에서 `mean |Δluma| ≥ 15`** 이고 그 측정은 롤 포화 컷이 필요하다 — 비평가 몫이다.
  * 여기 적은 값은 방향 확인용이고, 이 표를 게이트로 쓰면 안 된다(프레임 L 이 다르다).
  */
-const SURFACE_SHADE_ALPHA = 1;
+const SURFACE_SHADE_ALPHA = 0.5;
 /**
  * 그늘 알파의 감쇠 지수. **1 미만이면 안쪽 스트립에 상대적으로 더 많은 알파가 간다.**
  *
@@ -612,7 +612,7 @@ const SURFACE_SHADE_ALPHA = 1;
  * 짜리 안쪽 스트립의 것이었다. 지수를 1 미만으로 두면 픽셀이 3배 많고 바탕이 밝은 안쪽이
  * 실제로 일한다. 램프 **방향**(외곽이 더 그늘)은 유지된다 — 물리적 개연성이 거기서 온다.
  */
-const SURFACE_SHADE_POWER = 0.3;
+const SURFACE_SHADE_POWER = 0.5;
 /**
  * 롤이 조명 계수에 더하는 이득. 1 보다 크면 **롤만으로도** 밝은 쪽이 판면을 넘어갈 수 있다 —
  * 광원이 정면/후방(횡 성분 0)인 행성에서도 뱅킹이 음영을 만들어야 하므로 필요하다.
@@ -1426,9 +1426,8 @@ class PlayerBodyAdorner implements EntityAdorner {
   private damage: Sprite | null = null;
   /** ⑩ 판면 음영 컨테이너(aboveLayer, 실루엣 마스크). 스트립 기하는 한 번 굽고 알파만 흔든다. */
   private surface: Container | null = null;
-  private surfaceMask: Sprite | null = null;
-  private readonly specStrips: Graphics[] = [];
-  private readonly shadeStrips: Graphics[] = [];
+  private readonly specStrips: Container[] = [];
+  private readonly shadeStrips: Container[] = [];
 
   constructor(motion: PlayerMotion) {
     this.motion = motion;
@@ -1639,10 +1638,18 @@ class PlayerBodyAdorner implements EntityAdorner {
     if (surface === null) {
       surface = new Container();
       surface.label = 'playerSurface';
-      const mask = new Sprite(sprite.texture);
-      mask.anchor.set(0.5);
-      this.surfaceMask = mask;
-      surface.addChild(mask);
+      // ⚠️ **컨테이너 `Sprite` 마스크를 쓰지 않는다.** Pixi v8 에서 `Sprite` 마스크는 알파마스크
+      // **필터**라 컨테이너가 오프스크린 렌더 타깃에 먼저 그려지고, 그 안에서 `multiply`·`add` 가
+      // **씬이 아니라 빈 타깃**에 블렌딩된 뒤 normal 로 합성된다. 같은 프레임·같은 픽셀에서
+      // 마스크만 갈아 끼운 실측(비평가 최종 3차):
+      //
+      //   Sprite 마스크   shade 평균 하강 16.19 · spec 평균 상승 +2.20
+      //   Graphics 마스크 shade 평균 하강 73.53 · spec 평균 상승 +27.63   (모델 예측 70.4)
+      //
+      // 즉 곱연산의 **78%**, 가산의 **92%** 를 합성 경로가 먹고 있었다. 상수를 아무리 올려도
+      // 못 넘는 천장이었다(전 스트립 α=1 강제에서도 mean 20.9 / 게이트 15·100px 미달).
+      // 실루엣은 이제 **각 스트립이 본체 텍스처를 그대로 쓰는 것**으로 얻고, 띠 클리핑만
+      // `Graphics` 마스크(스텐실 — 렌더 타깃 없음)가 한다.
       for (let i = 0; i < SURFACE_STRIPS; i++) {
         const shade = buildSurfaceStrip(i, SURFACE_SHADE_COLOR, 'multiply');
         const spec = buildSurfaceStrip(i, SURFACE_SPEC_COLOR, 'add');
@@ -1651,21 +1658,12 @@ class PlayerBodyAdorner implements EntityAdorner {
         surface.addChild(shade);
         surface.addChild(spec);
       }
-      // 마스크는 자식으로 두고 그대로 `mask` 로 지정한다 — 마스크로 쓰이는 표시객체는 정상
-      // 렌더 경로에서 빠지므로 화면에 두 번 그려지지 않는다.
-      surface.mask = mask;
       ctx.aboveLayer.addChild(surface);
       this.surface = surface;
     }
 
     surface.position.set(sprite.x, sprite.y);
     surface.rotation = sprite.rotation;
-    const mask = this.surfaceMask;
-    if (mask !== null) {
-      if (mask.texture !== sprite.texture) mask.texture = sprite.texture;
-      // 컨테이너가 이미 회전을 물고 있으므로 마스크는 회전 0 이어야 본체와 겹친다.
-      mask.scale.set(sprite.scale.x, sprite.scale.y);
-    }
 
     // 조명 계수: 테마 광원의 **기수 기준 횡 성분** + 롤. `lateralSpeed` 를 광원 단위벡터에 그대로
     // 쓴다 — "기수 기준 횡 성분"이라는 같은 기하 연산이라서다(속도 전용 함수가 아니다).
@@ -1681,20 +1679,27 @@ class PlayerBodyAdorner implements EntityAdorner {
     // 4차는 둘 다 `halfSpan` 이라 램프가 실루엣 밖에 앉았다(§10 헤더 CRIT).
     const sx = this.halfSpan;
     const sy = this.lateralHalf;
+    /** 스트립 하나를 본체와 맞춘다. 자식 [0]=텍스처 스프라이트(실루엣) · [1]=띠 마스크(스텐실). */
+    const sync = (strip: Container | undefined, alpha: number): void => {
+      if (strip === undefined) return;
+      strip.alpha = alpha;
+      strip.visible = alpha > 0;
+      // ⚠️ 텍스처·스케일은 **보이지 않는 스트립에도** 맞춘다. 알파가 0 인 프레임에 건너뛰면
+      // 다음 프레임에 켜질 때 한 프레임 동안 빈 텍스처(= 실루엣 없음)로 그려진다.
+      const tex = strip.children[0];
+      const band = strip.children[1];
+      if (tex instanceof Sprite) {
+        // 실루엣은 본체 텍스처가 준다 — 컨테이너는 이미 회전을 물고 있으므로 회전 0.
+        if (tex.texture !== sprite.texture) tex.texture = sprite.texture;
+        tex.scale.set(sprite.scale.x, sprite.scale.y);
+      }
+      // 띠는 단위 공간(−1..1)에 구워져 있다. x=기수 축, y=램프가 깔리는 횡축.
+      if (band !== undefined) band.scale.set(sx, sy);
+    };
     for (let i = 0; i < SURFACE_STRIPS; i++) {
       const a = surfaceStripAlpha(i, light, specOn);
-      const shade = this.shadeStrips[i];
-      const spec = this.specStrips[i];
-      if (shade !== undefined) {
-        shade.alpha = a.shade;
-        shade.visible = a.shade > 0;
-        shade.scale.set(sx, sy);
-      }
-      if (spec !== undefined) {
-        spec.alpha = a.spec;
-        spec.visible = a.spec > 0;
-        spec.scale.set(sx, sy);
-      }
+      sync(this.shadeStrips[i], a.shade);
+      sync(this.specStrips[i], a.spec);
     }
   }
 
@@ -1754,7 +1759,6 @@ class PlayerBodyAdorner implements EntityAdorner {
     const surface = this.surface;
     if (surface === null) return;
     this.surface = null;
-    this.surfaceMask = null;
     this.specStrips.length = 0;
     this.shadeStrips.length = 0;
     surface.parent?.removeChild(surface);
@@ -1777,17 +1781,29 @@ class PlayerBodyAdorner implements EntityAdorner {
  * 알파를 `1` 로 굽고 `Graphics.alpha` 로 흔드는 이유: `fill({alpha})` 는 기하에 구워지므로
  * 프레임마다 바꾸려면 **재빌드**가 필요하다(매 프레임 Graphics 재빌드 금지 규율).
  */
-function buildSurfaceStrip(i: number, color: number, blend: 'add' | 'multiply'): Graphics {
-  const g = new Graphics();
-  g.label = blend === 'add' ? 'playerSurfaceSpec' : 'playerSurfaceShade';
-  g.blendMode = blend;
+function buildSurfaceStrip(i: number, color: number, blend: 'add' | 'multiply'): Container {
+  const c = new Container();
+  c.label = blend === 'add' ? 'playerSurfaceSpec' : 'playerSurfaceShade';
+  // 실루엣은 **본체 텍스처의 알파**가 준다(컨테이너 Sprite 마스크가 아니라). 텍스처는
+  // syncSurface 가 매 프레임 본체와 맞춘다.
+  const s = new Sprite();
+  s.anchor.set(0.5);
+  s.blendMode = blend;
+  s.tint = color;
   // ⚠️ 띠 구간은 {@link surfaceStripBand} 에서만 온다 — 여기서 다시 계산하면 굽는 기하와 검증하는
-  // 기하가 갈라져 "코드는 맞고 화면은 틀렸다"가 또 열린다(§10 헤더의 세 번 재발한 계열).
+  // 기하가 갈라져 "코드는 맞고 화면은 틀렸다"가 또 열린다(§10 헤더의 네 번 재발한 계열).
   const band = surfaceStripBand(i);
-  g.rect(-SURFACE_EXTENT, band.lo, SURFACE_EXTENT * 2, band.hi - band.lo).fill({ color, alpha: 1 });
-  g.alpha = 0;
-  g.visible = false;
-  return g;
+  // 띠 클리핑은 **`Graphics` 마스크 = 스텐실**이다. `Sprite` 마스크였다면 알파마스크 필터라
+  // 오프스크린 렌더 타깃이 생기고, 그 안에서 blend 가 **씬이 아니라 빈 타깃**에 적용된다
+  // (아래 syncSurface 주석의 실측: 곱연산 78% · 가산 92% 손실).
+  const m = new Graphics();
+  m.rect(-SURFACE_EXTENT, band.lo, SURFACE_EXTENT * 2, band.hi - band.lo).fill(0xffffff);
+  s.mask = m;
+  c.addChild(s);
+  c.addChild(m);
+  c.alpha = 0;
+  c.visible = false;
+  return c;
 }
 
 /**
