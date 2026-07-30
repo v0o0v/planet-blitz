@@ -362,6 +362,26 @@ export const EN = {
   'tutorial.hint2': 'Dash to dodge enemy fire. Dodging dense barrages is the smart play.',
   'tutorial.hint3': 'Grabbing your first gear reveals the base. Keep pushing!',
   'tutorial.hint4': 'Press Z or X to trigger your active skills once unlocked.',
+
+  // --- 액티브 스킬 크롬(ADR-0041 · 레인 D) — 연구소 패널 + HUD 좌하단 -------------------------
+  // ⚠️ `lab.actives.locked` 의 `{n}` 은 **파생값**(`activeGateThreshold(def)`)을 넘긴다.
+  //    숫자를 문구에 박으면 안 된다 — 고티어 게이트는 `capstoneGate` 추종이라 **해츨링만 44** 다.
+  //    `lab.actives.sub` 의 `{m}` 도 `ACTIVE_SLOT_COUNT` 파생이다.
+  'lab.actives.btn': 'Active Skills',
+  'lab.actives.title': 'Active Skills',
+  'lab.actives.sub': 'Equipped {n}/{m} · unlocked by tree investment',
+  'lab.actives.slot': 'Slot {n}',
+  'lab.actives.slotEmpty': 'Empty',
+  'lab.actives.unequipHint': 'Click a slot to unequip',
+  'lab.actives.locked': 'Locked · {n} pt in tree',
+  'lab.actives.ready': 'Equipped',
+  'lab.actives.meta': 'CD {cd}s · Power {p}%',
+  'lab.actives.tier.lo': 'Tier I',
+  'lab.actives.tier.hi': 'Tier II',
+  'lab.actives.none': 'No active skills authored for this ship yet.',
+  'lab.err.activeLocked': 'Not unlocked yet — invest more in that tree.',
+  'lab.err.activeFull': 'Both active slots are full — unequip one first.',
+  'hud.active.title': 'ACTIVES',
   'tutorial.drop': 'Gear acquired! Finish this run to maintain it at the base.',
 
   // --- 레벨업 파워업 선택 ---
@@ -1940,6 +1960,23 @@ export const KO: Record<MessageKey, string> = {
   'tutorial.hint2': '대시로 적탄을 회피하세요. 밀집한 탄막은 피하는 게 상책입니다.',
   'tutorial.hint3': '첫 장비를 획득하면 기지가 공개됩니다. 계속 밀어붙이세요!',
   'tutorial.hint4': '잠금 해제되면 Z 또는 X 키로 액티브 스킬을 발동할 수 있습니다.',
+
+  // 액티브 스킬 크롬(ADR-0041 · 레인 D). params 토큰은 EN 과 동일하게 보존한다.
+  'lab.actives.btn': '액티브 스킬',
+  'lab.actives.title': '액티브 스킬',
+  'lab.actives.sub': '장착 {n}/{m} · 계열 투자로 해금',
+  'lab.actives.slot': '슬롯 {n}',
+  'lab.actives.slotEmpty': '비어 있음',
+  'lab.actives.unequipHint': '슬롯을 누르면 장착이 해제됩니다',
+  'lab.actives.locked': '잠김 · 계열 투자 {n} 필요',
+  'lab.actives.ready': '장착됨',
+  'lab.actives.meta': '쿨다운 {cd}초 · 위력 {p}%',
+  'lab.actives.tier.lo': '1티어',
+  'lab.actives.tier.hi': '2티어',
+  'lab.actives.none': '이 기체의 액티브 스킬이 아직 저작되지 않았습니다.',
+  'lab.err.activeLocked': '아직 해금되지 않았습니다 — 해당 계열에 더 투자하세요.',
+  'lab.err.activeFull': '액티브 슬롯 2칸이 모두 찼습니다 — 하나를 먼저 해제하세요.',
+  'hud.active.title': '액티브',
   'tutorial.drop': '장비 획득! 이 런을 마치면 기지에서 정비할 수 있습니다.',
 
   'powerup.title': '레벨 업! — 강화를 선택하라',
