@@ -21,6 +21,11 @@ import { TilingSprite } from 'pixi.js';
 import { createGameApp, DESIGN_WIDTH, DESIGN_HEIGHT } from './render/app.js';
 import { loadGameTextures, applyShipSprite } from './render/textures.js';
 import { EntityRenderer } from './render/entityRenderer.js';
+import {
+  playerVisualFlags,
+  setPlayerVisualFlags,
+  resetPlayerVisualFlags,
+} from './render/entity/playerVisualFlags.js';
 import { DefensePreviewController } from './render/defensePreview.js';
 import type { DefensePreviewControls } from './render/defensePreview.js';
 import { AutotileBackground, loadWangTiles, loadInvasionWangTiles } from './render/autotile.js';
@@ -2068,6 +2073,10 @@ async function main(): Promise<void> {
       controller,
       entityRenderer,
       autotile,
+      // 플레이어 비주얼 항목 스위치(치트 패널 '기체' 탭과 같은 상태). 스크립트에서 항목을
+      // 하나씩 켜고 화면 델타를 재려면 여기 노출돼 있어야 한다 — 치트 패널 안에만 있으면
+      // "체크박스는 있는데 화면은 안 바뀐다"를 자동으로 확인할 방법이 없다.
+      playerVisual: { get: playerVisualFlags, set: setPlayerVisualFlags, reset: resetPlayerVisualFlags },
       // 행성 환경 레이어 스택. 레이어를 한 장씩만 켜 놓고 스크린샷을 찍어야 그 레이어가 실제로
       // 무엇을 그리는지 대조할 수 있다(전부 켠 화면만 보면 어느 레이어의 기여인지 못 가린다).
       env,

@@ -57,6 +57,13 @@ import {
 } from '../../data/lineage.js';
 import type { Application, Container } from 'pixi.js';
 import { galleryScene } from './gallery/galleryScene.js';
+import {
+  ALL_ON_PLAYER_VISUAL_FLAGS,
+  playerVisualFlags,
+  resetPlayerVisualFlags,
+  setPlayerVisualFlags,
+  type PlayerVisualFlags,
+} from '../render/entity/playerVisualFlags.js';
 
 /**
  * 촉매 하네스 제어(ADR-0029, DEV). main.ts 가 인메모리 모의 원장(`HarnessCatalystGateway`)과
@@ -186,11 +193,62 @@ type SceneTab =
   | 'invasion'
   | 'boss'
   | 'fx'
+  | 'ship'
   | 'gallery'
   | 'result'
   | 'menus'
   | 'guardian'
   | 'inspect';
+/**
+ * 기체 탭에 나열할 플레이어 비주얼 항목. 번호는 레인 계약(`playerVisual.ts` 헤더 표)의 항목
+ * 번호라 화면에서 고른 결과를 그대로 코드로 옮길 수 있다.
+ */
+const SHIP_VISUAL_GROUPS: readonly {
+  title: string;
+  items: readonly { key: keyof PlayerVisualFlags; label: string; desc: string }[];
+}[] = [
+  {
+    title: '엔진',
+    items: [
+      { key: 'flame', label: '② 엔진 불꽃', desc: '기체 뒤 3구 노즐의 시안 불꽃. 속도에 따라 길어진다.' },
+    ],
+  },
+  {
+    title: '선체 표현',
+    items: [
+      { key: 'contour', label: '⓪ 감산 컨투어', desc: '기체 둘레의 어두운 띠(밝은 배경에서 실루엣을 떼어낸다).' },
+      { key: 'banking', label: '① 뱅킹/롤', desc: '선회할 때 기체가 기울고 횡폭이 눌린다.' },
+      { key: 'rim', label: '③ 림라이트', desc: '광원 쪽 가장자리에 차가운 흰 하이라이트.' },
+      { key: 'surface', label: '⑩ 판면 방향광', desc: '선체 표면이 광원·롤에 따라 밝고 어두워진다.' },
+      { key: 'idleBob', label: '⑥ 아이들 부유', desc: '정지 시 위아래로 천천히 흔들린다.' },
+      { key: 'damageScorch', label: '⑦ 손상 그을림', desc: 'HP 가 낮을수록 선체가 어둡고 난색으로 탄다.' },
+    ],
+  },
+  {
+    title: '피격',
+    items: [
+      { key: 'hitKick', label: '④ 피격 반동', desc: '맞으면 기수 반대 방향으로 튀었다 돌아온다.' },
+      { key: 'shield', label: '④ 무적 실드 셸', desc: '피격 후 0.67초간 조여드는 육각 시안 링.' },
+    ],
+  },
+  {
+    title: '대시(회피)',
+    items: [
+      { key: 'dashCore', label: '2b 대시 심', desc: '대시 중 불꽃 안쪽에 밝은 시안 코어가 뜬다.' },
+      { key: 'dashGhosts', label: '⑤ 대시 잔상', desc: '대시 궤적을 따라 반투명 기체가 남는다.' },
+      { key: 'dashRing', label: '5b 충격파 링', desc: '대시 시작 순간 퍼져 나가는 시안 링(0.28초).' },
+      { key: 'dashTrauma', label: '대시 화면 흔들림', desc: '대시 시작 시 카메라가 살짝 흔들린다.' },
+    ],
+  },
+  {
+    title: '발광 헤일로 (레인 이전부터 있던 표현)',
+    items: [
+      { key: 'halo', label: '기체 주위 파란 발광', desc: '발광체 헤일로. 젬·전리품·보스도 쓰는 공통 표현이며 여기서는 플레이어만 끈다.' },
+      { key: 'haloAniso', label: '⑨ 헤일로 늘이기', desc: '헤일로를 기수 축으로 늘여 물방울 모양으로 만든다(레인 추가분).' },
+    ],
+  },
+];
+
 /** 씬 탭 정의(표시 순서). */
 const SCENE_TABS: readonly { id: SceneTab; label: string }[] = [
   { id: 'run', label: '런' },
@@ -198,6 +256,7 @@ const SCENE_TABS: readonly { id: SceneTab; label: string }[] = [
   { id: 'invasion', label: '침공' },
   { id: 'boss', label: '보스전' },
   { id: 'fx', label: '연출' },
+  { id: 'ship', label: '기체' },
   { id: 'gallery', label: '갤러리' },
   { id: 'result', label: '정산' },
   { id: 'menus', label: '메뉴' },
@@ -759,6 +818,9 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
           break;
         case 'fx':
           buildFxTab(pane);
+          break;
+        case 'ship':
+          buildShipTab(pane);
           break;
         case 'gallery':
           buildGalleryTab(pane);
@@ -1502,6 +1564,69 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         btn('유니크 세리머니', sceneUnique, '근처에 유니크 loot 드랍 → 금빛 슬로모'),
       );
       s.appendChild(row);
+    }
+
+    /**
+     * 기체 탭 — 플레이어 비주얼 **항목별 on/off**.
+     *
+     * 기체 AAA 비주얼 레인(PR#205)이 넣은 표현을 하나씩 켜고 끄며 눈으로 비교하기 위한 도구다.
+     * 기본값은 사용자가 이 탭으로 항목을 하나씩 비교해 **확정한 조합**이고(뱅킹/롤·헤일로 2종만
+     * 끔), `전부 켜기` 가 레인 머지 직후 화면이다. 토글은 **다음 프레임에 즉시** 반영된다(장식자가 매
+     * 프레임 플래그를 다시 읽는다). 런 중에 켜고 꺼도 상태가 튀지 않게 각 항목의 상태 기계는
+     * 스위치 밖에서 계속 돈다.
+     *
+     * 오염(tainted)과 무관하다 — 렌더 전용 스위치라 sim·해시·리플레이에 닿지 않는다.
+     */
+    function buildShipTab(s: HTMLElement): void {
+      s.appendChild(buildPinRow());
+      s.appendChild(subLabel('플레이어 비주얼 항목 (렌더 전용 · 비오염)'));
+
+      const presets = document.createElement('div');
+      presets.className = 'pb-c-row';
+      presets.append(
+        btn('확정 조합 (기본)', () => {
+          resetPlayerVisualFlags();
+          render();
+        }, '사용자가 항목별 비교로 확정한 조합 — 뱅킹/롤과 헤일로 2종만 끈다'),
+        btn('전부 켜기', () => {
+          setPlayerVisualFlags(ALL_ON_PLAYER_VISUAL_FLAGS);
+          render();
+        }, 'PR#205 머지 직후 화면 — 레인이 넣은 것을 전부 켠다'),
+        btn('전부 끄기', () => {
+          setPlayerVisualFlags(
+            Object.fromEntries(
+              Object.keys(ALL_ON_PLAYER_VISUAL_FLAGS).map((k) => [k, false]),
+            ) as Partial<PlayerVisualFlags>,
+          );
+          render();
+        }, '레인 이전 + 헤일로까지 뺀 순수 스프라이트'),
+      );
+      s.appendChild(presets);
+
+      const flags = playerVisualFlags();
+      for (const group of SHIP_VISUAL_GROUPS) {
+        s.appendChild(subLabel(group.title));
+        for (const item of group.items) {
+          const line = document.createElement('label');
+          line.className = 'pb-c-chk';
+          // 공용 pb-c-chk 는 inline-flex 라 항목이 옆으로 붙는다 — 목록은 한 줄에 하나여야 읽힌다.
+          line.style.display = 'flex';
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = flags[item.key];
+          cb.addEventListener('change', () => {
+            setPlayerVisualFlags({ [item.key]: cb.checked } as Partial<PlayerVisualFlags>);
+            setHint(`${item.label}: ${cb.checked ? '켬' : '끔'}`);
+          });
+          line.appendChild(cb);
+          line.appendChild(document.createTextNode(` ${item.label}`));
+          line.title = item.desc;
+          s.appendChild(line);
+        }
+      }
+      s.appendChild(
+        subLabel('※ 항목에 마우스를 올리면 설명이 뜹니다. 대시 항목은 회피(대시) 중에만 보입니다.'),
+      );
     }
 
     /**

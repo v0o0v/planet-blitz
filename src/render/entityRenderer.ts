@@ -71,6 +71,7 @@ import { graphicsTierController } from './graphicsRuntime.js';
 import { buildGlowHalo, createGlowBloomFilter, haloSpec, isGlowEmitter } from './effects/glow.js';
 // 플레이어 전용 파생(레인 A). **플레이어 경로에서만** 쓰인다 — 다른 발광체·엔티티의 거동은
 // 한 줄도 바뀌지 않는다. 튜닝값이 레인 A 파일에 남아 있어야 이 공유 파일이 밸런스 축을 안 먹는다.
+import { playerVisualFlags } from './entity/playerVisualFlags.js';
 import {
   PLAYER_DASH_TRAUMA,
   isDashSpeed,
@@ -1290,7 +1291,9 @@ export class EntityRenderer {
         // 그 파일에만 있어야 공유 파일이 밸런스 축을 안 먹는다).
         const pv = snapshotVelocity(e, p);
         const dashing = isDashSpeed(Math.hypot(pv.vx, pv.vy));
-        if (dashing && !this.playerWasDashing) this.trauma.addTrauma(PLAYER_DASH_TRAUMA);
+        if (dashing && !this.playerWasDashing && playerVisualFlags().dashTrauma) {
+          this.trauma.addTrauma(PLAYER_DASH_TRAUMA);
+        }
         this.playerWasDashing = dashing;
         // 헤일로 이방성(레인 A ⑤) — 등방 원 blob 은 면적을 가장 많이 쓰면서 정보를 0 비트 준다.
         // 기수 축으로 늘이고 전방으로 편심시키면 발광 자체가 방향 신호가 된다.
@@ -1480,13 +1483,18 @@ export class EntityRenderer {
       // 발광체 헤일로(glowLayer, 스프라이트 아래·가산, AC-3.1) — 게이트 on 이고 발광체일 때만
       // 유지한다. 헤일로는 스프라이트와 별개 레이어라 보간 위치를 매 프레임 미러한다. 탄·적
       // 실루엣은 isGlowEmitter=false 라 헤일로가 없다(탄막 가독성 계약).
-      if (gates.halo && isGlowEmitter(e.kind)) {
+      // 플레이어 헤일로는 별도 스위치를 탄다(`playerVisualFlags`). 사용자가 "기체 주위 파란
+      // 원형 발광만 끄기"를 택했고(2026-07-30), 젬·전리품·보스 헤일로는 그대로 둔다.
+      const playerHaloOff = e.kind === 'player' && !playerVisualFlags().halo;
+      if (playerHaloOff) {
+        this.removeGlowHalo(e.id);
+      } else if (gates.halo && isGlowEmitter(e.kind)) {
         // 이방성은 **플레이어에게만** 넘긴다. 나머지 발광체(젬·전리품·보스)는 null 을 받아
         // 종전과 픽셀 단위로 동일하다.
         this.syncGlowHalo(
           e.id,
           tracked.sprite,
-          e.kind === 'player' ? this.playerAniso : null,
+          e.kind === 'player' && playerVisualFlags().haloAniso ? this.playerAniso : null,
           e.kind,
         );
       }

@@ -16,7 +16,7 @@
  * {@link GameAudio} 가, 로케일은 i18n 이 소유하고 이 화면은 그 뷰/컨트롤러다.
  */
 
-import { Container, Graphics, NineSliceSprite, Rectangle, Sprite, Text } from 'pixi.js';
+import { Container, Graphics, Rectangle, Sprite, Text } from 'pixi.js';
 import type { FederatedPointerEvent } from 'pixi.js';
 import type { GameAudio, AudioBus } from '../../render/audio.js';
 import { getLocale, setLocale, LOCALES, t, type Locale, type MessageKey } from '../../i18n/index.js';
@@ -218,34 +218,39 @@ export class SettingsScreen {
 
   // --- 톱니 --------------------------------------------------------------
 
+  /**
+   * 톱니 버튼 — **아이콘 배지 한 장**으로 끝낸다(닫기 X 버튼과 같은 구성).
+   *
+   * ## 나무 느낌이 너무 강했던 이유 (사용자 신고 2026-07-30)
+   * 예전에는 `ui_btn_wood.png` 를 9-slice 로 {@link GEAR_SIZE} 만큼 깔고 그 **위에** 톱니
+   * 아이콘을 44px 로 얹었다. 그런데 `ui_icon_gear.png` 자체가 이미 테두리를 가진 **완성된 원형
+   * 배지**다 — 나무 판과 배지 테두리가 이중으로 겹쳐 팔각 나무틀 안에 또 원형 틀이 들어앉은
+   * 모양이 됐고, 그래서 이 버튼만 유독 나무가 두꺼워 보였다.
+   *
+   * 같은 자리의 닫기 버튼({@link makeIconButton})은 처음부터 배경 없이 `ui_icon_close.png` 한
+   * 장만 버튼 크기로 그린다. 톱니를 그 규칙에 맞춘다 — 자산 자체가 배지라 배경이 필요 없다.
+   *
+   * 클릭·hover 는 컨테이너가 `hitArea` 로 이미 지고 있어(생성자) 자식 구성과 무관하다.
+   */
   private buildGear(): void {
     this.gear.removeChildren();
-    const tex = this.ui['ui_btn_wood.png'];
-    if (tex) {
-      const bg = new NineSliceSprite({ texture: tex, leftWidth: 30, topHeight: 0, rightWidth: 30, bottomHeight: 0 });
-      bg.width = GEAR_SIZE;
-      bg.height = GEAR_SIZE;
-      this.gear.addChild(bg);
-    } else {
-      const g = new Graphics();
-      g.roundRect(0, 0, GEAR_SIZE, GEAR_SIZE, 12)
-        .fill({ color: 0x5a4028 })
-        .stroke({ color: 0x2a1c10, width: 3, alignment: 1 });
-      this.gear.addChild(g);
-    }
-
     const icon = this.ui['ui_icon_gear.png'];
     if (icon) {
       const sp = new Sprite(icon);
-      sp.width = GEAR_ICON;
-      sp.height = GEAR_ICON;
-      sp.position.set((GEAR_SIZE - GEAR_ICON) / 2, (GEAR_SIZE - GEAR_ICON) / 2);
+      sp.width = GEAR_SIZE;
+      sp.height = GEAR_SIZE;
       this.gear.addChild(sp);
-    } else {
-      const glyph = gearGlyph(GEAR_ICON);
-      glyph.position.set((GEAR_SIZE - GEAR_ICON) / 2, (GEAR_SIZE - GEAR_ICON) / 2);
-      this.gear.addChild(glyph);
+      return;
     }
+    // 폴백(자산 누락) — 배지 어휘를 유지하되 나무가 아니라 중립 원판으로 그린다.
+    const g = new Graphics();
+    g.circle(GEAR_SIZE / 2, GEAR_SIZE / 2, GEAR_SIZE / 2 - 2)
+      .fill({ color: 0x3a2a2a })
+      .stroke({ color: 0x000000, width: 2, alpha: 0.5, alignment: 1 });
+    this.gear.addChild(g);
+    const glyph = gearGlyph(GEAR_ICON);
+    glyph.position.set((GEAR_SIZE - GEAR_ICON) / 2, (GEAR_SIZE - GEAR_ICON) / 2);
+    this.gear.addChild(glyph);
   }
 
   // --- 팝업 --------------------------------------------------------------
