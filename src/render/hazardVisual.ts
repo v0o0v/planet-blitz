@@ -99,7 +99,7 @@ export function hazardVisual(subtype: number, active: boolean, permanent = false
     accent: harmful ? ACCENT_WARM : ACCENT_COOL,
     harmful,
     // 위험은 더 진하게 깔고 빗금까지 얹는다. 방해(감속)는 옅게 — 밟아도 되는 곳이다.
-    fillAlpha: harmful ? 0.3 : 0.22,
+    fillAlpha: harmful ? FILL_ALPHA_HARMFUL : FILL_ALPHA_HINDER,
     strokeAlpha: 0.95,
     strokeWidth: harmful ? 4 : 2,
     hatch: harmful,
@@ -138,11 +138,34 @@ export const FILL_RINGS = 3;
  */
 export const FILL_SOFT_SPAN = 0.22;
 /**
- * 채움 폴리곤 꼭짓점 수. 장판이 40개를 넘는 모드(톡사르 41 · 크라스 23)에서 프레임당 꼭짓점
- * 총량이 여기에 비례하므로 필요한 만큼만 쓴다. 16 이면 반경 200 에서 변 길이 약 78px — 큰
- * 굴곡은 살고 잔결은 노이즈 진폭이 만든다.
+ * 채움 폴리곤 꼭짓점 **하한**. 아래 {@link hazardFillPoints} 가 정본이다.
  */
 export const FILL_POINTS = 16;
+
+/**
+ * 변 길이를 일정하게 유지하기 위한 목표 변 길이(px).
+ *
+ * ## 왜 고정 개수가 틀렸나 (3차 반려 MAJOR-6)
+ * 3차는 `FILL_POINTS = 16` 고정이었다. 반경 200 장판에서 변 길이가 78px 이라 화면에서 그대로
+ * **16각형**으로 읽혔다("여전히 평면 채움 + 16각 윤곽"). 그런데 개수를 통째로 올리면 작은
+ * 오염 셀 41장이 값을 함께 물어야 한다 — 그쪽은 이미 변 길이가 39px 이라 올릴 이유가 없다.
+ *
+ * 그래서 개수가 아니라 **변 길이**를 상수로 잡는다: 비용은 둘레(∝반경)에 비례해 붙고, 큰
+ * 장판만 촘촘해진다. 20px 는 1280×720 에서 곡선으로 읽히는 상한이다.
+ */
+const FILL_EDGE_PX = 20;
+/** 채움 꼭짓점 상한(성능 방어선). 반경 130 이상은 여기서 묶인다. */
+const FILL_POINTS_MAX = 40;
+
+/**
+ * 이 반경에 쓸 채움 폴리곤 꼭짓점 수. **4의 배수로 맞춘다** — 예열 윤곽(36점)과 활성 윤곽이
+ * 같은 함수에서 나왔음을 각도 대조로 증명하는 테스트가 `gcd` 를 4 로 보기 때문이고, 실용적으로도
+ * 사분점이 정렬돼 있어야 두 실루엣이 겹칠 때 어긋난 인상이 안 생긴다.
+ */
+export function hazardFillPoints(radius: number): number {
+  const want = Math.round(((Math.PI * 2 * radius) / FILL_EDGE_PX) / 4) * 4;
+  return Math.max(FILL_POINTS, Math.min(FILL_POINTS_MAX, want));
+}
 /**
  * 경계선 알파 배율. 유기 폴리곤은 완전한 원보다 **낮은 밝기로 같은 가독성**을 낸다(눈은 직선·
  * 정원 같은 인공 형태를 배경으로 흘려보내고 불규칙 윤곽에 더 붙는다). 밝기 총량 예산(§2-4)에
@@ -191,8 +214,14 @@ export function boundaryWidth(radius: number, strokeWidth: number): number {
   return Math.min(strokeWidth, Math.max(1.2, radius * BOUNDARY_WIDTH_PER_RADIUS));
 }
 
-/** 반경 대비 경계선 두께 계수. 대역 폭(0.13)의 약 3분의 1이라 비율 3 이 구조적으로 성립한다. */
-const BOUNDARY_WIDTH_PER_RADIUS = 0.043;
+/**
+ * 반경 대비 경계선 두께 계수. 대역 폭의 약 3분의 1이라 비율 3 이 구조적으로 성립한다.
+ *
+ * `EDGE_MIN_RATIO` 를 0.83 → 0.88 로 올려(3차 반려 MINOR — 위험지대 과소 표시 17% → 12%)
+ * 대역 폭이 0.13r → 0.08r 로 좁아졌으므로 여기도 함께 내렸다. **둘은 같이 움직여야 한다** —
+ * 한쪽만 만지면 진폭이 자기 선 안에 묻히던 2차 반려 CRIT-2 가 그대로 돌아온다.
+ */
+const BOUNDARY_WIDTH_PER_RADIUS = 0.02;
 /** 빗금이 흐르는 속도(프레임당 px). 흐름이 "여기 살아 있다"를 만든다. */
 const HATCH_FLOW = 0.35;
 
@@ -202,6 +231,80 @@ const DASH_SEGMENTS = 18;
 const DASH_SPIN = 0.012;
 /** 수렴 예고 링의 주기(프레임). 반경이 밖→안으로 줄며 "곧 켜진다"를 만든다. */
 const CONVERGE_PERIOD = 60;
+/**
+ * 수렴 예고 링 알파. 0.5 → 0.34. 예열 컷에서 동심 윤곽이 너무 많다는 지적(3차 반려 MAJOR-6)에
+ * 대한 응답이자 §2-4 순감 항목이다. **지우지는 않는다** — "곧 온다"의 리듬이고 색 외 채널이다.
+ */
+const CONVERGE_ALPHA = 0.34;
+
+/** 활성 채움 알파(위험 / 방해). {@link visualHeat} 가 열을 되읽는 기준값이다. */
+export const FILL_ALPHA_HARMFUL = 0.3;
+export const FILL_ALPHA_HINDER = 0.22;
+
+/** 빗금 알파가 차오르기 시작·완료하는 열. */
+const HATCH_HEAT_ON = 0.35;
+const HATCH_HEAT_FULL = 0.85;
+/** 점선↔실선 교차 페이드 구간. 두 알파가 같아지는 지점이 중간값(≈0.55)이다. */
+const DASH_CROSS_LO = 0.35;
+const DASH_CROSS_HI = 0.75;
+
+/** [0,1] 로 자른다. */
+function sat(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+/** 구간 [a,b] 를 [0,1] 로 펴는 선형 램프. */
+function ramp(v: number, a: number, b: number): number {
+  return b === a ? (v < a ? 0 : 1) : sat((v - a) / (b - a));
+}
+
+/**
+ * 호스트가 채움 알파에 실어 보낸 **열**(0~1)을 되읽는다.
+ *
+ * ## 왜 이런 우회를 하는가
+ * 열의 소유자는 `hazardHost` 이고({@link file://./entity/hazardHost.ts} 의 `HazardZone.heat`),
+ * 그 값을 재질에게는 직접 넘기지만 **이 함수에는 넘길 통로가 없다** — `drawHazardZone` 의 호출
+ * 지점이 호스트 안이고, 인자를 늘리면 소유권 밖 파일을 고쳐야 한다. 대신 호스트는 이미
+ * `fillAlpha` 를 `base × heat` 로 밀어 주고 있으므로, 기준값으로 나누면 열이 정확히 복원된다.
+ *
+ * 예열(`dashed`)은 정의상 열 0 이다 — 호스트가 `fillAlpha === 0` 경로에서 원본을 그대로 넘긴다.
+ *
+ * ⚠️ 식는 쪽(활성→예열)에는 연속이 없고, **그것이 의도다**: 여운은 재질(안쪽 질감)에만 실리고
+ * 판정을 알리는 채널은 활성 플래그와 동시에 끊긴다(`hazardShape.HEAT_FALL_PER_SEC` 주석 정본).
+ * 여운이 "아직 아프다"로 읽히면 안 된다.
+ */
+export function visualHeat(v: HazardVisual): number {
+  if (v.dashed) return 0;
+  const base = v.harmful ? FILL_ALPHA_HARMFUL : FILL_ALPHA_HINDER;
+  return base <= 0 ? 1 : sat(v.fillAlpha / base);
+}
+
+/**
+ * 유기 윤곽 위를 도는 점선 한 바퀴. 예열 경로와 활성 교차 페이드가 **같은 함수**를 쓴다 —
+ * 두 그림이 정확히 포개져야 전이가 형태의 도약이 아니게 된다.
+ */
+function drawDashRing(
+  g: HazardCanvas,
+  x: number,
+  y: number,
+  poly: number[],
+  spin: number,
+  color: number,
+  width: number,
+  alpha: number,
+): void {
+  if (alpha <= 0) return;
+  const n = DASH_SEGMENTS * 2;
+  const rot = Math.round((spin / (Math.PI * 2)) * n);
+  for (let i = 0; i < DASH_SEGMENTS; i++) {
+    // 꼭짓점 두 개마다 한 조각씩 그리고 한 조각을 건너뛴다 → 점선.
+    const a = (((rot + i * 2) % n) + n) % n;
+    const b = (a + 1) % n;
+    g.moveTo(x + (poly[a * 2] ?? 0), y + (poly[a * 2 + 1] ?? 0))
+      .lineTo(x + (poly[b * 2] ?? 0), y + (poly[b * 2 + 1] ?? 0))
+      .stroke({ color, width, alpha });
+  }
+}
 
 /**
  * 그리기 대상의 최소 계약(PixiJS `Graphics` 하위 집합). 테스트가 호출 기록만 모으는 스텁을
@@ -289,6 +392,9 @@ export function drawHazardZone(
   // 장판별로 다른 실루엣과 저비용 요동을 얻기 위한 장치다.
   const seed = shapeSeed(x, y);
   const qTick = quantizeTick(frameTick);
+  const points = hazardFillPoints(radius);
+  // 호스트가 채움 알파에 실어 보낸 열을 되읽는다 — 아래 `visualHeat` 주석이 정본이다.
+  const heat = visualHeat(v);
 
   if (v.dashed) {
     // ── 예열 ──────────────────────────────────────────────────────────────
@@ -300,30 +406,23 @@ export function drawHazardZone(
     // 지금은 활성 채움과 **같은 시드·같은 대역**의 폴리곤을 따라 조각을 끊으므로, 예열에서
     // 활성으로 넘어갈 때 실루엣이 이어진다(전이가 형태의 도약이 아니게 된다).
     const dashPoly = edgePolygon(seed, radius, qTick, 1, 1, DASH_SEGMENTS * 2);
-    const rot = Math.round((spin / (Math.PI * 2)) * DASH_SEGMENTS * 2);
-    for (let i = 0; i < DASH_SEGMENTS; i++) {
-      // 꼭짓점 두 개마다 한 조각씩 그리고 한 조각을 건너뛴다 → 점선.
-      const a = (rot + i * 2) % (DASH_SEGMENTS * 2);
-      const b = (a + 1) % (DASH_SEGMENTS * 2);
-      g.moveTo(x + (dashPoly[a * 2] ?? 0), y + (dashPoly[a * 2 + 1] ?? 0))
-        .lineTo(x + (dashPoly[b * 2] ?? 0), y + (dashPoly[b * 2 + 1] ?? 0))
-        .stroke({ color: v.color, width: v.strokeWidth, alpha: v.strokeAlpha });
-    }
+    drawDashRing(g, x, y, dashPoly, spin, v.color, v.strokeWidth, v.strokeAlpha);
     // 수렴 링: 바깥에서 안으로 줄어들며 반복 — 남은 시간이 아니라 "곧 온다"는 리듬을 준다.
     // 유기 폴리곤이고(§2-5), `decorated` 조건이 없다(전 셀 공통 — MAJOR-1).
     const t = (frameTick % CONVERGE_PERIOD) / CONVERGE_PERIOD;
     g.poly(scaledTo(dashPoly, x, y, 1 - 0.45 * t), true).stroke({
       color: v.accent,
       width: 2,
-      alpha: 0.5 * (1 - t),
+      alpha: CONVERGE_ALPHA * (1 - t),
     });
-    // 예열에도 판정 반경의 울타리는 있어야 한다 — 활성과 같은 자리, 같은 채널.
-    const warmPulse = 0.5 + 0.5 * Math.sin(frameTick * 0.12);
-    g.circle(x, y, radius * LIP_RATIO).stroke({
-      color: v.accent,
-      width: LIP_WIDTH,
-      alpha: (0.3 + 0.25 * warmPulse) * (v.harmful ? 1 : 0.7),
-    });
+    // ⚠️ **예열에는 정원 립이 없다.** 3차가 여기에 새로 하나 넣었고, 그 결과 예열 컷의 동심
+    // 윤곽이 2차보다 늘었다(3차 반려 MAJOR-6: 흰 정원 3 + 각진 수렴 폴리곤 3 + 붉은 점선 +
+    // 플레이어 시안 링). 원 하나가 문제가 아니라 **겹치는 장판마다 한 줄씩 쌓이는 구조**가
+    // 문제였다 — 오염 셀은 서로 겹치므로 셀 수만큼 정원이 포개진다.
+    //
+    // 예열은 정의상 **아직 아프지 않은 상태**라 판정 울타리의 정밀도 요구가 활성보다 낮고,
+    // 점선 자체가 같은 시드의 유기 윤곽 위를 달려 위치를 이미 알려 준다. 활성에서만 립을 둬서
+    // "정원 = 지금 아프다"가 오히려 더 강한 신호가 된다(색 외 채널이 하나 늘어난 셈이다).
     return;
   }
 
@@ -334,7 +433,7 @@ export function drawHazardZone(
   //  ② 실루엣 — 완전한 원이 아니라 노이즈로 흔든 폴리곤이다. **이것이 전 장판에 적용되는
   //     유일한 유기 신호**이고, 그래서 재질(LOD)이 낮은 장판도 정체성이 같다. 개체 상한으로
   //     재질을 빼던 1차 설계에서 "같은 해저드가 두 스타일"로 보이던 결함이 여기서 사라진다.
-  const fillPoly = edgePolygon(seed, radius, qTick, 1, 1, FILL_POINTS);
+  const fillPoly = edgePolygon(seed, radius, qTick, 1, 1, points);
   const perRing = 1 - Math.pow(1 - v.fillAlpha, 1 / FILL_RINGS);
   for (let i = 0; i < FILL_RINGS; i++) {
     const k = 1 - (FILL_SOFT_SPAN * i) / (FILL_RINGS - 1 || 1);
@@ -350,16 +449,31 @@ export function drawHazardZone(
     // 회귀다. 대신 개수 상한을 16→7 로, 알파를 0.55→0.42 로 낮춰 전 셀에 깔 여유를 만들었다
     // (총 선 개수는 41×7=287 로 이전 12×16=192 와 같은 규모다). 알파를 낮춘 것은 §2-4 순감
     // 항목이기도 하다 — 이 직선 격자가 화면에서 가장 강한 무늬라는 지적을 함께 받는다.
-    const spacing = HATCH_SPACING;
+    //
+    // ⚠️ **오프셋 구간을 유효 하한에서 시작해야 한다** (3차 반려 MAJOR-4 — 3차에서 새로 생긴 회귀).
+    // 3차는 `HATCH_MAX_LINES` 를 16→7 로 내리면서 루프의 시작점을 `-2r` 로 그대로 뒀다. 그러면
+    // 처음 7줄만 그려지고 **모든 셀에서 좌상단만 빗금이 있고 반대쪽이 비었다**(r=200 에서 27개
+    // 후보 중 7개 = 26%, o 범위 −400..−292 / 가능 −483..83). 빗금은 "아프다"의 색 외 채널이므로,
+    // 셀 **간** 정보량 불균형을 없애려다 셀 **내부** 불균형을 만든 것이다.
+    //
+    // 유효 구간은 `chordSpan` 의 판별식에서 닫힌 형태로 나온다: (o−r)² − 2o² > 0 ⟺
+    // o ∈ (−r(1+√2), r(√2−1)). 폭이 정확히 2√2·r 이므로 간격을 **폭 ÷ 상한**으로 파생시키면
+    // 개수 상한을 지키면서 전면을 덮는다.
+    const lo = -radius * (1 + Math.SQRT2);
+    const span = radius * 2 * Math.SQRT2;
+    const spacing = Math.max(HATCH_SPACING, span / HATCH_MAX_LINES);
     const flow = (frameTick * HATCH_FLOW) % spacing;
+    // 빗금은 열 0.35 에서 차오르기 시작한다 — 채움·경계와 **위상을 어긋나게** 해 셋이 같은
+    // 프레임에 팝인하지 않게 한다(3차 반려 MAJOR-4 의 다른 절반).
+    const hatchAlpha = HATCH_ALPHA * ramp(heat, HATCH_HEAT_ON, HATCH_HEAT_FULL);
     let lines = 0;
-    for (let o = -radius * 2 + flow; o < radius * 2 && lines < HATCH_MAX_LINES; o += spacing) {
+    for (let o = lo + flow; o < lo + span && lines < HATCH_MAX_LINES; o += spacing) {
       // 45° 선: (x + o + t, y - radius + t). 원과의 교차 구간만 남긴다.
       const seg = chordSpan(o, radius);
       if (seg === null) continue;
       g.moveTo(x + seg.x0, y + seg.y0)
         .lineTo(x + seg.x1, y + seg.y1)
-        .stroke({ color: v.color, width: 2, alpha: HATCH_ALPHA });
+        .stroke({ color: v.color, width: 2, alpha: hatchAlpha });
       lines++;
     }
   }
@@ -385,11 +499,29 @@ export function drawHazardZone(
   // 경계선 = **채움의 바깥 겹 그 자체**다. 별도 폴리곤을 하나 더 그리면 물질의 윤곽과 미세하게
   // 어긋난 선이 하나 더 생긴다(그게 밧줄의 세 번째 가닥이었다). 같은 배열을 stroke 해서 물질과
   // 윤곽이 정의상 일치하게 한다 — 진폭도 채움 대역 전체(0.13r)를 그대로 받아 선 두께의 3배를 넘는다.
+  //
+  // 점선→실선은 **교차 페이드**다(3차 반려 MAJOR-4). 열이 오르는 동안 실선이 차오르고 점선이
+  // 빠지며, 두 알파가 같아지는 지점이 열 ≈0.55 다. 3차까지는 `hazardVisual(active)` 가 `dashed`
+  // 를 한 프레임에 뒤집어서, 재질이 아무리 연속으로 고조해도 그 끝에 스위치가 남았다.
+  const solid = ramp(heat, DASH_CROSS_LO, DASH_CROSS_HI);
   g.poly(scaledTo(fillPoly, x, y, 1), true).stroke({
     color: v.color,
     width: boundaryWidth(radius, v.strokeWidth),
-    alpha: v.strokeAlpha * BOUNDARY_ALPHA_SCALE,
+    alpha: v.strokeAlpha * BOUNDARY_ALPHA_SCALE * solid,
   });
+  if (solid < 1) {
+    // 아직 남은 점선. 활성 윤곽과 **같은 시드·같은 대역**이라 두 그림이 정확히 포개진다.
+    drawDashRing(
+      g,
+      x,
+      y,
+      edgePolygon(seed, radius, qTick, 1, 1, DASH_SEGMENTS * 2),
+      frameTick * DASH_SPIN,
+      v.color,
+      v.strokeWidth,
+      v.strokeAlpha * (1 - solid),
+    );
+  }
 
   // 맥동 립 — **판정 반경에 정확히 놓이는 울타리**이자 색 외 채널이다. 완전한 원인 것이
   // 여기서는 의도적이고 계약 §2-5 가 명시적으로 허용한다: 유기적 물질 윤곽은 어디가 진짜
@@ -416,7 +548,7 @@ export function drawHazardZone(
     const breathe = (GLOW_MAX_RATIO - GLOW_MIN_RATIO) * pulse;
     g.poly(
       translated(
-        bandPolygon(seed, radius, qTick, GLOW_MIN_RATIO + breathe, GLOW_MAX_RATIO + breathe, FILL_POINTS),
+        bandPolygon(seed, radius, qTick, GLOW_MIN_RATIO + breathe, GLOW_MAX_RATIO + breathe, points),
         x,
         y,
       ),

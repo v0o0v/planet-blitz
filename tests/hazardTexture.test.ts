@@ -19,10 +19,36 @@ import {
   BLOB_TEX_SIZE,
   MOTE_TEX_SIZE,
   bakeLuminanceTexture,
+  bakeVectorTexture,
   blobLuminance,
+  bubbleLuminance,
+  contactLuminance,
+  crackLuminance,
+  crackShadeLuminance,
+  discMask,
+  lensDisplacement,
+  lensLuminance,
   moteLuminance,
+  plateShadeLuminance,
   resetHazardTextures,
+  rimLuminance,
 } from '../src/render/entity/hazardTexture.js';
+
+/** 원판을 격자로 훑어 [0,1] 값을 모은다. 면적 재질의 통계를 재는 공용 도구. */
+function sampleDisc(f: (nx: number, ny: number) => number, n = 40): number[] {
+  const out: number[] = [];
+  for (let iy = 0; iy < n; iy++) {
+    for (let ix = 0; ix < n; ix++) {
+      const nx = ((ix + 0.5) / n) * 2 - 1;
+      const ny = ((iy + 0.5) / n) * 2 - 1;
+      if (Math.hypot(nx, ny) >= 0.98) continue;
+      out.push(f(nx, ny));
+    }
+  }
+  return out;
+}
+
+const mean = (a: readonly number[]): number => a.reduce((s, v) => s + v, 0) / a.length;
 
 describe('블롭 텍스처 — 로브의 실루엣', () => {
   it('중심이 가장 밝고 가장자리에서 정확히 0 이다', () => {
@@ -116,5 +142,144 @@ describe('굽기 — 알파가 아니라 휘도로 굽는다', () => {
     expect(tex?.source.width).toBe(BLOB_TEX_SIZE);
     const mote = bakeLuminanceTexture(MOTE_TEX_SIZE, moteLuminance);
     expect(mote?.source.width).toBe(MOTE_TEX_SIZE);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 접지 — 3차는 톡사르에서 실측이 **정확히 바닥**이었다 (3차 반려 MAJOR-3)
+// ---------------------------------------------------------------------------
+
+describe('접지 텍스처 — 원인은 알파가 아니라 면적이었다', () => {
+  it('그늘이 광원 반대쪽 가장자리를 어둡게 하고 광원 쪽은 건드리지 않는다', () => {
+    // 텍스처는 광원이 +x 라고 가정해 굽는다(방향은 스프라이트 rotation 이 실는다).
+    expect(contactLuminance(-0.8, 0)).toBeLessThan(0.5); // 반대쪽 가장자리 = 어둡다
+    expect(contactLuminance(0.8, 0)).toBeCloseTo(1, 6); // 광원 쪽 = 그대로
+    expect(contactLuminance(0, 0)).toBeCloseTo(1, 6); // 중앙 = 그대로
+    expect(contactLuminance(1.5, 0)).toBe(1); // 원 밖 = 그대로
+  });
+
+  it('그늘이 원판의 다섯 분의 일 이상을 덮는다(3차의 호는 원주의 33% 폭 16% 였다)', () => {
+    // 곱연산이므로 "1 미만"인 표본 비율이 곧 덮는 면적이다.
+    const s = sampleDisc(contactLuminance);
+    expect(s.filter((v) => v < 0.97).length / s.length).toBeGreaterThan(0.2);
+  });
+
+  it('림이 광원 쪽 안쪽 가장자리에만 있다', () => {
+    expect(rimLuminance(0.94, 0)).toBeGreaterThan(0.4);
+    expect(rimLuminance(-0.94, 0)).toBe(0); // 반대쪽 없음
+    expect(rimLuminance(0.3, 0)).toBe(0); // 중앙 없음
+    expect(rimLuminance(1.4, 0)).toBe(0); // 원 밖 없음
+  });
+
+  it('그늘과 림이 같은 자리에서 겹치지 않는다(밝고 어두우면 무늬가 죽는다)', () => {
+    for (let a = 0; a < 24; a++) {
+      const t = (a / 24) * Math.PI * 2;
+      const shade = 1 - contactLuminance(Math.cos(t) * 0.93, Math.sin(t) * 0.93);
+      const rim = rimLuminance(Math.cos(t) * 0.93, Math.sin(t) * 0.93);
+      expect(Math.min(shade, rim), `a=${a}`).toBeLessThan(0.15);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 면적 재질 — "종류가 달라도 색만 다르다"의 처방 (3차 반려 MAJOR-5)
+// ---------------------------------------------------------------------------
+
+describe('면적 재질 텍스처 — 무늬가 실제로 다르다', () => {
+  it('마스크가 가장자리에서 0 이라 판정 반경 밖으로 새지 않는다', () => {
+    expect(discMask(0)).toBeCloseTo(1, 6);
+    expect(discMask(0.6)).toBeCloseTo(1, 6);
+    expect(discMask(1)).toBe(0);
+    expect(discMask(1.5)).toBe(0);
+    // 부드럽게 죽는다(하드 엣지가 없다 — §3-C-2 "각진 폴리곤이 아니라 소프트 페이드").
+    expect(discMask(0.85)).toBeGreaterThan(0);
+    expect(discMask(0.85)).toBeLessThan(1);
+  });
+
+  it('균열이 얇은 선이다 — 넓은 얼룩이면 다시 "평면 채움"이다', () => {
+    const s = sampleDisc(crackLuminance, 64);
+    // 밝은 픽셀(≥0.5)이 소수여야 "선"이다. 절반을 넘으면 원판이 통째로 밝은 것이다.
+    const bright = s.filter((v) => v >= 0.5).length / s.length;
+    expect(bright).toBeGreaterThan(0.005); // 존재한다
+    expect(bright).toBeLessThan(0.2); // 그러나 선이다
+    // 최댓값이 실제로 높이 올라간다(균열이 발광 코어로 읽힌다).
+    expect(Math.max(...s)).toBeGreaterThan(0.8);
+  });
+
+  it('그을음 균열은 반대 부호다 — 밝히지 않고 어둡게 한다(곱연산)', () => {
+    const s = sampleDisc(crackShadeLuminance, 48);
+    expect(Math.max(...s)).toBeLessThanOrEqual(1);
+    expect(Math.min(...s)).toBeLessThan(0.5); // 실제로 검은 금이 있다
+    expect(mean(s)).toBeGreaterThan(0.6); // 그러나 판 전체가 검지는 않다
+    // 원 밖은 그대로(1) — 곱연산 겹이 사각 타일을 드러내면 안 된다.
+    expect(crackShadeLuminance(1.4, 0)).toBe(1);
+  });
+
+  it('식은 껍질과 발광 균열이 같은 자리에 있지 않다(판과 금이 겹치면 무늬가 죽는다)', () => {
+    // 다른 노이즈 시드를 쓰므로 상관이 낮아야 한다. "균열이 밝은 곳에서 껍질도 가장 어둡다"면
+    // 두 겹이 서로를 지운다.
+    let both = 0;
+    let crackBright = 0;
+    for (let iy = 0; iy < 48; iy++) {
+      for (let ix = 0; ix < 48; ix++) {
+        const nx = ((ix + 0.5) / 48) * 2 - 1;
+        const ny = ((iy + 0.5) / 48) * 2 - 1;
+        if (Math.hypot(nx, ny) >= 0.9) continue;
+        const c = crackLuminance(nx, ny) >= 0.5;
+        if (!c) continue;
+        crackBright++;
+        if (plateShadeLuminance(nx, ny) < 0.75) both++;
+      }
+    }
+    expect(crackBright).toBeGreaterThan(10);
+    expect(both / crackBright).toBeLessThan(0.6);
+  });
+
+  it('거품은 막(테두리)이 안쪽보다 밝다 — 채워진 원은 다시 도형이다', () => {
+    const s = sampleDisc(bubbleLuminance, 64);
+    expect(Math.max(...s)).toBeGreaterThan(0.5);
+    expect(mean(s)).toBeLessThan(0.45); // 원판이 통째로 차 있지 않다
+    expect(bubbleLuminance(1.3, 0)).toBe(0);
+  });
+
+  it('렌즈는 집광 무늬와 유리 테두리를 갖고, 무늬가 원형 격자가 아니다', () => {
+    // 유리 테두리: 안쪽 가장자리(0.93)가 밝다.
+    expect(lensLuminance(0.93, 0)).toBeGreaterThan(0.5);
+    // 같은 반경의 서로 다른 각도에서 값이 달라야 "원형 격자"가 아니다.
+    const ring: number[] = [];
+    for (let a = 0; a < 16; a++) {
+      const t = (a / 16) * Math.PI * 2;
+      ring.push(lensLuminance(Math.cos(t) * 0.55, Math.sin(t) * 0.55));
+    }
+    expect(Math.max(...ring) - Math.min(...ring)).toBeGreaterThan(0.15);
+    expect(lensLuminance(1.2, 0)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 굴절 변위맵 — 실제 왜곡의 입력
+// ---------------------------------------------------------------------------
+
+describe('굴절 변위맵', () => {
+  it('가장자리에서 변위가 0 으로 죽는다(장판 경계에 잘린 자국이 안 남는다)', () => {
+    const e = lensDisplacement(0.999, 0);
+    expect(Math.hypot(e.x, e.y)).toBeLessThan(0.01);
+    expect(lensDisplacement(1.5, 0)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('내부에서는 실제로 밀어낸다(0 이면 필터가 있으나 왜곡이 없다)', () => {
+    const m = lensDisplacement(0.45, 0.2);
+    expect(Math.hypot(m.x, m.y)).toBeGreaterThan(0.05);
+  });
+
+  it('0 변위가 128 로 인코딩된다(규약을 틀리면 화면이 통째로 밀린다)', () => {
+    const tex = bakeVectorTexture(8, () => ({ x: 0, y: 0 }));
+    expect(tex).not.toBeNull();
+    const px = (tex?.source as unknown as { resource: Uint8Array }).resource;
+    for (let i = 0; i < px.length; i += 4) {
+      expect(px[i]).toBe(128);
+      expect(px[i + 1]).toBe(128);
+      expect(px[i + 3]).toBe(255);
+    }
   });
 });
