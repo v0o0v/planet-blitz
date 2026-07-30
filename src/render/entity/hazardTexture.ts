@@ -237,6 +237,21 @@ const CONTACT_TEX_BAND = 0.42;
 const CONTACT_TEX_MAX = 0.8;
 /** 림 띠 두께(반경 대비). 그늘보다 좁아야 가장자리가 선다. */
 const RIM_TEX_BAND = 0.16;
+/**
+ * **내벽** 띠 두께(반경 대비). 방향성 그늘과 별개로 원주 **전체**를 두르는 어두운 띠다.
+ *
+ * ## 왜 방향성 그늘만으로는 높이감이 안 나오는가 (6차 반려 MAJOR-2)
+ * 5차의 접지는 광원 반대쪽 절반만 어둡다. 그래서 광원 쪽 절반은 **바닥과 같은 높이**로 읽히고,
+ * 장판이 "파인 웅덩이"가 아니라 "한쪽에 그늘이 드리운 평면 원"이 된다. AAA 대조(Hades 용암
+ * 웅덩이 · Returnal 산성 지대)는 웅덩이 **전 둘레**에 두꺼운 어두운 내벽을 두고, 그 내벽이
+ * 깊이의 주 신호다. 방향 신호(어느 쪽이 더 어두운가)는 그 위에 얹히는 2차 정보다.
+ *
+ * 곱연산이므로 이 겹을 두껍게 해도 밝기 총량(§2-4)에는 **순감**으로만 기여한다 — 즉 예산을
+ * 쓰지 않고 높이감을 얻는 유일한 축이다.
+ */
+const WALL_TEX_BAND = 0.26;
+/** 내벽 최대 감광. 방향성 그늘(0.8)보다 얕아 방향 정보가 그 위에 남는다. */
+const WALL_TEX_MAX = 0.52;
 
 /**
  * 접촉 그늘의 **곱연산 밝기** ∈ [0,1](1 = 그대로, 0 = 완전 검정).
@@ -257,7 +272,14 @@ export function contactLuminance(nx: number, ny: number): number {
   // 가장자리 안쪽 띠 — 양 끝에서 0 이라 하드 라인이 없다.
   const t = sat((d - (1 - CONTACT_TEX_BAND)) / CONTACT_TEX_BAND);
   const radial = Math.sin(Math.PI * t);
-  return 1 - CONTACT_TEX_MAX * angular * radial * (d < 1 ? 1 : 0);
+  const directional = CONTACT_TEX_MAX * angular * radial;
+  // 전 둘레를 두르는 내벽(방향 무관). 같은 sin 램프라 양 끝에서 정확히 0 이고, 그래서 텍스처
+  // 경계(d=1)에 하드 라인이 생기지 않는다 — 여기서 램프를 단조 증가로 두면 d=1 에서 밝기가
+  // 0.48 → 1 로 튀어 **정원 윤곽 한 줄**이 생긴다(§2-5 로 되돌아간다).
+  const wt = sat((d - (1 - WALL_TEX_BAND)) / WALL_TEX_BAND);
+  const wall = WALL_TEX_MAX * Math.sin(Math.PI * wt);
+  // 두 감광을 곱으로 합친다(각각 "남은 밝기의 비율"이므로 더하면 1 을 넘어 음수 밝기가 된다).
+  return sat((1 - directional) * (1 - wall));
 }
 
 /** 림 하이라이트의 **가산 휘도**. 광원 쪽(+x) 안쪽 가장자리만 밝다. */
@@ -364,6 +386,50 @@ export function bubbleLuminance(nx: number, ny: number): number {
   return sat(v) * m;
 }
 
+/** 오염 감산 겹의 우묶음(가라앉은 웅덩이) 개수. 거품(22)보다 적고 커야 판이 읽힌다. */
+const SPORE_POOL_COUNT = 13;
+/** 웅덩이 하나의 최대 감광. */
+const SPORE_POOL_MAX = 0.66;
+/** 판 사이 얼룩의 최대 감광. 넓고 옅어 웅덩이 사이를 잇는다. */
+const SPORE_MOTTLE_MAX = 0.3;
+
+/**
+ * 오염의 **곱연산 밝기**(가라앉은 포자 웅덩이). 6차 반려 CRITICAL-1 의 처방.
+ *
+ * ## 왜 오염에만 감산 겹이 없었는가, 그리고 왜 그것이 근인인가
+ * 5차의 `CRUST_SPEC.spore.shade` 는 `null` 이었다. 즉 `molten` 이 {@link plateShadeLuminance} 로
+ * 구조를 얻는 통로가 오염에는 **통째로 없었다**. 남은 채널이 전부 가산인데, 판정 장면(톡사르)의
+ * 오염 셀은 `fillAlpha` 채움이 깔린 **밝은 원판**이라 알파 0.15 대의 가산은 대비를 만들지 못한다.
+ * 실측이 그것을 정확히 말했다: 셀 내부 on/off 채널 델타가 mean maxCh **6.32**(카르곤 molten
+ * full 셀은 15.20) — 겹의 **형태는 옳고 진폭만 없었다**.
+ *
+ * 감산으로 구조를 만들면 대비는 오르고 밝기 총량(§2-4)은 **내려간다**. 5차의 밝기 성과를
+ * 되돌리지 않고 6차의 가시성 요구를 만족시키는 유일한 축이다(가산 기본 배율
+ * `ADDITIVE_ALPHA_BASE` 를 되올리는 것은 명시적으로 처방이 아니다).
+ *
+ * 무늬는 {@link bubbleLuminance} 와 **다른 시드**여야 한다 — 같은 시드면 밝은 거품과 어두운
+ * 웅덩이가 같은 자리에 겹쳐 서로를 지운다(`plateShade` ↔ `crackAdd` 가 시드를 가른 것과 같은 규율).
+ * 웅덩이는 거품보다 크고 적어서, 겹치면 "거품이 뜬 늪"으로 읽힌다.
+ */
+export function sporeShadeLuminance(nx: number, ny: number): number {
+  const m = discMask(Math.hypot(nx, ny));
+  if (m <= 0) return 1;
+  let pool = 0;
+  for (let k = 0; k < SPORE_POOL_COUNT; k++) {
+    const cx = (hash3(0x2ea77d13, k, 0, 1) * 2 - 1) * 0.7;
+    const cy = (hash3(0x2ea77d13, k, 0, 2) * 2 - 1) * 0.7;
+    const rr = 0.16 + 0.2 * hash3(0x2ea77d13, k, 0, 3);
+    const dd = Math.hypot(nx - cx, ny - cy) / rr;
+    if (dd >= 1) continue;
+    // **최댓값**으로 합친다(합이 아니다). 겹친 웅덩이가 서로를 더 어둡게 만들면 몇 자리만
+    // 검게 뭉치고 나머지는 비는데, 웅덩이는 같은 깊이의 판이라야 "가라앉은 면"으로 읽힌다.
+    const v = Math.pow(1 - dd * dd, 1.1) * SPORE_POOL_MAX * (0.62 + 0.38 * hash3(0x2ea77d13, k, 0, 4));
+    if (v > pool) pool = v;
+  }
+  const mottle = SPORE_MOTTLE_MAX * sat((0.55 - fbm(0x6cd9a17f, nx * 2.2 + 13, ny * 2.2 + 13)) * 1.9);
+  return sat(1 - (pool + mottle) * m);
+}
+
 /**
  * 굴절 렌즈의 **가산 휘도**. 코스틱(집광 무늬)과 유리 테두리.
  *
@@ -425,13 +491,20 @@ export function bakeVectorTexture(
 }
 
 /** 면적 재질 텍스처의 종류. `add` 는 가산 겹, `shade` 는 곱연산 겹이 쓴다. */
-export type CrustTextureId = 'crackAdd' | 'crackShade' | 'plateShade' | 'bubbleAdd' | 'lensAdd';
+export type CrustTextureId =
+  | 'crackAdd'
+  | 'crackShade'
+  | 'plateShade'
+  | 'bubbleAdd'
+  | 'sporeShade'
+  | 'lensAdd';
 
 const CRUST_SAMPLERS: Readonly<Record<CrustTextureId, (nx: number, ny: number) => number>> = {
   crackAdd: crackLuminance,
   crackShade: crackShadeLuminance,
   plateShade: plateShadeLuminance,
   bubbleAdd: bubbleLuminance,
+  sporeShade: sporeShadeLuminance,
   lensAdd: lensLuminance,
 };
 
@@ -538,6 +611,7 @@ const ADDITIVE_SAMPLERS: Readonly<
   crackShade: crackShadeLuminance,
   plateShade: plateShadeLuminance,
   bubbleAdd: bubbleLuminance,
+  sporeShade: sporeShadeLuminance,
   lensAdd: lensLuminance,
 };
 

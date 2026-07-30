@@ -34,6 +34,7 @@ import {
   plateShadeLuminance,
   resetHazardTextures,
   rimLuminance,
+  sporeShadeLuminance,
 } from '../src/render/entity/hazardTexture.js';
 import { hash3 } from '../src/render/env/noise.js';
 
@@ -153,12 +154,30 @@ describe('굽기 — 알파가 아니라 휘도로 굽는다', () => {
 // ---------------------------------------------------------------------------
 
 describe('접지 텍스처 — 원인은 알파가 아니라 면적이었다', () => {
-  it('그늘이 광원 반대쪽 가장자리를 어둡게 하고 광원 쪽은 건드리지 않는다', () => {
+  /**
+   * ## 계약이 바뀌었다 (6차 반려 MAJOR-2 — 전 둘레 내벽)
+   * 5차는 광원 쪽 절반을 **전혀** 건드리지 않았다. 그래서 그 절반이 바닥과 같은 높이로 읽히고
+   * 장판이 "파인 웅덩이"가 아니라 "한쪽에 그늘이 드리운 평면 원"이 됐다(높이감 미달의 근인).
+   * 지금은 원주 **전체**에 내벽이 있고, 방향 정보는 "어느 쪽이 **더** 어두운가"로 남는다.
+   */
+  it('내벽이 전 둘레를 두르고, 방향 정보는 깊이 차이로 남는다', () => {
     // 텍스처는 광원이 +x 라고 가정해 굽는다(방향은 스프라이트 rotation 이 실는다).
-    expect(contactLuminance(-0.8, 0)).toBeLessThan(0.5); // 반대쪽 가장자리 = 어둡다
-    expect(contactLuminance(0.8, 0)).toBeCloseTo(1, 6); // 광원 쪽 = 그대로
-    expect(contactLuminance(0, 0)).toBeCloseTo(1, 6); // 중앙 = 그대로
+    const away = contactLuminance(-0.87, 0);
+    const toward = contactLuminance(0.87, 0);
+    expect(away).toBeLessThan(0.5); // 반대쪽 가장자리 = 가장 어둡다
+    expect(toward).toBeLessThan(0.75); // 광원 쪽도 내벽이 있다(5차는 정확히 1 이었다)
+    expect(toward).toBeGreaterThan(away * 1.4); // 그래도 방향은 읽힌다
+    expect(contactLuminance(0, 0)).toBeCloseTo(1, 6); // 중앙 = 그대로(내벽은 가장자리 띠다)
     expect(contactLuminance(1.5, 0)).toBe(1); // 원 밖 = 그대로
+  });
+
+  it('내벽이 텍스처 경계에서 0 으로 죽는다 — 하드 라인이 정원 윤곽을 만들면 안 된다(§2-5)', () => {
+    // 단조 증가 램프를 쓰면 d=1 에서 밝기가 0.48 → 1 로 튀어 원 하나가 더 생긴다.
+    for (let a = 0; a < 12; a++) {
+      const t = (a / 12) * Math.PI * 2;
+      const at = (d: number): number => contactLuminance(Math.cos(t) * d, Math.sin(t) * d);
+      expect(at(0.999), `a=${a}`).toBeGreaterThan(0.9);
+    }
   });
 
   it('그늘이 원판의 다섯 분의 일 이상을 덮는다(3차의 호는 원주의 33% 폭 16% 였다)', () => {
@@ -174,13 +193,104 @@ describe('접지 텍스처 — 원인은 알파가 아니라 면적이었다', (
     expect(rimLuminance(1.4, 0)).toBe(0); // 원 밖 없음
   });
 
-  it('그늘과 림이 같은 자리에서 겹치지 않는다(밝고 어두우면 무늬가 죽는다)', () => {
+  /**
+   * 5차의 단언은 "두 겹이 같은 자리에서 겹치지 않는다"였다. 내벽이 전 둘레로 퍼지면서 그 단언은
+   * 성립할 수 없고, **성립하지 않아야 한다** — AAA 대조(Hades 용암 웅덩이)의 가장자리는 정확히
+   * "어두운 내벽 위에 얹힌 밝은 립"이다. 두 겹은 블렌드가 달라(곱연산 아래 · 가산 위) 서로를
+   * 지우지 않고, 감산된 바탕 위의 가산 하이라이트는 **대비가 오히려 커진다**.
+   *
+   * 그래서 잠글 것은 겹치지 않음이 아니라 **방향의 일관성**이다: 가장 밝은 림과 가장 깊은
+   * 내벽이 서로 반대쪽에 있어야 화면에 태양이 둘이 되지 않는다.
+   */
+  it('가장 밝은 림과 가장 깊은 내벽이 서로 반대쪽에 있다(태양은 하나다)', () => {
+    let bestRim = -1;
+    let rimAngle = 0;
+    let worstShade = -1;
+    let shadeAngle = 0;
     for (let a = 0; a < 24; a++) {
       const t = (a / 24) * Math.PI * 2;
-      const shade = 1 - contactLuminance(Math.cos(t) * 0.93, Math.sin(t) * 0.93);
-      const rim = rimLuminance(Math.cos(t) * 0.93, Math.sin(t) * 0.93);
-      expect(Math.min(shade, rim), `a=${a}`).toBeLessThan(0.15);
+      const px = Math.cos(t) * 0.93;
+      const py = Math.sin(t) * 0.93;
+      const shade = 1 - contactLuminance(px, py);
+      const rim = rimLuminance(px, py);
+      if (rim > bestRim) {
+        bestRim = rim;
+        rimAngle = t;
+      }
+      if (shade > worstShade) {
+        worstShade = shade;
+        shadeAngle = t;
+      }
     }
+    expect(bestRim).toBeGreaterThan(0.4);
+    expect(worstShade).toBeGreaterThan(0.4);
+    // 두 극점의 각도 차가 π 에 가깝다(같은 방향이면 화면에 태양이 둘이다).
+    const d = rimAngle - shadeAngle;
+    const diff = Math.abs(Math.atan2(Math.sin(d), Math.cos(d)));
+    expect(diff).toBeGreaterThan(Math.PI - 0.3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 오염의 감산 겹 — 6차 반려 CRITICAL-1 (판정 장면에서 재질이 가시성 하한 밑이었다)
+// ---------------------------------------------------------------------------
+
+/**
+ * ## 무엇이 결함이었나
+ * 판정 장면(톡사르 41셀)에서 **이 레인의 겹을 통째로 꺼도 화면이 거의 같았다**: 셀 내부 on/off
+ * 채널 델타가 mean maxCh **6.32 · ≥16레벨 9.4%**(카르곤 molten full 셀은 15.20 · 26.0%). 겹의
+ * **형태는 옳았고 진폭이 없었다.**
+ *
+ * 근인은 알파 하나가 아니라 구조다: 오염에는 **감산 축이 아예 없었고**(`CRUST_SPEC.spore.shade
+ * === null`), 남은 채널은 전부 가산인데 채움이 깔린 밝은 원판 위에서 알파 0.15 대의 가산은
+ * 대비를 만들지 못한다. 감산은 대비를 올리면서 밝기 총량(§2-4)을 **내린다** — 5차의 성과를
+ * 되돌리지 않고 6차의 요구를 만족시키는 유일한 축이다.
+ */
+describe('오염 감산 겹 — 대비는 감산에서 나온다 (6차 CRITICAL-1)', () => {
+  it('곱연산 규약을 지킨다(전부 ≤1, 원 밖은 정확히 1)', () => {
+    for (const v of sampleDisc(sporeShadeLuminance)) {
+      expect(v).toBeLessThanOrEqual(1);
+      expect(v).toBeGreaterThanOrEqual(0);
+    }
+    expect(sporeShadeLuminance(1.4, 0)).toBe(1);
+    expect(sporeShadeLuminance(0.99, 0.99)).toBe(1); // 마스크 밖
+  });
+
+  it('진폭이 실제로 있다 — 원판의 3분의 1 이상이 20% 넘게 어두워진다', () => {
+    // `sampleDisc` 는 d<0.98 을 훑으므로 `discMask` 가 0 으로 죽는 바깥 테(d>0.9, 표본의 16%)
+    // 까지 분모에 들어간다. 실효 원판(d<0.9) 기준으로는 47% 다.
+    const s = sampleDisc(sporeShadeLuminance);
+    const deep = s.filter((v) => v < 0.8).length / s.length;
+    expect(deep).toBeGreaterThan(1 / 3);
+    // 가장 깊은 웅덩이는 절반 이상 어둡다(여기가 ≥16레벨을 만드는 자리다).
+    expect(Math.min(...s)).toBeLessThan(0.4);
+  });
+
+  it('거품(가산)과 웅덩이(감산)가 같은 자리에 겹치지 않는다 — 시드를 갈라야 서로를 안 지운다', () => {
+    // `plateShade` ↔ `crackAdd` 가 시드를 가른 것과 같은 규율이다. 같은 시드면 밝은 거품과
+    // 어두운 웅덩이가 정확히 포개져 둘 다 사라진다.
+    let both = 0;
+    let brightOnly = 0;
+    for (let iy = 0; iy < 64; iy++) {
+      for (let ix = 0; ix < 64; ix++) {
+        const nx = ((ix + 0.5) / 64) * 2 - 1;
+        const ny = ((iy + 0.5) / 64) * 2 - 1;
+        if (nx * nx + ny * ny >= 0.81) continue;
+        const bright = bubbleLuminance(nx, ny) > 0.35;
+        const dark = sporeShadeLuminance(nx, ny) < 0.6;
+        if (bright && dark) both++;
+        else if (bright) brightOnly++;
+      }
+    }
+    expect(brightOnly).toBeGreaterThan(both);
+  });
+
+  it('감산 진폭이 가산 진폭을 압도한다(§2-4 를 지키면서 대비를 얻는 축)', () => {
+    // 화면에 실리는 실효 진폭 = 알파 × 텍스처 평균 편차. 감산은 밝기 총량에 순감이므로
+    // 이 부등식이 "밝히지 않고 보이게 한다"의 수치적 표현이다.
+    const sub = 0.92 * (1 - meanDiscLuminance(sporeShadeLuminance));
+    const add = 0.22 * 0.72 * meanDiscLuminance(bubbleLuminance) * 1.7;
+    expect(sub).toBeGreaterThan(add * 3);
   });
 });
 

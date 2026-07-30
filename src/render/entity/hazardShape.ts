@@ -327,10 +327,22 @@ export interface HazardLobe {
  * 포자"가 아니라 **렌즈 플레어 스티커**였다.
  *
  * 물질감은 큰 덩어리 몇 개가 아니라 **작은 개체 여럿의 통계**에서 나온다. 작고(0.12~0.30r)
- * 많고(14개) 각자 다른 주기로 태어나-부풀고-사라져야 표면이 살아 있는 것으로 읽힌다.
+ * 많고 각자 다른 주기로 태어나-부풀고-사라져야 표면이 살아 있는 것으로 읽힌다.
  * 개수가 늘었으므로 개당 알파는 크게 내렸다(가산 누적 밝기 예산 — 계약 §2-4).
+ *
+ * ## 14 → 10 (6차 반려 MAJOR-3 — 예산은 쓰고 화면에는 없었다)
+ * 실측: 톡사르 272 스프라이트가 셀 가산 부하의 **20%**(spore full 셀 0.0276 / 0.1380)를 쓰는데
+ * molten 원판에서의 가시 기여는 mean maxCh **0.80 · ≥8레벨 3.3%** — 재질 신호(15.20)의 5% 미만
+ * 이다. §3-C-1 의 "재질 본체"를 실제로 지는 것은 원판을 통째로 덮는 `crustAdd` 이고, 이 회계는
+ * {@link additiveLayerSpecs} 로 재현된다.
+ *
+ * **알파를 올려 보이게 하는 길은 택하지 않았다.** 5차의 밝기 성과(3레인 통합 후 bright 가
+ * 출발점보다 낮다)를 되돌리는 방향이고, 6차 처방이 명시적으로 금지한 축과 같은 계열이다.
+ * 대신 개수를 줄여 그 예산을 **감산 구조**(`sporeShade`)와 **셀 간 균일성**(전 LOD 입자 —
+ * {@link lodMoteScale})으로 옮긴다. 통계로 읽히는 하한은 10 이다(5개 시절의 "큰 덩어리 하나"는
+ * 개수가 아니라 **개당 크기**(0.40~0.92r)의 문제였고 그 축은 {@link LOBE_MAX_R} 가 지킨다).
  */
-export const LOBE_COUNT = 14;
+export const LOBE_COUNT = 10;
 
 /** 로브의 운동 방식. 재질감의 정체는 결국 **운동**이라, 종류마다 달라야 구분된다. */
 export type HazardLobeMotion = 'flow' | 'bubble' | 'lens' | 'still';
@@ -478,6 +490,23 @@ export const CRUST_COVER = 0.95;
 /** 접지 텍스처가 덮는 반경 비율. 판정 반경에 맞춰야 "가장자리가 파였다"가 립과 정합한다. */
 export const GROUND_COVER = 0.99;
 
+/**
+ * 물질 겹의 **원근 압축 계수**(세로 / 가로). 6차 반려 MAJOR-2 의 처방.
+ *
+ * 5차까지 채움·경계·립·재질에 원근 압축이 **0** 이었다(압축을 쓰는 것은 환경 기여 0.88 과 예열
+ * 고조 0.92 뿐). 그래서 장판이 바닥에 누운 웅덩이가 아니라 정면에서 본 **평면 원**으로 읽혔다 —
+ * AAA 대조(Hades 용암 웅덩이 · Returnal 산성 지대)는 웅덩이 자체를 세로로 누른다.
+ *
+ * 여기(Pixi 를 모르는 파일)에 두는 이유: `hazardVisual.drawHazardZone` 의 채움·경계와
+ * `hazardField` 의 재질 스프라이트가 **같은 값**을 써야 두 그림이 같은 타원 안에 머문다. 값이
+ * 갈리면 재질이 채움 밖으로 삐져나오고, 그것은 화면에서만 보이는 결함이다.
+ *
+ * ⚠️ **맥동 립과 바깥 글로우는 압축 대상이 아니다.** 립은 판정 반경의 울타리라 누르면 화면이
+ * 세로 방향 위험 범위를 실제보다 작게 말하고(§2-2 위반), 글로우 대역 [1.02,1.06] 은 압축하면
+ * 세로에서 립 안쪽으로 내려와 세 선의 대역 분리(2차 반려 CRIT-3)가 깨진다.
+ */
+export const HAZARD_SQUASH_Y = 0.94;
+
 const CRUST_SPEC: Readonly<Record<HazardMaterialKind, HazardCrustSpec>> = {
   // 용암: 굳은 껍질(곱연산) 사이로 균열이 빛난다(가산 2장 역회전 = 흐름).
   //
@@ -493,8 +522,16 @@ const CRUST_SPEC: Readonly<Record<HazardMaterialKind, HazardCrustSpec>> = {
   ember: { add: 'crackAdd', shade: null, addAlpha: 0.23, shadeAlpha: 0, flow: 2, spin: 0.004 },
   // 그을음: **갈라진 검은 금**. 발광이 아니라 감광이라 가산 겹이 아예 없다.
   scorch: { add: null, shade: 'crackShade', addAlpha: 0, shadeAlpha: 0.95, flow: 0, spin: 0 },
-  // 오염: 부글거리는 거품.
-  spore: { add: 'bubbleAdd', shade: null, addAlpha: 0.22, shadeAlpha: 0, flow: 2, spin: 0.0015 },
+  // 오염: 부글거리는 거품이 **가라앉은 웅덩이 판** 위에 뜬다.
+  //
+  // 6차 반려 CRITICAL-1 — `shade` 가 `null` 이었던 것이 근인이다. 판정 장면(톡사르 41셀)의 오염
+  // 셀은 채움이 깔린 밝은 원판이고, 그 위에서 가산 겹만으로는 대비가 생기지 않는다(셀 내부
+  // on/off 채널 델타 mean maxCh 6.32 vs 카르곤 molten full 15.20). `molten` 이 `plateShade` 로
+  // 구조를 얻는 통로가 오염에는 통째로 없었다.
+  //
+  // 감산 겹은 §2-4 밝기 총량에 **순감**으로 들어가므로, 5차의 밝기 성과를 되돌리지 않고 진폭을
+  // 얻는 유일한 축이다. 가산 알파는 그대로 두고(총량 회귀 금지) 구조를 전부 감산으로 만든다.
+  spore: { add: 'bubbleAdd', shade: 'sporeShade', addAlpha: 0.22, shadeAlpha: 0.92, flow: 2, spin: 0.0015 },
   // 감속장: 집광 무늬 + 유리 테두리. 실제 왜곡은 `hazardField` 의 공유 변위 필터가 준다.
   refract: { add: 'lensAdd', shade: null, addAlpha: 0.26, shadeAlpha: 0, flow: 1, spin: 0.0026 },
 };
@@ -631,18 +668,29 @@ export function lodHasGrounding(_lod: HazardLod): boolean {
   return true;
 }
 /**
- * 이 LOD 가 입자를 그리는가. `lite` 만 뺀다 — 입자는 위로 솟는 개체라 없어도 "같은 물질의
- * 원거리 표현"으로 읽히고(스타일이 갈리지 않는다), 유일하게 매 프레임 위치를 다시 쓰는 겹이다.
+ * 이 LOD 가 입자를 그리는가. **전부 그린다**(6차 반려 MINOR-2).
+ *
+ * 5차는 `lod !== 'lite'` 라 톡사르 41셀 중 18셀에만 입자가 있었다. 근거는 "입자가 없어도 같은
+ * 물질의 원거리 표현으로 읽힌다"였는데, 실제 판정 장면의 오염 셀은 **서로 붙어 있고 거리가
+ * 같다** — 같은 거리의 나란한 셀 사이 정보량 차이는 접지·빗금에서 이미 스스로 반려한 항목과
+ * 같은 계열이다. 개수는 {@link lodMoteScale} 이 낮춘다(겹을 빼는 것이 아니라 밀도를 낮춘다).
  */
-export function lodHasMotes(lod: HazardLod): boolean {
-  return lod !== 'lite';
+export function lodHasMotes(_lod: HazardLod): boolean {
+  return true;
 }
-/** LOD 별 입자 수 배율. `mid` 는 절반이라 전이가 계단으로 읽히지 않는다. */
+/**
+ * LOD 별 입자 수 배율. `mid` 는 절반이라 전이가 계단으로 읽히지 않는다.
+ *
+ * `lite` 가 0 → **0.25** (6차 반려 MINOR-2): 5차는 입자가 41셀 중 18셀에만 있었고, 그것은
+ * "나란한 같은 셀 중 일부만 다르면 관객은 LOD 가 아니라 렌더링 버그로 읽는다"는 이 레인
+ * 자신의 논거(MAJOR-1)의 잔여분이었다. 로브 감축(14→10)으로 비운 가산 예산을 여기로 옮긴다 —
+ * 셀당 3개는 `moteBudget` 의 `min` 단계와 같은 규모라 총량이 아니라 **분포**만 고른다.
+ */
 export function lodMoteScale(lod: HazardLod): number {
-  return lod === 'full' ? 1 : lod === 'mid' ? 0.5 : 0;
+  return lod === 'full' ? 1 : lod === 'mid' ? 0.5 : 0.25;
 }
 /** `lite` 가 유지하는 최소 로브 수(고사양 기준). **0 이 아니다.** */
-export const LOD_LITE_LOBES = 4;
+export const LOD_LITE_LOBES = 3;
 
 /**
  * 이 LOD 의 로브 수. **티어를 게이트보다 먼저 본다**({@link moteBudget} 와 같은 규율).
@@ -658,11 +706,11 @@ export const LOD_LITE_LOBES = 4;
  * 적용된다 — LOD 는 "멀리 있는 것"의 표현이지만 티어는 "성능이 없는 것"이고, 저사양에서는
  * 화면 전체가 함께 내려가므로 셀 간 불균형이 생기지 않는다.
  *
- * 톡사르 41장 실측: high 6×14 + 12×8 + 23×4 = **272** → low 6×3 + 12×2 + 23×0 = **42**.
+ * 톡사르 41장: high 6×10 + 12×6 + 23×3 = **201**(5차 272) → low 6×3 + 12×2 + 23×0 = **42**.
  */
 export function lodLobeCount(lod: HazardLod, tier: QualityTier, gates: EffectGates): number {
   if (tier === 'low') return lod === 'full' ? 3 : lod === 'mid' ? 2 : 0;
-  const base = lod === 'full' ? LOBE_COUNT : lod === 'mid' ? 8 : LOD_LITE_LOBES;
+  const base = lod === 'full' ? LOBE_COUNT : lod === 'mid' ? 6 : LOD_LITE_LOBES;
   // 티어는 개수를, `reducedGlow`(= halo 차단)는 개수와 강도를 함께 깎는다. 가산 스프라이트는
   // 겹칠 때마다 밝기가 누적되므로, 광과민 대응에서는 **장수 자체**를 줄이는 것이 알파만 내리는
   // 것보다 효과가 크다(강도는 {@link lobeAlphaScale} 가 추가로 내린다).
@@ -850,12 +898,18 @@ export interface HazardGrounding {
  * 면적 수정만 남긴다. **접지감(§3-C 항목 3)은 곱연산 {@link HAZARD_CONTACT_ALPHA}(0.62)가 이미
  * 지고 있고** 그쪽은 어둡게 하므로 밝기 총량 기여가 0 이다 — 즉 림을 내려도 접지는 안 죽는다.
  */
-export const HAZARD_RIM_ALPHA = 0.26;
+export const HAZARD_RIM_ALPHA = 0.17;
 /**
  * 접촉 그늘 기본 알파. **곱연산**이라 어두운 행성에서 스스로 약해지고(groundShadow 와 같은
  * 성질) 밝기 총량(§2-4)에는 순감으로 기여한다 — 3차의 `+0.76pp` 순기여를 되돌리는 항목이다.
+ *
+ * 0.62 → **0.8** (6차 반려 MAJOR-2). 높이감이 미달인데(진폭 ≥8레벨 7.3% · 톡사르 육안 0) 이
+ * 겹은 **올려도 예산을 쓰지 않는 유일한 축**이다 — 곱연산이므로 올린 만큼 밝기 총량이 내려간다.
+ * 텍스처 쪽에서는 방향성 그늘에 전 둘레 **내벽**(`WALL_TEX_BAND`)이 더해졌고, 알파는 그 내벽이
+ * 화면에서 두께로 읽히는 데 필요한 진폭이다. 가산 림은 반대로 내려(0.26 → 0.17) 접지감의
+ * 무게중심을 감산으로 완전히 옮긴다.
  */
-export const HAZARD_CONTACT_ALPHA = 0.62;
+export const HAZARD_CONTACT_ALPHA = 0.8;
 
 /**
  * 테마 광원 → 장판 접지 기하. **테마가 없으면 방향 신호를 통째로 끈다**(0) — 광원을 모르면서
@@ -1120,16 +1174,30 @@ export function additiveLoad(
 }
 
 /**
- * 셀 하나의 **게이트 걸린** 가산 부하 상한(= `ambient` 를 뺀 합).
+ * 셀 하나의 **게이트 걸린** 가산 부하 상한(= `ambient` 를 뺀 합). **종류별**이다.
  *
- * 4차 값은 최악 조합(`molten`·`full`·`high`)에서 **0.689** 였다. 5차 감산 후 **0.291** 이고,
- * 상한은 거기에 10% 여유를 준 값이다. 앞으로 어떤 겹의 알파를 올리든 여기 먼저 부딪친다.
+ * ## 왜 하나의 상수에서 종류별 표로 바뀌었나 (6차 반려 MINOR-3)
+ * 5차는 `0.32` 단일 상수였다. 그 값은 최악 조합(`molten`·`full`·`high` = 0.291)에서 파생됐지만,
+ * **판정 장면인 톡사르는 전부 `spore`(실측 0.138)** 라 상한이 실측의 **2.3배**였다. 즉 오염 셀의
+ * 어떤 알파 회귀도 셀 테스트를 통과했다 — 5차가 밟은 함정("겹별 개별 판단은 전부 정당했는데
+ * 총량이 터졌다")과 같은 계열의 다음 결함을 모델이 여전히 통과시키고 있었던 것이다.
  *
- * bright(L≥96)는 가산 누적의 **초선형** 함수라 부하를 3분의 1로 내리면 순기여는 그보다 더
- * 떨어지지만, 회계는 보수적으로 선형 비례로 읽는다(4차 순기여 +5.95pp × 0.29 ≈ 1.7pp 가
- * 선형 상계이고 실제는 그보다 낮게 나와야 한다 — 목표는 ≤1.5pp).
+ * 그래서 **종류마다 실측 × 1.05** 로 조인다. 여유 5% 는 표본 흔들림(로브·입자 수명 곡선의
+ * `LOAD_SEEDS` 표본)만 흡수하는 폭이고, 의도적인 알파 인상은 반드시 여기 부딪친다.
+ *
+ * 6차 실측(`full`·`high`·`gates.halo` 열림, `additiveTextureMean` 적분):
+ * molten 0.2745 · spore 0.1229 · refract 0.2128 · scorch 0.0519 · ember 0.2332.
+ *
+ * bright(L≥96)는 가산 누적의 **초선형** 함수라 부하를 내리면 순기여는 그보다 더 떨어지지만,
+ * 회계는 보수적으로 선형 비례로 읽는다(목표는 톡사르 순기여 ≤1.5pp).
  */
-export const MAX_CELL_ADDITIVE_LOAD = 0.32;
+export const MAX_CELL_ADDITIVE_LOAD: Readonly<Record<HazardMaterialKind, number>> = {
+  molten: 0.29,
+  spore: 0.13,
+  refract: 0.225,
+  scorch: 0.055,
+  ember: 0.245,
+};
 
 /**
  * 환경 기여(`hazardAmbience`) 겹의 셀당 상한. **왜 따로인가**: 이 겹은
@@ -1140,8 +1208,11 @@ export const MAX_CELL_ADDITIVE_LOAD = 0.32;
  * 5차 실측 최악은 `molten` 의 **0.418** 이고, 그 값을 쓰는 카르곤 보스전은 bright 3.58% ·
  * p95 85.00 으로 §2-4 를 통과했다. 즉 이 겹은 **현재 값이 증거로 통과한 상태**이므로 감산
  * 대상이 아니고, 상한은 회귀 방어다.
+ *
+ * 0.45 → **0.44** (6차 MINOR-3): 실측 0.4178 × 1.05 로 조인다. 이 겹만 손대지 않는 것과
+ * 이 겹의 회귀를 안 잡는 것은 다른 얘기다.
  */
-export const MAX_AMBIENT_LOAD = 0.45;
+export const MAX_AMBIENT_LOAD = 0.44;
 
 /**
  * 판정 장면(톡사르 41셀)의 LOD 분포. `hazardLod` 의 경계에서 파생된다 — 6 full · 12 mid · 23 lite.
@@ -1166,11 +1237,23 @@ export function toxarLodMix(cells = 41): readonly { lod: HazardLod; cells: numbe
 }
 
 /**
- * 판정 장면(톡사르 41셀) 합계 상한. **셀당 상한 × 41 이 아니다** — 41셀이 전부 최악 종류일 수는
- * 없고(톡사르는 전부 `spore` 다) LOD 가 낮은 셀이 다수다. 톡사르 실제 구성으로 잰다.
+ * 41셀 장면 합계 상한(톡사르 LOD 분포 기준). **종류별**이다.
  *
- * 4차 **14.96** → 5차 **4.39**(0.29배). 이 비가 §2-4 게이트("해저드 순기여 ≤1.5pp")의 근거이고,
- * 셀당 상한과 별도로 존재하는 이유는 **셀 수와 LOD 분포가 곱해지는 축**을 셀 하나만 봐서는
- * 절대 못 잡기 때문이다 — 4차가 정확히 그렇게 통과했다(겹마다 개별 판단은 전부 정당했다).
+ * 셀당 상한 × 41 이 아니다 — LOD 가 낮은 셀이 다수이므로 실제 구성으로 잰다.
+ *
+ * ## 왜 `spore` 하나가 아니라 5종 전부인가 (6차 반려 MINOR-3)
+ * 5차는 상수 하나(4.8)였고 테스트도 `'spore'` 한 종만 훑었다. 그러면 다른 네 종의 겹 알파가
+ * 올라가도 **장면 축에서는 아무도 보지 않는다**. 41셀은 톡사르에서 실측된 **최악의 셀 수**이므로
+ * 종류를 갈아 끼워도 유효한 상계 장면이고, 종류별 상한을 두면 어느 종을 만져도 같은 자리에서
+ * 빨개진다.
+ *
+ * 6차 실측 × 1.05: molten 10.2353 · spore 4.0874 · refract 7.7067 · scorch 1.2822 · ember 8.6084.
+ * (4차의 같은 모델 `spore` 값은 **14.96** 이었다 — 그 비가 §2-4 순기여 목표 ≤1.5pp 의 근거다.)
  */
-export const MAX_SCENE_ADDITIVE_LOAD = 4.8;
+export const MAX_SCENE_ADDITIVE_LOAD: Readonly<Record<HazardMaterialKind, number>> = {
+  molten: 10.75,
+  spore: 4.3,
+  refract: 8.1,
+  scorch: 1.35,
+  ember: 9.05,
+};
