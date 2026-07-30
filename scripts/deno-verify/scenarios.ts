@@ -22,7 +22,11 @@ import {
   emptyInput,
   packPowerupPick,
   DEFAULT_CONFIG,
+  SPECIAL_POWERUP_PICK,
+  SPECIAL_ACTIVE_SLOT1,
+  SPECIAL_ACTIVE_SLOT2,
 } from '../../src/sim/world.js';
+import { wireIdOf } from '../../data/ships/actives/index.js';
 import type { WorldConfig, WorldState, InputFrame } from '../../src/sim/world.js';
 import { neutralLoadout, computeLoadoutStats } from '../../src/items/loadout.js';
 import { shipTypeDef, zeroSkillInvest, shipTreeRange } from '../../data/ships/index.js';
@@ -76,6 +80,26 @@ export interface Scenario {
   readonly rolls: readonly RollProbe[];
   /** 정련 공정(다중 고착·밴드) 교차 검증용 재단조 스펙. 없으면 빈 목록으로 취급. */
   readonly reforges?: readonly ReforgeProbe[];
+}
+
+/**
+ * 액티브 발동 파일럿(ADR-0041) — `driveDurable` 과 **완전히 같은 스티어링**에 액티브 비트만
+ * 얹는다. 두 슬롯을 서로 다른 주기(150/210틱)로 눌러 쿨다운 잔여·버프 잔여가 **겹치는 구간과
+ * 안 겹치는 구간이 둘 다** 나오게 한다 — 꼬리 폴드가 런 도중 켜졌다 꺼졌다 하는 형태를 실제로
+ * 밟는 것이 이 시나리오의 목적이다(AS-OQ14).
+ *
+ * ⚠️ 프리즈(파워업 픽) 프레임에는 액티브 비트를 **싣지 않는다** — 컨트롤러 규율과 같다.
+ * 실으면 sim 이 그 프레임을 조기 return 으로 버려 입력 로그와 실행이 어긋난 것처럼 보인다.
+ */
+function driveWithActives(seed: number, config: WorldConfig, maxTicks: number): InputFrame[] {
+  const base = driveDurable(seed, config, maxTicks);
+  return base.map((f, t) => {
+    if ((f.special & SPECIAL_POWERUP_PICK) !== 0) return f;
+    let special = f.special;
+    if (t > 0 && t % 150 === 0) special |= SPECIAL_ACTIVE_SLOT1;
+    if (t > 0 && t % 210 === 0) special |= SPECIAL_ACTIVE_SLOT2;
+    return special === f.special ? f : { ...f, special };
+  });
 }
 
 /**
@@ -372,6 +396,25 @@ const BRUISER_RUN: WorldConfig = {
   shipType: BRUISER_TYPE_ID,
 };
 
+/**
+ * 브루저 + **액티브 2개 장착** 런(ADR-0041). `BRUISER_RUN` 과 딱 한 필드(`activeSlots`)만
+ * 다르다 — 그 차이가 신규 꼬리 폴드 2건을 켠다. 슬롯 값은 `wireIdOf` 파생이라 저작 순서가
+ * 바뀌면 자동으로 따라온다(숫자를 박으면 조용히 다른 스킬을 가리킨다).
+ */
+const BRUISER_ACTIVE_RUN: WorldConfig = {
+  ...DEFAULT_CONFIG,
+  planet: 2,
+  stage: 11,
+  playerHp: DURABLE,
+  loadout: computeLoadoutStats([], BRUISER_INVEST, undefined, BRUISER_TYPE_ID).loadout,
+  skillInvest: BRUISER_INVEST,
+  shipType: BRUISER_TYPE_ID,
+  activeSlots: [
+    wireIdOf('as_bruiser_blade_lo'),
+    wireIdOf('as_bruiser_fortify_lo'),
+  ],
+};
+
 const ARCCASTER_RUN: WorldConfig = {
   ...DEFAULT_CONFIG,
   planet: 2,
@@ -580,6 +623,24 @@ export const SCENARIOS: readonly Scenario[] = [
     rolls: [
       { dropSeed: 0x9fa3_c1, rarity: 'rare', source: { planet: 0, stage: 1 } },
       { dropSeed: 0x9fa3_c2, rarity: 'unique', source: { planet: 0, stage: 1 } },
+    ],
+  },
+  {
+    // **액티브 스킬 꼬리 폴드 2건을 실제로 밟는 유일한 시나리오**(ADR-0041).
+    // 위 12건은 전부 `activeSlots` 미탑재라 폴드가 한 번도 실행되지 않는다 — 그게 골든 바이트
+    // 불변의 증명이자 동시에 **신규 폴드의 커버리지가 0** 이라는 뜻이다. 여기서만 갈린다:
+    //   ① 런타임 정수 4개(쿨다운 2 + 버프 잔여 2) — 발동 직후 양수라 그 구간 매 틱 접힌다
+    //   ② 장착 wire id 2칸 — config 스탬프라 런 내내 접힌다
+    // 브루저를 고른 이유: `aux0`(장갑 스택)이 읽기·쓰기가 다 있는 정수라 **시그니처 aux 꼬리
+    // 폴드까지 같은 런에서 함께** 밟힌다.
+    name: '⑬ 브루저 액티브 발동 런 — 신규 꼬리 폴드 ①런타임 4정수 ②장착 wire id',
+    seed: 0xac71,
+    config: BRUISER_ACTIVE_RUN,
+    checkpointInterval: 600,
+    buildInputs: () => driveWithActives(0xac71, BRUISER_ACTIVE_RUN, MAX_RUN_TICKS),
+    rolls: [
+      { dropSeed: 0xac71_d1, rarity: 'rare', source: { planet: 2, stage: 11 } },
+      { dropSeed: 0xac71_d2, rarity: 'unique', source: { planet: 2, stage: 11 } },
     ],
   },
 ];
