@@ -31,6 +31,101 @@
       },
       "prep": "node scripts/glb-prep.mjs <remesh 다운로드>.glb --out assets/models/boss_kargon.glb --color 256 --normal 128",
       "geometry": { "triangles": 8288, "bytes": 581956, "baseColor": "256x256", "normal": "128x128" }
+    },
+    {
+      "id": "boss_berdan",
+      "file": "boss_berdan.glb",
+      "title": "베르단 보스 — 군체 여왕",
+      "usedBy": "src/render/three3d/bossActor.ts (행성 1 보스)",
+      "meshy": {
+        "aiModel": "meshy-6",
+        "prompt": "Top-down view sci-fi game boss: a colossal insectoid hive queen, olive-gold chitinous armor plates, huge curved mandibles, six barbed legs splayed symmetrically, massive bulbous segmented egg abdomen swollen with glowing amber egg sacs, wet organic carapace, menacing, game asset",
+        "texturePrompt": "Olive gold and mustard yellow chitin plating with dark brown segment seams, translucent amber glowing egg sacs, wet organic insect carapace sheen, acid green bioluminescent veins",
+        "tasks": {
+          "preview": "019fb28d-ed7b-7057-8987-ab77ae541207",
+          "refine": "019fb292-106b-7e2e-a2db-b014ad79ec7e"
+        },
+        "credits": { "preview": 20, "refine": 10, "total": 30 },
+        "createdAt": "2026-07-30"
+      },
+      "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/boss_berdan.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
+      "geometry": { "triangles": 3098, "bytes": 360300, "baseColor": "256x256" }
+    },
+    {
+      "id": "boss_niflheim",
+      "file": "boss_niflheim.glb",
+      "title": "니플헤임 보스 — 얼음에 갇힌 유령 전함",
+      "usedBy": "src/render/three3d/bossActor.ts (행성 2 보스)",
+      "meshy": {
+        "aiModel": "meshy-6",
+        "prompt": "Top-down view sci-fi game boss: a frozen ghost battleship encased in ice, translucent pale blue glacial crystal hull, rows of heavy cannon barrels jutting from both flanks, jagged ice spires rising from the deck, frost-shrouded derelict warship, symmetrical, menacing, game asset",
+        "texturePrompt": "Translucent glacial ice and frost-rimed pale blue crystal, dark frozen steel hull beneath the ice, glowing cyan cracks deep inside, snow dusted surfaces, ghostly frozen shipwreck",
+        "tasks": {
+          "preview": "019fb28e-09a6-7d31-8a3e-39ee6ad8d65c",
+          "refine": "019fb292-a6cb-737d-b08f-9c388b5f2180"
+        },
+        "credits": { "preview": 20, "refine": 10, "total": 30 },
+        "createdAt": "2026-07-30"
+      },
+      "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/boss_niflheim.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
+      "geometry": { "triangles": 3028, "bytes": 381324, "baseColor": "256x256" }
+    },
+    {
+      "id": "boss_arke",
+      "file": "boss_arke.glb",
+      "title": "아르케 보스 — 고대 기계 오벨리스크",
+      "usedBy": "src/render/three3d/bossActor.ts (행성 3 보스)",
+      "meshy": {
+        "aiModel": "meshy-6",
+        "prompt": "Top-down view sci-fi game boss: an ancient machine obelisk, tall tapered bronze stone spire covered in carved circuit glyphs, three concentric floating metal rings orbiting its midsection, a bright glowing golden orb core set into the front face, resting on a heavy dark stepped pedestal, symmetrical, menacing, game asset",
+        "texturePrompt": "Weathered bronze and tan sandstone carved with glowing golden circuit glyphs, verdigris patina in the grooves, polished brass orbiting rings, brilliant incandescent gold core light, dark granite pedestal, ancient alien machine",
+        "tasks": {
+          "preview": "019fb28e-36b5-705b-914b-969ac01e613d",
+          "refine": "019fb292-edef-7115-ba3c-fdd11c4cd53e"
+        },
+        "credits": { "preview": 20, "refine": 10, "total": 30 },
+        "createdAt": "2026-07-30"
+      },
+      "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/boss_arke.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
+      "geometry": { "triangles": 3032, "bytes": 340732, "baseColor": "256x256" }
+    },
+    {
+      "id": "boss_toxar",
+      "file": "boss_toxar.glb",
+      "title": "톡사르 보스 — 독성 슬러지 덩어리",
+      "usedBy": "src/render/three3d/bossActor.ts (행성 4 보스)",
+      "meshy": {
+        "aiModel": "meshy-6",
+        "prompt": "Top-down view sci-fi game boss: a monstrous amorphous toxic sludge blob, mass of clustered bulging violet spore bladders and bubbling pustules, no limbs, dripping viscous ooze, irregular writhing organic mound, menacing, game asset",
+        "texturePrompt": "Glossy violet and magenta toxic slime, translucent purple spore bladders glowing from within, wet dripping ooze highlights, sickly bruised purple flesh, bubbling acid",
+        "tasks": {
+          "preview": "019fb28e-502f-725c-94b3-d64b65575288",
+          "refine": "019fb293-2fff-711a-8c7f-0c2a7151763b"
+        },
+        "credits": { "preview": 20, "refine": 10, "total": 30 },
+        "createdAt": "2026-07-30"
+      },
+      "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/boss_toxar.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
+      "geometry": { "triangles": 3110, "bytes": 319436, "baseColor": "256x256" }
+    },
+    {
+      "id": "boss_kras",
+      "file": "boss_kras.glb",
+      "title": "크라스 보스 — 강철 타이탄 요새",
+      "usedBy": "src/render/three3d/bossActor.ts (행성 5 보스)",
+      "meshy": {
+        "aiModel": "meshy-6",
+        "prompt": "Top-down view sci-fi game boss: a colossal armored steel titan fused into a rubble fortress bunker, broad riveted iron shoulder pauldrons, heavy armored torso with a barred grille chest, thick fortress wall blocks and buttresses built around its lower body, rust red scorched plating, symmetrical, menacing, game asset",
+        "texturePrompt": "Rust red and terracotta scorched steel plating with heavy rivets and weld seams, crumbling grey concrete fortress blocks, glowing orange ember cracks in the armor, industrial war fortress",
+        "tasks": {
+          "preview": "019fb28e-6efb-7263-8563-88efd0602bc3",
+          "refine": "019fb293-76bd-739c-9f61-3185aa7fd012"
+        },
+        "credits": { "preview": 20, "refine": 10, "total": 30 },
+        "createdAt": "2026-07-30"
+      },
+      "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/boss_kras.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
+      "geometry": { "triangles": 3085, "bytes": 351300, "baseColor": "256x256" }
     }
   ],
   "reuseRecipes": {
@@ -43,7 +138,8 @@
   },
   "generationNotes": {
     "$comment": "다음 모델(플레이어 기체 등)을 뽑을 때 반드시 볼 것. 실측으로 확인한 내용이다.",
-    "폴리곤 수는 생성 시 지정할 수 있다": "meshy_text_to_3d 에 should_remesh: true 를 **함께** 넘겨야 target_polycount 가 적용된다(기본 30,000, 범위 100~300,000). meshy-6 는 should_remesh 기본값이 false 라 그것만 빼면 조용히 무시되고 1,016,472 삼각형 / 32.7MB 가 나온다 — 카르곤 보스가 실제로 그랬고, 그래서 remesh 5 크레딧을 따로 썼다. 다음부터는 불필요하다.",
+    "폴리곤 수는 생성 시 지정할 수 있다": "meshy_text_to_3d 에 should_remesh: true 를 **함께** 넘겨야 target_polycount 가 적용된다(기본 30,000, 범위 100~300,000). meshy-6 는 should_remesh 기본값이 false 라 그것만 빼면 조용히 무시되고 1,016,472 삼각형 / 32.7MB 가 나온다 — 카르곤 보스가 실제로 그랬고, 그래서 remesh 5 크레딧을 따로 썼다. **행성 5종(2026-07-30)에서 실증 완료**: should_remesh:true + target_polycount:3000 으로 실측 3,028~3,110 삼각형 / 원본 2.6~4.3MB 가 나왔다(remesh 불필요, 모델당 30 크레딧).",
+    "refine 직출력은 텍스처를 JPEG 로 내장한다": "remesh 를 태우면 PNG 가 되지만(카르곤), refine 에서 바로 내려받으면 베이스컬러가 image/jpeg 다. scripts/glb-prep.mjs 는 PNG 만 디코드하므로 그대로는 실패한다. JPEG 디코더를 들이는 대신 meshy_download_model 이 **같은 텍스처를 <이름>_base_color.png 로 따로 내려주는 것**을 --image 0=<그 경로> 로 주입한다(손실 재압축이 한 단계 줄어 화질에도 낫다). 행성 5종이 이 경로로 2048² → 256² · 320~381KB 가 됐다.",
     "텍스처 해상도는 2k 가 하한이다": "refine 의 texture_resolution 은 '2k'(기본)/'4k'/'8k' 뿐이고 그 아래가 없다. 게다가 MCP 툴 스키마에는 texture_resolution 이 없고 deprecated hd_texture(=4k)만 있어 MCP 경유로는 2k 가 최선이다. 우리 렌더 슬롯은 160px 이므로 **scripts/glb-prep.mjs 로컬 축소는 선택이 아니라 필수**다.",
     "그 외": "model_type: 'lowpoly' 를 쓰면 ai_model/topology/target_polycount/should_remesh 가 전부 무시된다. decimation_mode(1~4)를 주면 target_polycount 가 무시된다."
   }

@@ -9,9 +9,14 @@
  *   - 리메시(8k tri) 후     : 13.5MB — 지오메트리는 0.4MB 로 줄었고 **나머지 13.1MB 가 텍스처**
  *                             (베이스컬러 PNG 6.0MB + 노멀맵 PNG 7.1MB, 각 2K~4K)
  *
- * ⚠️ `meshy_text_to_3d` 의 `target_polycount` 는 **meshy-6 에서 무시된다**(그 모델은
- * `should_remesh` 기본값이 false 라서). 폴리곤 감축은 `meshy_remesh` 를 따로 태워야 한다.
+ * ⚠️ `meshy_text_to_3d` 의 `target_polycount` 는 `should_remesh: true` 를 **함께** 넘겨야
+ * 적용된다(meshy-6 는 그 기본값이 false 라, 빠뜨리면 조용히 무시되고 100만 삼각형이 나온다).
+ * 그것만 지키면 `meshy_remesh` 5 크레딧은 불필요하다 — 행성 보스 5종을 그렇게 뽑았다.
  * 텍스처 해상도는 API 에 옵션이 아예 없으므로 **여기서 로컬로 줄인다**.
+ *
+ * ⚠️ refine 직출력 GLB 는 베이스컬러를 **JPEG 로 내장**한다(remesh 를 태우면 PNG 가 된다).
+ * 이 스크립트는 PNG 만 디코드하므로, 그 경우 `meshy_download_model` 이 따로 내려주는
+ * `<이름>_base_color.png` 를 `--image 0=<그 경로>` 로 주입한다(아래 `--image` 참조).
  *
  * ── 무엇을 하는가 ──
  * GLB(바이너리 glTF)의 JSON/BIN 청크를 풀어 **내장 이미지 bufferView 만** 교체한다:
@@ -27,6 +32,7 @@
  *
  * 사용법:
  *   node scripts/glb-prep.mjs <in.glb> --out <out.glb> [--color 256] [--normal 128]
+ *   node scripts/glb-prep.mjs <in.glb> --out <out.glb> --image 0=<base_color.png>
  *   node scripts/glb-prep.mjs <in.glb> --out <out.glb> --dry-run
  */
 
@@ -111,7 +117,10 @@ function imageRoles(json) {
 function main(argv) {
   const inPath = argv[0];
   if (inPath === undefined || inPath.startsWith('--')) {
-    console.error('usage: glb-prep.mjs <in.glb> --out <out.glb> [--color 256] [--normal 128] [--dry-run]');
+    console.error(
+      'usage: glb-prep.mjs <in.glb> --out <out.glb> [--color 256] [--normal 128]' +
+        ' [--image <n>=<path.png>] [--dry-run]',
+    );
     process.exit(2);
   }
   const flag = (name, dflt) => {
@@ -124,6 +133,23 @@ function main(argv) {
   const dryRun = argv.includes('--dry-run');
   if (outPath === undefined && !dryRun) throw new Error('--out is required (or use --dry-run)');
 
+  /**
+   * `--image <n>=<path.png>` — 내장 이미지 n 을 **디스크의 PNG 로 갈아 끼운다**(반복 가능).
+   *
+   * 왜 필요한가: `meshy_text_to_3d_refine` 의 GLB 는 베이스컬러를 **JPEG 로 내장**한다(카르곤은
+   * 그 뒤에 `meshy_remesh` 를 태워서 PNG 였고, 그래서 이 스크립트는 PNG 만 알면 됐다). 여기에
+   * JPEG 디코더를 새로 들이는 대신, `meshy_download_model` 이 **같은 텍스처를 PNG 로 따로 내려주는
+   * 것**을 이용한다(`<이름>_base_color.png`). 이쪽이 손실 재압축도 한 단계 줄어 화질에도 낫다.
+   */
+  const overrides = new Map();
+  for (const [i, a] of argv.entries()) {
+    if (a !== '--image') continue;
+    const spec = argv[i + 1] ?? '';
+    const eq = spec.indexOf('=');
+    if (eq < 0) throw new Error(`--image expects <n>=<path.png>, got: ${spec}`);
+    overrides.set(Number(spec.slice(0, eq)), spec.slice(eq + 1));
+  }
+
   const src = readFileSync(inPath);
   const { json, bin } = parseGlb(src);
   const roles = imageRoles(json);
@@ -132,18 +158,27 @@ function main(argv) {
   const replaced = new Map();
   for (const [i, image] of (json.images ?? []).entries()) {
     if (image.bufferView === undefined) continue; // 외부 URI 이미지는 대상 아님.
-    if (image.mimeType !== 'image/png') {
-      throw new Error(`image ${i}: unsupported mime ${image.mimeType} (only image/png; no JPEG decoder)`);
+    const override = overrides.get(i);
+    if (override === undefined && image.mimeType !== 'image/png') {
+      throw new Error(
+        `image ${i}: unsupported mime ${image.mimeType} — PNG 로 갈아 끼우려면 --image ${i}=<path.png>`,
+      );
     }
     const bv = json.bufferViews[image.bufferView];
-    const bytes = bin.subarray(bv.byteOffset ?? 0, (bv.byteOffset ?? 0) + bv.byteLength);
+    const bytes =
+      override === undefined
+        ? bin.subarray(bv.byteOffset ?? 0, (bv.byteOffset ?? 0) + bv.byteLength)
+        : readFileSync(override);
     const decoded = decodePng(Buffer.from(bytes));
+    // 갈아 끼웠으면 mime 도 실제 내용과 맞춰야 한다 — 안 그러면 로더가 JPEG 로 파싱하려 든다.
+    if (override !== undefined) image.mimeType = 'image/png';
     const role = roles.get(i) ?? 'color';
     const target = role === 'normal' ? normalMax : colorMax;
     const small = downscale(decoded, target);
     const encoded = encodePng(small);
     console.log(
-      `image ${i} (${role}): ${decoded.width}x${decoded.height} ${(bv.byteLength / 1048576).toFixed(2)}MB` +
+      `image ${i} (${role}${override === undefined ? '' : ', override'}): ` +
+        `${decoded.width}x${decoded.height} ${(bytes.length / 1048576).toFixed(2)}MB` +
         ` → ${small.width}x${small.height} ${(encoded.length / 1024).toFixed(0)}KB`,
     );
     replaced.set(image.bufferView, encoded);

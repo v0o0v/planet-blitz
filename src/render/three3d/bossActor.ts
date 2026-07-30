@@ -1,12 +1,16 @@
 /**
- * 보스 3D 액터 — **페이즈별로 다른 연출**을 재생한다.
+ * 보스 3D 액터 — **페이즈별로 다른 연출**을 재생한다. 행성 6종의 보스가 이 한 클래스를 공유한다
+ * ({@link BOSS_MODELS}): 저작으로 갈리는 것은 **모델·텍스처와 코어 점광 색**뿐이고, 연출(페이즈
+ * 모션 3종 + 전환 + 과열)은 전 행성 공용이다. 유일한 모델별 자동 보정은 {@link BossActor.roomScale}
+ * (전환·과열 **진폭**을 실측 여유에 맞춤)이며, 이것도 축·파형·구조는 건드리지 않는다.
  *
  * ── 왜 스켈레톤 애니메이션이 아닌가 ──
  * Meshy 의 리깅(`meshy_rig`)은 휴머노이드 전제(t-pose, height_meters 1.7)이고 커스텀 동작은
- * 정수 `action_id` 로 고르는 사전 정의 카탈로그(dancing/jumping/fighting…)다. 카르곤 보스는
- * **용암 요새 메카**라 스켈레톤이 의미가 없고, 우리가 원하는 연출(페이즈 전환·과열·붕괴)은
- * 애초에 그 카탈로그에 없다. 그래서 Meshy 는 **메시만** 주고, 연출은 여기서 트랜스폼 +
- * 발광(emissive)으로 저작한다. 게임 상태와 1:1 로 붙일 수 있고 리깅 비용도 들지 않는다.
+ * 정수 `action_id` 로 고르는 사전 정의 카탈로그(dancing/jumping/fighting…)다. 우리 보스는
+ * **요새 메카·얼음 전함·오벨리스크·슬러지 덩어리**라 스켈레톤이 의미가 없고, 우리가 원하는
+ * 연출(페이즈 전환·과열·붕괴)은 애초에 그 카탈로그에 없다. 그래서 Meshy 는 **메시만** 주고,
+ * 연출은 여기서 트랜스폼 + 발광(emissive)으로 저작한다. 게임 상태와 1:1 로 붙일 수 있고
+ * 리깅 비용도 들지 않는다.
  *
  * ── 상태 ──
  * sim 의 보스는 phase 0/1/2 를 가지고(HP 70%/35% 임계, `src/sim/boss.ts`), 임계를 넘을 때
@@ -143,34 +147,41 @@ function phase2Motion(t: number): Motion {
  */
 const TRANSITION_SECONDS = 2;
 
-/** 전환 3박자를 기본 모션 위에 덮어쓴다. `p` 는 0→1 진행도. */
-function applyTransition(m: Motion, p: number, t: number): void {
+/**
+ * 전환 3박자를 기본 모션 위에 덮어쓴다. `p` 는 0→1 진행도.
+ *
+ * `k` 는 **진폭 배수**(1 = 원안)다. 모델마다 슬롯 안 여유가 달라서, 같은 진폭이 어떤 모델에서는
+ * 실루엣을 슬롯 밖으로 밀어내 잘린다({@link BossActor.roomScale} 의 근거·실측 참조). k 는 위치·크기
+ * 델타에만 곱하고 **회전(yaw)과 발광은 건드리지 않는다** — 3박자 구조·축·파형은 그대로 유지되고,
+ * 줄어드는 것은 화면 밖으로 나가는 양뿐이다.
+ */
+function applyTransition(m: Motion, p: number, t: number, k: number): void {
   if (p < 0.35) {
     // ① 충전 — 수축·하강하며 떨림이 커진다.
     const u = p / 0.35;
-    m.scale *= 1 - 0.08 * u;
-    m.y -= 0.04 * u;
-    m.x += Math.sin(t * 71) * 0.025 * u; // 진동은 진행도에 비례해 커진다(축적감).
+    m.scale *= 1 - 0.08 * k * u;
+    m.y -= 0.04 * k * u;
+    m.x += Math.sin(t * 71) * 0.025 * k * u; // 진동은 진행도에 비례해 커진다(축적감).
     m.pitch *= 1 - u;
     m.roll *= 1 - u;
     m.emissive += 1.2 * u;
   } else if (p < 0.7) {
     // ② 도약 — 급상승 + 가속 스핀 + 발광 폭발.
     const u = (p - 0.35) / 0.35;
-    m.y += TRANSITION_RISE * Math.sin((u * Math.PI) / 2); // 빠르게 올라 정점에서 완만해진다.
+    m.y += TRANSITION_RISE * k * Math.sin((u * Math.PI) / 2); // 빠르게 올라 정점에서 완만해진다.
     m.yaw += u * u * 11; // 제곱 = 가속하는 스핀.
-    m.scale *= 0.94 + 0.1 * u;
+    m.scale *= 1 - (0.06 - 0.1 * u) * k;
     m.pitch = 0;
     m.roll = 0;
     m.emissive += 1.2 + 2.2 * u;
   } else {
     // ③ 착지 — 낙하 후 스쿼시. 감속 없이 떨어져야 충격이 읽힌다.
     const u = (p - 0.7) / 0.3;
-    m.y += TRANSITION_RISE * (1 - u * u); // 제곱 = 가속하는 낙하.
+    m.y += TRANSITION_RISE * k * (1 - u * u); // 제곱 = 가속하는 낙하.
     m.yaw += 11;
     // 마지막 15% 구간에서 한 번 납작해졌다 돌아온다(여파).
     const squash = u > 0.85 ? Math.sin(((u - 0.85) / 0.15) * Math.PI) : 0;
-    m.scale *= 1.04 - 0.04 * u + squash * 0.1;
+    m.scale *= 1 + (0.04 - 0.04 * u + squash * 0.1) * k;
     m.emissive += 3.4 * (1 - u);
   }
 }
@@ -180,11 +191,11 @@ function applyTransition(m: Motion, p: number, t: number): void {
  * 발광만 올리면 화면이 밝아질 뿐 "부풀어 터질 것 같다"가 안 읽혀서, 같은 위상으로
  * 크기 팽창과 뒤로 젖히는 압력을 함께 싣는다.
  */
-function applyOverheat(m: Motion, t: number): void {
+function applyOverheat(m: Motion, t: number, k: number): void {
   const swell = 0.5 + 0.5 * osc(t, 2.4);
-  m.scale *= 1 + 0.035 * swell;
+  m.scale *= 1 + 0.035 * k * swell;
   m.pitch -= 0.05 * swell; // 내압에 밀려 뒤로 젖혀진다.
-  m.emissive += 1.0 + 0.8 * osc(t, 2.9);
+  m.emissive += 1.0 + 0.8 * osc(t, 2.9); // 발광은 화면 밖으로 나가지 않으므로 안 깎는다.
 }
 
 /** 카메라 틸트(수평에서의 각도). 90°=완전 수직 내려보기. 기존 보스 아트의 프레이밍에 맞춘 값. */
@@ -207,18 +218,84 @@ const FRAME_MARGIN = 1.1;
  */
 const TRANSITION_RISE = 0.18;
 
-/** GLB 자산 URL(있는 파일만 잡힌다 — 없으면 3D 액터가 생성되지 않고 2D 폴백). */
-const MODEL_URLS = import.meta.glob('../../../assets/models/*.glb', {
-  eager: true,
+/**
+ * 전환·과열 진폭이 **여유 없이 딱 들어가는** 수직 여유(프러스텀 반폭 단위).
+ *
+ * 카르곤 실측 여유가 0.32 이고 그 모델에서 연출이 잘리지 않는다(정상 페이즈 0~4px · 전환 8~9px).
+ * 즉 0.32 는 "진폭 1.0 이 통과하는" 기준점이다. 여유가 이보다 적은 모델은 그 비율로 진폭을 줄인다
+ * ({@link BossActor.roomScale}).
+ */
+const TRANSITION_ROOM = 0.32;
+
+/**
+ * 진폭 배수의 하한. 여유가 극단적으로 적은 모델에서도 연출이 **사라지지는** 않게 한다 — 잘림 0 보다
+ * "전환이 있었다는 것이 읽히는 것"이 우선이다(전환은 페이즈 변화를 알리는 유일한 신호다).
+ *
+ * ⚠️ **0.6 은 실측으로 정한 손익분기점이다.** 전환의 잔여 넘침은 진폭이 아니라 **스핀**(`yaw` 최대
+ * 11 rad)에서 오는데, 비정방 실루엣을 회전시키면 대각선이 프레임을 넘기 때문이다. 그건 진폭을 아무리
+ * 깎아도 남는다 — 실측: 아르케 전환 접촉이 배수 1.0 에서 56px, **0.35 로 깎아도 43px**. 즉 0.6→0.35
+ * 구간은 연출을 40% 약화시키고 5px 을 버는 손해다. 그래서 진폭이 **실제로 회수하는 만큼만** 깎는다.
+ * 남은 넘침을 없애려면 모델을 작게 하거나(=화면 존재감 희생) 도약의 시그니처인 스핀을 바꿔야 한다.
+ */
+const MIN_ROOM_SCALE = 0.6;
+
+/**
+ * GLB 자산 URL 로더 — **지연**(`eager: false`)이다. 행성마다 모델이 하나씩 있으므로 한 런에서
+ * 실제로 필요한 것은 늘 1개다.
+ *
+ * ⚠️ 실측 주의: `query: '?url'` 글롭은 eager 여도 **GLB 바이너리를 내려받지 않는다** — 번들에
+ * 들어가는 것은 해시된 URL **문자열**뿐이고, 실제 수십~수백 KB 전송은 아래 `GLTFLoader` 가
+ * 그 URL 을 fetch 할 때 처음 일어난다. 그래서 지연화로 절약되는 것은 문자열 6개(수백 바이트)이고,
+ * 대가로 URL 마다 작은 청크 + 왕복 1회가 생긴다. 그럼에도 지연을 택한 이유는 **자산 수가 늘어나도
+ * 3D 청크 크기가 상수로 유지**되기 때문이다(행성이 더 붙으면 문자열도 같이 는다).
+ */
+const MODEL_LOADERS = import.meta.glob('../../../assets/models/*.glb', {
   query: '?url',
   import: 'default',
-}) as Record<string, string>;
+}) as Record<string, () => Promise<string>>;
 
-function modelUrl(basename: string): string | undefined {
-  for (const key in MODEL_URLS) {
-    if (key.endsWith(`/${basename}`)) return MODEL_URLS[key];
+async function modelUrl(basename: string): Promise<string | undefined> {
+  for (const key in MODEL_LOADERS) {
+    if (key.endsWith(`/${basename}`)) return await MODEL_LOADERS[key]!();
   }
   return undefined;
+}
+
+/** 한 행성의 3D 보스 정의. `null` 슬롯은 모델 미제작 = 기존 PNG 스프라이트 유지. */
+interface BossModelDef {
+  /** `assets/models/` 안의 GLB 파일명. */
+  file: string;
+  /**
+   * 코어 점광 색(행성 테마).
+   *
+   * 모델 자체의 발광은 **베이스컬러를 그대로 emissiveMap 으로 재사용**하므로 텍스처가 자기 색으로
+   * 달아오른다 — 얼음 전함은 창백한 청색으로, 독성 덩어리는 자색으로 빛난다. 즉 행성별 개성의
+   * 주역은 모델·텍스처이고, 이 점광은 그 발광이 **모델 밖 주변 면까지 번지는 색**만 정한다.
+   * 그래서 여기 값은 텍스처의 지배색과 같은 계열이어야 한다(어긋나면 실루엣 테두리가 탁해진다).
+   */
+  coreLight: number;
+}
+
+/**
+ * 행성 인덱스 → 3D 보스. 순서는 `src/render/textures.ts` 의 `bossFiles` 와 **같은 계약**이다
+ * (0 카르곤 … 5 크라스). 모델이 없는 행성은 `null` 이고, 그 경우 액터가 아예 만들어지지 않아
+ * 기존 2D 스프라이트가 조용히 그대로 쓰인다.
+ */
+const BOSS_MODELS: readonly (BossModelDef | null)[] = [
+  { file: 'boss_kargon.glb', coreLight: 0xff6a1a }, // 0 카르곤 — 용암 주황.
+  { file: 'boss_berdan.glb', coreLight: 0xc8d420 }, // 1 베르단 — 산성 황록(알주머니와 같은 계열).
+  { file: 'boss_niflheim.glb', coreLight: 0x66ccff }, // 2 니플헤임 — 빙결 청록.
+  { file: 'boss_arke.glb', coreLight: 0xffc04a }, // 3 아르케 — 고대 기계의 황금 코어.
+  { file: 'boss_toxar.glb', coreLight: 0xc850ff }, // 4 톡사르 — 독성 자색.
+  { file: 'boss_kras.glb', coreLight: 0xff5533 }, // 5 크라스 — 강철 요새의 잔불 적색.
+];
+
+/**
+ * 이 행성에 3D 보스 모델이 있는가. 호출자가 **WebGL 컨텍스트를 만들기 전에** 물어보는 용도다 —
+ * 모델 없는 행성에서 무대를 세우면 아무 이득 없이 컨텍스트 하나를 점유한다.
+ */
+export function hasBossModel(planet: number): boolean {
+  return (BOSS_MODELS[planet] ?? null) !== null;
 }
 
 /**
@@ -239,6 +316,19 @@ export class BossActor {
    * x/y 값은 이 단위의 배수라, 카메라 프레이밍을 바꿔도 연출의 **화면상 크기**가 변하지 않는다.
    */
   private unit = 1;
+  /**
+   * 전환·과열 진폭 배수(1 = 원안). 로드 시 **실측한 실루엣 여유**에서 파생한다 —
+   * `min(위, 아래) / {@link TRANSITION_ROOM}` 을 [{@link MIN_ROOM_SCALE}, 1] 로 clamp.
+   *
+   * 왜 필요한가: 연출은 전 행성 공용인데 모델의 실루엣 비율은 제각각이라, 같은 진폭이 어떤 모델에서는
+   * 실루엣을 슬롯 밖으로 밀어내 **단면이 잘린다**(실측: 전환에서 아르케 56px · 크라스 72px, 카르곤은
+   * 8~9px). 페이즈별 모션의 축·파형과 3박자 구조는 그대로 두고 **진폭만** 모델에 맞춘다 — 행성별
+   * 분기가 아니라 기하에서 나오는 값이라 다음 모델에도 그대로 통한다.
+   *
+   * 위·아래만 보는 이유: 전환의 주 운동이 수직(도약 상승 → 낙하 → 스쿼시)이고 좌우 여유는
+   * {@link FRAME_MARGIN} 이 전 모델에 같은 몫으로 이미 배분해 두었다.
+   */
+  private roomScale = 1;
   /** 연출 시계(초). 벽시계 누적 — sim 틱과 무관하다. */
   private clock = 0;
   /** 전환 연출 잔여(초). `transitioning` 상승 에지에서 채운다. */
@@ -280,11 +370,15 @@ export class BossActor {
   }
 
   /**
-   * GLB 를 읽어 정규화(중심 정렬 + 최대 치수 1)하고 무대에 mount 한다.
-   * 파일이 없거나 파싱에 실패하면 조용히 false — 2D 스프라이트가 그대로 남는다.
+   * 행성의 GLB 를 읽어 정규화(중심 정렬 + 최대 치수 1)하고 무대에 mount 한다.
+   * 모델이 없는 행성이거나 파싱에 실패하면 조용히 false — 2D 스프라이트가 그대로 남는다.
+   *
+   * @param planet 행성 인덱스(0 카르곤 … 5 크라스). {@link BOSS_MODELS} 참조.
    */
-  async load(basename: string): Promise<boolean> {
-    const url = modelUrl(basename);
+  async load(planet: number): Promise<boolean> {
+    const def = BOSS_MODELS[planet] ?? null;
+    if (def === null) return false;
+    const url = await modelUrl(def.file);
     if (url === undefined) return false;
     try {
       const gltf = await new GLTFLoader().loadAsync(url);
@@ -317,13 +411,54 @@ export class BossActor {
         }
       });
 
+      // 코어 점광을 행성 테마색으로 — 모델 발광이 주변으로 번지는 색이다({@link BossModelDef}).
+      this.coreLight.color.setHex(def.coreLight);
+
       this.fitCamera();
       this.stage.mount('boss', this.scene, this.camera);
+      // 프레이밍이 확정된 뒤에 **한 번 그려 보고** 실루엣 여유를 재 연출 진폭을 맞춘다.
+      // mount 뒤여야 무대가 이 씬을 그릴 수 있다(measureSlotHeadroom 은 등록된 씬만 그린다).
+      const room = this.stage.measureSlotHeadroom('boss');
+      if (room !== null) {
+        this.roomScale = Math.min(
+          1,
+          Math.max(MIN_ROOM_SCALE, Math.min(room.up, room.down) / TRANSITION_ROOM),
+        );
+      }
       this.ready = true;
       return true;
     } catch {
       return false; // 손상된 자산이 게임을 막지 않는다.
     }
+  }
+
+  /**
+   * 모델과 그 GPU 자원을 회수한다. **행성이 바뀌면(다음 런) 반드시 불러야 한다** — three 의
+   * geometry/material/texture 는 GC 대상이 아니라 명시 `dispose()` 로만 GPU 에서 내려가고,
+   * 행성 6종을 순회하면 그대로 6배가 누적된다.
+   *
+   * 무대(WebGL 컨텍스트)는 건드리지 않는다 — 그건 호출자가 액터보다 오래 쥐고 재사용한다.
+   */
+  dispose(): void {
+    this.ready = false;
+    this.roomScale = 1;
+    this.stage.unmount('boss');
+    // 같은 텍스처를 여러 재질이 공유하므로(베이스컬러가 emissiveMap 으로도 쓰인다) 모아서 한 번만.
+    const textures = new Set<THREE.Texture>();
+    this.pivot.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      obj.geometry.dispose();
+      for (const m of Array.isArray(obj.material) ? obj.material : [obj.material]) {
+        if (!(m instanceof THREE.Material)) continue;
+        for (const value of Object.values(m)) {
+          if (value instanceof THREE.Texture) textures.add(value);
+        }
+        m.dispose();
+      }
+    });
+    for (const t of textures) t.dispose();
+    this.pivot.clear();
+    this.emissiveMaterials.length = 0;
   }
 
   /**
@@ -397,11 +532,11 @@ export class BossActor {
 
     // ── 전환(페이즈 위에 덮어쓴다) — 3박자로 실루엣이 시간에 따라 변한다 ──
     if (this.transitionLeft > 0) {
-      applyTransition(m, 1 - this.transitionLeft / TRANSITION_SECONDS, t);
+      applyTransition(m, 1 - this.transitionLeft / TRANSITION_SECONDS, t, this.roomScale);
     }
 
     // ── 과열(페이즈와 직교로 덧씌운다) ──
-    if (s.overheated) applyOverheat(m, t);
+    if (s.overheated) applyOverheat(m, t, this.roomScale);
 
     // 이동은 프러스텀 반폭 배수다(위 {@link unit} 주석) — 프레이밍과 연출이 함께 움직인다.
     this.pivot.position.set(m.x * this.unit, m.y * this.unit, 0);

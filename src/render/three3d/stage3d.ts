@@ -118,6 +118,72 @@ export class Stage3D {
     this.scenes.set(slot, { scene, camera });
   }
 
+  /**
+   * 슬롯의 씬을 뗀다. 액터가 회수될 때(행성이 바뀌어 보스 모델을 갈아탈 때) 부른다 —
+   * 떼지 않으면 `render()` 가 이미 dispose 된 geometry 를 계속 그리려 든다.
+   *
+   * 텍스처는 그대로 남는다(무대는 액터보다 오래 산다) — 다음 액터가 같은 슬롯에 mount 하면
+   * 스프라이트가 물고 있는 텍스처가 그대로 새 모델을 가리킨다.
+   */
+  unmount(slot: Slot3D): void {
+    this.scenes.delete(slot);
+    this.activeSlots.delete(slot);
+  }
+
+  /**
+   * 슬롯을 **한 번 그려 보고** 불투명 실루엣이 슬롯 경계까지 남긴 여유를 잰다. 단위는 프러스텀
+   * 반폭(=슬롯 절반)이라, 액터의 모션 값(같은 단위)과 직접 비교할 수 있다. 빈 슬롯이면 null.
+   *
+   * ── 왜 바운딩박스로는 안 되는가 ──
+   * 액터의 `fitCamera` 는 **바운딩박스 8모서리**로 프레이밍을 잡는데, 그 박스는 실루엣보다 크다
+   * (뾰족한 첨탑의 박스 모서리는 첨탑이 없는 허공에도 있다). 그 과대추정으로 여유를 계산하면
+   * 실제로는 여유가 넉넉한 모델(카르곤)까지 연출이 깎인다. 그래서 **그려서 실측**한다.
+   *
+   * 비용은 로드 1회의 렌더 + 160×160 readback 이다(런당 한 번).
+   */
+  measureSlotHeadroom(
+    slot: Slot3D,
+  ): { up: number; down: number; left: number; right: number } | null {
+    const mounted = this.scenes.get(slot);
+    if (mounted === undefined) return null;
+    const i = SLOT_ORDER.indexOf(slot);
+    const x = i * SLOT_SIZE;
+    this.renderer.setViewport(x, this.canvas.height - SLOT_SIZE, SLOT_SIZE, SLOT_SIZE);
+    this.renderer.setScissor(x, this.canvas.height - SLOT_SIZE, SLOT_SIZE, SLOT_SIZE);
+    this.renderer.clear(true, true, true);
+    this.renderer.render(mounted.scene, mounted.camera);
+
+    const probe = document.createElement('canvas');
+    probe.width = SLOT_SIZE;
+    probe.height = SLOT_SIZE;
+    const ctx = probe.getContext('2d', { willReadFrequently: true });
+    if (ctx === null) return null;
+    ctx.drawImage(this.canvas, x, 0, SLOT_SIZE, SLOT_SIZE, 0, 0, SLOT_SIZE, SLOT_SIZE);
+    const d = ctx.getImageData(0, 0, SLOT_SIZE, SLOT_SIZE).data;
+    let minX = SLOT_SIZE;
+    let maxX = -1;
+    let minY = SLOT_SIZE;
+    let maxY = -1;
+    for (let py = 0; py < SLOT_SIZE; py++) {
+      for (let px = 0; px < SLOT_SIZE; px++) {
+        if (d[(py * SLOT_SIZE + px) * 4 + 3]! <= 8) continue;
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+      }
+    }
+    if (maxX < 0) return null;
+    // 슬롯 전체가 2×half 이므로 1px = 2/SLOT_SIZE (half 단위).
+    const k = 2 / SLOT_SIZE;
+    return {
+      up: minY * k,
+      down: (SLOT_SIZE - 1 - maxY) * k,
+      left: minX * k,
+      right: (SLOT_SIZE - 1 - maxX) * k,
+    };
+  }
+
   /** 이 슬롯이 이번 프레임 화면에 있다고 표시한다. 표시되지 않은 슬롯은 그리지 않는다. */
   markActive(slot: Slot3D): void {
     this.activeSlots.add(slot);
