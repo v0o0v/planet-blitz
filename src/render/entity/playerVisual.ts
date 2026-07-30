@@ -1539,8 +1539,14 @@ class PlayerBodyAdorner implements EntityAdorner {
   }
 
   /**
-   * ⚠️ `mask` 를 **먼저 끊는다**. 마스크 지정이 살아 있는 채로 파괴하면 Pixi 의 마스크 효과가
-   * 파괴된 표시객체를 계속 참조한다(형제 회수 계약 §2-3 의 마스크 판).
+   * ⚠️ **스트립 배열을 비우는 것이 회수의 실질**이다. 컨테이너만 파괴하고 배열을 남기면 다음
+   * `syncSurface` 가 `surface === null` 을 보고 새로 굽는데, `push` 가 **파괴된 옛 스트립 뒤에**
+   * 쌓여 인덱스 0..4 가 죽은 객체를 가리킨다 — 알파를 그쪽에 써서 화면이 갱신되지 않는다.
+   *
+   * 마스크 지정은 따로 끊지 않는다: `destroy({children:true})` 가 마스크 스프라이트(자식)와
+   * 효과를 함께 회수하고, 컨테이너 자신도 이미 부모에서 떨어져 있어 남는 참조가 없다.
+   * (끊는 한 줄을 넣어 봤지만 **어떤 관측으로도 구별되지 않았다** — 뮤테이션이 살아남는 코드는
+   * 검증되지 않는 코드이므로 두지 않는다.)
    */
   private destroySurface(): void {
     const surface = this.surface;
@@ -1549,7 +1555,6 @@ class PlayerBodyAdorner implements EntityAdorner {
     this.surfaceMask = null;
     this.specStrips.length = 0;
     this.shadeStrips.length = 0;
-    surface.mask = null;
     surface.parent?.removeChild(surface);
     if (!surface.destroyed) surface.destroy({ children: true });
   }

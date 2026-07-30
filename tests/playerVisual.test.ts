@@ -1315,15 +1315,28 @@ describe('판면 방향광 + 스페큘러 스윕 — 선체 자체가 빛에 반
     for (const c of strips) expect(c.alpha).toBe(0);
   });
 
-  it('dispose 가 마스크 지정을 끊고 컨테이너를 회수한다(§2-3 형제 회수의 마스크 판)', () => {
+  it('dispose 뒤 다시 태우면 **살아 있는** 스트립으로 재구성된다(파괴된 객체 재사용 금지)', () => {
+    // ⚠️ 이 테스트가 예전에는 `expect(surf.mask).toBeFalsy()` 였다. 그건 **항진**이었다 —
+    // 마스크를 끊는 한 줄을 지워도 Pixi 가 destroy 에서 효과를 걷어 통과했다(뮤테이션 M23 생존).
+    // 실제로 관측 가능하고 실제로 위험한 것은 이쪽이다: 회수가 스트립 배열을 비우지 않으면
+    // 재구성분이 파괴된 옛 스트립 **뒤에** 쌓여 알파가 죽은 객체로 가고 화면이 안 바뀐다.
     const h = harness();
     const a = playerAdorners();
-    run(h, a, 4, { sprite: playerSprite() });
-    const surf = labeled(h.above, 'playerSurface')[0]!;
+    const s = playerSprite();
+    run(h, a, 4, { sprite: s, facing: 0 });
     for (const ad of a) ad.dispose(h.ctx);
-    // Pixi v8 는 마스크를 끊으면 게터가 `undefined` 를 준다(효과 자체가 제거된다) — 존재 여부만 본다.
-    expect(surf.mask).toBeFalsy();
     expect(labeled(h.above, 'playerSurface')).toHaveLength(0);
+
+    // 우현 미끄러짐으로 롤을 만들어 음영이 반드시 생기는 조건에서 재구성한다.
+    run(h, a, 30, { sprite: s, facing: 0, move: { dx: 0, dy: 12 } });
+    const again = labeled(h.above, 'playerSurface')[0];
+    expect(again).toBeDefined();
+    const strips = again!.children.filter(
+      (c) => c.label === 'playerSurfaceShade' || c.label === 'playerSurfaceSpec',
+    );
+    expect(strips).toHaveLength(10);
+    for (const c of strips) expect(c.destroyed).toBe(false);
+    expect(strips.some((c) => c.alpha > 0)).toBe(true);
   });
 });
 
@@ -1349,7 +1362,12 @@ describe('추진 불꽃 등급 — low 티어에서 기체가 다시 커서가 �
     run(high, playerAdorners(), 12, { sprite: playerSprite(), facing: 0, move: { dx: 46.7, dy: 0 } });
     const highFlame = labeled(high.below, 'playerThrust')[0]!;
 
-    expect(lowFlame.scale.x).toBeLessThan(highFlame.scale.x); // 대시 확장이 없다
+    // ⚠️ 두 컷의 scale 을 부등호로 비교하면 안 된다 — 요동(high 에만 있다)이 부호를 흔들어
+    // "대시 확장을 그대로 둔" 뮤테이션이 **살아남았다**(M29). 절대값으로 잠근다: 표시 반치수 24 ×
+    // 순항 extent 1.0 × 요동 없음 = 24. 대시 배율(2.2)이 살아 있으면 52.8 이 된다.
+    expect(lowFlame.scale.x).toBeCloseTo(24, 6);
+    expect(lowFlame.scale.y).toBeCloseTo(24, 6); // 요동이 0 이라 폭도 정확히 반치수다
+    expect(highFlame.scale.x).toBeGreaterThan(40); // 같은 대시에서 high 는 확장한다
     expect(lowFlame.alpha).toBeLessThan(1);
     const core = lowFlame.children.find((c) => c.label === 'playerDashCore');
     expect(core).toBeDefined();
