@@ -51,8 +51,18 @@ import {
   damageIntensity,
   isCriticalHp,
   damageAlpha,
-  vaporStrength,
   playerHaloAniso,
+  spriteAddLight,
+  addLayers,
+  damageFactor,
+  damageDelta,
+  damageWarmShift,
+  surfaceLight,
+  surfaceStripCenter,
+  surfaceStripAlpha,
+  surfaceShadeDelta,
+  flameGate,
+  PLAYER_TEX_MEAN,
   isDashSpeed,
   HEAVY_STACKS,
   BODY_LUMA_P99,
@@ -139,7 +149,9 @@ function labeled(layer: Container, label: string): Container[] {
 /**
  * 이 레인의 **가산** 기여 전량. 항목이 늘면 여기 한 줄만 더하면 밝기 단언이 자동으로 따라온다 —
  * 목록을 테스트마다 따로 쓰면 새 이펙트가 조용히 예산 밖에 남는다(실제로 그럴 뻔했다).
- * 감산 컨투어는 여기 **없다**(가산 기여가 0 이라서 — 그 자체가 계약이다).
+ *
+ * 감산 부품(컨투어 ⓪ · 손상 그을림 ⑦ · 판면 그늘 ⑩)은 여기 **없다** — 가산 기여가 0 이고,
+ * 각자 `contourDelta`·`damageDelta`·`surfaceShadeDelta` 로 감산 쪽 게이트를 따로 진다.
  */
 const PARTS: readonly PlayerLightPart[] = [
   'flame',
@@ -147,8 +159,7 @@ const PARTS: readonly PlayerLightPart[] = [
   'ghost',
   'dashCore',
   'dashRing',
-  'vapor',
-  'damage',
+  'specular',
 ];
 
 function ent(over: Partial<EntitySnapshot> = {}): EntitySnapshot {
@@ -346,6 +357,28 @@ describe('가산 합성 결과 (CRIT-1·CRIT-2) — 상수가 아니라 **화면
     const flame = partLight('flame');
     expect(fitsUnderBody(flame, 300)).toBe(true);
     expect(fitsUnderBody(flame, 10)).toBe(false);
+  });
+
+  it('**스프라이트** 기여는 텍스처 인자를 곱한 모델로 잰다 (4차 CRIT-1 의 근본 수정)', () => {
+    // rim·ghost 는 텍스처 복제라 `texture × tint × alpha` 다. 모델이 그걸 반영해야 화면과 일치한다.
+    for (const part of ['rim', 'ghost'] as const) {
+      const naive = part === 'rim' ? addLayers([{ color: 0xcfe6ff, alpha: 0.2 }]) : null;
+      if (naive !== null) expect(luminance(partLight(part))).toBeLessThan(luminance(naive));
+      // 청록 텍스처라 어느 tint 를 써도 **G·B 가 R 보다 크게** 남는다 — "차가운 화이트 림"은
+      // 이 기법으로 만들 수 없다(그래서 판면 하이라이트는 Graphics 다).
+      const l = partLight(part);
+      expect(l.g).toBeGreaterThan(l.r);
+      expect(l.b).toBeGreaterThan(l.r);
+    }
+    // 반면 Graphics 기여(불꽃·심·링·판면)는 텍스처 인자가 없다 — 두 모델을 섞으면 CRIT-1 이다.
+    expect(partLight('specular')).toEqual(addLayers([{ color: 0xdfeeff, alpha: 0.3 }]));
+  });
+
+  it('판면 하이라이트는 Graphics 라 **차가운 화이트**를 낼 수 있다(rim 이 못 하는 일)', () => {
+    const spec = partLight('specular');
+    expect(saturation255(spec)).toBeLessThan(60); // 무채에 가깝다 = 표면 반사
+    // 그런데도 개별 기여 상한 안이다(스트립끼리는 겹치지 않으므로 이 값이 최댓값이다).
+    expect(fitsUnderBody(spec, BODY_LUMA_P99_CLEAN)).toBe(true);
   });
 
   it('대시 심을 얹어도 불꽃 합성 채도가 60 이상이다 — 백열로 가지 않는다(§요구 ②)', () => {
@@ -553,7 +586,10 @@ describe('장식자 배선 — 화면에 실제로 붙는다', () => {
     expect(labeled(h.below, 'playerThrust')).toHaveLength(1);
     expect(labeled(h.below, 'playerRim')).toHaveLength(1);
     expect(labeled(h.below, 'playerContour')).toHaveLength(1);
-    expect(h.above.children.length).toBe(0); // 무피격이면 실드 셸 없음
+    expect(labeled(h.above, 'playerShield')).toHaveLength(0); // 무피격이면 실드 셸 없음
+    // ⚠️ 여기는 예전에 `above.children.length === 0` 이었다. 판면 음영(⑩)이 aboveLayer 에 살아서
+    // 절대 개수로 재면 무관한 항목이 늘 때마다 깨진다 — 라벨로 재는 규율(§labeled 주석)로 바꿨다.
+    expect(labeled(h.above, 'playerSurface')).toHaveLength(1);
   });
 
   it('불꽃은 기수 **반대편**에 놓여 본체 실루엣을 침범하지 않는다(§2-2)', () => {
@@ -676,7 +712,7 @@ describe('피격 반응 — 깜빡이지 않는다(§2-2 가독성 최우선)', 
     const s = playerSprite();
     // 프레임 2 에서 HP 가 떨어진다.
     run(h, a, 6, { sprite: s, hpAt: new Map([[2, 80]]) });
-    expect(h.above.children.length).toBe(1);
+    expect(labeled(h.above, 'playerShield')).toHaveLength(1);
     // 무적 창(40틱 ≈ 0.667s)을 넘길 만큼 더 태운다.
     let prev = ent({ hp: 80 });
     for (let i = 0; i < 60; i++) {
@@ -686,7 +722,7 @@ describe('피격 반응 — 깜빡이지 않는다(§2-2 가독성 최우선)', 
       prev = curr;
       h.advance();
     }
-    expect(h.above.children.length).toBe(0);
+    expect(labeled(h.above, 'playerShield')).toHaveLength(0);
   });
 
   it('**스프라이트 알파를 절대 건드리지 않는다** — 무적 중 실루엣이 한 프레임도 안 지워진다', () => {
@@ -741,7 +777,7 @@ describe('피격 반응 — 깜빡이지 않는다(§2-2 가독성 최우선)', 
       h.advance();
     }
     // prev.hp 로 판정했다면 창이 매 프레임 리셋돼 셸이 영원히 남는다.
-    expect(h.above.children.length).toBe(0);
+    expect(labeled(h.above, 'playerShield')).toHaveLength(0);
   });
 });
 
@@ -770,9 +806,14 @@ describe('대시 잔상 (§3 레인 A ⑤)', () => {
     const a = playerAdorners();
     run(h, a, 12, { sprite: playerSprite(), facing: 0, move: { dx: 46.7, dy: 0 } });
     expect(labeled(h.below, 'playerGhost')).toHaveLength(0);
-    // low 는 halo 도 off → 불꽃·림도 없다. 외곽선만 남는다(자기 위치 확보는 티어 무관).
-    expect(labeled(h.below, 'playerThrust')).toHaveLength(0);
+    // low 는 halo 도 off → 림이 없다. 컨투어·판면 그늘은 감산이라 티어 무관으로 남고,
+    // 불꽃은 **아이들 코어로 강등**된다(4차 MINOR — low 에서 기체가 커서로 보이던 것).
+    expect(labeled(h.below, 'playerRim')).toHaveLength(0);
     expect(labeled(h.below, 'playerContour')).toHaveLength(1);
+    const flame = labeled(h.below, 'playerThrust')[0];
+    expect(flame).toBeDefined();
+    expect(flame!.alpha).toBeLessThan(1);
+    expect(flame!.alpha).toBeGreaterThan(0);
   });
 });
 
@@ -1017,13 +1058,50 @@ describe('손상 상태 — HP 1 이든 만피든 똑같이 생기면 안 된다
     expect(dim).toBeLessThan(full);
   });
 
-  it('오버레이가 **가산**이다 — tint 로 밀면 Pixi 곱연산이라 기체가 어두워진다(레인 B 결론)', () => {
+  // ── 4차 CRIT-1 ── 3차는 `add` 였고 화면 델타가 **1.98**(7× 육안 구별 불가)이었다. 아래 세
+  // 테스트가 그 재발을 막는다: ① 기법이 곱연산이다 ② 모델이 텍스처 인자를 안다 ③ 게이트가
+  // 상수가 아니라 **실측 광도 하강**이다.
+
+  it('3차의 실패를 모델이 재현한다 — 가산 스프라이트는 텍스처 인자로 5배 약해진다', () => {
+    // 이 테스트의 값은 "고쳐야 할 것"의 크기다. `addLayers`(자유 공간 Graphics 모델)로 잰
+    // 3차의 손상 오버레이는 광도 18.3 이었지만, 텍스처 인자를 넣으면 7.7 대다.
+    const naive = addLayers([{ color: 0x9c3a14, alpha: 0.22 }]);
+    const real = spriteAddLight(0x9c3a14, 0.22);
+    expect(luminance(real)).toBeLessThan(luminance(naive) * 0.5);
+    // 그리고 **채널 우열이 뒤집힌다** — 주석은 R 지배를 약속했는데 화면은 G 가 더 올랐다.
+    expect(naive.r).toBeGreaterThan(naive.g);
+    expect(real.g).toBeGreaterThan(real.r);
+    // 원인은 텍스처 평균이 청록이라는 것뿐이다(R 낮음·G 높음).
+    expect(PLAYER_TEX_MEAN.r).toBeLessThan(PLAYER_TEX_MEAN.g);
+  });
+
+  it('그을림이 선체 광도를 **25 이상** 떨어뜨린다 (4차 합격 게이트 — 상수가 아니라 실측 파생)', () => {
+    // 기준은 관측된 가장 엄한 본체 실측(clean 149.8)이다. 3차의 국소 델타는 1.98 이었다.
+    expect(damageDelta(BODY_LUMA_P99_CLEAN)).toBeGreaterThan(25);
+    // 어두운 선체에서도 부호는 항상 감산이고, 밝을수록 세진다(곱연산의 성질).
+    expect(damageDelta(20)).toBeGreaterThan(0);
+    expect(damageDelta(BODY_LUMA_P99_DENSE)).toBeGreaterThan(damageDelta(BODY_LUMA_P99_CLEAN));
+    // 알파 0 은 정확히 항등원 — 만피에서 화면이 한 픽셀도 안 바뀐다.
+    expect(damageDelta(BODY_LUMA_P99_CLEAN, 0)).toBeCloseTo(0, 12);
+  });
+
+  it('그을림이 **난색으로** 기운다 — ΔR < ΔG < ΔB (3차는 이 우열이 뒤집혀 있었다)', () => {
+    const d = damageWarmShift(BODY_LUMA_P99_CLEAN);
+    expect(d.r).toBeLessThan(d.g);
+    expect(d.g).toBeLessThan(d.b);
+    // 감쇠 계수로 보면 R 이 가장 크다(가장 덜 깎인다) = 남는 색이 난색이다.
+    const f = damageFactor(0.35);
+    expect(f.r).toBeGreaterThan(f.g);
+    expect(f.g).toBeGreaterThan(f.b);
+  });
+
+  it('오버레이가 **곱연산**이다 — 가산은 청록 텍스처에 곱해져 화면에서 사라졌다(4차 CRIT-1)', () => {
     const h = harness();
     const s = playerSprite();
     run(h, playerAdorners(), 3, { sprite: s, hpAt: new Map([[1, 20]]) });
     const ov = h.above.children.find((c) => c.label === 'playerDamage');
     expect(ov).toBeDefined();
-    expect((ov as unknown as { blendMode: string }).blendMode).toBe('add');
+    expect((ov as unknown as { blendMode: string }).blendMode).toBe('multiply');
     expect(ov!.alpha).toBeGreaterThan(0);
     // 실루엣을 한 픽셀도 안 바꾼다: 같은 변환·같은 스케일.
     expect(ov!.rotation).toBeCloseTo(s.rotation, 6);
@@ -1088,36 +1166,194 @@ describe('이방성 헤일로 — 등방 blob 은 면적을 다 쓰고 정보를
   });
 });
 
-describe('익단 증기 — 가장 싼 2차 운동 한 겹 (§요구 ⑥)', () => {
-  it('순한 이동에서는 0 이고 급선회에서만 살아난다(노이즈가 아니라 정보)', () => {
-    expect(vaporStrength(0)).toBe(0);
-    expect(vaporStrength(200)).toBe(0);
-    expect(vaporStrength(900)).toBeGreaterThan(0);
-    expect(vaporStrength(-900)).toBeCloseTo(vaporStrength(900), 12); // 좌우 대칭
-    expect(vaporStrength(1e6)).toBe(1);
+describe('익단 증기는 **삭제됐다** — 화면에 없는 것을 코드에 두지 않는다 (4차 CRIT-2)', () => {
+  it('어떤 조건에서도 익단 증기가 붙지 않는다(부활 방지 가드)', () => {
+    // 자연 인스턴스 국소 델타 0.01, `alpha=1.0` 강제에도 임계 1 이상 달라지는 픽셀이 **9개**.
+    // 원인은 알파가 아니라 기하였다(쐐기가 선체 불투명 픽셀 아래) — 고치지 않고 지웠고 그
+    // 예산을 판면 음영(⑩)에 썼다. 자세한 근거는 playerVisual.ts 파일 헤더.
+    for (const over of [{}, { tier: 'low' as QualityTier, gates: gatesFor('low') }]) {
+      const h = harness(over);
+      run(h, playerAdorners(), 30, { sprite: playerSprite(), facing: 0, move: { dx: 0, dy: 14 } });
+      expect(labeled(h.below, 'playerVapor')).toHaveLength(0);
+      expect(labeled(h.above, 'playerVapor')).toHaveLength(0);
+    }
   });
 
-  it('급선회에서 belowLayer 에 붙고, 직진에서는 회수된다', () => {
-    const turn = harness();
-    run(turn, playerAdorners(), 30, { sprite: playerSprite(), facing: 0, move: { dx: 0, dy: 14 } });
-    expect(labeled(turn.below, 'playerVapor')).toHaveLength(1);
-
-    const straight = harness();
-    run(straight, playerAdorners(), 30, { sprite: playerSprite(), facing: 0, move: { dx: 12, dy: 0 } });
-    expect(labeled(straight.below, 'playerVapor')).toHaveLength(0);
-  });
-
-  it('low 티어·발광 감소·모션 감소에서 전부 꺼진다(연출 축이라 정보가 아니다)', () => {
+  it('대시 개시 링은 여전히 low·발광 감소·모션 감소에서 꺼진다(연출 축 — 회귀 가드)', () => {
     for (const over of [
       { tier: 'low' as QualityTier, gates: gatesFor('low') },
       { gates: gatesFor('high', { reducedGlow: true }) },
       { gates: gatesFor('high', { reducedMotion: true }) },
     ]) {
       const h = harness(over);
-      run(h, playerAdorners(), 30, { sprite: playerSprite(), facing: 0, move: { dx: 0, dy: 14 } });
-      expect(labeled(h.below, 'playerVapor')).toHaveLength(0);
+      run(h, playerAdorners(), 30, { sprite: playerSprite(), facing: 0, move: { dx: 46.7, dy: 0 } });
       expect(labeled(h.below, 'playerDashRing')).toHaveLength(0);
     }
+  });
+});
+
+describe('판면 방향광 + 스페큘러 스윕 — 선체 자체가 빛에 반응한다 (4차 CRIT-3)', () => {
+  it('스트립 중심이 횡축을 균등 분할한다(기체 타입 무관 공통 규칙)', () => {
+    const centers = [0, 1, 2, 3, 4].map(surfaceStripCenter);
+    const want = [-0.8, -0.4, 0, 0.4, 0.8];
+    // ⚠️ `toEqual` 로 비교하면 안 된다 — 균등 분할이 부동소수라 0.4 가 0.3999999999999999 다.
+    for (let i = 0; i < want.length; i++) expect(centers[i]).toBeCloseTo(want[i]!, 12);
+    // 대칭이다 — 어느 쪽으로 롤해도 같은 세기의 음영이 나온다.
+    expect(centers[0]).toBeCloseTo(-centers[4]!, 12);
+  });
+
+  it('**롤이 조명 계수를 넘긴다** — 광원 횡 성분이 0 인 행성에서도 뱅킹만으로 음영이 생긴다', () => {
+    expect(surfaceLight(0, 0)).toBe(0); // 정면광 + 수평 = 판면 대비 없음
+    expect(surfaceLight(0, 0.5)).toBeLessThan(0); // 우선회 롤 → 밝은 쪽이 좌현(−y)
+    expect(surfaceLight(0, -0.5)).toBeGreaterThan(0);
+    // 이득이 1 초과라 롤 하나로 계수가 포화까지 간다(그래서 뱅킹이 실제로 음영을 만든다).
+    expect(Math.abs(surfaceLight(0, 0.8))).toBe(1);
+  });
+
+  it('선회만 해도 음영이 흐른다 — 계수가 **기수 기준 광원 횡 성분**의 함수다', () => {
+    // 같은 태양(+x), 기수만 다르다. 기수가 +x 면 광원이 정면(횡 0), +y 를 보면 광원이 좌현이다.
+    const east = surfaceLight(lateralOfLight(0), 0);
+    const north = surfaceLight(lateralOfLight(Math.PI / 2), 0);
+    expect(east).toBeCloseTo(0, 9);
+    expect(Math.abs(north)).toBeGreaterThan(0.9);
+  });
+
+  it('밝은 판면은 가산, 등지는 판면은 **곱연산**이다 — 한 스트립이 둘일 수는 없다', () => {
+    const lit = surfaceStripAlpha(4, 1, true); // center +0.8, light +1 → 빛을 본다
+    const dark = surfaceStripAlpha(0, 1, true); // center −0.8 → 등진다
+    expect(lit.spec).toBeGreaterThan(0);
+    expect(lit.shade).toBe(0);
+    expect(dark.shade).toBeGreaterThan(0);
+    expect(dark.spec).toBe(0);
+    // 계수를 뒤집으면 밝은 쪽도 뒤집힌다(스윕의 실체).
+    expect(surfaceStripAlpha(4, -1, true).shade).toBeGreaterThan(0);
+  });
+
+  it('하이라이트가 밝은 쪽에 **좁게 모인다**(지수 > 1 = 스페큘러, 램버트가 아니다)', () => {
+    const outer = surfaceStripAlpha(4, 1, true).spec; // |s| = 0.8
+    const inner = surfaceStripAlpha(3, 1, true).spec; // |s| = 0.4
+    expect(inner).toBeGreaterThan(0);
+    // 선형이면 비율이 2 다. 지수 1.6 이면 그보다 크게 벌어진다.
+    expect(outer / inner).toBeGreaterThan(2.2);
+  });
+
+  it('가산 하이라이트는 발광 감소에서 꺼지고 **감산 그늘은 남는다**(빛이 아니라 그림자다)', () => {
+    const off = surfaceStripAlpha(4, 1, false);
+    expect(off.spec).toBe(0);
+    expect(surfaceStripAlpha(0, 1, false).shade).toBeGreaterThan(0);
+  });
+
+  it('그늘이 선체 광도를 **25 이상** 떨어뜨린다(low 티어에서 기체가 커서로 안 보이는 근거)', () => {
+    expect(surfaceShadeDelta(BODY_LUMA_P99_CLEAN)).toBeGreaterThan(25);
+    expect(surfaceShadeDelta(0)).toBeCloseTo(0, 12);
+  });
+
+  it('aboveLayer 에 붙고 **실루엣 마스크**를 쓴다 — 마스크가 없으면 선체 위 직사각형이다(§2-5)', () => {
+    const h = harness();
+    const s = playerSprite();
+    run(h, playerAdorners(), 3, { sprite: s, facing: 0.4 });
+    const surf = labeled(h.above, 'playerSurface')[0];
+    expect(surf).toBeDefined();
+    expect(surf!.mask).not.toBeNull();
+    expect(surf!.mask).toBeDefined();
+    // 마스크는 본체와 같은 텍스처·같은 스케일이어야 실루엣과 겹친다.
+    const mask = surf!.mask as unknown as Sprite;
+    expect(mask.texture).toBe(s.texture);
+    expect(mask.scale.x).toBeCloseTo(s.scale.x, 9);
+    // 컨테이너가 기수를 물고 있어야 띠가 기체 길이 방향으로 눕는다.
+    expect(surf!.rotation).toBeCloseTo(s.rotation, 9);
+  });
+
+  it('기울면 표면 음영이 **실제로 바뀐다** — 변환만 바뀌는 뱅킹과의 차이 (CRIT-3 본문)', () => {
+    /** 판면 스트립 알파를 좌현→우현 순으로 읽는다. */
+    const read = (h: Harness): number[] => {
+      const surf = labeled(h.above, 'playerSurface')[0]!;
+      return surf.children
+        .filter((c) => c.label === 'playerSurfaceShade' || c.label === 'playerSurfaceSpec')
+        .map((c) => Math.round(c.alpha * 1000) / 1000);
+    };
+    // 광원을 정면(+x, 기수도 +x)에 둬 **롤 말고는 음영을 만들 수 있는 것이 없게** 한다.
+    const straight = harness();
+    run(straight, playerAdorners(), 4, { sprite: playerSprite(), facing: 0 });
+    const flat = read(straight);
+
+    const banking = harness();
+    run(banking, playerAdorners(), 30, {
+      sprite: playerSprite(),
+      facing: 0,
+      move: { dx: 0, dy: 12 }, // 우현으로 미끄러짐 → 롤
+    });
+    const rolled = read(banking);
+
+    expect(flat.every((v) => v === 0)).toBe(true); // 수평 정면광에서는 판면 대비 0
+    expect(rolled.some((v) => v > 0)).toBe(true); // 기울면 음영이 생긴다
+    // 그리고 밝은 쪽·어두운 쪽이 **양쪽 다** 있다(단순 전체 밝힘/어둡힘이 아니다).
+    const surf = labeled(banking.above, 'playerSurface')[0]!;
+    const spec = surf.children.filter((c) => c.label === 'playerSurfaceSpec' && c.alpha > 0);
+    const shade = surf.children.filter((c) => c.label === 'playerSurfaceShade' && c.alpha > 0);
+    expect(spec.length).toBeGreaterThan(0);
+    expect(shade.length).toBeGreaterThan(0);
+  });
+
+  it('모션 감소에서 스윕이 멎되 **광원 성분은 남는다**(운동만 끄고 정보는 남긴다)', () => {
+    const h = harness({ gates: gatesFor('high', { reducedMotion: true }) });
+    // 광원이 좌현이 되는 기수(+y 를 봄)에서 재면 롤 없이도 음영이 있어야 한다.
+    run(h, playerAdorners(), 30, { sprite: playerSprite(), facing: Math.PI / 2, move: { dx: 0, dy: 12 } });
+    const surf = labeled(h.above, 'playerSurface')[0]!;
+    const shade = surf.children.filter((c) => c.label === 'playerSurfaceShade' && c.alpha > 0);
+    expect(shade.length).toBeGreaterThan(0);
+  });
+
+  it('테마가 null 이고 수평이면 판면 음영이 전부 0 이다(광원 없음 = 방향광 없음)', () => {
+    const h = harness({ theme: null });
+    run(h, playerAdorners(), 4, { sprite: playerSprite(), facing: 0 });
+    const surf = labeled(h.above, 'playerSurface')[0]!;
+    const strips = surf.children.filter(
+      (c) => c.label === 'playerSurfaceShade' || c.label === 'playerSurfaceSpec',
+    );
+    expect(strips.length).toBe(10); // 5 스트립 × (가산 + 곱연산)
+    for (const c of strips) expect(c.alpha).toBe(0);
+  });
+
+  it('dispose 가 마스크 지정을 끊고 컨테이너를 회수한다(§2-3 형제 회수의 마스크 판)', () => {
+    const h = harness();
+    const a = playerAdorners();
+    run(h, a, 4, { sprite: playerSprite() });
+    const surf = labeled(h.above, 'playerSurface')[0]!;
+    for (const ad of a) ad.dispose(h.ctx);
+    // Pixi v8 는 마스크를 끊으면 게터가 `undefined` 를 준다(효과 자체가 제거된다) — 존재 여부만 본다.
+    expect(surf.mask).toBeFalsy();
+    expect(labeled(h.above, 'playerSurface')).toHaveLength(0);
+  });
+});
+
+/** 광원이 +x 인 테마에서 기수 `facing` 일 때의 **광원 횡 성분**. `lateralSpeed` 와 같은 기하다. */
+function lateralOfLight(facing: number): number {
+  return lateralSpeed(Math.cos(0), Math.sin(0), facing);
+}
+
+describe('추진 불꽃 등급 — low 티어에서 기체가 다시 커서가 되지 않는다 (4차 MINOR)', () => {
+  it('flameGate 가 세 등급을 낸다 — full / idle(low) / off(발광 감소)', () => {
+    expect(flameGate(gatesFor('high'), 'high')).toBe('full');
+    expect(flameGate(gatesFor('med'), 'med')).toBe('full');
+    expect(flameGate(gatesFor('low'), 'low')).toBe('idle');
+    expect(flameGate(gatesFor('high', { reducedGlow: true }), 'high')).toBe('off');
+  });
+
+  it('low 아이들 코어는 대시에도 확장·심이 붙지 않는다(감광 등급의 일부)', () => {
+    const low = harness({ tier: 'low', gates: gatesFor('low') });
+    run(low, playerAdorners(), 12, { sprite: playerSprite(), facing: 0, move: { dx: 46.7, dy: 0 } });
+    const lowFlame = labeled(low.below, 'playerThrust')[0]!;
+
+    const high = harness();
+    run(high, playerAdorners(), 12, { sprite: playerSprite(), facing: 0, move: { dx: 46.7, dy: 0 } });
+    const highFlame = labeled(high.below, 'playerThrust')[0]!;
+
+    expect(lowFlame.scale.x).toBeLessThan(highFlame.scale.x); // 대시 확장이 없다
+    expect(lowFlame.alpha).toBeLessThan(1);
+    const core = lowFlame.children.find((c) => c.label === 'playerDashCore');
+    expect(core).toBeDefined();
+    expect(core!.alpha).toBe(0);
   });
 });
 

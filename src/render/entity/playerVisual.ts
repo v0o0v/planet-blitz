@@ -4,8 +4,8 @@
  * 장식자 심({@link file://./adorner.ts})에 `'player'` kind 로 등록되는 두 장식자를 제공한다.
  *
  * ## 무엇을 만드는가
- * 계약 §3 레인 A 의 6항목(1~6)과, 3차에서 **"AAA 와 나란히 놓으면 헷갈리지 않는다"는 판정**을
- * 닫기 위해 추가된 6항목(⓪·2b·5b·7·8·9)이다.
+ * 계약 §3 레인 A 의 6항목(1~6)과, 3·4차에서 **"AAA 와 나란히 놓으면 헷갈리지 않는다"는 판정**을
+ * 닫기 위해 추가된 항목(⓪·2b·5b·7·9·10)이다.
  *
  * | # | 항목 | 담당 | 자리 |
  * |---|---|---|---|
@@ -18,9 +18,20 @@
  * | 5 | 대시 잔상 | {@link PlayerThrustAdorner} | belowLayer(가산 고스트) |
  * | 5b | **대시 개시 링 충격파** | {@link PlayerThrustAdorner} | belowLayer(가산, 0.28s) |
  * | 6 | 아이들 부유 | {@link PlayerBodyAdorner} | 변환 + 엔진 열기 요동 |
- * | 7 | **손상 상태**(HP 누진) | {@link PlayerBodyAdorner} | aboveLayer(본체 가산 오버레이) |
- * | 8 | **익단 증기** | {@link PlayerThrustAdorner} | belowLayer(가산, 횡가속 함수) |
+ * | 7 | **손상 상태**(HP 누진 **그을림**) | {@link PlayerBodyAdorner} | aboveLayer(**곱연산** 오버레이) |
  * | 9 | **이방성 헤일로** | {@link playerHaloAniso} | entityRenderer 플레이어 경로 |
+ * | 10 | **판면 방향광 + 스페큘러 스윕** | {@link PlayerBodyAdorner} | aboveLayer(실루엣 마스크 · 가산+곱연산) |
+ *
+ * ## 4차에서 **삭제한** 것 — 익단 증기(구 ⑧)
+ * 3차의 익단 증기는 화면에 **없었다**: 자연 인스턴스 국소 델타 0.01, `alpha` 를 1.0 으로 강제해도
+ * 임계 1 이상 달라지는 픽셀이 전 화면 **9개**뿐(최대 Δ 32). 원인은 알파가 아니라 **기하**다 —
+ * 쐐기가 횡 ±29.8px · 후방 7~26px 인데 그 영역이 기체 스프라이트 불투명 픽셀 **아래**였고
+ * 증기는 `belowLayer` 라 선체가 통째로 가렸다(9픽셀은 삐져나온 부분이다).
+ *
+ * `aboveLayer` 로 올리는 것은 선체를 가로지르므로 §2-2 위반이고, 쐐기 원점을 실루엣 밖으로 밀면
+ * "익단에서 나는 증기"가 아니게 된다. 계약 §3 은 "부수 운동 한 겹"만 요구하고 그 역할은
+ * 뱅킹(①)·부유(⑥)·열기 요동이 이미 한다. 그래서 고치지 않고 **지웠고**, 그 예산을 ⑩에 썼다.
+ * 표시객체 2개와 프레임당 `syncVapor` 한 번이 함께 사라졌다.
  *
  * ## 공유 파일 접촉 (승인 범위)
  * 1·2차는 `entityRenderer.ts` 를 한 줄도 안 건드렸다. 3차는 **두 지점만** 건드린다 —
@@ -382,10 +393,38 @@ export const PLAYER_DASH_TRAUMA = 0.16;
  * 플레이어에는 없었다 — Hades·Returnal 은 아바타 상태를 언제나 **몸으로** 보여준다(HUD 바를
  * 안 봐도 위험을 안다). 탄막 슈터에서는 그 가치가 더 크다: 시선이 HP 바에 갈 여유가 없다.
  *
- * ## 레인 B 의 결론을 그대로 쓴다 — `tint` 금지
- * Pixi v8 `tint` 는 **곱연산**이라 손상을 tint 로 밀면 기체가 **어두워진다**. 레인 B 는 같은
- * 문제를 **본체 텍스처의 가산 오버레이**로 풀었고 수치로 옳았다(위장률이 오히려 개선됐다).
- * 같은 기법을 쓴다: 같은 텍스처·같은 변환의 형제 스프라이트를 `blendMode:'add'` 로 얹는다.
+ * ## 3차는 **화면에 없었다** — 가산 스프라이트의 텍스처 인자 (4차 CRIT-1)
+ * 3차는 본체 텍스처 복제를 `blendMode:'add'` + `tint` 로 얹었다. HP=1 강제 + 맥동 첨두
+ * (`alpha=0.2149`, 설계 상한 0.22 도달)에서 실측한 값이 이것이다:
+ *
+ * - 국소 델타 **1.98** · mean 0.02 · 최대 픽셀 Δ 42
+ * - 선체 픽셀 n=1945 평균 색 이동 **ΔR +1.43 · ΔG +2.88 · ΔB +1.07**
+ * - 7× 나란히 **구별 불가**(HP 15% 컷도 동일)
+ *
+ * 원인은 알파가 아니다. Pixi `Sprite` 의 가산 기여는 `src.rgb = texture.rgb × tint × alpha` 라
+ * **텍스처 색이 곱으로 들어간다.** 플레이어 텍스처는 청록(R 낮음·G 높음)이므로 실제 가산량은
+ * `(50,180,200)/255 × (156,58,20) × 0.215 ≈ (6.6, 8.8, 3.4)`(광도 ≈7.7)인데, 검증 모델이 쓴
+ * `addLayers([{DAMAGE_COLOR, DAMAGE_ALPHA_MAX}])` 는 `(34.3,12.8,4.4)` 였다 — **크기가 5배
+ * 틀리고 채널 우열이 뒤집힌다.** 주석은 "달아오른 금속(R 지배)"을 약속했는데 화면은 **G 가 더
+ * 오르는 미세 밝힘**이었다(측정된 ΔG > ΔR 이 직접 증거다).
+ *
+ * 이건 {@link FLAME_LAYERS} 헤더가 정본으로 박아 둔 CRIT-1("상수는 맞았는데 렌더 결과가
+ * 틀렸다")과 **같은 계열이 같은 파일 안에서 재발한 것**이다. 모델 쪽은 {@link spriteAddLight} 로
+ * 고쳤고(텍스처 인자를 넣었다), 표현 쪽은 아래처럼 기법을 갈았다.
+ *
+ * ## 지금 방식 — **감산 그을림**(`blendMode:'multiply'`)
+ * ⓪ 감산 컨투어가 쓴 해법을 그대로 쓴다. 손상은 "달아오름"이 아니라 **그을림**으로 표현한다:
+ *
+ * - 곱연산은 텍스처 인자가 **어두워지는 방향으로만** 작용한다(`out = dst·(1 − a(1 − tex·tint))` —
+ *   청록 텍스처가 R 을 죽이던 그 인자가 여기서는 대비를 **더 벌린다**). 가산에서 5배 손실이던
+ *   항이 감산에서는 이득이다.
+ * - 밝기 총량 예산(§2-4) 기여가 **구조적으로 0** 이다. 3차의 가산 오버레이는 "안 보이는데
+ *   예산은 먹는" 최악의 조합이었다.
+ * - R 채널을 **가장 덜** 깎아(tint 의 R 이 가장 크다) 어두워지면서 **난색으로** 기운다 — 시안
+ *   아군 색에서 멀어지므로 "정상 아님"이 즉시 읽힌다. 검게 탄 난색 선체다.
+ *
+ * 합격 게이트는 상수가 아니라 실측이다({@link damageDelta}·{@link damageWarmShift} 가 그 예측을
+ * 코드에서 계산해 둔다): 선체 광도 하강 **25 이상** + ΔR < ΔG < ΔB(난색 잔존).
  *
  * ## 플레이어에게 금지된 것 — 연기
  * 적에게는 허용되는 손상 연기가 플레이어에게는 금지다. **자기 위치를 잃으면 조작 불능**이라
@@ -399,45 +438,84 @@ const DAMAGE_START = 0.6;
 /** 이 비율 아래가 "위독" — 맥동이 붙는다. */
 const DAMAGE_CRITICAL = 0.3;
 /**
- * 손상 오버레이 최대 알파. `(156,58,20)×0.22 = (34.3,12.8,4.4)`, 광도 **18.3** — 본체 상위 5%
- * (148.7)의 12% 다. 이건 자유 공간의 발광이 아니라 **선체 위 색조 이동**이라 이 크기여야 한다.
+ * 손상 그을림 최대 알파(**곱연산**). 3차의 0.22 는 가산이었고 화면 델타가 1.98 이었다 —
+ * 여기서는 같은 자리에서 광도 하강 **33.9**(clean 컷 본체 149.8 기준)를 만든다.
+ * {@link damageDelta} 가 그 값을 계산하고 테스트가 25 하한을 잠근다.
  */
-const DAMAGE_ALPHA_MAX = 0.22;
-/** 손상 색 — 달아오른 금속/불티. 시안(아군 색)에서 멀수록 "정상 아님"이 즉시 읽힌다. */
-const DAMAGE_COLOR = 0x9c3a14;
+const DAMAGE_ALPHA_MAX = 0.35;
+/**
+ * 손상 그을림 색 — **곱해지는 색**이라 값이 작을수록 어둡다(컨투어와 같은 규율). R(138) >
+ * G(74) > B(48) 이라 R 을 가장 덜 깎아 **난색 그을림**이 남는다: 감쇠 계수 (0.839, 0.752, 0.716).
+ */
+const DAMAGE_SCORCH_COLOR = 0x8a4a30;
 /** 위독 구간 맥동 깊이·각속도. 심장 박동에 가까운 속도라 긴박함이 붙는다. */
 const DAMAGE_PULSE_DEPTH = 0.4;
 const DAMAGE_PULSE_RATE = 5.5;
 /** 발광 감소 시 곱해지는 배율. **0 이 아니다** — 손상도는 전투 정보다. */
 const DAMAGE_REDUCED_GLOW = 0.6;
 
-// ── 8. 익단 증기 (3차 요구 ⑥ — 가장 싼 2차 운동 한 겹) ──────────────────────
+// ── 10. 판면 방향광 + 스페큘러 스윕 (4차 CRIT-3 — 남은 최대 격차) ────────────
 /**
- * 정지 화면이 납작한 이유는 **2·3차 운동이 없어서**다(날개끝 증기 · 후연 열왜곡 · 엔진 셔터).
- * 셋 중 **가장 싼 것 하나만** 고른다:
+ * 비평가 4차: **"선체 자체가 빛에 반응하지 않는다."** 3차까지 이 레인이 더한 것은 전부 (a)
+ * 부드러운 가산 발광 (b) 외곽 띠였다. 뱅킹(①)조차 납작한 단일 스프라이트의 squash+rotate 라
+ * **음영이 변하지 않는다** — 실제 AAA 탑다운(Nova Drift·Returnal)이 뱅킹을 파는 방식은 변환이
+ * 아니라 **표면 음영 변화**다. `playerRim`(③)이 그 축이어야 했는데 기여가 국소 **0.52**
+ * (최대 픽셀 Δ 72)로 사실상 안 보였고, 원인은 CRIT-1 과 정확히 같은 텍스처 인자였다.
  *
- * | 후보 | 비용 | 판정 |
- * |---|---|---|
- * | 후연 열왜곡 | 풀스크린 필터 1패스 | 기각 — 프레임 예산의 대부분을 한 항목이 먹는다 |
- * | 엔진 셔터 | 이미 있다({@link HEAT_WOBBLE}) | 중복 |
- * | **익단 증기** | 구운 Graphics 2개 + 프레임당 알파·스케일 | **채택** |
+ * ## 왜 rim 알파를 올리지 않았나
+ * 올려도 안 보인다. rim 은 광원 쪽으로 밀린 실루엣 복제라 **실루엣 밖 초승달**만 남고, 그
+ * 면적이 애초에 수십 픽셀이다(그래서 알파를 2배로 해도 국소 델타가 1 근처다). 그리고 가산
+ * 텍스처 복제는 텍스처 색에 갇혀 "차가운 화이트 림"을 만들 수도 없다. **기법 자체가 이 일을
+ * 할 수 없다** — 그래서 rim 은 3차 값 그대로 두고(회귀 0) 축을 여기로 옮겼다.
  *
- * 실기가 급선회에서 익단에 증기 소용돌이를 뿜는 것은 실제 항공 현상이고(Ace Combat·
- * Project Wingman 이 그대로 쓴다), **횡가속의 함수**라 "지금 세게 꺾었다"가 화면에서 읽힌다 —
- * 뱅킹(①)이 이미 가진 정보를 **다른 채널로 한 번 더** 준다. 링을 하나 더 그리는 것이 아니라
- * 운동에서 자라난 표현이라 §2-5(UI 어휘 금지)와 충돌하지 않는다.
+ * ## 무엇을 만드는가 — 횡 방향 판면 램프
+ * 선체를 기수 축에 평행한 **{@link SURFACE_STRIPS} 개의 띠**로 나누고, 각 띠의 밝기를 매 프레임
+ * 다시 정한다. 띠 기하는 한 번만 굽고(§ 매 프레임 Graphics 재빌드 금지) **알파만** 흔든다.
+ *
+ * 밝기를 정하는 값은 하나다 — 기체 로컬 횡축 위의 **조명 계수** `L`({@link surfaceLight}):
+ *
+ * - `L` 의 정적 성분은 **테마 광원의 횡 성분**이다. 기체가 선회하면 같은 태양에 대해 판면이
+ *   돌아가므로 **기수를 돌리는 것만으로 음영이 흐른다**(접지 그림자·rim 과 같은 태양을 증언한다).
+ * - `L` 의 동적 성분은 **롤**이다({@link ROLL_LIGHT_GAIN}). 우선회로 롤하면 우현이 내려가고
+ *   좌현이 하늘을 향하므로 밝은 쪽이 **좌현으로 넘어간다** — 부호가 `−roll` 인 이유다.
+ *   기체가 기울 때 **표면 음영이 실제로 변한다**(비평가 요구의 문자 그대로).
+ *
+ * 밝은 쪽은 가산 스트립, 어두운 쪽은 **곱연산** 스트립이다. 둘 다 **실루엣 마스크** 안에만
+ * 있으므로 선체 밖으로 한 픽셀도 새지 않는다(그래서 aboveLayer 인데 §2-2 를 안 깬다 —
+ * 실루엣 **모양**은 마스크가 보존하고 바뀌는 것은 **표면**뿐이다).
+ *
+ * ## 왜 Graphics 인가 (CRIT-1 재발 방지)
+ * 스트립은 텍스처 복제가 **아니라** `Graphics` 다. 그래서 가산 기여가 `color × alpha` 로 끝나고
+ * 텍스처 인자가 곱해지지 않는다 — {@link partLight}('specular') 모델이 화면과 일치한다.
+ *
+ * ## 기체 타입 7종 공통 규칙
+ * `EntitySnapshot` 에 `typeId` 가 없어(파일 헤더 §기체 타입) 기체별 판면 배치를 가를 수 없다.
+ * 띠는 표시 반치수 배율의 균등 분할이라 어느 실루엣에서도 어긋나지 않는다. 기체별 음영이
+ * 필요하면 스냅샷에 `typeId` 를 싣는 **공유 파일 변경이 선행**되어야 한다(오케스트레이터 보고 항목).
  */
-const VAPOR_COLOR = 0x8fd8ff;
-/** 증기 한 장의 알파(가산). 겹침 2 기준 광도 39.8 — 불꽃·림과 겹쳐도 168.7 로 여유. */
-const VAPOR_ALPHA = 0.1;
-/** 이 횡속도 비율(순항 대비) 위에서만 나타난다. 순한 이동에서 뿜으면 정보가 아니라 노이즈다. */
-const VAPOR_ONSET = 0.35;
-/** 익단 위치(표시 반치수 배율) — 횡 오프셋·후퇴량. */
-const VAPOR_SPAN = 0.62;
-const VAPOR_BACK = 0.18;
-/** 증기 꼬리 길이·폭(표시 반치수 배율). */
-const VAPOR_LENGTH = 0.5;
-const VAPOR_HALF_WIDTH = 0.1;
+const SURFACE_STRIPS = 5;
+/** 스트립이 덮는 기수 축 길이(표시 반치수 배율, 중심 기준 ±). 마스크가 자르므로 넉넉히 잡는다. */
+const SURFACE_EXTENT = 1.15;
+/** 스트립이 덮는 횡 반폭(표시 반치수 배율). 위와 같은 이유로 실루엣보다 크다. */
+const SURFACE_SPAN = 1.15;
+/** 가산 하이라이트 색 — 차가운 화이트. Graphics 라 텍스처 색에 갇히지 않는다(rim 과의 차이). */
+const SURFACE_SPEC_COLOR = 0xdfeeff;
+/**
+ * 한 스트립의 가산 최대 알파. `(223,238,255)×0.3 = (66.9,71.4,76.5)`, 광도 **71.3** — 개별 기여
+ * 상한(clean 실측 149.8)의 절반이고, 스트립은 서로 겹치지 않으므로 이 값이 곧 최댓값이다.
+ */
+const SURFACE_SPEC_ALPHA = 0.3;
+/** 하이라이트 감쇠 지수. 1 보다 크면 밝은 쪽에 **좁게 모여** 스페큘러(윤이 나는 면)로 읽힌다. */
+const SURFACE_SPEC_POWER = 1.6;
+/** 곱연산 그늘 색. 컨투어와 같은 차가운 어둠이라 두 표현이 한 광원을 증언한다. */
+const SURFACE_SHADE_COLOR = 0x1b2440;
+/** 한 스트립의 곱연산 최대 알파. 감쇠 계수 0.53~0.60 — 그늘진 판면이 절반 가까이 어두워진다. */
+const SURFACE_SHADE_ALPHA = 0.55;
+/**
+ * 롤이 조명 계수에 더하는 이득. 1 보다 크면 **롤만으로도** 밝은 쪽이 판면을 넘어갈 수 있다 —
+ * 광원이 정면/후방(횡 성분 0)인 행성에서도 뱅킹이 음영을 만들어야 하므로 필요하다.
+ */
+const ROLL_LIGHT_GAIN = 1.4;
 
 // ── 9. 이방성 헤일로 (3차 요구 ⑤) ───────────────────────────────────────────
 /**
@@ -502,6 +580,32 @@ export function addLayers(layers: readonly LightLayer[], repeat = 1): AddedLight
     b += (l.color & 0xff) * l.alpha * repeat;
   }
   return { r, g, b };
+}
+
+/**
+ * 플레이어 텍스처의 불투명 픽셀 **평균 RGB**. 비평가 4차 실측치다(청록 — R 낮음·G 높음).
+ *
+ * ⚠️ 이 값이 있어야 스프라이트 기반 가산 부품의 모델이 화면과 일치한다({@link spriteAddLight}).
+ * 값 자체는 기체 텍스처의 함수이므로 기체가 바뀌면 따라가지 못한다 — 그래서 이 상수에 의존하는
+ * 단언은 전부 **부등식**(상한)이고, 등식으로 잠그지 않는다.
+ */
+export const PLAYER_TEX_MEAN = { r: 50, g: 180, b: 200 } as const;
+
+/**
+ * **스프라이트** 기반 가산 부품이 화면에 얹는 양. Pixi 는 `src.rgb = texture.rgb × tint × alpha`
+ * 이므로 텍스처 색이 곱으로 들어간다 — {@link addLayers}(자유 공간 `Graphics` 기여용)를 그대로
+ * 쓰면 **크기가 5배 틀리고 채널 우열이 뒤집힌다**(4차 CRIT-1 의 직접 원인).
+ *
+ * 손상 오버레이가 이 함정에 걸려 "코드에는 R 지배 달아오름, 화면에는 G 가 더 오르는 미세 밝힘"이
+ * 됐다. 그 항목은 감산으로 갈았고(§7 헤더), 남은 스프라이트 가산 부품(rim·ghost)은 여기를 쓴다.
+ */
+export function spriteAddLight(color: number, alpha: number, repeat = 1): AddedLight {
+  const k = alpha * repeat;
+  return {
+    r: (PLAYER_TEX_MEAN.r / 255) * ((color >> 16) & 0xff) * k,
+    g: (PLAYER_TEX_MEAN.g / 255) * ((color >> 8) & 0xff) * k,
+    b: (PLAYER_TEX_MEAN.b / 255) * (color & 0xff) * k,
+  };
 }
 
 /** 여러 기여의 합(같은 픽셀에 겹쳐 얹힐 때). */
@@ -574,6 +678,35 @@ export function contourDelta(backdropLuma: number): number {
 }
 
 /**
+ * 손상 그을림이 선체에 만드는 감쇠 계수. 텍스처 인자는 **일부러 빼고** 계산한다 — 곱연산에서
+ * 텍스처 색은 감쇠를 더 강하게만 하므로(`tex/255 ≤ 1`) 이 값은 화면 효과의 **하한**이다.
+ * 즉 이 모델로 통과하면 화면은 그보다 세다(느슨해지는 쪽으로 틀릴 수 없다 — 3차 CRIT-1 의 반대).
+ *
+ * @param alpha `damageAlpha` 가 낸 실제 프레임 알파.
+ */
+export function damageFactor(alpha: number): DarkFactor {
+  return multiplyFactor(DAMAGE_SCORCH_COLOR, alpha);
+}
+
+/**
+ * 손상 그을림이 광도 `bodyLuma` 인 선체 픽셀에서 만드는 **광도 하강량**. 4차 합격 게이트가
+ * 상수가 아니라 이 실측 파생에 걸린다: clean 컷 실측(149.8)에서 **25 이상**.
+ */
+export function damageDelta(bodyLuma: number, alpha: number = DAMAGE_ALPHA_MAX): number {
+  const f = damageFactor(alpha);
+  return bodyLuma * (1 - (0.299 * f.r + 0.587 * f.g + 0.114 * f.b));
+}
+
+/**
+ * 그을림이 남기는 **채널별 하강량**(양수 = 어두워진 양). ΔR < ΔG < ΔB 여야 난색이 남는다 —
+ * 3차의 실패는 정확히 이 우열이 뒤집힌 것이었다(ΔG > ΔR).
+ */
+export function damageWarmShift(bodyLuma: number, alpha: number = DAMAGE_ALPHA_MAX): AddedLight {
+  const f = damageFactor(alpha);
+  return { r: bodyLuma * (1 - f.r), g: bodyLuma * (1 - f.g), b: bodyLuma * (1 - f.b) };
+}
+
+/**
  * 본체 밝기 기준선.
  *
  * ## ⚠️ 이 상수의 출처와 한계 (비평가 3차 경고 — 자기증명 제거)
@@ -608,37 +741,44 @@ export function fitsUnderBody(part: AddedLight, measuredBodyP99: number): boolea
   return luminance(part) < measuredBodyP99;
 }
 
-/** 이 레인이 화면에 더하는 가산 기여의 종류. **컨투어는 여기 없다 — 감산이라 기여가 0 이다.** */
-export type PlayerLightPart = 'flame' | 'rim' | 'ghost' | 'dashCore' | 'dashRing' | 'vapor' | 'damage';
+/**
+ * 이 레인이 화면에 더하는 가산 기여의 종류.
+ *
+ * **감산 부품은 여기 없다 — 기여가 구조적으로 0 이다**: 컨투어(⓪) · 손상 그을림(⑦) ·
+ * 판면 그늘 스트립(⑩ 어두운 쪽). 각자 {@link contourDelta}·{@link damageDelta}·
+ * {@link surfaceShadeDelta} 로 **감산 쪽 게이트**를 따로 진다.
+ */
+export type PlayerLightPart = 'flame' | 'rim' | 'ghost' | 'dashCore' | 'dashRing' | 'specular';
 
 /**
  * 각 기여가 **화면에 실제로 얹는 양**. 상수 하나가 아니라 그 기여를 만드는 층·겹침을 전부
  * 반영한다 — 검증은 이 함수에만 걸고 색 상수에는 걸지 않는다(CRIT-1: 상수는 맞고 화면은 틀릴
  * 수 있다).
  *
- * - `flame` — 3층이 한 노즐 안에서 전부 겹치는 최내곽 지점.
- * - `dashCore` — 대시 심 **단독**. 불꽃 위에 얹히므로 합산은 {@link HEAVY_STACKS} 가 본다.
- * - `dashRing` — 개시 링의 첨두(t=0).
- * - `vapor` — 익단 증기 두 장이 겹치는 지점.
- * - `ghost` — 대시 중 잔상 두 장이 겹치는 지점(연속 두 샘플은 실제로 겹친다).
- * - `damage` — 위독 상태 손상 오버레이의 첨두(맥동 최상단).
+ * **`Graphics` 기여는 {@link addLayers}, 스프라이트 기여는 {@link spriteAddLight}** 다 — 둘을
+ * 섞어 쓴 것이 4차 CRIT-1 이었다(텍스처 인자 누락으로 5배 과대평가).
+ *
+ * - `flame` — Graphics. 3층이 한 노즐 안에서 전부 겹치는 최내곽 지점.
+ * - `dashCore` — Graphics. 대시 심 **단독**(불꽃 위 합산은 {@link HEAVY_STACKS} 가 본다).
+ * - `dashRing` — Graphics. 개시 링의 첨두(t=0).
+ * - `specular` — Graphics. 판면 하이라이트 스트립의 첨두(스트립끼리는 겹치지 않는다).
+ * - `rim` — **스프라이트**. 광원 쪽으로 밀린 텍스처 복제.
+ * - `ghost` — **스프라이트**. 대시 중 잔상 두 장이 겹치는 지점(연속 두 샘플은 실제로 겹친다).
  */
 export function partLight(part: PlayerLightPart): AddedLight {
   switch (part) {
     case 'flame':
       return addLayers(FLAME_LAYERS);
     case 'rim':
-      return addLayers([{ color: RIM_COLOR, alpha: RIM_ALPHA }]);
+      return spriteAddLight(RIM_COLOR, RIM_ALPHA);
     case 'ghost':
-      return addLayers([{ color: GHOST_TINT, alpha: GHOST_ALPHA }], 2);
+      return spriteAddLight(GHOST_TINT, GHOST_ALPHA, 2);
     case 'dashCore':
       return addLayers([{ color: DASH_CORE_COLOR, alpha: DASH_CORE_ALPHA }]);
     case 'dashRing':
       return addLayers([{ color: DASH_RING_COLOR, alpha: DASH_RING_ALPHA }]);
-    case 'vapor':
-      return addLayers([{ color: VAPOR_COLOR, alpha: VAPOR_ALPHA }], 2);
-    case 'damage':
-      return addLayers([{ color: DAMAGE_COLOR, alpha: DAMAGE_ALPHA_MAX }]);
+    case 'specular':
+      return addLayers([{ color: SURFACE_SPEC_COLOR, alpha: SURFACE_SPEC_ALPHA }]);
   }
 }
 
@@ -648,15 +788,17 @@ export function partLight(part: PlayerLightPart): AddedLight {
  *
  * - 불꽃과 대시 심은 **같은 자리**다(심이 불꽃 안에 있다).
  * - 림은 선체 가장자리라 광원이 후방일 때 불꽃 뿌리와 겹친다.
- * - 고스트·링·증기는 전부 기체 뒤/옆이라 불꽃과 겹칠 수 있다.
- * - 손상 오버레이는 **선체 위**라 자유 공간 발광과 겹치지 않는다(그래서 여기 없다).
+ * - 고스트·링은 전부 기체 뒤/옆이라 불꽃과 겹칠 수 있다.
+ * - 판면 하이라이트(`specular`)는 **실루엣 마스크 안**이라 자유 공간 발광과 겹치지 않는다.
+ *   겹치는 것은 선체 위에 오는 것뿐인데 그건 림의 안쪽 끝이다 — 그 조합만 넣는다.
+ * - 손상 그을림·판면 그늘은 **감산**이라 가산 합에 나타날 수 없다(그래서 여기 없다).
  */
 export const HEAVY_STACKS: readonly (readonly PlayerLightPart[])[] = [
   ['flame', 'rim', 'dashCore'],
   ['flame', 'dashCore', 'ghost'],
   ['flame', 'dashCore', 'dashRing'],
   ['flame', 'rim', 'ghost'],
-  ['flame', 'rim', 'vapor'],
+  ['rim', 'specular'],
 ];
 
 /**
@@ -780,6 +922,30 @@ export function shieldGate(gates: EffectGates, tier: QualityTier): 'plain' | 'fu
  * 림·불꽃은 0 인데 고스트 5개가 그대로 남았다. 고스트는 `blendMode:'add'` + 시안 tint 라
  * 명백한 발광축이고, 대시마다 5개가 동시에 명멸하므로 광과민 대응에서 가장 나쁜 형태다.
  */
+/**
+ * 추진 불꽃의 등급 (4차 MINOR — "low 티어에서 기체가 다시 커서가 된다").
+ *
+ * 3차는 불꽃 전체를 `reducedGlow`(= `!gates.halo`) 뒤에 뒀는데, **low 티어에서도 `halo` 가 꺼진다.**
+ * 그래서 low 에서는 정지한 기체에 아이들 코어조차 없어 "시동이 걸린 기체"로 읽히지 않았다.
+ *
+ * ## ⚠️ 두 원인은 게이트에서 갈 수 없다 (한계를 명시한다)
+ * `effectGates` 는 `halo` 를 **low 티어**와 **`reducedGlow` 설정** 양쪽에서 false 로 만든다
+ * (`qualityTier.ts` 정본). 따라서 "low 인데 reducedGlow 는 아님"을 판별할 방법이 **없다** —
+ * `ctx.tier === 'low'` 로 갈라도 low + reducedGlow 사용자는 같은 분기에 들어온다.
+ *
+ * 그래서 이 파일이 이미 쓰는 판단(실드 셸·손상: **정보는 끄지 않고 등급만 강등**하고 발광 감소에
+ * 0.55~0.6 배)을 그대로 적용한다: low 에서는 불꽃을 **정지·감광 아이들 코어**로만 남긴다
+ * (대시 확장·요동·심 없음, 알파 {@link FLAME_LOW_ALPHA}). 맥동하지 않는 상수 세기이므로
+ * 광과민 위험이 가장 낮은 형태다.
+ */
+export function flameGate(gates: EffectGates, tier: QualityTier): 'off' | 'idle' | 'full' {
+  if (!reducedGlow(gates)) return 'full';
+  return tier === 'low' ? 'idle' : 'off';
+}
+
+/** low 티어 아이들 코어의 알파. 실드 셸·손상이 발광 감소에서 쓰는 강등 배율과 같은 대역이다. */
+const FLAME_LOW_ALPHA = 0.5;
+
 export function ghostBudget(gates: EffectGates, tier: QualityTier): number {
   if (!gates.trails || reducedMotion(gates) || reducedGlow(gates)) return 0;
   return tier === 'high' ? GHOSTS_HIGH : tier === 'med' ? GHOSTS_MED : 0;
@@ -888,13 +1054,58 @@ export function damageAlpha(intensity: number, pulse01: number, dim: boolean): n
   return pulsed * (dim ? DAMAGE_REDUCED_GLOW : 1);
 }
 
+// ── 10. 판면 방향광 파생 (4차 CRIT-3) ───────────────────────────────────────
+
 /**
- * 익단 증기 세기 [0,1]. 순항 대비 횡속도 비율이 {@link VAPOR_ONSET} 을 넘어야 살아난다 —
- * 순한 이동에서 뿜으면 정보가 아니라 노이즈다.
+ * 스트립 `i` 의 **횡 방향 중심**(표시 반치수 배율, −1..1). 균등 분할의 중심점이라 기체 타입과
+ * 무관하다(파일 헤더 §기체 타입 공통 규칙).
  */
-export function vaporStrength(lateral: number): number {
-  const t = Math.abs(lateral) / CRUISE_SPEED;
-  return clamp01((t - VAPOR_ONSET) / (1 - VAPOR_ONSET));
+export function surfaceStripCenter(i: number): number {
+  return -1 + ((2 * i + 1) / SURFACE_STRIPS) * 1;
+}
+
+/**
+ * 기체 로컬 횡축의 **조명 계수** `L` ∈ [−1,1]. 양수면 로컬 +y(우현) 쪽이 밝다.
+ *
+ * - `lightLateral` — 테마 광원 단위벡터의 **기수 기준 횡 성분**. 선회만으로 음영이 흐르게 한다.
+ * - `roll` — 뱅킹 상태 [−1,1]. 우선회 롤(양수)이면 우현이 내려가고 좌현이 하늘을 보므로 밝은
+ *   쪽이 좌현(−y)으로 넘어간다 → 부호가 **−**다.
+ */
+export function surfaceLight(lightLateral: number, roll: number): number {
+  const v = lightLateral - ROLL_LIGHT_GAIN * roll;
+  return v < -1 ? -1 : v > 1 ? 1 : v;
+}
+
+/** 한 스트립의 가산(하이라이트)·감산(그늘) 알파. 둘 중 하나는 항상 0 이다(같은 면은 둘일 수 없다). */
+export interface SurfaceStripAlpha {
+  readonly spec: number;
+  readonly shade: number;
+}
+
+/**
+ * 스트립 `i` 의 알파. `s = center × L` 이 양수면 빛을 보는 판면(가산), 음수면 등지는 판면(감산)이다.
+ *
+ * @param specOn 가산 하이라이트 허용(발광 감소·low 티어에서 false). **감산 그늘은 끄지 않는다** —
+ *   빛이 아니라 그림자라 광과민 축이 아니고, 그게 low 티어에서 기체가 다시 커서로 보이지 않게
+ *   하는 유일한 축이다(⓪ 컨투어와 같은 판단).
+ */
+export function surfaceStripAlpha(i: number, light: number, specOn: boolean): SurfaceStripAlpha {
+  const s = surfaceStripCenter(i) * light;
+  return {
+    spec: specOn && s > 0 ? SURFACE_SPEC_ALPHA * Math.pow(s, SURFACE_SPEC_POWER) : 0,
+    shade: s < 0 ? SURFACE_SHADE_ALPHA * -s : 0,
+  };
+}
+
+/**
+ * 판면 그늘이 광도 `bodyLuma` 인 선체 픽셀에 만드는 **최대 광도 하강량**(가장 그늘진 스트립).
+ * 감산 부품의 게이트는 가산 예산이 아니라 이 값이 진다.
+ */
+export function surfaceShadeDelta(bodyLuma: number, light = 1): number {
+  // 스트립 0 은 중심이 가장 음수(−0.8)라 `light > 0` 에서 가장 깊게 그늘진다.
+  const a = surfaceStripAlpha(0, Math.abs(light), false).shade;
+  const f = multiplyFactor(SURFACE_SHADE_COLOR, a);
+  return bodyLuma * (1 - (0.299 * f.r + 0.587 * f.g + 0.114 * f.b));
 }
 
 /** 플레이어 헤일로의 이방성 변환. `entityRenderer` 가 플레이어 경로에서만 적용한다. */
@@ -1013,8 +1224,13 @@ class PlayerBodyAdorner implements EntityAdorner {
    * 아니었다 / 3차 — 가산은 경계를 못 만들었다). belowLayer 가 아니라 그 부모에 붙는다.
    */
   private contour: Container | null = null;
-  /** 손상 상태 가산 오버레이(aboveLayer). HP 가 임계 위면 존재 자체가 없다. */
+  /** 손상 상태 **감산 그을림** 오버레이(aboveLayer). HP 가 임계 위면 존재 자체가 없다. */
   private damage: Sprite | null = null;
+  /** ⑩ 판면 음영 컨테이너(aboveLayer, 실루엣 마스크). 스트립 기하는 한 번 굽고 알파만 흔든다. */
+  private surface: Container | null = null;
+  private surfaceMask: Sprite | null = null;
+  private readonly specStrips: Graphics[] = [];
+  private readonly shadeStrips: Graphics[] = [];
 
   constructor(motion: PlayerMotion) {
     this.motion = motion;
@@ -1126,10 +1342,12 @@ class PlayerBodyAdorner implements EntityAdorner {
       copy.alpha = CONTOUR_ALPHA * breath;
     }
 
-    // ── 7. 손상 상태(본체 텍스처의 가산 오버레이) ───────────────────────────
-    // ⚠️ `sprite.tint` 로 밀면 안 된다 — Pixi tint 는 곱연산이라 기체가 **어두워진다**(레인 B 가
-    // 같은 함정을 실측으로 확인했다). 같은 텍스처를 add 로 얹어 색조만 이동시킨다. 연기·흐림은
-    // 금지 — 플레이어는 자기 실루엣을 잃으면 조작 불능이다(§2-2).
+    // ── 7. 손상 상태(본체 텍스처의 **감산 그을림** 오버레이) ────────────────
+    // ⚠️ 3차는 `blendMode:'add'` 였고 화면 델타가 **1.98**(7× 육안 구별 불가)이었다 — 가산
+    // 스프라이트는 텍스처 색이 곱으로 들어가 청록 기체에서 R 이 죽는다(§7 헤더가 정본). 곱연산은
+    // 그 인자가 대비를 **더 벌리는** 방향이라 같은 알파대에서 광도 하강 33.9 를 만든다.
+    // `sprite.tint` 로 밀지 않는 이유는 그대로다 — tint 는 실루엣 전체를 균일하게 어둡게 만들어
+    // 위장률을 해친다. 연기·흐림도 금지다(플레이어는 실루엣을 잃으면 조작 불능, §2-2).
     const dmg = damageIntensity(e.hp, e.maxHp);
     if (dmg <= 0) {
       if (this.damage !== null) this.destroyDamage();
@@ -1139,9 +1357,10 @@ class PlayerBodyAdorner implements EntityAdorner {
         overlay = new Sprite(sprite.texture);
         overlay.label = 'playerDamage';
         overlay.anchor.set(0.5);
-        overlay.blendMode = 'add';
-        overlay.tint = DAMAGE_COLOR;
-        // aboveLayer 다 — 선체 **위** 색조 이동이라 belowLayer 에 두면 본체에 가려 안 보인다.
+        overlay.blendMode = 'multiply';
+        overlay.tint = DAMAGE_SCORCH_COLOR;
+        // aboveLayer 다 — 선체 **위**에서 곱해야 하고, belowLayer 는 (a) 본체에 가려지고
+        // (b) high 티어에서 블룸 필터가 곱연산을 삼킨다(⓪ 컨투어 헤더가 정본).
         // 실루엣을 덮지만 같은 텍스처·같은 변환이라 실루엣 **모양은 한 픽셀도** 안 바뀐다.
         ctx.aboveLayer.addChild(overlay);
         this.damage = overlay;
@@ -1157,6 +1376,9 @@ class PlayerBodyAdorner implements EntityAdorner {
           : 1;
       overlay.alpha = damageAlpha(dmg, pulse, reducedGlow(ctx.gates));
     }
+
+    // ── 10. 판면 방향광 + 스페큘러 스윕 ─────────────────────────────────────
+    this.syncSurface(sprite, ctx, motionOn);
 
     // ── 3. 림라이트 ─────────────────────────────────────────────────────────
     // 테마가 없으면(=담당 배경이 없는 행성) 광원이 없는 것이므로 스스로 꺼진다(계약 §3 광원 일관성).
@@ -1204,11 +1426,82 @@ class PlayerBodyAdorner implements EntityAdorner {
     }
   }
 
+  /**
+   * ── 10. 판면 방향광 + 스페큘러 스윕 ── 4차 CRIT-3. 상세 근거는 {@link SURFACE_STRIPS} 헤더.
+   *
+   * 여기서 하는 일은 **알파 {@link SURFACE_STRIPS}×2 개를 다시 정하는 것뿐**이다. 기하는 한 번만
+   * 굽고(실드 셸·불꽃과 같은 규율) 마스크 스프라이트만 본체 변환을 미러한다.
+   *
+   * ⚠️ 마스크가 **필수**다. 스트립은 선체보다 크게 굽혀 있어(마스크가 자를 것을 전제) 마스크가
+   * 빠지면 기체 위에 직사각형 띠가 그려진다 — 그건 §2-5 가 금지한 UI 어휘 그 자체다.
+   */
+  private syncSurface(sprite: Sprite, ctx: AdornerContext, motionOn: boolean): void {
+    let surface = this.surface;
+    if (surface === null) {
+      surface = new Container();
+      surface.label = 'playerSurface';
+      const mask = new Sprite(sprite.texture);
+      mask.anchor.set(0.5);
+      this.surfaceMask = mask;
+      surface.addChild(mask);
+      for (let i = 0; i < SURFACE_STRIPS; i++) {
+        const shade = buildSurfaceStrip(i, SURFACE_SHADE_COLOR, 'multiply');
+        const spec = buildSurfaceStrip(i, SURFACE_SPEC_COLOR, 'add');
+        this.shadeStrips.push(shade);
+        this.specStrips.push(spec);
+        surface.addChild(shade);
+        surface.addChild(spec);
+      }
+      // 마스크는 자식으로 두고 그대로 `mask` 로 지정한다 — 마스크로 쓰이는 표시객체는 정상
+      // 렌더 경로에서 빠지므로 화면에 두 번 그려지지 않는다.
+      surface.mask = mask;
+      ctx.aboveLayer.addChild(surface);
+      this.surface = surface;
+    }
+
+    surface.position.set(sprite.x, sprite.y);
+    surface.rotation = sprite.rotation;
+    const mask = this.surfaceMask;
+    if (mask !== null) {
+      if (mask.texture !== sprite.texture) mask.texture = sprite.texture;
+      // 컨테이너가 이미 회전을 물고 있으므로 마스크는 회전 0 이어야 본체와 겹친다.
+      mask.scale.set(sprite.scale.x, sprite.scale.y);
+    }
+
+    // 조명 계수: 테마 광원의 **기수 기준 횡 성분** + 롤. `lateralSpeed` 를 광원 단위벡터에 그대로
+    // 쓴다 — "기수 기준 횡 성분"이라는 같은 기하 연산이라서다(속도 전용 함수가 아니다).
+    const lightLat =
+      ctx.theme === null
+        ? 0
+        : lateralSpeed(lightX(ctx.theme.light), lightY(ctx.theme.light), sprite.rotation);
+    // 모션 감소에서는 롤 목표가 0 이라 스윕이 정지하고 **광원 성분만** 남는다(정보는 남고 운동만 꺼진다).
+    const roll = motionOn ? this.roll : 0;
+    const light = surfaceLight(lightLat, roll);
+    const specOn = !reducedGlow(ctx.gates);
+    const scale = this.halfSpan;
+    for (let i = 0; i < SURFACE_STRIPS; i++) {
+      const a = surfaceStripAlpha(i, light, specOn);
+      const shade = this.shadeStrips[i];
+      const spec = this.specStrips[i];
+      if (shade !== undefined) {
+        shade.alpha = a.shade;
+        shade.visible = a.shade > 0;
+        shade.scale.set(scale);
+      }
+      if (spec !== undefined) {
+        spec.alpha = a.spec;
+        spec.visible = a.spec > 0;
+        spec.scale.set(scale);
+      }
+    }
+  }
+
   dispose(): void {
     this.destroyRim();
     this.destroyShield();
     this.destroyContour();
     this.destroyDamage();
+    this.destroySurface();
     // 스프라이트가 살아 있는 경로(리셋 등)에서는 기준 스케일을 되돌린다 — 압축된 채로 남으면
     // 다음 런에서 눌린 기체로 시작한다.
     const s = this.sprite;
@@ -1245,6 +1538,22 @@ class PlayerBodyAdorner implements EntityAdorner {
     if (!dmg.destroyed) dmg.destroy();
   }
 
+  /**
+   * ⚠️ `mask` 를 **먼저 끊는다**. 마스크 지정이 살아 있는 채로 파괴하면 Pixi 의 마스크 효과가
+   * 파괴된 표시객체를 계속 참조한다(형제 회수 계약 §2-3 의 마스크 판).
+   */
+  private destroySurface(): void {
+    const surface = this.surface;
+    if (surface === null) return;
+    this.surface = null;
+    this.surfaceMask = null;
+    this.specStrips.length = 0;
+    this.shadeStrips.length = 0;
+    surface.mask = null;
+    surface.parent?.removeChild(surface);
+    if (!surface.destroyed) surface.destroy({ children: true });
+  }
+
   private destroyShield(): void {
     const shield = this.shield;
     if (shield === null) return;
@@ -1252,6 +1561,25 @@ class PlayerBodyAdorner implements EntityAdorner {
     shield.parent?.removeChild(shield);
     if (!shield.destroyed) shield.destroy({ children: true });
   }
+}
+
+/**
+ * 판면 스트립 하나를 **단위 치수**로 굽는다(알파는 매 프레임 호출측이 정한다). 기수 축(로컬 x)에
+ * 평행한 띠라 기체 길이 방향으로 이어지고, 횡(로컬 y)으로만 밝기가 갈린다.
+ *
+ * 알파를 `1` 로 굽고 `Graphics.alpha` 로 흔드는 이유: `fill({alpha})` 는 기하에 구워지므로
+ * 프레임마다 바꾸려면 **재빌드**가 필요하다(매 프레임 Graphics 재빌드 금지 규율).
+ */
+function buildSurfaceStrip(i: number, color: number, blend: 'add' | 'multiply'): Graphics {
+  const g = new Graphics();
+  g.label = blend === 'add' ? 'playerSurfaceSpec' : 'playerSurfaceShade';
+  g.blendMode = blend;
+  const half = SURFACE_SPAN / SURFACE_STRIPS;
+  const cy = surfaceStripCenter(i) * SURFACE_SPAN;
+  g.rect(-SURFACE_EXTENT, cy - half, SURFACE_EXTENT * 2, half * 2).fill({ color, alpha: 1 });
+  g.alpha = 0;
+  g.visible = false;
+  return g;
 }
 
 /**
@@ -1272,7 +1600,10 @@ function buildShieldShell(): Container {
   // 육각 메시를 0.6 에 뒀다가 이 계산을 놓쳐 창 끝에서 몸통을 가로지르고 있었다("획뿐이라
   // 선체를 한 픽셀도 가리지 않는다"는 이 함수 자신의 계약 위반).
   g.circle(0, 0, 1).stroke({ color: SHIELD_COLOR, width: 0.055, alpha: 0.8 });
-  g.circle(0, 0, SHIELD_INNER_BAND).stroke({ color: SHIELD_COLOR, width: 0.025, alpha: 0.45 });
+  // ⚠️ 여기 **두 번째 동심원이 있었다**(반지름 SHIELD_INNER_BAND, 획 0.025). 7× 확대에서 얇은
+  // 시안 동심원 2겹이 육각 셀보다 먼저 눈에 들어 계기판으로 읽혔다(4차 MINOR · §2-5 UI 어휘).
+  // 지운 뒤에도 **가장 안쪽 요소는 여전히 SHIELD_INNER_BAND 의 육각**이라 선체 불침범 부등식
+  // (`SHIELD_INNER_BAND × SHIELD_R_END > 1`)은 그대로 성립한다 — 테스트가 그 부등식을 잠근다.
   // 패싯 셀 — 육각 메시 두 겹(바깥 육각 + 30° 돌린 안쪽 육각). 방사 눈금이 아니라 **셀 경계**라
   // 조준 레티클로 오독되지 않으면서(§2-5 UI 어휘 금지) 색 외 채널은 그대로 남는다(색약 대응).
   const hexagon = (radius: number, phase: number, alpha: number): void => {
@@ -1318,7 +1649,6 @@ class PlayerThrustAdorner implements EntityAdorner {
   /** 직전 프레임 대시 여부 — 링은 **상승 에지**에서만 한 번 터진다(매 프레임 재발화 금지). */
   private wasDashing = false;
   private ring: Container | null = null;
-  private vapor: Container | null = null;
 
   private readonly ghosts: Sprite[] = [];
   private ghostAlpha: number[] = [];
@@ -1347,13 +1677,16 @@ class PlayerThrustAdorner implements EntityAdorner {
 
     this.syncFlame(sprite, ctx);
     this.syncDashRing(sprite, ctx);
-    this.syncVapor(sprite, ctx);
     this.syncGhosts(sprite, ctx, dt);
   }
 
-  /** ── 2. 엔진 추진 ── 속도 반응형 불꽃. 발광축이라 `halo` 게이트 뒤에 둔다. */
+  /**
+   * ── 2. 엔진 추진 ── 속도 반응형 불꽃. 발광축이라 `halo` 게이트 뒤에 두되, **low 티어에서는
+   * 정지 아이들 코어만 남긴다**({@link flameGate} — 4차 MINOR "low 에서 기체가 다시 커서가 된다").
+   */
   private syncFlame(sprite: Sprite, ctx: AdornerContext): void {
-    if (reducedGlow(ctx.gates)) {
+    const gate = flameGate(ctx.gates, ctx.tier);
+    if (gate === 'off') {
       if (this.flame !== null) this.destroyFlame();
       return;
     }
@@ -1366,7 +1699,9 @@ class PlayerThrustAdorner implements EntityAdorner {
     }
     // ── 대시 색 이동 ── 길이(아래 extent)만으로는 "불꽃이 길어졌다"로 읽힌다. 채도를 유지한 채
     // 휘도를 올리는 밝은 시안 심이 붙어야 "뜨거워졌다"가 된다(§요구 ②).
-    if (this.dashCore !== null) this.dashCore.alpha = this.heat;
+    // low 아이들 코어에서는 대시 심을 켜지 않는다(감광 등급의 일부다).
+    if (this.dashCore !== null) this.dashCore.alpha = gate === 'idle' ? 0 : this.heat;
+    flame.alpha = gate === 'idle' ? FLAME_LOW_ALPHA : 1;
     const f = sprite.rotation;
     // 노즐은 기수 **반대편**. 여기가 본체 실루엣을 침범하지 않는 유일한 자리다.
     flame.position.set(
@@ -1374,7 +1709,9 @@ class PlayerThrustAdorner implements EntityAdorner {
       sprite.y - Math.sin(f) * this.halfSpan * NOZZLE_BACK,
     );
     flame.rotation = f;
-    const extent = thrustExtent(this.motion.speed, this.motion.dashing);
+    // low 아이들 코어는 대시 확장도 받지 않는다 — 정지·저속에서 "시동이 걸린 기체"로 읽히게
+    // 하는 것이 유일한 목적이고, 확장·요동은 그 목적에 필요하지 않다.
+    const extent = thrustExtent(this.motion.speed, gate === 'idle' ? false : this.motion.dashing);
     // ── 6(부수). 엔진 열기 요동 ── 정지 시 최대, 대시 시 최소. 서로 다른 두 각속도의 합이라
     // 눈에 띄는 반복 주기가 생기지 않는다. 결정적(Math.random 없음).
     //
@@ -1382,9 +1719,10 @@ class PlayerThrustAdorner implements EntityAdorner {
     // 0 이 되는데 불꽃 요동만 reducedMotion 에서 0.2% 밖에 안 줄어 광과민 대응이 반쪽이었다.
     // 진폭이 아니라 **위상 전진**을 막아야 완전히 정지한다 — 진폭만 0 으로 두면 되지만, 여기서는
     // heat 자체를 0 으로 만들어 두 요동 항이 동시에 상수 1 이 된다.
-    const heat = reducedMotion(ctx.gates)
-      ? 0
-      : HEAT_WOBBLE * (0.35 + 0.65 * idleness(this.motion.speed)) * (this.motion.dashing ? 0.3 : 1);
+    const heat =
+      reducedMotion(ctx.gates) || gate === 'idle'
+        ? 0
+        : HEAT_WOBBLE * (0.35 + 0.65 * idleness(this.motion.speed)) * (this.motion.dashing ? 0.3 : 1);
     const wobbleL = 1 + Math.sin(this.clock * HEAT_RATE_A) * heat;
     const wobbleW = 1 + Math.sin(this.clock * HEAT_RATE_B + 1.7) * heat;
     flame.scale.set(this.halfSpan * extent * wobbleL, this.halfSpan * wobbleW);
@@ -1416,30 +1754,6 @@ class PlayerThrustAdorner implements EntityAdorner {
     ring.scale.set(state.radius * this.halfSpan);
     // 획 두께는 단위 원에 구워져 있으므로 스케일에 딸려 커진다 — 얇아지는 몫만 알파로 준다.
     ring.alpha = state.alpha * (state.width / DASH_RING_WIDTH);
-  }
-
-  /**
-   * ── 6b. 익단 증기 ── 가장 싼 2차 운동 한 겹(§요구 ⑥). 횡가속의 함수라 급선회에서만 뿜는다.
-   * 가산 발광이라 `reducedGlow`·`reducedMotion`·low 티어에서 완전히 꺼진다.
-   */
-  private syncVapor(sprite: Sprite, ctx: AdornerContext): void {
-    const on = !reducedGlow(ctx.gates) && !reducedMotion(ctx.gates) && ctx.tier !== 'low';
-    const strength = on ? vaporStrength(this.motion.lateral) : 0;
-    if (strength <= 0) {
-      if (this.vapor !== null) this.destroyVapor();
-      return;
-    }
-    let vapor = this.vapor;
-    if (vapor === null) {
-      vapor = buildWingVapor();
-      ctx.belowLayer.addChild(vapor);
-      this.vapor = vapor;
-    }
-    vapor.position.set(sprite.x, sprite.y);
-    vapor.rotation = sprite.rotation;
-    // 세기가 오르면 꼬리가 길어진다(면적이 아니라 **길이**로 자라야 가독을 안 먹는다).
-    vapor.scale.set(this.halfSpan * (0.6 + 0.4 * strength), this.halfSpan);
-    vapor.alpha = strength;
   }
 
   /** ── 5. 대시 잔상 ── 위치 이력 기반 감쇠 고스트. 티어 예산 안에서만. */
@@ -1488,7 +1802,6 @@ class PlayerThrustAdorner implements EntityAdorner {
   dispose(): void {
     this.destroyFlame();
     this.destroyRing();
-    this.destroyVapor();
     this.destroyGhosts();
   }
 
@@ -1508,14 +1821,6 @@ class PlayerThrustAdorner implements EntityAdorner {
     this.ring = null;
     ring.parent?.removeChild(ring);
     if (!ring.destroyed) ring.destroy({ children: true });
-  }
-
-  private destroyVapor(): void {
-    const vapor = this.vapor;
-    if (vapor === null) return;
-    this.vapor = null;
-    vapor.parent?.removeChild(vapor);
-    if (!vapor.destroyed) vapor.destroy({ children: true });
   }
 
   private destroyGhosts(): void {
@@ -1604,30 +1909,6 @@ function buildDashRing(): Container {
   const g = new Graphics();
   g.circle(0, 0, 1).stroke({ color: DASH_RING_COLOR, width: DASH_RING_WIDTH, alpha: 1 });
   c.addChild(g);
-  return c;
-}
-
-/**
- * 익단 증기를 **단위 치수**로 굽는다. 좌우 익단에서 뒤(-x)로 뻗는 가느다란 쐐기 두 개다 —
- * 불꽃(중앙·굵음)과 자리도 모양도 달라 한 덩어리로 뭉치지 않는다.
- */
-function buildWingVapor(): Container {
-  const c = new Container();
-  c.label = 'playerVapor';
-  c.blendMode = 'add';
-  for (const side of [-1, 1]) {
-    const g = new Graphics();
-    const y = VAPOR_SPAN * side;
-    g.poly([
-      -VAPOR_BACK,
-      y - VAPOR_HALF_WIDTH,
-      -VAPOR_BACK - VAPOR_LENGTH,
-      y,
-      -VAPOR_BACK,
-      y + VAPOR_HALF_WIDTH,
-    ]).fill({ color: VAPOR_COLOR, alpha: VAPOR_ALPHA });
-    c.addChild(g);
-  }
   return c;
 }
 

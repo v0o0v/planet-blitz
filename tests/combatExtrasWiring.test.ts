@@ -493,10 +493,16 @@ describe('정리 — 누수 0', () => {
     expect(halos.length).toBe(2);
     expect(r.glowHaloCount).toBe(2);
     // 젬 헤일로는 원 그대로다(등방·무회전).
-    const gemHalo = halos.find((h) => Math.abs(h.x - 900) < 1)!;
-    expect(gemHalo.scale.x).toBeCloseTo(1, 12);
-    expect(gemHalo.scale.y).toBeCloseTo(1, 12);
-    expect(gemHalo.rotation).toBeCloseTo(0, 12);
+    //
+    // ⚠️ 예전에는 `halos.find(h => Math.abs(h.x - 900) < 1)!` 였다. 이방성이 헤일로 위치를 밀면
+    // 파인더가 `undefined` 를 돌려주고 `!` 가 그것을 통과시켜 **다음 줄에서 TypeError** 로 죽는다 —
+    // 실패가 원인을 지목하지 못했다. 젬에 가장 가까운 것을 고른 뒤 **먼저 단언**한다.
+    const gemHalo = [...halos].sort((a, b) => Math.abs(a.x - 900) - Math.abs(b.x - 900))[0];
+    expect(gemHalo).toBeDefined();
+    expect(Math.abs(gemHalo!.x - 900)).toBeLessThan(1);
+    expect(gemHalo!.scale.x).toBeCloseTo(1, 12);
+    expect(gemHalo!.scale.y).toBeCloseTo(1, 12);
+    expect(gemHalo!.rotation).toBeCloseTo(0, 12);
     // 플레이어 헤일로는 기수 축으로 늘어나고 횡으로 좁아져 있다.
     const playerHalo = halos.find((h) => h !== gemHalo)!;
     expect(playerHalo.scale.x).toBeGreaterThan(1.2);
