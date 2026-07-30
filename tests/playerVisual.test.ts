@@ -1235,13 +1235,23 @@ describe('판면 방향광 + 스페큘러 스윕 — 선체 자체가 빛에 반
 
   it('램프 끝이 **실루엣 안**이다 — 기준 길이를 기수 축으로 되돌리면 밖으로 나간다', () => {
     const { width, height } = PLAYER_SPRITE_DISPLAY;
-    // ⚠️ 이 단언이 뮤테이션 증인이다. `surfaceLateralHalf` 를 `max` 로 되돌리면 램프 끝이
-    // 0.62 × 48 = 29.76px 로 불투명 반폭 26px 을 넘어 최외곽 스트립이 잘린다(4차엔 55.2 대 26).
+    // 램프 끝(0.78 × 48 = 37.44px)이 실측 불투명 반폭(38.3px) 안이다.
     expect(surfaceRampOuterEdgePx(width, height)).toBeLessThanOrEqual(PLAYER_OPAQUE_LATERAL_HALF);
-    // 기준은 **짧은 축**이다. 정사각 스프라이트에서는 두 축이 같아 이 구별이 관측되지 않으므로
-    // 실측 치수(96 × 83.2)로 재야 한다.
-    expect(surfaceLateralHalf(width, height)).toBeCloseTo(height / 2, 9);
-    expect(surfaceLateralHalf(width, height)).toBeLessThan(width / 2);
+
+    // ⚠️ **5차의 두 단언을 지웠다 — 프로덕션에서 관측 불가능한 것을 재고 있었다.**
+    // 5차는 `surfaceLateralHalf` 가 짧은 축을 쓰는지 확인하려고 `toBeCloseTo(height/2)` 와
+    // `toBeLessThan(width/2)` 를 걸었다. 그런데 프로덕션 스프라이트는 **96 × 96 정사각**이고
+    // (라이브 실측 `baseScaleX === baseScaleY === 1.5`) 정사각에서는 `min === max` 다 —
+    // 두 단언이 초록이었던 이유는 테스트가 **롤 스쿼시된 83.2** 를 base 로 넣었기 때문이다.
+    // 즉 런타임에 없는 가상 기하에서만 참인 단언이었고, 그것이 5차 뮤테이션 M3 를 red 로
+    // 보이게 만든 원인이다.
+    //
+    // `surfaceLateralHalf` 자체는 남긴다(비정사각 기체 방어). 다만 **정사각 자산에서는 항등**
+    // 이므로 그 축을 프로덕션 치수로 검증할 수 없다 — 항등성을 아래에서 명시적으로 잠근다.
+    expect(surfaceLateralHalf(width, height)).toBeCloseTo(width / 2, 9);
+    // 비정사각을 넣었을 때 짧은 축을 고른다는 사실은 **합성 입력**으로만 관측된다.
+    expect(surfaceLateralHalf(120, 80)).toBeCloseTo(40, 9);
+    expect(surfaceLateralHalf(80, 120)).toBeCloseTo(40, 9);
   });
 
   it('스트립 구간이 틈·겹침 없이 이어진다(굽는 기하와 검증 기하가 한 함수에서 온다)', () => {
