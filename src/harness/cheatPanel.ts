@@ -910,6 +910,19 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       }
       row2.append(bulletBtn, killBtn, eliteBtn);
       s.appendChild(row2);
+
+      const row3 = document.createElement('div');
+      row3.className = 'pb-c-row';
+      const cdBtn = btn('액티브 쿨다운 리셋', () => {
+        harness.resetActiveCooldowns();
+        setHint('액티브 쿨다운 → 0/0');
+      }, 'z/x 액티브 쿨다운 두 슬롯을 즉시 0으로(ADR-0041).');
+      if (!live) {
+        cdBtn.disabled = true;
+        cdBtn.title = '진행 중인 런이 없습니다';
+      }
+      row3.append(cdBtn);
+      s.appendChild(row3);
     }
 
     /** 라이브 상태 한 줄(런·보스전 탭): 눈 검증 중 흘끗 볼 핵심 수치. */
@@ -1752,6 +1765,51 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         btn('장비 지급', () => grantItem(slotSel.value as EquipSlotId, raritySel.value as Rarity)),
       );
       s.appendChild(row3);
+
+      // 액티브 슬롯 장착 치트(ADR-0041). 슬롯 1=z · 슬롯 2=x. 정규화(그 타입의 스킬이 아니면
+      // 탈락)는 저장층이 하므로 여기선 셀렉트 값을 그대로 넘긴다. 레지스트리가 비어 있으면
+      // (0a-14 시점 — 0b/E 레인이 채운다) 빈 슬롯 선택지뿐이다.
+      s.appendChild(subLabel('액티브 슬롯 장착 (활성 기체)'));
+      const catalog = harness.activeSkillCatalog();
+      const curSlots = harness.snapshot().activeSlots;
+      const buildSlotSel = (): HTMLSelectElement => {
+        const sel = document.createElement('select');
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = '(비움)';
+        sel.appendChild(empty);
+        for (const d of catalog) {
+          const o = document.createElement('option');
+          o.value = d.id;
+          o.textContent = `${d.id} [${d.tier}/${d.kind}]`;
+          sel.appendChild(o);
+        }
+        return sel;
+      };
+      const slot1Sel = buildSlotSel();
+      slot1Sel.value = curSlots[0] ?? '';
+      const slot2Sel = buildSlotSel();
+      slot2Sel.value = curSlots[1] ?? '';
+      const activeRow = document.createElement('div');
+      activeRow.className = 'pb-c-row';
+      activeRow.append(
+        slot1Sel,
+        slot2Sel,
+        btn('액티브 장착', () => {
+          const applied = harness.setActiveSlots([
+            slot1Sel.value || null,
+            slot2Sel.value || null,
+          ]);
+          setHint(`액티브 슬롯 → [${applied[0] ?? '-'}, ${applied[1] ?? '-'}]`);
+        }, '슬롯1(z)/슬롯2(x)에 장착할 액티브를 고른다. 그 기체 타입의 스킬이 아니면 저장 시 탈락.'),
+      );
+      s.appendChild(activeRow);
+      if (catalog.length === 0) {
+        const note = document.createElement('div');
+        note.className = 'pb-c-lbl';
+        note.textContent = '이 기체 타입의 액티브 레지스트리가 비어 있습니다(구현 대기).';
+        s.appendChild(note);
+      }
 
       // 기체 타입 치트(M8). 런의 `WorldConfig.shipType` 은 createWorld 시점에 봉인되므로
       // **런을 시작하기 전에** 바꿔야 그 타입으로 도는 런이 만들어진다(라이브 런에 걸면 오염).

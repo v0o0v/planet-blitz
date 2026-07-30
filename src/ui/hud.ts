@@ -12,6 +12,21 @@
 import { t } from '../i18n/index.js';
 import type { BossProgress } from '../sim/bossProgress.js';
 import type { InvasionHudState } from './invasionProgress.js';
+import type { WorldState } from '../sim/world.js';
+import {
+  ACTIVES_BY_SHIP,
+  activeByWireId,
+  activeCooldownTicks,
+  investedInTree,
+} from '../../data/ships/actives/index.js';
+import {
+  ACTIVE_SLOT_COUNT,
+  activeSkillIconName,
+  activeSkillNameKey,
+} from '../../data/ships/actives/types.js';
+import { SHIP_TYPES } from '../../data/ships/index.js';
+import { uiAssetUrl } from './pixi/uiTextures.js';
+import { tShipKey } from './pixi/shipLabels.js';
 
 export interface BossHudState {
   hp: number;
@@ -56,6 +71,84 @@ export interface HudState {
    * (사용자 신고 2026-07-27 "일정 시간 넘으면 갑자기 실패").
    */
   contamination?: { cells: number; critical: number } | undefined;
+  /**
+   * 장착 액티브 2칸의 쿨다운(ADR-0041 · AC-18). 미장착 런은 빈 배열/undefined 라 칸을 감춘다.
+   *
+   * ⚠️ **optional 이어야 한다.** 필수 필드로 만들면 `HudState` 를 직접 짓는 기존 테스트가 전부
+   * 깨진다(보스·오염 게이지가 optional 인 것과 같은 이유). 값은 호출부가 `WorldState` 에서
+   * 직접 파생한다({@link hudActives}) — `bossEta: bossProgress(w)` 와 같은 선례다.
+   */
+  actives?: readonly HudActiveState[] | undefined;
+}
+
+/** 좌하단 쿨다운 한 칸. 문자열은 호출부가 이미 번역해 넣는다(BossHudState.name 과 같은 규율). */
+export interface HudActiveState {
+  /** 발동 키 라벨(`Z`/`X`). ASCII 고정 — 폰트·로케일과 무관하게 같은 글자를 보여 준다. */
+  key: string;
+  /** 번역된 스킬 이름. */
+  name: string;
+  /** 쿨다운 잔여 틱(0 = 발동 가능). */
+  cd: number;
+  /** 현재 투자량 기준 실효 쿨다운(틱). 진행률의 분모다. */
+  cdMax: number;
+  /**
+   * 아이콘 URL(번들 해석 완료). 미등재·미생성이면 `undefined` 이고, 그때는 발동 키 글자를
+   * 절차적 자리표시자로 그린다 — **조용히 빈 칸이 되지 않게** 하는 것이 계약이다.
+   *
+   * Pixi 텍스처 캐시는 캔버스 전용이라 DOM 오버레이가 재사용할 수 없다. 그래서
+   * `uiAssetUrl`(`src/ui/pixi/uiTextures.ts`)로 번들 URL 을 직접 얻는다.
+   */
+  iconUrl?: string;
+}
+
+/** 발동 키 라벨(슬롯 축). z/x 는 입력 레인이 소유하는 계약이고 여기서는 표시만 한다. */
+const ACTIVE_KEY_LABELS: readonly string[] = ['Z', 'X'];
+
+/**
+ * 쿨다운 **잔여 비율**(0..1). 1 = 방금 발동, 0 = 발동 가능. 순수 함수라 단위 테스트가
+ * 경계(분모 0·음수·초과)를 잠근다 — 화면에서는 이 값이 채움 높이가 된다.
+ */
+export function activeCooldownFraction(cd: number, cdMax: number): number {
+  if (!(cdMax > 0)) return 0;
+  return Math.max(0, Math.min(1, cd / cdMax));
+}
+
+/**
+ * 라이브 `WorldState` 에서 좌하단 쿨다운 칸을 파생한다(읽기 전용 — sim 무영향).
+ *
+ * 스냅샷 경유가 **불필요**하다: `hud.update` 호출부가 월드를 손에 쥐고 있고, 장착 wire·투자
+ * 벡터·쿨다운 잔여가 전부 `WorldState`/`WorldConfig` 안에 있다. 미장착 런은 `config.activeSlots`
+ * 필드 자체가 없으므로(runConfig 조건부 스탬프) 빈 배열이 나가고 HUD 가 칸을 감춘다.
+ */
+export function hudActives(w: WorldState): readonly HudActiveState[] {
+  const wires = w.config.activeSlots;
+  if (wires === undefined) return [];
+  const invest = w.config.skillInvest ?? [];
+  const cds = [w.activeCd0, w.activeCd1];
+  const out: HudActiveState[] = [];
+  for (let slot = 0; slot < ACTIVE_SLOT_COUNT; slot++) {
+    const def = activeByWireId(wires[slot] ?? -1);
+    if (def === undefined) continue;
+    // 기체 타입 고유(ADR-0041) — 손상 세이브가 남의 스킬을 실어도 발동하지 않으므로 표시도 안 한다.
+    if (def.shipTypeId !== (w.config.shipType ?? 0)) continue;
+    out.push({
+      key: ACTIVE_KEY_LABELS[slot] ?? `${slot + 1}`,
+      // ⚠️ 이 호출이 84키의 사문화 방지 참조다(AC-22 · tests/i18n.test.ts).
+      name: tShipKey(activeSkillNameKey(def.id), def.id),
+      cd: Math.max(0, cds[slot] ?? 0),
+      cdMax: activeCooldownTicks(def, investedInTree(invest, def)),
+      // 아이콘 URL 은 **있을 때만** 싣는다(exactOptionalPropertyTypes: undefined 대입 금지).
+      // 파일명 규약의 정본은 `activeSkillIconName` 하나이고, 인덱스는 그 기체 안 순서다.
+      ...(() => {
+        const idx = (ACTIVES_BY_SHIP[def.shipTypeId] ?? []).findIndex((d) => d.id === def.id);
+        const slug = SHIP_TYPES[def.shipTypeId]?.slug;
+        if (idx < 0 || slug === undefined) return {};
+        const url = uiAssetUrl(activeSkillIconName(slug, idx));
+        return url !== undefined ? { iconUrl: url } : {};
+      })(),
+    });
+  }
+  return out;
 }
 
 /**
@@ -197,6 +290,19 @@ const STYLE = `
 #pb-invprog .pb-ip-defhead { font-size:10px; font-weight:800; letter-spacing:1px; color:#8affc0; margin-top:7px; text-shadow:0 1px 2px #000; }
 #pb-invprog .pb-ip-def { display:flex; flex-wrap:wrap; gap:4px 10px; font-size:11px; font-weight:700; margin-top:2px; text-shadow:0 1px 2px #000; }
 #pb-invprog .pb-ip-def span b { color:#8affc0; font-weight:800; }
+#pb-actives { position:absolute; left:16px; bottom:96px; width:340px; font-family:'Segoe UI',system-ui,sans-serif; color:#e8ecff; pointer-events:none; user-select:none; }
+#pb-actives .pb-ac-head { font-size:10px; font-weight:800; letter-spacing:1.4px; color:#ffd98a; text-shadow:0 1px 3px #000; margin-bottom:4px; }
+#pb-actives .pb-ac-row { display:flex; gap:10px; }
+#pb-actives .pb-ac { width:84px; }
+#pb-actives .pb-ac-tile { position:relative; width:60px; height:60px; margin:0 auto; background:rgba(10,12,24,.82); border:2px solid rgba(255,255,255,.22); border-radius:10px; overflow:hidden; box-shadow:0 2px 6px rgba(0,0,0,.5); }
+#pb-actives .pb-ac.ready .pb-ac-tile { border-color:#ffd24c; box-shadow:0 0 10px 2px rgba(255,210,76,.42); }
+#pb-actives .pb-ac-glyph { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:800; color:#6f7ba8; text-shadow:0 1px 3px #000; }
+#pb-actives .pb-ac.ready .pb-ac-glyph { color:#ffd98a; }
+#pb-actives .pb-ac-img { width:100%; height:100%; object-fit:contain; image-rendering:pixelated; }
+#pb-actives .pb-ac-cool { position:absolute; left:0; right:0; bottom:0; height:0%; background:rgba(4,6,14,.74); transition:height .08s linear; }
+#pb-actives .pb-ac-key { position:absolute; left:0; top:0; z-index:3; padding:1px 5px; font-size:11px; font-weight:800; color:#0d0f1c; background:rgba(255,210,76,.92); border-radius:8px 0 8px 0; }
+#pb-actives .pb-ac-cd { position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center; font-size:17px; font-weight:800; color:#ffe6b0; text-shadow:0 1px 3px #000; }
+#pb-actives .pb-ac-name { margin-top:3px; text-align:center; font-size:10px; font-weight:700; line-height:12px; max-height:24px; overflow:hidden; color:#cdd6f5; text-shadow:0 1px 2px #000; }
 #pb-lore { position:absolute; top:140px; left:50%; transform:translateX(-50%); max-width:80vw; background:rgba(18,24,44,.82); border:1px solid rgba(120,200,255,.55); box-shadow:0 0 18px 2px rgba(60,140,220,.35) inset; color:#dbe8ff; padding:10px 22px; border-radius:12px; font-family:'Segoe UI',system-ui,sans-serif; text-align:center; pointer-events:none; user-select:none; }
 #pb-lore .pb-lore-line { font-size:14px; font-weight:600; letter-spacing:.4px; text-shadow:0 1px 3px #000; line-height:1.5; }
 #pb-lore .pb-lore-line + .pb-lore-line { font-size:12px; font-weight:500; color:#a9c6ff; }
@@ -251,6 +357,15 @@ export class Hud {
   /** 스토리 로어 토스트 배너(에코 안정화 등). 기본 숨김, {@link showLore} 로 잠깐 표시. */
   private readonly loreToast: HTMLElement;
   private loreTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * 좌하단 액티브 쿨다운 칸(AC-18). `#pb-hud` 바로 위에 뜬다 — `#pb-invprog`(좌상단)·
+   * `#pb-runinfo`(우중앙)·`#pb-boss`(상단중앙) 어느 것과도 자리가 겹치지 않는다.
+   */
+  private readonly activesRoot: HTMLElement;
+  private readonly activesRow: HTMLElement;
+  /** 지금 그려 둔 칸들(키+이름). 바뀔 때만 DOM 을 다시 짓고, 평소엔 값만 갈아끼운다. */
+  private activesSig = '';
+  private activeCells: readonly { root: HTMLElement; cool: HTMLElement; cd: HTMLElement }[] = [];
 
   constructor(elementId = 'hud') {
     const el = document.getElementById(elementId);
@@ -418,6 +533,19 @@ export class Hud {
     this.invRoot.style.display = 'none';
     document.body.appendChild(this.invRoot);
 
+    // 액티브 쿨다운 칸(좌하단) — 머리글 + 칸 줄. 칸 자체는 장착이 확정되는 첫 갱신에서 짓는다.
+    this.activesRoot = document.createElement('div');
+    this.activesRoot.id = 'pb-actives';
+    const acHead = document.createElement('div');
+    acHead.className = 'pb-ac-head';
+    acHead.textContent = t('hud.active.title');
+    this.activesRow = document.createElement('div');
+    this.activesRow.className = 'pb-ac-row';
+    this.activesRoot.appendChild(acHead);
+    this.activesRoot.appendChild(this.activesRow);
+    this.activesRoot.style.display = 'none';
+    document.body.appendChild(this.activesRoot);
+
     this.loreToast = document.createElement('div');
     this.loreToast.id = 'pb-lore';
     this.loreToast.style.display = 'none';
@@ -447,6 +575,7 @@ export class Hud {
       this.loreToast,
       this.runInfo,
       this.invRoot,
+      this.activesRoot,
     ]) {
       el.style.visibility = v;
     }
@@ -638,6 +767,85 @@ export class Hud {
 
     this.updateBossEta(s.bossEta);
     this.updateContamination(s.contamination);
+    this.updateActives(s.actives);
+  }
+
+  /**
+   * 좌하단 액티브 쿨다운 칸을 갱신한다(AC-18). 장착이 없으면 통째로 감춘다 — 미장착 런에서
+   * 빈 칸 두 개가 남으면 "장착했는데 안 보인다"로 오독된다(침공 코어 게이지와 같은 규율).
+   *
+   * DOM 은 **장착 구성이 바뀔 때만** 다시 짓는다. 쿨다운은 매 프레임 값이라 나머지 경로는
+   * 채움 높이·숫자 대입뿐이다(`setInvasion` 과 같은 규율 — 프레임당 재구축 금지).
+   */
+  private updateActives(list: readonly HudActiveState[] | undefined): void {
+    const items = list ?? [];
+    if (items.length === 0) {
+      this.activesRoot.style.display = 'none';
+      return;
+    }
+    this.activesRoot.style.display = 'block';
+
+    const sig = items.map((a) => `${a.key}|${a.name}`).join(';');
+    if (sig !== this.activesSig) {
+      this.activesSig = sig;
+      this.activesRow.replaceChildren();
+      this.activeCells = items.map((a) => Hud.buildActiveCell(a, this.activesRow));
+    }
+
+    for (const [i, a] of items.entries()) {
+      const cell = this.activeCells[i];
+      if (cell === undefined) continue;
+      const frac = activeCooldownFraction(a.cd, a.cdMax);
+      cell.cool.style.height = `${frac * 100}%`;
+      // 남은 초는 올림 — 0.4초 남았는데 "0"이 뜨면 눌러도 안 나가는 것처럼 보인다.
+      cell.cd.textContent = a.cd > 0 ? `${Math.ceil(a.cd / 60)}` : '';
+      cell.root.className = `pb-ac${a.cd > 0 ? '' : ' ready'}`;
+    }
+  }
+
+  /**
+   * 칸 하나를 짓는다. **아이콘 자산(`active_<slug>_<n>.png`)이 아직 없어** 지금은 발동 키
+   * 글자를 절차적 자리표시자로 그린다 — 그림이 오면 `.pb-ac-glyph` 를 `<img>` 로 바꾸면 된다.
+   */
+  private static buildActiveCell(
+    a: HudActiveState,
+    parent: HTMLElement,
+  ): { root: HTMLElement; cool: HTMLElement; cd: HTMLElement } {
+    const root = document.createElement('div');
+    root.className = 'pb-ac';
+    const tile = document.createElement('div');
+    tile.className = 'pb-ac-tile';
+    // 아이콘이 있으면 그림, 없으면 발동 키 글자를 절차적 자리표시자로 그린다.
+    let glyph: HTMLElement;
+    if (a.iconUrl !== undefined) {
+      const img = document.createElement('img');
+      img.className = 'pb-ac-glyph pb-ac-img';
+      img.src = a.iconUrl;
+      img.alt = '';
+      glyph = img;
+    } else {
+      glyph = document.createElement('div');
+      glyph.className = 'pb-ac-glyph';
+      glyph.textContent = a.key;
+    }
+    const cool = document.createElement('div');
+    cool.className = 'pb-ac-cool';
+    const cd = document.createElement('div');
+    cd.className = 'pb-ac-cd';
+    const key = document.createElement('div');
+    key.className = 'pb-ac-key';
+    key.textContent = a.key;
+    tile.appendChild(glyph);
+    tile.appendChild(cool);
+    tile.appendChild(cd);
+    tile.appendChild(key);
+    const name = document.createElement('div');
+    name.className = 'pb-ac-name';
+    name.textContent = a.name;
+    root.appendChild(tile);
+    root.appendChild(name);
+    parent.appendChild(root);
+    return { root, cool, cd };
   }
 
   /** 오염도 경고 단계 임계(0..1). 이 위는 주의색, {@link CONTAM_DANGER} 위는 위험색+맥동. */

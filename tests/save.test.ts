@@ -309,7 +309,7 @@ describe('마이그레이션 v3 → v4 — 계정 투자가 기체로 승계된�
     const p = migrate(v3Blob(invest));
 
     expect(p.saveVersion).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(7);
+    expect(SAVE_VERSION).toBe(8);
     const ship = activeShip(p);
     expect(ship.typeId).toBe(0); // 기존 유저는 전원 스트라이커
     expect(ship.skillInvest).toHaveLength(shipSkillNodeCount(0));
@@ -446,7 +446,7 @@ describe('마이그레이션 v4 → v5 — 티어→침략 단계 (ADR-0022, Lan
   function v4Blob(progress: Record<number, { bestTierCleared: number }>): Record<string, unknown> {
     return {
       saveVersion: 4,
-      ships: [{ id: 'ship-0', name: '초기 전투기', typeId: 0, level: 5, xp: 0, equipped: {}, skillInvest: zeroSkillInvest(0) }],
+      ships: [{ id: 'ship-0', name: '초기 전투기', typeId: 0, level: 5, xp: 0, equipped: {}, skillInvest: zeroSkillInvest(0), activeSlots: [null, null] }],
       activeShipIndex: 0,
       inventory: [], stash: [], stashExpansions: 0,
       planetProgress: progress,
@@ -482,7 +482,7 @@ describe('마이그레이션 v5 → v6 — 기록 파편·마일스톤 카운터
   function v5Blob(extra: Record<string, unknown> = {}): Record<string, unknown> {
     return {
       saveVersion: 5,
-      ships: [{ id: 'ship-0', name: '초기 전투기', typeId: 0, level: 5, xp: 0, equipped: {}, skillInvest: zeroSkillInvest(0) }],
+      ships: [{ id: 'ship-0', name: '초기 전투기', typeId: 0, level: 5, xp: 0, equipped: {}, skillInvest: zeroSkillInvest(0), activeSlots: [null, null] }],
       activeShipIndex: 0,
       inventory: [], stash: [], stashExpansions: 0,
       planetProgress: {},
@@ -500,7 +500,7 @@ describe('마이그레이션 v5 → v6 — 기록 파편·마일스톤 카운터
   it('필드 부재 v5 세이브를 v6 로 올리고 두 필드를 기본값으로 채운다', () => {
     const p = migrate(v5Blob());
     expect(p.saveVersion).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(7);
+    expect(SAVE_VERSION).toBe(8);
     expect(p.collectedShards).toEqual([]);
     expect(p.storyMetrics).toEqual({});
     // 기존 진행 상태는 함께 보존된다(필드 신설이 다른 축을 건드리지 않는다).
@@ -533,7 +533,7 @@ describe('정규화 — GuardianRecord.build 실물 빌드 (예비역 소집·�
   function guardianBlob(guardians: unknown[]): Record<string, unknown> {
     return {
       saveVersion: 7,
-      ships: [{ id: 'ship-0', name: '초기 전투기', typeId: 0, level: 1, xp: 0, equipped: {}, skillInvest: zeroSkillInvest(0) }],
+      ships: [{ id: 'ship-0', name: '초기 전투기', typeId: 0, level: 1, xp: 0, equipped: {}, skillInvest: zeroSkillInvest(0), activeSlots: [null, null] }],
       activeShipIndex: 0,
       inventory: [], stash: [], stashExpansions: 0, planetProgress: {},
       credits: 0, minerals: 0, skillPoints: 0, tutorialDone: true, introSeen: true,
@@ -591,7 +591,7 @@ describe('정규화 — collectedShards(문자열 집합)·storyMetrics(유한 �
   function v6Blob(collectedShards: unknown, storyMetrics: unknown): Record<string, unknown> {
     return {
       saveVersion: 6,
-      ships: [{ id: 'ship-0', name: '초기 전투기', typeId: 0, level: 1, xp: 0, equipped: {}, skillInvest: zeroSkillInvest(0) }],
+      ships: [{ id: 'ship-0', name: '초기 전투기', typeId: 0, level: 1, xp: 0, equipped: {}, skillInvest: zeroSkillInvest(0), activeSlots: [null, null] }],
       activeShipIndex: 0,
       inventory: [], stash: [], stashExpansions: 0, planetProgress: {},
       credits: 0, minerals: 0, skillPoints: 0, tutorialDone: true,
@@ -661,7 +661,7 @@ describe('정본은 기체 벡터 — 연구소 투자·리스펙', () => {
     const p = defaultProfile();
     p.ships.push({
       id: 'ship-1', name: '2번기', typeId: 0, level: 1, xp: 0, equipped: {},
-      skillInvest: zeroSkillInvest(0),
+      skillInvest: zeroSkillInvest(0), activeSlots: [null, null],
     });
     p.activeShipIndex = 1;
     p.skillPoints = 1;

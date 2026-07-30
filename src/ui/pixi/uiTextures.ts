@@ -14,6 +14,8 @@ import { stickerByIndex } from '../../../data/stickers.js';
 import { CATALYST_ICON_NAMES } from '../../data/catalysts.js';
 import type { SkillNode } from '../../../data/skills.js';
 import { SHIP_TYPES, DEFAULT_SHIP_TYPE, shipTypeDef } from '../../../data/ships/index.js';
+import { ACTIVES_BY_SHIP } from '../../../data/ships/actives/index.js';
+import { activeSkillIconName } from '../../../data/ships/actives/types.js';
 
 /**
  * 연구소 스킬 노드 아이콘 62종 = 스탯 × 티어대 59 + 계열 캡스톤 3
@@ -156,6 +158,14 @@ export function shipPortraitName(typeId: number): string {
 /** 전 기체 타입의 초상 basename(중복 없음). 레지스트리 파생 — 하드코딩하면 타입 추가 시 조용히 빠진다. */
 export const SHIP_PORTRAIT_NAMES: readonly string[] = SHIP_TYPES.map((d) => shipPortraitName(d.id));
 
+/**
+ * 액티브 스킬 아이콘 42장의 basename — **레지스트리 파생**(`ACTIVES_BY_SHIP`).
+ * 파일명 규약의 정본은 `activeSkillIconName(shipSlug, indexInShip)` 하나뿐이다.
+ */
+export const ACTIVE_ICON_NAMES: readonly string[] = ACTIVES_BY_SHIP.flatMap((list, shipTypeId) =>
+  list.map((_, i) => activeSkillIconName(SHIP_TYPES[shipTypeId]?.slug ?? '', i)),
+);
+
 /** 로드 대상 UI 자산 basename (assets/ 아래, 확장자 포함). */
 export const UI_ASSET_NAMES: readonly string[] = [
   'ui_panel.png',
@@ -261,6 +271,10 @@ export const UI_ASSET_NAMES: readonly string[] = [
   // lowmid 로 옮겨가며 사문서가 된 실물 아트인데, 파워업 '집속 렌즈'(beam-focuser)가 이걸 되쓴다 —
   // 유니온에 있던 `skill_range_flat_lowmid` 는 PNG 가 없어 카드에 그림이 안 떴다(2026-07-27).
   'skill_range_flat_low.png',
+  // 액티브 스킬 아이콘 42장(ADR-0041 — ADR-0015 의 "인스턴스 단위 아이콘 예외"에 편입).
+  // **레지스트리 파생**이라 42종 저작이 바뀌면 목록이 자동으로 따라온다 — 손으로 나열하면
+  // 조용히 어긋나고, 그 어긋남은 "번들에는 있는데 화면에 안 뜬다"로만 드러난다.
+  ...ACTIVE_ICON_NAMES,
 ];
 
 /** StatKey(camelCase) → 파일명 조각(snake_case). `maxHpFlat` → `max_hp_flat`. */
@@ -320,7 +334,12 @@ const UI_ASSET_URLS = import.meta.glob('../../../assets/*.png', {
   import: 'default',
 }) as Record<string, string>;
 
-function uiAssetUrl(basename: string): string | undefined {
+/**
+ * basename → 번들 URL. **DOM 오버레이(HUD)가 같은 아트를 `<img>` 로 쓰려면 이것이 필요하다** —
+ * Pixi 텍스처 캐시는 캔버스 전용이라 DOM 이 재사용할 수 없다(ADR-0041 · HUD 액티브 2칸).
+ * 미등재 basename 은 `undefined` 를 돌려주므로 호출부가 폴백을 그려야 한다.
+ */
+export function uiAssetUrl(basename: string): string | undefined {
   for (const key in UI_ASSET_URLS) {
     if (key.endsWith(`/${basename}`)) return UI_ASSET_URLS[key];
   }

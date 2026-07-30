@@ -169,7 +169,7 @@ describe('침공 안전 (verify-invasion 무영향 못박기)', () => {
 
 describe('파워업 dormancy (weapons/powerupIcons 회귀 방지)', () => {
   it('POWERUPS.length === 24 (Lane2 신규 파워업 없음)', () => {
-    expect(POWERUPS.length).toBe(24);
+    expect(POWERUPS.length).toBe(26); // 24 + 액티브 강화 2종(ADR-0041)
   });
 
   it('모드 태그 파워업이 하나도 없다 (필터가 무효 = dormant)', () => {

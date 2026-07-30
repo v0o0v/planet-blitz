@@ -17,6 +17,7 @@ import {
   SPECIAL_ENCOUNTER_EXIT,
   packEncounterAltar,
 } from '../../data/encounters.js';
+import { SPECIAL_ACTIVE_SLOT1, SPECIAL_ACTIVE_SLOT2 } from '../../data/inputBits.js';
 
 export class InputController {
   private readonly keys = new Set<string>();
@@ -38,12 +39,24 @@ export class InputController {
   /** 제단 3택 선택 인덱스(0..3). null = 대기 없음. */
   private encounterAltarPick: number | null = null;
   private encounterExit = false;
+  /**
+   * 액티브 스킬 슬롯 1/2(키 `z`/`x`, ADR-0041) 입력 큐 — 대시(`dashQueued`)와 같은 1회성
+   * 소비 플래그 패턴. `sample()` 이 한 번 소비해 `SPECIAL_ACTIVE_SLOT1/2` 비트로 싣는다.
+   */
+  private activeSlot1Queued = false;
+  private activeSlot2Queued = false;
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     this.keys.add(e.code);
     if (e.code === 'Space') {
       this.dashQueued = true;
       e.preventDefault();
+    }
+    if (e.code === 'KeyZ') {
+      this.activeSlot1Queued = true;
+    }
+    if (e.code === 'KeyX') {
+      this.activeSlot2Queued = true;
     }
   };
   private readonly onKeyUp = (e: KeyboardEvent): void => {
@@ -89,6 +102,16 @@ export class InputController {
     this.encounterExit = true;
   }
 
+  /** 액티브 슬롯 1(`SPECIAL_ACTIVE_SLOT1`, 키 `z`)을 큐잉한다. 테스트 전용 진입점. */
+  queueActiveSlot1(): void {
+    this.activeSlot1Queued = true;
+  }
+
+  /** 액티브 슬롯 2(`SPECIAL_ACTIVE_SLOT2`, 키 `x`)를 큐잉한다. 테스트 전용 진입점. */
+  queueActiveSlot2(): void {
+    this.activeSlot2Queued = true;
+  }
+
   /**
    * Sample the current input for one sim tick. Consumes the queued dash so a
    * single Space press maps to exactly one dash request, and any queued powerup
@@ -103,6 +126,13 @@ export class InputController {
    * 그래서 파워업 픽이 대기 중이면 **조우 큐를 소비하지 않고 그대로 유지**한다. 조우
    * 입력은 프리즈가 풀린 다음 프레임에 온전히 실려 나간다. 반대 선택(조우 우선)은
    * 레벨업 프리즈를 영원히 못 푸는 교착을 만들 수 있어 택하지 않았다.
+   *
+   * 액티브 스킬(z/x, ADR-0041)도 조우 비트와 같은 결로 맞춘다 — 파워업 픽 대기 중에는
+   * 큐를 소비하지 않고 **버린다**(ADR-0041 "프리즈 중 입력은 버린다, 큐잉 금지"). 조우처럼
+   * 프리즈 해제 후로 이월하지 않는 이유는 액티브 발동이 그 순간의 전황(적 밀집·체력)에
+   * 반응하는 입력이라 프리즈가 몇 프레임이든 걸릴 수 있는 픽 UI 뒤로 미루면 플레이어가
+   * 누른 시점의 의도와 실제 발동 시점이 어긋나기 때문이다 — 조우처럼 되돌릴 수 없는 선택이
+   * 아니라 다시 누르면 되는 입력이므로 유실 비용이 낮다.
    */
   sample(playerX: number, playerY: number): InputFrame {
     let moveX = 0;
@@ -130,6 +160,11 @@ export class InputController {
       special = packPowerupPick(this.powerupPick);
       this.powerupPick = null;
       // 조우 큐는 **일부러 소비하지 않는다** — 위 "동시 프레임 규율" 주석 참조.
+      // 액티브 슬롯 큐는 반대로 **여기서 버린다**(소비하지 않고 리셋) — ADR-0041
+      // "프리즈 중 입력은 버린다(큐잉 금지)". 조우처럼 이월하면 프리즈 해제 후 뒤늦게
+      // 발동해 플레이어가 누른 시점의 전황과 어긋난다.
+      this.activeSlot1Queued = false;
+      this.activeSlot2Queued = false;
     } else {
       // 조우 비트는 비트 3 이상만 쓰므로(data/encounters.ts 배치 계약) 파워업이 점유한
       // 비트 0..2 를 절대 오염시키지 않는다. 여러 종류가 동시에 큐잉되는 것은 UI 상
@@ -150,6 +185,16 @@ export class InputController {
       if (this.encounterExit) {
         special |= SPECIAL_ENCOUNTER_EXIT;
         this.encounterExit = false;
+      }
+      // 액티브 슬롯 1/2(비트 9·10, ADR-0041) — 조우 비트들 다음에 append. 파워업 픽이
+      // 대기 중이 아닐 때만 소비된다(위 파워업 분기의 큐 폐기 주석 참조).
+      if (this.activeSlot1Queued) {
+        special |= SPECIAL_ACTIVE_SLOT1;
+        this.activeSlot1Queued = false;
+      }
+      if (this.activeSlot2Queued) {
+        special |= SPECIAL_ACTIVE_SLOT2;
+        this.activeSlot2Queued = false;
       }
     }
 

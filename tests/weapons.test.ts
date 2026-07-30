@@ -142,12 +142,18 @@ describe('skill investment — determinism + hash inclusion (AC2, plan A2)', () 
 
 describe('powerup pool — 24 tagged + build-weighted draw (C2, AC9, OQ-M3-1)', () => {
   it('has 24 entries, indices 0..7 unchanged (replay wire stability)', () => {
-    expect(POWERUPS).toHaveLength(24);
+    expect(POWERUPS).toHaveLength(26); // 24 + 액티브 강화 2종(ADR-0041, append-only)
     expect(POWERUPS[0]?.id).toBe('rapid-fire');
     expect(POWERUPS[7]?.id).toBe('gem-magnet');
     // Every entry carries exactly one build tag.
     for (const p of POWERUPS) {
-      const tags = [p.universal === true, p.weaponType !== undefined, p.affinity !== undefined];
+      const tags = [
+        p.universal === true,
+        p.weaponType !== undefined,
+        p.affinity !== undefined,
+        // 액티브 슬롯 전용(ADR-0041)도 배타 태그 축 하나다 — 미장착이면 pool 진입 자체가 없다.
+        p.activeSlot !== undefined,
+      ];
       expect(tags.filter(Boolean)).toHaveLength(1);
     }
   });
@@ -251,6 +257,9 @@ function legacyDrawPowerupChoices(state: WorldState, count: number): number[] {
     const def = POWERUPS[i];
     if (def === undefined) continue;
     if (def.weaponType !== undefined && def.weaponType !== state.weapon.weaponType) continue;
+    // 액티브 슬롯 전용(ADR-0041)도 미러에서 함께 건너뛴다 — 이 대조의 목적은 affinity 슬라이스
+    // 등가 증명이고, 미장착 런에서는 본체도 pool 에 넣지 않으므로 같은 조건이 된다.
+    if (def.activeSlot !== undefined) continue;
     pool.push(i);
     weights.push(legacyPowerupWeight(def, state));
   }

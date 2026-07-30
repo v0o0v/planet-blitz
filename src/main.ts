@@ -42,7 +42,7 @@ import { Radar } from './render/radar.js';
 import { UniqueCeremony } from './render/ceremony.js';
 import { ScreenTransition } from './render/screenTransition.js';
 import { InputController } from './input/controller.js';
-import { Hud } from './ui/hud.js';
+import { Hud, hudActives } from './ui/hud.js';
 import type { BossHudState, RunInfoState } from './ui/hud.js';
 import { invasionHudState } from './ui/invasionProgress.js';
 import { bossHudName } from './ui/bossLabels.js';
@@ -1859,6 +1859,9 @@ async function main(): Promise<void> {
         // 오염도(톡사르). 스냅샷의 render-only 필드 그대로 — 오염 런이 아니면 undefined 라
         // HUD 가 게이지를 감춘다.
         contamination: currSnap.contamination,
+        // 액티브 쿨다운 2칸(AC-18) — `bossEta` 와 같은 읽기 전용 월드 파생이라 스냅샷 경유가
+        // 불필요하다. 미장착 런은 빈 배열이 나가고 HUD 가 칸을 감춘다.
+        actives: hudActives(w),
       });
 
       const seg = w.wave.segmentIndex + 1;

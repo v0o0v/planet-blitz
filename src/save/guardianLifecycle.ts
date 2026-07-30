@@ -146,6 +146,9 @@ export function retireActiveShip(
     typeId: ship.typeId,
     equipped: { ...ship.equipped },
     skillInvest: ship.skillInvest.slice(),
+    // 액티브 장착 2칸 박제(ADR-0041 · 계획 PM-3). `skillInvest` 만 복사하면 해금 조건은
+    // 만족하는데 장착 상태만 없는 — "열려 있는데 안 끼워져 있는" — 가장 헷갈리는 형태가 된다.
+    activeSlots: ship.activeSlots.slice(),
   };
   // ADR-0025: 방어 스냅샷은 실물 빌드 loadout 에서 파생한다(프리셋=이동 AI, 파워·발사체=빌드).
   // 계보 기체 가지(shipBonusBp)는 넘기지 않는다 — 수호 계보 보너스는 수호 가지이며 스폰 시
@@ -184,6 +187,8 @@ export function retireActiveShip(
     xp: 0,
     equipped: {},
     skillInvest: zeroSkillInvest(typeId),
+    // 세대 교체 기체는 투자 0이라 열린 액티브가 없다 → 빈 슬롯 2칸.
+    activeSlots: [null, null],
   };
   profile.ships.push(next);
   profile.activeShipIndex = profile.ships.length - 1;

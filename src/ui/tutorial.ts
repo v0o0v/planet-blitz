@@ -136,11 +136,18 @@ export class TitleScreen {
 // ---------------------------------------------------------------------------
 
 /** Scripted hints keyed to the run's elapsed seconds (render-only, i18n key). */
-const HINTS: readonly { fromSec: number; key: 'tutorial.hint0' | 'tutorial.hint1' | 'tutorial.hint2' | 'tutorial.hint3' }[] = [
+const HINTS: readonly {
+  fromSec: number;
+  key: 'tutorial.hint0' | 'tutorial.hint1' | 'tutorial.hint2' | 'tutorial.hint3' | 'tutorial.hint4';
+}[] = [
   { fromSec: 0, key: 'tutorial.hint0' },
   { fromSec: 6, key: 'tutorial.hint1' },
   { fromSec: 14, key: 'tutorial.hint2' },
   { fromSec: 24, key: 'tutorial.hint3' },
+  // 액티브 스킬 z/x 안내(ADR-0041 · AC-19). 이 목록이 **유일한 조작 안내 채널**이라 신규 조작은
+  // 반드시 여기 들어와야 한다. 맨 뒤에 두는 이유: 튜토리얼 시점에는 계열 투자가 0이라 아직
+  // 아무것도 열려 있지 않고, 문구도 "잠금 해제되면"으로 그 사실을 반영한다.
+  { fromSec: 34, key: 'tutorial.hint4' },
 ];
 
 const TUT_STYLE = `

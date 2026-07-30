@@ -42,5 +42,8 @@ export function buildCallupPilot(
     skillInvest: build.skillInvest,
     typeId: build.typeId,
     performanceCP: guardian.performanceCP,
+    // 박제된 액티브 장착 2칸(ADR-0041 · 계획 PM-3). 이 전달 경로가 빠지면 `GuardianBuild` 에
+    // 박제해 두고도 소집 런에서 z/x 가 죽는다 — **셋 다**(박제·마이그레이션·전달) 해야 성립한다.
+    activeSlots: build.activeSlots,
   };
 }

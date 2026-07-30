@@ -24,6 +24,8 @@ import { EQUIP_SLOTS } from '../items/types.js';
 import type { EquipSlotId } from '../items/types.js';
 import { defaultProfile } from '../save/profile.js';
 import type { Profile } from '../save/profile.js';
+import { ACTIVES_BY_SHIP, isActiveUnlocked } from '../../data/ships/actives/index.js';
+import { shipTypeDef, flattenShipNodes } from '../../data/ships/index.js';
 import {
   INVASION_ASCENSION_MAX,
   INVASION_CORE_HP,
@@ -216,6 +218,18 @@ export function buildPreset(kind: ProfilePresetKind): Profile {
     ship.level = 100;
     ship.xp = 0;
     ship.equipped = buildMaxedEquip();
+    // 만렙 계정이므로 스킬 트리도 전 계열 만투 — **노드별 실제 상한**(`SkillNode.maxPoints`)으로
+    // 채운다. ⚠️ "게이트만 넘으면 되니까" 하고 큰 정수(999)를 부으면 `computeLoadoutStats` 가
+    // 그 값을 그대로 곱해 **하네스 만렙 프리셋의 전투 스탯이 실제 게임에서 도달 불가능한 값**이
+    // 된다 — 밸런스 계측도 육안 검증도 통째로 왜곡된다. 상한 만투로도 액티브 lo(8)·hi
+    // (`capstoneGate`, 최대 44) 게이트는 넉넉히 넘는다. 결정론 정수 — Math.random 아님.
+    const maxedNodes = flattenShipNodes(shipTypeDef(ship.typeId));
+    ship.skillInvest = ship.skillInvest.map((_, i) => maxedNodes[i]?.maxPoints ?? 0);
+    // 액티브 스킬(ADR-0041): 그 타입에 열려 있는 것 중 앞에서 2개를 자동 장착한다. 레지스트리가
+    // 비어 있으면(0a-14 시점) 빈 슬롯 그대로 — 예외를 던지지 않는다.
+    const shipActives = ACTIVES_BY_SHIP[ship.typeId] ?? [];
+    const unlocked = shipActives.filter((d) => isActiveUnlocked(ship.skillInvest, d));
+    ship.activeSlots = [unlocked[0]?.id ?? null, unlocked[1]?.id ?? null];
   }
   profile.credits = 999_999;
   profile.minerals = 999_999;

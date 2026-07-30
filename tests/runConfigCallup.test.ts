@@ -76,7 +76,8 @@ describe('buildRunConfig — 예비역 소집(pilot) loadout 파생 (ADR-0024)',
         equipped: equippedInOrder(ship),
         skillInvest: ship.skillInvest.slice(),
         typeId: ship.typeId,
-        performanceCP: 10000,
+        activeSlots: [null, null],
+      performanceCP: 10000,
       },
     });
     expect(full.loadout).toEqual(active.loadout);
@@ -94,7 +95,8 @@ describe('buildRunConfig — 예비역 소집(pilot) loadout 파생 (ADR-0024)',
         equipped: equippedInOrder(ship),
         skillInvest: ship.skillInvest.slice(),
         typeId: ship.typeId,
-        performanceCP: 10000,
+        activeSlots: [null, null],
+      performanceCP: 10000,
       },
     });
     const floor = buildRunConfig(profile, {
@@ -104,7 +106,8 @@ describe('buildRunConfig — 예비역 소집(pilot) loadout 파생 (ADR-0024)',
         equipped: equippedInOrder(ship),
         skillInvest: ship.skillInvest.slice(),
         typeId: ship.typeId,
-        performanceCP: 5000,
+        activeSlots: [null, null],
+      performanceCP: 5000,
       },
     });
     // 감쇠가 관측 가능하려면 기준 값이 유의미해야 한다(무결성 가드).
@@ -132,7 +135,8 @@ describe('buildRunConfig — 예비역 소집(pilot) loadout 파생 (ADR-0024)',
         equipped: equippedInOrder(ship),
         skillInvest: ship.skillInvest.slice(),
         typeId: ship.typeId,
-        performanceCP: 10000,
+        activeSlots: [null, null],
+      performanceCP: 10000,
       },
     });
     // 활성 경로는 활성 기체를 그대로 스탬프하고 감쇠를 적용하지 않는다.
@@ -153,7 +157,8 @@ describe('buildRunConfig — 예비역 소집(pilot) loadout 파생 (ADR-0024)',
         equipped: [],
         skillInvest: zeroSkillInvest(1),
         typeId: 1,
-        performanceCP: 10000,
+        activeSlots: [null, null],
+      performanceCP: 10000,
       },
     });
     expect(cfg.shipType).toBe(1);

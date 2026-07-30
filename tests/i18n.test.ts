@@ -28,6 +28,13 @@ import {
 } from '../data/coreModules.js';
 import { SHIP_TYPES, shipTypeDef, zeroSkillInvest } from '../data/ships/index.js';
 import {
+  ALL_ACTIVES,
+} from '../data/ships/actives/index.js';
+import {
+  activeSkillNameKey,
+  activeSkillDescKey,
+} from '../data/ships/actives/types.js';
+import {
   shipTypeName,
   shipTypeRole,
   shipSignatureDesc,
@@ -751,5 +758,61 @@ describe('t() 조회·치환·폴백', () => {
   it('params 없으면 플레이스홀더를 그대로 둔다(치환 실패 방어)', () => {
     setLocale('en');
     expect(t('result.levelShort')).toBe('Lv {n}');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 액티브 스킬 42종 i18n (ADR-0041 · 계획 0a-12 + AC-22 ·
+// .omc/plans/active-skills-catalog.md 저작 카탈로그 정본)
+// ---------------------------------------------------------------------------
+
+describe('액티브 스킬 84키(ALL_ACTIVES 파생)', () => {
+  it('42종 전체의 activeSkill.<id>.name/.desc 가 EN·KO 양쪽에 존재한다', () => {
+    expect(ALL_ACTIVES.length).toBe(42);
+    for (const def of ALL_ACTIVES) {
+      for (const key of [activeSkillNameKey(def.id), activeSkillDescKey(def.id)]) {
+        expect(EN, `EN missing ${key}`).toHaveProperty(key);
+        expect(KO, `KO missing ${key}`).toHaveProperty(key);
+      }
+    }
+  });
+
+  it('84키가 비어 있지 않고 컬러 이모지를 쓰지 않는다(Pixi 두부 방지 — ▶ ◀ 만 예외)', () => {
+    const table = (o: Record<string, string>, k: string): string => o[k] ?? '';
+    const keys = ALL_ACTIVES.flatMap((def) => [
+      activeSkillNameKey(def.id),
+      activeSkillDescKey(def.id),
+    ]);
+    expect(keys.length).toBe(84);
+    for (const key of keys) {
+      for (const [label, t] of [
+        ['EN', EN as unknown as Record<string, string>],
+        ['KO', KO as unknown as Record<string, string>],
+      ] as const) {
+        const v = table(t, key);
+        expect(v.length, `${label} empty ${key}`).toBeGreaterThan(0);
+        expect(v, `${label} emoji in ${key}`).not.toMatch(/\p{Extended_Pictographic}/u);
+      }
+    }
+  });
+
+  /**
+   * 사문화 방지 참조 단언(AC-22 · 계획 R16). 84키가 정의만 되고 아무도 안 부르는 상태를
+   * 막기 위해, `activeSkillNameKey`/`activeSkillDescKey` 호출이 소스에 실제로 존재하는지
+   * 배선까지 대조한다("전용 문구" describe 의 배선 대조 패턴을 그대로 따른다).
+   *
+   * **해제 완료**: D 레인이 Pixi 연구소 액티브 패널과 HUD 를 배선했다.
+   *
+   * ⚠️ 대조 대상은 **살아 있는 화면 파일 두 개**다. 디렉터리를 통째로 `readFileSync` 하면
+   * `EISDIR` 로 던지고, 무엇보다 `src/ui/researchLab.ts`(DOM 레거시)는 **죽은 파일**이라
+   * 거기에 호출이 있어도 화면에는 아무것도 안 뜬다 — 그런 대조는 사문화를 못 막는다.
+   * `src/main.ts` 가 마운트하는 것은 `src/ui/pixi/researchLab.ts` 다.
+   */
+  it('activeSkillNameKey/activeSkillDescKey 호출부가 살아 있는 화면 소스에 존재한다', () => {
+    const readSource = (rel: string): string =>
+      new TextDecoder().decode(readFileSync(fileURLToPath(new URL(rel, import.meta.url))));
+    const src = readSource('../src/ui/pixi/researchLab.ts') + readSource('../src/ui/hud.ts');
+    expect(src).toMatch(/activeSkillNameKey\(/);
+    expect(src).toMatch(/activeSkillDescKey\(/);
   });
 });

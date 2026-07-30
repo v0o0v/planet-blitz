@@ -42,7 +42,7 @@ import {
 } from '../src/sim/shipSignature.js';
 
 /** 비스트라이커 시나리오 마크 — 아래 두 케이스가 같은 목록을 본다(한쪽만 늘어나면 구멍이 난다). */
-const NON_STRIKER_MARKS = ['⑦', '⑧', '⑨', '⑩', '⑪', '⑫'] as const;
+const NON_STRIKER_MARKS = ['⑦', '⑧', '⑨', '⑩', '⑪', '⑫', '⑬'] as const;
 
 /** 픽스처 재생성 스위치. 없으면 커밋된 파일과 **비교만** 한다(회귀 게이트). */
 const REGEN = process.env.REGEN_DENO_FIXTURES === '1';
@@ -67,9 +67,10 @@ describe('Deno 교차 검증 픽스처 (M4 스파이크)', () => {
       writeFileSync(FIXTURE_PATH, JSON.stringify(fixture, null, 2) + '\n', 'utf8');
     }
 
-    // 12종 시나리오(M2 3 + 촉매 1(ADR-0029, 구 변칙 자리) + M3 표면 2 + M8 비스트라이커 6 =
+    // 13종 시나리오(M2 3 + 촉매 1(ADR-0029, 구 변칙 자리) + M3 표면 2 + M8 비스트라이커 6
+    //  + ⑬ 액티브 발동 1(ADR-0041 — 신규 꼬리 폴드 2건의 유일한 커버리지) =
     // 로스터 전량), 최종 해시가 유효 u32.
-    expect(scenarios.length).toBe(12);
+    expect(scenarios.length).toBe(13);
     for (const s of scenarios) {
       expect(Number.isInteger(s.finalHash)).toBe(true);
       expect(s.finalHash).toBeGreaterThanOrEqual(0);

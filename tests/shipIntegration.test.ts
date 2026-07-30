@@ -312,7 +312,7 @@ describe('③ 투자 → 저장 → 재로드 → buildRunConfig 왕복', () => 
       level: 1,
       xp: 0,
       equipped: {},
-      skillInvest: zeroSkillInvest(1),
+      skillInvest: zeroSkillInvest(1), activeSlots: [null, null],
     });
     p.activeShipIndex = 1;
     const cfg = buildRunConfig(p, { planet: 0, stage: 1 });

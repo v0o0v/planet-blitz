@@ -2,7 +2,7 @@
   "meta": {
     "generatedBy": "tests/denoFixture.test.ts (Node/vitest)",
     "node": "v24.13.0",
-    "scenarioCount": 12
+    "scenarioCount": 13
   },
   "mathProbe": 793092539,
   "scenarios": [
@@ -2466,6 +2466,180 @@
         "level": 11,
         "bossSpawned": false,
         "entityCount": 657
+      }
+    },
+    {
+      "name": "⑬ 브루저 액티브 발동 런 — 신규 꼬리 폴드 ①런타임 4정수 ②장착 wire id",
+      "seed": 44145,
+      "ticks": 14400,
+      "inputsHash": 152940338,
+      "checkpoints": [
+        {
+          "tick": 600,
+          "hash": 1890799806
+        },
+        {
+          "tick": 1200,
+          "hash": 1763345083
+        },
+        {
+          "tick": 1800,
+          "hash": 805918220
+        },
+        {
+          "tick": 2400,
+          "hash": 284565741
+        },
+        {
+          "tick": 3000,
+          "hash": 3213858703
+        },
+        {
+          "tick": 3600,
+          "hash": 2747470752
+        },
+        {
+          "tick": 4200,
+          "hash": 4253193698
+        },
+        {
+          "tick": 4800,
+          "hash": 1147645124
+        },
+        {
+          "tick": 5400,
+          "hash": 4291868801
+        },
+        {
+          "tick": 6000,
+          "hash": 2316158326
+        },
+        {
+          "tick": 6600,
+          "hash": 854353532
+        },
+        {
+          "tick": 7200,
+          "hash": 4004431091
+        },
+        {
+          "tick": 7800,
+          "hash": 495669653
+        },
+        {
+          "tick": 8400,
+          "hash": 3134149097
+        },
+        {
+          "tick": 9000,
+          "hash": 11612368
+        },
+        {
+          "tick": 9600,
+          "hash": 1695852106
+        },
+        {
+          "tick": 10200,
+          "hash": 3353135684
+        },
+        {
+          "tick": 10800,
+          "hash": 1973358475
+        },
+        {
+          "tick": 11400,
+          "hash": 2522438365
+        },
+        {
+          "tick": 12000,
+          "hash": 3728227711
+        },
+        {
+          "tick": 12600,
+          "hash": 2875289390
+        },
+        {
+          "tick": 13200,
+          "hash": 2155555240
+        },
+        {
+          "tick": 13800,
+          "hash": 1859643458
+        },
+        {
+          "tick": 14400,
+          "hash": 1186460721
+        }
+      ],
+      "finalHash": 1186460721,
+      "loot": [],
+      "rolls": [
+        {
+          "id": "it-11301329",
+          "slot": "engine",
+          "rarity": "rare",
+          "weaponType": null,
+          "uniqueId": null,
+          "affixes": [
+            {
+              "id": "overclocked",
+              "stat": "fireRatePct",
+              "value": 20
+            },
+            {
+              "id": "of-fortitude",
+              "stat": "maxHpFlat",
+              "value": 49
+            },
+            {
+              "id": "of-swiftness",
+              "stat": "moveSpeedPct",
+              "value": 6
+            },
+            {
+              "id": "of-greed",
+              "stat": "magnetPct",
+              "value": 23
+            },
+            {
+              "id": "of-prospecting",
+              "stat": "mineralFindPct",
+              "value": 20
+            }
+          ]
+        },
+        {
+          "id": "it-11301330",
+          "slot": "module",
+          "rarity": "unique",
+          "weaponType": null,
+          "uniqueId": "relic-amplifier",
+          "affixes": [
+            {
+              "id": "of-warding",
+              "stat": "maxHpPct",
+              "value": 5
+            },
+            {
+              "id": "of-prospecting",
+              "stat": "mineralFindPct",
+              "value": 24
+            },
+            {
+              "id": "of-vitality",
+              "stat": "maxHpFlat",
+              "value": 21
+            }
+          ]
+        }
+      ],
+      "summary": {
+        "victory": false,
+        "gameOver": false,
+        "kills": 41,
+        "level": 3,
+        "bossSpawned": false,
+        "entityCount": 397
       }
     }
   ]
