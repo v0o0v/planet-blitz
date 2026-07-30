@@ -1,0 +1,50 @@
+{
+  "$comment": [
+    "3D 모델 원장 — 이 파일이 '보관'의 실체다.",
+    "",
+    "Meshy 변형(retexture/rig/animate/remesh/convert)은 전부 **로컬 파일이 아니라 서버의",
+    "task id** 를 입력으로 받는다. 즉 task id 를 잃지 않는 한 원본 고해상도 GLB 를 로컬에",
+    "쌓아 두지 않아도 언제든 색만 바꾸거나 애니메이션을 붙일 수 있다. 반대로 task id 를 잃으면",
+    "20 크레딧짜리 생성부터 다시 해야 한다 — 그래서 여기에 못 박는다.",
+    "",
+    "리포에는 인게임용 경량본(assets/models/*.glb)만 커밋한다. 원본(수십 MB)은 Meshy 에",
+    "남아 있고 meshy_download_model 로 언제든 다시 받는다(assets/models/_source/ 는 gitignore)."
+  ],
+  "version": 1,
+  "models": [
+    {
+      "id": "boss_kargon",
+      "file": "boss_kargon.glb",
+      "title": "카르곤 보스 — 용암 요새 메카",
+      "usedBy": "src/render/three3d/bossActor.ts (행성 0 보스)",
+      "meshy": {
+        "aiModel": "meshy-6",
+        "prompt": "Top-down view sci-fi game boss: a massive hulking dark iron battle fortress mech, four heavy cannon turrets mounted on its corners, thick armor plating cracked with glowing molten lava veins, a bright orange magma core reactor in the center of its chest, volcanic obsidian rock and scorched steel, symmetrical, menacing, game asset",
+        "texturePrompt": "Dark scorched iron armor plating with deep glowing molten orange lava veins running through the cracks, bright incandescent magma core, volcanic obsidian, heavy industrial war machine",
+        "tasks": {
+          "preview": "019fb21d-9900-790c-9c21-814cd1096abf",
+          "refine": "019fb21f-59c4-778b-b277-d07579ebb256",
+          "remesh": "019fb223-e04b-7acc-bf0e-4c2e4e751aae"
+        },
+        "credits": { "preview": 20, "refine": 10, "remesh": 5, "total": 35 },
+        "createdAt": "2026-07-30"
+      },
+      "prep": "node scripts/glb-prep.mjs <remesh 다운로드>.glb --out assets/models/boss_kargon.glb --color 256 --normal 128",
+      "geometry": { "triangles": 8288, "bytes": 581956, "baseColor": "256x256", "normal": "128x128" }
+    }
+  ],
+  "reuseRecipes": {
+    "$comment": "task id 하나로 파생할 수 있는 것들. <refine> 은 위 tasks.refine, <remesh> 는 tasks.remesh.",
+    "색·재질만 변경": "meshy_retexture(input_task_id: <remesh>, text_style_prompt: '...') — 10 크레딧. 형상 그대로, 텍스처만 새로. 행성별 보스 색 변형에 쓴다.",
+    "애니메이션 추가": "meshy_rig(input_task_id: <remesh>) 5 크레딧 → meshy_animate(rig_task_id, action_id) 3 크레딧/개. ⚠️ 휴머노이드 전용이고 action_id 는 사전 정의 카탈로그다 — 요새형 보스에는 부적합(연출은 bossActor.ts 에서 코드로 저작).",
+    "폴리곤 재조정": "meshy_remesh(input_task_id: <refine>, target_polycount: N) — 5 크레딧.",
+    "포맷 변환": "meshy_convert — 1 크레딧.",
+    "원본 재다운로드": "meshy_download_model(task_id: <refine 또는 remesh>, format: 'glb', save_to: 'assets/models/_source/...')"
+  },
+  "generationNotes": {
+    "$comment": "다음 모델(플레이어 기체 등)을 뽑을 때 반드시 볼 것. 실측으로 확인한 내용이다.",
+    "폴리곤 수는 생성 시 지정할 수 있다": "meshy_text_to_3d 에 should_remesh: true 를 **함께** 넘겨야 target_polycount 가 적용된다(기본 30,000, 범위 100~300,000). meshy-6 는 should_remesh 기본값이 false 라 그것만 빼면 조용히 무시되고 1,016,472 삼각형 / 32.7MB 가 나온다 — 카르곤 보스가 실제로 그랬고, 그래서 remesh 5 크레딧을 따로 썼다. 다음부터는 불필요하다.",
+    "텍스처 해상도는 2k 가 하한이다": "refine 의 texture_resolution 은 '2k'(기본)/'4k'/'8k' 뿐이고 그 아래가 없다. 게다가 MCP 툴 스키마에는 texture_resolution 이 없고 deprecated hd_texture(=4k)만 있어 MCP 경유로는 2k 가 최선이다. 우리 렌더 슬롯은 160px 이므로 **scripts/glb-prep.mjs 로컬 축소는 선택이 아니라 필수**다.",
+    "그 외": "model_type: 'lowpoly' 를 쓰면 ai_model/topology/target_polycount/should_remesh 가 전부 무시된다. decimation_mode(1~4)를 주면 target_polycount 가 무시된다."
+  }
+}

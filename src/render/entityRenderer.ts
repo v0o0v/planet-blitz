@@ -93,6 +93,10 @@ import { isTrailBullet, BulletTrail } from './effects/bulletTrail.js';
 import { isGraze, GrazeTracker, GrazeSpark } from './effects/grazeSpark.js';
 import { PickupPop, LevelUpRing } from './effects/pickupPop.js';
 import { MuzzleFlash } from './effects/muzzleFlash.js';
+// three.js 는 **타입만** 정적으로 가져온다(런타임 코드는 아래 ensureBoss3D 의 동적 import).
+// 정적 import 로 두면 three 전체가 메인 청크에 들어가 첫 로드가 무거워진다 — 실측 gzip 약 0.4MB.
+import type { Stage3D } from './three3d/stage3d.js';
+import type { BossActor } from './three3d/bossActor.js';
 
 /**
  * effectLayer 원샷 이펙트의 공통 계약(ShardBurst 동형). 데미지 숫자·그레이징 스파크·수집 팝·레벨업
@@ -830,6 +834,21 @@ export class EntityRenderer {
    */
   private animClock = 0;
 
+  /**
+   * 런타임 3D 무대(오프스크린 three.js → 아틀라스 텍스처, `three3d/stage3d.ts`).
+   *
+   * **지연 생성**이다 — 보스가 화면에 처음 등장하고 티어 게이트(`gates.model3d`)가 열릴 때만
+   * 만든다. 대부분의 런은 보스 조우 전에 끝나거나 저티어라, 여기서 WebGL 컨텍스트를 미리
+   * 잡으면 아무 이득 없이 컨텍스트 하나를 상시 점유하게 된다.
+   *
+   * null 인 채로 남는 경우(GL 미지원·컨텍스트 소진·자산 없음)에는 기존 PNG 스프라이트가
+   * 그대로 쓰인다 — 3D 는 덧붙임이라 실패해도 보스가 사라지지 않는다.
+   */
+  private stage3d: Stage3D | null = null;
+  private bossActor: BossActor | null = null;
+  /** 3D 보스 자산 로드를 이미 시도했는가. 실패도 1회로 끝낸다(매 프레임 재시도 금지). */
+  private boss3dRequested = false;
+
   constructor(private readonly textures: PlaceholderTextures) {
     // Draw order (bottom → top): lava overlay (시머 대상), hazard/beam overlay, [glow halos],
     // entity sprites, death bursts, then the field overlay (시야 암흑·안전 반경) on top so it dims
@@ -1324,10 +1343,38 @@ export class EntityRenderer {
       }
 
       if (e.kind === 'boss') {
-        // Phase transition = white flash; overheat = bright red pulse (spec).
-        // 보스는 기존 flash/과열 로직이 tint 를 전유한다 — 히트 플래시(아래 else if)를 태우지 않아
-        // 두 로직이 tint 를 두고 다투지 않게 한다(AC-2.3: 보스 기존 로직 우선).
-        if (e.flash) {
+        // 런타임 3D 액터(티어 게이트) — **텍스처만** 3D 아틀라스 프레임으로 갈아 끼운다.
+        // 스프라이트는 끝까지 평범한 Pixi Sprite 로 남으므로 스프라이트 풀·접지 그림자·발광·
+        // 레이더·z-order 가 한 줄도 바뀌지 않는다. 페이즈별 거동은 액터가 쥔다.
+        //
+        // 단 **tint/alpha 연출만은 배타적**이다 — 아래 `driven3d` 분기 주석 참조.
+        let driven3d = false;
+        if (gates.model3d) {
+          this.ensureBoss3D();
+          const actor = this.bossActor;
+          const stage = this.stage3d;
+          if (actor !== null && stage !== null && actor.isReady) {
+            actor.update(dt, {
+              phase: e.bossPhase ?? 0,
+              transitioning: e.flash,
+              overheated: e.active,
+            });
+            const tex = stage.textureOf('boss');
+            if (tracked.sprite.texture !== tex) tracked.sprite.texture = tex;
+            driven3d = true;
+          }
+        }
+
+        if (driven3d) {
+          // 3D 액터가 전환·과열을 **자기 연출로** 표현하므로 아래 2D tint 처리를 태우지 않는다.
+          //
+          // ⚠️ 태우면 보스가 화면에서 사라진다(사용자 신고 2026-07-30). Pixi tint 는 곱연산이라
+          // 과열의 `0xff4020` 은 녹색을 0.25배·파랑을 0.125배로 깎는데, 이는 3D 액터가 발광으로
+          // 밝힌 것을 정확히 되돌리는 연산이다. 거기에 alpha 0.86 까지 겹쳐 어두운 배경과 섞인다.
+          // 즉 같은 상태를 두 시스템이 **반대 방향으로** 그리고 있었다.
+          tracked.sprite.tint = 0xffffff;
+          tracked.sprite.alpha = 1;
+        } else if (e.flash) {
           tracked.sprite.tint = (this.frameTick >> 2) % 2 === 0 ? 0xffffff : 0xff8080;
         } else if (e.active) {
           const pulse = 0.5 + 0.5 * Math.sin(this.frameTick * 0.4);
@@ -1590,6 +1637,43 @@ export class EntityRenderer {
     // 오버레이는 layer 자식에 월드 좌표로 그리므로 position 설정 시점과 무관하다.
     const sh = this.trauma.tick(dt, gates.shake);
     this.layer.position.set(DESIGN_WIDTH / 2 - camX + sh.dx, DESIGN_HEIGHT / 2 - camY + sh.dy);
+
+    // 3D 아틀라스를 그려 Pixi 텍스처로 올린다(프레임당 업로드 1회). 이번 프레임에 활성 슬롯이
+    // 없으면 — 보스가 화면에 없거나 티어가 낮으면 — 아무것도 하지 않는다(비용 0).
+    this.stage3d?.render();
+  }
+
+  /**
+   * 3D 무대와 보스 액터를 **한 번만** 준비한다(지연 생성). 로드는 비동기라 이번 프레임에는
+   * 준비되지 않는다 — 그동안 호출자는 기존 PNG 스프라이트를 계속 쓰고, 로드가 끝난 다음
+   * 프레임부터 3D 텍스처로 자연스럽게 갈아탄다(로딩이 화면을 비우지 않는다).
+   */
+  private ensureBoss3D(): void {
+    if (this.boss3dRequested) return;
+    this.boss3dRequested = true;
+    // three.js 는 무겁다 — **동적 import** 로 코드를 분할해 보스 3D 가 실제로 필요해지는
+    // 순간에만 내려받는다. 보스 조우 전에 끝나는 런·저티어 기기는 이 청크를 아예 받지 않는다.
+    void (async () => {
+      try {
+        const [{ Stage3D }, { BossActor }] = await Promise.all([
+          import('./three3d/stage3d.js'),
+          import('./three3d/bossActor.js'),
+        ]);
+        const stage = Stage3D.create();
+        if (stage === null) return; // GL 없음 — 2D 폴백 유지.
+        const actor = new BossActor(stage);
+        if (await actor.load('boss_kargon.glb')) {
+          // 둘을 **함께** 공개한다 — 렌더 루프가 stage 만 보고 그리려 들면 빈 아틀라스를
+          // 스프라이트에 물릴 수 있다.
+          this.stage3d = stage;
+          this.bossActor = actor;
+        } else {
+          stage.destroy(); // 자산이 없으면 컨텍스트를 쥐고 있을 이유가 없다.
+        }
+      } catch {
+        // 청크 로드 실패(오프라인·배포 불일치)는 화면을 막지 않는다 — 2D 스프라이트로 남는다.
+      }
+    })();
   }
 
   /**
@@ -2169,6 +2253,12 @@ export class EntityRenderer {
     this.clearBulletTrails();
     this.grazeTracker.reset();
     this.pendingLevelUp = false;
+    // 런타임 3D 무대 회수 — WebGL 컨텍스트·GPU 자원을 쥐고 있어 명시 해제가 필요하다
+    // (브라우저의 컨텍스트 수 상한은 낮다: 누수시 재진입에서 3D 가 조용히 꺼진다).
+    this.stage3d?.destroy();
+    this.stage3d = null;
+    this.bossActor = null;
+    this.boss3dRequested = false;
     // 발광체 헤일로·블룸 필터를 명시 회수한다(Container.destroy 는 filters 를 파괴하지 않는다).
     this.clearGlowHalos();
     // 접지 그림자 전량 회수(누수 0). 형제라 부모 destroy 로는 안 걷힌다. reset 에서는 남기면

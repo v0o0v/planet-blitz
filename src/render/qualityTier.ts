@@ -96,14 +96,20 @@ export interface EffectGates {
   eventShaders: boolean;
   /** 탄 트레일(가산 스트릭). 티어별 on/off. */
   trails: boolean;
+  /**
+   * 런타임 3D 액터(오프스크린 three.js → 아틀라스 텍스처, `render/three3d/`). 저티어에서는
+   * 끄고 기존 PNG 스프라이트로 남는다 — 3D 는 **덧붙임**이라 꺼져도 화면이 비지 않는다.
+   * 발광·모션 감소 토글과는 무관하다(접근성 축이 아니라 순수 성능 축).
+   */
+  model3d: boolean;
 }
 
 /**
  * 티어 × 감소 토글 → 이펙트 게이트(순수함수).
  *
  * **티어 기본표(placeholder, defer-balance-tuning)** — 상위 티어가 하위의 상위집합(단조):
- *  - Low : 발광(halo)·흔들림(shake)·블룸(bloom) 없음, 파티클 min, 트레일/이벤트셰이더 off.
- *  - Med : halo + shake + 파티클 normal + 트레일. 블룸/이벤트셰이더는 아직 off.
+ *  - Low : 발광(halo)·흔들림(shake)·블룸(bloom) 없음, 파티클 min, 트레일/이벤트셰이더/3D off.
+ *  - Med : halo + shake + 파티클 normal + 트레일 + 3D 액터. 블룸/이벤트셰이더는 아직 off.
  *  - High: 위 전부 + bloom + eventShaders.
  *  - hitFlash 는 저렴한 핵심 전투 피드백이라 **전 티어 on**(피격 귀속 가독). 감소축(모션)에서만 끈다.
  *
@@ -124,6 +130,7 @@ export function effectGates(tier: QualityTier, settings: GraphicsSettings): Effe
           bloom: false,
           eventShaders: false,
           trails: false,
+          model3d: false,
         }
       : tier === 'med'
         ? {
@@ -134,6 +141,7 @@ export function effectGates(tier: QualityTier, settings: GraphicsSettings): Effe
             bloom: false,
             eventShaders: false,
             trails: true,
+            model3d: true,
           }
         : {
             shake: true,
@@ -143,6 +151,7 @@ export function effectGates(tier: QualityTier, settings: GraphicsSettings): Effe
             bloom: true,
             eventShaders: true,
             trails: true,
+            model3d: true,
           };
 
   // 감소 토글은 티어와 직교로 특정 이펙트를 끈다.

@@ -69,3 +69,6 @@ supabase/.temp/
 # 엔티티 AAA 레인(플레이어·적·해저드)의 before/after 컷. 같은 이유로 커밋하지 않는다 —
 # 여기는 `bg` 가 아니라 엔티티가 보이는 컷이라 장당 ~2MB 다.
 .omc/research/entity-aaa-shots/**/*.png
+
+# 3D 모델 원본(수십 MB) — Meshy 에 남아 있고 manifest.json 의 task id 로 다시 받는다.
+assets/models/_source/

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>Planet Blitz — 보스 3D 연출 뷰어 (dev)</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; padding: 24px; background: #0a0c14; color: #cfe0ff;
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      }
+      h1 { font-size: 16px; font-weight: 600; margin: 0 0 4px; color: #e8f0ff; }
+      p.sub { margin: 0 0 20px; font-size: 12px; color: #7f92b5; line-height: 1.6; }
+      .row { display: flex; gap: 16px; flex-wrap: wrap; }
+      .cell { background: #0e1220; border: 1px solid #22304a; border-radius: 6px; padding: 10px; }
+      .cell canvas {
+        display: block; width: 320px; height: 320px;
+        image-rendering: pixelated; background: #070910; border-radius: 3px;
+      }
+      .label { margin-top: 8px; font-size: 12px; color: #9fb4d8; }
+      .desc { font-size: 11px; color: #6d80a3; margin-top: 2px; }
+      .status { margin-top: 20px; font-size: 12px; color: #7f92b5; }
+      .err { color: #ff8080; }
+    </style>
+  </head>
+  <body>
+    <h1>보스 3D 연출 뷰어 <span style="color:#6d80a3">(dev 전용)</span></h1>
+    <p class="sub">
+      Meshy 로 만든 카르곤 보스 GLB 를 게임과 <b>동일한 경로</b>로 렌더한다 —
+      오프스크린 three.js → 아틀라스 → Pixi 텍스처(<code>src/render/three3d/</code>).<br />
+      각 칸은 sim 의 보스 상태(<code>boss.phase</code> / 전환 프리즈 / 과열 창)에 대응하는 연출이며,
+      인게임과 같은 160px 슬롯을 nearest 확대해 픽셀감을 유지한다.
+    </p>
+    <div class="row" id="row"></div>
+    <div class="status" id="status">로딩 중…</div>
+
+    <script type="module">
+      import { Stage3D, SLOT_SIZE } from '/src/render/three3d/stage3d.ts';
+      import { BossActor } from '/src/render/three3d/bossActor.ts';
+
+      const STATES = [
+        ['PHASE 0', '체력 100~70% · 상하 호흡만 (좌우 축 미사용)', { phase: 0, transitioning: false, overheated: false }, 0],
+        ['PHASE 1', '체력 70~35% · 좌우 무게 이동 + 롤 (상하 미사용)', { phase: 1, transitioning: false, overheated: false }, 0],
+        ['PHASE 2', '체력 35% 이하 · 회전 드리프트 + 비정수비 흔들림', { phase: 2, transitioning: false, overheated: false }, 0],
+        ['OVERHEAT', '과열 창(피해 2배) · 팽창 맥동 + 뒤로 젖힘', { phase: 2, transitioning: false, overheated: true }, 0],
+        ['TRANSITION', '전환 2초 · 충전 → 도약 → 착지 스쿼시', { phase: 1, transitioning: true, overheated: false }, null],
+      ];
+
+      const row = document.getElementById('row');
+      const status = document.getElementById('status');
+      const cells = STATES.map(([label, desc]) => {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        const cv = document.createElement('canvas');
+        cv.width = SLOT_SIZE;
+        cv.height = SLOT_SIZE;
+        cell.append(cv);
+        const l = document.createElement('div');
+        l.className = 'label';
+        l.textContent = label;
+        const d = document.createElement('div');
+        d.className = 'desc';
+        d.textContent = desc;
+        cell.append(l, d);
+        row.append(cell);
+        return cv.getContext('2d');
+      });
+
+      const stage = Stage3D.create();
+      if (stage === null) {
+        status.className = 'status err';
+        status.textContent = 'WebGL 컨텍스트를 얻지 못했습니다 — 인게임에서도 2D 스프라이트로 폴백됩니다.';
+      } else {
+        const actor = new BossActor(stage);
+        const ok = await actor.load('boss_kargon.glb');
+        if (!ok) {
+          status.className = 'status err';
+          status.textContent = 'assets/models/boss_kargon.glb 로드 실패 — 인게임에서는 기존 PNG 로 폴백됩니다.';
+        } else {
+          status.textContent = '재생 중 — 각 칸은 같은 모델·같은 시계이고 상태만 다르다.';
+          let last = performance.now();
+          // 전환은 2초 뒤 끝나는 일회성이라, 뷰어에서는 계속 되감아 반복 재생한다.
+          let transLoop = 2;
+          const tick = (now) => {
+            const dt = Math.min((now - last) / 1000, 0.1);
+            last = now;
+            transLoop -= dt;
+            if (transLoop <= 0) transLoop = 2;
+            for (const [i, [, , state, tl]] of STATES.entries()) {
+              actor.transitionLeft = tl === null ? transLoop : 0;
+              actor.wasTransitioning = state.transitioning;
+              actor.update(i === 0 ? dt : 0, state); // 시계는 한 번만 전진시킨다(전 칸 동기).
+              stage.render();
+              const ctx = cells[i];
+              ctx.clearRect(0, 0, SLOT_SIZE, SLOT_SIZE);
+              ctx.drawImage(stage.canvas, 0, 0, SLOT_SIZE, SLOT_SIZE, 0, 0, SLOT_SIZE, SLOT_SIZE);
+            }
+            requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        }
+      }
+    </script>
+  </body>
+</html>
