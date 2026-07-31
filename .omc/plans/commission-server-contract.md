@@ -9,7 +9,8 @@
 - 용어 정본: `CONTEXT.md` §의뢰서 · §의뢰 확정 지급물 · §지시 수신소 · §의뢰 런 (`CONTEXT.md:208-254`, `:668-677`, `:695`)
 - 결정 문서: ADR-0042 · ADR-0043 · ADR-0044 · ADR-0045(3차 정정본) · ADR-0027 · ADR-0028 · ADR-0026 · ADR-0024 · ADR-0039 · ADR-0038
 - **이 문서의 모든 사실 주장은 `파일:줄` 을 달거나 "미확인"으로 표시한다.**
-- **개정: rev2** (security-reviewer 검토 반영 — CRITICAL 2 · MAJOR 6 · Minor 4). rev1 에서
+- **개정: rev3** (보안 재검토 — 조건부 GO. rev2 의 12건 중 10건은 원 공격을 실제로 막는 것으로 확인됐고, **M2 ②(쿨다운)와 M6(뷰 전환)이 각각 다른 이유로 여전히 뚫려 있었다**. §0-3 참조.)
+- 개정: rev2 (security-reviewer 검토 반영 — CRITICAL 2 · MAJOR 6 · Minor 4). rev1 에서
   **틀렸던 결정을 지우지 않고** 각 자리에 `⚠️ rev2 정정` 으로 남긴다. 검토가 그대로 두라고 확인한 6건
   (§2-2 트리거 앵커 · §2-3 자인 · §4-2 권한 · §5-1 (다) 기각 · §7-2 순서 반전 · §5-4 3단계 멱등)은 불변.
 
@@ -43,6 +44,17 @@
 | **m2** | cron 스니펫이 테이블을 비수식 사용 | **전부 `public.` 수식** | pg_cron 은 스케줄 롤의 `search_path` 로 돌아 `set search_path=''` 규율 밖이다. 리포 선례도 전부 수식(`20260726000100:124-128`) |
 | **m3** | `p_source` 비교 정규화 미지정 | **C1 allowlist 로 함께 닫힘** | 통과 집합이 유한 리터럴 3종으로 고정된다 |
 | **m4** | 잠금 순서 서술에 배타성 근거 없음 | **cron ① ↔ `consume_commission` 의 대상 집합 배타성을 명시** | M4 수정 후 두 경로의 잠금 순서가 역순이 된다. 지금은 술어가 배타적이라 사이클이 안 닫히지만, **그 배타성이 계약에 없으면 술어를 넓힐 때 교착이 생긴다** |
+
+### 0-3. rev3 이 rev2 에서 뒤집은 것
+
+재검토 판정은 **조건부 GO** — rev2 의 12건 중 **10건(C1·C2·M1·M3·M4·M5 + m1~m4)은 원 공격을 실제로 막는 것으로 확인됐다**(plpgsql 의미론 · 회귀 4경로 · 부등호 일치 · CTE 잠금까지 대조). 아래 둘만 뒤집는다.
+
+| # | rev2 | rev3 | 왜 rev2 가 틀렸나 |
+|---|---|---|---|
+| **선행1** | M2 ② 쿨다운 = **직전 granted 행의 `claimed_final_tick / 60` 초** 대기 | **(a) 자격에 `MIN_BOSS_KILL_TICKS` 하한 + (b) `next_eligible_at` 누적기.** 둘이 함께여야 성립한다 | **비례 계수를 공격자가 고른다.** `claimed_final_tick` 은 바로 그 호출에서 공격자가 정한 값이고, 자격 판정(2단계)에 **틱 하한이 없다**. `finalTick:1` 을 반복하면 쿨다운이 `1/60`초 ≈ 0 이라 **rev1 과 똑같이 20/h 하나만 남는다.** ⚠️ 특히 rev2 가 든 `grant_currency` 개연성 캡과의 유비가 **부호가 반대라 틀렸다** — 개연성 캡은 `finalTick` 이 작을수록 지급 상한을 **깎는다**(`20260727000000:423-424`, 상한이 `틱 × (1+stage)` 에 비례)라 작게 주장하면 **손해**다. rev2 의 쿨다운은 작게 주장하면 **이득**이었다 |
+| **선행2** | M6 fail-closed 전환 — 기저에 `commission_runs_select_own` 정책 추가 + 뷰 `security_invoker` | **행은 RLS, 컬럼은 GRANT 로 각각 fail-closed.** `revoke select … from authenticated` + 컬럼 목록 명시 grant | **RLS 정책은 행을 게이트하고 컬럼은 GRANT 가 게이트한다.** rev1 에서 `commission_runs` 는 정책이 **0개**라 클라가 기저를 행 단위로 아예 못 읽었고, 컬럼 축소는 뷰가 담당하면 충분했다. rev2 가 select-own 을 **추가**하면서 행이 열렸는데 **컬럼 GRANT 를 한 홉 더 안 밟았다** — 이 리포 전 마이그레이션에 테이블 GRANT 문이 **0건**(유일한 `grant select` 는 `20260727010000:240` 의 뷰 1건)이라 **Supabase 기본 부여에 의존**하고 있다. 즉 `GET /rest/v1/commission_runs?select=loadout_sealed,replay_gz` 로 **§3-5·§3-6 이 존재 이유로 든 바로 그 두 컬럼**이 그대로 나간다. **rev2 가 rev1 보다 나빠졌다** |
+
+**⚠️ 그리고 선행2 는 R 계열 AC 4건이 전부 초록인 채로 샌다.** rev2 가 AC-R1 을 "0행" → "본인 행만 보인다"로 바꿨으므로 **유출 상태에서 통과**하고, AC-R2 는 **뷰의** `information_schema.columns` 만 보며, AC-R7 은 뷰의 `security_invoker` 만 본다. rev1 의 "AC 가 6건 중 하나도 안 잡는다"가 **R 계열에서 그대로 재발했다** — AC 를 고칠 때 **그 AC 가 무엇을 안 보는지**를 함께 세지 않으면 같은 실패가 반복된다는 증거다.
 
 ---
 
@@ -193,7 +205,8 @@ create table if not exists public.commission_issues (
   profile_id    uuid        not null references public.profiles(id) on delete cascade,
   granted           boolean     not null,
   claimed_victory   boolean     not null,      -- ← rev2 (M2 ①). 빈도 상한이 세는 술어.
-  claimed_final_tick int        not null default 0,  -- ← rev2 (M2 ②). 쿨다운 산정 입력.
+  claimed_final_tick int        not null default 0,  -- ← rev2 (M2 ②). 감사·산정 입력.
+  next_eligible_at timestamptz not null default now(), -- ← rev3 (선행1 b). 누적 예약 지평.
   commission_id uuid,                          -- granted=true 일 때 발령분(FK 없음: 소비 시 삭제됨)
   skip_reason   text        check (skip_reason in ('not-victory','stock','rate','cooldown')),
   created_at    timestamptz not null default now()
@@ -205,6 +218,9 @@ create index if not exists commission_issues_rate_idx
   on public.commission_issues (profile_id, created_at desc) where claimed_victory;
 create index if not exists commission_issues_granted_idx
   on public.commission_issues (profile_id, created_at desc) where granted;
+-- ← rev3 (선행1 b). 쿨다운은 이 인덱스로 max(next_eligible_at) 하나만 읽는다.
+create index if not exists commission_issues_horizon_idx
+  on public.commission_issues (profile_id, next_eligible_at desc);
 
 alter table public.commission_issues enable row level security;
 -- select 정책도 두지 않는다. 클라가 읽을 이유가 없고(발령 결과는 inventory 로 보인다),
@@ -293,12 +309,19 @@ create policy commission_grants_select_own
 ### 3-5. `commission_runs_public` — 컬럼을 좁힌 뷰
 
 ```sql
--- ← rev2 (M6). 기저 select 정책을 두고 뷰를 invoker 로 돌려 **fail-closed** 로 만든다.
+-- ← rev2 (M6). 기저 select 정책을 두고 뷰를 invoker 로 돌려 **행**을 fail-closed 로 만든다.
 drop policy if exists commission_runs_select_own on public.commission_runs;
 create policy commission_runs_select_own
   on public.commission_runs for select to authenticated
   using (auth.uid() = profile_id);
 -- insert/update/delete 정책은 여전히 없다(쓰기는 definer RPC 전용).
+
+-- ← rev3 (선행2). **행은 RLS, 컬럼은 GRANT.** 정책만 두면 컬럼은 Supabase 기본 부여로 전부 열린다.
+revoke select on public.commission_runs from authenticated;
+grant  select (run_id, profile_id, commission_id, grade, status, payload,
+               verify_attempts, verified_result, created_at, started_at, verified_at)
+  on public.commission_runs to authenticated;
+-- loadout_sealed · replay_gz 는 목록에 없다 = **어떤 경로로도 안 나간다.**
 
 create or replace view public.commission_runs_public
 with (security_barrier = true, security_invoker = true)
@@ -315,6 +338,14 @@ grant select on public.commission_runs_public to authenticated;
 - ⚠️ **rev2 정정 (M6) — rev1 은 fail-open 이었다.** rev1 은 기저에 select 정책을 두지 않고 정의자 권한 뷰의 `where profile_id = auth.uid()` 한 줄에 **행 경계 전부**를 실었다. 구조가 뚫린 것은 아니었지만(기저 정책 0개 · `authenticated` 에만 grant · `security_barrier`) **실패 방향이 틀렸다**: 그 한 줄이 지워지면 즉시 전 계정 노출이고, 탐지 장치가 AC-R3 테스트 하나뿐이었다.
 - **rev2 구조**: 기저 `commission_runs_select_own`(행 경계) + 뷰 `security_invoker = true`(컬럼 축소). **뷰의 `where` 를 지워도 RLS 가 본인 행만 통과시키므로 결과가 "유출"이 아니라 "무변화"다.** 비용은 정책 1개고, 원래 목적(컬럼 축소)은 그대로 유지된다.
 - ⚠️ **`security_invoker = true` 를 빠뜨리면 rev1 로 되돌아간다** — 기저 정책이 있어도 정의자 권한 뷰는 RLS 를 우회한다. AC-R7 이 이것을 잡는다.
+- ⚠️ **rev3 정정 (선행2) — rev2 의 M6 수정이 `loadout_sealed`·`replay_gz` 를 클라에 열었다. rev1 보다 나빴다.**
+  - **RLS 정책은 행을 게이트하고, 컬럼은 GRANT 가 게이트한다.** rev1 에서 `commission_runs` 는 **정책이 0개**였으므로 클라가 기저를 **행 단위로 아예 못 읽었고**, 컬럼 축소는 뷰가 담당하면 충분했다.
+  - rev2 는 fail-closed 를 만들려고 **select-own 행 정책을 추가**했다. 행이 열렸는데 **컬럼 GRANT 를 한 홉 더 안 밟았다.** 이 리포 전 마이그레이션에 **테이블 GRANT 문이 0건**이고(유일한 `grant select` 는 `20260727010000:240` 의 뷰 1건 — 전문 grep 확인) 나머지는 전부 **Supabase 기본 부여**(`public` 스키마 신규 테이블에 `authenticated` 전 컬럼 SELECT)에 의존한다.
+  - 공격: `GET /rest/v1/commission_runs?select=run_id,loadout_sealed,replay_gz` — 뷰를 무시하고 기저를 직접 친다. 자기 행이 전부 나온다.
+  - 얻는 것이 하필 **이 뷰 규율이 존재 이유로 든 바로 그 둘**이다: `loadout_sealed`(EF 게이트 3 의 **위조 대조 기준값** — §3-5 가 "노출 이득 0 + 대조 기준값이라 뺐다"고 명시) · `replay_gz`(§3-6 이 이 규율의 **유일한 이득**으로 든 "합격하는 입력로그를 연구할 재료"). **즉 rev2 의 수정이 §3-5·§3-6 을 통째로 무효화했다.**
+  - **rev3: 행은 RLS, 컬럼은 GRANT 로 각각 fail-closed.** 위 `revoke` + 컬럼 목록 `grant` 가 그것이다.
+  - **컬럼 목록이 곧 드리프트 탐지기다**: `security_invoker` 뷰는 **호출자 권한으로** 기저를 읽으므로 이 GRANT 목록과 뷰 select 목록이 **정확히 일치해야 뷰가 동작한다.** 불일치가 즉시 오류로 드러난다.
+  - ⚠️ **그리고 이것은 R 계열 AC 4건이 전부 초록인 채로 샜다** — AC-R1 은 rev2 가 "0행"→"본인 행만"으로 바꿔 **유출 상태에서 통과**, AC-R2 는 **뷰의** `information_schema.columns` 만 보고 기저를 안 봄, AC-R7 은 뷰의 `security_invoker` 만 봄. **AC-R8 이 이 사각지대를 닫는다.**
 - `payload` 는 노출한다 — 클라가 `consume_commission` 반환으로 이미 갖고 있고, 수신소 UI 가 무대·주문·보상을 표시해야 한다.
 - **`loadout_sealed` 를 뺀 것은 노출 이득 0 + 위조 대조 기준값이기 때문**이다.
 
@@ -368,6 +399,7 @@ create trigger pve_runs_issue_commission
     return;                      -- 서브트랜잭션만 롤백. 바깥 정산은 커밋된다.
   end;
   ```
+  - ⚠️ **rev3 문구 정정**: plpgsql `OTHERS` 는 **`query_canceled`·`assert_failure` 를 잡지 않는다.** 발령 중 `statement_timeout` 이 터지면 정산은 **여전히 롤백된다** — "어느 단계에서 예외가 나도"는 엄밀히는 참이 아니다. 실무상 그 경우는 세션 취소라 정산 응답 자체가 실패하므로 **조용한 자원 0 지급(PR#222 형상)은 발생하지 않지만**, 계약 문구는 정확해야 한다.
   - **fail-closed 로 안전하다**: 서브트랜잭션 롤백으로 §4-2 1단계의 앵커 행도 함께 사라지지만, 그 `pve_runs` 행은 이미 `verified` 로 커밋돼 **트리거가 재발화하지 않는다**(§4-1 의 `old`/`tg_op` 가드). 즉 재처리 경로가 없고 결과는 **의뢰서 미발령** — 지급 쪽으로 새지 않는다.
   - **자인**: 그래서 발령 실패는 `raise warning` 으로만 남고 플레이어는 알지 못한다. 관측(§7-3 형식)으로 warning 발생률을 모니터한다.
 - **AC-I5 가 rev2 에서 뮤테이션으로 바뀐다** — "세 경로에서 정상 반환"은 **rev1 의 항진**이었다(세 경로는 원래 예외를 안 던지므로 감싸지 않아도 통과한다).
@@ -388,15 +420,17 @@ issue_commission_for_run(p_pve_run_id uuid, p_profile_id uuid, p_summary jsonb) 
 |---|---|---|
 | **0** | **전체를 서브트랜잭션으로 감싼다**(§4-1 C2). 아래 어느 단계에서 예외가 나도 바깥 정산은 커밋된다 | ← rev2 |
 | 1 | `v_victory := (p_summary->>'victory' = 'true' and p_summary->>'bossKilled' = 'true')`; `v_ft := coalesce(nullif(p_summary->>'finalTick','')::int, 0)` (비숫자 방어). `insert into commission_issues (pve_run_id, profile_id, granted, claimed_victory, claimed_final_tick) values (p_pve_run_id, p_profile_id, false, v_victory, greatest(0, v_ft)) on conflict (pve_run_id) do nothing` → `get diagnostics v_n = row_count`; `v_n = 0` 이면 **즉시 return** | 1회성 — 이미 판정을 거친 앵커. **자격 판정을 INSERT 앞으로 당긴 것이 rev2 변경**(M2 ①) |
-| 2 | `not v_victory` 이면 `skip_reason:='not-victory'` 로 갱신 후 return | 클라 주장(§2-3 자인) |
+| 2 | **자격 + 개연성 하한** ← **rev3 (선행1 a)**: `not v_victory` **또는 `v_ft < MIN_BOSS_KILL_TICKS`(3,600)** 이면 `skip_reason:='not-victory'` 로 갱신 후 return | 클라 주장(§2-3 자인). **하한이 없으면 3b 를 공격자가 0 으로 만든다** |
 | 3 | **빈도**: `select count(*) from commission_issues where profile_id = p_profile_id and claimed_victory and created_at > now() - interval '1 hour'` ≥ `CAP_ISSUE_ATTEMPTS_PER_HOUR`(20) 이면 `skip_reason:='rate'` 후 return. 1단계에서 자기 행을 이미 넣었으므로 **자기 자신이 카운트에 포함된다** — 상수 20 은 그 포함 기준이다 | §2-4. **`and claimed_victory` 가 rev2 변경** |
-| **3b** | **쿨다운**(rev2 M2 ②): 직전 **granted** 행의 시각 `select max(created_at) from commission_issues where profile_id = p_profile_id and granted` 을 잡고, **그 행의 `claimed_final_tick / 60` 초**가 아직 안 지났으면 `skip_reason:='cooldown'` 후 return | 아래 §4-3 |
+| **3b** | **쿨다운 — 누적 예약 지평** ← **rev3 (선행1 b, rev2 를 대체)**: `v_horizon := coalesce((select max(next_eligible_at) from public.commission_issues where profile_id = p_profile_id), now())`. `v_horizon > now()` 이면 `skip_reason:='cooldown'` 후 return | 아래 §4-3 |
 | 4 | 재고: `select count(*) from commission_inventory where profile_id = p_profile_id` ≥ 보관 상한이면 `skip_reason:='stock'` 후 return | 상한 실값 **미확인**(§13-①) |
 | 5 | 계급·payload 를 굴린다(RNG 는 서버). **보유 유니크를 제외하지 않는다 — 중복 지급 허용**(계획 pre-mortem ⑥) | — |
-| 6 | `insert into commission_inventory ... returning commission_id into v_cid`; `update commission_issues set granted = true, commission_id = v_cid where pve_run_id = p_pve_run_id` | — |
+| 6 | `insert into commission_inventory ... returning commission_id into v_cid`; `update commission_issues set granted = true, commission_id = v_cid, **next_eligible_at = greatest(now(), v_horizon) + make_interval(secs => greatest(0, v_ft) / 60.0)** where pve_run_id = p_pve_run_id` | **지평 전진은 granted 일 때만.** 미발령 행은 `default now()` 라 max 에 영향이 없다 |
 
 - 5 단계의 굴리기 RNG 는 `gen_random_uuid()`/`random()` 계열이며 **sim 해시와 무관**하다(서버 전용). `src/sim` 을 건드리지 않는다(Principle 6).
 ### 4-3. rev2 — 빈도 상한이 세는 양을 고친다 (M2)
+
+> ⚠️ **이 절의 ①(`and claimed_victory`)만 유효하다. ②(쿨다운)는 rev3 에서 폐기됐고 §4-4 가 정본이다.** 두 절은 항상 함께 인용한다.
 
 **rev1 이 틀린 지점**: rev1 은 1단계에서 행을 무조건 넣고 **2단계에서야 승리를 봤다.** 그래서 3단계 count 가 **패배·중도 이탈 정산까지** 셌다. 귀결이 정확히 반대였다:
 
@@ -408,10 +442,56 @@ issue_commission_for_run(p_pve_run_id uuid, p_profile_id uuid, p_summary jsonb) 
 **rev2 의 두 축**:
 
 1. **`and claimed_victory`** — 패배 정산은 슬롯을 소모하지 않는다. **"상한에 걸려 미발령"은 여전히 카운트된다**(그 행도 `claimed_victory=true` 이므로) — §2-4 가 요구한 "grant 만 세면 상한이 자기를 무력화한다"는 성질이 보존된다.
-2. **주장 런 길이 비례 쿨다운** — 직전 발령 이후 **그 런이 주장한 `finalTick / 60` 초**가 지나야 다음 발령이 열린다. `grant_currency` 개연성 캡(`20260727000000:404-425`)과 **같은 논리**다: 클라 주장을 물리적 가능 시간으로 유계한다. 공격자가 상한을 우회하려면 **짧은 런을 주장해야 하는데 그러면 쿨다운이 짧은 대신 보상 자격 판정이 그대로 남고, 긴 런을 주장하면 그 시간만큼 기다려야 한다** — 비용이 주장에 비례한다.
-   - **정직한 플레이어에게 무해하다**: 실제로 그 길이를 플레이했으므로 이미 그만큼 시간이 흘렀다. 오거부 0.
-   - `claimed_final_tick` 은 **직전 granted 행의 값**을 쓴다(현재 행이 아니다) — 현재 행 기준이면 "짧게 주장하고 즉시 또"가 성립한다.
-   - **자인**: `finalTick` 도 클라 주장이다. 이 장치는 위조를 막는 것이 아니라 **위조의 처리량을 주장에 비례해 깎는다.**
+2. ~~**주장 런 길이 비례 쿨다운** — 직전 granted 행의 `claimed_final_tick / 60` 초를 기다린다. `grant_currency` 개연성 캡과 같은 논리다.~~ ← **rev3 에서 폐기. 아래 §4-4 가 대체한다.**
+
+### 4-4. rev3 — 쿨다운을 다시 세운다 (선행1)
+
+**⚠️ rev2 의 쿨다운은 공격을 못 막았다. 비례 계수를 공격자가 골랐기 때문이다.**
+
+공격: `settle_pve_run({victory:"true", bossKilled:"true", finalTick:1})` 반복.
+
+| 단계 | rev2 거동 |
+|---|---|
+| 1 | `claimed_final_tick = 1` 로 기록 |
+| 2 | 자격 통과 — 판정 입력이 `victory`·`bossKilled` **두 문자열뿐이고 틱 하한이 없다** |
+| 3b | 쿨다운 = `1/60`초 ≈ **0** → 즉시 다음 발령 |
+
+→ 남는 제약이 **rev1 과 똑같이 `CAP_ISSUE_ATTEMPTS_PER_HOUR`(20) 하나**였다. rev2 가 적은 비용 논증("짧게 주장하면 쿨다운이 짧은 대신 보상 자격 판정이 그대로 남는다")은 **그 자격 판정도 클라 주장 두 글자**라 성립하지 않았다.
+
+**⚠️ `grant_currency` 개연성 캡과 "같은 논리"라는 rev2 의 유비가 특히 틀렸다 — 부호가 반대다.**
+
+| | 작은 `finalTick` 을 주장하면 |
+|---|---|
+| 개연성 캡(`20260727000000:423-424`) | 상한이 `틱 × (1+stage)` 에 비례하므로 지급이 **깎인다** → 공격자에게 **손해** |
+| rev2 쿨다운 | 대기가 `틱/60` 이므로 **짧아진다** → 공격자에게 **이득** |
+
+**같은 입력을 쓴다는 것이 같은 논리라는 뜻이 아니다.** 방어 장치를 기존 장치에 유비할 때는 **입력이 아니라 부호**를 대조해야 한다는 교훈으로 남긴다.
+
+→ **rev3 결정 — 두 조각이 함께 있어야 성립한다:**
+
+**(a) 자격에 개연성 하한** (§4-2 2단계)
+
+```
+MIN_BOSS_KILL_TICKS constant int := 3600;   -- 60초. 실값은 sim 실측(§13-⑫)
+if not v_victory or v_ft < MIN_BOSS_KILL_TICKS then … 'not-victory' … end if;
+```
+
+보스를 잡은 승리 런이 **물리적으로 가질 수 없는 길이**를 자격에서 배제한다. **이것이 없으면 (b)를 공격자가 0 으로 만든다** — (a)와 (b)는 독립 방어가 아니라 **한 방어의 두 조각**이다.
+
+**(b) 쿨다운을 "직전 행 읽기"가 아니라 "미래 예약 누적기"로** (§4-2 3b·6단계)
+
+```
+지평 = max(next_eligible_at)                      -- 프로필별
+발령 게이트: 지평 > now() 이면 미발령('cooldown')
+발령 시 전진: next_eligible_at := greatest(now(), 지평) + (claimed_final_tick / 60) 초
+```
+
+- **성질**: 발령은 지평이 과거일 때만 열리고 매 발령이 지평을 주장한 만큼 밀므로, **어떤 창에서도 "발령된 런들이 주장한 시간의 합 ≤ 실제 경과 시간"** 이 성립한다. 짧게 주장하면 (a)가 막고, 길게 주장하면 그만큼 **실제로** 기다린다.
+- **rev2 의 "직전 행 기준"이 놓친 것**: 그 형태는 지평이 누적되지 않아 **긴 주장과 짧은 주장을 번갈아** 파이프라이닝할 수 있었다.
+- **rev1→rev2→rev3 의 궤적을 기록한다**: rev2 는 "현재 행 기준이면 짧게 주장하고 즉시 또가 성립한다"며 직전 행 기준을 골랐는데, **배제 근거는 맞았지만 대안도 같은 병을 앓았다.** 두 선택지가 다 틀렸고 정답은 제3의 형태(누적기)였다. **"둘 중 낫다"로 고르면 셋째를 못 본다.**
+- **GC 무해**: cron ④(7일)가 지운 행은 `next_eligible_at` 이 이미 과거다(쿨다운 지평은 최대 `replayBudgetTicks/60` 초 ≈ 분 단위). 따라서 **rev2 가 §10 에서 "부등식 근거 명시"로 남겼던 GC 우려 자체가 소멸한다.**
+- **정직한 플레이어에게 무해**: 실제로 그 길이를 플레이했으므로 이미 그만큼 시간이 흘렀다. 오거부 0.
+- **잔여 자인**: `finalTick`·`victory` 는 여전히 클라 주장이다. (a)+(b)가 하는 일은 **위조를 막는 것이 아니라 위조 처리량의 상한을 공격자가 고를 수 없게 만드는 것**이다. 상한 자체는 `20/h` 와 `실시간/MIN_BOSS_KILL_TICKS` 중 작은 쪽으로 **서버가 고정**한다.
 
 - **의뢰 런의 정산은 이 경로를 타지 않는다** — 의뢰 런은 `settlePveRunCurrency`(→`settle_pve_run`)를 호출하지 않으므로(§8) `pve_runs` 행이 생기지 않고, 따라서 트리거가 발화할 대상이 없다. **"의뢰 런이 다시 의뢰서를 낳지 않는다"(`CONTEXT.md:669`)가 코드 분기가 아니라 구조로 성립한다.**
 
@@ -848,7 +928,7 @@ M4 수정 후 두 경로의 잠금 순서가 **역순**이 된다:
 |---|---|---|---|
 | `pve_runs` (전체 행) | **cron `planet-blitz-gc-pve-runs`, 7일**(`20260726000200:384-388`) | rev7 이 여기에 앵커를 걸려 했다면 **8일 전 발령 기록이 소멸**한다 | **이 계약은 여기에 아무것도 걸지 않는다.** 앵커 id 만 복사해 `commission_issues` 에 둔다(FK 없음, §2-5) |
 | `commission_issues` | **cron ④, 7일** | 빈도 상한 창(1h)이 168배 여유. 1회성 PK 도 함께 사라지지만 **앵커가 재제시될 경로가 없다**(§2-5) | 안전 |
-| `commission_issues.claimed_final_tick`(쿨다운 근거) | 위와 같이 7일 | 쿨다운은 **직전 granted 행** 하나만 보므로(§4-3) 7일 GC 가 그것을 지우면 쿨다운이 풀린다. **주장 가능한 최장 런(`replayBudgetTicks`)이 7일보다 훨씬 짧으므로 무해** | 안전(부등식 근거 명시) |
+| `commission_issues.next_eligible_at`(쿨다운 지평) | 위와 같이 7일 | ← **rev3 (선행1 b)**. 쿨다운 지평은 최대 `replayBudgetTicks / 60` 초(분 단위)라 **GC 대상이 되는 시점에는 이미 과거**다. `greatest(now(), 지평)` 이 그 경우를 `now()` 로 흡수한다 | 안전 — **GC 가 쿨다운을 푸는 경로가 원리적으로 없다** |
 | `commission_inventory` | **소비 시 즉시 삭제**(`consume_commission` 4단계). TTL 없음 | 여기에 1회성을 걸면 소비와 함께 소멸(§2-1 ②) | **1회성을 걸지 않는다** |
 | `commission_runs` (행) | **삭제하지 않는다.** cron ②는 컬럼만 비운다 | 지우면 `commission_grants.commission_run_id` FK(restrict)가 막는다 | 안전 — DB 가 규율을 강제 |
 | `commission_runs.replay_gz` | **cron ②, verified_at + 48h** | 48h 뒤 감사 불가. `ACTIVE_TTL`(24h) 이 그보다 짧아 재시도 창과 겹치지 않는다 | 안전 |
@@ -871,6 +951,9 @@ M4 수정 후 두 경로의 잠금 순서가 **역순**이 된다:
 > **⚠️ rev2 — 검토자 총평: "rev1 의 AC 목록으로는 C1·C2·M1·M2·M4·M6 중 하나도 잡히지 않는다."** 이것이 이 개정의 가장 아픈 지적이다. rev1 은 AC 를 **49개** 썼는데 **길이가 완결성의 증거가 아니었다** — 새로 발견된 결함 6건 전부가 그 49개의 사각지대에 있었다(rev2 는 59개다). 그래서 rev2 는 **AC 를 먼저 고치고 각 항목에 뮤테이션(무엇을 되돌리면 이 AC 가 실패하는가)을 붙였다.** 뮤테이션이 없는 AC 는 "구현했다"만 재고 "구조가 그 결함을 막는다"를 재지 못한다.
 >
 > **rev2 변경분**: 교체 5건(AC-C2 · AC-C3 · AC-I5 · AC-R1 · AC-S4) · 신설 10건(AC-C9 · AC-C10 · AC-I8 · AC-I9 · AC-M5 · AC-M6 · AC-R7 · AC-S4b · AC-S9 · AC-E9).
+>
+> **⚠️ rev3 — 같은 실패가 R 계열에서 재발했다.** rev2 는 AC 를 고치면서 **그 AC 가 무엇을 *안* 보는지**를 세지 않았다. 그 결과 §3-5 컬럼 유출(선행2)이 **AC-R1·R2·R7 세 개가 전부 초록인 채로** 통과한다 — R1 은 rev2 가 판정 기준을 느슨하게 바꿔서, R2·R7 은 **뷰만 보고 기저를 안 봐서**. **AC 를 고칠 때는 "이 AC 가 통과하면서도 참일 수 있는 나쁜 상태"를 함께 적어라.**
+> **rev3 변경분**: 교체 1건(AC-I9) · 보강 3건(AC-R1 · AC-R2 · AC-G2) · 신설 2건(AC-I10 · AC-R8). 총 61건.
 
 ### 발령 (I)
 
@@ -885,9 +968,12 @@ M4 수정 후 두 경로의 잠금 순서가 **역순**이 된다:
 - [ ] **AC-I8** ← **rev2 신설 (M2 ①)**. **패배 정산은 빈도 슬롯을 소모하지 않는다.**
   *검증법*: `claimed_victory=false` 행 30개(상한 20 초과)를 심은 뒤 정상 승리 정산 1회 → **발령된다**. 이어서 같은 30개를 `claimed_victory=true` 로 바꿔 심고 반복 → **미발령(`skip_reason='rate'`)**.
   *뮤테이션*: count 술어에서 `and claimed_victory` 를 지우면 첫 절반이 실패해야 한다. **이 AC 가 없으면 "정직한 빠른 재시작 플레이어의 의뢰서가 끊기는" rev1 거동이 그대로 통과한다.**
-- [ ] **AC-I9** ← **rev2 신설 (M2 ②)**. 직전 발령이 주장한 런 길이만큼 지나기 전의 발령 시도는 `skip_reason='cooldown'` 이다.
-  *검증법*: `claimed_final_tick=36000`(=600초)인 granted 행을 심고 10초 뒤 승리 정산 → 미발령. `created_at` 을 601초 전으로 옮기면 → 발령.
-  *뮤테이션*: 3b 단계를 제거하면 첫 절반이 실패해야 한다. *이 AC 는 위조 차단이 아니라 **위조 처리량이 주장한 런 길이에 비례해 깎이는 것**을 잰다(§4-3 자인).*
+- [ ] **AC-I9** ← **rev3 교체** (구 rev2: "`claimed_final_tick=36000` 심고 10초 뒤 미발령 → 601초 뒤 발령"). **쿨다운 우회가 닫혔다** — `finalTick=1` 및 `MIN_BOSS_KILL_TICKS - 1`(=3,599)로 승리를 각각 20회 주장하면 **발령 0** 이다.
+  *왜 교체했나*: 구 AC 는 **기구가 동작하는가**만 재고 **우회가 닫혔는가**는 안 쟀다 — rev2 구현(공격자가 `finalTick` 을 고르는 쿨다운)에서도 **그대로 통과한다.** rev1 의 구 AC-I5 와 같은 부류의 항진이다.
+  *뮤테이션*: **(a) `MIN_BOSS_KILL_TICKS` 하한을 지우면 20회 전부 발령돼 실패해야 한다.**
+- [ ] **AC-I10** ← **rev3 신설 (선행1 b)**. **누적기 성질**: 어떤 창에서도 **발령된 런들이 주장한 시간의 합 ≤ 실제 경과 시간**이다.
+  *검증법*: `finalTick = 36000`(600초)을 주장하는 승리 정산을 1초 간격으로 5회 → **1회만 발령**되고 나머지 4회는 `skip_reason='cooldown'`. 이어서 실시간 600초를 흘려야 2회째가 열린다.
+  *뮤테이션*: `next_eligible_at` 전진을 `greatest(now(), 지평) + …` 에서 `now() + …` 로 되돌리면(= rev2 의 직전 행 기준과 동치) **긴 주장·짧은 주장을 번갈아 파이프라이닝**하는 케이스가 통과해 실패해야 한다.
 - [ ] **AC-I5** ← **rev2 교체** (구: "세 경로에서 정상 반환"). 발령 경로에서 **임의의 예외가 터져도** `settle_pve_run` 이 커밋된다.
   *검증법*: `issue_commission_for_run` 안에 **강제 예외를 주입**(`raise exception 'boom'` · 또는 RNG 를 조작해 `grade=0` 으로 check 위반 유발)한 뒤 `settle_pve_run` 호출 → **정상 반환 + `profiles.credits` 증가 + `commission_inventory` 불변 + 서버 로그 warning**.
   *왜 교체했나*: 구 AC 의 세 경로(보관 상한·빈도·`victory` 누락)는 **원래 예외를 던지지 않는 정상 반환 경로**라 서브트랜잭션을 감싸지 않아도 통과한다 — **항진이었다.** 실제 위험은 §3-1·§3-2 의 check·not-null·FK 다섯 개이고(§4-1 C2), 그것들은 정상 경로가 아니라 **예외 경로**로 터진다.
@@ -958,13 +1044,18 @@ M4 수정 후 두 경로의 잠금 순서가 **역순**이 된다:
 
 ### RLS·권한 (R)
 
-- [ ] **AC-R1** ← **rev2 교체** (구: "기저 직접 select 0행"). `authenticated` 롤로 `commission_runs` 를 직접 select 하면 **본인 행만** 보이고 **타인 행은 0건**이다 — `loadout_sealed`·`replay_gz` 를 명시적으로 select 해도 그렇다.
-  *왜 교체했나*: rev2 는 기저에 `commission_runs_select_own` 정책을 둔다(fail-closed, M6). "0행"은 더 이상 참이 아니고 **재야 할 것은 "본인 것만 보이는가"** 다. 구 AC 를 두면 rev2 구현에서 **실패하는 항진 AC** 가 된다.
+- [ ] **AC-R1** ← rev2 교체 / **rev3 보강**. `authenticated` 롤로 `commission_runs` 를 직접 select 하면 **본인 행만** 보이고 **타인 행은 0건**이다.
+  *왜 rev2 가 교체했나*: 기저에 `commission_runs_select_own` 정책을 두므로(fail-closed, M6) "0행"은 더 이상 참이 아니다. 구 AC 를 두면 실패하는 항진 AC 가 된다.
+  *⚠️ rev3 — 이 AC 가 통과하면서도 참일 수 있는 나쁜 상태*: **컬럼이 전부 열려 있어도 통과한다**(행 판정만 하므로). 실제로 rev2 구현이 그 상태였다. **컬럼 축은 AC-R8 이 진다 — 이 둘은 반드시 짝으로 존재해야 한다.**
 - [ ] **AC-R7** ← **rev2 신설 (M6)**. **뷰가 fail-closed 다.**
   *검증법*: 뷰 정의에서 `where profile_id = auth.uid()` 를 **제거한 상태**로 두 계정 교차 조회 → **여전히 본인 행만** 보인다(기저 RLS 가 잡는다).
   *뮤테이션*: `security_invoker = true` 를 빼면 실패해야 한다 — 정의자 권한 뷰는 기저 RLS 를 우회하므로 즉시 전 계정 노출이 된다. **AC-R3 과 짝이다: R3 은 "경계가 있는가", R7 은 "경계가 무너지는 방향이 안전한가"를 잰다.**
 - [ ] **AC-R2** `commission_runs_public` 뷰로는 **본인 행만** 보이고 `replay_gz`·`loadout_sealed` **컬럼이 존재하지 않는다**(← rev2 M5: `replay`·`client_result` 는 컬럼 자체가 사라졌다).
   *검증법*: `information_schema.columns` 전수 대조. **열거가 아니라 차집합으로 잰다** — 뷰에 컬럼이 추가돼도 걸리게.
+  *⚠️ rev3 — 이 AC 가 통과하면서도 참일 수 있는 나쁜 상태*: **뷰만 보고 기저를 안 본다.** 기저에서 같은 컬럼이 전부 나가도 통과한다. AC-R8 이 그 축이다.
+- [ ] **AC-R8** ← **rev3 신설 (선행2)**. `authenticated` 롤로 `select loadout_sealed from public.commission_runs` 를 시도하면 **`permission denied for column`** 이다(`replay_gz` 도 동일).
+  *검증법*: **열거가 아니라 차집합으로** — `information_schema.column_privileges` 에서 `authenticated` 가 `commission_runs` 에 가진 컬럼 집합이 **`commission_runs_public` 뷰의 컬럼 집합과 정확히 같은지** 단언한다. 컬럼이 새로 생겨도 걸린다.
+  *뮤테이션*: `revoke select on public.commission_runs from authenticated;` 줄을 지우면 실패해야 한다. **이 AC 가 없으면 §3-5·§3-6 의 존재 이유가 통째로 무효인 상태가 R 계열 3건 초록으로 통과한다.**
 - [ ] **AC-R3** 뷰 본문에서 `where profile_id = auth.uid()` 를 제거하면 **타 계정 행이 보이는 테스트가 실패한다**(뮤테이션). *두 계정을 만들어 교차 조회한다.*
 - [ ] **AC-R4** `commission_grants` 의 insert/update/delete 를 `authenticated` 롤로 시도하면 전부 거부된다(select-own 만).
 - [ ] **AC-R5** `commission_issues` 를 `authenticated` 롤로 select 하면 0행이다(정책 0개).
@@ -991,6 +1082,7 @@ M4 수정 후 두 경로의 잠금 순서가 **역순**이 된다:
 
 - [ ] **AC-G1** 상수 모듈이 `GRACE < ACTIVE_TTL < BLOB_TTL < ISSUES_RETENTION` 부등식을 단언한다(§10).
 - [ ] **AC-G2** SQL 캡 상수와 TS 상수 모듈의 `CAP_COMMISSION_*` 값이 일치한다(미러 동기화 테스트 — `20260727000000:43-46` 선례 형식).
+  *← rev3 확장 (⑪)*: **집합 일치**도 함께 단언한다 — ⓐ `grant_currency` allowlist 리터럴 집합 ⓑ `grant_currency_for` 의 `case p_source` 분기 라벨 집합 − `{commission}` ⓒ TS 상수의 source 집합, **셋이 같아야 한다.** *뮤테이션*: `case` 에 분기만 추가하고 allowlist 를 빠뜨리면 실패해야 한다.
 - [ ] **AC-G3** 신규 마이그레이션 파일명 타임스탬프가 `20260802000000` 보다 크다(`tests/pveRunsColumnContract.test.ts` 형식의 정렬 계약 테스트).
 - [ ] **AC-P1** 의뢰 런이 `settlePveRunCurrency` 를 호출하지 않는다.
 - [ ] **AC-P2** 의뢰 런의 자원 축이 `settle_commission` 을 통해 확정 보상과 **합산 1회**로 지급된다.
@@ -1019,7 +1111,8 @@ M4 수정 후 두 경로의 잠금 순서가 **역순**이 된다:
 | 10 | ~~**트리거가 정산 트랜잭션을 롤백시킬 위험** — 테스트가 유일한 방어~~ | — | **⚠️ rev2 해소 (C2)**: 서브트랜잭션(`exception when others`)으로 **구조 방어를 조달했다**(§4-1). rev1 의 "테스트가 유일한 방어"는 Principle 2 기준 **미조달**이었고, 게다가 그 테스트(구 AC-I5)마저 항진이었다. 잔여 자인은 아래 12 |
 | 12 | **발령 실패가 플레이어에게 보이지 않는다** | 서브트랜잭션이 예외를 `raise warning` 으로 삼킨다(§4-1) | 서버 로그 warning 발생률 관측. **실패는 "의뢰서 미발령"으로만 나타나고 지급 쪽으로 새지 않는다**(fail-closed) |
 | 13 | **`verify_attempts` 5회를 소진한 정직한 플레이어의 보상 소멸** | 네트워크 재시도도 카운트된다(§5-7) | 실값 5 는 여유값. §13-⑨ 관측 대상. 8 과 같은 성격의 의도된 손실 |
-| 14 | **빈도 상한·쿨다운의 입력이 전부 클라 주장이다** | `victory`·`finalTick` 모두 `p_summary` 에서 온다(§4-3) | **위조를 막지 못한다 — 처리량을 주장에 비례해 깎을 뿐.** `grant_currency` 개연성 캡과 같은 성격이며, 그것이 이 축에서 조달 가능한 전부다 |
+| 14 | **빈도 상한·쿨다운의 입력이 전부 클라 주장이다** | `victory`·`finalTick` 모두 `p_summary` 에서 온다(§4-4) | ← **rev3 재작성.** rev2 는 "처리량을 주장에 비례해 깎는다"고 적었는데 **비례 계수를 공격자가 골랐다.** rev3 의 (a)+(b)가 하는 일은 **위조 차단이 아니라 처리량 상한을 공격자가 고를 수 없게 만드는 것**이고, 상한은 `20/h` 와 `실시간 / MIN_BOSS_KILL_TICKS` 중 작은 쪽으로 **서버가 고정**한다 |
+| 15 | **`MIN_BOSS_KILL_TICKS` 가 실측 없이 3,600 이다** | sim 실측을 안 했다(§13-⑫) | 너무 크면 **정직한 속공 런이 오거부**된다(발령 자체가 안 된다) — **이 축에서 유일하게 정직한 사용자를 벌할 수 있는 상수다.** 착수 전 실측이 필수다 |
 | 11 | ~~**뷰 본문의 `where` 절이 유일한 행 경계**~~ | — | **⚠️ rev2 해소 (M6)**: 기저 `commission_runs_select_own` + `security_invoker = true` 로 **fail-closed** 전환(§3-5). `where` 가 지워져도 결과는 유출이 아니라 무변화다. AC-R3(경계 존재) + AC-R7(실패 방향) 짝으로 잰다 |
 
 **침공 축과의 비대칭을 남긴다**: `apply_invasion_result` 는 `currency_grants` 를 우회해 재화를 지급하므로(**1h/24h 누적 캡 밖**) 이 계약이 의뢰 축에 강제하는 폭주 방어가 침공 축에는 없다. **이 계약은 그것을 고치지 않는다**(범위 밖, ADR-0027/0028 소관). 그러나 **"선례가 그러니 복제한다"는 논증을 명시적으로 기각**한다 — §5-1 (다) 기각 사유.
@@ -1037,9 +1130,10 @@ M4 수정 후 두 경로의 잠금 순서가 **역순**이 된다:
 - **⑤** **무료 티어 EF 호출 수·DB 용량 여유.** 실패 런도 제출하므로 건수가 늘어난다(계획 §Phase C). 재지 않았다.
 - **⑥** **원격 스키마 실상태.** 이 계약은 리포 마이그레이션 기준이다. `20260802000000` 이 원격에 적용됐는지는 이 작업에서 확인하지 않았다(적용 전이면 PvE 정산이 여전히 100% 실패 중이고, 트리거 앵커가 발화할 대상 자체가 없다). **착수 전 필수 대조.**
 - **⑦** **사연 챕터 claim 원장이 서버에 없다.** `grant_currency('story')` 는 "이 챕터를 이미 청구했는가"를 알 수 없고 claim 은 로컬 `profile.storyRewardsClaimed` 에만 있다(`src/save/settlement.ts:255-265`). **이 레인 범위 밖이지만 AC-P3 가 그 위에 서 있다** — 재시도 시 story 크레딧 이중 지급 가능성이 남는다(현행 일반 PvE 도 동일).
-- **⑨** ← **rev2 신설**. **`CAP_VERIFY_ATTEMPTS = 5` 가 정직한 재시도에 충분한가.** 모바일 네트워크에서 EF 왕복이 반복 실패하는 빈도를 재지 않았다. 너무 작으면 정직한 완주자의 보상이 소멸하고(§12-⑬), 너무 크면 M1 상한이 느슨해진다. **출시 후 `commission-too-many-attempts` 발생률로 조정한다.**
-- **⑩** ← **rev2 신설**. **`PendingGrant.source` 의 실제 분포.** 타입이 `string` 이고(`src/net/profileSync.ts:303`) localStorage 를 `typeof === 'string'` 만으로 되읽으므로(`:324`), **기존 사용자 기기에 어떤 값이 고여 있는지 알 수 없다.** allowlist 도입 후 그 항목들이 무한 재시도로 고이지 않도록 AC-C10 의 클라 필터가 **반드시 같은 배포에 들어가야 한다**(서버만 먼저 배포하면 그 사이 큐가 막힌다). **배포 순서 제약이다.**
-- **⑪** ← **rev2 신설**. **`grant_currency` allowlist 가 미래 source 를 막는다.** 새 지급원(예: 이벤트 보상)을 추가하려면 SQL·TS 양쪽 allowlist 를 함께 고쳐야 한다. 이것은 의도된 마찰이지만, **잊으면 신규 기능이 조용히 예외로 실패**한다. AC-G2 미러 테스트가 부분적으로만 잡는다(값 일치는 보지만 "빠뜨린 신규 source" 는 못 본다).
+- **⑨** ← rev2 / **rev3 판정 가능으로 승격**. **`CAP_VERIFY_ATTEMPTS = 5` 가 정직한 재시도에 충분한가.** 미측정은 그대로지만 **상한 쪽은 이제 산술로 닫혔다**: 계정당 최대 `CAP_CONSUME_PER_HOUR(12) × CAP_VERIFY_ATTEMPTS(5) = 60 verifyRun/h`. 침공 `SOFT_RERUN_BUDGET_MS = 20,000`(`supabase/functions/verify-invasion/index.ts:47`)을 준용하면 **계정당 최대 20 CPU-분/시간**이다. 남은 미확인은 **하한**(정직한 재시도에 5회가 부족한가)뿐이며, 출시 후 `commission-too-many-attempts` 발생률로 조정한다.
+- **⑫** ← **rev3 신설 (선행1 a)**. **`MIN_BOSS_KILL_TICKS` 실값을 sim 실측으로 정해야 한다.** 3,600(60초)은 placeholder 다. **행성·계급·기체별 최속 보스 처치 틱의 하위 분위수**를 재고 그보다 충분히 낮게 잡아야 한다 — 너무 크면 정직한 속공 런이 **발령 자체를 못 받는다**(§12-⑮, 이 축에서 유일하게 정직한 사용자를 벌할 수 있는 상수). Phase 0 벤치와 함께 낸다.
+- **⑩** ← rev2 / **rev3 에서 LOW 로 재분류. 배포 결합을 해제한다.** rev2 는 "서버만 먼저 배포하면 큐가 막힌다"는 **배포 순서 제약**으로 올렸으나, 재검토가 코드로 확인했다: `PendingGrant` 큐에 들어가는 source 는 **`'salvage'` 하나뿐**이고(`grantCurrencyToServer` 실패 경로, 유일 호출부 `src/ui/pixi/hangar.ts:445`) `'story'` 는 **다른 큐**(`flushPendingSettlements`)를 쓴다 — **둘 다 allowlist 3종 안에 있다.** 즉 **정상 데이터는 예외를 안 맞는다.** 걸리는 것은 손수 편집한 localStorage 뿐이고 그 경우에도 데이터 손실 없음·다른 항목 미차단·비용은 실패 RPC 1회다. **AC-C10 은 위생으로 유지하되 릴리스 결합을 계약에 박지 않는다.**
+- **⑪** ← rev2 / **rev3 완화**. **`grant_currency` allowlist 가 미래 source 를 막는다.** 새 지급원을 추가하려면 SQL·TS 양쪽을 함께 고쳐야 한다(의도된 마찰). **rev3 조치**: AC-G2 를 확장해 **allowlist 리터럴 집합과 `grant_currency_for` 의 `case p_source` 분기 라벨 집합이 같은 TS 상수에서 나오는지**를 단언한다 — **값 일치가 아니라 집합 일치**다. 그러면 "분기는 추가했는데 allowlist 를 빠뜨림"이 잡힌다. 잔여 미확인은 "TS 상수 자체를 안 고치는 경우"뿐이고 그것은 기능 테스트가 잡는다.
 - **⑧** **`stashPendingSettlement` 에 멱등 키·dedup 이 없다**(`src/net/profileSync.ts:243-247`, localStorage 누적 배열). 의뢰 런의 재제출 큐를 같은 저장소에 얹으면 같은 런이 두 번 stash 될 수 있다. `settle_commission` 의 원자성이 서버 측 이중 지급은 막지만(§5-4), **클라 큐 설계는 PC 에서 확정해야 한다.**
 
 ---
@@ -1051,6 +1145,7 @@ M4 수정 후 두 경로의 잠금 순서가 **역순**이 된다:
 1. **ADR-0045 §결과 첫 항** — "부분 실패가 나면 서버 측 재시도가…"는 단일 트랜잭션 전제에서 거짓이다(§5-4). **재시도 주체를 클라이언트로 정정**하고 삽입 순서의 근거를 "서술 순서"로 바꾼다.
 2. **ADR-0045 §1 테이블** — `slot_index` 컬럼과 `unique (commission_run_id, kind, slot_index)` 를 반영한다(§3-4).
 3. **ADR-0044** — EF 게이트 순서에서 **대조가 덮어쓰기보다 앞선다**는 것과, 강제는 덮어쓰기가 지고 대조는 진단이라는 역할 분리를 명시한다(§7-2).
-4. **계획 `.omc/plans/commission-system-consensus.md`** — §Phase B·C 를 이 문서 참조로 대체하고, §Acceptance Criteria "서버 · 원장" 절을 §11 로 교체한다. D9·D10·D13 은 **이 계약이 대체했음**을 결정 로그에 남긴다.
-5. **ADR-0027(재화 서버 원장 권위)** ← **rev2 신설**. `grant_currency` 를 **allowlist(default-deny)** 로 전환한 것은 그 ADR 이 정의한 재화 관문의 **계약 변경**이다. 미등록 source 가 `CAP_DEFAULT_*`(1,000)로 통과하던 거동이 사라지고, 허용 집합이 `('pve_run','salvage','story','commission')`(마지막은 `grant_currency_for` 전용)로 **명시 열거**된다. **§C1 의 사실(시간당 50,000 무상 지급 경로)도 그 ADR 의 "결과"에 기록해야 한다** — 이 계약 문서에만 두면 재화 축 문서를 읽는 사람이 못 본다.
-6. **`CONTEXT.md`** — 새 용어를 만들지 않았으므로 **갱신 불요**. `commission_issues`·`commission_runs`·`commission_grants` 는 전부 기존 용어(**발령** · **의뢰 런** · **의뢰 확정 지급물**)의 구현 이름이다.
+4. ← **rev3 신설**. **§4-3(rev2 M2) 은 폐기 표기만 남았고 정본은 §4-4 다.** 구현자는 §4-3 의 2번 항목을 **읽고 따르면 안 된다** — 그 자리에 rev3 폐기 표시를 달아 두었으나, 문서를 발췌해 옮길 때 잘려 나갈 수 있는 형태다. **§4-3·§4-4 는 항상 함께 인용한다.**
+5. **계획 `.omc/plans/commission-system-consensus.md`** — §Phase B·C 를 이 문서 참조로 대체하고, §Acceptance Criteria "서버 · 원장" 절을 §11 로 교체한다. D9·D10·D13 은 **이 계약이 대체했음**을 결정 로그에 남긴다.
+6. **ADR-0027(재화 서버 원장 권위)** ← **rev2 신설**. `grant_currency` 를 **allowlist(default-deny)** 로 전환한 것은 그 ADR 이 정의한 재화 관문의 **계약 변경**이다. 미등록 source 가 `CAP_DEFAULT_*`(1,000)로 통과하던 거동이 사라지고, 허용 집합이 `('pve_run','salvage','story','commission')`(마지막은 `grant_currency_for` 전용)로 **명시 열거**된다. **§C1 의 사실(시간당 50,000 무상 지급 경로)도 그 ADR 의 "결과"에 기록해야 한다** — 이 계약 문서에만 두면 재화 축 문서를 읽는 사람이 못 본다.
+7. **`CONTEXT.md`** — 새 용어를 만들지 않았으므로 **갱신 불요**. `commission_issues`·`commission_runs`·`commission_grants` 는 전부 기존 용어(**발령** · **의뢰 런** · **의뢰 확정 지급물**)의 구현 이름이다.
