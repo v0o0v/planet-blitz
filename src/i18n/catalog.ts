@@ -186,7 +186,7 @@ export const EN = {
   'catalyst.manage.empty': 'No catalysts in stock. Earn them from elite and boss runs.',
   'catalyst.manage.owned': 'x{n}',
   'catalyst.manage.salvage': 'Salvage 1',
-  'catalyst.manage.salvageDone': 'Salvaged {name} · +{credits} credits',
+  'catalyst.manage.salvageDone': 'Salvaged {name} · +{residue} catalyst residue',
   'catalyst.manage.salvageFail': 'Salvage failed',
   'catalyst.manage.offline': 'Catalysts require online play.',
   'catalyst.manage.filterAll': 'All',
@@ -194,6 +194,18 @@ export const EN = {
   'catalyst.manage.filterSignature': 'Signature',
   'result.loot.catalysts': 'Catalysts',
   'result.loot.catalystList': 'Catalysts Gained',
+
+  // --- 촉매 잔재·촉매 상점·분해 수량(ADR-0042, catalyst-shop-residue lane) ---
+  'catalyst.residue.name': 'Catalyst Residue',
+  'catalyst.shop.buy': 'Buy',
+  'catalyst.shop.price': '{n} Catalyst Residue',
+  'catalyst.shop.signatureNotSold': 'Signature catalysts are not sold.',
+  'catalyst.shop.priceUnset': 'Price not set — cannot buy.',
+  'catalyst.shop.insufficientResidue': 'Not enough catalyst residue.',
+  'catalyst.shop.noProfile': 'Could not load your profile yet. Please try again in a moment.',
+  'catalyst.shop.offline': 'The catalyst shop needs a server connection.',
+  'catalyst.salvage.qty': 'Salvage Qty',
+  'catalyst.salvage.gained': '+{n} Catalyst Residue',
 
   // --- 촉매 전체 효과 집계(사용자 요청 2026-07-28) — 픽커 하단 요약 + 런 중 정보판 공용 ---
   'catalyst.summary.title': 'Combined Effect',
@@ -1788,7 +1800,7 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.manage.empty': '보유한 촉매가 없습니다. 엘리트·보스 런에서 획득하세요.',
   'catalyst.manage.owned': 'x{n}',
   'catalyst.manage.salvage': '1개 분해',
-  'catalyst.manage.salvageDone': '{name} 분해 · +{credits} 크레딧',
+  'catalyst.manage.salvageDone': '{name} 분해 · +{residue} 촉매 잔재',
   'catalyst.manage.salvageFail': '분해 실패',
   'catalyst.manage.offline': '촉매는 온라인 플레이가 필요합니다.',
   'catalyst.manage.filterAll': '전체',
@@ -1796,6 +1808,18 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.manage.filterSignature': '특산',
   'result.loot.catalysts': '촉매',
   'result.loot.catalystList': '획득 촉매',
+
+  // --- 촉매 잔재·촉매 상점·분해 수량(ADR-0042, catalyst-shop-residue 레인) ---
+  'catalyst.residue.name': '촉매 잔재',
+  'catalyst.shop.buy': '구매',
+  'catalyst.shop.price': '{n} 촉매 잔재',
+  'catalyst.shop.signatureNotSold': '특산 촉매는 판매하지 않습니다.',
+  'catalyst.shop.priceUnset': '가격이 설정되지 않아 구매할 수 없습니다.',
+  'catalyst.shop.insufficientResidue': '촉매 잔재가 부족합니다.',
+  'catalyst.shop.noProfile': '프로필을 아직 불러오지 못했습니다. 잠시 후 다시 시도하세요.',
+  'catalyst.shop.offline': '촉매 상점은 서버 연결이 필요합니다.',
+  'catalyst.salvage.qty': '분해 수량',
+  'catalyst.salvage.gained': '+{n} 촉매 잔재',
 
   // --- 촉매 전체 효과 집계(사용자 요청 2026-07-28) ---
   'catalyst.summary.title': '전체 효과',

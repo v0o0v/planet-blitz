@@ -8,7 +8,8 @@
  *  - `consumeCatalysts` — 슬롯 상한·특산 정합·보유량을 서버와 **같은 계약**으로 2차 검증한 뒤
  *    실제로 원장을 차감하고 가짜 runId 를 발급한다(무촉매 폴백이 아니라 실제 주입 출격),
  *  - `grantCatalyst` — 정산이 파생한 드랍을 원장에 적립하고(드랍→다음 주입 루프 실증),
- *  - `salvageCatalyst` — 원장을 차감하고 재화를 지급한다(관리 화면 분해 실증).
+ *  - `salvageCatalyst` — 원장을 차감하고 **촉매 잔재**를 지급하며(ADR-0042), `buyCatalyst` 는
+ *    그 잔재로 공용 촉매를 되사 원장에 얹는다(촉매 상점 분해↔구매 왕복 실증).
  *
  * `consumeFail` 토글로 소모 거부를 강제해 출격 폴백 모달([재시도]/[촉매 빼고 출격])도 재현한다.
  *
@@ -26,6 +27,7 @@ import type {
   ServerGateway,
   CatalystConsumeResult,
   CatalystSalvageResult,
+  CatalystBuyResult,
   CatalystGrantResult,
   CatalystInventoryRow,
 } from '../net/gateway.js';
@@ -35,15 +37,15 @@ import {
   normalizeCatalystArray,
   isWithinSlotCap,
   resourceMultOf,
+  catalystBuyPrice,
+  catalystSalvageValue,
+  catalystIsPurchasable,
 } from '../data/catalysts.js';
 
 /**
- * 분해 1개당 지급 크레딧(하네스 모의 placeholder — 실 밸런스 아님). salvage 응답 잔액을
- * "현재 크레딧 + 이 값"으로 되돌려 관리 화면에서 크레딧이 실제로 오르는 것을 관측한다.
+ * 하네스 모의가 참조하던 재화 리더. ADR-0042 로 분해 보상이 크레딧 → **촉매 잔재**로 바뀌어
+ * 더 이상 읽지 않지만, 배선(main.ts DEV 블록) 호환을 위해 타입과 생성자 인자는 남긴다.
  */
-const MOCK_SALVAGE_CREDIT = 50;
-
-/** 하네스 모의가 참조하는 재화 리더(하네스 프로필의 현재 재화 — 분해 잔액 산정용). */
 export interface MockCurrencyReader {
   credits(): number;
   minerals(): number;
@@ -60,10 +62,11 @@ export class HarnessCatalystGateway implements ServerGateway {
   private consumeFail = false;
   /** 발급 runId 카운터(가짜 uuid 대용). */
   private runCounter = 0;
-  private readonly currency: MockCurrencyReader;
+  /** 촉매 잔재 잔액 모의(ADR-0042) — 분해로 늘고 구매로 준다. */
+  private residue = 0;
 
-  constructor(currency: MockCurrencyReader) {
-    this.currency = currency;
+  constructor(_currency?: MockCurrencyReader) {
+    /* 재화는 더 이상 참조하지 않는다(ADR-0042: 분해 보상 = 촉매 잔재). */
   }
 
   // --- 하네스 제어 표면(치트 패널이 호출) -----------------------------------
@@ -82,9 +85,20 @@ export class HarnessCatalystGateway implements ServerGateway {
     for (const def of CATALYSTS) this.ledger.set(def.id, (this.ledger.get(def.id) ?? 0) + Math.floor(qty));
   }
 
-  /** 원장을 통째로 비운다. */
+  /** 원장을 통째로 비운다(잔재도 0으로). */
   clear(): void {
     this.ledger.clear();
+    this.residue = 0;
+  }
+
+  /** 촉매 잔재를 직접 세팅한다(치트 패널 — 구매 실증용). */
+  setResidue(v: number): void {
+    this.residue = Math.max(0, Math.floor(v));
+  }
+
+  /** 현재 촉매 잔재 잔액. */
+  getResidue(): number {
+    return this.residue;
   }
 
   /** consume 강제 실패 토글 설정. */
@@ -107,8 +121,12 @@ export class HarnessCatalystGateway implements ServerGateway {
   async getUserId(): Promise<string> {
     return 'harness-uid';
   }
+  /**
+   * 프로필 pull — 촉매 잔재(ADR-0042)만 실어 낸다. 잔재 조회가 이 경로를 타므로(전용 RPC 없음)
+   * 하네스에서도 상점이 잔고를 읽을 수 있어야 한다. `save` 는 하네스가 로컬로 처리하므로 비운다.
+   */
   async fetchProfile(): Promise<ServerProfile | null> {
-    return null;
+    return { save: null, saveVersion: 0, catalystResidue: this.residue };
   }
   async upsertProfile(): Promise<void> {
     /* 재화/프로필은 하네스가 로컬로 처리 — 모의 안 함(no-op). */
@@ -154,22 +172,46 @@ export class HarnessCatalystGateway implements ServerGateway {
   }
 
   /**
-   * 분해 — 보유가 충분하면 차감하고 재화를 지급한다(재화는 하네스 프로필 현재값 + placeholder).
-   * 보유 부족이면 `ok=false`(미차감). 서버 `salvage_catalyst` 와 같은 반환 계약.
+   * 분해(ADR-0042) — 보유가 충분하면 차감하고 **촉매 잔재**를 지급한다. 결합 순서는 서버 계약
+   * 그대로 `catalystSalvageValue(id) * qty` 다(`floor(price*pct*qty/100)` 로 쓰면 값이 갈린다).
+   * 보유 부족이면 `ok=false`(미차감).
    */
   async salvageCatalyst(catalystId: number, qty: number): Promise<CatalystSalvageResult> {
     const owned = this.ledger.get(catalystId) ?? 0;
     const want = Math.max(0, Math.floor(qty));
     if (want <= 0 || owned < want) {
-      return { ok: false, salvaged: 0, credits_left: this.currency.credits(), minerals_left: this.currency.minerals() };
+      return { ok: false, salvaged: 0, residue: this.residue, gained: 0, note: 'not-owned' };
     }
     this.decrement(catalystId, want);
-    return {
-      ok: true,
-      salvaged: want,
-      credits_left: this.currency.credits() + MOCK_SALVAGE_CREDIT * want,
-      minerals_left: this.currency.minerals(),
-    };
+    const gained = catalystSalvageValue(catalystId) * want;
+    this.residue += gained;
+    return { ok: true, salvaged: want, residue: this.residue, gained };
+  }
+
+  /**
+   * 구매(ADR-0042) — 서버 `buy_catalyst` 와 **같은 게이트 순서**로 거부한다: 미지 id →
+   * 특산 → 가격 미설정 → 잔재 부족. 통과하면 잔재를 차감하고 원장에 가산한다(미통과는 미차감).
+   */
+  async buyCatalyst(catalystId: number, qty: number): Promise<CatalystBuyResult> {
+    const want = Math.max(0, Math.floor(qty));
+    const reject = (note: string): CatalystBuyResult => ({
+      ok: false,
+      catalyst_id: catalystId,
+      bought: 0,
+      spent: 0,
+      residue: this.residue,
+      note,
+    });
+    if (want <= 0) return reject('nothing-to-buy');
+    if (catalystById(catalystId) === undefined) return reject('unknown-catalyst');
+    if (!catalystIsPurchasable(catalystId)) return reject('signature-not-sold');
+    const price = catalystBuyPrice(catalystId);
+    if (price <= 0) return reject('price-unset');
+    const cost = price * want;
+    if (this.residue < cost) return reject('insufficient-residue');
+    this.residue -= cost;
+    this.ledger.set(catalystId, (this.ledger.get(catalystId) ?? 0) + want);
+    return { ok: true, catalyst_id: catalystId, bought: want, spent: cost, residue: this.residue };
   }
 
   /** 보유 원장 조회 — >0 인 행만 낸다. */

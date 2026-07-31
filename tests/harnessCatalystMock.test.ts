@@ -20,6 +20,7 @@ import {
   grantCatalystDrops,
   fetchCatalystInventoryOnline,
 } from '../src/net/index.js';
+import { CATALYSTS, catalystBuyPrice, catalystSalvageValue } from '../src/data/catalysts.js';
 
 const currency = { credits: () => 100, minerals: () => 5 };
 
@@ -82,14 +83,42 @@ describe('HarnessCatalystGateway — 인메모리 원장', () => {
     await expect(gw.consumeCatalysts([0], 0)).resolves.toBeTruthy();
   });
 
-  it('salvage: 보유 충분이면 차감 + 재화(현재 크레딧 + 지급)', async () => {
+  it('salvage: 보유 충분이면 차감 + 촉매 잔재 지급(ADR-0042)', async () => {
     const gw = new HarnessCatalystGateway(currency);
     gw.seed([{ id: 0, qty: 2 }]);
     const res = await gw.salvageCatalyst(0, 1);
     expect(res.ok).toBe(true);
     expect(res.salvaged).toBe(1);
-    expect(res.credits_left).toBeGreaterThan(100); // 현재 100 + placeholder.
+    expect(res.gained).toBe(catalystSalvageValue(0));
+    expect(res.residue).toBe(catalystSalvageValue(0));
+    expect(gw.getResidue()).toBe(catalystSalvageValue(0));
     expect(gw.snapshot().get(0)).toBe(1);
+  });
+
+  it('buy: 잔재가 충분하면 차감 + 원장 가산, 부족하면 미차감', async () => {
+    const gw = new HarnessCatalystGateway(currency);
+    gw.setResidue(catalystBuyPrice(0) * 2);
+    const ok = await gw.buyCatalyst(0, 2);
+    expect(ok.ok).toBe(true);
+    expect(ok.spent).toBe(catalystBuyPrice(0) * 2);
+    expect(ok.residue).toBe(0);
+    expect(gw.snapshot().get(0)).toBe(2);
+
+    const short = await gw.buyCatalyst(0, 1);
+    expect(short.ok).toBe(false);
+    expect(short.note).toBe('insufficient-residue');
+    expect(gw.snapshot().get(0)).toBe(2); // 미차감·미가산.
+  });
+
+  it('buy: 특산은 잔재가 아무리 많아도 signature-not-sold', async () => {
+    const gw = new HarnessCatalystGateway(currency);
+    gw.setResidue(1_000_000);
+    const sig = CATALYSTS.find((c) => c.kind === 'signature');
+    expect(sig).toBeDefined();
+    const res = await gw.buyCatalyst(sig?.id ?? 30, 1);
+    expect(res.ok).toBe(false);
+    expect(res.note).toBe('signature-not-sold');
+    expect(gw.getResidue()).toBe(1_000_000);
   });
 
   it('salvage: 보유 부족이면 ok=false(미차감)', async () => {

@@ -33,6 +33,13 @@ export interface ServerProfile {
   credits?: number;
   /** DB 의 profiles.minerals **컬럼**(재화 정본, ADR-0027). credits 와 동일 규율. */
   minerals?: number;
+  /**
+   * DB 의 profiles.catalyst_residue **컬럼**(촉매 잔재, ADR-0042). 촉매 상점 화면이 읽는
+   * 유일한 잔재 소스다 — 전용 RPC 대신 이 pull 경로에 얹었다. **로컬 `Profile` 로는 흘리지
+   * 않는다**(잔재는 서버 권위 잔액이고 save jsonb 미러를 만들면 위조 표면이 늘어난다).
+   * 구 서버(컬럼 부재)면 undefined.
+   */
+  catalystResidue?: number;
 }
 
 /** 이관 계획: 업로드할지/스킵할지 + 업로드할 프로필. */

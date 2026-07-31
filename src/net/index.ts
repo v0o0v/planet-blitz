@@ -379,12 +379,13 @@ export async function consumeCatalystsOnServer(
  */
 export type SalvageCatalystOutcome =
   | { status: 'unconfigured' }
-  | { status: 'ok'; salvaged: number; creditsLeft: number; mineralsLeft: number }
-  | { status: 'rejected' };
+  | { status: 'ok'; salvaged: number; residue: number; gained: number }
+  | { status: 'rejected'; note?: string };
 
 /**
- * 촉매 분해(ADR-0029) — 서버 `salvage_catalyst` 로 보유를 차감하고 재화를 지급받는다. 재화 서버
- * 권위(ADR-0027): 갱신 잔액을 서버가 낸다(salvage 캡은 촉매 배율로 느슨해지지 않음 — 가드레일 #2).
+ * 촉매 분해(ADR-0029 · ADR-0042) — 서버 `salvage_catalyst` 로 보유를 차감하고 **촉매 잔재**를
+ * 지급받는다. 잔재는 촉매 경제 안에 닫혀 있어 `grant_currency` 캡 파이프를 타지 않는다 —
+ * 크레딧·광물은 이 경로에서 더 이상 변하지 않는다.
  * 미설정이면 `unconfigured`(촉매 보유는 서버 원장이라 오프라인 분해는 성립하지 않음). 절대 throw 안 함.
  */
 export async function salvageCatalystOnServer(
@@ -396,15 +397,65 @@ export async function salvageCatalystOnServer(
   if (gateway === null || gateway.salvageCatalyst === undefined) return { status: 'unconfigured' };
   try {
     const res = await gateway.salvageCatalyst(catalystId, qty);
-    if (!res.ok) return { status: 'rejected' };
+    if (!res.ok) return { status: 'rejected', ...(res.note !== undefined ? { note: res.note } : {}) };
     return {
       status: 'ok',
       salvaged: res.salvaged,
-      creditsLeft: res.credits_left,
-      mineralsLeft: res.minerals_left,
+      residue: res.residue,
+      gained: res.gained,
     };
   } catch {
     return { status: 'rejected' };
+  }
+}
+
+/**
+ * `buyCatalystOnServer` 결과. unconfigured=미설정/구버전(오프라인 — 촉매 상점은 온라인 전용),
+ * ok=구매 확정+갱신 잔재, rejected=거부(미차감, `note` 에 서버 사유).
+ */
+export type BuyCatalystOutcome =
+  | { status: 'unconfigured' }
+  | { status: 'ok'; bought: number; spent: number; residue: number }
+  | { status: 'rejected'; note?: string };
+
+/**
+ * 촉매 구매(ADR-0042) — 서버 `buy_catalyst` 로 촉매 잔재를 지불하고 보유 원장에 촉매를 얹는다.
+ * 가격 정본은 TS(`catalystBuyPrice`)이고 서버는 시드된 `catalyst_defs.buy_price` 를 조회한다 —
+ * **클라가 가격을 보내지 않는다**(위조 표면). 거부는 서버 `note` 를 그대로 실어 화면이 사유를
+ * 고를 수 있게 한다. `salvageCatalystOnServer` 와 같은 규율으로 절대 throw 하지 않는다.
+ */
+export async function buyCatalystOnServer(
+  catalystId: number,
+  qty: number,
+  deps: NetDeps = {},
+): Promise<BuyCatalystOutcome> {
+  const gateway = await resolveCatalystGateway(deps);
+  if (gateway === null || gateway.buyCatalyst === undefined) return { status: 'unconfigured' };
+  try {
+    const res = await gateway.buyCatalyst(catalystId, qty);
+    if (!res.ok) return { status: 'rejected', ...(res.note !== undefined ? { note: res.note } : {}) };
+    return { status: 'ok', bought: res.bought, spent: res.spent, residue: res.residue };
+  } catch {
+    return { status: 'rejected' };
+  }
+}
+
+/**
+ * 촉매 잔재 잔액 조회(ADR-0042) — **프로필 pull 경로**(`fetchProfile` 의 `catalyst_residue`
+ * 컬럼)를 그대로 쓴다. 전용 RPC 를 만들지 않는 이유는 `profiles_select_own` 정책이 이미 본인
+ * 행 읽기를 허용하기 때문. 미설정/구버전/오류/프로필 부재면 `null` — 호출부가 "아직 모름"으로
+ * 구분해 `catalyst.shop.noProfile` 안내를 낼 수 있다. 절대 throw 하지 않는다.
+ */
+export async function fetchCatalystResidueOnline(deps: NetDeps = {}): Promise<number | null> {
+  const gateway = await resolveCatalystGateway(deps);
+  if (gateway === null) return null;
+  try {
+    const uid = await gateway.getUserId();
+    const row = await gateway.fetchProfile(uid);
+    if (row === null || row.catalystResidue === undefined) return null;
+    return row.catalystResidue;
+  } catch {
+    return null;
   }
 }
 

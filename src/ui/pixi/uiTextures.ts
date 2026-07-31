@@ -266,6 +266,10 @@ export const UI_ASSET_NAMES: readonly string[] = [
   // 촉매 아이콘(개별 48 + 보상축 폴백 10) — 목록은 `data/catalysts.ts` 레지스트리 파생.
   // 픽커·재고 보관소·정산 획득 목록이 같은 키로 읽는다.
   ...CATALYST_ICON_NAMES,
+  // 촉매 잔재 아이콘(ADR-0042 촉매 상점 재화). 48종 레지스트리 파생이 **아니라** 재화 아이콘이라
+  // 손으로 등재한다 — 촉매 한 장이 아니라 "분해하고 남은 것"이라 `CATALYST_ICON_NAMES` 의
+  // slug 축에 낄 자리가 없다. 상점·분해·재화 표시가 같은 키로 읽는다.
+  'catalyst_residue.png',
   // 파워업 전용 재사용 아트(스킬 노드는 부르지 않는다 — 그래서 SKILL_ICON_NAMES 에 넣으면
   // "죽은 아트 금지" 계약(tests/skillIcons)이 깨진다). `skill_range_flat_low.png` 는 tier 1 이
   // lowmid 로 옮겨가며 사문서가 된 실물 아트인데, 파워업 '집속 렌즈'(beam-focuser)가 이걸 되쓴다 —
