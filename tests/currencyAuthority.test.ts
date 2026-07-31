@@ -21,6 +21,7 @@ import {
   progressScore,
   readPendingSettlements,
   readPendingGrants,
+  writePendingGrants,
   type ServerProfile,
 } from '../src/net/profileSync.js';
 import type {

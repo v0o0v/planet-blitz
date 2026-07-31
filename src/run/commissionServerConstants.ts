@@ -126,6 +126,20 @@ export function isGrantCurrencyClientSource(source: string): source is GrantCurr
 }
 
 /**
+ * 의뢰 전용 유니크의 `LoadoutConfig.uniqueMask` 비트 집합(서버 계약 §7-3 게이트 4).
+ *
+ * ⚠️ **플레이스홀더 — 현재 비어 있다(미확인, Phase D 의존).** "의뢰 전용 유니크" 카탈로그
+ * (개별 유니크가 어느 비트를 쓰는가)는 아직 PA 레인이 만들지 않았다 — `src/items/uniques.ts`
+ * 의 `UNIQUE_REGISTRY` 는 계급·의뢰 여부와 무관한 공용 레지스트리다. **이 목록이 비어 있는
+ * 한 게이트 4 는 구조적으로 아무것도 막지 못한다**(순회할 항목이 없어 항상 통과) — 이것은
+ * 방어가 아니라 **방어를 걸 자리**다. Phase D 가 의뢰 전용 유니크를 등록하면 그 bit 번호를
+ * 여기에 추가해야 게이트가 실제로 작동한다. `verify-commission` 의 게이트 4(`evaluateCommissionGates`)
+ * 가 이 배열을 순회해, 켜진 비트가 있는데 그 profile 의 `commission_grants` 에 대응 발급
+ * 기록이 없으면 `commission-unauthorized-unique` 로 거부한다.
+ */
+export const COMMISSION_EXCLUSIVE_UNIQUE_BITS: readonly number[] = [];
+
+/**
  * 시간 상수 정렬 불변식 — `GRACE < ACTIVE_TTL < BLOB_TTL < ISSUES_RETENTION` (서버 계약 §10).
  *
  * 이 부등식이 깨지면 수명·GC 검증표의 "안전" 판정 중 하나가 무너진다. 대표적으로

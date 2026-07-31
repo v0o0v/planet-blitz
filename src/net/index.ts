@@ -16,6 +16,7 @@ import { readSupabaseConfig, type SupabaseConfig } from './config.js';
 import type { ServerGateway, PveSettleSummary } from './gateway.js';
 import { normalizeCatalystArray } from '../data/catalysts.js';
 import type { CatalystDrop } from '../data/catalystDrops.js';
+import { isGrantCurrencyClientSource } from '../run/commissionServerConstants.js';
 import {
   serializeProfile,
   deserializeProfile,
@@ -579,6 +580,14 @@ async function flushPendingSettlements(gateway: ServerGateway, store: KeyValueSt
 /**
  * 대기 재화 가산 큐를 서버에 재지급한다(MED-1). 성공분만 큐에서 빼고 실패분은 남겨 재시도한다.
  * 각 항목은 독립 grant 라 순서·중복 걱정이 없다(성공 즉시 큐에서 제거되므로 이중 지급 없음).
+ *
+ * ⚠️ **allowlist 필터(의뢰서 서버 계약 §5-1 회귀 절 · AC-C10)** — `grant_currency` 가
+ * `('pve_run','salvage','story')` 외의 `source` 를 전부 예외로 거부하도록 바뀐다(마이그레이션,
+ * default-deny). `PendingGrant.source` 는 localStorage 에서 온 `string` 이라(profileSync.ts) 조작·
+ * 구버전 항목이 섞여 있으면 그 항목은 이제 매번 예외를 맞아 아래 catch 로 떨어져 **재큐잉되고
+ * 무한 재시도로 고인다**(이전에는 서버가 미등록 source 를 `CAP_DEFAULT_*` 로 조용히 캡해 문제가
+ * 안 보였다). 그래서 **보내기 전에 같은 allowlist 로 걸러**, 벗어난 항목은 재큐잉하지 않고
+ * 폐기한다 — 정상 데이터(`'salvage'`·`'story'`)는 전부 허용 집합 안이라 무영향이다.
  */
 async function flushPendingGrants(gateway: ServerGateway, store: KeyValueStore): Promise<void> {
   if (gateway.grantCurrency === undefined) return;
@@ -586,6 +595,7 @@ async function flushPendingGrants(gateway: ServerGateway, store: KeyValueStore):
   if (list.length === 0) return;
   const remaining: PendingGrant[] = [];
   for (const entry of list) {
+    if (!isGrantCurrencyClientSource(entry.source)) continue; // allowlist 밖 — 폐기(재큐잉 안 함)
     try {
       await gateway.grantCurrency(entry.credits, entry.minerals, entry.source);
     } catch {

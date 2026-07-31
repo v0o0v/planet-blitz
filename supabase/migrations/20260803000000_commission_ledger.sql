@@ -435,8 +435,12 @@ declare
   COMMISSION_STOCK_CAP        constant int := 12;
   -- ⚠️ **이 축에서 유일하게 정직한 사용자를 벌할 수 있는 상수다.** 너무 크면 정직한 속공 런이
   --    발령 자체를 못 받는다. finalTick = replay.inputs.length(src/net/pveRun.ts:46), TICK_RATE=60.
-  --    실측 근거는 .omc/plans/balance-queue.md 참조.
-  MIN_BOSS_KILL_TICKS         constant int := 3600;
+  --    실측(2026-08-01, 210런/승리 156): **최소 195틱**(3.25초) · p1 215 · p5 272 · p50 782.
+  --    60 은 관측 최소의 31%. 낮게 잡아도 방어가 안 죽는 이유: 위조 처리량을 실제로 묶는 것은
+  --    CAP_ISSUE_ATTEMPTS_PER_HOUR(20/h) 이고, 60틱이면 "실시간÷상수"가 시간당 3,600 이라
+  --    20/h 가 항상 먼저 문다. 이 상수의 실제 역할은 finalTick:1 이 쿨다운을 문자 그대로 0 으로
+  --    만드는 퇴화만 막는 것이다. 미러: src/run/commissionConstants.ts MIN_BOSS_KILL_TICKS.
+  MIN_BOSS_KILL_TICKS         constant int := 60;
   -- payload 굴리기 placeholder 상수(계급별 구간 수·구간당 틱 상한). 미러:
   -- src/run/commissionConstants.ts COMMISSION_SEGMENT_COUNT / COMMISSION_SEGMENT_TICK_CAP.
   SEGMENT_TICK_CAP            constant int := 9000;
