@@ -52,10 +52,23 @@ commission_grants(
   profile_id         uuid not null references profiles(id),
   commission_run_id  uuid not null,        -- commission_runs.run_id
   kind               text not null,        -- 'unique' | 'blueprint'(의뢰 전용분)
+  slot_index         int  not null,        -- ← 4차 정정. payload.rewards 안 그 kind 의 0-based 순번
   item_payload       jsonb not null,       -- 지급물 정본(uniqueId 등)
-  granted_at         timestamptz not null default now()
+  granted_at         timestamptz not null default now(),
+  constraint commission_grants_once unique (commission_run_id, kind, slot_index)
 )
 ```
+
+- ⚠️ **← 4차 정정 (2026-08-01, 서버 축 구현): 유일성 키에 `slot_index` 가 필요하다.**
+  초판이 전제한 `unique (commission_run_id, kind)` 는 **같은 종류를 2개 주는 의뢰서를 표현할 수
+  없다** — 유니크 2개짜리 최종 지시가 있으면 두 번째 삽입이 조용히 `do nothing` 으로 흡수돼
+  **지급물이 하나 증발한다.** `slot_index` 는 `payload.rewards` 안의 순번이라 payload 가 고정된
+  이상 **결정적**이고, 따라서 재시도가 같은 키를 만들어 멱등이 유지된다.
+  - ⚠️ 이것이 성립하려면 `rewards` 의 그 kind 목록이 **배열로 고정**돼야 한다. 객체 키 순서에
+    의존하면 순번이 흔들려 재시도가 다른 키를 만든다.
+  - **현행 `CommissionRewards` 는 `uniqueId?: number` 스칼라 하나만 표현한다**(`src/run/commission.ts`).
+    즉 지금 타입으로는 "유니크 2개" 자체가 표현 불가다. 서버 구현은 스칼라와 배열(`uniqueIds`)
+    **양쪽을 받도록** 써 두었으므로, 타입이 배열로 확정되면 스칼라 분기만 지우면 된다.
 
 - RLS: **select-own 만.** insert/update/delete 정책을 두지 않는다 — 쓰기는
   `SECURITY DEFINER` + `search_path=''` RPC(`settle_commission`) 전용이며 그 RPC 는
