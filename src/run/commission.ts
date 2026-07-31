@@ -147,15 +147,28 @@ export interface CommissionPayload {
  * 구간 전환은 새 월드를 만들면서 `config` 를 계승하고 이 필드만 갱신한다. `state.tick` 이
  * 구간마다 0 으로 돌아가므로, **같은 행성·같은 단계가 반복되는 조합에서는 `segmentIndex` 가
  * per-tick 해시 스트림의 유일한 구간 판별자**다(계약 §8). 장식이 아니라 하중 부재다.
+ *
+ * ## ⚠️ 전 필드가 `readonly` 인 이유 — in-place 갱신 금지
+ * `buildRunConfig` 는 이 객체를 **복사 없이** 스탬프하므로 호출부 객체와 라이브 월드 config 가
+ * 같은 참조다. 구간 전환이 `segmentIndex` 를 **제자리에서** 올리면 **1구간 월드의
+ * `config.commission.segmentIndex` 까지 함께 바뀐다.** config 는 리플레이 스냅샷에 그대로
+ * 실리므로 "실제 플레이한 런과 정산·재검증되는 런이 갈리는" 결함(PR#191 계열)이 되는데,
+ * 클라·서버가 **둘 다 같은 config 로 재실행**하므로 **해시는 절대 안 갈리고 어떤 게이트도
+ * 안 울린다.**
+ *
+ * 그래서 전환은 반드시 **새 객체**를 만들어야 한다:
+ * `{ ...prev.config.commission, segmentIndex: i + 1 }`. `readonly` 가 그것을 강제한다 —
+ * 규율이 아니라 타입이 지게 두는 것이 이 저장소의 반복 결함(“한 경로만 고쳐서 새는”)에 대한
+ * 유일하게 신뢰할 만한 방어다.
  */
 export interface CommissionRunConfig {
-  commissionId: string;
-  order: CommissionOrder;
-  grade: CommissionGrade;
-  segments: SegmentSpec[];
+  readonly commissionId: string;
+  readonly order: CommissionOrder;
+  readonly grade: CommissionGrade;
+  readonly segments: readonly SegmentSpec[];
   /** 이 의뢰 전체의 리플레이 틱 예산. */
-  replayBudgetTicks: number;
-  constraints?: CommissionConstraints;
-  /** 현재 구간 인덱스(0-based). 구간 전환이 이 값만 갱신한다. */
-  segmentIndex: number;
+  readonly replayBudgetTicks: number;
+  readonly constraints?: CommissionConstraints;
+  /** 현재 구간 인덱스(0-based). 구간 전환이 **새 객체를 만들어** 이 값만 갱신한다. */
+  readonly segmentIndex: number;
 }

@@ -35,6 +35,12 @@
 import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
 
+/**
+ * `T` 의 키 중 **값 타입이 `number` 인 것**만. 0 리셋 배열의 원소를 이것으로 제약하면
+ * "0 을 대입할 수 없는 필드가 0 리셋 목록에 들어가는" 오분류가 컴파일에서 걸린다.
+ */
+type NumericKeys<T> = { [K in keyof T]-?: T[K] extends number ? K : never }[keyof T];
+
 // ---------------------------------------------------------------------------
 // WorldState 분류 (61필드)
 // ---------------------------------------------------------------------------
@@ -91,8 +97,13 @@ export const WORLD_CARRY = [
  *
  * 그래도 자리를 남기는 이유: 훗날 "승계는 하되 0 으로"인 필드가 생기면 여기가 그 자리이고,
  * 세 갈래 분류를 유지해야 전수 대조 식이 그대로 성립하기 때문이다.
+ *
+ * ⚠️ **비어 있어도 {@link carryAcrossSegment} 가 이 배열을 순회한다.** 배선 없이 자리만 남기면
+ * 훗날 여기에 필드를 넣었을 때 **아무 일도 안 일어나고 어떤 테스트도 실패하지 않는다** — 이
+ * 저장소의 지배적 실패 모드("배선이 통째로 없다")가 정확히 그 모양이다. 그래서 원소 타입을
+ * **수치 필드로 제약**해 두어, 넣는 순간 0 대입이 타입 검사를 통과하며 즉시 동작하게 했다.
  */
-export const WORLD_RESET_ZERO = [] as const satisfies readonly (keyof WorldState)[];
+export const WORLD_RESET_ZERO = [] as const satisfies readonly NumericKeys<WorldState>[];
 
 /**
  * 새 무대에서 **새로 시작**하는 `WorldState` 필드(= 새 월드 초기값을 그대로 쓴다).
@@ -160,9 +171,18 @@ export const WORLD_FRESH = [
  * ⚠️ `targetX` 는 좌표가 아니다 — 플레이어 엔티티에서는 `CAP_SURVIVAL_CRIT`(런당 1회 치명
  * 무효)의 **소진 표식**이다. 리셋하면 **N구간 = N회 부활**이 되어 안전망이 곱해진다.
  * ⚠️ `targetY` 는 위상 전환막 내부 쿨다운, `ownerId` 는 `UQ_DRONE_BAY` 소환 간격이다.
+ * ⚠️ **`timer` 는 "일반 타이머"가 아니라 독립 보조무기 발사 쿨다운이다**(`world.ts:2611-2725` —
+ * 주무기와 경쟁하지 않는 자기 사이클). 쿨다운 실값은 SIDEKICK 18 · SCATTER 33 · FLARE 45 ·
+ * MINE 66 · **SENTRY 300**. 리셋하면 구간 진입마다 쿨다운을 건너뛰고 **무료 1발**이 나가,
+ * 5구간 최종 지시에서 센트리는 런당 5회 공짜다. 결정론적이라 해시가 안 갈리고 밸런스 이상으로만
+ * 보인다(`tick` 승계 결함과 같은 은폐 형태).
  * 이름이 용도를 배신하는 필드들이라 **여기 주석이 유일한 방어**다.
  * `aux0`/`aux1` 은 기체 시그니처 런타임이며, 해츨링은 `aux0`(kills 스냅샷)이 `state.kills` 와
  * 결합돼 있어 둘 다 승계해야 정합이다.
+ *
+ * 이 목록의 **분류 원칙은 "쿨다운은 승계"** 다 — `cooldown`(주무기)·`dashCooldown`(대시)·
+ * `targetY`(위상 전환막)·`ownerId`(드론 베이)·`timer`(보조무기)가 전부 여기 있는 이유다.
+ * 하나라도 0 으로 내리면 그 축만 구간 수만큼 무료 재발급된다.
  */
 export const ENTITY_CARRY = [
   'hp',
@@ -172,6 +192,7 @@ export const ENTITY_CARRY = [
   'ownerId',
   'cooldown',
   'dashCooldown',
+  'timer',
   'aux0',
   'aux1',
 ] as const satisfies readonly (keyof Entity)[];
@@ -180,11 +201,14 @@ export const ENTITY_CARRY = [
  * 플레이어 `Entity` 에서 **명시적으로 0 으로 되돌리는** 필드.
  *
  * 새 월드의 플레이어는 새 객체지만 {@link ENTITY_CARRY} 가 값을 덮으므로, "승계하지 않는다"를
- * **행동으로** 표현할 자리가 필요하다. 여기 있는 셋은 문맥이 무대와 함께 사라지는 것들이다:
- * `iframes` 는 피격 무적, `phase` 는 `UQ_OVERHEAT_DRUM` 연속 명중 스택(`combo` 와 같은 결),
- * `timer` 는 일반 타이머.
+ * **행동으로** 표현할 자리가 필요하다. 여기 있는 둘은 문맥이 무대와 함께 사라지는 것들이다:
+ * `iframes` 는 피격 무적, `phase` 는 `UQ_OVERHEAT_DRUM` 연속 명중 스택(`combo` 와 같은 결 —
+ * 구간 사이에 전투가 끊기므로 스택이 이어지면 안 된다).
+ *
+ * ⚠️ **`timer` 는 여기 있었고, 오분류였다.** 보조무기 쿨다운이라 {@link ENTITY_CARRY} 로 옮겼다.
+ * 계획 rev7 의 표가 "일반 타이머"라고 적었던 것이 원인이다 — 분류를 이름으로 하지 마라.
  */
-export const ENTITY_RESET_ZERO = ['iframes', 'phase', 'timer'] as const satisfies readonly (keyof Entity)[];
+export const ENTITY_RESET_ZERO = ['iframes', 'phase'] as const satisfies readonly (keyof Entity)[];
 
 /**
  * 새 무대에서 `createWorld` 가 세팅하는 그대로 두는 플레이어 `Entity` 필드.
@@ -263,11 +287,28 @@ export function carryAcrossSegment(prev: WorldState, next: WorldState): void {
   const nextTaintedBefore = next.tainted;
   copyKeys(prev, next, WORLD_CARRY);
   next.tainted = next.tainted || nextTaintedBefore;
+  // 현재 WORLD_RESET_ZERO 는 비어 있어 이 루프는 0회 돈다. **그래도 지우지 마라** — 배선 없이
+  // 목록만 남기면 훗날 필드를 넣었을 때 조용히 아무 일도 안 일어난다(이 저장소의 지배적 실패 모드).
+  //
+  // 넓히기가 필요한 이유: 배열이 비어 있으면 `as const` 원소 타입이 `never` 라 `next[k] = 0` 이
+  // 컴파일되지 않는다. 배열 선언의 `satisfies readonly NumericKeys<WorldState>[]` 가 **원소가
+  // 항상 수치 필드임을 이미 보증**하므로 이 넓히기는 안전하고, 전수 대조 게이트는 `as const` 의
+  // 리터럴 타입을 그대로 쓰므로 영향받지 않는다(여기서 넓히면 게이트가 전 수치 키를 덮은 것으로
+  // 착각해 무력화된다 — 그래서 선언이 아니라 **사용처에서만** 넓힌다).
+  for (const k of WORLD_RESET_ZERO as readonly NumericKeys<WorldState>[]) next[k] = 0;
 
   // 플레이어는 항상 엔티티 배열의 0번이다(WorldState.playerId 주석의 계약).
   const prevPlayer = prev.entities[0];
   const nextPlayer = next.entities[0];
-  if (prevPlayer === undefined || nextPlayer === undefined) return;
+  // ⚠️ **조용히 return 하지 않는다.** 여기서 빠져나가면 hp·`targetX`(치명 무효 소진)·시그니처가
+  // 통째로 사라지는데 화면엔 "2구간이 만피로 시작"으로만 보인다. `kind` 까지 확인하는 이유는
+  // 훗날 0번 자리에 다른 엔티티가 들어가면 승계분을 **그 엔티티에** 써 넣기 때문이다.
+  if (prevPlayer === undefined || prevPlayer.kind !== 'player') {
+    throw new Error('carryAcrossSegment: prev.entities[0] 이 플레이어가 아니다');
+  }
+  if (nextPlayer === undefined || nextPlayer.kind !== 'player') {
+    throw new Error('carryAcrossSegment: next.entities[0] 이 플레이어가 아니다');
+  }
   copyKeys(prevPlayer, nextPlayer, ENTITY_CARRY);
   for (const k of ENTITY_RESET_ZERO) nextPlayer[k] = 0;
 }

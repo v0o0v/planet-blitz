@@ -88,10 +88,14 @@ const EXPECTED_ENTITY_CARRY: readonly string[] = [
   'ownerId',
   'cooldown',
   'dashCooldown',
+  // ⚠️ `timer` 는 보조무기 발사 쿨다운이다(`world.ts:2611-2725`). 처음엔 RESET_ZERO 에 있었고
+  // 그것이 오분류였다 — SENTRY 300틱을 구간마다 건너뛰어 **구간당 무료 1발**이 나갔다.
+  // 결정론적이라 해시가 안 갈리고 밸런스 이상으로만 보이는 종류다.
+  'timer',
   'aux0',
   'aux1',
 ];
-const EXPECTED_ENTITY_RESET_ZERO: readonly string[] = ['iframes', 'phase', 'timer'];
+const EXPECTED_ENTITY_RESET_ZERO: readonly string[] = ['iframes', 'phase'];
 
 describe('① 전수 대조 — 분류 배열이 필드 전부를 덮는다', () => {
   it('승계 목록이 독립 전사본과 정확히 일치한다 (항진 방지 — 목록 변경은 반드시 눈에 띈다)', () => {

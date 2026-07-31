@@ -22,7 +22,7 @@
 
 ### 0-1. 새로 확정된 수치
 
-- **`WorldState` 는 61필드**(`src/sim/world.ts:746-985`, optional 7개). 계획은 개수를 세지 않았다.
+- **`WorldState` 는 61필드**(`src/sim/world.ts:746-985`, optional 6개). 계획은 개수를 세지 않았다.
   전수 대조 게이트는 이 61개를 전부 덮어야 한다.
 - **플레이어 `Entity` 는 정확히 25필드**(`src/sim/entities.ts:126-175`). 계획의 25 **일치**.
 - **`stepWorld` 소비처**: `src/` 20파일 56건 · `tests/` 89파일 532건 · **`scripts/` 5파일 13건** ·
@@ -186,10 +186,10 @@ export function stepRun(state: WorldState, input: InputFrame): WorldState
 | | `aux0` / `aux1` | 기체 시그니처 런타임 |
 | **승계 — 쿨다운** | `targetY` | 위상 전환막 내부 쿨다운(`world.ts:1731-1733`) |
 | | `ownerId` | `UQ_DRONE_BAY` 소환 간격(`world.ts:2716-2729`) |
-| | `cooldown` / `dashCooldown` | 무기·대시 쿨다운 |
+| | `cooldown` / `dashCooldown` / **`timer`** | 무기·대시·**보조무기** 쿨다운. ⚠️ 계획 rev7 은 `timer` 를 "일반 타이머"라 적고 RESET_ZERO 로 분류했는데 **오분류다** — 보조무기 발사 사이클(`world.ts:2611-2725`)이라 리셋하면 SENTRY 300틱을 구간마다 건너뛰어 **구간당 무료 1발**이 나간다 |
 | **RESET_ZERO** | `iframes` | 피격 무적 — 문맥이 무대와 함께 사라진다 |
 | | `phase` | `UQ_OVERHEAT_DRUM` 연속 명중 스택. **`combo` 와 같은 결** |
-| | `timer` | 일반 타이머 |
+
 | **FRESH** | `x` `y` `vx` `vy` `angle` `radius` `life` `damage` `pierce` `enemyType` `id` `kind` `dead` | 무대 진입 시 재설정 |
 
 **기체별 `aux0`/`aux1` 승계 영향**(정본 `world.ts:1811-1816`) — 6기체 중 **말로우만 불리**
