@@ -112,3 +112,16 @@ export const COMMISSION_ELITE_OVERLAP_DELAY_TICKS = 150;
  * 읽는 곳: Phase D(`buildRunConfig` 의뢰 경로) · Phase G(구간 길이 계측).
  */
 export const COMMISSION_WAVE_SEGMENTS_PER_SEGMENT = 3;
+
+/**
+ * 정예 겹침의 **절대 상한** — 압박이 누적돼도 동시 정예가 이 수를 넘지 않는다.
+ * **플레이스홀더 6.**
+ *
+ * ⚠️ {@link COMMISSION_ELITE_OVERLAP_MIN} 은 **하한**(목표 겹침)이고 이것이 상한이다. 둘을 한
+ * 상수로 겸하면 겹침이 하한에 영구 고정되어 ADR-0043 의 압박 누적이 성립하지 않는다 — 처음
+ * 구현이 실제로 그랬고, `MIN` 이라는 이름을 상한으로 읽은 것이 원인이었다(이 레인이 `player.timer`
+ * 로 한 번 당한 "이름으로 분류하기"의 재발).
+ *
+ * 읽는 곳: Phase D(`decideEliteDeploy`) · Phase G(정예 소집령 별도 기준선 계측).
+ */
+export const COMMISSION_ELITE_OVERLAP_MAX = 6;

@@ -29,6 +29,7 @@ import { cos, sin, atan2, TWO_PI, HALF_PI, clamp } from './math.js';
 import { DT, VIEW_HEIGHT, HAZARD_LINE_SPAN, SPAWN_RING_RADIUS } from './constants.js';
 import type { BossAttack, BossDef } from '../../data/boss.js';
 import { planetContent } from '../../data/planets/index.js';
+import { commissionBossDef } from '../../data/commissionBosses.js';
 import { summonEnemy } from './waves.js';
 import { PLANET_MODE } from './planetMode.js';
 import { chasePredatorPursue } from './modes/chase.js';
@@ -54,10 +55,27 @@ export const BOSS_PHASE_TRANSITION_TICKS = 120;
 /** Overheat window after casting a pattern: 5 seconds, double damage taken (spec). */
 export const BOSS_OVERHEAT_TICKS = 300;
 
+/**
+ * 이 런의 보스 정의를 고르는 **단일 정본**.
+ *
+ * ⚠️ **스폰과 매 틱이 같은 함수를 불러야 한다.** 예전에는 스폰(`world.ts`)만 의뢰 보스로 갈리고
+ * `updateBoss` 는 계속 `planetContent(config.planet).boss` 를 읽었다. 그러면 런에 닿는 것이
+ * `hp`·`radius`·`contactDamage` 뿐이고 **3페이즈 공격 프리미티브와 `moveSpeed` 는 전부 행성 보스
+ * 것으로 대체**된다 — 화면에는 의뢰 보스 모델이 뜨는데 싸우는 패턴은 그 행성 보스이고, 예외도
+ * 로그도 없다. 연쇄 원정은 정의상 여러 행성을 밟으므로 **같은 의뢰 보스가 구간마다 다른 보스처럼
+ * 싸운다**. 두 호출자를 여기로 모아 그 갈림이 구조적으로 불가능하게 만든다.
+ *
+ * 무의뢰 런은 `commission` 이 `undefined` 라 예전 표현식 그대로다 — **해시 바이트 불변**.
+ */
+export function bossDefFor(state: WorldState): BossDef {
+  const order = state.config.commission?.order;
+  return order !== undefined ? commissionBossDef(order) : planetContent(state.config.planet).boss;
+}
+
 /** Advance the boss by one tick: transitions, movement, overheat, patterns. */
 export function updateBoss(state: WorldState, boss: Entity, player: Entity): void {
-  // 행성별 보스 정의(카르곤 용암 요새 / 베르단 여왕). 3페이즈·과열 리듬 골격은 공유.
-  const bossDef = planetContent(state.config.planet).boss;
+  // 행성 보스(카르곤 용암 요새 / 베르단 여왕) 또는 의뢰 보스. 3페이즈·과열 리듬 골격은 공유.
+  const bossDef = bossDefFor(state);
   // Phase-transition animation: frozen, no fire, no overheat decay.
   if (boss.timer > 0) {
     boss.timer--;

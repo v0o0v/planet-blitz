@@ -150,7 +150,7 @@ import {
 import { shipTypeDef } from '../../data/ships/index.js';
 import { SpatialHash, circlesOverlap, sweptCircleHitT } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
-import { updateBoss } from './boss.js';
+import { updateBoss, bossDefFor } from './boss.js';
 import { drawPowerupChoices, applyPowerup } from './powerups.js';
 import type { WaveRuntime } from './waves.js';
 import { createWaveRuntime, updateWaves, enemyDefFor } from './waves.js';
@@ -164,7 +164,7 @@ import {
   decodeBountyIgnition,
   encodeBountyIgnition,
 } from './commissionOrders.js';
-import { commissionBossDef, commissionBossEnemyType } from '../../data/commissionBosses.js';
+import { commissionBossEnemyType } from '../../data/commissionBosses.js';
 // 단계 → eliteCount 해석은 sim 코어(world)의 책임이다 — `src/sim/drops.ts` 는 데이터 레이어를
 // import 하지 않는 계약이라(tests/planetDrops.test.ts ⑤) 드랍 확률 함수에 값으로 넘긴다.
 import { stageParams } from '../../data/waves.js';
@@ -2319,8 +2319,11 @@ function stepBoss(state: WorldState, player: Entity): void {
     // 의뢰 런은 **주문 종류**가 보스를 고른다(`data/commissionBosses.ts`). 행성 보스는 행성에만
     // 매달려 있어(`PlanetContent.boss`) 여러 행성을 거치는 연쇄 원정에서는 애초에 결정될 수
     // 없다. 무의뢰 런은 아래 두 줄(`bossDef`·`enemyType`)이 예전 그대로라 **바이트 불변**이다.
+    // ⚠️ **정의 해석은 `bossDefFor` 한 곳에서만 한다.** 여기서 따로 삼항을 쓰면 매 틱 도는
+    // `updateBoss` 와 갈려, 스폰은 의뢰 보스인데 패턴·이동속도는 행성 보스가 되는 상태가 조용히
+    // 성립한다(예외·로그 0, 아트만 맞게 뜬다).
     const cmOrder = state.config.commission?.order;
-    const bossDef = cmOrder !== undefined ? commissionBossDef(cmOrder) : planetContent(state.config.planet).boss;
+    const bossDef = bossDefFor(state);
     // 강제 스크롤(Lane4/5): 카메라가 플레이어가 아니라 스크롤 창이므로 보스도 창 중심 기준으로
     // 소환한다(플레이어 기준이면 창 안 오프셋만큼 어긋난다). 모드별 방향으로 코스 끝에 둔다 —
     // 레이싱(+X 스크롤)은 오른쪽 끝(+X), 블록격파(−Y 스크롤)·뱀서류는 위(−Y). 뱀서류는 창
@@ -3861,6 +3864,13 @@ function collectLoot(state: WorldState, loot: Entity): void {
  * @param outcome `'cleared'` = 표적 처치(보스 격파) · `'escaped'` = 표적 도주(실패)
  */
 export function endCommissionSegment(state: WorldState, outcome: 'cleared' | 'escaped'): void {
+  // ⚠️ **선점 가드 — 먼저 선 종료 판정을 덧씌우지 않는다.** 도주는 `stepBoss` 안에서(=
+  // `resolveCollisions`/`compact` 보다 **먼저**) 성립하는데, 같은 틱에 표적이 hp 0 이 되면
+  // `compact()` 가 `'cleared'` 로 이 함수를 다시 불러 **`gameOver` 위에 `victory` 를 덧씌운다**
+  // → 의뢰 실패가 성공으로 판정되고 확정 유니크 지급 경로로 간다. 게다가 이 경합은 균등분포가
+  // 아니라 **도주 임계 근처에 집중**된다(30초를 꽉 채워 싸운 플레이어가 그 언저리에서 킬을 낸다).
+  // `advanceCommissionSegment:109` 와 같은 규율(계약 §A-3b)이다.
+  if (state.gameOver || state.victory) return;
   const cm = state.config.commission;
   if (cm === undefined) {
     // 무의뢰 런: 보스 격파 = 즉시 승리(기존 거동과 바이트 동일). 도주 개념이 없다.

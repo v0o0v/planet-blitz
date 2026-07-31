@@ -93,8 +93,8 @@ describe('WaveRuntime 해시 폴드 회귀 가드 (계획 AC9 — 신규 폴드 
   /**
    * 접히지 **않는** 필드(순수 스포너 부기).
    *
-   * ⚠️ 2026-08-01 의뢰 Phase D 가 둘을 더했다 — `eliteAlivePrev`·`eliteNextTick`(정예 소집령
-   * 겹침 시계, ADR-0043). **접지 않았으므로 골든은 바이트 불변**이고, 그 사실은 이 스위트의
+   * ⚠️ 2026-08-01 의뢰 Phase D 가 셋을 더했다 — `eliteAlivePrev`·`eliteNextTick`·`eliteCap`
+   * (정예 소집령 겹침 시계, ADR-0043). **접지 않았으므로 골든은 바이트 불변**이고, 그 사실은 이 스위트의
    * `shipHashBaseline`·`encounterHashInvariance` 골든과 `scripts/deno-verify` 13 시나리오가
    * 증명한다. 이 목록을 늘릴 때는 그 셋을 반드시 함께 통과시켜라.
    *
@@ -107,9 +107,9 @@ describe('WaveRuntime 해시 폴드 회귀 가드 (계획 AC9 — 신규 폴드 
    * 번째 케이스가 그 분류를 **실제 해시 동작으로** 재므로 그 우회가 막힌다.
    * (실제로 이 케이스가 최초 작성 때의 오분류 — 꼬리 폴드 2개를 '미접힘'으로 적은 것 — 을 잡았다.)
    */
-  const NOT_FOLDED = ['eliteAlivePrev', 'eliteNextTick'] as const;
+  const NOT_FOLDED = ['eliteAlivePrev', 'eliteNextTick', 'eliteCap'] as const;
 
-  it('WaveRuntime 필드가 접히는 것 7 + 안 접히는 것 2 로 정확히 나뉜다', () => {
+  it('WaveRuntime 필드가 접히는 것 7 + 안 접히는 것 3 으로 정확히 나뉜다', () => {
     expect(Object.keys(createWaveRuntime()).sort()).toEqual([...FOLDED, ...NOT_FOLDED].sort());
   });
 

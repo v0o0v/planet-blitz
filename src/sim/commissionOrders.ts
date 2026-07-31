@@ -28,6 +28,7 @@ import {
   COMMISSION_BOUNTY_ESCAPE_SURVIVE_TICKS,
   COMMISSION_ELITE_OVERLAP_DELAY_TICKS,
   COMMISSION_ELITE_OVERLAP_MIN,
+  COMMISSION_ELITE_OVERLAP_MAX,
   COMMISSION_ELITE_REGROUP_TICKS,
 } from '../run/commissionConstants.js';
 
@@ -115,6 +116,16 @@ export interface EliteDeployState {
   readonly alivePrev: number;
   /** 다음 투입이 가능해지는 틱(이 틱 미만이면 투입 없음). */
   readonly nextTick: number;
+  /**
+   * 현재 허용 겹침 **상한**. `COMMISSION_ELITE_OVERLAP_MIN` 에서 시작해, 정예를 못 치우고
+   * 시간이 흐르면 한 칸씩 오르고(상한 `COMMISSION_ELITE_OVERLAP_MAX`), 전멸하면 다시 내려간다.
+   *
+   * ⚠️ **이 필드가 없으면 겹침이 `OVERLAP_MIN` 에 영구 고정된다.** 그러면 "처치가 늦으면 겹쳐
+   * 내려와 빽빽해진다"는 ADR-0043 의 압박 누적이 성립하지 않는다 — 그 ADR 이 잡몹 소거로
+   * 사라진 런 길이 캡의 **대체물**로 지정한 바로 그 기제다. 밀도가 고정이면 늦음이 압박으로
+   * 전환되지 않아 "못 죽이는데 안 죽는" 교착이 그대로 남는다.
+   */
+  readonly cap: number;
 }
 
 /** {@link decideEliteDeploy} 의 결과 — 다음 시계 상태 + 이번 틱 투입 여부. */
@@ -136,9 +147,10 @@ export interface EliteDeployDecision extends EliteDeployState {
  *  - **정예가 전멸하면** 시계를 "처치 이후 경과 틱"(`REGROUP`)으로 다시 잡는다. 빠르게
  *    치우는 플레이어는 겹침을 한 번도 안 보고 다음 정예를 기다린다 = 강하면 빨리 통과한다.
  *
- * `OVERLAP_MIN` 은 **목표 겹침**이라 도달하면 투입이 멈춘다. `OVERLAP_DELAY` 는 투입을
- * 구동하지 않고 간격만 벌린다 — 게이트(직전 정예 생존)가 닫혀 있으면 이 값이 아무리
- * 흘러도 아무것도 나오지 않는다.
+ * `OVERLAP_MIN` 은 **목표 겹침의 하한**이다 — 상한이 아니다. 상한은 `cap` 이 들고, 정예를
+ * 못 치우는 동안 `OVERLAP_DELAY` 마다 한 칸씩 올라 `OVERLAP_MAX` 에서 멈춘다. `OVERLAP_DELAY`
+ * 는 투입을 구동하지 않고 간격만 벌린다 — 게이트(직전 정예 생존)가 닫혀 있으면 이 값이
+ * 아무리 흘러도 아무것도 나오지 않는다.
  *
  * 순수 함수다(RNG·시각 미소비). `alive` 는 호출부가 센 실측값이다.
  */
@@ -150,12 +162,23 @@ export function decideEliteDeploy(
   // 전멸 **직후 그 틱**에만 시계를 다시 잡는다(`alivePrev > 0` 이 에지 판정). 전멸 상태가
   // 계속되는 동안 매 틱 다시 잡으면 시계가 영원히 도망가 정예가 다시는 안 나온다.
   let nextTick = prev.nextTick;
-  if (alive === 0 && prev.alivePrev > 0) nextTick = tick + COMMISSION_ELITE_REGROUP_TICKS;
-  if (tick < nextTick) return { deploy: false, nextTick, alivePrev: alive };
-  // 목표 겹침 도달 — 투입 없음. `nextTick` 은 그대로 둔다(과거 값이라 다음 틱에도 즉시
-  // 이 분기를 재평가한다 = 한 기가 죽는 순간 곧바로 보충이 가능하다).
-  if (alive >= COMMISSION_ELITE_OVERLAP_MIN) return { deploy: false, nextTick, alivePrev: alive };
-  return { deploy: true, nextTick: tick + COMMISSION_ELITE_OVERLAP_DELAY_TICKS, alivePrev: alive };
+  let cap = prev.cap;
+  if (alive === 0 && prev.alivePrev > 0) {
+    nextTick = tick + COMMISSION_ELITE_REGROUP_TICKS;
+    // 전멸 = 압박 해제. 빠르게 치우는 플레이어는 누적된 겹침을 다시 안 본다.
+    cap = COMMISSION_ELITE_OVERLAP_MIN;
+  }
+  if (tick < nextTick) return { deploy: false, nextTick, alivePrev: alive, cap };
+  if (alive >= cap) {
+    // 상한에 닿았는데도 **직전 정예가 계속 살아 있다** = 처치가 늦다. 상한을 한 칸 올려
+    // 이번 틱에 투입한다 — 늦을수록 빽빽해진다(ADR-0043 의 압박 누적).
+    if (cap >= COMMISSION_ELITE_OVERLAP_MAX) {
+      // 절대 상한. `nextTick` 은 그대로 둔다(과거 값이라 한 기가 죽는 순간 곧바로 보충된다).
+      return { deploy: false, nextTick, alivePrev: alive, cap };
+    }
+    cap = cap + 1;
+  }
+  return { deploy: true, nextTick: tick + COMMISSION_ELITE_OVERLAP_DELAY_TICKS, alivePrev: alive, cap };
 }
 
 // ---------------------------------------------------------------------------

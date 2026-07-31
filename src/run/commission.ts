@@ -101,7 +101,14 @@ export interface CommissionConstraints {
  * 도주 임계 수치 자체는 `commissionConstants.ts` 가 정본으로 들고 있다(하드코딩 금지).
  */
 export interface CommissionBounty {
-  /** 표적 종류 식별자(Phase F 의 의뢰 보스 카탈로그 인덱스). */
+  /**
+   * 표적 종류 식별자(Phase F 의 의뢰 보스 카탈로그 인덱스).
+   *
+   * ⚠️ **아직 소비되지 않는다 — 예약 필드다.** 현재 보스 선택은 전적으로 주문 종류가 한다
+   * (`commissionBossIndex`). payload 가 표적을 고르게 하면 현상금 의뢰가 **도주하지 않는 보스**를
+   * 지목할 수 있고, 그러면 이 주문의 유일한 실패 경로가 사라진다. 소비를 시작하려면
+   * `data/commissionBosses.ts` 의 짝 주석과 함께 갱신하라.
+   */
   targetKind: number;
   /**
    * 도주 규칙 식별자. `'hpThreshold'` = HP 가 임계 아래로 떨어지면 도주,

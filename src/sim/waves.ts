@@ -28,6 +28,7 @@ import { planetContent } from '../../data/planets/index.js';
 import { cos, sin, PI, TWO_PI } from './math.js';
 import { OFFSCREEN_X, OFFSCREEN_Y, SPAWN_RING_RADIUS, VIEW_HEIGHT } from './constants.js';
 import { makeElite, isElite, ELITE_AFFIX_COUNT } from './elite.js';
+import { COMMISSION_ELITE_OVERLAP_MIN } from '../run/commissionConstants.js';
 import { PLANET_MODE } from './planetMode.js';
 import { windowCenterX, windowCenterY } from './invasion/scroll.js';
 import {
@@ -88,6 +89,14 @@ export interface WaveRuntime {
   eliteAlivePrev: number;
   /** 정예 소집령 겹침 시계 — **다음 투입이 가능해지는 틱**. 위 필드의 주석이 계약 전부다. */
   eliteNextTick: number;
+  /**
+   * 정예 소집령 겹침 시계 — **현재 허용 겹침 상한**(`decideEliteDeploy` 의 `cap`).
+   * 위 두 필드와 같은 규율(WaveRuntime 소속·미폴드)이다.
+   *
+   * 이 축이 없으면 겹침이 `COMMISSION_ELITE_OVERLAP_MIN` 에 영구 고정되어 ADR-0043 의 압박
+   * 누적이 성립하지 않는다 — 자세한 근거는 `commissionOrders.ts` 의 `EliteDeployState.cap`.
+   */
+  eliteCap: number;
 }
 
 export function createWaveRuntime(): WaveRuntime {
@@ -104,6 +113,8 @@ export function createWaveRuntime(): WaveRuntime {
     // 첫 정예가 tick 0 에 내려온다(무의뢰 런은 스포너가 아예 안 불린다).
     eliteAlivePrev: 0,
     eliteNextTick: 0,
+    // 상한은 하한에서 출발한다 — 압박은 "못 치우는 시간"이 쌓여야 붙는다.
+    eliteCap: COMMISSION_ELITE_OVERLAP_MIN,
   };
 }
 
@@ -354,9 +365,11 @@ function stepEliteSummons(state: WorldState, player: Entity): void {
   const d = decideEliteDeploy(state.tick, alive, {
     alivePrev: w.eliteAlivePrev,
     nextTick: w.eliteNextTick,
+    cap: w.eliteCap,
   });
   w.eliteAlivePrev = d.alivePrev;
   w.eliteNextTick = d.nextTick;
+  w.eliteCap = d.cap;
   if (!d.deploy) return;
 
   const planet = planetContent(state.config.planet);

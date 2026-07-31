@@ -32,6 +32,7 @@ import {
   DEFAULT_CONFIG,
 } from '../src/sim/world.js';
 import { advanceCommissionSegment } from '../src/sim/commissionSegment.js';
+import { bossDefFor } from '../src/sim/boss.js';
 import type { WorldConfig, WorldState } from '../src/sim/world.js';
 import type { Entity } from '../src/sim/entities.js';
 import { drawPowerupChoices, POWERUPS } from '../src/sim/powerups.js';
@@ -48,10 +49,11 @@ import {
   COMMISSION_BOUNTY_ESCAPE_SURVIVE_TICKS,
   COMMISSION_ELITE_OVERLAP_DELAY_TICKS,
   COMMISSION_ELITE_OVERLAP_MIN,
+  COMMISSION_ELITE_OVERLAP_MAX,
   COMMISSION_ELITE_REGROUP_TICKS,
   COMMISSION_WAVE_SEGMENTS_PER_SEGMENT,
 } from '../src/run/commissionConstants.js';
-import { COMMISSION_BOSS_ENEMY_TYPE_BASE } from '../data/commissionBosses.js';
+import { COMMISSION_BOSS_ENEMY_TYPE_BASE, commissionBossDef } from '../data/commissionBosses.js';
 import { planetContent } from '../data/planets/index.js';
 import { SEGMENTS } from '../data/waves.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
@@ -235,7 +237,7 @@ describe('(d) 정예 소집령 — 잡몹 0 · 젬 0', () => {
 });
 
 describe('(e) 정예 겹침 — 직전 정예가 **살아 있을 때만** 추가된다 (고정 타이머가 아니다)', () => {
-  const S0 = { alivePrev: 0, nextTick: 0 };
+  const S0 = { alivePrev: 0, nextTick: 0, cap: COMMISSION_ELITE_OVERLAP_MIN };
 
   it('첫 정예는 즉시 투입된다', () => {
     const d = decideEliteDeploy(0, 0, S0);
@@ -247,57 +249,93 @@ describe('(e) 정예 겹침 — 직전 정예가 **살아 있을 때만** 추가
     const d = decideEliteDeploy(COMMISSION_ELITE_OVERLAP_DELAY_TICKS, 1, {
       alivePrev: 1,
       nextTick: COMMISSION_ELITE_OVERLAP_DELAY_TICKS,
+      cap: COMMISSION_ELITE_OVERLAP_MIN,
     });
     expect(d.deploy).toBe(true);
   });
 
-  it('목표 겹침에 도달하면 시계가 흘러도 **더 나오지 않는다** (고정 주기 타이머면 계속 나온다)', () => {
+  it('겹침 상한은 **하한에서 시작해 못 치우는 동안 오르고**, 절대 상한에서 멈춘다 (ADR-0043 압박 누적)', () => {
+    // ⚠️ 예전 구현은 `OVERLAP_MIN` 을 **상한**으로 써서 겹침이 2기에 영구 고정됐다. 그러면
+    //    "처치가 늦으면 빽빽해진다"가 성립하지 않아, 잡몹 소거로 사라진 런 길이 캡의 대체물이
+    //    없어진다. 아래가 그 회귀를 막는 단언이다.
+    // ⚠️ 통과하면서도 참일 수 있는 나쁜 상태: 상한이 **무한정** 오르는 것. 그래서 절대 상한에서
+    //    멈추는 것까지 같은 루프에서 잰다.
+    let st = { alivePrev: 0, nextTick: 0, cap: COMMISSION_ELITE_OVERLAP_MIN };
+    let alive = 0;
+    let maxCap = st.cap;
+    for (let t = 0; t < 20_000; t += COMMISSION_ELITE_OVERLAP_DELAY_TICKS) {
+      const d = decideEliteDeploy(t, alive, st);
+      if (d.deploy) alive++; // 아무도 안 죽는 최악 시나리오(화력 부족 빌드)
+      st = { alivePrev: d.alivePrev, nextTick: d.nextTick, cap: d.cap };
+      if (d.cap > maxCap) maxCap = d.cap;
+      expect(d.cap, `tick ${t} 에 상한이 절대 상한을 넘었다`).toBeLessThanOrEqual(
+        COMMISSION_ELITE_OVERLAP_MAX,
+      );
+    }
+    expect(maxCap, '상한이 한 번도 안 올랐다 — 압박 누적이 없다').toBe(COMMISSION_ELITE_OVERLAP_MAX);
+    expect(alive, '겹침이 절대 상한까지 실제로 쌓이지 않았다').toBe(COMMISSION_ELITE_OVERLAP_MAX);
+  });
+
+  it('절대 상한에 닿으면 시계가 흘러도 **더 나오지 않는다** (고정 주기 타이머면 계속 나온다)', () => {
     // ⚠️ 이것이 ADR-0043 의 A안(고정 간격 타이머) 기각을 지키는 단언이다. 구현이 시계만 보고
     // 뱉으면 여기서 `deploy === true` 가 되어 실패한다.
     for (let t = 0; t < 4000; t += 137) {
-      const d = decideEliteDeploy(t, COMMISSION_ELITE_OVERLAP_MIN, {
-        alivePrev: COMMISSION_ELITE_OVERLAP_MIN,
+      const d = decideEliteDeploy(t, COMMISSION_ELITE_OVERLAP_MAX, {
+        alivePrev: COMMISSION_ELITE_OVERLAP_MAX,
         nextTick: 0,
+        cap: COMMISSION_ELITE_OVERLAP_MAX,
       });
       expect(d.deploy, `tick ${t}`).toBe(false);
     }
   });
 
-  it('전멸하면 시계가 **처치 이후 경과 틱**으로 다시 잡힌다 (그 전엔 안 나온다)', () => {
-    const killed = decideEliteDeploy(1000, 0, { alivePrev: 1, nextTick: 900 });
+  it('전멸하면 시계가 **처치 이후 경과 틱**으로 다시 잡히고 상한도 하한으로 되돌아간다', () => {
+    const killed = decideEliteDeploy(1000, 0, {
+      alivePrev: 1,
+      nextTick: 900,
+      cap: COMMISSION_ELITE_OVERLAP_MAX,
+    });
     expect(killed.deploy).toBe(false);
     expect(killed.nextTick).toBe(1000 + COMMISSION_ELITE_REGROUP_TICKS);
+    // 압박 해제 — 빠르게 치우면 누적된 겹침을 다시 안 본다.
+    expect(killed.cap).toBe(COMMISSION_ELITE_OVERLAP_MIN);
     // 재집결 지연 도중에는 계속 안 나온다.
     expect(decideEliteDeploy(1000 + COMMISSION_ELITE_REGROUP_TICKS - 1, 0, {
       alivePrev: 0,
       nextTick: killed.nextTick,
+      cap: killed.cap,
     }).deploy).toBe(false);
     // 지연이 끝나면 나온다.
     expect(decideEliteDeploy(1000 + COMMISSION_ELITE_REGROUP_TICKS, 0, {
       alivePrev: 0,
       nextTick: killed.nextTick,
+      cap: killed.cap,
     }).deploy).toBe(true);
   });
 
   it('전멸 상태가 이어져도 시계를 **다시 잡지 않는다** (매 틱 다시 잡으면 정예가 영영 안 나온다)', () => {
-    const d = decideEliteDeploy(1001, 0, { alivePrev: 0, nextTick: 1240 });
+    const d = decideEliteDeploy(1001, 0, {
+      alivePrev: 0,
+      nextTick: 1240,
+      cap: COMMISSION_ELITE_OVERLAP_MIN,
+    });
     expect(d.nextTick).toBe(1240);
   });
 
-  it('통합: 3,000틱 동안 살아 있는 정예가 목표 겹침을 **한 번도 넘지 않고**, 실제로 도달은 한다', () => {
+  it('통합: 3,000틱 동안 겹침이 절대 상한을 **한 번도 넘지 않고**, 하한에는 실제로 도달한다', () => {
     // ⚠️ 통과하면서도 참일 수 있는 나쁜 상태: 정예가 **한 기도 안 나오는 것**(그러면 상한을
-    // 넘을 리가 없다). 그래서 최댓값이 정확히 목표 겹침에 **도달**했음을 함께 단언한다.
+    // 넘을 리가 없다). 그래서 최댓값이 최소한 하한에 **도달**했음을 함께 단언한다.
     const w = createWorld(0x99, cfg('elite'));
     let maxAlive = 0;
     for (let i = 0; i < 3000; i++) {
       stepWorld(w, emptyInput());
       const alive = countAliveElites(w);
-      expect(alive, `tick ${i} 에 정예가 목표 겹침을 넘었다`).toBeLessThanOrEqual(
-        COMMISSION_ELITE_OVERLAP_MIN,
+      expect(alive, `tick ${i} 에 정예가 절대 상한을 넘었다`).toBeLessThanOrEqual(
+        COMMISSION_ELITE_OVERLAP_MAX,
       );
       if (alive > maxAlive) maxAlive = alive;
     }
-    expect(maxAlive).toBe(COMMISSION_ELITE_OVERLAP_MIN);
+    expect(maxAlive).toBeGreaterThanOrEqual(COMMISSION_ELITE_OVERLAP_MIN);
   });
 });
 
@@ -628,5 +666,122 @@ describe('의뢰 런의 `maxSegments`', () => {
 
   it('무의뢰 런은 필드 자체가 실리지 않는다 (config 직렬화 바이트 불변)', () => {
     expect('maxSegments' in buildRunConfig(defaultProfile(), base)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 리뷰 회귀 게이트 — 초록인 채로 통과하던 결함들
+// ---------------------------------------------------------------------------
+
+describe('회귀: 의뢰 보스 정의가 **매 틱에도** 적용된다 (스폰만 갈리면 패턴이 행성 보스 것이 된다)', () => {
+  it('의뢰 런의 `bossDefFor` 가 주문 보스를 돌려준다 — 행성이 무엇이든', () => {
+    // ⚠️ 결함 형상: 스폰(`world.ts`)만 의뢰 보스로 갈리고 `updateBoss` 는 계속
+    //    `planetContent(config.planet).boss` 를 읽던 상태. 그러면 hp·radius·contactDamage 만
+    //    의뢰 것이고 **3페이즈 패턴과 moveSpeed 는 전부 행성 보스 것**이 된다 — 화면엔 의뢰
+    //    보스 모델이 뜨는데 싸우는 패턴이 그 행성 보스이고 예외·로그가 0 이다.
+    // ⚠️ 통과하면서도 참일 수 있는 나쁜 상태: 의뢰 보스와 행성 보스가 **우연히 같은 정의**인 것.
+    //    그래서 행성을 바꿔 가며 재고, 행성 보스 정의와 **다르다**를 함께 단언한다.
+    for (const planet of [0, 1, 2, 3, 4, 5]) {
+      const w = createWorld(0x5b05, cfg('bounty', 0, {}, { planet, stage: 1 }));
+      const def = bossDefFor(w);
+      expect(def, `planet ${planet}`).toBe(commissionBossDef('bounty'));
+      expect(def, `planet ${planet} 에서 행성 보스와 구분되지 않는다`).not.toBe(
+        planetContent(planet).boss,
+      );
+    }
+  });
+
+  it('무의뢰 런은 행성 보스 그대로다 (회귀 0)', () => {
+    for (const planet of [0, 1, 2, 3, 4, 5]) {
+      const w = createWorld(0x5b05, { ...DEFAULT_CONFIG, planet, stage: 1 });
+      expect(bossDefFor(w), `planet ${planet}`).toBe(planetContent(planet).boss);
+    }
+  });
+
+  it('스폰된 보스의 실제 페이즈 정의가 의뢰 보스 것이다 (배선 증명 — 정의 조회가 아니라 런)', () => {
+    // 단위로 `bossDefFor` 만 재면 두 호출자 중 하나가 여전히 옛 표현식이어도 통과한다.
+    // 실제 런에서 보스를 세우고, 그 보스의 과열/패턴 시계가 **의뢰 정의의 값**으로 초기화됐는지 본다.
+    const w = createWorld(0x5b06, cfg('elite'));
+    const boss = spawnBoss(w);
+    expect(boss.enemyType).toBe(COMMISSION_BOSS_ENEMY_TYPE_BASE + 1);
+    const def = commissionBossDef('elite');
+    const planetDef = planetContent(w.config.planet).boss;
+    expect(def.moveSpeed, '이 테스트가 의미를 가지려면 두 정의의 이동속도가 달라야 한다').not.toBe(
+      planetDef.moveSpeed,
+    );
+    // 보스를 몇 틱 굴려 이동 산술이 실제로 의뢰 정의를 쓰는지 본다(정지 상태면 구분이 안 된다).
+    const x0 = boss.x;
+    const y0 = boss.y;
+    run(w, 30);
+    expect(Math.abs(boss.x - x0) + Math.abs(boss.y - y0), '보스가 전혀 안 움직였다').toBeGreaterThan(0);
+  });
+});
+
+describe('회귀: 같은 틱 도주+처치 경합에서 실패가 성공으로 뒤집히지 않는다', () => {
+  it('`gameOver` 가 선 뒤의 `cleared` 는 `victory` 를 세우지 못한다', () => {
+    // ⚠️ 결함 형상: 도주는 `stepBoss` 안에서(= resolveCollisions/compact 보다 **먼저**) 성립하는데
+    //    같은 틱에 표적이 hp 0 이 되면 `compact()` 가 `'cleared'` 로 다시 불러 gameOver 위에
+    //    victory 를 덧씌운다 → 의뢰 실패가 확정 유니크 지급 경로로 간다(ADR-0044 위조 가치 최고).
+    const w = createWorld(0x5b07, cfg('bounty', 1)); // 마지막 구간
+    endCommissionSegment(w, 'escaped');
+    expect(w.gameOver).toBe(true);
+    expect(w.victory).toBe(false);
+    endCommissionSegment(w, 'cleared'); // 같은 틱의 뒤늦은 처치
+    expect(w.victory, '실패가 성공으로 뒤집혔다').toBe(false);
+    expect(w.gameOver).toBe(true);
+  });
+
+  it('반대 순서도 대칭이다 — 승리 뒤의 도주가 `gameOver` 를 세우지 못한다', () => {
+    const w = createWorld(0x5b08, cfg('bounty', 1));
+    endCommissionSegment(w, 'cleared');
+    expect(w.victory).toBe(true);
+    endCommissionSegment(w, 'escaped');
+    expect(w.gameOver, '성공이 실패로 뒤집혔다').toBe(false);
+  });
+
+  it('대조군: 아무것도 안 선 상태에서는 두 분기가 정상 동작한다 (위가 항진이 아니다)', () => {
+    const a = createWorld(0x5b09, cfg('bounty', 1));
+    endCommissionSegment(a, 'escaped');
+    expect(a.gameOver).toBe(true);
+    const b = createWorld(0x5b09, cfg('bounty', 1));
+    endCommissionSegment(b, 'cleared');
+    expect(b.victory).toBe(true);
+  });
+});
+
+describe('회귀: 현상금 의뢰에 `bounty` 블록이 없으면 조립에서 던진다', () => {
+  const base = { planet: 0, stage: 1 } as const;
+  const bountyCm = (bounty?: CommissionRunConfig['bounty']): CommissionRunConfig => ({
+    commissionId: '00000000-0000-4000-8000-0000000000d4',
+    order: 'bounty',
+    grade: 2,
+    segments: [...TWO],
+    replayBudgetTicks: 27000,
+    segmentIndex: 0,
+    ...(bounty === undefined ? {} : { bounty }),
+  });
+
+  it('블록이 없으면 던진다 (없으면 도주 기제가 통째로 사라져 **항상 성공하는 의뢰**가 된다)', () => {
+    expect(() =>
+      buildRunConfig(defaultProfile(), { ...base, commission: bountyCm() }),
+    ).toThrow(/bounty/);
+  });
+
+  it('대조군: 블록이 있으면 통과한다 (위 단언이 "현상금이면 무조건 던진다"가 아니다)', () => {
+    expect(() =>
+      buildRunConfig(defaultProfile(), {
+        ...base,
+        commission: bountyCm({ targetKind: 2, escapeRule: 'hpThreshold' }),
+      }),
+    ).not.toThrow();
+  });
+
+  it('대조군: 다른 주문은 `bounty` 없이도 통과한다', () => {
+    expect(() =>
+      buildRunConfig(defaultProfile(), {
+        ...base,
+        commission: { ...bountyCm(), order: 'chain' },
+      }),
+    ).not.toThrow();
   });
 });

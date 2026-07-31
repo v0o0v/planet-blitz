@@ -181,6 +181,13 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
   if (opts.commission !== undefined && opts.pilot !== undefined) {
     throw new Error('buildRunConfig: 의뢰 런에는 예비역 소집(pilot)을 실을 수 없다 — 장비축 제약이 우회된다');
   }
+  // 현상금 표적인데 `bounty` 블록이 없으면 `stepBountyEscape` 가 첫 줄에서 무연산으로 빠져
+  // **도주 기제 전체가 조용히 사라진다** — 구간이 보스 처치로만 닫히므로 이 주문의 유일한 실패
+  // 경로가 없어져 **항상 성공하는 의뢰**가 된다. 그리고 서버 EF 는 같은 소스로 같은 결정을
+  // 내리므로 해시가 일치해 accept 된다. 어떤 게이트도 울리지 않으니 여기서 던진다.
+  if (opts.commission !== undefined && opts.commission.order === 'bounty' && opts.commission.bounty === undefined) {
+    throw new Error('buildRunConfig: 현상금 표적 의뢰에 bounty 블록이 없다 — 도주 기제가 통째로 사라진다');
+  }
   const pilot = opts.pilot;
   const ship = activeShip(profile);
   // 소집이면 예비역 빌드에서, 아니면 활성 기체에서 소스를 고른다. 손상 세이브 방어: 범위 밖

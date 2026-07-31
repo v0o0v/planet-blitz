@@ -24,11 +24,17 @@
  * ⚠️ {@link COMMISSION_BOSS_ENEMY_TYPE_BASE} 는 **행성 보스 수와 반드시 같아야** 한다.
  * 어긋나면 의뢰 보스가 행성 보스 모델을 뒤집어쓰거나(작으면) 렌더가 빈 슬롯을 집는다(크면).
  * 둘 다 조용히 잘못된 그림이 나올 뿐 아무 게이트도 울리지 않으므로,
- * `tests/commissionBossCatalog.test.ts` 가 이 등식을 잠근다.
+ * `tests/commissionBossRender.test.ts` 가 이 등식을 잠근다(독립 전사본 대조).
  *
  * ## append-only
- * 이 배열의 **인덱스는 wire 값**이다(`CommissionBounty.targetKind` · 보스 `enemyType`).
- * 재배치하면 이미 발령된 의뢰의 표적이 조용히 바뀐다. 항상 끝에만 추가하라.
+ * 이 배열의 **인덱스는 wire 값**이다(보스 `enemyType`). 재배치하면 이미 발령된 의뢰의 표적이
+ * 조용히 바뀐다. 항상 끝에만 추가하라.
+ *
+ * ⚠️ **`CommissionBounty.targetKind` 는 아직 이 인덱스를 고르지 않는다.** 보스 선택은 전적으로
+ * **주문 종류**(`commissionBossIndex`)가 한다 — payload 가 표적을 고르게 하면 현상금 의뢰가
+ * 도주하지 않는 보스를 지목할 수 있고, 그러면 이 주문의 유일한 실패 경로가 사라진다. 그 필드는
+ * 예약된 채로 **미소비**다. 서버가 이 값을 정본으로 굽기 시작하면 클라·서버의 진실이 둘이 되므로,
+ * 소비를 시작할 때 이 주석과 `src/run/commission.ts` 의 짝 주석을 함께 갱신하라.
  */
 
 import type { BossDef } from './boss.js';
