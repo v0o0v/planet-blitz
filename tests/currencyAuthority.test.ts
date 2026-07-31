@@ -21,6 +21,7 @@ import {
   progressScore,
   readPendingSettlements,
   readPendingGrants,
+  writePendingGrants,
   type ServerProfile,
 } from '../src/net/profileSync.js';
 import type {
@@ -301,6 +302,50 @@ describe('재화 권위 — grant 전송 실패 시 대기 큐 재지급(MED-1)'
     const r = await grantCurrencyToServer(10, 3, 'salvage', { config: null, store });
     expect(r).toEqual({ status: 'unconfigured' });
     expect(readPendingGrants(store)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (AC-C10) 대기 재화 큐 allowlist 필터 — 의뢰서 서버 계약 §5-1 회귀 절
+// ---------------------------------------------------------------------------
+//
+// 마이그레이션이 `grant_currency` 를 allowlist(default-deny)로 바꾸면, 큐 안의 조작/구버전
+// `source` 항목은 서버 호출 시마다 예외를 맞는다. 필터가 없으면 그 예외가 catch 로 떨어져
+// 무조건 재큐잉되어 큐가 절대 안 빈다(무한 재시도로 고인다) — 이 테스트는 그 잔존을 잡는다.
+describe('재화 권위 — 대기 큐 allowlist 필터(AC-C10)', () => {
+  it('allowlist 밖 source 항목은 flush 에서 폐기되고 큐가 빈다(서버 호출 자체를 안 한다)', async () => {
+    const gw = new FakeCurrencyGateway();
+    const store = memStore();
+    // 손수 조작/구버전 큐 항목을 직접 심는다(stashPendingGrant 는 API 로 못 만드는 상태 —
+    // 실제로는 localStorage 조작이나 구버전 클라가 만든다).
+    writePendingGrants(store, [
+      { credits: 1000, minerals: 1000, source: 'commission' }, // 뮤테이션 대상 — allowlist 밖
+      { credits: 10, minerals: 3, source: 'salvage' }, // 허용 — 정상 처리돼야 한다
+    ]);
+
+    await flushPendingSync({ gateway: gw, store });
+
+    // ⚠️ 뮤테이션: `isGrantCurrencyClientSource` 필터를 지우면(또는 무조건 통과시키면) 이 assertion
+    // 이 실패해야 한다 — gw.grantCalls 에 'commission' 호출이 섞이거나(FakeCurrencyGateway 는
+    // source 검증을 안 하므로 조용히 성공해 버림) 큐가 안 빈다.
+    expect(gw.grantCalls).toEqual([{ credits: 10, minerals: 3, source: 'salvage' }]);
+    expect(readPendingGrants(store)).toHaveLength(0); // 폐기 + 정상 처리 — 둘 다 빠졌다.
+  });
+
+  it('allowlist 밖 항목이 서버 실패를 겪어도 재큐잉되지 않는다(폐기가 재시도보다 앞선다)', async () => {
+    const gw = new FakeCurrencyGateway();
+    gw.failGrant = true; // 허용 source 라도 이번엔 전송 실패 시뮬레이션
+    const store = memStore();
+    writePendingGrants(store, [
+      { credits: 500, minerals: 0, source: 'x' }, // allowlist 밖
+      { credits: 10, minerals: 3, source: 'salvage' }, // 허용이지만 failGrant=true 라 재큐잉돼야 함
+    ]);
+
+    await flushPendingSync({ gateway: gw, store });
+
+    expect(gw.grantCalls).toEqual([]); // salvage 도 실패해 호출 기록은 없다(throw 는 push 이전)
+    // allowlist 밖 항목은 사라지고, 허용 항목만 재시도를 위해 남는다.
+    expect(readPendingGrants(store)).toEqual([{ credits: 10, minerals: 3, source: 'salvage' }]);
   });
 });
 

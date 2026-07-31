@@ -11,3 +11,37 @@ profiles.save는 클라이언트 통짜 업로드(last-write-wins)라 credits·�
 - 공격자 로드아웃 위조 경로가 닫혀, 래더 오염 벡터는 침공 리플레이 위조(전수 검증이 차단)만 남는다
 - 기체 획득·강화 경로 전부(건조·장비 장착 해제·스킬 투자·분해·리롤)가 RPC화되는 큰 마이그레이션이다 — 재화 이관과 한 결의로 묶어 한 번에 끝내는 것이 이중 마이그레이션보다 싸다는 판단
 - PvE 정산 요약의 보상 재계산(ADR-0026)과 한 쌍으로 동작한다 — 원장 없는 캡, 캡 없는 원장 모두 반쪽이다
+
+## 개정 (2026-08-01) — `grant_currency` 를 allowlist(default-deny)로 전환
+
+의뢰서 서버 축 구현(`supabase/migrations/20260803000000_commission_ledger.sql`)이 이 ADR 이 정의한
+재화 관문의 **계약을 바꾼다.** 재화 축 문서만 읽는 사람이 놓치지 않도록 여기 기록한다.
+
+**발견된 사실 — 이 변경이 만든 구멍이 아니라 이미 라이브에 열려 있던 구멍이다:**
+
+`grant_currency` 는 `authenticated` 가 직접 호출 가능한데 `p_source` 를 **검증하지 않았다.**
+그리고 미등록 source 는 `case` 의 `else` 분기로 떨어져 `CAP_DEFAULT_*`(1,000/1,000)를 받고,
+개연성 캡은 `p_source='pve_run'` 일 때만 산정되므로 `least()` 가 그것을 무시한다. 귀결:
+
+> 인증된 아무 사용자가 `rpc/grant_currency {p_credits:1000, p_minerals:1000, p_source:"x"}` 를
+> 시간당 50회 호출해 **런을 한 번도 돌리지 않고 시간당 50,000/50,000, 일 300,000/300,000**
+> (`CAP_HOURLY_*`·`CAP_DAILY_*` 상한)을 얻을 수 있었다.
+
+남아 있던 유일한 방어는 그 누적 캡뿐이었다. 이 ADR 이 "획득은 정산·드랍 RPC 가 처리한다"고
+정한 구조가, 진입점이 source 를 안 보는 바람에 **관문이 아니라 통로**가 되어 있었다.
+
+**조치**: 통과 집합을 유한 리터럴 3종 `('pve_run','salvage','story')` 로 고정한다(default-deny).
+캡 표와 원장 기록은 신설된 공유 본문 `grant_currency_for` 에 그대로 남고, **게이트는 진입점이
+진다.** `commission` 은 그 공유 본문으로만 도달하며 `service_role` 전용이다.
+
+- blocklist 로 `commission` 하나만 막는 것은 **부족하다** — 위 구멍이 그대로 남는다. 자기가
+  만드는 구멍만 보고 이미 열려 있는 것을 안 보는 실수의 표본으로 남긴다.
+- allowlist 는 대소문자·공백 정규화 문제도 함께 닫는다(통과 집합이 유한 리터럴이므로).
+- **마찰(의도)**: 새 지급원을 추가하려면 SQL 과 TS 상수를 함께 고쳐야 한다.
+  `tests/commissionServerConstants.test.ts` 가 **값이 아니라 집합 일치**를 단언해
+  "`case` 에 분기만 추가하고 allowlist 를 빠뜨림"을 잡는다.
+- 회귀 위험은 "allowlist 를 좁히다 정상 경로를 끊는 것" 하나뿐이며, 원격 적용 스크립트가
+  `salvage`·`story` 실호출로 확인한다(`scripts/apply-commission-ledger-migration.ps1`).
+- **침공 축의 비대칭은 고치지 않는다**(범위 밖): `apply_invasion_result` 는 `currency_grants`
+  원장을 우회해 지급하므로 1h/24h 누적 캡 **밖**이다. "선례가 그러니 복제한다"는 논증은
+  의뢰 축에서 명시적으로 기각했다.
