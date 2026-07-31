@@ -91,6 +91,15 @@ export interface RunResult {
    *  ② 특산 설계도 역수 보정 — `blueprintDropsFromLoot` 이 엘리트 유래 동반 확률을 ×(1/m) 한다.
    */
   planetMultCenti?: number;
+  /**
+   * 이 런이 **의뢰 런**인가(의뢰서 시스템 · 계약 §10). `WorldConfig.commission !== undefined` 를
+   * 그대로 넘긴다. 미지정 = 일반 런(기존 호출부·구 세이브 전부 무영향).
+   *
+   * 정산이 이걸 받는 이유는 하나다: **의뢰 클리어는 최고 클리어 단계를 갱신하지 않는다.**
+   * 의뢰는 서버가 지정한 무대를 도는 별도 축이라, 그것으로 단계 개방이 진행되면 정규 진행
+   * (ADR-0022)을 우회하는 경로가 열린다.
+   */
+  commission?: boolean;
 }
 
 /** Summary of what a run added to the profile (for the result overlay). */
@@ -119,6 +128,15 @@ export interface SettlementOutcome {
    * 별도 축이라 결과 오버레이가 구분해 표시할 수 있다. 지급 없으면 undefined.
    */
   storyRewardCredits?: number;
+  /**
+   * 이 정산이 **의뢰 런**의 것인가(계약 §10 · A-8b). `RunResult.commission` 을 그대로 되비춘다.
+   *
+   * ⚠️ **optional 이 아니라 항상 실린다.** 호출부(`main.ts`)가 이 값으로 재화 지급 경로를
+   * 가르는데(의뢰 런은 `settlePveRunCurrency` 를 타지 않는다), optional 이면 `?? false` 폴백이
+   * 생기고 그 폴백은 "배선을 잊었다"와 "의뢰가 아니다"를 구분하지 못한다 — 이 저장소의 지배적
+   * 실패 모드(조용한 배선 누락)가 정확히 그 틈으로 들어온다.
+   */
+  commission: boolean;
 }
 
 /**
@@ -174,7 +192,16 @@ export function settleRun(profile: Profile, result: RunResult): SettlementOutcom
 
   // 5. On victory, record the planet clear (drives 정제소 unlock + 단계 개방 상한, ADR-0022).
   //    승리한 단계가 실제로 기록돼야 개방이 진행된다(핵심 배선 — 누락 시 개방 영영 안 됨).
-  if (result.victory && result.planet !== undefined && result.stage !== undefined) {
+  //    ⚠️ **의뢰 런은 제외한다**(계약 §10 A-8). 의뢰는 서버가 지정한 무대를 도는 별도 축이라,
+  //    의뢰 클리어로 단계가 개방되면 정규 진행(ADR-0022)을 우회하는 경로가 열린다.
+  //    ⚠️⚠️ **일반 PvE 는 반드시 계속 갱신돼야 한다** — 이 게이트를 넓게 잡으면 위 주석이 경고한
+  //    "누락 시 개방 영영 안 됨" 이 그대로 재현된다(정반대 방향의 회귀).
+  if (
+    result.victory &&
+    result.commission !== true &&
+    result.planet !== undefined &&
+    result.stage !== undefined
+  ) {
     recordPlanetClear(profile, result.planet, result.stage);
   }
 
@@ -196,6 +223,7 @@ export function settleRun(profile: Profile, result: RunResult): SettlementOutcom
     creditsGained,
     overflow,
     blueprintsGained,
+    commission: result.commission === true,
     ...(story.shardGained !== undefined ? { shardGained: story.shardGained } : {}),
     ...(story.rewardCredits > 0 ? { storyRewardCredits: story.rewardCredits } : {}),
   };

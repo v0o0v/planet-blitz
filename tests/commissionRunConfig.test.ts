@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile } from '../src/save/profile.js';
 import { createWorld } from '../src/sim/world.js';
+import { COMMISSION_ORDERS, commissionOrderWire } from '../src/run/commission.js';
 import type { CommissionRunConfig } from '../src/run/commission.js';
 import {
   COMMISSION_SEGMENT_COUNT,
@@ -100,5 +101,43 @@ describe('P0 상수 모듈 — 하드코딩 금지의 근거지', () => {
     for (const g of [1, 2, 3, 4] as const) {
       expect(commissionReplayBudgetTicks(g)).toBe(COMMISSION_SEGMENT_COUNT[g] * COMMISSION_SEGMENT_TICK_CAP);
     }
+  });
+});
+
+describe('④ 주문 wire 인코딩 — append-only 골든', () => {
+  // 이 배열의 **인덱스가 곧 해시에 접히는 값**이다(`hashWorld` 의뢰 꼬리 폴드). 재배치는 이미
+  // 제출된 모든 의뢰 리플레이를 조용히 무효화하는데, 클라·서버가 같은 소스를 쓰므로 **양쪽이
+  // 동시에 틀려 어떤 게이트도 안 울린다.** 주석만으로는 그 규율이 강제되지 않아 골든으로 박는다
+  // (`activeSlots` wire 선례와 같은 형태).
+  it('COMMISSION_ORDERS 의 순서가 고정돼 있다 (재배치 = 제출된 리플레이 무효화)', () => {
+    expect([...COMMISSION_ORDERS]).toEqual(['chain', 'constraint', 'bounty', 'elite']);
+  });
+
+  it('commissionOrderWire 가 그 인덱스를 그대로 낸다', () => {
+    expect(commissionOrderWire('chain')).toBe(0);
+    expect(commissionOrderWire('constraint')).toBe(1);
+    expect(commissionOrderWire('bounty')).toBe(2);
+    expect(commissionOrderWire('elite')).toBe(3);
+  });
+});
+
+describe('⑤ 조립 관문 — 빈 무대 거부', () => {
+  // segments 가 비면 "마지막 구간인가" 판정이 항상 참이라 첫 보스 처치가 곧바로 victory 이고,
+  // 그 victory 는 확정 유니크 지급 경로로 간다.
+  it('segments 가 빈 의뢰 config 는 조립 단계에서 거부된다', () => {
+    expect(() =>
+      buildRunConfig(defaultProfile(), {
+        planet: 0,
+        stage: 1,
+        commission: {
+          commissionId: 'c-empty',
+          order: 'chain',
+          grade: 1,
+          segments: [],
+          replayBudgetTicks: 9000,
+          segmentIndex: 0,
+        },
+      }),
+    ).toThrow();
   });
 });

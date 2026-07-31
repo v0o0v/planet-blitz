@@ -102,6 +102,46 @@ export default tseslint.config(
     rules: simCoreRestrictions,
   },
   {
+    /**
+     * 런 전진 봉인 — `src/sim/**` **밖**에서는 `stepWorld` 를 직접 import 하지 않는다.
+     * 대신 `src/sim/commissionSegment.ts` 의 `stepRun` 을 쓴다.
+     *
+     * ## 왜 필요한가
+     * 다구간 의뢰는 구간마다 **새 월드**를 만들므로, 런을 전진시키는 함수가 월드를 **반환**해야
+     * 한다. `stepWorld` 는 제자리 변형이라 그 전환을 표현할 방법이 없다 — 직접 부르면 2구간부터
+     * 죽은 월드를 스텝하고, **예외도 타입 오류도 나지 않는다.** 화면엔 "런이 안 끝난다"로만 보인다.
+     *
+     * ## ⚠️ 이것은 구조적 봉인이 아니다 — 자인한다
+     * `stepWorld` 소비처는 115파일 602건이고 그중 89파일이 `tests/` 다. 전수 이관 비용 대비
+     * 이득이 낮다고 판단해 **린트 방어로 받아들인 트레이드오프**다. 그래서 적용 범위는
+     * "프로덕션 소스(`src/`) 중 sim 밖" 으로 좁고, `tests/`·`scripts/` 는 대상이 아니다.
+     *
+     * ⚠️ **위 `simCoreRestrictions` 블록을 재사용할 수 없다.** 그 블록은 대상이
+     * `src/sim/**`·`data/**` 이고 방향이 정반대다(sim 이 pixi/render/ui 를 못 당기게).
+     * 그래서 별도 블록이다 — 두 규칙을 합치려 들면 한쪽이 조용히 무력화된다.
+     */
+    files: ['src/**/*.ts'],
+    // `src/bench/**` 는 예외다 — 오프라인 성능 프로브라 **`stepWorld` 자체의 비용을 재는 것이
+    // 목적**이고, config 를 자기가 리터럴로 조립하므로 `commission` 이 실릴 경로가 없다.
+    // (예외를 두는 대신 벤치를 `stepRun` 으로 옮기면 재려던 대상이 바뀐다.)
+    ignores: ['src/sim/**/*.ts', 'src/bench/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/sim/world.js', '**/sim/world', './world.js', '../sim/world.js'],
+              importNames: ['stepWorld'],
+              message:
+                'sim 밖에서 stepWorld 직접 import 금지 — src/sim/commissionSegment.ts 의 stepRun 을 써라(의뢰 구간 전환이 새 월드를 반환한다).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // Build-time Node scripts (asset prep, tileset synthesis) run on Node, not in the browser.
     // `.omc/research/**` 의 오프라인 검수 스크립트도 같은 환경이다 — `eslint .` 이 dot-디렉터리를
     // 실제로 훑으므로 여기 넣지 않으면 `pnpm lint` 가 무관한 이유로 빨개진다.

@@ -86,6 +86,12 @@ export const WORLD_CARRY = [
   'broodLaunches',
   'cushionHealed',
   'filmPops',
+  // --- 의뢰 런타임: `totalTicks` 가 런 단위 누적이라 승계해야 한다 ---
+  // ⚠️ **참조를 그대로 넘긴다**(`weapon`·`loot` 와 같은 규율 — 이전 월드는 전환 직후 버려진다).
+  // 그래서 `segmentDone` 은 **명시적으로 0 으로 되돌려야 한다**: 이 객체는 직전 구간에서
+  // `segmentDone = 1` 로 세워진 바로 그 객체라, 안 내리면 `stepRun` 이 다음 틱에 또 전환해
+  // **구간이 한 틱에 하나씩 소진되고 의뢰가 즉시 끝난다**. {@link carryAcrossSegment} 참조.
+  'commissionRuntime',
 ] as const satisfies readonly (keyof WorldState)[];
 
 /**
@@ -296,6 +302,19 @@ export function carryAcrossSegment(prev: WorldState, next: WorldState): void {
   // 리터럴 타입을 그대로 쓰므로 영향받지 않는다(여기서 넓히면 게이트가 전 수치 키를 덮은 것으로
   // 착각해 무력화된다 — 그래서 선언이 아니라 **사용처에서만** 넓힌다).
   for (const k of WORLD_RESET_ZERO as readonly NumericKeys<WorldState>[]) next[k] = 0;
+
+  // 의뢰 런타임은 **객체 참조**를 승계했으므로(위 WORLD_CARRY 주석), 구간 신호만 여기서 내린다.
+  // `totalTicks` 는 그대로 이어진다 — 그것이 이 객체를 승계하는 이유다.
+  // 새 월드가 `createWorld` 에서 만든 자기 런타임은 여기서 버려진다(전환은 항상 승계본이 이긴다).
+  //
+  // ⚠️ **이 참조 공유는 `weapon`·`loot` 의 그것과 등급이 다르다 — `commissionRuntime` 은 해시
+  // 대상이다**(`segmentDone` 이 꼬리 폴드에 접힌다). 아래 한 줄이 `prev` 의 값까지 함께 바꾸므로
+  // **전환 후 `hashWorld(prev)` 는 전환 전과 다른 값을 낸다.**
+  // 지금은 무해하다 — 전환 뒤 `prev` 를 재해싱하는 호출부가 0건이다(`runReplay` 는 `stepRun` 의
+  // 반환값만 해싱하고, 정산 경로는 `world` 를 재조회한다). **그러나 그 안전성은 호출부 전수에
+  // 의존한다.** 전환 후 이전 월드를 다시 해싱하는 경로를 만들지 마라 — 만들어야 한다면 여기를
+  // 값 복사(`{ ...prev.commissionRuntime, segmentDone: 0 }`)로 먼저 바꿔라.
+  if (next.commissionRuntime !== undefined) next.commissionRuntime.segmentDone = 0;
 
   // 플레이어는 항상 엔티티 배열의 0번이다(WorldState.playerId 주석의 계약).
   const prevPlayer = prev.entities[0];

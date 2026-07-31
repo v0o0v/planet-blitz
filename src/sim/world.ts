@@ -998,6 +998,33 @@ export interface WorldState {
   activeBuff0: number;
   /** 슬롯 2 `kind='buff'` 잔여 틱(0 = 비활성). **핸들러가 쓴다**(공통 코드 금지). */
   activeBuff1: number;
+  /**
+   * 의뢰 런 런타임(의뢰서 시스템 · 계약 §5·§8·§10). **`config.commission` 이 있을 때만 존재**한다
+   * — 조건부 필드라 무의뢰 런은 `hashWorld` 의뢰 꼬리 폴드가 아예 실행되지 않는다(바이트 불변).
+   *
+   * ⚠️ 의뢰 술어의 **정본은 `config.commission`** 이다. 이 런타임의 유무로 "의뢰인가"를
+   * 판정하지 마라(파생 정본 금지 — `sigBit` 과 같은 규율).
+   * append-only 규율: 신규 필드는 항상 이 아래에만 추가.
+   */
+  commissionRuntime?: CommissionRuntime;
+}
+
+/**
+ * 의뢰 런의 구간 진행 런타임.
+ *
+ * 두 필드가 사는 이유가 서로 다르다 — 섞어 읽지 마라:
+ *  - {@link CommissionRuntime.segmentDone} 은 **sim → 루프 층의 신호**다. `compact()` 가 세우고
+ *    `stepRun` 이 소비해 다음 구간 월드를 만든다. `hashWorld` 가 접는다(레벨업 프리즈로 전환이
+ *    한 틱 이상 지연되면 실제로 스트림에 나타난다).
+ *  - {@link CommissionRuntime.totalTicks} 는 **런 전체 누적 틱**이다. `state.tick` 은 구간마다
+ *    0 으로 돌아가므로(승계 계약 §7) 런 시간의 정본은 이쪽뿐이다. `hashWorld` 는 **접지 않는다**
+ *    — 스트림 인덱스 i 에서 항상 `i+1` 이라 정보량이 0인 순수 파생값이다(파생 폴드 금지 규율).
+ */
+export interface CommissionRuntime {
+  /** 이번 구간이 종료됐는가(1 = 종료, 전환 대기). 새 구간 진입 시 0 으로 돌아간다. */
+  segmentDone: number;
+  /** 런 전체 누적 틱(구간 경계를 넘어 단조 증가). 표시·정산이 읽는 런 시간의 정본. */
+  totalTicks: number;
 }
 
 /**
@@ -1013,8 +1040,30 @@ export function markTainted(world: WorldState): void {
  * spawning, so the starting layout past the player is empty until the first
  * card is drawn (tick 0). Everything is a pure function of the seed.
  */
-export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG): WorldState {
+export interface CreateWorldOpts {
+  /**
+   * **파생 스탯이 이미 config 에 구워져 있다**(의뢰 구간 전환 · 계약 §4).
+   *
+   * `createWorld` 는 기본적으로 `loadout`·촉매 파워 보상축을 `weapon`/`cfg` 에 **굽는다**.
+   * 그런데 의뢰 2구간 이후의 config 는 1구간 월드의 `state.config` 를 계승한 것이라 그 굽기가
+   * **이미 적용돼 있다** — 다시 구우면 이동 속도·피해·최대 HP 가 구간마다 곱해져 5구간짜리
+   * 최종 지시에서 스탯이 지수적으로 폭주한다. 이 플래그가 그 블록을 건너뛴다.
+   *
+   * ⚠️ **건너뛰는 것은 굽기뿐이다.** `catalystMods`·`planetMult` 는 그 블록 **밖**이라 계승
+   * config 로부터 정상 재도출되고, `weapon`/`magnetRadius` 는 승계가 덮는다(`carryAcrossSegment`).
+   */
+  preDerived?: boolean;
+}
+
+export function createWorld(
+  seed: number,
+  config: WorldConfig = DEFAULT_CONFIG,
+  opts: CreateWorldOpts = {},
+): WorldState {
   const cfg = { ...config };
+  // ⚠️ 이 함수는 `cfg`(얕은 사본)를 **변형**한다. 원본 `config` 는 절대 건드리지 않는다 —
+  // 계승 config 를 오염시키면 다음 구간이 또 그 위에 굽는다(계약 §4의 경고).
+  const preDerived = opts.preDerived === true;
   const rng = new SeededRng(seed);
   const entities: Entity[] = [];
   let nextEntityId = 1;
@@ -1033,7 +1082,7 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   // which are already hashed. The loadout block itself is folded into the hash too.
   const weapon: WeaponStats = { ...DEFAULT_WEAPON };
   let magnetRadius = BASE_MAGNET_RADIUS;
-  const lo = cfg.loadout;
+  const lo = preDerived ? undefined : cfg.loadout;
   if (lo !== undefined) {
     weapon.weaponType = lo.weaponType;
     weapon.damage = Math.round(weapon.damage * lo.damageMult * 100) / 100;
@@ -1060,7 +1109,10 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   //  · skillAll("모든 스킬 +N" 계열)은 전용 런타임 스킬-효과 노브가 없어(스킬은 buildRunConfig
   //    에서 loadout 에 이미 접힘) 네 전투 스탯의 **공동 인자**로 얹는다 — loadout 파생과는 별개
   //    인자라 이중 적용이 아니다(완전한 스킬-효과 배선은 후속). 무주입이면 1 → 무연산.
-  const cats = cfg.catalysts;
+  // ⚠️ `preDerived` 는 이 촉매 파워 굽기도 함께 건너뛴다 — loadout 굽기와 **같은 블록**으로
+  // 취급해야 한다(계약 §4가 지정한 굽기 범위). 하나만 건너뛰면 촉매 런의 2구간부터
+  // 피해·연사·이속·HP 가 구간마다 다시 곱해진다.
+  const cats = preDerived ? undefined : cfg.catalysts;
   if (cats !== undefined && cats.length > 0) {
     const skillAll = catalystPowerMult(cats, 'skillAll');
     const dmgMul = catalystPowerMult(cats, 'damage') * skillAll;
@@ -1120,9 +1172,16 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   // shrinkRuntime 과 같은 상호 배타 가드). **positive 일 때만** echoRuntime 을 세운다 → hashWorld
   // 조건부 폴드가 성립해 에코 미발생 런은 바이트 불변이다. worldRng 은 이 로컬 인스턴스를 state
   // 에 그대로 싣는다(아래 리터럴) — fork 는 소비가 아니라 파생이라 getState() 가 여전히 pristine.
+  //
+  // ⚠️ **의뢰 런(cfg.commission)도 억제한다**(계약 §9). 근거는 RNG 전진이 **아니다** — `rollEcho`
+  // 는 `worldRng.fork(...)` 만 쓰고 부모를 소비하지 않으므로 굴리고 버려도 스트림은 그대로다.
+  // 진짜 근거는 **런타임 객체가 존재하면 조건부 꼬리 폴드가 켜지고** `stepEcho` 가 상태를
+  // 갖는다는 것이다. 의뢰는 구간마다 새 월드를 만드는데 에코 런타임은 무대 단위 미승계라,
+  // 구간 수만큼 에코가 재추첨되어 의뢰 1건이 에코 N회를 낳는다.
   const worldRng = rng.fork('world');
+  const commissionRun = cfg.commission !== undefined;
   let echoRuntime: EchoRuntime | undefined;
-  if (cfg.invasion3 === undefined) echoRuntime = rollEcho(worldRng);
+  if (cfg.invasion3 === undefined && !commissionRun) echoRuntime = rollEcho(worldRng);
 
   // PvE 조우(ADR-0033). 에코와 같은 fork 전용 롤(`worldRng.fork('encounter')`)이라 worldRng 을
   // 한 번도 소비하지 않는다 — 조우 발생 런에서도 웨이브·드랍·파워업 스트림이 전부 그대로다.
@@ -1137,8 +1196,11 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
   // 즉 **detour 중에는 모드 규칙이 아예 실행되지 않는다**. 근거가 사라졌으니 게이트도 없앤다.
   // 이제 워프는 모든 행성 모드에서 안전하고, 조우는 6개 모드 전부에서 도달 가능하다.
   // 롤 구조(chance → 유형 가중 → 스폰 틱 3회 소비)는 그대로라 RNG 소비량은 불변이다.
+  //
+  // ⚠️ **의뢰 런도 억제한다**(계약 §9) — 근거는 위 에코 주석과 같다. 조우는 게다가 detour 로
+  // 메인 파이프라인을 통째로 멈추므로, 구간마다 재추첨되면 의뢰의 틱 예산 계산이 무너진다.
   let encounterRuntime: EncounterRuntime | undefined;
-  if (cfg.invasion3 === undefined) {
+  if (cfg.invasion3 === undefined && !commissionRun) {
     encounterRuntime = rollEncounter(worldRng);
   }
 
@@ -1218,6 +1280,11 @@ export function createWorld(seed: number, config: WorldConfig = DEFAULT_CONFIG):
     // PvE 조우 런타임도 positive 런에만 싣는다(exactOptionalPropertyTypes · 조건부 폴드 정합).
     // 침공엔 위 롤 가드로 애초에 세우지 않으므로 invasion3 과 공존하지 않는다.
     ...(encounterRuntime !== undefined ? { encounterRuntime } : {}),
+    // 의뢰 런타임도 의뢰 런에만 싣는다(exactOptionalPropertyTypes · 조건부 폴드 정합).
+    // 무의뢰 런은 필드 자체가 없어 `hashWorld` 의뢰 꼬리 폴드가 미실행이다(바이트 불변).
+    // `totalTicks` 는 여기서 0 으로 시작하지만 2구간 이후 월드는 `carryAcrossSegment` 가
+    // 직전 구간 값으로 덮는다(런 단위 누적).
+    ...(commissionRun ? { commissionRuntime: { segmentDone: 0, totalTicks: 0 } } : {}),
   };
 
   // L1 진입 훅(정적 배치 스폰)은 상태가 완성된 뒤에 태운다 — 훅이 state.entities 에 스폰하기
@@ -1266,6 +1333,12 @@ function getPlayer(state: WorldState): Entity {
  * Advance the world by exactly one tick. Deterministic in (state, input).
  */
 export function stepWorld(state: WorldState, input: InputFrame): void {
+  // 의뢰 런 누적 틱(계약 §10) — **모든 조기 반환보다 앞**이다. `state.tick` 은 구간마다 0 으로
+  // 돌아가고 프리즈·detour 틱도 세야 하므로, 여기가 아니면 "스트림 인덱스 i 에서 i+1" 이라는
+  // 불변식이 깨진다. 해시에는 접지 않는다(순수 파생 — replay.ts 의뢰 폴드 주석 참조).
+  // 무의뢰 런은 필드 자체가 없어 무연산이다.
+  if (state.commissionRuntime !== undefined) state.commissionRuntime.totalTicks++;
+
   // Run is over — the world is inert (settlement screen is showing).
   if (state.gameOver || state.victory) return;
 
@@ -3709,6 +3782,43 @@ function collectLoot(state: WorldState, loot: Entity): void {
 // Dead-entity compaction (order-preserving; player stays at index 0).
 // ---------------------------------------------------------------------------
 
+/**
+ * 구간(또는 런) 종료 판정 **단일 정본** — 계약 §5 의 3분기가 여기 한 곳에만 산다.
+ *
+ * | 분기 | 조건 | 결과 |
+ * |---|---|---|
+ * | ① 중간 구간 종료 | `cleared` 또는 `escaped`, `segmentIndex < length-1` | `segmentDone = 1` |
+ * | ② 마지막 구간 완수 | `cleared`, `segmentIndex === length-1` | `victory = true` |
+ * | ③ 마지막 구간 실패 | `escaped`, `segmentIndex === length-1` | **`gameOver = true`** |
+ *
+ * ⚠️ **③ 을 ② 로 떨어뜨리면 의뢰 실패가 성공으로 판정된다.** ADR-0046 이 위조 가치 최고로 지목한
+ * 확정 유니크 지급 경로에서 벌어지는 오판이라, 전용 테스트 3건이 이 표를 못 박고 있다.
+ *
+ * ⚠️ **`escaped` 호출부는 아직 없다**(현상금 표적 도주는 Phase D/F 소관). 그럼에도 지금 분기를
+ * 세우는 이유는, 나중에 도주를 배선할 때 "어디에 무엇을 세울 것인가"를 다시 결정하게 두면 이
+ * 저장소가 반복해서 당한 실패 모드(③을 ②로 떨어뜨림)가 그 시점에 열리기 때문이다. 계약과
+ * 테스트를 먼저 굳혀 둔다.
+ *
+ * @param outcome `'cleared'` = 표적 처치(보스 격파) · `'escaped'` = 표적 도주(실패)
+ */
+export function endCommissionSegment(state: WorldState, outcome: 'cleared' | 'escaped'): void {
+  const cm = state.config.commission;
+  if (cm === undefined) {
+    // 무의뢰 런: 보스 격파 = 즉시 승리(기존 거동과 바이트 동일). 도주 개념이 없다.
+    if (outcome === 'cleared') state.victory = true;
+    return;
+  }
+  const isLast = cm.segmentIndex >= cm.segments.length - 1;
+  if (!isLast) {
+    // ① 중간 구간. `victory`/`gameOver` 를 세우지 않는다 — 세우면 `stepWorld` 첫 줄 가드에
+    //    걸려 런이 그 자리에서 끝난다. 전환은 루프 층(`stepRun`)이 이 신호를 보고 한다.
+    if (state.commissionRuntime !== undefined) state.commissionRuntime.segmentDone = 1;
+    return;
+  }
+  if (outcome === 'cleared') state.victory = true;
+  else state.gameOver = true;
+}
+
 function compact(state: WorldState): void {
   const survivors: Entity[] = [];
   const drops: { x: number; y: number; xp: number }[] = [];
@@ -3801,7 +3911,9 @@ function compact(state: WorldState): void {
       // 3레이어 침공에서는 보스 격파가 승리 조건이 아니다(승리 = L3 코어 파괴). 방어 보스는
       // 전용 kind 를 쓰는 것이 정본이지만, 'boss' 가 섞여 들어와도 런이 조기 종료되지 않도록
       // 여기서 막는다. PvE·구 침공은 조건이 항상 참이라 거동·해시 불변.
-      state.victory = true;
+      // 의뢰 런은 여기서 3분기로 갈린다(계약 §5) — 중간 구간이면 승리가 아니라 **구간 종료**다.
+      // 무의뢰 런은 `endCommissionSegment` 가 `state.victory = true` 한 줄로 떨어진다(거동 불변).
+      endCommissionSegment(state, 'cleared');
       bossKilled = true;
       // Boss guaranteed rare+ drop (GDD §3, plan B3). 승리 tick이라 바닥 스폰→접촉 수거가
       // 불가능하므로 state.loot에 직접 기록해 정산에 포함시킨다(해시 포함, replay.ts).

@@ -249,7 +249,10 @@ function main(): number {
   ]);
   expectReject(
     'invasion3 블록 부재',
-    { ...base, config: { ...cfg, invasion3: undefined } as WorldConfig },
+    // `exactOptionalPropertyTypes` 아래에서는 `invasion3: undefined` 를 `WorldConfig` 로 직접
+    // 좁힐 수 없다(그것이 이 게이트가 재현하려는 "블록 부재" 상태 그 자체다). 런타임 형태를
+    // 바꾸지 않으려면 `unknown` 경유가 유일하다.
+    { ...base, config: { ...cfg, invasion3: undefined } as unknown as WorldConfig },
     ['invasion-config-required'],
   );
 
@@ -428,7 +431,10 @@ function main(): number {
       defenseId: 'def-1',
       authorityLayers: snapLayers,
       authorityMaintenanceDb: 80,
-      card: undefined,
+      // 신설 `tsconfig.scripts.json` 게이트가 잡은 드리프트: 여기 있던 `card: undefined` 는
+      // `InvasionSnapshotRow` 에 없는 필드였고, 정작 **필수 필드 `authorityModules` 가 빠져
+      // 있었다**(모듈 권위 = 재실행 입력). 타입 정본은 `verify-invasion/verifyInvasionCore.ts`.
+      authorityModules: null,
       createdAtMs: nowMs - 60_000,
     };
     const baseParams = {

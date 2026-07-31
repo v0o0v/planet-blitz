@@ -34,7 +34,10 @@ function readFixture(): Fixture {
 
 /** 정직한 제출: 서버 재실행 결과를 그대로 주장으로 담는다(accept 되어야 정상). */
 function honestSubmission(seed: number, config: Replay['config'], inputs: InputFrame[]): RunSubmission {
-  const r = runReplay({ seed, config, inputs });
+  // `config` 는 optional 이라 `exactOptionalPropertyTypes` 아래에서 `undefined` 를 그대로 실을 수
+  // 없다 — 바로 아래 제출 조립과 **같은 조건부 스탬프**를 쓴다(둘이 갈리면 재실행에 쓰인 config 와
+  // 제출된 config 가 달라진다).
+  const r = runReplay({ seed, ...(config === undefined ? {} : { config }), inputs });
   return {
     seed,
     ...(config === undefined ? {} : { config }),

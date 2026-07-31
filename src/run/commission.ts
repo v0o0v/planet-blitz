@@ -33,12 +33,30 @@ export type CommissionGrade = 1 | 2 | 3 | 4;
 export type CommissionOrder = 'chain' | 'constraint' | 'bounty' | 'elite';
 
 /**
+ * 주문의 **wire 순서** — `hashWorld` 의뢰 꼬리 폴드가 접는 정수 인코딩의 정본.
+ *
+ * ⚠️ **APPEND-ONLY. 순서를 바꾸지 마라.** 이 배열의 인덱스가 곧 해시에 접히는 값이라, 재배치는
+ * 이미 제출된 모든 의뢰 리플레이를 조용히 무효화한다(클라·서버가 같은 소스를 쓰므로 **양쪽이
+ * 동시에 틀려** 어떤 게이트도 울리지 않는다).
+ */
+export const COMMISSION_ORDERS = ['chain', 'constraint', 'bounty', 'elite'] as const satisfies
+  readonly CommissionOrder[];
+
+/**
+ * 주문 → wire 정수. 미지의 값은 `-1`(정규화 실패도 결정론적이어야 한다 — `activeSlots` 의
+ * `ACTIVE_WIRE_EMPTY` 와 같은 규율).
+ */
+export function commissionOrderWire(order: CommissionOrder): number {
+  return COMMISSION_ORDERS.indexOf(order);
+}
+
+/**
  * 한 구간의 무대 지정.
  *
  * ⚠️ **`mode` 필드를 두지 않는다.** 행성 모드의 단일 정본은 `planetContent(planet).mode`
  * 파생이다(`src/run/runConfig.ts` 의 `planetMode` 스탬프). 여기에 `mode` 를 두면 정본이 둘이
  * 되어 "행성은 카르곤인데 모드는 수축" 같은 조합 불가능한 상태가 타입상 표현 가능해진다 —
- * 행성-모드 자유 조합은 **명시적 비목표**다(ADR-0042 의 "구간마다 모드를 갈아탄다"는 실질적으로
+ * 행성-모드 자유 조합은 **명시적 비목표**다(ADR-0046 의 "구간마다 모드를 갈아탄다"는 실질적으로
  * "구간마다 행성을 갈아탄다"와 등가).
  */
 export interface SegmentSpec {

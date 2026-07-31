@@ -76,7 +76,6 @@ import {
 } from './ui/tutorial.js';
 import {
   createWorld,
-  stepWorld,
   markTainted,
   DT,
   xpToNext,
@@ -88,6 +87,10 @@ import {
   runStoryMetrics,
 } from './sim/world.js';
 import type { WorldState, InputFrame } from './sim/world.js';
+// ⚠️ 런 전진은 `stepRun` 만 쓴다 — `stepWorld` 직접 import 는 eslint 가 막는다(계약 §6-4).
+// 다구간 의뢰는 구간마다 **새 월드**를 만들므로, 반환값을 `world` 에 다시 대입하지 않으면
+// 2구간부터 죽은 월드를 스텝하게 된다.
+import { stepRun } from './sim/commissionSegment.js';
 // 스토리 시스템(Phase E): 에코 안정화로 실을 파편 슬롯이 남았는지 판정(로어 토스트 예측용).
 import { RECORD_SHARDS } from '../data/lore/index.js';
 // DEV 하네스: 타입만 정적 import(런타임 값은 아래 import.meta.env.DEV 블록에서 동적
@@ -110,6 +113,7 @@ import {
   migrateLocalProfileToServer,
   recordPveRunResult,
   settlePveRunCurrency,
+  grantCurrencyToServer,
   isNetConfigured,
   pushProfileToServer,
   consumeCatalystsOnServer,
@@ -1364,10 +1368,24 @@ async function main(): Promise<void> {
     const w = world;
     if (w === null) return;
     recorder?.record(input);
-    stepWorld(w, input);
+    // 의뢰 구간 전환이면 **다른 월드**가 돌아온다. 반드시 `world` 에 다시 대입한다.
+    const next = stepRun(w, input);
+    world = next;
+    if (next !== w) {
+      // ⚠️ **전환됐을 때만** 리셋한다. 무조건 부르면 프리즈된 틱마다 스프라이트 캐시가 날아간다.
+      //  - `entityRenderer.reset()`: 새 월드가 `nextEntityId` 를 1 로 되돌리므로, 안 부르면
+      //    2구간의 적이 1구간 스프라이트를 그대로 물려받는다(렌더러가 엔티티 id 로 캐시한다).
+      //  - 보간 스냅샷: 이전 무대의 좌표에서 새 무대 좌표로 **선을 그으며** 날아가는 프레임이
+      //    생기지 않도록 두 스냅샷을 새 월드로 붙인다.
+      entityRenderer.reset();
+      prevSnap = snapshotWorld(next);
+      currSnap = prevSnap;
+      harness?.observe(next);
+      return;
+    }
     prevSnap = currSnap;
-    currSnap = snapshotWorld(w);
-    harness?.observe(w);
+    currSnap = snapshotWorld(next);
+    harness?.observe(next);
   }
 
   /** Settle a finished run into the profile once, then show the result screen. */
@@ -1430,6 +1448,9 @@ async function main(): Promise<void> {
           ...(w.config.planetMultCenti !== undefined
             ? { planetMultCenti: w.config.planetMultCenti }
             : {}),
+          // 의뢰 런 표식(계약 §10 A-8) — 정산이 **최고 클리어 단계를 갱신하지 않게** 하는
+          // 유일한 신호다. 술어 정본은 `config.commission`(런타임 파생 금지).
+          commission: w.config.commission !== undefined,
         });
         // Completing the tutorial (win or lose) reveals the base and makes the run
         // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.
@@ -1441,7 +1462,29 @@ async function main(): Promise<void> {
         // isNetConfigured() 로 분기해 미설정 폴백을 saveProfile **전에** 동기 반영한다.
         const creditsGained = lastOutcome.creditsGained;
         const storyReward = lastOutcome.storyRewardCredits ?? 0;
-        if (isNetConfigured()) {
+        if (lastOutcome.commission) {
+          // 의뢰 런은 **클라 `settlePveRunCurrency` 경로를 타지 않는다**(계약 §10 A-8b · 계획 D5).
+          // 의뢰 보상은 종이에 적힌 확정분이라 서버 원장이 리플레이 검증 후 지급한다 — 클라가
+          // 자원→크레딧 환산을 올리면 같은 런이 두 축으로 지급된다.
+          //
+          // ⚠️ **사연 보상만은 반드시 별도로 지급한다**(D11). `applyStoryProgress` 가 claim 원장을
+          // 이미 소진했으므로, 여기서 안 부르면 챕터 보상 크레딧이 **영영 증발**한다(1회성이라
+          // 재시도할 claim 자체가 남지 않는다). 오프라인이면 아래 로컬 미러 폴백과 같은 취급.
+          if (storyReward > 0) {
+            if (isNetConfigured()) {
+              void grantCurrencyToServer(storyReward, 0, 'story').then((r) => {
+                if (r.status === 'applied') {
+                  profile.credits = r.creditsLeft;
+                  profile.minerals = r.mineralsLeft;
+                }
+              });
+            } else {
+              profile.credits += storyReward;
+            }
+          }
+          // ⚠️ 실제 RPC 형태(의뢰 정산·확정 보상 수령)는 **서버 레인 계약**이 확정한다.
+          // PA 레인은 여기까지 — "PvE 정산에 타지 않는다"는 분기와 사연 보상 배선만 진다.
+        } else if (isNetConfigured()) {
           void settlePveRunCurrency(profile, {
             summary: {
               victory: w.victory,
@@ -1507,7 +1550,11 @@ async function main(): Promise<void> {
         maxCombo: w.maxCombo,
         resources: w.resources,
         level: activeShip(profile).level,
-        timeSec: w.tick / 60,
+        // ⚠️ **누적 틱 기준**이다. 의뢰 다구간 런은 `w.tick` 이 구간마다 0 으로 돌아가므로
+        // 그대로 쓰면 **마지막 구간의 시간만** 보인다(5구간 의뢰가 30초로 표시되고, 런 중
+        // HUD 타이머는 구간이 넘어갈 때마다 0 으로 되감긴다).
+        // 무의뢰 런은 `commissionRuntime` 이 없어 `w.tick` 그대로다(표시 바이트 불변).
+        timeSec: (w.commissionRuntime?.totalTicks ?? w.tick) / 60,
         // 승리 문구가 격파한 보스 이름을 이 값에서 파생한다(카르곤 고정 결함 — 2026-07-27).
         planet: w.config.planet ?? 0,
         ...(o !== null
@@ -1591,7 +1638,10 @@ async function main(): Promise<void> {
       st.setChildIndex(screenTransition.container, st.children.length - 1);
     }
 
-    const w = world;
+    // ⚠️ `let` 이다 — 아래 스텝 블록에서 의뢰 구간 전환이 일어나면 `world` 가 **새 객체**로
+    // 갈리므로, 스텝이 끝난 직후 재조회한다(계약 §6-2). 안 하면 프레임 나머지(HUD·오버레이·
+    // 정산 판정·렌더 관측)가 통째로 죽은 월드를 읽는다.
+    let w = world;
     const runOver = w !== null && (w.gameOver || w.victory);
     const spectating = spectateReplay !== null;
 
@@ -1624,7 +1674,11 @@ async function main(): Promise<void> {
       const timeScale = ceremony.update(frame);
       accumulator += frame * timeScale * harnessSpeed;
       while (accumulator >= DT) {
-        const player = w.entities[0];
+        // ⚠️ **루프 안에서 재조회한다.** 직전 반복이 구간을 전환했으면 `w` 는 죽은 월드고,
+        // 그 월드의 플레이어 좌표로 조준을 샘플링하면 새 무대의 첫 입력이 엉뚱한 각을 문다.
+        const lw = world;
+        if (lw === null) break;
+        const player = lw.entities[0];
         const input = controller.sample(player?.x ?? 0, player?.y ?? 0);
         stepOnce(input);
         accumulator -= DT;
@@ -1634,6 +1688,12 @@ async function main(): Promise<void> {
     } else if (w === null || runOver) {
       accumulator = 0; // menus / settled run: sim is inert (일시정지 런은 유지)
     }
+
+    // ⚠️ **월드 재조회(계약 §6-2).** 위 캐치업 루프 안에서 의뢰 구간이 전환됐으면 `world` 는
+    // 새 객체다. 이 한 줄이 없으면 아래 프레임 나머지가 전부 죽은 월드를 읽는데 — 그중
+    // `settleIfRunOver()` 는 정산이라, 마지막 구간의 전리품·XP 가 통째로 사라진다.
+    // `tests/commissionWorldRebind.test.ts` 가 이 재조회를 소스 수준에서 잠근다.
+    w = world;
 
     // Tutorial: advance the scripted hint + instrument the first drop (FTUE, AC8).
     if (!spectating && tutorialActive && w !== null) {
@@ -1848,7 +1908,11 @@ async function main(): Promise<void> {
         xp: w.xp,
         xpNeed: xpToNext(w.level),
         level: w.level,
-        timeSec: w.tick / 60,
+        // ⚠️ **누적 틱 기준**이다. 의뢰 다구간 런은 `w.tick` 이 구간마다 0 으로 돌아가므로
+        // 그대로 쓰면 **마지막 구간의 시간만** 보인다(5구간 의뢰가 30초로 표시되고, 런 중
+        // HUD 타이머는 구간이 넘어갈 때마다 0 으로 되감긴다).
+        // 무의뢰 런은 `commissionRuntime` 이 없어 `w.tick` 그대로다(표시 바이트 불변).
+        timeSec: (w.commissionRuntime?.totalTicks ?? w.tick) / 60,
         combo: w.combo,
         multiplier: comboMultiplier(w.combo),
         boss,
@@ -2135,9 +2199,21 @@ async function main(): Promise<void> {
         const w = world;
         if (w === null) return;
         const merged = { moveX: 0, moveY: 0, aim: 0, dash: false, special: 0, ...input };
-        stepWorld(w, merged);
-        prevSnap = currSnap;
-        currSnap = snapshotWorld(w);
+        // `stepRun` 을 쓰는 이유는 의뢰 전환 때문만이 아니다 — `stepWorld` 직접 호출은 이 파일에서
+        // 금지돼 있고(eslint), 여기만 예외로 두면 하네스 경로에서만 구간이 안 넘어간다.
+        const nextW = stepRun(w, merged);
+        world = nextW;
+        if (nextW !== w) {
+          // `stepOnce` 의 전환 분기와 **같은 계약**을 쓴다(두 스냅샷을 새 월드로 붙인다).
+          // 여기서 `prevSnap` 에 구 월드 스냅샷을 남겨도 아래가 alpha=1 로 그려 화면상 무해하지만,
+          // 그 우연에 기대면 보간 alpha 가 1 이 아니게 되는 순간 두 경로가 조용히 갈린다.
+          entityRenderer.reset();
+          prevSnap = snapshotWorld(nextW);
+          currSnap = prevSnap;
+        } else {
+          prevSnap = currSnap;
+          currSnap = snapshotWorld(nextW);
+        }
         entityRenderer.render(prevSnap, currSnap, 1);
         renderRadarGated();
         gameApp.app.renderer.render(gameApp.app.stage);

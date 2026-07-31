@@ -161,7 +161,17 @@ export function updateWaves(state: WorldState, player: Entity): void {
   // 라 waveRng/eliteRng/dropRng 스트림이 밀리지 않는다 — 기존 카드 추첨 시퀀스가 그대로다.
   // 중반 격전 소환은 **강제 스크롤 모드를 제외**한다(아래 cleared 분기의 게이트 제외와 같은
   // 조건 — 둘은 반드시 함께 움직인다). 근거는 그쪽 주석 참조.
-  if (seg.clash === true && w.segmentElapsed === 0 && state.scrollRuntime === undefined) {
+  //
+  // **의뢰 런도 제외한다**(계약 §9). 중반 격전은 "한 무대를 오래 도는" 뱀서류 페이싱의 중간
+  // 산인데, 의뢰는 구간마다 새 무대를 여는 구조라 구간 수만큼 격전이 반복된다(페이싱류는 무대
+  // 단위 — 승계 원칙의 역방향 귀결). 술어 정본은 `config.commission` 이다.
+  //
+  // ⚠️ 소환 게이트와 전진 게이트(아래 `clashActive` 사용처)는 **반드시 함께 움직인다.** 하나만
+  // 끄면 "리더가 없는데 리더 처치를 기다리는" 영구 정체 구간이 생긴다. 그래서 조건을 **여기
+  // 한 곳에서 계산해 둘이 같은 값을 읽게** 한다 — 조건을 두 번 적는 순간 갈라진다.
+  const clashActive =
+    seg.clash === true && state.scrollRuntime === undefined && state.config.commission === undefined;
+  if (clashActive && w.segmentElapsed === 0) {
     spawnMidClash(state, player);
   }
 
@@ -225,7 +235,7 @@ export function updateWaves(state: WorldState, player: Entity): void {
     // 소환하지 않는다(위 spawnMidClash 게이트와 한 쌍). 세그먼트가 하나 늘어난 만큼 코스도
     // `SEGMENTS.length - 1` 파생으로 한 구간 길어져 있어 거리 축은 이미 정합이다.
     // 모드별 격전 변형(스크롤 창 정지 등)은 다운스트림이다(ADR-0032 §Consequences).
-    if (seg.clash === true && sw === undefined) cleared = midClashCleared(state, w);
+    if (clashActive) cleared = midClashCleared(state, w);
     else if (sw !== undefined && state.config.planetMode === PLANET_MODE.blockBreak)
       cleared = blockBreakProgress(sw) >= (w.segmentIndex + 1) * BLOCKBREAK_SECTION_LENGTH;
     else if (sw !== undefined && state.config.planetMode === PLANET_MODE.racing)
