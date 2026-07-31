@@ -44,12 +44,16 @@ import {
 import {
   clampQty,
   salvageQty,
+  salvageLabel,
   salvageEnabled,
   buyEnabled,
   buyRejectKey,
   salvageRejectKey,
   rowNoteText,
+  noteLayout,
   QTY_MIN,
+  ROW_H,
+  ROW_CTRL_W,
   type CatalystRowShopState,
 } from './catalystShopView.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
@@ -73,14 +77,9 @@ const PANEL_H = 820;
 const BOX = panelContent(PANEL_W, PANEL_H);
 const LIST_TOP = BOX.y + 116;
 const LIST_AVAIL = BOX.bottom - LIST_TOP;
-/**
- * 행 높이. 우측 컨트롤이 **세로 2단**(스테퍼 / [분해][구매])이 되면서 108 → 136 으로 확정됐다
- * (계획 §5 MED-1 — 실행자 재량이 아니라 수치 확정).
- */
-const ROW_H = 136;
+// ⚠️ `ROW_H`(136)·`ROW_CTRL_W`(220)은 계획 §5 확정 수치이고, **하단 문구 배치 산술이 그 값을
+// 써야 하므로** 순수 모듈(`catalystShopView`)에 정본을 두고 여기서 가져온다.
 const ROW_GAP = 12;
-/** 우측 컨트롤 영역 폭의 **단일 정본**. 버튼 폭·설명 wordWrap 이 전부 여기서 파생된다. */
-const ROW_CTRL_W = 220;
 /** 컨트롤 우측 여백. */
 const ROW_CTRL_PAD = 16;
 /** [분해][구매] 사이 간격. */
@@ -90,6 +89,8 @@ const ROW_BTN_W = (ROW_CTRL_W - ROW_BTN_GAP) / 2;
 const ROW_BTN_H = 52;
 /** 스테퍼(− n +) 한 단의 높이 = ± 버튼 한 변. */
 const STEP_H = 44;
+/** 하단 문구 높이를 못 잰 경우(캔버스 없는 환경)의 안전 y — 1줄 기준 상단. */
+const NOTE_FALLBACK_Y = ROW_H - 24;
 /** 스테퍼 상단 여백 / 스테퍼와 버튼 줄 사이 간격. */
 const STEP_Y = 14;
 const ROW_BTN_Y = STEP_Y + STEP_H + 12;
@@ -552,8 +553,24 @@ export class CatalystArchiveScreen {
         dropShadow: TEXT_SHADOW,
       },
     });
-    note.position.set(textX, ROW_H - 32);
     row.addChild(note);
+    /**
+     * 문구는 줄 수가 런타임에 변한다(사유가 붙으면 2줄). 고정 y 로 두면 둘째 줄이 행 테두리
+     * 밖으로 잘리므로 **실측 높이로 하단 정렬**한다. 배치 산술은 순수 헬퍼가 하고, 캔버스 없는
+     * 환경에서 `Text.height` 접근이 던지면 상단 기준으로 안전 폴백한다.
+     */
+    const placeNote = (): void => {
+      let h = 0;
+      try {
+        h = note.height;
+      } catch {
+        h = 0;
+      }
+      const box = noteLayout(h);
+      note.scale.set(box.scale);
+      note.position.set(textX, h > 0 ? box.y : NOTE_FALLBACK_Y);
+    };
+    placeNote();
 
     // --- 우측 컨트롤(세로 2단: 스테퍼 / [분해][구매]) ---
     const ctrlX = BOX.w - ROW_CTRL_W - ROW_CTRL_PAD;
@@ -572,8 +589,8 @@ export class CatalystArchiveScreen {
       fallbackColor: 0x5a3a3a,
       width: ROW_BTN_W,
       height: ROW_BTN_H,
-      fontSize: 17,
-      label: t('catalyst.manage.salvage'),
+      fontSize: 16,
+      label: salvageLabel(this.rowState(def)),
       onClick: () => void this.salvageOne(def),
     });
     salvage.container.position.set(ctrlX, ROW_BTN_Y);
@@ -597,6 +614,10 @@ export class CatalystArchiveScreen {
       const s = this.rowState(def);
       qtyText.text = String(s.qty);
       note.text = rowNoteText(s);
+      // 문구가 갈리면 줄 수도 갈린다 — 갈아끼운 **뒤에** 다시 배치해야 넘침이 안 생긴다.
+      placeNote();
+      // 라벨도 수량을 반영한다(고정 "1개 분해" 는 실제 3개 분해와 모순돼 오조작을 부른다).
+      salvage.setLabel(salvageLabel(s));
       salvage.setEnabled(salvageEnabled(s));
       buy.setEnabled(buyEnabled(s));
     };

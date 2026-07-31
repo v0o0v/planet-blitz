@@ -185,7 +185,9 @@ export const EN = {
   'catalyst.manage.title': 'Catalyst Stock',
   'catalyst.manage.empty': 'No catalysts in stock. Earn them from elite and boss runs.',
   'catalyst.manage.owned': 'x{n}',
-  'catalyst.manage.salvage': 'Salvage 1',
+  // {n} = 이번 클릭으로 실제 분해될 수량(스테퍼 값을 보유량으로 깎은 값). 되돌릴 수 없는
+  // 조작이라 라벨이 수량을 반드시 반영해야 한다 — 고정 "1" 문구는 오조작을 부른다.
+  'catalyst.manage.salvage': 'Salvage {n}',
   'catalyst.manage.salvageDone': 'Salvaged {name} · +{residue} catalyst residue',
   'catalyst.manage.salvageFail': 'Salvage failed',
   'catalyst.manage.offline': 'Catalysts require online play.',
@@ -1799,7 +1801,7 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.manage.title': '촉매 보관함',
   'catalyst.manage.empty': '보유한 촉매가 없습니다. 엘리트·보스 런에서 획득하세요.',
   'catalyst.manage.owned': 'x{n}',
-  'catalyst.manage.salvage': '1개 분해',
+  'catalyst.manage.salvage': '분해 {n}',
   'catalyst.manage.salvageDone': '{name} 분해 · +{residue} 촉매 잔재',
   'catalyst.manage.salvageFail': '분해 실패',
   'catalyst.manage.offline': '촉매는 온라인 플레이가 필요합니다.',

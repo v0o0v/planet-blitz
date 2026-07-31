@@ -32,6 +32,33 @@ export interface CatalystRowShopState {
   online: boolean;
 }
 
+// --- 행 예산(계획 §5 확정 수치 — 임의 변경 금지) -----------------------------
+
+/** 행 높이. 우측 컨트롤이 세로 2단이 되면서 108 → 136 으로 확정됐다. */
+export const ROW_H = 136;
+/** 우측 컨트롤 영역 폭의 단일 정본(버튼 폭·설명 wordWrap 이 전부 여기서 파생). */
+export const ROW_CTRL_W = 220;
+/** 하단 문구가 침범해선 안 되는 상한 = 설명(info) 2줄이 끝나는 y. */
+export const NOTE_MIN_Y = 94;
+/** 하단 문구와 행 바닥 사이 여백. */
+export const NOTE_PAD_BOTTOM = 2;
+
+/**
+ * 하단 문구의 배치(상단 y·축소 배율). **고정 y 를 쓰면 문구가 2줄이 되는 순간 행 밖으로
+ * 넘친다** — 미보유 사유·잔재 부족 사유가 붙으면 실제로 그렇게 되고, 스테퍼가 `Text.text` 만
+ * 갈아끼우므로 런타임에 발생한다. 그래서 **실측 높이를 받아 하단 정렬**하고, 예산(=
+ * `ROW_H - NOTE_MIN_Y - NOTE_PAD_BOTTOM`)을 넘으면 그만큼 축소한다.
+ *
+ * 순수 산술이라 캔버스 없이 검증된다 — 호출부는 `Text.height` 만 넘긴다.
+ */
+export function noteLayout(noteHeight: number): { y: number; scale: number } {
+  const budget = ROW_H - NOTE_MIN_Y - NOTE_PAD_BOTTOM;
+  const h = Number.isFinite(noteHeight) && noteHeight > 0 ? noteHeight : 0;
+  const scale = h > budget ? budget / h : 1;
+  const drawn = h * scale;
+  return { y: ROW_H - NOTE_PAD_BOTTOM - drawn, scale };
+}
+
 /** 스테퍼 값 정규화 — 정수·[QTY_MIN, QTY_MAX] 클램프. */
 export function clampQty(qty: number): number {
   if (!Number.isFinite(qty)) return QTY_MIN;
@@ -41,6 +68,20 @@ export function clampQty(qty: number): number {
 /** 이 행에서 실제로 분해될 수량 — 보유를 넘지 않는다(초과 지정은 서버가 거부하므로 미리 깎는다). */
 export function salvageQty(s: CatalystRowShopState): number {
   return Math.min(clampQty(s.qty), Math.max(0, Math.floor(s.owned)));
+}
+
+/**
+ * [분해] 라벨에 실을 수량 — **이번 클릭으로 실제 분해될 개수**다. 보유가 있으면 보유 상한으로
+ * 깎은 값, 없으면(버튼은 비활성) 스테퍼 값. 라벨과 행동이 갈리면 되돌릴 수 없는 오조작이 난다.
+ */
+export function salvageLabelQty(s: CatalystRowShopState): number {
+  const n = salvageQty(s);
+  return n > 0 ? n : clampQty(s.qty);
+}
+
+/** [분해] 버튼 라벨. 수량을 반영한다(고정 "1개 분해" 금지). */
+export function salvageLabel(s: CatalystRowShopState): string {
+  return t('catalyst.manage.salvage', { n: salvageLabelQty(s) });
 }
 
 /** 분해로 얻을 촉매 잔재. **결합 순서가 계약이다** — `단가 × n` 이지 `floor(가격×비율×n/100)` 이 아니다. */

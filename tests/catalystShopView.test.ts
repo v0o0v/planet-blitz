@@ -20,6 +20,12 @@ import {
   rowNoteText,
   buyRejectKey,
   salvageRejectKey,
+  salvageLabel,
+  salvageLabelQty,
+  noteLayout,
+  ROW_H,
+  NOTE_MIN_Y,
+  NOTE_PAD_BOTTOM,
   QTY_MIN,
   QTY_MAX,
   type CatalystRowShopState,
@@ -161,6 +167,73 @@ describe('서버 note → 안내 문구 키', () => {
     expect(salvageRejectKey('no-profile')).toBe('catalyst.shop.noProfile');
     expect(salvageRejectKey('not-owned')).toBe('catalyst.manage.salvageFail');
     expect(salvageRejectKey(undefined)).toBe('catalyst.manage.salvageFail');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 하네스 육안 회귀 2건(2026-07-31)
+// ---------------------------------------------------------------------------
+
+describe('회귀 — [분해] 라벨이 실제 분해 수량을 반영한다', () => {
+  it('스테퍼가 3이면 라벨 수량도 3이다 — 고정 "1" 이 아니다', () => {
+    const s = state({ owned: 5, qty: 3 });
+    expect(salvageLabelQty(s)).toBe(3);
+    expect(salvageQty(s)).toBe(3);
+    // 라벨과 행동이 갈리면(되돌릴 수 없는 조작) 오조작이 난다 — 같은 수를 쓴다.
+    expect(salvageLabel(s)).toContain('3');
+    expect(salvageLabel(s)).not.toBe(salvageLabel(state({ owned: 5, qty: 1 })));
+  });
+
+  it('보유보다 많이 지정하면 라벨도 실제 분해될 수(보유)로 깎인다', () => {
+    const s = state({ owned: 2, qty: 7 });
+    expect(salvageLabelQty(s)).toBe(2);
+    expect(salvageLabelQty(s)).toBe(salvageQty(s));
+    expect(salvageLabel(s)).toContain('2');
+  });
+
+  it('문구가 수량 파라미터를 실제로 치환한다 — 미치환이면 `{n}` 이 그대로 남는다', () => {
+    expect(salvageLabel(state({ owned: 1, qty: 1 }))).not.toContain('{n}');
+  });
+});
+
+describe('회귀 — 하단 문구가 행 밖으로 넘치지 않는다', () => {
+  const budget = ROW_H - NOTE_MIN_Y - NOTE_PAD_BOTTOM;
+
+  it('1줄이면 하단 정렬되고 설명 영역을 침범하지 않는다', () => {
+    const box = noteLayout(19);
+    expect(box.scale).toBe(1);
+    expect(box.y + 19).toBeLessThanOrEqual(ROW_H);
+    expect(box.y).toBeGreaterThanOrEqual(NOTE_MIN_Y);
+  });
+
+  it('2줄(40px)이어도 바닥을 넘지 않는다 — 고정 y=104 였다면 bottom 144 로 넘쳤다', () => {
+    const box = noteLayout(40);
+    expect(box.scale).toBe(1);
+    expect(box.y).toBe(ROW_H - NOTE_PAD_BOTTOM - 40);
+    expect(box.y + 40).toBeLessThanOrEqual(ROW_H);
+    expect(104 + 40).toBeGreaterThan(ROW_H); // 옛 고정 배치가 실제로 넘쳤다는 증인.
+  });
+
+  it('예산을 넘는 3줄 이상은 축소해 담는다(잘림 대신 축소)', () => {
+    const h = 60;
+    const box = noteLayout(h);
+    expect(box.scale).toBeLessThan(1);
+    expect(h * box.scale).toBeCloseTo(budget, 6);
+    expect(box.y + h * box.scale).toBeLessThanOrEqual(ROW_H);
+    expect(box.y).toBeGreaterThanOrEqual(NOTE_MIN_Y);
+  });
+
+  it('높이를 못 잰 경우(0·NaN)에도 산술이 던지지 않는다', () => {
+    expect(() => noteLayout(0)).not.toThrow();
+    expect(noteLayout(Number.NaN).scale).toBe(1);
+  });
+
+  it('어떤 높이든 bottom ≤ ROW_H · top ≥ NOTE_MIN_Y 불변식을 지킨다', () => {
+    for (let h = 1; h <= 120; h += 1) {
+      const box = noteLayout(h);
+      expect(box.y + h * box.scale).toBeLessThanOrEqual(ROW_H + 1e-9);
+      expect(box.y).toBeGreaterThanOrEqual(NOTE_MIN_Y - 1e-9);
+    }
   });
 });
 
