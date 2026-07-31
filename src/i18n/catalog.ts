@@ -356,6 +356,8 @@ export const EN = {
   'base.bld.control.desc': 'Ladder · Invasion · Replay',
   'base.bld.archive.name': 'Record Vault',
   'base.bld.archive.desc': 'Pilot Files · Record Shards · Prologue',
+  'base.bld.commission.name': 'Commission Desk',
+  'base.bld.commission.desc': 'Accept Commissions · Confirmed Rewards',
   'base.lock.pre': 'Locked',
   'base.lock.level': 'Requires Ship Lv {lvl}',
   'base.lock.clear': 'Clear a planet first',
@@ -1636,6 +1638,32 @@ export const EN = {
   'activeSkill.as_bubble_film_hi.name': 'Everlasting Film',
   'activeSkill.as_bubble_film_hi.desc':
     'The film refills every tick for 300 ticks, then bursts hard.',
+
+  // --- Commission Desk (지시 수신소, Phase E) ---
+  'commission.title': 'Commission Desk',
+  'commission.sub': 'Accept a commission, launch instantly',
+  'commission.stock': 'Held {n}/{cap}',
+  'commission.empty': 'No commissions held. Defeat planet bosses to earn one.',
+  'commission.offline': 'Commissions are online-only — connect to view your inventory.',
+  'commission.grade.1': 'Standing Order',
+  'commission.grade.2': 'Priority Order',
+  'commission.grade.3': 'Urgent Order',
+  'commission.grade.4': 'Final Order',
+  'commission.order.chain': 'Chain Expedition',
+  'commission.order.constraint': 'Restricted Contract',
+  'commission.order.bounty': 'Bounty Target',
+  'commission.order.elite': 'Elite Summons',
+  'commission.segments': '{n} stages',
+  'commission.rewards.credits': '+{n} credits',
+  'commission.rewards.minerals': '+{n} minerals',
+  'commission.rewards.items': '+{n} items',
+  'commission.rewards.unique': 'Guaranteed unique',
+  'commission.eliteNoGrowth': 'No in-run growth — no XP gems, no level-ups, no powerup picks. Only your permanent build fights.',
+  'commission.constraint.bannedSlots': 'Sealed: {list}',
+  'commission.constraint.maxRarity': '{name} or below only',
+  'commission.constraint.bannedPowerups': 'Banned growth: {list}',
+  'commission.launch': 'Launch',
+  'commission.launching': 'Launching…',
 } as const;
 
 /** 카탈로그 키 = 영어 정본의 키 집합. */
@@ -1970,6 +1998,8 @@ export const KO: Record<MessageKey, string> = {
   'base.bld.control.desc': '래더 · 침공 · 리플레이',
   'base.bld.archive.name': '기록 보관소',
   'base.bld.archive.desc': '파일럿 파일 · 기록 파편 · 프롤로그',
+  'base.bld.commission.name': '지시 수신소',
+  'base.bld.commission.desc': '의뢰서 수락 · 확정 보상',
   'base.lock.pre': '해금 전',
   'base.lock.level': '기체 Lv {lvl} 필요',
   'base.lock.clear': '행성 1회 클리어 필요',
@@ -3153,6 +3183,32 @@ export const KO: Record<MessageKey, string> = {
   'activeSkill.as_bubble_film_hi.name': '불멸 막',
   'activeSkill.as_bubble_film_hi.desc':
     '300틱 동안 막이 매 틱 다시 차오르고, 끝날 때 크게 터진다.',
+
+  // --- 지시 수신소(Phase E) ---
+  'commission.title': '지시 수신소',
+  'commission.sub': '의뢰서를 수락하면 그 자리에서 출격한다',
+  'commission.stock': '보유 {n}/{cap}',
+  'commission.empty': '보유한 의뢰서가 없다. 행성 보스를 처치하면 드물게 얻는다.',
+  'commission.offline': '의뢰서는 온라인 전용이다 — 접속해야 보유 목록을 볼 수 있다.',
+  'commission.grade.1': '정기 지시',
+  'commission.grade.2': '우선 지시',
+  'commission.grade.3': '특급 지시',
+  'commission.grade.4': '최종 지시',
+  'commission.order.chain': '연쇄 원정',
+  'commission.order.constraint': '제약 계약',
+  'commission.order.bounty': '현상금 표적',
+  'commission.order.elite': '정예 소집령',
+  'commission.segments': '{n}개 무대',
+  'commission.rewards.credits': '크레딧 +{n}',
+  'commission.rewards.minerals': '광물 +{n}',
+  'commission.rewards.items': '아이템 +{n}',
+  'commission.rewards.unique': '유니크 확정',
+  'commission.eliteNoGrowth': '런 내 성장 없음 — 경험치 젬도, 레벨업도, 파워업 3택도 없다. 영구 성장만으로 싸운다.',
+  'commission.constraint.bannedSlots': '봉인: {list}',
+  'commission.constraint.maxRarity': '{name} 이하만',
+  'commission.constraint.bannedPowerups': '금지 성장: {list}',
+  'commission.launch': '출격',
+  'commission.launching': '출격 중…',
 };
 
 /** 로케일별 카탈로그 묶음. */

@@ -12,8 +12,12 @@ import { describe, it, expect } from 'vitest';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile } from '../src/save/profile.js';
 import { createWorld } from '../src/sim/world.js';
-import { COMMISSION_ORDERS, commissionOrderWire } from '../src/run/commission.js';
-import type { CommissionRunConfig } from '../src/run/commission.js';
+import {
+  COMMISSION_ORDERS,
+  commissionOrderWire,
+  commissionRunConfigFromPayload,
+} from '../src/run/commission.js';
+import type { CommissionRunConfig, CommissionPayload } from '../src/run/commission.js';
 import {
   COMMISSION_SEGMENT_COUNT,
   COMMISSION_SEGMENT_TICK_CAP,
@@ -118,6 +122,56 @@ describe('④ 주문 wire 인코딩 — append-only 골든', () => {
     expect(commissionOrderWire('constraint')).toBe(1);
     expect(commissionOrderWire('bounty')).toBe(2);
     expect(commissionOrderWire('elite')).toBe(3);
+  });
+});
+
+describe('⑥ commissionRunConfigFromPayload — 서버 payload → WorldConfig 형태(지시 수신소 출격)', () => {
+  it('보상 블록(rewards)을 뺀다 — sim 입력이 아닌 값을 리플레이에 싣지 않는다', () => {
+    const payload: CommissionPayload = {
+      version: 1,
+      commissionId: 'c-1',
+      grade: 2,
+      order: 'chain',
+      segments: [{ planet: 0, stage: 1 }],
+      rewards: { credits: 500, minerals: 0, items: [], uniqueId: 3 },
+      replayBudgetTicks: commissionReplayBudgetTicks(2),
+    };
+    const cfg = commissionRunConfigFromPayload(payload);
+    expect('rewards' in cfg).toBe(false);
+    expect(cfg.commissionId).toBe('c-1');
+    expect(cfg.segments).toEqual(payload.segments);
+    expect(cfg.replayBudgetTicks).toBe(payload.replayBudgetTicks);
+  });
+
+  it('segmentIndex 는 항상 0 이다(출격은 언제나 1구간부터)', () => {
+    const payload: CommissionPayload = {
+      version: 1,
+      commissionId: 'c-2',
+      grade: 1,
+      order: 'bounty',
+      segments: [{ planet: 1, stage: 3 }],
+      bounty: { targetKind: 0, escapeRule: 'hpThreshold' },
+      rewards: { credits: 100, minerals: 0, items: [] },
+      replayBudgetTicks: commissionReplayBudgetTicks(1),
+    };
+    const cfg = commissionRunConfigFromPayload(payload);
+    expect(cfg.segmentIndex).toBe(0);
+    expect(cfg.bounty).toEqual(payload.bounty);
+  });
+
+  it('constraints·bounty 가 없으면 필드 자체를 싣지 않는다(조건부 스탬프 규율)', () => {
+    const payload: CommissionPayload = {
+      version: 1,
+      commissionId: 'c-3',
+      grade: 1,
+      order: 'chain',
+      segments: [{ planet: 0, stage: 1 }],
+      rewards: { credits: 100, minerals: 0, items: [] },
+      replayBudgetTicks: commissionReplayBudgetTicks(1),
+    };
+    const cfg = commissionRunConfigFromPayload(payload);
+    expect('constraints' in cfg).toBe(false);
+    expect('bounty' in cfg).toBe(false);
   });
 });
 

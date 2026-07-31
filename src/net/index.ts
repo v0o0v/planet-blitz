@@ -17,6 +17,13 @@ import type { ServerGateway, PveSettleSummary } from './gateway.js';
 import { normalizeCatalystArray } from '../data/catalysts.js';
 import type { CatalystDrop } from '../data/catalystDrops.js';
 import { isGrantCurrencyClientSource } from '../run/commissionServerConstants.js';
+import type {
+  CommissionGateway,
+  CommissionInventoryRow,
+  CommissionRunRow,
+  CommissionGrantRow,
+} from './commissionGateway.js';
+import type { CommissionPayload } from '../run/commission.js';
 import {
   serializeProfile,
   deserializeProfile,
@@ -603,4 +610,143 @@ async function flushPendingGrants(gateway: ServerGateway, store: KeyValueStore):
     }
   }
   writePendingGrants(store, remaining);
+}
+
+// ---------------------------------------------------------------------------
+// 의뢰서(Commission) — 지시 수신소 오케스트레이션 (계획 §Phase E · 서버 계약 §5)
+// ---------------------------------------------------------------------------
+
+/** 주입 가능한 의존성(테스트에서 CommissionGateway 를 대체). `resolveGateway` 계열과 별개 캐시다 —
+ * `CommissionGateway` 는 `ServerGateway` 와 다른 인터페이스라 같은 캐시를 못 쓴다. */
+export interface CommissionNetDeps {
+  gateway?: CommissionGateway;
+  config?: SupabaseConfig | null;
+}
+
+let cachedCommissionGateway: CommissionGateway | null = null;
+let cachedCommissionConfigKey: string | null = null;
+
+/** 이 호출에 쓸 의뢰서 게이트웨이를 해석한다. 미설정이면 null(→ 호출부가 오프라인 취급). */
+async function resolveCommissionGateway(deps: CommissionNetDeps): Promise<CommissionGateway | null> {
+  if (deps.gateway !== undefined) return deps.gateway;
+  const config = deps.config !== undefined ? deps.config : readSupabaseConfig();
+  if (config === null) return null;
+  const key = config.url;
+  if (cachedCommissionGateway !== null && cachedCommissionConfigKey === key) return cachedCommissionGateway;
+  const { SupabaseCommissionGateway } = await import('./commissionGateway.js');
+  cachedCommissionGateway = new SupabaseCommissionGateway(config);
+  cachedCommissionConfigKey = key;
+  return cachedCommissionGateway;
+}
+
+/**
+ * RPC 예외 메시지를 사람이 읽을 문자열로 뽑는다. 의뢰서 RPC 는 거부 사유를 구조화된 `note` 가
+ * 아니라 **예외 메시지 그대로**로 낸다(서버 계약 §5-2·§5-3 — `consume_commission: 출격 빈도
+ * 상한 초과` 등, 전부 이미 한글이다). 그래서 여기서는 매핑표를 두지 않고 서버 문구를 그대로
+ * 화면에 옮긴다 — 고정 사유 집합을 만들면 서버가 새 거부 문구를 추가할 때마다 클라도 함께
+ * 갱신해야 하는 이중 정본이 생긴다.
+ */
+function commissionErrorMessage(err: unknown): string {
+  if (err instanceof Error && err.message !== '') return err.message;
+  return String(err);
+}
+
+/** 지시 수신소의 미소비 의뢰서 목록 조회. 미설정/오프라인/오류면 `null`(오프라인 취급). */
+export async function fetchCommissionInventoryOnline(
+  deps: CommissionNetDeps = {},
+): Promise<CommissionInventoryRow[] | null> {
+  const gateway = await resolveCommissionGateway(deps);
+  if (gateway === null) return null;
+  try {
+    await gateway.getUserId();
+    return await gateway.fetchCommissionInventory();
+  } catch {
+    return null;
+  }
+}
+
+/** 본인 의뢰 런 이력 조회(뷰 경유). 미설정/오프라인/오류면 `null`. */
+export async function fetchCommissionRunsOnline(
+  limit: number,
+  deps: CommissionNetDeps = {},
+): Promise<CommissionRunRow[] | null> {
+  const gateway = await resolveCommissionGateway(deps);
+  if (gateway === null) return null;
+  try {
+    await gateway.getUserId();
+    return await gateway.fetchCommissionRuns(limit);
+  } catch {
+    return null;
+  }
+}
+
+/** 본인 의뢰 확정 지급물 이력 조회(ADR-0045). 미설정/오프라인/오류면 `null`. */
+export async function fetchCommissionGrantsOnline(
+  deps: CommissionNetDeps = {},
+): Promise<CommissionGrantRow[] | null> {
+  const gateway = await resolveCommissionGateway(deps);
+  if (gateway === null) return null;
+  try {
+    await gateway.getUserId();
+    return await gateway.fetchCommissionGrants();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `consumeCommissionOnServer` 결과.
+ *  - `unconfigured`: 서버 미설정(오프라인) — 의뢰서는 온라인 전용이라 출격 자체가 불가하다.
+ *  - `ok`: 소모 확정 — `runId`·서버 원장 `payload`(발령 시점에 굳은 종이).
+ *  - `rejected`: 거부(서버 예외 메시지 그대로 — 빈도 상한·의뢰서 없음 등). 미차감.
+ */
+export type ConsumeCommissionOutcome =
+  | { status: 'unconfigured' }
+  | { status: 'ok'; runId: string; payload: CommissionPayload }
+  | { status: 'rejected'; reason: string };
+
+/**
+ * 출격(서버 계약 §5-2) — 의뢰서를 소모하고 `commission_runs` 행을 만든다. `loadout` 은
+ * {@link commissionSealedLoadout}(runConfig.ts)로 뽑은 값을 그대로 넘겨야 한다 — 여기서
+ * 다시 계산하지 않는다(단일 정본은 호출부의 책임). 절대 throw 하지 않는다.
+ */
+export async function consumeCommissionOnServer(
+  commissionId: string,
+  loadout: unknown,
+  deps: CommissionNetDeps = {},
+): Promise<ConsumeCommissionOutcome> {
+  const gateway = await resolveCommissionGateway(deps);
+  if (gateway === null) return { status: 'unconfigured' };
+  try {
+    await gateway.getUserId();
+    const res = await gateway.consumeCommission(commissionId, loadout);
+    return { status: 'ok', runId: res.runId, payload: res.payload };
+  } catch (err) {
+    return { status: 'rejected', reason: commissionErrorMessage(err) };
+  }
+}
+
+/**
+ * `markCommissionActiveOnServer` 결과. `rejected` 는 **클라가 복구를 지시하지 않는다** —
+ * 신호를 못 보낸 채로 두는 것이 곧 회수 조건이고, 회수는 cron 만 한다(계획 pre-mortem ④,
+ * D8). 그래서 실패 시 호출부는 안내만 하고 별도 재시도·복구 RPC 를 부르지 않는다.
+ */
+export type MarkCommissionActiveOutcome =
+  | { status: 'unconfigured' }
+  | { status: 'ok'; startedAtMs: number }
+  | { status: 'rejected'; reason: string };
+
+/** 런 시작 신호(서버 계약 §5-3). 절대 throw 하지 않는다. */
+export async function markCommissionActiveOnServer(
+  runId: string,
+  deps: CommissionNetDeps = {},
+): Promise<MarkCommissionActiveOutcome> {
+  const gateway = await resolveCommissionGateway(deps);
+  if (gateway === null) return { status: 'unconfigured' };
+  try {
+    const res = await gateway.markCommissionActive(runId);
+    return { status: 'ok', startedAtMs: res.startedAtMs };
+  } catch (err) {
+    return { status: 'rejected', reason: commissionErrorMessage(err) };
+  }
 }

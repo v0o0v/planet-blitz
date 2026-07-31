@@ -203,10 +203,13 @@ function readSrc(rel: string): string {
 describe('② 런 조립 단일 정본 grep 게이트 (설계서 §10-2)', () => {
   const MAIN = readSrc('src/main.ts');
 
-  it('main.ts 의 런 시작 3경로가 전부 buildRunConfig 를 부른다', () => {
-    // 정식 침공(startInvasionRun) · 하네스 침공(startHarnessInvasionRun) · PvE(startRun).
+  it('main.ts 의 런 시작 4경로가 전부 buildRunConfig 를 부른다', () => {
+    // 정식 침공(startInvasionRun) · 하네스 침공(startHarnessInvasionRun) · PvE(startRun) ·
+    // 의뢰(startCommissionRun, 의뢰서 시스템 Phase E — 지시 수신소 출격구). 게이트의 취지는
+    // "buildRunConfig 만 거친다"이지 경로 수를 3으로 못박는 것이 아니다 — 새 진입점이 생겨도
+    // 여전히 이 함수 하나만 쓰면 이 카운트가 늘어나는 것이 정상이다.
     const calls = MAIN.match(/buildRunConfig\(/g) ?? [];
-    expect(calls.length).toBe(3);
+    expect(calls.length).toBe(4);
   });
 
   it('main.ts 에 computeLoadoutStats 직접 호출이 남아 있지 않다', () => {

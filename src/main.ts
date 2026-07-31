@@ -66,6 +66,8 @@ import type { ControlTowerShowOpts, InvasionResultView } from './ui/controlTower
 import { TitleScreen } from './ui/pixi/titleScreen.js';
 import { RecordsArchiveScreen } from './ui/pixi/recordsArchive.js';
 import { IntroSlidesScreen } from './ui/pixi/introSlides.js';
+// 의뢰서 시스템 Phase E: 지시 수신소(PvE 출격구 #2 — 성계 지도와 별개, CONTEXT.md 정본).
+import { CommissionDeskScreen } from './ui/pixi/commissionDesk.js';
 import {
   TutorialOverlay,
   FtueTracker,
@@ -120,7 +122,12 @@ import {
   fetchCatalystInventoryOnline,
   grantCatalystDrops,
   setHarnessCatalystGateway,
+  markCommissionActiveOnServer,
 } from './net/index.js';
+// 의뢰서 시스템 Phase E — 서버 원장 payload → `WorldConfig` 형태 변환(sim 입력이 아닌
+// rewards 를 뺀다). 봉인 로드아웃은 지시 수신소 화면이 출격 시점에 직접 계산해 싣는다.
+import { commissionRunConfigFromPayload } from './run/commission.js';
+import type { CommissionPayload } from './run/commission.js';
 // 행성 인기 배율(ADR-0038): 30분 폴링 캐시. 출격 경로를 블로킹하지 않는 **동기** 리더만 쓴다.
 import {
   startPlanetMultiplierPolling,
@@ -382,6 +389,9 @@ async function main(): Promise<void> {
   // 화면과 같은 블록에서 만들어야 entityRenderer·radar 레이어보다 뒤에 붙어 위로 그려진다(z 순서).
   const recordsArchive = new RecordsArchiveScreen(gameApp.stage);
   const introSlides = new IntroSlidesScreen(gameApp.stage);
+  // 의뢰서 시스템 Phase E: 지시 수신소. 다른 캔버스 화면과 같은 블록에서 만들어야
+  // entityRenderer·radar 레이어보다 **뒤에** stage 에 붙어 위로 그려진다(z 순서).
+  const commissionDesk = new CommissionDeskScreen(profile, gameApp.stage);
   // 코어 모듈 화면(M7b — 구 카드 화면 계승). 진입은 방어 사령부의 모듈 탭 버튼이고, 사령부는
   // 자기 화면만 suspend 로 감췄다가 닫힐 때 resume 한다(미저장 배치 편집을 지키기 위해 show 를
   // 다시 부르지 않는다). 다른 캔버스 화면과 같은 블록에서 만들어야 z 순서가 맞는다.
@@ -619,6 +629,9 @@ async function main(): Promise<void> {
       case 'archive':
         openArchive();
         break;
+      case 'commission':
+        openCommissionDesk();
+        break;
       // inventory/research/refinery/defense 는 각 오버레이가 자체 콜백으로 기지 복귀하므로
       // 언어 전환 즉시 반영은 다음 진입 때 이뤄진다(안전한 기본 동작).
       default:
@@ -675,6 +688,7 @@ async function main(): Promise<void> {
     controlTower.hide();
     recordsArchive.hide();
     introSlides.hide();
+    commissionDesk.hide();
     spectateOverlay.hide();
     stickerPicker.hide();
     spectateReplay = null; // 관전 종료(화면 전환 시 항상 해제)
@@ -753,6 +767,10 @@ async function main(): Promise<void> {
         baseMap.hide();
         openArchive();
       },
+      onCommission: () => {
+        baseMap.hide();
+        openCommissionDesk();
+      },
       onStarMap: () => openStarMap(),
     });
   }
@@ -767,6 +785,19 @@ async function main(): Promise<void> {
         // 인트로는 보관소 위 오버레이로 띄우고, 끝나면 보관소로 복귀한다(첫 실행 경로와 별개).
         introSlides.show({ onDone: () => openArchive() });
       },
+    });
+  }
+
+  /**
+   * 지시 수신소(의뢰서 시스템 Phase E) — 보유 의뢰서 목록을 보고 그 자리에서 출격한다.
+   * `onLaunch` 는 화면이 이미 자기 자신을 닫은 **뒤** 호출된다(성계 지도 self-hide 규약과 동일).
+   */
+  function openCommissionDesk(): void {
+    clearToMenu();
+    setScreen('commission');
+    commissionDesk.show(profile, {
+      onClose: () => openBaseMap(),
+      onLaunch: (runId, payload) => startCommissionRun(runId, payload),
     });
   }
 
@@ -1338,6 +1369,63 @@ async function main(): Promise<void> {
     // config 를 읽는 이유는 무촉매/consume 실패 폴백에서 둘이 갈릴 수 있어서다(표시가 곧 계약).
     hud.setRunInfo(runInfoFor(sel.planet, sel.stage, config.catalysts ?? []));
     setScreen('run');
+  }
+
+  /**
+   * 의뢰 런 조립(의뢰서 시스템 Phase E) — 지시 수신소가 `consume_commission` 을 이미 성공시킨
+   * 뒤에만 호출된다(`runId` 는 그 응답). 서버 원장 `payload`(이미 굳은 종이)에서 `WorldConfig`
+   * 를 만들어 런을 시작한다.
+   *
+   * ⚠️ **여기서 config 를 손보지 않는다** — `buildRunConfig` 단일 정본에 `commission` 옵션만
+   * 실어 넘긴다(`tests/shipIntegration.test.ts` grep 게이트). 촉매 픽커를 안 띄우므로 촉매는
+   * 항상 미지정이고, 행성 인기 배율도 넘기지 않는다 — 둘 다 의뢰 런의 계약이다(계획 D13,
+   * `buildRunConfig` 가 `commission` 이 있으면 어차피 인기 배율 스탬프를 재차 막는다).
+   */
+  function startCommissionRun(runId: string, payload: CommissionPayload): void {
+    const first = payload.segments[0];
+    // `buildRunConfig` 가 빈 `segments` 를 던지므로 도달하지 않아야 정상이다 — 방어적 조기 반환.
+    if (first === undefined) return;
+    const seed = nextSeed();
+    pendingRunSeed = null;
+    tutorialActive = false;
+    invasionTarget = null;
+    harnessInvasionRun = false;
+    currentRunKind = 'pve';
+    clearInvasionBackdrop();
+    shownLevel = 0;
+    echoToastShown = false;
+    const config = buildRunConfig(profile, {
+      planet: first.planet,
+      stage: first.stage,
+      commission: commissionRunConfigFromPayload(payload),
+    });
+    applyShipSprite(textures, config.shipType ?? 0);
+    background.texture = planetBackground(first.planet);
+    const tiles = wangTiles[first.planet] ?? null;
+    autotile.configure(tiles, seed);
+    env.configure({ planet: first.planet, seed, renderer: gameApp.app.renderer });
+    entityRenderer.setEnvPlanet(first.planet);
+    clearInvasionBackdrop();
+    background.visible = !autotile.active;
+    currentSeed = seed;
+    entityRenderer.reset();
+    world = createWorld(seed, config);
+    recorder = new ReplayRecorder(seed, config);
+    prevSnap = snapshotWorld(world);
+    currSnap = prevSnap;
+    accumulator = 0;
+    settled = false;
+    ceremony.reset();
+    soundObserver.reset();
+    dropObserver.reset();
+    lastOutcome = null;
+    resultOverlay.hide();
+    // 의뢰 런은 촉매 픽커가 없다 — 정보판 촉매 칸은 항상 빈 목록.
+    hud.setRunInfo(runInfoFor(first.planet, first.stage, []));
+    setScreen('run');
+    // 런 시작 직후 신호(계약 §5-3, 계획 pre-mortem ④). **실패해도 클라는 아무것도 하지 않는다**
+    // — 복구를 지시하지 못하고, 신호 부재 자체가 회수 조건이다(cron 만 회수한다, D8).
+    void markCommissionActiveOnServer(runId);
   }
 
   /**
@@ -1994,6 +2082,11 @@ async function main(): Promise<void> {
           clearToMenu();
           openControlTower();
           break;
+        case 'commission':
+          planetSelect.hide();
+          clearToMenu();
+          openCommissionDesk();
+          break;
       }
     }
 
@@ -2011,6 +2104,7 @@ async function main(): Promise<void> {
         case 'refinery':
         case 'defense':
         case 'controlTower':
+        case 'commission':
           harnessGoto(currentScreenName);
           break;
         case 'base':
@@ -2339,6 +2433,7 @@ async function main(): Promise<void> {
         'refinery',
         'defense',
         'controlTower',
+        'commission',
       ];
       if ((valid as readonly string[]).includes(screenParam)) {
         harnessGoto(screenParam as HarnessScreen);

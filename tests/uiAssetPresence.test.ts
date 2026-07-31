@@ -42,6 +42,8 @@ const ASSETS = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'assets');
  *    (`catalystIconKey`) 이 폴백은 사다리 두 번째 칸으로만 존재한다. 그래도 등재해 두는
  *    이유는 `catalystIconFallbackKey` 가 실제 코드 경로(픽커·재고·정산 3곳)이기 때문 —
  *    나중에 축 아트가 들어오면 코드 변경 0으로 살아난다.
+ * ③ 지시 수신소 건물 아이콘 1장(의뢰서 시스템 Phase E) — PixelLab 생성 전(비용 승인 대기,
+ *    2026-08-01). `baseMap.ts` 의 accent 색 사각 폴백으로 화면은 죽지 않는다.
  */
 const KNOWN_MISSING: readonly string[] = [
   // ② 촉매 보상축 폴백 10장(설계상 비어 있음 — 개별 아트 48종이 정본).
@@ -55,6 +57,8 @@ const KNOWN_MISSING: readonly string[] = [
   'catalyst_axis_power_moveSpeed.png',
   'catalyst_axis_power_maxHp.png',
   'catalyst_axis_power_skillAll.png',
+  // ③ 지시 수신소 건물 아이콘(아트 미생성 — 승인 대기).
+  'ui_bld_commission.png',
 ];
 
 describe('UI 자산 등재 이름 ↔ assets/ 실물', () => {
