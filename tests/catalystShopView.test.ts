@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { CATALOG } from '../src/i18n/catalog.js';
 import {
   clampQty,
   salvageQty,
@@ -168,9 +169,28 @@ describe('서버 note → 안내 문구 키', () => {
     expect(buyRejectKey('insufficient-residue')).toBe('catalyst.shop.insufficientResidue');
   });
 
-  it('미지 사유·부재는 일반 실패로 접는다(무반응 금지)', () => {
-    expect(buyRejectKey(undefined)).toBe('catalyst.manage.salvageFail');
-    expect(buyRejectKey('who-knows')).toBe('catalyst.manage.salvageFail');
+  it('미지 사유·부재는 **구매** 일반 실패로 접는다(무반응 금지)', () => {
+    expect(buyRejectKey(undefined)).toBe('catalyst.shop.buyFail');
+    expect(buyRejectKey('who-knows')).toBe('catalyst.shop.buyFail');
+    // 서버가 실제로 내는 사유들이다(supabase/migrations/20260731000000_catalyst_shop.sql
+    // buy_catalyst §거부 사유). 앞으로 늘어날 사유도 전부 이 분기로 떨어진다.
+    expect(buyRejectKey('unknown-catalyst')).toBe('catalyst.shop.buyFail');
+    expect(buyRejectKey('nothing-to-buy')).toBe('catalyst.shop.buyFail');
+  });
+
+  it('구매 거부 문구가 분해 문구로 새지 않는다 — 실제 문자열까지 대조', () => {
+    // 실재한 결함: 기본 분기가 `catalyst.manage.salvageFail` 이라, 구매를 누른 플레이어에게
+    // "분해 실패"가 떴다. 키 비교만으로는 다시 새기 쉬우므로 **렌더될 문자열**을 대조한다.
+    // 하네스 인메모리 모의 게이트웨이는 이 note 들을 내지 않아 화면 검증이 이걸 통과시켰다.
+    const salvageWording = new Set([CATALOG.ko['catalyst.manage.salvageFail'], CATALOG.en['catalyst.manage.salvageFail']]);
+    for (const note of [undefined, 'who-knows', 'unknown-catalyst', 'nothing-to-buy',
+      'no-profile', 'signature-not-sold', 'price-unset', 'insufficient-residue']) {
+      for (const loc of ['ko', 'en'] as const) {
+        const text = CATALOG[loc][buyRejectKey(note)];
+        expect(text, `note=${String(note)} loc=${loc} 의 구매 안내가 비어 있다`).toBeTruthy();
+        expect(salvageWording.has(text), `note=${String(note)} loc=${loc}: 구매 거부에 분해 문구가 떴다`).toBe(false);
+      }
+    }
   });
 
   it('분해도 no-profile 만 별도 안내다', () => {

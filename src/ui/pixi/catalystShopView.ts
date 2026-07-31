@@ -182,6 +182,12 @@ export function rowNoteText(s: CatalystRowShopState): string {
 /**
  * 서버 거부 `note` → 안내 문구 키. 미지 사유는 일반 실패로 접는다(원인 불명 무반응 금지 —
  * 특히 `no-profile` 은 신규 가입 직후 창에서 실재한다).
+ *
+ * ⚠️ 기본 분기는 **구매** 실패여야 한다. 여기가 `catalyst.manage.salvageFail` 이면 구매를
+ * 누른 플레이어에게 "분해 실패"가 뜬다 — 서버가 실제로 내는 `unknown-catalyst`(TS↔SQL
+ * 카탈로그 드리프트)·`nothing-to-buy` 와 앞으로 늘어날 모든 사유가 이 분기로 떨어지므로
+ * 사각이 아니라 상시 경로다. 하네스 인메모리 모의 게이트웨이는 이 note 들을 내지 않아
+ * PR#215 의 화면 검증이 이걸 통과시켰다(실서버 note 대조에서 드러났다).
  */
 export function buyRejectKey(note: string | undefined): MessageKey {
   switch (note) {
@@ -194,7 +200,7 @@ export function buyRejectKey(note: string | undefined): MessageKey {
     case 'insufficient-residue':
       return 'catalyst.shop.insufficientResidue';
     default:
-      return 'catalyst.manage.salvageFail';
+      return 'catalyst.shop.buyFail';
   }
 }
 
