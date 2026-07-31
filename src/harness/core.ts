@@ -675,10 +675,15 @@ export function createHarness(host: HarnessHost): Harness {
     },
 
     ff(ticks, opts = {}) {
-      const world = host.getWorld();
-      if (world === null) return;
+      if (host.getWorld() === null) return;
       const useAutopilot = opts.autopilot ?? true;
       for (let i = 0; i < ticks; i++) {
+        // ⚠️ **루프 안에서 재조회한다**(계약 §6-2). 의뢰 구간 전환은 `stepOnce` 안에서 월드를
+        // **새 객체로 갈아치우므로**, 루프 밖에서 잡아 둔 참조는 전환 직후 죽은 월드다. 그러면
+        // ① 종료 판정(`gameOver`/`victory`)이 영영 false 라 ff 가 끝까지 헛돌고 ② `autopilotInput`
+        // 이 사라진 무대의 적을 조준한다. 둘 다 예외 없이 조용히 틀린다.
+        const world = host.getWorld();
+        if (world === null) break;
         if (world.gameOver || world.victory) break;
         const input = useAutopilot ? autopilotInput(world) : emptyInput();
         host.stepOnce(input); // records + snapshots + observe (via host)
@@ -704,9 +709,11 @@ export function createHarness(host: HarnessHost): Harness {
     },
 
     step(n = 1) {
-      const world = host.getWorld();
-      if (world === null) return;
+      if (host.getWorld() === null) return;
       for (let i = 0; i < n; i++) {
+        // ⚠️ 루프 안에서 재조회 — 근거는 위 `ff` 주석과 같다(계약 §6-2).
+        const world = host.getWorld();
+        if (world === null) break;
         if (world.gameOver || world.victory) break;
         host.stepOnce(host.sampleInput());
       }

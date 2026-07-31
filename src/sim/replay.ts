@@ -22,6 +22,8 @@ import { NEUTRAL_MULT_CENTI } from '../economy/planetPopularity.js';
 import { normalizeMaintenance } from './invasion/guardian.js';
 import { INVASION_HASH_VERSION } from './invasion/constants.js';
 import { GUARDIAN_SNAPSHOT_FIELDS } from './invasion/normalize.js';
+import { stepRun } from './commissionSegment.js';
+import { commissionOrderWire } from '../run/commission.js';
 import type {
   Invasion3Config,
   InvasionGuardianPlacement,
@@ -602,6 +604,31 @@ export function hashWorld(state: WorldState): number {
     h = hashU32(h, (slots[0] ?? -1) >>> 0);
     h = hashU32(h, (slots[1] ?? -1) >>> 0);
   }
+  // --- 의뢰 런 꼬리(APPEND-ONLY, 조건부 · 계약 §8) ---
+  // 조건은 `config.commission !== undefined` 다. 이 조건은 **런 내내 불변**이라 바로 위 액티브
+  // 쿨다운 꼬리(런 도중 켜졌다 꺼졌다 한다)보다 한 등급 안전하다. 무의뢰 런은 한 폴드도 실행되지
+  // 않아 기존 PvE 골든·침공 해시가 **바이트 불변**이고, 그래서 `verify-invasion` EF 재배포가 필요 없다.
+  //
+  // ⚠️ **이 폴드는 장식이 아니라 스트림 무결성의 하중 부재다.** `state.tick` 이 구간마다 0 으로
+  // 돌아가므로, 같은 행성·같은 단계가 반복되는 조합에서는 **`segmentIndex` 가 유일한 구간 판별자**
+  // 다. 빼면 "2구간 시작"과 "1구간 재시작"이 같은 바이트열을 낳는다.
+  //
+  // `segmentDone` 을 함께 접는 이유: 레벨업 프리즈 중에는 전환이 지연되어 이 값이 실제로 1 인
+  // 채로 스트림에 나타난다(`stepRun` 의 프리즈 가드). 접지 않으면 그 틱들이 구간 종료 전과
+  // 구분되지 않는다.
+  //
+  // **접지 않는 것**: `planet`·`stage` 는 본문에서 이미 접힌다(중복 폴드 금지) ·
+  // `totalTicks` 는 스트림 인덱스 i 에서 항상 `i+1` 이라 정보량 0 인 파생값이다(파생 폴드 금지).
+  //
+  // all-or-nothing 고정 폭 5개. 조건이 참이면 다섯 전부를 접는다(부분 폴드는 충돌을 만든다).
+  const cmn = state.config.commission;
+  if (cmn !== undefined) {
+    h = hashU32(h, cmn.segments.length >>> 0);
+    h = hashU32(h, cmn.segmentIndex >>> 0);
+    h = hashU32(h, (state.commissionRuntime?.segmentDone ?? 0) >>> 0);
+    h = hashU32(h, commissionOrderWire(cmn.order) >>> 0);
+    h = hashU32(h, cmn.grade >>> 0);
+  }
   return h >>> 0;
 }
 
@@ -651,10 +678,13 @@ export interface ReplayResult {
  * calling this twice with the same replay yields identical hash arrays.
  */
 export function runReplay(replay: Replay): ReplayResult {
-  const state = createWorld(replay.seed, replay.config ?? DEFAULT_CONFIG);
+  // ⚠️ **월드 참조를 루프 밖에 캐시하지 않는다.** 다구간 의뢰는 구간마다 새 월드를 만들므로
+  // (`stepRun`) 루프 변수를 매 틱 갱신해야 한다 — 안 그러면 2구간부터 죽은 월드를 해싱하고
+  // `finalState` 가 1구간에서 멈춘다. 무의뢰 런에서는 `stepRun` 이 항등이라 산술이 기존과 동일하다.
+  let state = createWorld(replay.seed, replay.config ?? DEFAULT_CONFIG);
   const hashes: number[] = [];
   for (const input of replay.inputs) {
-    stepWorld(state, input);
+    state = stepRun(state, input);
     hashes.push(hashWorld(state));
   }
   const finalHash = hashes.length > 0 ? (hashes[hashes.length - 1] as number) : hashWorld(state);
@@ -664,8 +694,18 @@ export function runReplay(replay: Replay): ReplayResult {
 /**
  * Advance an existing world by a full input log, returning per-tick hashes.
  * Useful for driving a live world while also collecting a hash stream.
+ *
+ * ⚠️ **의뢰 런에는 쓸 수 없다.** 이 함수는 호출부가 넘긴 월드 객체를 제자리에서 전진시키는
+ * 계약이라 구간 전환(새 월드 반환)을 표현할 방법이 없다 — 그대로 두면 2구간부터 죽은 월드를
+ * 해싱하고 호출부는 아무 신호도 못 받는다. **타입으로 막을 방법을 못 찾았으므로 자인하고
+ * 런타임에 던진다**(조용히 틀린 해시를 내는 것보다 낫다). 의뢰 런은 `runReplay`/`stepRun` 을 써라.
+ *
+ * 프로덕션 호출부는 0건이고 테스트 전용이다(`tests/invasionHash.test.ts`).
  */
 export function stepThrough(state: WorldState, inputs: InputFrame[]): number[] {
+  if (state.config.commission !== undefined) {
+    throw new Error('stepThrough: 의뢰 런은 구간 전환을 표현할 수 없다 — runReplay/stepRun 을 써라');
+  }
   const hashes: number[] = [];
   for (const input of inputs) {
     stepWorld(state, input);

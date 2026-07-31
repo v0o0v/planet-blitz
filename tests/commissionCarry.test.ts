@@ -37,6 +37,8 @@ const WORLD_OPTIONAL_KEYS: readonly (keyof WorldState)[] = [
   'shrinkRuntime',
   'echoRuntime',
   'encounterRuntime',
+  // 의뢰 런에만 존재한다(`config.commission` 이 있을 때만 `createWorld` 가 싣는다).
+  'commissionRuntime',
 ];
 
 function player(w: WorldState): Entity {
@@ -77,6 +79,8 @@ const EXPECTED_WORLD_CARRY: readonly string[] = [
   'broodLaunches',
   'cushionHealed',
   'filmPops',
+  // 의뢰 런타임: `totalTicks` 가 런 단위 누적이라 승계한다(`segmentDone` 은 승계 후 0 으로 내린다).
+  'commissionRuntime',
 ];
 
 /** 플레이어 승계·0리셋 목록의 독립 전사본. 근거는 위와 동일. */
@@ -138,10 +142,12 @@ describe('① 전수 대조 — 분류 배열이 필드 전부를 덮는다', ()
     expect(unclassified, `미분류 엔티티 키: ${unclassified.join(', ')}`).toEqual([]);
   });
 
-  it('배열 길이 합이 실제 필드 수와 같다 (WorldState 61 · Entity 25)', () => {
+  it('배열 길이 합이 실제 필드 수와 같다 (WorldState 62 · Entity 25)', () => {
     // 숫자를 박아 두는 이유: 필드가 늘었는데 분류도 같이 늘면 위 대조는 통과하지만, 그때
     // **분류 판단이 실제로 있었는지**는 이 숫자가 바뀌는 것으로만 드러난다.
-    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(61);
+    // 61 → 62: `commissionRuntime` 신설(의뢰 구간 전환 코어 2단계). 이 숫자가 실제로 이 레인에서
+    // 컴파일과 테스트를 동시에 깨뜨렸고, 그 강제가 곧 분류가 판단됐다는 물증이다.
+    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(62);
     expect(ENTITY_CARRY.length + ENTITY_RESET_ZERO.length + ENTITY_FRESH.length).toBe(25);
   });
 });
@@ -244,6 +250,21 @@ describe('② 뮤테이션 진단력 — carryAcrossSegment 가 필드별로 실
     for (const k of EXPECTED_ENTITY_RESET_ZERO) {
       expect(np[k], `ENTITY_RESET_ZERO['${k}'] 가 0 이 아니다`).toBe(0);
     }
+  });
+
+  it('commissionRuntime: totalTicks 는 이어지고 segmentDone 은 0 으로 내려간다', () => {
+    // ⚠️ 이 둘이 한 객체 안에 있어서 규칙이 갈린다. `segmentDone` 을 안 내리면 `stepRun` 이
+    // 다음 틱에 또 전환해 **구간이 한 틱에 하나씩 소진되고 의뢰가 즉시 끝난다** — 해시는
+    // 클라·서버가 똑같이 틀리므로 어떤 게이트도 안 울린다.
+    const prev = createWorld(0x5555, { ...DEFAULT_CONFIG });
+    const next = createWorld(0x6666, { ...DEFAULT_CONFIG });
+    prev.commissionRuntime = { segmentDone: 1, totalTicks: 4242 };
+    next.commissionRuntime = { segmentDone: 0, totalTicks: 0 };
+
+    carryAcrossSegment(prev, next);
+
+    expect(next.commissionRuntime?.totalTicks).toBe(4242);
+    expect(next.commissionRuntime?.segmentDone).toBe(0);
   });
 
   it('플레이어 ENTITY_FRESH 는 새 월드 값을 유지한다 (좌표가 딸려오면 무대 진입 위치가 깨진다)', () => {
