@@ -69,6 +69,12 @@ export interface CatalystConsumeResult {
 export interface CatalystGrantResult {
   catalyst_id: number;
   qty_after: number;
+  /**
+   * 실제로 적립된 수량(ADR-0042 Follow-up ⓐ). 서버 `grant_catalyst` 가 per-call·누적 캡으로
+   * **절삭**할 수 있으므로 요청 수량과 다를 수 있다. 캡 개정 이전 서버는 이 필드를 안 주므로
+   * 호출부는 요청 수량으로 폴백한다.
+   */
+  granted?: number;
 }
 
 /**
@@ -359,7 +365,12 @@ export class SupabaseGateway implements ServerGateway {
     });
     if (error !== null) throw error;
     const r = asRec(data);
-    return { catalyst_id: num(r.catalyst_id, catalystId), qty_after: num(r.qty_after) };
+    return {
+      catalyst_id: num(r.catalyst_id, catalystId),
+      qty_after: num(r.qty_after),
+      // 구버전 서버(캡 개정 이전)는 granted 를 안 준다 — 그때만 요청 수량으로 폴백한다.
+      granted: typeof r.granted === 'number' ? r.granted : qty,
+    };
   }
 
   async salvageCatalyst(catalystId: number, qty: number): Promise<CatalystSalvageResult> {
