@@ -21,6 +21,9 @@ import { SeededRng } from './rng.js';
 import { cos, sin, atan2, length, TWO_PI, wrapAngle } from './math.js';
 import { DT, VIEW_WIDTH, VIEW_HEIGHT, OFFSCREEN_X } from './constants.js';
 import type { PlanetMode } from './planetMode.js';
+// 타입 전용 import 다 — `verbatimModuleSyntax` 로 런타임에 완전히 지워지므로 sim → run 런타임
+// 의존이 생기지 않는다(Deno 검증 경로가 `src/sim` 을 소스 그대로 import 하는 계약에 무영향).
+import type { CommissionRunConfig } from '../run/commission.js';
 import type { Entity, EntityKind } from './entities.js';
 import {
   blankEntity,
@@ -704,6 +707,19 @@ export interface WorldConfig {
    * 한 곳에서만 일어난다(단일 정본).
    */
   activeSlots?: number[];
+  /**
+   * 의뢰 런 설정(의뢰서 시스템, 계획 §A-1). **optional** — 미지정 = 일반 런(거동·해시 100% 불변).
+   *
+   * 존재하면 다구간 의뢰 런이다: 구간 종료 감지와 구간 전환(새 월드 생성 + 승계)이 열리고
+   * `hashWorld` 꼬리에 의뢰 폴드가 붙는다. `planetMultCenti`·`activeSlots` 와 같은 **조건부
+   * 스탬프** 규율을 따른다 — `buildRunConfig` 가 미지정 시 **필드 자체를 싣지 않아** 무의뢰 런의
+   * config 직렬화(리플레이 스냅샷)까지 기존과 바이트 동일하다.
+   *
+   * ⚠️ **`DEFAULT_CONFIG` 에 넣지 마라.** 넣으면 모든 런에 필드가 생겨 골든이 깨진다.
+   * ⚠️ 의뢰 술어의 정본은 **이 필드**다. 런타임 상태로 "의뢰인가"를 판정하지 마라(파생 정본 금지).
+   * append-only 규율: 신규 필드는 항상 이 아래에만 추가.
+   */
+  commission?: CommissionRunConfig;
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {
