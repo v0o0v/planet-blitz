@@ -29,6 +29,7 @@
 import { DEFAULT_CONFIG } from '../sim/world.js';
 import type { WorldConfig } from '../sim/world.js';
 import type { Invasion3Config } from '../sim/invasion/index.js';
+import type { CommissionRunConfig } from './commission.js';
 import { EQUIP_SLOTS } from '../items/types.js';
 import type { Item } from '../items/types.js';
 import { computeLoadoutStats } from '../items/loadout.js';
@@ -86,6 +87,15 @@ export interface RunConfigOpts {
    * 배선 누락이 열린다(이 저장소가 8번 겪은 결함 유형).
    */
   planetMult?: { centi: number; epoch: number };
+  /**
+   * 의뢰 런 설정(의뢰서 시스템, 계획 §A-1). **의뢰 경로에서만** 전달한다 — 미지정이면
+   * `commission` 필드가 아예 스탬프되지 않아 기존 PvE·침공 런의 config 가 바이트 불변이다.
+   *
+   * `segmentIndex` 를 포함해 통째로 받는 것이 계약이다: 구간 전환은 이 객체를 계승하고
+   * `segmentIndex` 만 갱신한 새 config 로 다음 월드를 만든다. 인덱스를 따로 받으면
+   * "구간은 넘어갔는데 인덱스는 그대로"인 배선 누락이 열린다.
+   */
+  commission?: CommissionRunConfig;
 }
 
 /**
@@ -187,12 +197,20 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
     // 행성 인기 배율(ADR-0038) — **중립(100)이면 아예 스탬프하지 않는다.** shipType/planetMode 처럼
     // "항상 명시"하지 않는 이유는 조건부 해시 폴드의 불변식을 **필드 부재로도** 성립시켜, 침공·
     // 오프라인 런의 config 직렬화(리플레이 스냅샷)까지 기존과 바이트 동일하게 두기 위함이다.
-    ...(opts.planetMult !== undefined && opts.planetMult.centi !== NEUTRAL_MULT_CENTI
+    // ⚠️ **의뢰 런은 인기 배율을 스탬프하지 않는다**(계획 D13). 의뢰 보상은 종이에 적힌 확정분
+    // 이라 행성 인기와 무관하고, 배율이 실리면 서버가 payload 대조 시 "없어야 할 축"을 보게 된다.
+    // 호출부가 실수로 planetMult 를 넘겨도 여기서 막는다 — 조건을 호출부 규율에 맡기면 이
+    // 저장소가 8번 겪은 "한 경로만 고쳐서 새는" 결함이 그대로 재현된다.
+    ...(opts.commission === undefined &&
+    opts.planetMult !== undefined &&
+    opts.planetMult.centi !== NEUTRAL_MULT_CENTI
       ? { planetMultCenti: opts.planetMult.centi | 0 }
       : {}),
     // epoch 은 배율이 중립이어도 싣는다 — 정산이 "어느 표를 봤는가"를 서버에 말해야 서버가 자기
     // 스냅샷으로 재산정할 수 있고, 중립 배율도 그 표의 정당한 값이기 때문이다. sim 미사용·비해시.
-    ...(opts.planetMult !== undefined ? { planetMultEpoch: opts.planetMult.epoch | 0 } : {}),
+    ...(opts.commission === undefined && opts.planetMult !== undefined
+      ? { planetMultEpoch: opts.planetMult.epoch | 0 }
+      : {}),
     // 액티브 스킬 장착 슬롯(ADR-0041) — **둘 다 비면 필드 자체를 싣지 않는다**(planetMultCenti
     // 선례). 이것이 계획 PM-4("장착은 되는데 런에 안 닿는다", 이 저장소 지배적 실패 모드)의
     // 유일한 배선 지점이다. `Ship`→`WorldConfig` 경로는 이 함수뿐이고, 소집(`opts.pilot`)
@@ -200,5 +218,9 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
     ...(activeSlotsWire.length > 0 ? { activeSlots: activeSlotsWire } : {}),
     ...(opts.maxSegments !== undefined ? { maxSegments: opts.maxSegments } : {}),
     ...(opts.invasion3 !== undefined ? { invasion3: opts.invasion3 } : {}),
+    // 의뢰 런 설정 — **조건부 스탬프**(planetMultCenti·activeSlots 선례). 미지정이면 필드 자체를
+    // 싣지 않아 기존 런의 config 직렬화가 바이트 동일하다. 이것이 `Commission`→`WorldConfig` 의
+    // **유일한 배선 지점**이다(호출부에서 config 를 손보지 마라 — 파일 머리말 계약).
+    ...(opts.commission !== undefined ? { commission: opts.commission } : {}),
   };
 }
