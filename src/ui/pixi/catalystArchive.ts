@@ -54,6 +54,9 @@ import {
   QTY_MIN,
   ROW_H,
   ROW_CTRL_W,
+  INFO_Y,
+  INFO_LINE_H,
+  NOTE_LINE_H,
   type CatalystRowShopState,
 } from './catalystShopView.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
@@ -532,11 +535,13 @@ export class CatalystArchiveScreen {
         // 우측 컨트롤 폭 파생 — SALVAGE_W 만 빼던 옛 식으로는 구매 버튼을 얹는 순간 글자가
         // 버튼 밑으로 들어간다.
         wordWrapWidth: BOX.w - textX - ROW_CTRL_W - 32,
-        lineHeight: 21,
+        // ⚠️ y·lineHeight 를 여기서 직접 정하지 않는다 — 하단 문구의 세로 예산이 이 값들에서
+        // 파생되므로, 둘이 서로를 모르는 채 각자 고정되면 줄 수가 늘 때 조용히 겹친다.
+        lineHeight: INFO_LINE_H,
         dropShadow: TEXT_SHADOW,
       },
     });
-    info.position.set(textX, 52);
+    info.position.set(textX, INFO_Y);
     row.addChild(info);
 
     // 행 하단 한 줄: 분해 획득량 · 구매가 · 거부 사유. 스테퍼로 수량이 바뀌면 이 Text 만 갈린다.
@@ -549,7 +554,7 @@ export class CatalystArchiveScreen {
         fill: COLOR.cream,
         wordWrap: true,
         wordWrapWidth: BOX.w - textX - ROW_CTRL_W - 32,
-        lineHeight: 19,
+        lineHeight: NOTE_LINE_H,
         dropShadow: TEXT_SHADOW,
       },
     });

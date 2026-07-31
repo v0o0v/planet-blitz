@@ -26,6 +26,16 @@ import {
   ROW_H,
   NOTE_MIN_Y,
   NOTE_PAD_BOTTOM,
+  NOTE_BUDGET,
+  NOTE_EXPECTED_H,
+  NOTE_GAP,
+  INFO_Y,
+  INFO_LINE_H,
+  INFO_MAX_LINES,
+  INFO_BOTTOM,
+  NOTE_LINE_H,
+  NOTE_MAX_LINES,
+  TEXT_MEASURE_SLACK,
   QTY_MIN,
   QTY_MAX,
   type CatalystRowShopState,
@@ -196,8 +206,31 @@ describe('회귀 — [분해] 라벨이 실제 분해 수량을 반영한다', (
   });
 });
 
+describe('회귀 — 설명(2줄)과 하단 문구(2줄)가 겹치지 않는다', () => {
+  it('상한이 설명 실측 바닥에서 파생된다 — 두 상수가 서로를 모르면 안 된다', () => {
+    // 옛 코드는 NOTE_MIN_Y 를 94 로 **직접 박아** 뒀는데 설명 2줄 실측 바닥은 96 이라 2px 겹쳤다.
+    expect(INFO_BOTTOM).toBe(INFO_Y + INFO_LINE_H * INFO_MAX_LINES + TEXT_MEASURE_SLACK);
+    expect(NOTE_MIN_Y).toBe(INFO_BOTTOM + NOTE_GAP);
+    expect(NOTE_MIN_Y).toBeGreaterThanOrEqual(INFO_BOTTOM);
+    expect(94).toBeLessThan(INFO_BOTTOM); // 옛 값이 실제로 침범했다는 증인.
+  });
+
+  it('설명 2줄 + 문구 2줄이 동시에 최대여도 겹치지 않는다', () => {
+    const box = noteLayout(NOTE_EXPECTED_H);
+    expect(box.y).toBeGreaterThanOrEqual(INFO_BOTTOM);
+    expect(box.y - INFO_BOTTOM).toBeGreaterThanOrEqual(NOTE_GAP);
+    expect(box.y + NOTE_EXPECTED_H * box.scale).toBeLessThanOrEqual(ROW_H);
+  });
+
+  it('문구 2줄이 예산 안에 들어가 축소가 걸리지 않는다', () => {
+    expect(NOTE_EXPECTED_H).toBe(NOTE_LINE_H * NOTE_MAX_LINES + TEXT_MEASURE_SLACK);
+    expect(NOTE_EXPECTED_H).toBeLessThanOrEqual(NOTE_BUDGET);
+    expect(noteLayout(NOTE_EXPECTED_H).scale).toBe(1);
+  });
+});
+
 describe('회귀 — 하단 문구가 행 밖으로 넘치지 않는다', () => {
-  const budget = ROW_H - NOTE_MIN_Y - NOTE_PAD_BOTTOM;
+  const budget = NOTE_BUDGET;
 
   it('1줄이면 하단 정렬되고 설명 영역을 침범하지 않는다', () => {
     const box = noteLayout(19);
@@ -206,11 +239,12 @@ describe('회귀 — 하단 문구가 행 밖으로 넘치지 않는다', () => 
     expect(box.y).toBeGreaterThanOrEqual(NOTE_MIN_Y);
   });
 
-  it('2줄(40px)이어도 바닥을 넘지 않는다 — 고정 y=104 였다면 bottom 144 로 넘쳤다', () => {
-    const box = noteLayout(40);
+  it('2줄이어도 바닥을 넘지 않는다 — 고정 y=104 였다면 bottom 이 ROW_H 를 넘었다', () => {
+    const h = NOTE_EXPECTED_H;
+    const box = noteLayout(h);
     expect(box.scale).toBe(1);
-    expect(box.y).toBe(ROW_H - NOTE_PAD_BOTTOM - 40);
-    expect(box.y + 40).toBeLessThanOrEqual(ROW_H);
+    expect(box.y).toBe(ROW_H - NOTE_PAD_BOTTOM - h);
+    expect(box.y + h).toBeLessThanOrEqual(ROW_H);
     expect(104 + 40).toBeGreaterThan(ROW_H); // 옛 고정 배치가 실제로 넘쳤다는 증인.
   });
 

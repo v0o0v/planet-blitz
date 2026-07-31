@@ -38,10 +38,39 @@ export interface CatalystRowShopState {
 export const ROW_H = 136;
 /** 우측 컨트롤 영역 폭의 단일 정본(버튼 폭·설명 wordWrap 이 전부 여기서 파생). */
 export const ROW_CTRL_W = 220;
-/** 하단 문구가 침범해선 안 되는 상한 = 설명(info) 2줄이 끝나는 y. */
-export const NOTE_MIN_Y = 94;
+// 설명(info)과 하단 문구(note)의 세로 예산은 **같은 산술 하나**로 계산한다. 두 값을 서로
+// 모르는 상수로 따로 박아 두면 한쪽 줄 수가 늘 때 조용히 겹친다(실제로 겹쳤다 — `NOTE_MIN_Y`
+// 를 "설명 2줄 끝"이라고 94 로 적었으나 실측은 96 이었다). 아래 상수는 화면이 그대로 쓰고,
+// 파생값끼리의 정합은 단위 테스트가 잠근다.
+
+/** 설명(info) 상단 y. */
+export const INFO_Y = 52;
+/** 설명 한 줄 높이. */
+export const INFO_LINE_H = 21;
+/** 설명이 차지할 수 있는 최대 줄 수(예산 산정 기준). */
+export const INFO_MAX_LINES = 2;
+/** 하단 문구 한 줄 높이. */
+export const NOTE_LINE_H = 17;
+/** 하단 문구가 차지할 수 있는 최대 줄 수(예산 산정 기준). */
+export const NOTE_MAX_LINES = 2;
+/**
+ * Pixi `Text` 실측 높이가 `lineHeight × 줄수` 보다 큰 몫(글리프 어센더·드롭섀도). 실측으로
+ * 얻은 값이다 — 설명 2줄이 42 가 아니라 44 로 재졌고, 그 2px 이 이 결함의 실체였다.
+ */
+export const TEXT_MEASURE_SLACK = 2;
+/** 설명과 하단 문구 사이 최소 간격. */
+export const NOTE_GAP = 2;
+
+/** 설명 블록이 실제로 끝나는 y(최대 줄 수 기준). */
+export const INFO_BOTTOM = INFO_Y + INFO_LINE_H * INFO_MAX_LINES + TEXT_MEASURE_SLACK;
+/** 하단 문구가 침범해선 안 되는 상한 — 설명 실측 바닥 + 간격 **파생**(하드코딩 금지). */
+export const NOTE_MIN_Y = INFO_BOTTOM + NOTE_GAP;
 /** 하단 문구와 행 바닥 사이 여백. */
 export const NOTE_PAD_BOTTOM = 2;
+/** 하단 문구에 허용된 세로 예산. */
+export const NOTE_BUDGET = ROW_H - NOTE_MIN_Y - NOTE_PAD_BOTTOM;
+/** 하단 문구 최대 줄 수의 실측 예상 높이 — 이 값이 예산 안이어야 축소가 걸리지 않는다. */
+export const NOTE_EXPECTED_H = NOTE_LINE_H * NOTE_MAX_LINES + TEXT_MEASURE_SLACK;
 
 /**
  * 하단 문구의 배치(상단 y·축소 배율). **고정 y 를 쓰면 문구가 2줄이 되는 순간 행 밖으로
@@ -52,7 +81,7 @@ export const NOTE_PAD_BOTTOM = 2;
  * 순수 산술이라 캔버스 없이 검증된다 — 호출부는 `Text.height` 만 넘긴다.
  */
 export function noteLayout(noteHeight: number): { y: number; scale: number } {
-  const budget = ROW_H - NOTE_MIN_Y - NOTE_PAD_BOTTOM;
+  const budget = NOTE_BUDGET;
   const h = Number.isFinite(noteHeight) && noteHeight > 0 ? noteHeight : 0;
   const scale = h > budget ? budget / h : 1;
   const drawn = h * scale;
