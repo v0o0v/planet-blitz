@@ -405,7 +405,7 @@ AC-1 원문은 "`data/ships/<slug>.ts` **계열 구조**에서 조회 가능"이
 | AC-10 | integration: 오토파일럿 발동 + 동일 시드 2회 해시 동일 | B | 레인 종료 |
 | AC-11 | e2e: fixtures 재생성 + EF 재배포 후 액티브 사용 리플레이 검증 통과 | G/H | **T5** |
 | AC-12 | unit: 저티어 7/8 경계 · 고티어 `capstoneGate`±1(해츨링 43/44 포함) | C | 레인 종료 |
-| AC-13 | unit: 투자량↑ → 위력 단조↑ · 쿨다운 단조↓, `skillInvest` 외 저장 없음 | C | 레인 종료 |
+| AC-13 | unit: 투자량↑ → 위력 단조↑ · 쿨다운 단조↓, `skillInvest` 외 저장 없음. **2026-07-31 개정 — 위력은 피해 축 한정**(strike 14 + 만료 훅 3), 나머지 25종은 불변. 정본 ADR-0041 §"위력의 적용 범위", 잠금 `tests/activeSkillPowerScope.test.ts` | C | 레인 종료 |
 | AC-14 | unit: 3개째 장착 거부 | C | 레인 종료 |
 | AC-15 | unit: V7 프로필 + **기존 guardian 레코드** → V8 정규화, 손실 0 | C | **0a** + 최종 |
 | AC-16 | e2e 하네스: **Pixi** 연구소 계열별 액티브 2칸, 잠금 시 필요 투자량 | D | **0b**(브루저) + 통합 |
