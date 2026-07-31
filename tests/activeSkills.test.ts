@@ -81,6 +81,13 @@ describe('AC-12 — 해금 게이트 (저티어 8 · 고티어 capstoneGate 추�
   });
 });
 
+/**
+ * ⚠️ 아래 describe 는 **순수 함수만** 지킨다 — `activeCooldownTicks`·`activePowerCenti` 를 직접
+ * 부르므로, 그 반환값이 sim 에 도달하는지는 보지 않는다. 실제로 `powerCentiOf` 의 소비를 통째로
+ * 끊는 뮤테이션에서 이 42종 단조성은 **전원 통과**했다(2026-07-31 조사). 도달 범위의 잠금은
+ * `tests/activeSkillPowerScope.test.ts`(양성 17 · 음성 25)이고, 범위 정본은 ADR-0041
+ * §"위력의 적용 범위"다. 여기를 고칠 때 그 파일을 함께 보라.
+ */
 describe('AC-13 — 투자량 파생 (위력 단조↑ · 쿨다운 단조↓, 별도 저장 없음)', () => {
   it.each(ALL_ACTIVES.map((d) => [d.id, d] as const))('%s — 단조성', (_id, def) => {
     let prevCd = Number.POSITIVE_INFINITY;

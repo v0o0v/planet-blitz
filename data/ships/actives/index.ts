@@ -116,6 +116,12 @@ export const ACTIVE_CD_FLOOR = 18;
 /**
  * 실효 위력 배율(**centi 정수** — 100 = ×1.00). 계열 누적 투자가 늘수록 **단조 증가**(AC-13).
  * 파생값이므로 별도 저장이 없다(`skillInvest` 에서만 파생 — AC-13 후단).
+ *
+ * ⚠️ **이 값이 도달하는 곳은 42종이 아니라 17종이다**(ADR-0041 §"위력의 적용 범위",
+ * 2026-07-31 개정). `powerCentiOf`(`src/sim/activeTypes.ts:59`)를 호출하는 것은
+ * `kind='strike'` 14종의 `coeff.damage` 와 buff 3종의 만료 훅(`coeff.heal`/`coeff.blastDamage`)
+ * 뿐이고, **이동 거리·버프 지속·무적·충전·흡수량은 투자에 불변**이다. 이 함수만 보는 단조성
+ * 단언은 그 사실을 못 본다 — 도달 범위의 잠금은 `tests/activeSkillPowerScope.test.ts` 다.
  */
 export function activePowerCenti(_def: ActiveSkillDef, invested: number): number {
   const inv = Math.max(0, Math.floor(invested));
