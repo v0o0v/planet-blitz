@@ -290,6 +290,77 @@ export const CATALYST_RESOURCE_MIRROR: readonly { readonly id: number; readonly 
   }));
 
 // ---------------------------------------------------------------------------
+// 촉매 상점 가격 (ADR-0042 — 촉매 잔재로 닫은 자기 완결 경제)
+// ---------------------------------------------------------------------------
+
+/**
+ * 흔한 촉매(`dropWeight === W_COMMON`) 1장의 구매가. 다른 모든 가격이 여기서 파생한다. // BALANCE
+ */
+export const CATALYST_BASE_PRICE = 10;
+
+/**
+ * 분해 환급 비율(퍼센트). 구매가의 이 비율만큼 촉매 잔재로 돌려준다. // BALANCE
+ *
+ * ⚠️ 이 값은 `salvage_catalyst` SQL 본문의 `SALVAGE_RATIO_PCT` 와 **수동 미러**다.
+ * `tests/catalystShopContract.test.ts` 가 마이그레이션 본문에서 리터럴을 추출해 대조하므로
+ * 한쪽만 고치면 CI 가 먼저 깨진다.
+ */
+export const SALVAGE_RATIO_PCT = 50;
+
+/**
+ * 촉매 구매가 — 희소도(`dropWeight`) 한 축에서만 파생한다(ADR-0042 §계약 세부).
+ * 보상축·행성별 가감은 없다.
+ *
+ * `W_SIGNATURE = 8` 이라 특산 일반 12종이 `10 × 10 / 8 = 12.5` 로 비정수가 된다. **`Math.floor`
+ * 로 절하한다** — 서버는 `floor(buy_price × pct / 100)` 로 환급하므로 양수 구간에서 JS 와
+ * PostgreSQL 의 `floor` 가 동일해 표시가와 청구액이 갈릴 여지가 없다.
+ *
+ * 미지 id 는 0 을 반환한다. 서버 `buy_catalyst` 의 `price-unset` 게이트와 같은 방향이다.
+ */
+export function catalystBuyPrice(id: number): number {
+  const def = BY_ID.get(id);
+  if (def === undefined) return 0;
+  return Math.floor((CATALYST_BASE_PRICE * W_COMMON) / def.dropWeight);
+}
+
+/**
+ * 촉매 1장 분해 시 얻는 촉매 잔재.
+ *
+ * ⚠️ **결합 순서가 계약이다** — n 장 분해는 `catalystSalvageValue(id) * n` 이지
+ * `floor(price × pct × n / 100)` 이 아니다. `buy_price = 25 · n = 3` 에서 36 vs 37 로 갈린다.
+ * SQL 도 같은 순서(`floor(...) * v_qty`)여야 하고 계약 테스트가 그 괄호 위치를 잠근다.
+ */
+export function catalystSalvageValue(id: number): number {
+  return Math.floor((catalystBuyPrice(id) * SALVAGE_RATIO_PCT) / 100);
+}
+
+/**
+ * 촉매 상점 진열 여부. 공용 30종만 판다 — 특산은 분해만 되고 되살 수 없다(ADR-0042 §결정 4).
+ * 특산을 팔면 그 행성에 한 번도 안 가고 그 행성 특산을 쥐게 되어 ADR-0022 의 종류 축 차별화가
+ * 무너진다.
+ */
+export function catalystIsPurchasable(id: number): boolean {
+  return BY_ID.get(id)?.kind === 'common';
+}
+
+/**
+ * `catalyst_defs.buy_price` 시드의 TS 정본. 마이그레이션의 `CATALYST_PRICE_SEED_BEGIN`/`_END`
+ * 센티넬 사이 블록과 계약 테스트가 전수 대조한다 — 시드 갱신을 잊으면 CI 가 깨진다.
+ *
+ * `purchasable` 을 함께 싣는 이유: 구매 가능성이 TS·SQL(`planet is null`)·경계(`id < 30`) 세
+ * 곳에 서로 다른 술어로 적혀 있어, 미러에 실어야 계약 테스트가 셋을 한자리에서 대조할 수 있다.
+ */
+export const CATALYST_PRICE_MIRROR: readonly {
+  readonly catalystId: number;
+  readonly buyPrice: number;
+  readonly purchasable: boolean;
+}[] = CATALYSTS.map((c) => ({
+  catalystId: c.id,
+  buyPrice: catalystBuyPrice(c.id),
+  purchasable: catalystIsPurchasable(c.id),
+}));
+
+// ---------------------------------------------------------------------------
 // 아이콘 참조 (slug 기반, 축별 placeholder)
 // ---------------------------------------------------------------------------
 

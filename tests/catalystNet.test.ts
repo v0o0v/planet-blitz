@@ -75,11 +75,13 @@ class FakeGateway implements ServerGateway {
   }
   async salvageCatalyst(_catalystId: number, qty: number): Promise<CatalystSalvageResult> {
     if (this.failSalvage) throw new Error('offline');
+    // ADR-0042: 분해 보상은 크레딧이 아니라 **촉매 잔재**다(grant_currency 미경유).
     return {
       ok: this.salvageOk,
       salvaged: this.salvageOk ? qty : 0,
-      credits_left: this.salvageOk ? 150 : 0,
-      minerals_left: 0,
+      residue: this.salvageOk ? 150 : 0,
+      gained: this.salvageOk ? 10 * qty : 0,
+      ...(this.salvageOk ? {} : { note: 'not-owned' }),
     };
   }
   async grantCatalyst(catalystId: number, qty: number): Promise<CatalystGrantResult> {
@@ -131,17 +133,17 @@ describe('consumeCatalystsOnServer', () => {
 // ---------------------------------------------------------------------------
 
 describe('salvageCatalystOnServer — 분해 왕복', () => {
-  it('성공: 갱신 잔액 + 분해 수량', async () => {
+  it('성공: 갱신 잔재 + 획득 잔재 + 분해 수량', async () => {
     const gw = new FakeGateway();
     const out = await salvageCatalystOnServer(15, 2, { gateway: gw });
-    expect(out).toEqual({ status: 'ok', salvaged: 2, creditsLeft: 150, mineralsLeft: 0 });
+    expect(out).toEqual({ status: 'ok', salvaged: 2, residue: 150, gained: 20 });
   });
 
-  it('보유/잔액 부족(ok=false)이면 rejected(미차감)', async () => {
+  it('보유 부족(ok=false)이면 rejected(미차감) — 서버 note 를 그대로 실어 낸다', async () => {
     const gw = new FakeGateway();
     gw.salvageOk = false;
     const out = await salvageCatalystOnServer(15, 2, { gateway: gw });
-    expect(out).toEqual({ status: 'rejected' });
+    expect(out).toEqual({ status: 'rejected', note: 'not-owned' });
   });
 
   it('오프라인/오류면 rejected', async () => {

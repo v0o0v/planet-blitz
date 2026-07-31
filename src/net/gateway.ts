@@ -71,13 +71,40 @@ export interface CatalystGrantResult {
   qty_after: number;
 }
 
-/** `salvage_catalyst` 반환 — 분해 성공 여부 + 갱신 재화 잔액(ok=false 면 미차감). */
+/**
+ * `salvage_catalyst` 반환 — 분해 성공 여부 + 갱신 **촉매 잔재** 잔액(ok=false 면 미차감).
+ *
+ * ⚠️ ADR-0042(촉매 상점·잔재 경제)로 분해 보상이 크레딧/광물 → 촉매 잔재로 바뀌었다. 서버가
+ * `grant_currency` 를 더 이상 타지 않으므로 옛 `credits_left`·`minerals_left` 는 **반환에서
+ * 사라졌다** — 타입에서도 지운다(남겨 두면 `undefined` 가 조용히 재화 미러에 저장된다).
+ */
 export interface CatalystSalvageResult {
   ok: boolean;
   /** 실제 분해된 수량(ok=false 면 0). */
   salvaged: number;
-  credits_left: number;
-  minerals_left: number;
+  /** 분해 후 촉매 잔재 잔액(profiles.catalyst_residue). */
+  residue: number;
+  /** 이번 분해로 얻은 촉매 잔재(ok=false 면 0). */
+  gained: number;
+  /** 거부 사유(ok=false 일 때만). `no-profile`·`not-owned` 등 서버 note 원문. */
+  note?: string;
+}
+
+/**
+ * `buy_catalyst` 반환 — 구매 성공 여부 + 갱신 촉매 잔재 잔액(ok=false 면 미차감).
+ * 거부 사유는 `note`(`no-profile`·`signature-not-sold`·`price-unset`·`insufficient-residue`·
+ * `unknown-catalyst`·`nothing-to-buy`).
+ */
+export interface CatalystBuyResult {
+  ok: boolean;
+  catalyst_id: number;
+  /** 실제 구매된 수량(ok=false 면 0). */
+  bought: number;
+  /** 지불한 촉매 잔재(ok=false 면 0). */
+  spent: number;
+  /** 구매 후 촉매 잔재 잔액. */
+  residue: number;
+  note?: string;
 }
 
 /** `catalyst_inventory` 한 행(본인 보유 원장). */
@@ -153,10 +180,17 @@ export interface ServerGateway {
    */
   grantCatalyst?(catalystId: number, qty: number): Promise<CatalystGrantResult>;
   /**
-   * 촉매 분해(ADR-0029) — 서버 `salvage_catalyst` RPC. 보유 차감 + `grant_currency(salvage)` 로
-   * 재화를 지급하고 갱신 잔액을 낸다. 잔액/보유 부족이면 `ok=false`(미차감). 구버전이면 undefined.
+   * 촉매 분해(ADR-0029 · ADR-0042) — 서버 `salvage_catalyst` RPC. 보유를 차감하고 **촉매 잔재**를
+   * 가산해 갱신 잔액을 낸다(`grant_currency` 를 타지 않는다 — 잔재는 촉매 경제 안에 닫혀 있다).
+   * 보유 부족·프로필 부재면 `ok=false`(미차감). 구버전이면 undefined.
    */
   salvageCatalyst?(catalystId: number, qty: number): Promise<CatalystSalvageResult>;
+  /**
+   * 촉매 구매(ADR-0042) — 서버 `buy_catalyst` RPC. 촉매 잔재를 차감하고 보유 원장에 가산한다.
+   * 공용 촉매만 판매되며(특산은 `signature-not-sold`), 잔재 부족·미설정가는 `ok=false`(미차감).
+   * 구버전 게이트웨이면 undefined — 호출부가 no-op(`unconfigured`) 처리.
+   */
+  buyCatalyst?(catalystId: number, qty: number): Promise<CatalystBuyResult>;
   /**
    * 촉매 보유 원장 조회 — `catalyst_inventory` select(RLS 로 본인 행만). 픽커·관리 UI 표시용.
    * 구버전 게이트웨이면 undefined(→ 빈 보유로 취급).
@@ -209,9 +243,11 @@ export class SupabaseGateway implements ServerGateway {
     // 재화 서버 권위(ADR-0027): credits/minerals **컬럼**을 함께 읽는다 — save jsonb 의
     // 낡은 재화가 아니라 서버 정본 컬럼을 미러 초기값으로 쓰기 위함. 구 서버(컬럼 null/부재)면
     // deserializeProfile 이 save 값을 유지한다(하위호환).
+    // 촉매 잔재(ADR-0042)도 **이 pull 경로에 얹는다** — 잔재 전용 RPC 를 새로 만들지 않는다
+    // (`profiles_select_own` 정책이 이미 본인 행 읽기를 허용한다).
     const { data, error } = await this.client
       .from('profiles')
-      .select('save, save_version, credits, minerals')
+      .select('save, save_version, credits, minerals, catalyst_residue')
       .eq('id', uid)
       .maybeSingle();
     if (error !== null) throw error;
@@ -221,6 +257,7 @@ export class SupabaseGateway implements ServerGateway {
       save_version: number;
       credits?: unknown;
       minerals?: unknown;
+      catalyst_residue?: unknown;
     };
     return {
       save: row.save,
@@ -228,6 +265,9 @@ export class SupabaseGateway implements ServerGateway {
       ...(row.credits !== null && row.credits !== undefined ? { credits: num(row.credits) } : {}),
       ...(row.minerals !== null && row.minerals !== undefined
         ? { minerals: num(row.minerals) }
+        : {}),
+      ...(row.catalyst_residue !== null && row.catalyst_residue !== undefined
+        ? { catalystResidue: num(row.catalyst_residue) }
         : {}),
     };
   }
@@ -332,8 +372,26 @@ export class SupabaseGateway implements ServerGateway {
     return {
       ok: r.ok === true,
       salvaged: num(r.salvaged),
-      credits_left: num(r.credits_left),
-      minerals_left: num(r.minerals_left),
+      residue: num(r.residue),
+      gained: num(r.gained),
+      ...(typeof r.note === 'string' ? { note: r.note } : {}),
+    };
+  }
+
+  async buyCatalyst(catalystId: number, qty: number): Promise<CatalystBuyResult> {
+    const { data, error } = await this.client.rpc('buy_catalyst', {
+      p_catalyst_id: catalystId,
+      p_qty: qty,
+    });
+    if (error !== null) throw error;
+    const r = asRec(data);
+    return {
+      ok: r.ok === true,
+      catalyst_id: num(r.catalyst_id, catalystId),
+      bought: num(r.bought),
+      spent: num(r.spent),
+      residue: num(r.residue),
+      ...(typeof r.note === 'string' ? { note: r.note } : {}),
     };
   }
 

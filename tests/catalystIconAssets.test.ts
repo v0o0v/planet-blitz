@@ -27,10 +27,18 @@ describe('촉매 아이콘 아트(assets/catalyst_*.png)', () => {
     expect(missing).toEqual([]);
   });
 
+  it('촉매 잔재 아이콘이 있다(ADR-0042 상점 재화)', () => {
+    expect(files.has('catalyst_residue.png')).toBe(true);
+  });
+
   it('쓰이지 않는 촉매 아트가 남아 있지 않다(사문서 아트 금지)', () => {
     const used = new Set(CATALYSTS.map((c) => `${catalystIconKey(c)}.png`));
     // 축 폴백 이름은 아직 아트가 없지만, 생긴다면 그것도 정당한 소비처다.
-    const orphans = [...files].filter((f) => !used.has(f) && !f.startsWith('catalyst_axis_'));
+    // `catalyst_residue.png` 는 촉매 한 장이 아니라 상점 재화(촉매 잔재) 아이콘이라
+    // 레지스트리 파생이 아니고, `UI_ASSET_NAMES` 에 손으로 등재된 정당한 소비처가 있다.
+    const orphans = [...files].filter(
+      (f) => !used.has(f) && !f.startsWith('catalyst_axis_') && f !== 'catalyst_residue.png',
+    );
     expect(orphans).toEqual([]);
   });
 });
