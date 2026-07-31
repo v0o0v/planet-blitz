@@ -51,6 +51,15 @@
 --     "촉매 밖에서 가치 0"은 잔재에만 참이고 촉매에는 거짓이다.
 --     복구 항목: docs/adr/0042 §Follow-ups ⓐ (주체=보안 레인, 출시 전 필수, 미해결 시 출시 차단).
 --
+--     ▷ 해소됨 (2026-07-31, 주석만 추가 — 이 파일의 SQL 은 원격 적용본과 한 바이트도 다르지 않다):
+--       20260801000000_catalyst_grant_cap.sql 이 셋을 동시에 복구했다.
+--         · 무캡    → grant_catalyst 1h 360 / 24h 2160 누적 캡(초과분 클램프).
+--         · 무원장  → catalyst_grants 원장(본인 select 만·TTL 48h GC).
+--         · 무플래깅 → 절삭 전 요청량 > 10×per-call 이면 profiles.flagged.
+--       원격 실증: scripts/prove-catalyst-grant-cap.ps1 — authenticated 역할로 500 을 요청해
+--       360 만 받는다(개정 전이라면 500 이 그대로 들어갔다).
+--       위 세 줄 중 하나라도 되돌아가면 tests/catalystGrantCapContract.test.ts 가 빨개진다.
+--
 -- ▮ no-profile 게이트 이식(방어를 떼면 그 방어가 막던 것을 다시 막는다):
 --     이 게이트는 원래 grant_currency 안에 있었다(20260727000000_catalyst_ledger.sql:439-447).
 --     salvage_catalyst 가 grant_currency 를 떼면서 함께 사라지므로 두 RPC 에 각각 이식한다.

@@ -71,7 +71,7 @@ function forUpdateLockOrder(code: string): string[] {
 function declaredConstant(code: string, name: string): string {
   const m = new RegExp(`${name}\\s+constant\\s+int\\s*:=\\s*([^;]+);`).exec(code);
   expect(m, `DECLARE 에 ${name} constant int 선언이 없다`).not.toBeNull();
-  return m![1].replace(/\s+/g, ' ').trim();
+  return (m![1] ?? '').replace(/\s+/g, ' ').trim();
 }
 
 const GRANT = effectiveFunctionBody('grant_catalyst');
@@ -106,7 +106,7 @@ describe('grant_catalyst — 1h·24h 누적 캡', () => {
   it('남은 예산이 1h·24h 잔여의 최소값이다', () => {
     const m = /v_rem\s*:=\s*least\(([\s\S]*?)\);/.exec(GRANT.code);
     expect(m, 'v_rem := least(...) 형상이 아니다').not.toBeNull();
-    const expr = m![1].replace(/\s+/g, ' ');
+    const expr = (m![1] ?? '').replace(/\s+/g, ' ');
     expect(expr).toContain('CAP_HOURLY_CATALYSTS - v_1h');
     expect(expr).toContain('CAP_DAILY_CATALYSTS - v_24h');
     expect(expr, '음수 예산 방어(greatest(0, ..))가 없다').toContain('greatest(0,');
@@ -173,7 +173,7 @@ describe('catalyst_grants 원장', () => {
   it('테이블 DDL 이 존재하고 절삭 폭(requested)을 보존한다', () => {
     const m = /create table if not exists public\.catalyst_grants \(([\s\S]*?)\n\);/.exec(raw);
     expect(m, 'catalyst_grants 테이블 선언이 없다').not.toBeNull();
-    const cols = stripLineComments(m![1]);
+    const cols = stripLineComments(m![1] ?? '');
     for (const c of ['profile_id', 'catalyst_id', 'requested', 'qty', 'created_at']) {
       expect(cols, `컬럼 ${c} 이 없다`).toContain(c);
     }
