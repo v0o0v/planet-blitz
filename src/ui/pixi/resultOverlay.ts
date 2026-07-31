@@ -28,7 +28,7 @@ import {
   catalystIconKey,
 } from '../../data/catalysts.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
-import type { ResultDrop, ResultState, SettlementSummary } from '../resultOverlay.js';
+import type { CommissionResultInfo, ResultDrop, ResultState, SettlementSummary } from '../resultOverlay.js';
 import { COLOR, RARITY_COLOR_NUM, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
@@ -40,7 +40,7 @@ import { stripEmoji } from './text.js';
 import { bossName } from '../bossLabels.js';
 import { dropTipContent } from '../dropTip.js';
 
-export type { ResultDrop, SettlementSummary, ResultState };
+export type { ResultDrop, SettlementSummary, ResultState, CommissionResultInfo };
 
 /** 승리/패배 배너 제목색. 세트 팔레트 안에서 고른다(DOM 판 네온 시안/핑크는 나무와 겉돈다). */
 const WIN_COLOR = COLOR.gold;
@@ -159,6 +159,19 @@ export class ResultOverlayScreen {
     setDomHidden(false);
   }
 
+  /**
+   * 의뢰 확정 지급물 판정을 반영해 다시 그린다(의뢰서 시스템 Phase E). 런 종료 시점에는
+   * `verify-commission` 왕복이 아직 없어 알 수 없으므로, 그 응답이 온 뒤 호출부(main.ts)가
+   * 이 메서드로 갈아끼운다. `show()` 는 재호출 시 멱등 가드로 무시되므로(위 주석) **이
+   * 갱신 전용 경로가 별도로 필요하다** — 화면이 이미 닫혔거나(다음 런으로 진행) 애초에
+   * 의뢰 런이 아니었으면 조용히 무시한다.
+   */
+  updateCommission(info: CommissionResultInfo): void {
+    if (this.state === null || !this.root.visible) return;
+    this.state = { ...this.state, commission: info };
+    this.render();
+  }
+
   // --- 렌더 ----------------------------------------------------------------
 
   private render(): void {
@@ -190,7 +203,7 @@ export class ResultOverlayScreen {
       const rowW = STATS_W + PANEL_GAP + LOOT_W;
       const x0 = (DESIGN_WIDTH - rowW) / 2;
       this.renderStatsPanel(s, x0, STATS_W);
-      this.renderLootPanel(settlement, x0 + STATS_W + PANEL_GAP);
+      this.renderLootPanel(s, settlement, x0 + STATS_W + PANEL_GAP);
     }
     this.renderActions();
 
@@ -302,7 +315,7 @@ export class ResultOverlayScreen {
     });
   }
 
-  private renderLootPanel(st: SettlementSummary, x: number): void {
+  private renderLootPanel(s: ResultState, st: SettlementSummary, x: number): void {
     const panel = new Container();
     panel.position.set(x, PANEL_Y);
     this.root.addChild(panel);
@@ -322,6 +335,27 @@ export class ResultOverlayScreen {
     }
     if (st.catalystDrops !== undefined && st.catalystDrops > 0) {
       entries.push({ key: t('result.loot.catalysts'), value: `+${st.catalystDrops}`, accent: true });
+    }
+    // 의뢰 확정 지급물(의뢰서 시스템 Phase E) — 무의뢰 런은 `s.commission` 이 없어 이 항목이
+    // 아예 안 생긴다(조건부 스탬프 규율과 같은 결). 위 `result.loot.credits`(로컬 loot 추정치)
+    // 와 별개 축이다 — 의뢰 런은 그 로컬 추정치를 profile.credits 에 반영하지 않는다(계약 §10
+    // A-8b·계획 D5). 서버가 확정한 값만 여기 실린다.
+    if (s.commission !== undefined) {
+      const c = s.commission;
+      const value =
+        c.status === 'verified'
+          ? t('result.commission.verified', {
+              credits: c.grantedCredits ?? 0,
+              minerals: c.grantedMinerals ?? 0,
+            })
+          : c.status === 'rejected'
+            ? t('result.commission.rejected')
+            : c.status === 'queued'
+              ? t('result.commission.queued')
+              : c.status === 'unconfigured'
+                ? t('result.commission.offline')
+                : t('result.commission.pending');
+      entries.push({ key: t('result.commission.label'), value, accent: c.status === 'verified' });
     }
 
     // 열 우선 배치(위→아래로 읽고 다음 열). 열 폭은 콘텐츠 상자를 정확히 반으로 나눈다.

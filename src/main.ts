@@ -123,6 +123,8 @@ import {
   grantCatalystDrops,
   setHarnessCatalystGateway,
   markCommissionActiveOnServer,
+  submitCommissionRun,
+  flushPendingCommissionSubmissions,
 } from './net/index.js';
 // 의뢰서 시스템 Phase E — 서버 원장 payload → `WorldConfig` 형태 변환(sim 입력이 아닌
 // rewards 를 뺀다). 봉인 로드아웃은 지시 수신소 화면이 출격 시점에 직접 계산해 싣는다.
@@ -337,6 +339,9 @@ async function main(): Promise<void> {
   const profile = loadProfile();
   // 로컬 세이브 → 서버 1회 이관(멱등, 무손실). 미설정이면 no-op. 비차단.
   void migrateLocalProfileToServer(profile);
+  // 지난 세션에서 판정을 못 받은 채 남은 의뢰 제출 회수(의뢰서 시스템 Phase E, 계약 §5-4
+  // 재시도 규율). 미설정/오프라인이면 no-op. 비차단.
+  void flushPendingCommissionSubmissions();
   // 행성 인기 배율표 폴링 시작(ADR-0038). 즉시 1회 + 30분 간격. 미설정·실패는 전 행성 1.0
   // 폴백이라 오프라인 단일플레이가 그대로다(출격 경로는 이 결과를 기다리지 않는다).
   startPlanetMultiplierPolling();
@@ -525,6 +530,13 @@ async function main(): Promise<void> {
   // 공개된다(스펙 R9) — 등급·잔여 횟수·모듈 어픽스까지 드러나 복수전·재침공의 역퍼즐이 된다.
   let pendingRevealModules: readonly ModuleInstance[] = [];
 
+  // --- 의뢰서 시스템(Phase E) 런 상태 ---
+  // 현재 런이 의뢰 런이면 `consume_commission` 이 발급한 `commission_runs.run_id`. `endRun`
+  // 이 이 값으로 `verify-commission` 을 제출한다 — `w.config.commission.commissionId` 는
+  // 종이(카탈로그) id 이지 이 값이 아니다(별도 축). `startCommissionRun` 이 세우고
+  // `submitCommissionReplay` 가 제출 직전에 지운다(재진입 방지 — 그 함수가 유일한 소비자다).
+  let commissionRunId: string | null = null;
+
   // --- 리플레이 관전(F3) 상태 ---
   // spectateReplay !== null 이면 현재 화면은 관전 재생이다 → ticker 가 리플레이 입력을
   // 주입하고, 정산/레벨업 오버레이/제출 경로를 모두 건너뛴다(월드는 markTainted 됨).
@@ -667,6 +679,9 @@ async function main(): Promise<void> {
     autotile.configure(null, 0);
     env.disable();
     entityRenderer.setEnvPlanet(null);
+    // 의뢰 런 상태 방어적 리셋 — 정상 경로는 `submitCommissionReplay` 가 이미 소비·정리했겠지만
+    // (예: 하네스 goto 로 정산 없이 벗어난 경우) 다음 무의뢰 런으로 새는 것을 막는다.
+    commissionRunId = null;
     // 접지 그림자·스프라이트 캐시 회수. 그림자는 스프라이트의 자식이 아니라 형제라 부모
     // destroy 로 걷히지 않는다 — 명시 회수 경로 넷 중 하나가 이것이다.
     entityRenderer.reset();
@@ -1394,6 +1409,9 @@ async function main(): Promise<void> {
     clearInvasionBackdrop();
     shownLevel = 0;
     echoToastShown = false;
+    // `endRun` 이 이 값으로 `verify-commission` 을 제출한다(계약 §7). `consume_commission`
+    // 이 이미 성공한 뒤에만 이 함수가 불리므로(지시 수신소 self-hide 규약) runId 는 항상 유효하다.
+    commissionRunId = runId;
     const config = buildRunConfig(profile, {
       planet: first.planet,
       stage: first.stage,
@@ -1474,6 +1492,57 @@ async function main(): Promise<void> {
     prevSnap = currSnap;
     currSnap = snapshotWorld(next);
     harness?.observe(next);
+  }
+
+  /**
+   * 끝난 의뢰 런의 리플레이를 `verify-commission` 에 제출하고, 판정을 정산 화면에 반영한다
+   * (의뢰서 시스템 Phase E · 서버 계약 §7·§5-4).
+   *
+   * ## 이 함수가 없으면 시스템이 닫히지 않는다
+   * 출격(`consume_commission`)과 런 시작 신호(`mark_commission_active`)만 있고 제출이 없으면
+   * **확정 지급물도 재화도 영영 나오지 않는다.** 화면상 런은 멀쩡히 끝나므로 증상이 "보상이
+   * 안 들어온다" 하나뿐이다 — 이 리포가 반복해서 겪은 *"저장은 되는데 런에 안 닿는다"* 형태다.
+   *
+   * ## 규율
+   * - **`commissionRunId` 를 먼저 소비한다**(재진입 방지). 이 함수가 그 값의 유일한 소비자다.
+   * - **오염 런은 제출하지 않는다**(ADR-0008). 하네스·치트 개입 런은 판정 대상이 아니다.
+   * - 제출 리플레이는 `recorder.toReplay()` — `world.config`(파생 사본)가 아니다. 그 혼동이
+   *   실제로 "실제 플레이가 아닌 런"을 판정하게 만든 전례가 있다(PR#191).
+   * - **`queued`(전송 실패)는 재시도한다** — 대기 큐에 남아 다음 부팅/제출 때 같은 `run_id` 로
+   *   다시 간다. ⚠️ 런 **시작** 실패 규율과 정반대다(그쪽은 신호를 안 보내는 것이 곧 회수
+   *   조건이라 클라가 아무것도 하지 않는다).
+   * - 재화는 서버가 돌려준 잔액을 **그대로 미러에 세팅**한다(가산이 아니다 — 원장이 정본).
+   */
+  async function submitCommissionReplay(w: WorldState): Promise<void> {
+    const runId = commissionRunId;
+    commissionRunId = null;
+    if (runId === null) return;
+    // 오염 런은 판정 대상이 아니다. 소비된 의뢰서는 회수되지 않고 cron 이 종결한다(계약 §6-1).
+    if (w.tainted) return;
+    const replay = lastFinishedReplay;
+    if (replay === null) return;
+    resultOverlay.updateCommission({ status: 'pending' });
+    const res = await submitCommissionRun(runId, replay);
+    if (res.status === 'verified') {
+      // 서버 원장이 정본 — 가산하지 않고 잔액을 그대로 받는다.
+      profile.credits = res.creditsLeft;
+      profile.minerals = res.mineralsLeft;
+      saveProfile(profile);
+      resultOverlay.updateCommission({
+        status: 'verified',
+        grantedCredits: res.grantedCredits,
+        grantedMinerals: res.grantedMinerals,
+      });
+      return;
+    }
+    if (res.status === 'rejected') {
+      resultOverlay.updateCommission({
+        status: 'rejected',
+        ...(res.reason !== undefined ? { reason: res.reason } : {}),
+      });
+      return;
+    }
+    resultOverlay.updateCommission({ status: res.status });
   }
 
   /** Settle a finished run into the profile once, then show the result screen. */
@@ -1628,6 +1697,10 @@ async function main(): Promise<void> {
     harnessInvasionRun = false; // 하네스 침공 런 종료(다음 런은 정식 경로)
     clearInvasionBackdrop(); // 정산 화면은 침공 배경을 쓰지 않는다
     setScreen('result');
+    // 의뢰 런이면 리플레이를 제출한다(계약 §7). 비동기라 정산 화면은 즉시 뜨고, 판정이 오면
+    // `resultOverlay.updateCommission` 이 그 자리에 갈아끼운다. `await` 가 한 번 양보하므로
+    // 아래 `resultOverlay.show(...)` 가 먼저 끝난 뒤에 갱신이 도착한다(표시 순서 보장).
+    void submitCommissionReplay(w);
     const o = lastOutcome;
     resultOverlay.show(
       {

@@ -19,6 +19,7 @@
 import type { Profile } from '../save/profile.js';
 import { migrate } from '../save/profile.js';
 import type { PveSettleSummary } from './gateway.js';
+import type { InputFrame, WorldConfig } from '../sim/world.js';
 
 /** 서버 `profiles` 행에서 이관에 필요한 최소 형태. */
 export interface ServerProfile {
@@ -343,4 +344,86 @@ export function stashPendingGrant(store: KeyValueStore, entry: PendingGrant): vo
   const list = readPendingGrants(store);
   list.push(entry);
   writePendingGrants(store, list);
+}
+
+// ---------------------------------------------------------------------------
+// 대기 의뢰 제출 큐(verify-commission 전송 실패 재시도, 의뢰서 시스템 Phase E)
+// ---------------------------------------------------------------------------
+
+/**
+ * `verify-commission` 제출이 **판정 자체를 못 받고**(네트워크 오류·EF 5xx·타임아웃) 실패한
+ * 리플레이 대기 큐. 서버 계약 §5-4·§7 의 재시도 규율(재시도 주체 = 클라이언트, 같은 `run_id` 로
+ * 재호출)을 이 큐가 구현한다 — `PendingSettlement`/`PendingGrant` 와 같은 결의 세 번째 큐다.
+ *
+ * ⚠️ **"응답을 받았다"(accept 든 reject 든)는 이 큐에 넣지 않는다.** 서버 게이트 0b 가 이미
+ * `verified`/`rejected` 행은 CPU 없이 저장된 판정을 돌려주므로 재호출은 안전하지만, 응답을
+ * 받았다는 것 자체가 이미 최종 판정이다 — 큐는 "판정을 못 받은" 경우만을 위한 것이다.
+ */
+const PENDING_COMMISSION_SUBMISSIONS_KEY = 'planet-blitz:net:pending-commission-submissions';
+
+/**
+ * 대기 의뢰 제출 1건. `claim` 은 `runReplay` 로 이미 계산해 둔 값을 그대로 들고 있다(재계산
+ * 불필요 — 결정론이라 재계산해도 같은 값이지만, 저장해 두면 다구간 긴 리플레이의 재해싱
+ * 비용을 큐 flush 마다 반복하지 않는다).
+ */
+export interface PendingCommissionSubmission {
+  runId: string;
+  seed: number;
+  config: WorldConfig;
+  inputs: readonly InputFrame[];
+  claim: { finalHash: number; hashStream: readonly number[]; outcome: { victory: boolean; gameOver: boolean } };
+}
+
+/** 대기 의뢰 제출 목록을 읽는다(손상/부재 시 빈 배열). */
+export function readPendingCommissionSubmissions(store: KeyValueStore): PendingCommissionSubmission[] {
+  let raw: string | null;
+  try {
+    raw = store.getItem(PENDING_COMMISSION_SUBMISSIONS_KEY);
+  } catch {
+    return [];
+  }
+  if (raw === null) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (e): e is PendingCommissionSubmission =>
+        typeof e === 'object' &&
+        e !== null &&
+        typeof (e as PendingCommissionSubmission).runId === 'string' &&
+        typeof (e as PendingCommissionSubmission).seed === 'number' &&
+        Array.isArray((e as PendingCommissionSubmission).inputs),
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** 대기 의뢰 제출 목록을 통째로 저장한다(비었으면 슬롯 제거). */
+export function writePendingCommissionSubmissions(
+  store: KeyValueStore,
+  list: readonly PendingCommissionSubmission[],
+): void {
+  try {
+    if (list.length === 0) store.removeItem(PENDING_COMMISSION_SUBMISSIONS_KEY);
+    else store.setItem(PENDING_COMMISSION_SUBMISSIONS_KEY, JSON.stringify(list));
+  } catch {
+    // best-effort — 저장 실패는 삼킨다.
+  }
+}
+
+/** 대기 의뢰 제출 1건을 큐 끝에 추가한다. 같은 `run_id` 가 이미 있으면 갈아끼운다(중복 방지). */
+export function stashPendingCommissionSubmission(
+  store: KeyValueStore,
+  entry: PendingCommissionSubmission,
+): void {
+  const list = readPendingCommissionSubmissions(store).filter((e) => e.runId !== entry.runId);
+  list.push(entry);
+  writePendingCommissionSubmissions(store, list);
+}
+
+/** 대기 의뢰 제출에서 이 `runId` 항목을 지운다(응답을 받아 최종 판정이 났을 때). */
+export function removePendingCommissionSubmission(store: KeyValueStore, runId: string): void {
+  const list = readPendingCommissionSubmissions(store).filter((e) => e.runId !== runId);
+  writePendingCommissionSubmissions(store, list);
 }

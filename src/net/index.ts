@@ -24,6 +24,8 @@ import type {
   CommissionGrantRow,
 } from './commissionGateway.js';
 import type { CommissionPayload } from '../run/commission.js';
+import { runReplay } from '../sim/replay.js';
+import type { Replay } from '../sim/replay.js';
 import {
   serializeProfile,
   deserializeProfile,
@@ -42,6 +44,11 @@ import {
   writePendingGrants,
   stashPendingGrant,
   type PendingGrant,
+  readPendingCommissionSubmissions,
+  writePendingCommissionSubmissions,
+  stashPendingCommissionSubmission,
+  removePendingCommissionSubmission,
+  type PendingCommissionSubmission,
 } from './profileSync.js';
 
 /** 주입 가능한 의존성(테스트에서 gateway/store/config 를 대체). */
@@ -749,4 +756,145 @@ export async function markCommissionActiveOnServer(
   } catch (err) {
     return { status: 'rejected', reason: commissionErrorMessage(err) };
   }
+}
+
+// ---------------------------------------------------------------------------
+// 의뢰 런 제출(verify-commission, 서버 계약 §7) — "저장은 되는데 런에 안 닿는다" 폐쇄
+// ---------------------------------------------------------------------------
+
+/**
+ * 리플레이 → 제출용 `claim`(`RunClaim` 형, `verify-run/verifyCore.ts` 계약). **원본 config 로
+ * 만든 `Replay` 를 그대로 재실행한다** — `world.config`(파생 사본)를 실으면 재실행이 실제
+ * 플레이와 달라지는 결함을 이 저장소가 이미 겪었다(PR#191, `main.ts:1308-1325` 주석 정본).
+ * 호출부(`main.ts`)가 `recorder.toReplay()`(= 원본 config)를 그대로 넘기는 한 이 함수는
+ * 안전하다. 순수·결정론이라 같은 리플레이는 항상 같은 claim 을 낸다(ADR-0005).
+ */
+export function buildCommissionClaim(
+  replay: Replay,
+): { finalHash: number; hashStream: readonly number[]; outcome: { victory: boolean; gameOver: boolean } } {
+  const res = runReplay(replay);
+  return {
+    finalHash: res.finalHash,
+    hashStream: res.hashes,
+    outcome: { victory: res.finalState.victory, gameOver: res.finalState.gameOver },
+  };
+}
+
+/**
+ * `submitCommissionRun` 결과.
+ *  - `unconfigured`: 서버 미설정(오프라인) — 의뢰서는 온라인 전용이라 제출 자체가 불가하다.
+ *  - `verified`: 서버가 승인·지급을 확정했다. `creditsLeft`/`mineralsLeft` 가 정본(그대로
+ *    미러에 세팅한다). `grants` 는 확정 지급물(유니크·설계도) 원시 배열(계약 §7-4).
+ *  - `rejected`: 서버가 최종 거부했다(패배 런·위조 등). **재시도하지 않는다** — 확정 판정이다.
+ *  - `queued`: 판정 자체를 못 받았다(오프라인·EF 5xx·타임아웃). 대기 큐에 남아 다음 기회에
+ *    같은 `run_id` 로 재시도된다(계약 §5-4 재시도 주체 = 클라이언트).
+ */
+export type SubmitCommissionOutcome =
+  | { status: 'unconfigured' }
+  | {
+      status: 'verified';
+      grantedCredits: number;
+      grantedMinerals: number;
+      creditsLeft: number;
+      mineralsLeft: number;
+      grants: readonly unknown[];
+    }
+  | { status: 'rejected'; reason?: string }
+  | { status: 'queued' };
+
+/**
+ * 의뢰 런 리플레이 제출(계약 §7). **먼저 대기 큐를 흘려보낸 뒤**(이전 세션에서 판정을 못 받은
+ * 제출이 있으면 같이 재시도) 이번 런을 제출한다 — 두 시도를 순서 없이 병렬로 쏘면 같은
+ * `run_id` 가 동시에 두 번 카운트돼 `CAP_VERIFY_ATTEMPTS`(5)를 불필요하게 태운다.
+ *
+ * ⚠️ **런 시작 실패(`markCommissionActiveOnServer`) 규율과 혼동하지 마라** — 그쪽은 신호를
+ * 안 보내는 것 자체가 회수 조건이라 클라가 아무것도 하지 않는다. 이쪽(제출)은 **정반대**다 —
+ * 판정을 못 받으면 클라가 반드시 재시도해야 확정 지급물이 증발하지 않는다.
+ */
+export async function submitCommissionRun(
+  runId: string,
+  replay: Replay,
+  deps: CommissionNetDeps & { store?: KeyValueStore | null } = {},
+): Promise<SubmitCommissionOutcome> {
+  const gateway = await resolveCommissionGateway(deps);
+  if (gateway === null) return { status: 'unconfigured' };
+  const store = deps.store !== undefined ? deps.store : defaultNetStore();
+  if (store !== null) await flushPendingCommissionQueue(gateway, store);
+  const config = replay.config;
+  if (config === undefined) {
+    // 의뢰 런은 항상 명시적 config 로 조립된다(startCommissionRun) — 여기 도달하면 호출부
+    // 버그이지 전송 실패가 아니므로 큐잉하지 않는다(재시도해도 같은 결함이 반복된다).
+    return { status: 'rejected', reason: 'client-malformed-replay' };
+  }
+  const claim = buildCommissionClaim(replay);
+  const submission = { seed: replay.seed, config, inputs: replay.inputs, claim };
+  try {
+    const res = await gateway.verifyCommission(runId, submission);
+    if (store !== null) removePendingCommissionSubmission(store, runId);
+    if (res.accepted) {
+      return {
+        status: 'verified',
+        grantedCredits: res.grantedCredits ?? 0,
+        grantedMinerals: res.grantedMinerals ?? 0,
+        creditsLeft: res.creditsLeft ?? 0,
+        mineralsLeft: res.mineralsLeft ?? 0,
+        grants: res.grants ?? [],
+      };
+    }
+    return { status: 'rejected', ...(res.reason !== undefined ? { reason: res.reason } : {}) };
+  } catch {
+    // 전송 실패 — 판정을 못 받았다. 대기 큐에 남긴다(재시도 주체 = 클라이언트, 계약 §5-4).
+    if (store !== null) {
+      stashPendingCommissionSubmission(store, { runId, seed: replay.seed, config, inputs: replay.inputs, claim });
+    }
+    return { status: 'queued' };
+  }
+}
+
+/**
+ * 대기 의뢰 제출 큐를 흘려보낸다(부팅 시 + 매 제출 직전). 각 항목은 이미 계산해 둔 `claim`
+ * 을 그대로 재전송한다 — 재계산하지 않는다(결정론이라 같은 값이지만, 다구간 긴 리플레이의
+ * 재해싱 비용을 아낀다). 응답을 받으면(accept·reject 무관) 최종 판정이므로 큐에서 뺀다.
+ * 전송 자체가 다시 실패하면 큐에 남겨 다음 기회로 미룬다.
+ */
+async function flushPendingCommissionQueue(
+  gateway: CommissionGateway,
+  store: KeyValueStore,
+): Promise<void> {
+  const list = readPendingCommissionSubmissions(store);
+  if (list.length === 0) return;
+  const remaining: PendingCommissionSubmission[] = [];
+  for (const entry of list) {
+    try {
+      await gateway.verifyCommission(entry.runId, {
+        seed: entry.seed,
+        config: entry.config,
+        inputs: entry.inputs,
+        claim: entry.claim,
+      });
+      // 응답을 받았다 — 성공/거부 무관 최종 판정. 이 큐는 "제출"만 보증한다. 그 판정이 실은
+      // 재화·지급 반영은 이 함수의 책임이 아니다(호출부가 이미 화면을 떠났을 수 있다) — 다음
+      // 서버 응답(다음 런 정산 등)이 `credits_left` 로 미러를 다시 맞춘다.
+    } catch {
+      remaining.push(entry); // 재시도 유지
+      continue;
+    }
+  }
+  writePendingCommissionSubmissions(store, remaining);
+}
+
+/**
+ * 앱 부팅 시 대기 의뢰 제출 큐를 흘려보내는 진입점. 지난 세션에서 판정을 못 받은 채(탭 종료·
+ * 크래시) 남은 제출이 있으면 여기서 회수를 시도한다 — `submitCommissionRun` 자체도 매 제출
+ * 직전 같은 큐를 흘리지만, 그 사이 다음 의뢰 런을 아예 안 도는 세션에서는 이 진입점이 유일한
+ * 재시도 기회다. 미설정/오프라인이면 조용히 no-op(다음 부팅에 재시도). 절대 throw 하지 않는다.
+ */
+export async function flushPendingCommissionSubmissions(
+  deps: CommissionNetDeps & { store?: KeyValueStore | null } = {},
+): Promise<void> {
+  const gateway = await resolveCommissionGateway(deps);
+  if (gateway === null) return;
+  const store = deps.store !== undefined ? deps.store : defaultNetStore();
+  if (store === null) return;
+  await flushPendingCommissionQueue(gateway, store);
 }

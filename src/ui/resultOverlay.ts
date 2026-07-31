@@ -61,6 +61,26 @@ export interface SettlementSummary {
   catalystDropList?: readonly { readonly id: number; readonly qty: number }[];
 }
 
+/**
+ * 의뢰 확정 지급물 판정 표시(의뢰서 시스템 Phase E — 서버 계약 §7).
+ *
+ * 런 종료 순간에는 아직 알 수 없다(`verify-commission` 왕복이 필요) — 그래서 `pending` 으로
+ * 시작해 응답이 오면 `ResultOverlayScreen.updateCommission()` 이 갈아끼운다.
+ */
+export interface CommissionResultInfo {
+  /**
+   * `unconfigured` = 서버 미설정(오프라인, 제출 자체가 불가) · `queued` = 전송 실패로 대기
+   * 큐에 남음(다음 기회에 재시도, 화면에는 남아 있지 않을 수 있다).
+   */
+  status: 'pending' | 'verified' | 'rejected' | 'queued' | 'unconfigured';
+  /** `status === 'verified'` 일 때만 의미가 있다. */
+  grantedCredits?: number;
+  /** `status === 'verified'` 일 때만 의미가 있다. */
+  grantedMinerals?: number;
+  /** `status === 'rejected'` 일 때 서버 거부 사유(원문 — 고정 매핑표를 두지 않는다). */
+  reason?: string;
+}
+
 export interface ResultState {
   victory: boolean;
   seed: number;
@@ -78,6 +98,11 @@ export interface ResultState {
   planet?: number;
   /** Present once the run has been settled into the profile (M2). */
   settlement?: SettlementSummary;
+  /**
+   * 의뢰 런일 때만 설정한다(의뢰서 시스템 Phase E). 무의뢰 런은 항상 `undefined` 라 이 축이
+   * 화면에 전혀 나타나지 않는다(조건부 스탬프 규율과 같은 결).
+   */
+  commission?: CommissionResultInfo;
 }
 
 /** 등급 → 표시 색상(inventory 와 동일 팔레트). */
