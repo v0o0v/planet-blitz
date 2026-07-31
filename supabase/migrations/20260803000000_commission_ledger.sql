@@ -452,6 +452,7 @@ declare
   v_horizon  timestamptz;
   v_cnt      int;
   v_grade    int;
+  v_roll     double precision;
   v_segments int;
   v_order    int;
   v_payload  jsonb;
@@ -520,10 +521,16 @@ begin
     --    아직 확정되지 않았다. 형태(CommissionPayload)만 계약대로 채운다.
     --    **보유 유니크를 제외하지 않는다 — 중복 지급을 허용한다**(서버가 갖지 않은 원장을
     --    전제하지 않기 위함).
+    -- ⚠️ **한 번만 뽑아서 그 하나를 누적 경계와 비교한다.** `case when random() < a … when
+    --    random() < b …` 는 `random()` 이 volatile 이라 **분기마다 새로 뽑는다** — 경계가 누적
+    --    CDF 처럼 읽히는데 실제 분포는 조건부 곱(0.55 / 0.3375 / 0.1046 / 0.0079)이 되어
+    --    최종 계급이 의도(7%)의 9분의 1로 나온다. 눈으로는 맞아 보이고 테스트도 분포를 안 세면
+    --    통과하는 형태라 여기 못 박는다.
+    v_roll := random();
     v_grade := case
-      when random() < 0.55 then 1
-      when random() < 0.75 then 2
-      when random() < 0.93 then 3
+      when v_roll < 0.55 then 1
+      when v_roll < 0.75 then 2
+      when v_roll < 0.93 then 3
       else 4 end;
     v_segments := case v_grade when 1 then 2 when 2 then 3 when 3 then 4 else 5 end;
     v_order := floor(random() * 4)::int;   -- COMMISSION_ORDERS wire 인덱스(append-only).
