@@ -206,6 +206,7 @@ export const EN = {
   'catalyst.shop.insufficientResidue': 'Not enough catalyst residue.',
   'catalyst.shop.noProfile': 'Could not load your profile yet. Please try again in a moment.',
   'catalyst.shop.offline': 'The catalyst shop needs a server connection.',
+  'catalyst.shop.buyFail': 'Purchase failed',
   'catalyst.salvage.qty': 'Salvage Qty',
   'catalyst.salvage.gained': '+{n} Catalyst Residue',
 
@@ -1820,6 +1821,7 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.shop.insufficientResidue': '촉매 잔재가 부족합니다.',
   'catalyst.shop.noProfile': '프로필을 아직 불러오지 못했습니다. 잠시 후 다시 시도하세요.',
   'catalyst.shop.offline': '촉매 상점은 서버 연결이 필요합니다.',
+  'catalyst.shop.buyFail': '구매 실패',
   'catalyst.salvage.qty': '분해 수량',
   'catalyst.salvage.gained': '+{n} 촉매 잔재',
 

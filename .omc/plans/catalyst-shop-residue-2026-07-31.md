@@ -308,3 +308,51 @@ CATALYST_PRICE_MIRROR: { catalystId, buyPrice, purchasable }[]   // CATALYSTS.le
 
 **개정 2 세부 (Critic 1차)**
 - MIN: 승계 기준 16개로 정정 · `CAP_BUY_PER_CALL` **제거**(잔재 잔고가 상한, 절삭 UX 함정) · `consume_catalysts` 잠금 방향 과대 주장 삭제 · `numeric` 근거 명시 · 롤백 절차 기입 · i18n 로케일 패리티 명시 · 성능 검증에 도구·임계값 기입 · S4 를 `salvage_core_module` 기준으로 재작성 지시
+
+---
+
+## 잔여 ② 실서버 UI 검증 결과 (2026-07-31, `fix/catalyst-shop-ui-viewport`)
+
+PR#215 의 화면 검증은 하네스 인메모리 모의 게이트웨이로만 했고, 남긴 잔여는 둘이었다.
+**둘 다 처리했고, 그 과정에서 실제 결함 1건이 나왔다.**
+
+### ⓐ 서버 거부 note → 화면 문구 매핑 — **결함 1건 발견·수정**
+
+`buyRejectKey()`(`src/ui/pixi/catalystShopView.ts`)의 **기본 분기가
+`catalyst.manage.salvageFail`("분해 실패" / "Salvage failed")** 이었다. 즉 **구매**를 누른
+플레이어에게 **분해** 실패 문구가 뜬다.
+
+사각이 아니라 상시 경로다 — 서버 `buy_catalyst` 가 실제로 내는 `unknown-catalyst`(TS↔SQL
+카탈로그 드리프트 시)·`nothing-to-buy` 와 **앞으로 늘어날 모든 사유**가 이 분기로 떨어진다.
+하네스 모의 게이트웨이는 이 note 들을 내지 않아 PR#215 의 화면 검증을 그대로 통과했고,
+`tests/catalystShopView.test.ts` 는 이 동작을 **기대값으로 못 박고 있었다**(테스트가 결함을
+승인한 형태).
+
+- 수정: `catalyst.shop.buyFail` 신설(ko "구매 실패" / en "Purchase failed")을 기본 분기로.
+- 회귀 방어: 키 비교가 아니라 **렌더될 문자열**을 분해 문구 집합과 대조한다(키만 보면 다시
+  샌다). 뮤테이션(기본 분기를 되돌림) → 2건 RED 확인.
+- 나머지 4종(`no-profile`·`price-unset`·`signature-not-sold`·`insufficient-residue`)은
+  ko/en 양쪽 모두 사람이 읽는 문장으로 정상 매핑됨을 실화면에서 확인.
+- `no-profile` 은 실제 화면 상태(`residue === null`)로 재현해 **구매 가능 30행 전부**에
+  안내 문장이 뜨는 것과, 그 상태가 가장 긴 문구인데도 2줄·2px 여유를 지키는 것을 확인.
+
+### ⓑ 다른 뷰포트 폭 — **전제가 틀렸다(폭 의존이 없다)**
+
+잔여 항목은 "`wordWrapWidth` 가 `BOX.w` 파생이라 폭 의존이 있다"였으나, `BOX.w` 는
+`PANEL_W = 1000` **상수**에서 나온다. 이 UI 는 1920×1080 **고정 디자인 스페이스**이고 stage 가
+균일 스케일될 뿐이라 뷰포트 폭은 줄바꿈에 영향을 주지 않는다. 단정이 아니라 실측으로 확인했다:
+
+| 뷰포트 | stage scale | wordWrapWidth | 최대 설명/문구 줄 수 | 설명↔문구 간격 | 행 넘침 |
+|---|---|---|---|---|---|
+| 1750×1020 | — | 538 | 2 / 2 | +2px | −1px |
+| 820×1180 | 0.6667 | **538(동일)** | 2 / 2 | +2px | −1px |
+
+실제로 줄 수를 바꾸는 축은 폭이 아니라 **로케일**이다. 그래서 ko·en 양쪽으로 48행 전수를
+쟀고 둘 다 설명 ≤2줄·문구 ≤2줄·간격 +2px·넘침 없음(축소 배율 1.0 = 축소 미발동)이었다.
+
+측정법: 하네스에서 `catalystArchive` 를 띄우고 행 컨테이너의 `Text` 객체에서 `y`·`height`·
+`scale`·`style.lineHeight` 를 직접 읽어 수치로 판정(스크린샷 눈대중 아님).
+서빙 워크트리는 임시 마커 파일 fetch 로 확증했다(`preview_start` 가 세션 cwd 의 launch.json 을
+쓰므로 워크트리가 여럿이면 엉뚱한 트리를 서빙할 수 있다).
+
+**결론**: 2줄 전제는 살아 있다. 폭 관련 후속 작업 없음.
