@@ -17,6 +17,26 @@
  * 화면엔 "정산이 이상하다"로만 보인다. `tests/commissionWorldRebind.test.ts` 가 호출부
  * 3곳(`main.ts` 티커 · 하네스 `ff`/`step`)의 재조회를 소스 수준에서 잠근다.
  *
+ * ## ⚠️ EF 배포 조건 — "재배포 불요"는 **침공 트래픽에 한해** 참이다
+ * 이 레인은 `supabase/` 를 한 줄도 안 고쳤고(`verify-run/verifyCore.ts` diff 0) 무의뢰 런의
+ * 해시가 바이트 불변이라, **배포된 `verify-invasion` 을 재배포하지 않아도 기존 침공은 계속
+ * accept 된다.** 거기까지가 참이다.
+ *
+ * 그런데 그 배포 번들은 `src/sim` 을 통째로 담으므로 **구 `runReplay`(월드를 한 번만 만들고
+ * `stepWorld` 로 도는 루프)를 그대로 들고 있다.** 따라서:
+ *
+ * - **의뢰 런을 검증하는 EF 는 반드시 이 커밋 이후 소스로 번들해야 한다.** 구 소스로 번들하면
+ *   서버 재실행이 구간 전환을 하지 않아 `finalState` 가 1구간에서 멈추고, `verifyCore.ts` 가
+ *   읽는 `victory`/`gameOver` 가 둘 다 `false` 라 **모든 의뢰 리플레이가 `outcome-mismatch` 로
+ *   100% 거부**된다.
+ * - 이 저장소는 **정확히 그 실수를 이미 한 번 했다** — M8 배선 이전 커밋으로 번들해 배포하고
+ *   문서만 "완료"였으며 그동안 침공이 계속 거부되고 있었다. 그래서 배포 절차 정본
+ *   (`.omc/skills/planet-blitz-supabase-deploy-workflow.md`)이 **번들 소스 커밋을 기록하고
+ *   `origin/main` 최신인지 대조하라**를 단계로 못 박고 있다.
+ *
+ * `verify-run` 은 배포 대상이 **아니다**(`deno.json` 에 `bundle` 태스크가 없고 "배포 전 로컬 확인
+ * 전용"이라고 적혀 있다). 대상은 **새로 만들 `verify-commission`** 이다.
+ *
  * ## 마지막 틱 전환 금지 (구조적으로 막을 수 없는 축 — 자인한다)
  * 중간 구간의 **마지막 입력 프레임** 뒤에 전환이 일어나면 `runReplay` 의 `finalState` 가 한 틱도
  * 안 돈 새 월드가 되어 `victory`/`gameOver` 가 둘 다 `false` 다 → 서버 `verify-run` 이

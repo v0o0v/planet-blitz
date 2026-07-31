@@ -2203,9 +2203,17 @@ async function main(): Promise<void> {
         // 금지돼 있고(eslint), 여기만 예외로 두면 하네스 경로에서만 구간이 안 넘어간다.
         const nextW = stepRun(w, merged);
         world = nextW;
-        if (nextW !== w) entityRenderer.reset();
-        prevSnap = currSnap;
-        currSnap = snapshotWorld(nextW);
+        if (nextW !== w) {
+          // `stepOnce` 의 전환 분기와 **같은 계약**을 쓴다(두 스냅샷을 새 월드로 붙인다).
+          // 여기서 `prevSnap` 에 구 월드 스냅샷을 남겨도 아래가 alpha=1 로 그려 화면상 무해하지만,
+          // 그 우연에 기대면 보간 alpha 가 1 이 아니게 되는 순간 두 경로가 조용히 갈린다.
+          entityRenderer.reset();
+          prevSnap = snapshotWorld(nextW);
+          currSnap = prevSnap;
+        } else {
+          prevSnap = currSnap;
+          currSnap = snapshotWorld(nextW);
+        }
         entityRenderer.render(prevSnap, currSnap, 1);
         renderRadarGated();
         gameApp.app.renderer.render(gameApp.app.stage);

@@ -132,6 +132,13 @@ function equippedItems(profile: Profile): Item[] {
  * 소집 때만 실행된다(스트라이커 해시 골든 `tests/shipHashBaseline.test.ts` 가 못 박는다).
  */
 export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConfig {
+  // 의뢰 무대가 비어 있으면 sim 의 "마지막 구간인가" 판정(`segmentIndex >= segments.length - 1`)이
+  // **항상 참**이 되어 **첫 보스 처치가 곧바로 `victory`** 다 — 그리고 그 victory 는 확정 유니크
+  // 지급 경로로 간다(ADR-0044·0045). 조립 지점에서 막는 것이 가장 싸다: sim 안에서 던지면
+  // 서버 EF 가 500 을 내고, 서버는 어차피 자기 payload 로 덮어쓰므로 여기가 유일한 클라 관문이다.
+  if (opts.commission !== undefined && opts.commission.segments.length === 0) {
+    throw new Error('buildRunConfig: 의뢰 런의 segments 가 비어 있다 — 무대 없는 의뢰는 성립하지 않는다');
+  }
   const pilot = opts.pilot;
   const ship = activeShip(profile);
   // 소집이면 예비역 빌드에서, 아니면 활성 기체에서 소스를 고른다. 손상 세이브 방어: 범위 밖
