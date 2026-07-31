@@ -26,11 +26,21 @@
           "refine": "019fb21f-59c4-778b-b277-d07579ebb256",
           "remesh": "019fb223-e04b-7acc-bf0e-4c2e4e751aae"
         },
-        "credits": { "preview": 20, "refine": 10, "remesh": 5, "total": 35 },
+        "credits": {
+          "preview": 20,
+          "refine": 10,
+          "remesh": 5,
+          "total": 35
+        },
         "createdAt": "2026-07-30"
       },
       "prep": "node scripts/glb-prep.mjs <remesh 다운로드>.glb --out assets/models/boss_kargon.glb --color 256 --normal 128",
-      "geometry": { "triangles": 8288, "bytes": 581956, "baseColor": "256x256", "normal": "128x128" }
+      "geometry": {
+        "triangles": 8288,
+        "bytes": 581956,
+        "baseColor": "256x256",
+        "normal": "128x128"
+      }
     },
     {
       "id": "boss_berdan",
@@ -45,11 +55,19 @@
           "preview": "019fb28d-ed7b-7057-8987-ab77ae541207",
           "refine": "019fb292-106b-7e2e-a2db-b014ad79ec7e"
         },
-        "credits": { "preview": 20, "refine": 10, "total": 30 },
+        "credits": {
+          "preview": 20,
+          "refine": 10,
+          "total": 30
+        },
         "createdAt": "2026-07-30"
       },
       "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/boss_berdan.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
-      "geometry": { "triangles": 3098, "bytes": 360300, "baseColor": "256x256" }
+      "geometry": {
+        "triangles": 3098,
+        "bytes": 360300,
+        "baseColor": "256x256"
+      }
     },
     {
       "id": "boss_niflheim",
@@ -64,11 +82,19 @@
           "preview": "019fb28e-09a6-7d31-8a3e-39ee6ad8d65c",
           "refine": "019fb292-a6cb-737d-b08f-9c388b5f2180"
         },
-        "credits": { "preview": 20, "refine": 10, "total": 30 },
+        "credits": {
+          "preview": 20,
+          "refine": 10,
+          "total": 30
+        },
         "createdAt": "2026-07-30"
       },
       "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/boss_niflheim.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
-      "geometry": { "triangles": 3028, "bytes": 381324, "baseColor": "256x256" }
+      "geometry": {
+        "triangles": 3028,
+        "bytes": 381324,
+        "baseColor": "256x256"
+      }
     },
     {
       "id": "boss_arke",
@@ -83,11 +109,19 @@
           "preview": "019fb28e-36b5-705b-914b-969ac01e613d",
           "refine": "019fb292-edef-7115-ba3c-fdd11c4cd53e"
         },
-        "credits": { "preview": 20, "refine": 10, "total": 30 },
+        "credits": {
+          "preview": 20,
+          "refine": 10,
+          "total": 30
+        },
         "createdAt": "2026-07-30"
       },
       "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/boss_arke.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
-      "geometry": { "triangles": 3032, "bytes": 340732, "baseColor": "256x256" }
+      "geometry": {
+        "triangles": 3032,
+        "bytes": 340732,
+        "baseColor": "256x256"
+      }
     },
     {
       "id": "boss_toxar",
@@ -102,11 +136,19 @@
           "preview": "019fb28e-502f-725c-94b3-d64b65575288",
           "refine": "019fb293-2fff-711a-8c7f-0c2a7151763b"
         },
-        "credits": { "preview": 20, "refine": 10, "total": 30 },
+        "credits": {
+          "preview": 20,
+          "refine": 10,
+          "total": 30
+        },
         "createdAt": "2026-07-30"
       },
       "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/boss_toxar.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
-      "geometry": { "triangles": 3110, "bytes": 319436, "baseColor": "256x256" }
+      "geometry": {
+        "triangles": 3110,
+        "bytes": 319436,
+        "baseColor": "256x256"
+      }
     },
     {
       "id": "boss_kras",
@@ -121,11 +163,100 @@
           "preview": "019fb28e-6efb-7263-8563-88efd0602bc3",
           "refine": "019fb293-76bd-739c-9f61-3185aa7fd012"
         },
-        "credits": { "preview": 20, "refine": 10, "total": 30 },
+        "credits": {
+          "preview": 20,
+          "refine": 10,
+          "total": 30
+        },
         "createdAt": "2026-07-30"
       },
       "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/boss_kras.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
-      "geometry": { "triangles": 3085, "bytes": 351300, "baseColor": "256x256" }
+      "geometry": {
+        "triangles": 3085,
+        "bytes": 351300,
+        "baseColor": "256x256"
+      }
+    },
+    {
+      "id": "boss_cm_salvage",
+      "file": "boss_cm_salvage.glb",
+      "title": "의뢰 보스 — 잔해 포식자(연쇄 원정)",
+      "usedBy": "src/render/three3d/bossActor.ts (의뢰 보스 0 · enemyType 6)",
+      "meshy": {
+        "aiModel": "meshy-6",
+        "prompt": "Top-down view sci-fi game boss: a hulking scavenger devourer built from welded salvaged starship wreckage, a huge circular grinding maw of jagged teeth at its center, four hooked magnetic tow claws reaching outward from its corners, mismatched scavenged hull plates, trailing torn cables and debris, symmetrical, menacing, game asset",
+        "texturePrompt": "Dull gunmetal grey and oxidized copper salvaged hull plates, mismatched patched panels with weld scars and rust streaks, sickly amber glowing seams inside the grinding maw, grimy scrapyard war machine",
+        "tasks": {
+          "preview": "019fb8d6-a4cc-7fd5-979c-5374ffcc537b",
+          "refine": "019fb8d8-eca4-79c1-a294-b983186aeb9a"
+        },
+        "credits": {
+          "preview": 20,
+          "refine": 10,
+          "total": 30
+        },
+        "createdAt": "2026-08-01"
+      },
+      "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/boss_cm_salvage.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
+      "geometry": {
+        "triangles": 4146,
+        "bytes": 442612,
+        "baseColor": "256x256"
+      }
+    },
+    {
+      "id": "boss_cm_warlord",
+      "file": "boss_cm_warlord.glb",
+      "title": "의뢰 보스 — 정예 군주(정예 소집령)",
+      "usedBy": "src/render/three3d/bossActor.ts (의뢰 보스 1 · enemyType 7)",
+      "meshy": {
+        "aiModel": "meshy-6",
+        "prompt": "Top-down view sci-fi game boss: a regal armored war commander throne platform, a tall spiked crown of black iron blades radiating from its top, ornate gilded armored shoulder pauldrons flanking a central command throne, banner poles mounted at the rear corners, polished obsidian black plating with gold trim, symmetrical, menacing, game asset",
+        "texturePrompt": "Polished obsidian black armor plating with bright gold filigree trim and engraved heraldry, deep crimson banner cloth, cold white-blue glowing command runes, imperial elite warlord regalia",
+        "tasks": {
+          "preview": "019fb8d6-de6a-7940-ac2b-4ec18aa92fe8",
+          "refine": "019fb8d9-3cce-7041-a075-030944605836"
+        },
+        "credits": {
+          "preview": 20,
+          "refine": 10,
+          "total": 30
+        },
+        "createdAt": "2026-08-01"
+      },
+      "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/boss_cm_warlord.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
+      "geometry": {
+        "triangles": 4002,
+        "bytes": 427636,
+        "baseColor": "256x256"
+      }
+    },
+    {
+      "id": "boss_cm_runner",
+      "file": "boss_cm_runner.glb",
+      "title": "의뢰 보스 — 도주자(현상금 표적)",
+      "usedBy": "src/render/three3d/bossActor.ts (의뢰 보스 2 · enemyType 8)",
+      "meshy": {
+        "aiModel": "meshy-6",
+        "prompt": "Top-down view sci-fi game boss: a sleek predatory raider craft built for escape, a narrow arrowhead fuselage swept sharply backward, four oversized rear thruster nozzles clustered at the tail, thin folded blade wings tucked close to the body, a single tapered sensor spine along the top, dark violet stealth plating, symmetrical, menacing, game asset",
+        "texturePrompt": "Matte dark violet and charcoal stealth plating with faint iridescent purple sheen, thin cyan glowing thruster vents and edge lighting, smooth aerodynamic raider hull",
+        "tasks": {
+          "preview": "019fb8d7-1629-7436-833c-dba2bf6f5583",
+          "refine": "019fb8d9-836b-749d-90fe-76e8e82c2e55"
+        },
+        "credits": {
+          "preview": 20,
+          "refine": 10,
+          "total": 30
+        },
+        "createdAt": "2026-08-01"
+      },
+      "prep": "node scripts/glb-prep.mjs <refine 다운로드>.glb --out assets/models/boss_cm_runner.glb --color 256 --normal 128 --image 0=<refine 다운로드>_base_color.png",
+      "geometry": {
+        "triangles": 4002,
+        "bytes": 310452,
+        "baseColor": "256x256"
+      }
     }
   ],
   "reuseRecipes": {
