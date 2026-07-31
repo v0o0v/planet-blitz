@@ -24,6 +24,7 @@ import type { TreeAffinity } from '../../data/ships/index.js';
 import type { PlanetMode } from './planetMode.js';
 import { activeByWireId } from '../../data/ships/actives/index.js';
 import { ACTIVE_WIRE_EMPTY } from '../../data/ships/actives/types.js';
+import { commissionBansPowerupLine } from './commissionOrders.js';
 
 export interface PowerupDef {
   readonly id: string;
@@ -451,6 +452,15 @@ export function drawPowerupChoices(state: WorldState, count: number): number[] {
     if (offBuildWeaponPowerup(def, state)) continue;
     if (offModePowerup(def, state)) continue;
     if (offSlotActivePowerup(def, state)) continue;
+    // 제약 계약(성장축) — 봉인된 계열은 **pool 진입 자체를 막는다**(위 세 필터와 같은 축).
+    // pool 에 넣고 뒤에서 거르면 `weights` 총합이 바뀌어 **같은 시드에서도 뽑히는 파워업이
+    // 통째로 달라진다**(이 파일 44~50행 계약). 무의뢰 런·제약 미지정 런은 항상 거짓이라
+    // pool 구성이 바이트 동일하다.
+    //
+    // ⚠️ **위반 처리기를 만들지 마라.** 제약 계약은 위반이 원천 불가능한 축만 쓴다 —
+    // 금지 계열은 여기서 3택 풀에서 빠지고, 장비는 `runConfig` 의 출격 조립에서 빠진다.
+    // sim 이 제약을 감시할 필요도 위반을 처벌할 장치도 없다(CONTEXT `제약 계약`).
+    if (commissionBansPowerupLine(state, i)) continue;
     pool.push(i);
     weights.push(powerupWeight(def, state));
   }

@@ -150,11 +150,21 @@ import {
 import { shipTypeDef } from '../../data/ships/index.js';
 import { SpatialHash, circlesOverlap, sweptCircleHitT } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
-import { updateBoss } from './boss.js';
+import { updateBoss, bossDefFor } from './boss.js';
 import { drawPowerupChoices, applyPowerup } from './powerups.js';
 import type { WaveRuntime } from './waves.js';
 import { createWaveRuntime, updateWaves, enemyDefFor } from './waves.js';
 import { planetContent } from '../../data/planets/index.js';
+// 의뢰 주문 축(Phase D). `commissionOrders` 는 순수 술어 모음이고 world 를 **타입으로만**
+// 참조하므로 런타임 순환이 없다. `commissionBosses` 는 주문 → 의뢰 보스 선택의 단일 정본이다.
+import {
+  bountyEscaped,
+  bountyIgnites,
+  commissionSuppressesGems,
+  decodeBountyIgnition,
+  encodeBountyIgnition,
+} from './commissionOrders.js';
+import { commissionBossEnemyType } from '../../data/commissionBosses.js';
 // 단계 → eliteCount 해석은 sim 코어(world)의 책임이다 — `src/sim/drops.ts` 는 데이터 레이어를
 // import 하지 않는 계약이라(tests/planetDrops.test.ts ⑤) 드랍 확률 함수에 값으로 넘긴다.
 import { stageParams } from '../../data/waves.js';
@@ -2306,7 +2316,14 @@ function stepBoss(state: WorldState, player: Entity): void {
     // at an absolute arena position. moveBoss then hovers it relative to the player.
     // 행성별 보스 선택(카르곤 용암 요새 / 베르단 여왕). enemyType에 행성 인덱스를
     // 태깅해 렌더가 보스 스프라이트를 분화할 수 있게 한다(카르곤=0 유지 → 해시 불변).
-    const bossDef = planetContent(state.config.planet).boss;
+    // 의뢰 런은 **주문 종류**가 보스를 고른다(`data/commissionBosses.ts`). 행성 보스는 행성에만
+    // 매달려 있어(`PlanetContent.boss`) 여러 행성을 거치는 연쇄 원정에서는 애초에 결정될 수
+    // 없다. 무의뢰 런은 아래 두 줄(`bossDef`·`enemyType`)이 예전 그대로라 **바이트 불변**이다.
+    // ⚠️ **정의 해석은 `bossDefFor` 한 곳에서만 한다.** 여기서 따로 삼항을 쓰면 매 틱 도는
+    // `updateBoss` 와 갈려, 스폰은 의뢰 보스인데 패턴·이동속도는 행성 보스가 되는 상태가 조용히
+    // 성립한다(예외·로그 0, 아트만 맞게 뜬다).
+    const cmOrder = state.config.commission?.order;
+    const bossDef = bossDefFor(state);
     // 강제 스크롤(Lane4/5): 카메라가 플레이어가 아니라 스크롤 창이므로 보스도 창 중심 기준으로
     // 소환한다(플레이어 기준이면 창 안 오프셋만큼 어긋난다). 모드별 방향으로 코스 끝에 둔다 —
     // 레이싱(+X 스크롤)은 오른쪽 끝(+X), 블록격파(−Y 스크롤)·뱀서류는 위(−Y). 뱀서류는 창
@@ -2326,11 +2343,56 @@ function stepBoss(state: WorldState, player: Entity): void {
     const bossHp = Math.round(bossDef.hp * state.catalystMods.enemyHp);
     const boss = spawnBoss(state, bossX, bossY, bossHp, bossDef.radius);
     boss.damage = bossDef.contactDamage * state.catalystMods.enemyDamage;
-    boss.enemyType = state.config.planet ?? 0;
+    // `enemyType` 은 렌더의 보스 모델·스프라이트 선택자다. 의뢰 보스는 행성 인덱스 공간
+    // **뒤에 append** 된 값을 쓴다(`COMMISSION_BOSS_ENEMY_TYPE_BASE` 규약) — 신규 `EntityKind`
+    // 를 만들지 않아 `hashEntity` 레이아웃과 `compact()` 의 보스 사망 분기를 그대로 탄다.
+    boss.enemyType = cmOrder !== undefined ? commissionBossEnemyType(cmOrder) : (state.config.planet ?? 0);
     state.bossSpawned = true;
   }
   for (const e of state.entities) {
     if (e.kind === 'boss') updateBoss(state, e, player);
+  }
+  stepBountyEscape(state);
+}
+
+/**
+ * **현상금 표적**(`order: 'bounty'`)의 도주 시계 한 틱 (CONTEXT `주문` · 계약 §5 분기 ③).
+ *
+ * 이 주문만 종료 조건이 **표적에 붙어 있다** — 다른 주문은 보스 처치로 구간을 닫지만, 여기서는
+ * 표적이 도주해도 구간이 닫힌다(놓칠수록 보상이 깎이고 마지막 구간에서 놓치면 의뢰 실패).
+ *
+ * ## ⚠️ 보스를 죽여서 도주를 표현하지 마라
+ * `compact()` 의 보스 사망 분기는 `endCommissionSegment(state, 'cleared')` 를 부른다. 도주에서
+ * hp 를 0 으로 내리면 **의뢰 실패가 성공으로 뒤집히고**, 그 성공은 ADR-0044 가 위조 가치를 지목하고
+ * ADR-0045 가 소유 축을 서버로 옮긴 **확정 유니크 지급 경로**로 간다. 도주는 표적을 **살려 둔 채** 구간만 끝낸다 —
+ * 이후 처리(중간 구간이면 `segmentDone`, 마지막이면 `gameOver`)는 `endCommissionSegment` 가 한다.
+ *
+ * ## 멱등 가드
+ * 이미 이번 구간이 닫혔거나 런이 끝났으면 즉시 나간다. 없으면 같은 틱·다음 틱에 `escaped` 가
+ * 중복 호출된다(무해해 보이지만 `segmentDone` 이 다시 서면 전환이 한 번 더 돈다).
+ */
+function stepBountyEscape(state: WorldState): void {
+  const cm = state.config.commission;
+  if (cm === undefined || cm.order !== 'bounty') return;
+  const rule = cm.bounty?.escapeRule;
+  if (rule === undefined) return;
+  if (state.gameOver || state.victory) return;
+  if (state.commissionRuntime !== undefined && state.commissionRuntime.segmentDone === 1) return;
+  for (const e of state.entities) {
+    if (e.kind !== 'boss' || e.dead) continue;
+    let ignition = decodeBountyIgnition(e.aux1);
+    if (ignition < 0) {
+      if (!bountyIgnites(e, rule)) continue;
+      ignition = state.tick;
+      // `aux1` 에 `tick+1` 을 싣는다(0 = 미점화 센티넬). 이 값은 `hashEntity` 의 aux 꼬리에
+      // 접히므로 점화 시각이 per-tick 해시 스트림에 나타난다 — 서버 재실행이 같은 틱에
+      // 점화하지 않으면 그 자리에서 갈린다.
+      e.aux1 = encodeBountyIgnition(ignition);
+    }
+    if (bountyEscaped(ignition, state.tick)) {
+      endCommissionSegment(state, 'escaped');
+      return;
+    }
   }
 }
 
@@ -3802,6 +3864,13 @@ function collectLoot(state: WorldState, loot: Entity): void {
  * @param outcome `'cleared'` = 표적 처치(보스 격파) · `'escaped'` = 표적 도주(실패)
  */
 export function endCommissionSegment(state: WorldState, outcome: 'cleared' | 'escaped'): void {
+  // ⚠️ **선점 가드 — 먼저 선 종료 판정을 덧씌우지 않는다.** 도주는 `stepBoss` 안에서(=
+  // `resolveCollisions`/`compact` 보다 **먼저**) 성립하는데, 같은 틱에 표적이 hp 0 이 되면
+  // `compact()` 가 `'cleared'` 로 이 함수를 다시 불러 **`gameOver` 위에 `victory` 를 덧씌운다**
+  // → 의뢰 실패가 성공으로 판정되고 확정 유니크 지급 경로로 간다. 게다가 이 경합은 균등분포가
+  // 아니라 **도주 임계 근처에 집중**된다(30초를 꽉 채워 싸운 플레이어가 그 언저리에서 킬을 낸다).
+  // `advanceCommissionSegment:109` 와 같은 규율(계약 §A-3b)이다.
+  if (state.gameOver || state.victory) return;
   const cm = state.config.commission;
   if (cm === undefined) {
     // 무의뢰 런: 보스 격파 = 즉시 승리(기존 거동과 바이트 동일). 도주 개념이 없다.
@@ -3926,7 +3995,16 @@ function compact(state: WorldState): void {
     }
   }
   state.entities = survivors;
-  for (const d of drops) spawnGem(state, d.x, d.y, d.xp);
+  // 정예 소집령(ADR-0043)은 **런 내 성장이 0** 이다 — 경험치 젬을 한 톨도 남기지 않는다.
+  //
+  // ⚠️ 막는 것은 **젬 생성뿐**이다. 위 루프의 드랍 판정(`rollEliteDropGate`·`rollEliteDrop`)은
+  // 그대로 굴러야 한다 — 건너뛰면 `dropRng` 스트림이 밀려 같은 시드의 전리품이 통째로 갈린다.
+  // 장비는 계속 떨어진다(엘리트·보스만 떨구는 규율 그대로). 사라지는 것은 젬뿐이다.
+  //
+  // ⚠️ **파워업 3택을 따로 막지 마라.** 3택이 안 열리는 것은 젬 0 → 레벨업 0 의 자연 귀결이고,
+  // 별도 차단을 두면 같은 사실에 대한 진실이 둘이 된다(commissionOrders.ts 주석).
+  const noGems = commissionSuppressesGems(state);
+  if (!noGems) for (const d of drops) spawnGem(state, d.x, d.y, d.xp);
   if (bossKilled) {
     // 보스와 같은 tick에 죽은 엘리트 loot도 승리 tick이라 바닥에서 수거될 수 없다.
     // 보스 드랍과 동일하게 state.loot에 직접 기록해 유실을 막는다(결정론: 배열 순서 고정).
@@ -3938,7 +4016,9 @@ function compact(state: WorldState): void {
     for (const d of lootDrops) spawnLoot(state, d.x, d.y, d.seed, d.rarity);
   }
   for (const e of splitElites) spawnEliteDeathFx(state, e);
-  for (const d of supplyDrops) {
+  // 보급 습격 보상 젬도 같은 규율이다(위 `noGems` 주석). 자원(`state.resources`) 보상은
+  // 경제 축이라 그대로 지급된다 — 막는 것은 **런 내 성장**뿐이다.
+  for (const d of noGems ? [] : supplyDrops) {
     for (let i = 0; i < SUPPLY_REWARD_GEMS; i++) {
       const ang = (i * 6.283185307179586) / SUPPLY_REWARD_GEMS;
       spawnGem(state, d.x + cos(ang) * 40, d.y + sin(ang) * 40, SUPPLY_GEM_XP);

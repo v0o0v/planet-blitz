@@ -29,9 +29,11 @@
 import { DEFAULT_CONFIG } from '../sim/world.js';
 import type { WorldConfig } from '../sim/world.js';
 import type { Invasion3Config } from '../sim/invasion/index.js';
-import type { CommissionRunConfig } from './commission.js';
-import { EQUIP_SLOTS } from '../items/types.js';
-import type { Item } from '../items/types.js';
+import type { CommissionEquipRules, CommissionRunConfig } from './commission.js';
+import { COMMISSION_WAVE_SEGMENTS_PER_SEGMENT } from './commissionConstants.js';
+import { EQUIP_SLOTS, RARITY_CODE } from '../items/types.js';
+import type { EquipSlotId, Item } from '../items/types.js';
+import { UNIQUE_REGISTRY } from '../items/uniques.js';
 import { computeLoadoutStats } from '../items/loadout.js';
 import { shipBonusBp } from '../../data/lineage.js';
 import { activeShip } from '../save/profile.js';
@@ -99,15 +101,48 @@ export interface RunConfigOpts {
 }
 
 /**
+ * 그 장비가 **의뢰 제약(장비축)에 걸리는가** — 걸리면 출격 조립에서 빠진다.
+ *
+ * ## 왜 "빼는 것"이 유일한 강제 수단인가
+ * 제약 계약은 **위반이 원천 불가능한 축만** 쓴다(CONTEXT `주문` · ADR-0044). 장비를 끌고
+ * 나갈 수 있게 두고 sim 이 감시하는 형태였다면 감시기·위반 카운터·처벌 규칙이 전부 필요하고,
+ * 그 셋은 서버가 리플레이로 재현할 수 없는 상태를 만든다. 여기서 빼면 그 장비는 `loadout` 에
+ * 아예 반영되지 않고, `loadout` 은 리플레이 스냅샷에 실려 **서버 EF 재실행과 자동으로 정합**
+ * 이다 — 서버는 제출된 `config.loadout` 을 자기 payload 의 제약과 대조하는 것만으로 준수를
+ * 증명한다.
+ *
+ * @param slotId `EQUIP_SLOTS` 의 위치 id. `bannedSlots` 는 `SlotKind`(module 하나)가 아니라
+ *   **위치**(module0/module1 따로)로 지정하므로 여기서 그 id 로 비교해야 한다.
+ */
+function equipBanned(rules: CommissionEquipRules, slotId: EquipSlotId, item: Item): boolean {
+  if (rules.bannedSlots?.includes(slotId) === true) return true;
+  if (rules.maxRarity !== undefined && RARITY_CODE[item.rarity] > rules.maxRarity) return true;
+  const banned = rules.bannedUniqueIds;
+  if (banned !== undefined && banned.length > 0 && item.uniqueId !== undefined) {
+    // `bannedUniqueIds` 의 정수 정본은 `UniqueDef.bit`(= `LoadoutConfig.uniqueMask` 에 OR 되는
+    // 비트)다. 문자열 id 를 wire 로 쓰지 않는 이유는 payload 가 jsonb 이고 서버·클라가 같은
+    // 정수를 봐야 하기 때문이며, bit 는 이미 append-only 로 고정된 유일한 정수 축이다.
+    const bit = UNIQUE_REGISTRY.get(item.uniqueId)?.bit;
+    if (bit !== undefined && banned.includes(bit)) return true;
+  }
+  return false;
+}
+
+/**
  * 활성 기체의 장착 아이템을 `EQUIP_SLOTS` 순서로 모은다. **순서가 계약이다** —
  * `computeLoadoutStats` 의 어픽스 합산은 순서 무관이지만 무기/보조 선택(`find`)은 아니다.
+ *
+ * `rules` 가 있으면(의뢰 제약 계약) 걸리는 항목을 **건너뛴다**. 건너뛰기는 순서를 보존하므로
+ * 위 계약이 유지된다 — 재배치가 아니라 결손이다.
  */
-function equippedItems(profile: Profile): Item[] {
+function equippedItems(profile: Profile, rules?: CommissionEquipRules): Item[] {
   const ship = activeShip(profile);
   const out: Item[] = [];
   for (const id of EQUIP_SLOTS) {
     const it = ship.equipped[id];
-    if (it !== undefined) out.push(it);
+    if (it === undefined) continue;
+    if (rules !== undefined && equipBanned(rules, id, it)) continue;
+    out.push(it);
   }
   return out;
 }
@@ -139,6 +174,20 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
   if (opts.commission !== undefined && opts.commission.segments.length === 0) {
     throw new Error('buildRunConfig: 의뢰 런의 segments 가 비어 있다 — 무대 없는 의뢰는 성립하지 않는다');
   }
+  // 의뢰 런 + 예비역 소집은 성립하지 않는 조합이다(소집은 침공 경로 전용, 침공과 의뢰는 상호
+  // 배타). 막는 이유는 배선이 아니라 **제약 우회**다 — 소집 경로는 박제된 `pilot.equipped` 를
+  // 그대로 쓰므로 아래 장비축 필터를 통과하지 않는다. 조용히 허용하면 "제약이 걸린 의뢰인데
+  // 금지 장비를 낀 채 도는 런"이 만들어지고, 그 런은 서버 대조에서야 거부된다.
+  if (opts.commission !== undefined && opts.pilot !== undefined) {
+    throw new Error('buildRunConfig: 의뢰 런에는 예비역 소집(pilot)을 실을 수 없다 — 장비축 제약이 우회된다');
+  }
+  // 현상금 표적인데 `bounty` 블록이 없으면 `stepBountyEscape` 가 첫 줄에서 무연산으로 빠져
+  // **도주 기제 전체가 조용히 사라진다** — 구간이 보스 처치로만 닫히므로 이 주문의 유일한 실패
+  // 경로가 없어져 **항상 성공하는 의뢰**가 된다. 그리고 서버 EF 는 같은 소스로 같은 결정을
+  // 내리므로 해시가 일치해 accept 된다. 어떤 게이트도 울리지 않으니 여기서 던진다.
+  if (opts.commission !== undefined && opts.commission.order === 'bounty' && opts.commission.bounty === undefined) {
+    throw new Error('buildRunConfig: 현상금 표적 의뢰에 bounty 블록이 없다 — 도주 기제가 통째로 사라진다');
+  }
   const pilot = opts.pilot;
   const ship = activeShip(profile);
   // 소집이면 예비역 빌드에서, 아니면 활성 기체에서 소스를 고른다. 손상 세이브 방어: 범위 밖
@@ -151,7 +200,9 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
   // 단위 파일럿 버프라 소집이든 활성이든 동일하게 얹는다(계정의 버프는 무엇을 타든 적용).
   // loadout 은 config 로 리플레이에 스냅샷되므로 서버 재실행 검증(EF)과 호환된다.
   const { loadout } = computeLoadoutStats(
-    pilot !== undefined ? pilot.equipped : equippedItems(profile),
+    // 의뢰 제약 계약(장비축)은 **여기서** 걸러야 한다 — 이 목록이 `loadout` 이 되고, 그 `loadout`
+    // 이 리플레이 스냅샷에 실려 서버 EF 재실행과 정합이 된다(`equipBanned` 주석).
+    pilot !== undefined ? pilot.equipped : equippedItems(profile, opts.commission?.constraints?.equipRules),
     skillInvest,
     shipBonusBp(profile.lineage),
     typeId,
@@ -223,7 +274,17 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
     // 유일한 배선 지점이다. `Ship`→`WorldConfig` 경로는 이 함수뿐이고, 소집(`opts.pilot`)
     // 분기도 여기서 같이 처리된다. 문자열 id → wire 정수 변환도 **여기 한 곳에서만** 한다.
     ...(activeSlotsWire.length > 0 ? { activeSlots: activeSlotsWire } : {}),
-    ...(opts.maxSegments !== undefined ? { maxSegments: opts.maxSegments } : {}),
+    // 보스 전 일반 세그먼트 상한. 호출자가 명시로 준 값이 **항상 우선**하고(하네스·튜토리얼
+    // 단축판), 미지정 의뢰 런에만 의뢰 기본값이 실린다.
+    //
+    // ⚠️ 의뢰 런에 이 상한이 없으면 구간마다 PvE 웨이브 표를 **끝까지** 소화해야 보스가 나와
+    // `COMMISSION_SEGMENT_TICK_CAP` 을 구조적으로 넘긴다 — 그리고 그 초과는 클라에서 아무
+    // 증상 없이 통과했다가 **서버 EF 의 틱 예산 게이트에서 런 전체가 거부**된다.
+    ...(opts.maxSegments !== undefined
+      ? { maxSegments: opts.maxSegments }
+      : opts.commission !== undefined
+        ? { maxSegments: COMMISSION_WAVE_SEGMENTS_PER_SEGMENT }
+        : {}),
     ...(opts.invasion3 !== undefined ? { invasion3: opts.invasion3 } : {}),
     // 의뢰 런 설정 — **조건부 스탬프**(planetMultCenti·activeSlots 선례). 미지정이면 필드 자체를
     // 싣지 않아 기존 런의 config 직렬화가 바이트 동일하다. 이것이 `Commission`→`WorldConfig` 의

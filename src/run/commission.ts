@@ -101,7 +101,14 @@ export interface CommissionConstraints {
  * 도주 임계 수치 자체는 `commissionConstants.ts` 가 정본으로 들고 있다(하드코딩 금지).
  */
 export interface CommissionBounty {
-  /** 표적 종류 식별자(Phase F 의 의뢰 보스 카탈로그 인덱스). */
+  /**
+   * 표적 종류 식별자(Phase F 의 의뢰 보스 카탈로그 인덱스).
+   *
+   * ⚠️ **아직 소비되지 않는다 — 예약 필드다.** 현재 보스 선택은 전적으로 주문 종류가 한다
+   * (`commissionBossIndex`). payload 가 표적을 고르게 하면 현상금 의뢰가 **도주하지 않는 보스**를
+   * 지목할 수 있고, 그러면 이 주문의 유일한 실패 경로가 사라진다. 소비를 시작하려면
+   * `data/commissionBosses.ts` 의 짝 주석과 함께 갱신하라.
+   */
   targetKind: number;
   /**
    * 도주 규칙 식별자. `'hpThreshold'` = HP 가 임계 아래로 떨어지면 도주,
@@ -187,6 +194,15 @@ export interface CommissionRunConfig {
   /** 이 의뢰 전체의 리플레이 틱 예산. */
   readonly replayBudgetTicks: number;
   readonly constraints?: CommissionConstraints;
+  /**
+   * 현상금 표적의 도주 규정(그 주문일 때만). **sim 이 읽는다** — `stepBountyEscape` 가 매 틱
+   * `escapeRule` 로 점화 조건을 고른다. 그래서 보상 블록과 달리 이 축은 `WorldConfig` 에
+   * 실려야 한다(sim 입력이 아닌 것만 payload 에 남긴다는 이 파일의 분리 원칙 그대로).
+   *
+   * 임계 **수치**는 여기 없다 — `commissionConstants.ts` 가 정본이다(하드코딩 금지). 여기 있는
+   * 것은 "어느 조건으로 점화하는가" 뿐이고, 길이는 규칙과 무관하게 항상 같다.
+   */
+  readonly bounty?: CommissionBounty;
   /** 현재 구간 인덱스(0-based). 구간 전환이 **새 객체를 만들어** 이 값만 갱신한다. */
   readonly segmentIndex: number;
 }

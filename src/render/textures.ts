@@ -888,6 +888,36 @@ export const DEF3_UNIT_ASSET_FILES: readonly string[] = [
   'def3_spawned_drone.png',
 ];
 
+/**
+ * 보스 자산 파일명(index = 보스 시각 카탈로그 인덱스, `src/render/three3d/bossActor.ts` 의
+ * `BOSS_MODELS` 와 **같은 계약**). 0~5 는 행성 보스(카르곤..크라스, M1 이래 정본).
+ *
+ * 6~8 은 **의뢰 보스**(Phase F, `data/commissionBosses.ts` 의 `COMMISSION_BOSS_ENEMY_TYPE_BASE`)
+ * — 연쇄 원정 · 정예 소집령 · 현상금 표적. 전용 GLB 는 이미 있다(`BOSS_MODELS` 6~8 참조·
+ * `assets/models/manifest.json` `boss_cm_*`). 하지만 **전용 2D PNG 는 아직 없다** — 3D 무대가
+ * 로드되기 전(첫 프레임) · GL 미지원 · 3D 게이트 꺼짐일 때 쓰는 2D 폴백 슬롯이므로,
+ * **잠정으로 기존 행성 보스 스프라이트를 재사용**한다(신규 파일명을 적으면 `assets/` 에 실물이
+ * 없어 조용한 결손이 된다 — 이 리포가 8번 넘게 겪은 실패 형태). 선택 근거:
+ *   6 연쇄 원정 → boss.png(카르곤 용암 요새) — 잔해 포식자의 시그니처(lavaLine 용암 기둥)와
+ *     같은 용암 테마.
+ *   7 정예 소집령 → boss_arke.png(아르케 고대 기계) — 정예 군주의 격자·다각 회전 패턴이 아르케의
+ *     기계적 저작과 결이 같다.
+ *   8 현상금 표적 → boss_niflheim.png(니플헤임 얼음 전함) — 도주자의 P3 감속장(slowField) 테마가
+ *     니플헤임의 냉기 계열과 맞는다.
+ * 전용 PNG 가 들어오면 이 3칸만 교체하면 된다.
+ */
+export const BOSS_ASSET_FILES: readonly string[] = [
+  'boss.png', // 0 카르곤
+  'boss_berdan.png', // 1 베르단
+  'boss_niflheim.png', // 2 니플헤임
+  'boss_arke.png', // 3 아르케
+  'boss_toxar.png', // 4 톡사르
+  'boss_kras.png', // 5 크라스
+  'boss.png', // 6 연쇄 원정 — 잠정 재사용(위 주석).
+  'boss_arke.png', // 7 정예 소집령 — 잠정 재사용(위 주석).
+  'boss_niflheim.png', // 8 현상금 표적 — 잠정 재사용(위 주석).
+];
+
 /** 역할별 기물 반지름(카탈로그에서 파생 — 없으면 기본 48). */
 function propRadius(role: number): number {
   return L3_PROPS.find((p) => p.role === role)?.radius ?? 48;
@@ -1141,7 +1171,9 @@ export async function loadGameTextures(
   // Boss + backdrop by planetIndex (0 카르곤 .. 5 크라스). Slot 0 keeps the M1
   // filenames (`boss.png`, `bg_kargon.png`); others follow the planet contract.
   // 4~5(톡사르·크라스)는 Lane9 append — TODO(art): 실 스프라이트 대기.
-  const bossFiles = ['boss.png', 'boss_berdan.png', 'boss_niflheim.png', 'boss_arke.png', 'boss_toxar.png', 'boss_kras.png'];
+  //
+  // 6~8 은 의뢰 보스(Phase F) — 정의는 모듈 상단 {@link BOSS_ASSET_FILES} 참조.
+  const bossFiles = BOSS_ASSET_FILES;
   const bgFiles = ['bg_kargon.png', 'bg_berdan.png', 'bg_niflheim.png', 'bg_arke.png', 'bg_toxar.png', 'bg_kras.png'];
 
   // 방어 엔티티(파일명 계약, spec 레인 A). 없는 파일은 절차적 플레이스홀더 유지(tryLoad 패턴).

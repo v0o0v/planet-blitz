@@ -71,3 +71,57 @@ export const COMMISSION_BOUNTY_ESCAPE_SURVIVE_TICKS = 1800;
 export function commissionReplayBudgetTicks(grade: CommissionGrade): number {
   return COMMISSION_SEGMENT_COUNT[grade] * COMMISSION_SEGMENT_TICK_CAP;
 }
+
+// ---------------------------------------------------------------------------
+// Phase D 추가분 — **파일 끝 append 전용.**
+// 위 선언을 재배치하지 마라. 이 모듈은 병렬 레인과의 유일한 공유 편집 지점이라,
+// 재배치는 다른 레인의 삽입 지점을 조용히 무너뜨린다.
+// ---------------------------------------------------------------------------
+
+/**
+ * 정예 소집령의 **재집결 지연** — 필드에 정예가 **한 기도 남지 않은** 뒤 이 틱수가 지나야
+ * 다음 정예를 투입한다. **플레이스홀더 240틱**(4초).
+ *
+ * ⚠️ 이것은 "고정 웨이브 타이머"가 아니다. ADR-0043 이 폐기한 것은 *생존 여부와 무관하게*
+ * 주기적으로 적을 뱉는 타이머다. 여기서 시계가 도는 조건은 **직전 정예가 죽었다**는
+ * 사건이며, 정예가 살아 있는 동안 이 값은 아무것도 하지 않는다.
+ *
+ * 읽는 곳: Phase D(정예 소집령 스포너).
+ */
+export const COMMISSION_ELITE_REGROUP_TICKS = 240;
+
+/**
+ * 정예 소집령의 **겹침 투입 간격** — 직전 정예가 살아 있어 겹침 게이트가 열려 있는 동안,
+ * 연속 투입 사이의 최소 간격. **플레이스홀더 150틱**(2.5초).
+ *
+ * ⚠️ 이 값은 투입을 **구동하지 않는다.** 게이트(= 직전 정예 생존)가 닫혀 있으면 이 시계가
+ * 아무리 흘러도 아무것도 나오지 않는다. 간격만 벌리는 값이라 A안(고정 간격 타이머)이 아니다.
+ *
+ * 읽는 곳: Phase D(정예 소집령 스포너).
+ */
+export const COMMISSION_ELITE_OVERLAP_DELAY_TICKS = 150;
+
+/**
+ * 의뢰 **구간 하나당 보스 전 일반 웨이브 세그먼트 수** — `WorldConfig.maxSegments` 로 실린다.
+ * **플레이스홀더 3.**
+ *
+ * 왜 필요한가: 의뢰 구간의 종료 조건은 보스 격파다(`endCommissionSegment('cleared')`).
+ * 상한을 안 걸면 구간마다 PvE 웨이브 표를 끝까지 소화해야 보스가 나와,
+ * {@link COMMISSION_SEGMENT_TICK_CAP} 을 구조적으로 넘긴다.
+ *
+ * 읽는 곳: Phase D(`buildRunConfig` 의뢰 경로) · Phase G(구간 길이 계측).
+ */
+export const COMMISSION_WAVE_SEGMENTS_PER_SEGMENT = 3;
+
+/**
+ * 정예 겹침의 **절대 상한** — 압박이 누적돼도 동시 정예가 이 수를 넘지 않는다.
+ * **플레이스홀더 6.**
+ *
+ * ⚠️ {@link COMMISSION_ELITE_OVERLAP_MIN} 은 **하한**(목표 겹침)이고 이것이 상한이다. 둘을 한
+ * 상수로 겸하면 겹침이 하한에 영구 고정되어 ADR-0043 의 압박 누적이 성립하지 않는다 — 처음
+ * 구현이 실제로 그랬고, `MIN` 이라는 이름을 상한으로 읽은 것이 원인이었다(이 레인이 `player.timer`
+ * 로 한 번 당한 "이름으로 분류하기"의 재발).
+ *
+ * 읽는 곳: Phase D(`decideEliteDeploy`) · Phase G(정예 소집령 별도 기준선 계측).
+ */
+export const COMMISSION_ELITE_OVERLAP_MAX = 6;

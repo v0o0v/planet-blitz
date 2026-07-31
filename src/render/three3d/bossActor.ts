@@ -277,25 +277,36 @@ interface BossModelDef {
 }
 
 /**
- * 행성 인덱스 → 3D 보스. 순서는 `src/render/textures.ts` 의 `bossFiles` 와 **같은 계약**이다
- * (0 카르곤 … 5 크라스). 모델이 없는 행성은 `null` 이고, 그 경우 액터가 아예 만들어지지 않아
+ * **보스 시각 카탈로그 인덱스** → 3D 보스. 순서는 `src/render/textures.ts` 의 `BOSS_ASSET_FILES`
+ * 와 **같은 계약**이다. 모델이 없는 슬롯은 `null` 이고, 그 경우 액터가 아예 만들어지지 않아
  * 기존 2D 스프라이트가 조용히 그대로 쓰인다.
+ *
+ * 0~5 는 행성 보스(0 카르곤 … 5 크라스, M1 이래 정본). 6~8 은 **의뢰 보스**(Phase F,
+ * `data/commissionBosses.ts` 의 `COMMISSION_BOSS_ENEMY_TYPE_BASE`) — 연쇄 원정 · 정예 소집령 ·
+ * 현상금 표적. GLB 는 `assets/models/manifest.json` 의 `boss_cm_salvage`/`boss_cm_warlord`/
+ * `boss_cm_runner` 로 이미 생성·등재돼 있다(원장의 `usedBy` 가 이 배열의 6~8 을 명시적으로 가리킨다).
  */
-const BOSS_MODELS: readonly (BossModelDef | null)[] = [
+export const BOSS_MODELS: readonly (BossModelDef | null)[] = [
   { file: 'boss_kargon.glb', coreLight: 0xff6a1a }, // 0 카르곤 — 용암 주황.
   { file: 'boss_berdan.glb', coreLight: 0xc8d420 }, // 1 베르단 — 산성 황록(알주머니와 같은 계열).
   { file: 'boss_niflheim.glb', coreLight: 0x66ccff }, // 2 니플헤임 — 빙결 청록.
   { file: 'boss_arke.glb', coreLight: 0xffc04a }, // 3 아르케 — 고대 기계의 황금 코어.
   { file: 'boss_toxar.glb', coreLight: 0xc850ff }, // 4 톡사르 — 독성 자색.
   { file: 'boss_kras.glb', coreLight: 0xff5533 }, // 5 크라스 — 강철 요새의 잔불 적색.
+  // 6 연쇄 원정 — 잔해 포식자. 용접된 난파선 잔해(녹슨 스캐빈지) 저작이라 잔불 녹빛.
+  { file: 'boss_cm_salvage.glb', coreLight: 0xff8040 },
+  // 7 정예 소집령 — 정예 군주. 흑철 왕관 + 금장 갑주 저작이라 금빛.
+  { file: 'boss_cm_warlord.glb', coreLight: 0xffd24a },
+  // 8 현상금 표적 — 도주자. 짙은 바이올렛 스텔스 저작이라 자색.
+  { file: 'boss_cm_runner.glb', coreLight: 0xa050ff },
 ];
 
 /**
- * 이 행성에 3D 보스 모델이 있는가. 호출자가 **WebGL 컨텍스트를 만들기 전에** 물어보는 용도다 —
- * 모델 없는 행성에서 무대를 세우면 아무 이득 없이 컨텍스트 하나를 점유한다.
+ * 이 보스 시각 카탈로그 인덱스에 3D 모델이 있는가. 호출자가 **WebGL 컨텍스트를 만들기 전에**
+ * 물어보는 용도다 — 모델 없는 인덱스에서 무대를 세우면 아무 이득 없이 컨텍스트 하나를 점유한다.
  */
-export function hasBossModel(planet: number): boolean {
-  return (BOSS_MODELS[planet] ?? null) !== null;
+export function hasBossModel(visualIndex: number): boolean {
+  return (BOSS_MODELS[visualIndex] ?? null) !== null;
 }
 
 /**
@@ -370,13 +381,14 @@ export class BossActor {
   }
 
   /**
-   * 행성의 GLB 를 읽어 정규화(중심 정렬 + 최대 치수 1)하고 무대에 mount 한다.
-   * 모델이 없는 행성이거나 파싱에 실패하면 조용히 false — 2D 스프라이트가 그대로 남는다.
+   * 보스의 GLB 를 읽어 정규화(중심 정렬 + 최대 치수 1)하고 무대에 mount 한다.
+   * 모델이 없는 인덱스이거나 파싱에 실패하면 조용히 false — 2D 스프라이트가 그대로 남는다.
    *
-   * @param planet 행성 인덱스(0 카르곤 … 5 크라스). {@link BOSS_MODELS} 참조.
+   * @param visualIndex 보스 시각 카탈로그 인덱스(0 카르곤 … 5 크라스, 6~8 의뢰 보스).
+   *   {@link BOSS_MODELS} 참조.
    */
-  async load(planet: number): Promise<boolean> {
-    const def = BOSS_MODELS[planet] ?? null;
+  async load(visualIndex: number): Promise<boolean> {
+    const def = BOSS_MODELS[visualIndex] ?? null;
     if (def === null) return false;
     const url = await modelUrl(def.file);
     if (url === undefined) return false;

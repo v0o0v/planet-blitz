@@ -848,14 +848,22 @@ export class EntityRenderer {
   private stage3d: Stage3D | null = null;
   private bossActor: BossActor | null = null;
   /**
-   * 현재 액터가 어느 행성 모델로 로드됐는가(로드 중인 것도 포함). 보스 모델은 행성마다 다르므로
-   * 이 값이 {@link planet} 과 갈라지면 모델을 갈아탄다. 시도 자체를 기록하기 때문에 **실패도 1회로
-   * 끝난다**(매 프레임 재시도 금지) — 같은 행성으로 다시 들어오지 않는 한 재시도하지 않는다.
+   * 현재 액터가 어느 **보스 시각 카탈로그 인덱스**(`bossActor.ts` 의 `BOSS_MODELS`/`hasBossModel`
+   * 인자, = 보스 엔티티의 `enemyType`)로 로드됐는가(로드 중인 것도 포함).
    *
-   * 런 중에 행성이 바뀌지는 않으므로 실제 교체는 **다음 런**에서만 일어난다. 그래서 아틀라스
-   * 슬롯은 `boss` 한 칸으로 충분하다(행성 6칸으로 늘릴 이유가 없다).
+   * ⚠️ **행성 인덱스가 아니다.** 예전엔 `state.config.planet` 을 그대로 썼지만, 의뢰 런
+   * (Phase F)에서는 보스 엔티티의 `enemyType` 이 6~8(의뢰 보스)일 수 있고 `config.planet` 은
+   * 여전히 0~5 대(무관한 값)라 둘이 갈린다. 그래서 **보스 엔티티의 `enemyType`** 을 정본으로
+   * 쓴다 — 무의뢰 런은 `boss.enemyType === config.planet` 이 항상 성립하므로(계약은
+   * `data/commissionBosses.ts` 머리말) 이 일반화로 기존 거동이 **한 비트도 바뀌지 않는다**.
+   *
+   * 이 값이 바뀌면 모델을 갈아탄다. 시도 자체를 기록하기 때문에 **실패도 1회로 끝난다**(매 프레임
+   * 재시도 금지) — 같은 인덱스로 다시 들어오지 않는 한 재시도하지 않는다.
+   *
+   * 런 중에 보스가 바뀌지는 않으므로 실제 교체는 **다음 런**에서만 일어난다. 그래서 아틀라스
+   * 슬롯은 `boss` 한 칸으로 충분하다(카탈로그 크기만큼 늘릴 이유가 없다).
    */
-  private boss3dPlanet: number | null = null;
+  private boss3dVisualIndex: number | null = null;
 
   constructor(private readonly textures: PlaceholderTextures) {
     // Draw order (bottom → top): lava overlay (시머 대상), hazard/beam overlay, [glow halos],
@@ -1360,7 +1368,8 @@ export class EntityRenderer {
         // 단 **tint/alpha 연출만은 배타적**이다 — 아래 `driven3d` 분기 주석 참조.
         let driven3d = false;
         if (gates.model3d) {
-          this.ensureBoss3D();
+          // 보스 시각 카탈로그 인덱스 = 이 보스 엔티티의 enemyType(위 boss3dVisualIndex 주석).
+          this.ensureBoss3D(e.enemyType);
           const actor = this.bossActor;
           const stage = this.stage3d;
           if (actor !== null && stage !== null && actor.isReady) {
@@ -1662,20 +1671,25 @@ export class EntityRenderer {
   }
 
   /**
-   * **현재 행성의** 보스 액터를 준비한다(지연 생성). 로드는 비동기라 이번 프레임에는 준비되지
+   * **이 보스 엔티티의** 3D 액터를 준비한다(지연 생성). 로드는 비동기라 이번 프레임에는 준비되지
    * 않는다 — 그동안 호출자는 기존 PNG 스프라이트를 계속 쓰고, 로드가 끝난 다음 프레임부터 3D
    * 텍스처로 자연스럽게 갈아탄다(로딩이 화면을 비우지 않는다).
    *
-   * 행성이 바뀌면(다음 런) **이전 모델을 회수하고 새로 로드**한다. 무대(WebGL 컨텍스트)는 액터보다
+   * @param visualIndex 이 보스 엔티티의 `enemyType`(= 보스 시각 카탈로그 인덱스). 호출자는
+   *   **보스 엔티티가 존재하는 프레임에서만** 부른다(유일한 호출부가 `e.kind === 'boss'` 분기
+   *   안이다) — 보스가 없는 프레임에서 무대를 미리 세우지 않는다. 이 가드는 예전에 `state.
+   *   config.planet` 을 키로 쓰던 시절에도 이미 이 호출부 하나뿐이라 동일했으므로, 이번 일반화로
+   *   **3D 무대 생성 시점은 바뀌지 않는다**.
+   *
+   * 보스가 바뀌면(다음 런) **이전 모델을 회수하고 새로 로드**한다. 무대(WebGL 컨텍스트)는 액터보다
    * 오래 살려 재사용한다 — 브라우저의 컨텍스트 수 상한이 낮아 런마다 새로 잡으면 몇 런 뒤에 3D 가
    * 조용히 꺼진다.
    */
-  private ensureBoss3D(): void {
-    const planet = this.planet;
-    if (this.boss3dPlanet === planet) return;
-    this.boss3dPlanet = planet;
+  private ensureBoss3D(visualIndex: number): void {
+    if (this.boss3dVisualIndex === visualIndex) return;
+    this.boss3dVisualIndex = visualIndex;
 
-    // 이전 행성의 모델을 먼저 내린다. `bossActor` 를 **즉시** null 로 만들어야 이번 프레임부터
+    // 이전 모델을 먼저 내린다. `bossActor` 를 **즉시** null 로 만들어야 이번 프레임부터
     // 2D 로 폴백한다 — 안 그러면 회수된 geometry 를 그리려 들거나 빈 아틀라스를 물린다.
     const prev = this.bossActor;
     this.bossActor = null;
@@ -1689,16 +1703,16 @@ export class EntityRenderer {
           import('./three3d/stage3d.js'),
           import('./three3d/bossActor.js'),
         ]);
-        // 모델 없는 행성에서는 **무대조차 세우지 않는다** — 아무 이득 없이 GL 컨텍스트를 점유한다.
-        if (!hasBossModel(planet)) return;
-        // 청크를 받는 동안 행성이 또 바뀌었으면 이 로드는 사문이다(뒤에 온 호출이 이미 진행 중).
-        if (this.boss3dPlanet !== planet) return;
+        // 모델 없는 인덱스에서는 **무대조차 세우지 않는다** — 아무 이득 없이 GL 컨텍스트를 점유한다.
+        if (!hasBossModel(visualIndex)) return;
+        // 청크를 받는 동안 보스가 또 바뀌었으면 이 로드는 사문이다(뒤에 온 호출이 이미 진행 중).
+        if (this.boss3dVisualIndex !== visualIndex) return;
         this.stage3d ??= Stage3D.create();
         const stage = this.stage3d;
         if (stage === null) return; // GL 없음 — 2D 폴백 유지.
         const actor = new BossActor(stage);
-        if (!(await actor.load(planet)) || this.boss3dPlanet !== planet) {
-          actor.dispose(); // 로드 실패 또는 그 사이 행성 교체. 무대는 남겨 재사용한다.
+        if (!(await actor.load(visualIndex)) || this.boss3dVisualIndex !== visualIndex) {
+          actor.dispose(); // 로드 실패 또는 그 사이 보스 교체. 무대는 남겨 재사용한다.
           return;
         }
         this.bossActor = actor;
@@ -2291,7 +2305,7 @@ export class EntityRenderer {
     this.bossActor = null;
     this.stage3d?.destroy();
     this.stage3d = null;
-    this.boss3dPlanet = null;
+    this.boss3dVisualIndex = null;
     // 발광체 헤일로·블룸 필터를 명시 회수한다(Container.destroy 는 filters 를 파괴하지 않는다).
     this.clearGlowHalos();
     // 접지 그림자 전량 회수(누수 0). 형제라 부모 destroy 로는 안 걷힌다. reset 에서는 남기면
