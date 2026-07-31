@@ -1,0 +1,141 @@
+/**
+ * 의뢰서 **서버 축** 상수 — SQL 미러의 TS 정본 (서버 계약 rev3 §5·§6·§10).
+ *
+ * ## 이 모듈이 따로 있는 이유
+ * `commissionConstants.ts` 는 sim·UI 가 읽는 런 형태의 상수를 진다. 여기 있는 값은 **서버
+ * 마이그레이션 SQL 안에 같은 수치가 한 번 더 적히는** 것들이다 — 즉 이 파일의 존재 이유는
+ * "값을 담는 것"이 아니라 **SQL 과의 불일치를 테스트가 잡을 수 있게 하는 것**이다
+ * (`20260727000000_catalyst_ledger.sql:43-46` 선례). 값을 고칠 때는 **반드시 SQL 도 함께**
+ * 고쳐라. 한쪽만 고치면 `tests/commissionServerConstants.test.ts` 가 실패한다.
+ *
+ * ## 하드코딩 금지
+ * 소비처(EF `verify-commission` · 클라 게이트웨이 · 테스트)는 전부 이 모듈을 읽는다. 같은
+ * 수치를 소비처에 다시 적으면 "여기만 고쳐서 안 먹는" 결함이 열린다 — 이 저장소가 반복해서
+ * 겪은 실패 모드다.
+ */
+
+/**
+ * 프로필당 **시간당 발령 시도 상한**(서버 계약 §2-4).
+ *
+ * ⚠️ **이것이 발령 빈도를 묶는 유일한 실질 방어다.** 발령 자격(`victory`·`bossKilled`)은
+ * 클라 주장이고(ADR-0026 의 PvE 신뢰 모델), 재고 상한은 소비하면 다시 차므로 빈도를 묶지
+ * 못한다. 밸런스 큐가 아니라 **서버 계약이 이 값을 진다**(미정으로 두면 방어 미조달).
+ *
+ * 세는 대상은 `commission_issues` 중 **`claimed_victory` 인 행**이다 — 패배 정산까지 세면
+ * 정직한 빠른 재시작 플레이어의 의뢰서를 끊으면서 위조자에게는 아무 비용도 물리지 않는다.
+ *
+ * SQL 미러: `CAP_ISSUE_ATTEMPTS_PER_HOUR` (`issue_commission_for_run` 3단계).
+ */
+export const CAP_ISSUE_ATTEMPTS_PER_HOUR = 20;
+
+/**
+ * 프로필당 **시간당 출격 상한**(서버 계약 §5-2 ②).
+ *
+ * 상한을 **행 생성 지점**(`consume_commission`)에 둔다. `mark_commission_active` 는 상태
+ * 전이라 행당 정확히 1회만 성공하므로 별도 카운터가 불필요하다 — 열거식 방어를 만들지 않는다.
+ *
+ * SQL 미러: `CAP_CONSUME_PER_HOUR` (`consume_commission` 2단계).
+ */
+export const CAP_CONSUME_PER_HOUR = 12;
+
+/**
+ * 한 `commission_runs` 행이 허용하는 **EF 재실행 시도 횟수**(서버 계약 §5-7).
+ *
+ * ⚠️ 카운터 증가는 **`settle_commission` 과 별개의 트랜잭션**이어야 한다. 같은 트랜잭션에
+ * 넣으면 "응답 직전 연결을 끊는" 공격에서 롤백으로 카운터가 사라져 아무것도 막지 못한다.
+ *
+ * 계정당 CPU 상한이 여기서 닫힌다: `CAP_CONSUME_PER_HOUR × CAP_VERIFY_ATTEMPTS` =
+ * 시간당 최대 60 회의 `verifyRun`.
+ *
+ * SQL 미러: `bump_commission_verify_attempts` 의 소비처(EF 게이트 6b).
+ */
+export const CAP_VERIFY_ATTEMPTS = 5;
+
+/** `issued → active` 전이 유예(ms). 서버 계약 §5-3. **UX 요건이지 방어 요건이 아니다.** */
+export const GRACE_ISSUED_TO_ACTIVE_MS = 10 * 60 * 1000;
+
+/**
+ * `active` 런의 제출 가능 창(ms). 서버 계약 §5-4 4b · EF 게이트 0c′.
+ *
+ * ⚠️ 나이 검사는 **판정 지점 둘에 직접** 박혀 있다(RPC·EF). cron ③ 은 청소 담당일 뿐
+ * 판정 주체가 아니다 — cron 은 매시 정각이라 판정을 맡기면 최대 1시간의 제출 창이 샌다.
+ */
+export const COMMISSION_ACTIVE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** `replay_gz` 보존 기간(ms). 침공과 동일. 서버 계약 §6 ②. */
+export const COMMISSION_BLOB_TTL_MS = 48 * 60 * 60 * 1000;
+
+/** `commission_issues` 보존 기간(ms). `currency_grants`·`pve_runs` 와 같은 결. 서버 계약 §6 ④. */
+export const COMMISSION_ISSUES_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * `source='commission'` 의 per-call 지급 캡. 서버 계약 §5-1.
+ *
+ * ⚠️ `grant_currency_for` 의 `case p_source` 에 **분기를 반드시 신설**해야 한다. 분기가 없으면
+ * 미등록 source 로 떨어져 `CAP_DEFAULT_*`(1,000)로 **조용히 클램프**된다.
+ *
+ * `CAP_HOURLY_*`(50,000) 아래로 두어 정직한 1회 지급이 누적 캡에 먼저 걸리지 않게 한다.
+ */
+export const CAP_COMMISSION_CREDITS = 30000;
+/** @see CAP_COMMISSION_CREDITS */
+export const CAP_COMMISSION_MINERALS = 30000;
+
+/**
+ * 지시 수신소 **보관 상한** — ⚠️ **플레이스홀더**(서버 계약 §13-① · 밸런스 큐 C4).
+ *
+ * `CONTEXT.md` 가 "보관 상한이 있어 꽉 차면 새 의뢰서가 들어오지 않는다"를 용어 정본으로
+ * 못 박았으나 숫자가 없다. **수신소 UI 레인과 함께 확정한다.** 그 전까지 발령 4단계가 이 값을
+ * 읽는다. 이 값은 방어가 아니라 **긴장 설계**의 축이다(빈도 상한이 방어를 진다).
+ */
+export const COMMISSION_STOCK_CAP = 12;
+
+/**
+ * `grant_currency`(클라 진입점)가 허용하는 **source allowlist**(default-deny). 서버 계약 §5-1 C1.
+ *
+ * ⚠️ **이 목록 밖은 전부 거부된다.** 이것은 이 레인이 만든 제약이 아니라 **이미 열려 있던
+ * 구멍을 닫는 것**이다 — 미등록 source 는 `CAP_DEFAULT_*`(1,000/1,000)로 통과했고 개연성 캡은
+ * `pve_run` 에만 걸리므로, 인증된 아무 사용자가 임의 문자열로 **시간당 50,000/50,000, 일
+ * 300,000/300,000 을 런 없이** 얻을 수 있었다(ADR-0027 결과 절에 기록).
+ *
+ * 전수 근거(grep 확인): `pve_run` = `settle_pve_run` 내부 중첩 호출 · `story` = 사연 보상 ·
+ * `salvage` = 격납고 살베지.
+ */
+export const GRANT_CURRENCY_CLIENT_SOURCES = ['pve_run', 'salvage', 'story'] as const;
+
+/** @see GRANT_CURRENCY_CLIENT_SOURCES */
+export type GrantCurrencyClientSource = (typeof GRANT_CURRENCY_CLIENT_SOURCES)[number];
+
+/**
+ * `grant_currency_for`(공유 본문)의 `case p_source` 분기가 가져야 하는 **전체 라벨 집합**.
+ *
+ * 클라 allowlist + `commission`(서버 전용 진입). **AC-G2 가 이 집합과 SQL 의 `case` 분기
+ * 라벨 집합이 같은지 단언한다** — 값 일치가 아니라 **집합 일치**다. 그래야 "`case` 에 분기만
+ * 추가하고 allowlist 를 빠뜨림"이 잡힌다.
+ */
+export const GRANT_CURRENCY_ALL_SOURCES = [
+  ...GRANT_CURRENCY_CLIENT_SOURCES,
+  'commission',
+] as const;
+
+/** @see GRANT_CURRENCY_ALL_SOURCES */
+export type GrantCurrencySource = (typeof GRANT_CURRENCY_ALL_SOURCES)[number];
+
+/** 클라가 직접 지정할 수 있는 source 인지. `flushPendingGrants` 가 큐 위생에 쓴다(AC-C10). */
+export function isGrantCurrencyClientSource(source: string): source is GrantCurrencyClientSource {
+  return (GRANT_CURRENCY_CLIENT_SOURCES as readonly string[]).includes(source);
+}
+
+/**
+ * 시간 상수 정렬 불변식 — `GRACE < ACTIVE_TTL < BLOB_TTL < ISSUES_RETENTION` (서버 계약 §10).
+ *
+ * 이 부등식이 깨지면 수명·GC 검증표의 "안전" 판정 중 하나가 무너진다. 대표적으로
+ * `ACTIVE_TTL >= BLOB_TTL` 이면 **재시도 창 안에 리플레이가 사라진다**.
+ * **AC-G1 이 이 함수를 단언한다.**
+ */
+export function commissionTtlOrderingHolds(): boolean {
+  return (
+    GRACE_ISSUED_TO_ACTIVE_MS < COMMISSION_ACTIVE_TTL_MS &&
+    COMMISSION_ACTIVE_TTL_MS < COMMISSION_BLOB_TTL_MS &&
+    COMMISSION_BLOB_TTL_MS < COMMISSION_ISSUES_RETENTION_MS
+  );
+}
