@@ -476,8 +476,10 @@ export async function grantCatalystDrops(
   for (const d of drops) {
     if (d.qty <= 0) continue;
     try {
-      await gateway.grantCatalyst(d.id, d.qty);
-      granted += d.qty;
+      // 서버가 per-call·누적 캡으로 절삭할 수 있으므로(ADR-0042 Follow-up ⓐ) 요청량이 아니라
+      // 서버가 돌려준 실적립량을 센다. 구버전 서버는 granted 를 안 주므로 요청량으로 폴백한다.
+      const res = await gateway.grantCatalyst(d.id, d.qty);
+      granted += res.granted !== undefined ? res.granted : d.qty;
     } catch {
       // 개별 실패는 삼킨다(부분 적립 허용 — 다음 런에서 다시 나온다). 다음 드랍 계속.
     }
