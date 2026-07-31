@@ -127,6 +127,10 @@ create policy commission_runs_select_own
 -- ⚠️ **행은 RLS, 컬럼은 GRANT.** 정책만 두면 컬럼은 Supabase 기본 부여로 전부 열린다 →
 --    `GET /rest/v1/commission_runs?select=loadout_sealed,replay_gz` 로 뷰를 무시하고 기저를 친다.
 --    얻는 것이 하필 이 뷰 규율이 존재 이유로 든 바로 그 둘이다.
+-- `anon` 도 함께 회수한다. 지금은 anon 용 정책이 0개라 RLS 가 fail-closed 로 막지만, 그러면
+-- "행은 RLS, 컬럼은 GRANT — **각각** fail-closed" 가 anon 에 대해 1겹뿐이다. 장래에 anon 정책이
+-- 하나라도 생기는 날 컬럼이 통째로 열린다.
+revoke select on public.commission_runs from anon;
 revoke select on public.commission_runs from authenticated;
 grant  select (run_id, profile_id, commission_id, grade, status, payload,
                verify_attempts, verified_result, created_at, started_at, verified_at)
@@ -259,8 +263,18 @@ begin
   v_claim_credits  := greatest(0, coalesce(p_credits, 0));
   v_claim_minerals := greatest(0, coalesce(p_minerals, 0));
 
-  -- ① 개연성 캡: pve_run 만. 의뢰는 **서버 재실행 증거가 있으므로 증거가 캡을 대체한다** —
-  --   이 가드가 이미 그렇게 동작하므로 추가 코드가 없다는 사실을 계약으로 명문화한다.
+  -- ① 개연성 캡: pve_run 만.
+  --
+  -- ⚠️ **의뢰가 여기서 면제되는 근거를 정정한다.** 이전 판은 "서버 재실행 증거가 캡을 대체한다"
+  --    고 적었는데 **그 전제는 거짓이었다** — 재실행이 제출자 config 로 돌면 해시는 제출자가 같은
+  --    config 로 계산한 claim 과 일치해 원리적으로 발산하지 않는다. EF 게이트 6 을 allowlist
+  --    재조립으로 고쳐 무대·코어 스탯·배율 축을 닫았고, **런 파생 자원분은 `settle_commission`
+  --    이 틱 비례로 클램프한 뒤 넘긴다**(§7 참조). 즉 의뢰의 개연성 방어는 면제가 아니라
+  --    **호출부로 옮겨져 있다.**
+  --
+  --    여기서 의뢰를 캡하지 않는 이유: 이 함수가 받는 값은 *런 파생분 + 서버가 발급한 확정 보상*
+  --    의 합이고, 그 합에 런 길이 비례 캡을 걸면 **짧은 고계급 의뢰의 확정 지급이 조용히 잘린다.**
+  --    확정 보상은 서버가 payload 에 구운 값이라 개연성을 물을 대상이 아니다.
   if p_source = 'pve_run' then
     v_final_tick := greatest(0, case
       when (p_metrics->>'finalTick') ~ '^-?[0-9]+(\.[0-9]+)?$'
@@ -594,15 +608,33 @@ security definer
 set search_path = ''
 as $$
 begin
-  -- tg_op / old 가드로 verified → verified 재기록에서 재발화하지 않는다.
-  -- 그래도 commission_issues 의 PK 가 최종 방어다(두 겹: 술어 가드 + 구조 제약).
-  if new.verified_status = 'verified'
-     and (tg_op = 'INSERT' or old.verified_status is distinct from 'verified') then
-    perform public.issue_commission_for_run(new.id, new.profile_id, new.summary);
-  end if;
+  -- ⚠️ **트리거 함수 자체도 서브트랜잭션으로 감싼다.** 피호출자(issue_commission_for_run) 안의
+  --    핸들러만으로는 **이 함수의 잔여 표면**이 무방비다: `new.verified_status`·`new.summary`·
+  --    `new.profile_id`·`new.id` 의 레코드 필드 해석과 함수 해소가 그것이다. 이 리포는 정확히
+  --    그 형태(드롭된 컬럼 참조 → ERROR 42703)로 **온라인 PvE 정산이 100% 실패**한 전례가 있다
+  --    (20260802000000:11-15). `pve_runs.summary` 는 나중에 add column 으로 붙은 컬럼이라
+  --    (20260726000200:265) 장래 리네임·드롭의 실제 후보다. 감싸지 않으면 그날 **전 플레이어가
+  --    자원을 못 받고 화면은 조용하다** — 발령 실패보다 훨씬 나쁜 귀결이다.
+  begin
+    -- tg_op / old 가드로 verified → verified 재기록에서 재발화하지 않는다.
+    -- 그래도 commission_issues 의 PK 가 최종 방어다(두 겹: 술어 가드 + 구조 제약).
+    if new.verified_status = 'verified'
+       and (tg_op = 'INSERT' or old.verified_status is distinct from 'verified') then
+      perform public.issue_commission_for_run(new.id, new.profile_id, new.summary);
+    end if;
+  exception when others then
+    raise warning 'trg_commission_issue_on_verified 실패(pve_run=%): %', new.id, sqlerrm;
+  end;
   return null;   -- AFTER 트리거이므로 반환값은 무시된다.
 end;
 $$;
+
+-- 규율 예외를 만들지 않는다 — 신규 함수는 **전부** PUBLIC 자동 부여를 회수한다. Postgres 가
+-- `returns trigger` 함수의 직접 호출을 거부하므로 착취 경로는 없지만, 예외가 하나 있으면 회귀
+-- 대조에서 "빠뜨린 것"과 "일부러 뺀 것"을 구분할 수 없다.
+revoke all on function public.trg_commission_issue_on_verified() from public;
+revoke all on function public.trg_commission_issue_on_verified() from anon;
+revoke all on function public.trg_commission_issue_on_verified() from authenticated;
 
 -- 트리거는 UPDATE 분기(촉매 런)와 INSERT 분기(무촉매 런) **양쪽에서** 발화한다.
 -- 클라는 verified 행을 만들 수 없다: pve_runs 에 authenticated 용 정책은 insert·select 둘뿐이고
@@ -767,6 +799,8 @@ set search_path = ''
 as $$
 declare
   ACTIVE_TTL constant interval := interval '24 hours';   -- 미러: commissionServerConstants.ts
+  -- 미러: grant_currency_for 의 같은 상수. 런 파생 자원분에만 적용한다(아래 7 참조).
+  PLAUSIBILITY_CREDITS_PER_TICK constant numeric := 2.0;
   v_run      public.commission_runs%rowtype;
   v_rewards  jsonb;
   v_uniques  jsonb;
@@ -774,6 +808,9 @@ declare
   v_grant    jsonb;
   v_grants   jsonb := '[]'::jsonb;
   v_elem     jsonb;
+  v_ver_ticks numeric;
+  v_max_stage numeric;
+  v_plaus_run numeric;
   i          int;
 begin
   -- 1. 정문(apply_invasion_result:289-291 동형 — JWT 기준 판별자를 쓴다).
@@ -852,13 +889,32 @@ begin
   end loop;
 
   -- 7. 자원 지급 **1회** — 확정 보상 + 재실행 finalState 자원 축을 합산한다.
-  --    행성 인기 배율을 읽지 않는다(ADR-0038 "대체 가능한 보상에만 배율"; 의뢰 런 config 에
-  --    planetMultCenti/planetMultEpoch 를 스탬프하지 않으므로 적용할 입력 자체가 없다).
+  --    행성 인기 배율을 읽지 않는다(ADR-0038 "대체 가능한 보상에만 배율"). ⚠️ 이전 판은 그 근거를
+  --    "의뢰 런 config 에 planetMultCenti 를 스탬프하지 않으므로 적용할 입력 자체가 없다"로 적었는데,
+  --    **그것은 정직한 클라에 대한 참이지 제출자에 대한 참이 아니었다**(클라 조립 규율을 서버
+  --    불변식으로 오독). 실제 근거는 EF 게이트 6 의 allowlist 재조립이 그 필드를 **벗긴다**는 것이다.
   --    app.in_settle 을 세우지 않는다(촉매 주입 불가라 배율이 없다).
+  --
+  -- ⚠️ **런 파생분에만 틱 비례 개연성 캡을 건다.** 확정 보상은 서버가 payload 에 구운 값이라
+  --    개연성을 물을 대상이 아니고, 합에 캡을 걸면 짧은 고계급 의뢰의 확정 지급이 조용히 잘린다.
+  --    부풀 수 있는 것은 런 파생분뿐이다 — 로드아웃이 아직 미검증이라(`loadout_sealed` 의 기준값
+  --    자체가 출격 전 클라 입력) 화력 → 처치 속도 → 자원 축이 여전히 열려 있다.
+  --    `finalTick` 은 **EF 가 재실행으로 확정한 값**이다(클라 주장이 아니다).
+  v_ver_ticks := greatest(0, case
+    when (p_verified_result->>'ticks') ~ '^[0-9]+$' then (p_verified_result->>'ticks')::numeric
+    else 0 end);
+  v_max_stage := 0;
+  for i in 0 .. greatest(0, jsonb_array_length(coalesce(v_run.payload->'segments', '[]'::jsonb)) - 1) loop
+    v_max_stage := greatest(v_max_stage, coalesce((v_run.payload->'segments'->i->>'stage')::numeric, 0));
+  end loop;
+  v_plaus_run := PLAUSIBILITY_CREDITS_PER_TICK * v_ver_ticks * (1 + v_max_stage);
+
   v_grant := public.grant_currency_for(
     v_run.profile_id,
-    coalesce((v_rewards->>'credits')::numeric, 0)  + greatest(0, coalesce(p_run_credits, 0)),
-    coalesce((v_rewards->>'minerals')::numeric, 0) + greatest(0, coalesce(p_run_minerals, 0)),
+    coalesce((v_rewards->>'credits')::numeric, 0)
+      + least(greatest(0, coalesce(p_run_credits, 0)), v_plaus_run),
+    coalesce((v_rewards->>'minerals')::numeric, 0)
+      + least(greatest(0, coalesce(p_run_minerals, 0)), v_plaus_run),
     'commission',
     null
   );

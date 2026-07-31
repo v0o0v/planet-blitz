@@ -181,6 +181,18 @@ begin
     acc := acc || ('col_replay_gz' || ' => ' || 'REFUSED ' || sqlerrm);
   end;
 
+  -- (6b) same two columns must be unreachable as `anon` too. RLS already blocks anon rows
+  --      (no anon policy), but the banner claims rows AND columns are each fail-closed - for
+  --      anon that was only one layer until the anon revoke was added. Probe the second layer.
+  set local role anon;
+  begin
+    perform loadout_sealed from public.commission_runs limit 1;
+    acc := acc || ('anon_col_loadout_sealed' || ' => ' || 'LEAK readable');
+  exception when others then
+    acc := acc || ('anon_col_loadout_sealed' || ' => ' || 'REFUSED ' || sqlerrm);
+  end;
+  set local role authenticated;
+
   -- (7) granted columns must still work (over-revoking would break the client).
   begin
     perform status from public.commission_runs limit 1;

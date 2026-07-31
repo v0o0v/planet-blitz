@@ -141,6 +141,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
     verified_result: unknown;
   };
 
+  // 게이트 0d(**소유자 검사가 먼저다** — 계약 §7-1 게이트 표의 순서를 이 자리에서 정정한다):
+  // 제출자 = 행의 profile_id 본인만. 예전에는 0b(멱등 반환)가 앞이라, 인증된 아무 사용자가 남의
+  // `run_id` 를 알면 그 런의 `verified_result`(finalHash·틱수·승패·지급액)를 읽었다. run_id 가
+  // uuid v4 라 추측 불가이므로 실제 착취성은 낮지만, **소유자 검사보다 앞서는 반환 경로를 두면
+  // 안 된다**는 규율이 더 싸다.
+  if (run.profile_id !== callerId) {
+    return respond('rejected', false, { reason: 'commission-run-not-owner' }, 403);
+  }
+
   // 게이트 0b: 이미 확정된 런은 저장된 판정을 CPU 없이 그대로 반환(멱등 재호출의 값싼 경로).
   if (run.status === 'verified' || run.status === 'rejected') {
     const vr = asRecord(run.verified_result);
@@ -167,11 +176,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const startedAtMs = Date.parse(run.started_at);
   if (!Number.isFinite(startedAtMs) || startedAtMs <= Date.now() - COMMISSION_ACTIVE_TTL_MS) {
     return respond('rejected', false, { reason: 'commission-run-expired' });
-  }
-
-  // 게이트 0d: 제출자 = 행의 profile_id 본인만.
-  if (run.profile_id !== callerId) {
-    return respond('rejected', false, { reason: 'commission-run-not-owner' }, 403);
   }
 
   const payload = run.payload as CommissionPayload;

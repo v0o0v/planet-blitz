@@ -17,7 +17,10 @@ import {
 } from '../supabase/functions/verify-commission/verifyCommissionCore.js';
 import type { CommissionServerContext } from '../supabase/functions/verify-commission/verifyCommissionCore.js';
 import type { CommissionPayload, CommissionRunConfig } from '../src/run/commission.js';
-import { commissionReplayBudgetTicks } from '../src/run/commissionConstants.js';
+import {
+  commissionReplayBudgetTicks,
+  COMMISSION_WAVE_SEGMENTS_PER_SEGMENT,
+} from '../src/run/commissionConstants.js';
 
 function samplePayload(over: Partial<CommissionPayload> = {}): CommissionPayload {
   return {
@@ -261,5 +264,132 @@ describe('extractRunResources — 재실행 finalState.resources 추출(계약 �
     const expected = runReplay({ seed: 7, config, inputs }).finalState.resources;
     const { resources } = extractRunResources({ seed: 7, config, inputs });
     expect(resources).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 게이트 6 — allowlist 재조립 (보안 검토 CRITICAL 회귀 게이트)
+// ---------------------------------------------------------------------------
+
+describe('게이트 6 — 제출 config 를 **정화**한다 (덮어쓰기만 하면 재실행이 증거가 아니다)', () => {
+  // ⚠️ 결함 형상: `{...cfg, commission: expected}`. 그러면 서버 권위가 commission 블록 하나뿐이고
+  //    나머지 WorldConfig 전체가 제출자 것으로 남는다. 재실행이 제출자 config 로 돌고 해시는
+  //    제출자가 같은 config 로 계산한 claim 과 일치하므로 **게이트 7 은 원리적으로 발산하지
+  //    않는다** — 즉 "재실행이 강제한다"가 거짓이 된다.
+  //
+  // ⚠️ 이 블록의 단언이 통과하면서도 참일 수 있는 나쁜 상태: 게이트 6 이 **아예 도달하지 않는
+  //    것**(앞 게이트가 거부). 그래서 매 케이스에서 `res.ok === true` 를 먼저 확인한다.
+
+  /** 위험 필드를 잔뜩 실은 제출. 전부 정직한 클라가 의뢰 런에 넣지 않는 값이다. */
+  function hostileSubmission(server: CommissionServerContext) {
+    return baseSubmission(server, {
+      config: {
+        loadout: server.loadoutSealed,
+        commission: commissionConfigFromPayload(server.payload),
+        // ⓐ 코어 스탯 위조 → 무손실 완주 → 확정 지급물 취득
+        playerHp: 1e9,
+        playerSpeed: 1e6,
+        dashSpeed: 1e6,
+        hitIframes: 1e9,
+        dashIframes: 1e9,
+        dashCooldownTicks: 0,
+        arenaWidth: 1e6,
+        arenaHeight: 1e6,
+        // ⓑ 자원 배율 → finalState.resources 무제한(그 산술에 상한 캡이 없다)
+        planetMultCenti: 1_000_000,
+        planetMultEpoch: 99,
+        // ⓒ 1구간 무대 위조 — stageOverride 는 2구간 전환에만 적용된다
+        planet: 5,
+        stage: 99,
+        planetMode: 3,
+        // ⓓ 구간 단축 → 일반 세그먼트를 건너뛰고 즉시 보스
+        maxSegments: 0,
+        // 그 외 의뢰에 실릴 수 없는 축
+        invasion3: { anything: true },
+        pilot: { typeId: 3 },
+      },
+    });
+  }
+
+  it('코어 스탯 9종이 DEFAULT_CONFIG 로 되돌아간다 (제출값이 한 개도 살아남지 않는다)', () => {
+    const server = baseContext();
+    const res = evaluateCommissionGates(hostileSubmission(server), server);
+    expect(res.ok, '게이트 6 에 도달하지 못했다 — 이 테스트가 무의미하다').toBe(true);
+    if (!res.ok) return;
+    const c = res.submission.config as unknown as Record<string, unknown>;
+    // 독립 전사본 — DEFAULT_CONFIG 를 순회하면 그 객체에서 키가 빠질 때 단언도 함께 사라진다.
+    const CORE = [
+      'arenaWidth',
+      'arenaHeight',
+      'playerSpeed',
+      'dashSpeed',
+      'dashCooldownTicks',
+      'dashIframes',
+      'hitIframes',
+      'playerHp',
+    ] as const;
+    for (const k of CORE) {
+      expect(c[k], `${k} 가 제출값으로 남았다`).toBe(
+        (DEFAULT_CONFIG as unknown as Record<string, unknown>)[k],
+      );
+    }
+    // 전사본이 실제 필드 집합과 어긋나면(예: 새 코어 상수 추가) 여기서 걸린다.
+    expect(Object.keys(DEFAULT_CONFIG).sort()).toEqual([...CORE].sort());
+  });
+
+  it('무대는 **payload 의 1구간**에서 파생된다 (제출 planet/stage 를 믿지 않는다)', () => {
+    const server = baseContext();
+    const res = evaluateCommissionGates(hostileSubmission(server), server);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const c = res.submission.config as unknown as Record<string, unknown>;
+    expect(c.planet).toBe(server.payload.segments[0]?.planet);
+    expect(c.stage).toBe(server.payload.segments[0]?.stage);
+    // 제출값(5/99)이 아니라는 것을 명시적으로 — 우연히 같은 값이면 위 단언이 항진이다.
+    expect(c.planet).not.toBe(5);
+    expect(c.stage).not.toBe(99);
+  });
+
+  it('의뢰에 실릴 수 없는 축은 **키 자체가 사라진다**', () => {
+    const server = baseContext();
+    const res = evaluateCommissionGates(hostileSubmission(server), server);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const c = res.submission.config as unknown as Record<string, unknown>;
+    for (const k of ['planetMultCenti', 'planetMultEpoch', 'invasion3', 'pilot', 'catalysts']) {
+      expect(k in c, `${k} 가 살아남았다`).toBe(false);
+    }
+  });
+
+  it('maxSegments 는 서버 상수로 고정된다 (제출 0 이 통하면 보스로 즉시 점프한다)', () => {
+    const server = baseContext();
+    const res = evaluateCommissionGates(hostileSubmission(server), server);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const c = res.submission.config as unknown as Record<string, unknown>;
+    expect(c.maxSegments).toBe(COMMISSION_WAVE_SEGMENTS_PER_SEGMENT);
+  });
+
+  it('대조군: 정직한 제출은 재조립 후에도 자기 축을 그대로 유지한다', () => {
+    // ⚠️ 위 네 단언만 있으면 "게이트 6 이 전부 지워 버린다"도 통과한다. 정직한 축(로드아웃·
+    //    기체·스킬 투자)이 살아남는지 함께 잰다 — 안 살아남으면 정직한 런이 전부 거부된다.
+    const server = baseContext();
+    const honest = baseSubmission(server, {
+      config: {
+        loadout: server.loadoutSealed,
+        commission: commissionConfigFromPayload(server.payload),
+        shipType: 2,
+        skillInvest: [1, 2, 3],
+        runId: 'abc',
+      },
+    });
+    const res = evaluateCommissionGates(honest, server);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const c = res.submission.config as unknown as Record<string, unknown>;
+    expect(c.shipType).toBe(2);
+    expect(c.skillInvest).toEqual([1, 2, 3]);
+    expect(c.runId).toBe('abc');
+    expect(c.loadout).toEqual(server.loadoutSealed);
   });
 });

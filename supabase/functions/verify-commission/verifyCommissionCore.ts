@@ -27,6 +27,9 @@
  */
 
 import type { WorldConfig } from '../../../src/sim/world.js';
+import { DEFAULT_CONFIG } from '../../../src/sim/world.js';
+import { planetContent } from '../../../data/planets/index.js';
+import { COMMISSION_WAVE_SEGMENTS_PER_SEGMENT } from '../../../src/run/commissionConstants.js';
 import { runReplay } from '../../../src/sim/replay.js';
 import type { Replay } from '../../../src/sim/replay.js';
 import type {
@@ -168,6 +171,18 @@ export function evaluateCommissionGates(
 
   // 게이트 3: 로드아웃 위조 — 출격 시점 봉인(loadout_sealed)과 제출 config.loadout 이 달라지면
   // 거부한다. 대조가 닫는 것은 "출격 후 편집"뿐이고 출격 전 위조는 열려 있다(ADR-0044, ADR-0028).
+  //
+  // ⚠️ **자인 — 로드아웃 축에는 현재 서버 판정이 0겹이다.** 이 게이트의 기준값(`loadout_sealed`)은
+  //    `consume_commission(p_loadout)` 으로 클라가 넣은 값이고, 그 구멍의 대체 방어로 지목된
+  //    게이트 4 는 `COMMISSION_EXCLUSIVE_UNIQUE_BITS` 가 비어 있어 구조적으로 아무것도 안 본다.
+  //    자인 둘이 겹쳐 상쇄된 상태다.
+  //
+  //    **배정된 대체 방어**(미조달로 남기지 않는다): ① 게이트 6 의 allowlist 재조립이 코어 스탯·
+  //    무대·배율 축을 닫아 로드아웃 위조의 상한을 "장비로 낼 수 있는 화력"으로 묶는다. ② 런 파생
+  //    자원분에 틱 비례 개연성 캡(`settle_commission` §7)을 걸어 화력 인플레가 재화로 환전되는
+  //    폭을 묶는다. ③ 확정 지급물은 소비된 의뢰서 1장당 1회이고 발령이 빈도 상한 20/h 에 묶인다.
+  //    남는 잔여 위험은 "정상 범위를 벗어난 장비로 어려운 의뢰를 깬다"이며, 이는 서버가 장비
+  //    원장을 갖기 전까지(ADR-0028 연기) 구조로 못 막는 축이다 — 밸런스 큐에 등재한다.
   const submittedLoadout = cfg !== null ? cfg.loadout : undefined;
   if (!deepEqual(submittedLoadout, server.loadoutSealed)) {
     return reject('commission-loadout-mismatch');
@@ -203,10 +218,50 @@ export function evaluateCommissionGates(
     return reject('commission-payload-mismatch');
   }
 
-  // 게이트 6: 서버 payload 로 `commission` 블록을 덮어쓴다(거부 없음 — 강제는 재실행이 진다).
+  // 게이트 6: **allowlist 재조립**. 거부는 없고, 서버가 아는 축을 서버 값으로 다시 세운다.
+  //
+  // ⚠️ **`{...cfg, commission: expected}` 로 쓰면 안 된다.** 그러면 서버 권위가 `commission`
+  //    블록 하나뿐이고 나머지 `WorldConfig` 전체가 제출자 것으로 남는다. 재실행이 제출자 config
+  //    로 돌고 해시는 제출자가 **같은 config 로 계산한** claim 과 일치하므로, 게이트 7 은
+  //    원리적으로 발산하지 않는다 — 즉 "재실행이 강제한다"가 거짓이 된다. 실제로 열리는 벡터:
+  //      ⓐ `playerHp: 1e9` → 무손실 완주 → 확정 지급물(ADR-0045) 취득
+  //      ⓑ `planetMultCenti: 1e6` → `finalState.resources` 무제한(그 산술에 상한 캡이 없다)
+  //      ⓒ `planet`/`stage` 임의 → **1구간 무대는 서버 권위가 아니다**(`stageOverride` 는
+  //         `nextIndex >= 1` 전환에만 적용되고 `createWorld` 는 `segments[0]` 을 읽지 않는다)
+  //      ⓓ `maxSegments: 0` → 일반 세그먼트를 건너뛰고 즉시 보스
+  //
+  // 규율: **서버가 아는 것은 서버 값, 모르는 것만 제출값.** 새 필드가 `WorldConfig` 에 생기면
+  // 여기서 명시적으로 분류하라 — spread 로 흘려보내면 그 순간 다시 열린다.
+  const seg0 = server.payload.segments[0];
+  if (seg0 === undefined) return reject('commission-payload-mismatch');
   const authoritativeConfig: WorldConfig = {
-    ...(cfg as unknown as WorldConfig),
+    // ① 코어 sim 상수 — 제출자가 정할 여지가 없다. `buildRunConfig` 도 이 아홉을 손대지 않고
+    //    `DEFAULT_CONFIG` 그대로 쓰므로(`src/run/runConfig.ts:183`), 고정해도 정직한 런은
+    //    한 비트도 안 바뀐다.
+    ...DEFAULT_CONFIG,
+    // ② 무대 — **payload 의 1구간**이 정본. 2구간부터는 `stageOverride` 가 전환 때 세운다.
+    planet: seg0.planet,
+    stage: seg0.stage,
+    planetMode: planetContent(seg0.planet).mode,
+    // ③ 제출자가 정하는 축(서버가 독립적으로 알 수 없다). 로드아웃은 게이트 3 이 `loadout_sealed`
+    //    와 대조하지만 그 기준값 자체가 출격 전 클라 입력이다 — §자인 참조.
+    //    `exactOptionalPropertyTypes` 아래에서는 `undefined` 를 **넣는 것**과 **키가 없는 것**이
+    //    다르다. 조건부 스프레드로 키 자체를 빼야 `WorldConfig` 와 정합하고, sim 도 기본값으로 간다.
+    ...(cfg?.loadout !== undefined ? { loadout: cfg.loadout as NonNullable<WorldConfig["loadout"]> } : {}),
+    ...(cfg?.skillInvest !== undefined
+      ? { skillInvest: cfg.skillInvest as NonNullable<WorldConfig["skillInvest"]> }
+      : {}),
+    ...(cfg?.activeSlots !== undefined
+      ? { activeSlots: cfg.activeSlots as NonNullable<WorldConfig["activeSlots"]> }
+      : {}),
+    ...(cfg?.shipType !== undefined ? { shipType: cfg.shipType as NonNullable<WorldConfig["shipType"]> } : {}),
+    ...(cfg?.runId !== undefined ? { runId: cfg.runId as NonNullable<WorldConfig["runId"]> } : {}),
+    // ④ 서버 권위 블록.
     commission: expected,
+    maxSegments: COMMISSION_WAVE_SEGMENTS_PER_SEGMENT,
+    // ⑤ **의도적 누락** — `catalysts`(게이트 2 가 이미 거부) · `planetMultCenti`/`planetMultEpoch`
+    //    (의뢰 런은 행성 인기 배율을 받지 않는다) · `invasion3`(침공과 상호 배타) · `pilot`
+    //    (예비역 소집은 장비축 제약을 우회한다). 여기 없으면 sim 이 기본값으로 간다.
   };
   return {
     ok: true,
@@ -231,6 +286,15 @@ export interface RunResourceFacts {
  * outcome)만 반환하고 `resources`/`minerals` 를 노출하지 않으므로, **같은 결정론적 replay 를
  * 한 번 더 돌려** 그 값을 얻는다(같은 입력이므로 결과가 갈릴 위험이 없다 — 게이트 7 이 이미
  * 해시 일치를 확인한 뒤에만 이 함수를 부른다).
+ *
+ * ## CPU 예산 — 이 중복이 왜 계정당 상한을 2배로 만들지 않는가
+ * 이 함수는 **accept 경로에서만** 불린다. 그리고 accept 는 `settle_commission` 이 상태를
+ * `verified` 로 확정하므로 같은 `run_id` 에 대해 **최대 1회**다(재호출은 게이트 0b 가 CPU 없이
+ * 저장된 판정을 돌려준다). 즉 증폭은 "시도당 2배"가 아니라 **런당 +1회**다.
+ *
+ * ⚠️ 남는 창 하나: `settle_commission` 이 500 을 내면 상태가 확정되지 않아 클라 재호출이 이
+ * 경로를 다시 밟는다. 그 반복은 `commission_runs.verify_attempts`(상한 5, `bump_...` RPC 가
+ * 게이트 7 직전에 증가)가 묶는다 — 무한이 아니다.
  *
  * ⚠️ **가정(미확인)**: `minerals` 는 WorldState 에 결정론적 필드로 없다(일반 PvE 정산도
  * 살베지 파생 클라 주장이다 — `src/save/settlement.ts` 참조). 이 함수는 `resources` 만 낸다.
