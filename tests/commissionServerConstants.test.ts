@@ -50,6 +50,19 @@ function sqlConstant(name: string): number {
   return Number(m![1]);
 }
 
+/**
+ * 정규식 캡처 그룹을 **문자열로 확정해서** 돌려준다.
+ *
+ * `noUncheckedIndexedAccess` 아래에서 `m[1]` 은 `string | undefined` 다. `!` 로 눌러 두면
+ * 타입만 조용해지고 그룹이 실제로 안 잡힌 경우 `undefined` 가 그대로 흘러 **집합 비교가 빈 값끼리
+ * 같다고 말하며 통과**한다 — 이 파일이 지키려는 드리프트를 못 보게 되는 형태다. 여기서 던진다.
+ */
+function cap(m: RegExpMatchArray | RegExpExecArray | null, i: number, what: string): string {
+  const v = m?.[i];
+  if (typeof v !== 'string') throw new Error(`${what}: 캡처 그룹 ${i} 를 읽지 못했다`);
+  return v;
+}
+
 /** `NAME constant interval := interval '<n> <unit>';` 을 ms 로 읽는다. */
 function sqlIntervalMs(name: string): number {
   const code = stripLineComments(sql());
@@ -57,8 +70,8 @@ function sqlIntervalMs(name: string): number {
     code,
   );
   expect(m, `SQL interval 상수 ${name} 을 찾지 못함`).not.toBeNull();
-  const n = Number(m![1]);
-  const unit = m![2];
+  const n = Number(cap(m, 1, `SQL interval ${name}`));
+  const unit = cap(m, 2, `SQL interval ${name} 단위`);
   const per: Record<string, number> = {
     minute: 60_000,
     minutes: 60_000,
@@ -67,8 +80,9 @@ function sqlIntervalMs(name: string): number {
     day: 86_400_000,
     days: 86_400_000,
   };
-  expect(per[unit], `알 수 없는 단위 ${unit}`).toBeGreaterThan(0);
-  return n * per[unit];
+  const ms = per[unit];
+  expect(ms, `알 수 없는 단위 ${unit}`).toBeGreaterThan(0);
+  return n * (ms ?? 0);
 }
 
 describe('AC-G1 — 시간 상수 정렬 불변식', () => {
@@ -118,7 +132,9 @@ describe('AC-G2 확장 — source 집합 일치 (값이 아니라 집합)', () =
     const code = stripLineComments(sql());
     const m = /p_source not in \(([^)]*)\)/.exec(code);
     expect(m, 'allowlist 를 찾지 못함').not.toBeNull();
-    return [...m![1].matchAll(/'([^']+)'/g)].map((x) => x[1]).sort();
+    return [...cap(m, 1, 'allowlist 본문').matchAll(/'([^']+)'/g)]
+      .map((x) => cap(x, 1, 'allowlist 항목'))
+      .sort();
   }
 
   /** grant_currency_for 의 `case p_source` 분기 라벨 집합. */
@@ -130,7 +146,9 @@ describe('AC-G2 확장 — source 집합 일치 (값이 아니라 집합)', () =
     expect(end).toBeGreaterThan(at);
     // ⚠️ `\s+` 여야 한다. `' then`(공백 1칸)으로 쓰면 정렬용 여백을 넣은 분기를 놓쳐
     //    **집합이 조용히 작아진다** — 이 테스트가 지키려는 바로 그 드리프트를 못 보게 된다.
-    return [...code.slice(at, end).matchAll(/when '([^']+)'\s+then/g)].map((x) => x[1]).sort();
+    return [...code.slice(at, end).matchAll(/when '([^']+)'\s+then/g)]
+      .map((x) => cap(x, 1, 'case 분기 라벨'))
+      .sort();
   }
 
   it('allowlist == TS 클라 source 집합', () => {

@@ -60,6 +60,19 @@ function commissionCode(): string {
   return stripLineComments(commissionSql());
 }
 
+/**
+ * 정규식 캡처 그룹을 **문자열로 확정해서** 돌려준다.
+ *
+ * `noUncheckedIndexedAccess` 아래에서 `m[1]` 은 `string | undefined` 다. `!` 로 눌러 두면 타입만
+ * 조용해지고 그룹이 안 잡힌 경우 `undefined` 가 흘러 **컬럼 목록 비교가 빈 값끼리 같다고 말하며
+ * 통과**한다 — 이 파일이 지키려는 바로 그 유출을 못 보게 되는 형태다. 여기서 던진다.
+ */
+function cap(m: RegExpMatchArray | RegExpExecArray | null, i: number, what: string): string {
+  const v = m?.[i];
+  if (typeof v !== 'string') throw new Error(`${what}: 캡처 그룹 ${i} 를 읽지 못했다`);
+  return v;
+}
+
 /** cron.schedule('<name>', '<sched>', $$ <body> $$) 를 뽑는다. */
 function cronJob(name: string): { schedule: string; body: string } {
   const code = commissionCode();
@@ -70,7 +83,7 @@ function cronJob(name: string): { schedule: string; body: string } {
   const body = /\$\$([\s\S]*?)\$\$/.exec(tail);
   expect(sched, `${name}: 스케줄을 못 읽음`).not.toBeNull();
   expect(body, `${name}: 본문을 못 읽음`).not.toBeNull();
-  return { schedule: sched![1], body: body![1] };
+  return { schedule: cap(sched, 1, `cron ${name} 스케줄`), body: cap(body, 1, `cron ${name} 본문`) };
 }
 
 describe('의뢰서 원장 — 마이그레이션 정렬 계약 (AC-G3)', () => {
@@ -218,11 +231,17 @@ describe('의뢰서 원장 — RLS·권한 (AC-R2 · AC-R8)', () => {
         .filter((t) => t.length > 0)
         .sort();
 
+    const granted = norm(cap(grantM, 1, 'commission_runs 컬럼 GRANT 목록'));
+    const viewed = norm(cap(viewM, 1, 'commission_runs_public 뷰 select 목록'));
+
     // **열거가 아니라 집합 일치로 잰다** — 컬럼이 새로 생겨도 걸린다.
-    expect(norm(grantM![1])).toEqual(norm(viewM![1]));
+    expect(granted).toEqual(viewed);
+    // 빈 목록끼리도 "같다"가 되므로 비어 있지 않음을 함께 못 박는다 — 정규식이 헛돌면
+    // 위 등식만으로는 유출 상태에서 통과한다.
+    expect(granted.length).toBeGreaterThan(0);
     // 그리고 두 목록 어디에도 이 둘이 없어야 한다.
-    expect(norm(grantM![1])).not.toContain('loadout_sealed');
-    expect(norm(grantM![1])).not.toContain('replay_gz');
+    expect(granted).not.toContain('loadout_sealed');
+    expect(granted).not.toContain('replay_gz');
   });
 
   it('기저 테이블의 기본 컬럼 부여를 회수한다 (AC-R8 뮤테이션 대상)', () => {
