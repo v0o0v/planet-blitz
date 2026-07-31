@@ -27,8 +27,14 @@ import type { WaveCard, Formation } from '../../data/waves.js';
 import { planetContent } from '../../data/planets/index.js';
 import { cos, sin, PI, TWO_PI } from './math.js';
 import { OFFSCREEN_X, OFFSCREEN_Y, SPAWN_RING_RADIUS, VIEW_HEIGHT } from './constants.js';
-import { makeElite, ELITE_AFFIX_COUNT } from './elite.js';
+import { makeElite, isElite, ELITE_AFFIX_COUNT } from './elite.js';
 import { PLANET_MODE } from './planetMode.js';
+import { windowCenterX, windowCenterY } from './invasion/scroll.js';
+import {
+  commissionSuppressesCardSpawns,
+  decideEliteDeploy,
+  isEliteSummons,
+} from './commissionOrders.js';
 import {
   blockBreakProgress,
   BLOCKBREAK_SECTION_LENGTH,
@@ -62,6 +68,26 @@ export interface WaveRuntime {
   segmentBaseKills: number;
   /** 현재 세그먼트를 넘어가기 위한 처치 수(현재 세그먼트 데이터의 killGoal). */
   segmentKillGoal: number;
+  /**
+   * 정예 소집령(ADR-0043) 겹침 시계 — **직전 틱의 살아 있는 정예 수**. 전멸 에지
+   * (`>0` → `0`)를 잡는 데만 쓴다. 의뢰 이외의 런에서는 끝까지 0 이라 무연산이다.
+   *
+   * ## ⚠️ 왜 `CommissionRuntime` 이 아니라 여기인가 (계약 초안과의 의도적 차이)
+   * 계약은 이 둘을 `CommissionRuntime` 에 두고 "구간마다 새 월드라 자동 리셋"이라고 적었다.
+   * **그 전제가 틀렸다** — `commissionCarry.ts` 의 `WORLD_CARRY` 가 `commissionRuntime` 을
+   * **객체 참조째** 승계하므로(`totalTicks` 누적이 그 이유다) 거기 얹은 필드는 구간을 넘어
+   * 그대로 살아남는다. `eliteNextTick` 은 `state.tick` 과 비교되는데 `tick` 은 구간마다 0 으로
+   * 돌아가므로, 1구간 말의 큰 값이 넘어오면 **2구간 내내 정예가 한 기도 안 나온다**.
+   * 결정론적이라 해시가 안 갈리고 "2구간이 텅 비었다"로만 보인다(`tick` 승계 결함과 같은 은폐 형태).
+   * `WaveRuntime` 은 `WORLD_FRESH` 라 `createWaveRuntime()` 이 구간마다 진짜로 0 을 준다.
+   *
+   * ⚠️ **`hashWorld` 는 이 둘을 접지 않는다**(wave 폴드는 필드를 이름으로 열거한다). 자인
+   * 사항이다 — 대신 이 시계가 만들어 내는 **엔티티(정예)는 접히므로** 두 값이 갈리면 발산이
+   * 늦어도 다음 투입 틱에 스트림에 드러난다.
+   */
+  eliteAlivePrev: number;
+  /** 정예 소집령 겹침 시계 — **다음 투입이 가능해지는 틱**. 위 필드의 주석이 계약 전부다. */
+  eliteNextTick: number;
 }
 
 export function createWaveRuntime(): WaveRuntime {
@@ -74,6 +100,10 @@ export function createWaveRuntime(): WaveRuntime {
     done: false,
     segmentBaseKills: 0,
     segmentKillGoal: first ? first.killGoal : 0,
+    // 정예 소집령 시계. 둘 다 0 = "아직 아무것도 안 나왔고 지금 당장 투입 가능" 이라
+    // 첫 정예가 tick 0 에 내려온다(무의뢰 런은 스포너가 아예 안 불린다).
+    eliteAlivePrev: 0,
+    eliteNextTick: 0,
   };
 }
 
@@ -150,6 +180,11 @@ export function updateWaves(state: WorldState, player: Entity): void {
   }
   state.bulletCap = seg.bulletCap;
 
+  // 정예 소집령(ADR-0043): 잡몹 대신 정예를 겹쳐 내려보내는 **스포너**다. 세그먼트 게이트가
+  // 아니라 여기(스폰 층)에 붙는 이유는, 이 주문이 바꾸는 것이 "구간을 언제 넘는가"가 아니라
+  // "무엇이 내려오는가"이기 때문이다. 무의뢰 런은 술어가 거짓이라 무연산(바이트 불변).
+  if (isEliteSummons(state)) stepEliteSummons(state, player);
+
   if (seg.boss) {
     w.boss = true; // Phase 3 hook: boss encounter begins here.
   }
@@ -198,7 +233,14 @@ export function updateWaves(state: WorldState, player: Entity): void {
   const cardInterval = Math.max(RUSH_MIN_INTERVAL, seg.cardInterval - rushSteps * RUSH_INTERVAL_STEP);
 
   if (w.cardTimer > 0) w.cardTimer--;
-  if (w.cardTimer <= 0 && countEnemies(state) < maxEnemies) {
+  // 정예 소집령은 **잡몹이 전혀 나오지 않는다**(ADR-0043 — "잡몹을 극소로"는 명시 기각안이다).
+  // 카드 추첨 자체를 건너뛰므로 `waveRng` 도 소비되지 않는다. 젬 0 은 이 게이트의 자연 귀결이고
+  // (잡몹이 없으면 젬을 남길 개체가 없다), 남은 경로 하나(엘리트·기물 젬)를 `compact()` 가 막는다.
+  if (
+    !commissionSuppressesCardSpawns(state) &&
+    w.cardTimer <= 0 &&
+    countEnemies(state) < maxEnemies
+  ) {
     // 행성별 카드 풀에서 추첨(카르곤/베르단). 풀 길이가 달라도 waveRng 소비는 카드
     // 인덱스 1회로 동일하므로 스트림 분리 규율 유지.
     const cardPool = planetContent(state.config.planet).cardPool;
@@ -286,6 +328,63 @@ export function updateWaves(state: WorldState, player: Entity): void {
       if (state.shrinkRuntime !== undefined) state.shrinkRuntime.graceTicks = SHRINK_GRACE_TICKS;
     }
   }
+}
+
+/**
+ * 정예 소집령(`order: 'elite'`)의 **겹침 소환** 한 틱 (ADR-0043).
+ *
+ * 판정은 전부 {@link decideEliteDeploy} 안에 있다(순수 함수) — 여기는 실측(`alive` 세기)과
+ * 부수효과(스폰)만 진다. **고정 주기 타이머가 아니라는 것**이 이 주문의 핵심이니, 왜 그런지는
+ * 그 함수의 주석을 읽어라.
+ *
+ * ## RNG 소비 순서 계약 (`eliteRng`, 투입 1기당 정확히 3회)
+ * `① 정예 정의 인덱스 → ② 배치 각도 → ③ 어픽스`. 순서를 바꾸면 이미 제출된 의뢰
+ * 리플레이가 전부 다른 런이 된다. 이 스트림은 무의뢰 런에서 한 번도 소비되지 않으므로
+ * (스포너 자체가 안 불린다) 기존 PvE·침공 해시에는 닿지 않는다.
+ *
+ * ## 정예 정의 풀
+ * 행성 레지스트리의 `elites` 가 정본이다. **카르곤(0)은 `elites: []`** 라 비어 있으므로
+ * 로스터로 폴백한다 — 폴백이 없으면 카르곤을 지정한 정예 소집령이 아무것도 못 내려보내
+ * "적이 하나도 안 나오는 런"이 된다(그리고 그것은 조용히 통과한다).
+ */
+function stepEliteSummons(state: WorldState, player: Entity): void {
+  const w = state.wave;
+  let alive = 0;
+  for (const e of state.entities) if (e.kind === 'enemy' && !e.dead && isElite(e)) alive++;
+  const d = decideEliteDeploy(state.tick, alive, {
+    alivePrev: w.eliteAlivePrev,
+    nextTick: w.eliteNextTick,
+  });
+  w.eliteAlivePrev = d.alivePrev;
+  w.eliteNextTick = d.nextTick;
+  if (!d.deploy) return;
+
+  const planet = planetContent(state.config.planet);
+  const pool: readonly EnemyDef[] =
+    planet.elites.length > 0
+      ? planet.elites
+      : [planet.roster.special, planet.roster.charger, planet.roster.gunner, planet.roster.support];
+  // ① 정의 인덱스.
+  const def = pool[state.eliteRng.int(0, pool.length - 1)];
+  if (def === undefined) return; // 방어적: 위 폴백이 비는 경우는 없다.
+  // ② 배치 각도 — 플레이어 기준 스폰 링. 강제 스크롤·침공은 카메라가 플레이어가 아니라 창이므로
+  //    창 중심을 기준으로 잡는다(`stepBoss` 의 `state.invasion3 ?? state.scrollRuntime` 선례).
+  const win = state.invasion3 ?? state.scrollRuntime;
+  const baseX = win !== undefined ? windowCenterX(win) : player.x;
+  const baseY = win !== undefined ? windowCenterY(win) : player.y;
+  const ang = state.eliteRng.range(-PI, PI);
+  const pos = avoidWalls(
+    state.activeWalls,
+    baseX + cos(ang) * SPAWN_RING_RADIUS,
+    baseY + sin(ang) * SPAWN_RING_RADIUS,
+    def.radius,
+  );
+  // `summonEnemy`(RNG 미소비)를 쓴다 — `spawnEnemy` 는 첫 발사 쿨다운을 `waveRng` 에서 뽑아
+  // 카드 추첨 스트림을 밀어 버린다. 여기서 밀면 같은 시드의 웨이브 구성이 통째로 갈린다.
+  const e = summonEnemy(state, def, pos.x, pos.y);
+  // ③ 어픽스. 정예 승격은 `summonEnemy` **뒤**라 단계·촉매 HP 배율이 반영된 값에 곱해진다
+  //    (`spawnCard` 의 승격 순서와 같은 규율).
+  makeElite(e, state.eliteRng.int(0, ELITE_AFFIX_COUNT - 1));
 }
 
 function spawnCard(state: WorldState, card: WaveCard, maxEnemies: number, player: Entity): void {

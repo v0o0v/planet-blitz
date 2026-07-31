@@ -4,8 +4,9 @@
  * 검증 축:
  *  (a) 데이터 계약 — 격전 세그먼트가 중반(index ≥ 1)에 있고, `SEGMENTS[0]` 값과 마지막 보스
  *      슬롯이 불변이다(계획 AC2 — 침공 baseline 바이트 불변의 데이터측 근거).
- *  (b) 해시 폴드 회귀 가드 — `WaveRuntime` 필드가 정확히 7개다. 하나라도 늘면 `hashWorld` 가
- *      무조건 접는 블록이 바뀌어 전 PvE + 침공 해시가 갈린다(계획 AC9/MAJ-3 "신규 폴드 0").
+ *  (b) 해시 폴드 회귀 가드 — `WaveRuntime` 필드가 **접힘 7 / 미접힘 2** 로 정확히 나뉘고, 그
+ *      분류가 실제 해시 동작과 일치한다. 접힘 쪽이 늘면 전 PvE + 침공 해시가 갈린다
+ *      (계획 AC9/MAJ-3 "신규 폴드 0"). 구 "총 7개" 개수 가드에서 옮겨 온 경위는 그 블록 주석 참조.
  *  (c) 전진 게이트 — 진입 틱에 리더 마커가 정확히 1개 서고, 살아 있는 동안 세그먼트가 전진하지
  *      않으며, 죽으면 전진한다.
  *  (d) RNG 미소비 — 격전 소환이 waveRng/eliteRng/dropRng 스트림을 한 칸도 밀지 않는다.
@@ -14,6 +15,7 @@
 import { describe, it, expect } from 'vitest';
 import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } from '../src/sim/world.js';
 import { createWaveRuntime } from '../src/sim/waves.js';
+import { hashWorld } from '../src/sim/replay.js';
 import {
   MID_CLASH_LEADER_MARK,
   MID_CLASH_SURGE_OFFSETS,
@@ -74,21 +76,51 @@ describe('중반 격전 데이터 계약 (ADR-0032)', () => {
 });
 
 describe('WaveRuntime 해시 폴드 회귀 가드 (계획 AC9 — 신규 폴드 0)', () => {
-  it('WaveRuntime 필드는 정확히 7개다', () => {
-    // `hashWorld` 는 이 7개를 **무조건** 접는다(replay.ts). 필드가 하나라도 늘면 전 PvE +
-    // 침공 해시가 통째로 갈리므로, 중반 격전 상태는 반드시 엔티티 스캔으로 파생해야 한다.
-    const keys = Object.keys(createWaveRuntime()).sort();
-    expect(keys).toEqual(
-      [
-        'boss',
-        'cardTimer',
-        'done',
-        'segmentBaseKills',
-        'segmentElapsed',
-        'segmentIndex',
-        'segmentKillGoal',
-      ].sort(),
-    );
+  /**
+   * `hashWorld` 가 **무조건** 접는 7개 — 본문 5개(`replay.ts:303-307`) + append-only 꼬리 2개
+   * (`:400-401`). 여기에 하나라도 추가되면 전 PvE + 침공 해시가 통째로 갈린다. 중반 격전
+   * 상태를 엔티티 스캔으로 파생시킨 이유가 이것이다.
+   */
+  const FOLDED = [
+    'segmentIndex',
+    'segmentElapsed',
+    'cardTimer',
+    'boss',
+    'done',
+    'segmentBaseKills',
+    'segmentKillGoal',
+  ] as const;
+  /**
+   * 접히지 **않는** 필드(순수 스포너 부기).
+   *
+   * ⚠️ 2026-08-01 의뢰 Phase D 가 둘을 더했다 — `eliteAlivePrev`·`eliteNextTick`(정예 소집령
+   * 겹침 시계, ADR-0043). **접지 않았으므로 골든은 바이트 불변**이고, 그 사실은 이 스위트의
+   * `shipHashBaseline`·`encounterHashInvariance` 골든과 `scripts/deno-verify` 13 시나리오가
+   * 증명한다. 이 목록을 늘릴 때는 그 셋을 반드시 함께 통과시켜라.
+   *
+   * 왜 `CommissionRuntime` 이 아니라 여기인가 — `commissionCarry` 가 그 객체를 **참조째**
+   * 승계해 구간 리셋이 안 되기 때문이다(`waves.ts` 의 필드 주석이 정본).
+   *
+   * 원래 이 가드는 "필드 총 7개"라는 **개수**였다. 개수를 늘려 통과시키는 대신 **접힘/미접힘
+   * 분류**로 바꾼 이유: 개수 가드는 "접히는 필드가 늘었다"와 "안 접히는 부기가 늘었다"를
+   * 구분하지 못해, 전자(진짜 위험)를 후자라고 우기며 숫자만 올리는 통과가 가능하다. 아래 두
+   * 번째 케이스가 그 분류를 **실제 해시 동작으로** 재므로 그 우회가 막힌다.
+   * (실제로 이 케이스가 최초 작성 때의 오분류 — 꼬리 폴드 2개를 '미접힘'으로 적은 것 — 을 잡았다.)
+   */
+  const NOT_FOLDED = ['eliteAlivePrev', 'eliteNextTick'] as const;
+
+  it('WaveRuntime 필드가 접히는 것 7 + 안 접히는 것 2 로 정확히 나뉜다', () => {
+    expect(Object.keys(createWaveRuntime()).sort()).toEqual([...FOLDED, ...NOT_FOLDED].sort());
+  });
+
+  it('접히지 않기로 한 필드는 **실제로** 해시를 못 움직인다 (분류가 주석이 아니라 동작이다)', () => {
+    const w = createWorld(0x0c1f, DURABLE);
+    const before = hashWorld(w);
+    for (const k of NOT_FOLDED) w.wave[k] = 4321;
+    expect(hashWorld(w)).toBe(before);
+    // ⚠️ 대조군이 없으면 "hashWorld 가 wave 를 아예 안 본다"도 위를 통과시킨다.
+    w.wave.cardTimer = 4321;
+    expect(hashWorld(w)).not.toBe(before);
   });
 });
 

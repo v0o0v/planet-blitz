@@ -187,6 +187,15 @@ export interface CommissionRunConfig {
   /** 이 의뢰 전체의 리플레이 틱 예산. */
   readonly replayBudgetTicks: number;
   readonly constraints?: CommissionConstraints;
+  /**
+   * 현상금 표적의 도주 규정(그 주문일 때만). **sim 이 읽는다** — `stepBountyEscape` 가 매 틱
+   * `escapeRule` 로 점화 조건을 고른다. 그래서 보상 블록과 달리 이 축은 `WorldConfig` 에
+   * 실려야 한다(sim 입력이 아닌 것만 payload 에 남긴다는 이 파일의 분리 원칙 그대로).
+   *
+   * 임계 **수치**는 여기 없다 — `commissionConstants.ts` 가 정본이다(하드코딩 금지). 여기 있는
+   * 것은 "어느 조건으로 점화하는가" 뿐이고, 길이는 규칙과 무관하게 항상 같다.
+   */
+  readonly bounty?: CommissionBounty;
   /** 현재 구간 인덱스(0-based). 구간 전환이 **새 객체를 만들어** 이 값만 갱신한다. */
   readonly segmentIndex: number;
 }
