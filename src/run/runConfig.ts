@@ -30,7 +30,10 @@ import { DEFAULT_CONFIG } from '../sim/world.js';
 import type { WorldConfig } from '../sim/world.js';
 import type { Invasion3Config } from '../sim/invasion/index.js';
 import type { CommissionEquipRules, CommissionRunConfig } from './commission.js';
-import { COMMISSION_WAVE_SEGMENTS_PER_SEGMENT } from './commissionConstants.js';
+import {
+  COMMISSION_ELITE_WAVE_SEGMENTS,
+  COMMISSION_WAVE_SEGMENTS_PER_SEGMENT,
+} from './commissionConstants.js';
 import { EQUIP_SLOTS, RARITY_CODE } from '../items/types.js';
 import type { EquipSlotId, Item } from '../items/types.js';
 import { UNIQUE_REGISTRY } from '../items/uniques.js';
@@ -280,10 +283,22 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
     // ⚠️ 의뢰 런에 이 상한이 없으면 구간마다 PvE 웨이브 표를 **끝까지** 소화해야 보스가 나와
     // `COMMISSION_SEGMENT_TICK_CAP` 을 구조적으로 넘긴다 — 그리고 그 초과는 클라에서 아무
     // 증상 없이 통과했다가 **서버 EF 의 틱 예산 게이트에서 런 전체가 거부**된다.
+    //
+    // ⚠️ **정예 소집령(`order: 'elite'`)만 별도로 낮은 값을 쓴다**(`COMMISSION_ELITE_WAVE_SEGMENTS`,
+    // 2026-08-01 Phase G 실측 재조정). 그 주문은 잡몹 유입이 0 이라(`commissionSuppressesCardSpawns`)
+    // `SEGMENTS[].killGoal` 을 오직 겹침 소환 트리클로 채워야 하는데, 기본값(3세그 먼트, killGoal
+    // 합계 109)을 그대로 물리면 96시드 실측 34시드가 `COMMISSION_SEGMENT_TICK_CAP` 을 넘겼다
+    // (최대 5.9배). 문제가 상수 자체가 아니라 배선이었다는 근거는
+    // `COMMISSION_ELITE_WAVE_SEGMENTS` 주석을 봐라.
     ...(opts.maxSegments !== undefined
       ? { maxSegments: opts.maxSegments }
       : opts.commission !== undefined
-        ? { maxSegments: COMMISSION_WAVE_SEGMENTS_PER_SEGMENT }
+        ? {
+            maxSegments:
+              opts.commission.order === 'elite'
+                ? COMMISSION_ELITE_WAVE_SEGMENTS
+                : COMMISSION_WAVE_SEGMENTS_PER_SEGMENT,
+          }
         : {}),
     ...(opts.invasion3 !== undefined ? { invasion3: opts.invasion3 } : {}),
     // 의뢰 런 설정 — **조건부 스탬프**(planetMultCenti·activeSlots 선례). 미지정이면 필드 자체를

@@ -29,7 +29,10 @@
 import type { WorldConfig } from '../../../src/sim/world.js';
 import { DEFAULT_CONFIG } from '../../../src/sim/world.js';
 import { planetContent } from '../../../data/planets/index.js';
-import { COMMISSION_WAVE_SEGMENTS_PER_SEGMENT } from '../../../src/run/commissionConstants.js';
+import {
+  COMMISSION_ELITE_WAVE_SEGMENTS,
+  COMMISSION_WAVE_SEGMENTS_PER_SEGMENT,
+} from '../../../src/run/commissionConstants.js';
 import { runReplay } from '../../../src/sim/replay.js';
 import type { Replay } from '../../../src/sim/replay.js';
 import type {
@@ -258,7 +261,11 @@ export function evaluateCommissionGates(
     ...(cfg?.runId !== undefined ? { runId: cfg.runId as NonNullable<WorldConfig["runId"]> } : {}),
     // ④ 서버 권위 블록.
     commission: expected,
-    maxSegments: COMMISSION_WAVE_SEGMENTS_PER_SEGMENT,
+    // ⚠️ **정예 소집령만 낮은 상한을 쓴다**(`buildRunConfig` 와 대칭 — `COMMISSION_ELITE_WAVE_SEGMENTS`
+    // 주석 참조). 여기서 갈리면 클라·서버가 다른 `maxSegments` 로 재실행해 정직한 정예 소집령
+    // 런까지 `outcome-mismatch` 로 거부된다 — 배선은 반드시 한 쌍으로 움직인다.
+    maxSegments:
+      expected.order === 'elite' ? COMMISSION_ELITE_WAVE_SEGMENTS : COMMISSION_WAVE_SEGMENTS_PER_SEGMENT,
     // ⑤ **의도적 누락** — `catalysts`(게이트 2 가 이미 거부) · `planetMultCenti`/`planetMultEpoch`
     //    (의뢰 런은 행성 인기 배율을 받지 않는다) · `invasion3`(침공과 상호 배타) · `pilot`
     //    (예비역 소집은 장비축 제약을 우회한다). 여기 없으면 sim 이 기본값으로 간다.

@@ -75,6 +75,10 @@ import { CI_SEEDS, FIXED_SEEDS } from './balance/seeds.js';
  * 24 시드는 클리어율 최소 눈금 4.17pp(이항 SE ≈9.4pp)라 60~80% 밴드 안인지 판정할 수 없다.
  * 96 시드는 p=0.7 에서 SE ±4.7pp 로 판정이 선다. 그래서 **곡선 스윕은 96, CI 게이트/매트릭스는
  * 24**({@link CI_SEEDS})로 2층 구성이다.
+ *
+ * ⚠️ **export 는 의뢰 다구간 계측(`src/bench/commissionBench.ts`, 계획 §Phase G) 이 96시드
+ * 좌표계를 공유하기 위함이다.** 새 시드 배열을 만들지 마라 — 이 배열이 로스터 벤치·침공 밸런스
+ * (`tests/invasionBalance.test.ts`)와 이미 공유하는 유일한 96시드 정본이다.
  */
 const SEEDS: readonly number[] = FIXED_SEEDS;
 

@@ -162,3 +162,33 @@ export const COMMISSION_WAVE_SEGMENTS_PER_SEGMENT = 3;
  * 읽는 곳: Phase D(`decideEliteDeploy`) · Phase G(정예 소집령 별도 기준선 계측).
  */
 export const COMMISSION_ELITE_OVERLAP_MAX = 6;
+
+/**
+ * **정예 소집령 전용** 보스 전 웨이브 세그먼트 수 — {@link COMMISSION_WAVE_SEGMENTS_PER_SEGMENT}
+ * 의 정예 소집령 오버라이드. **값 1 — 플레이스홀더가 아니라 96시드 실측으로 확정**했다
+ * (2026-08-01 Phase G). 두 판정 기준을 동시에 만족한 값이다: 니플헤임 제외 p99 구간틱
+ * 3,139(상한의 34.9%) · 클리어율 61.4%(목표 밴드 40~85%). 밸런스 큐 C10 은 이 실측으로 닫혔다.
+ *
+ * ⚠️ **미계측으로 남은 축**(큐 C-ter3): 이 값이 보스 전 처치 요구를 109 → 10 으로 **10.9배**
+ * 낮췄다. 수치 기준은 통과했지만 "정예 6기 겹침 압박"이 구간당 실제로 몇 번 발현되는지는
+ * 재지 않았다 — 겹침이 1~2회밖에 안 뜨면 ADR-0043 의 주문 정체성이 수치상 통과하면서
+ * **체감상 사라진다.** 겹침 발생 횟수 카운터를 계측에 추가해야 확증된다.
+ *
+ * ## 왜 이 주문만 따로 낮췄는가
+ * `COMMISSION_WAVE_SEGMENTS_PER_SEGMENT = 3` 은 `SEGMENTS[0..2]`(`data/waves.ts`)의
+ * `killGoal` 합계(10+46+53=109)를 처치해야 보스가 나온다는 뜻이다. 그 표는 **카드 잡몹 밀도**를
+ * 전제로 설계됐다 — `cardInterval` 마다 여러 마리가 한꺼번에 유입된다. 그런데 정예 소집령은
+ * 잡몹 유입을 0 으로 막고(`commissionSuppressesCardSpawns`) 오직 겹침 소환(최대
+ * `COMMISSION_ELITE_OVERLAP_MAX` 기 동시 · `COMMISSION_ELITE_OVERLAP_DELAY_TICKS` 간격)으로만
+ * 킬을 공급한다. 즉 **카드 밀도용 처치 할당을 정예 트리클로 채우게 한 것**이 2026-08-01 Phase G
+ * 실측이 잡은 근인이다 — 96시드 중 34시드가 `COMMISSION_SEGMENT_TICK_CAP` 을 넘겼고(최대
+ * 53,441틱 = 상한의 5.9배) 전 구간의 대부분이 보스 이전 처치 할당 단계에서 지연됐다.
+ *
+ * ⚠️ **`COMMISSION_WAVE_SEGMENTS_PER_SEGMENT` 자체는 건드리지 않는다** — 그 상수는 `chain`·
+ * `constraint`·`bounty` 3주문과 공유되고 그 셋은 96시드 실측에서 상한을 지켰다(니플헤임 봇
+ * 한계 예외 제외). 문제는 상수가 아니라 **정예 소집령에 그 상수를 그대로 물린 배선**이었다.
+ *
+ * 읽는 곳: `src/run/runConfig.ts`(`buildRunConfig` 의뢰 경로 — `order === 'elite'` 분기) ·
+ * Phase G(정예 소집령 별도 기준선 계측).
+ */
+export const COMMISSION_ELITE_WAVE_SEGMENTS = 1;
