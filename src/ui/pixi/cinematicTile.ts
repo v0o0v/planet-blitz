@@ -61,7 +61,8 @@
  *
  * ## 품질 티어를 읽지 않는다
  * 기지는 부팅 직후 화면일 수 있어 `graphicsTierController` 값이 아직 수렴 전이다(§0-3).
- * 여기서 쓰는 것은 스프라이트 몇 장과 구운 텍스처 넷뿐이라 저사양에서 끌 것이 없다.
+ * 여기서 쓰는 것은 스프라이트 몇 장과 **모듈 전체가 공유하는** 구운 텍스처 다섯 장(바탕 램프·
+ * 페더·방사 글로우·그림자 2단)뿐이라 저사양에서 끌 것이 없다. 타일 수가 늘어도 굽기는 1회다.
  *
  * 순수 render/UI 레이어(ADR-0005) — sim 을 읽지도 쓰지도 않고 시간축은 벽시계다.
  * `width`/`height` 는 리드가 정한다(§3) — 내부에 하드코딩된 치수는 없고 전부 파생이다.
@@ -100,6 +101,14 @@ const PAD_RATIO = 0.062;
 /**
  * 정사각 일러스트를 밴드 비율로 중앙 크롭할 때의 세로 초점(0=위, 1=아래).
  * 건물 일러스트는 구조물이 가운데보다 조금 위에 앉아 있어 정중앙을 잡으면 지붕이 잘린다.
+ *
+ * ## ⚠️ 가로로 아주 긴 카드의 구조적 한계(치수 스윕 실측)
+ * 크롭은 **비율 보존**이라 밴드가 가로로 길수록 원본 세로가 더 잘린다. `h=372` 기준:
+ *  - `w=424` → 밴드 424×264, 1024² 중 세로 **638px(62%)** 유지 — 건물이 온전하다.
+ *  - `w=878` → 밴드 878×264, 세로 **308px(30%)** 만 유지 — 지붕과 바닥이 함께 날아간다.
+ * 예외도 폴백도 없고 화면은 정상적으로 서지만, **자산이 정사각인 한 이건 코드로 못 푼다** —
+ * 넓은 카드를 쓰려면 높이를 같이 키우거나(밴드 세로가 늘어 잘림이 줄어든다) 그 칸만
+ * 가로형 원본을 따로 받아야 한다. 리드 판단 사항이라 여기서 임의로 왜곡하지 않는다.
  */
 const FOCUS_Y = 0.42;
 
@@ -118,13 +127,22 @@ const MAX_DT = 1 / 15;
 /**
  * 카드 바탕 석재 그라디언트(위→아래).
  *
- * ⚠️ 이 두 값이 1차 판정 CRIT-1 의 처방이다. 색상은 **따뜻한 갈색 계열**이어야 하고(배경
- * 색온도와 같아야 붙여 놓은 패널로 안 읽힌다), 밝기는 라벨 밴드 평균 휘도가 배경 거터
- * (실측 22.8)보다 **최소 +8** 높아야 한다. 여기서 라벨 밴드(y 0.71~1.0)의 색 범위는
- * rgb(45,33,22)~rgb(39,28,19) → 휘도 약 32.7 로 거터 대비 +10 이다.
+ * ⚠️ 색상은 **따뜻한 갈색 계열**이어야 한다 — 배경과 색온도가 다르면 붙여 놓은 패널로 읽힌다.
+ *
+ * ## 판정 불변식: **라벨 밴드 bg 평균 휘도 ≥ 인접 거터 평균 + 5**
+ * 1차 처방은 "카드 **전체** 평균 ≥ 거터 +8" 이었고 숫자로는 초과 달성했다(카드 72.4 vs 거터
+ * 36.3 = +36.1). **그런데 그 +36 은 전부 아트 절반이 벌어준 것이었다** — 밴드만 따로 재면
+ * 32.1 로 거터(36.3)보다 −4, 카드 아래 바닥(51.2)보다 −19 였고, 실제로 카드 하단 29% 가
+ * 배경으로 녹아 사라졌다(2차 판정 MED-5). **지표를 카드 전체 평균으로 잡은 것이 결함을
+ * 가렸다.** 그래서 불변식을 "카드 평균"이 아니라 **"밴드 bg 평균"** 으로 다시 못 박는다.
+ *
+ * 값 검산(Rec.601 휘도, 실측과 0.7 이내로 일치함이 확인된 모델):
+ *  - t=0.71(밴드 상단) rgb(60,44,30) → L 47.0
+ *  - t=1.00(밴드 하단) rgb(51,37,26) → L 39.9
+ *  - 밴드 bg 평균 **≈ 43.5** → 거터 36.3 대비 **+7.2** (불변식 +5 충족).
  */
-const BODY_TOP = { r: 0x3d, g: 0x2c, b: 0x1d } as const;
-const BODY_BOTTOM = { r: 0x27, g: 0x1c, b: 0x13 } as const;
+const BODY_TOP = { r: 0x52, g: 0x3c, b: 0x28 } as const;
+const BODY_BOTTOM = { r: 0x33, g: 0x25, b: 0x1a } as const;
 
 /** 안쪽 어두운 홈(theme.ts ICON_RING_GROOVE 계열 — 카드 스케일에 맞춰 조금 더 짙게). */
 const GROOVE = 0x0d0805;
@@ -137,11 +155,74 @@ const DESC_FILL = 0x9a8f7d;
 /** 잠금 사유 문구색 — 경고이되 붉게 타오르지 않는 따뜻한 살구색. */
 const LOCK_TEXT = 0xffab84;
 
-/** 드롭 섀도 기본 오프셋·알파(1차 판정 CRIT-2 처방: offsetY 11 · blur 26 · 0.55). */
-const SHADOW_OFFSET = 11;
-const SHADOW_ALPHA = 0.55;
-/** 카드 바깥으로 그림자가 번지는 폭(px). 구운 텍스처의 여백과 같아야 정렬이 맞는다. */
-const SHADOW_SPREAD = 48;
+/**
+ * 그림자 한 층의 굽기·배치 명세.
+ *
+ * ## 왜 한 층으로는 안 되는가 (2차 판정 MED-2b)
+ * 1차 처방(offsetY 11 · blur 22 · α0.55) 한 층만 깔았더니 실측 최심이 카드 아래 y+3 에서
+ * **−11.7L** 에 그쳤고 24px 에 걸쳐 소멸했다 — **테두리 바로 아래 0~3px 에 near-black 이
+ * 없으면** 눈은 그것을 접지가 아니라 **앰비언트 얼룩**으로 읽는다. 물체가 바닥에 닿아 있다는
+ * 신호는 넓고 옅은 확산이 아니라 **좁고 짙은 접촉 어둠(contact shadow)** 이 만든다.
+ *
+ * 그래서 두 층으로 나눈다:
+ *  - {@link CONTACT} 좁고 짙게(blur 4 · α0.85) — 카드가 바닥에 **닿은** 자리
+ *  - {@link DIFFUSE} 넓고 옅게(blur 22 · α0.45) — 카드가 바닥에서 **떨어진** 부피감
+ *
+ * **검증 불변식**: 카드 하단 테두리 아래 **y+2~y+5 가 같은 y 의 측면 대조군보다 −28L 이상**
+ * 어두울 것. 검산(바닥 L 51.2 기준, 두 층은 알파가 곱으로 합성된다):
+ *  - y+2 — 접촉층은 사각 바닥 모서리(h+2)라 α≈0.85·0.5=0.42, 확산층은 사각 내부라 α=0.45
+ *    → 투과 (1−0.42)(1−0.45)=0.319 → L 16.3 = **−34.9**
+ *  - y+5 — 접촉층 3px 밖(σ=4) α≈0.85·0.23=0.19, 확산층 여전히 0.45
+ *    → 투과 0.81·0.55=0.446 → L 22.8 = **−28.4**
+ * 두 지점 모두 −28 을 넘는다.
+ */
+interface ShadowBake {
+  /** 카드 바깥으로 번지는 폭(px). 구운 텍스처의 여백과 같아야 정렬이 맞는다. */
+  readonly spread: number;
+  /** 캔버스 `filter: blur()` 반경(px) = 가우시안 표준편차. */
+  readonly blur: number;
+  /** 나인슬라이스 경계(여백 + 모서리 반경). 텍스처 절반보다 작아야 한다. */
+  readonly border: number;
+  /** 기본 세로 오프셋과 알파. */
+  readonly offset: number;
+  readonly alpha: number;
+  /** 호버 시(카드가 뜰 때) 도달할 오프셋·알파·추가 번짐. */
+  readonly hoverOffset: number;
+  readonly hoverAlpha: number;
+  readonly hoverGrow: number;
+}
+
+/**
+ * 접촉층 — 카드가 바닥에 닿은 자리. 호버로 카드가 뜨면 **접촉이 끊기므로 거의 사라진다**
+ * (오프셋을 키우는 게 아니라 알파를 죽이는 것이 물리적으로 맞는 신호다).
+ */
+const CONTACT: ShadowBake = {
+  spread: 12,
+  blur: 4,
+  border: 30,
+  offset: 2,
+  alpha: 0.85,
+  hoverOffset: 3,
+  hoverAlpha: 0.4,
+  hoverGrow: 2,
+};
+
+/** 확산층 — 부피감. 카드가 뜰수록 더 내려가고 옅고 넓어진다. */
+const DIFFUSE: ShadowBake = {
+  spread: 48,
+  blur: 22,
+  border: 68,
+  offset: 11,
+  alpha: 0.45,
+  hoverOffset: 18,
+  hoverAlpha: 0.34,
+  hoverGrow: 10,
+};
+
+/** 구운 그림자 텍스처 안쪽 사각의 한 변(px). 나인슬라이스라 실제 카드 크기와 무관하다. */
+const SHADOW_CORE = 96;
+/** 구운 사각의 모서리 반경. 카드 반경(짧은 변 ×0.045 ≈ 17)과 맞춰 둔다. */
+const SHADOW_RADIUS = 18;
 
 export interface CinematicTileOpts {
   width: number;
@@ -260,42 +341,40 @@ function radialGlowTexture(): Texture | null {
   return glowCache;
 }
 
-let shadowCache: Texture | null | undefined;
+const shadowCache = new Map<string, Texture | null>();
 
 /**
- * 드롭 섀도 실루엣(192², 나인슬라이스용).
+ * 드롭 섀도 실루엣(나인슬라이스용). 안쪽 {@link SHADOW_CORE}² 사각 둘레에 `spread` 만큼
+ * 여백을 두고, 그 사각을 캔버스 `filter: blur()` 로 흐려 굽는다.
  *
  * ⚠️ 1차판은 방사 그라디언트를 타원으로 늘려 썼는데, **모서리에 닿지 못해 화면에서 사라졌다**
  * (비평 판정: "캐스트 섀도가 없고 테두리 스트로크뿐"). 그림자는 카드와 **같은 모양**이어야
- * 물체로 읽힌다. 그래서 둥근 사각을 그리고 캔버스 `filter: blur()` 로 흐린 뒤 굽는다.
+ * 물체로 읽힌다.
  *
  * 나인슬라이스로 쓰는 이유: 스프라이트를 그냥 늘리면 카드 비율에 따라 **모서리 곡률과 흐림
- * 반경이 함께 늘어나** 카드마다 다른 그림자가 된다. 나인슬라이스는 모서리를 고정하고 변만
- * 늘리므로 어떤 치수에서도 같은 흐림이 나온다.
+ * 반경이 함께 늘어나** 카드마다 다른 그림자가 된다(878×372 같은 가로로 긴 카드에서 즉시
+ * 드러난다). 나인슬라이스는 모서리를 고정하고 변만 늘리므로 어떤 치수에서도 같은 흐림이다.
  *
  * `ctx.filter`·`roundRect` 가 없는 구형 엔진이면 `null` — 호출부가 방사 폴백으로 내려간다.
  */
-function softShadowTexture(): Texture | null {
-  if (shadowCache !== undefined) return shadowCache;
-  const size = 192;
+function softShadowTexture(bake: ShadowBake): Texture | null {
+  const key = `${bake.spread}:${bake.blur}`;
+  const hit = shadowCache.get(key);
+  if (hit !== undefined) return hit;
+  const size = SHADOW_CORE + bake.spread * 2;
   const ctx = bakeCanvas(size, size);
   if (ctx === null || typeof ctx.filter !== 'string' || typeof ctx.roundRect !== 'function') {
-    shadowCache = null;
+    shadowCache.set(key, null);
     return null;
   }
-  ctx.filter = 'blur(18px)';
+  ctx.filter = `blur(${bake.blur}px)`;
   ctx.fillStyle = '#000000';
   ctx.beginPath();
-  ctx.roundRect(
-    SHADOW_SPREAD,
-    SHADOW_SPREAD,
-    size - SHADOW_SPREAD * 2,
-    size - SHADOW_SPREAD * 2,
-    20,
-  );
+  ctx.roundRect(bake.spread, bake.spread, SHADOW_CORE, SHADOW_CORE, SHADOW_RADIUS);
   ctx.fill();
-  shadowCache = fromCanvas(ctx);
-  return shadowCache;
+  const tex = fromCanvas(ctx);
+  shadowCache.set(key, tex);
+  return tex;
 }
 
 // --- 순수 헬퍼 ------------------------------------------------------------------
@@ -414,7 +493,8 @@ function lockBadge(size: number, color: number): Container {
 
 /**
  * 타일 한 장. 반환 `container` 는 (0,0) 기준 width×height 를 차지하고(그림자만 바깥으로
- * {@link SHADOW_SPREAD} 만큼 번진다), 위치는 리드가 `.position.set()` 으로 잡는다.
+ * {@link DIFFUSE}`.spread`(48px, 호버 시 58px) 만큼 번진다), 위치는 리드가
+ * `.position.set()` 으로 잡는다.
  */
 export function makeCinematicTile(o: CinematicTileOpts): CinematicTile {
   const { width: w, height: h, accent, locked } = o;
@@ -428,32 +508,36 @@ export function makeCinematicTile(o: CinematicTileOpts): CinematicTile {
   const root = new Container();
   const inner = new Container();
 
-  // --- 드롭 섀도 ---------------------------------------------------------------
+  // --- 드롭 섀도(2단: 확산 → 접촉) ----------------------------------------------
   // inner **밖**에 둔다 — 카드가 뜰 때 그림자까지 같이 뜨면 부유가 아니라 통째로 미끄러진
   // 것으로 읽힌다. 바닥에 남아 내려가고 옅어지고 넓어져야 "떴다"가 성립한다.
-  let shadow: NineSliceSprite | Sprite | null = null;
-  const shadowTex = softShadowTexture();
-  if (shadowTex !== null) {
-    // 텍스처의 사각은 [SPREAD, size-SPREAD] 구간이므로, 스프라이트를 (-SPREAD, -SPREAD)에
-    // 두고 w+2·SPREAD 크기로 잡으면 안쪽 사각이 정확히 카드와 겹친다.
+  // 확산층을 먼저(뒤에) 깔고 접촉층을 그 위에 얹어야 테두리 바로 밑이 가장 짙어진다.
+  const shadows: { sprite: NineSliceSprite; bake: ShadowBake }[] = [];
+  for (const bake of [DIFFUSE, CONTACT]) {
+    const tex = softShadowTexture(bake);
+    if (tex === null) continue;
+    // 텍스처의 사각은 [spread, size−spread] 구간이므로, 스프라이트를 (−spread, −spread)에
+    // 두고 w+2·spread 크기로 잡으면 안쪽 사각이 정확히 카드와 겹친다.
     const ns = new NineSliceSprite({
-      texture: shadowTex,
-      leftWidth: 68,
-      topHeight: 68,
-      rightWidth: 68,
-      bottomHeight: 68,
+      texture: tex,
+      leftWidth: bake.border,
+      topHeight: bake.border,
+      rightWidth: bake.border,
+      bottomHeight: bake.border,
     });
-    ns.alpha = SHADOW_ALPHA;
-    shadow = ns;
+    ns.alpha = bake.alpha;
     root.addChild(ns);
-  } else if (glowTex !== null) {
-    // 폴백: 방사 타원. 모서리에는 못 닿지만 아무것도 없는 것보다는 낫다.
-    const sp = new Sprite(glowTex);
-    sp.anchor.set(0.5);
-    sp.tint = 0x000000;
-    sp.alpha = SHADOW_ALPHA;
-    shadow = sp;
-    root.addChild(sp);
+    shadows.push({ sprite: ns, bake });
+  }
+  // 폴백: `ctx.filter` 가 없는 엔진. 방사 타원이라 모서리에는 못 닿고 접촉층도 못 만들지만,
+  // 아무것도 없는 것보다는 낫다(구운 텍스처가 하나도 안 나온 경우에만 쓴다).
+  let fallbackShadow: Sprite | null = null;
+  if (shadows.length === 0 && glowTex !== null) {
+    fallbackShadow = new Sprite(glowTex);
+    fallbackShadow.anchor.set(0.5);
+    fallbackShadow.tint = 0x000000;
+    fallbackShadow.alpha = DIFFUSE.alpha;
+    root.addChild(fallbackShadow);
   }
   root.addChild(inner);
 
@@ -704,21 +788,23 @@ export function makeCinematicTile(o: CinematicTileOpts): CinematicTile {
       artSprite.width = artBaseW * z;
       artSprite.height = artBaseH * z;
     }
-    if (shadow !== null) {
-      // 카드가 뜰수록 그림자는 **더 내려가고 옅고 넓어진다** — 그것이 높이의 신호다.
-      // (`bob` 을 더해 부유와 위상을 맞춘다. 안 맞추면 카드만 떠는 것으로 보인다.)
-      const drop = SHADOW_OFFSET + 7 * hover;
-      if (shadow instanceof NineSliceSprite) {
-        const grow = SHADOW_SPREAD + 10 * hover;
-        shadow.width = w + grow * 2;
-        shadow.height = h + grow * 2;
-        shadow.position.set(-grow, -grow + drop + bob);
-      } else {
-        shadow.width = w * (1.1 + 0.06 * hover);
-        shadow.height = h * 0.4;
-        shadow.position.set(w / 2, h + drop + bob);
-      }
-      shadow.alpha = SHADOW_ALPHA - 0.13 * hover;
+    // 카드가 뜰수록 확산층은 **더 내려가고 옅고 넓어지고**, 접촉층은 **끊겨 사라진다** —
+    // 그 둘의 차이가 높이의 신호다. (`bob` 을 더해 부유와 위상을 맞춘다. 안 맞추면 카드만
+    // 떠는 것으로 보인다.)
+    for (const { sprite, bake } of shadows) {
+      const grow = bake.spread + bake.hoverGrow * hover;
+      const drop = bake.offset + (bake.hoverOffset - bake.offset) * hover;
+      sprite.width = w + grow * 2;
+      sprite.height = h + grow * 2;
+      sprite.position.set(-grow, -grow + drop + bob);
+      sprite.alpha = bake.alpha + (bake.hoverAlpha - bake.alpha) * hover;
+    }
+    if (fallbackShadow !== null) {
+      const drop = DIFFUSE.offset + (DIFFUSE.hoverOffset - DIFFUSE.offset) * hover;
+      fallbackShadow.width = w * (1.1 + 0.06 * hover);
+      fallbackShadow.height = h * 0.4;
+      fallbackShadow.position.set(w / 2, h + drop + bob);
+      fallbackShadow.alpha = DIFFUSE.alpha + (DIFFUSE.hoverAlpha - DIFFUSE.alpha) * hover;
     }
   };
 

@@ -356,6 +356,8 @@ export const EN = {
   // (AAA 비평 지적). `meta.line` 은 DOM 판·정산이 계속 쓰므로 건드리지 않는다.
   'base.metaShort': 'Ship Lv {lv} · Skills {sp}',
   'base.launch': '▶ Star Map (Launch)',
+  // 출격 카드(격자 8번째 칸)의 부제. 카드가 건물 타일과 같은 골격을 쓰므로 설명 줄이 필요하다.
+  'base.launchSub': 'To the six archive worlds',
   'base.bld.hangar.name': 'Hangar',
   'base.bld.hangar.desc': 'Gear · Inventory · Salvage',
   'base.bld.research.name': 'Research Lab',
@@ -2008,6 +2010,7 @@ export const KO: Record<MessageKey, string> = {
   'base.sub': '건물을 선택해 정비하거나, 출격해 행성을 침략하라.',
   'base.metaShort': '기체 Lv {lv} · 스킬 {sp}',
   'base.launch': '▶ 성계 지도 (출격)',
+  'base.launchSub': '여섯 아카이브 행성으로',
   'base.bld.hangar.name': '격납고',
   'base.bld.hangar.desc': '장비 · 인벤토리 · 분해',
   'base.bld.research.name': '연구소',

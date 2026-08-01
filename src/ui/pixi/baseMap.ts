@@ -42,7 +42,7 @@ import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { loadBaseTextures, baseBuildingAssetName, BASE_BACKDROP_NAME, type BaseTextures } from './baseTextures.js';
 import { BaseBackdrop } from './baseBackdrop.js';
 import { makeCinematicTile, type CinematicTile } from './cinematicTile.js';
-import { makeScreenTitle, makeCinematicChip, makeHeroButton, type HeroButton } from './cinematicChrome.js';
+import { makeScreenTitle, makeCinematicChip, makeHeroTile, type HeroButton } from './cinematicChrome.js';
 import type { BaseMapCallbacks } from '../baseMap.js';
 
 /** 건물 타일 정의. 일러스트는 `baseTextures` 의 이름 규약으로 파생한다(basename 하드코딩 없음). */
@@ -97,7 +97,7 @@ export const TILE_W = 424;
  * 맞춘다. 밴드가 상단 60% 라 `424×198` 짜리 슬라이스가 되는데, 이건 Lane B 가 기준으로 삼은
  * 430×340(밴드 204) 과 사실상 같은 잘림이라 건물이 여전히 읽힌다.
  */
-const TILE_H = 314;
+const TILE_H = 372;
 const TILE_GAP = 34;
 /**
  * 1행 상단. 제목 블록이 y 30..142 를 쓰므로 **56px** 을 띄운다 — 1차 판(158)은 장식선과
@@ -110,28 +110,35 @@ const ROW1_Y = 196;
  */
 const ROW_GAP = 44;
 const ROW2_Y = ROW1_Y + TILE_H + ROW_GAP;
+const META_Y = 1032;
 
 /**
- * 출격 CTA. 1차 판(520×86)은 타일 7장 합계 면적의 3.8% 라 **주인공으로 안 읽혔다**(AAA
- * 비평 지적 — 카드 하나 면적의 27%). 화면의 유일한 행동 버튼이므로 키운다.
+ * 격자에 놓이는 칸 수 = 건물 7 + **출격 카드 1**.
+ *
+ * ## 왜 CTA 가 격자 안으로 들어왔나
+ * 4+3 배치는 2행 좌우에 **227px 짜리 죽은 기둥 두 개**를 남겼다. 배경을 그 자리에서 밝혀
+ * 채우려 했더니 오히려 **빈 배경이 카드보다 밝아지는 도-지 반전**이 났다(AAA 비평 2라운드
+ * N2·N3 — "가장 밝은 화소가 아무것도 없는 좌하단 배경"). 조명 문제가 아니라 레이아웃
+ * 문제였다.
+ *
+ * 4+4 로 채우고 8번째 칸을 출격 카드로 만들면 결함 셋이 한꺼번에 사라진다:
+ *  ① 죽은 기둥 소멸 ② CTA 가 격자 안에서 가장 밝은 것이 됨 ③ 하단 CTA 막대가 없어져 남는
+ *  세로 여유로 카드 높이를 314 → 372 로 키울 수 있고, 그 덕에 건물 잘림도 함께 풀린다.
  */
-const LAUNCH_W = 680;
-const LAUNCH_H = 101;
-const LAUNCH_Y = 906;
-const META_Y = 1036;
+const CELLS = BUILDINGS.length + 1;
 
 /**
- * 2행 분배(각 행 칸 수). **균등 반반**이 계약이다 — 남는 건물을 전부 둘째 행에 몰면(옛
- * "1행 최대 3칸 고정") 건물 수가 홀수로 늘 때 둘째 행이 더 커져 넘침이 재발한다.
+ * 2행 분배(각 행 칸 수). **균등 반반**이 계약이다 — 남는 칸을 전부 둘째 행에 몰면(옛
+ * "1행 최대 3칸 고정") 칸 수가 홀수로 늘 때 둘째 행이 더 커져 넘침이 재발한다.
  */
 export function rowSplit(n: number): readonly [number, number] {
   const row0 = Math.ceil(n / 2);
   return [row0, n - row0];
 }
 
-/** i 번째 건물 타일의 좌상단(2행 배치, 각 행 가운데 정렬). */
+/** i 번째 칸의 좌상단(2행 배치, 각 행 가운데 정렬). 마지막 칸이 출격 카드다. */
 export function tilePosition(i: number): { x: number; y: number } {
-  const [cols0, cols1] = rowSplit(BUILDINGS.length);
+  const [cols0, cols1] = rowSplit(CELLS);
   const row = i < cols0 ? 0 : 1;
   const cols = row === 0 ? cols0 : cols1;
   const col = row === 0 ? i : i - cols0;
@@ -148,7 +155,7 @@ export function tilePosition(i: number): { x: number; y: number } {
  * 바꿀 때 조용히 어긋나므로(실제로 Lane A 가 그렇게 인계했다) 격자 상수에서 계산해 넘긴다.
  */
 export function veilRects(): readonly { x0: number; y0: number; x1: number; y1: number }[] {
-  const [cols0, cols1] = rowSplit(BUILDINGS.length);
+  const [cols0, cols1] = rowSplit(CELLS);
   const span = (cols: number): { x0: number; x1: number } => {
     const w = cols * TILE_W + (cols - 1) * TILE_GAP;
     const x0 = (DESIGN_WIDTH - w) / 2;
@@ -357,9 +364,13 @@ export class BaseMapScreen {
     this.tiles.push(tile);
   }
 
+  /** 출격 카드 — 격자의 마지막 칸(8번째). 건물 타일과 같은 골격, 다른 무게. */
   private renderLaunch(): void {
-    const hero = makeHeroButton(LAUNCH_W, LAUNCH_H, t('base.launch'), () => this.cb?.onStarMap());
-    hero.container.position.set((DESIGN_WIDTH - LAUNCH_W) / 2, LAUNCH_Y);
+    const { x, y } = tilePosition(CELLS - 1);
+    const hero = makeHeroTile(TILE_W, TILE_H, t('base.launch'), t('base.launchSub'), () =>
+      this.cb?.onStarMap(),
+    );
+    hero.container.position.set(x, y);
     this.root.addChild(hero.container);
     this.hero = hero;
   }

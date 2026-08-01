@@ -33,6 +33,7 @@ import {
   Container,
   FillGradient,
   Graphics,
+  NineSliceSprite,
   Rectangle,
   Sprite,
   Text,
@@ -65,8 +66,12 @@ const GROOVE = 0x120b07;
  */
 const TEAL = 0x8fc4b8;
 const TEAL_DEEP = 0x2f5f58;
-/** 칩 값 텍스트 — 크림보다 한 단 낮춰 칩이 제목·CTA 보다 앞서지 않게 한다. */
-const CHIP_TEXT = 0xd8cdb4;
+/**
+ * 칩 값 텍스트. 크림(`#EBDCBE`)도 `#D8CDB4` 도 너무 밝았다 — 실측에서 칩 숫자의 p99 휘도가
+ * 205 로 **페이지 제목(204)과 동률**이었다. 위계는 제목만 올려서는 안 서고 크롬을 같이
+ * 눌러야 선다. 이 값은 p99 ≈ 168 로 제목보다 확실히 뒤에 앉는다.
+ */
+const CHIP_TEXT = 0xa89e88;
 
 // ── 구운 텍스처 (모듈 캐시 — 화면을 다시 그려도 재사용) ──────────────────────
 
@@ -158,7 +163,13 @@ function sheenBand(): Texture | null {
   return sheenTex;
 }
 
-/** 캔버스 둥근 사각 경로. `roundRect` 미지원 환경이면 각진 사각으로 폴백한다. */
+/**
+ * 캔버스 둥근 사각 경로. `roundRect` 미지원 환경이면 각진 사각으로 폴백한다.
+ *
+ * ⚠️ 반지름은 **항상 변 절반으로 클램프한다.** 클램프를 빼면 알약(r = h/2)을 조금이라도 인셋한
+ * 사각에 같은 r 을 그대로 넘겼을 때 모서리 호가 사각 **밖으로 부푼다** — 실제로 그 실수가
+ * CTA 어깨에 초승달 아티팩트를 만들었다(CRIT-1). 클램프는 그 계열의 결함을 원천 봉쇄한다.
+ */
 function pathRoundRect(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -167,9 +178,25 @@ function pathRoundRect(
   h: number,
   r: number,
 ): void {
+  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
   ctx.beginPath();
-  if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, w, h, r);
+  if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, w, h, rr);
   else ctx.rect(x, y, w, h);
+}
+
+/** 알약(또는 둥근 사각) 한 장을 단색으로 굽는다. 판때기와 **같은 경로**를 쓰는 것이 요점이다. */
+function pillTexture(w: number, h: number, css: string, inset: number, blur = 0): Texture | null {
+  const pad = blur * 2;
+  const s = blur > 0 ? 1 : 2; // 블러 판은 어차피 흐리므로 슈퍼샘플이 필요 없다.
+  const b = bakeCanvas((w + pad * 2) * s, (h + pad * 2) * s);
+  if (b === null) return null;
+  const { ctx } = b;
+  ctx.scale(s, s);
+  if (blur > 0) ctx.filter = `blur(${blur}px)`;
+  pathRoundRect(ctx, pad + inset, pad + inset, w - inset * 2, h - inset * 2, h / 2);
+  ctx.fillStyle = css;
+  ctx.fill();
+  return toTexture(b.canvas);
 }
 
 /**
@@ -177,15 +204,16 @@ function pathRoundRect(
  * 굽는다**. 굽는 이유는 두 가지다: ①Pixi Graphics 에 그라디언트가 없다 ②띠 근사 금지(§0-4).
  * 2× 로 구워 스케일 다운하므로 가장자리가 뭉개지지 않는다.
  */
-function heroPlate(w: number, h: number): Texture | null {
+function heroPlate(w: number, h: number, radius = h / 2): Texture | null {
   const s = 2;
   const b = bakeCanvas(w * s, h * s);
   if (b === null) return null;
   const { ctx } = b;
   ctx.scale(s, s);
-  // **알약(pill)** — 타이틀 화면 시작 버튼과 같은 버튼 언어다. 게임 안에 버튼 문법이 셋
-  // (알약 / 목재 / 그 외)이면 화면마다 다른 제품처럼 읽힌다(비평 지적).
-  const r = h / 2;
+  // 기본값은 **알약(pill)** — 타이틀 화면 시작 버튼과 같은 버튼 언어다. 게임 안에 버튼 문법이
+  // 셋(알약 / 목재 / 그 외)이면 화면마다 다른 제품처럼 읽힌다(비평 지적). 격자 안에 들어가는
+  // 출격 카드는 건물 타일과 같은 반경을 넘겨받아 **같은 격자의 일원**으로 보이게 한다.
+  const r = radius;
 
   const grad = ctx.createLinearGradient(0, 0, 0, h);
   grad.addColorStop(0, '#ffeeba');
@@ -251,14 +279,18 @@ function fitWidth(text: Text, max: number, min = 0.6): void {
 /**
  * 제목 글자 크기. 부제·장식선 간격이 전부 여기서 파생한다.
  *
- * 카드 제목이 33px 이므로 46px 은 1.4배뿐 — 페이지 제목이 화면을 지배하지 못했다(비평 실측).
- * 61px 은 카드 제목의 1.85배로, 위계가 **크기만으로** 성립하는 최소선이다.
+ * 카드 제목이 33px 이라 46px(1.4배)도 61px(1.85배)도 부족했다 — 61px 판의 실측에서 제목
+ * `기지`의 p99 휘도가 **재화 칩 숫자와 동률(204 vs 205)** 이었다. 위계는 크기와 밝기가 **같이**
+ * 벌어져야 선다. 84px 은 카드 제목의 2.5배이고, 여기에 아웃라인·스페큘러가 얹혀야 타이틀
+ * 워드마크와 같은 무게가 된다.
  */
-const TITLE_SIZE = 61;
+const TITLE_SIZE = 84;
+/** 제목 아웃라인 두께. 얇으면 그냥 굵은 본문이고, 이 두께부터 새김으로 읽힌다. */
+const TITLE_STROKE = 4;
 const SUB_SIZE = 19;
 /** 제목 윗변 → 부제 윗변 · 부제 윗변 → 장식선. */
-const SUB_Y = TITLE_SIZE + 14;
-const RULE_Y = SUB_Y + SUB_SIZE + 18;
+const SUB_Y = TITLE_SIZE + 8;
+const RULE_Y = SUB_Y + SUB_SIZE + 16;
 /** 장식선 전체 폭(양 끝은 알파 0 이라 실제 인상 폭은 이보다 좁다). */
 const RULE_W = 1180;
 
@@ -294,14 +326,33 @@ export function makeScreenTitle(text: string, sub: string): Container {
     root.addChild(glow);
   }
 
+  // 새김 3중 스택(뒤 → 앞): ①offsetY 3 다크 드롭 ②금 그라디언트 + 4px 다크 아웃라인
+  // ③윗부분 1/3 screen 스페큘러. 셋 중 하나라도 빠지면 "굵은 글씨"로 돌아간다.
+  const base = {
+    fontFamily: UI_FONT,
+    fontSize: TITLE_SIZE,
+    fontWeight: '800' as const,
+    align: 'center' as const,
+  };
+
+  const drop = new Text({
+    resolution: 2,
+    text: title,
+    style: {
+      ...base,
+      fill: TITLE_DROP,
+      stroke: { color: TITLE_OUTLINE, width: TITLE_STROKE, join: 'round' },
+    },
+  });
+  drop.anchor.set(0.5, 0);
+  drop.position.set(0, 3);
+  root.addChild(drop);
+
   const face = new Text({
     resolution: 2,
     text: title,
     style: {
-      fontFamily: UI_FONT,
-      fontSize: TITLE_SIZE,
-      fontWeight: '800',
-      align: 'center',
+      ...base,
       fill: new FillGradient({
         type: 'linear',
         start: { x: 0, y: 0 },
@@ -311,14 +362,33 @@ export function makeScreenTitle(text: string, sub: string): Container {
           { offset: 1, color: GOLD_DARK },
         ],
       }),
-      stroke: { color: TITLE_OUTLINE, width: 2.7, join: 'round' },
-      dropShadow: { color: TITLE_DROP, alpha: 1, blur: 0, distance: 1, angle: Math.PI / 2 },
+      stroke: { color: TITLE_OUTLINE, width: TITLE_STROKE, join: 'round' },
     },
   });
   face.anchor.set(0.5, 0);
   face.position.set(0, 0);
   fitWidth(face, RULE_W * 0.8, 0.7);
+  drop.scale.copyFrom(face.scale); // 축소가 걸리면 드롭도 같이 줄어야 어긋나지 않는다.
   root.addChild(face);
+
+  // 스페큘러 — 글자 윗부분만 밝힌다. 아웃라인 위로는 번지지 않게 띠 마스크로 자른다.
+  const spec = new Text({
+    resolution: 2,
+    text: title,
+    style: { ...base, fill: 0xfff6dc },
+  });
+  spec.anchor.set(0.5, 0);
+  spec.position.set(0, 0);
+  spec.scale.copyFrom(face.scale);
+  spec.blendMode = 'screen';
+  spec.alpha = 0.5;
+  const band = new Graphics();
+  band
+    .rect(-RULE_W / 2, TITLE_SIZE * 0.12, RULE_W, TITLE_SIZE * 0.3)
+    .fill({ color: 0xffffff });
+  root.addChild(band);
+  spec.mask = band;
+  root.addChild(spec);
 
   if (subtitle.length > 0) {
     const st = new Text({
@@ -340,37 +410,65 @@ export function makeScreenTitle(text: string, sub: string): Container {
     root.addChild(st);
   }
 
-  // 장식선 — 두 겹(짙은 홈 위에 금선)이라 밝은 바탕에서도 선이 사라지지 않는다.
+  root.addChild(carvedDivider());
+  return root;
+}
+
+/**
+ * 제목 아래 장식 — **석재에 판 홈**이지 웹 헤어라인이 아니다.
+ *
+ * 1px 선 + 중앙 점은 웹 앱 헤더 문법이라, 회화적인 배경 위에 UI 레이어가 그냥 떠 있는 인상을
+ * 준다(비평 지적). 두께가 있는 채널(어두운 홈)에 위쪽 금 하이라이트와 아래쪽 그림자를 짝지어
+ * **깎여 들어간 면**을 만들고, 중앙에 키스톤, 양 끝에 계단형 마감을 둔다 — 빛이 위에서 오는
+ * 이 화면의 조명과 부호가 맞아야 홈으로 읽힌다(하이라이트가 위, 그림자가 아래).
+ */
+function carvedDivider(): Container {
+  const c = new Container();
   const rule = edgeFadeRule();
   if (rule !== null) {
-    const groove = new Sprite(rule);
-    groove.anchor.set(0.5, 0);
-    groove.width = RULE_W;
-    groove.height = 3;
-    groove.position.set(0, RULE_Y + 1);
-    groove.tint = GROOVE;
-    groove.alpha = 0.55;
-    root.addChild(groove);
-
-    const line = new Sprite(rule);
-    line.anchor.set(0.5, 0);
-    line.width = RULE_W;
-    line.height = 1.5;
-    line.position.set(0, RULE_Y);
-    root.addChild(line);
+    const band = (h: number, dy: number, tint: number, alpha: number): void => {
+      const s = new Sprite(rule);
+      s.anchor.set(0.5, 0);
+      s.width = RULE_W;
+      s.height = h;
+      s.position.set(0, RULE_Y + dy);
+      s.tint = tint;
+      s.alpha = alpha;
+      c.addChild(s);
+    };
+    band(2, 0, GOLD_LIT, 0.85); // 홈 윗턱 — 빛 받는 모서리
+    band(5, 2, GROOVE, 0.7); // 파인 채널
+    band(1.5, 7, 0x000000, 0.45); // 홈 아랫턱 그림자
   }
 
-  // 선 가운데 마름모 — 선을 "끝난 곳"이 아니라 "중심이 있는 장식"으로 만든다.
-  const gem = new Graphics();
-  const r = 5;
-  gem
-    .poly([0, -r, r, 0, 0, r, -r, 0])
-    .fill({ color: GOLD })
-    .stroke({ color: GOLD_DEEP, width: 1, alpha: 0.8 });
-  gem.position.set(0, RULE_Y + 0.75);
-  root.addChild(gem);
+  // 중앙 키스톤 — 사다리꼴 두 겹(어두운 테 안에 금)이라 박혀 있는 돌로 읽힌다.
+  const key = new Graphics();
+  key
+    .poly([-15, -11, 15, -11, 10, 11, -10, 11])
+    .fill({ color: GROOVE, alpha: 0.9 });
+  key
+    .poly([-11, -7, 11, -7, 7.5, 7, -7.5, 7])
+    .fill({ color: GOLD_LIT })
+    .stroke({ color: GOLD_DEEP, width: 1, alpha: 0.7 });
+  key.rect(-1, -7, 2, 14).fill({ color: GOLD_DEEP, alpha: 0.55 }); // 가운데 정 자국
+  key.position.set(0, RULE_Y + 4);
+  c.addChild(key);
 
-  return root;
+  // 양 끝 마감 — 계단형 눈금 셋이 바깥으로 갈수록 짧고 옅어진다. 선이 그냥 사라지는 대신
+  // "여기서 끝난다"고 말해 준다.
+  for (const dir of [-1, 1]) {
+    const end = new Graphics();
+    for (let i = 0; i < 3; i++) {
+      const x = dir * (RULE_W * 0.3 + i * 13);
+      const half = 9 - i * 2.5;
+      end
+        .rect(x - 1, RULE_Y + 4 - half, 2, half * 2)
+        .fill({ color: GOLD_LIT, alpha: 0.5 - i * 0.14 });
+    }
+    c.addChild(end);
+  }
+
+  return c;
 }
 
 // ── 2. 유리 재화 칩 ─────────────────────────────────────────────────────────
@@ -477,6 +575,9 @@ const GLOW_BASE = 0.3;
 const GLOW_AMPL = 0.07;
 /** 외곽 글로우 색(따뜻한 호박) — 판때기의 금보다 한 단 붉어야 빛으로 읽힌다. */
 const GLOW_TINT = 0xffbe50;
+/** 접지 그림자 블러 반경과 아래 오프셋. 난색 다크(`#2a1a08`)로 굽는다 — 중성 검정은 "때"로 보인다. */
+const SHADOW_BLUR = 18;
+const SHADOW_DY = 6;
 /** 호버 시 글로우 가산분. */
 const GLOW_HOVER = 0.16;
 /** 광택 스윕 주기와 통과 시간(초) — 대부분의 시간 동안 화면에 없다. */
@@ -532,6 +633,19 @@ export interface HeroButton {
 }
 
 /**
+ * i18n 라벨에서 앞뒤 방향 마커를 걷어낸다.
+ *
+ * ⚠️ `base.launch` 는 카탈로그에 **이미 `▶` 를 달고 있다**. 호출부가 마커를 하나 더 붙였더니
+ * 실화면에 화살표가 둘이 됐고 오른쪽 것이 텍스트에서 220px 떨어져 고아로 떠 있었다(비평 지적).
+ * 카탈로그는 다른 화면도 쓰므로 건드리지 않고 **표시 직전에** 정규화한다.
+ */
+function bareLabel(label: string): string {
+  return stripEmoji(label)
+    .replace(/^[▶◀\s]+/u, '')
+    .replace(/[▶◀\s]+$/u, '');
+}
+
+/**
  * 출격 CTA — 이 화면의 주인공.
  *
  * 구성(뒤 → 앞): 맥동 글로우(가산) · 접지 그림자 · 금 판때기(구운 그라디언트) · 광택 스윕
@@ -569,14 +683,16 @@ export function makeHeroButton(w: number, h: number, label: string, onClick: () 
   }
 
   // 접지 그림자 — 판이 배경 위에 **놓여 있다**는 신호. 없으면 스티커처럼 붙어 보인다.
-  if (haze !== null) {
-    const shade = new Sprite(haze);
+  //
+  // 알약과 **같은 경로·같은 반지름**으로 굽는다. 예전엔 원형 헤이즈를 눌러 썼는데, 알약 모서리와
+  // 형상이 달라 어깨에서 어긋나고 색도 중성 검정이라 전면 난색 팔레트에서 "때"로 보였다.
+  const shadowTex = pillTexture(w, h, 'rgba(42, 26, 8, 0.6)', 0, SHADOW_BLUR);
+  if (shadowTex !== null) {
+    const shade = new Sprite(shadowTex);
     shade.anchor.set(0.5);
-    shade.width = w * 0.92;
-    shade.height = h * 0.9;
-    shade.position.set(0, h * 0.52);
-    shade.tint = 0x000000;
-    shade.alpha = 0.45;
+    shade.width = w + SHADOW_BLUR * 4;
+    shade.height = h + SHADOW_BLUR * 4;
+    shade.position.set(0, SHADOW_DY);
     glowHost.addChildAt(shade, 0);
   }
 
@@ -601,8 +717,10 @@ export function makeHeroButton(w: number, h: number, label: string, onClick: () 
   let sheen: Sprite | null = null;
   const sheenSrc = sheenBand();
   if (sheenSrc !== null) {
+    // 마스크는 판때기가 실제로 칠해진 범위(1.5px 인셋) 안쪽으로 잡는다. 반지름도 **인셋된
+    // 높이의 절반**이어야 한다 — 여기에 h/2 를 그대로 넣는 것이 CRIT-1 의 원인이었다.
     const clip = new Graphics();
-    clip.roundRect(0, 0, w, h, h / 2).fill({ color: 0xffffff });
+    clip.roundRect(2, 2, w - 4, h - 4, (h - 4) / 2).fill({ color: 0xffffff });
     sheenHost.addChild(clip);
     sheenHost.mask = clip;
     sheen = new Sprite(sheenSrc);
@@ -618,18 +736,29 @@ export function makeHeroButton(w: number, h: number, label: string, onClick: () 
   }
 
   // 호버 광택 — tint 는 곱연산이라 밝힐 수 없다. 반투명 크림을 얹어 밝힌다.
-  const gloss = new Graphics();
-  gloss.roundRect(2, 2, w - 4, h - 4, h / 2).fill({ color: 0xfff3d0 });
+  //
+  // ⚠️ **CRIT-1 의 진짜 원인이 여기였다.** 예전엔 `Graphics.roundRect(2, 2, w-4, h-4, h/2)` 였는데,
+  // 반지름 h/2 가 그 사각형 높이의 절반((h-4)/2)보다 커서 모서리 호가 판때기 **밖으로 부풀었다**.
+  // 크림이 금 위에서는 안 보이고 삐져나온 부분만 어두운 배경에 찍혀, 호버 중 캡처된 실화면에서
+  // 알약 양 어깨에 초승달로 남았다. 이제 판때기와 **같은 경로로 구운 텍스처**를 쓰므로 형상이
+  // 어긋나는 것이 원리적으로 불가능하다(폴백도 클램프된 반지름).
+  let gloss: Sprite | Graphics;
+  const glossTex = pillTexture(w, h, '#fff3d0', 2.5);
+  if (glossTex !== null) {
+    const sp = new Sprite(glossTex);
+    sp.width = w;
+    sp.height = h;
+    gloss = sp;
+  } else {
+    const g = new Graphics();
+    g.roundRect(2.5, 2.5, w - 5, h - 5, (h - 5) / 2).fill({ color: 0xfff3d0 });
+    gloss = g;
+  }
   gloss.alpha = 0;
   inner.addChild(gloss);
 
-  // 라벨 + 셰브런.
-  //
-  // ⚠️ **i18n 문자열이 이미 `▶` 를 달고 온다**(`base.launch` = "▶ 성계 지도 (출격)"). 여기서
-  // 마커를 하나 더 붙였더니 실화면에 화살표가 둘이 됐고, 오른쪽 것이 텍스트에서 220px 떨어져
-  // 고아로 떠 있었다(비평 지적). 카탈로그는 다른 화면도 쓰므로 건드리지 않고 **이 자리에서
-  // 정규화**한다: 앞뒤의 기존 마커를 걷어내고 왼쪽 하나만 텍스트에 붙여 다시 세운다.
-  const bare = stripEmoji(label).replace(/^[▶◀\s]+/u, '').replace(/[▶◀\s]+$/u, '');
+  // 라벨 + 셰브런. 마커는 {@link bareLabel} 로 정규화한 뒤 **왼쪽 하나만** 다시 세운다.
+  const bare = bareLabel(label);
   const markerSize = Math.round(h * 0.26);
   const marker = new Text({
     resolution: 2,
