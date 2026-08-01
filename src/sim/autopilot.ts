@@ -20,6 +20,7 @@ import { SPECIAL_NONE, packPowerupPick } from './world.js';
 import type { Entity } from './entities.js';
 import { atan2, length } from './math.js';
 import { isObjectiveDestructible } from './modes/objective.js';
+import { INVASION_WINDOW_HALF_W, INVASION_WINDOW_HALF_H } from './invasion/scroll.js';
 import { PLANET_MODE } from './planetMode.js';
 
 /** 적탄이 '위협'으로 간주되는 최대 거리(월드 단위). 이 안에서 접근 중인 탄만 회피한다. */
@@ -38,6 +39,31 @@ export const KITE_DISTANCE = 460;
 const KITE_BACKOFF = 0.75;
 
 /**
+ * 강제 스크롤 창의 뒤 경계까지 이 거리 안쪽이면 **다른 모든 휴리스틱을 제치고 전진**한다.
+ *
+ * ## 왜 필요한가 — 카이팅은 강제 스크롤 무대에서 자살이다 (2026-08-02 실측)
+ * 봇은 창을 **전혀 모른 채** 최근접 적에서 물러난다(③ 카이팅). 그런데 레이싱·블록격파는
+ * 적을 창 **전방**에 스폰하므로(`RACING_SPAWN_AHEAD`) 후퇴 방향이 곧 뒤 경계 방향이다.
+ * 게다가 창 기준 속도(`INVASION_SCROLL_SPEED` 12 u/tick)가 플레이어 기본 이동 속도와 **같은
+ * 값**이라 뒤로 밀린 거리는 사실상 만회되지 않는다(가속은 100→200cp 로 오르기만 한다).
+ *
+ * 코스가 짧던 동안에는 이것이 보이지 않았다. 2026-08-01 페이싱 조정이 레이싱 코스를 14초
+ * → 90초로 늘리자 즉시 드러났다 — 아르케 클리어율 **1.7%**, 그리고 신설 진단 지표
+ * `후방압박`이 **런 시간의 42.8%** 를 뒤 경계 압박 구역에서 보냈다고 보고했다. 레벨을
+ * 5 → 100 으로 올려도 처치/초가 2.04 → 1.80 으로 **떨어지고** 로스터 편차가 2.9pp 였다 —
+ * 적을 못 죽여서 지는 것이 아니라 창을 못 따라가서 지는 것이라는 signature 다.
+ *
+ * **그래서 이것은 밸런스 조정이 아니라 계측기 수리다.** 여기를 고치지 않고 적 곡선을 낮추면
+ * 존재하지 않는 문제를 튜닝하게 된다(이 저장소가 조준 목록에서 4번 겪은 부류).
+ */
+const STATION_CRITICAL_SLACK = 320;
+/**
+ * 뒤 경계까지 이 거리 안쪽이면 **뒤로 가는 성분만 잘라낸다**(옆으로 피하는 것은 그대로 허용).
+ * 임계 구간 바깥에서는 회피·카이팅이 한 글자도 바뀌지 않는다.
+ */
+const STATION_COMFORT_SLACK = 880;
+
+/**
  * 이번 틱의 입력 프레임을 생성한다. `world` 상태만의 순수 함수 — 부작용 없음.
  */
 export function autopilotInput(world: WorldState): InputFrame {
@@ -54,10 +80,19 @@ export function autopilotInput(world: WorldState): InputFrame {
   const target = nearestTarget(world, player);
   const aim = target !== undefined ? atan2(target.y - player.y, target.x - player.x) : 0;
 
+  // ⓪ 창 유지(강제 스크롤 무대 전용): 뒤 경계에 붙으면 회피·카이팅보다 먼저 전진한다.
+  //    그 외 무대는 `forward` 가 undefined 라 아래 경로가 한 줄도 실행되지 않는다(거동·해시 불변).
+  const forward = scrollForward(world);
+  const slack = forward !== undefined ? rearSlack(world, player, forward) : Infinity;
+  if (forward !== undefined && slack <= STATION_CRITICAL_SLACK) {
+    return { moveX: forward.x, moveY: forward.y, aim, dash: false, special: SPECIAL_NONE };
+  }
+
   // ① 위협 회피 우선: 접근 중인 최근접 적탄의 탄선에서 수직으로 비킨다.
   const dodge = dodgeVector(world, player);
   if (dodge !== undefined) {
-    return { moveX: dodge.x, moveY: dodge.y, aim, dash: false, special: SPECIAL_NONE };
+    const v = clampBackward(dodge, forward, slack);
+    return { moveX: v.x, moveY: v.y, aim, dash: false, special: SPECIAL_NONE };
   }
 
   // ② 목표물 우선: 무대 진행이 걸린 파괴 대상이 남아 있으면 **가장 가까운 것으로 곧장 붙는다**
@@ -91,8 +126,9 @@ export function autopilotInput(world: WorldState): InputFrame {
       const nx = dx / d;
       const ny = dy / d;
       if (d < KITE_DISTANCE * KITE_BACKOFF) {
-        // 너무 가까움 → 물러난다.
-        return { moveX: -nx, moveY: -ny, aim, dash: false, special: SPECIAL_NONE };
+        // 너무 가까움 → 물러난다. 강제 스크롤 무대에서는 뒤 경계 쪽 성분만 잘라낸다.
+        const v = clampBackward({ x: -nx, y: -ny }, forward, slack);
+        return { moveX: v.x, moveY: v.y, aim, dash: false, special: SPECIAL_NONE };
       }
       if (d > KITE_DISTANCE) {
         // 멀다 → 접근한다(젬 수거 + 사격 사거리 확보).
@@ -102,7 +138,60 @@ export function autopilotInput(world: WorldState): InputFrame {
   }
 
   // 적정 거리대 또는 표적 없음: 정지(오토어택이 최근접 표적을 알아서 조준·사격).
+  //
+  // ⚠️ 강제 스크롤 무대에서는 **정지가 곧 후퇴다** — 창이 매 틱 전진하므로 가만히 서 있으면
+  // 창 기준 속도만큼 뒤로 밀린다. 그래서 그 무대에서만 기본 행동을 전진으로 바꾼다.
+  if (forward !== undefined) {
+    return { moveX: forward.x, moveY: forward.y, aim, dash: false, special: SPECIAL_NONE };
+  }
   return { moveX: 0, moveY: 0, aim, dash: false, special: SPECIAL_NONE };
+}
+
+/**
+ * 이 무대의 **창 전진 방향**(단위 벡터). 강제 스크롤 무대가 아니면 undefined —
+ * 그 경우 창 유지 경로 전체가 무연산이라 기존 봇 거동이 바이트 불변이다.
+ *
+ * 레이싱은 +X, 블록격파는 −Y 로 창이 나아간다(`racingProgress` = `scrollX`,
+ * `blockBreakProgress` = `-scrollY`). 침공(`invasion3`)은 `scrollRuntime` 이 없어 대상이 아니다.
+ */
+function scrollForward(world: WorldState): { x: number; y: number } | undefined {
+  if (world.scrollRuntime === undefined) return undefined;
+  if (world.config.planetMode === PLANET_MODE.racing) return { x: 1, y: 0 };
+  if (world.config.planetMode === PLANET_MODE.blockBreak) return { x: 0, y: -1 };
+  return undefined;
+}
+
+/**
+ * 창 뒤 경계까지 남은 여유(월드 유닛). 전진 방향축으로만 잰다 — 압박 판정
+ * (`racingRearPressure`)과 같은 축이다. 값이 작을수록 경계에 가깝다.
+ */
+function rearSlack(world: WorldState, player: Entity, forward: { x: number; y: number }): number {
+  const rt = world.scrollRuntime;
+  if (rt === undefined) return Infinity;
+  return forward.x !== 0
+    ? player.x - (rt.scrollX - INVASION_WINDOW_HALF_W)
+    : rt.scrollY + INVASION_WINDOW_HALF_H - player.y;
+}
+
+/**
+ * 뒤 경계가 가까울 때 이동 벡터에서 **뒤로 가는 성분만** 잘라낸다(옆 회피는 그대로 남긴다).
+ * 잘라낸 뒤 길이가 0 이면 전진 벡터로 대체한다 — 방향이 사라진 채 정지하면 그것도 후퇴다.
+ *
+ * 여유가 충분하거나 강제 스크롤 무대가 아니면 입력을 **그대로** 돌려준다.
+ */
+function clampBackward(
+  v: { x: number; y: number },
+  forward: { x: number; y: number } | undefined,
+  slack: number,
+): { x: number; y: number } {
+  if (forward === undefined || slack > STATION_COMFORT_SLACK) return v;
+  const along = v.x * forward.x + v.y * forward.y;
+  if (along >= 0) return v;
+  const x = v.x - along * forward.x;
+  const y = v.y - along * forward.y;
+  const d = length(x, y);
+  if (d < 0.0001) return forward;
+  return { x: x / d, y: y / d };
 }
 
 /**
