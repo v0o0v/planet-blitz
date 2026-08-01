@@ -12,6 +12,7 @@
 
 import type { WorldState } from '../../sim/world.js';
 import { chaseAliveCounterDevices } from '../../sim/modes/chase.js';
+import { contaminationPurifyRate } from '../../sim/modes/contamination.js';
 import { PLANET_MODE } from '../../sim/planetMode.js';
 
 /**
@@ -96,6 +97,17 @@ export interface RunTrace {
    * 손댈 축이 적 곡선이 아니다(봇 · 창 속도 · 압박 계수). 판정은 `cell.ts` 런 루프에서 한다.
    */
   rearPinTicks: number;
+  /**
+   * 런 전체에서 플레이어가 **잃은 선체 HP 총량**(틱별 감소분의 합, 회복은 세지 않는다).
+   *
+   * 아래 두 귀속 버킷의 분모다. 최대 HP 는 레벨·장비로 달라지므로 절대량이 아니라 **비율**로만
+   * 읽어야 한다.
+   */
+  hpLost: number;
+  /** 그중 **지형(활성 해저드)** 에 귀속된 분. {@link RunTrace.hpLost} 참조. */
+  hpLostHazard: number;
+  /** 그중 **접촉(적·보스 몸통)** 에 귀속된 분. */
+  hpLostContact: number;
 }
 
 /** 새 trace 를 만든다. */
@@ -108,6 +120,9 @@ export function newTrace(): RunTrace {
     bossHpLast: -1,
     bossReachTick: -1,
     rearPinTicks: 0,
+    hpLost: 0,
+    hpLostHazard: 0,
+    hpLostContact: 0,
   };
 }
 
@@ -238,6 +253,58 @@ export const RUN_METRICS: Readonly<Record<string, MetricDef>> = {
     kind: 'mean',
     digits: 3,
     of: (s, t) => (s.tick > 0 ? t.rearPinTicks / s.tick : 0),
+  },
+  /**
+   * 패배가 **플레이어 사망이 아닌** 비율(런 종료 시 `gameOver` 인데 선체가 남아 있다).
+   *
+   * 이 경로를 가진 모드는 둘이다(그 외는 항상 0):
+   * - **오염(톡사르)**: 맵이 임계까지 오염되면(`contaminationCritical`) 만피여도 진다.
+   * - **추격(니플헤임)**: 취약화 전 무적 포식자에 **접촉하면 피해 없이 즉시** `gameOver` 다
+   *   (`resolveCollisions` 의 chase 분기). 선체는 그대로 남는다.
+   *
+   * **처방을 정반대로 가른다**: 크면 사인은 확산 시계·포식자 접근이고, 0 이면 사인은 평범한
+   * 소모전이라 그 축을 아무리 만져도 움직이지 않는다. 톡사르에서 유입·오염 지형 피해 두 축이
+   * **둘 다 무반응**이었던 이유를 이 지표가 가른다.
+   */
+  mapLossRate: {
+    label: '맵상실',
+    kind: 'rate',
+    of: (s) => {
+      const player = s.entities[0];
+      return s.gameOver && player !== undefined && player.hp > 0 ? 1 : 0;
+    },
+  },
+  /**
+   * 런 종료 시점의 **정화율**(파괴한 오염 노드 / 전체 노드, 오염 모드 전용 · 그 외 0).
+   *
+   * "목표 비용을 감당할 수 있는가"의 직답이다. 패배 런에서 이 값이 낮게 고이면 사인은 압박이
+   * 아니라 **목표 총 HP**(노드 수 × 노드 HP)이고, 손댈 축은 웨이브가 아니라 그쪽이다.
+   * 승리 런은 정의상 1.0 이라 전 런 평균은 승률에 끌려간다 — 판정은 `runs.json` 을 결과별로
+   * 교차집계해서 한다(`chaseDevicesLeft` 와 같은 규율).
+   */
+  purifyEnd: {
+    label: '정화율',
+    kind: 'mean',
+    digits: 2,
+    of: (s) =>
+      s.config.planetMode === PLANET_MODE.contamination ? contaminationPurifyRate(s) : 0,
+  },
+  /**
+   * 잃은 선체 HP 중 **지형(활성 해저드)** 에 귀속된 비율. 귀속 규칙은 `cell.ts`
+   * `attributeHpLoss` 에 있다(sim 의 "겹친 피해원 중 최대" 규칙을 그대로 흉내낸다).
+   */
+  hpLossHazardShare: {
+    label: '지형피해분',
+    kind: 'mean',
+    digits: 3,
+    of: (_s, t) => (t.hpLost > 0 ? t.hpLostHazard / t.hpLost : 0),
+  },
+  /** 잃은 선체 HP 중 **접촉(적·보스 몸통)** 에 귀속된 비율. 나머지는 원거리 탄이다. */
+  hpLossContactShare: {
+    label: '접촉피해분',
+    kind: 'mean',
+    digits: 3,
+    of: (_s, t) => (t.hpLost > 0 ? t.hpLostContact / t.hpLost : 0),
   },
   metaXp: { label: '메타XP', kind: 'mean', digits: 0, of: (s) => s.xpTotal },
   kills: { label: '처치', kind: 'mean', digits: 0, of: (s) => s.kills },

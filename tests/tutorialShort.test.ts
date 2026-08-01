@@ -21,6 +21,12 @@ const DURABLE: WorldConfig = { ...DEFAULT_CONFIG, playerHp: 100_000_000 };
 /** maxSegments 상한 런에서 도달한 세그먼트 인덱스 궤적을 수집한다. */
 function segmentTrace(config: WorldConfig, ticks: number): number[] {
   const state = createWorld(0x707, config);
+  // 관측 화력 고정 — 이 테스트의 계약은 **세그먼트 궤적**이지 "무장비 파일럿이 몇 틱에 처치
+  // 할당을 채우는가" 가 아니다. 예전에는 무장비 오토어택의 자연 화력에 기댔고, 그래서 밸런스
+  // 상수가 움직일 때마다(파워업 강화 폭 +35% → +10%, 2026-08-02) 궤적이 예산 안에서 끝나지
+  // 않아 `[0,1,2]` 로 잘렸다 — 계약이 깨진 게 아니라 관측 파일럿이 약해진 것이다. 화력을
+  // 여기서 못박으면 궤적 단언이 화력 튜닝과 무관해진다(격전 리더 HP×8 도 확실히 넘긴다).
+  state.weapon.damage = 100_000;
   const seen: number[] = [];
   for (let t = 0; t < ticks; t++) {
     // 레벨업 선택 대기는 sim을 멈추므로 첫 후보를 자동 픽해 궤적 관찰을 지속한다.
