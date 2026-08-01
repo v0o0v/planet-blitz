@@ -39,6 +39,10 @@ Thumbs.db
 tmp/
 temp/
 
+# 밸런스 체크 산출물(`pnpm balance`) — sim 번들·리포트·런 기록 전부 재생성물이다.
+# 리포트를 남기고 싶으면 `.omc/research/` 로 복사해라(거기가 계측 정본 자리다).
+.balance/
+
 # Asset-prep raw inputs (PixelLab north-facing originals; prepped into assets/*.png)
 assets/_raw/
 

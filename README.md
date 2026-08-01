@@ -71,6 +71,20 @@ pnpm run build
 - `lint`: ESLint — `src/sim/**`에서 `pixi.js` import·`Math.random`·`Date.now`·`performance.now` 사용을 에러로 차단 (ADR-0005)
 - `build`: `tsc --noEmit`(strict) + `vite build`
 
+### 밸런스 체크
+
+```
+pnpm balance
+```
+
+**10분 예산**으로 난이도 곡선·로스터 편차·행성 편차·경제 지표를 한 번에 재고 게이트로 판정한다.
+`(행성 × 기체 × 표준 레벨)` 격자를 코어 수만큼 병렬로 돌리며, 축은 카탈로그(`PLANETS`·`SHIP_TYPES`·
+`BAND_LEVELS`)에서 파생되므로 **새 행성·기체·장비가 들어와도 하네스를 고칠 필요가 없다** —
+격자가 커지면 셀당 시드 수가 줄어 소요 시간은 유지된다.
+
+산출물은 `.balance/report.md`(사람용) · `summary.json` · `runs.json`(재집계용)이다.
+절차·인자·게이트 근거·측정 사각지대는 **[docs/balance-check.md](docs/balance-check.md)** 가 정본이다.
+
 ## 서버 배포
 
 원격 Supabase(프로젝트 ref `qxgbxwyccbxokdgwxcuw`)에 마이그레이션·Edge Function 을 올리는 절차다.

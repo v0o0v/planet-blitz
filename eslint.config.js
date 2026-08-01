@@ -74,7 +74,10 @@ export default tseslint.config(
     // 프로덕션 그래프 밖이고 git 에도 대부분 안 들어가는데, lint 가 그 안의 `.mjs` 프로브를 잡아
     // **소스가 멀쩡한데 `pnpm lint` 가 빨개졌다**(실제 발생: 비평가가 남긴 `tools/sat.mjs` 의 미사용
     // 변수 1건). 검증 게이트가 검증 부산물 때문에 실패하는 것은 게이트를 무의미하게 만든다.
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '.omc/**'],
+    // `.balance/**` 은 밸런스 체크(`pnpm balance`)의 산출물이다 — vite 가 뽑은 sim 번들과
+    // 리포트가 들어 있고 gitignore 대상이다. 번들을 lint 하면 **소스가 멀쩡한데 게이트가
+    // 빨개진다**(위와 같은 실패 유형).
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '.omc/**', '.balance/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -149,7 +152,16 @@ export default tseslint.config(
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
-      globals: { Buffer: 'readonly', process: 'readonly', console: 'readonly', URL: 'readonly' },
+      // `performance` 는 Node 18+ 의 전역이다(밸런스 러너가 예산 회계에 쓴다). sim 코어에서는
+      // `performance.now` 가 여전히 금지지만(ADR-0005) 그 규칙은 `src/sim/**` 에만 걸린다 —
+      // 여기는 벽시계로 예산을 재는 것이 목적인 계층이다.
+      globals: {
+        Buffer: 'readonly',
+        process: 'readonly',
+        console: 'readonly',
+        URL: 'readonly',
+        performance: 'readonly',
+      },
     },
   },
   {

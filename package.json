@@ -12,7 +12,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint . --max-warnings 0",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "balance": "node scripts/balance/run.mjs",
+    "balance:quick": "node scripts/balance/run.mjs --minutes=2"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",
