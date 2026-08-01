@@ -37,7 +37,7 @@ import { MID_CLASH_LEADER_MARK } from './midClash.js';
  *
  * 벽 행 수는 `blockBreakCourseLength() / BLOCKBREAK_ROW_SPACING` **파생**이라 길이를 늘리면
  * 행이 비례해 늘어난다 — 레이싱과 달리 밀도 보존이 이미 구조에 들어 있다. TODO(밸런스). */
-export const BLOCKBREAK_SECTION_LENGTH = 13500;
+export const BLOCKBREAK_SECTION_LENGTH = 14650;
 /**
  * 보스 전 구간 수 — **일반 세그먼트 수에서 파생한다**(밸런스 상수가 아니라 구조 정합).
  * 근거는 `RACING_SECTION_COUNT` 와 동일: 전진 게이트가 `blockBreakProgress(sw) >=

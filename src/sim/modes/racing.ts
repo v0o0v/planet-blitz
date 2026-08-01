@@ -34,7 +34,7 @@ import type { WorldState } from '../world.js';
  * 길이를 늘려도 **콘텐츠 밀도는 유지된다** — 분기·부스트 배치가 {@link RACING_BRANCH_INTERVAL}
  * 파생이라 구간이 길어지면 분기 수가 함께 늘어난다. 파생으로 바꾸기 전에는 구간당 분기 1개
  * 고정이라, 길이만 늘리면 **12,700 유닛짜리 빈 복도**가 됐을 것이다. */
-export const RACING_SECTION_LENGTH = 12700;
+export const RACING_SECTION_LENGTH = 13460;
 /**
  * 분기(갈림길) 하나가 담당하는 +X 거리. 구간당 분기 수가 이 값에서 파생되므로
  * **구간 길이를 바꿔도 "몇 유닛마다 갈림길이 나오는가"라는 체감 밀도가 보존된다.**

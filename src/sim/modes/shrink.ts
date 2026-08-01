@@ -34,7 +34,7 @@ import type { WorldState } from '../world.js';
 
 // --- 플레이스홀더 계수 (TODO(밸런스): 출시 전 일괄 튜닝, 구조만 고정) ---
 /** 안전 반경 시작값(월드 유닛, 정수). 원점 0,0 기준. TODO(밸런스). */
-export const SHRINK_INITIAL_RADIUS = 4000;
+export const SHRINK_INITIAL_RADIUS = 5500;
 /** 안전 반경 하한(정수). 수축이 이 값에서 멈춘다(0 으로 조이면 코어가 붕괴). TODO(밸런스). */
 export const SHRINK_MIN_RADIUS = 600;
 /** 유예 소진 후 매 틱 반경 감소량(정수). 정수 뺄셈뿐 — 부동소수 금지. TODO(밸런스). */

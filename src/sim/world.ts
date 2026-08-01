@@ -1321,7 +1321,7 @@ export function createWorld(
     // PvE 오염(Lane8): 비-스크롤 자유추적이라 scrollRuntime 이 없다(위 두 분기 조건 밖). 오염
     // 노드 필드(고정 링)를 1회 배치한다. contamination 런에만 — 뱀서류·블록격파·레이싱·침공은
     // 조건 밖이라 오염 노드가 하나도 안 생겨 골든 바이트 불변.
-    placeContaminationField(state);
+    placeContaminationField(state, state.config.stage ?? 1);
   } else if (cfg.planetMode === PLANET_MODE.chase) {
     // PvE 추격(Lane6): 비-스크롤 자유추적이라 scrollRuntime 이 없다(위 두 분기 조건 밖). 무적
     // 포식자(boss, aux0=0) + 반격 장치 + 대피소 코스를 1회 배치하고 bossSpawned 을 세운다(포식자가
