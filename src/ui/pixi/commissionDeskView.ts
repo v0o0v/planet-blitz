@@ -11,6 +11,7 @@ import type { CommissionGrade, CommissionOrder, CommissionPayload } from '../../
 import type { EquipSlotId, SlotKind } from '../../items/types.js';
 import { RARITY_BY_CODE } from '../../items/types.js';
 import { POWERUPS } from '../../sim/powerups.js';
+import { M2_UNIQUES } from '../../../data/uniques.js';
 import { slotLabel } from '../itemNames.js';
 import { t, type MessageKey } from '../../i18n/index.js';
 
@@ -68,10 +69,28 @@ export function commissionRewardSummary(payload: CommissionPayload): CommissionR
 }
 
 /**
+ * `bannedUniqueIds` 의 정수(= `UniqueDef.bit`)를 표시 이름으로 되돌린다.
+ *
+ * ⚠️ **`id` 문자열이 아니라 `bit` 로 조회한다** — wire 정본이 bit 이기 때문이다
+ * (`src/run/runConfig.ts` 의 `equipBanned` 주석이 근거: payload 가 jsonb 이라 서버·클라가 같은
+ * **정수**를 봐야 하고, bit 는 이미 append-only 로 고정된 유일한 정수 축이다).
+ *
+ * 미상 bit 는 **버리지 않고** `#<bit>` 로 보여준다 — 조용히 빠뜨리면 "금지가 3개인데 2개만
+ * 보이는" 상태가 되고, 그건 목록을 신뢰하게 만들어 아무것도 안 보이는 것보다 나쁘다.
+ */
+function uniqueNameByBit(bit: number): string {
+  for (const def of M2_UNIQUES) if (def.bit === bit) return def.name;
+  return `#${bit}`;
+}
+
+/**
  * 제약 계약(장비축·성장축) 표시 줄. **다른 주문이면 빈 배열** — 카드에 아무 표시도 하지 않는다.
  *
- * ⚠️ `bannedUniqueIds` 는 아직 표시하지 않는다(개별 유니크 이름 역조회 자리 미비 — 후속 폴리시).
- * 이 함수는 스펙이 명시한 두 축(장비 슬롯·장비 등급 상한·성장 계열)만 진다.
+ * ⚠️ **금지된 것은 반드시 이름으로 보여야 한다.** 제약 계약 의뢰인데 무엇이 봉인됐는지 화면에
+ * 없으면 플레이어는 장비가 사라진 것을 **결함으로 읽는다** — 장비축 제약은 `runConfig.ts` 의
+ * `equippedItems` 단계에서 조용히 빠지므로 아무 오류도 나지 않기 때문이다. 그래서
+ * `bannedUniqueIds` 도 이름으로 편다(초안이 "역조회 자리 미비"로 미뤘던 것은 오판이었다 —
+ * `M2_UNIQUES` 가 `bit`·`name` 을 나란히 들고 있어 역조회가 사소하다).
  */
 export function commissionConstraintLines(payload: CommissionPayload): string[] {
   if (payload.order !== 'constraint') return [];
@@ -87,6 +106,11 @@ export function commissionConstraintLines(payload: CommissionPayload): string[] 
   if (rules?.maxRarity !== undefined) {
     const rarity = RARITY_BY_CODE[rules.maxRarity] ?? 'normal';
     lines.push(t('commission.constraint.maxRarity', { name: t(`item.rarity.${rarity}` as MessageKey) }));
+  }
+  const bannedUniques = rules?.bannedUniqueIds;
+  if (bannedUniques !== undefined && bannedUniques.length > 0) {
+    const names = bannedUniques.map((bit) => uniqueNameByBit(bit)).join(' · ');
+    lines.push(t('commission.constraint.bannedUniques', { list: names }));
   }
   const bannedPowerups = payload.constraints?.bannedPowerupLines;
   if (bannedPowerups !== undefined && bannedPowerups.length > 0) {

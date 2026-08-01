@@ -19,6 +19,7 @@ import {
 import type { CommissionPayload } from '../src/run/commission.js';
 import { t } from '../src/i18n/index.js';
 import { POWERUPS } from '../src/sim/powerups.js';
+import { M2_UNIQUES } from '../data/uniques.js';
 
 function basePayload(overrides: Partial<CommissionPayload> = {}): CommissionPayload {
   return {
@@ -149,5 +150,48 @@ describe('commissionEliteNoteFor — ADR-0043', () => {
 describe('commissionStockText — 보관 상한', () => {
   it('보유/상한을 그대로 담는다', () => {
     expect(commissionStockText(3, 12)).toBe(t('commission.stock', { n: 3, cap: 12 }));
+  });
+});
+
+describe('금지 유니크가 **이름으로** 표시된다 (리뷰 후속 — 미표시는 결함으로 읽힌다)', () => {
+  // ⚠️ 초안은 이 축을 "역조회 자리 미비"로 미뤘는데 오판이었다 — `M2_UNIQUES` 가 `bit`·`name` 을
+  //    나란히 들고 있다. 그리고 미표시는 단순 누락이 아니다: 장비축 제약은 `runConfig.ts` 의
+  //    `equippedItems` 단계에서 **조용히** 빠지므로 아무 오류도 안 나고, 플레이어는 장비가
+  //    사라진 것을 결함으로 읽는다.
+  const first = M2_UNIQUES[0];
+  const second = M2_UNIQUES[1];
+
+  it('bit 로 조회한 이름이 나온다 (wire 정본이 문자열 id 가 아니라 bit 다)', () => {
+    if (first === undefined || second === undefined) throw new Error('유니크 카탈로그가 비었다');
+    const lines = commissionConstraintLines(
+      basePayload({
+        order: 'constraint',
+        constraints: { equipRules: { bannedUniqueIds: [first.bit, second.bit] } },
+      }),
+    );
+    expect(lines).toEqual([
+      t('commission.constraint.bannedUniques', { list: `${first.name} · ${second.name}` }),
+    ]);
+  });
+
+  it('미상 bit 도 **버리지 않고** 표시한다 (조용한 누락이 아무것도 안 보이는 것보다 나쁘다)', () => {
+    // ⚠️ 이 단언이 통과하면서도 참일 수 있는 나쁜 상태: 구현이 미상 항목을 빈 문자열로 만들어
+    //    ' · ' 만 남기는 것. 그래서 표시 문자열에 원문 식별자가 실제로 들어 있는지 본다.
+    const unknownBit = 999;
+    const lines = commissionConstraintLines(
+      basePayload({
+        order: 'constraint',
+        constraints: { equipRules: { bannedUniqueIds: [unknownBit] } },
+      }),
+    );
+    expect(lines.length).toBe(1);
+    expect(lines[0]).toContain(String(unknownBit));
+  });
+
+  it('금지 유니크가 없으면 그 줄이 아예 안 나온다', () => {
+    const lines = commissionConstraintLines(
+      basePayload({ order: 'constraint', constraints: { equipRules: { bannedUniqueIds: [] } } }),
+    );
+    expect(lines).toEqual([]);
   });
 });
