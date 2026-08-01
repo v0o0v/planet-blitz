@@ -289,18 +289,37 @@ const RIB_GRAIN_HALF_W = 12;
 /** 리브 중심 x(디자인). 격자 피치 458 에서 파생 — Lane D 와 같은 자리를 가리켜야 한다. */
 const RIB_COLUMNS: readonly number[] = [502, 960, 1418];
 
-// --- 하단 가산 리프트(P4) ---
+// --- 하단 가산 바닥광(P4 → C6) ---
 /**
- * 화면 맨 아래에 **더하는** 빛(휘도). 곱이나 하한으로는 못 고친다 — {@link LP_FLOOR} 는 곱
+ * 화면 아래쪽에 **더하는** 빛(휘도). 곱이나 하한으로는 못 고친다 — {@link LP_FLOOR} 는 곱
  * **이전** 하한이라 원화가 L 11 인 자리를 끌어올리지 못했고, 그래서 하단 평균 35.6 뒤에
  * **L<24 가 24.5%** 숨어 있었다(좌하단 타일 11.2~14.0). 평균이 가린 결함이라 최솟값으로
- * 잡아야 한다.
+ * 잡아야 한다. 비네트·스크림 **뒤에** 얹으므로 아무것도 이 값을 깎지 않는다.
  *
- * 비네트·스크림 **뒤에** 얹으므로 아무것도 이 값을 깎지 않는다 — 바닥이 보장된다.
+ * ⚠️ **한때 34 짜리 단조 증가 램프였고(y 890→1080 선형), 그게 값 위계를 뒤집었다.**
+ * 크러시는 풀렸지만 대가로 **화면 맨 아래가 프레임에서 제일 밝아졌다** — 실측(오프-리브
+ * 배경) y 920~960 L 44 vs y 1020~1060 L 77~81. 실내는 광원에서 멀어질수록 어두워지는 것이
+ * 자연의 위계인데 그 반대가 됐고, 부작용이 결정적이었다: **기둥 발치가 프레임 최고 밝기라
+ * 접지 그림자가 앉을 자리가 없다**(Lane D 의 기둥이 바닥에 놓이지 않고 떠 보이던 근인).
+ *
+ * 그래서 램프를 **바닥 그라디언트**로 바꿨다 — 카드 바닥 바로 아래({@link BOTTOM_LIFT_PEAK_Y})
+ * 에서 빛이 고이고, 화면 맨 아래(관객 쪽)로 갈수록 다시 어두워진다. 크러시 방지는 최댓값이
+ * 아니라 **커버 구간 전체가 0 이 아니라는 사실**이 맡으므로 정점을 낮춰도 바닥은 보장된다.
  */
-const BOTTOM_LIFT_LUM = 34;
-/** 리프트가 0 에서 최대까지 올라오는 높이(px). 화면 바닥에서 위로. */
-const BOTTOM_LIFT_H = 190;
+const BOTTOM_LIFT_LUM = 22;
+/** 바닥광이 0 에서 올라오기 시작하는 y(디자인). 이 위로는 정확히 0 이라 시작선이 없다. */
+const BOTTOM_LIFT_TOP = 872;
+/**
+ * 바닥광의 **정점** y. 카드 격자 바닥(≈977) 바로 아래 — 뒷벽 램프광이 바닥에 고이는 자리다.
+ * 여기가 하단에서 가장 밝고, 아래로는 {@link BOTTOM_LIFT_EDGE_RATIO} 까지 롤오프한다.
+ */
+const BOTTOM_LIFT_PEAK_Y = 985;
+/**
+ * 화면 맨 아래(y = {@link DESIGN_HEIGHT})에 남는 비율. 0 으로 떨어뜨리면 안 된다 — 프레임
+ * 최하단이 원화만 남아 다시 크러시 위험 구간이 된다. 자연스러운 위계(정점 대비 약 1/4)와
+ * 크러시 방지의 하한이 만나는 값이다.
+ */
+const BOTTOM_LIFT_EDGE_RATIO = 0.4;
 /** 리프트 색(따뜻한 바닥 반사광). 아래 계수는 휘도 1 정규화값이다. */
 const BOTTOM_LIFT_COLOR = 0xffd696;
 const BOTTOM_LIFT_LUMA = 218.9;
@@ -311,6 +330,31 @@ const MOTE_COUNT = 34;
 /** 광선 스윕 1회 주기(초)와 통과 시간. 대부분의 시간 동안 화면에 없어야 "가끔"으로 읽힌다. */
 const SHAFT_PERIOD = 21;
 const SHAFT_SWEEP = 3.4;
+/**
+ * 광선 기울기(rad). **부호가 규약이다** — `gutterRibs.ts` "광원 규약"의 키라이트가 **좌상단**
+ * (좌 수광 립 / 우 코어 그림자, 위가 밝은 세로 램프)이므로 광선도 좌상 → 우하로 내려와야 한다.
+ * 스프라이트 로컬 +y(광선 진행 방향)를 회전시키면 `(−sinθ, cosθ)` 이므로 `θ = −SHAFT_TILT` 일
+ * 때 x 가 증가한다.
+ *
+ * ⚠️ 예전 판은 `rotation = +0.22` 라 **우상 → 좌하**로 흘렀다. 기둥은 왼쪽에서, 광선은
+ * 오른쪽에서 빛을 받는 화면이 되어 광선이 볼류메트릭이 아니라 **압축 잡음 같은 비대칭 번짐**
+ * 으로 읽혔다.
+ */
+const SHAFT_TILT = 0.2;
+/** 광선 폭·길이(디자인 px). 길이는 화면보다 길게 잡고 꼬리를 텍스처가 재운다. */
+const SHAFT_WIDTH = 380;
+const SHAFT_LENGTH = 1720;
+/** 광선 정점 알파. 예전 판은 슬랩 7장이 중심에서 0.25 까지 누적됐다 — 그 절반 아래다. */
+const SHAFT_ALPHA = 0.125;
+/** 코어·헤일로 가우시안 반폭(정규화 폭 −1..1 기준)과 헤일로 비중. */
+const SHAFT_CORE_SIGMA = 0.26;
+const SHAFT_HALO_SIGMA = 0.62;
+const SHAFT_HALO_MIX = 0.34;
+/** 광선 길이 방향에서 선단이 서는 구간과 꼬리가 사라지기 시작하는 지점(0..1). */
+const SHAFT_HEAD = 0.09;
+const SHAFT_TAIL = 0.24;
+/** 광선 속 먼지 진폭(0..1). 결이 없으면 젤리처럼 매끈해 볼류메트릭으로 안 읽힌다. */
+const SHAFT_DUST = 0.5;
 
 /** 절차적 폴백 팔레트 — 타이틀·인트로와 같은 붓(청록·자홍 성운, 금빛 램프광). */
 const FALLBACK_BASE = 0x120e1e;
@@ -455,8 +499,25 @@ function bakeEdgeVignette(): Texture | null {
 }
 
 /**
- * 하단 가산 리프트 텍스처(1×256, 아래로 갈수록 밝다). 가산 합성이라 곱 레이어가 이미 지나간
- * 뒤에도 바닥을 확실히 들어올린다({@link BOTTOM_LIFT_LUM} 주석 참조).
+ * 바닥광의 세기(0..1)를 디자인 y 에서 준다. **위로도 아래로도 0 을 향해 떨어지는 봉우리**다 —
+ * 단조 증가 램프가 값 위계를 뒤집었던 자리({@link BOTTOM_LIFT_LUM} 주석).
+ *
+ * 위쪽 어깨는 `smoothstep` 이라 시작선이 보이지 않고, 아래쪽은 완전히 0 이 아니라
+ * {@link BOTTOM_LIFT_EDGE_RATIO} 로 수렴해 프레임 최하단의 크러시 하한을 남긴다.
+ */
+function bottomLiftProfile(y: number): number {
+  if (y <= BOTTOM_LIFT_TOP) return 0;
+  if (y <= BOTTOM_LIFT_PEAK_Y) {
+    return smoothstep((y - BOTTOM_LIFT_TOP) / (BOTTOM_LIFT_PEAK_Y - BOTTOM_LIFT_TOP));
+  }
+  const t = (y - BOTTOM_LIFT_PEAK_Y) / Math.max(1, DESIGN_HEIGHT - BOTTOM_LIFT_PEAK_Y);
+  return 1 - (1 - BOTTOM_LIFT_EDGE_RATIO) * smoothstep(t);
+}
+
+/**
+ * 하단 가산 바닥광 텍스처(1×256). 가산 합성이라 곱 레이어(비네트·스크림)가 이미 지나간
+ * 뒤에도 바닥을 확실히 들어올린다. 세로 프로파일은 {@link bottomLiftProfile} 하나가 정한다 —
+ * 띠를 겹쳐 근사하지 않는다(1px 겹침이 알파를 두 배로 만드는 `scrim.ts` 함정).
  */
 function bakeBottomLift(): Texture | null {
   const h = 256;
@@ -466,14 +527,71 @@ function bakeBottomLift(): Texture | null {
   const g = (BOTTOM_LIFT_COLOR >> 8) & 0xff;
   const b = BOTTOM_LIFT_COLOR & 0xff;
   const maxAlpha = BOTTOM_LIFT_LUM / BOTTOM_LIFT_LUMA;
+  const span = DESIGN_HEIGHT - BOTTOM_LIFT_TOP;
   const img = ctx.createImageData(1, h);
   for (let y = 0; y < h; y++) {
-    // 선형 램프 — 위쪽 끝에서 정확히 0 이라 시작선이 보이지 않는다.
-    const a = maxAlpha * (y / (h - 1));
+    const dy = BOTTOM_LIFT_TOP + ((y + 0.5) / h) * span;
+    const a = maxAlpha * bottomLiftProfile(dy);
     img.data[y * 4] = r;
     img.data[y * 4 + 1] = g;
     img.data[y * 4 + 2] = b;
     img.data[y * 4 + 3] = Math.round(a * 255);
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvasTexture(ctx);
+}
+
+/**
+ * 볼류메트릭 광선 한 줄기를 **텍스처로 굽는다**(로컬 좌표: x=폭, y=진행 방향).
+ *
+ * ⚠️ 예전 판은 폭이 다른 사각형 7장을 중심에서 겹쳐 쌓아 단면을 근사했다. 그게 계약 §0-4 가
+ * 금지한 바로 그 방식이고, 결과는 30px 간격의 **계단 에지 7쌍**이었다 — 화면에서 광선이 아니라
+ * "압축 노이즈 같은 사선 번짐"으로 보이던 실체다. 그라디언트는 겹쳐 근사하지 말고 픽셀로 굽는다.
+ *
+ * 구운 단면은 세 성분이다:
+ *  - **코어**(좁은 가우시안) — 빛줄기의 심.
+ *  - **헤일로**(넓은 가우시안) — 공기 산란. 코어만 있으면 칼로 자른 띠가 된다.
+ *  - **먼지**(세로로 늘인 값 노이즈 + 잔 입자) — 진행 방향으로 늘어난 결. 이게 없으면 매끈한
+ *    젤리라 볼류메트릭으로 안 읽힌다.
+ *
+ * 길이 방향으로는 선단({@link SHAFT_HEAD})에서 서고 꼬리({@link SHAFT_TAIL})부터 사라진다 —
+ * 화면 위아래 끝에서 잘리지 않아야 "창에서 들어온 빛"으로 읽힌다.
+ */
+function bakeLightShaft(): Texture | null {
+  const w = 96;
+  const h = 256;
+  const ctx = makeCtx(w, h);
+  if (ctx === null) return null;
+  const r = (FALLBACK_LAMP >> 16) & 0xff;
+  const g = (FALLBACK_LAMP >> 8) & 0xff;
+  const b = FALLBACK_LAMP & 0xff;
+  // 진행 방향으로 늘인 결(2×34) + 잔 입자(5×11). 셀이 이방적이라 방향성이 생긴다.
+  const dust = new Float32Array(w * h);
+  noiseOctave(dust, w, h, 3, 40, 1, 131);
+  noiseOctave(dust, w, h, 7, 13, 0.55, 149);
+  noiseOctave(dust, w, h, 17, 60, 0.7, 163);
+  let sq = 0;
+  for (let i = 0; i < dust.length; i++) sq += (dust[i] ?? 0) ** 2;
+  const inv = 1 / (Math.sqrt(sq / dust.length) || 1);
+  const img = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    const v = (y + 0.5) / h;
+    // 선단은 서고 꼬리는 사라진다. 두 smoothstep 의 곱이라 어느 끝에서도 단차가 없다.
+    const along =
+      smoothstep(v / SHAFT_HEAD) * (1 - smoothstep((v - SHAFT_TAIL) / (1 - SHAFT_TAIL)));
+    for (let x = 0; x < w; x++) {
+      const u = ((x + 0.5) / w) * 2 - 1;
+      const core = Math.exp(-(u * u) / (2 * SHAFT_CORE_SIGMA ** 2));
+      const halo = Math.exp(-(u * u) / (2 * SHAFT_HALO_SIGMA ** 2));
+      const cross = (1 - SHAFT_HALO_MIX) * core + SHAFT_HALO_MIX * halo;
+      const d = 1 + SHAFT_DUST * (dust[y * w + x] ?? 0) * inv;
+      const a = SHAFT_ALPHA * along * cross * Math.max(0, d);
+      const i = (y * w + x) * 4;
+      img.data[i] = r;
+      img.data[i + 1] = g;
+      img.data[i + 2] = b;
+      img.data[i + 3] = Math.round(Math.min(1, a) * 255);
+    }
   }
   ctx.putImageData(img, 0, 0);
   return canvasTexture(ctx);
@@ -891,7 +1009,9 @@ export class BaseBackdrop {
   private readonly airLayer = new Container();
 
   private readonly motes: Mote[] = [];
-  private shaft: Graphics | null = null;
+  private shaft: Sprite | null = null;
+  /** 광선 텍스처. 스프라이트가 아니라 우리가 구운 자원이라 직접 반납한다. */
+  private shaftTex: Texture | null = null;
   /** 절차적 폴백의 성운 얼룩 — 아주 느리게 숨 쉬듯 알파가 오간다. */
   private readonly breathers: Breather[] = [];
   /** 톤매핑으로 구운 텍스처. `view.destroy` 가 모르는 자원이라 직접 반납한다. */
@@ -970,24 +1090,23 @@ export class BaseBackdrop {
 
     // --- 공기: 가끔 지나는 광선(가산) ---
     if (gates.halo) {
-      // 단일 사각형이면 좌우 경계가 칼같이 서서 **광선이 아니라 띠**로 읽힌다(타이틀 실측).
-      // Pixi Graphics 에는 그라디언트가 없으므로 폭이 다른 사각형을 중심에서 겹쳐 쌓아 단면을
-      // 만든다 — 같은 색을 가산으로 쌓는 것이라 알파 이중가산 가로줄(scrim 함정)과는 무관하다.
-      const shaft = new Graphics();
-      const slabs = 7;
-      for (let i = slabs; i >= 1; i--) {
-        const halfW = 30 * i;
-        const a = 0.075 * (1 - (i - 1) / slabs) ** 1.5;
-        shaft
-          .rect(-halfW, -DESIGN_HEIGHT, halfW * 2, DESIGN_HEIGHT * 3)
-          .fill({ color: FALLBACK_LAMP, alpha: a });
+      // 단면·먼지·선단은 전부 **구운 텍스처**가 갖는다(`bakeLightShaft` 주석 — 슬랩 적층은
+      // 계단 에지를 남겨 "사선 번짐"으로 읽혔다). 여기서는 놓는 일만 한다.
+      this.shaftTex = bakeLightShaft();
+      if (this.shaftTex !== null) {
+        const shaft = new Sprite(this.shaftTex);
+        // 위 끝(광원)을 기준으로 회전한다 — 창은 고정이고 빛줄기가 그 아래로 뻗는 형태다.
+        shaft.anchor.set(0.5, 0);
+        shaft.width = SHAFT_WIDTH;
+        shaft.height = SHAFT_LENGTH;
+        // 좌상 → 우하. 부호 규약은 {@link SHAFT_TILT} 주석 참조.
+        shaft.rotation = -SHAFT_TILT;
+        shaft.y = -DESIGN_HEIGHT * 0.14;
+        shaft.blendMode = 'add';
+        shaft.visible = false;
+        this.airLayer.addChild(shaft);
+        this.shaft = shaft;
       }
-      shaft.rotation = 0.22;
-      shaft.y = DESIGN_HEIGHT / 2;
-      shaft.blendMode = 'add';
-      shaft.visible = false;
-      this.airLayer.addChild(shaft);
-      this.shaft = shaft;
     }
 
     // --- 대비 장치(고정 — 패럴랙스 밖) ---
@@ -1087,7 +1206,7 @@ export class BaseBackdrop {
   }
 
   /**
-   * 하단 가산 리프트 — **맨 마지막**에 얹는다. 곱 레이어(비네트·스크림)보다 뒤라 아무것도
+   * 하단 가산 바닥광 — **맨 마지막**에 얹는다. 곱 레이어(비네트·스크림)보다 뒤라 아무것도
    * 이 값을 깎지 않으므로 화면 바닥의 최솟값이 보장된다. 평균이 아니라 **최솟값**을 고쳐야
    * 하는 결함이라(하단 평균 35.6 뒤에 L<24 가 24.5% 숨어 있었다) 곱이 아니라 합이어야 한다.
    */
@@ -1095,9 +1214,9 @@ export class BaseBackdrop {
     const tex = bakeBottomLift();
     if (tex === null) return;
     const s = new Sprite(tex);
-    s.position.set(0, DESIGN_HEIGHT - BOTTOM_LIFT_H);
+    s.position.set(0, BOTTOM_LIFT_TOP);
     s.width = DESIGN_WIDTH;
-    s.height = BOTTOM_LIFT_H;
+    s.height = DESIGN_HEIGHT - BOTTOM_LIFT_TOP;
     s.blendMode = 'add';
     this.view.addChild(s);
   }
@@ -1138,7 +1257,9 @@ export class BaseBackdrop {
       if (phase < SHAFT_SWEEP) {
         const p = phase / SHAFT_SWEEP;
         shaft.visible = true;
-        shaft.x = DESIGN_WIDTH * (-0.3 + p * 1.6);
+        // 기운 광선은 발치가 머리보다 `length·sin(tilt)` ≈ 340px 오른쪽에 있다 — 시작점을 그만큼
+        // 더 왼쪽에서 잡아야 등장·퇴장이 화면 밖에서 일어난다.
+        shaft.x = DESIGN_WIDTH * (-0.45 + p * 1.78);
         // 양 끝에서 0 이 되는 사인 페이드 — 갑자기 나타났다 사라지지 않게.
         shaft.alpha = Math.sin(p * Math.PI);
       } else {
@@ -1158,5 +1279,7 @@ export class BaseBackdrop {
     // 구운 텍스처는 스프라이트가 아니라 우리가 만든 자원이다 — 직접 반납한다.
     this.bakedArt?.destroy(true);
     this.bakedArt = null;
+    this.shaftTex?.destroy(true);
+    this.shaftTex = null;
   }
 }

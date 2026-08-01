@@ -97,29 +97,9 @@ function toTexture(canvas: HTMLCanvasElement): Texture {
   return tex;
 }
 
-let ruleTex: Texture | null | undefined;
-/**
- * 가로 장식선 — 중앙이 가장 진하고 양 끝에서 0 으로 사라진다(1px 높이, 가로로 늘린다).
- *
- * 끝을 칼같이 자르면 "선"이 아니라 "막대"로 읽힌다. 끝을 죽이는 것만으로 화면을 가로지르는
- * 선이 제목의 일부가 된다.
- */
-function edgeFadeRule(): Texture | null {
-  if (ruleTex !== undefined) return ruleTex;
-  const b = bakeCanvas(256, 1);
-  if (b === null) {
-    ruleTex = null;
-    return null;
-  }
-  for (let i = 0; i < 256; i++) {
-    const t = (i + 0.5) / 256;
-    const a = Math.sin(Math.PI * t) ** 1.6;
-    b.ctx.fillStyle = `rgba(255, 214, 120, ${a})`;
-    b.ctx.fillRect(i, 0, 1, 1);
-  }
-  ruleTex = toTexture(b.canvas);
-  return ruleTex;
-}
+// ⚠️ 여기 있던 `edgeFadeRule`(양 끝이 0 으로 사라지는 가로 램프)은 **삭제했다.** 그 페이드가
+// 상인방을 가운데 세 기둥에서 증발시킨 원인이다(6차 판정 C1) — 배경 휘도가 변하는 필드 위에서
+// 등알파·저알파 선은 밝은 구간에 그대로 묻힌다. 대체는 `carvedDivider` 의 불투명 3밴드 보다.
 
 let hazeTex: Texture | null | undefined;
 /**
@@ -300,8 +280,20 @@ const SUB_SIZE = 19;
 /** 제목 윗변 → 부제 윗변 · 부제 윗변 → 장식선. */
 const SUB_Y = TITLE_SIZE + 8;
 const RULE_Y = SUB_Y + SUB_SIZE + 16;
-/** 장식선 전체 폭(양 끝은 알파 0 이라 실제 인상 폭은 이보다 좁다). */
-const RULE_W = 1180;
+/**
+ * 상인방(entablature) 전체 폭과 그 끝이 앉는 기둥의 x(디자인 스페이스, 화면 중앙 기준 상대).
+ *
+ * 배경에 석조 콜로네이드가 생기면서 이 가로선이 **기둥 다섯을 잇는 보**로 읽히게 됐다. 기둥은
+ * design x 44 · 502 · 960 · 1418 · 1876 (피치 458)이고 화면 중앙이 960 이므로, 중앙 기준
+ * ±916 이 바깥 기둥 두 개의 중심이다. 보는 **거기서 끝나야** 한다 — 허공에서 끊기면 구조가
+ * 거짓말이 된다.
+ */
+const BEAM_HALF = 916;
+const BEAM_W = BEAM_HALF * 2;
+/** 콜로네이드 기둥 피치. 주두를 여기서 파생해야 보가 허공을 짚지 않는다. */
+const COLUMN_PITCH = 458;
+/** 제목·부제 축소 기준 폭. 보 폭과 분리한다 — 보가 화면을 가로질러도 글자는 중앙에 모여 있어야 한다. */
+const TITLE_MAX_W = 1000;
 
 /**
  * 화면 제목 — 각인된 금박 타이포 + 부제 + 화면을 가로지르는 얇은 금색 장식선.
@@ -379,7 +371,7 @@ export function makeScreenTitle(text: string, sub: string): Container {
   });
   face.anchor.set(0.5, 0);
   face.position.set(0, 0);
-  fitWidth(face, RULE_W * 0.8, 0.7);
+  fitWidth(face, TITLE_MAX_W, 0.7);
   drop.scale.copyFrom(face.scale); // 축소가 걸리면 드롭도 같이 줄어야 어긋나지 않는다.
   root.addChild(face);
 
@@ -396,7 +388,7 @@ export function makeScreenTitle(text: string, sub: string): Container {
   spec.alpha = 0.5;
   const band = new Graphics();
   band
-    .rect(-RULE_W / 2, TITLE_SIZE * 0.12, RULE_W, TITLE_SIZE * 0.3)
+    .rect(-TITLE_MAX_W / 2, TITLE_SIZE * 0.12, TITLE_MAX_W, TITLE_SIZE * 0.3)
     .fill({ color: 0xffffff });
   root.addChild(band);
   spec.mask = band;
@@ -418,7 +410,7 @@ export function makeScreenTitle(text: string, sub: string): Container {
     st.anchor.set(0.5, 0);
     st.position.set(0, SUB_Y);
     st.alpha = 0.72;
-    fitWidth(st, RULE_W * 0.72, 0.7);
+    fitWidth(st, TITLE_MAX_W * 0.9, 0.7);
     root.addChild(st);
   }
 
@@ -427,33 +419,59 @@ export function makeScreenTitle(text: string, sub: string): Container {
 }
 
 /**
- * 제목 아래 장식 — **석재에 판 홈**이지 웹 헤어라인이 아니다.
+ * 제목 아래 **상인방(entablature)** — 콜로네이드 기둥 다섯을 잇는 보.
  *
- * 1px 선 + 중앙 점은 웹 앱 헤더 문법이라, 회화적인 배경 위에 UI 레이어가 그냥 떠 있는 인상을
- * 준다(비평 지적). 두께가 있는 채널(어두운 홈)에 위쪽 금 하이라이트와 아래쪽 그림자를 짝지어
- * **깎여 들어간 면**을 만들고, 중앙에 키스톤, 양 끝에 계단형 마감을 둔다 — 빛이 위에서 오는
- * 이 화면의 조명과 부호가 맞아야 홈으로 읽힌다(하이라이트가 위, 그림자가 아래).
+ * ## 왜 헤어라인이 아니라 채움 사각 3밴드인가
+ * 처음엔 가장자리가 사라지는 1px 금선이었다. 배경에 석조 기둥이 서고 나니 이 선이 **보**로
+ * 읽히기 시작했는데, 등알파 헤어라인은 **배경이 밝아지는 구간에서 그냥 묻힌다** — 실측에서
+ * 보가 design x 527~1295 에만 존재하고(가운데 세 기둥) 바깥 두 기둥에 닿기 전에 증발했다
+ * (|ΔL| < 1). 6차 판정 최상위 결함: *"화면에서 가장 크게 틀린 것."*
+ *
+ * 그래서 **자기 색을 가진 불투명에 가까운 3밴드**로 바꾼다. 상단 파시아(수광) · 본체(석재
+ * 그늘) · 하단 그림자. 알파가 0.8~0.9 라 합성값이 사실상 보 자신의 색이고, 따라서 **배경
+ * 휘도와 무관하게** 밴드 간 |ΔL| 이 150 이상으로 일정하다. 등알파 헤어라인으로는 원리적으로
+ * 보장할 수 없는 성질이다.
+ *
+ * ## 왜 폭이 {@link BEAM_W} 인가
+ * 보는 **기둥 위에서 끝나야 한다**(design x 44 ↔ 1876). 허공에서 끊기면 구조가 거짓말이 되고,
+ * 페이드로 사라지면 위의 실측처럼 아예 없는 것이 된다. 양 끝에는 기둥 머리에 얹히는 **주두
+ * 블록**을 둔다 — 보가 어디에 하중을 싣는지 눈이 즉시 안다.
+ *
+ * 조명 부호는 이 화면 규약을 따른다: **위가 밝고 아래가 어둡다**(광원이 위). 음각 홈인 중앙
+ * 룬만 반대다 — 파인 면은 위쪽 벽이 그늘이고 아래 입술이 빛을 받는다.
  */
 function carvedDivider(): Container {
   const c = new Container();
-  const rule = edgeFadeRule();
-  if (rule !== null) {
-    const band = (h: number, dy: number, tint: number, alpha: number): void => {
-      const s = new Sprite(rule);
-      s.anchor.set(0.5, 0);
-      s.width = RULE_W;
-      s.height = h;
-      s.position.set(0, RULE_Y + dy);
-      s.tint = tint;
-      s.alpha = alpha;
-      c.addChild(s);
-    };
-    // ⚠️ **명암 순서가 뒤집혀 있었다**(실측: 위가 L113 으로 밝고 아래가 L28 로 어두웠다).
-    // 광원이 위에 있을 때 **음각 홈**은 위쪽 벽이 그늘이고 아래 입술이 빛을 받는다. 반대로 하면
-    // 아래에서 조명한 **양각 리브**로 읽힌다 — 같은 세 겹인데 부호 하나가 부조를 뒤집는다.
-    band(1, 0, 0x0d0805, 0.75); // 홈 상단 — 파고든 그늘의 시작
-    band(5, 1, GROOVE, 0.55); // 채널 안쪽 어둠(아래로 감쇠)
-    band(1, 6.5, 0xc9a367, 0.45); // 홈 하단 입술 — 빛을 받는 유일한 면
+
+  /** 보의 한 밴드. 전 구간 등폭·등알파라 어느 100px 구간에서 재도 같은 대비가 나온다. */
+  const beam = (
+    x: number,
+    width: number,
+    dy: number,
+    height: number,
+    color: number,
+    alpha: number,
+  ): void => {
+    const g = new Graphics();
+    g.rect(x, RULE_Y + dy, width, height).fill({ color, alpha });
+    c.addChild(g);
+  };
+
+  beam(-BEAM_HALF, BEAM_W, 0, 2, 0xdcc08c, 0.82); // 파시아 — 빛을 받는 윗면(L≈192)
+  beam(-BEAM_HALF, BEAM_W, 2, 7, 0x3a2a18, 0.9); // 본체 — 석재 그늘(L≈45)
+  beam(-BEAM_HALF, BEAM_W, 9, 3, 0x140c06, 0.78); // 처마 그림자(L≈16)
+
+  // 주두 — **기둥이 선 자리마다** 하나씩(피치 458: 0 · ±458 · ±916). 보와 같은 3밴드 재질이라
+  // 같은 돌로 읽히고, 조금 더 두꺼워 "여기서 하중을 받는다"가 보인다. 기둥 위치와 어긋나면
+  // 보가 허공을 짚는 것이 되므로 좌표는 콜로네이드 피치에서 파생한다.
+  for (const cx of [-BEAM_HALF, -COLUMN_PITCH, 0, COLUMN_PITCH, BEAM_HALF]) {
+    const keystone = cx === 0;
+    const cw = keystone ? 78 : 58;
+    const top = keystone ? -4 : -3;
+    const bodyH = keystone ? 16 : 13;
+    beam(cx - cw / 2, cw, top, 3.5, 0xe6cd9c, 0.85);
+    beam(cx - cw / 2, cw, top + 3.5, bodyH, 0x43301c, 0.92);
+    beam(cx - cw / 2, cw, top + 3.5 + bodyH, 4, 0x140c06, 0.8);
   }
 
   // 중앙 룬 셋 — 구분선과 **같은 문법**(위 그늘 / 아래 수광 립)으로 판 짧은 세로 홈이다.
@@ -465,13 +483,16 @@ function carvedDivider(): Container {
   //
   // 그래서 **채움도 외곽선도 쓰지 않는다.** 모든 획이 배경 위 반투명이라 최소 휘도가 배경에서
   // 크게 떨어지지 않는다(가장 어두운 획 = 상단 그늘 α0.6 → 배경 L36 기준 합성 ≈ L25).
+  // 중앙 주두(키스톤)의 본체 안에 들어가도록 좌표를 파생한다 — 블록 밖으로 삐져나오면
+  // 보에 새긴 것이 아니라 위에 얹은 스티커가 된다.
+  const runeMid = RULE_Y - 0.5 + 16 / 2;
   const rune = new Graphics();
   for (const [dx, half] of [
-    [-15, 7],
-    [0, 11],
-    [15, 7],
+    [-13, 3.5],
+    [0, 5.5],
+    [13, 3.5],
   ] as const) {
-    const top = RULE_Y + 4 - half;
+    const top = runeMid - half;
     const hgt = half * 2;
     rune.rect(dx - 2, top, 4, hgt).fill({ color: 0x241608, alpha: 0.35 }); // 파인 면
     rune.rect(dx - 2, top, 4, 1).fill({ color: 0x1a1008, alpha: 0.6 }); // 위쪽 벽 그늘
@@ -1331,27 +1352,9 @@ export function makeHeroTile(
   bandWash.rect(0, bandY, w, h - bandY).fill({ color: 0xc8963c, alpha: 0.14 });
   clip.addChild(bandWash);
 
-  // 라벨 밴드 좌우 화살촉 한 쌍(카드 폭 8%). 글리프가 아니라 **베벨과 같은 립 재질**로 긋는다 —
-  // 금선 아래 1.5px 다크 드롭이라 판에 박힌 금속 상감으로 읽힌다(`▸` 글리프는 폰트 티가 난다).
-  const arrowL = w * 0.08;
-  const arrowY = bandY + (h - bandY) * 0.4;
-  const arrowH = arrowL * 0.42;
-  for (const dir of [-1, 1]) {
-    const xs = dir < 0 ? pad * 0.55 : w - pad * 0.55;
-    const tip = xs + dir * arrowL * 0.55;
-    const chevron = new Graphics();
-    for (const [color, dy, alpha] of [
-      [0x2a1a08, 1.6, 0.5],
-      [GOLD_LIT, 0, 0.9],
-    ] as const) {
-      chevron
-        .moveTo(xs, arrowY - arrowH + dy)
-        .lineTo(tip, arrowY + dy)
-        .lineTo(xs, arrowY + arrowH + dy)
-        .stroke({ color, width: 3, alpha, cap: 'round', join: 'round' });
-    }
-    clip.addChild(chevron);
-  }
+  // ⚠️ 여기 있던 **좌우 금색 화살촉은 지웠다**(6차 판정 C10). 라벨 밴드 가장자리에 붙어 카드
+  // 테두리를 넘겨 보였고, 이웃 7장에는 없는 요소라 밴드 메트릭이 어긋난 것처럼 읽혔다. 강조는
+  // **테두리와 글로우로만** 준다 — 밴드 금빛 차등(위)은 위계를 만드는 데 성공했으므로 유지한다.
 
   // 호버 온기(가산) — tint 는 곱연산이라 밝힐 수 없다.
   const warm = new Graphics();
@@ -1369,8 +1372,12 @@ export function makeHeroTile(
   // ⚠️ **글자 극성을 이웃과 맞춘다.** 금판 시절에는 밝은 판 + 어두운 글자였는데, 어두운 판 +
   // 밝은 글자인 이웃 7장 사이에서 그 반전 하나가 "혼자 다른 컴포넌트" 신호의 절반이었다
   // (3차 판정 CRIT·N2). 주인공 표시는 색상(금)과 굵기로만 준다.
-  const labelSize = Math.min(44, Math.max(24, Math.round(h * 0.105)));
-  const subSize = Math.min(20, Math.max(12, Math.round(h * 0.048)));
+  //
+  // 크기·간격은 **이웃 타일과 같은 산식**이다(6차 판정 C10: 라벨 밴드 메트릭 불일치). 예전엔
+  // 제목을 h×0.105 로 키워 이 칸만 라벨 블록이 두꺼웠는데, 그러면 8장이 한 격자로 안 보인다.
+  // 주인공 표시는 **크기가 아니라 색(금)·테두리·글로우**가 맡는다.
+  const labelSize = Math.min(34, Math.max(20, Math.round(h * 0.079)));
+  const subSize = Math.min(18, Math.max(12, Math.round(h * 0.0425)));
   const wrapW = w - pad * 2;
 
   const title = new Text({
@@ -1405,7 +1412,7 @@ export function makeHeroTile(
       align: 'center',
       wordWrap: true,
       wordWrapWidth: wrapW,
-      lineHeight: Math.round(subSize * 1.4),
+      lineHeight: Math.round(subSize * 1.42),
       dropShadow: TEXT_SHADOW,
     },
   });
@@ -1414,8 +1421,8 @@ export function makeHeroTile(
   // 라벨 블록을 밴드 안에서 세로 중앙 정렬한다(건물 타일과 같은 규칙 — 고정 y 로 찍으면
   // 줄 수가 다른 카드끼리 밑이 어긋나고 남는 높이가 죽은 여백으로 남는다).
   const titleH = safeTextHeight(title, labelSize * 1.14);
-  const subH = safeTextHeight(subText, subSize * 1.4);
-  const gap = Math.max(4, Math.round(h * 0.018));
+  const subH = safeTextHeight(subText, subSize * 1.42);
+  const gap = Math.max(6, Math.round(h * 0.024));
   const bandH = h - bandY;
   const blockTop = bandY + Math.max(Math.round(h * 0.012), (bandH - (titleH + gap + subH)) / 2);
   title.position.set(w / 2, blockTop);
