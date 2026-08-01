@@ -80,7 +80,15 @@ function gateLine(g: GateResult): string {
           .slice(0, 8)
           .map((v) => `${v.at}=${fmt(v.observed, g.metric)}`)
           .join(', ') + (g.violations.length > 8 ? ` 외 ${g.violations.length - 8}점` : '');
-  return `| ${mark} | ${g.label} | ${band} | ${g.scope === 'level' ? '레벨별' : '전체'} | ${detail} | ${g.source} |`;
+  const scopeLabel =
+    g.scope === 'overall'
+      ? '전체'
+      : g.scope === 'level'
+        ? '레벨별'
+        : g.scope === 'planet'
+          ? '행성별'
+          : '기체별';
+  return `| ${mark} | ${g.label} | ${band} | ${scopeLabel} | ${detail} | ${g.source} |`;
 }
 
 /** 전체 리포트. */
@@ -196,6 +204,12 @@ export function renderReport(runs: readonly RunRecord[], meta: ReportMeta): stri
   );
   L.push(
     '- **침공(PvP)·의뢰 런은 이 격자에 없다.** 각각 `tests/invasionBalance.test.ts` 와 의뢰 계측이 별도 축이다.',
+  );
+  L.push(
+    '- **모드마다 "보스에 이르는 경로"가 다르다.** `보스교전` 은 교전 가능한 보스 엔티티를 본 ' +
+      '적이 있는가이며, 추격 모드(니플헤임)에서는 **포식자 취약화**(반격 장치 전부 파괴)가 그 ' +
+      '시점이다 — 세그먼트 진행이 아니다. 이 열을 무대 간에 나란히 읽을 때 같은 사건을 세고 ' +
+      '있다고 가정하지 마라.',
   );
   L.push(
     '- **파워업 선택은 항상 0번**이다(봇 휴리스틱). 파워업 조합의 강약은 이 측정으로 갈리지 않는다.',

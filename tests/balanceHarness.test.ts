@@ -16,8 +16,12 @@ import { describe, it, expect } from 'vitest';
 import { PLANETS } from '../data/planets/index.js';
 import { SHIP_TYPES } from '../data/ships/index.js';
 import { BAND_LEVELS } from '../src/bench/standardBuild.js';
+import { PLANET_MODE } from '../src/sim/planetMode.js';
+import type { WorldState } from '../src/sim/world.js';
+import type { Entity } from '../src/sim/entities.js';
 import {
   FIXED_SEEDS,
+  bossEngageable,
   METRIC_KEYS,
   MIN_AXIS_POINTS,
   RUN_METRICS,
@@ -224,6 +228,20 @@ describe('게이트 판정', () => {
     expect(g?.violations.map((v) => v.at)).not.toContain('Lv5');
   });
 
+  it('scope 가 축이면 그 축의 점마다 판정하고, 위반 지점을 이름으로 짚는다', () => {
+    // `timeoutRate` 는 scope='level' 이다. 전체 평균으로 보면 통과하지만 한 레벨만 나쁜 경우를
+    // 잡아야 한다 — 실제로 Lv100 타임아웃 10.6% 가 전체 평균 0.8% 뒤에 숨어 있었다.
+    const runs: RunRecord[] = [];
+    for (let i = 0; i < 99; i++) runs.push(rec({ level: 5, values: { timeoutRate: 0 } }));
+    for (let i = 0; i < 10; i++) runs.push(rec({ level: 100, values: { timeoutRate: 1 } }));
+    const g = evaluateGates(runs).find((x) => x.metric === 'timeoutRate');
+    expect(g?.scope).toBe('level');
+    expect(g?.pass).toBe(false);
+    expect(g?.violations.map((v) => v.at)).toEqual(['Lv100']);
+    // 같은 표본을 전체 평균으로 보면 10/109 = 9.2% … 가 아니라, 레벨별이라 Lv5 는 0% 로 통과한다.
+    expect(g?.violations).toHaveLength(1);
+  });
+
   it('표본이 없는 지점은 위반이 아니라 미판정이다', () => {
     // 전패 런만 주면 winMean 지표(clearSec)의 표본이 0 이 된다.
     const runs = [rec({ won: false, values: { clearSec: 0 } })];
@@ -241,6 +259,18 @@ describe('집계', () => {
     ];
     expect(statsOf(runs).metrics['clearSec']?.mean).toBe(100);
     expect(statsOf(runs).metrics['clearSec']?.n).toBe(1);
+  });
+
+  it('winPosMean 지표는 0(측정 불가)을 표본에서 뺀다', () => {
+    // bossDps 의 0 은 "피해 0"이 아니라 "관측 창 없음"이다 — 평균에 섞으면 무대 DPS 가 내려앉는다.
+    const runs = [
+      rec({ won: true, values: { bossDps: 1000 } }),
+      rec({ won: true, values: { bossDps: 0 } }),
+      rec({ won: false, values: { bossDps: 0 } }),
+    ];
+    const d = statsOf(runs).metrics['bossDps'];
+    expect(d?.n).toBe(1);
+    expect(d?.mean).toBe(1000);
   });
 
   it('축 접기는 원본 런에서 재집계한다(표본 수가 다른 셀이 과대 대표되지 않는다)', () => {
@@ -268,7 +298,71 @@ describe('집계', () => {
 // 5. 런 실행 — 결정론
 // ---------------------------------------------------------------------------
 
+describe('보스 교전 판정', () => {
+  // `bossEngageable` 이 보는 것은 `state.config.planetMode` 와 엔티티의 kind/dead/aux0 뿐이라
+  // 최소 객체로 충분하다(sim 전체를 세우지 않는다).
+  const world = (mode: number | undefined): WorldState =>
+    ({ config: { planetMode: mode } }) as unknown as WorldState;
+  const boss = (over: Partial<Entity> = {}): Entity =>
+    ({ kind: 'boss', dead: false, aux0: 0, hp: 100, ...over }) as unknown as Entity;
+
+  it('일반 모드는 보스 엔티티가 있으면 교전 가능이다', () => {
+    expect(bossEngageable(world(PLANET_MODE.vampire), boss())).toBe(true);
+  });
+
+  it('추격 모드의 무적 포식자(aux0=0)는 교전 불가다', () => {
+    // 런 시작부터 존재하므로 이걸 세면 보스교전률이 항상 100% 가 된다.
+    expect(bossEngageable(world(PLANET_MODE.chase), boss({ aux0: 0 }))).toBe(false);
+  });
+
+  it('추격 모드의 취약화된 포식자(aux0=1)는 교전 가능이다', () => {
+    expect(bossEngageable(world(PLANET_MODE.chase), boss({ aux0: 1 }))).toBe(true);
+  });
+
+  it('죽은 보스와 보스 아닌 엔티티는 교전 대상이 아니다', () => {
+    expect(bossEngageable(world(PLANET_MODE.vampire), boss({ dead: true }))).toBe(false);
+    expect(bossEngageable(world(PLANET_MODE.vampire), boss({ kind: 'enemy' }))).toBe(false);
+  });
+});
+
 describe('런 실행', () => {
+  /**
+   * **항진 방어** — PvE 승리는 곧 보스 처치(`compact()` 의 보스 분기)다. 따라서 승리한 런은
+   * 반드시 보스를 관측했어야 한다.
+   *
+   * 이 단언이 없을 때 실제로 니플헤임(추격) 승리 422건이 전부 `bossReachRate=0` 인 채로
+   * 리포트에 실렸다 — 게이트는 통과하는데 지표가 아무것도 보지 않는 상태였다. 시드는 그
+   * 스윕에서 뽑은 **가장 짧은 승리 런**이다(158틱).
+   */
+  it('추격 모드(니플헤임) 승리 런은 보스를 관측한다 — 회귀 방어', () => {
+    const r = runCellSeed({ planet: 2, ship: 2, level: 95 }, 11);
+    expect(r.won).toBe(true);
+    expect(r.values['bossReachRate']).toBe(1);
+    expect(r.values['bossDps']).toBeGreaterThan(0);
+  });
+
+  it('일반 모드 승리 런도 보스를 관측한다(같은 불변식)', () => {
+    // 아르케(racing) = 보스 도달률 100% 로 관측된 무대 중 가장 짧다.
+    const r = runCellSeed({ planet: 3, ship: 0, level: 5 }, 1);
+    if (r.won) {
+      expect(r.values['bossReachRate']).toBe(1);
+      expect(r.values['bossDps']).toBeGreaterThan(0);
+    }
+  });
+
+  /**
+   * 보스가 **스폰된 바로 그 틱에 처치**되는 런. `stepWorld` 안에서 스폰→피격→`compact` 제거가
+   * 모두 끝나므로 반환 후 스캔하는 관측기는 보스를 한 번도 보지 못한다. 승리 사실이 교전을
+   * 증명하므로 `bossReachRate` 는 1 이어야 한다(`cell.ts` 승리 보정 ②).
+   *
+   * 시드는 12,600런 스윕에서 이 경우로 잡힌 10건 중 가장 짧은 것이다(604틱).
+   */
+  it('보스 스폰 틱에 처치된 승리 런도 교전으로 센다 — 회귀 방어', () => {
+    const r = runCellSeed({ planet: 4, ship: 0, level: 20 }, 43);
+    expect(r.won).toBe(true);
+    expect(r.values['bossReachRate']).toBe(1);
+  });
+
   it('같은 (셀, 시드) 는 항상 같은 결과다', () => {
     // 가장 짧은 무대를 고른다(아르케 = racing, 런 길이 약 20초분).
     const cell = { planet: 3, ship: 0, level: 5 };

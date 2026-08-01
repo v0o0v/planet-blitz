@@ -22,7 +22,7 @@ export type { MetricDef, MetricKind, MetricTarget, RunTrace } from './metrics.js
 export { METRIC_KEYS, RUN_METRICS, gatedMetricKeys } from './metrics.js';
 
 export type { CellRunResult } from './cell.js';
-export { MAX_TICKS, runCellSeed } from './cell.js';
+export { MAX_TICKS, bossEngageable, runCellSeed } from './cell.js';
 
 export type {
   CellStat,

@@ -18,8 +18,14 @@ import type { WorldState } from '../../sim/world.js';
  * - `rate`: 0/1 값의 전 런 평균(= 비율). 클리어율처럼 "몇 %"로 읽는 축.
  * - `mean`: 전 런 평균. 생존 시간처럼 승패 무관하게 의미가 있는 축.
  * - `winMean`: **승리 런만**의 평균. 클리어 소요처럼 패배 런을 섞으면 뜻이 무너지는 축.
+ * - `winPosMean`: 승리 런 중 **값이 0 보다 큰** 표본만. 0 이 "측정값 0"이 아니라 **"측정 불가"**를
+ *   뜻하는 축에만 쓴다(현재 `bossDps` 하나). 보스가 스폰된 틱에 처치되면 관측 창이 0틱이라 DPS 를
+ *   계산할 수 없는데, 그 0 을 평균에 섞으면 무대 전체의 DPS 가 실제보다 낮게 보인다.
  */
-export type MetricKind = 'rate' | 'mean' | 'winMean';
+export type MetricKind = 'rate' | 'mean' | 'winMean' | 'winPosMean';
+
+/** 접을 수 있는 축(집계·게이트 공통). 정본을 여기 두는 이유는 `aggregate.ts` 가 이 모듈을 읽기 때문이다. */
+export type FoldAxis = 'planet' | 'ship' | 'level';
 
 /** 목표 밴드 — 적으면 그 지표의 게이트가 자동 생성된다(양 끝 포함). */
 export interface MetricTarget {
@@ -29,9 +35,15 @@ export interface MetricTarget {
   readonly source: string;
   /**
    * 게이트를 어느 층에서 볼 것인가. 기본 `'overall'`(격자 전체 평균 1개).
-   * `'level'` 이면 레벨 축으로 접은 점마다 판정한다(난이도 곡선처럼 "구간마다" 성립해야 하는 축).
+   *
+   * 축 이름을 주면 **그 축으로 접은 점마다** 판정한다. 난이도 곡선처럼 "구간마다 성립해야
+   * 하는" 축은 반드시 축 단위로 봐야 한다.
+   *
+   * ⚠️ **전체 평균은 국소 이상을 가린다.** `timeoutRate` 가 실제로 그랬다 — 전체 0.8% 로
+   * 게이트를 통과하는데 **Lv100 만 10.6%**(그중 니플헤임 44.8%)였다. 새 지표에 `target` 을
+   * 달 때 "이 성질이 전체 평균으로 성립하면 충분한가, 구간마다 성립해야 하는가"를 먼저 답해라.
    */
-  readonly scope?: 'overall' | 'level';
+  readonly scope?: 'overall' | FoldAxis;
 }
 
 export interface MetricDef {
@@ -50,7 +62,13 @@ export interface MetricDef {
 
 /** 런 도중 누적하는 관측치. 확장 = 필드 추가 + `cell.ts` 런 루프에 갱신 한 줄. */
 export interface RunTrace {
-  /** 보스 세그먼트에 진입한 적이 있는가. */
+  /**
+   * **교전 가능한** 보스 엔티티를 본 적이 있는가(`cell.ts` `bossEngageable`).
+   *
+   * ⚠️ "보스 세그먼트에 진입했는가"가 아니다. 모드마다 보스에 이르는 경로가 다르다 — 추격
+   * (니플헤임)은 포식자가 런 시작부터 존재하되 **취약화 전에는 교전이 불가능**하고, 승리는
+   * 세그먼트 진행과 무관하게 성립한다. 세그먼트 기준으로 재면 승리 런조차 0 이 나온다(실측).
+   */
   sawBoss: boolean;
   /** 도달한 최대 세그먼트 인덱스. */
   maxSegment: number;
@@ -98,7 +116,11 @@ export const RUN_METRICS: Readonly<Record<string, MetricDef>> = {
     },
   },
   survivalSec: { label: '생존초', kind: 'mean', unit: 's', of: (s) => s.tick / 60 },
-  bossReachRate: { label: '보스도달', kind: 'rate', of: (_s, t) => (t.sawBoss ? 1 : 0) },
+  /**
+   * 보스와 **교전 가능한 상태까지 갔는가**. 추격 모드에서는 포식자 취약화가 그 시점이다
+   * (자세한 근거는 `cell.ts` `bossEngageable`).
+   */
+  bossReachRate: { label: '보스교전', kind: 'rate', of: (_s, t) => (t.sawBoss ? 1 : 0) },
   timeoutRate: {
     label: '타임아웃',
     kind: 'rate',
@@ -108,7 +130,9 @@ export const RUN_METRICS: Readonly<Record<string, MetricDef>> = {
       max: 0.02,
       // 타임아웃은 "이길 수도 질 수도 없는 런" 이다 — 밸런스가 아니라 구조 결함 신호다.
       source: '구조 건전성 — 18000틱 상한에 걸리는 런은 사실상 없어야 한다',
-      scope: 'overall',
+      // ⚠️ `'overall'` 이면 안 된다. 전체 0.8% 로 통과하던 시절 **Lv100 만 10.6%**(니플헤임
+      // 44.8%)였다 — 만렙 추격 런의 절반 가까이가 5분을 넘겨도 끝나지 않는데 게이트는 초록이었다.
+      scope: 'level',
     },
   },
   runLevelUps: {
@@ -141,7 +165,9 @@ export const RUN_METRICS: Readonly<Record<string, MetricDef>> = {
   resources: { label: '자원', kind: 'mean', digits: 0, of: (s) => s.resources },
   bossDps: {
     label: '보스DPS',
-    kind: 'winMean',
+    // 0 = "관측 창 없음"(스폰 틱 즉사)이지 "피해 0"이 아니다 — 승리는 정의상 보스 처치라
+    // 피해 0 인 승리 런은 존재할 수 없다. 그래서 0 을 표본에서 뺀다(`cell.ts` 승리 보정 주석).
+    kind: 'winPosMean',
     digits: 0,
     of: (_s, t) =>
       t.bossHp0 >= 0 && t.bossTicks > 0 ? ((t.bossHp0 - t.bossHpLast) * 60) / t.bossTicks : 0,
