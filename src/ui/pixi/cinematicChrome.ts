@@ -38,6 +38,7 @@ import {
   Sprite,
   Text,
   Texture,
+  TilingSprite,
 } from 'pixi.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { stripEmoji } from './text.js';
@@ -95,6 +96,38 @@ function toTexture(canvas: HTMLCanvasElement): Texture {
   const tex = new Texture({ source: new CanvasSource({ resource: canvas }) });
   tex.source.scaleMode = 'linear';
   return tex;
+}
+
+let grainTex: Texture | null | undefined;
+/**
+ * 석재 그레인(64², 밝은 회색 노이즈). `multiply` 로 덧대 **균질한 채움에 결을 넣는다.**
+ *
+ * 실측에서 상인방 본체가 x650~850 구간 내내 L 51,51,51… 로 **문자 그대로 단색**이었다. 배경
+ * 벽에는 그레인이 있는데 들보만 없으면, 그 균질성 하나가 석재를 **UI 툴바**로 되돌린다(최종
+ * 판정: "툴바로 오독될 잔여 위험의 전부가 이 균질성에 있다").
+ *
+ * 값은 결정적 의사난수다 — 실행마다 결이 바뀌면 스크린샷 회귀 비교가 불가능해진다.
+ */
+function stoneGrain(): Texture | null {
+  if (grainTex !== undefined) return grainTex;
+  const size = 64;
+  const b = bakeCanvas(size, size);
+  if (b === null) {
+    grainTex = null;
+    return null;
+  }
+  const img = b.ctx.createImageData(size, size);
+  for (let i = 0; i < size * size; i++) {
+    const r = (((Math.sin(i * 12.9898) * 43758.5453) % 1) + 1) % 1;
+    const v = 190 + Math.round(r * 65);
+    img.data[i * 4] = v;
+    img.data[i * 4 + 1] = v;
+    img.data[i * 4 + 2] = v;
+    img.data[i * 4 + 3] = 255;
+  }
+  b.ctx.putImageData(img, 0, 0);
+  grainTex = toTexture(b.canvas);
+  return grainTex;
 }
 
 // ⚠️ 여기 있던 `edgeFadeRule`(양 끝이 0 으로 사라지는 가로 램프)은 **삭제했다.** 그 페이드가
@@ -276,6 +309,11 @@ const TITLE_SIZE = 84;
 const TITLE_STROKE = 2.5;
 /** 제목 자간 0.02em. 한글이라 트래킹은 금물이지만, 이 정도는 획이 뭉치는 것만 막는다. */
 const TITLE_TRACKING = TITLE_SIZE * 0.02;
+/**
+ * 제목·부제 블록을 위로 올리는 양(px). 실측 부제↔인방 여백이 12px 이라 26px 이상으로 벌려야
+ * 하는데, **인방은 못 내린다**(기둥 주두에 묶여 있다). 16 을 올리면 여백이 28px 이 된다.
+ */
+const HEADER_LIFT = 16;
 const SUB_SIZE = 19;
 /** 제목 윗변 → 부제 윗변 · 부제 윗변 → 장식선. */
 const SUB_Y = TITLE_SIZE + 8;
@@ -314,6 +352,16 @@ export function makeScreenTitle(text: string, sub: string): Container {
   const title = stripEmoji(text);
   const subtitle = stripEmoji(sub);
 
+  // 제목·부제만 담는 컨테이너. **인방은 여기 들어가지 않는다** — 인방 y 는 배경 기둥의 주두에
+  // 묶여 있어 움직일 수 없고(움직이면 보가 기둥을 벗어난다), 부제와의 여백은 **텍스트를 위로
+  // 올려서** 벌어야 한다. 실측 여백이 12px(부제 높이의 0.6배)뿐이라 "텍스트 바로 밑에 붙은
+  // 수평선" = 웹 헤더 구분선 인상을 만들고 있었다(최종 판정 MINOR).
+  //
+  // 이 컨테이너만 올리므로 **호출자의 원점(리드의 `TITLE_Y`)은 그대로다** — 인방도 제자리다.
+  const head = new Container();
+  head.y = -HEADER_LIFT;
+  root.addChild(head);
+
   // 제목 뒤 안개 — 밝은 키아트 위에서도 글자가 뜨도록 아주 옅게 깐다(가리지 않는 최소량).
   const haze = softHaze();
   if (haze !== null) {
@@ -324,10 +372,10 @@ export function makeScreenTitle(text: string, sub: string): Container {
     glow.position.set(0, TITLE_SIZE * 0.5);
     glow.tint = 0x120c1e;
     glow.alpha = 0.5;
-    root.addChild(glow);
+    head.addChild(glow);
   }
 
-  // 새김 3중 스택(뒤 → 앞): ①offsetY 3 다크 드롭 ②금 그라디언트 + 4px 다크 아웃라인
+  // 새김 3중 스택(뒤 → 앞): ①1px 다크 드롭 ②금 그라디언트 + 다크 아웃라인
   // ③윗부분 1/3 screen 스페큘러. 셋 중 하나라도 빠지면 "굵은 글씨"로 돌아간다.
   const base = {
     fontFamily: UI_FONT,
@@ -350,7 +398,7 @@ export function makeScreenTitle(text: string, sub: string): Container {
   drop.anchor.set(0.5, 0);
   // 오프셋 3 → 1: 각인 규약(홈 아래 입술)과 같은 두께다. 3px 은 글자가 판에서 떠 보였다(처방5).
   drop.position.set(0, 1);
-  root.addChild(drop);
+  head.addChild(drop);
 
   const face = new Text({
     resolution: 2,
@@ -373,7 +421,7 @@ export function makeScreenTitle(text: string, sub: string): Container {
   face.position.set(0, 0);
   fitWidth(face, TITLE_MAX_W, 0.7);
   drop.scale.copyFrom(face.scale); // 축소가 걸리면 드롭도 같이 줄어야 어긋나지 않는다.
-  root.addChild(face);
+  head.addChild(face);
 
   // 스페큘러 — 글자 윗부분만 밝힌다. 아웃라인 위로는 번지지 않게 띠 마스크로 자른다.
   const spec = new Text({
@@ -390,9 +438,9 @@ export function makeScreenTitle(text: string, sub: string): Container {
   band
     .rect(-TITLE_MAX_W / 2, TITLE_SIZE * 0.12, TITLE_MAX_W, TITLE_SIZE * 0.3)
     .fill({ color: 0xffffff });
-  root.addChild(band);
+  head.addChild(band);
   spec.mask = band;
-  root.addChild(spec);
+  head.addChild(spec);
 
   if (subtitle.length > 0) {
     const st = new Text({
@@ -411,7 +459,7 @@ export function makeScreenTitle(text: string, sub: string): Container {
     st.position.set(0, SUB_Y);
     st.alpha = 0.72;
     fitWidth(st, TITLE_MAX_W * 0.9, 0.7);
-    root.addChild(st);
+    head.addChild(st);
   }
 
   root.addChild(carvedDivider());
@@ -457,9 +505,41 @@ function carvedDivider(): Container {
     c.addChild(g);
   };
 
-  beam(-BEAM_HALF, BEAM_W, 0, 2, 0xdcc08c, 0.82); // 파시아 — 빛을 받는 윗면(L≈192)
+  // 파시아 — **베이(기둥 사이 한 칸)마다 ±3 luma** 로 흔든다. 1832px 을 한 색으로 칠하면
+  // 그 균질함 자체가 "UI 툴바"의 신호다(최종 판정 MINOR). 같은 채석장 돌이라도 면마다 빛을
+  // 조금 다르게 받는다 — 베이 경계는 주두가 가리므로 색 계단이 이음매로 보이지 않는다.
+  const FASCIA_BAYS = [0xd9bd89, 0xdfc38f, 0xdcc08c, 0xdec290] as const; // L 191.4~197.4
+  const bays = Math.round(BEAM_W / COLUMN_PITCH);
+  for (let i = 0; i < bays; i++) {
+    beam(
+      -BEAM_HALF + i * COLUMN_PITCH,
+      COLUMN_PITCH,
+      0,
+      2,
+      FASCIA_BAYS[i % FASCIA_BAYS.length] ?? 0xdcc08c,
+      0.82,
+    );
+  }
   beam(-BEAM_HALF, BEAM_W, 2, 7, 0x3a2a18, 0.9); // 본체 — 석재 그늘(L≈45)
   beam(-BEAM_HALF, BEAM_W, 9, 3, 0x140c06, 0.78); // 처마 그림자(L≈16)
+
+  // 본체·처마 그레인. `multiply` 라 밝기 평균은 거의 그대로 두고 화소마다 결만 넣는다
+  // (실측 L 51,51,51… 인 단색 채움을 깨는 것이 목적이다). 타일 배율을 서로 다르게 줘서
+  // 두 밴드에 같은 무늬가 반복되는 것을 피한다.
+  const grain = stoneGrain();
+  if (grain !== null) {
+    for (const [dy, height, scale, alpha] of [
+      [2, 7, 0.55, 0.25],
+      [9, 3, 0.8, 0.2],
+    ] as const) {
+      const g = new TilingSprite({ texture: grain, width: BEAM_W, height });
+      g.position.set(-BEAM_HALF, RULE_Y + dy);
+      g.tileScale.set(scale);
+      g.blendMode = 'multiply';
+      g.alpha = alpha;
+      c.addChild(g);
+    }
+  }
 
   // 주두 — **기둥이 선 자리마다** 하나씩(피치 458: 0 · ±458 · ±916). 보와 같은 3밴드 재질이라
   // 같은 돌로 읽히고, 조금 더 두꺼워 "여기서 하중을 받는다"가 보인다. 기둥 위치와 어긋나면

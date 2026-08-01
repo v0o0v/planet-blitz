@@ -4,7 +4,7 @@
  * ## 왜 배경이 "한 장 붙이기"가 아닌가
  * 기지는 **오래 머무는 화면**이다. 정지 이미지 한 장은 몇 초만 지나면 배경이 아니라 벽지로
  * 읽히고, 그 위에 놓인 타일이 종이처럼 떠 보인다. 그래서 이 클래스는 ①시선에 따라 아주 조금
- * 움직이고 ②입력이 없어도 스스로 표류하며 ③공기(먼지·가끔 지나는 광선)를 가진다. 장소가
+ * 움직이고 ②입력이 없어도 스스로 표류하며 ③공기(먼지·상시 걸린 평행 광축)를 가진다. 장소가
  * 살아 있어야 타일이 그 안에 **놓인 것**으로 읽힌다.
  *
  * ## 왜 타이틀보다 진폭이 작은가
@@ -327,9 +327,16 @@ const BOTTOM_LIFT_LUMA = 218.9;
 // --- 공기 ---
 /** 먼지 티끌 수(고티어). 저티어는 절반. 타이틀보다 적다 — 오래 보는 화면이라 산만하면 안 된다. */
 const MOTE_COUNT = 34;
-/** 광선 스윕 1회 주기(초)와 통과 시간. 대부분의 시간 동안 화면에 없어야 "가끔"으로 읽힌다. */
-const SHAFT_PERIOD = 21;
-const SHAFT_SWEEP = 3.4;
+/**
+ * 광선 알파가 아주 느리게 오가는 진폭. **꺼지지는 않는다.**
+ *
+ * ⚠️ 예전 판은 21초에 3.4초만 지나가는 **스윕 1줄**이었다. 그 결과 화면의 84%의 시간 동안
+ * 벽 대역에 **대역 규모의 명암 구성이 0** 이었다 — 실측(하이패스 σ40)에서 평행 광축 개수
+ * v11 5개 → v12 **0개**, 벽 y23/67/111 이 98/105/117 → 63/74/81 로 내려앉았다. 배경이
+ * "그레인 텍스처 + 비네트"가 된 형태다. 광선은 이 화면의 **유일한 회화적 단서**라 상시
+ * 존재해야 하고, 살아 있다는 신호는 등장/퇴장이 아니라 이 미세한 호흡이 맡는다.
+ */
+const SHAFT_BREATH = 0.12;
 /**
  * 광선 기울기(rad). **부호가 규약이다** — `gutterRibs.ts` "광원 규약"의 키라이트가 **좌상단**
  * (좌 수광 립 / 우 코어 그림자, 위가 밝은 세로 램프)이므로 광선도 좌상 → 우하로 내려와야 한다.
@@ -341,11 +348,23 @@ const SHAFT_SWEEP = 3.4;
  * 으로 읽혔다.
  */
 const SHAFT_TILT = 0.2;
-/** 광선 폭·길이(디자인 px). 길이는 화면보다 길게 잡고 꼬리를 텍스처가 재운다. */
-const SHAFT_WIDTH = 380;
+/** 광선 길이(디자인 px). 화면보다 길게 잡고 꼬리를 텍스처가 재운다. 폭은 배치마다 다르다. */
 const SHAFT_LENGTH = 1720;
-/** 광선 정점 알파. 예전 판은 슬랩 7장이 중심에서 0.25 까지 누적됐다 — 그 절반 아래다. */
-const SHAFT_ALPHA = 0.125;
+/**
+ * 광선 머리(광원)의 y. 화면 위 조금 바깥 — {@link SHAFT_HEAD} 의 선단 페이드가 화면 상단
+ * 1/6 에 걸쳐 서므로 빛이 **위에서 내려오는** 위계가 생긴다. 예전처럼 −151 로 멀리 올리면
+ * 선단이 프레임 밖에서 이미 다 서 버려 상단이 평평해진다.
+ */
+const SHAFT_HEAD_Y = -95;
+/**
+ * 광선 정점 알파(구운 단면의 최댓값).
+ *
+ * ⚠️ 슬랩 적층을 걷어내면서 0.25 → 0.125 로 **절반 낮춘 것이 과했다.** 계단 에지는 사라졌지만
+ * 광선도 함께 사라졌다(위 {@link SHAFT_BREATH} 의 실측). 단면이 이제 가우시안이라 예전 슬랩
+ * 누적처럼 중심만 뾰족하지 않고 부드럽게 퍼진다 — 같은 인상을 내려면 정점이 그때보다 낮을
+ * 이유가 없다.
+ */
+const SHAFT_ALPHA = 0.21;
 /** 코어·헤일로 가우시안 반폭(정규화 폭 −1..1 기준)과 헤일로 비중. */
 const SHAFT_CORE_SIGMA = 0.26;
 const SHAFT_HALO_SIGMA = 0.62;
@@ -355,6 +374,32 @@ const SHAFT_HEAD = 0.09;
 const SHAFT_TAIL = 0.24;
 /** 광선 속 먼지 진폭(0..1). 결이 없으면 젤리처럼 매끈해 볼류메트릭으로 안 읽힌다. */
 const SHAFT_DUST = 0.5;
+
+/**
+ * 광선 배치. **텍스처는 한 장을 구워** 배치마다 회전·스케일·알파만 달리해 겹친다 — 폭이 다른
+ * 사각형을 쌓아 단면을 근사하던 방식(§0-4 금지)과는 다르다. 여기서 겹치는 것은 **완성된
+ * 단면끼리**라 합이 언제나 가우시안의 합이고, 계단이 생길 자리가 원리적으로 없다.
+ *
+ * `x` 는 머리(광원)의 디자인 x 다 — 기울어져 있으므로 화면 중단의 중심은 여기서
+ * `깊이·sin(tilt)` 만큼 오른쪽이다. 주 광축(1번)의 중심이 벽 대역 실측 지점(디자인 x≈550)에
+ * 오도록 잡았고, 나머지 셋은 폭·세기를 낮춰 **평행하되 종속**으로 읽히게 한다.
+ *
+ * `tiltDelta` 는 {@link SHAFT_TILT} 에 더해지는 미세 편차다. 전부 같은 각이면 복사-붙여넣기로
+ * 읽히고, 부호를 뒤집으면 광원 규약이 깨진다 — 그래서 부호는 유지한 채 크기만 흔든다.
+ */
+interface ShaftPlacement {
+  x: number;
+  width: number;
+  alpha: number;
+  tiltDelta: number;
+  period: number;
+}
+const SHAFT_PLACEMENTS: readonly ShaftPlacement[] = [
+  { x: 520, width: 360, alpha: 1, tiltDelta: 0, period: 17 },
+  { x: 132, width: 250, alpha: 0.5, tiltDelta: -0.025, period: 23 },
+  { x: 1006, width: 300, alpha: 0.55, tiltDelta: 0.015, period: 29 },
+  { x: 1472, width: 230, alpha: 0.42, tiltDelta: -0.01, period: 37 },
+];
 
 /** 절차적 폴백 팔레트 — 타이틀·인트로와 같은 붓(청록·자홍 성운, 금빛 램프광). */
 const FALLBACK_BASE = 0x120e1e;
@@ -1009,8 +1054,7 @@ export class BaseBackdrop {
   private readonly airLayer = new Container();
 
   private readonly motes: Mote[] = [];
-  private shaft: Sprite | null = null;
-  /** 광선 텍스처. 스프라이트가 아니라 우리가 구운 자원이라 직접 반납한다. */
+  /** 광선 텍스처. **한 장을 모든 광축이 공유한다** — 우리가 구운 자원이라 직접 반납한다. */
   private shaftTex: Texture | null = null;
   /** 절차적 폴백의 성운 얼룩 — 아주 느리게 숨 쉬듯 알파가 오간다. */
   private readonly breathers: Breather[] = [];
@@ -1088,24 +1132,33 @@ export class BaseBackdrop {
       }
     }
 
-    // --- 공기: 가끔 지나는 광선(가산) ---
+    // --- 공기: 상시 걸린 평행 광축(가산) ---
     if (gates.halo) {
-      // 단면·먼지·선단은 전부 **구운 텍스처**가 갖는다(`bakeLightShaft` 주석 — 슬랩 적층은
-      // 계단 에지를 남겨 "사선 번짐"으로 읽혔다). 여기서는 놓는 일만 한다.
+      // 단면·먼지·선단은 전부 **구운 텍스처 한 장**이 갖는다(`bakeLightShaft` 주석 — 슬랩
+      // 적층은 계단 에지를 남겨 "사선 번짐"으로 읽혔다). 여기서는 그것을 **놓는 일만** 한다.
       this.shaftTex = bakeLightShaft();
       if (this.shaftTex !== null) {
-        const shaft = new Sprite(this.shaftTex);
-        // 위 끝(광원)을 기준으로 회전한다 — 창은 고정이고 빛줄기가 그 아래로 뻗는 형태다.
-        shaft.anchor.set(0.5, 0);
-        shaft.width = SHAFT_WIDTH;
-        shaft.height = SHAFT_LENGTH;
-        // 좌상 → 우하. 부호 규약은 {@link SHAFT_TILT} 주석 참조.
-        shaft.rotation = -SHAFT_TILT;
-        shaft.y = -DESIGN_HEIGHT * 0.14;
-        shaft.blendMode = 'add';
-        shaft.visible = false;
-        this.airLayer.addChild(shaft);
-        this.shaft = shaft;
+        for (const [i, p] of SHAFT_PLACEMENTS.entries()) {
+          const shaft = new Sprite(this.shaftTex);
+          // 위 끝(광원)을 기준으로 회전한다 — 창은 고정이고 빛줄기가 그 아래로 뻗는 형태다.
+          shaft.anchor.set(0.5, 0);
+          shaft.width = p.width;
+          shaft.height = SHAFT_LENGTH;
+          // 좌상 → 우하. 부호 규약은 {@link SHAFT_TILT} 주석 참조.
+          shaft.rotation = -(SHAFT_TILT + p.tiltDelta);
+          shaft.x = p.x;
+          shaft.y = SHAFT_HEAD_Y;
+          shaft.blendMode = 'add';
+          shaft.alpha = p.alpha;
+          this.airLayer.addChild(shaft);
+          // 호흡은 폴백 발광체와 **같은 장치**를 쓴다(주기가 서로소에 가까워 위상이 안 맞는다).
+          this.breathers.push({
+            sprite: shaft,
+            base: p.alpha,
+            period: p.period,
+            phase: i * 1.7,
+          });
+        }
       }
     }
 
@@ -1245,26 +1298,11 @@ export class BaseBackdrop {
       m.gfx.x = m.baseX + Math.sin(this.time * 0.4 + m.phase) * m.amp;
     }
 
-    // 발광체의 미세한 호흡 — 폴백에서도 화면이 완전히 정지하지 않게(기준값 ±10%).
+    // 광선·발광체의 미세한 호흡 — 같은 장치다. 광선은 **꺼지지 않고** 세기만 아주 느리게
+    // 오간다({@link SHAFT_BREATH} — 스윕으로 껐다 켰다 하던 판이 벽 대역을 비웠다).
     for (const b of this.breathers) {
-      b.sprite.alpha = b.base * (1 + 0.1 * Math.sin((this.time / b.period) * Math.PI * 2 + b.phase));
-    }
-
-    // 광선 — 주기의 앞부분(SHAFT_SWEEP 초) 동안만 화면을 가로지른다.
-    const shaft = this.shaft;
-    if (shaft !== null) {
-      const phase = this.time % SHAFT_PERIOD;
-      if (phase < SHAFT_SWEEP) {
-        const p = phase / SHAFT_SWEEP;
-        shaft.visible = true;
-        // 기운 광선은 발치가 머리보다 `length·sin(tilt)` ≈ 340px 오른쪽에 있다 — 시작점을 그만큼
-        // 더 왼쪽에서 잡아야 등장·퇴장이 화면 밖에서 일어난다.
-        shaft.x = DESIGN_WIDTH * (-0.45 + p * 1.78);
-        // 양 끝에서 0 이 되는 사인 페이드 — 갑자기 나타났다 사라지지 않게.
-        shaft.alpha = Math.sin(p * Math.PI);
-      } else {
-        shaft.visible = false;
-      }
+      b.sprite.alpha =
+        b.base * (1 + SHAFT_BREATH * Math.sin((this.time / b.period) * Math.PI * 2 + b.phase));
     }
   }
 
@@ -1274,7 +1312,6 @@ export class BaseBackdrop {
     }
     this.motes.length = 0;
     this.breathers.length = 0;
-    this.shaft = null;
     this.view.destroy({ children: true });
     // 구운 텍스처는 스프라이트가 아니라 우리가 만든 자원이다 — 직접 반납한다.
     this.bakedArt?.destroy(true);

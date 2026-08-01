@@ -231,6 +231,25 @@ const AO_RECESS_FADE = 0.18;
 const CONTACT_W_K = 1.6;
 const CONTACT_H_K = 0.25;
 const CONTACT_ALPHA = 0.55;
+/**
+ * 접지 그림자의 **방향**([MINOR]). 7라운드 판정: 다섯 개 모두 **수직 낙하**한다 — C7 이 광원을
+ * 좌상으로 확정했으므로 그림자는 **우하로** 흘러야 한다. 원인은 타원을 기둥 중심에 정확히
+ * 대칭으로 놓은 것이었다(중심 대칭 도형에는 방향이 원리적으로 없다).
+ *
+ * 그래서 ①중심을 우하로 밀고 ②**오른쪽 반경만** 늘린다. 대칭 타원을 통째로 옮기면 왼쪽에
+ * 빈틈이 생겨 기둥이 떠 보이므로, 접촉점(기둥 바로 아래)은 유지한 채 그림자만 오른쪽으로
+ * 끌리게 하는 비대칭 확대여야 한다. 이 방향은 측면 AO 의 좌우 비대칭
+ * ({@link AO_RIGHT_PEAK} > {@link AO_LEFT_PEAK})·카드 베벨과 같은 한 광원에서 나온다.
+ *
+ * ⚠️ 편향의 상한은 "웅덩이가 발자국에서 떨어지지 않을 것"이다. 첫 시도(오프셋 7·신장 1.5)는
+ * 타원의 왼쪽 도달이 8.2px 로 줄어 대좌 반폭 16px 안쪽에서 끝났다 — 그 자리를 측면 차폐가
+ * 대신 덮으므로(실측 결합 차폐 0.57~0.65) 모서리가 뜨지는 않지만, 접지 웅덩이가 대좌
+ * **오른쪽에만 걸린 별개의 얼룩**으로 분리된다. 오프셋 4·신장 1.7 이면 웅덩이가 발자국
+ * 전체를 물고 오른쪽으로 끌린다(차폐 0.30 등고선 기준 우/좌 **1.48배**).
+ */
+const CONTACT_OFF_X = 4;
+const CONTACT_OFF_Y = 1.5;
+const CONTACT_STRETCH_R = 1.7;
 
 // --- 원경 후퇴 — [C4] ---
 /**
@@ -599,10 +618,15 @@ function bakeAo(capTop: number, baseBottom: number, recess: number): AoBake | nu
       const reach = right ? AO_RIGHT_REACH : AO_LEFT_REACH;
       const lat = d <= 0 ? peak : peak * (1 - smoothstep(d / reach));
       // 접촉 타원 — 기초 바닥에 고이는 코어. 물체가 바닥에 닿는 유일한 증거다.
-      const er = Math.hypot(sx / contactRx, (ay - baseBottom) / contactRy);
+      // 광원이 좌상이므로 **우하로 기운다**: 중심을 밀고 오른쪽 반경만 늘린다(위 상수 주석).
+      const ex = sx - CONTACT_OFF_X;
+      const ey = ay - baseBottom - CONTACT_OFF_Y;
+      const er = Math.hypot(ex / (ex > 0 ? contactRx * CONTACT_STRETCH_R : contactRx), ey / contactRy);
+      // ⚠️ 접지는 후퇴 감쇠에서 **뺀다.** 먼 기둥도 바닥에는 똑같이 닿아 있다 — 여기까지
+      // 흐리게 하면 [C2] 가 되살리려던 "서 있다"는 신호가 바깥 두 기둥에서만 다시 사라진다.
       const contact = CONTACT_ALPHA * (1 - smoothstep(er));
       // ⚠️ 최댓값 — 합이면 성분이 겹치는 자리가 두 배가 되어 띠가 남는다.
-      const occ = Math.min(AO_MAX, Math.max(lat * env, contact) * gain);
+      const occ = Math.min(AO_MAX, Math.max(lat * env * gain, contact));
       const o = (ty * w + tx) * 4;
       img.data[o] = 0;
       img.data[o + 1] = 0;
