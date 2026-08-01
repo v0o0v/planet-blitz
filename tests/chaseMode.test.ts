@@ -307,9 +307,19 @@ describe('추격 — 정규경로 full-path 통합(니플헤임=chase)', () => {
           .filter((e) => !e.dead && isCounterDevice(e))
           .map((e) => Math.hypot(e.x - player.x, e.y - player.y)),
       );
+    // ⚠️ "거리가 줄었다" 로는 **아무것도 증명하지 못한다** — 카이팅만 하는 봇도 90틱 안에
+    //    우연히 가까워진다(이 테스트를 처음 그렇게 써서 뮤테이션 검증을 통과해 버렸다).
+    //    판정은 **접촉 거리까지 수렴했는가**여야 한다. 장치는 원점 링에 고정돼 있으므로
+    //    목표를 향해 가지 않는 봇은 여기까지 오지 않는다.
+    const REACHED = 150; // 장치 반경 70 + 플레이어 반경 32 에 여유.
     const d0 = nearest();
-    for (let i = 0; i < 90; i++) stepWorld(w, autopilotInput(w));
-    expect(nearest(), `장치까지 거리 ${d0} → ${nearest()}`).toBeLessThan(d0);
+    let best = d0;
+    for (let i = 0; i < 900 && best > REACHED; i++) {
+      stepWorld(w, w.pendingLevelUp ? { ...emptyInput(), special: packPowerupPick(0) } : autopilotInput(w));
+      const d = nearest();
+      if (d < best) best = d;
+    }
+    expect(best, `장치까지 최소 거리 ${d0} → ${best}`).toBeLessThanOrEqual(REACHED);
   });
 
   it('(d) 대피소 도달로 세그먼트가 전진한다(killGoal 아님 — kills=0 에서 전진)', () => {

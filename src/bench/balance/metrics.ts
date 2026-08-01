@@ -176,6 +176,19 @@ export const RUN_METRICS: Readonly<Record<string, MetricDef>> = {
     digits: 2,
     of: (s) => (s.config.planetMode === PLANET_MODE.chase ? chaseAliveCounterDevices(s) : 0),
   },
+  /**
+   * 런 종료 시점에 **바닥에 남아 수거되지 않은 전리품 수**.
+   *
+   * B3(장비유입 0.92/런, 목표 2~3)의 처방을 가르는 진단 지표다. `state.loot` 는 **수거분만**
+   * 세므로, 이 값이 크면 "드랍은 나는데 못 줍는다"(수거·봇 축)이고 0 에 가까우면 "드랍 자체가
+   * 적다"(드랍률 축)다.
+   */
+  lootGround: {
+    label: '미수거전리품',
+    kind: 'mean',
+    digits: 2,
+    of: (s) => s.entities.reduce((n, e) => (!e.dead && e.kind === 'loot' ? n + 1 : n), 0),
+  },
   metaXp: { label: '메타XP', kind: 'mean', digits: 0, of: (s) => s.xpTotal },
   kills: { label: '처치', kind: 'mean', digits: 0, of: (s) => s.kills },
   killsPerSec: { label: '처치/초', kind: 'mean', digits: 2, of: (s) => (s.tick > 0 ? (s.kills * 60) / s.tick : 0) },
