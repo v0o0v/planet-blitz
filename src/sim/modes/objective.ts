@@ -29,6 +29,7 @@
  * 적 대신 배경 바위를 쏘게 된다. 그래서 반드시 **마커로 좁힌다**.
  */
 import type { Entity } from '../entities.js';
+import { PLANET_MODE, type PlanetMode } from '../planetMode.js';
 import { isCounterDevice } from './chase.js';
 import { isContaminationNode } from './contamination.js';
 
@@ -38,4 +39,79 @@ import { isContaminationNode } from './contamination.js';
  */
 export function isObjectiveDestructible(e: Entity): boolean {
   return isCounterDevice(e) || isContaminationNode(e);
+}
+
+/**
+ * 이 무대의 진행·승리가 **목표 오브젝트 파괴**에 걸려 있는가(오염·추격).
+ *
+ * `isObjectiveDestructible` 이 "이 엔티티가 목표인가"라면 이쪽은 "이 무대가 목표 게이트형인가"다.
+ * 둘을 같은 파일에 두는 이유는 **목록이 갈리면 안 되기 때문**이다 — 새 목표 게이트형 모드는
+ * 두 술어에 동시에 들어와야 한다.
+ */
+export function isObjectiveGatedMode(mode: PlanetMode | undefined): boolean {
+  return mode === PLANET_MODE.contamination || mode === PLANET_MODE.chase;
+}
+
+/**
+ * 목표 게이트형 무대의 **피격 피해 배율**(1 미만 = 덜 아프다).
+ *
+ * ## 왜 이 축이 따로 필요한가 (2026-08-02 실측)
+ * 이 무대들에서 **목표 총 HP 는 난이도와 페이싱을 동시에 정한다** — 노드·장치를 다 부수는 데
+ * 걸리는 시간이 곧 ①얼마나 오래 버텨야 하는가 ②보스에 언제 닿는가 둘 다이기 때문이다. 그래서
+ * 목표 HP 하나로는 "보스 도달 90초"(사용자 지시)와 "클리어율 60~80%"(ADR-0037)를 **함께
+ * 만족시킬 수 없다.** 실측이 그대로 보여줬다:
+ *
+ * | 톡사르 노드 HP | 클리어율 | 보스도달 |
+ * |---|---|---|
+ * | 62,000 | 14.1% | 88.2s(목표 충족) |
+ * | 40,000 | 24.5% | 74.9s(페이싱 파손) |
+ *
+ * 크라스(블록격파)만 밴드·페이싱을 동시에 잡았는데, 이유는 압사가 **진행 게이트가 아니라 순수
+ * 피해원**이라 두 축이 애초에 분리돼 있어서다. 이 상수는 오염·추격에 **그 분리를 만들어 준다**:
+ * 목표 HP 는 페이싱이 정한 값으로 되돌리고, 난이도는 생존 축이 진다.
+ *
+ * ## 왜 "적 유입"이 아니라 "피격 피해"인가
+ * 유입 감소는 이 두 무대에서 **실측으로 기각**됐다(톡사르 14.3 → 13.9% · 니플헤임 30.6 → 31.7%,
+ * 계수 1.6). 적은 압박인 동시에 젬·전리품을 내는 **성장 자원**이라 줄이면 굶는다. 피격 피해는
+ * 성장에 손대지 않고 생존만 늘린다.
+ *
+ * ## 형태
+ * `SHRINK_INTERVAL_SCALE` 과 같은 **모드 게이트 배율**이다. 다른 무대·침공은
+ * {@link objectiveModeDamageScale} 이 1 을 돌려주므로 거동·해시가 **바이트 불변**이다.
+ *
+ * ## 왜 무대마다 값이 다른가
+ * 같은 배율 0.5 를 둘에 걸었더니 **12.7pp 벌어졌다**(니플헤임 45.3% · 톡사르 26.8%). 두 무대는
+ * 압박의 성질이 다르다 — 추격은 회피 가능한 단일 포식자 + 웨이브이고, 오염은 도망칠 수 없는
+ * 영구 지형이 깔린 채 노드 10개를 도는 무대다. 그래서 하나의 값으로 둘을 맞출 수 없다.
+ *
+ * ## ⚠️ 이 축 **하나로도** 안 된다 — 손잡이는 셋이고 함께 움직여야 한다
+ * 프로브 5회의 결론이다. 목표 HP 와 이 배율은 **페이싱을 서로 반대 방향으로 민다**:
+ *
+ * | 톡사르 조합 | 클리어율 | 보스도달 | 무엇이 깨졌나 |
+ * |---|---|---|---|
+ * | HP 62,000 · 배율 1.0 | 14.1% | 88.2s | 클리어율 |
+ * | HP 40,000 · 배율 1.0 | 24.5% | 74.9s | 페이싱(빨라짐) |
+ * | HP 62,000 · 배율 0.3 | 37.1% | 105.1s | 페이싱(느려짐) · 레벨업 10.1 |
+ * | **HP 40,000 · 기울기 0.06 · 배율 0.26** | **61.7%** | **84.4s** | — |
+ *
+ * 세 번째 손잡이가 **단계 기울기**(`_HP_SLOPE`)다. 배율만 낮추면 플레이어가 안 죽는 대신
+ * 고단계에서 목표를 못 깎아 **패배가 타임아웃으로 바뀐다** — 승률은 오르는데 구조 건전성이
+ * 무너진다. 기울기가 그 고단계 격차를 담당한다.
+ *
+ * **셋 중 하나만 되돌리지 마라.** 각 상수 주석의 실측표가 서로를 전제한다.
+ * TODO(밸런스): 출시 전 튜닝.
+ */
+export const CONTAMINATION_DAMAGE_SCALE = 0.26;
+
+/** 추격(니플헤임)의 피격 피해 배율. 근거는 {@link CONTAMINATION_DAMAGE_SCALE}. */
+export const CHASE_DAMAGE_SCALE = 0.32;
+
+/**
+ * 이 런의 피격 피해 배율. 목표 게이트형 무대 외에는 **정확히 1** 이다 — 호출부가 그 경우
+ * 한 줄도 실행하지 않도록 `=== 1` 로 가드한다(기존 해시 완전 불변).
+ */
+export function objectiveModeDamageScale(mode: PlanetMode | undefined): number {
+  if (mode === PLANET_MODE.contamination) return CONTAMINATION_DAMAGE_SCALE;
+  if (mode === PLANET_MODE.chase) return CHASE_DAMAGE_SCALE;
+  return 1;
 }

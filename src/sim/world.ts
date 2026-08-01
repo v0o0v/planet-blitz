@@ -267,7 +267,7 @@ import {
 // --- 추격·탈출 콘텐츠(Lane6 · ADR-0021 §2.4) — 비-스크롤 자유추적. 무적 포식자(boss.aux0=0)가
 //     끝없이 추격, 대피소 도달로 진행, 반격 장치 전부 파괴로 취약화(aux0=1)→보스전, 접촉 시 실패 ---
 import { placeChaseCourse, updateChasePredator, COUNTER_DEVICE_MARK } from './modes/chase.js';
-import { isObjectiveDestructible } from './modes/objective.js';
+import { isObjectiveDestructible, objectiveModeDamageScale } from './modes/objective.js';
 // --- 수축지대 콘텐츠(Lane7 · ADR-0021 §2.5) — 비-스크롤 자유추적. 아레나 중심(원점 0,0) 기준
 //     동적으로 줄어드는 안전 반경 밖이면 지속 피해, 안전 반경 안 적 전멸로 진행, 중심 보스 처치로
 //     완주. 이 재설계의 첫 "신규 해시 필드" 모드(shrinkRuntime, 정수 2필드) -----------------------
@@ -3659,6 +3659,20 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // Supply raiders never harm the player (they do not attack).
   });
   if (dmg > 0 && !invulnerable) {
+    // 목표 게이트형 무대(오염·추격)의 생존 축 — 피격 피해 배율(`src/sim/modes/objective.ts`).
+    //
+    // ## 왜 여기인가 (감쇠 사슬의 **맨 앞**)
+    // 이건 "이 무대에서 맞으면 얼마나 아픈가" 라는 **들어오는 피해의 성질**이지 플레이어가
+    // 갖춘 경감 수단이 아니다. 그래서 장갑·막·완충·캡스톤보다 앞에 둔다 — 뒤에 두면 캡스톤의
+    // 치사 판정(`hp - dmg <= 0`)이 무대 배율을 못 본 값으로 이뤄져, 배율이 살려 낼 피격까지
+    // "치명타 1회 무효" 를 소진시킨다.
+    //
+    // ## 정수화
+    // `Math.round` 는 배율이 실제로 걸리는 무대에서만 돈다. 배율 1 인 무대(그 외 전부 + 침공)는
+    // **이 블록에 진입조차 하지 않으므로** 엘리트 배율이 섞인 소수 접촉 피해가 그대로 보존된다
+    // — 브루저·버블 주석이 경고하는 바로 그 함정을 게이트로 피한다(기존 해시 바이트 불변).
+    const modeScale = objectiveModeDamageScale(state.config.planetMode);
+    if (modeScale !== 1) dmg = Math.round(dmg * modeScale);
     // 브루저 시그니처 — 장갑 스택 피해 감소(설계서 §3·§4). **생존 캡스톤 판정보다 먼저** 적용해
     // "치명타 1회 무효" 가 감소된 피해로 치사 여부를 판정하게 한다(장갑이 살려낸 피격까지
     // 캡스톤을 소진시키지 않는다). 미보유면 armorOn=false 로 한 줄도 실행되지 않는다.

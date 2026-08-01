@@ -110,8 +110,11 @@ if (shared.size === 0) {
  * 튜닝하게 된다. 시드는 위에서 맞췄지만 축은 맞출 수 없으므로(없는 표본은 만들 수 없다) 여기서
  * 크게 경고한다.
  */
+// ⚠️ `planet` 은 검사하지 않는다. 표의 각 행은 **그 행성 안에서만** 집계되므로 어느 행성이 함께
+// 돌았는지는 행의 값을 바꾸지 않는다 — 그래서 좁은 프로브(`--planets=2,4`)를 전 행성 런과
+// 행 단위로 대조하는 것은 정당하다. 반면 `level`·`ship` 은 행 **안의** 모집단을 바꾼다.
 const axisOf = (runs, k) => [...new Set(runs.map((r) => r[k]))].sort((x, y) => x - y).join(',');
-for (const k of ['level', 'ship', 'planet']) {
+for (const k of ['level', 'ship']) {
   const a = axisOf(before, k);
   const b = axisOf(after, k);
   if (a !== b) {
