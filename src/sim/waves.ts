@@ -172,46 +172,6 @@ export function createWaveRuntime(): WaveRuntime {
  */
 export const PVE_DENSITY_MULT = 1.5;
 
-/**
- * **목표 게이트형 무대의 웨이브 압박 계수** — 카드 추첨 간격에 곱한다(1 초과 = 유입 감소).
- *
- * ## 왜 뱀서류와 같은 압박을 주면 안 되는가 (2026-08-02 실측)
- * 뱀서류(카르곤)는 **처치가 곧 진행**이라 웨이브 물량이 스스로 조절된다 — 잘 죽이면 구간이
- * 넘어가고 런이 끝난다. 나머지 다섯 무대는 진행 게이트가 처치가 아니라 목표(주파 거리·정화율·
- * 대피소·링 전멸)라, 웨이브는 **진행에 기여하지 않는 순수 소모전**이다.
- *
- * 2026-08-01 페이싱 조정이 이 비대칭을 드러냈다. 전 무대를 보스 도달 90초로 맞추자 뱀서류만
- * 승률이 그대로였고(78.9%) 나머지가 무너졌는데, 실측 signature 가 "적이 세다"와 정반대였다:
- *
- * | 행성 | 처치/초 | 생존초 | 클리어율 |
- * |---|---|---|---|
- * | 카르곤(뱀서류) | 2.61 | 93.5 | 78.9% |
- * | 톡사르(오염) | 2.76 | 66.4 | 14.3% |
- * | 베르단(수축) | 2.85 | 70.5 | 21.1% |
- * | 니플헤임(추격) | 2.87 | 77.2 | 30.6% |
- *
- * **적을 더 빨리 죽이면서 더 일찍 죽는다.** 적 HP·밀도를 낮추는 처방이 여기서 기각되는
- * 이유다(그 축은 이미 빠르게 소화되고 있다). 무너진 것은 "90초 동안 누적되는 소모전"이고,
- * 그 축은 유입 케이던스다.
- *
- * `data/waves.ts` 의 `SEGMENTS` 원본을 건드리지 않는다 — 침공(PvP) 해시가 그 값에 걸려 있고
- * (`SEGMENTS[0]` 주석), 침공은 `updateWaves` 를 아예 돌리지 않아 이 계수와 무관하다.
- * 뱀서류는 계수 1 이라 **바이트 불변**이다.
- *
- * TODO(밸런스): 무대마다 갈라야 할 근거가 서면 모드별 표로 쪼갠다. 지금은 "목표 게이트형"이라는
- * 하나의 성질에서 나오는 값이므로 단일 계수로 둔다.
- */
-export const OBJECTIVE_MODE_INTERVAL_SCALE = 1.6;
-
-/**
- * 이 런의 카드 추첨 간격 배율. 뱀서류(및 모드 미지정)는 1 — 기존 거동·해시가 바이트 불변이다.
- */
-export function waveIntervalScale(state: WorldState): number {
-  const mode = state.config.planetMode;
-  if (mode === undefined || mode === PLANET_MODE.vampire) return 1;
-  return OBJECTIVE_MODE_INTERVAL_SCALE;
-}
-
 /** Count live enemies (excludes bullets/hazards/gems). */
 export function countEnemies(state: WorldState): number {
   let n = 0;
@@ -281,15 +241,7 @@ export function updateWaves(state: WorldState, player: Entity): void {
   const maxEnemies = Math.round(
     (seg.maxEnemies + rushEnemyBonus) * state.catalystMods.enemyCount * tp.densityMult * PVE_DENSITY_MULT,
   );
-  // 목표 게이트형 무대는 유입 케이던스를 늘린다(위 `waveIntervalScale` 주석 — 그 무대의 웨이브는
-  // 진행에 기여하지 않는 순수 소모전이다). 하한(`RUSH_MIN_INTERVAL`)에도 같은 배율을 걸어야
-  // 급행 램프가 최고조일 때 계수가 무력화되지 않는다 — 걸지 않으면 램프가 붙는 후반에 정확히
-  // 효과가 사라진다. 뱀서류는 배율 1 이라 두 값 모두 바이트 불변.
-  const scale = waveIntervalScale(state);
-  const cardInterval = Math.max(
-    Math.round(RUSH_MIN_INTERVAL * scale),
-    Math.round((seg.cardInterval - rushSteps * RUSH_INTERVAL_STEP) * scale),
-  );
+  const cardInterval = Math.max(RUSH_MIN_INTERVAL, seg.cardInterval - rushSteps * RUSH_INTERVAL_STEP);
 
   if (w.cardTimer > 0) w.cardTimer--;
   // 정예 소집령은 **잡몹이 전혀 나오지 않는다**(ADR-0043 — "잡몹을 극소로"는 명시 기각안이다).
