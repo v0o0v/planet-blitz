@@ -1794,6 +1794,11 @@ async function main(): Promise<void> {
     let frame = ticker.deltaMS / 1000;
     if (frame > 0.25) frame = 0.25; // clamp to avoid spiral-of-death after stalls
 
+    // 타이틀 연출(패럴랙스·티끌·광선·3D 함선)은 여기서만 진행한다. 화면이 숨겨져 있으면
+    // 내부에서 즉시 반환하므로 런 중 비용은 0 이다 — 특히 3D 는 이 호출이 유일한 렌더 지점이라
+    // 타이틀 밖에서는 GPU 를 아예 쓰지 않는다.
+    titleScreen.update(frame);
+
     // AC-5.1 화면 전환 커튼: 매 프레임 진행(비재생 시 no-op) + 재생 중엔 stage 최상단으로 올려
     // 전 화면·크롬 UI 위를 덮는다(settings.raise 뒤라 커튼이 그 위). render-only.
     screenTransition.update(frame);
