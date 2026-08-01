@@ -158,9 +158,18 @@ function commissionProfile(gearSeed: number, gearPlanet: number) {
 // ---------------------------------------------------------------------------
 
 /**
- * 안전판(설계 상한이 아니다) — 구간당 최대 허용 틱. `src/bench/rosterBench.ts` 의 `MAX_TICKS`
- * (저장소 표준 상한 18,000틱)와 같은 값이다. `COMMISSION_SEGMENT_TICK_CAP`(9,000) 초과 여부를
- * **재기 위해서는** 그보다 더 오래 돌 수 있어야 하므로, 실제 게이트 상수의 2배를 안전판으로 둔다.
+ * 안전판(설계 상한이 아니다) — **구간 수에 비례한 런 누적 허용 틱의 계수**다.
+ * `src/bench/rosterBench.ts` 의 `MAX_TICKS`(저장소 표준 상한 18,000틱)와 같은 값이며,
+ * `COMMISSION_SEGMENT_TICK_CAP`(9,000) 초과 여부를 **재려면** 그보다 오래 돌 수 있어야 하므로
+ * 게이트 상수의 2배로 둔다.
+ *
+ * ⚠️ **이름이 시사하는 "구간당 상한"이 아니다.** 실제로는
+ * `hardCap = segments.length * 이 값` 을 **런 누적 총량**(`while (totalTicks < hardCap)`)으로
+ * 쓴다 — 한 구간이 폭주하면 나머지 구간은 틱을 0 받는다. 그래서 **폭주 런의 관측 최댓값은
+ * 실제값이 아니라 절단된 하한**이다(2026-08-01 조정 **전** 계급2 elite 의 hardCap 은
+ * 3×18,000 = 54,000 이고 보고된 최대 구간틱이 53,441 이었다 — 자연 관측이 아니라 안전판에
+ * 부딪힌 값이며, 그 시드의 2·3구간은 아예 돌지 않아 초과 **건수도 과소계상**이다).
+ * 조정 후에는 max 11,485 ≪ 54,000 이라 바인딩되지 않는다.
  */
 const RUN_SAFETY_TICKS_PER_SEGMENT = 18000;
 
@@ -170,7 +179,13 @@ export interface CommissionRunOutcome {
   readonly totalTicks: number;
   /** 구간별 소요 틱(완주하지 못한 마지막 구간도 포함). */
   readonly segmentTicks: readonly number[];
-  /** 어느 구간이든 `COMMISSION_SEGMENT_TICK_CAP` 을 넘겼는가 — **1순위 확인 항목**. */
+  /**
+   * 어느 구간이든 `COMMISSION_SEGMENT_TICK_CAP` 을 넘겼는가 — **1순위 확인 항목**.
+   *
+   * ⚠️ **밴드 집계는 이 필드를 읽지 않는다** — `measureCommissionBand` 이 `segmentTicks` 에서
+   * 독립 재계산한다(같은 것을 두 경로가 계산하면 언젠가 갈린다). 여기 남긴 이유는 **단일 런
+   * 디버깅**용이고, 판정 정본은 집계 쪽이다. 판정에 쓰려거든 둘 중 하나를 지워라.
+   */
   readonly tickCapExceeded: boolean;
   /** 완전히 클리어(보스 처치 후 전환)된 구간 수. 승리 런은 전 구간. */
   readonly segmentsCleared: number;
@@ -285,7 +300,7 @@ function dist(values: readonly number[]): Dist {
 export interface TickCapViolation {
   readonly seed: number;
   readonly segmentTicks: number;
-  /** 봉 한계 행성(니플헤임)이 포함된 런인가 — 참이면 진짜 난이도 신호가 아니다(파일 머리말). */
+  /** 봇 한계 행성(니플헤임)이 포함된 런인가 — 참이면 진짜 난이도 신호가 아니다(파일 머리말). */
   readonly touchesNiflheim: boolean;
 }
 

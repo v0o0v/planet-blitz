@@ -19,8 +19,12 @@ import type { CommissionServerContext } from '../supabase/functions/verify-commi
 import type { CommissionPayload, CommissionRunConfig } from '../src/run/commission.js';
 import {
   commissionReplayBudgetTicks,
+  COMMISSION_ELITE_WAVE_SEGMENTS,
   COMMISSION_WAVE_SEGMENTS_PER_SEGMENT,
 } from '../src/run/commissionConstants.js';
+import { COMMISSION_ORDERS } from '../src/run/commission.js';
+import { buildRunConfig } from '../src/run/runConfig.js';
+import { defaultProfile } from '../src/save/profile.js';
 
 function samplePayload(over: Partial<CommissionPayload> = {}): CommissionPayload {
   return {
@@ -391,5 +395,62 @@ describe('게이트 6 — 제출 config 를 **정화**한다 (덮어쓰기만 �
     expect(c.skillInvest).toEqual([1, 2, 3]);
     expect(c.runId).toBe('abc');
     expect(c.loadout).toEqual(server.loadoutSealed);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// maxSegments 클라·서버 대칭 (리뷰 MAJOR-1 회귀 게이트)
+// ---------------------------------------------------------------------------
+
+describe('maxSegments 는 클라(`buildRunConfig`)와 서버(게이트 6)가 **주문별로 같은 값**을 낸다', () => {
+  // ⚠️ **주문 목록을 `COMMISSION_ORDERS` 순회로 쓰지 마라.** 목록을 순회하면 거기서 항목이
+  //    빠질 때 대조도 함께 사라져 원리적으로 눈이 먼다. 독립 전사본으로 4개를 열거한다.
+  const ORDERS = ['chain', 'constraint', 'bounty', 'elite'] as const;
+
+  // ⚠️ 이 단언이 통과하면서도 참일 수 있는 나쁜 상태: **양쪽이 나란히 틀린 것**(예: 둘 다
+  //    elite 분기를 잃어 3 을 낸다). 그래서 대칭만 재지 않고 elite 의 기대값 자체도 못 박는다.
+  const EXPECTED: Record<(typeof ORDERS)[number], number> = {
+    chain: COMMISSION_WAVE_SEGMENTS_PER_SEGMENT,
+    constraint: COMMISSION_WAVE_SEGMENTS_PER_SEGMENT,
+    bounty: COMMISSION_WAVE_SEGMENTS_PER_SEGMENT,
+    elite: COMMISSION_ELITE_WAVE_SEGMENTS,
+  };
+
+  it('전사본이 실제 주문 집합과 일치한다 (주문이 늘면 이 표가 먼저 깨진다)', () => {
+    expect([...ORDERS].sort()).toEqual([...COMMISSION_ORDERS].sort());
+  });
+
+  for (const order of ORDERS) {
+    it(`${order}: 클라 == 서버 == 기대값`, () => {
+      const payload = samplePayload({ order });
+      // 현상금 주문은 `bounty` 블록이 없으면 조립이 던진다(도주 기제가 통째로 사라지는 것을
+      // 막는 가드) — 대조에 필요한 최소 블록을 싣는다.
+      const base = commissionConfigFromPayload(payload);
+      const commission =
+        order === 'bounty'
+          ? { ...base, bounty: { targetKind: 2, escapeRule: 'hpThreshold' as const } }
+          : base;
+      // 클라 — 조립의 유일한 정본.
+      const clientCfg = buildRunConfig(defaultProfile(), {
+        planet: payload.segments[0]?.planet ?? 0,
+        stage: payload.segments[0]?.stage ?? 1,
+        commission,
+      });
+      // 서버 — 게이트 6 의 allowlist 재조립.
+      const server = baseContext({ payload });
+      const res = evaluateCommissionGates(baseSubmission(server), server);
+      expect(res.ok, '게이트 6 에 도달하지 못했다 — 이 대조가 무의미하다').toBe(true);
+      if (!res.ok) return;
+      const serverMax = (res.submission.config as unknown as Record<string, unknown>).maxSegments;
+
+      expect(clientCfg.maxSegments, `클라 ${order}`).toBe(EXPECTED[order]);
+      expect(serverMax, `서버 ${order}`).toBe(EXPECTED[order]);
+      // 대칭 자체를 한 번 더 — 위 둘이 같은 상수를 참조해도 배선이 갈리면 여기서 잡힌다.
+      expect(serverMax, `${order}: 클라·서버 maxSegments 가 갈렸다`).toBe(clientCfg.maxSegments);
+    });
+  }
+
+  it('elite 는 다른 3주문과 **실제로 다른 값**이다 (오버라이드가 사문이 아니다)', () => {
+    expect(COMMISSION_ELITE_WAVE_SEGMENTS).not.toBe(COMMISSION_WAVE_SEGMENTS_PER_SEGMENT);
   });
 });

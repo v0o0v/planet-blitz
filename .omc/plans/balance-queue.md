@@ -107,6 +107,20 @@
 - **실측 정본**: `.omc/research/commission-band-2026-08-01.md`. 계측 인프라(재사용 가능):
   `src/bench/commissionBench.ts` + 영구 회귀 게이트 `tests/commissionBandMeasure.test.ts`.
 
+### C-ter3. 미계측 — 정예 소집령의 겹침 압박이 실제로 발현되는가 (2026-08-01 등재)
+
+C-ter2 의 수정(`COMMISSION_ELITE_WAVE_SEGMENTS = 1`)은 보스 전 처치 요구를 killGoal
+**109 → 10 으로 10.9배** 낮췄다. 틱 상한·클리어율 두 기준은 만족하지만, **겹침이 구간당 몇 번
+발현되는지는 재지 않았다.**
+
+- 우려: killGoal 10 이면 `COMMISSION_ELITE_OVERLAP_MAX = 6` 겹침이 구간당 1~2회밖에 안 뜰 수
+  있다. 그러면 ADR-0043 이 "잡몹 소거로 사라진 런 길이 캡의 대체물"로 지정한 압박 누적이
+  **수치상 통과하면서 체감상 사라진다** — 지표가 초록인 채로 주문 정체성이 비는 형태다.
+- 착수 조건: `commissionBench` 에 겹침 발생 횟수(동시 정예 수의 시계열 최댓값·`cap` 상승 횟수)
+  카운터를 추가해 96시드로 재측정. 발현이 실질적이지 않으면 `COMMISSION_ELITE_WAVE_SEGMENTS`
+  를 올리는 대신 겹침 축(`_DELAY_TICKS` 단축 등)으로 밀도를 앞당기는 쪽을 먼저 본다.
+- **이것은 자인이지 미조달이 아니다** — 착수 조건과 다음 수가 위에 배정돼 있다.
+
 ### C-ter2. C10 실측 완료 — 정예 소집령이 서버 틱 예산을 초과하고 있었다 (2026-08-01, Phase G)
 
 96시드 계측(`.omc/research/commission-band-2026-08-01.md`)이 **C10 이 기다리던 겹침 임계

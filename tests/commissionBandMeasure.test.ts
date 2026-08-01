@@ -92,6 +92,21 @@ describe('의뢰 다구간 난이도 계측 — 1순위: 틱 예산', () => {
   // p99 가 상한 아래 **여유를 두고** 들어와야 한다(판정 기준 ① — 평균이 아니라 꼬리). 여유
   // 기준은 "p99 가 상한의 80% 미만"으로 못박는다 — 96시드보다 큰 실서버 트래픽에서 분포 꼬리가
   // 조금 더 늘어나도 흡수할 여지를 남긴다.
+  // ⚠️ **표본 하한이 먼저다(리뷰 MAJOR-2).** `dist([])` 는 `p99: 0` 을 돌려주므로, 니플헤임
+  // 제외 표본이 0 이면 아래 두 게이트가 **"측정할 게 없다"와 "전부 상한 아래다"를 같은 초록으로**
+  // 낸다. 제외 규칙이 넓어지거나(봇 한계 행성 추가) 구간 생성기가 바뀌어 표본이 잠식되면 그
+  // 순간 1순위 방어가 증거 0 으로 통과한다 — 그래서 표본 수 자체를 계약으로 굳힌다.
+  it('정예 소집령 — 니플헤임 제외 표본이 판정 가능한 크기다(위 두 게이트의 전제)', () => {
+    expect(
+      ELITE.segmentTicksExNiflheim.n,
+      `니플헤임 제외 구간 표본 ${ELITE.segmentTicksExNiflheim.n}개 — 너무 적어 p99 가 무의미하다`,
+    ).toBeGreaterThanOrEqual(100);
+    expect(
+      ELITE.niflheimRunCount,
+      `니플헤임 런 ${ELITE.niflheimRunCount}/${ELITE.runCount} — 제외가 표본 대부분을 삼켰다`,
+    ).toBeLessThanOrEqual(40);
+  });
+
   it('정예 소집령 — 니플헤임 제외 구간틱이 상한을 넘지 않는다(1순위)', () => {
     expect(
       ELITE.tickCapViolationsExNiflheim,
@@ -124,7 +139,20 @@ describe('의뢰 다구간 난이도 계측 — 밴드 관측', () => {
   // 96시드 중 1~2개만 그 행성을 포함) 아래 비교가 노이즈에 가깝다. 표본 수를 함께 기록해
   // 사후 판정 가능하게 한다(콘솔 표의 "니플헤임런" 열).
   it('니플헤임 포함 런은 봇 한계로 제외 런보다 클리어율이 낮거나 같다(진짜 난이도 아님을 확인)', () => {
-    const bands: readonly CommissionBandStat[] = [...GRADES.map((g) => TYPICAL[g]), ELITE];
+    // ⚠️ **독립 전사본(리뷰 MAJOR-3).** `GRADES.map` 으로만 돌면 측정한 9개 밴드 중 MAX_MODE
+    //    4개가 조용히 빠진다 — 지금은 그쪽 니플헤임이 0 이라 무해하지만, `maxSegments()` 의
+    //    행성 목록에 2 가 들어가는 순간 검사 없이 통과한다. 9개를 여기 적는다.
+    const bands: readonly CommissionBandStat[] = [
+      TYPICAL[1], TYPICAL[2], TYPICAL[3], TYPICAL[4],
+      MAX_MODE[1], MAX_MODE[2], MAX_MODE[3], MAX_MODE[4],
+      ELITE,
+    ];
+    // ⚠️ 전 밴드가 `continue` 로 빠지면 루프 본문이 한 번도 안 돌아 **단언 0건으로 통과**한다.
+    //    "비교할 표본이 있었다"를 먼저 못 박는다.
+    expect(
+      bands.filter((b) => b.niflheimRunCount > 0).length,
+      '니플헤임 표본이 있는 밴드가 하나도 없다 — 이 방향성 검사가 공허하다',
+    ).toBeGreaterThan(0);
     for (const b of bands) {
       if (b.niflheimRunCount === 0) continue; // 그 밴드에 니플헤임 표본이 없으면 비교 불가 — 정상.
       expect(
@@ -162,8 +190,11 @@ describe('의뢰 다구간 난이도 계측 — 밴드 관측', () => {
   });
 
   it('정예 소집령 기준선이 유한하고(완주 가능성이 살아 있고) 계측이 크래시하지 않는다', () => {
-    expect(ELITE.runCount).toBe(96);
+    // ⚠️ `runCount` 는 `SEEDS.length` 상수 복사라 96런이 전부 0틱 쓰레기를 내도 통과한다
+    //    (리뷰 MINOR-1). 계측이 **실제로 돌았다**를 재려면 구간 표본 수를 봐야 한다 —
+    //    런당 최소 1구간이므로 96 을 넘어야 한다.
+    expect(ELITE.segmentTicks.n, '구간 표본이 런 수보다 적다 — 계측이 돌지 않았다').toBeGreaterThan(96);
     expect(Number.isFinite(ELITE.winRate)).toBe(true);
-    expect(Number.isFinite(ELITE.segmentTicks.mean)).toBe(true);
+    expect(ELITE.segmentTicks.mean, '평균 구간틱이 0 — 빈 분포다').toBeGreaterThan(0);
   });
 });
