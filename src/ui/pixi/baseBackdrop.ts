@@ -125,7 +125,7 @@ const LOWPASS_RADIUS = 60;
  * 카드와의 대비 여유가 커진다. 이 값은 **스케일이 아니라 지정값**이라 거터 셋이 원화 밝기와
  * 무관하게 같은 자리에 앉는다(균일성 Δ≤4 가 구조적으로 보장되는 근거).
  */
-const TARGET_INNER_L = 44;
+const TARGET_INNER_L = 55;
 /** 격자 행 **바깥**(좌우·위아래 여백)의 목표 평균 휘도. 안쪽과 거의 같게 둬 화면이 갈리지 않게. */
 const TARGET_SURROUND_L = 41;
 /** 디테일 목표 표준편차. 수용 기준 std ≥ 30 에 여유를 둔 값. */
@@ -205,12 +205,21 @@ const DIM_TEX_H = 180;
  */
 const RIB_W = 24;
 /**
- * 본체 세로 램프(위 → 아래). 위가 밝고 아래로 어두워지는 라벨 밴드와 같은 광원 규약이다.
- * 두 색의 평균 휘도가 ≈45 라 좌측 여백(실측 43)과 같은 대역에 앉는다 — 거터만 어둡던
- * **이방성**(수평 47 vs 수직 24~32)이 여기서 사라진다.
+ * 본체 세로 램프의 **기준색**(위 → 아래, 평균 휘도 ≈45.9). 위가 밝고 아래로 어두워지는,
+ * 라벨 밴드와 같은 광원 규약이다.
+ *
+ * ⚠️ 이 값을 그대로 쓰지 않는다 — {@link ribRampColors} 가 {@link TARGET_INNER_L} 에서
+ * 배율을 파생해 스케일한다. 거터에 실제로 보이는 것은 배경이 아니라 **리브**이므로, 목표
+ * 휘도만 올리고 리브를 그대로 두면 거터는 꿈쩍도 하지 않는다(실측: 목표 44 인데 거터 37.6).
+ * 상수 하나가 배경과 리브를 **함께** 움직여야 한다.
  */
-const RIB_TOP = 0x4a3826;
-const RIB_BOTTOM = 0x2a1e14;
+const RIB_TOP_BASE = 0x4a3826;
+const RIB_BOTTOM_BASE = 0x2a1e14;
+/**
+ * 리브 본체 램프 평균 → 화면 거터 평균의 실측 비율(0.82). 2px 그늘·좌우 배경 노출·비네트가
+ * 깎아 내는 몫이다. 목표 휘도를 이 값으로 나눠 램프를 정한다.
+ */
+const RIB_COMPOSITE_K = 0.82;
 /** 왼쪽 수광 립(1px)과 오른쪽 그늘(2px). 카드 베벨과 광원 방향이 같아야 한 장면으로 읽힌다. */
 const RIB_LIP = 0xd9b070;
 const RIB_LIP_ALPHA = 0.5;
@@ -350,6 +359,29 @@ function bottomScrimAlpha(y: number): number {
 /** Rec.601 루마. */
 function luma(r: number, g: number, b: number): number {
   return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+/** 정수색의 루마. */
+function colorLuma(c: number): number {
+  return luma((c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff);
+}
+
+/** 정수색을 배율만큼 밝힌다(색상 보존 — 채널 비를 유지한다). */
+function scaleColor(c: number, s: number): number {
+  const r = Math.min(255, Math.round(((c >> 16) & 0xff) * s));
+  const g = Math.min(255, Math.round(((c >> 8) & 0xff) * s));
+  const b = Math.min(255, Math.round((c & 0xff) * s));
+  return (r << 16) | (g << 8) | b;
+}
+
+/**
+ * 리브 본체 램프 색 — {@link TARGET_INNER_L} **에서 파생한다.** 배경 목표와 리브가 한 상수에
+ * 묶여 있어야 거터 밝기를 한 군데서 조절할 수 있다(둘을 따로 적으면 반드시 어긋난다).
+ */
+function ribRampColors(): { top: number; bottom: number } {
+  const baseMean = (colorLuma(RIB_TOP_BASE) + colorLuma(RIB_BOTTOM_BASE)) / 2;
+  const s = TARGET_INNER_L / RIB_COMPOSITE_K / baseMean;
+  return { top: scaleColor(RIB_TOP_BASE, s), bottom: scaleColor(RIB_BOTTOM_BASE, s) };
 }
 
 /**
@@ -840,7 +872,8 @@ export class BaseBackdrop {
    */
   private buildRibs(ribs: readonly BaseRib[]): void {
     if (ribs.length === 0) return;
-    const bodyTex = bakeVerticalRamp(RIB_TOP, RIB_BOTTOM);
+    const ramp = ribRampColors();
+    const bodyTex = bakeVerticalRamp(ramp.top, ramp.bottom);
     const host = new Container();
     for (const rib of ribs) {
       const h = rib.y1 - rib.y0;
