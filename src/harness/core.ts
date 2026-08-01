@@ -69,7 +69,8 @@ export type HarnessScreen =
   | 'research'
   | 'refinery'
   | 'defense'
-  | 'controlTower';
+  | 'controlTower'
+  | 'commission';
 
 /** Options for {@link Harness.startRun}. */
 export interface HarnessRunOpts {

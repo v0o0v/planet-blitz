@@ -19,6 +19,7 @@
 import type { Profile } from '../save/profile.js';
 import { migrate } from '../save/profile.js';
 import type { PveSettleSummary } from './gateway.js';
+import type { InputFrame, WorldConfig } from '../sim/world.js';
 
 /** 서버 `profiles` 행에서 이관에 필요한 최소 형태. */
 export interface ServerProfile {
@@ -343,4 +344,140 @@ export function stashPendingGrant(store: KeyValueStore, entry: PendingGrant): vo
   const list = readPendingGrants(store);
   list.push(entry);
   writePendingGrants(store, list);
+}
+
+// ---------------------------------------------------------------------------
+// 대기 의뢰 제출 큐(verify-commission 전송 실패 재시도, 의뢰서 시스템 Phase E)
+// ---------------------------------------------------------------------------
+
+/**
+ * `verify-commission` 제출이 **판정 자체를 못 받고**(네트워크 오류·EF 5xx·타임아웃) 실패한
+ * 리플레이 대기 큐. 서버 계약 §5-4·§7 의 재시도 규율(재시도 주체 = 클라이언트, 같은 `run_id` 로
+ * 재호출)을 이 큐가 구현한다 — `PendingSettlement`/`PendingGrant` 와 같은 결의 세 번째 큐다.
+ *
+ * ⚠️ **"응답을 받았다"(accept 든 reject 든)는 이 큐에 넣지 않는다.** 서버 게이트 0b 가 이미
+ * `verified`/`rejected` 행은 CPU 없이 저장된 판정을 돌려주므로 재호출은 안전하지만, 응답을
+ * 받았다는 것 자체가 이미 최종 판정이다 — 큐는 "판정을 못 받은" 경우만을 위한 것이다.
+ */
+const PENDING_COMMISSION_SUBMISSIONS_KEY = 'planet-blitz:net:pending-commission-submissions';
+
+/**
+ * 대기 의뢰 제출 1건. `claim` 은 `runReplay` 로 이미 계산해 둔 값을 그대로 들고 있다(재계산
+ * 불필요 — 결정론이라 재계산해도 같은 값이지만, 저장해 두면 다구간 긴 리플레이의 재해싱
+ * 비용을 큐 flush 마다 반복하지 않는다).
+ */
+export interface PendingCommissionSubmission {
+  runId: string;
+  seed: number;
+  config: WorldConfig;
+  inputs: readonly InputFrame[];
+  /**
+   * ⚠️ **`hashStream` 을 저장하지 않는다.** 결정론이라 `buildCommissionClaim` 이 언제든 다시
+   * 계산할 수 있는데, 45,000틱이면 그 배열만 ~0.5MB 라 localStorage 쿼터(통상 5MB)를 잡아먹는다.
+   * 재해싱 비용보다 쿼터가 비싸다 — 큐가 못 들어가면 확정 지급물이 통째로 증발한다.
+   */
+  claim: { finalHash: number; outcome: { victory: boolean; gameOver: boolean } };
+}
+
+/**
+ * 대기 큐 항목 수 상한 — **1**. 초과하면 가장 오래된 것을 버린다.
+ *
+ * 왜 필요한가: 이 큐는 리포에서 **처음으로 리플레이 통째를 localStorage 에 넣는다**(기존
+ * `PendingSettlement`/`PendingGrant` 는 수십 바이트짜리 요약이라 이 문제를 겪은 적이 없다 —
+ * 선례로 안심하면 안 된다). 최종 지시 1건이 5구간×9,000틱 = 45,000틱이고 `InputFrame` 이
+ * float 3개라 JSON 으로 ~5MB 다.
+ *
+ * ⚠️ **왜 2 가 아니라 1 인가.** 초판은 2 였는데 그 값은 자기 근거와 모순이었다 — "1건이 ~5MB,
+ * 쿼터가 통상 5MB" 라면 **2건은 정확히 터지는 값**이라 상한이 아무것도 막지 못한다. 그리고
+ * 터질 때 폴백이 단독 저장으로 성공해 버리므로 **직전 대기 런이 아무 신호 없이 사라진다**.
+ * 1 이면 "가장 최근 런 하나만 보관"이 계약이 되고, 밀려나는 항목은 {@link
+ * StashResult.dropped} 로 **호출부에 보고**된다 — 조용한 소실이 구조적으로 불가능해진다.
+ */
+export const PENDING_COMMISSION_QUEUE_MAX = 1;
+
+/** {@link stashPendingCommissionSubmission} 결과 — 저장 성공 여부와 **밀려난 항목 수**. */
+export interface StashResult {
+  /** 이번 항목이 큐에 실제로 들어갔는가. */
+  stored: boolean;
+  /**
+   * 이번 저장 때문에 큐에서 밀려난 **이전** 대기 항목 수.
+   *
+   * ⚠️ 0 이 아니면 그 런들은 **재시도 기회를 잃었다**. 호출부는 이것을 조용히 버리면 안 된다 —
+   * 그 런들의 `commission_runs` 행은 24h 뒤 cron 이 `abandoned` 로 종결하고 **의뢰서는 회수되지
+   * 않으므로**, 플레이어에게 남는 것은 "보상이 안 들어왔다" 하나뿐이다.
+   */
+  dropped: number;
+}
+
+/** 대기 의뢰 제출 목록을 읽는다(손상/부재 시 빈 배열). */
+export function readPendingCommissionSubmissions(store: KeyValueStore): PendingCommissionSubmission[] {
+  let raw: string | null;
+  try {
+    raw = store.getItem(PENDING_COMMISSION_SUBMISSIONS_KEY);
+  } catch {
+    return [];
+  }
+  if (raw === null) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (e): e is PendingCommissionSubmission =>
+        typeof e === 'object' &&
+        e !== null &&
+        typeof (e as PendingCommissionSubmission).runId === 'string' &&
+        typeof (e as PendingCommissionSubmission).seed === 'number' &&
+        Array.isArray((e as PendingCommissionSubmission).inputs) &&
+        // ⚠️ `config`·`claim` 도 본다. 잘린 항목이 통과하면 `config: undefined` 로 전송돼 EF 가
+        //    400 을 내고, 그 400 이 최종 판정으로 갈리기 전까지 헛된 왕복을 만든다.
+        typeof (e as PendingCommissionSubmission).config === 'object' &&
+        (e as PendingCommissionSubmission).config !== null &&
+        typeof (e as PendingCommissionSubmission).claim === 'object' &&
+        (e as PendingCommissionSubmission).claim !== null,
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** 대기 의뢰 제출 목록을 통째로 저장한다(비었으면 슬롯 제거). */
+export function writePendingCommissionSubmissions(
+  store: KeyValueStore,
+  list: readonly PendingCommissionSubmission[],
+): boolean {
+  // ⚠️ **저장 실패를 삼키지 않고 호출부에 알린다.** 삼키면 `QuotaExceededError` 가 났는데도
+  //    호출부는 "큐에 남겼다"고 믿고 `queued` 를 표시한다 — 재시도 기회가 영영 없는데 화면은
+  //    "나중에 다시 시도됨"이라고 말하는 상태다. 이 함수의 존재 이유가 바로 그 증발 방지다.
+  try {
+    if (list.length === 0) store.removeItem(PENDING_COMMISSION_SUBMISSIONS_KEY);
+    else store.setItem(PENDING_COMMISSION_SUBMISSIONS_KEY, JSON.stringify(list));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 대기 의뢰 제출 1건을 큐 끝에 추가한다. 같은 `run_id` 가 이미 있으면 갈아끼운다(중복 방지). */
+export function stashPendingCommissionSubmission(
+  store: KeyValueStore,
+  entry: PendingCommissionSubmission,
+): StashResult {
+  const list = readPendingCommissionSubmissions(store).filter((e) => e.runId !== entry.runId);
+  list.push(entry);
+  // 상한 초과분은 **앞에서**(오래된 것부터) 버린다. 새 항목이 밀려나면 방금 끝낸 런을 잃는
+  // 것이라 최악이다.
+  const trimmed = list.slice(Math.max(0, list.length - PENDING_COMMISSION_QUEUE_MAX));
+  const droppedByCap = list.length - trimmed.length;
+  // ⚠️ **"1차 실패 시 이번 항목만 단독 저장" 폴백을 두지 않는다.** 상한이 1 이라 `trimmed` 는
+  //    언제나 정확히 1항목이고, 그러면 폴백은 **완전히 같은 payload 를 다시 쓰는 것**이라
+  //    도달해도 무의미하다(죽은 코드). 초판에 그 분기가 있었는데, 검증 에이전트가 분기를 통째로
+  //    지워도 전 테스트가 통과함을 실측해 도달 불가임을 밝혔다 — 죽은 방어는 "막고 있다"는
+  //    착각만 남기므로 지운다. 상한을 2 이상으로 되돌린다면 그때 다시 필요해진다.
+  return { stored: writePendingCommissionSubmissions(store, trimmed), dropped: droppedByCap };
+}
+
+/** 대기 의뢰 제출에서 이 `runId` 항목을 지운다(응답을 받아 최종 판정이 났을 때). */
+export function removePendingCommissionSubmission(store: KeyValueStore, runId: string): void {
+  const list = readPendingCommissionSubmissions(store).filter((e) => e.runId !== runId);
+  writePendingCommissionSubmissions(store, list);
 }

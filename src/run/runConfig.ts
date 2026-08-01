@@ -27,7 +27,7 @@
  */
 
 import { DEFAULT_CONFIG } from '../sim/world.js';
-import type { WorldConfig } from '../sim/world.js';
+import type { WorldConfig, LoadoutConfig } from '../sim/world.js';
 import type { Invasion3Config } from '../sim/invasion/index.js';
 import type { CommissionEquipRules, CommissionRunConfig } from './commission.js';
 import {
@@ -148,6 +148,30 @@ function equippedItems(profile: Profile, rules?: CommissionEquipRules): Item[] {
     out.push(it);
   }
   return out;
+}
+
+/**
+ * 의뢰 출격의 **봉인 로드아웃**(서버 계약 §5-2 ⑤ · §7 게이트 3) — `consume_commission` 에 실을
+ * `p_loadout` 값을 낸다.
+ *
+ * ⚠️ **`buildRunConfig` 가 같은 프로필로 굽는 `config.loadout` 과 반드시 같은 값이어야 한다.**
+ * 서버는 이 값을 `loadout_sealed` 로 저장해 두었다가, 제출된 리플레이의 `config.loadout` 과
+ * 대조해 "출격 후 편집"을 잡는다(`commission-loadout-mismatch`). 여기서 따로 계산하면
+ * "출격 UI 에서 본 로드아웃과 실제로 도는 런의 로드아웃이 어긋나는" 결함이 열리므로, 이 함수는
+ * `buildRunConfig` 와 **같은 함수·같은 인자 순서**(`equippedItems` → `computeLoadoutStats`)로만
+ * 계산한다. 소집(`pilot`)·촉매 배율은 여기 관여하지 않는다 — 의뢰 런은 그 둘과 상호배타다
+ * (`buildRunConfig` 의 pilot 금지 가드).
+ */
+export function commissionSealedLoadout(profile: Profile, rules?: CommissionEquipRules): LoadoutConfig {
+  const ship = activeShip(profile);
+  const typeId = normalizeShipTypeId(ship.typeId);
+  const { loadout } = computeLoadoutStats(
+    equippedItems(profile, rules),
+    ship.skillInvest.slice(),
+    shipBonusBp(profile.lineage),
+    typeId,
+  );
+  return loadout;
 }
 
 /**

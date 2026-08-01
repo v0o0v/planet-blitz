@@ -23,7 +23,7 @@ import type { BaseMapCallbacks } from '../baseMap.js';
 
 /** 건물 타일 정의. 아이콘은 UI 킷 텍스처 basename 으로 참조한다. */
 interface Building {
-  key: 'hangar' | 'research' | 'refinery' | 'defense' | 'control' | 'archive';
+  key: 'hangar' | 'research' | 'refinery' | 'defense' | 'control' | 'archive' | 'commission';
   nameKey: MessageKey;
   descKey: MessageKey;
   tex: string;
@@ -39,6 +39,9 @@ const BUILDINGS: readonly Building[] = [
   { key: 'control', nameKey: 'base.bld.control.name', descKey: 'base.bld.control.desc', tex: 'ui_bld_control.png', accent: 0xc86aff },
   // 기록 보관소(스토리 시스템 Phase C2) — 상시 개방 서사 열람 시설. 아이콘 미도착 시 accent 폴백.
   { key: 'archive', nameKey: 'base.bld.archive.name', descKey: 'base.bld.archive.desc', tex: 'ui_bld_archive.png', accent: 0xffb24c },
+  // 지시 수신소(의뢰서 시스템 Phase E) — 상시 개방(성계 지도와 별개의 PvE 출격구, CONTEXT.md
+  // "지시 수신소" 절). 아이콘 미도착이라 `ui_bld_commission.png` 는 KNOWN_MISSING 등재(accent 폴백).
+  { key: 'commission', nameKey: 'base.bld.commission.name', descKey: 'base.bld.commission.desc', tex: 'ui_bld_commission.png', accent: 0x7affea },
 ];
 
 // --- 레이아웃 상수(디자인 스페이스). 목업 좌표를 그대로 옮긴다 — 재유도 금지(스킬 §2-3). ---
@@ -48,7 +51,12 @@ const BANNER_Y = 16;
 const CHIP_W = 190;
 const CHIP_H = 52;
 const SUB_Y = 100;
-const TILE_W = 470;
+// ⚠️ **넘침 함정(실측)**: 예전 `TILE_W=470` 은 6건물(3+3)까지만 맞았다. 7번째(지시 수신소)를
+// 넣으면 `tilePosition` 의 옛 "1행 최대 3칸 고정" 분배가 2행에 4칸을 몰아 `4×470+3×36=1988px`
+// 로 `DESIGN_WIDTH`(1920)를 넘어 화면 밖으로 잘렸다. 폭을 줄이고(430) 행 분배를 **균등
+// 반반**(`Math.ceil(n/2)`/나머지)으로 바꿔 두 문제를 함께 없앤다 — 6건물(3+3)은 산술이 그대로라
+// 회귀가 없고, 7건물(4+3)도 `4×430+3×36=1828 < 1920` 로 여유가 남는다.
+export const TILE_W = 430;
 const TILE_H = 340;
 const TILE_GAP = 36;
 const ROW1_Y = 134;
@@ -68,13 +76,24 @@ const LAUNCH_Y = 872;
 const META_Y = 996;
 
 /**
- * i 번째 건물 타일의 좌상단(2행 배치, 각 행 가운데 정렬). 첫 행은 최대 3칸, 나머지는 둘째 행.
- * 6건물이면 3+3, 5건물이면 3+2 로 각 행이 스스로 가운데 정렬된다(기록 보관소 추가로 6칸).
+ * 2행 분배(각 행 칸 수). **균등 반반**이 계약이다 — 남는 건물을 전부 둘째 행에 몰면(옛
+ * "1행 최대 3칸 고정") 건물 수가 홀수로 늘 때 둘째 행이 더 커져 넘침이 재발한다(실측: 7건물이
+ * 4칸을 2행에 몰아 `DESIGN_WIDTH` 초과). 반반이면 첫 행이 항상 같거나 하나 많다.
  */
-function tilePosition(i: number): { x: number; y: number } {
-  const row = i < 3 ? 0 : 1;
-  const cols = row === 0 ? Math.min(3, BUILDINGS.length) : BUILDINGS.length - 3;
-  const col = row === 0 ? i : i - 3;
+export function rowSplit(n: number): readonly [number, number] {
+  const row0 = Math.ceil(n / 2);
+  return [row0, n - row0];
+}
+
+/**
+ * i 번째 건물 타일의 좌상단(2행 배치, 각 행 가운데 정렬). 6건물(3+3)은 기존과 동일 산술이라
+ * 회귀가 없고, 7건물(지시 수신소 추가)은 4+3 으로 갈린다.
+ */
+export function tilePosition(i: number): { x: number; y: number } {
+  const [cols0, cols1] = rowSplit(BUILDINGS.length);
+  const row = i < cols0 ? 0 : 1;
+  const cols = row === 0 ? cols0 : cols1;
+  const col = row === 0 ? i : i - cols0;
   const rowW = cols * TILE_W + (cols - 1) * TILE_GAP;
   const x0 = (DESIGN_WIDTH - rowW) / 2;
   return { x: x0 + col * (TILE_W + TILE_GAP), y: row === 0 ? ROW1_Y : ROW2_Y };
@@ -138,6 +157,10 @@ export class BaseMapScreen {
       case 'archive':
         // 기록 보관소 — 서사 열람 시설이라 상시 개방(잠금 없음).
         return null;
+      case 'commission':
+        // 지시 수신소 — 의뢰서는 보스 처치로만 발령되므로 시설 자체는 상시 개방(잠금 없음).
+        // 보유 0장이면 화면 안에서 "보유한 의뢰서가 없다"로 안내한다(잠금 타일이 아니다).
+        return null;
       default:
         return null;
     }
@@ -164,6 +187,9 @@ export class BaseMapScreen {
         break;
       case 'archive':
         cb.onArchive();
+        break;
+      case 'commission':
+        cb.onCommission();
         break;
     }
   }

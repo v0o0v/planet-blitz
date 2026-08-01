@@ -72,6 +72,8 @@ export interface BaseMapCallbacks {
   onStarMap: () => void;
   /** 기록 보관소(서사 열람 시설) 진입 — 상시 개방(스토리 시스템 Phase C2). */
   onArchive: () => void;
+  /** 지시 수신소(의뢰서 시스템 Phase E) 진입 — 상시 개방. */
+  onCommission: () => void;
 }
 
 export class BaseMap {

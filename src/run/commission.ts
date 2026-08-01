@@ -206,3 +206,21 @@ export interface CommissionRunConfig {
   /** 현재 구간 인덱스(0-based). 구간 전환이 **새 객체를 만들어** 이 값만 갱신한다. */
   readonly segmentIndex: number;
 }
+
+/**
+ * **서버 원장 형태 → `WorldConfig` 형태** 변환(지시 수신소 출격 배선). 보상 블록(`rewards`)은
+ * sim 입력이 아니므로 뺀다 — 파일 머리말의 분리 원칙 그대로. `segmentIndex` 는 항상 0(출격은
+ * 언제나 1구간부터 시작한다).
+ */
+export function commissionRunConfigFromPayload(payload: CommissionPayload): CommissionRunConfig {
+  return {
+    commissionId: payload.commissionId,
+    order: payload.order,
+    grade: payload.grade,
+    segments: payload.segments,
+    replayBudgetTicks: payload.replayBudgetTicks,
+    ...(payload.constraints !== undefined ? { constraints: payload.constraints } : {}),
+    ...(payload.bounty !== undefined ? { bounty: payload.bounty } : {}),
+    segmentIndex: 0,
+  };
+}

@@ -136,9 +136,10 @@ describe('배선 — main.ts 의 recorder 생성', () => {
   );
   const CODE = MAIN.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 
-  it('세 진입점 모두 recorder 에 world.config 를 주지 않는다', () => {
+  it('네 진입점 모두 recorder 에 world.config 를 주지 않는다', () => {
     const calls = CODE.match(/new ReplayRecorder\([^)]*\)/g) ?? [];
-    expect(calls.length, 'recorder 생성 지점은 PvE·정식 침공·하네스 침공 셋이다').toBe(3);
+    // PvE·정식 침공·하네스 침공 · 의뢰(startCommissionRun, 의뢰서 시스템 Phase E) 네 곳.
+    expect(calls.length, 'recorder 생성 지점은 PvE·정식 침공·하네스 침공·의뢰 넷이다').toBe(4);
     for (const call of calls) {
       expect(call, `${call} 이 파생된 world.config 를 싣고 있다`).not.toContain('world.config');
     }
