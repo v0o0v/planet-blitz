@@ -844,3 +844,449 @@ export function makeHeroButton(w: number, h: number, label: string, onClick: () 
     },
   };
 }
+
+// ── 4. 출격 카드(격자 8번째 칸) ─────────────────────────────────────────────
+
+/**
+ * 건물 타일과 **같은 격자 문법**을 쓰기 위한 비율 상수.
+ *
+ * 값은 Lane B `cinematicTile.ts` 와 의도적으로 동일하다(import 는 계약상 금지 — 세 레인은
+ * 서로의 파일을 참조하지 않는다). 여기서 하나라도 어긋나면 8번째 칸만 다른 제품처럼 보인다:
+ * 같은 모서리 반경 · 같은 라벨 밴드 시작선 · 같은 접지 그림자 2단 · 같은 호버 리프트/부유.
+ */
+const TILE_BAND_RATIO = 0.71;
+const TILE_RADIUS_RATIO = 0.045;
+const TILE_PAD_RATIO = 0.062;
+const TILE_LIFT_RATIO = 0.026;
+const TILE_FLOAT_RATIO = 0.004;
+const TILE_FLOAT_PERIOD = 6.2;
+const TILE_HOVER_LERP = 9;
+/** dt 상한 — 탭 복귀로 프레임이 크게 튀어도 연출이 순간이동하지 않게. */
+const MAX_DT = 1 / 15;
+
+/** 출격 카드 맥동 주기(초). 격자 안에서 혼자 살아 있되 번쩍이면 안 된다. */
+const TILE_PULSE_PERIOD = 5;
+/** 방사 광휘 각속도(rad/초). 눈으로 좇을 수 없을 만큼 느려야 "빛"이지 "바람개비"가 아니다. */
+const RAY_SPIN = 0.055;
+/** 궤도 위 점이 한 바퀴 도는 시간(초). */
+const ORBIT_PERIOD = 14;
+/** 금판을 파낸 각인 색(궤도 링·함선 실루엣). */
+const BRONZE = 0x7a4f14;
+
+/** 접지 그림자 한 층의 굽기·배치 명세(건물 타일과 같은 2단 문법). */
+interface TileShadowBake {
+  readonly spread: number;
+  readonly blur: number;
+  readonly border: number;
+  readonly offset: number;
+  readonly alpha: number;
+  readonly hoverOffset: number;
+  readonly hoverAlpha: number;
+  readonly hoverGrow: number;
+}
+
+/** 접촉층 — 카드가 바닥에 닿은 자리. 카드가 뜨면 접촉이 끊기므로 알파가 죽는다. */
+const TILE_CONTACT: TileShadowBake = {
+  spread: 12,
+  blur: 4,
+  border: 30,
+  offset: 2,
+  alpha: 0.85,
+  hoverOffset: 3,
+  hoverAlpha: 0.4,
+  hoverGrow: 2,
+};
+
+/** 확산층 — 부피감. 카드가 뜰수록 더 내려가고 옅고 넓어진다. */
+const TILE_DIFFUSE: TileShadowBake = {
+  spread: 48,
+  blur: 22,
+  border: 68,
+  offset: 11,
+  alpha: 0.45,
+  hoverOffset: 18,
+  hoverAlpha: 0.34,
+  hoverGrow: 10,
+};
+
+/** 구운 그림자 텍스처 안쪽 사각의 한 변과 모서리 반경(나인슬라이스라 카드 크기와 무관). */
+const TILE_SHADOW_CORE = 96;
+const TILE_SHADOW_RADIUS = 18;
+
+const tileShadowCache = new Map<string, Texture | null>();
+
+/**
+ * 카드 모양 드롭 섀도(나인슬라이스용).
+ *
+ * 스프라이트를 그냥 늘리면 카드 비율에 따라 **모서리 곡률과 흐림 반경이 함께 늘어나** 카드마다
+ * 다른 그림자가 된다. 나인슬라이스는 모서리를 고정하고 변만 늘리므로 어떤 치수에서도 같은
+ * 흐림이다. `ctx.filter`·`roundRect` 가 없으면 `null` — 호출부가 그림자 없이 진행한다.
+ */
+function tileShadow(bake: TileShadowBake): Texture | null {
+  const key = `${bake.spread}:${bake.blur}`;
+  const hit = tileShadowCache.get(key);
+  if (hit !== undefined) return hit;
+  const size = TILE_SHADOW_CORE + bake.spread * 2;
+  const b = bakeCanvas(size, size);
+  if (b === null || typeof b.ctx.filter !== 'string' || typeof b.ctx.roundRect !== 'function') {
+    tileShadowCache.set(key, null);
+    return null;
+  }
+  b.ctx.filter = `blur(${bake.blur}px)`;
+  b.ctx.fillStyle = '#000000';
+  pathRoundRect(
+    b.ctx,
+    bake.spread,
+    bake.spread,
+    TILE_SHADOW_CORE,
+    TILE_SHADOW_CORE,
+    TILE_SHADOW_RADIUS,
+  );
+  b.ctx.fill();
+  const tex = toTexture(b.canvas);
+  tileShadowCache.set(key, tex);
+  return tex;
+}
+
+let warmRampTex: Texture | null | undefined;
+/**
+ * 라벨 밴드를 앉히는 따뜻한 세로 램프(1×256, 투명 → 짙은 호박).
+ *
+ * 금판 위에서는 **색온도를 유지한 채 밝기만** 눌러야 한다 — 차가운 잉크 스크림을 쓰면 금이
+ * 회색으로 죽어 카드가 통째로 탁해진다.
+ */
+function warmRamp(): Texture | null {
+  if (warmRampTex !== undefined) return warmRampTex;
+  const h = 256;
+  const b = bakeCanvas(1, h);
+  if (b === null) {
+    warmRampTex = null;
+    return null;
+  }
+  for (let i = 0; i < h; i++) {
+    const t = (i + 1) / h;
+    b.ctx.fillStyle = `rgba(92, 54, 10, ${0.3 * t ** 1.4})`;
+    b.ctx.fillRect(0, i, 1, 1);
+  }
+  warmRampTex = toTexture(b.canvas);
+  return warmRampTex;
+}
+
+/**
+ * 텍스트 높이(캔버스 없는 환경 방어). `Text.height` 는 측정을 위해 캔버스를 요구해 vitest 에서
+ * 던진다 — 이 리포가 UI 테스트에서 실제로 밟은 지점이라 폴백을 둔다.
+ */
+function safeTextHeight(text: Text, fallback: number): number {
+  try {
+    const h = text.height;
+    return Number.isFinite(h) && h > 0 ? h : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+interface Motif {
+  readonly view: Container;
+  update(time: number): void;
+}
+
+/**
+ * 출격 모티프 — 방사 광휘 · 궤도 링 · 함선 실루엣.
+ *
+ * 건물 타일의 상단은 **그려진 일러스트**지만 여기엔 자산이 없다(§3 새 자산 금지). 그래서 같은
+ * 자리를 **각인된 엠블럼**으로 채운다: 금판을 파낸 청동 선(궤도·함선)과 그 뒤에서 새어 나오는
+ * 흰 금색 빛. 사진적 일러스트와 경쟁하지 않으면서 "이 칸은 다른 종류"라고 말한다.
+ */
+function launchMotif(size: number): Motif {
+  const view = new Container();
+  const haze = softHaze();
+
+  // ① 뒤에서 새어 나오는 흰 금색 코어. 화면에서 가장 밝은 화소가 여기에 있어야 한다.
+  if (haze !== null) {
+    const core = new Sprite(haze);
+    core.anchor.set(0.5);
+    core.width = size * 1.15;
+    core.height = size * 1.15;
+    core.tint = 0xfff6dc;
+    core.blendMode = 'screen';
+    core.alpha = 0.85;
+    view.addChild(core);
+  }
+
+  // ② 방사 광휘 — 길고 짧은 쐐기가 번갈아. 아주 느리게 돈다.
+  const rays = new Graphics();
+  const spokes = 16;
+  for (let i = 0; i < spokes; i++) {
+    const a = (i / spokes) * Math.PI * 2;
+    const len = size * (i % 2 === 0 ? 0.62 : 0.42);
+    const half = 0.028;
+    rays
+      .poly([
+        Math.cos(a) * len,
+        Math.sin(a) * len,
+        Math.cos(a - half) * size * 0.1,
+        Math.sin(a - half) * size * 0.1,
+        Math.cos(a + half) * size * 0.1,
+        Math.sin(a + half) * size * 0.1,
+      ])
+      .fill({ color: 0xfff3cf, alpha: i % 2 === 0 ? 0.34 : 0.2 });
+  }
+  rays.blendMode = 'add';
+  view.addChild(rays);
+
+  // ③ 궤도 링 둘(기울기가 서로 달라야 구가 아니라 궤도로 읽힌다) + 그 위를 도는 점.
+  const ringA = new Graphics();
+  ringA.ellipse(0, 0, size * 0.56, size * 0.2).stroke({ color: BRONZE, width: 2.5, alpha: 0.65 });
+  ringA.rotation = -0.34;
+  const ringB = new Graphics();
+  ringB.ellipse(0, 0, size * 0.44, size * 0.16).stroke({ color: BRONZE, width: 2, alpha: 0.45 });
+  ringB.rotation = 0.52;
+  view.addChild(ringA);
+  view.addChild(ringB);
+  const bead = new Graphics();
+  bead
+    .circle(0, 0, size * 0.028)
+    .fill({ color: 0xfff6dc })
+    .stroke({ color: BRONZE, width: 1.5 });
+  view.addChild(bead);
+
+  // ④ 함선 — 위로 향한 델타 실루엣. 청동으로 파고 기수에만 밝은 금 립을 준다.
+  const ship = new Graphics();
+  const s = size * 0.3;
+  ship.poly([0, -s, s * 0.66, s * 0.62, 0, s * 0.3, -s * 0.66, s * 0.62]).fill({
+    color: 0x3d2408,
+    alpha: 0.9,
+  });
+  ship
+    .poly([0, -s * 0.86, s * 0.5, s * 0.42, 0, s * 0.16, -s * 0.5, s * 0.42])
+    .fill({ color: BRONZE });
+  ship
+    .poly([0, -s * 0.86, s * 0.16, -s * 0.2, -s * 0.16, -s * 0.2])
+    .fill({ color: GOLD_LIT, alpha: 0.9 });
+  view.addChild(ship);
+
+  return {
+    view,
+    update(time: number): void {
+      rays.rotation = time * RAY_SPIN;
+      // 링 A 의 기울기를 그대로 적용한 타원 궤적 — 점이 링을 벗어나면 즉시 가짜로 보인다.
+      const a = (time / ORBIT_PERIOD) * Math.PI * 2;
+      const ex = Math.cos(a) * size * 0.56;
+      const ey = Math.sin(a) * size * 0.2;
+      const t = ringA.rotation;
+      bead.position.set(ex * Math.cos(t) - ey * Math.sin(t), ex * Math.sin(t) + ey * Math.cos(t));
+    },
+  };
+}
+
+/**
+ * 출격 카드 — 건물 격자의 8번째 칸이자 **이 화면의 주인공**.
+ *
+ * ## 왜 하단 CTA 막대가 아니라 격자 한 칸인가
+ * 4+3 배치는 2행 좌우에 227px 짜리 죽은 기둥을 남겼고, 하단 CTA 막대는 타일 7장 합계 면적의
+ * 3.8% 라 "주인공"이 될 수 없었다. 8번째 칸으로 올리면 ①죽은 기둥이 사라지고 ②CTA 가 격자
+ * 안에서 카드 한 장의 무게를 갖고 ③하단이 비어 카드 높이를 키울 수 있다(사용자 확정).
+ *
+ * ## 두 가지를 동시에 만족한다
+ * 1. **같은 격자의 일원** — 반경 · 라벨 밴드 시작선(h×{@link TILE_BAND_RATIO}) · 접지 그림자
+ *    2단 · 호버 리프트/부유가 건물 타일과 같은 값이다.
+ * 2. **명백한 주인공** — 건물 타일이 "어두운 석재 판"이라면 이 칸은 **금색으로 빛나는 판**이다.
+ *    비평 총평이 "상용 허브는 예외 없이 가장 밝은 화소가 눌러야 할 것 위에 있다"였는데, 그전까지
+ *    이 화면에서 가장 밝은 곳은 아무것도 없는 좌하단 배경이었다.
+ *
+ * 반환 타입은 {@link HeroButton} 그대로다 — 리드가 타일과 같은 방식으로 `update(dt)` 를 돌린다.
+ */
+export function makeHeroTile(
+  w: number,
+  h: number,
+  label: string,
+  sub: string,
+  onClick: () => void,
+): HeroButton {
+  const radius = Math.max(6, Math.round(Math.min(w, h) * TILE_RADIUS_RATIO));
+  const pad = Math.round(w * TILE_PAD_RATIO);
+  const bandY = Math.round(h * TILE_BAND_RATIO);
+  const lift = h * TILE_LIFT_RATIO;
+  const floatAmp = h * TILE_FLOAT_RATIO;
+
+  const root = new Container();
+  const inner = new Container();
+
+  // --- 접지 그림자(2단, inner 밖) ------------------------------------------------
+  // inner 밖에 두는 이유: 카드가 뜰 때 그림자까지 같이 뜨면 부유가 아니라 통째로 미끄러진
+  // 것으로 읽힌다. 바닥에 남아 내려가고 옅어지고 넓어져야 "떴다"가 성립한다.
+  const shadows: { sprite: NineSliceSprite; bake: TileShadowBake }[] = [];
+  for (const bake of [TILE_DIFFUSE, TILE_CONTACT]) {
+    const tex = tileShadow(bake);
+    if (tex === null) continue;
+    const ns = new NineSliceSprite({
+      texture: tex,
+      leftWidth: bake.border,
+      topHeight: bake.border,
+      rightWidth: bake.border,
+      bottomHeight: bake.border,
+    });
+    ns.alpha = bake.alpha;
+    root.addChild(ns);
+    shadows.push({ sprite: ns, bake });
+  }
+  root.addChild(inner);
+
+  // --- 맥동 후광(카드 뒤, 가산) --------------------------------------------------
+  const haze = softHaze();
+  let glow: Sprite | null = null;
+  if (haze !== null) {
+    glow = new Sprite(haze);
+    glow.anchor.set(0.5);
+    glow.width = w * 1.5;
+    glow.height = h * 1.5;
+    glow.position.set(w / 2, h * 0.46);
+    glow.tint = GLOW_TINT;
+    glow.blendMode = 'add';
+    glow.alpha = GLOW_BASE;
+    inner.addChild(glow);
+  }
+
+  // --- 금판 ----------------------------------------------------------------------
+  const plateTex = heroPlate(w, h, radius);
+  if (plateTex !== null) {
+    const plate = new Sprite(plateTex);
+    plate.width = w;
+    plate.height = h;
+    inner.addChild(plate);
+  } else {
+    const g = new Graphics();
+    g.roundRect(0, 0, w, h, radius)
+      .fill({ color: GOLD })
+      .stroke({ color: GROOVE, width: 3, alpha: 0.8 });
+    inner.addChild(g);
+  }
+
+  // --- 모티프(라벨 밴드 위쪽 영역의 중앙) -----------------------------------------
+  const motif = launchMotif(Math.min(w, bandY) * 0.72);
+  motif.view.position.set(w / 2, bandY * 0.5);
+  inner.addChild(motif.view);
+
+  // --- 라벨 밴드 ------------------------------------------------------------------
+  // 금판 위에 글자를 그냥 놓으면 밝기 차가 모자라 라벨이 판에 녹는다. 색온도를 유지한 채
+  // 밝기만 누르는 따뜻한 램프를 깔고, 경계에 청동 각인선을 새겨 건물 타일 seam 과 짝을 맞춘다.
+  const ramp = warmRamp();
+  if (ramp !== null) {
+    const feather = Math.round(h * 0.1);
+    const band = new Sprite(ramp);
+    band.position.set(0, bandY - feather);
+    band.width = w;
+    band.height = h - bandY + feather;
+    inner.addChild(band);
+  }
+  const seam = new Graphics();
+  seam.rect(pad * 0.6, bandY, w - pad * 1.2, 1.5).fill({ color: BRONZE, alpha: 0.55 });
+  inner.addChild(seam);
+
+  // --- 타이포 ---------------------------------------------------------------------
+  // ⚠️ 밝은 금 바탕에 흰 글씨는 묻힌다 — 진한 갈색이 계약이다. 자간 0(한글 트래킹 금지).
+  const labelSize = Math.min(44, Math.max(24, Math.round(h * 0.105)));
+  const subSize = Math.min(20, Math.max(12, Math.round(h * 0.048)));
+  const wrapW = w - pad * 2;
+
+  const title = new Text({
+    resolution: 2,
+    text: bareLabel(label),
+    style: {
+      fontFamily: UI_FONT,
+      fontSize: labelSize,
+      fontWeight: '800',
+      fill: COLOR.darkLabel,
+      align: 'center',
+      wordWrap: true,
+      wordWrapWidth: wrapW,
+      lineHeight: Math.round(labelSize * 1.14),
+    },
+  });
+  title.anchor.set(0.5, 0);
+
+  const subText = new Text({
+    resolution: 2,
+    text: stripEmoji(sub),
+    style: {
+      fontFamily: UI_FONT,
+      fontSize: subSize,
+      fontWeight: '600',
+      // 라벨보다 한 단 옅은 청동 — 금판 위 위계는 크기와 **채도**가 만든다.
+      fill: 0x6b4412,
+      align: 'center',
+      wordWrap: true,
+      wordWrapWidth: wrapW,
+      lineHeight: Math.round(subSize * 1.4),
+    },
+  });
+  subText.anchor.set(0.5, 0);
+
+  // 라벨 블록을 밴드 안에서 세로 중앙 정렬한다(건물 타일과 같은 규칙 — 고정 y 로 찍으면
+  // 줄 수가 다른 카드끼리 밑이 어긋나고 남는 높이가 죽은 여백으로 남는다).
+  const titleH = safeTextHeight(title, labelSize * 1.14);
+  const subH = safeTextHeight(subText, subSize * 1.4);
+  const gap = Math.max(4, Math.round(h * 0.018));
+  const bandH = h - bandY;
+  const blockTop = bandY + Math.max(Math.round(h * 0.012), (bandH - (titleH + gap + subH)) / 2);
+  title.position.set(w / 2, blockTop);
+  subText.position.set(w / 2, blockTop + titleH + gap);
+  inner.addChild(title);
+  inner.addChild(subText);
+
+  // --- 호버 림 --------------------------------------------------------------------
+  const rim = new Graphics();
+  rim.roundRect(0, 0, w, h, radius).stroke({ color: 0xfffbe8, width: 2.5, alignment: 1, alpha: 1 });
+  rim.alpha = 0;
+  inner.addChild(rim);
+
+  // --- 상호작용 -------------------------------------------------------------------
+  // 이벤트는 root 에 걸고 hitArea 를 명시한다 — 위에 얹힌 텍스트가 클릭을 삼키지 않는다.
+  root.eventMode = 'static';
+  root.cursor = 'pointer';
+  root.hitArea = new Rectangle(0, 0, w, h);
+  root.on('pointertap', onClick);
+  let hoverTarget = 0;
+  root.on('pointerover', () => {
+    hoverTarget = 1;
+  });
+  root.on('pointerout', () => {
+    hoverTarget = 0;
+  });
+
+  let hover = 0;
+  let time = 0;
+
+  const update = (dt: number): void => {
+    const step = Math.min(Math.max(dt, 0), MAX_DT);
+    time += step;
+
+    const k = 1 - Math.exp(-TILE_HOVER_LERP * step);
+    hover += (hoverTarget - hover) * k;
+    if (hover < 0.001 && hoverTarget === 0) hover = 0;
+
+    const bob = Math.sin((time / TILE_FLOAT_PERIOD) * Math.PI * 2) * floatAmp;
+    inner.y = bob - lift * hover;
+    rim.alpha = 0.75 * hover;
+    motif.update(time);
+
+    if (glow !== null) {
+      const pulse = 0.5 + 0.5 * Math.sin((time / TILE_PULSE_PERIOD) * Math.PI * 2);
+      glow.alpha = GLOW_BASE + GLOW_AMPL * pulse + GLOW_HOVER * hover;
+    }
+
+    for (const { sprite, bake } of shadows) {
+      const grow = bake.spread + bake.hoverGrow * hover;
+      const drop = bake.offset + (bake.hoverOffset - bake.offset) * hover;
+      sprite.width = w + grow * 2;
+      sprite.height = h + grow * 2;
+      sprite.position.set(-grow, -grow + drop + bob);
+      sprite.alpha = bake.alpha + (bake.hoverAlpha - bake.alpha) * hover;
+    }
+  };
+
+  // 첫 프레임 전에도 정지 상태가 정확하도록 한 번 정착시킨다.
+  update(0);
+
+  return { container: root, update };
+}
