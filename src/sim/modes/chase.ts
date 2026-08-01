@@ -31,7 +31,7 @@ import { spawnBoss, spawnDestructible, spawnShelter } from '../entities.js';
 import type { WorldState } from '../world.js';
 import { PLANET_MODE, type PlanetMode } from '../planetMode.js';
 import { planetContent } from '../../../data/planets/index.js';
-import { SEGMENTS } from '../../../data/waves.js';
+import { SEGMENTS, stageHpMult } from '../../../data/waves.js';
 import { cos, sin, atan2, clamp, TWO_PI } from '../math.js';
 import { DT } from '../constants.js';
 
@@ -59,8 +59,45 @@ export const CHASE_PREDATOR_SPEED = 540;
 export const CHASE_PREDATOR_STANDOFF = 900;
 /** 반격 장치 수(전부 파괴 = 포식자 취약화 조건). TODO(밸런스). */
 export const CHASE_COUNTER_DEVICE_COUNT = 5;
-/** 반격 장치 HP(아군탄이 깎아 파괴). TODO(밸런스). */
-export const CHASE_COUNTER_DEVICE_HP = 40;
+/**
+ * 반격 장치 **기준 HP**(단계 1 기준). 실 HP 는 `stageHpMult(stage)` 를 곱한 값이다
+ * ({@link chaseCounterDeviceHp}).
+ *
+ * ## 왜 단계 스케일이 필요한가 (2026-08-01)
+ * 예전에는 단계·레벨과 무관한 **고정 40** 이었다. 그 값은 어느 레벨에서도 한 틱 사격이면
+ * 사라지는 크기라, 추격 모드의 유일한 승리 조건(장치 5개 파괴)이 **난이도 축을 전혀 갖지
+ * 못했다**. 조준 결함을 고치고 재측정하자 니플헤임 클리어율이 Lv5~Lv100 **전 구간 100.0%**,
+ * 클리어 5.4초로 나왔다 — 소요의 거의 전부가 장치 사이 이동 시간이었고 파괴 자체는 공짜였다.
+ * 즉 이 무대에는 조절할 난이도가 아예 없었던 것이지, 어려웠던 것이 아니다.
+ *
+ * 적 HP 와 같은 앵커(`stageHpMult`)를 쓰는 이유는 ADR-0037("난이도 곡선은 적 축에서만")과
+ * 정합하기 위해서다 — 장치는 이 무대에서 적 HP 가 맡는 역할(TTK 예산)을 대신 진다.
+ */
+export const CHASE_COUNTER_DEVICE_HP_BASE = 14000;
+
+/**
+ * 단계 기울기 **감쇠 계수**. 장치 HP 는 `stageHpMult` 를 그대로 타지 않고 이 비율만큼만 탄다.
+ *
+ * ## 왜 그대로 타면 안 되는가 (실측)
+ * 감쇠 없이(계수 1.0) 재보니 니플헤임 클리어율이 **Lv5 95.4% → Lv90 65.9%** 로 30pp 기울었다.
+ * 적 HP 앵커는 **수와 밀도가 함께 늘어나는 잡몹 무리**를 상대로 보정된 값인데, 반격 장치는
+ * 플레이어의 집중 화력을 혼자 받는 **단일 표적**이라 같은 기울기를 주면 고레벨에서 과하게
+ * 무거워진다. 감쇠는 그 차이를 흡수한다 — 무대의 절대 난이도는 `_HP_BASE` 가, 단계 축
+ * 기울기는 이 계수가 진다.
+ */
+export const CHASE_COUNTER_DEVICE_HP_SLOPE = 0.15;
+
+/**
+ * 이 단계의 반격 장치 HP. 적 HP 와 같은 단계 앵커를 타되 기울기는
+ * {@link CHASE_COUNTER_DEVICE_HP_SLOPE} 만큼 감쇠한다. 단계 1 에서는 정확히 `_HP_BASE` 다
+ * (`stageHpMult(1) === 1` → 감쇠항이 0).
+ *
+ * 정수로 내린다 — 엔티티 hp 가 해시에 접히므로 소수부가 유실되면 클라·서버 재실행이 갈린다.
+ */
+export function chaseCounterDeviceHp(stage: number): number {
+  const scale = 1 + (stageHpMult(stage) - 1) * CHASE_COUNTER_DEVICE_HP_SLOPE;
+  return Math.round(CHASE_COUNTER_DEVICE_HP_BASE * scale);
+}
 /** 반격 장치 반경(조준·피격 판정). TODO(밸런스). */
 export const CHASE_COUNTER_DEVICE_RADIUS = 70;
 /** 반격 장치 파괴 시 드랍 젬 XP(destructible 기존 드랍 경로). TODO(밸런스). */
@@ -148,7 +185,7 @@ export function placeChaseCourse(state: WorldState): void {
       x,
       y,
       CHASE_COUNTER_DEVICE_RADIUS,
-      CHASE_COUNTER_DEVICE_HP,
+      chaseCounterDeviceHp(state.config.stage ?? 1),
       CHASE_COUNTER_DEVICE_GEM_XP,
     );
     dev.ownerId = COUNTER_DEVICE_MARK;

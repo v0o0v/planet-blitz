@@ -21,6 +21,7 @@ import { describe, it, expect } from 'vitest';
 import { createWorld, stepWorld, emptyInput, packPowerupPick } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig, WorldState } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
+import { autopilotInput } from '../src/sim/autopilot.js';
 import { snapshotWorld } from '../src/sim/snapshot.js';
 import { classifyRadar } from '../src/render/radar.js';
 import { shelterArrow, SHELTER_ARROW_RADIUS } from '../src/render/entityRenderer.js';
@@ -257,6 +258,58 @@ describe('추격 — 정규경로 full-path 통합(니플헤임=chase)', () => {
       stepChase(w);
     }
     expect(w.victory).toBe(true);
+  });
+
+  it('(c-2) 반격 장치는 **자동 조준 대상**이다 — 승리 조건이 조준 밖이면 이 무대는 깰 수 없다', () => {
+    // ⚠️ 이 저장소가 세 번째로 겪은 "맞기는 하지만 조준되지는 않는" 결함의 회귀 가드다
+    //    (선례: 침공 실드 발생기 · 보호막 국면 코어). 이 게임의 사격은 **전부 자동 조준**이고
+    //    `autoAttack` 은 `input.aim` 을 쓰지 않으므로(그 값은 렌더용 `player.angle` 이다),
+    //    `isPlayerTargetable` 에서 빠진 오브젝트는 플레이어가 **의도적으로 부술 수단이 없다.**
+    //    반격 장치가 정확히 그 상태였고, 그래서 추격 모드의 유일한 승리 경로가 유탄 운에
+    //    맡겨져 있었다(실측: 니플헤임 클리어율 18.6%, 만렙 타임아웃 44.8%).
+    //
+    // 판정을 조준 하나로 좁히기 위해 **이 장치 말고 조준 후보가 될 수 있는 것을 전부 죽인다**
+    // — 이러면 조준 대상이 그 장치이거나(→ 피해) 아무것도 없거나(→ 한 발도 안 나가 hp 불변)
+    // 둘 뿐이라 "유탄이 우연히 맞았다"가 원리적으로 배제된다.
+    //
+    // ⚠️ 죽여도 되는 것은 **잡몹과 다른 장치뿐**이다. 두 가지를 같이 죽이면 안 된다:
+    //    ① 발사체 — 플레이어 자기 탄이 사라져 조준이 멀쩡해도 hp 가 안 깎인다.
+    //    ② 포식자(boss) — 보스 사망은 곧 승리라 `compact()` 가 `victory` 를 세우고 월드가
+    //       그 자리에서 얼어붙는다(틱이 1 에서 멈춘다). 둘 다 실제로 겪은 거짓 실패다.
+    const w = createWorld(11, chaseConfig());
+    const player = w.entities[0] as Entity;
+    const device = w.entities.find(isCounterDevice) as Entity;
+    expect(device).toBeDefined();
+    const hp0 = device.hp;
+    // 사거리 안에 두되 겹치지는 않게(접촉 피해·이동 간섭 배제).
+    player.x = device.x - 300;
+    player.y = device.y;
+    for (let i = 0; i < 120 && device.hp === hp0; i++) {
+      for (const e of w.entities) {
+        if (e === player || e === device) continue;
+        if (e.kind === 'enemy' || e.kind === 'destructible') e.dead = true;
+      }
+      player.x = device.x - 300;
+      player.y = device.y;
+      stepChase(w);
+    }
+    expect(device.hp, '반격 장치가 자동 조준되지 않아 한 발도 맞지 않았다').toBeLessThan(hp0);
+  });
+
+  it('(c-3) 오토파일럿은 추격 모드에서 반격 장치 쪽으로 이동한다(측정 가능성 보장)', () => {
+    // 봇이 장치로 가지 않으면 이 무대의 승패는 **측정 자체가 성립하지 않는다** — 실제로
+    // 기준선 12,600런이 그 상태에서 "니플헤임은 어렵다"는 거짓 신호를 냈다.
+    const w = createWorld(13, chaseConfig());
+    const player = w.entities[0] as Entity;
+    const nearest = (): number =>
+      Math.min(
+        ...w.entities
+          .filter((e) => !e.dead && isCounterDevice(e))
+          .map((e) => Math.hypot(e.x - player.x, e.y - player.y)),
+      );
+    const d0 = nearest();
+    for (let i = 0; i < 90; i++) stepWorld(w, autopilotInput(w));
+    expect(nearest(), `장치까지 거리 ${d0} → ${nearest()}`).toBeLessThan(d0);
   });
 
   it('(d) 대피소 도달로 세그먼트가 전진한다(killGoal 아님 — kills=0 에서 전진)', () => {
