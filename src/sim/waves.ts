@@ -172,6 +172,45 @@ export function createWaveRuntime(): WaveRuntime {
  */
 export const PVE_DENSITY_MULT = 1.5;
 
+/**
+ * **수축(베르단) 전용 카드 추첨 간격 배율** — 1 초과 = 유입 감소.
+ *
+ * ## 왜 이 무대에만 거는가 (구조적 근거 — 실측만으로 고른 값이 아니다)
+ * 수축은 여섯 무대 중 유일하게 **적 자체가 진행 게이트**다(`shrinkRingCleared` — 안전 반경 안
+ * 적 전멸). 다른 무대에서 웨이브는 피해원이면서 동시에 젬·전리품을 내는 **성장 자원**이라
+ * 유입을 줄이면 플레이어가 굶는다. 수축에서만 유입 감소가 "피해 감소 + 진행 가속"으로
+ * 이중으로 작용한다.
+ *
+ * ## 실측 (2026-08-02 · 6행성 6,720런, 대조군 포함)
+ * 같은 배율 1.6 을 **목표 게이트형 무대 전부**에 걸어 본 결과가 이 좁힘의 근거다:
+ *
+ * | 행성(모드) | 계수 전 | 계수 1.6 | 런내 레벨업 |
+ * |---|---|---|---|
+ * | 카르곤(뱀서류·대조군) | 78.9% | 79.1% | 계수 미적용 |
+ * | **베르단(수축)** | 21.1% | **37.8%** | 6.4 → 5.3 |
+ * | 니플헤임(추격) | 30.6% | 31.7% | — |
+ * | 톡사르(오염) | 14.3% | 13.9% | — |
+ * | **크라스(블록격파)** | 49.0% | **22.0%** | 6.4 → **4.0** |
+ * | 아르케(레이싱) | 92.2% | 97.1% | **보스도달 87.4 → 77.0s** |
+ *
+ * 크라스는 처치 73·레벨업 4.0 으로 **굶어서** 반토막 났고, 레이싱은 적이 줄자
+ * `racingCleared` 가속이 더 자주 걸려 **페이싱이 깨졌다**(90초 목표 → 77초). 즉 이 레버는
+ * 무대 성질에 따라 부호가 갈린다 — 공용으로 쓰면 안 된다.
+ *
+ * 베르단의 보스 도달은 91.3 → 89.0s 로 페이싱을 지켰다.
+ *
+ * TODO(밸런스): 나머지 무대(니플헤임 30.6% · 톡사르 · 크라스 49.0% · 아르케 92.2%)는 각자
+ * 다른 축이 필요하다. 경위는 `.omc/plans/balance-queue.md`.
+ */
+export const SHRINK_INTERVAL_SCALE = 1.6;
+
+/**
+ * 이 런의 카드 추첨 간격 배율. 수축 외 전 모드는 1 — 기존 거동·해시가 바이트 불변이다.
+ */
+export function waveIntervalScale(state: WorldState): number {
+  return state.config.planetMode === PLANET_MODE.shrink ? SHRINK_INTERVAL_SCALE : 1;
+}
+
 /** Count live enemies (excludes bullets/hazards/gems). */
 export function countEnemies(state: WorldState): number {
   let n = 0;
@@ -241,7 +280,15 @@ export function updateWaves(state: WorldState, player: Entity): void {
   const maxEnemies = Math.round(
     (seg.maxEnemies + rushEnemyBonus) * state.catalystMods.enemyCount * tp.densityMult * PVE_DENSITY_MULT,
   );
-  const cardInterval = Math.max(RUSH_MIN_INTERVAL, seg.cardInterval - rushSteps * RUSH_INTERVAL_STEP);
+  // 수축은 유입 케이던스를 늘린다(위 `waveIntervalScale` 주석 — 그 무대에서만 적이 진행
+  // 게이트다). 하한(`RUSH_MIN_INTERVAL`)에도 같은 배율을 걸어야 급행 램프가 최고조일 때 계수가
+  // 무력화되지 않는다 — 걸지 않으면 램프가 붙는 후반에 정확히 효과가 사라진다.
+  // 그 외 모드는 배율 1 이라 두 값 모두 바이트 불변.
+  const scale = waveIntervalScale(state);
+  const cardInterval = Math.max(
+    Math.round(RUSH_MIN_INTERVAL * scale),
+    Math.round((seg.cardInterval - rushSteps * RUSH_INTERVAL_STEP) * scale),
+  );
 
   if (w.cardTimer > 0) w.cardTimer--;
   // 정예 소집령은 **잡몹이 전혀 나오지 않는다**(ADR-0043 — "잡몹을 극소로"는 명시 기각안이다).
