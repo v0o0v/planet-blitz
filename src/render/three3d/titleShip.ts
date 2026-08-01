@@ -74,6 +74,33 @@ function toonGradient(): THREE.DataTexture {
   return tex;
 }
 
+/**
+ * 엔진 발광용 방사형 그라디언트 텍스처(64²).
+ *
+ * 가산 합성이라 **가장자리가 정확히 0 이어야** 한다 — 사각형 경계가 조금이라도 밝으면 화면에
+ * 네모난 얼룩으로 드러난다. 그래서 중심 1 → 가장자리 0 인 램프를 굽고, 알파가 아니라 **밝기**로
+ * 감쇠시킨다(가산에서는 검정이 곧 투명이다).
+ */
+function glowTexture(): THREE.Texture | null {
+  if (typeof document === 'undefined') return null;
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (ctx === null) return null;
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.28, 'rgba(190,246,255,0.75)');
+  g.addColorStop(0.62, 'rgba(90,200,255,0.22)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
 /** 프레넬 림 셰이더 — 시선과 법선이 이루는 각이 클수록(가장자리일수록) 밝다. */
 const RIM_VERT = `
 varying vec3 vNormalView;
@@ -103,24 +130,61 @@ void main() {
 /**
  * **기본 자세** — 연출 진동은 이 값을 중심으로 흔들린다.
  *
- * 0 으로 두면 GLB 가 태어난 방향 그대로라 이 모델은 거의 **정측면**으로 보인다. 화면에서
- * 얇은 조각으로 읽혀 3D 인지조차 알기 어려웠다(실측). 요를 돌려 기수를 화면 안쪽으로 틀고
- * 피치를 내려 윗면을 보이면 부피가 살아난다 — 3/4 뷰가 실루엣 정보량이 가장 큰 각도다.
+ * 타이틀이 원하는 그림은 **플레이어가 있는 자리에서 화면 안쪽 행성으로 날아가는 함선**이다.
+ * 즉 카메라가 함선의 **뒤**에 있고, 기체는 좌우 대칭 뒷모습으로 멀어지며, 기수만 살짝 들려
+ * 있어야 한다(사용자 확정, 2026-08-02).
+ *
+ * ⚠️ **요는 정확히 `−π/2` 여야 하고 다른 항을 더하면 안 된다.** 이 GLB 의 전방은 로컬 −x 라,
+ * y 축으로 −90° 돌려야 전방이 화면 안쪽(−z)에 정렬돼 좌우 대칭 뒷모습이 나온다. 여기에
+ * 3/4 뷰 시절의 보정값(0.62)이 남아 있어서 기체가 **늘 비스듬히 틀어져 있었다** — 화면에서는
+ * "기수가 왼쪽을 본다"로 보였고, 스프라이트를 회전시켜 덮으려 하면 오히려 옆으로 누웠다.
+ * 모델을 교체하면 이 값이 맞는지 화면으로 다시 확인해야 한다(코드만 봐서는 앞뒤를 모른다).
+ *
+ * ⚠️ 피치는 **부호가 그림을 뒤집는다.** three 의 기본 오일러 순서(XYZ)에서 `rotation.x` 는 요를
+ * 먹인 뒤 **월드 x 축**(=화면 가로축)으로 도는 항이라, 뒷모습 구도에서는 그대로 화면상 기수의
+ * 상하다. 기수가 −z 일 때 `Rx(a)` 는 그것을 `(0, sin a, −cos a)` 로 보내므로 **양수라야 기수가
+ * 든다**. 음수였을 때는 행성이 위에 있는데 함선은 아래를 보고 있었다.
+ *
+ * 롤은 0 이다. 뒷모습의 값어치가 **좌우 대칭**인데 롤을 주면 그게 바로 깨진다.
  */
-const BASE_YAW = 0.62;
-const BASE_PITCH = -0.34;
-const BASE_ROLL = 0.08;
+const BASE_YAW = -Math.PI / 2;
+const BASE_PITCH = 0.30;
+const BASE_ROLL = 0;
 
 /** 연출 상수 — 진폭은 전부 라디안/모델 단위. 값을 키우면 프레임 밖으로 나가므로 여기서 관리한다. */
-const YAW_AMPL = 0.30;
+/**
+ * ⚠️ 요 진폭은 **작아야 한다**. 뒤에서 보는 구도에서 요는 화면상 좌우 흔들림으로 나타나는데,
+ * 0.30(±17°)이면 "행성으로 간다"가 아니라 "좌우로 표류한다"로 읽힌다(실측 — 스크린샷마다
+ * 기수가 다른 쪽을 보고 있었고, 기본 자세가 틀린 줄 알았으나 진폭이 원인이었다).
+ */
+const YAW_AMPL = 0.085;
 const YAW_PERIOD = 17;
-const PITCH_AMPL = 0.09;
+const PITCH_AMPL = 0.05;
 const PITCH_PERIOD = 11;
 const ROLL_AMPL = 0.11;
 const ROLL_PERIOD = 23;
 const BOB_AMPL = 0.045; // 프레이밍 반경 대비 비율.
 const BOB_PERIOD = 9;
 const RIM_PULSE_PERIOD = 5.5;
+
+/**
+ * 엔진 발광 배치 — **바운딩 박스 반치수 대비 비율**이다. 절대 좌표로 적으면 모델을 바꿀 때
+ * 발광만 허공에 남는다. 전방이 로컬 −x 이므로 후방(=노즐)은 +x 다.
+ */
+const ENGINE_AT = { back: 0.80, down: -0.16, side: 0.17 } as const;
+/** 빌보드 지름(박스 세로 반치수 대비). */
+const ENGINE_GLOW_SIZE = 0.85;
+/**
+ * 노즐 뒤 점광 — 선체 **후미만** 청록으로 물들여 "가동 중"을 만든다.
+ *
+ * ⚠️ 세기·거리를 키우면 기체 전체가 청록으로 덮여 **브론즈·금색이 죽는다**(실측 — 2.4 /
+ * 반경×3 에서 선체가 통째로 물들었다). 이 발광의 값어치는 밝기가 아니라 **국소성**이다.
+ */
+const ENGINE_LIGHT_INTENSITY = 0.9;
+/** 점광 감쇠 거리(바운딩 반경 대비). 짧을수록 후미에만 머문다. */
+const ENGINE_LIGHT_RANGE = 0.85;
+/** 발광 맥동 주기(초). 림 맥동과 **다른 주기**여야 둘이 한 덩어리로 뛰지 않는다. */
+const ENGINE_PULSE_PERIOD = 2.3;
 
 export class TitleShip3D {
   private readonly renderer: THREE.WebGLRenderer;
@@ -133,6 +197,12 @@ export class TitleShip3D {
   private readonly rimMaterials: THREE.ShaderMaterial[] = [];
   /** 프레이밍 반경(모델 바운딩 구). 상하 흔들림 진폭이 이 값에서 파생한다. */
   private radius = 1;
+  /** 바운딩 박스 반치수. 엔진 발광 배치가 여기서 파생한다. */
+  private readonly half = new THREE.Vector3(1, 1, 1);
+  /** 노즐 빌보드(맥동 대상). */
+  private readonly engineGlows: THREE.Sprite[] = [];
+  /** 노즐 뒤 점광(맥동 대상). */
+  private engineLight: THREE.PointLight | null = null;
   private time = 0;
   private disposed = false;
 
@@ -234,6 +304,46 @@ export class TitleShip3D {
     for (const m of outlineShells) this.pivot.add(m);
     for (const m of rimShells) this.pivot.add(m);
     this.frame(root);
+    this.engines();
+  }
+
+  /**
+   * 엔진 발광 — 노즐 자리에 가산 빌보드 둘 + 그 뒤 점광 하나.
+   *
+   * ⚠️ **스프라이트(2D) 좌표에 박으면 안 된다.** 기체는 매 프레임 미세하게 요·피치가 흔들리는데,
+   * 화면 좌표에 고정하면 발광만 제자리에 남아 노즐에서 떨어져 나간다. 피벗의 자식으로 두면
+   * 자세 변화가 그대로 따라온다.
+   *
+   * 빌보드(`THREE.Sprite`)를 쓰는 이유는 항상 카메라를 마주 보기 때문이다 — 평면 메시로 두면
+   * 기체가 기울 때 발광이 타원으로 찌그러진다.
+   */
+  private engines(): void {
+    const tex = glowTexture();
+    if (tex === null) return;
+    const size = this.half.y * ENGINE_GLOW_SIZE;
+    for (const side of [-1, 1]) {
+      const mat = new THREE.SpriteMaterial({
+        map: tex,
+        color: 0x9ff0ff,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        transparent: true,
+      });
+      const glow = new THREE.Sprite(mat);
+      glow.scale.set(size, size, 1);
+      glow.position.set(
+        this.half.x * ENGINE_AT.back,
+        this.half.y * ENGINE_AT.down,
+        this.half.z * ENGINE_AT.side * side,
+      );
+      this.pivot.add(glow);
+      this.engineGlows.push(glow);
+    }
+    // 점광은 노즐보다 조금 더 뒤에 둔다 — 선체 후미가 물들고 앞쪽은 키광이 유지된다.
+    const light = new THREE.PointLight(0x6fe3ff, ENGINE_LIGHT_INTENSITY, this.radius * ENGINE_LIGHT_RANGE, 2);
+    light.position.set(this.half.x * (ENGINE_AT.back + 0.25), this.half.y * ENGINE_AT.down, 0);
+    this.pivot.add(light);
+    this.engineLight = light;
   }
 
   /** 바운딩 구를 프러스텀 안에 넣고, 모델 원점을 피벗 중심으로 옮긴다. */
@@ -241,6 +351,7 @@ export class TitleShip3D {
     const box = new THREE.Box3().setFromObject(root);
     const sphere = box.getBoundingSphere(new THREE.Sphere());
     this.radius = sphere.radius || 1;
+    box.getSize(this.half).multiplyScalar(0.5);
     // 모델을 원점 중심으로 — 회전 연출이 무게중심을 축으로 돌아야 한다.
     root.position.sub(sphere.center);
     for (const child of this.pivot.children) {
@@ -256,15 +367,17 @@ export class TitleShip3D {
   /** 배경 키아트의 광원 배치를 그대로 옮긴다 — 따뜻한 정면광 + 청록 역광. */
   private light(): void {
     // 키광: 아치 바닥에서 올라오는 금빛(키아트의 밝은 바닥과 같은 방향).
-    const key = new THREE.DirectionalLight(0xffd9a0, 2.1);
+    // 밝기는 **배경 대비로** 정한다: 함선은 창 안 밝은 성운 앞에 놓이므로, 실내 조명 감각으로
+    // 맞추면 실루엣만 남은 검은 덩어리가 된다(실측 — 어두워서 형태가 안 읽혔다).
+    const key = new THREE.DirectionalLight(0xffd9a0, 2.9);
     key.position.set(-0.6, -0.35, 1);
     this.scene.add(key);
     // 역광: 창 너머 성운의 청록. 실루엣 위쪽 가장자리를 살린다.
-    const back = new THREE.DirectionalLight(0x74e0ff, 1.5);
+    const back = new THREE.DirectionalLight(0x74e0ff, 1.8);
     back.position.set(0.5, 0.9, -1);
     this.scene.add(back);
     // 환경광: 위는 성운 청록, 아래는 유적의 짙은 갈색.
-    this.scene.add(new THREE.HemisphereLight(0x2c6c78, 0x2a2118, 0.9));
+    this.scene.add(new THREE.HemisphereLight(0x3d8894, 0x352a1e, 1.3));
   }
 
   /**
@@ -289,6 +402,18 @@ export class TitleShip3D {
     for (const m of this.rimMaterials) {
       (m.uniforms['uIntensity'] as { value: number }).value = pulse;
     }
+
+    // 엔진 맥동 — 림보다 **빠르게** 뛴다. 같은 주기로 두면 기체 전체가 한 덩어리로 숨 쉬어
+    // 엔진이 따로 가동 중이라는 느낌이 사라진다. 진폭도 더 크다(연소는 불규칙하다).
+    const burn = 0.78 + 0.30 * Math.sin((t / ENGINE_PULSE_PERIOD) * Math.PI * 2);
+    // 두 배 주기의 작은 흔들림을 얹어 맥동이 기계적인 사인파로 읽히지 않게 한다.
+    const flicker = burn + 0.09 * Math.sin((t / (ENGINE_PULSE_PERIOD * 0.37)) * Math.PI * 2);
+    const glowSize = this.half.y * ENGINE_GLOW_SIZE * flicker;
+    for (const g of this.engineGlows) {
+      g.scale.set(glowSize, glowSize, 1);
+      (g.material as THREE.SpriteMaterial).opacity = Math.min(1, flicker);
+    }
+    if (this.engineLight !== null) this.engineLight.intensity = ENGINE_LIGHT_INTENSITY * flicker;
 
     this.renderer.render(this.scene, this.camera);
     // three 가 캔버스를 갱신했음을 Pixi 에 알린다 — 없으면 첫 프레임만 올라간다.

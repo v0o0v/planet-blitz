@@ -34,7 +34,7 @@
  * 순수 render/UI 레이어다. sim 을 읽지도 쓰지도 않고 시간축은 벽시계다(연출 전용).
  */
 
-import { Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
+import { CanvasSource, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import { t } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { effectGates, type QualityTier } from '../../render/qualityTier.js';
@@ -64,7 +64,36 @@ const START_Y = 858;
  */
 const LOGO_W = 1150;
 const LOGO_Y = 74;
-const TAG_Y = 690;
+/** 하단 어둠 그라디언트가 시작하는 y. 버튼 라벨이 밝은 금색 바닥에 묻히는 것을 막는다. */
+const SCRIM_TOP = 630;
+
+/**
+ * 행성 중심(화면 비율). 함선의 진행 방향이 여기서 파생한다 — 둘을 따로 적으면 어긋난다.
+ *
+ * 위쪽에 둔다. 아치 상단이 행성 윗부분을 조금 자르지만(사용자 승인) 그 대가로 ①함선과
+ * 겹치지 않고 ②함선이 **올려다보며 나아가는** 구도가 성립한다. 행성을 화면 중앙에 두면
+ * 함선과 같은 높이가 되어 "지나쳐 간다"로 읽힌다.
+ */
+const PLANET_AT = { x: 0.55, y: 0.35 } as const;
+/**
+ * 함선 기준 위치(화면 비율).
+ *
+ * 함선은 **뒤에서 본다**(카메라가 함선 뒤 = 플레이어 자리). 그래서 자리는 행성 바로 아래
+ * 약간 앞쪽이다 — 화면 가장자리로 밀면 "옆으로 지나간다"가 되고, 행성과 겹치면 실루엣이
+ * 행성 표면에 묻힌다. 그 사이의 좁은 자리다.
+ */
+const SHIP_AT = { x: 0.47, y: 0.635 } as const;
+/**
+ * 스프라이트 배율. 뒤에서 보면 실루엣이 짧아져(길이가 화면 깊이로 들어간다) 같은 배율에서도
+ * 더 커 보인다. 게다가 **작을수록 멀리 있는 것으로 읽혀** 행성까지의 거리가 살아난다.
+ */
+const SHIP_SCALE = 1.25;
+/**
+ * 진행 방향으로의 왕복 폭(px)과 주기(초). 계속 전진시키면 프레임을 벗어나므로 아주 느리게
+ * 오간다 — 정지가 아니라 **거리를 좁히는 중**으로 읽히는 최소량이다.
+ */
+const APPROACH_AMPL = 26;
+const APPROACH_PERIOD = 19;
 
 /**
  * 레이어별 패럴랙스 계수(마우스 오프셋 · 자동 드리프트에 곱한다). 뒤일수록 작게 —
@@ -127,22 +156,35 @@ interface Mote {
   amp: number;
 }
 
-function centeredText(text: string, size: number, fill: number): Text {
-  const el = new Text({
-    resolution: 2,
-    text,
-    style: {
-      fontFamily: UI_FONT,
-      fontSize: size,
-      fontWeight: '700',
-      fill,
-      align: 'center',
-      dropShadow: TEXT_SHADOW,
-    },
-  });
-  el.anchor.set(0.5, 0);
-  el.x = DESIGN_WIDTH / 2;
-  return el;
+/**
+ * 위에서 아래로 짙어지는 세로 그라디언트 텍스처(1×256).
+ *
+ * ⚠️ **얇은 사각형을 겹쳐 쌓는 근사를 쓰면 안 된다.** 처음엔 18개 띠를 `bandH + 1` 높이로
+ * 그렸는데, 그 `+1` 때문에 인접 띠가 1px 겹치고 **겹친 줄만 알파가 두 배**가 되어 25px 간격의
+ * 검은 가로줄이 화면 하단을 가로질렀다(사용자 신고). 겹침을 없애면 이번엔 반올림 때문에 흰
+ * 틈이 생긴다 — 띠 근사로는 둘 중 하나를 반드시 밟는다.
+ *
+ * 그래서 알파 램프를 **픽셀로 직접 굽는다**. 세로로만 변하므로 폭 1px 이면 충분하고, 늘릴 때
+ * `linear` 로 보간돼 이음매가 원리적으로 생기지 않는다. 드로우콜도 18 → 1 로 준다.
+ */
+function scrimTexture(topAlpha: number, bottomAlpha: number): Texture | null {
+  if (typeof document === 'undefined') return null;
+  const h = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = 1;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (ctx === null) return null;
+  for (let i = 0; i < h; i++) {
+    // 감마 1.6 — 선형이면 위쪽이 너무 빨리 어두워져 키아트를 먹는다.
+    const t = (i + 1) / h;
+    const a = topAlpha + (bottomAlpha - topAlpha) * t ** 1.6;
+    ctx.fillStyle = `rgba(10, 8, 18, ${a})`;
+    ctx.fillRect(0, i, 1, 1);
+  }
+  const tex = new Texture({ source: new CanvasSource({ resource: canvas }) });
+  tex.source.scaleMode = 'linear';
+  return tex;
 }
 
 /** 텍스처를 화면 중앙에 `scale` 배 오버스캔으로 놓은 스프라이트. */
@@ -170,8 +212,15 @@ export class TitleScreen {
 
   /** 3D 함선. 저티어·WebGL 실패면 끝까지 null 이다(배경만 나온다). */
   private ship: TitleShip3D | null = null;
+  private shipSprite: Sprite | null = null;
   /** 로드를 여러 번 걸지 않기 위한 래치(show/hide 를 오가도 1회). */
   private shipRequested = false;
+
+  /** 함선 기준 위치(디자인 스페이스). 진행 왕복이 이 점을 중심으로 오간다. */
+  private readonly shipBase = {
+    x: DESIGN_WIDTH * SHIP_AT.x,
+    y: DESIGN_HEIGHT * SHIP_AT.y,
+  };
 
   private time = 0;
   /** 마우스 목표 오프셋과 현재(보간) 오프셋. */
@@ -269,13 +318,24 @@ export class TitleScreen {
     if (ship === null || host === undefined) return;
     const sprite = new Sprite(ship.texture);
     sprite.anchor.set(0.5);
-    // 아치 개구부 안쪽, 행성보다 앞. 창 중앙에서 좌하로 — 행성과 겹치지 않는 자리다.
-    sprite.position.set(DESIGN_WIDTH * 0.365, DESIGN_HEIGHT * 0.545);
-    // 오프스크린 렌더(768×512)를 1.35배로 띄운다. 모델은 프레이밍 여유를 두고 그려지므로
-    // 실제 함선 실루엣은 이 박스의 약 2/3 다(≈690×310).
-    sprite.scale.set(1.35);
+    sprite.position.set(this.shipBase.x, this.shipBase.y);
+    sprite.scale.set(SHIP_SCALE);
+    // ⚠️ **스프라이트를 회전시키지 않는다.** 진행 방향은 3D 자세(`titleShip.ts` BASE_YAW·
+    // BASE_PITCH)가 이미 표현한다 — 기체의 길이 축이 화면이 아니라 **깊이**로 들어가 있기
+    // 때문이다. 여기서 추가로 굴리면 좌우 대칭 뒷모습이 옆으로 누워 버린다(실측 — 기수가
+    // 틀어진 것을 스프라이트 회전으로 덮으려다 오히려 자세를 망가뜨렸다. 원인은 요 상수의
+    // 잔여 보정값이었고, 고칠 자리는 3D 쪽이었다).
     host.removeChildren();
     host.addChild(sprite);
+    this.shipSprite = sprite;
+  }
+
+  /** 함선 → 행성 단위 벡터. 진행 왕복이 이 축으로만 움직인다. */
+  private heading(): { x: number; y: number } {
+    const dx = (PLANET_AT.x - SHIP_AT.x) * DESIGN_WIDTH;
+    const dy = (PLANET_AT.y - SHIP_AT.y) * DESIGN_HEIGHT;
+    const len = Math.hypot(dx, dy) || 1;
+    return { x: dx / len, y: dy / len };
   }
 
   /**
@@ -337,6 +397,13 @@ export class TitleScreen {
       this.requestShip();
       if (shipLayer !== undefined) shipLayer.visible = true;
       this.ship?.update(dt);
+      // 진행 왕복 — 기수 방향으로만 오간다. 옆으로도 흔들면 "표류"로 읽히므로 축을 하나로 묶는다.
+      const sprite = this.shipSprite;
+      if (sprite !== null) {
+        const h = this.heading();
+        const s = Math.sin((this.time / APPROACH_PERIOD) * Math.PI * 2) * APPROACH_AMPL;
+        sprite.position.set(this.shipBase.x + h.x * s, this.shipBase.y + h.y * s);
+      }
     } else if (shipLayer !== undefined) {
       shipLayer.visible = false; // 그리지도 않고 보이지도 않는다.
     }
@@ -350,6 +417,7 @@ export class TitleScreen {
     this.layers = {};
     this.motes = [];
     this.shaft = null;
+    this.shipSprite = null;
 
     const opts = this.opts;
     if (opts === null) return;
@@ -382,7 +450,7 @@ export class TitleScreen {
       s.anchor.set(0.5);
       s.scale.set(660 / planetTex.width);
       // 창 중앙보다 우측·아래 — 로고 아래를 비우고, 함선이 지날 좌하 공간을 남긴다.
-      s.position.set(DESIGN_WIDTH * 0.565, DESIGN_HEIGHT * 0.47);
+      s.position.set(DESIGN_WIDTH * PLANET_AT.x, DESIGN_HEIGHT * PLANET_AT.y);
       planet.addChild(s);
     }
 
@@ -476,25 +544,21 @@ export class TitleScreen {
     }
 
     // --- 하단 스크림 ---
-    // 이 키아트는 바닥이 밝은 금색이라 버튼 라벨이 묻힌다. 아래로 갈수록 짙어지는 띠를 깐다.
-    // Pixi Graphics 에 그라디언트가 없으므로 얇은 사각형을 겹쳐 근사한다(필터보다 싸다).
-    const scrim = new Container();
-    const bands = 18;
-    const scrimTop = TAG_Y - 60;
-    const bandH = (DESIGN_HEIGHT - scrimTop) / bands;
-    for (let i = 0; i < bands; i++) {
-      const g = new Graphics();
-      const a = 0.5 * ((i + 1) / bands) ** 1.6;
-      g.rect(0, scrimTop + i * bandH, DESIGN_WIDTH, bandH + 1).fill({ color: 0x0a0812, alpha: a });
-      scrim.addChild(g);
+    // 이 키아트는 바닥이 밝은 금색이라 버튼 라벨이 묻힌다. 아래로 갈수록 짙어지는 그라디언트를
+    // 깐다(구현은 `scrimTexture` 헤더 참조 — 띠 근사가 만들던 가로줄을 없앤 자리다).
+    const scrimTex = scrimTexture(0, 0.5);
+    if (scrimTex !== null) {
+      const scrim = new Sprite(scrimTex);
+      scrim.position.set(0, SCRIM_TOP);
+      scrim.width = DESIGN_WIDTH;
+      scrim.height = DESIGN_HEIGHT - SCRIM_TOP;
+      this.root.addChild(scrim);
     }
-    this.root.addChild(scrim);
 
-    // --- 부제 · 버튼 · 첫 실행 안내 ---
-    const tag = centeredText(t('title.tag'), 27, COLOR.cream);
-    tag.y = TAG_Y;
-    this.root.addChild(tag);
-
+    // --- 시작 버튼 ---
+    // 부제(`title.tag`)와 첫 실행 안내(`title.note`)는 **의도적으로 그리지 않는다**(사용자 지시,
+    // 2026-08-02). 키아트 위에 떠 있는 설명 문구가 시네마틱 인상을 깎기 때문이다. 두 문자열은
+    // 카탈로그에 그대로 남아 있어(기록 보관소·후속 화면이 쓸 수 있다) i18n 커버리지도 온전하다.
     const start = new PixiButton({
       texture: this.ui['ui_btn_yellow.png'],
       width: START_W,
@@ -509,11 +573,5 @@ export class TitleScreen {
     });
     start.container.position.set((DESIGN_WIDTH - START_W) / 2, START_Y);
     this.root.addChild(start.container);
-
-    if (opts.firstRun) {
-      const note = centeredText(t('title.note'), 22, COLOR.muted);
-      note.y = START_Y + START_H + 18;
-      this.root.addChild(note);
-    }
   }
 }
