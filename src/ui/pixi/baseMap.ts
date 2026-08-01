@@ -39,7 +39,13 @@ import { t, type MessageKey } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
-import { loadBaseTextures, baseBuildingAssetName, BASE_BACKDROP_NAME, type BaseTextures } from './baseTextures.js';
+import {
+  loadBaseTextures,
+  baseBuildingAssetName,
+  BASE_BACKDROP_NAME,
+  BASE_LAUNCH_NAME,
+  type BaseTextures,
+} from './baseTextures.js';
 import { BaseBackdrop } from './baseBackdrop.js';
 import { makeCinematicTile, type CinematicTile } from './cinematicTile.js';
 import { makeScreenTitle, makeCinematicChip, makeHeroTile, type HeroButton } from './cinematicChrome.js';
@@ -372,8 +378,15 @@ export class BaseMapScreen {
   /** 출격 카드 — 격자의 마지막 칸(8번째). 건물 타일과 같은 골격, 다른 무게. */
   private renderLaunch(): void {
     const { x, y } = tilePosition(CELLS - 1);
-    const hero = makeHeroTile(TILE_W, TILE_H, t('base.launch'), t('base.launchSub'), () =>
-      this.cb?.onStarMap(),
+    // ⚠️ 아트를 안 넘기면 **조용히 절차적 엠블럼 폴백**으로 떨어진다(어두운 판). 이 리포가
+    // 반복해서 밟은 "배선이 없는데 테스트는 그린" 유형이라, 화면으로 확인한 뒤에 닫는다.
+    const hero = makeHeroTile(
+      TILE_W,
+      TILE_H,
+      t('base.launch'),
+      t('base.launchSub'),
+      () => this.cb?.onStarMap(),
+      this.art[BASE_LAUNCH_NAME],
     );
     hero.container.position.set(x, y);
     this.root.addChild(hero.container);

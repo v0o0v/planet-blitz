@@ -32,6 +32,9 @@ export function baseBuildingAssetName(key: string): string {
 /** 풀블리드 배경(격납고 홀). 중앙은 타일 격자가 앉도록 의도적으로 비어 있다. */
 export const BASE_BACKDROP_NAME = 'base_backdrop.webp';
 
+/** 출격 카드(격자 8번째 칸)의 페인터리 아트. 건물이 아니므로 BASE_BUILDING_KEYS 밖이다. */
+export const BASE_LAUNCH_NAME = 'base_launch.webp';
+
 /**
  * 일러스트가 필요한 건물 키. `baseMap.ts` 의 `Building['key']` 와 같은 집합이어야 한다 —
  * 리드가 자산 결손 가드에서 **양방향**으로 대조한다(목록에만 있는 파일 / 파일만 있는 목록
@@ -47,10 +50,15 @@ export const BASE_BUILDING_KEYS = [
   'commission',
 ] as const;
 
-/** 기지 화면이 요구하는 자산 목록(배경 + 건물 7종). 손으로 적지 않고 키에서 파생한다. */
+/**
+ * 기지 화면이 요구하는 자산 목록(배경 1 + 건물 7 + 출격 1 = 9장). 건물 부분은 손으로 적지
+ * 않고 키에서 파생한다. 리드의 자산 결손 가드가 이 목록과 `assets/base/` 실물을 **양방향**
+ * 으로 대조하므로, 여기 빠진 파일은 "아무도 안 쓰는 자산"으로 잡힌다.
+ */
 export const BASE_ASSET_NAMES: readonly string[] = [
   BASE_BACKDROP_NAME,
   ...BASE_BUILDING_KEYS.map((k) => baseBuildingAssetName(k)),
+  BASE_LAUNCH_NAME,
 ];
 
 /** basename → Texture(로드 성공) | undefined(미존재/실패). */

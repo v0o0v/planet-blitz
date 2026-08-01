@@ -78,8 +78,9 @@ import {
   Sprite,
   Text,
   Texture,
+  TilingSprite,
 } from 'pixi.js';
-import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
+import { UI_FONT, TEXT_SHADOW } from './theme.js';
 
 // --- 비율 상수(전부 width/height 파생 — 절대 치수 없음) -------------------------
 
@@ -125,30 +126,66 @@ const FLOAT_PERIOD = 6.2;
 const MAX_DT = 1 / 15;
 
 /**
- * 카드 바탕 석재 그라디언트(위→아래).
+ * 라벨 밴드 석재 램프의 **양 끝 색**(밴드 상단 → 밴드 하단). 카드 전체 램프는 여기서 역산한다
+ * ({@link bodyChannel}) — 반대로 카드 끝점을 적고 밴드 색을 눈대중하면 `BAND_RATIO` 를 바꿀 때
+ * 조용히 어긋난다.
  *
  * ⚠️ 색상은 **따뜻한 갈색 계열**이어야 한다 — 배경과 색온도가 다르면 붙여 놓은 패널로 읽힌다.
  *
- * ## 판정 불변식: **라벨 밴드 bg 평균 휘도 ≥ 인접 거터 평균 + 5**
- * 1차 처방은 "카드 **전체** 평균 ≥ 거터 +8" 이었고 숫자로는 초과 달성했다(카드 72.4 vs 거터
- * 36.3 = +36.1). **그런데 그 +36 은 전부 아트 절반이 벌어준 것이었다** — 밴드만 따로 재면
- * 32.1 로 거터(36.3)보다 −4, 카드 아래 바닥(51.2)보다 −19 였고, 실제로 카드 하단 29% 가
- * 배경으로 녹아 사라졌다(2차 판정 MED-5). **지표를 카드 전체 평균으로 잡은 것이 결함을
- * 가렸다.** 그래서 불변식을 "카드 평균"이 아니라 **"밴드 bg 평균"** 으로 다시 못 박는다.
- *
- * 값 검산(Rec.601 휘도, 실측과 0.7 이내로 일치함이 확인된 모델):
- *  - t=0.71(밴드 상단) rgb(60,44,30) → L 47.0
- *  - t=1.00(밴드 하단) rgb(51,37,26) → L 39.9
- *  - 밴드 bg 평균 **≈ 43.5** → 거터 36.3 대비 **+7.2** (불변식 +5 충족).
+ * ## 지표를 세 번 갈아탄 기록(같은 실수를 반복하지 않기 위해 남긴다)
+ *  - 1차: "카드 **전체** 평균 ≥ 거터 +8" → 숫자는 초과 달성(72.4 vs 36.3)했지만 **+36 은 전부
+ *    아트 절반이 번 것**이었다. 밴드만 재면 32.1 로 거터보다 −4 였고 카드 하단이 배경에
+ *    녹았다. **평균이 국소 결함을 가린 전형**이다.
+ *  - 2차: "밴드 bg 평균 ≥ 거터 +5" → 밴드 42.4(예측 43.5, 오차 1.1)로 달성. 그런데 **대조군인
+ *    거터가 36.3 → 22.9 로 움직여** 실제 델타가 +19.5 가 됐다 — 밴드가 이번엔 반대로 떠올랐다.
+ *    **내 수치는 맞았는데 기준이 움직인 실패**다. 절대 휘도는 배경(Lane A)이 확정된 뒤에만
+ *    의미가 있다.
+ *  - 3차(현재): 그래서 **절대 휘도를 쫓지 않는다.** 밴드 bg 평균을 40~44 대역에 두고
+ *    (검산: 상단 rgb(62,45,32) L48.5 · 하단 rgb(46,33,24) L35.9 → **평균 42.2**),
+ *    나머지는 **재질 구조**로 푼다 — 세로 램프(Δ12.6L)·미세 그레인·상단 그림자선.
+ *    "std 1.42 의 완전 균일한 사각형"이 CSS `div` 로 읽힌 원인이지 밝기가 아니었다.
  */
-const BODY_TOP = { r: 0x52, g: 0x3c, b: 0x28 } as const;
-const BODY_BOTTOM = { r: 0x33, g: 0x25, b: 0x1a } as const;
+const BAND_TOP = { r: 0x3e, g: 0x2d, b: 0x20 } as const;
+const BAND_BOTTOM = { r: 0x2e, g: 0x21, b: 0x18 } as const;
 
-/** 안쪽 어두운 홈(theme.ts ICON_RING_GROOVE 계열 — 카드 스케일에 맞춰 조금 더 짙게). */
-const GROOVE = 0x0d0805;
-/** 아트/라벨 경계에 새기는 금박 실선(rgba(201,160,74,0.28)). */
+/**
+ * 미세 그레인 진폭(±3L 목표). 흰 점과 검은 점의 알파가 다른 이유는 **합성이 비대칭**이기
+ * 때문이다: 바탕 L≈42 위에 흰색을 알파 a 로 얹으면 `42 + 213a`, 검은색은 `42(1−a)` 라
+ * 같은 ±3L 을 내려면 흰쪽 0.014 · 검은쪽 0.071 이 필요하다. 같은 값을 쓰면 얼룩이 한쪽으로
+ * 쏠린다.
+ */
+const GRAIN_UP = 0.016;
+const GRAIN_DOWN = 0.075;
+
+/** 아트/라벨 경계: 선반이 드리우는 그림자선과 그 위 립의 캐치라이트. */
+const SEAM_SHADOW = 0x0e0906;
 const SEAM_GOLD = 0xc9a04a;
-const SEAM_ALPHA = 0.28;
+const SEAM_ALPHA = 0.2;
+
+/**
+ * 방향성 베벨(3차 판정 HIGH·N3).
+ *
+ * ⚠️ 1차·2차판은 사방 균일한 금색 1px 스트로크였다. 실측이 상 114.8 / 좌 113.3 / 우 110.4 /
+ * 하 113.4 — **편차 4L**. 광원이 위에 있는 화면에서 **바닥 모서리가 천장 모서리와 똑같이 밝은
+ * 것은 조명이 아니라 스트로크다.** 카드 내부 L≈65 와 배경 L≈25 사이에 L113 하드 키라인이
+ * 박히니 유화 타일이 "오려 붙인 것"·"웹 카드 컴포넌트"로 읽혔다.
+ *
+ * 그래서 위/왼쪽만 빛을 받고 아래/오른쪽은 그늘지는 **실제 베벨**로 바꾼다. 경로는 대각선
+ * (좌하·우상 모서리 호의 중점)에서 갈라 이음매가 모서리 한가운데에 오게 한다 — 변에서 끊으면
+ * 끊긴 자리가 눈에 띈다. 바깥으로는 **한 픽셀도 그리지 않는다**(스트로크를 안쪽 정렬로
+ * 인셋해서 그린다) — 카드 바깥 밝은 선이 이 처방이 없애려는 바로 그 신호다.
+ */
+const BEVEL_LIGHT = 0xd9b070;
+const BEVEL_LIGHT_ALPHA = 0.55;
+const BEVEL_DARK = 0x120b06;
+const BEVEL_DARK_ALPHA = 0.7;
+/**
+ * 밝은 립 **안쪽**에 파는 어두운 홈. `theme.ts` `iconContrastRingBands` 의 실측 결론(밝은 링은
+ * 중간 톤을 묻는다, 어두운 홈이 답)을 베벨과 양립시키는 자리다 — 이게 없으면 밝은 일러스트
+ * 상단이 금색 립과 붙어 **2px 짜리 밝은 띠**가 되어 원래 문제가 되돌아온다.
+ */
+const BEVEL_RECESS = 0x0d0805;
+const BEVEL_RECESS_ALPHA = 0.5;
 /** 제목·설명색(1차 판정 MED-6 처방값). 위계를 크기와 **색·굵기 양쪽**으로 벌린다. */
 const TITLE_FILL = 0xf0e6d2;
 const DESC_FILL = 0x9a8f7d;
@@ -261,9 +298,18 @@ function fromCanvas(ctx: CanvasRenderingContext2D): Texture {
   return tex;
 }
 
-/** 바탕 램프의 세로 위치 `t`(0..1)에서의 채널값. 페더 색이 여기서 파생한다 — 둘을 따로 적으면 어긋난다. */
+/**
+ * 카드 바탕 램프의 세로 위치 `t`(0..1)에서의 채널값.
+ *
+ * 정본은 **밴드 구간의 색**({@link BAND_TOP}/{@link BAND_BOTTOM})이고, 카드 전체 램프는 그
+ * 직선을 `t=BAND_RATIO..1` 이 정확히 밴드 색이 되도록 **역산**한 것이다. 아트가 덮는 위쪽은
+ * 어차피 안 보이므로 자유롭고, 대신 `BAND_RATIO` 를 바꿔도 밴드 색이 따라 어긋나지 않는다.
+ * 페더 색({@link bandFadeTexture})도 같은 함수에서 파생한다 — 둘을 따로 적으면 이음매가 생긴다.
+ */
 function bodyChannel(k: 'r' | 'g' | 'b', t: number): number {
-  return Math.round(BODY_TOP[k] + (BODY_BOTTOM[k] - BODY_TOP[k]) * t);
+  const slope = (BAND_BOTTOM[k] - BAND_TOP[k]) / (1 - BAND_RATIO);
+  const at0 = BAND_TOP[k] - slope * BAND_RATIO;
+  return Math.max(0, Math.min(255, Math.round(at0 + slope * t)));
 }
 
 let bodyCache: Texture | null | undefined;
@@ -339,6 +385,51 @@ function radialGlowTexture(): Texture | null {
   ctx.fillRect(0, 0, size, size);
   glowCache = fromCanvas(ctx);
   return glowCache;
+}
+
+let grainCache: Texture | null | undefined;
+
+/**
+ * 미세 그레인(64² 타일, 알파만 있는 흑백 점).
+ *
+ * ⚠️ 3차 판정 MED-N: 밴드 bg 의 **표준편차가 1.42** 였다 — 4장 전부 42.35~42.55 로 픽셀 단위
+ * 완전 균일한 사각형이라, 유화 일러스트 바로 아래에서 CSS `div` 로 읽혔다. 유화 옆에 놓이는
+ * 면은 **평평하면 안 된다.** 밝기가 아니라 재질이 문제였다.
+ *
+ * 난수는 xorshift 로 **결정적**이다 — 굽기가 매번 같아야 스크린샷 회귀 비교가 성립한다
+ * (`Math.random()` 을 쓰면 프레임마다가 아니라 세션마다 달라져 비평 실측이 흔들린다).
+ * 보간은 `nearest` — `linear` 로 늘리면 그레인이 뭉개져 그냥 얼룩이 된다.
+ */
+function grainTexture(): Texture | null {
+  if (grainCache !== undefined) return grainCache;
+  const size = 64;
+  const ctx = bakeCanvas(size, size);
+  if (ctx === null) {
+    grainCache = null;
+    return null;
+  }
+  const img = ctx.createImageData(size, size);
+  let seed = 0x9e3779b9;
+  for (let i = 0; i < size * size; i++) {
+    seed ^= seed << 13;
+    seed >>>= 0;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    seed >>>= 0;
+    const n = (seed / 0xffffffff) * 2 - 1; // -1..1
+    const up = n > 0;
+    const o = i * 4;
+    const v = up ? 255 : 0;
+    img.data[o] = v;
+    img.data[o + 1] = v;
+    img.data[o + 2] = v;
+    img.data[o + 3] = Math.round(Math.abs(n) * (up ? GRAIN_UP : GRAIN_DOWN) * 255);
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = fromCanvas(ctx);
+  tex.source.scaleMode = 'nearest';
+  grainCache = tex;
+  return tex;
 }
 
 const shadowCache = new Map<string, Texture | null>();
@@ -453,6 +544,43 @@ function desaturate(sprite: Sprite): void {
   } catch {
     sprite.tint = 0x5f5c68;
   }
+}
+
+/**
+ * 둥근 사각의 **위/왼쪽 반**(빛을 받는 쪽) 경로. 좌하 모서리 호의 중점에서 시작해 왼쪽 변 →
+ * 좌상 호 → 윗변 → 우상 호의 중점에서 끝난다. 대각선에서 갈라야 이음매가 모서리 한가운데에
+ * 놓여 눈에 띄지 않는다(변 중간에서 끊으면 그 자리가 보인다).
+ *
+ * `inset` 만큼 안으로 들여 그린다 — Pixi 의 열린 경로 스트로크는 중심 정렬이라, 선 두께의
+ * 절반을 인셋해야 **카드 바깥으로 한 픽셀도 새지 않는다**.
+ */
+function bevelLightPath(g: Graphics, w: number, h: number, radius: number, inset: number): void {
+  const r = Math.max(0, radius - inset);
+  const x0 = inset;
+  const y0 = inset;
+  const x1 = w - inset;
+  const y1 = h - inset;
+  const q = Math.PI / 2;
+  g.arc(x0 + r, y1 - r, r, q * 1.5, Math.PI) // 좌하 호의 아래→중점
+    .lineTo(x0, y0 + r)
+    .arc(x0 + r, y0 + r, r, Math.PI, q * 3) // 좌상 호 전체
+    .lineTo(x1 - r, y0)
+    .arc(x1 - r, y0 + r, r, q * 3, q * 3.5); // 우상 호의 절반
+}
+
+/** 둥근 사각의 **아래/오른쪽 반**(그늘지는 쪽) 경로. {@link bevelLightPath} 와 정확히 상보다. */
+function bevelDarkPath(g: Graphics, w: number, h: number, radius: number, inset: number): void {
+  const r = Math.max(0, radius - inset);
+  const x0 = inset;
+  const y0 = inset;
+  const x1 = w - inset;
+  const y1 = h - inset;
+  const q = Math.PI / 2;
+  g.arc(x1 - r, y0 + r, r, q * 3.5, q * 4) // 우상 호의 중점→오른쪽
+    .lineTo(x1, y1 - r)
+    .arc(x1 - r, y1 - r, r, 0, q) // 우하 호 전체
+    .lineTo(x0 + r, y1)
+    .arc(x0 + r, y1 - r, r, q, q * 1.5); // 좌하 호의 절반
 }
 
 /** 문자열에서 뽑은 결정적 위상(0..2π) — 타일마다 부유가 어긋나게. 매 프레임 같은 값이다. */
@@ -642,6 +770,21 @@ export function makeCinematicTile(o: CinematicTileOpts): CinematicTile {
     // 페더 아래(밴드 바닥~카드 바닥)는 바탕 그라디언트가 이미 채우고 있다.
   }
 
+  // --- 미세 그레인 ---------------------------------------------------------------
+  // 페더 **위**에 얹는다 — 베일까지 함께 거칠어져야 아트에서 선반으로 넘어가는 구간이 하나의
+  // 재질로 읽힌다. 페더 아래만 그레인을 주면 그 경계가 또 다른 가로줄이 된다.
+  const grainTex = grainTexture();
+  if (grainTex !== null) {
+    const grainTop = Math.max(0, bandH - feather);
+    const grain = new TilingSprite({
+      texture: grainTex,
+      width: w,
+      height: h - grainTop,
+    });
+    grain.position.set(0, grainTop);
+    clip.addChild(grain);
+  }
+
   // --- 호버 온기(가산) ----------------------------------------------------------
   // tint 는 곱연산이라 밝힐 수 없다(§0-5). 밴드 위에 얇은 가산 판을 얹어 조명이 든 것처럼.
   const warm = new Graphics();
@@ -657,11 +800,14 @@ export function makeCinematicTile(o: CinematicTileOpts): CinematicTile {
     clip.addChild(dim);
   }
 
-  // --- 아트/라벨 경계 각인선 -----------------------------------------------------
+  // --- 아트/라벨 경계 ------------------------------------------------------------
+  // 라벨 선반은 아트보다 **뒤로 물러난 면**이다. 그러면 경계에 생기는 것은 밝은 각인선이
+  // 아니라 **선반이 받는 그림자**다(3차 판정 MED-N ③). 그 위 1px 에만 아주 옅은 금빛 립을
+  // 남겨 "빛을 받는 모서리 → 그늘진 안쪽"의 2단을 만든다 — 금선 하나만 두면 선반이 오히려
+  // 앞으로 튀어나온 것처럼 보인다.
   const seam = new Graphics();
-  seam
-    .rect(0, bandH, w, 1)
-    .fill({ color: SEAM_GOLD, alpha: locked ? SEAM_ALPHA * 0.5 : SEAM_ALPHA });
+  seam.rect(0, bandH - 1, w, 1).fill({ color: SEAM_GOLD, alpha: locked ? SEAM_ALPHA * 0.5 : SEAM_ALPHA });
+  seam.rect(0, bandH, w, 1).fill({ color: SEAM_SHADOW, alpha: 0.9 });
   inner.addChild(seam);
 
   if (locked) {
@@ -670,20 +816,31 @@ export function makeCinematicTile(o: CinematicTileOpts): CinematicTile {
     inner.addChild(badge);
   }
 
-  // --- 테두리: 안쪽 어두운 홈 + 금박 헤어라인 + 호버 림 --------------------------
-  const grooveW = Math.max(2, Math.round(Math.min(w, h) * 0.009));
+  // --- 테두리: 방향성 베벨 --------------------------------------------------------
+  // 사방 균일 스트로크는 폐기했다(BEVEL_LIGHT 헤더의 실측 근거). 위/왼쪽 = 립, 아래/오른쪽 =
+  // 그늘, 그 립 안쪽에 어두운 홈. 셋 다 안쪽으로 인셋해 카드 **바깥에는 아무것도 없다**.
   const edge = new Graphics();
-  edge
-    .roundRect(grooveW / 2, grooveW / 2, w - grooveW, h - grooveW, radius - grooveW / 2)
-    .stroke({ color: GROOVE, width: grooveW, alpha: 0.9 });
-  edge
-    .roundRect(0, 0, w, h, radius)
-    .stroke({ color: COLOR.gold, width: 1.5, alignment: 1, alpha: locked ? 0.22 : 0.5 });
+  // ① 아래/오른쪽 그늘 2px — 카드가 바닥에서 어둠으로 넘어가는 자리.
+  bevelDarkPath(edge, w, h, radius, 1);
+  edge.stroke({ color: BEVEL_DARK, width: 2, alpha: locked ? BEVEL_DARK_ALPHA * 0.7 : BEVEL_DARK_ALPHA });
+  // ② 위/왼쪽 립 안쪽의 어두운 홈 1px([1,2] 구간) — 밝은 일러스트가 립과 붙어 2px 밝은 띠가
+  //    되는 것을 막는다(theme.ts iconContrastRingBands 결론).
+  bevelLightPath(edge, w, h, radius, 1.5);
+  edge.stroke({ color: BEVEL_RECESS, width: 1, alpha: BEVEL_RECESS_ALPHA });
+  // ③ 위/왼쪽 립 1px([0,1] 구간) — 이 카드에서 유일하게 밝은 테두리.
+  bevelLightPath(edge, w, h, radius, 0.5);
+  edge.stroke({
+    color: BEVEL_LIGHT,
+    width: 1,
+    alpha: locked ? BEVEL_LIGHT_ALPHA * 0.4 : BEVEL_LIGHT_ALPHA,
+  });
   inner.addChild(edge);
 
-  // 림라이트는 별도 Graphics 라 알파만 흔들면 된다(매 프레임 재작도 없음).
+  // 림라이트도 **방향성**이다 — 호버라고 사방을 밝히면 그 순간 다시 웹 카드 키라인이 된다.
+  // 빛을 받는 위/왼쪽만 강해진다. 별도 Graphics 라 알파만 흔들면 된다(매 프레임 재작도 없음).
   const rim = new Graphics();
-  rim.roundRect(0, 0, w, h, radius).stroke({ color: 0xfff0c8, width: 2, alignment: 1, alpha: 1 });
+  bevelLightPath(rim, w, h, radius, 1);
+  rim.stroke({ color: 0xfff0c8, width: 2, alpha: 1 });
   rim.alpha = 0;
   inner.addChild(rim);
 

@@ -39,7 +39,7 @@ import {
   Text,
   Texture,
 } from 'pixi.js';
-import { COLOR, UI_FONT } from './theme.js';
+import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { stripEmoji } from './text.js';
 
 // ── 팔레트 ─────────────────────────────────────────────────────────────────
@@ -436,9 +436,12 @@ function carvedDivider(): Container {
       s.alpha = alpha;
       c.addChild(s);
     };
-    band(2, 0, GOLD_LIT, 0.85); // 홈 윗턱 — 빛 받는 모서리
-    band(5, 2, GROOVE, 0.7); // 파인 채널
-    band(1.5, 7, 0x000000, 0.45); // 홈 아랫턱 그림자
+    // ⚠️ **명암 순서가 뒤집혀 있었다**(실측: 위가 L113 으로 밝고 아래가 L28 로 어두웠다).
+    // 광원이 위에 있을 때 **음각 홈**은 위쪽 벽이 그늘이고 아래 입술이 빛을 받는다. 반대로 하면
+    // 아래에서 조명한 **양각 리브**로 읽힌다 — 같은 세 겹인데 부호 하나가 부조를 뒤집는다.
+    band(1, 0, 0x0d0805, 0.75); // 홈 상단 — 파고든 그늘의 시작
+    band(5, 1, GROOVE, 0.55); // 채널 안쪽 어둠(아래로 감쇠)
+    band(1, 6.5, 0xc9a367, 0.45); // 홈 하단 입술 — 빛을 받는 유일한 면
   }
 
   // 중앙 키스톤 — 사다리꼴 두 겹(어두운 테 안에 금)이라 박혀 있는 돌로 읽힌다.
@@ -866,6 +869,16 @@ const MAX_DT = 1 / 15;
 
 /** 출격 카드 맥동 주기(초). 격자 안에서 혼자 살아 있되 번쩍이면 안 된다. */
 const TILE_PULSE_PERIOD = 5;
+/**
+ * 출격 카드 후광 — CTA 알약(0.30±0.075)보다 **훨씬 얕다**.
+ *
+ * 카드는 알약보다 면적이 10배 넘게 크다. 같은 알파를 주면 그 자체로 화면의 밝기 예산을
+ * 독점한다(3차 판정 CRIT·N1: 카드 평균 L 207 · 화면 L>170 화소의 62.7%). 주인공 지위는
+ * 밝기 총량이 아니라 **재질·대비·맥동**이 만든다.
+ */
+const TILE_GLOW_BASE = 0.1;
+const TILE_GLOW_AMPL = 0.05;
+const TILE_GLOW_HOVER = 0.12;
 /** 방사 광휘 각속도(rad/초). 눈으로 좇을 수 없을 만큼 느려야 "빛"이지 "바람개비"가 아니다. */
 const RAY_SPIN = 0.055;
 /** 궤도 위 점이 한 바퀴 도는 시간(초). */
@@ -946,6 +959,88 @@ function tileShadow(bake: TileShadowBake): Texture | null {
   const tex = toTexture(b.canvas);
   tileShadowCache.set(key, tex);
   return tex;
+}
+
+/**
+ * 카드 바탕 석재 램프(위→아래). Lane B `cinematicTile.ts` 와 **같은 값**이다 — 출격 카드가
+ * 이웃과 같은 판 색을 써야 "같은 격자의 일원"이 된다(3차 판정 CRIT·N2: 판 색·재질·글자 극성이
+ * 셋 다 달라 혼자 다른 컴포넌트로 읽혔다).
+ */
+const TILE_BODY_TOP = { r: 0x52, g: 0x3c, b: 0x28 } as const;
+const TILE_BODY_BOTTOM = { r: 0x33, g: 0x25, b: 0x1a } as const;
+/** 아트→라벨 페더 높이 비율 · 정사각 아트를 밴드로 크롭할 때의 세로 초점. */
+const TILE_FEATHER_RATIO = 0.145;
+const TILE_FOCUS_Y = 0.42;
+/** 아트/라벨 경계 금박 실선(이웃 타일과 같은 값). */
+const SEAM_GOLD = 0xc9a04a;
+
+function tileBodyChannel(k: 'r' | 'g' | 'b', t: number): number {
+  return Math.round(TILE_BODY_TOP[k] + (TILE_BODY_BOTTOM[k] - TILE_BODY_TOP[k]) * t);
+}
+
+let bodyRampTex: Texture | null | undefined;
+/** 카드 바탕 석재 램프(1×256, 불투명). 세로로만 변하므로 폭 1px 이면 충분하다. */
+function bodyRamp(): Texture | null {
+  if (bodyRampTex !== undefined) return bodyRampTex;
+  const h = 256;
+  const b = bakeCanvas(1, h);
+  if (b === null) {
+    bodyRampTex = null;
+    return null;
+  }
+  for (let i = 0; i < h; i++) {
+    const t = i / (h - 1);
+    b.ctx.fillStyle = `rgb(${tileBodyChannel('r', t)}, ${tileBodyChannel('g', t)}, ${tileBodyChannel('b', t)})`;
+    b.ctx.fillRect(0, i, 1, 1);
+  }
+  bodyRampTex = toTexture(b.canvas);
+  return bodyRampTex;
+}
+
+let bandFadeTex: Texture | null | undefined;
+/**
+ * 아트/라벨 페더(1×256). 종착색이 **밴드 바닥에서의 바탕색과 정확히 같아** 알파가 1 에 닿는
+ * 지점에서 색 계단이 원리적으로 없다. 알파 지수 1.5 — 선형이면 위쪽이 너무 빨리 덮인다.
+ */
+function bandFade(): Texture | null {
+  if (bandFadeTex !== undefined) return bandFadeTex;
+  const h = 256;
+  const b = bakeCanvas(1, h);
+  if (b === null) {
+    bandFadeTex = null;
+    return null;
+  }
+  const r = tileBodyChannel('r', TILE_BAND_RATIO);
+  const g = tileBodyChannel('g', TILE_BAND_RATIO);
+  const bl = tileBodyChannel('b', TILE_BAND_RATIO);
+  for (let i = 0; i < h; i++) {
+    const t = (i + 1) / h;
+    b.ctx.fillStyle = `rgba(${r}, ${g}, ${bl}, ${t ** 1.5})`;
+    b.ctx.fillRect(0, i, 1, 1);
+  }
+  bandFadeTex = toTexture(b.canvas);
+  return bandFadeTex;
+}
+
+/**
+ * 정사각 일러스트를 `w:h` 비율로 **중앙 크롭**한 텍스처(프레임 UV 크롭 — 늘리지 않는다).
+ * 원본은 건드리지 않고 같은 `source` 위에 새 `frame` 을 얹는다(공유 자산 오염 금지).
+ */
+function cropToAspect(art: Texture, w: number, h: number): Texture {
+  const src = art.frame;
+  if (!(src.width > 0) || !(src.height > 0) || !(w > 0) || !(h > 0)) return art;
+  const target = w / h;
+  let cw = src.width;
+  let ch = src.height;
+  if (src.width / src.height > target) cw = src.height * target;
+  else ch = src.width / target;
+  const cx = src.x + (src.width - cw) / 2;
+  const cy = src.y + (src.height - ch) * TILE_FOCUS_Y;
+  try {
+    return new Texture({ source: art.source, frame: new Rectangle(cx, cy, cw, ch) });
+  } catch {
+    return art;
+  }
 }
 
 let warmRampTex: Texture | null | undefined;
@@ -1090,9 +1185,21 @@ function launchMotif(size: number): Motif {
  * ## 두 가지를 동시에 만족한다
  * 1. **같은 격자의 일원** — 반경 · 라벨 밴드 시작선(h×{@link TILE_BAND_RATIO}) · 접지 그림자
  *    2단 · 호버 리프트/부유가 건물 타일과 같은 값이다.
- * 2. **명백한 주인공** — 건물 타일이 "어두운 석재 판"이라면 이 칸은 **금색으로 빛나는 판**이다.
- *    비평 총평이 "상용 허브는 예외 없이 가장 밝은 화소가 눌러야 할 것 위에 있다"였는데, 그전까지
- *    이 화면에서 가장 밝은 곳은 아무것도 없는 좌하단 배경이었다.
+ * 2. **명백한 주인공** — 다만 그 지위는 **밝기 총량이 아니다**.
+ *
+ * ## ⚠️ 한때 "금색으로 빛나는 판"이었다 — 그게 실패였다(3차 판정 CRIT)
+ * 카드 전체를 금판으로 칠했더니 실측 평균 **L 207.2**, 이웃 타일 7장(75.5~94.4)의 **2.5배**,
+ * 화면에서 `L>170` 인 화소의 **62.7%** 가 이 카드 하나였다(제목 글리프는 1.9%). 화면을 처음
+ * 봤을 때 눈이 가는 곳이 제목도 건물도 아닌 노란 판이 됐다. 게다가 벡터로 그린 판이라 로컬
+ * std 0.90 · 죽은 평면 79.3% 로, 유화 7장 옆에서 **혼자 CSS 컴포넌트**로 보였다(가장 평평한
+ * 페인터리 타일보다 2배 평평·3배 매끈 — 그레이드나 필터로 메울 수 있는 격차가 아니다).
+ *
+ * 그래서 판 색·판 재질·글자 극성 셋 다 **이웃과 같게** 되돌렸다: 같은 석재 램프, 같은 붓으로
+ * 그린 전용 아트(`base_launch.webp` — 리드가 인자로 넘긴다), 어두운 라벨 밴드 + **밝은 금색**
+ * 글자. 주인공 표시는 ①한 단계 진한 금박 테두리 ②느린 얕은 맥동 ③아트 자체의 서사(열린
+ * 발사 게이트)뿐이다.
+ *
+ * 아트가 없으면 절차적 엠블럼으로 폴백한다 — 자산은 덧붙임이지 전제가 아니다(§0-6).
  *
  * 반환 타입은 {@link HeroButton} 그대로다 — 리드가 타일과 같은 방식으로 `update(dt)` 를 돌린다.
  */
@@ -1102,6 +1209,7 @@ export function makeHeroTile(
   label: string,
   sub: string,
   onClick: () => void,
+  art?: Texture,
 ): HeroButton {
   const radius = Math.max(6, Math.round(Math.min(w, h) * TILE_RADIUS_RATIO));
   const pad = Math.round(w * TILE_PAD_RATIO);
@@ -1143,48 +1251,84 @@ export function makeHeroTile(
     glow.position.set(w / 2, h * 0.46);
     glow.tint = GLOW_TINT;
     glow.blendMode = 'add';
-    glow.alpha = GLOW_BASE;
+    glow.alpha = TILE_GLOW_BASE;
     inner.addChild(glow);
   }
 
-  // --- 금판 ----------------------------------------------------------------------
-  const plateTex = heroPlate(w, h, radius);
-  if (plateTex !== null) {
-    const plate = new Sprite(plateTex);
-    plate.width = w;
-    plate.height = h;
-    inner.addChild(plate);
+  // --- 카드 내용물(둥근 모서리 클리핑) ---------------------------------------------
+  const clip = new Container();
+  const clipMask = new Graphics();
+  clipMask.roundRect(0, 0, w, h, radius).fill({ color: 0xffffff });
+  inner.addChild(clip);
+  inner.addChild(clipMask);
+  clip.mask = clipMask;
+
+  // 바탕 — 이웃 타일과 **같은** 따뜻한 석재 램프.
+  const body = bodyRamp();
+  if (body !== null) {
+    const bg = new Sprite(body);
+    bg.width = w;
+    bg.height = h;
+    clip.addChild(bg);
   } else {
-    const g = new Graphics();
-    g.roundRect(0, 0, w, h, radius)
-      .fill({ color: GOLD })
-      .stroke({ color: GROOVE, width: 3, alpha: 0.8 });
-    inner.addChild(g);
+    const bg = new Graphics();
+    bg.rect(0, 0, w, h).fill({ color: 0x3f2e1e });
+    clip.addChild(bg);
   }
 
-  // --- 모티프(라벨 밴드 위쪽 영역의 중앙) -----------------------------------------
-  const motif = launchMotif(Math.min(w, bandY) * 0.72);
-  motif.view.position.set(w / 2, bandY * 0.5);
-  inner.addChild(motif.view);
-
-  // --- 라벨 밴드 ------------------------------------------------------------------
-  // 금판 위에 글자를 그냥 놓으면 밝기 차가 모자라 라벨이 판에 녹는다. 색온도를 유지한 채
-  // 밝기만 누르는 따뜻한 램프를 깔고, 경계에 청동 각인선을 새겨 건물 타일 seam 과 짝을 맞춘다.
-  const ramp = warmRamp();
-  if (ramp !== null) {
-    const feather = Math.round(h * 0.1);
-    const band = new Sprite(ramp);
-    band.position.set(0, bandY - feather);
-    band.width = w;
-    band.height = h - bandY + feather;
-    inner.addChild(band);
+  // --- 아트 밴드(또는 절차적 엠블럼 폴백) -------------------------------------------
+  let motif: Motif | null = null;
+  if (art !== undefined) {
+    const sprite = new Sprite(cropToAspect(art, w, bandY));
+    sprite.anchor.set(0.5);
+    sprite.position.set(w / 2, bandY / 2);
+    sprite.width = w;
+    sprite.height = bandY;
+    clip.addChild(sprite);
+  } else {
+    // 폴백: 짙은 호박 바닥 + 각인 엠블럼. 전용 아트가 없어도 "발사"가 읽혀야 한다.
+    const ramp = warmRamp();
+    if (ramp !== null) {
+      const ground = new Sprite(ramp);
+      ground.position.set(0, 0);
+      ground.width = w;
+      ground.height = bandY;
+      ground.scale.y = -Math.abs(ground.scale.y); // 위가 짙고 아래로 열리게 뒤집는다.
+      ground.position.set(0, bandY);
+      clip.addChild(ground);
+    }
+    motif = launchMotif(Math.min(w, bandY) * 0.72);
+    motif.view.position.set(w / 2, bandY * 0.5);
+    clip.addChild(motif.view);
   }
+
+  // 아트 → 라벨 페더. 종착색이 그 지점의 바탕색과 정확히 같아 색 계단이 원리적으로 없다.
+  const fade = bandFade();
+  const feather = Math.max(12, Math.round(h * TILE_FEATHER_RATIO));
+  if (fade !== null) {
+    const f = new Sprite(fade);
+    f.position.set(0, bandY - feather);
+    f.width = w;
+    f.height = feather;
+    clip.addChild(f);
+  }
+
+  // 호버 온기(가산) — tint 는 곱연산이라 밝힐 수 없다.
+  const warm = new Graphics();
+  warm.rect(0, 0, w, bandY).fill({ color: 0xffe0a8 });
+  warm.blendMode = 'add';
+  warm.alpha = 0;
+  clip.addChild(warm);
+
+  // --- 아트/라벨 경계 각인선(이웃과 같은 문법) --------------------------------------
   const seam = new Graphics();
-  seam.rect(pad * 0.6, bandY, w - pad * 1.2, 1.5).fill({ color: BRONZE, alpha: 0.55 });
+  seam.rect(0, bandY, w, 1).fill({ color: SEAM_GOLD, alpha: 0.4 });
   inner.addChild(seam);
 
   // --- 타이포 ---------------------------------------------------------------------
-  // ⚠️ 밝은 금 바탕에 흰 글씨는 묻힌다 — 진한 갈색이 계약이다. 자간 0(한글 트래킹 금지).
+  // ⚠️ **글자 극성을 이웃과 맞춘다.** 금판 시절에는 밝은 판 + 어두운 글자였는데, 어두운 판 +
+  // 밝은 글자인 이웃 7장 사이에서 그 반전 하나가 "혼자 다른 컴포넌트" 신호의 절반이었다
+  // (3차 판정 CRIT·N2). 주인공 표시는 색상(금)과 굵기로만 준다.
   const labelSize = Math.min(44, Math.max(24, Math.round(h * 0.105)));
   const subSize = Math.min(20, Math.max(12, Math.round(h * 0.048)));
   const wrapW = w - pad * 2;
@@ -1196,11 +1340,12 @@ export function makeHeroTile(
       fontFamily: UI_FONT,
       fontSize: labelSize,
       fontWeight: '800',
-      fill: COLOR.darkLabel,
+      fill: GOLD,
       align: 'center',
       wordWrap: true,
       wordWrapWidth: wrapW,
       lineHeight: Math.round(labelSize * 1.14),
+      dropShadow: { color: 0x000000, alpha: 0.8, blur: 5, distance: 2, angle: Math.PI / 2 },
     },
   });
   title.anchor.set(0.5, 0);
@@ -1212,12 +1357,13 @@ export function makeHeroTile(
       fontFamily: UI_FONT,
       fontSize: subSize,
       fontWeight: '600',
-      // 라벨보다 한 단 옅은 청동 — 금판 위 위계는 크기와 **채도**가 만든다.
-      fill: 0x6b4412,
+      // 이웃 설명문(회갈)보다 한 단 따뜻한 모래색 — 같은 위계에 있되 이 칸이 금 계열임을 잇는다.
+      fill: 0xc7b291,
       align: 'center',
       wordWrap: true,
       wordWrapWidth: wrapW,
       lineHeight: Math.round(subSize * 1.4),
+      dropShadow: TEXT_SHADOW,
     },
   });
   subText.anchor.set(0.5, 0);
@@ -1233,6 +1379,19 @@ export function makeHeroTile(
   subText.position.set(w / 2, blockTop + titleH + gap);
   inner.addChild(title);
   inner.addChild(subText);
+
+  // --- 테두리: 안쪽 어두운 홈 + 금박 헤어라인 ----------------------------------------
+  // 이웃 타일과 같은 구조이되 금박만 **한 단계 진하다**(폭 1.5→2.4 · 알파 0.5→0.85).
+  // 밝기 총량을 늘리지 않고 "이 칸이 주인공"이라고 말하는 가장 싼 방법이다.
+  const grooveW = Math.max(2, Math.round(Math.min(w, h) * 0.009));
+  const edge = new Graphics();
+  edge
+    .roundRect(grooveW / 2, grooveW / 2, w - grooveW, h - grooveW, radius - grooveW / 2)
+    .stroke({ color: GROOVE, width: grooveW, alpha: 0.9 });
+  edge
+    .roundRect(0, 0, w, h, radius)
+    .stroke({ color: GOLD_LIT, width: 2.4, alignment: 1, alpha: 0.85 });
+  inner.addChild(edge);
 
   // --- 호버 림 --------------------------------------------------------------------
   const rim = new Graphics();
@@ -1268,11 +1427,12 @@ export function makeHeroTile(
     const bob = Math.sin((time / TILE_FLOAT_PERIOD) * Math.PI * 2) * floatAmp;
     inner.y = bob - lift * hover;
     rim.alpha = 0.75 * hover;
-    motif.update(time);
+    warm.alpha = 0.085 * hover;
+    motif?.update(time);
 
     if (glow !== null) {
       const pulse = 0.5 + 0.5 * Math.sin((time / TILE_PULSE_PERIOD) * Math.PI * 2);
-      glow.alpha = GLOW_BASE + GLOW_AMPL * pulse + GLOW_HOVER * hover;
+      glow.alpha = TILE_GLOW_BASE + TILE_GLOW_AMPL * pulse + TILE_GLOW_HOVER * hover;
     }
 
     for (const { sprite, bake } of shadows) {
