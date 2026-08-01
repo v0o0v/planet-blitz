@@ -18,10 +18,12 @@
  * `defaultProfile()` 대신 표준 액티브 세트를 꽂는 한 줄만 추가하면 된다.
  */
 
-import { createWorld, stepWorld } from '../../sim/world.js';
+import { createWorld, stepWorld, hazardActive } from '../../sim/world.js';
 import type { WorldState } from '../../sim/world.js';
 import type { Entity } from '../../sim/entities.js';
 import { PLANET_MODE } from '../../sim/planetMode.js';
+import { RACING_REAR_PRESSURE_MARGIN } from '../../sim/modes/racing.js';
+import { INVASION_WINDOW_HALF_W } from '../../sim/invasion/scroll.js';
 import { autopilotInput } from '../../sim/autopilot.js';
 import { buildRunConfig } from '../../run/runConfig.js';
 import { defaultProfile, activeShip } from '../../save/profile.js';
@@ -106,6 +108,104 @@ function observeBoss(state: WorldState, t: RunTrace): void {
 }
 
 /**
+ * 뒤 경계 압박 관측(레이싱 전용).
+ *
+ * `racingRearPressure`(`src/sim/modes/racing.ts`)와 **같은 부등식**을 쓴다 — 판정을 베껴 적는
+ * 대신 상수를 그쪽에서 가져오므로, 압박 구역 정의가 바뀌면 이 관측도 함께 따라간다. sim 을
+ * 한 바이트도 건드리지 않고(관측 전용) 런 밖에서 세므로 해시·거동에 영향이 없다.
+ */
+function observeRearPin(state: WorldState, t: RunTrace): void {
+  if (state.config.planetMode !== PLANET_MODE.racing) return;
+  const rt = state.scrollRuntime;
+  const player = state.entities[0];
+  if (rt === undefined || player === undefined || player.dead) return;
+  const rearX = rt.scrollX - INVASION_WINDOW_HALF_W;
+  if (player.x - rearX <= RACING_REAR_PRESSURE_MARGIN) t.rearPinTicks++;
+}
+
+/**
+ * 이번 틱에 잃은 선체 HP 를 **피해원에 귀속**시킨다(관측 전용).
+ *
+ * ## 왜 필요한가
+ * "무엇이 플레이어를 죽이는가"를 sim 밖에서 답하기 위해서다. 톡사르(오염)에서 웨이브 유입과
+ * 오염 지형 피해를 각각 극단값으로 프로브했는데 **둘 다 무반응**이었다 — 즉 사인이 그 둘이
+ * 아닌데도 수치만 계속 만지면 없는 문제를 튜닝하게 된다.
+ *
+ * ## 귀속 규칙 — sim 과 같은 "겹친 피해원 중 최대"
+ * `resolveCollisions` 는 한 틱에 겹친 피해원들의 `damage` **최댓값** 하나만 적용한다. 여기서도
+ * 같은 규칙으로 지형(활성 해저드)과 접촉(적·보스·수호 몸통)의 최대치를 비교한다. 술어
+ * `hazardActive` 는 sim 에서 import 한다(베껴 적으면 그쪽이 바뀔 때 관측이 조용히 거짓말한다).
+ *
+ * ## ⚠️ 탄은 잔차다 — 그래서 **피해량 대조**로 과대계상을 막는다
+ * 적탄은 명중한 틱에 `dead` 로 지워지고 `compact()` 가 배열에서 뺀다. 즉 **스텝이 끝난 뒤에는
+ * 그 탄이 없다**. 그래서 탄은 독립 버킷이 아니라 잔차(1 − 지형 − 접촉)로 읽는다.
+ *
+ * 겹침만 보면 과대계상이 난다 — 자유추적 무대의 봇은 장판 위에 서 있는 시간이 길어서, 실제로
+ * 죽인 것이 탄이어도 "지형이 겹쳐 있었다"는 이유로 지형에 실린다. 그래서 **후보의 `damage` 가
+ * 이번에 잃은 HP 이상일 때만** 그 후보를 범인으로 인정한다. 적용치는 감액(장갑·막)만 받고
+ * 절대 커지지 않으므로, `damage < 잃은 HP` 인 후보는 **원리적으로** 범인이 될 수 없다.
+ * 남는 모호함은 두 후보가 모두 조건을 만족하는 경우뿐이고 그때는 sim 과 같은 최대 규칙을 쓴다.
+ */
+function attributeHpLoss(state: WorldState, player: Entity, lost: number, t: RunTrace): void {
+  t.hpLost += lost;
+  let hazardMax = 0;
+  let contactMax = 0;
+  for (const e of state.entities) {
+    if (e.dead || e === player) continue;
+    const isHazard = e.kind === 'hazard' && hazardActive(e);
+    const isBody =
+      e.kind === 'enemy' || e.kind === 'boss' || e.kind === 'guardian' || e.kind === 'defenseBoss';
+    if (!isHazard && !isBody) continue;
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    const r = e.radius + player.radius;
+    if (dx * dx + dy * dy > r * r) continue;
+    if (isHazard) {
+      if (e.damage > hazardMax) hazardMax = e.damage;
+    } else if (e.damage > contactMax) contactMax = e.damage;
+  }
+  // `damage < lost` 인 후보는 범인일 수 없다(적용치는 감액만 받는다). 둘 다 가능하면 sim 과
+  // 같은 최대 규칙. 아무도 조건을 못 채우면 잔차 = 탄이다.
+  const hazardCan = hazardMax >= lost;
+  const contactCan = contactMax >= lost;
+  if (hazardCan && hazardMax >= contactMax) t.hpLostHazard += lost;
+  else if (contactCan) t.hpLostContact += lost;
+}
+
+/**
+ * 표준 장비 롤에 쓸 시드. **런 시드에 기체를 섞는다.**
+ *
+ * ## 왜 필요한가 — 한 레벨의 장비 표본이 7배 부풀려져 있었다 (2026-08-02 실측)
+ * `standardEquipped(level, seed, planet)` 은 기체를 인자로 받지 않는다. 그래서 예전에는 한
+ * 라운드(시드 하나) 안에서 **기체 7종이 모두 똑같은 장비**로 돌았다. 셀당 표본이 11시드라면
+ * `(행성, 레벨)` 한 점의 런은 77건이지만 **장비 추첨은 11번뿐**이다 — 즉 유효 표본이 √7 배
+ * 부풀려져 있었다.
+ *
+ * 그리고 이 무대들에서 승패는 사실상 장비 추첨이 정한다. 실측(3,780런 격자)에서 시드별 승수가
+ * 톡사르 Lv25 는 `0/7 ×9, 6/7, 7/7`, 크라스 Lv25 는 `0/7` 아니면 `6~7/7` 로 **거의 완전한
+ * 이분**이었다 — 기체가 아니라 시드가 결과를 가른다. 표준 세트의 피해 배율이 주무기 타입
+ * 추첨 때문에 시드 간 2배 가까이 벌어지고, 목표 게이트형 무대는 그 위에 DPS 문턱을 세우기
+ * 때문이다(밸런스 큐 R8).
+ *
+ * 그 상태에서 **레벨별** 클리어율 게이트를 읽으면 장비 운이 레벨 곡선의 굴곡으로 위장한다 —
+ * 실제로 Lv15·Lv70·Lv80 에 "전 기체 0%" 구멍이 보였고 그것이 구조적 약점처럼 읽혔다.
+ *
+ * ## 대가 — 기체 비교의 짝짓기를 포기한다
+ * 예전 배선은 기체 비교에서 장비를 통제(같은 장비로 7종 비교)하는 이점이 있었다. 로스터 편차는
+ * 기체당 전 행성·전 레벨 수백 런으로 접으므로 장비 운이 그 층에서 평균된다 — 반면 레벨별
+ * 게이트는 접을 곳이 없어 그대로 오염된다. 그래서 정밀도를 게이트 쪽에 준다.
+ *
+ * 혼합은 `standardBuild.ts` 의 `mix32` 와 같은 계열(SplitMix32)이다. 정수 연산만 쓰므로
+ * 결정론이 유지된다 — 같은 `(cell, seed)` 는 여전히 항상 같은 장비다.
+ */
+function gearSeed(cell: BalanceCell, seed: number): number {
+  let h = (seed ^ Math.imul(cell.ship + 1, 0x9e3779b9)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/**
  * 셀 한 칸을 시드 하나로 돌린다. 결정론적이다 — 같은 `(cell, seed)` 는 항상 같은 결과다.
  */
 export function runCellSeed(cell: BalanceCell, seed: number): CellRunResult {
@@ -114,7 +214,7 @@ export function runCellSeed(cell: BalanceCell, seed: number): CellRunResult {
   ship.typeId = cell.ship;
   ship.level = cell.level;
   ship.skillInvest = investVector(cell.ship, standardPerTree(cell.level));
-  ship.equipped = standardEquipped(cell.level, seed, cell.planet);
+  ship.equipped = standardEquipped(cell.level, gearSeed(cell, seed), cell.planet);
 
   const config = buildRunConfig(profile, {
     planet: cell.planet,
@@ -124,8 +224,15 @@ export function runCellSeed(cell: BalanceCell, seed: number): CellRunResult {
   const state = createWorld(seed, config);
   const trace = newTrace();
 
+  let prevHp = state.entities[0]?.hp ?? 0;
   for (let i = 0; i < MAX_TICKS; i++) {
     stepWorld(state, autopilotInput(state));
+    const player = state.entities[0];
+    if (player !== undefined) {
+      if (player.hp < prevHp) attributeHpLoss(state, player, prevHp - player.hp, trace);
+      prevHp = player.hp;
+    }
+    observeRearPin(state, trace);
     if (state.bossSpawned) observeBoss(state, trace);
     if (state.wave.segmentIndex > trace.maxSegment) trace.maxSegment = state.wave.segmentIndex;
     if (state.victory || state.gameOver) break;

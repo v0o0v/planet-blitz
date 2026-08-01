@@ -24,7 +24,7 @@ import { PLANET_MODE } from '../src/sim/planetMode.js';
 import { createScrollRuntime } from '../src/sim/scrollMode.js';
 import { blankEntity, spawnBreakableWall, spawnBullet } from '../src/sim/entities.js';
 import type { Entity, EntitySink } from '../src/sim/entities.js';
-import { INVASION_WINDOW_HALF_W } from '../src/sim/invasion/scroll.js';
+import { INVASION_WINDOW_HALF_W, INVASION_SCROLL_SPEED } from '../src/sim/invasion/scroll.js';
 import { SEGMENTS } from '../data/waves.js';
 import { MID_CLASH_LEADER_MARK } from '../src/sim/modes/midClash.js';
 import {
@@ -73,6 +73,18 @@ function stepBlockBreak(state: WorldState, base: InputFrame = idle): void {
 
 function emptySink(): EntitySink {
   return { entities: [], nextEntityId: 1 };
+}
+
+/**
+ * 코스를 끝까지 미는 데 필요한 틱 예산.
+ *
+ * ⚠️ 상수로 박으면 안 된다 — 페이싱 조정으로 `BLOCKBREAK_SECTION_LENGTH` 가 2,000 → 14,650 이
+ * 되자 예전 상수 1,600틱으로는 코스의 1/5 도 못 갔고, 테스트는 "보스가 안 뜬다"고 실패했다
+ * (계약이 깨진 게 아니라 예산이 낡은 것이다). 창은 최소 `INVASION_SCROLL_SPEED` 로 전진하므로
+ * 이 값이 상한이다. 여유는 보스 스폰 · 레벨업 프리즈 해소 · 벽 파괴 정체용.
+ */
+function courseTickBudget(): number {
+  return Math.ceil(blockBreakCourseLength() / INVASION_SCROLL_SPEED) + 1200;
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +282,7 @@ describe('블록격파 — 정규경로 통합(배선 실도달)', () => {
   it('(d)(e) 코스 끝에서 보스가 소환되고 처치 시 공통 승리(compact 재사용)로 victory 가 선다', () => {
     const w = createWorld(9, durableBlockBreak());
     let boss: Entity | undefined;
-    for (let i = 0; i < 1600; i++) {
+    for (let i = 0; i < courseTickBudget(); i++) {
       stepBlockBreak(w);
       killClashLeader(w); // 위 헬퍼 주석 참조(격전 세그먼트는 리더 처치로만 전진한다).
       boss = w.entities.find((e) => e.kind === 'boss');
@@ -285,7 +297,12 @@ describe('블록격파 — 정규경로 통합(배선 실도달)', () => {
     // 가 hp≤0 으로 깎아 dead 로 만들고 → compact 의 boss(invasion3 미존재) 분기가 victory 를
     // 세우는 end-to-end 사슬을 통과시킨다(보스는 코스 최상단, 마지막 벽 행 위라 벽 가림 없음).
     (boss as Entity).hp = 10;
-    for (let i = 0; i < 30 && !w.victory; i++) {
+    // ⚠️ 예산 30 → 600. 보스는 코스 끝 **창보다 앞**에 스폰되고(실측 약 1,100유닛), 창 밖에
+    // 스폰한 거대 시험탄은 스크롤 컬링이 그 틱에 지운다 — 즉 창이 보스에 닿기 전에는 어떤
+    // 시험탄도 명중할 수 없다. 창 속도가 `INVASION_SCROLL_SPEED` 이므로 그 간격을 좁히는 데만
+    // 100틱 안팎이 든다(구 예산 30틱은 코스가 짧아 간격이 작던 시절의 값이다). 계약("실제 피해
+    // 경로로 victory 가 선다")은 그대로고 관측 예산만 넓힌다.
+    for (let i = 0; i < 600 && !w.victory; i++) {
       const b = w.entities.find((e) => e.kind === 'boss');
       if (b !== undefined) spawnBullet(w, b.x, b.y, 0, 0, 1_000_000, 0, b.radius + 100, 120, 1, 0);
       stepBlockBreak(w);

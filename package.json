@@ -14,7 +14,9 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "balance": "node scripts/balance/run.mjs",
-    "balance:quick": "node scripts/balance/run.mjs --minutes=2"
+    "balance:quick": "node scripts/balance/run.mjs --minutes=2",
+    "balance:probe": "node scripts/balance/run.mjs --minutes=3",
+    "balance:compare": "node scripts/balance/compare.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",
