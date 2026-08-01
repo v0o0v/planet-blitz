@@ -60,13 +60,18 @@ describe('3D 모델 원장 ↔ 실물 대조', () => {
     expect([...onDisk].filter((f) => !listed.has(f))).toEqual([]);
   });
 
-  it('모든 항목이 재사용 키(refine task id)를 갖는다 — 잃으면 재생성뿐이다', () => {
+  it('모든 항목이 재사용 키를 갖는다 — 잃으면 재생성뿐이다', () => {
+    // 재사용 키의 이름은 **생성 경로에 따라 다르다**. text-to-3d 는 preview → refine 2단계라
+    // `refine` 이 최종 산출이지만, image-to-3d 에는 refine 단계가 아예 없고(텍스처가 한 번에
+    // 나온다) 그 단일 task id 가 retexture/remesh 의 input_task_id 로 그대로 쓰인다.
+    // 이름 하나만 강제하면 image-to-3d 자산은 원장에 올릴 방법이 없어진다 — 둘 중 하나를 요구한다.
+    const REUSE_KEYS = ['refine', 'imageTo3d'] as const;
     for (const m of manifest.models) {
-      const refine = m.meshy?.tasks?.refine;
-      expect(refine, `${m.id}: meshy.tasks.refine 누락`).toBeDefined();
-      expect(TASK_ID.test(refine ?? ''), `${m.id}: refine task id 형식 오류 — ${refine}`).toBe(
-        true,
-      );
+      const found = REUSE_KEYS.map((k) => m.meshy?.tasks?.[k]).filter((v) => v !== undefined);
+      expect(found.length, `${m.id}: meshy.tasks 에 ${REUSE_KEYS.join('/')} 중 하나가 있어야 한다`).toBeGreaterThan(0);
+      for (const id of found) {
+        expect(TASK_ID.test(id), `${m.id}: 재사용 task id 형식 오류 — ${id}`).toBe(true);
+      }
     }
   });
 

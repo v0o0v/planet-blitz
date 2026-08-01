@@ -257,6 +257,40 @@
         "bytes": 310452,
         "baseColor": "256x256"
       }
+    },
+    {
+      "id": "ship_title",
+      "file": "ship_title.glb",
+      "title": "타이틀 함선 — 무명 파일럿의 요격기",
+      "usedBy": "src/render/three3d/titleShip.ts (타이틀 화면 3D · 보스 아틀라스와 별도 렌더러)",
+      "meshy": {
+        "aiModel": "meshy-6",
+        "$comment": [
+          "보스 8종과 달리 **text-to-3d 가 아니라 image-to-3d** 다. 타이틀 키아트와 같은 붓으로",
+          "그린 컨셉아트를 먼저 만들고 그것을 3D 로 올려야 2D 배경과 톤이 어긋나지 않는다.",
+          "그래서 재사용 키가 tasks.refine 이 아니라 tasks.imageTo3d 다 — image-to-3d 에는",
+          "refine 단계 자체가 없고(should_texture 로 텍스처가 한 번에 나온다), 그 task id 하나가",
+          "retexture/remesh 의 input_task_id 로 그대로 쓰인다."
+        ],
+        "prompt": "Concept art of a small sci-fi fighter ship on a pure solid black background, three-quarter front view, hand-painted stylized game art style, not photoreal. Compact single-seat interceptor with swept wings, tarnished bronze and dark teal armor plating with worn edges, two forward cannons, glowing pale cyan engine thrusters at the rear, faint ancient alien rune etchings on the hull.",
+        "texturePrompt": "Tarnished bronze and dark teal armor plating with worn chipped edges, faint glowing pale cyan rune etchings on the hull panels, bright cyan engine thruster nozzles, stylized game asset, not photoreal",
+        "tasks": {
+          "concept": "019fbdc7-8f35-736d-908d-3ecdb9e8cbf2",
+          "imageTo3d": "019fbdca-2fa8-73ba-9d4c-42f0e9990cd8"
+        },
+        "credits": {
+          "concept": 9,
+          "imageTo3d": 30,
+          "total": 39
+        },
+        "createdAt": "2026-08-02"
+      },
+      "prep": "node scripts/glb-prep.mjs <image-to-3d 다운로드>.glb --out assets/models/ship_title.glb --color 384 --normal 192 --image 0=<다운로드>_base_color.png",
+      "geometry": {
+        "triangles": 12256,
+        "bytes": 975788,
+        "baseColor": "384x384"
+      }
     }
   ],
   "reuseRecipes": {
