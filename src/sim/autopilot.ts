@@ -19,7 +19,7 @@ import type { InputFrame, WorldState } from './world.js';
 import { SPECIAL_NONE, packPowerupPick } from './world.js';
 import type { Entity } from './entities.js';
 import { atan2, length } from './math.js';
-import { isCounterDevice } from './modes/chase.js';
+import { isObjectiveDestructible } from './modes/objective.js';
 import { PLANET_MODE } from './planetMode.js';
 
 /** 적탄이 '위협'으로 간주되는 최대 거리(월드 단위). 이 안에서 접근 중인 탄만 회피한다. */
@@ -60,16 +60,17 @@ export function autopilotInput(world: WorldState): InputFrame {
     return { moveX: dodge.x, moveY: dodge.y, aim, dash: false, special: SPECIAL_NONE };
   }
 
-  // ② 목표물 우선: 추격 모드에서 반격 장치가 남아 있으면 **가장 가까운 장치로 곧장 붙는다**.
+  // ② 목표물 우선: 무대 진행이 걸린 파괴 대상이 남아 있으면 **가장 가까운 것으로 곧장 붙는다**
+  //    (추격 반격 장치 · 오염 노드 — 정본은 `modes/objective.ts`).
   //
   // 카이팅(③)으로는 이 목표를 영영 달성하지 못한다. 장치는 정지 표적이고 적은 플레이어에게
   // 몰려오므로, 자동 조준의 "사거리 안 최근접"은 거의 언제나 적이 이긴다 — 즉 장치 옆에 서
   // 있는 것만으로는 한 발도 장치에 가지 않는다. 그래서 목표 거리를 두지 않고 장치에 겹칠
   // 때까지 접근한다(장치 반경 70 이면 접촉한 적이 아닌 한 장치가 최근접이 된다).
   //
-  // ⚠️ 이 분기는 **추격 런에만** 존재한다(반격 장치는 `placeChaseCourse` 만 만든다). 다른
-  // 무대의 봇 거동·해시는 바이트 불변이다 — 오토파일럿 리플레이 기준선이 그것에 의존한다.
-  const device = nearestCounterDevice(world, player);
+  // ⚠️ 이 분기는 **목표 오브젝트가 있는 무대에만** 존재한다. 그 오브젝트를 만들지 않는 무대
+  // (뱀서류·수축·레이싱·블록격파·침공)의 봇 거동·해시는 바이트 불변이다.
+  const device = nearestObjective(world, player);
   if (device !== undefined) {
     const dx = device.x - player.x;
     const dy = device.y - player.y;
@@ -141,17 +142,19 @@ function nearestTarget(world: WorldState, player: Entity): Entity | undefined {
 }
 
 /**
- * 살아 있는 최근접 반격 장치(추격 모드 전용). 추격 모드가 아니면 엔티티를 훑지도 않는다 —
- * 다른 무대에서 이 함수는 항상 `undefined` 이므로 거동·비용이 모두 불변이다.
+ * 살아 있는 최근접 **목표 오브젝트**(추격 반격 장치 · 오염 노드). 그 오브젝트를 쓰는 모드가
+ * 아니면 엔티티를 훑지도 않는다 — 다른 무대에서 이 함수는 항상 `undefined` 라 거동·비용이
+ * 모두 불변이다.
  *
  * 동률은 id 오름차순으로 깨 플랫폼 순회 순서에 의존하지 않는다(`nearestTarget` 과 동일 규약).
  */
-function nearestCounterDevice(world: WorldState, player: Entity): Entity | undefined {
-  if (world.config.planetMode !== PLANET_MODE.chase) return undefined;
+function nearestObjective(world: WorldState, player: Entity): Entity | undefined {
+  const mode = world.config.planetMode;
+  if (mode !== PLANET_MODE.chase && mode !== PLANET_MODE.contamination) return undefined;
   let best: Entity | undefined;
   let bestD = Infinity;
   for (const e of world.entities) {
-    if (e.dead || !isCounterDevice(e)) continue;
+    if (e.dead || !isObjectiveDestructible(e)) continue;
     const dx = e.x - player.x;
     const dy = e.y - player.y;
     const d = dx * dx + dy * dy;

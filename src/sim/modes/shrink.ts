@@ -34,13 +34,13 @@ import type { WorldState } from '../world.js';
 
 // --- 플레이스홀더 계수 (TODO(밸런스): 출시 전 일괄 튜닝, 구조만 고정) ---
 /** 안전 반경 시작값(월드 유닛, 정수). 원점 0,0 기준. TODO(밸런스). */
-export const SHRINK_INITIAL_RADIUS = 2000;
+export const SHRINK_INITIAL_RADIUS = 4000;
 /** 안전 반경 하한(정수). 수축이 이 값에서 멈춘다(0 으로 조이면 코어가 붕괴). TODO(밸런스). */
 export const SHRINK_MIN_RADIUS = 600;
 /** 유예 소진 후 매 틱 반경 감소량(정수). 정수 뺄셈뿐 — 부동소수 금지. TODO(밸런스). */
 export const SHRINK_RATE_PER_TICK = 1;
 /** 세그먼트 전진 직후 부여되는 유예 틱(정수). 이 동안 반경이 홀드된다(숨돌릴 틈). TODO(밸런스). */
-export const SHRINK_GRACE_TICKS = 120;
+export const SHRINK_GRACE_TICKS = 240;
 /** 안전 반경 밖 지속 피해(iframes 간격 적용, 즉사 아님). TODO(밸런스). */
 export const SHRINK_OUT_OF_BOUNDS_DAMAGE = 8;
 /**
@@ -49,7 +49,7 @@ export const SHRINK_OUT_OF_BOUNDS_DAMAGE = 8;
  * shrinkRingCleared 가 즉시 true 가 되어 세그먼트가 헛돈다). 시작값 < SHRINK_INITIAL_RADIUS.
  * TODO(밸런스).
  */
-export const SHRINK_SPAWN_RING_RADIUS = 1400;
+export const SHRINK_SPAWN_RING_RADIUS = 3000;
 /**
  * 스폰 링 인셋(safeRadius 경계에서 안쪽으로 당기는 정수 여유). ⚠️ 결정론용 Taylor sin/cos
  * (`math.ts`)는 **모든 각도에서 cos²+sin²>1**(20M 각도 전수 실측 최대 1.0000071)이라, 경계

@@ -80,11 +80,19 @@ export interface RunTrace {
   bossHp0: number;
   /** 마지막으로 본 보스 hp(-1 = 미관측). */
   bossHpLast: number;
+  /**
+   * **보스와 교전 가능해진 첫 틱**(-1 = 끝까지 미도달).
+   *
+   * "보스전까지 몇 초인가"의 정본이다. 클리어초는 보스전 소요까지 포함하므로 페이싱 목표
+   * (무대당 보스 도달 90초)를 직접 재지 못한다. 모드마다 이 시점의 실체가 다르다 —
+   * 추격은 포식자 취약화, 그 외는 보스 세그먼트 스폰이다(`cell.ts` `bossEngageable`).
+   */
+  bossReachTick: number;
 }
 
 /** 새 trace 를 만든다. */
 export function newTrace(): RunTrace {
-  return { sawBoss: false, maxSegment: 0, bossTicks: 0, bossHp0: -1, bossHpLast: -1 };
+  return { sawBoss: false, maxSegment: 0, bossTicks: 0, bossHp0: -1, bossHpLast: -1, bossReachTick: -1 };
 }
 
 /**
@@ -188,6 +196,19 @@ export const RUN_METRICS: Readonly<Record<string, MetricDef>> = {
     kind: 'mean',
     digits: 2,
     of: (s) => s.entities.reduce((n, e) => (!e.dead && e.kind === 'loot' ? n + 1 : n), 0),
+  },
+  /**
+   * **보스 도달까지 걸린 초.** 페이싱 목표(무대당 90초)의 판정 지표다.
+   *
+   * `winPosMean`(승리 런 중 양수만)인 이유는 두 가지다: ① 보스에 못 간 런은 -1/0 이라 섞으면
+   * 뜻이 무너진다 ② 패배 런은 "도달 못 하고 죽은 시점"이라 페이싱과 다른 축이다. 승리 런의
+   * 도달 시각이 곧 "정상적으로 무대를 통과하는 데 걸린 시간"이다.
+   */
+  bossReachSec: {
+    label: '보스도달초',
+    kind: 'winPosMean',
+    unit: 's',
+    of: (_s, t) => (t.bossReachTick >= 0 ? t.bossReachTick / 60 : 0),
   },
   metaXp: { label: '메타XP', kind: 'mean', digits: 0, of: (s) => s.xpTotal },
   kills: { label: '처치', kind: 'mean', digits: 0, of: (s) => s.kills },

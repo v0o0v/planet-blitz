@@ -73,7 +73,7 @@ export const CHASE_COUNTER_DEVICE_COUNT = 5;
  * 적 HP 와 같은 앵커(`stageHpMult`)를 쓰는 이유는 ADR-0037("난이도 곡선은 적 축에서만")과
  * 정합하기 위해서다 — 장치는 이 무대에서 적 HP 가 맡는 역할(TTK 예산)을 대신 진다.
  */
-export const CHASE_COUNTER_DEVICE_HP_BASE = 14000;
+export const CHASE_COUNTER_DEVICE_HP_BASE = 47000;
 
 /**
  * 단계 기울기 **감쇠 계수**. 장치 HP 는 `stageHpMult` 를 그대로 타지 않고 이 비율만큼만 탄다.

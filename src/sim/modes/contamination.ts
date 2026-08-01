@@ -36,7 +36,7 @@ import { cos, sin, TWO_PI } from '../math.js';
 /** 오염 노드 수(= 정화율 분모, createWorld 가 정확히 이만큼 배치). TODO(밸런스). */
 export const CONTAMINATION_NODE_COUNT = 10;
 /** 오염 노드 HP(아군탄이 깎아 파괴 = 정화). TODO(밸런스). */
-export const CONTAMINATION_NODE_HP = 30;
+export const CONTAMINATION_NODE_HP = 120;
 /** 오염 노드 반경(조준·피격 판정). TODO(밸런스). */
 export const CONTAMINATION_NODE_RADIUS = 60;
 /** 노드 파괴 시 드랍 젬 XP(destructible 기존 드랍 경로). TODO(밸런스). */
