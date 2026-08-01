@@ -167,17 +167,45 @@ export function tilePosition(i: number): { x: number; y: number } {
  */
 export function veilRects(): readonly { x0: number; y0: number; x1: number; y1: number }[] {
   const [cols0, cols1] = rowSplit(CELLS);
-  const span = (cols: number): { x0: number; x1: number } => {
-    const w = cols * TILE_W + (cols - 1) * TILE_GAP;
-    const x0 = (DESIGN_WIDTH - w) / 2;
-    return { x0, x1: x0 + w };
-  };
-  const a = span(cols0);
-  const b = span(cols1);
+  const a = rowSpan(cols0);
+  const b = rowSpan(cols1);
   return [
     { x0: a.x0, y0: ROW1_Y, x1: a.x1, y1: ROW1_Y + TILE_H },
     { x0: b.x0, y0: ROW2_Y, x1: b.x1, y1: ROW2_Y + TILE_H },
   ];
+}
+
+/** 한 행(칸 `cols` 개)이 차지하는 x 구간. 행 가운데 정렬. */
+function rowSpan(cols: number): { x0: number; x1: number } {
+  const w = cols * TILE_W + (cols - 1) * TILE_GAP;
+  const x0 = (DESIGN_WIDTH - w) / 2;
+  return { x0, x1: x0 + w };
+}
+
+/**
+ * 거터에 세우는 석재 리브 — **격자에서 파생한다.**
+ *
+ * ## 왜 배경이 아니라 크롬이 거터를 그리는가
+ * 4라운드까지 거터의 어둠은 배경 원화에 맡겨져 있었다. 그런데 원화에는 밝은 세로 대역이
+ * **있었고**, 그게 하필 카드 뒤에 깔리고 어두운 대역이 거터에 깔렸다 — 원화의 주기와 격자의
+ * 주기(458px)가 안 맞았던 것이다. 그 결과 배경이 가로로는 밝고(47) 세로로는 어두워(24~32)
+ * 격자 뒤에 **가로 줄무늬**가 생겼다(AAA 비평 4라운드 실측).
+ *
+ * 증폭으로는 못 푼다. AAA 허브가 실제로 쓰는 방식은 원화 위에 격자를 얹는 것이 아니라
+ * **격자를 담는 크롬을 그리고 그 뒤에 원화를 두는 것**이다. 리브가 있으면 어떤 배경을 끼워도
+ * 거터 주기가 격자 주기와 영구히 일치한다 — 배경 재생성의 성패에 화면이 걸리지 않는다.
+ */
+export function ribLines(): readonly { x: number; y0: number; y1: number }[] {
+  const [cols0] = rowSplit(CELLS);
+  const { x0 } = rowSpan(cols0);
+  const y0 = ROW1_Y;
+  const y1 = ROW2_Y + TILE_H;
+  const out: { x: number; y0: number; y1: number }[] = [];
+  // 칸과 칸 사이마다 하나. 첫 행 기준이면 충분하다 — 두 행의 칸 수가 같기 때문이다.
+  for (let i = 1; i < cols0; i++) {
+    out.push({ x: x0 + i * (TILE_W + TILE_GAP) - TILE_GAP / 2, y0, y1 });
+  }
+  return out;
 }
 
 export class BaseMapScreen {
@@ -317,7 +345,10 @@ export class BaseMapScreen {
     this.root.addChild(bg);
 
     // --- 배경(격납고 홀 + 공기 + 중앙 베일) ---
-    const backdrop = new BaseBackdrop(this.art[BASE_BACKDROP_NAME], { veilRects: veilRects() });
+    const backdrop = new BaseBackdrop(this.art[BASE_BACKDROP_NAME], {
+      veilRects: veilRects(),
+      ribs: ribLines(),
+    });
     this.root.addChild(backdrop.view);
     this.backdrop = backdrop;
 
