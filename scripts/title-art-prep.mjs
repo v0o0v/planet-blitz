@@ -23,11 +23,17 @@
  *   window   <master.png> <out.png> [--inset 2] [--feather 3]
  *       마스터에 **아치 개구부만 투명한 창**을 뚫은 전경 판을 만든다. 이 한 장이 패럴랙스의
  *       맨 앞 레이어이고, 그 뒤에서 하늘·행성·3D 함선이 창을 통해 움직인다.
- *   keyblack <src.png> <out.png> [--threshold 24] [--feather 2]
+ *   keyblack <src.png> <out.png> [--threshold 24] [--feather 2] [--trim 1]
  *       순검정 배경 위 요소(행성·로고·함선 컨셉)를 **테두리에서 시작하는 flood fill** 로
  *       뽑는다. 휘도 임계로 자르지 않는 이유는 요소 **내부의 어두운 부분**(행성 야간면,
  *       금속 그림자)이 함께 뚫려 버리기 때문이다. 배경 검정은 테두리와 연결돼 있고 내부
  *       어두운 픽셀은 그렇지 않다 — 연결성이 휘도보다 정확한 판별식이다.
+ *
+ *       `--trim 1` 이면 **투명 여백을 잘라낸다**. 이게 중요한 이유: 잘라내지 않으면 자산의
+ *       기하 중심과 **그림의 중심이 다르다**. 로고 원본은 1536×1024 인데 글자는 가운데 띠에만
+ *       있어서, 폭을 1180 으로 맞추면 높이가 787 이 되고 글자는 그 한가운데(화면 y≈490)에
+ *       놓인다 — 상단에 두려고 y=96 을 줬는데 화면 한복판에 떠서 행성을 가렸다(실측).
+ *       여백을 자르면 스프라이트 박스 = 그림이라 좌표가 그대로 의도한 자리를 가리킨다.
  *   probe    <master.png> <out_debug.png>
  *       개구부 판정 결과를 자홍으로 칠한 확인용 이미지를 낸다(눈으로 검증할 때만).
  *
@@ -216,18 +222,45 @@ function cmdKeyBlack(srcPath, outPath, opts) {
   }
   const soft = feather(alpha, width, height, opts.feather);
 
-  const out = new Uint8Array(n * 4);
+  const rgba = new Uint8Array(n * 4);
   let opaque = 0;
   for (let i = 0; i < n; i++) {
-    out[i * 4] = pixels[i * 4];
-    out[i * 4 + 1] = pixels[i * 4 + 1];
-    out[i * 4 + 2] = pixels[i * 4 + 2];
+    rgba[i * 4] = pixels[i * 4];
+    rgba[i * 4 + 1] = pixels[i * 4 + 1];
+    rgba[i * 4 + 2] = pixels[i * 4 + 2];
     const a = Math.max(0, Math.min(255, Math.round(soft[i])));
-    out[i * 4 + 3] = a;
+    rgba[i * 4 + 3] = a;
     if (a > 200) opaque++;
   }
-  writeFileSync(outPath, encodePng({ width, height, colorType: 6, channels: 4, pixels: out }));
-  console.log(`[keyblack] ${outPath} ${width}x${height} opaque=${((opaque / n) * 100).toFixed(1)}%`);
+
+  // 투명 여백 잘라내기 — 스프라이트 박스와 그림을 일치시킨다(헤더 `--trim` 참조).
+  let ow = width, oh = height, out = rgba;
+  if (opts.trim) {
+    const VISIBLE = 8; // 페더 꼬리(알파 1~7)까지 여백으로 본다 — 안 그러면 거의 안 잘린다.
+    let minX = width, minY = height, maxX = -1, maxY = -1;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (rgba[(y * width + x) * 4 + 3] < VISIBLE) continue;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+    if (maxX < 0) throw new Error(`${srcPath}: 불투명 픽셀이 없다 — 배경 판정이 전부 먹었다`);
+    ow = maxX - minX + 1;
+    oh = maxY - minY + 1;
+    out = new Uint8Array(ow * oh * 4);
+    for (let y = 0; y < oh; y++) {
+      const src = ((y + minY) * width + minX) * 4;
+      out.set(rgba.subarray(src, src + ow * 4), y * ow * 4);
+    }
+  }
+
+  writeFileSync(outPath, encodePng({ width: ow, height: oh, colorType: 6, channels: 4, pixels: out }));
+  console.log(
+    `[keyblack] ${outPath} ${ow}x${oh}${opts.trim ? ` (trim ${width}x${height})` : ''} opaque=${((opaque / n) * 100).toFixed(1)}%`,
+  );
 }
 
 // --- entry -------------------------------------------------------------------
@@ -251,8 +284,12 @@ if (cmd === 'window') {
   if (positional.length < 2) throw new Error('usage: probe <master.png> <out_debug.png>');
   cmdProbe(positional[0], positional[1]);
 } else if (cmd === 'keyblack') {
-  if (positional.length < 2) throw new Error('usage: keyblack <src.png> <out.png> [--threshold N] [--feather N]');
-  cmdKeyBlack(positional[0], positional[1], { threshold: flag('threshold', 24), feather: flag('feather', 2) });
+  if (positional.length < 2) throw new Error('usage: keyblack <src.png> <out.png> [--threshold N] [--feather N] [--trim 1]');
+  cmdKeyBlack(positional[0], positional[1], {
+    threshold: flag('threshold', 24),
+    feather: flag('feather', 2),
+    trim: flag('trim', 0) !== 0,
+  });
 } else {
   throw new Error(`unknown command ${String(cmd)} — window | probe | keyblack`);
 }
