@@ -19,6 +19,9 @@
  */
 
 import { createWorld, stepWorld } from '../../sim/world.js';
+import type { WorldState } from '../../sim/world.js';
+import type { Entity } from '../../sim/entities.js';
+import { PLANET_MODE } from '../../sim/planetMode.js';
 import { autopilotInput } from '../../sim/autopilot.js';
 import { buildRunConfig } from '../../run/runConfig.js';
 import { defaultProfile, activeShip } from '../../save/profile.js';
@@ -47,17 +50,50 @@ export interface CellRunResult {
   readonly values: Readonly<Record<string, number>>;
 }
 
-/** 보스 관측치를 갱신한다(런 루프 안쪽 — 핫 패스라 보스 세그먼트에서만 돈다). */
-function observeBoss(state: ReturnType<typeof createWorld>, t: RunTrace): void {
-  t.sawBoss = true;
+/**
+ * 이 보스 엔티티와 **실제로 교전할 수 있는가**.
+ *
+ * ## 왜 `state.wave.boss` 로는 안 되는가 (2026-08-01 수정)
+ * 처음에는 "웨이브 디렉터가 보스 세그먼트에 진입했는가"(`state.wave.boss`)를 게이트로 썼다.
+ * 그 정의는 **추격 모드(니플헤임)에서 구조적으로 거짓**이다:
+ *
+ * - 포식자는 `createWorld` 가 코스를 깔 때 이미 스폰된다(`placeChaseCourse` → `bossSpawned=true`).
+ *   `wave.boss` 는 그때 false 이고, 세그먼트 전진은 **대피소 도달**로 대체된다(`waves.ts:314`).
+ * - 승리는 세그먼트 진행과 **무관하게** 성립한다 — 반격 장치 5개 파괴 → 포식자 취약화
+ *   (`aux0=1`) → 처치 → `compact()` 의 보스 분기 → `victory`.
+ * - 즉 **승리 런조차 마지막 보스 세그먼트에 도달하기 전에 끝나고**, `wave.boss` 는 끝까지 false 다.
+ *
+ * 실측이 이것을 그대로 드러냈다: 니플헤임 2,240런 중 **승리 422건이 전부 `bossReachRate=0`**.
+ * 승리가 곧 보스 처치인데 관측기는 한 번도 보스를 보지 않았다. 밸런스 신호가 아니라 지표의 결함이다.
+ *
+ * ## 새 정의
+ * "교전 가능한 보스 엔티티가 실재하는가". 추격 모드에서는 **취약화 전(`aux0===0`) 무적 포식자를
+ * 제외**한다 — 그것까지 세면 런 시작부터 참이 되어 이번엔 반대 방향으로 거짓(100%)이 된다.
+ * `aux0` 판정을 `planetMode === chase` 로 좁히는 이유는 다른 보스가 `aux0` 을 패턴 상태로 쓰기
+ * 때문이다(좁히지 않으면 일반 보스가 `aux0=0` 인 동안 "무적"으로 오판된다).
+ */
+export function bossEngageable(state: WorldState, e: Entity): boolean {
+  if (e.kind !== 'boss' || e.dead) return false;
+  if (state.config.planetMode === PLANET_MODE.chase) return e.aux0 === 1;
+  return true;
+}
+
+/**
+ * 보스 관측치를 갱신한다(런 루프 안쪽).
+ *
+ * 호출부가 `state.bossSpawned` 로 선행 게이트를 건다 — 보스가 스폰되기 전에는 엔티티 스캔
+ * 자체가 돌지 않는다.
+ */
+function observeBoss(state: WorldState, t: RunTrace): void {
   let bossHp: number | undefined;
   for (const e of state.entities) {
-    if (e.kind === 'boss' && !e.dead) {
+    if (bossEngageable(state, e)) {
       bossHp = e.hp;
       break;
     }
   }
   if (bossHp !== undefined) {
+    t.sawBoss = true;
     if (t.bossHp0 < 0) t.bossHp0 = bossHp;
     t.bossHpLast = bossHp;
     t.bossTicks++;
@@ -89,9 +125,28 @@ export function runCellSeed(cell: BalanceCell, seed: number): CellRunResult {
 
   for (let i = 0; i < MAX_TICKS; i++) {
     stepWorld(state, autopilotInput(state));
-    if (state.wave.boss) observeBoss(state, trace);
+    if (state.bossSpawned) observeBoss(state, trace);
     if (state.wave.segmentIndex > trace.maxSegment) trace.maxSegment = state.wave.segmentIndex;
     if (state.victory || state.gameOver) break;
+  }
+
+  // PvE 승리는 **정의상 보스 처치**다(`compact()` 의 보스 분기가 유일한 승리 경로).
+  //
+  // ① 관측 창 닫기 — 처치 틱에 루프가 break 하므로 위 관측기의 "보스가 사라졌다" 분기에
+  //    도달하지 못한다. 잔여 hp 를 0 으로 확정하지 않으면 DPS 가 과소평가된다.
+  // ② `sawBoss` 보정 — 보스가 **스폰된 바로 그 틱에 처치되면** 관측기는 한 번도 보스를 보지
+  //    못한다(`stepWorld` 안에서 스폰→피격→`compact` 제거가 모두 끝나고, 우리는 반환 후에
+  //    본다). 실측 12,600런 중 10건이 이 경우였다 — 저단계 보스 HP 에 다중탄이 한 틱에 몰리면
+  //    일어난다. 승리했다는 사실이 교전을 증명하므로 여기서 세운다.
+  //
+  //    ⚠️ 그 10건은 관측 창이 0틱이라 **DPS 를 계산할 수 없다**. 그래서 `bossDps` 는
+  //    `winPosMean`(양수 표본만) 으로 집계한다 — 0 을 섞으면 평균이 내려앉는다(metrics.ts).
+  if (state.victory) {
+    trace.sawBoss = true;
+    if (trace.bossHp0 >= 0) {
+      trace.bossHpLast = 0;
+      trace.bossTicks++;
+    }
   }
 
   return {

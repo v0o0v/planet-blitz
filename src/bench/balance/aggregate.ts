@@ -6,8 +6,10 @@
  */
 
 import type { BalanceCell } from './axes.js';
-import { cellKey } from './axes.js';
-import { METRIC_KEYS, RUN_METRICS, gatedMetricKeys } from './metrics.js';
+import { cellKey, planetAxis, shipAxis } from './axes.js';
+import { METRIC_KEYS, RUN_METRICS, gatedMetricKeys, type FoldAxis } from './metrics.js';
+
+export type { FoldAxis };
 
 /** 런 1회의 원본 기록. 러너가 워커에서 받아 그대로 쌓는다. */
 export interface RunRecord {
@@ -68,14 +70,19 @@ export function dist(values: readonly number[]): Dist {
 /**
  * 지표 하나의 표본을 고른다 — `kind` 가 표본 집합을 정한다.
  *
- * `winMean` 은 승리 런만 본다. 승리가 0건이면 표본이 비고, 그 사실이 `n=0` 으로 드러난다
- * (0 으로 채우면 "클리어 0초"라는 거짓 수치가 된다).
+ * `winMean`·`winPosMean` 은 승리 런만 본다. 승리가 0건이면 표본이 비고, 그 사실이 `n=0` 으로
+ * 드러난다(0 으로 채우면 "클리어 0초"라는 거짓 수치가 된다).
+ *
+ * `winPosMean` 은 거기서 **0 을 더 뺀다** — 그 축에서 0 은 값이 아니라 "측정 불가"다
+ * (`metrics.ts` `MetricKind` 주석).
  */
 function samplesFor(runs: readonly RunRecord[], key: string): number[] {
   const def = RUN_METRICS[key];
   if (def === undefined) return [];
-  const src = def.kind === 'winMean' ? runs.filter((r) => r.won) : runs;
-  return src.map((r) => r.values[key] ?? 0);
+  const winOnly = def.kind === 'winMean' || def.kind === 'winPosMean';
+  const src = winOnly ? runs.filter((r) => r.won) : runs;
+  const vals = src.map((r) => r.values[key] ?? 0);
+  return def.kind === 'winPosMean' ? vals.filter((v) => v > 0) : vals;
 }
 
 /** 런 묶음 하나의 전 지표 통계. */
@@ -118,9 +125,6 @@ export function cellStats(runs: readonly RunRecord[]): CellStat[] {
   return out;
 }
 
-/** 접을 수 있는 축. */
-export type FoldAxis = 'planet' | 'ship' | 'level';
-
 /** 한 축의 값 하나에 대한 통계(= 나머지 축을 전부 평균낸 것). */
 export interface FoldPoint extends MetricStats {
   readonly axis: FoldAxis;
@@ -162,11 +166,18 @@ export interface GateResult {
   readonly min: number;
   readonly max: number;
   readonly source: string;
-  readonly scope: 'overall' | 'level';
+  readonly scope: 'overall' | FoldAxis;
   readonly pass: boolean;
   readonly violations: readonly GateViolation[];
   /** 표본이 없어 판정 자체가 불가능했던 지점 수. `pass` 와 별개로 리포트에 드러낸다. */
   readonly unjudged: number;
+}
+
+/** 게이트 위반 지점의 사람이 읽는 이름. 축 값(숫자)만으로는 어느 행성·기체인지 알 수 없다. */
+function axisPointLabel(axis: FoldAxis, value: number): string {
+  if (axis === 'level') return `Lv${value}`;
+  const src = axis === 'planet' ? planetAxis() : shipAxis();
+  return src.find((a) => a.value === value)?.label ?? `${axis}${value}`;
 }
 
 /**
@@ -178,7 +189,6 @@ export interface GateResult {
  */
 export function evaluateGates(runs: readonly RunRecord[]): GateResult[] {
   const overall = statsOf(runs);
-  const levels = foldBy(runs, 'level');
   const out: GateResult[] = [];
 
   for (const key of gatedMetricKeys()) {
@@ -188,9 +198,12 @@ export function evaluateGates(runs: readonly RunRecord[]): GateResult[] {
     const scope = def.target.scope ?? 'overall';
 
     const points: { at: string; d: Dist }[] =
-      scope === 'level'
-        ? levels.map((p) => ({ at: `Lv${p.value}`, d: p.metrics[key] ?? EMPTY_DIST }))
-        : [{ at: '전체', d: overall.metrics[key] ?? EMPTY_DIST }];
+      scope === 'overall'
+        ? [{ at: '전체', d: overall.metrics[key] ?? EMPTY_DIST }]
+        : foldBy(runs, scope).map((p) => ({
+            at: axisPointLabel(scope, p.value),
+            d: p.metrics[key] ?? EMPTY_DIST,
+          }));
 
     const violations: GateViolation[] = [];
     let unjudged = 0;

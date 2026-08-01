@@ -26,12 +26,13 @@
  *   --no-build       reuse .balance/bundle/balance.mjs
  *   --gate           exit 1 if any gate fails
  *   --verbose        log every round (default: one line per 5s)
+ *   --reanalyze=DIR  re-render report/summary from DIR/runs.json without running any sim
  */
 
 import { Worker } from 'node:worker_threads';
 import { cpus } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -109,6 +110,71 @@ if (!existsSync(bundlePath)) {
 
 const bundleUrl = pathToFileURL(bundlePath).href;
 const core = await import(bundleUrl);
+
+// ---------------------------------------------------------------------------
+// re-analysis (no simulation)
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders report.md + summary.json from a run set. Shared by the live path and --reanalyze,
+ * so both always produce byte-identical structure from the same runs.
+ * Returns the number of failed gates.
+ */
+function emitReport(rs, m, extra, dir, writeRaw) {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'report.md'), core.renderReport(rs, m), 'utf8');
+  const gates = core.evaluateGates(rs);
+  const summary = {
+    meta: { ...m, ...extra, totalRuns: rs.length },
+    gates,
+    cells: core.cellStats(rs),
+    folds: {
+      level: core.foldBy(rs, 'level'),
+      planet: core.foldBy(rs, 'planet'),
+      ship: core.foldBy(rs, 'ship'),
+    },
+    spreads: {
+      planet: core.spreadOf(rs, 'planet'),
+      ship: core.spreadOf(rs, 'ship'),
+      level: core.spreadOf(rs, 'level'),
+    },
+  };
+  writeFileSync(join(dir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8');
+  if (writeRaw) writeFileSync(join(dir, 'runs.json'), JSON.stringify(rs), 'utf8');
+
+  if (extra.stopReason !== undefined) log(`stopped: ${extra.stopReason}`);
+  const failed = gates.filter((g) => !g.pass);
+  log(`GATES: ${gates.length - failed.length} pass / ${failed.length} fail`);
+  for (const g of gates) {
+    const pctBand = g.min <= 1 && g.max <= 1;
+    const band = pctBand ? `${(g.min * 100).toFixed(0)}-${(g.max * 100).toFixed(0)}%` : `${g.min}-${g.max}`;
+    const detail =
+      g.violations.length === 0
+        ? g.unjudged > 0
+          ? `unjudged ${g.unjudged}`
+          : 'ok'
+        : g.violations
+            .slice(0, 5)
+            .map((v) => `${v.at}=${pctBand ? (v.observed * 100).toFixed(1) + '%' : v.observed.toFixed(2)}`)
+            .join(' ') + (g.violations.length > 5 ? ` (+${g.violations.length - 5})` : '');
+    log(`  ${g.pass ? 'PASS' : 'FAIL'} ${g.metric} [${band}] (${g.scope}) ${detail}`);
+  }
+  log(`report: ${join(dir, 'report.md')}`);
+  return failed.length;
+}
+
+// `--reanalyze=DIR` re-reads DIR/runs.json and re-renders. No sim runs at all.
+// This is what makes "changing the aggregation rules does not require re-measuring" true rather
+// than merely documented — the gate scope fix (timeoutRate overall -> level) was validated this way.
+const reanalyzeDir = opt('reanalyze', undefined);
+if (reanalyzeDir !== undefined) {
+  const dir = resolve(ROOT, reanalyzeDir);
+  const prevRuns = JSON.parse(readFileSync(join(dir, 'runs.json'), 'utf8'));
+  const prevMeta = JSON.parse(readFileSync(join(dir, 'summary.json'), 'utf8')).meta;
+  log(`reanalyzing ${prevRuns.length} runs from ${dir} (no simulation)`);
+  const n = emitReport(prevRuns, prevMeta, { stopReason: 'reanalyzed', reanalyzedAt: new Date().toISOString() }, dir, false);
+  process.exit(wantGate && n > 0 ? 1 : 0);
+}
 
 // ---------------------------------------------------------------------------
 // worker pool
@@ -336,48 +402,6 @@ const meta = {
   budgetExhausted: aborted || round < maxRounds,
 };
 
-mkdirSync(outDir, { recursive: true });
-const md = core.renderReport(runs, meta);
-writeFileSync(join(outDir, 'report.md'), md, 'utf8');
-
-const gates = core.evaluateGates(runs);
-const summary = {
-  meta: { ...meta, stopReason, failedRuns: pool.errors, totalRuns: runs.length },
-  gates,
-  cells: core.cellStats(runs),
-  folds: {
-    level: core.foldBy(runs, 'level'),
-    planet: core.foldBy(runs, 'planet'),
-    ship: core.foldBy(runs, 'ship'),
-  },
-  spreads: {
-    planet: core.spreadOf(runs, 'planet'),
-    ship: core.spreadOf(runs, 'ship'),
-    level: core.spreadOf(runs, 'level'),
-  },
-};
-writeFileSync(join(outDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8');
-if (wantRaw) writeFileSync(join(outDir, 'runs.json'), JSON.stringify(runs), 'utf8');
-
-log(`stopped: ${stopReason}`);
+const failedCount = emitReport(runs, meta, { stopReason, failedRuns: pool.errors }, outDir, wantRaw);
 log(`total ${runs.length} runs in ${(elapsedMs() / 1000).toFixed(1)}s (budget ${budgetSec}s)`);
-
-const failed = gates.filter((g) => !g.pass);
-log(`GATES: ${gates.length - failed.length} pass / ${failed.length} fail`);
-for (const g of gates) {
-  const band = g.min <= 1 && g.max <= 1 ? `${(g.min * 100).toFixed(0)}-${(g.max * 100).toFixed(0)}%` : `${g.min}-${g.max}`;
-  const mark = g.pass ? 'PASS' : 'FAIL';
-  const detail =
-    g.violations.length === 0
-      ? g.unjudged > 0
-        ? `unjudged ${g.unjudged}`
-        : 'ok'
-      : g.violations
-          .slice(0, 5)
-          .map((v) => `${v.at}=${g.min <= 1 && g.max <= 1 ? (v.observed * 100).toFixed(1) + '%' : v.observed.toFixed(2)}`)
-          .join(' ') + (g.violations.length > 5 ? ` (+${g.violations.length - 5})` : '');
-  log(`  ${mark} ${g.metric} [${band}] ${detail}`);
-}
-log(`report: ${join(outDir, 'report.md')}`);
-
-process.exit(wantGate && failed.length > 0 ? 1 : 0);
+process.exit(wantGate && failedCount > 0 ? 1 : 0);
