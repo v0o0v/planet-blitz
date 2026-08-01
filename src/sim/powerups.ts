@@ -10,6 +10,20 @@
  * are weighted up, and off-build ones stay possible but rare — so the offer feels
  * derived from the player's build without ever hard-excluding a choice.
  *
+ * ## ⚠️ 강화 폭 상한 (2026-08-01 밸런스 지시)
+ *
+ * **피해 배율은 어떤 파워업이든 최대 +10% 다.** 그 외 배율·정수 가산도 기준값의 대략
+ * 5~15% 안에 둔다(기준: 최대 HP 100 · 이동 속도 720 · 대시 재충전 42틱 · 발사 간격 6틱).
+ * 예전에는 +35%(고폭탄)·+45%(과충전 코일)까지 있었는데, 런당 레벨업이 5~7회라 한 런에서
+ * 피해가 몇 배로 뛰어 **레벨업을 몇 번 뽑았는가가 무대 난이도를 압도**했다.
+ *
+ * 새 파워업을 추가하거나 기존 값을 올릴 때 **이 상한을 먼저 확인해라.**
+ * `tests/powerupMagnitude.test.ts` 가 `POWERUPS` 를 전수 순회하며 기계적으로 못 박는다.
+ *
+ * ⚠️ **발사 간격은 정수 틱이라 배율이 그대로 반영되지 않는다.** 기본 발칸은 6틱이라 한 단계가
+ * 1틱(−16.7%)이고, 배율 0.92 든 0.9 든 반올림하면 같은 5틱이 된다. 무기별 기본 간격이 클수록
+ * 배율 차이가 드러난다 — "퍼센트를 낮췄는데 실측이 안 변한다"면 이 반올림을 먼저 의심해라.
+ *
  * Each `apply` is a pure state mutation (weapon/config/player/magnet only) — no
  * RNG, no wall-clock — so a recorded [seed + input log] reproduces the same build
  * deterministically. The weighting reads only run-start config (loadout weapon
@@ -67,10 +81,10 @@ export const POWERUPS: readonly PowerupDef[] = [
   {
     id: 'rapid-fire',
     name: '고속 연사',
-    desc: '발칸 발사 간격 -18%',
+    desc: '발칸 발사 간격 -10%',
     weaponType: 0,
     apply: (s) => {
-      s.weapon.fireCooldown = Math.max(2, Math.round(s.weapon.fireCooldown * 0.82));
+      s.weapon.fireCooldown = Math.max(2, Math.round(s.weapon.fireCooldown * 0.9));
     },
   },
   {
@@ -86,10 +100,10 @@ export const POWERUPS: readonly PowerupDef[] = [
   {
     id: 'heavy-rounds',
     name: '고폭탄',
-    desc: '탄환 데미지 +35%',
+    desc: '탄환 데미지 +8%',
     universal: true,
     apply: (s) => {
-      s.weapon.damage = Math.round(s.weapon.damage * 1.35 * 100) / 100;
+      s.weapon.damage = Math.round(s.weapon.damage * 1.08 * 100) / 100;
     },
   },
   {
@@ -104,42 +118,42 @@ export const POWERUPS: readonly PowerupDef[] = [
   {
     id: 'thrusters',
     name: '추진기 증강',
-    desc: '이동 속도 +12%',
+    desc: '이동 속도 +6%',
     affinity: 'utility',
     apply: (s) => {
-      s.config.playerSpeed = Math.round(s.config.playerSpeed * 1.12);
+      s.config.playerSpeed = Math.round(s.config.playerSpeed * 1.06);
     },
   },
   {
     id: 'dash-coils',
     name: '대시 코일',
-    desc: '대시 재충전 -20%',
+    desc: '대시 재충전 -8%',
     affinity: 'utility',
     apply: (s) => {
-      s.config.dashCooldownTicks = Math.max(12, Math.round(s.config.dashCooldownTicks * 0.8));
+      s.config.dashCooldownTicks = Math.max(12, Math.round(s.config.dashCooldownTicks * 0.92));
     },
   },
   {
     id: 'reinforced-hull',
     name: '강화 장갑',
-    desc: '최대 HP +25, 즉시 회복',
+    desc: '최대 HP +10, 즉시 회복',
     affinity: 'defense',
     apply: (s) => {
       const p = player(s);
       if (p !== undefined) {
-        p.maxHp += 25;
-        p.hp = Math.min(p.maxHp, p.hp + 25);
+        p.maxHp += 10;
+        p.hp = Math.min(p.maxHp, p.hp + 10);
       }
-      s.config.playerHp += 25;
+      s.config.playerHp += 10;
     },
   },
   {
     id: 'gem-magnet',
     name: '자기장 코일',
-    desc: '젬 흡수 반경 +40%',
+    desc: '젬 흡수 반경 +15%',
     affinity: 'utility',
     apply: (s) => {
-      s.magnetRadius = Math.round(s.magnetRadius * 1.4);
+      s.magnetRadius = Math.round(s.magnetRadius * 1.15);
     },
   },
   // --- 8..15: main-weapon archetype derivatives (2 per non-vulcan type) ---
@@ -156,29 +170,29 @@ export const POWERUPS: readonly PowerupDef[] = [
   {
     id: 'spread-choke',
     name: '초크 개조',
-    desc: '탄환 데미지 +22% (스프레드)',
+    desc: '탄환 데미지 +10% (스프레드)',
     weaponType: 1,
     apply: (s) => {
-      s.weapon.damage = Math.round(s.weapon.damage * 1.22 * 100) / 100;
+      s.weapon.damage = Math.round(s.weapon.damage * 1.1 * 100) / 100;
     },
   },
   {
     id: 'rail-penetrator',
     name: '관통 강화 코어',
-    desc: '관통 +2 (레일건)',
+    desc: '관통 +1 (레일건)',
     weaponType: 2,
     apply: (s) => {
-      s.weapon.pierce += 2;
+      s.weapon.pierce += 1;
     },
   },
   {
     id: 'rail-overcharge',
     name: '과충전 코일',
-    desc: '탄환 데미지 +45%, 탄속 +15% (레일건)',
+    desc: '탄환 데미지 +10%, 탄속 +8% (레일건)',
     weaponType: 2,
     apply: (s) => {
-      s.weapon.damage = Math.round(s.weapon.damage * 1.45 * 100) / 100;
-      s.weapon.bulletSpeed = Math.round(s.weapon.bulletSpeed * 1.15 * 100) / 100;
+      s.weapon.damage = Math.round(s.weapon.damage * 1.1 * 100) / 100;
+      s.weapon.bulletSpeed = Math.round(s.weapon.bulletSpeed * 1.08 * 100) / 100;
     },
   },
   {
@@ -193,112 +207,112 @@ export const POWERUPS: readonly PowerupDef[] = [
   {
     id: 'missile-warhead',
     name: '고폭 탄두',
-    desc: '탄환 데미지 +30% (미사일)',
+    desc: '탄환 데미지 +10% (미사일)',
     weaponType: 3,
     apply: (s) => {
-      s.weapon.damage = Math.round(s.weapon.damage * 1.3 * 100) / 100;
+      s.weapon.damage = Math.round(s.weapon.damage * 1.1 * 100) / 100;
     },
   },
   {
     id: 'beam-intensifier',
     name: '빔 증폭기',
-    desc: '탄환 데미지 +28% (빔)',
+    desc: '탄환 데미지 +10% (빔)',
     weaponType: 4,
     apply: (s) => {
-      s.weapon.damage = Math.round(s.weapon.damage * 1.28 * 100) / 100;
+      s.weapon.damage = Math.round(s.weapon.damage * 1.1 * 100) / 100;
     },
   },
   {
     id: 'beam-focuser',
     name: '집속 렌즈',
-    desc: '사거리 +320 (빔 세그먼트 연장)',
+    desc: '사거리 +120 (빔 세그먼트 연장)',
     weaponType: 4,
     apply: (s) => {
-      s.weapon.range += 320;
+      s.weapon.range += 120;
     },
   },
   // --- 16..21: skill-tree derived (2 per tree) ---
   {
     id: 'fp-focus',
     name: '화력 집중',
-    desc: '탄환 데미지 +20%',
+    desc: '탄환 데미지 +8%',
     affinity: 'offense',
     apply: (s) => {
-      s.weapon.damage = Math.round(s.weapon.damage * 1.2 * 100) / 100;
+      s.weapon.damage = Math.round(s.weapon.damage * 1.08 * 100) / 100;
     },
   },
   {
     id: 'fp-cadence',
     name: '속사 조율',
-    desc: '발사 간격 -15%',
+    desc: '발사 간격 -8%',
     affinity: 'offense',
     apply: (s) => {
-      s.weapon.fireCooldown = Math.max(2, Math.round(s.weapon.fireCooldown * 0.85));
+      s.weapon.fireCooldown = Math.max(2, Math.round(s.weapon.fireCooldown * 0.92));
     },
   },
   {
     id: 'sv-plating',
     name: '보강 도금',
-    desc: '최대 HP +30, 즉시 회복',
+    desc: '최대 HP +12, 즉시 회복',
     affinity: 'defense',
     apply: (s) => {
       const p = player(s);
       if (p !== undefined) {
-        p.maxHp += 30;
-        p.hp = Math.min(p.maxHp, p.hp + 30);
+        p.maxHp += 12;
+        p.hp = Math.min(p.maxHp, p.hp + 12);
       }
-      s.config.playerHp += 30;
+      s.config.playerHp += 12;
     },
   },
   {
     id: 'sv-evasion',
     name: '회피 부스터',
-    desc: '대시 재충전 -15%',
+    desc: '대시 재충전 -8%',
     affinity: 'defense',
     apply: (s) => {
-      s.config.dashCooldownTicks = Math.max(12, Math.round(s.config.dashCooldownTicks * 0.85));
+      s.config.dashCooldownTicks = Math.max(12, Math.round(s.config.dashCooldownTicks * 0.92));
     },
   },
   {
     id: 'mb-overdrive',
     name: '기동 오버드라이브',
-    desc: '이동 속도 +10%',
+    desc: '이동 속도 +5%',
     affinity: 'utility',
     apply: (s) => {
-      s.config.playerSpeed = Math.round(s.config.playerSpeed * 1.1);
+      s.config.playerSpeed = Math.round(s.config.playerSpeed * 1.05);
     },
   },
   {
     id: 'mb-collector',
     name: '수집 증폭',
-    desc: '젬 흡수 반경 +30%',
+    desc: '젬 흡수 반경 +12%',
     affinity: 'utility',
     apply: (s) => {
-      s.magnetRadius = Math.round(s.magnetRadius * 1.3);
+      s.magnetRadius = Math.round(s.magnetRadius * 1.12);
     },
   },
   // --- 22..23: universal ---
   {
     id: 'muzzle-velocity',
     name: '고속 사출',
-    desc: '탄속 +20%',
+    desc: '탄속 +8%',
     universal: true,
     apply: (s) => {
-      s.weapon.bulletSpeed = Math.round(s.weapon.bulletSpeed * 1.2 * 100) / 100;
+      s.weapon.bulletSpeed = Math.round(s.weapon.bulletSpeed * 1.08 * 100) / 100;
     },
   },
   {
     id: 'field-medkit',
     name: '야전 응급팩',
-    desc: '최대 HP +15, 즉시 회복',
+    desc: '최대 HP +8, 즉시 회복',
     universal: true,
     apply: (s) => {
       const p = player(s);
       if (p !== undefined) {
-        p.maxHp += 15;
-        p.hp = Math.min(p.maxHp, p.hp + 15);
+        p.maxHp += 8;
+        p.hp = Math.min(p.maxHp, p.hp + 8);
       }
-      s.config.playerHp += 15;
+      s.config.playerHp += 8;
     },
   },
   // --- 24..25: 액티브 스킬 강화(ADR-0041 · APPEND-ONLY) ---------------------------------------
@@ -316,7 +330,7 @@ export const POWERUPS: readonly PowerupDef[] = [
   {
     id: 'active-tune-1',
     name: '슬롯 1 조율',
-    desc: '슬롯 1 액티브의 계열 투자 +4 (위력↑ · 쿨다운↓)',
+    desc: '슬롯 1 액티브의 계열 투자 +2 (위력↑ · 쿨다운↓)',
     activeSlot: 0,
     apply: (s) => {
       bumpActiveTree(s, 0);
@@ -325,7 +339,7 @@ export const POWERUPS: readonly PowerupDef[] = [
   {
     id: 'active-tune-2',
     name: '슬롯 2 조율',
-    desc: '슬롯 2 액티브의 계열 투자 +4 (위력↑ · 쿨다운↓)',
+    desc: '슬롯 2 액티브의 계열 투자 +2 (위력↑ · 쿨다운↓)',
     activeSlot: 1,
     apply: (s) => {
       bumpActiveTree(s, 1);
@@ -334,7 +348,7 @@ export const POWERUPS: readonly PowerupDef[] = [
 ];
 
 /** 액티브 강화 파워업 1회당 올려 주는 계열 base 누적 포인트. */
-const ACTIVE_TUNE_POINTS = 4;
+const ACTIVE_TUNE_POINTS = 2;
 
 /**
  * 슬롯에 장착된 액티브가 속한 계열의 base 누적 투자를 올린다. 미장착·미지 wire 면 무연산.

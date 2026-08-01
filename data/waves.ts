@@ -276,13 +276,13 @@ export const RUSH_MIN_INTERVAL = 45;
 export const SEGMENTS: readonly WaveSegment[] = [
   // ⚠️ index 0 의 killGoal 10 은 **의도적으로 불변**이다 — 아래 "침공 해시" 절 참조.
   { index: 0, killGoal: 10, maxEnemies: 12, bulletCap: 300, cardInterval: 220, boss: false },
-  { index: 1, killGoal: 46, maxEnemies: 20, bulletCap: 600, cardInterval: 200, boss: false },
-  { index: 2, killGoal: 53, maxEnemies: 28, bulletCap: 900, cardInterval: 180, boss: false },
+  { index: 1, killGoal: 40, maxEnemies: 20, bulletCap: 600, cardInterval: 200, boss: false },
+  { index: 2, killGoal: 46, maxEnemies: 28, bulletCap: 900, cardInterval: 180, boss: false },
   // 중반 격전 세그먼트(ADR-0032). killGoal 0 = 처치 할당 게이트 미사용(리더 처치가 게이트).
   // 예산은 index 2 ↔ index 4 사이 값 — TODO(밸런스): 출시 전 일괄 튜닝.
   { index: 3, killGoal: 0, maxEnemies: 32, bulletCap: 1000, cardInterval: 170, boss: false, clash: true },
-  { index: 4, killGoal: 59, maxEnemies: 36, bulletCap: 1200, cardInterval: 160, boss: false },
-  { index: 5, killGoal: 72, maxEnemies: 44, bulletCap: 1600, cardInterval: 150, boss: false },
+  { index: 4, killGoal: 52, maxEnemies: 36, bulletCap: 1200, cardInterval: 160, boss: false },
+  { index: 5, killGoal: 63, maxEnemies: 44, bulletCap: 1600, cardInterval: 150, boss: false },
   // 보스 세그먼트: killGoal 0(보스 처치로만 종료). cardInterval을 실제 값으로 낮춰
   // 보스전에도 일반몹이 계속 등장한다(급행 소환 램프가 여기서도 돌아 긴 꼬리를 캡).
   { index: 6, killGoal: 0, maxEnemies: 14, bulletCap: 2000, cardInterval: 200, boss: true },

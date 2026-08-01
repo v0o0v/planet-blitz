@@ -31,12 +31,36 @@ import type { Entity, EntitySink } from '../entities.js';
 import { spawnDestructible, spawnHazard } from '../entities.js';
 import type { WorldState } from '../world.js';
 import { cos, sin, TWO_PI } from '../math.js';
+import { stageHpMult } from '../../../data/waves.js';
 
 // --- 플레이스홀더 계수 (TODO(밸런스): 출시 전 일괄 튜닝, 구조만 고정) ---
 /** 오염 노드 수(= 정화율 분모, createWorld 가 정확히 이만큼 배치). TODO(밸런스). */
 export const CONTAMINATION_NODE_COUNT = 10;
 /** 오염 노드 HP(아군탄이 깎아 파괴 = 정화). TODO(밸런스). */
-export const CONTAMINATION_NODE_HP = 30;
+export const CONTAMINATION_NODE_HP_BASE = 62000;
+/**
+ * 단계 기울기 감쇠 계수. 추격 반격 장치와 **같은 형태**다({@link chaseCounterDeviceHp}) —
+ * 노드는 플레이어의 집중 화력을 혼자 받는 단일 표적이라 잡몹 무리용 앵커 기울기를 그대로
+ * 타면 고레벨에서 과하게 무거워진다.
+ */
+export const CONTAMINATION_NODE_HP_SLOPE = 0.15;
+
+/**
+ * 이 단계의 오염 노드 HP.
+ *
+ * ## 왜 고정값이면 안 되는가 (2026-08-01 실측)
+ * 예전에는 단계·레벨과 무관한 **고정 30** 이었다. 노드가 자동 조준 밖이던 동안에는 이 값이
+ * 레버로 먹지 않아(HP 를 4배로 올려도 보스 도달이 10%밖에 안 움직였다) 문제가 드러나지
+ * 않았는데, 조준을 고치자 **보스 도달이 11.6초**로 무너졌다 — 추격 모드가 조준 수정 직후
+ * 전 레벨 100%/5.4초였던 것과 같은 모양이다. 무대 진행이 걸린 오브젝트는 반드시 자기
+ * 난이도 축을 가져야 한다.
+ *
+ * 정수로 내린다 — 엔티티 hp 가 해시에 접힌다.
+ */
+export function contaminationNodeHp(stage: number): number {
+  const scale = 1 + (stageHpMult(stage) - 1) * CONTAMINATION_NODE_HP_SLOPE;
+  return Math.round(CONTAMINATION_NODE_HP_BASE * scale);
+}
 /** 오염 노드 반경(조준·피격 판정). TODO(밸런스). */
 export const CONTAMINATION_NODE_RADIUS = 60;
 /** 노드 파괴 시 드랍 젬 XP(destructible 기존 드랍 경로). TODO(밸런스). */
@@ -54,7 +78,17 @@ export const CONTAMINATION_NODE_MAX_CELLS = 6;
  * 개입 자체가 성립하지 않는다. 150(2.5초)이면 방치 시 임계까지 12.5초가 걸려 그 사이에 노드를
  * 깨 확산원을 줄이는 것이 실제 선택지가 된다. TODO(밸런스): 출시 전 튜닝.
  */
-export const CONTAMINATION_SPREAD_INTERVAL = 150;
+/**
+ * ⚠️ **이 값이 오염 무대의 런 길이 상한이다**(2026-08-01 실측). 정화(노드 파괴)가 아무리
+ * 빨라도 임계 오염(`CONTAMINATION_CRITICAL_CELLS`)에 먼저 닿으면 런이 끝나므로, 확산 간격이
+ * 곧 **실패 마감시계**다. 150 이던 시절 그 시계는 약 10초였고, 그래서 노드 HP 를 22배(1,600 →
+ * 36,000)로 올려도 보스 도달이 15.8 → 21.5초밖에 안 움직였다 — HP 는 레버가 아니었다.
+ *
+ * 페이싱 목표(90초)에 맞춰 150 → 1,700 으로 늘렸다. 그래도 실측 보스 도달은 **63.8초**로
+ * 목표에 못 미친다 — 자세한 경위와 남은 선택지는 `.omc/plans/balance-queue.md` §P1 참조.
+ * TODO(밸런스).
+ */
+export const CONTAMINATION_SPREAD_INTERVAL = 1700;
 /**
  * 정화(dead 노드가 뿌린 셀 걷기) 판정 간격(틱). 6틱 = 0.1초마다 **소유 노드가 죽은 셀을
  * 노드당 1개씩** 지운다 → 노드 하나가 뿌린 최대 6셀이 0.6초에 걷힌다(눈에 보이는 되돌림).
@@ -113,8 +147,12 @@ export function isContaminationCell(e: Entity): boolean {
  * aux0=0(확산 진척)로 시작한다. 초기 오염 지형 셀은 두지 않는다(정화율·임계가 0 에서 시작 —
  * 확산이 stepContamination 으로만 진행). 배치는 인덱스만의 함수(결정론 트리그)라 같은 필드가
  * 항상 동일 배치다 — 시드·해시 스트림에 영향이 없다.
+ *
+ * `stage` 는 노드 HP 파생에만 쓴다({@link contaminationNodeHp}). `WorldState` 전체가 아니라
+ * 정수 하나만 받는 이유는 이 함수가 **엔티티 싱크만 있으면 되는 순수 배치**이기 때문이다 —
+ * 순수 계약 테스트가 최소 싱크로 호출할 수 있어야 한다. 기본값 1 은 단계 미지정 호출 보호.
  */
-export function placeContaminationField(sink: EntitySink): void {
+export function placeContaminationField(sink: EntitySink, stage = 1): void {
   for (let i = 0; i < CONTAMINATION_NODE_COUNT; i++) {
     const angle = (i * TWO_PI) / CONTAMINATION_NODE_COUNT;
     const x = cos(angle) * CONTAMINATION_NODE_RING_RADIUS;
@@ -124,7 +162,7 @@ export function placeContaminationField(sink: EntitySink): void {
       x,
       y,
       CONTAMINATION_NODE_RADIUS,
-      CONTAMINATION_NODE_HP,
+      contaminationNodeHp(stage),
       CONTAMINATION_NODE_GEM_XP,
     );
     node.ownerId = CONTAMINATION_NODE_MARK;

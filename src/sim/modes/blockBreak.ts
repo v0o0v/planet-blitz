@@ -29,8 +29,15 @@ import { SEALED_GUARDIAN_MARK } from '../encounters/light.js';
 import { MID_CLASH_LEADER_MARK } from './midClash.js';
 
 // --- 플레이스홀더 계수 (TODO(밸런스): 출시 전 일괄 튜닝, 구조만 고정) ---
-/** 구간 1개의 −Y 스크롤 거리(월드 유닛). TODO(밸런스). */
-export const BLOCKBREAK_SECTION_LENGTH = 2000;
+/**
+ * 구간 1개의 −Y 스크롤 거리(월드 유닛).
+ *
+ * ⚠️ **이 값은 무대 런타임을 직접 정한다**(창 전진 속도 고정 → 보스 도달 시간 ∝ 코스 길이).
+ * 2026-08-01 페이싱 목표(보스 도달 90초)에 맞춰 2,000 → 13,500(실측 13.3초 → 목표 90초).
+ *
+ * 벽 행 수는 `blockBreakCourseLength() / BLOCKBREAK_ROW_SPACING` **파생**이라 길이를 늘리면
+ * 행이 비례해 늘어난다 — 레이싱과 달리 밀도 보존이 이미 구조에 들어 있다. TODO(밸런스). */
+export const BLOCKBREAK_SECTION_LENGTH = 14650;
 /**
  * 보스 전 구간 수 — **일반 세그먼트 수에서 파생한다**(밸런스 상수가 아니라 구조 정합).
  * 근거는 `RACING_SECTION_COUNT` 와 동일: 전진 게이트가 `blockBreakProgress(sw) >=

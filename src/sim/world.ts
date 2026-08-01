@@ -266,12 +266,8 @@ import {
 } from './modes/contamination.js';
 // --- 추격·탈출 콘텐츠(Lane6 · ADR-0021 §2.4) — 비-스크롤 자유추적. 무적 포식자(boss.aux0=0)가
 //     끝없이 추격, 대피소 도달로 진행, 반격 장치 전부 파괴로 취약화(aux0=1)→보스전, 접촉 시 실패 ---
-import {
-  placeChaseCourse,
-  updateChasePredator,
-  isCounterDevice,
-  COUNTER_DEVICE_MARK,
-} from './modes/chase.js';
+import { placeChaseCourse, updateChasePredator, COUNTER_DEVICE_MARK } from './modes/chase.js';
+import { isObjectiveDestructible } from './modes/objective.js';
 // --- 수축지대 콘텐츠(Lane7 · ADR-0021 §2.5) — 비-스크롤 자유추적. 아레나 중심(원점 0,0) 기준
 //     동적으로 줄어드는 안전 반경 밖이면 지속 피해, 안전 반경 안 적 전멸로 진행, 중심 보스 처치로
 //     완주. 이 재설계의 첫 "신규 해시 필드" 모드(shrinkRuntime, 정수 2필드) -----------------------
@@ -1325,7 +1321,7 @@ export function createWorld(
     // PvE 오염(Lane8): 비-스크롤 자유추적이라 scrollRuntime 이 없다(위 두 분기 조건 밖). 오염
     // 노드 필드(고정 링)를 1회 배치한다. contamination 런에만 — 뱀서류·블록격파·레이싱·침공은
     // 조건 밖이라 오염 노드가 하나도 안 생겨 골든 바이트 불변.
-    placeContaminationField(state);
+    placeContaminationField(state, state.config.stage ?? 1);
   } else if (cfg.planetMode === PLANET_MODE.chase) {
     // PvE 추격(Lane6): 비-스크롤 자유추적이라 scrollRuntime 이 없다(위 두 분기 조건 밖). 무적
     // 포식자(boss, aux0=0) + 반격 장치 + 대피소 코스를 1회 배치하고 bossSpawned 을 세운다(포식자가
@@ -2931,19 +2927,16 @@ function isPlayerTargetable(e: Entity): boolean {
   // 반지름 90 짜리 **무적 차폐물**이 되어 발생기로 가는 사선을 막는다 — 실제로 그 상태였고,
   // 기지 #12 패배 런의 100%가 코어 그림자 안에서 일어났다. 한쪽만 고치지 마라.
   if (e.kind === 'core') return e.timer !== 1;
-  // 추격 모드 반격 장치(Lane6 · destructible + COUNTER_DEVICE_MARK). **위 코어/발생기 사고와
-  // 정확히 같은 부류가 한 번 더 났던 자리다** — 반격 장치는 아군탄에 맞기는 하지만(②
-  // 화이트리스트에 `destructible` 이 있다) 이 술어에 없어서 **조준되지 않았다.** 추격 모드의
-  // 유일한 승리 경로가 "장치 5개 파괴 → 포식자 취약화 → 처치"인데, 이 게임의 사격은 전부
-  // 자동 조준이고(`autoAttack` 은 `input.aim` 을 쓰지 않는다 — `player.angle` 은 렌더용)
-  // 조준 대상에서 빠져 있으면 플레이어는 장치를 **의도적으로 부술 수단이 없다.** 실제로
-  // 스쳐 지나가는 유탄이 우연히 맞을 때만 부서지고 있었다(니플헤임 2,660런 실측: 타임아웃
-  // 63건이 전부 장치 1개 이상 잔존, 패배 2,102건 중 장치 0개는 2건뿐).
+  // **무대 진행·승리가 걸린 파괴 대상은 조준 가능해야 한다**(추격 반격 장치 · 오염 노드 …).
+  // 판정 정본은 `modes/objective.ts` 한 곳이다 — 위 코어/발생기 사고와 **같은 부류가 네 번째로**
+  // 났고(그 목록은 그 파일 헤더에 있다), 매번 술어를 여기에 하나씩 덧붙이는 방식이 다음 모드를
+  // 또 같은 함정에 빠뜨렸기 때문이다. 실제로 추격 장치를 고친 뒤에도 오염 노드가 그 상태였다.
   //
-  // 일반 절차 청크 `destructible`(ownerId=0)은 **그대로 제외한다** — 지형이 조준을 훔치면
-  // 다른 모든 무대의 거동이 바뀐다. 마커로 좁히면 반격 장치는 추격 런에만 존재하므로
-  // 뱀서류·수축·오염·레이싱·블록격파·침공은 바이트 불변이다.
-  if (isCounterDevice(e)) return true;
+  // 이 게임의 사격은 전부 자동 조준이고 `autoAttack` 은 `input.aim` 을 쓰지 않으므로(그 값은
+  // 렌더용 `player.angle`), 이 목록에서 빠진 오브젝트는 **플레이어가 의도적으로 부술 수단이
+  // 없다.** 일반 절차 청크 `destructible`(ownerId=0)은 마커로 좁혀 그대로 제외된다 — 지형이
+  // 조준을 훔치면 모든 무대의 거동이 바뀐다.
+  if (isObjectiveDestructible(e)) return true;
   return (
     e.kind === 'enemy' ||
     e.kind === 'boss' ||

@@ -24,8 +24,24 @@ import { SEGMENTS } from '../../../data/waves.js';
 import type { WorldState } from '../world.js';
 
 // --- 플레이스홀더 계수 (TODO(밸런스): 출시 전 일괄 튜닝, 구조만 고정) ---
-/** 체크포인트(구간) 1개의 +X 스크롤 거리(월드 유닛). TODO(밸런스). */
-export const RACING_SECTION_LENGTH = 2000;
+/**
+ * 체크포인트(구간) 1개의 +X 스크롤 거리(월드 유닛).
+ *
+ * ⚠️ **이 값은 무대 런타임을 직접 정한다** — 창 전진 속도가 고정이라 보스 도달 시간 =
+ * `RACING_SECTION_LENGTH × RACING_SECTION_COUNT ÷ 창 속도` 다. 2026-08-01 페이싱 목표
+ * (보스 도달 90초)에 맞춰 2,000 → 12,700 으로 올렸다(실측 14.2초 → 목표 90초).
+ *
+ * 길이를 늘려도 **콘텐츠 밀도는 유지된다** — 분기·부스트 배치가 {@link RACING_BRANCH_INTERVAL}
+ * 파생이라 구간이 길어지면 분기 수가 함께 늘어난다. 파생으로 바꾸기 전에는 구간당 분기 1개
+ * 고정이라, 길이만 늘리면 **12,700 유닛짜리 빈 복도**가 됐을 것이다. */
+export const RACING_SECTION_LENGTH = 13460;
+/**
+ * 분기(갈림길) 하나가 담당하는 +X 거리. 구간당 분기 수가 이 값에서 파생되므로
+ * **구간 길이를 바꿔도 "몇 유닛마다 갈림길이 나오는가"라는 체감 밀도가 보존된다.**
+ * 값 2,000 은 페이싱 조정 전의 실효 밀도(구간 길이 2,000 · 구간당 분기 1개)와 같다 —
+ * 즉 `RACING_SECTION_LENGTH = 2000` 이면 배치가 조정 전과 **바이트 동일**하다. TODO(밸런스).
+ */
+export const RACING_BRANCH_INTERVAL = 2000;
 /**
  * 보스 전 구간 수 — **일반 세그먼트 수에서 파생한다**(밸런스 상수가 아니라 구조 정합).
  *
@@ -79,6 +95,13 @@ export function racingProgress(rt: ScrollWindow): number {
   return rt.scrollX;
 }
 
+/**
+ * 한 구간에 깔리는 분기 수. 구간 길이 ÷ 분기 간격(최소 1) — 길이를 바꿔도 밀도가 보존된다.
+ */
+export function racingBranchesPerSection(): number {
+  return Math.max(1, Math.round(RACING_SECTION_LENGTH / RACING_BRANCH_INTERVAL));
+}
+
 /** 진행도 → 구간 인덱스(0..). */
 export function racingSection(progress: number): number {
   return Math.floor(progress / RACING_SECTION_LENGTH);
@@ -104,16 +127,28 @@ export function isBoostPad(e: Entity): boolean {
  * 않는다(레이싱 벽은 가이드지 격파 대상이 아니다).
  */
 export function placeRacingCourse(sink: EntitySink): void {
+  // 구간을 분기 간격으로 잘게 나눈다 — 구간이 길어져도 갈림길 밀도가 유지된다(위 상수 주석).
+  // `RACING_SECTION_LENGTH === RACING_BRANCH_INTERVAL` 이면 분기 1개라 구 배치와 바이트 동일.
+  const branches = racingBranchesPerSection();
+  const branchLength = RACING_SECTION_LENGTH / branches;
   for (let i = 0; i < RACING_SECTION_COUNT; i++) {
     const sectionStart = i * RACING_SECTION_LENGTH;
-    // 구간 중앙에 상·하 채널을 가르는 분리 벽(불파괴, hp=0). 청크 컬링에서 살아남게 마커를 단다.
-    const branchX = sectionStart + RACING_SECTION_LENGTH / 2;
-    const divider = spawnWall(sink, branchX, 0, RACING_DIVIDER_HALF_W, RACING_DIVIDER_HALF_H);
-    divider.ownerId = RACING_WALL_MARK;
-    // 지름길(상단, −Y) 채널에 부스트 패드를 구간 폭에 걸쳐 고정 배치(RNG 미사용).
-    for (let k = 0; k < RACING_BOOST_PER_SECTION; k++) {
-      const bx = sectionStart + ((k + 1) / (RACING_BOOST_PER_SECTION + 1)) * RACING_SECTION_LENGTH;
-      spawnBoostPad(sink, bx, -RACING_CHANNEL_OFFSET_Y, RACING_BOOST_RADIUS);
+    for (let b = 0; b < branches; b++) {
+      const branchStart = sectionStart + b * branchLength;
+      // 분기 중앙에 상·하 채널을 가르는 분리 벽(불파괴, hp=0). 청크 컬링에서 살아남게 마커를 단다.
+      const divider = spawnWall(
+        sink,
+        branchStart + branchLength / 2,
+        0,
+        RACING_DIVIDER_HALF_W,
+        RACING_DIVIDER_HALF_H,
+      );
+      divider.ownerId = RACING_WALL_MARK;
+      // 지름길(상단, −Y) 채널에 부스트 패드를 분기 폭에 걸쳐 고정 배치(RNG 미사용).
+      for (let k = 0; k < RACING_BOOST_PER_SECTION; k++) {
+        const bx = branchStart + ((k + 1) / (RACING_BOOST_PER_SECTION + 1)) * branchLength;
+        spawnBoostPad(sink, bx, -RACING_CHANNEL_OFFSET_Y, RACING_BOOST_RADIUS);
+      }
     }
   }
 }

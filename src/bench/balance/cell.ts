@@ -94,6 +94,7 @@ function observeBoss(state: WorldState, t: RunTrace): void {
   }
   if (bossHp !== undefined) {
     t.sawBoss = true;
+    if (t.bossReachTick < 0) t.bossReachTick = state.tick;
     if (t.bossHp0 < 0) t.bossHp0 = bossHp;
     t.bossHpLast = bossHp;
     t.bossTicks++;
@@ -143,6 +144,8 @@ export function runCellSeed(cell: BalanceCell, seed: number): CellRunResult {
   //    `winPosMean`(양수 표본만) 으로 집계한다 — 0 을 섞으면 평균이 내려앉는다(metrics.ts).
   if (state.victory) {
     trace.sawBoss = true;
+    // 스폰 틱 즉사(관측 창 0틱)면 도달 시각도 못 봤다 — 종료 틱으로 확정한다.
+    if (trace.bossReachTick < 0) trace.bossReachTick = state.tick;
     if (trace.bossHp0 >= 0) {
       trace.bossHpLast = 0;
       trace.bossTicks++;
