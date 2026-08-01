@@ -19,7 +19,7 @@ import {
 import type { CommissionPayload } from '../src/run/commission.js';
 import { t } from '../src/i18n/index.js';
 import { POWERUPS } from '../src/sim/powerups.js';
-import { M2_UNIQUES } from '../data/uniques.js';
+import { M2_UNIQUES, M3_UNIQUES } from '../data/uniques.js';
 
 function basePayload(overrides: Partial<CommissionPayload> = {}): CommissionPayload {
   return {
@@ -160,6 +160,38 @@ describe('금지 유니크가 **이름으로** 표시된다 (리뷰 후속 — �
   //    사라진 것을 결함으로 읽는다.
   const first = M2_UNIQUES[0];
   const second = M2_UNIQUES[1];
+
+  it('**M3 카탈로그(bit 5~14)도 이름으로 나온다** — 초판은 M2 만 훑어 10종이 #5~#14 였다', () => {
+    // ⚠️ 이 케이스가 없으면 M2(5종)만 쓰는 위 테스트가 전부 초록인 채로 유니크 15종 중 10종이
+    //    이름 대신 `#12` 로 나온다. 그리고 '미상 폴백'이 그 결함을 정확히 은폐한다 — 알고 있는데
+    //    못 찾은 것이 미상처럼 보인다. 목록을 순회하는 검증이 목록 변경에 눈머는 형태 그대로다.
+    const m3 = M3_UNIQUES[0];
+    if (m3 === undefined) throw new Error('M3 유니크 카탈로그가 비었다');
+    const lines = commissionConstraintLines(
+      basePayload({
+        order: 'constraint',
+        constraints: { equipRules: { bannedUniqueIds: [m3.bit] } },
+      }),
+    );
+    expect(lines).toEqual([t('commission.constraint.bannedUniques', { list: m3.name })]);
+    // 통과하면서도 참일 수 있는 나쁜 상태: 구현이 `#<bit>` 를 냈는데 그 문자열이 우연히 이름과
+    // 같은 것. 그래서 '#' 이 안 들어갔음을 함께 본다.
+    expect(lines[0]).not.toContain('#');
+  });
+
+  it('카탈로그 전 항목이 이름으로 열린다 (미상 폴백이 실제 결함을 덮지 않는다)', () => {
+    const all = [...M2_UNIQUES, ...M3_UNIQUES];
+    expect(all.length).toBeGreaterThan(10);
+    for (const def of all) {
+      const lines = commissionConstraintLines(
+        basePayload({
+          order: 'constraint',
+          constraints: { equipRules: { bannedUniqueIds: [def.bit] } },
+        }),
+      );
+      expect(lines[0], `bit ${def.bit}(${def.name}) 가 이름으로 안 열린다`).toContain(def.name);
+    }
+  });
 
   it('bit 로 조회한 이름이 나온다 (wire 정본이 문자열 id 가 아니라 bit 다)', () => {
     if (first === undefined || second === undefined) throw new Error('유니크 카탈로그가 비었다');

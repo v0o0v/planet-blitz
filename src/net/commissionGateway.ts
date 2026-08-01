@@ -183,7 +183,7 @@ function rowToGrant(raw: unknown): CommissionGrantRow {
  * 형태가 바뀔 수 있으므로 **못 읽으면 `null`(= 재시도)** 로 떨어진다 — 판정 불가일 때 영구
  * 폐기보다 재시도가 안전한 쪽이다(확정 지급물이 걸려 있다).
  */
-function finalHttpStatus(error: unknown): number | null {
+export function finalHttpStatus(error: unknown): number | null {
   const ctx = (error as { context?: unknown } | null)?.context;
   const status = (ctx as { status?: unknown } | null)?.status;
   if (typeof status !== 'number') return null;

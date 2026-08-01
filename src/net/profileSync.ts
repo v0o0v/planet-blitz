@@ -380,14 +380,34 @@ export interface PendingCommissionSubmission {
 }
 
 /**
- * 대기 큐 항목 수 상한. 초과하면 **가장 오래된 것부터** 버린다.
+ * 대기 큐 항목 수 상한 — **1**. 초과하면 가장 오래된 것을 버린다.
  *
  * 왜 필요한가: 이 큐는 리포에서 **처음으로 리플레이 통째를 localStorage 에 넣는다**(기존
  * `PendingSettlement`/`PendingGrant` 는 수십 바이트짜리 요약이라 이 문제를 겪은 적이 없다 —
  * 선례로 안심하면 안 된다). 최종 지시 1건이 5구간×9,000틱 = 45,000틱이고 `InputFrame` 이
- * float 3개라 JSON 으로 ~5MB 다. 상한이 없으면 두 번째 항목에서 쿼터가 터진다.
+ * float 3개라 JSON 으로 ~5MB 다.
+ *
+ * ⚠️ **왜 2 가 아니라 1 인가.** 초판은 2 였는데 그 값은 자기 근거와 모순이었다 — "1건이 ~5MB,
+ * 쿼터가 통상 5MB" 라면 **2건은 정확히 터지는 값**이라 상한이 아무것도 막지 못한다. 그리고
+ * 터질 때 폴백이 단독 저장으로 성공해 버리므로 **직전 대기 런이 아무 신호 없이 사라진다**.
+ * 1 이면 "가장 최근 런 하나만 보관"이 계약이 되고, 밀려나는 항목은 {@link
+ * StashResult.dropped} 로 **호출부에 보고**된다 — 조용한 소실이 구조적으로 불가능해진다.
  */
-export const PENDING_COMMISSION_QUEUE_MAX = 2;
+export const PENDING_COMMISSION_QUEUE_MAX = 1;
+
+/** {@link stashPendingCommissionSubmission} 결과 — 저장 성공 여부와 **밀려난 항목 수**. */
+export interface StashResult {
+  /** 이번 항목이 큐에 실제로 들어갔는가. */
+  stored: boolean;
+  /**
+   * 이번 저장 때문에 큐에서 밀려난 **이전** 대기 항목 수.
+   *
+   * ⚠️ 0 이 아니면 그 런들은 **재시도 기회를 잃었다**. 호출부는 이것을 조용히 버리면 안 된다 —
+   * 그 런들의 `commission_runs` 행은 24h 뒤 cron 이 `abandoned` 로 종결하고 **의뢰서는 회수되지
+   * 않으므로**, 플레이어에게 남는 것은 "보상이 안 들어왔다" 하나뿐이다.
+   */
+  dropped: number;
+}
 
 /** 대기 의뢰 제출 목록을 읽는다(손상/부재 시 빈 배열). */
 export function readPendingCommissionSubmissions(store: KeyValueStore): PendingCommissionSubmission[] {
@@ -441,16 +461,24 @@ export function writePendingCommissionSubmissions(
 export function stashPendingCommissionSubmission(
   store: KeyValueStore,
   entry: PendingCommissionSubmission,
-): boolean {
+): StashResult {
   const list = readPendingCommissionSubmissions(store).filter((e) => e.runId !== entry.runId);
   list.push(entry);
   // 상한 초과분은 **앞에서**(오래된 것부터) 버린다. 새 항목이 밀려나면 방금 끝낸 런을 잃는
   // 것이라 최악이다.
   const trimmed = list.slice(Math.max(0, list.length - PENDING_COMMISSION_QUEUE_MAX));
-  if (writePendingCommissionSubmissions(store, trimmed)) return true;
+  const droppedByCap = list.length - trimmed.length;
+  if (writePendingCommissionSubmissions(store, trimmed)) {
+    return { stored: true, dropped: droppedByCap };
+  }
   // 저장 실패(쿼터 등) — 이번 항목만 단독으로 넣어 본다. 기존 대기분을 버리더라도 **방금 끝낸
   // 런**을 살리는 쪽이 낫다(그쪽이 확정 지급물을 들고 있다).
-  return writePendingCommissionSubmissions(store, [entry]);
+  // ⚠️ 이 폴백이 성공하면 밀려난 항목은 **영영 재시도되지 않는다.** 그 사실을 `dropped` 로
+  //    반드시 올린다 — 초판은 여기서 `true` 만 돌려줘 소실이 완전히 조용했다.
+  if (writePendingCommissionSubmissions(store, [entry])) {
+    return { stored: true, dropped: Math.max(droppedByCap, trimmed.length - 1) };
+  }
+  return { stored: false, dropped: droppedByCap };
 }
 
 /** 대기 의뢰 제출에서 이 `runId` 항목을 지운다(응답을 받아 최종 판정이 났을 때). */

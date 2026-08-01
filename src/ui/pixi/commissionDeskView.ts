@@ -11,7 +11,7 @@ import type { CommissionGrade, CommissionOrder, CommissionPayload } from '../../
 import type { EquipSlotId, SlotKind } from '../../items/types.js';
 import { RARITY_BY_CODE } from '../../items/types.js';
 import { POWERUPS } from '../../sim/powerups.js';
-import { M2_UNIQUES } from '../../../data/uniques.js';
+import { M2_UNIQUES, M3_UNIQUES } from '../../../data/uniques.js';
 import { slotLabel } from '../itemNames.js';
 import { t, type MessageKey } from '../../i18n/index.js';
 
@@ -71,6 +71,12 @@ export function commissionRewardSummary(payload: CommissionPayload): CommissionR
 /**
  * `bannedUniqueIds` 의 정수(= `UniqueDef.bit`)를 표시 이름으로 되돌린다.
  *
+ * ⚠️ **두 카탈로그를 모두 훑어야 한다.** `data/uniques.ts` 는 `M2_UNIQUES`(bit 0~4)와
+ * `M3_UNIQUES`(bit 5~14)를 따로 export 하고 `registerM2Uniques()` 가 **둘 다** 등록한다.
+ * 초판은 `M2_UNIQUES` 만 훑어 **15종 중 10종이 이름 대신 `#5`~`#14` 로 나왔다** — 그리고
+ * 미상 폴백이 그 결함을 정확히 은폐했다(알고 있는데 못 찾은 것이 '미상'으로 보였다).
+ * 이 함수가 이름으로 못 여는 bit 는 **정말로 카탈로그에 없는 것뿐이어야** 한다.
+ *
  * ⚠️ **`id` 문자열이 아니라 `bit` 로 조회한다** — wire 정본이 bit 이기 때문이다
  * (`src/run/runConfig.ts` 의 `equipBanned` 주석이 근거: payload 가 jsonb 이라 서버·클라가 같은
  * **정수**를 봐야 하고, bit 는 이미 append-only 로 고정된 유일한 정수 축이다).
@@ -80,6 +86,7 @@ export function commissionRewardSummary(payload: CommissionPayload): CommissionR
  */
 function uniqueNameByBit(bit: number): string {
   for (const def of M2_UNIQUES) if (def.bit === bit) return def.name;
+  for (const def of M3_UNIQUES) if (def.bit === bit) return def.name;
   return `#${bit}`;
 }
 

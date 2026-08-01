@@ -825,7 +825,10 @@ export async function submitCommissionRun(
   const gateway = await resolveCommissionGateway(deps);
   if (gateway === null) return { status: 'unconfigured' };
   const store = deps.store !== undefined ? deps.store : defaultNetStore();
-  if (store !== null) await flushCommissionQueueOnce(gateway, store);
+  // ⚠️ `.catch` 가 필요하다 — 공유 promise 라 한 번의 reject 가 **모든 대기자**에게 번진다.
+  //    여기서 throw 하면 `submitCommissionReplay` 에 catch 가 없고 `commissionRunId` 는 이미
+  //    소비된 뒤라, 이번 런이 큐에도 안 남고 오버레이가 '확인 중…' 에 영구 고착한다.
+  if (store !== null) await flushCommissionQueueOnce(gateway, store).catch(() => undefined);
   const config = replay.config;
   if (config === undefined) {
     // 의뢰 런은 항상 명시적 config 로 조립된다(startCommissionRun) — 여기 도달하면 호출부
@@ -854,7 +857,7 @@ export async function submitCommissionRun(
       // ⚠️ `hashStream` 은 **저장하지 않는다** — 45,000틱이면 그 배열만 ~0.5MB 라 쿼터를
       //    잡아먹는데, `verifyRun` 은 이 필드를 optional 로 받는다(없으면 조기 발산 인덱스만
       //    못 받고 finalHash·outcome 대조는 그대로 성립한다). 재해싱 비용보다 쿼터가 비싸다.
-      const stored = stashPendingCommissionSubmission(store, {
+      const stash = stashPendingCommissionSubmission(store, {
         runId,
         seed: replay.seed,
         config,
@@ -864,7 +867,14 @@ export async function submitCommissionRun(
       // ⚠️ 저장이 실패했으면(쿼터 초과 등) **재시도 기회가 없다** — 화면에 'queued'(나중에 다시
       //    시도됨)를 보여주면 거짓말이 된다. 이 함수의 존재 이유가 확정 지급물 증발 방지이므로
       //    구분해서 알린다.
-      if (!stored) return { status: 'lost' };
+      if (!stash.stored) return { status: 'lost' };
+      // ⚠️ 밀려난 대기 항목은 **재시도 기회를 잃었다** — 그 런들은 24h 뒤 cron 이 `abandoned`
+      //    로 종결하고 의뢰서는 회수되지 않는다. 조용히 넘기면 플레이어에게 남는 신호가 0 이다.
+      if (stash.dropped > 0) {
+        console.warn(
+          `[commission] 대기 큐가 가득 차 이전 제출 ${stash.dropped}건이 폐기됐다 — 그 런들의 보상은 지급되지 않는다`,
+        );
+      }
     }
     return { status: 'queued' };
   }
@@ -887,12 +897,25 @@ export async function submitCommissionRun(
  * 결정론적이지 않아 재현이 어렵고 증상은 "가끔 보상이 두 번 확인된다" 정도라 진단이 힘들다.
  */
 let commissionFlushInFlight: Promise<void> | null = null;
+/** {@link commissionFlushInFlight} 가 어느 저장소를 흘리고 있는가(공유 판정 키). */
+let commissionFlushStore: KeyValueStore | null = null;
 
-/** {@link flushPendingCommissionQueue} 를 중복 없이 돌린다(이미 돌고 있으면 그것을 기다린다). */
+/**
+ * {@link flushPendingCommissionQueue} 를 중복 없이 돌린다(이미 돌고 있으면 그것을 기다린다).
+ *
+ * ⚠️ **같은 `store` 에 대해서만 공유한다.** 초판은 인자를 안 보고 무조건 진행 중 promise 를
+ * 돌려줬는데, 그러면 다른 store 로 부른 호출자가 남의 flush 를 기다린 뒤 **자기 큐는 안 흘리고**
+ * 넘어간다. 프로덕션은 둘 다 `defaultNetStore()` 라 지금은 안 터지지만 그건 계약이 아니라
+ * 우연이고, 테스트는 매번 다른 in-memory store 를 쓴다.
+ */
 function flushCommissionQueueOnce(gateway: CommissionGateway, store: KeyValueStore): Promise<void> {
-  if (commissionFlushInFlight !== null) return commissionFlushInFlight;
+  if (commissionFlushInFlight !== null && commissionFlushStore === store) {
+    return commissionFlushInFlight;
+  }
+  commissionFlushStore = store;
   const p = flushPendingCommissionQueue(gateway, store).finally(() => {
     commissionFlushInFlight = null;
+    commissionFlushStore = null;
   });
   commissionFlushInFlight = p;
   return p;
