@@ -13,15 +13,30 @@
  * 움직일 때마다 클릭 목표가 흔들리고 ②멀미가 난다. 그래서 절반 아래로 줄였다. 배경만 움직이고
  * **전경(타일·크롬)은 리드가 고정으로 붙인다** — 움직이는 것과 눌러야 하는 것을 분리한다.
  *
- * ## 중앙 베일 — 왜 사각형 알파가 아닌가
- * 배경 중앙은 아치 너머 성운이라 밝다. 타일 격자(대략 x 46..1874 · y 134..704)가 그 위에 그냥
- * 앉으면 대비가 무너진다. 그렇다고 반투명 사각형을 깔면 **경계선이 그대로 보인다**(직선 알파
- * 단차는 인간 시각이 가장 잘 잡는 신호다). 띠를 겹쳐 부드럽게 만드는 근사는 이 리포가 이미
- * 밟은 함정이다 — 1px 겹침이 알파를 두 배로 만들어 가로줄이 생겼다(`scrim.ts` 헤더).
+ * ## 딤은 "많이"가 아니라 "타일이 앉는 자리에만" — 실측이 그렇게 시켰다
+ * 1차 판은 전면 딤이었고, 실화면 계측에서 **자기 게임의 다른 화면보다 한 스톱 어두웠다**:
+ * 중앙값 휘도 24(타이틀 32·인트로 49) · lum<25 픽셀 52%(타이틀 43%) · 채도 18.7(타이틀 28.4).
+ * 배경이 "무특징 어둠"이 되어 타이틀에서 주인공이던 아치·성운·석재가 통째로 사라졌다.
  *
- * 그래서 베일도 **픽셀로 굽는다**: 중앙에 평탄부(plateau)를 두고 가장자리로 갈수록 0 으로
- * 떨어지는 알파장을 캔버스에 직접 써서 `linear` 로 늘린다. 가로·세로 페이드를 곱하므로 모서리가
- * 자연히 둥글어지고, 경계에서 알파가 정확히 0 이라 **테두리가 원리적으로 생기지 않는다**.
+ * 그래서 딤의 총량을 낮추는 동시에 **모양을 바꿨다.** 화면 전체를 덮는 사각형 하나가 아니라
+ * **타일 격자 행마다 하나씩** 눌러, 행 사이·좌우 알코브(격자 바깥)에는 배경이 그대로 드러난다.
+ * 격자 사이로 장소가 비쳐야 "배경 위에 얹은 UI"가 아니라 "그 장소 안의 UI"가 된다.
+ *
+ * ## 베일 — 왜 사각형 알파가 아니고, 왜 스프라이트 여러 장도 아닌가
+ * 반투명 사각형을 그냥 깔면 **경계선이 그대로 보인다**(직선 알파 단차는 인간 시각이 가장 잘
+ * 잡는 신호다). 그렇다고 행마다 부드러운 스프라이트를 한 장씩 겹치면 **행 사이에서 알파가
+ * 두 번 곱해져 오히려 더 어두운 띠**가 생긴다 — 이 리포가 이미 밟은 함정의 같은 얼굴이다
+ * (`scrim.ts` 헤더: 1px 겹침이 알파를 두 배로 만들어 가로줄을 만들었다).
+ *
+ * 그래서 여러 사각형을 **한 장의 알파장으로 굽는다**: 각 텍셀의 알파 = 사각형별 감쇠의
+ * **최댓값**(합이 아니다). 겹쳐도 최댓값이라 이중가산이 원리적으로 불가능하고, 경계에서
+ * 정확히 0 이라 테두리도 생기지 않는다. 드로우콜도 1 이다.
+ *
+ * ## 피사계 심도 — 왜 필터가 아니라 구운 텍스처인가
+ * 배경·타일·크롬이 전부 같은 초점면에 있으면 깊이가 안 생긴다. 배경을 약하게 흐리면 타일이
+ * 앞으로 떨어져 나온다. Pixi `BlurFilter` 는 **매 프레임 2패스**라 오래 머무는 화면에서 계속
+ * 비용을 내는데, 배경은 절대 변하지 않으므로 캔버스에서 **1회 구워** 그 텍스처를 쓴다(런타임
+ * 비용 0). 구울 수 없는 환경이면 원본을 그대로 쓴다 — 흐림은 덧붙임이지 전제가 아니다.
  *
  * ## 자산 없이도 서야 한다
  * `tex` 가 `undefined` 면 절차적 폴백으로 넘어간다 — 짙은 바탕 + 청록·자홍 성운 얼룩(같은
@@ -66,19 +81,65 @@ const PARALLAX = { art: 1, air: 1.45 } as const;
  */
 const OVERSCAN = 1.1;
 
+/**
+ * 배경 흐림 반경(원화 픽셀). 디자인 스페이스 ~6px 에 해당한다(원화 1376 폭이 2112 로 늘어나
+ * 확대율 ≈1.53 → 6/1.53 ≈ 4). 이보다 세게 걸면 타이틀에서 주인공이던 석재 부조가 뭉개져
+ * 배경이 다시 "무특징 어둠"이 된다 — 깊이를 얻으려고 랜드마크를 잃으면 손해다.
+ */
+const BLUR_RADIUS = 4;
+
 // --- 중앙 베일(타일 격자가 앉는 자리) ---
-/** 리드가 배치하는 타일 격자의 대략적 외곽(레인 계약). 베일 평탄부가 이 사각형을 덮는다. */
-const VEIL_RECT = { x0: 46, y0: 134, x1: 1874, y1: 704 } as const;
-/** 평탄부 바깥으로 알파가 0 까지 사라지는 거리(px). 넉넉해야 경계가 안 보인다. */
-const VEIL_FEATHER = 190;
-/** 베일 최대 알파. 성운을 죽이지 않으면서 타일 대비를 확보하는 최소량. */
-const VEIL_ALPHA = 0.44;
+/** 베일이 누를 사각형(디자인 스페이스). */
+export interface BaseVeilRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/**
+ * 기본 베일 사각형 — **격자 행마다 하나**다. 현재 배치(4칸 + 3칸)의 실측 외곽이며, 리드가
+ * 격자를 바꾸면 생성자 옵션으로 실제 값을 넘기면 된다(하드코딩에 묶이지 않는다).
+ *
+ * 한 장의 큰 사각형으로 두면 두 번째 행의 좌우 알코브(x 61..290 · 1629..1859)까지 눌러
+ * 배경 랜드마크가 통째로 사라진다 — 그 두 자리가 "배경이 살아 있다"를 증명하는 유일한
+ * 창이므로 행별로 나눈다.
+ */
+const DEFAULT_VEIL_RECTS: readonly BaseVeilRect[] = [
+  { x0: 60, y0: 179, x1: 1860, y1: 507 },
+  { x0: 290, y0: 567, x1: 1632, y1: 893 },
+];
+
+/** 사각형 바깥으로 알파가 0 까지 사라지는 거리(px). 넉넉해야 경계가 안 보인다. */
+const VEIL_FEATHER = 160;
+/** 베일 최대 알파. 성운을 죽이지 않으면서 타일 대비를 확보하는 최소량(1차 0.44 에서 하향). */
+const VEIL_ALPHA = 0.36;
+/** 베일 알파장 텍스처 해상도. 저주파 장이라 6px/텍셀이면 linear 확대로 이음매가 없다. */
+const VEIL_TEX_W = 320;
+const VEIL_TEX_H = 180;
 
 /** 하단 비네트가 시작하는 y — CTA·메타 줄이 앉는 자리를 눌러 준다. */
-const BOTTOM_SCRIM_TOP = 760;
-const BOTTOM_SCRIM_ALPHA = 0.52;
-/** 화면 네 변을 두르는 가장자리 비네트 최대 알파(중앙은 0). */
-const EDGE_VIGNETTE_ALPHA = 0.5;
+const BOTTOM_SCRIM_TOP = 790;
+const BOTTOM_SCRIM_ALPHA = 0.44;
+/**
+ * 화면 네 변을 두르는 가장자리 비네트. 중앙 ~1/3 은 손대지 않고(plateau) 가장자리에서만
+ * 최대 알파에 닿는다 — 1차 판(plateau 0.12 · alpha 0.5)은 사실상 화면 전체를 눌러
+ * 알코브까지 죽였다.
+ */
+const EDGE_VIGNETTE_ALPHA = 0.34;
+const EDGE_VIGNETTE_PLATEAU_X = 0.34;
+const EDGE_VIGNETTE_PLATEAU_Y = 0.3;
+
+/**
+ * 램프 발광을 얹을 자리(디자인 스페이스 중심). 두 번째 행 좌우의 **알코브** — 격자가 비켜
+ * 가는 유일한 큰 공간이라, 여기가 살아 있으면 화면이 "그 장소 안"으로 읽힌다. 딤을 걷는
+ * 것만으로는 채도가 안 올라오므로(어둠을 뺀 자리는 회색이다) 따뜻한 가산광을 함께 넣는다.
+ */
+const ALCOVES: readonly { x: number; y: number }[] = [
+  { x: 175, y: 731 },
+  { x: 1744, y: 731 },
+];
+const ALCOVE_GLOW_ALPHA = 0.13;
 
 // --- 공기 ---
 /** 먼지 티끌 수(고티어). 저티어는 절반. 타이틀보다 적다 — 오래 보는 화면이라 산만하면 안 된다. */
@@ -100,6 +161,23 @@ interface Mote {
   speed: number;
   phase: number;
   amp: number;
+}
+
+/** 아주 느리게 알파가 오가는 발광체(성운 얼룩·알코브 램프광). */
+interface Breather {
+  sprite: Sprite;
+  base: number;
+  period: number;
+  phase: number;
+}
+
+/** 생성자 옵션. 전부 선택적이다 — 리드가 아무것도 넘기지 않아도 기본값으로 선다. */
+export interface BaseBackdropOpts {
+  /**
+   * 타일 격자 행 사각형(디자인 스페이스). 이 사각형들 **안쪽만** 눌린다. 리드가 격자 배치를
+   * 바꾸면 여기로 실제 값을 넘겨라 — 넘기지 않으면 {@link DEFAULT_VEIL_RECTS} 를 쓴다.
+   */
+  veilRects?: readonly BaseVeilRect[];
 }
 
 /**
@@ -130,12 +208,24 @@ function axisFade(u: number, plateau: number): number {
   return 1 - smoothstep((a - plateau) / (1 - plateau));
 }
 
+/** 캔버스 2D 컨텍스트를 만든다. 없는 환경(vitest)에서는 null — 호출부가 그 없이도 서야 한다. */
+function makeCtx(w: number, h: number): CanvasRenderingContext2D | null {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  return canvas.getContext('2d');
+}
+
+/** 캔버스를 Pixi 텍스처로(항상 `linear` — 저주파 알파장을 늘려 쓰기 때문). */
+function canvasTexture(ctx: CanvasRenderingContext2D): Texture {
+  const tex = new Texture({ source: new CanvasSource({ resource: ctx.canvas }) });
+  tex.source.scaleMode = 'linear';
+  return tex;
+}
+
 /**
  * 부드러운 사각형(또는 `plateau` 0 이면 블롭) 알파장을 픽셀로 굽는다.
- *
- * 캔버스가 없는 환경(vitest)에서는 `null` — 호출부는 이 텍스처들 없이도 컨테이너를 돌려줘야
- * 한다. `scrim.ts` 와 같은 방어다.
- *
  * @param invert true 면 중앙이 0, 가장자리가 최대(비네트).
  */
 function bakeSoftRect(
@@ -145,14 +235,9 @@ function bakeSoftRect(
   plateauY: number,
   invert = false,
 ): Texture | null {
-  if (typeof document === 'undefined') return null;
-  // 128×80 이면 충분하다 — 알파장이 저주파라 linear 확대로 이음매 없이 늘어난다.
   const w = 128;
   const h = 80;
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
+  const ctx = makeCtx(w, h);
   if (ctx === null) return null;
   const r = (color >> 16) & 0xff;
   const g = (color >> 8) & 0xff;
@@ -174,9 +259,86 @@ function bakeSoftRect(
     }
   }
   ctx.putImageData(img, 0, 0);
-  const tex = new Texture({ source: new CanvasSource({ resource: canvas }) });
-  tex.source.scaleMode = 'linear';
-  return tex;
+  return canvasTexture(ctx);
+}
+
+/**
+ * 여러 사각형을 **한 장**의 알파장으로 굽는다. 텍셀 알파 = 사각형별 감쇠의 **최댓값**이므로
+ * 사각형이 겹치거나 가까워도 알파가 이중으로 쌓이지 않는다(헤더 "베일" 참조).
+ */
+function bakeVeilField(
+  rects: readonly BaseVeilRect[],
+  feather: number,
+  maxAlpha: number,
+  color: number,
+): Texture | null {
+  if (rects.length === 0) return null;
+  const ctx = makeCtx(VEIL_TEX_W, VEIL_TEX_H);
+  if (ctx === null) return null;
+  const r = (color >> 16) & 0xff;
+  const g = (color >> 8) & 0xff;
+  const b = color & 0xff;
+  const img = ctx.createImageData(VEIL_TEX_W, VEIL_TEX_H);
+  for (let ty = 0; ty < VEIL_TEX_H; ty++) {
+    const py = ((ty + 0.5) / VEIL_TEX_H) * DESIGN_HEIGHT;
+    for (let tx = 0; tx < VEIL_TEX_W; tx++) {
+      const px = ((tx + 0.5) / VEIL_TEX_W) * DESIGN_WIDTH;
+      let best = 0;
+      for (const rect of rects) {
+        // 사각형 바깥으로 나간 거리(안이면 0). 유클리드라 모서리가 자연히 둥글다.
+        const dx = Math.max(rect.x0 - px, px - rect.x1, 0);
+        const dy = Math.max(rect.y0 - py, py - rect.y1, 0);
+        const d = Math.hypot(dx, dy);
+        if (d >= feather) continue;
+        const a = 1 - smoothstep(d / feather);
+        if (a > best) best = a;
+      }
+      const i = (ty * VEIL_TEX_W + tx) * 4;
+      img.data[i] = r;
+      img.data[i + 1] = g;
+      img.data[i + 2] = b;
+      img.data[i + 3] = Math.round(maxAlpha * best * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvasTexture(ctx);
+}
+
+/** 캔버스에 그릴 수 있는 이미지 자원인가(구울 수 없는 자원이면 흐림을 포기한다). */
+function drawableSource(res: unknown): CanvasImageSource | null {
+  if (typeof HTMLImageElement !== 'undefined' && res instanceof HTMLImageElement) return res;
+  if (typeof HTMLCanvasElement !== 'undefined' && res instanceof HTMLCanvasElement) return res;
+  if (typeof ImageBitmap !== 'undefined' && res instanceof ImageBitmap) return res;
+  return null;
+}
+
+/**
+ * 배경을 **1회** 흐려 구운 텍스처. 실패하면 `null` — 호출부는 원본을 그대로 쓴다(흐림은
+ * 덧붙임이라 없어도 화면이 선다).
+ *
+ * 캔버스 `filter: blur()` 는 경계 바깥을 투명검정으로 샘플링해 테두리에 어두운 띠를 남긴다.
+ * 그래서 원본을 반경의 몇 배만큼 **확대해 그려** 그 띠가 캔버스 밖으로 나가게 한다. 어차피
+ * 이 텍스처는 오버스캔으로 더 확대돼 쓰이므로 잘려 나가는 몇 픽셀은 화면에 없다.
+ */
+function bakeBlurred(tex: Texture, radius: number): Texture | null {
+  const w = Math.round(tex.source.width);
+  const h = Math.round(tex.source.height);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  const src = drawableSource(tex.source.resource);
+  if (src === null) return null;
+  const ctx = makeCtx(w, h);
+  if (ctx === null) return null;
+  try {
+    ctx.filter = `blur(${radius}px)`;
+    const grow = 1 + (radius * 3) / Math.min(w, h);
+    const dw = w * grow;
+    const dh = h * grow;
+    ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    ctx.filter = 'none';
+  } catch {
+    return null; // `filter` 미지원 등 — 원본으로 간다.
+  }
+  return canvasTexture(ctx);
 }
 
 /** 텍스처를 화면 중앙에 `scale` 배 오버스캔으로 놓은 스프라이트(타이틀과 같은 규약). */
@@ -204,8 +366,10 @@ export class BaseBackdrop {
 
   private readonly motes: Mote[] = [];
   private shaft: Graphics | null = null;
-  /** 절차적 폴백의 성운 얼룩 — 아주 느리게 숨 쉬듯 알파가 오간다. */
-  private readonly nebulae: Sprite[] = [];
+  /** 성운 얼룩·알코브 램프광 — 아주 느리게 숨 쉬듯 알파가 오간다. */
+  private readonly breathers: Breather[] = [];
+  /** 흐림을 굽느라 만든 텍스처. `view.destroy` 가 모르는 자원이라 직접 반납한다. */
+  private bakedBlur: Texture | null = null;
 
   private time = 0;
   private aimX = 0;
@@ -214,7 +378,7 @@ export class BaseBackdrop {
   private curY = 0;
   private readonly onPointerMove: (e: PointerEvent) => void;
 
-  constructor(tex: Texture | undefined) {
+  constructor(tex: Texture | undefined, opts?: BaseBackdropOpts) {
     // 캔버스가 아니라 window 에 건다 — 커서가 캔버스 밖으로 나가도 마지막 값이 굳지 않고,
     // Pixi 이벤트 계층(위에 깔린 타일이 포인터를 삼키는 문제)과도 무관해진다.
     this.onPointerMove = (e: PointerEvent) => {
@@ -240,9 +404,37 @@ export class BaseBackdrop {
     this.view.addChild(this.airLayer);
 
     if (tex !== undefined) {
-      this.artLayer.addChild(coverSprite(tex, OVERSCAN));
+      // 피사계 심도 — 배경을 1회 구워 흐린다(헤더 참조). 못 구우면 원본 그대로.
+      this.bakedBlur = bakeBlurred(tex, BLUR_RADIUS);
+      this.artLayer.addChild(coverSprite(this.bakedBlur ?? tex, OVERSCAN));
     } else {
       this.buildProceduralArt();
+    }
+
+    // --- 알코브 램프광(가산) ---
+    // 딤을 걷는 것만으로는 채도가 안 올라온다(어둠을 뺀 자리는 회색이다). 격자가 비켜 가는
+    // 두 자리에 따뜻한 가산광을 얹어 그곳만 확실히 살린다.
+    if (gates.halo) {
+      for (let i = 0; i < ALCOVES.length; i++) {
+        const at = ALCOVES[i];
+        if (at === undefined) continue;
+        const glow = bakeSoftRect(FALLBACK_LAMP, 1, 0, 0);
+        if (glow === null) continue;
+        const s = new Sprite(glow);
+        s.anchor.set(0.5);
+        s.width = 620;
+        s.height = 760;
+        s.position.set(at.x, at.y);
+        s.alpha = ALCOVE_GLOW_ALPHA;
+        s.blendMode = 'add';
+        this.artLayer.addChild(s);
+        this.breathers.push({
+          sprite: s,
+          base: ALCOVE_GLOW_ALPHA,
+          period: 17 + i * 6,
+          phase: i * 1.7,
+        });
+      }
     }
 
     // --- 공기: 먼지 티끌 ---
@@ -294,21 +486,22 @@ export class BaseBackdrop {
     }
 
     // --- 대비 장치(고정 — 패럴랙스 밖) ---
-    this.buildVeil();
+    this.buildVeil(opts?.veilRects ?? DEFAULT_VEIL_RECTS);
     this.buildVignettes();
   }
 
   /** 자산이 없을 때의 절차적 배경 — 짙은 바탕 위 성운 얼룩 + 좌우 램프광. */
   private buildProceduralArt(): void {
     const put = (
-      tex: Texture | null,
+      color: number,
       x: number,
       y: number,
       w: number,
       h: number,
       alpha: number,
-      add: boolean,
+      period: number,
     ): void => {
+      const tex = bakeSoftRect(color, 1, 0, 0);
       if (tex === null) return;
       const s = new Sprite(tex);
       s.anchor.set(0.5);
@@ -316,44 +509,42 @@ export class BaseBackdrop {
       s.height = h;
       s.position.set(x, y);
       s.alpha = alpha;
-      if (add) s.blendMode = 'add';
+      s.blendMode = 'add';
       this.artLayer.addChild(s);
-      this.nebulae.push(s);
+      this.breathers.push({ sprite: s, base: alpha, period, phase: this.breathers.length });
     };
 
     // 성운 두 덩이 — 중앙 위쪽(아치 너머)에서 청록·자홍이 겹친다.
-    put(bakeSoftRect(FALLBACK_NEBULA_TEAL, 1, 0, 0), 900, 380, 1500, 900, 0.5, true);
-    put(bakeSoftRect(FALLBACK_NEBULA_MAGENTA, 1, 0, 0), 1180, 300, 1150, 720, 0.34, true);
+    put(FALLBACK_NEBULA_TEAL, 900, 380, 1500, 900, 0.52, 23);
+    put(FALLBACK_NEBULA_MAGENTA, 1180, 300, 1150, 720, 0.36, 31);
     // 좌우 벽의 금색 램프광 — 화면 양옆을 따뜻하게 붙잡아 "실내"로 읽히게 한다.
-    put(bakeSoftRect(FALLBACK_LAMP, 1, 0, 0), 120, 620, 900, 1300, 0.2, true);
-    put(bakeSoftRect(FALLBACK_LAMP, 1, 0, 0), DESIGN_WIDTH - 120, 620, 900, 1300, 0.2, true);
+    put(FALLBACK_LAMP, 120, 620, 900, 1300, 0.22, 37);
+    put(FALLBACK_LAMP, DESIGN_WIDTH - 120, 620, 900, 1300, 0.22, 43);
   }
 
   /**
-   * 중앙 베일 — 타일 격자가 앉을 자리를 눌러 준다. 평탄부가 격자 사각형을 덮고, 그 바깥
-   * `VEIL_FEATHER` 만큼에서 알파가 0 으로 사라진다(경계선이 생기지 않는 유일한 방식).
+   * 베일 — 타일 격자 행마다 그 자리를 눌러 준다. 여러 사각형을 한 장으로 굽기 때문에 행
+   * 사이에서 알파가 이중으로 쌓이지 않고, 행 바깥(좌우 알코브)에는 배경이 그대로 남는다.
    */
-  private buildVeil(): void {
-    const halfW = (VEIL_RECT.x1 - VEIL_RECT.x0) / 2 + VEIL_FEATHER;
-    const halfH = (VEIL_RECT.y1 - VEIL_RECT.y0) / 2 + VEIL_FEATHER;
-    const tex = bakeSoftRect(
-      0x0a0812,
-      VEIL_ALPHA,
-      1 - VEIL_FEATHER / halfW,
-      1 - VEIL_FEATHER / halfH,
-    );
+  private buildVeil(rects: readonly BaseVeilRect[]): void {
+    const tex = bakeVeilField(rects, VEIL_FEATHER, VEIL_ALPHA, 0x0a0812);
     if (tex === null) return;
     const s = new Sprite(tex);
-    s.anchor.set(0.5);
-    s.width = halfW * 2;
-    s.height = halfH * 2;
-    s.position.set((VEIL_RECT.x0 + VEIL_RECT.x1) / 2, (VEIL_RECT.y0 + VEIL_RECT.y1) / 2);
+    s.position.set(0, 0);
+    s.width = DESIGN_WIDTH;
+    s.height = DESIGN_HEIGHT;
     this.view.addChild(s);
   }
 
   /** 하단 스크림(CTA·메타 줄 자리) + 네 변 비네트(시선을 화면 안쪽으로 모은다). */
   private buildVignettes(): void {
-    const edge = bakeSoftRect(0x07050e, EDGE_VIGNETTE_ALPHA, 0.12, 0.1, true);
+    const edge = bakeSoftRect(
+      0x07050e,
+      EDGE_VIGNETTE_ALPHA,
+      EDGE_VIGNETTE_PLATEAU_X,
+      EDGE_VIGNETTE_PLATEAU_Y,
+      true,
+    );
     if (edge !== null) {
       const s = new Sprite(edge);
       s.position.set(0, 0);
@@ -396,11 +587,9 @@ export class BaseBackdrop {
       m.gfx.x = m.baseX + Math.sin(this.time * 0.4 + m.phase) * m.amp;
     }
 
-    // 성운 얼룩의 미세한 호흡 — 폴백에서도 화면이 완전히 정지하지 않게.
-    for (let i = 0; i < this.nebulae.length; i++) {
-      const s = this.nebulae[i];
-      if (s === undefined) continue;
-      s.alpha = this.nebulaAlpha(i);
+    // 발광체의 미세한 호흡 — 화면이 완전히 정지하지 않게(기준값 ±10%).
+    for (const b of this.breathers) {
+      b.sprite.alpha = b.base * (1 + 0.1 * Math.sin((this.time / b.period) * Math.PI * 2 + b.phase));
     }
 
     // 광선 — 주기의 앞부분(SHAFT_SWEEP 초) 동안만 화면을 가로지른다.
@@ -419,20 +608,16 @@ export class BaseBackdrop {
     }
   }
 
-  /** 폴백 성운 i 의 현재 알파(기준값 ±10% 를 서로 다른 느린 주기로 오간다). */
-  private nebulaAlpha(i: number): number {
-    const base = [0.5, 0.34, 0.2, 0.2][i] ?? 0.3;
-    const period = 23 + i * 7;
-    return base * (1 + 0.1 * Math.sin((this.time / period) * Math.PI * 2 + i));
-  }
-
   destroy(): void {
     if (typeof window !== 'undefined') {
       window.removeEventListener('pointermove', this.onPointerMove);
     }
     this.motes.length = 0;
-    this.nebulae.length = 0;
+    this.breathers.length = 0;
     this.shaft = null;
     this.view.destroy({ children: true });
+    // 구운 흐림 텍스처는 스프라이트가 아니라 우리가 만든 자원이다 — 직접 반납한다.
+    this.bakedBlur?.destroy(true);
+    this.bakedBlur = null;
   }
 }

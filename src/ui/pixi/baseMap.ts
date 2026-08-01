@@ -97,16 +97,28 @@ export const TILE_W = 424;
  * 맞춘다. 밴드가 상단 60% 라 `424×198` 짜리 슬라이스가 되는데, 이건 Lane B 가 기준으로 삼은
  * 430×340(밴드 204) 과 사실상 같은 잘림이라 건물이 여전히 읽힌다.
  */
-const TILE_H = 330;
+const TILE_H = 314;
 const TILE_GAP = 34;
-const ROW1_Y = 158;
-/** 행 간격 58 — 접지 그림자가 카드 아래로 `h*0.13`(≈43px) 번지므로 그보다 커야 한다. */
-const ROW2_Y = ROW1_Y + TILE_H + 58;
+/**
+ * 1행 상단. 제목 블록이 y 30..142 를 쓰므로 **56px** 을 띄운다 — 1차 판(158)은 장식선과
+ * 격자 사이가 27px 뿐이라 "헤더가 그리드에 눌려 있다"는 판정을 받았다(AAA 비평 §8).
+ */
+const ROW1_Y = 196;
+/**
+ * 행 간격. 가로 거터(34)와 맞추는 것이 리듬상 맞지만(비평 §8), 접지 그림자가 카드 아래로
+ * `h*0.13`(≈41px) 번지므로 34 로 두면 아래 행 위에 그림자가 얹힌다. 그 둘의 타협점이다.
+ */
+const ROW_GAP = 44;
+const ROW2_Y = ROW1_Y + TILE_H + ROW_GAP;
 
-const LAUNCH_W = 520;
-const LAUNCH_H = 86;
-const LAUNCH_Y = 928;
-const META_Y = 1040;
+/**
+ * 출격 CTA. 1차 판(520×86)은 타일 7장 합계 면적의 3.8% 라 **주인공으로 안 읽혔다**(AAA
+ * 비평 지적 — 카드 하나 면적의 27%). 화면의 유일한 행동 버튼이므로 키운다.
+ */
+const LAUNCH_W = 680;
+const LAUNCH_H = 101;
+const LAUNCH_Y = 906;
+const META_Y = 1036;
 
 /**
  * 2행 분배(각 행 칸 수). **균등 반반**이 계약이다 — 남는 건물을 전부 둘째 행에 몰면(옛
@@ -126,6 +138,28 @@ export function tilePosition(i: number): { x: number; y: number } {
   const rowW = cols * TILE_W + (cols - 1) * TILE_GAP;
   const x0 = (DESIGN_WIDTH - rowW) / 2;
   return { x: x0 + col * (TILE_W + TILE_GAP), y: row === 0 ? ROW1_Y : ROW2_Y };
+}
+
+/**
+ * 배경 베일이 눌러야 할 사각형 — **격자에서 파생한다.**
+ *
+ * 배경은 이 사각형 **안쪽만** 어둡게 눌러 타일 대비를 만들고, 바깥(특히 2행 좌우의 넓은
+ * 알코브)은 거의 누르지 않아 장소가 비친다. 좌표를 배경 모듈에 하드코딩해 두면 여기 격자를
+ * 바꿀 때 조용히 어긋나므로(실제로 Lane A 가 그렇게 인계했다) 격자 상수에서 계산해 넘긴다.
+ */
+export function veilRects(): readonly { x0: number; y0: number; x1: number; y1: number }[] {
+  const [cols0, cols1] = rowSplit(BUILDINGS.length);
+  const span = (cols: number): { x0: number; x1: number } => {
+    const w = cols * TILE_W + (cols - 1) * TILE_GAP;
+    const x0 = (DESIGN_WIDTH - w) / 2;
+    return { x0, x1: x0 + w };
+  };
+  const a = span(cols0);
+  const b = span(cols1);
+  return [
+    { x0: a.x0, y0: ROW1_Y, x1: a.x1, y1: ROW1_Y + TILE_H },
+    { x0: b.x0, y0: ROW2_Y, x1: b.x1, y1: ROW2_Y + TILE_H },
+  ];
 }
 
 export class BaseMapScreen {
@@ -265,7 +299,7 @@ export class BaseMapScreen {
     this.root.addChild(bg);
 
     // --- 배경(격납고 홀 + 공기 + 중앙 베일) ---
-    const backdrop = new BaseBackdrop(this.art[BASE_BACKDROP_NAME]);
+    const backdrop = new BaseBackdrop(this.art[BASE_BACKDROP_NAME], { veilRects: veilRects() });
     this.root.addChild(backdrop.view);
     this.backdrop = backdrop;
 
@@ -334,12 +368,9 @@ export class BaseMapScreen {
     const ship = activeShip(profile);
     const meta = new Text({
       resolution: 2,
-      text: t('meta.line', {
-        c: profile.credits,
-        m: profile.minerals,
-        lv: ship.level,
-        sp: profile.skillPoints,
-      }),
+      // 크레딧·광물은 상단 칩이 이미 보여 준다 — 같은 화면에서 두 번 적으면 디버그
+      // 텍스트로 읽힌다(AAA 비평 지적). `meta.line` 대신 짧은 전용 키를 쓴다.
+      text: t('base.metaShort', { lv: ship.level, sp: profile.skillPoints }),
       style: { fontFamily: UI_FONT, fontSize: 19, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
     });
     meta.anchor.set(0.5, 0);

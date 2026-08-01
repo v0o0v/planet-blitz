@@ -28,24 +28,45 @@
  * 조용히 폴백해 **컨테이너는 반드시 돌아온다** — 크롬 생성이 실패하면 화면이 통째로 죽는다.
  */
 
-import { CanvasSource, Container, Graphics, Rectangle, Sprite, Text, Texture } from 'pixi.js';
+import {
+  CanvasSource,
+  Container,
+  FillGradient,
+  Graphics,
+  Rectangle,
+  Sprite,
+  Text,
+  Texture,
+} from 'pixi.js';
 import { COLOR, UI_FONT } from './theme.js';
 import { stripEmoji } from './text.js';
 
 // ── 팔레트 ─────────────────────────────────────────────────────────────────
-/** 각인 금박(제목·테두리 상단광). */
-const GOLD_LIT = 0xffe9ae;
-/** 금박 본색. */
+/** 각인 금박 상단 스톱 · 테두리 밝은 금. 타이틀 로고 `PLANET BLITZ` 와 같은 스톱이다. */
+const GOLD_LIT = 0xf6d98a;
+/** 금박 하단 스톱 — 위/아래 두 스톱이 세로 그라디언트를 만든다. */
+const GOLD_DARK = 0xb8862f;
+/** 금박 본색(장식·아이콘). */
 const GOLD = 0xffd678;
-/** 금박 그늘 — 각인의 "파인 자국". */
+/** 금박 그늘. */
 const GOLD_DEEP = 0x8a5a12;
+/** 제목 아웃라인 — 시스템 폰트를 디스플레이 타입으로 읽히게 만드는 결정적 한 겹. */
+const TITLE_OUTLINE = 0x2a1a08;
+/** 제목 하단 1px 드롭. */
+const TITLE_DROP = 0x5a3b12;
 /** 유리판 바탕(짙은 잉크). 반투명이라 뒤 키아트가 은은히 비친다. */
 const GLASS_INK = 0x0b0a16;
 /** 안쪽 홈 — 어떤 바탕 위에서도 테두리 대비를 만드는 유일한 수단(theme.ts ICON_RING_GROOVE 근거와 동형). */
 const GROOVE = 0x120b07;
-/** 광물 칩의 청록 강조. 금색 크레딧과 **색상으로** 갈라 숫자를 읽기 전에 구분되게 한다. */
-const TEAL = 0x6fe3d4;
-const TEAL_DEEP = 0x1f6f68;
+/**
+ * 광물 칩의 청록 — **채도를 낮춘** 값이다. 원래 쓰던 `#6FE3D4` 는 금색 일색인 이 화면에서
+ * 혼자 고립돼 우상단으로 시선을 끌어갔다(비평 실측: 화면에서 가장 채도 높은 요소가 재화 칩
+ * 둘). 청록이라는 구분은 유지하되 주조색과 화해하는 톤으로 민다.
+ */
+const TEAL = 0x8fc4b8;
+const TEAL_DEEP = 0x2f5f58;
+/** 칩 값 텍스트 — 크림보다 한 단 낮춰 칩이 제목·CTA 보다 앞서지 않게 한다. */
+const CHIP_TEXT = 0xd8cdb4;
 
 // ── 구운 텍스처 (모듈 캐시 — 화면을 다시 그려도 재사용) ──────────────────────
 
@@ -162,7 +183,9 @@ function heroPlate(w: number, h: number): Texture | null {
   if (b === null) return null;
   const { ctx } = b;
   ctx.scale(s, s);
-  const r = Math.min(h / 2, 16);
+  // **알약(pill)** — 타이틀 화면 시작 버튼과 같은 버튼 언어다. 게임 안에 버튼 문법이 셋
+  // (알약 / 목재 / 그 외)이면 화면마다 다른 제품처럼 읽힌다(비평 지적).
+  const r = h / 2;
 
   const grad = ctx.createLinearGradient(0, 0, 0, h);
   grad.addColorStop(0, '#ffeeba');
@@ -173,30 +196,31 @@ function heroPlate(w: number, h: number): Texture | null {
   ctx.fillStyle = grad;
   ctx.fill();
 
-  // 상단 안쪽 하이라이트 — 금속이 위에서 빛을 받는다는 단 하나의 신호.
-  pathRoundRect(ctx, 5, 4, w - 10, h * 0.42, r * 0.7);
-  const hi = ctx.createLinearGradient(0, 4, 0, 4 + h * 0.42);
-  hi.addColorStop(0, 'rgba(255,255,255,0.42)');
+  // 상단 안쪽 하이라이트 — 금속이 위에서 빛을 받는다는 단 하나의 신호(높이 ≈ h 의 1/3).
+  const hiH = Math.round(h * 0.35);
+  pathRoundRect(ctx, 6, 5, w - 12, hiH, r * 0.8);
+  const hi = ctx.createLinearGradient(0, 5, 0, 5 + hiH);
+  hi.addColorStop(0, 'rgba(255,255,255,0.35)');
   hi.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = hi;
   ctx.fill();
 
   // 하단 안쪽 그늘 — 위 하이라이트와 짝이 맞아야 판이 두꺼워 보인다.
-  pathRoundRect(ctx, 4, h * 0.55, w - 8, h * 0.45 - 4, r * 0.7);
-  const lo = ctx.createLinearGradient(0, h * 0.55, 0, h - 4);
+  pathRoundRect(ctx, 5, h * 0.55, w - 10, h * 0.45 - 5, r * 0.8);
+  const lo = ctx.createLinearGradient(0, h * 0.55, 0, h - 5);
   lo.addColorStop(0, 'rgba(80,42,4,0)');
   lo.addColorStop(1, 'rgba(80,42,4,0.30)');
   ctx.fillStyle = lo;
   ctx.fill();
 
-  // 바깥 어두운 홈 → 안쪽 밝은 금테. 홈이 있어야 밝은 배경에서도 실루엣이 선다.
-  pathRoundRect(ctx, 1.5, 1.5, w - 3, h - 3, r);
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = 'rgba(38, 21, 4, 0.72)';
+  // 바깥 어두운 홈 → 안쪽 3px 밝은 금테. 홈이 있어야 밝은 배경에서도 실루엣이 선다.
+  pathRoundRect(ctx, 1.25, 1.25, w - 2.5, h - 2.5, r);
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = 'rgba(38, 21, 4, 0.7)';
   ctx.stroke();
-  pathRoundRect(ctx, 4, 4, w - 8, h - 8, r - 2);
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = 'rgba(255, 240, 196, 0.65)';
+  pathRoundRect(ctx, 4.5, 4.5, w - 9, h - 9, r - 3);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(246, 217, 138, 0.95)';
   ctx.stroke();
 
   return toTexture(b.canvas);
@@ -224,12 +248,14 @@ function fitWidth(text: Text, max: number, min = 0.6): void {
 
 // ── 1. 각인 제목 ────────────────────────────────────────────────────────────
 
-/** 제목 글자 크기. 부제·장식선 간격이 전부 여기서 파생한다. */
-const TITLE_SIZE = 46;
-/** 제목 자간. 각인은 **글자가 벌어져야** 돌에 새긴 것으로 읽힌다(붙으면 로고가 된다). */
-const TITLE_TRACKING = 12;
+/**
+ * 제목 글자 크기. 부제·장식선 간격이 전부 여기서 파생한다.
+ *
+ * 카드 제목이 33px 이므로 46px 은 1.4배뿐 — 페이지 제목이 화면을 지배하지 못했다(비평 실측).
+ * 61px 은 카드 제목의 1.85배로, 위계가 **크기만으로** 성립하는 최소선이다.
+ */
+const TITLE_SIZE = 61;
 const SUB_SIZE = 19;
-const SUB_TRACKING = 5;
 /** 제목 윗변 → 부제 윗변 · 부제 윗변 → 장식선. */
 const SUB_Y = TITLE_SIZE + 14;
 const RULE_Y = SUB_Y + SUB_SIZE + 18;
@@ -241,8 +267,14 @@ const RULE_W = 1180;
  *
  * 앵커는 **(0.5, 0)** 이다: 호출자가 컨테이너 위치를 (화면 중앙 x, 제목 윗변 y) 로 잡는다.
  *
- * 각인은 세 겹으로 만든다 — 아래 어두운 그림자(파인 자국) · 위 크림 하이라이트(빛 받는 모서리)
- * · 가운데 금박 본체. `dropShadow` 한 겹으로는 "떠 있는 글자"가 되고 새겨진 느낌이 안 난다.
+ * ## 왜 아웃라인 + 세로 그라디언트인가
+ * 웹폰트를 들이지 않고 시스템 폰트(Malgun Gothic)를 **디스플레이 타입으로 읽히게** 하는 조합이다.
+ * 굵기만 올리면 그냥 굵은 본문이고, 그림자만 얹으면 "떠 있는 글자"가 된다. 두꺼운 어두운
+ * 아웃라인이 글자를 판에서 떼어 내고, 세로 금 그라디언트(타이틀 로고와 **같은 스톱**)가 금속
+ * 면을 만든다 — 두 개가 같이 있어야 각인으로 읽힌다.
+ *
+ * ⚠️ **자간을 주지 않는다.** 한때 12px 트래킹을 넣었는데, 한국어 2~4음절에서는 디자인이
+ * 아니라 **띄어쓰기 버그**로 읽혔다(실화면: `기 지`). 라틴 대문자 로고타입에서만 통하는 기법이다.
  */
 export function makeScreenTitle(text: string, sub: string): Container {
   const root = new Container();
@@ -262,25 +294,31 @@ export function makeScreenTitle(text: string, sub: string): Container {
     root.addChild(glow);
   }
 
-  const style = {
-    fontFamily: UI_FONT,
-    fontSize: TITLE_SIZE,
-    fontWeight: '900' as const,
-    letterSpacing: TITLE_TRACKING,
-    align: 'center' as const,
-  };
-  const layer = (fill: number, alpha: number, dy: number): Text => {
-    const t = new Text({ resolution: 2, text: title, style: { ...style, fill } });
-    t.anchor.set(0.5, 0);
-    t.position.set(0, dy);
-    t.alpha = alpha;
-    root.addChild(t);
-    return t;
-  };
-  layer(0x1a0f04, 0.85, 3); // 파인 자국
-  layer(GOLD_LIT, 0.45, -1.5); // 모서리 하이라이트
-  const face = layer(GOLD, 1, 0);
+  const face = new Text({
+    resolution: 2,
+    text: title,
+    style: {
+      fontFamily: UI_FONT,
+      fontSize: TITLE_SIZE,
+      fontWeight: '800',
+      align: 'center',
+      fill: new FillGradient({
+        type: 'linear',
+        start: { x: 0, y: 0 },
+        end: { x: 0, y: 1 },
+        colorStops: [
+          { offset: 0, color: GOLD_LIT },
+          { offset: 1, color: GOLD_DARK },
+        ],
+      }),
+      stroke: { color: TITLE_OUTLINE, width: 2.7, join: 'round' },
+      dropShadow: { color: TITLE_DROP, alpha: 1, blur: 0, distance: 1, angle: Math.PI / 2 },
+    },
+  });
+  face.anchor.set(0.5, 0);
+  face.position.set(0, 0);
   fitWidth(face, RULE_W * 0.8, 0.7);
+  root.addChild(face);
 
   if (subtitle.length > 0) {
     const st = new Text({
@@ -290,7 +328,7 @@ export function makeScreenTitle(text: string, sub: string): Container {
         fontFamily: UI_FONT,
         fontSize: SUB_SIZE,
         fontWeight: '600',
-        letterSpacing: SUB_TRACKING,
+        // 자간 0 — 부제도 한국어라 트래킹이 곧 띄어쓰기로 읽힌다(제목과 같은 근거).
         fill: COLOR.cream,
         align: 'center',
       },
@@ -375,19 +413,22 @@ export function makeCinematicChip(
   const accent = tone === 'gold' ? GOLD : TEAL;
   const radius = Math.min(h / 2, 14);
 
+  // fill 을 0.35 까지 낮춘다 — 칩은 **테두리로만** 존재해야 한다. 진한 판이면 화면에서 가장
+  // 대비 높은 덩어리가 상단 두 모서리가 되어 시선이 제목·CTA 가 아니라 화면 밖으로 끌려간다
+  // (비평 실측).
   const plate = new Graphics();
   plate
     .roundRect(0, 0, w, h, radius)
-    .fill({ color: GLASS_INK, alpha: 0.62 })
-    .stroke({ color: GROOVE, width: 3, alpha: 0.85 });
-  plate.roundRect(1.5, 1.5, w - 3, h - 3, radius - 1).stroke({ color: accent, width: 1.4, alpha: 0.8 });
+    .fill({ color: GLASS_INK, alpha: 0.35 })
+    .stroke({ color: GROOVE, width: 3, alpha: 0.6 });
+  plate.roundRect(1.5, 1.5, w - 3, h - 3, radius - 1).stroke({ color: accent, width: 1.4, alpha: 0.7 });
   root.addChild(plate);
 
   // 위쪽 절반의 유리 반사. 판을 평평한 사각형이 아니라 **유리**로 읽히게 하는 유일한 요소다.
   const gloss = new Graphics();
   gloss
     .roundRect(3, 3, w - 6, h * 0.44, radius - 2)
-    .fill({ color: 0xffffff, alpha: 0.07 });
+    .fill({ color: 0xffffff, alpha: 0.05 });
   root.addChild(gloss);
 
   const iconSize = Math.max(8, h - 18);
@@ -411,10 +452,10 @@ export function makeCinematicChip(
       fontFamily: UI_FONT,
       fontSize: Math.round(h * 0.46),
       fontWeight: '700',
-      letterSpacing: 1,
-      // 값은 강조색이 아니라 크림 — 강조색으로 쓰면 테두리와 같은 색이 되어 숫자가 테두리에
-      // 흡수된다(theme.ts SLOT_RARITY_COLOR_NUM 이 기록한 것과 같은 함정).
-      fill: COLOR.cream,
+      // 자간 0(숫자도 예외 없이 — 값이 길어지면 그것대로 벌어져 보인다). 색은 강조색이 아니라
+      // 한 단 낮춘 크림: 강조색으로 쓰면 테두리와 같은 색이라 숫자가 테두리에 흡수되고
+      // (theme.ts SLOT_RARITY_COLOR_NUM 과 같은 함정), 순수 크림이면 칩이 제목보다 앞선다.
+      fill: CHIP_TEXT,
     },
   });
   t.anchor.set(0.5);
@@ -432,8 +473,10 @@ export function makeCinematicChip(
 /** 맥동 1주기(초). 3초 이상 — 짧으면 "번쩍임"이 되어 싸구려로 읽힌다. */
 const PULSE_PERIOD = 4.2;
 /** 글로우 알파: 기준 ± 진폭. 진폭을 절제하는 것이 AAA 와 데모의 차이다. */
-const GLOW_BASE = 0.17;
-const GLOW_AMPL = 0.075;
+const GLOW_BASE = 0.3;
+const GLOW_AMPL = 0.07;
+/** 외곽 글로우 색(따뜻한 호박) — 판때기의 금보다 한 단 붉어야 빛으로 읽힌다. */
+const GLOW_TINT = 0xffbe50;
 /** 호버 시 글로우 가산분. */
 const GLOW_HOVER = 0.16;
 /** 광택 스윕 주기와 통과 시간(초) — 대부분의 시간 동안 화면에 없다. */
@@ -445,7 +488,43 @@ const PRESS_SCALE = 0.972;
 /** 상태 추종 시상수(지수 감쇠) — 프레임률이 달라도 같은 체감이 되도록 dt 지수로 민다. */
 const EASE = 14;
 /** 라벨 좌우 안전 여백(안쪽 금테를 침범하지 않는 값). */
-const LABEL_PAD_X = 26;
+const LABEL_PAD_X = 32;
+/** 셰브런 ↔ 라벨 간격. 붙어 있어야 한 덩어리로 읽힌다(떨어지면 마커가 고아가 된다). */
+const MARKER_GAP = 16;
+
+/**
+ * 셰브런 + 라벨을 한 덩어리로 묶어 버튼 중앙에 세운다.
+ *
+ * 마커를 버튼 가장자리에 고정하지 않는 이유: 라벨 길이는 로케일마다 다르고, 가장자리에 박아
+ * 두면 짧은 라벨에서 마커만 멀리 떨어져 **아무것도 가리키지 않는 화살표**가 된다(실화면 220px).
+ * 캔버스가 없어 측정이 안 되면 마커를 숨기고 라벨만 중앙에 둔다 — 어긋난 배치보다 낫다.
+ */
+function layoutHeroLabel(marker: Text, text: Text, w: number, h: number): void {
+  const avail = w - LABEL_PAD_X * 2;
+  let markerW = 0;
+  try {
+    markerW = marker.width;
+  } catch {
+    markerW = 0;
+  }
+  fitWidth(text, Math.max(0, avail - markerW - MARKER_GAP));
+  let textW = 0;
+  try {
+    textW = text.width;
+  } catch {
+    textW = 0;
+  }
+  if (markerW <= 0 || textW <= 0) {
+    marker.visible = false;
+    text.anchor.set(0.5);
+    text.position.set(w / 2, h / 2);
+    return;
+  }
+  const x = (w - (markerW + MARKER_GAP + textW)) / 2;
+  // 셰브런은 시각 중심이 글자보다 살짝 위라 1px 내려야 라벨과 눈높이가 맞는다.
+  marker.position.set(x, h / 2 + 1);
+  text.position.set(x + markerW + MARKER_GAP, h / 2);
+}
 
 export interface HeroButton {
   readonly container: Container;
@@ -483,7 +562,7 @@ export function makeHeroButton(w: number, h: number, label: string, onClick: () 
     glow.anchor.set(0.5);
     glow.width = w * 1.65;
     glow.height = h * 3.1;
-    glow.tint = GOLD;
+    glow.tint = GLOW_TINT;
     glow.blendMode = 'add';
     glow.alpha = GLOW_BASE;
     glowHost.addChild(glow);
@@ -510,7 +589,7 @@ export function makeHeroButton(w: number, h: number, label: string, onClick: () 
   } else {
     // 캔버스 없는 환경 폴백 — 그라디언트는 포기하되 화면은 선다.
     const g = new Graphics();
-    g.roundRect(0, 0, w, h, Math.min(h / 2, 16))
+    g.roundRect(0, 0, w, h, h / 2)
       .fill({ color: GOLD })
       .stroke({ color: GROOVE, width: 3, alpha: 0.8 });
     inner.addChild(g);
@@ -523,7 +602,7 @@ export function makeHeroButton(w: number, h: number, label: string, onClick: () 
   const sheenSrc = sheenBand();
   if (sheenSrc !== null) {
     const clip = new Graphics();
-    clip.roundRect(0, 0, w, h, Math.min(h / 2, 16)).fill({ color: 0xffffff });
+    clip.roundRect(0, 0, w, h, h / 2).fill({ color: 0xffffff });
     sheenHost.addChild(clip);
     sheenHost.mask = clip;
     sheen = new Sprite(sheenSrc);
@@ -540,39 +619,43 @@ export function makeHeroButton(w: number, h: number, label: string, onClick: () 
 
   // 호버 광택 — tint 는 곱연산이라 밝힐 수 없다. 반투명 크림을 얹어 밝힌다.
   const gloss = new Graphics();
-  gloss.roundRect(2, 2, w - 4, h - 4, Math.min(h / 2, 15)).fill({ color: 0xfff3d0 });
+  gloss.roundRect(2, 2, w - 4, h - 4, h / 2).fill({ color: 0xfff3d0 });
   gloss.alpha = 0;
   inner.addChild(gloss);
 
-  // 우측 셰브런. `▶` 는 `stripEmoji` 보존 목록이라 캔버스에서 두부가 되지 않는다.
-  const chevron = new Text({
+  // 라벨 + 셰브런.
+  //
+  // ⚠️ **i18n 문자열이 이미 `▶` 를 달고 온다**(`base.launch` = "▶ 성계 지도 (출격)"). 여기서
+  // 마커를 하나 더 붙였더니 실화면에 화살표가 둘이 됐고, 오른쪽 것이 텍스트에서 220px 떨어져
+  // 고아로 떠 있었다(비평 지적). 카탈로그는 다른 화면도 쓰므로 건드리지 않고 **이 자리에서
+  // 정규화**한다: 앞뒤의 기존 마커를 걷어내고 왼쪽 하나만 텍스트에 붙여 다시 세운다.
+  const bare = stripEmoji(label).replace(/^[▶◀\s]+/u, '').replace(/[▶◀\s]+$/u, '');
+  const markerSize = Math.round(h * 0.26);
+  const marker = new Text({
     resolution: 2,
     text: '▶',
-    style: { fontFamily: UI_FONT, fontSize: Math.round(h * 0.30), fontWeight: '700', fill: COLOR.darkLabel },
+    style: { fontFamily: UI_FONT, fontSize: markerSize, fontWeight: '700', fill: COLOR.darkLabel },
   });
-  chevron.anchor.set(1, 0.5);
-  chevron.alpha = 0.55;
-  chevron.position.set(w - 20, h / 2);
-  inner.addChild(chevron);
+  marker.anchor.set(0, 0.5);
+  marker.alpha = 0.7;
+  inner.addChild(marker);
 
   const text = new Text({
     resolution: 2,
-    text: stripEmoji(label),
+    text: bare,
     style: {
       fontFamily: UI_FONT,
       fontSize: Math.round(h * 0.37),
       fontWeight: '800',
-      letterSpacing: 3,
+      // 자간 0 — 한국어 라벨에 트래킹을 주면 `성 계 지 도`가 된다(실화면).
       // ⚠️ 밝은 금 바탕에 흰 글씨는 묻힌다(사용자 지적). 진한 갈색이 계약이다.
       // 어두운 라벨에는 다크 섀도를 걸지 않는다 — 획이 촘촘한 한글이 그림자와 뭉친다.
       fill: COLOR.darkLabel,
       align: 'center',
     },
   });
-  text.anchor.set(0.5);
-  // 셰브런이 차지하는 우측 폭까지 빼고 맞춘다 — 로케일이 길어져도 화살표를 밀지 않는다.
-  fitWidth(text, w - LABEL_PAD_X * 2 - h * 0.34);
-  text.position.set(w / 2 - h * 0.17, h / 2);
+  text.anchor.set(0, 0.5);
+  layoutHeroLabel(marker, text, w, h);
   inner.addChild(text);
 
   container.eventMode = 'static';

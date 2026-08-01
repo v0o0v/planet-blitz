@@ -351,6 +351,10 @@ export const EN = {
   // --- 기지 허브 ---
   'base.title': 'Base',
   'base.sub': 'Enter a building to manage, or launch to raid a planet.',
+  // 시네마틱 기지 화면의 하단 메타. `meta.line` 과 달리 **크레딧·광물이 없다** — 그 둘은
+  // 상단 재화 칩이 이미 보여 주므로 같은 화면에서 두 번 적으면 디버그 텍스트로 읽힌다
+  // (AAA 비평 지적). `meta.line` 은 DOM 판·정산이 계속 쓰므로 건드리지 않는다.
+  'base.metaShort': 'Ship Lv {lv} · Skills {sp}',
   'base.launch': '▶ Star Map (Launch)',
   'base.bld.hangar.name': 'Hangar',
   'base.bld.hangar.desc': 'Gear · Inventory · Salvage',
@@ -2002,6 +2006,7 @@ export const KO: Record<MessageKey, string> = {
 
   'base.title': '기지',
   'base.sub': '건물을 선택해 정비하거나, 출격해 행성을 침략하라.',
+  'base.metaShort': '기체 Lv {lv} · 스킬 {sp}',
   'base.launch': '▶ 성계 지도 (출격)',
   'base.bld.hangar.name': '격납고',
   'base.bld.hangar.desc': '장비 · 인벤토리 · 분해',
