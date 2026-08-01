@@ -11,6 +11,8 @@
  */
 
 import type { WorldState } from '../../sim/world.js';
+import { chaseAliveCounterDevices } from '../../sim/modes/chase.js';
+import { PLANET_MODE } from '../../sim/planetMode.js';
 
 /**
  * 집계 방식.
@@ -157,6 +159,35 @@ export const RUN_METRICS: Readonly<Record<string, MetricDef>> = {
       source: 'ADR-0035 §3.1 — 런당 장비 2~3개',
       scope: 'overall',
     },
+  },
+  /**
+   * 런 종료 시점에 **살아남은 반격 장치 수**(추격 모드 전용, 그 외 모드는 항상 0).
+   *
+   * B7(만렙 추격 런이 끝나지 않는다)의 처방을 가르는 진단 지표다. 타임아웃 런에서 이 값이
+   * 0 이면 "취약화까지 갔는데 포식자를 못 잡는 것"이고, 1 이상이면 "장치를 못 깨는 것"이라
+   * 손댈 축이 완전히 갈린다(장치 HP·수 ↔ 취약화 후 보스 HP·DPS).
+   *
+   * 전 런 평균이라 **승리 런(항상 0)이 섞여 희석된다** — 판정은 `runs.json` 을 결과별로
+   * 교차집계해서 한다. 표의 이 열은 "추격 모드에 잔존 장치가 존재하는가"의 존재 신호일 뿐이다.
+   */
+  chaseDevicesLeft: {
+    label: '장치잔존',
+    kind: 'mean',
+    digits: 2,
+    of: (s) => (s.config.planetMode === PLANET_MODE.chase ? chaseAliveCounterDevices(s) : 0),
+  },
+  /**
+   * 런 종료 시점에 **바닥에 남아 수거되지 않은 전리품 수**.
+   *
+   * B3(장비유입 0.92/런, 목표 2~3)의 처방을 가르는 진단 지표다. `state.loot` 는 **수거분만**
+   * 세므로, 이 값이 크면 "드랍은 나는데 못 줍는다"(수거·봇 축)이고 0 에 가까우면 "드랍 자체가
+   * 적다"(드랍률 축)다.
+   */
+  lootGround: {
+    label: '미수거전리품',
+    kind: 'mean',
+    digits: 2,
+    of: (s) => s.entities.reduce((n, e) => (!e.dead && e.kind === 'loot' ? n + 1 : n), 0),
   },
   metaXp: { label: '메타XP', kind: 'mean', digits: 0, of: (s) => s.xpTotal },
   kills: { label: '처치', kind: 'mean', digits: 0, of: (s) => s.kills },
