@@ -47,8 +47,24 @@ export const BLOCKBREAK_SECTION_LENGTH = 14650;
 export const BLOCKBREAK_SECTION_COUNT = SEGMENTS.length - 1;
 /** 파괴가능 벽 세그먼트 HP. TODO(밸런스). */
 export const BLOCKBREAK_WALL_HP = 60;
-/** 압사 틱당 피해(iframes 간격 적용, 즉사 아님). TODO(밸런스). */
-export const BLOCKBREAK_CRUSH_DAMAGE = 8;
+/**
+ * 압사 틱당 피해(iframes 간격 적용, 즉사 아님).
+ *
+ * ## 8 → 6 의 근거 (2026-08-02 난이도 복구 2차)
+ * **압사가 이 무대의 주 사인이었다.** 피해 귀속 지표로는 안 보인다 — 압사는 엔티티 겹침이
+ * 아니라 직접 차감이라 `지형피해분`(0.03)·`접촉피해분`(0.02)에 잡히지 않고 잔차로만 남는다.
+ * 그래서 4 로 내려 레버 연결을 먼저 확인했고(49.0% → **90.5%**), 과교정이 확인돼 6 으로 되돌렸다.
+ *
+ * | 값 | 클리어율 | 보스도달 | 런내 레벨업 |
+ * |---|---|---|---|
+ * | 8 | 51.4% | 90.4s | 6.4 |
+ * | 4 | 90.5% | 88.4s | 7.4 |
+ * | **6** | **70.8%** | **89.1s** | 7.0 |
+ *
+ * 페이싱(90초)을 지키면서 밴드(60~80%) 안에 들어온 **유일한 무대**다 — 압사는 진행 게이트가
+ * 아니라 순수 피해원이라 난이도와 페이싱이 분리돼 있기 때문이다. TODO(밸런스).
+ */
+export const BLOCKBREAK_CRUSH_DAMAGE = 6;
 /** 벽 행 반높이. TODO(밸런스). */
 export const BLOCKBREAK_WALL_HALF_H = 60;
 /** 플레이어 통과 틈새 반폭. TODO(밸런스). */
