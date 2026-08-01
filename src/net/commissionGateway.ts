@@ -171,6 +171,27 @@ function rowToGrant(raw: unknown): CommissionGrantRow {
   };
 }
 
+/**
+ * `functions.invoke` 오류가 **재시도해도 결과가 안 바뀌는 최종 실패**면 그 HTTP 상태를, 아니면
+ * `null` 을 돌려준다.
+ *
+ * 재시도 대상에서 뺄 것(= 최종): 4xx 중 **401·408·429 를 제외**한 전부. 401 은 세션 만료라
+ * 갱신 후 성공할 수 있고, 408·429 는 그 자체가 "나중에 다시 오라"는 뜻이다. 5xx·네트워크
+ * 단절은 여기서 `null` 이 되어 호출부의 큐잉 경로로 간다.
+ *
+ * ⚠️ Supabase 클라이언트는 `FunctionsHttpError.context` 에 원본 `Response` 를 실어 준다. 그
+ * 형태가 바뀔 수 있으므로 **못 읽으면 `null`(= 재시도)** 로 떨어진다 — 판정 불가일 때 영구
+ * 폐기보다 재시도가 안전한 쪽이다(확정 지급물이 걸려 있다).
+ */
+function finalHttpStatus(error: unknown): number | null {
+  const ctx = (error as { context?: unknown } | null)?.context;
+  const status = (ctx as { status?: unknown } | null)?.status;
+  if (typeof status !== 'number') return null;
+  if (status < 400 || status >= 500) return null;
+  if (status === 401 || status === 408 || status === 429) return null;
+  return status;
+}
+
 /** EF 응답 jsonb → {@link VerifyCommissionResult}(신뢰하되 방어적으로 정규화). */
 function normalizeVerifyResult(raw: unknown): VerifyCommissionResult {
   const r = asRecord(raw);
@@ -242,7 +263,19 @@ export class SupabaseCommissionGateway implements CommissionGateway {
         claim: submission.claim,
       },
     });
-    if (error !== null) throw error;
+    if (error !== null) {
+      // ⚠️ **영구 실패와 전송 실패를 여기서 갈라야 한다.** EF 는 판정 거부를 200 으로 내지만
+      //    게이트 일부는 4xx 다(`commission-run-not-found` 404 · `commission-run-not-owner` 403 ·
+      //    `malformed-run-id`/`invalid-json` 400). `functions.invoke` 는 non-2xx 를 error 로
+      //    돌려주므로, 구분 없이 throw 하면 호출부가 **전송 실패로 오인해 큐에 넣고 영원히
+      //    재시도**한다 — 그 run_id 는 영구적으로 4xx 라 수 MB POST 가 부팅마다 반복된다.
+      //    401(만료 세션)·408·429 는 **재시도가 옳으므로** 최종 판정에서 제외한다.
+      const status = finalHttpStatus(error);
+      if (status !== null) {
+        return { status: 'rejected', accepted: false, reason: `commission-http-${status}` };
+      }
+      throw error;
+    }
     return normalizeVerifyResult(data);
   }
 

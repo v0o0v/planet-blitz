@@ -352,9 +352,11 @@ export class ResultOverlayScreen {
             ? t('result.commission.rejected')
             : c.status === 'queued'
               ? t('result.commission.queued')
-              : c.status === 'unconfigured'
-                ? t('result.commission.offline')
-                : t('result.commission.pending');
+              : c.status === 'lost'
+                ? t('result.commission.lost')
+                : c.status === 'unconfigured'
+                  ? t('result.commission.offline')
+                  : t('result.commission.pending');
       entries.push({ key: t('result.commission.label'), value, accent: c.status === 'verified' });
     }
 

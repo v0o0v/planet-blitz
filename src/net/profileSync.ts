@@ -371,8 +371,23 @@ export interface PendingCommissionSubmission {
   seed: number;
   config: WorldConfig;
   inputs: readonly InputFrame[];
-  claim: { finalHash: number; hashStream: readonly number[]; outcome: { victory: boolean; gameOver: boolean } };
+  /**
+   * ⚠️ **`hashStream` 을 저장하지 않는다.** 결정론이라 `buildCommissionClaim` 이 언제든 다시
+   * 계산할 수 있는데, 45,000틱이면 그 배열만 ~0.5MB 라 localStorage 쿼터(통상 5MB)를 잡아먹는다.
+   * 재해싱 비용보다 쿼터가 비싸다 — 큐가 못 들어가면 확정 지급물이 통째로 증발한다.
+   */
+  claim: { finalHash: number; outcome: { victory: boolean; gameOver: boolean } };
 }
+
+/**
+ * 대기 큐 항목 수 상한. 초과하면 **가장 오래된 것부터** 버린다.
+ *
+ * 왜 필요한가: 이 큐는 리포에서 **처음으로 리플레이 통째를 localStorage 에 넣는다**(기존
+ * `PendingSettlement`/`PendingGrant` 는 수십 바이트짜리 요약이라 이 문제를 겪은 적이 없다 —
+ * 선례로 안심하면 안 된다). 최종 지시 1건이 5구간×9,000틱 = 45,000틱이고 `InputFrame` 이
+ * float 3개라 JSON 으로 ~5MB 다. 상한이 없으면 두 번째 항목에서 쿼터가 터진다.
+ */
+export const PENDING_COMMISSION_QUEUE_MAX = 2;
 
 /** 대기 의뢰 제출 목록을 읽는다(손상/부재 시 빈 배열). */
 export function readPendingCommissionSubmissions(store: KeyValueStore): PendingCommissionSubmission[] {
@@ -392,7 +407,13 @@ export function readPendingCommissionSubmissions(store: KeyValueStore): PendingC
         e !== null &&
         typeof (e as PendingCommissionSubmission).runId === 'string' &&
         typeof (e as PendingCommissionSubmission).seed === 'number' &&
-        Array.isArray((e as PendingCommissionSubmission).inputs),
+        Array.isArray((e as PendingCommissionSubmission).inputs) &&
+        // ⚠️ `config`·`claim` 도 본다. 잘린 항목이 통과하면 `config: undefined` 로 전송돼 EF 가
+        //    400 을 내고, 그 400 이 최종 판정으로 갈리기 전까지 헛된 왕복을 만든다.
+        typeof (e as PendingCommissionSubmission).config === 'object' &&
+        (e as PendingCommissionSubmission).config !== null &&
+        typeof (e as PendingCommissionSubmission).claim === 'object' &&
+        (e as PendingCommissionSubmission).claim !== null,
     );
   } catch {
     return [];
@@ -403,12 +424,16 @@ export function readPendingCommissionSubmissions(store: KeyValueStore): PendingC
 export function writePendingCommissionSubmissions(
   store: KeyValueStore,
   list: readonly PendingCommissionSubmission[],
-): void {
+): boolean {
+  // ⚠️ **저장 실패를 삼키지 않고 호출부에 알린다.** 삼키면 `QuotaExceededError` 가 났는데도
+  //    호출부는 "큐에 남겼다"고 믿고 `queued` 를 표시한다 — 재시도 기회가 영영 없는데 화면은
+  //    "나중에 다시 시도됨"이라고 말하는 상태다. 이 함수의 존재 이유가 바로 그 증발 방지다.
   try {
     if (list.length === 0) store.removeItem(PENDING_COMMISSION_SUBMISSIONS_KEY);
     else store.setItem(PENDING_COMMISSION_SUBMISSIONS_KEY, JSON.stringify(list));
+    return true;
   } catch {
-    // best-effort — 저장 실패는 삼킨다.
+    return false;
   }
 }
 
@@ -416,10 +441,16 @@ export function writePendingCommissionSubmissions(
 export function stashPendingCommissionSubmission(
   store: KeyValueStore,
   entry: PendingCommissionSubmission,
-): void {
+): boolean {
   const list = readPendingCommissionSubmissions(store).filter((e) => e.runId !== entry.runId);
   list.push(entry);
-  writePendingCommissionSubmissions(store, list);
+  // 상한 초과분은 **앞에서**(오래된 것부터) 버린다. 새 항목이 밀려나면 방금 끝낸 런을 잃는
+  // 것이라 최악이다.
+  const trimmed = list.slice(Math.max(0, list.length - PENDING_COMMISSION_QUEUE_MAX));
+  if (writePendingCommissionSubmissions(store, trimmed)) return true;
+  // 저장 실패(쿼터 등) — 이번 항목만 단독으로 넣어 본다. 기존 대기분을 버리더라도 **방금 끝낸
+  // 런**을 살리는 쪽이 낫다(그쪽이 확정 지급물을 들고 있다).
+  return writePendingCommissionSubmissions(store, [entry]);
 }
 
 /** 대기 의뢰 제출에서 이 `runId` 항목을 지운다(응답을 받아 최종 판정이 났을 때). */

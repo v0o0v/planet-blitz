@@ -70,9 +70,11 @@ export interface SettlementSummary {
 export interface CommissionResultInfo {
   /**
    * `unconfigured` = 서버 미설정(오프라인, 제출 자체가 불가) · `queued` = 전송 실패로 대기
-   * 큐에 남음(다음 기회에 재시도, 화면에는 남아 있지 않을 수 있다).
+   * 큐에 남음(다음 기회에 재시도) · `lost` = 전송도 실패하고 **큐 저장까지 실패**(쿼터 초과 등)
+   * 해 재시도 기회가 없다. `queued` 와 `lost` 를 같은 문구로 말하면 안 된다 — 전자는 "나중에
+   * 다시 시도됨"이고 후자는 "제출하지 못했다"이다.
    */
-  status: 'pending' | 'verified' | 'rejected' | 'queued' | 'unconfigured';
+  status: 'pending' | 'verified' | 'rejected' | 'queued' | 'lost' | 'unconfigured';
   /** `status === 'verified'` 일 때만 의미가 있다. */
   grantedCredits?: number;
   /** `status === 'verified'` 일 때만 의미가 있다. */

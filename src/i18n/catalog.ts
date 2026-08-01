@@ -202,6 +202,7 @@ export const EN = {
   'result.commission.verified': '+{credits} credits · +{minerals} minerals',
   'result.commission.rejected': 'Rejected',
   'result.commission.queued': 'Retrying (offline)',
+  'result.commission.lost': 'Could not submit — rewards not granted',
   'result.commission.offline': 'Offline',
 
   // --- 촉매 잔재·촉매 상점·분해 수량(ADR-0042, catalyst-shop-residue lane) ---
@@ -1853,6 +1854,7 @@ export const KO: Record<MessageKey, string> = {
   'result.commission.verified': '+{credits} 크레딧 · +{minerals} 광물',
   'result.commission.rejected': '거부됨',
   'result.commission.queued': '재시도 예정(오프라인)',
+  'result.commission.lost': '제출하지 못함 — 보상 미지급',
   'result.commission.offline': '오프라인',
 
   // --- 촉매 잔재·촉매 상점·분해 수량(ADR-0042, catalyst-shop-residue 레인) ---

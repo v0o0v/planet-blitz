@@ -58,7 +58,6 @@ const KNOWN_MISSING: readonly string[] = [
   'catalyst_axis_power_maxHp.png',
   'catalyst_axis_power_skillAll.png',
   // ③ 지시 수신소 건물 아이콘(아트 미생성 — 승인 대기).
-  'ui_bld_commission.png',
 ];
 
 describe('UI 자산 등재 이름 ↔ assets/ 실물', () => {

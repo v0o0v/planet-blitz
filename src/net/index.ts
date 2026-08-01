@@ -800,7 +800,13 @@ export type SubmitCommissionOutcome =
       grants: readonly unknown[];
     }
   | { status: 'rejected'; reason?: string }
-  | { status: 'queued' };
+  | { status: 'queued' }
+  /**
+   * 판정을 못 받았고 **대기 큐 저장까지 실패**했다(localStorage 쿼터 초과 등). `queued` 와 달리
+   * 재시도 기회가 없다 — 화면은 이 둘을 다르게 말해야 한다(전자는 "나중에 다시 시도됨",
+   * 후자는 "제출하지 못했다").
+   */
+  | { status: 'lost' };
 
 /**
  * 의뢰 런 리플레이 제출(계약 §7). **먼저 대기 큐를 흘려보낸 뒤**(이전 세션에서 판정을 못 받은
@@ -819,7 +825,7 @@ export async function submitCommissionRun(
   const gateway = await resolveCommissionGateway(deps);
   if (gateway === null) return { status: 'unconfigured' };
   const store = deps.store !== undefined ? deps.store : defaultNetStore();
-  if (store !== null) await flushPendingCommissionQueue(gateway, store);
+  if (store !== null) await flushCommissionQueueOnce(gateway, store);
   const config = replay.config;
   if (config === undefined) {
     // 의뢰 런은 항상 명시적 config 로 조립된다(startCommissionRun) — 여기 도달하면 호출부
@@ -845,7 +851,20 @@ export async function submitCommissionRun(
   } catch {
     // 전송 실패 — 판정을 못 받았다. 대기 큐에 남긴다(재시도 주체 = 클라이언트, 계약 §5-4).
     if (store !== null) {
-      stashPendingCommissionSubmission(store, { runId, seed: replay.seed, config, inputs: replay.inputs, claim });
+      // ⚠️ `hashStream` 은 **저장하지 않는다** — 45,000틱이면 그 배열만 ~0.5MB 라 쿼터를
+      //    잡아먹는데, `verifyRun` 은 이 필드를 optional 로 받는다(없으면 조기 발산 인덱스만
+      //    못 받고 finalHash·outcome 대조는 그대로 성립한다). 재해싱 비용보다 쿼터가 비싸다.
+      const stored = stashPendingCommissionSubmission(store, {
+        runId,
+        seed: replay.seed,
+        config,
+        inputs: replay.inputs,
+        claim: { finalHash: claim.finalHash, outcome: claim.outcome },
+      });
+      // ⚠️ 저장이 실패했으면(쿼터 초과 등) **재시도 기회가 없다** — 화면에 'queued'(나중에 다시
+      //    시도됨)를 보여주면 거짓말이 된다. 이 함수의 존재 이유가 확정 지급물 증발 방지이므로
+      //    구분해서 알린다.
+      if (!stored) return { status: 'lost' };
     }
     return { status: 'queued' };
   }
@@ -857,6 +876,28 @@ export async function submitCommissionRun(
  * 재해싱 비용을 아낀다). 응답을 받으면(accept·reject 무관) 최종 판정이므로 큐에서 뺀다.
  * 전송 자체가 다시 실패하면 큐에 남겨 다음 기회로 미룬다.
  */
+/**
+ * 진행 중인 flush. **중복 실행을 막는 유일한 장치다.**
+ *
+ * ⚠️ 부팅 flush(`flushPendingCommissionSubmissions`)가 아직 도는 중에 의뢰 런이 끝나면
+ * `submitCommissionRun` 이 같은 큐를 다시 흘린다. 두 flush 는 각자 마지막에
+ * `writePendingCommissionSubmissions(store, remaining)` 로 **큐 전체를 덮어쓰므로**
+ * ① 같은 항목이 두 번 전송돼 `CAP_VERIFY_ATTEMPTS`(5) 중 2를 헛되이 태우고
+ * ② 늦게 끝난 쪽이 이미 제거된 항목을 **되살린다**(그 항목은 다음 부팅에 또 전송된다).
+ * 결정론적이지 않아 재현이 어렵고 증상은 "가끔 보상이 두 번 확인된다" 정도라 진단이 힘들다.
+ */
+let commissionFlushInFlight: Promise<void> | null = null;
+
+/** {@link flushPendingCommissionQueue} 를 중복 없이 돌린다(이미 돌고 있으면 그것을 기다린다). */
+function flushCommissionQueueOnce(gateway: CommissionGateway, store: KeyValueStore): Promise<void> {
+  if (commissionFlushInFlight !== null) return commissionFlushInFlight;
+  const p = flushPendingCommissionQueue(gateway, store).finally(() => {
+    commissionFlushInFlight = null;
+  });
+  commissionFlushInFlight = p;
+  return p;
+}
+
 async function flushPendingCommissionQueue(
   gateway: CommissionGateway,
   store: KeyValueStore,
@@ -896,5 +937,5 @@ export async function flushPendingCommissionSubmissions(
   if (gateway === null) return;
   const store = deps.store !== undefined ? deps.store : defaultNetStore();
   if (store === null) return;
-  await flushPendingCommissionQueue(gateway, store);
+  await flushCommissionQueueOnce(gateway, store);
 }

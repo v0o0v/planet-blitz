@@ -1697,10 +1697,6 @@ async function main(): Promise<void> {
     harnessInvasionRun = false; // 하네스 침공 런 종료(다음 런은 정식 경로)
     clearInvasionBackdrop(); // 정산 화면은 침공 배경을 쓰지 않는다
     setScreen('result');
-    // 의뢰 런이면 리플레이를 제출한다(계약 §7). 비동기라 정산 화면은 즉시 뜨고, 판정이 오면
-    // `resultOverlay.updateCommission` 이 그 자리에 갈아끼운다. `await` 가 한 번 양보하므로
-    // 아래 `resultOverlay.show(...)` 가 먼저 끝난 뒤에 갱신이 도착한다(표시 순서 보장).
-    void submitCommissionReplay(w);
     const o = lastOutcome;
     resultOverlay.show(
       {
@@ -1757,6 +1753,13 @@ async function main(): Promise<void> {
         inventory.show(profile, () => openBaseMap());
       },
     );
+    // 의뢰 런이면 리플레이를 제출한다(계약 §7).
+    // ⚠️ **`show()` 뒤여야 한다.** `submitCommissionReplay` 는 첫 `await` 전에 동기로
+    //    `updateCommission({status:'pending'})` 을 부르는데, 그 메서드는 오버레이가 안 보이면
+    //    즉시 return 한다(멱등 가드). `show()` 앞에서 부르면 그 시점 오버레이는 아직
+    //    `startCommissionRun` 의 `hide()` 상태라 **"확인 중…" 이 영영 안 뜨고** 검증 왕복 수 초
+    //    동안 화면이 비었다가 갑자기 항목이 생긴다.
+    void submitCommissionReplay(w);
   }
 
   /**
