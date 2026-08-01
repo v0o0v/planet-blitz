@@ -28,7 +28,7 @@ import { PLANET_MODE } from '../src/sim/planetMode.js';
 import { createScrollRuntime } from '../src/sim/scrollMode.js';
 import { blankEntity, spawnBullet } from '../src/sim/entities.js';
 import type { Entity, EntitySink } from '../src/sim/entities.js';
-import { INVASION_WINDOW_HALF_W } from '../src/sim/invasion/scroll.js';
+import { INVASION_WINDOW_HALF_W, INVASION_SCROLL_SPEED } from '../src/sim/invasion/scroll.js';
 import { SEGMENTS } from '../data/waves.js';
 import { isBreakableWall } from '../src/sim/modes/blockBreak.js';
 import { MID_CLASH_LEADER_MARK } from '../src/sim/modes/midClash.js';
@@ -40,6 +40,7 @@ import {
   racingCleared,
   racingRearPressure,
   placeRacingCourse,
+  racingBranchesPerSection,
   RACING_SECTION_LENGTH,
   RACING_SECTION_COUNT,
   RACING_PRESSURE_DAMAGE,
@@ -76,6 +77,19 @@ function stepRacing(state: WorldState, base: InputFrame = idle): void {
 
 function emptySink(): EntitySink {
   return { entities: [], nextEntityId: 1 };
+}
+
+/**
+ * 코스를 끝까지 미는 데 필요한 틱 예산.
+ *
+ * ⚠️ 상수로 박으면 안 된다 — 페이싱 조정으로 `RACING_SECTION_LENGTH` 가 2,000 → 13,460 이
+ * 되자 예전 상수 2,000틱으로는 코스의 1/3 도 못 갔고, 테스트는 "보스가 안 뜬다"고 실패했다
+ * (계약이 깨진 게 아니라 예산이 낡은 것이다). 창은 최소 `INVASION_SCROLL_SPEED` 로 전진하고
+ * 가속(`racingCleared`)은 그보다 빠르기만 하므로 이 값이 상한이다. 여유는 보스 스폰 · 레벨업
+ * 프리즈 해소 틱용.
+ */
+function courseTickBudget(): number {
+  return Math.ceil(racingCourseLength() / INVASION_SCROLL_SPEED) + 1200;
 }
 
 /** 레이싱 채널 벽(불파괴, 마커 부착)만 센다 — 청크 커버 벽(ownerId=0)과 구분. */
@@ -128,7 +142,9 @@ describe('레이싱 — 순수 함수', () => {
     const pads = a.entities.filter(isBoostPad);
     const walls = a.entities.filter((e) => e.kind === 'wall' && e.ownerId === RACING_WALL_MARK);
     expect(pads.length).toBeGreaterThan(0);
-    expect(walls.length).toBe(RACING_SECTION_COUNT);
+    // 채널 벽은 **구간당 분기 수만큼** 깔린다(`placeRacingCourse` 의 이중 루프). 구간 길이가
+    // 페이싱 조정으로 늘어나면 분기도 함께 늘어나므로 상수가 아니라 파생으로 단언한다.
+    expect(walls.length).toBe(RACING_SECTION_COUNT * racingBranchesPerSection());
     // 채널 벽은 hp=0 이라 파괴 대상이 아니다(가이드 벽).
     for (const w of walls) expect(isBreakableWall(w)).toBe(false);
   });
@@ -214,7 +230,7 @@ describe('레이싱 — 정규경로 통합(배선 실도달)', () => {
   it('(b) createWorld 가 분기 코스(부스트 패드 + 불파괴 채널 벽)를 배치한다(뱀서류엔 없음)', () => {
     const rc = createWorld(1, durableRacing());
     expect(rc.entities.filter(isBoostPad).length).toBeGreaterThan(0);
-    expect(racingWalls(rc).length).toBe(RACING_SECTION_COUNT);
+    expect(racingWalls(rc).length).toBe(RACING_SECTION_COUNT * racingBranchesPerSection());
     const vamp = createWorld(1, {
       ...buildRunConfig(defaultProfile(), { planet: 0, stage: 1 }),
       playerHp: DURABLE_HP,
@@ -226,7 +242,7 @@ describe('레이싱 — 정규경로 통합(배선 실도달)', () => {
   it('(b) 채널 벽은 청크 컬링에도 소멸하지 않는다(마커 배선 실도달)', () => {
     const w = createWorld(5, durableRacing());
     const before = racingWalls(w).length;
-    expect(before).toBe(RACING_SECTION_COUNT);
+    expect(before).toBe(RACING_SECTION_COUNT * racingBranchesPerSection());
     // 창이 +X 로 밀려 플레이어가 초기 코스에서 멀어져도(청크 컬 반경 3000 초과) 코스 벽이
     // 살아 있어야 한다 — hp=0 이라 isGimmick 오인 대상이지만 RACING_WALL_MARK 로 제외된다.
     // ⚠️ 틱 예산 600 → 900(2026-07-27 앵커 정책 개정). 적이 창과 함께 움직여 더 이상 뒤로
@@ -281,7 +297,7 @@ describe('레이싱 — 정규경로 통합(배선 실도달)', () => {
   it('(d)(e) 코스 끝(+X)에서 보스가 소환되고 처치 시 공통 승리(compact 재사용)로 victory 가 선다', () => {
     const w = createWorld(9, durableRacing());
     let boss: Entity | undefined;
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < courseTickBudget(); i++) {
       stepRacing(w);
       killClashLeader(w); // 아래 헬퍼 주석 참조(격전 세그먼트는 리더 처치로만 전진한다).
       boss = w.entities.find((e) => e.kind === 'boss');

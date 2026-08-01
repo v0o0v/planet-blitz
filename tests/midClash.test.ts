@@ -24,6 +24,8 @@ import {
 } from '../src/sim/modes/midClash.js';
 import { SEGMENTS } from '../data/waves.js';
 import type { Entity } from '../src/sim/entities.js';
+import { BLOCKBREAK_SECTION_LENGTH } from '../src/sim/modes/blockBreak.js';
+import { INVASION_SCROLL_SPEED } from '../src/sim/invasion/scroll.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile } from '../src/save/profile.js';
 
@@ -233,7 +235,15 @@ describe('강제 스크롤 모드에서 격전은 거리 게이트를 가로채�
     // 이 테스트가 예외를 검증하지 못한다.
     state.weapon.damage = 0;
     let advancedAt = -1;
-    for (let t = 0; t < 60 * 60 && advancedAt < 0; t++) {
+    // ⚠️ 예산은 **코스 길이 파생**이어야 한다. 거리 게이트로 다음 세그먼트에 가려면 창이
+    // `(격전 인덱스 + 1) × 구간 길이` 만큼 전진해야 하는데, 페이싱 조정으로 구간 길이가
+    // 2,000 → 14,650 이 되면서 예전 상수 3,600틱(=60초)으로는 도달 자체가 불가능해졌다.
+    // 창 최소 속도가 `INVASION_SCROLL_SPEED` 이므로 그 나눗셈이 상한이다.
+    const budget =
+      Math.ceil(
+        ((state.wave.segmentIndex + 1) * BLOCKBREAK_SECTION_LENGTH) / INVASION_SCROLL_SPEED,
+      ) + 600;
+    for (let t = 0; t < budget && advancedAt < 0; t++) {
       stepWorld(state, emptyInput());
       if (state.wave.segmentIndex > startIndex) advancedAt = t;
     }

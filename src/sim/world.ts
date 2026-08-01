@@ -3260,7 +3260,13 @@ function stepHazards(state: WorldState): void {
   }
 }
 
-function hazardActive(h: Entity): boolean {
+/**
+ * 이 해저드가 **지금 피해를 주는 상태인가**.
+ *
+ * export 인 이유는 밸런스 하네스의 피해 귀속 관측(`src/bench/balance/cell.ts`)이 같은 술어를
+ * 써야 하기 때문이다 — 판정을 베껴 적으면 이쪽이 바뀔 때 관측이 조용히 거짓말한다.
+ */
+export function hazardActive(h: Entity): boolean {
   // Damaging once its telegraph (if any) is done and it has not expired. life<0
   // marks a permanent terrain hazard (always active); life>0 a timed window.
   return h.timer <= 0 && h.life !== 0;
