@@ -53,8 +53,8 @@ const GOLD = 0xffd678;
 const GOLD_DEEP = 0x8a5a12;
 /** 제목 아웃라인 — 시스템 폰트를 디스플레이 타입으로 읽히게 만드는 결정적 한 겹. */
 const TITLE_OUTLINE = 0x2a1a08;
-/** 제목 하단 1px 드롭. */
-const TITLE_DROP = 0x5a3b12;
+/** 제목 하단 드롭 — 홈 아래 입술과 같은 따뜻한 금갈색(처방5: 검은 그림자는 폰트 티를 낸다). */
+const TITLE_DROP = 0x7a5520;
 /** 유리판 바탕(짙은 잉크). 반투명이라 뒤 키아트가 은은히 비친다. */
 const GLASS_INK = 0x0b0a16;
 /** 안쪽 홈 — 어떤 바탕 위에서도 테두리 대비를 만드는 유일한 수단(theme.ts ICON_RING_GROOVE 근거와 동형). */
@@ -285,8 +285,17 @@ function fitWidth(text: Text, max: number, min = 0.6): void {
  * 워드마크와 같은 무게가 된다.
  */
 const TITLE_SIZE = 84;
-/** 제목 아웃라인 두께. 얇으면 그냥 굵은 본문이고, 이 두께부터 새김으로 읽힌다. */
-const TITLE_STROKE = 4;
+/**
+ * 제목 아웃라인 두께. 얇으면 그냥 굵은 본문이고, 이 두께부터 새김으로 읽힌다.
+ *
+ * 4px 은 회화적 프레임 옆에서 스티커처럼 두꺼웠다(4차 판정 처방5: "폰트 티"). 2.5px 은 새김을
+ * 유지하면서 두께를 줄인 값이다 — **완전히 빼지는 않았다.** 웹폰트가 없는 상태에서 시스템
+ * 스택(Malgun Gothic)을 디스플레이 타입으로 읽히게 하는 것이 이 아웃라인이라, 없애면 84px 짜리
+ * 굵은 본문으로 되돌아간다(MED-6 이 고쳤던 지점). 리드가 웹폰트를 넣으면 그때 0 으로 뺄 값이다.
+ */
+const TITLE_STROKE = 2.5;
+/** 제목 자간 0.02em. 한글이라 트래킹은 금물이지만, 이 정도는 획이 뭉치는 것만 막는다. */
+const TITLE_TRACKING = TITLE_SIZE * 0.02;
 const SUB_SIZE = 19;
 /** 제목 윗변 → 부제 윗변 · 부제 윗변 → 장식선. */
 const SUB_Y = TITLE_SIZE + 8;
@@ -331,7 +340,9 @@ export function makeScreenTitle(text: string, sub: string): Container {
   const base = {
     fontFamily: UI_FONT,
     fontSize: TITLE_SIZE,
-    fontWeight: '800' as const,
+    // 800 → 700: 시스템 스택의 최대 굵기는 획이 뭉쳐 "굵게 누른 본문" 티가 난다(처방5).
+    fontWeight: '700' as const,
+    letterSpacing: TITLE_TRACKING,
     align: 'center' as const,
   };
 
@@ -345,7 +356,8 @@ export function makeScreenTitle(text: string, sub: string): Container {
     },
   });
   drop.anchor.set(0.5, 0);
-  drop.position.set(0, 3);
+  // 오프셋 3 → 1: 각인 규약(홈 아래 입술)과 같은 두께다. 3px 은 글자가 판에서 떠 보였다(처방5).
+  drop.position.set(0, 1);
   root.addChild(drop);
 
   const face = new Text({
@@ -444,32 +456,28 @@ function carvedDivider(): Container {
     band(1, 6.5, 0xc9a367, 0.45); // 홈 하단 입술 — 빛을 받는 유일한 면
   }
 
-  // 중앙 키스톤 — 사다리꼴 두 겹(어두운 테 안에 금)이라 박혀 있는 돌로 읽힌다.
-  const key = new Graphics();
-  key
-    .poly([-15, -11, 15, -11, 10, 11, -10, 11])
-    .fill({ color: GROOVE, alpha: 0.9 });
-  key
-    .poly([-11, -7, 11, -7, 7.5, 7, -7.5, 7])
-    .fill({ color: GOLD_LIT })
-    .stroke({ color: GOLD_DEEP, width: 1, alpha: 0.7 });
-  key.rect(-1, -7, 2, 14).fill({ color: GOLD_DEEP, alpha: 0.55 }); // 가운데 정 자국
-  key.position.set(0, RULE_Y + 4);
-  c.addChild(key);
-
-  // 양 끝 마감 — 계단형 눈금 셋이 바깥으로 갈수록 짧고 옅어진다. 선이 그냥 사라지는 대신
-  // "여기서 끝난다"고 말해 준다.
-  for (const dir of [-1, 1]) {
-    const end = new Graphics();
-    for (let i = 0; i < 3; i++) {
-      const x = dir * (RULE_W * 0.3 + i * 13);
-      const half = 9 - i * 2.5;
-      end
-        .rect(x - 1, RULE_Y + 4 - half, 2, half * 2)
-        .fill({ color: GOLD_LIT, alpha: 0.5 - i * 0.14 });
-    }
-    c.addChild(end);
+  // 중앙 룬 셋 — 구분선과 **같은 문법**(위 그늘 / 아래 수광 립)으로 판 짧은 세로 홈이다.
+  //
+  // ⚠️ 여기 있던 "키스톤" 사다리꼴은 실화면에서 **이 화면 유일의 벡터 클립아트**였다(4차 판정
+  // MED). 불투명 `#120b07` 채움이 L13 이라 바로 옆 금색 L217 과 **204 luma 를 점프하는 순흑
+  // 키라인**을 만들었는데, 이 화면 어디에도 검은 외곽선을 쓰는 요소가 없다. 형태도 방패인지
+  // 컵인지 읽히지 않았고("아이콘 폰트 조각"), 양옆 눈금은 아무것에도 정렬돼 있지 않아 지웠다.
+  //
+  // 그래서 **채움도 외곽선도 쓰지 않는다.** 모든 획이 배경 위 반투명이라 최소 휘도가 배경에서
+  // 크게 떨어지지 않는다(가장 어두운 획 = 상단 그늘 α0.6 → 배경 L36 기준 합성 ≈ L25).
+  const rune = new Graphics();
+  for (const [dx, half] of [
+    [-15, 7],
+    [0, 11],
+    [15, 7],
+  ] as const) {
+    const top = RULE_Y + 4 - half;
+    const hgt = half * 2;
+    rune.rect(dx - 2, top, 4, hgt).fill({ color: 0x241608, alpha: 0.35 }); // 파인 면
+    rune.rect(dx - 2, top, 4, 1).fill({ color: 0x1a1008, alpha: 0.6 }); // 위쪽 벽 그늘
+    rune.rect(dx - 2, top + hgt - 1, 4, 1).fill({ color: 0xc9a367, alpha: 0.55 }); // 아래 입술
   }
+  c.addChild(rune);
 
   return c;
 }
@@ -1313,6 +1321,38 @@ export function makeHeroTile(
     clip.addChild(f);
   }
 
+  // --- 라벨 밴드 금빛 차등 --------------------------------------------------------
+  // 3차에서 판 전체를 금으로 칠했다가 등급이 깨졌고(CRIT·N1/N2), 그것을 되돌리자 이번엔
+  // **어디를 눌러야 하는지 0.2초 안에 안 보인다**는 판정이 나왔다(4차 HIGH). 두 실패의 교집합이
+  // 아니라 차집합을 취한다: 아트 밴드(등급 지표가 걸린 곳)는 이웃과 **완전히 동일**하게 두고,
+  // **라벨 밴드에만** 금빛을 얹는다. 여기는 원래 단색 램프라 등급 지표(코너/중심비·채도)가
+  // 측정되지 않는 영역이다 — 즉 눈에 띄게 만들면서 통합을 깨지 않는 유일한 자리다.
+  const bandWash = new Graphics();
+  bandWash.rect(0, bandY, w, h - bandY).fill({ color: 0xc8963c, alpha: 0.14 });
+  clip.addChild(bandWash);
+
+  // 라벨 밴드 좌우 화살촉 한 쌍(카드 폭 8%). 글리프가 아니라 **베벨과 같은 립 재질**로 긋는다 —
+  // 금선 아래 1.5px 다크 드롭이라 판에 박힌 금속 상감으로 읽힌다(`▸` 글리프는 폰트 티가 난다).
+  const arrowL = w * 0.08;
+  const arrowY = bandY + (h - bandY) * 0.4;
+  const arrowH = arrowL * 0.42;
+  for (const dir of [-1, 1]) {
+    const xs = dir < 0 ? pad * 0.55 : w - pad * 0.55;
+    const tip = xs + dir * arrowL * 0.55;
+    const chevron = new Graphics();
+    for (const [color, dy, alpha] of [
+      [0x2a1a08, 1.6, 0.5],
+      [GOLD_LIT, 0, 0.9],
+    ] as const) {
+      chevron
+        .moveTo(xs, arrowY - arrowH + dy)
+        .lineTo(tip, arrowY + dy)
+        .lineTo(xs, arrowY + arrowH + dy)
+        .stroke({ color, width: 3, alpha, cap: 'round', join: 'round' });
+    }
+    clip.addChild(chevron);
+  }
+
   // 호버 온기(가산) — tint 는 곱연산이라 밝힐 수 없다.
   const warm = new Graphics();
   warm.rect(0, 0, w, bandY).fill({ color: 0xffe0a8 });
@@ -1340,7 +1380,10 @@ export function makeHeroTile(
       fontFamily: UI_FONT,
       fontSize: labelSize,
       fontWeight: '800',
-      fill: GOLD,
+      // ⚠️ `GOLD`(#ffd678)는 Rec.601 로 **215.5** 이고, 실측에서 이웃 타일 제목(231)보다
+      // **어두웠다**(216 < 231). 주인공 칸의 제목이 이웃보다 어두운 것은 의도일 수 없다.
+      // #ffecb8 = 235.7 로 이웃을 확실히 넘기되 금 계열은 유지한다.
+      fill: 0xffecb8,
       align: 'center',
       wordWrap: true,
       wordWrapWidth: wrapW,

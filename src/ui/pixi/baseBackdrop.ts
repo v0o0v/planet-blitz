@@ -133,7 +133,7 @@ const TARGET_DETAIL_STD = 34;
 /** 디테일 증폭 상한 — 원화에 없는 것을 만들어 낼 수는 없고, 과하면 압축 잡음이 올라온다. */
 const MAX_DETAIL_GAIN = 2.4;
 /** 비네트·스크림 선보정 상한. 가장자리에서 무한대로 부풀지 않게 막는다. */
-const COMP_MAX = 1.45;
+const COMP_MAX = 1.7;
 /**
  * 검정 바닥의 부드러운 하한(휘도). 이 아래로는 **자르지 않고** 지수적으로 수렴시킨다.
  *
@@ -142,8 +142,26 @@ const COMP_MAX = 1.45;
  * 클리핑 때문에 21.9 로 앉았다). 지수 수렴은 어두운 쪽 기울기를 남긴다.
  */
 const SOFT_FLOOR = 7;
-/** 국소 평균이 0 에 가까운 자리에서 대비 비율이 발산하지 않게 막는 하한. */
-const RATIO_FLOOR = 12;
+/**
+ * **국소 평균(`Lp`)의 하한.** 톤매핑 전체가 이 값에 걸려 있다 — 목표 평균의 약 40%.
+ *
+ * ⚠️ 이걸 비율 항의 분모에만 걸었다가 화면 하단 1/6 을 죽였다(실측: 하단 평균 7.5 · 순흑 화소
+ * 1.32% = 직전판의 42배). `Lp` 가 0 에 가까우면 ①`m = Lp + (목표−Lp)·w` 가 0 근처에서 시작하고
+ * ②대비 배율 `m/Lp` 이 함께 무너져, 세기가 중간인 자리(격자 아래·상단 코너)에서 출력이
+ * `원화·(1−w)` 로 수렴한다 — 누르라고 하지도 않은 곳이 검게 꺼진다. **`Lp` 를 읽는 모든
+ * 자리에서 하한을 건다**(평균식·디테일·배율 전부).
+ */
+const LP_FLOOR = 18;
+/**
+ * 처리된 배경 전체에 더하는 따뜻한 환경광(휘도). **곱이 아니라 합**이어야 한다 — 순흑 화소는
+ * 어떤 배율로도 검정이라, RGB 스케일만으로는 `순흑 0.00%` 를 만들 수 없다(위 실측의 코너
+ * 클러스터 15.8%·21.0%가 그 형태였다). 유적 안의 반사광으로 읽히는 최소량이다.
+ */
+const AMBIENT_LUM = 14;
+/** 환경광 색(금빛 램프 반사). 아래 계수는 이 색을 휘도 1 로 정규화한 값이다. */
+const AMBIENT_R = 1.1445;
+const AMBIENT_G = 0.9829;
+const AMBIENT_B = 0.7091;
 
 // --- 톤매핑 영역 ---
 /** 목표가 적용될 사각형(디자인 스페이스). */
@@ -180,9 +198,33 @@ const FALLBACK_DIM_ALPHA = 0.36;
 const DIM_TEX_W = 320;
 const DIM_TEX_H = 180;
 
+// --- 거터 석재 리브 ---
+/**
+ * 리브 본체 폭(px). 거터 폭(약 24~30px)을 거의 채워, **거터에 무엇이 보이는지가 원화가 아니라
+ * 이 리브로 결정되게** 한다. 배경이 교체돼도 거터의 밝기·주기가 격자 주기와 영구히 일치한다.
+ */
+const RIB_W = 24;
+/**
+ * 본체 세로 램프(위 → 아래). 위가 밝고 아래로 어두워지는 라벨 밴드와 같은 광원 규약이다.
+ * 두 색의 평균 휘도가 ≈45 라 좌측 여백(실측 43)과 같은 대역에 앉는다 — 거터만 어둡던
+ * **이방성**(수평 47 vs 수직 24~32)이 여기서 사라진다.
+ */
+const RIB_TOP = 0x4a3826;
+const RIB_BOTTOM = 0x2a1e14;
+/** 왼쪽 수광 립(1px)과 오른쪽 그늘(2px). 카드 베벨과 광원 방향이 같아야 한 장면으로 읽힌다. */
+const RIB_LIP = 0xd9b070;
+const RIB_LIP_ALPHA = 0.5;
+const RIB_SHADE = 0x120b06;
+const RIB_SHADE_ALPHA = 0.6;
+
 /** 하단 비네트가 시작하는 y — CTA·메타 줄이 앉는 자리를 눌러 준다. */
 const BOTTOM_SCRIM_TOP = 790;
-const BOTTOM_SCRIM_ALPHA = 0.44;
+/**
+ * 0.44 → 0.34 로 낮췄다. 톤매핑이 목표 휘도를 스크림 감쇠로 미리 나눠 보정하는데, 0.44 는
+ * 화면 맨 아래에서 보정 상한({@link COMP_MAX})을 넘겨 버려 보정이 불가능해진다 — 그 구간이
+ * 곧 "격자 아래가 사라졌다"는 신고 지점이다.
+ */
+const BOTTOM_SCRIM_ALPHA = 0.34;
 /**
  * 화면 네 변을 두르는 가장자리 비네트. 중앙 ~1/3 은 손대지 않고(plateau) 가장자리에서만
  * 최대 알파에 닿는다. 거터(화면 중앙부)에서의 값은 1% 미만이라 균일성을 해치지 않는다.
@@ -231,6 +273,13 @@ interface TargetField {
   weight: Float32Array;
 }
 
+/** 격자 사이에 세우는 세로 석재 리브(디자인 스페이스). `x` 는 **중심선**이다. */
+export interface BaseRib {
+  x: number;
+  y0: number;
+  y1: number;
+}
+
 /** 생성자 옵션. 전부 선택적이다 — 리드가 아무것도 넘기지 않아도 기본값으로 선다. */
 export interface BaseBackdropOpts {
   /**
@@ -238,6 +287,11 @@ export interface BaseBackdropOpts {
    * 처리된다. 넘기지 않으면 {@link DEFAULT_VEIL_RECTS}.
    */
   veilRects?: readonly BaseVeilRect[];
+  /**
+   * 카드 사이 거터에 세우는 세로 석재 리브. **리드가 격자에서 파생해 넘긴다** — 여기서
+   * 좌표를 하드코딩하면 격자가 바뀌는 순간 어긋난다. 넘기지 않으면 리브가 없다.
+   */
+  ribs?: readonly BaseRib[];
 }
 
 /**
@@ -355,6 +409,32 @@ function bakeSoftRect(
       img.data[i + 2] = b;
       img.data[i + 3] = Math.round(a * 255);
     }
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvasTexture(ctx);
+}
+
+/**
+ * 세로 색 램프 텍스처(1×256). 얇은 띠를 겹쳐 근사하지 않는다 — 1px 겹침이 알파를 두 배로
+ * 만들어 가로줄을 남기는 함정이 이 리포에 이미 있다(`scrim.ts` 헤더).
+ */
+function bakeVerticalRamp(top: number, bottom: number): Texture | null {
+  const h = 256;
+  const ctx = makeCtx(1, h);
+  if (ctx === null) return null;
+  const r0 = (top >> 16) & 0xff;
+  const g0 = (top >> 8) & 0xff;
+  const b0 = top & 0xff;
+  const r1 = (bottom >> 16) & 0xff;
+  const g1 = (bottom >> 8) & 0xff;
+  const b1 = bottom & 0xff;
+  const img = ctx.createImageData(1, h);
+  for (let y = 0; y < h; y++) {
+    const t = y / (h - 1);
+    img.data[y * 4] = r0 + (r1 - r0) * t;
+    img.data[y * 4 + 1] = g0 + (g1 - g0) * t;
+    img.data[y * 4 + 2] = b0 + (b1 - b0) * t;
+    img.data[y * 4 + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
   return canvasTexture(ctx);
@@ -509,10 +589,10 @@ function bakeToneMapped(tex: Texture, rects: readonly BaseVeilRect[]): Texture |
       // 격자 안쪽(카드 사이 거터)이 판정 대상이다 — 수용 기준이 그 자리의 std 로 적혀 있다.
       if (sampleField(field.weight, dx, dy) < 0.999) continue;
       const i = (sy * w + sx) * 4;
-      const lumLp = luma(lowPx[i] ?? 0, lowPx[i + 1] ?? 0, lowPx[i + 2] ?? 0);
+      const lumLp = Math.max(LP_FLOOR, luma(lowPx[i] ?? 0, lowPx[i + 1] ?? 0, lowPx[i + 2] ?? 0));
       const detail =
         (luma(detailPx[i] ?? 0, detailPx[i + 1] ?? 0, detailPx[i + 2] ?? 0) - lumLp) *
-        (sampleField(field.lum, dx, dy) / Math.max(RATIO_FLOOR, lumLp));
+        (sampleField(field.lum, dx, dy) / lumLp);
       sum += detail;
       sumSq += detail * detail;
       n++;
@@ -539,21 +619,24 @@ function bakeToneMapped(tex: Texture, rects: readonly BaseVeilRect[]): Texture |
       const lumA = luma(r, g, b);
       let outLum = lumA;
       if (wgt > 1e-3) {
-        const lumLp = luma(lowPx[i] ?? 0, lowPx[i + 1] ?? 0, lowPx[i + 2] ?? 0);
+        // **하한이 걸린 국소 평균.** 아래 세 식이 전부 이 값을 쓴다 — 하나라도 날것의 `Lp` 를
+        // 쓰면 어두운 자리에서 출력이 무너진다({@link LP_FLOOR} 주석의 실측).
+        const lumLp = Math.max(LP_FLOOR, luma(lowPx[i] ?? 0, lowPx[i + 1] ?? 0, lowPx[i + 2] ?? 0));
         const target = sampleField(field.lum, dx, dy);
         const m = lumLp + (target - lumLp) * wgt;
         // 대비는 **절대량이 아니라 비율**로 옮긴다(`m/Lp`). 어두워진 자리에 원래 밝기의 진폭을
         // 그대로 얹으면 음수로 내려가 검게 잘리고, 그 클리핑이 다시 대비를 죽인다.
         // 세기 0 → m = Lp, 배율 1, gain 1 → out = A(항등식). 처리 경계가 원리적으로 없다.
-        const detailScale = 1 + wgt * (m / Math.max(RATIO_FLOOR, lumLp) - 1);
+        const detailScale = 1 + wgt * (m / lumLp - 1);
         const gEff = 1 + (gain - 1) * wgt;
         outLum = softFloor(m + (lumA - lumLp) * gEff * detailScale);
       }
-      // RGB 는 휘도 비로만 민다 — 색상·채도를 보존하기 위해서다.
+      // RGB 는 휘도 비로만 민다 — 색상·채도를 보존하기 위해서다. 그 뒤 환경광을 **더한다**:
+      // 곱은 순흑 화소를 절대 들어올리지 못한다(0 × 무엇 = 0).
       const scale = Math.max(0, outLum / Math.max(1, lumA));
-      out.data[i] = Math.min(255, r * scale);
-      out.data[i + 1] = Math.min(255, g * scale);
-      out.data[i + 2] = Math.min(255, b * scale);
+      out.data[i] = Math.min(255, r * scale + AMBIENT_LUM * AMBIENT_R);
+      out.data[i + 1] = Math.min(255, g * scale + AMBIENT_LUM * AMBIENT_G);
+      out.data[i + 2] = Math.min(255, b * scale + AMBIENT_LUM * AMBIENT_B);
       out.data[i + 3] = 255;
     }
   }
@@ -673,6 +756,7 @@ export class BaseBackdrop {
     // 톤매핑이 성공했으면 딤은 **없다**(그게 3차 실패의 원인이었다). 실패했을 때만 최소한의
     // 딤을 얹어 카드가 배경에 묻히지 않게 한다.
     if (this.bakedArt === null) this.buildFallbackDim();
+    this.buildRibs(opts?.ribs ?? []);
     this.buildVignettes();
   }
 
@@ -741,6 +825,43 @@ export class BaseBackdrop {
     s.width = DESIGN_WIDTH;
     s.height = DESIGN_HEIGHT;
     this.view.addChild(s);
+  }
+
+  /**
+   * 거터 석재 리브 — **격자를 원화 위에 얹는 대신, 격자를 담는 크롬을 그리고 그 뒤에 원화를
+   * 둔다.** AAA 허브가 실제로 쓰는 구성이다.
+   *
+   * 왜 필요한가: 원화에는 밝은 세로 대역이 분명히 있는데(실측 L61~63), 그 주기가 격자 주기
+   * (458px)와 맞지 않아 하필 카드 뒤에 깔리고 거터에는 어두운 대역이 깔렸다. 원화를 아무리
+   * 톤매핑해도 이 위상 불일치는 못 고친다 — 배경이 교체되면 또 어긋난다. 리브는 격자에서
+   * 파생한 좌표에 서므로 **어떤 배경을 끼워도 거터의 리듬이 격자와 일치**한다.
+   *
+   * 본체는 세로 램프(구운 텍스처 — 띠 근사 금지), 좌우는 1px 수광 립 / 2px 그늘이다.
+   */
+  private buildRibs(ribs: readonly BaseRib[]): void {
+    if (ribs.length === 0) return;
+    const bodyTex = bakeVerticalRamp(RIB_TOP, RIB_BOTTOM);
+    const host = new Container();
+    for (const rib of ribs) {
+      const h = rib.y1 - rib.y0;
+      if (h <= 0) continue;
+      const left = rib.x - RIB_W / 2;
+      if (bodyTex !== null) {
+        const body = new Sprite(bodyTex);
+        body.position.set(left, rib.y0);
+        body.width = RIB_W;
+        body.height = h;
+        host.addChild(body);
+      }
+      const edges = new Graphics();
+      // 왼쪽 수광 립(1px) · 오른쪽 그늘(2px) — 카드 베벨과 같은 광원 방향.
+      edges.rect(left, rib.y0, 1, h).fill({ color: RIB_LIP, alpha: RIB_LIP_ALPHA });
+      edges
+        .rect(left + RIB_W - 2, rib.y0, 2, h)
+        .fill({ color: RIB_SHADE, alpha: RIB_SHADE_ALPHA });
+      host.addChild(edges);
+    }
+    this.view.addChild(host);
   }
 
   /** 하단 스크림(CTA·메타 줄 자리) + 네 변 비네트(시선을 화면 안쪽으로 모은다). */
