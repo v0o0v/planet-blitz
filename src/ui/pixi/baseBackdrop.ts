@@ -127,21 +127,13 @@ const LOWPASS_RADIUS = 60;
  */
 const TARGET_INNER_L = 55;
 /** 격자 행 **바깥**(좌우·위아래 여백)의 목표 평균 휘도. 안쪽과 거의 같게 둬 화면이 갈리지 않게. */
-const TARGET_SURROUND_L = 41;
+const TARGET_SURROUND_L = 52;
 /** 디테일 목표 표준편차. 수용 기준 std ≥ 30 에 여유를 둔 값. */
 const TARGET_DETAIL_STD = 34;
 /** 디테일 증폭 상한 — 원화에 없는 것을 만들어 낼 수는 없고, 과하면 압축 잡음이 올라온다. */
-const MAX_DETAIL_GAIN = 2.4;
+const MAX_DETAIL_GAIN = 1.15;
 /** 비네트·스크림 선보정 상한. 가장자리에서 무한대로 부풀지 않게 막는다. */
-const COMP_MAX = 1.7;
-/**
- * 검정 바닥의 부드러운 하한(휘도). 이 아래로는 **자르지 않고** 지수적으로 수렴시킨다.
- *
- * 하드 클리핑(`max(v, 0)`)을 쓰면 어두운 화소가 통째로 0 에 뭉쳐 ①평균이 목표보다 훨씬
- * 아래로 끌려가고 ②그 구간의 대비가 사라진다 — 실측으로 확인한 함정이다(목표 44 를 걸었는데
- * 클리핑 때문에 21.9 로 앉았다). 지수 수렴은 어두운 쪽 기울기를 남긴다.
- */
-const SOFT_FLOOR = 7;
+const COMP_MAX = 2.0;
 /**
  * **국소 평균(`Lp`)의 하한.** 톤매핑 전체가 이 값에 걸려 있다 — 목표 평균의 약 40%.
  *
@@ -198,49 +190,93 @@ const FALLBACK_DIM_ALPHA = 0.36;
 const DIM_TEX_W = 320;
 const DIM_TEX_H = 180;
 
-// --- 거터 석재 리브 ---
+// --- 하이라이트 무릎(N2·N3 의 근본 처방) ---
 /**
- * 리브 본체 폭(px). 거터 폭(약 24~30px)을 거의 채워, **거터에 무엇이 보이는지가 원화가 아니라
- * 이 리브로 결정되게** 한다. 배경이 교체돼도 거터의 밝기·주기가 격자 주기와 영구히 일치한다.
- */
-const RIB_W = 24;
-/**
- * 본체 세로 램프의 **기준색**(위 → 아래, 평균 휘도 ≈45.9). 위가 밝고 아래로 어두워지는,
- * 라벨 밴드와 같은 광원 규약이다.
+ * 출력이 국소 목표 `m` 의 몇 배까지 올라갈 수 있는지. 이 위로는 부드럽게 압축된다.
  *
- * ⚠️ 이 값을 그대로 쓰지 않는다 — {@link ribRampColors} 가 {@link TARGET_INNER_L} 에서
- * 배율을 파생해 스케일한다. 거터에 실제로 보이는 것은 배경이 아니라 **리브**이므로, 목표
- * 휘도만 올리고 리브를 그대로 두면 거터는 꿈쩍도 하지 않는다(실측: 목표 44 인데 거터 37.6).
- * 상수 하나가 배경과 리브를 **함께** 움직여야 한다.
+ * ⚠️ **네거티브 스페이스의 폭주 하이라이트가 여기서 막힌다.** 화면 우변에 원화의 밝은 설비가
+ * 있었는데, 톤매핑이 목표 평균은 54 로 맞추면서도 **디테일 항에는 상한이 없어** 그 자리가
+ * L 141.6(좌측 동일 영역의 2.7배)까지 올라갔다 — 카드가 아닌 빈 자리가 화면에서 가장 밝아
+ * 시선이 캔버스 밖으로 끌렸다. 같은 변의 위아래가 12배(11.7 ↔ 142) 벌어진 것도 같은 원인이다.
+ *
+ * 어두운 쪽은 이미 {@link LOW_KNEE} 로 막고 있었는데 밝은 쪽만 열려 있었다 — 비대칭이 결함의
+ * 형태였다. 무릎은 **`m` 에 비례**하므로 어떤 배경이 들어와도 같은 규칙이 선다.
  */
-const RIB_TOP_BASE = 0x4a3826;
-const RIB_BOTTOM_BASE = 0x2a1e14;
+const HIGH_KNEE = 1.15;
+/** 무릎 위로 허용하는 추가 여유(`m` 배수). */
+const HIGH_HEADROOM = 0.12;
+/** 아래쪽 무릎(`m` 배수)과 그 아래의 점근선. 자르지 않고 지수적으로 수렴시킨다. */
+const LOW_KNEE = 0.85;
+const LOW_ASYMPTOTE = 0.7;
+
+// --- 색온도 정규화(N1) ---
 /**
- * 리브 본체 램프 평균 → 화면 거터 평균의 실측 비율(0.82). 2px 그늘·좌우 배경 노출·비네트가
- * 깎아 내는 몫이다. 목표 휘도를 이 값으로 나눠 램프를 정한다.
+ * 네거티브 스페이스의 목표 `r−b`(호박). 실측에서 좌여백 +45.9 → 거터 +30 → 우여백 +3.8 →
+ * 하단 −15.8 로 **62유닛**이 흔들려 "한 방에서 찍힌 화면"으로 안 보였다. 휘도만 맞추고 색온도를
+ * 놔두면 밝기가 같아도 콜라주로 읽힌다.
  */
-const RIB_COMPOSITE_K = 0.82;
-/** 왼쪽 수광 립(1px)과 오른쪽 그늘(2px). 카드 베벨과 광원 방향이 같아야 한 장면으로 읽힌다. */
-const RIB_LIP = 0xd9b070;
-const RIB_LIP_ALPHA = 0.5;
-const RIB_SHADE = 0x120b06;
-const RIB_SHADE_ALPHA = 0.6;
+const TARGET_RB = 28;
+/** 목표 밴드 반폭. 이 안에 있으면 손대지 않는다(원화의 색 변화를 전부 지우지는 않는다). */
+const RB_TOL = 5;
+/** 녹색 편향 `g−(r+b)/2` 의 허용 반폭. 우여백이 +7.1 로 치우쳐 중성으로 읽혔다. */
+const GREEN_TOL = 6;
 
 /** 하단 비네트가 시작하는 y — CTA·메타 줄이 앉는 자리를 눌러 준다. */
 const BOTTOM_SCRIM_TOP = 790;
 /**
- * 0.44 → 0.34 로 낮췄다. 톤매핑이 목표 휘도를 스크림 감쇠로 미리 나눠 보정하는데, 0.44 는
- * 화면 맨 아래에서 보정 상한({@link COMP_MAX})을 넘겨 버려 보정이 불가능해진다 — 그 구간이
- * 곧 "격자 아래가 사라졌다"는 신고 지점이다.
+ * 0.44 → 0.28. 톤매핑이 목표 휘도를 스크림 감쇠로 미리 나눠 보정하는데, 크게 잡으면 화면 맨
+ * 아래에서 보정 상한({@link COMP_MAX})을 넘겨 보정 자체가 불가능해진다 — 그 구간이 곧
+ * "격자 아래가 사라졌다"는 신고 지점이었다.
  */
-const BOTTOM_SCRIM_ALPHA = 0.34;
+const BOTTOM_SCRIM_ALPHA = 0.28;
 /**
- * 화면 네 변을 두르는 가장자리 비네트. 중앙 ~1/3 은 손대지 않고(plateau) 가장자리에서만
- * 최대 알파에 닿는다. 거터(화면 중앙부)에서의 값은 1% 미만이라 균일성을 해치지 않는다.
+ * 화면 네 변의 **띠형** 곱 비네트. 가장자리에서 계수 `1−EDGE_VIGNETTE_ALPHA`, 안쪽으로
+ * {@link EDGE_VIGNETTE_BAND}px 지나면 1(무손실)이다.
+ *
+ * 검은 알파 오버레이는 곱과 같다(`dst·(1−a)`). 예전 판은 중앙 1/3 을 뺀 **전면** 감쇠라
+ * 네거티브 스페이스 밴드 전체를 서로 다른 양으로 눌러 5밴드 균일성을 흔들었다. 띠로 좁히면
+ * 프레이밍은 유지하면서 밴드 대부분이 무손실 구간에 들어간다. 남는 감쇠는 톤매핑이
+ * 선보정하므로(`comp`) 밴드 평균은 목표에 그대로 앉는다.
  */
-const EDGE_VIGNETTE_ALPHA = 0.34;
-const EDGE_VIGNETTE_PLATEAU_X = 0.34;
-const EDGE_VIGNETTE_PLATEAU_Y = 0.3;
+const EDGE_VIGNETTE_ALPHA = 0.28;
+const EDGE_VIGNETTE_BAND = 96;
+
+// --- 배경 재질(N5) ---
+/**
+ * 그레인 진폭(휘도 표준편차, 원화 픽셀 기준). 화면은 원화를 1.53배 확대해 쓰므로 보간이
+ * 고주파를 깎는다 — 목표(잔차 std ≥4)보다 여유 있게 잡는다.
+ */
+const GRAIN_LUM = 30;
+/** 그레인이 완전 진폭에 닿는 휘도. 이 아래에서는 0 클리핑 편향을 피해 진폭을 줄인다. */
+const GRAIN_FADE_L = 55;
+/** 그레인 색(거의 중성, 아주 살짝 따뜻). 휘도 1 정규화 계수. */
+const GRAIN_R = 1.06;
+const GRAIN_G = 1.0;
+const GRAIN_B = 0.9;
+/**
+ * 리브(Lane D 소관)가 덮는 열에서 그레인을 줄이는 계수와 반폭. 두 레이어가 각자 결을 얹으면
+ * 그 열만 이중으로 거칠어진다 — 재질의 주인을 한쪽으로 정한다.
+ */
+const RIB_GRAIN_ATTEN = 0.8;
+const RIB_GRAIN_HALF_W = 12;
+/** 리브 중심 x(디자인). 격자 피치 458 에서 파생 — Lane D 와 같은 자리를 가리켜야 한다. */
+const RIB_COLUMNS: readonly number[] = [502, 960, 1418];
+
+// --- 하단 가산 리프트(P4) ---
+/**
+ * 화면 맨 아래에 **더하는** 빛(휘도). 곱이나 하한으로는 못 고친다 — {@link LP_FLOOR} 는 곱
+ * **이전** 하한이라 원화가 L 11 인 자리를 끌어올리지 못했고, 그래서 하단 평균 35.6 뒤에
+ * **L<24 가 24.5%** 숨어 있었다(좌하단 타일 11.2~14.0). 평균이 가린 결함이라 최솟값으로
+ * 잡아야 한다.
+ *
+ * 비네트·스크림 **뒤에** 얹으므로 아무것도 이 값을 깎지 않는다 — 바닥이 보장된다.
+ */
+const BOTTOM_LIFT_LUM = 34;
+/** 리프트가 0 에서 최대까지 올라오는 높이(px). 화면 바닥에서 위로. */
+const BOTTOM_LIFT_H = 190;
+/** 리프트 색(따뜻한 바닥 반사광). 아래 계수는 휘도 1 정규화값이다. */
+const BOTTOM_LIFT_COLOR = 0xffd696;
+const BOTTOM_LIFT_LUMA = 218.9;
 
 // --- 공기 ---
 /** 먼지 티끌 수(고티어). 저티어는 절반. 타이틀보다 적다 — 오래 보는 화면이라 산만하면 안 된다. */
@@ -282,13 +318,6 @@ interface TargetField {
   weight: Float32Array;
 }
 
-/** 격자 사이에 세우는 세로 석재 리브(디자인 스페이스). `x` 는 **중심선**이다. */
-export interface BaseRib {
-  x: number;
-  y0: number;
-  y1: number;
-}
-
 /** 생성자 옵션. 전부 선택적이다 — 리드가 아무것도 넘기지 않아도 기본값으로 선다. */
 export interface BaseBackdropOpts {
   /**
@@ -296,11 +325,6 @@ export interface BaseBackdropOpts {
    * 처리된다. 넘기지 않으면 {@link DEFAULT_VEIL_RECTS}.
    */
   veilRects?: readonly BaseVeilRect[];
-  /**
-   * 카드 사이 거터에 세우는 세로 석재 리브. **리드가 격자에서 파생해 넘긴다** — 여기서
-   * 좌표를 하드코딩하면 격자가 바뀌는 순간 어긋난다. 넘기지 않으면 리브가 없다.
-   */
-  ribs?: readonly BaseRib[];
 }
 
 /**
@@ -343,10 +367,9 @@ function distToRect(rect: BaseVeilRect, x: number, y: number): number {
  * 그래서 상수를 공유하고 식을 한 군데만 둔다.
  */
 function edgeVignetteAlpha(x: number, y: number): number {
-  const nx = (x / DESIGN_WIDTH) * 2 - 1;
-  const ny = (y / DESIGN_HEIGHT) * 2 - 1;
-  const inner = axisFade(nx, EDGE_VIGNETTE_PLATEAU_X) * axisFade(ny, EDGE_VIGNETTE_PLATEAU_Y);
-  return EDGE_VIGNETTE_ALPHA * (1 - inner) ** 1.6;
+  const d = Math.min(x, DESIGN_WIDTH - x, y, DESIGN_HEIGHT - y);
+  if (d >= EDGE_VIGNETTE_BAND) return 0;
+  return EDGE_VIGNETTE_ALPHA * (1 - smoothstep(d / EDGE_VIGNETTE_BAND));
 }
 
 /** 하단 스크림의 알파(해석식). `scrim.ts` 의 감마 1.6 램프와 같은 곡선이다. */
@@ -361,36 +384,72 @@ function luma(r: number, g: number, b: number): number {
   return 0.299 * r + 0.587 * g + 0.114 * b;
 }
 
-/** 정수색의 루마. */
-function colorLuma(c: number): number {
-  return luma((c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff);
-}
-
-/** 정수색을 배율만큼 밝힌다(색상 보존 — 채널 비를 유지한다). */
-function scaleColor(c: number, s: number): number {
-  const r = Math.min(255, Math.round(((c >> 16) & 0xff) * s));
-  const g = Math.min(255, Math.round(((c >> 8) & 0xff) * s));
-  const b = Math.min(255, Math.round((c & 0xff) * s));
-  return (r << 16) | (g << 8) | b;
+/**
+ * 출력을 국소 목표 `m` 둘레의 좁은 대역으로 부드럽게 접는다. **양쪽 다** 접어야 한다 —
+ * 아래쪽만 막고 위쪽을 열어 뒀더니 네거티브 스페이스가 카드보다 밝아졌다({@link HIGH_KNEE}).
+ *
+ * `wgt` 가 0 이면 무릎이 사실상 무한대로 벌어져 항등식이 된다(처리 경계 없음).
+ */
+function kneeCompress(v: number, m: number, wgt: number): number {
+  // 세기가 0 이면 두 무릎이 무한히 벌어져 항등식이 된다(처리 경계 없음).
+  const lo = m * (1 - (1 - LOW_KNEE) * wgt);
+  const asy = m * (1 - (1 - LOW_ASYMPTOTE) * wgt);
+  if (v < lo) return asy + (lo - asy) * Math.exp((v - lo) / Math.max(1, lo - asy));
+  const hi = m * (1 + (HIGH_KNEE - 1) / Math.max(0.05, wgt));
+  if (v <= hi) return v;
+  const head = Math.max(1, (m * HIGH_HEADROOM) / Math.max(0.05, wgt));
+  return hi + head * (1 - Math.exp(-(v - hi) / head));
 }
 
 /**
- * 리브 본체 램프 색 — {@link TARGET_INNER_L} **에서 파생한다.** 배경 목표와 리브가 한 상수에
- * 묶여 있어야 거터 밝기를 한 군데서 조절할 수 있다(둘을 따로 적으면 반드시 어긋난다).
+ * 가장자리 띠형 곱 비네트를 굽는다. 밴드 안에서만 어두워지고 안쪽은 완전 무손실이다 —
+ * 전면 감쇠는 네거티브 스페이스 밴드를 서로 다른 양으로 눌러 균일성을 깬다.
  */
-function ribRampColors(): { top: number; bottom: number } {
-  const baseMean = (colorLuma(RIB_TOP_BASE) + colorLuma(RIB_BOTTOM_BASE)) / 2;
-  const s = TARGET_INNER_L / RIB_COMPOSITE_K / baseMean;
-  return { top: scaleColor(RIB_TOP_BASE, s), bottom: scaleColor(RIB_BOTTOM_BASE, s) };
+function bakeEdgeVignette(): Texture | null {
+  const w = 256;
+  const h = 144;
+  const ctx = makeCtx(w, h);
+  if (ctx === null) return null;
+  const img = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    const py = ((y + 0.5) / h) * DESIGN_HEIGHT;
+    for (let x = 0; x < w; x++) {
+      const px = ((x + 0.5) / w) * DESIGN_WIDTH;
+      const a = edgeVignetteAlpha(px, py);
+      const i = (y * w + x) * 4;
+      img.data[i] = 0x07;
+      img.data[i + 1] = 0x05;
+      img.data[i + 2] = 0x0e;
+      img.data[i + 3] = Math.round(a * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvasTexture(ctx);
 }
 
 /**
- * 검정 바닥을 **자르지 않고** 부드럽게 수렴시킨다. `SOFT_FLOOR` 위는 항등식이고, 아래는
- * 지수적으로 0 에 가까워진다 — 하드 클리핑이 만드는 "뭉친 검정"과 그로 인한 평균 붕괴를
- * 피하기 위해서다({@link SOFT_FLOOR} 주석 참조).
+ * 하단 가산 리프트 텍스처(1×256, 아래로 갈수록 밝다). 가산 합성이라 곱 레이어가 이미 지나간
+ * 뒤에도 바닥을 확실히 들어올린다({@link BOTTOM_LIFT_LUM} 주석 참조).
  */
-function softFloor(v: number): number {
-  return v >= SOFT_FLOOR ? v : SOFT_FLOOR * Math.exp((v - SOFT_FLOOR) / SOFT_FLOOR);
+function bakeBottomLift(): Texture | null {
+  const h = 256;
+  const ctx = makeCtx(1, h);
+  if (ctx === null) return null;
+  const r = (BOTTOM_LIFT_COLOR >> 16) & 0xff;
+  const g = (BOTTOM_LIFT_COLOR >> 8) & 0xff;
+  const b = BOTTOM_LIFT_COLOR & 0xff;
+  const maxAlpha = BOTTOM_LIFT_LUM / BOTTOM_LIFT_LUMA;
+  const img = ctx.createImageData(1, h);
+  for (let y = 0; y < h; y++) {
+    // 선형 램프 — 위쪽 끝에서 정확히 0 이라 시작선이 보이지 않는다.
+    const a = maxAlpha * (y / (h - 1));
+    img.data[y * 4] = r;
+    img.data[y * 4 + 1] = g;
+    img.data[y * 4 + 2] = b;
+    img.data[y * 4 + 3] = Math.round(a * 255);
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvasTexture(ctx);
 }
 
 /** 캔버스 2D 컨텍스트를 만든다. 없는 환경(vitest)에서는 null — 호출부가 그 없이도 서야 한다. */
@@ -446,30 +505,93 @@ function bakeSoftRect(
   return canvasTexture(ctx);
 }
 
-/**
- * 세로 색 램프 텍스처(1×256). 얇은 띠를 겹쳐 근사하지 않는다 — 1px 겹침이 알파를 두 배로
- * 만들어 가로줄을 남기는 함정이 이 리포에 이미 있다(`scrim.ts` 헤더).
- */
-function bakeVerticalRamp(top: number, bottom: number): Texture | null {
-  const h = 256;
-  const ctx = makeCtx(1, h);
-  if (ctx === null) return null;
-  const r0 = (top >> 16) & 0xff;
-  const g0 = (top >> 8) & 0xff;
-  const b0 = top & 0xff;
-  const r1 = (bottom >> 16) & 0xff;
-  const g1 = (bottom >> 8) & 0xff;
-  const b1 = bottom & 0xff;
-  const img = ctx.createImageData(1, h);
-  for (let y = 0; y < h; y++) {
-    const t = y / (h - 1);
-    img.data[y * 4] = r0 + (r1 - r0) * t;
-    img.data[y * 4 + 1] = g0 + (g1 - g0) * t;
-    img.data[y * 4 + 2] = b0 + (b1 - b0) * t;
-    img.data[y * 4 + 3] = 255;
+/** 리브 열 안에서 그레인을 줄이는 계수(디자인 x). 밖이면 1. */
+function ribGrainAtten(x: number): number {
+  for (const cx of RIB_COLUMNS) {
+    if (Math.abs(x - cx) <= RIB_GRAIN_HALF_W) return RIB_GRAIN_ATTEN;
   }
-  ctx.putImageData(img, 0, 0);
-  return canvasTexture(ctx);
+  return 1;
+}
+
+/** 결정적 2D 해시(0..1). 시드가 같으면 언제나 같은 결 — 재생성마다 자글거리지 않는다. */
+function hash2(x: number, y: number, seed: number): number {
+  const s = Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+/**
+ * 셀 크기 `cx`×`cy` 의 값 노이즈 한 옥타브(이중선형). `cx ≠ cy` 면 **방향성**이 생긴다 —
+ * 석재 결·수직 스트리크가 그 형태다.
+ */
+function noiseOctave(
+  out: Float32Array,
+  w: number,
+  h: number,
+  cx: number,
+  cy: number,
+  amp: number,
+  seed: number,
+): void {
+  const gw = Math.ceil(w / cx) + 2;
+  const gh = Math.ceil(h / cy) + 2;
+  const lat = new Float32Array(gw * gh);
+  for (let i = 0; i < lat.length; i++) {
+    lat[i] = hash2(i % gw, Math.floor(i / gw), seed) - 0.5;
+  }
+  for (let y = 0; y < h; y++) {
+    const fy = y / cy;
+    const y0 = Math.floor(fy);
+    const ty = fy - y0;
+    for (let x = 0; x < w; x++) {
+      const fx = x / cx;
+      const x0 = Math.floor(fx);
+      const tx = fx - x0;
+      const v00 = lat[y0 * gw + x0] ?? 0;
+      const v10 = lat[y0 * gw + x0 + 1] ?? 0;
+      const v01 = lat[(y0 + 1) * gw + x0] ?? 0;
+      const v11 = lat[(y0 + 1) * gw + x0 + 1] ?? 0;
+      const v = (v00 * (1 - tx) + v10 * tx) * (1 - ty) + (v01 * (1 - tx) + v11 * tx) * ty;
+      out[y * w + x] = (out[y * w + x] ?? 0) + v * amp;
+    }
+  }
+}
+
+/**
+ * 배경 재질 — **다중 옥타브** 결을 굽는다.
+ *
+ * ## 왜 단일 노이즈로는 안 되나
+ * 카드 밖 전 영역의 마이크로 콘트라스트가 0.28~0.36 인데 카드 아트는 7.6~33 이다. 그 격차가
+ * "코드로 그린 티"의 정체다. 다만 여기에 노이즈 한 겹을 얹으면 **입자 크기가 한 종류**라
+ * 즉시 CG 로 읽힌다 — 문제는 "절차적"이 아니라 **"단일 스케일"** 이다.
+ *
+ * 그래서 세 종류를 섞는다:
+ *  - **등방 옥타브 4겹**(1·3·9·27px, 진폭 감쇠) — 입자 크기가 한 종류가 아니게 만든다.
+ *  - **방향성 2겹**(2×22 세로 결, 30×3 가로 퇴적층) — 석재의 결. 등방 노이즈에는 없는 신호다.
+ *  - **저주파 얼룩**(90px) — 먼지·습기 얼룩.
+ *
+ * 마지막에 **평균 0·표준편차 1 로 정규화**한다. 그레인이 밝기를 움직이면 5밴드 균일성이
+ * 깨지므로, 진폭이 아니라 **분포**를 고정하는 것이 안전하다.
+ */
+function bakeGrainField(w: number, h: number): Float32Array {
+  const g = new Float32Array(w * h);
+  // 화면은 원화를 1.53배 확대해 쓴다 — 1px 옥타브는 보간에 대부분 먹히므로 2~8px 에 무게를 둔다.
+  noiseOctave(g, w, h, 1, 1, 0.5, 11);
+  noiseOctave(g, w, h, 2, 2, 1.0, 23);
+  noiseOctave(g, w, h, 4, 4, 0.9, 37);
+  noiseOctave(g, w, h, 8, 8, 0.7, 51);
+  noiseOctave(g, w, h, 16, 16, 0.5, 59);
+  noiseOctave(g, w, h, 32, 32, 0.35, 71);
+  noiseOctave(g, w, h, 3, 26, 0.6, 67); // 세로 석재 결
+  noiseOctave(g, w, h, 40, 4, 0.4, 83); // 가로 퇴적층
+  noiseOctave(g, w, h, 100, 100, 0.5, 97); // 먼지·습기 얼룩
+  let sum = 0;
+  for (let i = 0; i < g.length; i++) sum += g[i] ?? 0;
+  const mean = sum / g.length;
+  let sq = 0;
+  for (let i = 0; i < g.length; i++) sq += ((g[i] ?? 0) - mean) ** 2;
+  const std = Math.sqrt(sq / g.length) || 1;
+  for (let i = 0; i < g.length; i++) g[i] = ((g[i] ?? 0) - mean) / std;
+  return g;
 }
 
 /** 캔버스에 그릴 수 있는 이미지 자원인가(구울 수 없는 자원이면 톤매핑을 포기한다). */
@@ -562,7 +684,8 @@ function buildTargetField(rects: readonly BaseVeilRect[]): TargetField {
       const atten = (1 - edgeVignetteAlpha(x, y)) * (1 - bottomScrimAlpha(y));
       const comp = Math.min(COMP_MAX, atten > 0.01 ? 1 / atten : COMP_MAX);
       weight[i] = ws;
-      lum[i] = target * comp;
+      // 환경광은 톤매핑 **뒤에** 더해지므로 목표에서 미리 빼 둔다 — 안 빼면 그만큼 초과한다.
+      lum[i] = Math.max(4, target * comp - AMBIENT_LUM);
     }
   }
   return { lum, weight };
@@ -607,6 +730,7 @@ function bakeToneMapped(tex: Texture, rects: readonly BaseVeilRect[]): Texture |
   const designY = (sy: number): number => DESIGN_HEIGHT / 2 + (sy - h / 2) * k;
 
   const field = buildTargetField(rects);
+  const grain = bakeGrainField(w, h);
 
   // --- 1패스: 처리 영역 안의 **정규화된** 디테일 표준편차를 재서 증폭률을 역산한다 ---
   // 디테일을 그대로 재면 안 된다. 어두워진 뒤의 대비는 `목표평균/국소평균` 만큼 함께 줄어드는데
@@ -637,8 +761,10 @@ function bakeToneMapped(tex: Texture, rects: readonly BaseVeilRect[]): Texture |
     if (std > 1) gain = Math.min(MAX_DETAIL_GAIN, Math.max(1, TARGET_DETAIL_STD / std));
   }
 
-  // --- 2패스: 픽셀마다 목표 평균 + 증폭된 디테일 ---
-  const out = outCtx.createImageData(w, h);
+  // --- 2패스: 픽셀마다 목표 평균 + 접은 디테일(색·그레인은 아직) ---
+  const tmpCtx = makeCtx(w, h);
+  if (tmpCtx === null) return null;
+  const tmp = tmpCtx.createImageData(w, h);
   for (let sy = 0; sy < h; sy++) {
     const dy = designY(sy);
     for (let sx = 0; sx < w; sx++) {
@@ -646,29 +772,82 @@ function bakeToneMapped(tex: Texture, rects: readonly BaseVeilRect[]): Texture |
       const r = detailPx[i] ?? 0;
       const g = detailPx[i + 1] ?? 0;
       const b = detailPx[i + 2] ?? 0;
-      const dx = designX(sx);
-      const wgt = sampleField(field.weight, dx, dy);
+      const wgt = sampleField(field.weight, designX(sx), dy);
       const lumA = luma(r, g, b);
       let outLum = lumA;
       if (wgt > 1e-3) {
         // **하한이 걸린 국소 평균.** 아래 세 식이 전부 이 값을 쓴다 — 하나라도 날것의 `Lp` 를
         // 쓰면 어두운 자리에서 출력이 무너진다({@link LP_FLOOR} 주석의 실측).
         const lumLp = Math.max(LP_FLOOR, luma(lowPx[i] ?? 0, lowPx[i + 1] ?? 0, lowPx[i + 2] ?? 0));
-        const target = sampleField(field.lum, dx, dy);
+        const target = sampleField(field.lum, designX(sx), dy);
         const m = lumLp + (target - lumLp) * wgt;
         // 대비는 **절대량이 아니라 비율**로 옮긴다(`m/Lp`). 어두워진 자리에 원래 밝기의 진폭을
         // 그대로 얹으면 음수로 내려가 검게 잘리고, 그 클리핑이 다시 대비를 죽인다.
         // 세기 0 → m = Lp, 배율 1, gain 1 → out = A(항등식). 처리 경계가 원리적으로 없다.
         const detailScale = 1 + wgt * (m / lumLp - 1);
         const gEff = 1 + (gain - 1) * wgt;
-        outLum = softFloor(m + (lumA - lumLp) * gEff * detailScale);
+        // 양쪽 무릎으로 접는다 — 위쪽을 열어 두면 빈 자리가 카드보다 밝아진다(N2·N3).
+        outLum = kneeCompress(m + (lumA - lumLp) * gEff * detailScale, m, wgt);
       }
-      // RGB 는 휘도 비로만 민다 — 색상·채도를 보존하기 위해서다. 그 뒤 환경광을 **더한다**:
-      // 곱은 순흑 화소를 절대 들어올리지 못한다(0 × 무엇 = 0).
+      // RGB 는 휘도 비로만 민다 — 색상·채도를 보존하기 위해서다.
       const scale = Math.max(0, outLum / Math.max(1, lumA));
-      out.data[i] = Math.min(255, r * scale + AMBIENT_LUM * AMBIENT_R);
-      out.data[i + 1] = Math.min(255, g * scale + AMBIENT_LUM * AMBIENT_G);
-      out.data[i + 2] = Math.min(255, b * scale + AMBIENT_LUM * AMBIENT_B);
+      tmp.data[i] = Math.min(255, r * scale);
+      tmp.data[i + 1] = Math.min(255, g * scale);
+      tmp.data[i + 2] = Math.min(255, b * scale);
+      tmp.data[i + 3] = 255;
+    }
+  }
+  tmpCtx.putImageData(tmp, 0, 0);
+
+  // --- 3패스: 환경광 · 재질 · 색온도 ---
+  //
+  // ⚠️ 여기에 **닫힘 보정**(2패스 결과를 다시 흐려 실제 국소 평균을 재고 목표와의 비율만큼
+  // 곱하는 되먹임)을 넣었다가 **뺐다.** 원리는 맞지만 이 화면에서는 해롭다: 보정 커널은
+  // 저주파 평균(93px)이라 **24~44px 폭의 여백·거터 띠**를 그 이웃과 함께 움직인다. 띠가
+  // 이웃보다 어두우면 이웃을 목표에 맞추느라 띠를 통째로 밀어 올려, 실측에서 좌여백이
+  // 63 → 76, 우측 레일이 57 → 92 로 되레 나빠지고 순흑이 0% → 0.86% 로 돌아왔다.
+  // 기록으로 남긴다 — 다음 사람이 같은 아이디어를 다시 시도하지 않도록.
+  const basePx = tmpCtx.getImageData(0, 0, w, h).data;
+  const out = outCtx.createImageData(w, h);
+  for (let sy = 0; sy < h; sy++) {
+    const dy = designY(sy);
+    for (let sx = 0; sx < w; sx++) {
+      const i = (sy * w + sx) * 4;
+      const dx = designX(sx);
+      const wgt = sampleField(field.weight, dx, dy);
+      const r = basePx[i] ?? 0;
+      const g = basePx[i + 1] ?? 0;
+      const b = basePx[i + 2] ?? 0;
+      // 환경광·그레인은 **더한다**: 곱은 순흑 화소를 절대 들어올리지 못한다(0 × 무엇 = 0).
+      // 그레인은 평균 0 이라 밴드 평균을 움직이지 않는다. 다만 어두운 자리에서는 음의 진폭이
+      // 0 에서 잘려 평균이 **위로** 밀리므로(실측 +9.6), 어두울수록 진폭을 줄인다.
+      const lumBase = luma(r, g, b);
+      const fade = Math.min(1, (lumBase + AMBIENT_LUM) / GRAIN_FADE_L);
+      // 리브(Lane D)가 덮는 열에서는 약하게 — 두 레이어의 결이 겹쳐 이중으로 보이지 않게.
+      const gr = (grain[sy * w + sx] ?? 0) * GRAIN_LUM * wgt * ribGrainAtten(dx) * fade;
+      let outR = r + AMBIENT_LUM * AMBIENT_R + gr * GRAIN_R;
+      let outG = g + AMBIENT_LUM * AMBIENT_G + gr * GRAIN_G;
+      let outB = b + AMBIENT_LUM * AMBIENT_B + gr * GRAIN_B;
+      // 색온도 정규화(N1) — 휘도가 같아도 색온도가 갈리면 한 방에서 찍힌 화면으로 안 보인다.
+      // `r−b`(호박축)와 `g−(r+b)/2`(녹색 편향)를 목표 대역으로 접고, **휘도를 보존한 채**
+      // 세 채널을 다시 푼다. 미는 방식(shift)은 채널이 0 에서 잘리면 목표에 못 닿는다 —
+      // 우여백이 녹색 편향(+7.1) 때문에 그렇게 빗나갔다.
+      if (wgt > 1e-3) {
+        const y = luma(outR, outG, outB);
+        const rb = outR - outB;
+        const gx = outG - (outR + outB) / 2;
+        const d =
+          rb + (Math.min(TARGET_RB + RB_TOL, Math.max(TARGET_RB - RB_TOL, rb)) - rb) * wgt;
+        const xg = gx + (Math.min(GREEN_TOL, Math.max(-GREEN_TOL, gx)) - gx) * wgt;
+        // Y = (R+B)/2 + 0.0925·(R−B) + 0.587·(G−(R+B)/2) 를 R+B 에 대해 푼 것.
+        const s = 2 * (y - 0.0925 * d - 0.587 * xg);
+        outR = (s + d) / 2;
+        outB = (s - d) / 2;
+        outG = s / 2 + xg;
+      }
+      out.data[i] = Math.min(255, Math.max(0, outR));
+      out.data[i + 1] = Math.min(255, Math.max(0, outG));
+      out.data[i + 2] = Math.min(255, Math.max(0, outB));
       out.data[i + 3] = 255;
     }
   }
@@ -788,8 +967,8 @@ export class BaseBackdrop {
     // 톤매핑이 성공했으면 딤은 **없다**(그게 3차 실패의 원인이었다). 실패했을 때만 최소한의
     // 딤을 얹어 카드가 배경에 묻히지 않게 한다.
     if (this.bakedArt === null) this.buildFallbackDim();
-    this.buildRibs(opts?.ribs ?? []);
     this.buildVignettes();
+    this.buildBottomLift();
   }
 
   /** 자산이 없을 때의 절차적 배경 — 짙은 바탕 위 성운 얼룩 + 좌우 램프광. */
@@ -859,53 +1038,9 @@ export class BaseBackdrop {
     this.view.addChild(s);
   }
 
-  /**
-   * 거터 석재 리브 — **격자를 원화 위에 얹는 대신, 격자를 담는 크롬을 그리고 그 뒤에 원화를
-   * 둔다.** AAA 허브가 실제로 쓰는 구성이다.
-   *
-   * 왜 필요한가: 원화에는 밝은 세로 대역이 분명히 있는데(실측 L61~63), 그 주기가 격자 주기
-   * (458px)와 맞지 않아 하필 카드 뒤에 깔리고 거터에는 어두운 대역이 깔렸다. 원화를 아무리
-   * 톤매핑해도 이 위상 불일치는 못 고친다 — 배경이 교체되면 또 어긋난다. 리브는 격자에서
-   * 파생한 좌표에 서므로 **어떤 배경을 끼워도 거터의 리듬이 격자와 일치**한다.
-   *
-   * 본체는 세로 램프(구운 텍스처 — 띠 근사 금지), 좌우는 1px 수광 립 / 2px 그늘이다.
-   */
-  private buildRibs(ribs: readonly BaseRib[]): void {
-    if (ribs.length === 0) return;
-    const ramp = ribRampColors();
-    const bodyTex = bakeVerticalRamp(ramp.top, ramp.bottom);
-    const host = new Container();
-    for (const rib of ribs) {
-      const h = rib.y1 - rib.y0;
-      if (h <= 0) continue;
-      const left = rib.x - RIB_W / 2;
-      if (bodyTex !== null) {
-        const body = new Sprite(bodyTex);
-        body.position.set(left, rib.y0);
-        body.width = RIB_W;
-        body.height = h;
-        host.addChild(body);
-      }
-      const edges = new Graphics();
-      // 왼쪽 수광 립(1px) · 오른쪽 그늘(2px) — 카드 베벨과 같은 광원 방향.
-      edges.rect(left, rib.y0, 1, h).fill({ color: RIB_LIP, alpha: RIB_LIP_ALPHA });
-      edges
-        .rect(left + RIB_W - 2, rib.y0, 2, h)
-        .fill({ color: RIB_SHADE, alpha: RIB_SHADE_ALPHA });
-      host.addChild(edges);
-    }
-    this.view.addChild(host);
-  }
-
   /** 하단 스크림(CTA·메타 줄 자리) + 네 변 비네트(시선을 화면 안쪽으로 모은다). */
   private buildVignettes(): void {
-    const edge = bakeSoftRect(
-      0x07050e,
-      EDGE_VIGNETTE_ALPHA,
-      EDGE_VIGNETTE_PLATEAU_X,
-      EDGE_VIGNETTE_PLATEAU_Y,
-      true,
-    );
+    const edge = bakeEdgeVignette();
     if (edge !== null) {
       const s = new Sprite(edge);
       s.position.set(0, 0);
@@ -922,6 +1057,22 @@ export class BaseBackdrop {
       scrim.height = DESIGN_HEIGHT - BOTTOM_SCRIM_TOP;
       this.view.addChild(scrim);
     }
+  }
+
+  /**
+   * 하단 가산 리프트 — **맨 마지막**에 얹는다. 곱 레이어(비네트·스크림)보다 뒤라 아무것도
+   * 이 값을 깎지 않으므로 화면 바닥의 최솟값이 보장된다. 평균이 아니라 **최솟값**을 고쳐야
+   * 하는 결함이라(하단 평균 35.6 뒤에 L<24 가 24.5% 숨어 있었다) 곱이 아니라 합이어야 한다.
+   */
+  private buildBottomLift(): void {
+    const tex = bakeBottomLift();
+    if (tex === null) return;
+    const s = new Sprite(tex);
+    s.position.set(0, DESIGN_HEIGHT - BOTTOM_LIFT_H);
+    s.width = DESIGN_WIDTH;
+    s.height = BOTTOM_LIFT_H;
+    s.blendMode = 'add';
+    this.view.addChild(s);
   }
 
   /** 매 프레임 진행. `dt` 는 **벽시계 초**다. 숨겨져 있으면 아무것도 하지 않는다. */

@@ -157,8 +157,25 @@ const BAND_BOTTOM = { r: 0x2e, g: 0x21, b: 0x18 } as const;
 const GRAIN_UP = 0.016;
 const GRAIN_DOWN = 0.075;
 
-/** 아트/라벨 경계: 선반이 드리우는 그림자선과 그 위 립의 캐치라이트. */
-const SEAM_SHADOW = 0x0e0906;
+/**
+ * 아트/라벨 경계: 선반이 드리우는 그림자선과 그 위 립의 캐치라이트.
+ *
+ * ## 왜 순흑을 쓰면 안 되는가 (5차 판정 N6)
+ * 3차에 넣은 `#0e0906` α0.9 는 **의도는 맞았지만 값이 틀렸다**. 밴드 상단 rgb(62,45,32)
+ * 위에 합성하면 실제 픽셀이 L **14.0** 이 되어(비평 실측과 정확히 일치) 회화 위에서 **벡터
+ * 선**으로 읽혔다. 이 화면의 규율은 "검은 외곽선 0px" 이고, 같은 라운드에 헤더 장식의 순흑
+ * 키라인이 같은 이유로 제거됐다 — 내 경계선만 남겨 두면 자기모순이다.
+ *
+ * 그래서 색을 **밴드 상단색에서 파생**시킨다({@link seamShadowColor}). 상수를 따로 적으면
+ * `BAND_TOP` 을 바꿀 때 조용히 어긋나고, 무엇보다 "이 선은 밴드가 그늘진 것"이라는 사실이
+ * 코드에 남지 않는다. 불투명 채움은 어디에도 없다 — 톤과 알파 둘 다로 낮춘다.
+ *
+ * 검산(밴드 상단 rgb(62,45,32) L48.6 위, 톤 0.30 · α0.62):
+ *  - 선 색 rgb(19,14,10) → 합성 rgb(35,26,18) → **L 27.8** (주변 대비 −20.8)
+ *  - 수용 기준 **L ≥ 22** 를 5.8 여유로 통과하고, 경계는 −21L 이라 또렷하게 읽힌다.
+ */
+const SEAM_SHADOW_TONE = 0.3;
+const SEAM_SHADOW_ALPHA = 0.62;
 const SEAM_GOLD = 0xc9a04a;
 const SEAM_ALPHA = 0.2;
 
@@ -599,6 +616,19 @@ function bevelDarkPath(g: Graphics, w: number, h: number, radius: number, inset:
     .arc(x0 + r, y1 - r, r, q, q * 1.5); // 좌하 호의 절반
 }
 
+/**
+ * 아트/라벨 경계 그림자선의 색 — **밴드 상단색을 어둡게 민 것**이다.
+ *
+ * 순흑 상수 대신 파생을 쓰는 이유는 두 가지다: ①`BAND_TOP` 을 조정해도 경계선이 따라와
+ * 색온도가 갈리지 않는다 ②"이 선은 밴드가 그늘진 것"이라는 물리가 코드에 남는다. 반환색은
+ * 그 자체로도 순흑이 아닌 깊은 웜 브라운이고, 실제로는 {@link SEAM_SHADOW_ALPHA} 로 한 번 더
+ * 낮춰 칠해진다(불투명 채움 0px).
+ */
+function seamShadowColor(): number {
+  const c = (k: 'r' | 'g' | 'b'): number => Math.round(BAND_TOP[k] * SEAM_SHADOW_TONE);
+  return (c('r') << 16) | (c('g') << 8) | c('b');
+}
+
 /** 문자열에서 뽑은 결정적 위상(0..2π) — 타일마다 부유가 어긋나게. 매 프레임 같은 값이다. */
 function phaseOf(seed: string): number {
   let acc = 0;
@@ -834,7 +864,7 @@ export function makeCinematicTile(o: CinematicTileOpts): CinematicTile {
   // 앞으로 튀어나온 것처럼 보인다.
   const seam = new Graphics();
   seam.rect(0, bandH - 1, w, 1).fill({ color: SEAM_GOLD, alpha: locked ? SEAM_ALPHA * 0.5 : SEAM_ALPHA });
-  seam.rect(0, bandH, w, 1).fill({ color: SEAM_SHADOW, alpha: 0.9 });
+  seam.rect(0, bandH, w, 1).fill({ color: seamShadowColor(), alpha: SEAM_SHADOW_ALPHA });
   inner.addChild(seam);
 
   if (locked) {

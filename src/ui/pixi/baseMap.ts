@@ -47,6 +47,7 @@ import {
   type BaseTextures,
 } from './baseTextures.js';
 import { BaseBackdrop } from './baseBackdrop.js';
+import { makeGutterRibs, type GutterRibs } from './gutterRibs.js';
 import { makeCinematicTile, type CinematicTile } from './cinematicTile.js';
 import { makeScreenTitle, makeCinematicChip, makeHeroTile, type HeroButton } from './cinematicChrome.js';
 import type { BaseMapCallbacks } from '../baseMap.js';
@@ -201,8 +202,20 @@ export function ribLines(): readonly { x: number; y0: number; y1: number }[] {
   const y0 = ROW1_Y;
   const y1 = ROW2_Y + TILE_H;
   const out: { x: number; y0: number; y1: number }[] = [];
-  // 칸과 칸 사이마다 하나. 첫 행 기준이면 충분하다 — 두 행의 칸 수가 같기 때문이다.
-  for (let i = 1; i < cols0; i++) {
+  /**
+   * 칸 **경계마다** 하나 — 안쪽 거터뿐 아니라 **격자 양 바깥에도** 세운다.
+   *
+   * 처음엔 안쪽 3개만 세웠다. 그랬더니 거터는 균일해졌는데(편차 1.4) **좌·우 여백**이 배경
+   * 원화 그대로라 밴드 사이 휘도 스프레드가 24.6 으로 남았다(AAA 비평 5라운드 N1). 배경
+   * 조명 보정으로 그 띠를 맞추려는 시도는 실패했다 — 정규화 커널이 띠(24~44px)보다 넓으면
+   * 띠를 이웃과 함께 움직이고, 좁으면 매크로 구조가 무너진다(둘 다 실측으로 확인).
+   *
+   * 거터를 푼 원리를 여백에 그대로 적용하는 것이 답이다: **크롬이 직접 그린다.** 그러면
+   * 리브가 `44 · 502 · 960 · 1418 · 1876` 으로 **피치 458 에 정확히 등간격**이 되어, 4개 칸이
+   * 5개 기둥 사이의 베이(bay)에 앉은 콜로네이드가 된다. 스프레드는 보정이 아니라 **구성으로**
+   * 사라진다.
+   */
+  for (let i = 0; i <= cols0; i++) {
     out.push({ x: x0 + i * (TILE_W + TILE_GAP) - TILE_GAP / 2, y0, y1 });
   }
   return out;
@@ -218,6 +231,7 @@ export class BaseMapScreen {
 
   /** 연출을 가진 것들 — `update(dt)` 가 매 프레임 이 셋만 돌린다. */
   private backdrop: BaseBackdrop | null = null;
+  private ribs: GutterRibs | null = null;
   private tiles: CinematicTile[] = [];
   private hero: HeroButton | null = null;
 
@@ -329,6 +343,8 @@ export class BaseMapScreen {
     // 연출 참조를 먼저 끊는다 — destroy 된 컨테이너를 update 가 만지면 안 된다.
     this.backdrop?.destroy();
     this.backdrop = null;
+    this.ribs?.destroy();
+    this.ribs = null;
     this.tiles = [];
     this.hero = null;
     for (const child of [...this.root.children]) {
@@ -345,12 +361,15 @@ export class BaseMapScreen {
     this.root.addChild(bg);
 
     // --- 배경(격납고 홀 + 공기 + 중앙 베일) ---
-    const backdrop = new BaseBackdrop(this.art[BASE_BACKDROP_NAME], {
-      veilRects: veilRects(),
-      ribs: ribLines(),
-    });
+    const backdrop = new BaseBackdrop(this.art[BASE_BACKDROP_NAME], { veilRects: veilRects() });
     this.root.addChild(backdrop.view);
     this.backdrop = backdrop;
+
+    // --- 거터 석재 리브 --- 배경(비네트·하단 스크림 포함) **위**, 카드 **아래**.
+    // 스크림 밑에 넣으면 기초의 대비가 감쇠에 먹힌다(Lane D 인계 제약 ①).
+    const ribs = makeGutterRibs(ribLines());
+    this.root.addChild(ribs.view);
+    this.ribs = ribs;
 
     this.renderTitleBar(profile);
     BUILDINGS.forEach((b, i) => this.renderBuilding(b, i, profile));
@@ -431,7 +450,15 @@ export class BaseMapScreen {
       // 크레딧·광물은 상단 칩이 이미 보여 준다 — 같은 화면에서 두 번 적으면 디버그
       // 텍스트로 읽힌다(AAA 비평 지적). `meta.line` 대신 짧은 전용 키를 쓴다.
       text: t('base.metaShort', { lv: ship.level, sp: profile.skillPoints }),
-      style: { fontFamily: UI_FONT, fontSize: 19, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+      style: {
+        fontFamily: UI_FONT,
+        fontSize: 20,
+        // `COLOR.muted`(#aa9b87)는 이 자리의 청록 바닥(L 29~45) 위에서 대비 4.83:1 로
+        // WCAG AA(4.5)를 겨우 넘고 카드 부제(6.29:1)보다 흐리다 — 같은 화면에서 더 작은
+        // 글자가 더 흐린 것은 위계가 아니라 결함이다(AAA 비평 5라운드 N7).
+        fill: 0xc6bba6,
+        dropShadow: TEXT_SHADOW,
+      },
     });
     meta.anchor.set(0.5, 0);
     meta.position.set(DESIGN_WIDTH / 2, META_Y);
