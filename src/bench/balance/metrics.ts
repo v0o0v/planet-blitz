@@ -88,11 +88,27 @@ export interface RunTrace {
    * 추격은 포식자 취약화, 그 외는 보스 세그먼트 스폰이다(`cell.ts` `bossEngageable`).
    */
   bossReachTick: number;
+  /**
+   * 플레이어가 **강제 스크롤 창의 뒤 경계 압박 구역 안에** 있던 틱 수(레이싱 전용, 그 외 0).
+   *
+   * 아르케(레이싱) 클리어율 2.6% 가 "적이 세서"인지 "봇이 창을 못 따라가서"인지를 가르는
+   * 진단 지표다. 이 값이 크면 봇이 뒤 경계에 눌려 `racingRearPressure` 로 갈리고 있는 것이라
+   * 손댈 축이 적 곡선이 아니다(봇 · 창 속도 · 압박 계수). 판정은 `cell.ts` 런 루프에서 한다.
+   */
+  rearPinTicks: number;
 }
 
 /** 새 trace 를 만든다. */
 export function newTrace(): RunTrace {
-  return { sawBoss: false, maxSegment: 0, bossTicks: 0, bossHp0: -1, bossHpLast: -1, bossReachTick: -1 };
+  return {
+    sawBoss: false,
+    maxSegment: 0,
+    bossTicks: 0,
+    bossHp0: -1,
+    bossHpLast: -1,
+    bossReachTick: -1,
+    rearPinTicks: 0,
+  };
 }
 
 /**
@@ -209,6 +225,19 @@ export const RUN_METRICS: Readonly<Record<string, MetricDef>> = {
     kind: 'winPosMean',
     unit: 's',
     of: (_s, t) => (t.bossReachTick >= 0 ? t.bossReachTick / 60 : 0),
+  },
+  /**
+   * 런 시간 중 **뒤 경계 압박 구역에 눌려 있던 비율**(레이싱 전용, 그 외 무대는 항상 0).
+   *
+   * 아르케 2.6% 의 처방을 가르는 진단 지표다. 크면 사인은 적 곡선이 아니라 **창을 따라가지
+   * 못하는 것**이고(`racingRearPressure` 가 12 dmg/s 로 갈린다), 0 에 가까우면 적이 세다는 뜻이다.
+   * 관측 정의는 `cell.ts` 런 루프의 압박 구역 판정과 **같은 부등식**을 쓴다.
+   */
+  rearPinRate: {
+    label: '후방압박',
+    kind: 'mean',
+    digits: 3,
+    of: (s, t) => (s.tick > 0 ? t.rearPinTicks / s.tick : 0),
   },
   metaXp: { label: '메타XP', kind: 'mean', digits: 0, of: (s) => s.xpTotal },
   kills: { label: '처치', kind: 'mean', digits: 0, of: (s) => s.kills },

@@ -22,6 +22,8 @@ import { createWorld, stepWorld } from '../../sim/world.js';
 import type { WorldState } from '../../sim/world.js';
 import type { Entity } from '../../sim/entities.js';
 import { PLANET_MODE } from '../../sim/planetMode.js';
+import { RACING_REAR_PRESSURE_MARGIN } from '../../sim/modes/racing.js';
+import { INVASION_WINDOW_HALF_W } from '../../sim/invasion/scroll.js';
 import { autopilotInput } from '../../sim/autopilot.js';
 import { buildRunConfig } from '../../run/runConfig.js';
 import { defaultProfile, activeShip } from '../../save/profile.js';
@@ -106,6 +108,22 @@ function observeBoss(state: WorldState, t: RunTrace): void {
 }
 
 /**
+ * 뒤 경계 압박 관측(레이싱 전용).
+ *
+ * `racingRearPressure`(`src/sim/modes/racing.ts`)와 **같은 부등식**을 쓴다 — 판정을 베껴 적는
+ * 대신 상수를 그쪽에서 가져오므로, 압박 구역 정의가 바뀌면 이 관측도 함께 따라간다. sim 을
+ * 한 바이트도 건드리지 않고(관측 전용) 런 밖에서 세므로 해시·거동에 영향이 없다.
+ */
+function observeRearPin(state: WorldState, t: RunTrace): void {
+  if (state.config.planetMode !== PLANET_MODE.racing) return;
+  const rt = state.scrollRuntime;
+  const player = state.entities[0];
+  if (rt === undefined || player === undefined || player.dead) return;
+  const rearX = rt.scrollX - INVASION_WINDOW_HALF_W;
+  if (player.x - rearX <= RACING_REAR_PRESSURE_MARGIN) t.rearPinTicks++;
+}
+
+/**
  * 셀 한 칸을 시드 하나로 돌린다. 결정론적이다 — 같은 `(cell, seed)` 는 항상 같은 결과다.
  */
 export function runCellSeed(cell: BalanceCell, seed: number): CellRunResult {
@@ -126,6 +144,7 @@ export function runCellSeed(cell: BalanceCell, seed: number): CellRunResult {
 
   for (let i = 0; i < MAX_TICKS; i++) {
     stepWorld(state, autopilotInput(state));
+    observeRearPin(state, trace);
     if (state.bossSpawned) observeBoss(state, trace);
     if (state.wave.segmentIndex > trace.maxSegment) trace.maxSegment = state.wave.segmentIndex;
     if (state.victory || state.gameOver) break;
