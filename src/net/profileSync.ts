@@ -468,17 +468,12 @@ export function stashPendingCommissionSubmission(
   // 것이라 최악이다.
   const trimmed = list.slice(Math.max(0, list.length - PENDING_COMMISSION_QUEUE_MAX));
   const droppedByCap = list.length - trimmed.length;
-  if (writePendingCommissionSubmissions(store, trimmed)) {
-    return { stored: true, dropped: droppedByCap };
-  }
-  // 저장 실패(쿼터 등) — 이번 항목만 단독으로 넣어 본다. 기존 대기분을 버리더라도 **방금 끝낸
-  // 런**을 살리는 쪽이 낫다(그쪽이 확정 지급물을 들고 있다).
-  // ⚠️ 이 폴백이 성공하면 밀려난 항목은 **영영 재시도되지 않는다.** 그 사실을 `dropped` 로
-  //    반드시 올린다 — 초판은 여기서 `true` 만 돌려줘 소실이 완전히 조용했다.
-  if (writePendingCommissionSubmissions(store, [entry])) {
-    return { stored: true, dropped: Math.max(droppedByCap, trimmed.length - 1) };
-  }
-  return { stored: false, dropped: droppedByCap };
+  // ⚠️ **"1차 실패 시 이번 항목만 단독 저장" 폴백을 두지 않는다.** 상한이 1 이라 `trimmed` 는
+  //    언제나 정확히 1항목이고, 그러면 폴백은 **완전히 같은 payload 를 다시 쓰는 것**이라
+  //    도달해도 무의미하다(죽은 코드). 초판에 그 분기가 있었는데, 검증 에이전트가 분기를 통째로
+  //    지워도 전 테스트가 통과함을 실측해 도달 불가임을 밝혔다 — 죽은 방어는 "막고 있다"는
+  //    착각만 남기므로 지운다. 상한을 2 이상으로 되돌린다면 그때 다시 필요해진다.
+  return { stored: writePendingCommissionSubmissions(store, trimmed), dropped: droppedByCap };
 }
 
 /** 대기 의뢰 제출에서 이 `runId` 항목을 지운다(응답을 받아 최종 판정이 났을 때). */

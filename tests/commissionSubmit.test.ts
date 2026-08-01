@@ -374,8 +374,12 @@ describe('큐 폐기는 **조용하면 안 된다** (리뷰 MAJOR-C 회귀 게�
     expect(String(warned[0]?.[0])).toContain('폐기');
   });
 
-  it('부분 쿼터에서도 방금 끝난 런은 살아남고 폐기가 보고된다', async () => {
-    // 큰 쓰기(2건)는 실패하고 작은 쓰기(1건)는 성공하는 경계를 만든다.
+  it('저장이 성립하는 쿼터에서는 방금 끝난 런이 남고 이전 런은 폐기된다', async () => {
+    // ⚠️ 이 테스트는 **폴백 분기를 재현하지 않는다** — 상한이 1 이라 저장 payload 가 항상
+    //    1항목이고, 그 크기는 아래 경계를 절대 못 넘는다. (초판은 이 테스트가 '부분 쿼터
+    //    폴백'을 잠갔다고 주장했는데 검증 실측 결과 그 분기는 도달 불가였고, 그래서 폴백 자체를
+    //    지웠다 — `stashPendingCommissionSubmission` 주석 참조.) 여기서 재는 것은
+    //    **상한 교체가 최신 런을 살리는 방향인가** 하나다.
     const store = partialQuotaStore(4000);
     const gw = fakeGateway(NET_DOWN);
     await submitCommissionRun('run-A', tinyReplay(1), { gateway: gw, store });
