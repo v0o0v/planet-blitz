@@ -20,7 +20,7 @@ import { SPECIAL_NONE, packPowerupPick } from './world.js';
 import type { Entity } from './entities.js';
 import { atan2, length } from './math.js';
 import { isObjectiveDestructible } from './modes/objective.js';
-import { INVASION_WINDOW_HALF_W, INVASION_WINDOW_HALF_H } from './invasion/scroll.js';
+import { INVASION_WINDOW_HALF_W } from './invasion/scroll.js';
 import { PLANET_MODE } from './planetMode.js';
 
 /** 적탄이 '위협'으로 간주되는 최대 거리(월드 단위). 이 안에서 접근 중인 탄만 회피한다. */
@@ -83,7 +83,7 @@ export function autopilotInput(world: WorldState): InputFrame {
   // ⓪ 창 유지(강제 스크롤 무대 전용): 뒤 경계에 붙으면 회피·카이팅보다 먼저 전진한다.
   //    그 외 무대는 `forward` 가 undefined 라 아래 경로가 한 줄도 실행되지 않는다(거동·해시 불변).
   const forward = scrollForward(world);
-  const slack = forward !== undefined ? rearSlack(world, player, forward) : Infinity;
+  const slack = forward !== undefined ? rearSlack(world, player) : Infinity;
   if (forward !== undefined && slack <= STATION_CRITICAL_SLACK) {
     return { moveX: forward.x, moveY: forward.y, aim, dash: false, special: SPECIAL_NONE };
   }
@@ -151,13 +151,19 @@ export function autopilotInput(world: WorldState): InputFrame {
  * 이 무대의 **창 전진 방향**(단위 벡터). 강제 스크롤 무대가 아니면 undefined —
  * 그 경우 창 유지 경로 전체가 무연산이라 기존 봇 거동이 바이트 불변이다.
  *
- * 레이싱은 +X, 블록격파는 −Y 로 창이 나아간다(`racingProgress` = `scrollX`,
- * `blockBreakProgress` = `-scrollY`). 침공(`invasion3`)은 `scrollRuntime` 이 없어 대상이 아니다.
+ * 레이싱은 +X 로 창이 나아간다(`racingProgress` = `scrollX`). 침공(`invasion3`)은
+ * `scrollRuntime` 이 없어 대상이 아니다.
+ *
+ * ## ⚠️ 블록격파(−Y)는 **일부러 제외한다** — 실측으로 해롭다
+ * 창 수학은 같지만 실패 양식이 정반대다. 레이싱의 뒤 경계는 **빈 공간**이라 전진이 곧 회피이지만,
+ * 블록격파의 전방은 **파괴 가능한 벽 행**이라 전진 편향이 봇을 벽에 밀어붙여 `crushBlockBreak`
+ * (경계·벽 사이 끼임 누적 피해)을 자초한다. 같은 축(크라스 단독 · Lv5/25/60/80/100)으로 교환
+ * 대조한 결과 **49.0% → 16.7%**. 그래서 "강제 스크롤이면 전진"이라는 일반화를 쓰지 않고
+ * 모드를 명시한다 — 이 두 무대는 창만 같고 지형이 다르다.
  */
 function scrollForward(world: WorldState): { x: number; y: number } | undefined {
   if (world.scrollRuntime === undefined) return undefined;
   if (world.config.planetMode === PLANET_MODE.racing) return { x: 1, y: 0 };
-  if (world.config.planetMode === PLANET_MODE.blockBreak) return { x: 0, y: -1 };
   return undefined;
 }
 
@@ -165,12 +171,10 @@ function scrollForward(world: WorldState): { x: number; y: number } | undefined 
  * 창 뒤 경계까지 남은 여유(월드 유닛). 전진 방향축으로만 잰다 — 압박 판정
  * (`racingRearPressure`)과 같은 축이다. 값이 작을수록 경계에 가깝다.
  */
-function rearSlack(world: WorldState, player: Entity, forward: { x: number; y: number }): number {
+function rearSlack(world: WorldState, player: Entity): number {
   const rt = world.scrollRuntime;
   if (rt === undefined) return Infinity;
-  return forward.x !== 0
-    ? player.x - (rt.scrollX - INVASION_WINDOW_HALF_W)
-    : rt.scrollY + INVASION_WINDOW_HALF_H - player.y;
+  return player.x - (rt.scrollX - INVASION_WINDOW_HALF_W);
 }
 
 /**
