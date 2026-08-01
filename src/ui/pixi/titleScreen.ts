@@ -34,7 +34,7 @@
  * 순수 render/UI 레이어다. sim 을 읽지도 쓰지도 않고 시간축은 벽시계다(연출 전용).
  */
 
-import { CanvasSource, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import { t } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { effectGates, type QualityTier } from '../../render/qualityTier.js';
@@ -44,6 +44,7 @@ import { TitleShip3D } from '../../render/three3d/titleShip.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { loadTitleTextures, type TitleTextures } from './titleTextures.js';
+import { verticalScrimTexture } from './scrim.js';
 import { PixiButton } from './button.js';
 import { stripEmoji } from './text.js';
 
@@ -154,37 +155,6 @@ interface Mote {
   speed: number;
   phase: number;
   amp: number;
-}
-
-/**
- * 위에서 아래로 짙어지는 세로 그라디언트 텍스처(1×256).
- *
- * ⚠️ **얇은 사각형을 겹쳐 쌓는 근사를 쓰면 안 된다.** 처음엔 18개 띠를 `bandH + 1` 높이로
- * 그렸는데, 그 `+1` 때문에 인접 띠가 1px 겹치고 **겹친 줄만 알파가 두 배**가 되어 25px 간격의
- * 검은 가로줄이 화면 하단을 가로질렀다(사용자 신고). 겹침을 없애면 이번엔 반올림 때문에 흰
- * 틈이 생긴다 — 띠 근사로는 둘 중 하나를 반드시 밟는다.
- *
- * 그래서 알파 램프를 **픽셀로 직접 굽는다**. 세로로만 변하므로 폭 1px 이면 충분하고, 늘릴 때
- * `linear` 로 보간돼 이음매가 원리적으로 생기지 않는다. 드로우콜도 18 → 1 로 준다.
- */
-function scrimTexture(topAlpha: number, bottomAlpha: number): Texture | null {
-  if (typeof document === 'undefined') return null;
-  const h = 256;
-  const canvas = document.createElement('canvas');
-  canvas.width = 1;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  if (ctx === null) return null;
-  for (let i = 0; i < h; i++) {
-    // 감마 1.6 — 선형이면 위쪽이 너무 빨리 어두워져 키아트를 먹는다.
-    const t = (i + 1) / h;
-    const a = topAlpha + (bottomAlpha - topAlpha) * t ** 1.6;
-    ctx.fillStyle = `rgba(10, 8, 18, ${a})`;
-    ctx.fillRect(0, i, 1, 1);
-  }
-  const tex = new Texture({ source: new CanvasSource({ resource: canvas }) });
-  tex.source.scaleMode = 'linear';
-  return tex;
 }
 
 /** 텍스처를 화면 중앙에 `scale` 배 오버스캔으로 놓은 스프라이트. */
@@ -545,8 +515,8 @@ export class TitleScreen {
 
     // --- 하단 스크림 ---
     // 이 키아트는 바닥이 밝은 금색이라 버튼 라벨이 묻힌다. 아래로 갈수록 짙어지는 그라디언트를
-    // 깐다(구현은 `scrimTexture` 헤더 참조 — 띠 근사가 만들던 가로줄을 없앤 자리다).
-    const scrimTex = scrimTexture(0, 0.5);
+    // 깐다(구현은 `scrim.ts` 헤더 참조 — 띠 근사가 만들던 가로줄을 없앤 자리다).
+    const scrimTex = verticalScrimTexture(0, 0.5);
     if (scrimTex !== null) {
       const scrim = new Sprite(scrimTex);
       scrim.position.set(0, SCRIM_TOP);
