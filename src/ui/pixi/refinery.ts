@@ -226,12 +226,34 @@ const AFFIX_TO_TROUGH = 20;
 const AFFIX_REGION_H = TROUGH_Y - AFFIX_TO_TROUGH - AFFIX_TOP;
 const AFFIX_GAP = 8;
 /**
+ * 어픽스 영역을 **파낸 노(furnace) 챔버**로 그리고, 행을 그 안쪽으로 이 값만큼 들여 앉힌다.
+ *
+ * ## 왜 필요한가 (실화면 1차 확인)
+ * 어픽스가 1개인 장비에서 이 영역 428px 중 330px 이 그냥 빈 갈색 면이었다 — 형제 화면 넷이
+ * 전부 잡아 고친 "쓸모도 볼거리도 아닌 자리"의 정확한 형태다. 그런데 어픽스 수는 장비가 정하는
+ * 것이라 행으로 채울 수가 없다.
+ *
+ * → 처방은 채우는 것이 아니라 **그 자리에 이름을 주는 것**이다. 영역을 파내면 남는 공간이
+ * "빈 패널 면"이 아니라 **비어 있는 노 안**이 된다. 아래 트로프와 같은 재질이라 둘이 한 설비로
+ * 읽히고, 어픽스가 꽉 찬 장비에서는 행이 챔버를 덮으므로 아무 비용도 없다.
+ * (파인 면의 조명 부호는 볼록한 행 판과 **반대**다: 위가 그늘, 아래가 수광.)
+ */
+const AFFIX_WELL_PAD = 12;
+/** 행 폭 — 챔버 안쪽. 행이 챔버 테두리를 덮으면 파낸 것으로 안 읽힌다. */
+const AFFIX_ROW_W = BOX_D.w - AFFIX_WELL_PAD * 2;
+/**
  * 어픽스 행 높이의 하한·상한. 행은 어픽스 수에서 **파생**해 영역을 채운다(4개 이상이면 잔여가
  * 20px 이하다). 상한이 없으면 어픽스 1개짜리 장비에서 428px 짜리 행이 나오고, 하한이 없으면
  * 6어픽스 레어에서 제목+설명 두 줄이 안 들어간다.
  */
 const AFFIX_H_MIN = 64;
 const AFFIX_H_MAX = 96;
+/**
+ * 스크롤 없이 들어가야 하는 어픽스 행 수 — **레어의 최대 어픽스 수**다. 이 화면의 결정(어느
+ * 어픽스를 고착할까)은 전량을 한눈에 봐야 성립하므로, 흔한 경우에 스크롤이 붙으면 안 된다.
+ * 트로프를 키우거나 장비 머리를 키우면 영역이 줄어 조용히 깨지는 성질이라 테스트로 잠근다.
+ */
+const AFFIX_ROWS_NO_SCROLL = 6;
 
 /** {@link refineryDetailLayout} 결과 — 전부 상세 패널 로컬 y 좌표. */
 export interface RefineryDetailLayout {
@@ -399,6 +421,16 @@ export const REFINERY_DETAIL_BOX = {
   /** 어픽스 목록 영역(트로프에서 역산된 값). */
   affixTop: AFFIX_TOP,
   affixRegionH: AFFIX_REGION_H,
+  /** 노 챔버 안쪽 여백과 그 안에 앉는 행 폭. */
+  wellPad: AFFIX_WELL_PAD,
+  rowW: AFFIX_ROW_W,
+  /** 스크롤 없이 들어가야 하는 행 수와 그 최소 세로. */
+  rowsNoScroll: AFFIX_ROWS_NO_SCROLL,
+  rowsNoScrollH: AFFIX_ROWS_NO_SCROLL * (AFFIX_H_MIN + AFFIX_GAP) - AFFIX_GAP,
+  /** 노 출력 3버튼 행의 폭과, 그 오른쪽 안내가 접히려면 필요한 최소 폭(`renderHeatRow` 하한). */
+  heatRowW: HEATS.length * HEAT_W + (HEATS.length - 1) * HEAT_GAP,
+  heatHintGap: 20,
+  heatHintMinW: 120,
 } as const;
 
 // --- 행 판 조명 램프(모듈 1회 굽기) ------------------------------------------
@@ -522,6 +554,22 @@ function rowPlate(w: number, h: number): { view: Container; setSelected: (on: bo
       ring.visible = on;
     },
   };
+}
+
+/**
+ * **파낸 면** 한 장(노 챔버 · 위험 트로프가 공유한다). 볼록한 {@link rowPlate} 와 조명 부호가
+ * 정확히 반대다: 위가 그늘이고 **아래 입술만** 빛을 받는다. 이 부호가 뒤집히면 파인 자리가
+ * 아니라 얹어 놓은 판때기로 읽힌다.
+ */
+function recessedWell(x: number, y: number, w: number, h: number): Graphics {
+  const g = new Graphics();
+  g.roundRect(x, y, w, h, 12)
+    .fill({ color: 0x14100a, alpha: 0.82 })
+    .stroke({ color: 0x0a0705, width: 2, alignment: 1, alpha: 0.9 });
+  g.moveTo(x + 14, y + h - 1.5)
+    .lineTo(x + w - 14, y + h - 1.5)
+    .stroke({ color: 0xc9a04a, width: 1, alpha: 0.3 });
+  return g;
 }
 
 /** 연출 종류. 전부 render-only — 결과는 시작 전에 이미 확정·저장돼 있다. */
@@ -1095,7 +1143,13 @@ export class RefineryScreen {
     listPanel.container.addChild(gridHost);
     this.gridHost = gridHost;
 
-    const detailPanel = this.addPanel(DETAIL_X, PANEL_Y, DETAIL_W, PANEL_H, t('refine.reroll'));
+    const detailPanel = this.addPanel(
+      DETAIL_X,
+      PANEL_Y,
+      DETAIL_W,
+      PANEL_H,
+      t('refine.processTitle'),
+    );
     const detailHost = new Container();
     detailPanel.container.addChild(detailHost);
     this.detailHost = detailHost;
@@ -1337,35 +1391,24 @@ export class RefineryScreen {
       child.destroy({ children: true });
     }
 
+    // ⚠️ **설비는 장비가 없어도 그린다.** 옛 구현은 미선택이면 안내 한 줄만 남겨 패널
+    //    1140×848 이 통째로 빈 갈색 면이었다(실화면 1차 확인 — 이 화면 최악의 빈 자리).
+    //    노는 장비가 없어도 거기 있다: 빈 챔버 · 위험 트로프 · 노 출력 · 꺼진 굴리기 버튼을
+    //    그대로 두고 **머리에서 무엇을 해야 하는지 말한다.** 그러면 남는 자리가 "빈 패널"이
+    //    아니라 "쉬고 있는 설비"가 된다.
     const item = this.selected();
-    if (item === undefined) {
-      const prompt = new Text({
-        resolution: 2,
-        text: t('refine.selectPrompt'),
-        style: {
-          fontFamily: UI_FONT,
-          fontSize: 21,
-          fill: SLAB_BODY_FILL,
-          align: 'center',
-          wordWrap: true,
-          wordWrapWidth: BOX_D.w - 40,
-          dropShadow: TEXT_SHADOW,
-        },
-      });
-      prompt.anchor.set(0.5, 0.5);
-      prompt.position.set(BOX_D.x + BOX_D.w / 2, BOX_D.y + BOX_D.h / 2);
-      host.addChild(prompt);
-      return;
-    }
-
     this.renderItemHead(host, item);
 
-    const L = refineryDetailLayout(item.affixes.length);
-    this.renderAffixList(host, item, L);
+    const L = refineryDetailLayout(item?.affixes.length ?? 0);
+    // 노 챔버를 **먼저** 판다 — 행은 그 안에 앉는다. 어픽스가 적은 장비에서 남는 자리가
+    // "빈 패널 면"이 아니라 "비어 있는 노 안"이 되게 하는 것이 이 한 줄의 전부다.
+    host.addChild(recessedWell(BOX_D.x, AFFIX_TOP, BOX_D.w, AFFIX_REGION_H));
+    if (item !== undefined) this.renderAffixList(host, item, L);
     this.renderTrough(host, item, L);
     this.renderHeatRow(host, L.heatY);
-    this.renderCostRow(host, L.costY);
-    this.renderActionRow(host, L.actionY);
+    if (item !== undefined) this.renderCostRow(host, L.costY);
+    this.renderActionRow(host, L.actionY, item !== undefined);
+    if (item === undefined) return;
 
     // 연출 오버레이는 패널 맨 위. 용해=붉음, 완주=금색. 알파는 프레임마다 줄어든다.
     const fx = this.fx;
@@ -1381,14 +1424,19 @@ export class RefineryScreen {
     }
   }
 
-  /** 장비 머리 — 소켓에 앉은 아이콘 + 이름 + (슬롯 · 등급 · 고착 안내). */
-  private renderItemHead(host: Container, item: Item): void {
+  /**
+   * 장비 머리 — 소켓에 앉은 아이콘 + 이름 + (슬롯 · 등급 · 고착 안내).
+   *
+   * `item` 이 없으면 **빈 소켓**과 안내 한 줄이 그 자리를 그대로 쓴다. 안내를 패널 한가운데
+   * 띄우지 않는 이유는, 그러면 아래 설비(챔버·트로프·버튼)와 겹쳐 읽혀 무엇이 조작 대상인지
+   * 흐려지기 때문이다 — 안내는 **비어 있는 소켓 옆**에 있어야 "여기에 넣어라"가 된다.
+   */
+  private renderItemHead(host: Container, item: Item | undefined): void {
     const cell = makeSlotCell({
       size: ITEM_ICON,
-      item,
-      slotTex: cinematicSlotTexture(true, 0),
-      iconTex: equipIconTexture(this.ui, item),
-      highlight: true,
+      ...(item === undefined ? {} : { item, iconTex: equipIconTexture(this.ui, item) }),
+      slotTex: cinematicSlotTexture(item !== undefined, 0),
+      highlight: item !== undefined,
       highlightTex: cinematicSlotTexture(true, 0),
     });
     cell.position.set(BOX_D.x, BOX_D.y);
@@ -1397,12 +1445,12 @@ export class RefineryScreen {
     const textX = BOX_D.x + ITEM_ICON + 18;
     const name = new Text({
       resolution: 2,
-      text: this.itemName(item),
+      text: item === undefined ? t('refine.selectPrompt') : this.itemName(item),
       style: {
         fontFamily: UI_FONT,
         fontSize: 32,
         fontWeight: '800',
-        fill: RARITY_COLOR_NUM[item.rarity],
+        fill: item === undefined ? COLOR.muted : RARITY_COLOR_NUM[item.rarity],
         dropShadow: TEXT_SHADOW,
       },
     });
@@ -1411,7 +1459,10 @@ export class RefineryScreen {
 
     const sub = new Text({
       resolution: 2,
-      text: `${slotLabel(item.slot)} · ${t(`item.rarity.${item.rarity}` as MessageKey)} · ${t('refine.chain.fastenHint')}`,
+      text:
+        item === undefined
+          ? t('refine.chain.fastenHint')
+          : `${slotLabel(item.slot)} · ${t(`item.rarity.${item.rarity}` as MessageKey)} · ${t('refine.chain.fastenHint')}`,
       style: {
         fontFamily: UI_FONT,
         fontSize: 17,
@@ -1432,9 +1483,9 @@ export class RefineryScreen {
    */
   private renderAffixList(host: Container, item: Item, L: RefineryDetailLayout): void {
     const content = makeScrollArea(host, {
-      x: BOX_D.x,
+      x: BOX_D.x + AFFIX_WELL_PAD,
       y: L.rowsTop,
-      w: BOX_D.w,
+      w: AFFIX_ROW_W,
       h: L.viewH,
       totalH: L.totalH,
       get: () => this.affixScrollY,
@@ -1456,7 +1507,7 @@ export class RefineryScreen {
     const isFastened = chain !== null && chain.fastened.indexOf(index) >= 0;
     const canFasten = chain !== null && chain.canFasten && !isFastened && !this.spinning;
     const row = new Container();
-    const w = BOX_D.w;
+    const w = AFFIX_ROW_W;
 
     const plate = rowPlate(w, h);
     row.addChild(plate.view);
@@ -1579,24 +1630,34 @@ export class RefineryScreen {
    * 한다(구 구현의 규칙 유지). 위험 수치는 비용 줄에서 뺐다: 두 곳에서 같은 수치를 말하면
    * 하나는 노이즈다.
    */
-  private renderTrough(host: Container, item: Item, L: RefineryDetailLayout): void {
+  private renderTrough(host: Container, item: Item | undefined, L: RefineryDetailLayout): void {
     const x = BOX_D.x;
     const w = BOX_D.w;
     const h = L.troughH;
     const y = L.troughY;
     const risk = this.currentRisk();
 
-    // 파인 면의 조명 부호는 볼록한 행 판과 **반대**다: 위가 그늘, 아래가 수광.
-    const trough = new Graphics();
-    trough
-      .roundRect(x, y, w, h, 12)
-      .fill({ color: 0x14100a, alpha: 0.82 })
-      .stroke({ color: 0x0a0705, width: 2, alignment: 1, alpha: 0.9 });
-    trough
-      .moveTo(x + 14, y + h - 1.5)
-      .lineTo(x + w - 14, y + h - 1.5)
-      .stroke({ color: 0xc9a04a, width: 1, alpha: 0.3 });
-    host.addChild(trough);
+    // 노 챔버와 **같은 파인 면**이다 — 둘이 한 설비(노)로 읽혀야 한다.
+    host.addChild(recessedWell(x, y, w, h));
+
+    // 장비가 없으면 고착 수를 말할 대상이 없다 — `0/0` 은 정보가 아니라 거짓말이라 비운다.
+    if (item === undefined) {
+      const idle = new Text({
+        resolution: 2,
+        text: t('refine.chain.riskNone'),
+        style: {
+          fontFamily: UI_FONT,
+          fontSize: 19,
+          fontWeight: '800',
+          fill: COLOR.muted,
+          dropShadow: TEXT_SHADOW,
+        },
+      });
+      idle.anchor.set(1, 0.5);
+      idle.position.set(x + w - 22, y + h / 2);
+      host.addChild(idle);
+      return;
+    }
 
     const fastened = new Text({
       resolution: 2,
@@ -1734,8 +1795,8 @@ export class RefineryScreen {
   }
 
   /** 굴리기 + 공정 멈추기를 **같은 행에** 좌우로. 멈추기는 고착 ≥ 1 일 때만. */
-  private renderActionRow(host: Container, y: number): void {
-    const showStop = this.fastenedCount() >= 1;
+  private renderActionRow(host: Container, y: number, hasItem: boolean): void {
+    const showStop = hasItem && this.fastenedCount() >= 1;
     const totalW = showStop ? ROLL_W + ACTION_GAP + STOP_W : ROLL_W;
     const x0 = BOX_D.x + Math.max(0, Math.floor((BOX_D.w - totalW) / 2));
 
@@ -1766,7 +1827,10 @@ export class RefineryScreen {
     this.rollNode = roll.container;
     this.rollBase = { x: x0, y };
     // 완주 후 굴림은 순수 손해라 막는다(상태기계도 막는다 — 이중 방어이지 둘 중 하나가 아니다).
-    if (this.spinning || complete || !canAfford(this.profile.minerals, this.currentCost())) {
+    // ⚠️ `!hasItem` 을 빼면 안 된다: 장비가 없으면 비용이 0 이라 `canAfford` 가 **참**이 되어
+    //    아무것도 안 고른 채로 굴리기가 활성으로 보인다(눌러도 `reroll()` 이 즉시 반환하지만,
+    //    "눌러도 되는 것처럼 보이는 버튼"은 그 자체가 결함이다).
+    if (!hasItem || this.spinning || complete || !canAfford(this.profile.minerals, this.currentCost())) {
       roll.setEnabled(false);
     }
 

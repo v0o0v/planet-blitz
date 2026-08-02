@@ -262,6 +262,32 @@ describe('정련 공정 세로 — 어떤 어픽스 수에서도 테두리를 �
     expect(L.rowsEnd).toBeLessThanOrEqual(L.troughY);
   });
 
+  it('레어 최대 6어픽스가 스크롤 없이 들어간다', () => {
+    // 이 화면의 결정(어느 어픽스를 고착할까)은 전량을 한눈에 봐야 성립한다. 트로프를 키우거나
+    // 장비 머리를 키우면 영역이 줄어 조용히 깨지는 성질이라 여기서 잠근다 — 뮤테이션
+    // `TROUGH_H 84 → 200` 이 이 단언이 없을 때 통과했다.
+    const box = REFINERY_DETAIL_BOX;
+    expect(box.rowsNoScrollH).toBeLessThanOrEqual(box.affixRegionH);
+    const L = refineryDetailLayout(box.rowsNoScroll);
+    expect(L.totalH, '6어픽스에서 스크롤이 붙는다').toBeLessThanOrEqual(L.viewH);
+  });
+
+  it('어픽스 행이 노 챔버 안쪽에 앉는다(챔버 테두리를 덮지 않는다)', () => {
+    // 행이 챔버와 같은 폭이면 파낸 자리가 아니라 얹어 놓은 판때기로 읽힌다 — 어픽스가 적은
+    // 장비에서 남는 자리에 "이름을 주는" 처방 전체가 그 한 가지에 걸려 있다(실화면 1차 확인).
+    const box = REFINERY_DETAIL_BOX;
+    expect(box.wellPad).toBeGreaterThan(0);
+    expect(box.rowW).toBe(box.w - box.wellPad * 2);
+  });
+
+  it('상세 상자 폭이 노 출력 3버튼 + 안내를 담는다', () => {
+    // 목록 패널을 넓히면 상세가 좁아진다 — 안내가 접힐 폭을 못 얻으면 `renderHeatRow` 가
+    // 그것을 **조용히 생략한다**(하한 검사가 있어 예외도 안 난다). 뮤테이션
+    // `LIST_W 640 → 900` 계열이 이 단언이 없을 때 통과했다.
+    const box = REFINERY_DETAIL_BOX;
+    expect(box.heatRowW + box.heatHintGap + box.heatHintMinW).toBeLessThanOrEqual(box.w);
+  });
+
   it('음수·소수 어픽스 수도 안전하다(손상 방어)', () => {
     for (const n of [-3, 0, 2.7]) {
       const L = refineryDetailLayout(n);
