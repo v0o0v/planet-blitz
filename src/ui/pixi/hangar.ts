@@ -376,6 +376,7 @@ export class HangarScreen {
     // 광택이 통째로 멈춘다(자기 안에서 다시 가시성으로 걸러내므로 여기서 조건을 따질 필요 없다).
     this.catalystArchive.update(dt);
     this.roster.update(dt);
+    this.champion.update(dt);
     if (!this.root.visible) return;
     this.backdrop?.update(dt);
     for (const p of this.panels) p.update(dt);
