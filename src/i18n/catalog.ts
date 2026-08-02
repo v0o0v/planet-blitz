@@ -1206,6 +1206,8 @@ export const EN = {
   'mod.inv.fuseCancel': 'Cancel',
   'mod.inv.pick': 'Pick',
   'mod.inv.picked': 'Picked',
+  'mod.inv.fuseHint': 'Fuse 3 of the same grade into one — with a chance to promote.',
+  'mod.inv.more': 'Scroll for more modules.',
   // 상점
   'mod.shop.head': 'Daily Shop',
   'mod.shop.offline': 'The shop needs a server connection.',
@@ -1225,6 +1227,11 @@ export const EN = {
   'mod.salvage.done': 'Salvaged — +{c} credits.',
   'mod.salvage.notOwned': 'That module is no longer available.',
   'mod.salvage.failed': 'Salvage failed. Please try again.',
+  // 분해 확인 팝업 — 되돌릴 수 없는 유일한 조작이라 확인을 한 겹 둔다(레인 계약 §1-⑤).
+  'mod.salvage.confirm.title': 'Salvage this module?',
+  'mod.salvage.confirm.body': 'The module is destroyed for credits. This cannot be undone.',
+  'mod.salvage.confirm.ok': 'Salvage it',
+  'mod.salvage.confirm.cancel': 'Keep it',
   'mod.fuse.done': 'Fusion complete — got a {rarity} module.',
   'mod.fuse.promoted': 'Fusion promoted! Upgraded to {rarity}.',
   'mod.fuse.needThree': 'Select exactly 3 modules.',
@@ -2848,6 +2855,8 @@ export const KO: Record<MessageKey, string> = {
   'mod.inv.fuseCancel': '취소',
   'mod.inv.pick': '선택',
   'mod.inv.picked': '선택됨',
+  'mod.inv.fuseHint': '동급 3개를 하나로 — 확률로 한 등급 위가 됩니다.',
+  'mod.inv.more': '스크롤하면 모듈이 더 있습니다.',
   // 상점
   'mod.shop.head': '일일 상점',
   'mod.shop.offline': '상점은 서버 연결이 필요합니다.',
@@ -2867,6 +2876,11 @@ export const KO: Record<MessageKey, string> = {
   'mod.salvage.done': '분해 완료 — 크레딧 +{c}.',
   'mod.salvage.notOwned': '해당 모듈을 더 이상 찾을 수 없습니다.',
   'mod.salvage.failed': '분해에 실패했습니다. 다시 시도하세요.',
+  // 분해 확인 팝업 — 되돌릴 수 없는 유일한 조작이라 확인을 한 겹 둔다(레인 계약 §1-⑤).
+  'mod.salvage.confirm.title': '이 모듈을 분해할까요?',
+  'mod.salvage.confirm.body': '모듈이 사라지고 크레딧으로 바뀝니다. 되돌릴 수 없습니다.',
+  'mod.salvage.confirm.ok': '분해한다',
+  'mod.salvage.confirm.cancel': '그대로 둔다',
   'mod.fuse.done': '합성 완료 — {rarity} 모듈을 얻었습니다.',
   'mod.fuse.promoted': '합성 승급! {rarity} 등급으로 상승했습니다.',
   'mod.fuse.needThree': '정확히 3개를 선택하세요.',
