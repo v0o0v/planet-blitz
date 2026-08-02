@@ -236,6 +236,12 @@ describe('목록 정렬', () => {
     expect(g.avail - g.h).toBeLessThan(g.pitch);
   });
 
+  it('정렬 줄이 셀을 읽을 수 없을 만큼 먹지 않는다', () => {
+    // 정렬 줄 높이를 키우면 셀이 그만큼 줄어든다(전부 파생). 등급 테두리 + 아이콘이 읽히는
+    // 하한이 있어야 "줄만 키우면 격자가 조용히 뭉개진다"가 막힌다.
+    expect(REFINERY_GRID.cell).toBeGreaterThanOrEqual(64);
+  });
+
   it('획득순은 입력 순서를 그대로 둔다(기본값이 정보를 지우지 않는다)', () => {
     expect(sortRefineryItems(sample, 'recent').map((i) => i.id)).toEqual(['a', 'b', 'c', 'd']);
   });
