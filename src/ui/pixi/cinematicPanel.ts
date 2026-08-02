@@ -418,6 +418,35 @@ export interface CinematicPanelOpts {
   lightOrigin?: { x: number; y: number };
 }
 
+/**
+ * `window` 변종이 실제로 **파낸 개구부**(패널 로컬). 리드가 창에 세우는 내용물은
+ * {@link CinematicPanelBox} 가 아니라 **이 사각**을 채워야 한다.
+ *
+ * ## 왜 둘이 다른가 (실화면 실측 2026-08-03)
+ * `box` 는 "글자를 놓아도 되는 자리"라 사방 {@link EDGE_PAD} 24 안쪽이고 제목이 있으면
+ * 띠 + {@link CONTENT_GAP} 만큼 더 내려간다. 반면 개구부는 **바깥 베벨 1px + 석재 단면 6px**
+ * 만 물리고 나머지 전부다. 방어 사령부에서 프리뷰를 `box` 에 맞췄더니 프레임과 그림 사이에
+ * 위 16px · 좌우·아래 17px 의 맨 배경 띠가 둘러 생겼다("테두리와 화면이 안 맞는다").
+ *
+ * 제목이 있으면 그 띠는 **비워 둔다** — 제목 글자가 내용물 위에 얹히면 안 읽힌다.
+ * 반환값은 순수 산술이라 Pixi 없이 검증된다(레이아웃 테스트가 이 값으로 뷰포트를 잠근다).
+ */
+export function cinematicWindowOpening(
+  width: number,
+  height: number,
+  hasTitle: boolean,
+): CinematicPanelBox {
+  const w = Math.max(1, Math.round(width));
+  const h = Math.max(1, Math.round(height));
+  const inset = EDGE_INSET + REVEAL_W;
+  const bandH = hasTitle ? Math.round(Math.min(TITLE_BAND_H, h * TITLE_BAND_MAX_RATIO)) : 0;
+  const x = inset;
+  const y = Math.max(inset, bandH);
+  const ow = Math.max(0, w - inset * 2);
+  const oh = Math.max(0, h - y - inset);
+  return { x, y, w: ow, h: oh, right: x + ow, bottom: y + oh };
+}
+
 export interface CinematicPanelBox {
   x: number;
   y: number;

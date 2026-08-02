@@ -1813,6 +1813,9 @@ async function main(): Promise<void> {
     researchLab.update(frame);
     // 정제소도 같은 부류다(2026-08-02 AAA 전환) — 최상위 화면이라 여기 배선이 유일한 dt 공급원이다.
     refinery.update(frame);
+    // 방어 사령부도 같은 부류다(2026-08-02 AAA 전환) — 최상위 화면이라 여기 배선이 유일한 dt
+    // 공급원이다. 빠뜨리면 배경·석재 패널 연출이 통째로 멈춘다(연구소에서 실제로 겪었다).
+    defenseCommand.update(frame);
 
     // AC-5.1 화면 전환 커튼: 매 프레임 진행(비재생 시 no-op) + 재생 중엔 stage 최상단으로 올려
     // 전 화면·크롬 UI 위를 덮는다(settings.raise 뒤라 커튼이 그 위). render-only.

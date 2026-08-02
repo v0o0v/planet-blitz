@@ -51,9 +51,6 @@ import {
   guardianFallbackKey,
   placeGuardian,
   testInvadeAction,
-  TABS_Y,
-  TOP_CHROME_BOTTOM,
-  BOARD_TOP,
   type DefenseSlotRef,
 } from '../src/ui/pixi/defenseCommand.js';
 import { defaultProfile } from '../src/save/profile.js';
@@ -99,20 +96,27 @@ function owned(id: string, kind: number, catalogId: number, affixSeed: number): 
 }
 
 // ---------------------------------------------------------------------------
-// ① 탭 기하 — 신규 세트 규격
+// ① 탭 기하 — 나무 탭 바(`tabs.ts`) 규격
+//
+// ⚠️ 2026-08-02 AAA 전환 이후 **방어 사령부는 이 모듈을 쓰지 않는다**(화면 안에 시네마틱 탭을
+//    직접 만든다). 이 모듈은 아직 기록 보관소가 쓰므로 규격 검증은 여기 남긴다 — 탭 수는
+//    사령부 상수가 아니라 리터럴로 준다(사령부 탭이 4로 줄어도 이 규격은 무관하다).
+//    사령부 탭 줄의 기하는 `tests/defenseCommandAaaLayout.test.ts` 가 잠근다.
 // ---------------------------------------------------------------------------
 
-describe('탭 바 기하(신규 카툰나무풍 탭)', () => {
+const LEGACY_TABS = 5;
+
+describe('탭 바 기하(나무 탭 바 — 기록 보관소가 쓴다)', () => {
   it('탭 폭 합 + 간격이 바 폭과 정확히 일치한다(마지막 탭이 반올림 오차를 흡수)', () => {
     for (const width of [1848, 1000, 777, 5]) {
-      const rects = tabBarLayout(DEF_TAB_COUNT, { width, activeIndex: 0 });
+      const rects = tabBarLayout(LEGACY_TABS, { width, activeIndex: 0 });
       const last = rects[rects.length - 1]!;
       expect(last.x + last.w).toBe(width);
     }
   });
 
   it('선택 탭만 위로 올라오고 나머지는 가라앉는다', () => {
-    const rects = tabBarLayout(DEF_TAB_COUNT, { width: 1848, activeIndex: 2 });
+    const rects = tabBarLayout(LEGACY_TABS, { width: 1848, activeIndex: 2 });
     rects.forEach((r, i) => {
       expect(r.active).toBe(i === 2);
       expect(r.y).toBe(i === 2 ? 0 : TAB_SINK);
@@ -122,7 +126,7 @@ describe('탭 바 기하(신규 카툰나무풍 탭)', () => {
 
   it('금색 연결선이 선택 탭 밑에서만 끊긴다(선택 = 색이 아니라 기하)', () => {
     const width = 1000;
-    const rects = tabBarLayout(DEF_TAB_COUNT, { width, activeIndex: 1 });
+    const rects = tabBarLayout(LEGACY_TABS, { width, activeIndex: 1 });
     const spans = connectorSpans(rects, width);
     const active = rects[1]!;
     // 어떤 span 도 활성 탭 구간 [x, x+w) 와 겹치지 않는다.
@@ -133,9 +137,9 @@ describe('탭 바 기하(신규 카툰나무풍 탭)', () => {
     // 활성 탭 좌우가 모두 채워진다(끊긴 곳은 활성 구간뿐).
     expect(spans.reduce((a, s) => a + s.w, 0)).toBe(width - active.w);
     // 첫/끝 탭이 선택이어도 span 개수가 0 이 되지 않는다(양 끝 중 한쪽은 남는다).
-    expect(connectorSpans(tabBarLayout(DEF_TAB_COUNT, { width, activeIndex: 0 }), width).length).toBe(1);
+    expect(connectorSpans(tabBarLayout(LEGACY_TABS, { width, activeIndex: 0 }), width).length).toBe(1);
     expect(
-      connectorSpans(tabBarLayout(DEF_TAB_COUNT, { width, activeIndex: DEF_TAB_COUNT - 1 }), width).length,
+      connectorSpans(tabBarLayout(LEGACY_TABS, { width, activeIndex: LEGACY_TABS - 1 }), width).length,
     ).toBe(1);
   });
 
@@ -145,34 +149,9 @@ describe('탭 바 기하(신규 카툰나무풍 탭)', () => {
   });
 });
 
-describe('방어 사령부 상단 크롬 밴드(겹침 불가)', () => {
-  // 설정 톱니는 이 화면 소유가 아니라 매 프레임 맨 앞으로 올라오는 전역 크롬이다.
-  // 좌표 정본은 src/ui/pixi/settingsPanel.ts 의 GEAR_X/GEAR_Y/GEAR_SIZE = 24/20/76.
-  const GEAR = { left: 24, top: 20, right: 24 + 76, bottom: 20 + 76 };
-
-  it('크롬 밴드 바닥이 톱니 바닥(가장 아래 크롬 요소)까지 내려온다', () => {
-    expect(TOP_CHROME_BOTTOM).toBe(GEAR.bottom);
-  });
-
-  it('탭 바가 크롬 밴드 아래로 완전히 내려간다 — 세로 구간이 서로 겹치지 않는다', () => {
-    // 탭 바가 쓰는 세로 구간은 [TABS_Y, TABS_Y + TAB_H). 크롬 밴드는 [0, TOP_CHROME_BOTTOM).
-    expect(TABS_Y).toBeGreaterThanOrEqual(TOP_CHROME_BOTTOM);
-    // 붙지 않고 여백이 있다(예전 TABS_Y = 100 은 톱니 바닥 96 과 4px 차이였다).
-    expect(TABS_Y - TOP_CHROME_BOTTOM).toBeGreaterThanOrEqual(20);
-    // 톱니 상자와의 교차 = 0. 가로는 겹치지만(탭 바 x 36.., 톱니 x 24..100) 세로가 끊긴다.
-    expect(Math.max(0, Math.min(GEAR.bottom, TABS_Y + TAB_H) - Math.max(GEAR.top, TABS_Y))).toBe(0);
-  });
-
-  it('보드 패널이 탭 바에 딱 붙지 않는다 — 사이에 여백이 있다', () => {
-    // 예전에는 `BOARD_TOP = TABS_Y + TAB_H` 라 보드 나무 프레임이 탭 버튼 바닥에 **0px 로**
-    // 붙어, 활성 탭이 테두리에 얹힌 것처럼 보였다(사용자 신고: "위 버튼과 밑에 내용이 너무
-    // 붙어 있다"). 크롬↔탭 경계와 같은 방식으로 부등식으로 막는다.
-    expect(BOARD_TOP).toBeGreaterThan(TABS_Y + TAB_H);
-    expect(BOARD_TOP - (TABS_Y + TAB_H)).toBeGreaterThanOrEqual(12);
-    // 다만 탭과 보드는 한 묶음이라 크롬↔탭 간격(28)만큼 벌어지면 끊겨 보인다 — 상한도 둔다.
-    expect(BOARD_TOP - (TABS_Y + TAB_H)).toBeLessThan(TABS_Y - TOP_CHROME_BOTTOM);
-  });
-});
+// 상단 크롬 밴드 부등식(옛 `TOP_CHROME_BOTTOM`/`TABS_Y`/`BOARD_TOP`)은 2026-08-02 AAA 전환에서
+// 헤더 밴드 104 어휘로 교체됐다 — 겹침·톱니 예약 밴드·제목 대역·빈 자리 금지는 전부
+// `tests/defenseCommandAaaLayout.test.ts` 가 `defenseCommandLayout()` 좌표로 잠근다.
 
 // ---------------------------------------------------------------------------
 // ② 스크롤 영역 기하
