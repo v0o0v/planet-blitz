@@ -297,6 +297,8 @@ const RECON_PILL_H = 32;
 const RECON_PILL_GAP = 8;
 const RECON_PILL_PAD = 12;
 const RECON_PILL_MAX_W = 190;
+/** 알약 줄 피치 — **별 높이를 포함**한다(안 세면 다음 줄이 앞 줄 별을 덮는다). */
+const RECON_PILL_PITCH = RECON_PILL_H + RECON_STAR_H + RECON_PILL_GAP;
 /**
  * 슬라이스의 **최소** 자연 높이(잠금 = 소켓 한 줄). 해금이면 이름 알약이 여러 줄로 흘러 더
  * 커지므로 이 값은 하한이지 고정 높이가 아니다 — 실제 높이는 {@link ControlTowerScreen} 의
@@ -824,6 +826,7 @@ export class ControlTowerScreen {
   // 목록 스크롤 위치(재렌더 사이 유지).
   private targetScrollY = 0;
   private revengeScrollY = 0;
+  private reconScrollY = 0;
   private modalScrollY = 0;
 
   /** 진입 전 런 HUD 의 visibility — 닫을 때 **원래 값으로** 되돌린다(무조건 '' 금지). */
@@ -910,6 +913,7 @@ export class ControlTowerScreen {
     this.names.clear();
     this.targetScrollY = 0;
     this.revengeScrollY = 0;
+    this.reconScrollY = 0;
     this.modalScrollY = 0;
 
     this.buildChrome();
@@ -1712,21 +1716,41 @@ export class ControlTowerScreen {
       BOX_R.bottom - top,
       RECON_SLICE_MAX_H,
     );
-    let cy = top;
+    /**
+     * ⚠️ 슬라이스가 상자를 **넘칠 수 있다** — 설비 12칸이 전부 해금돼 이름 알약이 세 줄로 흐르면
+     * 자연 높이가 상한을 넘고, `fillRowHeights` 는 늘려 주기만 할 뿐 줄여 주지 않는다. 그대로
+     * 두면 챔버가 패널 테두리를 뚫는데 예외도 로그도 없다. 그래서 스크롤을 붙인다.
+     * (휠은 클립 Container 가 받는다 — 마스크 Graphics 는 히트 테스트에서 제외된다.)
+     */
+    const bounds = rowBounds(hs, ROW_GAP);
+    const total = bounds.length === 0 ? 0 : (bounds[bounds.length - 1] ?? 0);
+    const avail = BOX_R.bottom - top;
+    const content = makeScrollArea(host, {
+      x: BOX_R.x,
+      y: top,
+      w: BOX_R.w,
+      h: Math.min(avail, total),
+      totalH: total,
+      get: () => this.reconScrollY,
+      set: (v) => {
+        this.reconScrollY = v;
+      },
+    });
+    let cy = 0;
     built.forEach((b, i) => {
       const h = hs[i] ?? b.natural;
-      host.addChild(recessedWell(BOX_R.x, cy, BOX_R.w, h));
-      b.head.position.set(BOX_R.x + RECON_PAD, cy + 12);
-      host.addChild(b.head);
+      content.addChild(recessedWell(0, cy, BOX_R.w, h));
+      b.head.position.set(RECON_PAD, cy + 12);
+      content.addChild(b.head);
       // 내용은 머리글 아래 남는 세로의 **가운데**에 앉는다(챔버가 자라도 위에 몰리지 않게).
       b.body.position.set(
-        BOX_R.x + RECON_PAD,
+        RECON_PAD,
         cy + RECON_HEAD_H + Math.max(0, Math.round((h - RECON_HEAD_H - b.bodyH - 12) / 2)),
       );
-      host.addChild(b.body);
+      content.addChild(b.body);
       cy += h + ROW_GAP;
     });
-    this.tailWell(host, BOX_R, cy - ROW_GAP, null);
+    this.tailWell(host, BOX_R, top + Math.min(avail, total), null);
   }
 
   /**
@@ -1794,6 +1818,8 @@ export class ControlTowerScreen {
     for (let i = 0; i < empties; i++) {
       nodes.push({ node: this.reconSocket(RECON_PILL_H, false, 0, 0), w: RECON_PILL_H });
     }
+    // ⚠️ 줄 간격은 **별 높이까지** 세야 한다. 승급 별은 알약 아래로 삐져나오므로 피치를
+    // 알약 높이만으로 잡으면 다음 줄 알약이 앞 줄 별을 덮는다(사용자 신고 2026-08-03).
     let x = 0;
     let rows = 1;
     for (const item of nodes) {
@@ -1801,11 +1827,11 @@ export class ControlTowerScreen {
         x = 0;
         rows++;
       }
-      item.node.position.set(x, (rows - 1) * (RECON_PILL_H + RECON_PILL_GAP));
+      item.node.position.set(x, (rows - 1) * RECON_PILL_PITCH);
       body.addChild(item.node);
       x += item.w + RECON_PILL_GAP;
     }
-    return rows * (RECON_PILL_H + RECON_PILL_GAP) - RECON_PILL_GAP + RECON_STAR_H;
+    return rows * RECON_PILL_PITCH - RECON_PILL_GAP;
   }
 
   /**
