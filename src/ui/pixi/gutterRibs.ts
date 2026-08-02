@@ -450,7 +450,7 @@ function jointRows(h: number, originY: number): Float32Array {
 
 /** 캔버스 2D 컨텍스트. 없는 환경(vitest)에서는 `null` — 호출부가 그 없이도 서야 한다. */
 function makeCtx(w: number, h: number): CanvasRenderingContext2D | null {
-  if (typeof document === 'undefined') return null;
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;

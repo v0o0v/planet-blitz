@@ -318,7 +318,7 @@ export interface CinematicTile {
 
 /** 캔버스 2D 컨텍스트 하나. 없으면 `null`(vitest 등) — 호출부는 그래도 화면을 세운다. */
 function bakeCanvas(w: number, h: number): CanvasRenderingContext2D | null {
-  if (typeof document === 'undefined') return null;
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
