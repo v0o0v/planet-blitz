@@ -84,7 +84,7 @@
  * 순수 render/UI 레이어(ADR-0005) — sim 은 이 파일을 모른다.
  */
 
-import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
+import { Container, Graphics, Rectangle, Sprite, Text, Texture } from 'pixi.js';
 import {
   saveProfile,
   type GuardianRecord,
@@ -1102,7 +1102,7 @@ export class DefenseCommandScreen {
   private modalPanel: CinematicPanel | null = null;
   private msgTextNode: Text | null = null;
   private dirtyNode: Text | null = null;
-  private tabButtons: { btn: PixiButton; ring: Graphics }[] = [];
+  private tabButtons: { btn: PixiButton; ring: Graphics; host: Container }[] = [];
   private footButtons: { save: PixiButton; revert: PixiButton } | null = null;
 
   constructor(
@@ -1637,17 +1637,18 @@ export class DefenseCommandScreen {
       const x = EDGE_X + i * (TAB_W + TAB_GAP);
       const host = new Container();
       host.position.set(x, TAB_Y);
+      const select = (): void => {
+        setTab(this.state, i);
+        this.syncPreview();
+        this.refresh();
+      };
       const btn = this.chromeButton({
         tone: 'stone',
         width: TAB_W,
         height: TAB_H,
         fontSize: 20,
         label: tCmd(DEF_TAB_KEYS[i] ?? ''),
-        onClick: () => {
-          setTab(this.state, i);
-          this.syncPreview();
-          this.refresh();
-        },
+        onClick: select,
       });
       host.addChild(btn.container);
       const ring = new Graphics();
@@ -1658,8 +1659,25 @@ export class DefenseCommandScreen {
       // 링은 히트 테스트에서 빠져야 한다 — 안 그러면 활성 탭의 클릭을 링이 삼킨다.
       ring.eventMode = 'none';
       host.addChild(ring);
+
+      /**
+       * ⚠️ **판 전체를 host 가 받는다.** 사용자 신고(2026-08-02): "위 4개 버튼의 **아래 절반**이
+       * 클릭이 안 된다". `PixiButton` 은 `hitArea = (0,0,w,h)` 를 자기 container 에 걸지만,
+       * 그것만 믿으면 그려진 판과 판정 사각이 어긋나는 순간 **예외도 로그도 없이** 절반이 죽는다
+       * (원격 계측으로 기구를 특정하지 못했다 — CDP 합성 포인터가 실제 마우스와 경합해 좌표가
+       * 오염됐다). 그래서 판 전체를 덮는 host 를 두 번째 수신자로 둔다.
+       *
+       * 버튼이 먼저 받으면 `stopRowPropagation` 이 host 까지 올라가는 것을 끊으므로 **두 번
+       * 발동하지 않는다**(안 끊으면 setTab 이 두 번 돌고 UI 음도 두 번 난다).
+       */
+      host.eventMode = 'static';
+      host.cursor = 'pointer';
+      host.hitArea = new Rectangle(0, 0, TAB_W, TAB_H);
+      host.on('pointertap', select);
+      stopRowPropagation(btn.container);
+
       this.root.addChild(host);
-      this.tabButtons.push({ btn, ring });
+      this.tabButtons.push({ btn, ring, host });
     }
   }
 
@@ -1756,7 +1774,9 @@ export class DefenseCommandScreen {
     this.tabButtons.forEach((e, i) => {
       const active = i === tab;
       e.ring.visible = active;
-      e.btn.container.alpha = active ? 1 : 0.72;
+      // ⚠️ 흐림은 **host** 에 건다. `PixiButton` 의 pointerover/out 이 자기 container.alpha 를
+      // 0.85/1 로 덮어쓰므로, 버튼에 걸면 한 번 지나가기만 해도 미선택 흐림이 영영 풀린다.
+      e.host.alpha = active ? 1 : 0.72;
     });
 
     if (this.chipHost !== null) {
@@ -1980,16 +2000,25 @@ export class DefenseCommandScreen {
         onClick: () => this.mutate(setTemplateId(this.state.draft, i)),
       });
       const bx = BOX_R.x + 18 + i * (w + gap);
-      btn.container.position.set(bx, y);
-      // 선택 표시는 탭·정제소 정렬 줄과 **같은 어휘**(금색 링 + 미선택 0.72)다.
-      btn.container.alpha = active ? 1 : 0.72;
-      host.addChild(btn.container);
+      // 탭과 같은 규율(사용자 신고 2026-08-02): 판 전체를 받는 cell + 흐림은 cell 에 건다.
+      // 버튼 container 의 alpha 는 `PixiButton` 의 pointerover/out 이 덮어쓴다.
+      const cell = new Container();
+      cell.position.set(bx, y);
+      cell.addChild(btn.container);
       if (active) {
         const ring = new Graphics();
-        ring.roundRect(bx, y, w, 44, 10).stroke({ color: COLOR.gold, width: 3, alignment: 1, alpha: 0.95 });
+        ring.roundRect(0, 0, w, 44, 10).stroke({ color: COLOR.gold, width: 3, alignment: 1, alpha: 0.95 });
         ring.eventMode = 'none';
-        host.addChild(ring);
+        cell.addChild(ring);
       }
+      cell.eventMode = 'static';
+      cell.cursor = 'pointer';
+      cell.hitArea = new Rectangle(0, 0, w, 44);
+      cell.on('pointertap', () => this.mutate(setTemplateId(this.state.draft, i)));
+      stopRowPropagation(btn.container);
+      // 선택 표시는 탭·정제소 정렬 줄과 **같은 어휘**(금색 링 + 미선택 0.72)다.
+      cell.alpha = active ? 1 : 0.72;
+      host.addChild(cell);
     }
     return BOX_R.y + TEMPLATE_BLOCK_H;
   }
