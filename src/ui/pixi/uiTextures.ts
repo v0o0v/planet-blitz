@@ -197,6 +197,12 @@ export const UI_ASSET_NAMES: readonly string[] = [
   ...SHIP_SHOWCASE_NAMES,
   // 기체 초상 — 사연 팝업·기록 보관소용 카툰 픽셀 흉상(레지스트리 파생, 레거시 예외 없음).
   ...SHIP_PORTRAIT_NAMES,
+  // 예비역 수호기 프리셋 아트 2종(ADR-0024). **레지스트리 파생이 아니다** — 이 둘은 기체 타입이
+  // 아니라 ADR-0024 **이전에 퇴역해 `build` 가 없는** 구 수호기의 프리셋(타이탄/인터셉터)이라
+  // `SHIP_TYPES` 축에 낄 자리가 없다. 로스터 목록이 행 아이콘 폴백으로 읽는다(빌드가 있으면
+  // 기체 초상을 쓴다) — 등재하지 않으면 구 수호기 행만 조용히 아이콘이 빈다.
+  'guardian_titan.png',
+  'guardian_interceptor.png',
   // 기지 맵 건물 아이콘(카툰나무풍 롤아웃 #1).
   'ui_bld_hangar.png',
   'ui_bld_research.png',
