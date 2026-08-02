@@ -770,6 +770,19 @@ export const EN = {
     'Dismiss this {name}? Its {gear} locked item(s) return to your stash and you recover {points} lineage points. This cannot be undone.',
   'guardians.cancel': 'Cancel',
   'guardians.dismissed': '{n} gear returned to stash · {points} points recovered',
+  // 상세 패널(2026-08-02 AAA 시네마틱 전환) — 소멸이 무엇을 되돌려주는지 먼저 말한다.
+  'guardians.lineage.title': 'Lineage Points',
+  'guardians.lineage.use': 'Recovered by dismissing guardians · spent on lineage upgrades.',
+  'guardians.detail.title': 'Selected Guardian',
+  'guardians.detail.empty': 'Pick a guardian from the list to see what dismissing it returns.',
+  'guardians.detail.perf': 'Performance left',
+  'guardians.detail.score': 'Combat score',
+  'guardians.detail.gear': 'Locked gear',
+  'guardians.detail.recover': 'On dismissal',
+  'guardians.detail.gearTitle': 'Gear returned to your stash',
+  'guardians.detail.gearNone': 'No locked gear.',
+  'guardians.detail.warn':
+    'Dismissal cannot be undone. The guardian is gone for good and can never defend your base again.',
 
   // --- 서사(스토리) — 사연·인트로·기록 파편 (ADR-0023) ---
   // 키는 `data/lore` 정본 파생이다(`src/ui/pixi/loreLabels.ts` 가 유도). 사연 캐스트는 혼합 —
@@ -2398,6 +2411,19 @@ export const KO: Record<MessageKey, string> = {
     '이 {name}을(를) 소멸시킬까요? 잠긴 장비 {gear}개가 창고로 돌아오고 계보 포인트 {points}점을 회수합니다. 되돌릴 수 없습니다.',
   'guardians.cancel': '취소',
   'guardians.dismissed': '장비 {n}개 창고 회수 · 포인트 {points}점 회수',
+  // 상세 패널(2026-08-02 AAA 시네마틱 전환)
+  'guardians.lineage.title': '계보 포인트',
+  'guardians.lineage.use': '수호기를 소멸시켜 회수하고, 계보 승급에 씁니다.',
+  'guardians.detail.title': '선택한 수호기',
+  'guardians.detail.empty': '목록에서 수호기를 고르면 소멸 시 무엇이 돌아오는지 여기에 나옵니다.',
+  'guardians.detail.perf': '남은 성능',
+  'guardians.detail.score': '전투력',
+  'guardians.detail.gear': '잠긴 장비',
+  'guardians.detail.recover': '소멸 시 회수',
+  'guardians.detail.gearTitle': '창고로 돌아오는 장비',
+  'guardians.detail.gearNone': '잠긴 장비가 없습니다.',
+  'guardians.detail.warn':
+    '소멸은 되돌릴 수 없습니다. 이 수호기는 완전히 사라지고 다시는 기지 방어에 나설 수 없습니다.',
 
   // --- 서사(스토리) — 사연·인트로·기록 파편 (ADR-0023) ---
   // 인트로 슬라이드

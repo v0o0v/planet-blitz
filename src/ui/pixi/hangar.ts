@@ -375,6 +375,7 @@ export class HangarScreen {
     // `suspend()` 로 숨겨져 있으므로, 가드 뒤에 두면 촉매 보관함의 배경 패럴랙스·티끌·패널
     // 광택이 통째로 멈춘다(자기 안에서 다시 가시성으로 걸러내므로 여기서 조건을 따질 필요 없다).
     this.catalystArchive.update(dt);
+    this.roster.update(dt);
     if (!this.root.visible) return;
     this.backdrop?.update(dt);
     for (const p of this.panels) p.update(dt);
