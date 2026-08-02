@@ -1807,6 +1807,11 @@ async function main(): Promise<void> {
     // 화면이 숨겨져 있으면 내부에서 즉시 반환하므로 격납고 밖에서는 비용이 0 이다.
     inventory.update(frame);
 
+    // 연구소 시네마틱 연출도 같은 규약이다(2026-08-02 AAA 전환) — 연구소는 격납고 하위가 아니라
+    // main.ts 가 직접 여는 최상위 화면이라, 여기서 dt 를 흘리지 않으면 배경·패널 연출이 통째로
+    // 멈춘다. 숨겨져 있으면 내부에서 즉시 반환하므로 연구소 밖 비용은 0 이다.
+    researchLab.update(frame);
+
     // AC-5.1 화면 전환 커튼: 매 프레임 진행(비재생 시 no-op) + 재생 중엔 stage 최상단으로 올려
     // 전 화면·크롬 UI 위를 덮는다(settings.raise 뒤라 커튼이 그 위). render-only.
     screenTransition.update(frame);
@@ -2350,6 +2355,9 @@ async function main(): Promise<void> {
       resultOverlay,
       planetSelect,
       inventory,
+      // 연구소 — 팝업 둘(전체 스킬·액티브)은 클릭으로만 열려서 좌표 합성 없이는 스크린샷 검증을
+      // 할 수 없다. 이 참조로 화면을 직접 몬다(2026-08-02 AAA 전환 검증 절차).
+      researchLab,
       // 관제탑은 서버 왕복 화면이라 로그인 없이는 안내 상태만 뜬다 — 채워진 화면을
       // 검증하려면 이 참조로 뷰를 직접 띄운다(카툰나무풍 롤아웃 #6 검증 절차).
       controlTower,
