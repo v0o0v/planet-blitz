@@ -1,18 +1,61 @@
 /**
- * 격납고 화면 (Pixi 카툰 리스킨 — plan §4, 격납고 파일럿).
+ * 격납고 화면 — 시네마틱 전환(`.omc/plans/hangar-aaa-2026-08-02.md`).
  *
  * `src/ui/inventory.ts` InventoryOverlay(DOM) 와 기능 1:1 동등하게 장비 정비를 Pixi
  * 캔버스(1920×1080 디자인 스페이스, src/render/app.ts)로 재구현한다: 장착/해제(모듈 2슬롯
  * 규칙), 일괄 분해 2종, 창고 확장, 스탯 미리보기(computeLoadoutStats), 툴팁+장착 비교,
- * 재화 표시, i18n, Profile in-place 변이 + saveProfile. 신규(결정 7): 기체 쇼케이스 8슬롯
- * 연결선, 스탯 1줄 설명, 원소 강도/계보/유니크 조건부 행.
+ * 재화 표시, i18n, Profile in-place 변이 + saveProfile. 기체 쇼케이스 8슬롯 연결선,
+ * 스탯 1줄 설명, 원소 강도/계보/유니크 조건부 행.
+ *
+ * ## 왜 나무 패널을 걷어냈나
+ * 타이틀·인트로·기지를 풀블리드 시네마틱 키아트로 올린 뒤(PR#236·#238·#240·#245) 같은 붓을
+ * 다음 화면으로 롤아웃한다. 격납고가 그 대상이다. 나무 nine-slice(`ui_panel.png`)와 나무
+ * 판때기 버튼(`ui_btn_*.png`)은 여기서 은퇴하고, 석재 슬래브 + 각인 크롬으로 바꾼다.
+ *
+ * ## 기지와 결정적으로 다른 점 — **배경이 보일 자리가 없다**
+ * 기지는 카드 8장이 배경 **위에 떠 있는** 구성이라 배경이 넓게 보였다. 격납고는 패널 4장이
+ * 화면의 약 97% 를 덮는 **조작 화면**이다. 그 구성을 그대로 옮기면 아무리 잘 그린 배경도
+ * 보이지 않는다 — 실제로 좌우 여백 24 · 거터 20 이 배경의 전부였다.
+ *
+ * 그래서 배경을 패널 **뒤**가 아니라 패널 **안**으로 들여온다: 기체 쇼케이스 패널을 불투명
+ * 채움이 아니라 **배경이 비치는 도크 창**(`variant: 'window'`)으로 뚫는다. 그 창(936×496 =
+ * 화면 22.6%)과 헤더 밴드(1920×104 = 9.6%)를 합쳐 **약 32%** 가 실제 키아트다. 나머지는
+ * 석재가 덮는다 — AAA 허브는 배경을 넓게 펼치는 게 아니라 **창을 뚫는다**.
+ *
+ * 배경 원화도 그 창 위치에 맞춰 생성했다(`assets/hangar/README.md` — 우측 절반 정비 도크,
+ * 좌측·하단은 의도적으로 어두운 석재). ⚠️ 아래 패널 좌표를 바꾸면 그 대응이 어긋나고,
+ * 톤매핑으로는 못 푼다(없는 디테일은 만들 수 없다 — 기지 배경에서 확인한 한계다).
+ *
+ * ## 레이어 구조 (뒤 → 앞)
+ * ```
+ *   backdrop  HangarBackdrop     풀블리드 도크 홀 + 창 보존 · 창 밖/헤더 감쇠 · 비네트
+ *   panels    CinematicPanel ×4  석재 슬래브 3 + 유리창 1(쇼케이스)
+ *   content   슬롯 · 그리드 · 스탯 행 · 툴팁      ← 기능은 전혀 바뀌지 않았다
+ *   chrome    각인 제목 · 재화 칩 · 버튼(석재 텍스처를 PixiButton 에 주입)
+ * ```
+ *
+ * ## 기능은 한 줄도 바꾸지 않았다
+ * 요구 레벨 게이트(ADR-0030) · 중복 유니크 거부 · 휠 스크롤(클립 Container 에 — 마스크
+ * Graphics 에 걸면 영영 안 불린다) · 좌/우클릭 이동 · 일괄 분해의 "보이는 것 = 대상" 규율 ·
+ * 하위 화면 `suspend()`/`resume()` 는 그대로다. 등급 색(`RARITY_COLOR_NUM` 계열)도 손대지
+ * 않았다 — 파밍 시각 언어이고 `theme.ts` 헤더에 ΔE 실측 근거가 있다.
+ *
+ * 시네마틱 전환에서 실제로 바뀐 것은 **바탕**뿐이다: `nineSlicePanel` → `makeCinematicPanel`,
+ * `ui_btn_*.png` → `cinematicButtonTexture`, `ui_slot*.png` → `cinematicSlotTexture`.
+ * 기존 컴포넌트(`PixiButton` · `makeSlotCell`)는 수정하지 않고 **텍스처만 주입**한다 —
+ * 그 둘은 다른 화면 6곳이 쓰고 있어서, 고쳐 쓰면 기능이 조용히 퇴행한다.
+ *
+ * ## 연출은 `update(dt)` 로만 산다
+ * 배경 패럴랙스·티끌·램프 맥동·패널 광택 호흡은 전부 벽시계 기반이고 **렌더 루프가 불러 줘야**
+ * 돈다(`main.ts` 의 `inventory.update(frame)`). 화면이 숨겨져 있으면 즉시 반환하므로 런 중
+ * 비용은 0 이다.
  *
  * Profile 을 in-place 로 바꾸고 매 변경마다 저장하므로(InventoryOverlay 와 동일), 다음
  * 런의 로드아웃은 여기서 장착한 결과를 반영한다. 순수 render/UI 레이어(ADR-0005) — sim 은
  * 이 파일을 모른다.
  */
 
-import { Container, Graphics, Rectangle, Sprite, Text } from 'pixi.js';
+import { Container, Graphics, Rectangle, Text } from 'pixi.js';
 import type { Item, EquipSlotId, SlotKind, Rarity } from '../../items/types.js';
 import { EQUIP_SLOTS, RARITY_CODE } from '../../items/types.js';
 import { LEVEL_CAP } from '../../../data/waves.js';
@@ -45,11 +88,23 @@ import { ChampionSelectScreen } from './championSelect.js';
 import { GuardianRosterScreen } from './guardianRoster.js';
 import { CatalystArchiveScreen } from './catalystArchive.js';
 import { shipTypeName, tShipKey } from './shipLabels.js';
-import { nineSlicePanel, panelContent, PANEL_BORDER } from './nineSlicePanel.js';
 import { PixiButton } from './button.js';
 import { makeSlotCell, rectGridPositions, fitGridCols, equipIconTexture } from './slotGrid.js';
 import { PixiTooltip } from './tooltip.js';
-import { makeBanner, makeCurrencyChip, makeIconButton } from './titleBar.js';
+import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
+import { HangarBackdrop } from './hangarBackdrop.js';
+import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
+import { makeShipDock, type ShipDock } from './shipDock.js';
+import {
+  makeHangarTitle,
+  makeHangarChip,
+  makeSlotContactShadow,
+  cinematicButtonTexture,
+  chromeFallbackColor,
+  chromeLabelColor,
+  cinematicSlotTexture,
+  type ChromeTone,
+} from './hangarChrome.js';
 
 // 슬롯·무기 표시명은 `src/ui/itemNames.ts` 단일 정본을 쓴다 — 이 파일에 있던 사본은 무기 3종에서
 // 멈춰 있어 미사일·빔이 `?`/`발칸` 으로 표시됐다(사용자 신고 2026-07-27).
@@ -57,6 +112,68 @@ import { makeBanner, makeCurrencyChip, makeIconButton } from './titleBar.js';
 function slotKindOf(id: EquipSlotId): SlotKind {
   return (id === 'module0' || id === 'module1' ? 'module' : id) as SlotKind;
 }
+
+// ---------------------------------------------------------------------------
+// 레이아웃 (디자인 스페이스 1920×1080) — 시네마틱 전환에서 재설계했다.
+//
+// 옛 판은 좌우 여백 24 · 거터 20 으로 패널이 화면의 97% 를 덮었다. 배경을 아무리 잘 그려도
+// 보일 자리가 없다는 뜻이라(파일 헤더 참조), 여백·거터를 키워 **헤더 밴드**를 만들고 쇼케이스
+// 패널을 **창**으로 뚫었다. 아래 숫자는 그 둘의 합이 화면의 32% 가 되도록 잡은 것이다.
+//
+// ⚠️ **이 좌표는 배경 원화와 계약 관계다.** `assets/hangar/hangar_backdrop.webp` 는 우측
+// 절반에 정비 도크를, 좌측·하단에 어두운 석재를 두도록 생성했다 — 창을 옮기면 창 안에
+// 그림이 없어지고, 그건 톤매핑으로 못 푼다(`assets/hangar/README.md`).
+// ---------------------------------------------------------------------------
+
+/** 헤더 밴드 높이. 배경이 그대로 보이는 두 자리 중 하나이고, 제목·칩·버튼이 여기 앉는다. */
+const HEADER_H = 104;
+/** 헤더 컨트롤(칩·버튼) 상단과 높이 — 전부 같은 세로 띠를 쓴다(겹침 방지). */
+const HEAD_Y = 26;
+const HEAD_H = 52;
+/** 화면 좌우 여백 · 패널 사이 거터 · 두 행 사이 간격. */
+const EDGE_X = 32;
+const GUTTER_X = 28;
+const ROW_GAP = 20;
+/** 좌/우 열의 x 와 폭. 우열이 넓은 것은 인벤토리 그리드가 열을 더 먹기 때문이다. */
+const COL_L_X = EDGE_X;
+const COL_L_W = 892;
+const COL_R_X = COL_L_X + COL_L_W + GUTTER_X;
+const COL_R_W = DESIGN_WIDTH - EDGE_X - COL_R_X;
+/** 위 행(스탯 · 쇼케이스)과 아래 행(창고 · 인벤토리)의 y 와 높이. */
+const ROW_T_Y = HEADER_H + 8;
+const ROW_T_H = 496;
+const ROW_B_Y = ROW_T_Y + ROW_T_H + ROW_GAP;
+const ROW_B_H = 424;
+
+/**
+ * 쇼케이스 창의 화면 좌표 — 배경 모듈에 **여기서 파생해** 넘긴다.
+ *
+ * 배경 쪽에 좌표를 하드코딩해 두면 여기 레이아웃을 바꿀 때 조용히 어긋난다(기지에서 Lane A 가
+ * 실제로 그렇게 인계했고, 리드가 격자 파생으로 되돌렸다). 같은 실수를 반복하지 않는다.
+ */
+export function showcaseWindowRect(): { x: number; y: number; w: number; h: number } {
+  return { x: COL_R_X, y: ROW_T_Y, w: COL_R_W, h: ROW_T_H };
+}
+
+/**
+ * 석재 슬래브 위 **보조 텍스트색**(설명·안내·빈 목록 문구).
+ *
+ * 옛 `COLOR.muted`(#aa9b87)를 쓸 수 없다. 1차 AAA 판정 M4 처방으로 슬래브 면의 동작점을
+ * L* 19 → 28 로 올렸는데(그전에는 화면 과반이 지각적으로 평평한 암면이었다), 배경이 밝아지면
+ * 그 위 글자의 대비는 **내려간다**. 실측으로 콘텐츠 상자 안 가장 밝은 지점에서 옛 부제색
+ * `#b8ac97` 이 **3.00:1** 로 WCAG AA(4.5:1) 미달이 됐다.
+ *
+ * 고치는 방향이 중요하다 — 배경을 도로 어둡게 하면 C1(단일 평면 재질)·M4 가 함께 되돌아온다.
+ * **배경은 그대로 두고 전경만 올린다.** 대비는 두 항의 비인데 건드려도 되는 항이 하나뿐이다
+ * (기지 화면 `cinematicTile.ts` `DESC_FILL` 이 같은 논리로 결정됐다).
+ *
+ * `#e4dac7` 검산: 최악의 바탕(콘텐츠 상자 최대 밝기)에서 **4.84:1** — AA 를 0.34 여유로 넘고,
+ * 제목(`COLOR.cream` 계열 · 굵기 700~800 · 큰 크기)과의 위계도 유지된다.
+ *
+ * ⚠️ 헤더 밴드의 잠금 사유 문구는 여기 해당하지 않는다 — 그 글자는 슬래브가 아니라 **각인
+ * 인방** 위에 앉고, 인방의 글자 띠는 오히려 배경보다 어둡다(Lane C 실측 L* 10.7).
+ */
+const SLAB_BODY_FILL = 0xe4dac7;
 
 /**
  * 휠 스크롤을 **클립 Container** 에 건다 (결함 C-2).
@@ -182,6 +299,13 @@ export class HangarScreen {
   private onClose: (() => void) | null = null;
   private hint = '';
   private ui: UiTextures = {};
+  /** 시네마틱 배경 자산(배경 1장). 없으면 절차적 폴백으로 내려간다. */
+  private art: HangarTextures = {};
+  /** 연출을 가진 것들 — `update(dt)` 가 매 프레임 이 둘만 돌린다. */
+  private backdrop: HangarBackdrop | null = null;
+  private panels: CinematicPanel[] = [];
+  /** 기체 도크(쇼케이스 창 안의 접지·크래들·림 + 함선 스프라이트). */
+  private dock: ShipDock | null = null;
   private stashScrollY = 0;
   private statsScrollY = 0;
   private inventoryScrollY = 0;
@@ -232,10 +356,25 @@ export class HangarScreen {
       this.ui = tex;
       if (this.root.visible) this.render();
     });
+    void loadHangarTextures().then((tex) => {
+      this.art = tex;
+      if (this.root.visible) this.render();
+    });
   }
 
   get visible(): boolean {
     return this.root.visible;
+  }
+
+  /**
+   * 매 프레임 연출 진행(`main.ts` 렌더 루프). `dt` 는 **벽시계 초**다. 화면이 숨겨져 있으면
+   * 아무것도 하지 않는다 — 격납고 밖에서는 비용이 0 이다(기지와 같은 규약).
+   */
+  update(dt: number): void {
+    if (!this.root.visible) return;
+    this.backdrop?.update(dt);
+    for (const p of this.panels) p.update(dt);
+    this.dock?.update(dt);
   }
 
   /** 격납고를 연다. `profile` 재바인딩으로 항상 라이브 상태를 반영한다. */
@@ -655,6 +794,13 @@ export class HangarScreen {
   // --- 렌더 ----------------------------------------------------------------
 
   private render(): void {
+    // 연출 참조를 먼저 끊는다 — destroy 된 컨테이너를 update 가 만지면 안 된다.
+    this.backdrop?.destroy();
+    this.backdrop = null;
+    for (const p of this.panels) p.destroy();
+    this.panels = [];
+    this.dock?.destroy();
+    this.dock = null;
     // 툴팁 컨테이너는 유지하고 나머지를 지운다.
     for (const child of [...this.root.children]) {
       if (child !== this.tooltip.container && child !== this.equippedTip.container) {
@@ -664,67 +810,201 @@ export class HangarScreen {
     }
     this.hideTips();
 
-    // 배경(불투명 — 뒤 아레나를 가린다).
+    // 바닥 — 배경 자산이 없거나 실패해도 화면이 비지 않게(불투명, 뒤 아레나를 가린다).
+    // 이벤트도 여기서 막는다.
     const bg = new Graphics();
     bg.rect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT).fill({ color: COLOR.bg });
-    bg.eventMode = 'static'; // 뒤로 이벤트가 새지 않게 막는다.
+    bg.eventMode = 'static';
     this.root.addChildAt(bg, 0);
 
-    this.renderTitleBar();
+    // 배경 — 창 좌표는 **레이아웃에서 파생해** 넘긴다(하드코딩 금지, `showcaseWindowRect`).
+    // ⚠️ Lane A 인계 제약 ③: `view` 는 root 맨 뒤에 그대로 붙이고 스케일·이동을 걸지 마라
+    // (공기 마스크가 `view` 자식이라 어긋난다).
+    const backdrop = new HangarBackdrop(this.art[HANGAR_BACKDROP_NAME], {
+      windows: [showcaseWindowRect()],
+      headerH: HEADER_H,
+    });
+    this.root.addChild(backdrop.view);
+    this.backdrop = backdrop;
+
+    // ⚠️ **위 행 → 아래 행 순서로 붙인다**(Lane B 인계 제약 ①). 패널 접지 그림자는 아래로
+    // 59px(확산 spread 48 + offset 11) 번지는데 행 간격은 20 이라, 순서가 뒤집히면 위 행의
+    // 그림자가 아래 행 패널 **위에** 얹혀 얼룩으로 읽힌다.
     this.renderStatsPanel();
     this.renderShowcasePanel();
     this.renderStashPanel();
     this.renderInventoryPanel();
+    // 헤더는 패널보다 뒤에 붙는다 — 헤더 밴드는 패널 위쪽 빈 띠라 겹치지 않지만, 잠금 사유
+    // 문구처럼 버튼 아래로 흐르는 글자가 패널 그림자에 묻히지 않게 한다.
+    this.renderTitleBar();
     this.renderHint();
 
     this.root.setChildIndex(this.equippedTip.container, this.root.children.length - 1);
     this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
   }
 
-  private renderTitleBar(): void {
-    const bannerW = 760;
-    const bannerH = 72;
-    const banner = makeBanner(bannerW, bannerH, t('hangar.title'), this.ui['ui_banner.png']);
-    banner.position.set((DESIGN_WIDTH - bannerW) / 2, 8);
-    this.root.addChild(banner);
+  /**
+   * 석재 패널 한 장을 세우고 화면 좌표와 콘텐츠 상자를 함께 돌려준다.
+   *
+   * `box` 는 **패널 로컬**이라 화면 좌표로 쓰려면 매번 `px + box.x` 를 더해야 한다 — 그 덧셈을
+   * 호출부마다 반복하면 한 곳만 빠뜨려도 조용히 어긋나므로, 여기서 화면 좌표로 풀어 준다.
+   */
+  private addPanel(
+    px: number,
+    py: number,
+    pw: number,
+    ph: number,
+    variant: 'slab' | 'window',
+    title: string,
+  ): { x: number; y: number; w: number; h: number; right: number; bottom: number } {
+    // ⚠️ `screenX`/`screenY` 를 **반드시 넘긴다**(Lane B 인계 제약 ③). 안 넘기면 같은 치수의
+    // 패널끼리 조명·랜드마크 시드가 같아져 M6(위치별 조명)·C1(비반복 랜드마크)이 조용히
+    // 무효가 된다 — 화면은 정상적으로 서고 테스트도 통과하므로 눈으로만 잡히는 유형이다.
+    // 램프 위치는 헤더 밴드 중앙 상단 — 배경 원화에서 실제로 빛이 오는 대역이다.
+    const panel = makeCinematicPanel({
+      width: pw,
+      height: ph,
+      variant,
+      title,
+      screenX: px,
+      screenY: py,
+      lightOrigin: { x: DESIGN_WIDTH / 2, y: 60 },
+    });
+    panel.container.position.set(px, py);
+    this.root.addChild(panel.container);
+    this.panels.push(panel);
+    const b = panel.box;
+    return {
+      x: px + b.x,
+      y: py + b.y,
+      w: b.w,
+      h: b.h,
+      right: px + b.right,
+      bottom: py + b.bottom,
+    };
+  }
 
+  /** 시네마틱 버튼 — 기존 `PixiButton` 에 석재 텍스처만 주입한다(로직은 그대로). */
+  private chromeButton(o: {
+    tone: ChromeTone;
+    width: number;
+    height: number;
+    fontSize: number;
+    label: string;
+    onClick: () => void;
+  }): PixiButton {
+    return new PixiButton({
+      // ⚠️ 텍스처는 128×64 로 1:1 구워져 있다 — `cap: 32` 여야 모서리가 안 뭉개진다
+      // (Lane C 인계 제약 ①).
+      texture: cinematicButtonTexture(o.tone),
+      cap: 32,
+      fallbackColor: chromeFallbackColor(o.tone),
+      labelColor: chromeLabelColor(o.tone),
+      width: o.width,
+      height: o.height,
+      fontSize: o.fontSize,
+      label: o.label,
+      onClick: o.onClick,
+    });
+  }
+
+  /**
+   * 헤더 밴드(y 0..{@link HEADER_H}) — 각인 제목 · 재화 칩 2 · 진입 버튼 3 · 닫기.
+   *
+   * ⚠️ **여섯 요소가 전부 같은 세로 띠**(y {@link HEAD_Y}..{@link HEAD_Y}+{@link HEAD_H})를
+   * 쓴다. 이 화면은 헤더가 겹치는 결함을 이미 겪었으므로(하단 패널의 "겹치면 안 되는 세로 띠
+   * 4줄" 주석과 같은 유형), 세로로 쌓지 않고 **가로로만** 배치해 겹침을 구조적으로 없앤다.
+   * 좌→우: [촉매][크레딧][광물] … 제목(중앙) … [예비역][기체 교체][닫기].
+   */
+  private renderTitleBar(): void {
+    // ⚠️ **각인 석재 인방은 사용자 판단으로 제거됐다**(2026-08-02).
+    //
+    // AAA 비평 M7 은 헤더 밴드의 디테일 밀도(|HF| 1.30~1.56)가 창 키아트(17.15)의 1/11~1/13
+    // 이라며 "배경 노출 구간"을 "건축 요소"로 재정의하라고 요구했고, 인방은 그 지표를 실제로
+    // 달성했다(|HF| 상단 37.38 · 하단 26.64). 그런데 화면을 본 사용자 판단은 **헤더가 비어
+    // 있는 쪽**이었다 — 판정 기준은 스크린샷이고 비평 수치는 대리 지표다(계약 §6-6).
+    //
+    // 그래서 헤더 밴드는 다시 **배경이 그대로 보이는 띠**다. 배경 모듈이 이 대역을 중간 세기로
+    // 누르고 있으므로(창 밖 ×0.30 vs 헤더 ×0.46) 제목·칩 글자 대비는 인방 없이도 성립한다
+    // (인방 도입 전 실측 제목 8.08:1 · 칩 5.25:1, 요구 4.5:1).
+    //
+    // 되살릴 일이 생기면 `hangarChrome.makeHangarLintel(w, h, niches)` 가 그대로 있다 —
+    // 세 번째 인자는 재화 칩이 앉을 감실이고, 감실 바닥 밝기는 칩 글자 대비 4.5:1 하한에서
+    // 역산돼 있다(`NICHE_FLOOR` 헤더).
     const chipW = 190;
-    const chipH = 52;
-    const credits = makeCurrencyChip(
+    const catalystX = 132;
+    const actW = 128;
+    const headGap = 14;
+    const creditsX = catalystX + actW + headGap;
+
+    const title = makeHangarTitle(t('hangar.title'));
+    title.position.set(DESIGN_WIDTH / 2, HEAD_Y - 4);
+    this.root.addChild(title);
+
+    // 촉매 보관함 진입 — 좌상단 꼭짓점은 **설정 톱니**(main.ts SettingsScreen)가 쓰는 전 화면
+    // 공용 자리다: 톱니는 격납고보다 나중에 stage 최상위로 그려져 항상 위에 얹히므로, 겹치면
+    // 촉매 버튼이 통째로 클릭 불가가 된다(하네스 실측: 톱니 CSS (16,13,51,51) ↔ 촉매 CSS
+    // (16,12,85,35) — 거의 완전 겹침). 톱니의 디자인 스페이스 점유는 대략 x 24..101 ·
+    // y 20..96 이고, 여유를 둔 예약 밴드는 x<120 · y<120 이다. 그래서 x 를 밴드 밖으로 민다.
+    const CATALYST_X = catalystX;
+    const catBtn = this.chromeButton({
+      tone: 'stone',
+      width: actW,
+      height: HEAD_H,
+      fontSize: 15,
+      label: t('catalyst.manage.open'),
+      onClick: () => this.openCatalystArchive(),
+    });
+    catBtn.container.position.set(CATALYST_X, HEAD_Y);
+    this.root.addChild(catBtn.container);
+
+    const credits = makeHangarChip(
       chipW,
-      chipH,
+      HEAD_H,
       String(this.profile.credits),
-      this.ui['ui_chip.png'],
-      this.ui['ui_icon_coin.png'],
+      this.ui['ui_icon_coin.png'] ?? undefined,
+      'gold',
     );
-    credits.position.set((DESIGN_WIDTH - bannerW) / 2 - chipW - 20, 18);
+    credits.position.set(creditsX, HEAD_Y);
     this.root.addChild(credits);
 
-    const minerals = makeCurrencyChip(
+    const minerals = makeHangarChip(
       chipW,
-      chipH,
+      HEAD_H,
       String(this.profile.minerals),
-      this.ui['ui_chip.png'],
-      this.ui['ui_icon_crystal.png'],
+      this.ui['ui_icon_crystal.png'] ?? undefined,
+      'teal',
     );
-    minerals.position.set((DESIGN_WIDTH + bannerW) / 2 + 20, 18);
+    minerals.position.set(creditsX + chipW + headGap, HEAD_Y);
     this.root.addChild(minerals);
 
-    // 기체 교체(챔피언 선택) · 예비역 로스터(소멸) 진입 — 광물 칩과 닫기 버튼 사이의 빈 자리에
-    // 나란히 둔다(닫기 왼쪽부터 [기체 교체][예비역] 순). 폭은 광물 칩(우단 ~1550)과 겹치지 않도록
-    // 128px 로 잡는다 — 둘 다 이보다 넓으면 칩을 침범한다(우측 상단은 이미 칩 2개로 붐빈다).
-    const actW = 128;
-    const actH = 52;
-    const actY = 18;
-    const swapX = DESIGN_WIDTH - 24 - 56 - 12 - actW;
+    // 우측: [예비역][기체 교체][닫기]. 닫기부터 오른쪽 끝에 붙이고 왼쪽으로 쌓는다.
+    const closeW = 56;
+    const closeX = DESIGN_WIDTH - EDGE_X - closeW;
+    const close = this.chromeButton({
+      tone: 'stone',
+      width: closeW,
+      height: HEAD_H,
+      fontSize: 22,
+      // 컬러 이모지는 Pixi 에서 두부가 된다(`text.ts` stripEmoji) — U+2715 는 흑백 글리프다.
+      label: '✕',
+      onClick: () => {
+        const cb = this.onClose;
+        this.hide();
+        cb?.();
+      },
+    });
+    close.container.position.set(closeX, HEAD_Y);
+    this.root.addChild(close.container);
+
+    const swapX = closeX - headGap - actW;
     // 기체 교체 = 퇴역·세대 교체다. 만렙(LEVEL_CAP) 전에는 성장 여지를 남긴 기체를 버리는 셈이라
     // 잠근다. 여기는 **버튼 게이트**일 뿐이고 실제 강제는 championSelect/guardianLifecycle 몫이다.
     const canSwap = activeShip(this.profile).level >= LEVEL_CAP;
-    const swap = new PixiButton({
-      texture: this.ui['ui_btn_wood.png'],
-      fallbackColor: 0x4a3a24,
+    const swap = this.chromeButton({
+      tone: 'stone',
       width: actW,
-      height: actH,
+      height: HEAD_H,
       fontSize: 15,
       label: tShipKey('hangar.act.swapShip', 'Change Ship'),
       // 비활성 버튼은 클릭이 안 오지만, 게이트가 두 곳에서 어긋나도 진입만은 막히도록 한 번 더 본다.
@@ -740,64 +1020,32 @@ export class HangarScreen {
         this.openChampionSelect();
       },
     });
-    swap.container.position.set(swapX, actY);
+    swap.container.position.set(swapX, HEAD_Y);
     this.root.addChild(swap.container);
     if (!canSwap) {
       swap.setEnabled(false);
-      // 비활성 버튼은 hover 이벤트도 죽으므로(툴팁 불가) 잠긴 이유를 버튼 바로 아래 한 줄로 남긴다.
+      // 비활성 버튼은 hover 이벤트도 죽으므로(툴팁 불가) 잠긴 이유를 버튼 바로 아래 한 줄로
+      // 남긴다. 폰트 14 ≈ 18px 이라 y 82..100 을 쓰고 헤더 밴드(104) 안에서 끝난다.
       const why = new Text({
         resolution: 2,
         text: t('hangar.err.swapNeedMaxLevel', { n: LEVEL_CAP, lv: activeShip(this.profile).level }),
         style: { fontFamily: UI_FONT, fontSize: 14, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
       });
       why.anchor.set(1, 0);
-      why.position.set(swapX + actW, actY + actH + 4);
+      why.position.set(swapX + actW, HEAD_Y + HEAD_H + 4);
       this.root.addChild(why);
     }
 
-    const guardians = new PixiButton({
-      texture: this.ui['ui_btn_wood.png'],
-      fallbackColor: 0x4a3a24,
+    const guardians = this.chromeButton({
+      tone: 'stone',
       width: actW,
-      height: actH,
+      height: HEAD_H,
       fontSize: 15,
       label: tShipKey('hangar.act.guardians', 'Guardians'),
       onClick: () => this.openGuardianRoster(),
     });
-    guardians.container.position.set(swapX - 12 - actW, actY);
+    guardians.container.position.set(swapX - headGap - actW, HEAD_Y);
     this.root.addChild(guardians.container);
-
-    // 촉매 보관함 진입 — 우측 상단은 칩 2개 + 버튼 2개로 붐비므로 좌측 상단에 둔다. 단 좌상단
-    // 꼭짓점은 **설정 톱니**(main.ts SettingsScreen)가 쓰는 전 화면 공용 자리다: 톱니는 격납고보다
-    // 나중에 stage 최상위로 그려져 항상 위에 얹히므로, 겹치면 촉매 버튼이 통째로 클릭 불가가 된다
-    // (하네스 실측: 톱니 CSS (16,13,51,51) ↔ 촉매 CSS (16,12,85,35) — 거의 완전 겹침).
-    // 톱니의 디자인 스페이스 점유는 대략 x 24..101 · y 20..96(CSS×1/0.664)이고, 여유를 둔 예약
-    // 밴드는 x<120 · y<120 이다. 그래서 x 를 밴드 밖(132)으로 민다 — 오른쪽으로는 크레딧 칩
-    // (x 370 부터)까지 110px 이 남아 128px 버튼이 겹치지 않고 들어간다(132+128=260 < 370).
-    const CATALYST_X = 132;
-    const catBtn = new PixiButton({
-      texture: this.ui['ui_btn_wood.png'],
-      fallbackColor: 0x4a3a24,
-      width: actW,
-      height: actH,
-      fontSize: 15,
-      label: t('catalyst.manage.open'),
-      onClick: () => this.openCatalystArchive(),
-    });
-    catBtn.container.position.set(CATALYST_X, actY);
-    this.root.addChild(catBtn.container);
-
-    const close = makeIconButton(
-      56,
-      () => {
-        const cb = this.onClose;
-        this.hide();
-        cb?.();
-      },
-      this.ui['ui_icon_close.png'],
-    );
-    close.position.set(DESIGN_WIDTH - 24 - 56, 12);
-    this.root.addChild(close);
   }
 
   private statRows(): StatRow[] {
@@ -812,7 +1060,10 @@ export class HangarScreen {
       { label: t('inv.stat.bullets'), value: `+${loadout.bulletCountAdd}`, desc: t('hangar.desc.bullets'), color: COLOR.gold },
       { label: t('inv.stat.pierce'), value: `+${loadout.pierceAdd}`, desc: t('hangar.desc.pierce'), color: COLOR.gold },
       { label: t('inv.stat.moveSpeed'), value: `×${loadout.moveSpeedMult.toFixed(2)}`, desc: t('hangar.desc.moveSpeed'), color: COLOR.gold },
-      { label: t('inv.stat.hp'), value: `+${loadout.maxHpAdd}`, desc: t('hangar.desc.hp'), color: COLOR.gold },
+      // ⚠️ `maxHpAdd` 는 배율 합산의 결과라 부동소수점 꼬리가 남는다 — 그대로 찍으면
+      // `+424.35200000000003` 이 화면에 나온다(실화면에서 잡았다). 다른 행은 전부 `toFixed`
+      // 를 거치는데 이 행만 정수라고 가정하고 생으로 넣고 있었다. HP 는 1 미만이 의미 없다.
+      { label: t('inv.stat.hp'), value: `+${Math.round(loadout.maxHpAdd)}`, desc: t('hangar.desc.hp'), color: COLOR.gold },
       { label: t('inv.stat.magnet'), value: `×${loadout.magnetMult.toFixed(2)}`, desc: t('hangar.desc.magnet'), color: COLOR.gold },
       { label: t('inv.stat.xp'), value: `×${loadout.xpMult.toFixed(2)}`, desc: t('hangar.desc.xp'), color: COLOR.gold },
       { label: t('inv.stat.mineralFind'), value: `×${worldMods.mineralFindMult.toFixed(2)}`, desc: t('hangar.desc.mineralFind'), color: COLOR.gold },
@@ -849,31 +1100,26 @@ export class HangarScreen {
   }
 
   private renderStatsPanel(): void {
-    const px = 24;
-    const py = 96;
-    const pw = 900;
-    const ph = 512;
-    const box = panelContent(pw, ph);
-    const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER });
-    panel.position.set(px, py);
-    this.root.addChild(panel);
+    // 제목은 패널의 **각인 띠**가 그린다 — 예전처럼 콘텐츠 상자 안에 Text 로 얹으면 첫 행과
+    // 같은 세로 띠를 다투게 되고, 그 자리는 이미 결함 이력이 있다.
+    const box = this.addPanel(
+      COL_L_X,
+      ROW_T_Y,
+      COL_L_W,
+      ROW_T_H,
+      'slab',
+      t('hangar.panel.stats'),
+    );
 
-    const title = new Text({ resolution: 2,
-      text: t('hangar.panel.stats'),
-      style: { fontFamily: UI_FONT, fontSize: 32, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
-    });
-    title.position.set(px + box.x, py + box.y);
-    this.root.addChild(title);
-
-    // 스크롤 가능한 스탯 콘텐츠(마스크 클립 + 휠). 스크롤바 시각 요소 없음. 결함 #3 수정:
-    // 콘텐츠 top 을 제목 바로 아래로 당기고 행 간격/폰트를 줄여 기본 10행+설명이 스크롤 없이
-    // 최대한 보이도록 한다(넘치는 원소/계보/유니크 조건부 행만 스크롤로).
-    const contentX = px + box.x;
-    const contentTop = py + 104; // 제목(60..92) 아래
+    // 스크롤 가능한 스탯 콘텐츠(마스크 클립 + 휠). 스크롤바 시각 요소 없음. 콘텐츠 top 을
+    // 제목 띠 바로 아래로 당기고 행 간격/폰트를 줄여 기본 10행+설명이 스크롤 없이 최대한
+    // 보이도록 한다(넘치는 원소/계보/유니크 조건부 행만 스크롤로).
+    const contentX = box.x;
+    const contentTop = box.y;
     const contentW = box.w;
-    // 마스크 하한 = 콘텐츠 상자 바닥(프레임 + 여백) — 프레임 침범도 붙는 것도 막는다.
+    // 마스크 하한 = 콘텐츠 상자 바닥 — 프레임 침범도 붙는 것도 막는다.
     const STAT_STEP = 48;
-    const contentH = Math.floor((box.bottom - 104) / STAT_STEP) * STAT_STEP; // 행 단위 클램프
+    const contentH = Math.floor(box.h / STAT_STEP) * STAT_STEP; // 행 단위 클램프
 
     const clip = new Container();
     clip.position.set(contentX, contentTop);
@@ -905,7 +1151,7 @@ export class HangarScreen {
       if (r.desc !== '') {
         const desc = new Text({ resolution: 2,
           text: r.desc,
-          style: { fontFamily: UI_FONT, fontSize: 15, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+          style: { fontFamily: UI_FONT, fontSize: 15, fill: SLAB_BODY_FILL, dropShadow: TEXT_SHADOW },
         });
         desc.position.set(0, y + 27);
         content.addChild(desc);
@@ -931,39 +1177,66 @@ export class HangarScreen {
     );
   }
 
+  /**
+   * 기체 쇼케이스 — 이 화면에서 **유일하게 배경이 그대로 보이는 창**이다.
+   *
+   * 다른 셋과 달리 `variant: 'window'` 라 내부 채움이 없다. 배경 원화의 정비 도크가 그대로
+   * 비치고, 그 앞에 함선 스프라이트와 8슬롯이 선다 — 함선이 도크에 들어와 있는 그림이 된다.
+   * 함선 아트는 **픽셀아트 그대로 둔다**(사용자 확정): 기체 정체성·파밍 언어라 재생성하면
+   * 인게임 함선과 표시가 갈린다. 대신 뒤에 조명이 들어오게 해서 페인터리 배경에 앉힌다.
+   *
+   * ⚠️ Lane A 인계 제약 ①: 창 안은 계수 1 = 원화 그대로다(창 밖은 ×0.30). 창에 얹는 것이
+   * 배경보다 밝지 않으면 살아나지 않는다 — 함선 뒤 후광과 슬롯 소켓의 어두운 홈이 그 대비를
+   * 만든다.
+   */
   private renderShowcasePanel(): void {
-    const px = 944;
-    const py = 96;
-    const pw = 952;
-    const ph = 512;
-    const box = panelContent(pw, ph);
-    const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER });
-    panel.position.set(px, py);
-    this.root.addChild(panel);
-
+    const px = COL_R_X;
+    const py = ROW_T_Y;
+    const pw = COL_R_W;
     const ship = activeShip(this.profile);
-    const title = new Text({ resolution: 2,
-      text: `${shipTypeName(shipTypeDef(ship.typeId))} · Lv ${ship.level}`,
-      style: { fontFamily: UI_FONT, fontSize: 30, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
-    });
-    title.anchor.set(0.5, 0);
-    title.position.set(px + pw / 2, py + box.y);
-    this.root.addChild(title);
+    const box = this.addPanel(
+      px,
+      py,
+      pw,
+      ROW_T_H,
+      'window',
+      `${shipTypeName(shipTypeDef(ship.typeId))} · Lv ${ship.level}`,
+    );
 
-    // 기체 일러스트(×2 nearest). 중앙.
-    const shipCx = px + pw / 2;
-    const shipCy = py + ph / 2 + 20;
+    // --- 기체 도크(접지 · 크래들 · 림) ------------------------------------------
+    //
+    // 1차 AAA 판정 CRIT-C3: 함선의 접지 그림자가 **정확히 0** 이었다(아래 띠 / 같은 y 의 좌우
+    // 측면 = 1.001). 게다가 주변 장면 R/B 가 1.844 인데 함선 하단은 0.511 로, 바닥의 금빛
+    // 반사광이 함선에 전혀 닿지 않았다 — "스프라이트를 레이어에 얹은" 상태였다.
+    //
+    // 픽셀아트 함선은 **다시 그리지 않는 것이 확정 사항**이다(기체 정체성·파밍 시각 언어).
+    // 그래서 조명·접지·프레이밍으로만 페인터리 배경에 앉힌다. `shipDock` 이 함선 스프라이트
+    // 자체를 그리는 이유는 접지·크래들·림의 z 순서를 한 곳에서 보장하기 위해서다.
+    //
     // 쇼케이스는 **기체 타입 파생**이다. 아트가 아직 없으면 조용히 레거시 텍스처로 폴백해
     // 화면이 비지 않게 한다(설계서 §8·§9 — 아트는 코드보다 늦게 도착한다).
     const shipTex = this.ui[shipShowcaseName(ship.typeId)] ?? this.ui[LEGACY_SHOWCASE];
-    if (shipTex) {
-      const sp = new Sprite(shipTex);
-      sp.anchor.set(0.5);
-      sp.width = 256;
-      sp.height = 256;
-      sp.position.set(shipCx, shipCy);
-      this.root.addChild(sp);
-    } else {
+    const dock = makeShipDock({
+      width: box.w,
+      height: box.h,
+      ship: shipTex ?? undefined,
+      shipSize: 256,
+      cx: box.w / 2,
+      cy: box.h / 2,
+      // 크래들(받침)은 **사용자 판단으로 끈다**(2026-08-02). 접지 그림자·언더라이트·림은
+      // 실루엣 바닥선에서 파생하므로 그대로 살아 있다 — 함선은 여전히 그림자를 드리운다.
+      cradle: false,
+    });
+    dock.container.position.set(box.x, box.y);
+    this.root.addChild(dock.container);
+    this.dock = dock;
+
+    // ⚠️ 연결선·폴백은 **반환된 좌표**로 파생시킨다(Lane D 인계 제약 ①) — 데크선이 창 하단
+    // 여백을 침범하면 도크가 함선을 위로 올리므로, `box.h / 2` 를 그대로 쓰면 어긋난다.
+    const shipCx = box.x + dock.shipX;
+    const shipCy = box.y + dock.shipY;
+    if (!shipTex) {
+      // 자산 결손 폴백 — 도크는 함선을 그리지 않았으므로 여기서 실루엣만 세운다(제약 ②).
       const g = new Graphics();
       g.moveTo(shipCx, shipCy - 90)
         .lineTo(shipCx + 70, shipCy + 80)
@@ -974,15 +1247,15 @@ export class HangarScreen {
       this.root.addChild(g);
     }
 
-    // 장착 8슬롯: 좌 4 / 우 4 컬럼, y 간격 100. 라벨은 슬롯 바깥쪽.
+    // 장착 8슬롯: 좌 4 / 우 4 컬럼. 라벨은 슬롯 바깥쪽.
     const slotSize = 72;
-    // 바깥쪽 라벨(최대 ~90px)이 콘텐츠 상자(box.x=60) 안에 들어오도록 컬럼을 안쪽으로.
+    // 바깥쪽 라벨(최대 ~90px)이 콘텐츠 상자 안에 들어오도록 컬럼을 안쪽으로.
     const labelGutter = 90 + 12;
-    const leftX = px + box.x + labelGutter;
-    const rightX = px + box.right - labelGutter - slotSize;
-    const colTop = py + 140;
-    // 4행째(실드/모듈2) 하단이 콘텐츠 상자 바닥(py+box.bottom) 안에 들어오는 간격을 역산한다.
-    const colStep = Math.floor((box.bottom - 140 - slotSize) / 3);
+    const leftX = box.x + labelGutter;
+    const rightX = box.right - labelGutter - slotSize;
+    const colTop = box.y + 16;
+    // 4행째(실드/모듈2) 하단이 콘텐츠 상자 바닥 안에 들어오는 간격을 역산한다.
+    const colStep = Math.floor((box.h - 16 - slotSize) / 3);
 
     // 연결선 레이어(슬롯보다 아래).
     const lines = new Graphics();
@@ -996,21 +1269,59 @@ export class HangarScreen {
       const sy = colTop + row * colStep;
       const item = ship.equipped[id];
 
-      // 연결선(슬롯 중심 → 기체 중심 부근).
+      // 연결선(슬롯 중심 → 기체 중심 부근) — **슬롯 쪽에서 나와 함선 쪽으로 사라진다**.
+      //
+      // 1차·2차 AAA 판정 MINOR: 예전 판은 균일 알파 3px 벡터 8줄이라 CAD 와이어프레임으로
+      // 읽혔고, 도크 크래들이 들어온 뒤로는 금색 원호와 교차해 엉킴이 더 심해졌다. 물리적으로
+      // 이 선은 배선 하네스이지 도면 지시선이 아니다 — 슬롯 단자에서 굵고 밝게 시작해 함선
+      // 안으로 들어가며 가늘고 흐려져야 한다.
+      //
+      // ⚠️ 테이퍼는 세그먼트로 만들되 **구간을 정확히 이어 붙인다**(t_i → t_{i+1}). 세그먼트를
+      // 겹치면 겹친 자리의 알파가 두 배가 되어 마디가 생긴다 — 세로 램프에서 이 리포가 실제로
+      // 겪은 결함과 같은 원리다(계약 §0-4).
       const partY = shipCy - 60 + row * 40;
       const partX = shipCx + (left ? -40 : 40);
-      lines
-        .moveTo(sx + slotSize / 2, sy + slotSize / 2)
-        .lineTo(partX, partY)
-        .stroke({ color: COLOR.connector, width: 3, alpha: 0.59 });
+      const x0 = sx + slotSize / 2;
+      const y0 = sy + slotSize / 2;
+      const SEGS = 7;
+      for (let s = 0; s < SEGS; s++) {
+        const t0 = s / SEGS;
+        const t1 = (s + 1) / SEGS;
+        // 중점 기준 감쇠 — 슬롯 쪽(t=0) 굵고 진하게, 함선 쪽(t=1) 가늘고 흐리게.
+        const k = 1 - (t0 + t1) / 2;
+        lines
+          .moveTo(x0 + (partX - x0) * t0, y0 + (partY - y0) * t0)
+          .lineTo(x0 + (partX - x0) * t1, y0 + (partY - y0) * t1)
+          .stroke({
+            color: COLOR.connector,
+            width: 1.2 + 2.2 * k,
+            alpha: 0.16 + 0.52 * k,
+            cap: 'butt',
+          });
+      }
+      // 슬롯 쪽 단자 노드 — 선이 어디서 나오는지를 말한다. 이게 없으면 선이 셀 밑에서
+      // 시작하는지 위에서 시작하는지가 안 읽힌다.
+      lines.circle(x0, y0, 4.5).fill({ color: COLOR.connector, alpha: 0.5 });
+      lines.circle(x0, y0, 2.2).fill({ color: 0xfff0c8, alpha: 0.85 });
+
+      // 접지 그림자 — 셀과 **같은 좌표**에 셀보다 먼저 붙인다(스스로 셀 밖으로 번진다,
+      // Lane C 인계 제약 ③). 이게 없으면 슬롯이 유리 위에 붙은 스티커로 읽힌다(1차 판정
+      // MINOR-b). 슬롯 텍스처 안에 굽지 않은 이유는 비평이 유지를 지시한 셀 내부 세로
+      // 프로파일(20→55 단조 상승 = 움푹한 우물)이 깨지기 때문이다.
+      const cellShadow = makeSlotContactShadow(slotSize);
+      cellShadow.position.set(sx, sy);
+      this.root.addChild(cellShadow);
 
       const cell = makeSlotCell({
         size: slotSize,
         item,
-        slotTex: this.ui[item !== undefined ? 'ui_slot_hl.png' : 'ui_slot.png'],
+        // 나무 슬롯 텍스처 대신 석재 소켓을 주입한다(Lane C). 밝은 링이 없어 등급 테두리가
+        // 프레임 금색에 흡수되던 충돌이 구조적으로 재발하지 않는다(`theme.ts` SLOT_RARITY 헤더).
+        // `i` 를 종 인덱스로 넘겨 8칸이 같은 도장이 되지 않게 한다(감싸 처리는 Lane C 가 한다).
+        slotTex: cinematicSlotTexture(item !== undefined, i),
         iconTex: equipIconTexture(this.ui, item),
         highlight: item !== undefined,
-        highlightTex: this.ui['ui_slot_hl.png'],
+        highlightTex: cinematicSlotTexture(true, i),
         onClick: item !== undefined ? () => this.unequip(id) : undefined,
         onHover: item !== undefined ? (gx, gy) => this.showTip(item, gx, gy) : undefined,
         onMove: (gx, gy) => this.moveTip(gx, gy),
@@ -1034,29 +1345,40 @@ export class HangarScreen {
 
   // --- 하단 두 패널(창고·인벤토리) 공통 기하 ---------------------------------
   //
-  // 상단 패널이 y 608 에서 끝나므로 하단을 624 로 올려 432 높이를 확보한다. 그 432 안에서
-  // 제목/액션 행(60..104) · 안내 한 줄(106..124) · 분류 탭 행(128..164) ·
-  // 그리드(170..372 = 정확히 3행)가 프레임을 침범하지 않고 맞아떨어진다.
+  // 시네마틱 패널은 제목을 **각인 띠**가 가져가므로(로컬 0..52, 그 아래 숨틈 16) 콘텐츠 상자가
+  // 로컬 y 68 에서 시작한다. 그 아래로 액션 행(68..112) · 안내 한 줄(118..138) ·
+  // 분류 탭 행(142..178) · 그리드(184..400 = 정확히 3행)가 순서대로 앉는다.
   //
-  // ⚠️ 이 네 줄은 **서로 겹치면 안 되는 세로 띠**다. 예전에는 안내 한 줄을 제목 바로 아래
-  // (로컬 98) 에 얹어 두었는데, 액션 버튼(60..108)·분류 탭(112..152) 과 같은 띠를 나눠 써서
-  // 실제로 글자가 버튼과 탭 밑으로 파묻혔다(사용자 신고 2026-07-27: "글자가 겹쳐서 안보임").
-  // 안내 줄은 패널 폭 전체를 쓰므로 **자기 줄을 통째로 가져야 한다** — 액션 행 높이를 44 로
-  // 줄이고 셀을 66→62 로 줄여 그 한 줄(18px)을 만들고도 그리드 3행을 지켰다.
+  // ⚠️ 이 네 줄은 **서로 겹치면 안 되는 세로 띠**다. 예전에는 안내 한 줄을 제목 바로 아래에
+  // 얹어 두었는데, 액션 버튼·분류 탭과 같은 띠를 나눠 써서 실제로 글자가 버튼과 탭 밑으로
+  // 파묻혔다(사용자 신고 2026-07-27: "글자가 겹쳐서 안보임"). 안내 줄은 패널 폭 전체를 쓰므로
+  // **자기 줄을 통째로 가져야 한다**. 값은 전부 패널 로컬 y 이고,
+  // `tests/hangarInventoryUi.test.ts` 가 띠 경계를 산술로 못 박는다(측정 스텁에 기대지 않고).
+  //
+  // 세로 예산: 패널 424 − 콘텐츠 시작 68 − 하단 여백 24 = 332 이 콘텐츠 상자 높이다.
+  // 그리드는 184 에서 시작해 400 에서 끝나고, 셀 62 + 간격 8 = 70 이므로 정확히 3행이다.
 
   /** 하단 패널 상단 y(디자인 스페이스). */
-  private static readonly BOTTOM_PY = 624;
+  private static readonly BOTTOM_PY = ROW_B_Y;
   /** 하단 패널 높이. */
-  private static readonly BOTTOM_PH = 432;
-  /** 제목·액션 버튼 행의 높이(패널 로컬 y 는 콘텐츠 상자 상단 = 60). */
+  private static readonly BOTTOM_PH = ROW_B_H;
+  /**
+   * 콘텐츠 상자 상단(패널 로컬 y) = 각인 제목 띠 52 + 숨틈 16.
+   *
+   * ⚠️ 이 값은 `cinematicPanel.ts` 의 계약(제목 띠 **고정 52**)에서 온다. 옛 판은
+   * `PANEL_BORDER 46 + PANEL_INNER_PAD 14 = 60` 이었고, 테스트가 그 60 을 하드코딩하고 있었다.
+   * 상수로 올려 두 곳이 갈리지 않게 한다.
+   */
+  static readonly CONTENT_TOP = 68;
+  /** 제목·액션 버튼 행의 높이(콘텐츠 상자 상단부터). */
   private static readonly ACTION_H = 44;
   /** 조작 안내 한 줄의 패널 로컬 y(액션 행 아래 자기 줄). */
-  private static readonly HELP_Y = 106;
+  private static readonly HELP_Y = 118;
   /** 분류 탭 행의 패널 로컬 y 와 높이. */
-  private static readonly FILTER_Y = 128;
+  private static readonly FILTER_Y = 142;
   private static readonly FILTER_H = 36;
   /** 그리드 시작(패널 로컬 y). */
-  private static readonly GRID_TOP = 170;
+  private static readonly GRID_TOP = 184;
   /** 슬롯 셀 한 변과 세로 간격(가로 간격은 {@link fitGridCols} 가 폭에 맞춰 넓힌다). */
   private static readonly CELL = 62;
   private static readonly GAP = 8;
@@ -1078,15 +1400,14 @@ export class HangarScreen {
     FILTER_KINDS.forEach((kind, i) => {
       const isActive = kind === active;
       const last = i === n - 1;
-      const btn = new PixiButton({
-        texture: this.ui[isActive ? 'ui_btn_yellow.png' : 'ui_btn_wood.png'],
-        fallbackColor: isActive ? 0x9a7a2a : 0x4a3a24,
+      // 선택 = 금박 각인 판, 비선택 = 석재. 라벨색은 톤에서 파생하므로(밝은 바탕 위 흰 글씨
+      // 방지) 여기서 따로 정하지 않는다.
+      const btn = this.chromeButton({
+        tone: isActive ? 'gold' : 'stone',
         // 반올림 오차는 마지막 칸이 흡수한다 — 오른쪽 끝이 콘텐츠 폭과 정확히 맞는다.
         width: last ? w - (bw + gap) * (n - 1) : bw,
         height: HangarScreen.FILTER_H,
         fontSize: 15,
-        // 노란 판때기 위 흰 라벨은 묻힌다(카툰나무풍 세트 규칙).
-        ...(isActive ? { labelColor: COLOR.darkLabel } : {}),
         label: kind === null ? t('inv.filter.all') : slotLabel(kind),
         onClick: () => onSelect(kind),
       });
@@ -1108,7 +1429,7 @@ export class HangarScreen {
     const help = new Text({
       resolution: 2,
       text,
-      style: { fontFamily: UI_FONT, fontSize: 14, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+      style: { fontFamily: UI_FONT, fontSize: 14, fill: SLAB_BODY_FILL, dropShadow: TEXT_SHADOW },
     });
     help.position.set(x, y);
     this.root.addChild(help);
@@ -1123,9 +1444,8 @@ export class HangarScreen {
     width = 160,
   ): void {
     const next = SORT_MODES[(SORT_MODES.indexOf(mode) + 1) % SORT_MODES.length] ?? 'default';
-    const btn = new PixiButton({
-      texture: this.ui['ui_btn_wood.png'],
-      fallbackColor: 0x4a3a24,
+    const btn = this.chromeButton({
+      tone: 'stone',
       width,
       height: HangarScreen.ACTION_H,
       fontSize: 16,
@@ -1137,23 +1457,21 @@ export class HangarScreen {
   }
 
   private renderStashPanel(): void {
-    const px = 24;
+    const px = COL_L_X;
     const py = HangarScreen.BOTTOM_PY;
-    const pw = 900;
+    const pw = COL_L_W;
     const ph = HangarScreen.BOTTOM_PH;
-    const box = panelContent(pw, ph);
-    const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER });
-    panel.position.set(px, py);
-    this.root.addChild(panel);
-
     const cap = stashCapacity(this.profile.stashExpansions);
-    const title = new Text({ resolution: 2,
-      text: t('inv.stashHeader', { n: this.profile.stash.length, cap }),
-      style: { fontFamily: UI_FONT, fontSize: 24, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
-    });
-    title.position.set(px + box.x, py + box.y + 6);
-    this.root.addChild(title);
-    this.renderPanelHelp(px + box.x, py + HangarScreen.HELP_Y, t('inv.help.stash'));
+    // 제목(보유/용량)은 패널의 각인 띠가 그린다 — 액션 버튼 행과 같은 세로 띠를 다투지 않는다.
+    const box = this.addPanel(
+      px,
+      py,
+      pw,
+      ph,
+      'slab',
+      t('inv.stashHeader', { n: this.profile.stash.length, cap }),
+    );
+    this.renderPanelHelp(box.x, py + HangarScreen.HELP_Y, t('inv.help.stash'));
 
     // 헤더 우측 액션 줄: [하급 분해][상급 분해][정렬][확장]. 창고 패널은 인벤토리보다 좁아
     // (콘텐츠 780 vs 832) 인벤토리의 210px 버튼을 그대로 쓰면 제목 자리가 사라진다 — 같은
@@ -1162,16 +1480,15 @@ export class HangarScreen {
     const SORT_W = 116;
     const EXPAND_W = 196;
     const AGAP = 10;
-    const rowY = py + box.y;
-    let cursorX = px + box.right;
+    const rowY = box.y;
+    let cursorX = box.right;
 
     // 창고 확장 버튼(파랑) — 패널 우상단.
     const nextCost = stashExpansionCost(this.profile.stashExpansions);
     const maxed = this.profile.stashExpansions >= MAX_STASH_EXPANSIONS;
     cursorX -= EXPAND_W;
-    const expandBtn = new PixiButton({
-      texture: this.ui['ui_btn_blue.png'],
-      fallbackColor: 0x2a5a9a,
+    const expandBtn = this.chromeButton({
+      tone: 'blue',
       width: EXPAND_W,
       height: HangarScreen.ACTION_H,
       fontSize: 16,
@@ -1197,9 +1514,8 @@ export class HangarScreen {
       { key: 'inv.act.salvageLowShort' as const, rarities: ['normal', 'magic'] as const },
     ]) {
       cursorX -= AGAP + SALV_W;
-      const btn = new PixiButton({
-        texture: this.ui['ui_btn_red.png'],
-        fallbackColor: 0x9a2a2a,
+      const btn = this.chromeButton({
+        tone: 'red',
         width: SALV_W,
         height: HangarScreen.ACTION_H,
         fontSize: 15,
@@ -1210,7 +1526,7 @@ export class HangarScreen {
       this.root.addChild(btn.container);
     }
     this.renderFilterBar(
-      px + box.x,
+      box.x,
       py + HangarScreen.FILTER_Y,
       box.w,
       this.stashFilter,
@@ -1222,14 +1538,14 @@ export class HangarScreen {
     );
 
     // 스크롤 그리드(마스크 클립 + 휠, 스크롤바 없음).
-    const contentX = px + box.x;
+    const contentX = box.x;
     const contentTop = py + HangarScreen.GRID_TOP;
     const contentW = box.w;
     const cell = HangarScreen.CELL;
     const gap = HangarScreen.GAP;
     // 마스크 하한 = 콘텐츠 상자 바닥, 셀 행 배수로 클램프(반토막 셀 금지).
-    const contentH =
-      Math.floor((box.bottom - HangarScreen.GRID_TOP + gap) / (cell + gap)) * (cell + gap) - gap;
+    const gridH = box.bottom - contentTop;
+    const contentH = Math.floor((gridH + gap) / (cell + gap)) * (cell + gap) - gap;
     // 열 수는 폭에서 유도하고 남는 폭은 열 간격이 흡수한다(우측 여백 제거).
     const fit = fitGridCols(contentW, cell, gap);
     const cols = fit.cols;
@@ -1256,7 +1572,8 @@ export class HangarScreen {
       const c = makeSlotCell({
         size: cell,
         item,
-        slotTex: this.ui['ui_slot.png'],
+        // 종 인덱스 `i` — 80칸이 전부 같은 스탬프면 그리드가 벽지로 읽힌다(1차 판정 MINOR-a).
+        slotTex: cinematicSlotTexture(false, i),
         iconTex: equipIconTexture(this.ui, item),
         reqLevel: item !== undefined ? requiredLevel(item) : undefined,
         locked,
@@ -1277,7 +1594,7 @@ export class HangarScreen {
       const empty = new Text({
         resolution: 2,
         text: t('inv.filter.empty'),
-        style: { fontFamily: UI_FONT, fontSize: 18, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+        style: { fontFamily: UI_FONT, fontSize: 18, fill: SLAB_BODY_FILL, dropShadow: TEXT_SHADOW },
       });
       empty.position.set(0, 8);
       content.addChild(empty);
@@ -1302,58 +1619,53 @@ export class HangarScreen {
   }
 
   private renderInventoryPanel(): void {
-    const px = 944;
+    const px = COL_R_X;
     const py = HangarScreen.BOTTOM_PY;
-    const pw = 952;
+    const pw = COL_R_W;
     const ph = HangarScreen.BOTTOM_PH;
-    const box = panelContent(pw, ph);
-    const panel = nineSlicePanel(pw, ph, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER });
-    panel.position.set(px, py);
-    this.root.addChild(panel);
-
-    const title = new Text({ resolution: 2,
-      text: t('inv.invHeader', { n: this.profile.inventory.length, cap: INVENTORY_CAP }),
-      style: { fontFamily: UI_FONT, fontSize: 24, fontWeight: '800', fill: COLOR.cream, dropShadow: TEXT_SHADOW },
-    });
-    title.position.set(px + box.x, py + box.y + 6);
-    this.root.addChild(title);
-    this.renderPanelHelp(px + box.x, py + HangarScreen.HELP_Y, t('inv.help.inventory'));
+    const box = this.addPanel(
+      px,
+      py,
+      pw,
+      ph,
+      'slab',
+      t('inv.invHeader', { n: this.profile.inventory.length, cap: INVENTORY_CAP }),
+    );
+    this.renderPanelHelp(box.x, py + HangarScreen.HELP_Y, t('inv.help.inventory'));
 
     // 일괄 분해 버튼 2종(빨강) — 패널 우상단 나란히.
     const bw = 210;
     const bh = HangarScreen.ACTION_H;
-    const salvageHigh = new PixiButton({
-      texture: this.ui['ui_btn_red.png'],
-      fallbackColor: 0x9a2a2a,
+    const salvageHigh = this.chromeButton({
+      tone: 'red',
       width: bw,
       height: bh,
       fontSize: 16,
       label: t('inv.act.salvageHigh'),
       onClick: () => void this.salvageByRarities('inventory', ['rare', 'unique']),
     });
-    salvageHigh.container.position.set(px + box.right - bw, py + box.y);
+    salvageHigh.container.position.set(box.right - bw, box.y);
     this.root.addChild(salvageHigh.container);
 
-    const salvageLow = new PixiButton({
-      texture: this.ui['ui_btn_red.png'],
-      fallbackColor: 0x9a2a2a,
+    const salvageLow = this.chromeButton({
+      tone: 'red',
       width: bw,
       height: bh,
       fontSize: 16,
       label: t('inv.act.salvageLow'),
       onClick: () => void this.salvageByRarities('inventory', ['normal', 'magic']),
     });
-    salvageLow.container.position.set(px + box.right - bw * 2 - 12, py + box.y);
+    salvageLow.container.position.set(box.right - bw * 2 - 12, box.y);
     this.root.addChild(salvageLow.container);
 
     // 정렬 순환(일괄 분해 버튼 왼쪽) + 슬롯 분류 탭(그 아래 한 줄).
-    this.renderSortButton(px + box.right - bw * 2 - 12 - 12 - 160, py + box.y, this.invSort, (next) => {
+    this.renderSortButton(box.right - bw * 2 - 12 - 12 - 160, box.y, this.invSort, (next) => {
       this.invSort = next;
       this.inventoryScrollY = 0;
       this.render();
     });
     this.renderFilterBar(
-      px + box.x,
+      box.x,
       py + HangarScreen.FILTER_Y,
       box.w,
       this.invFilter,
@@ -1367,7 +1679,7 @@ export class HangarScreen {
     // 마스크 클립 + 휠 스크롤(패널 프레임 침범 0, 스크롤바 시각 요소 없음). 열 수는 **폭에서
     // 유도**한다 — 예전에는 `cols = 8` 하드코딩이라 832px 폭에 584px 만 그려져 오른쪽 248px 이
     // 통째로 비어 있었다(용량 표기 48칸과도 안 맞아 보였다).
-    const contentX = px + box.x;
+    const contentX = box.x;
     const contentTop = py + HangarScreen.GRID_TOP;
     const contentW = box.w;
     const cell = HangarScreen.CELL;
@@ -1375,8 +1687,8 @@ export class HangarScreen {
     const fit = fitGridCols(contentW, cell, gap);
     const cols = fit.cols;
     // 마스크 하한 = 콘텐츠 상자 바닥, 셀 행 배수로 클램프(반토막 셀 금지).
-    const contentH =
-      Math.floor((box.bottom - HangarScreen.GRID_TOP + gap) / (cell + gap)) * (cell + gap) - gap;
+    const gridH = box.bottom - contentTop;
+    const contentH = Math.floor((gridH + gap) / (cell + gap)) * (cell + gap) - gap;
 
     const clip = new Container();
     clip.position.set(contentX, contentTop);
@@ -1399,7 +1711,8 @@ export class HangarScreen {
       const c = makeSlotCell({
         size: cell,
         item,
-        slotTex: this.ui['ui_slot.png'],
+        // 종 인덱스 `i` — 80칸이 전부 같은 스탬프면 그리드가 벽지로 읽힌다(1차 판정 MINOR-a).
+        slotTex: cinematicSlotTexture(false, i),
         iconTex: equipIconTexture(this.ui, item),
         reqLevel: item !== undefined ? requiredLevel(item) : undefined,
         locked,
@@ -1420,7 +1733,7 @@ export class HangarScreen {
       const empty = new Text({
         resolution: 2,
         text: t('inv.filter.empty'),
-        style: { fontFamily: UI_FONT, fontSize: 18, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+        style: { fontFamily: UI_FONT, fontSize: 18, fill: SLAB_BODY_FILL, dropShadow: TEXT_SHADOW },
       });
       empty.position.set(0, 8);
       content.addChild(empty);
@@ -1451,7 +1764,9 @@ export class HangarScreen {
       style: { fontFamily: UI_FONT, fontSize: 20, fontWeight: '700', fill: 0xff9a7a, dropShadow: TEXT_SHADOW },
     });
     t2.anchor.set(0.5, 1);
-    t2.position.set(DESIGN_WIDTH / 2, DESIGN_HEIGHT - 8);
+    // 하단 패널 바닥(1052) 아래 남은 28px 띠. 패널 접지 그림자가 이 위로 번지므로 글자가
+    // 어두운 바탕 위에 앉는다 — 밝은 살구색이라 오히려 잘 읽힌다.
+    t2.position.set(DESIGN_WIDTH / 2, DESIGN_HEIGHT - 6);
     this.root.addChild(t2);
   }
 }

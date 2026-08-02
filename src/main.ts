@@ -1803,6 +1803,10 @@ async function main(): Promise<void> {
     // 화면이 숨겨져 있으면 내부에서 즉시 반환하므로 런 중 비용은 0 이다.
     baseMap.update(frame);
 
+    // 격납고 시네마틱 연출(배경 패럴랙스·창 안 티끌·램프 맥동·패널 광택 호흡)도 같은 규약이다 —
+    // 화면이 숨겨져 있으면 내부에서 즉시 반환하므로 격납고 밖에서는 비용이 0 이다.
+    inventory.update(frame);
+
     // AC-5.1 화면 전환 커튼: 매 프레임 진행(비재생 시 no-op) + 재생 중엔 stage 최상단으로 올려
     // 전 화면·크롬 UI 위를 덮는다(settings.raise 뒤라 커튼이 그 위). render-only.
     screenTransition.update(frame);

@@ -15,6 +15,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Container, Text, DOMAdapter } from 'pixi.js';
 
 import { HangarScreen } from '../src/ui/pixi/hangar.js';
+import { makeCinematicPanel } from '../src/ui/pixi/cinematicPanel.js';
 import { PixiButton } from '../src/ui/pixi/button.js';
 import {
   defaultProfile,
@@ -208,8 +209,9 @@ describe('격납고 상단 행 — 촉매 버튼이 설정 톱니를 피한다 (
     open();
     const cat = rectOf(buttonByLabel(root(), t('catalyst.manage.open')));
     // 좌표를 못 박아 둔다 — 누가 다시 좌상단으로 옮기면 여기서 먼저 걸린다.
-    // (배치는 132,18 이고 bounds 는 폴백 Graphics 테두리 2px 만큼 바깥으로 1px 넓다.)
-    expect({ x: Math.round(cat.x), y: Math.round(cat.y) }).toEqual({ x: 131, y: 17 });
+    // (배치는 132,26 = 헤더 밴드의 컨트롤 띠이고, bounds 는 폴백 Graphics 테두리 2px 만큼
+    // 바깥으로 1px 넓다. 시네마틱 전환에서 헤더 밴드가 104px 로 생기며 y 가 18 → 26 으로 갔다.)
+    expect({ x: Math.round(cat.x), y: Math.round(cat.y) }).toEqual({ x: 131, y: 25 });
     expect({ w: Math.round(cat.w), h: Math.round(cat.h) }).toEqual({ w: 130, h: 54 });
     expect(intersects(cat, GEAR_RECT), `촉매 ${JSON.stringify(cat)} 가 톱니와 겹친다`).toBe(false);
     expect(intersects(cat, GEAR_BAND), `촉매 ${JSON.stringify(cat)} 가 예약 밴드 안이다`).toBe(false);
@@ -285,7 +287,11 @@ function inventoryCellCount(): number {
     if (child.children.length !== 1) continue;
     const content = child.children[0];
     if (!(content instanceof Container) || content.children.length === 0) continue;
-    if (child.x > 900) found = content.children.length;
+    // ⚠️ y 조건이 없으면 **헤더 버튼**(우상단, x 1560~1840)이 걸린다 — PixiButton 도 자식이
+    // `inner` 하나뿐이라 이 술어를 통과하고, 루프가 마지막 매치를 취하므로 조용히 3(= inner 의
+    // bg/gloss/label)을 돌려준다. 시네마틱 전환에서 헤더를 패널 **뒤에** 그리게 되면서 순서가
+    // 뒤집혀 실제로 그렇게 됐다. 하단 패널 y 로 못 박는다(창고 헬퍼가 이미 쓰던 규율).
+    if (child.x > 900 && child.y > 700) found = content.children.length;
   }
   if (found < 0) throw new Error('인벤토리 그리드 클립을 찾지 못했다');
   return found;
@@ -732,17 +738,28 @@ describe('패널 헤더가 서로 겹치지 않는다', () => {
       FILTER_H: number;
       GRID_TOP: number;
       BOTTOM_PH: number;
+      CONTENT_TOP: number;
       CELL: number;
       GAP: number;
     };
-    const CONTENT_TOP = 60; // PANEL_BORDER 46 + PANEL_INNER_PAD 14
     const HELP_LINE_H = 20; // 폰트 14 의 실제 줄 높이(≈18)에 여유 2
-    expect(CONTENT_TOP + C.ACTION_H, '액션 행이 안내 줄을 침범한다').toBeLessThanOrEqual(C.HELP_Y);
+    expect(C.CONTENT_TOP + C.ACTION_H, '액션 행이 안내 줄을 침범한다').toBeLessThanOrEqual(C.HELP_Y);
     expect(C.HELP_Y + HELP_LINE_H, '안내 줄이 분류 탭을 침범한다').toBeLessThanOrEqual(C.FILTER_Y);
     expect(C.FILTER_Y + C.FILTER_H, '분류 탭이 그리드를 침범한다').toBeLessThanOrEqual(C.GRID_TOP);
     // 그리드는 여전히 3행이 콘텐츠 상자 안에 들어간다(헤더에 줄을 더하느라 행을 잃지 않았다).
-    const contentBottom = C.BOTTOM_PH - CONTENT_TOP;
-    const rows = Math.floor((contentBottom - C.GRID_TOP + C.GAP) / (C.CELL + C.GAP));
+    //
+    // ⚠️ 옛 판은 `BOTTOM_PH - CONTENT_TOP` 을 "상자 바닥 y" 로 썼는데, 그건 **상자 높이**다.
+    // 나무 패널 시절엔 위아래 여백이 둘 다 60 이라 두 값이 우연히 같아 오류가 안 드러났다.
+    // 시네마틱 패널은 상단 68(제목 띠 52 + 숨틈 16) · 하단 24 로 비대칭이라 그 우연이 깨진다 —
+    // **상자 바닥 y 는 패널 높이에서 하단 여백만 뺀 값**이다. 실제 상자를 물어봐서 못 박는다.
+    const box = makeCinematicPanel({
+      width: 936,
+      height: C.BOTTOM_PH,
+      variant: 'slab',
+      title: 'x',
+    }).box;
+    expect(box.y, '패널 콘텐츠 상단이 HangarScreen.CONTENT_TOP 과 갈렸다').toBe(C.CONTENT_TOP);
+    const rows = Math.floor((box.bottom - C.GRID_TOP + C.GAP) / (C.CELL + C.GAP));
     expect(rows, '그리드 3행이 유지돼야 한다').toBe(3);
   });
 

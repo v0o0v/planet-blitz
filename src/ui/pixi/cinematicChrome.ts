@@ -83,7 +83,7 @@ interface Baked {
 
 /** 캔버스 + 2D 컨텍스트. 없는 환경(테스트/SSR)이면 `null`. */
 function bakeCanvas(w: number, h: number): Baked | null {
-  if (typeof document === 'undefined') return null;
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(w));
   canvas.height = Math.max(1, Math.round(h));

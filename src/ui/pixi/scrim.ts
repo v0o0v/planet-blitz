@@ -23,12 +23,17 @@ import { CanvasSource, Texture } from 'pixi.js';
  * `null` — 호출부는 스크림 없이도 화면을 세울 수 있어야 한다.
  */
 export function verticalScrimTexture(topAlpha: number, bottomAlpha: number): Texture | null {
-  if (typeof document === 'undefined') return null;
+  // ⚠️ `typeof document === 'undefined'` 만으로는 부족하다. 이 리포의 UI 테스트는 **document 를
+  // 스텁으로 채워 넣고** 필요한 API 만 붙이므로, `document` 는 있는데 `createElement` 가 없는
+  // 상태가 실제로 존재한다 — 격납고 시네마틱 전환에서 이 경로가 30건을 던졌다. 존재가 아니라
+  // **호출 가능성**을 물어야 한다.
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
   const h = 256;
   const canvas = document.createElement('canvas');
   canvas.width = 1;
   canvas.height = h;
-  const ctx = canvas.getContext('2d');
+  // 스텁 캔버스는 `getContext` 자체가 없을 수 있다(위와 같은 이유).
+  const ctx = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
   if (ctx === null) return null;
   for (let i = 0; i < h; i++) {
     // 감마 1.6 — 선형이면 위쪽이 너무 빨리 어두워져 키아트를 먹는다.
