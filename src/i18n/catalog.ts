@@ -1521,6 +1521,10 @@ export const EN = {
   'def3.cmd.loading': 'Loading…',
   'def3.cmd.preview': 'Preview',
   'def3.cmd.previewHint': 'This is what an attacker actually sees on this layer.',
+  // 슬롯 패널 제목은 세 레이어 공통이다 — 각인 제목은 패널에 구워지므로 레이어마다 다르면
+  // 탭 전환 때마다 석재를 다시 구워야 한다(어느 레이어인지는 탭 바가 이미 말한다).
+  'def3.cmd.slots': 'Deployment slots',
+  'def3.cmd.core.note': 'Core modules are consumable instances, handled on their own screen.',
   'def3.cmd.slots.l1': 'Wave slots',
   'def3.cmd.slots.l2': 'Facility sockets',
   'def3.cmd.slots.l3': 'Core room',
@@ -3130,6 +3134,8 @@ export const KO: Record<MessageKey, string> = {
   'def3.cmd.loading': '불러오는 중…',
   'def3.cmd.preview': '미리보기',
   'def3.cmd.previewHint': '공격자가 이 레이어에서 실제로 보는 모습이다.',
+  'def3.cmd.slots': '배치 슬롯',
+  'def3.cmd.core.note': '코어 모듈은 소모성 인스턴스라 전용 화면에서 다룬다.',
   'def3.cmd.slots.l1': '웨이브 슬롯',
   'def3.cmd.slots.l2': '설비 소켓',
   'def3.cmd.slots.l3': '코어방',
