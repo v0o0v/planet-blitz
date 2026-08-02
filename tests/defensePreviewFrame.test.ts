@@ -470,12 +470,28 @@ describe('프리뷰 판독성 계약', () => {
     expect(marks).toBeGreaterThan(sprites);
   });
 
-  it('프리뷰 노드는 화면 루트 맨 앞이다 — 액자(fillAlpha 0.96) 아래면 4.6% 로 눌린다', () => {
-    // 실측 화면의 루트 자식 수 14. 구 동작(상수 1 = 배경 바로 위)은 이 계약을 깬다.
-    expect(previewChildIndex(14)).toBe(13);
-    expect(previewChildIndex(14)).toBeGreaterThan(1);
-    // 방어적: 자식이 없어도 음수 인덱스를 내지 않는다(setChildIndex 가 던진다).
+  it('프리뷰 노드는 창 패널 **바로 뒤**다 — 앞에 두면 창 처리를 통째로 가린다', () => {
+    /**
+     * ⚠️ 이 단언은 2026-08-03 AAA 시네마틱 전환에서 **뒤집혔다.**
+     *
+     * 옛 계약은 "루트 맨 앞"이었고 근거도 실측이었다 — 나무 `nineSlicePanel` 이
+     * `fillAlpha: 0.96` 으로 프리뷰를 덮어 화면 기여분이 **4.6%** 였다(프리뷰 배경
+     * `0x0b0a18` 이 (27,23,45) 로, 마커 링 `0xff6a5a` 가 (37,27,48) 로 찍혔다).
+     *
+     * 그 **전제가 사라졌다.** 액자가 `cinematicPanel` 의 `window` 변종으로 바뀌었고, 그것은
+     * 링만 굽고 안쪽을 **파낸다** — 덮는 면 자체가 없다. 반대로 앞에 두면 프리뷰가 창의
+     * 석재 단면·안쪽 AO·유리 반사·바닥 스크림을 전부 가려 개구부가 유리창이 아니라 검은
+     * 사각이 된다(실화면에서 AO 그라디언트가 프리뷰 위에 한 픽셀도 안 나타났다).
+     *
+     * 그래서 인자의 의미도 바뀌었다: **자식 수**가 아니라 **창 패널의 인덱스**다.
+     * "판독성"은 이제 z 순서가 아니라 뷰포트가 개구부와 일치하는지로 지켜지고, 그쪽은
+     * `tests/defenseCommandAaaLayout.test.ts` 가 `cinematicWindowOpening` 과 대조해 잠근다.
+     */
+    expect(previewChildIndex(2)).toBe(2);
+    expect(previewChildIndex(13)).toBe(13);
+    // 방어적: 음수 인덱스를 내지 않는다(setChildIndex 가 던진다).
     expect(previewChildIndex(0)).toBe(0);
+    expect(previewChildIndex(-5)).toBe(0);
   });
 
   it('링 불투명도: 테두리는 거의 불투명, 채움은 아트를 지우지 않는다', () => {
