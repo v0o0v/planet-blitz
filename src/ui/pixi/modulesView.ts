@@ -1035,6 +1035,19 @@ export class ModulesScreen {
     });
   }
 
+  /**
+   * 비활성일 때 쓸 톤.
+   *
+   * ⚠️ `PixiButton.setEnabled(false)` 는 container 알파를 **0.4** 로 떨어뜨린다. 금 톤은 라벨이
+   * `COLOR.darkLabel`(진한 갈색)이라 밝은 판이 흐려지는 순간 글자가 **통째로 사라진다** —
+   * 실화면에서 `합성 확정 (2/3)` 과 `구매함` 이 빈 판때기로 찍혔다. 정작 그 숫자가 사용자가
+   * 알아야 할 정보다. 옛 나무 구현도 같은 이유로 비활성이면 텍스처를 `ui_btn_wood` 로 바꿨다
+   * — 그 규율을 톤으로 옮긴다(석재 톤은 라벨이 밝아 0.4 에서도 읽힌다).
+   */
+  private toneFor(tone: ChromeTone, enabled: boolean): ChromeTone {
+    return enabled ? tone : 'stone';
+  }
+
   /** 시네마틱 버튼 — 기존 `PixiButton` 에 석재 텍스처만 주입한다(로직은 그대로). */
   private chromeButton(o: {
     tone: ChromeTone;
@@ -1321,11 +1334,16 @@ export class ModulesScreen {
     if (host === null) return;
     this.clearHost(host);
 
-    // --- 왼쪽 위: 보관 게이지 ---
+    // --- 왼쪽 아래 줄에 무엇이 앉는지 먼저 정한다 — 게이지의 세로 자리가 거기서 갈린다. ---
     const gauge = storageGauge(this.inventory.length);
     const gaugeShown = this.online && !this.invFailed;
+    // 만석 경고는 토스트가 없을 때만 그 자리를 쓴다(실제 조작 결과가 정보량이 더 많다).
+    const line = this.msgText !== '' ? this.msgText : gaugeShown && gauge.full ? t('mod.inv.full') : '';
+
+    // --- 왼쪽: 보관 게이지. 아래 줄이 비면 **띠 세로 중앙**으로 내려온다 —
+    //     위쪽에 붙여 두면 아래 절반이 빈 자리가 된다(실화면 1차 확인).
     if (gaugeShown) {
-      const gy = FOOT_Y + 16;
+      const gy = line === '' ? FOOT_Y + FOOT_H / 2 : FOOT_Y + 16;
       const gLabel = this.label(
         t('mod.inv.storage', { count: gauge.count, cap: gauge.cap }),
         18,
@@ -1352,9 +1370,7 @@ export class ModulesScreen {
       host.addChild(meter);
     }
 
-    // --- 왼쪽 아래: 상태 문구. 만석 경고는 토스트가 없을 때만 그 자리를 쓴다
-    //     (실제 조작 결과가 더 정보량이 많으므로 토스트가 우선한다).
-    const line = this.msgText !== '' ? this.msgText : gaugeShown && gauge.full ? t('mod.inv.full') : '';
+    // --- 왼쪽 아래: 상태 문구(토스트 또는 만석 경고). ---
     if (line !== '') {
       const msg = this.label(
         line,
@@ -1379,13 +1395,14 @@ export class ModulesScreen {
       hint.position.set(sideX + FUSE_SIDE_W / 2, FOOT_Y + FOOT_H / 2);
       host.addChild(hint);
 
+      const startEnabled = !this.busy && this.inventory.length >= MODULE_FUSION_INPUT_COUNT;
       const start = this.chromeButton({
-        tone: 'gold',
+        tone: this.toneFor('gold', startEnabled),
         width: FUSE_MAIN_W,
         height: FOOT_H,
         fontSize: 21,
         label: t('mod.inv.fuseStart'),
-        enabled: !this.busy && this.inventory.length >= MODULE_FUSION_INPUT_COUNT,
+        enabled: startEnabled,
         onClick: () => {
           this.fuseMode = true;
           this.fusePicks.clear();
@@ -1415,13 +1432,14 @@ export class ModulesScreen {
     host.addChild(cancel.container);
 
     const check = checkFusionSelection(this.pickedOwned());
+    const confirmEnabled = !this.busy && check.ok;
     const confirm = this.chromeButton({
-      tone: 'gold',
+      tone: this.toneFor('gold', confirmEnabled),
       width: FUSE_MAIN_W,
       height: FOOT_H,
       fontSize: 21,
       label: t('mod.inv.fuseConfirm', { n: this.fusePicks.size }),
-      enabled: !this.busy && check.ok,
+      enabled: confirmEnabled,
       onClick: () => void this.doFuse(),
     });
     confirm.container.position.set(mainX, FOOT_Y);
@@ -1449,16 +1467,10 @@ export class ModulesScreen {
     const kind = slotPanelKind({ equip, failed: this.equipFailed });
     if (kind !== 'slots' || equip === null || equip.defenseId === null) {
       // 조회 실패("모른다")와 방어 미배치("아직 안 짰다")를 다른 문구로 가른다.
-      // 실패는 사용자가 손쓸 수 있는 상태라 챔버 안에 [다시 시도]가 함께 앉는다.
-      const text = t(panelMessageKey(kind) ?? 'mod.slot.noBase');
-      if (kind === 'failed') {
-        this.emptyWell(host, BOX_SLOT, text, {
-          label: t('mod.load.retry'),
-          onClick: () => void this.reload(),
-        });
-      } else {
-        this.emptyWell(host, BOX_SLOT, text);
-      }
+      // ⚠️ 실패해도 여기에는 [다시 시도]를 두지 않는다 — 보관함·장착은 **한 번의 재조회**가
+      // 함께 받아 오므로 버튼이 둘이면 같은 일을 하는 버튼이 두 개가 된다(실화면 1차 확인).
+      // 재시도는 가운데 보관함 챔버가 하나만 갖는다.
+      this.emptyWell(host, BOX_SLOT, t(panelMessageKey(kind) ?? 'mod.slot.noBase'));
       return;
     }
     const defenseId = equip.defenseId;
@@ -1524,11 +1536,21 @@ export class ModulesScreen {
       this.refresh();
     });
 
+    /**
+     * 내용은 **inner 에 담아 최종 높이 안에서 세로 중앙에 놓는다**(실화면 1차 확인).
+     *
+     * 슬롯은 2칸뿐이라 {@link fillRowHeights} 가 행을 상한까지 늘리는데, 빈 슬롯은 글자가 세 줄
+     * 뿐이라 늘어난 판 아래쪽 150px 가 통째로 빈 면이 됐다 — 패널이 아니라 **행 안에** 생긴 빈
+     * 자리다. 중앙에 놓으면 늘어난 판이 "여유 있는 칸"으로 읽히고 위아래가 대칭이 된다.
+     */
+    const inner = new Container();
+    row.addChild(inner);
+
     const textW = MODULES_BOXES.slotRowTextW;
     let cy = 14;
     const put = (el: Text): void => {
       el.position.set(ROW_PAD, cy);
-      row.addChild(el);
+      inner.addChild(el);
       cy += el.height + 6;
     };
 
@@ -1558,7 +1580,7 @@ export class ModulesScreen {
       put(this.wrapped(moduleAffixOneLine(owned.module), 15, COLOR.muted, w - ROW_PAD * 2));
 
       clear = this.chromeButton({
-        tone: 'stone',
+        tone: 'stone', // 이미 석재 — 비활성 대체가 필요 없다
         width: ROW_BTN_W,
         height: ROW_BTN_H,
         fontSize: 17,
@@ -1566,10 +1588,13 @@ export class ModulesScreen {
         enabled: !this.busy,
         onClick: () => void this.doEquip(defenseId, index, null),
       });
-      clear.container.x = w - ROW_BTN_W - ROW_PAD;
+      // 해제 버튼은 글자 뭉치 **바로 아래**에 흐름대로 붙는다 — 판 바닥에 고정하면 늘어난
+      // 행에서 글자와 버튼 사이가 통째로 빈다.
+      clear.container.position.set(w - ROW_BTN_W - ROW_PAD, cy + 4);
       // 해제 버튼 클릭이 행 선택 토글까지 함께 발동하지 않게 끊는다.
       stopRowPropagation(clear.container);
-      row.addChild(clear.container);
+      inner.addChild(clear.container);
+      cy += ROW_BTN_H + 4;
     }
 
     const natural = Math.max(96, cy + 8);
@@ -1579,8 +1604,7 @@ export class ModulesScreen {
       finish: (h: number) => {
         // 바탕 판은 **맨 뒤**로 넣는다(내용이 이미 얹혀 있다).
         row.addChildAt(rowPlate(w, h, selected), 0);
-        // 해제 버튼은 행 **아래쪽**에 붙인다(글자 뭉치가 위에서 자란다).
-        if (clear !== null) clear.container.y = h - ROW_BTN_H - 14;
+        inner.y = Math.max(0, Math.round((h - natural) / 2));
       },
     };
   }
@@ -1598,7 +1622,10 @@ export class ModulesScreen {
       return;
     }
     if (!this.online) {
-      this.emptyWell(host, BOX_INV, t('mod.slot.offline'));
+      // ⚠️ 왼쪽 슬롯 패널이 이미 "서버 연결이 필요하다"를 말한다 — 같은 문장을 두 번 쓰면
+      // 화면이 자기 말을 되풀이하는 것으로 읽힌다(실화면 1차 확인). 여기서는 **보관함이 어디에
+      // 사는지**를 말한다. 상점 패널도 같은 이유로 제 나름의 문장을 쓴다.
+      this.emptyWell(host, BOX_INV, t('mod.inv.offlineNote'));
       return;
     }
 
@@ -1710,7 +1737,7 @@ export class ModulesScreen {
     } else {
       const canEquip = !isEquipped && this.equip?.defenseId != null && !this.busy;
       const eq = this.chromeButton({
-        tone: 'blue',
+        tone: this.toneFor('blue', canEquip),
         width: ROW_BTN_W,
         height: ROW_BTN_H,
         fontSize: 17,
@@ -1824,6 +1851,9 @@ export class ModulesScreen {
     const bought = this.purchases.includes(slotIndex);
     const rarityColor = hexColor(moduleRarityColor(mod.rarity));
     const row = new Container();
+    // 슬롯 행과 같은 이유로 내용을 inner 에 담아 세로 중앙에 놓는다({@link makeSlotRow} 주석).
+    const inner = new Container();
+    row.addChild(inner);
     const textW = MODULES_BOXES.shopRowTextW;
 
     const head = this.label(
@@ -1847,13 +1877,14 @@ export class ModulesScreen {
 
     const affix = this.wrapped(moduleAffixOneLine(mod), 15, SLAB_BODY_FILL, textW);
     affix.position.set(ROW_PAD, 62);
-    row.addChild(head, charges, affix);
+    inner.addChild(head, charges, affix);
 
-    const natural = 62 + affix.height + 10 + ROW_BTN_H + 14;
+    const buyY = 62 + affix.height + 10;
+    const natural = buyY + ROW_BTN_H + 12;
 
     const canBuy = !bought && !storageFull && !this.busy;
     const buy = this.chromeButton({
-      tone: 'gold',
+      tone: this.toneFor('gold', canBuy),
       width: 150,
       height: ROW_BTN_H,
       fontSize: 18,
@@ -1861,15 +1892,15 @@ export class ModulesScreen {
       enabled: canBuy,
       onClick: () => void this.doBuy(slotIndex),
     });
-    buy.container.x = w - 150 - ROW_PAD;
-    row.addChild(buy.container);
+    buy.container.position.set(w - 150 - ROW_PAD, buyY);
+    inner.addChild(buy.container);
 
     return {
       node: row,
       natural,
       finish: (h: number) => {
         row.addChildAt(rowPlate(w, h, false), 0);
-        buy.container.y = h - ROW_BTN_H - 14;
+        inner.y = Math.max(0, Math.round((h - natural) / 2));
       },
     };
   }

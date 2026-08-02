@@ -1207,6 +1207,7 @@ export const EN = {
   'mod.inv.pick': 'Pick',
   'mod.inv.picked': 'Picked',
   'mod.inv.fuseHint': 'Fuse 3 of the same grade into one — with a chance to promote.',
+  'mod.inv.offlineNote': 'Your collection lives on the server. Sign in and it fills up here.',
   'mod.inv.more': 'Scroll for more modules.',
   // 상점
   'mod.shop.head': 'Daily Shop',
@@ -2856,6 +2857,7 @@ export const KO: Record<MessageKey, string> = {
   'mod.inv.pick': '선택',
   'mod.inv.picked': '선택됨',
   'mod.inv.fuseHint': '동급 3개를 하나로 — 확률로 한 등급 위가 됩니다.',
+  'mod.inv.offlineNote': '보관함은 서버가 갖고 있습니다. 로그인하면 여기가 채워집니다.',
   'mod.inv.more': '스크롤하면 모듈이 더 있습니다.',
   // 상점
   'mod.shop.head': '일일 상점',
