@@ -24,6 +24,8 @@ import {
   coreModulesLayout,
   MODULES_BOXES,
   MODULES_MODAL,
+  salvageModalHeight,
+  salvageModalBlockH,
   fillRowHeights,
   GEAR_BAND_W,
   GEAR_BAND_H,
@@ -282,35 +284,67 @@ describe('목록 — 빈 자리 금지(행이 남는 세로를 나눠 갖는다)
     expect(hs[0]).toBe(MODULES_BOXES.invRowMaxH);
   });
 
+  it('⚠️ 상한이 자연 높이를 **깎지 않는다**(내용이 판 밖으로 나간다)', () => {
+    /*
+     * 실화면 2차에서 잡은 결함. 효과를 수치로 적기 시작하자 슬롯 행 자연 높이가 상한(240)을
+     * 넘겼는데 `Math.min(maxH, ...)` 만 쓰고 있어 행이 **줄어들었고**, [해제] 버튼이 판 아래로
+     * 반쯤 튀어나온 채 찍혔다. 목록이 짧을 때만 나타난다 — 길면 위 `total >= avail` 가지에서
+     * 그대로 반환되므로 이 경로를 안 탄다.
+     */
+    const tall = 300;
+    const hs = fillRowHeights([tall, 96], gap, MODULES_BOXES.slots.h, MODULES_BOXES.slotRowMaxH);
+    expect(hs[0], '자연 높이가 상한 때문에 깎였다').toBeGreaterThanOrEqual(tall);
+    // 짧은 쪽은 정상적으로 상한까지 늘어난다.
+    expect(hs[1]).toBe(MODULES_BOXES.slotRowMaxH);
+    // 모든 행이 자연 높이 이상이라는 것이 이 함수의 불변식이다.
+    for (const [i, nat] of [tall, 96].entries()) {
+      expect(hs[i] ?? 0, `행 ${i}`).toBeGreaterThanOrEqual(nat);
+    }
+  });
+
   it('빈 배열·잘못된 가용 세로에서도 안전하다', () => {
     expect(fillRowHeights([], gap, 500, 100)).toEqual([]);
     expect(fillRowHeights([84, 84], gap, -10, 200)).toEqual([84, 84]);
   });
 });
 
-describe('분해 확인 팝업 — 높이를 내용에서 역산해 빈 자리가 0 이다', () => {
-  it('높이가 세로 뭉치에서 정확히 역산된다(등호)', () => {
-    expect(MODULES_MODAL.h).toBe(MODULES_MODAL.boxY + MODULES_MODAL.blockH + MODULES_MODAL.edgePad);
-    // 뭉치도 구성 요소의 합이다 — 본문 · 틈 · 버튼 한 줄.
-    expect(MODULES_MODAL.blockH).toBeGreaterThan(MODULES_MODAL.bodyH + MODULES_MODAL.btnH);
+describe('분해 확인 팝업 — 높이를 **효과 줄 수에서** 역산해 빈 자리가 0 이다', () => {
+  it('줄이 하나 늘면 높이도 정확히 한 줄만큼 는다(등호)', () => {
+    /*
+     * 실화면 2차에서 잡은 결함. 본문 높이를 상수로 박아 뒀는데 효과를 수치로 적기 시작하자
+     * 등급 높은 모듈의 블록이 5줄이 되어 **경고 문장과 버튼을 뚫고 겹쳤다**. 팝업이 담는 것이
+     * 가변 길이면 높이도 그 길이에서 나와야 한다.
+     */
+    for (let n = MODULES_MODAL.linesMin; n < MODULES_MODAL.linesMax; n++) {
+      expect(salvageModalHeight(n + 1) - salvageModalHeight(n), `n=${n}`).toBe(MODULES_MODAL.lineH);
+    }
+    expect(salvageModalHeight(3)).toBe(
+      MODULES_MODAL.boxY + salvageModalBlockH(3) + MODULES_MODAL.edgePad,
+    );
   });
 
-  it('콘텐츠 상자가 실제 패널 상자와 같다(복제 상수 드리프트)', () => {
-    const panel = makeCinematicPanel({
-      width: MODULES_MODAL.w,
-      height: MODULES_MODAL.h,
-      variant: 'slab',
-      title: '분해',
-    });
-    expect(panel.box.y).toBe(MODULES_MODAL.boxY);
-    expect(panel.box.y + panel.box.h).toBe(MODULES_MODAL.h - MODULES_MODAL.edgePad);
-    // 본문 뭉치가 상자 바닥을 뚫지 않는다(버튼은 바닥 기준으로 앉는다).
-    expect(MODULES_MODAL.bodyH).toBeLessThan(panel.box.h - MODULES_MODAL.btnH);
-    panel.destroy();
+  it('줄 수가 [1, 8] 로 클램프된다', () => {
+    expect(salvageModalHeight(0)).toBe(salvageModalHeight(MODULES_MODAL.linesMin));
+    expect(salvageModalHeight(99)).toBe(salvageModalHeight(MODULES_MODAL.linesMax));
   });
 
-  it('팝업이 화면 안에 들어간다', () => {
-    expect(MODULES_MODAL.h).toBeLessThan(DESIGN_HEIGHT);
+  it('어떤 줄 수에서도 뭉치가 상자 안에서 끝난다(복제 상수 드리프트 + 겹침 금지)', () => {
+    for (const n of [1, 3, 5, MODULES_MODAL.linesMax]) {
+      const h = salvageModalHeight(n);
+      const panel = makeCinematicPanel({ width: MODULES_MODAL.w, height: h, variant: 'slab', title: '분해' });
+      expect(panel.box.y).toBe(MODULES_MODAL.boxY);
+      expect(panel.box.y + panel.box.h).toBe(h - MODULES_MODAL.edgePad);
+      // 머리 + 효과 줄 + 경고 문장이 **버튼 줄 위에서** 끝나야 한다(겹치면 여기서 빨개진다).
+      const used = MODULES_MODAL.headH + 8 + n * MODULES_MODAL.lineH + 14 + MODULES_MODAL.bodyH;
+      expect(used, `n=${n} 에서 본문이 버튼을 뚫는다`).toBeLessThanOrEqual(
+        panel.box.h - MODULES_MODAL.btnH,
+      );
+      panel.destroy();
+    }
+  });
+
+  it('최대 줄 수에서도 화면 안에 들어간다', () => {
+    expect(salvageModalHeight(MODULES_MODAL.linesMax)).toBeLessThan(DESIGN_HEIGHT - 40);
     expect(MODULES_MODAL.w).toBeLessThan(DESIGN_WIDTH);
   });
 });

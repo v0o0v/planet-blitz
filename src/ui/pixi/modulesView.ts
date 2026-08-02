@@ -146,7 +146,7 @@ import {
 import {
   moduleRarityColor,
   moduleRarityLabel,
-  moduleAffixOneLine,
+  moduleEffectLines,
   isLowCharge,
   storageGauge,
   checkFusionSelection,
@@ -325,6 +325,14 @@ const TAIL_WELL_MIN_H = 72;
  * 넘치면(스크롤이 붙으면) 입력 그대로 돌려준다. 나눠 준 뒤에도 상한 때문에 남을 수 있고,
  * 그 잔여는 호출부가 꼬리 챔버로 받는다. 반올림 잔여는 **행 수 미만**이다.
  * (방어 사령부 `fillRowHeights` 복제 — 그 파일은 공용 모듈이 아니라 화면이다.)
+ *
+ * ⚠️ **상한은 늘리기만 막는다. 자연 높이를 깎지 않는다.**
+ * `Math.min(maxH, h + add)` 만 쓰면 자연 높이가 상한보다 큰 행이 **줄어들어** 내용이 판 밖으로
+ * 삐져나온다 — 효과를 수치로 적기 시작하자 슬롯 행이 상한(240)을 넘겼고 `[해제]` 버튼이 판
+ * 아래로 반쯤 튀어나온 채로 찍혔다(실화면 2차 확인). 목록이 짧을 때만 나타나므로(길면 위
+ * `total >= avail` 에서 그대로 반환된다) 눈으로만 잡히는 유형이다.
+ * ⚠️ 같은 산술이 `defenseCommand.ts` 에도 복제돼 있다 — 거기는 아직 자연 높이가 상한 아래라
+ * 증상이 없지만 같은 함정을 안고 있다(후속 칩).
  */
 export function fillRowHeights(
   heights: readonly number[],
@@ -338,7 +346,7 @@ export function fillRowHeights(
   if (total >= avail) return [...heights];
   const add = Math.floor((avail - total) / n);
   if (add <= 0) return [...heights];
-  return heights.map((h) => Math.min(maxH, h + add));
+  return heights.map((h) => Math.max(h, Math.min(maxH, h + add)));
 }
 
 // --- 헤더 컨트롤(정제소·방어 사령부와 **같은 x**) ---
@@ -365,6 +373,18 @@ const SLAB_BODY_FILL = 0xe4dac7;
 const ROW_FACE = 0x3b3327;
 const ROW_GROOVE = 0x17130d;
 const ROW_RADIUS = 10;
+/**
+ * 모듈이 하는 일을 **한 줄에 하나씩, 전부 수치로** 적은 블록(사용자 지시 2026-08-03).
+ *
+ * 그때까지 이 화면은 `소화의 +12` 처럼 표기명 + 롤 값만 보여 줬다 — 값은 있는데 그 값이
+ * **무엇을 얼마나** 바꾸는지가 없었고, normal 모듈은 `기저 효과만` 한 마디로 끝났지만 실제로는
+ * 화력 +3% · 코어 HP +3% 가 무조건 걸린다(있는 효과를 없다고 말하고 있었다).
+ * 조립 규칙과 부호 규율은 `src/ui/modulesView.ts` 의 {@link moduleEffectLines} 주석이 정본이다.
+ */
+function effectText(mod: ModuleInstance): string {
+  return moduleEffectLines(mod).join('\n');
+}
+
 /** 잔여 1회 경고·만석 경고에 쓰는 주황(구 구현 승계). */
 const WARN_COLOR = 0xffb14c;
 /** 장착 모듈 강조색(구 구현 승계 — 글자색으로만 쓴다). */
@@ -454,17 +474,50 @@ export const MODULES_BOXES = {
  * `68 = TITLE_BAND_H(52) + CONTENT_GAP(16)` · `24 = EDGE_PAD` — 제목 띠가 있는 시네마틱
  * 패널의 콘텐츠 상자 기하다. `makeModal`(나무)은 고치지 않는다(다른 화면 다섯이 쓴다).
  */
-const CONFIRM_BODY_H = 96;
-const CONFIRM_BODY_GAP = 20;
+const CONFIRM_HEAD_H = 30;
+const CONFIRM_HEAD_GAP = 8;
+/** 효과 한 줄이 쓰는 세로. 줄은 **줄바꿈 없이** 가로 축소로 맞춘다 — 그래야 줄 수가 정확하다. */
+const CONFIRM_LINE_H = 22;
+const CONFIRM_LINES_GAP = 14;
+const CONFIRM_BODY_H = 26;
+const CONFIRM_BODY_GAP = 16;
 const CONFIRM_BTN_H = 56;
-const CONFIRM_BLOCK_H = CONFIRM_BODY_H + CONFIRM_BODY_GAP + CONFIRM_BTN_H;
+const CONFIRM_LINES_MIN = 1;
+const CONFIRM_LINES_MAX = 8;
+
+/**
+ * 분해 확인 팝업의 세로 뭉치 — **효과 줄 수에서 역산**한다(버려지는 세로 0).
+ *
+ * ⚠️ 처음에는 본문 높이를 상수 96 으로 박았는데, 효과를 수치로 적기 시작하자 등급이 높은 모듈의
+ * 효과 블록이 5줄이 되어 **경고 문장과 버튼을 뚫고 겹쳤다**(실화면 2차 확인). 팝업이 담는 것이
+ * 가변 길이면 높이도 그 길이에서 나와야 한다 — 방어 사령부 `pickModalHeight` 와 같은 처방이다.
+ */
+export function salvageModalBlockH(lineCount: number): number {
+  const n = Math.max(CONFIRM_LINES_MIN, Math.min(CONFIRM_LINES_MAX, Math.trunc(lineCount)));
+  return (
+    CONFIRM_HEAD_H +
+    CONFIRM_HEAD_GAP +
+    n * CONFIRM_LINE_H +
+    CONFIRM_LINES_GAP +
+    CONFIRM_BODY_H +
+    CONFIRM_BODY_GAP +
+    CONFIRM_BTN_H
+  );
+}
+
+/** 분해 확인 팝업 높이 — 효과 줄 수에서 역산. */
+export function salvageModalHeight(lineCount: number): number {
+  return TITLED_BOX_Y + salvageModalBlockH(lineCount) + PANEL_EDGE_PAD;
+}
 
 export const MODULES_MODAL = {
   w: 760,
-  h: TITLED_BOX_Y + CONFIRM_BLOCK_H + PANEL_EDGE_PAD,
-  blockH: CONFIRM_BLOCK_H,
+  headH: CONFIRM_HEAD_H,
+  lineH: CONFIRM_LINE_H,
   bodyH: CONFIRM_BODY_H,
   btnH: CONFIRM_BTN_H,
+  linesMin: CONFIRM_LINES_MIN,
+  linesMax: CONFIRM_LINES_MAX,
   /** 콘텐츠 상자 기하 — 테스트가 역산식을 되짚는다. */
   boxY: TITLED_BOX_Y,
   edgePad: PANEL_EDGE_PAD,
@@ -1577,7 +1630,7 @@ export class ModulesScreen {
       if (isLowCharge(owned.chargesLeft)) {
         put(this.wrapped(t('mod.slot.lastCharge'), 15, WARN_COLOR, w - ROW_PAD * 2, '700'));
       }
-      put(this.wrapped(moduleAffixOneLine(owned.module), 15, COLOR.muted, w - ROW_PAD * 2));
+      put(this.wrapped(effectText(owned.module), 15, COLOR.muted, w - ROW_PAD * 2));
 
       clear = this.chromeButton({
         tone: 'stone', // 이미 석재 — 비활성 대체가 필요 없다
@@ -1712,7 +1765,7 @@ export class ModulesScreen {
     );
     charges.position.set(ROW_PAD + grade.width + 10, 16);
 
-    const affix = this.wrapped(moduleAffixOneLine(owned.module), 15, COLOR.muted, textW);
+    const affix = this.wrapped(effectText(owned.module), 15, COLOR.muted, textW);
     affix.position.set(ROW_PAD, 42);
     row.addChild(grade, charges, affix);
 
@@ -1875,7 +1928,7 @@ export class ModulesScreen {
     );
     charges.position.set(ROW_PAD, 38);
 
-    const affix = this.wrapped(moduleAffixOneLine(mod), 15, SLAB_BODY_FILL, textW);
+    const affix = this.wrapped(effectText(mod), 15, SLAB_BODY_FILL, textW);
     affix.position.set(ROW_PAD, 62);
     inner.addChild(head, charges, affix);
 
@@ -1938,11 +1991,15 @@ export class ModulesScreen {
     scrim.on('pointertap', () => this.closeModal());
     host.addChild(scrim);
 
+    // 높이는 **효과 줄 수에서 역산**한다 — 팝업이 담는 것이 가변 길이면 높이도 거기서 나와야
+    // 한다(상수로 박았더니 5줄짜리 모듈이 경고 문장과 버튼을 뚫었다 — 실화면 2차 확인).
+    const lines = moduleEffectLines(owned.module).slice(0, MODULES_MODAL.linesMax);
+    const modalH = salvageModalHeight(lines.length);
     const px = Math.round((DESIGN_WIDTH - MODULES_MODAL.w) / 2);
-    const py = Math.round((DESIGN_HEIGHT - MODULES_MODAL.h) / 2);
+    const py = Math.round((DESIGN_HEIGHT - modalH) / 2);
     const panel = makeCinematicPanel({
       width: MODULES_MODAL.w,
-      height: MODULES_MODAL.h,
+      height: modalH,
       variant: 'slab',
       title: t('mod.salvage.confirm.title'),
       screenX: px,
@@ -1956,7 +2013,7 @@ export class ModulesScreen {
     this.modalPanel = panel;
 
     const box = panel.box;
-    // 무엇을 없애는지 보여야 확인이 확인이 된다(등급·잔여·어픽스 한 줄).
+    // 무엇을 없애는지 보여야 확인이 확인이 된다(등급 · 잔여 · 효과 전량).
     const what = this.label(
       `${moduleRarityLabel(owned.rarity)} · ${t('mod.inv.charges', { n: owned.chargesLeft })}`,
       22,
@@ -1968,25 +2025,31 @@ export class ModulesScreen {
     what.position.set(box.x + box.w / 2, box.y);
     panel.container.addChild(what);
 
-    const affix = this.wrapped(moduleAffixOneLine(owned.module), 16, COLOR.muted, box.w);
-    affix.anchor.set(0.5, 0);
-    affix.position.set(box.x + box.w / 2, box.y + 32);
-    panel.container.addChild(affix);
+    // ⚠️ 효과는 **줄바꿈 없이 한 줄씩** 놓는다(`label` 이 넘치면 가로로 줄인다). 자동 줄바꿈을
+    // 쓰면 렌더 줄 수가 역산에 쓴 줄 수와 갈려 높이가 다시 거짓말한다.
+    let ly = box.y + MODULES_MODAL.headH + 8;
+    for (const line of lines) {
+      const el = this.label(line, 16, SLAB_BODY_FILL, '400', box.w);
+      el.anchor.set(0.5, 0);
+      el.position.set(box.x + box.w / 2, ly);
+      panel.container.addChild(el);
+      ly += MODULES_MODAL.lineH;
+    }
 
-    const body = this.wrapped(t('mod.salvage.confirm.body'), 18, SLAB_BODY_FILL, box.w);
-    body.anchor.set(0.5, 1);
-    body.position.set(box.x + box.w / 2, box.y + CONFIRM_BODY_H);
+    const body = this.label(t('mod.salvage.confirm.body'), 18, WARN_COLOR, '700', box.w);
+    body.anchor.set(0.5, 0);
+    body.position.set(box.x + box.w / 2, ly + 14);
     panel.container.addChild(body);
 
-    // 버튼은 **패널 바닥 기준**으로 놓는다 — 본문 줄 수가 로케일에 따라 변하는데 본문 아래에
+    // 버튼은 **패널 바닥 기준**으로 놓는다 — 본문 길이가 로케일에 따라 변하는데 본문 아래에
     // 이어 붙이면 긴 문장에서 패널 밖으로 밀린다(챔피언 선택 실측 규율).
     const gap = 16;
     const bw = Math.floor((box.w - gap) / 2);
-    const by = box.bottom - CONFIRM_BTN_H;
+    const by = box.bottom - MODULES_MODAL.btnH;
     const ok = this.chromeButton({
       tone: 'red',
       width: bw,
-      height: CONFIRM_BTN_H,
+      height: MODULES_MODAL.btnH,
       fontSize: 20,
       label: t('mod.salvage.confirm.ok'),
       enabled: !this.busy,
@@ -2001,7 +2064,7 @@ export class ModulesScreen {
     const cancel = this.chromeButton({
       tone: 'stone',
       width: bw,
-      height: CONFIRM_BTN_H,
+      height: MODULES_MODAL.btnH,
       fontSize: 20,
       label: t('mod.salvage.confirm.cancel'),
       onClick: () => this.closeModal(),
