@@ -679,6 +679,46 @@ const ROW_BTN_W = 104;
 const ROW_BTN_H = 40;
 const ROW_PAD = 16;
 
+/**
+ * 행 높이 상한 — 목록이 짧을 때 **행을 늘려 영역을 채우되** 여기서 멈춘다.
+ *
+ * ## 왜 (실화면 1차 확인)
+ * L1 웨이브 슬롯 6행은 자연 높이로 684px 영역 중 **120px 을 빈 갈색 면**으로 남겼고,
+ * 설계도 3행은 **436px** 을 남겼다 — 형제 화면 다섯이 전부 잡아 고친 "쓸모도 볼거리도 아닌
+ * 자리"의 정확한 형태다. 행 수는 슬롯 규격·보유량이 정하므로 행 **개수**로는 못 채운다.
+ *
+ * → 처방 둘. ①남는 세로를 행에 **고르게 나눠 준다**(상한까지). ②그래도 남으면 그 자리를
+ * **파낸 챔버**로 그리고 이름을 준다(정제소 §6-bis 처방) — "빈 패널 면"이 아니라 "아직 안 찬
+ * 자리"가 된다. 상한이 없으면 설계도 1장짜리에서 684px 짜리 행이 나온다.
+ */
+const SLOT_ROW_MAX_H = 132;
+const UNIT_ROW_MAX_H = 120;
+const BP_ROW_H = 76;
+const BP_ROW_MAX_H = 96;
+/** 꼬리 챔버를 그릴 최소 잔여(이보다 작으면 그냥 여백이다). */
+const TAIL_WELL_MIN_H = 72;
+
+/**
+ * 남는 세로를 행에 **고르게 나눈** 새 높이 배열(순수 함수 — Pixi 미의존).
+ *
+ * 넘치면(스크롤이 붙으면) 입력 그대로 돌려준다. 나눠 준 뒤에도 상한 때문에 남을 수 있고,
+ * 그 잔여는 호출부가 꼬리 챔버로 받는다. 반올림 잔여는 **행 수 미만**이다.
+ */
+export function fillRowHeights(
+  heights: readonly number[],
+  gap: number,
+  avail: number,
+  maxH: number,
+): number[] {
+  const n = heights.length;
+  if (n === 0) return [];
+  const total = heights.reduce((a, b) => a + b, 0) + gap * (n - 1);
+  if (total >= avail) return [...heights];
+  const add = Math.floor((avail - total) / n);
+  if (add <= 0) return [...heights];
+  return heights.map((h) => Math.min(maxH, h + add));
+}
+
 // --- 헤더 컨트롤(정제소·연구소와 **같은 x**) ---
 const HEAD_GAP = 12;
 const CHIP_W = 190;
@@ -704,6 +744,13 @@ const ROW_RADIUS = 10;
 const WARN_COLOR = 0xffb14c;
 /** 배치 완료 표식색(구 구현 승계 — 글자색으로만 쓴다). */
 const PLACED_COLOR = 0x8fd94c;
+
+/**
+ * 팝업 암막 알파. **뒤 화면 밝기에 따라 다르다** — 예비역 로스터 0.92 · 챔피언 선택 0.96 ·
+ * 연구소 0.98 이었다. 여기는 밝은 슬래브 **두 장**이 화면을 거의 다 덮어 0.97 로는 뒤 목록
+ * 글자가 그대로 읽혔다(실화면 1차 확인). 실측으로 정한 값이니 눈대중으로 낮추지 마라.
+ */
+const SCRIM_ALPHA = 0.99;
 
 /** 화면 좌표 사각형(디자인 스페이스). */
 export interface DefenseRect {
@@ -783,6 +830,13 @@ export const DEFENSE_BOXES = {
   blockGap: CORE_BLOCK_GAP,
   /** 슬롯 행 폭에서 버튼 둘과 여백을 뺀 글자 폭 — 하한이 있어야 이름이 뭉개지지 않는다. */
   rowTextW: BOX_R.w - ROW_BTN_W * 2 - ROW_PAD * 2 - 12,
+  /** 행 높이 상한과 꼬리 챔버 하한(빈 자리 금지 처방 — {@link fillRowHeights} 주석이 근거). */
+  rowGap: ROW_GAP,
+  slotRowMaxH: SLOT_ROW_MAX_H,
+  unitRowMaxH: UNIT_ROW_MAX_H,
+  bpRowH: BP_ROW_H,
+  bpRowMaxH: BP_ROW_MAX_H,
+  tailWellMinH: TAIL_WELL_MIN_H,
 } as const;
 
 /**
@@ -1789,14 +1843,21 @@ export class DefenseCommandScreen {
     if (tab === DEF_TAB_L2) top = this.renderTemplateChooser(host) + CORE_BLOCK_GAP;
     else if (tab === DEF_TAB_L3) top = this.renderCoreBlock(host) + CORE_BLOCK_GAP;
 
+    const avail = BOX_R.bottom - top;
     const slots = this.tabSlots(tab);
-    const rows = slots.map((s) => this.makeSlotRow(s, BOX_R.w));
-    const bounds = rowBounds(
-      rows.map((r) => r.h),
+    const built = slots.map((s) => this.makeSlotRow(s, BOX_R.w));
+    // 남는 세로를 행이 나눠 갖는다(빈 자리 금지 — {@link fillRowHeights} 주석이 근거).
+    const hs = fillRowHeights(
+      built.map((b) => b.natural),
       ROW_GAP,
+      avail,
+      SLOT_ROW_MAX_H,
     );
+    built.forEach((b, i) => b.finish(hs[i] ?? b.natural));
+
+    const bounds = rowBounds(hs, ROW_GAP);
     const total = bounds.length === 0 ? 0 : (bounds[bounds.length - 1] ?? 0);
-    const maskH = clampToRows(BOX_R.bottom - top, bounds);
+    const maskH = clampToRows(avail, bounds);
     const content = makeScrollArea(host, {
       x: BOX_R.x,
       y: top,
@@ -1809,11 +1870,34 @@ export class DefenseCommandScreen {
       },
     });
     let cy = 0;
-    for (const row of rows) {
-      row.node.position.set(0, cy);
-      content.addChild(row.node);
-      cy += row.h + ROW_GAP;
-    }
+    built.forEach((b, i) => {
+      b.node.position.set(0, cy);
+      content.addChild(b.node);
+      cy += (hs[i] ?? b.natural) + ROW_GAP;
+    });
+    this.tailWell(host, BOX_R, top + Math.min(maskH, total), null);
+  }
+
+  /**
+   * 목록이 영역을 다 못 채우고 남았을 때 그 자리를 **파낸 챔버**로 그리고 이름을 준다.
+   * 정제소 §6-bis 처방 — "빈 패널 면"이 아니라 "아직 안 찬 자리"가 된다. 잔여가
+   * {@link TAIL_WELL_MIN_H} 미만이면 그냥 여백이므로 아무것도 그리지 않는다.
+   */
+  private tailWell(
+    host: Container,
+    box: { x: number; y: number; w: number; bottom: number },
+    usedBottom: number,
+    text: string | null,
+  ): void {
+    const y = usedBottom + ROW_GAP;
+    const h = box.bottom - y;
+    if (h < TAIL_WELL_MIN_H) return;
+    host.addChild(recessedWell(box.x, y, box.w, h));
+    if (text === null) return;
+    const el = this.wrapped(text, 17, COLOR.muted, box.w - 64);
+    el.anchor.set(0.5, 0.5);
+    el.position.set(box.x + box.w / 2, y + h / 2);
+    host.addChild(el);
   }
 
   /** 탭이 보여줄 슬롯 주소 목록. */
@@ -1910,8 +1994,17 @@ export class DefenseCommandScreen {
     return BOX_R.y + TEMPLATE_BLOCK_H;
   }
 
-  /** 슬롯 1행 — 이름 · 내용 · [배치]/[비우기]. 행 전체가 선택 대상이다. */
-  private makeSlotRow(slot: DefenseSlotRef, w: number): { node: Container; h: number } {
+  /**
+   * 슬롯 1행 — 이름 · 내용 · [배치]/[비우기]. 행 전체가 선택 대상이다.
+   *
+   * **2단계로 만든다**: 내용을 먼저 얹어 자연 높이(`natural`)를 재고, 호출부가 영역에 맞춰
+   * 나눠 준 최종 높이로 `finish()` 를 부른다. 바탕 판과 버튼 세로 중앙은 그때 결정된다 —
+   * 판을 먼저 구우면 높이를 나중에 못 늘린다(그래서 빈 자리가 생겼다).
+   */
+  private makeSlotRow(
+    slot: DefenseSlotRef,
+    w: number,
+  ): { node: Container; natural: number; finish: (h: number) => void } {
     const layers = this.state.draft;
     const sel = this.state.selected;
     const selected = sel !== null && sel.kind === slot.kind && sel.index === slot.index;
@@ -1954,13 +2047,11 @@ export class DefenseCommandScreen {
       affix.position.set(ROW_PAD, cy + 4);
       cy += affix.height + 4;
     }
-    const h = Math.max(84, cy + 14);
+    const natural = Math.max(84, cy + 14);
 
-    row.addChild(rowPlate(w, h, selected));
     row.addChild(head, body);
     if (affix !== null) row.addChild(affix);
 
-    const btnY = Math.round((h - ROW_BTN_H) / 2);
     const place = this.chromeButton({
       tone: 'blue',
       width: ROW_BTN_W,
@@ -1974,7 +2065,7 @@ export class DefenseCommandScreen {
         else this.openModal('pick');
       },
     });
-    place.container.position.set(w - ROW_BTN_W * 2 - 8 - ROW_PAD, btnY);
+    place.container.x = w - ROW_BTN_W * 2 - 8 - ROW_PAD;
     stopRowPropagation(place.container);
     row.addChild(place.container);
 
@@ -1991,11 +2082,21 @@ export class DefenseCommandScreen {
         this.mutate(clearSlot(this.state.draft, slot));
       },
     });
-    clear.container.position.set(w - ROW_BTN_W - ROW_PAD, btnY);
+    clear.container.x = w - ROW_BTN_W - ROW_PAD;
     stopRowPropagation(clear.container);
     row.addChild(clear.container);
 
-    return { node: row, h };
+    return {
+      node: row,
+      natural,
+      finish: (h: number) => {
+        // 바탕 판은 **맨 뒤**로 넣는다(내용이 이미 얹혀 있다).
+        row.addChildAt(rowPlate(w, h, selected), 0);
+        const btnY = Math.round((h - ROW_BTN_H) / 2);
+        place.container.y = btnY;
+        clear.container.y = btnY;
+      },
+    };
   }
 
   private slotTitle(slot: DefenseSlotRef): string {
@@ -2062,11 +2163,16 @@ export class DefenseCommandScreen {
       return;
     }
 
-    const rows = this.units.map((u) => this.makeUnitRow(u, BOX_L.w));
-    const bounds = rowBounds(
-      rows.map((r) => r.h),
+    const built = this.units.map((u) => this.makeUnitRow(u, BOX_L.w));
+    const hs = fillRowHeights(
+      built.map((b) => b.natural),
       ROW_GAP,
+      BOX_L.h,
+      UNIT_ROW_MAX_H,
     );
+    built.forEach((b, i) => b.finish(hs[i] ?? b.natural));
+
+    const bounds = rowBounds(hs, ROW_GAP);
     const total = bounds.length === 0 ? 0 : (bounds[bounds.length - 1] ?? 0);
     const maskH = clampToRows(BOX_L.h, bounds);
     const content = makeScrollArea(host, {
@@ -2081,15 +2187,19 @@ export class DefenseCommandScreen {
       },
     });
     let cy = 0;
-    for (const row of rows) {
-      row.node.position.set(0, cy);
-      content.addChild(row.node);
-      cy += row.h + ROW_GAP;
-    }
+    built.forEach((b, i) => {
+      b.node.position.set(0, cy);
+      content.addChild(b.node);
+      cy += (hs[i] ?? b.natural) + ROW_GAP;
+    });
+    this.tailWell(host, BOX_L, BOX_L.y + Math.min(maskH, total), tCmd('def3.cmd.inv.more'));
   }
 
-  /** 보관함 1행 — 행 전체가 강화 팝업 진입이다. */
-  private makeUnitRow(owned: DefenseUnitOwned, w: number): { node: Container; h: number } {
+  /** 보관함 1행 — 행 전체가 강화 팝업 진입이다(2단계 조립은 {@link makeSlotRow} 참조). */
+  private makeUnitRow(
+    owned: DefenseUnitOwned,
+    w: number,
+  ): { node: Container; natural: number; finish: (h: number) => void } {
     const unit = owned.unit;
     const placed = isRefPlaced(this.state.draft, toInvasionRef(unit));
     const row = new Container();
@@ -2103,18 +2213,23 @@ export class DefenseCommandScreen {
     head.position.set(ROW_PAD, 12);
     const affix = this.wrapped(unitAffixLine(unit), 15, COLOR.muted, textW);
     affix.position.set(ROW_PAD, 42);
-    const h = Math.max(80, 42 + affix.height + 14);
+    const natural = Math.max(80, 42 + affix.height + 14);
 
-    row.addChild(rowPlate(w, h, false));
     row.addChild(head, affix);
-
-    if (placed) {
-      const badge = this.label(tCmd('def3.cmd.pick.placed'), 16, PLACED_COLOR, '700');
+    const badge = placed ? this.label(tCmd('def3.cmd.pick.placed'), 16, PLACED_COLOR, '700') : null;
+    if (badge !== null) {
       badge.anchor.set(1, 0.5);
-      badge.position.set(w - ROW_PAD, h / 2);
+      badge.x = w - ROW_PAD;
       row.addChild(badge);
     }
-    return { node: row, h };
+    return {
+      node: row,
+      natural,
+      finish: (h: number) => {
+        row.addChildAt(rowPlate(w, h, false), 0);
+        if (badge !== null) badge.y = h / 2;
+      },
+    };
   }
 
   /**
@@ -2128,22 +2243,35 @@ export class DefenseCommandScreen {
     this.clearHost(host);
     if (tabPhase(this.state.tab) !== null) return;
 
-    if (this.loading || !this.online) {
-      this.emptyWell(host, BOX_R, tCmd(this.loading ? 'def3.cmd.loading' : 'def3.cmd.offline'));
+    if (this.loading) {
+      this.emptyWell(host, BOX_R, tCmd('def3.cmd.loading'));
+      return;
+    }
+    if (!this.online) {
+      // ⚠️ 왼쪽 패널이 이미 "로그인이 필요하다"를 말한다 — 같은 문장을 두 번 쓰면 화면이 자기
+      // 말을 되풀이하는 것으로 읽힌다. 여기서는 **설계도가 어디서 나오는지**를 말한다.
+      this.emptyWell(host, BOX_R, tCmd('def3.cmd.inv.bpMore'));
       return;
     }
     if (this.blueprints.length === 0) {
-      this.emptyWell(host, BOX_R, tCmd('def3.cmd.inv.bpEmpty'));
+      this.emptyWell(host, BOX_R, `${tCmd('def3.cmd.inv.bpEmpty')}\n${tCmd('def3.cmd.inv.bpMore')}`);
       return;
     }
 
-    const rowH = 76;
-    const rows = this.blueprints.map((bp) => {
+    const hs = fillRowHeights(
+      this.blueprints.map(() => BP_ROW_H),
+      ROW_GAP,
+      BOX_R.h,
+      BP_ROW_MAX_H,
+    );
+    const rows = this.blueprints.map((bp, i) => {
+      const h = hs[i] ?? BP_ROW_H;
       const row = new Container();
       const name = `${catalogName(bp.kind, bp.catalogId)} ${tCmd('def3.cmd.inv.count', { n: bp.count })}`;
-      row.addChild(rowPlate(BOX_R.w, rowH, false));
+      row.addChild(rowPlate(BOX_R.w, h, false));
       const head = this.label(name, 19, COLOR.cream, '800', BOX_R.w - 150 - ROW_PAD * 2 - 12);
-      head.position.set(ROW_PAD, 16);
+      head.anchor.set(0, 0.5);
+      head.position.set(ROW_PAD, h / 2);
       row.addChild(head);
       const craft = this.chromeButton({
         tone: 'gold',
@@ -2154,16 +2282,13 @@ export class DefenseCommandScreen {
         enabled: !this.busy && bp.count > 0,
         onClick: () => void this.runUpgrade(() => craftDefenseUnit(bp.kind, bp.catalogId)),
       });
-      craft.container.position.set(BOX_R.w - 150 - ROW_PAD, 16);
+      craft.container.position.set(BOX_R.w - 150 - ROW_PAD, Math.round((h - 44) / 2));
       stopRowPropagation(craft.container);
       row.addChild(craft.container);
-      return { node: row, h: rowH };
+      return { node: row, h };
     });
 
-    const bounds = rowBounds(
-      rows.map((r) => r.h),
-      ROW_GAP,
-    );
+    const bounds = rowBounds(hs, ROW_GAP);
     const total = bounds.length === 0 ? 0 : (bounds[bounds.length - 1] ?? 0);
     const maskH = clampToRows(BOX_R.h, bounds);
     const content = makeScrollArea(host, {
@@ -2183,6 +2308,8 @@ export class DefenseCommandScreen {
       content.addChild(row.node);
       cy += row.h + ROW_GAP;
     }
+    // 설계도는 보유량이 적은 것이 정상이다 — 남는 자리에 **어디서 얻는지**를 적는다.
+    this.tailWell(host, BOX_R, BOX_R.y + Math.min(maskH, total), tCmd('def3.cmd.inv.bpMore'));
   }
 
   // --- 팝업 ----------------------------------------------------------------
@@ -2217,7 +2344,7 @@ export class DefenseCommandScreen {
             title: tCmd('def3.cmd.pick.title'),
           }
         : kind === 'unit'
-          ? { w: DEFENSE_MODALS.unit.w, h: DEFENSE_MODALS.unit.h, title: tCmd('def3.cmd.inv.head') }
+          ? { w: DEFENSE_MODALS.unit.w, h: DEFENSE_MODALS.unit.h, title: tCmd('def3.cmd.unit.title') }
           : {
               w: DEFENSE_MODALS.confirm.w,
               h: DEFENSE_MODALS.confirm.h,
@@ -2226,7 +2353,7 @@ export class DefenseCommandScreen {
 
     // ① · ② 암막.
     const scrim = new Graphics();
-    scrim.rect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT).fill({ color: 0x05060f, alpha: 0.97 });
+    scrim.rect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT).fill({ color: 0x05060f, alpha: SCRIM_ALPHA });
     scrim.eventMode = 'static';
     scrim.on('pointertap', () => this.closeModal());
     host.addChild(scrim);

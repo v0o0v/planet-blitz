@@ -24,6 +24,7 @@ import {
   DEFENSE_BOXES,
   DEFENSE_MODALS,
   pickModalHeight,
+  fillRowHeights,
   previewChildIndex,
   GEAR_BAND_W,
   GEAR_BAND_H,
@@ -277,6 +278,43 @@ describe('슬롯 패널 안 — 고정 블록이 상자를 뚫지 않는다', ()
     // 오른쪽 패널을 좁히면 이름이 조용히 뭉개진다(`label` 이 scale.x 로 눌러 버려 예외가 없다).
     expect(DEFENSE_BOXES.rowTextW).toBeGreaterThanOrEqual(360);
     expect(DEFENSE_BOXES.rowTextW).toBeLessThan(DEFENSE_BOXES.right.w);
+  });
+});
+
+describe('목록 — 빈 자리 금지(행이 남는 세로를 나눠 갖는다)', () => {
+  const gap = DEFENSE_BOXES.rowGap;
+
+  it('짧은 목록이 영역을 채우고 잔여는 행 수 미만이다', () => {
+    // 실화면 1차: L1 웨이브 6행이 684px 중 120px 을 빈 갈색 면으로 남겼다.
+    const avail = DEFENSE_BOXES.right.h;
+    const hs = fillRowHeights([84, 84, 100, 84, 84, 84], gap, avail, DEFENSE_BOXES.slotRowMaxH);
+    const total = hs.reduce((a, b) => a + b, 0) + gap * (hs.length - 1);
+    expect(total).toBeLessThanOrEqual(avail);
+    expect(avail - total, '영역이 남는다').toBeLessThan(hs.length);
+  });
+
+  it('넘치는 목록은 그대로 둔다(스크롤이 받는다)', () => {
+    const hs = fillRowHeights([200, 200, 200, 200], gap, 300, DEFENSE_BOXES.slotRowMaxH);
+    expect(hs).toEqual([200, 200, 200, 200]);
+  });
+
+  it('상한을 넘겨 늘리지 않는다(1행짜리에서 거대한 행이 나오는 것을 막는다)', () => {
+    const hs = fillRowHeights([76], gap, DEFENSE_BOXES.right.h, DEFENSE_BOXES.bpRowMaxH);
+    expect(hs[0]).toBe(DEFENSE_BOXES.bpRowMaxH);
+  });
+
+  it('상한 때문에 남는 잔여는 꼬리 챔버가 받을 만큼 크다', () => {
+    // 설계도 3장이 684px 중 436px 을 남겼다 — 상한을 걸면 여전히 남으므로 그 자리에
+    // **이름을 준다**(파낸 챔버 + 어디서 얻는지). 잔여가 챔버 하한을 넘어야 그 처방이 돈다.
+    const avail = DEFENSE_BOXES.right.h;
+    const hs = fillRowHeights([76, 76, 76], gap, avail, DEFENSE_BOXES.bpRowMaxH);
+    const total = hs.reduce((a, b) => a + b, 0) + gap * (hs.length - 1);
+    expect(avail - total - gap).toBeGreaterThanOrEqual(DEFENSE_BOXES.tailWellMinH);
+  });
+
+  it('빈 배열·잘못된 가용 세로에서도 안전하다', () => {
+    expect(fillRowHeights([], gap, 500, 100)).toEqual([]);
+    expect(fillRowHeights([84, 84], gap, -10, 200)).toEqual([84, 84]);
   });
 });
 
