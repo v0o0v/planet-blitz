@@ -310,10 +310,13 @@ const REV_ROW_MAX_H = 160;
 const REV_BTN_W = 120;
 const REV_BTN_H = 44;
 
-/** 배치전 진행바 세그먼트. */
+/** 배치전 진행바 세그먼트. 총 횟수는 서버 권위지만 기본 5 회가 폭 하한을 정한다. */
 const SEG_W = 56;
 const SEG_H = 12;
 const SEG_GAP = 8;
+const PLACEMENT_TOTAL_MAX = 5;
+/** L2 소켓은 템플릿에 따라 최대 12칸까지 늘어난다 — 정찰 칩 줄의 폭 하한을 정한다. */
+const INVASION_SOCKET_MAX = 12;
 
 /** 순위표 RPC 상한(get_ladder_top 은 200 을 넘겨도 200 으로 자른다). */
 const LADDER_CAP = 200;
@@ -383,6 +386,13 @@ export const TOWER_BOXES = {
   opsGap: OPS_GAP,
   revRowH: REV_ROW_H,
   revRowMaxH: REV_ROW_MAX_H,
+  /**
+   * 열 폭의 **진짜** 하한 둘. 세 열의 폭 합이 콘텐츠 폭과 같은 것은 `OPS_W` 가 파생값이라
+   * 산술적으로 보장되므로 단언해도 항진이다(뮤테이션이 살아 돌아와 확인했다). 실제로 깨질 수
+   * 있는 것은 "한 열을 넓히면 다른 열이 내용을 못 담는다" 쪽이라 그것을 잠근다.
+   */
+  reconChipRowMinW: RECON_CHIP * INVASION_SOCKET_MAX,
+  opsBarMinW: SEG_W * PLACEMENT_TOTAL_MAX + SEG_GAP * (PLACEMENT_TOTAL_MAX - 1),
 } as const;
 
 /**

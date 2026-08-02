@@ -121,12 +121,23 @@ describe('관제탑 레이아웃 불변식', () => {
     if (a === undefined || b === undefined || c === undefined) return;
     expect(a.rect.x).toBe(32);
     expect(c.rect.x + c.rect.w).toBe(DESIGN_WIDTH - 32);
-    // 거터 28 이 두 번 — 남는 자리 없이 셋이 나눠 쓴다(등호라 폭을 바꾸면 깨진다).
+    // 거터 28 이 두 번 — 남는 자리 없이 셋이 나눠 쓴다.
+    // ⚠️ 이 세 단언은 **항진에 가깝다**: 마지막 열 폭이 파생값(`OPS_W = 1920 − 32 − OPS_X`)이라
+    // 앞 두 열을 어떻게 바꿔도 우변 등호가 성립한다(뮤테이션이 살아 돌아와 확인했다). 여백
+    // 어휘가 바뀌는 것만 잡는다. 실제로 깨질 수 있는 축은 바로 아래 "열이 내용을 담는다"다.
     expect(b.rect.x - (a.rect.x + a.rect.w)).toBe(28);
     expect(c.rect.x - (b.rect.x + b.rect.w)).toBe(28);
     expect(a.rect.y).toBe(b.rect.y);
     expect(b.rect.y).toBe(c.rect.y);
     expect(a.rect.y + a.rect.h).toBe(c.rect.y + c.rect.h);
+  });
+
+  it('한 열을 넓혀 다른 열이 내용을 못 담게 만들 수 없다', () => {
+    // 폭 합 등호는 파생 보장이라 못 잡는 축이다. 여기서 잠그는 것은 "정찰 열이 L2 소켓 12칸을
+    // 겹치지 않게 담는가" 와 "작전 상황 열이 배치전 진행바 5칸을 담는가" — 둘 다 넘치면 조용히
+    // 뭉개지거나 상자를 뚫는데 예외도 로그도 없다.
+    expect(TOWER_BOXES.recon.w - 32).toBeGreaterThanOrEqual(TOWER_BOXES.reconChipRowMinW);
+    expect(TOWER_BOXES.ops.w - 32).toBeGreaterThanOrEqual(TOWER_BOXES.opsBarMinW);
   });
 
   it('헤더 컨트롤은 같은 세로 띠를 쓰고 서로 겹치지 않는다', () => {
@@ -338,6 +349,16 @@ describe('팝업 — 높이를 내용에서 역산해 빈 자리가 0 이다', (
         const inner = fn(n) - boxY - edgePad;
         expect((inner + m.rowGap) % m.pitch, `n=${n} 에서 반토막 행이 남는다`).toBe(0);
       }
+    }
+  });
+
+  it('침공 알림 · 출격: 피치가 행 높이 + 간격이다', () => {
+    // ⚠️ 위 나머지 단언만으로는 **간격을 0 으로 만드는 뮤테이션이 살아 돌아온다**(피치와 간격이
+    // 함께 줄면 나머지가 그대로 0 이다). 렌더는 행을 `i * pitch` 에 높이 `rowH` 로 놓으므로
+    // 둘의 차이가 곧 눈에 보이는 간격이다 — 그 정의를 직접 잠근다.
+    for (const m of [TOWER_MODALS.alerts, TOWER_MODALS.sortie]) {
+      expect(m.pitch - m.rowH).toBe(m.rowGap);
+      expect(m.rowGap).toBeGreaterThan(0);
     }
   });
 
