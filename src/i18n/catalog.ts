@@ -218,7 +218,7 @@ export const EN = {
   'catalyst.salvage.qty': 'Salvage Qty',
   'catalyst.salvage.gained': '+{n} Catalyst Residue',
   // 보관함 잔재 패널(2026-08-02 AAA 전환) — 큰 숫자 하나만 두면 패널이 비어 보인다.
-  'catalyst.archive.stockSummary': 'Stock: {kinds} kinds · {total} total',
+  'catalyst.archive.affordable': 'Affordable now: {n} kinds',
   'catalyst.archive.residueUse': 'Earned by salvaging. Spent on purchases.',
   'catalyst.archive.detailTitle': 'Catalyst Details',
   'catalyst.archive.detailEmpty': 'Select a catalyst from the list.',
@@ -1889,7 +1889,7 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.shop.buyFail': '구매 실패',
   'catalyst.salvage.qty': '분해 수량',
   'catalyst.salvage.gained': '+{n} 촉매 잔재',
-  'catalyst.archive.stockSummary': '보유 {kinds}종 · 합계 {total}개',
+  'catalyst.archive.affordable': '지금 잔재로 {n}종 구매 가능',
   'catalyst.archive.residueUse': '분해로 모이고 구매에 쓰입니다.',
   'catalyst.archive.detailTitle': '촉매 정보',
   'catalyst.archive.detailEmpty': '왼쪽 목록에서 촉매를 선택하세요.',

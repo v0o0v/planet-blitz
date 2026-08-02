@@ -449,7 +449,7 @@ export class CatalystArchiveScreen {
   /** 잔재 패널의 큰 숫자·보유 요약·안내 문구·결과 문구 — 서버 왕복 때 `.text` 만 갈린다. */
   private residueValue: Text | null = null;
   private residueNote: Text | null = null;
-  private stockSummary: Text | null = null;
+  private affordable: Text | null = null;
   private hintText: Text | null = null;
   /** 상세 패널 위젯들 — 선택이 바뀌면 `.text`·텍스처만 갈아끼운다(패널은 다시 안 만든다). */
   private detail: {
@@ -683,7 +683,7 @@ export class CatalystArchiveScreen {
     this.chipHost = null;
     this.residueValue = null;
     this.residueNote = null;
-    this.stockSummary = null;
+    this.affordable = null;
     this.hintText = null;
     this.detail = null;
     this.rowSelect.clear();
@@ -1160,7 +1160,7 @@ export class CatalystArchiveScreen {
     summary.anchor.set(0.5, 0);
     summary.position.set(cx, box.y + 150);
     panel.container.addChild(summary);
-    this.stockSummary = summary;
+    this.affordable = summary;
 
     const note = new Text({
       resolution: 2,
@@ -1214,13 +1214,20 @@ export class CatalystArchiveScreen {
       this.residueNote.text = bad;
       this.residueNote.visible = bad !== '';
     }
-    if (this.stockSummary !== null) {
-      let kinds = 0;
-      let total = 0;
-      for (const q of this.inventory.values()) {
-        if (q > 0) { kinds++; total += q; }
+    if (this.affordable !== null) {
+      // **잔재 패널은 잔재만 다룬다.** 여기 있던 "보유 N종 · 합계 N개"는 잔재와 무관한 값이라
+      // 제목("촉매 잔재")과 소속이 어긋났고, 필터 탭을 눌러도 안 변해 목록과 어긋나 보였다
+      // (사용자 지적 2026-08-02). 지금 잔고로 **무엇을 할 수 있는지**가 이 자리의 값이다.
+      const r = this.residue;
+      let n = 0;
+      if (r !== null) {
+        for (const def of CATALYSTS) {
+          const price = catalystBuyPrice(def.id);
+          if (catalystIsPurchasable(def.id) && price > 0 && r >= price) n++;
+        }
       }
-      this.stockSummary.text = t('catalyst.archive.stockSummary', { kinds, total });
+      this.affordable.text = r === null ? '' : t('catalyst.archive.affordable', { n });
+      this.affordable.visible = r !== null;
     }
     if (this.hintText !== null) {
       this.hintText.text = this.hint;
