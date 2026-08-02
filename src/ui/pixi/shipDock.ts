@@ -778,11 +778,18 @@ export function makeShipDock(o: ShipDockOpts): ShipDock {
   // --- ⓐ 접촉 AO(선체–새들 크레바스) ----------------------------------------------
   // 겹쳐 놓는 것만으로는 부족하다 — **닿았다는 증거는 그림자**다. 앞턱보다 아래(뒤)에 둬야
   // 그늘이 크레바스 안에 고인 것으로 읽힌다(앞턱 위에 얹으면 부재에 낀 때가 된다).
-  const contactAo = new Graphics();
-  drawContactAo(contactAo, shipSize);
-  contactAo.position.set(shipX, deckY);
-  contactAo.blendMode = 'multiply';
-  container.addChild(contactAo);
+  //
+  // ⚠️ **크래들이 없으면 이 AO 도 없다.** 이것은 원호가 선체를 파고드는 네 접점의 그늘이라
+  // 새들이 안 그려지면 근거 없는 어둠이 된다 — 함선 아래 좌우에 **정체 모를 검은 갈고리 두
+  // 개**로 남는다(챔피언 선택 화면에서 shipSize 380 으로 키우자 또렷이 드러났다. 격납고는
+  // 256 이라 눈에 덜 띄었을 뿐 같은 결함이다).
+  if (showCradle) {
+    const contactAo = new Graphics();
+    drawContactAo(contactAo, shipSize);
+    contactAo.position.set(shipX, deckY);
+    contactAo.blendMode = 'multiply';
+    container.addChild(contactAo);
+  }
 
   // --- ⓑ 크래들 앞턱 ---------------------------------------------------------------
   let cradleFront: Graphics | null = null;
