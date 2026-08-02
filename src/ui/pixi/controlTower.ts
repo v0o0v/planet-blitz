@@ -266,10 +266,11 @@ const GOOD_COLOR = 0x8fd94c;
 
 /**
  * 팝업 암막 알파. **뒤 화면 밝기에 따라 다르다** — 예비역 로스터 0.92 · 챔피언 선택 0.96 ·
- * 연구소 0.98 · 방어 사령부 0.99. 여기는 밝은 슬래브 **셋**이 화면을 거의 다 덮는다.
- * 실측으로 정하는 값이니 눈대중으로 낮추지 마라.
+ * 연구소 0.98 · 방어 사령부 0.99. 여기는 밝은 슬래브 **셋**이 화면을 거의 다 덮어 0.98 로는
+ * 뒤 목록 글자("침공 대상 제안"·대상 이름)가 그대로 읽혔다(실화면 1차 확인).
+ * 실측으로 정한 값이니 눈대중으로 낮추지 마라.
  */
-const SCRIM_ALPHA = 0.98;
+const SCRIM_ALPHA = 0.99;
 
 // --- 목록 행 기하 ---
 const ROW_GAP = 10;
@@ -1552,7 +1553,7 @@ export class ControlTowerScreen {
       content.addChild(row);
       cy += h + ROW_GAP;
     });
-    this.tailWell(host, BOX_T, BOX_T.y + Math.min(maskH, total), null);
+    this.tailWell(host, BOX_T, BOX_T.y + Math.min(maskH, total), t('ctl.tgt.tail'));
   }
 
   /** 대상 1행(일반/배치전 공통). 배치전은 쿨다운 무시 + 시드 이름·난이도 밴드 표시. */
@@ -1965,7 +1966,7 @@ export class ControlTowerScreen {
       content.addChild(row);
       cy += h + ROW_GAP;
     });
-    this.tailWell(host, box, y + Math.min(maskH, total), null);
+    this.tailWell(host, box, y + Math.min(maskH, total), t('ctl.rev.tail'));
   }
 
   /**
@@ -2052,6 +2053,10 @@ export class ControlTowerScreen {
     this.root.setChildIndex(host, this.root.children.length - 1);
 
     const kind = this.modal;
+    // ⚠️ 검색 입력은 캔버스 **위에 뜬 DOM** 이라 팝업이 바뀌어도 저절로 사라지지 않는다 —
+    // 순위표를 열었다 알림으로 바꾸면 알림 팝업 위에 검색창이 남아 떠 있었다(실화면 1차 확인).
+    // 검색을 쓰는 팝업이 아니면 여기서 걷어낸다.
+    if (kind !== 'ladder' && kind !== 'history') this.search.unmount();
     const geom =
       kind === 'ladder'
         ? { w: TOWER_MODALS.ladder.w, h: TOWER_MODALS.ladder.h, title: t('ctl.ladder.title') }
