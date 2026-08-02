@@ -81,7 +81,7 @@
  */
 
 import { Container, Graphics, Sprite, Text, Texture, Ticker } from 'pixi.js';
-import type { Item } from '../../items/types.js';
+import { RARITY_CODE, SLOT_KINDS, type Item } from '../../items/types.js';
 import { AFFIXES, AFFIX_BY_ID } from '../../../data/affixes.js';
 import { affixLines, affixTitleLine, affixDescLine } from '../affixText.js';
 import { itemDisplayName, slotLabel } from '../itemNames.js';
@@ -178,19 +178,31 @@ const BOX_L = titledBox(LIST_W, PANEL_H);
 const BOX_D = titledBox(DETAIL_W, PANEL_H);
 
 // --- 장비 격자(목록 패널) ---
+/**
+ * 정렬 버튼 줄 — 콘텐츠 상자 맨 위. 4칸이 상자 폭을 정확히 나눠 쓴다(폭은 파생값).
+ * 격자는 그만큼 아래에서 시작하고, 셀 크기가 남은 세로에서 다시 역산된다.
+ */
+const SORT_H = 42;
+const SORT_GAP_X = 10;
+const SORT_TO_GRID = 12;
+const SORT_COLS = 4;
+const SORT_W = Math.floor((BOX_L.w - SORT_GAP_X * (SORT_COLS - 1)) / SORT_COLS);
+
 const GRID_COLS = 6;
 const CELL_GAP = 10;
+const GRID_TOP = BOX_L.y + SORT_H + SORT_TO_GRID;
+/** 격자가 쓸 수 있는 세로 — 정렬 줄을 뺀 나머지. */
+const GRID_AVAIL = BOX_L.bottom - GRID_TOP;
 /**
- * 셀 한 변은 **상자 높이에서 역산**한다(9행이 정확히 들어가는 최대 크기). 88 을 박아 두면
- * 상자 높이가 바뀔 때마다 바닥에 반 행 몫의 죽은 자리가 남는다.
+ * 셀 한 변은 **가용 세로에서 역산**한다(9행이 정확히 들어가는 최대 크기). 88 을 박아 두면
+ * 정렬 줄을 넣거나 상자 높이가 바뀔 때마다 바닥에 반 행 몫의 죽은 자리가 남는다.
  */
 const GRID_ROWS_FIT = 9;
-const CELL = Math.floor((BOX_L.h + CELL_GAP) / GRID_ROWS_FIT) - CELL_GAP;
+const CELL = Math.floor((GRID_AVAIL + CELL_GAP) / GRID_ROWS_FIT) - CELL_GAP;
 const CELL_PITCH = CELL + CELL_GAP;
 const GRID_W = GRID_COLS * CELL_PITCH - CELL_GAP;
-const GRID_TOP = BOX_L.y;
 /** 마스크 하한 = 행 피치의 배수(반토막 셀 금지). 잔여는 한 행 미만이어야 한다. */
-const GRID_H = Math.floor((BOX_L.h + CELL_GAP) / CELL_PITCH) * CELL_PITCH - CELL_GAP;
+const GRID_H = Math.floor((GRID_AVAIL + CELL_GAP) / CELL_PITCH) * CELL_PITCH - CELL_GAP;
 const GRID_X = BOX_L.x + Math.floor((BOX_L.w - GRID_W) / 2);
 
 // --- 상세 패널(정련 공정) ---
@@ -406,10 +418,55 @@ export const REFINERY_GRID = {
   h: GRID_H,
   x: GRID_X,
   y: GRID_TOP,
-  /** 격자가 쓸 수 있었던 세로(콘텐츠 상자 안). `h` 와의 차가 한 행 피치 미만이어야 한다. */
-  avail: BOX_L.h,
+  /** 격자가 쓸 수 있었던 세로(정렬 줄을 뺀 나머지). `h` 와의 차가 한 행 피치 미만이어야 한다. */
+  avail: GRID_AVAIL,
   boxW: BOX_L.w,
+  /** 정렬 버튼 줄 — 콘텐츠 상자 맨 위. 4칸이 상자 폭을 정확히 나눠 쓴다. */
+  sortY: BOX_L.y,
+  sortH: SORT_H,
+  sortW: SORT_W,
+  sortGapX: SORT_GAP_X,
+  sortCols: SORT_COLS,
 } as const;
+
+/**
+ * 장비 목록 정렬 축. **획득순이 기본**이다 — 인벤토리 순서가 곧 획득 순서라 "방금 주운 것"이
+ * 어디 있는지 알 수 있는 유일한 정렬이고, 다른 정렬을 기본으로 두면 그 정보가 사라진다.
+ */
+export type RefinerySort = 'recent' | 'rarity' | 'slot' | 'affixes';
+
+/** 정렬 버튼 순서(화면 왼쪽 → 오른쪽) = 이 배열 순서다. */
+export const REFINERY_SORTS: readonly RefinerySort[] = ['recent', 'rarity', 'slot', 'affixes'];
+
+const SORT_LABEL_KEY: Record<RefinerySort, MessageKey> = {
+  recent: 'refine.sort.recent',
+  rarity: 'refine.sort.rarity',
+  slot: 'refine.sort.slot',
+  affixes: 'refine.sort.affixes',
+};
+
+/**
+ * 목록 정렬(순수 함수 — 입력 배열을 건드리지 않는다).
+ *
+ * ⚠️ **`rerollable()` 자체는 정렬하지 않는다.** 그 함수는 "굴릴 수 있는 것"의 정의이고 회귀
+ * 테스트가 쓰는 표면이라, 표시 순서를 거기에 섞으면 정렬을 바꿀 때마다 무관한 단언이 흔들린다.
+ *
+ * 세 정렬 다 **동률에서 획득순으로 되돌아간다**(안정 정렬 대신 원래 인덱스를 tie-break 로
+ * 넣는다) — 그렇지 않으면 같은 등급 장비들의 자리가 굴릴 때마다 미묘하게 바뀌어, 방금 고른
+ * 칸이 어디로 갔는지 눈으로 못 쫓는다.
+ */
+export function sortRefineryItems(items: readonly Item[], mode: RefinerySort): Item[] {
+  const out = items.map((item, index) => ({ item, index }));
+  const key = (it: Item): number => {
+    if (mode === 'rarity') return -RARITY_CODE[it.rarity];
+    if (mode === 'affixes') return -it.affixes.length;
+    return SLOT_KINDS.indexOf(it.slot);
+  };
+  if (mode !== 'recent') {
+    out.sort((a, b) => key(a.item) - key(b.item) || a.index - b.index);
+  }
+  return out.map((e) => e.item);
+}
 
 /** 상세 패널 콘텐츠 상자(단위 테스트가 실제 패널 상자와 대조한다). */
 export const REFINERY_DETAIL_BOX = {
@@ -609,6 +666,8 @@ export class RefineryScreen {
   private spinTexts: (Text | null)[] = [];
   private listScrollY = 0;
   private affixScrollY = 0;
+  /** 목록 정렬 축. 화면을 나갔다 들어와도 유지한다(고른 정렬이 매번 풀리면 쓸모가 없다). */
+  private sort: RefinerySort = 'recent';
   private ui: UiTextures = {};
   private art: HangarTextures = {};
   /** 진입 시점의 런 HUD `visibility` 인라인 값(닫을 때 그대로 되돌린다). */
@@ -793,6 +852,19 @@ export class RefineryScreen {
     this.heat = 'mid';
     this.hint = '';
     this.affixScrollY = 0;
+    this.refresh();
+  }
+
+  /**
+   * 목록 정렬 변경. **선택과 공정은 건드리지 않는다** — 자리만 바뀌지 무엇을 굴리는 중인지는
+   * 그대로여야 한다. 연출·서버 왕복 중에는 막는다(재렌더가 스핀 텍스트를 파괴한다).
+   */
+  private setSort(mode: RefinerySort): void {
+    if (this.spinning || this.busy) return;
+    if (this.sort === mode) return;
+    this.sort = mode;
+    // 순서가 통째로 바뀌었으므로 스크롤 위치는 의미를 잃는다 — 맨 위로 되돌린다.
+    this.listScrollY = 0;
     this.refresh();
   }
 
@@ -1314,7 +1386,11 @@ export class RefineryScreen {
       child.destroy({ children: true });
     }
 
-    const items = this.rerollable();
+    // 정렬 줄은 목록이 비어 있어도 그린다 — 컨트롤이 상태에 따라 나타났다 사라지면 사용자는
+    // 그것이 있었다는 사실 자체를 못 배운다.
+    this.renderSortRow(host);
+
+    const items = sortRefineryItems(this.rerollable(), this.sort);
     if (items.length === 0) {
       const empty = new Text({
         resolution: 2,
@@ -1378,6 +1454,39 @@ export class RefineryScreen {
       const pos = positions[i];
       if (pos !== undefined) cell.position.set(pos.x, pos.y);
       content.addChild(cell);
+    });
+  }
+
+  /**
+   * 정렬 버튼 줄(라디오). 선택 표시는 노 출력 버튼과 **같은 어휘**(금색 링 + 미선택 한 톤
+   * 낮춤)다 — 한 화면 안에 라디오 관용구가 둘이면 그중 하나는 버튼처럼 안 읽힌다.
+   */
+  private renderSortRow(host: Container): void {
+    REFINERY_SORTS.forEach((mode, i) => {
+      const isSel = this.sort === mode;
+      const btn = this.chromeButton({
+        // 정렬은 자원을 쓰지 않는 중립 조작이라 석재다(청록은 "자원을 쓴다"에 배정돼 있다).
+        tone: 'stone',
+        width: SORT_W,
+        height: SORT_H,
+        fontSize: 17,
+        label: t(SORT_LABEL_KEY[mode]),
+        sound: 'uiNavigate',
+        onClick: () => this.setSort(mode),
+      });
+      const node = btn.container;
+      node.position.set(BOX_L.x + i * (SORT_W + SORT_GAP_X), BOX_L.y);
+      if (isSel) {
+        const ring = new Graphics();
+        ring
+          .roundRect(2, 2, SORT_W - 4, SORT_H - 4, 9)
+          .stroke({ color: COLOR.gold, width: 3, alignment: 1 });
+        node.addChild(ring);
+      } else {
+        node.alpha = 0.72;
+      }
+      host.addChild(node);
+      if (this.spinning) btn.setEnabled(false);
     });
   }
 

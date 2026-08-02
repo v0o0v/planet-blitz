@@ -29,9 +29,12 @@ import {
   PANEL_EDGE_PAD,
   PANEL_TITLE_BAND_H,
   PANEL_CONTENT_GAP,
+  REFINERY_SORTS,
+  sortRefineryItems,
 } from '../src/ui/pixi/refinery.js';
 import { makeCinematicPanel } from '../src/ui/pixi/cinematicPanel.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../src/render/app.js';
+import { SLOT_KINDS, type Item, type Rarity, type SlotKind } from '../src/items/types.js';
 
 interface Rect {
   readonly x: number;
@@ -92,7 +95,10 @@ describe('패널 콘텐츠 상자 기하 복제본이 실제 패널과 일치한
       variant: 'slab',
       title: '보유 장비',
     });
-    expect(REFINERY_GRID.avail).toBe(panel.box.h);
+    // 격자의 가용 세로 = 실제 상자 높이 − 정렬 줄. 상자를 좌변에 두고 대조해야 복제 상수가
+    // 어긋났을 때(= 격자가 패널 밖으로 나갈 때) 잡힌다.
+    expect(REFINERY_GRID.avail).toBe(panel.box.h - (REFINERY_GRID.sortH + 12));
+    expect(REFINERY_GRID.sortY).toBe(panel.box.y);
     expect(REFINERY_GRID.boxW).toBe(panel.box.w);
     panel.destroy();
   });
@@ -195,6 +201,65 @@ describe('목록 격자 — 빈 자리 금지', () => {
   it('6열이 콘텐츠 상자 폭 안에 들어간다', () => {
     expect(REFINERY_GRID.w).toBeLessThanOrEqual(REFINERY_GRID.boxW);
     expect(REFINERY_GRID.x).toBeGreaterThanOrEqual(REFINERY_DETAIL_BOX.x);
+  });
+});
+
+describe('목록 정렬', () => {
+  const item = (id: string, rarity: Rarity, slot: SlotKind, affixes: number): Item =>
+    ({
+      id,
+      rarity,
+      slot,
+      affixes: Array.from({ length: affixes }, () => ({ id: 'a', stat: 'damagePct', value: 1 })),
+    }) as unknown as Item;
+
+  const sample: Item[] = [
+    item('a', 'magic', 'engine', 2),
+    item('b', 'unique', 'main', 1),
+    item('c', 'normal', 'armor', 4),
+    item('d', 'magic', 'main', 2),
+  ];
+
+  it('정렬 버튼 4칸이 콘텐츠 상자 폭 안에서 끝난다', () => {
+    const g = REFINERY_GRID;
+    expect(g.sortCols).toBe(REFINERY_SORTS.length);
+    const rowW = g.sortCols * g.sortW + (g.sortCols - 1) * g.sortGapX;
+    expect(rowW).toBeLessThanOrEqual(g.boxW);
+    // 폭이 파생값이라 잔여는 반올림 오차(칸 수 미만)뿐이어야 한다.
+    expect(g.boxW - rowW).toBeLessThan(g.sortCols);
+  });
+
+  it('격자가 정렬 줄 아래에서 시작하고, 그만큼만 세로를 잃는다', () => {
+    const g = REFINERY_GRID;
+    expect(g.y).toBe(g.sortY + g.sortH + 12);
+    expect(g.h).toBeLessThanOrEqual(g.avail);
+    expect(g.avail - g.h).toBeLessThan(g.pitch);
+  });
+
+  it('획득순은 입력 순서를 그대로 둔다(기본값이 정보를 지우지 않는다)', () => {
+    expect(sortRefineryItems(sample, 'recent').map((i) => i.id)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('등급순은 높은 등급이 앞이고 동률은 획득순으로 되돌아간다', () => {
+    expect(sortRefineryItems(sample, 'rarity').map((i) => i.id)).toEqual(['b', 'a', 'd', 'c']);
+  });
+
+  it('어픽스순은 많은 쪽이 앞이고 동률은 획득순으로 되돌아간다', () => {
+    expect(sortRefineryItems(sample, 'affixes').map((i) => i.id)).toEqual(['c', 'a', 'd', 'b']);
+  });
+
+  it('슬롯순은 SLOT_KINDS 순서를 따르고 동률은 획득순으로 되돌아간다', () => {
+    const out = sortRefineryItems(sample, 'slot');
+    const rank = out.map((i) => SLOT_KINDS.indexOf(i.slot));
+    expect([...rank].sort((x, y) => x - y)).toEqual(rank);
+    // 같은 슬롯(main)의 둘은 획득 순서(b → d)를 유지한다.
+    expect(out.filter((i) => i.slot === 'main').map((i) => i.id)).toEqual(['b', 'd']);
+  });
+
+  it('입력 배열을 변형하지 않는다(인벤토리는 표시 순서를 모른다)', () => {
+    const before = sample.map((i) => i.id);
+    for (const mode of REFINERY_SORTS) sortRefineryItems(sample, mode);
+    expect(sample.map((i) => i.id)).toEqual(before);
   });
 });
 

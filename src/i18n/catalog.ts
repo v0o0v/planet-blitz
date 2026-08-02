@@ -1011,6 +1011,10 @@ export const EN = {
   'refine.chain.melted': 'Melted — all fastened affixes released',
   'refine.chain.complete': 'Refining complete — every affix fastened',
   'refine.chain.noBand': 'This affix has a fixed value; heat does not affect it',
+  'refine.sort.recent': 'Recent',
+  'refine.sort.rarity': 'Rarity',
+  'refine.sort.slot': 'Slot',
+  'refine.sort.affixes': 'Affixes',
 
   // --- 관제탑 ---
   'ctl.title': 'Control Tower',
@@ -2641,7 +2645,7 @@ export const KO: Record<MessageKey, string> = {
   'refine.chain.heat.low': '약불',
   'refine.chain.heat.mid': '중불',
   'refine.chain.heat.high': '강불',
-  'refine.chain.heat.hint': '노 출력이 높을수록 값이 잘 나오지만 비용과 용해 위험도 오릅니다',
+  'refine.chain.heat.hint': '화력이 높을수록 값이 잘 나오지만 비용과 용해 위험도 오릅니다',
   'refine.chain.risk': '용해 위험 {n}%',
   'refine.chain.riskNone': '용해 위험 없음',
   'refine.chain.fasten': '고착',
@@ -2652,7 +2656,11 @@ export const KO: Record<MessageKey, string> = {
   'refine.chain.cost': '굴림 비용: 광물 {n}',
   'refine.chain.melted': '용해 — 고착이 전부 풀렸습니다',
   'refine.chain.complete': '공정 완주 — 모든 어픽스를 고착했습니다',
-  'refine.chain.noBand': '이 어픽스는 값이 고정이라 노 출력의 영향을 받지 않습니다',
+  'refine.chain.noBand': '이 어픽스는 값이 고정이라 화력의 영향을 받지 않습니다',
+  'refine.sort.recent': '획득순',
+  'refine.sort.rarity': '등급순',
+  'refine.sort.slot': '슬롯순',
+  'refine.sort.affixes': '어픽스순',
 
   'ctl.title': '관제탑',
   'ctl.sub': '상위 랭커를 정찰하고 침공하라.',
