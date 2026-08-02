@@ -371,6 +371,10 @@ export class HangarScreen {
    * 아무것도 하지 않는다 — 격납고 밖에서는 비용이 0 이다(기지와 같은 규약).
    */
   update(dt: number): void {
+    // ⚠️ 하위 화면은 **가시성 가드보다 먼저** 흘린다. 하위 화면이 떠 있는 동안 격납고 root 는
+    // `suspend()` 로 숨겨져 있으므로, 가드 뒤에 두면 촉매 보관함의 배경 패럴랙스·티끌·패널
+    // 광택이 통째로 멈춘다(자기 안에서 다시 가시성으로 걸러내므로 여기서 조건을 따질 필요 없다).
+    this.catalystArchive.update(dt);
     if (!this.root.visible) return;
     this.backdrop?.update(dt);
     for (const p of this.panels) p.update(dt);
