@@ -256,9 +256,13 @@ describe('코어 모듈 화면 배선', () => {
     expect(scroll).not.toMatch(/mask\.on\(/);
   });
 
-  it('텍스처 로드 후 재렌더가 리스너를 두 번 등록하지 않는다(함정 2)', () => {
-    // 재렌더 진입점은 render() 하나이고, render() 는 매번 자식을 파괴하고 새로 만든다.
-    expect(src).toMatch(/loadUiTextures\(\)\.then\(\(tex\) => \{[\s\S]*?this\.render\(\);/);
+  it('텍스처 로드 후 재건이 리스너를 두 번 등록하지 않는다(함정 2)', () => {
+    // 2026-08-03 AAA 전환으로 재렌더 규율이 바뀌었다: 루트를 매번 다시 그리는 대신
+    // `buildChrome()` 1회 + `refresh()` 가 host 안만 갈아끼운다. 텍스처가 도착하면 구운 텍스처가
+    // 바뀌므로 **크롬을 통째로 재건**하는데(`rebuild()`), 그 앞의 `destroyChrome()` 이 리스너째
+    // 파괴하므로 이중 등록은 그대로 막힌다 — 막는 성질은 같고 기구만 달라졌다.
+    expect(src).toMatch(/loadUiTextures\(\)\.then\(\(tex\) => \{[\s\S]*?this\.rebuild\(\);/);
+    expect(src).toMatch(/private rebuild\(\)[\s\S]*?this\.destroyChrome\(\);[\s\S]*?this\.buildChrome\(\);/);
     expect(src).toMatch(/child\.destroy\(\{ children: true \}\)/);
   });
 });

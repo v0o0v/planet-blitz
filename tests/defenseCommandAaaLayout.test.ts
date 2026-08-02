@@ -356,6 +356,43 @@ describe('목록 — 빈 자리 금지(행이 남는 세로를 나눠 갖는다)
     expect(hs[0]).toBe(DEFENSE_BOXES.bpRowMaxH);
   });
 
+  it('⚠️ 상한이 자연 높이를 **깎지 않는다**(내용이 판 밖으로 나간다)', () => {
+    /*
+     * 상한은 **늘리기만** 막아야 한다. `Math.min(maxH, ...)` 만 쓰면 자연 높이가 상한보다 큰
+     * 행이 줄어들고, 바탕 판은 최종 높이로 구워지는데 글자·버튼은 이미 자연 높이만큼 자라 있어
+     * 내용이 판 밖으로 삐져나온다. 코어 모듈 화면(`modulesView.ts`)의 같은 산술 복제본에서
+     * 실제로 터졌다 — 슬롯 행이 상한을 넘기자 `[해제]` 가 판 아래로 반쯤 나온 채 찍혔다.
+     */
+    const tall = DEFENSE_BOXES.slotRowMaxH + 40;
+    const hs = fillRowHeights([tall, 84, 84], gap, DEFENSE_BOXES.right.h, DEFENSE_BOXES.slotRowMaxH);
+    expect(hs[0], '자연 높이가 상한 때문에 깎였다').toBeGreaterThanOrEqual(tall);
+    // 짧은 쪽은 정상적으로 상한까지 늘어난다(상한 자체는 계속 산다).
+    expect(hs[1]).toBe(DEFENSE_BOXES.slotRowMaxH);
+    // 불변식: **어떤 행도 자연 높이 아래로 내려가지 않는다.**
+    for (const [i, nat] of [tall, 84, 84].entries()) {
+      expect(hs[i] ?? 0, `행 ${i}`).toBeGreaterThanOrEqual(nat);
+    }
+  });
+
+  it('L1 실제 도달 경로 — 6칸 중 하나만 채워도 그 행이 깎이면 안 된다', () => {
+    /*
+     * 이 결함이 **잠재**가 아니라 도달 가능하다는 증거. 웨이브 슬롯 6칸 중 하나에만 어픽스가
+     * 긴 방어체를 꽂으면(자연 높이 ~160) 총합이 영역(684)보다 작아 나눠 주기 가지를 타고,
+     * 고치기 전에는 그 한 행이 상한 132 로 깎였다. 목록이 길면(여러 칸을 채우면) 위쪽
+     * `total >= avail` 에서 그대로 반환되므로 **짧을 때만** 나타난다.
+     */
+    const avail = DEFENSE_BOXES.right.h;
+    const filled = 160;
+    const naturals = [filled, 84, 84, 84, 84, 84];
+    const before = naturals.reduce((a, b) => a + b, 0) + gap * (naturals.length - 1);
+    expect(before, '이 표본이 나눠 주기 가지를 안 탄다 — 시나리오가 무의미해진다').toBeLessThan(avail);
+
+    const hs = fillRowHeights(naturals, gap, avail, DEFENSE_BOXES.slotRowMaxH);
+    expect(hs[0], 'L1 의 채워진 슬롯이 깎였다').toBeGreaterThanOrEqual(filled);
+    const total = hs.reduce((a, b) => a + b, 0) + gap * (hs.length - 1);
+    expect(total, '나눠 준 뒤 영역을 넘었다').toBeLessThanOrEqual(avail);
+  });
+
   it('상한 때문에 남는 잔여는 꼬리 챔버가 받을 만큼 크다', () => {
     // 설계도 3장이 684px 중 436px 을 남겼다 — 상한을 걸면 여전히 남으므로 그 자리에
     // **이름을 준다**(파낸 챔버 + 어디서 얻는지). 잔여가 챔버 하한을 넘어야 그 처방이 돈다.

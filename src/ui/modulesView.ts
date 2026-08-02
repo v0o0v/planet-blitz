@@ -17,14 +17,20 @@
 import {
   MODULE_STORAGE_CAP,
   MODULE_FUSION_INPUT_COUNT,
+  MODULE_AFFIX_BY_ID,
+  MODULE_BASE_EFFECT,
+  CORE_MODULE_UNIQUE_BY_ID,
   moduleBuyPrice,
   moduleAffixNameKey,
   moduleUniqueNameKey,
+  type ModuleAffixDef,
   type ModuleInstance,
+  type ModuleStatKey,
 } from '../../data/coreModules.js';
 import type { Rarity } from '../items/types.js';
 import type { ModuleOwned } from '../net/modules.js';
 import { t, type MessageKey } from '../i18n/index.js';
+import { TICK_RATE } from '../sim/constants.js';
 
 /** 등급 → 표시 색(resultOverlay/inventory 팔레트와 동일). 미지 등급은 normal 색. */
 export const MODULE_RARITY_COLOR: Record<string, string> = {
@@ -94,6 +100,97 @@ export function moduleAffixOneLine(mod: ModuleInstance): string {
   if (s.unique !== null) parts.push(s.unique);
   parts.push(...s.prefixes, ...s.suffixes);
   return parts.length > 0 ? parts.join(' · ') : t('mod.baseOnly');
+}
+
+// ---------------------------------------------------------------------------
+// 효과를 **수치로** 말한다 (사용자 지시 2026-08-03)
+// ---------------------------------------------------------------------------
+//
+// 그때까지 화면은 모듈의 특성을 `소화의 +12` 처럼 **표기명 + 롤 값**으로만 보여 줬다. 값은
+// 있는데 그 값이 **무엇을 얼마나** 바꾸는지가 없어서, 플레이어는 12 가 큰지 작은지도, 어느
+// 축을 건드리는지도 알 수 없었다. 게다가 normal 모듈은 어픽스가 없어 `기저 효과만` 한 마디로
+// 끝났는데 실제로는 화력 +3% · 코어 HP +3% 가 무조건 걸린다 — **있는 효과를 없다고 말하고
+// 있었다**.
+//
+// 그래서 세 조각을 데이터에서 조립한다:
+//   ① **얼마나** — 롤 `value` 를 그 `stat` 의 단위·부호와 함께({@link moduleStatText}).
+//   ② **언제** — 접두는 정적 카운터 조건, 접미는 트리거 이벤트(+ threshold)
+//      ({@link moduleAffixWhen}). 조건부 18% 와 무조건 18% 는 완전히 다른 값이라, 조건을
+//      빼면 수치를 보여 줘도 여전히 거짓말이 된다.
+//   ③ **기저·유니크** — 등급별 기저 효과와 유니크 파라미터도 수치로.
+//
+// ⚠️ 부호는 **문구가 들고 있다**(`받는 피해 −{n}%` / `공격자 이동속도 −{n}%`). 값에 부호를
+// 넣으면 `incomingDmgReductionPct` 처럼 "감소량이 클수록 좋은" 축에서 −가 나쁜 것처럼 읽힌다.
+// 산식 자체는 sim(`src/sim/moduleEffects.ts`)이 정본이고 여기는 그 축을 말로 옮기기만 한다.
+//
+// 기존 {@link moduleAffixOneLine} 은 **그대로 둔다** — 관제탑 정찰 공개(`controlTower.ts`)가
+// 좁은 한 줄로 쓰고 있고, 그 화면은 이 레인의 범위가 아니다.
+
+/** 스탯 → i18n 라벨 키(`{n}` 자리에 값이 들어간다). */
+function statKey(stat: ModuleStatKey): MessageKey {
+  return `mod.stat.${stat}` as MessageKey;
+}
+
+/**
+ * 스탯 한 축의 효과 문구. `value` 는 롤 원값(양수)이고 **부호와 단위는 문구가 갖는다**.
+ */
+export function moduleStatText(stat: ModuleStatKey, value: number): string {
+  return t(statKey(stat), { n: value });
+}
+
+/**
+ * 이 모듈 어픽스가 **언제** 실리는가. 접두는 T0 매치업 조건, 접미는 런 중 트리거다.
+ * 임계가 있는 트리거는 그 수치까지 문구에 싣는다(`설비 3기 파괴 시` · `코어 HP 30% 이하`).
+ * 정의를 못 찾으면 null — 호출부가 "언제" 없이 효과만 보여 준다(조용한 공백보다 낫다).
+ */
+export function moduleAffixWhen(def: ModuleAffixDef | undefined): string | null {
+  if (def === undefined) return null;
+  if (def.condition !== undefined) return t(`mod.when.${def.condition}` as MessageKey);
+  if (def.trigger !== undefined) {
+    return t(`mod.when.${def.trigger}` as MessageKey, { n: def.threshold ?? 0 });
+  }
+  return null;
+}
+
+/**
+ * 유니크 고유 효과의 **수치** 한 줄(파라미터에서 조립). 유니크가 아니면 null.
+ *
+ * ⚠️ 문구에 수치를 **손으로 적지 마라.** 파라미터는 데이터가 정본이고 튜닝으로 움직인다 —
+ * 손으로 적으면 그 순간부터 화면이 조용히 거짓말한다(`uq-blackout` 을 "첫 30초"로 적었다가
+ * 단위 테스트가 잡았다: 정본은 `radarDisableTicks: 1800` 이다).
+ * 틱처럼 플레이어가 모르는 단위는 **여기서 초로 파생**해 함께 넘긴다.
+ */
+export function moduleUniqueStatText(uniqueId: string | undefined): string | null {
+  if (uniqueId === undefined) return null;
+  const def = CORE_MODULE_UNIQUE_BY_ID.get(uniqueId);
+  if (def === undefined) return null;
+  const params: Record<string, number> = { ...def.params };
+  for (const [k, v] of Object.entries(def.params)) {
+    if (k.endsWith('Ticks')) params[`${k.slice(0, -5)}Sec`] = Math.round(v / TICK_RATE);
+  }
+  return t(`mod.uq.${uniqueId}` as MessageKey, params);
+}
+
+/**
+ * 모듈 하나가 실제로 하는 일 전량 — **한 줄에 하나씩, 전부 수치를 담아서**.
+ *
+ * 순서: 기저(무조건) → 유니크(룰 변경) → 접두(조건부) → 접미(트리거). 무조건 걸리는 것부터
+ * 놓아야 "이 모듈이 최소한 무엇을 주는가"가 첫 줄에서 끝난다.
+ */
+export function moduleEffectLines(mod: ModuleInstance): string[] {
+  const out: string[] = [];
+  const base = MODULE_BASE_EFFECT[mod.rarity];
+  if (base !== undefined) {
+    out.push(t('mod.effect.base', { d: base.allDamagePct, h: base.coreHpPct }));
+  }
+  const unique = moduleUniqueStatText(mod.uniqueId);
+  if (unique !== null) out.push(unique);
+  for (const roll of [...mod.prefixes, ...mod.suffixes]) {
+    const when = moduleAffixWhen(MODULE_AFFIX_BY_ID.get(roll.id));
+    const effect = moduleStatText(roll.stat, roll.value);
+    out.push(when === null ? effect : t('mod.effect.when', { when, effect }));
+  }
+  return out;
 }
 
 /** 잔여 1회 경고 대상 여부(소모성 — 다음 확정 침공에서 사라진다). */
