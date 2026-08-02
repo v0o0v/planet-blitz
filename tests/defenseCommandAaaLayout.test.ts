@@ -38,7 +38,7 @@ import {
   DEF_TAB_KEYS,
   DEF_TAB_INV,
 } from '../src/ui/pixi/defenseCommand.js';
-import { makeCinematicPanel } from '../src/ui/pixi/cinematicPanel.js';
+import { makeCinematicPanel, cinematicWindowOpening } from '../src/ui/pixi/cinematicPanel.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../src/render/app.js';
 
 interface Rect {
@@ -77,25 +77,35 @@ describe('패널 콘텐츠 상자 기하 복제본이 실제 패널과 일치한
     });
   }
 
-  it('window 변종도 같은 상자 기하를 준다(프리뷰 뷰포트가 거기서 파생된다)', () => {
+  it('프리뷰 뷰포트가 창의 **개구부**와 정확히 같다(콘텐츠 상자가 아니다)', () => {
+    // 사용자 신고(2026-08-03) "테두리와 미리보기가 안 맞는다"의 실체. `box` 는 글자를 놓는
+    // 자리라 사방 24 안쪽 + 제목 띠 아래 16 이고, 창은 바깥 베벨 1 + 석재 단면 6 만 문다.
+    // box 에 맞추면 프레임과 그림 사이에 위 16px · 좌우·아래 17px 의 맨 배경 띠가 생긴다.
     const p = layout.panels.find((q) => q.id === 'left');
     expect(p).toBeDefined();
     if (p === undefined) return;
+    const win = layout.windows[0];
+    expect(win).toBeDefined();
+    if (win === undefined) return;
+    const open = cinematicWindowOpening(p.rect.w, p.rect.h, true);
+    expect(win.x).toBe(p.rect.x + open.x);
+    expect(win.y).toBe(p.rect.y + open.y);
+    expect(win.w).toBe(open.w);
+    expect(win.h).toBe(open.h);
+
+    // 개구부는 콘텐츠 상자보다 **모든 방향으로 넓다** — 둘을 헷갈리면 띠가 다시 생긴다.
     const panel = makeCinematicPanel({
       width: p.rect.w,
       height: p.rect.h,
       variant: 'window',
       title: '배치 프리뷰',
     });
-    const win = layout.windows[0];
-    expect(win).toBeDefined();
-    if (win === undefined) return;
-    // 창(= 배경 밝기 보존 구역)은 **프리뷰가 실제로 그려질 사각형**과 정확히 같아야 한다.
-    // 어긋나면 밝기 보존이 헛돌아 창 밖이 밝고 창 안이 눌린다.
-    expect(win.x).toBe(p.rect.x + panel.box.x);
-    expect(win.y).toBe(p.rect.y + panel.box.y);
-    expect(win.w).toBe(panel.box.w);
-    expect(win.h).toBe(panel.box.h);
+    expect(open.x).toBeLessThan(panel.box.x);
+    expect(open.y).toBeLessThan(panel.box.y);
+    expect(open.right).toBeGreaterThan(panel.box.right);
+    expect(open.bottom).toBeGreaterThan(panel.box.bottom);
+    // 제목 띠는 비워 둔다(제목 글자가 내용물 위에 얹히면 안 읽힌다).
+    expect(open.y).toBe(panel.headerBottom);
     panel.destroy();
   });
 });
@@ -198,10 +208,14 @@ describe('방어 사령부 레이아웃 불변식', () => {
     expect(layout.windows).toHaveLength(1);
   });
 
-  it('프리뷰 노드는 화면 루트 맨 앞이다(액자에 묻히면 기여분이 4.6% 였다)', () => {
-    expect(previewChildIndex(7)).toBe(6);
-    expect(previewChildIndex(1)).toBe(0);
+  it('프리뷰 노드는 창 패널 **바로 뒤**다(창 처리가 그 위를 덮어야 유리창이 된다)', () => {
+    // 옛 계약은 "맨 앞"이었다 — 나무 패널이 fillAlpha 0.96 으로 덮어 기여분이 4.6% 였기
+    // 때문이다. `window` 변종은 안쪽을 **파내므로** 그 전제가 사라졌고, 앞에 두면 프리뷰가
+    // 석재 단면·AO·유리 반사·바닥 스크림을 통째로 가려 개구부가 그냥 검은 사각이 된다.
+    expect(previewChildIndex(2)).toBe(2);
+    expect(previewChildIndex(5)).toBe(5);
     expect(previewChildIndex(0)).toBe(0);
+    expect(previewChildIndex(-3)).toBe(0);
   });
 });
 
@@ -340,6 +354,43 @@ describe('목록 — 빈 자리 금지(행이 남는 세로를 나눠 갖는다)
   it('상한을 넘겨 늘리지 않는다(1행짜리에서 거대한 행이 나오는 것을 막는다)', () => {
     const hs = fillRowHeights([76], gap, DEFENSE_BOXES.right.h, DEFENSE_BOXES.bpRowMaxH);
     expect(hs[0]).toBe(DEFENSE_BOXES.bpRowMaxH);
+  });
+
+  it('⚠️ 상한이 자연 높이를 **깎지 않는다**(내용이 판 밖으로 나간다)', () => {
+    /*
+     * 상한은 **늘리기만** 막아야 한다. `Math.min(maxH, ...)` 만 쓰면 자연 높이가 상한보다 큰
+     * 행이 줄어들고, 바탕 판은 최종 높이로 구워지는데 글자·버튼은 이미 자연 높이만큼 자라 있어
+     * 내용이 판 밖으로 삐져나온다. 코어 모듈 화면(`modulesView.ts`)의 같은 산술 복제본에서
+     * 실제로 터졌다 — 슬롯 행이 상한을 넘기자 `[해제]` 가 판 아래로 반쯤 나온 채 찍혔다.
+     */
+    const tall = DEFENSE_BOXES.slotRowMaxH + 40;
+    const hs = fillRowHeights([tall, 84, 84], gap, DEFENSE_BOXES.right.h, DEFENSE_BOXES.slotRowMaxH);
+    expect(hs[0], '자연 높이가 상한 때문에 깎였다').toBeGreaterThanOrEqual(tall);
+    // 짧은 쪽은 정상적으로 상한까지 늘어난다(상한 자체는 계속 산다).
+    expect(hs[1]).toBe(DEFENSE_BOXES.slotRowMaxH);
+    // 불변식: **어떤 행도 자연 높이 아래로 내려가지 않는다.**
+    for (const [i, nat] of [tall, 84, 84].entries()) {
+      expect(hs[i] ?? 0, `행 ${i}`).toBeGreaterThanOrEqual(nat);
+    }
+  });
+
+  it('L1 실제 도달 경로 — 6칸 중 하나만 채워도 그 행이 깎이면 안 된다', () => {
+    /*
+     * 이 결함이 **잠재**가 아니라 도달 가능하다는 증거. 웨이브 슬롯 6칸 중 하나에만 어픽스가
+     * 긴 방어체를 꽂으면(자연 높이 ~160) 총합이 영역(684)보다 작아 나눠 주기 가지를 타고,
+     * 고치기 전에는 그 한 행이 상한 132 로 깎였다. 목록이 길면(여러 칸을 채우면) 위쪽
+     * `total >= avail` 에서 그대로 반환되므로 **짧을 때만** 나타난다.
+     */
+    const avail = DEFENSE_BOXES.right.h;
+    const filled = 160;
+    const naturals = [filled, 84, 84, 84, 84, 84];
+    const before = naturals.reduce((a, b) => a + b, 0) + gap * (naturals.length - 1);
+    expect(before, '이 표본이 나눠 주기 가지를 안 탄다 — 시나리오가 무의미해진다').toBeLessThan(avail);
+
+    const hs = fillRowHeights(naturals, gap, avail, DEFENSE_BOXES.slotRowMaxH);
+    expect(hs[0], 'L1 의 채워진 슬롯이 깎였다').toBeGreaterThanOrEqual(filled);
+    const total = hs.reduce((a, b) => a + b, 0) + gap * (hs.length - 1);
+    expect(total, '나눠 준 뒤 영역을 넘었다').toBeLessThanOrEqual(avail);
   });
 
   it('상한 때문에 남는 잔여는 꼬리 챔버가 받을 만큼 크다', () => {
