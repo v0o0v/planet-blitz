@@ -1697,14 +1697,24 @@ export class ControlTowerScreen {
     let cy = top;
     strips.forEach((strip, i) => {
       const h = hs[i] ?? RECON_SLICE_H;
-      this.renderReconSlice(host, strip, i, cy, h);
+      this.renderReconSlice(host, strip, i, cy, h, view.revealed);
       cy += h + ROW_GAP;
     });
     this.tailWell(host, BOX_R, cy - ROW_GAP, null);
   }
 
-  /** 정찰 슬라이스 한 장 — 파낸 챔버 + 이름/점유 수 + 슬롯 칩(등급 색 · 승급 별). */
-  private renderReconSlice(host: Container, strip: ReconStrip, index: number, y: number, h: number): void {
+  /**
+   * 정찰 슬라이스 한 장 — 파낸 챔버 + 이름/점유 수 + 슬롯 소켓(등급 색 테두리 · 승급 별).
+   * `revealed` = 이 상대를 1회 침공해 종류가 열렸는가(잠겨 있으면 글리프를 아예 안 얹는다).
+   */
+  private renderReconSlice(
+    host: Container,
+    strip: ReconStrip,
+    index: number,
+    y: number,
+    h: number,
+    revealed: boolean,
+  ): void {
     host.addChild(recessedWell(BOX_R.x, y, BOX_R.w, h));
 
     const occupied = strip.slots.filter((s) => s.occupied).length;
@@ -1729,25 +1739,55 @@ export class ControlTowerScreen {
     const chipY = y + 44 + Math.max(0, Math.round((h - 44 - RECON_CHIP - 14) / 2));
 
     strip.slots.forEach((slot, i) => {
+      const cx = x0 + i * step;
+      const rarity = hexColor(reconRarityColor(slot.rarity));
       const g = new Graphics();
+      // 칩은 챔버 바닥에 **파인 소켓**이다 — 얹어 놓은 판때기가 아니다. 그래서 어느 상태든
+      // 바닥은 같은 어두운 면이고, 점유는 등급색 **테두리 + 옅은 물듦**으로만 말한다.
+      g.roundRect(0, 0, RECON_CHIP, RECON_CHIP, 8).fill({ color: 0x0d0a06, alpha: 0.85 });
       if (slot.occupied) {
-        g.roundRect(0, 0, RECON_CHIP, RECON_CHIP, 8).fill({ color: hexColor(reconRarityColor(slot.rarity)) });
+        g.roundRect(0, 0, RECON_CHIP, RECON_CHIP, 8).fill({ color: rarity, alpha: 0.2 });
+        g.roundRect(0, 0, RECON_CHIP, RECON_CHIP, 8).stroke({
+          color: rarity,
+          width: 2,
+          alignment: 1,
+          alpha: 0.7,
+        });
+        // 파인 자리의 아래 입술만 빛을 받는다(챔버·행 판과 같은 조명 부호).
+        g.moveTo(7, RECON_CHIP - 1.5)
+          .lineTo(RECON_CHIP - 7, RECON_CHIP - 1.5)
+          .stroke({ color: rarity, width: 1.5, alpha: 0.4 });
       } else {
-        g.roundRect(0, 0, RECON_CHIP, RECON_CHIP, 8).stroke({ color: 0x5a4a34, width: 2 });
+        g.roundRect(0, 0, RECON_CHIP, RECON_CHIP, 8).stroke({
+          color: 0x2b241a,
+          width: 2,
+          alignment: 1,
+          alpha: 0.9,
+        });
       }
-      g.position.set(x0 + i * step, chipY);
+      g.position.set(cx, chipY);
       host.addChild(g);
       if (!slot.occupied) return;
 
-      // 실루엣 글리프: 해금이면 이름 첫 글자, 잠금이면 '?'. 정확 스펙은 어느 쪽이든 안 낸다.
-      const glyph = this.label(reconSlotLabel(slot).slice(0, 1), 20, COLOR.darkLabel, '800');
-      glyph.position.set(x0 + i * step + (RECON_CHIP - glyph.width) / 2, chipY + (RECON_CHIP - 24) / 2);
-      host.addChild(glyph);
+      /**
+       * 글리프는 **해금된 것에만** 얹는다.
+       *
+       * 잠금 슬롯의 `reconSlotLabel` 은 `'?'` 인데, 그것을 밝은 칩 위에 크게 찍으면 물음표
+       * 스물몇 개가 화면에서 가장 튀는 물체가 된다(사용자 신고 2026-08-03). 게다가 그 물음표는
+       * 정보를 하나도 더 주지 않는다 — "채워져 있지만 종류는 모른다"는 이미 **불 꺼진 소켓**이
+       * 말하고 있고, 몇 개가 찼는지는 슬라이스 머리글의 `4/6` 이 말한다.
+       */
+      if (revealed) {
+        const glyph = this.label(reconSlotLabel(slot).slice(0, 1), 19, SLAB_BODY_FILL, '800');
+        glyph.position.set(cx + (RECON_CHIP - glyph.width) / 2, chipY + (RECON_CHIP - 23) / 2);
+        host.addChild(glyph);
+      }
 
       if (slot.ascension > 0) {
         // 승급 별은 채워진 개수만 작게 얹는다(빈 별까지 그리면 칩이 뭉갠다).
         const stars = this.label('★'.repeat(Math.min(slot.ascension, 5)), 12, COLOR.gold, '800', RECON_CHIP);
-        stars.position.set(x0 + i * step, chipY + RECON_CHIP - 2);
+        stars.alpha = 0.75;
+        stars.position.set(cx, chipY + RECON_CHIP - 2);
         host.addChild(stars);
       }
     });
