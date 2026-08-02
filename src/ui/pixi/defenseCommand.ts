@@ -102,7 +102,11 @@ import { makeScrollArea, rowBounds, clampToRows } from './scrollArea.js';
 import { attachRowClick, stopRowPropagation } from './listRow.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
-import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
+import {
+  makeCinematicPanel,
+  cinematicWindowOpening,
+  type CinematicPanel,
+} from './cinematicPanel.js';
 import {
   makeHangarTitle,
   makeHangarChip,
@@ -761,14 +765,22 @@ export interface DefenseRect {
 }
 
 /**
- * 프리뷰가 그려질 뷰포트 = 왼쪽 패널의 콘텐츠 상자(화면 좌표).
+ * 프리뷰가 그려질 뷰포트 = 왼쪽 패널이 **실제로 파낸 개구부**(화면 좌표).
+ *
+ * ⚠️ **콘텐츠 상자가 아니다.** `box` 는 "글자를 놓아도 되는 자리"라 사방 24 안쪽이고 제목 띠
+ * 아래로 16 더 내려가는데, 창은 바깥 베벨 1 + 석재 단면 6 만 물린다. 처음에 `box` 에 맞췄더니
+ * 프레임과 그림 사이에 **위 16px · 좌우·아래 17px 의 맨 배경 띠**가 둘러 생겼다(사용자 신고
+ * 2026-08-03 "테두리와 미리보기가 안 맞는다" · 픽셀 실측으로 확인). 개구부 기하는
+ * `cinematicPanel.ts` 가 정본이다 — 여기서 다시 유도하면 조용히 어긋난다.
+ *
  * 배경 `windows` 도 **정확히 이 사각형**이다 — 창과 프리뷰가 어긋나면 밝기 보존이 헛돈다.
  */
+const PREVIEW_OPENING = cinematicWindowOpening(LEFT_W, PANEL_H, true);
 const PREVIEW_VIEWPORT: DefenseRect = {
-  x: LEFT_X + BOX_L.x,
-  y: PANEL_Y + BOX_L.y,
-  w: BOX_L.w,
-  h: BOX_L.h,
+  x: LEFT_X + PREVIEW_OPENING.x,
+  y: PANEL_Y + PREVIEW_OPENING.y,
+  w: PREVIEW_OPENING.w,
+  h: PREVIEW_OPENING.h,
 };
 
 /**
@@ -889,19 +901,24 @@ export const DEFENSE_MODALS = {
 } as const;
 
 /**
- * 화면 루트에서 프리뷰 노드가 놓일 z 인덱스 — **맨 앞**.
+ * 프리뷰 노드가 놓일 z 인덱스 — **창 패널 바로 뒤**(인자는 그 패널의 현재 인덱스).
  *
- * 예전엔 인덱스 1(배경 바로 위)로 내렸다 — "패널을 뚫지 않게" 하려던 것인데, 프리뷰 액자
- * 패널이 그 위를 반투명으로 덮어 실측 기여분이 **4.6%** 였다(프리뷰 배경 `0x0b0a18` 이 화면에
- * (27,23,45) 로, 마커 링 `0xff6a5a` 가 (37,27,48) 로 찍혔다). 즉 프레이밍·마커를 아무리 고쳐도
- * 액자 뒤에 묻혀 사실상 빈 상자였다. 프리뷰는 자기 뷰포트로 마스크되고 그 뷰포트는 창 안쪽이라
- * 맨 앞에 둬도 다른 UI 를 가리지 않는다. 팝업이 뜨면 `stop()` 이 노드를 떼므로 팝업도 안전하다.
+ * ## 왜 앞이 아니라 뒤로 바뀌었나 (2026-08-03)
+ * 옛 계약은 "맨 앞"이었다. 근거는 실측이었다 — 나무 `nineSlicePanel` 이 `fillAlpha: 0.96` 으로
+ * 프리뷰를 덮어 화면 기여분이 **4.6%** 였다(프리뷰 배경 `0x0b0a18` 이 (27,23,45) 로, 마커 링
+ * `0xff6a5a` 가 (37,27,48) 로 찍혔다). 즉 액자 뒤에 묻혀 사실상 빈 상자였다.
  *
+ * 그 전제는 **시네마틱 전환으로 사라졌다.** `window` 변종은 링만 굽고 안쪽을 **파내므로**
+ * 덮는 면 자체가 없다. 오히려 앞에 두면 프리뷰가 창의 석재 단면·안쪽 AO·유리 반사·바닥
+ * 스크림을 통째로 가려, 개구부가 "유리창"이 아니라 그냥 검은 사각이 된다(실화면에서 AO
+ * 그라디언트가 프리뷰 위에 하나도 안 나타났다).
+ *
+ * 그래서 창 패널 **바로 뒤**에 둔다 — 프리뷰가 개구부를 채우고 창 처리가 그 위를 덮는다.
  * 순수 함수로 빼 둔 이유는 노드 없이 이 계약을 테스트하기 위해서다(vitest 는 node 환경이라
  * Pixi 표시 객체를 만들 수 없다).
  */
-export function previewChildIndex(childCount: number): number {
-  return Math.max(0, childCount - 1);
+export function previewChildIndex(windowPanelIndex: number): number {
+  return Math.max(0, windowPanelIndex);
 }
 
 // --- 행 판 조명 램프(모듈 1회 굽기) ------------------------------------------
@@ -1103,7 +1120,9 @@ export class DefenseCommandScreen {
   private msgTextNode: Text | null = null;
   private dirtyNode: Text | null = null;
   private tabButtons: { btn: PixiButton; ring: Graphics; host: Container }[] = [];
-  private footButtons: { save: PixiButton; revert: PixiButton } | null = null;
+  private footHost: Container | null = null;
+  /** 하단 버튼을 세운 시점의 dirty 값 — 바뀌면 톤이 달라지므로 다시 세운다({@link buildFooter}). */
+  private footBuiltDirty: boolean | null = null;
 
   constructor(
     profile: Profile,
@@ -1494,7 +1513,8 @@ export class DefenseCommandScreen {
     this.msgTextNode = null;
     this.dirtyNode = null;
     this.tabButtons = [];
-    this.footButtons = null;
+    this.footHost = null;
+    this.footBuiltDirty = null;
     const previewNode = this.preview.layer;
     for (const child of [...this.root.children]) {
       // 프리뷰 노드는 이 화면이 만든 것이 아니다 — 떼기만 하고 **절대 destroy 하지 않는다**.
@@ -1704,17 +1724,52 @@ export class DefenseCommandScreen {
    * 몰고 상태 문구를 왼쪽에 두면 이 띠 안에 빈 자리가 없다.
    */
   private buildFooter(): void {
+    const host = new Container();
+    this.root.addChild(host);
+    this.footHost = host;
+
+    const dirtyNode = this.label('', 18, WARN_COLOR, '700');
+    dirtyNode.anchor.set(0, 0.5);
+    dirtyNode.position.set(EDGE_X, FOOT_Y + 18);
+    dirtyNode.visible = false;
+    this.root.addChild(dirtyNode);
+    this.dirtyNode = dirtyNode;
+
+    const msg = this.label('', 19, COLOR.gold, '700');
+    msg.anchor.set(0, 0.5);
+    msg.position.set(EDGE_X, FOOT_Y + FOOT_H - 18);
+    msg.visible = false;
+    this.root.addChild(msg);
+    this.msgTextNode = msg;
+  }
+
+  /**
+   * 하단 버튼 셋을 세운다. **dirty 가 바뀔 때만** 다시 세운다(톤이 달라지기 때문).
+   *
+   * ⚠️ 저장 버튼의 톤이 상태에 따라 갈리는 이유: `PixiButton.setEnabled(false)` 는 컨테이너
+   * alpha 를 0.4 로 떨어뜨리는데, `gold` 톤의 라벨색은 **어두운 갈색**(`COLOR.darkLabel`)이고
+   * 그림자도 꺼져 있다. 어두운 배경 위에서 판과 글자가 같이 0.4 로 흐려지면 **글자가 통째로
+   * 사라진다** — 실화면에서 `배치 저장` 이 라벨 없는 빈 금색 판으로 찍혔다.
+   * 비활성일 때는 라벨이 크림색인 `stone` 을 쓴다("지금은 주 동작이 아니다"라는 뜻도 맞다).
+   */
+  private buildFooterButtons(dirty: boolean): void {
+    const host = this.footHost;
+    if (host === null) return;
+    this.clearHost(host);
+    this.footBuiltDirty = dirty;
+
     let x = FOOT_BTN_X;
     const save = this.chromeButton({
-      tone: 'gold',
+      tone: dirty ? 'gold' : 'stone',
       width: SAVE_W,
       height: FOOT_H,
       fontSize: 21,
       label: tCmd('def3.cmd.save'),
+      enabled: dirty && !this.busy,
       onClick: () => void this.saveLayout(),
     });
     save.container.position.set(x, FOOT_Y);
-    this.root.addChild(save.container);
+    host.addChild(save.container);
     x += SAVE_W + FOOT_GAP;
 
     const revert = this.chromeButton({
@@ -1723,6 +1778,7 @@ export class DefenseCommandScreen {
       height: FOOT_H,
       fontSize: 21,
       label: tCmd('def3.cmd.revert'),
+      enabled: dirty && !this.busy,
       onClick: () => {
         revertDraft(this.state);
         this.syncPreview();
@@ -1730,7 +1786,7 @@ export class DefenseCommandScreen {
       },
     });
     revert.container.position.set(x, FOOT_Y);
-    this.root.addChild(revert.container);
+    host.addChild(revert.container);
     x += REVERT_W + FOOT_GAP;
 
     const test = this.chromeButton({
@@ -1746,23 +1802,7 @@ export class DefenseCommandScreen {
       },
     });
     test.container.position.set(x, FOOT_Y);
-    this.root.addChild(test.container);
-
-    this.footButtons = { save, revert };
-
-    const dirty = this.label('', 18, WARN_COLOR, '700');
-    dirty.anchor.set(0, 0.5);
-    dirty.position.set(EDGE_X, FOOT_Y + 18);
-    dirty.visible = false;
-    this.root.addChild(dirty);
-    this.dirtyNode = dirty;
-
-    const msg = this.label('', 19, COLOR.gold, '700');
-    msg.anchor.set(0, 0.5);
-    msg.position.set(EDGE_X, FOOT_Y + FOOT_H - 18);
-    msg.visible = false;
-    this.root.addChild(msg);
-    this.msgTextNode = msg;
+    host.addChild(test.container);
   }
 
   // --- 갱신 -----------------------------------------------------------------
@@ -1823,10 +1863,8 @@ export class DefenseCommandScreen {
     }
 
     const dirty = isDirty(this.state);
-    if (this.footButtons !== null) {
-      this.footButtons.save.setEnabled(dirty && !this.busy);
-      this.footButtons.revert.setEnabled(dirty && !this.busy);
-    }
+    // 톤이 dirty 에 따라 갈리므로 값이 **바뀔 때만** 다시 세운다(근거는 buildFooterButtons 주석).
+    if (this.footBuiltDirty !== dirty) this.buildFooterButtons(dirty);
     if (this.dirtyNode !== null) {
       this.dirtyNode.text = dirty ? stripEmoji(tCmd('def3.cmd.dirty')) : '';
       this.dirtyNode.visible = dirty;
@@ -1861,8 +1899,12 @@ export class DefenseCommandScreen {
     this.preview.start(this.state.draft);
     this.syncPreview();
     const node = this.preview.layer;
-    if (node.parent === this.root) {
-      this.root.setChildIndex(node, previewChildIndex(this.root.children.length));
+    const panel = this.previewPanel;
+    if (node.parent === this.root && panel !== null) {
+      // 창 패널 **바로 뒤**로 — 프리뷰가 개구부를 채우고 창 처리(단면·AO·반사·스크림)가 위를
+      // 덮는다. 인덱스는 런타임에 읽는다(크롬 조립 순서가 바뀌어도 따라온다).
+      const at = this.root.getChildIndex(panel.container);
+      this.root.setChildIndex(node, previewChildIndex(at));
     }
   }
 
