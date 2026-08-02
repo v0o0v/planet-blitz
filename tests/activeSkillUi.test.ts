@@ -138,9 +138,11 @@ describe('AC-16 · 액티브 팝업 레이아웃', () => {
     expect(total).toBeLessThanOrEqual(ACTIVES_PANEL.boxW);
   });
 
-  it('세로 순서가 겹치지 않는다: 제목 < 부제 < 슬롯 < 계열 머리글 < 격자 < 상자 바닥', () => {
+  it('세로 순서가 겹치지 않는다: 상자 상단 ≤ 부제 < 슬롯 < 계열 머리글 < 격자 < 상자 바닥', () => {
     const p = ACTIVES_PANEL;
-    expect(p.boxY).toBeLessThan(p.subY);
+    // 2026-08-02 AAA 전환: 제목이 콘텐츠 상자 안의 Text 에서 **각인 제목 띠**(상자 위)로 옮겨
+    // 갔다. 그래서 부제가 상자 첫 줄이고 `subY === boxY` 다 — 부등호가 아니라 이하가 옳다.
+    expect(p.boxY).toBeLessThanOrEqual(p.subY);
     expect(p.subY).toBeLessThan(p.slotY);
     expect(p.slotY + p.slotH).toBeLessThan(p.treeHeadY);
     expect(p.treeHeadY).toBeLessThan(p.gridTop);
