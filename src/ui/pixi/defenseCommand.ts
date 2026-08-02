@@ -1524,9 +1524,22 @@ export class DefenseCommandScreen {
     this.root.addChild(backdrop.view);
     this.backdrop = backdrop;
 
-    this.buildHeader();
-    this.buildTabs();
-
+    /**
+     * ⚠️ **크롬(헤더·탭·하단 띠)은 패널보다 뒤에 붙여 위로 올린다.**
+     *
+     * 사용자 신고(2026-08-02) "탭 아래 절반이 클릭이 안 된다"의 실체가 이 순서였다. 실측:
+     * `design=(1263,130)` → `TABHOST2/TABBTN2`(정상), `design=(1263,162)` → **화면 루트**.
+     * 석재 패널은 접지 그림자·글로우를 텍스처에 구워 넣어 **자기 사각보다 30px 가까이 위아래로
+     * 번지고**(패널 top 196 인데 bounds 가 y166 을 포함), 그 번짐이 탭 아래 절반을 덮었다.
+     *
+     * 왜 "비상호작용이니 안 가린다"가 틀렸나: Pixi v8 은 자식을 역순으로 훑다가 **픽셀에 걸리면
+     * 거기서 멈추고 가장 가까운 상호작용 조상**을 반환한다. 그림자 스프라이트가 passive 여도
+     * 탐색은 거기서 끝나고 결과는 루트가 된다 — 탭은 영영 후보에 오르지 못한다.
+     *
+     * 그래서 순서를 뒤집는다. 크롬이 콘텐츠 위라는 것은 z 순서로도 옳고, 하단 액션 띠(패널
+     * 바닥에서 16px)도 같은 번짐에 먹히던 자리라 함께 구제된다.
+     * ⚠️ 여백을 벌리는 것으로는 못 푼다 — 번짐 폭은 패널 치수에서 파생돼 조용히 커진다.
+     */
     // 패널 4장을 한 번에 세운다(§ 파일 헤더 "모든 탭이 같은 패널 기하를 쓴다").
     this.previewPanel = this.addPanel(
       LEFT_X,
@@ -1557,6 +1570,9 @@ export class DefenseCommandScreen {
     this.bpPanel.container.addChild(bpHost);
     this.bpHost = bpHost;
 
+    // 크롬은 여기서부터 — 패널 위에 얹힌다(바로 위 주석이 근거).
+    this.buildHeader();
+    this.buildTabs();
     this.buildFooter();
 
     const modalHost = new Container();

@@ -19,6 +19,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   defenseCommandLayout,
   DEFENSE_BOXES,
@@ -278,6 +280,43 @@ describe('슬롯 패널 안 — 고정 블록이 상자를 뚫지 않는다', ()
     // 오른쪽 패널을 좁히면 이름이 조용히 뭉개진다(`label` 이 scale.x 로 눌러 버려 예외가 없다).
     expect(DEFENSE_BOXES.rowTextW).toBeGreaterThanOrEqual(360);
     expect(DEFENSE_BOXES.rowTextW).toBeLessThan(DEFENSE_BOXES.right.w);
+  });
+});
+
+describe('크롬이 패널보다 위에 있다 — 구운 그림자가 클릭을 훔치지 못하게', () => {
+  /**
+   * 사용자 신고(2026-08-02) "탭 아래 절반이 클릭이 안 된다"의 실체.
+   *
+   * 실측 로그: `design=(1263,130)` → `TABHOST2/TABBTN2`(정상), `design=(1263,162)` → **화면 루트**.
+   * 석재 패널은 접지 그림자·글로우를 텍스처에 구워 넣어 자기 사각보다 30px 가까이 **위로 번지고**,
+   * 패널이 탭보다 나중에 추가돼 그 번짐이 탭 아래 절반을 덮고 있었다.
+   *
+   * 왜 "비상호작용이라 안 가린다"가 틀렸나: Pixi v8 은 자식을 역순으로 훑다가 **픽셀에 걸리면
+   * 거기서 멈추고 가장 가까운 상호작용 조상**을 반환한다. 그림자가 passive 여도 탐색은 끝난다.
+   *
+   * 좌표로는 못 잡는 결함이라(번짐은 텍스처 안에 있고 레이아웃 값이 아니다) **조립 순서**를
+   * 소스에서 직접 잠근다 — 이 리포가 `tests/m7bIntegration.test.ts` 에서 쓰는 선례와 같다.
+   * ⚠️ 여백을 벌리는 것으로는 못 푼다: 번짐 폭은 패널 치수에서 파생돼 조용히 커진다.
+   */
+  const src = new TextDecoder().decode(
+    readFileSync(fileURLToPath(new URL('../src/ui/pixi/defenseCommand.ts', import.meta.url))),
+  );
+  const body = src.slice(src.indexOf('private buildChrome('), src.indexOf('private addPanel('));
+
+  it('buildChrome 이 패널 4장을 세운 **뒤에** 헤더·탭·하단 띠를 붙인다', () => {
+    const lastPanel = body.lastIndexOf('this.addPanel(');
+    expect(lastPanel, 'buildChrome 안에서 addPanel 호출을 못 찾았다').toBeGreaterThan(-1);
+    for (const chrome of ['this.buildHeader()', 'this.buildTabs()', 'this.buildFooter()']) {
+      const at = body.indexOf(chrome);
+      expect(at, `${chrome} 호출이 없다`).toBeGreaterThan(-1);
+      expect(at, `${chrome} 가 패널보다 먼저 붙는다 — 패널 그림자가 클릭을 훔친다`).toBeGreaterThan(
+        lastPanel,
+      );
+    }
+  });
+
+  it('팝업 host 는 크롬보다도 뒤다(팝업이 언제나 맨 앞)', () => {
+    expect(body.indexOf('this.modalHost = modalHost')).toBeGreaterThan(body.indexOf('this.buildFooter()'));
   });
 });
 
