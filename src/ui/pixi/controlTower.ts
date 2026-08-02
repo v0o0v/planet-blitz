@@ -285,7 +285,24 @@ const TGT_BTN_H = 52;
 
 /** 정찰 판독 요약 줄(파낸 챔버) + 그 아래 레이어 슬라이스 5장. */
 const RECON_SUMMARY_H = 48;
-const RECON_SLICE_H = 120;
+const RECON_CHIP = 44;
+const RECON_CHIP_GAP = 10;
+/** 슬라이스 머리글이 쓰는 세로(12 여백 + 글자 22 + 아래 10). 내용은 그 아래에서 시작한다. */
+const RECON_HEAD_H = 44;
+const RECON_PAD = 16;
+/** 승급 별이 칸 아래로 삐져나오는 만큼 — 자연 높이에 더해야 다음 챔버를 침범하지 않는다. */
+const RECON_STAR_H = 14;
+/** 해금 슬라이스의 이름 알약. 상한이 있어야 긴 이름 하나가 한 줄을 통째로 먹지 않는다. */
+const RECON_PILL_H = 32;
+const RECON_PILL_GAP = 8;
+const RECON_PILL_PAD = 12;
+const RECON_PILL_MAX_W = 190;
+/**
+ * 슬라이스의 **최소** 자연 높이(잠금 = 소켓 한 줄). 해금이면 이름 알약이 여러 줄로 흘러 더
+ * 커지므로 이 값은 하한이지 고정 높이가 아니다 — 실제 높이는 {@link ControlTowerScreen} 의
+ * `buildReconSlice` 가 잰다.
+ */
+const RECON_SLICE_H = RECON_HEAD_H + RECON_CHIP + RECON_STAR_H + 12;
 const RECON_SLICE_MAX_H = 176;
 /** `reconView` 가 돌려주는 슬라이스 수(L1 편대 · L2 설비 · L3 보스/기물/수호). */
 const RECON_SLICE_COUNT = 5;
@@ -297,8 +314,6 @@ const RECON_SLICE_KEYS: readonly string[] = [
   'ctl.recon.slice.prop',
   'ctl.recon.slice.guardian',
 ];
-const RECON_CHIP = 44;
-const RECON_CHIP_GAP = 10;
 
 /** 작전 상황 열 — 내 전황 블록(상시)과 블록 사이 간격. */
 const OPS_RANK_H = 108;
@@ -1688,109 +1703,164 @@ export class ControlTowerScreen {
 
     const top = BOX_R.y + RECON_SUMMARY_H + OPS_GAP;
     const strips = view.strips.slice(0, RECON_SLICE_COUNT);
+    // 슬라이스마다 필요한 세로가 다르다(해금이면 이름 알약이 여러 줄로 흐른다) — 먼저 지어서
+    // 자연 높이를 재고, 남는 세로를 그 위에서 나눠 준다.
+    const built = strips.map((strip, i) => this.buildReconSlice(strip, i, view.revealed));
     const hs = fillRowHeights(
-      strips.map(() => RECON_SLICE_H),
+      built.map((b) => b.natural),
       ROW_GAP,
       BOX_R.bottom - top,
       RECON_SLICE_MAX_H,
     );
     let cy = top;
-    strips.forEach((strip, i) => {
-      const h = hs[i] ?? RECON_SLICE_H;
-      this.renderReconSlice(host, strip, i, cy, h, view.revealed);
+    built.forEach((b, i) => {
+      const h = hs[i] ?? b.natural;
+      host.addChild(recessedWell(BOX_R.x, cy, BOX_R.w, h));
+      b.head.position.set(BOX_R.x + RECON_PAD, cy + 12);
+      host.addChild(b.head);
+      // 내용은 머리글 아래 남는 세로의 **가운데**에 앉는다(챔버가 자라도 위에 몰리지 않게).
+      b.body.position.set(
+        BOX_R.x + RECON_PAD,
+        cy + RECON_HEAD_H + Math.max(0, Math.round((h - RECON_HEAD_H - b.bodyH - 12) / 2)),
+      );
+      host.addChild(b.body);
       cy += h + ROW_GAP;
     });
     this.tailWell(host, BOX_R, cy - ROW_GAP, null);
   }
 
   /**
-   * 정찰 슬라이스 한 장 — 파낸 챔버 + 이름/점유 수 + 슬롯 소켓(등급 색 테두리 · 승급 별).
-   * `revealed` = 이 상대를 1회 침공해 종류가 열렸는가(잠겨 있으면 글리프를 아예 안 얹는다).
+   * 정찰 슬라이스 한 장을 짓는다(머리글 + 내용 + 자연 높이). 챔버는 호출부가 최종 높이로 판다.
+   *
+   * ## 왜 해금 여부로 **모양이 갈리는가**
+   * 잠겨 있으면 낼 수 있는 것이 "몇 칸이 찼고 등급이 무엇인가"뿐이라 **소켓 한 줄**이면 충분하다.
+   * 해금되면 종류 이름이 열리는데, 이름을 소켓 안에 넣으려 **한 글자로 줄였더니 구분이 안 됐다**
+   * (사용자 신고 2026-08-03 — 그 전에는 잠금 '?' 가 화면에서 가장 튀는 물체였다). 44px 칸에
+   * 한글 이름이 들어갈 방법은 없고, L2 소켓은 12칸까지 늘어나 칸을 넓힐 수도 없다. 그래서
+   * 해금분은 **이름 알약**으로 바꾸고 폭에 맞춰 여러 줄로 흘린다 — 줄 수가 달라지므로 챔버
+   * 높이도 슬라이스마다 달라지고, 그래서 자연 높이를 재서 돌려준다.
    */
-  private renderReconSlice(
-    host: Container,
+  private buildReconSlice(
     strip: ReconStrip,
     index: number,
-    y: number,
-    h: number,
     revealed: boolean,
-  ): void {
-    host.addChild(recessedWell(BOX_R.x, y, BOX_R.w, h));
-
+  ): { head: Text; body: Container; bodyH: number; natural: number } {
     const occupied = strip.slots.filter((s) => s.occupied).length;
     const head = this.label(
       `${t((RECON_SLICE_KEYS[index] ?? 'ctl.recon.head') as Parameters<typeof t>[0])} · ${occupied}/${strip.slots.length}`,
       17,
       SLAB_BODY_FILL,
       '700',
-      BOX_R.w - 32,
+      BOX_R.w - RECON_PAD * 2,
     );
-    head.position.set(BOX_R.x + 16, y + 12);
-    host.addChild(head);
+    const avail = Math.max(RECON_CHIP, BOX_R.w - RECON_PAD * 2);
+    const body = new Container();
+    const bodyH = revealed
+      ? this.flowReconPills(body, strip, avail)
+      : this.flowReconSockets(body, strip, avail);
+    return { head, body, bodyH, natural: RECON_HEAD_H + bodyH + 12 };
+  }
 
-    const x0 = BOX_R.x + 16;
-    // 소켓이 12개까지 늘어나므로 남는 폭에 맞춰 칸 간격을 줄인다(넘치면 잘리는 대신 좁아진다).
-    const avail = Math.max(RECON_CHIP, BOX_R.w - 32);
+  /**
+   * 잠금 슬라이스 — 소켓 **한 줄**. 12칸까지 늘어나므로 남는 폭에 맞춰 간격을 줄인다
+   * (넘치면 잘리는 대신 좁아진다). 글리프는 얹지 않는다: `reconSlotLabel` 이 주는 '?' 는
+   * 정보를 하나도 더 주지 않으면서 석재 화면에서 가장 튀는 물체가 된다(사용자 신고).
+   * "채워졌지만 종류는 모른다"는 불 꺼진 소켓이, 몇 개가 찼는지는 머리글의 4/6 이 말한다.
+   */
+  private flowReconSockets(body: Container, strip: ReconStrip, avail: number): number {
     const step = Math.min(
       RECON_CHIP + RECON_CHIP_GAP,
       strip.slots.length > 0 ? avail / strip.slots.length : avail,
     );
-    // 칩 줄은 머리글 아래 남는 세로의 가운데에 앉는다(챔버가 자라도 위에 몰리지 않게).
-    const chipY = y + 44 + Math.max(0, Math.round((h - 44 - RECON_CHIP - 14) / 2));
-
     strip.slots.forEach((slot, i) => {
-      const cx = x0 + i * step;
-      const rarity = hexColor(reconRarityColor(slot.rarity));
-      const g = new Graphics();
-      // 칩은 챔버 바닥에 **파인 소켓**이다 — 얹어 놓은 판때기가 아니다. 그래서 어느 상태든
-      // 바닥은 같은 어두운 면이고, 점유는 등급색 **테두리 + 옅은 물듦**으로만 말한다.
-      g.roundRect(0, 0, RECON_CHIP, RECON_CHIP, 8).fill({ color: 0x0d0a06, alpha: 0.85 });
-      if (slot.occupied) {
-        g.roundRect(0, 0, RECON_CHIP, RECON_CHIP, 8).fill({ color: rarity, alpha: 0.2 });
-        g.roundRect(0, 0, RECON_CHIP, RECON_CHIP, 8).stroke({
-          color: rarity,
-          width: 2,
-          alignment: 1,
-          alpha: 0.7,
-        });
-        // 파인 자리의 아래 입술만 빛을 받는다(챔버·행 판과 같은 조명 부호).
-        g.moveTo(7, RECON_CHIP - 1.5)
-          .lineTo(RECON_CHIP - 7, RECON_CHIP - 1.5)
-          .stroke({ color: rarity, width: 1.5, alpha: 0.4 });
-      } else {
-        g.roundRect(0, 0, RECON_CHIP, RECON_CHIP, 8).stroke({
-          color: 0x2b241a,
-          width: 2,
-          alignment: 1,
-          alpha: 0.9,
-        });
-      }
-      g.position.set(cx, chipY);
-      host.addChild(g);
-      if (!slot.occupied) return;
-
-      /**
-       * 글리프는 **해금된 것에만** 얹는다.
-       *
-       * 잠금 슬롯의 `reconSlotLabel` 은 `'?'` 인데, 그것을 밝은 칩 위에 크게 찍으면 물음표
-       * 스물몇 개가 화면에서 가장 튀는 물체가 된다(사용자 신고 2026-08-03). 게다가 그 물음표는
-       * 정보를 하나도 더 주지 않는다 — "채워져 있지만 종류는 모른다"는 이미 **불 꺼진 소켓**이
-       * 말하고 있고, 몇 개가 찼는지는 슬라이스 머리글의 `4/6` 이 말한다.
-       */
-      if (revealed) {
-        const glyph = this.label(reconSlotLabel(slot).slice(0, 1), 19, SLAB_BODY_FILL, '800');
-        glyph.position.set(cx + (RECON_CHIP - glyph.width) / 2, chipY + (RECON_CHIP - 23) / 2);
-        host.addChild(glyph);
-      }
-
-      if (slot.ascension > 0) {
-        // 승급 별은 채워진 개수만 작게 얹는다(빈 별까지 그리면 칩이 뭉갠다).
-        const stars = this.label('★'.repeat(Math.min(slot.ascension, 5)), 12, COLOR.gold, '800', RECON_CHIP);
-        stars.alpha = 0.75;
-        stars.position.set(cx, chipY + RECON_CHIP - 2);
-        host.addChild(stars);
-      }
+      const node = this.reconSocket(RECON_CHIP, slot.occupied, slot.rarity, slot.ascension);
+      node.position.set(i * step, 0);
+      body.addChild(node);
     });
+    return RECON_CHIP + RECON_STAR_H;
+  }
+
+  /**
+   * 해금 슬라이스 — 이름 알약을 폭에 맞춰 흘린다. 빈 칸은 알약 뒤에 좁은 소켓으로 붙여
+   * "몇 칸이 남았는가"를 계속 눈으로 보여 준다(머리글의 4/6 과 같은 말을 형태로도 한다).
+   */
+  private flowReconPills(body: Container, strip: ReconStrip, avail: number): number {
+    const nodes: { node: Container; w: number }[] = [];
+    for (const slot of strip.slots) {
+      if (!slot.occupied) continue;
+      nodes.push(this.reconPill(reconSlotLabel(slot), slot.rarity, slot.ascension));
+    }
+    const empties = strip.slots.length - nodes.length;
+    for (let i = 0; i < empties; i++) {
+      nodes.push({ node: this.reconSocket(RECON_PILL_H, false, 0, 0), w: RECON_PILL_H });
+    }
+    let x = 0;
+    let rows = 1;
+    for (const item of nodes) {
+      if (x > 0 && x + item.w > avail) {
+        x = 0;
+        rows++;
+      }
+      item.node.position.set(x, (rows - 1) * (RECON_PILL_H + RECON_PILL_GAP));
+      body.addChild(item.node);
+      x += item.w + RECON_PILL_GAP;
+    }
+    return rows * (RECON_PILL_H + RECON_PILL_GAP) - RECON_PILL_GAP + RECON_STAR_H;
+  }
+
+  /**
+   * 슬롯 하나의 **파인 소켓**. 얹어 놓은 판때기가 아니라 챔버 바닥에 파인 자리다 — 그래서 어느
+   * 상태든 바닥은 같은 어두운 면이고, 점유는 등급색 테두리 + 옅은 물듦 + 아래 입술 수광으로만
+   * 말한다(챔버·행 판과 같은 조명 부호). 꽉 채운 등급색으로 그렸더니 화면에서 가장 밝은 물체가
+   * 됐다(사용자 신고 2026-08-03).
+   */
+  private reconSocket(size: number, occupied: boolean, rarity: number, ascension: number): Container {
+    const root = new Container();
+    const rc = hexColor(reconRarityColor(rarity));
+    const g = new Graphics();
+    g.roundRect(0, 0, size, size, 8).fill({ color: 0x0d0a06, alpha: 0.85 });
+    if (occupied) {
+      g.roundRect(0, 0, size, size, 8).fill({ color: rc, alpha: 0.2 });
+      g.roundRect(0, 0, size, size, 8).stroke({ color: rc, width: 2, alignment: 1, alpha: 0.7 });
+      g.moveTo(7, size - 1.5)
+        .lineTo(size - 7, size - 1.5)
+        .stroke({ color: rc, width: 1.5, alpha: 0.4 });
+    } else {
+      g.roundRect(0, 0, size, size, 8).stroke({ color: 0x2b241a, width: 2, alignment: 1, alpha: 0.9 });
+    }
+    root.addChild(g);
+    if (occupied && ascension > 0) this.reconStars(root, ascension, size, size);
+    return root;
+  }
+
+  /** 이름 알약 — 소켓과 같은 재질에 글자 폭만큼 늘린 것(등급은 테두리, 승급은 아래 별). */
+  private reconPill(name: string, rarity: number, ascension: number): { node: Container; w: number } {
+    const root = new Container();
+    const label = this.label(name, 15, SLAB_BODY_FILL, '700', RECON_PILL_MAX_W - RECON_PILL_PAD * 2);
+    const w = Math.ceil(Math.min(RECON_PILL_MAX_W, label.width + RECON_PILL_PAD * 2));
+    const rc = hexColor(reconRarityColor(rarity));
+    const g = new Graphics();
+    g.roundRect(0, 0, w, RECON_PILL_H, 8).fill({ color: 0x0d0a06, alpha: 0.85 });
+    g.roundRect(0, 0, w, RECON_PILL_H, 8).fill({ color: rc, alpha: 0.16 });
+    g.roundRect(0, 0, w, RECON_PILL_H, 8).stroke({ color: rc, width: 2, alignment: 1, alpha: 0.7 });
+    g.moveTo(7, RECON_PILL_H - 1.5)
+      .lineTo(w - 7, RECON_PILL_H - 1.5)
+      .stroke({ color: rc, width: 1.5, alpha: 0.4 });
+    root.addChild(g);
+    label.anchor.set(0.5, 0.5);
+    label.position.set(w / 2, RECON_PILL_H / 2);
+    root.addChild(label);
+    if (ascension > 0) this.reconStars(root, ascension, w, RECON_PILL_H);
+    return { node: root, w };
+  }
+
+  /** 승급 별은 채워진 개수만 아래에 작게 얹는다(빈 별까지 그리면 칸이 뭉갠다). */
+  private reconStars(root: Container, ascension: number, w: number, h: number): void {
+    const stars = this.label('★'.repeat(Math.min(ascension, 5)), 12, COLOR.gold, '800', w);
+    stars.alpha = 0.75;
+    stars.anchor.set(0.5, 0);
+    stars.position.set(w / 2, h - 1);
+    root.addChild(stars);
   }
 
   // --- 작전 상황(내 전황 · 결과판 · 검증 중 · 배치전 · 복수) --------------------
