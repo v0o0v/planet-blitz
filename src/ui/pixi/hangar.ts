@@ -86,6 +86,7 @@ import { COLOR, RARITY_COLOR_NUM, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, shipShowcaseName, LEGACY_SHOWCASE, type UiTextures } from './uiTextures.js';
 import { ChampionSelectScreen } from './championSelect.js';
 import { GuardianRosterScreen } from './guardianRoster.js';
+import { LineageHallScreen } from './lineageHall.js';
 import { CatalystArchiveScreen } from './catalystArchive.js';
 import { shipTypeName, tShipKey } from './shipLabels.js';
 import { PixiButton } from './button.js';
@@ -338,6 +339,11 @@ export class HangarScreen {
    * 촉매 보관함(분해 표면, ADR-0029). 챔피언·로스터와 같은 하위 화면 규약(`suspend()`/`resume()`).
    */
   private readonly catalystArchive: CatalystArchiveScreen;
+  /**
+   * 계보 전당(투자 표면, ADR-0007). 로스터가 회수하는 포인트를 쓰는 자리라 형제로 둔다 — 같은
+   * 하위 화면 규약(`suspend()`/`resume()`).
+   */
+  private readonly lineage: LineageHallScreen;
 
   constructor(profile: Profile, stage: Container, store: KeyValueStore | null = null) {
     this.profile = profile;
@@ -346,6 +352,7 @@ export class HangarScreen {
     this.champion = new ChampionSelectScreen(profile, stage, store);
     this.roster = new GuardianRosterScreen(profile, stage, store);
     this.catalystArchive = new CatalystArchiveScreen(profile, stage, store);
+    this.lineage = new LineageHallScreen(profile, stage, store);
     this.root.visible = false;
     this.root.eventMode = 'static';
     this.stage.addChild(this.root);
@@ -376,6 +383,7 @@ export class HangarScreen {
     // 광택이 통째로 멈춘다(자기 안에서 다시 가시성으로 걸러내므로 여기서 조건을 따질 필요 없다).
     this.catalystArchive.update(dt);
     this.roster.update(dt);
+    this.lineage.update(dt);
     this.champion.update(dt);
     if (!this.root.visible) return;
     this.backdrop?.update(dt);
@@ -437,6 +445,18 @@ export class HangarScreen {
   private openGuardianRoster(): void {
     this.suspend();
     this.roster.show(this.profile, {
+      onClose: () => this.resume(),
+    });
+  }
+
+  /**
+   * 계보 전당으로 내려간다(투자 표면, ADR-0007). 투자는 `profile.lineage` 를 변형하고 기체 가지는
+   * 로드아웃 빌드에 외부 적용되므로, 돌아올 때 `resume()` 의 `render()` 가 갱신된 보너스로 능력치
+   * 표를 다시 계산한다.
+   */
+  private openLineageHall(): void {
+    this.suspend();
+    this.lineage.show(this.profile, {
       onClose: () => this.resume(),
     });
   }
@@ -915,12 +935,12 @@ export class HangarScreen {
   }
 
   /**
-   * 헤더 밴드(y 0..{@link HEADER_H}) — 각인 제목 · 재화 칩 2 · 진입 버튼 3 · 닫기.
+   * 헤더 밴드(y 0..{@link HEADER_H}) — 각인 제목 · 재화 칩 2 · 진입 버튼 4 · 닫기.
    *
-   * ⚠️ **여섯 요소가 전부 같은 세로 띠**(y {@link HEAD_Y}..{@link HEAD_Y}+{@link HEAD_H})를
+   * ⚠️ **일곱 요소가 전부 같은 세로 띠**(y {@link HEAD_Y}..{@link HEAD_Y}+{@link HEAD_H})를
    * 쓴다. 이 화면은 헤더가 겹치는 결함을 이미 겪었으므로(하단 패널의 "겹치면 안 되는 세로 띠
    * 4줄" 주석과 같은 유형), 세로로 쌓지 않고 **가로로만** 배치해 겹침을 구조적으로 없앤다.
-   * 좌→우: [촉매][크레딧][광물] … 제목(중앙) … [예비역][기체 교체][닫기].
+   * 좌→우: [촉매][크레딧][광물] … 제목(중앙) … [계보][예비역][기체 교체][닫기].
    */
   private renderTitleBar(): void {
     // ⚠️ **각인 석재 인방은 사용자 판단으로 제거됐다**(2026-08-02).
@@ -1050,8 +1070,23 @@ export class HangarScreen {
       label: tShipKey('hangar.act.guardians', 'Guardians'),
       onClick: () => this.openGuardianRoster(),
     });
-    guardians.container.position.set(swapX - headGap - actW, HEAD_Y);
+    const guardiansX = swapX - headGap - actW;
+    guardians.container.position.set(guardiansX, HEAD_Y);
     this.root.addChild(guardians.container);
+
+    // 계보 전당 — 예비역 **바로 왼쪽**. 로스터가 회수하는 포인트를 쓰는 자리라 두 버튼이 붙어
+    // 있어야 "소멸 → 투자" 동선이 헤더에서 읽힌다. 제목은 최대 760 폭(중앙 정렬)이라 오른쪽
+    // 끝이 1340 이고 이 버튼의 왼쪽 끝은 1406 이다 — 겹치지 않는다.
+    const lineage = this.chromeButton({
+      tone: 'stone',
+      width: actW,
+      height: HEAD_H,
+      fontSize: 15,
+      label: tShipKey('hangar.act.lineage', 'Lineage'),
+      onClick: () => this.openLineageHall(),
+    });
+    lineage.container.position.set(guardiansX - headGap - actW, HEAD_Y);
+    this.root.addChild(lineage.container);
   }
 
   private statRows(): StatRow[] {

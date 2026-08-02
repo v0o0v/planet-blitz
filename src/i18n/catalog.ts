@@ -695,6 +695,7 @@ export const EN = {
   'hangar.desc.lineage': 'Account-wide boost to your active ship.',
   'hangar.act.swapShip': 'Change Ship',
   'hangar.act.guardians': 'Guardians',
+  'hangar.act.lineage': 'Lineage',
   // 기체 교체(퇴역·세대 교체)는 현역이 만렙일 때만 열린다 — 잠긴 이유를 화면에 남긴다.
   'hangar.err.swapNeedMaxLevel': 'Change Ship unlocks at max level (Lv {n}). Active ship: Lv {lv}.',
 
@@ -788,6 +789,46 @@ export const EN = {
   'guardians.detail.gearNone': 'No locked gear.',
   'guardians.detail.warn':
     'Dismissal cannot be undone. The guardian is gone for good and can never defend your base again.',
+
+  // --- 계보 전당(ADR-0007) — 계보 포인트를 쓰는 유일한 플레이어 표면 ---
+  // 곡선·비용·마일스톤 레벨은 전부 `data/lineage.ts` 정본에서 유도한다(문구에 수치를 박지 마라).
+  'lineage.title': 'Lineage',
+  'lineage.branches.title': 'Lineage Branches',
+  'lineage.branch.ship': 'Ship Branch',
+  'lineage.branch.ship.desc':
+    'Strengthens the ship you fly now, and every ship of every generation after it.',
+  'lineage.branch.guardian': 'Guardian Branch',
+  'lineage.branch.guardian.desc':
+    'Strengthens every guardian defending your base — the ones in reserve now and all future ones.',
+  'lineage.level': 'Invested level {lv}',
+  'lineage.next': 'Next level: +{pct}% (+{delta}%p)',
+  'lineage.cost': '{cost} pts',
+  'lineage.cap': 'Cap +{pct}%',
+  'lineage.invest': 'Invest',
+  'lineage.short': '{need} pts short',
+  'lineage.sunk': '{pt} pts already sunk into this branch — no respec.',
+  'lineage.invested': '{name} reached level {lv} · {cost} pts spent',
+  'lineage.points.title': 'Lineage Points',
+  'lineage.points.use': 'Earned by retiring ships and dismissing guardians.',
+  'lineage.points.warn':
+    'Investment cannot be undone. There is no respec — points spent on a branch stay there forever.',
+  'lineage.confirm.title': 'Invest in the lineage?',
+  'lineage.confirm.body':
+    'Raise the {name} to level {lv} for {cost} points? Its bonus becomes +{pct}% and you are left with {left} points. There is no respec — this cannot be undone.',
+  'lineage.confirm.yes': 'Invest',
+  'lineage.cancel': 'Cancel',
+  // 마일스톤 — 수호 가지 레벨 도달 시 자동 해금(별도 투자 없음).
+  'lineage.ms.title': 'Guardian Milestones',
+  'lineage.ms.req': 'Level {lv}',
+  'lineage.ms.remain': 'Level {lv} · {n} to go',
+  'lineage.ms.unlocked': 'Unlocked',
+  'lineage.ms.reboot': 'Combat Reboot',
+  'lineage.ms.reboot.desc': 'A downed guardian revives once per defense battle.',
+  'lineage.ms.coreGuard': 'Core Guard',
+  'lineage.ms.coreGuard.desc': 'Guardians hit harder and faster while near the core.',
+  'lineage.ms.shieldShare': 'Shield Share',
+  'lineage.ms.shieldShare.desc':
+    'The core and turrets start each defense with a shield scaled to guardian power.',
 
   // --- 서사(스토리) — 사연·인트로·기록 파편 (ADR-0023) ---
   // 키는 `data/lore` 정본 파생이다(`src/ui/pixi/loreLabels.ts` 가 유도). 사연 캐스트는 혼합 —
@@ -2418,6 +2459,7 @@ export const KO: Record<MessageKey, string> = {
   'hangar.desc.lineage': '현역 기체를 강화하는 계정 단위 보너스입니다.',
   'hangar.act.swapShip': '기체 교체',
   'hangar.act.guardians': '예비역',
+  'hangar.act.lineage': '계보',
   // 기체 교체(퇴역·세대 교체)는 현역이 만렙일 때만 열린다 — 잠긴 이유를 화면에 남긴다.
   'hangar.err.swapNeedMaxLevel': '기체 교체는 만렙(Lv {n})부터 가능합니다. 현역 기체: Lv {lv}.',
 
@@ -2499,6 +2541,44 @@ export const KO: Record<MessageKey, string> = {
   'guardians.detail.gearNone': '잠긴 장비가 없습니다.',
   'guardians.detail.warn':
     '소멸은 되돌릴 수 없습니다. 이 수호기는 완전히 사라지고 다시는 기지 방어에 나설 수 없습니다.',
+
+  // --- 계보 전당(ADR-0007) ---
+  'lineage.title': '계보',
+  'lineage.branches.title': '계보 가지',
+  'lineage.branch.ship': '기체 가지',
+  'lineage.branch.ship.desc': '지금 타는 기체를 강화합니다. 다음 세대의 모든 기체에도 그대로 이어집니다.',
+  'lineage.branch.guardian': '수호 가지',
+  'lineage.branch.guardian.desc':
+    '기지를 지키는 모든 수호기를 강화합니다. 지금 예비역에 있는 기체도, 앞으로 남길 기체도 함께입니다.',
+  'lineage.level': '누적 레벨 {lv}',
+  'lineage.next': '다음 레벨 +{pct}% (+{delta}%p)',
+  'lineage.cost': '{cost}pt',
+  'lineage.cap': '상한 +{pct}%',
+  'lineage.invest': '투자',
+  'lineage.short': '{need}pt 부족',
+  'lineage.sunk': '이 가지에 이미 {pt}pt 를 묻었습니다 — 리스펙은 없습니다.',
+  'lineage.invested': '{name} 누적 레벨 {lv} 달성 · {cost}pt 소비',
+  'lineage.points.title': '계보 포인트',
+  'lineage.points.use': '기체를 퇴역시키거나 수호기를 소멸시켜 모읍니다.',
+  'lineage.points.warn':
+    '투자는 되돌릴 수 없습니다. 리스펙이 없어 한 가지에 쓴 포인트는 영영 그 가지에 남습니다.',
+  'lineage.confirm.title': '계보에 투자할까요?',
+  'lineage.confirm.body':
+    // 가지 이름은 둘 다 "가지"로 끝나 받침이 없다 — 로스터처럼 "을(를)" 로 둘 이유가 없다.
+    '{name}를 누적 레벨 {lv}(으)로 올릴까요? {cost}pt 를 쓰고 보너스가 +{pct}% 가 되며 {left}pt 가 남습니다. 리스펙이 없어 되돌릴 수 없습니다.',
+  'lineage.confirm.yes': '투자한다',
+  'lineage.cancel': '취소',
+  // 마일스톤 — 수호 가지 레벨 도달 시 자동 해금(별도 투자 없음).
+  'lineage.ms.title': '수호 가지 마일스톤',
+  'lineage.ms.req': '레벨 {lv}',
+  'lineage.ms.remain': '레벨 {lv} · {n} 남음',
+  'lineage.ms.unlocked': '해금됨',
+  'lineage.ms.reboot': '격추 재기동',
+  'lineage.ms.reboot.desc': '격추된 수호기가 방어전당 한 번 부활합니다.',
+  'lineage.ms.coreGuard': '코어 근접 수비',
+  'lineage.ms.coreGuard.desc': '코어 가까이에서 수호기의 피해량과 연사가 강해집니다.',
+  'lineage.ms.shieldShare': '실드 공유',
+  'lineage.ms.shieldShare.desc': '방어전 시작 시 코어와 포탑이 수호 전투력에 비례한 실드를 받습니다.',
 
   // --- 서사(스토리) — 사연·인트로·기록 파편 (ADR-0023) ---
   // 인트로 슬라이드
