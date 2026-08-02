@@ -707,6 +707,17 @@ const TAIL_WELL_MIN_H = 72;
  *
  * 넘치면(스크롤이 붙으면) 입력 그대로 돌려준다. 나눠 준 뒤에도 상한 때문에 남을 수 있고,
  * 그 잔여는 호출부가 꼬리 챔버로 받는다. 반올림 잔여는 **행 수 미만**이다.
+ *
+ * ⚠️ **상한은 늘리기만 막는다. 자연 높이를 깎지 않는다.**
+ * `Math.min(maxH, h + add)` 만 쓰면 자연 높이가 상한보다 큰 행이 **줄어들어** 내용이 판 밖으로
+ * 삐져나온다 — 바탕 판({@link rowPlate})은 최종 높이로 구워지는데 글자·버튼은 이미 자연
+ * 높이만큼 자라 있기 때문이다. 코어 모듈 화면(`modulesView.ts`)의 같은 산술 복제본에서 실제로
+ * 터졌다: 슬롯 행이 상한을 넘기자 `[해제]` 버튼이 판 아래로 반쯤 튀어나온 채 찍혔다(2026-08-03).
+ *
+ * 여기서도 도달 가능한 경로다 — L1 웨이브 슬롯 6칸 중 **하나만 어픽스가 긴 방어체로 채우면**
+ * 총합이 영역보다 작아 이 가지를 타고, 그 한 행이 {@link SLOT_ROW_MAX_H} 로 깎인다.
+ * 목록이 길면 위 `total >= avail` 에서 그대로 반환되므로 **짧을 때만** 나타나고, 예외도 로그도
+ * 없어 눈으로만 잡힌다.
  */
 export function fillRowHeights(
   heights: readonly number[],
@@ -720,7 +731,7 @@ export function fillRowHeights(
   if (total >= avail) return [...heights];
   const add = Math.floor((avail - total) / n);
   if (add <= 0) return [...heights];
-  return heights.map((h) => Math.min(maxH, h + add));
+  return heights.map((h) => Math.max(h, Math.min(maxH, h + add)));
 }
 
 // --- 헤더 컨트롤(정제소·연구소와 **같은 x**) ---
