@@ -1834,6 +1834,9 @@ async function main(): Promise<void> {
     // 기록 보관소도 같은 부류다(2026-08-03 AAA 전환) — 최상위 화면이라 여기 배선이 유일한 dt
     // 공급원이다. 빠뜨리면 배경·석재 패널 연출이 통째로 멈춘다(연구소에서 실제로 겪었다).
     recordsArchive.update(frame);
+    // 지시 수신소도 같은 부류다(2026-08-03 AAA 전환) — 최상위 화면이라 여기 배선이 유일한 dt
+    // 공급원이다. 빠뜨리면 배경·석재 패널 연출이 통째로 멈춘다(연구소에서 실제로 겪었다).
+    commissionDesk.update(frame);
     // 코어 모듈 화면도 같은 부류다(2026-08-03 AAA 전환). 사령부에서 suspend/resume 으로 오가는
     // 하위 화면이지만 dt 공급원은 여기뿐이다 — 빠뜨리면 배경·석재 패널 연출이 통째로 멈춘다.
     modulesScreen.update(frame);
@@ -2395,6 +2398,11 @@ async function main(): Promise<void> {
       recordsArchive,
       introSlides,
       openArchive,
+      // 지시 수신소는 보유 목록이 **서버 원장**에서 오므로 로그인 없이는 항상 비어 있다 —
+      // 찬 화면을 검증하려면 이 참조로 `inventory`·`online` 을 직접 시딩해야 한다
+      // (2026-08-03 AAA 전환 검증 절차).
+      commissionDesk,
+      openCommissionDesk,
       // 코어 모듈 화면도 로그인해야 채워진다(미로그인이면 "쉬고 있는 상태") — 검증 시 이 참조로
       // 상태를 직접 넣고 refresh() 를 부른다(AAA 전환 후 값 갱신 진입점은 render 가 아니라 refresh).
       modulesScreen,
