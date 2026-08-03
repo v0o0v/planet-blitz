@@ -24,6 +24,7 @@ import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { nineSlicePanel, panelContent } from './nineSlicePanel.js';
+import { makeScrollArea } from './scrollArea.js';
 import { PixiButton } from './button.js';
 import { stripEmoji } from './text.js';
 import { graphicsSettings, type Quality } from '../../render/graphicsSettings.js';
@@ -63,7 +64,8 @@ const GEAR_ICON = 44;
 
 /** 팝업은 톱니 바로 아래에 붙는다(암막 없음 — 뒤 화면이 그대로 보인다). */
 const PANEL_X = GEAR_X;
-const PANEL_Y = GEAR_Y + GEAR_SIZE + 16;
+/** 팝업 상단 y. 기하 계약의 일부라 테스트가 읽는다(바닥이 화면 안인지 재려면 필요하다). */
+export const PANEL_Y = GEAR_Y + GEAR_SIZE + 16;
 const PANEL_W = 520;
 
 /** 콘텐츠 상자. 폭·좌상단은 패널 높이와 무관하므로(inset 60 고정) 미리 잡아 둔다. */
@@ -104,6 +106,41 @@ function gearGlyph(size: number): Graphics {
   g.circle(c, c, rOuter).fill({ color: COLOR.cream });
   g.circle(c, c, rOuter * 0.42).fill({ color: 0x2a2018 });
   return g;
+}
+
+/** 팝업 바닥과 화면 아래 사이에 남기는 여백. */
+export const PANEL_BOTTOM_MARGIN = 16;
+
+export interface SettingsPanelGeometry {
+  /** 실제로 그릴 패널 높이. */
+  panelH: number;
+  /** 내용이 보이는 창 높이(패널 높이에서 위아래 inset 을 뺀 값). */
+  viewH: number;
+  /** 내용이 창을 넘쳐 스크롤이 필요한가. */
+  scrolls: boolean;
+}
+
+/**
+ * 내용 높이 → 패널 기하.
+ *
+ * ## 이 함수가 왜 생겼나
+ * 팝업은 톱니 아래(y=112)에 붙고 **내용 높이만큼 자라기만** 했다. 행이 하나씩 늘어나면서
+ * (그래픽 티어 → 모션 감소 → 발광 감소 → 데미지 숫자 → 계정) 결국 화면 아래로 넘쳤고,
+ * 넘친 부분은 **잘려서 그냥 안 보였다** — 닫기 버튼과 계정 행이 그렇게 사라졌다. 스크롤도
+ * 없어서 사용자가 닿을 방법 자체가 없었다.
+ *
+ * 계정 행이 그 임계를 넘긴 방아쇠였을 뿐, 그 전에도 이미 넘치고 있었다. 그래서 "계정 행을
+ * 줄인다"가 아니라 **높이를 화면에 가두고 넘치면 스크롤**로 고친다 — 다음에 행이 또 늘어도
+ * 같은 결함이 재발하지 않는다.
+ *
+ * 넘치지 않으면 `scrolls=false` 이고 기존과 픽셀 하나 다르지 않다.
+ */
+export function settingsPanelGeometry(contentH: number): SettingsPanelGeometry {
+  const inset = BOX.y;
+  const ideal = Math.round(contentH + inset * 2);
+  const max = DESIGN_HEIGHT - PANEL_Y - PANEL_BOTTOM_MARGIN;
+  if (ideal <= max) return { panelH: ideal, viewH: ideal - inset * 2, scrolls: false };
+  return { panelH: max, viewH: max - inset * 2, scrolls: true };
 }
 
 /**
@@ -184,6 +221,12 @@ export class SettingsScreen {
   }
 
   private accountNotice: string | null = null;
+
+  /**
+   * 스크롤 위치. `render()` 는 매번 자식을 전부 새로 만들므로 위치를 여기 들고 있어야
+   * 토글 하나 눌렀다고 맨 위로 튀지 않는다(그래픽·볼륨 조작이 전부 render 를 다시 부른다).
+   */
+  private scroll = 0;
 
   constructor(
     private readonly audio: GameAudio,
@@ -546,17 +589,36 @@ export class SettingsScreen {
     close.container.position.set(0, y);
     content.addChild(close.container);
 
-    // 실제 바닥을 재서 아래 여백을 위와 같게 잡는다.
-    const bottom = content.getLocalBounds().bottom;
-    const panelH = Math.round(bottom + BOX.y * 2);
+    // 실제 바닥을 재서 아래 여백을 위와 같게 잡되, 화면을 넘으면 가두고 스크롤한다.
+    const contentH = content.getLocalBounds().bottom;
+    const geo = settingsPanelGeometry(contentH);
+    const panelH = geo.panelH;
 
     // 다른 화면과 달리 **밝은 화면 위에 뜨는 팝업**이라 기본 채움 알파(0.96)로는 뒤 화면이
     // 비친다(기지 맵 건물 카드의 글자가 그대로 읽혔다 — 확대 크롭에서 잡혔다). 불투명으로.
     this.panel.addChild(
       nineSlicePanel(PANEL_W, panelH, { texture: this.ui['ui_panel.png'], fillAlpha: 1 }),
     );
-    content.position.set(BOX.x, BOX.y);
-    this.panel.addChild(content);
+    if (geo.scrolls) {
+      // 위치 표시(thumb)를 켠다 — 마스크가 깔끔하게 자르면 "더 있다"는 시각 신호가 아예
+      // 사라진다(scrollArea 모듈 주석 ③). 지금 벌어진 일이 정확히 그것이었다.
+      const holder = makeScrollArea(this.panel, {
+        x: BOX.x,
+        y: BOX.y,
+        w: CW,
+        h: geo.viewH,
+        totalH: contentH,
+        get: () => this.scroll,
+        set: (v) => {
+          this.scroll = v;
+        },
+        thumb: true,
+      });
+      holder.addChild(content);
+    } else {
+      content.position.set(BOX.x, BOX.y);
+      this.panel.addChild(content);
+    }
     this.panel.position.set(PANEL_X, PANEL_Y);
     // 팝업 안쪽 클릭이 바깥 판(catcher)까지 흘러 창이 닫히지 않도록 끊는다.
     this.panel.eventMode = 'static';
