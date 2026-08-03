@@ -363,7 +363,9 @@ describe('크롬이 패널보다 위에 있다 — 구운 그림자가 클릭을
     const main = new TextDecoder().decode(
       readFileSync(fileURLToPath(new URL('../src/main.ts', import.meta.url))),
     );
-    expect(main).toContain('recordsArchive.update(frame)');
+    // ⚠️ `toContain` 은 **항진이었다** — 그 호출을 주석 처리해도 통과한다(주석 줄도 문자열을
+    // 품는다). 지시 수신소 레인에서 뮤테이션이 살아 돌아와 확인했다(2026-08-03).
+    expect(main).toMatch(/^[ \t]*recordsArchive\.update\(frame\);/m);
   });
 
   it('탭 흐림을 버튼이 아니라 host 에 건다(pointerout 이 alpha 를 되돌린다)', () => {

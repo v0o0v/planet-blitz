@@ -26,6 +26,11 @@ export interface PlanetMeta {
 const PRESENTATION: Record<number, { subtitle: string; accent: string }> = {
   0: { subtitle: '용암 지대 · 기계 군단', accent: '#ff6a3c' },
   1: { subtitle: '곤충 군체 · 여왕의 둥지', accent: '#8fd94c' },
+  // 2·3 은 오래 비어 있어 성계 지도에 '미지의 성역'이 **두 줄 나란히** 찍혔다(2026-08-03 AAA
+  // 전환 실화면에서 확인). 부제는 행성을 고르는 유일한 한 줄 단서라 같은 문구가 둘이면 그
+  // 자리가 결정을 못 돕는다. 문구·색은 배경 팔레트(`src/render/textures.ts`)·보스와 맞춘다.
+  2: { subtitle: '빙원 지대 · 서리 기함', accent: '#5cc4f2' },
+  3: { subtitle: '고대 유적 · 각성한 오벨리스크', accent: '#c07a28' },
   4: { subtitle: '오염 지대 · 부패의 모체', accent: '#b04dd6' },
   5: { subtitle: '파괴 전선 · 공성 콜로서스', accent: '#d6484a' },
 };
