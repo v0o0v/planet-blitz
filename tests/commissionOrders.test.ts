@@ -346,8 +346,17 @@ describe('정예 겹침 시계는 **구간마다 리셋**된다 (승계 참조�
     // `eliteNextTick` 이 1구간 말의 큰 값(여기선 1,000+)으로 넘어오고, `state.tick` 은 0 으로
     // 돌아가 **2구간 내내 정예가 한 기도 안 나온다.** 해시는 안 갈린다.
     const prev = createWorld(0x77, cfg('elite', 0));
-    run(prev, 1200);
-    expect(prev.wave.eliteNextTick, '1구간 시계가 안 움직였다 — 이 테스트가 무의미하다').toBeGreaterThan(600);
+    // ⚠️ **길이도 임계도 상수에서 파생시킨다.** 여기 "1,200틱 돌리고 시계 > 600" 을 손으로
+    //    적어 뒀더니 2026-08-03 밴드 복구 레인이 겹침 축을 조이는 순간(DELAY 150 → 25 ·
+    //    MAX 6 → 32) 두 군데가 동시에 깨졌다: ①시계 값이 550 이 되어 임계 미달 ②입력 없는
+    //    파일럿이 1,200틱을 못 버티고 527틱에 죽어 `advanceCommissionSegment` 가 항등 반환.
+    //    계약은 멀쩡했고 픽스처만 옛 상수를 들고 있었다(밸런스 큐 §R10·§R20 과 같은 형태).
+    //    이 테스트에 필요한 것은 "시계가 여러 번 전진했고 런이 살아 있다"뿐이다.
+    run(prev, COMMISSION_ELITE_OVERLAP_DELAY_TICKS * 8);
+    expect(prev.gameOver, '1구간에서 죽었다 — 전환을 재는 이 테스트가 성립하지 않는다').toBe(false);
+    expect(prev.wave.eliteNextTick, '1구간 시계가 안 움직였다 — 이 테스트가 무의미하다').toBeGreaterThan(
+      COMMISSION_ELITE_OVERLAP_DELAY_TICKS * 4,
+    );
     endCommissionSegment(prev, 'cleared');
     const next = advanceCommissionSegment(prev);
     expect(next).not.toBe(prev);
