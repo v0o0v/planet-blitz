@@ -32,8 +32,13 @@ import { PLANET_MODE } from '../../sim/planetMode.js';
  */
 export type MetricKind = 'rate' | 'mean' | 'winMean' | 'winPosMean';
 
-/** 접을 수 있는 축(집계·게이트 공통). 정본을 여기 두는 이유는 `aggregate.ts` 가 이 모듈을 읽기 때문이다. */
-export type FoldAxis = 'planet' | 'ship' | 'level';
+/**
+ * 접을 수 있는 축(집계·게이트 공통). 정본을 여기 두는 이유는 `aggregate.ts` 가 이 모듈을 읽기 때문이다.
+ *
+ * `powerup` 은 **선택 축**이라 값이 없는 런이 섞일 수 있다 — `foldBy` 가 그런 런을 버린다.
+ * 그래서 이 축을 게이트 `scope` 로 쓰면 안 된다(표준 격자에서 표본이 통째로 비어 미판정이 된다).
+ */
+export type FoldAxis = 'planet' | 'ship' | 'level' | 'powerup';
 
 /** 목표 밴드 — 적으면 그 지표의 게이트가 자동 생성된다(양 끝 포함). */
 export interface MetricTarget {

@@ -23,9 +23,11 @@
  * 좁은 헬퍼(`commissionCfg`)는 전환 코어 단위 테스트 전용이고 여기서는 쓰지 않는다.
  *
  * ## 실제 구간 생성 규칙은 SQL 이 정본이다
- * `supabase/migrations/20260803000000_commission_ledger.sql` 의 `issue_commission_for_run`:
- * `planet = random(0..5)` · `stage = 1 + random(0..grade)`(즉 `[1, grade+1]`). {@link typicalSegments}
- * 는 이 분포를 시드마다 결정론적으로 재현한다(`Math.random` 아님 — 고정 PRNG).
+ * `supabase/migrations/20260803030000_commission_segment_rebalance.sql` 의
+ * `issue_commission_for_run`(원본은 `20260803000000_commission_ledger.sql`):
+ * `planet = random(0..5)` · `stage = 1 + random(0..grade-1)`(즉 **`[1, grade]`** — 2026-08-03
+ * 밴드 복구 레인에서 `[1, grade+1]` 에서 좁혔다). {@link typicalSegments} 는 이 분포를 시드마다
+ * 결정론적으로 재현한다(`Math.random` 아님 — 고정 PRNG).
  *
  * ## 실행 — 이 워크트리에는 `vite-node` 가 없다
  * `tests/commissionBandMeasure.test.ts` 가 이 모듈의 export 를 직접 호출해 계측을 수행하는
@@ -88,7 +90,10 @@ function typicalSegments(grade: CommissionGrade, seed: number): SegmentSpec[] {
   for (let i = 0; i < n; i++) {
     segs.push({
       planet: Math.floor(rand() * PLANET_COUNT),
-      stage: 1 + Math.floor(rand() * (1 + grade)),
+      // 단계 분포 `[1, grade]` — 2026-08-03 밴드 복구 레인에서 `[1, grade+1]` 에서 좁혔다.
+      // SQL 미러: `20260803030000_commission_segment_rebalance.sql`. RNG 소비 횟수는 그대로라
+      // 행성 추첨 수열은 바뀌지 않는다(구간 조합 대조가 유지된다).
+      stage: 1 + Math.floor(rand() * grade),
     });
   }
   return segs;
@@ -106,7 +111,8 @@ function typicalSegments(grade: CommissionGrade, seed: number): SegmentSpec[] {
  */
 function maxSegments(grade: CommissionGrade): SegmentSpec[] {
   const n = COMMISSION_SEGMENT_COUNT[grade];
-  const stage = grade + 1;
+  // SQL 분포의 **상단** — 분포가 `[1, grade]` 로 좁아졌으므로 상단도 `grade` 다(2026-08-03).
+  const stage = grade;
   const planets = [0, 1, 3, 4, 5];
   const segs: SegmentSpec[] = [];
   for (let i = 0; i < n; i++) {

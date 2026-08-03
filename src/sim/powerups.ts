@@ -20,9 +20,21 @@
  * 새 파워업을 추가하거나 기존 값을 올릴 때 **이 상한을 먼저 확인해라.**
  * `tests/powerupMagnitude.test.ts` 가 `POWERUPS` 를 전수 순회하며 기계적으로 못 박는다.
  *
- * ⚠️ **발사 간격은 정수 틱이라 배율이 그대로 반영되지 않는다.** 기본 발칸은 6틱이라 한 단계가
- * 1틱(−16.7%)이고, 배율 0.92 든 0.9 든 반올림하면 같은 5틱이 된다. 무기별 기본 간격이 클수록
- * 배율 차이가 드러난다 — "퍼센트를 낮췄는데 실측이 안 변한다"면 이 반올림을 먼저 의심해라.
+ * ## 발사 간격 반올림 무동작 — **해소됐다**(2026-08-04, 밸런스 큐 §R39)
+ *
+ * 예전에는 발사 간격이 **정수 틱**이라 감소형 배율이 통째로 삼켜졌다: 배율 `m`·현재값 `c` 에
+ * 대해 `c(1 − m) < 0.5` 면 `Math.round` 가 같은 값을 돌려준다. 벌컨 기본 6틱 · 빔 기본 4틱에서
+ * `fp-cadence`(×0.92)는 **처음부터 영구 무동작**, `rapid-fire`(×0.90)는 6→5 한 번만 먹고
+ * 이후 무동작이었다(§R27 이 등재한 실물 결함).
+ *
+ * 지금은 `weapon.fireCooldownQ` 가 **1/256 틱 고정소수점**이라 배율이 항상 먹는다
+ * (`constants.ts` 의 `FIRE_CD_Q`). 정수 산술만 쓰므로 결정론은 그대로다.
+ *
+ * ⚠️ **감소형 배율을 새로 만들 때는 그 축의 실제 기본값으로 `c(1 − m) < 0.5` 를 먼저 확인해라.**
+ * 고쳐진 것은 발사 간격 축 하나뿐이다. 대시 재충전(`dashCooldownTicks`)은 여전히 정수 틱인데,
+ * 임계가 `c < 6.25` 이고 기본값이 42 · 하한이 12 라 **하한 밖에서는 원리적으로 안 걸린다**
+ * (42→39→36→33→30→28→26→24→22→20→18→17→16→15→14→13→12, 15픽 연속으로 매번 움직인다).
+ * 하한 12 에 닿은 뒤의 무동작은 결함이 아니라 **가드가 의도대로 동작하는 것**이다.
  *
  * Each `apply` is a pure state mutation (weapon/config/player/magnet only) — no
  * RNG, no wall-clock — so a recorded [seed + input log] reproduces the same build
@@ -32,6 +44,7 @@
  */
 
 import type { WorldState } from './world.js';
+import { FIRE_CD_MIN_Q } from './constants.js';
 import type { Entity } from './entities.js';
 import { shipTypeDef, shipTreeRange } from '../../data/ships/index.js';
 import type { TreeAffinity } from '../../data/ships/index.js';
@@ -84,7 +97,13 @@ export const POWERUPS: readonly PowerupDef[] = [
     desc: '발칸 발사 간격 -10%',
     weaponType: 0,
     apply: (s) => {
-      s.weapon.fireCooldown = Math.max(2, Math.round(s.weapon.fireCooldown * 0.9));
+      // 실측(벌컨 기본 6틱 = 1536Q, 연속 픽): 6.00 → 5.40 → 4.86 → 4.37 → 3.94 → 3.54 →
+      // 3.19 → 2.87 → 2.58 → 2.32 → 2.09 → 2.00(하한). 예전 정수 틱에서는 6 → 5 로 한 번만
+      // 먹고 `round(4.5) = 5` 라 **영구 무동작**이었다.
+      s.weapon.fireCooldownQ = Math.max(
+        FIRE_CD_MIN_Q,
+        Math.round(s.weapon.fireCooldownQ * 0.9),
+      );
     },
   },
   {
@@ -247,7 +266,13 @@ export const POWERUPS: readonly PowerupDef[] = [
     desc: '발사 간격 -8%',
     affinity: 'offense',
     apply: (s) => {
-      s.weapon.fireCooldown = Math.max(2, Math.round(s.weapon.fireCooldown * 0.92));
+      // 실측(벌컨 6틱 = 1536Q): 6.00 → 5.52 → 5.08 → 4.67 → 4.30 → 3.95 …, 빔 4틱(1024Q):
+      // 4.00 → 3.68 → 3.39 → 3.12 …. 예전 정수 틱에서는 **두 무기 모두 처음부터 완전 무동작**
+      // 이었다(`round(6 × 0.92) = 6` · `round(4 × 0.92) = 4`).
+      s.weapon.fireCooldownQ = Math.max(
+        FIRE_CD_MIN_Q,
+        Math.round(s.weapon.fireCooldownQ * 0.92),
+      );
     },
   },
   {

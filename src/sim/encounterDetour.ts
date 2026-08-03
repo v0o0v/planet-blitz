@@ -43,7 +43,7 @@ import type { WorldState, InputFrame } from './world.js';
 import type { EncounterRuntime } from './encounter.js';
 import type { Entity } from './entities.js';
 import { blankEntity, addEntity, spawnBullet, spawnLoot } from './entities.js';
-import { DT } from './constants.js';
+import { DT, FIRE_CD_Q } from './constants.js';
 import { atan2, cos, sin, length } from './math.js';
 import {
   SPECIAL_ENCOUNTER_EXIT,
@@ -251,7 +251,9 @@ function stepDetourEnemies(state: WorldState, player: Entity): void {
  */
 function detourAutoAttack(state: WorldState, player: Entity): void {
   const w = state.weapon;
-  if (player.cooldown > 0) player.cooldown--;
+  // 쿨다운 단위는 메인 `autoAttack` 과 **같은 Q(1/FIRE_CD_Q 틱)** 다 — 방 안팎의 연사 리듬이
+  // 이어진다는 이 함수의 계약이 단위까지 포함한다. 잔여분 carry 도 같은 형태로 유지한다.
+  if (player.cooldown > 0) player.cooldown -= FIRE_CD_Q;
   if (player.cooldown > 0) return;
   const reach = w.range > 0 ? w.range : 0;
   if (reach <= 0) return;
@@ -297,7 +299,7 @@ function detourAutoAttack(state: WorldState, player: Entity): void {
     // 방 안 탄도 마커를 단다 — exitDetour 가 잔탄까지 회수해 메인 월드로 새지 않게 한다.
     b.ownerId = DETOUR_MARK;
   }
-  player.cooldown = w.fireCooldown;
+  player.cooldown += w.fireCooldownQ;
 }
 
 /** 방 안 탄 전진(수명 감소·만료 처리). 메인 stepProjectiles 는 전혀 돌지 않는다. */

@@ -60,11 +60,17 @@ export const OVERHEAT_STEP = 0.06;
 /** 최대 스택(발사 쿨다운 감소 상한). */
 export const OVERHEAT_MAX_STACK = 8;
 
-/** 스택 수에 따른 유효 발사 쿨다운(최소 2틱 보장, 정수). */
-export function overheatCooldown(base: number, stacks: number): number {
+/**
+ * 스택 수에 따른 유효 발사 쿨다운(정수, 하한 보장).
+ *
+ * `min` 은 **호출자의 단위에 맞춘 하한**이다 — 주무기는 고정소수점 Q 단위로 부르므로
+ * `FIRE_CD_MIN_Q`(= 2틱 × 256)를 넘긴다. 기본값 2 는 정수 틱 호출자·기존 테스트용이다.
+ * ⚠️ 단위를 섞으면 하한이 조용히 128배 낮아진다(= 하한 가드 무력화). 반드시 같이 넘겨라.
+ */
+export function overheatCooldown(base: number, stacks: number, min = 2): number {
   const s = stacks < OVERHEAT_MAX_STACK ? stacks : OVERHEAT_MAX_STACK;
   const cd = Math.round(base * (1 - s * OVERHEAT_STEP));
-  return cd < 2 ? 2 : cd;
+  return cd < min ? min : cd;
 }
 
 // --- ② 분열 코어 ------------------------------------------------------------

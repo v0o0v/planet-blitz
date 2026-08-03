@@ -37,6 +37,10 @@ port.on('message', (msg) => {
         planet: msg.cell.planet,
         ship: msg.cell.ship,
         level: msg.cell.level,
+        // 선택 축은 **값이 있을 때만** 실린다 — 표준 격자의 `runs.json` 이 축 신설 전과
+        // 바이트 동일하게 유지된다(집계·재해석이 옛 산출물과 그대로 짝지어진다).
+        ...(msg.cell.stage === undefined ? {} : { stage: msg.cell.stage }),
+        ...(msg.cell.powerup === undefined ? {} : { powerup: msg.cell.powerup }),
         seed: r.seed,
         won: r.won,
         ticks: r.ticks,

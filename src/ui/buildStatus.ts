@@ -11,6 +11,7 @@
  */
 
 import type { WorldState } from '../sim/world.js';
+import { FIRE_CD_Q } from '../sim/constants.js';
 import { POWERUPS } from '../sim/powerups.js';
 import type { SkillTree } from '../../data/skills.js';
 import { AFFINITY_LEGACY_TREE } from '../../data/ships/index.js';
@@ -40,7 +41,7 @@ export interface BuildStatus {
   level: number;
   weaponType: number;
   weaponName: string;
-  /** 초당 발사수(60 / fireCooldown) — 낮은 쿨다운을 직관적 수치로 환산. */
+  /** 초당 발사수(60 ÷ 발사간격틱) — 낮은 쿨다운을 직관적 수치로 환산. */
   shotsPerSec: number;
   damage: number;
   bulletCount: number;
@@ -58,7 +59,8 @@ export interface BuildStatus {
 export function readBuildStatus(state: WorldState): BuildStatus {
   const w = state.weapon;
   const player = state.entities[0];
-  const cd = w.fireCooldown > 0 ? w.fireCooldown : 1;
+  // `fireCooldownQ` 는 1/FIRE_CD_Q 틱 단위다 — 표시용으로 틱(소수 가능)으로 되돌린다.
+  const cd = w.fireCooldownQ > 0 ? w.fireCooldownQ / FIRE_CD_Q : 1;
   return {
     level: state.level,
     weaponType: w.weaponType,

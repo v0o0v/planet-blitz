@@ -290,7 +290,7 @@ export function hashWorld(state: WorldState): number {
   h = hashFloat(h, cfg.playerHp);
   // Weapon stats (mutated by Phase 3 powerups) — every amplification hook.
   const w = state.weapon;
-  h = hashU32(h, w.fireCooldown >>> 0);
+  h = hashU32(h, w.fireCooldownQ >>> 0);
   h = hashFloat(h, w.bulletSpeed);
   h = hashFloat(h, w.damage);
   h = hashU32(h, w.bulletCount >>> 0);

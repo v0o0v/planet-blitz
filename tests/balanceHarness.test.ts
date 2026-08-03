@@ -19,8 +19,13 @@ import { BAND_LEVELS } from '../src/bench/standardBuild.js';
 import { PLANET_MODE } from '../src/sim/planetMode.js';
 import type { WorldState } from '../src/sim/world.js';
 import type { Entity } from '../src/sim/entities.js';
+import { POWERUPS } from '../src/sim/powerups.js';
 import {
   FIXED_SEEDS,
+  POWERUP_LINES,
+  POWERUP_POLICIES,
+  POWERUP_POLICY_BASELINE,
+  POWERUP_POLICY_MINIMAL,
   bossEngageable,
   METRIC_KEYS,
   MIN_AXIS_POINTS,
@@ -400,5 +405,126 @@ describe('런 실행', () => {
     for (const key of METRIC_KEYS) {
       expect(Number.isFinite(r.values[key]), key).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. 파워업 정책 축 (2026-08-03 신설)
+// ---------------------------------------------------------------------------
+
+describe('파워업 정책 축', () => {
+  /** 여러 무대 · 여러 레벨에서 교차 검증한다 — 한 셀만 보면 우연히 같을 수 있다. */
+  const PROBE_CELLS = [
+    { planet: 3, ship: 0, level: 5 },
+    { planet: 0, ship: 1, level: 25 },
+    { planet: 5, ship: 3, level: 60 },
+  ] as const;
+
+  /**
+   * **이 축의 존재 조건** — 기본값이 현행 거동과 바이트 동일해야 한다.
+   *
+   * 정책을 안 준 셀(= 표준 격자)과 정책 0(`기준선`)을 준 셀이 같은 시드에서 **틱 · 승패 · 전
+   * 지표까지 완전히 같아야** 한다. 이게 깨지면 이 축을 추가한 것만으로 기존 격자의 모든 수치가
+   * 움직인 것이고, 축 이전의 어떤 실측과도 대조가 성립하지 않는다.
+   */
+  it('정책 미지정 = 정책 0(기준선) = 현행 거동 — 런이 바이트 동일하다', () => {
+    for (const cell of PROBE_CELLS) {
+      for (const seed of seedsUpTo(3)) {
+        const base = runCellSeed(cell, seed);
+        const explicit = runCellSeed({ ...cell, powerup: POWERUP_POLICY_BASELINE }, seed);
+        const label = `${cellKey(cell)} seed=${seed}`;
+        expect(explicit.ticks, label).toBe(base.ticks);
+        expect(explicit.won, label).toBe(base.won);
+        expect(explicit.values, label).toEqual(base.values);
+      }
+    }
+  });
+
+  /**
+   * **항진 방어** — 위 단언은 정책 오버라이드가 *아무 일도 안 해도* 통과한다. 그래서 다른
+   * 정책은 실제로 다른 런을 만들어야 한다. 하나라도 갈리면 배선이 살아 있는 것이다.
+   *
+   * 특정 정책이 특정 셀에서 우연히 기준선과 같은 픽을 낼 수는 있으므로(오퍼 0번이 이미 그
+   * 계열이면 같다) 셀·시드 전체에서 **적어도 하나**가 갈리는지를 본다.
+   */
+  it('다른 정책은 실제로 다른 런을 만든다 — 배선 항진 방어', () => {
+    let differed = 0;
+    for (const cell of PROBE_CELLS) {
+      for (const seed of seedsUpTo(3)) {
+        const base = runCellSeed(cell, seed);
+        for (const p of POWERUP_POLICIES) {
+          if (p.id === POWERUP_POLICY_BASELINE) continue;
+          const r = runCellSeed({ ...cell, powerup: p.id }, seed);
+          if (r.ticks !== base.ticks || r.won !== base.won) differed++;
+        }
+      }
+    }
+    expect(differed, '어떤 정책도 런을 바꾸지 못했다 — 픽 오버라이드가 배선되지 않았다').toBeGreaterThan(0);
+  });
+
+  it('같은 (셀, 정책, 시드) 는 항상 같은 결과다', () => {
+    const cell = { planet: 3, ship: 0, level: 5, powerup: POWERUP_POLICY_MINIMAL };
+    const a = runCellSeed(cell, 1);
+    const b = runCellSeed(cell, 1);
+    expect(a.ticks).toBe(b.ticks);
+    expect(a.values).toEqual(b.values);
+  });
+
+  /**
+   * 계열 분류는 `apply` 의 **실제 변이 관찰**로 정해진다. `'unknown'` 은 "효과 없음"이 아니라
+   * **스텁이 못 본 축이 생겼다**는 신호이므로 조용히 넘어가면 안 된다 — 그 파워업은 어떤
+   * 정책의 우선순위에도 안 걸려 영원히 안 뽑힌다.
+   */
+  it('모든 파워업이 계열로 분류된다(미분류는 LOUD-FAIL)', () => {
+    expect(POWERUP_LINES.length).toBe(POWERUPS.length);
+    const unclassified = POWERUPS.map((d, i) => ({ id: d.id, line: POWERUP_LINES[i] }))
+      .filter((x) => x.line === 'unknown')
+      .map((x) => x.id);
+    expect(unclassified, `분류 실패: ${unclassified.join(', ')} — powerupPolicy.ts 스텁을 확장하라`).toEqual([]);
+  });
+
+  it('정책 축은 명시할 때만 열린다(기본 격자는 셀에 powerup 이 없다)', () => {
+    const plain = enumerateCells({ planets: [0], ships: [0], levels: [5] });
+    expect(plain).toHaveLength(1);
+    expect(plain[0]).not.toHaveProperty('powerup');
+
+    const opened = enumerateCells({ planets: [0], ships: [0], levels: [5], powerups: [0, 1, 4] });
+    expect(opened).toHaveLength(3);
+    expect(opened.map((c) => c.powerup)).toEqual([0, 1, 4]);
+  });
+
+  it('셀 키는 선택 축이 있을 때만 접미가 붙는다(기존 기준선 파일과 짝이 유지된다)', () => {
+    expect(cellKey({ planet: 1, ship: 2, level: 30 })).toBe('p1/s2/lv30');
+    expect(cellKey({ planet: 1, ship: 2, level: 30, powerup: 4 })).toBe('p1/s2/lv30/pw4');
+    expect(cellKey({ planet: 1, ship: 2, level: 30, stage: 1 })).toBe('p1/s2/lv30/st1');
+  });
+
+  /** 선택 축은 값이 없는 런이 섞일 수 있다 — 그런 런은 축 밖이라 접기에서 빠진다. */
+  it('축 접기는 값이 없는 런을 버린다(미지정이 한 점으로 실리면 안 된다)', () => {
+    const mk = (powerup: number | undefined): RunRecord => ({
+      planet: 0,
+      ship: 0,
+      level: 5,
+      ...(powerup === undefined ? {} : { powerup }),
+      seed: 1,
+      won: true,
+      ticks: 100,
+      values: { clearRate: 1 },
+    });
+    const points = foldBy([mk(undefined), mk(0), mk(0), mk(1)], 'powerup');
+    expect(points.map((p) => p.value)).toEqual([0, 1]);
+    expect(points[0]?.runs).toBe(2);
+  });
+
+  /**
+   * 침략 단계 override — 레벨과 단계를 떼어 놓는 축(밸런스 큐 §R28).
+   * 미지정이면 `standardStage(level)` 이므로 그 값을 명시해도 결과가 같아야 한다.
+   */
+  it('단계 override 미지정 = standardStage(level) 와 바이트 동일하다', () => {
+    const cell = { planet: 3, ship: 0, level: 25 };
+    const a = runCellSeed(cell, 1);
+    const b = runCellSeed({ ...cell, stage: 5 }, 1); // ceil(25/5) = 5
+    expect(b.ticks).toBe(a.ticks);
+    expect(b.values).toEqual(a.values);
   });
 });

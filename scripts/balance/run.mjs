@@ -19,6 +19,7 @@
  *   --planets=a,b    axis subset (default: every planet in data/planets)
  *   --ships=a,b      axis subset (default: every ship in data/ships)
  *   --levels=a,b     axis subset (default: every band level)
+ *   --powerups=a,b   powerup pick policy axis (OPT-IN: omitted = current behaviour, offer slot 0)
  *   --min-rounds=N   seeds per cell to protect when shrinking the grid (default 8)
  *   --max-rounds=N   hard cap on seeds per cell (default 96)
  *   --out=DIR        output directory (default .balance)
@@ -78,6 +79,10 @@ const selLevels = numList(opt('levels', undefined));
 if (selPlanets !== undefined) selection.planets = selPlanets;
 if (selShips !== undefined) selection.ships = selShips;
 if (selLevels !== undefined) selection.levels = selLevels;
+// Opt-in axis: omitting --powerups leaves `powerup` off every cell, which keeps the grid
+// byte-identical to the pre-axis behaviour (see src/bench/balance/powerupPolicy.ts).
+const selPowerups = numList(opt('powerups', undefined));
+if (selPowerups !== undefined) selection.powerups = selPowerups;
 
 const log = (msg) => console.log(`[balance] ${msg}`);
 
@@ -132,11 +137,14 @@ function emitReport(rs, m, extra, dir, writeRaw) {
       level: core.foldBy(rs, 'level'),
       planet: core.foldBy(rs, 'planet'),
       ship: core.foldBy(rs, 'ship'),
+      // Opt-in axis: absent from standard-grid summaries, so those stay byte-identical.
+      ...(rs.some((r) => r.powerup !== undefined) ? { powerup: core.foldBy(rs, 'powerup') } : {}),
     },
     spreads: {
       planet: core.spreadOf(rs, 'planet'),
       ship: core.spreadOf(rs, 'ship'),
       level: core.spreadOf(rs, 'level'),
+      ...(rs.some((r) => r.powerup !== undefined) ? { powerup: core.spreadOf(rs, 'powerup') } : {}),
     },
   };
   writeFileSync(join(dir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8');
@@ -321,7 +329,9 @@ let lastRoundMs = 0;
 let stopReason = 'max rounds';
 let aborted = false;
 
-const keyOf = (c) => `${c.planet}/${c.ship}/${c.level}`;
+// Optional axes must be part of the cost key too: two cells that differ only by powerup policy
+// have different run lengths, and the LPT ordering reads this map.
+const keyOf = (c) => `${c.planet}/${c.ship}/${c.level}/${c.stage ?? ''}/${c.powerup ?? ''}`;
 
 while (true) {
   const decision = core.decideNextRound({
