@@ -129,6 +129,10 @@ describe('기록 보관소 레이아웃 불변식', () => {
     // 폭 합 등호는 파생 보장이라 못 잡는 축이다. 여기서 잠그는 것은 ①목록 행에서 이름·태그라인이
     // 쓸 글자 폭이 남는가 ②상세 열의 초상 블록 오른쪽에 이름이 들어갈 자리가 남는가 —
     // 둘 다 넘치면 `label` 이 scale.x 로 눌러 버려 조용히 뭉개진다(예외가 없다).
+    //
+    // ⚠️ 목록 열 폭 자체를 못 박지 않는 것은 의도다 — 720 을 760 으로 바꾸는 뮤테이션은 살아
+    // 돌아오는 게 **옳다**(그 값에서도 두 열이 다 담긴다). 여기가 잡는 것은 한쪽이 다른 쪽을
+    // 못 담게 만드는 **극단**이고, 실제로 `LIST_W` 를 1120 까지 밀면 아래 `infoW` 가 깨진다.
     expect(ARCHIVE_BOXES.storyTextW).toBeGreaterThanOrEqual(300);
     expect(ARCHIVE_BOXES.storyTextW).toBeLessThan(ARCHIVE_BOXES.list.w);
     const infoW = ARCHIVE_BOXES.detail.w - ARCHIVE_BOXES.portraitWell - ARCHIVE_BOXES.blockGap - 8;
@@ -192,7 +196,11 @@ describe('탭 줄 · 하단 띠 · 패널 세로 — 빈 자리 금지', () => {
     if (a === undefined || b === undefined) return;
     expect(a.x).toBe(32);
     expect(a.w).toBe(b.w);
+    // ⚠️ 이 등호는 **항진이다** — 간격도 탭 폭도 `TAB_GAP` 하나에서 파생되므로 그 상수를 어떻게
+    // 흔들어도 성립한다(뮤테이션이 살아 돌아와 확인했다). 실제로 깨질 수 있는 축은 "간격이 0 이
+    // 되어 두 탭이 한 덩어리로 보이는 것"이라 그것을 따로 잠근다.
     expect(b.x - (a.x + a.w)).toBe(ARCHIVE_BOXES.tabGap);
+    expect(ARCHIVE_BOXES.tabGap).toBeGreaterThan(0);
     // 탭 줄이 목록 열 안에서 끝난다 — 넘치면 상세 열 위로 삐져나오고, 많이 남으면 죽은 자리다.
     const span = b.x + b.w - a.x;
     expect(span).toBeLessThanOrEqual(ARCHIVE_BOXES.listW);
