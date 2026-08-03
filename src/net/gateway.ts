@@ -3,7 +3,9 @@
  *
  * `ServerGateway` 인터페이스로 오케스트레이션(`index.ts`)과 실제 Supabase 호출을
  * 분리한다. 덕분에 이관 로직은 fake gateway 로 네트워크·`@supabase/supabase-js`
- * 없이 vitest 검증되고(계획 §3), 이 파일만 실제 SDK 를 import 한다.
+ * 없이 vitest 검증된다(계획 §3). 실 SDK 는 `supabaseClient.ts` 가 유일하게 정적 import 하고
+ * 이 파일은 그것을 경유한다 — 이 파일 자체가 `index.ts` 에서 지연 로딩되므로 미설정 번들에
+ * SDK 가 실리지 않는 성질은 그대로다.
  *
  * 익명 Auth(ADR-0002·계획 B3): 최초 호출 시 세션이 없으면 `signInAnonymously()` 로
  * 익명 유저를 만든다. Supabase 프로젝트에서 Anonymous sign-ins 활성화가 전제
@@ -15,7 +17,8 @@
  * 반영한다(guard 트리거가 클라 컬럼 write 를 봉인 — 위조 불가).
  */
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from './supabaseClient.js';
 import type { Profile } from '../save/profile.js';
 import type { ServerProfile } from './profileSync.js';
 import type { SupabaseConfig } from './config.js';
@@ -228,9 +231,7 @@ export class SupabaseGateway implements ServerGateway {
   private readonly client: SupabaseClient;
 
   constructor(config: SupabaseConfig) {
-    this.client = createClient(config.url, config.anonKey, {
-      auth: { persistSession: true, autoRefreshToken: true },
-    });
+    this.client = getSupabaseClient(config);
   }
 
   async getUserId(): Promise<string> {

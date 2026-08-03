@@ -1,10 +1,10 @@
 /**
  * 방어 업로드 게이트웨이의 실 Supabase 구현 (M4 Phase D — team-plan 계약).
  *
- * `defenseSync.ts` 의 {@link DefenseGateway} 를 `@supabase/supabase-js` 로 구현한다. 이
- * 파일만 SDK 를 정적 import 하며, `defenseSync.ts` 는 설정이 있을 때만 이 모듈을 동적
- * import 한다 → 미설정 번들/테스트에 SDK 가 실리지 않는다(gateway.ts·invasionGateway.ts
- * 와 동일 패턴).
+ * `defenseSync.ts` 의 {@link DefenseGateway} 를 `@supabase/supabase-js` 로 구현한다. SDK 는
+ * `supabaseClient.ts` 가 유일하게 정적 import 하고 이 파일은 그것을 경유한다. `defenseSync.ts`
+ * 는 설정이 있을 때만 이 모듈을 동적 import 하므로 미설정 번들/테스트에 SDK 가 실리지
+ * 않는다(다른 게이트웨이와 동일 패턴).
  *
  * 익명 Auth(ADR-0002): 세션이 없으면 `signInAnonymously()`. profiles·invasion 게이트웨이와
  * 같은 익명 유저를 공유한다(persistSession=true → localStorage 세션 공유).
@@ -16,7 +16,8 @@
  *    는 layout 만 신뢰 대상으로 보낸다.
  */
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from './supabaseClient.js';
 import type { SupabaseConfig } from './config.js';
 import type { InvasionLayers } from '../sim/invasion/types.js';
 import type {
@@ -42,9 +43,7 @@ export class SupabaseDefenseGateway implements DefenseGateway {
   private readonly client: SupabaseClient;
 
   constructor(config: SupabaseConfig) {
-    this.client = createClient(config.url, config.anonKey, {
-      auth: { persistSession: true, autoRefreshToken: true },
-    });
+    this.client = getSupabaseClient(config);
   }
 
   async getUserId(): Promise<string> {

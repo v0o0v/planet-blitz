@@ -1,16 +1,18 @@
 /**
  * 코어 모듈 경제 게이트웨이의 실 Supabase 구현 (M7b — modules EF · salvage_core_module RPC).
  *
- * `modules.ts` 의 {@link ModulesGateway} 를 `@supabase/supabase-js` 로 구현한다. 이 파일만 SDK 를
- * 정적 import 하며, `modules.ts` 는 설정이 있을 때만 이 모듈을 동적 import 한다 → 미설정 번들/
- * 테스트에 SDK 가 실리지 않는다(구 cardsGateway.ts 와 동일 패턴). 익명 Auth 세션(ADR-0002) 공유.
+ * `modules.ts` 의 {@link ModulesGateway} 를 `@supabase/supabase-js` 로 구현한다. SDK 는
+ * `supabaseClient.ts` 가 유일하게 정적 import 하고 이 파일은 그것을 경유한다. `modules.ts` 는
+ * 설정이 있을 때만 이 모듈을 동적 import 하므로 미설정 번들/테스트에 SDK 가 실리지 않는다.
+ * 익명 Auth 세션(ADR-0002) 공유.
  *
  * 구매·합성은 modules Edge Function(service_role 원자 트랜잭션)이 권위다 — 크레딧 차감·보관함
  * 상한·소유/중복 검증은 서버가 강제하고, 클라는 결과만 표시한다. 분해(salvage_core_module)는
  * 롤러 무관이라 SQL RPC 를 직접 호출한다.
  */
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from './supabaseClient.js';
 import type { SupabaseConfig } from './config.js';
 import type {
   ModulesGateway,
@@ -59,9 +61,7 @@ export class SupabaseModulesGateway implements ModulesGateway {
   private readonly client: SupabaseClient;
 
   constructor(config: SupabaseConfig) {
-    this.client = createClient(config.url, config.anonKey, {
-      auth: { persistSession: true, autoRefreshToken: true },
-    });
+    this.client = getSupabaseClient(config);
   }
 
   async getUserId(): Promise<string> {

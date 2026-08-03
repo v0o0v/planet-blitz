@@ -7,13 +7,15 @@
  *   - invest_lineage(p_branch) — 계보 1레벨 투자(포인트 차감).
  * 조회: guardians(본인) select + profiles.lineage_* 컬럼.
  *
- * 이 파일만 `@supabase/supabase-js` 를 정적 import 한다(defenseGateway 와 동일 패턴 — 미설정
- * 번들에 SDK 미탑재). 서버 권위(ADR-0005 원칙2): performance·계보 포인트/레벨은 서버만 쓴다.
+ * SDK 는 `supabaseClient.ts` 가 유일하게 정적 import 하고 이 파일은 그것을 경유한다. 이 파일이
+ * 지연 로딩되므로 미설정 번들에 SDK 미탑재(다른 게이트웨이와 동일 패턴).
+ * 서버 권위(ADR-0005 원칙2): performance·계보 포인트/레벨은 서버만 쓴다.
  * 클라이언트 로컬 미러(src/save/guardianLifecycle.ts)는 낙관적 반영이고, 이 게이트웨이가 서버
  * 정본과 동기화한다.
  */
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from './supabaseClient.js';
 import type { SupabaseConfig } from './config.js';
 import type { GuardianSnapshot } from '../../data/guardian.js';
 import type { GuardianBuild } from '../save/profile.js';
@@ -54,9 +56,7 @@ export class SupabaseGuardianGateway {
   private readonly client: SupabaseClient;
 
   constructor(config: SupabaseConfig) {
-    this.client = createClient(config.url, config.anonKey, {
-      auth: { persistSession: true, autoRefreshToken: true },
-    });
+    this.client = getSupabaseClient(config);
   }
 
   async getUserId(): Promise<string> {
