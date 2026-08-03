@@ -607,6 +607,10 @@ export const EN = {
     "Synergy: each node's output is amplified by points invested in lower tiers of the same tree (up to +50%). Investing deeper strengthens higher nodes.",
   'lab.err.noPoints': 'Not enough skill points.',
   'lab.err.maxed': 'Already invested to the maximum.',
+  // 사슬 선행 조건(ADR-0047). `prereq` 는 팝업 잠긴 행의 설명줄, `chainLocked` 는 클릭 힌트.
+  'lab.node.prereq': 'Requires {name} {cur}/{max}',
+  'lab.node.prereqMore': 'Requires {name} {cur}/{max} and {n} more',
+  'lab.err.chainLocked': 'Locked — fill the lower tier of this chain first: {name} {cur}/{max}',
   'lab.err.noInvest': 'No investment to undo.',
   'lab.err.noCredits': 'Not enough credits (need {n}).',
   'lab.respecDone': 'Reset the skill tree and refunded the points.',
@@ -2422,6 +2426,11 @@ export const KO: Record<MessageKey, string> = {
     '시너지: 각 노드의 출력은 같은 계열 하위 티어에 투자한 포인트만큼 소폭 증폭됩니다(최대 +50%). 깊게 투자할수록 상위 노드가 강해집니다.',
   'lab.err.noPoints': '스킬 포인트가 부족합니다.',
   'lab.err.maxed': '이미 최대까지 투자했습니다.',
+  // 사슬 선행 조건(ADR-0047). `prereq` 는 팝업 잠긴 행의 설명줄, `chainLocked` 는 클릭 힌트.
+  'lab.node.prereq': '선행 {name} {cur}/{max} 필요',
+  'lab.node.prereqMore': '선행 {name} {cur}/{max} 외 {n}개 필요',
+  // 조사(을/를)를 쓰지 않는 형태다 — 노드 이름의 받침이 제각각이라 정적으로 고를 수 없다.
+  'lab.err.chainLocked': '잠김 — 같은 사슬의 낮은 티어를 먼저 채우세요: {name} {cur}/{max}',
   'lab.err.noInvest': '되돌릴 투자가 없습니다.',
   'lab.err.noCredits': '크레딧이 부족합니다 (필요 {n}).',
   'lab.respecDone': '스킬 트리를 초기화하고 포인트를 환급했습니다.',

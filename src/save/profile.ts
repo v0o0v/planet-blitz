@@ -20,7 +20,7 @@
 import { SAVE_VERSION, SLOT_KINDS, RARITY_BY_CODE } from '../items/types.js';
 import type { Item, EquipSlotId } from '../items/types.js';
 import type { SkillNode } from '../../data/skills.js';
-import { shipCapstoneUnlocked } from '../items/skills.js';
+import { shipCapstoneUnlocked, chainPrereqMet } from '../items/skills.js';
 import {
   shipTypeDef,
   flattenShipNodes,
@@ -435,6 +435,10 @@ export function investSkill(profile: Profile, index: number): boolean {
     const treeIndex = index - def.nodesPerTree * def.trees.length;
     if (!shipCapstoneUnlocked(invest, def, treeIndex)) return false;
   }
+  // 사슬 선행 조건(ADR-0047): 같은 계열·같은 스탯의 더 낮은 티어가 전부 max 여야 한다.
+  // 캡스톤은 사슬 밖이라 `chainPrereqMet` 이 항상 true 를 낸다(위 게이트가 유일한 조건).
+  // 여기가 **유일한 관문**이다 — 파생(`computeSkillStats`)·sim·서버는 이 규칙을 모른다.
+  if (!chainPrereqMet(invest, def, index)) return false;
   invest[index] = cur + 1;
   profile.skillPoints -= 1;
   return true;
@@ -565,7 +569,48 @@ export function migrate(raw: unknown): Profile {
   if (version < 6) data = migrateV5toV6(data);
   if (version < 7) data = migrateV6toV7(data);
   if (version < 8) data = migrateV7toV8(data);
+  if (version < 9) data = migrateV8toV9(data);
   return normalizeProfile(data);
+}
+
+/**
+ * v8 → v9 (스킬 사슬 선행 조건, ADR-0047): **전 기체 무료 전액 리스펙.**
+ *
+ * 스키마는 안 바뀐다 — 이건 데이터 정합 마이그레이션이다. 사슬 규칙(같은 계열·같은 스탯의
+ * 더 낮은 티어를 전부 max 해야 위 노드 투자 가능)이 여태 없었으므로 기존 벡터에는 위반
+ * 배치가 얼마든지 있다. 그대로 두면 ① 규칙이 불변식이 아니게 되고 ② **리스펙 한 번이
+ * 되돌릴 수 없는 손실**이 된다(`applyRespecRefund` 는 전액 초기화라, 털고 나면 규칙 때문에
+ * 원래 배치로 못 돌아간다). 그 함정을 남기느니 여기서 한 번 털고 간다.
+ *
+ * 포인트는 **전액 환급**이라 진행도가 보존된다(리스펙 비용 없음). 장비·레벨·수호 로스터는
+ * 손대지 않는다. 퇴역 수호기의 `GuardianBuild.skillInvest` 도 **의도적으로 제외** — 퇴역
+ * 순간 고정된 스냅샷이고 투자 경로가 없어서(ADR-0024) 규칙의 적용 대상이 아니며, 털면
+ * 기존 수호 전력만 소급 약화된다.
+ *
+ * 손상 방어: `ships` 가 배열이 아니거나 원소가 객체가 아니면 그 칸은 건너뛴다
+ * (`normalizeProfile` 이 뒤에서 다시 거른다). 환급 누계는 유한 양수만 더한다.
+ */
+function migrateV8toV9(v8: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...v8, saveVersion: 9 };
+  if (!Array.isArray(out.ships)) return out;
+  let refund = 0;
+  out.ships = out.ships.map((raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null) return raw;
+    const ship = raw as Record<string, unknown>;
+    const invest = ship.skillInvest;
+    if (!Array.isArray(invest)) return ship;
+    for (const v of invest) {
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) refund += Math.trunc(v);
+    }
+    return { ...ship, skillInvest: invest.map(() => 0) };
+  });
+  if (refund > 0) {
+    const banked = typeof out.skillPoints === 'number' && Number.isFinite(out.skillPoints)
+      ? Math.trunc(out.skillPoints)
+      : 0;
+    out.skillPoints = banked + refund;
+  }
+  return out;
 }
 
 /**
