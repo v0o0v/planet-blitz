@@ -106,7 +106,7 @@ import { runBench } from './bench/bench.js';
 // 이것만 쓴다 — main.ts 안에서 config 를 다시 조립하지 마라(3중복이 배선 누락의 원인이었다).
 import { buildRunConfig } from './run/runConfig.js';
 import { buildCallupPilot } from './run/callupPilot.js';
-import { loadProfile, saveProfile, activeShip } from './save/profile.js';
+import { loadProfile, saveProfile, activeShip, defaultProfile } from './save/profile.js';
 import { settleRun, grantXp } from './save/settlement.js';
 import type { SettlementOutcome } from './save/settlement.js';
 // M4 네트워크 계층(Phase B3): Supabase 미설정 시 완전 no-op, 절대 throw 안 함.
@@ -125,7 +125,18 @@ import {
   markCommissionActiveOnServer,
   submitCommissionRun,
   flushPendingCommissionSubmissions,
+  pullServerProfileInto,
 } from './net/index.js';
+// 구글 로그인(로그인 필수 정책). 미설정이면 전부 no-op 이고 DEV 는 게이트만 꺼진다.
+// 이 모듈은 SDK 를 함수 안에서 동적 import 하므로 여기서 정적으로 끌어도 초기 청크가 안 는다.
+import {
+  isLoginConfigured,
+  isLoginRequired,
+  getSignedInUser,
+  signInWithGoogle,
+} from './net/auth.js';
+// 계정이 바뀌면 로컬 계정 데이터를 버린다(재화 이전 경로 차단).
+import { reconcileAccountScope, accountStore } from './net/accountScope.js';
 // 의뢰서 시스템 Phase E — 서버 원장 payload → `WorldConfig` 형태 변환(sim 입력이 아닌
 // rewards 를 뺀다). 봉인 로드아웃은 지시 수신소 화면이 출격 시점에 직접 계산해 싣는다.
 import { commissionRunConfigFromPayload } from './run/commission.js';
@@ -339,11 +350,9 @@ async function main(): Promise<void> {
 
   // --- Persistent meta state (M2) ---
   const profile = loadProfile();
-  // 로컬 세이브 → 서버 1회 이관(멱등, 무손실). 미설정이면 no-op. 비차단.
-  void migrateLocalProfileToServer(profile);
-  // 지난 세션에서 판정을 못 받은 채 남은 의뢰 제출 회수(의뢰서 시스템 Phase E, 계약 §5-4
-  // 재시도 규율). 미설정/오프라인이면 no-op. 비차단.
-  void flushPendingCommissionSubmissions();
+  // ⚠️ 이관·의뢰 회수는 **세션이 생긴 뒤**에 돌린다(`bootWithAuth`). 로그인 필수로 바뀌면서
+  // `getUserId()` 가 익명 계정을 만들어 주지 않으므로, 부팅 즉시 부르면 전부 throw → catch →
+  // 조용한 no-op 이 되고 로그인 후에는 아무도 다시 부르지 않는다.
   // 행성 인기 배율표 폴링 시작(ADR-0038). 즉시 1회 + 30분 간격. 미설정·실패는 전 행성 1.0
   // 폴백이라 오프라인 단일플레이가 그대로다(출격 경로는 이 결과를 기다리지 않는다).
   startPlanetMultiplierPolling();
@@ -738,17 +747,41 @@ async function main(): Promise<void> {
     shownLevel = 0;
   }
 
-  /** Title screen — first launch forces the tutorial; afterwards it enters base. */
-  function openTitle(): void {
+  /**
+   * 다음 타이틀 표시 때 1회 보여줄 안내(로그인 시작 실패). 표시하면서 비운다 — 남겨 두면
+   * 사용자가 화면을 오간 뒤에도 낡은 실패 문구가 계속 붙는다.
+   */
+  let titleNotice: string | undefined;
+
+  /**
+   * Title screen — first launch forces the tutorial; afterwards it enters base.
+   *
+   * `needsSignIn` 이면 같은 자리의 버튼이 "Google 로 계속하기"가 되고, 누르면 페이지가 구글로
+   * 떠난다(돌아오면 부팅이 처음부터 다시 돈다). 리다이렉트가 **시작조차 못 한 경우**에만
+   * 이 함수가 다시 불려 안내를 띄운다.
+   */
+  function openTitle(needsSignIn = false): void {
     clearToMenu();
     setScreen('title');
+    const notice = titleNotice;
+    titleNotice = undefined;
     titleScreen.show({
       firstRun: !profile.tutorialDone,
+      needsSignIn,
+      notice,
       onStart: () => {
         // The start click is the FTUE input (the 60s / 4min clock starts here).
         ftue.markInput();
         if (!profile.tutorialDone) startTutorial();
         else openBaseMap();
+      },
+      onSignIn: () => {
+        void signInWithGoogle().then((failure) => {
+          // null = 리다이렉트가 시작됐다. 이 페이지는 곧 사라지므로 아무것도 하지 않는다.
+          if (failure === null) return;
+          titleNotice = t('title.signInFailed');
+          openTitle(true);
+        });
       },
     });
   }
@@ -1824,8 +1857,75 @@ async function main(): Promise<void> {
     endRun(w);
   }
 
+  /**
+   * 서버 프로필을 받아오는 동안 띄우는 최소 오버레이.
+   *
+   * Pixi 화면 상태 기계(`setScreen`)를 건드리지 않으려고 **DOM** 으로 만든다 — 부팅 도중은
+   * 아직 어떤 화면도 열리지 않은 구간이라 화면 스택에 끼워 넣으면 규약이 지저분해진다.
+   * 없으면 사용자는 까만 화면만 보고 기다린다(대개 수백 ms 지만, 토큰 갱신이 끼면 더 길다).
+   */
+  function showBootOverlay(): () => void {
+    if (typeof document === 'undefined') return () => {};
+    const el = document.createElement('div');
+    el.textContent = t('title.loading');
+    el.setAttribute(
+      'style',
+      'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;' +
+        'color:#ebdcbe;font-family:sans-serif;font-size:18px;letter-spacing:1px;' +
+        'background:#05060a;z-index:10;pointer-events:none;',
+    );
+    document.body.appendChild(el);
+    return () => el.remove();
+  }
+
+  /**
+   * 부팅 — 로그인 게이트 → 계정 스코프 정리 → 서버 프로필 pull → 인트로/타이틀.
+   *
+   * ## 왜 pull 을 기다리는가
+   * `openIntroOrTitle` 은 `profile.introSeen`·`profile.tutorialDone` 으로 분기한다. 계정이
+   * 바뀌어 로컬을 비운 직후(= 기기 이관)에는 둘 다 false 라, 먼저 그리면 **이미 다 본 유저에게
+   * 인트로 4컷과 튜토리얼이 다시 뜬다**. 재화도 0 으로 잠깐 보인다. 로그인 필수 게임에서
+   * 기기 이관은 주 사용 사례이므로 짧은 대기를 택했다.
+   *
+   * ## 실패해도 진행한다
+   * pull 이 실패하면(오프라인 등) 로컬 상태 그대로 진입한다 — 세션 끊김을 오프라인으로
+   * 강등하는 규율과 같다. 못 보낸 것들은 대기 큐에 남아 다음 기회에 재전송된다.
+   */
+  async function bootWithAuth(): Promise<void> {
+    if (!isLoginConfigured()) {
+      openIntroOrTitle();
+      return;
+    }
+    const dismiss = showBootOverlay();
+    try {
+      const user = await getSignedInUser();
+      if (user === null) {
+        // 미로그인. 게이트가 강제면 로그인 버튼 상태로, DEV 면 그냥 들여보낸다.
+        if (isLoginRequired()) {
+          openTitle(true);
+          return;
+        }
+        openIntroOrTitle();
+        return;
+      }
+      // 계정이 바뀌었으면 로컬 계정 데이터를 버리고 **메모리의 profile 도** 기본값으로
+      // 되돌린다. 저장소만 비우면 이미 로드된 이전 계정 프로필이 그대로 살아 서버로 올라간다.
+      if (reconcileAccountScope(accountStore(), user.id)) {
+        Object.assign(profile, defaultProfile());
+      }
+      await pullServerProfileInto(profile);
+      saveProfile(profile);
+      // 세션이 생긴 지금이 이관·회수의 자리다(부팅 즉시 부르면 세션이 없어 전부 no-op 이었다).
+      void migrateLocalProfileToServer(profile);
+      void flushPendingCommissionSubmissions();
+      openIntroOrTitle();
+    } finally {
+      dismiss();
+    }
+  }
+
   // 부팅 — 첫 실행이면 세계관 인트로를 먼저 1회, 그 뒤 타이틀(첫 실행은 튜토리얼 강제 → 기지 맵).
-  openIntroOrTitle();
+  void bootWithAuth();
 
   gameApp.app.ticker.add((ticker) => {
     // 설정은 모든 화면 위에 떠 있는 크롬 UI 다 — 다른 캔버스 화면이 show() 에서 자기를 맨

@@ -15,7 +15,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getSupabaseClient } from './supabaseClient.js';
+import { getSupabaseClient, requireUserId } from './supabaseClient.js';
 import type { SupabaseConfig } from './config.js';
 import type { GuardianSnapshot } from '../../data/guardian.js';
 import type { GuardianBuild } from '../save/profile.js';
@@ -60,14 +60,7 @@ export class SupabaseGuardianGateway {
   }
 
   async getUserId(): Promise<string> {
-    const { data: sessionData } = await this.client.auth.getSession();
-    const existing = sessionData.session?.user?.id;
-    if (existing !== undefined) return existing;
-    const { data, error } = await this.client.auth.signInAnonymously();
-    if (error !== null) throw error;
-    const uid = data.user?.id;
-    if (uid === undefined) throw new Error('익명 로그인 후에도 uid 를 얻지 못했습니다');
-    return uid;
+    return requireUserId(this.client);
   }
 
   /** 본인 수호 기체 목록(소멸분 포함 — 표시 측이 필터). */

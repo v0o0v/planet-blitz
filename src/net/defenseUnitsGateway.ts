@@ -4,7 +4,8 @@
  * `defenseUnits.ts` 의 {@link DefenseUnitsGateway} 를 `@supabase/supabase-js` 로 구현한다.
  * SDK 는 `supabaseClient.ts` 가 유일하게 정적 import 하고 이 파일은 그것을 경유한다.
  * 부트스트랩(`main.ts`)이 **설정이 있을 때만** 동적 import 해 팩토리를 등록하므로 미설정
- * 번들·테스트에 SDK 가 실리지 않는다. 익명 Auth 세션(ADR-0002) 공유.
+ * 번들·테스트에 SDK 가 실리지 않는다. Auth 세션은 `supabaseClient.ts` 의 단일 클라이언트가
+ * 공유한다(익명 폴백 없음).
  *
  * ## 서버가 권위다
  * 레벨업·승급·리롤·등급 승급·제작은 전부 security definer RPC 가 재화를 차감하고 결과를
@@ -19,7 +20,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getSupabaseClient } from './supabaseClient.js';
+import { getSupabaseClient, requireUserId } from './supabaseClient.js';
 import type { SupabaseConfig } from './config.js';
 import type {
   DefenseUnitsGateway,
@@ -74,14 +75,7 @@ export class SupabaseDefenseUnitsGateway implements DefenseUnitsGateway {
   }
 
   async getUserId(): Promise<string> {
-    const { data: sessionData } = await this.client.auth.getSession();
-    const existing = sessionData.session?.user?.id;
-    if (existing !== undefined) return existing;
-    const { data, error } = await this.client.auth.signInAnonymously();
-    if (error !== null) throw error;
-    const uid = data.user?.id;
-    if (uid === undefined) throw new Error('익명 로그인 후에도 uid 를 얻지 못했습니다');
-    return uid;
+    return requireUserId(this.client);
   }
 
   async listUnits(): Promise<DefenseUnitOwned[]> {

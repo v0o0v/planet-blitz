@@ -4,7 +4,7 @@
  * `modules.ts` 의 {@link ModulesGateway} 를 `@supabase/supabase-js` 로 구현한다. SDK 는
  * `supabaseClient.ts` 가 유일하게 정적 import 하고 이 파일은 그것을 경유한다. `modules.ts` 는
  * 설정이 있을 때만 이 모듈을 동적 import 하므로 미설정 번들/테스트에 SDK 가 실리지 않는다.
- * 익명 Auth 세션(ADR-0002) 공유.
+ * Auth 세션은 `supabaseClient.ts` 의 단일 클라이언트가 공유한다(익명 폴백 없음).
  *
  * 구매·합성은 modules Edge Function(service_role 원자 트랜잭션)이 권위다 — 크레딧 차감·보관함
  * 상한·소유/중복 검증은 서버가 강제하고, 클라는 결과만 표시한다. 분해(salvage_core_module)는
@@ -12,7 +12,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getSupabaseClient } from './supabaseClient.js';
+import { getSupabaseClient, requireUserId } from './supabaseClient.js';
 import type { SupabaseConfig } from './config.js';
 import type {
   ModulesGateway,
@@ -65,14 +65,7 @@ export class SupabaseModulesGateway implements ModulesGateway {
   }
 
   async getUserId(): Promise<string> {
-    const { data: sessionData } = await this.client.auth.getSession();
-    const existing = sessionData.session?.user?.id;
-    if (existing !== undefined) return existing;
-    const { data, error } = await this.client.auth.signInAnonymously();
-    if (error !== null) throw error;
-    const uid = data.user?.id;
-    if (uid === undefined) throw new Error('익명 로그인 후에도 uid 를 얻지 못했습니다');
-    return uid;
+    return requireUserId(this.client);
   }
 
   async buyShopModule(slotIndex: number): Promise<ModuleBuyResult> {

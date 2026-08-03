@@ -1,0 +1,118 @@
+/**
+ * 구글 로그인 — 세션 조회·로그인·로그아웃.
+ *
+ * ## 게이트는 "설정이 있을 때만" 걸린다
+ * `readSupabaseConfig()` 가 null 이면(vitest·밸런스 러너·시크릿 없는 배포) 로그인이라는 개념
+ * 자체가 없고 게임은 기존대로 100% 로컬로 돈다. 이 규율 덕에 테스트 19파일·하네스·밸런스
+ * 하네스가 이 레인의 영향을 전혀 받지 않는다.
+ *
+ * ## DEV 는 게이트만 끈다
+ * 개발 머신에는 `.env.local` 이 있어 dev 서버는 설정이 non-null 이다. 게이트를 그대로 걸면
+ * 하네스를 띄울 때마다 구글 로그인을 해야 하고, 치트 패널로 만든 값이 실계정 데이터를
+ * 오염시킨다. 그래서 {@link isLoginRequired} 는 DEV 에서 false 다 — **버튼은 남는다**.
+ * 로컬에서 실제 왕복을 시험할 수 있어야 하기 때문이다.
+ *
+ * ## SDK 는 지연 로딩한다
+ * 이 모듈은 `main.ts`·타이틀 화면처럼 **초기 청크에 실리는 곳**에서 import 된다. 그래서
+ * `supabaseClient.ts` 를 정적으로 끌면 SDK 213kB 가 초기 청크로 딸려 온다. 함수 안에서
+ * `await import()` 하는 이유가 그것이다 — 다른 net 모듈들과 같은 규율.
+ *
+ * ## 왜 리다이렉트인가(팝업이 아니라)
+ * `signInWithOAuth` 는 페이지를 통째로 떠났다 돌아온다. 게임 상태가 날아가지만 **로그인
+ * 버튼은 타이틀에만 있으므로 잃을 상태가 없다**. 팝업 방식은 `skipBrowserRedirect` + 창 관리 +
+ * 세션 전달 배선을 직접 짜야 하고 팝업 차단·COOP 를 떠안는다. 값을 못 한다.
+ */
+
+import { readSupabaseConfig } from './config.js';
+
+/** 로그인한 사용자 최소 정보. `email` 은 provider 가 안 줄 수도 있어 nullable. */
+export interface SignedInUser {
+  id: string;
+  email: string | null;
+}
+
+/** 로그인 실패 사유(화면에 그대로 띄우지 않고 i18n 키로 옮긴다). */
+export type SignInFailure = 'not-configured' | 'no-browser' | 'provider-error';
+
+/** Supabase 설정이 있는가 = 로그인이라는 개념이 존재하는가. */
+export function isLoginConfigured(): boolean {
+  return readSupabaseConfig() !== null;
+}
+
+/**
+ * 로그인을 **강제**하는가. 설정이 있고 DEV 가 아닐 때만 true.
+ *
+ * 이 함수가 false 여도 로그인 자체는 가능하다({@link signInWithGoogle}) — 강제 여부만 가른다.
+ */
+export function isLoginRequired(): boolean {
+  return isLoginConfigured() && !import.meta.env.DEV;
+}
+
+/**
+ * OAuth 왕복이 돌아올 주소.
+ *
+ * `BASE_URL` 을 붙이는 것이 핵심이다 — 로컬은 `/`, GitHub Pages 프로젝트 페이지는
+ * `/planet-blitz/` 라 origin 만 쓰면 배포본에서 리포 루트로 떨어진다. 이 한 줄로 두 환경이
+ * 같은 코드 경로를 쓴다. Supabase 의 Redirect URLs 에 두 값이 모두 등록돼 있어야 한다.
+ */
+export function loginRedirectTarget(): string {
+  if (typeof window === 'undefined') return '';
+  return `${window.location.origin}${import.meta.env.BASE_URL}`;
+}
+
+/** 설정이 있으면 Supabase 클라이언트를, 없으면 null(SDK 를 로드조차 하지 않는다). */
+async function resolveClient(): Promise<import('@supabase/supabase-js').SupabaseClient | null> {
+  const config = readSupabaseConfig();
+  if (config === null) return null;
+  const { getSupabaseClient } = await import('./supabaseClient.js');
+  return getSupabaseClient(config);
+}
+
+/**
+ * 현재 로그인한 사용자. 세션이 없거나 미설정이면 null.
+ *
+ * `getSession()` 은 저장소에서 읽고 필요하면 갱신까지 한다. OAuth 리다이렉트로 돌아온
+ * 직후에는 `detectSessionInUrl` 이 URL 을 소비해 세션을 저장한 뒤이므로 여기서 바로 잡힌다.
+ */
+export async function getSignedInUser(): Promise<SignedInUser | null> {
+  const client = await resolveClient();
+  if (client === null) return null;
+  try {
+    const { data } = await client.auth.getSession();
+    const user = data.session?.user;
+    if (user === undefined) return null;
+    return { id: user.id, email: typeof user.email === 'string' ? user.email : null };
+  } catch {
+    // 네트워크·저장소 오류 — 미로그인으로 취급한다(게이트가 로그인을 다시 요구할 뿐).
+    return null;
+  }
+}
+
+/**
+ * 구글 로그인 시작. 성공하면 **브라우저가 구글로 떠나므로 이 함수 뒤의 코드는 실행되지
+ * 않는다**(반환은 리다이렉트가 시작되지 못한 경우를 위한 것).
+ */
+export async function signInWithGoogle(): Promise<SignInFailure | null> {
+  if (typeof window === 'undefined') return 'no-browser';
+  const client = await resolveClient();
+  if (client === null) return 'not-configured';
+  const { error } = await client.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: loginRedirectTarget() },
+  });
+  return error === null ? null : 'provider-error';
+}
+
+/**
+ * 로그아웃. 로컬 계정 데이터 삭제는 호출부가 {@link clearAccountScope} 로 따로 한다 —
+ * 이 모듈은 세션만 책임진다(스토어 주입 경로를 여기까지 끌고 오지 않기 위함).
+ */
+export async function signOut(): Promise<void> {
+  const client = await resolveClient();
+  if (client === null) return;
+  try {
+    await client.auth.signOut();
+  } catch {
+    // 서버가 죽어 있어도 로컬 세션은 SDK 가 지운다. 실패를 사용자에게 되돌릴 이유가 없다.
+  }
+}
