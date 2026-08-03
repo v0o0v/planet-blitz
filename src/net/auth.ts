@@ -81,6 +81,18 @@ export async function getSignedInUser(): Promise<SignedInUser | null> {
     const { data } = await client.auth.getSession();
     const user = data.session?.user;
     if (user === undefined) return null;
+
+    // **익명 세션은 로그인이 아니다.** `signInAnonymously()` 호출을 코드에서 걷어내도, 그 전에
+    // 만들어진 익명 세션은 localStorage 에 남아 자동 갱신된다(만료되지 않는다). 그대로 두면
+    // 이 레인 이전에 한 번이라도 플레이한 사람은 **전원이 게이트를 그냥 통과한다** — 로그인
+    // 필수 정책이 신규 사용자에게만 적용되는 셈이다. 실제로 개발 중 이 상태가 재현됐다.
+    //
+    // 되돌리는 김에 세션 자체도 끊는다. 남겨 두면 UI 는 "로그인 안 됨"인데 게이트웨이는 그
+    // 익명 uid 로 서버를 호출하는 두 얼굴이 된다.
+    if (user.is_anonymous === true) {
+      await client.auth.signOut();
+      return null;
+    }
     return { id: user.id, email: typeof user.email === 'string' ? user.email : null };
   } catch {
     // 네트워크·저장소 오류 — 미로그인으로 취급한다(게이트가 로그인을 다시 요구할 뿐).

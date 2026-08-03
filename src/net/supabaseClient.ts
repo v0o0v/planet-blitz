@@ -83,7 +83,10 @@ export function getSupabaseClient(config: SupabaseConfig): SupabaseClient {
  */
 export async function requireUserId(client: SupabaseClient): Promise<string> {
   const { data } = await client.auth.getSession();
-  const uid = data.session?.user?.id;
-  if (uid === undefined) throw new Error('로그인이 필요합니다(세션 없음)');
-  return uid;
+  const user = data.session?.user;
+  if (user === undefined) throw new Error('로그인이 필요합니다(세션 없음)');
+  // 익명 세션 거부(이중 방어). `net/auth.ts` 의 부팅 검사가 이런 세션을 끊지만, 그 검사를
+  // 안 타는 경로(하네스 직접 호출 등)로 들어와도 익명 uid 로 서버를 쓰지 못하게 막는다.
+  if (user.is_anonymous === true) throw new Error('로그인이 필요합니다(익명 세션)');
+  return user.id;
 }

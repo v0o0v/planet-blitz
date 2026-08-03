@@ -1890,6 +1890,20 @@ async function main(): Promise<void> {
    *
    * 순서가 중요하다: 세션을 먼저 끊어야 새로고침 후 부팅이 "미로그인"으로 판정한다.
    */
+  /**
+   * 설정 '계정' 행에서 누른 로그인. 성공하면 브라우저가 구글로 떠나므로 뒤 코드는 안 돈다.
+   *
+   * 타이틀의 로그인과 실패 처리가 다르다 — 여기서는 화면을 옮기지 않고 팝업에 안내만 띄운다.
+   * 설정은 어느 화면 위에서든 열 수 있어서, 실패했다고 타이틀로 끌고 가면 플레이 중이던
+   * 화면이 날아간다.
+   */
+  function handleSignIn(): void {
+    void signInWithGoogle().then((failure) => {
+      if (failure === null) return;
+      settings.setAccountNotice(t('title.signInFailed'));
+    });
+  }
+
   function handleSignOut(): void {
     void (async () => {
       await signOut();
@@ -1920,7 +1934,10 @@ async function main(): Promise<void> {
     try {
       const user = await getSignedInUser();
       if (user === null) {
-        // 미로그인. 게이트가 강제면 로그인 버튼 상태로, DEV 면 그냥 들여보낸다.
+        // 미로그인. 게이트가 강제면 타이틀 버튼이 로그인이 되고, 아니면(DEV·강등) 그냥
+        // 들여보낸다 — 다만 **설정 '계정' 행에는 로그인 버튼을 둔다**. 게이트가 꺼진 상황에서
+        // 타이틀 버튼은 "기지로 진입"이라, 이게 없으면 로그인할 방법이 아예 사라진다.
+        settings.setAccount({ signedIn: false, onSignIn: handleSignIn });
         if (isLoginRequired()) {
           openTitle(true);
           return;
@@ -1934,7 +1951,7 @@ async function main(): Promise<void> {
         Object.assign(profile, defaultProfile());
       }
       // 설정 팝업의 '계정' 행(이메일 + 로그아웃). 미로그인·미설정이면 행 자체가 안 그려진다.
-      settings.setAccount({ email: user.email, onSignOut: handleSignOut });
+      settings.setAccount({ signedIn: true, email: user.email, onSignOut: handleSignOut });
       await pullServerProfileInto(profile);
       saveProfile(profile);
       // 세션이 생긴 지금이 이관·회수의 자리다(부팅 즉시 부르면 세션이 없어 전부 no-op 이었다).
