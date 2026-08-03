@@ -1,21 +1,86 @@
 /**
- * 성계 지도 / 행성 선택 화면 (Pixi 카툰나무풍 리스킨 — `.omc/plans/cartoonwood-rollout.md` #4).
+ * 성계 지도 — 정규 PvE 출격구 (2026-08-03 AAA 시네마틱 전환)
+ * · 레인 계약 `.omc/plans/star-map-aaa-2026-08-03.md`.
  *
- * `src/ui/planetSelect.ts` 의 DOM `PlanetSelect` 와 기능 1:1 동등하게 출격 전 화면을 Pixi
- * 캔버스(1920×1080 디자인 스페이스)로 재구현한다: 행성 카드 선택, 침략 단계 선택(ADR-0022 —
- * 행성별 1..개방 상한 스텝퍼), 출격/장비 정비/기지 복귀. 공개 인터페이스(`show`/`hide`/`visible`)
- * 와 `LaunchSelection` 은 DOM 판 그대로다(롤아웃 공통 규칙 2). DOM 클래스는 회귀 대비로 남긴다.
+ * 기지 맵에서 진입하는 전체 화면(`main.ts:1246 openStarMap()`). **suspend/resume 은 없다** —
+ * `show({meta, bestStageCleared, onLaunch, onInventory, onBack, fetchCatalystInventory})` /
+ * `hide()` 규약이고, `LaunchSelection` 은 DOM 판(`src/ui/planetSelect.ts`)과 공유하는 타입이다.
+ * **공개 인터페이스는 한 줄도 바뀌지 않았다.**
+ * ⚠️ `main.ts` 는 `hide()` 를 하네스 goto 스위치를 포함해 여러 경로에서 부른다 — **멱등**이다.
  *
- * 촉매 주입 패널(변칙 패널 자리, ADR-0029)은 **Lane 4 픽커 소관** — 이 파일은 아직 그 자리를
- * 비워 둔다(하단 패널 행에 단계 스텝퍼만 렌더). Lane 4 가 여기 하단에 촉매 픽커/주입/해제를 얹는다.
+ * ---------------------------------------------------------------------------
+ * ## 출격 계약 (전환 전과 동일 — 손대지 않았다)
+ * `onLaunch(sel)` → `beginSortie(seed, sel)` → 촉매가 있으면 `consume_catalysts` → `startRun`
+ * 이 `buildRunConfig` **단일 정본**을 쓴다. 이 파일은 `sel` 만 만든다:
+ * `{planet, stage, ...(촉매 있으면 catalysts)}`. 여기서 config 를 손대면
+ * `tests/shipIntegration.test.ts` 의 grep 게이트가 잡는다.
+ * 모든 단계 이동은 예외 없이 {@link clampStageTo} 한 지점을 지난다(ADR-0022).
  *
- * 앞선 3화면(기지 맵·연구소·정제소)과 달리 **카드형 레이아웃**이다 — 카드 골격은 기지 맵
- * 건물 타일과 겹쳐 `./card.ts` 로 승격했다.
+ * ---------------------------------------------------------------------------
+ * ## ⚠️ 왜 여기는 **창을 뚫는가** (형제 화면 일곱은 뚫었다 뺐다)
+ * 기각의 근거는 언제나 **해상도**였다 — 촉매 보관함·기록 보관소·지시 수신소의 후보는
+ * `assets/ui_planet_*.png` 64×64 오브뿐이라 개구부를 채우면 17배 확대였다. 여기 후보는 다르다:
+ *
+ * | 후보 | 실측 | 판정 |
+ * | --- | --- | --- |
+ * | `ui_planet_0..3.png` | 64×64 · 행성 6종 중 **4종만** | ✗ (형제들이 기각한 그것) |
+ * | `textures.background[i]` | **절차 생성** 256×256(단색 + 균열 3줄 + 잉걸 8점) | ✗ 화면에서 가장 정보가 없는 면 |
+ * | `assets/tilesets/<planet>.png` | 128×256 아틀라스 = 32px wang 타일 16종 · **6종 전부** | ✅ |
+ *
+ * wang 타일셋은 **런에서 실제로 바닥에 깔리는 그 그림**이고({@link AutotileBackground} 가 32px
+ * 소스를 64px 로 그린다 — 게임 안과 **같은 배율**, 확대가 없다), 행성 6종 전부가 갖고 있으며,
+ * **행성을 바꾸면 창이 바뀐다.** 창이 "배경이 보이는 구멍"이 아니라 **결정을 돕는 자리**여야
+ * 한다는 형제 화면 열의 조건을 그대로 만족한다 — 여기가 곧 "이 행성이 어떻게 생겼나"다.
+ *
+ * 구현 규율(방어 사령부에서 실측으로 얻은 것):
+ *  - 내용물은 `box` 가 아니라 **{@link cinematicWindowOpening}** 을 채운다(`box` 에 맞췄더니
+ *    프레임과 그림 사이에 위 16px·좌우·아래 17px 맨 배경 띠가 둘러 생겼다 — 사용자 신고).
+ *  - 내용물은 **창 패널 바로 뒤**에 둔다. 앞에 두면 석재 단면·안쪽 AO·유리 반사·바닥 스크림을
+ *    통째로 가려 개구부가 "유리창"이 아니라 그냥 검은 사각이 된다.
+ *  - 배경 `windows` 는 **정확히 그 개구부**다(어긋나면 밝기 보존이 헛돈다).
+ *
+ * ## 카드 그리드를 버리고 **2열 + 오른쪽 세로 분할**로 갔다
+ * 옛 구현은 460×404 카드 6장을 가로로 늘어놓았다. 카드가 정보를 편 것이 아니라 오브 하나 +
+ * 이름 + 부제 + 배율 한 줄을 404px 높이에 띄엄띄엄 흘린 것이라, 카드 안 세로가 절반 이상 비었다
+ * (이 파일에 `CARD_SUB_MAX_BOTTOM` 같은 "겹치지 않게 띄우는" 상수가 쌓여 있던 것 자체가 증상).
+ * 이제 목록 행은 얇은 고정 높이고, 오른쪽이 **행을 바꿀 때마다 바뀌는 자리**다(위=전장 창,
+ * 아래=출격 제원). 격납고 선례 "밀도 높은 화면은 카드가 아니라 창을 뚫어라"와 같은 처방이다.
+ *
+ * ## 재화 칩은 두지 않는다
+ * 촉매 주입이 소모하는 것은 **촉매 아이템**(`consume_catalysts`)이지 크레딧·광물이 아니고
+ * 출격은 무료다. 다만 `show({meta})` 가 넘기는 상태 줄은 **계약이라 반드시 표시한다** — 하단
+ * 액션 띠 왼쪽 첫 줄이 받는다.
+ *
+ * ## 여기서 밟기 쉬운 함정 (전부 실측 근거)
+ * - ⚠️ **크롬(헤더·하단 띠)은 패널보다 뒤에 붙인다.** 석재 패널은 접지 그림자를 텍스처에 구워
+ *   자기 사각보다 30px 가까이 번지고, Pixi v8 은 자식을 역순으로 훑다가 픽셀에 걸리면 거기서
+ *   멈춘다 — 그림자가 passive 여도 탐색은 끝난다(방어 사령부 실제 신고).
+ * - ⚠️ **`setEnabled(false)` + `gold` 톤 금지.** container alpha 0.4 + 어두운 갈색 라벨 +
+ *   그림자 꺼짐이 겹쳐 글자가 통째로 사라진다. 비활성은 크림 라벨인 `stone` 이다.
+ * - ⚠️ **`PixiButton` 의 `pointerout` 이 `container.alpha` 를 1 로 되돌린다** — 흐림은 버튼
+ *   container 가 아니라 감싸는 host 에 건다.
+ * - **행 클릭은 행 Container 에**(바탕 Graphics 에 걸면 위 텍스트가 삼킨다).
+ * - **휠은 클립 Container 에**(마스크 Graphics 는 히트 테스트에서 제외된다).
+ * - 컬러 이모지 금지(`text.ts` stripEmoji). `★ ✕ ▶ ◀ ≪ ≫` 는 보존 목록.
+ * - ⚠️ `hudEl()` 에는 **캔버스 가드를 붙이지 않는다**(HUD 숨김이 통째로 죽는다).
+ * - ⚠️ 좌상단 x<120 · y<120 은 **설정 톱니 예약 밴드**다.
+ * - ⚠️ 각인 제목은 중앙 정렬 Text 라 사각형이 없어 겹침 테스트가 못 잡는다 —
+ *   {@link TITLE_BAND_HALF_W} 로 대역을 못 박는다.
+ *
+ * ## 재렌더 규율
+ * 옛 구현은 `render()` 가 루트를 통째로 지우고 다시 그렸다 — 카드 한 번, 단계 한 칸마다 배경과
+ * 석재 패널이 다시 **구워진다**. 그래서
+ *  - `buildChrome()` 은 1회(자산 도착 시에만 재건),
+ *  - `renderList()`/`renderOps()`/`syncValues()` 가 각자 host 안만 갈아끼우고,
+ *  - `syncArena()` 는 **행성이 바뀔 때만** 타일셋을 교체하며,
+ *  - `update(dt)` 는 `main.ts` 가 매 프레임 부른다(`planetSelect.update(frame)`). 숨겨져 있으면
+ *    즉시 반환하므로 이 화면 밖 비용은 0 이다. ⚠️ 연구소가 이 배선을 빠뜨려 배경·패널 연출이
+ *    통째로 멈춘 적이 있다.
  *
  * 순수 render/UI 레이어(ADR-0005) — sim 은 이 파일을 모른다.
  */
 
-import { Container, Graphics, Sprite, Text } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import { PLANETS, planetById, type PlanetMeta } from '../../../data/planets.js';
 import { stageOpenCap } from '../../../data/waves.js';
 import { multCentiFor } from '../../net/planetMultipliers.js';
@@ -23,126 +88,314 @@ import { NEUTRAL_MULT_CENTI } from '../../economy/planetPopularity.js';
 import { catalystById, normalizeCatalystArray, SLOT_CAP } from '../../data/catalysts.js';
 import { t, type MessageKey } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
+import { AutotileBackground, loadWangTiles, upperAt, type WangTiles } from '../../render/autotile.js';
 import type { LaunchSelection, BestStageClearedFn } from '../planetSelect.js';
 import type { CatalystInventory } from '../../net/index.js';
 import { COLOR, UI_FONT, TEXT_SHADOW, hexColor } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
-import { panelContent, PANEL_BORDER, nineSlicePanel } from './nineSlicePanel.js';
-import { makePanelCard } from './card.js';
 import { PixiButton } from './button.js';
-import { makeBanner } from './titleBar.js';
 import { stripEmoji } from './text.js';
+import { attachRowClick } from './listRow.js';
+import { makeScrollArea, rowBounds } from './scrollArea.js';
+import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
+import { HangarBackdrop } from './hangarBackdrop.js';
+import { makeCinematicPanel, cinematicWindowOpening, type CinematicPanel } from './cinematicPanel.js';
+import {
+  makeHangarTitle,
+  cinematicButtonTexture,
+  chromeFallbackColor,
+  chromeLabelColor,
+  type ChromeTone,
+} from './hangarChrome.js';
 import { CatalystPicker } from './catalystPicker.js';
 
 export type { LaunchSelection };
 
-// --- 레이아웃 상수(디자인 스페이스) ---
-/** 배너 폭은 제목("성계 지도") 길이에 맞춘다 — 짧은 제목에 넓은 배너는 허전하다(정제소 #3 과 동일). */
-const BANNER_W = 440;
-const BANNER_H = 72;
-const BANNER_Y = 12;
-const SUB_Y = 94;
+// ===========================================================================
+// 레이아웃(디자인 스페이스 1920×1080) — Pixi 없이 검증되는 순수 서술
+//
+// 여백 어휘(32 / 28 / 20 / 하단 28)와 헤더 높이 104 는 격납고·연구소·정제소·방어 사령부·
+// 관제탑·기록 보관소·지시 수신소와 **같은 값**이다.
+// ===========================================================================
 
-// 행성 카드 행.
-const CARD_Y = 126;
 /**
- * 콘텐츠(오브 → 이름 → 부제 2줄 → 보상 배율)가 콘텐츠 상자 안에 다 들어가는 높이.
+ * `cinematicPanel.ts` 콘텐츠 상자 기하의 **복제본**(출처: 그 파일의 `EDGE_PAD 24` ·
+ * `CONTENT_GAP 16` · `TITLE_BAND_H = round(TITLE_SIZE 26 × 2)`).
  *
- * ⚠️ 364 였을 때 배율 줄이 상자 **밖으로** 나가 프레임에 걸쳐 그려졌다(사용자 신고 2026-07-28):
- * `panelContent` 의 inset 은 46+14=60 이라 364 짜리 카드의 콘텐츠 바닥은 304 인데, 배율 줄이
- * 318 에서 시작했다. 배율 줄을 상자 바닥에 붙여 앵커하도록 고치면서(아래 {@link makePlanetCard})
- * 부제 2줄(바닥 ≈ 298)과 겹치지 않을 여유까지 확보한 높이가 404 다 — 콘텐츠 바닥 344.
- * 카드 행 바닥은 {@link CARD_Y}+404 = 530 이라 하단 패널({@link LOW_Y}=546) 과도 안 겹친다.
+ * 왜 베끼는가: 좌표 서술이 **Pixi 없이** 검증돼야 하는데 패널 상자는 런타임 객체다. 베낀 값이
+ * 조용히 어긋나면 내용이 패널 테두리를 뚫는데 예외도 로그도 없다 —
+ * `tests/planetSelectAaaLayout.test.ts` 가 실제 `makeCinematicPanel(...).box` 와 대조한다.
  */
-const CARD_H = 404;
-const CARD_MAX_W = 460;
-const CARD_GAP = 32;
-/** 카드 행이 쓸 수 있는 최대 폭(좌우 48px 여백). */
-const CARD_ROW_MAX_W = 1824;
-/** 행성 오브 지름. 자산이 64px 이므로 ×2 정수 배율(픽셀아트가 뭉개지지 않는다). */
-const ORB_D = 128;
-const CARD_NAME_Y = 212;
-const CARD_SUB_Y = 254;
-/**
- * 행성 인기 배율 줄(ADR-0038)은 세로 좌표를 **상수로 두지 않는다** — 콘텐츠 상자 바닥에
- * 바닥맞춤(anchor y=1)으로 붙인다. 상수로 두면 카드 높이·프레임 두께가 바뀔 때마다 상자
- * 밖으로 새는데, 실제로 그렇게 샜다(사용자 신고 2026-07-28 — {@link CARD_H} 주석 참조).
- * 바닥맞춤이면 "상자 밖으로 나간다"가 구조적으로 불가능하다.
- *
- * 카드는 여전히 **겹치면 안 되는 세로 띠**다(오브 → 이름 212 → 부제 254~ → 배율=바닥).
- * 부제는 2줄까지 감기므로(18px × 2 ≈ 44) 바닥이 약 298 이고, 배율 줄 상단은 약 320 이다.
- * **부제 폰트·wordWrap 을 키우면 {@link CARD_H} 를 함께 키워라** — 안 그러면 두 줄이 겹친다
- * (격납고 헤더에서 두 번 재발한 결함 유형).
- */
-const CARD_SUB_MAX_BOTTOM = 298;
+export const PANEL_EDGE_PAD = 24;
+export const PANEL_TITLE_BAND_H = 52;
+export const PANEL_CONTENT_GAP = 16;
+/** 제목 띠가 있는 패널의 콘텐츠 상자 로컬 y. */
+const TITLED_BOX_Y = PANEL_TITLE_BAND_H + PANEL_CONTENT_GAP;
 
-// 하단 패널 행: 단계 스텝퍼(좌) + 촉매 주입 패널(우, ADR-0029 Lane 4 — 구 변칙 패널 자리).
-const LOW_Y = 546;
-export const LOW_H = 280;
-/** 단계 패널 폭(좌). 티어 3버튼 행(884)이 콘텐츠 상자에 들어가는 최소 폭 이상. */
-export const STAGE_W = 1040;
-/** 촉매 주입 패널 폭(우). */
-const CAT_W = 560;
-/** 두 하단 패널 사이 간격. */
-const LOW_GAP = 40;
-/** 단계 조절 행 높이/세로 위치(콘텐츠 상자 안 — 제목 아래, 캡션 위). */
-export const STAGE_ROW_H = 64;
-export const STAGE_ROW_Y = 108;
-export const STAGE_DESC_Y = 186;
-/** 최소/최대 점프 버튼 폭(`≪` / `≫`). */
-const STAGE_JUMP_W = 96;
-/** 큰 걸음 버튼 폭(`−5` / `+5` — 걸음 폭은 상한에서 파생, {@link stageBigStep}). */
-const STAGE_BIG_W = 120;
-/** 한 칸 조절 버튼 폭(`−` / `+` — 정밀 조정용, 절대 없애지 않는다). */
-const STAGE_STEP_W = 96;
-/** 현재 단계 표시 버튼 폭(노란 버튼·비활성). */
-const STAGE_VALUE_W = 200;
-const STAGE_BTN_GAP = 14;
-
-// 하단 액션.
-const LAUNCH_W = 460;
-const LAUNCH_H = 84;
-const LAUNCH_Y = 872;
-const SIDE_W = 240;
-const SIDE_H = 64;
-const SIDE_GAP = 24;
-const SIDE_Y = LAUNCH_Y + (LAUNCH_H - SIDE_H) / 2;
-const META_Y = 1000;
-
-/** 배율 줄 한 줄 높이(fontSize 20 의 실측 근사 — 겹침 여유 계산용). */
-const CARD_MULT_LINE_H = 24;
+/** 헤더 밴드 높이 — 배경이 그대로 보이는 자리. 각인 석재 인방은 얹지 않는다(사용자 확정). */
+const HEADER_H = 104;
+/** 헤더 컨트롤의 세로 띠 — 전부 이 하나를 쓴다(격납고 헤더 겹침 결함 이력). */
+const HEAD_Y = 26;
+const HEAD_H = 52;
+const EDGE_X = 32;
+const GUTTER_X = 28;
+const STACK_GAP_Y = 20;
+const BOTTOM_PAD = 28;
 
 /**
- * 카드 세로 띠 기하(순수). 캔버스 없이 단위 테스트가 "배율 줄이 상자 안에 있고 부제와 겹치지
- * 않는다"를 고정하기 위해 노출한다 — 격납고 헤더에서 두 번 재발한 겹침 결함과 같은 유형이라
- * 코드로 잠근다.
+ * 좌상단 예약 밴드 — `main.ts` SettingsScreen 의 설정 톱니가 쓰는 **전 화면 공용 자리**다.
+ * 톱니는 매 프레임 stage 최상위로 올라오므로 여기에 컨트롤을 두면 통째로 클릭 불가가 된다.
+ * ⚠️ {@link PANEL_Y} 가 이 값에서 파생되므로 **선언 순서를 바꾸지 마라**(TDZ).
  */
-export function planetCardBands(cardH: number = CARD_H): {
-  /** 콘텐츠 상자 바닥(배율 줄이 바닥맞춤될 자리). */
-  contentBottom: number;
-  /** 부제 2줄이 차지하는 최대 바닥. */
-  subMaxBottom: number;
-  /** 바닥맞춤된 배율 줄의 상단. */
-  multTop: number;
-  /** 카드 행이 화면에서 끝나는 y. */
-  rowBottom: number;
-  /** 하단 패널 행이 시작되는 y(카드 행이 여기를 넘으면 겹친다). */
-  lowPanelTop: number;
-} {
-  const contentBottom = panelContent(CARD_MAX_W, cardH).bottom;
+export const GEAR_BAND_W = 120;
+export const GEAR_BAND_H = 120;
+
+const CONTENT_W = DESIGN_WIDTH - EDGE_X * 2;
+
+/** 하단 액션 띠 — 오른쪽에 [장비 정비][출격], 왼쪽은 상태 두 줄이 쓴다(빈 자리 0). */
+const FOOT_H = 64;
+const FOOT_Y = DESIGN_HEIGHT - BOTTOM_PAD - FOOT_H;
+const LAUNCH_W = 360;
+const LAUNCH_X = EDGE_X + CONTENT_W - LAUNCH_W;
+const INV_W = 220;
+const FOOT_BTN_GAP = 16;
+const INV_X = LAUNCH_X - FOOT_BTN_GAP - INV_W;
+
+/**
+ * 패널 줄 상단. 헤더 밴드(104) 바로 아래가 아니라 **{@link GEAR_BAND_H}(120) 아래**다 —
+ * 목록 패널이 화면 좌측 끝(x 32)에서 시작하므로 설정 톱니 예약 밴드와 가로로 겹치고, 세로로
+ * 몇 px 만 물려도 톱니가 매 프레임 맨 앞으로 올라와 그 자리를 통째로 삼킨다(테스트가 잠근다).
+ */
+const PANEL_Y = GEAR_BAND_H + 4;
+const PANEL_TO_FOOT = 16;
+/** 패널 세로는 **남는 자리 전부**다(빈 자리 금지 — 하드코딩하면 여백을 바꿀 때 어긋난다). */
+const PANEL_H = FOOT_Y - PANEL_TO_FOOT - PANEL_Y;
+
+const LIST_X = EDGE_X;
+const LIST_W = 520;
+const RIGHT_X = LIST_X + LIST_W + GUTTER_X;
+const RIGHT_W = DESIGN_WIDTH - EDGE_X - RIGHT_X;
+/**
+ * 전장 창 세로. 남는 세로에서 이것을 뺀 나머지가 출격 제원 패널이다 — 창이 이 화면의 주인공이라
+ * 큰 쪽을 먼저 정하고 제원이 나머지를 받는다(제원 콘텐츠는 두 줄이라 228 로 충분하다).
+ */
+const ARENA_H = 600;
+const OPS_Y = PANEL_Y + ARENA_H + STACK_GAP_Y;
+const OPS_H = PANEL_H - ARENA_H - STACK_GAP_Y;
+
+/** 제목 띠가 있는 패널의 콘텐츠 상자(패널 로컬) — 위 복제 기하에서 파생. */
+function titledBox(
+  w: number,
+  h: number,
+): { x: number; y: number; w: number; h: number; right: number; bottom: number } {
   return {
-    contentBottom,
-    subMaxBottom: CARD_SUB_MAX_BOTTOM,
-    multTop: contentBottom - CARD_MULT_LINE_H,
-    rowBottom: CARD_Y + cardH,
-    lowPanelTop: LOW_Y,
+    x: PANEL_EDGE_PAD,
+    y: TITLED_BOX_Y,
+    w: w - PANEL_EDGE_PAD * 2,
+    h: h - TITLED_BOX_Y - PANEL_EDGE_PAD,
+    right: w - PANEL_EDGE_PAD,
+    bottom: h - PANEL_EDGE_PAD,
   };
 }
 
-/** 카드 n 장이 한 행에 들어가도록 카드 폭을 정한다(행성이 늘어도 삐져나가지 않게). */
-function cardWidth(n: number): number {
-  if (n <= 0) return CARD_MAX_W;
-  return Math.min(CARD_MAX_W, Math.floor((CARD_ROW_MAX_W - CARD_GAP * (n - 1)) / n));
+const BOX_L = titledBox(LIST_W, PANEL_H);
+const BOX_O = titledBox(RIGHT_W, OPS_H);
+
+/**
+ * 전장 프리뷰가 그려질 뷰포트 = 창 패널이 **실제로 파낸 개구부**(화면 좌표).
+ *
+ * ⚠️ **콘텐츠 상자가 아니다.** 개구부 기하는 `cinematicPanel.ts` 가 정본이다 — 여기서 다시
+ * 유도하면 조용히 어긋나고, 어긋나면 프레임과 그림 사이에 맨 배경 띠가 둘러 생긴다.
+ */
+const ARENA_OPENING = cinematicWindowOpening(RIGHT_W, ARENA_H, true);
+/** 배경 `windows` 와 프리뷰 마스크가 **같은 사각**을 써야 밝기 보존이 헛돌지 않는다. */
+export const ARENA_VIEWPORT = {
+  x: RIGHT_X + ARENA_OPENING.x,
+  y: PANEL_Y + ARENA_OPENING.y,
+  w: ARENA_OPENING.w,
+  h: ARENA_OPENING.h,
+} as const;
+
+// --- 헤더 컨트롤(형제 화면과 **같은 x**) ---
+const CLOSE_W = 56;
+const CLOSE_X = DESIGN_WIDTH - EDGE_X - CLOSE_W;
+
+/**
+ * 각인 제목이 실제로 차지하는 가로 반폭. 중앙 정렬 Text 는 사각형이 없어 겹침 테스트가 못
+ * 잡는다 — 연구소 실화면에서 제목이 헤더 버튼과 **실제로 겹쳤다**.
+ */
+export const TITLE_BAND_HALF_W = 280;
+
+/** 석재 슬래브 위 **보조 텍스트색**(정제소 `SLAB_BODY_FILL` 복제 — 그 파일은 화면이다). */
+const SLAB_BODY_FILL = 0xe4dac7;
+/** 행 판 바탕색·홈·반경 — 예비역 로스터 `rowPlate` → … → 지시 수신소 경유 복제. */
+const ROW_FACE = 0x3b3327;
+const ROW_GROOVE = 0x17130d;
+const ROW_RADIUS = 10;
+
+// --- 목록 기하 ---
+const ROW_GAP = 10;
+const ROW_PAD = 16;
+/** 행성 오브 지름 — 자산이 64px 이므로 **1:1**(픽셀아트가 뭉개지지 않는다). */
+const ORB_D = 64;
+const ORB_GAP = 16;
+/** 행 오른쪽 보상 배율이 먹는 폭 — 행 왼쪽 글자 폭이 여기서 파생된다. */
+const ROW_REWARD_W = 100;
+/** 행성 행 — 1줄 이름, 2줄 부제. 나머지(전장·단계·촉매)는 오른쪽 열이 말한다. */
+const ROW_H = 96;
+/**
+ * 행 높이 상한.
+ *
+ * ⚠️ **아무 값이나 못 쓴다.** 상한이 높으면 행이 먼저 상한에 걸려 남는 자리가 {@link TAIL_MIN_H}
+ * 보다 작아지고, 그러면 꼬리 챔버가 안 생겨 목록 아래에 **이름 없는 빈 면**이 남는다 —
+ * 130 으로 뒀을 때 5개 구간에서 실제로 66px 가 남았다(단위 테스트가 잡았다). 122 는 1..7 개
+ * 전 구간에서 "행이 채우거나, 남으면 꼬리가 받거나" 둘 중 하나가 성립하는 값이다.
+ */
+const ROW_MAX_H = 122;
+/** 목록 **꼬리 챔버**의 최소 세로(읽을 만한 크기일 때만 생긴다). */
+const TAIL_MIN_H = 96;
+
+// --- 출격 제원 기하(패널 로컬 상자 BOX_O 안) ---
+const CHAMBER_GAP = 24;
+/** 침략 단계 챔버 폭 — 조절 행({@link stageRowWidth} = 836)이 안쪽 여백까지 담아야 한다. */
+const STAGE_CH_W = 880;
+/** 촉매 챔버는 **나머지 전부**다(빈 자리 금지 — 하드코딩하면 폭 합이 조용히 어긋난다). */
+const CAT_CH_W = BOX_O.w - STAGE_CH_W - CHAMBER_GAP;
+const CH_PAD = 16;
+
+/** 단계 조절 버튼 폭(좌→우). 옛 값(96/120/96/200)에서 좁혔다 — 챔버 880 안에 들어가야 한다. */
+const STAGE_JUMP_W = 88;
+const STAGE_BIG_W = 112;
+const STAGE_STEP_W = 88;
+const STAGE_VALUE_W = 176;
+const STAGE_BTN_GAP = 14;
+/** 조절 행 높이와 챔버 안 세로 위치(1줄 = 머리글+캡션, 2줄 = 조절 행). */
+export const STAGE_ROW_H = 72;
+export const STAGE_HEAD_Y = 12;
+export const STAGE_ROW_Y = 50;
+
+/**
+ * 전장 프리뷰 노드가 놓일 z 인덱스 — **창 패널 바로 뒤**(인자는 그 패널의 현재 인덱스).
+ *
+ * 앞에 두면 프리뷰가 창의 석재 단면·안쪽 AO·유리 반사·바닥 스크림을 통째로 가려, 개구부가
+ * "유리창"이 아니라 그냥 검은 사각이 된다(방어 사령부 실화면에서 AO 그라디언트가 프리뷰 위에
+ * 하나도 안 나타났다). 순수 함수로 빼 둔 이유는 노드 없이 이 계약을 테스트하기 위해서다
+ * (vitest 는 node 환경이라 Pixi 표시 객체를 세우기 어렵다).
+ */
+export function arenaChildIndex(windowPanelIndex: number): number {
+  return Math.max(0, windowPanelIndex);
+}
+
+/** 화면 좌표 사각형(디자인 스페이스). */
+export interface StarRect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/**
+ * 이 화면의 레이아웃 전량 — **Pixi 없이 검증되는 순수 서술**이다.
+ *
+ * 왜 내보내는가: 이 리포는 "겹치면 안 되는 세로 띠"가 실제로 겹친 결함을 격납고 헤더에서 겪었고,
+ * 캔버스 없는 vitest 는 화면을 세울 수 없어 눈으로만 잡히는 유형이 된다. 좌표를 순수 값으로
+ * 꺼내 두면 겹침·화면 이탈·톱니 예약 밴드 침범을 단위 테스트가 잠근다.
+ *
+ * ⚠️ **인자를 받지 않는 것 자체가 계약**이다 — 선택 행성·단계로 기하가 갈리면 조작 한 번마다
+ * 배경과 석재를 다시 구워야 한다.
+ */
+export function planetSelectLayout(): {
+  readonly screen: StarRect;
+  readonly headerH: number;
+  readonly panels: readonly { readonly id: string; readonly rect: StarRect }[];
+  readonly footer: { readonly band: StarRect; readonly buttons: readonly StarRect[] };
+  readonly headerControls: readonly { readonly id: string; readonly rect: StarRect }[];
+  /** 배경이 보존되는 창 — **전장 프리뷰 하나**(파일 헤더 "왜 여기는 창을 뚫는가"). */
+  readonly windows: readonly StarRect[];
+} {
+  return {
+    screen: { x: 0, y: 0, w: DESIGN_WIDTH, h: DESIGN_HEIGHT },
+    headerH: HEADER_H,
+    panels: [
+      { id: 'list', rect: { x: LIST_X, y: PANEL_Y, w: LIST_W, h: PANEL_H } },
+      { id: 'arena', rect: { x: RIGHT_X, y: PANEL_Y, w: RIGHT_W, h: ARENA_H } },
+      { id: 'ops', rect: { x: RIGHT_X, y: OPS_Y, w: RIGHT_W, h: OPS_H } },
+    ],
+    footer: {
+      band: { x: EDGE_X, y: FOOT_Y, w: CONTENT_W, h: FOOT_H },
+      // 왼쪽→오른쪽(장비 정비 · 출격). 주 동작이 오른쪽 끝을 잡는다.
+      buttons: [
+        { x: INV_X, y: FOOT_Y, w: INV_W, h: FOOT_H },
+        { x: LAUNCH_X, y: FOOT_Y, w: LAUNCH_W, h: FOOT_H },
+      ],
+    },
+    headerControls: [{ id: 'close', rect: { x: CLOSE_X, y: HEAD_Y, w: CLOSE_W, h: HEAD_H } }],
+    windows: [{ ...ARENA_VIEWPORT }],
+  };
+}
+
+/** 패널 콘텐츠 상자와 그 안의 고정 블록(단위 테스트가 실제 패널 상자와 대조한다). */
+export const STAR_BOXES = {
+  list: { x: BOX_L.x, y: BOX_L.y, w: BOX_L.w, h: BOX_L.h, bottom: BOX_L.bottom },
+  ops: { x: BOX_O.x, y: BOX_O.y, w: BOX_O.w, h: BOX_O.h, bottom: BOX_O.bottom },
+  rowGap: ROW_GAP,
+  rowH: ROW_H,
+  rowMaxH: ROW_MAX_H,
+  /** 목록 행에서 오브·여백·보상 배율이 먹고 남는 글자 폭 — 하한이 있어야 부제가 안 뭉개진다. */
+  rowTextW: BOX_L.w - ROW_PAD * 2 - ORB_D - ORB_GAP - ROW_REWARD_W,
+  rowRewardW: ROW_REWARD_W,
+  chamberGap: CHAMBER_GAP,
+  stageChW: STAGE_CH_W,
+  catChW: CAT_CH_W,
+  chamberPad: CH_PAD,
+  /** 전장 개구부(패널 로컬) — 배경 `windows` 와 프리뷰 마스크가 이걸 함께 쓴다. */
+  arenaOpening: { ...ARENA_OPENING },
+  planets: PLANETS.length,
+} as const;
+
+/**
+ * 남는 세로를 행에 **고르게 나눈** 새 높이 배열(순수 함수 — Pixi 미의존).
+ *
+ * 넘치면(스크롤이 붙으면) 입력 그대로 돌려준다. 반올림 잔여는 **행 수 미만**이다.
+ *
+ * ⚠️ **상한은 늘리기만 막는다. 자연 높이를 깎지 않는다.** `Math.min(maxH, h + add)` 만 쓰면
+ * 자연 높이가 상한보다 큰 행이 **줄어들어** 내용이 판 밖으로 삐져나온다 — 바탕 판은 최종
+ * 높이로 그려지는데 글자는 이미 자연 높이만큼 자라 있기 때문이다(`modulesView.ts` 에서 실제로
+ * 터졌다). 그래서 `Math.max(h, ...)` 로 감싼다.
+ * (지시 수신소 `fillRowHeights` 복제 — 그 파일은 공용 모듈이 아니라 화면이다.)
+ */
+export function fillRowHeights(
+  heights: readonly number[],
+  gap: number,
+  avail: number,
+  maxH: number,
+): number[] {
+  const n = heights.length;
+  if (n === 0) return [];
+  const total = heights.reduce((a, b) => a + b, 0) + gap * (n - 1);
+  if (total >= avail) return [...heights];
+  const add = Math.floor((avail - total) / n);
+  if (add <= 0) return [...heights];
+  return heights.map((h) => Math.max(h, Math.min(maxH, h + add)));
+}
+
+/**
+ * 목록 열의 세로 배분 — 행 높이들과 **꼬리 챔버** 높이(0 이면 없음). 순수 함수라 Pixi 없이
+ * 검증된다. 행성 6종이면 잔여가 행 수 미만이라 꼬리는 생기지 않지만, 레지스트리에 행성이
+ * 추가/제거돼도 목록에 이름 없는 빈 면이 남지 않는다(테스트가 전 구간을 훑는다).
+ */
+export function listFill(count: number): { heights: number[]; tailH: number } {
+  const avail = BOX_L.h;
+  if (count <= 0) return { heights: [], tailH: avail };
+  const heights = fillRowHeights(
+    Array.from({ length: count }, () => ROW_H),
+    ROW_GAP,
+    avail,
+    ROW_MAX_H,
+  );
+  const used = heights.reduce((a, b) => a + b, 0) + ROW_GAP * (count - 1);
+  const rest = avail - used - ROW_GAP;
+  return { heights, tailH: rest >= TAIL_MIN_H ? rest : 0 };
 }
 
 // --- 침략 단계 조절 컨트롤(순수 층) ---------------------------------------
@@ -180,7 +433,7 @@ export interface StageControlSpec {
   target: number;
   /** 눌러서 의미가 있는가(끝에 닿았으면 false → 비활성). */
   enabled: boolean;
-  /** 현재 단계 표시 칸인가(노란 버튼·클릭 없음). */
+  /** 현재 단계 표시 칸인가(금색 버튼·클릭 없음). */
   readonly current?: true;
 }
 
@@ -199,19 +452,150 @@ export function stageControlSpecs(stage: number, cap: number): StageControlSpec[
     { key: 'min', label: '≪', width: STAGE_JUMP_W, fontSize: 28, target: 1, enabled: canDec },
     { key: 'bigDec', label: `−${big}`, width: STAGE_BIG_W, fontSize: 24, target: clampStageTo(cur - big, cap), enabled: canDec },
     { key: 'dec', label: '−', width: STAGE_STEP_W, fontSize: 34, target: clampStageTo(cur - 1, cap), enabled: canDec },
-    { key: 'value', label: String(cur), width: STAGE_VALUE_W, fontSize: 26, target: cur, enabled: false, current: true },
+    { key: 'value', label: String(cur), width: STAGE_VALUE_W, fontSize: 30, target: cur, enabled: false, current: true },
     { key: 'inc', label: '+', width: STAGE_STEP_W, fontSize: 34, target: clampStageTo(cur + 1, cap), enabled: canInc },
     { key: 'bigInc', label: `+${big}`, width: STAGE_BIG_W, fontSize: 24, target: clampStageTo(cur + big, cap), enabled: canInc },
     { key: 'max', label: '≫', width: STAGE_JUMP_W, fontSize: 28, target: hi, enabled: canInc },
   ];
 }
 
-/** 조절 행 전체 폭(버튼 폭 합 + 간격). 콘텐츠 상자 폭을 넘으면 안 된다. */
+/** 조절 행 전체 폭(버튼 폭 합 + 간격). 챔버 안쪽 폭을 넘으면 안 된다. */
 export function stageRowWidth(specs: readonly StageControlSpec[]): number {
   if (specs.length === 0) return 0;
   let w = 0;
   for (const s of specs) w += s.width;
   return w + STAGE_BTN_GAP * (specs.length - 1);
+}
+
+// --- 행 판 조명 램프(모듈 1회 굽기) ------------------------------------------
+
+/**
+ * 행 판의 **방향성 조명**을 위한 세로 알파 램프.
+ *
+ * ⚠️ 띠를 겹쳐 그라디언트를 근사하지 않는다 — 1px 겹침이 알파를 두 배로 만들어 가로줄이 생긴다
+ * (실제 사용자 신고). 폭 1px 캔버스에 픽셀로 굽고 `linear` 로 늘린다.
+ */
+let rowRampTex: Texture | null | undefined;
+
+function rowRamp(): Texture | null {
+  if (rowRampTex !== undefined) return rowRampTex;
+  // ⚠️ 이 가드는 **캔버스를 굽는 함수에만** 붙인다. DOM 조회(`hudEl`)에 붙이면 HUD 숨김이
+  // 통째로 죽는다(이 리포가 실제로 밟았다).
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
+    rowRampTex = null;
+    return null;
+  }
+  try {
+    const n = 64;
+    const cv = document.createElement('canvas');
+    cv.width = 1;
+    cv.height = n;
+    const ctx = cv.getContext('2d');
+    if (ctx === null) {
+      rowRampTex = null;
+      return null;
+    }
+    const img = ctx.createImageData(1, n);
+    for (let i = 0; i < n; i++) {
+      // 위 1 → 아래 0. 선형이 아니라 위쪽에 몰리게(면이 위에서 빛을 받는다).
+      const u = 1 - i / (n - 1);
+      const a = Math.round(255 * u * u);
+      img.data[i * 4] = 255;
+      img.data[i * 4 + 1] = 255;
+      img.data[i * 4 + 2] = 255;
+      img.data[i * 4 + 3] = a;
+    }
+    ctx.putImageData(img, 0, 0);
+    rowRampTex = Texture.from(cv);
+    return rowRampTex;
+  } catch {
+    rowRampTex = null;
+    return null;
+  }
+}
+
+/**
+ * 행 한 장의 바탕 — 2단 접지 그림자 + 석재 면 + 방향성 램프 + 안쪽 어두운 홈.
+ *
+ * **선은 긋지 않는다.** 행 사이 구분은 이 그림자와 행 간격이 만든다. 선택은 금색 링이 말한다.
+ */
+function rowPlate(w: number, h: number, selected: boolean): Container {
+  const root = new Container();
+
+  // 2단 접지 그림자 — 한 층으로는 접지가 안 읽힌다(넓고 옅은 확산 + 좁고 짙은 접촉).
+  const diffuse = new Graphics();
+  diffuse.roundRect(-3, 6, w + 6, h, ROW_RADIUS + 3).fill({ color: 0x000000, alpha: 0.22 });
+  root.addChild(diffuse);
+  const contact = new Graphics();
+  contact.roundRect(1, 3, w - 2, h, ROW_RADIUS).fill({ color: 0x000000, alpha: 0.3 });
+  root.addChild(contact);
+
+  const face = new Graphics();
+  face.roundRect(0, 0, w, h, ROW_RADIUS).fill({ color: ROW_FACE });
+  root.addChild(face);
+
+  const ramp = rowRamp();
+  if (ramp !== null) {
+    const clip = new Container();
+    const mask = new Graphics();
+    mask.roundRect(0, 0, w, h, ROW_RADIUS).fill({ color: 0xffffff });
+    clip.addChild(mask);
+    clip.mask = mask;
+
+    const lit = new Sprite(ramp);
+    lit.width = w;
+    lit.height = h;
+    lit.alpha = 0.11;
+    clip.addChild(lit);
+
+    const shade = new Sprite(ramp);
+    shade.width = w;
+    shade.height = h;
+    shade.tint = 0x000000;
+    shade.alpha = 0.3;
+    // 뒤집어 아래쪽이 짙어지게 한다.
+    shade.scale.y = -Math.abs(shade.scale.y);
+    shade.y = h;
+    clip.addChild(shade);
+
+    root.addChild(clip);
+  }
+
+  const groove = new Graphics();
+  groove
+    .roundRect(0, 0, w, h, ROW_RADIUS)
+    .stroke({ color: ROW_GROOVE, width: 2, alignment: 1, alpha: 0.85 });
+  root.addChild(groove);
+
+  if (selected) root.addChild(selectionRing(0, 0, w, h, ROW_RADIUS));
+  return root;
+}
+
+/** 선택 표식 — 금색 링 하나. 히트 테스트에서 빠져야 행 클릭을 삼키지 않는다. */
+function selectionRing(x: number, y: number, w: number, h: number, radius: number): Graphics {
+  const ring = new Graphics();
+  ring
+    .roundRect(x, y, w, h, radius)
+    .stroke({ color: COLOR.gold, width: 3, alignment: 1, alpha: 0.95 });
+  ring.eventMode = 'none';
+  return ring;
+}
+
+/**
+ * **파낸 면** 한 장(출격 제원 챔버 · 목록 꼬리가 공유한다). 볼록한 {@link rowPlate} 와 조명
+ * 부호가 정확히 반대다: 위가 그늘이고 **아래 입술만** 빛을 받는다. 이 부호가 뒤집히면 파인
+ * 자리가 아니라 얹어 놓은 판때기로 읽힌다.
+ * (정제소 `recessedWell` → … → 지시 수신소 경유 복제 — 그 파일들은 화면이지 공용 모듈이 아니다.)
+ */
+function recessedWell(x: number, y: number, w: number, h: number): Graphics {
+  const g = new Graphics();
+  g.roundRect(x, y, w, h, 12)
+    .fill({ color: 0x14100a, alpha: 0.82 })
+    .stroke({ color: 0x0a0705, width: 2, alignment: 1, alpha: 0.9 });
+  g.moveTo(x + 14, y + h - 1.5)
+    .lineTo(x + w - 14, y + h - 1.5)
+    .stroke({ color: 0x6a5a3e, width: 1.5, alpha: 0.45 });
+  return g;
 }
 
 /** 두 색을 tt(0=a, 1=b) 로 섞는다 — 오브 그라데이션용. */
@@ -229,14 +613,14 @@ function mixColor(a: number, b: number, tt: number): number {
 }
 
 /**
- * 행성 오브 **폴백**. 실 자산(`ui_planet_<id>.png`)이 없을 때만 쓴다. DOM 판의
+ * 행성 오브 **폴백**. 실 자산(`ui_planet_<id>.png`)이 없을 때만 쓴다 — 자산은 6종 중 4종뿐이라
+ * 이 경로는 실제로 밟힌다(톡사르·크라스). DOM 판의
  * `radial-gradient(circle at 35% 30%, accent, #05060a)` 를 동심원 레이어로 근사한다
- * (Pixi Graphics 에는 방사 그라데이션이 없다). 하이라이트 중심을 좌상단으로 밀어 구체감을 낸다.
+ * (Pixi Graphics 에는 방사 그라데이션이 없다).
  */
 function makeOrb(diameter: number, accent: number): Graphics {
   const g = new Graphics();
   const r = diameter / 2;
-  // 바깥 glow(DOM box-shadow 0 0 22px currentColor).
   g.circle(r, r, r + 6).fill({ color: accent, alpha: 0.16 });
   const steps = 12;
   for (let i = steps; i >= 1; i--) {
@@ -251,10 +635,164 @@ function makeOrb(diameter: number, accent: number): Graphics {
   return g;
 }
 
+/**
+ * 전장 프리뷰의 지형 시드 — **행성 id 에서 결정론적으로** 뽑는다. 같은 행성은 언제 열어도 같은
+ * 지형이라 "이 행성은 이렇게 생겼다"가 기억에 남고, 행성이 다르면 지형도 다르다.
+ */
+function arenaSeed(planet: number): number {
+  return (Math.imul(planet + 1, 0x9e3779b1) ^ 0x5bf03635) >>> 0;
+}
+
+/** 창이 담아야 할 **두 지형의 섞임 비율**. 한쪽이 압도하면 창이 단색 면으로 읽힌다. */
+const ARENA_TARGET_UPPER = 0.42;
+
+/**
+ * 창에 **어느 자리를 비출지** 고른다(순수 함수 — Pixi 미의존).
+ *
+ * ## 왜 필요한가 (실화면 1차 확인 2026-08-03)
+ * 카메라를 원점에 두고 찍었더니 카르곤은 창의 3/4 가 어두운 현무암 한 덩어리였고 용암은
+ * 오른쪽 아래 귀퉁이에만 걸쳤다. wang 지형은 런에서는 적·투사체·환경 레이어가 그 위를 덮어
+ * 살지만, 1294×541 개구부에 **바닥만** 깔면 "한쪽 지형이 다 먹은 자리"가 그대로 화면의 절반이
+ * 된다 — 창을 뚫은 근거(정보가 있는 면)를 스스로 무너뜨린다.
+ *
+ * 그래서 지형 필드를 **미리 훑어** 두 지형이 가장 고르게 섞인 타일 좌표를 고른다. 지형 필드는
+ * `upperAt(seed, vx, vy)` 라는 순수 함수라 렌더 없이 셀 수 있고, 결과는 시드에서 결정되므로
+ * 같은 행성은 언제 열어도 같은 자리를 비춘다.
+ *
+ * @param cols/rows 창이 담는 타일 수. @returns 타일 단위 카메라 오프셋.
+ */
+export function arenaFraming(
+  seed: number,
+  cols: number,
+  rows: number,
+): { tx: number; ty: number } {
+  let best = { tx: 0, ty: 0 };
+  let bestErr = Number.POSITIVE_INFINITY;
+  // 후보는 창 하나 폭/높이 간격으로 흩는다 — 겹치는 후보를 촘촘히 보는 것은 낭비다.
+  for (let cy = 0; cy < 8; cy++) {
+    for (let cx = 0; cx < 8; cx++) {
+      const ox = cx * cols;
+      const oy = cy * rows;
+      let upper = 0;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (upperAt(seed, ox + c, oy + r)) upper++;
+        }
+      }
+      const err = Math.abs(upper / (cols * rows) - ARENA_TARGET_UPPER);
+      if (err < bestErr) {
+        bestErr = err;
+        best = { tx: ox, ty: oy };
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * 전장 창의 내용물 — 선택 행성의 **wang 타일 지형**(런에서 바닥에 깔리는 그 그림).
+ *
+ * `AutotileBackground` 는 카메라 좌표계로 동작한다: 레이어를 `(W/2 − camX, H/2 − camY)` 로 옮기고
+ * 타일을 `tx*64` 에 깐다. `camX` 를 화면 중앙으로 고정하면 가로 오프셋이 0 이 되어 개구부의
+ * 디자인 좌표를 그대로 뷰 사각으로 넘길 수 있고, `camY` 만 천천히 밀면 런에서처럼 바닥이 흐른다.
+ * 재타일링은 카메라가 타일 경계를 넘을 때만 일어난다(그 사이는 레이어 이동만).
+ */
+class ArenaView {
+  readonly view = new Container();
+  private readonly auto = new AutotileBackground(64);
+  private readonly fill = new Graphics();
+  private readonly caption: Text;
+  private planet = -1;
+  /** 창이 비추는 자리(타일 좌표 → 카메라). {@link arenaFraming} 이 행성마다 골라 준다. */
+  private camX = DESIGN_WIDTH / 2;
+  private camY = DESIGN_HEIGHT / 2;
+  /** 로드 경합 방지 — 늦게 도착한 타일셋이 이미 바뀐 행성을 덮어쓰지 않게 한다. */
+  private pending = 0;
+  private readonly rect: { x: number; y: number; w: number; h: number };
+
+  constructor(rect: { x: number; y: number; w: number; h: number }) {
+    this.rect = rect;
+    const mask = new Graphics();
+    mask.rect(rect.x, rect.y, rect.w, rect.h).fill({ color: 0xffffff });
+    this.view.addChild(mask);
+    this.view.mask = mask;
+    // 타일셋이 아직 없거나(첫 프레임·로드 실패) 타일 사이가 비어도 개구부가 뚫린 채로 보이지
+    // 않게 바닥을 먼저 깐다 — 색은 행성 강조색에서 파생된다.
+    this.view.addChild(this.fill);
+    this.view.addChild(this.auto.layer);
+
+    this.caption = new Text({
+      resolution: 2,
+      text: '',
+      style: {
+        fontFamily: UI_FONT,
+        fontSize: 20,
+        fontWeight: '700',
+        fill: SLAB_BODY_FILL,
+        dropShadow: TEXT_SHADOW,
+      },
+    });
+    this.caption.anchor.set(0.5, 1);
+    this.caption.position.set(rect.x + rect.w / 2, rect.y + rect.h - 10);
+    this.view.addChild(this.caption);
+  }
+
+  /** 행성이 **바뀔 때만** 타일셋을 갈아 끼운다(같은 행성이면 no-op — 매 갱신마다 다시 안 읽는다). */
+  select(p: PlanetMeta, caption: string): void {
+    this.caption.text = stripEmoji(caption);
+    if (p.id === this.planet) return;
+    this.planet = p.id;
+    const accent = hexColor(p.accent);
+    this.fill.clear();
+    this.fill
+      .rect(this.rect.x, this.rect.y, this.rect.w, this.rect.h)
+      .fill({ color: mixColor(0x05060a, accent, 0.16) });
+    const seed = arenaSeed(p.id);
+    // 창이 담는 타일 수만큼 지형을 훑어 두 지형이 가장 고르게 섞인 자리를 고른다. 카메라에서
+    // `rect` 를 빼는 이유: 레이어 오프셋이 `W/2 − camX` 라, 창 왼쪽 위에 타일 (tx,ty) 가 오려면
+    // 창의 화면 좌표만큼 되돌려야 한다(안 빼면 실제로 보이는 자리가 9타일 어긋난다).
+    const cols = Math.ceil(this.rect.w / 64);
+    const rows = Math.ceil(this.rect.h / 64);
+    const frame = arenaFraming(seed, cols, rows);
+    this.camX = DESIGN_WIDTH / 2 + frame.tx * 64 - this.rect.x;
+    this.camY = DESIGN_HEIGHT / 2 + frame.ty * 64 - this.rect.y;
+    this.auto.configure(null, seed);
+    const token = ++this.pending;
+    void loadWangTiles(p.id)
+      .then((tiles: WangTiles | null) => {
+        // 늦게 도착했으면 버린다(행성을 빠르게 넘기면 순서가 뒤집힐 수 있다).
+        if (token !== this.pending) return;
+        this.auto.configure(tiles, seed);
+      })
+      .catch(() => {
+        /* 자산 누락·오프라인이면 바닥색만 남는다(로더가 이미 null 로 삼키지만 이중 방어). */
+      });
+  }
+
+  update(dt: number): void {
+    // 런에서 바닥이 흐르는 방향(전방 비행) — 카메라가 아래로 밀리면 타일이 위로 흐른다.
+    this.camY += dt * 22;
+    this.auto.update(
+      this.camX,
+      this.camY,
+      this.rect.x,
+      this.rect.y,
+      this.rect.x + this.rect.w,
+      this.rect.y + this.rect.h,
+    );
+  }
+
+  destroy(): void {
+    this.auto.destroy();
+    this.view.destroy({ children: true });
+  }
+}
+
 export class PlanetSelectScreen {
   private readonly stage: Container;
   private readonly root = new Container();
   private ui: UiTextures = {};
+  private art: HangarTextures = {};
   private planet = 0;
   /** 선택된 침략 단계(1..개방 상한). `stage`(Pixi Container)와 이름이 겹치지 않게 별칭. */
   private selectedStage = 1;
@@ -272,6 +810,27 @@ export class PlanetSelectScreen {
   private fetchInventory: (() => Promise<CatalystInventory | null>) | null = null;
   /** 촉매 주입 픽커 팝업(하위 컴포넌트). */
   private readonly picker: CatalystPicker;
+  private listScrollY = 0;
+
+  /** 진입 전 런 HUD 의 visibility — 닫을 때 **원래 값으로** 되돌린다(무조건 '' 금지). */
+  private hudPrevVisibility: string | null = null;
+
+  // --- 크롬(1회 조립) ---
+  private backdrop: HangarBackdrop | null = null;
+  private panels: CinematicPanel[] = [];
+  private arena: ArenaView | null = null;
+  private chromeBuilt = false;
+  private listHost: Container | null = null;
+  private opsHost: Container | null = null;
+  private footHost: Container | null = null;
+  private metaNode: Text | null = null;
+  private summaryNode: Text | null = null;
+  private launchBtn: PixiButton | null = null;
+  /**
+   * [출격] 라벨은 행성 이름을 품는다 — 라벨이 바뀌면 버튼을 다시 세워야 하는데, 매 갱신마다
+   * 세우면 조작 한 번마다 텍스처가 다시 붙는다. 라벨이 **바뀔 때만** 세운다.
+   */
+  private launchKey = '';
 
   constructor(stage: Container) {
     this.stage = stage;
@@ -279,10 +838,15 @@ export class PlanetSelectScreen {
     this.root.visible = false;
     this.root.eventMode = 'static';
     this.stage.addChild(this.root);
-    // UI 킷 텍스처 비동기 로드 — 완료 후 열려 있으면 실 아트로 다시 그린다(그 전엔 폴백).
+    // 행성 오브(`ui_planet_*.png`)는 아직 나무 UI 킷에 들어 있다 — 크롬은 전부 절차적 석재로
+    // 바뀌었지만 이 4장은 실제로 쓰이므로 킷을 계속 읽는다.
     void loadUiTextures().then((tex) => {
       this.ui = tex;
-      if (this.root.visible) this.render();
+      this.rebuild();
+    });
+    void loadHangarTextures().then((tex) => {
+      this.art = tex;
+      this.rebuild();
     });
   }
 
@@ -290,8 +854,16 @@ export class PlanetSelectScreen {
     return this.root.visible;
   }
 
+  /** 배경·석재 패널·전장 연출 진행. `main.ts` 가 매 프레임 부른다 — 숨겨져 있으면 즉시 반환. */
+  update(dt: number): void {
+    if (!this.root.visible) return;
+    this.backdrop?.update(dt);
+    for (const p of this.panels) p.update(dt);
+    this.arena?.update(dt);
+  }
+
   /**
-   * 다음 런의 성계 지도를 연다(DOM 판과 동일 시그니처).
+   * 다음 런의 성계 지도를 연다(DOM 판과 동일 시그니처 — **한 줄도 바꾸지 않는다**).
    * @param opts.meta 하단 상태 줄(크레딧 / 기체 레벨 등).
    */
   show(opts: {
@@ -318,40 +890,73 @@ export class PlanetSelectScreen {
     this.fetchInventory = opts.fetchCatalystInventory ?? null;
     // 이전 런 주입이 이번 행성 특산 정합을 깨지 않게 정리(무촉매로 시작하는 것이 안전하다).
     this.pruneInjectedForPlanet();
-    this.render();
+    this.listScrollY = 0;
+    this.buildChrome();
+    this.refresh();
     this.root.visible = true;
+    this.raise();
     // 보유 원장은 서버 권위라 비동기 조회한다 — 도착하면 픽커·패널이 반영한다(그 전엔 빈 보유).
     const fetchInv = this.fetchInventory;
     if (fetchInv !== null) {
       void fetchInv().then((inv) => {
         if (inv !== null) this.inventory = inv;
-        if (this.root.visible) this.render();
+        if (this.root.visible) this.refresh();
       });
     }
     // DOM HUD 는 런 전용 — 캔버스 메타 화면 위에 떠 보이므로 숨긴다(스킬 §7).
-    const hud = document.getElementById('pb-hud');
-    if (hud !== null) hud.style.visibility = 'hidden';
+    this.hideRunHud();
   }
 
+  /** ⚠️ **멱등**이어야 한다 — `main.ts` 가 하네스 goto 스위치를 포함해 여러 경로에서 부른다. */
   hide(): void {
     this.root.visible = false;
     this.picker.hide(); // 픽커 모달이 떠 있으면 함께 내린다(화면 전환 시 잔상 방지).
     this.onLaunch = null;
     this.onInventory = null;
     this.onBack = null;
-    const hud = document.getElementById('pb-hud');
-    if (hud !== null) hud.style.visibility = '';
+    this.restoreRunHud();
+  }
+
+  private raise(): void {
+    this.stage.setChildIndex(this.root, this.stage.children.length - 1);
+  }
+
+  // --- 런 HUD ---------------------------------------------------------------
+
+  /**
+   * ⚠️ 여기에는 **캔버스 가드를 붙이지 않는다.** `typeof document.createElement !== 'function'`
+   * 까지 검사하면 HUD 숨김이 통째로 죽는다(이 리포가 실제로 밟았다). 가드는 캔버스를 굽는
+   * 함수({@link rowRamp})에만 붙인다.
+   */
+  private hudEl(): HTMLElement | null {
+    if (typeof document === 'undefined') return null;
+    return document.getElementById('pb-hud');
+  }
+
+  private hideRunHud(): void {
+    const el = this.hudEl();
+    if (el === null) return;
+    if (this.hudPrevVisibility === null) this.hudPrevVisibility = el.style.visibility;
+    el.style.visibility = 'hidden';
+  }
+
+  /** 원래 값으로 되돌린다 — 무조건 `''` 로 되살리면 런 중 HUD 상태를 덮어쓴다. */
+  private restoreRunHud(): void {
+    const el = this.hudEl();
+    if (el !== null && this.hudPrevVisibility !== null) el.style.visibility = this.hudPrevVisibility;
+    this.hudPrevVisibility = null;
   }
 
   // --- 선택 / 출격 (DOM 판과 동일 규칙) ------------------------------------
 
   private selectPlanet(id: number): void {
+    if (id === this.planet) return;
     this.planet = id;
     // 행성마다 개방 상한이 다르므로 선택 단계를 새 행성 상한으로 클램프한다.
     this.selectedStage = this.clampStage(this.selectedStage);
     // 특산 촉매는 출신 행성 전용이라 행성이 바뀌면 정합이 깨진 특산 주입을 걷어낸다(consume 거부 예방).
     this.pruneInjectedForPlanet();
-    this.render();
+    this.refresh();
   }
 
   /** 현재 선택 행성에서 잠기는 특산 촉매 주입을 제거한다(공용은 유지). */
@@ -379,7 +984,7 @@ export class PlanetSelectScreen {
    */
   private setStage(stage: number): void {
     this.selectedStage = this.clampStage(stage);
-    this.render();
+    this.refresh();
   }
 
   /** 현재 선택 단계(하네스·테스트가 읽는 접점). */
@@ -407,162 +1012,527 @@ export class PlanetSelectScreen {
     cb?.();
   }
 
-  // --- 렌더 ----------------------------------------------------------------
+  // --- 공용 렌더 조각 -------------------------------------------------------
 
-  private render(): void {
+  private label(
+    text: string,
+    size: number,
+    color: number,
+    weight: '400' | '700' | '800' = '400',
+    maxW?: number,
+  ): Text {
+    const el = new Text({
+      resolution: 2,
+      text: stripEmoji(text),
+      style: { fontFamily: UI_FONT, fontSize: size, fontWeight: weight, fill: color, dropShadow: TEXT_SHADOW },
+    });
+    if (maxW !== undefined && el.width > maxW) el.scale.x = maxW / el.width;
+    return el;
+  }
+
+  private wrapped(text: string, size: number, color: number, w: number, lineHeight?: number): Text {
+    return new Text({
+      resolution: 2,
+      text: stripEmoji(text),
+      style: {
+        fontFamily: UI_FONT,
+        fontSize: size,
+        fill: color,
+        wordWrap: true,
+        wordWrapWidth: w,
+        ...(lineHeight === undefined ? {} : { lineHeight }),
+        dropShadow: TEXT_SHADOW,
+      },
+    });
+  }
+
+  /** 시네마틱 버튼 — 기존 `PixiButton` 에 석재 텍스처만 주입한다(로직은 그대로). */
+  private chromeButton(o: {
+    tone: ChromeTone;
+    width: number;
+    height: number;
+    fontSize: number;
+    label: string;
+    onClick: () => void;
+    sound?: 'uiConfirm';
+  }): PixiButton {
+    return new PixiButton({
+      // ⚠️ 텍스처는 128×64 로 구워져 있다 — `cap: 32` 여야 모서리가 안 뭉개진다.
+      texture: cinematicButtonTexture(o.tone),
+      cap: 32,
+      fallbackColor: chromeFallbackColor(o.tone),
+      labelColor: chromeLabelColor(o.tone),
+      width: o.width,
+      height: o.height,
+      fontSize: o.fontSize,
+      label: stripEmoji(o.label),
+      ...(o.sound === undefined ? {} : { sound: o.sound }),
+      onClick: o.onClick,
+    });
+  }
+
+  private clearHost(host: Container): void {
+    for (const child of [...host.children]) {
+      host.removeChild(child);
+      child.destroy({ children: true });
+    }
+  }
+
+  // --- 크롬(1회 조립) -------------------------------------------------------
+
+  /** 자산이 도착하면 크롬을 통째로 다시 세운다(구운 텍스처가 바뀌므로 갱신으로는 안 된다). */
+  private rebuild(): void {
+    if (!this.chromeBuilt) return;
+    this.destroyChrome();
+    this.buildChrome();
+    this.refresh();
+  }
+
+  private destroyChrome(): void {
+    this.backdrop?.destroy();
+    this.backdrop = null;
+    this.arena?.destroy();
+    this.arena = null;
+    for (const p of this.panels) p.destroy();
+    this.panels = [];
+    this.listHost = null;
+    this.opsHost = null;
+    this.footHost = null;
+    this.metaNode = null;
+    this.summaryNode = null;
+    this.launchBtn = null;
+    this.launchKey = '';
     for (const child of [...this.root.children]) {
       this.root.removeChild(child);
       child.destroy({ children: true });
     }
+    this.chromeBuilt = false;
+  }
 
-    // 배경(불투명 — 뒤 아레나를 가린다). 별 장식 금지(세트 팔레트 확정).
+  private buildChrome(): void {
+    if (this.chromeBuilt) return;
+
+    // 바닥 — 배경 자산이 없거나 실패해도 화면이 비지 않게(불투명, 뒤 아레나를 가린다).
+    // 이벤트도 여기서 막는다(뒤 화면으로 클릭·휠이 새지 않게).
     const bg = new Graphics();
     bg.rect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT).fill({ color: COLOR.bg });
-    bg.eventMode = 'static'; // 뒤로 이벤트가 새지 않게 막는다.
+    bg.eventMode = 'static';
     this.root.addChild(bg);
 
-    this.renderTitleBar();
-    this.renderPlanetCards();
-    this.renderLowPanels();
-    this.renderActions();
-    this.renderMeta();
-  }
-
-  private renderTitleBar(): void {
-    const banner = makeBanner(BANNER_W, BANNER_H, t('planet.title'), this.ui['ui_banner.png']);
-    banner.position.set((DESIGN_WIDTH - BANNER_W) / 2, BANNER_Y);
-    this.root.addChild(banner);
-
-    const sub = new Text({
-      resolution: 2,
-      text: t('planet.sub'),
-      style: { fontFamily: UI_FONT, fontSize: 20, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+    // ⚠️ `view` 는 root 맨 뒤에 그대로 붙이고 스케일·이동을 걸지 마라(공기 마스크가 `view` 의
+    // 자식이라 어긋난다). 창은 **정확히** 전장 개구부다(파일 헤더 "왜 여기는 창을 뚫는가").
+    const backdrop = new HangarBackdrop(this.art[HANGAR_BACKDROP_NAME], {
+      windows: [{ ...ARENA_VIEWPORT }],
+      headerH: HEADER_H,
     });
-    sub.anchor.set(0.5, 0);
-    sub.position.set(DESIGN_WIDTH / 2, SUB_Y);
-    this.root.addChild(sub);
+    this.root.addChild(backdrop.view);
+    this.backdrop = backdrop;
+
+    // 전장 프리뷰는 **창 패널 바로 뒤**여야 한다 — 앞에 두면 석재 단면·AO·유리 반사·바닥
+    // 스크림을 통째로 가려 개구부가 검은 사각이 된다(방어 사령부 실측). 여기서 먼저 붙이고
+    // 아래에서 창 패널을 그 위에 얹는다.
+    const arena = new ArenaView({ ...ARENA_VIEWPORT });
+    arena.view.eventMode = 'none';
+    this.root.addChild(arena.view);
+    this.arena = arena;
+
+    /**
+     * ⚠️ **크롬(헤더·하단 띠)은 패널보다 뒤에 붙여 위로 올린다.**
+     *
+     * 사용자 신고(2026-08-02, 방어 사령부) "탭 아래 절반이 클릭이 안 된다"의 실체가 이 순서였다.
+     * 석재 패널은 접지 그림자·글로우를 텍스처에 구워 넣어 **자기 사각보다 30px 가까이 번지고**,
+     * 그 번짐이 위 컨트롤을 덮었다. Pixi v8 은 자식을 역순으로 훑다가 **픽셀에 걸리면 거기서
+     * 멈추고 가장 가까운 상호작용 조상**을 반환하므로 그림자가 passive 여도 탐색은 끝난다.
+     * ⚠️ 여백을 벌리는 것으로는 못 푼다 — 번짐 폭은 패널 치수에서 파생돼 조용히 커진다.
+     */
+    const listPanel = this.addPanel(LIST_X, PANEL_Y, LIST_W, PANEL_H, t('planet.list.head'), 'slab');
+    const arenaPanel = this.addPanel(
+      RIGHT_X,
+      PANEL_Y,
+      RIGHT_W,
+      ARENA_H,
+      t('planet.arena.head'),
+      'window',
+    );
+    const opsPanel = this.addPanel(RIGHT_X, OPS_Y, RIGHT_W, OPS_H, t('planet.ops.head'), 'slab');
+
+    const listHost = new Container();
+    listPanel.container.addChild(listHost);
+    this.listHost = listHost;
+    const opsHost = new Container();
+    opsPanel.container.addChild(opsHost);
+    this.opsHost = opsHost;
+
+    // 크롬은 여기서부터 — 패널 위에 얹힌다(바로 위 주석이 근거).
+    this.buildHeader();
+    this.buildFooter();
+
+    // 프리뷰를 창 패널 **바로 뒤**로 돌린다. 인덱스는 런타임에 읽으므로 위 조립 순서가 바뀌어도
+    // 따라온다({@link arenaChildIndex}).
+    const at = this.root.getChildIndex(arenaPanel.container);
+    this.root.setChildIndex(arena.view, arenaChildIndex(at));
+
+    this.chromeBuilt = true;
   }
 
-  private renderPlanetCards(): void {
-    const n = PLANETS.length;
-    const w = cardWidth(n);
-    const rowW = n * w + (n - 1) * CARD_GAP;
-    const x0 = (DESIGN_WIDTH - rowW) / 2;
+  /**
+   * 석재 패널 한 장을 세운다.
+   *
+   * ⚠️ `screenX`/`screenY` 를 **반드시 넘긴다.** 안 넘기면 같은 치수의 패널끼리 조명·랜드마크
+   * 시드가 같아져 위치별 조명이 조용히 무효가 된다 — 화면은 정상적으로 서고 테스트도 통과하므로
+   * 눈으로만 잡히는 유형이다.
+   */
+  private addPanel(
+    px: number,
+    py: number,
+    pw: number,
+    ph: number,
+    title: string,
+    variant: 'slab' | 'window',
+  ): CinematicPanel {
+    const panel = makeCinematicPanel({
+      width: pw,
+      height: ph,
+      variant,
+      title,
+      screenX: px,
+      screenY: py,
+      lightOrigin: { x: DESIGN_WIDTH / 2, y: 60 },
+    });
+    panel.container.position.set(px, py);
+    this.root.addChild(panel.container);
+    this.panels.push(panel);
+    return panel;
+  }
+
+  /**
+   * 헤더 밴드(y 0..{@link HEADER_H}) — 각인 제목(중앙) · 닫기(우 = 기지 복귀).
+   *
+   * ⚠️ **재화 칩은 두지 않는다.** 출격은 무료고 촉매 주입이 소모하는 것은 촉매 아이템이다.
+   * `meta` 상태 줄은 하단 띠가 받는다. ⚠️ 좌측은 **비워 둔다**(설정 톱니 예약 밴드).
+   */
+  private buildHeader(): void {
+    const title = makeHangarTitle(t('planet.title'));
+    title.position.set(DESIGN_WIDTH / 2, HEAD_Y - 4);
+    this.root.addChild(title);
+
+    const close = this.chromeButton({
+      tone: 'stone',
+      width: CLOSE_W,
+      height: HEAD_H,
+      fontSize: 22,
+      // 컬러 이모지는 Pixi 에서 두부가 된다(`text.ts` stripEmoji) — U+2715 는 흑백 글리프다.
+      label: '✕',
+      onClick: () => this.back(),
+    });
+    close.container.position.set(CLOSE_X, HEAD_Y);
+    this.root.addChild(close.container);
+  }
+
+  /**
+   * 하단 액션 띠 — 왼쪽 **두 줄**(`meta` 상태 줄 · 선택 요약), 오른쪽 [장비 정비] [출격].
+   *
+   * 옛 구현은 `meta` 를 화면 맨 아래 중앙에 떠 있는 Text 로 두고 버튼 셋을 그 위에 가로로
+   * 늘어놓았다. 둘을 한 띠로 모으면 띠 안에 빈 자리가 없고, 선택 요약(행성·단계·촉매)이
+   * **출격 직전에 무엇이 확정됐는지**를 버튼 바로 옆에서 말한다.
+   */
+  private buildFooter(): void {
+    const host = new Container();
+    this.root.addChild(host);
+    this.footHost = host;
+
+    const textW = INV_X - EDGE_X - 24;
+    const metaNode = this.label('', 18, SLAB_BODY_FILL, '400', textW);
+    metaNode.anchor.set(0, 0.5);
+    metaNode.position.set(EDGE_X, FOOT_Y + FOOT_H / 2 - 13);
+    host.addChild(metaNode);
+    this.metaNode = metaNode;
+
+    const summary = this.label('', 17, COLOR.muted, '400', textW);
+    summary.anchor.set(0, 0.5);
+    summary.position.set(EDGE_X, FOOT_Y + FOOT_H / 2 + 13);
+    host.addChild(summary);
+    this.summaryNode = summary;
+
+    const inv = this.chromeButton({
+      tone: 'stone',
+      width: INV_W,
+      height: FOOT_H,
+      fontSize: 21,
+      // '🛠 장비 정비' 의 컬러 이모지는 캔버스에서 두부가 된다.
+      label: t('planet.inventory'),
+      onClick: () => this.onInventory?.(),
+    });
+    inv.container.position.set(INV_X, FOOT_Y);
+    host.addChild(inv.container);
+  }
+
+  /**
+   * [출격] 버튼을 **라벨이 바뀔 때만** 다시 세운다(라벨이 행성 이름을 품는다).
+   *
+   * ⚠️ 톤은 항상 `gold` 다 — 이 화면에는 "출격할 수 없는 상태"가 없다(오프라인이어도 무촉매
+   * 폴백으로 런은 시작된다). 그래서 `setEnabled(false)` + `gold` 조합(글자가 통째로 사라진다)이
+   * 애초에 만들어지지 않는다.
+   */
+  private syncLaunchButton(): void {
+    const host = this.footHost;
+    if (host === null) return;
+    const label = t('planet.launch', { name: planetById(this.planet).name });
+    if (label === this.launchKey && this.launchBtn !== null) return;
+    this.launchKey = label;
+
+    const old = this.launchBtn;
+    if (old !== null) {
+      host.removeChild(old.container);
+      old.container.destroy({ children: true });
+    }
+    const btn = this.chromeButton({
+      tone: 'gold',
+      width: LAUNCH_W,
+      height: FOOT_H,
+      fontSize: 24,
+      label,
+      // 출격 = 결정성 확정 액션(AC16 팔레트 재사용 — 기본 navigate 와 구분).
+      sound: 'uiConfirm',
+      onClick: () => this.launch(),
+    });
+    btn.container.position.set(LAUNCH_X, FOOT_Y);
+    host.addChild(btn.container);
+    this.launchBtn = btn;
+  }
+
+  // --- 갱신 -----------------------------------------------------------------
+
+  /** 값과 목록만 갈아끼운다. 배경·석재 패널은 다시 굽지 않는다(파일 헤더 "재렌더 규율"). */
+  private refresh(): void {
+    if (!this.chromeBuilt) return;
+    this.syncValues();
+    this.syncArena();
+    this.renderList();
+    this.renderOps();
+  }
+
+  private syncValues(): void {
+    if (this.metaNode !== null) this.metaNode.text = stripEmoji(this.meta);
+    if (this.summaryNode !== null) {
+      this.summaryNode.text = stripEmoji(
+        t('planet.summary', {
+          name: planetById(this.planet).name,
+          stage: this.selectedStage,
+          n: this.injectedCatalysts.length,
+        }),
+      );
+    }
+    this.syncLaunchButton();
+  }
+
+  /** 전장 창 — 행성이 바뀔 때만 타일셋을 갈아 끼운다(캡션은 매번 갱신). */
+  private syncArena(): void {
+    const p = planetById(this.planet);
+    this.arena?.select(p, `${p.name} · ${p.subtitle}`);
+  }
+
+  // --- 목록 열 -------------------------------------------------------------
+
+  private renderList(): void {
+    const host = this.listHost;
+    if (host === null) return;
+    this.clearHost(host);
+
+    const { heights: hs, tailH } = listFill(PLANETS.length);
+    const bounds = rowBounds(hs, ROW_GAP);
+    const total = bounds.length === 0 ? 0 : (bounds[bounds.length - 1] ?? 0);
+
+    if (tailH > 0) {
+      // ⚠️ 스크롤 콘텐츠 **밖**에 둔다 — 꼬리가 생긴다는 것은 곧 스크롤이 없다는 뜻이고
+      // (남는 자리가 있다), 안에 넣으면 스크롤 총 높이가 늘어 헛돌게 된다.
+      const y = BOX_L.y + total + ROW_GAP;
+      host.addChild(recessedWell(BOX_L.x, y, BOX_L.w, tailH));
+      const el = this.wrapped(t('planet.list.tail'), 18, SLAB_BODY_FILL, BOX_L.w - 64, 28);
+      el.anchor.set(0.5, 0.5);
+      el.position.set(BOX_L.x + BOX_L.w / 2, y + tailH / 2);
+      host.addChild(el);
+    }
+
+    /**
+     * ⚠️ 마스크를 **행 경계로 자르지 않는다**(`clampToRows` 미사용). 상자 높이를 그대로 쓰면
+     * 넘칠 때 마지막 행이 반쯤 걸쳐 "아래에 더 있다"를 말한다 — 행 경계로 자르면 상자 아래에
+     * 맨 석재 면이 남는다(지시 수신소 실화면 확인).
+     */
+    const content = makeScrollArea(host, {
+      x: BOX_L.x,
+      y: BOX_L.y,
+      w: BOX_L.w,
+      h: BOX_L.h,
+      totalH: total,
+      get: () => this.listScrollY,
+      set: (v) => {
+        this.listScrollY = v;
+      },
+      thumb: true,
+    });
+
+    let cy = 0;
     PLANETS.forEach((p, i) => {
-      const card = this.makePlanetCard(p, w);
-      card.position.set(x0 + i * (w + CARD_GAP), CARD_Y);
-      this.root.addChild(card);
+      const h = hs[i] ?? ROW_H;
+      const node = this.makePlanetRow(p, BOX_L.w, h);
+      node.position.set(0, cy);
+      content.addChild(node);
+      cy += h + ROW_GAP;
     });
   }
 
-  private makePlanetCard(p: PlanetMeta, w: number): Container {
+  /** 행성 1행 — 오브(1:1 64px) + 이름 + 부제, 오른쪽에 인기 보상 배율. */
+  private makePlanetRow(p: PlanetMeta, w: number, h: number): Container {
     const selected = p.id === this.planet;
     const accent = hexColor(p.accent);
-    const card = makePanelCard({
-      width: w,
-      height: CARD_H,
-      texture: this.ui['ui_panel.png'],
-      selected,
-      onClick: () => this.selectPlanet(p.id),
-    });
-    // 콘텐츠는 전부 이 상자 안에만 — 프레임 침범도, 테두리에 붙는 것도 여기서 막힌다.
-    const box = panelContent(w, CARD_H);
 
-    // 실 자산(PixelLab 생성 64px 행성)이 있으면 ×2 nearest 로 확대해 쓰고, 없으면 코드 오브.
+    const node = new Container();
+    // 클릭은 **행 Container** 가 받는다(바탕 Graphics 에 걸면 위 텍스트가 삼킨다).
+    attachRowClick(node, () => this.selectPlanet(p.id));
+    node.addChild(rowPlate(w, h, selected));
+
+    // 실 자산(PixelLab 생성 64px 행성)이 있으면 1:1 로 쓰고, 없으면 코드 오브(6종 중 2종).
     const orbTex = this.ui[`ui_planet_${p.id}.png`];
     const orb = orbTex ? new Sprite(orbTex) : makeOrb(ORB_D, accent);
     if (orbTex) {
       orb.width = ORB_D;
       orb.height = ORB_D;
     }
-    orb.position.set((w - ORB_D) / 2, box.y);
-    card.addChild(orb);
+    orb.position.set(ROW_PAD, Math.round((h - ORB_D) / 2));
+    node.addChild(orb);
 
-    const name = new Text({
-      resolution: 2,
-      text: p.name,
-      style: {
-        fontFamily: UI_FONT,
-        fontSize: 30,
-        fontWeight: '800',
-        fill: selected ? COLOR.gold : COLOR.cream,
-        dropShadow: TEXT_SHADOW,
-      },
-    });
-    name.anchor.set(0.5, 0);
-    name.position.set(w / 2, CARD_NAME_Y);
-    card.addChild(name);
+    const textX = ROW_PAD + ORB_D + ORB_GAP;
+    const textW = w - textX - ROW_PAD - ROW_REWARD_W;
+    // 행 높이가 늘어나도 두 줄이 세로 가운데에 남게 위쪽 여백을 파생시킨다.
+    const top = Math.round((h - 52) / 2);
 
-    const sub = new Text({
-      resolution: 2,
-      text: p.subtitle,
-      style: {
-        fontFamily: UI_FONT,
-        fontSize: 18,
-        fill: COLOR.muted,
-        align: 'center',
-        wordWrap: true,
-        wordWrapWidth: box.w,
-        dropShadow: TEXT_SHADOW,
-      },
-    });
-    sub.anchor.set(0.5, 0);
-    sub.position.set(w / 2, CARD_SUB_Y);
-    card.addChild(sub);
+    const name = this.label(p.name, 24, selected ? COLOR.gold : COLOR.cream, '800', textW);
+    name.position.set(textX, top);
+    node.addChild(name);
+
+    const sub = this.label(p.subtitle, 16, COLOR.muted, '400', textW);
+    sub.position.set(textX, top + 30);
+    node.addChild(sub);
 
     // 행성 인기 보상 배율(ADR-0038) — **실수치 상시 노출**이 결정 사항이다. 감추면 플레이어가
     // "왜 여기가 더 잘 나오지?"를 추측하게 되고, 그 추측은 대개 미신이 된다. 중립(×1.00)이든
     // 아니든 항상 같은 자리에 같은 형식으로 찍어 비교 가능하게 둔다.
     // 색은 방향 신호: 상향=금색(가라), 하향=흐림(덜 준다), 중립=크림.
     const centi = multCentiFor(p.id);
-    const mult = new Text({
-      resolution: 2,
-      text: `보상 ×${(centi / 100).toFixed(2)}`,
-      style: {
-        fontFamily: UI_FONT,
-        fontSize: 20,
-        fontWeight: '700',
-        fill:
-          centi > NEUTRAL_MULT_CENTI
-            ? COLOR.gold
-            : centi < NEUTRAL_MULT_CENTI
-              ? COLOR.muted
-              : COLOR.cream,
-        dropShadow: TEXT_SHADOW,
-      },
-    });
-    // 바닥맞춤(anchor y=1) — 상자 바닥에 붙어서 프레임을 절대 넘지 않는다. 위쪽 여유는
-    // CARD_H 가 책임진다({@link CARD_SUB_MAX_BOTTOM} 주석).
-    mult.anchor.set(0.5, 1);
-    mult.position.set(w / 2, box.bottom);
-    card.addChild(mult);
+    const mult = this.label(
+      t('planet.rewardMult', { x: (centi / 100).toFixed(2) }),
+      18,
+      centi > NEUTRAL_MULT_CENTI
+        ? COLOR.gold
+        : centi < NEUTRAL_MULT_CENTI
+          ? COLOR.muted
+          : COLOR.cream,
+      '700',
+      ROW_REWARD_W - 8,
+    );
+    mult.anchor.set(1, 0.5);
+    mult.position.set(w - ROW_PAD, h / 2);
+    node.addChild(mult);
 
-    return card;
+    return node;
   }
 
-  /** 하단 패널 행: 단계 스텝퍼(좌) + 촉매 주입 패널(우, ADR-0029). */
-  private renderLowPanels(): void {
-    const rowW = STAGE_W + LOW_GAP + CAT_W;
-    const x0 = Math.round((DESIGN_WIDTH - rowW) / 2);
+  // --- 출격 제원 열 ---------------------------------------------------------
 
-    const stage = this.makeStagePanel(STAGE_W);
-    stage.position.set(x0, LOW_Y);
-    this.root.addChild(stage);
+  /**
+   * 출격 제원 — 챔버 둘이 상자 폭을 **등호로** 나눠 갖는다(침략 단계 · 촉매 주입).
+   *
+   * 챔버 안 콘텐츠는 위에서부터 채워 아래 여백이 한 칸만 남는다. 세로 중앙 정렬을 쓰지 않는
+   * 이유는 두 챔버의 콘텐츠 줄 수가 달라 중앙 정렬하면 서로 어긋나 보이기 때문이다.
+   */
+  private renderOps(): void {
+    const host = this.opsHost;
+    if (host === null) return;
+    this.clearHost(host);
 
-    const cat = this.makeCatalystPanel(CAT_W);
-    cat.position.set(x0 + STAGE_W + LOW_GAP, LOW_Y);
-    this.root.addChild(cat);
+    const stageX = BOX_O.x;
+    const catX = BOX_O.x + STAGE_CH_W + CHAMBER_GAP;
+    host.addChild(recessedWell(stageX, BOX_O.y, STAGE_CH_W, BOX_O.h));
+    host.addChild(recessedWell(catX, BOX_O.y, CAT_CH_W, BOX_O.h));
+
+    this.renderStageChamber(host, stageX, BOX_O.y);
+    this.renderCatalystChamber(host, catX, BOX_O.y);
   }
 
   /**
-   * 촉매 주입 패널(구 변칙 패널 자리, ADR-0029). 현재 주입 요약 + [주입 편집] 버튼. 편집은 픽커
-   * 팝업(`CatalystPicker`)에서 하고, 확정된 배열을 여기 상태에 반영해 출격 때 sel 로 넘긴다.
+   * 침략 단계 챔버(ADR-0022). 초기 3버튼(`−`/값/`+`)은 한 번에 한 단계만 움직여, 개방 상한이
+   * 10 이상인 지금은 목표 단계까지 여러 번 눌러야 했다. 그래서 같은 한 행에 **큰 걸음
+   * (±{@link stageBigStep})과 최소/최대 점프(`≪`/`≫`)** 를 더한다 — `−`/`+` 한 칸 조절은
+   * 정밀 조정용으로 그대로 남는다. 사양은 순수 함수({@link stageControlSpecs})가 만들고 여기서는
+   * 버튼으로 옮겨 그릴 뿐이라, 모든 이동이 `setStage`(→ clamp) 한 지점을 지난다.
    */
-  private makeCatalystPanel(w: number): Container {
-    const panel = new Container();
-    panel.addChild(nineSlicePanel(w, LOW_H, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER }));
-    const box = panelContent(w, LOW_H);
-    this.panelTitle(panel, w, t('catalyst.panel.title'));
+  private renderStageChamber(host: Container, x: number, y: number): void {
+    const cap = this.openCap();
+    const innerW = STAGE_CH_W - CH_PAD * 2;
+
+    const head = this.label(t('planet.stageLabel'), 20, COLOR.gold, '800', innerW / 2);
+    head.position.set(x + CH_PAD, y + STAGE_HEAD_Y);
+    host.addChild(head);
+
+    const desc = this.label(
+      t('planet.stageDesc', { stage: this.selectedStage, cap }),
+      18,
+      SLAB_BODY_FILL,
+      '400',
+      innerW / 2,
+    );
+    desc.anchor.set(1, 0);
+    desc.position.set(x + STAGE_CH_W - CH_PAD, y + STAGE_HEAD_Y + 3);
+    host.addChild(desc);
+
+    const specs = stageControlSpecs(this.selectedStage, cap);
+    // 행 전체를 챔버 안에서 가운데 정렬 — 파낸 면 밖으로는 절대 나가지 않는다.
+    const rowW = stageRowWidth(specs);
+    let bx = x + CH_PAD + Math.max(0, Math.floor((innerW - rowW) / 2));
+
+    for (const spec of specs) {
+      const btn = this.chromeButton({
+        // 현재 단계 칸만 금색(값이 어디 있는지가 이 행의 유일한 상태다). 비활성 버튼에는
+        // 금색을 쓰지 않는다 — alpha 0.4 + 어두운 라벨이 겹쳐 글자가 통째로 사라진다.
+        tone: spec.current === true ? 'gold' : 'stone',
+        width: spec.width,
+        height: STAGE_ROW_H,
+        fontSize: spec.fontSize,
+        label: spec.label,
+        // 현재 단계 칸은 표시 전용(비활성). 나머지는 절대 목표 단계로 이동한다.
+        onClick: spec.current === true ? () => {} : () => this.setStage(spec.target),
+      });
+      if (spec.current === true) {
+        // ⚠️ **현재 값 칸에는 `setEnabled(false)` 를 쓰지 않는다.** 이 칸은 금색인데
+        // `setEnabled(false)` 는 container alpha 를 0.4 로 낮추고 그림자를 끄므로, 금색 바탕 +
+        // 어두운 라벨과 겹쳐 **글자가 통째로 사라진다**(형제 화면에서 실화면으로 확인한 조합).
+        // 표시 전용이라는 뜻은 "흐리다"가 아니라 "누를 수 없다"이므로 이벤트만 끊는다.
+        btn.container.eventMode = 'none';
+        btn.container.cursor = 'default';
+      } else if (!spec.enabled) {
+        // 비활성 칸은 크림 라벨인 `stone` 이라 alpha 0.4 에서도 읽힌다.
+        btn.setEnabled(false);
+      }
+      // 챔버(파낸 면)는 클릭을 받지 않으므로 행 전파를 끊을 필요가 없다 — 목록 행 안 버튼과
+      // 달리 여기 버튼은 어떤 클릭 대상 위에도 얹혀 있지 않다.
+      btn.container.position.set(bx, y + STAGE_ROW_Y);
+      host.addChild(btn.container);
+      bx += spec.width + STAGE_BTN_GAP;
+    }
+  }
+
+  /**
+   * 촉매 주입 챔버(ADR-0029). 현재 주입 요약 + [주입 편집] 버튼. 편집은 픽커 팝업
+   * (`CatalystPicker`)에서 하고, 확정된 배열을 여기 상태에 반영해 출격 때 sel 로 넘긴다.
+   * ⚠️ 그 모듈은 다른 화면도 쓸 수 있으므로 **한 줄도 고치지 않는다** — 자리만 새로 잡았다.
+   */
+  private renderCatalystChamber(host: Container, x: number, y: number): void {
+    const innerW = CAT_CH_W - CH_PAD * 2;
+
+    const head = this.label(t('catalyst.panel.title'), 20, COLOR.gold, '800', innerW);
+    head.position.set(x + CH_PAD, y + STAGE_HEAD_Y);
+    host.addChild(head);
 
     // 주입 요약: 개수 + 주입한 촉매 이름(잘림). 미주입인데 보유가 있으면 첫 주입을 유도하는 힌트
     // (해금 게이트 부재 — 첫 획득 즉시 주입 가능, ADR-0029 온보딩). 보유도 없으면 기본 안내.
@@ -570,44 +1540,30 @@ export class PlanetSelectScreen {
     const ownedTypes = this.inventory.size;
     const summary =
       n > 0
-        ? `${t('catalyst.panel.count', { n, cap: SLOT_CAP })}\n${this.injectedNames()}`
+        ? `${t('catalyst.panel.count', { n, cap: SLOT_CAP })} — ${this.injectedNames()}`
         : ownedTypes > 0
           ? t('catalyst.panel.available', { n: ownedTypes })
           : t('catalyst.panel.none');
     // 색: 주입 있으면 크림, 보유만 있으면 골드(첫 주입 넛지), 둘 다 없으면 뮤트.
-    const summaryFill = n > 0 ? COLOR.cream : ownedTypes > 0 ? COLOR.gold : COLOR.muted;
-    const sumText = new Text({
-      resolution: 2,
-      text: summary,
-      style: {
-        fontFamily: UI_FONT,
-        fontSize: 18,
-        fill: summaryFill,
-        wordWrap: true,
-        wordWrapWidth: box.w,
-        lineHeight: 24,
-        dropShadow: TEXT_SHADOW,
-      },
-    });
-    sumText.position.set(box.x, box.y + 44);
-    panel.addChild(sumText);
+    const fill = n > 0 ? COLOR.cream : ownedTypes > 0 ? COLOR.gold : COLOR.muted;
+    const sum = this.wrapped(summary, 16, fill, innerW, 22);
+    sum.position.set(x + CH_PAD, y + STAGE_HEAD_Y + 32);
+    host.addChild(sum);
 
-    const edit = new PixiButton({
-      texture: this.ui['ui_btn_wood.png'],
-      fallbackColor: 0x4a3a24,
-      width: box.w,
-      height: 56,
-      fontSize: 22,
+    const btnH = 52;
+    const edit = this.chromeButton({
+      tone: 'stone',
+      width: innerW,
+      height: btnH,
+      fontSize: 20,
       label: t('catalyst.panel.edit'),
       onClick: () => this.openCatalystPicker(),
     });
-    edit.container.position.set(box.x, box.bottom - 56);
-    panel.addChild(edit.container);
-
-    return panel;
+    edit.container.position.set(x + CH_PAD, y + BOX_O.h - CH_PAD - btnH);
+    host.addChild(edit.container);
   }
 
-  /** 주입한 촉매 이름을 콤마로 이어 붙인다(패널 요약용, i18n name). */
+  /** 주입한 촉매 이름을 콤마로 이어 붙인다(요약용, i18n name). */
   private injectedNames(): string {
     return this.injectedCatalysts
       .map((id) => {
@@ -630,7 +1586,7 @@ export class PlanetSelectScreen {
       onConfirm: (ids) => {
         // 정규화(오름차순·중복 보존·미지 제거)로 저장 — consume·해시 정본과 같은 형태.
         this.injectedCatalysts = normalizeCatalystArray(ids);
-        this.render();
+        this.refresh();
       },
     });
   }
@@ -646,168 +1602,12 @@ export class PlanetSelectScreen {
   setInjectedCatalysts(ids: readonly number[]): void {
     this.injectedCatalysts = normalizeCatalystArray([...ids]);
     this.pruneInjectedForPlanet();
-    if (this.root.visible) this.render();
+    if (this.root.visible) this.refresh();
   }
 
   /** 보유 원장 스냅샷을 직접 주입한다(하네스 모의 — 서버 조회 우회). */
   setCatalystInventory(inv: CatalystInventory): void {
     this.inventory = inv;
-    if (this.root.visible) this.render();
-  }
-
-  /** 패널 제목 — top = 콘텐츠 상자 top(스킬 §4, 제목이 나무 테두리에 붙던 결함 재발 방지). */
-  private panelTitle(parent: Container, w: number, text: string, color: number = COLOR.cream): void {
-    const box = panelContent(w, LOW_H);
-    const title = new Text({
-      resolution: 2,
-      text,
-      style: {
-        fontFamily: UI_FONT,
-        fontSize: 26,
-        fontWeight: '800',
-        fill: color,
-        wordWrap: true,
-        wordWrapWidth: box.w,
-        dropShadow: TEXT_SHADOW,
-      },
-    });
-    title.position.set(box.x, box.y);
-    parent.addChild(title);
-  }
-
-  /**
-   * 선택형 버튼 한 개. 선택된 것은 노란 버튼(밝은 바탕 → 진한 라벨), 나머지는 나무 버튼.
-   * 롤아웃 #1~#3 과 같은 규칙이다(노란 버튼에 흰 라벨은 묻힌다).
-   */
-  private choiceButton(opts: {
-    label: string;
-    width: number;
-    height: number;
-    selected: boolean;
-    onClick: () => void;
-    fontSize?: number;
-  }): PixiButton {
-    return new PixiButton({
-      texture: this.ui[opts.selected ? 'ui_btn_yellow.png' : 'ui_btn_wood.png'],
-      fallbackColor: opts.selected ? 0x9a7a2a : 0x4a3a24,
-      width: opts.width,
-      height: opts.height,
-      fontSize: opts.fontSize ?? 24,
-      ...(opts.selected ? { labelColor: COLOR.darkLabel } : {}),
-      label: opts.label,
-      onClick: opts.onClick,
-    });
-  }
-
-  /**
-   * 침략 단계 조절 패널(ADR-0022). 초기 3버튼(`−`/값/`+`)은 한 번에 한 단계만 움직여, 개방
-   * 상한이 10 이상인 지금은 목표 단계까지 여러 번 눌러야 했다. 그래서 같은 한 행에 **큰 걸음
-   * (±{@link stageBigStep})과 최소/최대 점프(`≪`/`≫`)** 를 더한다 — `−`/`+` 한 칸 조절은
-   * 정밀 조정용으로 그대로 남는다. 사양은 순수 함수({@link stageControlSpecs})가 만들고 여기서는
-   * 버튼으로 옮겨 그릴 뿐이라, 모든 이동이 `setStage`(→ clamp) 한 지점을 지난다.
-   *
-   * 새 아트 없이 기존 나무/노란 버튼 어휘만 쓰고, 라벨은 기호·숫자라 새 i18n 문자열도 없다.
-   */
-  private makeStagePanel(w: number): Container {
-    const panel = new Container();
-    panel.addChild(nineSlicePanel(w, LOW_H, { texture: this.ui['ui_panel.png'], border: PANEL_BORDER }));
-    const box = panelContent(w, LOW_H);
-    this.panelTitle(panel, w, t('planet.stageLabel'));
-
-    const cap = this.openCap();
-    const specs = stageControlSpecs(this.selectedStage, cap);
-    // 행 전체를 콘텐츠 상자 안에서 가운데 정렬 — 상자 밖(나무 테두리)으로는 절대 나가지 않는다.
-    const rowW = stageRowWidth(specs);
-    let bx = box.x + Math.max(0, Math.floor((box.w - rowW) / 2));
-
-    for (const spec of specs) {
-      const btn = this.choiceButton({
-        label: spec.label,
-        width: spec.width,
-        height: STAGE_ROW_H,
-        selected: spec.current === true,
-        fontSize: spec.fontSize,
-        // 현재 단계 칸은 표시 전용(비활성). 나머지는 절대 목표 단계로 이동한다.
-        onClick: spec.current === true ? () => {} : () => this.setStage(spec.target),
-      });
-      if (!spec.enabled) btn.setEnabled(false);
-      btn.container.position.set(bx, STAGE_ROW_Y);
-      panel.addChild(btn.container);
-      bx += spec.width + STAGE_BTN_GAP;
-    }
-
-    const desc = new Text({
-      resolution: 2,
-      text: t('planet.stageDesc', { stage: this.selectedStage, cap }),
-      style: {
-        fontFamily: UI_FONT,
-        fontSize: 19,
-        fill: COLOR.muted,
-        dropShadow: TEXT_SHADOW,
-      },
-    });
-    desc.anchor.set(0.5, 0);
-    if (desc.width > box.w) desc.scale.x = box.w / desc.width;
-    desc.position.set(w / 2, STAGE_DESC_Y);
-    panel.addChild(desc);
-
-    return panel;
-  }
-
-  private renderActions(): void {
-    const launchX = (DESIGN_WIDTH - LAUNCH_W) / 2;
-
-    if (this.onBack !== null) {
-      const back = new PixiButton({
-        texture: this.ui['ui_btn_wood.png'],
-        fallbackColor: 0x4a3a24,
-        width: SIDE_W,
-        height: SIDE_H,
-        fontSize: 22,
-        label: t('planet.back'),
-        onClick: () => this.back(),
-      });
-      back.container.position.set(launchX - SIDE_GAP - SIDE_W, SIDE_Y);
-      this.root.addChild(back.container);
-    }
-
-    const inv = new PixiButton({
-      texture: this.ui['ui_btn_wood.png'],
-      fallbackColor: 0x4a3a24,
-      width: SIDE_W,
-      height: SIDE_H,
-      fontSize: 22,
-      // '🛠 장비 정비' 의 컬러 이모지는 캔버스에서 두부가 된다.
-      label: stripEmoji(t('planet.inventory')),
-      onClick: () => this.onInventory?.(),
-    });
-    inv.container.position.set(launchX + LAUNCH_W + SIDE_GAP, SIDE_Y);
-    this.root.addChild(inv.container);
-
-    const launch = new PixiButton({
-      texture: this.ui['ui_btn_yellow.png'],
-      fallbackColor: 0x9a7a2a,
-      width: LAUNCH_W,
-      height: LAUNCH_H,
-      fontSize: 30,
-      // 노란 버튼은 바탕이 밝아 흰 라벨이 묻힌다(롤아웃 #1~#3 과 동일 처리).
-      labelColor: COLOR.darkLabel,
-      label: t('planet.launch', { name: planetById(this.planet).name }),
-      sound: 'uiConfirm', // 출격 = 결정성 확정 액션(AC16 팔레트 재사용 — 기본 navigate 와 구분).
-      onClick: () => this.launch(),
-    });
-    launch.container.position.set(launchX, LAUNCH_Y);
-    this.root.addChild(launch.container);
-  }
-
-  private renderMeta(): void {
-    const meta = new Text({
-      resolution: 2,
-      text: this.meta,
-      style: { fontFamily: UI_FONT, fontSize: 20, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
-    });
-    meta.anchor.set(0.5, 0);
-    meta.position.set(DESIGN_WIDTH / 2, META_Y);
-    this.root.addChild(meta);
+    if (this.root.visible) this.refresh();
   }
 }

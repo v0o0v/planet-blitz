@@ -24,13 +24,11 @@ import {
   stageBigStep,
   stageControlSpecs,
   stageRowWidth,
-  STAGE_W,
-  LOW_H,
+  STAR_BOXES,
   STAGE_ROW_Y,
   STAGE_ROW_H,
-  STAGE_DESC_Y,
+  STAGE_HEAD_Y,
 } from '../src/ui/pixi/planetSelect.js';
-import { panelContent } from '../src/ui/pixi/nineSlicePanel.js';
 import { stageOpenCap } from '../data/waves.js';
 import { PLANETS } from '../data/planets.js';
 
@@ -198,21 +196,30 @@ describe('stageControlSpecs — 컨트롤 사양', () => {
   });
 });
 
-describe('레이아웃 불변 — 콘텐츠 상자를 넘지 않는다', () => {
-  const box = panelContent(STAGE_W, LOW_H);
+describe('레이아웃 불변 — 침략 단계 챔버를 넘지 않는다', () => {
+  // AAA 전환(2026-08-03)으로 조절 행은 나무 패널이 아니라 **출격 제원 패널 안 파낸 챔버**에
+  // 앉는다. 챔버 폭은 옛 패널(1040)보다 좁아졌으므로(880) 버튼 폭도 함께 좁혔다 — 그 산술이
+  // 실제로 들어맞는지가 여기서 잡히는 축이다(넘치면 `label` 이 scale.x 로 조용히 눌러 버린다).
+  const innerW = STAR_BOXES.stageChW - STAR_BOXES.chamberPad * 2;
 
-  it('조절 행 폭이 콘텐츠 상자 폭 안에 들어간다(상한과 무관)', () => {
+  it('조절 행 폭이 챔버 안쪽 폭에 들어간다(상한과 무관)', () => {
     for (const cap of [10, 100, 999]) {
-      expect(stageRowWidth(stageControlSpecs(1, cap))).toBeLessThanOrEqual(box.w);
+      expect(stageRowWidth(stageControlSpecs(1, cap))).toBeLessThanOrEqual(innerW);
     }
   });
 
-  it('제목·조절 행·캡션이 상자 세로 안에서 겹치지 않는다', () => {
-    // 제목은 box.y 에서 시작하고 fontSize 26(≈34px) 이다 — 행은 그 아래여야 한다.
-    expect(STAGE_ROW_Y).toBeGreaterThan(box.y + 34);
-    expect(STAGE_ROW_Y + STAGE_ROW_H).toBeLessThanOrEqual(STAGE_DESC_Y);
-    // 캡션(fontSize 19 ≈ 25px)까지 상자 바닥 안.
-    expect(STAGE_DESC_Y + 25).toBeLessThanOrEqual(box.bottom);
+  it('머리글 줄과 조절 행이 챔버 세로 안에서 겹치지 않는다', () => {
+    // 머리글은 fontSize 20(≈26px) 이다 — 행은 그 아래에서 시작해야 한다.
+    expect(STAGE_ROW_Y).toBeGreaterThanOrEqual(STAGE_HEAD_Y + 26);
+    // 조절 행 바닥이 챔버 바닥 안(아래 여백은 한 칸만 남는다 — 빈 자리 금지).
+    expect(STAGE_ROW_Y + STAGE_ROW_H).toBeLessThanOrEqual(STAR_BOXES.ops.h);
+    expect(STAR_BOXES.ops.h - (STAGE_ROW_Y + STAGE_ROW_H)).toBeLessThanOrEqual(STAR_BOXES.chamberPad);
+  });
+
+  it('두 챔버가 출격 제원 상자 폭을 **정확히** 나눠 갖는다(빈 자리 금지)', () => {
+    expect(STAR_BOXES.stageChW + STAR_BOXES.chamberGap + STAR_BOXES.catChW).toBe(STAR_BOXES.ops.w);
+    // 촉매 챔버도 [주입 편집] 버튼과 요약 두 줄이 읽힐 만큼은 남아야 한다.
+    expect(STAR_BOXES.catChW).toBeGreaterThanOrEqual(280);
   });
 });
 

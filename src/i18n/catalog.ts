@@ -156,6 +156,13 @@ export const EN = {
   'planet.back': '◀ Back to Base',
   'planet.inventory': '🛠 Manage Gear',
   'planet.launch': '▶ Launch {name}',
+  // AAA 시네마틱 전환(2026-08-03) — 패널 각인 제목 셋 · 목록 행 배율 · 하단 띠 선택 요약.
+  'planet.list.head': 'Planets',
+  'planet.arena.head': 'Battlefield Recon',
+  'planet.ops.head': 'Sortie Setup',
+  'planet.list.tail': 'No routes chart the deeper sectors yet.',
+  'planet.rewardMult': 'Reward ×{x}',
+  'planet.summary': '{name} · Stage {stage} · Catalysts {n}',
 
   // --- 촉매 UI(주입 패널·픽커·출격 폴백·관리·분해 — ADR-0029, Lane 4) ---
   'catalyst.panel.title': 'Catalysts',
@@ -1996,6 +2003,13 @@ export const KO: Record<MessageKey, string> = {
   'planet.back': '◀ 기지로',
   'planet.inventory': '🛠 장비 정비',
   'planet.launch': '▶ {name} 출격',
+  // AAA 시네마틱 전환(2026-08-03) — 패널 각인 제목 셋 · 목록 행 배율 · 하단 띠 선택 요약.
+  'planet.list.head': '행성',
+  'planet.arena.head': '전장 정찰',
+  'planet.ops.head': '출격 제원',
+  'planet.list.tail': '더 깊은 성역은 아직 항로가 없다',
+  'planet.rewardMult': '보상 ×{x}',
+  'planet.summary': '{name} · 침략 {stage}단계 · 촉매 {n}',
 
   // --- 촉매 UI(주입 패널·픽커·출격 폴백·관리·분해 — ADR-0029, Lane 4) ---
   'catalyst.panel.title': '촉매',
