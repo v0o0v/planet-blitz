@@ -155,6 +155,7 @@ import type { InvasionTarget } from './net/invasion.js';
 // M7b 방어체 경제: 설계도 지급(정산 파생) + 보관함·강화 게이트웨이 팩토리 등록.
 import { grantBlueprintDrops } from './net/blueprints.js';
 import { setDefenseUnitsGatewayFactory, setDefenseUnitsGatewayOverride } from './net/defenseUnits.js';
+import { setLineageGatewayFactory } from './net/lineage.js';
 import { readSupabaseConfig } from './net/config.js';
 // M7a 침공 3레이어(ADR-0017): 침공 런은 구 단일 아레나 `WorldConfig.invasion` 이 아니라
 // `invasion3`(L1 대기권 → L2 회랑 → L3 코어방) 로 만든다. 두 필드를 함께 지정하면 방어
@@ -353,6 +354,17 @@ async function main(): Promise<void> {
     void import('./net/defenseUnitsGateway.js')
       .then((m) => {
         setDefenseUnitsGatewayFactory((config) => new m.SupabaseDefenseUnitsGateway(config));
+      })
+      .catch(() => {
+        /* SDK 로드 실패 = 오프라인과 동일 취급 */
+      });
+    // 계보·수호 게이트웨이 팩토리 등록(ADR-0007 서버 권위). 규율은 위 방어체와 동일하되
+    // **거동이 다르다**: 등록 전에는 계보 화면이 no-op 이 아니라 조작을 **잠근다**(계보 소비는
+    // 되돌릴 수 없어 낙관적 진행이 불가능하다 — net/lineage.ts 헤더). 그래서 설정이 있는데
+    // SDK 로드가 실패하면 사용자에게 오프라인으로 보이는 것이 맞다.
+    void import('./net/guardianGateway.js')
+      .then((m) => {
+        setLineageGatewayFactory((config) => new m.SupabaseGuardianGateway(config));
       })
       .catch(() => {
         /* SDK 로드 실패 = 오프라인과 동일 취급 */

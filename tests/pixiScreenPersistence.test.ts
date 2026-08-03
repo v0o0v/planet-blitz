@@ -28,6 +28,8 @@ import { Container, DOMAdapter } from 'pixi.js';
 
 import { HangarScreen } from '../src/ui/pixi/hangar.js';
 import { ChampionSelectScreen } from '../src/ui/pixi/championSelect.js';
+import { setLineageGatewayOverride } from '../src/net/lineage.js';
+import { HarnessLineageGateway } from '../src/harness/lineageMock.js';
 import { ResearchLabScreen } from '../src/ui/pixi/researchLab.js';
 import { RefineryScreen, refineryDetailLayout } from '../src/ui/pixi/refinery.js';
 import type { ChainState } from '../src/items/refiningChain.js';
@@ -205,7 +207,14 @@ describe('Pixi 메타 화면 — store 없이 생성해도 프로필이 저장�
     expect(persisted().stashExpansions).toBe(1);
   });
 
-  it('챔피언 선택: 확정(퇴역 + 세대 교체)이 저장된다', () => {
+  /**
+   * ⚠️ 계약이 바뀌었다(ADR-0007 서버 권위 배선, 2026-08-03): 퇴역은 `retire_ship` RPC 가
+   * 성공한 뒤에만 로컬을 변형한다. 그래서 이 테스트는 **모의 게이트웨이를 끼우고 await** 해야
+   * 한다 — 예전처럼 동기 호출로 두면 오프라인 잠금에 걸려 아무 일도 일어나지 않는다.
+   *
+   * 여기서 보려는 것은 여전히 **저장 배선**(store 없이 만든 화면이 기본 store 로 저장하는가)이다.
+   */
+  it('챔피언 선택: 확정(퇴역 + 세대 교체)이 저장된다', async () => {
     const profile = defaultProfile();
     // 확정(퇴역)에는 만렙 게이트가 있다 — 여기서 보려는 것은 게이트가 아니라 **저장 배선**이다.
     activeShip(profile).level = LEVEL_CAP;
@@ -215,13 +224,38 @@ describe('Pixi 메타 화면 — store 없이 생성해도 프로필이 저장�
     const champ = new ChampionSelectScreen(profile, stage);
     champ.show(profile, { onClose: () => {} });
 
-    (champ as unknown as { select(id: number): void }).select(1);
-    (champ as unknown as { confirm(): void }).confirm();
+    setLineageGatewayOverride(new HarnessLineageGateway());
+    try {
+      (champ as unknown as { select(id: number): void }).select(1);
+      await (champ as unknown as { confirm(): Promise<void> | void }).confirm();
+      // confirm 은 void 를 돌려주고 내부에서 서버 왕복을 이어간다 — 한 틱 더 흘려 완료를 기다린다.
+      await new Promise((r) => setTimeout(r, 0));
+    } finally {
+      setLineageGatewayOverride(null);
+    }
 
     expect(profile.ships.length).toBe(before + 1);
     const saved = persisted();
     expect(saved.ships.length).toBe(before + 1);
     expect(activeShip(saved).typeId).toBe(1);
+  });
+
+  /**
+   * 같은 화면의 **반대쪽 계약**: 서버가 없으면 확정이 아무것도 하지 않는다. 위 테스트만 있으면
+   * 오프라인에서 로컬만 퇴역시키는 회귀(= 서버에 행이 없는 수호기 생성)를 아무도 못 잡는다.
+   */
+  it('챔피언 선택: 오프라인이면 확정이 아무것도 바꾸지 않는다(서버 권위)', async () => {
+    const profile = defaultProfile();
+    activeShip(profile).level = LEVEL_CAP;
+    const snapshot = JSON.stringify(profile);
+    const champ = new ChampionSelectScreen(profile, new Container());
+    champ.show(profile, { onClose: () => {} });
+
+    (champ as unknown as { select(id: number): void }).select(1);
+    (champ as unknown as { confirm(): void }).confirm();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(JSON.stringify(profile)).toBe(snapshot);
   });
 
   it('연구소: 스킬 투자가 저장된다', () => {

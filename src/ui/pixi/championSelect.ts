@@ -71,7 +71,9 @@ import {
   type KeyValueStore,
   type Profile,
 } from '../../save/profile.js';
-import { retireActiveShip, retireGate } from '../../save/guardianLifecycle.js';
+import { retireActiveShip, retireGate, retirementPayload } from '../../save/guardianLifecycle.js';
+import { isLineageOnline, pullLineageState, retireShipOnServer } from '../../net/lineage.js';
+import { applyServerLineageState } from '../../net/lineageMirror.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import {
@@ -513,6 +515,47 @@ export function applyChampionChoice(
   return result.ship.typeId;
 }
 
+/**
+ * 서버 확정을 거치는 챔피언 확정(ADR-0007 서버 권위 배선, 2026-08-03).
+ *
+ * 순서가 이 함수의 전부다:
+ *   ① `retirementPayload` 로 **변형 없이** 페이로드를 계산한다(퇴역 후에는 못 만드는 값이다).
+ *   ② `retire_ship` RPC 로 서버가 수호 행을 만들고 계보를 지급한다. 실패하면 **여기서 멈춘다**
+ *      — Profile 은 한 글자도 안 바뀐 상태다.
+ *   ③ 성공했을 때만 로컬 미러를 변형하고(`applyChampionChoice`), 방금 만든 로컬 레코드의 id 를
+ *      **서버 uuid 로 갈아끼운다.** 이것이 이후 소멸 RPC 가 가리키는 유일한 참조다 — 로컬 생성
+ *      id(`g-...`)로는 서버 행을 가리킬 수 없어 그 수호기는 영영 소멸시킬 수 없게 된다.
+ *   ④ 계보 잔고는 서버 pull 로 맞춘다. 로컬 지급(+50)은 미러일 뿐이고 서버 값이 정본이다.
+ *
+ * 오프라인이면 `null`. 화면이 미리 잠그지만, 게이트가 두 곳에서 어긋나도 **서버 없는 퇴역만은**
+ * 일어나지 않도록 여기서도 막는다(서버에 행이 없는 수호기를 만드는 것이 정확히 이번 레인이
+ * 없애려는 상태다).
+ */
+export async function applyChampionChoiceOnline(
+  profile: Profile,
+  typeId: number,
+  store: KeyValueStore | null,
+): Promise<number | null> {
+  const payload = retirementPayload(profile);
+  if (payload === null) return null;
+  const res = await retireShipOnServer(
+    payload.preset,
+    payload.combatScore,
+    payload.snapshot,
+    payload.build,
+  );
+  if (res === null) return null;
+  const applied = applyChampionChoice(profile, typeId, store);
+  if (applied === null) return null;
+  // 방금 push 된 수호기 = 배열 마지막. 서버 uuid 를 채택한다(위 ③).
+  const last = profile.guardians[profile.guardians.length - 1];
+  if (last !== undefined) last.id = res.guardianId;
+  const state = await pullLineageState();
+  if (state !== null) applyServerLineageState(profile, state);
+  saveProfile(profile, store ?? undefined);
+  return applied;
+}
+
 export interface ChampionSelectCallbacks {
   /** 화면을 닫을 때(확정·취소 공통). 격납고가 `resume()` 하는 자리. */
   onClose: () => void;
@@ -532,6 +575,8 @@ export class ChampionSelectScreen {
   private scrollY = 0;
   private confirming = false;
   private hint = '';
+  /** 서버 왕복 중 — 같은 퇴역을 두 번 보내면 수호 행이 둘 생긴다(되돌릴 수 없다). */
+  private busy = false;
   /** 진입 시점의 런 HUD `visibility` 인라인 값(닫을 때 그대로 되돌린다 — 결함 C-4). */
   private hudPrevVisibility: string | null = null;
 
@@ -605,6 +650,9 @@ export class ChampionSelectScreen {
     this.cb = cb;
     this.hint = '';
     this.confirming = false;
+    // 왕복 중에 사용자가 화면을 닫고 다시 들어오면 `busy` 가 켜진 채로 보일 수 있다. 그 상태의
+    // 확정 버튼은 아무 반응이 없어 원인을 알 수 없는 고장으로 읽힌다 — 진입마다 되돌린다.
+    this.busy = false;
     this.scrollY = 0;
     // 기본 선택은 **현역 기체 타입** — "지금 무엇을 타고 있는지" 에서 출발해야 비교가 된다.
     this.selected = shipTypeDef(activeShip(profile).typeId).id;
@@ -693,19 +741,36 @@ export class ChampionSelectScreen {
    * 그대로 재현된다 — 화면은 정상으로 보이고 다음 실행에서만 드러난다.
    */
   private confirm(): void {
-    const typeId = applyChampionChoice(this.profile, this.selected, this.store);
+    if (this.busy) return;
     this.confirming = false;
-    // 만렙 게이트에 막히면 아무 변형도 일어나지 않았다 — 화면을 닫지 말고 이유만 띄운다.
-    if (typeId === null) {
-      this.hint = this.retireBlockedHint();
+    // 퇴역은 **서버가 수호 행을 만든 뒤에만** 로컬을 변형한다(applyChampionChoiceOnline 헤더).
+    // 오프라인이면 여기까지 오지 않지만(버튼이 잠긴다), 게이트가 어긋나도 막히도록 다시 본다.
+    if (!isLineageOnline()) {
+      this.hint = t('lineage.offline');
       this.renderModal();
       this.syncDetail();
       return;
     }
-    const cb = this.cb;
-    this.hide();
-    cb?.onConfirmed?.(typeId);
-    cb?.onClose();
+    this.busy = true;
+    this.hint = t('lineage.busy');
+    this.renderModal();
+    this.syncDetail();
+    void applyChampionChoiceOnline(this.profile, this.selected, this.store).then((typeId) => {
+      this.busy = false;
+      // 만렙 게이트·서버 미확정 둘 다 **아무 변형도 일어나지 않은** 상태다 — 화면을 닫지 말고
+      // 이유만 띄운다. 게이트는 자기 문구가 있고, 그 외는 서버 미확정이다.
+      if (typeId === null) {
+        const blocked = this.retireBlockedHint();
+        this.hint = blocked !== '' ? blocked : t('lineage.failed');
+        this.renderModal();
+        this.syncDetail();
+        return;
+      }
+      const cb = this.cb;
+      this.hide();
+      cb?.onConfirmed?.(typeId);
+      cb?.onClose();
+    });
   }
 
   /**

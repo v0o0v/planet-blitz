@@ -807,6 +807,11 @@ export const EN = {
   'lineage.invest': 'Invest',
   'lineage.short': '{need} pts short',
   'lineage.sunk': '{pt} pts already sunk into this branch — no respec.',
+  // 서버 권위(ADR-0007): 계보 조작은 서버가 확정한다. 오프라인이면 잠근다 — 되돌릴 수 없는
+  // 지출이라 낙관적 진행이 불가능하다.
+  'lineage.offline': 'Offline — lineage needs the server',
+  'lineage.busy': 'Confirming with the server…',
+  'lineage.failed': 'The server did not confirm it. Nothing was spent.',
   'lineage.invested': '{name} reached level {lv} · {cost} pts spent',
   'lineage.points.title': 'Lineage Points',
   'lineage.points.use': 'Earned by retiring ships and dismissing guardians.',
@@ -2557,6 +2562,10 @@ export const KO: Record<MessageKey, string> = {
   'lineage.invest': '투자',
   'lineage.short': '{need}pt 부족',
   'lineage.sunk': '이 가지에 이미 {pt}pt 를 묻었습니다 — 리스펙은 없습니다.',
+  // 서버 권위(ADR-0007) — 오프라인이면 잠근다.
+  'lineage.offline': '오프라인 — 계보는 서버가 필요합니다',
+  'lineage.busy': '서버에 확인하는 중…',
+  'lineage.failed': '서버가 확정하지 않았습니다. 아무것도 쓰이지 않았습니다.',
   'lineage.invested': '{name} 누적 레벨 {lv} 달성 · {cost}pt 소비',
   'lineage.points.title': '계보 포인트',
   'lineage.points.use': '기체를 퇴역시키거나 수호기를 소멸시켜 모읍니다.',

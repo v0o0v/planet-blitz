@@ -19,7 +19,6 @@ import {
   lineageHallLayout,
   branchView,
   bpPct,
-  investedPoints,
   milestoneRows,
   GEAR_BAND_H,
   GEAR_BAND_W,
@@ -28,6 +27,7 @@ import {
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from '../src/render/app.js';
 import {
   branchBonusBp,
+  branchInvestedPoints as investedPoints,
   emptyLineage,
   nextLevelCost,
   CORE_GUARD_LEVEL,

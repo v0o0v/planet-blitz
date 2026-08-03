@@ -253,7 +253,12 @@ export class SupabaseGateway implements ServerGateway {
     // (`profiles_select_own` 정책이 이미 본인 행 읽기를 허용한다).
     const { data, error } = await this.client
       .from('profiles')
-      .select('save, save_version, credits, minerals, catalyst_residue')
+      // 계보도 컬럼 정본이다(ADR-0007) — 재화와 같은 규율로 이 pull 에 얹는다. 화면 진입 시의
+      // `pullLineageState()` 와 **중복이 아니다**: 그쪽은 수호 목록까지 맞추는 화면 전용이고,
+      // 여기는 앱 시작·기기 이관 때 save jsonb 의 낡은 계보를 서버 값으로 덮는 자리다.
+      .select(
+        'save, save_version, credits, minerals, catalyst_residue, lineage_points, lineage_ship_level, lineage_guardian_level',
+      )
       .eq('id', uid)
       .maybeSingle();
     if (error !== null) throw error;
@@ -264,10 +269,31 @@ export class SupabaseGateway implements ServerGateway {
       credits?: unknown;
       minerals?: unknown;
       catalyst_residue?: unknown;
+      lineage_points?: unknown;
+      lineage_ship_level?: unknown;
+      lineage_guardian_level?: unknown;
     };
+    // 계보 세 컬럼은 **함께 있을 때만** 싣는다. 하나라도 빠진 채 부분 반영하면 레벨은 서버,
+    // 잔고는 로컬인 뒤섞인 상태가 되고 그 조합은 어느 쪽에서도 정본이 아니다(구 서버 = 셋 다 부재).
+    const hasLineage =
+      row.lineage_points !== null &&
+      row.lineage_points !== undefined &&
+      row.lineage_ship_level !== null &&
+      row.lineage_ship_level !== undefined &&
+      row.lineage_guardian_level !== null &&
+      row.lineage_guardian_level !== undefined;
     return {
       save: row.save,
       saveVersion: row.save_version,
+      ...(hasLineage
+        ? {
+            lineage: {
+              available: num(row.lineage_points),
+              shipLevel: num(row.lineage_ship_level),
+              guardianLevel: num(row.lineage_guardian_level),
+            },
+          }
+        : {}),
       ...(row.credits !== null && row.credits !== undefined ? { credits: num(row.credits) } : {}),
       ...(row.minerals !== null && row.minerals !== undefined
         ? { minerals: num(row.minerals) }
