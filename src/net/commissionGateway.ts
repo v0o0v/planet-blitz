@@ -74,6 +74,15 @@ export interface ConsumeCommissionResult {
   payload: CommissionPayload;
 }
 
+/**
+ * `discard_commission` RPC 반환(2026-08-03 신설). `held` 는 폐기 **후** 남은 보유 수 —
+ * 클라가 세지 않고 서버가 세어 준다(원장이 정본이라 클라 감산은 두 번째 진실이 된다).
+ */
+export interface DiscardCommissionResult {
+  commissionId: string;
+  held: number;
+}
+
 /** `mark_commission_active` RPC 반환(계약 §5-3). */
 export interface MarkCommissionActiveResult {
   runId: string;
@@ -109,6 +118,11 @@ export interface CommissionGateway {
   getUserId(): Promise<string>;
   /** 출격(계약 §5-2) — 의뢰서 소비 + `commission_runs` 행 생성. 실패 시 throw(거부 사유는 예외 메시지). */
   consumeCommission(commissionId: string, loadout: unknown): Promise<ConsumeCommissionResult>;
+  /**
+   * 폐기 — 미소비 의뢰서 1장을 서버 원장에서 지운다(2026-08-03). 실패 시 throw(거부 사유는
+   * 예외 메시지). **되돌릴 수 없다** — 서버는 감사용으로 payload 를 남기지만 재고로는 안 돌린다.
+   */
+  discardCommission(commissionId: string): Promise<DiscardCommissionResult>;
   /** 런 시작 신호(계약 §5-3). 실패 시 throw. */
   markCommissionActive(runId: string): Promise<MarkCommissionActiveResult>;
   /** 제출 리플레이 검증(계약 §7). EF 응답을 그대로 정규화해 반환 — throw 는 전송 실패일 때만. */
@@ -239,6 +253,17 @@ export class SupabaseCommissionGateway implements CommissionGateway {
     const runId = asString(r.run_id);
     if (runId === '') throw new Error('consume_commission: run_id 미발급');
     return { runId, payload: r.payload as CommissionPayload };
+  }
+
+  async discardCommission(commissionId: string): Promise<DiscardCommissionResult> {
+    const { data, error } = await this.client.rpc('discard_commission', {
+      p_commission_id: commissionId,
+    });
+    if (error !== null) throw error;
+    const r = asRecord(data);
+    // `held` 는 서버가 센 값이다 — 0 도 정상이라 `asNumber` 의 폴백과 구분되지 않지만,
+    // 여기서 구분할 필요가 없다: 화면은 이 값을 쓰지 않고 목록을 **다시 읽는다**(원장이 정본).
+    return { commissionId: asString(r.commission_id, commissionId), held: asNumber(r.held) };
   }
 
   async markCommissionActive(runId: string): Promise<MarkCommissionActiveResult> {

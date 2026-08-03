@@ -87,13 +87,43 @@ function cronJob(name: string): { schedule: string; body: string } {
 }
 
 describe('의뢰서 원장 — 마이그레이션 정렬 계약 (AC-G3)', () => {
-  it('신규 마이그레이션 타임스탬프가 직전 최신보다 크다', () => {
+  /**
+   * ⚠️ **2026-08-03 정정**: 이 단언은 원래 "원장이 정렬 후 **마지막**"이었다. 그 형태는 원장이
+   * 최신인 동안만 참이고, 원장 **뒤에** 의뢰 축을 잇는 마이그레이션이 붙는 순간(폐기 RPC)
+   * 정상 변경에 빨간불을 낸다 — 실제로 그랬다.
+   *
+   * 이 계약이 지키려던 것은 "마지막"이 아니라 **의존 순서**다: 원장은 자기가 고쳐 쓰는
+   * `grant_currency`(20260727000000)와 `settle_pve_run`(20260802000000) **뒤에** 와야 하고,
+   * 원장이 만드는 테이블을 쓰는 마이그레이션은 원장 **뒤에** 와야 한다. 위치가 아니라 그
+   * 순서를 잰다.
+   */
+  it('원장이 자기가 의존하는 마이그레이션들보다 뒤에 온다', () => {
     const files = migrationsInOrder().map((m) => m.file);
     const idx = files.indexOf(COMMISSION_FILE);
     expect(idx, `${COMMISSION_FILE} 가 목록에 없다`).toBeGreaterThanOrEqual(0);
-    // 정렬 후 **마지막**이어야 한다. "20260802000000 보다 크다"만 재면 그 사이에 낀 다른 신규
-    // 마이그레이션을 못 본다 — 순서가 곧 적용 순서이므로 위치로 잰다.
-    expect(files[files.length - 1]).toBe(COMMISSION_FILE);
+    for (const dep of [
+      '20260726000000_currency_server_authority.sql',
+      '20260802000000_settle_pve_run_column_restore.sql',
+    ]) {
+      const at = files.indexOf(dep);
+      expect(at, `의존 마이그레이션 ${dep} 이 없다`).toBeGreaterThanOrEqual(0);
+      expect(idx, `원장이 ${dep} 보다 먼저 적용된다`).toBeGreaterThan(at);
+    }
+  });
+
+  it('원장 테이블을 쓰는 후속 마이그레이션은 원장 뒤에 온다', () => {
+    // 파일명 오름차순 = 적용 순이므로, 원장 앞에서 `commission_*` 를 건드리면 없는 테이블을
+    // 참조한다(적용이 그 자리에서 실패한다 — 조용하지 않지만 원격에서만 터진다).
+    const all = migrationsInOrder();
+    const idx = all.findIndex((m) => m.file === COMMISSION_FILE);
+    for (let i = 0; i < idx; i++) {
+      const m = all[i];
+      if (m === undefined) continue;
+      expect(
+        /public\.commission_(inventory|runs|issues|grants|discards)/.test(stripLineComments(m.sql)),
+        `${m.file} 이 원장 테이블을 원장보다 먼저 참조한다`,
+      ).toBe(false);
+    }
   });
 });
 

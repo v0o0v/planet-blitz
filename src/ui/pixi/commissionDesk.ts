@@ -88,7 +88,7 @@ import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { PixiButton } from './button.js';
 import { stripEmoji } from './text.js';
-import { attachRowClick } from './listRow.js';
+import { attachRowClick, stopRowPropagation } from './listRow.js';
 import { makeScrollArea, rowBounds } from './scrollArea.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
@@ -101,7 +101,11 @@ import {
   type ChromeTone,
 } from './hangarChrome.js';
 import { t, type MessageKey } from '../../i18n/index.js';
-import { fetchCommissionInventoryOnline, consumeCommissionOnServer } from '../../net/index.js';
+import {
+  fetchCommissionInventoryOnline,
+  consumeCommissionOnServer,
+  discardCommissionOnServer,
+} from '../../net/index.js';
 import type { CommissionInventoryRow } from '../../net/commissionGateway.js';
 import type { CommissionPayload } from '../../run/commission.js';
 import { commissionSealedLoadout } from '../../run/runConfig.js';
@@ -172,6 +176,14 @@ const FOOT_H = 64;
 const FOOT_Y = DESIGN_HEIGHT - BOTTOM_PAD - FOOT_H;
 const LAUNCH_W = 320;
 const FOOT_BTN_X = EDGE_X + CONTENT_W - LAUNCH_W;
+/**
+ * [폐기]는 [출격] **왼쪽**에 붙는다(2026-08-03). 파괴적 동작을 주 동작 오른쪽에 두면 눌러야 할
+ * 것 옆에 되돌릴 수 없는 것이 오고, 오른쪽 끝은 손이 먼저 가는 자리다. 폭도 일부러 좁게 잡아
+ * 시각 무게를 낮춘다 — 이 화면의 주 동작은 출격이지 폐기가 아니다.
+ */
+const DISCARD_W = 200;
+const FOOT_BTN_GAP = 16;
+const DISCARD_X = FOOT_BTN_X - FOOT_BTN_GAP - DISCARD_W;
 
 /**
  * 패널 줄 상단. 헤더 밴드(104) 바로 아래가 아니라 **{@link GEAR_BAND_H}(120) 아래**다 —
@@ -260,6 +272,18 @@ const DETAIL_CHAMBERS = 4;
 const CHAMBER_HEAD_W = 220;
 const CHAMBER_HEAD_GAP = 24;
 
+/**
+ * 폐기 확인 팝업(2026-08-03). 높이는 **내용에서 역산**한다 — 제목 띠 52 + 간격 16 = 상자 y 68,
+ * 그 아래 이름 한 줄(≈48) + 본문 두 줄(≈60) + 숨 52 + 버튼 64 + 아래 여백 24.
+ * 관제탑 시네마틱 팝업과 같은 방식이다(고정 높이를 적으면 문구가 길어질 때 조용히 뚫린다).
+ */
+const MODAL_W = 760;
+const MODAL_H = 320;
+const MODAL_X = Math.round((DESIGN_WIDTH - MODAL_W) / 2);
+const MODAL_Y = Math.round((DESIGN_HEIGHT - MODAL_H) / 2);
+const MODAL_BTN_W = 300;
+const MODAL_BTN_H = 64;
+
 /** 화면 좌표 사각형(디자인 스페이스). */
 export interface DeskRect {
   readonly x: number;
@@ -296,7 +320,11 @@ export function commissionDeskLayout(): {
     ],
     footer: {
       band: { x: EDGE_X, y: FOOT_Y, w: CONTENT_W, h: FOOT_H },
-      buttons: [{ x: FOOT_BTN_X, y: FOOT_Y, w: LAUNCH_W, h: FOOT_H }],
+      // 왼쪽→오른쪽 순서다(폐기 · 출격). 파괴적 동작이 주 동작 오른쪽에 오면 안 된다.
+      buttons: [
+        { x: DISCARD_X, y: FOOT_Y, w: DISCARD_W, h: FOOT_H },
+        { x: FOOT_BTN_X, y: FOOT_Y, w: LAUNCH_W, h: FOOT_H },
+      ],
     },
     headerControls: [{ id: 'close', rect: { x: CLOSE_X, y: HEAD_Y, w: CLOSE_W, h: HEAD_H } }],
     windows: [],
@@ -538,6 +566,12 @@ export class CommissionDeskScreen {
   private stockNode: Text | null = null;
   private statusNode: Text | null = null;
   private launchBtn: PixiButton | null = null;
+  private discardBtn: PixiButton | null = null;
+  /**
+   * 폐기 확인 팝업(열려 있으면 non-null). **크롬이 아니라 그때그때 세운다** — 상태가 아니라
+   * 사건이고, 안 열려 있을 때 화면에 아무 흔적도 남기지 않아야 뒤 컨트롤의 클릭을 안 훔친다.
+   */
+  private discardModal: Container | null = null;
   /**
    * [출격] 버튼을 **다시 세워야 하는가**를 판정하는 키. 활성/비활성은 톤이 갈리고
    * (`gold` ↔ `stone`) 톤은 텍스처를 바꾸므로 갱신으로는 안 된다 — 그렇다고 매 갱신마다
@@ -579,6 +613,9 @@ export class CommissionDeskScreen {
     this.listScrollY = 0;
     this.detailScrollY = 0;
 
+    // 팝업은 사건이지 상태다 — 재진입할 때 열려 있으면 안 된다(닫지 않고 화면을 벗어나는
+    // 경로가 실제로 있다: 출격 성공 self-hide · 하네스 goto).
+    this.closeDiscardConfirm();
     this.buildChrome();
     this.refresh();
     this.root.visible = true;
@@ -588,6 +625,7 @@ export class CommissionDeskScreen {
   }
 
   hide(): void {
+    this.closeDiscardConfirm();
     this.root.visible = false;
     this.cb = null;
     this.restoreRunHud();
@@ -677,6 +715,151 @@ export class CommissionDeskScreen {
       this.busy = false;
       if (this.root.visible) this.refresh();
     }
+  }
+
+  /**
+   * 폐기(2026-08-03) — `discard_commission` RPC. **확인 팝업을 통과한 뒤에만** 불린다.
+   *
+   * ## 왜 이 기능이 필요한가
+   * 보관 상한(12)이 차면 **새 의뢰서가 발령되지 않는데**(`issue_commission_for_run` 4단계),
+   * 그 상한을 내리는 방법이 지금까지 출격 하나뿐이었다. 원치 않는 저계급 의뢰가 12칸을 물면
+   * 보스를 아무리 잡아도 아무것도 안 들어오고, 발령은 **조용히 스킵**되므로 화면 어디에도
+   * 이유가 안 적힌다.
+   *
+   * ## 규율
+   * - 성공해도 **목록을 손으로 깎지 않는다** — 원장을 다시 읽는다(`refreshInventory`).
+   *   감산하면 서버와 갈리는 두 번째 진실이 생기고, 갈리는 날 화면이 어느 쪽인지 못 말한다.
+   * - 출격과 **같은 `busy` 가드**를 공유한다(둘 다 원장 왕복이다).
+   * - 거부는 서버 예외 메시지를 그대로 안내한다(고정 매핑표를 만들지 않는다).
+   */
+  private async discard(row: CommissionInventoryRow): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    this.hint = '';
+    this.refresh();
+    try {
+      const res = await discardCommissionOnServer(row.commissionId);
+      if (res.status === 'ok') {
+        // 지워진 것이 선택돼 있었으므로 선택을 비운다 — `refreshInventory` 가 첫 항목을 다시 고른다.
+        this.selectedId = null;
+        this.listScrollY = 0;
+        this.detailScrollY = 0;
+        return;
+      }
+      this.hint = res.status === 'unconfigured' ? t('commission.offline') : res.reason;
+    } finally {
+      this.busy = false;
+      // ⚠️ 성공이든 실패든 **원장을 다시 읽는다.** 실패해도 다시 읽는 이유는 "의뢰서 없음"
+      // 거부가 곧 "누군가 이미 지웠다"이기 때문이다 — 그때 화면에 남아 있으면 유령 행이 된다.
+      if (this.root.visible) void this.refreshInventory();
+    }
+  }
+
+  // --- 폐기 확인 팝업 -------------------------------------------------------
+
+  /**
+   * 되돌릴 수 없는 조작이므로 **확인을 받는다.** 팝업은 이 파일 안에서 시네마틱으로 세운다 —
+   * `makeModal`(나무)은 다른 화면 다섯이 쓰고 있어 고치면 그쪽이 함께 바뀐다.
+   *
+   * `modal.ts` 헤더가 실측으로 남긴 규칙 셋을 그대로 승계한다:
+   *  ① 암막은 **불투명**해야 한다(뒤 화면이 비치면 팝업이 떠 있는지 안 떠 있는지 안 읽힌다).
+   *  ② 암막이 **이벤트를 먹어야** 한다(안 먹으면 뒤 목록이 계속 눌린다).
+   *  ③ 패널 안쪽 탭은 **전파를 끊어야** 한다(안 끊으면 패널을 눌러도 암막이 받아 닫힌다).
+   * 암막 알파는 뒤 화면 밝기마다 다르다 — 이 화면은 석재 패널 둘이 화면을 거의 덮어 밝으므로
+   * 방어 사령부·관제탑과 같은 0.99 를 쓴다.
+   */
+  private openDiscardConfirm(row: CommissionInventoryRow): void {
+    if (this.discardModal !== null) return;
+    const { payload } = row;
+
+    const modal = new Container();
+    const scrim = new Graphics();
+    scrim.rect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT).fill({ color: 0x05060f, alpha: 0.99 });
+    scrim.eventMode = 'static';
+    modal.addChild(scrim);
+
+    const panel = makeCinematicPanel({
+      width: MODAL_W,
+      height: MODAL_H,
+      variant: 'slab',
+      title: t('commission.discard.title'),
+      screenX: MODAL_X,
+      screenY: MODAL_Y,
+      lightOrigin: { x: DESIGN_WIDTH / 2, y: 60 },
+    });
+    panel.container.position.set(MODAL_X, MODAL_Y);
+    // ③ 패널 안쪽 탭이 암막까지 올라가지 않게 끊는다.
+    stopRowPropagation(panel.container);
+    modal.addChild(panel.container);
+    this.panels.push(panel);
+
+    const box = titledBox(MODAL_W, MODAL_H);
+    const innerW = box.w - 32;
+
+    // 무엇을 버리는지 이름으로 말한다 — "이 의뢰서"만 쓰면 잘못 고른 것을 확인할 수가 없다.
+    const what = this.wrapped(
+      `${commissionGradeLabel(payload.grade)}  ·  ${commissionOrderLabel(payload.order)}`,
+      24,
+      COLOR.gold,
+      innerW,
+      '800',
+      34,
+    );
+    what.anchor.set(0.5, 0);
+    what.position.set(MODAL_W / 2, box.y + 4);
+    panel.container.addChild(what);
+
+    const body = this.wrapped(t('commission.discard.body'), 19, SLAB_BODY_FILL, innerW, '400', 30);
+    body.anchor.set(0.5, 0);
+    body.position.set(MODAL_W / 2, box.y + 52);
+    panel.container.addChild(body);
+
+    const btnY = box.bottom - MODAL_BTN_H;
+    const cancel = this.chromeButton({
+      tone: 'stone',
+      width: MODAL_BTN_W,
+      height: MODAL_BTN_H,
+      fontSize: 21,
+      label: t('commission.discard.cancel'),
+      onClick: () => this.closeDiscardConfirm(),
+    });
+    cancel.container.position.set(box.x, btnY);
+    panel.container.addChild(cancel.container);
+
+    const confirm = this.chromeButton({
+      tone: 'red',
+      width: MODAL_BTN_W,
+      height: MODAL_BTN_H,
+      fontSize: 21,
+      label: t('commission.discard.confirm'),
+      onClick: () => {
+        this.closeDiscardConfirm();
+        void this.discard(row);
+      },
+    });
+    confirm.container.position.set(box.right - MODAL_BTN_W, btnY);
+    panel.container.addChild(confirm.container);
+
+    // ② 암막이 이벤트를 먹되, 암막 자체를 눌러 닫는 것은 **막는다** — 파괴적 팝업에서 바깥 탭
+    //    닫기는 "취소"와 "실수로 닫힘"을 구분하지 못하게 만든다. 닫는 길은 [취소] 하나다.
+    this.root.addChild(modal);
+    this.discardModal = modal;
+  }
+
+  private closeDiscardConfirm(): void {
+    const modal = this.discardModal;
+    if (modal === null) return;
+    this.discardModal = null;
+    // 팝업 패널도 `update(dt)` 대상 목록에 들어 있었으므로 함께 빼야 파괴된 객체를 매 프레임
+    // 건드리지 않는다(빠뜨리면 팝업을 한 번 연 뒤부터 프레임마다 조용히 죽은 참조를 민다).
+    const live: CinematicPanel[] = [];
+    for (const p of this.panels) {
+      if (modal.children.includes(p.container)) p.destroy();
+      else live.push(p);
+    }
+    this.panels = live;
+    this.root.removeChild(modal);
+    modal.destroy({ children: true });
   }
 
   // --- 공용 렌더 조각 -------------------------------------------------------
@@ -791,6 +974,8 @@ export class CommissionDeskScreen {
     this.stockNode = null;
     this.statusNode = null;
     this.launchBtn = null;
+    this.discardBtn = null;
+    this.discardModal = null;
     this.footBtnKey = '';
     for (const child of [...this.root.children]) {
       this.root.removeChild(child);
@@ -899,7 +1084,7 @@ export class CommissionDeskScreen {
   }
 
   /**
-   * 하단 액션 띠 — 왼쪽 **두 줄**(재고 `보유 N/12` · 상태 문구), 오른쪽 [출격].
+   * 하단 액션 띠 — 왼쪽 **두 줄**(재고 `보유 N/12` · 상태 문구), 오른쪽 [폐기] [출격].
    *
    * 옛 구현은 재고 문구가 패널 안 우상단, 오류 힌트가 화면 맨 아래 중앙에 떠 있었다. 둘을 여기로
    * 모아 띠 왼쪽을 채운다 — 띠 안에 빈 자리가 없다. 상태 문구는 오류가 있으면 오류, 없으면
@@ -910,7 +1095,7 @@ export class CommissionDeskScreen {
     this.root.addChild(host);
     this.footHost = host;
 
-    const textW = FOOT_BTN_X - EDGE_X - 24;
+    const textW = DISCARD_X - EDGE_X - 24;
     const stock = this.label('', 19, COLOR.gold, '700', textW);
     stock.anchor.set(0, 0.5);
     stock.position.set(EDGE_X, FOOT_Y + FOOT_H / 2 - 13);
@@ -937,12 +1122,14 @@ export class CommissionDeskScreen {
     if (host === null) return;
     const enabled = this.canLaunch();
     const label = this.busy ? t('commission.launching') : t('commission.launch');
+    // 폐기 버튼도 같은 키에 접는다 — 활성 조건이 같아서(온라인 · 선택 있음 · 왕복 중 아님)
+    // 따로 두면 키가 둘로 갈리고, 갈린 키는 언젠가 한쪽만 갱신되는 자리가 된다.
     const key = `${enabled ? '1' : '0'}|${label}`;
     if (key === this.footBtnKey && this.launchBtn !== null) return;
     this.footBtnKey = key;
 
-    const old = this.launchBtn;
-    if (old !== null) {
+    for (const old of [this.launchBtn, this.discardBtn]) {
+      if (old === null) continue;
       host.removeChild(old.container);
       old.container.destroy({ children: true });
     }
@@ -961,9 +1148,32 @@ export class CommissionDeskScreen {
     btn.setEnabled(enabled);
     host.addChild(btn.container);
     this.launchBtn = btn;
+
+    // 폐기는 **되돌릴 수 없다** — 그래서 붉은 톤이고, 누르면 바로 지우지 않고 확인 팝업을 연다.
+    const discard = this.chromeButton({
+      tone: enabled ? 'red' : 'stone',
+      width: DISCARD_W,
+      height: FOOT_H,
+      fontSize: 20,
+      label: t('commission.discard'),
+      onClick: () => {
+        const row = this.selectedRow();
+        if (row !== undefined) this.openDiscardConfirm(row);
+      },
+    });
+    discard.container.position.set(DISCARD_X, FOOT_Y);
+    discard.setEnabled(enabled);
+    host.addChild(discard.container);
+    this.discardBtn = discard;
   }
 
-  /** 출격 가능 조건 — 온라인 · 선택된 의뢰서 있음 · 왕복 중이 아님. */
+  /**
+   * 출격 가능 조건 — 온라인 · 선택된 의뢰서 있음 · 왕복 중이 아님.
+   *
+   * 폐기도 **같은 조건**을 쓴다: 둘 다 서버 원장 왕복이고, 왕복 중에 다른 쪽을 누를 수 있으면
+   * "출격과 폐기가 같은 한 장을 동시에 노리는" 상태가 클라에서 만들어진다(서버는 `for update`
+   * 로 한쪽을 떨어뜨리지만, 화면이 그 경합을 먼저 안 만드는 것이 옳다).
+   */
   private canLaunch(): boolean {
     return this.online && !this.busy && this.selectedRow() !== undefined;
   }
