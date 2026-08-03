@@ -134,9 +134,10 @@ import {
   isLoginRequired,
   getSignedInUser,
   signInWithGoogle,
+  signOut,
 } from './net/auth.js';
 // 계정이 바뀌면 로컬 계정 데이터를 버린다(재화 이전 경로 차단).
-import { reconcileAccountScope, accountStore } from './net/accountScope.js';
+import { reconcileAccountScope, clearAccountScope, accountStore } from './net/accountScope.js';
 // 의뢰서 시스템 Phase E — 서버 원장 payload → `WorldConfig` 형태 변환(sim 입력이 아닌
 // rewards 를 뺀다). 봉인 로드아웃은 지시 수신소 화면이 출격 시점에 직접 계산해 싣는다.
 import { commissionRunConfigFromPayload } from './run/commission.js';
@@ -1879,6 +1880,25 @@ async function main(): Promise<void> {
   }
 
   /**
+   * 로그아웃 — 세션 해제 → 로컬 계정 데이터 삭제 → **페이지 새로고침**.
+   *
+   * ## 왜 새로고침인가
+   * 메모리에는 이 계정으로 만든 상태가 넓게 퍼져 있다 — `profile` 객체를 캡처한 화면 수십 개,
+   * 열린 월드, 인기 배율 폴링 타이머, 각 화면의 캐시. 그걸 하나씩 되돌리는 코드는 만드는 순간
+   * 낡기 시작하고, **빠뜨린 하나가 곧 다음 계정으로 새는 데이터**다. 새로고침은 그 전부를
+   * 한 번에, 빠뜨림 없이 없앤다. 로그아웃은 드문 조작이라 비용도 문제가 안 된다.
+   *
+   * 순서가 중요하다: 세션을 먼저 끊어야 새로고침 후 부팅이 "미로그인"으로 판정한다.
+   */
+  function handleSignOut(): void {
+    void (async () => {
+      await signOut();
+      clearAccountScope(accountStore());
+      if (typeof location !== 'undefined') location.reload();
+    })();
+  }
+
+  /**
    * 부팅 — 로그인 게이트 → 계정 스코프 정리 → 서버 프로필 pull → 인트로/타이틀.
    *
    * ## 왜 pull 을 기다리는가
@@ -1913,6 +1933,8 @@ async function main(): Promise<void> {
       if (reconcileAccountScope(accountStore(), user.id)) {
         Object.assign(profile, defaultProfile());
       }
+      // 설정 팝업의 '계정' 행(이메일 + 로그아웃). 미로그인·미설정이면 행 자체가 안 그려진다.
+      settings.setAccount({ email: user.email, onSignOut: handleSignOut });
       await pullServerProfileInto(profile);
       saveProfile(profile);
       // 세션이 생긴 지금이 이관·회수의 자리다(부팅 즉시 부르면 세션이 없어 전부 no-op 이었다).
