@@ -1,26 +1,49 @@
 /**
- * 촉매 주입 픽커 팝업 — Pixi (ADR-0029, Lane 4).
+ * 촉매 주입 픽커 팝업 — Pixi (ADR-0029, Lane 4 · 2026-08-03 AAA 시네마틱 전환)
+ * · 레인 계약 `.omc/plans/star-map-aaa-2026-08-03.md`.
  *
  * 성계 지도(`planetSelect.ts`)의 [주입 편집] 이 여는 모달이다. 48종 촉매를 그리드로 펼쳐
  * 보유 수량·주입 수(스택)·페널티+보상 방향을 보여 주고, 슬롯 상한(SLOT_CAP)·특산-행성 정합을
- * 강제한다. [확정] 이 주입 배열을 성계 지도에 돌려준다(X/암막은 취소 — 편집 폐기).
+ * 강제한다. [확정] 이 주입 배열을 성계 지도에 돌려준다(✕/암막은 취소 — 편집 폐기).
  *
- * ## 서버 권위 (ADR-0027/0029)
+ * ## 왜 `makeModal`(나무)을 안 쓰고 여기서 세우는가
+ * 그 모듈은 **다른 화면 다섯이 쓰고 있어** 고치면 그쪽이 함께 바뀐다. 그래서 껍데기만 이 파일
+ * 안에서 시네마틱으로 다시 세우고, `modal.ts` 헤더가 실측으로 남긴 규칙 셋은 **그대로 승계**한다:
+ *  ① 암막은 **불투명**해야 한다(뒤 화면이 비치면 팝업이 떠 있는지 안 읽힌다).
+ *  ② 암막이 **이벤트를 먹어야** 한다(안 먹으면 뒤 목록이 계속 눌린다).
+ *  ③ 패널 안쪽 탭은 **전파를 끊어야** 한다(안 끊으면 패널을 눌러도 암막이 받아 닫힌다).
+ * 암막 알파는 뒤 화면 밝기마다 다르다 — 성계 지도는 석재 패널 셋이 화면을 거의 덮어 밝으므로
+ * 방어 사령부·관제탑·지시 수신소와 같은 **0.99** 를 쓴다(나무 판의 0.78 로는 뒤가 비친다).
+ *
+ * ⚠️ **바깥 탭 = 취소는 전환 전 거동 그대로 유지한다.** 편집 폐기는 되돌릴 수 있는 조작이라
+ * (주입은 확정 전까지 서버를 만지지 않는다) "파괴적 팝업은 바깥 탭으로 닫지 마라" 규칙의
+ * 대상이 아니다. 여기서 거동을 바꾸면 이 팝업만 형제와 다르게 닫힌다.
+ *
+ * ## 전환에서 바뀐 것은 **바탕과 배치**뿐이다
+ * `makeModal`(나무) → 암막 + `makeCinematicPanel`(석재), `listRowBg` 셀 바탕 → 석재 판
+ * ({@link cellPlate}, 주입된 것은 금색 링), 나무 버튼 → `cinematicButtonTexture` 주입,
+ * 하단 요약 구분선 → **파낸 챔버**({@link recessedWell}). 편집 동작·게이트·요약 산식은
+ * 한 줄도 안 건드렸다 — 주입 판정은 계속 `catalystInject.ts`(Pixi 없는 순수 계층)가 소유한다.
+ *
+ * ## 서버 권위 (ADR-0027/0029 — 전환 전과 동일)
  * 보유 수량 정본은 서버 `catalyst_inventory` 다 — 픽커는 성계 지도가 넘긴 스냅샷(catalyst_id→qty)
  * 만 읽고, **실제 차감은 출격 직전 `consume_catalysts`** 가 한다(여기선 원장을 만지지 않는다).
  * 보유 0 이거나 오프라인(스냅샷 없음)이면 주입이 불가능하게 게이트한다.
  *
  * ## 실측 규칙(다른 캔버스 화면과 동일)
  * - **휠은 클립 Container + hitArea 에**(`makeScrollArea`). 마스크 Graphics 는 히트 제외.
- * - **밝은 화면 위 팝업은 `fillAlpha: 1`** — `makeModal` 이 고정한다.
- * - **여백은 `panelContent` 상자 안에만**.
- * - 리스너는 wipe-then-rebuild(`render()` 가 매번 자식 파괴·재생성). 주입/해제가 곧 재렌더고,
- *   하단 요약도 그때 다시 접힌다(별도 in-place 경로 없음 — 요약이 조합에서 파생되기 때문).
+ * - **여백은 콘텐츠 상자 안에만**(`PANEL_EDGE_PAD`/`TITLE_BAND` 복제 기하 — 테스트가 대조한다).
+ * - ⚠️ **`setEnabled(false)` + `gold` 톤 금지**(글자가 통째로 사라진다). 셀 버튼은 `blue`/`red`
+ *   이고 둘 다 크림 라벨이라 alpha 0.4 에서도 읽힌다.
+ * - ⚠️ **재렌더 규율**: 옛 구현은 `render()` 가 루트를 통째로 지우고 다시 그렸다. 나무
+ *   nine-slice 일 때는 값이 쌌지만 시네마틱 패널은 텍스처를 **굽는다** — 그대로 두면 [주입]
+ *   한 번 누를 때마다 1560×940 석재를 다시 굽는다(48종을 훑으며 수십 번 누르는 화면이다).
+ *   그래서 `buildChrome()` 1회 + `refresh()`(슬롯 수·셀·요약만)로 갈랐다.
  *
  * 순수 render/UI 레이어(ADR-0005 · ADR-0014) — sim 은 이 파일을 모른다.
  */
 
-import { Container, Graphics, Sprite, Text } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, Texture, type FederatedPointerEvent } from 'pixi.js';
 import {
   CATALYSTS,
   catalystById,
@@ -38,13 +61,18 @@ import {
   ownedCount,
 } from '../../data/catalystInject.js';
 import { planetById } from '../../../data/planets.js';
+import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { t, type MessageKey } from '../../i18n/index.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
-import { listRowBg } from './listRow.js';
 import { makeScrollArea } from './scrollArea.js';
-import { makeModal, modalBodyTop, MODAL_TITLE_BAND } from './modal.js';
-import type { PanelContentBox } from './nineSlicePanel.js';
+import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
+import {
+  cinematicButtonTexture,
+  chromeFallbackColor,
+  chromeLabelColor,
+  type ChromeTone,
+} from './hangarChrome.js';
 import { PixiButton } from './button.js';
 import { stripEmoji } from './text.js';
 
@@ -62,39 +90,86 @@ export interface CatalystPickerOptions {
   onConfirm: (ids: number[]) => void;
 }
 
-// --- 레이아웃(디자인 스페이스 1920×1080) ---
+// ===========================================================================
+// 레이아웃(디자인 스페이스 1920×1080) — Pixi 없이 검증되는 순수 서술
+// ===========================================================================
+
+/**
+ * `cinematicPanel.ts` 콘텐츠 상자 기하의 **복제본**(출처: 그 파일의 `EDGE_PAD 24` ·
+ * `CONTENT_GAP 16` · `TITLE_BAND_H = round(TITLE_SIZE 26 × 2)`).
+ *
+ * 왜 베끼는가: 좌표 서술이 **Pixi 없이** 검증돼야 하는데 패널 상자는 런타임 객체다. 베낀 값이
+ * 조용히 어긋나면 내용이 패널 테두리를 뚫는데 예외도 로그도 없다 —
+ * `tests/catalystPickerAaaLayout.test.ts` 가 실제 `makeCinematicPanel(...).box` 와 대조한다.
+ */
+export const PANEL_EDGE_PAD = 24;
+export const PANEL_TITLE_BAND_H = 52;
+export const PANEL_CONTENT_GAP = 16;
+const TITLED_BOX_Y = PANEL_TITLE_BAND_H + PANEL_CONTENT_GAP;
+
 const MODAL_W = 1560;
 const MODAL_H = 940;
+const MODAL_X = Math.round((DESIGN_WIDTH - MODAL_W) / 2);
+const MODAL_Y = Math.round((DESIGN_HEIGHT - MODAL_H) / 2);
+
 /**
- * 헤더 밴드 = 제목 줄(makeModal 이 `box.y` 에 그린다) + 그 **아래** 슬롯 카운터/버튼 줄.
- *
- * 예전에는 [확정]/[전체 해제] 를 `box.y + 34` 에 두고 오른쪽 끝(`box.right`)에 붙였는데,
- * `makeModal` 의 닫기 아이콘도 같은 자리(`box.right - 44`, `box.y - 4`, 한 변 44)에 있어
- * **버튼이 X 를 덮었다**(사용자 신고 2026-07-28 스크린샷). 이제 버튼 줄을 닫기 아이콘 아래
- * ({@link modalBodyTop} = `box.y + MODAL_TITLE_BAND`)로 내려 세로로 분리한다 — 가로로만
- * 피하면 창 폭이 줄었을 때 다시 겹친다.
+ * 암막 알파. 뒤(성계 지도)는 석재 패널 셋이 화면을 거의 덮어 **밝다** — 나무 판이 쓰던 0.78 로는
+ * 행성 목록과 전장 창이 그대로 비쳐 팝업이 떠 있는지 안 읽힌다(형제 화면 셋과 같은 값).
  */
+const SCRIM_ALPHA = 0.99;
+
+/** 콘텐츠 상자(패널 로컬) — 위 복제 기하에서 파생. */
+const BOX = {
+  x: PANEL_EDGE_PAD,
+  y: TITLED_BOX_Y,
+  w: MODAL_W - PANEL_EDGE_PAD * 2,
+  h: MODAL_H - TITLED_BOX_Y - PANEL_EDGE_PAD,
+  right: MODAL_W - PANEL_EDGE_PAD,
+  bottom: MODAL_H - PANEL_EDGE_PAD,
+} as const;
+
+/** 닫기 ✕ — **각인 제목 띠 안** 오른쪽. 제목은 왼쪽 정렬이라 세로로 겹치지 않는다. */
+const CLOSE_SIZE = 44;
+const CLOSE_X = MODAL_W - PANEL_EDGE_PAD - CLOSE_SIZE;
+const CLOSE_Y = 4;
+
+/** 헤더 둘째 줄: 슬롯 카운터(좌) + [전체 해제]/[확정](우). */
 const BTN_ROW_H = 52;
+const BTN_ROW_GAP = 16;
+const CONFIRM_W = 200;
+const CLEAR_W = 180;
+const BTN_GAP = 16;
+
 /**
- * 버튼 줄이 제목 밴드 아래로 더 내려앉는 여유(px). 닫기 아이콘은 `box.y - 4` 에서 시작해
- * `box.y + 40` 에 끝나고 `MODAL_TITLE_BAND` 는 44 라 맞닿기 직전(4px)이다 — 폰트 폴백으로
- * 아이콘이 조금만 커져도 다시 붙으므로 눈에 보이는 간격을 명시적으로 준다.
+ * 하단 **전체 효과 요약** 챔버 — 지금 주입된 조합이 실제로 만드는 배율.
+ *
+ * ⚠️ 168 이었을 때 페널티 축이 다섯이면 마지막 `외 N개` 줄이 **챔버 바닥을 뚫고** 잘렸다
+ * (실화면 1차 확인 2026-08-03). 축은 최대 6종까지 몰릴 수 있으므로 세로를 줄 수에서 역산한다 —
+ * {@link summaryRowCapacity} 가 그 산술이고 테스트가 하한을 잠근다.
  */
-const BTN_ROW_GAP = 10;
-const HEADER_H = MODAL_TITLE_BAND + BTN_ROW_GAP + BTN_ROW_H + 12;
-/**
- * 하단 **전체 효과 요약** 밴드. 예전 `DETAIL_H`(hover 한 촉매 한 장의 설명)를 대체한다 —
- * 8장을 주입해도 그 조합의 실제 배율은 화면 어디에도 없었다(사용자 요청 2026-07-28).
- */
-const SUMMARY_H = 168;
+const SUMMARY_H = 216;
+const SUMMARY_PAD = 16;
+/** 요약 줄 간격·머리글 아래 여백(용량 산정이 여기서 파생된다). */
+const SUMMARY_STEP = 24;
+const SUMMARY_ROWS_Y = 48;
+/** 열 머리글(페널티/보상)이 먹는 세로 — 첫 줄은 그 아래에서 시작한다. */
+const SUMMARY_HEAD_H = 26;
+
 const COLS = 6;
 /** 셀 높이 = 아이콘/이름/종류 + **설명 3줄** + 보유 카운터 + 버튼 줄. */
 const CELL_H = 196;
 const CELL_GAP = 12;
+
 const BADGE = 0x8affc0;
 /** 페널티 열 색(적색 계열) · 보상 열 색(청록 계열). 요약 2열의 의미를 색으로도 가른다. */
 const PENALTY_COLOR = 0xff9a8a;
 const REWARD_COLOR = 0x8affc0;
+/** 석재 슬래브 위 **보조 텍스트색**(정제소 `SLAB_BODY_FILL` 복제 — 그 파일은 화면이다). */
+const SLAB_BODY_FILL = 0xe4dac7;
+/** 셀 판 바탕색·홈·반경 — 예비역 로스터 `rowPlate` → … → 성계 지도 경유 복제. */
+const ROW_FACE = 0x3b3327;
+const ROW_GROOVE = 0x17130d;
+const ROW_RADIUS = 10;
 
 /** 보상축 → 셀 토큰 글리프(아이콘 PNG 부재 시 텍스트 폴백). ASCII 유지(캔버스 두부 방지). */
 const AXIS_GLYPH: Record<string, string> = {
@@ -106,6 +181,224 @@ const AXIS_GLYPH: Record<string, string> = {
   power: 'P',
 };
 
+/** 화면/패널 좌표 사각형. */
+export interface PickerRect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/**
+ * 이 팝업의 레이아웃 전량 — **Pixi 없이 검증되는 순수 서술**이다.
+ *
+ * 왜 내보내는가: 옛 구현에서 [확정] 버튼이 닫기 ✕ 를 **덮은** 결함이 실제로 났다(사용자 신고
+ * 2026-07-28 스크린샷). 좌표를 순수 값으로 꺼내 두면 그 유형이 단위 테스트에서 잡힌다.
+ *
+ * ⚠️ **인자를 받지 않는 것 자체가 계약**이다 — 주입 수·행성으로 기하가 갈리면 안 된다.
+ */
+export function catalystPickerLayout(): {
+  readonly screen: PickerRect;
+  /** 팝업 사각형(화면 좌표). */
+  readonly modal: PickerRect;
+  /** 콘텐츠 상자(패널 로컬). */
+  readonly box: PickerRect & { readonly right: number; readonly bottom: number };
+  /** 제목 띠 안 닫기 ✕(패널 로컬). */
+  readonly close: PickerRect;
+  /** 헤더 둘째 줄 버튼들(패널 로컬, 왼쪽→오른쪽). */
+  readonly headerButtons: readonly { readonly id: string; readonly rect: PickerRect }[];
+  /** 그리드 스크롤 창(패널 로컬). */
+  readonly grid: PickerRect & { readonly cols: number; readonly cellW: number; readonly cellH: number };
+  /** 하단 요약 챔버(패널 로컬). */
+  readonly summary: PickerRect;
+} {
+  const btnY = BOX.y;
+  const confirmX = BOX.right - CONFIRM_W;
+  const clearX = confirmX - BTN_GAP - CLEAR_W;
+  const gridY = BOX.y + BTN_ROW_H + BTN_ROW_GAP;
+  const summaryY = BOX.bottom - SUMMARY_H;
+  return {
+    screen: { x: 0, y: 0, w: DESIGN_WIDTH, h: DESIGN_HEIGHT },
+    modal: { x: MODAL_X, y: MODAL_Y, w: MODAL_W, h: MODAL_H },
+    box: { ...BOX },
+    close: { x: CLOSE_X, y: CLOSE_Y, w: CLOSE_SIZE, h: CLOSE_SIZE },
+    headerButtons: [
+      { id: 'clear', rect: { x: clearX, y: btnY, w: CLEAR_W, h: BTN_ROW_H } },
+      { id: 'confirm', rect: { x: confirmX, y: btnY, w: CONFIRM_W, h: BTN_ROW_H } },
+    ],
+    grid: {
+      x: BOX.x,
+      y: gridY,
+      w: BOX.w,
+      // 요약 챔버와의 틈은 여백 어휘 하나(16)뿐이다 — 남는 자리를 그리드가 전부 쓴다.
+      h: summaryY - BTN_ROW_GAP - gridY,
+      cols: COLS,
+      cellW: Math.floor((BOX.w - CELL_GAP * (COLS - 1)) / COLS),
+      cellH: CELL_H,
+    },
+    summary: { x: BOX.x, y: summaryY, w: BOX.w, h: SUMMARY_H },
+  };
+}
+
+/**
+ * 요약 한 열이 챔버 안에 그릴 수 있는 **줄 자리 수**.
+ *
+ * ⚠️ `외 N개` 도 한 줄을 먹는다 — 그걸 안 세면 넘칠 때 그 줄이 챔버 바닥을 뚫는다(실제로 뚫었다).
+ * 그래서 호출부는 `rows.length > capacity` 일 때 **capacity−1 줄만 그리고 마지막 자리를 `외 N개`
+ * 에 내준다**. 머리글 아래 26px 은 그 열의 제목이 쓰는 자리다.
+ */
+export function summaryRowCapacity(): number {
+  return Math.max(1, Math.floor((SUMMARY_H - SUMMARY_ROWS_Y - SUMMARY_HEAD_H - SUMMARY_PAD) / SUMMARY_STEP));
+}
+
+/**
+ * 줄 `total` 개 중 **실제로 그릴 줄 수**. 넘치면 마지막 자리를 `외 N개` 에 내준다.
+ *
+ * ⚠️ 순수 함수로 뺀 이유: 이 산술을 `Math.min(total, capacity)` 로 되돌리는 뮤테이션이 **살아
+ * 돌아왔다**(2026-08-03). 좌표만 보는 단언은 용량이 그대로라 안 깨지고, 뚫리는 것은 `외 N개`
+ * 줄 하나뿐이라 눈으로만 잡힌다 — 그래서 값 자체를 테스트가 본다.
+ */
+export function summaryShownRows(total: number): number {
+  const capacity = summaryRowCapacity();
+  return total <= capacity ? total : Math.max(1, capacity - 1);
+}
+
+/** 요약 챔버 세로 산술의 재료(테스트가 "마지막 줄이 바닥을 안 뚫는다"를 되짚는다). */
+export const SUMMARY_METRICS = {
+  h: SUMMARY_H,
+  pad: SUMMARY_PAD,
+  rowsY: SUMMARY_ROWS_Y,
+  headH: SUMMARY_HEAD_H,
+  step: SUMMARY_STEP,
+} as const;
+
+// --- 셀 판 조명 램프(모듈 1회 굽기) ------------------------------------------
+
+/**
+ * 셀 판의 **방향성 조명**을 위한 세로 알파 램프.
+ *
+ * ⚠️ 띠를 겹쳐 그라디언트를 근사하지 않는다 — 1px 겹침이 알파를 두 배로 만들어 가로줄이 생긴다
+ * (실제 사용자 신고). 폭 1px 캔버스에 픽셀로 굽고 `linear` 로 늘린다.
+ */
+let rowRampTex: Texture | null | undefined;
+
+function rowRamp(): Texture | null {
+  if (rowRampTex !== undefined) return rowRampTex;
+  // ⚠️ 이 가드는 **캔버스를 굽는 함수에만** 붙인다.
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
+    rowRampTex = null;
+    return null;
+  }
+  try {
+    const n = 64;
+    const cv = document.createElement('canvas');
+    cv.width = 1;
+    cv.height = n;
+    const ctx = cv.getContext('2d');
+    if (ctx === null) {
+      rowRampTex = null;
+      return null;
+    }
+    const img = ctx.createImageData(1, n);
+    for (let i = 0; i < n; i++) {
+      const u = 1 - i / (n - 1);
+      const a = Math.round(255 * u * u);
+      img.data[i * 4] = 255;
+      img.data[i * 4 + 1] = 255;
+      img.data[i * 4 + 2] = 255;
+      img.data[i * 4 + 3] = a;
+    }
+    ctx.putImageData(img, 0, 0);
+    rowRampTex = Texture.from(cv);
+    return rowRampTex;
+  } catch {
+    rowRampTex = null;
+    return null;
+  }
+}
+
+/**
+ * 셀 한 장의 바탕 — 2단 접지 그림자 + 석재 면 + 방향성 램프 + 안쪽 어두운 홈.
+ * **선은 긋지 않는다.** 셀 사이 구분은 이 그림자와 간격이 만든다. 주입은 금색 링이 말한다.
+ * (성계 지도 `rowPlate` 복제 — 그 파일은 공용 모듈이 아니라 화면이다.)
+ */
+function cellPlate(w: number, h: number, injected: boolean, signature: boolean): Container {
+  const root = new Container();
+
+  const diffuse = new Graphics();
+  diffuse.roundRect(-3, 6, w + 6, h, ROW_RADIUS + 3).fill({ color: 0x000000, alpha: 0.22 });
+  root.addChild(diffuse);
+  const contact = new Graphics();
+  contact.roundRect(1, 3, w - 2, h, ROW_RADIUS).fill({ color: 0x000000, alpha: 0.3 });
+  root.addChild(contact);
+
+  const face = new Graphics();
+  face.roundRect(0, 0, w, h, ROW_RADIUS).fill({ color: ROW_FACE });
+  root.addChild(face);
+
+  const ramp = rowRamp();
+  if (ramp !== null) {
+    const clip = new Container();
+    const mask = new Graphics();
+    mask.roundRect(0, 0, w, h, ROW_RADIUS).fill({ color: 0xffffff });
+    clip.addChild(mask);
+    clip.mask = mask;
+
+    const lit = new Sprite(ramp);
+    lit.width = w;
+    lit.height = h;
+    lit.alpha = 0.11;
+    clip.addChild(lit);
+
+    const shade = new Sprite(ramp);
+    shade.width = w;
+    shade.height = h;
+    shade.tint = 0x000000;
+    shade.alpha = 0.3;
+    shade.scale.y = -Math.abs(shade.scale.y);
+    shade.y = h;
+    clip.addChild(shade);
+
+    root.addChild(clip);
+  }
+
+  const groove = new Graphics();
+  groove
+    .roundRect(0, 0, w, h, ROW_RADIUS)
+    .stroke({ color: ROW_GROOVE, width: 2, alignment: 1, alpha: 0.85 });
+  root.addChild(groove);
+
+  // 주입 = 금색 링. 특산(미주입)은 은은한 놋빛 링으로 "이건 다른 종류"만 말한다 — 두 표식의
+  // 밝기 차가 커야 "고른 것"과 "종류가 다른 것"이 안 섞인다.
+  if (injected) root.addChild(ring(w, h, COLOR.gold, 3, 0.95));
+  else if (signature) root.addChild(ring(w, h, 0x8a7440, 2, 0.7));
+  return root;
+}
+
+/** 표식 링 하나. 히트 테스트에서 빠져야 아래 버튼 클릭을 삼키지 않는다. */
+function ring(w: number, h: number, color: number, width: number, alpha: number): Graphics {
+  const g = new Graphics();
+  g.roundRect(0, 0, w, h, ROW_RADIUS).stroke({ color, width, alignment: 1, alpha });
+  g.eventMode = 'none';
+  return g;
+}
+
+/**
+ * **파낸 면** 한 장(하단 요약 챔버). 볼록한 {@link cellPlate} 와 조명 부호가 정확히 반대다:
+ * 위가 그늘이고 **아래 입술만** 빛을 받는다.
+ * (정제소 `recessedWell` → … → 성계 지도 경유 복제 — 그 파일들은 화면이지 공용 모듈이 아니다.)
+ */
+function recessedWell(x: number, y: number, w: number, h: number): Graphics {
+  const g = new Graphics();
+  g.roundRect(x, y, w, h, 12)
+    .fill({ color: 0x14100a, alpha: 0.82 })
+    .stroke({ color: 0x0a0705, width: 2, alignment: 1, alpha: 0.9 });
+  g.moveTo(x + 14, y + h - 1.5)
+    .lineTo(x + w - 14, y + h - 1.5)
+    .stroke({ color: 0x6a5a3e, width: 1.5, alpha: 0.45 });
+  return g;
+}
+
 export class CatalystPicker {
   private readonly stage: Container;
   private readonly root = new Container();
@@ -114,15 +407,24 @@ export class CatalystPicker {
   /** 편집 중인 주입 배열(중복=스택). 확정 시 onConfirm 으로 돌려준다. */
   private working: number[] = [];
   private scrollY = 0;
+  /** 열려 있는 동안의 석재 패널(연출 진행 대상 — 닫을 때 반드시 파괴한다). */
+  private panel: CinematicPanel | null = null;
+  private chromeBuilt = false;
+  private gridHost: Container | null = null;
+  private summaryHost: Container | null = null;
+  private slotsNode: Text | null = null;
 
   constructor(stage: Container) {
     this.stage = stage;
     this.root.visible = false;
     this.root.eventMode = 'static';
     this.stage.addChild(this.root);
+    // 촉매 아이콘은 아직 나무 UI 킷 아틀라스에 들어 있다 — 크롬은 전부 절차적 석재로 바뀌었지만
+    // 아이콘 48종은 실제로 쓰이므로 킷을 계속 읽는다.
     void loadUiTextures().then((tex) => {
       this.ui = tex;
-      if (this.root.visible) this.render();
+      // 아이콘 아틀라스가 도착하면 셀만 다시 그린다 — 석재 패널은 굽는 비용이 커서 손대지 않는다.
+      if (this.root.visible) this.refresh();
     });
   }
 
@@ -134,14 +436,29 @@ export class CatalystPicker {
     this.opts = opts;
     this.working = [...opts.injected];
     this.scrollY = 0;
-    this.render();
+    this.buildChrome();
+    this.refresh();
     this.root.visible = true;
     this.raise();
   }
 
+  /**
+   * 닫으면 크롬을 **통째로 버린다.**
+   *
+   * ⚠️ 형제 화면들은 크롬을 남겨 두지만 여기는 팝업이다: 1560×940 석재 패널은 굽는 비용이
+   * 크고(텍스처 여러 장) 닫혀 있는 동안 아무도 안 본다. 게다가 이 팝업은 성계 지도 밖에서도
+   * `hide()` 가 불릴 수 있어(화면 전환) 남겨 두면 죽은 참조를 매 프레임 미는 자리가 된다.
+   */
   hide(): void {
     this.root.visible = false;
     this.opts = null;
+    this.destroyChrome();
+  }
+
+  /** 석재 패널 연출 진행. 성계 지도가 자기 `update` 에서 흘려 준다 — 닫혀 있으면 즉시 반환. */
+  update(dt: number): void {
+    if (!this.root.visible) return;
+    this.panel?.update(dt);
   }
 
   private raise(): void {
@@ -173,20 +490,20 @@ export class CatalystPicker {
     const def = catalystById(id);
     if (def === undefined || !this.canInject(def)) return;
     this.working.push(id);
-    this.render();
+    this.refresh();
   }
 
   private remove(id: number): void {
     const i = this.working.lastIndexOf(id);
     if (i < 0) return;
     this.working.splice(i, 1);
-    this.render();
+    this.refresh();
   }
 
   private clearAll(): void {
     if (this.working.length === 0) return;
     this.working = [];
-    this.render();
+    this.refresh();
   }
 
   private confirm(): void {
@@ -196,30 +513,103 @@ export class CatalystPicker {
     cb?.(ids);
   }
 
-  // --- 렌더 ----------------------------------------------------------------
+  // --- 공용 렌더 조각 -------------------------------------------------------
 
-  private render(): void {
+  /** 시네마틱 버튼 — 기존 `PixiButton` 에 석재 텍스처만 주입한다(로직은 그대로). */
+  private chromeButton(o: {
+    tone: ChromeTone;
+    width: number;
+    height: number;
+    fontSize: number;
+    label: string;
+    onClick: () => void;
+  }): PixiButton {
+    return new PixiButton({
+      // ⚠️ 텍스처는 128×64 로 구워져 있다 — `cap: 32` 여야 모서리가 안 뭉개진다.
+      texture: cinematicButtonTexture(o.tone),
+      cap: 32,
+      fallbackColor: chromeFallbackColor(o.tone),
+      labelColor: chromeLabelColor(o.tone),
+      width: o.width,
+      height: o.height,
+      fontSize: o.fontSize,
+      label: stripEmoji(o.label),
+      onClick: o.onClick,
+    });
+  }
+
+  // --- 크롬(1회 조립) -------------------------------------------------------
+
+  private destroyChrome(): void {
+    this.panel?.destroy();
+    this.panel = null;
+    this.gridHost = null;
+    this.summaryHost = null;
+    this.slotsNode = null;
     for (const child of [...this.root.children]) {
       this.root.removeChild(child);
       child.destroy({ children: true });
     }
-    const opts = this.opts;
-    if (opts === null) return;
+    this.chromeBuilt = false;
+  }
 
-    const parts = makeModal({
+  private clearHost(host: Container): void {
+    for (const child of [...host.children]) {
+      host.removeChild(child);
+      child.destroy({ children: true });
+    }
+  }
+
+  /**
+   * 암막 · 석재 패널 · 닫기 · 헤더 버튼 줄 · 요약 챔버 바탕은 **한 번만** 세운다.
+   *
+   * ⚠️ 옛 구현은 `render()` 가 루트를 통째로 지우고 다시 그렸다. 나무 nine-slice 일 때는 값이
+   * 쌌지만 시네마틱 패널은 텍스처를 **굽는다** — 그대로 두면 [주입] 한 번 누를 때마다
+   * 1560×940 석재를 다시 굽는다(48종을 훑으며 수십 번 누르는 화면이다).
+   */
+  private buildChrome(): void {
+    if (this.chromeBuilt) return;
+
+    // ② 암막 — 뒤로 포인터/휠이 새지 않게 막고, 바깥을 누르면 닫는다(전환 전 거동 그대로).
+    const scrim = new Graphics();
+    scrim.rect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT).fill({ color: 0x05060f, alpha: SCRIM_ALPHA });
+    scrim.eventMode = 'static';
+    scrim.on('pointertap', () => this.hide());
+    this.root.addChild(scrim);
+
+    const panel = makeCinematicPanel({
       width: MODAL_W,
       height: MODAL_H,
+      variant: 'slab',
       title: t('catalyst.picker.title'),
-      onClose: () => this.hide(), // 취소 — 편집 폐기(확정만 반영).
-      panelTexture: this.ui['ui_panel.png'],
-      closeTexture: this.ui['ui_icon_close.png'],
+      screenX: MODAL_X,
+      screenY: MODAL_Y,
+      lightOrigin: { x: DESIGN_WIDTH / 2, y: 60 },
     });
-    this.root.addChild(parts.root);
-    const box = parts.box;
+    panel.container.position.set(MODAL_X, MODAL_Y);
+    // ③ 팝업 안쪽 클릭이 암막으로 새어 창이 닫히는 것을 막는다.
+    panel.container.eventMode = 'static';
+    panel.container.on('pointertap', (e: FederatedPointerEvent) => e.stopPropagation());
+    this.root.addChild(panel.container);
+    this.panel = panel;
 
-    // 헤더 둘째 줄: 슬롯 카운터(좌) + [전체 해제]/[확정](우). **제목 밴드 아래**라 닫기 X 와
-    // 세로로 겹치지 않는다(위 HEADER_H 주석 — 사용자 신고 2026-07-28).
-    const btnY = modalBodyTop(box) + BTN_ROW_GAP;
+    const host = panel.container;
+    const layout = catalystPickerLayout();
+
+    // 닫기 ✕ — 각인 제목 띠 안 오른쪽. 옛 구현에서는 [확정] 이 이 자리를 **덮었다**(사용자
+    // 신고 2026-07-28) — 이제 버튼 줄이 제목 띠 **아래**라 세로로 분리돼 있다(테스트가 잠근다).
+    const close = this.chromeButton({
+      tone: 'stone',
+      width: CLOSE_SIZE,
+      height: CLOSE_SIZE,
+      fontSize: 20,
+      label: '✕',
+      onClick: () => this.hide(),
+    });
+    close.container.position.set(layout.close.x, layout.close.y);
+    host.addChild(close.container);
+
+    // 헤더 둘째 줄: 슬롯 카운터(좌) + [전체 해제]/[확정](우).
     const slots = new Text({
       resolution: 2,
       text: t('catalyst.picker.slots', { n: this.working.length, cap: SLOT_CAP }),
@@ -227,49 +617,85 @@ export class CatalystPicker {
         fontFamily: UI_FONT,
         fontSize: 22,
         fontWeight: '800',
-        fill: this.working.length >= SLOT_CAP ? COLOR.gold : COLOR.cream,
+        fill: this.working.length >= SLOT_CAP ? COLOR.gold : SLAB_BODY_FILL,
         dropShadow: TEXT_SHADOW,
       },
     });
-    slots.position.set(box.x, btnY + (BTN_ROW_H - 26) / 2);
-    parts.panel.addChild(slots);
+    slots.anchor.set(0, 0.5);
+    slots.position.set(BOX.x, BOX.y + BTN_ROW_H / 2);
+    host.addChild(slots);
+    this.slotsNode = slots;
 
-    const confirm = new PixiButton({
-      texture: this.ui['ui_btn_yellow.png'],
-      fallbackColor: 0x9a7a2a,
-      width: 200,
-      height: BTN_ROW_H,
-      fontSize: 22,
-      labelColor: COLOR.darkLabel,
-      label: t('catalyst.picker.confirm'),
-      onClick: () => this.confirm(),
-    });
-    confirm.container.position.set(box.right - 200, btnY);
-    parts.panel.addChild(confirm.container);
+    for (const b of layout.headerButtons) {
+      const btn =
+        b.id === 'confirm'
+          ? this.chromeButton({
+              tone: 'gold',
+              width: b.rect.w,
+              height: b.rect.h,
+              fontSize: 22,
+              label: t('catalyst.picker.confirm'),
+              onClick: () => this.confirm(),
+            })
+          : this.chromeButton({
+              tone: 'stone',
+              width: b.rect.w,
+              height: b.rect.h,
+              fontSize: 20,
+              label: t('catalyst.picker.clear'),
+              onClick: () => this.clearAll(),
+            });
+      btn.container.position.set(b.rect.x, b.rect.y);
+      host.addChild(btn.container);
+    }
 
-    const clear = new PixiButton({
-      texture: this.ui['ui_btn_wood.png'],
-      fallbackColor: 0x4a3a24,
-      width: 180,
-      height: BTN_ROW_H,
-      fontSize: 20,
-      label: t('catalyst.picker.clear'),
-      onClick: () => this.clearAll(),
-    });
-    clear.container.position.set(box.right - 200 - 16 - 180, btnY);
-    parts.panel.addChild(clear.container);
+    const gridHost = new Container();
+    host.addChild(gridHost);
+    this.gridHost = gridHost;
+    const summaryHost = new Container();
+    host.addChild(summaryHost);
+    this.summaryHost = summaryHost;
+    // 요약 챔버 **바탕**은 상태와 무관하므로 크롬이다(안 그리면 갱신마다 파낸 면을 다시 그린다).
+    host.addChild(recessedWell(layout.summary.x, layout.summary.y, layout.summary.w, layout.summary.h));
+    host.setChildIndex(summaryHost, host.children.length - 1);
 
-    // 그리드 스크롤 영역.
-    const gridTop = box.y + HEADER_H + 8;
-    const gridAvail = box.bottom - gridTop - SUMMARY_H;
-    const cellW = Math.floor((box.w - CELL_GAP * (COLS - 1)) / COLS);
+    this.chromeBuilt = true;
+  }
+
+  // --- 갱신 -----------------------------------------------------------------
+
+  /** 슬롯 수·셀·요약만 갈아끼운다. 암막·석재 패널·버튼 줄은 다시 굽지 않는다. */
+  private refresh(): void {
+    if (!this.chromeBuilt) return;
+    if (this.slotsNode !== null) {
+      this.slotsNode.text = t('catalyst.picker.slots', { n: this.working.length, cap: SLOT_CAP });
+      this.slotsNode.style.fill = this.working.length >= SLOT_CAP ? COLOR.gold : SLAB_BODY_FILL;
+    }
+    this.renderGrid();
+    const sh = this.summaryHost;
+    if (sh !== null) {
+      this.clearHost(sh);
+      this.renderSummary(sh, catalystPickerLayout().summary);
+    }
+  }
+
+  /**
+   * 촉매 48종 그리드. ⚠️ 마스크를 행 경계로 자르지 않는다 — 상자 높이를 그대로 쓰면 마지막
+   * 행이 반쯤 걸쳐 "아래에 더 있다"를 말한다.
+   */
+  private renderGrid(): void {
+    const host = this.gridHost;
+    if (host === null) return;
+    this.clearHost(host);
+    const layout = catalystPickerLayout();
+    const g = layout.grid;
     const rows = Math.ceil(CATALYSTS.length / COLS);
     const totalH = rows * (CELL_H + CELL_GAP) - CELL_GAP;
-    const content = makeScrollArea(parts.panel, {
-      x: box.x,
-      y: gridTop,
-      w: box.w,
-      h: gridAvail,
+    const content = makeScrollArea(host, {
+      x: g.x,
+      y: g.y,
+      w: g.w,
+      h: g.h,
       totalH,
       get: () => this.scrollY,
       set: (v) => {
@@ -281,33 +707,32 @@ export class CatalystPicker {
     CATALYSTS.forEach((def, i) => {
       const col = i % COLS;
       const row = Math.floor(i / COLS);
-      const cell = this.makeCell(def, cellW);
-      cell.position.set(col * (cellW + CELL_GAP), row * (CELL_H + CELL_GAP));
+      const cell = this.makeCell(def, g.cellW);
+      cell.position.set(col * (g.cellW + CELL_GAP), row * (CELL_H + CELL_GAP));
       content.addChild(cell);
     });
-
-    this.renderSummary(parts.panel, box);
   }
 
   /**
    * 하단 **전체 효과 요약** — 지금 주입된 조합이 실제로 만드는 배율을 페널티/보상 2열로 접는다.
    *
-   * 예전 이 자리에는 hover 한 촉매 **한 장**의 설명만 떴다(스크린샷의 "탐욕 / 페널티: … 보상: …").
-   * 그 문구는 이제 각 셀 안으로 옮겼고(`makeCell`), 여기서는 조합 전체만 말한다 — 8장을 넣어도
-   * 총합을 알 수 없던 것이 이 화면의 실제 결함이었다.
+   * 예전 이 자리에는 hover 한 촉매 **한 장**의 설명만 떴다. 그 문구는 각 셀 안으로 옮겼고
+   * (`makeCell`), 여기서는 조합 전체만 말한다 — 8장을 넣어도 총합을 알 수 없던 것이 이 화면의
+   * 실제 결함이었다.
+   *
+   * 전환에서 바뀐 것은 **바탕뿐**이다: 나무 구분선 한 줄 → 파낸 챔버. 선은 "여기서 잘린다"만
+   * 말했지만 챔버는 그 자리가 **다른 종류의 정보**라는 것까지 말한다.
    *
    * 수치는 전부 `catalystSummary` → `catalystPenaltyMult`/`RewardMult`/`PowerMult` 를 거치므로
    * **sim 에 곱해지는 값과 1:1** 이다(표시용 별도 산식 없음).
    */
-  private renderSummary(panel: Container, box: PanelContentBox): void {
-    const top = box.bottom - SUMMARY_H + 8;
+  private renderSummary(host: Container, rect: PickerRect): void {
+    // ⚠️ 파낸 면(챔버 바탕)은 **크롬**이라 여기서 그리지 않는다 — 여기서 또 그리면 주입 한 번에
+    // 파낸 면이 한 장씩 쌓인다(host 를 비우긴 하지만 바탕이 갱신 대상이 될 이유가 없다).
     const sum = catalystSummary(this.working);
 
-    // 구분선 — 그리드는 이 자리에서 마스크로 잘리므로, 선이 없으면 마지막 행이 요약을 뚫고
-    // 나온 것처럼 보인다(스크롤 클립이 의도라는 신호).
-    const rule = new Graphics();
-    rule.rect(box.x, top - 10, box.w, 2).fill({ color: 0x4a3a24, alpha: 0.9 });
-    panel.addChild(rule);
+    const innerX = rect.x + SUMMARY_PAD;
+    const top = rect.y + 14;
 
     const title = new Text({
       resolution: 2,
@@ -316,12 +741,12 @@ export class CatalystPicker {
         fontFamily: UI_FONT,
         fontSize: 20,
         fontWeight: '800',
-        fill: COLOR.cream,
+        fill: COLOR.gold,
         dropShadow: TEXT_SHADOW,
       },
     });
-    title.position.set(box.x, top);
-    panel.addChild(title);
+    title.position.set(innerX, top);
+    host.addChild(title);
 
     const meta = new Text({
       resolution: 2,
@@ -329,27 +754,28 @@ export class CatalystPicker {
         sum.count > 0
           ? t('catalyst.summary.injected', { n: sum.count, kinds: sum.kinds })
           : t('catalyst.summary.none'),
-      style: { fontFamily: UI_FONT, fontSize: 17, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+      style: { fontFamily: UI_FONT, fontSize: 17, fill: SLAB_BODY_FILL, dropShadow: TEXT_SHADOW },
     });
-    meta.anchor.set(0, 0);
-    meta.position.set(box.x + title.width + 18, top + 3);
-    panel.addChild(meta);
+    meta.position.set(innerX + title.width + 18, top + 3);
+    host.addChild(meta);
 
-    // 2열: 왼쪽 페널티 · 오른쪽 보상. 열 폭은 콘텐츠 상자를 정확히 반으로 나눈다.
-    const colW = Math.floor((box.w - 24) / 2);
+    // 2열: 왼쪽 페널티 · 오른쪽 보상. 열 폭은 챔버 안쪽을 정확히 반으로 나눈다.
+    const innerW = rect.w - SUMMARY_PAD * 2;
+    const colW = Math.floor((innerW - 24) / 2);
+    const rowsY = rect.y + SUMMARY_ROWS_Y;
     this.renderEffectColumn(
-      panel,
-      box.x,
-      top + 34,
+      host,
+      innerX,
+      rowsY,
       colW,
       t('catalyst.summary.penalty'),
       PENALTY_COLOR,
       sum.penalties.map(penaltyRow),
     );
     this.renderEffectColumn(
-      panel,
-      box.x + colW + 24,
-      top + 34,
+      host,
+      innerX + colW + 24,
+      rowsY,
       colW,
       t('catalyst.summary.reward'),
       REWARD_COLOR,
@@ -365,7 +791,7 @@ export class CatalystPicker {
    * 조용히 잘리면 "적은 것"과 "안 보이는 것"이 구별되지 않는다.
    */
   private renderEffectColumn(
-    panel: Container,
+    host: Container,
     x: number,
     y: number,
     w: number,
@@ -379,11 +805,10 @@ export class CatalystPicker {
       style: { fontFamily: UI_FONT, fontSize: 17, fontWeight: '800', fill: color, dropShadow: TEXT_SHADOW },
     });
     head.position.set(x, y);
-    panel.addChild(head);
+    host.addChild(head);
 
-    const step = 24;
-    const capacity = Math.max(1, Math.floor((SUMMARY_H - 8 - 34 - 26 - 4) / step));
-    const shown = Math.min(rows.length, capacity);
+    // 넘치면 마지막 한 자리를 `외 N개` 에 내준다 — 안 그러면 그 줄이 챔버 바닥을 뚫는다.
+    const shown = summaryShownRows(rows.length);
     const hidden = rows.length - shown;
 
     if (rows.length === 0) {
@@ -392,8 +817,8 @@ export class CatalystPicker {
         text: t('catalyst.summary.emptyCol'),
         style: { fontFamily: UI_FONT, fontSize: 17, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
       });
-      none.position.set(x, y + 26);
-      panel.addChild(none);
+      none.position.set(x, y + SUMMARY_HEAD_H);
+      host.addChild(none);
       return;
     }
 
@@ -403,10 +828,10 @@ export class CatalystPicker {
       const label = new Text({
         resolution: 2,
         text: row.label,
-        style: { fontFamily: UI_FONT, fontSize: 17, fill: COLOR.cream, dropShadow: TEXT_SHADOW },
+        style: { fontFamily: UI_FONT, fontSize: 17, fill: SLAB_BODY_FILL, dropShadow: TEXT_SHADOW },
       });
-      label.position.set(x, y + 26 + i * step);
-      panel.addChild(label);
+      label.position.set(x, y + SUMMARY_HEAD_H + i * SUMMARY_STEP);
+      host.addChild(label);
 
       const value = new Text({
         resolution: 2,
@@ -414,8 +839,8 @@ export class CatalystPicker {
         style: { fontFamily: UI_FONT, fontSize: 17, fontWeight: '800', fill: color, dropShadow: TEXT_SHADOW },
       });
       value.anchor.set(1, 0);
-      value.position.set(x + w, y + 26 + i * step);
-      panel.addChild(value);
+      value.position.set(x + w, y + SUMMARY_HEAD_H + i * SUMMARY_STEP);
+      host.addChild(value);
     }
 
     if (hidden > 0) {
@@ -424,8 +849,8 @@ export class CatalystPicker {
         text: t('result.drops.more', { n: hidden }),
         style: { fontFamily: UI_FONT, fontSize: 15, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
       });
-      more.position.set(x, y + 26 + shown * step);
-      panel.addChild(more);
+      more.position.set(x, y + SUMMARY_HEAD_H + shown * SUMMARY_STEP);
+      host.addChild(more);
     }
   }
 
@@ -434,13 +859,7 @@ export class CatalystPicker {
     const injected = this.injectedCountOf(def.id);
     const owned = this.ownedOf(def.id);
     const locked = this.locked(def);
-    const accent = injected > 0 ? COLOR.gold : def.kind === 'signature' ? 0x6a5a30 : undefined;
-    cell.addChild(
-      listRowBg(w, CELL_H, {
-        fillAlpha: 1,
-        ...(injected > 0 ? { selected: true } : accent !== undefined ? { accent } : {}),
-      }),
-    );
+    cell.addChild(cellPlate(w, CELL_H, injected > 0, def.kind === 'signature'));
 
     // 아이콘: 개별 아트 → 보상축 폴백 → 축 토큰 글리프 순(아트가 코드보다 늦게 와도 안 죽는다).
     const iconTex = this.ui[`${catalystIconKey(def)}.png`] ?? this.ui[`${catalystIconFallbackKey(def)}.png`];
@@ -457,13 +876,13 @@ export class CatalystPicker {
       const token = new Graphics();
       token
         .roundRect(iconX, iconY, iconSize, iconSize, 8)
-        .fill({ color: def.kind === 'signature' ? 0x3a2f18 : 0x2a2440 })
-        .stroke({ color: accent ?? COLOR.muted, width: 2, alignment: 1 });
+        .fill({ color: def.kind === 'signature' ? 0x3a2f18 : 0x241f18 })
+        .stroke({ color: injected > 0 ? COLOR.gold : 0x6a5a3e, width: 2, alignment: 1 });
       cell.addChild(token);
       const glyph = new Text({
         resolution: 2,
         text: AXIS_GLYPH[def.reward.axis] ?? '?',
-        style: { fontFamily: UI_FONT, fontSize: 24, fontWeight: '800', fill: COLOR.cream },
+        style: { fontFamily: UI_FONT, fontSize: 24, fontWeight: '800', fill: SLAB_BODY_FILL },
       });
       glyph.anchor.set(0.5);
       glyph.position.set(iconX + iconSize / 2, iconY + iconSize / 2);
@@ -532,7 +951,7 @@ export class CatalystPicker {
     if (locked) {
       // 특산 잠금: 딤 + 사유(출신 행성 전용).
       const dim = new Graphics();
-      dim.roundRect(0, 0, w, CELL_H, 10).fill({ color: 0x0b0814, alpha: 0.62 });
+      dim.roundRect(0, 0, w, CELL_H, ROW_RADIUS).fill({ color: 0x0b0814, alpha: 0.62 });
       cell.addChild(dim);
       const reason = new Text({
         resolution: 2,
@@ -554,12 +973,12 @@ export class CatalystPicker {
       reason.position.set(w / 2, CELL_H - 24);
       cell.addChild(reason);
     } else {
-      // 주입/해제 버튼 행(하단).
+      // 주입/해제 버튼 행(하단). ⚠️ 둘 다 어두운 톤이라 `setEnabled(false)`(alpha 0.4)에서도
+      // 크림 라벨이 읽힌다 — 여기에 `gold` 를 쓰면 비활성 셀의 글자가 통째로 사라진다.
       const btnW = Math.floor((w - 14 * 2 - 10) / 2);
       const btnY = CELL_H - 44;
-      const plus = new PixiButton({
-        texture: this.ui['ui_btn_wood.png'],
-        fallbackColor: 0x3a5a3a,
+      const plus = this.chromeButton({
+        tone: 'blue',
         width: btnW,
         height: 34,
         fontSize: 16,
@@ -570,9 +989,8 @@ export class CatalystPicker {
       if (!this.canInject(def)) plus.setEnabled(false);
       cell.addChild(plus.container);
 
-      const minus = new PixiButton({
-        texture: this.ui['ui_btn_wood.png'],
-        fallbackColor: 0x5a3a3a,
+      const minus = this.chromeButton({
+        tone: 'red',
         width: btnW,
         height: 34,
         fontSize: 16,
