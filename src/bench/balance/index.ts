@@ -14,9 +14,20 @@ export {
   fullCellCount,
   levelAxis,
   planetAxis,
+  powerupAxis,
   resolveAxes,
   shipAxis,
 } from './axes.js';
+
+export type { PowerupLine, PowerupPolicy } from './powerupPolicy.js';
+export {
+  POWERUP_LINES,
+  POWERUP_POLICIES,
+  POWERUP_POLICY_BASELINE,
+  POWERUP_POLICY_MINIMAL,
+  choosePowerupOffer,
+  powerupPolicy,
+} from './powerupPolicy.js';
 
 export type { MetricDef, MetricKind, MetricTarget, RunTrace } from './metrics.js';
 export { METRIC_KEYS, RUN_METRICS, gatedMetricKeys } from './metrics.js';

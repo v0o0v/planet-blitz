@@ -16,10 +16,15 @@
  * 으로 두고 그 사실을 리포트 메타에 싣는다 — 절반만 발동되는 상태로 재면 "액티브가 약하다"는
  * 거짓 결론이 나오기 때문이다. 봇에 액티브 발동이 들어오면 이 파일은 고칠 것이 없고
  * `defaultProfile()` 대신 표준 액티브 세트를 꽂는 한 줄만 추가하면 된다.
+ *
+ * ## 파워업 선택 축 (2026-08-03 신설)
+ * 오토파일럿은 항상 오퍼 0번을 고르므로 파워업 조합의 강약이 갈리지 않았다. `cell.powerup` 을
+ * 주면 이 파일의 {@link pickOverride} 가 픽 프레임만 갈아 끼운다 — sim(`autopilot.ts`)은 한 줄도
+ * 바뀌지 않는다. 정책 카탈로그와 그 축의 자인은 `powerupPolicy.ts` 헤더에 있다.
  */
 
-import { createWorld, stepWorld, hazardActive } from '../../sim/world.js';
-import type { WorldState } from '../../sim/world.js';
+import { createWorld, stepWorld, hazardActive, packPowerupPick } from '../../sim/world.js';
+import type { InputFrame, WorldState } from '../../sim/world.js';
 import type { Entity } from '../../sim/entities.js';
 import { PLANET_MODE } from '../../sim/planetMode.js';
 import { RACING_REAR_PRESSURE_MARGIN } from '../../sim/modes/racing.js';
@@ -35,6 +40,7 @@ import {
 } from '../standardBuild.js';
 import type { BalanceCell } from './axes.js';
 import { extractMetrics, newTrace, type RunTrace } from './metrics.js';
+import { choosePowerupOffer } from './powerupPolicy.js';
 
 /**
  * 런 틱 상한. 저장소 표준 18,000틱(=300초)이다. 게임 자체에는 타임아웃이 없고(보스 처치
@@ -173,6 +179,22 @@ function attributeHpLoss(state: WorldState, player: Entity, lost: number, t: Run
 }
 
 /**
+ * 레벨업 프리즈 중이면 **정책이 고른 오퍼 인덱스**로 픽 프레임을 갈아 끼운다.
+ *
+ * 정책이 미지정이면 입력 프레임을 **그 객체 그대로** 돌려준다 — 새 객체를 만들지도 않으므로
+ * 표준 격자의 런은 이 함수가 없던 때와 구조적으로 동일하다. 프리즈가 아닐 때도 마찬가지다
+ * (그 틱의 `special` 은 오토파일럿이 이미 `SPECIAL_NONE` 으로 낸다).
+ */
+function pickOverride(
+  state: WorldState,
+  input: InputFrame,
+  policy: number | undefined,
+): InputFrame {
+  if (policy === undefined || !state.pendingLevelUp) return input;
+  return { ...input, special: packPowerupPick(choosePowerupOffer(state, policy)) };
+}
+
+/**
  * 표준 장비 롤에 쓸 시드. **런 시드에 기체를 섞는다.**
  *
  * ## 왜 필요한가 — 한 레벨의 장비 표본이 7배 부풀려져 있었다 (2026-08-02 실측)
@@ -218,15 +240,22 @@ export function runCellSeed(cell: BalanceCell, seed: number): CellRunResult {
 
   const config = buildRunConfig(profile, {
     planet: cell.planet,
-    stage: standardStage(cell.level),
+    // 단계는 기본적으로 레벨에서 파생된다(`ceil(Lv/5)`). `cell.stage` 는 그 둘을 떼어 놓아야만
+    // 답할 수 있는 질문(트윙크 스톰프)을 위한 override 이고, 표준 격자는 항상 undefined 다.
+    stage: cell.stage ?? standardStage(cell.level),
   });
 
   const state = createWorld(seed, config);
   const trace = newTrace();
+  const policy = cell.powerup;
 
   let prevHp = state.entities[0]?.hp ?? 0;
   for (let i = 0; i < MAX_TICKS; i++) {
-    stepWorld(state, autopilotInput(state));
+    // 파워업 픽 오버라이드는 **여기**에 있지 `autopilot.ts` 에 있지 않다. 오토파일럿은 sim 계층
+    // 이고 그 파일을 건드리면 골든 해시 계약이 걸린다 — 반면 여기서 프레임을 갈아 끼우면
+    // 정책 미지정 런은 `autopilotInput(state)` 결과가 **그대로** 들어가 바이트 동일이 구조적으로
+    // 보장된다(`tests/balanceHarness.test.ts` 의 교환 대조가 이를 못 박는다).
+    stepWorld(state, pickOverride(state, autopilotInput(state), policy));
     const player = state.entities[0];
     if (player !== undefined) {
       if (player.hp < prevHp) attributeHpLoss(state, player, prevHp - player.hp, trace);

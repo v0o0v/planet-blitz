@@ -6,7 +6,7 @@
  */
 
 import type { BalanceCell } from './axes.js';
-import { cellKey, planetAxis, shipAxis } from './axes.js';
+import { cellKey, planetAxis, powerupAxis, shipAxis } from './axes.js';
 import { METRIC_KEYS, RUN_METRICS, gatedMetricKeys, type FoldAxis } from './metrics.js';
 
 export type { FoldAxis };
@@ -16,6 +16,10 @@ export interface RunRecord {
   readonly planet: number;
   readonly ship: number;
   readonly level: number;
+  /** 침략 단계 override(선택 축). 표준 격자의 런에는 없다. */
+  readonly stage?: number;
+  /** 파워업 정책 id(선택 축). 표준 격자의 런에는 없다. */
+  readonly powerup?: number;
   readonly seed: number;
   readonly won: boolean;
   readonly ticks: number;
@@ -116,11 +120,14 @@ export function cellStats(runs: readonly RunRecord[]): CellStat[] {
   for (const [key, rs] of by) {
     const first = rs[0];
     if (first === undefined) continue;
-    out.push({
-      key,
-      cell: { planet: first.planet, ship: first.ship, level: first.level },
-      ...statsOf(rs),
-    });
+    const cell: BalanceCell = {
+      planet: first.planet,
+      ship: first.ship,
+      level: first.level,
+      ...(first.stage === undefined ? {} : { stage: first.stage }),
+      ...(first.powerup === undefined ? {} : { powerup: first.powerup }),
+    };
+    out.push({ key, cell, ...statsOf(rs) });
   }
   return out;
 }
@@ -139,6 +146,10 @@ export function foldBy(runs: readonly RunRecord[], axis: FoldAxis): FoldPoint[] 
   const by = new Map<number, RunRecord[]>();
   for (const r of runs) {
     const v = r[axis];
+    // 선택 축(`powerup`·`stage`)은 값이 없는 런이 섞일 수 있다. 그런 런은 그 축의 점이 아니라
+    // **축 밖**이므로 버린다 — `undefined` 를 한 버킷으로 묶으면 "미지정"이 축의 한 점처럼 표에
+    // 실려 대조가 성립하지 않는다.
+    if (v === undefined) continue;
     const bucket = by.get(v);
     if (bucket === undefined) by.set(v, [r]);
     else bucket.push(r);
@@ -176,7 +187,7 @@ export interface GateResult {
 /** 게이트 위반 지점의 사람이 읽는 이름. 축 값(숫자)만으로는 어느 행성·기체인지 알 수 없다. */
 function axisPointLabel(axis: FoldAxis, value: number): string {
   if (axis === 'level') return `Lv${value}`;
-  const src = axis === 'planet' ? planetAxis() : shipAxis();
+  const src = axis === 'planet' ? planetAxis() : axis === 'ship' ? shipAxis() : powerupAxis();
   return src.find((a) => a.value === value)?.label ?? `${axis}${value}`;
 }
 

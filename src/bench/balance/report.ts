@@ -5,7 +5,7 @@
  * 자동으로 열이 생긴다.
  */
 
-import { planetAxis, shipAxis, type ResolvedAxes } from './axes.js';
+import { planetAxis, powerupAxis, shipAxis, type ResolvedAxes } from './axes.js';
 import {
   cellStats,
   evaluateGates,
@@ -167,6 +167,30 @@ export function renderReport(runs: readonly RunRecord[], meta: ReportMeta): stri
     L.push(metricRow(shipLabels.get(p.value) ?? `기체${p.value}`, runs.filter((r) => r.ship === p.value)));
   }
   L.push('');
+
+  // 파워업 정책 축 — **명시했을 때만** 존재한다(`--powerups=`). 표준 격자 리포트는 이 절이
+  // 통째로 없으므로 기존 산출물과 바이트 동일하다.
+  if (runs.some((r) => r.powerup !== undefined)) {
+    const pwLabels = new Map(powerupAxis().map((a) => [a.value, a.label]));
+    L.push('## 파워업 정책 축');
+    L.push('');
+    const pws = spreadOf(runs, 'powerup');
+    L.push(
+      `- 클리어율 폭 **${(pws.spread * 100).toFixed(1)}pp** (sd ${(pws.sd * 100).toFixed(1)}pp) · ` +
+        `최저 ${pwLabels.get(pws.lowest.value) ?? pws.lowest.value}=${(pws.lowest.observed * 100).toFixed(1)}% · ` +
+        `최고 ${pwLabels.get(pws.highest.value) ?? pws.highest.value}=${(pws.highest.observed * 100).toFixed(1)}%`,
+    );
+    L.push('');
+    L.push('오퍼 추첨은 런 시작 config 만 읽으므로 정책이 달라도 **같은 시드는 같은 오퍼 스트림**을 본다(짝지어진 대조).');
+    L.push('');
+    L.push(...metricHeader());
+    for (const p of foldBy(runs, 'powerup')) {
+      L.push(
+        metricRow(pwLabels.get(p.value) ?? `정책${p.value}`, runs.filter((r) => r.powerup === p.value)),
+      );
+    }
+    L.push('');
+  }
 
   // 극단 셀 — 곡선·편차 표가 평균으로 가려버리는 지점을 드러낸다.
   const cells = cellStats(runs).filter((c) => (c.metrics['clearRate']?.n ?? 0) > 0);
