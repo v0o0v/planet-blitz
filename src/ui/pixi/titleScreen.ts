@@ -46,6 +46,7 @@ import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { loadTitleTextures, type TitleTextures } from './titleTextures.js';
 import { verticalScrimTexture } from './scrim.js';
 import { PixiButton } from './button.js';
+import { GoogleSignInButton } from './googleSignInButton.js';
 import { stripEmoji } from './text.js';
 
 export interface TitleShowOpts {
@@ -548,33 +549,35 @@ export class TitleScreen {
     // 부제(`title.tag`)와 첫 실행 안내(`title.note`)는 **의도적으로 그리지 않는다**(사용자 지시,
     // 2026-08-02). 키아트 위에 떠 있는 설명 문구가 시네마틱 인상을 깎기 때문이다. 두 문자열은
     // 카탈로그에 그대로 남아 있어(기록 보관소·후속 화면이 쓸 수 있다) i18n 커버리지도 온전하다.
-    // 미로그인이면 같은 자리에서 라벨과 동작만 갈린다. **로그인 쪽은 `hide()` 를 부르지
-    // 않는다** — 리다이렉트가 시작되면 페이지가 통째로 떠나므로 화면을 정리할 필요가 없고,
-    // 리다이렉트가 시작되지 못했을 때(오프라인 등) 타이틀이 그대로 남아 있어야 안내 문구를
-    // 보여줄 수 있기 때문이다.
-    const label = opts.needsSignIn
-      ? t('title.signInGoogle')
-      : opts.firstRun
-        ? t('title.startTutorial')
-        : t('title.enterBase');
-    const start = new PixiButton({
-      texture: this.ui['ui_btn_yellow.png'],
-      width: START_W,
-      height: START_H,
-      label: stripEmoji(label),
-      fontSize: 32,
-      labelColor: COLOR.darkLabel,
-      onClick: () => {
-        if (opts.needsSignIn) {
-          opts.onSignIn();
-          return;
-        }
-        this.hide();
-        opts.onStart();
-      },
-    });
-    start.container.position.set((DESIGN_WIDTH - START_W) / 2, START_Y);
-    this.root.addChild(start.container);
+    // 미로그인이면 **같은 자리**에 Google 공식 버튼이 선다. 게임 나무 버튼으로 흉내 내지
+    // 않는 이유는 `googleSignInButton.ts` 헤더 참고(브랜딩 가이드라인 + 익숙한 모양이어야
+    // 누른다). 로그인 쪽은 `hide()` 를 부르지 않는다 — 리다이렉트가 시작되면 페이지가 통째로
+    // 떠나므로 정리할 필요가 없고, 시작조차 못 했을 때는 타이틀이 남아 있어야 안내를 띄운다.
+    if (opts.needsSignIn) {
+      const google = new GoogleSignInButton({
+        width: START_W,
+        height: START_H,
+        label: t('title.signInGoogle'),
+        onClick: () => opts.onSignIn(),
+      });
+      google.container.position.set((DESIGN_WIDTH - START_W) / 2, START_Y);
+      this.root.addChild(google.container);
+    } else {
+      const start = new PixiButton({
+        texture: this.ui['ui_btn_yellow.png'],
+        width: START_W,
+        height: START_H,
+        label: stripEmoji(opts.firstRun ? t('title.startTutorial') : t('title.enterBase')),
+        fontSize: 32,
+        labelColor: COLOR.darkLabel,
+        onClick: () => {
+          this.hide();
+          opts.onStart();
+        },
+      });
+      start.container.position.set((DESIGN_WIDTH - START_W) / 2, START_Y);
+      this.root.addChild(start.container);
+    }
 
     // 로그인 실패 안내. 버튼 바로 아래, 스크림이 가장 짙은 구간이라 흰 글자가 읽힌다.
     if (opts.notice !== undefined && opts.notice.length > 0) {

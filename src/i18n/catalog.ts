@@ -413,7 +413,8 @@ export const EN = {
   'title.startTutorial': '▶ Start Tutorial',
   'title.enterBase': '▶ Enter Base',
   'title.note': 'Learn the basics in homeworld orbit (about 3–4 min).',
-  'title.signInGoogle': 'Continue with Google',
+  // Google 브랜딩 가이드라인이 규정한 문구. 임의로 바꾸지 마라(공식 번역만 허용된다).
+  'title.signInGoogle': 'Sign in with Google',
   'title.signInFailed': 'Sign-in could not start. Check your connection and try again.',
   'title.loading': 'Loading your commander file…',
 
@@ -2261,7 +2262,8 @@ export const KO: Record<MessageKey, string> = {
   'title.startTutorial': '▶ 튜토리얼 시작',
   'title.enterBase': '▶ 기지로 진입',
   'title.note': '홈월드 궤도에서 기초 조작을 익힙니다 (약 3~4분).',
-  'title.signInGoogle': 'Google 로 계속하기',
+  // Google 공식 한국어 문구. 임의 의역 금지(브랜딩 가이드라인).
+  'title.signInGoogle': 'Google 계정으로 로그인',
   'title.signInFailed': '로그인을 시작하지 못했습니다. 연결을 확인하고 다시 시도하세요.',
   'title.loading': '지휘관 기록을 불러오는 중…',
 

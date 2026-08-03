@@ -25,6 +25,7 @@ import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { nineSlicePanel, panelContent } from './nineSlicePanel.js';
 import { makeScrollArea } from './scrollArea.js';
+import { GoogleSignInButton } from './googleSignInButton.js';
 import { PixiButton } from './button.js';
 import { stripEmoji } from './text.js';
 import { graphicsSettings, type Quality } from '../../render/graphicsSettings.js';
@@ -546,28 +547,38 @@ export class SettingsScreen {
       content.addChild(whoLabel);
       y += 36;
 
-      const action = new PixiButton({
-        texture: account.signedIn ? this.ui['ui_btn_wood.png'] : this.ui['ui_btn_yellow.png'],
-        width: CW,
-        height: BTN_H,
-        label: stripEmoji(account.signedIn ? t('settings.signOut') : t('title.signInGoogle')),
-        fontSize: 20,
-        ...(account.signedIn ? {} : { labelColor: COLOR.darkLabel }),
-        onClick: () => {
-          if (account.signedIn) {
+      if (account.signedIn) {
+        const signOut = new PixiButton({
+          texture: this.ui['ui_btn_wood.png'],
+          width: CW,
+          height: BTN_H,
+          label: stripEmoji(t('settings.signOut')),
+          fontSize: 20,
+          onClick: () => {
             // 로그아웃은 곧 새로고침이므로 팝업이 남아 있을 이유가 없다.
             this.setOpen(false);
             account.onSignOut();
-            return;
-          }
-          // 로그인은 **닫지 않는다** — 성공하면 어차피 페이지가 떠나고, 실패하면 여기에
-          // 안내를 띄워야 하는데 닫아 버리면 아무 일도 안 일어난 것처럼 보인다.
-          this.setAccountNotice(null);
-          account.onSignIn();
-        },
-      });
-      action.container.position.set(0, y);
-      content.addChild(action.container);
+          },
+        });
+        signOut.container.position.set(0, y);
+        content.addChild(signOut.container);
+      } else {
+        // 타이틀과 **같은 공식 버튼**을 쓴다. 한 제품 안에서 로그인 버튼이 두 모양이면
+        // 어느 쪽이 진짜인지 알 수 없고, 게임 나무 버튼은 브랜딩 가이드라인 위반이다.
+        const google = new GoogleSignInButton({
+          width: CW,
+          height: BTN_H,
+          label: t('title.signInGoogle'),
+          onClick: () => {
+            // 로그인은 **닫지 않는다** — 성공하면 어차피 페이지가 떠나고, 실패하면 여기에
+            // 안내를 띄워야 하는데 닫아 버리면 아무 일도 안 일어난 것처럼 보인다.
+            this.setAccountNotice(null);
+            account.onSignIn();
+          },
+        });
+        google.container.position.set(0, y);
+        content.addChild(google.container);
+      }
       y += BTN_H + 26;
 
       if (this.accountNotice !== null) {
