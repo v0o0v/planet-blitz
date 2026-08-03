@@ -2,8 +2,8 @@
  * 의뢰서(Commission) 게이트웨이 — 서버 축 클라 배선(서버 계약 rev3 §5·§7).
  *
  * `gateway.ts`(RPC 위주 — `SupabaseGateway`)와 `invasionGateway.ts`(RPC + EF invoke 위주 —
- * `SupabaseInvasionGateway`)의 문법을 그대로 따른다. 이 파일만 `@supabase/supabase-js` 를
- * 정적 import 한다.
+ * `SupabaseInvasionGateway`)의 문법을 그대로 따른다. SDK 는 `supabaseClient.ts` 가 유일하게
+ * 정적 import 하고 이 파일은 그것을 경유한다.
  *
  * ⚠️ **`commission_runs` 기저 테이블을 직접 읽지 마라.** 반드시 `commission_runs_public` 뷰를
  * 경유한다 — 기저는 `loadout_sealed`·`replay_gz` 컬럼 GRANT 가 회수돼 있어(계약 §3-5 rev3
@@ -11,7 +11,8 @@
  * SupabaseCommissionGateway.fetchCommissionRuns} 가 그 규율을 강제한다.
  */
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from './supabaseClient.js';
 import type { SupabaseConfig } from './config.js';
 import type { CommissionPayload } from '../run/commission.js';
 
@@ -226,9 +227,7 @@ export class SupabaseCommissionGateway implements CommissionGateway {
   private readonly client: SupabaseClient;
 
   constructor(config: SupabaseConfig) {
-    this.client = createClient(config.url, config.anonKey, {
-      auth: { persistSession: true, autoRefreshToken: true },
-    });
+    this.client = getSupabaseClient(config);
   }
 
   async getUserId(): Promise<string> {

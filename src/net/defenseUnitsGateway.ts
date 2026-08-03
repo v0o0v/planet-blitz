@@ -2,9 +2,9 @@
  * 방어체 인벤토리·강화 게이트웨이의 실 Supabase 구현 (M7b 통합 게이트).
  *
  * `defenseUnits.ts` 의 {@link DefenseUnitsGateway} 를 `@supabase/supabase-js` 로 구현한다.
- * 이 파일만 SDK 를 정적 import 하며, 부트스트랩(`main.ts`)이 **설정이 있을 때만** 동적
- * import 해 팩토리를 등록한다 → 미설정 번들·테스트에 SDK 가 실리지 않는다
- * (`modulesGateway.ts`·구 `cardsGateway.ts` 와 동일 패턴). 익명 Auth 세션(ADR-0002) 공유.
+ * SDK 는 `supabaseClient.ts` 가 유일하게 정적 import 하고 이 파일은 그것을 경유한다.
+ * 부트스트랩(`main.ts`)이 **설정이 있을 때만** 동적 import 해 팩토리를 등록하므로 미설정
+ * 번들·테스트에 SDK 가 실리지 않는다. 익명 Auth 세션(ADR-0002) 공유.
  *
  * ## 서버가 권위다
  * 레벨업·승급·리롤·등급 승급·제작은 전부 security definer RPC 가 재화를 차감하고 결과를
@@ -18,7 +18,8 @@
  * 만들지 않는다 — `unit` 필드는 채우지 않는다(선택 필드).
  */
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from './supabaseClient.js';
 import type { SupabaseConfig } from './config.js';
 import type {
   DefenseUnitsGateway,
@@ -69,9 +70,7 @@ export class SupabaseDefenseUnitsGateway implements DefenseUnitsGateway {
   private readonly client: SupabaseClient;
 
   constructor(config: SupabaseConfig) {
-    this.client = createClient(config.url, config.anonKey, {
-      auth: { persistSession: true, autoRefreshToken: true },
-    });
+    this.client = getSupabaseClient(config);
   }
 
   async getUserId(): Promise<string> {
@@ -189,9 +188,7 @@ export async function grantBlueprintsViaRpc(
   config: SupabaseConfig,
   grants: readonly { kind: number; catalogId: number; count: number }[],
 ): Promise<number> {
-  const client = createClient(config.url, config.anonKey, {
-    auth: { persistSession: true, autoRefreshToken: true },
-  });
+  const client = getSupabaseClient(config);
   const { data, error } = await client.rpc('grant_blueprints', {
     p_grants: grants.map((g) => ({ kind: g.kind, catalogId: g.catalogId, count: g.count })),
   });
