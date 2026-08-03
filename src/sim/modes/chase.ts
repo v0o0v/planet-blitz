@@ -31,7 +31,7 @@ import { spawnBoss, spawnDestructible, spawnShelter } from '../entities.js';
 import type { WorldState } from '../world.js';
 import { PLANET_MODE, type PlanetMode } from '../planetMode.js';
 import { planetContent } from '../../../data/planets/index.js';
-import { SEGMENTS, stageHpMult } from '../../../data/waves.js';
+import { SEGMENTS, stageHpMult, objectiveLowStageRelief } from '../../../data/waves.js';
 import { cos, sin, atan2, clamp, TWO_PI } from '../math.js';
 import { DT } from '../constants.js';
 
@@ -146,7 +146,8 @@ export const CHASE_COUNTER_DEVICE_HP_SLOPE = 0.02;
  */
 export function chaseCounterDeviceHp(stage: number): number {
   const scale = 1 + (stageHpMult(stage) - 1) * CHASE_COUNTER_DEVICE_HP_SLOPE;
-  return Math.round(CHASE_COUNTER_DEVICE_HP_BASE * scale);
+  // 저단계 완화(`objectiveLowStageRelief`) — 단계 4 이상은 정확히 1 이라 산술 불변이다.
+  return Math.round(CHASE_COUNTER_DEVICE_HP_BASE * scale * objectiveLowStageRelief(stage));
 }
 /** 반격 장치 반경(조준·피격 판정). TODO(밸런스). */
 export const CHASE_COUNTER_DEVICE_RADIUS = 70;

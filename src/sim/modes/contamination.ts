@@ -31,7 +31,7 @@ import type { Entity, EntitySink } from '../entities.js';
 import { spawnDestructible, spawnHazard } from '../entities.js';
 import type { WorldState } from '../world.js';
 import { cos, sin, TWO_PI } from '../math.js';
-import { stageHpMult } from '../../../data/waves.js';
+import { stageHpMult, objectiveLowStageRelief } from '../../../data/waves.js';
 
 // --- 플레이스홀더 계수 (TODO(밸런스): 출시 전 일괄 튜닝, 구조만 고정) ---
 /** 오염 노드 수(= 정화율 분모, createWorld 가 정확히 이만큼 배치). TODO(밸런스). */
@@ -85,7 +85,8 @@ export const CONTAMINATION_NODE_HP_SLOPE = 0.06;
  */
 export function contaminationNodeHp(stage: number): number {
   const scale = 1 + (stageHpMult(stage) - 1) * CONTAMINATION_NODE_HP_SLOPE;
-  return Math.round(CONTAMINATION_NODE_HP_BASE * scale);
+  // 저단계 완화(`objectiveLowStageRelief`) — 단계 4 이상은 정확히 1 이라 산술 불변이다.
+  return Math.round(CONTAMINATION_NODE_HP_BASE * scale * objectiveLowStageRelief(stage));
 }
 /** 오염 노드 반경(조준·피격 판정). TODO(밸런스). */
 export const CONTAMINATION_NODE_RADIUS = 60;
