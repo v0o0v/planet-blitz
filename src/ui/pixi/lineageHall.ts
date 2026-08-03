@@ -41,9 +41,11 @@
 
 import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../../save/profile.js';
-import { investLineageBranch } from '../../save/guardianLifecycle.js';
+import { investLineageOnServer, isLineageOnline, pullLineageState } from '../../net/lineage.js';
+import { applyServerInvest, applyServerLineageState } from '../../net/lineageMirror.js';
 import {
   branchBonusBp,
+  branchInvestedPoints,
   canInvest,
   guardianMilestones,
   hasMilestone,
@@ -348,18 +350,6 @@ export function branchView(
   };
 }
 
-/**
- * 이 가지에 지금까지 **묻은** 포인트(누적 투자 비용). 순수.
- *
- * 비용이 `40 + level×10` 인 등차수열이라 닫힌 식으로 센다: Σ(i=0..L-1) (40+10i) = 40L + 5L(L-1).
- * 리스펙이 없어(ADR-0007 R2) 이 값은 **영영 그 가지에 묶인 매몰 포인트**다 — 되돌릴 수 없는
- * 지출을 다루는 화면이라 얼마를 이미 묻었는지 보여 준다.
- */
-export function investedPoints(level: number): number {
-  const l = level < 0 ? 0 : Math.trunc(level);
-  return 40 * l + 5 * l * (l - 1);
-}
-
 /** 마일스톤 표시 행(수호 가지). 순수 — 요구 레벨·해금 여부는 `data/lineage.ts` 정본에서 유도한다. */
 export function milestoneRows(
   guardianLevel: number,
@@ -419,6 +409,8 @@ export class LineageHallScreen {
   private confirming: LineageBranch | null = null;
   /** 투자 직후 피드백 한 줄. 포인트 패널 바닥에 뜬다. */
   private hint = '';
+  /** 서버 왕복 중 — 버튼을 잠가 같은 투자를 두 번 보내지 않는다(되돌릴 수 없는 지출이다). */
+  private busy = false;
   /** 진입 시점의 런 HUD `visibility`(닫을 때 그대로 되돌린다 — 챔피언 선택 C-4 규약). */
   private hudPrevVisibility: string | null = null;
 
@@ -469,12 +461,16 @@ export class LineageHallScreen {
     this.cb = cb;
     this.hint = '';
     this.confirming = null;
+    this.busy = false;
     this.buildChrome();
     this.sync();
     this.renderModal();
     this.root.visible = true;
     this.raise();
     this.hideRunHud();
+    // 서버 정본 pull 은 화면을 **띄운 뒤** 시작한다 — 왕복을 기다리며 검은 화면을 보여 주지
+    // 않는다. 도착하면 `sync()` 가 값만 갈아끼운다.
+    this.pullFromServer();
   }
 
   hide(): void {
@@ -519,31 +515,61 @@ export class LineageHallScreen {
   // --- 동작 ----------------------------------------------------------------
 
   /**
-   * 투자 확정. 비용·레벨은 **투자 전에** 읽어 둔다(투자가 상태를 갈아 끼우므로 뒤에 읽으면 다음
-   * 레벨 값이 나온다). 성공하면 저장하고 결과 한 줄을 남긴다.
+   * 투자 확정 — **서버가 차감한다**(ADR-0007 서버 권위).
+   *
+   * 클라는 `invest_lineage` RPC 를 부르고 **서버가 돌려준 `{level, points}` 로 미러를 맞춘다**.
+   * 로컬 산식으로 다시 빼지 않는다 — 같은 비용 곡선을 두 번 적용하는 결함이 되고, 애초에 클라가
+   * 계산한 잔액을 서버가 믿는 경로는 존재하지 않는다.
+   *
+   * 실패(오프라인·거부)면 **Profile 을 전혀 건드리지 않는다.** 계보는 리스펙이 없어 낙관적
+   * 반영을 되돌릴 수단이 없으므로, 서버가 확정하기 전에는 로컬도 움직이지 않는 것이 유일하게
+   * 안전한 순서다.
    *
    * `store` 가 null 이면 `?? undefined` 로 기본 store 를 태운다 — `saveProfile` 은 **명시적
    * null 을 "저장하지 마라"로 읽고 즉시 return** 하기 때문이다(격납고/로스터 선례).
-   *
-   * 서버 권위 메모: 계보는 `profiles.lineage_*` 가 정본이고 `invest_lineage` RPC 도 있지만,
-   * 지급 경로(retire_ship·dismiss_guardian RPC)가 아직 미배선이라 서버 잔고는 항상 0 이다 —
-   * 투자만 RPC 로 올리면 포인트 부족으로 **반드시 거부된다**. 그래서 이 화면은 퇴역·소멸과 같은
-   * 로컬 규율을 쓴다. 서버화는 계보 경제 전체를 한 레인으로 배선해야 성립한다.
    */
   private performInvest(branch: LineageBranch): void {
     this.confirming = null;
+    if (this.busy) return;
     const before = branchView(this.profile.lineage, branch);
-    const ok = investLineageBranch(this.profile, branch);
-    if (ok) {
+    this.busy = true;
+    this.hint = t('lineage.busy');
+    this.renderModal();
+    this.sync();
+    void investLineageOnServer(branch).then((res) => {
+      this.busy = false;
+      if (res === null) {
+        // 서버가 확정하지 않았다 = 아무 일도 일어나지 않았다. 잔고·레벨은 그대로다.
+        this.hint = t('lineage.failed');
+        this.sync();
+        return;
+      }
+      applyServerInvest(this.profile, branch, res);
       saveProfile(this.profile, this.store ?? undefined);
       this.hint = t('lineage.invested', {
         name: t(branchNameKey(branch)),
         lv: before.level + 1,
         cost: before.cost,
       });
-    }
-    this.renderModal();
-    this.sync();
+      this.sync();
+    });
+  }
+
+  /**
+   * 서버 정본을 당겨 미러를 맞춘다(진입 시 1회). 계보 포인트는 다른 기기의 퇴역·소멸로도 늘기
+   * 때문에, 이 화면에 들어온 순간의 서버 잔고가 유일하게 옳은 값이다.
+   *
+   * ⚠️ 실패하면 **아무것도 하지 않는다.** 빈 결과로 미러를 덮으면 수호 목록이 통째로 지워진다
+   * (`applyServerLineageState` 헤더). 그래서 파사드가 실패를 `null` 로 낸다.
+   */
+  private pullFromServer(): void {
+    if (!isLineageOnline()) return;
+    void pullLineageState().then((state) => {
+      if (state === null) return;
+      applyServerLineageState(this.profile, state);
+      saveProfile(this.profile, this.store ?? undefined);
+      this.sync();
+    });
   }
 
   // --- 크롬(1회 조립) -------------------------------------------------------
@@ -840,6 +866,8 @@ export class LineageHallScreen {
       label: t('lineage.invest'),
       onClick: () => {
         // 투자는 되돌릴 수 없다 — 여기서는 팝업만 연다. 실행은 팝업의 확정 버튼이다.
+        // 게이트가 두 곳에서 어긋나도 지출만은 막히도록 여기서도 세 조건을 다시 본다.
+        if (!isLineageOnline() || this.busy) return;
         if (!canInvest(this.profile.lineage, branch)) return;
         this.confirming = branch;
         this.renderModal();
@@ -985,6 +1013,7 @@ export class LineageHallScreen {
   /** 크롬의 **값만** 갱신한다(포인트·가지·마일스톤). 배경·패널은 다시 만들지 않는다. */
   private sync(): void {
     const st = this.profile.lineage;
+    const online = isLineageOnline();
 
     if (this.pointsValue !== null) this.pointsValue.text = String(st.available);
     if (this.hintText !== null) {
@@ -997,14 +1026,27 @@ export class LineageHallScreen {
       b.level.text = t('lineage.level', { lv: v.level });
       b.bonus.text = `+${bpPct(v.bonusBp)}%`;
       b.next.text = t('lineage.next', { pct: bpPct(v.nextBonusBp), delta: bpPct(v.deltaBp) });
-      b.sunk.text = t('lineage.sunk', { pt: investedPoints(v.level) });
+      b.sunk.text = t('lineage.sunk', { pt: branchInvestedPoints(v.level) });
       b.cost.text = t('lineage.cost', { cost: v.cost });
       b.cost.style.fill = v.affordable ? COLOR.gold : WARN_FILL;
-      b.button.setEnabled(v.affordable);
-      // 비활성 버튼은 hover 이벤트도 죽으므로(툴팁 불가) 잠긴 이유를 버튼 바로 아래 한 줄로
-      // 남긴다(격납고 `swapNeedMaxLevel` 과 같은 규율).
-      b.short.text = v.affordable ? '' : t('lineage.short', { need: v.shortBy });
-      b.short.visible = !v.affordable;
+      /**
+       * 잠금 사유는 셋이고 **순서가 있다**: 오프라인 → 왕복 중 → 포인트 부족. 오프라인을 먼저
+       * 보는 이유는, 서버가 없으면 잔고 자체가 신뢰할 수 없는 값이라 "N pt 부족"이 거짓 정보가
+       * 되기 때문이다(로컬 미러는 다른 기기의 소멸을 모른다).
+       *
+       * 비활성 버튼은 hover 이벤트도 죽으므로(툴팁 불가) 사유를 버튼 바로 아래 한 줄로 남긴다
+       * (격납고 `swapNeedMaxLevel` 과 같은 규율).
+       */
+      const reason = !online
+        ? t('lineage.offline')
+        : this.busy
+          ? t('lineage.busy')
+          : v.affordable
+            ? ''
+            : t('lineage.short', { need: v.shortBy });
+      b.button.setEnabled(online && !this.busy && v.affordable);
+      b.short.text = reason;
+      b.short.visible = reason !== '';
       this.drawBar(b, v.ratio, v.nextRatio);
     }
 

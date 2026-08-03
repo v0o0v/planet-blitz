@@ -25,6 +25,7 @@ import {
   normalizeGuardianPreset,
   MAX_GUARDIAN_SLOTS,
 } from '../../data/guardian.js';
+import type { GuardianSnapshot } from '../../data/guardian.js';
 import type { GuardianPlacement } from '../sim/invasion/guardian.js';
 import {
   grantPoints,
@@ -130,15 +131,25 @@ export interface RetireResult {
  * 남지 않는다(중간에 거부하면 계보만 받고 기체는 그대로인 상태가 세이브된다).
  * 반환 타입이 nullable 인 것도 의도다 — 호출부가 거부를 무시하면 **컴파일이 막는다**.
  */
-export function retireActiveShip(
+/**
+ * 퇴역이 서버로 보낼 페이로드를 **변형 없이** 계산한다(ADR-0007 서버 권위 배선, 2026-08-03).
+ *
+ * ## 왜 따로 뽑았는가 — 순서가 뒤집히면 되돌릴 수 없다
+ * `retire_ship` RPC 는 수호 행을 만들고 계보를 지급하는 **서버 확정**이고, 실패하면 로컬도
+ * 움직이지 않아야 한다. 그런데 RPC 인자(전투력·스냅샷·빌드)는 **퇴역 전 기체 상태**에서만 나온다
+ * — `retireActiveShip` 이 장착을 비우고 세대를 교체한 뒤에는 같은 값을 다시 만들 수 없다.
+ * 그래서 "계산"과 "변형"을 갈라, 호출부가 [계산 → 서버 확정 → 변형] 순서를 지킬 수 있게 한다.
+ *
+ * 순수하다(제자리 변형 없음). 만렙 게이트에 걸리면 `null` — `retireActiveShip` 과 같은 판정을
+ * 쓰므로 두 곳이 어긋날 수 없다.
+ */
+export function retirementPayload(
   profile: Profile,
   preset: number = GUARDIAN_TITAN,
-  nextTypeId = 0,
-): RetireResult | null {
-  // 게이트는 어떤 변형보다도 먼저(부분 변형 금지 — 위 주석 참조).
+): { preset: number; combatScore: number; snapshot: GuardianSnapshot; build: GuardianBuild } | null {
   if (!canRetireActiveShip(profile)) return null;
   const p = normalizeGuardianPreset(preset);
-  const score = retirementCombatScore(profile);
+  const combatScore = retirementCombatScore(profile);
   // 퇴역 순간의 실물 빌드를 통째로 복사해 잠근다(ADR-0024) — 스냅샷 파생·장착 비우기 전에 캡처.
   // equipped 는 얕은 복사(Item 은 불변 데이터라 참조 공유 안전), skillInvest 는 벡터 복사.
   const ship = activeShip(profile);
@@ -157,7 +168,20 @@ export function retireActiveShip(
     (it): it is Item => it !== undefined,
   );
   const { loadout } = computeLoadoutStats(equippedItems, build.skillInvest, undefined, build.typeId);
-  const snapshot = mapLoadoutToGuardianSnapshot(p, loadout);
+  return { preset: p, combatScore, snapshot: mapLoadoutToGuardianSnapshot(p, loadout), build };
+}
+
+export function retireActiveShip(
+  profile: Profile,
+  preset: number = GUARDIAN_TITAN,
+  nextTypeId = 0,
+): RetireResult | null {
+  // 게이트는 어떤 변형보다도 먼저(부분 변형 금지 — 위 주석 참조).
+  if (!canRetireActiveShip(profile)) return null;
+  const payload = retirementPayload(profile, preset);
+  if (payload === null) return null;
+  const { preset: p, combatScore: score, snapshot, build } = payload;
+  const ship = activeShip(profile);
   const guardian: GuardianRecord = {
     id: makeLocalGuardianId(profile),
     snapshot,

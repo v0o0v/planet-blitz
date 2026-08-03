@@ -18,6 +18,7 @@
 
 import type { Profile } from '../save/profile.js';
 import { migrate } from '../save/profile.js';
+import { derivedSpent } from '../../data/lineage.js';
 import type { PveSettleSummary } from './gateway.js';
 import type { InputFrame, WorldConfig } from '../sim/world.js';
 
@@ -41,6 +42,12 @@ export interface ServerProfile {
    * 구 서버(컬럼 부재)면 undefined.
    */
   catalystResidue?: number;
+  /**
+   * DB 의 `profiles.lineage_*` 컬럼(계보 정본, ADR-0007). 있으면 `deserializeProfile` 이 save
+   * jsonb 의 낡은 계보를 이 값으로 덮는다(재화와 같은 규율). 구 서버(컬럼 부재)면 undefined.
+   * `spent` 는 서버에 컬럼이 없어 레벨에서 파생한다(`derivedSpent`).
+   */
+  lineage?: { available: number; shipLevel: number; guardianLevel: number };
 }
 
 /** 이관 계획: 업로드할지/스킵할지 + 업로드할 프로필. */
@@ -74,7 +81,26 @@ export function deserializeProfile(row: ServerProfile): Profile {
   if (typeof row.minerals === 'number' && Number.isFinite(row.minerals)) {
     profile.minerals = row.minerals;
   }
+  // 계보 서버 권위(ADR-0007). 재화와 같은 규율이되 `spent` 만 다르다 — 서버에 컬럼이 없어
+  // 두 레벨에서 파생한다(로컬의 낡은 spent 를 남기면 기기마다 다른 누적 소비가 표시된다).
+  if (row.lineage !== undefined) {
+    profile.lineage = {
+      available: safeLineageCount(row.lineage.available),
+      shipLevel: safeLineageCount(row.lineage.shipLevel),
+      guardianLevel: safeLineageCount(row.lineage.guardianLevel),
+      spent: derivedSpent(
+        safeLineageCount(row.lineage.shipLevel),
+        safeLineageCount(row.lineage.guardianLevel),
+      ),
+    };
+  }
   return profile;
+}
+
+/** 서버 계보 수치 방어(음수·비유한 → 0). Profile 불변식(음수 없음)을 여기서 지킨다. */
+function safeLineageCount(v: number): number {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return 0;
+  return Math.trunc(v);
 }
 
 // ---------------------------------------------------------------------------

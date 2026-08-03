@@ -56,6 +56,8 @@ import {
   type GuardianRecord,
 } from '../../save/profile.js';
 import { activeGuardians, dismissGuardianRecord } from '../../save/guardianLifecycle.js';
+import { dismissGuardianOnServer, isLineageOnline, pullLineageState } from '../../net/lineage.js';
+import { applyServerLineageState } from '../../net/lineageMirror.js';
 import { dismissPoints, GUARDIAN_INTERCEPTOR } from '../../../data/guardian.js';
 import { shipTypeDef } from '../../../data/ships/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
@@ -406,6 +408,8 @@ export class GuardianRosterScreen {
   private confirming: string | null = null;
   /** 소멸 직후 피드백 한 줄(반환 장비 수·회수 포인트). 상세 패널 바닥에 뜬다. */
   private hint = '';
+  /** 서버 왕복 중 — 같은 수호기를 두 번 소멸 요청하지 않는다(되돌릴 수 없다). */
+  private busy = false;
   /** 상세 패널이 보여 줄 수호기 id. */
   private selectedId: string | null = null;
   /** 진입 시점의 런 HUD `visibility`(닫을 때 그대로 되돌린다 — 챔피언 선택 C-4 규약). */
@@ -475,6 +479,7 @@ export class GuardianRosterScreen {
     this.cb = cb;
     this.hint = '';
     this.confirming = null;
+    this.busy = false;
     this.scrollY = 0;
     this.buildChrome();
     this.ensureSelection();
@@ -484,6 +489,18 @@ export class GuardianRosterScreen {
     this.root.visible = true;
     this.raise();
     this.hideRunHud();
+    // 서버 정본(계보 잔고 + 수호 목록) pull 은 화면을 띄운 뒤 시작한다. 다른 기기에서 소멸한
+    // 수호기가 목록에 남아 있으면 소멸 버튼이 서버에 없는 행을 가리키게 된다.
+    if (isLineageOnline()) {
+      void pullLineageState().then((state) => {
+        if (state === null) return;
+        applyServerLineageState(this.profile, state);
+        saveProfile(this.profile, this.store ?? undefined);
+        this.ensureSelection();
+        this.syncChrome();
+        this.renderList();
+      });
+    }
   }
 
   hide(): void {
@@ -528,8 +545,15 @@ export class GuardianRosterScreen {
   // --- 동작 ----------------------------------------------------------------
 
   /**
-   * 소멸 확정: 잠긴 장비 수를 **소멸 전에** 세어 둔 뒤 {@link dismissGuardianRecord} 로 소멸하고
-   * (장비 stash 반환·계보 포인트 회수는 그 함수가 처리) 저장한다. 목록에서 그 수호기가 사라진다.
+   * 소멸 확정 — **서버가 확정한다**(ADR-0007 서버 권위, 2026-08-03 배선).
+   *
+   * 순서가 중요하다: `dismiss_guardian` RPC 가 **먼저** 성공해야 로컬을 변형한다. 소멸은
+   * 되돌릴 수 없고 계보 포인트는 서버 잔고가 정본이라, 낙관적으로 지운 뒤 서버가 거부하면
+   * 수호기도 장비도 되살릴 방법이 없다.
+   *
+   * 서버가 회수 포인트를 돌려주지만 **잔고는 pull 로 맞춘다** — RPC 반환은 이번 회수분이지
+   * 잔고가 아니다. 로컬 `dismissGuardianRecord` 는 장비 stash 반환과 목록 갱신을 위해 계속
+   * 부르고(그 함수가 로컬 available 도 올리지만) 곧바로 pull 이 서버 정본으로 덮는다.
    *
    * `store` 가 null 이면 `?? undefined` 로 기본 store 를 태운다 — `saveProfile` 은 **명시적
    * null 을 "저장하지 마라"로 읽고 즉시 return** 하기 때문이다(격납고/챔피언 선례).
@@ -537,22 +561,40 @@ export class GuardianRosterScreen {
   private performDismiss(id: string): void {
     const g = this.profile.guardians.find((x) => x.id === id);
     this.confirming = null;
-    if (g === undefined || g.retired) {
+    if (g === undefined || g.retired || this.busy) {
       this.renderModal();
       this.renderList();
       return;
     }
     const gearCount = countLockedGear(g);
-    const res = dismissGuardianRecord(this.profile, id);
-    saveProfile(this.profile, this.store ?? undefined);
-    if (res.dismissed) {
-      this.hint = t('guardians.dismissed', { n: gearCount, points: res.points });
-    }
-    if (this.selectedId === id) this.selectedId = null;
-    this.ensureSelection();
+    this.busy = true;
+    this.hint = t('lineage.busy');
     this.renderModal();
     this.syncChrome();
     this.renderList();
+    void dismissGuardianOnServer(id).then(async (points) => {
+      this.busy = false;
+      if (points === null) {
+        // 서버가 확정하지 않았다 = 아무 일도 없었다. 수호기도 장비도 그대로다.
+        this.hint = t('lineage.failed');
+        this.syncChrome();
+        this.renderList();
+        return;
+      }
+      const res = dismissGuardianRecord(this.profile, id);
+      if (res.dismissed) {
+        this.hint = t('guardians.dismissed', { n: gearCount, points });
+      }
+      if (this.selectedId === id) this.selectedId = null;
+      // 서버 정본으로 계보 잔고·수호 목록을 맞춘다. 실패하면 로컬 반영만 남는데, 그건 서버가
+      // 이미 소멸을 확정한 뒤라 방향이 같다(다음 진입의 pull 이 마저 맞춘다).
+      const state = await pullLineageState();
+      if (state !== null) applyServerLineageState(this.profile, state);
+      saveProfile(this.profile, this.store ?? undefined);
+      this.ensureSelection();
+      this.syncChrome();
+      this.renderList();
+    });
   }
 
   /** 선택이 비었거나 사라졌으면 첫 수호기로 맞춘다 — 상세 패널이 이유 없이 비지 않게. */
@@ -923,8 +965,11 @@ export class GuardianRosterScreen {
   private syncChrome(): void {
     if (this.lineageValue !== null) this.lineageValue.text = String(this.profile.lineage.available);
     if (this.hintText !== null) {
-      this.hintText.text = this.hint;
-      this.hintText.visible = this.hint !== '';
+      // 오프라인 사유는 **행이 아니라 여기** 한 곳에서 말한다 — 행마다 적으면 목록이 경고문으로
+      // 덮인다. 직전 조작 결과가 있으면 그쪽이 우선이다(방금 한 일이 더 급한 정보다).
+      const text = this.hint !== '' ? this.hint : isLineageOnline() ? '' : t('lineage.offline');
+      this.hintText.text = text;
+      this.hintText.visible = text !== '';
     }
     this.syncDetail();
   }
@@ -1128,6 +1173,8 @@ export class GuardianRosterScreen {
       label: t('guardians.dismiss'),
       onClick: () => {
         // 소멸은 되돌릴 수 없다 — 여기서는 팝업만 연다. 실행은 팝업의 확정 버튼이다.
+        // 서버가 확정하는 조작이라 오프라인·왕복 중에는 팝업조차 열지 않는다.
+        if (!isLineageOnline() || this.busy) return;
         this.selectedId = g.id;
         this.confirming = g.id;
         this.syncDetail();
@@ -1138,6 +1185,9 @@ export class GuardianRosterScreen {
     dismiss.container.position.set(rowW - DISMISS_W - ROW_CTRL_PAD, Math.round((ROW_H - DISMISS_H) / 2));
     stopRowPropagation(dismiss.container);
     row.addChild(dismiss.container);
+    // 오프라인이면 서버가 소멸을 확정할 수 없다 — 버튼을 눌리는 채로 두면 아무 반응 없는
+    // 버튼이 된다. 사유는 계보 패널이 한 줄로 말한다(행마다 적으면 목록이 경고문으로 덮인다).
+    if (!isLineageOnline()) dismiss.setEnabled(false);
 
     return row;
   }

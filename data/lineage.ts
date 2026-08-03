@@ -61,6 +61,27 @@ export function nextLevelCost(currentLevel: number): number {
 }
 
 /**
+ * 한 가지에 레벨 L 까지 투자하며 **묻은** 포인트 총액(누적 비용). 결정론 정수.
+ *
+ * 비용이 등차수열이라 닫힌 식으로 센다: Σ(i=0..L-1) (40+10i) = 40L + 5L(L-1). 리스펙이 없어
+ * (R2) 이 값은 영영 그 가지에 묶인 매몰 포인트다.
+ *
+ * ⚠️ 서버에는 `spent` 컬럼이 **없다**(`lineage_points`·`lineage_ship_level`·
+ * `lineage_guardian_level` 셋뿐). 그래서 서버 정본으로 미러를 맞출 때 `spent` 는 두 가지
+ * 레벨에서 **파생**한다({@link derivedSpent}) — 로컬에 남은 낡은 `spent` 를 그대로 들고 있으면
+ * 같은 계정이 기기마다 다른 누적 소비를 표시한다.
+ */
+export function branchInvestedPoints(level: number): number {
+  const l = level < 0 ? 0 : Math.trunc(level);
+  return 40 * l + 5 * l * (l - 1);
+}
+
+/** 두 가지 레벨에서 파생한 누적 소비 포인트(서버 정본에 spent 컬럼이 없다 — 위 주석). */
+export function derivedSpent(shipLevel: number, guardianLevel: number): number {
+  return branchInvestedPoints(shipLevel) + branchInvestedPoints(guardianLevel);
+}
+
+/**
  * 누적 투자 레벨 → 보너스(basis-point, 로그형 점근). CAP × L / (L + K), 결정론 정수(내림 —
  * 상한 근처에서 오버슈트 방지). L=0 → 0, L=K → CAP/2, L→∞ → CAP 에 점근(초과 없음).
  */

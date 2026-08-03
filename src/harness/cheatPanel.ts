@@ -46,6 +46,7 @@ import { EQUIP_SLOTS, RARITY_CODE } from '../items/types.js';
 import { activeShip } from '../save/profile.js';
 import type { Profile } from '../save/profile.js';
 import { retireActiveShip, bulkDismissGuardians, investLineageBranch } from '../save/guardianLifecycle.js';
+import { setLineageGatewayOverride } from '../net/lineage.js';
 import { GUARDIAN_TITAN, GUARDIAN_INTERCEPTOR } from '../../data/guardian.js';
 import {
   branchBonusBp,
@@ -1934,6 +1935,53 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         }, '기체 가지 1레벨 투자'),
       );
       s.appendChild(dismissRow);
+
+      /**
+       * 계보 **서버 모의** 토글 — 계보 조작은 서버가 확정하므로(ADR-0007 배선), Supabase 설정이
+       * 없는 개발 환경에서는 계보 전당·로스터 소멸·기체 교체가 통째로 잠긴다. 이 토글이 모의
+       * 게이트웨이를 끼워 그 화면들을 밟을 수 있게 한다(방어 사령부 모의와 같은 규율).
+       *
+       * ⚠️ 위 [일괄 소멸]·[계보 투자] 버튼은 **로컬 Profile 을 직접 만지는 구 경로**다. 모의
+       * 서버를 켠 상태에서 쓰면 로컬만 앞서 나가고, 화면 진입 시 pull 이 서버 값으로 되돌린다 —
+       * 그 되돌림을 관찰하는 것이 이 조합의 용도다(실사용자에게 일어날 수 있는 상태다).
+       */
+      const mockRow = document.createElement('div');
+      mockRow.className = 'pb-c-row';
+      let lineageMock: import('./lineageMock.js').HarnessLineageGateway | null = null;
+      mockRow.appendChild(
+        btn('계보 서버 모의 ON/OFF', () => {
+          void (async () => {
+            if (lineageMock !== null) {
+              setLineageGatewayOverride(null);
+              lineageMock = null;
+              setHint('계보 서버 모의 OFF — 계보 화면이 오프라인으로 잠긴다');
+              return;
+            }
+            const mod = await import('./lineageMock.js');
+            const gw = new mod.HarnessLineageGateway();
+            // 지금 로컬에 있는 수호기를 모의 서버로 옮겨 심는다 — 안 그러면 pull 이 목록을
+            // 비워 소멸 화면을 밟을 수 없다(pull 은 서버 정본으로 **교체**한다).
+            const p = host.getProfile();
+            gw.seedGuardians(
+              p.guardians
+                .filter((g) => !g.retired)
+                .map((g) => ({
+                  snapshot: g.snapshot,
+                  performanceCP: g.performanceCP,
+                  combatScore: g.combatScore,
+                  preset: g.preset,
+                  ...(g.build !== undefined ? { build: g.build } : {}),
+                })),
+            );
+            gw.grantPoints(p.lineage.available);
+            setLineageGatewayOverride(gw);
+            lineageMock = gw;
+            const st = gw.peek();
+            setHint(`계보 서버 모의 ON — 수호 ${st.guardians}기 · ${st.available}pt 이관`);
+          })();
+        }, '설정 없는 dev 에서 계보 화면을 밟기 위한 인메모리 서버(ADR-0008 하네스 전용)'),
+      );
+      s.appendChild(mockRow);
       s.appendChild(status);
     }
 
