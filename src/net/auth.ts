@@ -6,11 +6,14 @@
  * 자체가 없고 게임은 기존대로 100% 로컬로 돈다. 이 규율 덕에 테스트 19파일·하네스·밸런스
  * 하네스가 이 레인의 영향을 전혀 받지 않는다.
  *
- * ## DEV 는 게이트만 끈다
- * 개발 머신에는 `.env.local` 이 있어 dev 서버는 설정이 non-null 이다. 게이트를 그대로 걸면
- * 하네스를 띄울 때마다 구글 로그인을 해야 하고, 치트 패널로 만든 값이 실계정 데이터를
- * 오염시킨다. 그래서 {@link isLoginRequired} 는 DEV 에서 false 다 — **버튼은 남는다**.
- * 로컬에서 실제 왕복을 시험할 수 있어야 하기 때문이다.
+ * ## 우회는 DEV 전체가 아니라 `?harness=1` 이다
+ * 처음에는 DEV 전체에서 게이트를 껐다. 그런데 타이틀은 버튼이 하나뿐이라, 게이트가 꺼지면
+ * 그 버튼이 "기지로 진입"이 되어 **로그인 버튼이 화면에서 사라진다**(사용자 신고). 로컬에서
+ * 왕복을 시험할 수 없으니 우회의 목적 자체가 무너졌다.
+ *
+ * 그래서 우회를 `?harness=1` 로 좁혔다(`main.ts`). 프로필 I/O 를 격리 슬롯으로 돌리는 그
+ * 스위치가 이미 "지금은 테스트 중"이라는 선언이므로 로그인 우회도 거기 얹는 것이 맞다.
+ * 그냥 `npm run dev` 로 띄우면 **프로덕션과 똑같이** 로그인을 요구한다.
  *
  * ## SDK 는 지연 로딩한다
  * 이 모듈은 `main.ts`·타이틀 화면처럼 **초기 청크에 실리는 곳**에서 import 된다. 그래서
@@ -37,15 +40,6 @@ export type SignInFailure = 'not-configured' | 'no-browser' | 'provider-error';
 /** Supabase 설정이 있는가 = 로그인이라는 개념이 존재하는가. */
 export function isLoginConfigured(): boolean {
   return readSupabaseConfig() !== null;
-}
-
-/**
- * 로그인을 **강제**하는가. 설정이 있고 DEV 가 아닐 때만 true.
- *
- * 이 함수가 false 여도 로그인 자체는 가능하다({@link signInWithGoogle}) — 강제 여부만 가른다.
- */
-export function isLoginRequired(): boolean {
-  return isLoginConfigured() && !import.meta.env.DEV;
 }
 
 /**

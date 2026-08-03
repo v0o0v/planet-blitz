@@ -131,7 +131,6 @@ import {
 // 이 모듈은 SDK 를 함수 안에서 동적 import 하므로 여기서 정적으로 끌어도 초기 청크가 안 는다.
 import {
   isLoginConfigured,
-  isLoginRequired,
   getSignedInUser,
   signInWithGoogle,
   signOut,
@@ -1934,11 +1933,17 @@ async function main(): Promise<void> {
     try {
       const user = await getSignedInUser();
       if (user === null) {
-        // 미로그인. 게이트가 강제면 타이틀 버튼이 로그인이 되고, 아니면(DEV·강등) 그냥
-        // 들여보낸다 — 다만 **설정 '계정' 행에는 로그인 버튼을 둔다**. 게이트가 꺼진 상황에서
-        // 타이틀 버튼은 "기지로 진입"이라, 이게 없으면 로그인할 방법이 아예 사라진다.
         settings.setAccount({ signedIn: false, onSignIn: handleSignIn });
-        if (isLoginRequired()) {
+        // **미로그인이면 타이틀 버튼 자리에 Google 버튼이 선다** — DEV 여부와 무관하다.
+        //
+        // 처음에는 DEV 에서 게이트를 통째로 끄고 그냥 들여보냈는데, 그러면 그 하나뿐인 버튼이
+        // "기지로 진입"이 되어 **로그인 버튼이 화면에서 사라진다**(사용자 신고). 로컬에서 실제
+        // 왕복을 시험할 수 없으니 DEV 우회의 목적 자체가 무너진다.
+        //
+        // 하네스는 `?harness=1` 이라는 **명시적 스위치**로 빠져나간다. 프로필 I/O 를 격리
+        // 슬롯으로 돌리는 그 스위치가 이미 "지금은 테스트 중"이라는 선언이므로, 로그인
+        // 우회도 여기에 얹는 것이 맞다 — DEV 전체를 뚫는 것보다 훨씬 좁다.
+        if (!harnessActive) {
           openTitle(true);
           return;
         }

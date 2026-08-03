@@ -18,7 +18,6 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   isLoginConfigured,
-  isLoginRequired,
   getSignedInUser,
   signInWithGoogle,
   loginRedirectTarget,
@@ -39,9 +38,6 @@ describe('① vitest 환경은 게이트 밖이다', () => {
     expect(isLoginConfigured()).toBe(false);
   });
 
-  it('로그인을 강제하지 않는다', () => {
-    expect(isLoginRequired()).toBe(false);
-  });
 
   it('세션 조회가 SDK 를 건드리지 않고 null 을 준다', async () => {
     await expect(getSignedInUser()).resolves.toBeNull();
@@ -107,12 +103,23 @@ describe('② 익명 폴백이 부활하지 않는다', () => {
 });
 
 describe('③ 게이트·리다이렉트 배선', () => {
-  it('DEV 는 게이트만 끈다 — 로그인 기능 자체는 살아 있다', () => {
-    const src = read('net/auth.ts');
-    // isLoginRequired 만 DEV 를 본다. signInWithGoogle 이 DEV 를 보면 로컬에서 왕복을 못 시험한다.
-    expect(src).toMatch(/isLoginRequired[\s\S]*?import\.meta\.env\.DEV/);
-    const signIn = src.slice(src.indexOf('export async function signInWithGoogle'));
-    expect(signIn).not.toContain('import.meta.env.DEV');
+  /**
+   * 우회는 **DEV 전체가 아니라 `?harness=1`** 이다.
+   *
+   * DEV 전체를 뚫었더니 타이틀 버튼이 "기지로 진입"이 되어 로그인 버튼이 화면에서 사라졌다
+   * (사용자 신고). 그냥 `npm run dev` 로 띄우면 프로덕션과 똑같이 로그인을 요구해야, 로컬에서
+   * 본 것이 실제 배포본과 같다고 말할 수 있다.
+   */
+  it('게이트 우회가 DEV 전체가 아니라 harness 스위치에 걸려 있다', () => {
+    const src = read('main.ts');
+    const boot = src.slice(src.indexOf('async function bootWithAuth'));
+    const branch = boot.slice(boot.indexOf('if (user === null)'), boot.indexOf('reconcileAccountScope'));
+    expect(branch).toContain('!harnessActive');
+    expect(branch).not.toContain('import.meta.env.DEV');
+  });
+
+  it('auth 모듈이 DEV 로 분기하지 않는다(로컬과 배포본이 같은 경로를 돈다)', () => {
+    expect(read('net/auth.ts')).not.toContain('import.meta.env.DEV');
   });
 
   it('리다이렉트 목적지가 BASE_URL 을 포함한다(Pages 서브패스)', () => {
@@ -148,6 +155,58 @@ describe('④ 로그아웃 순서', () => {
     // 익명이 사라진 뒤 부팅 즉시 부르면 전부 throw → 조용한 no-op 이 되고 아무도 다시 안 부른다.
     expect(boot).toContain('migrateLocalProfileToServer(profile)');
     expect(boot).toContain('flushPendingCommissionSubmissions()');
+  });
+});
+
+describe('⑥ Google 버튼은 공식 규격이다', () => {
+  const src = () => read('ui/pixi/googleSignInButton.ts');
+
+  it('공식 문구를 쓴다(임의 의역 금지)', async () => {
+    const { CATALOG } = await import('../src/i18n/catalog.js');
+    expect(CATALOG.en['title.signInGoogle']).toBe('Sign in with Google');
+    expect(CATALOG.ko['title.signInGoogle']).toBe('Google 계정으로 로그인');
+  });
+
+  it('라이트 테마 공식 색을 쓴다', () => {
+    expect(src()).toContain('0xffffff'); // 배경
+    expect(src()).toContain('0x747775'); // 테두리
+    expect(src()).toContain('0x1f1f1f'); // 글자
+  });
+
+  it('4색 로고를 단색화하지 않는다', () => {
+    for (const c of ['#4285F4', '#34A853', '#FBBC05', '#EA4335']) {
+      expect(src(), `공식 로고 색 ${c} 가 없다`).toContain(c);
+    }
+  });
+
+  it('게임 폰트를 쓰지 않는다 — Roboto 계열이다', () => {
+    // 주석에는 "UI_FONT 를 쓰지 않는다"는 설명이 남아야 하므로 **import 줄만** 본다.
+    // (`[\s\S]*?` 로 이으면 import 줄에서 시작해 주석까지 건너뛰어 매치된다 — 실제로 밟았다.)
+    const imports = src()
+      .split('\n')
+      .filter((l) => l.startsWith('import'))
+      .join('\n');
+    expect(imports).not.toContain('UI_FONT');
+    expect(src()).toContain("'Roboto'");
+  });
+
+  it('치수를 눈대중으로 고르지 않고 높이 40 규격에서 스케일한다', () => {
+    // 개별 값을 손으로 적으면 비율이 어긋나 "공식 버튼처럼 생긴 다른 것"이 된다.
+    expect(src()).toMatch(/const k = h \/ SPEC\.height/);
+    for (const key of ['logo', 'fontSize', 'padX', 'gap', 'radius', 'border']) {
+      expect(src(), `SPEC.${key} 누락`).toContain(`${key}:`);
+    }
+  });
+
+  it('캔버스를 CanvasSource 로 감싼다(베이스 TextureSource 는 조용히 빈 텍스처가 된다)', () => {
+    expect(src()).toContain('new CanvasSource({ resource: canvas })');
+    expect(src()).not.toMatch(/new TextureSource\(/);
+  });
+
+  it('캔버스가 없는 환경에서 null 로 물러난다(화면 전체를 죽이지 않는다)', async () => {
+    const { googleLogoTexture } = await import('../src/ui/pixi/googleSignInButton.js');
+    // vitest 는 node 환경이라 document 가 없다.
+    expect(googleLogoTexture(18)).toBeNull();
   });
 });
 
