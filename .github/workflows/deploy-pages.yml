@@ -1,0 +1,65 @@
+# Planet Blitz — GitHub Pages 배포.
+#
+# main 에 push 될 때마다 정적 번들을 빌드해 Pages 로 올린다. `gh-pages` 브랜치를 두는
+# 방식이 아니라 **Actions 아티팩트 방식**이다 — 빌드 산출물이 리포 히스토리에 안 쌓이고,
+# Jekyll 처리를 타지 않으므로 `.nojekyll` 도 필요 없다.
+#
+# 사전 설정(1회): 리포 Settings → Pages → Source = "GitHub Actions".
+#
+# Supabase 연결은 빌드 시각에 정적 주입된다(vite 의 `import.meta.env`). 두 값이 모두
+# 없으면 `readSupabaseConfig()` 가 null 을 돌려 네트워크 계층이 통째로 no-op 이 되므로,
+# 시크릿을 안 넣으면 배포는 성공하되 **오프라인 데모**로 뜬다.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 배포는 최신 것 하나만 살린다. 진행 중인 배포는 취소하지 않는다(중간 상태로 끝나면
+# 사이트가 깨진 채 남는다).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # packageManager 필드(pnpm@11.16.0)를 읽어 같은 버전을 깐다. setup-node 의
+      # cache: pnpm 이 pnpm 을 먼저 요구하므로 순서를 바꾸면 안 된다.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # `pnpm build` 는 `tsc --noEmit && vite build` — 타입 오류가 있으면 배포가 막힌다.
+      - run: pnpm build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,42 @@
+Planet Blitz — 저작권 고지 / Copyright Notice
+
+Copyright (c) 2026 김민석 (v0o0v). All rights reserved.
+무단 복제·배포를 금합니다.
+
+## 한국어
+
+이 저장소의 소스 코드·문서·게임 데이터는 저작권자의 독점 저작물입니다. **소스를 공개해 둔
+것은 열람을 허용하기 위함이며, 그 외의 권리를 넘기지 않습니다.**
+
+- **허용:** 저장소 열람, 개인적 학습·참고 목적의 읽기.
+- **금지(사전 서면 허가 없이):** 복제, 수정, 2차적 저작물 작성, 배포, 재배포, 공중송신,
+  상업적 이용, 별도 서비스로의 운영·배포.
+- 포크·클론은 GitHub 이용에 수반되는 기술적 복제까지만 허용하며, 그 사본을 위 금지 행위에
+  쓰는 것은 허용하지 않습니다.
+
+**제3자 자산은 각자의 라이선스를 따릅니다.** 이 고지가 그 자산의 라이선스를 덮어쓰지 않습니다.
+
+- `assets/audio/**` — BGM 6트랙은 **CC0 1.0(퍼블릭 도메인)**. 저작자·출처·라이선스 링크는
+  [`assets/audio/CREDITS.md`](assets/audio/CREDITS.md)에 있습니다. 이 트랙들은 위 금지 조항의
+  대상이 아니며, CC0 조건 그대로 자유롭게 쓸 수 있습니다.
+- `node_modules/` 및 `package.json`의 의존성(pixi.js, three, @supabase/supabase-js 등) —
+  각 패키지의 라이선스를 따릅니다.
+
+문의·이용 허가 요청: GitHub Issues (https://github.com/v0o0v/planet-blitz/issues)
+
+## English (summary)
+
+The source code, documentation, and game data in this repository are proprietary.
+**Public visibility is granted for reading only; no other rights are transferred.**
+
+Permitted: viewing and reading this repository for personal study or reference.
+Prohibited without prior written permission: copying, modification, derivative works,
+distribution, redistribution, public transmission, commercial use, and operating or
+shipping this work as a separate service.
+
+Third-party assets keep their own licenses and are not covered by the restrictions above.
+In particular, the six BGM tracks under `assets/audio/**` are CC0 1.0 (public domain) —
+see `assets/audio/CREDITS.md` for authorship and sources. Dependencies listed in
+`package.json` are governed by their respective licenses.
+
+Inquiries: https://github.com/v0o0v/planet-blitz/issues
