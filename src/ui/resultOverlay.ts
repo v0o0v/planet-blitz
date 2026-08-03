@@ -79,6 +79,13 @@ export interface CommissionResultInfo {
   grantedCredits?: number;
   /** `status === 'verified'` 일 때만 의미가 있다. */
   grantedMinerals?: number;
+  /**
+   * 종이에 적힌 **확정 경험치**(`commissionXpReward`). `status === 'verified'` 일 때만 의미가
+   * 있다 — 재화와 달리 서버 원장이 없어 클라가 승인 직후 활성 기체에 적립한다.
+   */
+  grantedXp?: number;
+  /** 그 적립으로 오른 레벨 수(0 이면 문구에서 뺀다). */
+  xpLevels?: number;
   /** `status === 'rejected'` 일 때 서버 거부 사유(원문 — 고정 매핑표를 두지 않는다). */
   reason?: string;
 }

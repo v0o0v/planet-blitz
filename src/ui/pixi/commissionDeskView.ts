@@ -12,6 +12,7 @@ import type { EquipSlotId, SlotKind } from '../../items/types.js';
 import { RARITY_BY_CODE } from '../../items/types.js';
 import { POWERUPS } from '../../sim/powerups.js';
 import { M2_UNIQUES, M3_UNIQUES } from '../../../data/uniques.js';
+import { commissionXpReward } from '../../run/commissionConstants.js';
 import { slotLabel } from '../itemNames.js';
 import { t, type MessageKey } from '../../i18n/index.js';
 
@@ -55,6 +56,12 @@ export interface CommissionRewardSummary {
   creditsText: string;
   mineralsText: string | null;
   itemsText: string | null;
+  /**
+   * 확정 경험치 줄. **항상 값이 있다** — 크레딧과 함께 모든 의뢰서가 가지는 축이기 때문이다
+   * (`commissionXpReward` 는 봉인된 `segments`·`grade` 에서 파생되므로 0 이 될 수 없다).
+   * 그래서 `null` 을 낼 수 있는 광물·아이템과 타입이 다르다.
+   */
+  xpText: string;
   hasUnique: boolean;
 }
 
@@ -64,6 +71,7 @@ export function commissionRewardSummary(payload: CommissionPayload): CommissionR
     creditsText: t('commission.rewards.credits', { n: r.credits }),
     mineralsText: r.minerals > 0 ? t('commission.rewards.minerals', { n: r.minerals }) : null,
     itemsText: r.items.length > 0 ? t('commission.rewards.items', { n: r.items.length }) : null,
+    xpText: t('commission.rewards.xp', { n: commissionXpReward(payload) }),
     hasUnique: r.uniqueId !== undefined,
   };
 }

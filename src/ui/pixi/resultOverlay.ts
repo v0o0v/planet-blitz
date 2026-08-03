@@ -358,6 +358,20 @@ export class ResultOverlayScreen {
                   ? t('result.commission.offline')
                   : t('result.commission.pending');
       entries.push({ key: t('result.commission.label'), value, accent: c.status === 'verified' });
+      // 확정 경험치는 **별도 줄**이다 — 재화 줄에 이어 붙이면 세 수치가 한 줄에 몰려 읽히지
+      // 않고, 무엇보다 레벨업이 났을 때 그 사실이 재화 뒤에 묻힌다(정예 소집령은 이 줄이 그
+      // 런의 유일한 성장 표시다). 승인 전에는 값 자체가 없으므로 줄을 만들지 않는다.
+      if (c.status === 'verified' && (c.grantedXp ?? 0) > 0) {
+        const levels = c.xpLevels ?? 0;
+        entries.push({
+          key: t('result.commission.xpLabel'),
+          value:
+            levels > 0
+              ? t('result.commission.xpLevels', { xp: c.grantedXp ?? 0, levels })
+              : t('result.commission.xp', { xp: c.grantedXp ?? 0 }),
+          accent: levels > 0,
+        });
+      }
     }
 
     // 열 우선 배치(위→아래로 읽고 다음 열). 열 폭은 콘텐츠 상자를 정확히 반으로 나눈다.

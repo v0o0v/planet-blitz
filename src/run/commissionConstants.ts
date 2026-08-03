@@ -14,6 +14,7 @@
  */
 
 import type { CommissionGrade } from './commission.js';
+import { metaXpPerRun } from '../save/progressionPath.js';
 
 /**
  * 계급별 구간 수 — **플레이스홀더**(정기 2 · 우선 3 · 특급 4 · 최종 5).
@@ -192,3 +193,53 @@ export const COMMISSION_ELITE_OVERLAP_MAX = 6;
  * Phase G(정예 소집령 별도 기준선 계측).
  */
 export const COMMISSION_ELITE_WAVE_SEGMENTS = 1;
+
+/**
+ * 의뢰 **확정 경험치**의 계급 배율(천분율, 1000 = ×1.0).
+ *
+ * ## 왜 payload 에 새 필드를 두지 않는가 (2026-08-03)
+ * 확정 보상의 계약은 "발령 시점에 굳는다"이지 "jsonb 에 적혀 있다"가 아니다. 이 값은 이미
+ * 굳어 있는 `segments`(행성·단계)와 `grade` 만의 **순수 함수**라 발령 시점에 함께 굳고, 클라와
+ * 서버가 같은 소스를 읽으므로 갈릴 수 없다. 반대로 필드를 새로 두면 ①마이그레이션과 원격
+ * 배포가 필요하고 ②구 payload(version 1)에 값이 없어 분기가 생기며 ③같은 수치의 정본이 SQL 과
+ * TS 두 곳이 된다 — 이 저장소의 지배적 실패 모드다.
+ *
+ * ## 왜 경험치를 아예 얹는가
+ * 의뢰 런도 `settleRun` 을 타므로 **런 안에서 번 XP** 는 이미 들어온다. 그런데
+ * **정예 소집령(ADR-0043)은 런 내 성장을 통째로 끈다** — 경험치 젬이 없어 그 주문의 메타 XP 가
+ * 구조적으로 0 이다. 계급이 가장 높은 주문이 진행에 가장 적게 기여하는 역전이 생긴다.
+ * 확정 경험치는 그 역전을 닫는다: 종이에 적힌 값이므로 런 안에서 무엇이 꺼져 있든 지급된다.
+ *
+ * 읽는 곳: {@link commissionXpReward}.
+ */
+export const COMMISSION_XP_GRADE_PERMILLE: Readonly<Record<CommissionGrade, number>> = {
+  1: 1000,
+  2: 1150,
+  3: 1350,
+  4: 1600,
+};
+
+/**
+ * 이 의뢰의 **확정 경험치**(메타 XP) — 봉인된 payload 만의 순수 함수다.
+ *
+ * 기준선은 "그 무대를 한 번 정직하게 돈 값"이다: 구간마다
+ * {@link metaXpPerRun}(그 구간의 침략 단계)을 더하고 계급 배율을 곱한다. 구간이 늘면 자연히
+ * 늘고, 단계가 높으면 자연히 커진다 — 별도 표를 두지 않는 이유이자, 이 값이 정규 진행
+ * (ADR-0035 표준 경로)과 같은 축 위에 있다는 뜻이기도 하다.
+ *
+ * ⚠️ **저단계 감쇠(`lowStageXpDecayPercent`)를 여기 곱하지 않는다.** 그 감쇠는 "만렙 근처
+ * 파일럿이 1단계를 반복해서 파밍하는" 경로를 깎는 장치인데, 의뢰서는 반복 획득이 서버
+ * 쿨다운(`MIN_BOSS_KILL_TICKS` · `CAP_ISSUE_ATTEMPTS_PER_HOUR`)에 이미 묶여 있어 그 경로가
+ * 성립하지 않는다. 감쇠를 이중으로 걸면 "종이에 적힌 값과 실제로 들어온 값이 다르다"가 되고,
+ * 확정 보상의 계약은 정확히 그것을 금지한다.
+ *
+ * 읽는 곳: `src/ui/pixi/commissionDeskView.ts`(표시) · `src/main.ts`(검증 확정 후 지급).
+ */
+export function commissionXpReward(payload: {
+  grade: CommissionGrade;
+  segments: readonly { stage: number }[];
+}): number {
+  let base = 0;
+  for (const s of payload.segments) base += metaXpPerRun(s.stage);
+  return Math.round((base * COMMISSION_XP_GRADE_PERMILLE[payload.grade]) / 1000);
+}

@@ -17,6 +17,7 @@ import {
   commissionStockText,
 } from '../src/ui/pixi/commissionDeskView.js';
 import type { CommissionPayload } from '../src/run/commission.js';
+import { commissionXpReward } from '../src/run/commissionConstants.js';
 import { t } from '../src/i18n/index.js';
 import { POWERUPS } from '../src/sim/powerups.js';
 import { M2_UNIQUES, M3_UNIQUES } from '../data/uniques.js';
@@ -69,6 +70,29 @@ describe('commissionRewardSummary', () => {
     expect(s.mineralsText).toBeNull();
     expect(s.itemsText).toBeNull();
     expect(s.hasUnique).toBe(false);
+    // 확정 경험치는 **null 이 될 수 없는 축**이다 — 봉인된 segments·grade 에서 파생되므로
+    // 모든 의뢰서가 가진다(2026-08-03 신설).
+    expect(s.xpText).toBe(
+      t('commission.rewards.xp', { n: commissionXpReward(basePayload()) }),
+    );
+  });
+
+  it('확정 경험치가 계급·구간을 따라간다(정예 소집령도 0 이 아니다)', () => {
+    // 젬이 0 인 정예 소집령(ADR-0043)에서 이 줄이 비면 최고 계급 의뢰가 진행에 기여를 못 한다.
+    const elite = basePayload({ grade: 4, order: 'elite', segments: [{ planet: 5, stage: 9 }] });
+    expect(commissionXpReward(elite)).toBeGreaterThan(0);
+    expect(commissionRewardSummary(elite).xpText).toBe(
+      t('commission.rewards.xp', { n: commissionXpReward(elite) }),
+    );
+    // 구간이 늘면 표시값도 함께 늘어난다(요약이 다른 상수를 베끼고 있지 않다는 확인).
+    const long = basePayload({
+      grade: 4,
+      segments: [
+        { planet: 5, stage: 9 },
+        { planet: 4, stage: 9 },
+      ],
+    });
+    expect(commissionXpReward(long)).toBeGreaterThan(commissionXpReward(elite));
   });
 
   it('광물·아이템·유니크가 있으면 각 줄이 채워진다', () => {

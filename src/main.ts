@@ -107,7 +107,7 @@ import { runBench } from './bench/bench.js';
 import { buildRunConfig } from './run/runConfig.js';
 import { buildCallupPilot } from './run/callupPilot.js';
 import { loadProfile, saveProfile, activeShip } from './save/profile.js';
-import { settleRun } from './save/settlement.js';
+import { settleRun, grantXp } from './save/settlement.js';
 import type { SettlementOutcome } from './save/settlement.js';
 // M4 네트워크 계층(Phase B3): Supabase 미설정 시 완전 no-op, 절대 throw 안 함.
 // 정산 시점에서만 fire-and-forget 로 호출 — sim/게임루프와 무관(결정론·오프라인 우선).
@@ -130,6 +130,7 @@ import {
 // rewards 를 뺀다). 봉인 로드아웃은 지시 수신소 화면이 출격 시점에 직접 계산해 싣는다.
 import { commissionRunConfigFromPayload } from './run/commission.js';
 import type { CommissionPayload } from './run/commission.js';
+import { commissionXpReward } from './run/commissionConstants.js';
 // 행성 인기 배율(ADR-0038): 30분 폴링 캐시. 출격 경로를 블로킹하지 않는 **동기** 리더만 쓴다.
 import {
   startPlanetMultiplierPolling,
@@ -548,6 +549,13 @@ async function main(): Promise<void> {
   // 종이(카탈로그) id 이지 이 값이 아니다(별도 축). `startCommissionRun` 이 세우고
   // `submitCommissionReplay` 가 제출 직전에 지운다(재진입 방지 — 그 함수가 유일한 소비자다).
   let commissionRunId: string | null = null;
+  /**
+   * 그 런의 **봉인된 종이**. 확정 경험치(`commissionXpReward`)는 서버가 `verified` 를 낸 **뒤에**
+   * 지급하는데, 그 시점에는 월드도 지시 수신소도 이미 사라져 payload 를 되찾을 곳이 없다.
+   * `commissionRunId` 와 **같은 자리에서 세우고 같은 자리에서 지운다** — 둘이 갈리면 "런 id 는
+   * 있는데 종이가 없다"가 되어 경험치만 조용히 증발한다.
+   */
+  let commissionPayload: CommissionPayload | null = null;
 
   // --- 리플레이 관전(F3) 상태 ---
   // spectateReplay !== null 이면 현재 화면은 관전 재생이다 → ticker 가 리플레이 입력을
@@ -694,6 +702,7 @@ async function main(): Promise<void> {
     // 의뢰 런 상태 방어적 리셋 — 정상 경로는 `submitCommissionReplay` 가 이미 소비·정리했겠지만
     // (예: 하네스 goto 로 정산 없이 벗어난 경우) 다음 무의뢰 런으로 새는 것을 막는다.
     commissionRunId = null;
+    commissionPayload = null;
     // 접지 그림자·스프라이트 캐시 회수. 그림자는 스프라이트의 자식이 아니라 형제라 부모
     // destroy 로 걷히지 않는다 — 명시 회수 경로 넷 중 하나가 이것이다.
     entityRenderer.reset();
@@ -1424,6 +1433,9 @@ async function main(): Promise<void> {
     // `endRun` 이 이 값으로 `verify-commission` 을 제출한다(계약 §7). `consume_commission`
     // 이 이미 성공한 뒤에만 이 함수가 불리므로(지시 수신소 self-hide 규약) runId 는 항상 유효하다.
     commissionRunId = runId;
+    // 확정 경험치는 검증이 끝난 **뒤에** 지급되므로 종이를 여기서 붙잡아 둔다(월드도 화면도
+    // 그때는 이미 사라져 있다). runId 와 같은 자리에서 세우고 같은 자리에서 지운다.
+    commissionPayload = payload;
     const config = buildRunConfig(profile, {
       planet: first.planet,
       stage: first.stage,
@@ -1527,7 +1539,9 @@ async function main(): Promise<void> {
    */
   async function submitCommissionReplay(w: WorldState): Promise<void> {
     const runId = commissionRunId;
+    const paper = commissionPayload;
     commissionRunId = null;
+    commissionPayload = null;
     if (runId === null) return;
     // 오염 런은 판정 대상이 아니다. 소비된 의뢰서는 회수되지 않고 cron 이 종결한다(계약 §6-1).
     if (w.tainted) return;
@@ -1539,11 +1553,26 @@ async function main(): Promise<void> {
       // 서버 원장이 정본 — 가산하지 않고 잔액을 그대로 받는다.
       profile.credits = res.creditsLeft;
       profile.minerals = res.mineralsLeft;
+      // 확정 경험치(종이에 적힌 값) — **서버가 승인한 뒤에만** 지급한다. 재화와 달리 XP 는
+      // 서버 원장이 없어(프로필 blob 축) 잔액을 받아올 수 없으므로 여기서 가산한다. 위조
+      // 표면은 늘지 않는다: 이 경로는 `verified` 안쪽이고 값은 봉인된 payload 의 순수 파생이다.
+      //
+      // ⚠️ 런 안에서 번 XP 는 이미 `settleRun` 이 넣었다 — 이것은 그 **위에 얹는 확정분**이다.
+      // 정예 소집령은 런 내 성장이 통째로 꺼져 있어(ADR-0043) 이 경로가 유일한 XP 공급원이다.
+      let grantedXp = 0;
+      let xpLevels = 0;
+      if (paper !== null) {
+        grantedXp = commissionXpReward(paper);
+        xpLevels = grantXp(activeShip(profile), grantedXp);
+        profile.skillPoints += xpLevels;
+      }
       saveProfile(profile);
       resultOverlay.updateCommission({
         status: 'verified',
         grantedCredits: res.grantedCredits,
         grantedMinerals: res.grantedMinerals,
+        grantedXp,
+        xpLevels,
       });
       return;
     }
