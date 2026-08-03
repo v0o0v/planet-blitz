@@ -517,7 +517,7 @@ describe('파워업 정책 축', () => {
   });
 
   /**
-   * 침략 단계 override — 레벨과 단계를 떼어 놓는 축(밸런스 큐 §R22).
+   * 침략 단계 override — 레벨과 단계를 떼어 놓는 축(밸런스 큐 §R28).
    * 미지정이면 `standardStage(level)` 이므로 그 값을 명시해도 결과가 같아야 한다.
    */
   it('단계 override 미지정 = standardStage(level) 와 바이트 동일하다', () => {

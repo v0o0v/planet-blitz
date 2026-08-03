@@ -1,12 +1,12 @@
 /**
- * 발사 간격 고정소수점 회귀 (`fix/powerup-rounding-noop`, 밸런스 큐 §R30).
+ * 발사 간격 고정소수점 회귀 (`fix/powerup-rounding-noop`, 밸런스 큐 §R39).
  *
  * ## 이 파일이 막는 것
  * 발사 간격이 **정수 틱**이던 시절, 감소형 파워업은 배율이 통째로 삼켜졌다: 배율 `m`·현재값
  * `c` 에 대해 `c(1 − m) < 0.5` 면 `Math.round` 가 같은 값을 돌려준다. 벌컨 기본 6틱 · 빔 기본
  * 4틱에서 `fp-cadence`(×0.92)는 **처음부터 영구 무동작**, `rapid-fire`(×0.90)는 6→5 한 번만
  * 먹고 이후 무동작이었다. 단위 테스트는 전부 그린이었다 — 그 값을 실제 기본값으로 밟는
- * 테스트가 하나도 없었기 때문이다(§R22 를 잡은 것은 테스트가 아니라 벤치 분류기였다).
+ * 테스트가 하나도 없었기 때문이다(§R27 을 잡은 것은 테스트가 아니라 벤치 분류기였다).
  *
  * 그래서 여기서는 ①**실제 무기별 기본 간격**으로 파워업을 걸어 값이 정말 움직이는지
  * ②소수 주기가 **발사 리듬에 실제로 반영**되는지(정규 경로 `createWorld`→`stepWorld` 로 탄을
@@ -33,7 +33,7 @@ import { autopilotInput } from '../src/sim/autopilot.js';
 const RAPID_FIRE = 0;
 const FP_CADENCE = 17;
 
-/** 무기 타입별 기본 발사 간격(틱) — `applyWeaponTypeBase` 파생값. §R22 표와 같은 값. */
+/** 무기 타입별 기본 발사 간격(틱) — `applyWeaponTypeBase` 파생값. §R27 표와 같은 값. */
 const BASE_TICKS: ReadonlyArray<readonly [string, number]> = [
   ['벌컨', 6],
   ['스프레드', 7],
