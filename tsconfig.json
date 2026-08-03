@@ -22,6 +22,14 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "tests", "data", "vite.config.ts", "vite.balance.config.ts", "eslint.config.js"],
+  "include": [
+    "src",
+    "tests",
+    "data",
+    "vite.config.ts",
+    "vite.sim.config.ts",
+    "vite.balance.config.ts",
+    "eslint.config.js"
+  ],
   "exclude": ["node_modules", "dist"]
 }
