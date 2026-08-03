@@ -37,6 +37,7 @@
  */
 
 import { createWorld, stepWorld } from '../sim/world.js';
+import { FIRE_CD_Q } from '../sim/constants.js';
 import type { WorldState } from '../sim/world.js';
 import { autopilotInput } from '../sim/autopilot.js';
 import { buildRunConfig } from '../run/runConfig.js';
@@ -184,7 +185,8 @@ function readDerived(state: WorldState): DerivedStats {
   const p = state.entities[0];
   return {
     weaponDamage: state.weapon.damage,
-    fireCooldown: state.weapon.fireCooldown,
+    // Q(1/256틱) -> 틱(소수 가능)으로 되돌려 리포트에 싣는다.
+    fireCooldown: state.weapon.fireCooldownQ / FIRE_CD_Q,
     weaponRange: state.weapon.range,
     bulletCount: state.weapon.bulletCount,
     pierce: state.weapon.pierce,

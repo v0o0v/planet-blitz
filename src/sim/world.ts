@@ -19,7 +19,7 @@
 
 import { SeededRng } from './rng.js';
 import { cos, sin, atan2, length, TWO_PI, wrapAngle } from './math.js';
-import { DT, VIEW_WIDTH, VIEW_HEIGHT, OFFSCREEN_X } from './constants.js';
+import { DT, VIEW_WIDTH, VIEW_HEIGHT, OFFSCREEN_X, FIRE_CD_Q, FIRE_CD_MIN_Q } from './constants.js';
 import type { PlanetMode } from './planetMode.js';
 // 타입 전용 import 다 — `verbatimModuleSyntax` 로 런타임에 완전히 지워지므로 sim → run 런타임
 // 의존이 생기지 않는다(Deno 검증 경로가 `src/sim` 을 소스 그대로 import 하는 계약에 무영향).
@@ -300,7 +300,7 @@ import { stepActives } from './actives.js';
 // 정산·관측이 소비하는 순수 리더 재수출(echoStabilizedOf 선례).
 export { encounterCompletedOf, encounterTypeOf, encounterShardOf } from './encounter.js';
 
-export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT } from './constants.js';
+export { TICK_RATE, DT, VIEW_WIDTH, VIEW_HEIGHT, FIRE_CD_Q, FIRE_CD_MIN_Q } from './constants.js';
 
 /**
  * Projectile cull radius (world units): bullets/enemy bullets farther than this
@@ -485,8 +485,24 @@ export function comboMultiplier(combo: number): number {
  * each fire; nothing else caches these values.
  */
 export interface WeaponStats {
-  /** Ticks between shots (lower = faster fire). */
-  fireCooldown: number;
+  /**
+   * 발사 간격 — **단위는 틱이 아니라 `1/FIRE_CD_Q` 틱**이다(고정소수점 Q, 2026-08-04).
+   *
+   * ⚠️ 이름에 `Q` 가 붙어 있는 이유는 단위 사고를 컴파일러가 잡게 하기 위해서다. 예전 이름은
+   * `fireCooldown`(정수 틱)이었고, 그 정수 격자 때문에 **감소형 파워업이 통째로 삼켜졌다**:
+   * 배율 `m`·현재값 `c` 에 대해 `c(1 − m) < 0.5` 면 `Math.round` 가 같은 값을 돌려준다.
+   * 벌컨 기본 6틱 · 빔 기본 4틱에서 `fp-cadence`(×0.92)는 **처음부터 영구 무동작**,
+   * `rapid-fire`(×0.90)는 6→5 한 번만 먹고 이후 무동작이었다(밸런스 큐 §R22).
+   *
+   * 처방은 **단위를 잘게 쪼개는 것**이다 — 배율은 늘 Q 값에 곱해지고, 발사 판정은
+   * `player.cooldown` 을 매 틱 {@link FIRE_CD_Q} 씩 깎아 **정수 산술만으로** 소수 주기를
+   * 재현한다(잔여분 carry). 부동소수 누적을 도입하지 않으므로 리플레이 해시 결정론이 유지된다.
+   *
+   * 하한은 `FIRE_CD_MIN_Q`(= 2틱) 로 그대로 남는다 — 프레임당 발사 폭주 방지 가드다.
+   * 두 상수는 `constants.ts`(leaf) 에 있다 — `powerups.ts` 가 값으로 import 해야 하는데
+   * world.ts 에 두면 world ↔ powerups 런타임 순환이 생긴다.
+   */
+  fireCooldownQ: number;
   bulletSpeed: number;
   damage: number;
   /** Projectiles per volley (fanned across `spread`). */
@@ -547,7 +563,7 @@ export interface WeaponStats {
 export const BASE_WEAPON_RANGE = 1650;
 
 export const DEFAULT_WEAPON: WeaponStats = {
-  fireCooldown: 6,
+  fireCooldownQ: 6 * FIRE_CD_Q,
   // Bullet speed doubled for the 2x-scale world so shots feel as fast relative to
   // the larger entities and distances.
   bulletSpeed: 1800,
@@ -1101,7 +1117,10 @@ export function createWorld(
   if (lo !== undefined) {
     weapon.weaponType = lo.weaponType;
     weapon.damage = Math.round(weapon.damage * lo.damageMult * 100) / 100;
-    weapon.fireCooldown = Math.max(2, Math.round(weapon.fireCooldown * lo.fireRateMult));
+    weapon.fireCooldownQ = Math.max(
+      FIRE_CD_MIN_Q,
+      Math.round(weapon.fireCooldownQ * lo.fireRateMult),
+    );
     weapon.bulletCount += lo.bulletCountAdd;
     weapon.pierce += lo.pierceAdd;
     weapon.bulletSpeed = Math.round(weapon.bulletSpeed * lo.bulletSpeedMult * 100) / 100;
@@ -1135,7 +1154,7 @@ export function createWorld(
     const moveMul = catalystPowerMult(cats, 'moveSpeed') * skillAll;
     const hpMul = catalystPowerMult(cats, 'maxHp') * skillAll;
     weapon.damage = Math.round(weapon.damage * dmgMul * 100) / 100;
-    weapon.fireCooldown = Math.max(2, Math.round(weapon.fireCooldown / fireMul));
+    weapon.fireCooldownQ = Math.max(FIRE_CD_MIN_Q, Math.round(weapon.fireCooldownQ / fireMul));
     cfg.playerSpeed = Math.round(cfg.playerSpeed * moveMul);
     // 파워 maxHp 상향 → 촉매 playerHpDown 페널티 하향 순으로 소비한다. playerHpDown ≥ 1 이라
     // **나눗셈**이 페널티 방향(HP 감소)이다(부호 규약: 배율 클수록 페널티 큼). catalystMods 는
@@ -2464,7 +2483,13 @@ function reachLife(w: WeaponStats, reach: number): number {
 
 function autoAttack(state: WorldState, player: Entity): void {
   const w = state.weapon;
-  if (player.cooldown > 0) player.cooldown--;
+  // ⚠️ **플레이어의 `cooldown` 은 Q 단위**(1/FIRE_CD_Q 틱)다 — 적 엔티티의 `cooldown` 은
+  // 여전히 정수 틱이다(같은 필드, 다른 소유자). 매 틱 FIRE_CD_Q 씩 깎고, 발사 때 남은
+  // **음수 잔여분을 보존한 채** 간격을 더한다(`= ` 가 아니라 `+= `). 이 carry 가 소수 주기를
+  // 정수 산술만으로 재현하는 장치다: 간격 5.52틱이면 5·6·5·6… 으로 갈리고 장기 평균이
+  // 정확히 5.52 가 된다. 잔여분은 항상 (−FIRE_CD_Q, 0] 로 유계다.
+  // 간격이 FIRE_CD_Q 의 배수면 잔여분이 항상 정확히 0 이라 예전 `= ` 와 **비트 동일**이다.
+  if (player.cooldown > 0) player.cooldown -= FIRE_CD_Q;
   if (player.cooldown > 0) return;
 
   const reach = weaponReach(w);
@@ -2476,8 +2501,8 @@ function autoAttack(state: WorldState, player: Entity): void {
   //    스택은 항상 0이라 base 그대로(거동 불변).
   const mask = state.config.loadout?.uniqueMask ?? 0;
   const fireCd = hasUnique(mask, UQ_OVERHEAT_DRUM)
-    ? overheatCooldown(w.fireCooldown, player.phase)
-    : w.fireCooldown;
+    ? overheatCooldown(w.fireCooldownQ, player.phase, FIRE_CD_MIN_Q)
+    : w.fireCooldownQ;
 
   // 아크캐스터 시그니처 — 연속 정지 틱(player.aux0)에 비례한 피해 증폭(설계서 §3·§4).
   // 미보유·이동 중이면 bp = 0 → `wDamage === w.damage` 로 **완전히 같은 값**이라 거동·해시 불변.
@@ -2529,7 +2554,7 @@ function autoAttack(state: WorldState, player: Entity): void {
       cos(baseAngle),
       sin(baseAngle),
     );
-    player.cooldown = fireCd;
+    player.cooldown += fireCd;
     return;
   }
 
@@ -2554,7 +2579,7 @@ function autoAttack(state: WorldState, player: Entity): void {
       );
       m.ownerId = MISSILE_MARK; // 유도 마커: stepProjectiles가 매 틱 제한 선회.
     }
-    player.cooldown = fireCd;
+    player.cooldown += fireCd;
     return;
   }
 
@@ -2587,7 +2612,7 @@ function autoAttack(state: WorldState, player: Entity): void {
         sa,
       );
     }
-    player.cooldown = fireCd;
+    player.cooldown += fireCd;
     return;
   }
 
@@ -2616,7 +2641,7 @@ function autoAttack(state: WorldState, player: Entity): void {
       sin(ang),
     );
   }
-  player.cooldown = fireCd;
+  player.cooldown += fireCd;
 }
 
 /**
