@@ -225,6 +225,13 @@ function runOnce(seed: number, stage: number, centi?: number, planet = 0) {
     victory: state.victory,
     xpTotal: state.xpTotal,
     resources: state.resources,
+    /**
+     * 자원 적립의 **반올림 이전 총량**(milli). `state.resources` 는 `Math.floor` 로 잘린
+     * 정수라 런당 습격 격추가 몇 건뿐이면 ×1.2 가 정수 경계를 못 넘어 **두 상태가 같은
+     * 값으로 보인다**(2026-08-04 실측: 8시드 base 21 vs up 21). 배선을 재려면 캐리를
+     * 포함한 이 값을 봐야 한다 — 밸런스 큐 §R48.
+     */
+    resourceMilli: state.resources * 1000 + state.catalystResourceMilli,
     drops: state.loot.length + state.entities.filter((e) => e.kind === 'loot').length,
     loot: state.loot,
   };
@@ -261,8 +268,12 @@ describe('§6 정규 경로 배선 — 배율이 실제 런에 도달한다', ()
   });
 
   it('배율 1.20 이 자원 적립을 늘린다', () => {
-    const base = SEEDS.map((s) => runOnce(s, 11).resources).reduce((a, b) => a + b, 0);
-    const up = SEEDS.map((s) => runOnce(s, 11, 120).resources).reduce((a, b) => a + b, 0);
+    // ⚠️ **`resources`(정수)가 아니라 `resourceMilli`(캐리 포함)를 본다.** 이유는 `runOnce`
+    // 의 `resourceMilli` 주석. 정수 지표는 런당 습격 격추가 몇 건뿐일 때 ×1.2 를 통째로
+    // 삼켜 **배선이 살아 있어도 같은 값**을 낸다(단언을 약화한 게 아니라 계량을 바꿨다 —
+    // 배율이 자원 경로에 안 닿으면 두 값이 정확히 같아져 여전히 깨진다).
+    const base = SEEDS.map((s) => runOnce(s, 11).resourceMilli).reduce((a, b) => a + b, 0);
+    const up = SEEDS.map((s) => runOnce(s, 11, 120).resourceMilli).reduce((a, b) => a + b, 0);
     expect(base).toBeGreaterThan(0);
     expect(up).toBeGreaterThan(base);
   });

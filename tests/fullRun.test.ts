@@ -53,8 +53,16 @@ function playToEnd(seed: number, config: WorldConfig): { state: WorldState; inpu
  * 재표본(`0x50c1a0..0x50c1df` 연속 64시드, 이 파일의 단언 전부 — 승리·보스 처치·처치>0·레벨>1·
  * rare+ 드랍 1건 — 을 만족): **`0x50c1d1`(처치 1,261 · Lv12) · `0x50c1d6`(처치 1,759 · Lv12)**.
  * 앞의 값을 골랐다. 완주 시드는 눈덩이형이다 — 초반에 포위를 벗어나면 처치가 1,200+ 로 는다.
+ *
+ * ## 2026-08-04 (5레인 통합) — `0x50c1d1` → **`0x50c1d6`**
+ * 발사 간격이 정수 틱에서 **1/256틱 고정소수점**으로 바뀌면서(밸런스 큐 §R39) 발사 시점이
+ * 전 런에서 재배치됐다. `0x50c1d1` 은 그 여파로 완주를 못 한다. **단언은 한 자도 약화하지
+ * 않았다** — 같은 성질(위 다섯 단언 전부 만족)의 증인을 다시 골랐을 뿐이고, 후보는 2026-07-27
+ * 재표본에서 **함께 2등으로 적혀 있던 바로 그 시드**다(당시 처치 1,759 · Lv12 → 현재 처치
+ * **1,998** · Lv13). 같은 창(`0x50c1a0`부터 96시드)에서 조건을 전부 만족하는 시드는 이
+ * 하나였다 — 완주 시드가 희소해졌다는 뜻이고, 다음에 또 깨지면 창을 넓혀 다시 골라라.
  */
-const FULL_RUN_SEED = 0x50c1d1;
+const FULL_RUN_SEED = 0x50c1d6;
 
 describe('full run to victory (task 15, e2e)', () => {
   // Durable pilot: survives the whole run so the boss segment is always reached.
