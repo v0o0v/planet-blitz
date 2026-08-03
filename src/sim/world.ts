@@ -267,7 +267,11 @@ import {
 // --- 추격·탈출 콘텐츠(Lane6 · ADR-0021 §2.4) — 비-스크롤 자유추적. 무적 포식자(boss.aux0=0)가
 //     끝없이 추격, 대피소 도달로 진행, 반격 장치 전부 파괴로 취약화(aux0=1)→보스전, 접촉 시 실패 ---
 import { placeChaseCourse, updateChasePredator, COUNTER_DEVICE_MARK } from './modes/chase.js';
-import { isObjectiveDestructible, objectiveModeDamageScale } from './modes/objective.js';
+import {
+  isObjectiveDestructible,
+  objectiveModeDamageScale,
+  objectiveAimBias,
+} from './modes/objective.js';
 // --- 수축지대 콘텐츠(Lane7 · ADR-0021 §2.5) — 비-스크롤 자유추적. 아레나 중심(원점 0,0) 기준
 //     동적으로 줄어드는 안전 반경 밖이면 지속 피해, 안전 반경 안 적 전멸로 진행, 중심 보스 처치로
 //     완주. 이 재설계의 첫 "신규 해시 필드" 모드(shrinkRuntime, 정수 2필드) -----------------------
@@ -2963,19 +2967,29 @@ function isPlayerTargetable(e: Entity): boolean {
  */
 function nearestTarget(state: WorldState, from: Entity, range: number): Entity | undefined {
   const maxD2 = range * range;
+  // 목표 오브젝트(추격 장치·오염 노드) 조준 우선 가중치. 그 밖의 무대에는 해당 엔티티가
+  // 아예 없고, 단계 1 에서는 값이 정확히 1 이라 곱셈이 순위를 바꾸지 않는다.
+  const aimBias = objectiveAimBias(state.config.stage ?? 1);
 
   // Fast path: no walls → nearest candidate, nothing to occlude.
   if (state.activeWalls.length === 0) {
     let best: Entity | undefined;
-    let bestD = maxD2;
+    let bestD = Infinity;
     for (const e of state.entities) {
       if (e.dead) continue;
       if (!isPlayerTargetable(e)) continue;
       const dx = e.x - from.x;
       const dy = e.y - from.y;
       const d = dx * dx + dy * dy;
-      if (d < bestD) {
-        bestD = d;
+      if (d >= maxD2) continue; // 사거리는 **실거리**로 판정한다(아래 가중치를 쓰지 않는다).
+      // ⚠️ 자인: 이 fast path 는 **목표 오브젝트가 있는 무대에서 실전 도달하지 않는다** —
+      // 추격·오염은 둘 다 벽이 상시 존재해 아래 LOS 경로만 탄다(실측 activeWalls 5개).
+      // 그래서 `tests/objectiveAimBias.test.ts` 의 뮤테이션이 이 줄을 잡지 못한다. 그럼에도
+      // 같은 규칙을 두는 이유는 두 경로가 갈리는 것이 이 저장소의 대표적 반복 결함이기
+      // 때문이다(벽 없는 목표 게이트형 무대가 생기면 즉시 실전 경로가 된다).
+      const rank = isObjectiveDestructible(e) ? d * aimBias : d;
+      if (rank < bestD) {
+        bestD = rank;
         best = e;
       }
     }
@@ -2994,7 +3008,8 @@ function nearestTarget(state: WorldState, from: Entity, range: number): Entity |
     const dx = e.x - from.x;
     const dy = e.y - from.y;
     const d = dx * dx + dy * dy;
-    if (d < maxD2) cands.push({ e, d });
+    // 사거리는 실거리로, 정렬 키만 가중치를 태운다(fast path 와 같은 규칙).
+    if (d < maxD2) cands.push({ e, d: isObjectiveDestructible(e) ? d * aimBias : d });
   }
   cands.sort((a, b) => (a.d !== b.d ? a.d - b.d : a.e.id - b.e.id));
   const k = cands.length < LOS_MAX_CANDIDATES ? cands.length : LOS_MAX_CANDIDATES;

@@ -11,7 +11,12 @@
  */
 
 import type { WorldState } from '../../sim/world.js';
-import { chaseAliveCounterDevices } from '../../sim/modes/chase.js';
+import {
+  chaseAliveCounterDevices,
+  chaseCounterDeviceHp,
+  isCounterDevice,
+  CHASE_COUNTER_DEVICE_COUNT,
+} from '../../sim/modes/chase.js';
 import { contaminationPurifyRate } from '../../sim/modes/contamination.js';
 import { PLANET_MODE } from '../../sim/planetMode.js';
 
@@ -214,6 +219,35 @@ export const RUN_METRICS: Readonly<Record<string, MetricDef>> = {
     kind: 'mean',
     digits: 2,
     of: (s) => (s.config.planetMode === PLANET_MODE.chase ? chaseAliveCounterDevices(s) : 0),
+  },
+  /**
+   * 런 종료 시점의 **장치 총 잔여 HP 비율**(살아있는 장치 hp 합 ÷ 장치 5개 최대 HP 합).
+   * 추격 모드 전용, 그 외는 항상 0.
+   *
+   * ## 왜 `chaseDevicesLeft` 로는 부족한가 (2026-08-03)
+   * 장치 **수**는 정수라 "5개 그대로"가 두 가지 완전히 다른 상태를 같은 값으로 보고한다:
+   * ① 화력이 가고 있는데 첫 장치를 못 끝냈다(잔여 비율 0.85 — 축은 **HP**) ② 화력이 아예
+   * 안 간다(잔여 비율 1.00 — 축은 **조준·접근**). B7 진단이 여기서 갈렸다: Lv100 타임아웃의
+   * 64%가 5/5 였는데 HP 를 18% 깎아도 그 수가 34→31 로 안 움직였고, 1/10 로 만들어야
+   * 사라졌다 — 수만 보면 두 가설을 못 가른다.
+   *
+   * 승리 런은 정의상 0 이라 전 런 평균은 승률에 끌려간다. 판정은 `runs.json` 을 결과별로
+   * 교차집계해서 한다(`chaseDevicesLeft`·`purifyEnd` 와 같은 규율).
+   */
+  chaseDeviceHpFrac: {
+    label: '장치잔여HP',
+    kind: 'mean',
+    digits: 3,
+    of: (s) => {
+      if (s.config.planetMode !== PLANET_MODE.chase) return 0;
+      const max = chaseCounterDeviceHp(s.config.stage ?? 1) * CHASE_COUNTER_DEVICE_COUNT;
+      if (max <= 0) return 0;
+      let left = 0;
+      for (const e of s.entities) {
+        if (!e.dead && isCounterDevice(e)) left += e.hp;
+      }
+      return left / max;
+    },
   },
   /**
    * 런 종료 시점에 **바닥에 남아 수거되지 않은 전리품 수**.

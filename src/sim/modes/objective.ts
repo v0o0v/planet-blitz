@@ -107,6 +107,58 @@ export const CONTAMINATION_DAMAGE_SCALE = 0.26;
 export const CHASE_DAMAGE_SCALE = 0.32;
 
 /**
+ * 목표 오브젝트의 **조준 우선 가중치**(제곱거리에 곱한다. 1 = 우선권 없음, 작을수록 우선).
+ * 단계 1 에서 {@link OBJECTIVE_AIM_BIAS_STAGE_1}, 단계 {@link OBJECTIVE_AIM_BIAS_STAGE_MAX_AT}
+ * 이상에서 {@link OBJECTIVE_AIM_BIAS_STAGE_MAX} 로 선형 보간된다.
+ *
+ * ## 왜 필요한가 — 조준 목록에 있는 것으로는 부족하다 (2026-08-03 실측)
+ * 이 파일 머리의 결함 4회는 전부 "목록에 없어서 **아예** 못 친다"였다. 이번 것은 그다음
+ * 단계다: **목록에는 있는데 순번이 오지 않는다.** `nearestTarget` 은 사거리 안 최근접 하나를
+ * 고르는데, 잡몹은 플레이어를 향해 몰려오므로 거의 항상 목표 오브젝트보다 가깝다. 단계가
+ * 오를수록 수·밀도가 함께 늘어 그 확률이 1 에 수렴한다.
+ *
+ * 니플헤임 Lv100 타임아웃 런의 계측(`chaseDeviceHpFrac` 신설):
+ *
+ * | | 값 |
+ * |---|---|
+ * | 장치 잔여 HP 1.00(화력 0)인 런 | **0건** — 화력은 간다 |
+ * | 5/5 잔존 런의 평균 잔여 HP | **0.766** — 300초에 23%만 깎았다 |
+ * | 같은 셀 승리 런 | 83초에 5개 **전부** 파괴 |
+ * | 타임아웃 런의 처치/초 | **6.12** (승리 런 3.11의 2배) |
+ *
+ * 화력이 약한 게 아니라 **전부 잡몹에 쓰고 있다.** 그래서 축은 HP 가 아니라 조준이다 —
+ * 장치 HP 를 18% 깎아도 5/5 잔존이 34→31 로 안 움직였고, 1/10 로 만들어야 사라졌다.
+ *
+ * ## 왜 단계 함수인가
+ * 고정 우선권은 **저단계를 깎는다**(니플헤임 Lv5 38% → 29%, 톡사르 27% → 23%): 잡몹이 적어
+ * 우선권이 필요 없는 구간에서 코앞의 적을 두고 목표를 쏘다 죽는다. 문제 자체가 "단계가
+ * 오를수록"이므로 처방도 단계를 타야 한다 — 단계 1 에서는 **정확히 1**(거동·해시 불변)이고
+ * 고단계에서만 우선권이 붙는다.
+ *
+ * ## 형태
+ * 순위 비교에만 곱하고 **사거리 판정에는 쓰지 않는다** — 할인된 거리로 사거리를 재면 탄이
+ * 닿지 않는 표적을 조준하게 된다. 목표 오브젝트가 없는 무대(뱀서류·수축·레이싱·블록격파·
+ * 침공)는 이 분기를 한 번도 타지 않으므로 거동·해시가 **바이트 불변**이다.
+ * TODO(밸런스): 출시 전 튜닝.
+ */
+export const OBJECTIVE_AIM_BIAS_STAGE_1 = 1;
+/** 고단계 우선 가중치(하한). 근거는 {@link OBJECTIVE_AIM_BIAS_STAGE_1}. */
+export const OBJECTIVE_AIM_BIAS_STAGE_MAX = 0.1;
+/** 이 단계 이상에서 {@link OBJECTIVE_AIM_BIAS_STAGE_MAX} 로 포화한다(만렙 = 단계 20). */
+export const OBJECTIVE_AIM_BIAS_STAGE_MAX_AT = 20;
+
+/**
+ * 이 단계의 목표 오브젝트 조준 가중치. 단계 1 이하는 **정확히 1** 이라 호출부가 곱해도
+ * 값이 바뀌지 않는다(저단계 거동 완전 불변).
+ */
+export function objectiveAimBias(stage: number): number {
+  if (stage <= 1) return OBJECTIVE_AIM_BIAS_STAGE_1;
+  if (stage >= OBJECTIVE_AIM_BIAS_STAGE_MAX_AT) return OBJECTIVE_AIM_BIAS_STAGE_MAX;
+  const t = (stage - 1) / (OBJECTIVE_AIM_BIAS_STAGE_MAX_AT - 1);
+  return OBJECTIVE_AIM_BIAS_STAGE_1 + (OBJECTIVE_AIM_BIAS_STAGE_MAX - OBJECTIVE_AIM_BIAS_STAGE_1) * t;
+}
+
+/**
  * 이 런의 피격 피해 배율. 목표 게이트형 무대 외에는 **정확히 1** 이다 — 호출부가 그 경우
  * 한 줄도 실행하지 않도록 `=== 1` 로 가드한다(기존 해시 완전 불변).
  */
