@@ -38,7 +38,7 @@ import { metaXpPerRun } from '../save/progressionPath.js';
  * ⚠️ **이 값을 올리려면 구간당 생존율을 먼저 올려라.** 2구간 80% 는 구간당 약 0.9 를 요구하고,
  * 3구간은 0.93 을 요구한다. 구간당 축은 {@link COMMISSION_WAVE_SEGMENTS_PER_SEGMENT} 다.
  *
- * ⚠️ **SQL 미러가 있다**: `supabase/migrations/20260803020000_commission_segment_rebalance.sql`
+ * ⚠️ **SQL 미러가 있다**: `supabase/migrations/20260803030000_commission_segment_rebalance.sql`
  * 의 `issue_commission_for_run`(`v_segments`). 한쪽만 고치면 서버가 다른 길이의 payload 를
  * 구워 클라 계측과 실서버가 조용히 갈린다.
  *

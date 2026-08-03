@@ -1302,7 +1302,7 @@ prefix** 이고, sim 은 결정론이라 구간 k 까지의 진행이 n 과 무�
 - ⚠️ **EF 재배포가 필요하다.** `COMMISSION_WAVE_SEGMENTS_PER_SEGMENT` 는 `verify-commission`
   번들 안(`verifyCommissionCore.ts`)에 있다. 서버가 옛 값(3)으로 재실행하면 **정직한 의뢰 런이
   전부 `outcome-mismatch` 로 거부**된다. 원격 마이그레이션
-  (`20260803020000_commission_segment_rebalance.sql`)과 **쌍으로** 나가야 한다.
+  (`20260803030000_commission_segment_rebalance.sql`)과 **쌍으로** 나가야 한다.
 - **주문 4종 중 둘(제약 계약·현상금)은 여전히 미계측**이다 — 이 게이트는 `chain` 과 `elite` 만
   본다. 두 주문은 `COMMISSION_WAVE_SEGMENTS_PER_SEGMENT` 를 공유하므로 같은 방향으로 쉬워졌을
   것이나, 확인하지 않았다.
