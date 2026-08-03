@@ -131,8 +131,9 @@ describe('지시 수신소 레이아웃 불변식', () => {
     // 둘 다 넘치면 `label` 이 scale.x 로 눌러 버려 **예외 없이 조용히** 뭉개진다.
     //
     // ⚠️ 목록 열 폭(720) 자체를 못 박지 않는 것은 의도다 — 760 으로 바꾸는 뮤테이션은 살아
-    // 돌아오는 게 **옳다**(그 값에서도 두 열이 다 담긴다). 여기가 잡는 것은 한쪽이 다른 쪽을
-    // 못 담게 만드는 **극단**이고, 실제로 `LIST_W` 를 1200 까지 밀면 아래 챔버 폭이 깨진다.
+    // 돌아왔고 그게 **옳다**(그 값에서도 두 열이 다 담긴다, 실측 확인 2026-08-03). 여기가 잡는
+    // 것은 한쪽이 다른 쪽을 못 담게 만드는 **극단**이고, 실제로 `LIST_W` 를 1300 으로 밀면
+    // `chamberTextW` 하한이 깨져 빨개진다(뮤테이션 M5 로 확인).
     expect(DESK_BOXES.rowTextW).toBeGreaterThanOrEqual(400);
     expect(DESK_BOXES.rowTextW).toBeLessThan(DESK_BOXES.list.w);
     expect(DESK_BOXES.chamberTextW).toBeGreaterThanOrEqual(600);
@@ -318,7 +319,9 @@ describe('크롬이 패널보다 위에 있다 — 구운 그림자가 클릭을
   });
 
   it('main.ts 가 매 프레임 update 를 흘린다(빠뜨리면 연출이 통째로 멈춘다)', () => {
-    expect(readSource('../src/main.ts')).toContain('commissionDesk.update(frame)');
+    // ⚠️ `toContain('commissionDesk.update(frame)')` 로는 **부족하다** — 그 호출을 주석 처리하는
+    // 뮤테이션이 살아 돌아왔다(주석 줄도 문자열을 품는다). 줄 맨 앞이 호출이어야 한다.
+    expect(readSource('../src/main.ts')).toMatch(/^[ \t]*commissionDesk\.update\(frame\);/m);
   });
 });
 
