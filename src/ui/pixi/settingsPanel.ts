@@ -133,6 +133,26 @@ export class SettingsScreen {
    * @param stage 디자인 스페이스 stage(레터박스 스케일이 걸린 컨테이너).
    * @param onLocaleChange 언어 전환 후 호출(열린 메뉴 화면 재렌더용).
    */
+  /**
+   * 로그인 계정 표시·로그아웃.
+   *
+   * `null` 이면 계정 행 자체를 안 그린다 — 미설정 빌드(vitest·밸런스 러너·시크릿 없는 배포)와
+   * 미로그인 상태가 여기 해당한다. 로그인이 없는 환경에 "로그아웃"만 덩그러니 뜨는 것을 막는다.
+   *
+   * **표시와 로그아웃을 같이 넣은 이유**: 로그아웃 버튼만 있고 누구인지 안 보이면, 엉뚱한
+   * 계정으로 쌓고 있다는 것을 끝날 때까지 모른다. 둘은 한 쌍이다.
+   */
+  private account: { email: string | null; onSignOut: () => void } | null = null;
+
+  /**
+   * 계정 정보를 갈아 끼운다. 부팅이 세션을 확인한 뒤 `main.ts` 가 한 번 부르고, 로그아웃
+   * 직후에도 부른다(그때는 null). 패널이 열려 있으면 즉시 다시 그린다.
+   */
+  setAccount(account: { email: string | null; onSignOut: () => void } | null): void {
+    this.account = account;
+    if (this.opened) this.render();
+  }
+
   constructor(
     private readonly audio: GameAudio,
     stage: Container,
@@ -431,6 +451,36 @@ export class SettingsScreen {
       });
       toggle.container.position.set(CW - 150, y);
       content.addChild(toggle.container);
+      y += BTN_H + 26;
+    }
+
+    // 계정: 라벨 한 줄 + 이메일 한 줄 + 로그아웃 버튼. 언어 행과 같은 관용구(라벨을 위에
+    // 따로 두는 형태)를 쓴다 — 이메일은 길어서 오른쪽 150px 컨트롤 옆에 붙이면 잘린다.
+    if (this.account !== null) {
+      content.addChild(this.row(t('settings.account'), y, 0));
+      y += 34;
+
+      // 이메일이 없을 수도 있다(provider 가 안 주는 경우). 그때도 "로그인됨"은 보여야 하므로
+      // 대체 문구를 쓴다 — 빈 줄을 남기면 로그아웃 버튼이 무엇에 대한 것인지 사라진다.
+      const who = label(this.account.email ?? t('settings.accountSignedIn'), ROW_LABEL, COLOR.gold);
+      who.position.set(0, y);
+      content.addChild(who);
+      y += 36;
+
+      const signOut = new PixiButton({
+        texture: this.ui['ui_btn_wood.png'],
+        width: CW,
+        height: BTN_H,
+        label: stripEmoji(t('settings.signOut')),
+        fontSize: 20,
+        onClick: () => {
+          // 창을 먼저 닫는다 — 로그아웃은 타이틀로 돌려보내므로 팝업이 남아 있으면 안 된다.
+          this.setOpen(false);
+          this.account?.onSignOut();
+        },
+      });
+      signOut.container.position.set(0, y);
+      content.addChild(signOut.container);
       y += BTN_H + 26;
     }
 
