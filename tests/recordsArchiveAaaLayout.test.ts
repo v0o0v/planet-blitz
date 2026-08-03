@@ -319,12 +319,14 @@ describe('패널 안 — 빈 자리 금지(행이 남는 세로를 나눠 갖는
     expect(ARCHIVE_BOXES.chapterMaxH * chapters).toBeGreaterThan(rest);
   });
 
-  it('상세 열의 파편 본문 챔버가 제목 챔버 아래 남는 세로를 전부 쓴다', () => {
+  it('파편 상세의 글줄 폭이 상자보다 좁다(각인 명판으로 읽히게)', () => {
+    // 상자를 제목/본문 두 챔버로 쪼갰더니 아래 챔버가 570px 짜리 빈 상자로 찍혔다(실화면 1차
+    // 확인). 지금은 상자 전체가 챔버 하나이고 글줄을 좁혀 가운데 앉힌다 — 그 "좁힘"이 사라지면
+    // 두세 줄짜리 비문이 1060px 를 가로질러 흐르면서 다시 빈 상자가 된다.
     const box = ARCHIVE_BOXES.detail;
-    const bodyH = box.h - ARCHIVE_BOXES.shardHeadH - ARCHIVE_BOXES.blockGap;
-    expect(bodyH).toBeGreaterThan(0);
-    // 등호 — 본문 챔버는 상자 바닥까지 내려간다(중간에 멈추면 그 아래가 빈 면이 된다).
-    expect(ARCHIVE_BOXES.shardHeadH + ARCHIVE_BOXES.blockGap + bodyH).toBe(box.h);
+    expect(ARCHIVE_BOXES.shardTextW).toBeLessThan(box.w - 96);
+    expect(ARCHIVE_BOXES.shardTextW).toBeGreaterThanOrEqual(600);
+    expect(ARCHIVE_BOXES.shardTitleGap).toBeGreaterThan(0);
   });
 });
 

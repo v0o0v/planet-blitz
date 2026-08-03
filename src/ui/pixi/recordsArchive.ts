@@ -254,8 +254,13 @@ const CHAPTER_MAX_H = 260;
 /** 챕터 챔버가 최소한 담아야 하는 세로(머리글 + 본문 두 줄) — 열 폭 하한을 되짚는 값이다. */
 const CHAPTER_MIN_H = 96;
 
-/** 상세(파편) 제목 챔버 높이. 본문 챔버는 상자 바닥까지 내려간다. */
-const SHARD_HEAD_H = 72;
+/**
+ * 상세(파편)의 **글줄 폭**과 제목↔본문 간격. 상자 전체가 챔버 하나이고 그 안에 제목+본문이 한
+ * 뭉치로 가운데 앉는다 — 상자를 둘로 쪼갰더니 아래 챔버가 570px 짜리 빈 상자로 찍혔다
+ * (실화면 1차 확인). 글줄 폭을 상자보다 좁게 잡아야 각인처럼 읽힌다.
+ */
+const SHARD_TEXT_W = 820;
+const SHARD_TITLE_GAP = 28;
 
 /** 화면 좌표 사각형(디자인 스페이스). */
 export interface ArchiveRect {
@@ -323,7 +328,8 @@ export const ARCHIVE_BOXES = {
   blockGap: DETAIL_BLOCK_GAP,
   chapterMaxH: CHAPTER_MAX_H,
   chapterMinH: CHAPTER_MIN_H,
-  shardHeadH: SHARD_HEAD_H,
+  shardTextW: SHARD_TEXT_W,
+  shardTitleGap: SHARD_TITLE_GAP,
   /** 탭 폭·간격(탭 줄이 목록 열을 정확히 덮는지 테스트가 되짚는다). */
   tabW: TAB_W,
   tabGap: TAB_GAP,
@@ -1243,19 +1249,27 @@ export class RecordsArchiveScreen {
     built.forEach((b, i) => {
       const h = hs[i] ?? b.natural;
       content.addChild(recessedWell(0, cy, BOX_D.w, h));
-      b.head.position.set(ROW_PAD + 4, cy + 14);
+      // 챔버가 남는 세로를 나눠 가지며 자라므로 글자를 위에 고정하면 아래가 빈 면이 된다 —
+      // 머리글+본문 **뭉치**를 챔버 세로 가운데에 앉힌다(정찰 슬라이스와 같은 처방).
+      const top = cy + Math.max(14, Math.round((h - (b.natural - 28)) / 2));
+      b.head.position.set(ROW_PAD + 4, top);
       content.addChild(b.head);
-      b.body.position.set(ROW_PAD + 4, cy + 14 + Math.ceil(b.head.height) + 8);
+      b.body.position.set(ROW_PAD + 4, top + Math.ceil(b.head.height) + 8);
       content.addChild(b.body);
       cy += h + ROW_GAP;
     });
   }
 
   /**
-   * 기록 파편 상세 — 제목 챔버 + **상자 바닥까지 내려가는 본문 챔버**.
+   * 기록 파편 상세 — **상자 전체가 챔버 하나**이고 제목 + 본문이 그 안에 한 뭉치로 앉는다.
    *
-   * 본문이 짧으면 챔버 세로 가운데에 앉는다(`emptyWell` 과 같은 처방 — 빈 면이 아니라 이름 있는
-   * 자리다). 길면 위에서부터 흐르고 스크롤이 받는다.
+   * ## 왜 상자를 둘로 쪼개지 않는가 (실화면 1차 확인 2026-08-03)
+   * 처음에는 제목 챔버(72) + 본문 챔버(나머지)로 나눴는데, 파편 본문이 두세 줄뿐이라 아래
+   * 챔버가 **570px 짜리 빈 상자**로 찍혔다 — 챔버로 이름을 줘도 그 크기면 그냥 빈 면이다.
+   * 하나로 합치고 글자를 **각인 크기**로 올려 가운데에 앉히면, 남는 여백이 "못 채운 자리"가
+   * 아니라 **명판 둘레의 여백**으로 읽힌다. 파편은 짧은 비문이지 문서가 아니다.
+   *
+   * 본문이 길어 뭉치가 상자를 넘치면 스크롤이 받는다(휠은 클립 Container 가 받는다).
    */
   private renderShardDetail(host: Container, profile: Profile): void {
     const id = this.selectedShard;
@@ -1265,51 +1279,57 @@ export class RecordsArchiveScreen {
       return;
     }
     const has = collectedShardIds(profile).has(shard.id);
+    host.addChild(recessedWell(BOX_D.x, BOX_D.y, BOX_D.w, BOX_D.h));
 
-    host.addChild(recessedWell(BOX_D.x, BOX_D.y, BOX_D.w, SHARD_HEAD_H));
-    const title = this.label(
+    const innerW = Math.min(SHARD_TEXT_W, BOX_D.w - 96);
+    const cx = BOX_D.x + BOX_D.w / 2;
+
+    const title = this.wrapped(
       has ? recordShardTitle(shard) : t('archive.story.locked'),
-      24,
+      28,
       has ? COLOR.gold : COLOR.muted,
+      innerW,
       '800',
-      BOX_D.w - ROW_PAD * 2 - 8,
+      40,
     );
-    title.anchor.set(0, 0.5);
-    title.position.set(BOX_D.x + ROW_PAD + 4, BOX_D.y + SHARD_HEAD_H / 2);
-    host.addChild(title);
-
-    const top = BOX_D.y + SHARD_HEAD_H + DETAIL_BLOCK_GAP;
-    const availH = BOX_D.bottom - top;
-    host.addChild(recessedWell(BOX_D.x, top, BOX_D.w, availH));
-
-    const innerW = BOX_D.w - 96;
+    title.anchor.set(0.5, 0);
     const body = this.wrapped(
       has ? recordShardBody(shard) : t('archive.shards.locked'),
-      has ? 19 : 18,
+      has ? 24 : 21,
       has ? SLAB_BODY_FILL : COLOR.muted,
       innerW,
       '400',
-      30,
+      has ? 42 : 34,
     );
+    body.anchor.set(0.5, 0);
+
+    const titleH = Math.ceil(title.height);
     const bodyH = Math.ceil(body.height);
-    if (bodyH + 48 <= availH) {
-      body.anchor.set(0.5, 0.5);
-      body.position.set(BOX_D.x + BOX_D.w / 2, top + availH / 2);
+    const groupH = titleH + SHARD_TITLE_GAP + bodyH;
+
+    if (groupH + 64 <= BOX_D.h) {
+      const top = BOX_D.y + Math.round((BOX_D.h - groupH) / 2);
+      title.position.set(cx, top);
+      body.position.set(cx, top + titleH + SHARD_TITLE_GAP);
+      host.addChild(title);
       host.addChild(body);
       return;
     }
     const content = makeScrollArea(host, {
-      x: BOX_D.x + 48,
-      y: top + 24,
-      w: innerW,
-      h: availH - 48,
-      totalH: bodyH,
+      x: BOX_D.x,
+      y: BOX_D.y + 32,
+      w: BOX_D.w,
+      h: BOX_D.h - 64,
+      totalH: groupH,
       get: () => this.detailScrollY,
       set: (v) => {
         this.detailScrollY = v;
       },
       thumb: true,
     });
+    title.position.set(BOX_D.w / 2, 0);
+    body.position.set(BOX_D.w / 2, titleH + SHARD_TITLE_GAP);
+    content.addChild(title);
     content.addChild(body);
   }
 }
