@@ -1831,6 +1831,9 @@ async function main(): Promise<void> {
     // 관제탑도 같은 부류다(2026-08-03 AAA 전환) — 최상위 화면이라 여기 배선이 유일한 dt
     // 공급원이다. 빠뜨리면 배경·석재 패널 연출이 통째로 멈춘다(연구소에서 실제로 겪었다).
     controlTower.update(frame);
+    // 기록 보관소도 같은 부류다(2026-08-03 AAA 전환) — 최상위 화면이라 여기 배선이 유일한 dt
+    // 공급원이다. 빠뜨리면 배경·석재 패널 연출이 통째로 멈춘다(연구소에서 실제로 겪었다).
+    recordsArchive.update(frame);
     // 코어 모듈 화면도 같은 부류다(2026-08-03 AAA 전환). 사령부에서 suspend/resume 으로 오가는
     // 하위 화면이지만 dt 공급원은 여기뿐이다 — 빠뜨리면 배경·석재 패널 연출이 통째로 멈춘다.
     modulesScreen.update(frame);

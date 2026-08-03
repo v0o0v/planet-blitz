@@ -43,7 +43,14 @@ const LORE_CHROME_KEYS = [
   'archive.subtitle',
   'archive.tab.stories',
   'archive.tab.shards',
-  'archive.tab.intro',
+  // 2026-08-03 AAA 전환: 프롤로그 **탭**이 사라지고(`archive.tab.intro` 삭제) 그 진입점은
+  // 하단 액션 띠의 `archive.intro.replay` 버튼으로 내려갔다. 대신 2열 목록/상세가 되면서
+  // 패널 각인 제목 둘과 상세 열 문구가 새로 생겼다.
+  'archive.list.head',
+  'archive.detail.head',
+  'archive.detail.empty',
+  'archive.stories.progress',
+  'archive.story.progress',
   'archive.shards.progress',
   'archive.shards.locked',
   'archive.story.locked',
