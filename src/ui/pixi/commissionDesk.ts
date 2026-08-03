@@ -1108,6 +1108,8 @@ export class CommissionDeskScreen {
     node.addChild(rewardText);
 
     const extras = [
+      // 확정 경험치는 **모든 의뢰서가 가지는 축**이라 광물·아이템보다 앞에 온다.
+      reward.xpText,
       ...(reward.mineralsText !== null ? [reward.mineralsText] : []),
       ...(reward.itemsText !== null ? [reward.itemsText] : []),
       ...(reward.hasUnique ? [t('commission.rewards.unique')] : []),
@@ -1152,6 +1154,7 @@ export class CommissionDeskScreen {
     const reward = commissionRewardSummary(payload);
     const rewardLines = [
       reward.creditsText,
+      reward.xpText,
       ...(reward.mineralsText !== null ? [reward.mineralsText] : []),
       ...(reward.itemsText !== null ? [reward.itemsText] : []),
       ...(reward.hasUnique ? [t('commission.rewards.unique')] : []),
