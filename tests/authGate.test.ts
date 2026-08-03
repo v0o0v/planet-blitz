@@ -84,8 +84,25 @@ describe('② 익명 폴백이 부활하지 않는다', () => {
 
   it('requireUserId 는 세션이 없으면 throw 한다(조용히 만들어 주지 않는다)', () => {
     const src = read('net/supabaseClient.ts');
-    expect(src).toMatch(/if \(uid === undefined\) throw/);
+    expect(src).toMatch(/if \(user === undefined\) throw/);
     expect(src).not.toMatch(/\.auth\.signInAnonymously\s*\(/);
+  });
+
+  /**
+   * 호출을 지우는 것만으로는 부족했다. **이미 발급된 익명 세션은 localStorage 에 남아 자동
+   * 갱신되므로 만료되지 않는다** — 그대로 두면 이 레인 이전에 한 번이라도 플레이한 사람은
+   * 전원이 게이트를 그냥 통과한다(로그인 필수가 신규 사용자에게만 적용된다). 개발 중 실제로
+   * 재현됐고, 그때까지 어떤 테스트도 빨갛지 않았다.
+   */
+  it('익명 세션은 로그인으로 치지 않는다 — 부팅 검사와 requireUserId 양쪽에서', () => {
+    expect(read('net/auth.ts')).toMatch(/user\.is_anonymous === true/);
+    expect(read('net/supabaseClient.ts')).toMatch(/user\.is_anonymous === true/);
+  });
+
+  it('발견한 익명 세션은 끊는다(UI 는 미로그인인데 서버는 익명 uid 로 쓰는 두 얼굴 방지)', () => {
+    const src = read('net/auth.ts');
+    const block = src.slice(src.indexOf('if (user.is_anonymous === true)'));
+    expect(block.slice(0, 200)).toContain('signOut()');
   });
 });
 
@@ -134,15 +151,46 @@ describe('④ 로그아웃 순서', () => {
   });
 });
 
-describe('⑤ 계정 행은 로그인했을 때만 그린다', () => {
-  it('account 가 null 이면 행 자체가 없다', () => {
+describe('⑤ 계정 행', () => {
+  it('로그인 개념이 없는 빌드(미설정)면 행 자체가 없다', () => {
     const src = read('ui/pixi/settingsPanel.ts');
-    // 미설정 빌드·미로그인에 "로그아웃"만 덩그러니 뜨는 것을 막는다.
-    expect(src).toMatch(/if \(this\.account !== null\) \{/);
+    // 누를 수도 없는 계정 UI 가 뜨는 것을 막는다.
+    expect(src).toMatch(/if \(account !== null\) \{/);
   });
 
   it('이메일이 없어도 로그인 사실은 보여준다', () => {
     const src = read('ui/pixi/settingsPanel.ts');
-    expect(src).toContain("this.account.email ?? t('settings.accountSignedIn')");
+    expect(src).toContain("account.email ?? t('settings.accountSignedIn')");
+  });
+
+  /**
+   * 이 두 개가 실제로 놓쳤던 결함을 잠근다.
+   *
+   * 타이틀은 버튼이 **하나**고, 그 하나는 게이트가 강제일 때만 로그인이 된다. 그래서 게이트가
+   * 꺼진 상황(DEV·세션 끊김 강등)에서는 로그인할 방법이 아예 없어졌다 — 실제로 DEV 에서
+   * "구글 버튼이 안 보인다"로 드러났다. 설정 계정 행이 그 유일한 출구다.
+   */
+  it('미로그인 상태에도 로그인 버튼이 있다', () => {
+    const src = read('ui/pixi/settingsPanel.ts');
+    expect(src).toContain("t('title.signInGoogle')");
+    expect(src).toContain('account.onSignIn()');
+  });
+
+  it('DEV·강등 상황에서 계정 행에 미로그인 상태를 넣는다', () => {
+    const boot = (() => {
+      const src = read('main.ts');
+      return src.slice(src.indexOf('async function bootWithAuth'));
+    })();
+    // `user === null` 분기가 setAccount 를 부르지 않으면 로그인 버튼이 영영 안 나타난다.
+    const branch = boot.slice(boot.indexOf('if (user === null)'), boot.indexOf('reconcileAccountScope'));
+    expect(branch).toContain('setAccount({ signedIn: false');
+  });
+
+  it('설정에서 로그인 실패하면 화면을 옮기지 않고 안내만 띄운다', () => {
+    const src = read('main.ts');
+    const fn = src.slice(src.indexOf('function handleSignIn'), src.indexOf('function handleSignOut'));
+    expect(fn).toContain('setAccountNotice');
+    // 플레이 중이던 화면을 날리지 않는다.
+    expect(fn).not.toContain('openTitle(');
   });
 });

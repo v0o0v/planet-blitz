@@ -106,6 +106,16 @@ function gearGlyph(size: number): Graphics {
   return g;
 }
 
+/**
+ * 설정 팝업 '계정' 행의 상태.
+ *
+ * 로그인 개념이 있는 빌드(설정 O)에서 **미로그인도 하나의 상태**다 — 그때 로그인 버튼이
+ * 없으면, 게이트가 꺼진 상황(DEV·세션 끊김 강등)에서 다시 로그인할 방법이 사라진다.
+ */
+export type AccountPanelState =
+  | { signedIn: true; email: string | null; onSignOut: () => void }
+  | { signedIn: false; onSignIn: () => void };
+
 export class SettingsScreen {
   private readonly stage: Container;
   private readonly root = new Container();
@@ -134,24 +144,46 @@ export class SettingsScreen {
    * @param onLocaleChange 언어 전환 후 호출(열린 메뉴 화면 재렌더용).
    */
   /**
-   * 로그인 계정 표시·로그아웃.
+   * 계정 행 상태.
    *
-   * `null` 이면 계정 행 자체를 안 그린다 — 미설정 빌드(vitest·밸런스 러너·시크릿 없는 배포)와
-   * 미로그인 상태가 여기 해당한다. 로그인이 없는 환경에 "로그아웃"만 덩그러니 뜨는 것을 막는다.
+   * `null` = 행 자체를 안 그린다. **로그인이라는 개념이 없는 빌드**가 여기 해당한다
+   * (미설정 — vitest·밸런스 러너·시크릿 없는 배포). 그런 환경에 계정 UI 가 뜨면 누를 수도
+   * 없는 버튼만 남는다.
    *
-   * **표시와 로그아웃을 같이 넣은 이유**: 로그아웃 버튼만 있고 누구인지 안 보이면, 엉뚱한
-   * 계정으로 쌓고 있다는 것을 끝날 때까지 모른다. 둘은 한 쌍이다.
+   * ## 왜 로그인 버튼이 여기 있나 (타이틀이 아니라)
+   * 타이틀은 y=858 에 460×86 버튼 **하나**가 들어가도록 짜여 있고, 그 하나는 게이트가 강제일
+   * 때만 로그인이 된다. 그래서 게이트가 꺼진 상황 — ①DEV(하네스를 위해 강제하지 않는다)
+   * ②세션이 끊겨 오프라인으로 강등된 뒤 — 에는 **로그인할 방법이 아예 없어진다**. 설정 팝업은
+   * 모든 화면 위에 떠 있는 크롬이라(`settings.raise()`) 어느 상황에서도 닿는 유일한 자리다.
+   *
+   * ## 표시와 로그아웃은 한 쌍이다
+   * 로그아웃 버튼만 있고 누구인지 안 보이면, 엉뚱한 계정으로 쌓고 있다는 것을 끝날 때까지
+   * 모른다.
    */
-  private account: { email: string | null; onSignOut: () => void } | null = null;
+  private account: AccountPanelState | null = null;
 
   /**
-   * 계정 정보를 갈아 끼운다. 부팅이 세션을 확인한 뒤 `main.ts` 가 한 번 부르고, 로그아웃
-   * 직후에도 부른다(그때는 null). 패널이 열려 있으면 즉시 다시 그린다.
+   * 계정 행 상태를 갈아 끼운다. 부팅이 세션을 확인한 뒤 `main.ts` 가 부르고, 로그인 실패
+   * 직후에도 부른다. 패널이 열려 있으면 즉시 다시 그린다.
    */
-  setAccount(account: { email: string | null; onSignOut: () => void } | null): void {
+  setAccount(account: AccountPanelState | null): void {
     this.account = account;
     if (this.opened) this.render();
   }
+
+  /**
+   * 계정 행에 붙일 안내(로그인 시작 실패). null 이면 지운다.
+   *
+   * 타이틀의 로그인 실패는 타이틀이 직접 문구를 띄우지만, **설정에서 누른 실패는 띄울 곳이
+   * 없다** — 팝업을 닫아 버리면 사용자는 아무 일도 안 일어난 것처럼 본다. 그래서 여기에도
+   * 같은 안내를 둔다.
+   */
+  setAccountNotice(notice: string | null): void {
+    this.accountNotice = notice;
+    if (this.opened) this.render();
+  }
+
+  private accountNotice: string | null = null;
 
   constructor(
     private readonly audio: GameAudio,
@@ -456,32 +488,51 @@ export class SettingsScreen {
 
     // 계정: 라벨 한 줄 + 이메일 한 줄 + 로그아웃 버튼. 언어 행과 같은 관용구(라벨을 위에
     // 따로 두는 형태)를 쓴다 — 이메일은 길어서 오른쪽 150px 컨트롤 옆에 붙이면 잘린다.
-    if (this.account !== null) {
+    const account = this.account;
+    if (account !== null) {
       content.addChild(this.row(t('settings.account'), y, 0));
       y += 34;
 
       // 이메일이 없을 수도 있다(provider 가 안 주는 경우). 그때도 "로그인됨"은 보여야 하므로
-      // 대체 문구를 쓴다 — 빈 줄을 남기면 로그아웃 버튼이 무엇에 대한 것인지 사라진다.
-      const who = label(this.account.email ?? t('settings.accountSignedIn'), ROW_LABEL, COLOR.gold);
-      who.position.set(0, y);
-      content.addChild(who);
+      // 대체 문구를 쓴다 — 빈 줄을 남기면 아래 버튼이 무엇에 대한 것인지 사라진다.
+      const who = account.signedIn
+        ? (account.email ?? t('settings.accountSignedIn'))
+        : t('settings.notSignedIn');
+      const whoLabel = label(who, ROW_LABEL, account.signedIn ? COLOR.gold : COLOR.muted);
+      whoLabel.position.set(0, y);
+      content.addChild(whoLabel);
       y += 36;
 
-      const signOut = new PixiButton({
-        texture: this.ui['ui_btn_wood.png'],
+      const action = new PixiButton({
+        texture: account.signedIn ? this.ui['ui_btn_wood.png'] : this.ui['ui_btn_yellow.png'],
         width: CW,
         height: BTN_H,
-        label: stripEmoji(t('settings.signOut')),
+        label: stripEmoji(account.signedIn ? t('settings.signOut') : t('title.signInGoogle')),
         fontSize: 20,
+        ...(account.signedIn ? {} : { labelColor: COLOR.darkLabel }),
         onClick: () => {
-          // 창을 먼저 닫는다 — 로그아웃은 타이틀로 돌려보내므로 팝업이 남아 있으면 안 된다.
-          this.setOpen(false);
-          this.account?.onSignOut();
+          if (account.signedIn) {
+            // 로그아웃은 곧 새로고침이므로 팝업이 남아 있을 이유가 없다.
+            this.setOpen(false);
+            account.onSignOut();
+            return;
+          }
+          // 로그인은 **닫지 않는다** — 성공하면 어차피 페이지가 떠나고, 실패하면 여기에
+          // 안내를 띄워야 하는데 닫아 버리면 아무 일도 안 일어난 것처럼 보인다.
+          this.setAccountNotice(null);
+          account.onSignIn();
         },
       });
-      signOut.container.position.set(0, y);
-      content.addChild(signOut.container);
+      action.container.position.set(0, y);
+      content.addChild(action.container);
       y += BTN_H + 26;
+
+      if (this.accountNotice !== null) {
+        const notice = label(this.accountNotice, ROW_LABEL, COLOR.cream);
+        notice.position.set(0, y);
+        content.addChild(notice);
+        y += 34;
+      }
     }
 
     const close = new PixiButton({
