@@ -17,6 +17,7 @@ import {
   migrateLocalProfileToServer,
   recordPveRunResult,
   flushPendingSync,
+  pullServerProfileInto,
 } from '../src/net/index.js';
 import type { ServerGateway } from '../src/net/gateway.js';
 import { defaultProfile, type KeyValueStore, type Profile } from '../src/save/profile.js';
@@ -326,5 +327,64 @@ describe('net/index — PvE 런 기록·재시도 큐(AC8)', () => {
     const store = memStore();
     await recordPveRunResult(richProfile(), { config: null, store });
     expect(readPendingProfile(store)).toBeNull();
+  });
+});
+
+/**
+ * 서버 → 로컬 pull.
+ *
+ * **이 경로는 로그인 레인 전까지 아예 없었다.** `migrateLocalProfileToServer` 는 올리기만 하고,
+ * 서버가 더 진행됐어도 로컬 객체에는 아무것도 안 남긴다. 익명 로그인 시절엔 기기마다 uid 가
+ * 달라 "같은 계정을 새 기기에서 연다"가 성립하지 않아 드러나지 않았다. 구글 로그인이 붙으면
+ * 그게 주 사용 사례가 되므로, 없으면 새 기기에서 진행도가 영영 안 보인다.
+ */
+describe('pullServerProfileInto', () => {
+  it('서버가 더 진행됐으면 로컬 객체를 제자리에서 갈아 끼운다', async () => {
+    const serverRich = richProfile();
+    const gw = new FakeGateway('uid-1', {
+      save: serverRich,
+      saveVersion: serverRich.saveVersion,
+    });
+    // main.ts 의 `profile` 은 const 라 재대입이 불가능하다 — 참조가 유지되는지까지 확인한다.
+    const local = defaultProfile();
+    const ref = local;
+
+    expect(await pullServerProfileInto(local, { gateway: gw })).toBe('applied');
+    expect(local).toBe(ref);
+    expect(local.ships[0]?.level).toBe(12);
+    expect(local.credits).toBe(500);
+  });
+
+  it('로컬이 더 진행됐으면 건드리지 않는다(오프라인 플레이 보존)', async () => {
+    const gw = new FakeGateway('uid-1', {
+      save: defaultProfile(),
+      saveVersion: defaultProfile().saveVersion,
+    });
+    const local = richProfile();
+
+    expect(await pullServerProfileInto(local, { gateway: gw })).toBe('kept-local');
+    expect(local.ships[0]?.level).toBe(12);
+  });
+
+  it('신규 계정(서버 행 없음)이면 로컬을 그대로 출발점으로 쓴다', async () => {
+    const gw = new FakeGateway('uid-1', null);
+    const local = defaultProfile();
+    expect(await pullServerProfileInto(local, { gateway: gw })).toBe('kept-local');
+  });
+
+  it('미로그인/오프라인이면 unavailable — 로컬을 지우지도 덮지도 않는다', async () => {
+    const gw = new FakeGateway('uid-1', {
+      save: defaultProfile(),
+      saveVersion: defaultProfile().saveVersion,
+    });
+    gw.failAll = true;
+    const local = richProfile();
+
+    expect(await pullServerProfileInto(local, { gateway: gw })).toBe('unavailable');
+    expect(local.ships[0]?.level).toBe(12);
+  });
+
+  it('미설정이면 SDK 를 건드리지 않고 unavailable', async () => {
+    expect(await pullServerProfileInto(defaultProfile(), { config: null })).toBe('unavailable');
   });
 });

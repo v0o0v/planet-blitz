@@ -29,6 +29,7 @@ import type { Replay } from '../sim/replay.js';
 import {
   serializeProfile,
   deserializeProfile,
+  chooseProfile,
   planServerMigration,
   isMigrated,
   markMigrated,
@@ -134,6 +135,50 @@ export async function migrateLocalProfileToServer(
     markMigrated(store, uid);
   } catch {
     // 오프라인/일시 오류 — 마커를 남기지 않아 다음 세션에 다시 시도된다.
+  }
+}
+
+/**
+ * 서버 프로필을 **로컬 Profile 객체에 반영**한다(기기 이관·재로그인용).
+ *
+ * ## 왜 새로 필요한가 — 이 경로가 아예 없었다
+ * `migrateLocalProfileToServer` 는 이름 그대로 **올리기만** 한다. 서버가 더 진행됐으면
+ * `planServerMigration` 이 그 프로필을 골라 **서버에 되쓸 뿐** 로컬에는 아무것도 안 남긴다.
+ * 익명 로그인 시절에는 기기마다 uid 가 달라 "같은 계정을 새 기기에서 연다"가 성립하지
+ * 않았으므로 드러나지 않았다. 구글 로그인이 붙는 순간 그 상황이 정상 사용 사례가 되고,
+ * 그때 이 경로가 없으면 **새 기기에서 진행도가 영영 보이지 않는다**.
+ *
+ * ## 왜 통짜 덮어쓰기가 아니라 `chooseProfile` 인가
+ * 로컬이 더 진행됐을 수 있다(오프라인 플레이 후 재접속). 진행도 점수로 고르는 기존 규율을
+ * 그대로 쓴다 — 여기서만 다른 규칙을 쓰면 두 진실이 생긴다.
+ *
+ * ## 왜 `Object.assign` 인가
+ * `main.ts` 의 `profile` 은 `const` 이고 화면·핸들러 수십 곳이 그 **객체 참조**를 캡처하고
+ * 있다. 재대입은 불가능하므로 제자리에서 필드를 갈아 끼운다. `deserializeProfile` 이 항상
+ * 완전한 Profile 을 돌려주므로(migrate 통과) 부분 갱신으로 남는 필드는 없다.
+ *
+ * 절대 throw 하지 않는다. 반환값은 호출부가 "저장할지" 판단하는 데 쓴다.
+ *
+ * @returns `applied` = 서버 값으로 갈아 끼웠다 / `kept-local` = 로컬이 최신이라 그대로 /
+ *          `unavailable` = 미설정·미로그인·오프라인(아무것도 안 했다)
+ */
+export async function pullServerProfileInto(
+  profile: Profile,
+  deps: NetDeps = {},
+): Promise<'applied' | 'kept-local' | 'unavailable'> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null) return 'unavailable';
+  try {
+    const uid = await gateway.getUserId();
+    const row = await gateway.fetchProfile(uid);
+    if (row === null) return 'kept-local'; // 신규 계정 — 로컬(대개 기본값)이 그대로 출발점.
+    const server = deserializeProfile(row);
+    if (chooseProfile(profile, server) !== server) return 'kept-local';
+    Object.assign(profile, server);
+    return 'applied';
+  } catch {
+    // 미로그인(requireUserId throw)·오프라인·일시 오류 — 로컬 그대로 두고 조용히 물러난다.
+    return 'unavailable';
   }
 }
 

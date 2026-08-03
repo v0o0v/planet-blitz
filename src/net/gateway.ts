@@ -7,9 +7,9 @@
  * 이 파일은 그것을 경유한다 — 이 파일 자체가 `index.ts` 에서 지연 로딩되므로 미설정 번들에
  * SDK 가 실리지 않는 성질은 그대로다.
  *
- * 익명 Auth(ADR-0002·계획 B3): 최초 호출 시 세션이 없으면 `signInAnonymously()` 로
- * 익명 유저를 만든다. Supabase 프로젝트에서 Anonymous sign-ins 활성화가 전제
- * (supabase/README.md 적용 절차 2단계).
+ * Auth: 세션이 **이미 있어야** 한다(`requireUserId`). 구글 로그인 필수 정책으로 바뀌면서
+ * 익명 폴백(`signInAnonymously`)을 걷어냈다 — 그 폴백은 로그인 게이트를 우회시킨다.
+ * 세션이 없으면 throw 하고 호출부가 오프라인과 동일하게 강등한다(`net/auth.ts` 참고).
  *
  * 재화 서버 권위(ADR-0027/0026): `profiles.credits`/`minerals`(numeric 컬럼)가 재화 정본이고
  * `save` jsonb 의 재화는 표시 미러다. `fetchProfile` 이 컬럼을 함께 읽어 미러 초기값으로 쓰고,
@@ -18,7 +18,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getSupabaseClient } from './supabaseClient.js';
+import { getSupabaseClient, requireUserId } from './supabaseClient.js';
 import type { Profile } from '../save/profile.js';
 import type { ServerProfile } from './profileSync.js';
 import type { SupabaseConfig } from './config.js';
@@ -235,15 +235,7 @@ export class SupabaseGateway implements ServerGateway {
   }
 
   async getUserId(): Promise<string> {
-    const { data: sessionData } = await this.client.auth.getSession();
-    const existing = sessionData.session?.user?.id;
-    if (existing !== undefined) return existing;
-
-    const { data, error } = await this.client.auth.signInAnonymously();
-    if (error !== null) throw error;
-    const uid = data.user?.id;
-    if (uid === undefined) throw new Error('익명 로그인 후에도 uid 를 얻지 못했습니다');
-    return uid;
+    return requireUserId(this.client);
   }
 
   async fetchProfile(uid: string): Promise<ServerProfile | null> {

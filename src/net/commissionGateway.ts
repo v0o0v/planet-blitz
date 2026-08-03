@@ -12,7 +12,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getSupabaseClient } from './supabaseClient.js';
+import { getSupabaseClient, requireUserId } from './supabaseClient.js';
 import type { SupabaseConfig } from './config.js';
 import type { CommissionPayload } from '../run/commission.js';
 
@@ -231,15 +231,7 @@ export class SupabaseCommissionGateway implements CommissionGateway {
   }
 
   async getUserId(): Promise<string> {
-    const { data: sessionData } = await this.client.auth.getSession();
-    const existing = sessionData.session?.user?.id;
-    if (existing !== undefined) return existing;
-
-    const { data, error } = await this.client.auth.signInAnonymously();
-    if (error !== null) throw error;
-    const uid = data.user?.id;
-    if (uid === undefined) throw new Error('익명 로그인 후에도 uid 를 얻지 못했습니다');
-    return uid;
+    return requireUserId(this.client);
   }
 
   async consumeCommission(commissionId: string, loadout: unknown): Promise<ConsumeCommissionResult> {

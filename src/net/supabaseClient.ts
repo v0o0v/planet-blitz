@@ -50,14 +50,40 @@ function cacheKey(config: SupabaseConfig): string {
 /**
  * 설정에 대응하는 Supabase 클라이언트를 반환한다(같은 설정이면 항상 같은 인스턴스).
  *
- * auth 옵션은 기존 8곳이 쓰던 것과 동일하다 — 이 통합은 동작을 바꾸지 않는다.
+ * ## `flowType: 'pkce'` — 기본값을 바꾼다
+ * auth-js 2.110.8 의 기본은 `implicit` 이고, 그러면 **액세스 토큰이 URL 해시에 실려 돌아온다**.
+ * 브라우저 히스토리·확장 프로그램·referrer 에 남을 수 있는 값이다. PKCE 는 `?code=` 만 싣고
+ * 교환에 localStorage 의 verifier 를 쓰므로 토큰이 URL 을 타지 않는다. 정적 호스팅(GitHub
+ * Pages)에서도 서버 없이 성립한다 — 교환을 브라우저가 하기 때문이다.
+ *
+ * 인스턴스를 하나로 합쳐 둔 덕에 **이 한 줄이 전부**다. 8개였다면 8곳을 맞춰야 했다.
  */
 export function getSupabaseClient(config: SupabaseConfig): SupabaseClient {
   const key = cacheKey(config);
   if (cached !== null && cached.key === key) return cached.client;
   const client = createClient(config.url, config.anonKey, {
-    auth: { persistSession: true, autoRefreshToken: true },
+    auth: { persistSession: true, autoRefreshToken: true, flowType: 'pkce' },
   });
   cached = { key, client };
   return client;
+}
+
+/**
+ * 로그인된 uid 를 돌려준다. **세션이 없으면 throw** 한다.
+ *
+ * ## 익명 로그인을 여기서 걷어냈다
+ * 이전에는 게이트웨이 7곳이 각자 "세션 없으면 `signInAnonymously()`" 를 복제하고 있었다.
+ * 로그인 필수 정책에서는 그 폴백이 곧 **게이트 우회**다 — 로그인 안 한 사용자에게 서버가
+ * 계정을 만들어 주면 게이트가 UI 장식이 된다.
+ *
+ * ## throw 가 맞는 이유
+ * 호출부(`net/index.ts`·`defenseSync.ts` 등)는 이미 전부 `try/catch` 로 감싸 no-op 또는 대기
+ * 큐 적재로 강등한다. 즉 세션이 없으면 **오프라인과 똑같이 동작한다** — 진행 중인 런을 죽이지
+ * 않고, 못 보낸 정산은 큐에 남아 다음 로그인 때 재전송된다. 이것이 세션 끊김 시 원하는 거동이다.
+ */
+export async function requireUserId(client: SupabaseClient): Promise<string> {
+  const { data } = await client.auth.getSession();
+  const uid = data.session?.user?.id;
+  if (uid === undefined) throw new Error('로그인이 필요합니다(세션 없음)');
+  return uid;
 }

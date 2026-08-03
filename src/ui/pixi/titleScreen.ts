@@ -51,7 +51,26 @@ import { stripEmoji } from './text.js';
 export interface TitleShowOpts {
   /** true = 시작 버튼이 강제 튜토리얼 런을 띄운다(첫 실행). */
   firstRun: boolean;
+  /**
+   * true = 아직 로그인하지 않았고 로그인이 **강제**다. 같은 자리의 버튼이 시작 대신
+   * "Google 로 계속하기"가 된다.
+   *
+   * 버튼을 하나로 유지하는 이유: 이 화면은 y=858 에 460×86 버튼 하나가 들어가도록 짜여
+   * 있고 그 아래는 스크림 경계다. 둘로 늘리면 키아트 바닥과 겹친다. 게다가 웹 OAuth 는
+   * 페이지를 통째로 떠났다 돌아오므로 "누르기 전"과 "돌아온 후"는 애초에 같은 화면의 두
+   * 상태다 — 버튼 하나가 상태로 바뀌는 것이 흐름과도 맞는다.
+   */
+  needsSignIn: boolean;
+  /**
+   * 로그인 시작 실패 안내(i18n 키가 아니라 이미 번역된 문자열). 없으면 안 그린다.
+   *
+   * `exactOptionalPropertyTypes` 가 켜져 있어 `| undefined` 를 명시한다 — 호출부가 "안내 없음"을
+   * `undefined` 로 넘기기 때문(프로퍼티를 조건부로 빼는 것보다 읽기 쉽다).
+   */
+  notice?: string | undefined;
   onStart: () => void;
+  /** `needsSignIn` 일 때 버튼을 누르면 호출. 성공하면 브라우저가 구글로 떠난다. */
+  onSignIn: () => void;
 }
 
 // --- 레이아웃 상수(디자인 스페이스 1920×1080) ---
@@ -529,19 +548,51 @@ export class TitleScreen {
     // 부제(`title.tag`)와 첫 실행 안내(`title.note`)는 **의도적으로 그리지 않는다**(사용자 지시,
     // 2026-08-02). 키아트 위에 떠 있는 설명 문구가 시네마틱 인상을 깎기 때문이다. 두 문자열은
     // 카탈로그에 그대로 남아 있어(기록 보관소·후속 화면이 쓸 수 있다) i18n 커버리지도 온전하다.
+    // 미로그인이면 같은 자리에서 라벨과 동작만 갈린다. **로그인 쪽은 `hide()` 를 부르지
+    // 않는다** — 리다이렉트가 시작되면 페이지가 통째로 떠나므로 화면을 정리할 필요가 없고,
+    // 리다이렉트가 시작되지 못했을 때(오프라인 등) 타이틀이 그대로 남아 있어야 안내 문구를
+    // 보여줄 수 있기 때문이다.
+    const label = opts.needsSignIn
+      ? t('title.signInGoogle')
+      : opts.firstRun
+        ? t('title.startTutorial')
+        : t('title.enterBase');
     const start = new PixiButton({
       texture: this.ui['ui_btn_yellow.png'],
       width: START_W,
       height: START_H,
-      label: stripEmoji(opts.firstRun ? t('title.startTutorial') : t('title.enterBase')),
+      label: stripEmoji(label),
       fontSize: 32,
       labelColor: COLOR.darkLabel,
       onClick: () => {
+        if (opts.needsSignIn) {
+          opts.onSignIn();
+          return;
+        }
         this.hide();
         opts.onStart();
       },
     });
     start.container.position.set((DESIGN_WIDTH - START_W) / 2, START_Y);
     this.root.addChild(start.container);
+
+    // 로그인 실패 안내. 버튼 바로 아래, 스크림이 가장 짙은 구간이라 흰 글자가 읽힌다.
+    if (opts.notice !== undefined && opts.notice.length > 0) {
+      const notice = new Text({
+        text: stripEmoji(opts.notice),
+        style: {
+          fontFamily: UI_FONT,
+          fontSize: 22,
+          fill: COLOR.cream,
+          align: 'center',
+          dropShadow: TEXT_SHADOW,
+          wordWrap: true,
+          wordWrapWidth: 900,
+        },
+      });
+      notice.anchor.set(0.5, 0);
+      notice.position.set(DESIGN_WIDTH / 2, START_Y + START_H + 16);
+      this.root.addChild(notice);
+    }
   }
 }

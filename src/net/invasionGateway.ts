@@ -5,12 +5,12 @@
  * `supabaseClient.ts` 가 유일하게 정적 import 하고 이 파일은 그것을 경유한다. `invasion.ts` 는
  * 설정이 있을 때만 이 모듈을 동적 import 하므로 미설정 번들/테스트에 SDK 가 실리지 않는다.
  *
- * 익명 Auth(ADR-0002): 세션이 없으면 `signInAnonymously()`. profiles 게이트웨이와 같은
- * 익명 유저를 공유한다(persistSession=true → localStorage 세션 공유).
+ * Auth: 세션이 **이미 있어야** 한다(`requireUserId`) — 익명 폴백은 로그인 필수 정책으로
+ * 걷어냈다. 다른 게이트웨이와 같은 클라이언트·세션을 공유한다(`supabaseClient.ts`).
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getSupabaseClient } from './supabaseClient.js';
+import { getSupabaseClient, requireUserId } from './supabaseClient.js';
 import type { SupabaseConfig } from './config.js';
 import type { Replay } from '../sim/replay.js';
 import { normalizeInvasionLayers } from '../sim/invasion/normalize.js';
@@ -181,15 +181,7 @@ export class SupabaseInvasionGateway implements InvasionGateway {
   }
 
   async getUserId(): Promise<string> {
-    const { data: sessionData } = await this.client.auth.getSession();
-    const existing = sessionData.session?.user?.id;
-    if (existing !== undefined) return existing;
-
-    const { data, error } = await this.client.auth.signInAnonymously();
-    if (error !== null) throw error;
-    const uid = data.user?.id;
-    if (uid === undefined) throw new Error('익명 로그인 후에도 uid 를 얻지 못했습니다');
-    return uid;
+    return requireUserId(this.client);
   }
 
   async getInvasionTargets(): Promise<InvasionTarget[]> {
