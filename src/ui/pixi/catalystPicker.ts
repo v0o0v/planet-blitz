@@ -251,6 +251,18 @@ export function summaryRowCapacity(): number {
   return Math.max(1, Math.floor((SUMMARY_H - SUMMARY_ROWS_Y - SUMMARY_HEAD_H - SUMMARY_PAD) / SUMMARY_STEP));
 }
 
+/**
+ * 줄 `total` 개 중 **실제로 그릴 줄 수**. 넘치면 마지막 자리를 `외 N개` 에 내준다.
+ *
+ * ⚠️ 순수 함수로 뺀 이유: 이 산술을 `Math.min(total, capacity)` 로 되돌리는 뮤테이션이 **살아
+ * 돌아왔다**(2026-08-03). 좌표만 보는 단언은 용량이 그대로라 안 깨지고, 뚫리는 것은 `외 N개`
+ * 줄 하나뿐이라 눈으로만 잡힌다 — 그래서 값 자체를 테스트가 본다.
+ */
+export function summaryShownRows(total: number): number {
+  const capacity = summaryRowCapacity();
+  return total <= capacity ? total : Math.max(1, capacity - 1);
+}
+
 /** 요약 챔버 세로 산술의 재료(테스트가 "마지막 줄이 바닥을 안 뚫는다"를 되짚는다). */
 export const SUMMARY_METRICS = {
   h: SUMMARY_H,
@@ -796,8 +808,7 @@ export class CatalystPicker {
     host.addChild(head);
 
     // 넘치면 마지막 한 자리를 `외 N개` 에 내준다 — 안 그러면 그 줄이 챔버 바닥을 뚫는다.
-    const capacity = summaryRowCapacity();
-    const shown = rows.length <= capacity ? rows.length : Math.max(1, capacity - 1);
+    const shown = summaryShownRows(rows.length);
     const hidden = rows.length - shown;
 
     if (rows.length === 0) {

@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import {
   catalystPickerLayout,
   summaryRowCapacity,
+  summaryShownRows,
   SUMMARY_METRICS,
   PANEL_EDGE_PAD,
   PANEL_TITLE_BAND_H,
@@ -122,6 +123,8 @@ describe('픽커 레이아웃 불변식', () => {
     expect(g.h).toBeGreaterThan(0);
   });
 
+  // ⚠️ 열 수(6) 자체는 못 박지 않는다 — 5 로 바꾸는 뮤테이션은 살아 돌아왔고 그게 **옳다**
+  // (그 값에서도 셀이 더 넓어질 뿐 아무것도 안 깨진다). 여기가 잡는 것은 "열이 폭을 안 채운다"다.
   it('셀 여섯 열이 그리드 폭을 채우고 넘치지 않는다', () => {
     const g = layout.grid;
     const used = g.cols * g.cellW + 12 * (g.cols - 1);
@@ -151,8 +154,18 @@ describe('픽커 레이아웃 불변식', () => {
     // 실화면 1차(2026-08-03): 페널티 축이 다섯일 때 `외 1개` 가 챔버 바닥 밖에 그려져 잘렸다.
     // 원인은 용량 산식이 그 줄을 안 센 것 — 이제 마지막 자리를 그 줄에 내준다.
     const m = SUMMARY_METRICS;
-    const lastLineTop = m.rowsY + m.headH + (summaryRowCapacity() - 1) * m.step;
+    const cap = summaryRowCapacity();
+    const lastLineTop = m.rowsY + m.headH + (cap - 1) * m.step;
     expect(lastLineTop + m.step, '마지막 줄이 챔버 바닥을 넘는다').toBeLessThanOrEqual(m.h - m.pad);
+
+    // ⚠️ 좌표만 보면 부족하다 — `Math.min(total, capacity)` 로 되돌리는 뮤테이션이 살아 돌아왔다.
+    // 넘칠 때는 `외 N개` 줄이 **자리 하나를 차지하므로** 그린 줄 + 1 이 용량 안이어야 한다.
+    expect(summaryShownRows(cap)).toBe(cap);
+    for (const total of [cap + 1, cap + 3, 12]) {
+      const shown = summaryShownRows(total);
+      expect(shown, `${total}줄: 다 그리면 외 N개 줄이 바닥을 뚫는다`).toBeLessThan(total);
+      expect(shown + 1, `${total}줄: 외 N개 줄 자리가 없다`).toBeLessThanOrEqual(cap);
+    }
   });
 });
 
