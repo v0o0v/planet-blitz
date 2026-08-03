@@ -1826,6 +1826,27 @@ export const EN = {
   'commission.constraint.bannedPowerups': 'Banned growth: {list}',
   'commission.launch': 'Launch',
   'commission.launching': 'Launching…',
+  // 2026-08-03 AAA 시네마틱 전환(2열 목록/상세) — 각인 패널 제목과 상세 챔버 넷.
+  'commission.list.head': 'Held Orders',
+  'commission.detail.head': 'Order Detail',
+  'commission.detail.brief': 'Brief',
+  'commission.detail.stages': 'Stages',
+  'commission.detail.rewards': 'Confirmed Rewards',
+  'commission.detail.constraints': 'Restrictions',
+  'commission.detail.noConstraints': 'No additional restrictions.',
+  'commission.stageLine': '{name} · Invasion Stage {stage}',
+  'commission.list.tail': 'Room for more. Planet bosses issue new orders.',
+  // 아무것도 선택되지 않은 상세 열이 받는 안내 셋 — 이 화면의 **기본 상태**(보유 0 · 오프라인)
+  // 에서 플레이어가 알아야 하는 것은 "고르라"가 아니라 "어떻게 얻고 몇 장까지 쌓이는가"다.
+  'commission.about.what': 'What is a Commission',
+  'commission.about.whatBody':
+    'A sealed order. Its stages and rewards are fixed the moment it is issued — clearing it pays exactly what is written.',
+  'commission.about.get': 'How to Obtain',
+  'commission.about.getBody':
+    'Planet bosses rarely issue one on defeat. Higher invasion stages issue higher grades.',
+  'commission.about.stock': 'Storage',
+  'commission.about.stockBody':
+    'You may hold up to {cap}. While full, no new commission is issued — launch or clear space first.',
 } as const;
 
 /** 카탈로그 키 = 영어 정본의 키 집합. */
@@ -3523,6 +3544,27 @@ export const KO: Record<MessageKey, string> = {
   'commission.constraint.bannedPowerups': '금지 성장: {list}',
   'commission.launch': '출격',
   'commission.launching': '출격 중…',
+  // 2026-08-03 AAA 시네마틱 전환(2열 목록/상세) — 각인 패널 제목과 상세 챔버 넷.
+  'commission.list.head': '보유 의뢰서',
+  'commission.detail.head': '지시 상세',
+  'commission.detail.brief': '지시 개요',
+  'commission.detail.stages': '무대',
+  'commission.detail.rewards': '확정 보상',
+  'commission.detail.constraints': '제약',
+  'commission.detail.noConstraints': '추가 제약 없음.',
+  'commission.stageLine': '{name} · 침략 {stage}단계',
+  'commission.list.tail': '아직 자리가 남았다. 행성 보스가 새 의뢰서를 내린다.',
+  // 아무것도 선택되지 않은 상세 열이 받는 안내 셋 — 이 화면의 **기본 상태**(보유 0 · 오프라인)
+  // 에서 플레이어가 알아야 하는 것은 "고르라"가 아니라 "어떻게 얻고 몇 장까지 쌓이는가"다.
+  'commission.about.what': '의뢰서란',
+  'commission.about.whatBody':
+    '발령 시점에 굳은 종이다. 무대와 보상이 그때 확정되므로, 완수하면 적힌 그대로 지급된다.',
+  'commission.about.get': '얻는 법',
+  'commission.about.getBody':
+    '행성 보스를 처치하면 드물게 발령된다. 침략 단계가 높을수록 높은 계급이 나온다.',
+  'commission.about.stock': '보관',
+  'commission.about.stockBody':
+    '{cap}장까지 보관한다. 꽉 차 있는 동안에는 새 의뢰서가 들어오지 않는다 — 먼저 출격해 자리를 비운다.',
 };
 
 /** 로케일별 카탈로그 묶음. */
