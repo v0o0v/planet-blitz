@@ -206,7 +206,12 @@ describe('시네마틱 전환에서 지켜야 할 배선', () => {
       const at = SRC.indexOf(fn);
       expect(at, `${fn} 를 못 찾았다`).toBeGreaterThan(-1);
       const body = SRC.slice(at, SRC.indexOf('\n  }', at));
-      expect(body, `${fn} 가 크롬을 다시 굽는다`).toContain('this.refresh();');
+      expect(body, `${fn} 가 갱신을 안 부른다`).toContain('this.refresh();');
+      // ⚠️ `refresh()` 를 부르는지만 보면 **부족하다** — 그 앞에 크롬을 다시 세우는 뮤테이션이
+      // 살아 돌아왔다(2026-08-03). 편집 경로에는 크롬 재건이 아예 없어야 한다.
+      for (const rebuild of ['this.buildChrome()', 'this.destroyChrome()']) {
+        expect(body, `${fn} 가 ${rebuild} 로 석재를 다시 굽는다`).not.toContain(rebuild);
+      }
     }
   });
 
