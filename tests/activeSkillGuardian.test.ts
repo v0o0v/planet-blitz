@@ -18,6 +18,7 @@ import { buildRunConfig } from '../src/run/runConfig.js';
 import { ALL_ACTIVES, wireIdOf } from '../data/ships/actives/index.js';
 import { ACTIVE_WIRE_EMPTY } from '../data/ships/actives/types.js';
 import { zeroSkillInvest } from '../data/ships/index.js';
+import { SAVE_VERSION } from '../src/items/types.js';
 
 describe('PM-3 — 퇴역 → 소집에서 액티브 장착이 박제된다', () => {
   it('퇴역 시점 장착 2개가 `GuardianBuild` 에 실리고 소집 런의 `WorldConfig` 까지 닿는다', () => {
@@ -75,7 +76,7 @@ describe('PM-3 — 퇴역 → 소집에서 액티브 장착이 박제된다', ()
     }
 
     const migrated = migrate(raw);
-    expect(migrated.saveVersion).toBe(8);
+    expect(migrated.saveVersion).toBe(SAVE_VERSION);
     for (const g of migrated.guardians) {
       expect(g.build?.activeSlots).toEqual([null, null]);
     }

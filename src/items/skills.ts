@@ -183,6 +183,75 @@ export function shipCapstoneActive(
   return (invest[shipCapstoneIndex(def, treeIndex)] ?? 0) > 0;
 }
 
+// ---------------------------------------------------------------------------
+// 사슬 선행 조건 (ADR-0047)
+//
+// 사슬 = **한 계열 안에서 `stat` 이 같은 base 노드들**, 티어 오름차순. 노드에 저작된
+// 필드가 아니라 `(계열, 스탯)` 에서 파생한다 — 데이터 수정 0줄로 기체 7종이 같은 규칙을
+// 받고, 신규 기체도 저작 없이 물려받는다.
+//
+// ⚠️ 이 규칙은 **투자 시점 규율이지 파생 규칙이 아니다.** `computeSkillStats` 는 한 줄도
+// 안 건드린다 — 서버(`verify-*` EF)가 `skillInvest` 합법성을 검증하지 않으므로(ADR-0028)
+// 파생에 넣어도 위조 방어가 되지 않고, 리플레이 해시 폴드·파워업 RNG 슬라이스만 위험해진다.
+// 따라서 런 중 벡터(`config.skillInvest` 사본, 파워업이 t0 칸을 올린다)는 판정 대상이 아니다.
+// ---------------------------------------------------------------------------
+
+/**
+ * `index` 노드에 투자하기 위해 **아직 max 가 아닌 같은 사슬의 더 낮은 티어 노드**들의
+ * flat 인덱스를 티어 오름차순으로 돌려준다. 빈 배열 = 투자 가능.
+ *
+ * 캡스톤은 사슬에 속하지 않는다 — 항상 빈 배열이고, 게이트는 `shipCapstoneUnlocked` 가
+ * 따로 본다(캡스톤 노드의 `stat` 은 전부 자리표시자 `'damagePct'` 라, 사슬에 편입시키면
+ * damagePct 노드가 하나도 없는 계열의 캡스톤까지 엉뚱한 사슬에 붙는다).
+ *
+ * 티어에 구멍이 있으면 그냥 건너뛴다(사슬에 없는 티어는 조건이 아니다). 한 티어에 같은
+ * 스탯 노드가 둘이면 **둘 다** 걸린다. 노드가 하나뿐인 사슬은 항상 빈 배열이다.
+ */
+export function chainMissingPrereqs(
+  invest: readonly number[],
+  def: ShipTypeDef,
+  index: number,
+): number[] {
+  const nodes = shipFlatNodes(def);
+  const node = nodes[index];
+  if (node === undefined) return [];
+  if (node.capstone === true) return [];
+  const treeIndex = Math.floor(index / def.nodesPerTree);
+  const { start, end } = shipTreeRange(def, treeIndex);
+  const out: number[] = [];
+  for (let i = start; i < end; i++) {
+    const other = nodes[i];
+    if (other === undefined || other.capstone === true) continue;
+    if (other.stat !== node.stat) continue;
+    if (other.tier >= node.tier) continue;
+    if ((invest[i] ?? 0) < other.maxPoints) out.push(i);
+  }
+  // flat 순서가 곧 티어 오름차순이라 별도 정렬이 필요 없다(`buildTree` 가 티어별로 쌓는다).
+  return out;
+}
+
+/** 사슬 선행 조건을 만족했는지 — `chainMissingPrereqs(...).length === 0` 의 빠른 판정. */
+export function chainPrereqMet(
+  invest: readonly number[],
+  def: ShipTypeDef,
+  index: number,
+): boolean {
+  const nodes = shipFlatNodes(def);
+  const node = nodes[index];
+  if (node === undefined) return true;
+  if (node.capstone === true) return true;
+  const treeIndex = Math.floor(index / def.nodesPerTree);
+  const { start, end } = shipTreeRange(def, treeIndex);
+  for (let i = start; i < end; i++) {
+    const other = nodes[i];
+    if (other === undefined || other.capstone === true) continue;
+    if (other.stat !== node.stat) continue;
+    if (other.tier >= node.tier) continue;
+    if ((invest[i] ?? 0) < other.maxPoints) return false;
+  }
+  return true;
+}
+
 /** True if any node has a non-zero investment (cheap "has skills" guard). */
 export function hasAnyInvestment(invest: readonly number[] | undefined): boolean {
   if (invest === undefined) return false;

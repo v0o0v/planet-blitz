@@ -309,15 +309,17 @@ describe('마이그레이션 v3 → v4 — 계정 투자가 기체로 승계된�
     const p = migrate(v3Blob(invest));
 
     expect(p.saveVersion).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(8);
+    expect(SAVE_VERSION).toBe(9);
     const ship = activeShip(p);
     expect(ship.typeId).toBe(0); // 기존 유저는 전원 스트라이커
     expect(ship.skillInvest).toHaveLength(shipSkillNodeCount(0));
-    expect(ship.skillInvest[0]).toBe(3);
-    expect(ship.skillInvest[25]).toBe(2);
-    expect(ship.skillInvest[45]).toBe(1);
-    // 총량 보존 — 마이그레이션이 조용히 포인트를 흘리지 않았는지 합으로 재확인.
-    expect(ship.skillInvest.reduce((a, b) => a + b, 0)).toBe(6);
+    // ⚠️ v9(사슬 선행 조건, ADR-0047)가 뒤이어 **전 기체를 무료 전액 리스펙**하므로 벡터는
+    // 0 으로 끝난다. 그래도 이 테스트는 판별력을 잃지 않는다 — v3→v4 승계가 깨지면 옮겨질
+    // 투자가 없어 **환급액이 0** 이 되기 때문이다. 즉 관측 지점이 벡터에서 환급으로 옮겨갔을 뿐,
+    // "계정 벡터가 기체로 내려왔는가"를 여전히 정확히 묻는다.
+    expect(ship.skillInvest.every((v) => v === 0)).toBe(true);
+    // 총량 보존 — 3+2+1 이 한 점도 새지 않고 뱅크로 돌아왔는가.
+    expect(p.skillPoints).toBe(6);
     // 다른 진행 상태도 함께 보존된다(기체를 통째로 갈아치우지 않았는가).
     expect(ship.level).toBe(5);
   });
@@ -330,7 +332,8 @@ describe('마이그레이션 v3 → v4 — 계정 투자가 기체로 승계된�
     invest[0] = 4;
     const p = migrate(v3Blob(invest));
     expect('skillInvest' in p).toBe(false);
-    expect(activeShip(p).skillInvest[0]).toBe(4);
+    // v9 전액 리스펙 후이므로 도착 증거는 벡터가 아니라 환급액이다(위 테스트와 같은 이유).
+    expect(p.skillPoints).toBe(4);
   });
 
   it('세이브→로드 왕복이 기체 벡터를 무손실로 복원한다', () => {
@@ -352,7 +355,8 @@ describe('마이그레이션 v3 → v4 — 계정 투자가 기체로 승계된�
     const own = zeroSkillInvest(0);
     own[0] = 2;
     (blob.ships as Record<string, unknown>[])[0]!.skillInvest = own;
-    expect(activeShip(migrate(blob)).skillInvest[0]).toBe(2);
+    // 기체 벡터(2)가 이겼는지 계정 벡터(5)가 덮어썼는지는 v9 환급액이 그대로 가른다.
+    expect(migrate(blob).skillPoints).toBe(2);
   });
 
   it('기체마다 독립된 벡터 인스턴스를 갖는다(한 기체 투자가 다른 기체로 새지 않음)', () => {
@@ -434,9 +438,11 @@ describe('손상 세이브 복구 — 투자 벡터·타입 (검증②③)', () 
       const s0 = (blob.ships as Record<string, unknown>[])[0]!;
       s0.typeId = t;
       s0.skillInvest = own;
-      const ship = activeShip(migrate(blob));
-      expect(ship.skillInvest).toHaveLength(count);
-      expect(ship.skillInvest[count - 1], `타입 ${t}: 꼬리 투자가 소실됐다`).toBe(1);
+      const p = migrate(blob);
+      expect(activeShip(p).skillInvest).toHaveLength(count);
+      // v9 전액 리스펙 뒤이므로 꼬리 1점의 생존은 **환급액**으로 읽는다. 벡터가 63 으로
+      // 잘렸다면 그 1점은 애초에 읽히지 않아 환급이 0 이 된다 — 전방 가드의 판별력은 그대로다.
+      expect(p.skillPoints, `타입 ${t}: 꼬리 투자가 소실됐다`).toBe(1);
     }
   });
 });
@@ -500,7 +506,7 @@ describe('마이그레이션 v5 → v6 — 기록 파편·마일스톤 카운터
   it('필드 부재 v5 세이브를 v6 로 올리고 두 필드를 기본값으로 채운다', () => {
     const p = migrate(v5Blob());
     expect(p.saveVersion).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(8);
+    expect(SAVE_VERSION).toBe(9);
     expect(p.collectedShards).toEqual([]);
     expect(p.storyMetrics).toEqual({});
     // 기존 진행 상태는 함께 보존된다(필드 신설이 다른 축을 건드리지 않는다).
@@ -697,16 +703,25 @@ function runHashes(seed: number, cfg: WorldConfig, ticks: number): number[] {
 }
 
 describe('정규 경로 통합 — 기체 벡터가 실제 런에 도달한다 (검증⑥)', () => {
-  it('v3 유저가 승계한 투자가 런 설정과 sim 해시 스트림까지 흘러간다', () => {
-    const invest = zeroSkillInvest(0);
-    invest[0] = SKILLS[0]!.maxPoints;
-    const migrated = migrate(v3Blob(invest));
+  /**
+   * ⚠️ 원래 이 테스트는 v3 세이브를 마이그레이션해 투자를 얻었다. v9(사슬 선행 조건,
+   * ADR-0047)가 구 세이브를 **전액 리스펙**하면서 그 경로로는 투자가 런에 도달할 수 없게
+   * 됐다 — 마이그레이션 결함이 아니라 설계다(구 벡터에는 사슬 위반이 섞여 있다).
+   * 증명하려는 배선은 **기체 벡터 → 런 설정 → sim** 이고 그건 그대로이므로, 투자를 얻는
+   * 경로만 연구소가 실제로 부르는 `investSkill` 로 바꾼다. 마이그레이션 승계 자체는
+   * 위 "v3 → v4" 그룹이 환급액으로 따로 지킨다.
+   */
+  it('연구소 투자가 런 설정과 sim 해시 스트림까지 흘러간다', () => {
+    const max = SKILLS[0]!.maxPoints;
+    const invested = defaultProfile();
+    invested.skillPoints = max;
+    for (let i = 0; i < max; i++) expect(investSkill(invested, 0)).toBe(true);
 
-    const cfg = assembleRunConfigLikeMain(migrated);
-    // ① 런 설정이 기체 벡터를 그대로 실었는가(마이그레이션 → 런 배선).
-    expect(cfg.skillInvest).toEqual(activeShip(migrated).skillInvest);
+    const cfg = assembleRunConfigLikeMain(invested);
+    // ① 런 설정이 기체 벡터를 그대로 실었는가(프로필 → 런 배선).
+    expect(cfg.skillInvest).toEqual(activeShip(invested).skillInvest);
     // ② 투자가 파생 스탯으로 실제로 접혔는가(중립 loadout 이 아님).
-    const none = assembleRunConfigLikeMain(migrate(v3Blob(zeroSkillInvest(0))));
+    const none = assembleRunConfigLikeMain(defaultProfile());
     expect(cfg.loadout).not.toEqual(none.loadout);
     // ③ sim 이 실제로 다르게 굴러가는가 — 파생 스탯만 비교하면 "접히긴 했는데 sim 이
     //    안 읽는" 경우를 놓친다. 여기까지 와야 "배선이 있다"고 말할 수 있다.

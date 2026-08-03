@@ -64,7 +64,12 @@ import {
   type ShipTypeDef,
 } from '../../../data/ships/index.js';
 import type { StatKey } from '../../items/types.js';
-import { computeSkillStats, shipCapstoneUnlocked, shipTreeBaseInvested } from '../../items/skills.js';
+import {
+  computeSkillStats,
+  shipCapstoneUnlocked,
+  shipTreeBaseInvested,
+  chainMissingPrereqs,
+} from '../../items/skills.js';
 import {
   activeSlotViews,
   equipActive,
@@ -885,9 +890,37 @@ export class ResearchLabScreen {
 
   // --- 투자 / 리스펙 (DOM 판과 동일 규칙) ----------------------------------
 
+  /**
+   * 사슬 선행 조건(ADR-0047)이 `index` 를 막고 있으면 그 문구를, 아니면 null 을 돌려준다.
+   *
+   * 부족한 노드가 여럿이어도 **가장 낮은 티어 하나만** 이름으로 보여 주고 나머지는 `외 N개`
+   * 로 접는다 — 행 한 줄에 이름을 여럿 욱여넣으면 폭이 터지고, 어차피 플레이어가 다음에
+   * 눌러야 할 칸은 가장 낮은 티어 하나다. `chainMissingPrereqs` 가 티어 오름차순이라 `[0]`
+   * 이 곧 그 칸이다. 캡스톤은 사슬 밖이라 항상 null 이다(게이트 문구는 `investCapstone` 이 낸다).
+   */
+  private prereqText(index: number, forHint: boolean): string | null {
+    const def = this.def();
+    const invest = this.invest();
+    const missing = chainMissingPrereqs(invest, def, index);
+    const first = missing[0];
+    if (first === undefined) return null;
+    const node = flattenShipNodes(def)[first];
+    if (node === undefined) return null;
+    const args = { name: node.name, cur: invest[first] ?? 0, max: node.maxPoints };
+    if (forHint) return t('lab.err.chainLocked', args);
+    return missing.length > 1
+      ? t('lab.node.prereqMore', { ...args, n: missing.length - 1 })
+      : t('lab.node.prereq', args);
+  }
+
   private investNode(index: number): void {
     if (!investSkill(this.profile, index)) {
-      this.hint = this.profile.skillPoints <= 0 ? t('lab.err.noPoints') : t('lab.err.maxed');
+      // 우선순위: 포인트 없음 → 사슬 잠김 → 이미 최대. 사슬 잠김을 maxed 보다 먼저 봐야
+      // "이미 최대까지 투자했습니다"라는 거짓 안내가 잠긴 칸에 뜨지 않는다.
+      this.hint =
+        this.profile.skillPoints <= 0
+          ? t('lab.err.noPoints')
+          : (this.prereqText(index, true) ?? t('lab.err.maxed'));
       this.refresh();
       return;
     }
@@ -1790,7 +1823,9 @@ export class ResearchLabScreen {
   private makePopupRow(index: number, node: SkillNode, accent: number): Container {
     const cur = this.invest()[index] ?? 0;
     const maxed = cur >= node.maxPoints;
-    const canInvest = !maxed && this.profile.skillPoints > 0;
+    // 사슬 선행 조건(ADR-0047). 배치는 그대로 두고 **설명줄 글자만** 바꾼다.
+    const prereq = this.prereqText(index, false);
+    const canInvest = !maxed && prereq === null && this.profile.skillPoints > 0;
 
     const row = new Container();
     const plate = rowPlate(POP_ROW_W, POP_ROW_H);
@@ -1836,7 +1871,10 @@ export class ResearchLabScreen {
 
     const detail = new Text({
       resolution: 2,
-      text: `${node.desc} · ${t('lab.node.meta', { t: node.tier + 1, m: node.maxPoints })}`,
+      text:
+        prereq !== null
+          ? `${node.desc} · ${prereq}`
+          : `${node.desc} · ${t('lab.node.meta', { t: node.tier + 1, m: node.maxPoints })}`,
       style: {
         fontFamily: UI_FONT,
         fontSize: 13,
