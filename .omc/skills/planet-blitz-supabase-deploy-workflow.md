@@ -9,6 +9,10 @@ triggers:
   - Management API database/query
   - spb functions deploy
   - verify-invasion 재배포
+  - verify-commission 재배포
+  - EF 배포 이력
+  - 배포본 해시 대조
+  - toml invalid character at start of key
   - "Expected ',' or '}' after property value"
   - JSON 400 position
   - sloppy-imports deploy
@@ -86,10 +90,23 @@ triggers:
 7. 순서 지키기(타임스탬프 오름차순). 400 파싱오류면 SQL 은 실행 안 된 것(재실행 안전).
 8. 콘솔 깨짐 방지: `[Console]::OutputEncoding = [Text.Encoding]::UTF8`(표시용, 전송과 별개).
 
-### 배포 대상은 `verify-invasion` **하나뿐**
-`supabase/functions/` 에 셋이 있지만 실제로 올리는 것은 `verify-invasion` 이다.
+### 배포 대상은 **둘**이다 — `verify-invasion` · `verify-commission`
+둘 다 sloppy-imports 로 `src/sim` 을 당겨 번들에 시뮬 코어를 통째로 싣는다.
+- `verify-invasion` — `src/sim/**` 변경 시 필수.
+- `verify-commission` — `src/sim/**` 또는 `src/run/commission*` 변경 시 필수.
 - `verify-run` — **로컬 전용**이고 `bundle` 태스크가 없다. 배포 대상이 아니다.
 - `modules` — type-only import 라 sim 을 번들하지 않는다. sim 변경과 무관하다(2026-07-20 v1 이후 그대로).
+
+> ⚠️ **이 절은 2026-08-03 까지 "배포 대상은 `verify-invasion` 하나뿐"이라고 적혀 있었다.**
+> `verify-commission` 이 추가된 뒤에도 갱신되지 않아, 이 문장을 믿은 레인들이 재배포하지 않았고
+> **배포본이 이틀간 스테일**이었다(배포본 241,045 B ↔ `origin/main` 번들 241,287 B). 낡은 문서가
+> 능동적으로 오도한 두 번째 사례다(첫 번째는 2026-07-26 `supabase/README.md` §배포).
+> **배포 대상이 늘면 이 절 · 리포 루트 `README.md` §서버 배포 · `supabase/DEPLOYMENTS.md` 셋을
+> 함께 갱신하라.**
+
+### 무엇이 올라가 있는지는 `supabase/DEPLOYMENTS.md` 가 정본이다
+함수별 버전·번들 SHA-256·크기가 거기 있다. **버전 번호만 적힌 기록은 쓸모가 없다** — 어떤
+소스가 올라갔는지 알 수 없어 스큐를 판정하지 못한다(위 사고의 원인).
 
 ### `src/sim` 을 건드렸으면 재배포는 **선택이 아니다**
 EF `index.ts` 가 `../../../src/sim/**` 를 직접 import 해 **번들에 sim 이 통째로 들어간다**. 서버는
@@ -99,6 +116,34 @@ EF `index.ts` 가 `../../../src/sim/**` 를 직접 import 해 **번들에 sim �
 ⚠️ **`scripts/deno-verify/fixtures.json` 이 그린이어도 재배포는 필요하다.** 그 12 시나리오는 침공
 경로를 태우지 않아서 침공 sim 이 바뀌어도 통과한다(2026-07-26 ADR-0034 에서 실증 — Node 2회
 bit-identical + 커밋 픽스처 일치). **픽스처 그린을 "재배포 불필요"로 읽지 마라.**
+
+### 그런데 "소스를 건드렸나"로 판정하면 **두 방향으로 틀린다**
+2026-08-03 에 둘 다 실측했다:
+
+- **안 건드렸는데 바뀐다** — 공유 모듈을 통해. 그래서 "내 레인은 EF 를 안 만졌다"는 근거가 못 된다.
+- **건드렸는데 바이트 동일이다** — 계보 레인이 `data/lineage.ts` 에 함수를 둘 추가했고 그 파일은
+  `verify-invasion` 의 import 그래프 안에 있는데, EF 어디서도 안 쓰여 **트리셰이킹이 통째로
+  걷어냈다.** pre-lane 커밋으로 되돌려 재번들해도 해시가 같았다.
+
+**배포본을 직접 받아 대조하는 것이 유일하게 확실하다:**
+
+```powershell
+# 1) origin/main 워크트리에서 번들을 굽고 사본을 떠 둔다(2단계가 index.ts 를 덮어쓴다)
+cd <worktree>/supabase/functions/<slug>; deno task bundle
+Copy-Item dist.index.js "$env:TEMP\ef-new.js"
+
+# 2) 지금 배포돼 있는 것을 받는다
+cd <worktree>; . $PROFILE
+spb functions download <slug> --project-ref qxgbxwyccbxokdgwxcuw
+
+# 3) 같으면 재배포 불필요
+(Get-FileHash "supabase\functions\<slug>\index.ts").Hash
+(Get-FileHash "$env:TEMP\ef-new.js").Hash
+```
+
+**어느 커밋이 원인인지 가르는 법**: 의심 파일만 이전 커밋으로 되돌려 재번들하고 해시를 다시
+본다(`git checkout <sha> -- <file>` → `deno task bundle`). 이 방법으로 "계보 레인은 무관하고
+스큐는 그 이전부터 있었다"를 확정했다.
 
 ### Edge Function (Claude 직접, spb)
 **정본은 폐기용 detached 워크트리다.** 3단계가 `index.ts` 를 덮어쓰므로 본 부준치에서 하면
@@ -112,6 +157,23 @@ bit-identical + 커밋 픽스처 일치). **픽스처 그린을 "재배포 불�
 3. `cp dist.index.js index.ts`. **원본 `index.ts` 로는 배포가 성립하지 않는다** — sloppy-imports
    (`.js`→`.ts`)로 functions 디렉터리 **밖**의 `src/sim` 을 당겨오는데 CLI 배포 번들러가 이를 못
    따라간다. CLI 에 `--entrypoint` 플래그도 없어서 치환이 유일한 길이다.
+3.5. **워크트리 루트에 `supabase/config.toml` 을 만든다** — 리포에는 없다(커밋되지 않는다).
+   배포할 **슬러그마다** `verify_jwt = true` 를 둔다:
+
+   ```powershell
+   @"
+   project_id = "qxgbxwyccbxokdgwxcuw"
+
+   [functions.verify-commission]
+   verify_jwt = true
+   "@ | Set-Content supabase\config.toml -Encoding ascii
+   ```
+
+   ⚠️ **BOM 금지.** PowerShell 5.1 의 `-Encoding utf8` 은 BOM 을 붙이는데 Supabase CLI 의 TOML
+   파서가 이를 거부한다 — `failed to merge file config: While parsing config: toml: invalid
+   character at start of key: ï`(2026-08-03 실제로 막혔다). 내용이 ASCII 뿐이니 `-Encoding ascii`
+   가 가장 간단하다(`utf8NoBOM` 은 5.1 에 없다).
+
 4. `. $PROFILE` 로 `spb` 를 로드한 뒤(**dot-source 없으면 `spb` 가 안 잡힌다**)
    **워크트리 루트에서** `spb functions deploy verify-invasion --project-ref <ref> --use-api`
    - ⚠️ **cwd 가 함수 디렉터리면 실패한다**(2026-07-28 실측). CLI 는 entrypoint 를
@@ -125,6 +187,9 @@ bit-identical + 커밋 픽스처 일치). **픽스처 그린을 "재배포 불�
      형제 파일이 없어 `verifyInvasionCore.ts`·`dist.index.js` 는 안 올라간다 — **치환이 제대로
      됐다는 방증**이니 이 목록을 확인해라.
 5. `spb functions list --project-ref <ref>` 로 VERSION 증가 확인(2026-07-26 v24 → v25).
+5.5. **올라간 바이트를 확인한다** — 다시 `spb functions download <slug>` 해서 로컬 번들과 해시가
+   같은지 본다. "배포 명령이 성공했다"와 "의도한 번들이 올라갔다"는 **다른 주장**이다. 이 확인이
+   없으면 스테일 번들 배포를 그 자리에서 못 잡는다(2026-07-21 M8 1회차가 정확히 그랬다).
 6. **번들 소스 커밋 == `origin/main` 대조.** `git rev-parse HEAD` 와 `git rev-parse origin/main` 이
    같은지 눈으로 봐라. **M8 1회차 배포가 이 대조를 빼먹어 번들이 배선 이전 커밋(`7ae64b6`)이었고,
    문서만 "완료"인 채 침공은 계속 거부되고 있었다.**
@@ -143,7 +208,12 @@ bit-identical + 커밋 픽스처 일치). **픽스처 그린을 "재배포 불�
 1. `spb projects api-keys --project-ref <ref>` 로 anon 키를 얻는다(클라이언트 번들에 실려 나가는
    공개 키라 스모크에 써도 안전하다. service_role 은 쓰지 마라).
 2. `POST /functions/v1/verify-invasion` + `Authorization: Bearer <anon>` + body `{}`.
-3. 기대 응답: `400 {"status":"rejected","reason":"malformed-invasion-id","attackerWon":false,...}`.
+3. 기대 응답은 **함수 자신의 구조화된 거절**이다(슬러그마다 다르다):
+
+   | 함수 | 기대 응답(HTTP 400) |
+   |---|---|
+   | `verify-invasion` | `{"status":"rejected","reason":"malformed-invasion-id","attackerWon":false,…}` |
+   | `verify-commission` | `{"status":"rejected","accepted":false,"reason":"malformed-run-id"}` |
 4. **그 `reason` 문자열이 배포한 번들에 있는지 `grep` 으로 대조**해라(정상이면 1회). 게이트웨이가
    아니라 우리 코드가 실행됐다는 확증은 이 대조까지 해야 성립한다.
 
