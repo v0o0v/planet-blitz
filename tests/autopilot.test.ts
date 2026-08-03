@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createWorld, stepWorld, markTainted, DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { WorldConfig } from '../src/sim/world.js';
 import { autopilotInput } from '../src/sim/autopilot.js';
+import { spawnLoot } from '../src/sim/entities.js';
 import { hashWorld } from '../src/sim/replay.js';
 
 /** 오토파일럿으로 world를 최대 `ticks`틱 구동하고, 매 틱 hashWorld를 수집한다. */
@@ -71,5 +72,40 @@ describe('autopilot (ADR-0008, 결정론 입력 봇)', () => {
     expect(hashWorld(dirty)).toBe(before);
     // 오염 표시 여부와 무관하게 두 런의 해시는 동일하다.
     expect(hashWorld(dirty)).toBe(hashWorld(clean));
+  });
+
+  /**
+   * 전리품 수거(2026-08-03 신설, `LOOT_SEEK_RADIUS`).
+   *
+   * ⚠️ **이것은 봇의 강함이 아니라 계측기 정확도의 문제다.** 봇에는 전리품·젬을 향한 이동이
+   * 아예 없어서 `lootPerRun` 게이트가 드랍 설계가 아니라 **봇의 무관심**을 재고 있었다
+   * (전체 런 실측: 수거 1.21 + 바닥 잔존 0.99 = 2.2 로 설계 기대값과 일치 — 드랍은 정상이고
+   * 절반을 흘리고 있었다). 이 축이 사라지면 그 오독이 그대로 돌아온다.
+   */
+  it('위협이 없으면 반경 안 바닥 전리품 쪽으로 이동한다', () => {
+    const state = createWorld(SEED, DEFAULT_CONFIG);
+    const player = state.entities[0]!;
+    // 위협·표적을 걷어내 ①회피 ②목표물 분기를 비운다 — 이 단언이 재는 것은 ③ 수거뿐이다.
+    for (const e of state.entities) {
+      if (e.kind !== 'player') e.dead = true;
+    }
+    const loot = spawnLoot(state, player.x + 400, player.y, 0xbeef, 0);
+
+    const input = autopilotInput(state);
+    // 전리품 쪽(+X)으로 간다. 대조: 전리품을 치우면 그 방향이 사라진다.
+    expect(input.moveX).toBeGreaterThan(0.9);
+
+    loot.dead = true;
+    expect(autopilotInput(state).moveX).toBe(0);
+  });
+
+  it('수거 반경 밖 전리품은 쫓지 않는다 — 봇이 전투를 버리고 무대를 가로지르지 않는다', () => {
+    const state = createWorld(SEED, DEFAULT_CONFIG);
+    const player = state.entities[0]!;
+    for (const e of state.entities) {
+      if (e.kind !== 'player') e.dead = true;
+    }
+    spawnLoot(state, player.x + 5000, player.y, 0xbeef, 0);
+    expect(autopilotInput(state).moveX).toBe(0);
   });
 });

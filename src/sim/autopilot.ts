@@ -64,6 +64,12 @@ const STATION_CRITICAL_SLACK = 320;
 const STATION_COMFORT_SLACK = 880;
 
 /**
+ * 봇이 바닥 전리품을 주우러 갈 최대 거리(월드 유닛). 카이팅 목표 거리(`KITE_DISTANCE`)의
+ * 몇 배 안쪽으로 두어, 봇이 전투를 버리고 무대를 가로지르지 않게 가둔다. TODO(밸런스).
+ */
+const LOOT_SEEK_RADIUS = 900;
+
+/**
  * 이번 틱의 입력 프레임을 생성한다. `world` 상태만의 순수 함수 — 부작용 없음.
  */
 export function autopilotInput(world: WorldState): InputFrame {
@@ -117,7 +123,27 @@ export function autopilotInput(world: WorldState): InputFrame {
     return { moveX: 0, moveY: 0, aim: devAim, dash: false, special: SPECIAL_NONE };
   }
 
-  // ③ 카이팅: 최근접 적/보스와 목표 거리를 유지한다.
+  // ③ 전리품 수거: 위협이 없고(①을 지났다) 무대 목표도 없을 때(②), 가까운 바닥 전리품을
+  //    주우러 간다. 사람이 하는 "탄이 안 날아오면 아이템부터 줍는다"에 해당하는 단계다.
+  //
+  // ⚠️ **이것은 밸런스 조정이 아니라 계측기 수리다.** 봇에는 전리품·젬을 향한 이동이 아예
+  // 없었다(이 파일에 `loot` 라는 단어가 없었다). 그래서 `lootPerRun` 게이트는 드랍 설계가
+  // 아니라 **봇의 무관심**을 재고 있었다: 전체 런에서 수거 1.21 + 바닥 잔존 0.99 = 2.2 는
+  // 설계 기대값(엘리트 1.5 + 보스 확정 × 승률 0.7 = 2.2)과 정확히 일치했다. 드랍은 정상이고
+  // 절반을 흘리고 있었을 뿐이다. 여기를 고치지 않고 드랍률을 올리면 존재하지 않는 문제를
+  // 튜닝하게 된다(§R1 아르케 · §R8 장비 표본에 이은 세 번째 계측기 고장).
+  const loot = nearestPickup(world, player);
+  if (loot !== undefined) {
+    const dx = loot.x - player.x;
+    const dy = loot.y - player.y;
+    const d = length(dx, dy);
+    if (d > 0.0001) {
+      const v = clampBackward({ x: dx / d, y: dy / d }, forward, slack);
+      return { moveX: v.x, moveY: v.y, aim, dash: false, special: SPECIAL_NONE };
+    }
+  }
+
+  // ④ 카이팅: 최근접 적/보스와 목표 거리를 유지한다.
   if (target !== undefined) {
     const dx = target.x - player.x;
     const dy = target.y - player.y;
@@ -251,6 +277,32 @@ function nearestObjective(world: WorldState, player: Entity): Entity | undefined
     const dx = e.x - player.x;
     const dy = e.y - player.y;
     const d = dx * dx + dy * dy;
+    if (d < bestD || (d === bestD && best !== undefined && e.id < best.id)) {
+      bestD = d;
+      best = e;
+    }
+  }
+  return best;
+}
+
+/**
+ * 수거 반경 안의 최근접 바닥 전리품. 반경 밖이면 undefined —
+ * 봇이 무대를 가로질러 전리품만 쫓아다니지 않도록 가둔다.
+ *
+ * ## 왜 젬이 아니라 전리품인가
+ * 젬은 이미 카이팅 이동(④)이 지나가며 쓸어담는다(적이 죽은 자리 = 카이팅 중심). 바닥에
+ * 남는 것은 **엘리트 전리품**이고, 그것은 적 무리에서 떨어진 자리에 떨어져 우연히 지나갈
+ * 확률이 낮다. 실측 미수거 0.99/런이 그 값이다.
+ */
+function nearestPickup(world: WorldState, player: Entity): Entity | undefined {
+  let best: Entity | undefined;
+  let bestD = LOOT_SEEK_RADIUS * LOOT_SEEK_RADIUS;
+  for (const e of world.entities) {
+    if (e.dead || e.kind !== 'loot') continue;
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    const d = dx * dx + dy * dy;
+    // 동률은 id 오름차순으로 깨 플랫폼 순회 순서에 의존하지 않는다(`nearestTarget` 과 동일 규약).
     if (d < bestD || (d === bestD && best !== undefined && e.id < best.id)) {
       bestD = d;
       best = e;
