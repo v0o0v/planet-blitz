@@ -50,7 +50,20 @@ export const SIM_LANE_FILES: readonly string[] = [
   'tests/planetTierCompletion.test.ts',
 ];
 
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ command, mode }) => ({
+  /**
+   * GitHub Pages **프로젝트 페이지**는 리포 이름이 경로 접두사가 된다
+   * (`https://v0o0v.github.io/planet-blitz/`). 번들이 참조하는 자산 URL 이 `/assets/...`
+   * 로 나가면 전부 404 이므로 빌드 산출물의 base 를 `/planet-blitz/` 로 고정한다.
+   *
+   * **build 일 때만** 바꾼다 — dev 서버까지 접두사가 붙으면 `localhost:5180/` 이 빈
+   * 화면이 되고 하네스 절차(포트 루트 접속)가 통째로 깨진다.
+   *
+   * 소스에 `/assets/...` 같은 절대 경로 리터럴은 없다(전부 `import` 또는
+   * `import.meta.glob`) — 그래서 base 만 바꾸면 자산 경로는 vite 가 알아서 다시 쓴다.
+   * 커스텀 도메인으로 옮기면 이 값을 `'/'` 로 되돌려야 한다.
+   */
+  base: command === 'build' ? '/planet-blitz/' : '/',
   /**
    * 테스트(`mode === 'test'`)일 때만 env 디렉터리를 **.env 가 없는 곳**으로 돌린다.
    *
@@ -72,7 +85,14 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     target: 'es2022',
-    sourcemap: true,
+    /**
+     * 소스맵은 **로컬 빌드에서만** 켠다.
+     *
+     * Pages 사이트는 리포가 private 이어도 공개로 뜬다. 소스맵을 같이 올리면 `.ts` 원본이
+     * 통째로 복원되므로(밸런스 수치·치트 패널 구조·주석 전부) CI 배포에서는 끈다. 로컬
+     * `pnpm build`(CI env 없음)에서는 그대로 남아 디버깅에 쓴다.
+     */
+    sourcemap: process.env.CI !== 'true',
   },
   test: {
     globals: true,

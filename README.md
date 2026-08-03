@@ -121,6 +121,33 @@ import 라 시뮬을 번들하지 않는다.
   바뀌기도 하고, 반대로 건드렸는데 트리셰이킹이 걷어내 **바이트 동일**이기도 하다(2026-08-03 실측).
   `spb functions download` 로 배포본을 받아 로컬 번들과 해시를 비교하는 것이 유일하게 확실하다.
 
+## 웹 배포 (GitHub Pages)
+
+`main` 에 push 하면 `.github/workflows/deploy-pages.yml` 이 정적 번들을 빌드해
+`https://v0o0v.github.io/planet-blitz/` 에 올린다. `gh-pages` 브랜치가 아니라 Actions
+아티팩트 방식이라 산출물이 히스토리에 쌓이지 않는다.
+
+사전 설정 셋(각 1회):
+
+1. **리포를 public 으로 바꾸거나 Pro 이상 요금제.** 무료 요금제의 private 리포는 Pages 를
+   못 쓴다(워크플로가 `deploy` 단계에서 실패한다).
+2. **Settings → Pages → Source = "GitHub Actions".**
+3. **Actions 시크릿 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`.** 빌드 시각에
+   `import.meta.env` 로 정적 주입된다. 둘 중 하나라도 없으면
+   [`readSupabaseConfig()`](src/net/config.ts) 가 null 을 돌려 네트워크 계층이 통째로 no-op
+   이 되고, 배포는 성공하되 **오프라인 데모**로 뜬다(진행도가 브라우저에만 남는다).
+
+온라인으로 띄우면 Supabase Dashboard 의 **Authentication → URL Configuration** 에
+`https://v0o0v.github.io` 를 허용 URL 로 추가해야 익명 로그인이 붙는다.
+
+주의할 점 둘:
+
+- **`base` 는 리포 이름에 묶여 있다.** 프로젝트 페이지는 `/planet-blitz/` 가 경로 접두사라
+  [`vite.config.ts`](vite.config.ts) 가 build 일 때만 그 값을 쓴다. 커스텀 도메인으로 옮기거나
+  리포 이름을 바꾸면 여기를 같이 고쳐야 한다 — 안 고치면 자산이 전부 404 다.
+- **Pages 사이트는 리포가 private 이어도 공개다.** 그래서 CI 빌드는 소스맵을 끈다(켜면 `.ts`
+  원본이 통째로 복원된다). 로컬 `pnpm build` 는 그대로 소스맵을 낸다.
+
 ## 프로젝트 구조
 
 ```
