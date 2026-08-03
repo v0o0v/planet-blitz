@@ -1830,6 +1830,14 @@ export const EN = {
   'commission.constraint.bannedPowerups': 'Banned growth: {list}',
   'commission.launch': 'Launch',
   'commission.launching': 'Launching…',
+  // 폐기(2026-08-03) — 보관 상한이 차면 새 의뢰서가 발령되지 않는데, 상한을 내리는 길이
+  // 출격 하나뿐이었다. 되돌릴 수 없으므로 문구가 그 사실을 먼저 말한다.
+  'commission.discard': 'Discard',
+  'commission.discard.title': 'Discard Commission',
+  'commission.discard.body':
+    'This cannot be undone. The order is struck from the ledger and its rewards are lost. Storage frees up, so new orders can be issued again.',
+  'commission.discard.confirm': 'Discard it',
+  'commission.discard.cancel': 'Keep it',
   // 2026-08-03 AAA 시네마틱 전환(2열 목록/상세) — 각인 패널 제목과 상세 챔버 넷.
   'commission.list.head': 'Held Orders',
   'commission.detail.head': 'Order Detail',
@@ -3552,6 +3560,14 @@ export const KO: Record<MessageKey, string> = {
   'commission.constraint.bannedPowerups': '금지 성장: {list}',
   'commission.launch': '출격',
   'commission.launching': '출격 중…',
+  // 폐기(2026-08-03) — 보관 상한이 차면 새 의뢰서가 발령되지 않는데, 상한을 내리는 길이
+  // 출격 하나뿐이었다. 되돌릴 수 없으므로 문구가 그 사실을 먼저 말한다.
+  'commission.discard': '폐기',
+  'commission.discard.title': '의뢰서 폐기',
+  'commission.discard.body':
+    '되돌릴 수 없다. 원장에서 지워지고 적힌 보상도 함께 사라진다. 대신 보관 자리가 비어 새 의뢰서가 다시 들어온다.',
+  'commission.discard.confirm': '폐기한다',
+  'commission.discard.cancel': '그대로 둔다',
   // 2026-08-03 AAA 시네마틱 전환(2열 목록/상세) — 각인 패널 제목과 상세 챔버 넷.
   'commission.list.head': '보유 의뢰서',
   'commission.detail.head': '지시 상세',

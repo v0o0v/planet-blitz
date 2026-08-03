@@ -153,3 +153,22 @@ export function commissionTtlOrderingHolds(): boolean {
     COMMISSION_BLOB_TTL_MS < COMMISSION_ISSUES_RETENTION_MS
   );
 }
+
+/**
+ * 의뢰서 **폐기** 시간당 상한 — SQL 미러: `CAP_DISCARD_PER_HOUR`
+ * (`discard_commission`, 20260803010000_commission_discard.sql).
+ *
+ * ⚠️ **이 상한은 방어가 아니다.** "낮은 계급을 버리고 높은 계급을 노린다"는 경로는 막지 않는다 —
+ * 그게 이 기능의 용도다. 처리량을 묶는 것은 폐기가 아니라 **발령**이고
+ * (`MIN_BOSS_KILL_TICKS`(commissionConstants.ts) 누적 예약 지평 +
+ * {@link CAP_ISSUE_ATTEMPTS_PER_HOUR}),
+ * 폐기를 무한히 해도 새 의뢰서가 그보다 빨리 나오지 않는다. 상한을 두는 이유는 이득이 아니라
+ * **폐기 감사 테이블의 쓰기 폭주**를 막기 위함이다.
+ *
+ * 보관 상한이 12 이므로 30 은 "재고를 두 번 반 비울 수 있다"에 해당한다 — 정직한 사용자가
+ * 이 값에 닿는 시나리오가 없어야 한다는 것이 고른 기준이다.
+ *
+ * 읽는 곳: `src/ui/pixi/commissionDesk.ts`(안내 문구 아님 — 거부 사유는 서버 원문을 그대로
+ * 보여준다) · 이 상수의 유일한 역할은 **SQL 과 값이 갈렸을 때 테스트가 잡는 것**이다.
+ */
+export const CAP_DISCARD_PER_HOUR = 30;

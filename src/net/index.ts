@@ -734,6 +734,39 @@ export async function consumeCommissionOnServer(
 }
 
 /**
+ * `discardCommissionOnServer` 결과.
+ *  - `unconfigured`: 서버 미설정(오프라인) — 의뢰서는 온라인 전용이라 폐기도 불가하다.
+ *  - `ok`: 원장에서 지워졌다. `held` 는 **서버가 센** 폐기 후 보유 수.
+ *  - `rejected`: 거부(서버 예외 메시지 그대로 — 빈도 상한·의뢰서 없음 등). **미삭제**다.
+ */
+export type DiscardCommissionOutcome =
+  | { status: 'unconfigured' }
+  | { status: 'ok'; held: number }
+  | { status: 'rejected'; reason: string };
+
+/**
+ * 폐기(2026-08-03) — 미소비 의뢰서 1장을 서버 원장에서 지운다. 절대 throw 하지 않는다.
+ *
+ * ⚠️ **되돌릴 수 없다.** 호출부는 반드시 확인을 받은 뒤에만 부른다(지시 수신소의 폐기 팝업).
+ * 성공해도 클라가 목록을 손으로 깎지 않는다 — 원장을 **다시 읽는다**(감산하면 서버 상태와
+ * 갈리는 두 번째 진실이 생기고, 갈리는 날 어느 쪽이 정본인지 화면이 말할 수 없다).
+ */
+export async function discardCommissionOnServer(
+  commissionId: string,
+  deps: CommissionNetDeps = {},
+): Promise<DiscardCommissionOutcome> {
+  const gateway = await resolveCommissionGateway(deps);
+  if (gateway === null) return { status: 'unconfigured' };
+  try {
+    await gateway.getUserId();
+    const res = await gateway.discardCommission(commissionId);
+    return { status: 'ok', held: res.held };
+  } catch (err) {
+    return { status: 'rejected', reason: commissionErrorMessage(err) };
+  }
+}
+
+/**
  * `markCommissionActiveOnServer` 결과. `rejected` 는 **클라가 복구를 지시하지 않는다** —
  * 신호를 못 보낸 채로 두는 것이 곧 회수 조건이고, 회수는 cron 만 한다(계획 pre-mortem ④,
  * D8). 그래서 실패 시 호출부는 안내만 하고 별도 재시도·복구 RPC 를 부르지 않는다.

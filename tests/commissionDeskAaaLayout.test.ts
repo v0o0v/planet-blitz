@@ -187,17 +187,26 @@ describe('지시 수신소 레이아웃 불변식', () => {
 });
 
 describe('하단 띠 · 패널 세로 — 빈 자리 금지', () => {
-  it('[출격] 이 콘텐츠 오른쪽 끝에 정확히 붙고 왼쪽에 문구 자리가 남는다', () => {
+  it('[폐기][출격] 이 오른쪽 끝에 붙고 겹치지 않으며 왼쪽에 문구 자리가 남는다', () => {
     const btns = layout.footer.buttons;
-    expect(btns).toHaveLength(1);
-    const only = btns[0];
-    expect(only).toBeDefined();
-    if (only === undefined) return;
-    expect(only.x + only.w).toBe(layout.footer.band.x + layout.footer.band.w);
+    expect(btns).toHaveLength(2);
+    const [discard, launch] = btns;
+    expect(discard).toBeDefined();
+    expect(launch).toBeDefined();
+    if (discard === undefined || launch === undefined) return;
+    // 주 동작(출격)이 오른쪽 끝을 잡는다.
+    expect(launch.x + launch.w).toBe(layout.footer.band.x + layout.footer.band.w);
+    // ⚠️ **파괴적 동작이 주 동작 오른쪽에 오면 안 된다** — 오른쪽 끝은 손이 먼저 가는 자리다.
+    expect(discard.x + discard.w, '폐기가 출격 오른쪽에 있다').toBeLessThanOrEqual(launch.x);
+    expect(overlaps(discard, launch), '두 버튼이 겹친다').toBe(false);
+    // 시각 무게: 폐기가 출격보다 넓으면 안 된다(주 동작이 무엇인지가 뒤집힌다).
+    expect(discard.w).toBeLessThan(launch.w);
     // 왼쪽에는 재고·상태 두 줄이 앉는다(빈 자리가 아니라 쓰이는 자리다).
-    expect(only.x - layout.footer.band.x).toBeGreaterThanOrEqual(300);
-    expect(only.y).toBe(layout.footer.band.y);
-    expect(only.h).toBe(layout.footer.band.h);
+    expect(discard.x - layout.footer.band.x).toBeGreaterThanOrEqual(300);
+    for (const b of btns) {
+      expect(b.y).toBe(layout.footer.band.y);
+      expect(b.h).toBe(layout.footer.band.h);
+    }
   });
 
   it('하단 띠가 콘텐츠 폭을 채우고 바닥 여백 28 을 정확히 남긴다', () => {
