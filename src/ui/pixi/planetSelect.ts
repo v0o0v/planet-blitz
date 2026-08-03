@@ -860,6 +860,9 @@ export class PlanetSelectScreen {
     this.backdrop?.update(dt);
     for (const p of this.panels) p.update(dt);
     this.arena?.update(dt);
+    // 촉매 픽커도 시네마틱 석재 패널을 쓴다 — 이 화면이 유일한 소유자라 dt 공급원도 여기뿐이다.
+    // 빠뜨리면 팝업이 떠 있는 동안만 연출이 멈춰, 눈으로만 잡히는 유형이 된다.
+    this.picker.update(dt);
   }
 
   /**
