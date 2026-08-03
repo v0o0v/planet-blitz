@@ -25,8 +25,21 @@ import { blankEntity } from '../src/sim/entities.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile } from '../src/save/profile.js';
 import { PLANET_MODE } from '../src/sim/planetMode.js';
-import { isCounterDevice } from '../src/sim/modes/chase.js';
-import { isContaminationNode } from '../src/sim/modes/contamination.js';
+import {
+  isCounterDevice,
+  chaseCounterDeviceHp,
+  CHASE_COUNTER_DEVICE_HP_BASE,
+} from '../src/sim/modes/chase.js';
+import {
+  isContaminationNode,
+  contaminationNodeHp,
+  CONTAMINATION_NODE_HP_BASE,
+} from '../src/sim/modes/contamination.js';
+import {
+  objectiveLowStageRelief,
+  OBJECTIVE_LOW_STAGE_RELIEF,
+  OBJECTIVE_RELIEF_ENDS_AT,
+} from '../data/waves.js';
 import {
   objectiveAimBias,
   OBJECTIVE_AIM_BIAS_STAGE_1,
@@ -141,5 +154,45 @@ describe('목표 오브젝트 조준 우선 가중치', () => {
   it('벽 없는 조준 경로(오염 노드)도 같은 계약이다 — 두 경로를 각각 못 박는다', () => {
     expect(nodeDamageWithCloserEnemy(1)).toBe(0);
     expect(nodeDamageWithCloserEnemy(OBJECTIVE_AIM_BIAS_STAGE_MAX_AT)).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * 목표 총 HP 의 **저단계 완화**(2026-08-03, Lv5 축).
+ *
+ * 완화가 끝나는 단계 이상에서 **정확히 1** 이어야 한다는 것이 이 축의 안전 계약이다 —
+ * 그래야 §R12 에서 함께 정해진 세 손잡이(목표 HP · 피격 배율 · 단계 기울기)의 중·고단계
+ * 균형이 한 글자도 안 바뀐다.
+ */
+describe('목표 총 HP 저단계 완화', () => {
+  it('완화 종료 단계 이상은 정확히 1 이다 — 중·고단계 균형 불변 계약', () => {
+    for (const s of [OBJECTIVE_RELIEF_ENDS_AT, OBJECTIVE_RELIEF_ENDS_AT + 1, 11, 20, 50]) {
+      expect(objectiveLowStageRelief(s), `stage ${s}`).toBe(1);
+    }
+  });
+
+  it('단계 1 에서 가장 크게 덜고 종료 단계까지 단조로 복귀한다', () => {
+    expect(objectiveLowStageRelief(1)).toBe(OBJECTIVE_LOW_STAGE_RELIEF);
+    expect(objectiveLowStageRelief(0)).toBe(OBJECTIVE_LOW_STAGE_RELIEF);
+    let prev = objectiveLowStageRelief(1);
+    for (let s = 2; s <= OBJECTIVE_RELIEF_ENDS_AT; s++) {
+      const cur = objectiveLowStageRelief(s);
+      expect(cur, `stage ${s}`).toBeGreaterThan(prev);
+      prev = cur;
+    }
+    expect(OBJECTIVE_LOW_STAGE_RELIEF).toBeGreaterThan(0);
+    expect(OBJECTIVE_LOW_STAGE_RELIEF).toBeLessThan(1);
+  });
+
+  it('두 목표 게이트형 무대의 HP 가 실제로 이 계수를 탄다(배선 실도달)', () => {
+    // 목록이 갈리는 것(한 무대만 배선됨)이 이 축의 대표 실패 모드다 — 둘 다 잰다.
+    // 단계 1 은 기울기 항이 0 이라 `base × 완화` 와 정확히 같아야 한다. 배선이 빠지면 base
+    // 그대로가 되어 이 단언이 깨진다(항진이 아니다 — 실제 상수와 대조한다).
+    expect(chaseCounterDeviceHp(1)).toBe(
+      Math.round(CHASE_COUNTER_DEVICE_HP_BASE * OBJECTIVE_LOW_STAGE_RELIEF),
+    );
+    expect(contaminationNodeHp(1)).toBe(
+      Math.round(CONTAMINATION_NODE_HP_BASE * OBJECTIVE_LOW_STAGE_RELIEF),
+    );
   });
 });

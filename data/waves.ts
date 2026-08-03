@@ -120,6 +120,45 @@ export function stageHpMult(stage: number): number {
 }
 
 /**
+ * 목표 오브젝트(추격 반격 장치 · 오염 노드) 총 HP 의 **저단계 완화 계수**(1 이하).
+ * 단계 1 에서 {@link OBJECTIVE_LOW_STAGE_RELIEF}, {@link OBJECTIVE_RELIEF_ENDS_AT} 이상에서
+ * 정확히 1 로 선형 복귀한다.
+ *
+ * ## 왜 필요한가 (2026-08-03)
+ * Lv5 클리어율 53.6%(밴드 60~80% 아래)는 **전 무대 공통이 아니었다** — 카르곤 74% ·
+ * 아르케 87% 는 정상이고 **톡사르 31% · 니플헤임 43%** 가 끌어내린다. 둘 다 목표 게이트형이고,
+ * 그 무대의 목표 HP 는 단계 1 에서 기울기 항이 0 이라 **정확히 `_HP_BASE`** 다. 그런데 그
+ * base 는 중·고레벨 화력을 기준으로 정해진 값이라 화력이 가장 낮은 Lv5 에서 가장 무겁다.
+ *
+ * base 를 낮추면 전 레벨이 함께 쉬워져 §R12 의 세 손잡이 균형(목표 HP · 피격 배율 · 단계
+ * 기울기)이 통째로 무너진다. 그래서 **저단계 구간만** 따로 덜어낸다.
+ *
+ * ## 왜 `data/waves.ts` 에 있는가
+ * `sim/modes/objective.ts` 가 자연스러운 자리지만 그 모듈은 `chase`·`contamination` 을
+ * import 하므로, 두 모드가 되받아 import 하면 **순환 의존**이 된다. 이 파일은 두 모드가 이미
+ * `stageHpMult` 로 의존하는 leaf 라 방향이 한쪽으로만 흐른다.
+ */
+export function objectiveLowStageRelief(stage: number): number {
+  if (stage >= OBJECTIVE_RELIEF_ENDS_AT) return 1;
+  if (stage <= 1) return OBJECTIVE_LOW_STAGE_RELIEF;
+  const t = (stage - 1) / (OBJECTIVE_RELIEF_ENDS_AT - 1);
+  return OBJECTIVE_LOW_STAGE_RELIEF + (1 - OBJECTIVE_LOW_STAGE_RELIEF) * t;
+}
+
+/**
+ * 단계 1 의 목표 총 HP 완화 폭. 근거는 {@link objectiveLowStageRelief}. TODO(밸런스).
+ *
+ * | 완화 | 니플헤임 Lv5 | 톡사르 Lv5 | 니플 전체 | 톡사르 전체 |
+ * |---|---|---|---|---|
+ * | 없음(1.0) | 43% | 31% | 69.5% | 64.2% |
+ * | 0.7 | 50% | 41% | 66.6% | 60.9% |
+ * | **0.45** | **60%** | **56%** | **68.8%** | **63.7%** |
+ */
+export const OBJECTIVE_LOW_STAGE_RELIEF = 0.45;
+/** 이 단계부터 완화가 사라진다(계수 1). 단계 = `ceil(Lv/5)` 이므로 4 는 Lv16~20 이다. */
+export const OBJECTIVE_RELIEF_ENDS_AT = 4;
+
+/**
  * 단계 파라미터 조회. hpMult 는 연속 함수, 나머지(정예·서브탄·밀도)는 `stage` 이하 최대
  * `minStage` 밴드에서 온다. 범위 밖(<1)은 단계 1로 클램프.
  *

@@ -189,7 +189,12 @@ describe('오토파일럿 완주 (ADR-0011, par 창발)', () => {
     // 상수로 고정하면 "그 장비 세트 한 벌의 운"을 재게 된다 — 같은 설계값에서도 `gearSeed`
     // 만 바꾸면 클리어율이 48.3~100.0% 로 갈린다
     // (`.omc/research/economy-recalibrated-2026-07-27.md` §0.1).
-    const RUN_SEED = 0x50c1af;
+    // 2026-08-03 에 0x50c1af → **0x50c1b0** 으로 갈았다. 원인은 봇의 **전리품 수거** 신설
+    // (`LOOT_SEEK_RADIUS`, autopilot ③)이다 — 이동 경로가 바뀌므로 시드별 결과가 재추첨된다.
+    // 재표본(0x50c1a0..0x50c1ff 연속 96시드): 완주 **71/96** 이고 전부 40~150초 밴드 안이다
+    // (직전 재선정 때의 3/96 보다 오히려 넉넉해졌다 — 수거가 성장을 늘렸기 때문). 즉 계약은
+    // 건재하고 **증인 하나만 어긋났다**. 0x50c1b0 은 87.3초.
+    const RUN_SEED = 0x50c1b0;
     const STANDARD_LEVEL = LEVEL_PER_STAGE * 1; // 표준 레벨 = 5 × 단계
     const profile = defaultProfile();
     const ship = activeShip(profile);
