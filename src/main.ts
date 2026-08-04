@@ -40,7 +40,6 @@ import { graphicsTierController } from './render/graphicsRuntime.js';
 import { graphicsSettings } from './render/graphicsSettings.js';
 import { Radar } from './render/radar.js';
 import { UniqueCeremony } from './render/ceremony.js';
-import { ScreenTransition } from './render/screenTransition.js';
 import { InputController } from './input/controller.js';
 import { Hud, hudActives } from './ui/hud.js';
 import type { BossHudState, RunInfoState } from './ui/hud.js';
@@ -403,11 +402,12 @@ async function main(): Promise<void> {
   // visible + ResultState 동일). 다른 캔버스 화면과 같은 이유로 여기서 만든다 — 앞쪽(텍스처
   // 로드 전)에서 만들면 entityRenderer·radar 보다 먼저 stage 에 붙어 아레나 아래에 깔린다.
   const resultOverlay = new ResultOverlayScreen(gameApp.stage);
-  // AC-5.1 메타 화면 전환 커튼(카툰나무 슬라이드, ADR-0031). clearToMenu() 단일 초크포인트가 play() 로
-  // 트리거하고, 렌더 루프가 매 프레임 update(진행) + 재생 중엔 stage 최상단으로 raise 해 전 화면·크롬 UI
-  // 위를 덮는다. render-only(sim 무관). 비재생 시 커튼은 화면 밖·invisible 로 파킹된다.
-  const screenTransition = new ScreenTransition();
-  gameApp.stage.addChild(screenTransition.container);
+  // ⚠️ 여기 있던 **메타 화면 전환 커튼**(AC-5.1 / ADR-0031, 슬라이드 와이프)은 모듈째 제거했다
+  // (사용자 지시 2026-08-04: "화면 전환 효과 없애줘"). 커튼은 swap 을 은닉하지 않는 순수 장식
+  // 와이프였고(teardown + 새 화면 show 가 같은 프레임에 동기 완결이라 swap 은 원래 원자적이다),
+  // 화면이 바뀔 때마다 판이 한 장 쓸고 지나가는 것이 전환을 읽히게 하기보다 거슬렸다.
+  // 되살릴 일이 생기면 `src/render/` 의 삭제 커밋을 git 이력에서 꺼내면 된다 — 배선 지점은
+  // 셋뿐이었다(여기 mount · clearToMenu 트리거 · 렌더 루프 진행/raise).
   // 카툰나무풍 롤아웃 #6: DOM `ControlTower` 대신 Pixi 캔버스 관제탑으로 교체(show/hide/
   // visible + 콜백·옵션 타입 동일). 다른 캔버스 화면과 같은 블록에서 만들어야
   // entityRenderer·radar 레이어보다 **뒤에** stage 에 붙어 위로 그려진다(z 순서).
@@ -682,11 +682,7 @@ async function main(): Promise<void> {
 
   /** Clear the live run + all menu overlays (called before every screen swap). */
   function clearToMenu(): void {
-    // AC-5.1 균일 전환 커튼(카툰나무 슬라이드) — 전 메타 화면 swap 의 단일 초크포인트라 여기서 1회 트리거해
-    // 모든 화면 전환에 균일 적용한다. 화면 teardown(아래)+호출자의 새 화면 show()는 같은 프레임에 동기로
-    // 끝나 swap 이 원자적이므로(플래시 없음), 커튼은 그 위를 카툰 결로 쓸어 전환을 읽히게 하는 연출이다.
-    // play()는 멱등·재진입 안전이라 여러 초크포인트에서 불려도 안전(처음부터 재시작). render-only.
-    screenTransition.play();
+    // (여기 있던 전환 커튼 트리거는 제거했다 — 위 mount 자리의 주석 참조.)
     world = null;
     recorder = null;
     prevSnap = emptySnap;
@@ -698,9 +694,8 @@ async function main(): Promise<void> {
     // 메뉴로 나가면 Wang 타일 714장과 환경 레이어 5장이 **불투명 메뉴 뒤에서 매 프레임 계속
     // 갱신·렌더되고**, 사라진 엔티티의 접지 그림자가 바닥에 남았다(하네스 실측).
     //
-    // 게다가 평면 배경은 `background.visible = !autotile.active` 규칙을 따르므로 지형을 안 끄면
-    // **메뉴용 배경이 꺼진 채로 남는다** — 지금은 메뉴가 전부 불투명해 가려지지만, 반투명한
-    // 화면이 하나만 생겨도 그때 아레나가 비친다.
+    // (평면 배경·Wang 지형의 **표시 여부**는 여기서 손대지 않는다 — 렌더 루프가 화면 이름에서
+    //  매 프레임 도출하는 단일 권위로 옮겼다. 여기서 하는 일은 지형 **설정**을 비우는 것이다.)
     //
     // 이 파일이 같은 종류의 결함을 이미 두 번 기록해 뒀다(아래 레벨업·조우 오버레이 주석) —
     // "런 전용인데 화면 전환에서 안 걷히는 것"이다. 관전 진입 경로가 쓰는 것과 **같은 3종 세트**를
@@ -716,14 +711,6 @@ async function main(): Promise<void> {
     // destroy 로 걷히지 않는다 — 명시 회수 경로 넷 중 하나가 이것이다.
     entityRenderer.reset();
     clearInvasionBackdrop();
-    // 평면 배경(TilingSprite)도 **런 전용**이다. 예전엔 여기서 `!autotile.active` 규칙을 그대로
-    // 적용했는데, 바로 위에서 `autotile.configure(null, 0)` 로 지형을 끈 직후라 이 식은 **항상
-    // true** 가 되어 메뉴에서도 아레나 타일 배경이 깔린 채로 남았다. 메타 화면이 전부 불투명일
-    // 때는 안 보였지만, AC-5.1 전환 커튼이 화면을 쓸고 지나가는 구간에는 새 화면이 아직 안
-    // 그려진 자리로 그 배경이 그대로 비쳤다(사용자 신고 2026-08-04 — 별무늬 타일 바닥).
-    // 메타 화면은 저마다 자기 배경을 세우고, 런 경로(startRun/침공/관전)는 이 뒤에 각자
-    // `background.visible` 을 다시 켠다 — 그래서 여기서는 무조건 끄는 것이 옳다.
-    background.visible = false;
     tutorialOverlay.hide();
     resultOverlay.hide();
     baseMap.hide();
@@ -972,7 +959,6 @@ async function main(): Promise<void> {
     // 환경 레이어가 꺼진 화면에선 접지 그림자도 꺼진다 — 그림자만 남으면 없는 광원을 주장한다.
     entityRenderer.setEnvPlanet(null);
     clearInvasionBackdrop();
-    background.visible = true;
     spectateOverlay.show(
       {
         onTogglePlay: () => toggleSpectatePlay(),
@@ -1014,10 +1000,9 @@ async function main(): Promise<void> {
   function beginInvasionBackdrop(phase: number, tick: number): void {
     invasionBackdrop.begin(phase, tick);
     invasionBackdrop.visible = true;
-    // flat 배경 규칙을 PvE(`startRun`)와 **하나로 통일**한다. 예전에는 침공만 `false` 고정이라
-    // 침공 타일셋 로드가 실패하면 바닥이 통째로 비었다(베일은 평상시 알파 0 이라 안 덮는다).
-    // 지형이 켜졌으면 가려지므로 끄고, 없으면 폴백을 남긴다 — 규칙이 하나면 갈릴 수 없다.
-    background.visible = !autotile.active;
+    // (flat 배경의 표시 여부는 렌더 루프의 단일 권위가 정한다 — `arenaScreen && !autotile.active`.
+    //  예전에는 침공만 `false` 고정이라 침공 타일셋 로드가 실패하면 바닥이 통째로 비었는데,
+    //  그 규칙 통일이 이제 한 곳에만 산다.)
   }
 
   /**
@@ -1031,7 +1016,6 @@ async function main(): Promise<void> {
     // 접지 그림자는 **같은 인덱스**를 받아야 한다 — 배경과 그림자가 다른 광원을 읽으면 화면에
     // 태양이 둘이 된다(데칼↔지형광에서 이미 겪은 실패). `env.configure` 바로 옆이 그 계약의 자리다.
     entityRenderer.setEnvPlanet(invasionEnvPlanet(phase));
-    background.visible = !autotile.active;
   }
 
   /** 침공이 아닌 런으로 돌아갈 때 전용 배경을 내린다. */
@@ -1405,7 +1389,6 @@ async function main(): Promise<void> {
     entityRenderer.setEnvPlanet(sel.planet);
     // 직전 런이 침공이었으면 전용 배경이 남아 PvE 아레나를 덮는다 — 반드시 내린다.
     clearInvasionBackdrop();
-    background.visible = !autotile.active;
     currentSeed = seed;
     // 스프라이트 캐시 리셋(B-1) — `createWorld` 앞. 위 `applyShipSprite` 가 `textures.player` 를
     // 갈아끼워도, 이전 런의 플레이어 스프라이트(같은 엔티티 id)가 캐시에 남아 있으면 그 런 내내
@@ -1488,7 +1471,6 @@ async function main(): Promise<void> {
     env.configure({ planet: first.planet, seed, renderer: gameApp.app.renderer });
     entityRenderer.setEnvPlanet(first.planet);
     clearInvasionBackdrop();
-    background.visible = !autotile.active;
     currentSeed = seed;
     entityRenderer.reset();
     world = createWorld(seed, config);
@@ -2024,13 +2006,29 @@ async function main(): Promise<void> {
     // 하위 화면이지만 dt 공급원은 여기뿐이다 — 빠뜨리면 배경·석재 패널 연출이 통째로 멈춘다.
     modulesScreen.update(frame);
 
-    // AC-5.1 화면 전환 커튼: 매 프레임 진행(비재생 시 no-op) + 재생 중엔 stage 최상단으로 올려
-    // 전 화면·크롬 UI 위를 덮는다(settings.raise 뒤라 커튼이 그 위). render-only.
-    screenTransition.update(frame);
-    if (screenTransition.active) {
-      const st = gameApp.stage;
-      st.setChildIndex(screenTransition.container, st.children.length - 1);
-    }
+    /**
+     * 아레나 바닥(평면 배경 + Wang 지형)의 표시 여부 — **여기가 단일 권위다.**
+     *
+     * ## 왜 화면 이름에서 매 프레임 도출하는가
+     * 예전에는 진입 경로마다(`startRun`·침공·관전·`clearToMenu`) 각자 `background.visible` 을
+     * 대입했다. 그 방식은 **경로를 하나 빠뜨리면 조용히 새는** 구조라, 실제로 메뉴 화면에
+     * 아레나 타일이 비치는 신고가 두 번 나왔다(2026-08-04). 경로를 하나 더 고쳐도 다음 경로가
+     * 또 남는다 — HUD 가 이미 같은 이유로 화면 이름 게이트로 옮겨 온 자리다(바로 아래
+     * `hud.setVisible`). 규칙이 하나면 갈릴 수 없다.
+     *
+     * `result`(정산)를 포함하는 이유: 런이 끝나도 world 를 살려 두므로 정산 화면 뒤는 여전히
+     * 그 런의 아레나다(`shouldEnterSettlement` 참조). 여기서 빼면 정산 뒤 바닥이 검게 빠진다.
+     *
+     * 평면 배경은 **Wang 지형이 없는 행성의 폴백**이라 `!autotile.active` 조건이 그대로 남는다.
+     */
+    const arenaScreen =
+      currentScreenName === 'run' ||
+      currentScreenName === 'spectate' ||
+      currentScreenName === 'result';
+    background.visible = arenaScreen && !autotile.active;
+    // Wang 지형은 `configure()` 가 이미 `layer.visible = tiles !== null` 을 쥐고 있다 —
+    // 그 의미(타일셋이 없으면 안 켠다)를 보존한 채 화면 게이트만 곱한다.
+    autotile.layer.visible = arenaScreen && autotile.active;
 
     // ⚠️ `let` 이다 — 아래 스텝 블록에서 의뢰 구간 전환이 일어나면 `world` 가 **새 객체**로
     // 갈리므로, 스텝이 끝난 직후 재조회한다(계약 §6-2). 안 하면 프레임 나머지(HUD·오버레이·
