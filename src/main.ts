@@ -233,6 +233,21 @@ async function main(): Promise<void> {
     width: DESIGN_WIDTH,
     height: DESIGN_HEIGHT,
   });
+  /**
+   * ⚠️ **꺼진 채로 태어나야 한다.**
+   *
+   * 표시 여부의 단일 권위는 렌더 루프인데(아래 `arenaScreen` 블록), 그 루프는 이 줄에서
+   * 한참 뒤 `gameApp.app.ticker.add(...)` 로야 붙는다. 그 사이에는 텍스처·프로필·인증 로드가
+   * **await 로 줄줄이** 걸려 있어 실시간으로 수 초가 지나간다. `TilingSprite` 의 `visible`
+   * 기본값은 `true` 라, 그 구간 내내 캔버스에 아레나 타일이 깔린 채 부팅 화면이 서 있었다
+   * (사용자 신고 2026-08-04 — "F5 누르면 아직 아레나 타일 보여". 첫 프레임 플래시가 아니라
+   * **로드가 끝날 때까지 계속** 보이는 것이 핵심이다).
+   *
+   * 첫 프레임에 켜야 하는 상태(런 재개 등)라면 루프가 그때 켜 준다 — 기본값을 끔으로 두는
+   * 쪽이 항상 안전하다. Wang 지형(`AutotileBackground`)은 이미 생성자에서 `layer.visible`
+   * 을 `false` 로 두고 있다(같은 이유).
+   */
+  background.visible = false;
   gameApp.stage.addChild(background);
   // Wang autotile terrain floor (render-only). Sits above the flat TilingSprite
   // fallback and below entities. Each run's planet tileset + seed is applied in

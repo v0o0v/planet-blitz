@@ -122,9 +122,23 @@ describe('AC-5.1/5.2 · main.ts 배선 계약 (소스 그렙 — 앱 부트스�
     expect(src).toMatch(/autotile\.layer\.visible = arenaScreen && autotile\.active/);
   });
 
-  it('진입 경로별 background.visible 대입이 없다(단일 권위 우회 가드)', () => {
+  /**
+   * 대입은 **정확히 둘**이어야 한다: 생성 직후 초기값 `false` 하나와 렌더 루프의 규칙 하나.
+   *
+   * 초기값이 필요한 이유는 타이밍이다 — 렌더 루프(`ticker.add`)는 텍스처·프로필·인증 로드
+   * **뒤**에 붙는데 `TilingSprite.visible` 기본값이 `true` 라, 그 await 구간 내내 부팅 화면에
+   * 아레나 타일이 깔려 있었다(사용자 신고 2026-08-04 "F5 누르면 아직 보여" — 첫 프레임 플래시가
+   * 아니라 로드가 끝날 때까지 계속이다).
+   *
+   * 셋 이상이면 진입 경로별 대입이 되살아난 것이고, 그러면 "경로 하나를 빠뜨려 메뉴에 아레나가
+   * 비치는" 결함이 그대로 재발한다. 옛 경로 대입의 두 형태도 이름으로 못박아 둔다.
+   */
+  it('background.visible 대입은 초기값 + 단일 권위 둘뿐이다', () => {
     const assigns = src.match(/background\.visible\s*=/g) ?? [];
-    expect(assigns).toHaveLength(1);
+    expect(assigns).toHaveLength(2);
+    expect(src).toMatch(/background\.visible = false;/);
+    expect(src).not.toMatch(/background\.visible = true;/);
+    expect(src).not.toMatch(/background\.visible = !autotile\.active;/);
   });
 
   it('정산 세리머니 구동 호출이 렌더 루프에서 사라졌다(삭제 회귀 가드)', () => {
