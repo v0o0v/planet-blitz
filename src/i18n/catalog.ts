@@ -3688,7 +3688,11 @@ export const KO: Record<MessageKey, string> = {
   'commission.order.constraint': '제약 계약',
   'commission.order.bounty': '현상금 표적',
   'commission.order.elite': '정예 소집령',
-  'commission.segments': '{n}개 무대',
+  // ⚠️ EN 원문의 `stages` 는 런의 **구간**(segment)이고 침략 단계(`commission.stageLine` 의
+  // '침략 {stage}단계')와는 다른 축이다. 그 충돌을 피하려고 '무대'를 골랐던 자리인데, 정작
+  // 게임이 같은 것을 이미 **구간**이라 부르고 있었다(`hud.bossEta.segment` = '{n}/{total} 구간').
+  // 한 제품에서 같은 것을 두 이름으로 부르면 그 자체가 어색함이다 — HUD 쪽 이름으로 통일한다.
+  'commission.segments': '{n}개 구간',
   'commission.rewards.credits': '크레딧 +{n}',
   'commission.rewards.minerals': '광물 +{n}',
   'commission.rewards.items': '아이템 +{n}',
@@ -3713,7 +3717,7 @@ export const KO: Record<MessageKey, string> = {
   'commission.list.head': '보유 의뢰서',
   'commission.detail.head': '지시 상세',
   'commission.detail.brief': '지시 개요',
-  'commission.detail.stages': '무대',
+  'commission.detail.stages': '구간', // `commission.segments` 와 같은 이름(위 주석 참조).
   'commission.detail.rewards': '확정 보상',
   'commission.detail.constraints': '제약',
   'commission.detail.noConstraints': '추가 제약 없음.',
@@ -3722,11 +3726,16 @@ export const KO: Record<MessageKey, string> = {
   // 아무것도 선택되지 않은 상세 열이 받는 안내 셋 — 이 화면의 **기본 상태**(보유 0 · 오프라인)
   // 에서 플레이어가 알아야 하는 것은 "고르라"가 아니라 "어떻게 얻고 몇 장까지 쌓이는가"다.
   'commission.about.what': '의뢰서란',
+  // ⚠️ 예전 문구는 '발령 시점에 굳은 종이입니다' 였다. EN 원문 `A sealed order` 의 "봉인"을
+  // "굳은"으로 직역한 것인데, 한국어에서 '굳은 종이'는 봉인이 아니라 **뻣뻣한 종이**로 읽힌다
+  // (사용자 지적 2026-08-04). 은유를 버리고 규칙을 그대로 적는다 — 이 칸이 실제로 알려 줘야
+  // 하는 것은 "내용이 언제 정해지는가"이지 종이의 재질이 아니다.
   'commission.about.whatBody':
-    '발령 시점에 굳은 종이입니다. 무대와 보상이 그때 확정되므로, 완수하면 적힌 그대로 지급됩니다.',
+    '발령되는 순간 내용이 확정되는 명령서입니다. 구간과 보상이 그때 정해지고, 완수하면 적힌 그대로 지급됩니다.',
   'commission.about.get': '얻는 법',
+  // '높을수록 높은'의 반복을 피한다 — 같은 낱말이 한 문장에 두 번 나오면 규칙보다 말투가 먼저 읽힌다.
   'commission.about.getBody':
-    '행성 보스를 처치하면 드물게 발령됩니다. 침략 단계가 높을수록 높은 계급이 나옵니다.',
+    '행성 보스를 처치하면 드물게 발령됩니다. 침략 단계가 높을수록 상위 계급이 나옵니다.',
   'commission.about.stock': '보관',
   'commission.about.stockBody':
     '{cap}장까지 보관합니다. 꽉 차 있는 동안에는 새 의뢰서가 들어오지 않습니다 — 먼저 출격해 자리를 비우세요.',
