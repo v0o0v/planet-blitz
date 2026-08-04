@@ -1937,7 +1937,51 @@ export const EN = {
 /** 카탈로그 키 = 영어 정본의 키 집합. */
 export type MessageKey = keyof typeof EN;
 
-/** 한국어 카탈로그(전 키 필수). 기존 UI 의 한글 원문을 정본으로 옮긴 것. */
+/**
+ * 한국어 카탈로그(전 키 필수).
+ *
+ * ## 용어 정본 — 새 문자열을 넣기 전에 여기부터 본다
+ *
+ * 2026-08-04 전수 점검에서 **같은 개념이 화면마다 다른 이름으로 불리는** 결함을 119건 고쳤다.
+ * 사용자가 "표현이 어색하다"고 지적한 실제 원인이 대부분 그것이었다(대표: 런의 구간을 지시
+ * 수신소만 `무대`라 부르고 HUD 는 `구간`이라 불렀다). 아래 표가 그 결론이다.
+ *
+ * | EN | 정본 KO | 함께 쓰면 안 되는 것 |
+ * |---|---|---|
+ * | `Hull` | 선체 | ⚠ `HP` 는 **체력**이다. 이 둘의 갈림은 EN 을 정확히 반영한 것이지 결함이 아니다 |
+ * | `HP`(플레이어) | 체력 | 적·코어·기물·방어체의 HP 는 **내구도** — 전역 치환 금지 |
+ * | `Stash`(장비) | 창고 | `보관함`은 촉매·모듈 Collection 이 선점 |
+ * | `Collection`/`Stock` | 보관함 | 위와 반드시 분리 |
+ * | `Guardian`(예비 전력) | 수호기 | 아르케 적 고유명(`수호 오벨리스크` 등)과 병합 금지 |
+ * | `Active ship` | 현역 기체 | `활성`은 액티브 스킬과 혼동 |
+ * | `Elite` | 정예 | (엘리트 ✗) |
+ * | `Commission`/`Order` | 의뢰서 | 건물명 `지시 수신소`·등급명 `…지시`는 세계관 플레이버라 유지 |
+ * | `Wave`(L1 슬롯) | 편대 | (웨이브 ✗) |
+ * | `Cooldown` | 쿨다운 | (재사용·재충전 ✗) |
+ * | `Damage`(스탯) | 피해량 | (데미지·공격력 ✗) |
+ * | `Fire Rate` | 연사 속도 | (발사 속도 ✗) |
+ * | `Bullets` | 탄 수 | |
+ * | `Magnet` | 자석 | |
+ * | `Rarity` 사다리 | 노말·매직·레어·유니크 | 같은 enum 이 화면 따라 두 이름이었다 |
+ * | `powerup`/`Upgrade` | 파워업 | `강화`는 계보·방어체·촉매에 13회로 과부하 |
+ * | `shield`(코어 임시 자원) | 보호막 | 장비 슬롯명·유닛명 `실드`는 유지 |
+ * | `heat`(정련) | 불 세기 | `화력`은 damage 축(14회) |
+ * | `neglect`(방어체 감쇠) | 풍화 | |
+ * | `Power`(전투 지표) | 전투력 | `전력`은 電力 오독 |
+ * | `Invasion` | **침략 단계**(행성 난이도) / **침공**(PvP 기지 공격) | EN 이 한 낱말로 뭉갠 두 개념을 KO 가 나눠 놓은 것이다. 병합하지 마라 |
+ *
+ * ## 두 가지 예외 정책
+ * 1. **좁은 칩은 축약을 허용한다** — `champion.bp.*`·`catalyst.rew.power.fireRate` 의 `피해`·`연사`,
+ *    `hud.inv.guardians`·`def3.cmd.slot.guardian` 의 `수호`. 정본대로 늘리면 +18px 이고 그 칸들은
+ *    폭이 없다(실측). 각 자리에 이유를 주석으로 남겨 뒀다.
+ * 2. **서사는 문체가 연출이다** — 인트로 4컷·기체 사연·기록 파편은 문어체를, 도발 스티커
+ *    (`sticker.*`)는 반말을 의도적으로 유지한다. UI 문장만 존댓말(`~합니다`/`~하세요`)로 통일한다.
+ *
+ * ## 직역 함정 (실제로 밟은 것들)
+ * `A sealed order` → `굳은 종이`(뻣뻣한 종이로 읽힘) · `sunk into` → `묻었습니다`(땅에 묻음) ·
+ * `authored` → `저작`(저작권) · `weapon cycles` → `재장전`(**없는 메커니즘을 UI 가 약속했다**) ·
+ * `instances` → `인스턴스`(코드 용어 유출). **은유가 한국어에서 살지 않으면 규칙을 그대로 적어라.**
+ */
 export const KO: Record<MessageKey, string> = {
   'common.close': '닫기',
 
@@ -2013,7 +2057,7 @@ export const KO: Record<MessageKey, string> = {
   'enemy.toxar-rot-behemoth': '부패 거수',
   'enemy.kras-breaker': '파쇄 강습체',
   'enemy.kras-piercer': '관통 포수',
-  'enemy.kras-crusher-totem': '분쇄 토템',
+  'enemy.kras-crusher-totem': '파쇄 토템',
   'enemy.kras-salvage-drone': '잔해 회수체',
   'enemy.kras-siege-battery': '공성 포대',
   'enemy.kras-devastator': '파멸 거병',
@@ -2046,7 +2090,7 @@ export const KO: Record<MessageKey, string> = {
   'result.loot.overflow': '보관 실패',
   'result.loot.overflowVal': '{n}개 (공간 부족)',
   'result.tip.power': '전투력 {n}',
-  'result.drops.title': '획득 장비',
+  'result.drops.title': '새 장비',
   'result.drops.none': '이번 런에는 새 장비가 없습니다.',
   'result.drops.more': '외 {n}개',
   'result.btn.inventory': '🛠 장비 정비',
@@ -2093,9 +2137,9 @@ export const KO: Record<MessageKey, string> = {
   'stat.maxHpFlat.desc': '최대 체력이 {n} 늘어납니다.',
   'stat.maxHpPct.name': '최대 체력',
   'stat.maxHpPct.desc': '최대 체력이 {n}% 늘어납니다.',
-  'stat.dashCdPct.name': '대시 재사용',
+  'stat.dashCdPct.name': '대시 쿨다운',
   'stat.dashCdPct.desc': '대시 재사용 대기가 {n}% 짧아집니다.',
-  'stat.magnetPct.name': '자력',
+  'stat.magnetPct.name': '자석',
   'stat.magnetPct.desc': '젬을 끌어당기는 반경이 {n}% 넓어집니다.',
   'stat.xpPct.name': '경험치',
   'stat.xpPct.desc': '획득 경험치가 {n}% 증가합니다.',
@@ -2115,7 +2159,7 @@ export const KO: Record<MessageKey, string> = {
   'planet.title': '성계 지도',
   'planet.sub': '행성과 침략 단계를 선택하세요.',
   'planet.stageLabel': '침략 단계',
-  'planet.stageDesc': '단계 {stage} · 개방 상한 {cap}',
+  'planet.stageDesc': '{stage}단계 · 개방 상한 {cap}',
   'planet.back': '◀ 기지로',
   'planet.inventory': '🛠 장비 정비',
   'planet.launch': '▶ {name} 출격',
@@ -2133,7 +2177,7 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.panel.title': '촉매',
   'catalyst.panel.sub': '위험-보상 런 소모품',
   'catalyst.panel.none': '주입 없음',
-  'catalyst.panel.available': '보유 {n}종 · 주입 편집으로 얹기',
+  'catalyst.panel.available': '보유 {n}종 · 주입 편집에서 얹습니다',
   'catalyst.panel.count': '주입 {n} / {cap}',
   'catalyst.panel.edit': '주입 편집',
   'catalyst.picker.title': '촉매 주입',
@@ -2145,7 +2189,7 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.picker.confirm': '확정',
   'catalyst.picker.signatureLocked': '{planet} 전용',
   'catalyst.picker.slotFull': '슬롯 상한 도달({cap})',
-  'catalyst.picker.noneOwned': '보유한 촉매가 없습니다. 엘리트·보스 런에서 획득하세요.',
+  'catalyst.picker.noneOwned': '보유한 촉매가 없습니다. 정예·보스 런에서 획득하세요.',
   'catalyst.kind.common': '공용',
   'catalyst.kind.signature': '특산',
   'catalyst.sortie.failTitle': '주입 실패',
@@ -2155,7 +2199,7 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.sortie.skip': '촉매 빼고 출격',
   'catalyst.manage.open': '촉매',
   'catalyst.manage.title': '촉매 보관함',
-  'catalyst.manage.empty': '보유한 촉매가 없습니다. 엘리트·보스 런에서 획득하세요.',
+  'catalyst.manage.empty': '보유한 촉매가 없습니다. 정예·보스 런에서 획득하세요.',
   'catalyst.manage.owned': 'x{n}',
   'catalyst.manage.salvage': '분해 {n}',
   'catalyst.manage.salvageDone': '{name} 분해 · +{residue} 촉매 잔재',
@@ -2191,7 +2235,7 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.salvage.qty': '분해 수량',
   'catalyst.salvage.gained': '+{n} 촉매 잔재',
   'catalyst.archive.affordable': '지금 잔재로 {n}종 구매 가능',
-  'catalyst.archive.residueUse': '분해로 모이고 구매에 쓰입니다.',
+  'catalyst.archive.residueUse': '분해로 얻고 구매에 씁니다.',
   'catalyst.archive.detailTitle': '촉매 정보',
   'catalyst.archive.detailEmpty': '왼쪽 목록에서 촉매를 선택하세요.',
   'catalyst.archive.labelSalvage': '분해',
@@ -2218,20 +2262,21 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.pen.enemyCount': '적 수',
   'catalyst.pen.enemySpeed': '적 이동 속도',
   'catalyst.pen.enemyBulletSpeed': '적 탄속',
-  'catalyst.pen.playerHpDown': '기체 내구도 감소',
+  'catalyst.pen.playerHpDown': '기체 체력 감소',
   'catalyst.rew.drop': '드랍량',
   'catalyst.rew.rarity': '드랍 희귀도',
   'catalyst.rew.xp': '경험치',
   'catalyst.rew.resource': '자원',
   'catalyst.rew.catalystDrop': '촉매 드랍률',
-  'catalyst.rew.power.damage': '공격력',
+  'catalyst.rew.power.damage': '피해량',
+  // '연사'는 좁은 보상 칩 폭에 맞춘 의도적 축약이다('연사 속도'의 통일 대상 아님).
   'catalyst.rew.power.fireRate': '연사',
-  'catalyst.rew.power.moveSpeed': '이동속도',
+  'catalyst.rew.power.moveSpeed': '이동 속도',
   'catalyst.rew.power.maxHp': '최대 체력',
   'catalyst.rew.power.skillAll': '전 스킬',
 
   // --- 런 중 침공 정보판(우측 가운데, 사용자 요청 2026-07-28) ---
-  'runinfo.title': '현재 침공',
+  'runinfo.title': '현재 출격',
   'runinfo.stage': '{n}단계',
   'runinfo.catalysts': '촉매 {n}장',
   'runinfo.noCatalysts': '주입 촉매 없음',
@@ -2254,7 +2299,7 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.prospect.name': '감정',
   'catalyst.prospect.desc': '페널티: 적 수 증가 / 보상: 드랍 희귀도 증가',
   'catalyst.alchemy.name': '연성',
-  'catalyst.alchemy.desc': '페널티: 기체 내구도 감소 / 보상: 드랍 희귀도 증가',
+  'catalyst.alchemy.desc': '페널티: 기체 체력 감소 / 보상: 드랍 희귀도 증가',
   'catalyst.epiphany.name': '계시',
   'catalyst.epiphany.desc': '페널티: 적 탄속 증가 / 보상: 드랍 희귀도 증가',
   'catalyst.insight.name': '통찰',
@@ -2266,7 +2311,7 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.enlightenment.name': '각성',
   'catalyst.enlightenment.desc': '페널티: 적 수 증가 / 보상: 경험치 획득 증가',
   'catalyst.mastery.name': '숙련',
-  'catalyst.mastery.desc': '페널티: 기체 내구도 감소 / 보상: 경험치 획득 증가',
+  'catalyst.mastery.desc': '페널티: 기체 체력 감소 / 보상: 경험치 획득 증가',
   'catalyst.extraction.name': '채굴',
   'catalyst.extraction.desc': '페널티: 적 내구도 증가 / 보상: 자원 획득 증가',
   'catalyst.foundry.name': '제련소',
@@ -2276,7 +2321,7 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.mercantile.name': '교역',
   'catalyst.mercantile.desc': '페널티: 적 이동 속도 증가 / 보상: 자원 획득 증가',
   'catalyst.motherlode.name': '노다지',
-  'catalyst.motherlode.desc': '페널티: 기체 내구도 감소 / 보상: 자원 획득 증가',
+  'catalyst.motherlode.desc': '페널티: 기체 체력 감소 / 보상: 자원 획득 증가',
   'catalyst.resonance.name': '공명',
   'catalyst.resonance.desc': '페널티: 적 내구도 증가 / 보상: 촉매 드랍률 증가',
   'catalyst.catalysis.name': '촉매 반응',
@@ -2296,7 +2341,7 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.bulwark.name': '방벽',
   'catalyst.bulwark.desc': '페널티: 적 이동 속도 증가 / 보상: 기체 최대 체력 강화(런 한정)',
   'catalyst.ascendant.name': '초월',
-  'catalyst.ascendant.desc': '페널티: 기체 내구도 감소 / 보상: 전 스킬 강화(런 한정)',
+  'catalyst.ascendant.desc': '페널티: 기체 체력 감소 / 보상: 전 스킬 강화(런 한정)',
   'catalyst.kargon-swarmcall.name': '카르곤 군단 소집',
   'catalyst.kargon-swarmcall.desc': '적 밀도 격화 · 페널티: 적 수 증가 / 보상: 드랍량 증가',
   'catalyst.kargon-magma-vein.name': '카르곤 마그마 광맥',
@@ -2316,13 +2361,13 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.niflheim-flagship.name': '니플헤임 유령 기함',
   'catalyst.niflheim-flagship.desc': '페널티: 적 내구도 증가 / 보상: 드랍 희귀도 증가',
   'catalyst.arke-overclock.name': '아르케 오버클록',
-  'catalyst.arke-overclock.desc': '레이싱 페이스 격화 · 페널티: 적 이동 속도 증가 / 보상: 경험치 획득 증가',
+  'catalyst.arke-overclock.desc': '질주 속도 격화 · 페널티: 적 이동 속도 증가 / 보상: 경험치 획득 증가',
   'catalyst.arke-ancient-core.name': '아르케 고대 코어',
   'catalyst.arke-ancient-core.desc': '페널티: 적 내구도 증가 / 보상: 자원 획득 증가',
   'catalyst.arke-obelisk.name': '아르케 오벨리스크',
   'catalyst.arke-obelisk.desc': '페널티: 적 공격력 증가 / 보상: 드랍량 증가',
   'catalyst.toxar-outbreak.name': '톡사르 창궐',
-  'catalyst.toxar-outbreak.desc': '오염 확산 가속 · 페널티: 기체 내구도 감소 / 보상: 드랍량 증가',
+  'catalyst.toxar-outbreak.desc': '오염 확산 가속 · 페널티: 기체 체력 감소 / 보상: 드랍량 증가',
   'catalyst.toxar-blightspore.name': '톡사르 역병 포자',
   'catalyst.toxar-blightspore.desc': '페널티: 적 공격력 증가 / 보상: 자원 획득 증가',
   'catalyst.toxar-blight-mother.name': '톡사르 부패의 모체',
@@ -2360,7 +2405,7 @@ export const KO: Record<MessageKey, string> = {
 
   'meta.line': '크레딧 {c} · 광물 {m} · 기체 Lv {lv} · 스킬 {sp}',
 
-  'title.tag': '행성을 침략해 파밍하고, 더 높은 랭커의 기지를 뚫으세요.',
+  'title.tag': '행성을 침략해 파밍하고, 상위 랭커의 기지를 뚫으세요.',
   'title.startTutorial': '▶ 튜토리얼 시작',
   'title.enterBase': '▶ 기지로 진입',
   'title.note': '홈월드 궤도에서 기초 조작을 익힙니다 (약 3~4분).',
@@ -2374,7 +2419,7 @@ export const KO: Record<MessageKey, string> = {
   'tutorial.hint1': '적을 처치해 경험치 젬을 모으세요. 레벨업하면 파워업을 고를 수 있습니다.',
   'tutorial.hint2': '대시로 적탄을 회피하세요. 밀집한 탄막은 피하는 게 상책입니다.',
   'tutorial.hint3': '첫 장비를 획득하면 기지가 공개됩니다. 계속 밀어붙이세요!',
-  'tutorial.hint4': '잠금 해제되면 Z 또는 X 키로 액티브 스킬을 발동할 수 있습니다.',
+  'tutorial.hint4': '해금되면 Z 또는 X 키로 액티브 스킬을 발동할 수 있습니다.',
 
   // 액티브 스킬 크롬(ADR-0041 · 레인 D). params 토큰은 EN 과 동일하게 보존한다.
   'lab.actives.btn': '액티브 스킬',
@@ -2388,33 +2433,33 @@ export const KO: Record<MessageKey, string> = {
   'lab.actives.meta': '쿨다운 {cd}초 · 위력 {p}%',
   'lab.actives.tier.lo': '1티어',
   'lab.actives.tier.hi': '2티어',
-  'lab.actives.none': '이 기체의 액티브 스킬이 아직 저작되지 않았습니다.',
+  'lab.actives.none': '이 기체에는 아직 액티브 스킬이 없습니다.',
   'lab.err.activeLocked': '아직 해금되지 않았습니다 — 해당 계열에 더 투자하세요.',
   'lab.err.activeFull': '액티브 슬롯 2칸이 모두 찼습니다 — 하나를 먼저 해제하세요.',
   'hud.active.title': '액티브',
   'tutorial.drop': '장비 획득! 이 런을 마치면 기지에서 정비할 수 있습니다.',
 
-  'powerup.title': '레벨 업! — 강화를 선택하세요',
+  'powerup.title': '레벨업! — 파워업을 선택하세요',
   'powerup.hint': '클릭 또는 {keys} 키',
-  'powerup.aria': '{n}번 강화: {name} — {desc}',
+  'powerup.aria': '{n}번 파워업: {name} — {desc}',
   'powerup.stat.weapon': '무기',
   'powerup.stat.level': 'Lv',
-  'powerup.stat.damage': '데미지',
-  'powerup.stat.bullets': '탄환',
+  'powerup.stat.damage': '피해량',
+  'powerup.stat.bullets': '탄 수',
   'powerup.stat.fire': '연사',
   'powerup.stat.pierce': '관통',
   'powerup.stat.spread': '확산',
   'powerup.stat.move': '이동',
   'powerup.stat.dash': '대시',
-  'powerup.stat.hp': 'HP',
+  'powerup.stat.hp': '체력',
   'powerup.stat.magnet': '자석',
 
   'encounter.vault.title': '보물 격실 포탈',
-  'encounter.vault.desc': '안에는 전리품과 경비가 있습니다. 여기서 죽으면 런이 실패합니다.',
+  'encounter.vault.desc': '안에는 전리품이 있고, 지키는 자들도 있습니다. 여기서 죽으면 런이 실패합니다.',
   'encounter.guardian.title': '봉인 수호자',
   'encounter.guardian.desc': '봉인을 열면 이 자리에 미니 보스가 소환됩니다.',
   'encounter.altar.title': '오스카의 제단',
-  'encounter.altar.desc': '공물은 한 번뿐입니다. 도박을 선택하세요.',
+  'encounter.altar.desc': '공물은 한 번뿐입니다. 무엇에 걸지 고르세요.',
   'encounter.altar.0.name': '즉시 보상',
   'encounter.altar.0.desc': '고등급 장비와 크레딧을 지금 바로',
   'encounter.altar.1.name': '드랍 부스트',
@@ -2470,7 +2515,7 @@ export const KO: Record<MessageKey, string> = {
   'hud.bossEta.shelter': '대피소에 도달하세요',
   'hud.bossEta.ring': '안전권을 소탕하세요',
   'hud.contamination.title': '오염도',
-  'hud.contamination.warn': '임계 오염 임박 — 오염 노드를 파괴하세요',
+  'hud.contamination.warn': '오염 임계 도달 직전 — 노드를 파괴하세요',
   'hud.inv.title': '침공 진행',
   'hud.inv.layer0': 'L1 · 대기권 돌파',
   'hud.inv.layer1': 'L2 · 회랑 돌파',
@@ -2481,6 +2526,7 @@ export const KO: Record<MessageKey, string> = {
   'hud.inv.boss': '방어 보스',
   'hud.inv.defense': '방어 잔존',
   'hud.inv.facilities': '설비',
+  // '수호' — '수호기'로 늘리면 +18px 이라 좁은 HUD 칸을 넘친다. 폭 예외로 축약을 유지한다.
   'hud.inv.guardians': '수호',
   'hud.inv.props': '기물',
   'hud.inv.enemies': '적',
@@ -2526,15 +2572,15 @@ export const KO: Record<MessageKey, string> = {
   'lab.bar.invest': '투자',
   'lab.bar.credits': '크레딧',
   'lab.bar.shipLv': '기체 Lv',
-  'lab.stat.damage': '탄환 데미지',
+  'lab.stat.damage': '탄 피해량',
   'lab.stat.fireRate': '연사 속도',
-  'lab.stat.bulletCount': '추가 탄환',
+  'lab.stat.bulletCount': '추가 탄 수',
   'lab.stat.pierce': '관통',
   'lab.stat.bulletSpeed': '탄속',
   'lab.stat.range': '사거리',
-  'lab.stat.maxHpFlat': '최대 HP(고정)',
-  'lab.stat.maxHp': '최대 HP',
-  'lab.stat.dashCd': '대시 재충전 감소',
+  'lab.stat.maxHpFlat': '최대 체력(고정)',
+  'lab.stat.maxHp': '최대 체력',
+  'lab.stat.dashCd': '대시 쿨다운 감소',
   'lab.stat.moveSpeed': '이동 속도',
   'lab.stat.magnet': '자석 반경',
   'lab.stat.xp': '경험치',
@@ -2553,7 +2599,7 @@ export const KO: Record<MessageKey, string> = {
   'lab.err.noCredits': '크레딧이 부족합니다 (필요 {n}).',
   'lab.respecDone': '스킬 트리를 초기화하고 포인트를 환급했습니다.',
   'lab.respecBtn': '리스펙 ({n} 크레딧)',
-  'lab.capstone.locked': '잠금 — 이 계열에 {g}pt 투자 시 해금',
+  'lab.capstone.locked': '잠김 — 이 계열에 {g}pt 투자 시 해금',
   'lab.capstone.needGate': '캡스톤 잠김: 이 계열에 먼저 {g}포인트를 투자하세요.',
 
   'inv.title': '장비 정비',
@@ -2568,15 +2614,15 @@ export const KO: Record<MessageKey, string> = {
   'inv.stashHeader': '창고 ({n}/{cap})',
   'inv.loadoutStats': '로드아웃 스탯',
   'inv.stat.weapon': '주무기',
-  'inv.stat.damage': '피해',
-  'inv.stat.fireRate': '발사 속도',
+  'inv.stat.damage': '피해량',
+  'inv.stat.fireRate': '연사 속도',
   'inv.stat.bullets': '탄 수',
   'inv.stat.pierce': '관통',
   'inv.stat.moveSpeed': '이동 속도',
-  'inv.stat.hp': '추가 HP',
+  'inv.stat.hp': '추가 체력',
   'inv.stat.magnet': '자석',
   'inv.stat.xp': '경험치',
-  'inv.stat.mineralFind': '광물 발견',
+  'inv.stat.mineralFind': '광물 획득',
   'inv.tip.compare': '장착 중: {name} (어픽스 {n}개)',
   'inv.tip.compareTitle': '— 장착 장비와 비교 —',
   'inv.tip.comparePower': '전투력 {n}',
@@ -2594,15 +2640,15 @@ export const KO: Record<MessageKey, string> = {
   'inv.act.salvageLowShort': '노말·매직 분해',
   'inv.act.salvageHighShort': '레어+ 분해',
   'inv.help.stash': '클릭: 인벤토리로 꺼내기  ·  분해는 현재 분류 탭에 보이는 것만',
-  'inv.help.inventory': '클릭: 장착  ·  우클릭: 보관함으로 넣기',
+  'inv.help.inventory': '클릭: 장착  ·  우클릭: 창고로 넣기',
   // 조사(을/를)는 앞 글자 받침에 따라 갈린다 — `{name}` 이 데이터라 고를 수 없으므로 화살표로
   // 표기해 어색한 "엔진 을(를)" 을 피한다.
   'inv.moved.toInventory': '{name} → 인벤토리로 이동',
-  'inv.moved.toStash': '{name} → 보관함으로 이동',
-  'inv.err.stashFull': '보관함이 가득 찼습니다. 확장하거나 먼저 분해하세요.',
+  'inv.moved.toStash': '{name} → 창고로 이동',
+  'inv.err.stashFull': '창고가 가득 찼습니다. 확장하거나 먼저 분해하세요.',
   // 조사(을/를) 회피는 위 이동 문구와 같은 이유 — `{name}` 이 데이터라 받침을 고를 수 없다.
   'inv.err.duplicateUnique':
-    '{name} — 같은 유니크를 이미 장착 중입니다. 유니크 효과는 중첩되지 않아 두 번째 칸이 낭비됩니다.',
+    '{name} — 같은 유니크를 이미 장착 중입니다. 유니크 효과는 중첩되지 않아 두 번째 사본은 칸만 낭비합니다.',
   'inv.tip.equippedNow': '현재 장착 중',
   'inv.act.expand': '창고 확장 ({n} 크레딧)',
   'inv.act.expandMax': '창고 최대 확장됨',
@@ -2631,11 +2677,11 @@ export const KO: Record<MessageKey, string> = {
   'hangar.stat.uniqueDup': '{name} (중복 — 효과 없음)',
   'hangar.desc.weapon': '기체의 기본 발사 방식입니다.',
   'hangar.desc.damage': '모든 피해에 곱해지는 배율입니다.',
-  'hangar.desc.fireRate': '무기가 재장전되는 속도입니다.',
+  'hangar.desc.fireRate': '무기가 다음 발사를 준비하는 속도입니다.',
   'hangar.desc.bullets': '발사당 추가 탄환 수입니다.',
   'hangar.desc.pierce': '탄환이 관통하는 적의 수입니다.',
   'hangar.desc.moveSpeed': '기체 이동 속도 배율입니다.',
-  'hangar.desc.hp': '기본 체력에 더해지는 추가 체력입니다.',
+  'hangar.desc.hp': '기본값에 더해지는 추가 체력입니다.',
   'hangar.desc.magnet': '아이템 수집 반경입니다.',
   'hangar.desc.xp': '획득 경험치 배율입니다.',
   'hangar.desc.mineralFind': '분해 광물 획득 배율입니다.',
@@ -2668,7 +2714,7 @@ export const KO: Record<MessageKey, string> = {
   'ship.hatchling.signature':
     '부화 — 적을 처치하면 둥지가 차고 요구치를 채우면 병아리 드론이 스스로 출격합니다. 요구치는 12처치에서 시작해 누적 60처치마다 4씩 오르며 40에서 멈춥니다.',
   'ship.mallow.name': '말로우',
-  'ship.mallow.role': '충격을 삼키는 완충형. 비율 체력 성장이 가장 크고, 한 방의 위력은 가장 약합니다.',
+  'ship.mallow.role': '충격을 삼키는 완충형. 선체 성장률이 가장 크고, 한 방의 위력은 가장 약합니다.',
   'ship.mallow.signature':
     '완충 — 피격 피해의 35%는 즉시 들어가지 않고 지연분으로 적립됩니다. 3초 동안 맞지 않으면 적립된 지연분의 60%가 회복됩니다.',
   'ship.bubble.name': '버블',
@@ -2684,6 +2730,8 @@ export const KO: Record<MessageKey, string> = {
   'champion.signature': '시그니처',
   'champion.signature.none': '시그니처 패시브가 없습니다 — 보정 없는 기준 섀시입니다.',
   'champion.chassis': '섀시 보정',
+  // '피해'·'연사' 는 좁은 청사진 칩 폭에 맞춘 의도적 축약이다('피해량'·'연사 속도'의 통일 대상 아님).
+  // 'maxHp'='선체' 는 EN 이 'Hull' 이라 그대로다 — 'HP' 자리의 '체력' 과 갈리는 것이 정상이다.
   'champion.bp.damage': '피해',
   'champion.bp.fireRate': '연사',
   'champion.bp.maxHp': '선체',
@@ -2711,12 +2759,12 @@ export const KO: Record<MessageKey, string> = {
   'guardians.dismiss': '소멸',
   'guardians.dismiss.title': '수호기를 소멸시킬까요?',
   'guardians.dismiss.confirm':
-    '이 {name}을(를) 소멸시킬까요? 잠긴 장비 {gear}개가 창고로 돌아오고 계보 포인트 {points}점을 회수합니다. 되돌릴 수 없습니다.',
+    '{name} — 이 수호기를 소멸시킬까요? 잠긴 장비 {gear}개가 창고로 돌아오고 계보 {points}pt 를 회수합니다. 되돌릴 수 없습니다.',
   'guardians.cancel': '취소',
-  'guardians.dismissed': '장비 {n}개 창고 회수 · 포인트 {points}점 회수',
+  'guardians.dismissed': '장비 {n}개 창고 회수 · 계보 {points}pt 회수',
   // 상세 패널(2026-08-02 AAA 시네마틱 전환)
   'guardians.lineage.title': '계보 포인트',
-  'guardians.lineage.use': '수호기를 소멸시켜 회수하고, 계보 승급에 씁니다.',
+  'guardians.lineage.use': '수호기를 소멸시켜 회수하고, 계보 투자에 씁니다.',
   'guardians.detail.title': '선택한 수호기',
   'guardians.detail.empty': '목록에서 수호기를 고르면 소멸 시 무엇이 돌아오는지 여기에 나옵니다.',
   'guardians.detail.perf': '남은 성능',
@@ -2732,7 +2780,7 @@ export const KO: Record<MessageKey, string> = {
   'lineage.title': '계보',
   'lineage.branches.title': '계보 가지',
   'lineage.branch.ship': '기체 가지',
-  'lineage.branch.ship.desc': '지금 타는 기체를 강화합니다. 다음 세대의 모든 기체에도 그대로 이어집니다.',
+  'lineage.branch.ship.desc': '지금 타는 기체를 강화합니다. 이후 모든 세대의 기체에 그대로 이어집니다.',
   'lineage.branch.guardian': '수호 가지',
   'lineage.branch.guardian.desc':
     '기지를 지키는 모든 수호기를 강화합니다. 지금 예비역에 있는 기체도, 앞으로 남길 기체도 함께입니다.',
@@ -2742,11 +2790,11 @@ export const KO: Record<MessageKey, string> = {
   'lineage.cap': '상한 +{pct}%',
   'lineage.invest': '투자',
   'lineage.short': '{need}pt 부족',
-  'lineage.sunk': '이 가지에 이미 {pt}pt 를 묻었습니다 — 리스펙은 없습니다.',
+  'lineage.sunk': '이 가지에 이미 {pt}pt 를 넣었습니다 — 되돌릴 수 없습니다.',
   // 서버 권위(ADR-0007) — 오프라인이면 잠근다.
   'lineage.offline': '오프라인 — 계보는 서버가 필요합니다',
   'lineage.busy': '서버에 확인하는 중…',
-  'lineage.failed': '서버가 확정하지 않았습니다. 아무것도 쓰이지 않았습니다.',
+  'lineage.failed': '서버가 확정하지 않았습니다. 차감된 것은 없습니다.',
   'lineage.invested': '{name} 누적 레벨 {lv} 달성 · {cost}pt 소비',
   'lineage.points.title': '계보 포인트',
   'lineage.points.use': '기체를 퇴역시키거나 수호기를 소멸시켜 모읍니다.',
@@ -2755,7 +2803,7 @@ export const KO: Record<MessageKey, string> = {
   'lineage.confirm.title': '계보에 투자할까요?',
   'lineage.confirm.body':
     // 가지 이름은 둘 다 "가지"로 끝나 받침이 없다 — 로스터처럼 "을(를)" 로 둘 이유가 없다.
-    '{name}를 누적 레벨 {lv}(으)로 올릴까요? {cost}pt 를 쓰고 보너스가 +{pct}% 가 되며 {left}pt 가 남습니다. 리스펙이 없어 되돌릴 수 없습니다.',
+    '{name}를 누적 레벨 {lv}(으)로 올릴까요? {cost}pt 를 쓰고 보너스는 +{pct}%가 되고 {left}pt 가 남습니다. 리스펙이 없어 되돌릴 수 없습니다.',
   'lineage.confirm.yes': '투자하기',
   'lineage.cancel': '취소',
   // 마일스톤 — 수호 가지 레벨 도달 시 자동 해금(별도 투자 없음).
@@ -2764,11 +2812,11 @@ export const KO: Record<MessageKey, string> = {
   'lineage.ms.remain': '레벨 {lv} · {n} 남음',
   'lineage.ms.unlocked': '해금됨',
   'lineage.ms.reboot': '격추 재기동',
-  'lineage.ms.reboot.desc': '격추된 수호기가 방어전당 한 번 부활합니다.',
+  'lineage.ms.reboot.desc': '격추된 수호기가 방어전마다 한 번 부활합니다.',
   'lineage.ms.coreGuard': '코어 근접 수비',
-  'lineage.ms.coreGuard.desc': '코어 가까이에서 수호기의 피해량과 연사가 강해집니다.',
-  'lineage.ms.shieldShare': '실드 공유',
-  'lineage.ms.shieldShare.desc': '방어전 시작 시 코어와 포탑이 수호 전투력에 비례한 실드를 받습니다.',
+  'lineage.ms.coreGuard.desc': '코어 가까이에서 수호기의 피해량이 오르고 연사가 빨라집니다.',
+  'lineage.ms.shieldShare': '보호막 공유',
+  'lineage.ms.shieldShare.desc': '방어전 시작 시 코어와 포탑이 수호기 전투력에 비례한 보호막을 받습니다.',
 
   // --- 서사(스토리) — 사연·인트로·기록 파편 (ADR-0023) ---
   // 인트로 슬라이드
@@ -2780,7 +2828,7 @@ export const KO: Record<MessageKey, string> = {
     '폐허 속에서 아직 가치를 지닌 것은 단 하나, 기록이다. 봉인된 설계, 잃어버린 지식의 조각. 가장 많이 모으는 자가 기록 보관소의 공적부에서 가장 높이 오른다.',
   'intro.archives.title': '봉인된 여섯 세계',
   'intro.archives.body':
-    '오스카는 자신의 지식을 여섯 아카이브 행성에 봉인했고, 그 하나하나를 결코 꺼지지 않은 시스템이 지킨다. 파일럿들은 그곳으로 몰려들고 — 서로의 금고를 침공해, 원본은 건드리지 않은 채 기록을 복제해 간다.',
+    '오스카는 자신의 지식을 여섯 아카이브 행성에 봉인했고, 그 하나하나를 한 번도 꺼진 적 없는 시스템이 지킨다. 파일럿들은 그곳으로 몰려들고 — 서로의 금고를 침공해, 원본은 건드리지 않은 채 기록을 복제해 간다.',
   'intro.launch.title': '이제 당신이 출격할 차례',
   'intro.launch.body':
     '당신에겐 기체 한 대와 텅 빈 항해일지, 그리고 아직 아무도 들어보지 못한 이름이 있다. 공적부는 열려 있다. 가서 그것이 당신을 기억하게 만들어라.',
@@ -2812,7 +2860,7 @@ export const KO: Record<MessageKey, string> = {
   // 출격 기체 선택(예비역 소집, ADR-0024) — 관제탑 침공 시작 팝업
   'sortie.title': '출격 기체 선택',
   'sortie.sub': '활성 기체로 출격하거나, 퇴역한 수호 기체를 소집해 대신 출격시킵니다.',
-  'sortie.active': '활성 기체 · 성능 100%',
+  'sortie.active': '현역 기체 · 성능 100%',
   'sortie.guardian': '예비역',
   'sortie.perf': '성능 {n}%',
   'sortie.gear': '잠긴 장비 {n}개',
@@ -2826,7 +2874,7 @@ export const KO: Record<MessageKey, string> = {
   'story.striker.ch2.title': '첫 줄',
   'story.striker.ch2.body':
     '카르곤의 용암 금고는 당신이 어디서 왔는지 따위 신경 쓰지 않는다. 그래도 당신은 그곳을 클리어했고, 처음으로 공적부에 당신의 콜사인이 적힌 한 줄이 남았다. 짧은 한 줄이다. 그래도 당신의 것이다.',
-  'story.striker.ch3.title': '정리해 둘 만한 사람',
+  'story.striker.ch3.title': '기록에 남길 만한 사람',
   'story.striker.ch3.body':
     '열두 번의 승리를 거두자, 다른 파일럿들이 당신의 이름을 제대로 부르기 시작했다. 당신의 문명 전체를 무시했던 기록 보관소가 이제 당신 앞으로 폴더 하나를 둔다. 기억되는 길은 기록을 물려받는 것이 아니라 — 만들어내는 것이었다.',
   'story.striker.quest.ch2': '당신의 첫 시험장 카르곤을 한 번 이상 클리어하세요.',
@@ -2839,8 +2887,8 @@ export const KO: Record<MessageKey, string> = {
     '브루저는 삼십 년간 수송선단을 호위했고, 한 번 잃었다. 그는 자신이 지켜낸 배들 이야기는 하지 않는다, 지키지 못한 그 한 척 이야기만 한다. 그의 선체 장갑판마다 그 잃어버린 선단의 이름이 하나씩 새겨져 있다.',
   'story.bruiser.ch2.title': '크라스는 무게를 기억한다',
   'story.bruiser.ch2.body':
-    '크라스는 공성과 잔해의 세계이고, 되받아치는 힘이 거세다. 브루저는 일부러 그 안으로 걸어 들어갔다 — 타격이 무거울수록 더 많은 이름을 떠올릴 수 있으니까. 그는 더 느려지고 찌그러진 채, 그래도 서서 걸어 나왔다.',
-  'story.bruiser.ch3.title': '빈 판 하나 없이',
+    '크라스는 공성과 잔해의 세계이고, 되받아치는 힘이 거세다. 브루저는 일부러 그 안으로 걸어 들어갔다 — 타격이 무거울수록 더 많은 이름을 떠올릴 수 있으니까. 그는 더 느려지고 찌그러진 채, 그래도 제 발로 걸어 나왔다.',
+  'story.bruiser.ch3.title': '빈 장갑판 하나 없이',
   'story.bruiser.ch3.body':
     '충분히 얻어맞으면 선체 전체가 뒤덮인다 — 맨 장갑판 하나 남지 않고, 모든 이름이 제자리를 얻는다. 장갑 스택은 방어 재주가 아니다. 그것은 한 대 맞을 때마다 한 명씩, 소리 내어 부르는 점호다.',
   'story.bruiser.quest.ch2': '공성의 세계 크라스를 한 번 이상 클리어하세요.',
@@ -2856,7 +2904,7 @@ export const KO: Record<MessageKey, string> = {
     '아르케는 오스카의 수도 아카이브로, 가장 뛰어난 봉인 설계들이 보관된 곳이다 — 아크 캐스터는 아주 오래전부터 그것을 한 번 보고 싶어 했다. 빗발치는 포화 속에 완벽히 멈춰 선 채, 금고로 곧장 이어지는 길을 조각해냈다. 아름다웠다, 본인 말로는.',
   'story.arccaster.ch3.title': '과충전된 완성',
   'story.arccaster.ch3.body':
-    '충분히 오래 멈춰 있으면 광선은 무기이길 그만두고 서명이 된다. 과충전은 인내가 아니다; 작품을 뭉개지 않겠다는 거부다. 수백 점의 완성작을 남긴 뒤엔, 회의론자들조차 조용해졌다.',
+    '충분히 오래 멈춰 있으면 광선은 무기이길 그만두고 서명이 된다. 과충전은 인내가 아니라, 작품을 뭉개지 않겠다는 거부다. 수백 점의 완성작을 남긴 뒤엔, 회의론자들조차 조용해졌다.',
   'story.arccaster.quest.ch2': '수도 아카이브 아르케를 한 번 이상 클리어하세요.',
   'story.arccaster.quest.ch3': '과충전 상태로 충분히 처치해 예술가라는 칭호를 얻으세요.',
 
@@ -2864,7 +2912,7 @@ export const KO: Record<MessageKey, string> = {
   'story.phantom.tagline': '기록 보관소가 보관하길 잊은 파일럿.',
   'story.phantom.ch1.title': '파일을 찾을 수 없음',
   'story.phantom.ch1.body':
-    '오스카가 무너질 때 한 기록이 삭제됐다 — 손상된 게 아니라, 삭제됐다, 깔끔하게, 마치 누군가 작정한 것처럼. 팬텀은 한 존재 전체가 정리되지 못한 채 남았을 때 남는 것이다. 은신막 아래의 얼굴을 아무도 기억하지 못한다, 그리고 대개의 밤엔, 팬텀 자신도 그렇다.',
+    '오스카가 무너질 때 한 기록이 삭제됐다 — 손상된 게 아니라, 삭제됐다, 깔끔하게, 마치 누군가 작정한 것처럼. 팬텀은 한 존재 전체가 등재되지 못한 채 지워졌을 때 남는 것이다. 은신막 아래의 얼굴을 아무도 기억하지 못한다, 그리고 대개의 밤엔, 팬텀 자신도 그렇다.',
   'story.phantom.ch2.title': '차가운 흔적',
   'story.phantom.ch2.body':
     '니플헤임은 유령선과 죽은 신호의 얼어붙은 세계로, 팬텀 자신의 기록이 온전히 목격된 마지막 장소다. 은신한 채 소리 없이, 모든 수호자를 지나쳐 금고에 닿았다. 원하던 파일은 사라지고 없었다. 더 나쁜 것이 남아 있었다: 그 삭제가 요청된 것이었다는 기록.',
@@ -2896,9 +2944,9 @@ export const KO: Record<MessageKey, string> = {
   'story.mallow.ch2.title': '봉인된 레시피',
   'story.mallow.ch2.body':
     '톡사르는 부식과 부패의 세계라, 디저트를 찾기엔 이상한 곳이다. 하지만 오스카는 자신의 최고 레시피를 그곳에 봉인했고, 말로우는 그 부패를 뚫고 냄새를 맡았다. 금고까지 먹어 치우며 길을 냈다. 그럴 만했다.',
-  'story.mallow.ch3.title': '수만 번의 달콤함',
+  'story.mallow.ch3.title': '천 번의 단맛',
   'story.mallow.ch3.body':
-    '말로우가 완충한 모든 타격은 적립되고, 부드러워졌다가, 회복으로 되돌아온다 — 아픔이 들어가고, 달콤함이 나온다. 지금까지 삼켜 소화한 아픔이 수만 점. 최고의 디저트는 애초에 금고에 있던 게 아니었다; 무엇이든 맛있게 만드는 그 재주였다.',
+    '말로우가 완충한 모든 타격은 적립되고, 부드러워졌다가, 회복으로 되돌아온다 — 아픔이 들어가고, 달콤함이 나온다. 지금까지 삼켜 소화한 아픔이 수만에 이른다. 최고의 디저트는 애초에 금고에 있던 게 아니었다. 무엇이든 맛있게 만드는 그 재주였다.',
   'story.mallow.quest.ch2': '레시피가 봉인된 톡사르를 한 번 이상 클리어하세요.',
   'story.mallow.quest.ch3': '피해를 충분히 완충하고 회복해 가장 달콤한 레시피를 완성하세요.',
 
@@ -2922,7 +2970,7 @@ export const KO: Record<MessageKey, string> = {
     '오스카의 가장 첫 기록은 무기도 도시도 아니었다. 그것은 약속이었다: "우리가 만든 것은 무엇도 결코 완전히 사라지지 않는다." 그들은 그 약속을 지켰다. 자기 자신은 지키지 못했다.',
   'shard.the-curators.title': '파편: 큐레이터들',
   'shard.the-curators.body':
-    '아카이브 행성들은 큐레이터들이 돌봤다 — 기록을 영원히 지키도록 만들어진 자동 관리자들. 「영원」은 누구의 설계보다도 길었다. 큐레이터들은 여전히 근무 중이고, 애초에 누군가를 들여보내도록 되어 있었다는 사실을 잊었다.',
+    '아카이브 행성들은 큐레이터들이 돌봤다 — 기록을 영원히 지키도록 만들어진 자동 관리자들. 그 「영원」은 누구도 설계해 두지 않은 길이였다. 큐레이터들은 여전히 근무 중이고, 애초에 누군가를 들여보내도록 되어 있었다는 사실을 잊었다.',
   'shard.overflow.title': '파편: 과적',
   'shard.overflow.body':
     '후기 기록들은 다급해진다: 저장할 것은 너무 많고, 시간은 너무 없다. 오스카는 결코 보관해선 안 될 것들까지 저장하기 시작했다 — 한 파편이 암시하기로는, 자신들을 끝장낸 무언가의 설계까지도.',
@@ -2931,13 +2979,13 @@ export const KO: Record<MessageKey, string> = {
     '전쟁도, 역병도, 충돌도 없었다. 어느 날 송신이 그냥 멈췄다, 문장 한가운데서, 모든 세계에서 동시에. 기록 보관소는 그 침묵을 기록해야 할 사건으로 남겼다. 그러고는 그것마저 조용해졌다 — 한동안.',
   'shard.copy-of-a-copy.title': '파편: 사본의 사본',
   'shard.copy-of-a-copy.body':
-    '기록은 끝없이 복제해도 원본이 상하지 않는다. 파일럿들이 파괴하지 않고 침공하는 이유이고, 공적부가 결코 잊지 않는 이유다. 오스카는 이를 자비로 뜻했다. 그것은 게임이 되었다.',
+    '기록은 끝없이 복제해도 원본이 상하지 않는다. 파일럿들이 파괴하지 않고 침공하는 이유이고, 공적부가 결코 잊지 않는 이유다. 오스카는 이것을 자비로 만든 것이었다. 그것은 게임이 되었다.',
   'shard.the-last-curator.title': '파편: 마지막 큐레이터',
   'shard.the-last-curator.body':
     '아르케 깊은 곳의 한 큐레이터는 여전히 말한다. 그것은 문명이 무너진 적 없다고 우긴다 — 모두가 그저 위험이 지나가길 기다리려 기록 속으로 걸어 들어갔을 뿐이며, 안전해지면 돌아올 거라고. 아주 오랫동안 그 말을 되풀이해 왔다.',
   'shard.echoes.title': '파편: 메아리',
   'shard.echoes.body':
-    '이따금 런이 있어선 안 될 신호로 깜빡인다 — 보낸 이가 사라진 지 오래인데도 전송을 마치려 애쓰는 떠도는 기록. 그 곁에 굳건히 머물면 신호가 안정화되며, 그것이 전하려던 말의 파편 하나를 건넨다.',
+    '이따금 런 도중에 있어선 안 될 신호가 깜빡인다 — 보낸 이가 사라진 지 오래인데도 전송을 마치려 애쓰는 떠도는 기록. 그 곁에 굳건히 머물면 신호가 안정화되며, 그것이 전하려던 말의 파편 하나를 건넨다.',
   'shard.your-name-here.title': '파편: 여기 당신의 이름',
   'shard.your-name-here.body':
     '마지막 파편은 비어 있다. 잃어버린 게 아니라 — 비어서, 기다리는 중이다. 기록 보관소는 자신이 관리하는 모든 공적부에 한 칸을 비워 둔다. 당신의 이야기가 아직 정리되는 중이라고 여기는 모양이다.',
@@ -2947,14 +2995,14 @@ export const KO: Record<MessageKey, string> = {
   'shard.gained': '새 기록 파편을 획득했습니다.',
 
   // 도감 코스메틱 — 사연 챕터 해금 배지(챕터 2)·칭호(챕터 3)
-  'cosmetic.striker-ch2.name': '첫 기록',
+  'cosmetic.striker-ch2.name': '첫 줄',
   'cosmetic.striker-ch3.name': '스스로 남긴 이름',
   'cosmetic.bruiser-ch2.name': '크라스의 무게',
   'cosmetic.bruiser-ch3.name': '이름을 새긴 자',
   'cosmetic.arccaster-ch2.name': '걸작의 금고',
   'cosmetic.arccaster-ch3.name': '광선 조각가',
-  'cosmetic.phantom-ch2.name': '식은 자취',
-  'cosmetic.phantom-ch3.name': '기억하는 일격',
+  'cosmetic.phantom-ch2.name': '차가운 흔적',
+  'cosmetic.phantom-ch3.name': '기억하게 만드는 일격',
   'cosmetic.hatchling-ch2.name': '초록빛 좌표',
   'cosmetic.hatchling-ch3.name': '무리의 어미',
   'cosmetic.mallow-ch2.name': '봉인된 레시피',
@@ -2979,7 +3027,7 @@ export const KO: Record<MessageKey, string> = {
   'refine.chain.heat.low': '약불',
   'refine.chain.heat.mid': '중불',
   'refine.chain.heat.high': '강불',
-  'refine.chain.heat.hint': '화력이 높을수록 값이 잘 나오지만 비용과 용해 위험도 오릅니다',
+  'refine.chain.heat.hint': '불이 셀수록 값이 잘 나오지만 비용과 용해 위험도 오릅니다',
   'refine.chain.risk': '용해 위험 {n}%',
   'refine.chain.riskNone': '용해 위험 없음',
   'refine.chain.fasten': '고착',
@@ -2990,15 +3038,15 @@ export const KO: Record<MessageKey, string> = {
   'refine.chain.cost': '굴림 비용: 광물 {n}',
   'refine.chain.melted': '용해 — 고착이 전부 풀렸습니다',
   'refine.chain.complete': '공정 완주 — 모든 어픽스를 고착했습니다',
-  'refine.chain.noBand': '이 어픽스는 값이 고정이라 화력의 영향을 받지 않습니다',
+  'refine.chain.noBand': '이 어픽스는 값이 고정이라 불 세기의 영향을 받지 않습니다',
   'refine.sort.recent': '획득순',
-  'refine.sort.rarity': '등급순',
+  'refine.sort.rarity': '희귀도순',
   'refine.sort.slot': '슬롯순',
   'refine.sort.affixes': '어픽스순',
 
   'ctl.title': '관제탑',
   'ctl.sub': '상위 랭커를 정찰하고 침공하세요.',
-  'ctl.verifying': '서버 검증 중… (전수 재실행으로 결과를 확정합니다)',
+  'ctl.verifying': '서버 검증 중… (전체 재시뮬레이션으로 결과를 확정합니다)',
   'ctl.note': '재도전 쿨다운(1시간)과 순위 스왑·복제 약탈은 서버가 강제합니다. 이 화면의 값은 서버 판정의 미러입니다.',
   'ctl.anonymous': '무명 파일럿',
   'ctl.noBase': '방어 기지 없음',
@@ -3060,7 +3108,7 @@ export const KO: Record<MessageKey, string> = {
   'ctl.rev.none': '복수 창이 열린 상대가 없습니다. 기지가 함락되면 24시간 안에 되갚을 수 있습니다.',
   'ctl.rev.tail': '기지가 함락되면 그 상대가 24시간 동안 여기에 쌓입니다.',
   'ctl.ops.head': '작전 상황',
-  'ctl.ops.rankHead': '내 전황',
+  'ctl.ops.rankHead': '내 순위',
   'ctl.recon.head': '기지 정찰',
   'ctl.recon.slice.wave': 'L1 대기권 · 편대',
   'ctl.recon.slice.socket': 'L2 회랑 · 설비',
@@ -3094,7 +3142,7 @@ export const KO: Record<MessageKey, string> = {
   'ctl.ladder.meRank': '내 순위 {n}위 · {w}승 {l}패 · 승률 {p}%',
   'ctl.ladder.meUnranked': '아직 순위가 없습니다 — 배치전을 마치면 순위에 진입합니다.',
   'ctl.ladder.winRate': '승률',
-  'ctl.ladder.games': '전적',
+  'ctl.ladder.games': '판수',
   'ctl.ladder.cap': '상위 {n}위까지 표시합니다.',
   'ctl.notif.title': '침공 알림',
   'ctl.notif.when': '{when} 공격받음',
@@ -3142,8 +3190,8 @@ export const KO: Record<MessageKey, string> = {
   'def.maint.repairing': '정비 중…',
   'def.maint.repair': '🛠 정비',
   'def.maint.repairTitle': '크레딧으로 정비도 100% 회복',
-  'def.guardianHead': '수호 기체',
-  'def.guardian.emptyTitle': '기체를 퇴역시키면 수호 기체가 됩니다.',
+  'def.guardianHead': '수호기',
+  'def.guardian.emptyTitle': '기체를 퇴역시키면 수호기가 됩니다.',
   'def.guardian.none': '없음',
   'def.guardian.slotTitle': '{label} · 성능 {perf}% — 클릭 후 격자에 재배치',
   'def.guardian.tip': '수호 {n} · {label} · 성능 {perf}% (스탯은 서버 권위)',
@@ -3213,7 +3261,7 @@ export const KO: Record<MessageKey, string> = {
   'mod.when.coreProximity': '공격자가 코어에 접근하면',
   'mod.when.facilitiesDestroyed': '설비 {n}기가 파괴되면',
   'mod.when.timeElapsed': '{n}초가 지나면',
-  'mod.when.guardianDowned': '수호 기체가 격추되면',
+  'mod.when.guardianDowned': '수호기가 격추되면',
   'mod.when.coreHpLow': '코어 HP {n}% 이하에서',
   'mod.when.earlyPhase': '시작 {n}초 이내',
   'mod.when.coreHit': '코어가 피격되면',
@@ -3227,7 +3275,7 @@ export const KO: Record<MessageKey, string> = {
   'mod.shop.head': '일일 상점',
   'mod.shop.offline': '상점은 서버 연결이 필요합니다.',
   'mod.shop.empty': '오늘 상점이 비어 있습니다.',
-  'mod.shop.note': '매일 로테이션 · normal/magic 전용 · 옵션 미리 공개.',
+  'mod.shop.note': '매일 로테이션 · 노말·매직 전용 · 옵션 미리 공개.',
   'mod.shop.price': '{c} 크레딧',
   'mod.shop.buy': '구매',
   'mod.shop.bought': '구매함',
@@ -3275,12 +3323,12 @@ export const KO: Record<MessageKey, string> = {
   'def3.affix.mc-insulate.desc': '공격자가 전격 어픽스를 지녔을 때, 그 보조무기 쿨다운이 늘어납니다.',
   'def3.affix.mc-refract.name': '분광의',
   'def3.affix.mc-refract.desc': '공격자의 주무기가 빔·레일건 계열일 때, 배치 방어체가 받는 피해가 줄어듭니다.',
-  'def3.affix.mc-armorbreak.name': '중장갑 파쇄의',
+  'def3.affix.mc-armorbreak.name': '파쇄의',
   'def3.affix.mc-armorbreak.desc': '공격자의 전투력이 방어자보다 우위일 때, 회랑 설비의 화력이 오릅니다.',
   'def3.affix.mc-avenger.name': '복수자의',
   'def3.affix.mc-avenger.desc': '복수전으로 들어온 공격자에게 방어 보스의 화력이 크게 오릅니다.',
-  'def3.affix.mc-blockade.name': '연전 차단의',
-  'def3.affix.mc-blockade.desc': '같은 공격자가 재침공하면 코어방 기물이 훨씬 단단하게 세워집니다.',
+  'def3.affix.mc-blockade.name': '봉쇄의',
+  'def3.affix.mc-blockade.desc': '같은 공격자가 재침공하면 코어방 기물이 훨씬 단단해집니다.',
   'def3.affix.mc-disruptor.name': '교란의',
   'def3.affix.mc-disruptor.desc': '공격자가 강한 보조무기를 장착했을 때, 그 쿨다운이 늘어납니다.',
   // 접미 8종 — 동적 트리거(런 중 공격자 행동 반응)
@@ -3291,11 +3339,11 @@ export const KO: Record<MessageKey, string> = {
   'def3.affix.mt-attrition.name': '의 지연전',
   'def3.affix.mt-attrition.desc': '침공이 길어지면 공격자의 이동속도가 떨어집니다.',
   'def3.affix.mt-retribution.name': '의 응징',
-  'def3.affix.mt-retribution.desc': '수호 기체가 격추당하면 일제사격이 공격자를 때립니다.',
+  'def3.affix.mt-retribution.desc': '수호기가 격추당하면 일제사격이 공격자를 강타합니다.',
   'def3.affix.mt-laststand.name': '의 배수진',
-  'def3.affix.mt-laststand.desc': '코어 체력이 위험 구간이면 방어 보스의 화력이 오릅니다.',
+  'def3.affix.mt-laststand.desc': '코어 내구도가 위험 수준으로 낮으면 방어 보스의 화력이 오릅니다.',
   'def3.affix.mt-vanguard.name': '의 선제',
-  'def3.affix.mt-vanguard.desc': '침공 초반 구간 동안 대기권 편대의 화력이 오릅니다.',
+  'def3.affix.mt-vanguard.desc': '침공 시작 몇 초 동안 대기권 편대의 화력이 오릅니다.',
   'def3.affix.mt-reflection.name': '의 반사',
   'def3.affix.mt-reflection.desc': '코어가 받은 피해의 일부를 공격자에게 반사합니다.',
   'def3.affix.mt-bulwark.name': '의 최종 방벽',
@@ -3308,7 +3356,7 @@ export const KO: Record<MessageKey, string> = {
   'def3.formation.interceptors.name': '요격 편대',
   'def3.formation.interceptors.desc': '박격 기체 6기가 좌우에서 시차를 두고 조여듭니다.',
   'def3.formation.assault.name': '강습 돌격편대',
-  'def3.formation.assault.desc': '파쇄 기체 4기가 밀집 종대로 연달아 들이받습니다.',
+  'def3.formation.assault.desc': '충각 기체 4기가 밀집 종대로 연달아 들이받습니다.',
   'def3.formation.glide-flock.name': '활공 편대',
   'def3.formation.glide-flock.desc':
     '무른 요격기 6기가 좌우 끝에서 안쪽으로 급강하합니다. 궤도가 대각선이라 제자리에 서 있으면 반드시 스칩니다.',
@@ -3323,18 +3371,18 @@ export const KO: Record<MessageKey, string> = {
     '원거리 포대가 통로 위쪽에 눌러앉아 착탄 예고선을 계속 긋습니다. 붙으면 쉽게 부수지만 방치하면 계속 맞습니다.',
   'def3.formation.support-escort.name': '지원 편대',
   'def3.formation.support-escort.desc':
-    '두꺼운 모체를 복원 드로이드가 따라다니며 근거리에서 계속 회복시킵니다. 치유원을 먼저 지우지 않으면 모체가 내려가지 않습니다.',
+    '육중한 모체를 복원 드로이드가 따라다니며 근거리에서 계속 회복시킵니다. 복원 드로이드를 먼저 지우지 않으면 모체가 내려가지 않습니다.',
   // Lane9 신규 편대(톡사르·크라스)
   'def3.formation.toxar-corrosion.name': '부식 강습편대',
   'def3.formation.toxar-corrosion.desc':
-    '산성 돌격체가 좌우에서 파고들고 그 뒤로 독액 분사체·부식 분비강이 협공으로 붙습니다. 가만히 있으면 산성이 계속 갉아먹습니다.',
+    '부식 돌격체가 좌우에서 파고들고 그 뒤로 독액 분사체·부식 분비강이 협공으로 붙습니다. 가만히 있으면 부식이 계속 갉아먹습니다.',
   'def3.formation.toxar-blight.name': '역병 살포편대',
   'def3.formation.toxar-blight.desc':
     '독액 분사체와 부식 분비강이 느리게 흘러내리며 통로를 오염으로 봉쇄합니다. 화면에 오래 남아 지속 피해로 길을 좁힙니다.',
   'def3.formation.kras-breaker.name': '파쇄 돌격편대',
   'def3.formation.kras-breaker.desc':
     '파쇄 골렘 3기가 밀집 종대로 들이받고 고대 파괴자 2기가 뒤에서 가속 진입합니다. 전열을 뚫을지 우회할지 고르게 만듭니다.',
-  'def3.formation.kras-piercer.name': '관통 저격편대',
+  'def3.formation.kras-piercer.name': '관통 저격 편대',
   'def3.formation.kras-piercer.desc':
     '수호 포대가 상단에 눌러앉아 예고선을 긋고 정밀 포탑과 골렘이 뒤따릅니다. 빨리 붙지 않으면 계속 관통당합니다.',
   // L2 설비
@@ -3345,7 +3393,7 @@ export const KO: Record<MessageKey, string> = {
   'def3.fac.mortar.name': '곡사 박격포',
   'def3.fac.mortar.desc': '느린 포탄을 넓은 부채꼴로 뿌려 회랑을 면으로 덮습니다.',
   'def3.fac.laser.name': '레이저 격자',
-  'def3.fac.laser.desc': '주기적으로 켜졌다 꺼지며 통로를 불태우는 장판을 세웁니다.',
+  'def3.fac.laser.desc': '주기적으로 켜졌다 꺼지며 회랑을 불태우는 장판을 세웁니다.',
   'def3.fac.flame.name': '화염 방사구',
   'def3.fac.flame.desc': '벽 안쪽에 꺼지지 않는 화염 장판을 계속 뿜습니다.',
   'def3.fac.spawner.name': '드론 사출구',
@@ -3368,13 +3416,13 @@ export const KO: Record<MessageKey, string> = {
   'def3.fac.corrosivemist.name': '부식 안개',
   'def3.fac.corrosivemist.desc': '짧은 예열 뒤 넓은 저피해 안개를 오래 깔아 회랑을 덮습니다.',
   'def3.fac.toxinturret.name': '독성 연사포',
-  'def3.fac.toxinturret.desc': '근거리를 빠르게 훑는 저피해 독성 연사 포대.',
+  'def3.fac.toxinturret.desc': '저피해 독성 탄을 빠르게 뿜어 근거리를 훑습니다.',
   'def3.fac.heavyrail.name': '중장 레일포',
   'def3.fac.heavyrail.desc': '조준을 잠그고 예고선을 그은 뒤 초고피해 관통탄 한 발을 회랑으로 내리꽂습니다.',
   'def3.fac.siegecannon.name': '공성 주포',
-  'def3.fac.siegecannon.desc': '느리지만 무거운 단발 고화력 포격으로 육중하게 후려칩니다.',
+  'def3.fac.siegecannon.desc': '느리지만 묵직합니다. 단발 고화력 포탄이 철퇴처럼 내리꽂힙니다.',
   'def3.fac.breachturret.name': '돌파 산탄포',
-  'def3.fac.breachturret.desc': '중간 화력의 부채꼴 다발을 뿌려 회랑을 면으로 돌파 제압합니다.',
+  'def3.fac.breachturret.desc': '중간 화력의 부채꼴 다발을 뿌려 회랑을 돌파 탄막으로 덮습니다.',
   'def3.fac.demolisher.name': '파괴 폭뢰기',
   'def3.fac.demolisher.desc': '길게 예열한 뒤 한순간에 거대한 광역 폭발을 터뜨립니다. 회피 타이밍 한 번을 정확히 묻습니다.',
   // L3 기물
@@ -3416,16 +3464,16 @@ export const KO: Record<MessageKey, string> = {
     '장갑을 덧댔습니다. 쓰러지기까지 더 많은 타격을 견딥니다.',
   'def3.affix.du-honed.name': '벼려진',
   'def3.affix.du-honed.desc':
-    '사격 기구를 다듬었습니다. 한 발 한 발이 더 아픕니다.',
+    '한 발 한 발이 더 세게 박힙니다.',
   'def3.affix.du-cycled.name': '순환식',
   'def3.affix.du-cycled.desc':
     '급탄부를 손봤습니다. 더 자주 쏩니다.',
   'def3.affix.du-plated.name': '판갑의',
   'def3.affix.du-plated.desc':
-    '선체보다 먼저 피해를 흡수하는 상시 보호막.',
+    '내구도보다 먼저 피해를 흡수하는 상시 보호막.',
   'def3.affix.du-sealed.name': '밀폐된',
   'def3.affix.du-sealed.desc':
-    '풍우를 막는 외피. 방치돼도 더 천천히 삭습니다.',
+    '풍화가 더 천천히 진행됩니다.',
   'def3.affix.du-teeming.name': '증식형',
   'def3.affix.du-teeming.desc':
     '사출구를 넓혔습니다. 드론을 더 많이 동시에 유지합니다.',
@@ -3434,7 +3482,7 @@ export const KO: Record<MessageKey, string> = {
     '구동부 방열재. 보스가 더 늦게, 더 적게 과열됩니다.',
   'def3.affix.du-vanward.name': '선봉의',
   'def3.affix.du-vanward.desc':
-    '진입 추진기를 키웠습니다. 편대가 사선에 더 빨리 붙습니다.',
+    '편대가 사격 위치에 더 빨리 붙습니다.',
   'def3.affix.dt-ambush.name': '매복의',
   'def3.affix.dt-ambush.desc':
     '공격자가 레이어에 들어선 직후 가장 강하게 때립니다.',
@@ -3458,7 +3506,7 @@ export const KO: Record<MessageKey, string> = {
     '방어체를 하나 잃을 때마다 드론 자리가 하나 늘어납니다.',
   'def3.affix.dt-secondwind.name': '재기의',
   'def3.affix.dt-secondwind.desc':
-    '침공이 길어지면 방치의 흔적을 털어냅니다.',
+    '침공이 길어지면 쌓인 풍화를 털어냅니다.',
   // 유니크 방어체 고유 효과(M7b — data/defenseUnits.ts DEFENSE_UNIQUES)
   'def3.duq.duq-overclock-core.name': '과부하 코어',
   'def3.duq.duq-overclock-core.desc':
@@ -3469,7 +3517,8 @@ export const KO: Record<MessageKey, string> = {
   'def3.duq.duq-deathgrip-bastion.desc':
     '코어 내구도가 떨어질수록 단단해지고, 코어가 거의 무너졌을 때 가장 질깁니다.',
   'def3.duq.duq-proximity-reactor.name': '근접 반응로',
-  'def3.duq.duq-proximity-reactor.desc': '공격자가 가까울수록 피해가 오릅니다. 고정 거리 밴드로 계단식.',
+  'def3.duq.duq-proximity-reactor.desc':
+    '공격자가 가까울수록 피해가 오릅니다. 정해진 거리 구간마다 계단식으로 올라갑니다.',
   'def3.duq.duq-swarm-nexus.name': '군체 중추',
   'def3.duq.duq-swarm-nexus.desc': '드론을 훨씬 많이 동시에 유지합니다. 대신 매 주기가 더 느려집니다.',
   'def3.duq.duq-aegis-lattice.name': '수호 격자',
@@ -3488,7 +3537,7 @@ export const KO: Record<MessageKey, string> = {
     '첫 30초 동안 공격자의 레이더를 무력화합니다.',
   'def3.module.uq-last-reboot.name': '최후의 재기동',
   'def3.module.uq-last-reboot.desc':
-    '코어가 쓰러지는 대신 최대 체력의 5분의 1로 1회 재기동합니다.',
+    '코어가 쓰러지는 대신 최대 내구도의 5분의 1로 1회 재기동합니다.',
   'def3.module.uq-mirror-gate.name': '거울 관문',
   'def3.module.uq-mirror-gate.desc':
     '코어가 받는 피해의 4분의 1을 공격자에게 되돌립니다.',
@@ -3518,16 +3567,17 @@ export const KO: Record<MessageKey, string> = {
   'def3.cmd.preview': '미리보기',
   'def3.cmd.previewHint': '공격자가 이 레이어에서 실제로 보는 모습입니다.',
   'def3.cmd.slots': '배치 슬롯',
-  'def3.cmd.core.note': '코어 모듈은 소모성 인스턴스라 전용 화면에서 다룹니다.',
-  'def3.cmd.slots.l1': '웨이브 슬롯',
+  'def3.cmd.core.note': '코어 모듈은 한 번 쓰면 없어지는 개별 물품이라 전용 화면에서 다룹니다.',
+  'def3.cmd.slots.l1': '편대 슬롯',
   'def3.cmd.slots.l2': '설비 소켓',
   'def3.cmd.slots.l3': '코어방',
   'def3.cmd.slot.empty': '비어 있음 — 기본 수비대가 충원합니다',
   'def3.cmd.slot.emptyProp': '비어 있음',
-  'def3.cmd.slot.wave': '웨이브 {n}',
+  'def3.cmd.slot.wave': '편대 {n}',
   'def3.cmd.slot.socket': '소켓 {n}',
   'def3.cmd.slot.prop': '기물 {n}',
   'def3.cmd.slot.boss': '방어 보스',
+  // '수호 {n}' — '수호기'로 늘리면 +18px 이라 좁은 슬롯 칸을 넘친다. 폭 예외로 축약을 유지한다.
   'def3.cmd.slot.guardian': '수호 {n}',
   'def3.cmd.slot.core': '코어',
   'def3.cmd.slot.place': '배치',
@@ -3536,7 +3586,7 @@ export const KO: Record<MessageKey, string> = {
   'def3.cmd.template': '회랑 지형',
   'def3.cmd.template.sockets': '소켓 {n}',
   'def3.cmd.pick.title': '방어체 고르기',
-  'def3.cmd.pick.none': '꽂을 수 있는 방어체가 없습니다. 보관함 탭에서 설계도로 제작하세요.',
+  'def3.cmd.pick.none': '배치할 수 있는 방어체가 없습니다. 보관함 탭에서 설계도로 제작하세요.',
   'def3.cmd.pick.placed': '이미 배치됨',
   'def3.cmd.inv.head': '보유 방어체',
   'def3.cmd.inv.empty': '보유 방어체가 없습니다. 설계도로 제작하세요.',
@@ -3548,23 +3598,24 @@ export const KO: Record<MessageKey, string> = {
   'def3.cmd.inv.craft': '제작',
   'def3.cmd.inv.count': '{n}장',
   'def3.cmd.unit.level': 'Lv {n}',
-  'def3.cmd.unit.ascension': '승급 {n}',
-  'def3.cmd.unit.power': '전력 {p}%',
+  'def3.cmd.unit.ascension': '승격 {n}',
+  'def3.cmd.unit.power': '전투력 {p}%',
   'def3.cmd.unit.levelUp': '레벨업',
-  'def3.cmd.unit.ascend': '승급',
+  'def3.cmd.unit.ascend': '승격',
   'def3.cmd.unit.reroll': '어픽스 리롤',
   'def3.cmd.unit.promote': '등급 승급',
   'def3.cmd.unit.max': '최대',
-  'def3.cmd.unit.cost': '{c} 크레딧 / 광물 {m} / 설계도 {b}',
+  'def3.cmd.unit.cost': '크레딧 {c} / 광물 {m} / 설계도 {b}',
   'def3.cmd.unit.affix.none': '기저 스탯만',
   'def3.cmd.unit.affix.always': '상시',
   'def3.cmd.unit.affix.cond': '조건부',
   'def3.cmd.mod.head': '코어 모듈',
-  'def3.cmd.mod.note': '코어 모듈은 카탈로그 선택이 아니라 소모성 인스턴스라 전용 화면에서 다룹니다.',
+  'def3.cmd.mod.note':
+    '코어 모듈은 카탈로그에서 고르는 것이 아니라 한 번 쓰면 없어지는 개별 물품이라 전용 화면에서 다룹니다.',
   'def3.cmd.mod.open': '모듈 관리',
-  'def3.cmd.rarity.normal': '일반',
-  'def3.cmd.rarity.magic': '마법',
-  'def3.cmd.rarity.rare': '희귀',
+  'def3.cmd.rarity.normal': '노말',
+  'def3.cmd.rarity.magic': '매직',
+  'def3.cmd.rarity.rare': '레어',
   'def3.cmd.rarity.unique': '유니크',
   'def3.cmd.err.failed': '서버가 요청을 거부했습니다.',
   'def3.cmd.err.offline': '서버에 연결돼 있지 않습니다.',
@@ -3600,7 +3651,7 @@ export const KO: Record<MessageKey, string> = {
     '300틱 동안 장갑을 고정하고, 끝나는 순간 전량을 폭발로 터뜨립니다.',
   'activeSkill.as_arccaster_chain_lo.name': '강제 충전',
   'activeSkill.as_arccaster_chain_lo.desc':
-    '정지하지 않고도 즉시 과충전에 진입하며 전격 12발을 흘립니다.',
+    '정지하지 않고도 즉시 과충전에 진입하며 전격 12발을 뿜습니다.',
   'activeSkill.as_arccaster_chain_hi.name': '전량 방전',
   'activeSkill.as_arccaster_chain_hi.desc':
     '모아둔 과충전을 한 번에 방전해 충전량만큼 전격을 쏟습니다.',
@@ -3638,7 +3689,7 @@ export const KO: Record<MessageKey, string> = {
   'activeSkill.as_hatchling_nurture_lo.name': '알 구르기',
   'activeSkill.as_hatchling_nurture_lo.desc': '600 거리를 굴러 이동하고 부화를 조금 앞당깁니다.',
   'activeSkill.as_hatchling_nurture_hi.name': '둥지 도약',
-  'activeSkill.as_hatchling_nurture_hi.desc': '900 거리를 도약하고 부화를 12처치 분만큼 앞당깁니다.',
+  'activeSkill.as_hatchling_nurture_hi.desc': '900 거리를 도약하고 부화를 적 12기를 잡은 만큼 앞당깁니다.',
   'activeSkill.as_hatchling_shelter_lo.name': '온기 품기',
   'activeSkill.as_hatchling_shelter_lo.desc': '180틱 동안 부화가 계속 조금씩 앞당겨집니다.',
   'activeSkill.as_hatchling_shelter_hi.name': '둥지 개방',
@@ -3648,12 +3699,12 @@ export const KO: Record<MessageKey, string> = {
   'activeSkill.as_mallow_squish_lo.desc': '미뤄둔 피해를 전부 탄으로 바꿔 되돌려줍니다.',
   'activeSkill.as_mallow_squish_hi.name': '이월 폭발',
   'activeSkill.as_mallow_squish_hi.desc':
-    '미룬 피해를 두 배로 늘리는 대가로 24발을 한 번에 터뜨립니다.',
+    '미뤄둔 피해를 두 배로 늘리는 대가로 24발을 한 번에 터뜨립니다.',
   'activeSkill.as_mallow_mend_lo.name': '반동 튕김',
   'activeSkill.as_mallow_mend_lo.desc':
-    '600 거리를 튕겨 이동하고 착지하는 순간 지연 피해를 정산합니다.',
+    '600 거리를 튕겨 이동하고 착지하는 순간 미뤄둔 피해를 정산합니다.',
   'activeSkill.as_mallow_mend_hi.name': '탄력 도약',
-  'activeSkill.as_mallow_mend_hi.desc': '900 거리를 도약하며 미룬 피해를 절반으로 줄이고 정산합니다.',
+  'activeSkill.as_mallow_mend_hi.desc': '900 거리를 도약하며 미뤄둔 피해를 절반으로 줄이고 정산합니다.',
   'activeSkill.as_mallow_cushion_lo.name': '빠른 회복',
   'activeSkill.as_mallow_cushion_lo.desc': '180틱 동안 회복 임계가 세 배 빠르게 채워집니다.',
   'activeSkill.as_mallow_cushion_hi.name': '전량 유예',
@@ -3698,7 +3749,7 @@ export const KO: Record<MessageKey, string> = {
   'commission.rewards.items': '아이템 +{n}',
   'commission.rewards.xp': '경험치 +{n}',
   'commission.rewards.unique': '유니크 확정',
-  'commission.eliteNoGrowth': '런 내 성장 없음 — 경험치 젬도, 레벨업도, 파워업 3택도 없습니다. 영구 성장만으로 싸웁니다.',
+  'commission.eliteNoGrowth': '런 내 성장 없음 — 경험치 젬도, 레벨업도, 파워업 선택도 없습니다. 영구 성장만으로 싸웁니다.',
   'commission.constraint.bannedSlots': '봉인: {list}',
   'commission.constraint.maxRarity': '{name} 이하만',
   'commission.constraint.bannedUniques': '봉인 유니크: {list}',
@@ -3710,13 +3761,13 @@ export const KO: Record<MessageKey, string> = {
   'commission.discard': '폐기',
   'commission.discard.title': '의뢰서 폐기',
   'commission.discard.body':
-    '되돌릴 수 없습니다. 원장에서 지워지고 적힌 보상도 함께 사라집니다. 대신 보관 자리가 비어 새 의뢰서가 다시 들어옵니다.',
+    '되돌릴 수 없습니다. 보유 목록에서 지워지고 적힌 보상도 함께 사라집니다. 대신 보관 자리가 비어 새 의뢰서가 다시 들어옵니다.',
   'commission.discard.confirm': '폐기하기',
   'commission.discard.cancel': '그대로 두기',
   // 2026-08-03 AAA 시네마틱 전환(2열 목록/상세) — 각인 패널 제목과 상세 챔버 넷.
   'commission.list.head': '보유 의뢰서',
-  'commission.detail.head': '지시 상세',
-  'commission.detail.brief': '지시 개요',
+  'commission.detail.head': '의뢰서 상세',
+  'commission.detail.brief': '의뢰 개요',
   'commission.detail.stages': '구간', // `commission.segments` 와 같은 이름(위 주석 참조).
   'commission.detail.rewards': '확정 보상',
   'commission.detail.constraints': '제약',
@@ -3731,7 +3782,7 @@ export const KO: Record<MessageKey, string> = {
   // (사용자 지적 2026-08-04). 은유를 버리고 규칙을 그대로 적는다 — 이 칸이 실제로 알려 줘야
   // 하는 것은 "내용이 언제 정해지는가"이지 종이의 재질이 아니다.
   'commission.about.whatBody':
-    '발령되는 순간 내용이 확정되는 명령서입니다. 구간과 보상이 그때 정해지고, 완수하면 적힌 그대로 지급됩니다.',
+    '발령되는 순간 내용이 확정되는 의뢰서입니다. 구간과 보상이 그때 정해지고, 완수하면 적힌 그대로 지급됩니다.',
   'commission.about.get': '얻는 법',
   // '높을수록 높은'의 반복을 피한다 — 같은 낱말이 한 문장에 두 번 나오면 규칙보다 말투가 먼저 읽힌다.
   'commission.about.getBody':
