@@ -11,7 +11,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseClient, requireUserId } from './supabaseClient.js';
-import type { SupabaseConfig } from './config.js';
+import { isHarnessSession, type SupabaseConfig } from './config.js';
 import type { Replay } from '../sim/replay.js';
 import { normalizeInvasionLayers } from '../sim/invasion/normalize.js';
 import { parseModulesAuthority } from './modules.js';
@@ -112,6 +112,39 @@ function rowToTarget(raw: unknown): InvasionTarget {
   };
 }
 
+/**
+ * NPC 시드 기지 20개의 고정 profile UUID 대역(`m4_phase_e_npc_seed.sql`).
+ * `000000e5-ed00-4000-8000-000000000001` ~ `...020` 으로 시드가 박아 둔 값이라 접두사로 판별된다.
+ */
+const NPC_PROFILE_ID_PREFIX = '000000e5-ed00-4000-8000-';
+
+/** 이 profile 이 NPC 시드 기지인가. 순수 함수 — 테스트가 대역을 잠근다. */
+export function isNpcProfileId(profileId: string): boolean {
+  return profileId.startsWith(NPC_PROFILE_ID_PREFIX);
+}
+
+/**
+ * 하네스 세션이면 매치메이킹 결과를 **NPC 시드 기지로만** 좁힌다.
+ *
+ * ## 왜 — 하네스 침공은 남의 데이터를 실제로 깎는다
+ * `get_invasion_targets` 는 래더 순위로만 고르고 `is_npc` 를 **거르지 않는다**
+ * (`20260717010000_m4_phase_d.sql`). 그래서 하네스에서 침공을 한 번 돌리면 매칭된 실유저의
+ * 정비도와 래더 순위가 `apply_invasion_result` 로 진짜 변한다 — 그 사람은 영문도 모르고,
+ * 되돌릴 수단도 없다. 치트로 만든 기체라면 더 나쁘다.
+ *
+ * ## 왜 클라이언트인가
+ * 서버에서 막으려면 DEV 전용 RPC 를 프로덕션 DB 에 남겨야 한다(그 자체가 공격면이다).
+ * NPC 는 고정 UUID 대역이라 클라이언트만으로 판별되고, 마이그레이션도 원격 배포도 필요 없다.
+ * **한계는 분명하다** — 이건 서버 강제가 아니라 목록 필터다. 대상을 손으로 지정하는 경로가
+ * 생기면 뚫린다. 그런 경로를 만들 때는 이 함수가 아니라 서버 가드를 세워야 한다.
+ */
+export function restrictToNpcTargets<T extends { profileId: string }>(
+  targets: readonly T[],
+  harness: boolean,
+): T[] {
+  return harness ? targets.filter((t) => isNpcProfileId(t.profileId)) : [...targets];
+}
+
 /** `ladder` 한 행 → LadderEntry. */
 function rowToLadder(raw: unknown): LadderEntry {
   const r = asRecord(raw);
@@ -188,7 +221,8 @@ export class SupabaseInvasionGateway implements InvasionGateway {
     const { data, error } = await this.client.rpc('get_invasion_targets');
     if (error !== null) throw error;
     const rows = Array.isArray(data) ? data : [];
-    return rows.map(rowToTarget);
+    // 하네스에서는 NPC 시드 기지만 남긴다 — 실유저 기지를 진짜로 깎지 않기 위해서다.
+    return restrictToNpcTargets(rows.map(rowToTarget), isHarnessSession());
   }
 
   async getPlacementTargets(): Promise<InvasionTarget[]> {
@@ -233,15 +267,19 @@ export class SupabaseInvasionGateway implements InvasionGateway {
     const { data, error } = await this.client.rpc('get_revenge_targets');
     if (error !== null) throw error;
     const rows = Array.isArray(data) ? data : [];
-    return rows.map((raw) => {
-      const base = rowToTarget(raw);
-      const r = asRecord(raw);
-      return {
-        ...base,
-        revengeInvasionId: asString(r.revenge_invasion_id),
-        expiresAtMs: asEpochMs(r.expires_at),
-      };
-    });
+    // 복수 대상도 같은 규율 — 나를 친 것이 실유저면 하네스에서는 되받아치지 않는다.
+    return restrictToNpcTargets(
+      rows.map((raw) => {
+        const base = rowToTarget(raw);
+        const r = asRecord(raw);
+        return {
+          ...base,
+          revengeInvasionId: asString(r.revenge_invasion_id),
+          expiresAtMs: asEpochMs(r.expires_at),
+        };
+      }),
+      isHarnessSession(),
+    );
   }
 
   async getIncomingInvasions(sinceMs: number, limit: number): Promise<IncomingInvasion[]> {

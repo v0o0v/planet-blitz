@@ -26,7 +26,7 @@
  * 세션 전달 배선을 직접 짜야 하고 팝업 차단·COOP 를 떠안는다. 값을 못 한다.
  */
 
-import { readSupabaseConfig } from './config.js';
+import { readHarnessFlag, readSupabaseConfig } from './config.js';
 
 /** 로그인한 사용자 최소 정보. `email` 은 provider 가 안 줄 수도 있어 nullable. */
 export interface SignedInUser {
@@ -51,7 +51,26 @@ export function isLoginConfigured(): boolean {
  */
 export function loginRedirectTarget(): string {
   if (typeof window === 'undefined') return '';
-  return `${window.location.origin}${import.meta.env.BASE_URL}`;
+  const base = `${window.location.origin}${import.meta.env.BASE_URL}`;
+  return withHarnessFlag(base, window.location.search);
+}
+
+/**
+ * 복귀 주소에 `?harness=1` 을 **되붙인다**(하네스 세션이었을 때만). 순수 함수 — 테스트가
+ * 이 규칙을 잠근다.
+ *
+ * ## 왜 필요한가 — 하네스는 로그인하면 자기 자신을 잃어버렸다
+ * `redirectTo` 는 origin+BASE_URL 뿐이라 쿼리가 통째로 날아갔다. 그래서 하네스에서 로그인하고
+ * 돌아오면 `harnessActive` 가 false 인 채로 부팅한다. 그러면 (a) 치트 패널이 없고 (b) 프로필
+ * I/O 격리가 풀려 **본 세이브 슬롯에 테스트 계정의 서버 프로필이 pull 된다**. 로그인이 필요한
+ * 화면(의뢰서·코어 모듈·침공·방어)을 하네스에서 볼 방법이 아예 없었다는 뜻이다.
+ *
+ * ## Supabase Redirect URLs 에 쿼리까지 허용돼 있어야 한다
+ * 대시보드 화이트리스트는 완전 일치 또는 glob 이다. `http://localhost:5185/` 만 등록하면 이
+ * 주소는 거부된다 — 포트 뒤에 `/` + 별 두 개를 붙여 경로·쿼리를 덮는 패턴이어야 한다.
+ */
+export function withHarnessFlag(base: string, search: string): string {
+  return readHarnessFlag(search) ? `${base}?harness=1` : base;
 }
 
 /** 설정이 있으면 Supabase 클라이언트를, 없으면 null(SDK 를 로드조차 하지 않는다). */
