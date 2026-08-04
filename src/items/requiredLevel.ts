@@ -10,6 +10,11 @@
  * 게이트는 클라 착용 시점에서만 `canEquip` 로 강제하며 sim·상태 해시·세이브
  * 스키마는 불변이다(부적격 아이템은 sim 에 진입하지 않는다).
  *
+ * ⚠️ 2026-08-05: 상한이 **둘**이 됐다 — 드랍처(단계)와 **소유자**(드랍 당시 기체 레벨,
+ * {@link ownerLevelCap}). 사용자 지시 "행성에서 떨어지는 장비는 현재 기체가 장착할 수 있는
+ * 장비가 떨어지게" 의 구현이다. 순수성은 유지된다: 두 값 모두 `item.source` 에 박힌 저장
+ * 필드라 언제·어디서 계산해도 같은 값이 나온다.
+ *
  * ⚠️ 결정론 경계: 이 모듈은 `src/sim/*`(math.ts 포함)·`loadout.ts`·`combatPower.ts` 의
  * **값**을 import 하지 않는다(타입만 허용). `clampInt` 도 sim/math 에서 가져오지 않고 아래
  * 로컬 인라인으로 정의한다 — reqLevel 산식이 sim/loadout 튜닝과 커플링되지 않게 한다.
@@ -81,6 +86,19 @@ export function stageLevelCap(source: ItemSource | undefined): number {
 }
 
 /**
+ * **소유자 상한**(드랍 당시 기체 레벨, {@link ItemSource.levelCap}). 없으면 상한 없음(LEVEL_CAP)
+ * = 구 거동. 근거는 그 필드 주석이다.
+ *
+ * 유효 숫자가 아니면 상한을 걸지 않는다 — 손상된 세이브를 과도하게 잠그느니 구 거동을 보존한다
+ * ({@link stageLevelCap} 과 같은 규율).
+ */
+export function ownerLevelCap(source: ItemSource | undefined): number {
+  const cap = source?.levelCap;
+  if (typeof cap !== 'number' || !Number.isFinite(cap)) return LEVEL_CAP;
+  return clampInt(cap, 1, LEVEL_CAP);
+}
+
+/**
  * 아이템의 요구 레벨(정수 [1,100]). 유니크는 `UniqueDef.reqLevel` 저작값, 그 외는 상수 테이블.
  * 두 경우 모두 **드랍처 상한**({@link stageLevelCap})으로 낮춘다.
  *
@@ -97,7 +115,9 @@ export function stageLevelCap(source: ItemSource | undefined): number {
  * 미저작 유니크가 rare 산식으로 조용히 열리는 것을 막는다(AC7). rare 폴백은 절대 하지 않는다.
  */
 export function requiredLevel(item: Item): number {
-  const cap = stageLevelCap(item.source);
+  // 두 상한 중 **낮은 쪽**을 쓴다. 드랍처 상한은 "그 단계를 도는 동안 입는다"를, 소유자 상한은
+  // "주운 즉시 입는다"를 보장한다 — 둘 다 하한이 아니라 천장이라 min 이 곧 두 약속의 교집합이다.
+  const cap = Math.min(stageLevelCap(item.source), ownerLevelCap(item.source));
   if (item.rarity === 'unique') {
     const def = UNIQUE_REGISTRY.get(item.uniqueId ?? '');
     if (!def || !Number.isFinite(def.reqLevel)) {

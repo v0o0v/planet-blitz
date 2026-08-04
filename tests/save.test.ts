@@ -167,8 +167,12 @@ describe('settleRun — loot → items + leveling (AC3/AC11)', () => {
     expect(out.itemsGained).toHaveLength(2);
     expect(p.inventory).toHaveLength(2);
     // Same seeds re-roll to byte-identical items.
-    expect(out.itemsGained[0]).toEqual(rollItem(101, 'rare', { planet: 0, stage: 11 }));
-    expect(out.itemsGained[1]).toEqual(rollItem(202, 'unique', { planet: 1, stage: 1 }));
+    // ⚠️ `levelCap`(= 정산 시점 기체 레벨, 사용자 지시 2026-08-05)이 `source` 에 함께 실린다 —
+    //    재현하려면 같은 값을 넘겨야 한다. 이 값이 빠지면 "떨어진 장비를 지금 기체가 못 입는다"가
+    //    되돌아온다(`src/items/requiredLevel.ts` `ownerLevelCap`).
+    const lv = activeShip(p).level;
+    expect(out.itemsGained[0]).toEqual(rollItem(101, 'rare', { planet: 0, stage: 11, levelCap: lv }));
+    expect(out.itemsGained[1]).toEqual(rollItem(202, 'unique', { planet: 1, stage: 1, levelCap: lv }));
   });
 
   it('banks XP onto the active ship and grants one skill point per level', () => {

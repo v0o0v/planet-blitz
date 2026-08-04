@@ -26,7 +26,9 @@ import { AFFIX_BY_ID } from '../data/affixes.js';
 import { UNIQUE_REGISTRY, registerUnique } from '../src/items/uniques.js';
 import { M2_UNIQUES, M3_UNIQUES } from '../data/uniques.js';
 import { buildPreset } from '../src/harness/presets.js';
-import { activeShip } from '../src/save/profile.js';
+import { activeShip, defaultProfile } from '../src/save/profile.js';
+import { settleRun } from '../src/save/settlement.js';
+import type { LootRecord } from '../src/sim/world.js';
 import type { AffixRoll, Item, Rarity, SlotKind, StatKey } from '../src/items/types.js';
 
 // ---------------------------------------------------------------------------
@@ -186,6 +188,84 @@ describe('드랍처(침략 단계) 상한', () => {
           expect(requiredLevel(litItem(rarity, a, { stage })), `${rarity}/${a}/${stage}`).toBeLessThanOrEqual(cap);
         }
       }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 소유자 상한(드랍 당시 기체 레벨) — 사용자 지시 2026-08-05
+// ---------------------------------------------------------------------------
+
+describe('소유자 상한(ItemSource.levelCap) — "주운 즉시 입는다"', () => {
+  /** `levelCap` 이 붙은 리터럴 아이템(단계 상한이 안 무는 무효 단계 21 로 고정). */
+  function ownedItem(rarity: Exclude<Rarity, 'unique'>, affixCount: number, levelCap: number): Item {
+    const base = litItem(rarity, affixCount, { stage: 21 });
+    return { ...base, source: { ...base.source, levelCap } };
+  }
+
+  it('부재하면 구 거동 그대로다(상한 없음) — 기존 세이브·시작 지급 장비의 경로', () => {
+    // 이 단언이 깨지면 마이그레이션 없이 필드를 추가한 것이 기존 아이템을 조용히 잠근 것이다.
+    const rare6 = litItem('rare', 6, { stage: 21 });
+    expect(rare6.source.levelCap).toBeUndefined();
+    expect(requiredLevel(rare6)).toBe(32 + 6 * 3); // 등급 산식 그대로
+  });
+
+  it('핵심 계약: 어떤 등급·어픽스 조합도 **드랍 당시 기체 레벨을 넘지 않는다**', () => {
+    for (const level of [1, 2, 5, 17, 50, 99, 100]) {
+      for (const rarity of ['normal', 'magic', 'rare'] as const) {
+        for (let a = 0; a <= 6; a++) {
+          const it = ownedItem(rarity, a, level);
+          expect(requiredLevel(it), `${rarity}/${a}/Lv${level}`).toBeLessThanOrEqual(level);
+          // 곧 이것이 사용자가 본 결과다 — 주운 즉시 입는다.
+          expect(canEquip(level, it), `${rarity}/${a}/Lv${level}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('두 상한 중 낮은 쪽이 이긴다(단계 상한이 더 낮으면 그쪽이 남는다)', () => {
+    // 단계 1 의 드랍처 상한은 1 이다. 기체가 Lv50 이어도 요구 레벨은 1 이어야 한다 —
+    // 소유자 상한이 하한처럼 작동해 요구 레벨을 **끌어올리면** 저단계 온보딩이 무너진다.
+    const lowStage = litItem('rare', 6, { stage: 1 });
+    const withOwner: Item = { ...lowStage, source: { ...lowStage.source, levelCap: 50 } };
+    expect(stageLevelCap(withOwner.source)).toBe(1);
+    expect(requiredLevel(withOwner)).toBe(1);
+  });
+
+  it('유효하지 않은 값은 상한을 걸지 않는다(손상 세이브를 과도하게 잠그지 않는다)', () => {
+    const base = litItem('rare', 6, { stage: 21 });
+    const expected = requiredLevel(base);
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, undefined]) {
+      const it: Item = { ...base, source: { ...base.source, levelCap: bad as unknown as number } };
+      expect(requiredLevel(it)).toBe(expected);
+    }
+  });
+
+  it('배선 실도달: `settleRun` 이 떨군 장비는 그 기체가 전부 입을 수 있다', () => {
+    // ⚠️ 이 저장소의 지배적 실패 모드는 "순수 함수는 맞는데 호출부가 안 넘긴다"이다.
+    //    산식이 아니라 **실제 정산 경로**로 확인한다.
+    const profile = defaultProfile();
+    const ship = activeShip(profile);
+    ship.level = 3; // 저레벨 기체가 고단계를 도는, 가장 어긋나기 쉬운 상황.
+    const loot: LootRecord[] = Array.from({ length: 24 }, (_, i) => ({
+      seed: (0x1234_5678 + i * 0x9e37_79b9) >>> 0,
+      rarity: i % 4, // normal·magic·rare·unique 전수
+      planet: 2,
+      stage: 12,
+      elite: 1,
+    }));
+    const out = settleRun(profile, {
+      victory: true,
+      loot,
+      xpTotal: 0,
+      resources: 0,
+      planet: 2,
+      stage: 12,
+    });
+    expect(out.itemsGained.length).toBe(loot.length);
+    for (const it of out.itemsGained) {
+      expect(it.source.levelCap, `${it.id} 에 소유자 상한이 안 실렸다`).toBe(3);
+      expect(canEquip(3, it), `${it.rarity} ${it.id} 를 Lv3 이 못 입는다`).toBe(true);
     }
   });
 });

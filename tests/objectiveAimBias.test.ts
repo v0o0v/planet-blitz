@@ -20,16 +20,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
-import type { WorldConfig, WorldState } from '../src/sim/world.js';
+import type { WorldState } from '../src/sim/world.js';
 import { blankEntity } from '../src/sim/entities.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile } from '../src/save/profile.js';
 import { PLANET_MODE } from '../src/sim/planetMode.js';
-import {
-  isCounterDevice,
-  chaseCounterDeviceHp,
-  CHASE_COUNTER_DEVICE_HP_BASE,
-} from '../src/sim/modes/chase.js';
 import {
   isContaminationNode,
   contaminationNodeHp,
@@ -42,58 +37,23 @@ import {
 } from '../data/waves.js';
 import {
   objectiveAimBias,
+  isObjectiveDestructible,
   OBJECTIVE_AIM_BIAS_STAGE_1,
   OBJECTIVE_AIM_BIAS_STAGE_MAX,
   OBJECTIVE_AIM_BIAS_STAGE_MAX_AT,
 } from '../src/sim/modes/objective.js';
 
-/** 니플헤임(추격) 런 설정. `playerHp` 를 크게 잡아 이 측정이 사망으로 끊기지 않게 한다. */
-function chaseConfig(stage: number): WorldConfig {
-  return {
-    ...buildRunConfig(defaultProfile(), { planet: 2, stage }),
-    planetMode: PLANET_MODE.chase,
-    playerHp: 1_000_000,
-  };
-}
-
 /**
- * "장치 옆에 서 있는데 잡몹이 **더 가까이** 붙어 있다"는 상황을 만들고 N틱 굴려, 그동안
- * 반격 장치가 받은 피해를 잰다. 잡몹은 죽지 않도록 HP 를 크게 준다 — 죽어서 사라지면
- * 그 뒤엔 장치가 최근접이 되어 대조가 무너진다.
- */
-function deviceDamageWithCloserEnemy(stage: number, ticks = 120): number {
-  const state: WorldState = createWorld(1234, chaseConfig(stage));
-  const player = state.entities[0]!;
-  const dev = state.entities.find((e) => !e.dead && isCounterDevice(e))!;
-
-  player.x = dev.x - 200;
-  player.y = dev.y;
-
-  const enemy = blankEntity('enemy');
-  // 장치(200)보다 가깝되, 고단계 가중치(제곱거리 ×0.1 → 등가거리 약 0.32배)가 순위를 뒤집을
-  // 수 있는 자리다: 200×0.32 ≈ 63 < 100. 단계 1 에서는 200 > 100 이라 잡몹이 이긴다.
-  //
-  // ⚠️ 장치와 **직각 방향**에 둔다. 같은 사선에 두면 조준이 장치를 골라도 탄이 잡몹에 먼저
-  // 흡수돼(관통 0) 장치 피해가 0 으로 나온다 — 조준 결함과 구분되지 않는 거짓 실패였다.
-  enemy.x = player.x;
-  enemy.y = player.y + 100;
-  enemy.radius = 24;
-  enemy.hp = 1e9;
-  enemy.maxHp = 1e9;
-  state.entities.push(enemy);
-
-  const before = dev.hp;
-  for (let i = 0; i < ticks; i++) stepWorld(state, emptyInput());
-  return before - dev.hp;
-}
-
-/**
- * 오염 무대(톡사르) 판 — **두 목표 게이트형 무대 모두**에서 배선이 도달함을 못 박는다.
- * 목록이 갈리는 것(한 무대만 배선됨)이 이 축의 대표 실패 모드다.
+ * 오염 무대(톡사르) 판 — 이 축의 **유일한 실배선 무대**다.
  *
- * ⚠️ 자인: `nearestTarget` 의 벽-없음 fast path 는 여기서도 **재지 못한다**. 추격·오염 둘 다
- * 벽이 상시 존재해(실측 activeWalls 5개) 실전에서 LOS 경로만 타기 때문이다 — 실제로 fast
- * path 의 가중치를 지워도 이 파일은 전부 초록이었다. 그 줄의 존재 이유는 world.ts 주석 참조.
+ * ⚠️ 예전에는 추격(반격 장치) 판이 짝을 이뤄 "두 무대 모두"를 못 박았다. 반격 장치는
+ * 2026-08-05 재설계로 사라졌고(`sim/modes/chase.ts`), 추격의 목표는 파괴물이 아니라 **미확보
+ * 대피소**가 됐다 — 조준이 아니라 이동으로 닿는 것이라 이 축을 타지 않는다. 그래서 여기서
+ * 추격을 재려는 시도는 전부 거짓 신호다(장치가 없어 `find` 가 undefined 를 낸다).
+ *
+ * ⚠️ 자인: `nearestTarget` 의 벽-없음 fast path 는 여기서도 **재지 못한다**. 오염은 벽이 상시
+ * 존재해(실측 activeWalls 5개) 실전에서 LOS 경로만 타기 때문이다 — 실제로 fast path 의
+ * 가중치를 지워도 이 파일은 전부 초록이었다. 그 줄의 존재 이유는 world.ts 주석 참조.
  */
 function nodeDamageWithCloserEnemy(stage: number, ticks = 120): number {
   const state: WorldState = createWorld(1234, {
@@ -144,16 +104,22 @@ describe('목표 오브젝트 조준 우선 가중치', () => {
     expect(OBJECTIVE_AIM_BIAS_STAGE_MAX).toBeLessThan(1);
   });
 
-  it('고단계에서는 더 가까운 잡몹을 제치고 장치를 친다 — 단계 1 은 안 친다(배선 실도달)', () => {
+  it('고단계에서는 더 가까운 잡몹을 제치고 오염 노드를 친다 — 단계 1 은 안 친다(배선 실도달)', () => {
     // 대조군이 먼저다. 단계 1 에서 가중치는 1 이므로 최근접(잡몹)만 맞아야 한다.
-    expect(deviceDamageWithCloserEnemy(1)).toBe(0);
-    // 같은 배치에서 고단계는 장치에 화력이 들어간다.
-    expect(deviceDamageWithCloserEnemy(OBJECTIVE_AIM_BIAS_STAGE_MAX_AT)).toBeGreaterThan(0);
+    expect(nodeDamageWithCloserEnemy(1)).toBe(0);
+    // 같은 배치에서 고단계는 노드에 화력이 들어간다.
+    expect(nodeDamageWithCloserEnemy(OBJECTIVE_AIM_BIAS_STAGE_MAX_AT)).toBeGreaterThan(0);
   });
 
-  it('벽 없는 조준 경로(오염 노드)도 같은 계약이다 — 두 경로를 각각 못 박는다', () => {
-    expect(nodeDamageWithCloserEnemy(1)).toBe(0);
-    expect(nodeDamageWithCloserEnemy(OBJECTIVE_AIM_BIAS_STAGE_MAX_AT)).toBeGreaterThan(0);
+  it('추격에는 목표 파괴물이 없다 — 이 축이 적용될 대상 자체가 없다(재설계 계약)', () => {
+    // 이 단언이 깨지면(추격에 파괴물이 다시 생기면) 위 조준 축을 그 무대에도 배선했는지
+    // 반드시 확인해야 한다 — "목록이 갈린다"가 이 축의 대표 실패 모드다.
+    const w = createWorld(1234, {
+      ...buildRunConfig(defaultProfile(), { planet: 2, stage: 1 }),
+      planetMode: PLANET_MODE.chase,
+      playerHp: 1_000_000,
+    });
+    expect(w.entities.some((e) => !e.dead && isObjectiveDestructible(e))).toBe(false);
   });
 });
 
@@ -184,13 +150,12 @@ describe('목표 총 HP 저단계 완화', () => {
     expect(OBJECTIVE_LOW_STAGE_RELIEF).toBeLessThan(1);
   });
 
-  it('두 목표 게이트형 무대의 HP 가 실제로 이 계수를 탄다(배선 실도달)', () => {
-    // 목록이 갈리는 것(한 무대만 배선됨)이 이 축의 대표 실패 모드다 — 둘 다 잰다.
+  it('오염 노드 HP 가 실제로 이 계수를 탄다(배선 실도달)', () => {
     // 단계 1 은 기울기 항이 0 이라 `base × 완화` 와 정확히 같아야 한다. 배선이 빠지면 base
     // 그대로가 되어 이 단언이 깨진다(항진이 아니다 — 실제 상수와 대조한다).
-    expect(chaseCounterDeviceHp(1)).toBe(
-      Math.round(CHASE_COUNTER_DEVICE_HP_BASE * OBJECTIVE_LOW_STAGE_RELIEF),
-    );
+    //
+    // ⚠️ 짝이던 `chaseCounterDeviceHp` 는 2026-08-05 재설계로 **어떤 엔티티에도 쓰이지 않는다**
+    // (반격 장치가 배치되지 않는다). 계속 재면 "배선이 살아 있다"는 거짓 신호가 된다.
     expect(contaminationNodeHp(1)).toBe(
       Math.round(CONTAMINATION_NODE_HP_BASE * OBJECTIVE_LOW_STAGE_RELIEF),
     );

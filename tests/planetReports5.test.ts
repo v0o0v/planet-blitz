@@ -17,8 +17,10 @@ import { PLANET_MODE } from '../src/sim/planetMode.js';
 import { SEGMENTS } from '../data/waves.js';
 import {
   CHASE_SHELTER_RADIUS,
-  chaseShelterReached,
+  updateChaseShelters,
+  chaseSheltersSecured,
   isShelter,
+  isShelterSecured,
 } from '../src/sim/modes/chase.js';
 import { isContaminationNode } from '../src/sim/modes/contamination.js';
 import { isBreakableWall, BLOCKBREAK_ROW_SPACING, blockBreakCourseLength } from '../src/sim/modes/blockBreak.js';
@@ -55,27 +57,30 @@ describe('① 니플헤임(추격) — 격전 세그먼트에서는 대피소를
     expect(midClashGateActive(w)).toBe(true);
   });
 
-  it('격전 세그먼트에서 active 대피소가 0개다 — 도달해도 게이트가 아니기 때문이다', () => {
-    const w = createWorld(1, planetConfig(2));
-    atSegment(w, clashIndex);
-    const snap = snapshotWorld(w);
-    const shelters = snap.entities.filter((e) => e.kind === 'shelter');
-    // 대피소 자체는 그대로 서 있다(인덱스 정합을 위해 배치는 유지된다).
-    expect(shelters.length).toBeGreaterThan(0);
-    // ⚠️ 결함 재현 지점: 여기가 1이면 게임이 초록 강조·링·화면밖 화살표·레이더로 그 대피소를
-    // 가리키는데 도착해도 아무 일이 없다. 6구간 중 1구간에서만 나서 "간혹"으로 보였다.
-    expect(shelters.filter((e) => e.active).length).toBe(0);
-    // sim 판정도 같은 말을 한다 — 표시와 규칙이 갈리지 않는다.
-    expect(chaseShelterReached(w, clashIndex)).toBe(false);
-  });
-
-  it('격전이 아닌 세그먼트에서는 정확히 하나가 목표로 선다(회귀 방지)', () => {
-    const w = createWorld(1, planetConfig(2));
-    for (const idx of [0, 1, 2]) {
-      if (idx === clashIndex) continue;
+  it('가리키는 대피소는 **어느 세그먼트에서도** 밟으면 든다 — 표시와 규칙이 갈릴 수 없다', () => {
+    // ## 원 신고(2026-08-04): "간혹 대피소에 가도 체크가 안 된다"
+    // 당시 원인은 **같은 술어를 세 곳에 따로 적은 것**이었다. 목표 대피소는 `aux0 ===
+    // segmentIndex` 하나뿐인데 격전 세그먼트에서는 전진 게이트가 리더 처치로 바뀌어, 화면은
+    // 초록 강조·링·화살표·레이더로 대피소를 가리키는데 도착해도 아무 일이 없었다.
+    //
+    // ## 2026-08-05 재설계로 이 결함 부류가 **구조적으로** 사라졌다
+    // 표시(`active`)와 확보(`updateChaseShelters`)가 이제 **같은 술어 하나**(미확보)를 본다.
+    // 세그먼트는 어느 쪽에도 등장하지 않는다. 그래서 격전 구간이든 아니든 "가리키는 곳을
+    // 밟으면 든다"가 전 구간에서 성립한다 — 그것을 전수로 확인한다.
+    for (const idx of [0, 1, 2, clashIndex]) {
+      const w = createWorld(1, planetConfig(2));
       atSegment(w, idx);
-      const active = snapshotWorld(w).entities.filter((e) => e.kind === 'shelter' && e.active);
-      expect(active.length, `세그먼트 ${idx}`).toBe(1);
+      const shown = snapshotWorld(w).entities.filter((e) => e.kind === 'shelter' && e.active);
+      // 미확보 대피소는 전부 목표다(격전 구간에서도 0개가 되지 않는다).
+      expect(shown.length, `세그먼트 ${idx} 에서 가리키는 대피소가 없다`).toBeGreaterThan(0);
+      // 그중 하나를 실제로 밟으면 확보된다 — 화면이 가리킨 대로 규칙이 따라온다.
+      const target = w.entities.find((e) => isShelter(e) && e.id === shown[0]!.id)!;
+      const player = w.entities[0]!;
+      player.x = target.x;
+      player.y = target.y;
+      updateChaseShelters(w);
+      expect(isShelterSecured(target), `세그먼트 ${idx} 에서 밟았는데 안 들었다`).toBe(true);
+      expect(chaseSheltersSecured(w)).toBe(1);
     }
   });
 

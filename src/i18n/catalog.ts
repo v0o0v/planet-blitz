@@ -584,7 +584,7 @@ export const EN = {
   'hud.bossEta.clash': 'Destroy the commander',
   'hud.bossEta.distance': 'Push forward',
   'hud.bossEta.purify': 'Purify the zone',
-  'hud.bossEta.shelter': 'Reach the shelter',
+  'hud.bossEta.shelter': 'Shelters {n}/{goal} — find them all to draw out the predator',
   'hud.bossEta.ring': 'Clear the safe ring',
   // --- 런 목표·주의 2줄(사용자 요청 2026-08-04). 1줄=목표+카운터, 2줄=모드 고정 주의 또는
   // 상황 경고(`warn.*`). 파생은 src/ui/runObjective.ts.
@@ -603,7 +603,7 @@ export const EN = {
   'hud.obj.warn.outside': 'You are outside the safe ring — get back inside',
   'hud.obj.warn.healer': 'A repair ship is healing them — take it out first',
   'hud.obj.warn.time': 'Only {n}s left',
-  'hud.obj.shelterReached': 'Shelter reached — sector {n} secured',
+  'hud.obj.shelterReached': 'Shelter secured — {n}/{goal}',
   // 오염도 게이지(톡사르=오염 모드). 실패 임계를 실패 전에 보여 준다.
   'hud.contamination.title': 'CONTAMINATION',
   'hud.contamination.warn': 'Critical contamination imminent — destroy the nodes',
@@ -2530,7 +2530,7 @@ export const KO: Record<MessageKey, string> = {
   'hud.bossEta.clash': '지휘관을 격파하세요',
   'hud.bossEta.distance': '전방으로 돌파하세요',
   'hud.bossEta.purify': '구역을 정화하세요',
-  'hud.bossEta.shelter': '대피소에 도달하세요',
+  'hud.bossEta.shelter': '대피소 {n}/{goal} — 전부 찾으면 포식자가 모습을 드러냅니다',
   'hud.bossEta.ring': '안전권을 소탕하세요',
   'hud.obj.count': '{n}/{total}',
   'hud.obj.inv0': '대기권을 돌파하세요',
@@ -2547,7 +2547,7 @@ export const KO: Record<MessageKey, string> = {
   'hud.obj.warn.outside': '안전권 밖입니다 — 안으로 들어가세요',
   'hud.obj.warn.healer': '정비선이 적을 수복하고 있습니다 — 먼저 제거하세요',
   'hud.obj.warn.time': '남은 시간 {n}초',
-  'hud.obj.shelterReached': '대피소 도달 — {n}구간 돌파',
+  'hud.obj.shelterReached': '대피소 확보 — {n}/{goal}',
   'hud.contamination.title': '오염도',
   'hud.contamination.warn': '오염 임계 도달 직전 — 노드를 파괴하세요',
   'hud.inv.title': '침공 진행',

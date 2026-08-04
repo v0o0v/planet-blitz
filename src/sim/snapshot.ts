@@ -11,14 +11,13 @@ import type { WorldState } from './world.js';
 import type { EntityKind } from './entities.js';
 import { eliteAffix } from './elite.js';
 import { windowCenterX, windowCenterY } from './invasion/scroll.js';
-import { chaseVisionRadius } from './modes/chase.js';
+import { chaseVisionRadius, isShelterSecured } from './modes/chase.js';
 import { shrinkSafeRadius } from './modes/shrink.js';
 import {
   contaminationCellCount,
   CONTAMINATION_CRITICAL_CELLS,
   isContaminationNode,
 } from './modes/contamination.js';
-import { midClashGateActive } from './waves.js';
 import { PLANET_MODE } from './planetMode.js';
 
 export interface EntitySnapshot {
@@ -67,13 +66,13 @@ export interface EntitySnapshot {
    */
   bossPhase?: number;
   /**
-   * 대피소 전용(render-only): **이미 지나간 세그먼트의 대피소인가**(`aux0 < segmentIndex`).
+   * 대피소 전용(render-only): **이미 확보한 대피소인가**(`aux1 === 1`).
    *
-   * `active`(= 이번 세그먼트 목표)만으로는 대피소가 두 상태밖에 못 산다 — "아직 안 온 곳"과
-   * "이미 쓴 곳"이 똑같이 비활성으로 보여, 링을 한 바퀴 돌면 어느 쪽이 남은 길인지 화면에서
-   * 사라졌다(사용자 신고 2026-08-04 "대피소로 가야 한다는 느낌이 설명이 안 된다"). 셋을 가르는
-   * 판정은 sim 이 이미 아는 것(`aux0` vs `wave.segmentIndex`)이라 여기서 한 번만 편다 —
-   * `active` 를 같은 자리에서 펴는 것과 같은 규율이다.
+   * 2026-08-05 재설계 전에는 "지나간 세그먼트의 것"(`aux0 < segmentIndex`)이었다. 지금은
+   * 확보 플래그 그 자체이고, `active`(= 미확보)의 정확한 여집합이다. 두 상태를 가르는 이유는
+   * 그대로다 — "아직 안 간 곳"과 "이미 쓴 곳"이 똑같이 비활성으로 보이면 남은 길이 화면에서
+   * 사라진다(사용자 신고 2026-08-04). 판정은 sim 이 이미 아는 것(`isShelterSecured`)이라
+   * 여기서 한 번만 편다 — `active` 를 같은 자리에서 펴는 것과 같은 규율이다.
    *
    * `permanent`·`bossPhase` 와 같은 이유로 **선택 필드**다(테스트가 스냅샷 리터럴을 직접 만든다).
    * 부재는 false(미도달)로 다룬다. 스냅샷은 해시 대상이 아니라 sim 계약은 불변이다.
@@ -187,17 +186,18 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
               // 링을 이 값으로 가른다. 스냅샷은 해시 대상이 아니라 sim 계약 불변이다.
               e.kind === 'turretPickup'
               ? e.phase === 1
-              : // 대피소(추격 Lane6)는 **지금 세그먼트의 것만** 전진 게이트다(`chaseShelterReached`
-                // 는 `aux0 === segmentIndex` 만 본다). 6개가 전부 같은 모습으로 서 있으면 어디로
-                // 가야 하는지 화면에서 알 수 없었다(사용자 신고 2026-07-27) — 렌더·레이더가
-                // 목표 대피소를 가르도록 sim 판정과 **같은 식**을 여기서 한 번만 편다.
-                // ⚠️ **격전 세그먼트에서는 어떤 대피소도 목표가 아니다**(사용자 신고 2026-08-04
-                // "간혹 대피소에 가도 체크가 안 된다"). 그 구간의 전진 게이트는 리더 처치로
-                // 바뀌는데(`midClashGateActive`) 여기서 그것을 안 봐서, 게이트가 아닌 대피소를
-                // 초록 강조 + 링 + 화면밖 화살표 + 레이더로 가리키고 있었다. 판정식은 sim 과
-                // 같은 것을 쓴다 — 조건을 여기서 다시 적으면 다시 갈라진다.
+              : // 대피소(추격 Lane6)는 **미확보인 것 전부**가 목표다(2026-08-05 재설계 —
+                // "대피소를 다 찾으면 보스"). 확보 여부는 sim 이 `aux1` 로 쓰고
+                // (`updateChaseShelters`), 여기서는 그 술어(`isShelterSecured`)를 그대로 편다.
+                //
+                // ## 왜 세그먼트를 더 이상 안 보는가
+                // 예전에는 `aux0 === segmentIndex` 인 **한 곳만** 목표였다. 그래서 ①어디로 가야
+                // 하는지 안 보이는 문제(2026-07-27) ②격전 세그먼트에서 게이트가 리더 처치로
+                // 바뀌는데도 엉뚱한 대피소를 가리키던 문제(2026-08-04)를 차례로 겪었다. 둘 다
+                // "세그먼트와 대피소의 1:1" 이 만든 결함이고, 그 1:1 자체가 사라졌다 — 이제
+                // 미확보면 언제나 목표이므로 두 결함이 구조적으로 재발하지 않는다.
                 e.kind === 'shelter'
-                ? e.aux0 === state.wave.segmentIndex && !midClashGateActive(state)
+                ? !isShelterSecured(e)
                 : false,
       flash: e.kind === 'boss' && e.timer > 0,
       // 보스 페이즈(0/1/2). 보스가 아니면 의미가 없으므로 0 — 렌더는 kind 로 먼저 가른다.
@@ -205,8 +205,9 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
       elite: eliteAffix(e),
       // 영구 지형 해저드(life < 0 = 청크 배치·만료 없음). 렌더가 감속 지대와 가르는 유일한 신호다.
       permanent: e.kind === 'hazard' && e.life < 0,
-      // 이미 지나간 대피소(= 지난 세그먼트의 것). `active` 와 같은 식을 여기서 한 번만 편다.
-      spent: e.kind === 'shelter' && e.aux0 < state.wave.segmentIndex,
+      // 이미 확보한 대피소(흐리게 그린다). `active` 의 정확한 여집합이다 — 남은 곳을 추리할
+      // 단서로 지도에 남겨야 하므로 확보해도 사라지지 않는다(`isShelterSecured` 주석 참조).
+      spent: e.kind === 'shelter' && isShelterSecured(e),
       // 오염 노드(톡사르). `destructible` 은 셋이 공유하는 kind 라 렌더가 스냅샷만으로는
       // 못 가른다 — `ownerId` 는 스냅샷에 없다. 여기서 한 번만 편다(`permanent`·`spent` 선례).
       objectiveNode: isContaminationNode(e),

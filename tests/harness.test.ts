@@ -348,7 +348,8 @@ describe('Harness.snapshot().mode (행성 모드 표면 — ADR-0021)', () => {
       slug: 'vampire',
       safeRadius: 0,
       visionRadius: 0,
-      counterDevices: 0,
+      sheltersSecured: 0,
+      sheltersTotal: 0,
       scrollSection: -1,
       contaminationCritical: false,
     });
@@ -365,11 +366,12 @@ describe('Harness.snapshot().mode (행성 모드 표면 — ADR-0021)', () => {
     expect(m.safeRadius).toBeGreaterThan(0);
   });
 
-  it('추격은 시야 반경·살아있는 반격 장치 수를 노출한다', () => {
+  it('추격은 시야 반경·대피소 확보/총수를 노출한다(시작 시 0/N)', () => {
     const m = harnessWithMode(PLANET_MODE.chase).snapshot().mode;
     expect(m.slug).toBe('chase');
     expect(m.visionRadius).toBeGreaterThan(0);
-    expect(m.counterDevices).toBeGreaterThan(0);
+    expect(m.sheltersTotal).toBeGreaterThan(0);
+    expect(m.sheltersSecured).toBe(0);
   });
 
   it('블록격파·레이싱은 강제 스크롤 구간 인덱스를 노출한다(시작 구간 0)', () => {

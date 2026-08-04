@@ -43,7 +43,7 @@ import {
 } from './modes/blockBreak.js';
 import { racingProgress, RACING_SECTION_LENGTH, RACING_SPAWN_AHEAD } from './modes/racing.js';
 import { contaminationPurifyRate, CONTAMINATION_PURIFY_THRESHOLD } from './modes/contamination.js';
-import { chaseShelterReached } from './modes/chase.js';
+import { chaseSegmentCleared } from './modes/chase.js';
 import { shrinkRingCleared, shrinkSpawnRadius, SHRINK_GRACE_TICKS } from './modes/shrink.js';
 // 중반 격전(ADR-0032). ⚠️ midClash 는 이 모듈의 `summonEnemy` 를 되가져오므로 모듈 순환이
 // 하나 생긴다 — 양쪽 다 호이스팅되는 함수 선언이고 모듈 평가 시점이 아니라 **호출 시점**에만
@@ -402,11 +402,12 @@ export function updateWaves(state: WorldState, player: Entity): void {
       const milestone = (CONTAMINATION_PURIFY_THRESHOLD * (w.segmentIndex + 1)) / normalSegments;
       cleared = contaminationPurifyRate(state) >= milestone;
     } else if (state.config.planetMode === PLANET_MODE.chase) {
-      // 추격(Lane6): 처치 할당 대신 **대피소 도달**로 구간을 넘는다("탈출 단계"). 세그먼트 i 통과 =
-      // aux0===i 대피소에 도달. 마지막 일반 세그먼트 통과 → 보스 세그먼트지만, 포식자는 이미
-      // 존재(bossSpawned)라 두 번째 보스가 뜨지 않는다. 승리는 대피소가 아니라 반격 장치 전부
-      // 파괴→취약→포식자 처치다(§7-R#3). planetMode 게이트라 뱀서류·침공 거동 불변.
-      cleared = chaseShelterReached(state, w.segmentIndex);
+      // 추격(Lane6): 처치 할당 대신 **누적 대피소 확보 수**로 구간을 넘는다("탈출 단계").
+      // 세그먼트 i 통과 = 확보 수 ≥ `chaseShelterMilestone(i)`. 마지막 일반 세그먼트의 마일스톤은
+      // 정확히 전량이라, **다 찾는 순간** 보스 세그먼트로 넘어가고 같은 틱에 포식자가 취약해진다
+      // (`updateChasePredator`). 포식자는 이미 존재(bossSpawned)라 두 번째 보스는 뜨지 않는다.
+      // 승리는 취약해진 포식자 처치다. planetMode 게이트라 뱀서류·침공 거동 불변.
+      cleared = chaseSegmentCleared(state, w.segmentIndex);
     } else if (state.config.planetMode === PLANET_MODE.shrink) {
       // 수축(Lane7): 처치 할당 대신 **안전 반경 안 적 전멸**(shrinkRingCleared)로 구간을 넘는다.
       // 마지막 일반 세그먼트 통과 → 보스 세그먼트 → 아레나 중심 보스(stepBoss 공통 경로). 전진

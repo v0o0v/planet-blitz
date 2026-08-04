@@ -55,7 +55,7 @@ import { PLANET_MODE } from '../sim/planetMode.js';
 import { shrinkSafeRadius } from '../sim/modes/shrink.js';
 import { blockBreakProgress, blockBreakSection } from '../sim/modes/blockBreak.js';
 import { racingProgress, racingSection } from '../sim/modes/racing.js';
-import { chaseAliveCounterDevices, chaseVisionRadius } from '../sim/modes/chase.js';
+import { chaseSheltersSecured, chaseShelterTotal, chaseVisionRadius } from '../sim/modes/chase.js';
 import { contaminationCritical } from '../sim/modes/contamination.js';
 import { EventRing, diffWorldEvents, emptyWorldEventSummary } from './events.js';
 import type { HarnessEvent, WorldEventSummary } from './events.js';
@@ -140,8 +140,10 @@ export interface HarnessModeState {
   safeRadius: number;
   /** 추격: 시야 반경. 추격 모드가 아니면 0. */
   visionRadius: number;
-  /** 추격: 살아있는 반격 장치 수. 추격 모드가 아니면 0. */
-  counterDevices: number;
+  /** 추격: **확보한** 대피소 수. 추격 모드가 아니면 0. */
+  sheltersSecured: number;
+  /** 추격: 배치된 대피소 총수. 추격 모드가 아니면 0. */
+  sheltersTotal: number;
   /** 강제 스크롤(블록격파·레이싱): 현재 진행 구간 인덱스(0-based). 스크롤 모드가 아니면 -1. */
   scrollSection: number;
   /** 오염: 임계 오염 도달 여부(맵 실패 조건). 오염 모드가 아니면 false. */
@@ -528,7 +530,8 @@ function emptyModeState(): HarnessModeState {
     slug: MODE_SLUG[PLANET_MODE.vampire] ?? 'vampire',
     safeRadius: 0,
     visionRadius: 0,
-    counterDevices: 0,
+    sheltersSecured: 0,
+    sheltersTotal: 0,
     scrollSection: -1,
     contaminationCritical: false,
   };
@@ -550,7 +553,8 @@ function modeStateOf(world: WorldState): HarnessModeState {
       break;
     case PLANET_MODE.chase:
       state.visionRadius = chaseVisionRadius(world.config.planetMode);
-      state.counterDevices = chaseAliveCounterDevices(world);
+      state.sheltersSecured = chaseSheltersSecured(world);
+      state.sheltersTotal = chaseShelterTotal(world);
       break;
     case PLANET_MODE.blockBreak:
       // scrollRuntime 은 강제 스크롤 모드에만 선다(scroll.ts ScrollWindow 를 구조적으로 만족).

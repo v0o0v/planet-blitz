@@ -11,12 +11,7 @@
  */
 
 import type { WorldState } from '../../sim/world.js';
-import {
-  chaseAliveCounterDevices,
-  chaseCounterDeviceHp,
-  isCounterDevice,
-  CHASE_COUNTER_DEVICE_COUNT,
-} from '../../sim/modes/chase.js';
+import { chaseSheltersSecured, chaseShelterTotal } from '../../sim/modes/chase.js';
 import { contaminationPurifyRate } from '../../sim/modes/contamination.js';
 import { PLANET_MODE } from '../../sim/planetMode.js';
 
@@ -225,49 +220,31 @@ export const RUN_METRICS: Readonly<Record<string, MetricDef>> = {
     },
   },
   /**
-   * 런 종료 시점에 **살아남은 반격 장치 수**(추격 모드 전용, 그 외 모드는 항상 0).
+   * 런 종료 시점에 **아직 못 찾은 대피소 수**(추격 모드 전용, 그 외 모드는 항상 0).
    *
-   * B7(만렙 추격 런이 끝나지 않는다)의 처방을 가르는 진단 지표다. 타임아웃 런에서 이 값이
-   * 0 이면 "취약화까지 갔는데 포식자를 못 잡는 것"이고, 1 이상이면 "장치를 못 깨는 것"이라
-   * 손댈 축이 완전히 갈린다(장치 HP·수 ↔ 취약화 후 보스 HP·DPS).
+   * ## 무엇을 가르는가
+   * 타임아웃 런에서 이 값이 0 이면 "다 찾아 취약화까지 갔는데 포식자를 못 잡는 것"이고,
+   * 1 이상이면 "아직 다 못 찾은 것"이라 손댈 축이 완전히 갈린다(대피소 링 반경·시야·이동
+   * 속도 ↔ 취약화 후 보스 HP·DPS). 구 `chaseDevicesLeft`(반격 장치 잔존)가 하던 역할을
+   * 그대로 승계한다 — 장치는 2026-08-05 재설계로 사라졌다(`sim/modes/chase.ts`).
    *
-   * 전 런 평균이라 **승리 런(항상 0)이 섞여 희석된다** — 판정은 `runs.json` 을 결과별로
-   * 교차집계해서 한다. 표의 이 열은 "추격 모드에 잔존 장치가 존재하는가"의 존재 신호일 뿐이다.
-   */
-  chaseDevicesLeft: {
-    label: '장치잔존',
-    kind: 'mean',
-    digits: 2,
-    of: (s) => (s.config.planetMode === PLANET_MODE.chase ? chaseAliveCounterDevices(s) : 0),
-  },
-  /**
-   * 런 종료 시점의 **장치 총 잔여 HP 비율**(살아있는 장치 hp 합 ÷ 장치 5개 최대 HP 합).
-   * 추격 모드 전용, 그 외는 항상 0.
-   *
-   * ## 왜 `chaseDevicesLeft` 로는 부족한가 (2026-08-03)
-   * 장치 **수**는 정수라 "5개 그대로"가 두 가지 완전히 다른 상태를 같은 값으로 보고한다:
-   * ① 화력이 가고 있는데 첫 장치를 못 끝냈다(잔여 비율 0.85 — 축은 **HP**) ② 화력이 아예
-   * 안 간다(잔여 비율 1.00 — 축은 **조준·접근**). B7 진단이 여기서 갈렸다: Lv100 타임아웃의
-   * 64%가 5/5 였는데 HP 를 18% 깎아도 그 수가 34→31 로 안 움직였고, 1/10 로 만들어야
-   * 사라졌다 — 수만 보면 두 가설을 못 가른다.
+   * ## ⚠️ 구 지표 두 개는 왜 지웠나
+   * `chaseDevicesLeft`·`chaseDeviceHpFrac` 는 이제 **어떤 런에서도 정확히 0** 이다(장치가
+   * 배치되지 않는다). 0 을 계속 보고하는 열은 "장치가 다 깨졌다"로 읽혀 진단을 정반대로
+   * 이끈다 — 이 저장소가 계측기 고장으로 네 레인을 태운 부류가 정확히 그것이다. 그래서
+   * 남기지 않고 갈아 끼운다.
    *
    * 승리 런은 정의상 0 이라 전 런 평균은 승률에 끌려간다. 판정은 `runs.json` 을 결과별로
-   * 교차집계해서 한다(`chaseDevicesLeft`·`purifyEnd` 와 같은 규율).
+   * 교차집계해서 한다(`purifyEnd` 와 같은 규율).
    */
-  chaseDeviceHpFrac: {
-    label: '장치잔여HP',
+  chaseSheltersLeft: {
+    label: '대피소잔존',
     kind: 'mean',
-    digits: 3,
-    of: (s) => {
-      if (s.config.planetMode !== PLANET_MODE.chase) return 0;
-      const max = chaseCounterDeviceHp(s.config.stage ?? 1) * CHASE_COUNTER_DEVICE_COUNT;
-      if (max <= 0) return 0;
-      let left = 0;
-      for (const e of s.entities) {
-        if (!e.dead && isCounterDevice(e)) left += e.hp;
-      }
-      return left / max;
-    },
+    digits: 2,
+    of: (s) =>
+      s.config.planetMode === PLANET_MODE.chase
+        ? Math.max(0, chaseShelterTotal(s) - chaseSheltersSecured(s))
+        : 0,
   },
   /**
    * 런 종료 시점에 **바닥에 남아 수거되지 않은 전리품 수**.

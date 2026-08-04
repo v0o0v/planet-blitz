@@ -25,8 +25,18 @@ export interface SoundFrame {
   playerHp: number;
   /** 획득 자원(world.resources) — 픽업 감지. */
   resources: number;
-  /** 보스 엔티티 존재 여부(등장 감지). */
-  hasBoss: boolean;
+  /**
+   * **보스전이 열렸는가**(등장 감지). 이름 그대로 "보스 엔티티가 있는가"가 아니다.
+   *
+   * ## 왜 존재 여부가 아닌가 (2026-08-05 사용자 신고 "보스 등장 시 사운드 추가")
+   * 추격(니플헤임)은 포식자가 **런 시작부터 boss 엔티티로 존재**한다. 존재 여부로 상승 에지를
+   * 보면 첫 프레임이 곧 기준선이라 등장음이 **영영 울리지 않았다** — 정작 이 무대에서 극적인
+   * 순간(대피소를 다 찾아 포식자가 취약해지는 그 틱)은 존재 여부가 변하지 않는다.
+   *
+   * 그래서 호출부(main.ts)가 "지금부터 싸울 수 있는가"를 판단해 넘긴다. 일반 무대에서는 보스
+   * 스폰과 동시에 참이라 기존 거동이 그대로다(구 필드명 `hasBoss` 의 의미를 포함한다).
+   */
+  bossEngaged: boolean;
   /** 플레이어 탄환 수(발사 감지 — 증가분만 신규 발사로 취급). */
   bulletCount: number;
   /**
@@ -193,7 +203,10 @@ export class RunSoundObserver {
     const prevOver = p.gameOver || p.victory;
 
     if (f.level > p.level) this.audio.play('levelUp');
-    if (f.hasBoss && !p.hasBoss) this.audio.play('boss');
+    // ⚠️ **보스 등장음은 의도적으로 없다**(사용자 선택 2026-08-05 — 청취실 X0). 등장 신호는
+    // `BossWarnLoop`(render/bossWarn.ts)의 반복이 **끊기는 정적**과 보스 BGM 전환이 함께 낸다.
+    // 여기서 스팅어를 울리면 그 정적이 메워져 구조가 무너진다 — `bossEngaged` 는 예고 루프를
+    // 멈추는 신호로만 쓰이고(main.ts), 이 관찰자는 그것으로 소리를 내지 않는다.
     if (f.kills > p.kills) this.audio.play('kill');
     if (f.resources > p.resources) this.audio.play('pickup');
     if (f.bulletCount > p.bulletCount) {

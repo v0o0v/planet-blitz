@@ -117,27 +117,31 @@ function invasionCaution(inv: InvasionHudState): string {
 }
 
 /**
- * 대피소 **도달 알림** 문구(없으면 null). 도달 자체는 sim 이 판정하고(`chaseShelterReached` →
- * 세그먼트 전진), 여기서는 그 결과의 **상승 에지**만 본다 — 렌더러의 방어막 링과 같은 신호를
+ * 대피소 **확보 알림** 문구(없으면 null). 확보 자체는 sim 이 판정하고(`updateChaseShelters` →
+ * `aux1 = 1`), 여기서는 확보 **수의 상승 에지**만 본다 — 렌더러의 방어막 링과 같은 신호를
  * 글로 한 번 말하는 자리다.
  *
- * 순수 함수로 뽑은 이유: 호출부(main 렌더 루프)에 두면 이 판정이 **실시간 플레이로만** 검증
- * 가능해진다(fast-forward 는 렌더 프레임을 건너뛰어 에지를 못 만든다). 조건이 넷이나 되므로
- * (모드·기준선 유무·상승·보스 구간 제외) 규칙 자체는 여기서 잠근다.
+ * ## 왜 세그먼트가 아니라 확보 수인가 (2026-08-05 재설계)
+ * 예전에는 세그먼트 전진(= 대피소 도달)의 상승 에지를 봤다. 지금은 대피소 10곳과 세그먼트
+ * 6구간이 **1:1 이 아니다** — 확보 수가 마일스톤(2·4·5·7·9·10)을 넘을 때만 세그먼트가 오른다.
+ * 세그먼트를 계속 보면 대피소를 찾았는데 화면이 조용한 프레임이 절반 넘게 생긴다. 사용자에게
+ * 알려야 할 사건은 "찾았다" 그 자체다.
  *
- * @param prevSegment 직전 렌더 프레임의 세그먼트 인덱스. `-1` = 기준선 없음(런 시작 직후) →
- *                    알리지 않는다. 새 런의 첫 구간을 "도달"로 오인하지 않기 위한 계약이다.
+ * 순수 함수로 뽑은 이유: 호출부(main 렌더 루프)에 두면 이 판정이 **실시간 플레이로만** 검증
+ * 가능해진다(fast-forward 는 렌더 프레임을 건너뛰어 에지를 못 만든다).
+ *
+ * @param prevSecured 직전 렌더 프레임의 확보 수. `-1` = 기준선 없음(런 시작 직후) → 알리지
+ *                    않는다. 새 런의 첫 프레임을 "확보"로 오인하지 않기 위한 계약이다.
  */
 export function shelterArrivalMessage(
   mode: number,
-  prevSegment: number,
-  segment: number,
-  bossSegment: boolean,
+  prevSecured: number,
+  secured: number,
+  total: number,
 ): string | null {
   if (mode !== PLANET_MODE.chase) return null;
-  if (prevSegment < 0 || segment <= prevSegment) return null;
-  if (bossSegment) return null; // 보스 구간 진입은 그 자체가 큰 연출이라 겹쳐 말하지 않는다.
-  return t('hud.obj.shelterReached', { n: segment });
+  if (prevSecured < 0 || secured <= prevSecured) return null;
+  return t('hud.obj.shelterReached', { n: secured, goal: total });
 }
 
 /**
@@ -167,16 +171,19 @@ export function runObjective(
   // --- 1줄: 목표 + 진행 카운터 ---------------------------------------------
   let objective: string | null = null;
   if (eta !== undefined && !eta.bossActive) {
-    const gate =
-      eta.gate === 'kills'
-        ? t('hud.bossEta.kills', { n: eta.current, goal: eta.goal })
-        : t(`hud.bossEta.${eta.gate}` as MessageKey);
-    // 불리언 게이트(대피소·정화·격전…)는 문구만으로는 "몇 번째인지"를 못 말한다 — 구간 카운터를
-    // 붙여야 *이걸 하면 진행된다* 가 눈에 보인다. 처치 할당은 이미 제 카운터를 갖고 있다.
-    objective =
-      eta.gate === 'kills'
-        ? gate
-        : `${gate} · ${t('hud.obj.count', { n: eta.segment, total: eta.totalSegments })}`;
+    // 카운터형 게이트(처치·대피소)는 제 카운터를 그대로 쓴다. 대피소는 2026-08-05 재설계로
+    // "몇 번째 구간인가"가 아니라 **몇 곳을 찾았는가**가 곧 보스까지의 거리다 — 구간 카운터를
+    // 붙이면 같은 화면에 진행도가 둘이 되어 어느 쪽이 보스를 부르는지 다시 흐려진다.
+    if (eta.gate === 'kills') {
+      objective = t('hud.bossEta.kills', { n: eta.current, goal: eta.goal });
+    } else if (eta.gate === 'shelter') {
+      objective = t('hud.bossEta.shelter', { n: eta.current, goal: eta.goal });
+    } else {
+      // 남은 불리언 게이트(정화·격전·거리·수축)는 문구만으로는 "몇 번째인지"를 못 말한다 —
+      // 구간 카운터를 붙여야 *이걸 하면 진행된다* 가 눈에 보인다.
+      const gate = t(`hud.bossEta.${eta.gate}` as MessageKey);
+      objective = `${gate} · ${t('hud.obj.count', { n: eta.segment, total: eta.totalSegments })}`;
+    }
   }
 
   // --- 2줄: 상황 경고(우선순위 순) → 없으면 모드 고정 주의 -------------------
