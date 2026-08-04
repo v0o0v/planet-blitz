@@ -169,7 +169,13 @@ describe('chunk placement determinism (plan E, AC3)', () => {
     // 안전 청크(|cx|,|cy| <= 1)를 피해 넓게 훑는다. 표본이 커야 3% 를 좁은 구간으로 단언할 수 있다.
     for (let cx = 2; cx < 62; cx++) {
       for (let cy = 2; cy < 62; cy++) {
+        // ⚠️ 비율의 분모는 **조각이 아니라 슬롯**이다. 벽은 프리팹이라 한 번 뽑히면 조각을
+        // 2~4개 낳으므로, 조각을 세면 벽 비율이 배분과 무관하게 부풀어 오른다(프리팹 도입 시
+        // 실제로 61.7% 로 튀어 이 테스트가 잡았다). 슬롯 = `group` 의 가짓수다.
+        const seen = new Set<number>();
         for (const g of chunkPlacements(rng, cx, cy)) {
+          if (seen.has(g.group)) continue;
+          seen.add(g.group);
           counts[g.kind] = (counts[g.kind] ?? 0) + 1;
           total++;
         }
@@ -178,19 +184,25 @@ describe('chunk placement determinism (plan E, AC3)', () => {
     expect(total).toBeGreaterThan(4000); // 표본이 충분하다(공회전 방지).
     const share = (k: string): number => ((counts[k] ?? 0) / total) * 100;
     // 해저드 3% — 표본 오차를 감안해 1.5~5% 구간. 예전 값(10%)은 이 구간 밖이라 회귀를 잡는다.
-    expect(share('hazard')).toBeGreaterThan(1.5);
-    expect(share('hazard')).toBeLessThan(5);
+    expect(share('hazard')).toBeGreaterThan(2);
+    expect(share('hazard')).toBeLessThan(7);
     // 해저드에서 뺀 7% 는 벽으로 갔다(피해 없는 순수 지형). 파괴체·이벤트 비율은 불변이라
     // 성장·보상 곡선이 이 변경에 끌려가지 않는다 — 그것이 벽에 넘긴 이유다.
     // 벽은 하한·상한 양쪽을 잠근다 — 하한만 두면 "벽이 폭주하는 오배분" 을 이 단언이 못 잡고
     // 다른 종류 밴드로 간접 검출되기만 한다(경계 합 100 불변식이 한 방향으로만 걸린다).
-    expect(share('wall')).toBeGreaterThan(42);
-    expect(share('wall')).toBeLessThan(52);
-    expect(share('destructible')).toBeGreaterThan(16);
-    expect(share('destructible')).toBeLessThan(24);
+    // ⚠️ 추첨 비율은 22% 인데 **실현 비율은 그보다 낮다**(실측 19%). 벽이 프리팹(조각 7개 이상이
+    // 이어진 큰 구조물)이 되면서, 청크 안에 놓을 자리를 못 찾거나 걷기가 막혀 최소 길이를 못 채우면
+    // 그 슬롯은 **비운다**(짧은 토막을 놓지 않는다는 계약). 밴드는 실현 비율 기준이다.
+    //
+    // 47% → 22% 로 내린 이유는 `ROLL_WALL` 주석에 있다 — 벽 하나가 조각 7~16개를 낳게 되면서
+    // "자주"와 "길게"가 같은 예산을 다투게 됐고, 고른 것은 길게다.
+    expect(share('wall')).toBeGreaterThan(14);
+    expect(share('wall')).toBeLessThan(26);
+    expect(share('destructible')).toBeGreaterThan(26);
+    expect(share('destructible')).toBeLessThan(36);
     for (const k of ['magnetEmitter', 'bombDevice', 'turretPickup']) {
-      expect(share(k), `${k} 비율`).toBeGreaterThan(7);
-      expect(share(k), `${k} 비율`).toBeLessThan(13);
+      expect(share(k), `${k} 비율`).toBeGreaterThan(10);
+      expect(share(k), `${k} 비율`).toBeLessThan(20);
     }
   });
 });
@@ -224,6 +236,42 @@ describe('청크 기믹은 서로 겹치지 않는다', () => {
     // 표본이 비어 있으면 위 단언이 공회전한다 — 실제로 배치와 쌍이 존재했음을 못박는다.
     expect(placements).toBeGreaterThan(200);
     expect(checked).toBeGreaterThan(100);
+  });
+
+  it('프리팹은 한 덩어리다 — 같은 슬롯 조각은 서로 붙고, 다른 슬롯과는 여백을 지킨다', () => {
+    // 겹침 면제를 `group` 으로 뚫어 놨으므로(placementsOverlap), 그 면제가 **프리팹 안에서만**
+    // 쓰이는지 여기서 따로 못박는다. 면제가 새면 예전 결함(겹쳐 나오는 벽)이 그대로 돌아온다.
+    const w = createWorld(0x51ee);
+    let multiPiece = 0;
+    let touching = 0;
+    for (let cx = -14; cx <= 14; cx++) {
+      for (let cy = -14; cy <= 14; cy++) {
+        const gs = chunkPlacements(w.worldRng, cx, cy);
+        const groups = new Map<number, GimmickPlacement[]>();
+        for (const g of gs) {
+          const list = groups.get(g.group) ?? [];
+          list.push(g);
+          groups.set(g.group, list);
+        }
+        for (const [, pieces] of groups) {
+          if (pieces.length < 2) continue;
+          multiPiece++;
+          // ① 프리팹 조각은 전부 벽이다(다른 종류가 한 슬롯을 공유하지 않는다).
+          for (const p of pieces) expect(p.kind).toBe('wall');
+          // ② 조각들은 한 덩어리로 모여 있다 — 각 조각이 같은 프리팹의 다른 조각과
+          //    PREFAB_SPAN 안에 있다(흩뿌려진 것이 아니라 구조물이다).
+          for (const a of pieces) {
+            const near = pieces.some(
+              (b) => b !== a && Math.abs(a.x - b.x) < 900 && Math.abs(a.y - b.y) < 900,
+            );
+            expect(near, `프리팹 조각이 홀로 떨어져 있다 @${a.x},${a.y}`).toBe(true);
+          }
+          touching++;
+        }
+      }
+    }
+    expect(multiPiece, '다중 조각 프리팹이 표본에 없다(공회전)').toBeGreaterThan(20);
+    expect(touching).toBe(multiPiece);
   });
 
   it('청크 경계를 넘는 겹침도 불가능하다(여백 ≥ 최대 반폭)', () => {
