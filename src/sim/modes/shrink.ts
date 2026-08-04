@@ -92,6 +92,53 @@ export const SHRINK_SPAWN_RING_RADIUS = 3000;
  * 여유를 준다(정수). TODO(밸런스).
  */
 export const SHRINK_SPAWN_INSET = 16;
+/**
+ * 스폰을 링 경계에서 안쪽으로 떼어 놓는 **거리(= 적이 게이트를 풀려면 나가야 하는 거리)**.
+ *
+ * ## 왜 인셋(16)만으로는 안 됐는가 — 사용자 신고 2026-08-04
+ * "보스 게이지가 초반에는 잘 안 늘다가 후반에 갑자기 늘어남." 게이지 산식은 무죄다(6칸
+ * 불리언 계단, `bossProgress.ts`). 무너진 것은 **게이트 난이도**였다.
+ *
+ * 구 산식은 `spawnR = min(safeRadius, 3000) − 16` 이라, 적이 링 밖으로 나가야 하는 거리가
+ *
+ * | safeRadius | 탈출 여유 | 돌격체(380u/s) 탈출 |
+ * |---|---|---|
+ * | 5500(시작) | 2516 | 6.6초 |
+ * | 3500 | 516 | 1.4초 |
+ * | **3000 이하** | **16 (고정)** | **0.04초** |
+ *
+ * 즉 `safeRadius` 가 스폰 링(3000) 밑으로 내려가는 **약 46~54초 지점부터** 돌격체가 플레이어를
+ * 관통해 오버슛하기만 해도 "링 전멸"이 되어 칸이 즉시 넘어갔다. 런의 앞 절반은 "다 죽여야
+ * 하는" 게이트, 뒤 절반은 사실상 공짜 게이트 — 사용자 체감과 정확히 일치한다.
+ *
+ * 이 상수는 그 여유를 **런 내내 일정하게** 만든다. `safeRadius ≥ 3000` 구간(= 초반)은
+ * 상한 3000 이 여전히 지배하므로 **거동이 사실상 그대로**고(2516 → 2500), 무너지던 후반만
+ * 700 으로 복원된다. 즉 초반 난이도(실측 클리어율 66.8% 가 맞춰진 자리)를 건드리지 않는다.
+ *
+ * ⚠️ {@link SHRINK_SPAWN_INSET}(16)의 원래 목적인 Taylor sin/cos 경계 오분류 방어는 이 값이
+ * 그것보다 훨씬 크므로 자연히 포함된다. 다만 링이 최소 반경 근처로 조여져 마진을 다 뺄 수
+ * 없을 때를 위해 아래 `shrinkSpawnRadius` 가 **비율 하한**을 함께 건다. TODO(밸런스).
+ */
+export const SHRINK_SPAWN_MARGIN = 700;
+/**
+ * 마진의 **반경 비례 상한**(백분율, 정수) — 실제 마진은 `min(MARGIN, floor(r × PERCENT/100))`.
+ *
+ * ⚠️ 이 상한이 없으면 링이 최소 반경(600)까지 조여졌을 때 마진 700 이 반경보다 커서 **적이
+ * 전부 원점 근처에 겹쳐 스폰**된다. 실측으로 그 상태의 런은 격전 세그먼트에서 **36,000틱을
+ * 돌려도 못 빠져나왔다**(증인 `0xd00d`) — 링 게이트를 고치려다 무대를 통째로 막은 것이다.
+ * 비율 상한을 두면 마진이 링과 함께 줄어 배치가 항상 퍼진 채로 유지된다.
+ *
+ * | safeRadius | 마진 | 스폰 반경 | 탈출 여유 |
+ * |---|---|---|---|
+ * | 5500 | 700 | 2300(상한 지배) | 3200 |
+ * | 3000 | 700 | 2300 | 700 |
+ * | 2000 | 700 | 1300 | 700 |
+ * | 1000 | 350 | 650 | 350 |
+ * | 600(하한) | 210 | 390 | 210 |
+ *
+ * 구값(인셋 16 고정)과 비교하면 후반 여유가 **13~44배**로 복원된다. TODO(밸런스).
+ */
+export const SHRINK_SPAWN_MARGIN_PERCENT = 35;
 
 /** 수축지대 런타임(정수 2필드). 원점 0,0 이 안전 반경의 중심이다. */
 export interface ShrinkRuntime {
@@ -139,11 +186,19 @@ export function shrinkSpawnRadius(state: WorldState): number {
   const r = shrinkSafeRadius(state);
   if (r <= 0) return 0;
   // 스폰은 항상 안전 반경 **미만**이어야 링 전멸 게이트가 성립한다(SHRINK_SPAWN_INSET 근거 참조).
-  // safeRadius 를 스폰 링 반경 상한으로 min 한 뒤, 인셋으로 경계에서 엄격히 떼어 낸다 — safeRadius
-  // 가 SHRINK_SPAWN_RING_RADIUS 와 같은 경계값(예: 정확히 1400)일 때도 안쪽이 보장된다.
+  // safeRadius 를 스폰 링 반경 상한으로 min 한 뒤, **마진**만큼 경계에서 떼어 낸다 — 인셋(16)
+  // 하나로는 링이 상한 밑으로 조여진 순간 여유가 16 으로 고정돼 게이트가 공짜가 됐다
+  // (SHRINK_SPAWN_MARGIN 주석의 실측표). 정수 산술뿐 — 부동소수 금지.
   const capped = r < SHRINK_SPAWN_RING_RADIUS ? r : SHRINK_SPAWN_RING_RADIUS;
-  const inset = capped - SHRINK_SPAWN_INSET;
-  return inset < 0 ? 0 : inset;
+  // 마진은 **반경에 비례해 상한**이 걸린다 — 조여진 링에서 원점 겹침 스폰을 막는다
+  // (SHRINK_SPAWN_MARGIN_PERCENT 주석의 36,000틱 정체 실측). `Math.floor` 로 접어 정수 유지.
+  const scaled = Math.floor((r * SHRINK_SPAWN_MARGIN_PERCENT) / 100);
+  const margin = SHRINK_SPAWN_MARGIN < scaled ? SHRINK_SPAWN_MARGIN : scaled;
+  const out = capped - margin;
+  // 마지막 안전망 — 어떤 경우에도 경계보다 최소 인셋만큼은 안쪽이어야 한다(Taylor 오분류 방어).
+  const hardCap = r - SHRINK_SPAWN_INSET;
+  const clamped = out > hardCap ? hardCap : out;
+  return clamped < 0 ? 0 : clamped;
 }
 
 /**

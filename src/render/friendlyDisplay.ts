@@ -84,11 +84,34 @@ export function isSizeCapped(kind: EntityKind): boolean {
 }
 
 /**
+ * 판정 반경이 곧 표시 반경이어야 하는 kind — `artScale` 확대를 받지 않는다.
+ *
+ * ## 왜 대피소가 여기 있는가 (사용자 신고 2026-08-04)
+ * "대피소에 갔는데 도착 체크가 안 된다." 격전 세그먼트 결함(`sim/waves.ts`
+ * `midClashGateActive`)이 주 원인이었지만, **그와 별개로 그림이 판정보다 컸다**:
+ *
+ * | | 계산 | 반경 |
+ * |---|---|---|
+ * | 스프라이트(구) | `140 × 2 × 1.5 / 2` | **210** |
+ * | 실제 도달 판정 | `shelter.radius + player.radius = 140 + 32` | **172** |
+ * | 강조 링 | `g.circle(e.x, e.y, e.radius)` | 140 |
+ *
+ * 월드=화면 1:1 이라 **패드 그림 위에 완전히 서 있는데도 판정이 안 드는 외곽 38px 링**이
+ * 있었다(그림 면적의 약 33%). 셋이 서로 다른 "여기까지"를 동시에 보여주던 상태다.
+ *
+ * `artScale` 를 빼면 표시 반경이 `radius`(140) 가 되어 **판정(172)보다 항상 작다** — 보이는
+ * 패드를 밟으면 언제나 든다. 크기 상한(`SIZE_CAPPED_KINDS`)으로 처리하지 않는 이유는 그쪽이
+ * 48px 고정이라 "어디까지 안전한가"라는 넓이 정보 자체를 지우기 때문이다.
+ */
+const UNSCALED_KINDS: ReadonlySet<EntityKind> = new Set<EntityKind>(['shelter']);
+
+/**
  * 표시 지름(px). 상한 대상이면 `min(기본 환산, 기체 크기)`, 아니면 기본 환산 그대로.
  * `artScale` 는 호출측(entityRenderer)의 ART_SCALE 을 받아 두 곳의 상수가 갈라지지 않게 한다.
+ * {@link UNSCALED_KINDS} 는 그 확대를 받지 않는다(판정 반경 = 표시 반경).
  */
 export function displaySize(kind: EntityKind, radius: number, artScale: number): number {
-  const base = radius * 2 * artScale;
+  const base = radius * 2 * (UNSCALED_KINDS.has(kind) ? 1 : artScale);
   return isSizeCapped(kind) ? Math.min(base, PICKUP_DISPLAY_SIZE) : base;
 }
 

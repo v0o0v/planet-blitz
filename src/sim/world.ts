@@ -1436,9 +1436,32 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
    */
   const designedRun = invasion3 !== undefined;
 
+  /**
+   * 청크 지형만 따로 끄는 조건 — **레이싱(아르케)**.
+   *
+   * ## 사용자 신고 2026-08-04: "아르케에서 우측이 막혀서 무조건 벽에 부딪힐 때가 있음"
+   * 레이싱은 `placeRacingCourse` 가 분기 분리벽과 부스트 패드로 **설계된 코스**를 깐다. 그런데
+   * `designedRun` 이 침공만 보고 있어서 그 위에 절차 청크 프리팹이 그대로 덮였고, 아르케는
+   * 벽 프리팹의 감김 성향이 최대(`PLANET_WALL_STYLE` 의 `enclose: 88`)라 실측으로
+   *
+   *  - 프리팹의 **16.1%** 가 플레이어(전폭 64)가 들어가고도 남는 **완전 밀폐 포켓**을 갖고
+   *  - 프리팹 내부 빈칸의 **56.4%** 가 진행 방향(+X)으로 나가는 길이 막혀 있고
+   *  - **부스트 패드의 4~12%** 가 벽에 통째로 묻히고
+   *  - 코스 슬라이스의 0.018% 는 자유 폭이 플레이어 전폭에도 못 미친다
+   *
+   * 이게 "우측만" 막히는 것으로 체감되는 이유는 좌표 편향이 아니라 **앵커가 +X 한 방향으로만
+   * 밀기 때문**이다(`scrollMode.ts` `PLAYER_ANCHOR_PERCENT`, 틱당 +8). 서쪽으로 입을 벌린 ㄷ 자
+   * 구조물에 앵커가 밀어 넣으면 탈출 방향은 창이 오는 반대쪽뿐이고, 그 상대 속도는 −4/틱인데
+   * 창은 +12/틱로 온다 — 사실상 탈출 불가다.
+   *
+   * 그래서 **설계된 코스가 있는 무대에서는 절차 지형을 얹지 않는다.** 침공과 같은 규율이다.
+   * ⚠️ 적·보급은 그대로다 — 이 플래그는 `activateChunks` 하나만 끈다(`designedRun` 과 다르다).
+   */
+  const designedTerrain = designedRun || state.config.planetMode === PLANET_MODE.racing;
+
   // Materialise/cull scroll-map gimmicks around the player, then rebuild the
   // active-wall list (both before movement so walls obstruct this tick).
-  if (!designedRun) activateChunks(state, player);
+  if (!designedTerrain) activateChunks(state, player);
   rebuildActiveWalls(state);
   // 침공 회랑은 활성 벽이 수십 개라 탄-벽 직접 스윕(O(탄 × 벽))이 무너진다. 인덱스를 여기서
   // 한 번 재빌드해 이번 틱 stepProjectiles 가 질의만 하게 한다.

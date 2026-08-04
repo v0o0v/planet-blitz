@@ -13,7 +13,12 @@ import { eliteAffix } from './elite.js';
 import { windowCenterX, windowCenterY } from './invasion/scroll.js';
 import { chaseVisionRadius } from './modes/chase.js';
 import { shrinkSafeRadius } from './modes/shrink.js';
-import { contaminationCellCount, CONTAMINATION_CRITICAL_CELLS } from './modes/contamination.js';
+import {
+  contaminationCellCount,
+  CONTAMINATION_CRITICAL_CELLS,
+  isContaminationNode,
+} from './modes/contamination.js';
+import { midClashGateActive } from './waves.js';
 import { PLANET_MODE } from './planetMode.js';
 
 export interface EntitySnapshot {
@@ -74,6 +79,22 @@ export interface EntitySnapshot {
    * 부재는 false(미도달)로 다룬다. 스냅샷은 해시 대상이 아니라 sim 계약은 불변이다.
    */
   spent?: boolean;
+  /**
+   * 오염 노드 전용(render-only): **톡사르에서 부수면 정화되는 기물인가.**
+   *
+   * `destructible` 은 세 용도가 공유하는 kind 다 — 절차 청크 파괴물(`ownerId = 0`), 추격 반격
+   * 장치(`COUNTER_DEVICE_MARK`), 오염 노드(`CONTAMINATION_NODE_MARK`). 셋을 가르는 것은
+   * `ownerId` 인데 **`EntitySnapshot` 에 `ownerId` 가 없다** → 렌더는 지금 이 셋을 구별할 수단이
+   * 자체적으로 없다. 그래서 sim 이 이미 아는 판정(`isContaminationNode`)을 여기서 한 번만 편다.
+   *
+   * 용도: 머리 위 HP 바(`render/entity/enemyHpBar.ts`). 오염 노드는 HP 가 40,000급이라 "얼마나
+   * 부쉈는지"가 안 보이면 정화가 진행되는지 알 수 없다(사용자 요청 2026-08-04). 반대로 청크
+   * 파괴물 전부에 바를 띄우면 전 행성 화면이 바뀌므로 kind 만으로 켜서는 안 된다.
+   *
+   * `permanent`·`spent` 와 같은 이유로 **선택 필드**다(테스트가 스냅샷 리터럴을 직접 만든다).
+   * 부재는 false 로 다룬다. 스냅샷은 해시 대상이 아니라 sim 계약은 불변이다.
+   */
+  objectiveNode?: boolean;
 }
 
 /** A support heal beam, for render only. */
@@ -170,8 +191,13 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
                 // 는 `aux0 === segmentIndex` 만 본다). 6개가 전부 같은 모습으로 서 있으면 어디로
                 // 가야 하는지 화면에서 알 수 없었다(사용자 신고 2026-07-27) — 렌더·레이더가
                 // 목표 대피소를 가르도록 sim 판정과 **같은 식**을 여기서 한 번만 편다.
+                // ⚠️ **격전 세그먼트에서는 어떤 대피소도 목표가 아니다**(사용자 신고 2026-08-04
+                // "간혹 대피소에 가도 체크가 안 된다"). 그 구간의 전진 게이트는 리더 처치로
+                // 바뀌는데(`midClashGateActive`) 여기서 그것을 안 봐서, 게이트가 아닌 대피소를
+                // 초록 강조 + 링 + 화면밖 화살표 + 레이더로 가리키고 있었다. 판정식은 sim 과
+                // 같은 것을 쓴다 — 조건을 여기서 다시 적으면 다시 갈라진다.
                 e.kind === 'shelter'
-                ? e.aux0 === state.wave.segmentIndex
+                ? e.aux0 === state.wave.segmentIndex && !midClashGateActive(state)
                 : false,
       flash: e.kind === 'boss' && e.timer > 0,
       // 보스 페이즈(0/1/2). 보스가 아니면 의미가 없으므로 0 — 렌더는 kind 로 먼저 가른다.
@@ -181,6 +207,9 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
       permanent: e.kind === 'hazard' && e.life < 0,
       // 이미 지나간 대피소(= 지난 세그먼트의 것). `active` 와 같은 식을 여기서 한 번만 편다.
       spent: e.kind === 'shelter' && e.aux0 < state.wave.segmentIndex,
+      // 오염 노드(톡사르). `destructible` 은 셋이 공유하는 kind 라 렌더가 스냅샷만으로는
+      // 못 가른다 — `ownerId` 는 스냅샷에 없다. 여기서 한 번만 편다(`permanent`·`spent` 선례).
+      objectiveNode: isContaminationNode(e),
     });
     if (e.kind === 'enemy' && e.enemyType === SUPPORT_TYPE && e.phase === 1) {
       beams.push({ x1: e.x, y1: e.y, x2: e.targetX, y2: e.targetY });

@@ -35,8 +35,20 @@ import type { EntitySnapshot } from '../../sim/snapshot.js';
 import type { AdornerContext, EntityAdorner } from './adorner.js';
 import { registerAdornerFactory } from './adorner.js';
 
-/** 바를 붙일 kind. 보스 계열은 HUD 전용 바가 있어 제외한다(위 §보스). */
+/** 바를 **무조건** 붙일 kind. 보스 계열은 HUD 전용 바가 있어 제외한다(위 §보스). */
 export const HP_BAR_KINDS: readonly EntityKind[] = ['enemy', 'formationDrone', 'spawnedDrone'];
+
+/**
+ * 바를 **조건부로** 붙일 kind → 그 조건.
+ *
+ * `destructible` 은 세 용도가 공유한다 — 절차 청크 파괴물(전 행성), 추격 반격 장치, 톡사르
+ * 오염 노드. kind 만으로 켜면 **전 행성의 돌덩이마다 바가 뜬다.** 사용자가 요청한 것은
+ * 톡사르 오염 노드 하나뿐이고(HP 40,000급이라 진척이 안 보이면 정화가 도는지 알 수 없다),
+ * 그것을 가르는 신호가 스냅샷의 `objectiveNode` 다(`sim/snapshot.ts` 참조 — `ownerId` 는
+ * 스냅샷에 없어서 렌더가 자체적으로는 셋을 구별하지 못한다).
+ */
+const CONDITIONAL_HP_BAR_KINDS: ReadonlyArray<readonly [EntityKind, (e: EntitySnapshot) => boolean]> =
+  [['destructible', (e) => e.objectiveNode === true]];
 
 /** 바 높이(px, 월드 좌표계). 얇게 — 실루엣을 덮으면 안 된다. */
 const BAR_H = 5;
@@ -173,4 +185,9 @@ class EnemyHpBarAdorner implements EntityAdorner {
 
 for (const kind of HP_BAR_KINDS) {
   registerAdornerFactory(kind, () => [new EnemyHpBarAdorner()]);
+}
+for (const [kind, predicate] of CONDITIONAL_HP_BAR_KINDS) {
+  // 조건 불충족이면 **빈 배열**을 돌려준다 — 장식자를 만들어 두고 `onFrame` 에서 숨기면
+  // 개체당 컨테이너 2개가 그대로 할당된다(청크 파괴물은 화면에 수십 개다).
+  registerAdornerFactory(kind, (e) => (predicate(e) ? [new EnemyHpBarAdorner()] : []));
 }
