@@ -32,11 +32,45 @@ export const TITLE_ASSET_NAMES = [
 
 export type TitleAssetName = (typeof TITLE_ASSET_NAMES)[number];
 
+/**
+ * 행성 앞에 세우는 보스 실루엣(`assets/title/bosses/*.png`). `scripts/boss-silhouette.mjs` 가
+ * 실제 `boss_*.glb` 에서 굽는다 — 목록과 파일명은 그 스크립트의 출력 규약(`<모델명>_sil.png`)이다.
+ *
+ * ## 왜 키아트와 다른 규칙인가
+ *  - **PNG 다.** 키아트는 페인터리 풀블리드라 WebP 가 14배 이득이었지만, 이쪽은 **알파 실루엣**
+ *    이라 RGB 가 통째로 흰색 상수다. 9장 합계 23KB 로 이미 WebP 로 얻을 것이 없고, PNG 는
+ *    `scripts/` 의존성 0 규약 안에서 만들 수 있다(WebP 는 python PIL 을 따로 태워야 한다).
+ *  - **nearest 가 아니라 linear 도 아니다** — 아래 로더가 키아트와 같은 `linear` 를 건다.
+ *    실루엣은 가장자리가 전부라 확대할 때 계단이 그대로 결함이 된다.
+ *
+ * 색은 여기 없다. RGB 는 흰색으로 구워져 있고 **런타임 tint** 가 짙은 남색 본체와 청록 림
+ * 사본을 만든다(`titleScreen.ts` BOSS_BODY_TINT·BOSS_RIM_TINT).
+ */
+export const BOSS_SILHOUETTE_NAMES = [
+  'boss_arke_sil.png',
+  'boss_berdan_sil.png',
+  'boss_cm_runner_sil.png',
+  'boss_cm_salvage_sil.png',
+  'boss_cm_warlord_sil.png',
+  'boss_kargon_sil.png',
+  'boss_kras_sil.png',
+  'boss_niflheim_sil.png',
+  'boss_toxar_sil.png',
+] as const;
+
+export type BossSilhouetteName = (typeof BOSS_SILHOUETTE_NAMES)[number];
+
 /** basename → Texture(로드 성공) | undefined(미존재/실패). */
-export type TitleTextures = Partial<Record<TitleAssetName, Texture>>;
+export type TitleTextures = Partial<Record<TitleAssetName | BossSilhouetteName, Texture>>;
 
 // 이 파일은 src/ui/pixi/ 라 assets 까지 3단계 상위다(uiTextures.ts 와 같은 규약).
 const TITLE_ASSET_URLS = import.meta.glob('../../../assets/title/*.webp', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>;
+
+const BOSS_SILHOUETTE_URLS = import.meta.glob('../../../assets/title/bosses/*.png', {
   eager: true,
   query: '?url',
   import: 'default',
@@ -47,6 +81,9 @@ export function titleAssetUrl(basename: string): string | undefined {
   for (const key in TITLE_ASSET_URLS) {
     if (key.endsWith(`/${basename}`)) return TITLE_ASSET_URLS[key];
   }
+  for (const key in BOSS_SILHOUETTE_URLS) {
+    if (key.endsWith(`/${basename}`)) return BOSS_SILHOUETTE_URLS[key];
+  }
   return undefined;
 }
 
@@ -54,7 +91,7 @@ export function titleAssetUrl(basename: string): string | undefined {
 export async function loadTitleTextures(): Promise<TitleTextures> {
   const out: TitleTextures = {};
   await Promise.all(
-    TITLE_ASSET_NAMES.map(async (name) => {
+    [...TITLE_ASSET_NAMES, ...BOSS_SILHOUETTE_NAMES].map(async (name) => {
       const url = titleAssetUrl(name);
       if (url === undefined) return;
       try {
