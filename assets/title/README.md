@@ -14,23 +14,6 @@
 
 3D 함선은 이 폴더가 아니라 `assets/models/ship_title.glb` 다(원장은 `assets/models/manifest.json`).
 
-## `bosses/` — 행성 앞 보스 실루엣
-
-`assets/title/bosses/boss_*_sil.png` 는 **손으로 만들지 않는다.** `assets/models/boss_*.glb` 에서
-굽는 파생물이다:
-
-```
-node scripts/boss-silhouette.mjs
-```
-
-보스 모델을 추가·교체하면 **이 명령을 다시 돌려야 한다.** 안 돌리면 그 보스만 타이틀에서 조용히
-빠진다(9종 중 3기를 뽑는 연출이라 화면에 아무 신호도 없다) — `tests/titleAssetPresence.test.ts` 가
-모델 목록과 실루엣 목록을 대조해 그 상태를 잡는다.
-
-WebP 가 아니라 **PNG** 인 이유는 위 표의 키아트와 성질이 다르기 때문이다. 실루엣은 RGB 가 통째로
-흰색 상수인 알파 마스크라 9장 합계가 이미 23KB 고, PNG 는 `scripts/` 의존성 0 규약 안에서 만들 수
-있다(WebP 는 python PIL 을 따로 태워야 한다). 색은 런타임 tint 가 정한다.
-
 ## 왜 배경 모델이 두 개인가
 
 `gpt-image-2` 는 **16:9 를 못 낸다**(`1:1`/`3:2`/`2:3` 뿐). 그래서 화면을 채우는 배경
