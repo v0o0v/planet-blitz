@@ -37,19 +37,30 @@ import { isBoostPad } from '../src/sim/modes/racing.js';
 import {
   placeChaseCourse,
   updateChasePredator,
-  chaseShelterReached,
-  chaseAliveCounterDevices,
+  updateChaseShelters,
+  chaseSegmentCleared,
+  chaseSheltersSecured,
+  chaseShelterTotal,
+  chaseAllSheltersSecured,
+  chaseShelterMilestone,
+  chaseNormalSegments,
+  chaseOnUnsecuredShelter,
   chaseVisionRadius,
-  isCounterDevice,
   isShelter,
+  isShelterSecured,
   isPredatorInvincible,
-  CHASE_COUNTER_DEVICE_COUNT,
   CHASE_SHELTER_COUNT,
+  CHASE_SHELTER_RING_RADIUS,
+  CHASE_SHELTER_RING_RADIUS_OUTER,
   CHASE_VISION_RADIUS,
   CHASE_PREDATOR_SPEED,
   CHASE_PREDATOR_STANDOFF,
-  COUNTER_DEVICE_MARK,
 } from '../src/sim/modes/chase.js';
+
+/** 이 무대의 모든 대피소를 확보 상태로 만든다(전량 확보 게이트 검증용). */
+function secureAll(state: WorldState): void {
+  for (const e of state.entities) if (isShelter(e)) e.aux1 = 1;
+}
 
 const idle: InputFrame = emptyInput();
 /** 런이 접촉·탄 피해로 조기 종료되지 않게 버티는 무대 HP(프로필 파생값이 아니다). */
@@ -102,7 +113,7 @@ function blast(state: WorldState, x: number, y: number, radius: number): void {
 // ---------------------------------------------------------------------------
 
 describe('추격 — 순수 함수', () => {
-  it('placeChaseCourse: 포식자 aux0=0 · bossSpawned · 장치 N개+마커 · 대피소 N개(aux0=세그먼트 인덱스)', () => {
+  it('placeChaseCourse: 포식자 aux0=0 · bossSpawned · 대피소 10개(aux0=인덱스 전수, aux1=0 미확보) · 반격 장치 0개', () => {
     const a = placedState(2);
     // 포식자(boss): 무적(aux0=0) + bossSpawned(두 번째 보스 방지).
     const predator = predatorOf(a) as Entity;
@@ -110,34 +121,52 @@ describe('추격 — 순수 함수', () => {
     expect(predator.aux0).toBe(0);
     expect(isPredatorInvincible(predator)).toBe(true);
     expect(a.bossSpawned).toBe(true);
-    // 반격 장치 N개 + 마커.
-    const devices = a.entities.filter(isCounterDevice);
-    expect(devices.length).toBe(CHASE_COUNTER_DEVICE_COUNT);
-    for (const d of devices) expect(d.ownerId).toBe(COUNTER_DEVICE_MARK);
-    // 대피소 N개 + aux0=세그먼트 인덱스(0..N-1 전수).
+    // 반격 장치는 2026-08-05 재설계로 사라졌다 — 파괴물이 한 개도 배치되지 않는다.
+    expect(a.entities.filter((e) => e.kind === 'destructible').length).toBe(0);
+    // 대피소 N개 + aux0=인덱스(0..N-1 전수) + aux1=0(미확보).
     const shs = shelters(a);
     expect(shs.length).toBe(CHASE_SHELTER_COUNT);
+    expect(CHASE_SHELTER_COUNT).toBe(10);
     expect(shs.map((e) => e.aux0).sort((m, n) => m - n)).toEqual(
       Array.from({ length: CHASE_SHELTER_COUNT }, (_, k) => k),
     );
+    for (const e of shs) expect(isShelterSecured(e)).toBe(false);
+    expect(chaseSheltersSecured(a)).toBe(0);
+    expect(chaseShelterTotal(a)).toBe(CHASE_SHELTER_COUNT);
+  });
+
+  it('대피소는 안/밖 두 링에 번갈아 선다 — 바깥 링은 시야 반경 밖이라 탐색이 필요하다', () => {
+    // 한 링에 다 세우면 시작 지점에서 전부 보여 "다 찾는다" 가 성립하지 않는다. 이 등식이
+    // 깨지면 무대의 난이도 축(이동 거리)이 조용히 사라진다.
+    expect(CHASE_SHELTER_RING_RADIUS_OUTER).toBeGreaterThan(CHASE_VISION_RADIUS);
+    const shs = shelters(placedState(2));
+    for (const e of shs) {
+      const r = Math.hypot(e.x, e.y);
+      const want = e.aux0 % 2 === 0 ? CHASE_SHELTER_RING_RADIUS : CHASE_SHELTER_RING_RADIUS_OUTER;
+      // 허용 오차 1 유닛 — 배치가 sim 의 근사 `cos`/`sin`(결정론용 테이블)을 쓰므로 정확히
+      // 링 위는 아니다. 여기서 재는 것은 "어느 링에 속하는가"이고 두 링은 1000 이나 떨어져 있다.
+      expect(Math.abs(r - want), `대피소 ${e.aux0} 반경 ${r}`).toBeLessThan(1);
+    }
+    // 두 링에 실제로 갈려 있다(전부 한 링에 몰리면 위 등식이 통과해도 의미가 없다).
+    const outer = shs.filter((e) => Math.hypot(e.x, e.y) > CHASE_VISION_RADIUS);
+    expect(outer.length).toBe(CHASE_SHELTER_COUNT / 2);
   });
 
   it('placeChaseCourse 결정론(바이트 동일) — 배치 좌표까지 완전 일치', () => {
     const a = placedState(2);
     const b = placedState(2);
     const strip = (s: WorldState): unknown =>
-      s.entities.map((e) => [e.kind, e.x, e.y, e.radius, e.hp, e.ownerId, e.aux0, e.enemyType]);
+      s.entities.map((e) => [e.kind, e.x, e.y, e.radius, e.hp, e.ownerId, e.aux0, e.aux1, e.enemyType]);
     expect(strip(a)).toEqual(strip(b));
   });
 
-  it('isCounterDevice/isShelter/isPredatorInvincible 는 마커·kind·aux0 로만 판정한다', () => {
-    const dev = blankEntity('destructible');
-    dev.ownerId = COUNTER_DEVICE_MARK;
-    expect(isCounterDevice(dev)).toBe(true);
-    const chunkDestr = blankEntity('destructible'); // ownerId=0(절차 청크)
-    expect(isCounterDevice(chunkDestr)).toBe(false);
+  it('isShelter/isShelterSecured/isPredatorInvincible 는 kind·aux 로만 판정한다', () => {
     const sh = blankEntity('shelter');
     expect(isShelter(sh)).toBe(true);
+    expect(isShelterSecured(sh)).toBe(false); // aux1=0 기본
+    sh.aux1 = 1;
+    expect(isShelterSecured(sh)).toBe(true);
+    const dev = blankEntity('destructible');
     expect(isShelter(dev)).toBe(false);
     const boss = blankEntity('boss');
     boss.aux0 = 0;
@@ -146,43 +175,88 @@ describe('추격 — 순수 함수', () => {
     expect(isPredatorInvincible(boss)).toBe(false);
   });
 
-  it('chaseAliveCounterDevices 는 살아있는 마킹 장치만 센다(dead·비마킹 제외)', () => {
+  it('updateChaseShelters 는 밟은 미확보 대피소만 aux1=1 로 넘긴다(멀거나 이미 확보면 불변)', () => {
     const s = placedState(2);
-    expect(chaseAliveCounterDevices(s)).toBe(CHASE_COUNTER_DEVICE_COUNT);
-    (s.entities.filter(isCounterDevice)[0] as Entity).dead = true;
-    expect(chaseAliveCounterDevices(s)).toBe(CHASE_COUNTER_DEVICE_COUNT - 1);
+    const player = s.entities[0] as Entity;
+    const target = shelters(s)[3] as Entity;
+    // 멀리 있으면 아무것도 확보되지 않는다.
+    player.x = 999_999;
+    updateChaseShelters(s);
+    expect(chaseSheltersSecured(s)).toBe(0);
+    // 밟으면 그 한 곳만 확보된다.
+    player.x = target.x;
+    player.y = target.y;
+    updateChaseShelters(s);
+    expect(isShelterSecured(target)).toBe(true);
+    expect(chaseSheltersSecured(s)).toBe(1);
+    // 재호출은 멱등(두 번 세지 않는다).
+    updateChaseShelters(s);
+    expect(chaseSheltersSecured(s)).toBe(1);
   });
 
-  it('updateChasePredator 는 장치 0개일 때만 포식자를 취약화(aux0=1)한다', () => {
+  it('updateChasePredator 는 **전량 확보** 시에만 포식자를 취약화(aux0=1)한다', () => {
     const s = placedState(2);
     const predator = predatorOf(s) as Entity;
-    // 장치가 남아 있으면 무적 유지.
+    // 한 곳이라도 남아 있으면 무적 유지 — 9/10 에서도 열리면 안 된다.
     updateChasePredator(s);
     expect(predator.aux0).toBe(0);
-    // 전 장치 파괴 → 취약화.
-    for (const e of s.entities) if (isCounterDevice(e)) e.dead = true;
+    const shs = shelters(s);
+    for (let i = 0; i < shs.length - 1; i++) (shs[i] as Entity).aux1 = 1;
+    expect(chaseAllSheltersSecured(s)).toBe(false);
+    updateChasePredator(s);
+    expect(predator.aux0).toBe(0);
+    // 마지막 한 곳까지 확보 → 취약화.
+    (shs[shs.length - 1] as Entity).aux1 = 1;
+    expect(chaseAllSheltersSecured(s)).toBe(true);
     updateChasePredator(s);
     expect(predator.aux0).toBe(1);
   });
 
-  it('chaseShelterReached 는 aux0===segmentIndex 대피소 overlap 만 참이다', () => {
+  it('chaseShelterMilestone: 단조 증가하고 **마지막이 정확히 전량**이다(= 다 찾으면 보스)', () => {
+    const n = chaseNormalSegments();
+    let prev = 0;
+    for (let i = 0; i < n; i++) {
+      const m = chaseShelterMilestone(i, n);
+      expect(m).toBeGreaterThan(prev);
+      expect(Number.isInteger(m)).toBe(true);
+      prev = m;
+    }
+    // 이 등식이 깨지면 "다 찾았는데 보스가 안 나온다"(또는 그 반대)가 된다.
+    expect(chaseShelterMilestone(n - 1, n)).toBe(CHASE_SHELTER_COUNT);
+    // 범위 밖 인덱스는 클램프된다(손상 상태에서 조용히 통과/실패하지 않게).
+    expect(chaseShelterMilestone(-5, n)).toBe(chaseShelterMilestone(0, n));
+    expect(chaseShelterMilestone(999, n)).toBe(CHASE_SHELTER_COUNT);
+  });
+
+  it('chaseSegmentCleared 는 누적 확보 수가 그 구간 마일스톤에 닿아야 참이다', () => {
+    const s = placedState(2);
+    const n = chaseNormalSegments();
+    const need = chaseShelterMilestone(0, n);
+    const shs = shelters(s);
+    for (let i = 0; i < need - 1; i++) (shs[i] as Entity).aux1 = 1;
+    expect(chaseSegmentCleared(s, 0)).toBe(false); // 한 곳 모자라면 전진 없음
+    (shs[need - 1] as Entity).aux1 = 1;
+    expect(chaseSegmentCleared(s, 0)).toBe(true);
+    // 마지막 구간은 전량을 요구한다.
+    expect(chaseSegmentCleared(s, n - 1)).toBe(false);
+    secureAll(s);
+    expect(chaseSegmentCleared(s, n - 1)).toBe(true);
+  });
+
+  it('chaseOnUnsecuredShelter 는 미확보 대피소 overlap 만 참이다(확보 후엔 거짓)', () => {
     const player = blankEntity('player');
     player.id = 1;
     player.radius = 32;
     const sh = blankEntity('shelter');
     sh.id = 2;
     sh.radius = 140;
-    sh.aux0 = 2;
-    sh.x = 0;
-    sh.y = 0;
     const s = { entities: [player, sh] as Entity[] } as unknown as WorldState;
-    // 겹침(같은 좌표) + 인덱스 일치 → 참.
-    expect(chaseShelterReached(s, 2)).toBe(true);
-    // 인덱스 불일치 → 거짓(다른 세그먼트 대피소).
-    expect(chaseShelterReached(s, 1)).toBe(false);
-    // 멀리 떨어지면 → 거짓.
+    expect(chaseOnUnsecuredShelter(s)).toBe(true);
+    sh.aux1 = 1;
+    expect(chaseOnUnsecuredShelter(s)).toBe(false);
+    sh.aux1 = 0;
     player.x = 100000;
-    expect(chaseShelterReached(s, 2)).toBe(false);
+    expect(chaseOnUnsecuredShelter(s)).toBe(false);
   });
 
   it('chaseVisionRadius 는 chase 면 상수, 그 외/undefined 면 0 이다', () => {
@@ -192,11 +266,14 @@ describe('추격 — 순수 함수', () => {
     expect(chaseVisionRadius(undefined)).toBe(0);
   });
 
-  it('CHASE_SHELTER_COUNT 는 일반 세그먼트 수(SEGMENTS.length-1)와 일치한다(desync 가드, 리뷰 LOW)', () => {
-    // 대피소 aux0(0..N-1)가 각 일반 세그먼트에 1:1 대응한다. SEGMENTS 가 바뀌면 초과 세그먼트에
-    // 매칭 대피소가 없어 도주 진행이 정체될 수 있으므로(하드락은 아님 — 포식자 처치 승리는 유지),
-    // 이 등식을 못박아 조용한 desync 를 잡는다.
-    expect(CHASE_SHELTER_COUNT).toBe(SEGMENTS.length - 1);
+  it('대피소 수와 세그먼트 수는 **독립**이다 — 어떤 조합에서도 마일스톤이 전량으로 끝난다', () => {
+    // 구 계약은 `CHASE_SHELTER_COUNT === SEGMENTS.length - 1`(aux0 ↔ 세그먼트 1:1)이었고,
+    // 그 결합이 실제로 desync 를 냈다(세그먼트가 하나 늘자 초과 구간에 대응 대피소가 없어졌다).
+    // 지금은 결합이 없다 — 세그먼트 수가 무엇이든 마지막 마일스톤이 전량이라 구조적으로 안전하다.
+    expect(chaseNormalSegments()).toBe(SEGMENTS.length - 1);
+    for (const n of [1, 2, 3, 6, 7, 13, CHASE_SHELTER_COUNT + 5]) {
+      expect(chaseShelterMilestone(n - 1, n)).toBe(CHASE_SHELTER_COUNT);
+    }
   });
 });
 
@@ -233,21 +310,25 @@ describe('추격 — 정규경로 full-path 통합(니플헤임=chase)', () => {
     expect(predator.aux0).toBe(0);
     blast(w, predator.x, predator.y, predator.radius + 50); // 거대 아군탄 직격
     for (let i = 0; i < 3; i++) stepChase(w);
-    // 취약화 전이라 무피해(반격 장치가 아직 살아 있다).
-    expect(chaseAliveCounterDevices(w)).toBe(CHASE_COUNTER_DEVICE_COUNT);
+    // 취약화 전이라 무피해(대피소가 아직 남아 있다).
+    expect(chaseAllSheltersSecured(w)).toBe(false);
     expect(predator.aux0).toBe(0);
     expect(predator.hp).toBe(hp0);
   });
 
-  it('(c) 반격 장치 전부 파괴 → 포식자 aux0=1(취약) → 아군탄이 hp 를 깎아 처치 → victory(실제 피해 경로)', () => {
+  it('(c) 대피소 전부 확보 → 포식자 aux0=1(취약) → 아군탄이 hp 를 깎아 처치 → victory(실제 피해 경로)', () => {
     const w = createWorld(3, chaseConfig());
-    w.weapon.damage = 0; // 오토어택 개입 배제(장치는 내 거대 탄으로만 파괴).
+    w.weapon.damage = 0; // 오토어택 개입 배제.
     const predator = predatorOf(w) as Entity;
     expect(predator.aux0).toBe(0);
-    // 전 반격 장치에 거대 아군탄.
-    for (const e of w.entities) if (isCounterDevice(e)) blast(w, e.x, e.y, e.radius + 50);
-    for (let i = 0; i < 4; i++) stepChase(w);
-    expect(chaseAliveCounterDevices(w)).toBe(0); // 전부 파괴
+    // 플레이어를 대피소마다 순서대로 세워 **실제 확보 경로**(updateChaseShelters)로 전부 확보한다.
+    const player = w.entities[0] as Entity;
+    for (const sh of shelters(w)) {
+      player.x = sh.x;
+      player.y = sh.y;
+      stepChase(w);
+    }
+    expect(chaseSheltersSecured(w)).toBe(CHASE_SHELTER_COUNT); // 전부 확보
     expect(predator.aux0).toBe(1); // updateChasePredator 가 취약화
     // 취약해진 포식자를 실제 피해로 처치 → 공통 compact→victory.
     for (let i = 0; i < 60 && !w.victory; i++) {
@@ -261,80 +342,71 @@ describe('추격 — 정규경로 full-path 통합(니플헤임=chase)', () => {
     expect(w.victory).toBe(true);
   });
 
-  it('(c-2) 반격 장치는 **자동 조준 대상**이다 — 승리 조건이 조준 밖이면 이 무대는 깰 수 없다', () => {
-    // ⚠️ 이 저장소가 세 번째로 겪은 "맞기는 하지만 조준되지는 않는" 결함의 회귀 가드다
-    //    (선례: 침공 실드 발생기 · 보호막 국면 코어). 이 게임의 사격은 **전부 자동 조준**이고
-    //    `autoAttack` 은 `input.aim` 을 쓰지 않으므로(그 값은 렌더용 `player.angle` 이다),
-    //    `isPlayerTargetable` 에서 빠진 오브젝트는 플레이어가 **의도적으로 부술 수단이 없다.**
-    //    반격 장치가 정확히 그 상태였고, 그래서 추격 모드의 유일한 승리 경로가 유탄 운에
-    //    맡겨져 있었다(실측: 니플헤임 클리어율 18.6%, 만렙 타임아웃 44.8%).
+  it('(c-2) 취약해진 포식자는 **자동 조준**만으로 죽는다 — 승리 조건이 조준 밖이면 이 무대는 깰 수 없다', () => {
+    // ⚠️ 이 저장소가 네 번 겪은 "맞기는 하지만 조준되지는 않는" 결함의 회귀 가드다(선례: 침공
+    //    실드 발생기 · 보호막 국면 코어 · 반격 장치 · 오염 노드). 이 게임의 사격은 **전부 자동
+    //    조준**이라, 조준 목록에 없는 것은 플레이어가 의도적으로 부술 수단이 없다.
     //
-    // 판정을 조준 하나로 좁히기 위해 **이 장치 말고 조준 후보가 될 수 있는 것을 전부 죽인다**
-    // — 이러면 조준 대상이 그 장치이거나(→ 피해) 아무것도 없거나(→ 한 발도 안 나가 hp 불변)
-    // 둘 뿐이라 "유탄이 우연히 맞았다"가 원리적으로 배제된다.
-    //
-    // ⚠️ 죽여도 되는 것은 **잡몹과 다른 장치뿐**이다. 두 가지를 같이 죽이면 안 된다:
-    //    ① 발사체 — 플레이어 자기 탄이 사라져 조준이 멀쩡해도 hp 가 안 깎인다.
-    //    ② 포식자(boss) — 보스 사망은 곧 승리라 `compact()` 가 `victory` 를 세우고 월드가
-    //       그 자리에서 얼어붙는다(틱이 1 에서 멈춘다). 둘 다 실제로 겪은 거짓 실패다.
+    //    2026-08-05 재설계로 이 무대의 파괴 대상은 **포식자 하나**가 됐다 — 즉 승리 경로 전체가
+    //    "취약해진 보스가 조준되는가" 한 줄에 걸린다. 손으로 얹는 거대 탄(`blast`) 없이
+    //    오토어택만으로 hp 가 깎이는지를 본다.
     const w = createWorld(11, chaseConfig());
     const player = w.entities[0] as Entity;
-    const device = w.entities.find(isCounterDevice) as Entity;
-    expect(device).toBeDefined();
-    const hp0 = device.hp;
-    // 사거리 안에 두되 겹치지는 않게(접촉 피해·이동 간섭 배제).
-    player.x = device.x - 300;
-    player.y = device.y;
-    for (let i = 0; i < 120 && device.hp === hp0; i++) {
-      for (const e of w.entities) {
-        if (e === player || e === device) continue;
-        if (e.kind === 'enemy' || e.kind === 'destructible') e.dead = true;
-      }
-      player.x = device.x - 300;
-      player.y = device.y;
+    secureAll(w); // 전량 확보 상태에서 시작(확보 경로 자체는 (c)가 증명한다).
+    const predator = predatorOf(w) as Entity;
+    const hp0 = predator.hp;
+    for (let i = 0; i < 240 && predator.hp === hp0; i++) {
+      // 잡몹이 조준을 가져가지 않게 비운다 — 남는 조준 후보는 포식자뿐이다.
+      for (const e of w.entities) if (e.kind === 'enemy') e.dead = true;
+      // 사거리 안에 두되 겹치지 않게(무적 접촉 즉사·이동 간섭 배제).
+      player.x = predator.x - 300;
+      player.y = predator.y;
       stepChase(w);
     }
-    expect(device.hp, '반격 장치가 자동 조준되지 않아 한 발도 맞지 않았다').toBeLessThan(hp0);
+    expect(predator.aux0, '전량 확보인데 취약화가 안 됐다').toBe(1);
+    expect(predator.hp, '취약해진 포식자가 자동 조준되지 않아 한 발도 맞지 않았다').toBeLessThan(hp0);
   });
 
-  it('(c-3) 오토파일럿은 추격 모드에서 반격 장치 쪽으로 이동한다(측정 가능성 보장)', () => {
-    // 봇이 장치로 가지 않으면 이 무대의 승패는 **측정 자체가 성립하지 않는다** — 실제로
+  it('(c-3) 오토파일럿은 추격 모드에서 미확보 대피소 쪽으로 이동한다(측정 가능성 보장)', () => {
+    // 봇이 대피소로 가지 않으면 이 무대의 승패는 **측정 자체가 성립하지 않는다** — 실제로
     // 기준선 12,600런이 그 상태에서 "니플헤임은 어렵다"는 거짓 신호를 냈다.
     const w = createWorld(13, chaseConfig());
-    const player = w.entities[0] as Entity;
-    const nearest = (): number =>
-      Math.min(
-        ...w.entities
-          .filter((e) => !e.dead && isCounterDevice(e))
-          .map((e) => Math.hypot(e.x - player.x, e.y - player.y)),
-      );
-    // ⚠️ "거리가 줄었다" 로는 **아무것도 증명하지 못한다** — 카이팅만 하는 봇도 90틱 안에
-    //    우연히 가까워진다(이 테스트를 처음 그렇게 써서 뮤테이션 검증을 통과해 버렸다).
-    //    판정은 **접촉 거리까지 수렴했는가**여야 한다. 장치는 원점 링에 고정돼 있으므로
-    //    목표를 향해 가지 않는 봇은 여기까지 오지 않는다.
-    const REACHED = 150; // 장치 반경 70 + 플레이어 반경 32 에 여유.
-    const d0 = nearest();
-    let best = d0;
-    for (let i = 0; i < 900 && best > REACHED; i++) {
+    // ⚠️ "거리가 줄었다" 로는 **아무것도 증명하지 못한다** — 카이팅만 하는 봇도 우연히
+    //    가까워진다. 판정은 **실제로 확보했는가**다. 대피소는 고정 링에 있으므로 목표를 향해
+    //    가지 않는 봇은 한 곳도 밟지 못한다.
+    for (let i = 0; i < 1800 && chaseSheltersSecured(w) === 0; i++) {
       stepWorld(w, w.pendingLevelUp ? { ...emptyInput(), special: packPowerupPick(0) } : autopilotInput(w));
-      const d = nearest();
-      if (d < best) best = d;
     }
-    expect(best, `장치까지 최소 거리 ${d0} → ${best}`).toBeLessThanOrEqual(REACHED);
+    expect(chaseSheltersSecured(w), '봇이 대피소를 한 곳도 못 찾았다').toBeGreaterThan(0);
   });
 
-  it('(d) 대피소 도달로 세그먼트가 전진한다(killGoal 아님 — kills=0 에서 전진)', () => {
+  it('(d) 대피소 확보로 세그먼트가 전진한다(killGoal 아님 — kills=0 에서 전진)', () => {
     const w = createWorld(5, chaseConfig());
     w.weapon.damage = 0; // kills 를 0 으로 고정 → killGoal 게이트 배제(전진하면 대피소뿐).
     expect(w.wave.segmentIndex).toBe(0);
     const player = w.entities[0] as Entity;
-    const shelter0 = shelters(w).find((e) => e.aux0 === 0) as Entity;
-    expect(shelter0).toBeDefined();
-    player.x = shelter0.x;
-    player.y = shelter0.y;
+    const need = chaseShelterMilestone(0, chaseNormalSegments());
+    const shs = shelters(w);
+    // 마일스톤 직전까지는 전진하지 않는다(한 곳만 밟아도 오르면 마일스톤이 무의미하다).
+    for (let i = 0; i < need - 1; i++) {
+      const sh = shs[i] as Entity;
+      player.x = sh.x;
+      player.y = sh.y;
+      stepChase(w);
+    }
+    expect(w.wave.segmentIndex).toBe(0);
+    const last = shs[need - 1] as Entity;
+    player.x = last.x;
+    player.y = last.y;
+    // ⚠️ 확보는 `compact` **이후**(틱 후반)에 일어나고 세그먼트 판정(`updateWaves`)은 틱 전반에
+    //    있다. 그래서 마지막 한 곳을 밟은 틱이 아니라 **그다음 틱**에 전진한다(1프레임 = 16ms,
+    //    화면에서는 같은 순간이다). 순서를 뒤집으면 확보 즉시 전진하지만, `updateChaseShelters`
+    //    가 compact 이후여야 이번 틱에 죽은 엔티티가 반영된다는 계약이 깨진다.
+    stepChase(w);
+    expect(chaseSheltersSecured(w)).toBe(need); // 확보는 이 틱에 끝났다
     stepChase(w);
     expect(w.kills).toBe(0); // 처치 0 — killGoal 로는 절대 전진 못 함
-    expect(w.wave.segmentIndex).toBe(1); // 대피소 도달로 전진
+    expect(w.wave.segmentIndex).toBe(1); // 마일스톤 도달로 전진
   });
 
   it('(e) 무적 포식자 접촉 시 gameOver 가 선다(iframes 무시)', () => {
@@ -352,78 +424,81 @@ describe('추격 — 정규경로 full-path 통합(니플헤임=chase)', () => {
     expect((w.entities[0] as Entity).hp).toBeGreaterThan(0);
   });
 
-  it('(f) 필드 밖(8000,8000)으로 도망가도 반격 장치·대피소·포식자가 컬링되지 않는다(Lane8 교훈)', () => {
+  it('(f) 필드 밖(8000,8000)으로 도망가도 대피소·포식자가 컬링되지 않는다(Lane8 교훈)', () => {
     const w = createWorld(21, chaseConfig());
     w.weapon.damage = 0;
     const player = w.entities[0] as Entity;
-    expect(chaseAliveCounterDevices(w)).toBe(CHASE_COUNTER_DEVICE_COUNT);
     expect(shelters(w).length).toBe(CHASE_SHELTER_COUNT);
     // 컬 반경(CHUNK_CULL_RADIUS=3000) 훨씬 밖으로 이동 → activateChunks 가 매 틱 gimmick 을 컬링.
     player.x = 8000;
     player.y = 8000;
     for (let i = 0; i < 10; i++) stepChase(w);
-    // 수정 전이면 장치가 컬링돼(도망만으로 취약화) 코어 루프가 붕괴했다.
-    expect(chaseAliveCounterDevices(w)).toBe(CHASE_COUNTER_DEVICE_COUNT); // ★ 장치 미컬링
+    // ⚠️ 대피소가 컬링되면 `chaseShelterTotal` 이 줄어 **도망만으로 전량 확보**가 성립한다
+    //    (구 반격 장치에서 실제로 겪은 exploit 의 동형). 총수·확보 수 둘 다 못박는다.
     expect(shelters(w).length).toBe(CHASE_SHELTER_COUNT); // ★ 대피소 미컬링
+    expect(chaseShelterTotal(w)).toBe(CHASE_SHELTER_COUNT);
+    expect(chaseSheltersSecured(w)).toBe(0); // 밟지 않았으므로 한 곳도 확보되지 않았다
+    expect(chaseAllSheltersSecured(w)).toBe(false);
     expect(predatorOf(w)).toBeDefined(); // ★ 포식자 미컬링
     const predator = predatorOf(w) as Entity;
     expect(predator.aux0).toBe(0); // 무노력 취약화가 일어나지 않았다
   });
 
-  it('(g2) 이번 세그먼트의 대피소만 스냅샷에서 목표로 표시된다(사용자 신고 2026-07-27 "어디인지 안 보임")', () => {
-    // 대피소 6개가 전부 같은 모습이고 링 반경 1600 은 화면(1920×1080) 밖이라, 화면만 봐서는
-    // 어디로 가야 하는지 알 수 없었다. sim 전진 게이트와 **같은 식**(aux0 === segmentIndex)을
-    // 스냅샷 `active` 로 펴서 렌더·레이더가 목표를 가르게 한다.
+  it('(g2) 미확보 대피소 전부가 스냅샷에서 목표로 표시된다(레이더도 같은 식으로 찍는다)', () => {
+    // 대피소가 전부 같은 모습이고 링 반경이 화면(1920×1080) 밖이라, 화면만 봐서는 어디로 가야
+    // 하는지 알 수 없었다(사용자 신고 2026-07-27). sim 술어(`isShelterSecured`)를 스냅샷
+    // `active` 로 펴서 렌더·레이더가 남은 곳을 가르게 한다.
+    //
+    // ⚠️ 구 계약은 "목표는 언제나 정확히 하나"(aux0 === segmentIndex)였다. 2026-08-05 재설계로
+    //    **미확보면 언제나 목표**다 — 10곳을 다 찾는 것이 곧 보스 게이트이기 때문이다.
     const w = createWorld(11, chaseConfig());
-    const snapShelters = (): { aux0: number; active: boolean }[] => {
-      const snap = snapshotWorld(w);
+    const snapShelters = (): { secured: boolean; active: boolean; spent: boolean }[] => {
       const live = shelters(w);
-      return snap.entities
-        .filter((e) => e.kind === 'shelter')
+      return snapshotWorld(w)
+        .entities.filter((e) => e.kind === 'shelter')
         .map((e) => ({
-          aux0: (live.find((s) => s.id === e.id) as Entity).aux0,
+          secured: isShelterSecured(live.find((s) => s.id === e.id) as Entity),
           active: e.active,
+          spent: e.spent === true,
         }));
     };
     const s0 = snapShelters();
     expect(s0.length).toBe(CHASE_SHELTER_COUNT);
-    expect(s0.filter((s) => s.active).length).toBe(1); // ★ 목표는 언제나 정확히 하나
-    expect(s0.find((s) => s.active)?.aux0).toBe(w.wave.segmentIndex);
-    // 레이더는 활성 대피소만 목표(objective)로 찍는다 — 6개를 다 찍으면 안 갈린다.
-    const snap = snapshotWorld(w);
-    const blips = snap.entities.filter((e) => e.kind === 'shelter').map(classifyRadar);
-    expect(blips.filter((c) => c === 'objective').length).toBe(1);
-    expect(blips.filter((c) => c === null).length).toBe(CHASE_SHELTER_COUNT - 1);
+    expect(s0.filter((s) => s.active).length).toBe(CHASE_SHELTER_COUNT); // 전부 미확보 = 전부 목표
+    // 레이더는 활성 대피소를 목표(objective)로 찍는다.
+    const blips = snapshotWorld(w).entities.filter((e) => e.kind === 'shelter').map(classifyRadar);
+    expect(blips.filter((c) => c === 'objective').length).toBe(CHASE_SHELTER_COUNT);
 
-    // 세그먼트가 전진하면 목표도 따라 옮겨간다(다음 대피소).
-    w.wave.segmentIndex = 2;
+    // 세 곳을 확보하면 그만큼 목표에서 빠지고 `spent` 로 넘어간다.
+    const live = shelters(w);
+    for (let i = 0; i < 3; i++) (live[i] as Entity).aux1 = 1;
     const s1 = snapShelters();
-    expect(s1.filter((s) => s.active).length).toBe(1);
-    expect(s1.find((s) => s.active)?.aux0).toBe(2);
+    expect(s1.filter((s) => s.active).length).toBe(CHASE_SHELTER_COUNT - 3);
+    expect(s1.filter((s) => s.spent).length).toBe(3);
   });
 
-  it('(g2b) 대피소는 세 상태로 갈린다 — 미도달·목표·사용됨(사용자 신고 2026-08-04)', () => {
+  it('(g2b) `active`/`spent` 는 정확한 여집합이다 — 확보한 곳도 지도에 남아야 남은 길이 보인다', () => {
     // `active` 하나로는 "아직 안 온 곳"과 "이미 쓴 곳"이 똑같이 비활성으로 보여 남은 길이
-    // 화면에서 사라진다. 스냅샷 `spent` 가 지나온 것을 갈라 렌더가 한 단계 더 죽인다.
+    // 화면에서 사라진다(사용자 신고 2026-08-04). 스냅샷 `spent` 가 확보분을 갈라 렌더가 한
+    // 단계 더 죽인다 — 지우지 않는 이유는 남은 곳을 추리할 단서이기 때문이다.
     const w = createWorld(11, chaseConfig());
-    w.wave.segmentIndex = 2;
     const live = shelters(w);
+    for (let i = 0; i < 4; i++) (live[i] as Entity).aux1 = 1;
     const snap = snapshotWorld(w)
       .entities.filter((e) => e.kind === 'shelter')
       .map((e) => ({
-        aux0: (live.find((s) => s.id === e.id) as Entity).aux0,
+        secured: isShelterSecured(live.find((s) => s.id === e.id) as Entity),
         active: e.active,
         spent: e.spent === true,
       }));
     expect(snap.length).toBe(CHASE_SHELTER_COUNT);
-    // 세 상태는 서로 배타적이고 aux0 순서와 정확히 대응한다.
     for (const s of snap) {
-      expect(s.active).toBe(s.aux0 === 2);
-      expect(s.spent).toBe(s.aux0 < 2);
-      expect(s.active && s.spent).toBe(false);
+      expect(s.active).toBe(!s.secured);
+      expect(s.spent).toBe(s.secured);
+      expect(s.active && s.spent).toBe(false); // 배타
+      expect(s.active || s.spent).toBe(true); // 전수(제3의 상태가 없다)
     }
-    expect(snap.filter((s) => s.spent).length).toBe(2); // 0·1 번을 지나왔다
-    expect(snap.filter((s) => !s.active && !s.spent).length).toBe(CHASE_SHELTER_COUNT - 3);
+    expect(snap.filter((s) => s.spent).length).toBe(4);
   });
 
   it('(g3) 화면 밖 대피소는 화면 가장자리 화살표 + 남은 거리로 지시하고, 화면 안이면 그리지 않는다', () => {
@@ -473,7 +548,7 @@ describe('추격 — 정규경로 full-path 통합(니플헤임=chase)', () => {
     //          겹쳐 즉사해 "손도 못 대게 어렵다" 는 신고가 나왔다.
     // 지금은 플레이어 중심 CHASE_PREDATOR_STANDOFF 링으로 수렴한다 — 따라붙되 덮치지 않는다.
     const w = createWorld(13, chaseConfig());
-    w.weapon.damage = 0; // 반격 장치 파괴 배제 → 포식자 무적(aux0=0) 유지(무노력 취약화 없음)
+    w.weapon.damage = 0;
     const player = w.entities[0] as Entity;
     const predator = predatorOf(w) as Entity;
     expect(predator.aux0).toBe(0);
@@ -488,7 +563,7 @@ describe('추격 — 정규경로 full-path 통합(니플헤임=chase)', () => {
         minDist = Math.min(minDist, Math.hypot(p.x - player.x, p.y - player.y));
       }
     }
-    expect(chaseAliveCounterDevices(w)).toBe(CHASE_COUNTER_DEVICE_COUNT); // 무적 유지
+    expect(chaseAllSheltersSecured(w)).toBe(false); // 대피소 미확보 = 무적 유지
     expect(w.gameOver, '정지해 있다고 덮쳐 죽으면 안 된다').toBe(false);
     // 링 안쪽으로 들어오지 않는다(한 틱 이동량만큼의 오버슈트만 허용).
     const overshoot = CHASE_PREDATOR_SPEED / 60;
@@ -520,7 +595,9 @@ describe('추격 — 정규경로 full-path 통합(니플헤임=chase)', () => {
 describe('추격 — 회귀(타 모드 무개입 + 해시 재현)', () => {
   const noChase = (w: WorldState): void => {
     expect(shelters(w).length).toBe(0);
-    expect(chaseAliveCounterDevices(w)).toBe(0);
+    expect(chaseShelterTotal(w)).toBe(0);
+    expect(chaseSheltersSecured(w)).toBe(0);
+    expect(chaseAllSheltersSecured(w)).toBe(false); // 대피소가 0개면 "전량 확보"가 아니다
   };
 
   it('뱀서류(planet0) 런에는 추격 콘텐츠·포식자 초기 스폰이 없고 해시가 재현된다', () => {

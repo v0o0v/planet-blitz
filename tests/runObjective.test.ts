@@ -55,18 +55,20 @@ function objectiveOf(w: WorldState, inv: InvasionHudState | null = null): Return
 }
 
 describe('런 목표·주의 2줄', () => {
-  it('추격 런: 목표는 대피소 문구 + 구간 카운터, 주의는 모드 고정(경고 아님)', () => {
+  it('추격 런: 목표는 대피소 **확보 카운터**, 주의는 모드 고정(경고 아님)', () => {
     const w = chaseWorld();
     // 포식자를 경고 거리 밖으로 밀어 평상시 상태를 만든다(스폰 직후엔 위쪽 1200 이라 이미 밖이다).
     const eta = bossProgress(w);
     const s = objectiveOf(w);
     expect(s.objective).not.toBeNull();
-    expect(s.objective).toContain(t('hud.bossEta.shelter'));
-    // 카운터는 **구간** 축이다(대피소 수가 아니라) — 아래 세그먼트 게이지와 같은 숫자를 말해야
-    // 두 줄이 서로 다른 진행을 주장하지 않는다.
-    expect(s.objective).toContain(
-      t('hud.obj.count', { n: eta!.segment, total: eta!.totalSegments }),
-    );
+    // ⚠️ 카운터 축은 **구간이 아니라 대피소 수**다(2026-08-05 재설계). 보스까지의 거리가 곧
+    // 남은 대피소 수라, 구간 카운터를 함께 붙이면 한 줄에 진행도가 둘이 되어 어느 쪽이 보스를
+    // 부르는지 다시 흐려진다.
+    expect(eta!.gate).toBe('shelter');
+    expect(eta!.goal).toBe(10);
+    expect(s.objective).toBe(t('hud.bossEta.shelter', { n: eta!.current, goal: eta!.goal }));
+    expect(s.objective).toContain('0/10');
+    expect(s.objective).not.toContain(t('hud.obj.count', { n: eta!.segment, total: eta!.totalSegments }));
     expect(s.caution).toBe(t('hud.obj.caution.chase'));
     expect(s.alert).toBe(false);
   });
@@ -173,22 +175,24 @@ describe('런 목표·주의 2줄', () => {
     expect(runObjective(w, undefined, { ...inv, phase: 2 }).objective).toBe(t('hud.obj.inv2'));
   });
 
-  it('대피소 도달 알림은 상승 에지에만 뜬다 — 기준선 없음·보스 구간·타 모드는 침묵', () => {
-    // 정상: 구간이 1 → 2 로 올라간 프레임.
-    expect(shelterArrivalMessage(PLANET_MODE.chase, 1, 2, false)).toBe(
-      t('hud.obj.shelterReached', { n: 2 }),
+  it('대피소 확보 알림은 확보 수의 상승 에지에만 뜬다 — 기준선 없음·정체·타 모드는 침묵', () => {
+    // 정상: 확보 수가 1 → 2 로 올라간 프레임.
+    expect(shelterArrivalMessage(PLANET_MODE.chase, 1, 2, 10)).toBe(
+      t('hud.obj.shelterReached', { n: 2, goal: 10 }),
     );
-    // 기준선 없음(-1) = 런 시작 직후 — 첫 구간을 '도달'로 오인하면 안 된다.
-    expect(shelterArrivalMessage(PLANET_MODE.chase, -1, 0, false)).toBeNull();
-    expect(shelterArrivalMessage(PLANET_MODE.chase, -1, 3, false)).toBeNull();
+    // 기준선 없음(-1) = 런 시작 직후 — 첫 프레임을 '확보'로 오인하면 안 된다.
+    expect(shelterArrivalMessage(PLANET_MODE.chase, -1, 0, 10)).toBeNull();
+    expect(shelterArrivalMessage(PLANET_MODE.chase, -1, 3, 10)).toBeNull();
     // 변화 없음·후퇴는 침묵.
-    expect(shelterArrivalMessage(PLANET_MODE.chase, 2, 2, false)).toBeNull();
-    expect(shelterArrivalMessage(PLANET_MODE.chase, 3, 2, false)).toBeNull();
-    // 보스 구간 진입은 그 자체가 연출이라 겹쳐 말하지 않는다.
-    expect(shelterArrivalMessage(PLANET_MODE.chase, 5, 6, true)).toBeNull();
+    expect(shelterArrivalMessage(PLANET_MODE.chase, 2, 2, 10)).toBeNull();
+    expect(shelterArrivalMessage(PLANET_MODE.chase, 3, 2, 10)).toBeNull();
+    // 마지막 한 곳(= 보스가 열리는 순간)도 말한다 — 여기서 침묵하면 무슨 일이 났는지 안 보인다.
+    expect(shelterArrivalMessage(PLANET_MODE.chase, 9, 10, 10)).toBe(
+      t('hud.obj.shelterReached', { n: 10, goal: 10 }),
+    );
     // 다른 모드는 대피소 축이 없다.
-    expect(shelterArrivalMessage(PLANET_MODE.vampire, 1, 2, false)).toBeNull();
-    expect(shelterArrivalMessage(PLANET_MODE.contamination, 1, 2, false)).toBeNull();
+    expect(shelterArrivalMessage(PLANET_MODE.vampire, 1, 2, 10)).toBeNull();
+    expect(shelterArrivalMessage(PLANET_MODE.contamination, 1, 2, 10)).toBeNull();
   });
 
   it('침공 파생이 null 이면 PvE 경로로 떨어진다(런이 아니면 호출부가 감춘다)', () => {

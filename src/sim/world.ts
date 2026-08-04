@@ -266,7 +266,12 @@ import {
 } from './modes/contamination.js';
 // --- 추격·탈출 콘텐츠(Lane6 · ADR-0021 §2.4) — 비-스크롤 자유추적. 무적 포식자(boss.aux0=0)가
 //     끝없이 추격, 대피소 도달로 진행, 반격 장치 전부 파괴로 취약화(aux0=1)→보스전, 접촉 시 실패 ---
-import { placeChaseCourse, updateChasePredator, COUNTER_DEVICE_MARK } from './modes/chase.js';
+import {
+  placeChaseCourse,
+  updateChasePredator,
+  updateChaseShelters,
+  COUNTER_DEVICE_MARK,
+} from './modes/chase.js';
 import {
   isObjectiveDestructible,
   objectiveModeDamageScale,
@@ -1600,10 +1605,15 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   stepHazards(state);
   resolveCollisions(state, player);
   compact(state);
-  // 추격(Lane6): 살아있는 반격 장치가 0개면 포식자를 취약화(aux0=1)한다. **compact 이후**라
-  // 이번 틱 파괴된 장치가 반영된다. planetMode 게이트라 뱀서류·블록격파·레이싱·오염·침공은
-  // 미실행(골든 바이트 불변). 취약화 후엔 아군탄이 포식자 hp 를 깎아 다음 compact 가 처치→victory.
-  if (state.config.planetMode === PLANET_MODE.chase) updateChasePredator(state);
+  // 추격(Lane6): ①플레이어가 밟은 미확보 대피소를 확보(aux1=1)로 넘기고, ②전량 확보면 포식자를
+  // 취약화(aux0=1)한다. 순서가 중요하다 — 마지막 한 곳을 밟은 **그 틱에** 보스전이 열려야
+  // "다 찾으면 보스"가 한 프레임의 사건이 된다. **compact 이후**라 이번 틱 상태가 반영된다.
+  // planetMode 게이트라 뱀서류·블록격파·레이싱·오염·침공은 미실행(골든 바이트 불변).
+  // 취약화 후엔 아군탄이 포식자 hp 를 깎아 다음 compact 가 처치→victory 로 잡는다.
+  if (state.config.planetMode === PLANET_MODE.chase) {
+    updateChaseShelters(state);
+    updateChasePredator(state);
+  }
   updateCombo(state);
   checkLevelUp(state);
   checkGameOver(state, player);
@@ -1640,9 +1650,10 @@ function isGimmick(e: Entity): boolean {
     // 컬 반경(3000) 밖으로 벗어날 때 노드가 dead 로 지워지고, `contaminationPurifyRate` 가 그
     // 컬링된 노드를 "정화됨"으로 세어 **도망만으로 정화율이 오르는** 코어 루프 붕괴가 난다
     // (리뷰 CRITICAL 확증). 절차 청크 destructible 은 ownerId=0 이라 조건 그대로 성립 → 불변.
-    // ⚠️ 반격 장치(Lane6 · destructible + COUNTER_DEVICE_MARK)도 같은 이유로 제외한다(AND 결합) —
-    // 제외하지 않으면 추격 자유추적 플레이어가 필드 밖으로 도망칠 때 장치가 컬링돼 `chaseAlive
-    // CounterDevices` 가 0 이 되고 포식자가 **무노력 취약화**된다(Lane8 도망 exploit 동형).
+    // ⚠️ 반격 장치(Lane6 · destructible + COUNTER_DEVICE_MARK)도 같은 이유로 제외한다(AND 결합).
+    // **2026-08-05 이후 반격 장치는 배치되지 않으므로 이 조건은 아무것도 거르지 않는다**(어떤
+    // 엔티티도 이 마커를 갖지 않는다) — 산술·거동은 완전 불변이라 그대로 둔다. 대피소는 애초에
+    // `shelter` kind 라 isGimmick 에 없고, 따라서 도망쳐도 컬링되지 않는다(같은 exploit 부류 차단).
     (e.kind === 'destructible' &&
       e.ownerId !== CONTAMINATION_NODE_MARK &&
       e.ownerId !== COUNTER_DEVICE_MARK) ||

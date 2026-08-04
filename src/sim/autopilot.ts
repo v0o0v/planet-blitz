@@ -20,6 +20,7 @@ import { SPECIAL_NONE, packPowerupPick } from './world.js';
 import type { Entity } from './entities.js';
 import { atan2, length } from './math.js';
 import { isObjectiveDestructible } from './modes/objective.js';
+import { isShelter, isShelterSecured } from './modes/chase.js';
 import { INVASION_WINDOW_HALF_W } from './invasion/scroll.js';
 import { PLANET_MODE } from './planetMode.js';
 
@@ -261,7 +262,7 @@ function nearestTarget(world: WorldState, player: Entity): Entity | undefined {
 }
 
 /**
- * 살아 있는 최근접 **목표 오브젝트**(추격 반격 장치 · 오염 노드). 그 오브젝트를 쓰는 모드가
+ * 살아 있는 최근접 **무대 목표**(추격 = 미확보 대피소 · 오염 = 오염 노드). 그 목표를 쓰는 모드가
  * 아니면 엔티티를 훑지도 않는다 — 다른 무대에서 이 함수는 항상 `undefined` 라 거동·비용이
  * 모두 불변이다.
  *
@@ -270,10 +271,15 @@ function nearestTarget(world: WorldState, player: Entity): Entity | undefined {
 function nearestObjective(world: WorldState, player: Entity): Entity | undefined {
   const mode = world.config.planetMode;
   if (mode !== PLANET_MODE.chase && mode !== PLANET_MODE.contamination) return undefined;
+  // 추격의 목표는 **파괴물이 아니라 미확보 대피소**다(2026-08-05 재설계). 봇이 이것을 쫓지
+  // 않으면 니플헤임 런이 영영 진행되지 않아 밸런스 하네스 전체가 타임아웃으로 채워진다 —
+  // 조준 목록(`isObjectiveDestructible`)과 달리 이쪽은 **이동 표적**이라 별도 분기가 맞다.
+  const chase = mode === PLANET_MODE.chase;
   let best: Entity | undefined;
   let bestD = Infinity;
   for (const e of world.entities) {
-    if (e.dead || !isObjectiveDestructible(e)) continue;
+    if (e.dead) continue;
+    if (chase ? !(isShelter(e) && !isShelterSecured(e)) : !isObjectiveDestructible(e)) continue;
     const dx = e.x - player.x;
     const dy = e.y - player.y;
     const d = dx * dx + dy * dy;

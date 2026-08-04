@@ -1,7 +1,9 @@
-# BGM 트랙 크레딧 · 라이선스 관리 (사운드 풍성화 Phase 3, ADR-0029)
+# 오디오 크레딧 · 라이선스 관리 (BGM: ADR-0029 · SFX 실음원: 2026-08-05)
 
-Planet Blitz 는 SFX 를 절차 합성(`src/render/audio.ts`)하지만 **BGM 만 외부 트랙**을 쓰는
-하이브리드 정책이다(ADR-0029). 이 문서는 그 외부 트랙의 출처·라이선스·확보 상태를 추적한다.
+Planet Blitz 는 원래 SFX 를 전부 절차 합성(`src/render/audio.ts`)하고 **BGM 만 외부 트랙**을
+쓰는 하이브리드였다(ADR-0029). 2026-08-05 사용자 판정("현재 소리는 너무 투박하다" → "공개
+사운드 중에 괜찮은걸로 찾아보자")으로 **핵심 SFX 8종도 CC0 실음원**이 됐다. 절차 합성은
+지우지 않고 **폴백으로 남겼다** — 아래 §SFX 참조. 이 문서는 두 축의 출처·라이선스를 추적한다.
 
 > **현재 상태: 전부 확보 완료(CC0).** 아래 파일명은 `src/render/musicDirector.ts` 의
 > `TRACK_MANIFEST` 이 기대하는 basename 이고, 실제 파일이 `assets/audio/` 에 들어 있어 자동
@@ -43,6 +45,41 @@ Planet Blitz 는 SFX 를 절차 합성(`src/render/audio.ts`)하지만 **BGM 만
 - **패배 스팅어(Emma_MA)**: 원본 `sad_game_over.wav`(stereo, 19s) 를 `ffmpeg -t 14
   -af afade=out:st=12:d=2` 로 14s 트림 + 페이드아웃 후 ogg(libvorbis q4)·mp3(128k) 로 변환.
 - 저작자·라이선스가 CC0 라 위 트림·변환·재배포에 제약이 없다.
+
+## SFX 실음원 (`assets/audio/sfx/` — 2026-08-05 사용자 선정)
+
+전부 **Kenney.nl · CC0 1.0(퍼블릭 도메인)** 이다. 상업 배포·수정·재배포에 제약이 없고 저작자
+표기 의무도 없으나, 증빙으로 출처를 남긴다. 총 용량 **166KB** — 초기 JS 청크와 무관하다
+(`?url` 지연 로딩, `src/render/audio.ts` 의 `SFX_URLS`).
+
+| 용도 | 파일명 | 원본 | 팩 | 사용자 선택 |
+|---|---|---|---|---|
+| 발사음 · 발칸 | `sfx_shot_vulcan.ogg` | `laserSmall_000.ogg` | Sci-Fi Sounds | L1 |
+| 발사음 · 스프레드 | `sfx_shot_spread.ogg` | `laserSmall_003.ogg` | Sci-Fi Sounds | S2 |
+| 발사음 · 레일건 | `sfx_shot_railgun.ogg` | `laserLarge_004.ogg` | Sci-Fi Sounds | R3 |
+| 발사음 · 미사일 | `sfx_shot_missile.ogg` | `explosionCrunch_002.ogg` | Sci-Fi Sounds | M5 |
+| 발사음 · 빔 | `sfx_shot_beam.ogg` | `forceField_003.ogg` | Sci-Fi Sounds | W3 |
+| 피격(내 기체) | `sfx_hit.ogg` | `impactMetal_000.ogg` | Sci-Fi Sounds | H1 |
+| 렙업 카드 등장 | `sfx_card.ogg` | `confirmation_002.ogg` | Interface Sounds | C3 |
+| 보스 예고 루프 | `sfx_boss_warn.ogg` | `forceField_004.ogg` | Sci-Fi Sounds | B3 / P1 |
+
+출처: [Sci-Fi Sounds](https://kenney.nl/assets/sci-fi-sounds) · [Interface Sounds](https://kenney.nl/assets/interface-sounds) — 둘 다 CC0 1.0.
+파일은 **바이트 그대로** 복사했다(리네임만, 재인코딩 없음).
+
+### 보스는 "등장음" 이 아니라 "예고 루프" 다
+
+사용자 지시: *"보스 등장 전부터 반복적으로 울리다가 보스가 나오면 사라지는 것으로 하자"*.
+그래서 `sfx_boss_warn.ogg` 는 보스 진행도 75% 지점부터 반복되고 다가올수록 간격이 좁혀지며
+(2.2s → 0.45s), 보스전이 열리는 순간 **끊긴다**. 그 정적이 곧 등장 신호다 — 별도 등장 스팅어는
+**의도적으로 없다**(청취실 X0 선택). 구현은 `src/render/bossWarn.ts`.
+
+### ⚠️ ogg 단일 포맷 — Safari 는 절차 합성으로 떨어진다
+
+BGM 과 달리 SFX 는 **ogg 만** 둔다(원본 팩이 ogg 단일 배포이고, 이 작업 시점 환경에 ffmpeg 가
+없었다). Ogg Vorbis 를 디코드하지 못하는 브라우저(주로 Safari)에서는 `decodeAudioData` 가 실패
+하고, `GameAudio.play` 가 **기존 절차 합성음으로 조용히 폴백**한다 — 무음이 되지는 않는다.
+mp3 를 병행하려면 같은 basename 의 mp3 를 이 폴더에 넣고 `SFX_MANIFEST` 를 BGM 처럼 쌍
+(`{ogg, mp3}`)으로 바꾸면 된다.
 
 ## 교체·추가 시 체크리스트
 

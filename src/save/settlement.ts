@@ -145,10 +145,26 @@ export interface SettlementOutcome {
  */
 export function settleRun(profile: Profile, result: RunResult): SettlementOutcome {
   // 1. Confirm every collected drop into a concrete item.
+  //
+  //    `levelCap` = **이 런을 돈 기체의 레벨**(사용자 지시 2026-08-05 — "현재 기체가 장착할 수
+  //    있는 장비가 떨어지게"). `requiredLevel` 이 이 값을 천장으로 써서 주운 즉시 입을 수 있게
+  //    된다(`src/items/requiredLevel.ts` `ownerLevelCap`).
+  //
+  //    ⚠️ **XP 적립(3단계) 전에 읽는다.** 전리품은 런 **도중에** 떨어진 것이라 기준이 되어야 할
+  //    레벨은 런을 시작할 때의 레벨이다. 적립 후에 읽으면 이 런에서 오른 레벨만큼 상한이 함께
+  //    올라가, 방금 레벨업한 런에서만 더 무거운 장비가 나오는 비대칭이 생긴다.
+  //    ⚠️ 순서 의존이므로 3단계(`grantXp`)를 이 위로 옮기지 마라.
+  const runShipLevel = activeShip(profile).level;
   const itemsGained: Item[] = [];
   for (const rec of result.loot) {
     const rarity = RARITY_BY_CODE[rec.rarity] ?? 'normal';
-    itemsGained.push(rollItem(rec.seed, rarity, { planet: rec.planet, stage: rec.stage }));
+    itemsGained.push(
+      rollItem(rec.seed, rarity, {
+        planet: rec.planet,
+        stage: rec.stage,
+        levelCap: runShipLevel,
+      }),
+    );
   }
 
   // 2. Place items: inventory first, then stash, then overflow.

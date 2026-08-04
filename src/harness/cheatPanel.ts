@@ -2069,7 +2069,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         m.slug === 'shrink'
           ? ` 안전R ${m.safeRadius}`
           : m.slug === 'chase'
-            ? ` 반격장치 ${m.counterDevices} 시야R ${m.visionRadius}`
+            ? ` 대피소 ${m.sheltersSecured}/${m.sheltersTotal} 시야R ${m.visionRadius}`
             : m.slug === 'blockBreak' || m.slug === 'racing'
               ? ` 구간 ${m.scrollSection}`
               : m.slug === 'contamination'

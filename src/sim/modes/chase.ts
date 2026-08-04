@@ -27,7 +27,7 @@
  * 데이터 레지스트리(planetContent — world 를 import 하지 않는다)로만(contamination/racing 선례).
  */
 import type { Entity } from '../entities.js';
-import { spawnBoss, spawnDestructible, spawnShelter } from '../entities.js';
+import { spawnBoss, spawnShelter } from '../entities.js';
 import type { WorldState } from '../world.js';
 import { PLANET_MODE, type PlanetMode } from '../planetMode.js';
 import { planetContent } from '../../../data/planets/index.js';
@@ -57,11 +57,27 @@ export const CHASE_PREDATOR_SPEED = 540;
  * 그림자로 남게 한다. TODO(밸런스): 출시 전 튜닝.
  */
 export const CHASE_PREDATOR_STANDOFF = 900;
-/** 반격 장치 수(전부 파괴 = 포식자 취약화 조건). TODO(밸런스). */
+/**
+ * ⛔ **반격 장치는 2026-08-05 에 제거됐다**(사용자 지시 — "대피소를 다 찾으면 보스 등장").
+ *
+ * 예전 규칙은 손잡이가 둘이었다: ①반격 장치 5개 전부 파괴 → 포식자 취약화(보스전) ②대피소
+ * 6개 도달 → 세그먼트 전진. 두 축이 서로를 몰랐고, 화면에서는 무엇이 보스를 부르는지 읽히지
+ * 않았다. 이제 축은 **대피소 하나**다 — 10곳을 전부 확보하면 그것이 곧 세그먼트 완주이자
+ * 포식자 취약화다({@link updateChasePredator}).
+ *
+ * 아래 두 상수는 **더는 배치에 쓰이지 않는다**. 그런데도 남겨 둔 이유는 밸런스 계측
+ * (`src/bench/balance/metrics.ts`)과 이 파일 아래 실측표들이 이 값을 전제로 쓰였고, 그 기록이
+ * 곧 "이 무대의 난이도를 무엇이 지고 있었는가"의 유일한 근거이기 때문이다. **새 코드에서
+ * 참조하지 마라.**
+ *
+ * ⚠️ **난이도 축이 비었다.** 장치 HP 가 지던 TTK 예산이 사라지고 그 자리를 **이동 거리·시야**
+ * 가 대신 진다({@link CHASE_SHELTER_RING_RADIUS} 참조). 클리어율·보스도달은 재측정 대상이다 —
+ * TODO(밸런스): 출시 전 니플헤임 프로브 재실행.
+ */
 export const CHASE_COUNTER_DEVICE_COUNT = 5;
 /**
- * 반격 장치 **기준 HP**(단계 1 기준). 실 HP 는 `stageHpMult(stage)` 를 곱한 값이다
- * ({@link chaseCounterDeviceHp}).
+ * 구 반격 장치 **기준 HP**(단계 1 기준). 실 HP 는 `stageHpMult(stage)` 를 곱한 값이었다
+ * ({@link chaseCounterDeviceHp}). **현행 배치에는 쓰이지 않는다** — 위 주석 참조.
  *
  * ## 왜 단계 스케일이 필요한가 (2026-08-01)
  * 예전에는 단계·레벨과 무관한 **고정 40** 이었다. 그 값은 어느 레벨에서도 한 틱 사격이면
@@ -165,12 +181,31 @@ export const CHASE_COUNTER_DEVICE_RING_RADIUS = 1100;
  * 격전 세그먼트(index 3)에 대응하는 대피소는 전진 게이트가 리더 처치로 대체돼 쓰이지 않지만,
  * 인덱스 정합을 위해 자리를 비우지 않고 그대로 배치한다(배치가 인덱스만의 함수라 특례를 두면
  * 결정론 배치가 복잡해진다).
+ *
+ * ## ⛔ 위 규율은 2026-08-05 에 **폐기됐다** — 이제 세그먼트에서 파생하지 않는다
+ * 대피소 `aux0` 가 세그먼트 인덱스와 1:1 이던 것이 그 파생의 전제였다. 지금 대피소는
+ * **세그먼트에 매인 표식이 아니라 모으는 대상**이고, 세그먼트 전진은 누적 확보 수의
+ * 마일스톤({@link chaseShelterMilestone})으로 파생한다. 두 수가 독립이라 어떤 조합에서도
+ * 마지막 마일스톤이 정확히 전량이고, 위 desync 부류는 구조적으로 재발하지 않는다.
+ * TODO(밸런스): 출시 전 튜닝.
  */
-export const CHASE_SHELTER_COUNT = SEGMENTS.length - 1;
+export const CHASE_SHELTER_COUNT = 10;
 /** 대피소 반경(도달 판정, 관대). TODO(밸런스). */
 export const CHASE_SHELTER_RADIUS = 140;
-/** 대피소 배치 링 반경(플레이어 시작 0,0 주변). TODO(밸런스). */
-export const CHASE_SHELTER_RING_RADIUS = 1600;
+/**
+ * 대피소 배치 **안쪽 링** 반경(플레이어 시작 0,0 주변). 짝수 인덱스가 여기 선다.
+ *
+ * ## 왜 링이 둘인가
+ * 10곳을 한 링에 세우면 원을 한 바퀴 도는 단조로운 코스가 되고, 무엇보다 **찾을 것이 없다** —
+ * 시야 반경({@link CHASE_VISION_RADIUS} 1400)이 링 반경보다 크면 시작 지점에서 사실상 전부
+ * 보인다. 안/밖 두 링으로 갈라 바깥 링을 시야 밖에 두면 "다 찾는다"가 실제 탐색이 된다.
+ *
+ * ⚠️ 반격 장치가 지던 난이도 축(TTK 예산)이 사라진 자리를 **이 반경 = 이동 거리**가 진다.
+ * 니플헤임 클리어율·보스도달의 주 레버가 이 두 값으로 옮겨졌다. TODO(밸런스): 출시 전 재측정.
+ */
+export const CHASE_SHELTER_RING_RADIUS = 1300;
+/** 대피소 배치 **바깥 링** 반경(홀수 인덱스). 시야 반경 밖이라 탐색이 필요하다. 근거는 위 주석. */
+export const CHASE_SHELTER_RING_RADIUS_OUTER = 2300;
 
 /**
  * 반격 장치 마커(ownerId 센티넬). 절차 청크 destructible(ownerId=0)·오염 노드와 구분해
@@ -191,18 +226,107 @@ export function isShelter(e: Entity): boolean {
   return e.kind === 'shelter';
 }
 
+/**
+ * 이 대피소를 이미 **확보**했는가(`aux1 === 1`). 미확보는 0 이다.
+ *
+ * ## 왜 `dead` 가 아니라 aux1 인가
+ * 확보된 대피소도 화면에 남아야 한다 — 남지 않으면 "몇 개를 어디서 찾았는지"가 지도에서
+ * 사라져 남은 곳을 추리할 단서가 없어진다(렌더는 `spent` 로 흐리게 그린다, `snapshot.ts`).
+ * 그리고 `dead` 는 `compact` 가 배열에서 제거하므로 확보 수를 셀 근거 자체가 없어진다.
+ *
+ * aux1 은 **정수**여야 한다 — `hashEntity` 가 u32 로 접으므로 소수부가 유실되면 클라·EF
+ * 재실행이 갈린다(이 파일 머리 §결정론).
+ */
+export function isShelterSecured(e: Entity): boolean {
+  return e.aux1 === 1;
+}
+
 /** 포식자(boss)가 무적인가 = 취약화 전(aux0===0). 취약(aux0===1) 후엔 아군탄이 처치할 수 있다. */
 export function isPredatorInvincible(boss: Entity): boolean {
   return boss.aux0 === 0;
 }
 
-/** 살아있는 반격 장치 수. 0 이면 포식자 취약화(updateChasePredator). 순수 판정. */
+/** 살아있는 반격 장치 수. **현행 배치에는 장치가 없어 항상 0 이다**(계측 호환용으로 남긴다). */
 export function chaseAliveCounterDevices(state: WorldState): number {
   let n = 0;
   for (const e of state.entities) {
     if (!e.dead && isCounterDevice(e)) n++;
   }
   return n;
+}
+
+/** 지금까지 **확보한** 대피소 수. 전량이면 포식자 취약화({@link updateChasePredator}). 순수 판정. */
+export function chaseSheltersSecured(state: WorldState): number {
+  let n = 0;
+  for (const e of state.entities) {
+    if (!e.dead && isShelter(e) && isShelterSecured(e)) n++;
+  }
+  return n;
+}
+
+/** 이 무대에 배치된 대피소 총수(확보 여부 무관). 추격 런이 아니면 0. */
+export function chaseShelterTotal(state: WorldState): number {
+  let n = 0;
+  for (const e of state.entities) {
+    if (!e.dead && isShelter(e)) n++;
+  }
+  return n;
+}
+
+/** 대피소를 **전부** 확보했는가. 배치가 0개면 false(추격 런이 아니거나 아직 미배치). */
+export function chaseAllSheltersSecured(state: WorldState): boolean {
+  const total = chaseShelterTotal(state);
+  return total > 0 && chaseSheltersSecured(state) >= total;
+}
+
+/**
+ * 세그먼트 `segmentIndex` 를 넘기는 데 필요한 **누적 확보 수**(1-based 마일스톤).
+ *
+ * 마지막 일반 세그먼트의 마일스톤은 정확히 {@link CHASE_SHELTER_COUNT} 다 — 즉 **전부 찾으면
+ * 곧 보스 세그먼트**이고, 같은 순간 {@link updateChasePredator} 가 포식자를 취약화한다.
+ * 두 사건이 같은 조건에서 나오므로 "다 찾으면 보스"가 화면과 규칙 양쪽에서 한 문장이다.
+ *
+ * ⚠️ 술어를 여기 한 곳에만 둔다. 예전 구조는 같은 "여기까지" 를 sim·HUD·렌더 세 곳에 따로
+ * 적어 두어 화면과 규칙이 갈렸다(2026-08-04 대피소 신고). 호출부는 전부 이 함수를 부른다.
+ *
+ * 순수·정수 연산(`Math.ceil`). 인덱스는 [0, normalSegments-1] 로 클램프한다.
+ */
+export function chaseShelterMilestone(segmentIndex: number, normalSegments: number): number {
+  const n = Math.max(1, Math.floor(normalSegments));
+  const i = Math.max(0, Math.min(n - 1, Math.floor(segmentIndex)));
+  return Math.ceil((CHASE_SHELTER_COUNT * (i + 1)) / n);
+}
+
+/** 이 무대의 일반(보스 제외) 세그먼트 수. 마일스톤 분모의 정본. */
+export function chaseNormalSegments(): number {
+  return Math.max(1, SEGMENTS.length - 1);
+}
+
+/**
+ * 세그먼트 전진 게이트(`waves.ts` 배선). 누적 확보 수가 이 세그먼트의 마일스톤에 닿았는가.
+ * 순수 판정 — 상태를 바꾸지 않는다(확보 자체는 {@link updateChaseShelters} 가 한다).
+ */
+export function chaseSegmentCleared(state: WorldState, segmentIndex: number): boolean {
+  return chaseSheltersSecured(state) >= chaseShelterMilestone(segmentIndex, chaseNormalSegments());
+}
+
+/**
+ * 대피소 확보 한 틱(`stepWorld` 배선). 플레이어(entities[0])와 overlap 한 **미확보** 대피소를
+ * `aux1 = 1` 로 넘긴다. 한 틱에 여러 곳이 겹치면 전부 확보한다(반경 140 이라 실제로는 드물다).
+ *
+ * ⚠️ 이 함수만이 확보 상태를 쓴다. 판정(`chaseSegmentCleared`·`chaseAllSheltersSecured`)은
+ * 전부 읽기 전용이라, "언제 확보되는가"가 한 자리에만 있다.
+ */
+export function updateChaseShelters(state: WorldState): void {
+  const player = state.entities[0];
+  if (player === undefined || player.dead) return;
+  for (const e of state.entities) {
+    if (e.dead || !isShelter(e) || isShelterSecured(e)) continue;
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    const rr = e.radius + player.radius;
+    if (dx * dx + dy * dy <= rr * rr) e.aux1 = 1;
+  }
 }
 
 /**
@@ -226,40 +350,30 @@ export function placeChaseCourse(state: WorldState): void {
   predator.aux0 = 0; // 무적(취약화 전) — blankEntity 기본 0 이지만 계약을 명시.
   state.bossSpawned = true; // stepBoss 가 두 번째 보스를 세우지 않는다(포식자가 곧 보스다).
 
-  // ② 반격 장치(destructible + MARK). 전부 파괴 = 취약화 조건. 원점 링 고정 배치(RNG 없음).
-  for (let i = 0; i < CHASE_COUNTER_DEVICE_COUNT; i++) {
-    const angle = (i * TWO_PI) / CHASE_COUNTER_DEVICE_COUNT;
-    const x = cos(angle) * CHASE_COUNTER_DEVICE_RING_RADIUS;
-    const y = sin(angle) * CHASE_COUNTER_DEVICE_RING_RADIUS;
-    const dev = spawnDestructible(
-      state,
-      x,
-      y,
-      CHASE_COUNTER_DEVICE_RADIUS,
-      chaseCounterDeviceHp(state.config.stage ?? 1),
-      CHASE_COUNTER_DEVICE_GEM_XP,
-    );
-    dev.ownerId = COUNTER_DEVICE_MARK;
-  }
-
-  // ③ 대피소(shelter kind, aux0=세그먼트 인덱스). 도달 = 세그먼트 전진(chaseShelterReached).
+  // ② 대피소 N곳(shelter kind, aux0=대피소 인덱스, aux1=확보 플래그). 확보 = updateChaseShelters,
+  //    전량 확보 = 세그먼트 완주 + 포식자 취약화. 반격 장치는 제거됐다(상수 주석 참조).
+  //    안/밖 두 링에 번갈아 세운다 — 바깥 링은 시야 밖이라 실제 탐색이 필요하다.
   for (let i = 0; i < CHASE_SHELTER_COUNT; i++) {
     const angle = (i * TWO_PI) / CHASE_SHELTER_COUNT;
-    const x = cos(angle) * CHASE_SHELTER_RING_RADIUS;
-    const y = sin(angle) * CHASE_SHELTER_RING_RADIUS;
-    const shelter = spawnShelter(state, x, y, CHASE_SHELTER_RADIUS);
-    shelter.aux0 = i; // 세그먼트 인덱스 대응(정수).
+    const r = i % 2 === 0 ? CHASE_SHELTER_RING_RADIUS : CHASE_SHELTER_RING_RADIUS_OUTER;
+    const shelter = spawnShelter(state, cos(angle) * r, sin(angle) * r, CHASE_SHELTER_RADIUS);
+    shelter.aux0 = i; // 대피소 인덱스(정수). 세그먼트와의 1:1 은 더는 없다.
+    shelter.aux1 = 0; // 미확보(blankEntity 기본 0 이지만 계약을 명시).
   }
 }
 
 /**
- * 추격 포식자 취약화 한 틱(stepWorld 배선, compact 이후 호출 — 이번 틱 파괴된 장치 반영).
- * 살아있는 반격 장치가 0개면 포식자(boss) `aux0=1`(취약)로 전환한다 → 이제 아군탄이 hp 를
- * 깎아 처치할 수 있고, compact 가 보스 처치를 victory 로 잡는다(공통 경로 재사용). 장치가
- * 하나라도 남아 있으면 무적을 유지한다. 순수(엔티티 aux 만 변경).
+ * 추격 포식자 취약화 한 틱(stepWorld 배선, compact 이후 호출).
+ *
+ * **대피소를 전부 확보하면** 포식자(boss) `aux0=1`(취약)로 전환한다 → 이제 아군탄이 hp 를
+ * 깎아 처치할 수 있고, compact 가 보스 처치를 victory 로 잡는다(공통 경로 재사용). 한 곳이라도
+ * 남아 있으면 무적을 유지한다. 순수(엔티티 aux 만 변경).
+ *
+ * ⚠️ 구 규칙은 "반격 장치 5개 전부 파괴"였다(2026-08-05 사용자 지시로 교체). 조건이 대피소
+ * 마일스톤의 마지막 값과 **같은 술어**라, 보스 세그먼트 진입과 취약화가 같은 틱에 일어난다.
  */
 export function updateChasePredator(state: WorldState): void {
-  if (chaseAliveCounterDevices(state) > 0) return;
+  if (!chaseAllSheltersSecured(state)) return;
   for (const e of state.entities) {
     if (e.kind === 'boss') e.aux0 = 1; // 취약(아군탄 피해 가능).
   }
@@ -295,15 +409,17 @@ export function chasePredatorPursue(boss: Entity, player: Entity): void {
 }
 
 /**
- * 대피소 도달 여부(세그먼트 전진 게이트, waves.ts 배선). 플레이어(entities[0])가 `aux0 ===
- * segmentIndex` 인 대피소와 overlap 하면 true. 순수 판정 — 상태를 바꾸지 않는다. 플레이어
- * 부재면 false.
+ * 지금 플레이어가 **미확보 대피소 위에 서 있는가**(렌더 연출용 순간 판정).
+ *
+ * ⚠️ 이것은 더 이상 세그먼트 전진 게이트가 아니다 — 그 자리는 {@link chaseSegmentCleared}
+ * (누적 확보 수 마일스톤)가 가져갔다. 구 이름(`chaseShelterReached`)이 쓰이던 자리를 전부
+ * 옮겼으니, 새 코드에서 "전진하는가"를 물으려면 반드시 마일스톤 쪽을 불러라.
  */
-export function chaseShelterReached(state: WorldState, segmentIndex: number): boolean {
+export function chaseOnUnsecuredShelter(state: WorldState): boolean {
   const player = state.entities[0];
   if (player === undefined) return false;
   for (const e of state.entities) {
-    if (e.dead || !isShelter(e) || e.aux0 !== segmentIndex) continue;
+    if (e.dead || !isShelter(e) || isShelterSecured(e)) continue;
     const dx = e.x - player.x;
     const dy = e.y - player.y;
     const rr = e.radius + player.radius;

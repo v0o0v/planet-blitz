@@ -25,7 +25,12 @@ import { PLANET_MODE } from './planetMode.js';
 import { blockBreakProgress, BLOCKBREAK_SECTION_LENGTH } from './modes/blockBreak.js';
 import { racingProgress, RACING_SECTION_LENGTH } from './modes/racing.js';
 import { contaminationPurifyRate, CONTAMINATION_PURIFY_THRESHOLD } from './modes/contamination.js';
-import { chaseShelterReached } from './modes/chase.js';
+import {
+  chaseSheltersSecured,
+  chaseShelterTotal,
+  chaseShelterMilestone,
+  chaseNormalSegments,
+} from './modes/chase.js';
 import { shrinkRingCleared } from './modes/shrink.js';
 import { midClashCleared } from './modes/midClash.js';
 import { midClashGateActive } from './waves.js';
@@ -43,7 +48,7 @@ export type BossGate =
   | 'distance'
   /** 오염 정화율. */
   | 'purify'
-  /** 추격 대피소 도달. */
+  /** 추격 대피소 확보 수(카운터형 — `current`/`goal` 을 함께 싣는다). */
   | 'shelter'
   /** 수축 안전권 소탕. */
   | 'ring';
@@ -59,9 +64,9 @@ export interface BossProgress {
   frac: number;
   /** 현재 구간 게이트 종류. */
   gate: BossGate;
-  /** 처치 게이트일 때 현재 처치 수(그 외 게이트는 0). */
+  /** 카운터형 게이트의 현재값 — `kills`=처치 수, `shelter`=확보한 대피소 수. 그 외 게이트는 0. */
   current: number;
-  /** 처치 게이트일 때 목표 처치 수(그 외 게이트는 0). */
+  /** 카운터형 게이트의 목표값 — `kills`=처치 할당, `shelter`=대피소 총수. 그 외 게이트는 0. */
   goal: number;
   /** 보스 세그먼트에 진입했는가(= 보스전 시작). */
   bossActive: boolean;
@@ -133,8 +138,16 @@ export function bossProgress(state: WorldState): BossProgress | undefined {
     const step = CONTAMINATION_PURIFY_THRESHOLD / normalSegments;
     segmentFrac = clamp01(contaminationPurifyRate(state) / step - w.segmentIndex);
   } else if (mode === PLANET_MODE.chase) {
+    // 추격은 불리언 게이트가 아니다 — **누적 확보 수**라 처치 할당처럼 연속 카운터를 낼 수 있다.
+    // `current/goal` 을 전량 기준으로 실어 HUD 가 "대피소 3/10" 을 그대로 쓴다(2026-08-05).
+    // 구간 내 진행도는 직전 마일스톤 대비 비율이라 게이지가 구간마다 0→1 로 채워진다.
     gate = 'shelter';
-    segmentFrac = chaseShelterReached(state, w.segmentIndex) ? 1 : 0;
+    current = chaseSheltersSecured(state);
+    goal = chaseShelterTotal(state);
+    const n = chaseNormalSegments();
+    const from = w.segmentIndex > 0 ? chaseShelterMilestone(w.segmentIndex - 1, n) : 0;
+    const to = chaseShelterMilestone(w.segmentIndex, n);
+    segmentFrac = to > from ? clamp01((current - from) / (to - from)) : 0;
   } else if (mode === PLANET_MODE.shrink) {
     gate = 'ring';
     segmentFrac = shrinkRingCleared(state) ? 1 : 0;

@@ -30,7 +30,6 @@
  */
 import type { Entity } from '../entities.js';
 import { PLANET_MODE, type PlanetMode } from '../planetMode.js';
-import { isCounterDevice } from './chase.js';
 import { isContaminationNode } from './contamination.js';
 
 /**
@@ -38,7 +37,12 @@ import { isContaminationNode } from './contamination.js';
  * 표적이 된다. 절차 청크 지형은 거짓이다(마커로 좁혔다).
  */
 export function isObjectiveDestructible(e: Entity): boolean {
-  return isCounterDevice(e) || isContaminationNode(e);
+  // ⚠️ 추격 반격 장치(`isCounterDevice`)는 2026-08-05 재설계로 **배치 자체가 없어졌다**
+  // (`modes/chase.ts` 상수 주석). 술어를 남겨 두면 어떤 엔티티도 만족하지 않는 죽은 분기가
+  // 되고, 이 파일이 경고하는 "목록이 갈린다" 를 오히려 부른다 — 목록에서 뺀다. 추격의 목표는
+  // 이제 파괴물이 아니라 **미확보 대피소**이고, 그 조준·추적은 파괴 대상이 아니므로 여기가
+  // 아니라 봇 이동(`autopilot.ts nearestObjective`)이 따로 다룬다.
+  return isContaminationNode(e);
 }
 
 /**

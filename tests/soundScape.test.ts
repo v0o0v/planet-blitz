@@ -3,7 +3,7 @@
  *
  * AudioContext 없이 순수 로직만 검증한다. GameAudio 는 `{ play: vi.fn() }` mock 을 cast 해 주입한다.
  * 핵심은 **이원 드랍 관측**(바닥 엔티티 등장 + 보스 무엔티티 직행) 과 **더블카운트 금지**(수거는 무음),
- * weaponType 5종 발사음 매핑, 특수탄 경고 판별·rising-edge, hasBoss 전이·관전 억제다.
+ * weaponType 5종 발사음 매핑, 특수탄 경고 판별·rising-edge, bossEngaged 전이·관전 억제다.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -30,7 +30,7 @@ function frame(over: Partial<SoundFrame> = {}): SoundFrame {
     level: 0,
     playerHp: 100,
     resources: 0,
-    hasBoss: false,
+    bossEngaged: false,
     bulletCount: 0,
     weaponType: 0,
     gameOver: false,
@@ -177,19 +177,22 @@ describe('RunSoundObserver (weaponType 발사음·드랍·경고·전이)', () =
     expect(warnCalls).toHaveLength(2);
   });
 
-  it('(f) hasBoss false→true → play("boss")', () => {
+  it('(f) bossEngaged false→true 여도 **등장음을 내지 않는다** — 정적이 곧 신호다', () => {
+    // 사용자 선택 2026-08-05(청취실 X0): 보스 등장 신호는 `BossWarnLoop` 의 반복이 **끊기는
+    // 정적** + 보스 BGM 전환이 낸다. 여기서 스팅어를 울리면 그 정적이 메워진다.
+    // ⚠️ 이 단언이 깨지면(= 다시 소리가 나면) 예고 루프 설계 전체가 무의미해진다.
     const { audio, play } = mockAudio();
     const obs = new RunSoundObserver(audio);
-    obs.observe(frame({ hasBoss: false }));
-    obs.observe(frame({ hasBoss: true }));
-    expect(play).toHaveBeenCalledWith('boss');
+    obs.observe(frame({ bossEngaged: false }));
+    obs.observe(frame({ bossEngaged: true }));
+    expect(play).not.toHaveBeenCalledWith('boss');
   });
 
   it('suppressSfx=true 는 모든 SFX 억제하되 prev 기준선은 갱신(관전 게이트 P4)', () => {
     const { audio, play } = mockAudio();
     const obs = new RunSoundObserver(audio);
     obs.observe(frame({ kills: 0 })); // 기준선.
-    obs.observe(frame({ kills: 5, hasBoss: true }), { suppressSfx: true, warn: true }); // 억제.
+    obs.observe(frame({ kills: 5, bossEngaged: true }), { suppressSfx: true, warn: true }); // 억제.
     // 억제 프레임에서 아무 SFX 도 안 남(boss·kill·warn 전부).
     expect(play).not.toHaveBeenCalled();
     // prev 가 갱신됐으므로 다음 프레임 kills 5→5 델타 없음 → kill 없음(prev 미갱신이면 5>0 로 오발).

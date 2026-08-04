@@ -45,6 +45,7 @@ import { Hud, hudActives } from './ui/hud.js';
 import type { BossHudState, RunInfoState } from './ui/hud.js';
 import { invasionHudState } from './ui/invasionProgress.js';
 import { runObjective, shelterArrivalMessage } from './ui/runObjective.js';
+import { chaseSheltersSecured, chaseShelterTotal } from './sim/modes/chase.js';
 import { PLANET_MODE } from './sim/planetMode.js';
 import { bossHudName } from './ui/bossLabels.js';
 import { bossProgress } from './sim/bossProgress.js';
@@ -192,6 +193,7 @@ import type { Replay } from './sim/replay.js';
 // M5 Phase C: 사운드(C1)·정산 완성판(C2)·로컬라이즈(C3). 전부 render/UI 레이어(sim 무수정).
 import { GameAudio } from './render/audio.js';
 import { RunSoundObserver, DropObserver } from './render/soundScape.js';
+import { BossWarnLoop } from './render/bossWarn.js';
 import { MusicDirector, type MusicZone } from './render/musicDirector.js';
 import { setUiAudio } from './render/uiSound.js';
 import { SettingsScreen } from './ui/pixi/settingsPanel.js';
@@ -486,6 +488,9 @@ async function main(): Promise<void> {
   // 메타 UI 음(AC16)이 흐를 사운드 보드를 UI 훅에 1회 주입 — PixiButton 등 공유 UI 가 playUi 로 낸다.
   setUiAudio(audio);
   const soundObserver = new RunSoundObserver(audio);
+  // 보스 예고 루프(사용자 지시 2026-08-05). 런 경계마다 soundObserver 와 함께 리셋한다 —
+  // 기준선을 안 버리면 다음 런 첫 프레임에 밀린 만큼 몰아서 운다.
+  const bossWarn = new BossWarnLoop(audio);
   // 이원 드랍 관측자(바닥 loot 엔티티 등장 + state.loot 직행 증분 — AC13·R8). 런마다 reset.
   const dropObserver = new DropObserver();
   // BGM 존 디렉터(사운드 풍성화 Phase 3 — 화면/보스 상태를 관찰해 존 전환·정산 스팅어). 순수 render.
@@ -551,9 +556,9 @@ async function main(): Promise<void> {
   let accumulator = 0;
   let frameCount = 0;
   /**
-   * 직전 프레임의 추격 세그먼트 인덱스(-1 = 기준선 없음 — 런 밖이거나 다른 모드). 대피소 도달
-   * 알림은 이 값이 **올라간 프레임**에만 뜬다. 런이 바뀌면 -1 로 되돌려 새 런 첫 구간에서
-   * 오발하지 않게 한다.
+   * 직전 프레임의 추격 **대피소 확보 수**(-1 = 기준선 없음 — 런 밖이거나 다른 모드). 확보 알림은
+   * 이 값이 **올라간 프레임**에만 뜬다. 런이 바뀌면 -1 로 되돌려 새 런 첫 프레임에서 오발하지
+   * 않게 한다(2026-08-05 재설계 전에는 세그먼트 인덱스였다 — `shelterArrivalMessage` 주석).
    */
   let lastChaseSegment = -1;
   // 스토리 시스템(Phase E): 이번 런에 에코 안정화 로어 토스트를 이미 띄웠는가(런당 1회).
@@ -973,6 +978,7 @@ async function main(): Promise<void> {
     settled = false;
     ceremony.reset();
     soundObserver.reset();
+    bossWarn.reset();
     dropObserver.reset();
     // 관전 아레나 배경(기본 배경, autotile 없음).
     const planet = world.config.planet ?? 0;
@@ -1150,6 +1156,7 @@ async function main(): Promise<void> {
     settled = false;
     ceremony.reset();
     soundObserver.reset();
+    bossWarn.reset();
     dropObserver.reset();
     lastOutcome = null;
     resultOverlay.hide();
@@ -1205,6 +1212,7 @@ async function main(): Promise<void> {
     settled = false;
     ceremony.reset();
     soundObserver.reset();
+    bossWarn.reset();
     dropObserver.reset();
     lastOutcome = null;
     resultOverlay.hide();
@@ -1443,6 +1451,7 @@ async function main(): Promise<void> {
     settled = false;
     ceremony.reset();
     soundObserver.reset();
+    bossWarn.reset();
     dropObserver.reset();
     lastOutcome = null;
     resultOverlay.hide();
@@ -1504,6 +1513,7 @@ async function main(): Promise<void> {
     settled = false;
     ceremony.reset();
     soundObserver.reset();
+    bossWarn.reset();
     dropObserver.reset();
     lastOutcome = null;
     resultOverlay.hide();
@@ -2208,6 +2218,10 @@ async function main(): Promise<void> {
       );
       if (action === 'show') {
         shownLevel = w.level;
+        // 카드 등장음(사용자 요청 2026-08-05). **오버레이가 실제로 뜨는 그 프레임**에만 울린다 —
+        // `levelUp`(레벨 수치 상승)과 다른 사건이다: 프리즈가 걸려 화면이 멈추고 선택을 요구하는
+        // 순간이 카드 등장이고, 그 둘은 같은 프레임이 아닐 수 있다(픽 소비 전 재표시 경로).
+        audio.play('card');
         powerupOverlay.show([...w.powerupChoices], readBuildStatus(w), (offerIndex) => {
           controller.queuePowerupPick(offerIndex);
         });
@@ -2254,22 +2268,23 @@ async function main(): Promise<void> {
     hud.setInvasion(invHud);
     // 런 목표·주의 2줄(사용자 요청 2026-08-04) — 침공 패널과 같은 읽기 전용 파생이라 sim 무영향.
     // 이미 구한 `bossProgress`·`invasionHudState` 를 그대로 넘겨 같은 순회를 두 번 돌지 않는다.
-    hud.setObjective(w !== null ? runObjective(w, bossProgress(w), invHud) : null);
+    const eta = w !== null ? bossProgress(w) : undefined;
+    hud.setObjective(w !== null ? runObjective(w, eta, invHud) : null);
     // 대피소 도달 알림(추격 모드). 도달하면 구간이 조용히 올라갈 뿐이라 화면에서는 아무 일도
     // 일어나지 않았다(사용자 신고 2026-08-04). 렌더러가 대피소 자리에 방어막 링을 터뜨리고,
     // 여기서는 **무엇이 일어났는지**를 글로 한 번 말한다. 표시 전용 — sim 무영향.
     if (w !== null && currentScreenName === 'run') {
-      const seg = w.wave.segmentIndex;
+      const secured = chaseSheltersSecured(w);
       const msg = shelterArrivalMessage(
         w.config.planetMode ?? PLANET_MODE.vampire,
         lastChaseSegment,
-        seg,
-        w.wave.boss,
+        secured,
+        chaseShelterTotal(w),
       );
       if (msg !== null) hud.showLore([msg]);
-      lastChaseSegment = seg;
+      lastChaseSegment = secured;
     } else {
-      lastChaseSegment = -1; // 런 밖에서는 기준선을 버린다(다음 런 첫 구간 오발 방지).
+      lastChaseSegment = -1; // 런 밖에서는 기준선을 버린다(다음 런 첫 확보 오발 방지).
     }
     if (w !== null) {
       const p = w.entities[0];
@@ -2306,13 +2321,20 @@ async function main(): Promise<void> {
       // 적 특수탄/보스탄 경고(AC19), 발사음 5종 변주(weaponType, AC12), 관전 SFX 억제(suppressSfx, AC21).
       const drops = dropObserver.observe(lootEntities, w.loot, p?.x ?? 0, VIEW_HALF_WIDTH);
       const warn = warnPresent;
+      // 보스전이 **열린** 순간(엔티티 존재가 아니다 — SoundFrame.bossEngaged 주석). 추격은
+      // 포식자가 처음부터 boss 로 서 있고 취약화(aux0=1)가 곧 보스전 개시다.
+      const bossEngaged =
+        bossEnt !== undefined && (w.config.planetMode !== PLANET_MODE.chase || bossEnt.aux0 === 1);
+      // 보스 예고 루프(사용자 지시 2026-08-05) — 다가올수록 빨라지고, 열리는 순간 끊긴다.
+      // 관전은 SFX 를 통째로 억제하므로 같은 플래그를 넘긴다.
+      bossWarn.tick(eta?.frac, bossEngaged, frame, spectating);
       soundObserver.observe(
         {
           kills: w.kills,
           level: w.level,
           playerHp: p?.hp ?? 0,
           resources: w.resources,
-          hasBoss: bossEnt !== undefined,
+          bossEngaged,
           bulletCount: playerBulletN,
           weaponType: w.weapon.weaponType,
           gameOver: w.gameOver,
