@@ -12,6 +12,7 @@
 import { t } from '../i18n/index.js';
 import type { BossProgress } from '../sim/bossProgress.js';
 import type { InvasionHudState } from './invasionProgress.js';
+import type { RunObjectiveState } from './runObjective.js';
 import type { WorldState } from '../sim/world.js';
 import {
   ACTIVES_BY_SHIP,
@@ -238,7 +239,7 @@ const STYLE = `
 #pb-hud .pb-bartext { position:relative; z-index:1; text-align:center; line-height:16px; font-size:11px; font-weight:600; text-shadow:0 1px 2px #000; }
 #pb-hud .pb-topline { display:flex; justify-content:space-between; font-size:13px; font-weight:700; margin-bottom:6px; text-shadow:0 1px 3px #000; }
 #pb-hud .pb-combo { color:#ffd24c; }
-#pb-supply { position:absolute; top:96px; left:50%; transform:translateX(-50%); background:rgba(255,180,40,.14); border:1px solid #ffcc44; color:#ffd98a; padding:6px 18px; border-radius:20px; font:700 15px 'Segoe UI',sans-serif; letter-spacing:1px; pointer-events:none; text-shadow:0 1px 2px #000; }
+#pb-supply { position:absolute; top:300px; left:50%; transform:translateX(-50%); background:rgba(255,180,40,.14); border:1px solid #ffcc44; color:#ffd98a; padding:6px 18px; border-radius:20px; font:700 15px 'Segoe UI',sans-serif; letter-spacing:1px; pointer-events:none; text-shadow:0 1px 2px #000; }
 #pb-boss { position:absolute; top:20px; left:50%; transform:translateX(-50%); width:640px; max-width:80vw; font-family:'Segoe UI',sans-serif; color:#fff; pointer-events:none; text-align:center; }
 #pb-boss .pb-bossname { font-size:14px; font-weight:800; letter-spacing:2px; text-shadow:0 1px 3px #000; margin-bottom:4px; }
 #pb-boss .pb-bosstrack { position:relative; height:20px; background:rgba(10,5,8,.8); border:2px solid #ff6a3c; border-radius:4px; overflow:hidden; }
@@ -253,7 +254,7 @@ const STYLE = `
 #pb-bossmeter .pb-etafill { position:absolute; inset:0; width:0%; background:linear-gradient(90deg,#ff8a2a,#ffd24c); transition:width .12s linear; }
 #pb-bossmeter .pb-etamark { position:absolute; top:0; bottom:0; width:2px; background:rgba(0,0,0,.55); }
 #pb-bossmeter .pb-etadetail { display:flex; justify-content:space-between; font-size:11px; font-weight:700; color:#d8c9a8; margin-top:3px; text-shadow:0 1px 2px #000; }
-#pb-contam { position:absolute; top:84px; left:50%; transform:translateX(-50%); width:420px; max-width:70vw; font-family:'Segoe UI',sans-serif; color:#fff; pointer-events:none; user-select:none; }
+#pb-contam { position:absolute; top:138px; left:50%; transform:translateX(-50%); width:420px; max-width:70vw; font-family:'Segoe UI',sans-serif; color:#fff; pointer-events:none; user-select:none; }
 #pb-contam .pb-contamhead { display:flex; justify-content:space-between; align-items:baseline; font-size:12px; font-weight:800; letter-spacing:1.5px; color:#b6ff8a; text-shadow:0 1px 3px #000; margin-bottom:3px; }
 #pb-contam .pb-contamtrack { position:relative; height:12px; background:rgba(8,14,10,.78); border:2px solid rgba(120,220,110,.55); border-radius:4px; overflow:hidden; }
 #pb-contam .pb-contamfill { position:absolute; inset:0; width:0%; background:linear-gradient(90deg,#7bd44a,#c8e05a); transition:width .12s linear; }
@@ -263,6 +264,11 @@ const STYLE = `
 #pb-contam.danger .pb-contamhead { color:#ff9a8a; }
 #pb-contam .pb-contammsg { font-size:11px; font-weight:700; color:#ffb0a0; margin-top:3px; height:13px; text-shadow:0 1px 2px #000; }
 @keyframes pb-contam-pulse { 0%,100%{opacity:1;} 50%{opacity:.55;} }
+#pb-objective { position:absolute; top:78px; left:50%; transform:translateX(-50%); width:640px; max-width:80vw; font-family:'Segoe UI',sans-serif; text-align:center; pointer-events:none; user-select:none; }
+#pb-objective .pb-obj-goal { font-size:19px; font-weight:800; letter-spacing:.4px; color:#ffe9b0; text-shadow:0 2px 4px #000,0 0 12px rgba(255,180,60,.45); }
+#pb-objective .pb-obj-caution { margin-top:3px; font-size:13px; font-weight:700; color:#a9b6d6; text-shadow:0 1px 3px #000; }
+#pb-objective .pb-obj-caution.alert { color:#ff9a8a; animation:pb-obj-alert .9s ease-in-out infinite; }
+@keyframes pb-obj-alert { 0%,100%{opacity:1;} 50%{opacity:.5;} }
 #pb-runinfo { position:absolute; right:16px; top:50%; transform:translateY(-50%); width:250px; background:rgba(14,12,26,.74); border:1px solid rgba(255,200,120,.35); border-radius:10px; padding:10px 12px; font-family:'Segoe UI',system-ui,sans-serif; color:#e8ecff; pointer-events:none; user-select:none; }
 #pb-runinfo .pb-ri-planet { font-size:15px; font-weight:800; color:#ffd98a; letter-spacing:.5px; text-shadow:0 1px 3px #000; }
 #pb-runinfo .pb-ri-stage { font-size:12px; font-weight:700; color:#d8c9a8; margin-top:1px; text-shadow:0 1px 2px #000; }
@@ -303,7 +309,7 @@ const STYLE = `
 #pb-actives .pb-ac-key { position:absolute; left:0; top:0; z-index:3; padding:1px 5px; font-size:11px; font-weight:800; color:#0d0f1c; background:rgba(255,210,76,.92); border-radius:8px 0 8px 0; }
 #pb-actives .pb-ac-cd { position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center; font-size:17px; font-weight:800; color:#ffe6b0; text-shadow:0 1px 3px #000; }
 #pb-actives .pb-ac-name { margin-top:3px; text-align:center; font-size:10px; font-weight:700; line-height:12px; max-height:24px; overflow:hidden; color:#cdd6f5; text-shadow:0 1px 2px #000; }
-#pb-lore { position:absolute; top:140px; left:50%; transform:translateX(-50%); max-width:80vw; background:rgba(18,24,44,.82); border:1px solid rgba(120,200,255,.55); box-shadow:0 0 18px 2px rgba(60,140,220,.35) inset; color:#dbe8ff; padding:10px 22px; border-radius:12px; font-family:'Segoe UI',system-ui,sans-serif; text-align:center; pointer-events:none; user-select:none; }
+#pb-lore { position:absolute; top:352px; left:50%; transform:translateX(-50%); max-width:80vw; background:rgba(18,24,44,.82); border:1px solid rgba(120,200,255,.55); box-shadow:0 0 18px 2px rgba(60,140,220,.35) inset; color:#dbe8ff; padding:10px 22px; border-radius:12px; font-family:'Segoe UI',system-ui,sans-serif; text-align:center; pointer-events:none; user-select:none; }
 #pb-lore .pb-lore-line { font-size:14px; font-weight:600; letter-spacing:.4px; text-shadow:0 1px 3px #000; line-height:1.5; }
 #pb-lore .pb-lore-line + .pb-lore-line { font-size:12px; font-weight:500; color:#a9c6ff; }
 #pb-lore.pb-lore-in { animation:pb-lore-fade 5.2s ease-in-out forwards; }
@@ -332,6 +338,15 @@ export class Hud {
   private readonly etaGate: HTMLElement;
   /** 현재 트랙에 그려 둔 구간 눈금 수(바뀔 때만 다시 그린다). */
   private etaMarks = -1;
+  /**
+   * 런 목표·주의 2줄(상단중앙, 보스 게이지/보스 체력바 **아래**). 세그먼트 게이지와 자리를
+   * 나눠 갖지 않고 별도 블록으로 둔 이유는 **보이는 조건이 다르기** 때문이다 — 게이지는 보스전과
+   * 침공에서 사라지지만, 주의 줄은 바로 그때도 남아야 한다(보스전의 추격 포식자, 침공의 제한시간).
+   * 값은 {@link setObjective} 가 프레임마다 채운다(파생은 src/ui/runObjective.ts).
+   */
+  private readonly objRoot: HTMLElement;
+  private readonly objGoal: HTMLElement;
+  private readonly objCaution: HTMLElement;
   /** 오염도 게이지(톡사르=오염 모드). 그 외 런에서는 숨는다. */
   private readonly contamRoot: HTMLElement;
   private readonly contamFill: HTMLElement;
@@ -450,6 +465,18 @@ export class Hud {
     this.etaRoot.appendChild(etaDetail);
     this.etaRoot.style.display = 'none';
     document.body.appendChild(this.etaRoot);
+
+    // 런 목표·주의 2줄. 기본 숨김 — setObjective 가 채우기 전에는 자리를 차지하지 않는다.
+    this.objRoot = document.createElement('div');
+    this.objRoot.id = 'pb-objective';
+    this.objGoal = document.createElement('div');
+    this.objGoal.className = 'pb-obj-goal';
+    this.objCaution = document.createElement('div');
+    this.objCaution.className = 'pb-obj-caution';
+    this.objRoot.appendChild(this.objGoal);
+    this.objRoot.appendChild(this.objCaution);
+    this.objRoot.style.display = 'none';
+    document.body.appendChild(this.objRoot);
 
     // 오염도 게이지 — 제목/수치 줄 + 트랙 + 경고 줄. 임계에 가까워지면 색이 오르고 맥동한다.
     this.contamRoot = document.createElement('div');
@@ -571,6 +598,7 @@ export class Hud {
       this.supplyBanner,
       this.bossRoot,
       this.etaRoot,
+      this.objRoot,
       this.contamRoot,
       this.loreToast,
       this.runInfo,
@@ -588,6 +616,28 @@ export class Hud {
    *
    * 침공(수비 시설 공략)·튜토리얼처럼 행성/촉매 축이 없는 런은 호출부가 `null` 을 준다.
    */
+  /**
+   * 런 목표·주의 2줄을 채운다(`null` = 감춤 — 런이 아닌 화면). 값 파생은 전부
+   * {@link runObjective} 가 하고 여기서는 그리기만 한다(`setInvasion` 과 같은 규율).
+   *
+   * 목표 줄은 보스전에서 `null` 로 온다 — 그 자리를 보스 체력바가 이미 말하고 있으므로 줄을
+   * 통째로 비운다. 주의 줄은 그때도 남는다(이 게임의 즉사 규칙은 보스전에도 그대로다).
+   */
+  setObjective(s: RunObjectiveState | null): void {
+    if (s === null) {
+      this.objRoot.style.display = 'none';
+      return;
+    }
+    this.objRoot.style.display = 'block';
+    const goal = s.objective ?? '';
+    if (this.objGoal.textContent !== goal) this.objGoal.textContent = goal;
+    this.objGoal.style.display = goal.length > 0 ? 'block' : 'none';
+    if (this.objCaution.textContent !== s.caution) this.objCaution.textContent = s.caution;
+    const cls = s.alert ? 'pb-obj-caution alert' : 'pb-obj-caution';
+    if (this.objCaution.className !== cls) this.objCaution.className = cls;
+    this.restackTop();
+  }
+
   setRunInfo(info: RunInfoState | null): void {
     if (info === null) {
       this.runInfo.style.display = 'none';
@@ -768,6 +818,8 @@ export class Hud {
     this.updateBossEta(s.bossEta);
     this.updateContamination(s.contamination);
     this.updateActives(s.actives);
+    // 상단중앙 스택은 **표시 조합이 확정된 뒤** 다시 쌓는다(이 세 갱신이 display 를 정한다).
+    this.restackTop();
   }
 
   /**
@@ -900,9 +952,31 @@ export class Hud {
       n: eta.segment,
       total: eta.totalSegments,
     });
+    // 게이트 상세는 **목표 줄이 가져갔다**(2026-08-04). 처치 할당만 여기 남긴다 — 그건 매 초
+    // 변하는 수치라 게이지 옆이 제자리이고, 나머지 게이트 문구는 두 줄이 같은 말을 반복했다.
     this.etaGate.textContent =
-      eta.gate === 'kills'
-        ? t('hud.bossEta.kills', { n: eta.current, goal: eta.goal })
-        : t(`hud.bossEta.${eta.gate}` as const);
+      eta.gate === 'kills' ? t('hud.bossEta.kills', { n: eta.current, goal: eta.goal }) : '';
+  }
+
+  /**
+   * 상단중앙 세로 스택(보스 체력바 → 보스 예고 게이지 → 목표/주의 → 오염도)의 `top` 을 이번
+   * 프레임의 **표시 조합**에 맞춰 다시 쌓는다.
+   *
+   * 왜 필요한가: 넷 다 `top` 고정이었고 보스 체력바와 예고 게이지는 **같은 20px** 이었다. 대개
+   * 배타적이라 안 드러났지만 추격 모드는 포식자가 런 시작부터 `boss` 엔티티라 **둘이 처음부터
+   * 겹쳐** 글자가 서로를 뚫고 나왔다(2026-08-04 화면 확인). 고정값을 더 늘리는 대신 표시 중인
+   * 것만 순서대로 쌓는다 — 어느 조합이든 겹치지 않는다.
+   */
+  private restackTop(): void {
+    let y = 20;
+    const place = (el: HTMLElement, height: number): void => {
+      if (el.style.display === 'none') return;
+      el.style.top = `${y}px`;
+      y += height;
+    };
+    place(this.bossRoot, 76); // 이름 + 트랙 + 메시지 줄
+    place(this.etaRoot, 62); // 머리글 + 트랙 + 상세
+    place(this.objRoot, this.objGoal.style.display === 'none' ? 30 : 54);
+    place(this.contamRoot, 62);
   }
 }

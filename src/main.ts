@@ -44,6 +44,8 @@ import { InputController } from './input/controller.js';
 import { Hud, hudActives } from './ui/hud.js';
 import type { BossHudState, RunInfoState } from './ui/hud.js';
 import { invasionHudState } from './ui/invasionProgress.js';
+import { runObjective, shelterArrivalMessage } from './ui/runObjective.js';
+import { PLANET_MODE } from './sim/planetMode.js';
 import { bossHudName } from './ui/bossLabels.js';
 import { bossProgress } from './sim/bossProgress.js';
 import { PowerupOverlay } from './ui/powerupOverlay.js';
@@ -548,6 +550,12 @@ async function main(): Promise<void> {
   let currSnap: WorldSnapshot = emptySnap;
   let accumulator = 0;
   let frameCount = 0;
+  /**
+   * 직전 프레임의 추격 세그먼트 인덱스(-1 = 기준선 없음 — 런 밖이거나 다른 모드). 대피소 도달
+   * 알림은 이 값이 **올라간 프레임**에만 뜬다. 런이 바뀌면 -1 로 되돌려 새 런 첫 구간에서
+   * 오발하지 않게 한다.
+   */
+  let lastChaseSegment = -1;
   // 스토리 시스템(Phase E): 이번 런에 에코 안정화 로어 토스트를 이미 띄웠는가(런당 1회).
   // echoStabilizedOf 는 안정화 후 런 내내 true 라, 전이 관측을 이 플래그로 1회로 고정한다.
   let echoToastShown = false;
@@ -2240,7 +2248,27 @@ async function main(): Promise<void> {
     hud.setVisible(currentScreenName === 'run' || currentScreenName === 'spectate');
     // 침공 진행 패널(사용자 요청 2026-07-29) — 읽기 전용 파생이라 sim 무영향. 침공 런이 아니면
     // `invasionHudState` 가 null 을 돌려주고 패널이 감춰진다(런이 없을 때도 동일).
-    hud.setInvasion(w !== null ? invasionHudState(w) : null);
+    const invHud = w !== null ? invasionHudState(w) : null;
+    hud.setInvasion(invHud);
+    // 런 목표·주의 2줄(사용자 요청 2026-08-04) — 침공 패널과 같은 읽기 전용 파생이라 sim 무영향.
+    // 이미 구한 `bossProgress`·`invasionHudState` 를 그대로 넘겨 같은 순회를 두 번 돌지 않는다.
+    hud.setObjective(w !== null ? runObjective(w, bossProgress(w), invHud) : null);
+    // 대피소 도달 알림(추격 모드). 도달하면 구간이 조용히 올라갈 뿐이라 화면에서는 아무 일도
+    // 일어나지 않았다(사용자 신고 2026-08-04). 렌더러가 대피소 자리에 방어막 링을 터뜨리고,
+    // 여기서는 **무엇이 일어났는지**를 글로 한 번 말한다. 표시 전용 — sim 무영향.
+    if (w !== null && currentScreenName === 'run') {
+      const seg = w.wave.segmentIndex;
+      const msg = shelterArrivalMessage(
+        w.config.planetMode ?? PLANET_MODE.vampire,
+        lastChaseSegment,
+        seg,
+        w.wave.boss,
+      );
+      if (msg !== null) hud.showLore([msg]);
+      lastChaseSegment = seg;
+    } else {
+      lastChaseSegment = -1; // 런 밖에서는 기준선을 버린다(다음 런 첫 구간 오발 방지).
+    }
     if (w !== null) {
       const p = w.entities[0];
       let enemyN = 0;

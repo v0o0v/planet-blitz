@@ -601,42 +601,74 @@ export function drawVisionFog(g: Graphics, cx: number, cy: number, radius: numbe
 // **대피소는 대개 화면 밖에 있다**. 게다가 6개가 전부 같은 스프라이트로 서 있고 전진 게이트는
 // `aux0 === segmentIndex` 인 하나뿐이라, 화면만 봐서는 어디로 가야 하는지 알 수 없었다
 // (사용자 신고 2026-07-27 "대피소가 어디인지 잘 보이지 않음"). 세 가지로 나눠 답한다:
-//   ① 활성 대피소 = 맥동 링으로 강조, 비활성 = 톤 다운 → 가까이 가면 어느 것이 목표인지 즉시 읽힌다.
-//   ② 화면 밖이면 카메라 중심 둘레에 **방향 화살표** → 어느 쪽으로 달릴지 항상 보인다.
+//   ① 대피소 세 상태(목표·미도달·사용됨)를 스프라이트 틴트와 링으로 가른다 → 남은 길이 읽힌다.
+//   ② 화면 밖이면 **화면 가장자리**에 방향 화살표 + 남은 거리 → 어느 쪽으로 달릴지 항상 보인다.
 //   ③ 레이더 `objective` 블립(radar.ts) → 사거리 밖이면 테두리 화살표로 방향.
-// 전부 렌더 전용(스냅샷 `active` 만 읽는다) — sim·해시 무관.
+// 전부 렌더 전용(스냅샷 `active`·`spent` 만 읽는다) — sim·해시 무관.
+//
+// ## 화살표가 카메라 둘레에서 화면 가장자리로 간 이유 (2026-08-04)
+// 처음에는 카메라 중심에서 260px 떨어진 자리에 높이 34px 삼각형을 띄웠다. 그 자리는 **화면
+// 한가운데 근처**라 탄막·이펙트와 겹쳐 표식이 아니라 적탄으로 읽혔고, 크기도 작아 사용자
+// 신고("화살표시도 너무 작아서 잘 안 보여")로 돌아왔다. 지금은 카메라에서 대상 방향으로 쏜
+// 반직선이 뷰포트 사각형과 만나는 점에 **크게** 그린다 — 전투가 벌어지는 화면 중앙을 비우고,
+// 화살표는 "저 가장자리 너머"라는 뜻만 실어 나른다.
 // ---------------------------------------------------------------------------
 
 /** 활성 대피소(이번 세그먼트 목표) 강조 색 — 레이더 objective 와 같은 연두. */
 export const SHELTER_ACTIVE_COLOR = 0x7dff5a;
 /** 비활성 대피소 링 색(존재만 알리는 톤). */
 export const SHELTER_IDLE_COLOR = 0x4a6a80;
-/** 화면 밖 대피소 화살표를 띄우는 카메라 중심 반경(월드 유닛 = px). */
-export const SHELTER_ARROW_RADIUS = 260;
+/** 이미 지나간 대피소 링 색(더 죽인 회색 — 남은 길과 헷갈리지 않게). */
+export const SHELTER_SPENT_COLOR = 0x3a4048;
+/**
+ * 화살표를 놓는 화면 가장자리 안쪽 여백(px). 화살표 자체 크기(팁 {@link SHELTER_ARROW_TIP})보다
+ * 커야 삼각형이 화면 밖으로 잘리지 않는다.
+ */
+export const SHELTER_ARROW_MARGIN = 96;
+/** 화살표 팁 길이(px). 옛 34 → 2.5배 — 화면 가장자리에서도 한눈에 잡히는 크기. */
+export const SHELTER_ARROW_TIP = 86;
+/** 화살표 밑변 반폭(px). */
+export const SHELTER_ARROW_HALF = 44;
 
 /**
- * 화면 밖 활성 대피소를 가리키는 화살표의 위치·각도. 대피소가 뷰포트(디자인 1920×1080) 안이면
- * null 을 돌려 화살표를 그리지 않는다(그 자리에 실물 대피소가 이미 보이므로). 순수 함수 —
- * 카메라·대상 좌표만의 함수라 vitest 로 단위 검증한다.
+ * 화면 밖 활성 대피소를 가리키는 화살표의 위치·각도·남은 거리. 대피소가 뷰포트(디자인
+ * 1920×1080) 안이면 null 을 돌려 화살표를 그리지 않는다(그 자리에 실물 대피소가 이미 보이므로).
+ *
+ * 위치는 카메라에서 대상으로 쏜 반직선이 **뷰포트 사각형(여백만큼 안쪽)** 과 만나는 점이다 —
+ * 옛 구현의 고정 반경 원이 아니다. 그래서 좌우로 먼 대피소는 좌우 변에, 위아래로 먼 대피소는
+ * 위아래 변에 붙어 방향이 화면 기하와 어긋나지 않는다. 순수 함수 — 카메라·대상 좌표만의
+ * 함수라 vitest 로 단위 검증한다.
  */
 export function shelterArrow(
   camX: number,
   camY: number,
   sx: number,
   sy: number,
-): { x: number; y: number; angle: number } | null {
+): { x: number; y: number; angle: number; distance: number } | null {
   const dx = sx - camX;
   const dy = sy - camY;
   // 뷰포트 안이면 화살표 불요(살짝 여유를 둬 가장자리에서 깜빡이지 않게 한다).
-  const margin = 80;
-  if (Math.abs(dx) <= DESIGN_WIDTH / 2 - margin && Math.abs(dy) <= DESIGN_HEIGHT / 2 - margin) {
+  const enterMargin = 80;
+  if (
+    Math.abs(dx) <= DESIGN_WIDTH / 2 - enterMargin &&
+    Math.abs(dy) <= DESIGN_HEIGHT / 2 - enterMargin
+  ) {
     return null;
   }
   const angle = Math.atan2(dy, dx);
+  const ca = Math.cos(angle);
+  const sa = Math.sin(angle);
+  // 반직선 ↔ 사각형 교점: 각 축이 경계에 닿는 매개변수 t 중 **작은 쪽**이 먼저 만나는 변이다.
+  const halfW = DESIGN_WIDTH / 2 - SHELTER_ARROW_MARGIN;
+  const halfH = DESIGN_HEIGHT / 2 - SHELTER_ARROW_MARGIN;
+  const tx = Math.abs(ca) > 1e-6 ? halfW / Math.abs(ca) : Infinity;
+  const ty = Math.abs(sa) > 1e-6 ? halfH / Math.abs(sa) : Infinity;
+  const t = Math.min(tx, ty);
   return {
-    x: camX + Math.cos(angle) * SHELTER_ARROW_RADIUS,
-    y: camY + Math.sin(angle) * SHELTER_ARROW_RADIUS,
+    x: camX + ca * t,
+    y: camY + sa * t,
     angle,
+    distance: Math.hypot(dx, dy),
   };
 }
 
@@ -814,6 +846,20 @@ export class EntityRenderer {
    * 필드(visionRadius·safeRadius)만 읽는다(결정론 골든 불변).
    */
   private readonly fog = new Graphics();
+  /**
+   * 화면 밖 대피소 화살표에 붙는 **남은 거리** 라벨(예: `320m`). 방향만으로는 "저쪽으로 가면
+   * 곧인지 한참인지"를 알 수 없어 화살표만 켜 두면 거리 감각이 없다. Graphics 로는 글자를 못
+   * 그리므로 Text 를 하나만 만들어 재사용하고(프레임마다 생성 금지), 화살표가 없는 프레임에는
+   * 감춘다. 렌더 전용 — sim/해시 무관.
+   */
+  private shelterDistLabel: Text | null = null;
+  /**
+   * 직전 프레임의 **목표 대피소**(id·월드 좌표). 목표가 다른 대피소로 넘어간 프레임이 곧 "방금
+   * 대피소에 도달했다"는 뜻이라, 그 순간에만 도달 연출(방어막 확산 링)을 옛 목표 자리에 터뜨린다.
+   * 도달 자체는 sim 이 판정하고(`chaseShelterReached`) 렌더는 그 결과의 **변화**만 본다 — 스냅샷
+   * 파생이라 해시·리플레이와 무관하다. id 0 이 유효값이므로 미설정은 -1.
+   */
+  private prevActiveShelter: { id: number; x: number; y: number } | null = null;
   private frameTick = 0;
   /** Active planet index (from the current snapshot) — selects boss art. */
   private planet = 0;
@@ -1360,7 +1406,24 @@ export class EntityRenderer {
         tracked.chute.rotation = tracked.sprite.rotation;
       }
 
-      if (e.kind === 'boss') {
+      if (e.kind === 'shelter') {
+        // 대피소 세 상태(추격 Lane6, 2026-08-04). 자산은 한 장이고 상태는 **틴트**로 가른다:
+        //   목표(active)   = 원색 + 은은한 맥동(유도등이 살아 있는 패드)
+        //   미도달         = 어둡게 죽인 톤(전원 꺼진 패드 — 있다는 것만 알린다)
+        //   사용됨(spent)  = 더 어둡고 채도 없는 톤(이미 지나온 길)
+        // Pixi tint 는 곱연산이라 0xffffff 가 항등원이고, 회색을 곱하면 그대로 어두워진다.
+        if (e.active) {
+          const pulse = 0.5 + 0.5 * Math.sin(this.frameTick * 0.08);
+          tracked.sprite.tint = 0xffffff;
+          tracked.sprite.alpha = 0.9 + 0.1 * pulse;
+        } else if (e.spent === true) {
+          tracked.sprite.tint = 0x4a4a52;
+          tracked.sprite.alpha = 0.55;
+        } else {
+          tracked.sprite.tint = 0x8a94a0;
+          tracked.sprite.alpha = 0.78;
+        }
+      } else if (e.kind === 'boss') {
         // 런타임 3D 액터(티어 게이트) — **텍스처만** 3D 아틀라스 프레임으로 갈아 끼운다.
         // 스프라이트는 끝까지 평범한 Pixi Sprite 로 남으므로 스프라이트 풀·접지 그림자·발광·
         // 레이더·z-order 가 한 줄도 바뀌지 않는다. 페이즈별 거동은 액터가 쥔다.
@@ -2112,6 +2175,62 @@ export class EntityRenderer {
     this.hazardHost.clear(this.hazardCtx(gates, tier, 0));
   }
 
+  /**
+   * 화면 밖 대피소 화살표 아래의 남은 거리 라벨을 이 자리에 띄운다. 라벨은 한 번만 만들고
+   * 재사용한다 — 화살표는 매 프레임 다시 그려지지만 Text 는 무겁다(폰트 래스터). 좌표는 월드
+   * 기준이다(labelLayer 가 카메라 변환을 받는 층이라 화살표와 같은 계에 있다).
+   */
+  private drawShelterDistance(x: number, y: number, distance: number): void {
+    let label = this.shelterDistLabel;
+    if (label === null) {
+      label = new Text({
+        text: '',
+        resolution: 2,
+        style: {
+          fontFamily: 'sans-serif',
+          fontSize: 26,
+          fontWeight: '800',
+          fill: SHELTER_ACTIVE_COLOR,
+          stroke: { color: 0x0a1408, width: 5 },
+        },
+      });
+      label.anchor.set(0.5, 0.5);
+      this.labelLayer.addChild(label);
+      this.shelterDistLabel = label;
+    }
+    // 월드 유닛 = px 라 그대로 미터로 읽는다(10 단위 반올림 — 한 자리씩 떨리면 눈이 피로하다).
+    const text = `${Math.round(distance / 10) * 10}m`;
+    if (label.text !== text) label.text = text;
+    label.position.set(x, y);
+    label.visible = true;
+  }
+
+  /**
+   * 대피소 **도달 순간** 연출. 목표 대피소가 다른 것으로 넘어간 프레임에만, 옛 목표 자리에서
+   * 방어막이 퍼지듯 링 두 겹을 터뜨린다(레벨업 링과 같은 원샷 계약 재사용).
+   *
+   * 왜 필요한가: 도달해도 화면에서는 구간 숫자만 조용히 올라가 **무슨 일이 일어난 건지 알 수
+   * 없었다**(사용자 신고 2026-08-04). 이 게임에서 대피소 도달은 유일한 전진 수단이므로, 보상이
+   * 눈에 보여야 "저기로 가라"가 규칙이 아니라 습관이 된다.
+   */
+  private updateShelterArrival(active: { id: number; x: number; y: number } | null): void {
+    const prev = this.prevActiveShelter;
+    if (prev !== null && active !== null && active.id !== prev.id) {
+      this.addOneShot(
+        new LevelUpRing(prev.x, prev.y, { color: SHELTER_ACTIVE_COLOR, radius: 340 }),
+      );
+      this.addOneShot(
+        new LevelUpRing(prev.x, prev.y, { color: 0xd8fff0, radius: 200 }),
+      );
+    }
+    this.prevActiveShelter = active;
+  }
+
+  /** 이번 프레임에 화살표가 없으면 거리 라벨을 감춘다(파괴하지 않는다 — 곧 다시 쓴다). */
+  private hideShelterDistance(): void {
+    if (this.shelterDistLabel !== null) this.shelterDistLabel.visible = false;
+  }
+
   private drawOverlay(curr: WorldSnapshot, hazardCtx: HazardHostContext): void {
     const g = this.overlay;
     const lg = this.lavaOverlay;
@@ -2128,13 +2247,22 @@ export class EntityRenderer {
       if (!showsTriggerRing(e.kind, e.active)) continue;
       g.circle(e.x, e.y, e.radius).stroke({ color: TRIGGER_RING_COLOR, width: 2, alpha: 0.35 });
     }
-    // 대피소 표식(추격 Lane6). 활성(이번 세그먼트 목표)만 맥동 링으로 세우고 나머지는 낮춘다.
-    // 화면 밖이면 카메라 둘레에 방향 화살표를 띄운다(SHELTER_ARROW_RADIUS).
+    // 대피소 표식(추격 Lane6). 세 상태를 링으로 가르고(목표=맥동 / 미도달=얇게 / 사용됨=더 죽여서),
+    // 목표가 화면 밖이면 **화면 가장자리**에 큰 방향 화살표 + 남은 거리를 띄운다.
     const shelterPulse = 0.5 + 0.5 * Math.sin(this.frameTick * 0.08);
+    let arrowShown = false;
+    let activeShelter: { id: number; x: number; y: number } | null = null;
     for (const e of curr.entities) {
       if (e.kind !== 'shelter') continue;
+      if (e.active) activeShelter = { id: e.id, x: e.x, y: e.y };
       if (!e.active) {
-        g.circle(e.x, e.y, e.radius).stroke({ color: SHELTER_IDLE_COLOR, width: 2, alpha: 0.22 });
+        // 이미 지나온 대피소는 남은 길과 헷갈리지 않게 한 단계 더 죽인다.
+        const spent = e.spent === true;
+        g.circle(e.x, e.y, e.radius).stroke({
+          color: spent ? SHELTER_SPENT_COLOR : SHELTER_IDLE_COLOR,
+          width: 2,
+          alpha: spent ? 0.14 : 0.22,
+        });
         continue;
       }
       g.circle(e.x, e.y, e.radius).stroke({
@@ -2152,16 +2280,24 @@ export class EntityRenderer {
       if (arrow === null) continue;
       const ca = Math.cos(arrow.angle);
       const sa = Math.sin(arrow.angle);
-      const tip = 34;
-      const half = 18;
-      const bx = arrow.x - ca * tip;
-      const by = arrow.y - sa * tip;
+      const bx = arrow.x - ca * SHELTER_ARROW_TIP;
+      const by = arrow.y - sa * SHELTER_ARROW_TIP;
+      // 어두운 배경·밝은 배경 어디서도 실루엣이 서게 검은 테두리를 먼저 깐다.
       g.moveTo(arrow.x, arrow.y)
-        .lineTo(bx - sa * half, by + ca * half)
-        .lineTo(bx + sa * half, by - ca * half)
+        .lineTo(bx - sa * SHELTER_ARROW_HALF, by + ca * SHELTER_ARROW_HALF)
+        .lineTo(bx + sa * SHELTER_ARROW_HALF, by - ca * SHELTER_ARROW_HALF)
         .closePath()
-        .fill({ color: SHELTER_ACTIVE_COLOR, alpha: 0.55 + 0.35 * shelterPulse });
+        .fill({ color: SHELTER_ACTIVE_COLOR, alpha: 0.72 + 0.24 * shelterPulse })
+        .stroke({ color: 0x0a1408, width: 4, alpha: 0.85, alignment: 0.5 });
+      this.drawShelterDistance(
+        arrow.x - ca * (SHELTER_ARROW_TIP + 26),
+        arrow.y - sa * (SHELTER_ARROW_TIP + 26),
+        arrow.distance,
+      );
+      arrowShown = true;
     }
+    if (!arrowShown) this.hideShelterDistance();
+    this.updateShelterArrival(activeShelter);
     // Hazard zones: telegraph = outlined warning ring; active = filled danger.
     // 주기 온오프 해저드(L2 설비·L3 중력 앵커)는 이 예열↔활성 대비가 리듬을 읽게 한다.
     // **용암(HAZARD_LAVA)만 lavaOverlay 로 분리** — 시머가 용암류만 국소로 흔들고 예고선·비-용암
