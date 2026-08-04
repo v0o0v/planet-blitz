@@ -970,7 +970,12 @@ const TILE_BAND_RATIO = 0.71;
 const TILE_RADIUS_RATIO = 0.045;
 const TILE_PAD_RATIO = 0.062;
 const TILE_LIFT_RATIO = 0.026;
-const TILE_FLOAT_RATIO = 0.004;
+/**
+ * ⚠️ **0 이다** — 이웃 타일(`cinematicTile.ts` `FLOAT_RATIO`)과 같은 이유로 함께 껐다. 서브픽셀
+ * 부유가 1px 밝은 테두리를 매 프레임 리샘플해 "테두리가 번쩍인다"로 읽혔다(사용자 신고
+ * 2026-08-04). 근거 전문은 그 상수의 주석에 있다 — 두 파일이 갈리면 이 칸만 다시 지글거린다.
+ */
+const TILE_FLOAT_RATIO = 0;
 const TILE_FLOAT_PERIOD = 6.2;
 const TILE_HOVER_LERP = 9;
 /** dt 상한 — 탭 복귀로 프레임이 크게 튀어도 연출이 순간이동하지 않게. */
@@ -1082,6 +1087,55 @@ const TILE_FEATHER_RATIO = 0.145;
 const TILE_FOCUS_Y = 0.42;
 /** 아트/라벨 경계 금박 실선(이웃 타일과 같은 값). */
 const SEAM_GOLD = 0xc9a04a;
+
+/**
+ * 방향성 베벨 3단 — `cinematicTile.ts` `BEVEL_*` 와 **같은 값**이다.
+ *
+ * 값을 여기 복제하는 이유는 이 파일 위쪽 상수들과 같다: 세 레인은 서로의 파일을 import 하지
+ * 않는 것이 계약이다. 대신 **하나라도 어긋나면 이 칸만 다른 제품처럼 보인다** — 그게 실제로
+ * 벌어졌던 결함이라(사방 균일 금박) 짝을 명시해 둔다.
+ */
+const TILE_BEVEL_LIGHT = 0xd9b070;
+const TILE_BEVEL_LIGHT_ALPHA = 0.55;
+const TILE_BEVEL_DARK = 0x120b06;
+const TILE_BEVEL_DARK_ALPHA = 0.7;
+const TILE_BEVEL_RECESS = 0x0d0805;
+const TILE_BEVEL_RECESS_ALPHA = 0.5;
+
+/**
+ * 둥근 사각의 **위/왼쪽 반**(빛을 받는 쪽) 경로. 좌하 호의 중점에서 시작해 왼쪽 변 → 좌상 호 →
+ * 윗변 → 우상 호의 중점에서 끝난다. 대각선에서 갈라야 이음매가 모서리 한가운데에 놓인다.
+ * `inset` 만큼 안으로 들여 그린다 — Pixi 의 열린 경로 스트로크는 중심 정렬이라, 선 두께의
+ * 절반을 인셋해야 카드 **바깥으로 한 픽셀도 새지 않는다**.
+ */
+function bevelLightPath(g: Graphics, w: number, h: number, radius: number, inset: number): void {
+  const r = Math.max(0, radius - inset);
+  const x0 = inset;
+  const y0 = inset;
+  const x1 = w - inset;
+  const y1 = h - inset;
+  const q = Math.PI / 2;
+  g.arc(x0 + r, y1 - r, r, q * 1.5, Math.PI)
+    .lineTo(x0, y0 + r)
+    .arc(x0 + r, y0 + r, r, Math.PI, q * 3)
+    .lineTo(x1 - r, y0)
+    .arc(x1 - r, y0 + r, r, q * 3, q * 3.5);
+}
+
+/** 둥근 사각의 **아래/오른쪽 반**(그늘지는 쪽) 경로. {@link bevelLightPath} 와 정확히 상보다. */
+function bevelDarkPath(g: Graphics, w: number, h: number, radius: number, inset: number): void {
+  const r = Math.max(0, radius - inset);
+  const x0 = inset;
+  const y0 = inset;
+  const x1 = w - inset;
+  const y1 = h - inset;
+  const q = Math.PI / 2;
+  g.arc(x1 - r, y0 + r, r, q * 3.5, q * 4)
+    .lineTo(x1, y1 - r)
+    .arc(x1 - r, y1 - r, r, 0, q)
+    .lineTo(x0 + r, y1)
+    .arc(x0 + r, y1 - r, r, q, q * 1.5);
+}
 
 function tileBodyChannel(k: 'r' | 'g' | 'b', t: number): number {
   return Math.round(TILE_BODY_TOP[k] + (TILE_BODY_BOTTOM[k] - TILE_BODY_TOP[k]) * t);
@@ -1510,22 +1564,31 @@ export function makeHeroTile(
   inner.addChild(title);
   inner.addChild(subText);
 
-  // --- 테두리: 안쪽 어두운 홈 + 금박 헤어라인 ----------------------------------------
-  // 이웃 타일과 같은 구조이되 금박만 **한 단계 진하다**(폭 1.5→2.4 · 알파 0.5→0.85).
-  // 밝기 총량을 늘리지 않고 "이 칸이 주인공"이라고 말하는 가장 싼 방법이다.
-  const grooveW = Math.max(2, Math.round(Math.min(w, h) * 0.009));
+  // --- 테두리: 이웃 타일과 **완전히 동일한** 방향성 베벨 ------------------------------
+  // ⚠️ 예전엔 여기만 사방 균일한 금박을 한 단계 진하게 둘렀다(폭 2.4 · α0.85 vs 이웃 1 · α0.55).
+  // "밝기 총량을 늘리지 않고 주인공이라고 말하는 싼 방법"이라고 적어 뒀지만, 실화면에서는
+  // **성계지도 칸만 테두리가 진하게 도드라져** 8칸이 한 격자로 안 보였다(사용자 지시 2026-08-04:
+  // "다른 메뉴와 동일하게"). 게다가 사방 균일 밝은 스트로크는 이 화면이 이미 폐기한 문법이다
+  // (`cinematicTile.ts` `BEVEL_LIGHT` 실측: 바닥 모서리가 천장 모서리와 같이 밝으면 조명이 아니라
+  // 웹 카드 키라인으로 읽힌다) — 주인공 칸만 그 문법을 쓰고 있었던 셈이다.
+  //
+  // 그래서 이웃과 **같은 3단 베벨**(아래/오른쪽 그늘 → 위/왼쪽 홈 → 위/왼쪽 립)로 되돌린다.
+  // 주인공 표시는 아트·금색 글자·라벨 밴드 금빛 차등·맥동 후광이 이미 맡고 있다.
   const edge = new Graphics();
-  edge
-    .roundRect(grooveW / 2, grooveW / 2, w - grooveW, h - grooveW, radius - grooveW / 2)
-    .stroke({ color: GROOVE, width: grooveW, alpha: 0.9 });
-  edge
-    .roundRect(0, 0, w, h, radius)
-    .stroke({ color: GOLD_LIT, width: 2.4, alignment: 1, alpha: 0.85 });
+  bevelDarkPath(edge, w, h, radius, 1);
+  edge.stroke({ color: TILE_BEVEL_DARK, width: 2, alpha: TILE_BEVEL_DARK_ALPHA });
+  bevelLightPath(edge, w, h, radius, 1.5);
+  edge.stroke({ color: TILE_BEVEL_RECESS, width: 1, alpha: TILE_BEVEL_RECESS_ALPHA });
+  bevelLightPath(edge, w, h, radius, 0.5);
+  edge.stroke({ color: TILE_BEVEL_LIGHT, width: 1, alpha: TILE_BEVEL_LIGHT_ALPHA });
   inner.addChild(edge);
 
   // --- 호버 림 --------------------------------------------------------------------
+  // 림도 **방향성**이다(이웃 타일과 같은 규율) — 호버라고 사방을 밝히면 그 순간 다시 웹 카드
+  // 키라인이 된다. 빛을 받는 위/왼쪽만 강해진다.
   const rim = new Graphics();
-  rim.roundRect(0, 0, w, h, radius).stroke({ color: 0xfffbe8, width: 2.5, alignment: 1, alpha: 1 });
+  bevelLightPath(rim, w, h, radius, 1);
+  rim.stroke({ color: 0xfff0c8, width: 2, alpha: 1 });
   rim.alpha = 0;
   inner.addChild(rim);
 
@@ -1556,7 +1619,7 @@ export function makeHeroTile(
 
     const bob = Math.sin((time / TILE_FLOAT_PERIOD) * Math.PI * 2) * floatAmp;
     inner.y = bob - lift * hover;
-    rim.alpha = 0.75 * hover;
+    rim.alpha = 0.7 * hover; // 이웃 타일과 같은 값 — 호버 응답도 8칸이 같아야 한 격자다.
     warm.alpha = 0.085 * hover;
     motif?.update(time);
 

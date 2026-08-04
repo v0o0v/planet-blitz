@@ -716,7 +716,14 @@ async function main(): Promise<void> {
     // destroy 로 걷히지 않는다 — 명시 회수 경로 넷 중 하나가 이것이다.
     entityRenderer.reset();
     clearInvasionBackdrop();
-    background.visible = !autotile.active;
+    // 평면 배경(TilingSprite)도 **런 전용**이다. 예전엔 여기서 `!autotile.active` 규칙을 그대로
+    // 적용했는데, 바로 위에서 `autotile.configure(null, 0)` 로 지형을 끈 직후라 이 식은 **항상
+    // true** 가 되어 메뉴에서도 아레나 타일 배경이 깔린 채로 남았다. 메타 화면이 전부 불투명일
+    // 때는 안 보였지만, AC-5.1 전환 커튼이 화면을 쓸고 지나가는 구간에는 새 화면이 아직 안
+    // 그려진 자리로 그 배경이 그대로 비쳤다(사용자 신고 2026-08-04 — 별무늬 타일 바닥).
+    // 메타 화면은 저마다 자기 배경을 세우고, 런 경로(startRun/침공/관전)는 이 뒤에 각자
+    // `background.visible` 을 다시 켠다 — 그래서 여기서는 무조건 끄는 것이 옳다.
+    background.visible = false;
     tutorialOverlay.hide();
     resultOverlay.hide();
     baseMap.hide();

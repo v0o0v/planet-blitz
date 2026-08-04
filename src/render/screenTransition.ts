@@ -24,39 +24,53 @@
  *  파일이 거기서 import 하면 DEV 코드가 프로덕션 번들에 딸려온다. 그래서 진행 이징을 이 파일에
  *  자체 포함한다(shaderEffects 가 progress 를 자체 포함한 선례와 동형). 갤러리 사본은 그대로 둔다.
  *
- * ── 시각 레지스터 = meta(카툰나무풍) — 넘을 수 없는 계약 ③ ─────────────────────
- *  따뜻한 브라운/그린/크림 나무 톤만 쓴다. 전투 SF 네온 글로우·블룸은 차용하지 않는다. 이건
- *  셰이더가 아니라 **Graphics 오버레이 애니메이션**(절차적 나무판 슬라이드)이다.
+ * ── 시각 레지스터 = 시네마틱 키아트 (2026-08-04 사용자 지시로 전환) ───────────────
+ *  예전엔 카툰나무 색판이었다. 그런데 타이틀·인트로·기지가 전부 풀블리드 키아트로 올라간 뒤
+ *  (PR#236·#240·#245) **화면 전환만 밋밋한 노란 나무판**으로 남아, 전환할 때마다 게임이 한
+ *  단계 아래로 내려갔다 보인다는 판정이 나왔다. 그래서 커튼 면을 **타이틀 하늘 키아트**
+ *  ({@link CURTAIN_ART})로 갈아끼운다 — 이미 게임 안에 있는 붓이라 새 자산을 요구하지 않고,
+ *  전환이 "화면과 화면 사이의 우주"로 읽힌다.
+ *
+ *  자산은 **비동기로 얹는다**: 생성자는 여전히 절차적 색판을 동기로 세우고(아래 node 계약),
+ *  로드가 끝나면 그 위에 스프라이트를 덮는다. 로드가 실패해도 커튼은 그대로 화면을 덮는다 —
+ *  자산은 덧붙임이지 전제가 아니다(리포 공통 규율).
  *
  * ── 계약(넘을 수 없음) ────────────────────────────────────────────────────────
  *  - **render-only**: `src/sim/` 무접촉. 결정론(hashWorld/hashEntity)과 무관하다.
  *  - **node 안전**: 절차적 Graphics 라 GL 없이 생성자에서 색판을 동기 생성 → `container.children>0`
- *    (tests/galleryWiring 배선 스모크 근거). `Date`/`Math.random` 미사용.
+ *    (tests/galleryWiring 배선 스모크 근거). `Date`/`Math.random` 미사용. 자산 로드는 실패가
+ *    기본값인 경로라 node 에서도 조용히 지나간다.
  *
  * ── 밸런스 유예(defer-balance-tuning) ── cover/hold/reveal 타이밍·팔레트·트림 폭은 전부
  *    placeholder 다. 실제 값은 구현 완료 후 출시 직전 일괄 조정한다(2026-07-22 지시).
  */
 
-import { Container, Graphics } from 'pixi.js';
+import { Assets, Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from './app.js';
+import { titleAssetUrl } from '../ui/pixi/titleTextures.js';
 
 // ---------------------------------------------------------------------------
-// 카툰나무풍 팔레트 (전부 기존 메타 UI 실사용 색 + 조화 그린/골드)
-//   transitionVariants.ts WOOD 톤과 동일 계열. 커튼은 나무문(sliding door)처럼 읽히게
-//   따뜻한 중간 브라운을 바탕으로, 크림 프레임 · 골드 리딩 트림으로 카툰 결을 준다.
+// 시네마틱 팔레트
+//   커튼 면은 키아트 스프라이트가 맡고, 여기 색들은 ①자산 로드 전·실패 시의 폴백 바탕
+//   ②자산 위에 얹는 비네트·리딩 엣지 역할만 한다. 톤은 타이틀 하늘(짙은 남보라 + 금)과 맞춘다.
 // ---------------------------------------------------------------------------
-const WOOD = {
-  /** 바탕 나무판(따뜻한 중간 브라운) — 커튼 본체. */
-  base: 0x6b4a2a,
-  /** 판재 홈(어두운 결). */
-  groove: 0x3a2a1a,
-  /** 판재 하이라이트(밝은 결). */
-  highlight: 0xc9b58a,
-  /** 크림 외곽 프레임. */
-  cream: 0xebdcbe,
-  /** 골드 리딩/트레일링 트림(슬라이드 엣지 강조). */
+const INK = {
+  /** 폴백 바탕(짙은 청록 — {@link CURTAIN_ART} 성운의 그늘색). 자산이 없어도 확실히 덮는 실체. */
+  base: 0x0b171c,
+  /** 폴백 바탕 하단(더 깊은 잉크) — 세로 램프로 평면을 깬다. */
+  deep: 0x050a0d,
+  /** 좌우 비네트 — 슬라이드 중 커튼이 화면과 섞이지 않게 가장자리를 눌러 준다. */
+  vignette: 0x000000,
+  /** 리딩/트레일링 엣지의 금빛 — 슬라이드 방향을 읽히게 하는 유일한 밝은 요소. */
   gold: 0xffd678,
 } as const;
+
+/**
+ * 커튼 면에 쓰는 키아트. **타이틀 하늘 레이어를 재사용한다** — 새 자산을 만들지 않으면서
+ * 게임 안에 이미 있는 붓을 쓰는 유일한 선택지고, 1376×768 풀블리드라 커튼(1920×1080)에
+ * cover-fit 으로 늘려도 구도가 성립한다.
+ */
+const CURTAIN_ART = 'title_sky.webp';
 
 // ---------------------------------------------------------------------------
 // 전환 타이밍 (placeholder · defer-balance-tuning)
@@ -247,34 +261,92 @@ export class ScreenTransition {
   }
 
   /**
-   * 절차적 카툰나무 색판을 동기 생성해 container 에 붙인다(children===1). 통짜 Graphics 라
-   * GL 없이 성립. 좌표는 디자인 영역 기준이며 OVERSCAN 만큼 사방으로 넉넉히 그린다.
+   * 불투명 폴백 색판을 **동기로** 세워 container 에 붙이고(children≥1 — node 계약), 이어서
+   * 키아트를 비동기로 얹는다. 통짜 Graphics 라 GL 없이 성립하고, 좌표는 디자인 영역 기준이며
+   * OVERSCAN 만큼 사방으로 넉넉히 그린다(레터박스 서브픽셀 갭 방어).
+   *
+   * 레이어 순서(뒤 → 앞): 폴백 잉크 램프 → 키아트 스프라이트(로드 후) → 비네트·엣지 크롬.
+   * 크롬을 **먼저 만들어 두고** 스프라이트를 그 아래에 끼워 넣으므로(`addChildAt`), 자산이
+   * 늦게 와도 위아래가 뒤집히지 않는다.
    */
   private buildCurtain(): void {
     const W = DESIGN_WIDTH;
     const H = DESIGN_HEIGHT;
     const M = OVERSCAN;
-    const g = new Graphics();
 
-    // 1. 바탕 나무판(불투명) — 완전 덮힘을 보장하는 실체. OVERSCAN 만큼 오버사이즈.
-    g.rect(-M, -M, W + 2 * M, H + 2 * M).fill({ color: WOOD.base, alpha: 1 });
+    // 1. 폴백 바탕(불투명) — 완전 덮힘을 보장하는 실체. 자산이 없어도 이것만으로 성립한다.
+    //    단색 사각이 아니라 위→아래 2단 램프라, 자산 실패 시에도 평면 판때기로 읽히지 않는다.
+    const base = new Graphics();
+    base.rect(-M, -M, W + 2 * M, H + 2 * M).fill({ color: INK.base, alpha: 1 });
+    base.rect(-M, H * 0.55, W + 2 * M, H * 0.45 + M).fill({ color: INK.deep, alpha: 0.85 });
+    this.container.addChild(base);
 
-    // 2. 가로 판재 결 — 홈(어두움) + 하이라이트(밝음) 교대로 카툰 나무 질감.
-    const planks = 6;
-    for (let i = 1; i < planks; i++) {
-      const y = (H / planks) * i;
-      g.rect(0, y - 3, W, 3).fill({ color: WOOD.groove, alpha: 0.55 });
-      g.rect(0, y, W, 2).fill({ color: WOOD.highlight, alpha: 0.35 });
+    // 2. 크롬 — 좌우 비네트 + 리딩/트레일링 금빛 엣지. 자산 위에 얹혀야 하므로 먼저 붙인다.
+    const chrome = new Graphics();
+    // 좌우 비네트: 커튼 가장자리를 눌러 슬라이드 중 배경과 섞이지 않게 한다.
+    const vw = Math.round(W * 0.16);
+    for (let i = 0; i < 8; i++) {
+      const a = 0.5 * (1 - i / 8) ** 1.6;
+      const step = vw / 8;
+      chrome.rect(-M + i * step, -M, step, H + 2 * M).fill({ color: INK.vignette, alpha: a });
+      chrome
+        .rect(W - (i + 1) * step, -M, step + (i === 0 ? M : 0), H + 2 * M)
+        .fill({ color: INK.vignette, alpha: a });
     }
+    // 슬라이드 엣지 — 얇은 금빛 립 + 그 안쪽으로 사라지는 광휘. 두꺼운 트림 대신 얇게 간다.
+    chrome.rect(-M, -M, 3, H + 2 * M).fill({ color: INK.gold, alpha: 0.85 });
+    chrome.rect(W - 3, -M, 3 + M, H + 2 * M).fill({ color: INK.gold, alpha: 0.85 });
+    for (let i = 1; i <= 5; i++) {
+      const a = 0.16 * (1 - i / 5);
+      chrome.rect(3 + (i - 1) * (TRIM_WIDTH / 5), -M, TRIM_WIDTH / 5, H + 2 * M).fill({
+        color: INK.gold,
+        alpha: a,
+      });
+      chrome.rect(W - 3 - i * (TRIM_WIDTH / 5), -M, TRIM_WIDTH / 5, H + 2 * M).fill({
+        color: INK.gold,
+        alpha: a,
+      });
+    }
+    this.container.addChild(chrome);
 
-    // 3. 크림 외곽 2겹 프레임(카툰나무 결) — nineSlicePanel 코드 프레임과 동형.
-    g.rect(0, 0, W, H).stroke({ color: WOOD.cream, width: 18, alignment: 1 });
-    g.rect(12, 12, W - 24, H - 24).stroke({ color: WOOD.groove, width: 6, alignment: 1 });
+    // 3. 키아트 — 비동기. 실패·미존재는 조용히 넘어가고 위 폴백이 그대로 커튼이 된다.
+    void this.attachArt(base);
+  }
 
-    // 4. 좌·우 세로 골드 트림 — 슬라이드 시 리딩/트레일링 엣지가 밝게 쓸리는 카툰 느낌.
-    g.rect(-M, -M, TRIM_WIDTH, H + 2 * M).fill({ color: WOOD.gold, alpha: 0.9 });
-    g.rect(W - TRIM_WIDTH, -M, TRIM_WIDTH + M, H + 2 * M).fill({ color: WOOD.gold, alpha: 0.9 });
+  /**
+   * 키아트를 로드해 폴백 바탕 **바로 위**에 cover-fit 으로 얹는다. 파괴된 뒤 도착한 응답은
+   * 버린다(전환은 화면 수명보다 짧을 수 있다).
+   *
+   * cover-fit 인 이유: 자산 비율(1376×768 ≈ 1.79)과 디자인 비율(1920×1080 ≈ 1.78)이 거의
+   * 같지만 정확히 같지는 않다. contain 으로 맞추면 한쪽에 폴백 색이 띠로 남아 **커튼에
+   * 이음매**가 생긴다 — 덮는 것이 목적인 물건이라 넘치는 쪽을 잘라야 맞다.
+   */
+  private async attachArt(base: Graphics): Promise<void> {
+    const url = titleAssetUrl(CURTAIN_ART);
+    if (url === undefined) return;
+    let tex: Texture;
+    try {
+      tex = await Assets.load<Texture>(url);
+    } catch {
+      return; // 자산은 덧붙임이지 전제가 아니다.
+    }
+    if (this.destroyed) return;
+    // 페인터리 원화를 확대해 쓴다 — nearest 면 붓자국이 계단으로 부서진다(titleTextures 근거).
+    tex.source.scaleMode = 'linear';
 
-    this.container.addChild(g);
+    const W = DESIGN_WIDTH + OVERSCAN * 2;
+    const H = DESIGN_HEIGHT + OVERSCAN * 2;
+    const sw = tex.width > 0 ? tex.width : W;
+    const sh = tex.height > 0 ? tex.height : H;
+    const scale = Math.max(W / sw, H / sh);
+
+    const art = new Sprite(tex);
+    art.anchor.set(0.5);
+    art.width = sw * scale;
+    art.height = sh * scale;
+    art.position.set(DESIGN_WIDTH / 2, DESIGN_HEIGHT / 2);
+
+    const at = this.container.getChildIndex(base) + 1;
+    this.container.addChildAt(art, at);
   }
 }

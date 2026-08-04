@@ -624,6 +624,12 @@ export class SettingsScreen {
           this.scroll = v;
         },
         thumb: true,
+        // 막대를 **창 밖 오른쪽**에 세운다. 설정 팝업의 컨트롤(버튼·슬라이더)은 창 폭 CW 를
+        // 꽉 채우므로, 기본값(창 안쪽)으로 두면 막대가 그 위에 그대로 얹혀 겹쳐 보인다
+        // (사용자 신고 2026-08-04). 패널 안쪽 여백은 60px(테두리 46 + 패드 14)이고 내부 채움은
+        // 30px 부터라, 창 오른쪽 끝(BOX.right = PANEL_W − 60)과 채움 끝(PANEL_W − 30) 사이에
+        // 30px 이 비어 있다 — 막대(6) + 여백(2) = 8px 은 여기에 충분히 들어간다.
+        thumbOutside: true,
       });
       holder.addChild(content);
     } else {

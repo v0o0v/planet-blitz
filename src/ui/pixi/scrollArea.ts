@@ -103,6 +103,20 @@ export interface ScrollAreaOptions {
    * opt-in 이다(모듈 주석 ③).
    */
   thumb?: boolean;
+  /**
+   * thumb 을 창 **바깥 오른쪽**에 그린다(기본 false = 창 안쪽 오른쪽 끝에 겹쳐 그린다).
+   *
+   * ## 왜 필요한가 (사용자 신고 2026-08-04 — "톱니 메뉴 안에 스크롤바가 겹쳐 보여")
+   * 기본값은 thumb 을 창 안쪽에 얹는다. 내용이 창 폭을 다 안 쓰는 목록(사령부·연구소)에서는
+   * 오른쪽에 여백이 있어 문제가 없지만, **설정 팝업처럼 컨트롤이 창 폭을 꽉 채우는 화면**에서는
+   * 막대가 버튼·슬라이더 위에 그대로 얹혀 겹쳐 보인다.
+   *
+   * 창을 좁히는 것으로는 못 푼다 — 내용은 이미 `w` 를 기준으로 조립된 뒤에 들어온다. 그래서
+   * **막대를 밖으로 내보내는** 선택지를 준다. 호출부는 창 오른쪽에 {@link SCROLL_THUMB_W} +
+   * {@link SCROLL_THUMB_PAD} 만큼의 빈 자리가 있는지 책임진다(설정 팝업은 패널 안쪽 여백이
+   * 30px 이라 8px 을 충분히 흡수한다).
+   */
+  thumbOutside?: boolean;
 }
 
 /**
@@ -139,7 +153,10 @@ export function makeScrollArea(parent: Container, opts: ScrollAreaOptions): Cont
       thumbG.clear();
       const g = thumbGeometry(h, totalH, opts.get());
       if (g === null) return;
-      const tx = x + w - SCROLL_THUMB_W - SCROLL_THUMB_PAD;
+      const tx =
+        opts.thumbOutside === true
+          ? x + w + SCROLL_THUMB_PAD
+          : x + w - SCROLL_THUMB_W - SCROLL_THUMB_PAD;
       const r = SCROLL_THUMB_W / 2;
       // 트랙(창 전체) → 손잡이. 트랙이 있어야 "이만큼 중 여기"라는 비율이 읽힌다.
       thumbG
