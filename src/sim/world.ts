@@ -1674,7 +1674,7 @@ function activateChunks(state: WorldState, player: Entity): void {
       // live gimmick set of a generated chunk is always the full pure-function
       // layout (AC3 path independence). If the cap can't fit the whole chunk,
       // defer it — marker stays unset and generation retries next tick.
-      const placements = chunkPlacements(state.worldRng, cx, cy);
+      const placements = chunkPlacements(state.worldRng, cx, cy, state.config.planet ?? 0);
       if (activeGimmicks + placements.length > MAX_ACTIVE_GIMMICKS) continue;
       for (const g of placements) {
         spawnPlacement(state, g);

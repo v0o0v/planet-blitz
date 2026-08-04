@@ -26,7 +26,15 @@
 
 import { Rectangle, Texture } from 'pixi.js';
 
-/** 파생 텍스처 캐시(키 = `타일수X×타일수Y`). 벽 크기는 몇 종류뿐이라 캐시가 곧 상한이다. */
+/**
+ * 파생 텍스처 캐시(키 = `소스 uid:타일수X×타일수Y`).
+ *
+ * ⚠️ **소스 uid 가 키에 반드시 들어가야 한다.** 예전에는 타일 수만으로 키를 잡았고, 그건 벽
+ * 텍스처가 세상에 한 장뿐이라는 전제 위에서만 맞다. 벽 질감을 둘 이상 쓰는 순간 같은 타일 수를
+ * 쓰는 다른 질감이 **서로의 캐시 항목을 집어 가** 엉뚱한 무늬가 그려진다 — 실제로 행성별 벽
+ * 질감을 시험하다 이 결함을 만났다(2026-08-04). 질감은 다시 한 장으로 돌아갔지만, 전제에
+ * 기대는 키는 그때 조용히 깨지므로 키를 고쳐 둔다.
+ */
 const cache = new Map<string, Texture>();
 
 /** 한 축의 타일 수(최소 1). 반올림이라 잔여 스케일은 [0.67, 1.33] 안에 든다. */
@@ -48,7 +56,7 @@ export function tiledWallTexture(base: Texture, widthPx: number, heightPx: numbe
   const nx = tileCount(widthPx, tw);
   const ny = tileCount(heightPx, th);
   if (nx === 1 && ny === 1) return base;
-  const key = `${nx}x${ny}`;
+  const key = `${base.source.uid}:${nx}x${ny}`;
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
   // 소스에 반복 주소 모드를 걸어야 프레임을 키운 만큼 무늬가 이어진다(늘림이 아니라 반복).
