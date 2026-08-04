@@ -2618,6 +2618,11 @@ async function main(): Promise<void> {
       // 관제탑은 서버 왕복 화면이라 로그인 없이는 안내 상태만 뜬다 — 채워진 화면을
       // 검증하려면 이 참조로 뷰를 직접 띄운다(카툰나무풍 롤아웃 #6 검증 절차).
       controlTower,
+      // 타이틀 — 행성 앞 보스 실루엣은 **매 부팅 랜덤 3기**라, 노출해 두지 않으면 화면 비교가
+      // 성립하지 않는다(불꽃 세기 A/B 를 찍는데 보스가 매번 바뀌면 무엇이 달라졌는지 못 가린다).
+      // `setBossSilhouettes([...])` 로 고정하고 `show()` 를 다시 부르면 그 셋으로 선다.
+      titleScreen,
+      openTitle,
       // 기록 보관소(서사 열람) + 인트로 슬라이드 — 검증 시 이 참조로 직접 show 한다.
       recordsArchive,
       introSlides,

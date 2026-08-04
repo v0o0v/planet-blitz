@@ -172,8 +172,26 @@ const RIM_PULSE_PERIOD = 5.5;
  * 발광만 허공에 남는다. 전방이 로컬 −x 이므로 후방(=노즐)은 +x 다.
  */
 const ENGINE_AT = { back: 0.80, down: -0.16, side: 0.17 } as const;
-/** 빌보드 지름(박스 세로 반치수 대비). */
-const ENGINE_GLOW_SIZE = 0.85;
+/**
+ * 불꽃 세기 배수 — **노즐 코어(여기)와 Pixi 코로나(`titleScreen.ts`)가 공유하는 단 하나의 손잡이**다.
+ *
+ * 둘을 따로 두면 한쪽만 올려 놓고 잊는다: 코어만 키우면 캔버스 경계에서 잘리고, 코로나만 키우면
+ * 심지 없는 안개가 된다.
+ *
+ * 값 1.5 는 실화면 3안 비교로 골랐다(사용자 확정, 2026-08-04). ⚠️ **이 수치는 코로나를 함선
+ * **앞**에 그린다는 전제와 한 몸이다.** 뒤에 그리던 시절에는 2.8 도 약해 보였는데, 앞으로
+ * 옮기자 같은 2.8 이 함선을 통째로 흰 덩어리로 지웠다 — 합성 순서를 되돌리면 이 값도 다시
+ * 골라야 한다.
+ */
+export const FLAME_STRENGTH = 1.5;
+/**
+ * 빌보드 지름(박스 세로 반치수 대비).
+ *
+ * ⚠️ 이 값을 무한정 키울 수 없다. 함선은 {@link RENDER_W}×{@link RENDER_H} 오프스크린 캔버스에
+ * 그려지므로, 발광이 프러스텀을 넘으면 **네모난 단면**으로 잘린다(가산 합성이라 특히 눈에 띈다).
+ * 넓게 번지는 몫은 캔버스 밖 Pixi 가산 레이어가 맡는다 — 여기는 심지만 담당한다.
+ */
+const ENGINE_GLOW_SIZE = 0.85 * FLAME_STRENGTH;
 /**
  * 노즐 뒤 점광 — 선체 **후미만** 청록으로 물들여 "가동 중"을 만든다.
  *
@@ -205,9 +223,38 @@ export class TitleShip3D {
   private engineLight: THREE.PointLight | null = null;
   private time = 0;
   private disposed = false;
+  /**
+   * 직전 프레임의 연소 맥동값(≈0.48~1.17). Pixi 코로나가 **같은 값**을 읽어 크기·알파를 정한다 —
+   * 두 계층이 각자 사인파를 돌리면 위상이 어긋나 불꽃이 둘로 보인다.
+   */
+  private burn = 1;
 
   /** 이 스프라이트에 물리면 된다. 매 {@link update} 마다 내용이 갱신된다. */
   readonly texture: Texture;
+
+  /** {@link burn} 의 읽기 전용 창. 호출자는 이 값을 곱해 자기 계층을 맞춘다. */
+  get flicker(): number {
+    return this.burn;
+  }
+
+  /**
+   * 노즐 둘의 **텍스처 중심 기준 픽셀 오프셋**. Pixi 코로나가 이 값으로 자리를 잡는다.
+   *
+   * ⚠️ 이 값을 손으로 상수에 적으면 안 된다. 실제로 두 번 틀렸다 — 처음엔 광채가 동체를 감싸
+   * 역광처럼 보였고, 내려 보니 이번엔 함선 밑 조명이 됐다. 노즐의 화면 위치는 기본 자세
+   * (요 −90°·피치 +0.30)와 매 프레임 흔들리는 요·피치·롤·상하 부유가 **전부 곱해진 결과**라,
+   * 눈대중으로 맞출 수 있는 값이 아니다.
+   *
+   * 스프라이트가 이 텍스처를 그대로 배율만 바꿔 그리므로, 호출자는 여기에 스케일만 곱하면 된다.
+   */
+  nozzleOffsets(): { x: number; y: number }[] {
+    this.camera.updateMatrixWorld();
+    return this.engineGlows.map((g) => {
+      const v = g.getWorldPosition(new THREE.Vector3()).project(this.camera);
+      // NDC(-1..1) → 텍스처 픽셀. y 는 화면 아래가 +라 부호가 뒤집힌다.
+      return { x: (v.x * RENDER_W) / 2, y: (-v.y * RENDER_H) / 2 };
+    });
+  }
 
   private constructor(renderer: THREE.WebGLRenderer, canvas: HTMLCanvasElement) {
     this.renderer = renderer;
@@ -359,8 +406,11 @@ export class TitleShip3D {
     }
     // 세로 프러스텀이 더 좁으므로 세로 기준으로 거리를 잡고 여유(1.35)를 준다 — 자세 연출로
     // 실루엣이 기울어도 프레임에 닿지 않게.
+    // ⚠️ 여유 1.6 은 **불꽃 예산**이다. 원래 1.35 였는데, 그 값에서는 노즐 발광을 키우는 순간
+    // 프러스텀을 넘어 네모나게 잘렸다 — 세기 손잡이를 돌려도 화면이 안 변하는 원인의 절반이
+    // 여기였다. 여유를 늘리면 함선이 작아지므로 `titleScreen.ts` 의 SHIP_SCALE 이 함께 커진다.
     const fov = (this.camera.fov * Math.PI) / 180;
-    this.camera.position.set(0, 0, (this.radius / Math.sin(fov / 2)) * 1.35);
+    this.camera.position.set(0, 0, (this.radius / Math.sin(fov / 2)) * 1.6);
     this.camera.lookAt(0, 0, 0);
   }
 
@@ -408,6 +458,7 @@ export class TitleShip3D {
     const burn = 0.78 + 0.30 * Math.sin((t / ENGINE_PULSE_PERIOD) * Math.PI * 2);
     // 두 배 주기의 작은 흔들림을 얹어 맥동이 기계적인 사인파로 읽히지 않게 한다.
     const flicker = burn + 0.09 * Math.sin((t / (ENGINE_PULSE_PERIOD * 0.37)) * Math.PI * 2);
+    this.burn = flicker;
     const glowSize = this.half.y * ENGINE_GLOW_SIZE * flicker;
     for (const g of this.engineGlows) {
       g.scale.set(glowSize, glowSize, 1);

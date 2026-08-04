@@ -40,10 +40,16 @@ import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { effectGates, type QualityTier } from '../../render/qualityTier.js';
 import { graphicsTierController } from '../../render/graphicsRuntime.js';
 import { graphicsSettings, type Quality } from '../../render/graphicsSettings.js';
-import { TitleShip3D } from '../../render/three3d/titleShip.js';
+import { TitleShip3D, FLAME_STRENGTH } from '../../render/three3d/titleShip.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
-import { loadTitleTextures, type TitleTextures } from './titleTextures.js';
+import {
+  loadTitleTextures,
+  BOSS_SILHOUETTE_NAMES,
+  type TitleTextures,
+  type BossSilhouetteName,
+} from './titleTextures.js';
+import { radialGlowTexture } from './glowTexture.js';
 import { verticalScrimTexture } from './scrim.js';
 import { PixiButton } from './button.js';
 import { GoogleSignInButton } from './googleSignInButton.js';
@@ -108,7 +114,7 @@ const SHIP_AT = { x: 0.47, y: 0.635 } as const;
  * 스프라이트 배율. 뒤에서 보면 실루엣이 짧아져(길이가 화면 깊이로 들어간다) 같은 배율에서도
  * 더 커 보인다. 게다가 **작을수록 멀리 있는 것으로 읽혀** 행성까지의 거리가 살아난다.
  */
-const SHIP_SCALE = 1.25;
+const SHIP_SCALE = 1.48;
 /**
  * 진행 방향으로의 왕복 폭(px)과 주기(초). 계속 전진시키면 프레임을 벗어나므로 아주 느리게
  * 오간다 — 정지가 아니라 **거리를 좁히는 중**으로 읽히는 최소량이다.
@@ -121,7 +127,76 @@ const APPROACH_PERIOD = 19;
  * 원경이 근경보다 덜 움직이는 것이 깊이의 정의다. 전경판만 **부호가 반대**라 창틀이
  * 시선과 함께 미세하게 반대로 밀리며 입체감을 만든다.
  */
-const PARALLAX = { sky: 0.35, planet: 0.62, ship: 0.85, frame: -0.18, logo: -0.08 } as const;
+const PARALLAX = { sky: 0.35, planet: 0.62, boss: 0.72, ship: 0.85, frame: -0.18, logo: -0.08 } as const;
+
+// --- 행성 앞 보스 실루엣 ---
+
+/**
+ * 보스 실루엣 자리.
+ *
+ * ⚠️ **행성 앞에 놓으면 안 된다.** 처음에 행성 주변(x 726~1386 · y 190~566)에 겹쳐 놓았는데,
+ * 이 키아트의 `title_planet.webp` 는 밝은 행성이 아니라 **어두운 유적선**이라 짙은 실루엣 셋 중
+ * 둘이 화면에서 통째로 사라졌다(실측 스크린샷 — 읽힌 것은 밝은 성운 위에 선 하나뿐이었다).
+ * 실루엣은 뒤가 밝을 때만 실루엣이다. 그래서 자리는 **성운**이고, 유적선 박스(대략
+ * x 726~1096 · y 341~566)와 함선 몸통(x 740~1082 · y 649~758)을 둘 다 비켜 간다.
+ *
+ * 크기가 곧 원근이다(사용자 확정, 2026-08-04): 큰 1 + 작은 2. 랜덤으로 뽑은 셋의 실루엣이
+ * 우연히 비슷해도 크기 차가 구분을 대신해 준다 — 같은 크기 셋이면 그 보험이 없다.
+ *
+ * `w` 는 실루엣의 **최대 변** 길이다(굽는 쪽이 종횡비를 보존해 정사각 캔버스에 맞췄으므로,
+ * 납작한 니플헤임은 같은 `w` 에서 세로가 훨씬 얇게 나온다 — 의도된 것이다).
+ */
+const BOSS_SLOTS = [
+  { x: 1292, y: 505, w: 208, alpha: 0.95, bobAmpl: 7, bobPeriod: 12.7 },
+  { x: 718, y: 600, w: 148, alpha: 0.85, bobAmpl: 9, bobPeriod: 17.3 },
+  { x: 1002, y: 582, w: 102, alpha: 0.72, bobAmpl: 6, bobPeriod: 21.1 },
+] as const;
+
+/** 본체 tint. 순검정이 아닌 짙은 남색 — 검정은 어두운 성운 앞에서 배경에 들러붙는다. */
+const BOSS_BODY_TINT = 0x1a243c;
+/**
+ * 림라이트 tint·두께. 같은 실루엣을 조금 키워 뒤에 가산으로 한 겹 깔면 가장자리만 남아 테두리가
+ * 된다 — 모델별로 가장자리를 따로 굽지 않고도 실루엣이 배경에서 떨어진다. 색은 함선 림
+ * (`titleShip.ts` 0x7fe6ff)과 같은 계열이라 둘이 한 장면 안의 광원을 공유하는 것처럼 붙는다.
+ */
+const BOSS_RIM_TINT = 0x4fd2e8;
+const BOSS_RIM_GROW = 1.05;
+const BOSS_RIM_ALPHA = 0.5;
+
+// --- 노즐 코로나(Pixi 가산) ---
+
+/**
+ * 코로나 중심의 함선 스프라이트 기준 오프셋(px). 함선은 기수가 들린 뒷모습이라 노즐이 스프라이트
+ * 중심보다 **아래**에 온다. 3D 안의 발광과 달리 이쪽은 자세 흔들림을 따라가지 않는데, 넓게 번지는
+ * 빛이라 몇 px 어긋나도 보이지 않는다(따라가야 하는 심지는 3D 쪽에 남겨 두었다).
+ */
+/**
+ * 노즐 자리에서 배기 방향으로 더 밀어내는 양(px, 스프라이트 기준).
+ *
+ * 자리 자체는 {@link TitleShip3D.nozzleOffsets} 가 3D 에서 투영해 준다 — 손으로 적었다가 두 번
+ * 틀렸다(동체를 감싸는 역광 → 함선 밑 조명). 여기 남은 것은 **불꽃이 노즐보다 조금 뒤에서
+ * 시작한다**는 몫뿐이다. 뒤에서 보는 구도라 "뒤"는 화면상 아래쪽이다(기수가 들려 있으므로).
+ */
+const CORONA_TRAIL = { x: 0, y: 10 } as const;
+
+/**
+ * 코로나는 **두 겹**이다 — 넓은 헤일로 + 좁고 뜨거운 심지. 노즐마다 이 한 쌍이 붙는다.
+ *
+ * ⚠️ 한 겹(넓고 부드러운 가산 광채)만 쓰면 세기 손잡이가 화면에서 안 들린다. 실측: 0.7·1.0·1.4
+ * 세 장을 나란히 놓았더니 사용자가 "세 개 다 비슷해"라고 판정했다. 이유는 두 가지가 겹쳤다 —
+ * ①가산 광채는 배경이 밝을수록 기여가 묻히는데 함선 뒤가 밝은 성운이고, ②부드러운 램프는
+ * 키워도 **면적만** 늘 뿐 어디에도 또렷한 경계가 안 생겨 "밝아졌다"로 안 읽힌다.
+ *
+ * 좁고 알파가 높은 심지를 얹으면 밝은 배경 위에서도 흰 코어가 남아, 크기 변화가 곧 밝기 변화로
+ * 읽힌다. 넓은 겹은 그 코어가 공중에 떠 보이지 않게 받쳐 주는 몫이다.
+ *
+ * 크기는 **함선 동체(≈200px)보다 작게** 잡는다. 넘어서는 순간 불꽃이 아니라 함선을 덮는
+ * 안개가 된다.
+ */
+const CORONA_HALO = { size: 132, alpha: 0.4 } as const;
+const CORONA_CORE = { size: 46, alpha: 0.9 } as const;
+/** 알파 상한 — 넘기면 함선 후미가 흰 덩어리로 씻긴다. */
+const CORONA_ALPHA_MAX = 0.95;
 
 /** 마우스 추종 최대 변위(px, 디자인 스페이스). 크게 잡으면 멀미가 나므로 절제한다. */
 const MOUSE_RANGE = 26;
@@ -168,6 +243,35 @@ function currentGates(): ReturnType<typeof effectGates> {
   );
 }
 
+/**
+ * 보스 실루엣 셋을 **중복 없이** 뽑는다.
+ *
+ * 중복을 막는 이유는 뻔하지만(같은 보스가 크기만 달리해 둘 서 있으면 랜덤이 아니라 결함으로
+ * 보인다) 순진한 구현이 그것을 놓치기 쉬워 함수로 떼어 둔다 — 여기가 테스트가 무는 자리다.
+ *
+ * `rand` 를 받는 이유: 화면 판정용 스크린샷은 **같은 셋**으로 찍어야 비교가 성립한다. 매번 다른
+ * 보스가 서 있으면 "불꽃이 세졌나"가 아니라 "보스가 바뀌었나"를 보게 된다.
+ */
+export function pickBossSilhouettes(
+  count: number,
+  rand: () => number = Math.random,
+): BossSilhouetteName[] {
+  const pool = [...BOSS_SILHOUETTE_NAMES];
+  const out: BossSilhouetteName[] = [];
+  for (let i = 0; i < count && pool.length > 0; i++) {
+    out.push(pool.splice(Math.floor(rand() * pool.length), 1)[0]!);
+  }
+  return out;
+}
+
+interface BossSil {
+  body: Sprite;
+  rim: Sprite;
+  baseY: number;
+  ampl: number;
+  period: number;
+}
+
 interface Mote {
   gfx: Graphics;
   baseX: number;
@@ -199,6 +303,15 @@ export class TitleScreen {
   private motes: Mote[] = [];
   private shaft: Graphics | null = null;
   private moteHost = new Container();
+
+  /** 이번 화면에 세운 보스 실루엣(자산 로드 전이면 비어 있다). */
+  private bosses: BossSil[] = [];
+  /** 이번에 뽑힌 보스. `show()` 마다 재추첨하고, {@link setBossSilhouettes} 가 있으면 그것을 쓴다. */
+  private bossPick: BossSilhouetteName[] = [];
+  /** 고정 지정(하네스·스크린샷 비교용). null 이면 매 `show()` 랜덤. */
+  private bossOverride: BossSilhouetteName[] | null = null;
+  /** 노즐 코로나(가산). 노즐 둘 × 두 겹 = 스프라이트 4장. 함선이 없으면 비어 있다. */
+  private corona: { sprite: Sprite; nozzle: number; spec: { size: number; alpha: number } }[] = [];
 
   /** 3D 함선. 저티어·WebGL 실패면 끝까지 null 이다(배경만 나온다). */
   private ship: TitleShip3D | null = null;
@@ -253,9 +366,19 @@ export class TitleScreen {
     return this.root.visible;
   }
 
+  /**
+   * 보스 실루엣을 고정한다(하네스·스크린샷 비교용). `null` 이면 다시 랜덤으로 돌아간다.
+   * 다음 {@link show} 부터 적용된다.
+   */
+  setBossSilhouettes(names: BossSilhouetteName[] | null): void {
+    this.bossOverride = names;
+  }
+
   show(opts: TitleShowOpts): void {
     this.opts = opts;
     this.time = 0;
+    // 매 부팅(그리고 타이틀로 돌아올 때마다) 재추첨한다 — 사용자 확정, 2026-08-04.
+    this.bossPick = this.bossOverride ?? pickBossSilhouettes(BOSS_SLOTS.length);
     this.render();
     this.root.visible = true;
     // 다른 캔버스 화면(카드 등)이 자기를 맨 앞으로 올려 둔 뒤일 수 있다 — 타이틀도 올린다.
@@ -316,8 +439,48 @@ export class TitleScreen {
     // 틀어진 것을 스프라이트 회전으로 덮으려다 오히려 자세를 망가뜨렸다. 원인은 요 상수의
     // 잔여 보정값이었고, 고칠 자리는 3D 쪽이었다).
     host.removeChildren();
+    // ⚠️ 배열도 같이 비운다. `render()` 가 부르고 로드 완료가 또 부르므로, 안 비우면 화면에서
+    // 떨어져 나간 스프라이트가 배열에 남아 매 프레임 죽은 객체를 만지게 된다.
+    this.corona = [];
+    const haloTex = radialGlowTexture(256, [
+      [0, '255, 255, 255', 0.95],
+      [0.22, '190, 246, 255', 0.55],
+      [0.55, '90, 200, 255', 0.16],
+      [1, '0, 0, 0', 0],
+    ]);
+    // 심지는 **거의 흰색이고 가장자리까지 급하게 떨어진다**. 밝은 성운 위에서도 남는 것은
+    // 이 경계뿐이라, 헤일로와 같은 완만한 램프를 쓰면 두 겹을 둔 의미가 사라진다.
+    const coreTex = radialGlowTexture(128, [
+      [0, '255, 255, 255', 1],
+      [0.35, '235, 252, 255', 0.9],
+      [0.7, '150, 226, 255', 0.35],
+      [1, '0, 0, 0', 0],
+    ]);
     host.addChild(sprite);
     this.shipSprite = sprite;
+
+    // ⚠️ 코로나는 **함선보다 앞**이다. 처음에는 뒤에 뒀는데(가산 광채가 선체를 씻어낼까 봐),
+    // 그러면 동체가 광채를 가려 가장자리 테두리만 남고 화면에서는 "엔진이 탄다"가 아니라
+    // "앞에서 빛이 온다"로 읽혔다(사용자 판정 — "불꽃이 비행체 앞에서 나오는 느낌").
+    //
+    // 물리적으로도 앞이 맞다. 카메라가 함선 **뒤**에 있으므로 배기는 화면 바깥, 즉 **카메라
+    // 쪽으로** 뿜어져 나온다 — 선체 후미를 가리는 것이 정상이다. 사용자도 "불꽃이 비행체를
+    // 가려도 된다"고 명시했다.
+    if (haloTex !== null && coreTex !== null) {
+      // 헤일로 둘을 먼저 다 깔고 그 위에 심지 둘 — 심지가 이웃 노즐의 헤일로에 묻히지 않는다.
+      for (const [tex, spec] of [
+        [haloTex, CORONA_HALO],
+        [coreTex, CORONA_CORE],
+      ] as const) {
+        for (let nozzle = 0; nozzle < ship.nozzleOffsets().length; nozzle++) {
+          const s = new Sprite(tex);
+          s.anchor.set(0.5);
+          s.blendMode = 'add';
+          host.addChild(s);
+          this.corona.push({ sprite: s, nozzle, spec });
+        }
+      }
+    }
   }
 
   /** 함선 → 행성 단위 벡터. 진행 왕복이 이 축으로만 움직인다. */
@@ -353,6 +516,14 @@ export class TitleScreen {
       if (layer === undefined) continue;
       layer.x = ox * factor;
       layer.y = oy * factor;
+    }
+
+    // 보스 실루엣 부유 — 슬롯마다 **다른 주기**(12.7/17.3/21.1)라 셋이 한 덩어리로 뛰지 않는다.
+    // 위치만 흔든다: 실루엣은 고정 각도로 구워져 있어 회전을 주면 굽힌 각과 어긋난다.
+    for (const b of this.bosses) {
+      const y = b.baseY + Math.sin((this.time / b.period) * Math.PI * 2) * b.ampl;
+      b.body.y = y;
+      b.rim.y = y;
     }
 
     // 먼지 티끌 — 창 안을 아주 느리게 떠오른다. 위로 벗어나면 아래로 되감는다.
@@ -393,6 +564,26 @@ export class TitleScreen {
         const h = this.heading();
         const s = Math.sin((this.time / APPROACH_PERIOD) * Math.PI * 2) * APPROACH_AMPL;
         sprite.position.set(this.shipBase.x + h.x * s, this.shipBase.y + h.y * s);
+        // 코로나는 함선을 따라간다 — 진행 왕복으로 함선이 움직이는데 광채만 제자리에 있으면
+        // 노즐에서 떨어져 나간다. 크기·알파는 3D 쪽 연소 맥동을 **그대로 읽어** 쓴다.
+        const burn = this.ship?.flicker ?? 1;
+        // 노즐 자리는 3D 에서 투영해 온다 — 자세가 흔들리면 불꽃도 같이 흔들린다.
+        const nozzles = this.ship?.nozzleOffsets() ?? [];
+        for (const { sprite: s, nozzle, spec } of this.corona) {
+          const at = nozzles[nozzle];
+          if (at === undefined) continue;
+          s.position.set(
+            sprite.x + (at.x + CORONA_TRAIL.x) * SHIP_SCALE,
+            sprite.y + (at.y + CORONA_TRAIL.y) * SHIP_SCALE,
+          );
+          const size = spec.size * FLAME_STRENGTH * burn;
+          s.width = size;
+          s.height = size;
+          s.alpha = Math.min(
+            CORONA_ALPHA_MAX,
+            spec.alpha * FLAME_STRENGTH * Math.min(1.3, burn),
+          );
+        }
       }
     } else if (shipLayer !== undefined) {
       shipLayer.visible = false; // 그리지도 않고 보이지도 않는다.
@@ -408,6 +599,8 @@ export class TitleScreen {
     this.motes = [];
     this.shaft = null;
     this.shipSprite = null;
+    this.bosses = [];
+    this.corona = [];
 
     const opts = this.opts;
     if (opts === null) return;
@@ -442,6 +635,41 @@ export class TitleScreen {
       // 창 중앙보다 우측·아래 — 로고 아래를 비우고, 함선이 지날 좌하 공간을 남긴다.
       s.position.set(DESIGN_WIDTH * PLANET_AT.x, DESIGN_HEIGHT * PLANET_AT.y);
       planet.addChild(s);
+    }
+
+    // --- 행성 앞 보스 실루엣 ---
+    // 행성보다 앞, 함선보다 뒤다. 함선은 화면 아래쪽(y 0.635)이고 보스는 행성 근처(y 0.33~0.45)라
+    // 겹칠 일이 거의 없지만, 순서를 정해 두지 않으면 자산 로드 순서가 앞뒤를 정하게 된다.
+    const bossLayer = addLayer('boss');
+    for (const [i, slot] of BOSS_SLOTS.entries()) {
+      const name = this.bossPick[i];
+      if (name === undefined) continue;
+      const tex = this.art[name];
+      if (tex === undefined) continue;
+      // 굽는 쪽이 정사각 캔버스에 최대 변을 맞춰 두었으므로 폭 하나로 크기가 정해진다.
+      const k = slot.w / tex.width;
+      const make = (tint: number, grow: number, alpha: number): Sprite => {
+        const s = new Sprite(tex);
+        s.anchor.set(0.5);
+        s.scale.set(k * grow);
+        s.position.set(slot.x, slot.y);
+        s.tint = tint;
+        s.alpha = alpha;
+        return s;
+      };
+      // 림이 먼저(뒤) — 조금 큰 사본의 가장자리만 본체 밖으로 삐져나와 테두리가 된다.
+      const rim = make(BOSS_RIM_TINT, BOSS_RIM_GROW, BOSS_RIM_ALPHA * slot.alpha);
+      rim.blendMode = 'add';
+      const body = make(BOSS_BODY_TINT, 1, slot.alpha);
+      bossLayer.addChild(rim);
+      bossLayer.addChild(body);
+      this.bosses.push({
+        body,
+        rim,
+        baseY: slot.y,
+        ampl: slot.bobAmpl,
+        period: slot.bobPeriod,
+      });
     }
 
     // --- 3D 함선 자리(로드가 끝나면 attachShip 이 채운다) ---
