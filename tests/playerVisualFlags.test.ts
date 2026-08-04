@@ -119,6 +119,8 @@ function rig(): Rig {
   const ctx: AdornerContext = {
     belowLayer: below,
     aboveLayer: above,
+    // 정보 레이어(이름표·체력바). 플레이어 장식자는 안 쓰지만 맥락 형태는 채워야 한다.
+    labelLayer: new Container(),
     frameTick: 0,
     dt: 1 / 60,
     gates: effectGates('high', settings()),

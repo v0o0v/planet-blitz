@@ -19,11 +19,14 @@ import {
 import { settleRun } from '../src/save/settlement.js';
 
 describe('base unlocks — computeUnlocks (plan E2, GDD §7)', () => {
-  it('a fresh pilot has only the hangar; M4 buildings stay locked', () => {
+  it('a fresh pilot has the hangar + 연구소; M4 buildings stay locked', () => {
     const p = defaultProfile();
     const u = computeUnlocks(p);
     expect(u.hangar).toBe(true);
-    expect(u.research).toBe(false); // Lv1 < 3
+    // 연구소는 처음부터 열려 있다(RESEARCH_UNLOCK_LEVEL 3 → 1, 사용자 요청 2026-08-04).
+    // 스킬 트리는 기체가 성장하는 유일한 화면이라 온보딩 두 레벨 동안 잠가 둘 이유가 없다.
+    expect(RESEARCH_UNLOCK_LEVEL).toBe(1);
+    expect(u.research).toBe(true);
     expect(u.refinery).toBe(false); // no clears yet
     expect(u.defenseCommand).toBe(false);
     expect(u.controlTower).toBe(false);

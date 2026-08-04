@@ -41,6 +41,15 @@ export interface AdornerContext {
   readonly belowLayer: Container;
   /** 스프라이트 **위** 레이어. 파편·충격·숫자처럼 순간적으로 덮어도 되는 것만. */
   readonly aboveLayer: Container;
+  /**
+   * **정보** 레이어(이름표와 같은 계). 스프라이트 위·이펙트 아래에 있다.
+   *
+   * 이펙트가 아니라 읽으라고 띄우는 것(이름표·체력바)은 여기 붙인다. `aboveLayer` 에 섞으면
+   * "잡몹 장식은 정원까지만" · "low 티어는 두 레이어 모두 안 만든다" 같은 **이펙트 예산
+   * 단언들이 정보 요소까지 세게 되어** 두 축이 영영 엉킨다(`tests/enemyVisual.test.ts`).
+   * 새 레이어가 아니라 렌더러가 이미 쓰던 `labelLayer` 라 draw order 는 불변이다.
+   */
+  readonly labelLayer: Container;
   /** 렌더 프레임 카운터. 결정적 애니메이션 위상의 기준(sim tick 이 아니다). */
   readonly frameTick: number;
   /** 프레임 델타(초). 벽시계 기반 감쇠·스프링에만 쓴다(해시 무관). */

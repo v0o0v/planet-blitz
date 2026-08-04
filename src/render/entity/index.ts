@@ -30,4 +30,5 @@
 
 import './playerVisual.js';
 import './enemyVisual.js';
+import './enemyHpBar.js';
 import './hazardField.js';

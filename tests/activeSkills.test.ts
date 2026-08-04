@@ -212,8 +212,8 @@ describe('AC-2 — 쿨다운 설정 · 매 틱 감소 · 중 재입력 무시', 
 describe('AC-15 — SAVE_VERSION 8 마이그레이션 (손실 0 · 빈 슬롯 2칸)', () => {
   // 핀은 "액티브 슬롯이 v8 에서 들어왔다"가 아니라 "스키마 버전이 의도치 않게 안 움직였다"를
   // 지킨다. v9(사슬 선행 조건, ADR-0047)가 뒤에 붙었으므로 값만 따라 올린다.
-  it('SAVE_VERSION 이 9 이다', () => {
-    expect(SAVE_VERSION).toBe(9);
+  it('SAVE_VERSION 이 10 이다', () => {
+    expect(SAVE_VERSION).toBe(10);
   });
 
   it('V7 프로필을 올리면 슬롯 2칸이 생기고 기존 진행은 그대로다', () => {

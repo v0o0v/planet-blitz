@@ -91,11 +91,23 @@ export const EVENT_TRIGGER_RADIUS = 70;
  * 해저드에서 뺀 7%는 **벽**으로 넘겼다. 벽은 피해가 없는 순수 지형이라 "위험은 줄고 지형
  * 다양성은 유지" 가 되고, 파괴체(경험치)·이벤트 오브젝트 비율을 건드리지 않아 성장·보상
  * 곡선이 이 변경에 끌려가지 않는다.
+ *
+ * ## 4% → 2% (2026-08-04, "해저드가 너무 많이 나온다")
+ * 위 주석은 3% 를 적어 두었지만 실제 경계는 `56 - 52 = 4%` 였다(주석이 코드보다 낡았고,
+ * 테스트 밴드가 2~7% 로 넓어 잡히지 않았다). 사용자 요청("지금의 반")대로 **2%** 로 내린다.
+ *
+ * ⚠️ 이번엔 뺀 2%p 를 **벽에 주지 않았다.** 7%p 를 벽에 넘긴 위 결정은 벽이 낱개 사각형이던
+ * 시절의 것이다. 지금 벽은 조각 7~16개짜리 프리팹이라 22 → 24 만 해도 청크당 조각이
+ * {@link MAX_ACTIVE_GIMMICKS} 예산을 더 자주 넘기고, 청크 생성은 원자적이라 **넘친 청크가
+ * 통째로 밀린다**. 그러면 어느 청크가 밀리는지가 **플레이어 이동 경로에 의존**하게 되어
+ * 경로 독립성(AC3)이 깨진다 — `tests/chunkDeterminism.test.ts` 의 경로 A/B 다이제스트
+ * 비교가 실제로 그것을 잡았다. 그래서 2%p 는 **자석 방출기**(15% → 17%)로 보냈다:
+ * 피해가 없고, 프리팹이 아니라 예산을 안 흔들고, 파괴체(경험치) 비율도 그대로다.
  */
 const ROLL_WALL = 22;
 const ROLL_DESTRUCTIBLE = 52; // 22 + 30
-const ROLL_HAZARD = 56; // 52 + 4  ← 해저드 4%
-const ROLL_MAGNET = 71; // 56 + 15
+const ROLL_HAZARD = 54; // 52 + 2  ← 해저드 2%
+const ROLL_MAGNET = 71; // 54 + 17  (해저드에서 넘겨받은 2%p 포함)
 const ROLL_BOMB = 86; // 71 + 15
 // 나머지(86..99) = 포탑 픽업 14%.
 
@@ -131,7 +143,7 @@ export interface GimmickPlacement {
    *
    * 왜 필요한가: 프리팹 도입 뒤 배치 목록의 길이는 더 이상 **추첨 횟수**가 아니다(벽 한 번이
    * 조각 넷을 낳는다). 그래서 ① 종류 배분 비율(해저드 3% 등)을 재는 쪽은 조각이 아니라 이
-   * 번호의 가짓수를 세야 하고 ② 겹침 불변식은 "같은 번호끼리는 면제, 다른 번호끼리는 금지"로
+   * 번호의 가짓수를 세야 하고(해저드 2% 등) ② 겹침 불변식은 "같은 번호끼리는 면제, 다른 번호끼리는 금지"로
    * 말해야 한다. 렌더·sim 은 이 값을 읽지 않는다(world.ts 는 엔티티만 만든다).
    */
   group: number;
@@ -360,7 +372,7 @@ export function chunkRngFor(worldRng: SeededRng, cx: number, cy: number): Seeded
  * kept a margin inside the chunk (so `floor(pos / CHUNK_SIZE)` recovers this
  * chunk — used by the culling code to map a gimmick back to its chunk).
  *
- * 종류 배분은 {@link ROLL_WALL} 이하 누적 경계 상수들이 정본이다(해저드 3%).
+ * 종류 배분은 {@link ROLL_WALL} 이하 누적 경계 상수들이 정본이다(해저드 2%).
  */
 export function chunkPlacements(
   worldRng: SeededRng,

@@ -5,6 +5,7 @@ import {
   saveProfile,
   migrate,
   defaultProfile,
+  newPlayerProfile,
   stashCapacity,
   activeShip,
   INVENTORY_CAP,
@@ -86,18 +87,21 @@ describe('profile — save/load round-trip (AC5)', () => {
     expect(loadProfile(store)).toEqual(p);
   });
 
-  it('missing storage falls back to a default profile', () => {
-    expect(loadProfile(null)).toEqual(defaultProfile());
+  // ⚠️ 폴백은 `defaultProfile`(맨몸 스키마 기본값)이 아니라 `newPlayerProfile`(기본 장비 탑재)
+  // 이다. 이 경로에 도달한 사람은 "세이브가 없는 조종사"이고, 맨몸으로 내보내면 Lv1~5 구간
+  // 클리어율이 실측 0.0% 인 곳에 떨어진다.
+  it('missing storage falls back to a new-player profile', () => {
+    expect(loadProfile(null)).toEqual(newPlayerProfile());
   });
 });
 
 describe('profile — corruption recovery (AC5)', () => {
-  it('invalid JSON recovers to default', () => {
-    expect(loadProfile(memStore({ [KEY]: '{not json' }))).toEqual(defaultProfile());
+  it('invalid JSON recovers to a new-player profile', () => {
+    expect(loadProfile(memStore({ [KEY]: '{not json' }))).toEqual(newPlayerProfile());
   });
 
-  it('a non-object blob recovers to default', () => {
-    expect(loadProfile(memStore({ [KEY]: '42' }))).toEqual(defaultProfile());
+  it('a non-object blob recovers to a new-player profile', () => {
+    expect(loadProfile(memStore({ [KEY]: '42' }))).toEqual(newPlayerProfile());
   });
 
   it('drops malformed items but keeps valid ones', () => {
@@ -309,7 +313,7 @@ describe('마이그레이션 v3 → v4 — 계정 투자가 기체로 승계된�
     const p = migrate(v3Blob(invest));
 
     expect(p.saveVersion).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(9);
+    expect(SAVE_VERSION).toBe(10);
     const ship = activeShip(p);
     expect(ship.typeId).toBe(0); // 기존 유저는 전원 스트라이커
     expect(ship.skillInvest).toHaveLength(shipSkillNodeCount(0));
@@ -506,7 +510,7 @@ describe('마이그레이션 v5 → v6 — 기록 파편·마일스톤 카운터
   it('필드 부재 v5 세이브를 v6 로 올리고 두 필드를 기본값으로 채운다', () => {
     const p = migrate(v5Blob());
     expect(p.saveVersion).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(9);
+    expect(SAVE_VERSION).toBe(10);
     expect(p.collectedShards).toEqual([]);
     expect(p.storyMetrics).toEqual({});
     // 기존 진행 상태는 함께 보존된다(필드 신설이 다른 축을 건드리지 않는다).

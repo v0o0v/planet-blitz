@@ -19,6 +19,7 @@
 
 import { SAVE_VERSION, SLOT_KINDS, RARITY_BY_CODE } from '../items/types.js';
 import type { Item, EquipSlotId } from '../items/types.js';
+import { fillStarterEquipment } from '../items/starterKit.js';
 import type { SkillNode } from '../../data/skills.js';
 import { shipCapstoneUnlocked, chainPrereqMet } from '../items/skills.js';
 import {
@@ -42,8 +43,15 @@ import { respecCostCredits, RESPEC_CREDITS_PER_LEVEL } from '../../data/economy.
  */
 export const RESPEC_COST_PER_LEVEL = RESPEC_CREDITS_PER_LEVEL;
 
-/** Active-ship level at which the research lab (skill tree) unlocks (GDD §7). */
-export const RESEARCH_UNLOCK_LEVEL = 3;
+/**
+ * Active-ship level at which the research lab (skill tree) unlocks (GDD §7).
+ *
+ * **1 = 처음부터 열려 있다.** 구값은 3 이었는데, 스킬 트리는 기체가 성장하는 유일한 화면이라
+ * 그것을 첫 두 레벨 동안 잠가 두면 "무엇을 향해 크는지"를 보여주지 않은 채로 온보딩이 돈다.
+ * 상수를 지우지 않고 값만 내린 이유: `ui/baseMap.ts`·`ui/pixi/baseMap.ts`·테스트가 이 상수를
+ * import 해 잠금 문구를 만든다 — 상수를 없애면 그 4곳이 함께 흔들린다.
+ */
+export const RESEARCH_UNLOCK_LEVEL = 1;
 
 /** Inventory capacity — 48 slots (6×8 grid, plan D1). */
 export const INVENTORY_CAP = 48;
@@ -326,7 +334,15 @@ export function zeroSkillInvest(typeId = 0): number[] {
   return registryZeroSkillInvest(typeId);
 }
 
-/** A fresh profile — one starter ship, empty everything. */
+/**
+ * A fresh profile — one starter ship, empty everything.
+ *
+ * ⚠️ 이것은 **스키마 기본값**이지 "새 플레이어의 프로필"이 아니다. 실제 신규 조종사에게
+ * 주는 것은 {@link newPlayerProfile} 이고, 그쪽만 기본 장비를 싣는다. 둘을 합치지 마라 —
+ * 이 함수는 sim·밸런스 스위트 전반이 **맨몸 기준선 픽스처**로 쓰고 있어서(전진 속도·명중
+ * 피해·시그니처 대조군 등 24개 테스트가 이 값에 눈금을 맞춘다), 여기에 장비를 실으면
+ * 그 기준선이 통째로 밀려 "무엇을 재고 있었는지"가 사라진다.
+ */
 export function defaultProfile(): Profile {
   const p: Profile = {
     saveVersion: SAVE_VERSION,
@@ -351,6 +367,20 @@ export function defaultProfile(): Profile {
 }
 
 
+/**
+ * **신규 조종사의 프로필** — {@link defaultProfile} 에 기본 장비 8칸을 실은 것.
+ *
+ * 저장된 세이브가 없을 때 실제로 주어지는 프로필이다. 맨몸으로 시작하면 Lv1~5 구간의
+ * 단계1 클리어율이 실측 0.0% 다(`src/items/starterKit.ts` §왜 필요한가) — 즉 게임을 처음
+ * 켠 사람이 아무것도 못 이기는 구간을 지나야 했다.
+ */
+export function newPlayerProfile(): Profile {
+  const p = defaultProfile();
+  const first = p.ships[0];
+  if (first !== undefined) fillStarterEquipment(first.equipped);
+  return p;
+}
+
 /** The active ship (falls back to the first, then a fresh default). */
 export function activeShip(profile: Profile): Ship {
   return profile.ships[profile.activeShipIndex] ?? profile.ships[0] ?? defaultShip();
@@ -361,8 +391,10 @@ export function activeShip(profile: Profile): Ship {
 // ---------------------------------------------------------------------------
 
 /** Derive which base buildings are unlocked from the profile's live state. The
- *  unlock order (격납고 → Lv3 연구소 → 행성 1클리어 정제소 → M4 방어 사령부·관제탑)
- *  is surfaced by the base map as lock overlays (GDD §7). */
+ *  unlock order (격납고·연구소 → 행성 1클리어 정제소 → M4 방어 사령부·관제탑)
+ *  is surfaced by the base map as lock overlays (GDD §7).
+ *  연구소는 `RESEARCH_UNLOCK_LEVEL = 1` 이라 사실상 상시 개방이다 — 조건을 지우지 않고
+ *  상수 비교를 남겨 둔다(잠금 문구·테스트가 상수를 참조한다). */
 export function computeUnlocks(profile: Profile): BaseUnlocks {
   const level = activeShip(profile).level;
   let anyClear = false;
@@ -520,21 +552,25 @@ function defaultStore(): KeyValueStore | null {
 
 /**
  * Load + migrate the stored profile. Any failure (no store, missing key, invalid
- * JSON, shape corruption) recovers to a fresh default profile (AC5).
+ * JSON, shape corruption) recovers to a fresh **new-player** profile (AC5).
+ *
+ * ⚠️ 폴백은 {@link defaultProfile} 이 아니라 {@link newPlayerProfile} 이다 — 이 경로에
+ * 도달한 사람은 "세이브가 없는 조종사"이고, 그가 받아야 하는 것은 기본 장비가 실린 프로필이다.
+ * (스키마 기본값과 신규 플레이어 프로필의 구분은 `defaultProfile` 주석 참조.)
  */
 export function loadProfile(store: KeyValueStore | null = defaultStore()): Profile {
-  if (store === null) return defaultProfile();
+  if (store === null) return newPlayerProfile();
   let raw: string | null;
   try {
     raw = store.getItem(STORAGE_KEY);
   } catch {
-    return defaultProfile();
+    return newPlayerProfile();
   }
-  if (raw === null) return defaultProfile();
+  if (raw === null) return newPlayerProfile();
   try {
     return migrate(JSON.parse(raw) as unknown);
   } catch {
-    return defaultProfile();
+    return newPlayerProfile();
   }
 }
 
@@ -558,7 +594,8 @@ export function saveProfile(profile: Profile, store: KeyValueStore | null = defa
  * partially-corrupt profile still yields a valid one.
  */
 export function migrate(raw: unknown): Profile {
-  if (typeof raw !== 'object' || raw === null) return defaultProfile();
+  // 읽을 것이 없다 = 세이브가 없는 조종사다 → 기본 장비가 실린 신규 프로필(위 loadProfile 참조).
+  if (typeof raw !== 'object' || raw === null) return newPlayerProfile();
   let data = raw as Record<string, unknown>;
   const version = typeof data.saveVersion === 'number' ? data.saveVersion : 0;
   if (version < 1) data = migrateV0toV1(data);
@@ -570,7 +607,42 @@ export function migrate(raw: unknown): Profile {
   if (version < 7) data = migrateV6toV7(data);
   if (version < 8) data = migrateV7toV8(data);
   if (version < 9) data = migrateV8toV9(data);
+  if (version < 10) data = migrateV9toV10(data);
   return normalizeProfile(data);
+}
+
+/**
+ * v9 → v10 (기본 장비 지급): **전 기체의 빈 장착 칸을 스타터 킷으로 채운다.**
+ *
+ * 스키마는 안 바뀐다 — v9 와 같은 데이터 정합 마이그레이션이다. `defaultShip()` 과 세대 교체
+ * 기체가 여태 맨몸이었고, 그 상태의 Lv1~5 는 단계1 클리어율이 실측 0.0% 였다
+ * (`requiredLevel.ts` §밴드 시작 기준). 신규만 고치면 **이미 만들어진 프로필은 영영 맨몸**이라
+ * 여기서 소급 지급한다.
+ *
+ * **빈 칸만** 채운다(`fillStarterEquipment`). 이미 입고 있는 칸을 덮으면 파밍 장비가 스타터로
+ * 바뀌는 데이터 손실이 된다. 퇴역 수호기의 `GuardianBuild.equipped` 는 **의도적으로 제외** —
+ * 퇴역 순간 고정된 봉인 빌드라(ADR-0024) 소급 강화 대상이 아니다.
+ *
+ * 손상 방어: `ships` 가 배열이 아니거나 원소·`equipped` 가 객체가 아니면 그 칸은 건너뛴다
+ * (`normalizeProfile` 이 뒤에서 다시 거른다). 심는 아이템은 `rollItem` 산출물이라
+ * `isValidItem` shape guard 를 통과한다.
+ */
+function migrateV9toV10(v9: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...v9, saveVersion: 10 };
+  if (!Array.isArray(out.ships)) return out;
+  out.ships = out.ships.map((raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null) return raw;
+    const ship = raw as Record<string, unknown>;
+    const eq = ship.equipped;
+    // 손상/부재는 빈 칸 8개로 취급한다 — 여기서 버리는 것은 이미 정규화가 버렸을 값뿐이다.
+    const equipped: Partial<Record<EquipSlotId, Item>> =
+      typeof eq === 'object' && eq !== null
+        ? ({ ...(eq as Record<string, unknown>) } as Partial<Record<EquipSlotId, Item>>)
+        : {};
+    fillStarterEquipment(equipped);
+    return { ...ship, equipped };
+  });
+  return out;
 }
 
 /**

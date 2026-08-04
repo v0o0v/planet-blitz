@@ -188,9 +188,14 @@ describe('말로우(typeId 5) 정규 경로 배선 — Profile → buildRunConfi
     // 재추첨되고 seed 42 는 정산이 0 회가 됐다(적립만 하고 소진 규칙을 못 태운다 = 이 케이스가
     // 재는 것이 사라진다). 200시드 재표본에서 **seed 10** 이 정산 2회 · 무피격 최대 239틱 ·
     // 순 경감 86 vs 142 로 규칙이 반복 발현하는 것을 가장 또렷하게 보여준다.
+    //
+    // ⚠️ SEED 재선정 2026-08-04(10 → 3, 해저드 반감). 박격포 쿨다운 2배 · 용암 기둥 6→3 ·
+    // 지형 해저드 4%→2% 로 굴림 값이 갈려 seed 10 은 정산이 0 회가 됐다. 1..300 재표본에서
+    // **seed 3** 이 정산 **2회** · 무피격 최대 285틱 · 순 경감 60 vs 98 로 이 절이 재려는
+    // 소진 규칙을 가장 또렷하게 태운다(1·2·6·7 도 통과하지만 전부 정산 1회다).
     const cfg = buildRunConfig(profileWithType(5), { planet: 0, stage: 1 });
-    const live = runObserved(10, cfg, 1800);
-    const ctrl = runObserved(10, suppressSignature(cfg, SIG_MALLOW_CUSHION), 1800);
+    const live = runObserved(3, cfg, 1800);
+    const ctrl = runObserved(3, suppressSignature(cfg, SIG_MALLOW_CUSHION), 1800);
 
     expect(new Set(live.hashes).size).toBeGreaterThan(900);
     expect(ctrl.hpLost).toBeGreaterThan(0);
