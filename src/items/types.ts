@@ -55,8 +55,18 @@
  *  털고 투자분을 `skillPoints` 로 **전액 환급**한다(리스펙 비용 없음, 장비·진행도 불변).
  *  ⚠️ 퇴역 수호기의 `GuardianBuild.skillInvest` 는 **건드리지 않는다** — 그건 퇴역 순간
  *  고정된 스냅샷이고 투자 경로가 없다(ADR-0024). 털면 기존 수호 전력이 소급 약화된다.
- *  ⚠️ DB 변경 없음 — `profiles.save` 는 불투명 jsonb. */
-export const SAVE_VERSION = 9;
+ *  ⚠️ DB 변경 없음 — `profiles.save` 는 불투명 jsonb.
+ *
+ *  v10 (기본 장비 지급): 스키마는 **한 칸도 안 바뀐다** — v9 와 같은 순수 **데이터 정합**
+ *  스탬프다. `defaultShip()` 과 세대 교체 기체가 여태 `equipped: {}` 로 나왔고, 그 상태의
+ *  Lv1~5 는 단계1 클리어율이 실측 0.0% 였다(`requiredLevel.ts` §밴드 시작 기준 주석).
+ *  `migrateV9toV10` 이 **모든 기체의 빈 장착 칸만** `starterKit` 으로 채운다 — 이미 입고
+ *  있는 칸은 절대 덮지 않으므로 파밍 장비가 스타터로 바뀌지 않는다.
+ *  ⚠️ 퇴역 수호기의 `GuardianBuild.equipped` 는 **건드리지 않는다** — 퇴역 순간 고정된
+ *  봉인 빌드이고(ADR-0024), 채우면 기존 수호 전력이 소급 강화된다.
+ *  ⚠️ DB 변경 없음 — `profiles.save` 는 불투명 jsonb. 장비는 `equipped` 에만 들어가므로
+ *  `progressScore`(inventory/stash 길이 합산)도 흔들지 않는다. */
+export const SAVE_VERSION = 10;
 
 // ---------------------------------------------------------------------------
 // Rarity

@@ -20,7 +20,12 @@ import {
   pullServerProfileInto,
 } from '../src/net/index.js';
 import type { ServerGateway } from '../src/net/gateway.js';
-import { defaultProfile, type KeyValueStore, type Profile } from '../src/save/profile.js';
+import {
+  defaultProfile,
+  newPlayerProfile,
+  type KeyValueStore,
+  type Profile,
+} from '../src/save/profile.js';
 import { rollItem } from '../src/items/roll.js';
 import { SAVE_VERSION } from '../src/items/types.js';
 
@@ -97,9 +102,11 @@ describe('profileSync — 직렬화(AC8)', () => {
     expect(back.credits).toBe(99); // v0 gold → credits
   });
 
-  it('완전 쓰레기 blob 도 기본 프로필로 회복', () => {
+  it('완전 쓰레기 blob 도 신규 플레이어 프로필로 회복', () => {
+    // 읽을 것이 없다 = 세이브가 없는 조종사다 → 기본 장비가 실린 프로필(맨몸 스키마
+    // 기본값이 아니다 — `defaultProfile` 주석의 구분 참조).
     const back = deserializeProfile({ save: 'not-an-object', saveVersion: 0 });
-    expect(back).toEqual(defaultProfile());
+    expect(back).toEqual(newPlayerProfile());
   });
 });
 

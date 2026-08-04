@@ -107,7 +107,7 @@ import { runBench } from './bench/bench.js';
 // 이것만 쓴다 — main.ts 안에서 config 를 다시 조립하지 마라(3중복이 배선 누락의 원인이었다).
 import { buildRunConfig } from './run/runConfig.js';
 import { buildCallupPilot } from './run/callupPilot.js';
-import { loadProfile, saveProfile, activeShip, defaultProfile } from './save/profile.js';
+import { loadProfile, saveProfile, activeShip, newPlayerProfile } from './save/profile.js';
 import { settleRun, grantXp } from './save/settlement.js';
 import type { SettlementOutcome } from './save/settlement.js';
 // M4 네트워크 계층(Phase B3): Supabase 미설정 시 완전 no-op, 절대 throw 안 함.
@@ -1965,7 +1965,9 @@ async function main(): Promise<void> {
       // 계정이 바뀌었으면 로컬 계정 데이터를 버리고 **메모리의 profile 도** 기본값으로
       // 되돌린다. 저장소만 비우면 이미 로드된 이전 계정 프로필이 그대로 살아 서버로 올라간다.
       if (reconcileAccountScope(accountStore(), user.id)) {
-        Object.assign(profile, defaultProfile());
+        // 새 계정 = 세이브 없는 조종사다 → 기본 장비가 실린 신규 프로필(맨몸 스키마 기본값이
+        // 아니다 — `defaultProfile` 주석의 구분 참조).
+        Object.assign(profile, newPlayerProfile());
       }
       // 설정 팝업의 '계정' 행(이메일 + 로그아웃). 미로그인·미설정이면 행 자체가 안 그려진다.
       settings.setAccount({ signedIn: true, email: user.email, onSignOut: handleSignOut });

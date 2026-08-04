@@ -207,7 +207,8 @@ describe('확정은 실제로 저장된다 (§10-5)', () => {
     expect(ship.typeId).toBe(2);
     expect(ship.level).toBe(1);
     expect(ship.xp).toBe(0);
-    expect(ship.equipped).toEqual({});
+    // 기체를 교체해도 맨몸으로 떨어지지 않는다 — 기본 장비 8칸을 입고 나온다(2026-08-04).
+    expect(Object.keys(ship.equipped)).toHaveLength(8);
     expect(ship.skillInvest).toHaveLength(shipSkillNodeCount(2));
     expect(ship.skillInvest.every((v) => v === 0)).toBe(true);
     // 퇴역한 세대는 수호로 남는다.

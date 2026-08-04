@@ -2120,8 +2120,8 @@ export class EntityRenderer {
   }
 
   /**
-   * 이번 프레임의 장식자 맥락을 만든다. 레이어는 **발광(아래)·이펙트(위)** 를 그대로 재사용한다 —
-   * 새 레이어를 추가하면 draw order 가 바뀌어 "거동 변화 0" 계약이 깨진다.
+   * 이번 프레임의 장식자 맥락을 만든다. 레이어는 **발광(아래)·이름표(정보)·이펙트(위)** 를 그대로
+   * 재사용한다 — 새 레이어를 추가하면 draw order 가 바뀌어 "거동 변화 0" 계약이 깨진다.
    */
   private adornerCtx(
     gates: EffectGates,
@@ -2132,6 +2132,7 @@ export class EntityRenderer {
     return {
       belowLayer: this.glowLayer,
       aboveLayer: this.effectLayer,
+      labelLayer: this.labelLayer,
       frameTick: this.frameTick,
       dt,
       gates,

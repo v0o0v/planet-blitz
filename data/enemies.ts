@@ -45,7 +45,10 @@ export const GUNNER: EnemyDef = {
   speed: 180,
   movement: 'standoff',
   attack: { kind: 'mortar', windup: 48, radius: 140, damage: 16 },
-  fireCooldown: 130,
+  // 130 → 260 (2026-08-04, "해저드가 너무 많이 나온다"). 박격포는 1발 = 장판 1장이라 개수를
+  // 반으로 줄이는 손잡이가 **주기밖에 없다**(용암 계열은 `pillars` 로 줄인다). 피해·반경은
+  // 그대로 두었다 — 사용자가 요청한 축은 "얼마나 아픈가"가 아니라 "얼마나 자주 깔리는가"다.
+  fireCooldown: 260,
   xpValue: 4,
 };
 
@@ -88,7 +91,10 @@ export const LAVA_SPRING: EnemyDef = {
   contactDamage: 10,
   speed: 0,
   movement: 'stationary',
-  attack: { kind: 'lava', windup: 54, activeTicks: 90, pillars: 6, radius: 92, damage: 16 },
+  // `pillars` 6 → 3 (2026-08-04, "해저드가 너무 많이 나온다"). 시전 1회당 장판 수를 반으로
+  // 줄인다 — 쿨다운을 늘리는 대신 이쪽을 고른 이유는 ①융기 예고(windup 54)의 리듬이 이 적의
+  // 정체성이고 ②위 표가 실측한 축은 `damage` 라 그 값을 보존해야 대조가 살아 있기 때문이다.
+  attack: { kind: 'lava', windup: 54, activeTicks: 90, pillars: 3, radius: 92, damage: 16 },
   fireCooldown: 200,
   xpValue: 8,
 };
@@ -148,7 +154,7 @@ export const LAVA_BATTERY: EnemyDef = {
   speed: 160, // TODO(밸런스)
   movement: 'standoff',
   attack: { kind: 'mortar', windup: 48, radius: 160, damage: 16 }, // TODO(밸런스)
-  fireCooldown: 120, // TODO(밸런스)
+  fireCooldown: 240, // 120 → 240 (해저드 반감, GUNNER 와 같은 이유) TODO(밸런스)
   xpValue: 24, // TODO(밸런스)
 };
 
@@ -171,7 +177,8 @@ export const MAGMA_COLOSSUS: EnemyDef = {
   contactDamage: 15, // TODO(밸런스)
   speed: 0,
   movement: 'stationary',
-  attack: { kind: 'lava', windup: 56, activeTicks: 88, pillars: 6, radius: 96, damage: 14 }, // TODO(밸런스)
+  // `pillars` 6 → 3 (해저드 반감, 용암 포대와 같은 이유).
+  attack: { kind: 'lava', windup: 56, activeTicks: 88, pillars: 3, radius: 96, damage: 14 }, // TODO(밸런스)
   fireCooldown: 210, // TODO(밸런스)
   xpValue: 28, // TODO(밸런스)
 };

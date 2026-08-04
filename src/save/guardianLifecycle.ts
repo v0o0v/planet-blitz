@@ -17,6 +17,7 @@ import type { Profile, GuardianRecord, GuardianBuild, Ship } from './profile.js'
 import { totalCombatPower } from './combatPower.js';
 import type { Item } from '../items/types.js';
 import { computeLoadoutStats } from '../items/loadout.js';
+import { starterEquipped } from '../items/starterKit.js';
 import {
   mapLoadoutToGuardianSnapshot,
   dismissPoints,
@@ -209,7 +210,10 @@ export function retireActiveShip(
     typeId,
     level: 1,
     xp: 0,
-    equipped: {},
+    // 세대 교체 기체도 기본 장비를 입고 나온다. 봉인된 구 세대 장비(ADR-0024)는 돌려받지
+    // 못하므로, 채우지 않으면 만렙에서 퇴역한 조종사가 정확히 맨몸 Lv1 로 떨어진다 —
+    // 실측 클리어율 0.0% 구간이다(`src/items/starterKit.ts` §왜 필요한가).
+    equipped: starterEquipped(),
     skillInvest: zeroSkillInvest(typeId),
     // 세대 교체 기체는 투자 0이라 열린 액티브가 없다 → 빈 슬롯 2칸.
     activeSlots: [null, null],

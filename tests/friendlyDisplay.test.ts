@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { Container, Texture } from 'pixi.js';
+import { Container, Text, Texture } from 'pixi.js';
 
 import { EntityRenderer } from '../src/render/entityRenderer.js';
 import type { PlaceholderTextures } from '../src/render/textures.js';
@@ -220,7 +220,10 @@ describe('배선 — EntityRenderer 정규 render 경로', () => {
     const r = new EntityRenderer(realTextures());
     const w = world([entity('enemy', { id: 1 })]);
     r.render(w, w, 0);
-    expect(labelLayer(r).children.length).toBe(0);
+    // ⚠️ "이름표가 없다" 를 `children.length === 0` 으로 재면 안 된다 — 이 레이어는 이제
+    // 이름표 말고도 **정보 요소**를 받는다(적 체력바, `enemyHpBar.ts`). 이 단언이 묻는 것은
+    // "적에게 이름 텍스트가 붙는가" 이므로 `Text` 만 센다.
+    expect(labelLayer(r).children.filter((c) => c instanceof Text).length).toBe(0);
     r.destroy();
   });
 

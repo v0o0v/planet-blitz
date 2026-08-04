@@ -152,7 +152,15 @@ describe('퇴역 — 수호 기체 생성 + 계보 지급 (AC1)', () => {
     // ⚠️ M8: 퇴역이 기체를 **교체**하므로 활성 기체는 더 이상 퇴역한 그 기체가 아니다.
     // 장착이 비워졌는지는 퇴역한 기체 본체에서 확인한다(장비는 build 로 옮겨감).
     expect(Object.keys(retiring.equipped).length).toBe(0);
-    expect(Object.keys(p.ships[p.activeShipIndex]!.equipped).length).toBe(0); // 새 기체도 빈손
+    // 새 기체는 빈손이 아니라 **기본 장비**를 입고 나온다(2026-08-04). 봉인된 구 세대 장비는
+    // 돌려받지 못하므로, 채우지 않으면 만렙 퇴역자가 실측 클리어율 0.0% 인 맨몸 Lv1 로 떨어진다.
+    const fresh = p.ships[p.activeShipIndex]!;
+    expect(Object.keys(fresh.equipped).length).toBe(8);
+    for (const it of Object.values(fresh.equipped)) {
+      expect(it!.id.startsWith('it-starter-')).toBe(true);
+    }
+    // 그리고 그것은 퇴역한 기체가 입고 있던 실물이 아니다(봉인은 build 쪽에 그대로 남는다).
+    expect(fresh.equipped.main).not.toBe(mainItem);
     // 새 수호기의 build 에 퇴역 순간 빌드가 잠겼다: typeId · 장착 장비 · 스킬 투자 캡처.
     const build = r.guardian.build;
     expect(build).toBeDefined();
@@ -205,7 +213,7 @@ describe('퇴역 — 세대 교체 (M8)', () => {
     expect(r.ship.id).not.toBe(retiring.id);
   });
 
-  it('신규 기체는 요청한 타입 · level 1 · xp 0 · 투자 전 0 · 빈 장비로 시작한다', () => {
+  it('신규 기체는 요청한 타입 · level 1 · xp 0 · 투자 전 0 · 기본 장비 8칸으로 시작한다', () => {
     for (let t = 0; t < SHIP_TYPES.length; t++) {
       const p = profileWithGear();
       p.skillPoints = 5;
@@ -215,7 +223,9 @@ describe('퇴역 — 세대 교체 (M8)', () => {
       expect(r.ship.typeId).toBe(t);
       expect(r.ship.level).toBe(1);
       expect(r.ship.xp).toBe(0);
-      expect(Object.keys(r.ship.equipped).length).toBe(0);
+      // 장비는 승계되지 않지만 **맨몸도 아니다** — 기본 장비 8칸이 실려 나온다.
+      expect(Object.keys(r.ship.equipped).length).toBe(8);
+      expect(r.ship.equipped.main?.id).toBe('it-starter-main');
       // 퇴역 = 세대 리셋. 투자는 승계되지 않는다(계정 성장은 계보가 담당).
       expect(r.ship.skillInvest).toHaveLength(shipSkillNodeCount(t));
       expect(r.ship.skillInvest.every((v) => v === 0)).toBe(true);

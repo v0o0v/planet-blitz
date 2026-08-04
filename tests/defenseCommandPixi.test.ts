@@ -506,11 +506,20 @@ describe('시험 침공은 정산·제출 경로를 타지 않는다', () => {
 // 후보에서 사라져 슬롯 2 에는 영영 "배치할 방어체가 없습니다" 만 떴다.
 
 describe('수호 슬롯 신원(중복 판정)', () => {
-  /** 연속 퇴역 2회 — 실제 게임이 수호를 만드는 그 경로. */
+  /**
+   * 연속 퇴역으로 **빌드가 똑같은 수호 2기**를 만든다 — 실제 게임이 수호를 만드는 그 경로.
+   *
+   * ⚠️ 세 번 퇴역시키고 **뒤 2기**를 쓴다. 1세대는 `defaultProfile()` 의 맨몸 기체지만
+   * 2세대부터는 세대 교체가 기본 장비를 실어 주므로(2026-08-04), 1·2세대를 비교하면 빌드가
+   * 달라 키가 갈린다 — 이 테스트가 세우려는 전제("빌드가 같으면 대체 키가 겹친다")가
+   * 성립하지 않는다. 2·3세대는 둘 다 같은 기본 장비라 전제가 정확히 선다.
+   */
   function twoIdenticalGuardians() {
     const profile = defaultProfile();
     retireAtCap(profile);
     retireAtCap(profile);
+    retireAtCap(profile);
+    profile.guardians.shift(); // 맨몸 1세대는 대조에서 뺀다
     return profile;
   }
 
