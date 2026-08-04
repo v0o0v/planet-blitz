@@ -135,8 +135,9 @@ describe('행성 레지스트리 확장 (B1/B2, AC4)', () => {
     expect(arkKinds).toContain('polygonSpin');
   });
 
-  it('ENEMY_BY_TYPE가 34종(카르곤~크라스)으로 연속 typeIndex를 유지한다', () => {
-    expect(ENEMY_BY_TYPE.length).toBe(34); // Lane9: 톡사르 22~27 · 크라스 28~33 append
+  it('ENEMY_BY_TYPE가 36종(카르곤~크라스 + 카르곤 엘리트)으로 연속 typeIndex를 유지한다', () => {
+    // Lane9: 톡사르 22~27 · 크라스 28~33 append. 2026-08-04: 카르곤 엘리트 34~35 append.
+    expect(ENEMY_BY_TYPE.length).toBe(36);
     ENEMY_BY_TYPE.forEach((def, i) => expect(def.typeIndex).toBe(i));
   });
 });

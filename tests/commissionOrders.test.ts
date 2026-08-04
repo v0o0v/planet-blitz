@@ -55,6 +55,7 @@ import {
 } from '../src/run/commissionConstants.js';
 import { COMMISSION_BOSS_ENEMY_TYPE_BASE, commissionBossDef } from '../data/commissionBosses.js';
 import { planetContent } from '../data/planets/index.js';
+import { ENEMY_BY_TYPE } from '../data/enemies.js';
 import { SEGMENTS } from '../data/waves.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile, activeShip } from '../src/save/profile.js';
@@ -221,11 +222,28 @@ describe('(d) 정예 소집령 — 잡몹 0 · 젬 0', () => {
     expect(w.kills).toBe(1); // 처치 집계는 그대로다(경제 축은 안 건드린다).
   });
 
-  it('행성에 `elites` 정의가 없어도(카르곤) 정예가 내려온다 — 폴백이 없으면 빈 런이 된다', () => {
-    expect(planetContent(0).elites.length, '카르곤에 elites 가 생겼다 — 이 테스트의 전제 갱신 필요').toBe(0);
+  /**
+   * 2026-08-04 전제 전환 — 카르곤에 엘리트 2종이 생겼다.
+   *
+   * 이 자리는 원래 "카르곤은 `elites: []` 라 로스터 폴백이 없으면 빈 런이 된다"를 잠그고 있었고,
+   * 실패 메시지가 "카르곤에 elites 가 생겼다 — 전제 갱신 필요"라고 예고해 뒀다. 이제 카르곤도
+   * 자기 정예를 갖췄으므로 잠글 것이 바뀐다: **폴백이 아니라 자기 정예가 내려오는가**.
+   * 폴백 분기(`stepEliteSummons` 의 `elites.length > 0 ? … : 로스터`)는 방어적으로 남고,
+   * 전 행성이 정예를 갖췄다는 사실 자체를 아래에서 함께 잠근다.
+   */
+  it('카르곤 정예 소집령은 **카르곤 자기 정예**를 내려보낸다(로스터 폴백이 아니다)', () => {
+    const eliteIds = new Set(planetContent(0).elites.map((d) => d.id));
+    expect(eliteIds.size, '카르곤 elites 가 비었다 — 폴백으로 되돌아갔다').toBe(2);
     const w = createWorld(0x1234, cfg('elite'));
     run(w, 5);
     expect(countAliveElites(w)).toBeGreaterThan(0);
+    const rosterIds = new Set(Object.values(planetContent(0).roster).map((d) => d.id));
+    const summoned = w.entities.filter((e) => e.kind === 'enemy' && !e.dead && isElite(e));
+    for (const e of summoned) {
+      const id = ENEMY_BY_TYPE[e.enemyType]?.id ?? '';
+      expect(eliteIds.has(id), `정예가 아닌 ${id} 가 내려왔다`).toBe(true);
+      expect(rosterIds.has(id)).toBe(false);
+    }
   });
 
   it('`elites` 정의가 있는 행성(베르단)에서도 내려온다', () => {

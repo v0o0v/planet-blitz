@@ -8,15 +8,26 @@
  * 결손은 예외도 로그도 없이 "그 칸만 이상한" 형태로만 드러난다 — 이 리포가 스킬 아이콘·
  * 침공 방어체에서 두 번 밟은 유형이다. 세 갈래를 여기서 함께 잠근다.
  *
- * 좌표는 캔버스 없이 검증된다(`reconLayout` 이 순수 함수) — 겹침·창 이탈은 눈으로만 잡히는
+ * 좌표는 캔버스 없이 검증된다(`reconScene` 이 순수 함수) — 겹침·창 이탈은 눈으로만 잡히는
  * 유형이라 `planetSelectAaaLayout.test.ts` 와 같은 규율로 단위 테스트가 본다.
+ *
+ * 보스 연출 순환(`reconBossCycle`)도 여기서 본다 — 그 아래 계층(three·WebGL)은 node 환경에서
+ * 세울 수 없으므로, "다섯 연출을 빠짐없이 번갈아 지나는가"는 순수 함수 층에서만 검증 가능하다.
  */
 
 import { describe, it, expect } from 'vitest';
 import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { reconScene, ARENA_VIEWPORT } from '../src/ui/pixi/planetSelect.js';
+import {
+  reconScene,
+  reconBossCycle,
+  RECON_BOSS_CYCLE_SECONDS,
+  RECON_BOSS_PHASE_SECONDS,
+  RECON_BOSS_TRANSITION_SECONDS,
+  RECON_BOSS_OVERHEAT_SECONDS,
+  ARENA_VIEWPORT,
+} from '../src/ui/pixi/planetSelect.js';
 import {
   planetReconRoster,
   enemyName,
@@ -206,5 +217,59 @@ describe('편성 배치 — 지형 위에서 겹치지 않고 창을 안 벗어�
     const at = reconScene(W, H, 256, []);
     expect(at.mobs).toEqual([]);
     expect(at.boss.y + at.boss.d / 2).toBeLessThanOrEqual(H);
+  });
+});
+
+describe('보스 연출 순환 — 다섯 연출을 빠짐없이 번갈아 보여준다', () => {
+  /** 한 바퀴를 촘촘히 훑어 (phase, transitioning, overheated) 조합을 모은다. */
+  function walk(step = 0.05): Set<string> {
+    const seen = new Set<string>();
+    for (let t = 0; t < RECON_BOSS_CYCLE_SECONDS; t += step) {
+      const s = reconBossCycle(t);
+      seen.add(`${s.phase}|${s.transitioning ? 1 : 0}|${s.overheated ? 1 : 0}`);
+    }
+    return seen;
+  }
+
+  it('한 바퀴가 페이즈 0·1·2 + 전환 + 과열을 전부 지난다', () => {
+    const seen = walk();
+    // 페이즈 정지 구간 셋.
+    expect(seen.has('0|0|0')).toBe(true);
+    expect(seen.has('1|0|0')).toBe(true);
+    expect(seen.has('2|0|0')).toBe(true);
+    // 전환 둘(0→1, 1→2)과 과열 하나.
+    expect(seen.has('1|1|0')).toBe(true);
+    expect(seen.has('2|1|0')).toBe(true);
+    expect(seen.has('2|0|1')).toBe(true);
+  });
+
+  it('주기가 마디 길이의 합이고 한 바퀴 뒤에 처음으로 돌아온다', () => {
+    expect(RECON_BOSS_CYCLE_SECONDS).toBeCloseTo(
+      RECON_BOSS_PHASE_SECONDS * 3 + RECON_BOSS_TRANSITION_SECONDS * 2 + RECON_BOSS_OVERHEAT_SECONDS,
+      6,
+    );
+    for (const t of [0, 1.3, 6.2, 11.9, 17.4]) {
+      expect(reconBossCycle(t + RECON_BOSS_CYCLE_SECONDS)).toEqual(reconBossCycle(t));
+      expect(reconBossCycle(t + RECON_BOSS_CYCLE_SECONDS * 7)).toEqual(reconBossCycle(t));
+    }
+  });
+
+  it('전환은 페이즈가 **오르는 순간에만** 켜진다(내려갈 때는 없다)', () => {
+    // 전환 상태의 phase 는 도착 페이즈다 — 상승 에지에서 한 번 채워지는 액터 계약과 맞는다.
+    expect(reconBossCycle(RECON_BOSS_PHASE_SECONDS + 0.1)).toEqual({
+      phase: 1,
+      transitioning: true,
+      overheated: false,
+    });
+    // 과열 다음은 곧바로 페이즈 0 이고 전환을 끼우지 않는다(폭주 → 처음으로 되돌아간다).
+    expect(reconBossCycle(RECON_BOSS_CYCLE_SECONDS - 0.01).overheated).toBe(true);
+    expect(reconBossCycle(0)).toEqual({ phase: 0, transitioning: false, overheated: false });
+  });
+
+  it('음수·비유한 입력은 첫 마디로 접힌다(dt 가 튀어도 화면이 안 멈춘다)', () => {
+    const first = { phase: 0, transitioning: false, overheated: false };
+    expect(reconBossCycle(-1)).toEqual(first);
+    expect(reconBossCycle(Number.NaN)).toEqual(first);
+    expect(reconBossCycle(Number.POSITIVE_INFINITY)).toEqual(first);
   });
 });

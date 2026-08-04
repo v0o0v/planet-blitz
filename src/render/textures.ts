@@ -274,6 +274,10 @@ const ENEMY_STYLE: { color: number; radius: number; shape: 'tri' | 'square' | 'd
   { color: 0xe08a6a, radius: 30, shape: 'hex' }, // 31 support
   { color: 0xf06058, radius: 48, shape: 'square' }, // 32 elite gunner
   { color: 0xf06058, radius: 54, shape: 'tri' }, // 33 elite charger
+  // 카르곤 엘리트 34~35(2026-08-04) — 카르곤 화염 팔레트를 한 단 밝게(정예 규약: 로스터보다
+  // 밝은 톤 + 한 치수 큰 도형). 실 스프라이트가 있으므로 이 도형은 로드 실패 시 폴백이다.
+  { color: 0xffc861, radius: 46, shape: 'square' }, // 34 elite gunner(용암 포대)
+  { color: 0xffc861, radius: 52, shape: 'diamond' }, // 35 elite special(용암 거인)
 ];
 
 /**
@@ -933,6 +937,12 @@ export const ENEMY_ASSET_FILES: readonly string[] = [
   'enemy_kras_support.png', // 31
   'enemy_kras_elite_gunner.png', // 32
   'enemy_kras_elite_charger.png', // 33
+  // 카르곤 엘리트 34~35(2026-08-04). 파일명은 4~ 의 계약(`enemy_<planet>_elite_<role>`)을 따른다 —
+  // 0~3 만 M1 레거시 이름이고, 이 둘은 그 뒤에 추가된 자산이라 계약 이름이 맞다.
+  'enemy_kargon_elite_gunner.png', // 34
+  // 35 는 **special** 이다(다른 행성의 둘째 정예는 charger). 이유는 `data/enemies.ts` 의
+  // 용암 거인 주석 — 돌진 예고 듀티 예산이 카르곤만 이미 빠듯하다.
+  'enemy_kargon_elite_special.png', // 35
 ];
 
 /**

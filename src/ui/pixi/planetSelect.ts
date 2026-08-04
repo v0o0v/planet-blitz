@@ -96,6 +96,11 @@ import {
   reconUnitLabel,
   type ReconUnit,
 } from '../enemyLabels.js';
+// ⚠️ **타입 전용 import 다.** 값으로 가져오면 `three`(약 1MB)가 이 화면의 정적 모듈 그래프에
+// 딸려 온다 — 실제 모듈은 {@link ArenaView.ensureBoss3D} 가 동적 import 로 가져온다
+// (`entityRenderer` 가 인게임 보스에서 쓰는 것과 같은 규율).
+import type { Stage3D } from '../../render/three3d/stage3d.js';
+import type { BossActor } from '../../render/three3d/bossActor.js';
 import type { CatalystInventory } from '../../net/index.js';
 import { COLOR, UI_FONT, TEXT_SHADOW, hexColor } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
@@ -329,6 +334,61 @@ const RECON_BOSS_GAP = 16;
 const RECON_TOP_RESERVED = 46;
 /** 잡몹 줄의 지그재그 폭 — 한 줄로 반듯하면 목록처럼 읽힌다(편성으로 보이게 어긋낸다). */
 const RECON_ZIGZAG = 14;
+
+// --- 보스 연출 순환(순수 층) -----------------------------------------------
+//
+// 사용자 요청 2026-08-04: "보스는 본인의 애니메이션을 번갈아가면서 계속 보여주게".
+//
+// ⚠️ **보스에는 애니메이션 자산이 없다.** 스켈레톤도, 스프라이트 스트립도 없다 — Meshy 리깅은
+// 휴머노이드 전제라 요새 메카·오벨리스크에 의미가 없어서 애초에 안 붙였다(`bossActor.ts` 머리말).
+// 대신 그 파일이 **트랜스폼 + 발광으로 저작한 연출 다섯**을 갖고 있고, 그것이 곧 이 보스의
+// "본인 애니메이션"이다: 페이즈 0 호흡 · 1 무게 이동 · 2 폭주 · 전환 · 과열.
+// 인게임에서는 sim 이 그 상태를 정하지만, 정찰 창에는 sim 이 없으므로 여기서 **시간으로 순환**한다.
+//
+// 순수 함수로 빼 두는 이유는 늘 같다 — vitest 는 node 환경이라 WebGL·three 를 세울 수 없고,
+// "순환이 다섯 연출을 전부 지나는가"는 그 아래 계층 없이 검증돼야 한다.
+
+/** 한 페이즈를 보여 주는 시간(초). */
+export const RECON_BOSS_PHASE_SECONDS = 4.5;
+/** 페이즈 전환 연출 길이(초) — `bossActor` 의 전환은 상승 에지에서 한 번 채워진다. */
+export const RECON_BOSS_TRANSITION_SECONDS = 2;
+/** 과열(피해 2배 창) 연출 길이(초). 순환의 마지막이라 곧바로 페이즈 0 으로 돌아간다. */
+export const RECON_BOSS_OVERHEAT_SECONDS = 2.5;
+
+/** `bossActor.BossVisualState` 의 구조적 사본 — three 를 정적으로 끌어오지 않기 위해 여기 둔다. */
+export interface ReconBossState {
+  readonly phase: number;
+  readonly transitioning: boolean;
+  readonly overheated: boolean;
+}
+
+/** 순환 마디(합 = 한 바퀴). 순서가 곧 연출 시나리오다. */
+const RECON_BOSS_CYCLE: readonly { state: ReconBossState; seconds: number }[] = [
+  { state: { phase: 0, transitioning: false, overheated: false }, seconds: RECON_BOSS_PHASE_SECONDS },
+  { state: { phase: 1, transitioning: true, overheated: false }, seconds: RECON_BOSS_TRANSITION_SECONDS },
+  { state: { phase: 1, transitioning: false, overheated: false }, seconds: RECON_BOSS_PHASE_SECONDS },
+  { state: { phase: 2, transitioning: true, overheated: false }, seconds: RECON_BOSS_TRANSITION_SECONDS },
+  { state: { phase: 2, transitioning: false, overheated: false }, seconds: RECON_BOSS_PHASE_SECONDS },
+  { state: { phase: 2, transitioning: false, overheated: true }, seconds: RECON_BOSS_OVERHEAT_SECONDS },
+];
+
+/** 한 바퀴 길이(초). */
+export const RECON_BOSS_CYCLE_SECONDS = RECON_BOSS_CYCLE.reduce((a, s) => a + s.seconds, 0);
+
+/**
+ * 경과 시간(초) → 지금 보여 줄 보스 연출 상태(순수, 주기 {@link RECON_BOSS_CYCLE_SECONDS}).
+ * 음수·비유한 입력은 첫 마디로 접는다(방어적 — dt 가 튀어도 화면이 멈추지 않는다).
+ */
+export function reconBossCycle(t: number): ReconBossState {
+  const first = RECON_BOSS_CYCLE[0]!.state;
+  if (!Number.isFinite(t) || t < 0) return first;
+  let left = t % RECON_BOSS_CYCLE_SECONDS;
+  for (const seg of RECON_BOSS_CYCLE) {
+    if (left < seg.seconds) return seg.state;
+    left -= seg.seconds;
+  }
+  return first;
+}
 
 /** 편성 한 자리 — 스프라이트 **중심**과 그려질 지름(창 로컬 좌표). */
 export interface ReconSpot {
@@ -845,6 +905,22 @@ class ArenaView {
   /** 부유 애니메이션 대상(편성 재건마다 다시 채운다). */
   private bobs: { node: Container; phase: number; boss: boolean }[] = [];
   private bobT = 0;
+  // --- 보스 3D(런의 그 액터를 그대로 빌려 온다 — 절 머리말 "보스 연출 순환") ---
+  /** 오프스크린 three 무대. 이 화면이 처음 보스 모델을 요구할 때 한 번 만든다(실패 = null). */
+  private stage3d: Stage3D | null = null;
+  private bossActor: BossActor | null = null;
+  /** 3D 텍스처를 물린 스프라이트. 준비되면 2D 보스 그림을 대신한다. */
+  private boss3d: Sprite | null = null;
+  /** 지금 3D 로 올라와 있는(또는 로드 중인) 행성. -1 = 없음. */
+  private boss3dPlanet = -1;
+  /** 순환 시계(초). 행성이 바뀌면 0 으로 되돌려 항상 페이즈 0 부터 보여 준다. */
+  private bossCycleT = 0;
+  /** 2D 보스 그림 컨테이너 — 3D 가 준비되면 숨긴다(로드 중에는 이것이 보인다). */
+  private bossArt: Container | null = null;
+  /** 보스 접지 그림자 — 3D 일 때 함께 숨긴다(주인 없는 타원이 남지 않게). */
+  private bossGround: Graphics | null = null;
+  /** 보스 자리(창 로컬). 3D 스프라이트를 같은 자리·같은 크기로 놓는다. */
+  private bossSpot: ReconSpot | null = null;
   /** 적·보스 스프라이트(basename → Texture|null). 자산 도착 시 화면이 통째로 재건된다. */
   private readonly ui: UiTextures;
   private planet = -1;
@@ -956,9 +1032,87 @@ class ArenaView {
       if (spot === undefined) return;
       this.reconHost.addChild(this.reconUnit(u, spot, accent, i));
     });
+    this.bossArt = null;
+    this.bossGround = null;
+    this.bossSpot = null;
     if (boss !== null && at.boss.d > 0) {
       this.reconHost.addChild(this.reconUnit(boss, at.boss, accent, -1));
+      this.bossSpot = at.boss;
+      void this.ensureBoss3D(p.id);
     }
+  }
+
+  /**
+   * 보스 3D 액터를 이 행성 것으로 맞춘다(비동기 — 로드 전까지는 2D 그림이 그대로 보인다).
+   *
+   * ⚠️ **`three`·`stage3d`·`bossActor` 는 동적 import 다.** 정적으로 쓰면 성계 지도에 들어오는
+   * 순간(그리고 그 화면을 import 하는 부팅 경로에서) 1MB 짜리 3D 스택이 따라온다 —
+   * `entityRenderer` 도 같은 이유로 인게임에서 동적으로 가져온다.
+   *
+   * ⚠️ **모델이 없는 인덱스면 무대를 세우지 않는다**(`hasBossModel`). 세우면 아무 이득 없이
+   * WebGL 컨텍스트 하나를 점유한다(브라우저 상한이 있다 — 그 파일의 주석).
+   */
+  private async ensureBoss3D(planetId: number): Promise<void> {
+    if (this.boss3dPlanet === planetId) {
+      this.placeBoss3D();
+      return;
+    }
+    this.boss3dPlanet = planetId;
+    this.bossCycleT = 0;
+    // 이전 행성 액터는 즉시 회수한다 — three 자원은 GC 대상이 아니라 행성을 훑으면 누적된다.
+    this.bossActor?.dispose();
+    this.bossActor = null;
+    this.hideBoss3D();
+
+    const [{ Stage3D }, { BossActor, hasBossModel }] = await Promise.all([
+      import('../../render/three3d/stage3d.js'),
+      import('../../render/three3d/bossActor.js'),
+    ]);
+    if (this.boss3dPlanet !== planetId) return; // 로드 중 행성이 또 바뀌었다.
+    if (!hasBossModel(planetId)) return; // 2D 스프라이트가 정답인 인덱스.
+    this.stage3d ??= Stage3D.create();
+    const stage = this.stage3d;
+    if (stage === null) return; // WebGL 미지원·컨텍스트 소진 — 2D 폴백.
+
+    const actor = new BossActor(stage);
+    const ok = await actor.load(planetId);
+    if (!ok || this.boss3dPlanet !== planetId) {
+      actor.dispose();
+      return;
+    }
+    this.bossActor = actor;
+    const sprite = this.boss3d ?? new Sprite(stage.textureOf('boss'));
+    sprite.anchor.set(0.5, 0.5);
+    this.boss3d = sprite;
+    if (sprite.parent === null) {
+      // 편성 위·캡션 아래. 캡션 위에 두면 큰 보스가 행성 이름을 덮는다(창 위쪽까지 솟는 모델이 있다).
+      this.view.addChildAt(sprite, this.view.getChildIndex(this.caption));
+    }
+    this.placeBoss3D();
+  }
+
+  /** 3D 스프라이트를 보스 자리에 맞춘다(2D 그림은 숨긴다). 자리가 없으면 숨긴다. */
+  private placeBoss3D(): void {
+    const sprite = this.boss3d;
+    const spot = this.bossSpot;
+    if (sprite === null) return;
+    if (spot === null || this.bossActor === null) {
+      sprite.visible = false;
+      return;
+    }
+    sprite.visible = true;
+    // 3D 슬롯은 정사각이고 모델은 그 안에 맞춰져 있다 — 지름을 그대로 변으로 쓴다.
+    sprite.width = spot.d;
+    sprite.height = spot.d;
+    sprite.position.set(this.rect.x + spot.x, this.rect.y + spot.y);
+    if (this.bossArt !== null) this.bossArt.visible = false;
+    if (this.bossGround !== null) this.bossGround.visible = false;
+  }
+
+  private hideBoss3D(): void {
+    if (this.boss3d !== null) this.boss3d.visible = false;
+    if (this.bossArt !== null) this.bossArt.visible = true;
+    if (this.bossGround !== null) this.bossGround.visible = true;
   }
 
   /**
@@ -975,6 +1129,10 @@ class ArenaView {
       .ellipse(0, spot.d * 0.42, spot.d * 0.34, spot.d * 0.12)
       .fill({ color: 0x000000, alpha: 0.38 });
     node.addChild(shadow);
+    // ⚠️ 보스가 3D 로 올라오면 이 그림자는 **함께 숨긴다.** 3D 액터는 자기 슬롯 안에서 뜨고
+    // 기울며 움직이는데 그림자는 2D 스프라이트 발치에 고정돼 있어, 남겨 두면 주인 없는 검은
+    // 타원만 지형에 떠 있는다(실화면에서 니플헤임 기함이 그렇게 보였다).
+    if (unit.boss) this.bossGround = shadow;
 
     const art = new Container();
     node.addChild(art);
@@ -993,6 +1151,8 @@ class ArenaView {
       art.addChild(g);
     }
     this.bobs.push({ node: art, phase: seat < 0 ? 0 : seat * 1.7, boss: seat < 0 });
+    // 보스의 2D 그림은 3D 액터가 준비되면 숨긴다(그 전까지는 이것이 보인다).
+    if (unit.boss) this.bossArt = art;
 
     // 이름표 — 지형은 밝기가 제각각이라 글자만 얹으면 사라진다. 어두운 알약을 깐다.
     const size = unit.boss ? 20 : 15;
@@ -1026,6 +1186,17 @@ class ArenaView {
     for (const b of this.bobs) {
       b.node.position.y = Math.sin(this.bobT * (b.boss ? 0.9 : 1.6) + b.phase) * (b.boss ? 6 : 4);
     }
+
+    // 보스는 **자기 연출 다섯을 순환**한다(페이즈 0·1·2 · 전환 · 과열). 액터가 트랜스폼·발광을
+    // 전부 지므로 여기서는 시계를 밀고 상태를 넘겨줄 뿐이다.
+    const actor = this.bossActor;
+    const stage = this.stage3d;
+    if (actor !== null && stage !== null) {
+      this.bossCycleT += dt;
+      actor.update(dt, reconBossCycle(this.bossCycleT));
+      stage.markActive('boss');
+      stage.render();
+    }
     // 런에서 바닥이 흐르는 방향(전방 비행) — 카메라가 아래로 밀리면 타일이 위로 흐른다.
     this.camY += dt * 22;
     this.auto.update(
@@ -1039,6 +1210,12 @@ class ArenaView {
   }
 
   destroy(): void {
+    // three 자원은 GC 대상이 아니다 — 액터(모델)와 무대(WebGL 컨텍스트)를 명시적으로 회수한다.
+    this.bossActor?.dispose();
+    this.bossActor = null;
+    this.stage3d?.destroy();
+    this.stage3d = null;
+    this.boss3d = null;
     this.auto.destroy();
     this.view.destroy({ children: true });
   }

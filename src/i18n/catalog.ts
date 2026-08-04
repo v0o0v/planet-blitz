@@ -100,6 +100,9 @@ export const EN = {
   'enemy.kras-salvage-drone': 'Salvage Drone',
   'enemy.kras-siege-battery': 'Siege Battery',
   'enemy.kras-devastator': 'Devastator',
+  // 카르곤 엘리트 2종은 typeIndex 34~35(append-only) 라 목록 끝에 온다 — 표시 순서와 무관하다.
+  'enemy.kargon-lava-battery': 'Lava Battery',
+  'enemy.kargon-magma-colossus': 'Magma Colossus',
   /** 역할 태그 — 정찰 로스터 칩의 두 번째 줄. */
   'enemy.role.charger': 'Charger',
   'enemy.role.gunner': 'Gunner',
@@ -2014,6 +2017,8 @@ export const KO: Record<MessageKey, string> = {
   'enemy.kras-salvage-drone': '잔해 회수체',
   'enemy.kras-siege-battery': '공성 포대',
   'enemy.kras-devastator': '파멸 거병',
+  'enemy.kargon-lava-battery': '용암 포대',
+  'enemy.kargon-magma-colossus': '용암 거인',
   'enemy.role.charger': '돌격형',
   'enemy.role.gunner': '사수형',
   'enemy.role.special': '특수형',

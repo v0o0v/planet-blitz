@@ -15,7 +15,7 @@ import type { EnemyDef, EnemyRole } from '../../src/sim/patterns/types.js';
 import type { WaveCard } from '../waves.js';
 import type { BossDef } from '../boss.js';
 import { PLANET_MODE, type PlanetMode } from '../../src/sim/planetMode.js';
-import { KARGON_ROSTER } from '../enemies.js';
+import { KARGON_ROSTER, KARGON_ELITES } from '../enemies.js';
 import { CARD_POOL } from '../waves.js';
 import { LAVA_FORTRESS } from '../boss.js';
 import { BERDAN_ROSTER, BERDAN_ELITES, BERDAN_CARD_POOL } from './berdan.js';
@@ -224,7 +224,9 @@ export const KARGON: PlanetContent = {
   // ADR-0021 배정: 카르곤 = vampire(0) 온보딩 기준 모드(현행 뱀서류 경로).
   mode: PLANET_MODE.vampire,
   roster: KARGON_ROSTER,
-  elites: [],
+  // 2026-08-04: 오래 비어 있던 자리. 비어 있는 동안 카르곤은 정예 카드가 없었고
+  // `stepEliteSummons` 가 로스터로 폴백해 정예 소집령이 일반몹을 내려보냈다(`data/enemies.ts`).
+  elites: KARGON_ELITES,
   cardPool: CARD_POOL,
   boss: LAVA_FORTRESS,
   // 카르곤 드랍 기준값 = src/sim/drops.ts 기존 상수(정합). 변경 시 함께 유지.

@@ -170,8 +170,11 @@ describe('편대 카탈로그 — append-only 계약', () => {
    * 계약이라 늘리는 순간 스프라이트 매핑·조준 술어·EF 재실행까지 표면이 넓어진다 —
    * 이 가드는 "편대를 늘리다가 적을 슬쩍 끼워 넣는" 변경을 즉시 빨간불로 만든다.
    */
-  it('ENEMY_BY_TYPE 골든 — 34종·연속 typeIndex·기존 0~21 불변', () => {
-    expect(ENEMY_BY_TYPE.length).toBe(34); // Lane9: 톡사르 22~27 · 크라스 28~33 append
+  it('ENEMY_BY_TYPE 골든 — 36종·연속 typeIndex·기존 0~33 불변', () => {
+    // Lane9: 톡사르 22~27 · 크라스 28~33 append. 2026-08-04: 카르곤 엘리트 34~35 append.
+    // ⚠️ 34~35 가 카르곤 소속인데 맨 뒤에 있는 것이 이 골든의 요점이다 — 카르곤 블록(0~3)에
+    // 끼워 넣으면 그 뒤 30종의 번호가 밀려 모든 리플레이·골든이 무효가 된다.
+    expect(ENEMY_BY_TYPE.length).toBe(36);
     ENEMY_BY_TYPE.forEach((def, i) => expect(def.typeIndex).toBe(i));
     expect(ENEMY_BY_TYPE.map((d) => d.id)).toEqual([
       'kargon-charger',
@@ -208,6 +211,8 @@ describe('편대 카탈로그 — append-only 계약', () => {
       'kras-salvage-drone',
       'kras-siege-battery',
       'kras-devastator',
+      'kargon-lava-battery',
+      'kargon-magma-colossus',
     ]);
   });
 
