@@ -61,6 +61,19 @@ export interface EntitySnapshot {
    * 만든다). 부재는 0(1페이즈)으로 다룬다. 스냅샷은 해시 대상이 아니라 골든 불변이다.
    */
   bossPhase?: number;
+  /**
+   * 대피소 전용(render-only): **이미 지나간 세그먼트의 대피소인가**(`aux0 < segmentIndex`).
+   *
+   * `active`(= 이번 세그먼트 목표)만으로는 대피소가 두 상태밖에 못 산다 — "아직 안 온 곳"과
+   * "이미 쓴 곳"이 똑같이 비활성으로 보여, 링을 한 바퀴 돌면 어느 쪽이 남은 길인지 화면에서
+   * 사라졌다(사용자 신고 2026-08-04 "대피소로 가야 한다는 느낌이 설명이 안 된다"). 셋을 가르는
+   * 판정은 sim 이 이미 아는 것(`aux0` vs `wave.segmentIndex`)이라 여기서 한 번만 편다 —
+   * `active` 를 같은 자리에서 펴는 것과 같은 규율이다.
+   *
+   * `permanent`·`bossPhase` 와 같은 이유로 **선택 필드**다(테스트가 스냅샷 리터럴을 직접 만든다).
+   * 부재는 false(미도달)로 다룬다. 스냅샷은 해시 대상이 아니라 sim 계약은 불변이다.
+   */
+  spent?: boolean;
 }
 
 /** A support heal beam, for render only. */
@@ -166,6 +179,8 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
       elite: eliteAffix(e),
       // 영구 지형 해저드(life < 0 = 청크 배치·만료 없음). 렌더가 감속 지대와 가르는 유일한 신호다.
       permanent: e.kind === 'hazard' && e.life < 0,
+      // 이미 지나간 대피소(= 지난 세그먼트의 것). `active` 와 같은 식을 여기서 한 번만 편다.
+      spent: e.kind === 'shelter' && e.aux0 < state.wave.segmentIndex,
     });
     if (e.kind === 'enemy' && e.enemyType === SUPPORT_TYPE && e.phase === 1) {
       beams.push({ x1: e.x, y1: e.y, x2: e.targetX, y2: e.targetY });

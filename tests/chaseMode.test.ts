@@ -24,7 +24,8 @@ import { hashWorld } from '../src/sim/replay.js';
 import { autopilotInput } from '../src/sim/autopilot.js';
 import { snapshotWorld } from '../src/sim/snapshot.js';
 import { classifyRadar } from '../src/render/radar.js';
-import { shelterArrow, SHELTER_ARROW_RADIUS } from '../src/render/entityRenderer.js';
+import { shelterArrow, SHELTER_ARROW_MARGIN } from '../src/render/entityRenderer.js';
+import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../src/render/app.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile } from '../src/save/profile.js';
 import { SEGMENTS } from '../data/waves.js';
@@ -401,16 +402,62 @@ describe('추격 — 정규경로 full-path 통합(니플헤임=chase)', () => {
     expect(s1.find((s) => s.active)?.aux0).toBe(2);
   });
 
-  it('(g3) 화면 밖 대피소는 방향 화살표로 지시하고, 화면 안이면 그리지 않는다', () => {
+  it('(g2b) 대피소는 세 상태로 갈린다 — 미도달·목표·사용됨(사용자 신고 2026-08-04)', () => {
+    // `active` 하나로는 "아직 안 온 곳"과 "이미 쓴 곳"이 똑같이 비활성으로 보여 남은 길이
+    // 화면에서 사라진다. 스냅샷 `spent` 가 지나온 것을 갈라 렌더가 한 단계 더 죽인다.
+    const w = createWorld(11, chaseConfig());
+    w.wave.segmentIndex = 2;
+    const live = shelters(w);
+    const snap = snapshotWorld(w)
+      .entities.filter((e) => e.kind === 'shelter')
+      .map((e) => ({
+        aux0: (live.find((s) => s.id === e.id) as Entity).aux0,
+        active: e.active,
+        spent: e.spent === true,
+      }));
+    expect(snap.length).toBe(CHASE_SHELTER_COUNT);
+    // 세 상태는 서로 배타적이고 aux0 순서와 정확히 대응한다.
+    for (const s of snap) {
+      expect(s.active).toBe(s.aux0 === 2);
+      expect(s.spent).toBe(s.aux0 < 2);
+      expect(s.active && s.spent).toBe(false);
+    }
+    expect(snap.filter((s) => s.spent).length).toBe(2); // 0·1 번을 지나왔다
+    expect(snap.filter((s) => !s.active && !s.spent).length).toBe(CHASE_SHELTER_COUNT - 3);
+  });
+
+  it('(g3) 화면 밖 대피소는 화면 가장자리 화살표 + 남은 거리로 지시하고, 화면 안이면 그리지 않는다', () => {
+    // 옛 계약은 카메라 중심 260px 링이었다 — 화면 한가운데라 탄막으로 오인됐다(사용자 신고
+    // 2026-08-04). 지금은 뷰포트 사각형(여백 SHELTER_ARROW_MARGIN 안쪽) 경계에 붙는다.
+    const halfW = DESIGN_WIDTH / 2 - SHELTER_ARROW_MARGIN;
+    const halfH = DESIGN_HEIGHT / 2 - SHELTER_ARROW_MARGIN;
+
     // 대피소 링 반경 1600 > 화면 절반(960×540) → 시작 시점부터 대개 화면 밖이다.
     const far = shelterArrow(0, 0, 1600, 0);
     expect(far).not.toBeNull();
     expect(far!.angle).toBeCloseTo(0, 6);
-    expect(Math.hypot(far!.x, far!.y)).toBeCloseTo(SHELTER_ARROW_RADIUS, 6);
-    // 대각선 방향도 카메라 중심 링 위에 놓인다(방향만 남기고 거리 정보는 없다).
+    // 정동쪽이면 오른쪽 변에 붙는다(고정 반경 원이 아니다).
+    expect(far!.x).toBeCloseTo(halfW, 6);
+    expect(far!.y).toBeCloseTo(0, 6);
+    // 남은 거리는 실제 카메라↔대피소 거리다(화살표 아래 라벨의 값).
+    expect(far!.distance).toBeCloseTo(1600, 6);
+
+    // 대각선(45°)은 세로 여백이 먼저 닿으므로 위/아래 변에 붙는다.
     const diag = shelterArrow(100, 200, 100 - 1200, 200 - 1200);
     expect(diag).not.toBeNull();
-    expect(Math.hypot(diag!.x - 100, diag!.y - 200)).toBeCloseTo(SHELTER_ARROW_RADIUS, 6);
+    expect(diag!.y - 200).toBeCloseTo(-halfH, 6);
+    expect(Math.abs(diag!.x - 100)).toBeLessThanOrEqual(halfW + 1e-6);
+    expect(diag!.distance).toBeCloseTo(Math.hypot(1200, 1200), 6);
+
+    // 어느 방향이든 화살표는 화면 밖으로 나가지 않는다(잘림 방지).
+    for (let i = 0; i < 16; i++) {
+      const a = (i * Math.PI) / 8;
+      const p = shelterArrow(0, 0, Math.cos(a) * 4000, Math.sin(a) * 4000);
+      expect(p).not.toBeNull();
+      expect(Math.abs(p!.x)).toBeLessThanOrEqual(halfW + 1e-6);
+      expect(Math.abs(p!.y)).toBeLessThanOrEqual(halfH + 1e-6);
+    }
+
     // 화면 안(여유 마진 안쪽)이면 실물 대피소가 이미 보이므로 화살표 없음.
     expect(shelterArrow(0, 0, 300, 100)).toBeNull();
   });

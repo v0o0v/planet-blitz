@@ -484,17 +484,34 @@ function coreTexture(renderer: Renderer): Texture {
 }
 
 /**
- * 대피소 플레이스홀더(추격 모드 Lane6): 안전지대 돔. 어두운 베이스 원반 + 청록 보호막 돔 +
- * 안전 오라 링 + 회복 십자. 아군 톤(민트·시안)이라 적 스프라이트와 겹치지 않고 "여기가 안전"이
- * 즉시 읽힌다. inert·fixedFacing(회전 없음).
+ * 대피소 폴백(추격 모드 Lane6): **착륙 패드**. 어두운 장갑 링 + 유도등 8개 + 비어 있는 중앙
+ * 데크 + 바닥 안전 표식.
+ *
+ * ## 왜 돔이 아니라 패드인가 (2026-08-04)
+ * 원래는 보호막 돔이었다. 탑다운에서 돔은 "지붕 덮인 건물"로 읽혀 **들어가는 곳이 아니라 서
+ * 있는 물체**처럼 보였고, 실제로 "일반 건물처럼 보인다"는 신고로 돌아왔다. 이 오브젝트가 화면에
+ * 전해야 하는 것은 하나다 — *저 원 안으로 들어가면 구간을 넘는다.* 그래서 중앙을 비우고(밟는
+ * 자리), 둘레 유도등이 안쪽을 가리키게 한다. 실 PNG(`shelter.png`)가 정본이고 이건 부재 시
+ * 폴백이지만 **읽히는 방식은 같아야** 한다. inert·fixedFacing(회전 없음).
  */
 function shelterTexture(renderer: Renderer): Texture {
   const g = new Graphics();
-  g.circle(0, 0, 30).fill({ color: 0x0e2a24 }).stroke({ color: 0x2fe0b0, width: 3, alignment: 0 }); // 베이스 원반
-  g.circle(0, 0, 22).fill({ color: 0x1f7a5c, alpha: 0.55 }).stroke({ color: 0x5affc0, width: 2, alignment: 0 }); // 보호막 돔
-  g.circle(0, 0, 34).stroke({ color: 0x39d0ff, width: 2, alpha: 0.6, alignment: 0 }); // 안전 오라
-  g.rect(-3, -12, 6, 24).fill({ color: 0xd8fff0 }); // 회복 십자(세로)
-  g.rect(-12, -3, 24, 6).fill({ color: 0xd8fff0 }); // 회복 십자(가로)
+  // 장갑 링(바깥 테두리) — 두꺼운 어두운 금속.
+  g.circle(0, 0, 34).fill({ color: 0x2b3038 }).stroke({ color: 0x151a20, width: 3, alignment: 0 });
+  // 데크(중앙) — 밟는 자리라 비워 둔다. 링보다 밝아 "안쪽"이 구분된다.
+  g.circle(0, 0, 25).fill({ color: 0x474d57 });
+  // 유도등 8개(링 위) — 안쪽을 향해 늘어서 시선을 중앙으로 모은다.
+  for (let i = 0; i < 8; i++) {
+    const a = (i * Math.PI) / 4;
+    g.circle(Math.cos(a) * 29.5, Math.sin(a) * 29.5, 3.4).fill({ color: 0x7dff5a });
+  }
+  // 바닥 안전 표식 — 중앙 링 + 안쪽을 가리키는 짧은 살 3개.
+  g.circle(0, 0, 15).stroke({ color: 0x7dff5a, width: 3, alignment: 0 });
+  for (const a of [-Math.PI / 2, Math.PI / 6, (Math.PI * 5) / 6]) {
+    g.moveTo(Math.cos(a) * 15, Math.sin(a) * 15)
+      .lineTo(Math.cos(a) * 4, Math.sin(a) * 4)
+      .stroke({ color: 0x7dff5a, width: 3 });
+  }
   const tex = renderer.generateTexture(g);
   g.destroy();
   return tex;
