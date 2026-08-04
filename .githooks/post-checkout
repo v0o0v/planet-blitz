@@ -21,6 +21,24 @@
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 [ -n "$root" ] || exit 0
 
+# .env.local 을 주 워크트리에서 복사한다(없을 때만).
+#
+# 왜: Supabase 설정은 gitignore 대상이라 새 워크트리에 안 따라온다. 그러면 readSupabaseConfig()
+# 가 null 이 되어 **게임 전체가 오프라인으로 떨어진다** — 의뢰서·코어 모듈·침공·방어 화면이
+# 전부 빈 채로 잠기고, 하네스로 띄워도 원인을 알기 어렵다(로그인 게이트조차 안 뜬다).
+#
+# 주 워크트리(= git common dir 의 부모)를 원본으로 삼는다. 이미 있으면 절대 덮지 않는다 —
+# 워크트리마다 다른 프로젝트를 가리키게 두는 경우가 있다.
+git_common=$(git rev-parse --git-common-dir 2>/dev/null)
+if [ -n "$git_common" ] && [ ! -f "$root/.env.local" ]; then
+  # --git-common-dir 는 주 워크트리의 .git 을 가리킨다(상대 경로일 수 있어 -- 로 정규화).
+  main_root=$(cd "$git_common/.." 2>/dev/null && pwd)
+  if [ -n "$main_root" ] && [ "$main_root" != "$root" ] && [ -f "$main_root/.env.local" ]; then
+    cp "$main_root/.env.local" "$root/.env.local" &&
+      echo "[post-checkout] .env.local 복사 완료 (원본: $main_root)"
+  fi
+fi
+
 # 이미 설치돼 있으면 아무것도 안 한다(브랜치 전환 시 매번 도는 것 방지). 새 워크트리는
 # node_modules 가 아예 없으므로 이 가드를 통과해 설치가 돈다.
 [ -d "$root/node_modules" ] && exit 0

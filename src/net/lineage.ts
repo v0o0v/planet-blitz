@@ -91,6 +91,16 @@ export function setLineageGatewayOverride(gateway: LineageGateway | null): void 
   gatewayOverride = gateway;
 }
 
+/**
+ * 지금 대체가 걸려 있는가(= 실서버가 가려져 있는가). 치트 패널 상태 배지가 읽는다.
+ *
+ * 왜 패널의 지역 변수로는 안 되는가: 치트 패널은 매 렌더마다 탭을 새로 만들어 토글을 추적하던
+ * 클로저가 초기화된다. 그래서 "켠 적 있는가"를 패널이 스스로 알 수 없다 — 정본은 여기다.
+ */
+export function hasLineageGatewayOverride(): boolean {
+  return gatewayOverride !== null;
+}
+
 /** 테스트 격리용 초기화(등록된 팩토리·대체를 모두 지운다). */
 export function resetLineageGateway(): void {
   gatewayFactory = null;

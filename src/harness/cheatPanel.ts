@@ -46,7 +46,10 @@ import { EQUIP_SLOTS, RARITY_CODE } from '../items/types.js';
 import { activeShip } from '../save/profile.js';
 import type { Profile } from '../save/profile.js';
 import { retireActiveShip, bulkDismissGuardians, investLineageBranch } from '../save/guardianLifecycle.js';
-import { setLineageGatewayOverride } from '../net/lineage.js';
+import { setLineageGatewayOverride, hasLineageGatewayOverride } from '../net/lineage.js';
+import { hasDefenseUnitsGatewayOverride } from '../net/defenseUnits.js';
+import { readSupabaseConfig } from '../net/config.js';
+import { getSignedInUser } from '../net/auth.js';
 import { GUARDIAN_TITAN, GUARDIAN_INTERCEPTOR } from '../../data/guardian.js';
 import {
   branchBonusBp,
@@ -352,6 +355,14 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   let paused = false;
   let invincible = false;
   let savedMaxHp = 0;
+  /**
+   * 접속 배지가 쓰는 로그인 상태 캐시.
+   *
+   * `getSignedInUser()` 는 비동기인데 `render()` 는 동기다(250ms 자동 갱신이 body 를 통째로
+   * 다시 그린다). 매 렌더마다 부르면 세션 조회가 초당 4회 돌므로, 결과를 여기 캐시하고
+   * 갱신은 {@link refreshAccount} 가 따로 돌린다. `'unknown'` 은 아직 첫 조회 전.
+   */
+  let accountEmail: string | null | 'unknown' = 'unknown';
   // 씬 런처 입력값은 250ms 자동 갱신(render)이 body를 통째로 다시 그려도 유지되도록
   // 클로저 상태로 보존한다(입력 요소는 매 렌더 이 값에서 복원). 시드를 고정하면 씬이
   // 재현 가능해진다("핀"), 빈 값은 랜덤.
@@ -706,6 +717,56 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     setHint(ok ? '정예 승격(현장 적 1기)' : '승격할 일반 적이 없습니다');
   }
 
+  // --- 접속 상태 -------------------------------------------------------------
+
+  /**
+   * 로그인 상태를 다시 읽고, 값이 바뀌었을 때만 다시 그린다.
+   *
+   * OAuth 왕복 직후에는 세션이 늦게 잡히므로 한 번만 읽어서는 "미로그인"으로 굳는다.
+   * 자동 갱신 주기에 얹되 조회 자체는 여기서만 한다.
+   */
+  function refreshAccount(): void {
+    void getSignedInUser()
+      .then((u) => {
+        const next = u === null ? null : (u.email ?? '(이메일 없음)');
+        if (next === accountEmail) return;
+        accountEmail = next;
+        render();
+      })
+      .catch(() => {
+        /* 세션 조회 실패는 미로그인과 같게 둔다 — 배지가 그렇게 표시한다. */
+      });
+  }
+
+  /**
+   * 접속 배지 문구. **왜 이 배지가 필요한가**:
+   *
+   * 하네스에서 화면이 비어 있을 때 원인이 셋인데 화면상으로는 전부 똑같이 "빈 목록"이다 —
+   * (a) `.env.local` 이 없어 설정 자체가 없다 (b) 설정은 있는데 로그인을 안 했다
+   * (c) 둘 다 되는데 모의 게이트웨이가 실서버를 가리고 있다. (c) 가 특히 고약하다:
+   * `defenseUnits`/`lineage` 의 대체는 설정보다 **먼저** 검사되므로, 켜 둔 것을 잊으면
+   * 실서버에 붙어 있는데도 인메모리 원장을 보면서 "서버가 반영이 안 된다"고 오진하게 된다.
+   * 그래서 셋을 한 줄에 드러낸다.
+   */
+  function describeConnection(): { text: string; ok: boolean } {
+    const masked: string[] = [];
+    if (hasDefenseUnitsGatewayOverride()) masked.push('방어체');
+    if (hasLineageGatewayOverride()) masked.push('계보');
+    const maskSuffix = masked.length > 0 ? ` · ⚠ 모의가 가림: ${masked.join('·')}` : '';
+
+    if (readSupabaseConfig() === null) {
+      return { text: `오프라인 — .env.local 없음(서버 화면 전부 잠김)${maskSuffix}`, ok: false };
+    }
+    if (accountEmail === 'unknown') return { text: `로그인 확인 중…${maskSuffix}`, ok: false };
+    if (accountEmail === null) {
+      return { text: `미로그인 — ⚙ 설정에서 로그인(서버 화면 잠김)${maskSuffix}`, ok: false };
+    }
+    return {
+      text: `온라인 · ${accountEmail} · 침공은 NPC 대상만${maskSuffix}`,
+      ok: masked.length === 0,
+    };
+  }
+
   // --- 렌더 -----------------------------------------------------------------
 
   function render(): void {
@@ -734,6 +795,13 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     badge.className = `pb-c-badge${snap.tainted ? '' : ' clean'}`;
     badge.textContent = snap.tainted ? '⚠ 오염 런 (정산·제출 제외)' : '정상 런';
     body.appendChild(badge);
+
+    // 접속 배지 — 왜 필요한가는 describeConnection 주석에.
+    const conn = describeConnection();
+    const connBadge = document.createElement('div');
+    connBadge.className = `pb-c-badge${conn.ok ? ' clean' : ''}`;
+    connBadge.textContent = conn.text;
+    body.appendChild(connBadge);
 
     // 1) 재생 제어 — 횡단 도구(어느 씬에서든 배속/정지/스텝/ff). 항상 표시.
     {
@@ -2127,8 +2195,17 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     render();
   }, 250);
 
+  // 로그인 상태는 따로, 더 느리게 읽는다 — 250ms 주기에 얹으면 세션 조회가 초당 4회 돈다.
+  // 2초면 OAuth 왕복 복귀 직후의 지연을 흡수하기에 충분하다.
+  refreshAccount();
+  const accountTimer = window.setInterval(() => {
+    if (body.classList.contains('hidden')) return;
+    refreshAccount();
+  }, 2000);
+
   return {
     destroy(): void {
+      window.clearInterval(accountTimer);
       // 갤러리 씬이 열려 있으면 함께 정리(ticker 콜백·핸들·백드롭 누수 0).
       galleryScene.unmount();
       window.clearInterval(timer);

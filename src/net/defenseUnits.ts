@@ -141,6 +141,14 @@ export function setDefenseUnitsGatewayOverride(gateway: DefenseUnitsGateway | nu
   gatewayOverride = gateway;
 }
 
+/**
+ * 지금 대체가 걸려 있는가(= 실서버가 가려져 있는가). 치트 패널 상태 배지가 읽는다 —
+ * `hasLineageGatewayOverride` 와 같은 이유로 패널 지역 변수가 아니라 여기가 정본이다.
+ */
+export function hasDefenseUnitsGatewayOverride(): boolean {
+  return gatewayOverride !== null;
+}
+
 function resolveGateway(deps: DefenseUnitsDeps): DefenseUnitsGateway | null {
   if (deps.gateway !== undefined) return deps.gateway;
   if (gatewayOverride !== null) return gatewayOverride;
