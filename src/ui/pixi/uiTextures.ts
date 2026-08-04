@@ -11,6 +11,8 @@
 
 import { Assets, type Texture } from 'pixi.js';
 import { stickerByIndex } from '../../../data/stickers.js';
+import { PLANETS as PLANET_CONTENT } from '../../../data/planets/index.js';
+import { ENEMY_ASSET_FILES, BOSS_ASSET_FILES } from '../../render/textures.js';
 import { CATALYST_ICON_NAMES } from '../../data/catalysts.js';
 import type { SkillNode } from '../../../data/skills.js';
 import { SHIP_TYPES, DEFAULT_SHIP_TYPE, shipTypeDef } from '../../../data/ships/index.js';
@@ -166,6 +168,26 @@ export const ACTIVE_ICON_NAMES: readonly string[] = ACTIVES_BY_SHIP.flatMap((lis
   list.map((_, i) => activeSkillIconName(SHIP_TYPES[shipTypeId]?.slug ?? '', i)),
 );
 
+/**
+ * 성계 지도 **전장 정찰 로스터**가 쓰는 적·보스 스프라이트(2026-08-04).
+ *
+ * 파일명 정본은 `src/render/textures.ts`(런이 쓰는 그 목록) 하나다 — 여기서 다시 적으면
+ * 두 번째 전사본이 생기고, 어긋남은 "런에는 맞게 뜨는데 정찰창만 틀리다"로만 드러난다.
+ * 보스는 **행성 보스만** 담는다(의뢰 보스 3칸은 행성 보스 파일을 잠정 재사용해 중복이라
+ * `UI_ASSET_NAMES` 의 중복 금지 계약을 깬다). 방어적으로 Set 으로 한 번 더 접는다.
+ *
+ * 비용: `Assets.load` 는 URL 단위 캐시라 런 로더(`loadGameTextures`)와 **같은 텍스처를 공유**한다 —
+ * 부팅에 새로 받는 것이 아니라 같은 항목을 한 번 더 참조할 뿐이다.
+ */
+export const RECON_ASSET_NAMES: readonly string[] = [
+  ...new Set([
+    ...ENEMY_ASSET_FILES,
+    ...PLANET_CONTENT.map((c) => BOSS_ASSET_FILES[c.index]).filter(
+      (n): n is string => n !== undefined,
+    ),
+  ]),
+];
+
 /** 로드 대상 UI 자산 basename (assets/ 아래, 확장자 포함). */
 export const UI_ASSET_NAMES: readonly string[] = [
   'ui_panel.png',
@@ -284,6 +306,8 @@ export const UI_ASSET_NAMES: readonly string[] = [
   // lowmid 로 옮겨가며 사문서가 된 실물 아트인데, 파워업 '집속 렌즈'(beam-focuser)가 이걸 되쓴다 —
   // 유니온에 있던 `skill_range_flat_lowmid` 는 PNG 가 없어 카드에 그림이 안 떴다(2026-07-27).
   'skill_range_flat_low.png',
+  // 성계 지도 전장 정찰 로스터의 적·보스 스프라이트 — 목록 정본은 {@link RECON_ASSET_NAMES}.
+  ...RECON_ASSET_NAMES,
   // 액티브 스킬 아이콘 42장(ADR-0041 — ADR-0015 의 "인스턴스 단위 아이콘 예외"에 편입).
   // **레지스트리 파생**이라 42종 저작이 바뀌면 목록이 자동으로 따라온다 — 손으로 나열하면
   // 조용히 어긋나고, 그 어긋남은 "번들에는 있는데 화면에 안 뜬다"로만 드러난다.
