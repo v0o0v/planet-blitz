@@ -170,8 +170,21 @@ const RIM_PULSE_PERIOD = 5.5;
 /**
  * 엔진 발광 배치 — **바운딩 박스 반치수 대비 비율**이다. 절대 좌표로 적으면 모델을 바꿀 때
  * 발광만 허공에 남는다. 전방이 로컬 −x 이므로 후방(=노즐)은 +x 다.
+ *
+ * ## `side`·`lateral` 은 실측으로 역산한 값이다
+ * ⚠️ **화면의 청록 링은 이 빌보드가 아니라 모델 자체의 노즐**이다. `side` 를 0.17→0.30 으로
+ * 바꿔도 링은 1px 도 안 움직였다 — 즉 빌보드(와 그 위치를 읽어 가는 Pixi 코로나)는 처음부터
+ * 실제 구멍과 어긋나 있었고, 화면에서는 "불꽃이 구멍과 살짝 비껴 있다"로 보였다.
+ *
+ * 그래서 링의 화면 좌표를 **픽셀에서 측정**하고(시안 화소 무게중심), 같은 프레임에서 빌보드
+ * 투영 좌표와 대조해 두 지점을 맞추는 비율을 역산했다. 결과는 노즐 축이 바운딩 박스 중심에서
+ * **한쪽으로 치우쳐 있다**는 것이다 — 그래서 좌우 대칭 `side` 하나로는 맞출 수 없고
+ * {@link ENGINE_AT.lateral}(중심 오프셋)이 함께 필요하다.
+ *
+ * 모델을 교체하면 이 둘은 **다시 재야 한다**(코드만 봐서는 알 수 없다). 절차:
+ * 코로나를 10px 점으로 줄여 렌더 → 캔버스에서 시안 화소 무게중심과 점 좌표를 비교.
  */
-const ENGINE_AT = { back: 0.80, down: -0.16, side: 0.17 } as const;
+const ENGINE_AT = { back: 0.80, down: -0.16, side: 0.2325, lateral: -0.0625 } as const;
 /**
  * 불꽃 세기 배수 — **노즐 코어(여기)와 Pixi 코로나(`titleScreen.ts`)가 공유하는 단 하나의 손잡이**다.
  *
@@ -381,7 +394,7 @@ export class TitleShip3D {
       glow.position.set(
         this.half.x * ENGINE_AT.back,
         this.half.y * ENGINE_AT.down,
-        this.half.z * ENGINE_AT.side * side,
+        this.half.z * (ENGINE_AT.lateral + ENGINE_AT.side * side),
       );
       this.pivot.add(glow);
       this.engineGlows.push(glow);
