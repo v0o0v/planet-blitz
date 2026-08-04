@@ -327,7 +327,16 @@ export const SEGMENTS: readonly WaveSegment[] = [
   { index: 6, killGoal: 0, maxEnemies: 14, bulletCap: 2000, cardInterval: 200, boss: true },
 ];
 
-/** 8-card spawn pool drawn from throughout a run (spec 웨이브 카드 풀 초안). */
+/**
+ * 카르곤 웨이브 카드 풀(10장 — M1 의 8장 + 2026-08-04 정예 2장).
+ *
+ * ⚠️ **정예 카드 2장을 뒤에 붙이면서 풀 길이가 8 → 10 이 됐다.** 카드 추첨은 `waveRng` 로
+ * 인덱스를 뽑으므로 길이가 바뀌면 **같은 시드라도 카르곤 런의 웨이브 구성이 통째로 갈린다** —
+ * 카르곤 골든 해시·fixture 는 이 커밋에서 재생성해야 한다. 다른 행성은 자기 풀을 쓰므로
+ * 영향이 없다. 정예 카드는 다른 행성(`BERDAN_CARD_POOL` 의 `brd-sentinel-guard` ·
+ * `brd-brood-charge`)과 **같은 모양**이다 — 카르곤만 정예가 안 나오던 공백을 메우는 것이 목적이라
+ * 새 형태를 발명하지 않았다.
+ */
 export const CARD_POOL: readonly WaveCard[] = [
   { id: 'charger-rush', formation: 'line', spawns: [{ role: 'charger', count: 4 }] },
   { id: 'gunner-line', formation: 'edges', spawns: [{ role: 'gunner', count: 3 }] },
@@ -355,6 +364,32 @@ export const CARD_POOL: readonly WaveCard[] = [
     formation: 'edges',
     spawns: [
       { role: 'special', count: 1 },
+      { role: 'gunner', count: 2 },
+      { role: 'support', count: 1 },
+    ],
+  },
+  // --- 정예 2장(2026-08-04) — 인덱스 0 = 용암 포대, 1 = 마그마 파쇄기(`KARGON_ELITES` 순서). ---
+  {
+    id: 'lava-battery-guard',
+    formation: 'edges',
+    spawns: [
+      { elite: 0, count: 1 },
+      { role: 'gunner', count: 3 },
+    ],
+  },
+  /**
+   * ⚠️ 호위는 **1기**다(베르단의 같은 카드는 3기).
+   *
+   * 3기로 두면 `tests/enemyVisual.test.ts` 의 **돌진 예고 듀티**가 최악 셀에서 35.6% → 52.5% 로
+   * 뛴다 — 즉 그 창에서 화면 절반 이상 동안 돌진 예고가 떠 있어 "예고가 배경이 되는" 상태다.
+   * 정예 자신이 이미 돌격형이라 호위까지 돌격형으로 채우면 같은 신호가 겹쳐 쌓인다.
+   * 카르곤 차저(파쇄차)의 예고가 다른 행성보다 길어 이 행성에서만 드러나는 축이다.
+   */
+  {
+    id: 'magma-colossus-field',
+    formation: 'line',
+    spawns: [
+      { elite: 1, count: 1 },
       { role: 'gunner', count: 2 },
       { role: 'support', count: 1 },
     ],

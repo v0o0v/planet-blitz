@@ -183,9 +183,14 @@ describe('말로우(typeId 5) 정규 경로 배선 — Profile → buildRunConfi
     // settlements=0 — 다음 교전이 aux0=0 이 되기 전에 다시 피격을 리셋하는 정확한 타이밍을
     // 놓쳤다). seed 42 는 1800틱에 settlements=2·maxAux1=600(임계 180 이상)으로 소진 규칙 자체가
     // 실제로 도는 것을 확인할 수 있다.
+    //
+    // ⚠️ SEED 재선정 2026-08-04(42 → 10, 카르곤 정예 2종). 카드 풀 8 → 10 이라 카드열이 통째로
+    // 재추첨되고 seed 42 는 정산이 0 회가 됐다(적립만 하고 소진 규칙을 못 태운다 = 이 케이스가
+    // 재는 것이 사라진다). 200시드 재표본에서 **seed 10** 이 정산 2회 · 무피격 최대 239틱 ·
+    // 순 경감 86 vs 142 로 규칙이 반복 발현하는 것을 가장 또렷하게 보여준다.
     const cfg = buildRunConfig(profileWithType(5), { planet: 0, stage: 1 });
-    const live = runObserved(42, cfg, 1800);
-    const ctrl = runObserved(42, suppressSignature(cfg, SIG_MALLOW_CUSHION), 1800);
+    const live = runObserved(10, cfg, 1800);
+    const ctrl = runObserved(10, suppressSignature(cfg, SIG_MALLOW_CUSHION), 1800);
 
     expect(new Set(live.hashes).size).toBeGreaterThan(900);
     expect(ctrl.hpLost).toBeGreaterThan(0);

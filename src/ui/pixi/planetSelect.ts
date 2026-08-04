@@ -90,6 +90,17 @@ import { t, type MessageKey } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { AutotileBackground, loadWangTiles, upperAt, type WangTiles } from '../../render/autotile.js';
 import type { LaunchSelection, BestStageClearedFn } from '../planetSelect.js';
+import {
+  planetReconRoster,
+  reconCaption,
+  reconUnitLabel,
+  type ReconUnit,
+} from '../enemyLabels.js';
+// ⚠️ **타입 전용 import 다.** 값으로 가져오면 `three`(약 1MB)가 이 화면의 정적 모듈 그래프에
+// 딸려 온다 — 실제 모듈은 {@link ArenaView.ensureBoss3D} 가 동적 import 로 가져온다
+// (`entityRenderer` 가 인게임 보스에서 쓰는 것과 같은 규율).
+import type { Stage3D } from '../../render/three3d/stage3d.js';
+import type { BossActor } from '../../render/three3d/bossActor.js';
 import type { CatalystInventory } from '../../net/index.js';
 import { COLOR, UI_FONT, TEXT_SHADOW, hexColor } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
@@ -284,6 +295,169 @@ export const STAGE_ROW_Y = 50;
  */
 export function arenaChildIndex(windowPanelIndex: number): number {
   return Math.max(0, windowPanelIndex);
+}
+
+// --- 전장 정찰 편성(순수 층) -----------------------------------------------
+//
+// 창이 "이 행성이 어떻게 생겼나"만 말하던 자리에 **"여기서 무엇이 나오는가"**를 얹는다
+// (사용자 요청 2026-08-04). 얹는 방식이 이 절의 전부다:
+//
+// ⚠️ **띠에 칩으로 나열하지 않는다.** 첫 구현이 창 아래에 카드 띠를 깔았는데, 그러면 창이
+// "전장"이 아니라 "지형 위에 붙은 목록"이 된다(사용자가 곧바로 되돌렸다 — "실제 행성 전장이
+// 보여지고 있는데 **그 위에** 보스와 몹들이 같이 보여지면 좋겠어"). 그래서 적들은 판·테두리
+// 없이 **지형 위에 그대로 선다** — 창이 곧 정찰 사진이다.
+//
+// ⚠️ **크기는 sim 반지름에서 온다**(`EnemyDef.radius`·`BossDef.radius` ×2 = 지름). 이 창은
+// 런과 **같은 배율**이라(파일 헤더 "왜 여기는 창을 뚫는가" — 32px 타일을 64px 로 그린다)
+// 반지름을 그대로 쓰면 화면에 보이는 크기가 실제 교전에서 보게 될 크기와 같다. 임의 크기로
+// 그리면 "용암샘이 수리드론보다 크다" 같은 **실제 정보**가 지워진다.
+//
+// 자리는 Pixi 없이 검증되는 순수 서술이다(이 화면의 다른 좌표와 같은 규율).
+
+/** 편성 좌우 여백. */
+export const RECON_PAD = 24;
+/** 잡몹 사이 최소 간격(지름 밖 여백). */
+export const RECON_MOB_GAP = 24;
+/** 이름표가 스프라이트 아래에서 떨어지는 거리. */
+export const RECON_LABEL_GAP = 6;
+/**
+ * 잡몹 줄이 창 바닥에서 띄우는 여백.
+ *
+ * ⚠️ **이름표 자리를 포함해야 한다** — 스프라이트만 보고 잡으면 지그재그로 내려간 개체의
+ * 이름표가 창 밖으로 나가 마스크에 잘린다(단위 테스트가 2px 초과로 잡았다):
+ * {@link RECON_ZIGZAG} + {@link RECON_LABEL_GAP} + 이름표 높이(≈24) 가 하한이다.
+ */
+const RECON_ROW_BOTTOM = 50;
+/** 보스와 잡몹 줄 사이 최소 간격. */
+const RECON_BOSS_GAP = 16;
+/** 캡션 아래 — 보스는 여기서부터 아래로만 선다(글자와 안 겹친다). */
+const RECON_TOP_RESERVED = 46;
+/** 잡몹 줄의 지그재그 폭 — 한 줄로 반듯하면 목록처럼 읽힌다(편성으로 보이게 어긋낸다). */
+const RECON_ZIGZAG = 14;
+
+// --- 보스 연출 순환(순수 층) -----------------------------------------------
+//
+// 사용자 요청 2026-08-04: "보스는 본인의 애니메이션을 번갈아가면서 계속 보여주게".
+//
+// ⚠️ **보스에는 애니메이션 자산이 없다.** 스켈레톤도, 스프라이트 스트립도 없다 — Meshy 리깅은
+// 휴머노이드 전제라 요새 메카·오벨리스크에 의미가 없어서 애초에 안 붙였다(`bossActor.ts` 머리말).
+// 대신 그 파일이 **트랜스폼 + 발광으로 저작한 연출 다섯**을 갖고 있고, 그것이 곧 이 보스의
+// "본인 애니메이션"이다: 페이즈 0 호흡 · 1 무게 이동 · 2 폭주 · 전환 · 과열.
+// 인게임에서는 sim 이 그 상태를 정하지만, 정찰 창에는 sim 이 없으므로 여기서 **시간으로 순환**한다.
+//
+// 순수 함수로 빼 두는 이유는 늘 같다 — vitest 는 node 환경이라 WebGL·three 를 세울 수 없고,
+// "순환이 다섯 연출을 전부 지나는가"는 그 아래 계층 없이 검증돼야 한다.
+
+/** 한 페이즈를 보여 주는 시간(초). */
+export const RECON_BOSS_PHASE_SECONDS = 4.5;
+/** 페이즈 전환 연출 길이(초) — `bossActor` 의 전환은 상승 에지에서 한 번 채워진다. */
+export const RECON_BOSS_TRANSITION_SECONDS = 2;
+/** 과열(피해 2배 창) 연출 길이(초). 순환의 마지막이라 곧바로 페이즈 0 으로 돌아간다. */
+export const RECON_BOSS_OVERHEAT_SECONDS = 2.5;
+
+/** `bossActor.BossVisualState` 의 구조적 사본 — three 를 정적으로 끌어오지 않기 위해 여기 둔다. */
+export interface ReconBossState {
+  readonly phase: number;
+  readonly transitioning: boolean;
+  readonly overheated: boolean;
+}
+
+/** 순환 마디(합 = 한 바퀴). 순서가 곧 연출 시나리오다. */
+const RECON_BOSS_CYCLE: readonly { state: ReconBossState; seconds: number }[] = [
+  { state: { phase: 0, transitioning: false, overheated: false }, seconds: RECON_BOSS_PHASE_SECONDS },
+  { state: { phase: 1, transitioning: true, overheated: false }, seconds: RECON_BOSS_TRANSITION_SECONDS },
+  { state: { phase: 1, transitioning: false, overheated: false }, seconds: RECON_BOSS_PHASE_SECONDS },
+  { state: { phase: 2, transitioning: true, overheated: false }, seconds: RECON_BOSS_TRANSITION_SECONDS },
+  { state: { phase: 2, transitioning: false, overheated: false }, seconds: RECON_BOSS_PHASE_SECONDS },
+  { state: { phase: 2, transitioning: false, overheated: true }, seconds: RECON_BOSS_OVERHEAT_SECONDS },
+];
+
+/** 한 바퀴 길이(초). */
+export const RECON_BOSS_CYCLE_SECONDS = RECON_BOSS_CYCLE.reduce((a, s) => a + s.seconds, 0);
+
+/**
+ * 경과 시간(초) → 지금 보여 줄 보스 연출 상태(순수, 주기 {@link RECON_BOSS_CYCLE_SECONDS}).
+ * 음수·비유한 입력은 첫 마디로 접는다(방어적 — dt 가 튀어도 화면이 멈추지 않는다).
+ */
+export function reconBossCycle(t: number): ReconBossState {
+  const first = RECON_BOSS_CYCLE[0]!.state;
+  if (!Number.isFinite(t) || t < 0) return first;
+  let left = t % RECON_BOSS_CYCLE_SECONDS;
+  for (const seg of RECON_BOSS_CYCLE) {
+    if (left < seg.seconds) return seg.state;
+    left -= seg.seconds;
+  }
+  return first;
+}
+
+/** 편성 한 자리 — 스프라이트 **중심**과 그려질 지름(창 로컬 좌표). */
+export interface ReconSpot {
+  readonly x: number;
+  readonly y: number;
+  /** 실제로 그릴 지름(sim 지름에서 시작해 자리에 맞게 줄어들 수 있다). */
+  readonly d: number;
+  /** 이름표 기준선(스프라이트 아래). */
+  readonly labelY: number;
+}
+
+/** 창 위 편성 배치(창 로컬 좌표). */
+export interface ReconScene {
+  readonly caption: { readonly x: number; readonly y: number };
+  readonly boss: ReconSpot;
+  readonly mobs: readonly ReconSpot[];
+}
+
+/**
+ * 창 크기 + **sim 지름**으로 편성 자리를 만든다(순수).
+ *
+ * - 잡몹은 창 아래쪽에 한 줄로 서고 지그재그로 어긋난다. 자리는 창 폭을 마리 수로 나눈
+ *   **칸의 중앙**이다(붙여 세우면 넓은 창 한가운데 작은 무리가 된다 — 실화면에서 되돌렸다).
+ *   가장 큰 개체가 칸을 넘으면 **전부 같은 비율로** 줄인다(한 마리만 줄이면 크기 비교가
+ *   거짓말이 된다).
+ * - 보스는 잡몹 줄 위 남는 자리 한가운데. 남는 세로가 sim 지름보다 좁으면 그만큼만 줄인다 —
+ *   창을 넘어 잘리는 것보다 낫고, 여전히 잡몹보다 크다.
+ * - 카르곤은 정예가 없어 4마리, 나머지 다섯 행성은 6마리다(칸 수가 행성마다 다르다).
+ */
+export function reconScene(
+  w: number,
+  h: number,
+  bossD: number,
+  mobDs: readonly number[],
+): ReconScene {
+  const inner = Math.max(0, w - RECON_PAD * 2);
+  const ds = mobDs.filter((d) => d > 0);
+  const n = ds.length;
+  /**
+   * 한 마리가 받는 칸 — 창 폭을 마리 수로 나눈다. ⚠️ **붙여 세우지 않는다**: 실측 지름
+   * (56~88px)대로 서로 붙이면 1294px 창 한가운데 작은 무리 하나가 되어 "전장에 깔린 적"이
+   * 아니라 "가운데 모인 아이콘"으로 읽혔다(실화면에서 되돌렸다).
+   */
+  const slot = n === 0 ? 0 : inner / n;
+  const maxRaw = n === 0 ? 0 : Math.max(...ds);
+  const shrink =
+    n > 0 && maxRaw + RECON_MOB_GAP > slot ? Math.max(0, (slot - RECON_MOB_GAP) / maxRaw) : 1;
+  const maxMobD = maxRaw * shrink;
+
+  const rowY = h - RECON_ROW_BOTTOM - maxMobD / 2;
+  const mobs: ReconSpot[] = [];
+  ds.forEach((raw, i) => {
+    const d = raw * shrink;
+    // 지그재그는 **큰 개체가 아래**로 오게 짝수 인덱스를 내린다(작은 것이 뒤에 가려지지 않는다).
+    const y = rowY + (i % 2 === 0 ? RECON_ZIGZAG : -RECON_ZIGZAG);
+    const cx = RECON_PAD + slot * (i + 0.5);
+    mobs.push({ x: cx, y, d, labelY: y + d / 2 + RECON_LABEL_GAP });
+  });
+
+  const rowTop = n === 0 ? h - RECON_ROW_BOTTOM : rowY - maxMobD / 2 - RECON_ZIGZAG;
+  const avail = Math.max(0, rowTop - RECON_TOP_RESERVED - RECON_BOSS_GAP);
+  // 보스 이름표도 보스 자리 안에서 나온다 — 지름은 이름표 높이를 뺀 자리에 맞춘다.
+  const bd = Math.max(0, Math.min(bossD, avail - 24, inner));
+  const bossY = RECON_TOP_RESERVED + Math.max(0, (avail - bd - 24) / 2) + bd / 2;
+  return {
+    caption: { x: RECON_PAD, y: 14 },
+    boss: { x: w / 2, y: bossY, d: bd, labelY: bossY + bd / 2 + RECON_LABEL_GAP },
+    mobs,
+  };
 }
 
 /** 화면 좌표 사각형(디자인 스페이스). */
@@ -697,11 +871,64 @@ export function arenaFraming(
  * 디자인 좌표를 그대로 뷰 사각으로 넘길 수 있고, `camY` 만 천천히 밀면 런에서처럼 바닥이 흐른다.
  * 재타일링은 카메라가 타일 경계를 넘을 때만 일어난다(그 사이는 레이어 이동만).
  */
+/**
+ * 로스터 띠 안 글자 한 줄. `maxW` 를 넘으면 가로로 눌러 담는다(줄바꿈 대신) — 칸 폭이 행성마다
+ * 다르고 한글 이름은 길어서, 넘치면 옆 칸을 침범한다(관제탑에서 겪은 유형).
+ */
+function reconText(
+  text: string,
+  size: number,
+  color: number,
+  weight: '400' | '700' | '800',
+  maxW: number,
+): Text {
+  const el = new Text({
+    resolution: 2,
+    text: stripEmoji(text),
+    style: { fontFamily: UI_FONT, fontSize: size, fontWeight: weight, fill: color, dropShadow: TEXT_SHADOW },
+  });
+  if (maxW > 0 && el.width > maxW) el.scale.x = maxW / el.width;
+  return el;
+}
+
 class ArenaView {
   readonly view = new Container();
   private readonly auto = new AutotileBackground(64);
   private readonly fill = new Graphics();
   private readonly caption: Text;
+  /**
+   * 로스터 띠 — **행성이 바뀔 때가 아니라 `select` 마다** 다시 세운다. 지형(타일셋)은 무거워
+   * 행성 교체 때만 갈아 끼우지만 로스터는 스프라이트 7장 + 글자 14줄이라 비용이 없고, 갱신을
+   * 행성 변화로 묶으면 **로케일을 바꿔도 이름이 영어로 남는다**(형제 화면에서 겪은 유형).
+   */
+  private readonly reconHost = new Container();
+  /** 부유 애니메이션 대상(편성 재건마다 다시 채운다). */
+  private bobs: { node: Container; phase: number; boss: boolean }[] = [];
+  private bobT = 0;
+  // --- 보스 3D(런의 그 액터를 그대로 빌려 온다 — 절 머리말 "보스 연출 순환") ---
+  /** 오프스크린 three 무대. 이 화면이 처음 보스 모델을 요구할 때 한 번 만든다(실패 = null). */
+  private stage3d: Stage3D | null = null;
+  private bossActor: BossActor | null = null;
+  /** 3D 텍스처를 물린 스프라이트. 준비되면 2D 보스 그림을 대신한다. */
+  private boss3d: Sprite | null = null;
+  /** 지금 3D 로 올라와 있는(또는 로드 중인) 행성. -1 = 없음. */
+  private boss3dPlanet = -1;
+  /**
+   * 이 뷰가 이미 회수됐는가. ⚠️ 자산이 도착하면 화면이 크롬을 통째로 재건하므로
+   * ({@link PlanetSelectScreen.rebuild}) **비동기 로드 중에 이 뷰가 destroy 될 수 있다** —
+   * 그때 무대에 mount 하면 이미 dispose 된 렌더러를 건드린다.
+   */
+  private destroyed = false;
+  /** 순환 시계(초). 행성이 바뀌면 0 으로 되돌려 항상 페이즈 0 부터 보여 준다. */
+  private bossCycleT = 0;
+  /** 2D 보스 그림 컨테이너 — 3D 가 준비되면 숨긴다(로드 중에는 이것이 보인다). */
+  private bossArt: Container | null = null;
+  /** 보스 접지 그림자 — 3D 일 때 함께 숨긴다(주인 없는 타원이 남지 않게). */
+  private bossGround: Graphics | null = null;
+  /** 보스 자리(창 로컬). 3D 스프라이트를 같은 자리·같은 크기로 놓는다. */
+  private bossSpot: ReconSpot | null = null;
+  /** 적·보스 스프라이트(basename → Texture|null). 자산 도착 시 화면이 통째로 재건된다. */
+  private readonly ui: UiTextures;
   private planet = -1;
   /** 창이 비추는 자리(타일 좌표 → 카메라). {@link arenaFraming} 이 행성마다 골라 준다. */
   private camX = DESIGN_WIDTH / 2;
@@ -710,8 +937,9 @@ class ArenaView {
   private pending = 0;
   private readonly rect: { x: number; y: number; w: number; h: number };
 
-  constructor(rect: { x: number; y: number; w: number; h: number }) {
+  constructor(rect: { x: number; y: number; w: number; h: number }, ui: UiTextures) {
     this.rect = rect;
+    this.ui = ui;
     const mask = new Graphics();
     mask.rect(rect.x, rect.y, rect.w, rect.h).fill({ color: 0xffffff });
     this.view.addChild(mask);
@@ -720,6 +948,9 @@ class ArenaView {
     // 않게 바닥을 먼저 깐다 — 색은 행성 강조색에서 파생된다.
     this.view.addChild(this.fill);
     this.view.addChild(this.auto.layer);
+
+    // 로스터 띠는 지형 **위**, 캡션 **아래**다(글자가 띠 판에 가리면 안 된다).
+    this.view.addChild(this.reconHost);
 
     this.caption = new Text({
       resolution: 2,
@@ -732,14 +963,20 @@ class ArenaView {
         dropShadow: TEXT_SHADOW,
       },
     });
-    this.caption.anchor.set(0.5, 1);
-    this.caption.position.set(rect.x + rect.w / 2, rect.y + rect.h - 10);
+    // ⚠️ 캡션은 **창 위쪽**이다 — 아래(옛 자리)는 잡몹 줄과 이름표가 쓴다.
+    const at = reconScene(rect.w, rect.h, 0, []);
+    this.caption.anchor.set(0, 0);
+    this.caption.position.set(rect.x + at.caption.x, rect.y + at.caption.y);
     this.view.addChild(this.caption);
   }
 
-  /** 행성이 **바뀔 때만** 타일셋을 갈아 끼운다(같은 행성이면 no-op — 매 갱신마다 다시 안 읽는다). */
+  /**
+   * 행성이 **바뀔 때만** 타일셋을 갈아 끼운다(같은 행성이면 no-op — 매 갱신마다 다시 안 읽는다).
+   * 캡션과 로스터 띠는 매번 다시 세운다(비용이 없고, 로케일 전환을 놓치지 않는다).
+   */
   select(p: PlanetMeta, caption: string): void {
     this.caption.text = stripEmoji(caption);
+    this.renderRecon(p);
     if (p.id === this.planet) return;
     this.planet = p.id;
     const accent = hexColor(p.accent);
@@ -769,7 +1006,203 @@ class ArenaView {
       });
   }
 
+  /**
+   * 편성을 다시 세운다 — 보스 하나 + 역할 4종 + 정예(있으면 2종)가 **지형 위에 그대로 선다**.
+   *
+   * 목록은 `planetReconRoster` 가 콘텐츠 레지스트리에서 파생하고 자리는 {@link reconScene} 이
+   * 정한다 — 여기서는 그리기만 한다. 스프라이트가 없으면(자산 미도착) 행성 강조색 도형으로
+   * 내려앉는다(자리가 비어 "이 행성엔 없는 적"처럼 읽히면 안 된다).
+   *
+   * ⚠️ 판·테두리를 두르지 않는다 — 창이 목록이 아니라 **전장 사진**이어야 한다(절 머리말).
+   * 대신 접지 그림자와 이름표 뒤 어둠으로 지형에서 떠올린다(지형이 밝으면 글자가 사라진다).
+   */
+  private renderRecon(p: PlanetMeta): void {
+    for (const child of [...this.reconHost.children]) {
+      this.reconHost.removeChild(child);
+      child.destroy({ children: true });
+    }
+    this.bobs = [];
+    const units = planetReconRoster(p.id);
+    const boss = units.find((u) => u.boss) ?? null;
+    const mobs = units.filter((u) => !u.boss);
+    const at = reconScene(
+      this.rect.w,
+      this.rect.h,
+      (boss?.radius ?? 0) * 2,
+      mobs.map((u) => u.radius * 2),
+    );
+    const accent = hexColor(p.accent);
+
+    mobs.forEach((u, i) => {
+      const spot = at.mobs[i];
+      if (spot === undefined) return;
+      this.reconHost.addChild(this.reconUnit(u, spot, accent, i));
+    });
+    this.bossArt = null;
+    this.bossGround = null;
+    this.bossSpot = null;
+    if (boss !== null && at.boss.d > 0) {
+      this.reconHost.addChild(this.reconUnit(boss, at.boss, accent, -1));
+      this.bossSpot = at.boss;
+      void this.ensureBoss3D(p.id);
+    }
+  }
+
+  /**
+   * 보스 3D 액터를 이 행성 것으로 맞춘다(비동기 — 로드 전까지는 2D 그림이 그대로 보인다).
+   *
+   * ⚠️ **`three`·`stage3d`·`bossActor` 는 동적 import 다.** 정적으로 쓰면 성계 지도에 들어오는
+   * 순간(그리고 그 화면을 import 하는 부팅 경로에서) 1MB 짜리 3D 스택이 따라온다 —
+   * `entityRenderer` 도 같은 이유로 인게임에서 동적으로 가져온다.
+   *
+   * ⚠️ **모델이 없는 인덱스면 무대를 세우지 않는다**(`hasBossModel`). 세우면 아무 이득 없이
+   * WebGL 컨텍스트 하나를 점유한다(브라우저 상한이 있다 — 그 파일의 주석).
+   */
+  private async ensureBoss3D(planetId: number): Promise<void> {
+    if (this.boss3dPlanet === planetId) {
+      this.placeBoss3D();
+      return;
+    }
+    this.boss3dPlanet = planetId;
+    this.bossCycleT = 0;
+    // 이전 행성 액터는 즉시 회수한다 — three 자원은 GC 대상이 아니라 행성을 훑으면 누적된다.
+    this.bossActor?.dispose();
+    this.bossActor = null;
+    this.hideBoss3D();
+
+    const [{ Stage3D }, { BossActor, hasBossModel }] = await Promise.all([
+      import('../../render/three3d/stage3d.js'),
+      import('../../render/three3d/bossActor.js'),
+    ]);
+    if (this.destroyed || this.boss3dPlanet !== planetId) return; // 회수됐거나 행성이 또 바뀌었다.
+    if (!hasBossModel(planetId)) return; // 2D 스프라이트가 정답인 인덱스.
+    this.stage3d ??= Stage3D.create();
+    const stage = this.stage3d;
+    if (stage === null) return; // WebGL 미지원·컨텍스트 소진 — 2D 폴백.
+
+    const actor = new BossActor(stage);
+    const ok = await actor.load(planetId);
+    if (!ok || this.destroyed || this.boss3dPlanet !== planetId) {
+      actor.dispose();
+      return;
+    }
+    this.bossActor = actor;
+    const sprite = this.boss3d ?? new Sprite(stage.textureOf('boss'));
+    sprite.anchor.set(0.5, 0.5);
+    this.boss3d = sprite;
+    if (sprite.parent === null) {
+      // 편성 위·캡션 아래. 캡션 위에 두면 큰 보스가 행성 이름을 덮는다(창 위쪽까지 솟는 모델이 있다).
+      this.view.addChildAt(sprite, this.view.getChildIndex(this.caption));
+    }
+    this.placeBoss3D();
+  }
+
+  /** 3D 스프라이트를 보스 자리에 맞춘다(2D 그림은 숨긴다). 자리가 없으면 숨긴다. */
+  private placeBoss3D(): void {
+    const sprite = this.boss3d;
+    const spot = this.bossSpot;
+    if (sprite === null) return;
+    if (spot === null || this.bossActor === null) {
+      sprite.visible = false;
+      return;
+    }
+    sprite.visible = true;
+    // 3D 슬롯은 정사각이고 모델은 그 안에 맞춰져 있다 — 지름을 그대로 변으로 쓴다.
+    sprite.width = spot.d;
+    sprite.height = spot.d;
+    sprite.position.set(this.rect.x + spot.x, this.rect.y + spot.y);
+    if (this.bossArt !== null) this.bossArt.visible = false;
+    if (this.bossGround !== null) this.bossGround.visible = false;
+  }
+
+  private hideBoss3D(): void {
+    if (this.boss3d !== null) this.boss3d.visible = false;
+    if (this.bossArt !== null) this.bossArt.visible = true;
+    if (this.bossGround !== null) this.bossGround.visible = true;
+  }
+
+  /**
+   * 적 하나 — 접지 그림자 + 스프라이트 + 이름표(창 로컬 자리를 화면 좌표로 옮긴다).
+   * @param seat 부유 위상 시드. -1 = 보스(느리고 크게 흔들린다).
+   */
+  private reconUnit(unit: ReconUnit, spot: ReconSpot, accent: number, seat: number): Container {
+    const node = new Container();
+    node.position.set(this.rect.x + spot.x, this.rect.y + spot.y);
+
+    // 접지 그림자 — 이것이 없으면 스프라이트가 지형에 **붙어** 보이지 않고 떠 있는 스티커가 된다.
+    const shadow = new Graphics();
+    shadow
+      .ellipse(0, spot.d * 0.42, spot.d * 0.34, spot.d * 0.12)
+      .fill({ color: 0x000000, alpha: 0.38 });
+    node.addChild(shadow);
+    // ⚠️ 보스가 3D 로 올라오면 이 그림자는 **함께 숨긴다.** 3D 액터는 자기 슬롯 안에서 뜨고
+    // 기울며 움직이는데 그림자는 2D 스프라이트 발치에 고정돼 있어, 남겨 두면 주인 없는 검은
+    // 타원만 지형에 떠 있는다(실화면에서 니플헤임 기함이 그렇게 보였다).
+    if (unit.boss) this.bossGround = shadow;
+
+    const art = new Container();
+    node.addChild(art);
+    const tex = unit.asset === null ? null : (this.ui[unit.asset] ?? null);
+    if (tex !== null && tex.width > 0 && tex.height > 0) {
+      const sprite = new Sprite(tex);
+      // **sim 지름에 맞춘다** — 런에서 보게 될 크기 그대로다(절 머리말).
+      sprite.scale.set(spot.d / Math.max(tex.width, tex.height));
+      sprite.anchor.set(0.5, 0.5);
+      art.addChild(sprite);
+    } else {
+      // 자산 폴백 — 행성 강조색 마름모(자리가 비지 않게).
+      const g = new Graphics();
+      const r = spot.d / 2;
+      g.moveTo(0, -r).lineTo(r, 0).lineTo(0, r).lineTo(-r, 0).closePath().fill({ color: accent });
+      art.addChild(g);
+    }
+    this.bobs.push({ node: art, phase: seat < 0 ? 0 : seat * 1.7, boss: seat < 0 });
+    // 보스의 2D 그림은 3D 액터가 준비되면 숨긴다(그 전까지는 이것이 보인다).
+    if (unit.boss) this.bossArt = art;
+
+    // 이름표 — 지형은 밝기가 제각각이라 글자만 얹으면 사라진다. 어두운 알약을 깐다.
+    const size = unit.boss ? 20 : 15;
+    const label = reconText(
+      reconUnitLabel(unit),
+      size,
+      unit.boss ? COLOR.gold : COLOR.cream,
+      unit.boss ? '800' : '700',
+      Math.max(80, spot.d * 1.6),
+    );
+    label.anchor.set(0.5, 0);
+    const lw = label.width + 14;
+    const lh = size + 8;
+    const ly = spot.labelY - spot.y;
+    const pill = new Graphics();
+    pill
+      .roundRect(-lw / 2, ly - 2, lw, lh, 6)
+      .fill({ color: 0x05060a, alpha: 0.68 })
+      .stroke({ color: unit.boss ? COLOR.gold : ROW_GROOVE, width: unit.boss ? 2 : 1, alignment: 0 });
+    node.addChild(pill);
+    label.position.set(0, ly + 2);
+    node.addChild(label);
+
+    return node;
+  }
+
   update(dt: number): void {
+    // 편성은 **제자리에서 부유**한다 — 지형만 흐르고 적이 굳어 있으면 붙여 넣은 그림처럼 보인다.
+    // 사인 위상이라 결정론(해시)과 무관하고 비용도 노드 수만큼뿐이다.
+    this.bobT += dt;
+    for (const b of this.bobs) {
+      b.node.position.y = Math.sin(this.bobT * (b.boss ? 0.9 : 1.6) + b.phase) * (b.boss ? 6 : 4);
+    }
+
+    // 보스는 **자기 연출 다섯을 순환**한다(페이즈 0·1·2 · 전환 · 과열). 액터가 트랜스폼·발광을
+    // 전부 지므로 여기서는 시계를 밀고 상태를 넘겨줄 뿐이다.
+    const actor = this.bossActor;
+    const stage = this.stage3d;
+    if (actor !== null && stage !== null) {
+      this.bossCycleT += dt;
+      actor.update(dt, reconBossCycle(this.bossCycleT));
+      stage.markActive('boss');
+      stage.render();
+    }
     // 런에서 바닥이 흐르는 방향(전방 비행) — 카메라가 아래로 밀리면 타일이 위로 흐른다.
     this.camY += dt * 22;
     this.auto.update(
@@ -783,6 +1216,13 @@ class ArenaView {
   }
 
   destroy(): void {
+    // three 자원은 GC 대상이 아니다 — 액터(모델)와 무대(WebGL 컨텍스트)를 명시적으로 회수한다.
+    this.destroyed = true;
+    this.bossActor?.dispose();
+    this.bossActor = null;
+    this.stage3d?.destroy();
+    this.stage3d = null;
+    this.boss3d = null;
     this.auto.destroy();
     this.view.destroy({ children: true });
   }
@@ -1134,7 +1574,7 @@ export class PlanetSelectScreen {
     // 전장 프리뷰는 **창 패널 바로 뒤**여야 한다 — 앞에 두면 석재 단면·AO·유리 반사·바닥
     // 스크림을 통째로 가려 개구부가 검은 사각이 된다(방어 사령부 실측). 여기서 먼저 붙이고
     // 아래에서 창 패널을 그 위에 얹는다.
-    const arena = new ArenaView({ ...ARENA_VIEWPORT });
+    const arena = new ArenaView({ ...ARENA_VIEWPORT }, this.ui);
     arena.view.eventMode = 'none';
     this.root.addChild(arena.view);
     this.arena = arena;
@@ -1332,7 +1772,7 @@ export class PlanetSelectScreen {
   /** 전장 창 — 행성이 바뀔 때만 타일셋을 갈아 끼운다(캡션은 매번 갱신). */
   private syncArena(): void {
     const p = planetById(this.planet);
-    this.arena?.select(p, `${p.name} · ${p.subtitle}`);
+    this.arena?.select(p, reconCaption(p.name, p.subtitle));
   }
 
   // --- 목록 열 -------------------------------------------------------------

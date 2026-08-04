@@ -274,6 +274,10 @@ const ENEMY_STYLE: { color: number; radius: number; shape: 'tri' | 'square' | 'd
   { color: 0xe08a6a, radius: 30, shape: 'hex' }, // 31 support
   { color: 0xf06058, radius: 48, shape: 'square' }, // 32 elite gunner
   { color: 0xf06058, radius: 54, shape: 'tri' }, // 33 elite charger
+  // 카르곤 엘리트 34~35(2026-08-04) — 카르곤 화염 팔레트를 한 단 밝게(정예 규약: 로스터보다
+  // 밝은 톤 + 한 치수 큰 도형). 실 스프라이트가 있으므로 이 도형은 로드 실패 시 폴백이다.
+  { color: 0xffc861, radius: 46, shape: 'square' }, // 34 elite gunner(용암 포대)
+  { color: 0xffc861, radius: 52, shape: 'diamond' }, // 35 elite special(용암 거인)
 ];
 
 /**
@@ -889,6 +893,59 @@ export const DEF3_UNIT_ASSET_FILES: readonly string[] = [
 ];
 
 /**
+ * 적 자산 파일명(**index = 전역 typeIndex** = `data/enemies.ts` 의 `ENEMY_BY_TYPE` 순서).
+ * 0~3 은 M1 카르곤 이름을 유지하고, 4~ 는 계약 `enemy_<planet>_<role>`(정예는 `elite_<role>`)이다.
+ *
+ * ⚠️ **로더 안 지역 변수였던 것을 모듈로 끌어올렸다**(2026-08-04, 전장 정찰 로스터). 성계 지도의
+ * 정찰 패널이 같은 스프라이트를 UI 레이어에서 읽어야 하는데, 파일명 규약이 로더 안에만 있으면
+ * 두 번째 전사본이 생기고 그 어긋남은 "런에는 뜨는데 정찰창만 도형" 으로만 드러난다.
+ * 없는 파일은 조용히 절차적 도형 폴백으로 내려앉으므로 결손 신호가 없다 —
+ * `tests/planetSelectRecon.test.ts` 가 등재 ↔ 실물을 대조한다.
+ */
+export const ENEMY_ASSET_FILES: readonly string[] = [
+  'enemy_charger.png', // 0
+  'enemy_mortar.png', // 1
+  'enemy_lavaspring.png', // 2
+  'enemy_support.png', // 3
+  'enemy_berdan_charger.png', // 4
+  'enemy_berdan_gunner.png', // 5
+  'enemy_berdan_special.png', // 6
+  'enemy_berdan_support.png', // 7
+  'enemy_berdan_elite_gunner.png', // 8
+  'enemy_berdan_elite_charger.png', // 9
+  'enemy_niflheim_charger.png', // 10
+  'enemy_niflheim_gunner.png', // 11
+  'enemy_niflheim_special.png', // 12
+  'enemy_niflheim_support.png', // 13
+  'enemy_niflheim_elite_gunner.png', // 14
+  'enemy_niflheim_elite_charger.png', // 15
+  'enemy_arke_charger.png', // 16
+  'enemy_arke_gunner.png', // 17
+  'enemy_arke_special.png', // 18
+  'enemy_arke_support.png', // 19
+  'enemy_arke_elite_gunner.png', // 20
+  'enemy_arke_elite_charger.png', // 21
+  'enemy_toxar_charger.png', // 22
+  'enemy_toxar_gunner.png', // 23
+  'enemy_toxar_special.png', // 24
+  'enemy_toxar_support.png', // 25
+  'enemy_toxar_elite_gunner.png', // 26
+  'enemy_toxar_elite_charger.png', // 27
+  'enemy_kras_charger.png', // 28
+  'enemy_kras_gunner.png', // 29
+  'enemy_kras_special.png', // 30
+  'enemy_kras_support.png', // 31
+  'enemy_kras_elite_gunner.png', // 32
+  'enemy_kras_elite_charger.png', // 33
+  // 카르곤 엘리트 34~35(2026-08-04). 파일명은 4~ 의 계약(`enemy_<planet>_elite_<role>`)을 따른다 —
+  // 0~3 만 M1 레거시 이름이고, 이 둘은 그 뒤에 추가된 자산이라 계약 이름이 맞다.
+  'enemy_kargon_elite_gunner.png', // 34
+  // 35 는 **special** 이다(다른 행성의 둘째 정예는 charger). 이유는 `data/enemies.ts` 의
+  // 용암 거인 주석 — 돌진 예고 듀티 예산이 카르곤만 이미 빠듯하다.
+  'enemy_kargon_elite_special.png', // 35
+];
+
+/**
  * 보스 자산 파일명(index = 보스 시각 카탈로그 인덱스, `src/render/three3d/bossActor.ts` 의
  * `BOSS_MODELS` 와 **같은 계약**). 0~5 는 행성 보스(카르곤..크라스, M1 이래 정본).
  *
@@ -1126,47 +1183,9 @@ export async function loadGameTextures(
 ): Promise<PlaceholderTextures> {
   const tex = createPlaceholderTextures(renderer);
 
-  // Enemy filenames by global typeIndex (0..21). 0~3 keep the M1 names; 4~21
-  // follow the planet/role contract `enemy_<planet>_<role>` with elites tagged
-  // `elite_<role>` (see data/planets — order == ENEMY_BY_TYPE). Any missing file
-  // silently keeps its planet-tinted shape placeholder.
-  const enemyFiles = [
-    'enemy_charger.png', // 0
-    'enemy_mortar.png', // 1
-    'enemy_lavaspring.png', // 2
-    'enemy_support.png', // 3
-    'enemy_berdan_charger.png', // 4
-    'enemy_berdan_gunner.png', // 5
-    'enemy_berdan_special.png', // 6
-    'enemy_berdan_support.png', // 7
-    'enemy_berdan_elite_gunner.png', // 8
-    'enemy_berdan_elite_charger.png', // 9
-    'enemy_niflheim_charger.png', // 10
-    'enemy_niflheim_gunner.png', // 11
-    'enemy_niflheim_special.png', // 12
-    'enemy_niflheim_support.png', // 13
-    'enemy_niflheim_elite_gunner.png', // 14
-    'enemy_niflheim_elite_charger.png', // 15
-    'enemy_arke_charger.png', // 16
-    'enemy_arke_gunner.png', // 17
-    'enemy_arke_special.png', // 18
-    'enemy_arke_support.png', // 19
-    'enemy_arke_elite_gunner.png', // 20
-    'enemy_arke_elite_charger.png', // 21
-    // 톡사르 22~27 · 크라스 28~33 (Lane9). TODO(art): 실 스프라이트 대기 — 없으면 절차적 유지.
-    'enemy_toxar_charger.png', // 22
-    'enemy_toxar_gunner.png', // 23
-    'enemy_toxar_special.png', // 24
-    'enemy_toxar_support.png', // 25
-    'enemy_toxar_elite_gunner.png', // 26
-    'enemy_toxar_elite_charger.png', // 27
-    'enemy_kras_charger.png', // 28
-    'enemy_kras_gunner.png', // 29
-    'enemy_kras_special.png', // 30
-    'enemy_kras_support.png', // 31
-    'enemy_kras_elite_gunner.png', // 32
-    'enemy_kras_elite_charger.png', // 33
-  ];
+  // Enemy filenames by global typeIndex — 정본은 모듈 상단 {@link ENEMY_ASSET_FILES} 다.
+  // Any missing file silently keeps its planet-tinted shape placeholder.
+  const enemyFiles = ENEMY_ASSET_FILES;
 
   // Boss + backdrop by planetIndex (0 카르곤 .. 5 크라스). Slot 0 keeps the M1
   // filenames (`boss.png`, `bg_kargon.png`); others follow the planet contract.

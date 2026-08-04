@@ -111,6 +111,77 @@ export const REPAIR_DRONE: EnemyDef = {
 /** Hazard subtype re-export so the world hazard resolver can tag lava damage. */
 export { HAZARD_LAVA };
 
+// ---------------------------------------------------------------------------
+// 카르곤 엘리트 2종 (2026-08-04 — 사용자 요청 "다른 행성처럼 6종으로")
+// ---------------------------------------------------------------------------
+//
+// 카르곤만 `elites: []` 였다. 그 공백은 세 곳에서 조용히 드러났다:
+//  1. 성계 지도 전장 정찰 창이 카르곤만 4마리(다른 행성은 6마리),
+//  2. 웨이브 카드 풀에 정예 카드가 없어 **카드 추첨으로는 정예가 영영 안 나오고**,
+//  3. `stepEliteSummons`(정예 소집령)가 로스터로 폴백해 "정예"가 일반몹이었다.
+//
+// ⚠️ **typeIndex 는 34·35 다 — 카르곤 0~3 옆에 끼워 넣지 않는다.** `entity.enemyType` 이
+// `ENEMY_BY_TYPE` 의 **배열 인덱스**이고 그 값이 해시에 들어가므로, 4번 자리에 삽입하면
+// 베르단 이후 30종의 번호가 전부 밀려 **모든 골든·리플레이가 무효**가 된다. append-only 는
+// 이 배열의 계약이다(파일 하단 주석). 그래서 정의는 행성별 블록과 **떨어져** 맨 뒤에 붙는다.
+//
+// ⚠️ 새 카드 2장이 카르곤 카드 풀에 들어가므로 **카르곤 런의 골든 해시는 바뀐다**(풀 길이가
+// 8 → 10 이라 추첨 결과가 통째로 갈린다). 정예 소집령(카르곤) 리플레이도 폴백이 사라져 바뀐다.
+// 이것은 부작용이 아니라 요청의 내용이다 — 정예가 실제로 나오게 하는 것이 목적이다.
+
+/** 용암 포대 — 엘리트: 완강한 박격포 변종. 광역 용암탄 + 높은 체력. */
+export const LAVA_BATTERY: EnemyDef = {
+  id: 'kargon-lava-battery',
+  role: 'gunner',
+  typeIndex: 34,
+  radius: 46, // TODO(밸런스)
+  // ⚠️ 다른 행성 정예(180~250)보다 **가볍다** — 카르곤은 온보딩 무대(단계1 기준선)다.
+  //
+  // ## 난이도 영향은 실측했고, 사용자가 수용한 값이다 (2026-08-04)
+  // 60시드 오토파일럿 1200틱 실측: **1200틱 생존 29 → 21 / 60**, **런내 레벨≥2 45 → 33 / 60**.
+  // 정예 스탯을 다섯 단계로 낮춰 봤지만(HP 190→80까지) 격차가 남았다 — 원인이 스탯이 아니라
+  // **카드 2/10 이 느린 웨이브로 대체되는 것**이기 때문이다(처치·XP 속도가 그만큼 준다).
+  // 그래서 스탯을 더 깎아 "정예"를 무의미하게 만드는 대신, 난이도 상승을 받아들이고 값을
+  // 정예답게 되돌렸다. 출시 전 밸런스 일괄 패스에서 다시 본다.
+  hp: 140, // TODO(밸런스)
+  contactDamage: 13, // TODO(밸런스)
+  speed: 160, // TODO(밸런스)
+  movement: 'standoff',
+  attack: { kind: 'mortar', windup: 48, radius: 160, damage: 16 }, // TODO(밸런스)
+  fireCooldown: 120, // TODO(밸런스)
+  xpValue: 24, // TODO(밸런스)
+};
+
+/**
+ * 용암 거인 — 엘리트: 뿌리내린 채 용암 기둥을 대량으로 융기시키는 거대 기계.
+ *
+ * ⚠️ **둘째 정예를 돌격형(다른 행성의 관례)으로 만들지 않았다.** 처음에 `chargeStraight` 정예로
+ * 뒀더니 `tests/enemyVisual.test.ts` 의 **돌진 예고 듀티**가 최악 셀에서 35.6% → 41~52% 로 뛰었다
+ * (호위를 빼도 41.3%). 카르곤 차저(파쇄차)의 예고가 길어 이 행성만 예고 예산이 이미 빠듯한데,
+ * 오래 사는 정예(HP 240)가 그 신호를 계속 켜 두기 때문이다 — "예고가 배경이 되는" 상태다.
+ * 특수형으로 돌리면 그 축을 아예 안 건드리면서 카르곤의 정체성(용암 지대)에 더 붙는다.
+ */
+export const MAGMA_COLOSSUS: EnemyDef = {
+  id: 'kargon-magma-colossus',
+  role: 'special',
+  typeIndex: 35,
+  radius: 52, // TODO(밸런스)
+  // 위 용암 포대와 같은 이유로 가볍다(카르곤 = 온보딩 기준선).
+  hp: 180, // TODO(밸런스)
+  contactDamage: 15, // TODO(밸런스)
+  speed: 0,
+  movement: 'stationary',
+  attack: { kind: 'lava', windup: 56, activeTicks: 88, pillars: 6, radius: 96, damage: 14 }, // TODO(밸런스)
+  fireCooldown: 210, // TODO(밸런스)
+  xpValue: 28, // TODO(밸런스)
+};
+
+/** 카르곤 엘리트 정예(웨이브 카드가 elite 인덱스로 참조 — 다른 행성과 같은 규약). */
+export const KARGON_ELITES: readonly EnemyDef[] = [LAVA_BATTERY, MAGMA_COLOSSUS];
+
+/** ENEMY_BY_TYPE append 순서용(크라스 뒤 34~35 — 위 ⚠️ 참조). */
+export const KARGON_ELITE_DEFS: readonly EnemyDef[] = [LAVA_BATTERY, MAGMA_COLOSSUS];
+
 /** All M1 enemies, indexed by role for wave spawning. */
 export const KARGON_ROSTER = {
   charger: CHARGER,
@@ -122,8 +193,11 @@ export const KARGON_ROSTER = {
 /**
  * Lookup by stable typeIndex (used when reconstructing behaviour from state).
  * 카르곤 0~3 → 베르단 4~9 → 니플헤임 10~15 → 아르케 16~21 → 톡사르 22~27 → 크라스 28~33
- * 순으로 append — typeIndex는 전역 고유하며 entity.enemyType이 이 배열의 인덱스이므로 절대
- * 재정렬/재번호 금지(해시 불변).
+ * → **카르곤 엘리트 34~35** 순으로 append — typeIndex는 전역 고유하며 entity.enemyType이 이
+ * 배열의 인덱스이므로 절대 재정렬/재번호 금지(해시 불변).
+ *
+ * ⚠️ 마지막 두 칸이 카르곤 소속인데 카르곤 블록에서 **멀리 떨어져** 있는 것은 실수가 아니다 —
+ * append-only 계약을 지키는 유일한 자리라서다(위 카르곤 엘리트 절의 ⚠️).
  */
 export const ENEMY_BY_TYPE: readonly EnemyDef[] = [
   CHARGER,
@@ -135,4 +209,5 @@ export const ENEMY_BY_TYPE: readonly EnemyDef[] = [
   ...ARKE_DEFS,
   ...TOXAR_DEFS,
   ...KRAS_DEFS,
+  ...KARGON_ELITE_DEFS,
 ];

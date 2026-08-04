@@ -80,8 +80,8 @@ describe('§1 신규 2행성 레지스트리', () => {
 // ---------------------------------------------------------------------------
 
 describe('§2 typeIndex append-only(planet0~3 골든 불변)', () => {
-  it('ENEMY_BY_TYPE 가 34종·연속 typeIndex 이고 22~33 이 신규 로스터다', () => {
-    expect(ENEMY_BY_TYPE.length).toBe(34);
+  it('ENEMY_BY_TYPE 가 36종·연속 typeIndex 이고 22~35 가 append 분이다', () => {
+    expect(ENEMY_BY_TYPE.length).toBe(36);
     ENEMY_BY_TYPE.forEach((def, i) => expect(def.typeIndex).toBe(i));
     // 기존 0~21 은 손대지 않았다(append-only 근거 — 대표 앵커).
     expect(ENEMY_BY_TYPE[0]!.id).toBe('kargon-charger');
@@ -91,6 +91,10 @@ describe('§2 typeIndex append-only(planet0~3 골든 불변)', () => {
     expect(ENEMY_BY_TYPE[27]!.id).toBe('toxar-rot-behemoth');
     expect(ENEMY_BY_TYPE[28]!.id).toBe('kras-breaker');
     expect(ENEMY_BY_TYPE[33]!.id).toBe('kras-devastator');
+    // 2026-08-04 카르곤 엘리트 2종. ⚠️ **카르곤 소속인데 34~35 다** — 0~3 옆에 끼워 넣으면
+    // 그 뒤 30종의 번호가 밀려 리플레이·골든이 전부 무효가 되므로 맨 뒤가 유일한 자리다.
+    expect(ENEMY_BY_TYPE[34]!.id).toBe('kargon-lava-battery');
+    expect(ENEMY_BY_TYPE[35]!.id).toBe('kargon-magma-colossus');
   });
 
   it('행성 로스터가 그 행성 typeIndex 대역에 배선돼 있다', () => {
@@ -155,6 +159,30 @@ describe('§3 정규경로 통합 — full-path 로 모드 스탬프 + 로스터
     expect(live.config.planetMode).toBe(PLANET_MODE.blockBreak);
     const seen = observedEnemyTypes(5, 6000);
     expect([...seen].some((ty) => ty >= 28 && ty <= 33), `크라스 로스터 미도달: ${[...seen]}`).toBe(true);
+  });
+
+  /**
+   * 카르곤 정예 2종(34~35)이 **실제 웨이브에 올라오는가** (2026-08-04).
+   *
+   * ⚠️ 이 저장소의 반복 결함은 "데이터는 추가됐는데 배선이 없다"다 — 정예를 레지스트리에만
+   * 넣고 카드 풀에 안 넣으면 성계 지도 정찰 창에는 6마리가 뜨는데 **런에서는 영영 안 나온다**
+   * (그리고 그 거짓말은 어떤 단위 테스트도 안 잡는다). 그래서 실런으로 도달을 관측한다.
+   * 카드 2/10 이라 시드에 따라 늦게 뽑힐 수 있어 시드 셋을 훑고 **합집합**으로 판정한다.
+   */
+  it('(f) 카르곤 실런이 정예 2종(34~35)을 전장에 올린다', () => {
+    const seen = new Set<number>();
+    for (const s of [1, 2, 3]) {
+      const state = createWorld(0x5a17 + s, planetConfig(0));
+      for (let t = 0; t < 9000; t++) {
+        step(state);
+        for (const e of state.entities) if (e.kind === 'enemy') seen.add(e.enemyType);
+        if (state.gameOver || state.victory) break;
+      }
+      if (seen.has(34) && seen.has(35)) break;
+    }
+    expect([...seen].filter((ty) => ty >= 34), `정예 미도달: ${[...seen].sort((a, b) => a - b)}`).toEqual(
+      expect.arrayContaining([34, 35]),
+    );
   });
 
   it('(e) 같은 시드의 두 실런이 바이트 동일하다(런 단위 결정론)', () => {
