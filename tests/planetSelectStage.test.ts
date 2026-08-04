@@ -298,7 +298,7 @@ describe('배선 — 그려진 버튼이 실제로 선택 단계를 바꾼다', 
     // 다시 그려졌는가 — 값 라벨과 캡션이 새 단계를 보여준다.
     const labels = allLabels(stage);
     expect(labels).toContain(String(cap));
-    expect(labels.some((s) => s.includes(`단계 ${cap}`) || s.includes(`Stage ${cap}`))).toBe(true);
+    expect(labels.some((s) => s.includes(`${cap}단계`) || s.includes(`Stage ${cap}`))).toBe(true);
     screen.hide();
   });
 

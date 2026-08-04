@@ -378,7 +378,12 @@ export class BaseMapScreen {
   }
 
   private renderTitleBar(profile: Profile): void {
-    const title = makeScreenTitle(t('base.title'), t('base.sub'));
+    // 부제(`base.sub` — "건물을 선택해 정비하거나…")는 **넘긴다**(사용자 지시 2026-08-04).
+    // 카드 8장이 각자 제목+설명을 달고 있어 그 한 줄이 알려 주는 것이 화면에 이미 다 있었고,
+    // 헤더가 두 줄이면 제목 각인의 무게가 그만큼 깎인다. `makeScreenTitle` 은 빈 문자열이면
+    // 부제 블록 자체를 세우지 않는다(그쪽 `subtitle.length > 0` 가드) — 여백도 남지 않는다.
+    // 카탈로그 키는 DOM 판(`src/ui/baseMap.ts`)이 아직 쓰므로 지우지 않는다.
+    const title = makeScreenTitle(t('base.title'), '');
     title.position.set(DESIGN_WIDTH / 2, TITLE_Y);
     this.root.addChild(title);
 

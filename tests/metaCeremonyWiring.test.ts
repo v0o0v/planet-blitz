@@ -3,15 +3,18 @@
  *
  * ## 왜 이 형태인가
  * 이 프로젝트의 #1 반복 결함은 "순수함수 유닛은 그린인데 정규 경로에 배선이 통째로 없다"이다.
- * `ScreenTransition` 유닛(tests/screenTransition)이 통과해도 main.ts clearToMenu/렌더 루프가
- * 그것을 **실제로 호출하지 않으면** 게임엔 아무 전환도 안 뜬다. 그래서 ①실제 `ResultOverlayScreen`
- * 을 세워 정산이 show 즉시 온전히 서는지 관측하고, ②main.ts 의 배선 계약(clearToMenu play·렌더 루프
- * update·stage mount)을 소스 그렙으로 못박는다(entityRendererShipSwap 의 main.ts 계약 테스트 선례 —
- * 배선이 리팩터로 사라지면 빨개진다). main.ts 는 앱 부트스트랩이라 인스턴스화가 안 되므로 소스 그렙이
- * 정본 방어다.
+ * 모듈 유닛이 통과해도 main.ts 가 그것을 **실제로 호출하지 않으면** 게임엔 아무것도 안 뜬다.
+ * 그래서 ①실제 `ResultOverlayScreen` 을 세워 정산이 show 즉시 온전히 서는지 관측하고, ②main.ts 의
+ * 배선 계약을 소스 그렙으로 못박는다(entityRendererShipSwap 의 main.ts 계약 테스트 선례). main.ts 는
+ * 앱 부트스트랩이라 인스턴스화가 안 되므로 소스 그렙이 정본 방어다.
  *
- * ⚠️ **보상 세리머니(AC-5.2)는 삭제됐다**(사용자 요청 2026-07-27). 그 자리에는 "부활 방지" 회귀
- * 가드가 들어간다 — 모듈 부재 · 내부 필드 부재 · 렌더 루프 구동 호출 부재.
+ * ⚠️ **보상 세리머니(AC-5.2)는 삭제됐다**(사용자 요청 2026-07-27). ⚠️ **화면 전환 커튼(AC-5.1)도
+ * 삭제됐다**(사용자 지시 2026-08-04). 그 둘의 자리에는 "부활 방지" 회귀 가드가 들어간다 — 모듈
+ * 부재 · 내부 필드 부재 · 렌더 루프 구동 호출 부재.
+ *
+ * 대신 여기가 지키는 **새 계약**이 하나 생겼다: 아레나 바닥(평면 배경 + Wang 지형)의 표시 여부는
+ * 진입 경로마다 대입하는 것이 아니라 **렌더 루프에서 화면 이름으로 도출**한다. 경로 대입은 하나만
+ * 빠뜨려도 메뉴에 아레나가 비치고, 실제로 그 신고가 두 번 나왔다(2026-08-04).
  *
  * render-only(ADR-0005) — sim·hashWorld/hashEntity 무접촉. 메타 UI라 결정론과 무관하다.
  */
@@ -103,17 +106,39 @@ describe('AC-5.1/5.2 · main.ts 배선 계약 (소스 그렙 — 앱 부트스�
   const url = new URL('../src/main.ts', import.meta.url);
   const src = new TextDecoder().decode(readFileSync(url.pathname.replace(/^\/([A-Za-z]:)/, '$1')));
 
-  it('screenTransition.container 가 stage 에 mount 된다', () => {
-    expect(src).toMatch(/stage\.addChild\(screenTransition\.container\)/);
+  // ⚠️ 여기 있던 **전환 커튼(AC-5.1) 배선 3건은 삭제 회귀 가드로 뒤집었다.** 커튼 자체를
+  // 제거했기 때문이다(사용자 지시 2026-08-04: "화면 전환 효과 없애줘"). "배선이 있어야 한다"를
+  // 그대로 두면 제거가 실패로 잡히고, 그냥 지우면 **누가 되살려도 아무도 모른다** — 이 파일의
+  // 존재 이유가 "모듈 유닛은 통과해도 main.ts 배선이 죽는" 경우를 잡는 것이라, 방향만 뒤집는다.
+  it('전환 커튼 배선이 main.ts 에서 사라졌다(재유입 가드)', () => {
+    expect(src).not.toMatch(/screenTransition/);
   });
 
-  it('clearToMenu() 가 screenTransition.play() 를 호출한다(전 화면 swap 균일 전환)', () => {
-    // clearToMenu 함수 본문 안에 play() 호출이 있어야 한다(전환 프리미티브 단일 초크포인트, AC-5.1).
-    expect(src).toMatch(/function clearToMenu\(\)[\s\S]{0,600}?screenTransition\.play\(\)/);
+  // 아레나 바닥의 표시 여부는 진입 경로마다 흩어져 있던 것을 **렌더 루프 단일 권위**로 옮겼다.
+  // 경로 대입이 되살아나면 "경로 하나를 빠뜨려 메뉴에 아레나가 비치는" 결함이 그대로 재발한다
+  // (2026-08-04 두 번 신고). 그래서 ①단일 권위가 있고 ②경로 대입이 없다를 둘 다 잠근다.
+  it('아레나 바닥 표시가 화면 이름 단일 권위로 도출된다', () => {
+    expect(src).toMatch(/background\.visible = arenaScreen && !autotile\.active/);
+    expect(src).toMatch(/autotile\.layer\.visible = arenaScreen && autotile\.active/);
   });
 
-  it('렌더 루프가 screenTransition.update 를 매 프레임 구동한다', () => {
-    expect(src).toMatch(/screenTransition\.update\(/);
+  /**
+   * 대입은 **정확히 둘**이어야 한다: 생성 직후 초기값 `false` 하나와 렌더 루프의 규칙 하나.
+   *
+   * 초기값이 필요한 이유는 타이밍이다 — 렌더 루프(`ticker.add`)는 텍스처·프로필·인증 로드
+   * **뒤**에 붙는데 `TilingSprite.visible` 기본값이 `true` 라, 그 await 구간 내내 부팅 화면에
+   * 아레나 타일이 깔려 있었다(사용자 신고 2026-08-04 "F5 누르면 아직 보여" — 첫 프레임 플래시가
+   * 아니라 로드가 끝날 때까지 계속이다).
+   *
+   * 셋 이상이면 진입 경로별 대입이 되살아난 것이고, 그러면 "경로 하나를 빠뜨려 메뉴에 아레나가
+   * 비치는" 결함이 그대로 재발한다. 옛 경로 대입의 두 형태도 이름으로 못박아 둔다.
+   */
+  it('background.visible 대입은 초기값 + 단일 권위 둘뿐이다', () => {
+    const assigns = src.match(/background\.visible\s*=/g) ?? [];
+    expect(assigns).toHaveLength(2);
+    expect(src).toMatch(/background\.visible = false;/);
+    expect(src).not.toMatch(/background\.visible = true;/);
+    expect(src).not.toMatch(/background\.visible = !autotile\.active;/);
   });
 
   it('정산 세리머니 구동 호출이 렌더 루프에서 사라졌다(삭제 회귀 가드)', () => {

@@ -92,8 +92,25 @@ describe('행성 환경 레이어 배선', () => {
     expect(body).toContain('env.disable()');
     expect(body).toContain('entityRenderer.setEnvPlanet(null)');
     expect(body).toContain('entityRenderer.reset()');
-    // 지형을 끈 뒤 평면 배경이 다시 켜져야 한다. 리터럴 `true` 가 아니라 파생식이어야
-    // PvE 런 시작 쪽 규칙과 갈라지지 않는다.
-    expect(body).toContain('background.visible = !autotile.active');
+  });
+
+  /**
+   * ⚠️ 여기 있던 기대는 **틀려 있었다**: "지형을 끈 뒤 평면 배경이 `!autotile.active` 로 다시
+   * 켜져야 한다". 그런데 바로 위 `autotile.configure(null, 0)` 이 지형을 끈 직후라 그 식은
+   * **항상 true** 였고, 결과적으로 이 테스트가 **메뉴 화면에 아레나 타일을 켜 두는 것을
+   * 계약으로 못박고 있었다**(사용자 신고 2026-08-04, 두 번). 테스트가 초록이라 아무도
+   * 의심하지 않은 자리다.
+   *
+   * 이제 표시 여부는 `clearToMenu` 가 아니라 **렌더 루프가 화면 이름에서 도출**한다. 그래서
+   * 여기서 잠글 것은 반대다 — `clearToMenu` 본문에 표시 대입이 **없어야** 한다(설정만 비운다).
+   * 단일 권위 자체는 `metaCeremonyWiring.test.ts` 가 잠근다.
+   */
+  it('clearToMenu() 는 배경 표시 여부를 대입하지 않는다(단일 권위는 렌더 루프)', () => {
+    const start = main.indexOf('function clearToMenu()');
+    const rest = main.slice(start + 'function clearToMenu()'.length);
+    const end = rest.indexOf('\n  function ');
+    const body = end > 0 ? rest.slice(0, end) : rest;
+    expect(body).not.toMatch(/background\.visible\s*=/);
+    expect(body).not.toMatch(/autotile\.layer\.visible\s*=/);
   });
 });
