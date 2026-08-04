@@ -913,6 +913,12 @@ class ArenaView {
   private boss3d: Sprite | null = null;
   /** 지금 3D 로 올라와 있는(또는 로드 중인) 행성. -1 = 없음. */
   private boss3dPlanet = -1;
+  /**
+   * 이 뷰가 이미 회수됐는가. ⚠️ 자산이 도착하면 화면이 크롬을 통째로 재건하므로
+   * ({@link PlanetSelectScreen.rebuild}) **비동기 로드 중에 이 뷰가 destroy 될 수 있다** —
+   * 그때 무대에 mount 하면 이미 dispose 된 렌더러를 건드린다.
+   */
+  private destroyed = false;
   /** 순환 시계(초). 행성이 바뀌면 0 으로 되돌려 항상 페이즈 0 부터 보여 준다. */
   private bossCycleT = 0;
   /** 2D 보스 그림 컨테이너 — 3D 가 준비되면 숨긴다(로드 중에는 이것이 보인다). */
@@ -1068,7 +1074,7 @@ class ArenaView {
       import('../../render/three3d/stage3d.js'),
       import('../../render/three3d/bossActor.js'),
     ]);
-    if (this.boss3dPlanet !== planetId) return; // 로드 중 행성이 또 바뀌었다.
+    if (this.destroyed || this.boss3dPlanet !== planetId) return; // 회수됐거나 행성이 또 바뀌었다.
     if (!hasBossModel(planetId)) return; // 2D 스프라이트가 정답인 인덱스.
     this.stage3d ??= Stage3D.create();
     const stage = this.stage3d;
@@ -1076,7 +1082,7 @@ class ArenaView {
 
     const actor = new BossActor(stage);
     const ok = await actor.load(planetId);
-    if (!ok || this.boss3dPlanet !== planetId) {
+    if (!ok || this.destroyed || this.boss3dPlanet !== planetId) {
       actor.dispose();
       return;
     }
@@ -1211,6 +1217,7 @@ class ArenaView {
 
   destroy(): void {
     // three 자원은 GC 대상이 아니다 — 액터(모델)와 무대(WebGL 컨텍스트)를 명시적으로 회수한다.
+    this.destroyed = true;
     this.bossActor?.dispose();
     this.bossActor = null;
     this.stage3d?.destroy();

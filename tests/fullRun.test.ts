@@ -61,8 +61,19 @@ function playToEnd(seed: number, config: WorldConfig): { state: WorldState; inpu
  * 재표본에서 **함께 2등으로 적혀 있던 바로 그 시드**다(당시 처치 1,759 · Lv12 → 현재 처치
  * **1,998** · Lv13). 같은 창(`0x50c1a0`부터 96시드)에서 조건을 전부 만족하는 시드는 이
  * 하나였다 — 완주 시드가 희소해졌다는 뜻이고, 다음에 또 깨지면 창을 넓혀 다시 골라라.
+ *
+ * ## 2026-08-04 (카르곤 정예 2종) — `0x50c1d6` → **`0x50c1af`**
+ * 카르곤 `CARD_POOL` 이 8 → 10 이 되면서 **카드 추첨이 재추첨**됐다(풀 길이로 인덱스를 뽑는다).
+ * `0x50c1d6` 은 그 여파로 완주를 못 한다. 위 지시대로 창을 넓혀(`0x50c1a0..0x50c220`, 129시드)
+ * 다시 골랐고, 이 파일의 단언 다섯을 전부 만족하는 시드가 **셋** 나왔다:
+ * `0x50c1a7`(처치 532 · Lv10 · rare+ 1) · `0x50c1ac`(580 · Lv10 · 1) ·
+ * **`0x50c1af`(568 · Lv11 · rare+ 2)**. 마지막을 골랐다 — 레벨과 rare+ 여유가 가장 크다.
+ * **단언은 한 자도 약화하지 않았다.** 앞선 두 후보는 다음 재선정 때 바로 쓸 수 있다.
+ *
+ * ⚠️ 처치 수가 1,998 → 568 로 줄어든 것은 시드 차이가 아니라 **카르곤이 실제로 어려워졌기
+ * 때문**이다(정예 카드 2장 — `data/enemies.ts` 카르곤 엘리트 절의 실측표 참조).
  */
-const FULL_RUN_SEED = 0x50c1d6;
+const FULL_RUN_SEED = 0x50c1af;
 
 describe('full run to victory (task 15, e2e)', () => {
   // Durable pilot: survives the whole run so the boss segment is always reached.
