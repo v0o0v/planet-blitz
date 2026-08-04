@@ -28,6 +28,7 @@ import { contaminationPurifyRate, CONTAMINATION_PURIFY_THRESHOLD } from './modes
 import { chaseShelterReached } from './modes/chase.js';
 import { shrinkRingCleared } from './modes/shrink.js';
 import { midClashCleared } from './modes/midClash.js';
+import { midClashGateActive } from './waves.js';
 
 /**
  * 현재 구간을 넘기는 조건의 종류. HUD 가 어떤 문구로 상세를 적을지 고르는 데만 쓴다
@@ -111,7 +112,10 @@ export function bossProgress(state: WorldState): BossProgress | undefined {
   let current = 0;
   let goal = 0;
 
-  if (seg.clash === true && sw === undefined) {
+  // 술어 정본은 `midClashGateActive` 하나다(그 주석 참조). 여기 조건을 다시 적으면
+  // 의뢰 런에서 HUD 만 "지휘관을 격파하세요"를 띄우고 sim 은 모드 게이트로 도는 상태가 된다 —
+  // 실제로 그렇게 갈라져 있었다.
+  if (midClashGateActive(state)) {
     gate = 'clash';
     segmentFrac = midClashCleared(state, w) ? 1 : 0;
   } else if (sw !== undefined && mode === PLANET_MODE.blockBreak) {

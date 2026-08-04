@@ -41,6 +41,8 @@ import {
   SHRINK_OUT_OF_BOUNDS_DAMAGE,
   SHRINK_SPAWN_RING_RADIUS,
   SHRINK_SPAWN_INSET,
+  SHRINK_SPAWN_MARGIN,
+  SHRINK_SPAWN_MARGIN_PERCENT,
 } from '../src/sim/modes/shrink.js';
 
 const idle: InputFrame = emptyInput();
@@ -175,20 +177,60 @@ describe('수축 — 순수 함수', () => {
     expect(pNo.hp).toBe(hpNo);
   });
 
-  it('shrinkSafeRadius/shrinkSpawnRadius: rt 값 노출 · 스폰 반경은 항상 safeRadius 미만(인셋)', () => {
+  it('shrinkSafeRadius/shrinkSpawnRadius: rt 값 노출 · 스폰 반경은 항상 safeRadius 미만(마진)', () => {
     expect(shrinkSafeRadius(unitState(undefined))).toBe(0);
     expect(shrinkSpawnRadius(unitState(undefined))).toBe(0);
     const big: ShrinkRuntime = { safeRadius: SHRINK_INITIAL_RADIUS, graceTicks: 0 };
     expect(shrinkSafeRadius(unitState(big))).toBe(SHRINK_INITIAL_RADIUS);
-    // safeRadius > SPAWN_RING → 스폰은 SPAWN_RING 상한에서 인셋만큼 안쪽(리뷰 MED: cos²+sin²>1 이라
-    // 경계 스폰은 "밖" 오분류 → 인셋으로 엄격히 안쪽에 둔다).
-    expect(shrinkSpawnRadius(unitState(big))).toBe(SHRINK_SPAWN_RING_RADIUS - SHRINK_SPAWN_INSET);
-    // safeRadius ≤ SPAWN_RING → safeRadius 에서 인셋만큼 조여진다(항상 안전 반경 안 = 링 게이트 성립).
+    // safeRadius > SPAWN_RING → 스폰은 SPAWN_RING 상한에서 마진만큼 안쪽. 이 구간(=초반)은
+    // 상한이 지배하므로 탈출 여유가 원래 크다(2500) — 거동이 사실상 그대로다.
+    expect(shrinkSpawnRadius(unitState(big))).toBe(SHRINK_SPAWN_RING_RADIUS - SHRINK_SPAWN_MARGIN);
+    // safeRadius ≤ SPAWN_RING → safeRadius 에서 **마진**만큼 조여진다. 구 인셋(16)이었을 때
+    // 여기서 탈출 여유가 16 으로 고정돼 후반 게이트가 공짜가 됐다(사용자 신고 2026-08-04).
     const small: ShrinkRuntime = { safeRadius: SHRINK_SPAWN_RING_RADIUS - 100, graceTicks: 0 };
-    expect(shrinkSpawnRadius(unitState(small))).toBe(SHRINK_SPAWN_RING_RADIUS - 100 - SHRINK_SPAWN_INSET);
+    expect(shrinkSpawnRadius(unitState(small))).toBe(
+      SHRINK_SPAWN_RING_RADIUS - 100 - SHRINK_SPAWN_MARGIN,
+    );
     // 경계값(safeRadius === SPAWN_RING)에서도 스폰이 엄격히 안쪽이다(r=1400 조기 전진 버그 방어).
     const edge: ShrinkRuntime = { safeRadius: SHRINK_SPAWN_RING_RADIUS, graceTicks: 0 };
     expect(shrinkSpawnRadius(unitState(edge))).toBeLessThan(SHRINK_SPAWN_RING_RADIUS);
+  });
+
+  /**
+   * 게이트 난이도의 **런 전체 균일성** — 사용자 신고 2026-08-04("초반엔 안 늘다가 후반에 갑자기").
+   * 재는 것은 게이지 산식이 아니라 **적이 링을 벗어나야 하는 거리**다. 구 산식은 이 값이
+   * `safeRadius` 가 스폰 링 밑으로 내려가는 순간 16 으로 고정돼(= 오버슛 한 번이면 칸 통과)
+   * 런 뒤 절반의 게이트를 통째로 무력화했다.
+   */
+  it('탈출 여유가 링이 조여져도 붕괴하지 않는다(구 결함: 3000 밑에서 16 고정)', () => {
+    const margin = (safeRadius: number): number =>
+      safeRadius - shrinkSpawnRadius(unitState({ safeRadius, graceTicks: 0 }));
+    // 상한이 지배하는 초반 — 여유가 원래 크다(회귀 방지: 초반을 건드리지 않았다).
+    expect(margin(SHRINK_INITIAL_RADIUS)).toBeGreaterThan(2000);
+    // 링이 스폰 상한 밑으로 조여진 구간 — 여기가 무너져 있었다(구값 16 고정).
+    // 마진은 `min(MARGIN, floor(r × PERCENT/100))` 이라, 반경이 충분하면 MARGIN 그대로다.
+    for (const r of [2900, 2000]) {
+      expect(margin(r), `safeRadius=${r} 탈출 여유`).toBe(SHRINK_SPAWN_MARGIN);
+    }
+    // 반경이 작아지면 마진도 **함께** 줄어든다 — 안 줄이면 적이 원점에 겹쳐 스폰돼 무대가
+    // 막힌다(실측: 격전 세그먼트 36,000틱 정체). 비례식 그대로인지 확인한다.
+    for (const r of [1500, 1000, SHRINK_MIN_RADIUS]) {
+      const expected = Math.min(
+        SHRINK_SPAWN_MARGIN,
+        Math.floor((r * SHRINK_SPAWN_MARGIN_PERCENT) / 100),
+      );
+      expect(margin(r), `safeRadius=${r} 탈출 여유`).toBe(expected);
+    }
+    // 그래도 구값(16)보다는 어디서나 훨씬 크다 — 그것이 이 수정의 요점이다.
+    for (const r of [SHRINK_MIN_RADIUS, 1000, 2000, 2900]) {
+      expect(margin(r), `safeRadius=${r}`).toBeGreaterThan(SHRINK_SPAWN_INSET * 10);
+    }
+    // 어떤 반경에서도 스폰은 경계보다 엄격히 안쪽이다(Taylor 오분류 방어는 유지).
+    for (const r of [SHRINK_MIN_RADIUS, 800, 1500, 3000, SHRINK_INITIAL_RADIUS]) {
+      expect(shrinkSpawnRadius(unitState({ safeRadius: r, graceTicks: 0 })), `r=${r}`).toBeLessThan(
+        r - SHRINK_SPAWN_INSET + 1,
+      );
+    }
   });
 });
 

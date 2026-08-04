@@ -239,6 +239,34 @@ export function countEnemies(state: WorldState): number {
   return n;
 }
 
+/**
+ * 지금 세그먼트의 전진 게이트가 **중반 격전(리더 처치)** 인가 — 순수 술어, 단일 정본.
+ *
+ * ## 왜 함수로 뽑았는가 (사용자 신고 2026-08-04)
+ * "니플헤임에서 간혹 대피소에 가도 도착 체크가 안 된다." 원인은 이 조건이 **세 곳에 각자
+ * 적혀 있었던 것**이다:
+ *  - `updateWaves`(아래) — `seg.clash && !scroll && !commission` 전부
+ *  - `bossProgress.ts` — `seg.clash && !scroll` (**`commission` 빠짐**)
+ *  - `snapshot.ts` 의 대피소 `active` — **격전을 아예 안 봄**
+ *
+ * 세 번째가 신고의 정체다. 격전 세그먼트(index 3)에서는 전진 게이트가 리더 처치로 바뀌어
+ * 대피소가 게이트가 아닌데, 스냅샷은 그 대피소를 여전히 "이번 목표"로 표시했다 →
+ * 초록 강조 + 맥동 링 + 화면밖 방향 화살표 + 레이더 블립이 전부 그리로 가리키는데
+ * 도착해도 아무 일이 없다. 6구간 중 정확히 1구간에서만 나므로 "간혹"으로 보인다.
+ *
+ * 두 번째(의뢰 런에서 HUD 만 격전 문구)도 같은 뿌리다. 술어를 한 곳에 두면 둘 다 사라진다.
+ *
+ * ⚠️ 소환 게이트와 전진 게이트는 **반드시 함께 움직인다**(아래 사용처 주석). 이 함수를
+ * 우회해 조건을 다시 적지 마라 — 그 순간 다시 갈라진다.
+ */
+export function midClashGateActive(state: WorldState): boolean {
+  const seg = SEGMENTS[state.wave.segmentIndex];
+  if (seg === undefined) return false;
+  return (
+    seg.clash === true && state.scrollRuntime === undefined && state.config.commission === undefined
+  );
+}
+
 /** Advance the wave director by one tick, spawning enemies as due. */
 export function updateWaves(state: WorldState, player: Entity): void {
   const w = state.wave;
@@ -275,8 +303,7 @@ export function updateWaves(state: WorldState, player: Entity): void {
   // ⚠️ 소환 게이트와 전진 게이트(아래 `clashActive` 사용처)는 **반드시 함께 움직인다.** 하나만
   // 끄면 "리더가 없는데 리더 처치를 기다리는" 영구 정체 구간이 생긴다. 그래서 조건을 **여기
   // 한 곳에서 계산해 둘이 같은 값을 읽게** 한다 — 조건을 두 번 적는 순간 갈라진다.
-  const clashActive =
-    seg.clash === true && state.scrollRuntime === undefined && state.config.commission === undefined;
+  const clashActive = midClashGateActive(state);
   if (clashActive && w.segmentElapsed === 0) {
     spawnMidClash(state, player);
   }

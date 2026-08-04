@@ -69,8 +69,24 @@ export const BLOCKBREAK_CRUSH_DAMAGE = 6;
 export const BLOCKBREAK_WALL_HALF_H = 60;
 /** 플레이어 통과 틈새 반폭. TODO(밸런스). */
 export const BLOCKBREAK_GAP_HALF_W = 220;
-/** 벽 행 사이 −Y 간격. TODO(밸런스). */
-export const BLOCKBREAK_ROW_SPACING = 800;
+/**
+ * 벽 행 사이 −Y 간격.
+ *
+ * ## 800 → 1143 (2026-08-04, "블록 기물 등장을 30% 줄여줘")
+ * 행 수는 `blockBreakCourseLength() / BLOCKBREAK_ROW_SPACING` **파생**이라 이 상수 하나가
+ * 개수와 조우 주기를 **동시에** 정한다 — 109행 → `floor(87900/1143)` = **76행(−30.3%)**,
+ * 조우 간격 `800/12 = 66.7틱(1.11초)` → `1143/12 = 95.3틱(1.59초)`.
+ *
+ * ⚠️ 코스 길이({@link BLOCKBREAK_SECTION_LENGTH})는 **건드리지 않았다.** 그쪽으로 행을 줄이면
+ * 무대 런타임이 같이 줄어 보스 도달 90초 페이싱이 63초로 무너지고 세그먼트 전진 게이트까지
+ * 통째로 당겨진다. 등장 빈도와 페이싱은 여기서 분리돼 있다.
+ *
+ * ⚠️ 행이 줄면 **압사 기회도 그만큼 준다**({@link BLOCKBREAK_CRUSH_DAMAGE} 주석의 실측표 참조 —
+ * 압사가 이 무대의 주 사인이다). 클리어율이 70.8% 에서 밴드(60~80%) 위로 나가면 보정할 자리는
+ * 행 간격이 아니라 압사 피해다(진행 게이트가 아니라 순수 피해원이라 페이싱과 분리돼 있다).
+ * TODO(밸런스).
+ */
+export const BLOCKBREAK_ROW_SPACING = 1143;
 /** 적 스폰 기준을 창 중심에서 전방(−Y)으로 당기는 거리(위에서 내려오는 정체성). TODO(밸런스). */
 export const BLOCKBREAK_SPAWN_AHEAD = 700;
 /**

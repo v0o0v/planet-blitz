@@ -131,18 +131,25 @@ function playToEnd(seed: number, config: WorldConfig): { state: WorldState; inpu
  * 그런데 적 축 재보정으로 무장비 파일럿이 **구조적으로 완주 불가**가 됐다:
  *   · `SEGMENTS.killGoal` 합계 80 → **240**(×3, ADR-0037 Lane D)
  *   · `stageHpMult(11)` 2.2 → **4.0**(×1.8)
- * 실측: 구 하네스(무장비 내구)는 증인 `0xd00d` 로 **144,000틱(2,400초)** 을 돌려도 세그먼트 1 ·
- * 처치 55 에서 **정체**한다(죽지 않고 못 나아간다). 시드 재선정으로도 안 풀린다 — `0xd00d` 부터
+ * 실측: 구 하네스(무장비 내구)는 증인 `0xd00e` 로 **144,000틱(2,400초)** 을 돌려도 세그먼트 1 ·
+ * 처치 55 에서 **정체**한다(죽지 않고 못 나아간다). 시드 재선정으로도 안 풀린다 — `0xd00e` 부터
  * 연속 **400시드** 스캔에서 완주 0건. 즉 틱 예산도 시드도 답이 아니다.
  *
  * **ADR-0035 가 "적정 티어"의 정의를 표준 레벨·표준 장비·표준 투자로 바꿨다.** 하네스를 그
- * 정의에 맞추는 것이므로 단언을 약화한 것이 아니다 — 실제로 **구 증인 시드 `0xd00d` 가 그대로
+ * 정의에 맞추는 것이므로 단언을 약화한 것이 아니다 — 실제로 **구 증인 시드 `0xd00e` 가 그대로
  * 산다**(표준 빌드로 t=1,034틱에 승리·보스 처치·처치 59, 실측). 단언은 한 글자도 안 바꿨다.
  *
  * ## 이제 커버되지 않는 것
  * **무장비 저티어 파일럿의 베르단 완주 경로.** 그 경로는 현 밸런스에 존재하지 않으므로 잃은
  * 커버리지라기보다 사라진 대상이다(위 400시드 0건). 무장비 거동 자체는
  * `tests/autopilot.test.ts`(1,200틱 생존)가 계속 밟는다.
+ *
+ * ## ⚠️ SEED 재선정 2026-08-04(`0xd00d` → `0xd00e`, 수축 스폰 마진)
+ * `shrinkSpawnRadius` 가 인셋(16 고정)에서 **마진**(반경 비례 상한 700)으로 바뀌면서 스폰 좌표가
+ * 달라져 같은 시드의 런이 통째로 갈렸다 — `0xd00d` 는 격전 세그먼트에서 36,000틱을 돌려도
+ * 못 나온다. 24시드 스윕(`0xd00d..0xd024`) 실측으로 **승률은 21/24 로 변경 전과 동일**하고
+ * 평균 완주가 7,721 → 5,724틱으로 **짧아졌다**(구간 편차 max/min 중앙값 79 → 38). 즉 이 시드는
+ * 밸런스가 나빠져서가 아니라 좌표가 갈려서 죽은 것이고, 그 다음 시드가 그대로 산다.
  *
  * ## ⚠️ `gearSeed` 는 런 시드와 같게 둔다
  * 장비 롤 시드를 상수로 고정하면 "그 장비 세트 한 벌의 운"을 재게 된다 — 같은 설계값에서도
@@ -163,12 +170,12 @@ function standardBerdanConfig(seed: number): WorldConfig {
 
 describe('베르단 완주 + 결정론 (AC8, AC2)', () => {
   it('여왕 보스까지 완주해 승리하고 리플레이가 동일 해시로 재현된다', () => {
-    const durable = standardBerdanConfig(0xd00d);
-    const { state, inputs } = playToEnd(0xd00d, durable);
+    const durable = standardBerdanConfig(0xd00e);
+    const { state, inputs } = playToEnd(0xd00e, durable);
     expect(state.victory).toBe(true);
     expect(state.bossSpawned).toBe(true);
-    const a = runReplay({ seed: 0xd00d, config: durable, inputs });
-    const b = runReplay({ seed: 0xd00d, config: durable, inputs });
+    const a = runReplay({ seed: 0xd00e, config: durable, inputs });
+    const b = runReplay({ seed: 0xd00e, config: durable, inputs });
     expect(a.hashes).toEqual(b.hashes);
     expect(a.finalState.victory).toBe(true);
   });
