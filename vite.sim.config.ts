@@ -26,7 +26,7 @@ export default defineConfig(({ mode }) => ({
     /** 근거는 `vite.config.ts` 의 `pool` 주석(collect 지배 → 프로세스 격리가 비싸다). */
     pool: 'threads',
     /**
-     * 이 레인은 8개 파일뿐이라 워커(코어 수)에 전부 즉시 배치된다 — 순서 조정은 의미가 없고,
+     * 이 레인은 9개 파일뿐이라 워커(코어 수)에 전부 즉시 배치된다 — 순서 조정은 의미가 없고,
      * 벽시계는 가장 긴 `commissionBandMeasure.test.ts`(약 719초, 전부 collect)가 정한다.
      * 나머지 7개를 합쳐도 577초라 그 그늘에 들어간다.
      */
