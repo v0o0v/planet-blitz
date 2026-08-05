@@ -52,12 +52,15 @@ import {
   placeGuardian,
   testInvadeAction,
   type DefenseSlotRef,
+  DEF_HELP_SECTIONS,
+  DEFENSE_MODALS,
+  defenseCommandLayout,
 } from '../src/ui/pixi/defenseCommand.js';
 import { defaultProfile } from '../src/save/profile.js';
 import { retireAtCap } from './support/retireAtCap.js';
 import type { InvasionGuardianPlacement } from '../src/sim/invasion/types.js';
 import { defenseUniqueNameKey, type DefenseUnitInstance } from '../data/defenseUnits.js';
-import { CATALOG } from '../src/i18n/catalog.js';
+import { CATALOG, EN, KO } from '../src/i18n/catalog.js';
 import { getLocale } from '../src/i18n/index.js';
 import { buildPreviewWorld, previewFit, PREVIEW_SEED } from '../src/render/defensePreview.js';
 import {
@@ -706,5 +709,108 @@ describe('유니크 방어체가 화면 문구에 실제로 실린다', () => {
     });
     expect(defenseUnitUnique(unit)).toBeNull();
     expect(unitAffixLine(unit)).not.toContain('[');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑫ 도움말 팝업 · 시험 침공 이탈 버튼 (사용자 요청 2026-08-05)
+// ---------------------------------------------------------------------------
+
+describe('도움말 팝업 — 절 목록과 문구가 두 로케일에 다 있다', () => {
+  it('절마다 제목·본문 키가 EN·KO 양쪽에 있고 키 이름이 새지 않는다', () => {
+    expect(DEF_HELP_SECTIONS.length).toBeGreaterThanOrEqual(6);
+    for (const id of DEF_HELP_SECTIONS) {
+      for (const suffix of ['h', 'b'] as const) {
+        const key = `def3.cmd.help.${id}.${suffix}`;
+        for (const [name, cat] of [
+          ['EN', EN],
+          ['KO', KO],
+        ] as const) {
+          const text = (cat as Record<string, string>)[key];
+          expect(text, `${name} 미등재: ${key}`).toBeTruthy();
+          // 미해석 키가 그대로 새면 화면에 날문자가 뜬다(유니크 이름 검증과 같은 규율).
+          expect(text).not.toContain('def3.cmd.help.');
+        }
+      }
+    }
+  });
+
+  it('문단 구분은 홑 개행이다 — 빈 줄은 stripEmoji 가 접어 화면에 도달하지 못한다', () => {
+    // 화면은 홑 `\n` 으로 잘라 **문단마다 별도 노드**를 만들고 그 사이를 간격으로 벌린다.
+    // 빈 줄(`\n\n`)로 적으면 `\s{2,}` → ' ' 로 접혀 문단이 통째로 한 덩어리가 된다.
+    for (const id of DEF_HELP_SECTIONS) {
+      for (const cat of [EN, KO] as const) {
+        const body = (cat as Record<string, string>)[`def3.cmd.help.${id}.b`];
+        expect(body, `빈 줄이 있음: ${id}`).not.toContain('\n\n');
+        expect(body).not.toMatch(/\s{2,}/);
+      }
+    }
+  });
+
+  it('본문은 제목보다 길다 — 절 하나가 빈 껍데기로 남는 것을 막는다', () => {
+    for (const id of DEF_HELP_SECTIONS) {
+      const head = KO[`def3.cmd.help.${id}.h` as keyof typeof KO];
+      const body = KO[`def3.cmd.help.${id}.b` as keyof typeof KO];
+      expect(body.length, `본문이 부실함: ${id}`).toBeGreaterThan(head.length * 3);
+    }
+  });
+
+  it('KO 도움말에는 이모지를 쓰지 않는다(사용자 지시 + stripEmoji 가 두부로 떨군다)', () => {
+    // `stripEmoji` 가 지우고 나면 문장이 달라지므로, 애초에 없어야 한다.
+    const emoji = /\p{Extended_Pictographic}/u;
+    for (const id of DEF_HELP_SECTIONS) {
+      for (const suffix of ['h', 'b'] as const) {
+        const text = KO[`def3.cmd.help.${id}.${suffix}` as keyof typeof KO];
+        expect(emoji.test(text), `이모지가 있음: ${id}.${suffix}`).toBe(false);
+      }
+    }
+    expect(emoji.test(KO['def3.cmd.help'])).toBe(false);
+    expect(emoji.test(KO['def3.cmd.help.title'])).toBe(false);
+  });
+
+  it('팝업이 화면 안에 들어오고 스크롤 창 + 닫기 버튼으로 세로가 정확히 나뉜다', () => {
+    const m = DEFENSE_MODALS.help;
+    expect(m.h).toBeLessThanOrEqual(DESIGN_HEIGHT);
+    expect(m.w).toBeLessThanOrEqual(DESIGN_WIDTH);
+    // 높이는 스크롤 창 + 간격 + 버튼에서 역산된 값이다 — 등호라 한쪽만 바꾸면 깨진다.
+    expect(m.blockH).toBe(m.bodyH + 16 + m.btnH);
+    expect(m.h).toBe(DEFENSE_MODALS.boxY + m.blockH + DEFENSE_MODALS.edgePad);
+  });
+
+  it('도움말 버튼이 헤더 컨트롤로 등록돼 있다', () => {
+    // 겹침·제목 대역·톱니 밴드 단언은 레이아웃 테스트가 `headerControls` 를 훑어 검사한다 —
+    // 즉 목록에서 빠지면 그 검사들이 **조용히 통과한다**. 존재 자체를 여기서 못 박는다.
+    const ids = defenseCommandLayout().headerControls.map((c) => c.id);
+    expect(ids).toContain('help');
+  });
+});
+
+describe('시험 침공 이탈 버튼 — 오염 런에서만 뜨고 사령부로 돌아온다', () => {
+  const src = readSource('../src/main.ts');
+
+  it('하네스 침공 런만 이탈 버튼을 켠다', () => {
+    const fn = /function startHarnessInvasionRun\([\s\S]*?setScreen\('run'\);/.exec(src);
+    expect(fn).not.toBeNull();
+    expect(fn![0]).toMatch(/hud\.setExitRun\(\s*t\('hud\.exitTest'\)/);
+    // 되돌아가는 곳은 기지 맵이 아니라 배치를 고치던 그 화면이다.
+    expect(fn![0]).toMatch(/openDefenseCommand\(\)/);
+  });
+
+  it('정식 런 진입점 셋은 이탈 버튼을 켜지 않는다', () => {
+    for (const name of ['startInvasionRun', 'startRun', 'startCommissionRun']) {
+      const fn = new RegExp(String.raw`function ${name}\([\s\S]*?setScreen\('run'\);`).exec(src);
+      expect(fn, `진입점을 못 찾음: ${name}`).not.toBeNull();
+      // `setExitRun(null)` 은 꺼는 호출이라 허용한다 — 금지 대상은 **켜는** 호출이다.
+      expect(fn![0], `${name} 이 이탈 버튼을 켠다`).not.toMatch(/setExitRun\(\s*(?!null\s*\))/);
+    }
+  });
+
+  it('화면 전환 관문(clearToMenu)이 이탈 버튼을 끈다', () => {
+    // 끄는 곳을 여기 하나로 몰아 둔 것이 안전장치다 — 모든 런 진입점이 첫 줄에서 이것을
+    // 부르므로, 진입점마다 끄게 두었을 때 하나를 빠뜨려 생기는 "정산 건너뛰기 구멍"이 없다.
+    // ` {2}\}` = 함수 본문을 닫는 두 칸 들여쓴 중괄호(리터럴 공백 두 개는 eslint 가 막는다).
+    const fn = /function clearToMenu\(\)[\s\S]*?\n {2}\}/.exec(src);
+    expect(fn).not.toBeNull();
+    expect(fn![0]).toMatch(/hud\.setExitRun\(null\)/);
   });
 });
