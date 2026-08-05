@@ -17,9 +17,14 @@
  * 적혀 있지 않았고 테스트도 없었다. 이 파일이 그 구멍을 메운다.
  *
  * ## 왜 상한을 손으로 적지 않는가
- * 탄속 배율의 출처가 여러 갈래다(무기 아키타입 · 기체 스킬 트리 × 시너지 증폭 · 장비 어픽스).
- * 상수를 베껴 적으면 카탈로그에 노드나 어픽스가 하나 추가될 때 조용히 늙는다. 그래서 상한을
- * **실제 카탈로그와 실제 조립 함수에서 파생**한다 — 데이터가 늘면 이 테스트가 먼저 깨진다.
+ * 탄속 배율의 출처가 여러 갈래다(무기 아키타입 · 장비 어픽스). 상수를 베껴 적으면 카탈로그에
+ * 어픽스가 하나 추가될 때 조용히 늙는다. 그래서 상한을 **실제 카탈로그와 실제 조립 함수에서
+ * 파생**한다 — 데이터가 늘면 이 테스트가 먼저 깨진다.
+ *
+ * ⚠️ ADR-0049: 스킬 트리는 더 이상 `computeLoadoutStats` 에 `invest` 를 넘기지 않는다(스킬이
+ * 스탯에서 메커닉으로 옮겨갔다 — `src/items/loadout.ts` 헤더 참조). 그래서 탄속 상한은 이제
+ * 무기 아키타입 × 장비 어픽스에서만 파생된다. 기체 타입(`baseBp`)은 축에 `bulletSpeed` 가
+ * 없어 무연산이지만, 미래에 축이 늘 수도 있으므로 전 타입을 계속 순회한다(방어적 루프).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -30,7 +35,7 @@ import { blankEntity } from '../src/sim/entities.js';
 import type { Entity } from '../src/sim/entities.js';
 import { InvasionWallIndex, sweepWallsDirectSwept } from '../src/sim/invasion/wallIndex.js';
 import { computeLoadoutStats } from '../src/items/loadout.js';
-import { SHIP_TYPES, shipNodeCount } from '../data/ships/index.js';
+import { SHIP_TYPES } from '../data/ships/index.js';
 import { AFFIXES } from '../data/affixes.js';
 import { EQUIP_SLOTS } from '../src/items/types.js';
 import type { Item, SlotKind } from '../src/items/types.js';
@@ -46,18 +51,6 @@ function velocityAffix() {
   const def = AFFIXES.find((a) => a.stat === 'bulletSpeedPct');
   expect(def, 'bulletSpeedPct 어픽스가 카탈로그에 있어야 한다').toBeDefined();
   return def as NonNullable<typeof def>;
-}
-
-/**
- * 이 기체의 스킬 트리를 **전 노드 만점** 투자한 invest 벡터.
- *
- * 노드별 maxPoints 를 조회하지 않고 큰 값으로 채운다 — `computeSkillStats` 가 노드마다
- * `clampPoints(invest[i], node.maxPoints)` 로 잘라 주므로 결과가 정확히 만점이고, 노드 정의
- * (비공개 `shipFlatNodes`)에 의존하지 않아 카탈로그가 바뀌어도 이 헬퍼는 그대로 맞다.
- */
-const OVER_MAX_POINTS = 999;
-function fullInvest(def: (typeof SHIP_TYPES)[number]): number[] {
-  return new Array<number>(shipNodeCount(def)).fill(OVER_MAX_POINTS);
 }
 
 /**
@@ -91,11 +84,11 @@ describe('탄속 상한 — 카탈로그 파생', () => {
     expect(MAX_AFFIXES_PER_ITEM).toBeLessThanOrEqual(AFFIXES.length);
   });
 
-  it('전 기체 × 만점 투자 × 최대 어픽스 × 레일건의 탄속을 실제 조립 경로로 계산한다', () => {
+  it('전 기체 × 최대 어픽스 × 레일건의 탄속을 실제 조립 경로로 계산한다', () => {
     const gear = maxSpeedGear();
     const rows: { id: string; speed: number; perTick: number }[] = [];
     for (const def of SHIP_TYPES) {
-      const lo = computeLoadoutStats(gear, fullInvest(def), 5000, def.id);
+      const lo = computeLoadoutStats(gear, 5000, def.id);
       // `createWorld` 의 무기 조립과 **같은 식**(world.ts): base × mult, 소수 2자리 반올림.
       const speed = Math.round(DEFAULT_WEAPON.bulletSpeed * lo.loadout.bulletSpeedMult * 100) / 100;
       rows.push({ id: def.slug, speed, perTick: speed * DT });
@@ -117,7 +110,7 @@ function worstBulletStep(): number {
   const gear = maxSpeedGear();
   let worst = 0;
   for (const def of SHIP_TYPES) {
-    const lo = computeLoadoutStats(gear, fullInvest(def), 5000, def.id);
+    const lo = computeLoadoutStats(gear, 5000, def.id);
     const speed = Math.round(DEFAULT_WEAPON.bulletSpeed * lo.loadout.bulletSpeedMult * 100) / 100;
     const perTick = speed * DT;
     if (perTick > worst) worst = perTick;
@@ -126,23 +119,35 @@ function worstBulletStep(): number {
 }
 
 describe('터널링 — 탄 스텝이 벽 두께를 넘는다는 사실 자체', () => {
-  it('최대 탄 스텝이 청크 벽 최소 전폭을 실제로 넘는다 (지점 판정이 안전하지 않은 이유)', () => {
-    // 이 방향의 단언이 중요하다. "부등식이 지켜진다" 를 단언하면(원래 계획) 카탈로그가 성장한
-    // 지금은 실패하고, 그 실패를 피하려 탄속을 깎는 것은 결함이 아니라 밸런스를 건드리는 일이다.
-    // 실제로 넘으니 **판정을 고치는 것**이 답이었고(아래 describe), 이 단언은 그 판단의 근거가
-    // 계속 유효한지를 지킨다 — 만약 언젠가 탄속 상한이 벽 두께 아래로 내려오면 이 테스트가
-    // 깨져서 "이제 지점 판정으로 되돌려도 되는가" 를 재검토하게 만든다.
+  /**
+   * ⚠️ (ADR-0049 재정의, 2026-08-06) 이 트립와이어가 **정확히 설계 의도대로** 뒤집혔다.
+   *
+   * 이 describe 의 원래 방향(부등식이 지켜진다가 아니라 실제로 넘는다를 단언)은 그 자체가
+   * "만약 언젠가 탄속 상한이 벽 두께 아래로 내려오면 이 테스트가 깨져서 재검토하게 만든다"는
+   * 트립와이어였다. 지금 그 트립와이어가 울렸다 — 원인은 skillInvest 가 더 이상
+   * `computeLoadoutStats` 에 접히지 않아(스킬이 스탯에서 메커닉으로 옮겨갔다,
+   * `src/items/loadout.ts` 헤더) 탄속 상한의 한 원천(스킬 트리 시너지)이 통째로 사라졌기
+   * 때문이다 — 지금은 무기 아키타입(레일건) × 장비 어픽스만 남아 상한이 낮아졌다.
+   *
+   * **이것이 "지점 판정으로 되돌려도 된다"는 뜻은 아니다.** 스윕 판정(`sweptCircleOverlapsWall`)
+   * 을 되돌리는 것은 이 레인 밖의 프로덕션 판단이고(건드리지 않는다), 스윕 판정 자체는 여유
+   * 마진이 늘었을 뿐 여전히 정확하다 — 손해가 없다. 이 테스트는 방향을 뒤집어 **지금 실제
+   * 상한이 얼마인지**를 계속 관측하는 역할로 남긴다 — 스킬 배선(후속 레인)이나 어픽스
+   * 카탈로그 확장이 상한을 다시 벽 두께 위로 올리면, 이 테스트가 다시 깨져 그 사실을 알린다.
+   */
+  it('최대 탄 스텝이 청크 벽 최소 전폭 아래다 (ADR-0049: 스킬 기여 소멸 — 재교차 시 트립와이어)', () => {
     const perTick = worstBulletStep();
     const minWallFullWidth = WALL_HALF_MIN * 2;
     expect(
       perTick,
-      `최대 탄 스텝 ${perTick.toFixed(1)}u/tick vs 최소 벽 전폭 ${minWallFullWidth}`,
-    ).toBeGreaterThan(minWallFullWidth);
+      `최대 탄 스텝 ${perTick.toFixed(1)}u/tick vs 최소 벽 전폭 ${minWallFullWidth}` +
+        ' — 이 값이 다시 벽 두께를 넘으면 스윕 판정 필요성을 재확인하라(코드는 그대로 안전하다).',
+    ).toBeLessThan(minWallFullWidth);
   });
 
-  it('침공 회랑 벽 전폭(240)도 넘는 기체가 있다', () => {
+  it('침공 회랑 벽 전폭(240) 아래다 (같은 트립와이어, 침공 최소 두께 기준)', () => {
     // 침공 템플릿 벽은 `data/invasion/mapTemplates.ts` 에서 halfH 120(전폭 240)이 최소다.
-    expect(worstBulletStep()).toBeGreaterThan(240);
+    expect(worstBulletStep()).toBeLessThan(240);
   });
 });
 

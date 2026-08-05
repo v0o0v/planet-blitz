@@ -5,9 +5,12 @@
  * 재번호·재정렬 금지, append-only. 순서를 바꾸면 기존 세이브의 `Ship.typeId` 가 다른 기체를
  * 가리키고, 리플레이 검증(EF)이 다른 트리로 재실행된다.
  *
- * 타입 0(스트라이커)만 특별하다 — 시그니처 없음(`signatureBit = -1`), baseBp 전 축 0,
- * 노드 63개 고정. 설계서 §11 채택안 A: 5종 리팩터가 도는 동안 스트라이커를 **회귀 탐지기**로
- * 남긴다. 전 신규 경로가 타입 0 에서 조기 탈출하므로 기존 런의 해시가 바이트 불변이다.
+ * ⚠️ **ADR-0049 로 "스트라이커는 특별하다" 가 대부분 끝났다.** 구 주석은 타입 0 이
+ * 시그니처 없음(-1)·baseBp 전 축 0·**노드 63개 고정**이라 5종 리팩터가 도는 동안
+ * **회귀 탐지기** 역할을 한다고 적었다. flat 재편으로 노드 수가 **전 기체 30 균일**이 되어
+ * 그 축은 사라졌고, 시그니처(비트 24 "정조준 사이클")도 별도 커밋에서 부여된다.
+ * 남는 특례는 baseBp 전 축 0 하나뿐이다 — 기준점 기체라는 뜻이지 해시 불변 장치가 아니다.
+ * (구 역할의 대체는 `tests/shipSkillLayout.test.ts` 의 구조 계약이다.)
  *
  * 1~6 은 실데이터다. 타입 4 는 구 slug `bion`(곤충 컨셉)에서 `hatchling` 으로 **개명**됐고
  * (2026-07-21 사용자 지시), 5·6(`mallow`·`bubble`)은 같은 지시로 **append** 된 신규 기체다 —
@@ -91,7 +94,7 @@ export function shipTypeDef(typeId: number): ShipTypeDef {
   return def;
 }
 
-/** 이 타입의 `skillInvest` 벡터 길이. 스트라이커 = 63(동결). */
+/** 이 타입의 `skillInvest` 벡터 길이. **전 기체 30 균일**(ADR-0049 — 3축 × 10스킬). */
 export function shipSkillNodeCount(typeId: number): number {
   return shipNodeCount(shipTypeDef(typeId));
 }

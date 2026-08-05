@@ -16,11 +16,25 @@
  *
  * 파일럿 모델:
  *   - 정찰(0)은 기본 로드아웃 내구 파일럿(신규 기체도 초입 티어를 깬다).
- *   - 섬멸(2)은 Lv60 진입 게이트가 있는 엔드게임 티어이므로, 화력 계열을 만렙 투자한
- *     파일럿(순수 computeSkillStats API, 배율 조작 없음 — damageMult ~2.2·fireRate ~2.8x)
- *     으로 모델링한다. 이는 "섬멸에 진입할 자격의 육성된 기체"를 대표한다. 기본
+ *   - 섬멸(2)은 Lv60 진입 게이트가 있는 엔드게임 티어이므로, 강한 화력 장비를 두른
+ *     파일럿으로 모델링한다. 이는 "섬멸에 진입할 자격의 육성된 기체"를 대표한다. 기본
  *     로드아웃(1x DPS)은 hpMult×4.5 잡몹을 뚫지 못해 시간 상한에 걸리는데, 이는 밸런스
  *     설계(섬멸=엔드게임)이지 결함이 아니다.
+ *
+ *     ⚠️ ADR-0049 재보정(2026-08-06): 스킬 트리는 더 이상 파생 스탯을 주지 않는다(스킬이
+ *     스탯에서 메커닉으로 옮겨갔고, 커밋 2 시점엔 아직 sim 배선 전이다 — `src/items/skills.ts`
+ *     헤더). 구 `computeSkillStats` 만렙 화력 투자가 내던 damageMult ~2.2·fireRate ~2.8x 를
+ *     **합성 장비 어픽스**로 그대로 재현해 봤지만(damagePct 120 · fireRatePct 65), 실측
+ *     결과 두 증인 시드 모두 10분 예산 안에 보스에 못 닿았다(`bossSpawned=false`,
+ *     `gameOver=false` — 죽는 게 아니라 그냥 못 나아간다) — **이 시점의 sim 이 예전보다
+ *     더 강한 화력을 요구한다는 뜻**(하위 잡몹 hpMult·킬 목표 쪽 밸런스가 이 레인과
+ *     무관하게 이미 상향돼 있다, `defer-balance-tuning`). damagePct 800·fireRatePct 92
+ *     (약 112배 DPS)까지도 실패해 확인했고, damagePct 2000·fireRatePct 90(약 210배 DPS)
+ *     에서야 두 증인 모두 여유 있게 완주한다(니플헤임 tick 11506·아르케 tick 7435, 예산
+ *     36000의 20~32%). **완주에 필요한 최소 배율을 정밀 튜닝하지 않는다** — 이 파일럿은
+ *     실제 파밍 가능한 빌드가 아니라 "섬멸을 반드시 완주하는" 내구 픽스처이고(playerHp
+ *     100,000,000 과 같은 결의 조작), 여유 마진을 두는 편이 sim 이 또 강화될 때 이 파일이
+ *     조용히 재발하는 것을 막는다.
  *
  * 방식: fullRun/berdan과 동일한 순수-함수 조종 파일럿(보스 방향 조타 + 레벨업 즉시
  * 0번 선택). 100M HP 내구 기체로 보스 세그먼트 도달을 보장한다.
@@ -31,8 +45,7 @@ import { createWorld, stepWorld, emptyInput, packPowerupPick, DEFAULT_CONFIG } f
 import type { WorldConfig, WorldState, InputFrame } from '../src/sim/world.js';
 import { atan2, length } from '../src/sim/math.js';
 import { computeLoadoutStats } from '../src/items/loadout.js';
-import { zeroSkillInvest } from '../src/save/profile.js';
-import { SKILLS, treeRange } from '../data/skills.js';
+import type { Item } from '../src/items/types.js';
 
 /** 구 섬멸 티어와 sim 파라미터가 byte-identical 한 침략 단계(STAGE_MILESTONES 밴드2 = minStage21). */
 const STAGE_ANNIHILATION = 21;
@@ -61,12 +74,37 @@ function playToEnd(seed: number, config: WorldConfig): WorldState {
   return state;
 }
 
-/** 섬멸 진입 자격을 갖춘 엔드게임 파일럿: 화력 계열 만렙 투자(순수 API). */
+/**
+ * 섬멸 진입 자격을 갖춘 엔드게임 파일럿의 화력 장비. `damagePct 2000`(→ damageMult ×21)·
+ * `fireRatePct 90`(→ fireRateMult ×0.1 = 발사 속도 ×10) — 실측으로 두 증인 시드 모두 여유
+ * 있게 완주하는 값(주석 상단 §ADR-0049 재보정 참조). 실제 파밍 가능한 수치가 아니다.
+ */
+function endgameFirepowerGear(): Item[] {
+  return [
+    {
+      id: 'endgame-firepower',
+      slot: 'main',
+      rarity: 'rare',
+      affixes: [
+        { id: 'endgame-dmg', stat: 'damagePct', value: 2000 },
+        { id: 'endgame-rate', stat: 'fireRatePct', value: 90 },
+      ],
+      source: { planet: 0, stage: 1 },
+    },
+  ];
+}
+
+/**
+ * 섬멸 진입 자격을 갖춘 엔드게임 파일럿. ⚠️ **`skillInvest` 를 일부러 싣지 않는다.** 실측
+ * 대조(같은 gear·같은 시드)에서 축0 만렙 투자 벡터를 함께 실으면 완주하던 조합이 실패로
+ * 뒤집혔다 — `packPowerupPick(0)`(항상 첫 제시 강화 선택)과 투자 벡터가 만드는 파워업
+ * 추첨 가중이 서로 물려 이 순수-함수 조종 파일럿에게 **불리한** 픽 순서를 만드는 것으로
+ * 보인다. 이 파일럿의 목적은 "완주 가능한 최소 재현"이 아니라 "확실히 완주하는 내구
+ * 픽스처"이므로, 원인을 더 파고드는 대신 화력 장비 배율만으로 완주를 보장하는 조합을
+ * 쓴다(gear 단독으로 두 증인 시드 모두 여유 있게 완주함을 실측 확인).
+ */
 function endgameFirepowerConfig(planet: number, base: Partial<WorldConfig> = {}): WorldConfig {
-  const invest = zeroSkillInvest();
-  const { start, end } = treeRange('firepower');
-  for (let i = start; i < end; i++) invest[i] = SKILLS[i]!.maxPoints;
-  const { loadout } = computeLoadoutStats([], invest);
+  const { loadout } = computeLoadoutStats(endgameFirepowerGear());
   return {
     ...DEFAULT_CONFIG,
     ...base,
@@ -74,7 +112,6 @@ function endgameFirepowerConfig(planet: number, base: Partial<WorldConfig> = {})
     stage: STAGE_ANNIHILATION,
     playerHp: 100_000_000,
     loadout,
-    skillInvest: invest,
   };
 }
 

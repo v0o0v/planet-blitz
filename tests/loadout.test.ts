@@ -1,3 +1,13 @@
+/**
+ * ⚠️ **ADR-0049 로 `computeLoadoutStats` 의 위치 인자가 하나 줄었다** —
+ * 구 `(equipped, invest, shipBonusBp, typeId)` → 신 `(equipped, shipBonusBp, typeId)`.
+ *
+ * 이 파일은 그 변경에서 **`tsc` 가 못 잡은 유일한 자리**였다. 구 호출
+ * `computeLoadoutStats([], undefined, 5000)` 은 신 시그니처에서 `shipBonusBp = undefined`
+ * · `typeId = 5000` 으로 **말이 되어 버려** 타입 검사를 통과하고, `shipTypeDef` 가 범위 밖
+ * 5000 을 스트라이커로 정규화해 **계보 보너스가 조용히 사라진** 채 초록이 될 뻔했다
+ * (전체 스위트가 잡았다). 위치 인자를 지울 때는 "타입이 우연히 맞는" 조합을 먼저 세어라.
+ */
 import { describe, it, expect } from 'vitest';
 import {
   computeLoadoutStats,
@@ -86,12 +96,12 @@ describe('computeLoadoutStats — derived stats pipeline (AC4)', () => {
 
 describe('computeLoadoutStats — 계보 기체 가지 보너스 (ADR-0007)', () => {
   it('미지정·0 보너스는 기존 결과와 완전 동일 (하위 호환)', () => {
-    expect(computeLoadoutStats([], undefined, 0).loadout).toEqual(neutralLoadout());
-    expect(computeLoadoutStats([], undefined, 0)).toEqual(computeLoadoutStats([]));
+    expect(computeLoadoutStats([], 0).loadout).toEqual(neutralLoadout());
+    expect(computeLoadoutStats([], 0)).toEqual(computeLoadoutStats([]));
   });
 
   it('상한 보너스(5000bp=+50%)를 데미지·연사·HP 3축에 적용한다', () => {
-    const { loadout } = computeLoadoutStats([], undefined, 5000);
+    const { loadout } = computeLoadoutStats([], 5000);
     expect(loadout.damageMult).toBeCloseTo(1.5);
     expect(loadout.fireRateMult).toBeCloseTo(10000 / 15000); // 발사 간격 ÷1.5 = 연사↑
     expect(loadout.maxHpAdd).toBe(50); // 기준 HP 100 의 +50%
@@ -103,19 +113,19 @@ describe('computeLoadoutStats — 계보 기체 가지 보너스 (ADR-0007)', ()
   });
 
   it('중간 보너스(2500bp=+25%)는 비례 적용, 범위 밖은 클램프', () => {
-    const mid = computeLoadoutStats([], undefined, 2500).loadout;
+    const mid = computeLoadoutStats([], 2500).loadout;
     expect(mid.damageMult).toBeCloseTo(1.25);
     expect(mid.maxHpAdd).toBe(25);
     // 음수 → 0, 5000 초과 → 5000 (normalizeLineageBonus 클램프)
-    expect(computeLoadoutStats([], undefined, -100).loadout).toEqual(neutralLoadout());
-    expect(computeLoadoutStats([], undefined, 99999).loadout).toEqual(
-      computeLoadoutStats([], undefined, 5000).loadout,
+    expect(computeLoadoutStats([], -100).loadout).toEqual(neutralLoadout());
+    expect(computeLoadoutStats([], 99999).loadout).toEqual(
+      computeLoadoutStats([], 5000).loadout,
     );
   });
 
   it('장비·스킬 위에 곱연산으로 겹친다 (ARPG 스택)', () => {
     const gear = [item('armor', [{ stat: 'damagePct', value: 20 }])];
-    const { loadout } = computeLoadoutStats(gear, undefined, 5000);
+    const { loadout } = computeLoadoutStats(gear, 5000);
     expect(loadout.damageMult).toBeCloseTo(1.2 * 1.5);
   });
 });

@@ -8,12 +8,11 @@ import {
   type WorldState,
 } from '../src/sim/world.js';
 import { runReplay, idleInputs } from '../src/sim/replay.js';
-import { neutralLoadout, computeLoadoutStats } from '../src/items/loadout.js';
+import { neutralLoadout } from '../src/items/loadout.js';
 import { blankEntity, type Entity } from '../src/sim/entities.js';
 import { length } from '../src/sim/math.js';
-import { POWERUPS, drawPowerupChoices, type PowerupDef } from '../src/sim/powerups.js';
-import { AFFINITY_LEGACY_TREE, type TreeAffinity } from '../data/ships/index.js';
-import { SKILL_TREES, NODES_PER_TREE } from '../data/skills.js';
+import { POWERUPS, drawPowerupChoices } from '../src/sim/powerups.js';
+import { shipTypeDef, shipTreeRange } from '../data/ships/index.js';
 import {
   ARMOR_MAX_STACKS,
   ARMOR_PER_STACK_BP,
@@ -24,7 +23,6 @@ import {
   overchargedDamage,
 } from '../src/sim/shipSignature.js';
 import { zeroSkillInvest } from '../src/save/profile.js';
-import { treeRange } from '../data/skills.js';
 
 const WEAPON_MISSILE = 3;
 const WEAPON_BEAM = 4;
@@ -117,15 +115,16 @@ describe('beam weapon (type 4) — matic short-life segments (C1, OQ-M3-3)', () 
 });
 
 describe('skill investment — determinism + hash inclusion (AC2, plan A2)', () => {
+  // ⚠️ ADR-0049: `computeLoadoutStats` 는 더 이상 `invest` 를 받지 않는다(스킬이 스탯에서
+  // 메커닉으로 옮겨갔다 — `src/items/loadout.ts` 헤더 참조). `main.ts` 도 이제 loadout 을
+  // 접지 않고 `skillInvest` 를 config 에 그대로 싣기만 한다. 그런데도 이 벡터는 여전히
+  // 리플레이 해시에 직접 폴드되고(`src/sim/replay.ts`) 파워업 추첨 가중(`investedInAffinity`)
+  // 을 흔들므로, 투자 유무가 hashes 를 갈라놓는다는 계약은 그대로 유효하다.
   function investedConfig(): WorldConfig {
     const invest = zeroSkillInvest();
-    invest[0] = 4; // firepower damagePct
-    invest[41] = 4; // mobility moveSpeedPct
-    const cfg = weaponConfig(0, invest);
-    // Fold the same investment into the loadout block (mirrors main.ts).
-    const { loadout } = computeLoadoutStats([], invest);
-    cfg.loadout = loadout;
-    return cfg;
+    invest[0] = 4; // 축0(offense) 스킬
+    invest[20] = 3; // 축2(utility) 스킬
+    return weaponConfig(0, invest);
   }
 
   it('a run with skill investment replays to identical hashes', () => {
@@ -197,9 +196,11 @@ describe('powerup pool — 24 tagged + build-weighted draw (C2, AC9, OQ-M3-1)', 
   });
 
   it('soft-weights toward an invested skill tree', () => {
-    // Fully invest the mobility tree; its tagged powerups should be offered more.
+    // Fully invest the mobility(utility) axis; its tagged powerups should be offered more.
     const invest = zeroSkillInvest();
-    const { start, end } = treeRange('mobility');
+    const striker = shipTypeDef(0);
+    const utilityAxis = striker.trees.findIndex((t) => t.affinity === 'utility');
+    const { start, end } = shipTreeRange(striker, utilityAxis);
     for (let i = start; i < end; i++) invest[i] = 5;
     // M8: 태그 축이 트리 이름 → affinity 로 바뀌었다. mobility 의 역할 축은 'utility'.
     const mobilityIdx = POWERUPS.map((p, i) => (p.affinity === 'utility' ? i : -1)).filter(
@@ -220,77 +221,24 @@ describe('powerup pool — 24 tagged + build-weighted draw (C2, AC9, OQ-M3-1)', 
 });
 
 // ---------------------------------------------------------------------------
-// M8 — 파워업 태그가 트리 **이름**에서 **affinity(역할 축)** 로 바뀐 리팩터의 안전망.
+// 파워업 affinity 태그 — 풀 인덱스 wire 안정성 (설계서 §2·§10-4).
 //
-// 설계서 §1 이 경고하는 삼중 계약 중 **세 번째(sim 내부 RNG 슬라이스)** 를 겨눈다:
-// 가중값이 같아도 슬라이스가 한 칸 밀리면 `powerupRng` 소비가 갈려 레벨업 틱부터 스트림이
-// 발산한다. 그래서 값 비교가 아니라 **추첨 시퀀스 전체**를 레거시 구현과 대조한다.
+// ⚠️ (ADR-0049 정리) 이 describe 는 원래 M8 리팩터 전후 구현을 **레거시 구현 재현체와 전체
+// 추첨 시퀀스 대조**로 등가 증명했다. 그 대조는 옛 60노드/트리당 20칸 슬라이스
+// (`SKILL_TREES.indexOf(tree) * NODES_PER_TREE`)를 가정했는데, ADR-0049 의 flat 30칸(축당
+// 10) 레이아웃이 그 가정 자체를 깼다 — 지금 대조하면 "같은 자리에 다른 값이 있다"가 아니라
+// "슬라이스 상수 자체가 다른 세대"라 항상 실패하고, 실패해도 아무 결함도 가리키지 않는다.
+// 그래서 레거시 재현체와 그 대조 테스트는 지웠다(더 지킬 것이 없다). 남기는 것은 둘 —
+// **풀 인덱스의 affinity 태그가 여전히 안정적인가**(wire 계약, 노드 개수와 무관)와
+// **shipType 미지정 = 0 명시 등가**(현재 API 로 재작성)다. 투자량에 따라 가중이 실제로
+// 움직이는지는 위 'soft-weights toward an invested skill tree' 가 새 레이아웃으로 지킨다.
 // ---------------------------------------------------------------------------
 
-/**
- * M8 이전의 `powerupWeight` 를 테스트 안에 독립 재현한 것. 태그를 affinity → 레거시 트리로
- * 되돌리고, 슬라이스를 `SKILL_TREES.indexOf(tree) * NODES_PER_TREE` 로 잡는다(옛 코드 그대로).
- */
-function legacyPowerupWeight(def: PowerupDef, state: WorldState): number {
-  if (def.universal === true) return 10; // WEIGHT_UNIVERSAL
-  // 오프빌드 배제는 `fix/weapon-range-semantics` 의 **의도된** 변경이라 미러도 함께 지운다
-  // (아래 legacyDrawPowerupChoices 의 skip 과 쌍). 이 미러를 옛 가중값 2 로 남겨 두면
-  // 대조가 "affinity 슬라이스가 맞는가"가 아니라 "그 변경이 있었는가"를 재는 것이 된다.
-  if (def.weaponType !== undefined) return 28;
-  if (def.affinity !== undefined) {
-    const tree = AFFINITY_LEGACY_TREE[def.affinity];
-    const t = SKILL_TREES.indexOf(tree);
-    if (t < 0) return 4;
-    const start = t * NODES_PER_TREE;
-    let sum = 0;
-    for (let i = start; i < start + NODES_PER_TREE; i++) sum += state.config.skillInvest?.[i] ?? 0;
-    return 4 + Math.floor(sum / 4); // WEIGHT_TREE_BASE + invested/TREE_POINTS_PER_WEIGHT
-  }
-  return 1;
-}
-
-/** M8 이전의 `drawPowerupChoices` 를 그대로 재현(같은 순서로 powerupRng 를 소비한다). */
-function legacyDrawPowerupChoices(state: WorldState, count: number): number[] {
-  const pool: number[] = [];
-  const weights: number[] = [];
-  for (let i = 0; i < POWERUPS.length; i++) {
-    const def = POWERUPS[i];
-    if (def === undefined) continue;
-    if (def.weaponType !== undefined && def.weaponType !== state.weapon.weaponType) continue;
-    // 액티브 슬롯 전용(ADR-0041)도 미러에서 함께 건너뛴다 — 이 대조의 목적은 affinity 슬라이스
-    // 등가 증명이고, 미장착 런에서는 본체도 pool 에 넣지 않으므로 같은 조건이 된다.
-    if (def.activeSlot !== undefined) continue;
-    pool.push(i);
-    weights.push(legacyPowerupWeight(def, state));
-  }
-  const chosen: number[] = [];
-  const n = Math.min(count, pool.length);
-  for (let k = 0; k < n; k++) {
-    let total = 0;
-    for (const w of weights) total += w;
-    if (total <= 0) break;
-    let r = state.powerupRng.int(0, total - 1);
-    let pick = 0;
-    for (let j = 0; j < pool.length; j++) {
-      r -= weights[j] as number;
-      if (r < 0) {
-        pick = j;
-        break;
-      }
-    }
-    const idx = pool[pick];
-    if (idx !== undefined) chosen.push(idx);
-    pool.splice(pick, 1);
-    weights.splice(pick, 1);
-  }
-  return chosen;
-}
-
-describe('M8 파워업 affinity 리팩터 — 스트라이커 바이트 동일 (설계서 §2·§10-4)', () => {
+describe('파워업 풀 — affinity 태그 wire 안정성 (설계서 §2·§10-4)', () => {
   it('affinity 태그가 레거시 트리 태그와 1:1 로 대응한다 (풀 인덱스 불변)', () => {
     // 옛 배치: 4·5·7 = mobility, 6 = survival, 16·17 = firepower, 18·19 = survival,
     // 20·21 = mobility. 인덱스는 pick 입력의 wire 값이라 절대 움직이면 안 된다.
-    const expected: Record<number, TreeAffinity> = {
+    const expected: Record<number, 'offense' | 'defense' | 'utility'> = {
       4: 'utility',
       5: 'utility',
       6: 'defense',
@@ -311,37 +259,9 @@ describe('M8 파워업 affinity 리팩터 — 스트라이커 바이트 동일 (
     }
   });
 
-  it('추첨 **순서**가 레거시 구현과 전 시퀀스 일치한다 (RNG 소비까지 동일)', () => {
-    // 세 계열에 서로 다른 투자량을 넣어 세 가중이 전부 갈라진 상태로 대조한다
-    // (전부 0이면 가중이 같아 슬라이스 오류를 못 잡는다).
-    const invest = zeroSkillInvest();
-    const fill = (tree: 'firepower' | 'survival' | 'mobility', v: number): void => {
-      const { start, end } = treeRange(tree);
-      for (let i = start; i < end; i++) invest[i] = v;
-    };
-    fill('firepower', 5);
-    fill('survival', 2);
-    fill('mobility', 1);
-
-    for (const weaponType of [0, 1, 2, 3, 4]) {
-      const cfg = weaponConfig(weaponType, invest.slice());
-      const now = createWorld(0x5eed, cfg);
-      const legacy = createWorld(0x5eed, cfg);
-      for (let i = 0; i < 60; i++) {
-        const a = drawPowerupChoices(now, 4);
-        const b = legacyDrawPowerupChoices(legacy, 4);
-        expect(a, `weaponType=${weaponType} draw#${i}`).toEqual(b);
-      }
-      // RNG 스트림까지 같은 자리에 서 있어야 한다(소비 횟수 일치).
-      expect(now.powerupRng.getState(), `weaponType=${weaponType} rng`).toBe(
-        legacy.powerupRng.getState(),
-      );
-    }
-  });
-
   it('shipType 미지정 · 0 명시가 같은 추첨 시퀀스를 낸다', () => {
     const invest = zeroSkillInvest();
-    const { start, end } = treeRange('firepower');
+    const { start, end } = shipTreeRange(shipTypeDef(0), 0); // 축0 = offense(firepower)
     for (let i = start; i < end; i++) invest[i] = 4;
     const base = weaponConfig(0, invest.slice());
     const seqOf = (cfg: WorldConfig): number[] => {

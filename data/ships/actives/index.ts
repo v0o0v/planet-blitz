@@ -11,7 +11,7 @@
  * 가능해야 `tests/activeSkillWiring.test.ts` 의 존재 대조가 의미를 갖는다.
  */
 
-import { SHIP_TYPES, shipTreeRange } from '../index.js';
+import { ACTIVE_HI_GATE_DEFAULT, SHIP_TYPES, shipTreeRange } from '../index.js';
 import type { ShipTypeDef } from '../types.js';
 import { ACTIVE_LO_GATE, ACTIVES_PER_SHIP, activeWireId } from './types.js';
 import type { ActiveSkillDef } from './types.js';

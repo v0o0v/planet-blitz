@@ -34,7 +34,7 @@ import '../data/uniques.js';
 import { canEquip, requiredLevel } from '../src/items/requiredLevel.js';
 import { EQUIP_SLOTS } from '../src/items/types.js';
 import type { Rarity } from '../src/items/types.js';
-import { SHIP_TYPES, shipTypeDef, shipTreeRange, shipCapstoneIndex } from '../data/ships/index.js';
+import { SHIP_TYPES, shipTypeDef, shipTreeRange } from '../data/ships/index.js';
 
 /** 테스트용 고정 시드(난수 금지 — 벤치 시드 목록 앞부분과 동일 계열의 소수). */
 const SEEDS = [1, 5, 11, 17, 23, 191, 631] as const;
@@ -384,7 +384,7 @@ describe('표준 투자', () => {
     }
   });
 
-  it('전 기체에서 벡터 길이·트리별 합이 배분과 일치하고 만렙은 공격 캡스톤이 붙는다', () => {
+  it('전 기체에서 벡터 길이·트리별 합이 배분과 일치하고 만렙은 공격 축만 상위 액티브 게이트를 넘는다', () => {
     for (let typeId = 0; typeId < SHIP_TYPES.length; typeId++) {
       const def = shipTypeDef(typeId);
       const v = standardSkillInvest(typeId, 100);
@@ -396,10 +396,12 @@ describe('표준 투자', () => {
         // 트리 용량이 배분보다 작으면 잘린다 — 잘리면 측정이 설계와 어긋나므로 계약으로 못박는다.
         expect(sum, `${def.slug} 트리${t}`).toBe(perTree[t]);
       }
-      // 공격 45pt 는 capstoneGate(40, 해츨링 44)를 전 기체에서 넘긴다.
-      expect(v[shipCapstoneIndex(def, 0)], `${def.slug} 공격 캡스톤`).toBe(1);
-      expect(v[shipCapstoneIndex(def, 1)]).toBe(0);
-      expect(v[shipCapstoneIndex(def, 2)]).toBe(0);
+      // 공격 45pt 는 activeHiGate(ADR-0049: 전 기체 40 균일, 구 이름 capstoneGate)를 넘기고
+      // 방어·유틸(27pt 씩)은 못 넘는다 — ADR-0049 는 캡스톤을 폐기했으므로 여기서 지키는 것은
+      // "축 하나만 상위 액티브를 해금한다"는 배분 성격이지, 더 이상 캡스톤 칸의 값이 아니다.
+      expect(perTree[0], `${def.slug} 공격 배분`).toBeGreaterThanOrEqual(def.activeHiGate);
+      expect(perTree[1], `${def.slug} 방어 배분`).toBeLessThan(def.activeHiGate);
+      expect(perTree[2], `${def.slug} 유틸 배분`).toBeLessThan(def.activeHiGate);
     }
   });
 
