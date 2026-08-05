@@ -2582,7 +2582,23 @@ function autoAttack(state: WorldState, player: Entity): void {
   // 입력을 `Math.trunc` 하는데 `weapon.damage` 는 소수 2자리 실수다. 산술은 그 함수와 동형
   // (정수 bp · 단일 나눗셈 · 반올림 1회)이라 정수 피해에 대해 값이 완전히 같다.
   // 미보유·비은신이면 이 블록은 한 줄도 실행되지 않아 `wDamage` 가 위 값 그대로다(해시 불변).
-  if (signatureOn(state, SIG_PHANTOM_CLOAK) && player.aux1 !== 0) {
+  //
+  // ## 침공 게이트 — `stepShipSignature` 와 **같은 조건**이어야 한다
+  // `stepShipSignature` 의 팬텀 분기는 침공(3레이어)에서 통째로 반환한다(world.ts 위쪽,
+  // `state.config.invasion3 !== undefined`) — 억제(대가)를 걸 수 없는데 배율(이득)만 남으면
+  // 침공에서 팬텀이 공짜로 강해지기 때문이다. 그런데 **액티브는 침공에서도 발동한다**
+  // (`buildRunConfig` 가 `activeSlots` 를 무조건 스탬프한다 — runConfig.ts:247-254,303).
+  // 즉 `as_phantom_disrupt_hi` 의 SUSTAIN 이 매 틱 `aux1 = 1` 을 세우므로, 이 소진 지점에
+  // 게이트가 없으면 **침공에서 버프 지속 내내 전 발사가 2.5배**가 된다 — 시그니처를 접어
+  // 막으려던 바로 그 순이득이 액티브 경로로 되살아난다. 시그니처를 접는 조건과 배율을
+  // 싣는 조건이 갈리면 안 되므로 여기에도 같은 술어를 건다.
+  // (ADR-0049 구현 레인 선결 E2. 이 게이트로 침공에서 `aux1` 이 소진되지 않고 남으므로
+  //  `invasionHash` 골든이 함께 갈린다 — 재생성·EF 재배포와 한 커밋이다.)
+  if (
+    signatureOn(state, SIG_PHANTOM_CLOAK) &&
+    player.aux1 !== 0 &&
+    state.config.invasion3 === undefined
+  ) {
     wDamage = Math.round((wDamage * CLOAK_BREAK_BP) / 10000);
     // 사연 관측(비-해시): 은신 해제 첫 타가 실제로 발동한 이 지점에서만 센다. 결정론 무영향 —
     // hashWorld 가 접지 않는 순수 메타.
