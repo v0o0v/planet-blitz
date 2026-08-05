@@ -1068,6 +1068,18 @@ export interface WorldState {
    * append-only 규율: 신규 필드는 항상 이 아래에만 추가.
    */
   commissionRuntime?: CommissionRuntime;
+  // --- 액티브 조율 포인트 2개(E7 · ADR-0049 선결) -----------------------------------------
+  // ⚠️ **`config.skillInvest` 를 대신한다 — 그것을 건드리지 않는다.** ADR-0049 flat 재편
+  // 전에는 파워업 24·25(`active-tune-1/2`)가 계열 base 첫 칸에 `+2` 를 직접 더했다(옛
+  // `bumpActiveTree`). 구 트리는 "계열 합만 읽힌다"가 성립해 어느 칸이든 무해했지만, 재편 후
+  // 칸마다 다른 메커닉이라 **그 칸 스킬이 포인트 0인데 해금되는** 결함이 됐다(해금은 포인트로만
+  // — ADR-0049 위반, 트레이드형 스킬 배타도 우회). 그래서 투자 벡터는 그대로 두고 슬롯별
+  // 별도 정수로 옮긴다. 액티브 위력·쿨다운은 계열 **합**만 읽으므로(`investedInTree`) 소비
+  // 지점에서 이 값을 더해서만 쓴다 — 해금(`isActiveUnlocked`)은 여전히 `skillInvest` 만 본다.
+  /** 슬롯 1 액티브의 조율 누적(파워업 24 `active-tune-1`). `bumpActiveTree` 만 쓴다. */
+  activeTune0: number;
+  /** 슬롯 2 액티브의 조율 누적(파워업 25 `active-tune-2`). `bumpActiveTree` 만 쓴다. */
+  activeTune1: number;
 }
 
 /**
@@ -1326,6 +1338,10 @@ export function createWorld(
     activeCd1: 0,
     activeBuff0: 0,
     activeBuff1: 0,
+    // 액티브 조율 포인트 2개(E7). 0 초기화 = 파워업 24/25 를 못 먹은 런은 끝까지 0 →
+    // hashWorld 꼬리 폴드 미실행(바이트 불변).
+    activeTune0: 0,
+    activeTune1: 0,
     // 탄-벽 broad-phase 는 침공 3레이어에서만 쓴다. PvE 는 null → 기존 직접 스윕 그대로라
     // 해시가 바이트 불변이다(회랑 벽이 '활성 벽 ≤~19' 전제를 깨는 것은 침공 경로뿐).
     wallIndex: invasion3Runtime !== undefined ? new InvasionWallIndex() : null,

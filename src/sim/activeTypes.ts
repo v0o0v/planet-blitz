@@ -26,7 +26,7 @@ import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
 import { spawnBullet } from './entities.js';
 import { slideCircleWalls } from './los.js';
-import { activePowerCenti, investedInTree } from '../../data/ships/actives/index.js';
+import { activePowerCenti, investedInTree, wireIdOf } from '../../data/ships/actives/index.js';
 import type { ActiveSkillDef } from '../../data/ships/actives/types.js';
 
 /** 발동 효과. **부수효과만**(반환값 없음). */
@@ -55,9 +55,29 @@ export type ActiveExpireTable = Readonly<Record<string, ActiveExpire>>;
 //   strike → 투사체 개수 증가 · dash → 좌표 변화 · buff → 잔여 틱 양수
 // ---------------------------------------------------------------------------
 
-/** 그 스킬의 실효 위력 배율(centi 정수). `skillInvest` 파생이라 별도 저장이 없다. */
+/**
+ * `def` 가 장착된 슬롯(0/1)의 조율 누적(`WorldState.activeTune0/1`, E7). 미장착이면 0.
+ *
+ * ⚠️ **왜 슬롯을 인자로 안 받는가.** 이 파일 헤더의 0c 계약 1번이 핸들러/엔진이 공유하는
+ * `powerCentiOf(state, def)` 시그니처를 동결한다 — 바꾸면 `src/sim/activeHandlers/*.ts` 7개
+ * 전 호출부가 갈린다. 그래서 `slot` 을 직접 받는 대신 `config.activeSlots` 에서 `def` 의
+ * wire id 를 역탐색한다. 같은 스킬이 두 슬롯에 동시에 있을 수는 없지만(장착 규칙), 있어도
+ * **첫 번째(슬롯 0)** 를 쓰기로 고정해 결정론을 지킨다.
+ */
+function tuneSlotOf(state: WorldState, def: ActiveSkillDef): number {
+  const slots = state.config.activeSlots;
+  if (slots === undefined) return 0;
+  const wire = wireIdOf(def.id);
+  const idx = slots.indexOf(wire);
+  if (idx === 0) return state.activeTune0;
+  if (idx === 1) return state.activeTune1;
+  return 0;
+}
+
+/** 그 스킬의 실효 위력 배율(centi 정수). `skillInvest` + 조율(E7) 파생이라 별도 저장이 없다. */
 export function powerCentiOf(state: WorldState, def: ActiveSkillDef): number {
-  return activePowerCenti(def, investedInTree(state.config.skillInvest ?? [], def));
+  const invested = investedInTree(state.config.skillInvest ?? [], def) + tuneSlotOf(state, def);
+  return activePowerCenti(def, invested);
 }
 
 /** centi 정수 배율 적용(정수 유지 — 부동소수는 결정론 위험). */

@@ -79,6 +79,13 @@ export const WORLD_CARRY = [
   'activeCd1',
   'activeBuff0',
   'activeBuff1',
+  // --- 액티브 조율 포인트 2개(E7 · ADR-0049 선결): 파워업 24/25 누적도 런 단위 자원이다 ---
+  // 옛 `skillInvest` 직접 변형 방식은 config 승계로 자연히 이월됐다(구간마다 `config` 를
+  // 갱신·전달). 지금은 `skillInvest` 밖으로 분리했으므로 **명시적으로 승계하지 않으면 구간
+  // 전환마다 조율이 0으로 리셋**된다 — 리셋하면 N구간 = N번 재수집이 필요해 사실상 삭제와
+  // 같다. `activeCd0/1` 과 같은 그룹으로 둔다.
+  'activeTune0',
+  'activeTune1',
   // --- 사연 관측 카운터 6개(비-해시 메타. 런 전체 누적이라야 정산 델타가 맞는다) ---
   'hitsTaken',
   'overchargeKills',

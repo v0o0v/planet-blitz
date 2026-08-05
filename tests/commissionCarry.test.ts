@@ -73,6 +73,9 @@ const EXPECTED_WORLD_CARRY: readonly string[] = [
   'activeCd1',
   'activeBuff0',
   'activeBuff1',
+  // 조율 포인트 2개(E7 · ADR-0049 선결): 파워업 24/25 누적도 런 단위 자원이다.
+  'activeTune0',
+  'activeTune1',
   'hitsTaken',
   'overchargeKills',
   'cloakBreaks',
@@ -145,9 +148,10 @@ describe('① 전수 대조 — 분류 배열이 필드 전부를 덮는다', ()
   it('배열 길이 합이 실제 필드 수와 같다 (WorldState 62 · Entity 25)', () => {
     // 숫자를 박아 두는 이유: 필드가 늘었는데 분류도 같이 늘면 위 대조는 통과하지만, 그때
     // **분류 판단이 실제로 있었는지**는 이 숫자가 바뀌는 것으로만 드러난다.
-    // 61 → 62: `commissionRuntime` 신설(의뢰 구간 전환 코어 2단계). 이 숫자가 실제로 이 레인에서
-    // 컴파일과 테스트를 동시에 깨뜨렸고, 그 강제가 곧 분류가 판단됐다는 물증이다.
-    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(62);
+    // 61 → 62: `commissionRuntime` 신설(의뢰 구간 전환 코어 2단계). 62 → 64: `activeTune0/1`
+    // 신설(E7 · ADR-0049 선결). 이 숫자가 실제로 이 레인에서 컴파일과 테스트를 동시에
+    // 깨뜨렸고, 그 강제가 곧 분류가 판단됐다는 물증이다.
+    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(64);
     expect(ENTITY_CARRY.length + ENTITY_RESET_ZERO.length + ENTITY_FRESH.length).toBe(25);
   });
 });
