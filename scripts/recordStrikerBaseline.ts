@@ -2,16 +2,25 @@
  * M8-L0 — 스트라이커(기존 단일 기체) 해시 골든 녹화기.
  *
  * ## 왜 필요한가
- * M8(기체 챔피언화)은 `data/skills.ts` 인덱스에 걸린 **삼중 해시 계약**을 건드린다:
+ * M8(기체 챔피언화)은 flat `skillInvest` 벡터에 걸린 **삼중 해시 계약**을 건드린다:
  *   (1) 직접 폴드   — `src/sim/replay.ts` 가 `skillInvest` 를 길이 프리픽스 + u32 로 접는다
  *   (2) 파생 스탯   — `src/items/loadout.ts` → `cfg.loadout` → replay 폴드
- *   (3) sim RNG 슬라이스 — `src/sim/powerups.ts` 의 `investedInTree()` 가 트리 블록을
+ *   (3) sim RNG 슬라이스 — `src/sim/powerups.ts` 의 `investedInAffinity()` 가 축 블록을
  *       인덱스 범위로 잘라 파워업 가중을 만들고, `drawPowerupChoices` 가 그 가중으로
  *       **powerupRng 를 소비**한다
  *
  * (3) 이 가장 위험하다 — 해시 폴드 레이아웃을 완벽히 보존해도 슬라이스 레이아웃이 한 칸만
  * 밀리면 **레벨업 틱부터 RNG 스트림이 갈린다.** 그래서 이 녹화기는 per-tick 해시뿐 아니라
  * **`drawPowerupChoices` 가 실제로 뱉은 인덱스 시퀀스**까지 통째로 굳힌다.
+ *
+ * ## ADR-0049 갱신 (스킬 전면 재구축)
+ * flat 레이아웃이 `[base 0..59][캡스톤 60..62]`(63칸)에서 `[축0 0..9][축1 10..19]
+ * [축2 20..29]`(30칸, 캡스톤 없음)로 바뀌면서, 스트라이커 전용 레거시 API
+ * (`data/skills.ts` 의 `SKILLS`·`SKILL_TREES`·`SKILL_NODE_COUNT`·`CAPSTONE_GATE`·
+ * `capstoneIndex`·`treeRange`)를 걷어내고 신규 레지스트리(`data/ships/index.ts`, typeId 0 =
+ * 스트라이커)로 갈았다. 캡스톤 빌드 3종은 **축 몰빵** 빌드 3종으로 대체한다 —
+ * 캡스톤 개념 자체가 폐기됐기 때문이다(`data/ships/types.ts` §flat 벡터 레이아웃 계약).
+ * 골든 값 자체의 재생성은 이 커밋의 범위 밖이다(`.omc/handoffs/skill-rebuild-commit2.md`).
  *
  * ## 이 파일이 절대 하지 않는 것
  * 프로덕션 코드를 한 줄도 건드리지 않는다. 순수 관찰자다.
@@ -44,14 +53,13 @@ import { standardEquipped } from '../src/bench/standardBuild.js';
 import { SeededRng } from '../src/sim/rng.js';
 import { atan2, length } from '../src/sim/math.js';
 import {
-  SKILLS,
-  SKILL_TREES,
-  SKILL_NODE_COUNT,
-  CAPSTONE_GATE,
-  capstoneIndex,
-  treeRange,
-} from '../data/skills.js';
-import type { SkillTree } from '../data/skills.js';
+  shipTypeDef,
+  zeroSkillInvest,
+  flattenShipNodes,
+  shipTreeRange,
+  shipNodeCount,
+  DEFAULT_SHIP_TYPE,
+} from '../data/ships/index.js';
 
 /** 골든 픽스처 경로(테스트가 읽는 정본). */
 export const BASELINE_FIXTURE_PATH = fileURLToPath(
@@ -79,7 +87,7 @@ export const BASELINE_FORMAT = 1;
 /**
  * 골든 녹화에 실리는 표준 장비의 **밴드 1 레벨**({@link gearedBaselineConfig}).
  * 밴드 1 세트는 레어 8칸·유니크 0 이라 장비가 `uniqueMask` 에 비트를 더하지 않는다 —
- * 그 성질이 이 골든의 캐프스톤 단언을 그대로 살려 둔다(그 함수 주석 참조).
+ * 그 성질이 이 골든의 `uniqueMask` 를 예측 가능하게 남긴다(그 함수 주석 참조).
  */
 export const STANDARD_GEAR_LEVEL = 5;
 
@@ -87,23 +95,29 @@ export const STANDARD_GEAR_LEVEL = 5;
 const DURABLE = 100_000_000;
 
 // ---------------------------------------------------------------------------
-// 스킬 벡터 조립 — data/skills.ts 의 export 만 읽는다(리터럴 복사 금지).
+// 스킬 벡터 조립 — data/ships/index.ts(typeId 0 = 스트라이커)의 export 만 읽는다
+// (리터럴 복사 금지, ADR-0049).
 // ---------------------------------------------------------------------------
 
+const STRIKER_TYPE_ID = DEFAULT_SHIP_TYPE;
+
 function zeroInvest(): number[] {
-  return new Array<number>(SKILL_NODE_COUNT).fill(0);
+  return zeroSkillInvest(STRIKER_TYPE_ID);
 }
 
 /**
- * 한 계열의 base 노드에 인덱스 오름차순(=티어 오름차순)으로 `points` 를 채운다.
- * 노드별 상한(`maxPoints`)을 지키므로 연구소가 허용하는 형태의 벡터만 나온다.
- * 반환값은 실제로 투입된 포인트 수(용량 초과분은 버려진다).
+ * 한 축(0=firepower/offense, 1=survival/defense, 2=mobility/utility)의 스킬에 인덱스
+ * 오름차순으로 `points` 를 채운다. 노드별 상한(`maxPoints` = `SKILL_MAX_LEVEL` 20)을 지키므로
+ * 연구소가 허용하는 형태의 벡터만 나온다. 반환값은 실제로 투입된 포인트 수(용량 초과분은
+ * 버려진다).
  */
-function investTree(v: number[], tree: SkillTree, points: number): number {
-  const { start, end } = treeRange(tree);
+function investAxis(v: number[], axis: number, points: number): number {
+  const def = shipTypeDef(STRIKER_TYPE_ID);
+  const nodes = flattenShipNodes(def);
+  const { start, end } = shipTreeRange(def, axis);
   let left = points;
   for (let i = start; i < end && left > 0; i++) {
-    const node = SKILLS[i];
+    const node = nodes[i];
     if (node === undefined) continue;
     const put = Math.min(node.maxPoints, left);
     v[i] = (v[i] ?? 0) + put;
@@ -112,38 +126,32 @@ function investTree(v: number[], tree: SkillTree, points: number): number {
   return points - left;
 }
 
-/** 게이트(CAPSTONE_GATE) 를 넘긴 계열의 캡스톤에 1포인트 — sim 캡스톤 비트가 실제로 켜진다. */
-function takeCapstone(v: number[], tree: SkillTree): void {
-  v[capstoneIndex(tree)] = 1;
-}
-
-/** 계열 캡스톤 빌드: 게이트+4 포인트를 그 계열에 몰아넣고 캡스톤을 찍는다. */
-function capstoneBuild(tree: SkillTree): number[] {
+/** 한 축에 `points` 포인트를 몰아넣은 빌드(ADR-0049 — 캡스톤 폐기로 "계열 캡스톤" 빌드를 대체). */
+function axisBuild(axis: number, points: number): number[] {
   const v = zeroInvest();
-  investTree(v, tree, CAPSTONE_GATE + 4);
-  takeCapstone(v, tree);
+  investAxis(v, axis, points);
   return v;
 }
 
-/** 3계열 혼합(캡스톤 없음) — 어느 계열도 게이트를 못 넘는 분산 빌드. */
+/** 3축 혼합 — 세 축 모두 일부만 투자하는 분산 빌드. */
 function mixedBuild(): number[] {
   const v = zeroInvest();
-  investTree(v, 'firepower', 22);
-  investTree(v, 'survival', 20);
-  investTree(v, 'mobility', 18);
+  investAxis(v, 0, 22);
+  investAxis(v, 1, 20);
+  investAxis(v, 2, 18);
   return v;
 }
 
 /**
- * 만렙 근접 투자(≈99 포인트 + 캡스톤 1) — 화력을 캡스톤까지 밀고 나머지를 생존·기동에
- * 배분한 실전형 상한 빌드. 세 계열 슬라이스가 전부 0이 아니어서 파워업 가중이 최대로 갈린다.
+ * 만렙 근접 투자(≈99 포인트, 구 리스펙 상한과 동일) — 화력 축에 가장 많이 밀고 나머지를
+ * 생존·기동 축에 배분한 실전형 상한 빌드. 세 축 슬라이스가 전부 0이 아니어서 파워업 가중이
+ * 최대로 갈린다.
  */
 function nearMaxBuild(): number[] {
   const v = zeroInvest();
-  investTree(v, 'firepower', CAPSTONE_GATE);
-  takeCapstone(v, 'firepower');
-  investTree(v, 'survival', 35);
-  investTree(v, 'mobility', 24);
+  investAxis(v, 0, 40);
+  investAxis(v, 1, 35);
+  investAxis(v, 2, 24);
   return v;
 }
 
@@ -156,10 +164,10 @@ export interface BuildSpec {
 
 export const BASELINE_BUILDS: readonly BuildSpec[] = [
   { id: 'no-invest', label: '① 무투자', invest: zeroInvest() },
-  { id: 'capstone-firepower', label: '② 화력 캡스톤', invest: capstoneBuild('firepower') },
-  { id: 'capstone-survival', label: '③ 생존 캡스톤', invest: capstoneBuild('survival') },
-  { id: 'capstone-mobility', label: '④ 기동 캡스톤', invest: capstoneBuild('mobility') },
-  { id: 'mixed-three', label: '⑤ 3계열 혼합', invest: mixedBuild() },
+  { id: 'axis-firepower', label: '② 축0(화력) 몰빵', invest: axisBuild(0, 44) },
+  { id: 'axis-survival', label: '③ 축1(생존) 몰빵', invest: axisBuild(1, 44) },
+  { id: 'axis-mobility', label: '④ 축2(기동) 몰빵', invest: axisBuild(2, 44) },
+  { id: 'mixed-three', label: '⑤ 3축 혼합', invest: mixedBuild() },
   { id: 'near-max', label: '⑥ 만렙 근접', invest: nearMaxBuild() },
 ];
 
@@ -197,7 +205,9 @@ export const BASELINE_PLANETS: readonly PlanetSpec[] = [
  */
 export function baselineConfig(planet: PlanetSpec, invest: readonly number[]): WorldConfig {
   const skillInvest = invest.slice();
-  const { loadout } = computeLoadoutStats([], skillInvest, 0);
+  // ADR-0049: 스킬은 더 이상 파생 스탯을 만들지 않는다 — `computeLoadoutStats` 는 skillInvest 를
+  // 받지 않는다(sim 이 `WorldConfig.skillInvest` 를 직접 읽는다).
+  const { loadout } = computeLoadoutStats([], 0);
   return {
     ...DEFAULT_CONFIG,
     planet: planet.planet,
@@ -213,7 +223,7 @@ export function baselineConfig(planet: PlanetSpec, invest: readonly number[]): W
  *
  * ## 왜 장비를 싣는가 (2026-07-27 밸런스 패스)
  * 런 풀 커브 `10+6L` → **`10+66L`** 와 적 축 상향이 겹치면서 **무장비 저투자 런이 골든으로서
- * 정보를 잃었다** — 재녹화 실측에서 `berdan-engage/capstone-survival` 은 9,000틱(150초)을 돌려도
+ * 정보를 잃었다** — 재녹화 실측에서 `berdan-engage/axis-survival` 은 9,000틱(150초)을 돌려도
  * **레벨업 0회 · 처치 7** 이고, 12런 중 레벨업 6회 이상이 **0런** 이었다. 파워업 추첨이 거의
  * 안 나면 이 골든의 목적(트리 슬라이스 가중 회귀 탐지)이 공회전한다.
  * **틱만 늘려서는 안 풀렸다**: 3,000 / 6,000 / 9,000 / 12,000틱에서 활발 런이 0 / 3 / 5 / **5** 로
@@ -231,11 +241,16 @@ export function baselineConfig(planet: PlanetSpec, invest: readonly number[]): W
  *
  * ## ⚠️ 장비 레벨은 단계가 아니라 **밴드 1 고정**이다 ({@link STANDARD_GEAR_LEVEL})
  * 그래야 장비가 `uniqueMask` 를 오염하지 않는다 — 밴드 1 표준 세트는 **레어 8칸**이고
- * 유니크가 없다(ADR-0035 장비 산술). 그래서 '캐프스톤 빌드가 실제로 uniqueMask 비트를 켠다'
- * 단언이 **그대로 산다** — 마스크에 드는 비트가 여전히 투자 기원뿐이다(실측: 무투자·혼합
- * 런은 mask 0, 캐프스톤 런은 각각 32768 / 65536 / 131072). 단계별 레벨(5 × stage)로 실으면
- * 베르단(단계 11 → Lv55)이 유니크 2칸을 받아 무투자 런의 mask 가 288 이 된다(실측).
- * 밴드 1 장비만으로도 활력 목표는 충분히 달성된다(11/12 런 레벨업 6회 이상 · 전 런 처치 240+).
+ * 유니크가 없다(ADR-0035 장비 산술).
+ *
+ * ⚠️ **ADR-0049 갱신**: 구 버전은 여기서 "계열 캡스톤 빌드가 실제로 `uniqueMask` 비트를
+ * 켠다"(무투자·혼합 런은 mask 0, 캡스톤 런은 각각 32768/65536/131072)를 단언했다. 캡스톤이
+ * 폐기되면서 그 경로 자체가 사라졌다 — 스킬 투자는 이제 `uniqueMask` 에 전혀 기여하지 않고
+ * (`src/items/loadout.ts` — 스킬은 sim 메커닉일 뿐 파생 스탯이 아니다), `BASELINE_BUILDS` 전량이
+ * 같은 장비 규칙 아래 **동일한 mask**(장비 + 시그니처 비트만)를 가져야 정상이다. 단계별
+ * 레벨(5 × stage)로 실으면 베르단(단계 11 → Lv55)이 유니크 2칸을 받아 mask 가 오르는 것은
+ * 여전하다(그건 장비 축이라 불변) — 밴드 1 장비만으로도 활력 목표는 충분히 달성된다
+ * (11/12 런 레벨업 6회 이상 · 전 런 처치 240+).
  */
 export function gearedBaselineConfig(
   planet: PlanetSpec,
@@ -247,7 +262,8 @@ export function gearedBaselineConfig(
   const items = EQUIP_SLOTS.map((slot) => equipped[slot]).filter(
     (it): it is NonNullable<typeof it> => it !== undefined && it !== null,
   );
-  const { loadout } = computeLoadoutStats(items, skillInvest, 0);
+  // ADR-0049: skillInvest 는 더 이상 computeLoadoutStats 인자가 아니다(위 baselineConfig 참조).
+  const { loadout } = computeLoadoutStats(items, 0);
   return { ...baselineConfig(planet, invest), loadout, skillInvest };
 }
 
@@ -340,7 +356,7 @@ export interface BaselineRun {
   readonly stage: number;
   readonly seed: number;
   readonly ticks: number;
-  /** 이 런의 스킬 투자 벡터(길이 SKILL_NODE_COUNT). */
+  /** 이 런의 스킬 투자 벡터(길이 = `shipNodeCount(shipTypeDef(0))` = 30, ADR-0049). */
   readonly skillInvest: readonly number[];
   /** per-tick 해시 전량(길이 === ticks). 요약이 아니라 원소 단위 골든이다. */
   readonly hashes: readonly number[];
@@ -440,7 +456,7 @@ export function buildBaseline(): Baseline {
       format: BASELINE_FORMAT,
       generatedBy: 'scripts/recordStrikerBaseline.ts',
       ticks: BASELINE_TICKS,
-      skillNodeCount: SKILL_NODE_COUNT,
+      skillNodeCount: shipNodeCount(shipTypeDef(STRIKER_TYPE_ID)),
       runCount: runs.length,
     },
     runs,
@@ -473,10 +489,11 @@ if (nodeEnv?.RECORD_STRIKER_BASELINE === '1') {
   const baseline = buildBaseline();
   const text = serializeBaseline(baseline);
   writeFileSync(BASELINE_FIXTURE_PATH, text, 'utf8');
-  const trees = SKILL_TREES.join('/');
+  const strikerDef = shipTypeDef(STRIKER_TYPE_ID);
+  const trees = strikerDef.trees.map((t) => t.slug).join('/');
   const lines = [
     `[recordStrikerBaseline] ${baseline.runs.length} runs × ${BASELINE_TICKS} ticks ` +
-      `(trees=${trees}, nodes=${SKILL_NODE_COUNT}) → ${BASELINE_FIXTURE_PATH} (${text.length} bytes)`,
+      `(trees=${trees}, nodes=${shipNodeCount(strikerDef)}) → ${BASELINE_FIXTURE_PATH} (${text.length} bytes)`,
   ];
   for (const r of baseline.runs) {
     lines.push(

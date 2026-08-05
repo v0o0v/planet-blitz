@@ -167,7 +167,6 @@ export function commissionSealedLoadout(profile: Profile, rules?: CommissionEqui
   const typeId = normalizeShipTypeId(ship.typeId);
   const { loadout } = computeLoadoutStats(
     equippedItems(profile, rules),
-    ship.skillInvest.slice(),
     shipBonusBp(profile.lineage),
     typeId,
   );
@@ -230,7 +229,6 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
     // 의뢰 제약 계약(장비축)은 **여기서** 걸러야 한다 — 이 목록이 `loadout` 이 되고, 그 `loadout`
     // 이 리플레이 스냅샷에 실려 서버 EF 재실행과 정합이 된다(`equipBanned` 주석).
     pilot !== undefined ? pilot.equipped : equippedItems(profile, opts.commission?.constraints?.equipRules),
-    skillInvest,
     shipBonusBp(profile.lineage),
     typeId,
   );

@@ -20,14 +20,13 @@
 import { SAVE_VERSION, SLOT_KINDS, RARITY_BY_CODE } from '../items/types.js';
 import type { Item, EquipSlotId } from '../items/types.js';
 import { fillStarterEquipment } from '../items/starterKit.js';
-import type { SkillNode } from '../../data/skills.js';
-import { shipCapstoneUnlocked, chainPrereqMet } from '../items/skills.js';
 import {
   shipTypeDef,
   flattenShipNodes,
   normalizeShipTypeId,
   zeroSkillInvest as registryZeroSkillInvest,
 } from '../../data/ships/index.js';
+import type { ShipSkillDef } from '../../data/ships/index.js';
 import { activeById } from '../../data/ships/actives/index.js';
 import { ACTIVE_SLOT_COUNT } from '../../data/ships/actives/types.js';
 import type { InvasionLayers } from '../sim/invasion/types.js';
@@ -293,12 +292,12 @@ export interface KeyValueStore {
  * 레지스트리의 `normalizeShipTypeId` 를 그대로 쓴다 — 규칙을 두 벌 두지 않는다).
  * 아래 한 함수로 좁혀 둔다: 레지스트리 형태가 바뀌어도 갈아끼울 자리가 여기 하나다.
  *
- * ⚠️ 노드 순서는 **`flattenShipNodes` 로만** 얻는다. `trees.flatMap((t) => t.nodes)` 로
- * 단순 concat 하면 안 된다 — flat 벡터의 실제 배치는 `[base 블록 전부][캡스톤 3개]` 라서
- * concat 은 인덱스를 밀어 ① 리플레이 해시 폴드 ② 파생 스탯 ③ 파워업 RNG 슬라이스의
- * 삼중 계약을 조용히 깬다(`data/ships/types.ts` §flat 벡터 레이아웃 계약).
+ * ⚠️ 노드 순서는 **`flattenShipNodes` 로만** 얻는다(ADR-0049: `[축0 0..9][축1 10..19]
+ * [축2 20..29]`, 30칸). `trees.flatMap((t) => t.nodes)` 로 단순 concat 해도 순서는 같지만,
+ * `flattenShipNodes` 는 축당 스킬 수가 어긋난 저작 실수를 조립 시점에 던져서 잡는다
+ * (`data/ships/types.ts` §flat 벡터 레이아웃 계약).
  */
-function shipTypeNodes(typeId: number): readonly SkillNode[] {
+function shipTypeNodes(typeId: number): readonly ShipSkillDef[] {
   return flattenShipNodes(shipTypeDef(typeId));
 }
 
@@ -441,15 +440,12 @@ export function totalInvested(profile: Profile): number {
  * 투자는 계정이 아니라 기체에 쌓인다). No-ops (returns false) when the index is out of
  * range, the node is already maxed, or no points are banked.
  *
- * ⚠️ 노드 정의·캡스톤 게이트는 **활성 기체 타입의 것**을 쓴다(M8 통합 게이트에서 일반화).
- * 스트라이커 정본(`SKILLS`/`capstoneUnlocked`)을 쓰던 구현은 실측상 다음 3가지를 조용히
- * 깼다 — 예외도 타입 오류도 나지 않아 단위 테스트가 전부 그린이었다:
- *   ① 노드 수가 63 을 넘는 타입(hatchling=78)의 인덱스 63~77 이 **영구 투자 불가**
- *   ② `maxPoints` 가 타입별로 다른 노드에서 상한 오판정(과투자 또는 조기 차단)
- *   ③ 캡스톤 판정이 스트라이커 flat 레이아웃(60~62)·게이트 폭(20/40)으로 이뤄져,
- *      다른 레이아웃의 타입은 **base 노드가 캡스톤으로 오인**되고 진짜 캡스톤은 투자 불가
- * 그래서 노드는 `flattenShipNodes(shipTypeDef(ship.typeId))`, 게이트는
- * `shipCapstoneUnlocked(invest, def, treeIndex)` 로만 얻는다.
+ * ⚠️ 노드 정의는 **활성 기체 타입의 것**을 쓴다(`flattenShipNodes(shipTypeDef(ship.typeId))`).
+ * 상한은 `node.maxPoints`(= `SKILL_MAX_LEVEL` 20, 전 기체·전 축 동일).
+ *
+ * ADR-0049 가 캡스톤 게이트와 사슬 선행 조건(ADR-0047)을 폐기했다 — 축당 10스킬은 처음부터
+ * 전부 투자 가능하고, 상위 액티브 해금은 별도 축 누적 투자 게이트(`activeById` 소비 경로)가
+ * 담당한다. 이 함수는 더 이상 게이트를 판정하지 않는다.
  */
 export function investSkill(profile: Profile, index: number): boolean {
   if (profile.skillPoints <= 0) return false;
@@ -460,17 +456,6 @@ export function investSkill(profile: Profile, index: number): boolean {
   const invest = ship.skillInvest;
   const cur = invest[index] ?? 0;
   if (cur >= node.maxPoints) return false;
-  // 최상위 캡스톤(GDD §4)은 해당 계열 base 게이트(`def.capstoneGate`)를 통과해야 투자 가능.
-  // flat 레이아웃이 `[base 블록 전부][캡스톤 trees.length 개]` 이므로 계열 인덱스는
-  // 캡스톤 블록 시작점으로부터의 오프셋이다.
-  if (node.capstone === true) {
-    const treeIndex = index - def.nodesPerTree * def.trees.length;
-    if (!shipCapstoneUnlocked(invest, def, treeIndex)) return false;
-  }
-  // 사슬 선행 조건(ADR-0047): 같은 계열·같은 스탯의 더 낮은 티어가 전부 max 여야 한다.
-  // 캡스톤은 사슬 밖이라 `chainPrereqMet` 이 항상 true 를 낸다(위 게이트가 유일한 조건).
-  // 여기가 **유일한 관문**이다 — 파생(`computeSkillStats`)·sim·서버는 이 규칙을 모른다.
-  if (!chainPrereqMet(invest, def, index)) return false;
   invest[index] = cur + 1;
   profile.skillPoints -= 1;
   return true;

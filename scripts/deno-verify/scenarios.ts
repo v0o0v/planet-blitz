@@ -37,7 +37,6 @@ import {
   UQ_GREED_HEART,
 } from '../../src/sim/uniques.js';
 import { atan2, length } from '../../src/sim/math.js';
-import { SKILL_NODE_COUNT } from '../../data/skills.js';
 import type { Rarity, ItemSource } from '../../src/items/types.js';
 
 /** rollItem 결정론을 교차 검증하기 위한 단일 롤 스펙. */
@@ -210,12 +209,20 @@ const CATALYST_RUN: WorldConfig = {
   catalysts: [0, 1, 5, 15, 25],
 };
 
-/** 몇 노드에만 투자한 길이 SKILL_NODE_COUNT 스킬 벡터(파워업 가중·결정론 필드 자극). */
+/**
+ * 스트라이커(typeId 0)의 세 축 tier0(각 축 flat 인덱스 시작점)에만 투자한 스킬 벡터(파워업
+ * 가중·결정론 필드 자극). ADR-0049: 길이는 `zeroSkillInvest(0)`(30칸), 축 경계는
+ * `shipTreeRange` 가 준다 — 하드코딩하지 않는다.
+ */
 function sampleSkillInvest(): number[] {
-  const v = Array<number>(SKILL_NODE_COUNT).fill(0);
-  v[0] = 3; // firepower tier0
-  v[20] = 2; // survival tier0
-  v[40] = 4; // mobility tier0
+  const typeId = 0; // 스트라이커
+  const def = shipTypeDef(typeId);
+  const v = zeroSkillInvest(typeId);
+  const perAxis = [3, 2, 4]; // firepower(축0)·survival(축1)·mobility(축2) tier0
+  for (let ti = 0; ti < def.trees.length; ti++) {
+    const { start } = shipTreeRange(def, ti);
+    v[start] = perAxis[ti] ?? 0;
+  }
   return v;
 }
 
@@ -279,17 +286,21 @@ const ARKE_ENGAGE: WorldConfig = {
 // 세 가지를 동시에 자극한다:
 //   ① `WorldConfig.shipType` 조건부 해시 꼬리 폴드(`replay.ts` 최후미)
 //   ② 시그니처 비트(`uniqueMask` 18~21) → sim 의 `signatureOn` 분기와 파생 스탯
-//   ③ 스트라이커와 **길이가 다른** `skillInvest`(해츨링 78) → 길이 프리픽스 폴드와
-//      파워업 affinity 슬라이스(`nodesPerTree` 가 타입별)
+//   ③ (ADR-0049 이전) 스트라이커와 **길이가 다른** `skillInvest`(해츨링 78) → 길이 프리픽스
+//      폴드와 파워업 affinity 슬라이스. **ADR-0049 가 이 축을 걷었다** — flat 레이아웃이
+//      전 기체 30칸(`[축0 0..9][축1 10..19][축2 20..29]`)으로 통일돼 길이 차이 자체가
+//      더 이상 존재하지 않는다. 이 시나리오는 ①②를 위해 남는다(길이 축은 재설계 대상 —
+//      골든 재생성 레인 소관, `.omc/handoffs/skill-rebuild-commit2.md`).
 // 로드아웃은 리터럴이 아니라 실제 파생 함수를 태워, 클라가 쓰는 경로와 같은 값이 되게 한다.
 const HATCHLING_TYPE_ID = 4;
 
 /**
- * 타입 무관 샘플 투자 벡터 — 각 계열(tree)의 **첫 base 노드**에 `ti + 2` 를 찍는다.
+ * 타입 무관 샘플 투자 벡터 — 각 축의 **첫 스킬**에 `ti + 2` 를 찍는다.
  *
- * 길이는 `zeroSkillInvest(typeId)` 가, 계열 경계는 `shipTreeRange` 가 준다 — **길이·계열 수를
- * 하드코딩하지 않는다.** 타입마다 `nodesPerTree` 가 다르기 때문이다(해츨링 78 / 나머지 63).
- * ⑦·⑧·⑨ 가 같은 생성기를 공유하므로 ⑦ 의 벡터는 도입 전과 바이트 동일하다(같은 호출·같은 값).
+ * 길이는 `zeroSkillInvest(typeId)` 가, 축 경계는 `shipTreeRange` 가 준다 — **길이·축 수를
+ * 하드코딩하지 않는다.** ADR-0049 로 전 기체가 30칸(3축 × 10스킬) 균일이지만, 이 함수는
+ * 그 값에 의존하지 않으므로 향후 레이아웃이 다시 바뀌어도 그대로 쓸 수 있다.
+ * ⑦·⑧·⑨ 가 같은 생성기를 공유한다.
  */
 function shipSampleInvest(typeId: number): number[] {
   const def = shipTypeDef(typeId);
@@ -309,7 +320,7 @@ const HATCHLING_RUN: WorldConfig = {
   planet: 2,
   stage: 11,
   playerHp: DURABLE,
-  loadout: computeLoadoutStats([], HATCHLING_INVEST, undefined, HATCHLING_TYPE_ID).loadout,
+  loadout: computeLoadoutStats([], undefined, HATCHLING_TYPE_ID).loadout,
   skillInvest: HATCHLING_INVEST,
   shipType: HATCHLING_TYPE_ID,
 };
@@ -319,10 +330,10 @@ const HATCHLING_RUN: WorldConfig = {
 // `defense-mismatch`)로 추가한다. ⑦ 은 해츨링 하나뿐이라 **시그니처 sim 분기가 붙은 다른
 // 타입들은 서버 재실행 커버리지가 0** 이었다.
 //
-// ⚠️ 길이 축은 여기서 자극되지 않는다 — `data/ships/mallow.ts`·`data/ships/bubble.ts` 는 둘 다
-//    `nodesPerTree: NODES_PER_TREE` 라 스킬 노드 수가 **스트라이커와 같은 63** 이다. "스트라이커와
-//    길이가 다른 skillInvest" 축은 해츨링(78) 전담이며 ⑧·⑨ 는 그 축을 대신하지 못한다.
-//    ⑧·⑨ 가 새로 자극하는 것은 ①`shipType` 값 5·6 의 꼬리 폴드 ②시그니처 비트 22·23 의
+// ⚠️ 길이 축은 여기서 자극되지 않는다 — ADR-0049 이후 전 기체(`data/ships/mallow.ts`·
+//    `data/ships/bubble.ts` 포함)의 `skillInvest` 가 균일하게 30칸이라 "길이가 다른
+//    skillInvest" 축 자체가 더 이상 존재하지 않는다(⑦ 상단 주석 참조).
+//    ⑧·⑨ 가 자극하는 것은 ①`shipType` 값 5·6 의 꼬리 폴드 ②시그니처 비트 22·23 의
 //    `stepShipSignature`/`resolveCollisions` 분기(= aux0/aux1 조건부 폴드)다.
 //
 // ## 무대 선정 근거 — "얼마나 아픈가" 가 아니라 "어느 분기가 실행되는가" 로 골랐다
@@ -347,7 +358,7 @@ const MALLOW_RUN: WorldConfig = {
   planet: 2,
   stage: 1,
   playerHp: DURABLE,
-  loadout: computeLoadoutStats([], MALLOW_INVEST, undefined, MALLOW_TYPE_ID).loadout,
+  loadout: computeLoadoutStats([], undefined, MALLOW_TYPE_ID).loadout,
   skillInvest: MALLOW_INVEST,
   shipType: MALLOW_TYPE_ID,
 };
@@ -357,7 +368,7 @@ const BUBBLE_RUN: WorldConfig = {
   planet: 2,
   stage: 11,
   playerHp: DURABLE,
-  loadout: computeLoadoutStats([], BUBBLE_INVEST, undefined, BUBBLE_TYPE_ID).loadout,
+  loadout: computeLoadoutStats([], undefined, BUBBLE_TYPE_ID).loadout,
   skillInvest: BUBBLE_INVEST,
   shipType: BUBBLE_TYPE_ID,
 };
@@ -391,7 +402,7 @@ const BRUISER_RUN: WorldConfig = {
   planet: 2,
   stage: 11,
   playerHp: DURABLE,
-  loadout: computeLoadoutStats([], BRUISER_INVEST, undefined, BRUISER_TYPE_ID).loadout,
+  loadout: computeLoadoutStats([], undefined, BRUISER_TYPE_ID).loadout,
   skillInvest: BRUISER_INVEST,
   shipType: BRUISER_TYPE_ID,
 };
@@ -406,7 +417,7 @@ const BRUISER_ACTIVE_RUN: WorldConfig = {
   planet: 2,
   stage: 11,
   playerHp: DURABLE,
-  loadout: computeLoadoutStats([], BRUISER_INVEST, undefined, BRUISER_TYPE_ID).loadout,
+  loadout: computeLoadoutStats([], undefined, BRUISER_TYPE_ID).loadout,
   skillInvest: BRUISER_INVEST,
   shipType: BRUISER_TYPE_ID,
   activeSlots: [
@@ -420,7 +431,7 @@ const ARCCASTER_RUN: WorldConfig = {
   planet: 2,
   stage: 11,
   playerHp: DURABLE,
-  loadout: computeLoadoutStats([], ARCCASTER_INVEST, undefined, ARCCASTER_TYPE_ID).loadout,
+  loadout: computeLoadoutStats([], undefined, ARCCASTER_TYPE_ID).loadout,
   skillInvest: ARCCASTER_INVEST,
   shipType: ARCCASTER_TYPE_ID,
 };
@@ -430,7 +441,7 @@ const PHANTOM_RUN: WorldConfig = {
   planet: 0,
   stage: 1,
   playerHp: DURABLE,
-  loadout: computeLoadoutStats([], PHANTOM_INVEST, undefined, PHANTOM_TYPE_ID).loadout,
+  loadout: computeLoadoutStats([], undefined, PHANTOM_TYPE_ID).loadout,
   skillInvest: PHANTOM_INVEST,
   shipType: PHANTOM_TYPE_ID,
 };
@@ -542,7 +553,7 @@ export const SCENARIOS: readonly Scenario[] = [
     ],
   },
   {
-    name: '⑦ 해츨링(비스트라이커 기체) 런 — shipType 폴드 + 시그니처 + 78길이 벡터',
+    name: '⑦ 해츨링(비스트라이커 기체) 런 — shipType 폴드 + 시그니처',
     seed: 0xb10f,
     config: HATCHLING_RUN,
     checkpointInterval: 600,

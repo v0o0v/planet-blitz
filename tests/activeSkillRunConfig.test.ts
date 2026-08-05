@@ -17,7 +17,7 @@ import type { Profile } from '../src/save/profile.js';
 import { createWorld, DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { WorldConfig } from '../src/sim/world.js';
 import { POWERUPS, drawPowerupChoices } from '../src/sim/powerups.js';
-import { ALL_ACTIVES, wireIdOf } from '../data/ships/actives/index.js';
+import { ALL_ACTIVES, activeCooldownTicks, wireIdOf } from '../data/ships/actives/index.js';
 import { ACTIVE_WIRE_EMPTY } from '../data/ships/actives/types.js';
 import { SHIP_TYPES, zeroSkillInvest, shipTreeRange } from '../data/ships/index.js';
 
@@ -130,13 +130,30 @@ describe('AC-24 (양성) — 장착 슬롯에 대응하는 선택지가 실제�
     expect(drawn.includes(25)).toBe(true);
   });
 
-  it('강화 파워업이 그 액티브의 계열 투자를 올린다 (위력↑·쿨다운↓ 파생의 실물)', () => {
+  /**
+   * ⚠️ **E7(ADR-0049) 로 계약이 바뀐 자리다.** 구 버전은 "파워업이 `skillInvest` 의 계열 합을
+   * 올린다"를 관측량으로 삼았다 — 실제로 `bumpActiveTree` 가 투자 벡터를 직접 변형했기
+   * 때문이다. flat 재편 후에는 칸마다 다른 메커닉이라 그 방식이 **포인트 0인 스킬을
+   * 해금시키는 결함**이 됐고(계획 §2 E7), 강화분은 슬롯 전용 정수로 분리됐다.
+   *
+   * 그래서 관측량을 **바꾸되 의도는 유지**한다: "파워업이 실제로 그 액티브를 강화하는가"는
+   * 여전히 이 층에서 지킬 값어치가 있다. 다만 이제 그 실물은 `skillInvest` 가 아니라
+   * ①투자 벡터가 **불변**이고 ②슬롯 조율 정수가 오르고 ③그 결과 **실효 쿨다운이 실제로
+   * 줄어드는** 것이다. ③이 없으면 "정수만 오르고 아무 데도 안 쓰이는" 상태를 통과시킨다.
+   */
+  it('강화 파워업이 그 액티브를 강화한다 — 투자 벡터는 불변, 조율 정수가 오르고 쿨다운이 준다', () => {
     const def = ALL_ACTIVES[0];
     if (def === undefined) return;
     const ship = SHIP_TYPES[def.shipTypeId];
     if (ship === undefined) return;
     const invest = zeroSkillInvest(def.shipTypeId);
-    for (let i = 0; i < invest.length; i++) invest[i] = 50;
+    // 쿨다운 산식은 `floor(inv/4)*2` 라 **4의 배수 경계를 넘겨야** 값이 움직인다. 조율 +2 가
+    // 경계를 넘도록 축 합을 4로 나눈 나머지 2 에 맞춘다(10칸 × 2 = 20 에서 한 칸만 +2 → 22).
+    // 합이 20 이면 22 로 올라도 `floor` 값이 그대로라 ③이 거짓이 되고, 그건 산식 탓이지
+    // 배선 탓이 아니다 — 표본을 경계에 세우는 것이 이 테스트의 전제다.
+    const { start, end } = shipTreeRange(ship, def.treeIndex);
+    for (let i = start; i < end; i++) invest[i] = 2;
+    invest[start] = 4;
     const cfg: WorldConfig = {
       ...DEFAULT_CONFIG,
       shipType: def.shipTypeId,
@@ -144,15 +161,26 @@ describe('AC-24 (양성) — 장착 슬롯에 대응하는 선택지가 실제�
       activeSlots: [wireIdOf(def.id), ACTIVE_WIRE_EMPTY],
     };
     const s = createWorld(0x404, cfg);
-    const { start, end } = shipTreeRange(ship, def.treeIndex);
-    const sum = (v: readonly number[]): number => {
+    const investedInAxis = (v: readonly number[]): number => {
       let t = 0;
       for (let i = start; i < end; i++) t += v[i] ?? 0;
       return t;
     };
-    const before = sum(s.config.skillInvest ?? []);
+    const beforeInvest = investedInAxis(s.config.skillInvest ?? []);
+    const beforeCd = activeCooldownTicks(def, beforeInvest + s.activeTune0);
+
     POWERUPS[24]?.apply(s);
-    const after = sum(s.config.skillInvest ?? []);
-    expect(after).toBeGreaterThan(before);
+
+    // ① 투자 벡터 불변 — E7 의 본체다(여기가 움직이면 포인트 0 스킬이 해금된다).
+    expect(
+      investedInAxis(s.config.skillInvest ?? []),
+      'E7 위반 — 파워업이 skillInvest 를 다시 변형하고 있다',
+    ).toBe(beforeInvest);
+    // ② 슬롯 조율 정수가 올랐다(슬롯 1 = activeTune0).
+    expect(s.activeTune0).toBeGreaterThan(0);
+    expect(s.activeTune1, '반대 슬롯까지 오르면 안 된다').toBe(0);
+    // ③ 그 결과 실효 쿨다운이 실제로 줄었다 — 정수만 오르고 안 쓰이는 상태를 배제한다.
+    expect(activeCooldownTicks(def, investedInAxis(s.config.skillInvest ?? []) + s.activeTune0))
+      .toBeLessThan(beforeCd);
   });
 });
