@@ -193,7 +193,7 @@ import type { Replay } from './sim/replay.js';
 // M5 Phase C: 사운드(C1)·정산 완성판(C2)·로컬라이즈(C3). 전부 render/UI 레이어(sim 무수정).
 import { GameAudio } from './render/audio.js';
 import { RunSoundObserver, DropObserver } from './render/soundScape.js';
-import { BossWarnLoop } from './render/bossWarn.js';
+import { BossWarnLoop, bossWarnSuppressed } from './render/bossWarn.js';
 import { MusicDirector, type MusicZone } from './render/musicDirector.js';
 import { setUiAudio } from './render/uiSound.js';
 import { SettingsScreen } from './ui/pixi/settingsPanel.js';
@@ -2343,8 +2343,21 @@ async function main(): Promise<void> {
       const bossEngaged =
         bossEnt !== undefined && (w.config.planetMode !== PLANET_MODE.chase || bossEnt.aux0 === 1);
       // 보스 예고 루프(사용자 지시 2026-08-05) — 다가올수록 빨라지고, 열리는 순간 끊긴다.
-      // 관전은 SFX 를 통째로 억제하므로 같은 플래그를 넘긴다.
-      bossWarn.tick(eta?.frac, bossEngaged, frame, spectating);
+      // ⚠️ 억제 조건은 `bossWarnSuppressed` 가 소유한다. 이 블록은 `w !== null` 하나만 두르고
+      // 있어 **런이 끝난 뒤 결과 화면에서도 계속 돈다** — 보스를 잡으면 frac 이 1 로 남고
+      // bossEngaged 는 거짓이 되므로 그대로 두면 최고 속도로 영원히 운다(사용자 신고 2026-08-05).
+      // `runOver` 는 여기서 다시 읽는다 — 위쪽 상수는 스텝 **전**의 월드에서 뽑은 값이라
+      // 이번 프레임에 끝난 런을 놓친다(§6-2 재조회 규약).
+      bossWarn.tick(
+        eta?.frac,
+        bossEngaged,
+        frame,
+        bossWarnSuppressed({
+          runOver: w.gameOver || w.victory,
+          onRunScreen: currentScreenName === 'run',
+          spectating,
+        }),
+      );
       soundObserver.observe(
         {
           kills: w.kills,
