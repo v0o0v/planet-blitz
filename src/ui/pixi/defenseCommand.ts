@@ -98,13 +98,8 @@ import { COLOR, UI_FONT, TEXT_SHADOW, RARITY_COLOR_NUM } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { PixiButton } from './button.js';
 import { stripEmoji } from './text.js';
-import {
-  makeScrollArea,
-  rowBounds,
-  clampToRows,
-  SCROLL_THUMB_W,
-  SCROLL_THUMB_PAD,
-} from './scrollArea.js';
+import { makeScrollArea, rowBounds, clampToRows } from './scrollArea.js';
+import { HELP_MODAL, renderHelpSections, helpTitleKey, type HelpSpec } from './helpModal.js';
 import { attachRowClick, stopRowPropagation } from './listRow.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
@@ -916,60 +911,16 @@ const CONFIRM_BTN_H = 56;
 const CONFIRM_BLOCK_H = CONFIRM_BODY_H + 20 + CONFIRM_BTN_H;
 
 /**
- * 도움말 절 목록(사용자 요청 2026-08-05 — "처음 오는 사람이 전체 내용을 다 알 수 있게").
- *
- * 각 원소 `sN` 은 카탈로그의 `def3.cmd.help.sN.h`(제목)·`def3.cmd.help.sN.b`(본문) 짝이다.
- * 배열로 내보내는 이유는 둘이다: ① 화면이 순서를 여기 하나에서만 읽어 절을 넣고 빼는 일이
- * 렌더 코드를 안 건드린다 ② **i18n 테스트가 두 로케일에 짝이 다 있는지 이 목록으로 훑는다**
- * (문자열을 화면에 하드코딩하면 EN/KO 한쪽이 빠져도 조용히 키 이름이 그려진다).
+ * 방어 사령부 도움말 절 목록. 기구는 전부 공용 모듈(`helpModal.ts`)이 쥐고, 여기서는 **무엇을
+ * 말할지**만 정한다 — 화면 여섯이 같은 팝업을 쓰므로 렌더를 화면마다 두면 그날부터 따로 논다.
  */
-export const DEF_HELP_SECTIONS = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'] as const;
+export const DEFENSE_HELP: HelpSpec = {
+  prefix: 'def3.cmd.help',
+  sections: ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'],
+};
 
-/**
- * 도움말 팝업 세로 뭉치(스크롤 창 → 닫기 버튼).
- *
- * 다른 셋과 달리 높이를 내용에서 **역산하지 않는다** — 본문이 로케일마다 줄 수가 달라 역산하면
- * 팝업 크기가 언어를 따라 출렁이고, 어차피 화면 세로를 넘는 분량이라 스크롤이 전제다. 대신
- * 창 높이를 못 박고 그 안에서 스크롤한다(`pick` 팝업이 쓰는 `makeScrollArea` 와 같은 기구).
- */
-const HELP_BODY_H = 700;
-const HELP_BTN_H = 56;
-const HELP_BLOCK_H = HELP_BODY_H + 16 + HELP_BTN_H;
-/**
- * 도움말 간격 셋 — 제목→본문 · 문단 사이 · 절 사이. 셋이 **서로 달라야** 글 뭉치가 계층으로
- * 읽힌다(전부 같으면 절 경계가 문단 경계와 구분되지 않는다).
- *
- * ⚠️ 문단 나눔을 문자열 안 빈 줄(`\n\n`)로 하지 마라. Pixi 라벨은 전부 {@link stripEmoji} 를
- * 거치는데 그 함수가 `\s{2,}` 를 공백 하나로 접는다 — 빈 줄은 **화면에 도달하지 못하고 조용히
- * 사라진다**(m7b 통합 테스트가 def3 문자열 전체에 이 불변식을 걸어 두고 실제로 잡아냈다).
- * 그래서 카탈로그의 문단 구분자는 홑 `\n` 이고, 문단 사이 여백은 여기 이 값이 만든다.
- */
-const HELP_HEAD_GAP = 8;
-const HELP_PARA_GAP = 12;
-const HELP_SECTION_GAP = 28;
-
-/** 스크롤 창의 안쪽 좌우 여백(파낸 챔버 테두리와 글 사이). */
-const HELP_PAD = 20;
-/**
- * 글 오른쪽에 비워 두는 **손잡이 자리**(사용자 신고 2026-08-05 "스크롤바가 너무 붙어있어").
- *
- * 처음엔 줄바꿈 폭을 창 폭과 **똑같이** 줬다. `makeScrollArea` 는 손잡이를 창 **안쪽** 오른쪽
- * 끝에 얹으므로(`thumbOutside` 기본 false), 창 끝까지 닿는 줄은 막대 옆에 그대로 붙는다 —
- * 겹침이 아니라서 예외도 경고도 없고 **긴 줄에서만** 티가 난다(짧은 줄만 보면 멀쩡해 보인다).
- *
- * 창을 좁히는 것으로 풀지 않는다: 그러면 파낸 챔버 안에 쓰지 않는 세로 띠가 생긴다. 창은 그대로
- * 두고 **글만** 손잡이 폭 + 여유만큼 일찍 접는다. 값을 손잡이 상수에서 유도해 두어야 그 상수가
- * 바뀔 때 이 여백이 조용히 부족해지지 않는다.
- */
-const HELP_TEXT_GUTTER = SCROLL_THUMB_W + SCROLL_THUMB_PAD * 2 + 16;
-
-/**
- * 도움말 본문이 접히는 폭. 순수 함수로 뽑아 둔 이유는 **손잡이가 글을 침범하지 않는다**는 것을
- * Pixi 없이 단언하기 위해서다(vitest 는 node 라 캔버스 텍스트를 세울 수 없다).
- */
-export function helpTextWidth(boxW: number): number {
-  return boxW - HELP_PAD * 2 - HELP_TEXT_GUTTER;
-}
+/** 하위 호환 별칭 — 기존 테스트가 절 목록을 이 이름으로 읽는다. */
+export const DEF_HELP_SECTIONS = DEFENSE_HELP.sections;
 
 export const DEFENSE_MODALS = {
   pick: {
@@ -982,13 +933,8 @@ export const DEFENSE_MODALS = {
   },
   unit: { w: 900, h: TITLED_BOX_Y + UNIT_BLOCK_H + PANEL_EDGE_PAD, blockH: UNIT_BLOCK_H },
   confirm: { w: 900, h: TITLED_BOX_Y + CONFIRM_BLOCK_H + PANEL_EDGE_PAD, blockH: CONFIRM_BLOCK_H },
-  help: {
-    w: 1180,
-    h: TITLED_BOX_Y + HELP_BLOCK_H + PANEL_EDGE_PAD,
-    blockH: HELP_BLOCK_H,
-    bodyH: HELP_BODY_H,
-    btnH: HELP_BTN_H,
-  },
+  /** 도움말은 공용 모듈이 기하를 쥔다(화면 여섯이 같은 팝업을 쓴다). */
+  help: HELP_MODAL,
   /** 콘텐츠 상자 기하(세 팝업 공통) — 테스트가 역산식을 되짚는다. */
   boxY: TITLED_BOX_Y,
   edgePad: PANEL_EDGE_PAD,
@@ -2543,7 +2489,11 @@ export class DefenseCommandScreen {
         : kind === 'unit'
           ? { w: DEFENSE_MODALS.unit.w, h: DEFENSE_MODALS.unit.h, title: tCmd('def3.cmd.unit.title') }
           : kind === 'help'
-            ? { w: DEFENSE_MODALS.help.w, h: DEFENSE_MODALS.help.h, title: tCmd('def3.cmd.help.title') }
+            ? {
+                w: HELP_MODAL.w,
+                h: HELP_MODAL.h,
+                title: tCmd(helpTitleKey(DEFENSE_HELP)),
+              }
             : {
                 w: DEFENSE_MODALS.confirm.w,
                 h: DEFENSE_MODALS.confirm.h,
@@ -2580,74 +2530,16 @@ export class DefenseCommandScreen {
     else this.renderConfirmTestModal(panel);
   }
 
-  /**
-   * 화면 안내 팝업(사용자 요청 2026-08-05). 절 목록은 {@link DEF_HELP_SECTIONS} 가 정본이고
-   * 여기서는 그리기만 한다.
-   *
-   * ## 왜 높이를 역산하지 않는가
-   * 형제 팝업 셋은 전부 내용에서 높이를 역산해 빈 세로가 0 이다. 여기만 다르다 — 본문이 로케일
-   * 마다 줄 수가 달라 역산하면 팝업 크기가 언어를 따라 출렁이고, 어느 로케일이든 화면 세로를
-   * 넘으므로 결국 스크롤이 전제다. 그래서 창 높이를 못 박고(`bodyH`) 안에서 스크롤한다.
-   * 총 높이는 **실제로 조판된 Text 높이의 합**이라 로케일이 길어져도 잘리지 않는다.
-   */
+  /** 화면 안내 팝업. 기구는 공용 모듈이 쥐고 여기서는 절 목록과 스크롤 상태만 넘긴다. */
   private renderHelpModal(panel: CinematicPanel): void {
-    const box = panel.box;
-    const bodyH = DEFENSE_MODALS.help.bodyH;
-
-    // ① 먼저 전부 조판해 높이를 잰다 — 스크롤 총량은 측정값이어야 한다(상수로 두면 로케일이
-    //    길어지는 순간 마지막 절이 예외 없이 잘린다).
-    const nodes: { node: Text; y: number }[] = [];
-    // 글은 창보다 손잡이 자리만큼 일찍 접는다({@link HELP_TEXT_GUTTER} 주석 = 근거).
-    const textW = helpTextWidth(box.w);
-    let cy = 0;
-    for (const id of DEF_HELP_SECTIONS) {
-      const head = this.label(tCmd(`def3.cmd.help.${id}.h`), 23, COLOR.gold, '800', textW);
-      nodes.push({ node: head, y: cy });
-      cy += head.height + HELP_HEAD_GAP;
-      // 문단은 **노드로** 나눈다 — 문자열 안 빈 줄은 stripEmoji 가 접어 버린다(간격 상수 주석).
-      const paras = tCmd(`def3.cmd.help.${id}.b`).split('\n');
-      for (const [i, para] of paras.entries()) {
-        const body = this.wrapped(para, 18, SLAB_BODY_FILL, textW);
-        nodes.push({ node: body, y: cy });
-        cy += body.height + (i === paras.length - 1 ? HELP_SECTION_GAP : HELP_PARA_GAP);
-      }
-    }
-    const total = Math.max(0, cy - HELP_SECTION_GAP);
-
-    // ② 파낸 챔버 위에 얹는다 — 이 화면의 "글만 있는 자리"는 전부 `recessedWell` 이다.
-    panel.container.addChild(recessedWell(box.x, box.y, box.w, bodyH));
-    const content = makeScrollArea(panel.container, {
-      x: box.x + HELP_PAD,
-      y: box.y + 16,
-      w: box.w - HELP_PAD * 2,
-      h: bodyH - 32,
-      totalH: total,
-      thumb: true,
+    renderHelpSections(panel, {
+      spec: DEFENSE_HELP,
       get: () => this.modalScroll,
       set: (v) => {
         this.modalScroll = v;
       },
+      onClose: () => this.closeModal(),
     });
-    for (const n of nodes) {
-      n.node.position.set(0, n.y);
-      content.addChild(n.node);
-    }
-
-    // ③ 닫기. 암막 탭으로도 닫히지만(공용 규약) 처음 오는 사람에게는 나가는 길이 **보여야** 한다
-    //    — 이 팝업을 여는 사람은 정의상 이 화면을 처음 보는 사람이다.
-    const btn = this.chromeButton({
-      tone: 'stone',
-      width: 240,
-      height: DEFENSE_MODALS.help.btnH,
-      fontSize: 21,
-      label: tCmd('common.close'),
-      onClick: () => this.closeModal(),
-    });
-    btn.container.position.set(
-      box.x + Math.round((box.w - 240) / 2),
-      box.bottom - DEFENSE_MODALS.help.btnH,
-    );
-    panel.container.addChild(btn.container);
   }
 
   /** 방어체 고르기 팝업이 보여줄 행(높이 역산에도 쓰이므로 한 곳에서 만든다). */

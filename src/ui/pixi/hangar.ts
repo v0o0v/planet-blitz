@@ -95,6 +95,10 @@ import { PixiTooltip } from './tooltip.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
 import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
+// ⚠️ 공통 폭 `HELP_HEAD_W`(140)는 **쓰지 않는다** — 이 화면은 헤더가 가장 붐벼서 140 이면
+// 각인 제목 대역과의 여유가 12px 로 떨어진다. 형제 버튼과 같은 128 을 쓰는 근거는
+// `hangarHeaderLayout` 주석에 있고, 테스트가 제목 대역 침범을 좌표로 잠근다.
+import { openHelpOverlay, type HelpSpec } from './helpModal.js';
 import { makeShipDock, type ShipDock } from './shipDock.js';
 import {
   makeHangarTitle,
@@ -133,6 +137,63 @@ const HEAD_Y = 26;
 const HEAD_H = 52;
 /** 화면 좌우 여백 · 패널 사이 거터 · 두 행 사이 간격. */
 const EDGE_X = 32;
+
+/**
+ * 헤더 컨트롤의 가로 배치 — **이 화면은 헤더가 게임에서 가장 붐빈다**(요소 여덟).
+ *
+ * 좌표가 `renderTitleBar` 안 지역 변수였는데, 이 화면은 헤더 겹침 결함을 이미 겪었고
+ * 형제 화면들과 달리 그것을 잠그는 테스트가 없었다. 도움말 버튼을 하나 더 끼우면서 상수로
+ * 끌어올리고 {@link hangarHeaderLayout} 로 내보낸다 — 겹침·제목 대역 침범·톱니 밴드 침범을
+ * 테스트가 좌표로 확인한다.
+ *
+ * ⚠️ **도움말만 폭이 다르다.** 여섯 화면 공통값은 {@link openHelpOverlay} 쪽 공통 폭(140)이지만 여기서는
+ * 형제 버튼과 같은 128 을 쓴다 — 140 이면 각인 제목 대역(중앙 ±280 = 우측 끝 1240)과의 여유가
+ * 12px 로 떨어진다. 중앙 정렬 제목은 사각형이 없어 **겹쳐도 겹침 테스트가 못 잡으므로**
+ * 여유를 눈대중으로 줄이면 안 된다(연구소가 실제로 밟은 결함).
+ */
+const HEAD_ACT_W = 128;
+const HEAD_CHIP_W = 190;
+const HEAD_GAP_X = 14;
+/** 좌상단 설정 톱니 예약 밴드(x<120·y<120) 밖에서 시작한다. */
+const CATALYST_X = 132;
+const CREDITS_X = CATALYST_X + HEAD_ACT_W + HEAD_GAP_X;
+const MINERALS_X = CREDITS_X + HEAD_CHIP_W + HEAD_GAP_X;
+const CLOSE_W = 56;
+const CLOSE_X = DESIGN_WIDTH - EDGE_X - CLOSE_W;
+const SWAP_X = CLOSE_X - HEAD_GAP_X - HEAD_ACT_W;
+const GUARDIANS_X = SWAP_X - HEAD_GAP_X - HEAD_ACT_W;
+const LINEAGE_X = GUARDIANS_X - HEAD_GAP_X - HEAD_ACT_W;
+const HELP_X = LINEAGE_X - HEAD_GAP_X - HEAD_ACT_W;
+
+/** 각인 제목이 실제로 차지하는 가로 반폭(형제 화면들과 같은 값). */
+export const TITLE_BAND_HALF_W = 280;
+
+/** 헤더 컨트롤 사각형 — 단위 테스트가 겹침과 대역 침범을 이 목록으로 확인한다. */
+export function hangarHeaderLayout(): readonly {
+  readonly id: string;
+  readonly rect: { readonly x: number; readonly y: number; readonly w: number; readonly h: number };
+}[] {
+  const head = (
+    x: number,
+    w: number,
+  ): { x: number; y: number; w: number; h: number } => ({ x, y: HEAD_Y, w, h: HEAD_H });
+  return [
+    { id: 'catalyst', rect: head(CATALYST_X, HEAD_ACT_W) },
+    { id: 'credits', rect: head(CREDITS_X, HEAD_CHIP_W) },
+    { id: 'minerals', rect: head(MINERALS_X, HEAD_CHIP_W) },
+    { id: 'help', rect: head(HELP_X, HEAD_ACT_W) },
+    { id: 'lineage', rect: head(LINEAGE_X, HEAD_ACT_W) },
+    { id: 'guardians', rect: head(GUARDIANS_X, HEAD_ACT_W) },
+    { id: 'swap', rect: head(SWAP_X, HEAD_ACT_W) },
+    { id: 'close', rect: head(CLOSE_X, CLOSE_W) },
+  ];
+}
+
+/** 격납고 도움말 절 목록. 기구는 공용 모듈이 쥔다 — 여기서는 무엇을 말할지만 정한다. */
+export const HANGAR_HELP: HelpSpec = {
+  prefix: 'hangar.help',
+  sections: ['s1', 's2', 's3', 's4', 's5'],
+};
 const GUTTER_X = 28;
 const ROW_GAP = 20;
 /** 좌/우 열의 x 와 폭. 우열이 넓은 것은 인벤토리 그리드가 열을 더 먹기 때문이다. */
@@ -299,6 +360,10 @@ export class HangarScreen {
   private readonly store: KeyValueStore | null;
   private onClose: (() => void) | null = null;
   private hint = '';
+  /** 화면 안내 팝업 — 열림 여부 · 스크롤 위치 · 패널(수명 관리용). */
+  private helpOpen = false;
+  private helpScroll = 0;
+  private helpPanel: CinematicPanel | null = null;
   private ui: UiTextures = {};
   /** 시네마틱 배경 자산(배경 1장). 없으면 절차적 폴백으로 내려간다. */
   private art: HangarTextures = {};
@@ -827,6 +892,10 @@ export class HangarScreen {
     this.panels = [];
     this.dock?.destroy();
     this.dock = null;
+    // 도움말 패널도 `panels`·`dock` 과 같은 규율로 명시 회수한다 — 컨테이너만 destroy 하면
+    // 패널이 구워 둔 자원이 남는다.
+    this.helpPanel?.destroy();
+    this.helpPanel = null;
     // 툴팁 컨테이너는 유지하고 나머지를 지운다.
     for (const child of [...this.root.children]) {
       if (child !== this.tooltip.container && child !== this.equippedTip.container) {
@@ -865,8 +934,34 @@ export class HangarScreen {
     this.renderTitleBar();
     this.renderHint();
 
+    // 도움말 팝업 — 이 화면은 render() 마다 root 를 통째로 다시 짓는다. 그래서 그릇을 들고
+    // 있을 필요가 없고, 열려 있을 때만 마지막에 얹으면 항상 맨 앞이 된다(회수는 render 앞머리).
+    if (this.helpOpen) {
+      const host = new Container();
+      this.root.addChild(host);
+      this.helpPanel = openHelpOverlay(host, {
+        spec: HANGAR_HELP,
+        get: () => this.helpScroll,
+        set: (v) => {
+          this.helpScroll = v;
+        },
+        onClose: () => {
+          this.helpOpen = false;
+          this.render();
+        },
+      });
+    }
+
     this.root.setChildIndex(this.equippedTip.container, this.root.children.length - 1);
     this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
+  }
+
+  /** 화면 안내 팝업 — 읽기 전용이라 장비·장착 상태를 건드리지 않는다. */
+  private openHelp(): void {
+    this.helpOpen = true;
+    this.helpScroll = 0;
+    this.hideTips();
+    this.render();
   }
 
   /**
@@ -957,11 +1052,9 @@ export class HangarScreen {
     // 되살릴 일이 생기면 `hangarChrome.makeHangarLintel(w, h, niches)` 가 그대로 있다 —
     // 세 번째 인자는 재화 칩이 앉을 감실이고, 감실 바닥 밝기는 칩 글자 대비 4.5:1 하한에서
     // 역산돼 있다(`NICHE_FLOOR` 헤더).
-    const chipW = 190;
-    const catalystX = 132;
-    const actW = 128;
-    const headGap = 14;
-    const creditsX = catalystX + actW + headGap;
+    const chipW = HEAD_CHIP_W;
+    const actW = HEAD_ACT_W;
+    const creditsX = CREDITS_X;
 
     const title = makeHangarTitle(t('hangar.title'));
     title.position.set(DESIGN_WIDTH / 2, HEAD_Y - 4);
@@ -972,7 +1065,6 @@ export class HangarScreen {
     // 촉매 버튼이 통째로 클릭 불가가 된다(하네스 실측: 톱니 CSS (16,13,51,51) ↔ 촉매 CSS
     // (16,12,85,35) — 거의 완전 겹침). 톱니의 디자인 스페이스 점유는 대략 x 24..101 ·
     // y 20..96 이고, 여유를 둔 예약 밴드는 x<120 · y<120 이다. 그래서 x 를 밴드 밖으로 민다.
-    const CATALYST_X = catalystX;
     const catBtn = this.chromeButton({
       tone: 'stone',
       width: actW,
@@ -1001,12 +1093,12 @@ export class HangarScreen {
       this.ui['ui_icon_crystal.png'] ?? undefined,
       'teal',
     );
-    minerals.position.set(creditsX + chipW + headGap, HEAD_Y);
+    minerals.position.set(MINERALS_X, HEAD_Y);
     this.root.addChild(minerals);
 
     // 우측: [예비역][기체 교체][닫기]. 닫기부터 오른쪽 끝에 붙이고 왼쪽으로 쌓는다.
-    const closeW = 56;
-    const closeX = DESIGN_WIDTH - EDGE_X - closeW;
+    const closeW = CLOSE_W;
+    const closeX = CLOSE_X;
     const close = this.chromeButton({
       tone: 'stone',
       width: closeW,
@@ -1023,7 +1115,7 @@ export class HangarScreen {
     close.container.position.set(closeX, HEAD_Y);
     this.root.addChild(close.container);
 
-    const swapX = closeX - headGap - actW;
+    const swapX = SWAP_X;
     // 기체 교체 = 퇴역·세대 교체다. 만렙(LEVEL_CAP) 전에는 성장 여지를 남긴 기체를 버리는 셈이라
     // 잠근다. 여기는 **버튼 게이트**일 뿐이고 실제 강제는 championSelect/guardianLifecycle 몫이다.
     const canSwap = activeShip(this.profile).level >= LEVEL_CAP;
@@ -1070,7 +1162,7 @@ export class HangarScreen {
       label: tShipKey('hangar.act.guardians', 'Guardians'),
       onClick: () => this.openGuardianRoster(),
     });
-    const guardiansX = swapX - headGap - actW;
+    const guardiansX = GUARDIANS_X;
     guardians.container.position.set(guardiansX, HEAD_Y);
     this.root.addChild(guardians.container);
 
@@ -1085,7 +1177,20 @@ export class HangarScreen {
       label: tShipKey('hangar.act.lineage', 'Lineage'),
       onClick: () => this.openLineageHall(),
     });
-    lineage.container.position.set(guardiansX - headGap - actW, HEAD_Y);
+    lineage.container.position.set(LINEAGE_X, HEAD_Y);
+
+    // 도움말 — 형제 버튼과 **같은 폭 128**을 쓴다(공통값 140 이면 제목 대역 여유가 12px 로
+    // 떨어진다 · {@link hangarHeaderLayout} 주석이 근거).
+    const help = this.chromeButton({
+      tone: 'stone',
+      width: HEAD_ACT_W,
+      height: HEAD_H,
+      fontSize: 15,
+      label: t('hangar.help'),
+      onClick: () => this.openHelp(),
+    });
+    help.container.position.set(HELP_X, HEAD_Y);
+    this.root.addChild(help.container);
     this.root.addChild(lineage.container);
   }
 

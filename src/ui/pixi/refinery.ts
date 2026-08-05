@@ -108,6 +108,7 @@ import { graphicsSettings } from '../../render/graphicsSettings.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
 import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
+import { HELP_HEAD_W, openHelpOverlay, type HelpSpec } from './helpModal.js';
 import {
   makeHangarTitle,
   makeHangarChip,
@@ -342,6 +343,14 @@ const CLOSE_W = 56;
 const CLOSE_X = DESIGN_WIDTH - EDGE_X - CLOSE_W;
 const CREDIT_CHIP_X = CLOSE_X - HEAD_GAP - 2 - CHIP_W;
 const MINERAL_CHIP_X = CREDIT_CHIP_X - HEAD_GAP - 2 - CHIP_W;
+/** 도움말 버튼 — 오른쪽 컨트롤 줄의 맨 왼쪽(여섯 화면 공통 자리 · {@link HELP_HEAD_W} 주석). */
+const HELP_X = MINERAL_CHIP_X - HEAD_GAP - 2 - HELP_HEAD_W;
+
+/** 정제소 도움말 절 목록. 기구는 공용 모듈이 쥔다 — 여기서는 무엇을 말할지만 정한다. */
+export const REFINERY_HELP: HelpSpec = {
+  prefix: 'refine.help',
+  sections: ['s1', 's2', 's3', 's4', 's5'],
+};
 /**
  * 각인 제목이 실제로 차지하는 가로 반폭. 중앙 정렬 Text 는 사각형이 없어 겹침 테스트가 못
  * 잡는다 — 연구소 실화면에서 제목이 헤더 버튼과 **실제로 겹쳤다**. 대역을 상수로 못 박고
@@ -400,6 +409,7 @@ export function refineryLayout(): {
       { id: 'detail', rect: { x: DETAIL_X, y: PANEL_Y, w: DETAIL_W, h: PANEL_H } },
     ],
     headerControls: [
+      { id: 'help', rect: head(HELP_X, HELP_HEAD_W) },
       { id: 'minerals', rect: head(MINERAL_CHIP_X, CHIP_W) },
       { id: 'credits', rect: head(CREDIT_CHIP_X, CHIP_W) },
       { id: 'close', rect: head(CLOSE_X, CLOSE_W) },
@@ -697,6 +707,11 @@ export class RefineryScreen {
   private gridHost: Container | null = null;
   private detailHost: Container | null = null;
   private chipHost: Container | null = null;
+  /** 화면 안내 팝업 — 열림 여부 · 스크롤 위치 · 그릇 · 패널(수명 관리용). */
+  private helpOpen = false;
+  private helpScroll = 0;
+  private helpHost: Container | null = null;
+  private helpPanel: CinematicPanel | null = null;
   private hintText: Text | null = null;
 
   constructor(profile: Profile, stage: Container, store: KeyValueStore | null = null) {
@@ -1169,6 +1184,9 @@ export class RefineryScreen {
 
   private destroyChrome(): void {
     // 연출 참조를 먼저 끊는다 — destroy 된 컨테이너를 update·Ticker 가 만지면 안 된다.
+    this.helpPanel?.destroy();
+    this.helpPanel = null;
+    this.helpHost = null;
     this.stopHeatAnim();
     this.fxOverlay = null;
     this.spinTexts = [];
@@ -1325,10 +1343,62 @@ export class RefineryScreen {
     close.container.position.set(CLOSE_X, HEAD_Y);
     this.root.addChild(close.container);
 
+    // 도움말 — 재화 칩·닫기와 **같은 세로 띠**를 쓰고 가로로만 자리를 잡는다.
+    const help = this.chromeButton({
+      tone: 'stone',
+      width: HELP_HEAD_W,
+      height: HEAD_H,
+      fontSize: 20,
+      label: t('refine.help'),
+      onClick: () => this.openHelp(),
+    });
+    help.container.position.set(HELP_X, HEAD_Y);
+    this.root.addChild(help.container);
+
     // 칩은 값이 구워진 컨테이너라 갱신이 아니라 재조립이다 — 그릇만 잡아 둔다.
     const chips = new Container();
     this.root.addChild(chips);
     this.chipHost = chips;
+
+    // 도움말 팝업 그릇 — 항상 맨 위에 뜬다(툴팁만 그 위로 올라간다).
+    const helpHost = new Container();
+    this.root.addChild(helpHost);
+    this.helpHost = helpHost;
+  }
+
+  /** 화면 안내 팝업 — 읽기 전용이라 정련 상태를 건드리지 않는다. */
+  private openHelp(): void {
+    this.helpOpen = true;
+    this.helpScroll = 0;
+    this.tooltip.hide();
+    this.refresh();
+  }
+
+  private closeHelp(): void {
+    this.helpOpen = false;
+    this.refresh();
+  }
+
+  /** 도움말 팝업을 다시 그린다. 기구는 공용 모듈이 통째로 쥔다(암막+패널+내용). */
+  private renderHelp(): void {
+    const host = this.helpHost;
+    if (host === null) return;
+    this.helpPanel?.destroy();
+    this.helpPanel = null;
+    for (const child of [...host.children]) {
+      host.removeChild(child);
+      child.destroy({ children: true });
+    }
+    if (!this.helpOpen) return;
+    this.root.setChildIndex(host, this.root.children.length - 1);
+    this.helpPanel = openHelpOverlay(host, {
+      spec: REFINERY_HELP,
+      get: () => this.helpScroll,
+      set: (v) => {
+        this.helpScroll = v;
+      },
+      onClose: () => this.closeHelp(),
+    });
   }
 
   // --- 갱신 -----------------------------------------------------------------
@@ -1342,6 +1412,7 @@ export class RefineryScreen {
     this.syncValues();
     this.renderGrid();
     this.renderDetail();
+    this.renderHelp();
     this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
     if (this.currentRisk() > 0) this.startHeatAnim();
   }

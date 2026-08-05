@@ -701,6 +701,29 @@ export const EN = {
   'lab.capstone.locked': 'Locked — invest {g}pt in this tree to unlock',
   'lab.capstone.needGate': 'Capstone locked: invest {g} points in this tree first.',
 
+  // 연구소 도움말(사용자 요청 2026-08-05). 문단 구분은 **홑 개행**이다 — 빈 줄은 Pixi 라벨이
+  // 거치는 stripEmoji 가 접어 화면에 도달하지 못한다(`helpModal.ts` 모듈 주석 ①).
+  'lab.help': 'Help',
+  'lab.help.title': 'Research Lab Guide',
+  'lab.help.s1.h': 'What this screen is for',
+  'lab.help.s1.b':
+    'This is where permanent growth happens. Skill points spent here stay with your ship forever — nothing you build in this screen is lost when a run ends.\nEach ship type has its own three trees. Switching to a different ship means a different set of trees, not the same ones relearned.',
+  'lab.help.s2.h': 'Skill points',
+  'lab.help.s2.b':
+    'Every ship level grants one skill point, and ship level rises from experience carried out of runs. Level 100 is the cap, so points are finite over a ship\'s life and where you spend them is the build.\nSpending is a click on a node row. Higher tiers need their prerequisites filled first, so a tree is entered from the bottom.',
+  'lab.help.s3.h': 'Lower tiers amplify higher ones',
+  'lab.help.s3.b':
+    'Investment is not a flat sum. Points sitting in the lower tiers of a chain amplify the nodes above them, which is why going deep in one tree beats spreading thin across three.\nThe strip along the bottom shows your derived stats with that synergy already applied — read that, not the individual node numbers.',
+  'lab.help.s4.h': 'Capstones',
+  'lab.help.s4.b':
+    'The final node of each tree is a capstone, gated on total investment in that tree rather than on any single prerequisite. It stays locked until the tree total reaches its threshold, and the node tells you how far short you are.',
+  'lab.help.s5.h': 'Active skills',
+  'lab.help.s5.b':
+    'Each ship has six active skills, two per tree, opened by cumulative investment in that tree — 8 points for the lower one, 40 for the higher, the same threshold a capstone uses. Open the Active Skills button in the header to equip them.\nYou may equip two at a time and fire them with Z and X during a run. Their only cost is cooldown; they consume no resource and no hull.\nInvestment keeps improving their power and cooldown whether or not they are equipped, so points are never wasted on a tree whose skill you left at home.',
+  'lab.help.s6.h': 'Respec',
+  'lab.help.s6.b':
+    'Respec costs credits and refunds every point at once, so a build is never permanent. The button in the header shows the current price.\nYour ship\'s signature passive is not part of the tree — it is always on, cannot be invested in, and respec does not touch it.',
+
   // --- 인벤토리 ---
   'inv.title': 'Manage Gear',
   'inv.cur.credits': 'Credits',
@@ -768,6 +791,24 @@ export const EN = {
 
   // --- 격납고 카툰 UI (Pixi 리스킨) ---
   'hangar.title': 'Hangar',
+  // 격납고 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 주석 ①).
+  'hangar.help': 'Help',
+  'hangar.help.title': 'Hangar Guide',
+  'hangar.help.s1.h': 'What this screen is for',
+  'hangar.help.s1.b':
+    'This is where you dress your active ship. Gear equipped here is permanent progress — it survives every run, unlike the powerups you pick up during one.\nThe stat panel shows what your current loadout actually produces, with every source already folded in. That total is the number to compare builds by, not the numbers on individual pieces.',
+  'hangar.help.s2.h': 'Gear and the stash',
+  'hangar.help.s2.b':
+    'Eight slots take gear, and every ship type uses the same eight — farming carries across ship generations rather than restarting with each one.\nGear comes in four grades, normal through unique, and carries random affixes. A piece may also have a required level; you cannot equip it below that. Stage difficulty sets the ceiling on what drops there, so higher stages hand out gear you can wear sooner rather than gear you must wait for.',
+  'hangar.help.s3.h': 'Changing ships',
+  'hangar.help.s3.b':
+    'Change Ship stays locked until your current ship reaches level 100. Swapping early would throw away growth the ship has not finished, so the button is gated rather than merely discouraged.\nRetiring at the cap is an endgame move: the retired ship keeps its equipped gear, becomes a guardian, and pays out lineage points. The next ship is a free pick from the whole roster with nothing to unlock.',
+  'hangar.help.s4.h': 'Guardians and lineage',
+  'hangar.help.s4.b':
+    'Guardians are your retired ships. They can stand in your Defense Command core room, and their gear stays locked inside them.\nLineage points accumulate across retirements and buy permanent bonuses that apply to every future ship. The two buttons in the header open those screens.',
+  'hangar.help.s5.h': 'Catalysts',
+  'hangar.help.s5.b':
+    'Catalysts are consumables that season an ordinary run, raising its difficulty and its rewards together. The header button opens the collection where you manage them; you choose which to inject just before launching.\nCatalysts never appear in a commission run — that run already has its stage and rewards written.',
   'hangar.panel.stats': 'Ship Stats',
   'hangar.stat.element.fire': 'Fire',
   'hangar.stat.element.cold': 'Cold',
@@ -971,6 +1012,22 @@ export const EN = {
   'archive.intro.replay': 'Replay Prologue',
   'archive.empty': 'Nothing here yet.',
 
+  // 기록 보관소 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 주석 ①).
+  'archive.help': 'Help',
+  'archive.help.title': 'Record Vault Guide',
+  'archive.help.s1.h': 'What this screen is for',
+  'archive.help.s1.b':
+    'Everything you have uncovered about this galaxy collects here, and it is purely for reading. Nothing on this screen changes a single number in a run — no stats, no rewards, no unlocks that affect combat.\nThe two tabs hold two different kinds of record: pilot files and record shards.',
+  'archive.help.s2.h': 'Pilot files',
+  'archive.help.s2.b':
+    'Each ship type carries a three-chapter personal story. Chapter one is open from the start. Chapter two unlocks when you clear that ship\'s bonded planet, and chapter three when you finish its signature milestone.\nThe stories exist to explain why a ship has the signature passive it has. Some ships have a named pilot; the organic ones are themselves the character.',
+  'archive.help.s3.h': 'Record shards',
+  'archive.help.s3.b':
+    'Shards are fragments of the lost Oscar civilization, recovered by stabilizing Echo Signals — a narrative kind of encounter that appears rarely during runs.\nEncounters are opt-in. Ignoring one costs you nothing and the run continues safely; entering one carries real risk, including death. A shard you have not recovered shows as locked rather than hidden, so you can see what is still out there.',
+  'archive.help.s4.h': 'Where the entries come from',
+  'archive.help.s4.b':
+    'Nothing here is bought and nothing here is farmed directly. Records arrive as a side effect of playing — clearing planets, finishing milestones, and taking the encounters you choose to take.\nThe prologue can be replayed from this screen at any time.',
+
   // 챔피언 선택 화면 — 사연 열람 버튼/팝업
   'champion.story.open': 'Read Pilot File',
   'champion.story.title': '{name} — Pilot File',
@@ -1160,6 +1217,25 @@ export const EN = {
   'refine.chain.noBand': 'This affix has a fixed value; heat does not affect it',
   'refine.sort.recent': 'Recent',
   'refine.sort.rarity': 'Rarity',
+
+  // 정제소 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 모듈 주석 ①).
+  'refine.help': 'Help',
+  'refine.help.title': 'Refinery Guide',
+  'refine.help.s1.h': 'What this screen is for',
+  'refine.help.s1.b':
+    'This is where you reroll the affixes on gear you already own. The gear itself — its slot, its grade, its base stats — never changes here. Only the affixes move.\nPick an item on the left and the refining process opens on the right.',
+  'refine.help.s2.h': 'Rolling',
+  'refine.help.s2.b':
+    'Each roll costs minerals and redraws every affix that is not yet fastened. Rolling is not a single purchase but a session: you keep rolling until you are happy, then stop.\nNothing is committed to the item until you press Stop refining.',
+  'refine.help.s3.h': 'Fastening',
+  'refine.help.s3.b':
+    'After a roll you may fasten one affix you like. A fastened affix is removed from the redraw pool, so the next roll only touches what is left.\nFastening cannot be undone within the process, and fastened affixes only become permanent once you stop and commit. Accumulated fastens are your stake — the more you have riding, the more a failure costs you.',
+  'refine.help.s4.h': 'Heat',
+  'refine.help.s4.b':
+    'Every roll is made at one of three heats: low, medium, or high. Heat moves three things together — the quality of the affix values, the mineral cost, and the melt risk.\nHeat is a dial, not a safety switch. Low heat is not zero risk; it is a smaller multiplier on the risk your fastens have already created. Affixes with a fixed value ignore heat entirely, and the row tells you when that is the case.',
+  'refine.help.s5.h': 'Melting',
+  'refine.help.s5.b':
+    'A failed roll melts. Melting releases every fastened affix and returns the process to where it stood before you began — but the item is untouched. Its grade, its affix count, and its existence are never at risk. What melts is your progress, not your gear.\nThe exact failure chance is shown as a number before you commit to a roll, so a melt is always a risk you accepted rather than one you were surprised by.',
   'refine.sort.slot': 'Slot',
   'refine.sort.affixes': 'Affixes',
 
@@ -1249,6 +1325,28 @@ export const EN = {
   'ctl.ladder.empty': 'No ranks yet.',
   'ctl.ladder.rank': 'Rank',
   'ctl.ladder.name': 'Name',
+
+  // 관제탑 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 모듈 주석 ①).
+  'ctl.help': 'Help',
+  'ctl.help.title': 'Control Tower Guide',
+  'ctl.help.s1.h': 'What this screen is for',
+  'ctl.help.s1.b':
+    'This is the attacking half of PvP. You scout other pilots\' bases here and launch invasions against them. The defending half — arranging what meets them at your own base — lives in Defense Command.\nEverything on this screen needs a server connection. Offline, the lists stay empty while the rest of the game plays normally.',
+  'ctl.help.s2.h': 'The ladder',
+  'ctl.help.s2.b':
+    'The ladder is one permanent queue of every pilot. There is no season reset, so a rank you take is a rank you keep until someone takes it from you.\nOnly three things move a rank: a successful invasion swaps the two pilots, placement inserts a newcomer, and inactivity sinks you slowly.',
+  'ctl.help.s3.h': 'Placement',
+  'ctl.help.s3.b':
+    'Your first five invasions after PvP opens are placement matches, fought against NPC seed bases rather than real pilots. Your record across them decides where you enter the ladder.\nPlacement inserts you without moving anyone else, so nobody loses a rank to your arrival.',
+  'ctl.help.s4.h': 'Scouting before you commit',
+  'ctl.help.s4.b':
+    'Selecting a target shows its defense layout in the recon panel: how many wave slots, facilities, and props are filled across the three layers, and what boss sits in the core room.\nWhat you see first is silhouettes, grades, and ascension stars — not exact numbers. Precise stats and defense-unit affixes are revealed only after you have invaded that base once, which makes a losing first attempt worth something.',
+  'ctl.help.s5.h': 'Revenge',
+  'ctl.help.s5.b':
+    'When your base falls, the pilot who took your rank appears in the revenge list for 24 hours. A revenge strike ignores the normal retry cooldown, and winning reclaims your seat and pays bonus minerals.\nThe window expires on its own. Nothing is lost by letting it pass except the free swing.',
+  'ctl.help.s6.h': 'Results are decided by the server',
+  'ctl.help.s6.b':
+    'Your client shows a provisional outcome the moment a run ends, but the verdict is not final until the server re-simulates your replay in full and agrees. That is why a result can read "confirming" for a short while.\nIncoming attacks on your own base land in the notifications list, where you can watch the replay or leave a taunt sticker for a pilot you repelled.',
   'ctl.ladder.record': 'Record',
   'ctl.ladder.wl': '{w}W {l}L',
   // 관제탑 팝업(순위표 · 알림 · 전투 기록)
@@ -1989,6 +2087,25 @@ export const EN = {
   'commission.about.stock': 'Storage',
   'commission.about.stockBody':
     'You may hold up to {cap}. While full, no new commission is issued — launch or clear space first.',
+
+  // 지시 수신소 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 주석 ①).
+  'commission.help': 'Help',
+  'commission.help.title': 'Order Desk Guide',
+  'commission.help.s1.h': 'What a commission is',
+  'commission.help.s1.b':
+    'A commission is a sealed order. Its stages, its restrictions, and its rewards are all fixed the moment it is issued, and clearing it pays exactly what is written on it — no roll, no variance.\nBecause the reward is a promise rather than a drop, the planet popularity multiplier does not apply to it.',
+  'commission.help.s2.h': 'How you get one',
+  'commission.help.s2.b':
+    'Planet bosses issue a commission on defeat, rarely, and only from runs you won by killing the boss. Higher invasion stages issue higher grades.\nA commission run never issues another commission. To get more you have to go back to ordinary farming, which is what keeps the loop from feeding itself.\nYou may hold a limited number at once. While your desk is full, no new order is issued — launch one or clear space first.',
+  'commission.help.s3.h': 'What a commission run is like',
+  'commission.help.s3.b':
+    'A commission run follows the same grammar as an invasion: several stages passed in a single run with one settlement at the end, resources carried across the boundaries, and no checkpoint if you die partway.\nThe difference is what changes at a boundary. An invasion changes scroll direction; a commission changes the entire planet mode.\nCommissions and catalysts never share a run. A catalyst seasons an ordinary run; a commission opens a separate one with its stage already written.',
+  'commission.help.s4.h': 'Restrictions',
+  'commission.help.s4.b':
+    'Some orders carry restrictions. These are not policed during the run — what is forbidden is simply removed from your loadout options and from the powerup pool, so violating one is impossible rather than punished.\nIf an order lists no restrictions, the detail column says so plainly.',
+  'commission.help.s5.h': 'Why this screen needs a login',
+  'commission.help.s5.b':
+    'The server holds the record of both the orders you have and the guaranteed items they pay out. That is why obtaining a commission and launching a commission run both need a connection.\nA commission run is also the one PvE run that submits a replay. Because the reward is guaranteed rather than rolled, the server re-simulates the run in full before paying it.',
 } as const;
 
 /** 카탈로그 키 = 영어 정본의 키 집합. */
@@ -2676,6 +2793,30 @@ export const KO: Record<MessageKey, string> = {
   'lab.capstone.locked': '잠김 — 이 계열에 {g}pt 투자 시 해금',
   'lab.capstone.needGate': '캡스톤 잠김: 이 계열에 먼저 {g}포인트를 투자하세요.',
 
+  // 연구소 도움말(사용자 요청 2026-08-05). 용어는 KO 선언부 정본표를 따른다 —
+  // `스킬트리`·`계열`·`기체 레벨`·`액티브 스킬`(단독 `액티브` 금지)·`시그니처 패시브`·
+  // `쿨다운`·`피해량`. 이모지 금지, 존댓말.
+  'lab.help': '도움말',
+  'lab.help.title': '연구소 안내',
+  'lab.help.s1.h': '이 화면은 무엇을 하는 곳인가요',
+  'lab.help.s1.b':
+    '영구 성장이 일어나는 곳입니다. 여기에 쓴 스킬 포인트는 기체에 그대로 남으며, 런이 끝나도 사라지지 않습니다. 런 안에서 얻는 파워업과는 완전히 다른 축입니다.\n스킬트리는 기체 타입마다 고유한 3계열입니다. 다른 기체로 갈아타면 같은 트리를 다시 배우는 것이 아니라 아예 다른 트리를 만나게 됩니다.',
+  'lab.help.s2.h': '스킬 포인트',
+  'lab.help.s2.b':
+    '기체 레벨이 1 오를 때마다 스킬 포인트를 1 받습니다. 기체 레벨은 런에서 가지고 나온 경험치로 오르고 100이 상한이라, 한 기체가 평생 쓸 수 있는 포인트는 정해져 있습니다. 어디에 넣느냐가 곧 빌드입니다.\n투자는 노드 줄을 누르면 됩니다. 위 티어는 선행 노드가 차 있어야 열리므로 트리는 아래에서부터 올라갑니다.',
+  'lab.help.s3.h': '아래 티어가 위 티어를 증폭합니다',
+  'lab.help.s3.b':
+    '투자는 단순 합산이 아닙니다. 한 사슬의 아래 티어에 쌓인 포인트가 그 위 노드의 효과를 증폭하기 때문에, 세 계열에 얇게 펴 바르는 것보다 한 계열을 깊게 파는 쪽이 강합니다.\n화면 아래 가로 띠가 그 증폭까지 반영한 파생 스탯을 보여 줍니다. 개별 노드의 수치가 아니라 이 띠를 보고 판단하세요.',
+  'lab.help.s4.h': '캡스톤',
+  'lab.help.s4.b':
+    '각 계열의 마지막 노드는 캡스톤입니다. 선행 노드 하나가 아니라 그 계열에 넣은 누적 투자량으로 잠기고 열립니다. 문턱에 못 미치면 노드가 얼마나 모자란지 알려 줍니다.',
+  'lab.help.s5.h': '액티브 스킬',
+  'lab.help.s5.b':
+    '기체마다 액티브 스킬이 6종 있고 계열마다 2종씩 붙습니다. 해금은 그 계열의 누적 투자량으로, 낮은 쪽은 8, 높은 쪽은 40입니다(캡스톤과 같은 문턱입니다). 헤더의 액티브 스킬 버튼에서 장착합니다.\n한 번에 2개까지 장착할 수 있고 런에서 z·x 키로 직접 발동합니다. 비용은 쿨다운뿐이라 자원도 선체도 소모하지 않습니다.\n계열에 투자할수록 장착 여부와 무관하게 그 계열 스킬 2종의 위력과 쿨다운이 계속 좋아집니다. 장착하지 않은 스킬의 계열에 넣은 포인트도 헛되지 않습니다.',
+  'lab.help.s6.h': '리스펙',
+  'lab.help.s6.b':
+    '리스펙은 크레딧을 내고 투자한 포인트를 한 번에 전부 돌려받습니다. 빌드는 영구 결정이 아니니 편하게 실험하셔도 됩니다. 헤더의 버튼에 현재 비용이 적혀 있습니다.\n기체의 시그니처 패시브는 스킬트리 밖입니다. 항상 켜져 있고 투자 대상이 아니며 리스펙으로도 바뀌지 않습니다.',
+
   'inv.title': '장비 정비',
   'inv.cur.credits': '크레딧',
   'inv.cur.minerals': '광물',
@@ -2742,6 +2883,25 @@ export const KO: Record<MessageKey, string> = {
 
   // --- 격납고 카툰 UI (Pixi 리스킨) ---
   'hangar.title': '격납고',
+  // 격납고 도움말(사용자 요청 2026-08-05). 용어는 KO 정본표를 따른다 — `창고`(장비 Stash) ·
+  // `보관함`은 촉매·모듈 전용 · `수호기` · `퇴역` · `요구 레벨` · `파워업`. 이모지 금지, 존댓말.
+  'hangar.help': '도움말',
+  'hangar.help.title': '격납고 안내',
+  'hangar.help.s1.h': '이 화면은 무엇을 하는 곳인가요',
+  'hangar.help.s1.b':
+    '현역 기체에 장비를 입히는 곳입니다. 여기서 장착한 장비는 영구 성장이라 런이 끝나도 그대로 남습니다. 런 도중에 줍는 파워업과는 다른 축입니다.\n스탯 패널은 지금 장착 구성이 실제로 만들어 내는 값을 보여 줍니다. 모든 출처가 이미 합산된 값이므로, 빌드를 비교하실 때는 개별 장비의 수치가 아니라 이 총합을 보시면 됩니다.',
+  'hangar.help.s2.h': '장비와 창고',
+  'hangar.help.s2.b':
+    '장비 슬롯은 8칸이고, 기체 타입이 달라도 8칸은 그대로입니다. 그래서 파밍한 장비가 기체 세대를 넘어 이어집니다.\n장비는 노말·매직·레어·유니크 4등급이며 무작위 어픽스가 붙습니다. 요구 레벨이 붙은 장비는 그 레벨 아래에서는 착용할 수 없습니다. 침략 단계가 그 단계에서 나오는 장비의 요구 레벨 상한을 정하므로, 높은 단계일수록 한참 기다렸다 입는 장비가 아니라 바로 입을 수 있는 장비가 나옵니다.',
+  'hangar.help.s3.h': '기체 교체',
+  'hangar.help.s3.b':
+    '기체 교체는 현재 기체가 레벨 100에 닿기 전까지 잠겨 있습니다. 아직 자랄 여지가 남은 기체를 버리는 셈이 되기 때문에, 권고가 아니라 버튼 자체를 잠급니다.\n만렙에서의 교체는 퇴역이라는 엔드게임 행위입니다. 퇴역한 기체는 장착 장비를 품은 채 수호기가 되고 계보 포인트를 지급합니다. 다음 기체는 로스터 전체에서 자유롭게 고르며 따로 해금할 것이 없습니다.',
+  'hangar.help.s4.h': '수호기와 계보',
+  'hangar.help.s4.b':
+    '수호기는 퇴역시킨 기체들입니다. 방어 사령부의 코어방에 세울 수 있고, 품고 있는 장비는 그 안에 잠긴 채로 남습니다.\n계보 포인트는 퇴역을 거듭할수록 쌓이며, 앞으로 타게 될 모든 기체에 적용되는 영구 강화를 삽니다. 헤더의 두 버튼이 각각 그 화면을 엽니다.',
+  'hangar.help.s5.h': '촉매',
+  'hangar.help.s5.b':
+    '촉매는 평범한 런의 난이도와 보상을 함께 올리는 소모품입니다. 헤더의 버튼이 촉매를 관리하는 보관함을 열고, 어떤 촉매를 넣을지는 출격 직전에 고르시게 됩니다.\n의뢰 런에는 촉매가 들어가지 않습니다. 그 런은 무대와 보상이 이미 적혀 있기 때문입니다.',
   'hangar.panel.stats': '기체 스탯',
   'hangar.stat.element.fire': '화염',
   'hangar.stat.element.cold': '냉기',
@@ -2926,6 +3086,23 @@ export const KO: Record<MessageKey, string> = {
   'archive.story.chapter': '{n}장',
   'archive.intro.replay': '프롤로그 다시 보기',
   'archive.empty': '아직 아무것도 없습니다.',
+
+  // 기록 보관소 도움말(사용자 요청 2026-08-05). 용어는 KO 정본표를 따른다 — `사연`·`기록 파편`·
+  // `에코 신호`·`조우`·`시그니처 패시브`. 이모지 금지, 존댓말.
+  'archive.help': '도움말',
+  'archive.help.title': '기록 보관소 안내',
+  'archive.help.s1.h': '이 화면은 무엇을 하는 곳인가요',
+  'archive.help.s1.b':
+    '이 은하에 대해 밝혀낸 것이 전부 여기에 모입니다. 읽기 위한 화면이며, 이 화면의 무엇도 런의 수치를 바꾸지 않습니다. 스탯도, 보상도, 전투에 영향을 주는 해금도 없습니다.\n두 탭에 서로 다른 두 종류의 기록이 들어 있습니다. 파일럿 파일과 기록 파편입니다.',
+  'archive.help.s2.h': '파일럿 파일',
+  'archive.help.s2.b':
+    '기체 타입마다 3챕터짜리 사연이 붙어 있습니다. 챕터 1은 처음부터 열려 있고, 챕터 2는 그 기체의 인연 행성을 클리어하면, 챕터 3은 시그니처 마일스톤을 달성하면 열립니다.\n사연은 그 기체가 왜 그런 시그니처 패시브를 가졌는지를 설명하기 위해 있습니다. 전속 파일럿 인물이 있는 기체도 있고, 유기체형 기체는 기체 자신이 인격체입니다.',
+  'archive.help.s3.h': '기록 파편',
+  'archive.help.s3.b':
+    '기록 파편은 사라진 오스카 문명의 조각입니다. 런 도중 드물게 나타나는 에코 신호를 안정화하면 얻습니다. 에코 신호는 서사형 조우입니다.\n조우는 들어갈지 말지 직접 고르는 것입니다. 무시하면 아무 손해 없이 런을 이어 가고, 들어가면 큰 보상과 함께 실제 위험을 집니다. 사망도 가능합니다. 아직 찾지 못한 파편은 숨겨지지 않고 잠긴 채로 보이므로, 무엇이 남았는지 알 수 있습니다.',
+  'archive.help.s4.h': '기록은 어떻게 쌓이나요',
+  'archive.help.s4.b':
+    '여기 있는 것은 사는 것도, 따로 파밍하는 것도 아닙니다. 행성을 클리어하고 마일스톤을 채우고 조우를 선택해 들어가는 과정에서 부수적으로 쌓입니다.\n프롤로그는 이 화면에서 언제든 다시 보실 수 있습니다.',
 
   // 챔피언 선택 화면 — 사연 열람 버튼/팝업
   'champion.story.open': '사연 읽기',
@@ -3115,6 +3292,26 @@ export const KO: Record<MessageKey, string> = {
   'refine.chain.noBand': '이 어픽스는 값이 고정이라 불 세기의 영향을 받지 않습니다',
   'refine.sort.recent': '획득순',
   'refine.sort.rarity': '희귀도순',
+
+  // 정제소 도움말(사용자 요청 2026-08-05). 용어는 이 화면의 기존 문구와 같은 낱말을 쓴다 —
+  // `정련 공정`·`굴리기`·`고착`·`불 세기`(약불·중불·강불)·`용해`. 이모지 금지, 존댓말.
+  'refine.help': '도움말',
+  'refine.help.title': '정제소 안내',
+  'refine.help.s1.h': '이 화면은 무엇을 하는 곳인가요',
+  'refine.help.s1.b':
+    '이미 가지고 있는 장비의 어픽스를 다시 굴리는 곳입니다. 장비 자체는 여기서 바뀌지 않습니다. 슬롯도 등급도 기저 스탯도 그대로이고, 움직이는 것은 어픽스뿐입니다.\n왼쪽 목록에서 장비를 고르면 오른쪽에 정련 공정이 열립니다.',
+  'refine.help.s2.h': '굴리기',
+  'refine.help.s2.b':
+    '한 번 굴릴 때마다 광물이 들고, 아직 고착하지 않은 어픽스가 전부 다시 뽑힙니다. 정련은 한 번 사고 끝나는 것이 아니라 마음에 들 때까지 이어 가는 공정입니다.\n공정 멈추기를 누르기 전까지는 아무것도 장비에 확정되지 않습니다.',
+  'refine.help.s3.h': '고착',
+  'refine.help.s3.b':
+    '굴린 뒤 마음에 드는 어픽스 하나를 고착할 수 있습니다. 고착한 어픽스는 다시 뽑히지 않으므로 다음 굴림은 남은 것만 건드립니다.\n공정 안에서는 고착을 해제할 수 없고, 공정을 멈춰 확정해야 장비에 남습니다. 쌓인 고착이 곧 판돈입니다. 많이 걸어 둘수록 실패했을 때 잃는 것이 큽니다.',
+  'refine.help.s4.h': '불 세기',
+  'refine.help.s4.b':
+    '굴릴 때마다 약불·중불·강불 중 하나를 고릅니다. 불 세기는 세 가지를 한 몸으로 움직입니다. 어픽스 값의 품질, 광물 비용, 그리고 용해 위험입니다.\n불 세기는 위험을 없애는 스위치가 아니라 조절하는 다이얼입니다. 약불도 무위험이 아니라, 고착이 이미 만들어 둔 위험에 더 작은 배수를 거는 것뿐입니다. 값이 고정인 어픽스는 불 세기의 영향을 받지 않으며, 그런 경우에는 해당 줄이 알려 줍니다.',
+  'refine.help.s5.h': '용해',
+  'refine.help.s5.b':
+    '굴림이 실패하면 용해입니다. 고착이 전부 풀려 공정을 시작하기 직전 상태로 돌아갑니다. 다만 장비는 아무 손상도 입지 않습니다. 등급도, 어픽스 개수도, 장비의 존재 자체도 위험에 놓이지 않습니다. 녹는 것은 지금까지의 진행이지 장비가 아닙니다.\n실패 확률은 굴리기 전에 숫자로 보여 드립니다. 용해는 예고 없이 당하는 일이 아니라 알고 감수한 위험입니다.',
   'refine.sort.slot': '슬롯순',
   'refine.sort.affixes': '어픽스순',
 
@@ -3198,6 +3395,29 @@ export const KO: Record<MessageKey, string> = {
   'ctl.ladder.empty': '아직 순위가 없습니다.',
   'ctl.ladder.rank': '순위',
   'ctl.ladder.name': '이름',
+
+  // 관제탑 도움말(사용자 요청 2026-08-05). 용어는 KO 정본표를 따른다 — `래더`(랭킹·리더보드 ✗) ·
+  // `배치전`(예선전 ✗) · `복수전`(리벤지 매치 ✗) · `침공`(PvP) · `방어체`. 이모지 금지, 존댓말.
+  'ctl.help': '도움말',
+  'ctl.help.title': '관제탑 안내',
+  'ctl.help.s1.h': '이 화면은 무엇을 하는 곳인가요',
+  'ctl.help.s1.b':
+    'PvP 의 공격하는 쪽입니다. 다른 파일럿의 기지를 정찰하고 침공을 걸러 나가는 곳입니다. 반대로 내 기지에 쳐들어온 상대를 맞이할 배치를 짜는 일은 방어 사령부가 맡습니다.\n이 화면의 내용은 전부 서버에 있습니다. 접속돼 있지 않으면 목록이 빈 채로 있고, 나머지 게임은 평소처럼 즐기실 수 있습니다.',
+  'ctl.help.s2.h': '래더',
+  'ctl.help.s2.b':
+    '래더는 전체 파일럿이 한 줄로 늘어선 영구 순위표입니다. 시즌 리셋이 없으므로 한 번 차지한 순위는 누군가 빼앗아 가기 전까지 그대로 유지됩니다.\n순위를 움직이는 것은 세 가지뿐입니다. 침공에 성공하면 두 파일럿의 자리가 맞바뀌고, 배치전은 신규 파일럿을 끼워 넣으며, 오래 활동하지 않으면 서서히 내려갑니다.',
+  'ctl.help.s3.h': '배치전',
+  'ctl.help.s3.b':
+    'PvP 가 열린 뒤 처음 다섯 번의 침공은 배치전입니다. 실제 파일럿이 아니라 NPC 시드 기지를 상대로 치릅니다. 그 다섯 판의 성적이 래더 어디쯤에서 시작할지를 정합니다.\n배치전은 기존 순위를 밀어내지 않고 끼워 넣는 방식이라, 내가 들어온다고 해서 누군가 순위를 잃지는 않습니다.',
+  'ctl.help.s4.h': '걸기 전에 정찰하기',
+  'ctl.help.s4.b':
+    '대상을 고르면 정찰 패널에 그 기지의 방어 배치가 나옵니다. 세 레이어에 편대 슬롯과 설비, 기물이 각각 몇 칸이나 차 있는지, 코어방에 어떤 방어 보스가 앉아 있는지를 볼 수 있습니다.\n처음 보이는 것은 실루엣과 등급, 승격 별까지입니다. 정확한 스탯과 방어체 어픽스는 그 기지를 한 번 침공해 본 뒤에야 공개됩니다. 그래서 첫 도전은 져도 얻는 것이 있습니다.',
+  'ctl.help.s5.h': '복수전',
+  'ctl.help.s5.b':
+    '내 기지가 함락되면 내 순위를 가져간 파일럿이 24시간 동안 복수전 목록에 올라옵니다. 복수전은 평소의 재도전 쿨다운을 무시하며, 성공하면 자리를 되찾고 보너스 광물을 받습니다.\n기한이 지나면 저절로 닫힙니다. 그냥 흘려보내도 잃는 것은 이 공짜 한 번뿐입니다.',
+  'ctl.help.s6.h': '결과는 서버가 정합니다',
+  'ctl.help.s6.b':
+    '런이 끝나는 순간 화면에 뜨는 결과는 잠정입니다. 서버가 리플레이를 처음부터 다시 돌려 같은 결과가 나오는지 확인한 뒤에야 확정됩니다. 결과가 잠시 확인 중으로 보이는 것은 그 때문입니다.\n내 기지가 받은 공격은 침공 알림 목록에 쌓입니다. 거기서 리플레이를 관전하거나, 막아 낸 상대에게 도발 스티커를 남기실 수 있습니다.',
   'ctl.ladder.record': '전적',
   'ctl.ladder.wl': '{w}승 {l}패',
   // 관제탑 팝업(순위표 · 알림 · 전투 기록)
@@ -3902,6 +4122,26 @@ export const KO: Record<MessageKey, string> = {
   'commission.about.stock': '보관',
   'commission.about.stockBody':
     '{cap}장까지 보관합니다. 꽉 차 있는 동안에는 새 의뢰서가 들어오지 않습니다 — 먼저 출격해 자리를 비우세요.',
+
+  // 지시 수신소 도움말(사용자 요청 2026-08-05). 용어는 KO 정본표를 따른다 — `의뢰서`(건물명
+  // `지시 수신소`는 세계관 플레이버라 유지) · `촉매` · `침략 단계` · `파워업`. 이모지 금지, 존댓말.
+  'commission.help': '도움말',
+  'commission.help.title': '지시 수신소 안내',
+  'commission.help.s1.h': '의뢰서란 무엇인가요',
+  'commission.help.s1.b':
+    '의뢰서는 봉인된 주문서입니다. 어느 무대를 도는지, 어떤 제약이 걸리는지, 무엇을 받는지가 발급되는 순간 전부 적혀 확정됩니다. 완수하면 적힌 그대로 지급되며 굴림도 편차도 없습니다.\n보상이 굴림이 아니라 약속이라서 행성 인기 배율이 걸리지 않습니다.',
+  'commission.help.s2.h': '어떻게 얻나요',
+  'commission.help.s2.b':
+    '행성 보스가 쓰러질 때 드물게 발급합니다. 보스를 잡아 이긴 런에서만 나오며, 침략 단계가 높을수록 높은 등급이 나옵니다.\n의뢰 런은 다시 의뢰서를 낳지 않습니다. 더 얻으려면 평범한 파밍으로 돌아와야 하고, 이것이 순환이 스스로 불어나지 않게 막습니다.\n보관 장수에는 상한이 있습니다. 꽉 차 있는 동안에는 새 의뢰서가 들어오지 않으니 먼저 출격해 자리를 비워 주세요.',
+  'commission.help.s3.h': '의뢰 런은 어떤 런인가요',
+  'commission.help.s3.b':
+    '의뢰 런은 침공과 같은 문법입니다. 여러 구간을 한 번의 런으로 통과해 정산을 한 번만 하고, 자원이 구간을 넘어 승계되며, 중간에 죽어도 돌아갈 체크포인트가 없습니다.\n다른 점은 구간 경계에서 바뀌는 것입니다. 침공은 스크롤 방향이 바뀌지만 의뢰 런은 행성 모드가 통째로 바뀝니다.\n의뢰서와 촉매는 같은 런에 함께 서지 않습니다. 촉매는 평범한 런에 치는 조미료이고, 의뢰서는 무대가 이미 적혀 있는 별개의 런을 여는 것이기 때문입니다.',
+  'commission.help.s4.h': '제약',
+  'commission.help.s4.b':
+    '의뢰서에 제약이 붙는 경우가 있습니다. 이 제약은 런 도중에 감시하는 것이 아니라, 금지된 것을 출격 조립과 파워업 후보에서 아예 빼는 방식으로 강제합니다. 어기는 것이 벌을 받는 일이 아니라 애초에 불가능한 일입니다.\n제약이 없는 의뢰서는 상세 열에 없다고 분명히 적어 드립니다.',
+  'commission.help.s5.h': '이 화면은 왜 로그인이 필요한가요',
+  'commission.help.s5.b':
+    '보유한 의뢰서와 그것이 확정 지급하는 물건의 기록을 서버가 쥐고 있습니다. 그래서 의뢰서 획득과 의뢰 출격은 접속이 필요합니다.\n의뢰 런은 리플레이를 제출하는 유일한 PvE 런이기도 합니다. 보상이 굴림이 아니라 확정 지급이라, 서버가 런을 처음부터 다시 돌려 확인한 뒤에 지급합니다.',
 };
 
 /** 로케일별 카탈로그 묶음. */

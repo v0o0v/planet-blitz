@@ -108,6 +108,7 @@ import { stopRowPropagation } from './listRow.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
 import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
+import { HELP_HEAD_W, openHelpOverlay, type HelpSpec } from './helpModal.js';
 import {
   makeHangarTitle,
   makeHangarChip,
@@ -306,6 +307,14 @@ const CLOSE_W = 56;
 const CLOSE_X = DESIGN_WIDTH - EDGE_X - CLOSE_W;
 const CREDIT_CHIP_X = CLOSE_X - HEAD_GAP - 2 - CHIP_W;
 const POINT_CHIP_X = CREDIT_CHIP_X - HEAD_GAP - 2 - CHIP_W;
+/** 도움말 버튼 — 오른쪽 컨트롤 줄의 맨 왼쪽(여섯 화면 공통 자리 · {@link HELP_HEAD_W} 주석). */
+const HELP_X = POINT_CHIP_X - HEAD_GAP - 2 - HELP_HEAD_W;
+
+/** 연구소 도움말 절 목록. 기구는 공용 모듈이 쥔다 — 여기서는 무엇을 말할지만 정한다. */
+export const LAB_HELP: HelpSpec = {
+  prefix: 'lab.help',
+  sections: ['s1', 's2', 's3', 's4', 's5', 's6'],
+};
 /** 헤더 컨트롤 아래 한 줄(총 투자·기체 레벨). 헤더 밴드 안에서 끝난다. */
 const HEAD_SUB_Y = HEAD_Y + HEAD_H + 4;
 
@@ -377,6 +386,7 @@ export function researchLabLayout(cols = TREE_COLS): {
     headerControls: [
       { id: 'actives', rect: head(ACT_BTN_X, ACT_BTN_W) },
       { id: 'respec', rect: head(RESPEC_X, RESPEC_W) },
+      { id: 'help', rect: head(HELP_X, HELP_HEAD_W) },
       { id: 'points', rect: head(POINT_CHIP_X, CHIP_W) },
       { id: 'credits', rect: head(CREDIT_CHIP_X, CHIP_W) },
       { id: 'close', rect: head(CLOSE_X, CLOSE_W) },
@@ -771,6 +781,9 @@ export class ResearchLabScreen {
   private chipHost: Container | null = null;
   private statsHost: Container | null = null;
   private modalHost: Container | null = null;
+  /** 화면 안내 팝업이 열려 있는가 + 그 스크롤 위치(재렌더 사이 유지). */
+  private helpOpen = false;
+  private helpScroll = 0;
   private headSub: Text | null = null;
   private hintText: Text | null = null;
   private respecBtn: PixiButton | null = null;
@@ -1013,6 +1026,19 @@ export class ResearchLabScreen {
   private activeViews(): ActiveSlotView[] {
     const ship = activeShip(this.profile);
     return activeSlotViews(ship.typeId, this.invest(), ship.activeSlots);
+  }
+
+  /** 화면 안내 팝업 — 읽기 전용이라 투자 상태를 건드리지 않는다. */
+  private openHelp(): void {
+    this.helpOpen = true;
+    this.helpScroll = 0;
+    this.tooltip.hide();
+    this.refresh();
+  }
+
+  private closeHelp(): void {
+    this.helpOpen = false;
+    this.refresh();
   }
 
   private openActives(): void {
@@ -1316,6 +1342,18 @@ export class ResearchLabScreen {
     });
     close.container.position.set(CLOSE_X, HEAD_Y);
     this.root.addChild(close.container);
+
+    // 도움말 — 재화 칩·닫기와 **같은 세로 띠**를 쓰고 가로로만 자리를 잡는다.
+    const help = this.chromeButton({
+      tone: 'stone',
+      width: HELP_HEAD_W,
+      height: HEAD_H,
+      fontSize: 20,
+      label: t('lab.help'),
+      onClick: () => this.openHelp(),
+    });
+    help.container.position.set(HELP_X, HEAD_Y);
+    this.root.addChild(help.container);
 
     // 칩은 값이 구워진 컨테이너라 갱신이 아니라 재조립이다 — 그릇만 잡아 둔다.
     const chips = new Container();
@@ -1658,7 +1696,18 @@ export class ResearchLabScreen {
       child.destroy({ children: true });
     }
 
-    if (this.popupTree !== null) this.renderPopup(this.popupTree, host);
+    if (this.helpOpen) {
+      // 도움말은 화면의 팝업 기구를 빌리지 않고 공용 모듈이 통째로 세운다(암막+패널+내용) —
+      // 화면 여섯이 같은 팝업을 쓰므로 여기서 다시 조립하면 그 순간 여섯 벌이 갈린다.
+      this.modalPanel = openHelpOverlay(host, {
+        spec: LAB_HELP,
+        get: () => this.helpScroll,
+        set: (v) => {
+          this.helpScroll = v;
+        },
+        onClose: () => this.closeHelp(),
+      });
+    } else if (this.popupTree !== null) this.renderPopup(this.popupTree, host);
     else if (this.activesOpen) this.renderActives(host);
     this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
   }
