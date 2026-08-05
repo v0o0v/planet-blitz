@@ -84,6 +84,7 @@ import { attachRowClick, stopRowPropagation } from './listRow.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
 import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
+import { HELP_HEAD_W, openHelpOverlay, type HelpSpec } from './helpModal.js';
 import {
   makeHangarTitle,
   cinematicButtonTexture,
@@ -214,6 +215,14 @@ const BOX_D = titledBox(DETAIL_W, PANEL_H);
 // --- 헤더 컨트롤(형제 화면과 **같은 x**) ---
 const CLOSE_W = 56;
 const CLOSE_X = DESIGN_WIDTH - EDGE_X - CLOSE_W;
+/** 도움말 버튼 — 닫기 왼쪽(여섯 화면 공통 자리 · {@link HELP_HEAD_W} 주석). */
+const HELP_X = CLOSE_X - 12 - 2 - HELP_HEAD_W;
+
+/** 기록 보관소 도움말 절 목록. 기구는 공용 모듈이 쥔다 — 여기서는 무엇을 말할지만 정한다. */
+export const ARCHIVE_HELP: HelpSpec = {
+  prefix: 'archive.help',
+  sections: ['s1', 's2', 's3', 's4'],
+};
 
 /**
  * 각인 제목이 실제로 차지하는 가로 반폭. 중앙 정렬 Text 는 사각형이 없어 겹침 테스트가 못
@@ -308,7 +317,10 @@ export function recordsArchiveLayout(): {
       band: { x: EDGE_X, y: FOOT_Y, w: CONTENT_W, h: FOOT_H },
       buttons: [{ x: FOOT_BTN_X, y: FOOT_Y, w: REPLAY_W, h: FOOT_H }],
     },
-    headerControls: [{ id: 'close', rect: { x: CLOSE_X, y: HEAD_Y, w: CLOSE_W, h: HEAD_H } }],
+    headerControls: [
+      { id: 'help', rect: { x: HELP_X, y: HEAD_Y, w: HELP_HEAD_W, h: HEAD_H } },
+      { id: 'close', rect: { x: CLOSE_X, y: HEAD_Y, w: CLOSE_W, h: HEAD_H } },
+    ],
     windows: [],
   };
 }
@@ -535,6 +547,11 @@ export class RecordsArchiveScreen {
   private backdrop: HangarBackdrop | null = null;
   private panels: CinematicPanel[] = [];
   private chromeBuilt = false;
+  /** 화면 안내 팝업 — 열림 여부 · 스크롤 위치 · 그릇 · 패널(수명 관리용). */
+  private helpOpen = false;
+  private helpScroll = 0;
+  private helpHost: Container | null = null;
+  private helpPanel: CinematicPanel | null = null;
   private listHost: Container | null = null;
   private detailHost: Container | null = null;
   private progressNode: Text | null = null;
@@ -748,6 +765,9 @@ export class RecordsArchiveScreen {
   }
 
   private destroyChrome(): void {
+    this.helpPanel?.destroy();
+    this.helpPanel = null;
+    this.helpHost = null;
     this.backdrop?.destroy();
     this.backdrop = null;
     for (const p of this.panels) p.destroy();
@@ -856,6 +876,57 @@ export class RecordsArchiveScreen {
     });
     close.container.position.set(CLOSE_X, HEAD_Y);
     this.root.addChild(close.container);
+
+    // 도움말 — 닫기와 **같은 세로 띠**를 쓰고 가로로만 자리를 잡는다.
+    const help = this.chromeButton({
+      tone: 'stone',
+      width: HELP_HEAD_W,
+      height: HEAD_H,
+      fontSize: 20,
+      label: t('archive.help'),
+      onClick: () => this.openHelp(),
+    });
+    help.container.position.set(HELP_X, HEAD_Y);
+    this.root.addChild(help.container);
+
+    // 도움말 팝업 그릇 — 항상 맨 위에 뜬다.
+    const helpHost = new Container();
+    this.root.addChild(helpHost);
+    this.helpHost = helpHost;
+  }
+
+  /** 화면 안내 팝업 — 읽기 전용이라 기록을 건드리지 않는다. */
+  private openHelp(): void {
+    this.helpOpen = true;
+    this.helpScroll = 0;
+    this.refresh();
+  }
+
+  private closeHelp(): void {
+    this.helpOpen = false;
+    this.refresh();
+  }
+
+  /** 도움말 팝업을 다시 그린다. 기구는 공용 모듈이 통째로 쥔다(암막+패널+내용). */
+  private renderHelp(): void {
+    const host = this.helpHost;
+    if (host === null) return;
+    this.helpPanel?.destroy();
+    this.helpPanel = null;
+    for (const child of [...host.children]) {
+      host.removeChild(child);
+      child.destroy({ children: true });
+    }
+    if (!this.helpOpen) return;
+    this.root.setChildIndex(host, this.root.children.length - 1);
+    this.helpPanel = openHelpOverlay(host, {
+      spec: ARCHIVE_HELP,
+      get: () => this.helpScroll,
+      set: (v) => {
+        this.helpScroll = v;
+      },
+      onClose: () => this.closeHelp(),
+    });
   }
 
   /**
@@ -948,6 +1019,7 @@ export class RecordsArchiveScreen {
     this.syncValues();
     this.renderList();
     this.renderDetail();
+    this.renderHelp();
   }
 
   private syncValues(): void {

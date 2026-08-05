@@ -994,6 +994,22 @@ export const EN = {
   'archive.intro.replay': 'Replay Prologue',
   'archive.empty': 'Nothing here yet.',
 
+  // 기록 보관소 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 주석 ①).
+  'archive.help': 'Help',
+  'archive.help.title': 'Record Vault Guide',
+  'archive.help.s1.h': 'What this screen is for',
+  'archive.help.s1.b':
+    'Everything you have uncovered about this galaxy collects here, and it is purely for reading. Nothing on this screen changes a single number in a run — no stats, no rewards, no unlocks that affect combat.\nThe two tabs hold two different kinds of record: pilot files and record shards.',
+  'archive.help.s2.h': 'Pilot files',
+  'archive.help.s2.b':
+    'Each ship type carries a three-chapter personal story. Chapter one is open from the start. Chapter two unlocks when you clear that ship\'s bonded planet, and chapter three when you finish its signature milestone.\nThe stories exist to explain why a ship has the signature passive it has. Some ships have a named pilot; the organic ones are themselves the character.',
+  'archive.help.s3.h': 'Record shards',
+  'archive.help.s3.b':
+    'Shards are fragments of the lost Oscar civilization, recovered by stabilizing Echo Signals — a narrative kind of encounter that appears rarely during runs.\nEncounters are opt-in. Ignoring one costs you nothing and the run continues safely; entering one carries real risk, including death. A shard you have not recovered shows as locked rather than hidden, so you can see what is still out there.',
+  'archive.help.s4.h': 'Where the entries come from',
+  'archive.help.s4.b':
+    'Nothing here is bought and nothing here is farmed directly. Records arrive as a side effect of playing — clearing planets, finishing milestones, and taking the encounters you choose to take.\nThe prologue can be replayed from this screen at any time.',
+
   // 챔피언 선택 화면 — 사연 열람 버튼/팝업
   'champion.story.open': 'Read Pilot File',
   'champion.story.title': '{name} — Pilot File',
@@ -3014,6 +3030,23 @@ export const KO: Record<MessageKey, string> = {
   'archive.story.chapter': '{n}장',
   'archive.intro.replay': '프롤로그 다시 보기',
   'archive.empty': '아직 아무것도 없습니다.',
+
+  // 기록 보관소 도움말(사용자 요청 2026-08-05). 용어는 KO 정본표를 따른다 — `사연`·`기록 파편`·
+  // `에코 신호`·`조우`·`시그니처 패시브`. 이모지 금지, 존댓말.
+  'archive.help': '도움말',
+  'archive.help.title': '기록 보관소 안내',
+  'archive.help.s1.h': '이 화면은 무엇을 하는 곳인가요',
+  'archive.help.s1.b':
+    '이 은하에 대해 밝혀낸 것이 전부 여기에 모입니다. 읽기 위한 화면이며, 이 화면의 무엇도 런의 수치를 바꾸지 않습니다. 스탯도, 보상도, 전투에 영향을 주는 해금도 없습니다.\n두 탭에 서로 다른 두 종류의 기록이 들어 있습니다. 파일럿 파일과 기록 파편입니다.',
+  'archive.help.s2.h': '파일럿 파일',
+  'archive.help.s2.b':
+    '기체 타입마다 3챕터짜리 사연이 붙어 있습니다. 챕터 1은 처음부터 열려 있고, 챕터 2는 그 기체의 인연 행성을 클리어하면, 챕터 3은 시그니처 마일스톤을 달성하면 열립니다.\n사연은 그 기체가 왜 그런 시그니처 패시브를 가졌는지를 설명하기 위해 있습니다. 전속 파일럿 인물이 있는 기체도 있고, 유기체형 기체는 기체 자신이 인격체입니다.',
+  'archive.help.s3.h': '기록 파편',
+  'archive.help.s3.b':
+    '기록 파편은 사라진 오스카 문명의 조각입니다. 런 도중 드물게 나타나는 에코 신호를 안정화하면 얻습니다. 에코 신호는 서사형 조우입니다.\n조우는 들어갈지 말지 직접 고르는 것입니다. 무시하면 아무 손해 없이 런을 이어 가고, 들어가면 큰 보상과 함께 실제 위험을 집니다. 사망도 가능합니다. 아직 찾지 못한 파편은 숨겨지지 않고 잠긴 채로 보이므로, 무엇이 남았는지 알 수 있습니다.',
+  'archive.help.s4.h': '기록은 어떻게 쌓이나요',
+  'archive.help.s4.b':
+    '여기 있는 것은 사는 것도, 따로 파밍하는 것도 아닙니다. 행성을 클리어하고 마일스톤을 채우고 조우를 선택해 들어가는 과정에서 부수적으로 쌓입니다.\n프롤로그는 이 화면에서 언제든 다시 보실 수 있습니다.',
 
   // 챔피언 선택 화면 — 사연 열람 버튼/팝업
   'champion.story.open': '사연 읽기',
