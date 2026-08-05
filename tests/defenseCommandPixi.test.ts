@@ -808,7 +808,8 @@ describe('시험 침공 이탈 버튼 — 오염 런에서만 뜨고 사령부�
   it('화면 전환 관문(clearToMenu)이 이탈 버튼을 끈다', () => {
     // 끄는 곳을 여기 하나로 몰아 둔 것이 안전장치다 — 모든 런 진입점이 첫 줄에서 이것을
     // 부르므로, 진입점마다 끄게 두었을 때 하나를 빠뜨려 생기는 "정산 건너뛰기 구멍"이 없다.
-    const fn = /function clearToMenu\(\)[\s\S]*?\n  \}/.exec(src);
+    // ` {2}\}` = 함수 본문을 닫는 두 칸 들여쓴 중괄호(리터럴 공백 두 개는 eslint 가 막는다).
+    const fn = /function clearToMenu\(\)[\s\S]*?\n {2}\}/.exec(src);
     expect(fn).not.toBeNull();
     expect(fn![0]).toMatch(/hud\.setExitRun\(null\)/);
   });
