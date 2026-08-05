@@ -23,7 +23,9 @@
  */
 
 import { Container, Graphics, Text } from 'pixi.js';
-import type { CinematicPanel } from './cinematicPanel.js';
+import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
+import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
+import { stopRowPropagation } from './listRow.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { PixiButton } from './button.js';
 import { stripEmoji } from './text.js';
@@ -90,6 +92,19 @@ const HELP_TEXT_GUTTER = SCROLL_THUMB_W + SCROLL_THUMB_PAD * 2 + 16;
 export function helpTextWidth(boxW: number): number {
   return boxW - HELP_PAD * 2 - HELP_TEXT_GUTTER;
 }
+
+/**
+ * 헤더 도움말 버튼의 폭 — **여섯 화면이 같은 값을 쓴다**(사용자 확정 2026-08-05 "방어 사령부와
+ * 동일"). 자리도 같다: 헤더 오른쪽 컨트롤 줄의 맨 왼쪽, 즉 재화 칩 바로 왼쪽이다.
+ *
+ * ⚠️ 140 은 **여유가 딱 30px 인 값**이다. 각인 제목 대역이 화면 중앙 ±280 을 먹고 오른쪽
+ * 컨트롤 줄이 1424 에서 시작하므로 버튼은 1270..1410 에 앉는다. 넓히면 제목 글자와 겹치는데,
+ * 중앙 정렬 Text 는 사각형이 없어 **겹침 테스트가 못 잡는다**(연구소가 실제로 밟았다).
+ *
+ * 라벨을 `?` 한 글자로 줄이지 않는다 — 관제탑에서 사용자가 "꽉 채운 칩과 `?` 가 가장 튄다"고
+ * 지적한 그 기호다. 폭이 충분하므로 낱말을 쓴다.
+ */
+export const HELP_HEAD_W = 140;
 
 /** 스크롤 창 폭(파낸 챔버에서 좌우 여백을 뺀 값). */
 export function helpWindowWidth(boxW: number): number {
@@ -243,4 +258,44 @@ export function renderHelpSections(panel: CinematicPanel, opts: HelpRenderOption
     box.bottom - HELP_MODAL.btnH,
   );
   panel.container.addChild(btn.container);
+}
+
+/**
+ * 도움말 팝업을 **통째로** 세운다(암막 + 패널 + 내용). `host` 안을 비우고 다시 짓는다.
+ *
+ * 화면마다 팝업 기구가 제각각이라(어떤 화면은 `modalHost` 가 있고 어떤 화면은 없다) 도움말은
+ * 그 기구를 빌리지 않고 자기 것을 쓴다 — 화면이 해야 하는 일은 **호스트 Container 하나를 자기
+ * 루트 맨 앞에 두는 것**뿐이다.
+ *
+ * `modal.ts` 헤더의 실측 규칙 셋을 그대로 승계한다:
+ *  ① 암막은 **거의 불투명 채움**(뒤 화면 글자가 비쳐 읽히는 결함).
+ *  ② 암막이 **이벤트를 먹는다**(안 그러면 뒤 목록이 스크롤된다).
+ *  ③ 패널 안쪽 탭은 암막까지 **전파를 끊는다**(안 그러면 팝업 안을 누를 때마다 닫힌다).
+ *
+ * @returns 만든 패널(호출부가 `destroy()` 수명을 관리한다). 닫혀 있으면 `null`.
+ */
+export function openHelpOverlay(host: Container, opts: HelpRenderOptions): CinematicPanel {
+  const scrim = new Graphics();
+  scrim.rect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT).fill({ color: 0x05060f, alpha: 0.99 });
+  scrim.eventMode = 'static';
+  scrim.on('pointertap', opts.onClose);
+  host.addChild(scrim);
+
+  const px = Math.round((DESIGN_WIDTH - HELP_MODAL.w) / 2);
+  const py = Math.round((DESIGN_HEIGHT - HELP_MODAL.h) / 2);
+  const panel = makeCinematicPanel({
+    width: HELP_MODAL.w,
+    height: HELP_MODAL.h,
+    variant: 'slab',
+    title: t(helpTitleKey(opts.spec) as MessageKey),
+    screenX: px,
+    screenY: py,
+    lightOrigin: { x: DESIGN_WIDTH / 2, y: 60 },
+  });
+  panel.container.position.set(px, py);
+  stopRowPropagation(panel.container);
+  host.addChild(panel.container);
+
+  renderHelpSections(panel, opts);
+  return panel;
 }

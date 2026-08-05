@@ -701,6 +701,29 @@ export const EN = {
   'lab.capstone.locked': 'Locked — invest {g}pt in this tree to unlock',
   'lab.capstone.needGate': 'Capstone locked: invest {g} points in this tree first.',
 
+  // 연구소 도움말(사용자 요청 2026-08-05). 문단 구분은 **홑 개행**이다 — 빈 줄은 Pixi 라벨이
+  // 거치는 stripEmoji 가 접어 화면에 도달하지 못한다(`helpModal.ts` 모듈 주석 ①).
+  'lab.help': 'Help',
+  'lab.help.title': 'Research Lab Guide',
+  'lab.help.s1.h': 'What this screen is for',
+  'lab.help.s1.b':
+    'This is where permanent growth happens. Skill points spent here stay with your ship forever — nothing you build in this screen is lost when a run ends.\nEach ship type has its own three trees. Switching to a different ship means a different set of trees, not the same ones relearned.',
+  'lab.help.s2.h': 'Skill points',
+  'lab.help.s2.b':
+    'Every ship level grants one skill point, and ship level rises from experience carried out of runs. Level 100 is the cap, so points are finite over a ship\'s life and where you spend them is the build.\nSpending is a click on a node row. Higher tiers need their prerequisites filled first, so a tree is entered from the bottom.',
+  'lab.help.s3.h': 'Lower tiers amplify higher ones',
+  'lab.help.s3.b':
+    'Investment is not a flat sum. Points sitting in the lower tiers of a chain amplify the nodes above them, which is why going deep in one tree beats spreading thin across three.\nThe strip along the bottom shows your derived stats with that synergy already applied — read that, not the individual node numbers.',
+  'lab.help.s4.h': 'Capstones',
+  'lab.help.s4.b':
+    'The final node of each tree is a capstone, gated on total investment in that tree rather than on any single prerequisite. It stays locked until the tree total reaches its threshold, and the node tells you how far short you are.',
+  'lab.help.s5.h': 'Active skills',
+  'lab.help.s5.b':
+    'Each ship has six active skills, two per tree, opened by cumulative investment in that tree — 8 points for the lower one, 40 for the higher, the same threshold a capstone uses. Open the Active Skills button in the header to equip them.\nYou may equip two at a time and fire them with Z and X during a run. Their only cost is cooldown; they consume no resource and no hull.\nInvestment keeps improving their power and cooldown whether or not they are equipped, so points are never wasted on a tree whose skill you left at home.',
+  'lab.help.s6.h': 'Respec',
+  'lab.help.s6.b':
+    'Respec costs credits and refunds every point at once, so a build is never permanent. The button in the header shows the current price.\nYour ship\'s signature passive is not part of the tree — it is always on, cannot be invested in, and respec does not touch it.',
+
   // --- 인벤토리 ---
   'inv.title': 'Manage Gear',
   'inv.cur.credits': 'Credits',
@@ -2675,6 +2698,30 @@ export const KO: Record<MessageKey, string> = {
   'lab.respecBtn': '리스펙 ({n} 크레딧)',
   'lab.capstone.locked': '잠김 — 이 계열에 {g}pt 투자 시 해금',
   'lab.capstone.needGate': '캡스톤 잠김: 이 계열에 먼저 {g}포인트를 투자하세요.',
+
+  // 연구소 도움말(사용자 요청 2026-08-05). 용어는 KO 선언부 정본표를 따른다 —
+  // `스킬트리`·`계열`·`기체 레벨`·`액티브 스킬`(단독 `액티브` 금지)·`시그니처 패시브`·
+  // `쿨다운`·`피해량`. 이모지 금지, 존댓말.
+  'lab.help': '도움말',
+  'lab.help.title': '연구소 안내',
+  'lab.help.s1.h': '이 화면은 무엇을 하는 곳인가요',
+  'lab.help.s1.b':
+    '영구 성장이 일어나는 곳입니다. 여기에 쓴 스킬 포인트는 기체에 그대로 남으며, 런이 끝나도 사라지지 않습니다. 런 안에서 얻는 파워업과는 완전히 다른 축입니다.\n스킬트리는 기체 타입마다 고유한 3계열입니다. 다른 기체로 갈아타면 같은 트리를 다시 배우는 것이 아니라 아예 다른 트리를 만나게 됩니다.',
+  'lab.help.s2.h': '스킬 포인트',
+  'lab.help.s2.b':
+    '기체 레벨이 1 오를 때마다 스킬 포인트를 1 받습니다. 기체 레벨은 런에서 가지고 나온 경험치로 오르고 100이 상한이라, 한 기체가 평생 쓸 수 있는 포인트는 정해져 있습니다. 어디에 넣느냐가 곧 빌드입니다.\n투자는 노드 줄을 누르면 됩니다. 위 티어는 선행 노드가 차 있어야 열리므로 트리는 아래에서부터 올라갑니다.',
+  'lab.help.s3.h': '아래 티어가 위 티어를 증폭합니다',
+  'lab.help.s3.b':
+    '투자는 단순 합산이 아닙니다. 한 사슬의 아래 티어에 쌓인 포인트가 그 위 노드의 효과를 증폭하기 때문에, 세 계열에 얇게 펴 바르는 것보다 한 계열을 깊게 파는 쪽이 강합니다.\n화면 아래 가로 띠가 그 증폭까지 반영한 파생 스탯을 보여 줍니다. 개별 노드의 수치가 아니라 이 띠를 보고 판단하세요.',
+  'lab.help.s4.h': '캡스톤',
+  'lab.help.s4.b':
+    '각 계열의 마지막 노드는 캡스톤입니다. 선행 노드 하나가 아니라 그 계열에 넣은 누적 투자량으로 잠기고 열립니다. 문턱에 못 미치면 노드가 얼마나 모자란지 알려 줍니다.',
+  'lab.help.s5.h': '액티브 스킬',
+  'lab.help.s5.b':
+    '기체마다 액티브 스킬이 6종 있고 계열마다 2종씩 붙습니다. 해금은 그 계열의 누적 투자량으로, 낮은 쪽은 8, 높은 쪽은 40입니다(캡스톤과 같은 문턱입니다). 헤더의 액티브 스킬 버튼에서 장착합니다.\n한 번에 2개까지 장착할 수 있고 런에서 z·x 키로 직접 발동합니다. 비용은 쿨다운뿐이라 자원도 선체도 소모하지 않습니다.\n계열에 투자할수록 장착 여부와 무관하게 그 계열 스킬 2종의 위력과 쿨다운이 계속 좋아집니다. 장착하지 않은 스킬의 계열에 넣은 포인트도 헛되지 않습니다.',
+  'lab.help.s6.h': '리스펙',
+  'lab.help.s6.b':
+    '리스펙은 크레딧을 내고 투자한 포인트를 한 번에 전부 돌려받습니다. 빌드는 영구 결정이 아니니 편하게 실험하셔도 됩니다. 헤더의 버튼에 현재 비용이 적혀 있습니다.\n기체의 시그니처 패시브는 스킬트리 밖입니다. 항상 켜져 있고 투자 대상이 아니며 리스펙으로도 바뀌지 않습니다.',
 
   'inv.title': '장비 정비',
   'inv.cur.credits': '크레딧',
