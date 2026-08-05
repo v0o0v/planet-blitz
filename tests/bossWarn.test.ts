@@ -11,8 +11,11 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   BossWarnLoop,
+  bossWarnSuppressed,
   bossWarnIntensity,
   bossWarnIntervalSec,
   bossWarnGain,
@@ -140,6 +143,131 @@ describe('보스 예고 — 구동기(배선 실도달)', () => {
     playSample.mockClear();
     loop.tick(1, false, 1 / 60);
     expect(playSample).toHaveBeenCalledTimes(1); // 진입 1회일 뿐, 누적분이 터지지 않는다.
+  });
+});
+
+describe('보스 예고 — 런이 끝나면 침묵한다(회귀: 결과 화면에서 계속 울었다)', () => {
+  /** 사용자 신고 2026-08-05 재현 조건 — 보스를 잡은 직후의 프레임 상태. */
+  const AFTER_BOSS_KILL = {
+    // `bossProgress` 는 `w.done` 이면 계속 frac 1 을 돌려준다 — 런이 끝나도 0 으로 안 떨어진다.
+    frac: 1,
+    // 보스 엔티티가 사라졌으므로 `bossEngaged` 는 **거짓**이다. 이 조합이 정확히 함정이었다.
+    engaged: false,
+  } as const;
+
+  it('진리표 — 런 종료·런 화면 이탈·관전 중 어느 하나라도 참이면 침묵한다', () => {
+    const live = { runOver: false, onRunScreen: true, spectating: false };
+    expect(bossWarnSuppressed(live), '라이브 런에서 침묵하면 예고가 통째로 죽는다').toBe(false);
+    expect(bossWarnSuppressed({ ...live, runOver: true })).toBe(true);
+    expect(bossWarnSuppressed({ ...live, onRunScreen: false })).toBe(true);
+    expect(bossWarnSuppressed({ ...live, spectating: true })).toBe(true);
+    // 겹쳐도 참이다(OR 이 AND 로 뒤집히지 않았다).
+    expect(bossWarnSuppressed({ runOver: true, onRunScreen: false, spectating: true })).toBe(true);
+  });
+
+  it('보스를 잡아 런이 끝나면 즉시 멈춘다 — frac 은 1 로 남고 bossEngaged 는 거짓이 된다', () => {
+    const { audio, playSample } = mockAudio();
+    const loop = new BossWarnLoop(audio);
+    // ① 보스 직전 — 울고 있어야 한다(그래야 아래 침묵이 의미를 가진다).
+    for (let i = 0; i < 120; i++) loop.tick(1, false, 1 / 60, false);
+    const beforeKill = playSample.mock.calls.length;
+    expect(beforeKill, '보스 직전인데 예고가 안 운다').toBeGreaterThan(0);
+
+    // ② 처치 → 런 종료. 결과 화면이 떠 있는 10초 동안 호출부는 계속 tick 을 부른다.
+    const suppress = bossWarnSuppressed({ runOver: true, onRunScreen: true, spectating: false });
+    for (let i = 0; i < 600; i++) {
+      loop.tick(AFTER_BOSS_KILL.frac, AFTER_BOSS_KILL.engaged, 1 / 60, suppress);
+    }
+    expect(
+      playSample.mock.calls.length,
+      '런이 끝났는데 결과 화면에서 예고가 계속 운다',
+    ).toBe(beforeKill);
+  });
+
+  it('가드가 없으면 실제로 계속 운다 — 이 테스트가 지키는 것이 무엇인지 고정한다', () => {
+    // 같은 프레임 상태를 suppress=false 로 흘리면 최고 속도로 계속 운다. 위 테스트가
+    // "원래 안 울리는 조건"을 검사하는 항진 테스트가 아님을 증명한다.
+    const { audio, playSample } = mockAudio();
+    const loop = new BossWarnLoop(audio);
+    for (let i = 0; i < 600; i++) {
+      loop.tick(AFTER_BOSS_KILL.frac, AFTER_BOSS_KILL.engaged, 1 / 60, false);
+    }
+    expect(playSample.mock.calls.length).toBeGreaterThan(10);
+  });
+
+  it('죽어서 끝난 런도 마찬가지다 — 보스 근처에서 죽으면 frac 이 임계 위에 남는다', () => {
+    const { audio, playSample } = mockAudio();
+    const loop = new BossWarnLoop(audio);
+    const nearBoss = BOSS_WARN_START_FRAC + 0.15;
+    for (let i = 0; i < 120; i++) loop.tick(nearBoss, false, 1 / 60, false);
+    expect(playSample.mock.calls.length).toBeGreaterThan(0);
+    playSample.mockClear();
+    const suppress = bossWarnSuppressed({ runOver: true, onRunScreen: true, spectating: false });
+    for (let i = 0; i < 600; i++) loop.tick(nearBoss, false, 1 / 60, suppress);
+    expect(playSample, '패배로 끝난 런에서도 예고가 계속 운다').not.toHaveBeenCalled();
+  });
+
+  it('런 화면을 떠나도 멈춘다 — 기지·성계 지도에서 경보가 나면 안 된다', () => {
+    const { audio, playSample } = mockAudio();
+    const loop = new BossWarnLoop(audio);
+    const suppress = bossWarnSuppressed({ runOver: false, onRunScreen: false, spectating: false });
+    for (let i = 0; i < 600; i++) loop.tick(1, false, 1 / 60, suppress);
+    expect(playSample).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 호출부 게이트 — **이 결함의 진짜 자리는 순수 함수가 아니라 `main.ts` 였다.**
+ *
+ * 위 구동기 테스트는 `suppress` 를 손으로 넘겨 준다. 그래서 호출부가 그 인자를 안 넘겨도
+ * 전부 초록이다 — 실제로 신고가 들어온 상태가 바로 그것이었다(순수 로직은 처음부터 옳았고,
+ * `main.ts` 가 `spectating` 만 넘기고 있었다). 렌더 프레임에서만 만들어지는 조건이라
+ * 단위 테스트로는 도달할 수 없으므로, 이 리포의 확립된 관행대로 소스 게이트로 잠근다
+ * (`tests/commissionWorldRebind.test.ts` 와 같은 방식·같은 이유).
+ */
+describe('main.ts 배선 — 예고 루프에 억제 조건이 실제로 넘어간다', () => {
+  function src(rel: string): string {
+    return readFileSync(fileURLToPath(new URL(`../${rel}`, import.meta.url)), 'utf8');
+  }
+  /** 주석 제거 — 주석 속 문구가 게이트를 통과시키면 그건 게이트가 아니다. */
+  function stripComments(text: string): string {
+    return text
+      .split('\n')
+      .map((l) => {
+        const i = l.indexOf('//');
+        return i < 0 ? l : l.slice(0, i);
+      })
+      .join('\n');
+  }
+
+  const main = stripComments(src('src/main.ts'));
+  /** `bossWarn.tick(` 부터 닫는 괄호까지의 인자 구간. 앵커가 없으면 던진다(드리프트 = 실패). */
+  const tickCall = (() => {
+    const a = main.indexOf('bossWarn.tick(');
+    if (a < 0) throw new Error('앵커를 찾지 못했다: bossWarn.tick(');
+    const b = main.indexOf(');', a);
+    if (b < 0) throw new Error('bossWarn.tick( 의 닫는 괄호를 찾지 못했다');
+    return main.slice(a, b);
+  })();
+
+  it('억제 인자로 `bossWarnSuppressed` 를 넘긴다 — 안 넘기면 결과 화면에서 계속 운다', () => {
+    expect(tickCall, 'bossWarn.tick 이 bossWarnSuppressed 를 안 쓴다').toContain(
+      'bossWarnSuppressed(',
+    );
+  });
+
+  it('세 축을 모두 채운다 — 하나라도 빠지면 그 경로에서 소리가 샌다', () => {
+    for (const key of ['runOver', 'onRunScreen', 'spectating']) {
+      expect(tickCall, `bossWarnSuppressed 인자에 ${key} 가 없다`).toContain(key);
+    }
+  });
+
+  it('`runOver` 를 그 자리에서 월드로부터 다시 읽는다 — 스텝 전 상수는 이번 프레임을 놓친다', () => {
+    // 위쪽 `const runOver` 는 스텝 **전** 월드에서 뽑은 값이라, 이번 프레임에 끝난 런을 못 본다
+    // (계약 §6-2 재조회 규약). 그 상수를 그냥 재사용하면 종료 프레임에서 한 번 더 울린다.
+    expect(tickCall, 'runOver 가 gameOver/victory 에서 직접 파생되지 않는다').toMatch(
+      /runOver:\s*w\.gameOver\s*\|\|\s*w\.victory/,
+    );
   });
 });
 

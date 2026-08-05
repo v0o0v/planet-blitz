@@ -75,6 +75,30 @@ export function bossWarnGain(intensity: number): number {
 }
 
 /**
+ * 예고 루프를 침묵시켜야 하는가 — **호출 조건 자체를 순수 함수로 뽑은 것**이다.
+ *
+ * ⚠️ 이걸 왜 함수로 뽑았나(사용자 신고 2026-08-05 "행성런이 끝나고 보스 사운드가 계속 난다"):
+ * 호출부(`main.ts`)의 사운드 관측 블록은 `if (w !== null)` 하나만 두르고 있고, `world` 는
+ * teardown 에서야 null 이 된다. 그래서 **런이 끝나고 결과 화면에 있는 동안에도 이 블록이 계속
+ * 돈다**. 보스를 잡으면 `bossProgress` 가 `frac: 1`(`w.done`)을 계속 돌려주는데 보스 엔티티는
+ * 사라져 `bossEngaged` 가 거짓이 되므로, 루프가 **최고 속도(0.45초)로 영원히** 울었다.
+ *
+ * 조건을 호출부에 인라인으로 두면 렌더 프레임에서만 만들어지는 상태라 테스트가 못 잡는다
+ * (이 리포가 반복해서 밟은 자리다 — `tests/bossWarn.test.ts` 헤더 참조). 순수 함수로 두고
+ * 진리표를 고정한다.
+ */
+export function bossWarnSuppressed(o: {
+  /** 런이 끝났는가(`gameOver || victory`). 정산·결과 화면이 이 상태로 머문다. */
+  readonly runOver: boolean;
+  /** 지금 런 화면인가. 기지·성계 지도 등으로 나갔으면 거짓. */
+  readonly onRunScreen: boolean;
+  /** 리플레이 관전 중인가(SFX 통째 억제). */
+  readonly spectating: boolean;
+}): boolean {
+  return o.runOver || !o.onRunScreen || o.spectating;
+}
+
+/**
  * 예고 루프 구동기. 매 렌더 프레임 {@link tick} 을 부른다.
  *
  * `bossEngaged` 가 참이 되는 순간 루프는 **즉시 멈춘다** — 그 정적이 곧 등장 신호이고, 등장음
