@@ -192,7 +192,20 @@ describe('일일 보상 모의 — 예고 소비/확정', () => {
     expect(tomorrow.result?.axis).toBe(today.next?.axis);
     expect(tomorrow.result?.announcementMissed).toBe(false);
     // 예고에는 **값이 실리지 않는다**(AC-21 — 실리면 내일 굴림이 오늘 새어 나온 것이다).
-    expect(Object.keys(today.next ?? {}).sort()).toEqual(['axis']);
+    //
+    // ⚠️ 이 단언이 `['axis']` 정확 일치였던 것은 **슬라이스 1 의 우연**이다: 재화 축만
+    //    낙찰돼서 등급도 계급도 실릴 일이 없었다. AC-21 이 감추라고 한 것은 *값*이고
+    //    허용한 것은 *종류·등급·지시 계급*이므로, 축이 여섯이 된 지금 정확 일치는 설계가
+    //    맞을 때 빨개진다. 그래서 **허용 집합의 부분집합**인지로 바꾸고, 값 필드가 새는지는
+    //    아래에서 따로 전수로 막는다(부분집합만 보면 `axis` 하나만 남겨도 통과한다).
+    const ALLOWED = ['axis', 'grade', 'rarity'];
+    const keys = Object.keys(today.next ?? {}).sort();
+    expect(keys).toContain('axis');
+    expect(keys.filter((k) => !ALLOWED.includes(k)), `예고에 값이 샜다: ${keys.join(',')}`)
+      .toEqual([]);
+    for (const leak of ['credits', 'minerals', 'count', 'value', 'affixes', 'uses']) {
+      expect(keys, `예고에 굴림 값 ${leak} 가 실렸다`).not.toContain(leak);
+    }
   });
 });
 

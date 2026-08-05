@@ -22,13 +22,27 @@
  *    이 등식 덕분에 예산 필터(`value <= budget`)가 곧 *"오늘 예산으로 끝낼 수 있는 걸음만
  *    오늘의 걸음이다"* 가 된다 — 절반만 주고 내일 또 주는 흐지부지가 구조적으로 안 생긴다.
  *
- * ## 슬라이스 1 은 재화 축만 관통한다
+ * ## 6축 전부가 등록됐다 (슬라이스 2)
  *
- * 축 식별자와 **가치 환산표는 6축 전부** 있다(AC-16 이 6축 상호 환산을 요구한다). 그러나
- * **후보 생산기는 `currency` 하나만 등록**돼 있다 — 나머지 5축은 슬라이스 2 소관이다.
- * 레지스트리({@link DAILY_REWARD_PRODUCERS})가 그 빈자리를 명시적으로 들고 있어서, 축을
- * 붙이는 일이 이 파일의 구조를 바꾸지 않는다. 6축 생산기를 지금 다 짜는 안은 기각됐다 —
- * 슬라이스 1 이 실화면까지 닿기 전에 다섯 축의 목표 정의를 추측으로 굳히게 된다.
+ * 슬라이스 1 은 `currency` 하나만 등록했고 나머지 다섯은 빈자리였다. 슬라이스 2 가 그 자리를
+ * 채운다 — {@link DAILY_REWARD_PRODUCERS} 가 6축 전부를 든다. 축을 붙이며 이 파일의 구조는
+ * 바뀌지 않았다: 생산기 시그니처도 낙찰도 그대로이고, {@link DailyRewardProgressInput} 에
+ * **형제 필드가 다섯 늘었을 뿐**이다(레지스트리 구조로 얻으려던 것이 정확히 이것이다).
+ *
+ * ## ⚠️ 이산 축의 "거리"는 남은 걸음의 비율이다
+ *
+ * 재화 축은 부족분이 연속량이라 거리 = `부족 금액 / 필요 금액`이 자연스러웠다. 이산 축
+ * (코어 모듈·장비·의뢰서)에는 "일부만 모은 상태"가 없다 — 모듈은 반 개가 없다. 거리를
+ * `부족분/필요량`으로 그대로 쓰면 **모든 이산 후보의 거리가 1** 이 되어 재화 축의 0.05 짜리
+ * 후보에게 영영 진다. 축을 다섯 붙여도 낙찰은 늘 재화가 되는 것이다.
+ *
+ * 그래서 이산 축의 거리는 **목표까지 남은 걸음 수 / 전체 걸음 수**로 잰다. 뜻은 재화 축과
+ * 같다("진행률의 여집합")이고 [0,1] 정규화 규약도 그대로다. 대신 *"후보의 가치 = 부족분
+ * 전액"* 등식은 **부족분을 한 번에 줄 수 있는 축**(재화·촉매·설계도)에만 성립하고, 나머지
+ * 셋은 `value` 가 **오늘 주는 것 하나**의 값이고 남은 걸음은 {@link DailyRewardStep} 이
+ * 표시한다. 예산 필터의 뜻은 안 바뀐다 — *"오늘 줄 수 있는 것만 오늘 준다."*
+ *
+ * 이것은 AC-11(*"예산 안에서 거리 최소"*)의 재결정이 아니라 거리 산식의 확장이다.
  *
  * ## 규율
  *
@@ -45,10 +59,10 @@
 
 import { SeededRng } from '../src/sim/rng.js';
 import type { Rarity } from '../src/items/types.js';
-import { RARITY_CODE } from '../src/items/types.js';
+import { RARITY_CODE, RARITY_BY_CODE } from '../src/items/types.js';
 import type { CommissionGrade } from '../src/run/commission.js';
 
-import { catalystBuyPrice } from '../src/data/catalysts.js';
+import { CATALYSTS, SLOT_CAP, catalystBuyPrice } from '../src/data/catalysts.js';
 import { moduleBuyPrice } from './coreModules.js';
 import { PLANET_BLUEPRINT_SPECIALTIES } from './planets/blueprints.js';
 import {
@@ -61,6 +75,7 @@ import {
   ASCEND_BLUEPRINT_COST,
   defenseUnitAscendCost,
   defenseUnitLevelUpCost,
+  defenseUnitRarityUpCost,
 } from './defenseUnits.js';
 
 // ---------------------------------------------------------------------------
@@ -392,10 +407,116 @@ export interface CurrencyProgress {
 
 /**
  * 전 축 생산기가 공유하는 입력. 슬라이스 2 는 여기에 **형제 필드를 더할 뿐** 생산기 시그니처를
- * 바꾸지 않는다 — 그것이 레지스트리 구조로 얻으려는 것이다.
+ * 바꾸지 않았다 — 그것이 레지스트리 구조로 얻으려던 것이다.
+ *
+ * ⚠️ **다섯 형제가 선택 필드인 것은 "미구현"이 아니라 "이번 호출에 그 축 상태가 안 실렸다"**
+ * 를 뜻한다. 둘은 다르다 — 레지스트리의 빈자리(슬라이스 1)는 *코드가 없다* 였고, 여기 부재는
+ * *부수 테이블 조회가 실패했다* 이다. 후자는 실제로 일어나며(EF 는 `defense_units` 조회 실패를
+ * 치명으로 보지 않는다 — 그 축만 빠지고 나머지는 선다) 그때 그 축의 후보가 0개인 것이 옳다.
+ * 폴백 원인 관측이 죽지 않는 이유: 폴백은 **전 축 합계가 0일 때만** 나므로, 한 축이 빠져서
+ * 폴백이 났다면 나머지 다섯도 함께 비었다는 뜻이다.
  */
 export interface DailyRewardProgressInput {
   readonly currency: CurrencyProgress;
+  readonly catalyst?: CatalystProgress;
+  readonly blueprint?: BlueprintProgress;
+  readonly coreModule?: CoreModuleProgress;
+  readonly gear?: GearProgress;
+  readonly commission?: CommissionProgress;
+}
+
+// ---------------------------------------------------------------------------
+// 나머지 5축이 거리를 재는 데 필요한 상태 (슬라이스 2)
+// ---------------------------------------------------------------------------
+
+/** 보유 촉매 1종. */
+export interface CatalystOwnedEntry {
+  readonly catalystId: number;
+  readonly qty: number;
+}
+
+/**
+ * 촉매 축 상태 — 목표는 **다음 런의 주입 슬롯을 채우는 것**이다.
+ *
+ * 주입은 `SLOT_CAP`(8) 칸이고 한 칸에 촉매 1개가 들어간다(`src/data/catalystInject.ts` 의
+ * 세 규칙 중 ①③). 그래서 *"보유 총량이 슬롯 수에 얼마나 모자란가"* 가 그대로 거리가 되고,
+ * 모자란 만큼을 한 번에 줄 수 있으므로 **부족분 전액 등식이 이 축에서는 성립한다.**
+ */
+export interface CatalystProgress {
+  readonly owned: readonly CatalystOwnedEntry[];
+}
+
+/** 설계도 축이 보는 방어체 1기. 재화 축의 {@link DefenseUnitProgress} 와 겨누는 곳이 다르다. */
+export interface BlueprintUnitProgress {
+  /** 목표 식별자에 쓰는 안정 키(방어체 인스턴스 id). */
+  readonly key: string;
+  /** 설계도의 (종류, 카탈로그 id) — 지급물이 정확히 그 방어체의 중복 설계도여야 한다. */
+  readonly kind: number;
+  readonly catalogId: number;
+  readonly rarity: Rarity;
+  readonly ascension: number;
+  /** 그 방어체의 **중복 설계도** 보유 장수. */
+  readonly dupBlueprints: number;
+}
+
+/**
+ * 설계도 축 상태.
+ *
+ * 재화 축이 *"막고 있는 것이 설계도면 그 목표를 만들지 않는다"* 로 넘긴 자리를 이 축이 받는다
+ * ({@link currencyCandidates} 헤더의 기각 사유 ②③). 두 축이 같은 방어체를 겨누어도 겹치지
+ * 않는다 — 재화 축은 크레딧이 모자란 승급을, 이 축은 설계도가 모자란 승급을 본다.
+ */
+export interface BlueprintProgress {
+  readonly units: readonly BlueprintUnitProgress[];
+}
+
+/**
+ * 코어 모듈 축 상태 — 목표는 **코어 강화 슬롯을 채우는 것**이다(`MODULE_EQUIP_SLOTS` = 2).
+ *
+ * ⚠️ 이 축은 한 걸음에 모듈 **1개**만 줄 수 있으므로 부족분 전액 등식이 성립하지 않는다.
+ * 거리는 빈 슬롯 비율이고 `value` 는 오늘 주는 모듈 하나의 값이다(헤더 §이산 축).
+ */
+export interface CoreModuleProgress {
+  /** 장착 슬롯 수(호출 측이 `MODULE_EQUIP_SLOTS` 를 넘긴다 — 재화 축의 창고 상한과 같은 규율). */
+  readonly equipSlots: number;
+  /** 보유 모듈 수(장착·보관 합). */
+  readonly owned: number;
+  /** 후보로 세울 등급들. 예산이 이 중에서 고른다 — 등급 선택 규칙을 따로 저작하지 않는다. */
+  readonly rarities: readonly Rarity[];
+}
+
+/**
+ * 장비 축 상태 — 목표는 **여덟 장착 위치를 어떤 등급 이상으로 올리는 것**이다.
+ *
+ * 목표 등급을 상수로 못 박지 않고 **등급마다 후보를 하나씩** 세운다. 그러면 "지금 이 조종사에게
+ * 적당한 등급"을 정하는 두 번째 손잡이가 생기지 않고, 예산이 그 일을 대신한다 — 예산이 작으면
+ * 매직이, 크면 레어가 자연히 낙찰된다.
+ */
+export interface GearProgress {
+  /**
+   * 장착 위치별 현재 등급 코드(`RARITY_CODE`). **빈 슬롯은 `-1`** 이다. 길이가 곧 전체 걸음 수라
+   * 호출 측이 `EQUIP_SLOTS.length`(8) 만큼 채워 넘긴다.
+   */
+  readonly slotRarityCodes: readonly number[];
+  /**
+   * 활성 기체 레벨. **요구 레벨 상한**이다(ADR-0030 — 못 입는 것을 주지 않는다). 가치 산정도
+   * 이 값을 쓰므로 실지급 장비의 요구 레벨이 이보다 낮으면 실값이 예산 아래로 내려간다(안전한 쪽).
+   */
+  readonly shipLevel: number;
+}
+
+/**
+ * 의뢰서 축 상태 — 목표는 **지시 수신소 보관함을 채우는 것**이다.
+ *
+ * ⚠️ **보관 상한이 후보를 먼저 거른다.** 만석이면 서버 `grant_commission_for` 가 어차피 지급을
+ * 거부하는데, 그것을 여기서 거르지 않으면 낙찰만 되고 지급이 없는 하루가 생긴다 — 원장에는
+ * 수령으로 적히므로 **그날이 통째로 소멸한다.**
+ */
+export interface CommissionProgress {
+  /** 현재 보관 중인 의뢰서 수. */
+  readonly stock: number;
+  /** 보관 상한(호출 측이 `COMMISSION_STOCK_CAP` 을 넘긴다). */
+  readonly stockCap: number;
 }
 
 /**
@@ -537,6 +658,208 @@ export function currencyCandidates(input: DailyRewardProgressInput): DailyReward
 }
 
 // ---------------------------------------------------------------------------
+// 나머지 5축 후보 생산기 (슬라이스 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * 촉매 축 (AC-10).
+ *
+ * 목표는 하나뿐이다 — *"다음 런의 주입 슬롯 8칸을 채운다."* 보유 총량이 이미 8 이상이면
+ * 견인할 것이 없으므로 후보가 없다(재화 축의 *"이미 살 수 있으면 후보가 아니다"* 와 같은 규칙).
+ *
+ * ## 어느 촉매를 주는가 — 규칙을 저작하지 않는다
+ *
+ * 보유 중인 촉매가 있으면 **그 종류들을** 후보로 세운다(같은 것을 쌓는 편이 스택이 되어 실제로
+ * 세다). 하나도 없으면 **공용(common)** 전체를 후보로 세운다 — 특산(signature)은 출신 행성에서만
+ * 주입할 수 있어(`catalystLocked`) 다른 행성을 도는 조종사에게는 못 쓰는 것을 주는 셈이 된다.
+ *
+ * 어느 하나를 고르는 일은 tie-break 가 한다. 여기서 "가장 좋은 촉매"를 정하는 규칙을 세우면
+ * 그것이 거리·예산·시드와 별개인 **네 번째 손잡이**가 된다.
+ */
+export function catalystCandidates(input: DailyRewardProgressInput): DailyRewardCandidate[] {
+  const p = input.catalyst;
+  if (p === undefined) return [];
+
+  let total = 0;
+  const ownedIds: number[] = [];
+  for (const e of p.owned) {
+    const qty = Math.floor(safeNonNeg(e.qty));
+    if (qty <= 0) continue;
+    total += qty;
+    ownedIds.push(Math.trunc(e.catalystId));
+  }
+  const short = SLOT_CAP - total;
+  if (short <= 0) return [];
+
+  const ids = ownedIds.length > 0 ? ownedIds : CATALYSTS.filter((c) => c.kind === 'common').map((c) => c.id);
+  const distance = short / SLOT_CAP;
+  const out: DailyRewardCandidate[] = [];
+  for (const id of ids) {
+    // goalId 가 촉매 종류를 타는 것이 의도다 — 화면이 *"같은 목표가 이어지는가"* 를 이 키로만
+    // 판정하므로(AC-14), 어제 붉은 촉매 어제 오늘 푸른 촉매면 그것은 같은 목표가 아니다.
+    out.push(
+      makeCandidate(
+        `catalyst:slots:${id}`,
+        { axis: 'catalyst', catalystId: id, count: short },
+        distance,
+      ),
+    );
+  }
+  return out;
+}
+
+/**
+ * 설계도 축 (AC-10).
+ *
+ * 방어체 1기당 최대 두 목표다 — **승급의 설계도 요건**과 **등급 승급**. 둘 다 막고 있는 것이
+ * 설계도(중복 장수)이고, 크레딧이 막는 쪽은 재화 축이 이미 가져갔다.
+ *
+ * 부족분(`need - have`)을 한 번에 줄 수 있으므로 이 축도 **부족분 전액 등식**이 성립한다.
+ */
+export function blueprintCandidates(input: DailyRewardProgressInput): DailyRewardCandidate[] {
+  const p = input.blueprint;
+  if (p === undefined) return [];
+  const out: DailyRewardCandidate[] = [];
+
+  for (const unit of p.units) {
+    const have = Math.floor(safeNonNeg(unit.dupBlueprints));
+    const kind = Math.trunc(unit.kind);
+    const catalogId = Math.trunc(unit.catalogId);
+
+    // ── 승급의 설계도 요건 ── 크레딧분은 재화 축이 맡는다. 여기는 장수만 본다.
+    const ascend = defenseUnitAscendCost(unit.ascension);
+    if (ascend !== null && ascend.blueprints > have) {
+      const short = ascend.blueprints - have;
+      out.push(
+        makeCandidate(
+          `bpAscend:${unit.key}:${Math.trunc(unit.ascension)}`,
+          { axis: 'blueprint', kind, catalogId, count: short },
+          short / ascend.blueprints,
+          normalizeStep(Math.trunc(unit.ascension) + 1, ASCEND_BLUEPRINT_COST.length),
+        ),
+      );
+    }
+
+    // ── 등급 승급 ── 비용이 중복 설계도뿐이라(크레딧 0) 전적으로 이 축의 목표다.
+    const rarityUp = defenseUnitRarityUpCost(unit.rarity);
+    if (rarityUp !== null && rarityUp.blueprints > have) {
+      const short = rarityUp.blueprints - have;
+      out.push(
+        makeCandidate(
+          `bpRarity:${unit.key}:${unit.rarity}`,
+          { axis: 'blueprint', kind, catalogId, count: short },
+          short / rarityUp.blueprints,
+        ),
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * 코어 모듈 축 (AC-10).
+ *
+ * 목표는 **코어 강화 슬롯을 채우는 것** 하나다. 이미 슬롯 수만큼 갖고 있으면 후보가 없다 —
+ * 그 조종사에게 다음 한 걸음은 모듈 개수가 아니라 등급이고, 등급 올리기는 합성(3→1)이라
+ * 일일 보상이 열어 줄 걸음이 아니다.
+ */
+export function coreModuleCandidates(input: DailyRewardProgressInput): DailyRewardCandidate[] {
+  const p = input.coreModule;
+  if (p === undefined) return [];
+  const slots = Math.floor(safeNonNeg(p.equipSlots));
+  const owned = Math.floor(safeNonNeg(p.owned));
+  if (slots <= 0) return [];
+  const short = slots - owned;
+  if (short <= 0) return [];
+
+  const distance = short / slots;
+  const step = normalizeStep(owned + 1, slots);
+  const out: DailyRewardCandidate[] = [];
+  const seen = new Set<Rarity>();
+  for (const rarity of p.rarities) {
+    if (seen.has(rarity)) continue;
+    seen.add(rarity);
+    out.push(
+      makeCandidate(`coreModule:slot:${owned}`, { axis: 'coreModule', rarity }, distance, step),
+    );
+  }
+  return out;
+}
+
+/**
+ * 장비 축 (AC-10).
+ *
+ * 등급 r 마다 후보를 하나 세우고, 그 후보의 거리는 *"아직 r 미만인 장착 위치의 비율"* 이다.
+ * 그래서 **낮은 등급일수록 목표가 가깝고**(빈 슬롯만 세므로) 예산이 크면 먼 등급도 후보에
+ * 남는다 — 거리와 예산이 각자 할 일을 한다.
+ *
+ * ⚠️ **요구 레벨은 기체 레벨을 넘지 않는다**(ADR-0030). 여기서는 가치 산정에 `shipLevel` 을
+ * 그대로 쓰는데, 실제로 굴린 장비의 요구 레벨은 그 이하이므로 실지급 가치가 후보 가치보다
+ * 낮아진다 — 예산을 **넘기는 쪽으로는 틀리지 않는다.**
+ */
+export function gearCandidates(input: DailyRewardProgressInput): DailyRewardCandidate[] {
+  const p = input.gear;
+  if (p === undefined) return [];
+  const codes = p.slotRarityCodes;
+  const total = codes.length;
+  if (total <= 0) return [];
+  const level = Math.max(1, Math.floor(safeNonNeg(p.shipLevel)) || 1);
+
+  const out: DailyRewardCandidate[] = [];
+  for (const rarity of RARITY_BY_CODE) {
+    const want = RARITY_CODE[rarity];
+    let below = 0;
+    for (const c of codes) {
+      const code = Number.isFinite(c) ? Math.trunc(c) : -1;
+      if (code < want) below++;
+    }
+    // 그 등급 이상으로 이미 전부 채워졌다 — 이 등급의 목표는 끝났다.
+    if (below === 0) continue;
+    out.push(
+      makeCandidate(
+        `gear:${rarity}`,
+        { axis: 'gear', rarity, requiredLevel: level },
+        below / total,
+        normalizeStep(total - below + 1, total),
+      ),
+    );
+  }
+  return out;
+}
+
+/**
+ * 의뢰서 축 (AC-10).
+ *
+ * ⚠️ **보관 상한이 후보를 먼저 거른다** — 만석이면 후보가 아예 없다. 이것이 이 축에서 가장
+ * 중요한 한 줄이다: 서버 지급이 만석에서 거부하는데 낙찰만 되면 원장에는 수령으로 적히고
+ * 물건은 없는 하루가 된다.
+ */
+export function commissionCandidates(input: DailyRewardProgressInput): DailyRewardCandidate[] {
+  const p = input.commission;
+  if (p === undefined) return [];
+  const cap = Math.floor(safeNonNeg(p.stockCap));
+  const stock = Math.floor(safeNonNeg(p.stock));
+  if (cap <= 0) return [];
+  const short = cap - stock;
+  if (short <= 0) return [];
+
+  const distance = short / cap;
+  const step = normalizeStep(stock + 1, cap);
+  const out: DailyRewardCandidate[] = [];
+  for (let grade = 1; grade <= 4; grade++) {
+    out.push(
+      makeCandidate(
+        `commission:stock:${grade}`,
+        { axis: 'commission', grade: grade as CommissionGrade },
+        distance,
+        step,
+      ),
+    );
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // 생산기 레지스트리 — 축을 추가할 자리
 // ---------------------------------------------------------------------------
 
@@ -546,17 +869,25 @@ export type DailyRewardCandidateProducer = (
 ) => DailyRewardCandidate[];
 
 /**
- * 축 → 생산기. **슬라이스 1 은 `currency` 하나만 등록한다.**
+ * 축 → 생산기. **슬라이스 2 에서 6축 전부가 등록됐다.**
  *
- * `Partial` 인 것이 계약이다 — 미등록 축이 타입 수준에서 정상 상태이므로, 슬라이스 2 가 축을
- * 붙일 때 이 파일에서 고칠 곳은 이 객체 리터럴 한 줄뿐이다. 6축을 전부 필수로 두고 빈 배열
- * 반환 스텁을 채워 넣는 안은 기각됐다 — 스텁은 "구현했는데 후보가 0개"와 "아직 안 만들었다"를
- * 구분할 수 없게 만들어, 폴백이 왜 났는지 영영 못 읽게 된다(AC-12 의 관측성이 죽는다).
+ * `Partial` 은 남겨 둔다 — 슬라이스 1 에서 그것이 계약이었던 이유(미등록 축이 타입 수준에서
+ * 정상 상태)가 사라진 것은 아니고, 언젠가 축을 잠시 내려야 할 때 빈 배열 스텁으로 위장하는
+ * 대신 **키를 지우는 것**이 여전히 옳기 때문이다. 스텁은 "구현했는데 후보가 0개"와 "아직 안
+ * 만들었다"를 구분할 수 없게 만들어 폴백이 왜 났는지 못 읽게 한다(AC-12 의 관측성이 죽는다).
+ *
+ * ⚠️ 등록 순서는 낙찰에 영향이 없다 — {@link candidateTieKey} 가 배열 순서가 아니라 **내용**에서
+ * 키를 뽑기 때문이다. 다섯을 한꺼번에 등록해도 어제의 재화 축 낙찰이 뒤집히지 않는 근거가 그것이다.
  */
 export const DAILY_REWARD_PRODUCERS: Readonly<
   Partial<Record<DailyRewardAxis, DailyRewardCandidateProducer>>
 > = {
   currency: currencyCandidates,
+  catalyst: catalystCandidates,
+  blueprint: blueprintCandidates,
+  coreModule: coreModuleCandidates,
+  gear: gearCandidates,
+  commission: commissionCandidates,
 };
 
 /** 등록된 전 축의 후보를 모은다. 축 순서에 의존하지 않는다(낙찰이 내용 파생 키로 가른다). */

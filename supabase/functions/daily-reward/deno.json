@@ -1,6 +1,6 @@
 {
-  "//": "daily-reward Edge Function (일일 보상 슬라이스 1 — 재화 축, ADR-0048 · 계획 §C4). sloppy-imports(unstable)로 data/dailyReward·data/dailyRewardSelection 이 src/sim·src/items·src/run 의 .js specifier 를 .ts 에 resolve 해 공유 순수 산식을 무수정 import 한다(verify-commission·verify-invasion 과 동일 패턴).",
-  "//deploy": "배포는 `deno task bundle` 후 dist.index.js를 index.ts로 치환해 올린다 — sloppy-imports를 CLI 배포 번들러가 못 따라가고 `--entrypoint` 플래그도 없다. data/dailyReward*·data/coreModules·data/economy·data/defenseUnits·src/sim/rng 가 바뀌면 재배포가 필수다. 절차 정본: .omc/skills/planet-blitz-supabase-deploy-workflow.md · 요약: 리포 루트 README.md '서버 배포' 절.",
+  "//": "daily-reward Edge Function (일일 보상 6축, ADR-0048 · 계획 §C4·§C7). sloppy-imports(unstable)로 data/dailyReward·data/dailyRewardSelection 이 src/sim·src/items·src/run 의 .js specifier 를 .ts 에 resolve 해 공유 순수 산식을 무수정 import 한다(verify-commission·verify-invasion 과 동일 패턴).",
+  "//deploy": "배포는 `deno task bundle` 후 dist.index.js를 index.ts로 치환해 올린다 — sloppy-imports를 CLI 배포 번들러가 못 따라가고 `--entrypoint` 플래그도 없다. data/dailyReward*·data/coreModules·data/economy·data/defenseUnits·src/sim/rng 가 바뀌면 재배포가 필수다. 슬라이스 2 가 의존을 넓혔다: src/items/roll·src/items/requiredLevel·src/items/uniques·data/uniques·data/affixes·data/waves·src/save/progressionPath·src/data/catalysts·src/run/commissionServerConstants 도 재배포 대상이다(장비 굴림과 요구 레벨 상한이 그쪽에 산다). 절차 정본: .omc/skills/planet-blitz-supabase-deploy-workflow.md · 요약: 리포 루트 README.md '서버 배포' 절.",
   "unstable": ["sloppy-imports"],
   "lock": false,
   "tasks": {

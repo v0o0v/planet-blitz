@@ -24,7 +24,8 @@
 # Everything runs inside BEGIN ... ROLLBACK, so no ledger row, grant row, or profile
 # change survives - safe to re-run against production.
 #
-# THE EIGHT TOKENS
+# THE TOKENS - eight from slice 1, seven added by slice 2 (plan C7).
+# Slice 1 (the currency leg and the bounds):
 #   IDEMPOTENT_1ROW        two calls on the same day -> one ledger row, already=true, same payload
 #   CAP_LEDGER_ROW         the currency grant is recorded with source='daily_reward'
 #   CAP_CLAMPED            an oversized claim is truncated to the budget and flagged clamped
@@ -36,6 +37,18 @@
 #   BACKFILL_LOWER_BOUND   existing rows satisfy lifetime_granted >= credits + minerals*8
 #   STREAK_BREAK_ONE       a missed day resets the streak to 1 (not 0, not held)
 #   STREAK_CYCLE_WRAP      day 30 + 1 wraps to 1
+#
+# Slice 2 (the five non-currency axes). Every one of these reads a BEFORE/AFTER delta on
+# the table the axis is supposed to write - never the RPC's own answer alone. A function
+# that reports granted:true while writing nothing is the exact failure they exist to catch,
+# and it is invisible from the game (the day is consumed either way):
+#   AXIS_CATALYST_GRANTED       catalyst_inventory grows AND the cap ledger saw it
+#   AXIS_BLUEPRINT_GRANTED      defense_blueprints count grows by the granted amount
+#   AXIS_COREMODULE_GRANTED     a core_modules row appears with a matching rarity column
+#   AXIS_COMMISSION_GRANTED     commission_inventory grows at the PROMISED grade (no re-roll)
+#   AXIS_COMMISSION_STOCK_CAP   a full desk refuses with reason='stock' and records why
+#   AXIS_GEAR_INBOX             the item lands in the mailbox unapplied, id kept verbatim
+#   AXIS_TOPUP_NOT_AXIS_GATED   the budget top-up is paid on a non-currency axis too
 #
 # Console output is ASCII-only on purpose (Windows PowerShell 5.1 mangles non-ASCII
 # literals in BOM-less .ps1 files, and mojibake reads like a failure).
@@ -278,6 +291,193 @@ rollback;
 Write-Host ""
 Write-Host "--- C8: day 30 yesterday, claim today ---"
 Check 'STREAK_CYCLE_WRAP' $c8.streak 1
+
+# ===============================================================================
+# SLICE 2 (plan C7): the five non-currency axes actually deliver
+# ===============================================================================
+# Everything above proves the CURRENCY leg. None of it touches the five axes added in
+# slice 2, and a claim that lands a ledger row while granting nothing is the worst outcome
+# available here: the day is consumed, the streak advances, and the player has nothing.
+# So each axis gets its own before/after witness on the table it is supposed to write.
+#
+# The claims run as `postgres` standing in for the Edge Function (same reason as above).
+# axis_value is the value of the ONE main reward; the SQL uses it to decide all-or-nothing
+# for the indivisible axes. Keep it well under DAILY_BUDGET_DAY_1 so nothing clamps here -
+# clamping has its own proof (C3).
+
+# A module payload shaped like data/coreModules.ts ModuleInstance. The EF bakes the real
+# one; this is the minimum the insert needs (rarity + chargesLeft feed the normal columns).
+$MODULE = '{"id":"module-probe","rarity":"rare","prefixes":[],"suffixes":[],"chargesMax":3,"chargesLeft":3,"seed":7}'
+$GEAR   = '{"id":"daily:probe","slot":"main","rarity":"magic","affixes":[],"source":{"planet":0,"stage":3,"levelCap":12},"weaponType":0}'
+
+$c9 = Invoke-Sql @"
+$reset
+update public.profiles set lifetime_granted = 0 where id = '$me'::uuid;
+create temp table axis(k text, v numeric) on commit drop;
+
+insert into axis select 'cat_before', coalesce(sum(qty), 0)
+  from public.catalyst_inventory where profile_id = '$me'::uuid and catalyst_id = 0;
+insert into probe select 'cat', public.claim_daily_reward_for(
+  '$me'::uuid, 'catalyst', 100,
+  '{"catalyst_id":0,"count":3,"axis_value":100,"credits":0,"minerals":0}'::jsonb, '{}'::jsonb);
+insert into axis select 'cat_after', coalesce(sum(qty), 0)
+  from public.catalyst_inventory where profile_id = '$me'::uuid and catalyst_id = 0;
+
+select (select (v - (select v from axis where k = 'cat_before'))::text
+          from axis where k = 'cat_after')                                     as cat_delta,
+       (select (v->'result_payload'->'axis_grant'->>'granted') from probe where k = 'cat') as cat_granted,
+       (select (v->'result_payload'->'axis_grant'->>'qty') from probe where k = 'cat')     as cat_qty,
+       (select count(*)::text from public.catalyst_grants
+          where profile_id = '$me'::uuid)                                      as cat_ledger,
+       (select (v->>'clamped') from probe where k = 'cat')                     as cat_clamped;
+rollback;
+"@
+Write-Host ""
+Write-Host "--- C9: the catalyst axis ---"
+# The witness is the inventory delta, not the return value. A function that answers
+# granted:true while writing nothing is exactly the failure this token exists to catch.
+Check 'AXIS_CATALYST_GRANTED (inventory delta)' $c9.cat_delta   3
+# `granted` must be a BOOLEAN here even though grant_catalyst_for's own `granted` is a
+# count - axis_grant.granted has to mean the same thing on all six axes or every reader
+# of it is silently wrong on exactly one. The quantity lives in `qty`.
+Check 'AXIS_CATALYST_GRANTED (reported)'        $c9.cat_granted 'true'
+Check 'AXIS_CATALYST_GRANTED (qty)'             $c9.cat_qty     3
+# It went through the capped path, so the cap ledger saw it. A direct inventory write
+# would leave this at 0 - that is the "second path around the cap" this forbids.
+Check 'AXIS_CATALYST_GRANTED (cap ledger row)'  $c9.cat_ledger  1
+Check 'AXIS_CATALYST_GRANTED (not clamped)'     $c9.cat_clamped 'false'
+
+$c10 = Invoke-Sql @"
+$reset
+update public.profiles set lifetime_granted = 0 where id = '$me'::uuid;
+create temp table axis(k text, v numeric) on commit drop;
+
+insert into axis select 'bp_before', coalesce(sum(count), 0)
+  from public.defense_blueprints where profile_id = '$me'::uuid and kind = 0 and catalog_id = 0;
+insert into axis select 'mod_before', count(*) from public.core_modules where profile_id = '$me'::uuid;
+insert into axis select 'com_before', count(*) from public.commission_inventory where profile_id = '$me'::uuid;
+
+insert into probe select 'bp', public.claim_daily_reward_for(
+  '$me'::uuid, 'blueprint', 100,
+  '{"kind":0,"catalog_id":0,"count":2,"axis_value":100,"credits":0,"minerals":0}'::jsonb, '{}'::jsonb);
+insert into axis select 'bp_after', coalesce(sum(count), 0)
+  from public.defense_blueprints where profile_id = '$me'::uuid and kind = 0 and catalog_id = 0;
+
+delete from public.daily_reward_claims where profile_id = '$me'::uuid;
+update public.profiles set daily_last_claim_seed = 0, daily_streak = 0 where id = '$me'::uuid;
+insert into probe select 'mod', public.claim_daily_reward_for(
+  '$me'::uuid, 'coreModule', 100,
+  ('{"axis_value":100,"credits":0,"minerals":0,"module":' || '$MODULE'::text || '}')::jsonb, '{}'::jsonb);
+insert into axis select 'mod_after', count(*) from public.core_modules where profile_id = '$me'::uuid;
+
+delete from public.daily_reward_claims where profile_id = '$me'::uuid;
+update public.profiles set daily_last_claim_seed = 0, daily_streak = 0 where id = '$me'::uuid;
+insert into probe select 'com', public.claim_daily_reward_for(
+  '$me'::uuid, 'commission', 100,
+  '{"grade":2,"axis_value":100,"credits":0,"minerals":0}'::jsonb, '{}'::jsonb);
+insert into axis select 'com_after', count(*) from public.commission_inventory where profile_id = '$me'::uuid;
+
+select (select (v - (select v from axis where k = 'bp_before'))::text  from axis where k = 'bp_after')  as bp_delta,
+       (select (v - (select v from axis where k = 'mod_before'))::text from axis where k = 'mod_after') as mod_delta,
+       (select (v - (select v from axis where k = 'com_before'))::text from axis where k = 'com_after') as com_delta,
+       (select (v->'result_payload'->'axis_grant'->>'granted') from probe where k = 'bp')  as bp_granted,
+       (select (v->'result_payload'->'axis_grant'->>'granted') from probe where k = 'mod') as mod_granted,
+       (select (v->'result_payload'->'axis_grant'->>'granted') from probe where k = 'com') as com_granted,
+       (select rarity from public.core_modules where profile_id = '$me'::uuid
+         order by created_at desc limit 1)                                                  as mod_rarity,
+       (select grade::text from public.commission_inventory where profile_id = '$me'::uuid
+         order by created_at desc limit 1)                                                  as com_grade;
+rollback;
+"@
+Write-Host ""
+Write-Host "--- C10: blueprint / core module / commission ---"
+Check 'AXIS_BLUEPRINT_GRANTED (count delta)'   $c10.bp_delta     2
+Check 'AXIS_BLUEPRINT_GRANTED (reported)'      $c10.bp_granted   'true'
+Check 'AXIS_COREMODULE_GRANTED (row delta)'    $c10.mod_delta    1
+Check 'AXIS_COREMODULE_GRANTED (reported)'     $c10.mod_granted  'true'
+# The normalised column must agree with the jsonb - the invasion snapshot reads the column.
+Check 'AXIS_COREMODULE_GRANTED (rarity column)' $c10.mod_rarity  'rare'
+Check 'AXIS_COMMISSION_GRANTED (row delta)'    $c10.com_delta    1
+Check 'AXIS_COMMISSION_GRANTED (reported)'     $c10.com_granted  'true'
+# The grade must be the one the pick promised, not a re-roll - the announcement said so.
+Check 'AXIS_COMMISSION_GRANTED (grade kept)'   $c10.com_grade    2
+
+# --- C11: the commission stock cap actually refuses -----------------------------
+# A full desk must NOT consume the day silently. The claim still lands (the day is used),
+# but axis_grant records why nothing arrived - that record is the only way to read this
+# afterwards, and without it "the reward is broken" is indistinguishable from "the desk is full".
+$c11 = Invoke-Sql @"
+$reset
+update public.profiles set lifetime_granted = 0 where id = '$me'::uuid;
+insert into public.commission_inventory (profile_id, grade, payload)
+  select '$me'::uuid, 1, '{}'::jsonb from generate_series(1, 12);
+insert into probe select 'full', public.claim_daily_reward_for(
+  '$me'::uuid, 'commission', 100,
+  '{"grade":2,"axis_value":100,"credits":0,"minerals":0}'::jsonb, '{}'::jsonb);
+
+select (select (v->'result_payload'->'axis_grant'->>'granted') from probe where k = 'full') as granted,
+       (select (v->'result_payload'->'axis_grant'->>'reason')  from probe where k = 'full') as reason,
+       (select count(*)::text from public.commission_inventory
+          where profile_id = '$me'::uuid)                                                   as stock,
+       (select count(*)::text from public.daily_reward_claims where profile_id = '$me'::uuid) as ledger;
+rollback;
+"@
+Write-Host ""
+Write-Host "--- C11: a full commission desk ---"
+Check 'AXIS_COMMISSION_STOCK_CAP (refused)'   $c11.granted 'false'
+Check 'AXIS_COMMISSION_STOCK_CAP (reason)'    $c11.reason  'stock'
+Check 'AXIS_COMMISSION_STOCK_CAP (no 13th)'   $c11.stock   12
+# The day is still recorded - it must be, or a full desk would let the player re-claim.
+Check 'AXIS_COMMISSION_STOCK_CAP (day used)'  $c11.ledger  1
+
+# --- C12: the gear axis rides the mailbox, not a server table -------------------
+$c12 = Invoke-Sql @"
+$reset
+update public.profiles set lifetime_granted = 0 where id = '$me'::uuid;
+insert into probe select 'gear', public.claim_daily_reward_for(
+  '$me'::uuid, 'gear', 100,
+  '{"rarity":"magic","required_level":12,"axis_value":100,"credits":0,"minerals":0}'::jsonb,
+  '{}'::jsonb, '$GEAR'::jsonb);
+
+select (select (v->'result_payload'->'axis_grant'->>'granted') from probe where k = 'gear') as granted,
+       (select (item_payload->>'id') from public.daily_reward_claims
+          where profile_id = '$me'::uuid)                                                    as inbox_id,
+       (select (applied_at is null)::text from public.daily_reward_claims
+          where profile_id = '$me'::uuid)                                                    as unapplied;
+rollback;
+"@
+Write-Host ""
+Write-Host "--- C12: the gear axis ---"
+Check 'AXIS_GEAR_INBOX (reported)'   $c12.granted   'true'
+# The id must survive verbatim: src/net/dailyReward.ts derives `daily:{date_seed}` and
+# compares it against the save. A rewritten id makes the idempotence check miss and the
+# same item gets planted again on every boot.
+Check 'AXIS_GEAR_INBOX (payload id)' $c12.inbox_id  'daily:probe'
+# Not applied yet - the client marks it after the save round-trip. If the server closed it
+# here, the item would be lost the moment the push failed.
+Check 'AXIS_GEAR_INBOX (unapplied)'  $c12.unapplied 'true'
+
+# --- C13: the budget top-up rides along on a NON-currency axis -------------------
+# Slice 1 gated credits behind `p_axis = 'currency'`. Leaving that gate in place makes the
+# top-up vanish whenever a cheap goal wins, and the ramp disappears from the screen -
+# the "day 30 and I got 40 credits" report, with the axis changed.
+$c13 = Invoke-Sql @"
+$reset
+update public.profiles set lifetime_granted = 0 where id = '$me'::uuid;
+insert into probe select 'topup', public.claim_daily_reward_for(
+  '$me'::uuid, 'catalyst', 1500,
+  '{"catalyst_id":0,"count":1,"axis_value":100,"credits":1400,"minerals":0}'::jsonb, '{}'::jsonb);
+
+select (select coalesce(sum(credits), 0)::text from public.currency_grants
+          where profile_id = '$me'::uuid and source = 'daily_reward')          as granted_credits,
+       (select (v->'result_payload'->>'credits') from probe where k = 'topup') as recorded_credits;
+rollback;
+"@
+Write-Host ""
+Write-Host "--- C13: budget top-up on a non-currency axis ---"
+# 1400 top-up + DAILY_SIDE_CREDITS (500). If the axis gate is back, this reads 500.
+Check 'AXIS_TOPUP_NOT_AXIS_GATED (recorded)' $c13.recorded_credits 1400
+CheckNum 'AXIS_TOPUP_NOT_AXIS_GATED (paid)'  $c13.granted_credits  1900
 
 # --- nothing leaked -------------------------------------------------------------
 $post = Invoke-Sql @"

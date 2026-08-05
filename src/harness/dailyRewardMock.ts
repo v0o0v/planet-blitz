@@ -63,8 +63,10 @@ import {
   type DailyRewardCandidate,
   type DailyRewardProgressInput,
 } from '../../data/dailyRewardSelection.js';
-import { shopUserSeed, rollModuleShopRotation } from '../../data/coreModules.js';
+import { shopUserSeed, rollModuleShopRotation, MODULE_EQUIP_SLOTS } from '../../data/coreModules.js';
 import { activeShip, MAX_STASH_EXPANSIONS, type Profile } from '../save/profile.js';
+import { EQUIP_SLOTS, RARITY_CODE } from '../items/types.js';
+import { COMMISSION_STOCK_CAP } from '../run/commissionServerConstants.js';
 import type {
   DailyRewardAnnouncement,
   DailyRewardClaim,
@@ -179,6 +181,19 @@ function matchesAnnouncement(c: DailyRewardCandidate, ann: DailyRewardAnnounceme
 // 게이트웨이
 // ---------------------------------------------------------------------------
 
+/**
+ * 활성 기체의 장착 위치별 등급 코드(빈 슬롯 `-1`). EF `readGearSlots` 의 하네스판이다 —
+ * 그쪽은 `profiles.save` jsonb 를 방어적으로 훑고 여기는 이미 정규화된 `Profile` 을 본다.
+ * 두 경로가 **같은 배열**을 내야 하네스가 서버와 갈리지 않는다.
+ */
+function gearSlotRarityCodes(p: Profile): number[] {
+  const equipped = activeShip(p).equipped;
+  return EQUIP_SLOTS.map((slot) => {
+    const item = equipped[slot];
+    return item === undefined ? -1 : RARITY_CODE[item.rarity];
+  });
+}
+
 /** 생성자 의존성. 프로필은 **참조가 아니라 공급자**다 — 하네스 프로필 슬롯 전환에 따라간다. */
 export interface HarnessDailyRewardDeps {
   /** 진행 견인 입력을 조립할 라이브 프로필. */
@@ -211,6 +226,22 @@ export class HarnessDailyRewardGateway implements DailyRewardGateway {
   private serverProfile: Profile | null = null;
   /** 다음 수령이 배송함에 실을 페이로드(장비 축 예행). `null` 이면 재화 축처럼 배송물 없음. */
   private nextItemPayload: unknown = null;
+  /**
+   * 낙찰을 이 축으로 강제한다(치트). `null` = 강제 없음.
+   *
+   * 여섯 축 중 하나가 자연히 낙찰될 때까지 기다리면 육안 확인이 실질적으로 불가능하다 —
+   * 거리 최소값이 그날 상태에 따라 정해지므로 원하는 축이 며칠이고 안 나올 수 있다. 그래서
+   * **후보를 그 축으로 좁혀서** 낙찰시킨다. ⚠️ 낙찰 규칙 자체는 건드리지 않는다(같은
+   * `pickDailyReward` 가 좁혀진 집합에서 고른다) — 규칙을 우회하면 검증 대상이 아닌 것을
+   * 보게 된다. 그 축의 후보가 아예 없으면 강제는 **아무 일도 하지 않는다**(폴백이 뜬다).
+   */
+  private forcedAxis: DailyRewardAxis | null = null;
+  /** `catalyst_inventory` 미러(catalyst_id → qty). 촉매 축의 거리 입력이자 지급 대상이다. */
+  private readonly catalystOwned = new Map<number, number>();
+  /** `core_modules` 행 수 미러. */
+  private moduleOwned = 0;
+  /** `commission_inventory` 행 수 미러. */
+  private commissionStock = 0;
 
   private readonly deps: HarnessDailyRewardDeps;
 
@@ -296,6 +327,10 @@ export class HarnessDailyRewardGateway implements DailyRewardGateway {
         value: 0,
         credits: 0,
         minerals: 0,
+        rarity: 'rare',
+        grade: null,
+        count: null,
+        axisGrant: { granted: true, reason: null },
         goalId: 'harness:pending',
         fallback: false,
         announcementMissed: false,
@@ -320,6 +355,29 @@ export class HarnessDailyRewardGateway implements DailyRewardGateway {
   /** 다음 수령이 배송함에 실을 페이로드를 정한다(장비 축 예행). `null` = 배송물 없음. */
   setNextItemPayload(payload: unknown): void {
     this.nextItemPayload = payload;
+  }
+
+  /**
+   * 낙찰 축을 강제한다(치트 패널). `null` 이면 해제.
+   *
+   * 오늘 행이 있으면 지운다 — 안 지우면 멱등 분기가 옛 결과를 돌려줘 손잡이가 아무 일도
+   * 안 한 것처럼 보인다(`setStreak` 과 같은 이유).
+   */
+  forceAxis(axis: DailyRewardAxis | null): void {
+    this.forcedAxis = axis;
+    this.rows.delete(this.seed);
+  }
+
+  /** 지금 강제 중인 축(치트 패널이 배지를 그릴 때 읽는다). */
+  forcedAxisName(): DailyRewardAxis | null {
+    return this.forcedAxis;
+  }
+
+  /** 축별 인벤토리 미러 현황(치트 패널 표시 + 지급이 실제로 늘었는지 육안 확인). */
+  axisInventory(): { catalysts: number; modules: number; commissions: number } {
+    let catalysts = 0;
+    for (const qty of this.catalystOwned.values()) catalysts += qty;
+    return { catalysts, modules: this.moduleOwned, commissions: this.commissionStock };
   }
 
   /** 미반영(`applied_at IS NULL`) 행 수 — 관측 지표 ②. */
@@ -389,13 +447,13 @@ export class HarnessDailyRewardGateway implements DailyRewardGateway {
     const announcementMissed = announced !== null && honored.length === 0 && candidates.length > 0;
     const pool = announcementMissed ? candidates : honored;
 
-    const pick = pickDailyReward(pool, budget.budget, this.seed, userSeed);
+    // 축 강제(치트) — **낙찰 규칙이 아니라 후보 집합만** 좁힌다. 그 축의 후보가 없으면
+    // 좁힌 결과가 비고 `pickDailyReward` 가 폴백을 낸다(강제가 조용히 무시되는 것이 아니라
+    // 폴백으로 보이는 것이 옳다 — 그 축에 오늘 줄 것이 없다는 뜻이니까).
+    const forced = this.forcedAxis;
+    const forcedPool = forced === null ? pool : pool.filter((c) => c.axis === forced);
+    const pick = pickDailyReward(forcedPool, budget.budget, this.seed, userSeed);
     const subject = pick.candidate.detail.subject;
-    // 슬라이스 1 은 재화 축만 낙찰된다(레지스트리에 그것뿐이고 폴백도 재화다). 다른 축이 나오면
-    // EF 는 501 로 막는다 — 모의도 조용히 크레딧으로 바꾸지 않고 같은 자리에서 던진다.
-    if (subject.axis !== 'currency') {
-      throw new Error(`daily-reward: axis-not-implemented (${subject.axis})`);
-    }
     // 절삭은 **서버(SQL)가 한다** — EF 는 원값을 넘기고 `claim_daily_reward_for` 가 `v_scale`
     // 로 축 성분까지 깎는다. 모의도 같은 자리에서 같은 식으로 깎아야 하네스가 서버와 갈리지
     // 않는다. ⚠️ EF 쪽에서 미리 깎으면 `clamped` 플래그가 false 로 기록돼 절삭 지표가
@@ -407,8 +465,65 @@ export class HarnessDailyRewardGateway implements DailyRewardGateway {
     // 예산 보정 — EF 와 **같은 자리·같은 함수**다. 갈리면 하네스가 서버에 없는 결함을
     // 만들거나 있는 결함을 숨긴다(모의 충실도 §).
     const topUp = budgetTopUpCredits(pick, budget.budget);
-    const grantCredits = Math.max(0, Math.floor(subject.credits * scale) + topUp);
-    const grantMinerals = Math.max(0, Math.floor(subject.minerals * scale));
+    // ⚠️ **보정분은 축과 무관하게 실린다** — 서버 SQL 이 `case when p_axis = 'currency'` 를
+    //    걷어낸 것과 같은 이유다(20260805020000 §3). 여기서만 재화 축에 가두면 촉매가 낙찰된
+    //    날 하네스 잔액이 서버보다 적게 올라 "모의가 서버와 갈리는" 결함이 된다.
+    const grantCredits = Math.max(
+      0,
+      (subject.axis === 'currency' ? Math.floor(subject.credits * scale) : 0) + topUp,
+    );
+    const grantMinerals =
+      subject.axis === 'currency' ? Math.max(0, Math.floor(subject.minerals * scale)) : 0;
+
+    // ── 축별 지급 — 서버 `claim_daily_reward_for` 의 6갈래 미러 ──
+    //
+    // 하네스가 이것을 안 하면 화면은 *"오늘 촉매를 받았다"* 라고 말하는데 보유량은 그대로다.
+    // 모의가 서버와 갈리는 것 자체가 결함이라는 것이 이 레인의 앞선 교훈이고, 실화면이 두 건을
+    // 그렇게 잡았다. 인벤토리 미러는 축 강제 치트로 육안 확인하는 대상이기도 하다.
+    let axisGranted = true;
+    let axisReason: string | null = null;
+    let itemPayload: unknown = this.nextItemPayload;
+    const axisCount = subject.axis === 'catalyst' || subject.axis === 'blueprint' ? subject.count : null;
+    switch (subject.axis) {
+      case 'currency':
+        break;
+      case 'catalyst': {
+        const before = this.catalystOwned.get(subject.catalystId) ?? 0;
+        this.catalystOwned.set(subject.catalystId, before + Math.max(0, Math.floor(subject.count)));
+        break;
+      }
+      case 'blueprint':
+        // 설계도 원장은 별도 서버 테이블이고 하네스에 그 모의가 없다(`progressInput` 이 같은
+        // 이유로 이 축의 상태를 안 싣는다). 그래서 이 축은 낙찰되지 않으며, 강제해도 후보가
+        // 없어 폴백이 뜬다. 여기 분기는 그 사실을 문서로 남기는 자리다.
+        break;
+      case 'coreModule':
+        this.moduleOwned += 1;
+        break;
+      case 'commission':
+        // 서버와 같은 순서로 상한을 본다 — 만석이면 지급하지 않고 **이유를 남긴다**.
+        if (this.commissionStock >= COMMISSION_STOCK_CAP) {
+          axisGranted = false;
+          axisReason = 'stock';
+        } else {
+          this.commissionStock += 1;
+        }
+        break;
+      case 'gear':
+        // 장비는 서버 테이블이 아니라 배송함으로 간다. 치트로 페이로드를 안 세웠으면
+        // 그 자리를 대신 채운다 — 안 그러면 장비 축을 강제해도 배송함이 비어 육안 확인이 죽는다.
+        if (itemPayload === null) {
+          itemPayload = {
+            id: `daily:${this.seed}`,
+            slot: 'main',
+            rarity: subject.rarity,
+            affixes: [],
+            source: { planet: 0, stage: 3, levelCap: subject.requiredLevel },
+            weaponType: 0,
+          };
+        }
+        break;
+    }
 
     // 내일 예고 확정. 시드가 `seed + 1` 인 것이 계약이다 — 같은 시드면 tie-break 가 오늘과
     // 같아져 예고가 오늘 낙찰을 그대로 복사한다.
@@ -422,10 +537,15 @@ export class HarnessDailyRewardGateway implements DailyRewardGateway {
       budget: budget.budget,
       clamped: budget.clamped,
       result: {
-        axis: 'currency',
+        axis: subject.axis,
         value: pick.candidate.value,
         credits: grantCredits,
         minerals: grantMinerals,
+        // 모달이 "오늘 무엇을 받았는가"를 말하려면 이 셋이 있어야 한다(§net DailyRewardResult).
+        rarity: subject.axis === 'coreModule' || subject.axis === 'gear' ? subject.rarity : null,
+        grade: subject.axis === 'commission' ? subject.grade : null,
+        count: axisCount,
+        axisGrant: { granted: axisGranted, reason: axisReason },
         goalId: pick.candidate.detail.goalId,
         fallback: pick.fallback,
         announcementMissed,
@@ -435,7 +555,7 @@ export class HarnessDailyRewardGateway implements DailyRewardGateway {
             : null,
       },
       next: announcementOf(nextPick.candidate),
-      itemPayload: this.nextItemPayload,
+      itemPayload: subject.axis === 'gear' ? itemPayload : this.nextItemPayload,
       appliedAt: null,
       holdReason: null,
     };
@@ -519,9 +639,12 @@ export class HarnessDailyRewardGateway implements DailyRewardGateway {
   /**
    * 진행 견인 입력 조립 — EF `buildProgressInput` 의 하네스판.
    *
-   * 차이는 둘뿐이고 둘 다 의도다:
+   * 차이는 셋이고 전부 의도다:
    *  - **`defenseUnits` 는 비운다.** 방어체 원장은 별도 서버 테이블이고 하네스에는 그 모의가
    *    따로 있다(`defenseMock.ts`). 추측으로 채우면 존재하지 않는 목표가 매일 낙찰된다.
+   *  - **`blueprint` 축은 아예 안 싣는다** — 같은 이유다(그 축의 목표가 전부 방어체에 걸려
+   *    있다). 필드를 빼는 것과 빈 배열을 넣는 것이 다르다는 것이 `DailyRewardProgressInput`
+   *    의 계약이고, 여기서는 *"그 축 상태를 모른다"* 가 정확한 뜻이다.
    *  - **`refining` 은 넣지 않는다.** 정제소에 올린 장비는 세이브가 아니라 화면 세션 상태다
    *    (EF 주석과 같은 이유).
    */
@@ -530,6 +653,9 @@ export class HarnessDailyRewardGateway implements DailyRewardGateway {
     const ship = activeShip(p);
     let invested = 0;
     for (const v of ship.skillInvest) invested += v;
+    const moduleOffers = rollModuleShopRotation(this.seed, shopUserSeed(HARNESS_DAILY_UID)).map(
+      (m) => m.rarity,
+    );
     return {
       currency: {
         credits: this.credits,
@@ -540,10 +666,19 @@ export class HarnessDailyRewardGateway implements DailyRewardGateway {
         // 아무것도 안 찍은 조종사에게 리스펙 목표를 들이미는 것은 견인이 아니라 소음이다.
         wantsRespec: invested > 0,
         defenseUnits: [],
-        moduleOffers: rollModuleShopRotation(this.seed, shopUserSeed(HARNESS_DAILY_UID)).map(
-          (m) => m.rarity,
-        ),
+        moduleOffers,
       },
+      catalyst: {
+        owned: [...this.catalystOwned.entries()].map(([catalystId, qty]) => ({ catalystId, qty })),
+      },
+      coreModule: {
+        equipSlots: MODULE_EQUIP_SLOTS,
+        owned: this.moduleOwned,
+        rarities: moduleOffers,
+      },
+      // 장비 축은 **라이브 프로필의 실제 장착 상태**를 본다 — 미러가 아니라 진짜다.
+      gear: { slotRarityCodes: gearSlotRarityCodes(p), shipLevel: ship.level },
+      commission: { stock: this.commissionStock, stockCap: COMMISSION_STOCK_CAP },
     };
   }
 }
