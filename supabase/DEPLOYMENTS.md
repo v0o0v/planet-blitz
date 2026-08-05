@@ -15,12 +15,14 @@
 이 저장소가 반복해 겪는 결함("배선이 통째로 없는데 그린")의 **배포 축 재현**이다. 같은 일이
 2026-07-21 에도 있었다(M8 1회차 배포가 배선 이전 커밋을 올려 두고 문서만 "완료"였다).
 
-## 현재 상태 (2026-08-05 실측)
+## 현재 상태 (2026-08-06 실측)
 
 | 함수 | 버전 | 배포 시각(UTC) | 번들 SHA-256 | 크기 | 비고 |
 |---|---|---|---|---|---|
-| `verify-invasion` | 47 | 2026-08-04 17:21:36 | `A9C9BE69…71992F` | 249,759 B | `origin/main`(`22db489`) 번들과 **바이트 동일 확인**(download 재대조) · 부팅 스모크 통과 · 니플헤임 대피소 재설계+드랍 레벨 필터(PR#296) |
-| `verify-commission` | 12 | 2026-08-04 17:21:50 | `094107EA…E65E2B` | 245,093 B | `origin/main`(`22db489`) 번들과 **바이트 동일 확인**(download 재대조) · 부팅 스모크 통과 · 니플헤임 대피소 재설계+드랍 레벨 필터(PR#296) |
+| `verify-invasion` | 48 | 2026-08-06 (본 레인) | `AABF00BD…3966E66` | 249,799 B | `origin/main`(`496bd64`) 번들과 **바이트 동일 확인**(download 재대조) · 부팅 스모크 통과 · 팬텀 은신 해제 배율 침공 게이트 봉합(E2, PR#317) |
+| `verify-commission` | 14 | 2026-08-06 (본 레인) | `5FAB275A…7286621` | 245,288 B | `origin/main`(`496bd64`) 번들과 **바이트 동일 확인**(download 재대조) · 부팅 스모크 통과 · 팬텀 은신 해제 배율 침공 게이트 봉합(E2, PR#317) — 직전 배포는 v13(daily-reward 레인, 이 표에 미기록) |
+| ~~`verify-invasion`~~ | ~~47~~ | ~~2026-08-04 17:21:36~~ | ~~`A9C9BE69…71992F`~~ | ~~249,759 B~~ | 이전 세대(`22db489`) |
+| ~~`verify-commission`~~ | ~~12~~ | ~~2026-08-04 17:21:50~~ | ~~`094107EA…E65E2B`~~ | ~~245,093 B~~ | 이전 세대(`22db489`) |
 | `verify-invasion` | 46 | 2026-08-04 15:25:02 | `B245EFEA…FDCD16` | 249,666 B | `origin/main`(`9d03db2`) 번들과 바이트 동일 확인 · 행성 신고 5건(PR#294) |
 | `verify-commission` | 11 | 2026-08-04 15:25:18 | `CA0E3BEA…2B134F` | 245,000 B | `origin/main`(`9d03db2`) 번들과 바이트 동일 확인 · 행성 신고 5건(PR#294) |
 | ~~`verify-invasion`~~ | ~~45~~ | ~~2026-08-04 14:35:38~~ | ~~`F5E5985B…9BB1E1`~~ | ~~249,506 B~~ | 이전 세대(`33c1681`) |
@@ -33,6 +35,27 @@
 | `verify-run` | — | 미배포 | — | — | 로컬 확인 전용(`deno.json` 에 `bundle` 태스크 자체가 없다) |
 
 2026-07-31 이전 이력은 각 배포 PR 본문에 있다(#84 · #86 · #88 · #141 등).
+
+### v48 / v14 배포 기록 (2026-08-06) — 팬텀 은신 해제 배율 침공 게이트 봉합(PR#317)
+
+`src/sim/world.ts`(`bbc1c79`) — `autoAttack` 의 `SIG_PHANTOM_CLOAK` 소진 지점에
+`state.config.invasion3 === undefined` 게이트를 추가. `stepShipSignature` 의 팬텀 분기는
+침공(3레이어)에서 aux0/aux1 을 0 으로 묶어 배율을 못 걸게 막아 두는데, 액티브
+`as_phantom_disrupt_hi` 는 `buildRunConfig` 가 `activeSlots` 를 무조건 스탬프해 침공에서도
+발동한다 — 그래서 이 소진 지점에 게이트가 없으면 침공에서 버프 지속 내내 전 발사가 2.5배가
+됐다. 재배포 안 하면 서버가 옛 sim(게이트 없음)으로 침공 리플레이를 재계산해 정직한 제출까지
+`final-hash-mismatch` 로 거부된다.
+
+검증(§배포 절차 5.5~7 전부): 폐기용 detached 워크트리(`origin/main` = `496bd64`)에서
+`deno task bundle` → `verify-invasion` 249,799 B / `verify-commission` 245,288 B ·
+`spb functions download` 재대조 **바이트 완전 동일**(양쪽) · 번들 소스 커밋 `496bd64` ==
+`origin/main` · anon 부팅 스모크 두 함수 모두 자기 구조화 거절(`malformed-invasion-id` /
+`malformed-run-id`) · 그 `reason` 문자열 배포 번들에서 각각 1회, 대조군
+`UNAUTHORIZED_NO_AUTH_HEADER` 는 0회 · 게이트 술어(`invasion3===void 0`, 축약형)가 배포된
+`verify-invasion` 번들에 실제로 포함됨을 grep 으로 확인.
+
+`verify-commission` 은 v12 → v14 로 2 증가했다 — 이 표에 미기록이던 v13(daily-reward 레인,
+`22db489` 이후)이 그 사이에 있었다.
 
 ### v46 / v11 배포 기록 (2026-08-04) — 행성 신고 5건(PR#294)
 
