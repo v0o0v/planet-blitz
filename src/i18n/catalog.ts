@@ -1183,6 +1183,25 @@ export const EN = {
   'refine.chain.noBand': 'This affix has a fixed value; heat does not affect it',
   'refine.sort.recent': 'Recent',
   'refine.sort.rarity': 'Rarity',
+
+  // 정제소 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 모듈 주석 ①).
+  'refine.help': 'Help',
+  'refine.help.title': 'Refinery Guide',
+  'refine.help.s1.h': 'What this screen is for',
+  'refine.help.s1.b':
+    'This is where you reroll the affixes on gear you already own. The gear itself — its slot, its grade, its base stats — never changes here. Only the affixes move.\nPick an item on the left and the refining process opens on the right.',
+  'refine.help.s2.h': 'Rolling',
+  'refine.help.s2.b':
+    'Each roll costs minerals and redraws every affix that is not yet fastened. Rolling is not a single purchase but a session: you keep rolling until you are happy, then stop.\nNothing is committed to the item until you press Stop refining.',
+  'refine.help.s3.h': 'Fastening',
+  'refine.help.s3.b':
+    'After a roll you may fasten one affix you like. A fastened affix is removed from the redraw pool, so the next roll only touches what is left.\nFastening cannot be undone within the process, and fastened affixes only become permanent once you stop and commit. Accumulated fastens are your stake — the more you have riding, the more a failure costs you.',
+  'refine.help.s4.h': 'Heat',
+  'refine.help.s4.b':
+    'Every roll is made at one of three heats: low, medium, or high. Heat moves three things together — the quality of the affix values, the mineral cost, and the melt risk.\nHeat is a dial, not a safety switch. Low heat is not zero risk; it is a smaller multiplier on the risk your fastens have already created. Affixes with a fixed value ignore heat entirely, and the row tells you when that is the case.',
+  'refine.help.s5.h': 'Melting',
+  'refine.help.s5.b':
+    'A failed roll melts. Melting releases every fastened affix and returns the process to where it stood before you began — but the item is untouched. Its grade, its affix count, and its existence are never at risk. What melts is your progress, not your gear.\nThe exact failure chance is shown as a number before you commit to a roll, so a melt is always a risk you accepted rather than one you were surprised by.',
   'refine.sort.slot': 'Slot',
   'refine.sort.affixes': 'Affixes',
 
@@ -3162,6 +3181,26 @@ export const KO: Record<MessageKey, string> = {
   'refine.chain.noBand': '이 어픽스는 값이 고정이라 불 세기의 영향을 받지 않습니다',
   'refine.sort.recent': '획득순',
   'refine.sort.rarity': '희귀도순',
+
+  // 정제소 도움말(사용자 요청 2026-08-05). 용어는 이 화면의 기존 문구와 같은 낱말을 쓴다 —
+  // `정련 공정`·`굴리기`·`고착`·`불 세기`(약불·중불·강불)·`용해`. 이모지 금지, 존댓말.
+  'refine.help': '도움말',
+  'refine.help.title': '정제소 안내',
+  'refine.help.s1.h': '이 화면은 무엇을 하는 곳인가요',
+  'refine.help.s1.b':
+    '이미 가지고 있는 장비의 어픽스를 다시 굴리는 곳입니다. 장비 자체는 여기서 바뀌지 않습니다. 슬롯도 등급도 기저 스탯도 그대로이고, 움직이는 것은 어픽스뿐입니다.\n왼쪽 목록에서 장비를 고르면 오른쪽에 정련 공정이 열립니다.',
+  'refine.help.s2.h': '굴리기',
+  'refine.help.s2.b':
+    '한 번 굴릴 때마다 광물이 들고, 아직 고착하지 않은 어픽스가 전부 다시 뽑힙니다. 정련은 한 번 사고 끝나는 것이 아니라 마음에 들 때까지 이어 가는 공정입니다.\n공정 멈추기를 누르기 전까지는 아무것도 장비에 확정되지 않습니다.',
+  'refine.help.s3.h': '고착',
+  'refine.help.s3.b':
+    '굴린 뒤 마음에 드는 어픽스 하나를 고착할 수 있습니다. 고착한 어픽스는 다시 뽑히지 않으므로 다음 굴림은 남은 것만 건드립니다.\n공정 안에서는 고착을 해제할 수 없고, 공정을 멈춰 확정해야 장비에 남습니다. 쌓인 고착이 곧 판돈입니다. 많이 걸어 둘수록 실패했을 때 잃는 것이 큽니다.',
+  'refine.help.s4.h': '불 세기',
+  'refine.help.s4.b':
+    '굴릴 때마다 약불·중불·강불 중 하나를 고릅니다. 불 세기는 세 가지를 한 몸으로 움직입니다. 어픽스 값의 품질, 광물 비용, 그리고 용해 위험입니다.\n불 세기는 위험을 없애는 스위치가 아니라 조절하는 다이얼입니다. 약불도 무위험이 아니라, 고착이 이미 만들어 둔 위험에 더 작은 배수를 거는 것뿐입니다. 값이 고정인 어픽스는 불 세기의 영향을 받지 않으며, 그런 경우에는 해당 줄이 알려 줍니다.',
+  'refine.help.s5.h': '용해',
+  'refine.help.s5.b':
+    '굴림이 실패하면 용해입니다. 고착이 전부 풀려 공정을 시작하기 직전 상태로 돌아갑니다. 다만 장비는 아무 손상도 입지 않습니다. 등급도, 어픽스 개수도, 장비의 존재 자체도 위험에 놓이지 않습니다. 녹는 것은 지금까지의 진행이지 장비가 아닙니다.\n실패 확률은 굴리기 전에 숫자로 보여 드립니다. 용해는 예고 없이 당하는 일이 아니라 알고 감수한 위험입니다.',
   'refine.sort.slot': '슬롯순',
   'refine.sort.affixes': '어픽스순',
 
