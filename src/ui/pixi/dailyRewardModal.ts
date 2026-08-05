@@ -34,7 +34,7 @@
  * ③ `Sprite` 에 자식을 붙이지 않는다(리포 규율) — 이 파일은 `Container` + `Text` + `Graphics` 만 쓴다.
  */
 
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Graphics, Text, Ticker } from 'pixi.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { makeModal } from './modal.js';
 import { modalBodyTop } from './modal.js';
@@ -42,6 +42,11 @@ import { panelContent, type PanelContentBox } from './nineSlicePanel.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { stripEmoji } from './text.js';
 import { t, type MessageKey } from '../../i18n/index.js';
+import {
+  revealFrame,
+  REVEAL_SETTLED,
+  type RevealFrame,
+} from './dailyRewardReveal.js';
 import { DAILY_STREAK_CYCLE } from '../../../data/dailyReward.js';
 import type { DailyRewardAxis, DailyRewardStep } from '../../../data/dailyRewardSelection.js';
 import type { Rarity } from '../../items/types.js';
@@ -254,6 +259,23 @@ export interface DailyRewardBar {
  */
 export const DAILY_MODAL_INTERACTIVE: readonly string[] = ['close'];
 
+/** {@link showDailyRewardModal} 옵션. */
+export interface DailyRewardShowOpts {
+  /**
+   * **개봉 연출**을 틀지. 그날 첫 통지에만 `true` 다 — 헤더 칩 재열람은 `false`(기본).
+   * 연출의 정착 프레임이 정적 화면과 같으므로, `false` 는 "연출이 이미 끝난 상태"와 같다.
+   */
+  readonly reveal?: boolean;
+  /**
+   * 개봉음. `reveal` 이 참일 때 **연출 시작 시점에 한 번** 불린다.
+   *
+   * 콜백으로 받는 이유는 이 모듈이 `GameAudio` 를 모르게 하기 위해서다 — 여기는 Pixi 레이아웃
+   * 계층이고, 오디오를 import 하면 팝업 테스트가 WebAudio 스텁을 요구하게 된다. 호출부
+   * (`src/main.ts`)가 자기 오디오 인스턴스를 닫아 넣는다.
+   */
+  readonly onOpenSound?: () => void;
+}
+
 export interface DailyRewardModalLayout {
   readonly width: number;
   readonly height: number;
@@ -416,12 +438,88 @@ export function layoutDailyRewardModal(data: DailyRewardModalData): DailyRewardM
 const BAR_TRACK = 0x14100a;
 const BAR_FILL = 0xffd678;
 
+/** 봉인 판의 색(개봉 연출). 게이지 금빛과 같은 계열이되 한 단계 어둡다 — 밝으면 눈이 그쪽으로 간다. */
+const SEAL_FILL = 0x8a6a2a;
+const SEAL_EDGE = 0xffd678;
+
 let host: Container | null = null;
 let root: Container | null = null;
 let ui: UiTextures = {};
 let uiRequested = false;
 let currentData: DailyRewardModalData | null = null;
 let currentOnClose: (() => void) | null = null;
+
+// ---------------------------------------------------------------------------
+// 개봉 연출 — 순수 타임라인(`dailyRewardReveal.ts`)을 Pixi 노드에 옮기는 얇은 층
+// ---------------------------------------------------------------------------
+
+/**
+ * 이번에 세운 팝업이 **개봉**인가(그날 첫 통지) **재열람**인가(헤더 칩).
+ *
+ * 재열람에 개봉 연출을 다시 트는 것은 거짓말이다 — 봉인은 이미 그날 아침에 깨졌다. 그리고
+ * 칩은 하루에도 여러 번 눌리므로 그때마다 1.1초를 기다리게 하면 연출이 곧바로 방해물이 된다.
+ */
+let revealing = false;
+/** 연출 시작 이후 경과(ms). `Ticker` 의 `deltaMS` 를 누적한다 — `Date.now` 를 쓰지 않는다. */
+let revealElapsed = 0;
+/** 연출이 만지는 노드들. 연출이 없거나 끝났으면 전부 정착값으로 고정된다. */
+interface RevealNodes {
+  readonly root: Container;
+  readonly seal: Graphics;
+  readonly sweep: Graphics;
+  readonly subject: Text | null;
+  readonly subjectY: number;
+  readonly bar: Graphics;
+  readonly barGeom: DailyRewardBar;
+}
+let revealNodes: RevealNodes | null = null;
+
+/** 게이지를 프레임 진행도로 다시 그린다. `Graphics` 는 매 프레임 clear 후 재작성이 규약이다. */
+function drawBar(g: Graphics, geom: DailyRewardBar, progress: number): void {
+  g.clear();
+  g.roundRect(geom.x, geom.y, geom.w, geom.h, 6).fill({ color: BAR_TRACK, alpha: 0.9 });
+  const fillW = Math.round(geom.w * Math.min(1, Math.max(0, geom.fill * progress)));
+  if (fillW > 0) {
+    g.roundRect(geom.x, geom.y, fillW, geom.h, 6).fill({ color: BAR_FILL, alpha: 0.92 });
+  }
+}
+
+/** 한 프레임을 노드에 반영한다. 순수 타임라인의 값을 **해석 없이** 옮기기만 한다. */
+function applyReveal(n: RevealNodes, f: RevealFrame): void {
+  n.root.scale.set(f.panelScale);
+  n.root.alpha = f.panelAlpha;
+  n.seal.alpha = f.sealAlpha;
+  n.seal.scale.set(f.sealScale);
+  if (n.subject !== null) {
+    n.subject.alpha = f.subjectAlpha;
+    // 정수 좌표 — 반픽셀 부유가 글자 테두리를 번쩍이게 한다(리포 실측).
+    n.subject.position.y = n.subjectY + f.subjectRise;
+  }
+  n.sweep.alpha = f.sweepAlpha;
+  n.sweep.position.x = Math.round((f.sweepT * DAILY_MODAL_W) / 2);
+  drawBar(n.bar, n.barGeom, f.barProgress);
+}
+
+const onRevealFrame = (ticker: Ticker): void => {
+  const n = revealNodes;
+  if (n === null) {
+    stopReveal();
+    return;
+  }
+  revealElapsed += ticker.deltaMS;
+  const f = revealFrame(revealElapsed);
+  applyReveal(n, f);
+  // 끝나면 **구독을 끊는다** — 안 끊으면 팝업이 떠 있는 내내 매 프레임 Graphics 를 다시 그린다
+  // (기지 화면에서 idle 비용이 0 이어야 한다는 규약. `button.ts` 가 같은 규율을 쓴다).
+  if (f.done) stopReveal();
+};
+
+function stopReveal(): void {
+  if (revealing) {
+    Ticker.shared.remove(onRevealFrame);
+    revealing = false;
+  }
+}
 
 /**
  * 팝업을 붙일 곳을 등록한다. 화면 배선 시점(스테이지 생성 직후)에 **한 번** 부른다.
@@ -475,23 +573,73 @@ function build(data: DailyRewardModalData): Container {
   });
 
   // 연속 접속 게이지 — 30일 주기의 어디쯤인지가 숫자보다 먼저 눈에 들어와야 한다.
+  // 개봉이면 0 에서 차오르고, 재열람이면 처음부터 오늘 값이다(정착 프레임 = 정적 레이아웃).
   const bar = new Graphics();
-  bar
-    .roundRect(layout.bar.x, layout.bar.y, layout.bar.w, layout.bar.h, 6)
-    .fill({ color: BAR_TRACK, alpha: 0.9 });
-  const fillW = Math.round(layout.bar.w * Math.min(1, Math.max(0, layout.bar.fill)));
-  if (fillW > 0) {
-    bar
-      .roundRect(layout.bar.x, layout.bar.y, fillW, layout.bar.h, 6)
-      .fill({ color: BAR_FILL, alpha: 0.92 });
-  }
+  drawBar(bar, layout.bar, revealing ? 0 : 1);
   parts.panel.addChild(bar);
 
+  let subjectText: Text | null = null;
+  let subjectY = 0;
+  let subjectRow: DailyRewardTextRow | null = null;
   for (const row of layout.rows) {
     const el = label(row);
     el.position.set(row.x, row.y);
     parts.panel.addChild(el);
+    if (row.id === 'todaySubject') {
+      subjectText = el;
+      subjectY = row.y;
+      subjectRow = row;
+    }
   }
+
+  // ── 봉인 ── "오늘 받은 것" 줄을 덮는 금빛 판. 개봉 연출이 이것을 부수며 지급물을 드러낸다.
+  //
+  // ⚠️ 크기를 **그 줄의 실측 기하**에서 잡는다(`row.estWidth`·`row.height`). 상수로 두면
+  //    긴 축 이름(예: "코어 모듈 · 레어")에서 줄보다 짧아 글자가 봉인 밖으로 삐져나온 채로
+  //    보인다 — 이 리포에서 "구려 보인다"의 절반이 자산·기하의 배율 문제였다.
+  //    가로는 안쪽 폭을 넘지 않게 접는다(넘치면 판 밖으로 나간다).
+  const seal = new Graphics();
+  if (subjectRow !== null) {
+    const padX = 10;
+    const padY = 6;
+    const w = Math.min(layout.innerWidth, Math.round(subjectRow.estWidth) + padX * 2);
+    const h = subjectRow.height + padY * 2;
+    // 원점을 사각형 가운데로 두어야 `scale` 이 **가운데에서** 부푼다(왼쪽 위 기준이면
+    // 봉인이 오른쪽 아래로 밀려나며 사라져 깨지는 것으로 안 보인다).
+    seal
+      .roundRect(-w / 2, -h / 2, w, h, 8)
+      .fill({ color: SEAL_FILL, alpha: 0.95 })
+      .roundRect(-w / 2, -h / 2, w, h, 8)
+      .stroke({ color: SEAL_EDGE, width: 2, alpha: 0.9 });
+    seal.position.set(
+      Math.round(subjectRow.x + w / 2),
+      Math.round(subjectRow.y + subjectRow.height / 2),
+    );
+  }
+  seal.alpha = revealing ? 1 : 0;
+  parts.panel.addChild(seal);
+
+  // ── 금빛 쓸림 ── 판을 가로지르는 좁은 빛. 개봉에만 보이고 정착값은 투명이다.
+  const sweep = new Graphics();
+  sweep
+    .rect(-26, 0, 52, layout.height)
+    .fill({ color: BAR_FILL, alpha: 0.5 });
+  sweep.position.set(0, 0);
+  sweep.alpha = 0;
+  parts.panel.addChild(sweep);
+
+  revealNodes = {
+    root: parts.root,
+    seal,
+    sweep,
+    subject: subjectText,
+    subjectY,
+    bar,
+    barGeom: layout.bar,
+  };
+  // 연출이 아니면 **정착 프레임을 그대로** 찍는다 — 근사값을 계산하지 않는다(그 상수가
+  // 정적 레이아웃과 같다는 것이 `dailyRewardReveal.ts` 의 계약이다).
+  applyReveal(revealNodes, revealing ? revealFrame(revealElapsed) : REVEAL_SETTLED);
   return parts.root;
 }
 
@@ -513,7 +661,11 @@ function rebuild(): void {
  *
  * ⚠️ {@link setDailyRewardModalHost} 를 먼저 부르지 않으면 던진다(위 주석의 이유).
  */
-export function showDailyRewardModal(data: DailyRewardModalData, onClose?: () => void): void {
+export function showDailyRewardModal(
+  data: DailyRewardModalData,
+  onClose?: () => void,
+  opts?: DailyRewardShowOpts,
+): void {
   if (host === null) {
     throw new Error(
       'showDailyRewardModal: 호스트 미등록 — setDailyRewardModalHost(stage) 를 배선 시점에 먼저 부른다',
@@ -521,6 +673,29 @@ export function showDailyRewardModal(data: DailyRewardModalData, onClose?: () =>
   }
   currentData = data;
   currentOnClose = onClose ?? null;
+
+  // 개봉 연출은 **그날 첫 통지에만** 튼다. 칩 재열람에 다시 트는 것은 거짓말이고(봉인은 이미
+  // 아침에 깨졌다) 하루에 여러 번 눌리는 버튼 앞에서 1.1초는 곧바로 방해물이 된다.
+  stopReveal();
+  revealElapsed = 0;
+  revealing = opts?.reveal === true;
+  if (revealing) {
+    // ⚠️ `Ticker.shared` 는 브라우저에만 있다. node(vitest)에서 이 함수가 불릴 일은 없지만,
+    //    없으면 조용히 연출 없이 정착 화면을 보이는 편이 던지는 것보다 낫다 — 통지 자체가
+    //    사라지는 것이 이 기능에서 가장 나쁜 결말이다.
+    try {
+      Ticker.shared.add(onRevealFrame);
+    } catch {
+      revealing = false;
+    }
+    // 소리는 **연출 시작과 같은 프레임**에 낸다. 뒤로 미루면 봉인이 이미 깨진 뒤에 울려
+    // 소리가 그림을 설명하지 못한다. 호출부가 실패해도 통지가 사라지면 안 되므로 삼킨다.
+    try {
+      opts?.onOpenSound?.();
+    } catch {
+      // 오디오 컨텍스트 미준비(첫 제스처 전) 등 — 개봉 연출은 소리 없이도 성립한다.
+    }
+  }
   // 나무 프레임·닫기 아이콘은 늦게 와도 된다(없으면 Graphics 폴백). 도착하면 다시 세운다.
   if (!uiRequested) {
     uiRequested = true;
@@ -534,6 +709,11 @@ export function showDailyRewardModal(data: DailyRewardModalData, onClose?: () =>
 
 /** 팝업을 내린다. `onClose` 는 부르지 않는다 — 닫기 경로가 이미 부른 뒤 여기로 온다. */
 export function hideDailyRewardModal(): void {
+  // ⚠️ **구독을 먼저 끊는다.** 파괴된 노드에 프레임이 한 번이라도 더 닿으면 Pixi 가 던지고,
+  //    그 예외는 기지 화면 전체의 rAF 루프에서 나므로 화면이 통째로 멈춘 것처럼 보인다.
+  stopReveal();
+  revealNodes = null;
+  revealElapsed = 0;
   if (root !== null) {
     root.parent?.removeChild(root);
     root.destroy({ children: true });

@@ -998,7 +998,17 @@ async function main(): Promise<void> {
       baseMap.show(profile, baseMapHandlers(), dailyRewardChipOptions());
       if (!wantModal) return;
       saveDailySeenSeed(nowSeed); // 가드 ③
-      showDailyRewardModal(toDailyRewardModalData(outcome.claim));
+      // 그날 첫 통지 — **개봉 연출을 튼다**(칩 재열람은 아래에서 끄고 부른다).
+      //
+      // 개봉음은 `playSample` 을 **직접** 부른다. `audio.play()` 를 쓰면 샘플이 없을 때 절차
+      // 합성으로 떨어지는데, 이 리포는 절차 합성 SFX 가 전원 거부된 전례가 있다 — 파일이
+      // 없으면 무음이 옳다(연출은 시각이 주다).
+      showDailyRewardModal(toDailyRewardModalData(outcome.claim), undefined, {
+        reveal: true,
+        onOpenSound: () => {
+          audio.playSample('dailyReward');
+        },
+      });
     })();
   }
 

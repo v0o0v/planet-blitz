@@ -24,11 +24,12 @@
 #
 # WHAT IS LEFT IN PLACE
 #
-#   - grant_catalyst_for / grant_commission_for are NOT dropped. Reverting grant_catalyst to
-#     its own body makes them unreferenced, and an unreferenced service_role-only function
-#     with no authenticated grant is inert. Dropping them would fail anyway while any other
-#     migration or function still names them, and a failed rollback halfway through is worse
-#     than two idle functions.
+#   - grant_catalyst_for is NOT dropped. Reverting grant_catalyst to its own body makes it
+#     unreferenced, and an unreferenced service_role-only function with no authenticated
+#     grant is inert. Dropping it could fail while anything still names it, and a rollback
+#     that dies halfway is worse than one idle function.
+#     (There is no commission counterpart to worry about: issuing is inlined in the claim
+#     RPC precisely so that no named commission-granting function exists to leak.)
 #   - Rows already written by the five axes (catalysts, blueprints, modules, commissions)
 #     stay. They were legitimately granted; clawing them back would take items off players
 #     for a server-side decision they had no part in.

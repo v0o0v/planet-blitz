@@ -5,10 +5,12 @@
 #      recipient so a service_role caller can use it. grant_catalyst(int,int) becomes a thin
 #      wrapper that passes auth.uid(). The per-call cap, the 1h/24h ledger caps, the grant
 #      ledger row and the flagging all stay in that one body - no second path around the cap.
-#   2. grant_commission_for(uuid,int) - issue one commission at a GIVEN grade, honouring the
-#      12-slot stock cap. It deliberately does NOT touch issue_commission_for_run's rate limit
-#      or cooldown horizon: a daily login must not eat the settlement issue budget.
-#   3. claim_daily_reward_for revision - the six-way axis dispatch.
+#   2. claim_daily_reward_for revision - the six-way axis dispatch. Commission issuing is
+#      INLINE inside it, not a function of its own: tests\commissionLedgerContract.test.ts
+#      forbids a named commission-granting function outright ("a function that does not exist
+#      cannot be exposed by a permission mistake"), and that guard was aimed at exactly the
+#      grant_commission_for this script's first draft installed. Step 0 of the migration drops
+#      it again for any environment that ran that draft - this one did.
 #
 # Everything is create-or-replace, so the script is re-runnable. No new tables or columns.
 #
@@ -111,21 +113,20 @@ select (select has_function_privilege('service_role', p.oid, 'execute') from pg_
          where p.proname = 'grant_catalyst_for' and p.pronamespace = 'public'::regnamespace)   as cat_svc,
        (select has_function_privilege('authenticated', p.oid, 'execute') from pg_proc p
          where p.proname = 'grant_catalyst_for' and p.pronamespace = 'public'::regnamespace)   as cat_auth,
-       (select has_function_privilege('service_role', p.oid, 'execute') from pg_proc p
-         where p.proname = 'grant_commission_for' and p.pronamespace = 'public'::regnamespace) as com_svc,
-       (select has_function_privilege('authenticated', p.oid, 'execute') from pg_proc p
-         where p.proname = 'grant_commission_for' and p.pronamespace = 'public'::regnamespace) as com_auth,
+       (select count(*) from pg_proc p
+         where p.proname like 'grant_commission%' and p.pronamespace = 'public'::regnamespace)  as com_fns,
        (select has_function_privilege('authenticated', p.oid, 'execute') from pg_proc p
          where p.proname = 'grant_catalyst' and p.pronamespace = 'public'::regnamespace)       as wrapper_auth,
        (select has_function_privilege('authenticated', p.oid, 'execute') from pg_proc p
          where p.proname = 'claim_daily_reward_for' and p.pronamespace = 'public'::regnamespace) as claim_auth;
 "@
-Write-Host ("[OK] acl: catalyst_for(svc={0} auth={1}) commission_for(svc={2} auth={3}) wrapper_auth={4} claim_auth={5}" -f `
-  $acl.cat_svc, $acl.cat_auth, $acl.com_svc, $acl.com_auth, $acl.wrapper_auth, $acl.claim_auth)
+Write-Host ("[OK] acl: catalyst_for(svc={0} auth={1}) grant_commission_fns={2} wrapper_auth={3} claim_auth={4}" -f `
+  $acl.cat_svc, $acl.cat_auth, $acl.com_fns, $acl.wrapper_auth, $acl.claim_auth)
 if (-not $acl.cat_svc)     { Write-Host "[FAIL] service_role cannot execute grant_catalyst_for";      $bad++ }
 if ($acl.cat_auth)         { Write-Host "[FAIL] authenticated CAN execute grant_catalyst_for";        $bad++ }
-if (-not $acl.com_svc)     { Write-Host "[FAIL] service_role cannot execute grant_commission_for";    $bad++ }
-if ($acl.com_auth)         { Write-Host "[FAIL] authenticated CAN execute grant_commission_for";      $bad++ }
+# A named commission-granting function must NOT exist at all - see the header. If the first
+# draft's grant_commission_for survived, step 0 of the migration failed to drop it.
+if ([int]$acl.com_fns -ne 0) { Write-Host "[FAIL] a grant_commission* function still exists - it can be exposed by a permission slip"; $bad++ }
 if (-not $acl.wrapper_auth){ Write-Host "[FAIL] authenticated lost grant_catalyst - drops stop landing"; $bad++ }
 if ($acl.claim_auth)       { Write-Host "[FAIL] the revision re-opened claim_daily_reward_for to authenticated"; $bad++ }
 
@@ -169,7 +170,7 @@ with d as (
 )
 select position('grant_catalyst_for(' in src)        as cat_pos,
        position('grant_currency_for(' in src)        as cur_pos,
-       position('grant_commission_for(' in src)      as com_pos,
+       position('insert into public.commission_inventory' in src) as com_pos,
        (src like '%core_modules%')::text             as touches_modules,
        (src like '%core_modules%for update%')::text  as locks_modules
   from d;
@@ -177,7 +178,7 @@ select position('grant_catalyst_for(' in src)        as cat_pos,
 Write-Host ("[OK] claim body: catalyst@{0} currency@{1} commission@{2} modules={3} locks_modules={4}" -f `
   $ord.cat_pos, $ord.cur_pos, $ord.com_pos, $ord.touches_modules, $ord.locks_modules)
 if ([int]$ord.cat_pos -le 0) { Write-Host "[FAIL] the catalyst branch is missing";  $bad++ }
-if ([int]$ord.com_pos -le 0) { Write-Host "[FAIL] the commission branch is missing"; $bad++ }
+if ([int]$ord.com_pos -le 0) { Write-Host "[FAIL] the commission branch does not insert anything"; $bad++ }
 if ([int]$ord.cat_pos -gt 0 -and [int]$ord.cur_pos -gt 0 -and [int]$ord.cat_pos -ge [int]$ord.cur_pos) {
   Write-Host "[FAIL] LOCK ORDER: the side-credit grant runs before the catalyst grant - profiles before catalyst_inventory, the inverse of buy_catalyst"
   $bad++

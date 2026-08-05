@@ -10,8 +10,16 @@
 --
 --   1. grant_catalyst_for  — 촉매 지급의 service_role 진입점(신설). 기존 grant_catalyst 는
 --                            이것을 부르는 **얇은 래퍼**가 된다(본문이 한 곳에 남는다).
---   2. grant_commission_for — 의뢰서 1장 발령(보관 상한 준수). 신설.
---   3. claim_daily_reward_for 개정 — 축 분기 6갈래.
+--   2. claim_daily_reward_for 개정 — 축 분기 6갈래(의뢰서 발령은 **인라인**이다).
+--
+-- ▮ **의뢰서를 나눠 주는 함수를 새로 만들지 않는다.** 초안은 `grant_commission_for` 를 만들었고
+--    `tests/commissionLedgerContract.test.ts` §만들지 않은 것이 그것을 잡았다 —
+--    *"restore_commission 과 grant_commission 이 존재하지 않는다 … 존재하지 않는 함수는 권한
+--    실수로 노출될 수 없다."* 그 가드가 겨눈 것이 정확히 그 함수였으므로, 계약을 넓혀 통과
+--    시키는 대신 함수를 없애고 3절 안에 인라인했다. 진입점은 service_role 전용인
+--    `claim_daily_reward_for` 하나뿐이고 새 공격면이 0 이다.
+--    아래 `drop function if exists` 가 **중간판을 적용했던 원격에서 그 함수를 되돌린다** —
+--    없으면 revoke 만 걸린 채 영영 남는다(이 레인이 실제로 한 번 배포했다).
 --
 -- ▮ **왜 grant_catalyst 를 그대로 중첩 호출할 수 없었나.** 계획 §C7 은 *"기존 grant_catalyst 를
 --    중첩 호출한다"* 로 적었는데, 그 함수는 수신자를 **`auth.uid()`** 에서 읽는다
@@ -51,6 +59,13 @@
 --
 -- 롤백: `scripts/rollback-daily-reward-axes-migration.ps1`.
 -- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- 0. 중간판 되돌리기 — grant_commission_for 를 지운다
+-- -----------------------------------------------------------------------------
+-- 이 레인이 한 번 배포했던 함수다(§헤더). 계약 테스트가 그 존재 자체를 금지하므로 지운다.
+-- `if exists` 라 처음 적용하는 환경에서는 무해한 no-op 이다.
+drop function if exists public.grant_commission_for(uuid, int);
 
 -- -----------------------------------------------------------------------------
 -- 1. grant_catalyst_for — 촉매 적립의 service_role 진입점 (본문 정본)
@@ -217,98 +232,6 @@ comment on function public.grant_catalyst(int, int) is
   '촉매 드랍 적립(본인). grant_catalyst_for(auth.uid(), ...) 래퍼 — 캡·원장·플래깅 본문은 그쪽 하나에만 있다. user JWT.';
 
 -- -----------------------------------------------------------------------------
--- 2. grant_commission_for — 의뢰서 1장 발령 (service_role 전용)
--- -----------------------------------------------------------------------------
--- ⚠️ **`issue_commission_for_run` 을 부르지 않는다.** 그 함수는 `pve_run_id` 를 1회성 앵커로
---    쓰고 빈도 상한·쿨다운 지평까지 함께 전진시킨다(20260803030000:68-105). 일일 보상은
---    정산이 아니라 접속이므로 앵커로 쓸 run 이 없고, 억지로 만들면 **정직한 플레이의 발령
---    예산을 일일 보상이 먹는다** — 매일 슬롯 하나를 빼앗는 셈이다.
---
--- 그래서 이 함수는 그 함수에서 **보관 상한 검사와 payload 굽기만** 가져온다. 계급은 굴리지
--- 않는다 — 일일 보상의 계급은 낙찰이 이미 정했고(예고가 어제 약속한 값이다), 여기서 다시
--- 굴리면 *"적힌 것은 바뀌지 않는다"* 가 깨진다.
---
--- ⚠️ **payload 모양이 그 함수와 갈리면 조용히 죽는다** — 클라 `CommissionPayload` 파서가
---    필드를 못 찾으면 그 의뢰서는 보관함에 있는데 출격이 안 된다. 계약 테스트가 두 함수의
---    payload 키 집합과 구간 상수를 대조한다.
---
--- ⚠️ 보관 상한은 **후보 생산기가 이미 걸렀다**(`data/dailyRewardSelection.ts` 의
---    `commissionCandidates`). 여기서 다시 보는 이유는 그 사이 다른 경로(정산 발령)가 마지막
---    칸을 채웠을 수 있기 때문이다 — TOCTOU 다. 만석이면 예외가 아니라 `granted:false` 를
---    돌려주고, 부르는 쪽이 그것을 원장에 적는다(지급 없는 하루를 관측 가능하게 남긴다).
-create or replace function public.grant_commission_for(p_recipient uuid, p_grade int)
-returns jsonb
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  -- 미러: src/run/commissionServerConstants.ts · 20260803030000_commission_segment_rebalance.sql
-  COMMISSION_STOCK_CAP constant int := 12;
-  SEGMENT_TICK_CAP     constant int := 9000;
-  PLANET_COUNT         constant int := 6;
-  -- 2026-08-03 밴드 복구 레인: 계급별 구간 수 2/3/4/5 -> 전 계급 2(같은 파일 :132).
-  v_segments constant int := 2;
-
-  v_grade int := least(4, greatest(1, coalesce(p_grade, 1)));
-  v_cnt   int;
-  v_order int;
-  v_cid   uuid;
-  v_segs  jsonb := '[]'::jsonb;
-  v_payload jsonb;
-  i       int;
-begin
-  if p_recipient is null then
-    return jsonb_build_object('granted', false, 'reason', 'no-recipient');
-  end if;
-
-  -- 보관 상한. `for update` 를 쓰지 않는다 — 잠글 기존 행이 없고(신규 insert 전용) 이 축에
-  -- 인벤토리 잠금을 도입하면 한 트랜잭션의 인벤토리가 2개가 될 수 있다(§잠금 순서).
-  select count(*) into v_cnt from public.commission_inventory where profile_id = p_recipient;
-  if v_cnt >= COMMISSION_STOCK_CAP then
-    return jsonb_build_object('granted', false, 'reason', 'stock');
-  end if;
-
-  v_order := floor(random() * 4)::int;   -- COMMISSION_ORDERS wire 인덱스(append-only).
-  for i in 0 .. v_segments - 1 loop
-    v_segs := v_segs || jsonb_build_array(jsonb_build_object(
-      'planet', floor(random() * PLANET_COUNT)::int,
-      -- 단계 분포 [1, grade] (2026-08-03 밴드 복구 레인). 미러: src/bench/commissionBench.ts.
-      'stage',  1 + floor(random() * greatest(1, v_grade))::int
-    ));
-  end loop;
-
-  v_cid := gen_random_uuid();
-  v_payload := jsonb_build_object(
-    'version', 1,
-    'commissionId', v_cid::text,
-    'grade', v_grade,
-    'order', (array['chain','constraint','bounty','elite'])[v_order + 1],
-    'segments', v_segs,
-    'rewards', jsonb_build_object(
-      'credits',  v_grade * 2500,
-      'minerals', v_grade * 2500,
-      'items',    '[]'::jsonb
-    ),
-    'replayBudgetTicks', v_segments * SEGMENT_TICK_CAP
-  );
-
-  insert into public.commission_inventory (commission_id, profile_id, grade, payload)
-    values (v_cid, p_recipient, v_grade, v_payload);
-
-  return jsonb_build_object('granted', true, 'commission_id', v_cid, 'grade', v_grade);
-end;
-$$;
-
-revoke all on function public.grant_commission_for(uuid, int) from public;
-revoke all on function public.grant_commission_for(uuid, int) from anon;
-revoke all on function public.grant_commission_for(uuid, int) from authenticated;
-grant execute on function public.grant_commission_for(uuid, int) to service_role;
-
-comment on function public.grant_commission_for(uuid, int) is
-  '의뢰서 1장 발령(ADR-0048 일일 보상 전용). 계급은 낙찰이 정하고 여기서 굴리지 않는다. 보관 상한 12 를 지키고 만석이면 granted:false. issue_commission_for_run 의 빈도/쿨다운 예산을 건드리지 않는다. service_role 전용.';
-
--- -----------------------------------------------------------------------------
 -- 3. claim_daily_reward_for 개정 — 축 분기 6갈래
 -- -----------------------------------------------------------------------------
 -- 아래 본문은 20260805000000_daily_reward.sql:454-575 를 잘라 온 것이고, 더한 것은 축 분기
@@ -329,6 +252,13 @@ as $$
 declare
   DAILY_STREAK_CYCLE constant int     := 30;   -- BALANCE — 6절·TS 미러와 같은 값이어야 한다.
   DAILY_SIDE_CREDITS constant numeric := 500;  -- BALANCE — 곁들이 크레딧(주 보상과 별개).
+  -- 의뢰서 축 미러: src/run/commissionServerConstants.ts ·
+  -- 20260803030000_commission_segment_rebalance.sql. 계약 테스트가 두 곳을 대조한다.
+  COMMISSION_STOCK_CAP constant int := 12;
+  SEGMENT_TICK_CAP     constant int := 9000;
+  PLANET_COUNT         constant int := 6;
+  -- 2026-08-03 밴드 복구 레인: 계급별 구간 수 2/3/4/5 -> 전 계급 2(같은 파일 :132).
+  COMMISSION_SEGMENTS  constant int := 2;
   v_now_seed  bigint;
   v_preview   jsonb;
   v_budget    numeric;
@@ -347,6 +277,13 @@ declare
   v_axis       jsonb := '{}'::jsonb;   -- 축별 지급 결과(원장·응답의 관측면).
   v_cat        jsonb;   -- grant_catalyst_for 원반환(그 `granted` 는 수량이다 — 아래 주석).
   v_module     jsonb;
+  -- 의뢰서 축 인라인 발령용(§만들지 않은 것 — 별도 함수를 만들지 않는다).
+  v_com_grade  int;
+  v_cnt        int;
+  v_order      int;
+  v_cid        uuid;
+  v_segs       jsonb;
+  i            int;
 begin
   if p_recipient is null then
     return jsonb_build_object('ok', false, 'code', 'no-recipient');
@@ -510,10 +447,65 @@ begin
     end if;
 
   elsif p_axis = 'commission' then
-    if v_axis_value <= v_value then
-      v_axis := public.grant_commission_for(p_recipient, coalesce((p_result->>'grade')::int, 1));
-    else
+    -- ⚠️ **별도 함수(`grant_commission_for`)를 만들지 않는다.** 초안은 그렇게 짰고
+    --    `tests/commissionLedgerContract.test.ts` §만들지 않은 것이 그것을 잡았다 —
+    --    *"restore_commission 과 grant_commission 이 존재하지 않는다 … 존재하지 않는 함수는
+    --    권한 실수로 노출될 수 없다."* 의뢰서를 나눠 주는 함수가 **이름을 갖고 존재하는 것**
+    --    자체가 그 계약이 막으려던 것이고, revoke 한 줄이 다음 마이그레이션에서 빠지면
+    --    authenticated 가 공짜 의뢰서를 무한히 받는다. 그래서 인라인한다 — 진입점은 이미
+    --    service_role 전용인 이 RPC 하나뿐이고, 새 표면이 0 이다.
+    --    (계약을 넓혀 통과시키는 것이 더 싸 보였지만, 그 가드가 겨눈 것이 정확히 내가 한
+    --     일이었으므로 넓히는 쪽이 틀렸다.)
+    --
+    -- ⚠️ **`issue_commission_for_run` 도 부르지 않는다.** 그쪽은 `pve_run_id` 를 1회성 앵커로
+    --    쓰고 빈도 상한·쿨다운 지평까지 함께 전진시킨다(20260803030000:68-105). 일일 보상은
+    --    정산이 아니라 접속이라 앵커로 쓸 run 이 없고, 억지로 끼우면 **매일 접속이 정직한
+    --    플레이의 발령 슬롯을 하나씩 먹는다.**
+    --
+    -- 계급은 굴리지 않는다 — 낙찰이 이미 정했고 어제 예고가 약속한 값이다.
+    if v_axis_value > v_value then
       v_axis := jsonb_build_object('granted', false, 'reason', 'clamped');
+    else
+      v_com_grade := least(4, greatest(1, coalesce((p_result->>'grade')::int, 1)));
+      -- 보관 상한 재확인(TOCTOU) — 후보 생산기가 이미 걸렀지만 그 사이 정산 발령이 마지막
+      -- 칸을 채웠을 수 있다. `for update` 를 쓰지 않는다: 잠글 기존 행이 없고(신규 insert
+      -- 전용) 여기 인벤토리 잠금을 도입하면 한 트랜잭션의 인벤토리가 2개가 될 수 있다.
+      select count(*) into v_cnt
+        from public.commission_inventory where profile_id = p_recipient;
+      if v_cnt >= COMMISSION_STOCK_CAP then
+        -- 예외가 아니라 기록이다. 만석으로 못 받은 하루를 원장에서 읽을 수 있어야
+        -- "보상이 고장났다"와 "수신소가 찼다"가 구분된다.
+        v_axis := jsonb_build_object('granted', false, 'reason', 'stock');
+      else
+        -- payload 모양이 `issue_commission_for_run` 과 갈리면 **조용히 죽는다** — 클라
+        -- `CommissionPayload` 파서가 필드를 못 찾으면 그 의뢰서는 보관함에 있는데 출격이
+        -- 안 된다. 계약 테스트가 두 곳의 키 집합과 구간 상수를 대조한다.
+        v_segs := '[]'::jsonb;
+        v_order := floor(random() * 4)::int;   -- COMMISSION_ORDERS wire 인덱스(append-only).
+        for i in 0 .. COMMISSION_SEGMENTS - 1 loop
+          v_segs := v_segs || jsonb_build_array(jsonb_build_object(
+            'planet', floor(random() * PLANET_COUNT)::int,
+            -- 단계 분포 [1, grade](2026-08-03 밴드 복구 레인). 미러: src/bench/commissionBench.ts.
+            'stage',  1 + floor(random() * greatest(1, v_com_grade))::int
+          ));
+        end loop;
+        v_cid := gen_random_uuid();
+        insert into public.commission_inventory (commission_id, profile_id, grade, payload)
+          values (v_cid, p_recipient, v_com_grade, jsonb_build_object(
+            'version', 1,
+            'commissionId', v_cid::text,
+            'grade', v_com_grade,
+            'order', (array['chain','constraint','bounty','elite'])[v_order + 1],
+            'segments', v_segs,
+            'rewards', jsonb_build_object(
+              'credits',  v_com_grade * 2500,
+              'minerals', v_com_grade * 2500,
+              'items',    '[]'::jsonb
+            ),
+            'replayBudgetTicks', COMMISSION_SEGMENTS * SEGMENT_TICK_CAP
+          ));
+        v_axis := jsonb_build_object('granted', true, 'commission_id', v_cid, 'grade', v_com_grade);
+      end if;
     end if;
 
   elsif p_axis = 'gear' then
