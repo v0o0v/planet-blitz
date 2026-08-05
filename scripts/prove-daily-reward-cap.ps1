@@ -91,6 +91,25 @@ function Check([string]$label, $actual, $expected) {
   }
 }
 
+# Numeric variant. Postgres renders `numeric` with its full scale, so a value that IS
+# 2000 comes back as '2000.00000000000000000000' and a string compare calls it a failure.
+# That happened on the first live run: two [FAIL] lines whose values were both correct.
+# Comparing as decimal keeps the assertion exact (no epsilon) while ignoring the scale.
+function CheckNum([string]$label, $actual, $expected) {
+  $a = 0.0; $e = 0.0
+  if (-not [decimal]::TryParse("$actual", [ref]$a) -or -not [decimal]::TryParse("$expected", [ref]$e)) {
+    Write-Host ("[FAIL] {0}: not numeric - got '{1}', expected '{2}'" -f $label, $actual, $expected)
+    $script:bad++
+    return
+  }
+  if ($a -ne $e) {
+    Write-Host ("[FAIL] {0}: got '{1}', expected '{2}'" -f $label, $actual, $expected)
+    $script:bad++
+  } else {
+    Write-Host ("[OK] {0} = {1}" -f $label, $e)
+  }
+}
+
 # Clean slate for today, inside the transaction. daily_last_claim_seed = 0 is the
 # "never claimed" sentinel, so the next claim is day 1.
 $reset = @"
@@ -151,8 +170,8 @@ rollback;
 Write-Host ""
 Write-Host "--- C3: an oversized claim ---"
 Check 'CAP_CLAMPED (flag)'          $c3.clamped        'true'
-Check 'CAP_CLAMPED (paid value)'    $c3.value          $DAILY_BUDGET_DAY_1
-Check 'CAP_CLAMPED (budget)'        $c3.budget         $DAILY_BUDGET_DAY_1
+CheckNum 'CAP_CLAMPED (paid value)' $c3.value          $DAILY_BUDGET_DAY_1
+CheckNum 'CAP_CLAMPED (budget)'     $c3.budget         $DAILY_BUDGET_DAY_1
 # The observability column feeding metric (3) - without it the clamp rate has nowhere to live.
 Check 'CAP_CLAMPED (ledger column)' $c3.ledger_clamped 'true'
 
