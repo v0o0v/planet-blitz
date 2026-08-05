@@ -19,7 +19,13 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 import { tabBarLayout, connectorSpans, TAB_H, TAB_SINK } from '../src/ui/pixi/tabs.js';
-import { clampScroll, rowBounds, clampToRows } from '../src/ui/pixi/scrollArea.js';
+import {
+  clampScroll,
+  rowBounds,
+  clampToRows,
+  SCROLL_THUMB_W,
+  SCROLL_THUMB_PAD,
+} from '../src/ui/pixi/scrollArea.js';
 import { modalGeometry } from '../src/ui/pixi/modal.js';
 import { panelContent, PANEL_BORDER, PANEL_INNER_PAD } from '../src/ui/pixi/nineSlicePanel.js';
 import {
@@ -55,6 +61,7 @@ import {
   DEF_HELP_SECTIONS,
   DEFENSE_MODALS,
   defenseCommandLayout,
+  helpTextWidth,
 } from '../src/ui/pixi/defenseCommand.js';
 import { defaultProfile } from '../src/save/profile.js';
 import { retireAtCap } from './support/retireAtCap.js';
@@ -775,6 +782,20 @@ describe('도움말 팝업 — 절 목록과 문구가 두 로케일에 다 있�
     // 높이는 스크롤 창 + 간격 + 버튼에서 역산된 값이다 — 등호라 한쪽만 바꾸면 깨진다.
     expect(m.blockH).toBe(m.bodyH + 16 + m.btnH);
     expect(m.h).toBe(DEFENSE_MODALS.boxY + m.blockH + DEFENSE_MODALS.edgePad);
+  });
+
+  it('본문 오른쪽에 스크롤 손잡이 자리가 남는다', () => {
+    // 사용자 신고 2026-08-05 "스크롤바가 너무 붙어있어". 줄바꿈 폭을 창 폭과 같게 주면
+    // 손잡이(창 안쪽 오른쪽 끝)와 긴 줄이 맞붙는다 — 겹침이 아니라 예외도 경고도 없고,
+    // **긴 줄에서만** 티가 나서 짧은 줄만 보면 멀쩡해 보인다.
+    const boxW = DEFENSE_MODALS.help.w - DEFENSE_MODALS.edgePad * 2;
+    const windowW = boxW - 40; // 창은 챔버에서 좌우 20 씩 들어간다
+    const gutter = windowW - helpTextWidth(boxW);
+    expect(gutter).toBeGreaterThanOrEqual(SCROLL_THUMB_W + SCROLL_THUMB_PAD * 2);
+    // 여유까지 있어야 "붙었다"로 안 읽힌다 — 손잡이 폭에 딱 맞추면 글이 막대에 닿는다.
+    expect(gutter).toBeGreaterThanOrEqual(SCROLL_THUMB_W + SCROLL_THUMB_PAD * 2 + 8);
+    // 그렇다고 글이 쓸데없이 좁아지면 안 된다(빈 자리 금지).
+    expect(helpTextWidth(boxW)).toBeGreaterThan(windowW * 0.9);
   });
 
   it('도움말 버튼이 헤더 컨트롤로 등록돼 있다', () => {

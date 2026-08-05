@@ -98,7 +98,13 @@ import { COLOR, UI_FONT, TEXT_SHADOW, RARITY_COLOR_NUM } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { PixiButton } from './button.js';
 import { stripEmoji } from './text.js';
-import { makeScrollArea, rowBounds, clampToRows } from './scrollArea.js';
+import {
+  makeScrollArea,
+  rowBounds,
+  clampToRows,
+  SCROLL_THUMB_W,
+  SCROLL_THUMB_PAD,
+} from './scrollArea.js';
 import { attachRowClick, stopRowPropagation } from './listRow.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
@@ -941,6 +947,29 @@ const HELP_BLOCK_H = HELP_BODY_H + 16 + HELP_BTN_H;
 const HELP_HEAD_GAP = 8;
 const HELP_PARA_GAP = 12;
 const HELP_SECTION_GAP = 28;
+
+/** 스크롤 창의 안쪽 좌우 여백(파낸 챔버 테두리와 글 사이). */
+const HELP_PAD = 20;
+/**
+ * 글 오른쪽에 비워 두는 **손잡이 자리**(사용자 신고 2026-08-05 "스크롤바가 너무 붙어있어").
+ *
+ * 처음엔 줄바꿈 폭을 창 폭과 **똑같이** 줬다. `makeScrollArea` 는 손잡이를 창 **안쪽** 오른쪽
+ * 끝에 얹으므로(`thumbOutside` 기본 false), 창 끝까지 닿는 줄은 막대 옆에 그대로 붙는다 —
+ * 겹침이 아니라서 예외도 경고도 없고 **긴 줄에서만** 티가 난다(짧은 줄만 보면 멀쩡해 보인다).
+ *
+ * 창을 좁히는 것으로 풀지 않는다: 그러면 파낸 챔버 안에 쓰지 않는 세로 띠가 생긴다. 창은 그대로
+ * 두고 **글만** 손잡이 폭 + 여유만큼 일찍 접는다. 값을 손잡이 상수에서 유도해 두어야 그 상수가
+ * 바뀔 때 이 여백이 조용히 부족해지지 않는다.
+ */
+const HELP_TEXT_GUTTER = SCROLL_THUMB_W + SCROLL_THUMB_PAD * 2 + 16;
+
+/**
+ * 도움말 본문이 접히는 폭. 순수 함수로 뽑아 둔 이유는 **손잡이가 글을 침범하지 않는다**는 것을
+ * Pixi 없이 단언하기 위해서다(vitest 는 node 라 캔버스 텍스트를 세울 수 없다).
+ */
+export function helpTextWidth(boxW: number): number {
+  return boxW - HELP_PAD * 2 - HELP_TEXT_GUTTER;
+}
 
 export const DEFENSE_MODALS = {
   pick: {
@@ -2568,15 +2597,17 @@ export class DefenseCommandScreen {
     // ① 먼저 전부 조판해 높이를 잰다 — 스크롤 총량은 측정값이어야 한다(상수로 두면 로케일이
     //    길어지는 순간 마지막 절이 예외 없이 잘린다).
     const nodes: { node: Text; y: number }[] = [];
+    // 글은 창보다 손잡이 자리만큼 일찍 접는다({@link HELP_TEXT_GUTTER} 주석 = 근거).
+    const textW = helpTextWidth(box.w);
     let cy = 0;
     for (const id of DEF_HELP_SECTIONS) {
-      const head = this.label(tCmd(`def3.cmd.help.${id}.h`), 23, COLOR.gold, '800', box.w - 40);
+      const head = this.label(tCmd(`def3.cmd.help.${id}.h`), 23, COLOR.gold, '800', textW);
       nodes.push({ node: head, y: cy });
       cy += head.height + HELP_HEAD_GAP;
       // 문단은 **노드로** 나눈다 — 문자열 안 빈 줄은 stripEmoji 가 접어 버린다(간격 상수 주석).
       const paras = tCmd(`def3.cmd.help.${id}.b`).split('\n');
       for (const [i, para] of paras.entries()) {
-        const body = this.wrapped(para, 18, SLAB_BODY_FILL, box.w - 40);
+        const body = this.wrapped(para, 18, SLAB_BODY_FILL, textW);
         nodes.push({ node: body, y: cy });
         cy += body.height + (i === paras.length - 1 ? HELP_SECTION_GAP : HELP_PARA_GAP);
       }
@@ -2586,9 +2617,9 @@ export class DefenseCommandScreen {
     // ② 파낸 챔버 위에 얹는다 — 이 화면의 "글만 있는 자리"는 전부 `recessedWell` 이다.
     panel.container.addChild(recessedWell(box.x, box.y, box.w, bodyH));
     const content = makeScrollArea(panel.container, {
-      x: box.x + 20,
+      x: box.x + HELP_PAD,
       y: box.y + 16,
-      w: box.w - 40,
+      w: box.w - HELP_PAD * 2,
       h: bodyH - 32,
       totalH: total,
       thumb: true,
