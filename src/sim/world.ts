@@ -109,16 +109,6 @@ import {
   AFTERIMAGE_RADIUS,
 } from './uniques.js';
 import {
-  hasCapstone,
-  CAP_FIREPOWER_LASER,
-  CAP_SURVIVAL_CRIT,
-  CAP_MOBILITY_DASH,
-  LASER_PERIOD,
-  laserHits,
-  CRIT_NEGATE_IFRAMES,
-  DASH_CLEAR_RADIUS,
-} from './capstones.js';
-import {
   hasSignature,
   SIGNATURE_BITS,
   SIG_BRUISER_ARMOR,
@@ -402,9 +392,8 @@ export const PLAYER_HIT_RADIUS = 8;
  *
  * ## 왜 감쇠 사슬의 **맨 앞**인가
  * 이건 "맞으면 얼마나 아픈가" 라는 **들어오는 피해의 성질**이지 플레이어가 갖춘 경감 수단이
- * 아니다. 장갑·막·완충보다 뒤에 두면 생존 캡스톤의 치사 판정(`hp - dmg <= 0`)이 배수를 못 본
- * 값으로 이뤄져, 배수 때문에 죽을 피격을 "치명타 1회 무효" 가 못 잡는다(무대 배율 주석과 같은
- * 논증 — 바로 아래 `modeScale` 참조).
+ * 아니다. 장갑·막·완충 같은 경감 수단보다 앞서 적용해야 이후 시그니처들이 "실제로 이 무대에서
+ * 맞는 피해" 를 보고 판정한다(무대 배율 주석과 같은 논증 — 바로 아래 `modeScale` 참조).
  *
  * ## 정수화가 필요 없는 이유
  * 2 배는 f64 에서 **정확하다**(지수만 1 증가). 정수 피해는 정수로, 엘리트 배율이 섞인 소수
@@ -1633,7 +1622,6 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   }
   stepBoss(state, player);
   autoAttack(state, player);
-  capstoneLaser(state, player);
   subWeapon(state, player);
   droneBay(state, player);
   stepTurrets(state, player);
@@ -1945,14 +1933,10 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
       player.dashCooldown = config.dashCooldownTicks;
       player.iframes = config.dashIframes;
     }
-    // ⑪ 잔상 추진기(유니크) + 기동 캡스톤(대시 잔상 소거): 대시 순간 주변 적탄 소거.
-    // 중첩 규칙: 둘 다 보유하면 더 큰 반경(캡스톤 DASH_CLEAR_RADIUS=320 > 잔상 220)으로
-    // **한 번만** 소거한다(반경을 더하지 않음). 미보유 시 no-op.
+    // ⑪ 잔상 추진기(유니크): 대시 순간 주변 적탄 소거. 미보유 시 no-op.
     const afterOn = hasUnique(mask, UQ_AFTERIMAGE);
-    const dashCapOn = hasCapstone(mask, CAP_MOBILITY_DASH);
-    if (afterOn || dashCapOn) {
-      const clearR = dashCapOn ? DASH_CLEAR_RADIUS : AFTERIMAGE_RADIUS;
-      const clearR2 = clearR * clearR;
+    if (afterOn) {
+      const clearR2 = AFTERIMAGE_RADIUS * AFTERIMAGE_RADIUS;
       for (const t of state.entities) {
         if (t.kind !== 'enemyBullet' || t.dead) continue;
         const ex = t.x - player.x;
@@ -2733,25 +2717,6 @@ function autoAttack(state: WorldState, player: Entity): void {
     );
   }
   player.cooldown += fireCd;
-}
-
-/**
- * 화력 캡스톤 — 탄막 상쇄 레이저(GDD §4). 캡스톤 활성 시 LASER_PERIOD(90틱=1.5초)마다
- * 조준 방향으로 전방 레이저를 쏴, 사거리·반폭 안의 적탄을 소거한다. 순수 결정론: 발화 시점은
- * state.tick 배수, 판정은 정수/부동 산술(laserHits)만 사용 — RNG·wall-clock 없음. 적탄만
- * 소거하고 새 엔티티/필드를 만들지 않아 hashWorld 레이아웃 불변.
- */
-function capstoneLaser(state: WorldState, player: Entity): void {
-  const mask = state.config.loadout?.uniqueMask ?? 0;
-  if (!hasCapstone(mask, CAP_FIREPOWER_LASER)) return;
-  // tick 0 에는 적탄이 없으므로 사실상 무의미하지만, 배수 판정은 그대로 유지(결정론).
-  if (state.tick % LASER_PERIOD !== 0) return;
-  const dirX = cos(player.angle);
-  const dirY = sin(player.angle);
-  for (const t of state.entities) {
-    if (t.kind !== 'enemyBullet' || t.dead) continue;
-    if (laserHits(player.x, player.y, dirX, dirY, t.x, t.y)) t.dead = true;
-  }
 }
 
 // --- Sub-weapon 5종 (M2 plan B2, OQ-M2-2: 독립 발사 슬롯; GDD §5 "보조무기 5종") ------
@@ -3794,9 +3759,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     //
     // ## 왜 여기인가 (감쇠 사슬의 **맨 앞**)
     // 이건 "이 무대에서 맞으면 얼마나 아픈가" 라는 **들어오는 피해의 성질**이지 플레이어가
-    // 갖춘 경감 수단이 아니다. 그래서 장갑·막·완충·캡스톤보다 앞에 둔다 — 뒤에 두면 캡스톤의
-    // 치사 판정(`hp - dmg <= 0`)이 무대 배율을 못 본 값으로 이뤄져, 배율이 살려 낼 피격까지
-    // "치명타 1회 무효" 를 소진시킨다.
+    // 갖춘 경감 수단이 아니다. 그래서 장갑·막·완충 같은 경감 수단보다 앞에 둔다 — 뒤에 두면
+    // 이후 시그니처들이 무대 배율을 못 본 값을 놓고 판정하게 된다.
     //
     // ## 정수화
     // `Math.round` 는 배율이 실제로 걸리는 무대에서만 돈다. 배율 1 인 무대(그 외 전부 + 침공)는
@@ -3805,13 +3769,12 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     const modeScale = objectiveModeDamageScale(state.config.planetMode);
     if (modeScale !== 1) dmg = Math.round(dmg * modeScale);
     // 피격 피해 배수(사용자 지시 2026-08-05). 무대 배율과 **같은 성질**이라 같은 자리 —
-    // 감쇠 사슬(장갑·막·완충·캡스톤)의 맨 앞이다. 근거와 정수화를 뺀 이유는 상수 주석 참조.
+    // 감쇠 사슬(장갑·막·완충)의 맨 앞이다. 근거와 정수화를 뺀 이유는 상수 주석 참조.
     // `modeScale` 의 반올림 **뒤**에 곱한다: 그래야 이 지점의 값이 종전 값의 정확히 2 배라,
     // 무대 배율이 걸리는 런에서도 "두 배" 가 반올림 순서 때문에 ±1 로 흔들리지 않는다.
     dmg *= PLAYER_DAMAGE_TAKEN_MULT;
-    // 브루저 시그니처 — 장갑 스택 피해 감소(설계서 §3·§4). **생존 캡스톤 판정보다 먼저** 적용해
-    // "치명타 1회 무효" 가 감소된 피해로 치사 여부를 판정하게 한다(장갑이 살려낸 피격까지
-    // 캡스톤을 소진시키지 않는다). 미보유면 armorOn=false 로 한 줄도 실행되지 않는다.
+    // 브루저 시그니처 — 장갑 스택 피해 감소(설계서 §3·§4). 이후 시그니처들이 감소된 피해를 보고
+    // 판정하도록 앞에 둔다. 미보유면 armorOn=false 로 한 줄도 실행되지 않는다.
     // ⚠️ 산술은 shipSignature.ts 의 `armorReducedDamage` 와 동형(합산 bp · 단일 나눗셈)이되
     // 그 함수의 `Math.trunc` 만 뺐다 — 접촉 피해에는 엘리트 배율이 섞여 소수가 될 수 있고,
     // trunc 는 스택 0(bp=0)일 때조차 소수부를 지워 **무스택 피해까지 바꾼다.** 정수 피해에
@@ -3822,12 +3785,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       if (bp > 0) dmg -= Math.round((dmg * bp) / 10000);
     }
     // 버블 시그니처 — 방막 흡수(설계서 §3·§4). 막은 선체 **바깥** 층이므로 브루저 장갑 감소
-    // **뒤** · 완충 지연 전환과 생존 캡스톤 판정 **앞**이다.
+    // **뒤** · 완충 지연 전환 **앞**이다.
     //  · 완충보다 먼저인 이유: 지연 전환이 먼저면 애초에 막이 다 막아 낼 피해가 지연분으로
     //    적립돼 **막을 통과하지 않은 피해가 나중에 선체로 들어온다.** 두 시그니처는 한 런에
     //    공존할 수 없지만(§ 슬롯 배정), 순서를 코드로 못 박아 훗날 합성될 때 논쟁이 없게 한다.
-    //  · 캡스톤보다 먼저인 이유: 장갑·완충과 같은 논증 — 캡스톤은 `hp - dmg <= 0` 으로 치사를
-    //    보므로, 막이 살려 낸 피격까지 "치명타 1회 무효" 를 소진시키면 안 된다.
     // ⚠️ `Math.round(dmg)` 는 반드시 이 게이트 **안**이다(브루저·말로우 주석과 같은 함정):
     //    밖으로 빼면 시그니처 없는 런의 소수 접촉 피해(엘리트 배율)까지 바뀐다. 게이트 안에서
     //    먼저 정수화하는 이유는 aux0(막 내구)이 u32 로 해시되기 때문이다 — 소수를 깎으면
@@ -3853,7 +3814,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         burstFilm(state, player);
       }
       // ⚠️ 막이 전량 흡수했으면 **여기서 함수를 빠져나간다** — 다만 무적 창은 세우고 나간다.
-      //    · 나머지 피격 후속(과열 스택 리셋·반응 장갑 펄스·위상 전환막·캡스톤 소진·장갑 적립)은
+      //    · 나머지 피격 후속(과열 스택 리셋·반응 장갑 펄스·위상 전환막·장갑 적립)은
       //      건너뛴다: 피해가 0 이므로 "맞지 않은 것" 으로 취급하는 편이 일관적이고, 플레이어가
       //      공짜로 강해지는 방향의 조용한 오류를 만들지 않는다.
       //    · 반면 `iframes` 를 세우지 않으면 **막이 피격당 1대가 아니라 틱당 1대로 증발한다**
@@ -3870,10 +3831,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     }
     // 말로우 시그니처 — 완충 지연 전환(설계서 §3·§4). 이번 피격 피해의 CUSHION_DEFER_BP 만큼을
     // 지금 넣지 않고 떼어 둔다. **적립(aux0 += deferred)은 여기서 하지 않고 아래 hp 차감 분기
-    // 안에서만** 한다 — 근거는 그쪽 주석.
-    // 브루저 감소 **뒤** · 생존 캡스톤 판정 **앞**인 이유는 장갑과 완전히 같은 논증이다
-    // (위 2252-2254 주석): 캡스톤은 `hp - dmg <= 0` 으로 치사 여부를 보므로, 완충이 살려 낸
-    // 피격까지 캡스톤을 소진시키지 않으려면 감액이 먼저여야 한다.
+    // 안에서만** 한다 — 근거는 그쪽 주석. 브루저 감소 **뒤** 인 이유는 이후 시그니처들이 감소된
+    // 피해를 보고 판정하도록 하기 위함이다(장갑과 같은 논증).
     // ⚠️ `Math.round(dmg)` 는 **반드시 이 게이트 안**에 둔다 — 밖으로 빼면 시그니처 없는 런의
     //    소수 접촉 피해(엘리트 배율)까지 바뀐다. 게이트 안에서 먼저 정수화하는 이유는 aux0 이
     //    u32 로 해시되기 때문이다(replay.ts hashEntity 의 `>>> 0`): 소수를 적립하면 소수부가
@@ -3886,31 +3845,20 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       deferred = cushionDeferredDamage(dmg);
       dmg -= deferred;
     }
-    // 생존 캡스톤 — 치명타 1회 무효(GDD §4): 이 피격이 치명적(hp가 0 이하로 떨어짐)이고 아직
-    // 미소진(player.targetX===0)이면 피해를 전부 무효화하고 짧은 무적(CRIT_NEGATE_IFRAMES)을
-    // 준다. 소진 표식은 player.targetX(플레이어 미사용 필드, 이미 해시됨)에 1로 실어 런당 1회로
-    // 제한한다 — createWorld가 매 런 targetX=0으로 시작하므로 리셋이 자명하다. 무효 시 피격
-    // 후속(과열 리셋·반응 장갑·위상 전환막)은 모두 건너뛴다(없던 피격처럼 취급).
-    if (hasCapstone(uMask, CAP_SURVIVAL_CRIT) && player.targetX === 0 && player.hp - dmg <= 0) {
-      player.targetX = 1;
-      player.iframes = CRIT_NEGATE_IFRAMES;
-    } else {
-    // 사연 관측(비-해시): 실제로 선체 피해를 입은 이 지점에서만 센다(막 전량 흡수·캡스톤 무효
-    // = "없던 피격"은 여기 도달하지 않는다). iframes 부여 직전 · 전 기체 집계(storyUnlock 은
+    // 사연 관측(비-해시): 실제로 선체 피해를 입은 이 지점에서만 센다(막 전량 흡수는 여기
+    // 도달하지 않는다). iframes 부여 직전 · 전 기체 집계(storyUnlock 은
     // 브루저 사연만 이 metric 을 보지만 카운트는 기체 무관). 결정론 무영향 — hashWorld 미접.
     state.hitsTaken++;
     player.hp -= dmg;
     if (player.hp < 0) player.hp = 0;
     player.iframes = state.config.hitIframes;
     // 브루저 시그니처 — 실제로 피해를 입은 이번 피격으로 장갑 1스택 적립 + 소멸 타이머 리셋.
-    // (캡스톤 무효 분기는 "없던 피격"이라 여기 도달하지 않는다 = 스택도 쌓이지 않는다.)
     if (armorOn) {
       player.aux0 = clampArmorStacks(player.aux0 + 1);
       player.aux1 = 0;
     }
     // 말로우 시그니처 — 실제로 피해를 입은 이번 피격에서만 지연분을 적립하고 무피격 스트릭을
-    // 리셋한다. 적립을 위쪽 감액 지점에 두면 **캡스톤이 무효화한 "없던 피격"에서 지연 피해가
-    // 태어나** 몇 초 뒤 플레이어를 죽인다(사인이 캡스톤으로 보이지 않아 추적이 어렵다).
+    // 리셋한다.
     // deferred 는 위 게이트에서 정수화한 dmg 에서 나오므로 항상 비음 정수다 — aux0 의 u32
     // 규율(replay.ts hashEntity)이 여기서 지켜진다.
     if (cushionOn) {
@@ -3918,9 +3866,6 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       player.aux0 += deferred;
     }
     // 팬텀 시그니처 — 실제로 피해를 입은 이번 피격에서만 무피격 스트릭과 해제 표식을 리셋한다.
-    // **반드시 이 분기 안**이어야 한다: 생존 캡스톤이 무효화한 피격은 "없던 피격"(위 주석)이라
-    // 거기서 리셋하면 맞지도 않은 타격이 은신을 깨서 은신이 사실상 발동하지 않게 되고, 반대로
-    // 리셋을 아예 빼면 **맞아도 은신이 유지**된다. 둘 다 화면상으로는 조용하다.
     if (signatureOn(state, SIG_PHANTOM_CLOAK)) {
       player.aux0 = 0;
       player.aux1 = 0;
@@ -3957,7 +3902,6 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       for (const t of state.entities) if (t.kind === 'enemyBullet') t.dead = true;
       player.hp = Math.min(player.maxHp, player.hp + Math.round(player.maxHp * PHASE_MEMBRANE_HEAL_FRAC));
       player.targetY = PHASE_MEMBRANE_COOLDOWN;
-    }
     }
   }
 }

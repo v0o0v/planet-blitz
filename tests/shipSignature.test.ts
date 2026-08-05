@@ -131,13 +131,12 @@ describe('시그니처 비트 배정', () => {
     expect(SIGNATURE_BITS).toEqual([18, 19, 20, 21, 22, 23]);
   });
 
-  it('원문 실측: 유니크 15종(0~14) · 캡스톤 3종(15~17) 이 실제로 그 범위다', () => {
+  it('원문 실측: 유니크 15종(0~14) 이 실제로 그 범위다 · (구)캡스톤 3종(15~17)은 ADR-0049 로 폐기돼 더 이상 선언되지 않는다', () => {
     expect(UNIQUE_BITS.length).toBe(15);
     expect([...UNIQUE_BITS].sort((a, b) => a - b)).toEqual([
       0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
     ]);
-    expect(CAPSTONE_BITS.length).toBe(3);
-    expect([...CAPSTONE_BITS].sort((a, b) => a - b)).toEqual([15, 16, 17]);
+    expect(CAPSTONE_BITS.length).toBe(0);
   });
 
   it('시그니처 비트가 서로 유일하고 유니크·캡스톤과 하나도 겹치지 않는다', () => {
@@ -546,10 +545,9 @@ describe('정규 경로 통합 — Profile → 런 설정 → createWorld/stepWo
       for (const bit of SIGNATURE_BITS) {
         expect(hasSignature(mask, bit), `${build.id}: 비트 ${bit} 가 이미 점유됨`).toBe(false);
       }
-      // 캡스톤 빌드는 실제로 15~17 대역을 켠다(경로가 살아 있다는 증거).
-      if (build.id.startsWith('capstone') || build.id === 'near-max') {
-        expect(mask, `${build.id}: 캡스톤 비트 미점등`).toBeGreaterThan(0);
-      }
+      // (구) 캡스톤 빌드가 15~17 대역을 켜는지 보던 자리 — 캡스톤 개념 자체가 ADR-0049 로
+      // 폐기돼(`scripts/recordStrikerBaseline.ts` 갱신 주석 참조) 그 증거가 더 이상 성립하지
+      // 않는다. 축 몰빵 빌드로 대체된 뒤에도 uniqueMask 는 유니크 비트(0~14)만 쓴다.
     }
   });
 

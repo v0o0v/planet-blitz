@@ -285,9 +285,17 @@ describe('③ 투자 → 저장 → 재로드 → buildRunConfig 왕복', () => 
     expect(cfg.skillInvest?.[0]).toBe(1);
     // 저장 직전 프로필과 재로드 프로필이 같은 런을 만든다(직렬화 왕복 무손실).
     expect(cfg).toEqual(buildRunConfig(p, { planet: 0, stage: 1 }));
-    // 투자가 파생 스탯으로 실제로 접혔는가(중립 loadout 이 아님).
-    expect(cfg.loadout).not.toEqual(
-      buildRunConfig(defaultProfile(), { planet: 0, stage: 1 }).loadout,
+    // ⚠️ **ADR-0049 로 관측량이 바뀐 자리다.** 구 버전은 "투자가 파생 스탯으로 접혔는가"를
+    // 봤다(`cfg.loadout` 이 중립과 다른가). 스킬이 스탯에서 **메커닉**으로 옮겨 가면서
+    // `computeLoadoutStats` 는 더 이상 투자를 읽지 않으므로 그 단언은 영영 거짓이 됐다 —
+    // 결함이 아니라 폐기된 계약이다.
+    //
+    // 대신 지금 참인 것을 건다: **투자 벡터 자체가 런 설정까지 흘러가는가.** sim 이
+    // `WorldConfig.skillInvest` 를 직접 읽으므로 이쪽이 오히려 배선의 정본에 가깝다.
+    // (아래 `runHashes` 단언이 "그래서 실제로 다르게 굴러가는가"를 마저 증명한다 — 벡터가
+    // 실렸는데 sim 이 안 읽는 상태를 배제하는 것은 그쪽이다.)
+    expect(cfg.skillInvest).not.toEqual(
+      buildRunConfig(defaultProfile(), { planet: 0, stage: 1 }).skillInvest,
     );
     // sim 이 실제로 다르게 굴러가는가.
     expect(runHashes(31337, cfg, 120)).not.toEqual(

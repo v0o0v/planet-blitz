@@ -181,8 +181,10 @@ export const WORLD_FRESH = [
 /**
  * 구간을 넘어 **값이 이월**되는 플레이어 `Entity` 필드.
  *
- * ⚠️ `targetX` 는 좌표가 아니다 — 플레이어 엔티티에서는 `CAP_SURVIVAL_CRIT`(런당 1회 치명
- * 무효)의 **소진 표식**이다. 리셋하면 **N구간 = N회 부활**이 되어 안전망이 곱해진다.
+ * ⚠️ `targetX` 는 좌표가 아니다. 과거 플레이어 엔티티에서는 캡스톤(런당 1회 치명 무효)의
+ * **소진 표식**이었으나, 캡스톤 시스템 자체가 ADR-0049 로 폐기돼 지금은 플레이어 쪽에서
+ * 아무도 쓰지 않는다(항상 0). 그래도 이 목록에서 빼지 않는다 — 남겨 둬도 no-op 이고,
+ * 구 리플레이/세이브가 이 필드에 값을 남긴 채 들어올 가능성을 배제할 수 없어서다.
  * ⚠️ `targetY` 는 위상 전환막 내부 쿨다운, `ownerId` 는 `UQ_DRONE_BAY` 소환 간격이다.
  * ⚠️ **`timer` 는 "일반 타이머"가 아니라 독립 보조무기 발사 쿨다운이다**(`world.ts:2611-2725` —
  * 주무기와 경쟁하지 않는 자기 사이클). 쿨다운 실값은 SIDEKICK 18 · SCATTER 33 · FLARE 45 ·
@@ -326,7 +328,7 @@ export function carryAcrossSegment(prev: WorldState, next: WorldState): void {
   // 플레이어는 항상 엔티티 배열의 0번이다(WorldState.playerId 주석의 계약).
   const prevPlayer = prev.entities[0];
   const nextPlayer = next.entities[0];
-  // ⚠️ **조용히 return 하지 않는다.** 여기서 빠져나가면 hp·`targetX`(치명 무효 소진)·시그니처가
+  // ⚠️ **조용히 return 하지 않는다.** 여기서 빠져나가면 hp·시그니처가
   // 통째로 사라지는데 화면엔 "2구간이 만피로 시작"으로만 보인다. `kind` 까지 확인하는 이유는
   // 훗날 0번 자리에 다른 엔티티가 들어가면 승계분을 **그 엔티티에** 써 넣기 때문이다.
   if (prevPlayer === undefined || prevPlayer.kind !== 'player') {
