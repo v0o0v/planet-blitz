@@ -165,15 +165,15 @@ describe('catalyst_defs.buy_price 시드 ↔ TS CATALYST_PRICE_MIRROR', () => {
 // 2·3. 재화 봉인 가드 — 컬럼 열거식이라 컬럼을 늘리면 여기를 반드시 함께 고쳐야 한다
 // ---------------------------------------------------------------------------
 
-describe('guard_profiles_client_write — 클라 UPDATE 봉인 9종', () => {
+describe('guard_profiles_client_write — 클라 UPDATE 봉인 12종', () => {
   const guard = effectiveFunctionBody('guard_profiles_client_write');
 
-  it('new.X := old.X 대입이 정확히 9개이고 집합이 계약과 같다', () => {
+  it('new.X := old.X 대입이 정확히 12개이고 집합이 계약과 같다', () => {
     const cols = [...guard.code.matchAll(/new\.(\w+)\s*:=\s*old\.(\w+)\s*;/g)].map((m) => {
       expect(m[2], `${m[1]} 을 다른 컬럼(${m[2]})의 old 값으로 되돌리고 있다`).toBe(m[1]);
       return m[1];
     });
-    expect(cols.length, '봉인 대입 총수가 9가 아니다 — 컬럼을 지웠거나 늘렸다').toBe(9);
+    expect(cols.length, '봉인 대입 총수가 12가 아니다 — 컬럼을 지웠거나 늘렸다').toBe(12);
     expect(new Set(cols)).toEqual(
       new Set([
         'flagged',
@@ -185,18 +185,34 @@ describe('guard_profiles_client_write — 클라 UPDATE 봉인 9종', () => {
         'credits',
         'minerals',
         'catalyst_residue',
+        // ADR-0048(20260805000000): 연속일·상한 앵커. 이 셋이 클라 쓰기 가능하면 30일차를
+        // 스스로 세우고 상한 유계 — 이 설계의 유일한 안전장치 — 가 통째로 사라진다.
+        'daily_last_claim_seed',
+        'daily_streak',
+        'lifetime_granted',
       ]),
     );
   });
 });
 
-describe('guard_profiles_client_insert — 클라 INSERT 재화 0 강제 3종', () => {
+describe('guard_profiles_client_insert — 클라 INSERT 0 강제 6종', () => {
   const guard = effectiveFunctionBody('guard_profiles_client_insert');
 
-  it('new.X := 0 대입이 정확히 3개이고 집합이 계약과 같다', () => {
+  it('new.X := 0 대입이 정확히 6개이고 집합이 계약과 같다', () => {
     const cols = [...guard.code.matchAll(/new\.(\w+)\s*:=\s*0\s*;/g)].map((m) => m[1]);
-    expect(cols.length, '0 강제 대입 총수가 3이 아니다').toBe(3);
-    expect(new Set(cols)).toEqual(new Set(['credits', 'minerals', 'catalyst_residue']));
+    expect(cols.length, '0 강제 대입 총수가 6이 아니다').toBe(6);
+    expect(new Set(cols)).toEqual(
+      new Set([
+        'credits',
+        'minerals',
+        'catalyst_residue',
+        // ADR-0048: 신규 3컬럼을 전부 `:= 0` 으로 정한 이유가 **정확히 위 정규식이 그대로
+        // 통하게** 하기 위함이다(하나만 `:= -1` 이면 그 컬럼이 계약의 시야 밖으로 빠진다).
+        'daily_last_claim_seed',
+        'daily_streak',
+        'lifetime_granted',
+      ]),
+    );
   });
 });
 

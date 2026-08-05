@@ -2205,6 +2205,38 @@ export const EN = {
   'commission.help.s5.h': 'Why this screen needs a login',
   'commission.help.s5.b':
     'The server holds the record of both the orders you have and the guaranteed items they pay out. That is why obtaining a commission and launching a commission run both need a connection.\nA commission run is also the one PvE run that submits a replay. Because the reward is guaranteed rather than rolled, the server re-simulates the run in full before paying it.',
+
+  // 일일 보상 통지 팝업 (ADR-0048 §화면 · `src/ui/pixi/dailyRewardModal.ts`).
+  // 이 화면에는 "받기"가 없다 — 그래서 수령을 요청하는 문구도 없다(AC-19).
+  'daily.title': 'Daily Reward',
+  'daily.streak': 'Consecutive day {n}',
+  // 헤더 칩 전용 축약형. 모달의 문장형(`daily.streak`)과 **모양이 다르다** — 칩은 30일 주기를
+  // 함께 담아야 하고(AC-20) 폭 예산이 좁다. EN 은 `Streak` 원어 표기를 피한다.
+  'daily.chip': 'Daily {n}/{max}',
+  'daily.streak.sub':
+    'A {max}-day cycle. Day {max} is the peak of the ramp, and the day after it starts over at day 1.',
+  'daily.today': 'What arrived today',
+  'daily.today.notice': 'It was issued the moment you entered the base. There is nothing to press.',
+  'daily.today.side': 'Plus {n} credits on the side.',
+  'daily.step': 'Step {index} of {total} toward that goal.',
+  'daily.tomorrow': 'Notice for tomorrow',
+  'daily.tomorrow.hidden':
+    'Only what is coming is written down. The exact values are rolled when you receive it tomorrow.',
+  'daily.tomorrow.none': 'Nothing has been written down for tomorrow yet.',
+  'daily.count': 'x{n}',
+  'daily.uses': '{n} uses',
+  'daily.amount.credits': '{n} credits',
+  'daily.amount.minerals': '{n} minerals',
+  'daily.axis.currency': 'Currency',
+  'daily.axis.catalyst': 'Catalyst',
+  'daily.axis.blueprint': 'Blueprint',
+  'daily.axis.coreModule': 'Core Module',
+  'daily.axis.gear': 'Gear',
+  'daily.axis.commission': 'Commission',
+  'daily.help.reset':
+    'Miss a single day and you go back to day 1. The notice written for that day is gone with it.',
+  'daily.help.ceiling':
+    'The ceiling on what you can receive is bound to the total the server has granted you so far.',
 } as const;
 
 /** 카탈로그 키 = 영어 정본의 키 집합. */
@@ -4359,6 +4391,41 @@ export const KO: Record<MessageKey, string> = {
   'commission.help.s5.h': '이 화면은 왜 로그인이 필요한가요',
   'commission.help.s5.b':
     '보유한 의뢰서와 그것이 확정 지급하는 물건의 기록을 서버가 쥐고 있습니다. 그래서 의뢰서 획득과 의뢰 출격은 접속이 필요합니다.\n의뢰 런은 리플레이를 제출하는 유일한 PvE 런이기도 합니다. 보상이 굴림이 아니라 확정 지급이라, 서버가 런을 처음부터 다시 돌려 확인한 뒤에 지급합니다.',
+
+  // 일일 보상 통지 팝업 (ADR-0048 §화면 · `src/ui/pixi/dailyRewardModal.ts`).
+  //
+  // 용어 정본은 CONTEXT.md 경제 절이다 — `일일 보상` · `보상 예고` · `연속 접속` · `진행 견인`.
+  // ⚠️ 기피어 금지: `출석 보상`(근태 문법 — 이 세계엔 학교도 직장도 없고 지급 주체는 죽은
+  //    자동 시스템이다) · `로그인 보너스` · `데일리` · `출석 일수` · `streak`(원어 표기) ·
+  //    `누적 접속일`(리셋이 없다는 오해). 등급 사다리는 노말·매직·레어·유니크(`item.rarity.*`
+  //    재사용) · 의뢰서 계급은 `commission.grade.*` 재사용 · 닫기는 `common.close` 재사용.
+  // ⚠️ `daily.help.ceiling` 의 앵커는 **서버가 지급한 총량**이다. 옛 문구 *"자기 최고 클리어
+  //    단계에 묶인다"* 는 거짓이다 — 상한 앵커가 `pve_runs` 의 단계에서 `profiles.lifetime_granted`
+  //    로 바뀌었고(클라가 채우는 주장은 앵커가 될 수 없다), 그 문구를 쓰면 화면이 플레이어에게
+  //    거짓을 말한다. `tests/dailyRewardModal.test.ts` 가 그 표현의 부재를 잠근다.
+  'daily.title': '일일 보상',
+  'daily.streak': '연속 접속 {n}일차',
+  'daily.chip': '연속 접속 {n}/{max}',
+  'daily.streak.sub': '{max}일 주기입니다. {max}일차가 가장 높고, 그다음 날은 1일차로 돌아갑니다.',
+  'daily.today': '오늘 받은 것',
+  'daily.today.notice': '기지에 들어온 순간 이미 지급되었습니다. 따로 누를 것은 없습니다.',
+  'daily.today.side': '곁들여 크레딧 {n} 이 함께 들어왔습니다.',
+  'daily.step': '그 목표까지 {total}걸음 중 {index}걸음째입니다.',
+  'daily.tomorrow': '내일 보상 예고',
+  'daily.tomorrow.hidden': '무엇이 오는지까지만 적혀 있습니다. 세부 값은 내일 받을 때 정해집니다.',
+  'daily.tomorrow.none': '내일 것은 아직 적히지 않았습니다.',
+  'daily.count': '{n}개',
+  'daily.uses': '사용 {n}회',
+  'daily.amount.credits': '크레딧 {n}',
+  'daily.amount.minerals': '광물 {n}',
+  'daily.axis.currency': '재화',
+  'daily.axis.catalyst': '촉매',
+  'daily.axis.blueprint': '설계도',
+  'daily.axis.coreModule': '코어 모듈',
+  'daily.axis.gear': '장비',
+  'daily.axis.commission': '의뢰서',
+  'daily.help.reset': '하루라도 놓치면 1일차로 돌아갑니다. 그날 적어 둔 예고도 함께 사라집니다.',
+  'daily.help.ceiling': '받을 수 있는 것의 상한은 지금까지 서버가 지급한 총량에 묶입니다.',
 };
 
 /** 로케일별 카탈로그 묶음. */

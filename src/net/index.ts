@@ -24,6 +24,11 @@ import type {
   CommissionGrantRow,
 } from './commissionGateway.js';
 import type { CommissionPayload } from '../run/commission.js';
+import type {
+  DailyRewardGateway,
+  DailyRewardClaim,
+  DailyRewardDeliveryStatus,
+} from './dailyReward.js';
 import { runReplay } from '../sim/replay.js';
 import type { Replay } from '../sim/replay.js';
 import {
@@ -189,15 +194,29 @@ export async function pullServerProfileInto(
  * 진행도 가드가 있는 {@link flushPendingSync}/{@link migrateLocalProfileToServer} 를 쓴다 — 이
  * 함수는 하네스에서만 호출된다(치트로 만든 상태를 서버에 그대로 밀어야 하므로 가드를 두지 않는다).
  * 미설정/오프라인/오류면 완전 no-op(절대 throw 안 함).
+ *
+ * ## 두 번째 호출자 — 의뢰 확정 지급물 배송(2026-08-05)
+ * `deliverCommissionGrants`(src/run/commissionGrantDelivery.ts)가 **배송 완료를 표시하기 전에**
+ * 아이템이 서버에 실제로 닿았는지 확인하려고 이것을 쓴다. 가드 없는 upsert 가 맞는 자리다:
+ *   · 배송은 항상 `pullServerProfileInto` 뒤(부팅) 또는 방금 끝난 런 뒤(제출)에 일어나므로
+ *     로컬이 서버보다 뒤처져 있을 창이 없다.
+ *   · `shouldPushPending` 가드는 아이템 1개 증가(= `progressScore` +1)를 어차피 통과시키므로
+ *     여기서만 다른 규칙을 세울 실익이 없고, 가드가 조용히 스킵하면 표시를 못 해 그 행이
+ *     영원히 재시도된다.
+ *
+ * @returns 서버에 실제로 올라갔으면 `true`. 미설정·오프라인·오류면 `false` —
+ *          **호출부는 이 값이 `false` 이면 배송 완료를 표시하면 안 된다**(표시하면 영구 유실).
  */
-export async function pushProfileToServer(profile: Profile, deps: NetDeps = {}): Promise<void> {
+export async function pushProfileToServer(profile: Profile, deps: NetDeps = {}): Promise<boolean> {
   const gateway = await resolveGateway(deps);
-  if (gateway === null) return;
+  if (gateway === null) return false;
   try {
     const uid = await gateway.getUserId();
     await gateway.upsertProfile(uid, serializeProfile(profile));
+    return true;
   } catch {
     // 오프라인/일시 오류 — best-effort(다음 치트/저장 때 다시 밀린다).
+    return false;
   }
 }
 
@@ -747,6 +766,26 @@ export async function fetchCommissionGrantsOnline(
 }
 
 /**
+ * 의뢰 확정 지급물 배송 완료 통지(20260805010000 `mark_commission_grant_applied`).
+ * 절대 throw 하지 않는다 — 실패는 `false` 이고, 그 행은 `applied_at IS NULL` 로 남아
+ * **다음 부팅이 다시 배송을 시도**한다. 실패를 삼켜 true 를 돌려주면 그 순간 유실이다.
+ */
+export async function markCommissionGrantAppliedOnline(
+  grantId: string,
+  deps: CommissionNetDeps = {},
+): Promise<boolean> {
+  const gateway = await resolveCommissionGateway(deps);
+  if (gateway === null) return false;
+  try {
+    await gateway.getUserId();
+    await gateway.markCommissionGrantApplied(grantId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * `consumeCommissionOnServer` 결과.
  *  - `unconfigured`: 서버 미설정(오프라인) — 의뢰서는 온라인 전용이라 출격 자체가 불가하다.
  *  - `ok`: 소모 확정 — `runId`·서버 원장 `payload`(발령 시점에 굳은 종이).
@@ -1039,4 +1078,102 @@ export async function flushPendingCommissionSubmissions(
   const store = deps.store !== undefined ? deps.store : defaultNetStore();
   if (store === null) return;
   await flushCommissionQueueOnce(gateway, store);
+}
+
+// ---------------------------------------------------------------------------
+// 일일 보상(ADR-0048) — 수령 + 배송함 반영 오케스트레이션 (계획 §C5)
+// ---------------------------------------------------------------------------
+
+/** 주입 가능한 의존성(테스트에서 `DailyRewardGateway` 를 대체). 의뢰서와 같은 이유로 별개 캐시다. */
+export interface DailyRewardNetDeps {
+  gateway?: DailyRewardGateway;
+  config?: SupabaseConfig | null;
+}
+
+let cachedDailyRewardGateway: DailyRewardGateway | null = null;
+let cachedDailyRewardConfigKey: string | null = null;
+
+/** 이 호출에 쓸 일일 보상 게이트웨이를 해석한다. 미설정이면 null(→ 호출부가 오프라인 취급). */
+async function resolveDailyRewardGateway(deps: DailyRewardNetDeps): Promise<DailyRewardGateway | null> {
+  if (deps.gateway !== undefined) return deps.gateway;
+  const config = deps.config !== undefined ? deps.config : readSupabaseConfig();
+  if (config === null) return null;
+  const key = config.url;
+  if (cachedDailyRewardGateway !== null && cachedDailyRewardConfigKey === key) {
+    return cachedDailyRewardGateway;
+  }
+  const { SupabaseDailyRewardGateway } = await import('./dailyReward.js');
+  cachedDailyRewardGateway = new SupabaseDailyRewardGateway(config);
+  cachedDailyRewardConfigKey = key;
+  return cachedDailyRewardGateway;
+}
+
+/**
+ * {@link claimDailyRewardOnServer} 결과.
+ *  - `unconfigured`: 서버 미설정(오프라인) — 일일 보상은 서버 원장이 정본이라 성립하지 않는다.
+ *  - `ok`: 수령 확정. `claim.already` 가 참이면 오늘 것을 **다시 받아 온 것**이지 두 번 받은 게
+ *    아니다(AC-5 멱등). `delivery` 는 장비 배송함 반영 결과다(슬라이스 1 은 배송물이 없어 항상
+ *    `applied`).
+ *  - `failed`: 미로그인·오프라인·EF 거부. **아무것도 지급되지 않았다** — 화면은 재시도를 권하면 된다.
+ */
+export type ClaimDailyRewardOutcome =
+  | { status: 'unconfigured' }
+  | { status: 'ok'; claim: DailyRewardClaim; delivery: DailyRewardDeliveryStatus }
+  | { status: 'failed'; reason: string };
+
+/**
+ * 오늘의 일일 보상을 수령한다(모달의 [받기]). 절대 throw 하지 않는다.
+ *
+ * 수령 직후 **같은 호출 안에서 배송함을 반영**한다 — 반영을 다음 부팅으로 미루면 플레이어가
+ * 방금 받은 물건을 그 세션 내내 못 본다. 반영이 실패해도 수령 자체는 확정이므로 `ok` 를
+ * 돌려주고 `delivery` 로 구분한다(행은 서버에 남아 다음 부팅이 재시도한다).
+ *
+ * 반영은 `profile` 을 **제자리에서** 고친다(`main.ts` 의 `profile` 은 `const` 이고 화면·핸들러
+ * 수십 곳이 그 객체 참조를 캡처하고 있다 — `pullServerProfileInto` 와 같은 이유).
+ * 호출부는 `ok` 를 받으면 로컬 세이브를 저장해야 한다.
+ */
+export async function claimDailyRewardOnServer(
+  profile: Profile,
+  deps: DailyRewardNetDeps = {},
+): Promise<ClaimDailyRewardOutcome> {
+  const gateway = await resolveDailyRewardGateway(deps);
+  if (gateway === null) return { status: 'unconfigured' };
+  let claim: DailyRewardClaim;
+  try {
+    await gateway.getUserId();
+    claim = await gateway.claimDailyReward();
+  } catch (err) {
+    return { status: 'failed', reason: err instanceof Error && err.message !== '' ? err.message : String(err) };
+  }
+  // 재화 축은 서버가 이미 지급했다 — 미러를 서버가 낸 잔액으로 맞춘다(재화는 서버 컬럼이 정본).
+  if (claim.creditsLeft !== null) profile.credits = claim.creditsLeft;
+  if (claim.mineralsLeft !== null) profile.minerals = claim.mineralsLeft;
+
+  // ⚠️ 반영은 **수령 응답이 아니라 미반영 행 목록**을 입력으로 삼는다. 응답의 `item` 을 믿으면
+  //    멱등 재응답(`already`)이 배송물을 못 실어 온 순간 클라가 "배송할 것 없음"으로 읽고 행을
+  //    닫아 물건이 영구 유실된다. 겸사겸사 이전에 밀린 행도 여기서 함께 회수된다.
+  const { deliverPendingDailyRewards } = await import('./dailyReward.js');
+  const reports = await deliverPendingDailyRewards(profile, gateway);
+  const mine = reports.find((r) => r.dateSeed === claim.dateSeed);
+  return { status: 'ok', claim, delivery: mine?.status ?? 'noop' };
+}
+
+/**
+ * 부팅 시 **미반영 배송함 행을 재시도**한다(`applied_at IS NULL`). 미설정/오프라인이면 조용히
+ * no-op. 절대 throw 하지 않는다.
+ *
+ * ⚠️ 이 진입점이 없으면 push·mark 가 한 번 실패한 배송물은 영영 안 온다 — 수령 경로는 그날
+ * 한 번만 지나가고, 그날 이미 수령한 계정은 EF 가 멱등 응답만 돌려주기 때문이다.
+ *
+ * @returns 반영을 실제로 한 행이 있으면 `true`(호출부가 로컬 세이브를 저장할 신호).
+ */
+export async function flushPendingDailyRewardDeliveries(
+  profile: Profile,
+  deps: DailyRewardNetDeps = {},
+): Promise<boolean> {
+  const gateway = await resolveDailyRewardGateway(deps);
+  if (gateway === null) return false;
+  const { deliverPendingDailyRewards } = await import('./dailyReward.js');
+  const reports = await deliverPendingDailyRewards(profile, gateway);
+  return reports.some((r) => r.status === 'applied');
 }

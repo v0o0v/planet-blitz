@@ -67,6 +67,13 @@ export interface CommissionGrantRow {
   slotIndex: number;
   itemPayload: unknown;
   grantedAtMs: number;
+  /**
+   * 배송 완료 시각(`null` = 미배송 → 다음 부팅 재시도 대상). 20260805010000 이 신설한 컬럼.
+   * **발급(`grantedAtMs`)과 다른 사건이다** — 발급은 서버가 원장에 적은 순간이고 배송은
+   * 플레이어 세이브에 물건이 들어간 순간이다. 이 둘을 하나로 보면 "이겼는데 물건이 안 왔다"
+   * 상태를 표현할 자리가 없어진다.
+   */
+  appliedAtMs: number | null;
 }
 
 /** `consume_commission` RPC 반환(계약 §5-2). */
@@ -134,6 +141,14 @@ export interface CommissionGateway {
   fetchCommissionRuns(limit: number): Promise<CommissionRunRow[]>;
   /** 본인 의뢰 확정 지급물 이력(발급 정본 — ADR-0045). */
   fetchCommissionGrants(): Promise<CommissionGrantRow[]>;
+  /**
+   * 유니크 축 배송 완료 통지(`mark_commission_grant_applied`, 20260805010000).
+   *
+   * ⚠️ **반드시 세이브 반영 → 프로필 push 성공 → 재-pull 확인 뒤에** 부른다. 앞에서 부르면
+   * `chooseProfile` 통짜 선택이 그 아이템을 버릴 수 있는데 행은 이미 표시돼 재시도되지
+   * 않는다 → 영구 유실. 실패 시 throw(호출부가 표시를 미룬다).
+   */
+  markCommissionGrantApplied(grantId: string): Promise<void>;
 }
 
 function rowToInventory(raw: unknown): CommissionInventoryRow {
@@ -183,6 +198,9 @@ function rowToGrant(raw: unknown): CommissionGrantRow {
     slotIndex: asNumber(r.slot_index),
     itemPayload: r.item_payload ?? null,
     grantedAtMs: asEpochMs(r.granted_at),
+    // ⚠️ `asEpochMs` 는 폴백이 있어 null 을 0(= 1970)으로 뭉갠다. 미배송을 "1970에 배송됨"
+    //    으로 읽으면 배송 루틴이 그 행을 영영 건너뛴다 — null 을 명시적으로 보존한다.
+    appliedAtMs: r.applied_at != null ? asEpochMs(r.applied_at) : null,
   };
 }
 
@@ -323,10 +341,27 @@ export class SupabaseCommissionGateway implements CommissionGateway {
   async fetchCommissionGrants(): Promise<CommissionGrantRow[]> {
     const { data, error } = await this.client
       .from('commission_grants')
-      .select('grant_id, profile_id, commission_run_id, kind, slot_index, item_payload, granted_at')
+      .select(
+        'grant_id, profile_id, commission_run_id, kind, slot_index, item_payload, granted_at, applied_at',
+      )
       .order('granted_at', { ascending: false });
     if (error !== null) throw error;
     const rows = Array.isArray(data) ? data : [];
     return rows.map(rowToGrant);
+  }
+
+  async markCommissionGrantApplied(grantId: string): Promise<void> {
+    const { data, error } = await this.client.rpc('mark_commission_grant_applied', {
+      p_grant_id: grantId,
+    });
+    if (error !== null) throw error;
+    // `updated: 0` 은 오류가 아니다(이미 표시됨 = 멱등 재시도). 하지만 `ok: false`(미로그인 등)는
+    // **표시가 안 됐다**는 뜻이라 반드시 throw 해야 호출부가 다음 부팅에 다시 시도한다 —
+    // 조용히 성공으로 넘기면 그 행이 미배송인 채로 영원히 재시도 대상이 되거나(무해) 반대로
+    // 클라가 배송을 끝냈다고 착각한다(유해).
+    const r = asRecord(data);
+    if (r.ok === false) {
+      throw new Error(`mark_commission_grant_applied 거부: ${asString(r.code, 'unknown')}`);
+    }
   }
 }

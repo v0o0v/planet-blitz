@@ -135,8 +135,36 @@ export interface CommissionRewards {
   credits: number;
   minerals: number;
   items: CommissionRewardItem[];
-  blueprints?: number[];
+  /**
+   * 확정 설계도. **이 형식이 서버 트리거가 인식하는 유일한 형태다 — 스칼라를 넣으면
+   * warning 후 버려진다**(`trg_commission_grant_blueprint`,
+   * 20260805010000_commission_grant_delivery.sql 2절).
+   *
+   * `settle_commission` 은 이 배열의 원소를 그대로 `item_payload.blueprintId` 에 감싸 넣고
+   * (20260803000000:882), 트리거가 그 값이 object 일 때만 `defense_blueprints` 에 upsert 한다.
+   * 축 이름·범위는 `grant_blueprints`(20260722020000:66-84)와 **같다**:
+   *   · `kind`      0..3 — 0 편대 / 1 설비 / 2 기물 / 3 보스(data/invasion/catalog.ts CATALOG_*)
+   *   · `catalogId` >= 0 — 종류 안의 배열 인덱스(append-only 계약)
+   *   · `count`     1..4 — 장수
+   * 다른 범위를 쓰면 같은 자산에 두 개의 유효성 정의가 생긴다.
+   *
+   * ⚠️ **오늘 아무도 이 필드를 채우지 않는다.** 보상 생성기(`issue_commission_for_run`)가
+   *    `rewards` 에 넣는 것은 `credits`·`minerals`·`items: []` 뿐이다. 그래서 `number[]` →
+   *    이 형태로의 변경이 안전하다(깨질 호출부가 0개). 보상 콘텐츠 저작은 이 레인 밖이다
+   *    (밸런스, 출시 직전 일괄 — defer-balance-tuning).
+   */
+  blueprints?: { kind: number; catalogId: number; count: number }[];
   catalysts?: number[];
+  /**
+   * 확정 유니크의 id.
+   *
+   * ⚠️ **선언 타입(`number`)과 소비처(`string`)가 갈려 있다** — `Item.uniqueId` 와
+   *    `UNIQUE_REGISTRY` 키는 문자열이다(src/items/uniques.ts). 오늘 이 필드를 채우는
+   *    코드가 없어 드러나지 않을 뿐이고, 채우는 날 둘 중 하나를 고쳐야 한다. 배송 루틴
+   *    (`readUniqueId`, src/run/commissionGrantDelivery.ts)은 **문자열만 해석**하고 숫자는
+   *    비트·인덱스로 추측하지 않는다(새 인코딩 발명 금지) — 해석 못 한 행은 표시되지 않고
+   *    남아 형식이 굳는 날 그대로 배송된다.
+   */
   uniqueId?: number;
 }
 

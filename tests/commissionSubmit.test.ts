@@ -28,7 +28,10 @@ import {
   readPendingCommissionSubmissions,
   PENDING_COMMISSION_QUEUE_MAX,
 } from '../src/net/profileSync.js';
-import { type KeyValueStore } from '../src/save/profile.js';
+import { type KeyValueStore, defaultProfile } from '../src/save/profile.js';
+// 제출 → 배송을 이어 붙여 "서버가 줬다고 했는데 가방이 비어 있다"를 잠근다.
+import { deliverCommissionGrants } from '../src/run/commissionGrantDelivery.js';
+import { commissionGrantItemId } from '../src/items/commissionGrant.js';
 import { DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { Replay } from '../src/sim/replay.js';
 
@@ -107,6 +110,9 @@ function fakeGateway(
     async fetchCommissionGrants() {
       return [];
     },
+    async markCommissionGrantApplied() {
+      return undefined;
+    },
   };
   return g as unknown as CommissionGateway & { calls: FakeCall[] };
 }
@@ -131,6 +137,22 @@ const OK: VerifyCommissionResult = {
   creditsLeft: 1100,
   mineralsLeft: 550,
   grants: [],
+};
+
+/**
+ * 확정 지급물이 **실린** 성공 응답.
+ *
+ * ⚠️ 이 픽스처가 없던 것이 결함을 가린 커버리지 공백이었다 — 위 `OK` 는 `grants: []` 로
+ * 고정돼 있어, 제출 계층이 `grants` 를 통째로 버려도 모든 단언이 초록이었다. 실제로
+ * `main.ts` 의 `verified` 분기가 `res.grants` 를 아무 데도 쓰지 않고 있었다.
+ *
+ * 원소 형태는 `settle_commission` 이 실제로 담는 것과 같다(20260803000000:877-888) —
+ * `{kind, slot_index, item_payload}` 이고 **`grant_id` 가 없다**. 그래서 클라는 이 배열을
+ * "배송할 것이 생겼다"는 신호로만 쓰고 실제 값은 원장을 다시 읽어 얻는다.
+ */
+const OK_WITH_GRANTS: VerifyCommissionResult = {
+  ...OK,
+  grants: [{ kind: 'unique', slot_index: 0, item_payload: { uniqueId: 'phase-armor' } }],
 };
 
 const NET_DOWN = (): Error => new Error('network down');
@@ -167,6 +189,66 @@ describe('제출 — 성공 경로', () => {
     expect(sent?.inputs).toBe(rep.inputs);
     // claim 은 재계산분이라 동일 객체가 아니지만 결정론이라 값이 있어야 한다.
     expect((sent?.claim as { finalHash?: number } | undefined)?.finalHash).toBeTypeOf('number');
+  });
+});
+
+describe('제출 — 확정 지급물이 실린 응답 (커버리지 공백이 결함을 가리고 있었다)', () => {
+  it('grants 가 비지 않으면 그대로 호출부에 전달된다', async () => {
+    const res = await submitCommissionRun('run-1', tinyReplay(), {
+      gateway: fakeGateway(() => OK_WITH_GRANTS),
+      store: memStore(),
+    });
+    expect(res.status).toBe('verified');
+    if (res.status !== 'verified') return;
+    // 통과하면서도 참일 수 있는 나쁜 상태: `grants` 필드를 아예 안 읽고 `?? []` 로 접는 것.
+    expect(res.grants.length).toBe(1);
+    expect((res.grants[0] as { kind?: string } | undefined)?.kind).toBe('unique');
+  });
+
+  it('전달된 지급물이 배송을 거쳐 profile.inventory 에 실제로 들어간다', async () => {
+    // ⚠️ 제출 계층 자체는 세이브를 만지지 않는다(배송은 `deliverCommissionGrants` 가 한다).
+    //    두 계층을 여기서 이어 붙여, "서버가 줬다고 했는데 가방이 비어 있다"가 초록으로
+    //    지나가지 않게 한다. 원장 재조회는 `grant_id` 때문에 필요하다(위 픽스처 주석 참조).
+    const res = await submitCommissionRun('run-1', tinyReplay(), {
+      gateway: fakeGateway(() => OK_WITH_GRANTS),
+      store: memStore(),
+    });
+    expect(res.status).toBe('verified');
+    if (res.status !== 'verified') return;
+    expect(res.grants.length).toBeGreaterThan(0);
+
+    const profile = defaultProfile();
+    const grantId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const marks: string[] = [];
+    const report = await deliverCommissionGrants(profile, {
+      fetchGrants: async () => [
+        {
+          grantId,
+          profileId: 'p-1',
+          commissionRunId: 'run-1',
+          kind: 'unique',
+          slotIndex: 0,
+          itemPayload: { uniqueId: 'phase-armor' },
+          grantedAtMs: 1_700_000_000_000,
+          appliedAtMs: null,
+        },
+      ],
+      saveProfile: () => undefined,
+      pushProfile: async () => true,
+      repullProfile: async (p) => p,
+      markApplied: async (id) => {
+        marks.push(id);
+        return true;
+      },
+    });
+
+    expect(report.delivered).toBe(1);
+    const item = profile.inventory.find((i) => i.id === commissionGrantItemId(grantId));
+    expect(item).toBeDefined();
+    expect(item?.uniqueId).toBe('phase-armor');
+    expect(item?.rarity).toBe('unique');
+    // 표시는 세이브 반영 · push · 재-pull 확인을 전부 통과한 뒤에만 찍힌다.
+    expect(marks).toEqual([grantId]);
   });
 });
 

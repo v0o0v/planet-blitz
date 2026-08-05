@@ -56,6 +56,22 @@ import { shouldEnterSettlement } from './ui/runFlow.js';
 import type { LaunchSelection } from './ui/planetSelect.js';
 import { HangarScreen } from './ui/pixi/hangar.js';
 import { BaseMapScreen } from './ui/pixi/baseMap.js';
+// 일일 보상(ADR-0048) — 모달은 통지이지 수령 창구가 아니다("받기" 버튼이 없다).
+import {
+  setDailyRewardModalHost,
+  showDailyRewardModal,
+  hideDailyRewardModal,
+  type DailyRewardModalData,
+  type DailyRewardModalSubject,
+} from './ui/pixi/dailyRewardModal.js';
+import { loadDailySeenSeed, saveDailySeenSeed } from './save/dailySeen.js';
+import {
+  DAILY_SIDE_CREDITS,
+  DAILY_STREAK_CYCLE,
+  dailyDateSeed,
+  shouldOpenDailyReward,
+} from '../data/dailyReward.js';
+import { DAILY_REWARD_AXES, type DailyRewardAxis } from '../data/dailyRewardSelection.js';
 import { ResearchLabScreen } from './ui/pixi/researchLab.js';
 import { RefineryScreen } from './ui/pixi/refinery.js';
 import { PlanetSelectScreen } from './ui/pixi/planetSelect.js';
@@ -128,7 +144,15 @@ import {
   submitCommissionRun,
   flushPendingCommissionSubmissions,
   pullServerProfileInto,
+  claimDailyRewardOnServer,
+  flushPendingDailyRewardDeliveries,
+  type DailyRewardNetDeps,
+  fetchCommissionGrantsOnline,
+  markCommissionGrantAppliedOnline,
 } from './net/index.js';
+// 의뢰 확정 지급물 배송(발급 원장 → 세이브). 발급은 서버가 하고 배송은 클라만 할 수 있다 —
+// `items` 는 클라 rw 미러라 서버가 심을 자리가 없다(commissionGrantDelivery.ts 머리 참조).
+import { deliverCommissionGrants } from './run/commissionGrantDelivery.js';
 // 구글 로그인(로그인 필수 정책). 미설정이면 전부 no-op 이고 DEV 는 게이트만 꺼진다.
 // 이 모듈은 SDK 를 함수 안에서 동적 import 하므로 여기서 정적으로 끌어도 초기 청크가 안 는다.
 import {
@@ -216,10 +240,23 @@ async function main(): Promise<void> {
   // 대신 하네스 슬롯을 읽는다. 프로덕션에서는 import.meta.env.DEV가 정적으로 false라
   // 이 블록·동적 import가 통째로 제거된다.
   const harnessActive = import.meta.env.DEV && params.get('harness') === '1';
+  /**
+   * 일일 보상 모의 주입기(DEV 전용). 프로덕션에서는 `null` 이고 동적 import 가 통째로 제거된다.
+   *
+   * ⚠️ **꺼져 있으면 반드시 `{}` 를 내야 한다** — `{ gateway: undefined }` 를 내면
+   * `resolveDailyRewardGateway` 의 `!== undefined` 검사를 통과해 **꺼진 모의가 실서버를
+   * 조용히 가린다.** 이 리포에 정확히 그 형상의 전례가 있다(모의가 config 보다 먼저 적용).
+   * 그래서 판단을 여기서 하지 않고 모의 모듈의 `harnessDailyRewardDeps()` 하나에 맡긴다.
+   */
+  let dailyRewardDeps: (() => DailyRewardNetDeps) | null = null;
   if (harnessActive) {
     const core = await import('./harness/core.js');
     core.setProfileStoreOverride(core.harnessProfileStore());
+    const mock = await import('./harness/dailyRewardMock.js');
+    dailyRewardDeps = () => mock.harnessDailyRewardDeps();
   }
+  /** 모의가 없으면 `{}` — net 계층이 config 로 실경로를 해석한다(현행 동작과 동일). */
+  const dailyDeps = (): DailyRewardNetDeps => dailyRewardDeps?.() ?? {};
 
   const gameApp = await createGameApp(mount);
   const hud = new Hud();
@@ -406,6 +443,10 @@ async function main(): Promise<void> {
   // 카툰나무풍 롤아웃 #1(cartoonwood-rollout §화면 1): DOM `BaseMap` 대신 Pixi 캔버스 허브로
   // 진입점을 교체한다(show/hide/visible + 콜백 타입 동일). DOM 클래스는 회귀 대비로 유지.
   const baseMap = new BaseMapScreen(gameApp.stage);
+  // 일일 보상 모달의 호스트. 다른 메타 화면과 **같은 stage** 에 붙어야 위로 그려진다.
+  // 미등록 상태에서 show 를 부르면 모달 모듈이 던진다 — 조용히 no-op 하면 그날 통지가
+  // 통째로 사라지고 아무도 모르기 때문이다(그쪽 모듈 주석의 근거).
+  setDailyRewardModalHost(gameApp.stage);
   // 카툰나무풍 롤아웃 #2: DOM `ResearchLab` 대신 Pixi 캔버스 연구소로 교체(인터페이스 동일).
   const researchLab = new ResearchLabScreen(profile, gameApp.stage);
   // 카툰나무풍 롤아웃 #3: DOM `Refinery` 대신 Pixi 캔버스 정제소로 교체(인터페이스 동일).
@@ -710,6 +751,10 @@ async function main(): Promise<void> {
 
   /** Clear the live run + all menu overlays (called before every screen swap). */
   function clearToMenu(): void {
+    // 일일 보상 모달은 기지 위 오버레이라 화면이 바뀌면 함께 내려야 한다. 안 내리면 다른
+    // 화면 위에 통지가 그대로 앉는다 — `openBaseMap` 도 이 함수를 지나므로 여기 한 곳이면
+    // 진입 경로 전부가 덮인다(모달 표시는 그 뒤 `maybeOpenDailyReward` 가 다시 결정한다).
+    hideDailyRewardModal();
     // (여기 있던 전환 커튼 트리거는 제거했다 — 위 mount 자리의 주석 참조.)
     world = null;
     recorder = null;
@@ -833,11 +878,136 @@ async function main(): Promise<void> {
     openTitle();
   }
 
+  /**
+   * 연속 접속일의 **클라 사본**(표시 전용). 정본은 서버 봉인 컬럼 `profiles.daily_streak` 이고
+   * 여기 값은 수령 응답으로만 갱신된다 — 클라가 스스로 세면 그것이 곧 램프 무력화다.
+   * 0 = "아직 받아 오지 못했다"이며 칩은 그 상태를 `-/30` 으로 그린다(0일차와 구별한다).
+   */
+  let dailyStreak = 0;
+  /** 마지막 수령 응답. 헤더 칩의 재열람이 **같은 모달**을 다시 여는 근거다. */
+  let lastDailyClaim: Awaited<ReturnType<typeof claimDailyRewardOnServer>> extends infer O
+    ? O extends { status: 'ok'; claim: infer C }
+      ? C | null
+      : never
+    : never = null;
+
+  /**
+   * 서버 문자열 → 축 유니온. 모르는 값은 `null` 이다.
+   *
+   * 좁히지 않고 캐스팅하면 슬라이스 2 가 축을 늘렸는데 클라가 낡은 번들일 때 `daily.axis.<모르는 축>`
+   * 키 조회가 빈 문자열이 되어 **이름 없는 보상**이 표시된다. 그때는 차라리 폴백 라벨이 낫다.
+   */
+  function narrowDailyAxis(axis: string): DailyRewardAxis | null {
+    return (DAILY_REWARD_AXES as readonly string[]).includes(axis)
+      ? (axis as DailyRewardAxis)
+      : null;
+  }
+
+  /**
+   * 수령 응답 → 모달 데이터.
+   *
+   * ⚠️ **예고(`tomorrow`)에는 굴림 값을 넣지 않는다**(AC-21). 서버가 `next` 에 종류·등급·계급만
+   * 실어 주므로 여기서 더 넣을 것이 없고, 모달 레이아웃도 예고 자리의 어픽스·사용 횟수를
+   * 버리도록 돼 있다 — 두 겹이다.
+   */
+  function toDailyRewardModalData(claim: {
+    streak: number;
+    result: { axis: string; credits: number; minerals: number; step: { index: number; total: number } | null } | null;
+    next: { axis: string; rarity?: string; grade?: number } | null;
+  }): DailyRewardModalData {
+    const axis = narrowDailyAxis(claim.result?.axis ?? '') ?? 'currency';
+    const today: DailyRewardModalSubject = {
+      axis,
+      ...(claim.result !== null ? { credits: claim.result.credits, minerals: claim.result.minerals } : {}),
+    };
+    const nextAxis = claim.next === null ? null : narrowDailyAxis(claim.next.axis);
+    const step = claim.result?.step ?? null;
+    return {
+      streak: claim.streak,
+      today,
+      sideCredits: DAILY_SIDE_CREDITS,
+      ...(nextAxis !== null ? { tomorrow: { axis: nextAxis } satisfies DailyRewardModalSubject } : {}),
+      ...(step !== null ? { step } : {}),
+    };
+  }
+
+  /**
+   * 일일 보상 — 그날 첫 기지 진입에 수령하고 통지한다 (ADR-0048 · AC-18).
+   *
+   * ## 왜 여기 한 곳인가
+   * 리포 교훈이 정본이다: *"레이어 표시는 진입 경로가 아니라 화면 이름 단일 권위."*
+   * `openBaseMap()` 이 부팅 직행·런 종료 복귀·타이틀 진입·건물에서 뒤로·언어 전환
+   * rerender·하네스 refresh 를 **전부 모으는 단일 지점**이라(호출부 18곳), 여기 하나만
+   * 걸면 경로를 놓칠 자리가 없다. 경로별 처방은 실패해 재신고를 받은 전례가 있다.
+   *
+   * ## 세 가지 가드
+   * ① **순수 판정** `shouldOpenDailyReward(마지막 표시 시드, 오늘 시드)` — 재진입 두 경로
+   *    (`rerenderCurrentScreen` 언어 전환 · `harnessRefreshScreen`)에서 모달이 재발하지 않는다.
+   * ② **비동기 창** — `openBaseMap` 은 동기이고 수령은 서버 왕복이다. 그 사이 격납고를
+   *    누르면 `baseMap.hide()` 뒤에 응답이 도착해 **기지 없는 배경 위에 모달이 앉는다.**
+   *    그래서 응답 도착 시점에 `currentScreenName === 'base'` 를 **다시** 확인한다.
+   * ③ **표시 기록은 응답 뒤에** — 요청 전에 기록하면 실패한 날도 "봤다"가 되어 그날
+   *    보상 예고를 영영 못 본다(수령 자체는 다음 진입에 다시 시도되므로 지급은 무사하다).
+   *
+   * 절대 throw 하지 않는다. 미설정·오프라인·EF 미배포면 조용히 아무 일도 없다.
+   */
+  function maybeOpenDailyReward(): void {
+    const nowSeed = dailyDateSeed(Date.now());
+    const wantModal = shouldOpenDailyReward(loadDailySeenSeed(), nowSeed);
+    // 모달이 필요 없어도 **연속일을 한 번은 받아 와야** 헤더 칩이 값을 갖는다. 수령 RPC 는
+    // 멱등이라(같은 `date_seed` 재호출은 지급 없이 기존 행을 돌려준다) 그 프라이밍에 그대로
+    // 쓸 수 있다. `dailyStreak > 0` 이면 이미 받아 온 것이므로 왕복을 아낀다 — 안 그러면
+    // 기지를 오갈 때마다(호출부 18곳) RPC 가 나간다.
+    if (!wantModal && dailyStreak > 0) return;
+    void (async () => {
+      const outcome = await claimDailyRewardOnServer(profile, dailyDeps());
+      if (outcome.status !== 'ok') return;
+      // 수령은 프로필을 제자리에서 고친다(재대입 없음). 배송함 반영분까지 함께 굳힌다.
+      saveProfile(profile);
+      dailyStreak = outcome.claim.streak;
+      lastDailyClaim = outcome.claim;
+      if (currentScreenName !== 'base') return; // 가드 ②
+      // 칩의 연속일이 방금 오른 값으로 다시 그려진다. 모달보다 **먼저** 세운다 —
+      // 순서를 뒤집으면 `show` 가 만드는 새 컨테이너가 모달 위에 얹힌다.
+      baseMap.show(profile, baseMapHandlers(), dailyRewardChipOptions());
+      if (!wantModal) return;
+      saveDailySeenSeed(nowSeed); // 가드 ③
+      showDailyRewardModal(toDailyRewardModalData(outcome.claim));
+    })();
+  }
+
+  /**
+   * 헤더 **연속 접속** 칩의 표시 옵션 (AC-20).
+   *
+   * `onDailyReward` 가 있어야 칩이 선다("갈 곳이 없으면 입구를 만들지 않는다" — baseMap 규약).
+   * 그래서 아직 한 번도 수령 응답을 못 받았으면(`lastDailyClaim === null`) 칩을 세우지 않는다:
+   * 눌러도 띄울 것이 없는 버튼을 두면 그것이 곧 죽은 입구다.
+   */
+  function dailyRewardChipOptions(): Parameters<typeof baseMap.show>[2] {
+    if (lastDailyClaim === null) return {};
+    const claim = lastDailyClaim;
+    return {
+      dailyStreak,
+      dailyCycle: DAILY_STREAK_CYCLE,
+      dailyLabel: t('daily.chip', { n: dailyStreak, max: DAILY_STREAK_CYCLE }),
+      // 자동 모달과 **같은 모달**을 다시 연다(ADR-0048 §화면). 재열람이므로 표시 기록을
+      // 건드리지 않는다 — 그날 첫 진입 판정은 이미 끝났다.
+      onDailyReward: () => showDailyRewardModal(toDailyRewardModalData(claim)),
+    };
+  }
+
   /** Base map hub — the meta home. Buildings gate by unlock (plan D1/E2). */
   function openBaseMap(): void {
     clearToMenu();
     setScreen('base');
-    baseMap.show(profile, {
+    baseMap.show(profile, baseMapHandlers(), dailyRewardChipOptions());
+    maybeOpenDailyReward();
+  }
+
+  /** `openBaseMap` 과 일일 보상 재표시가 **같은 핸들러 묶음**을 쓰게 하는 자리. 두 곳에
+   *  각각 적으면 건물 하나를 추가할 때 한쪽만 고쳐져 그 버튼이 조용히 죽는다. */
+  function baseMapHandlers(): Parameters<typeof baseMap.show>[1] {
+    return {
       onHangar: () => {
         baseMap.hide();
         inventory.show(profile, () => openBaseMap());
@@ -868,7 +1038,7 @@ async function main(): Promise<void> {
         openCommissionDesk();
       },
       onStarMap: () => openStarMap(),
-    });
+    };
   }
 
   /** 기록 보관소(서사 열람 시설) — 사연 도감 · 기록 파편 도감 · 프롤로그 다시보기. */
@@ -1599,6 +1769,38 @@ async function main(): Promise<void> {
   }
 
   /**
+   * 의뢰 확정 지급물 배송 1회분(`applied_at IS NULL` 인 발급 행 → 세이브).
+   *
+   * ## 왜 제출 직후와 부팅 **둘 다**에서 부르는가
+   * 제출 직후만 부르면 그 순간 앱이 죽거나 오프라인이면 물건이 영영 안 온다. 부팅만 부르면
+   * 방금 이긴 런의 보상이 다음 실행까지 안 보인다. 두 자리 모두에서 **같은 함수**를 부르므로
+   * 경로가 갈릴 여지가 없고, 원장이 정본이라 두 번 불러도 중복 배송이 없다
+   * (`hasItemId` 전수 검사 — src/save/itemPresence.ts).
+   *
+   * 절대 throw 하지 않는다. 오프라인·미설정이면 완전 no-op 이다.
+   */
+  async function runCommissionGrantDelivery(): Promise<void> {
+    const report = await deliverCommissionGrants(profile, {
+      fetchGrants: () => fetchCommissionGrantsOnline(),
+      saveProfile: (p) => saveProfile(p),
+      pushProfile: (p) => pushProfileToServer(p),
+      // 재-pull. `pullServerProfileInto` 는 서버가 더 진행됐으면 **로컬을 갈아 끼운다** —
+      // 그때 방금 심은 아이템이 사라지고, 그것을 배송 루틴이 존재 확인 실패로 잡아 표시를
+      // 미룬다. 여기서 그 함수를 쓰는 이유가 바로 그 사건을 재현하는 것이다.
+      repullProfile: async (p) => ((await pullServerProfileInto(p)) === 'unavailable' ? null : p),
+      markApplied: (grantId) => markCommissionGrantAppliedOnline(grantId),
+    });
+    if (report.delivered > 0) {
+      saveProfile(profile);
+    }
+    if (report.held > 0) {
+      console.warn(
+        `[commission] 확정 지급물 ${report.held}건이 인벤·창고 만석으로 보류됐다 — 자리를 비우면 다음 부팅에 들어온다`,
+      );
+    }
+  }
+
+  /**
    * 끝난 의뢰 런의 리플레이를 `verify-commission` 에 제출하고, 판정을 정산 화면에 반영한다
    * (의뢰서 시스템 Phase E · 서버 계약 §7·§5-4).
    *
@@ -1654,6 +1856,11 @@ async function main(): Promise<void> {
         grantedXp,
         xpLevels,
       });
+      // 확정 지급물(유니크·설계도) 배송. **`res.grants` 는 "배송할 것이 생겼다"는 신호로만
+      // 쓴다** — 그 배열에는 `grant_id` 가 없어(settle_commission 이 kind/slot_index/item_payload
+      // 만 담는다) 아이템 id·어픽스 시드·배송 표시를 걸 축이 없다. 실제 값은 원장을 다시 읽어
+      // 얻는다(commissionGrantDelivery.ts 머리 참조). 비어 있으면 왕복을 아낀다.
+      if (res.grants.length > 0) void runCommissionGrantDelivery();
       return;
     }
     if (res.status === 'rejected') {
@@ -2011,6 +2218,15 @@ async function main(): Promise<void> {
       // 세션이 생긴 지금이 이관·회수의 자리다(부팅 즉시 부르면 세션이 없어 전부 no-op 이었다).
       void migrateLocalProfileToServer(profile);
       void flushPendingCommissionSubmissions();
+      // 미배송 확정 지급물 회수 — 제출 직후에 앱이 죽었거나 오프라인이었던 런의 물건이
+      // 여기서 들어온다(유실 0). 원장이 정본이라 중복 배송은 구조적으로 없다.
+      void runCommissionGrantDelivery();
+      // 일일 보상 배송함도 같은 이유로 부팅에서 재시도한다 — 세이브 반영 뒤 `mark_applied`
+      // 전에 죽으면 그 행은 `applied_at IS NULL` 로 남고, 반영이 `hasItemId` 로 멱등이라
+      // 다시 반영해도 아이템이 늘지 않는다(유실 0 · 중복 0).
+      void flushPendingDailyRewardDeliveries(profile, dailyDeps()).then((changed) => {
+        if (changed) saveProfile(profile);
+      });
       openIntroOrTitle();
     } finally {
       dismiss();

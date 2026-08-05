@@ -334,6 +334,32 @@ const COLUMN_PITCH = 458;
 const TITLE_MAX_W = 1000;
 
 /**
+ * 제목 글리프 3중 스택이 공유하는 글자 스타일(fill 만 층마다 다르다).
+ *
+ * **함수로 노출하는 이유**는 폭 실측 때문이다. 기지 헤더는 재화 칩 셋과 제목이 같은 줄을
+ * 나눠 쓰는데(`baseMap.headerSpans`), 겹침 판정은 제목의 **실측 폭**을 필요로 한다. 그런데
+ * `makeScreenTitle` 이 돌려주는 컨테이너의 `width` 는 900px 안개와 1832px 상인방까지 품어
+ * 쓸 수 없다. 그래서 테스트가 **같은 스타일의 `Text` 를 따로 세워** 잰다 — 상수를 테스트에
+ * 베껴 두면 여기 크기를 바꿔도 테스트가 모르는 죽은 대조가 된다.
+ */
+export function screenTitleBaseStyle(): {
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: '700';
+  letterSpacing: number;
+  align: 'center';
+} {
+  return {
+    fontFamily: UI_FONT,
+    fontSize: TITLE_SIZE,
+    // 800 → 700: 시스템 스택의 최대 굵기는 획이 뭉쳐 "굵게 누른 본문" 티가 난다(처방5).
+    fontWeight: '700',
+    letterSpacing: TITLE_TRACKING,
+    align: 'center',
+  };
+}
+
+/**
  * 화면 제목 — 각인된 금박 타이포 + 부제 + 화면을 가로지르는 얇은 금색 장식선.
  *
  * 앵커는 **(0.5, 0)** 이다: 호출자가 컨테이너 위치를 (화면 중앙 x, 제목 윗변 y) 로 잡는다.
@@ -377,14 +403,7 @@ export function makeScreenTitle(text: string, sub: string): Container {
 
   // 새김 3중 스택(뒤 → 앞): ①1px 다크 드롭 ②금 그라디언트 + 다크 아웃라인
   // ③윗부분 1/3 screen 스페큘러. 셋 중 하나라도 빠지면 "굵은 글씨"로 돌아간다.
-  const base = {
-    fontFamily: UI_FONT,
-    fontSize: TITLE_SIZE,
-    // 800 → 700: 시스템 스택의 최대 굵기는 획이 뭉쳐 "굵게 누른 본문" 티가 난다(처방5).
-    fontWeight: '700' as const,
-    letterSpacing: TITLE_TRACKING,
-    align: 'center' as const,
-  };
+  const base = screenTitleBaseStyle();
 
   const drop = new Text({
     resolution: 2,

@@ -43,8 +43,15 @@ import { makeElite, ELITE_AFFIX_COUNT, isElite } from '../sim/elite.js';
 import { rollItem } from '../items/roll.js';
 import type { Item, Rarity, SlotKind, EquipSlotId } from '../items/types.js';
 import { EQUIP_SLOTS, RARITY_CODE } from '../items/types.js';
-import { activeShip } from '../save/profile.js';
+import { activeShip, INVENTORY_CAP, stashCapacity } from '../save/profile.js';
 import type { Profile } from '../save/profile.js';
+import { clearDailySeenSeed } from '../save/dailySeen.js';
+import { DAILY_STREAK_CYCLE, dailyDateSeed } from '../../data/dailyReward.js';
+import {
+  HarnessDailyRewardGateway,
+  harnessDailyRewardGateway,
+  setHarnessDailyRewardGateway,
+} from './dailyRewardMock.js';
 import { retireActiveShip, bulkDismissGuardians, investLineageBranch } from '../save/guardianLifecycle.js';
 import { setLineageGatewayOverride, hasLineageGatewayOverride } from '../net/lineage.js';
 import { hasDefenseUnitsGatewayOverride } from '../net/defenseUnits.js';
@@ -752,6 +759,10 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     const masked: string[] = [];
     if (hasDefenseUnitsGatewayOverride()) masked.push('방어체');
     if (hasLineageGatewayOverride()) masked.push('계보');
+    // 일일 보상 모의도 켜져 있는 동안 config 를 이긴다(연속일이 서버 봉인 컬럼이라 이겨야만
+    // 30일차를 만들 수 있다). 메뉴 탭 상태 줄은 그 탭에 있을 때만 보이므로, 켜 둔 것을 잊는
+    // 사고는 **탭과 무관한 이 배지**가 막는다.
+    if (harnessDailyRewardGateway() !== null) masked.push('일일보상');
     const maskSuffix = masked.length > 0 ? ` · ⚠ 모의가 가림: ${masked.join('·')}` : '';
 
     if (readSupabaseConfig() === null) {
@@ -1922,6 +1933,180 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         }),
       );
       s.appendChild(row4);
+
+      buildDailyRewardSection(s);
+    }
+
+    /**
+     * 일일 보상 모의 손잡이 (ADR-0048 · DEV). 기지 화면이 모달을 여는 자리라 메뉴 탭에 둔다.
+     *
+     * ## 왜 여기 상태를 클로저에 안 담는가
+     *
+     * 패널은 250ms 마다 탭을 통째로 다시 만든다 — 토글을 추적하던 지역 변수는 매번 초기화된다
+     * (계보 모의 토글이 정확히 그 함정에 있다). 그래서 *"켜져 있는가"* 의 정본은 언제나
+     * `harnessDailyRewardGateway()` 모듈 상태이고, 여기서는 그것을 **읽기만** 한다.
+     *
+     * ## 왜 켜졌다는 것을 굳이 찍는가
+     *
+     * 모의는 켜져 있는 동안 config 를 이긴다(연속일이 서버 봉인 컬럼이라 이겨야만 30일차를
+     * 만들 수 있다). 그래서 **켜 둔 것을 잊으면 "실서버에서 됐다"고 오판한다** — 이 리포에
+     * 그 전례가 있다. 아래 상태 줄이 그 오판을 막는 유일한 장치다.
+     */
+    function buildDailyRewardSection(s: HTMLElement): void {
+      s.appendChild(subLabel('일일 보상 모의 (ADR-0048 · DEV)'));
+      const gw = harnessDailyRewardGateway();
+
+      // 상태 줄 — 연속일 · date_seed · 예산 · 미반영 행 · 모의 on/off 를 한 줄로.
+      const status = document.createElement('div');
+      status.className = 'pb-c-lbl';
+      if (gw === null) {
+        status.textContent = '모의 OFF — 일일 보상 net 경로는 실 Supabase 설정을 그대로 탄다';
+      } else {
+        const st = gw.status();
+        status.textContent =
+          `모의 ${st.enabled ? 'ON (실서버를 가린다)' : 'OFF'} · 연속일 ${st.streak}/${DAILY_STREAK_CYCLE} · ` +
+          `seed ${st.dateSeed}${st.claimedToday ? '(수령함)' : ''} · ` +
+          `예산 ${Math.round(st.budget)}${st.clamped ? ' (상한 절삭)' : ''} · ` +
+          `미반영 ${st.pending}행 · 누적 ${st.lifetimeGranted} · 내일예고 ${st.announcement}`;
+      }
+      s.appendChild(status);
+
+      const toggleRow = document.createElement('div');
+      toggleRow.className = 'pb-c-row';
+      toggleRow.appendChild(
+        btn(
+          gw === null ? '모의 ON' : '모의 OFF',
+          () => {
+            if (gw !== null) {
+              setHarnessDailyRewardGateway(null);
+              setHint('일일 보상 모의 OFF — 실 Supabase 설정 경로로 복귀');
+              return;
+            }
+            host.activateHarnessProfile();
+            // 벽시계는 **여기서** 읽는다. 모의 안에는 `Date.now` 가 없어야 하루 넘기기가 결정론이다.
+            const next = new HarnessDailyRewardGateway({
+              profile: () => host.getProfile(),
+              dateSeed: dailyDateSeed(Date.now()),
+            });
+            next.syncCurrencyFromProfile();
+            setHarnessDailyRewardGateway(next);
+            setHint('일일 보상 모의 ON — 이 상태에서 본 결과는 실서버 결과가 아니다');
+          },
+          '켜면 일일 보상 net 호출이 인메모리 원장으로 간다. 연속일은 서버 봉인 컬럼이라 ' +
+            '실서버를 붙인 채로는 30일차를 만들 수 없다(그래서 켜면 config 를 이긴다).',
+        ),
+      );
+      s.appendChild(toggleRow);
+      if (gw === null) return;
+
+      // 연속일 임의 세팅 — 30일차(AC-26)를 30일 기다리지 않고 만드는 유일한 수단.
+      const streakRow = document.createElement('div');
+      streakRow.className = 'pb-c-row';
+      const streakIn = numInput(DAILY_STREAK_CYCLE, 56);
+      streakIn.min = '1';
+      streakIn.max = String(DAILY_STREAK_CYCLE);
+      streakRow.append(
+        streakIn,
+        btn(
+          '연속일 세팅',
+          () => {
+            const n = Math.max(1, Math.min(DAILY_STREAK_CYCLE, Math.floor(Number(streakIn.value) || 1)));
+            gw.setStreak(n);
+            clearDailySeenSeed();
+            host.refreshScreen();
+            setHint(`연속일 → 다음 수령이 ${n}일차 (오늘 행은 지웠다 · 모달 표시 상태 초기화)`);
+          },
+          '직전 수령일·직전 연속일 두 칸만 조작한다(연속일 판정이 원장 스캔이 아니라 그 둘만 보므로).',
+        ),
+      );
+      s.appendChild(streakRow);
+
+      // 하루 넘기기 — `date_seed` +N. `clearDailySeenSeed()` 를 **반드시 함께** 부른다.
+      const dayRow = document.createElement('div');
+      dayRow.className = 'pb-c-row';
+      const advance = (n: number): void => {
+        const seed = gw.advanceDays(n);
+        // ⚠️ 이 호출이 빠지면 모달 표시 상태가 어제에 머물러 하루를 넘겨도 모달이 안 뜬다 —
+        //    30일차 육안 확인(AC-26)이 통째로 죽는 자리다.
+        clearDailySeenSeed();
+        host.refreshScreen();
+        setHint(`하루 넘기기 +${n} → seed ${seed} (모달 표시 상태 초기화 · 기지 재진입하면 뜬다)`);
+      };
+      dayRow.append(
+        btn('하루 넘기기', () => advance(1), 'date_seed +1 · 모달 표시 상태 초기화'),
+        btn('+7일', () => advance(7), '하루 건너뛰기(연속일 리셋 AC-8) 재현에도 쓴다'),
+        btn('원장 초기화', () => {
+          gw.reset();
+          clearDailySeenSeed();
+          host.refreshScreen();
+          setHint('일일 보상 원장 초기화 (미수령 상태로)');
+        }),
+      );
+      s.appendChild(dayRow);
+
+      // 미반영 배송함 행 + 만석 — 지표 ②가 살아 있는지, 만석 보류가 경보와 구별되는지.
+      const pendRow = document.createElement('div');
+      pendRow.className = 'pb-c-row';
+      pendRow.append(
+        btn(
+          '미반영 행 +1',
+          () => {
+            const seed = gw.seedPendingItemRow();
+            host.refreshScreen();
+            setHint(`미반영 배송함 행 생성(seed ${seed}) — 위 '미반영' 칸이 오르면 지표 ②가 살아 있다`);
+          },
+          'applied_at IS NULL 행을 만든다. 이 칸이 항상 0 이면 그 지표는 죽은 계측기다.',
+        ),
+        btn(
+          '인벤·창고 만석',
+          () => fillCapacityToFull(),
+          "가방 48 + 창고 전부를 채운다 → 배송이 hold_reason='capacity_full' 로 보류되는지 본다",
+        ),
+      );
+      s.appendChild(pendRow);
+
+      // 생애 누적 — 예산 천장의 앵커. 낮추면 상한 절삭(지표 ③)이 켜진다.
+      const lifeRow = document.createElement('div');
+      lifeRow.className = 'pb-c-row';
+      const lifeIn = numInput(gw.status().lifetimeGranted, 96);
+      lifeRow.append(
+        lifeIn,
+        btn(
+          '생애 누적 세팅',
+          () => {
+            const v = Math.max(0, Math.floor(Number(lifeIn.value) || 0));
+            gw.setLifetimeGranted(v);
+            host.refreshScreen();
+            setHint(`생애 누적 → ${v} (0 이면 신규 계정처럼 예산이 1일차에 고정된다)`);
+          },
+          '예산 천장 = max(2000, 누적×0.02). 30일차 20000 을 보려면 1,000,000 이상이어야 한다.',
+        ),
+      );
+      s.appendChild(lifeRow);
+    }
+
+    /**
+     * 가방·창고를 상한까지 채운다 — 만석 보류(`capacity_full`) 재현용.
+     *
+     * 창고 상한은 상수가 아니라 `stashCapacity(stashExpansions)` 다. 48 을 베끼면 확장을 산
+     * 프로필에서 만석이 안 되고, 그러면 보류 분기를 영영 못 밟는다.
+     */
+    function fillCapacityToFull(): void {
+      host.activateHarnessProfile();
+      const profile = host.getProfile();
+      const seedBase = (0xda11 + Math.floor(Math.random() * 0x7fffff)) >>> 0;
+      const source = { planet: 0, stage: 1 } as const;
+      let n = 0;
+      while (profile.inventory.length < INVENTORY_CAP) {
+        profile.inventory.push(rollItem((seedBase + n++) >>> 0, 'normal', source));
+      }
+      const cap = stashCapacity(profile.stashExpansions);
+      while (profile.stash.length < cap) {
+        profile.stash.push(rollItem((seedBase + n++) >>> 0, 'normal', source));
+      }
+      host.saveProfile();
+      host.refreshScreen();
+      setHint(`인벤 ${profile.inventory.length}/${INVENTORY_CAP} · 창고 ${profile.stash.length}/${cap} 만석`);
     }
 
     /** 수호·계보 탭(M5 Phase A — 퇴역 1사이클 딥링크: AC1/AC3/AC4 흐름 검증). */

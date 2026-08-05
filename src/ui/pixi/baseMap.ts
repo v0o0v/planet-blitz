@@ -33,7 +33,8 @@
  * 순수 render/UI 레이어(ADR-0005) — sim 은 이 파일을 모른다. Profile 은 읽기만 한다.
  */
 
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Graphics, Rectangle, Text } from 'pixi.js';
+import { DAILY_STREAK_CYCLE } from '../../../data/dailyReward.js';
 import { computeUnlocks, activeShip, RESEARCH_UNLOCK_LEVEL, type Profile } from '../../save/profile.js';
 import { t, type MessageKey } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
@@ -80,11 +81,46 @@ const BUILDINGS: readonly Building[] = [
  * 높이**의 좌우 바깥에 둔다(Lane C 인계 제약 ①).
  */
 const TITLE_Y = 26;
-const CHIP_W = 200;
-const CHIP_H = 54;
-const CHIP_Y = 52;
+export const CHIP_W = 200;
+export const CHIP_H = 54;
+export const CHIP_Y = 52;
 /** 좌우 여백. 좌상단 설정 톱니(크롬 UI, 매 프레임 최상단)를 피할 만큼은 떨어져야 한다. */
-const CHIP_MARGIN = 150;
+export const CHIP_MARGIN = 150;
+
+// --- 연속 접속 칩 (AC-20 — 일일 보상 재열람 입구) ---------------------------
+/**
+ * ## 왜 건물이 아니라 헤더 칩인가 — 재결정 금지 (ADR-0048)
+ *
+ * 실측이 새 건물을 기각했다. 건물 7 + 출격 카드 = 8칸이고 `rowSplit(8) = [4,4]` 라 1행이
+ * `4×424 + 3×34 = 1798` 로 {@link DESIGN_WIDTH} 1920 의 여유 끝이다. 9칸이면 `[5,4]` 가 되어
+ * 1행이 `5×424 + 4×34 = 2256` — 화면을 336px 넘긴다. 세로도 못 쓴다(2행 바닥 978 + 그림자
+ * 48 위에 {@link META_Y} 1036 이 이미 앉아 있다). 5칸을 넣으려면 `TILE_W ≤ 356` 으로 카드
+ * 8장 전부를 16% 줄여야 하고, 그러면 AAA 비평이 잡았던 일러스트 밴드 잘림이 재발한다.
+ *
+ * ## 이 칩의 진짜 위험은 겹침이다
+ * 헤더에는 **제목(중앙 정렬)** 과 재화 칩 둘이 이미 있다. 칩이 셋이 되는 순간
+ * {@link CHIP_MARGIN} 과 제목이 가로를 다투기 시작하는데, 이 리포는 **헤더 겹침이 테스트
+ * 초록으로 통과한 전례가 여러 건**이다(격납고 헤더 = 겹치면 안 되는 세로 띠 4줄). 그래서
+ * 배치를 눈대중이 아니라 {@link headerSpans} 라는 **순수 구간 함수**로 뽑고,
+ * `tests/baseMapDailyRewardChip.test.ts` 가 쌍마다 부등식으로 잠근다.
+ */
+/** 칩끼리의 최소 간격. 재화 칩과 **다른 부류**임이 보이도록 좁게 붙이지 않는다. */
+export const CHIP_GAP = 24;
+/**
+ * 연속 접속 칩 폭. 재화 칩(200)보다 넓다 — 값이 `n/30` 두 자리 쌍인 데다 앞에 한글 문구가
+ * 붙기 때문이다(EN 보다 KO 가 길다). 이 폭에서 텍스트 가용 구간은 192px 이고, 그보다 긴
+ * 문구는 {@link streakChipValue} 가 숫자형으로 **축약**한다.
+ */
+export const STREAK_CHIP_W = 260;
+/** 크레딧 칩 오른쪽. 좌상단은 시선의 시작점이고, 우측 광물 칩 안쪽에 밀어 넣으면 두 칩이 한 덩어리로 뭉쳐 "재화 셋"으로 오독된다. */
+export const STREAK_CHIP_X = CHIP_MARGIN + CHIP_W + CHIP_GAP;
+/**
+ * 제목 ↔ 칩 최소 여백. 붙어 있지만 안 겹치는 상태는 겹친 것과 같은 결함이라(헤더는 한 줄로
+ * 읽혀야 한다) 부등식에 여유를 함께 박는다.
+ */
+export const HEADER_CLEARANCE = 48;
+/** 연속일이 아직 확정되지 않았을 때(0일) 칩 투명도 — 숨기지 않는다(재열람 입구가 사라지면 안 된다). */
+const STREAK_DIM_ALPHA = 0.55;
 
 /**
  * 타일 격자. 이전 판(430×340)보다 **키가 크다** — 일러스트 밴드가 카드 상단 60% 를 먹으므로
@@ -122,7 +158,7 @@ const ROW2_Y = ROW1_Y + TILE_H + ROW_GAP;
  * 하단 메타. 2행 바닥(978)에 카드 그림자가 48px 번지므로 그보다 아래여야 한다 —
  * 그림자 위에 글자를 놓으면 글자가 얼룩 위에 앉는다.
  */
-const META_Y = 1036;
+export const META_Y = 1036;
 
 /**
  * 격자에 놓이는 칸 수 = 건물 7 + **출격 카드 1**.
@@ -221,6 +257,127 @@ export function ribLines(): readonly { x: number; y0: number; y1: number }[] {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// 헤더 가로 구간 — 겹침을 부등식으로 잠그기 위한 순수 함수
+// ---------------------------------------------------------------------------
+
+/** 헤더 요소 하나가 차지하는 x 구간(좌 포함, 우 배타). */
+export interface HeaderSpan {
+  readonly key: 'credits' | 'streak' | 'title' | 'minerals';
+  readonly x0: number;
+  readonly x1: number;
+}
+
+/**
+ * 헤더 요소들의 x 구간. **칩은 상수에서, 제목은 실측 폭에서** 나온다.
+ *
+ * ⚠️ 제목 폭을 상수로 가정하지 않는 것이 요점이다. `makeScreenTitle` 의 `fitWidth` 상한
+ * (`TITLE_MAX_W = 1000`)을 그대로 쓰면 제목 구간이 `[460, 1460]` 이 되어 칩을 놓을 자리가
+ * 좌우 110px 씩밖에 안 남는다 — 칩(200·260)이 들어갈 수 없는 폭이다. 실제 제목은 `기지`
+ * (2글자) · `Base`(4글자)라 200~260px 이고, 그 **실측**이 배치의 근거다. 그래서 문구가
+ * 길어지면 이 계약이 깨져야 하고, 테스트가 두 로케일의 실측 폭으로 그것을 잡는다.
+ *
+ * @param titleWidth 제목 텍스트의 실측 폭(px, 디자인 스페이스).
+ * @param streakShown 연속 접속 칩을 세우는가(콜백이 없으면 안 세운다).
+ */
+export function headerSpans(titleWidth: number, streakShown: boolean): readonly HeaderSpan[] {
+  const half = Math.max(0, titleWidth) / 2;
+  const out: HeaderSpan[] = [
+    { key: 'credits', x0: CHIP_MARGIN, x1: CHIP_MARGIN + CHIP_W },
+    { key: 'title', x0: DESIGN_WIDTH / 2 - half, x1: DESIGN_WIDTH / 2 + half },
+    { key: 'minerals', x0: DESIGN_WIDTH - CHIP_MARGIN - CHIP_W, x1: DESIGN_WIDTH - CHIP_MARGIN },
+  ];
+  if (streakShown) out.push({ key: 'streak', x0: STREAK_CHIP_X, x1: STREAK_CHIP_X + STREAK_CHIP_W });
+  return out;
+}
+
+/**
+ * 칩들 사이에 남는 **제목 최대 폭**. 제목은 화면 중앙 대칭이라 좌우 중 좁은 쪽이 정한다.
+ *
+ * 칩을 세운 상태의 값이 계약이다 — 칩을 숨겼을 때 더 넓어지는 것은 덤이고, 그 여유에
+ * 기대어 제목을 늘리면 칩이 돌아오는 순간 겹친다.
+ */
+export function maxTitleWidth(streakShown: boolean): number {
+  const leftEnd = streakShown ? STREAK_CHIP_X + STREAK_CHIP_W : CHIP_MARGIN + CHIP_W;
+  const rightStart = DESIGN_WIDTH - CHIP_MARGIN - CHIP_W;
+  const half = Math.min(DESIGN_WIDTH / 2 - leftEnd, rightStart - DESIGN_WIDTH / 2) - HEADER_CLEARANCE;
+  return Math.max(0, half * 2);
+}
+
+// ---------------------------------------------------------------------------
+// 연속 접속 칩 문구 — 캔버스 없이 판정 가능한 상한 근사
+// ---------------------------------------------------------------------------
+
+/**
+ * 칩 값 글자 크기. ⚠️ `cinematicChrome.makeCinematicChip` 의 `Math.round(h * 0.46)` 을
+ * **미러**한다 — 그쪽이 바뀌면 여기 예산이 조용히 틀어진다.
+ */
+const STREAK_TEXT_SIZE = Math.round(CHIP_H * 0.46);
+/**
+ * 칩 안에서 값 텍스트가 쓸 수 있는 가로 구간. 역시 `makeCinematicChip` 의 산술 미러다:
+ * `CHIP_PAD(12) + iconSize(h-18=36) + 8` 부터 `w - CHIP_PAD(12)` 까지.
+ */
+const STREAK_TEXT_AVAIL = STREAK_CHIP_W - 12 - (CHIP_H - 18) - 8 - 12;
+/**
+ * 문구 길이 예산. `fitWidth` 는 **0.6 배까지만** 줄인다 — 실측이 `가용폭 / 0.6` 을 넘으면
+ * 축소로도 못 담고 그대로 칩 밖으로 넘친다(그 함수의 `Math.max(min, max/measured)` 때문).
+ * 그래서 넘칠 문구는 그리기 전에 숫자형으로 갈아 끼운다. 상한에서 조금 물러난 값이다 —
+ * {@link estimateChipTextWidth} 는 근사라 여유가 있어야 한다.
+ */
+const STREAK_TEXT_BUDGET = Math.floor((STREAK_TEXT_AVAIL / 0.6) * 0.94);
+
+/**
+ * 한글·한자·가나 등 **전각 폭 1em** 으로 나아가는 글자. 나머지는 0.62em 으로 잡는다.
+ * 둘 다 실제 어드밴스의 **상한**이다 — 겹침·넘침 판정은 상한으로만 안전하다(하한을 쓰면
+ * 통과해 놓고 화면에서 넘친다).
+ */
+const FULL_WIDTH_RE =
+  /[ᄀ-ᇿ⺀-꓏ꥠ-꥿가-퟿豈-﫿︰-﹏＀-｠￠-￦]/u;
+
+/**
+ * 칩 값 텍스트 폭의 **상한 근사**(px). 캔버스가 없는 환경(vitest/SSR)에서도 판정할 수 있어야
+ * 하므로 측정이 아니라 글자 분류로 센다 — 실제 폰트 메트릭을 읽지 않는 대신 절대 과소평가하지
+ * 않는 쪽으로 기운다.
+ */
+export function estimateChipTextWidth(text: string): number {
+  let w = 0;
+  for (const ch of text) w += FULL_WIDTH_RE.test(ch) ? STREAK_TEXT_SIZE : STREAK_TEXT_SIZE * 0.62;
+  return w;
+}
+
+/**
+ * 칩에 적을 값 문자열.
+ *
+ * `label` 은 **호출자가 i18n 으로 완성해 넘긴 문구**다(이 레인은 카탈로그를 만지지 않는다 —
+ * 키 추가는 별도 레인). 없거나 예산을 넘으면 `n/주기` 숫자형으로 축약한다. 좁은 칩의 축약은
+ * 카탈로그 §두 가지 예외 정책이 허용하는 경로다.
+ *
+ * 연속일이 0(오프라인·아직 확정 전)이면 숫자 자리를 `-` 로 둔다. `0/30` 으로 적으면 "연속이
+ * 끊겼다"는 **틀린 사실**을 단언하게 된다 — 모르는 것과 0인 것은 다르다.
+ */
+export function streakChipValue(label: string | undefined, streak: number, cycle: number): string {
+  const numeric = `${streak > 0 ? String(streak) : '-'}/${cycle}`;
+  if (label === undefined || label.length === 0) return numeric;
+  return estimateChipTextWidth(label) <= STREAK_TEXT_BUDGET ? label : numeric;
+}
+
+/**
+ * `show()` 의 선택 인자 — 일일 보상(ADR-0048) 배선. **전부 선택**이라 기존 호출부는 그대로다.
+ *
+ * `onDailyReward` 가 없으면 칩 자체를 세우지 않는다. "갈 곳이 없으면 입구를 만들지 않는다"가
+ * 가시성 규칙이고, 그래서 화면이 모달 모듈을 import 하지 않는다(배선은 `main.ts` 몫).
+ */
+export interface BaseMapShowOptions {
+  /** 현재 연속 접속일. 0/미지정 = 아직 확정되지 않음 → 칩이 흐려지고 값이 `-` 가 된다. */
+  readonly dailyStreak?: number;
+  /** 주기. 미지정이면 {@link DAILY_STREAK_CYCLE}(30). */
+  readonly dailyCycle?: number;
+  /** 칩에 적을 완성된 문구. 미지정·과길이면 `n/주기` 로 축약된다. */
+  readonly dailyLabel?: string;
+  /** 칩 클릭 → 일일 보상 모달 재열람(AC-20). 없으면 칩을 세우지 않는다. */
+  readonly onDailyReward?: () => void;
+}
+
 export class BaseMapScreen {
   private readonly stage: Container;
   private readonly root = new Container();
@@ -228,6 +385,8 @@ export class BaseMapScreen {
   private art: BaseTextures = {};
   private profile: Profile | null = null;
   private cb: BaseMapCallbacks | null = null;
+  /** 일일 보상 배선. `render()` 가 자산 로드 완료 때 다시 불리므로 인스턴스에 남긴다. */
+  private opts: BaseMapShowOptions = {};
 
   /** 연출을 가진 것들 — `update(dt)` 가 매 프레임 이 셋만 돌린다. */
   private backdrop: BaseBackdrop | null = null;
@@ -255,9 +414,10 @@ export class BaseMapScreen {
     return this.root.visible;
   }
 
-  show(profile: Profile, cb: BaseMapCallbacks): void {
+  show(profile: Profile, cb: BaseMapCallbacks, opts: BaseMapShowOptions = {}): void {
     this.profile = profile;
     this.cb = cb;
+    this.opts = opts;
     this.render();
     this.root.visible = true;
     // DOM HUD(HP/LV, 좌하단)는 런 전용 — 캔버스 메타 화면 위에 떠 보이므로 숨긴다.
@@ -406,6 +566,51 @@ export class BaseMapScreen {
     );
     minerals.position.set(DESIGN_WIDTH - CHIP_MARGIN - CHIP_W, CHIP_Y);
     this.root.addChild(minerals);
+
+    this.renderStreakChip();
+  }
+
+  /**
+   * 연속 접속 칩 — 일일 보상 모달 재열람 입구(AC-20).
+   *
+   * ## 아이콘을 반드시 넘긴다
+   * `makeCinematicChip` 은 아이콘이 없으면 tone 에 따라 **금화 / 청록 결정**을 절차적으로
+   * 그린다. 그대로 두면 세 번째 칩이 "재화 하나 더"로 읽혀 이 칩의 의미가 통째로 사라진다.
+   * 체크 표식을 쓰는 이유는 서사와 맞기 때문이다 — 수령은 행위가 아니라 시점이고(CONTEXT
+   * §일일 보상), 화면은 **이미 받은 것을 통지**한다.
+   *
+   * ## 연출은 알파만
+   * 호버에 스케일을 주지 않는다. 서브픽셀 부유가 1px 테두리를 매 프레임 리샘플해 "테두리가
+   * 번쩍인다"는 신고가 된 전례가 있다(`cinematicChrome.TILE_FLOAT_RATIO` 주석).
+   */
+  private renderStreakChip(): void {
+    const open = this.opts.onDailyReward;
+    if (open === undefined) return;
+
+    const cycle = this.opts.dailyCycle ?? DAILY_STREAK_CYCLE;
+    const raw = this.opts.dailyStreak ?? 0;
+    const streak = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+
+    const chip = makeCinematicChip(
+      STREAK_CHIP_W,
+      CHIP_H,
+      streakChipValue(this.opts.dailyLabel, streak, cycle),
+      this.ui['ui_icon_check.png'] ?? undefined,
+      'gold',
+    );
+    // 좌표는 정수다 — 반픽셀 부유가 테두리 번쩍임을 만든 전례가 있다.
+    chip.position.set(STREAK_CHIP_X, CHIP_Y);
+
+    const base = streak > 0 ? 1 : STREAK_DIM_ALPHA;
+    chip.alpha = base;
+    chip.eventMode = 'static';
+    chip.cursor = 'pointer';
+    // 고정 hitArea — 자식 알파가 흔들려도 클릭 판정이 따라 흔들리지 않는다.
+    chip.hitArea = new Rectangle(0, 0, STREAK_CHIP_W, CHIP_H);
+    chip.on('pointertap', () => open());
+    chip.on('pointerover', () => (chip.alpha = Math.min(1, base + 0.2)));
+    chip.on('pointerout', () => (chip.alpha = base));
+    this.root.addChild(chip);
   }
 
   private renderBuilding(b: Building, i: number, profile: Profile): void {

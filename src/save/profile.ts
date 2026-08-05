@@ -539,7 +539,14 @@ export function setProfileStoreOverride(store: KeyValueStore | null | undefined)
   defaultStoreOverride = store;
 }
 
-/** Resolve the ambient `localStorage`, or null when unavailable/blocked. */
+/**
+ * Resolve the ambient `localStorage`, or null when unavailable/blocked.
+ *
+ * ⚠️ `defaultProfileStore` 로도 export 한다 — 프로필 **밖**에 사는 로컬 상태
+ * (일일 보상 모달의 마지막 표시 seed 등)가 같은 스토어를 써야 하기 때문이다. 자기
+ * `localStorage` 를 직접 잡으면 하네스 프로필 슬롯이 격리될 때 그 상태만 실계정 것을
+ * 계속 읽어, 치트로 하루를 넘겨도 모달이 안 뜨는 형태의 결함이 된다.
+ */
 function defaultStore(): KeyValueStore | null {
   if (defaultStoreOverride !== undefined) return defaultStoreOverride;
   try {
@@ -548,6 +555,11 @@ function defaultStore(): KeyValueStore | null {
     // Access can throw in sandboxed / privacy-mode contexts.
   }
   return null;
+}
+
+/** {@link defaultStore} 의 공개 이름 — 프로필 밖 로컬 상태가 같은 스토어를 공유한다. */
+export function defaultProfileStore(): KeyValueStore | null {
+  return defaultStore();
 }
 
 /**
