@@ -64,7 +64,7 @@
 --      DAILY_STREAK_CYCLE = 30            ↔ data/dailyReward.ts DAILY_STREAK_CYCLE
 --      DAILY_BUDGET_DAY_1 = 2000          ↔ data/dailyReward.ts DAILY_BUDGET_DAY_1
 --      DAILY_BUDGET_DAY_30 = 20000        ↔ data/dailyReward.ts DAILY_BUDGET_DAY_30
---      DAILY_CEILING_RATE = 0.02          ↔ data/dailyReward.ts DAILY_CEILING_RATE
+--      DAILY_CEILING_RATE = 0.2           ↔ data/dailyReward.ts DAILY_CEILING_RATE
 --      DAILY_BUDGET_FLOOR = DAILY_BUDGET_DAY_1  ↔ data/dailyReward.ts DAILY_BUDGET_FLOOR
 --      MINERAL_TO_CREDIT = 8              ↔ data/dailyRewardSelection.ts MINERAL_TO_CREDIT
 --      DAILY_SIDE_CREDITS = 500           ↔ data/dailyReward.ts DAILY_SIDE_CREDITS
@@ -357,7 +357,7 @@ declare
   DAILY_STREAK_CYCLE  constant int     := 30;     -- BALANCE — TS 미러: data/dailyReward.ts
   DAILY_BUDGET_DAY_1  constant numeric := 2000;   -- BALANCE
   DAILY_BUDGET_DAY_30 constant numeric := 20000;  -- BALANCE
-  DAILY_CEILING_RATE  constant numeric := 0.02;   -- BALANCE
+  DAILY_CEILING_RATE  constant numeric := 0.2;    -- BALANCE
   v_now_seed   bigint;
   v_prev_seed  bigint;
   v_prev_streak int;

@@ -28,6 +28,8 @@ import {
   gearValue,
   makeCandidate,
   pickDailyReward,
+  budgetTopUpCredits,
+  toppedUpValue,
   produceDailyRewardCandidates,
   subjectValue,
 } from '../data/dailyRewardSelection.js';
@@ -530,6 +532,60 @@ describe('축 레지스트리 — 슬라이스 1 은 재화만 관통한다', ()
     });
     for (const c of produceDailyRewardCandidates(input)) {
       expect(c.axis).toBe(c.detail.subject.axis);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 예산 보정 — 예산이 천장 필터로만 작동하던 것을 하한으로도 쓴다
+// ---------------------------------------------------------------------------
+
+describe('budgetTopUpCredits — 남은 예산을 크레딧으로 채운다 (2026-08-05 확정)', () => {
+  /**
+   * 실화면과 30일 시뮬레이션이 함께 잡은 것: 후보의 `value` 가 **목표까지 남은 부족분 전액**
+   * 이라, 40 크레딧 모자란 목표 하나가 있으면 예산 20,000 인 30일차에도 지급이 **40** 이었다.
+   * 예산이 천장 필터로만 작동하고 하한이 아니어서, 연속 접속 램프가 지급액에 전혀 나타나지
+   * 않았다 — *"길어질수록 지급 규모가 오른다"* 는 연속 접속의 정의가 화면에서 거짓이 됐다.
+   *
+   * ⚠️ 보정은 **낙찰 규칙(AC-11)을 한 글자도 건드리지 않는다.** 무엇을 고를지는 그대로
+   * 거리 최소값이고, 고른 뒤 남은 예산을 재화로 채울 뿐이다.
+   */
+  const goal = makeCandidate(
+    'test:goal',
+    { axis: 'currency', credits: 100, minerals: 0 },
+    0.05,
+  );
+
+  it('목표가 예산을 다 못 쓰면 차액이 보정으로 나온다', () => {
+    const pick = { candidate: goal, fallback: false };
+    expect(budgetTopUpCredits(pick, 20_000)).toBe(19_900);
+    expect(toppedUpValue(pick, 20_000)).toBeCloseTo(20_000, 9);
+  });
+
+  it('보정 뒤 실제 지급 가치가 예산과 같다 — 이것이 램프가 보이는 조건이다', () => {
+    for (const budget of [2_000, 5_000, 12_345, 20_000]) {
+      const pick = { candidate: goal, fallback: false };
+      expect(toppedUpValue(pick, budget)).toBeCloseTo(budget, 6);
+    }
+  });
+
+  it('폴백은 이미 예산 전액이라 보정이 0 이다 — 폴백 지표가 흐려지지 않는다', () => {
+    const picked = pickDailyReward([], 7_777, 20_670, 12_345);
+    expect(picked.fallback).toBe(true);
+    expect(budgetTopUpCredits(picked, 7_777)).toBe(0);
+  });
+
+  it('예산을 넘겨 주지 않는다 — 목표가 예산보다 크면 보정 0', () => {
+    const big = makeCandidate('test:big', { axis: 'currency', credits: 50_000, minerals: 0 }, 0.5);
+    expect(budgetTopUpCredits({ candidate: big, fallback: false }, 2_000)).toBe(0);
+  });
+
+  it('손상 입력에서 음수·NaN 을 내지 않는다', () => {
+    const pick = { candidate: goal, fallback: false };
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const v = budgetTopUpCredits(pick, bad);
+      expect(Number.isFinite(v)).toBe(true);
+      expect(v).toBeGreaterThanOrEqual(0);
     }
   });
 });
