@@ -201,18 +201,18 @@ export function mergeBlueprintGrants(grants: readonly BlueprintGrant[]): Bluepri
 }
 
 // ---------------------------------------------------------------------------
-// 제작 — 설계도 + 희귀 광물
+// 제작 — 설계도 + 광물
 // ---------------------------------------------------------------------------
 
 /**
- * 제작 1회 비용(설계도 장수 + 희귀 광물). **반복 파밍의 천장값**이다(기획 §4) — 설계도만
+ * 제작 1회 비용(설계도 장수 + 광물). **반복 파밍의 천장값**이다(기획 §4) — 설계도만
  * 쌓아도 광물이 없으면 못 만들고, 광물만 쌓아도 그 행성을 돌지 않으면 못 만든다.
  *
  * 값은 `supabase/migrations/20260722020000_m7b_blueprint_drops.sql` 의 `craft_defense_unit`
  * 과 **미러**다. 한쪽만 고치면 표기와 차감이 갈린다.
  */
 export const CRAFT_BLUEPRINT_COST = 1;
-/** 제작 1회 희귀 광물 비용(SQL 미러). */
+/** 제작 1회 광물 비용(SQL 미러). */
 export const CRAFT_MINERAL_COST = 12;
 /** 보스 설계도는 천장 재료라 제작 비용이 더 든다(SQL 미러). */
 export const CRAFT_MINERAL_COST_BOSS = 40;

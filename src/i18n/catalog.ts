@@ -1993,10 +1993,10 @@ export const EN = {
     'L1 Upper Atmosphere — wave slots. Slot your squadrons and decide the order only; each squadron carries its own formation and path.\nL2 Corridor — pick the corridor terrain, then fit facilities into its mounting sockets. Facilities come in three kinds: wall turrets, gimmick hazards, and drone spawners. Socket count and placement belong to the terrain, which is what stops everything being stacked in one spot.\nL3 Core Chamber — one defense boss slot, guardian slots, prop sockets, and the core itself. When core durability reaches zero the defense has failed.\nEmpty slots are filled by the default garrison, the planet\'s lowest-grade units. Leaving them empty is legal but weak.',
   'def3.cmd.help.s3.h': 'Getting defense units',
   'def3.cmd.help.s3.b':
-    'Defense units drop from planet runs, or you craft them from a blueprint plus rare minerals.\nBlueprints have exactly two sources: planet run drops, and copy-loot — when your own invasion of someone else succeeds, you may copy one of their blueprints. Being invaded is not a source.\nWhen someone invades you, you lose nothing at all. What they take is a copy, never your original.',
+    'Defense units drop from planet runs, or you craft them from a blueprint plus minerals.\nBlueprints have exactly two sources: planet run drops, and copy-loot — when your own invasion of someone else succeeds, you may copy one of their blueprints. Being invaded is not a source.\nWhen someone invades you, you lose nothing at all. What they take is a copy, never your original.',
   'def3.cmd.help.s4.h': 'Growing a defense unit',
   'def3.cmd.help.s4.b':
-    'Level — credits and rare minerals raise its stats. This is the everyday sink.\nAscension — collect duplicate blueprints of the same unit. Ascension jumps its stats and changes its appearance, and that appearance is visible on the attacker\'s screen.\nAffix reroll — rare minerals reroll the random defense-unit affixes carried by magic and rare units.\nGrade promotion — normal to magic to rare to unique. Unique units carry their own effects and rule changes.',
+    'Level — credits and minerals raise its stats. This is the everyday sink.\nAscension — collect duplicate blueprints of the same unit. Ascension jumps its stats and changes its appearance, and that appearance is visible on the attacker\'s screen.\nAffix reroll — minerals reroll the random defense-unit affixes carried by magic and rare units.\nGrade promotion — normal to magic to rare to unique. Unique units carry their own effects and rule changes.',
   'def3.cmd.help.s5.h': 'Neglect',
   'def3.cmd.help.s5.b':
     'Only deployed defense units decay. Anything sitting in your collection keeps its condition indefinitely, so there is no cost to holding spares. Guardians are the one exception to repair — their condition cannot be restored.',
@@ -2505,7 +2505,7 @@ export const KO: Record<MessageKey, string> = {
     '공용 촉매는 어디서든 나오며 보유량의 대부분을 차지하게 됩니다.\n특산 촉매는 그 촉매가 속한 행성에서만 나옵니다. 상점에서도 팔지 않으므로 얻는 방법은 그 행성에 직접 가서 따 오는 것뿐입니다.',
   'catalyst.help.s3.h': '분해와 촉매 잔재',
   'catalyst.help.s3.b':
-    '촉매를 분해하면 촉매 잔재가 나옵니다. 촉매 잔재는 획득처도 사용처도 정확히 하나씩입니다. 분해로만 얻고, 이 화면의 촉매 상점에서 촉매를 사는 데에만 씁니다. 다른 어떤 것도 이 재화를 만들지 않고 쓰지도 않습니다.\n이렇게 닫아 둔 것은 의도된 설계입니다. 크레딧이나 희귀 광물로 촉매를 살 수 있다면 자원으로 자원 획득 배율이 붙은 촉매를 사고 그렇게 불린 자원으로 또 촉매를 사는 고리가 생기기 때문에, 상점을 다른 재화로부터 아예 떼어 놓았습니다.',
+    '촉매를 분해하면 촉매 잔재가 나옵니다. 촉매 잔재는 획득처도 사용처도 정확히 하나씩입니다. 분해로만 얻고, 이 화면의 촉매 상점에서 촉매를 사는 데에만 씁니다. 다른 어떤 것도 이 재화를 만들지 않고 쓰지도 않습니다.\n이렇게 닫아 둔 것은 의도된 설계입니다. 크레딧이나 광물로 촉매를 살 수 있다면 자원으로 자원 획득 배율이 붙은 촉매를 사고 그렇게 불린 자원으로 또 촉매를 사는 고리가 생기기 때문에, 상점을 다른 재화로부터 아예 떼어 놓았습니다.',
   'catalyst.help.s4.h': '촉매 상점',
   'catalyst.help.s4.b':
     '상점에는 공용 촉매 전 목록이 항상 진열됩니다. 품절도 로테이션도 없습니다. 특산 촉매는 팔지 않습니다.\n분해 환급량과 구매가는 모두 그 촉매의 희소도에서 나오며, 환급량이 구매가보다 항상 적습니다. 그래서 촉매 잔재를 거쳐 한 번 바꿀 때마다 촉매 총량이 조금씩 줄어듭니다. 마음대로 바꾸는 것이 공짜는 아닙니다.\n특산 촉매도 같은 산식으로 환급되지만 되살 수는 없습니다. 적혀 있는 가격은 읽을 수는 있어도 지불할 수는 없는 값입니다.',
@@ -4150,10 +4150,10 @@ export const KO: Record<MessageKey, string> = {
     'L1 대기권 — 편대 슬롯입니다. 보유한 편대를 슬롯에 꽂아 등장 순서만 정하시면 됩니다. 진형과 이동 경로는 편대마다 내장돼 있어 직접 그리지 않습니다.\nL2 회랑 — 회랑 지형을 고르고, 그 지형에 뚫려 있는 설치 소켓에 설비를 넣습니다. 설비는 세 갈래입니다. 화력을 담당하는 벽부착 방어포, 회피를 강요하는 장치형 해저드, 파괴 전까지 소형 드론을 계속 뽑아내는 드론 사출구입니다. 소켓의 수와 위치는 지형이 정하므로 한 곳에 몰아 넣을 수는 없습니다.\nL3 코어방 — 방어 보스 한 자리, 수호기 자리, 기물 소켓, 그리고 코어가 있습니다. 코어 내구도가 0이 되는 순간 방어는 실패합니다.\n비어 있는 슬롯은 기본 수비대가 자동으로 채웁니다. 그 행성의 최하급 유닛이라 비워 두어도 방어는 서지만 약합니다. 내가 모은 방어체로 바꿔 꽂을수록 기지가 강해집니다.',
   'def3.cmd.help.s3.h': '방어체는 어떻게 얻나요',
   'def3.cmd.help.s3.b':
-    '방어체는 행성 런에서 직접 드랍되거나, 설계도와 희귀 광물을 들여 제작해 얻습니다.\n설계도의 획득 경로는 정확히 둘입니다. 하나는 행성 런 드랍이고, 다른 하나는 복제 약탈입니다. 복제 약탈은 내가 다른 기지를 침공해 성공했을 때 낮은 확률로 상대의 설계도를 복제해 오는 것입니다. 침공을 막아 냈을 때 설계도가 나오지는 않습니다.\n반대로 내가 침공당했을 때 잃는 것도 없습니다. 공격자가 가져가는 것은 언제나 사본이며 내 원본은 그대로 남습니다.',
+    '방어체는 행성 런에서 직접 드랍되거나, 설계도와 광물을 들여 제작해 얻습니다.\n설계도의 획득 경로는 정확히 둘입니다. 하나는 행성 런 드랍이고, 다른 하나는 복제 약탈입니다. 복제 약탈은 내가 다른 기지를 침공해 성공했을 때 낮은 확률로 상대의 설계도를 복제해 오는 것입니다. 침공을 막아 냈을 때 설계도가 나오지는 않습니다.\n반대로 내가 침공당했을 때 잃는 것도 없습니다. 공격자가 가져가는 것은 언제나 사본이며 내 원본은 그대로 남습니다.',
   'def3.cmd.help.s4.h': '방어체를 키우는 방법',
   'def3.cmd.help.s4.b':
-    '레벨 — 크레딧과 희귀 광물을 넣어 스탯을 올립니다. 가장 자주 쓰게 되는 축입니다.\n승격 — 같은 방어체의 설계도가 중복으로 모였을 때 씁니다. 스탯이 크게 뛰는 동시에 외형이 달라지며, 이 외형은 나를 침공하러 온 공격자의 화면에 그대로 보입니다.\n어픽스 리롤 — 희귀 광물로 방어체 어픽스를 다시 굴립니다. 방어체 어픽스는 매직과 레어 등급 방어체에 붙는 무작위 옵션입니다.\n등급 승급 — 노말에서 매직, 레어, 유니크 순으로 올립니다. 유니크 방어체는 다른 등급에는 없는 고유 효과를 가집니다.',
+    '레벨 — 크레딧과 광물을 넣어 스탯을 올립니다. 가장 자주 쓰게 되는 축입니다.\n승격 — 같은 방어체의 설계도가 중복으로 모였을 때 씁니다. 스탯이 크게 뛰는 동시에 외형이 달라지며, 이 외형은 나를 침공하러 온 공격자의 화면에 그대로 보입니다.\n어픽스 리롤 — 광물로 방어체 어픽스를 다시 굴립니다. 방어체 어픽스는 매직과 레어 등급 방어체에 붙는 무작위 옵션입니다.\n등급 승급 — 노말에서 매직, 레어, 유니크 순으로 올립니다. 유니크 방어체는 다른 등급에는 없는 고유 효과를 가집니다.',
   'def3.cmd.help.s5.h': '풍화',
   'def3.cmd.help.s5.b':
     '풍화는 배치해 둔 방어체에만 작용합니다. 보관함에 넣어 둔 방어체는 아무리 오래 두어도 닳지 않으므로 여분 방어체를 쌓아 두는 데에는 비용이 들지 않습니다. 다만 수호기만은 예외로, 배치 여부와 무관하게 성능이 떨어지고 한 번 닳은 성능은 되돌릴 수 없습니다.',

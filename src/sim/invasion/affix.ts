@@ -4,7 +4,7 @@
  * ## 이 파일이 존재하는 이유
  * 강화 3축 중 **어픽스 리롤**만 전투 영향이 0 이었다. `InvasionRef` 는 `affixSeed` 를 싣고
  * 다니는데 sim(formation/facility/coreRoom)은 `level/ascension/rarity` 만 읽고 시드를 한 번도
- * 펼치지 않았다 — 플레이어가 희귀 광물을 태워 리롤해도 아무 일도 일어나지 않았다는 뜻이다.
+ * 펼치지 않았다 — 플레이어가 광물을 태워 리롤해도 아무 일도 일어나지 않았다는 뜻이다.
  * 이 모듈이 그 회수 지점이다: `defenseUnitFromRef` 로 롤을 복원하고, **정수 basis-point 로
  * 접은 보정 묶음**({@link DefenseAffixMods})을 세 레이어에 넘긴다.
  *

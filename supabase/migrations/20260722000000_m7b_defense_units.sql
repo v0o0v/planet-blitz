@@ -224,7 +224,7 @@ revoke all on function public.spend_blueprints(uuid, smallint, integer, integer)
 grant execute on function public.spend_blueprints(uuid, smallint, integer, integer) to service_role;
 
 -- -----------------------------------------------------------------------------
--- 4. 축 ① 레벨업 — 크레딧 + 희귀 광물
+-- 4. 축 ① 레벨업 — 크레딧 + 광물
 -- -----------------------------------------------------------------------------
 -- data/defenseUnits.ts defenseUnitLevelUpCost 미러.
 create or replace function public.defense_unit_level_cost(p_rarity text, p_from integer)
@@ -356,7 +356,7 @@ revoke all on function public.ascend_defense_unit(uuid) from anon;
 grant execute on function public.ascend_defense_unit(uuid) to authenticated, service_role;
 
 -- -----------------------------------------------------------------------------
--- 6. 축 ③ 방어체 어픽스 리롤 — 희귀 광물 (서버가 새 시드 부여)
+-- 6. 축 ③ 방어체 어픽스 리롤 — 광물 (서버가 새 시드 부여)
 -- -----------------------------------------------------------------------------
 -- data/defenseUnits.ts defenseUnitRerollCost 미러(등급만의 함수 — DB 는 어픽스를 저장하지 않는다).
 create or replace function public.defense_unit_reroll_cost(p_rarity text)
