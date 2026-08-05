@@ -1,10 +1,16 @@
 /**
- * 연구소 화면의 **레이아웃 불변식** (2026-08-02 AAA 시네마틱 전환).
+ * 연구소 화면의 **레이아웃 불변식** (2026-08-02 AAA 시네마틱 전환 · ADR-0049 flat 재편).
  *
  * ## 왜 좌표를 단위 테스트가 보는가
  * 이 리포는 "겹치면 안 되는 세로 띠"가 실제로 겹친 결함을 격납고 헤더에서 겪었고, 캔버스 없는
  * vitest 는 화면을 세울 수 없어 그 유형이 **눈으로만** 잡힌다. `researchLabLayout()` 이 좌표를
  * 순수 값으로 꺼내 두므로 겹침·화면 이탈·설정 톱니 예약 밴드 침범을 여기서 잠근다.
+ *
+ * ## ADR-0049 가 지운 패널
+ * 파생 스탯 하단 띠(`stats` 패널)는 `computeSkillStats` 와 함께 폐기됐다(스킬이 더 이상
+ * `StatKey` 에 수치를 더하지 않는다 — 연구소 파일 헤더 참조). 계열 패널 3장이 그 세로를 그대로
+ * 흡수해 화면 하단까지 채운다. 옛 "계열 패널 바닥 아래를 스탯 띠가 받는다" 단언은 지우고
+ * "계열 패널이 화면 하단 여백까지 직접 닿는다"로 대체한다.
  *
  * ## 그리고 **베낀 상수의 드리프트**
  * `INVESTED_LIST.avail`·`POPUP_LIST.bottom`·`ACTIVES_PANEL.boxBottom` 은 스크롤 산술의 전제라
@@ -32,8 +38,7 @@ import {
 } from '../src/ui/pixi/researchLab.js';
 import { makeCinematicPanel } from '../src/ui/pixi/cinematicPanel.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../src/render/app.js';
-import { SHIP_TYPES } from '../data/ships/index.js';
-import { NODES_PER_TREE } from '../data/skills.js';
+import { SHIP_TYPES, SKILLS_PER_AXIS } from '../data/ships/index.js';
 
 interface Rect {
   readonly x: number;
@@ -58,7 +63,7 @@ describe('패널 콘텐츠 상자 기하 복제본이 실제 패널과 일치한
     expect(panel.box.y).toBe(PANEL_TITLE_BAND_H + PANEL_CONTENT_GAP);
     expect(panel.box.w).toBe(w - PANEL_EDGE_PAD * 2);
     expect(panel.box.h).toBe(h - (PANEL_TITLE_BAND_H + PANEL_CONTENT_GAP) - PANEL_EDGE_PAD);
-    // 투자 목록의 가용 세로는 이 상자 안에서 끝나야 한다(넘치면 캡스톤 바 위로 걸친다).
+    // 투자 목록의 가용 세로는 이 상자 안에서 끝나야 한다.
     expect(INVESTED_LIST.avail).toBeLessThan(panel.box.h);
     panel.destroy();
   });
@@ -114,19 +119,13 @@ describe('연구소 레이아웃 불변식', () => {
     }
   });
 
-  it('계열 패널 세 장의 바닥이 같고, 그 아래를 파생 스탯 띠가 받는다 — 남는 세로가 없다', () => {
+  it('계열 패널 세 장의 바닥이 같고, 화면 하단 여백(28)에서 끝난다 — 파생 스탯 띠 폐기로 남는 세로가 없다', () => {
     const trees = layout.panels.filter((p) => p.id.startsWith('tree:'));
-    const stats = layout.panels.find((p) => p.id === 'stats');
     expect(trees).toHaveLength(3);
-    expect(stats).toBeDefined();
-    if (stats === undefined) return;
     const bottoms = new Set(trees.map((p) => p.rect.y + p.rect.h));
     expect(bottoms.size).toBe(1);
-    // 띠는 계열 패널 바로 아래에 붙고, 화면 하단 여백(28)에서 끝난다.
     const treeBottom = [...bottoms][0] ?? 0;
-    expect(stats.rect.y).toBeGreaterThan(treeBottom);
-    expect(stats.rect.y - treeBottom).toBeLessThanOrEqual(20);
-    expect(DESIGN_HEIGHT - (stats.rect.y + stats.rect.h)).toBe(28);
+    expect(DESIGN_HEIGHT - treeBottom).toBe(28);
   });
 
   it('계열 패널 셋이 좌우 여백 32 안에서 화면 폭을 채운다', () => {
@@ -138,6 +137,10 @@ describe('연구소 레이아웃 불변식', () => {
     if (first === undefined || last === undefined) return;
     expect(first.rect.x).toBe(32);
     expect(last.rect.x + last.rect.w).toBe(DESIGN_WIDTH - 32);
+  });
+
+  it('패널은 계열 패널뿐이다(파생 스탯 띠는 ADR-0049 가 폐기했다)', () => {
+    expect(layout.panels.every((p) => p.id.startsWith('tree:'))).toBe(true);
   });
 
   it('헤더 컨트롤은 같은 세로 띠를 쓰고 서로 겹치지 않는다', () => {
@@ -195,10 +198,10 @@ describe('연구소 레이아웃 불변식', () => {
   });
 });
 
-describe('목록 산술 — 새 좌표에서도 전제가 유지된다', () => {
-  it('스트라이커 20노드는 본 패널에서 스크롤 없이 들어간다', () => {
+describe('목록 산술 — 새 좌표에서도 전제가 유지된다(ADR-0049: 전 기체 축당 10노드 고정)', () => {
+  it('축당 10노드는 본 패널에서 스크롤 없이 들어간다', () => {
     const h = listStackHeight(
-      NODES_PER_TREE,
+      SKILLS_PER_AXIS,
       INVESTED_LIST.cols,
       INVESTED_LIST.cellH,
       INVESTED_LIST.gapY,
@@ -206,17 +209,16 @@ describe('목록 산술 — 새 좌표에서도 전제가 유지된다', () => {
     expect(h).toBeLessThanOrEqual(INVESTED_LIST.avail);
   });
 
-  it('노드가 더 많은 기체는 넘친다 — 그래서 스크롤 배선이 살아 있어야 한다', () => {
+  it('전 기체가 같은 노드 수라 넘치는 기체가 없다 — 스크롤 배선은 방어적으로만 남는다', () => {
+    // 구조가 기체별로 다른 노드 수(20~25)였을 때는 일부가 넘쳤지만, ADR-0049 이후 전 기체
+    // SKILLS_PER_AXIS 로 고정돼 넘치는 사례 자체가 사라졌다. 이 케이스가 실패(= 넘치는 기체가
+    // 생김)하면 SKILLS_PER_AXIS 가 더 이상 전 기체 동일하지 않다는 뜻이다.
     const overflow = SHIP_TYPES.filter(
-      (def) =>
-        listStackHeight(
-          def.nodesPerTree,
-          INVESTED_LIST.cols,
-          INVESTED_LIST.cellH,
-          INVESTED_LIST.gapY,
-        ) > INVESTED_LIST.avail,
+      () =>
+        listStackHeight(SKILLS_PER_AXIS, INVESTED_LIST.cols, INVESTED_LIST.cellH, INVESTED_LIST.gapY) >
+        INVESTED_LIST.avail,
     );
-    expect(overflow.length).toBeGreaterThan(0);
+    expect(overflow).toHaveLength(0);
   });
 
   it('전체 스킬 팝업 마스크가 행 경계에 정확히 떨어진다(반토막 행 금지)', () => {
@@ -231,10 +233,5 @@ describe('목록 산술 — 새 좌표에서도 전제가 유지된다', () => {
     const p = ACTIVES_PANEL;
     const gridBottom = p.gridTop + p.rows * p.cellH + (p.rows - 1) * p.cellGapY;
     expect(gridBottom).toBe(p.boxBottom);
-  });
-
-  it('파생 스탯 6열 × 2행이 12행 전량을 담는다(미리보기 축 수와 같다)', () => {
-    // PREVIEW_ROWS 는 12축이다 — 6열 2행이 정확히 그 수다. 열을 줄이면 축이 조용히 잘린다.
-    expect(6 * 2).toBe(12);
   });
 });

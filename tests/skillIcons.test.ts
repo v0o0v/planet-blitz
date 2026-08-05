@@ -1,91 +1,65 @@
 /**
- * 연구소 스킬 노드 아이콘 매핑 검증 (노드 → 아이콘 basename).
+ * 연구소 스킬 노드 아이콘 매핑 검증 (노드 → 아이콘 basename) — ADR-0049 flat 재편.
  *
- * `skillIconName` 은 UI-독립 순수 함수라(노드 → 문자열) 단위 테스트로 고정한다. 이 테스트가
- * 지키는 것은 두 가지다:
- *  1. 63노드 **전부**가 로더에 등재된 유효한 이름으로 해석된다(빠진 노드 = 빈 셀).
- *  2. 스탯 노드 60개가 정확히 47개 키로 접히고 캡스톤 3개는 개별 키로 떨어진다 —
- *     티어대 5구간 경계(저 0 / 중 1 / 상 2 / 최상 3 / 초월 4, Lane 10)가 나중에 어긋나면
- *     여기서 깨진다.
+ * 구 `skillIconName`(`src/ui/pixi/uiTextures.ts`)은 `SkillNode.stat`+`tier` 에서 62종 아이콘
+ * 이름을 유도했다. ADR-0049 가 스킬을 메커닉으로 옮기면서 그 두 필드가 통째로 사라져(스킬은
+ * 더 이상 `StatKey` 에 수치를 더하지 않는다) 그 함수를 재사용할 수 없다. 연구소 화면
+ * (`src/ui/pixi/researchLab.ts`)이 직접 갖는 새 순수 함수 `skillNodeIconName` 은 지금 데이터에서
+ * 유도 가능한 유일한 시각 축인 **축(affinity)** 으로 접는다 — 없는 스탯 데이터를 추측해 옛날
+ * 처럼 스탯별 아이콘을 고르지 않는다.
  *
- * 자산 PNG 가 아직 없어도 통과해야 한다(파일 존재를 보지 않는다).
+ * 실제 PNG 자산(`skill_axis_*.png`)은 아직 없다 — `uiTextures.ts` 의 `SKILL_ICON_NAMES`/
+ * `UI_ASSET_NAMES` 레지스트리(이 레인의 담당 밖)에 등재되지 않았으므로 렌더는 계열색
+ * placeholder 로 우아하게 폴백한다(`makeSkillIcon` null 폴백 규약). 그래서 이 테스트는 파일
+ * 존재를 보지 않고 **이름 유도 규칙**만 고정한다.
  */
 
 import { describe, it, expect } from 'vitest';
-import { SKILLS, SKILL_NODE_COUNT, capstoneIndex, SKILL_TREES } from '../data/skills.js';
-import { SHIP_TYPES, flattenShipNodes } from '../data/ships/index.js';
-import { UI_ASSET_NAMES, SKILL_ICON_NAMES, skillIconBand, skillIconName } from '../src/ui/pixi/uiTextures.js';
+import { skillNodeIconName } from '../src/ui/pixi/researchLab.js';
+import { SHIP_TYPES, STRIKER, flattenShipNodes, TREE_AFFINITIES } from '../data/ships/index.js';
 
-describe('skillIconBand', () => {
-  it('maps tiers 0~4 one-to-one onto 5 bands (Lane 10)', () => {
-    expect(skillIconBand(0)).toBe('low');
-    expect(skillIconBand(1)).toBe('lowmid');
-    expect(skillIconBand(2)).toBe('mid');
-    expect(skillIconBand(3)).toBe('midhigh');
-    expect(skillIconBand(4)).toBe('high');
-  });
-});
-
-describe('skillIconName', () => {
-  it('derives stat icons as skill_<snake_stat>_<band>.png', () => {
-    // firepower-0-0 = 집중 사격(damagePct, tier 0), firepower-4-0 = 초토화 프로토콜(tier 4).
-    expect(skillIconName(SKILLS[0]!)).toBe('skill_damage_pct_low.png');
-    expect(skillIconName(SKILLS[16]!)).toBe('skill_damage_pct_high.png');
-    // survival-1-1 = 생체 강화(maxHpPct, tier 1) — camelCase 가 snake_case 로 접히고 tier 1 이
-    // 5구간에서 lowmid 로 접히는지.
-    expect(skillIconName(SKILLS[25]!)).toBe('skill_max_hp_pct_lowmid.png');
+describe('skillNodeIconName', () => {
+  it('derives icon names as skill_axis_<affinity>.png', () => {
+    // 스트라이커 축0 = firepower(offense), 축1 = survival(defense), 축2 = mobility(utility).
+    const nodes = flattenShipNodes(STRIKER);
+    expect(skillNodeIconName(nodes[0]!)).toBe('skill_axis_offense.png');
+    expect(skillNodeIconName(nodes[10]!)).toBe('skill_axis_defense.png');
+    expect(skillNodeIconName(nodes[20]!)).toBe('skill_axis_utility.png');
   });
 
-  it('gives each capstone its own art (stat/perPoint are placeholders there)', () => {
-    for (const tree of SKILL_TREES) {
-      expect(skillIconName(SKILLS[capstoneIndex(tree)]!)).toBe(`skill_capstone_${tree}.png`);
-    }
+  it('shares one icon across every node in the same axis (by design)', () => {
+    // 축당 10스킬이 전부 같은 그림을 쓴다 — 구별은 이름과 설명 툴팁이 한다.
+    const nodes = flattenShipNodes(STRIKER);
+    const axisOffense = nodes.slice(0, 10).map(skillNodeIconName);
+    expect(new Set(axisOffense).size).toBe(1);
   });
 
-  it('shares one icon across nodes with the same stat and tier band (by design)', () => {
-    // 예리한/잔혹한 류 — firepower-0-0(집중 사격)과 firepower-0-1(정밀 조준)은 둘 다
-    // damagePct tier 0 이라 같은 그림을 쓴다. 구별은 이름과 포인트 배지가 한다.
-    expect(skillIconName(SKILLS[1]!)).toBe(skillIconName(SKILLS[0]!));
-  });
-
-  it('resolves all 63 nodes to a name registered in the texture loader', () => {
-    const registered = new Set<string>(UI_ASSET_NAMES);
-    expect(SKILLS).toHaveLength(SKILL_NODE_COUNT);
-    for (const node of SKILLS) {
-      const name = skillIconName(node);
-      expect(name).toMatch(/^skill_[a-z_]+\.png$/);
-      expect(registered.has(name)).toBe(true);
-    }
-  });
-
-  it('folds the 60 stat nodes into exactly 47 distinct icons + 3 capstones', () => {
-    const stat = new Set(SKILLS.filter((n) => n.capstone !== true).map(skillIconName));
-    const caps = new Set(SKILLS.filter((n) => n.capstone === true).map(skillIconName));
-    expect(stat.size).toBe(47);
-    expect(caps.size).toBe(3);
-    for (const name of caps) expect(stat.has(name)).toBe(false);
-  });
-
-  it('keeps SKILL_ICON_NAMES exactly equal to what ALL ship types need (no dead art, no null fallback)', () => {
-    // ⚠️ M8(설계서 §10-7): 스트라이커(`SKILLS`)만 순회하면 신규 기체 트리가 만든 새 (스탯,
-    // 티어대) 조합이 목록에 없어도 **그린이다** — 렌더는 null 을 예외 없이 삼키므로 화면에서
-    // 빈 셀로만 드러난다. 실측으로 4건(range_flat_mid/high · bullet_speed_pct_high ·
-    // bullet_count_low)이 이 상태였다. 그래서 전 SHIP_TYPES 를 순회한다.
-    const needed = new Set<string>();
-    for (const def of SHIP_TYPES) {
-      for (const node of flattenShipNodes(def)) needed.add(skillIconName(node));
-    }
-    expect([...SKILL_ICON_NAMES].sort()).toEqual([...needed].sort());
-  });
-
-  it('resolves every node of every ship type to a registered loader name', () => {
-    const registered = new Set<string>(UI_ASSET_NAMES);
+  it('resolves to a name matching the registered file-name shape', () => {
     for (const def of SHIP_TYPES) {
       for (const node of flattenShipNodes(def)) {
-        const name = skillIconName(node);
-        expect(name, `${def.slug} / ${node.id}`).toMatch(/^skill_[a-z_]+\.png$/);
-        expect(registered.has(name), `${def.slug} / ${node.id} → ${name}`).toBe(true);
+        const name = skillNodeIconName(node);
+        expect(name, `${def.slug} / ${node.id}`).toMatch(/^skill_axis_[a-z]+\.png$/);
       }
     }
+  });
+
+  it('folds every ship type down to exactly 3 icons — one per affinity, no more', () => {
+    for (const def of SHIP_TYPES) {
+      const names = new Set(flattenShipNodes(def).map(skillNodeIconName));
+      expect(names.size, def.slug).toBe(TREE_AFFINITIES.length);
+    }
+  });
+
+  it('is a pure function of axis alone — same affinity always yields the same name across ship types', () => {
+    const byAffinity = new Map<string, string>();
+    for (const def of SHIP_TYPES) {
+      for (const node of flattenShipNodes(def)) {
+        const name = skillNodeIconName(node);
+        const prior = byAffinity.get(node.axis);
+        if (prior === undefined) byAffinity.set(node.axis, name);
+        else expect(name, `${def.slug} / ${node.id}`).toBe(prior);
+      }
+    }
+    expect(byAffinity.size).toBe(TREE_AFFINITIES.length);
   });
 });

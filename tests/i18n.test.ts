@@ -471,8 +471,8 @@ describe('기체 타입 카탈로그 완전성 (SHIP_TYPES 파생)', () => {
    * 문구가 조용히 남아 썩는다(`def3` 고아 가드와 같은 논리).
    */
   it('레지스트리에서 파생되지 않는 고아 ship.* / lab.tree.* 키가 없다', () => {
-    // `lab.tree.sub` 는 계열 이름이 아니라 트리 패널 부제다 — 접두사만 겹친다.
-    const treeAllow = new Set([...shipTreeKeys(), 'lab.tree.sub']);
+    // (`lab.tree.sub` 는 ADR-0049 로 삭제됐다 — 티어 시너지 부제였다.)
+    const treeAllow = new Set(shipTreeKeys());
     const shipAllow = new Set([...shipNameKeys(), ...shipSignatureKeys()]);
     for (const [label, table] of [
       ['EN', EN as unknown as Record<string, string>],

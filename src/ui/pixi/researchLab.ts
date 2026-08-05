@@ -1,14 +1,28 @@
 /**
  * 연구소 화면 — Pixi (2026-08-02 AAA 시네마틱 전환 · 레인 계약
- * `.omc/plans/research-lab-aaa-2026-08-02.md`).
+ * `.omc/plans/research-lab-aaa-2026-08-02.md` → ADR-0049 flat 재편으로 스킬 모델 교체).
  *
  * `main.ts` 가 직접 여는 **최상위 화면**이다(`researchLab.show(profile, () => openBaseMap())`) —
- * 격납고 하위 화면들과 달리 suspend/resume 이 아니라 show/onClose 규약이다. 스킬 트리 계열
- * 3종 × 20~25노드 + 캡스톤 투자(`investSkill`), 리스펙(`respecSkills`/`respecCost`), 파생 스탯
- * 미리보기(`computeSkillStats`), 액티브 스킬 장착(ADR-0041), i18n, Profile in-place 변이 +
+ * 격납고 하위 화면들과 달리 suspend/resume 이 아니라 show/onClose 규약이다. 스킬 축 3종 ×
+ * 축당 10스킬(ADR-0049, 캡스톤·티어·사슬 선행 없음) 투자(`investSkill`), 리스펙
+ * (`respecSkills`/`respecCost`), 액티브 스킬 장착(ADR-0041), i18n, Profile in-place 변이 +
  * `saveProfile` 를 담당한다.
  *
- * ## 시네마틱 전환에서 바뀐 것은 **바탕과 배치**뿐이다
+ * ## ADR-0049 가 이 화면에서 지운 것
+ * 구조가 **티어 5단 × 계열 3 + 계열별 캡스톤 1**(63노드, 스탯 수치 노드)에서 **flat 3축 ×
+ * 10스킬**(30노드, 메커닉 노드)로 바뀌면서 다음이 전부 폐기됐다 — 비활성으로 남기지 않고
+ * 그리는 코드 자체를 지운다:
+ *  - **티어 행·연결선**: flat 구조에는 티어가 없다. 축 하나를 그냥 10칸 격자로 보여준다.
+ *  - **계열 캡스톤 바**(`renderCapstone`/`investCapstone`): 캡스톤 자체가 폐기됐다.
+ *  - **사슬 선행 조건**(ADR-0047, `chainMissingPrereqs`/`prereqText`): "축당 10스킬은 처음부터
+ *    전부 투자 가능"이 ADR-0049 의 명시적 설계다.
+ *  - **파생 스탯 미리보기 띠**(`computeSkillStats`): 스킬은 더 이상 `StatKey` 에 수치를
+ *    더하지 않는다 — 효과는 sim 안의 규칙이라 이 화면이 미리 계산할 값 자체가 없다. 없는
+ *    데이터를 추측해 만들지 않는다(`node.desc` 한 문장이 스킬 설명의 전부다).
+ * 캡스톤 바가 빠지며 계열 패널 콘텐츠 상자 전체가 목록 몫이 되고, 스탯 띠가 빠지며 그 자리를
+ * 계열 패널 세로가 그대로 흡수한다(아래 레이아웃 상수 참조).
+ *
+ * ## 시네마틱 전환에서 바뀐 것은 **바탕과 배치**뿐이다(2026-08-02 유산)
  * `nineSlicePanel`(나무) → `makeCinematicPanel`(석재 슬래브), `makeBanner` → `makeHangarTitle`,
  * `makeCurrencyChip` → `makeHangarChip`, `ui_btn_*.png` → `cinematicButtonTexture` 주입,
  * 자홍 카드 행(`listRowBg`) → 석재 행 판(`rowPlate`), 단색 배경 → `HangarBackdrop`.
@@ -18,16 +32,14 @@
  * 형제 화면 셋의 결론: **창은 "배경이 보이는 구멍"이 아니라 "무언가를 보여주는 자리"다.**
  * 여기서 창에 세울 수 있는 피사체는 현역 기체 한 대뿐인데 이 화면에서 기체는 **바뀌지 않는다**
  * (교체는 챔피언 선택의 일이다) — 행을 눌러도 창 안 그림이 그대로다. 예비역 로스터에서 창을
- * 뺀 것과 같은 조건이다. 게다가 창은 최소 400px 폭을 요구해 계열 패널을 600 → 437 로 줄이는데,
- * 그러면 2열 투자 목록 한 칸이 194px 가 되어 이름이 포인트 배지에 눌린다 —
- * **정보 밀도가 이 화면의 목적이다**(격납고 계약 §0-bis-3). 배경 노출은 헤더 밴드와 패널 사이
- * 틈뿐이다.
+ * 뺀 것과 같은 조건이다. **정보 밀도가 이 화면의 목적이다**(격납고 계약 §0-bis-3). 배경 노출은
+ * 헤더 밴드와 패널 사이 틈뿐이다.
  *
  * ## 스킬 **노드 격자·연결선은 만들지 않는다**
- * 4열×5행 노드 격자(ADR-0015 Consequences)는 **사용자 피드백으로 이미 철거**됐다. 지금 구조는
- * 본 패널이 그 계열에서 **찍은 노드만** 2열로 보여 주고, 전체 열람·투자는 **세로 스크롤 팝업**이
- * 맡는다. 격자와 연결선을 도로 만드는 것은 AAA 전환이 아니라 사용자가 되돌린 정보 설계를 다시
- * 되돌리는 일이라 이 레인의 범위 밖이다.
+ * 본 패널은 그 축에서 **찍은 노드만** 2열로 보여 주고, 전체 열람·투자는 **세로 스크롤 팝업**이
+ * 맡는다. 축당 10스킬 고정이라(ADR-0049) 팝업은 스크롤이 사실상 필요 없어졌지만(10행이 한
+ * 화면에 다 들어온다), 기구는 그대로 재사용한다 — 노드 수가 다시 늘 가능성에 대비한 방어적
+ * 여지이자, 기존에 검증된 마스크·휠 관용구를 다시 만들지 않기 위해서다.
  *
  * ## 행 사이에 **선을 긋지 않는다**
  * 세로 리브·가로 이음선·각인 번호판은 사용자가 격납고에서 삭제를 지시한 것들이다(2026-08-02).
@@ -35,9 +47,9 @@
  *
  * ## 재렌더 규율 — 이 화면은 형제보다 더 자주 갱신된다
  * 클릭 한 번이 곧 투자라 값이 매번 바뀐다. `render()` 로 루트를 통째로 다시 그리면 노드를
- * 하나 찍을 때마다 배경과 석재 패널 4장이 다시 **구워진다**. 그래서
+ * 하나 찍을 때마다 배경과 석재 패널이 다시 **구워진다**. 그래서
  *  - `buildChrome()` 은 1회(자산 도착·기체 타입 변경 시에만 재건),
- *  - `syncValues()` 가 칩·부제·캡스톤·파생 스탯·리스펙 라벨을,
+ *  - `syncValues()` 가 칩·부제·파생 스탯·리스펙 라벨을,
  *  - `renderLists()` 가 계열 목록 행만,
  *  - 팝업은 `modalHost` 에서만 나고 진다.
  *
@@ -45,7 +57,7 @@
  * - **목록 행 클릭은 행 Container 에.** 바탕 Graphics 에 걸면 위에 얹힌 텍스트가 클릭을 삼킨다.
  * - **휠은 클립 Container + hitArea 에.** 마스크 Graphics 는 히트 테스트에서 제외된다.
  * - **여백은 패널의 `box` 안에만.**
- * - 컬러 이모지 금지(`text.ts` stripEmoji 가 두부로 떨군다). `★ ✕` 는 보존 목록이다.
+ * - 컬러 이모지 금지(`text.ts` stripEmoji 가 두부로 떨군다). `✕` 는 보존 목록이다.
  * - ⚠️ `hudEl()` 에는 **캔버스 가드를 붙이지 않는다**(`typeof document.createElement !==
  *   'function'` 까지 검사하면 HUD 숨김이 통째로 죽는다 — 이 리포가 실제로 밟았다).
  * - ⚠️ 좌상단 x<120 · y<120 은 **설정 톱니 예약 밴드**다 — 그 자리 컨트롤은 통째로 클릭 불가가
@@ -55,21 +67,15 @@
  */
 
 import { Container, Graphics, Rectangle, Sprite, Text, Texture } from 'pixi.js';
-import type { SkillNode } from '../../../data/skills.js';
 import {
   shipTypeDef,
   flattenShipNodes,
   shipTreeRange,
-  shipCapstoneIndex,
+  SKILLS_PER_AXIS,
   type ShipTypeDef,
+  type ShipSkillDef,
 } from '../../../data/ships/index.js';
-import type { StatKey } from '../../items/types.js';
-import {
-  computeSkillStats,
-  shipCapstoneUnlocked,
-  shipTreeBaseInvested,
-  chainMissingPrereqs,
-} from '../../items/skills.js';
+import { axisInvested } from '../../items/skills.js';
 import {
   activeSlotViews,
   equipActive,
@@ -83,7 +89,7 @@ import {
   activeSkillIconName,
   activeSkillNameKey,
 } from '../../../data/ships/actives/types.js';
-import { t, type MessageKey } from '../../i18n/index.js';
+import { t } from '../../i18n/index.js';
 import { shipTreeName, AFFINITY_ACCENT, tShipKey } from './shipLabels.js';
 import {
   investSkill,
@@ -99,7 +105,7 @@ import {
 import { spendCurrencyOnServer } from '../../net/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, UI_FONT, TEXT_SHADOW, iconContrastRingBands } from './theme.js';
-import { loadUiTextures, skillIconName, type UiTextures } from './uiTextures.js';
+import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { PixiButton } from './button.js';
 import { PixiTooltip } from './tooltip.js';
 import { rectGridPositions } from './slotGrid.js';
@@ -121,22 +127,6 @@ import {
 // 계열 강조색(affinity 축)의 정본은 `./shipLabels.ts` 다 — 격납고·챔피언 선택도 같은 값을
 // 쓰므로 이 화면 파일에 두면 다른 화면이 연구소 전체를 끌어오게 된다. 재수출만 한다.
 export { AFFINITY_ACCENT } from './shipLabels.js';
-
-/** 파생 스탯 미리보기 행: [StatKey, labelKey, isPercent]. DOM 판과 동일. */
-const PREVIEW_ROWS: readonly [StatKey, MessageKey, boolean][] = [
-  ['damagePct', 'lab.stat.damage', true],
-  ['fireRatePct', 'lab.stat.fireRate', true],
-  ['bulletCount', 'lab.stat.bulletCount', false],
-  ['pierce', 'lab.stat.pierce', false],
-  ['bulletSpeedPct', 'lab.stat.bulletSpeed', true],
-  ['rangeFlat', 'lab.stat.range', false],
-  ['maxHpFlat', 'lab.stat.maxHpFlat', false],
-  ['maxHpPct', 'lab.stat.maxHp', true],
-  ['dashCdPct', 'lab.stat.dashCd', true],
-  ['moveSpeedPct', 'lab.stat.moveSpeed', true],
-  ['magnetPct', 'lab.stat.magnet', true],
-  ['xpPct', 'lab.stat.xp', true],
-];
 
 // ---------------------------------------------------------------------------
 // 레이아웃(디자인 스페이스 1920×1080)
@@ -167,24 +157,21 @@ const HEAD_Y = 26;
 const HEAD_H = 52;
 const EDGE_X = 32;
 const GUTTER_X = 28;
-const ROW_GAP_Y = 20;
 const BOTTOM_PAD = 28;
 
 /** 계열 패널 열 수(레지스트리 계약 — 실제 패널 수는 `def().trees.length` 파생이다). */
 const TREE_COLS = 3;
 const PANEL_Y = HEADER_H + 8;
-/** 파생 스탯 띠 — 6열×2행(행 28)이 상자에 들어가는 최소 높이에서 정한다. */
-const STRIP_H = 152;
-const STRIP_X = EDGE_X;
-const STRIP_W = DESIGN_WIDTH - EDGE_X * 2;
-const STRIP_Y = DESIGN_HEIGHT - BOTTOM_PAD - STRIP_H;
-/** 계열 패널 세로는 **남는 자리 전부**다(빈 자리 금지 — 하드코딩하면 띠를 옮길 때 어긋난다). */
-const PANEL_H = STRIP_Y - ROW_GAP_Y - PANEL_Y;
+/**
+ * 계열 패널 세로는 **화면 하단까지 남는 자리 전부**다. ADR-0049 가 파생 스탯 하단 띠를
+ * 없애면서(캡스톤과 함께 폐기 — 파일 헤더 참조) 계열 패널이 그 세로를 그대로 흡수한다.
+ */
+const PANEL_H = DESIGN_HEIGHT - BOTTOM_PAD - PANEL_Y;
 
 /** 계열 열 한 칸의 폭·x — 열 수에서 파생한다(3 을 박으면 계열 수가 다른 기체에서 삐져나온다). */
 function treeColumnW(cols: number): number {
   if (cols <= 0) return 0;
-  return Math.floor((STRIP_W - GUTTER_X * (cols - 1)) / cols);
+  return Math.floor((DESIGN_WIDTH - EDGE_X * 2 - GUTTER_X * (cols - 1)) / cols);
 }
 
 function treeColumnX(col: number, cols: number): number {
@@ -204,17 +191,10 @@ const BOX = treeBox(TREE_COLS);
 const BROWSE_Y = BOX.y;
 const BROWSE_H = 48;
 const LIST_TOP = BROWSE_Y + BROWSE_H + 16;
-const CAPSTONE_H = 60;
-/** 캡스톤 바는 콘텐츠 상자 바닥에 붙인다 — 목록과의 간격이 자동으로 남는다. */
-const CAPSTONE_Y = BOX.bottom - CAPSTONE_H;
-/** 캡스톤 버튼 좌측 개별 아트 자리(라벨은 버튼 중앙이라 겹치지 않는다). */
-const CAPSTONE_ICON = 40;
-const CAPSTONE_ICON_X = 14;
 
 /**
- * 투자 목록 셀: 2열. 스트라이커 20노드 = 10행 × 53 − 8 = 522 로 가용 536 안에 들어가므로 본
- * 패널에는 스크롤이 필요 없다(전체 열람은 팝업 몫). 해츨링 25노드는 13행 = 681 로 넘치므로
- * 목록은 스크롤 영역 안에 있어야 한다 — 두 성질 다 단위 테스트가 잠근다.
+ * 투자 목록 셀: 2열. 축당 10스킬(ADR-0049, 전 기체 동일) = 5행 × 53 − 8 = 257 로 가용 안에
+ * 여유 있게 들어가므로 본 패널에는 스크롤이 필요 없다(전체 열람은 팝업 몫).
  */
 const INV_COLS = 2;
 const INV_GAP_X = 8;
@@ -228,7 +208,12 @@ const POP_ROW_H = 65;
 const POP_ROW_GAP = 4;
 /** 행 피치 — 마스크 높이를 이 배수로 클램프해 반토막 행을 구조적으로 막는다. */
 const POP_ROW_PITCH = POP_ROW_H + POP_ROW_GAP;
-const POP_VISIBLE_ROWS = 11;
+/**
+ * 팝업에 보이는 행 수 = **축당 스킬 수**(ADR-0049, 전 기체 10 고정). 구 버전은 11(스트라이커
+ * 20노드 초과분을 감당하는 임의값)이었다 — flat 구조는 수량이 고정이라 "빈 자리 금지"
+ * 원칙대로 정확히 그 수만큼만 잡는다(팝업 헤더 "왜 창을 두지 않는가" 절의 같은 원칙).
+ */
+const POP_VISIBLE_ROWS = SKILLS_PER_AXIS;
 const POP_W = 900;
 /** 팝업 세로는 **목록이 정한다**(빈 자리 금지 — 형제 화면 셋이 전부 잡아 고친 결함). */
 const POP_SUB_GAP = 32;
@@ -250,10 +235,10 @@ const POP_ROW_W = PBOX.w - POP_BAR_W;
 
 // --- 액티브 스킬 팝업(ADR-0041 · AC-16·17) ---
 /**
- * 왜 **팝업**인가. 본 화면은 이미 꽉 차 있다 — 계열 패널 3장이 y=112..880 을 덮고 파생 스탯
- * 띠가 900..1052 를 덮는다. 게다가 패널 안 투자 목록의 가용 세로는 "스트라이커 20노드가
- * 스크롤 없이 들어간다"로 단위 테스트가 못 박아 둔 값이라, 액티브 칸을 패널 안에 끼우려고
- * 목록을 줄이면 그 단언이 즉시 깨진다. 그래서 전체 스킬 팝업과 같은 관용구를 재사용한다.
+ * 왜 **팝업**인가. 본 화면은 이미 꽉 차 있다 — 계열 패널 3장이 화면 세로 대부분을 덮는다.
+ * 게다가 패널 안 투자 목록의 가용 세로는 "10노드가 스크롤 없이 들어간다"로 단위 테스트가
+ * 못 박아 둔 값이라, 액티브 칸을 패널 안에 끼우려고 목록을 줄이면 그 단언이 즉시 깨진다.
+ * 그래서 전체 스킬 팝업과 같은 관용구를 재사용한다.
  */
 const ACT_W = 1040;
 const ACT_SUB_GAP = 32;
@@ -318,21 +303,6 @@ export const LAB_HELP: HelpSpec = {
 /** 헤더 컨트롤 아래 한 줄(총 투자·기체 레벨). 헤더 밴드 안에서 끝난다. */
 const HEAD_SUB_Y = HEAD_Y + HEAD_H + 4;
 
-// --- 파생 스탯 하단 가로 띠 ---
-/** 띠 안쪽 콘텐츠 상자. 제목은 **각인 제목 띠**가 맡으므로 옛 제목 열 200 은 없앴다. */
-const SBOX = {
-  x: PANEL_EDGE_PAD,
-  y: TITLED_BOX_Y,
-  w: STRIP_W - PANEL_EDGE_PAD * 2,
-  right: STRIP_W - PANEL_EDGE_PAD,
-  h: STRIP_H - TITLED_BOX_Y - PANEL_EDGE_PAD,
-} as const;
-const STRIP_SYN_W = 360;
-const STAT_COLS = 6;
-const STAT_ROW_H = 28;
-const STAT_COL_W = Math.floor((SBOX.w - STRIP_SYN_W - 24) / STAT_COLS);
-const STAT_X = SBOX.x;
-
 const HINT_Y = DESIGN_HEIGHT - 4;
 
 /**
@@ -378,7 +348,6 @@ export function researchLabLayout(cols = TREE_COLS): {
   for (let i = 0; i < cols; i++) {
     panels.push({ id: `tree:${i}`, rect: { x: treeColumnX(i, cols), y: PANEL_Y, w, h: PANEL_H } });
   }
-  panels.push({ id: 'stats', rect: { x: STRIP_X, y: STRIP_Y, w: STRIP_W, h: STRIP_H } });
   return {
     screen: { x: 0, y: 0, w: DESIGN_WIDTH, h: DESIGN_HEIGHT },
     headerH: HEADER_H,
@@ -396,12 +365,11 @@ export function researchLabLayout(cols = TREE_COLS): {
 }
 
 /**
- * 계열에서 **포인트를 투자한** base 노드의 flat 인덱스 목록(flat 순서 = 티어 오름차순).
- * 캡스톤은 별도 바가 맡으므로 제외한다. 손상/짧은 벡터도 안전(누락 = 0).
+ * 계열에서 **포인트를 투자한** 스킬의 flat 인덱스 목록(flat 순서 = 축 내부 등록 순서).
+ * 손상/짧은 벡터도 안전(누락 = 0).
  *
  * ⚠️ M8: 축이 트리 **이름**(`'firepower'|…`)에서 **(타입 정의, 트리 인덱스)** 로 바뀌었다.
- * 이름 축을 남기면 신규 기체의 계열이 이 함수에 아예 들어올 수 없고(타입이 3리터럴), 슬라이스
- * 폭도 스트라이커의 20 으로 고정돼 비온(25)에서 다섯 칸이 조용히 잘린다.
+ * 이름 축을 남기면 신규 기체의 계열이 이 함수에 아예 들어올 수 없다.
  *
  * 순수 함수(Pixi 미의존) — 본 패널이 "찍은 것만" 보이는 규칙의 진실의 원천이다.
  */
@@ -428,7 +396,7 @@ export function listStackHeight(count: number, cols: number, rowH: number, gapY:
 }
 
 /**
- * 본 패널 투자 목록의 레이아웃 수치. 상수를 건드려 20노드가 더 이상 안 들어가게 되면 단위
+ * 본 패널 투자 목록의 레이아웃 수치. 상수를 건드려 10노드가 더 이상 안 들어가게 되면 단위
  * 테스트가 즉시 깨지도록 산술 전제를 여기로 노출한다(스크롤 없는 목록이 이 배치의 전제다).
  */
 export const INVESTED_LIST = {
@@ -437,8 +405,8 @@ export const INVESTED_LIST = {
   cellH: INV_H,
   gapX: INV_GAP_X,
   gapY: INV_GAP_Y,
-  /** 목록에 쓸 수 있는 세로(콘텐츠 상자 안, 캡스톤 바 위까지). */
-  avail: CAPSTONE_Y - 16 - LIST_TOP,
+  /** 목록에 쓸 수 있는 세로(콘텐츠 상자 안 전체 — ADR-0049 가 캡스톤 바를 없애 상자 바닥까지). */
+  avail: BOX.bottom - LIST_TOP,
   /** 콘텐츠 상자 폭 — 2열이 간격까지 포함해 정확히 이 안에 들어가야 한다. */
   boxW: BOX.w,
 } as const;
@@ -537,6 +505,22 @@ export function clampToRowHeight(avail: number, pitch: number): number {
 export function clampScroll(v: number, totalH: number, viewH: number): number {
   const max = Math.max(0, totalH - viewH);
   return Math.max(0, Math.min(max, v));
+}
+
+/**
+ * 스킬 노드 → 아이콘 파일명(ADR-0049).
+ *
+ * 구 `skillIconName`(`uiTextures.ts`)은 `SkillNode.stat`+`tier` 에서 유도했다 — 스킬이
+ * 메커닉으로 바뀌며 그 두 필드가 통째로 사라져 재사용할 수 없다. 지금 데이터에서 유도
+ * 가능한 유일한 시각 축은 **축(affinity)** 뿐이라 축당 공유 아이콘 하나로 접는다.
+ *
+ * `uiTextures.ts` 의 `SKILL_ICON_NAMES`/`UI_ASSET_NAMES` 레지스트리에는 이 이름이 아직
+ * 등재돼 있지 않다(그 파일은 이 레인의 담당 밖 — `makeSkillIcon` 이 미등록 텍스처를 계열색
+ * placeholder 로 이미 우아하게 대체하므로 화면은 죽지 않는다). 없는 스탯 데이터를 추측해
+ * 예전처럼 스탯별 아이콘을 고르지 않는다.
+ */
+export function skillNodeIconName(node: ShipSkillDef): string {
+  return `skill_axis_${node.axis}.png`;
 }
 
 // --- 행 판 조명 램프(모듈 1회 굽기) ------------------------------------------
@@ -740,7 +724,6 @@ interface TreeSlot {
   readonly panel: CinematicPanel;
   readonly browse: PixiButton;
   readonly listHost: Container;
-  readonly capstoneHost: Container;
   readonly cols: number;
 }
 
@@ -759,7 +742,7 @@ export class ResearchLabScreen {
   private popupScrollY = 0;
   /** 액티브 스킬 팝업이 열려 있는가(AC-16·17). 전체 스킬 팝업과 상호 배타다. */
   private activesOpen = false;
-  /** 본 패널 투자 목록의 계열별 스크롤 위치(노드가 많은 타입에서만 쓰인다). */
+  /** 본 패널 투자 목록의 계열별 스크롤 위치(방어적으로 유지 — 지금은 축당 10노드라 실사용 없음). */
   private readonly listScrollY: number[] = [0, 0, 0];
   /** 진입 시점의 런 HUD `visibility` 인라인 값(닫을 때 그대로 되돌린다). */
   private hudPrevVisibility: string | null = null;
@@ -779,7 +762,6 @@ export class ResearchLabScreen {
   private builtForTypeId = -1;
   private trees: TreeSlot[] = [];
   private chipHost: Container | null = null;
-  private statsHost: Container | null = null;
   private modalHost: Container | null = null;
   /** 화면 안내 팝업이 열려 있는가 + 그 스크롤 위치(재렌더 사이 유지). */
   private helpOpen = false;
@@ -791,8 +773,7 @@ export class ResearchLabScreen {
 
   /**
    * 현재 편집 대상 = **활성 기체의 타입 정의**. 화면 전체가 이 하나에서 파생된다
-   * (트리 수·노드 수·게이트·캡스톤 인덱스). 스트라이커 정본 상수를 직접 읽으면 비온(25노드,
-   * 게이트 44)에서 그리드가 붕괴하고 캡스톤 잠금이 오판정된다.
+   * (트리 수·게이트). 스트라이커 정본 상수를 직접 읽으면 신규 기체에서 그리드가 붕괴한다.
    */
   private def(): ShipTypeDef {
     return shipTypeDef(activeShip(this.profile).typeId);
@@ -904,52 +885,18 @@ export class ResearchLabScreen {
   // --- 투자 / 리스펙 (DOM 판과 동일 규칙) ----------------------------------
 
   /**
-   * 사슬 선행 조건(ADR-0047)이 `index` 를 막고 있으면 그 문구를, 아니면 null 을 돌려준다.
-   *
-   * 부족한 노드가 여럿이어도 **가장 낮은 티어 하나만** 이름으로 보여 주고 나머지는 `외 N개`
-   * 로 접는다 — 행 한 줄에 이름을 여럿 욱여넣으면 폭이 터지고, 어차피 플레이어가 다음에
-   * 눌러야 할 칸은 가장 낮은 티어 하나다. `chainMissingPrereqs` 가 티어 오름차순이라 `[0]`
-   * 이 곧 그 칸이다. 캡스톤은 사슬 밖이라 항상 null 이다(게이트 문구는 `investCapstone` 이 낸다).
+   * ADR-0049: 축당 10스킬은 처음부터 전부 투자 가능하다 — 선행 조건 판정 자체가 없다.
+   * 실패 사유는 포인트 없음 또는 이미 최대 두 가지뿐이다.
    */
-  private prereqText(index: number, forHint: boolean): string | null {
-    const def = this.def();
-    const invest = this.invest();
-    const missing = chainMissingPrereqs(invest, def, index);
-    const first = missing[0];
-    if (first === undefined) return null;
-    const node = flattenShipNodes(def)[first];
-    if (node === undefined) return null;
-    const args = { name: node.name, cur: invest[first] ?? 0, max: node.maxPoints };
-    if (forHint) return t('lab.err.chainLocked', args);
-    return missing.length > 1
-      ? t('lab.node.prereqMore', { ...args, n: missing.length - 1 })
-      : t('lab.node.prereq', args);
-  }
-
   private investNode(index: number): void {
     if (!investSkill(this.profile, index)) {
-      // 우선순위: 포인트 없음 → 사슬 잠김 → 이미 최대. 사슬 잠김을 maxed 보다 먼저 봐야
-      // "이미 최대까지 투자했습니다"라는 거짓 안내가 잠긴 칸에 뜨지 않는다.
-      this.hint =
-        this.profile.skillPoints <= 0
-          ? t('lab.err.noPoints')
-          : (this.prereqText(index, true) ?? t('lab.err.maxed'));
+      this.hint = this.profile.skillPoints <= 0 ? t('lab.err.noPoints') : t('lab.err.maxed');
       this.refresh();
       return;
     }
     this.hint = '';
     this.persist();
     this.refresh();
-  }
-
-  private investCapstone(index: number, unlocked: boolean): void {
-    if (!unlocked) {
-      // 게이트 폭은 타입별이다(스트라이커·브루저·아크·팬텀 40, 비온 44) — 상수를 박으면 거짓말.
-      this.hint = t('lab.capstone.needGate', { g: this.def().capstoneGate });
-      this.refresh();
-      return;
-    }
-    this.investNode(index);
   }
 
   private async respec(): Promise<void> {
@@ -1134,7 +1081,6 @@ export class ResearchLabScreen {
     this.modalPanel = null;
     this.trees = [];
     this.chipHost = null;
-    this.statsHost = null;
     this.modalHost = null;
     this.headSub = null;
     this.hintText = null;
@@ -1168,8 +1114,6 @@ export class ResearchLabScreen {
     this.root.addChild(backdrop.view);
     this.backdrop = backdrop;
 
-    // ⚠️ **위 → 아래 순서로 붙인다.** 패널 접지 그림자는 아래로 59px 번지는데 행 간격은 20 이라,
-    // 순서가 뒤집히면 위 패널의 그림자가 아래 패널 **위에** 얹혀 얼룩으로 읽힌다.
     const cols = def.trees.length;
     const colW = treeColumnW(cols);
     const box = treeBox(cols);
@@ -1192,34 +1136,9 @@ export class ResearchLabScreen {
 
       const listHost = new Container();
       panel.container.addChild(listHost);
-      const capstoneHost = new Container();
-      panel.container.addChild(capstoneHost);
 
-      this.trees.push({ panel, browse, listHost, capstoneHost, cols });
+      this.trees.push({ panel, browse, listHost, cols });
     }
-
-    // 파생 스탯 띠.
-    const strip = this.addPanel(STRIP_X, STRIP_Y, STRIP_W, STRIP_H, t('lab.derivedStats'));
-    const statsHost = new Container();
-    strip.container.addChild(statsHost);
-    this.statsHost = statsHost;
-
-    const syn = new Text({
-      resolution: 2,
-      text: t('lab.synergy'),
-      style: {
-        fontFamily: UI_FONT,
-        fontSize: 13,
-        fill: SLAB_BODY_FILL,
-        wordWrap: true,
-        wordWrapWidth: STRIP_SYN_W,
-        lineHeight: 17,
-        dropShadow: TEXT_SHADOW,
-      },
-    });
-    syn.anchor.set(0, 0.5);
-    syn.position.set(SBOX.right - STRIP_SYN_W, SBOX.y + SBOX.h / 2);
-    strip.container.addChild(syn);
 
     this.buildHeader();
 
@@ -1425,73 +1344,13 @@ export class ResearchLabScreen {
     const invest = this.invest();
     this.trees.forEach((slot, i) => {
       const picked = investedNodeIndices(invest, def, i);
-      slot.browse.setLabel(t('lab.browseAll', { n: picked.length, m: def.nodesPerTree }));
-      this.renderCapstone(i, slot);
+      slot.browse.setLabel(t('lab.browseAll', { n: picked.length, m: SKILLS_PER_AXIS }));
     });
-
-    this.renderStats();
 
     if (this.hintText !== null) {
       this.hintText.text = this.hint;
       this.hintText.visible = this.hint !== '';
     }
-  }
-
-  /** 파생 스탯 6열×2행. 값이 매 투자마다 바뀌므로 통째로 다시 만든다(글자뿐이라 싸다). */
-  private renderStats(): void {
-    const host = this.statsHost;
-    if (host === null) return;
-    for (const child of [...host.children]) {
-      host.removeChild(child);
-      child.destroy({ children: true });
-    }
-
-    // 파생 스탯도 **기체 타입** 을 함께 넘긴다 — 노드 정의가 타입별이라 타입을 빼면 비온의
-    // 25번째 이후 노드가 통째로 무시되고, 트리 슬라이스 폭도 20 으로 오판정된다.
-    const sums = computeSkillStats(this.invest(), this.def().id);
-    const rows = PREVIEW_ROWS.filter(([key]) => sums[key] !== 0);
-
-    if (rows.length === 0) {
-      const empty = new Text({
-        resolution: 2,
-        text: t('lab.noStats'),
-        style: { fontFamily: UI_FONT, fontSize: 16, fill: SLAB_BODY_FILL, dropShadow: TEXT_SHADOW },
-      });
-      empty.anchor.set(0, 0.5);
-      empty.position.set(STAT_X, SBOX.y + SBOX.h / 2);
-      host.addChild(empty);
-      return;
-    }
-
-    const cells = rectGridPositions(rows.length, STAT_COLS, STAT_COL_W, STAT_ROW_H, 0, 0);
-    rows.forEach(([key, labelKey, isPct], i) => {
-      const at = cells[i];
-      if (at === undefined) return;
-      const cy = SBOX.y + at.y + STAT_ROW_H / 2;
-      const k = new Text({
-        resolution: 2,
-        text: t(labelKey),
-        style: { fontFamily: UI_FONT, fontSize: 14, fill: SLAB_BODY_FILL, dropShadow: TEXT_SHADOW },
-      });
-      k.anchor.set(0, 0.5);
-      k.position.set(STAT_X + at.x, cy);
-      host.addChild(k);
-      // 시너지 증폭은 분수를 만든다(예: 59.072) — 소수 1자리로 반올림해 표시 노이즈를 줄인다.
-      const v = sums[key];
-      const shownV = Number.isInteger(v) ? String(v) : v.toFixed(1);
-      const val = new Text({
-        resolution: 2,
-        text: isPct ? `+${shownV}%` : `+${shownV}`,
-        style: { fontFamily: UI_FONT, fontSize: 15, fontWeight: '800', fill: COLOR.gold, dropShadow: TEXT_SHADOW },
-      });
-      val.anchor.set(1, 0.5);
-      val.position.set(STAT_X + at.x + STAT_COL_W - 12, cy);
-      host.addChild(val);
-      // 최악 조합(긴 라벨 "대시 재충전 감소" + 3자리 값 "+149.0%")이 붙어 보이지 않게, 값이
-      // 차지하고 남은 자리에 라벨을 가로로 눌러 맞춘다. 로케일이 바뀌어도 겹치지 않는다.
-      const labelRoom = STAT_COL_W - 12 - val.width - 10;
-      if (k.width > labelRoom) k.scale.x = labelRoom / k.width;
-    });
   }
 
   // --- 본 화면 계열 목록(찍은 것만) ----------------------------------------
@@ -1541,9 +1400,8 @@ export class ResearchLabScreen {
       return;
     }
 
-    // ⚠️ 목록 세로가 가용 높이를 넘을 수 있다 — `nodesPerTree` 가 타입별이라(해츨링 25) 2열
-    // 13행으로 가용을 넘긴다. 스크롤 영역에 넣어 두면 20노드 타입에서는 `totalH <= viewH` 라
-    // 휠 리스너조차 안 붙어 기존 거동과 같다(makeScrollArea 규약).
+    // 축당 10스킬 고정(ADR-0049)이라 본 패널 목록은 스크롤 없이 항상 들어간다. 그래도
+    // `makeScrollArea` 는 그대로 쓴다 — `totalH <= viewH` 면 휠 리스너조차 안 붙는다(규약).
     const nodes = flattenShipNodes(def);
     const cellW = Math.floor((box.w - INV_GAP_X * (INV_COLS - 1)) / INV_COLS);
     const cells = rectGridPositions(picked.length, INV_COLS, cellW, INV_H, INV_GAP_X, INV_GAP_Y);
@@ -1574,7 +1432,7 @@ export class ResearchLabScreen {
    * 본 패널의 투자 목록 행: 아이콘 + 이름 + `현재/최대`. **표시 전용**이다 — 투자는 팝업 한
    * 곳에서만 일어나게 해 진입점을 갈라 놓지 않는다. 설명은 hover 툴팁.
    */
-  private makeInvestedRow(index: number, node: SkillNode, accent: number, w: number): Container {
+  private makeInvestedRow(index: number, node: ShipSkillDef, accent: number, w: number): Container {
     const cur = this.invest()[index] ?? 0;
     const maxed = cur >= node.maxPoints;
 
@@ -1585,7 +1443,7 @@ export class ResearchLabScreen {
     plate.setSelected(maxed);
 
     const iconBoxY = Math.round((INV_H - INV_ICON) / 2);
-    row.addChild(makeSkillIcon(this.ui[skillIconName(node)], 7, iconBoxY, INV_ICON, accent, maxed));
+    row.addChild(makeSkillIcon(this.ui[skillNodeIconName(node)], 7, iconBoxY, INV_ICON, accent, maxed));
 
     const pts = new Text({
       resolution: 2,
@@ -1628,59 +1486,6 @@ export class ResearchLabScreen {
     row.on('pointermove', (e) => this.moveTip(e.global.x, e.global.y));
     row.on('pointerout', () => this.tooltip.hide());
     return row;
-  }
-
-  /** 캡스톤: 해금이면 금색 버튼, 잠기면 석재 버튼 + 게이트 진행도. */
-  private renderCapstone(treeIndex: number, slot: TreeSlot): void {
-    const host = slot.capstoneHost;
-    for (const child of [...host.children]) {
-      host.removeChild(child);
-      child.destroy({ children: true });
-    }
-
-    const def = this.def();
-    const treeDef = def.trees[treeIndex];
-    if (treeDef === undefined) return;
-    const accent = AFFINITY_ACCENT[treeDef.affinity];
-    const invest = this.invest();
-    const index = shipCapstoneIndex(def, treeIndex);
-    const node = flattenShipNodes(def)[index];
-    if (node === undefined) return;
-    const cur = invest[index] ?? 0;
-    const unlocked = shipCapstoneUnlocked(invest, def, treeIndex);
-    const gateProgress = shipTreeBaseInvested(invest, def, treeIndex);
-    const box = treeBox(slot.cols);
-
-    const label = unlocked
-      ? `★ ${node.name}   ${cur}/${node.maxPoints}`
-      : `${node.name}   ${gateProgress}/${def.capstoneGate}`;
-    const btn = this.chromeButton({
-      tone: unlocked ? 'gold' : 'stone',
-      width: box.w,
-      height: CAPSTONE_H,
-      fontSize: 18,
-      label,
-      onClick: () => this.investCapstone(index, unlocked),
-    });
-    // 캡스톤은 perPoint 0 인 질적 노드라 스탯 아이콘을 붙이면 거짓말이 된다 — 계열별 개별 아트.
-    btn.container.addChild(
-      makeSkillIcon(
-        this.ui[skillIconName(node)],
-        CAPSTONE_ICON_X,
-        Math.round((CAPSTONE_H - CAPSTONE_ICON) / 2),
-        CAPSTONE_ICON,
-        accent,
-        unlocked,
-      ),
-    );
-    btn.container.position.set(box.x, CAPSTONE_Y);
-    btn.container.on('pointerover', (e) =>
-      this.showTip(index, unlocked ? COLOR.gold : accent, e.global.x, e.global.y),
-    );
-    btn.container.on('pointermove', (e) => this.moveTip(e.global.x, e.global.y));
-    btn.container.on('pointerout', () => this.tooltip.hide());
-    if (!unlocked) btn.container.alpha = 0.78;
-    host.addChild(btn.container);
   }
 
   // --- 팝업 -----------------------------------------------------------------
@@ -1756,9 +1561,10 @@ export class ResearchLabScreen {
   }
 
   /**
-   * 계열 전체 20~25노드를 아이콘 + 이름 + 설명 + `현재/최대` 로 보여 주고 거기서 투자시킨다.
+   * 계열 전체 10노드를 아이콘 + 이름 + 설명 + `현재/최대` 로 보여 주고 거기서 투자시킨다.
    * 세로 스크롤은 마스크 + 클립 Container 조합이고, 마스크 높이는 행 피치의 배수로 클램프해
-   * 반토막 행이 나오지 않게 한다.
+   * 반토막 행이 나오지 않게 한다(축당 10노드 고정이라 지금은 스크롤이 실제로 발동하지 않지만
+   * 기구는 방어적으로 유지한다).
    */
   private renderPopup(treeIndex: number, host: Container): void {
     const def = this.def();
@@ -1793,7 +1599,7 @@ export class ResearchLabScreen {
       resolution: 2,
       text: t('lab.all.sub', {
         n: this.profile.skillPoints,
-        m: shipTreeBaseInvested(this.invest(), def, treeIndex),
+        m: axisInvested(this.invest(), def, treeIndex),
       }),
       style: { fontFamily: UI_FONT, fontSize: 15, fill: SLAB_BODY_FILL, dropShadow: TEXT_SHADOW },
     });
@@ -1813,7 +1619,7 @@ export class ResearchLabScreen {
     // 마스크 하한은 콘텐츠 상자 바닥 — 목록이 패널 테두리에 닿지 않는다.
     const viewH = clampToRowHeight(PBOX.bottom - POP_LIST_TOP, POP_ROW_PITCH);
     const { start } = shipTreeRange(def, treeIndex);
-    const perTree = def.nodesPerTree;
+    const perTree = SKILLS_PER_AXIS;
     const totalH = listStackHeight(perTree, 1, POP_ROW_H, POP_ROW_GAP);
 
     const clip = new Container();
@@ -1868,13 +1674,14 @@ export class ResearchLabScreen {
     }
   }
 
-  /** 팝업 목록 행: 아이콘 + 이름 + 상세 설명 + `현재/최대`. 행 클릭 = 1포인트 투자. */
-  private makePopupRow(index: number, node: SkillNode, accent: number): Container {
+  /**
+   * 팝업 목록 행: 아이콘 + 이름 + 설명 + `현재/최대`. 행 클릭 = 1포인트 투자. ADR-0049 이후
+   * 선행 조건이 없으므로 `canInvest` 는 포인트 有 + 미달성 두 조건뿐이다.
+   */
+  private makePopupRow(index: number, node: ShipSkillDef, accent: number): Container {
     const cur = this.invest()[index] ?? 0;
     const maxed = cur >= node.maxPoints;
-    // 사슬 선행 조건(ADR-0047). 배치는 그대로 두고 **설명줄 글자만** 바꾼다.
-    const prereq = this.prereqText(index, false);
-    const canInvest = !maxed && prereq === null && this.profile.skillPoints > 0;
+    const canInvest = !maxed && this.profile.skillPoints > 0;
 
     const row = new Container();
     const plate = rowPlate(POP_ROW_W, POP_ROW_H);
@@ -1882,7 +1689,7 @@ export class ResearchLabScreen {
     plate.setSelected(cur > 0);
 
     const iconBoxY = Math.round((POP_ROW_H - POP_ICON) / 2);
-    row.addChild(makeSkillIcon(this.ui[skillIconName(node)], 12, iconBoxY, POP_ICON, accent, maxed));
+    row.addChild(makeSkillIcon(this.ui[skillNodeIconName(node)], 12, iconBoxY, POP_ICON, accent, maxed));
 
     const pts = new Text({
       resolution: 2,
@@ -1918,12 +1725,11 @@ export class ResearchLabScreen {
     if (name.width > textW) name.scale.x = textW / name.width;
     row.addChild(name);
 
+    // 설명은 `node.desc` 그대로다 — 구 코드는 `stat`/`perPoint` 로 "+3% 공격력" 문구를
+    // **생성**했지만 ADR-0049 는 그 데이터를 지웠다. 없는 수치를 추측해 만들지 않는다.
     const detail = new Text({
       resolution: 2,
-      text:
-        prereq !== null
-          ? `${node.desc} · ${prereq}`
-          : `${node.desc} · ${t('lab.node.meta', { t: node.tier + 1, m: node.maxPoints })}`,
+      text: node.desc,
       style: {
         fontFamily: UI_FONT,
         fontSize: 13,
@@ -2175,7 +1981,7 @@ export class ResearchLabScreen {
     box.addChild(name);
 
     // 잠긴 칸은 **필요 투자량**을 그대로 보여 준다(AC-16). 임계는 `threshold` 파생이라
-    // 해츨링 고티어의 44 가 자동으로 따라온다 — 문구에 40 을 박으면 그 기체에서만 거짓말이 된다.
+    // 기체별 게이트(`activeHiGate`)가 자동으로 따라온다 — 문구에 상수를 박으면 그 기체에서만 거짓말이 된다.
     const status = new Text({
       resolution: 2,
       text: view.unlocked
