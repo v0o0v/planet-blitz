@@ -68,6 +68,7 @@ import { t, type MessageKey } from '../../i18n/index.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
 import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
+import { HELP_HEAD_W, openHelpOverlay, type HelpSpec } from './helpModal.js';
 import {
   makeHangarTitle,
   cinematicButtonTexture,
@@ -114,6 +115,16 @@ const MS_H = MAIN_Y + MAIN_H - MS_Y;
 
 /** 헤더 닫기 한 변. */
 const CLOSE_W = 56;
+/** 헤더 컨트롤 사이 틈 · 도움말 버튼 x(여섯 화면 공통 자리 · {@link HELP_HEAD_W} 주석). */
+const HEAD_GAP = 12;
+const CLOSE_X = DESIGN_WIDTH - EDGE_X - CLOSE_W;
+const HELP_X = CLOSE_X - HEAD_GAP - 2 - HELP_HEAD_W;
+
+/** 계보 전당 도움말 절 목록. 기구는 공용 모듈이 쥔다 — 여기서는 무엇을 말할지만 정한다. */
+export const LINEAGE_HELP: HelpSpec = {
+  prefix: 'lineage.help',
+  sections: ['s1', 's2', 's3', 's4'],
+};
 
 /**
  * 좌상단 예약 밴드 — `main.ts` SettingsScreen 의 설정 톱니가 쓰는 **전 화면 공용 자리**다.
@@ -145,7 +156,7 @@ export function lineageHallLayout(): {
   }[];
   readonly headerControls: readonly { readonly id: string; readonly rect: LineageHallRect }[];
 } {
-  const closeX = DESIGN_WIDTH - EDGE_X - CLOSE_W;
+  const closeX = CLOSE_X;
   return {
     screen: { x: 0, y: 0, w: DESIGN_WIDTH, h: DESIGN_HEIGHT },
     headerH: HEADER_H,
@@ -154,7 +165,10 @@ export function lineageHallLayout(): {
       { id: 'points', rect: { x: SIDE_X, y: POINTS_Y, w: SIDE_W, h: POINTS_H } },
       { id: 'milestones', rect: { x: SIDE_X, y: MS_Y, w: SIDE_W, h: MS_H } },
     ],
-    headerControls: [{ id: 'close', rect: { x: closeX, y: HEAD_Y, w: CLOSE_W, h: HEAD_H } }],
+    headerControls: [
+      { id: 'help', rect: { x: HELP_X, y: HEAD_Y, w: HELP_HEAD_W, h: HEAD_H } },
+      { id: 'close', rect: { x: closeX, y: HEAD_Y, w: CLOSE_W, h: HEAD_H } },
+    ],
   };
 }
 
@@ -420,6 +434,8 @@ export class LineageHallScreen {
   /** 팝업 패널은 나고 지므로 따로 잡는다(연출 dt 를 받아야 한다). */
   private modalPanel: CinematicPanel | null = null;
   private modalHost: Container | null = null;
+  private helpOpen = false;
+  private helpScroll = 0;
   private branches: BranchWidgets[] = [];
   private pointsValue: Text | null = null;
   private hintText: Text | null = null;
@@ -709,7 +725,7 @@ export class LineageHallScreen {
     title.position.set(DESIGN_WIDTH / 2, HEAD_Y - 4);
     this.root.addChild(title);
 
-    const closeX = DESIGN_WIDTH - EDGE_X - CLOSE_W;
+    const closeX = CLOSE_X;
     const close = this.chromeButton({
       tone: 'stone',
       width: CLOSE_W,
@@ -721,6 +737,25 @@ export class LineageHallScreen {
     });
     close.container.position.set(closeX, HEAD_Y);
     this.root.addChild(close.container);
+
+    // 도움말 — 닫기와 **같은 세로 띠**를 쓰고 가로로만 자리를 잡는다.
+    const help = this.chromeButton({
+      tone: 'stone',
+      width: HELP_HEAD_W,
+      height: HEAD_H,
+      fontSize: 20,
+      label: t('lineage.help'),
+      onClick: () => this.openHelp(),
+    });
+    help.container.position.set(HELP_X, HEAD_Y);
+    this.root.addChild(help.container);
+  }
+
+  /** 화면 안내 팝업 — 읽기 전용이라 계보 투자를 건드리지 않는다. */
+  private openHelp(): void {
+    this.helpOpen = true;
+    this.helpScroll = 0;
+    this.renderModal();
   }
 
   /**
@@ -1114,6 +1149,23 @@ export class LineageHallScreen {
     for (const child of [...host.children]) {
       host.removeChild(child);
       child.destroy({ children: true });
+    }
+    // 도움말은 화면의 확인 팝업과 같은 그릇을 쓰되 **먼저** 본다 — 기구는 공용 모듈이 통째로
+    // 세운다(암막+패널+내용). 여섯 화면이 같은 팝업을 쓰므로 여기서 다시 조립하면 갈린다.
+    if (this.helpOpen) {
+      this.root.setChildIndex(host, this.root.children.length - 1);
+      this.modalPanel = openHelpOverlay(host, {
+        spec: LINEAGE_HELP,
+        get: () => this.helpScroll,
+        set: (v) => {
+          this.helpScroll = v;
+        },
+        onClose: () => {
+          this.helpOpen = false;
+          this.renderModal();
+        },
+      });
+      return;
     }
     const branch = this.confirming;
     if (branch === null) return;

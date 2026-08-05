@@ -111,6 +111,7 @@ import { makeScrollArea, rowBounds } from './scrollArea.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
 import { makeCinematicPanel, cinematicWindowOpening, type CinematicPanel } from './cinematicPanel.js';
+import { HELP_HEAD_W, openHelpOverlay, type HelpSpec } from './helpModal.js';
 import {
   makeHangarTitle,
   cinematicButtonTexture,
@@ -230,6 +231,13 @@ export const ARENA_VIEWPORT = {
 // --- 헤더 컨트롤(형제 화면과 **같은 x**) ---
 const CLOSE_W = 56;
 const CLOSE_X = DESIGN_WIDTH - EDGE_X - CLOSE_W;
+const HELP_GAP = 12;
+const HELP_X = CLOSE_X - HELP_GAP - 2 - HELP_HEAD_W;
+
+export const STAR_HELP: HelpSpec = {
+  prefix: 'planet.help',
+  sections: ['s1', 's2', 's3', 's4', 's5'],
+};
 
 /**
  * 각인 제목이 실제로 차지하는 가로 반폭. 중앙 정렬 Text 는 사각형이 없어 겹침 테스트가 못
@@ -503,7 +511,10 @@ export function planetSelectLayout(): {
         { x: LAUNCH_X, y: FOOT_Y, w: LAUNCH_W, h: FOOT_H },
       ],
     },
-    headerControls: [{ id: 'close', rect: { x: CLOSE_X, y: HEAD_Y, w: CLOSE_W, h: HEAD_H } }],
+    headerControls: [
+      { id: 'help', rect: { x: HELP_X, y: HEAD_Y, w: HELP_HEAD_W, h: HEAD_H } },
+      { id: 'close', rect: { x: CLOSE_X, y: HEAD_Y, w: CLOSE_W, h: HEAD_H } },
+    ],
     windows: [{ ...ARENA_VIEWPORT }],
   };
 }
@@ -1260,6 +1271,10 @@ export class PlanetSelectScreen {
   private panels: CinematicPanel[] = [];
   private arena: ArenaView | null = null;
   private chromeBuilt = false;
+  private helpOpen = false;
+  private helpScroll = 0;
+  private helpHost: Container | null = null;
+  private helpPanel: CinematicPanel | null = null;
   private listHost: Container | null = null;
   private opsHost: Container | null = null;
   private footHost: Container | null = null;
@@ -1532,6 +1547,9 @@ export class PlanetSelectScreen {
   }
 
   private destroyChrome(): void {
+    this.helpPanel?.destroy();
+    this.helpPanel = null;
+    this.helpHost = null;
     this.backdrop?.destroy();
     this.backdrop = null;
     this.arena?.destroy();
@@ -1670,6 +1688,52 @@ export class PlanetSelectScreen {
     });
     close.container.position.set(CLOSE_X, HEAD_Y);
     this.root.addChild(close.container);
+
+    // 도움말 — 닫기와 **같은 세로 띠**를 쓰고 가로로만 자리를 잡는다.
+    const help = this.chromeButton({
+      tone: 'stone',
+      width: HELP_HEAD_W,
+      height: HEAD_H,
+      fontSize: 20,
+      label: t('planet.help'),
+      onClick: () => {
+        this.helpOpen = true;
+        this.helpScroll = 0;
+        this.refresh();
+      },
+    });
+    help.container.position.set(HELP_X, HEAD_Y);
+    this.root.addChild(help.container);
+
+    // 도움말 팝업 그릇 — 항상 맨 위에 뜬다.
+    const helpHost = new Container();
+    this.root.addChild(helpHost);
+    this.helpHost = helpHost;
+  }
+
+  /** 도움말 팝업을 다시 그린다. 기구는 공용 모듈이 통째로 쥔다(암막+패널+내용). */
+  private renderHelp(): void {
+    const host = this.helpHost;
+    if (host === null) return;
+    this.helpPanel?.destroy();
+    this.helpPanel = null;
+    for (const child of [...host.children]) {
+      host.removeChild(child);
+      child.destroy({ children: true });
+    }
+    if (!this.helpOpen) return;
+    this.root.setChildIndex(host, this.root.children.length - 1);
+    this.helpPanel = openHelpOverlay(host, {
+      spec: STAR_HELP,
+      get: () => this.helpScroll,
+      set: (v) => {
+        this.helpScroll = v;
+      },
+      onClose: () => {
+        this.helpOpen = false;
+        this.refresh();
+      },
+    });
   }
 
   /**
@@ -1753,6 +1817,7 @@ export class PlanetSelectScreen {
     this.syncArena();
     this.renderList();
     this.renderOps();
+    this.renderHelp();
   }
 
   private syncValues(): void {

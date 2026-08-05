@@ -39,6 +39,12 @@ import { TOWER_HELP } from '../src/ui/pixi/controlTower.js';
 import { ARCHIVE_HELP } from '../src/ui/pixi/recordsArchive.js';
 import { DESK_HELP } from '../src/ui/pixi/commissionDesk.js';
 import { HANGAR_HELP } from '../src/ui/pixi/hangar.js';
+import { STAR_HELP } from '../src/ui/pixi/planetSelect.js';
+import { MODULES_HELP } from '../src/ui/pixi/modulesView.js';
+import { CATALYST_HELP } from '../src/ui/pixi/catalystArchive.js';
+import { CHAMPION_HELP } from '../src/ui/pixi/championSelect.js';
+import { ROSTER_HELP } from '../src/ui/pixi/guardianRoster.js';
+import { LINEAGE_HELP } from '../src/ui/pixi/lineageHall.js';
 
 /**
  * 도움말을 가진 화면 전부. **새 화면에 도움말을 붙이면 여기에 한 줄 추가한다** — 그것이
@@ -52,6 +58,12 @@ const SPECS: readonly { readonly screen: string; readonly spec: HelpSpec }[] = [
   { screen: '기록 보관소', spec: ARCHIVE_HELP },
   { screen: '지시 수신소', spec: DESK_HELP },
   { screen: '격납고', spec: HANGAR_HELP },
+  { screen: '성계 지도', spec: STAR_HELP },
+  { screen: '코어 모듈', spec: MODULES_HELP },
+  { screen: '촉매 보관함', spec: CATALYST_HELP },
+  { screen: '기체 선택', spec: CHAMPION_HELP },
+  { screen: '예비역 로스터', spec: ROSTER_HELP },
+  { screen: '계보 전당', spec: LINEAGE_HELP },
 ];
 
 const en = EN as Record<string, string>;

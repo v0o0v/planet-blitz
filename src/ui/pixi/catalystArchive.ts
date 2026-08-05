@@ -102,6 +102,7 @@ import { penaltyRow, rewardRow } from '../catalystLabels.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
 import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
+import { HELP_HEAD_W, openHelpOverlay, type HelpSpec } from './helpModal.js';
 import {
   makeHangarTitle,
   makeHangarChip,
@@ -152,6 +153,12 @@ const FILTER_GAP = 12;
 const CHIP_W = 190;
 const HEAD_GAP = 14;
 const CLOSE_W = 56;
+/** 도움말 버튼 폭 — 여섯 화면 공통 자리({@link HELP_HEAD_W} 주석).
+ */
+export const CATALYST_HELP: HelpSpec = {
+  prefix: 'catalyst.help',
+  sections: ['s1', 's2', 's3', 's4', 's5'],
+};
 
 /** 화면 좌표 사각형(디자인 스페이스). */
 export interface CatalystArchiveRect {
@@ -185,6 +192,7 @@ export function catalystArchiveLayout(): {
   const closeX = DESIGN_WIDTH - EDGE_X - CLOSE_W;
   const mineralsX = closeX - HEAD_GAP - CHIP_W;
   const creditsX = mineralsX - HEAD_GAP - CHIP_W;
+  const helpX = creditsX - HEAD_GAP - HELP_HEAD_W;
   const head = (x: number, w: number): CatalystArchiveRect => ({ x, y: HEAD_Y, w, h: HEAD_H });
   return {
     screen: { x: 0, y: 0, w: DESIGN_WIDTH, h: DESIGN_HEIGHT },
@@ -196,6 +204,7 @@ export function catalystArchiveLayout(): {
     ],
     headerControls: [
       ...FILTERS.map((f, i) => ({ id: `filter:${f.id}`, rect: head(FILTER_X + i * (FILTER_W + FILTER_GAP), FILTER_W) })),
+      { id: 'help', rect: head(helpX, HELP_HEAD_W) },
       { id: 'credits', rect: head(creditsX, CHIP_W) },
       { id: 'minerals', rect: head(mineralsX, CHIP_W) },
       { id: 'close', rect: head(closeX, CLOSE_W) },
@@ -446,6 +455,10 @@ export class CatalystArchiveScreen {
   private filterHost: Container | null = null;
   /** 재화 칩만 갈아끼우는 그릇(값이 구워져 있어 세터가 없다). */
   private chipHost: Container | null = null;
+  private helpOpen = false;
+  private helpScroll = 0;
+  private helpHost: Container | null = null;
+  private helpPanel: CinematicPanel | null = null;
   /** 잔재 패널의 큰 숫자·보유 요약·안내 문구·결과 문구 — 서버 왕복 때 `.text` 만 갈린다. */
   private residueValue: Text | null = null;
   private residueNote: Text | null = null;
@@ -672,6 +685,9 @@ export class CatalystArchiveScreen {
   }
 
   private destroyChrome(): void {
+    this.helpPanel?.destroy();
+    this.helpPanel = null;
+    this.helpHost = null;
     // 연출 참조를 먼저 끊는다 — destroy 된 컨테이너를 update 가 만지면 안 된다.
     this.backdrop?.destroy();
     this.backdrop = null;
@@ -831,10 +847,57 @@ export class CatalystArchiveScreen {
     close.container.position.set(closeX, HEAD_Y);
     this.root.addChild(close.container);
 
+    // 도움말 — 재화 칩·닫기와 **같은 세로 띠**를 쓰고 가로로만 자리를 잡는다.
+    const helpX = closeX - HEAD_GAP - CHIP_W - HEAD_GAP - CHIP_W - HEAD_GAP - HELP_HEAD_W;
+    const help = this.chromeButton({
+      tone: 'stone',
+      width: HELP_HEAD_W,
+      height: HEAD_H,
+      fontSize: 20,
+      label: t('catalyst.help'),
+      onClick: () => {
+        this.helpOpen = true;
+        this.helpScroll = 0;
+        this.renderHelp();
+      },
+    });
+    help.container.position.set(helpX, HEAD_Y);
+    this.root.addChild(help.container);
+
     const chips = new Container();
     this.root.addChild(chips);
     this.chipHost = chips;
     this.buildChips();
+
+    // 도움말 팝업 그릇 — 항상 맨 위에 뜬다.
+    const helpHost = new Container();
+    this.root.addChild(helpHost);
+    this.helpHost = helpHost;
+  }
+
+  /** 도움말 팝업을 다시 그린다. 기구는 공용 모듈이 통째로 쥔다(암막+패널+내용). */
+  private renderHelp(): void {
+    const host = this.helpHost;
+    if (host === null) return;
+    this.helpPanel?.destroy();
+    this.helpPanel = null;
+    for (const child of [...host.children]) {
+      host.removeChild(child);
+      child.destroy({ children: true });
+    }
+    if (!this.helpOpen) return;
+    this.root.setChildIndex(host, this.root.children.length - 1);
+    this.helpPanel = openHelpOverlay(host, {
+      spec: CATALYST_HELP,
+      get: () => this.helpScroll,
+      set: (v) => {
+        this.helpScroll = v;
+      },
+      onClose: () => {
+        this.helpOpen = false;
+        this.renderHelp();
+      },
+    });
   }
 
   /**

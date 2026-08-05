@@ -116,6 +116,7 @@ import { attachRowClick, stopRowPropagation } from './listRow.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
 import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
+import { HELP_HEAD_W, openHelpOverlay, type HelpSpec } from './helpModal.js';
 import {
   makeHangarTitle,
   makeHangarChip,
@@ -360,6 +361,14 @@ const CLOSE_X = DESIGN_WIDTH - EDGE_X - CLOSE_W;
  * 배경이 그대로 보이는 띠라 칩이 하나여도 빈 자리가 아니다.
  */
 const CREDIT_CHIP_X = CLOSE_X - HEAD_GAP - 2 - CHIP_W;
+/** 도움말 버튼 — 재화 칩 왼쪽(여섯 화면 공통 자리 · {@link HELP_HEAD_W} 주석). */
+const HELP_X = CREDIT_CHIP_X - HEAD_GAP - 2 - HELP_HEAD_W;
+
+/** 코어 모듈 도움말 절 목록. 기구는 공용 모듈이 쥔다 — 여기서는 무엇을 말할지만 정한다. */
+export const MODULES_HELP: HelpSpec = {
+  prefix: 'mod.help',
+  sections: ['s1', 's2', 's3', 's4', 's5'],
+};
 
 /**
  * 각인 제목이 실제로 차지하는 가로 반폭. 중앙 정렬 Text 는 사각형이 없어 겹침 테스트가 못
@@ -445,6 +454,7 @@ export function coreModulesLayout(): {
       ],
     },
     headerControls: [
+      { id: 'help', rect: head(HELP_X, HELP_HEAD_W) },
       { id: 'credits', rect: head(CREDIT_CHIP_X, CHIP_W) },
       { id: 'close', rect: head(CLOSE_X, CLOSE_W) },
     ],
@@ -688,6 +698,9 @@ export class ModulesScreen {
   private readonly fusePicks = new Set<string>();
   /** 분해 확인 팝업 대상(보관함 행 id). null 이면 팝업이 없다. */
   private salvageId: string | null = null;
+  /** 화면 안내 팝업 — 열림 여부와 스크롤 위치(재렌더 사이 유지). */
+  private helpOpen = false;
+  private helpScroll = 0;
   /** 하단 안내(성공/오류 토스트). */
   private msgText = '';
   /** 네트워크 요청 진행 중(중복 클릭 방지). */
@@ -1321,6 +1334,22 @@ export class ModulesScreen {
     });
     close.container.position.set(CLOSE_X, HEAD_Y);
     this.root.addChild(close.container);
+
+    // 도움말 — 재화 칩·닫기와 **같은 세로 띠**를 쓰고 가로로만 자리를 잡는다.
+    const help = this.chromeButton({
+      tone: 'stone',
+      width: HELP_HEAD_W,
+      height: HEAD_H,
+      fontSize: 20,
+      label: t('mod.help'),
+      onClick: () => {
+        this.helpOpen = true;
+        this.helpScroll = 0;
+        this.renderModal();
+      },
+    });
+    help.container.position.set(HELP_X, HEAD_Y);
+    this.root.addChild(help.container);
 
     // 칩은 값이 구워진 컨테이너라 갱신이 아니라 재조립이다 — 그릇만 잡아 둔다.
     const chips = new Container();
@@ -1975,6 +2004,23 @@ export class ModulesScreen {
     this.modalPanel?.destroy();
     this.modalPanel = null;
     this.clearHost(host);
+    // 도움말은 화면의 분해 확인 팝업과 같은 그릇을 쓰되 **먼저** 본다 — 기구는 공용 모듈이
+    // 통째로 세운다(암막+패널+내용).
+    if (this.helpOpen) {
+      this.root.setChildIndex(host, this.root.children.length - 1);
+      this.modalPanel = openHelpOverlay(host, {
+        spec: MODULES_HELP,
+        get: () => this.helpScroll,
+        set: (v) => {
+          this.helpScroll = v;
+        },
+        onClose: () => {
+          this.helpOpen = false;
+          this.renderModal();
+        },
+      });
+      return;
+    }
     const targetId = this.salvageId;
     if (targetId === null) return;
     const owned = this.ownedById(targetId);

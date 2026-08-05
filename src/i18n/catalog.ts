@@ -204,6 +204,24 @@ export const EN = {
 
   // --- 성계 지도 ---
   'planet.title': 'Star Map',
+  // 성계 지도 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 주석 ①).
+  'planet.help': 'Help',
+  'planet.help.title': 'Star Map Guide',
+  'planet.help.s1.h': 'What this screen is for',
+  'planet.help.s1.b':
+    'This is the launch screen. You pick a planet, pick a stage, optionally inject catalysts, and go.\nEach planet is an archive facility of the lost Oscar civilization with its own enemies, its own terrain, and its own drop table. Which planet you run decides what you can find, not just how it looks.',
+  'planet.help.s2.h': 'Stages',
+  'planet.help.s2.b':
+    'Stage is the difficulty axis and it starts at 1 with no upper limit. Each planet tracks its own best clear independently.\nWhat you may attempt is your best clear plus five, floored at ten. Clearing is the only thing that opens stages — your ship level never locks one.\nAs a rough anchor, ship level around five times the stage number is comfortable. Stage raises the quality of loot, not the quantity, and it also sets the required level on what drops there so that gear is wearable rather than something you shelve.',
+  'planet.help.s3.h': 'Catalysts',
+  'planet.help.s3.b':
+    'Catalysts are consumables injected here, just before launch. Every catalyst carries a difficulty penalty and a reward boost as one inseparable package — there is no catalyst that only helps.\nYou may inject several at once, including duplicates of the same kind. They are consumed when the run starts, whether or not it goes well.\nCatalysts are for ordinary planet runs only. They never enter a commission run or an invasion.',
+  'planet.help.s4.h': 'The popularity multiplier',
+  'planet.help.s4.b':
+    'Each planet shows a live multiplier. It rises on planets few pilots are running and falls on crowded ones, rebalancing automatically from how many runs everyone settled in the last hour.\nIt moves quantity, experience, and resources only. Loot quality is never touched, and neither are boss guaranteed drops, planet-exclusive blueprints and catalysts, encounter rewards, or invasion payouts. The rule is that only fungible rewards get a multiplier.\nThe value is stamped onto your run at launch, so the number you saw is the number you get. Offline or logged out, every planet reads 1.0.',
+  'planet.help.s5.h': 'Before you launch',
+  'planet.help.s5.b':
+    'The summary beside the launch button states what is actually confirmed — planet, stage, and injected catalysts. Read it rather than trusting what you thought you selected.\nRun growth is temporary. Levels and powerups gathered inside a run vanish when it ends; what you keep is the loot and the resources, which are the raw material for permanent growth back at the base.',
   'planet.sub': 'Choose a planet and invasion stage.',
   'planet.stageLabel': 'Invasion Stage',
   'planet.stageDesc': 'Stage {stage} · open up to {cap}',
@@ -248,6 +266,24 @@ export const EN = {
   'catalyst.sortie.skip': 'Launch Without Catalysts',
   'catalyst.manage.open': 'Catalysts',
   'catalyst.manage.title': 'Catalyst Stock',
+  // 촉매 보관함 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 주석 ①).
+  'catalyst.help': 'Help',
+  'catalyst.help.title': 'Catalyst Stock Guide',
+  'catalyst.help.s1.h': 'What a catalyst is',
+  'catalyst.help.s1.b':
+    'A catalyst is a consumable that intensifies one run. Every catalyst carries a difficulty penalty and a reward boost as one inseparable package — none of them is purely an upgrade.\nEach kind has a fixed effect and no grade, so two copies of the same catalyst are identical. You inject them on the Star Map just before launching, and they are consumed when the run starts.',
+  'catalyst.help.s2.h': 'Common and planet-exclusive',
+  'catalyst.help.s2.b':
+    'Common catalysts drop anywhere and are the bulk of what you will hold.\nPlanet-exclusive catalysts drop only on the planet they belong to. They are never sold, so the only way to get one is to go there and earn it.',
+  'catalyst.help.s3.h': 'Dismantling and residue',
+  'catalyst.help.s3.b':
+    'Dismantling a catalyst returns catalyst residue. Residue has exactly one source and one use: it comes from dismantling and it buys catalysts in the shop on this screen. Nothing else produces it and nothing else spends it.\nThat closed loop is deliberate. If credits or minerals could buy catalysts, you could raise your resource multipliers with resources and spend the winnings on more catalysts — the shop is sealed off from your other currencies to prevent exactly that.',
+  'catalyst.help.s4.h': 'The shop',
+  'catalyst.help.s4.b':
+    'The shop stocks the full common catalogue at all times, so nothing is ever out of stock or on rotation. Planet-exclusive catalysts are never sold.\nBoth the refund from dismantling and the purchase price derive from how rare a catalyst is, and the refund is always lower than the price. Every trip through residue therefore shrinks your total catalyst count slightly. Converting freely is not free.\nExclusives refund by the same formula but cannot be bought back, so their listed price is a figure you can read but never pay.',
+  'catalyst.help.s5.h': 'Where catalysts do and do not apply',
+  'catalyst.help.s5.b':
+    'Catalysts are for ordinary PvE planet runs. They never enter an invasion or a commission run — a commission already has its stage and rewards written, so there is nothing for a catalyst to season.\nThe server holds your catalyst records, so this screen and the shop need a login.',
   'catalyst.manage.empty': 'No catalysts in stock. Earn them from elite and boss runs.',
   'catalyst.manage.owned': 'x{n}',
   // {n} = 이번 클릭으로 실제 분해될 수량(스테퍼 값을 보유량으로 깎은 값). 되돌릴 수 없는
@@ -874,6 +910,21 @@ export const EN = {
 
   // --- 챔피언 선택(M8) ---
   'champion.title': 'Choose Your Ship',
+  // 챔피언 선택 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 주석 ①).
+  'champion.help': 'Help',
+  'champion.help.title': 'Ship Selection Guide',
+  'champion.help.s1.h': 'What you are choosing',
+  'champion.help.s1.b':
+    'You are picking the ship you will fly next. The whole roster is open — nothing here needs unlocking.\nThis choice is not cosmetic. A ship type owns its three skill trees, its signature passive, its six active skills, its base stat modifiers, and its look. What stays the same across every type is the eight gear slots, movement, hitbox, and controls.',
+  'champion.help.s2.h': 'What carries over and what does not',
+  'champion.help.s2.b':
+    'Gear carries over. All eight slots are shared across ship types, which is what keeps farming meaningful through generation after generation.\nSkill investment does not. Trees belong to the ship type, so a new ship starts at level 1 with its own trees to fill.\nLineage carries over too, and it never resets — every bonus you bought in the Lineage Hall applies to this ship from its first run.',
+  'champion.help.s3.h': 'Switching means retiring',
+  'champion.help.s3.b':
+    'Taking a new ship retires the current one, which is why the button is locked until it reaches level 100. The retired ship keeps its equipped gear locked inside and becomes a guardian.\nRetirement pays lineage points and the retired ship can stand in your defense base. It is a step forward in the loop rather than a loss, but it is permanent — the ship does not come back to active duty.',
+  'champion.help.s4.h': 'Signature passives and stories',
+  'champion.help.s4.b':
+    'Every type except the baseline one carries a signature passive that is always on and cannot be invested in. It is the clearest single difference between two ships, so read it before you commit.\nEach ship also has a three-chapter story explaining why it has that passive. Chapter one is readable here from the start; the rest unlock through play and collect in the Record Vault.',
   'champion.roster': 'Roster',
   'champion.rosterSub': 'All ships are available — no unlock requirements.',
   'champion.confirm': 'Retire & Switch to {name}',
@@ -904,6 +955,21 @@ export const EN = {
 
   // --- 예비역 수호기 로스터·소멸(ADR-0024 Task #8) ---
   'guardians.title': 'Reserve Guardians',
+  // 예비역 로스터 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 주석 ①).
+  'guardians.help': 'Help',
+  'guardians.help.title': 'Reserve Guardians Guide',
+  'guardians.help.s1.h': 'What a guardian is',
+  'guardians.help.s1.b':
+    'A guardian is a ship you retired. Retiring is only possible at level 100, and the ship keeps the gear it had equipped — locked inside it rather than returned to your stash.\nGuardians are not idle trophies. They can be deployed to the core room of your defense base, where the lineage guardian branch strengthens all of them at once.',
+  'guardians.help.s2.h': 'Dismantling',
+  'guardians.help.s2.b':
+    'Dismantling breaks a guardian down. You get lineage points back and the gear locked inside returns to your stash.\nThe points returned scale with what the ship was worth — its combat score at retirement, which folds in gear grade, affix value, and skill build. A stronger retirement returns more.\nThis never happens on its own. A guardian sits in your roster indefinitely until you choose to dismantle it, and the choice cannot be undone.',
+  'guardians.help.s3.h': 'Deployed guardians wear differently',
+  'guardians.help.s3.b':
+    'Neglect only touches defense units you have actually deployed, guardians included. Anything sitting in this roster keeps its condition.\nGuardians are the one exception to repair — a deployed guardian\'s condition cannot be restored once it has worn, so treat deployment as a decision with a cost rather than a free placement.',
+  'guardians.help.s4.h': 'How this fits the loop',
+  'guardians.help.s4.b':
+    'Retire, dismantle, invest. Retirement pays lineage points up front, dismantling recovers more from ships you no longer need, and the Lineage Hall next door is where those points buy permanent bonuses for every future ship.\nBecause dismantling also frees the gear locked inside, an old guardian is worth revisiting once the equipment inside it starts to look useful again.',
   'guardians.empty': 'No guardians yet. Retire a ship to leave one in reserve.',
   'guardians.perf': 'Performance {pct}%',
   'guardians.gear': 'Locked gear {n}',
@@ -931,6 +997,21 @@ export const EN = {
   // --- 계보 전당(ADR-0007) — 계보 포인트를 쓰는 유일한 플레이어 표면 ---
   // 곡선·비용·마일스톤 레벨은 전부 `data/lineage.ts` 정본에서 유도한다(문구에 수치를 박지 마라).
   'lineage.title': 'Lineage',
+  // 계보 전당 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 주석 ①).
+  'lineage.help': 'Help',
+  'lineage.help.title': 'Lineage Hall Guide',
+  'lineage.help.s1.h': 'What this screen is for',
+  'lineage.help.s1.b':
+    'Lineage is a permanent tree that belongs to your account rather than to any one ship. Everything invested here keeps paying out across every ship generation that follows.\nIt is the only place lineage points can be spent. Points come from retiring a ship and from dismantling guardians.',
+  'lineage.help.s2.h': 'The two branches',
+  'lineage.help.s2.b':
+    'The ship branch strengthens the ship you are currently flying, applied when your loadout is assembled.\nThe guardian branch strengthens every guardian you own at once, which is what stands in your defense base.\nBoth accept unlimited investment, but the return follows a logarithmic curve and converges toward a ceiling. The bar on each branch shows what you have now, with the next level\'s gain overlaid as a ghost segment so you can see what this particular spend buys.',
+  'lineage.help.s3.h': 'Investment cannot be undone',
+  'lineage.help.s3.b':
+    'There is no respec here. Unlike the skill tree in the Research Lab, a point spent on a branch stays on that branch permanently.\nThat is why every investment asks for confirmation. It is not a formality — read the branch and the amount before you confirm.',
+  'lineage.help.s4.h': 'Milestones',
+  'lineage.help.s4.b':
+    'The guardian branch has three milestones that unlock purely by reaching a level, with nothing extra to buy. They add qualitative abilities rather than more of the same number, so the smooth bonus curve does not tell you they are coming.\nThe panel lists what is unlocked and what the next one needs, which is often half the reason to keep investing in that branch.',
   'lineage.branches.title': 'Lineage Branches',
   'lineage.branch.ship': 'Ship Branch',
   'lineage.branch.ship.desc':
@@ -1426,6 +1507,24 @@ export const EN = {
   // 구 `card.*`(M6 방어 카드)의 계승 자리다. 카드 화면·데이터·EF 는 M7b 에서 삭제됐고, 코어
   // 모듈은 L3 코어의 강화 슬롯 2개에 꽂는 **소모성 인스턴스**다. 컬러 이모지 금지(Pixi 두부).
   'mod.title': 'Core Modules',
+  // 코어 모듈 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 주석 ①).
+  'mod.help': 'Help',
+  'mod.help.title': 'Core Modules Guide',
+  'mod.help.s1.h': 'What a core module is',
+  'mod.help.s1.b':
+    'A core module slots into your base core and fires automatically when someone invades you. You never activate one during a run — it is defensive equipment that works while you are away.\nModules are consumable instances, not catalog picks. Each has its own grade from normal to unique, its own module affixes, and a number of uses. When the uses run out, the module is gone.',
+  'mod.help.s2.h': 'When a module is spent',
+  'mod.help.s2.b':
+    'A module\'s effect is frozen at the moment an invasion begins. Swapping modules never changes an invasion already in progress.\nUses are deducted only when an invasion result is finalized. An attacker who starts a run against you and abandons it costs you nothing.',
+  'mod.help.s3.h': 'Getting modules',
+  'mod.help.s3.b':
+    'The shop carries a daily rotation of low-grade modules. Rare and above are never sold there.\nRare and unique modules come from planet boss drops, from winning a revenge strike, and from fusing. Unique is rare on every one of those paths.\nRule-changing effects exist only on unique modules and unique defense units — nowhere else.',
+  'mod.help.s4.h': 'Fusing and dismantling',
+  'mod.help.s4.b':
+    'Fusing takes three modules of the same grade and attempts a promotion to the grade above. Failure is not a total loss: you get a new module of the same grade back instead.\nDismantling turns a module you do not want back into currency. Storage here has a cap, so dismantling is also how you make room.',
+  'mod.help.s5.h': 'Why this is a separate screen',
+  'mod.help.s5.b':
+    'Defense Command arranges units you place and keep. Modules are spent and replaced, so they live in their own screen with their own storage rather than sitting in a layout slot.\nThe server holds the record of which modules you own and how many uses each has left, so this screen needs a login.',
   'mod.back': '◀ Back to Defense Command',
   'mod.baseOnly': 'Base effect only',
   'mod.affixLine': '{name} +{value}',
@@ -2331,6 +2430,26 @@ export const KO: Record<MessageKey, string> = {
   'ent.shelter': '대피소',
 
   'planet.title': '성계 지도',
+  // 성계 지도 도움말(사용자 요청 2026-08-05). 용어는 KO 정본표를 따른다 — `침략 단계`(PvE) ·
+  // `행성 인기 배율`(행성 보너스·드랍률 ✗) · `촉매`(모디파이어 ✗) · `파워업` · `요구 레벨`.
+  // 이모지 금지, 존댓말.
+  'planet.help': '도움말',
+  'planet.help.title': '성계 지도 안내',
+  'planet.help.s1.h': '이 화면은 무엇을 하는 곳인가요',
+  'planet.help.s1.b':
+    '출격 화면입니다. 행성을 고르고 단계를 고르고, 원하시면 촉매를 주입한 뒤 떠나시면 됩니다.\n행성마다 사라진 오스카 문명의 기록 보관 시설이고, 적도 지형도 드랍 테이블도 각각 다릅니다. 어느 행성을 도느냐가 보이는 풍경만이 아니라 무엇을 얻을 수 있는지를 정합니다.',
+  'planet.help.s2.h': '침략 단계',
+  'planet.help.s2.b':
+    '단계는 난이도 축이며 1부터 시작해 상한이 없습니다. 최고 클리어 단계는 행성마다 따로 기록됩니다.\n도전할 수 있는 상한은 그 행성의 최고 클리어 단계 더하기 5이고, 최소 10입니다. 단계를 여는 것은 오직 클리어이며 기체 레벨이 단계를 잠그는 일은 없습니다.\n대략의 기준은 기체 레벨이 단계의 다섯 배쯤일 때 편안하다는 것입니다. 단계는 전리품의 품질을 올리고 수량은 올리지 않습니다. 또한 그 단계에서 나오는 장비의 요구 레벨 상한도 정하는데, 그 값이 밴드의 시작이라 나온 장비를 한참 묵히지 않고 바로 입으실 수 있습니다.',
+  'planet.help.s3.h': '촉매',
+  'planet.help.s3.b':
+    '촉매는 출격 직전에 여기서 주입하는 소모품입니다. 모든 촉매는 난이도 페널티와 보상 부스트를 한 몸으로 가집니다. 좋기만 한 촉매는 없습니다.\n여러 개를 한꺼번에 넣을 수 있고 같은 종류를 중복으로 쌓아도 됩니다. 주입한 촉매는 런이 시작되는 순간 소모되며, 런이 잘 풀리든 아니든 돌아오지 않습니다.\n촉매는 평범한 행성 런 전용입니다. 의뢰 런이나 침공에는 들어가지 않습니다.',
+  'planet.help.s4.h': '행성 인기 배율',
+  'planet.help.s4.b':
+    '행성마다 실시간 배율이 표시됩니다. 사람이 덜 도는 행성은 올라가고 많이 도는 행성은 내려갑니다. 전체 유저가 최근 한 시간 동안 정산한 런 수를 보고 자동으로 평형을 맞춥니다.\n배율이 걸리는 것은 수량과 경험치, 자원 셋뿐입니다. 전리품의 품질은 건드리지 않으며 보스 확정 드랍, 행성 특산 설계도와 특산 촉매, 조우 보상, 침공 보상도 배율 밖입니다. 원칙은 대체 가능한 보상에만 배율을 건다는 것입니다.\n값은 출격 시점에 그 런에 고정됩니다. 보신 숫자가 곧 받으실 숫자입니다. 오프라인이거나 로그인하지 않으면 전 행성이 1.0입니다.',
+  'planet.help.s5.h': '출격 전에',
+  'planet.help.s5.b':
+    '출격 버튼 옆 요약이 실제로 확정된 것을 적어 줍니다. 행성과 단계, 주입한 촉매입니다. 고른 줄 알았던 것 말고 이 줄을 확인해 주세요.\n런 안에서의 성장은 임시입니다. 런 도중 오른 레벨과 주운 파워업은 런이 끝나면 사라집니다. 남는 것은 전리품과 자원이고, 그것이 기지에서의 영구 성장의 재료가 됩니다.',
   'planet.sub': '행성과 침략 단계를 선택하세요.',
   'planet.stageLabel': '침략 단계',
   'planet.stageDesc': '{stage}단계 · 개방 상한 {cap}',
@@ -2373,6 +2492,26 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.sortie.skip': '촉매 빼고 출격',
   'catalyst.manage.open': '촉매',
   'catalyst.manage.title': '촉매 보관함',
+  // 촉매 보관함 도움말(사용자 요청 2026-08-05). 용어는 KO 정본표를 따른다 — `촉매 잔재`는 반드시
+  // 전체 표기(단독 `잔재` ✗ · `파편`은 기록 파편과 충돌) · `촉매 상점`(거래소 ✗) · `분해` ·
+  // `특산 촉매` · `보관함`. 이모지 금지, 존댓말.
+  'catalyst.help': '도움말',
+  'catalyst.help.title': '촉매 보관함 안내',
+  'catalyst.help.s1.h': '촉매란 무엇인가요',
+  'catalyst.help.s1.b':
+    '촉매는 런 한 번을 격화시키는 소모품입니다. 모든 촉매가 난이도 페널티와 보상 부스트를 한 몸으로 가지며, 좋기만 한 촉매는 하나도 없습니다.\n종류마다 효과가 고정이고 등급이 없어서 같은 촉매 두 장은 완전히 같습니다. 주입은 성계 지도에서 출격 직전에 하고, 런이 시작되는 순간 소모됩니다.',
+  'catalyst.help.s2.h': '공용 촉매와 특산 촉매',
+  'catalyst.help.s2.b':
+    '공용 촉매는 어디서든 나오며 보유량의 대부분을 차지하게 됩니다.\n특산 촉매는 그 촉매가 속한 행성에서만 나옵니다. 상점에서도 팔지 않으므로 얻는 방법은 그 행성에 직접 가서 따 오는 것뿐입니다.',
+  'catalyst.help.s3.h': '분해와 촉매 잔재',
+  'catalyst.help.s3.b':
+    '촉매를 분해하면 촉매 잔재가 나옵니다. 촉매 잔재는 획득처도 사용처도 정확히 하나씩입니다. 분해로만 얻고, 이 화면의 촉매 상점에서 촉매를 사는 데에만 씁니다. 다른 어떤 것도 이 재화를 만들지 않고 쓰지도 않습니다.\n이렇게 닫아 둔 것은 의도된 설계입니다. 크레딧이나 희귀 광물로 촉매를 살 수 있다면 자원으로 자원 배율을 올리고 그 자원으로 또 촉매를 사는 고리가 생기기 때문에, 상점을 다른 재화로부터 아예 떼어 놓았습니다.',
+  'catalyst.help.s4.h': '촉매 상점',
+  'catalyst.help.s4.b':
+    '상점에는 공용 촉매 전 목록이 항상 진열됩니다. 품절도 로테이션도 없습니다. 특산 촉매는 팔지 않습니다.\n분해 환급량과 구매가는 모두 그 촉매의 희소도에서 나오며, 환급량이 구매가보다 항상 적습니다. 그래서 잔재를 거쳐 한 번 바꿀 때마다 촉매 총량이 조금씩 줄어듭니다. 마음대로 바꾸는 것이 공짜는 아닙니다.\n특산 촉매도 같은 산식으로 환급되지만 되살 수는 없습니다. 적혀 있는 가격은 읽을 수는 있어도 지불할 수는 없는 값입니다.',
+  'catalyst.help.s5.h': '어디에 쓰이고 어디에 안 쓰이나요',
+  'catalyst.help.s5.b':
+    '촉매는 평범한 PvE 행성 런 전용입니다. 침공이나 의뢰 런에는 들어가지 않습니다. 의뢰 런은 무대와 보상이 이미 적혀 있어 촉매가 칠 자리가 없습니다.\n촉매 기록은 서버가 쥐고 있으므로 이 화면과 상점은 로그인이 필요합니다.',
   'catalyst.manage.empty': '보유한 촉매가 없습니다. 정예·보스 런에서 획득하세요.',
   'catalyst.manage.owned': 'x{n}',
   'catalyst.manage.salvage': '분해 {n}',
@@ -2957,6 +3096,23 @@ export const KO: Record<MessageKey, string> = {
     '거품 방막 — 7초마다 피해 60을 흡수하는 막이 생깁니다. 막이 터지면 반경 220 안의 적을 밀어냅니다.',
 
   'champion.title': '기체 고르기',
+  // 챔피언 선택 도움말(사용자 요청 2026-08-05). 용어는 KO 정본표를 따른다 — `기체 타입` ·
+  // `시그니처 패시브`(고유 스킬 ✗) · `액티브 스킬`(단독 `액티브` ✗) · `퇴역` · `수호기` ·
+  // `사연`. 이모지 금지, 존댓말.
+  'champion.help': '도움말',
+  'champion.help.title': '기체 선택 안내',
+  'champion.help.s1.h': '무엇을 고르는 것인가요',
+  'champion.help.s1.b':
+    '다음에 탈 기체를 고르는 화면입니다. 로스터 전체가 열려 있어 따로 해금할 것이 없습니다.\n외형만 바뀌는 선택이 아닙니다. 기체 타입은 3계열 스킬트리와 시그니처 패시브, 액티브 스킬 6종, 기본 스탯 보정, 외형을 전부 고유하게 가집니다. 모든 타입이 공유하는 것은 장비 8슬롯과 이동, 판정점, 조작감입니다.',
+  'champion.help.s2.h': '무엇이 이어지고 무엇이 이어지지 않나요',
+  'champion.help.s2.b':
+    '장비는 이어집니다. 8슬롯이 기체 타입과 무관하게 같아서, 세대를 거듭해도 파밍한 것이 계속 쓰입니다.\n스킬 투자는 이어지지 않습니다. 트리가 기체 타입 소유라, 새 기체는 레벨 1에서 자기 트리를 처음부터 채우게 됩니다.\n계보는 이어지고 초기화되지 않습니다. 계보 전당에서 산 강화는 이 기체의 첫 런부터 그대로 적용됩니다.',
+  'champion.help.s3.h': '교체는 곧 퇴역입니다',
+  'champion.help.s3.b':
+    '새 기체를 고르면 지금 기체가 퇴역합니다. 그래서 레벨 100에 닿기 전까지는 버튼이 잠겨 있습니다. 퇴역한 기체는 장착 장비를 안에 품은 채 수호기가 됩니다.\n퇴역은 계보 포인트를 지급하고, 그 기체는 방어 기지에 설 수 있습니다. 잃는 것이 아니라 순환의 다음 단계입니다. 다만 되돌릴 수 없어 그 기체가 현역으로 돌아오지는 않습니다.',
+  'champion.help.s4.h': '시그니처 패시브와 사연',
+  'champion.help.s4.b':
+    '기본 기체를 제외한 모든 타입은 항상 켜져 있는 시그니처 패시브를 가집니다. 투자 대상이 아니며, 두 기체를 가르는 가장 뚜렷한 차이이므로 결정 전에 꼭 읽어 보세요.\n기체마다 그 패시브가 왜 생겼는지 설명하는 3챕터짜리 사연도 있습니다. 챕터 1은 처음부터 여기서 읽으실 수 있고, 나머지는 플레이하면서 열려 기록 보관소에 쌓입니다.',
   'champion.roster': '보유 가능 기체',
   'champion.rosterSub': '모든 기체가 열려 있습니다 — 해금 조건이 없습니다.',
   'champion.confirm': '퇴역하고 {name}(으)로 교체',
@@ -2986,6 +3142,22 @@ export const KO: Record<MessageKey, string> = {
 
   // --- 예비역 수호기 로스터·소멸(ADR-0024 Task #8) ---
   'guardians.title': '예비역 수호기',
+  // 예비역 로스터 도움말(사용자 요청 2026-08-05). 용어는 KO 정본표를 따른다 — `수호기` ·
+  // `퇴역` · `소멸`(분해·폐기 ✗) · `전투력 점수` · `창고`(장비) · `풍화`. 이모지 금지, 존댓말.
+  'guardians.help': '도움말',
+  'guardians.help.title': '예비역 수호기 안내',
+  'guardians.help.s1.h': '수호기란 무엇인가요',
+  'guardians.help.s1.b':
+    '수호기는 퇴역시킨 기체입니다. 퇴역은 레벨 100에서만 가능하며, 그 기체는 장착하고 있던 장비를 품은 채로 남습니다. 장비는 창고로 돌아오지 않고 기체 안에 잠깁니다.\n수호기는 그냥 진열되는 기념품이 아닙니다. 방어 기지의 코어방에 배치할 수 있고, 계보의 수호 가지가 보유한 수호기 전원을 한꺼번에 강화합니다.',
+  'guardians.help.s2.h': '소멸',
+  'guardians.help.s2.b':
+    '소멸은 수호기를 해체하는 것입니다. 계보 포인트를 회수하고, 안에 잠겨 있던 장비가 창고로 돌아옵니다.\n돌려받는 포인트는 그 기체가 얼마나 값어치 있었는지에 비례합니다. 기준은 퇴역 시점에 기록된 전투력 점수이며, 장비 등급과 어픽스 가치, 스킬 빌드가 모두 반영된 값입니다. 강하게 키워 퇴역시킨 기체일수록 많이 돌아옵니다.\n소멸은 저절로 일어나지 않습니다. 직접 고르기 전까지 수호기는 이 목록에 그대로 남아 있고, 한 번 소멸시키면 되돌릴 수 없습니다.',
+  'guardians.help.s3.h': '배치한 수호기는 닳습니다',
+  'guardians.help.s3.b':
+    '풍화는 실제로 배치한 방어체에만 작용하며 수호기도 마찬가지입니다. 이 목록에 두기만 한 수호기는 정비도가 줄지 않습니다.\n다만 수호기는 정비의 예외입니다. 한 번 닳은 정비도를 되돌릴 수 없으므로, 배치는 공짜로 자리를 채우는 일이 아니라 대가가 따르는 결정으로 보셔야 합니다.',
+  'guardians.help.s4.h': '순환 안에서의 자리',
+  'guardians.help.s4.b':
+    '퇴역하고, 소멸시키고, 투자합니다. 퇴역이 계보 포인트를 먼저 지급하고, 소멸이 더 이상 필요 없는 기체에서 남은 몫을 회수하며, 바로 옆 계보 전당이 그 포인트로 앞으로의 모든 기체에 적용될 영구 강화를 삽니다.\n소멸은 안에 잠긴 장비도 함께 풀어 줍니다. 그래서 오래된 수호기는 그 안의 장비가 다시 쓸 만해 보일 때 한 번씩 들여다볼 가치가 있습니다.',
   'guardians.empty': '아직 수호기가 없습니다. 기체를 퇴역시키면 예비역으로 남습니다.',
   'guardians.perf': '성능 {pct}%',
   'guardians.gear': '잠긴 장비 {n}개',
@@ -3012,6 +3184,22 @@ export const KO: Record<MessageKey, string> = {
 
   // --- 계보 전당(ADR-0007) ---
   'lineage.title': '계보',
+  // 계보 전당 도움말(사용자 요청 2026-08-05). 용어는 KO 정본표를 따른다 — `계보 포인트`
+  // (수호 포인트·명성 ✗) · `퇴역` · `소멸` · `수호기`. 이모지 금지, 존댓말.
+  'lineage.help': '도움말',
+  'lineage.help.title': '계보 전당 안내',
+  'lineage.help.s1.h': '이 화면은 무엇을 하는 곳인가요',
+  'lineage.help.s1.b':
+    '계보는 특정 기체가 아니라 계정에 붙는 영구 트리입니다. 여기에 투자한 것은 앞으로 타게 될 모든 기체 세대에 계속 적용됩니다.\n계보 포인트를 쓸 수 있는 유일한 곳이기도 합니다. 포인트는 기체를 퇴역시킬 때 지급되고, 수호기를 소멸시킬 때 회수됩니다.',
+  'lineage.help.s2.h': '두 가지',
+  'lineage.help.s2.b':
+    '기체 가지는 지금 타고 있는 현역 기체를 강화합니다. 출격 장비를 조립할 때 함께 적용됩니다.\n수호 가지는 보유한 수호기 전원을 한꺼번에 강화합니다. 내 방어 기지에 서는 것이 바로 그 수호기들입니다.\n두 가지 모두 무한히 투자할 수 있지만 효과는 로그 곡선이라 상한으로 수렴합니다. 각 가지의 막대는 지금 수치를 보여 주고, 다음 레벨의 증가분을 옅은 유령 구간으로 겹쳐 이번 투자가 정확히 무엇을 사는지 눈으로 재실 수 있게 합니다.',
+  'lineage.help.s3.h': '투자는 되돌릴 수 없습니다',
+  'lineage.help.s3.b':
+    '계보에는 리스펙이 없습니다. 연구소의 스킬트리와 달리, 한 가지에 쓴 포인트는 영영 그 가지에 묶입니다.\n그래서 투자할 때마다 확인을 여쭙습니다. 형식적인 절차가 아니니 어느 가지에 얼마를 넣는지 보시고 확정해 주세요.',
+  'lineage.help.s4.h': '마일스톤',
+  'lineage.help.s4.b':
+    '수호 가지에는 마일스톤 3종이 있습니다. 따로 살 것 없이 레벨에 도달하기만 하면 열립니다. 같은 수치가 더 붙는 것이 아니라 질적인 능력이 붙기 때문에, 완만한 보너스 곡선만 봐서는 이것이 오고 있다는 것을 알 수 없습니다.\n오른쪽 아래 패널이 무엇이 열렸고 다음 것에 무엇이 필요한지 적어 둡니다. 그 가지에 계속 투자할 이유의 절반이 여기 있는 경우가 많습니다.',
   'lineage.branches.title': '계보 가지',
   'lineage.branch.ship': '기체 가지',
   'lineage.branch.ship.desc': '지금 타는 기체를 강화합니다. 이후 모든 세대의 기체에 그대로 이어집니다.',
@@ -3493,6 +3681,26 @@ export const KO: Record<MessageKey, string> = {
 
   // --- 코어 모듈 경제(M7b — 슬롯 2/보관함/상점/합성/분해, ADR-0018) ---
   'mod.title': '코어 모듈',
+  // 코어 모듈 도움말(사용자 요청 2026-08-05). 용어는 KO 정본표를 따른다 — `코어 모듈`은 반드시
+  // 전체 표기(단독 `모듈`은 장비 슬롯과 혼동) · `모듈 어픽스` · `사용 횟수` · `합성` · `분해` ·
+  // `복수전`. 이모지 금지, 존댓말.
+  'mod.help': '도움말',
+  'mod.help.title': '코어 모듈 안내',
+  'mod.help.s1.h': '코어 모듈이란 무엇인가요',
+  'mod.help.s1.b':
+    '코어 모듈은 기지 코어의 강화 슬롯에 장착하는 물품입니다. 누군가 내 기지를 침공해 오면 자동으로 발동합니다. 런 도중에 직접 쓰는 것이 아니라, 내가 접속해 있지 않을 때 대신 일해 주는 방어 장비입니다.\n목록에서 골라 쓰는 것이 아니라 한 번 쓰면 없어지는 개별 물품입니다. 저마다 노말에서 유니크까지의 등급과 모듈 어픽스, 그리고 사용 횟수를 가지며, 횟수가 다하면 사라집니다.',
+  'mod.help.s2.h': '언제 소모되나요',
+  'mod.help.s2.b':
+    '모듈의 효력은 침공이 시작되는 시점에 고정됩니다. 이미 진행 중인 침공은 도중에 모듈을 바꿔도 달라지지 않습니다.\n사용 횟수는 침공 결과가 확정될 때에만 줄어듭니다. 공격자가 시작만 하고 도중에 버린 침공은 내 모듈을 소모시키지 않습니다.',
+  'mod.help.s3.h': '어떻게 얻나요',
+  'mod.help.s3.b':
+    '상점에는 낮은 등급이 매일 로테이션으로 진열됩니다. 레어 이상은 상점에서 팔지 않습니다.\n레어와 유니크는 행성 보스 드랍, 복수전 승리, 합성으로만 얻습니다. 유니크는 그 어느 경로에서도 확률이 매우 낮습니다.\n규칙 자체를 바꾸는 효과는 유니크 코어 모듈과 유니크 방어체에만 있습니다. 다른 곳에는 없습니다.',
+  'mod.help.s4.h': '합성과 분해',
+  'mod.help.s4.b':
+    '합성은 같은 등급 3장으로 한 단계 위 등급을 노리는 것입니다. 실패해도 전부 잃지는 않습니다. 같은 등급의 새 모듈이 대신 나옵니다.\n분해는 쓰지 않을 모듈을 재화로 되돌립니다. 보관 상한이 있으므로 자리를 비우는 방법이기도 합니다.',
+  'mod.help.s5.h': '왜 별도 화면인가요',
+  'mod.help.s5.b':
+    '방어 사령부는 배치해 두고 계속 쓰는 방어체를 다룹니다. 코어 모듈은 쓰고 없어지고 다시 채우는 물품이라, 배치 슬롯에 앉히지 않고 전용 보관함을 가진 별도 화면에서 다룹니다.\n어떤 모듈을 몇 회 남기고 가지고 있는지는 서버가 기록하므로 이 화면은 로그인이 필요합니다.',
   'mod.back': '◀ 방어 사령부로',
   'mod.baseOnly': '기저 효과만',
   'mod.affixLine': '{name} +{value}',

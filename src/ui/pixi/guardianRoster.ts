@@ -73,6 +73,7 @@ import { t, type MessageKey } from '../../i18n/index.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
 import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
+import { HELP_HEAD_W, openHelpOverlay, type HelpSpec } from './helpModal.js';
 import {
   makeHangarTitle,
   cinematicButtonTexture,
@@ -117,6 +118,14 @@ const AUX_H = LIST_Y + LIST_H - AUX_Y;
 
 /** 헤더 닫기 한 변. */
 const CLOSE_W = 56;
+const HEAD_GAP = 12;
+const CLOSE_X = DESIGN_WIDTH - EDGE_X - CLOSE_W;
+const HELP_X = CLOSE_X - HEAD_GAP - 2 - HELP_HEAD_W;
+
+export const ROSTER_HELP: HelpSpec = {
+  prefix: 'guardians.help',
+  sections: ['s1', 's2', 's3', 's4'],
+};
 
 /**
  * 좌상단 예약 밴드 — `main.ts` SettingsScreen 의 설정 톱니가 쓰는 **전 화면 공용 자리**다.
@@ -151,7 +160,7 @@ export function guardianRosterLayout(): {
   }[];
   readonly headerControls: readonly { readonly id: string; readonly rect: GuardianRosterRect }[];
 } {
-  const closeX = DESIGN_WIDTH - EDGE_X - CLOSE_W;
+  const closeX = CLOSE_X;
   const head = (x: number, w: number): GuardianRosterRect => ({ x, y: HEAD_Y, w, h: HEAD_H });
   return {
     screen: { x: 0, y: 0, w: DESIGN_WIDTH, h: DESIGN_HEIGHT },
@@ -161,7 +170,10 @@ export function guardianRosterLayout(): {
       { id: 'detail', rect: { x: SIDE_X, y: DETAIL_Y, w: SIDE_W, h: DETAIL_H } },
       { id: 'lineage', rect: { x: SIDE_X, y: AUX_Y, w: SIDE_W, h: AUX_H } },
     ],
-    headerControls: [{ id: 'close', rect: head(closeX, CLOSE_W) }],
+    headerControls: [
+      { id: 'help', rect: head(HELP_X, HELP_HEAD_W) },
+      { id: 'close', rect: head(closeX, CLOSE_W) },
+    ],
   };
 }
 
@@ -426,6 +438,8 @@ export class GuardianRosterScreen {
   private lineageValue: Text | null = null;
   private hintText: Text | null = null;
   private modalHost: Container | null = null;
+  private helpOpen = false;
+  private helpScroll = 0;
   /** 상세 패널 위젯 — 선택이 바뀌면 `.text`·가시성만 갈아끼운다(패널은 다시 안 만든다). */
   private detail: {
     box: { x: number; y: number; w: number; h: number };
@@ -769,7 +783,7 @@ export class GuardianRosterScreen {
     title.position.set(DESIGN_WIDTH / 2, HEAD_Y - 4);
     this.root.addChild(title);
 
-    const closeX = DESIGN_WIDTH - EDGE_X - CLOSE_W;
+    const closeX = CLOSE_X;
     const close = this.chromeButton({
       tone: 'stone',
       width: CLOSE_W,
@@ -781,6 +795,22 @@ export class GuardianRosterScreen {
     });
     close.container.position.set(closeX, HEAD_Y);
     this.root.addChild(close.container);
+
+    // 도움말 — 닫기와 **같은 세로 띠**를 쓰고 가로로만 자리를 잡는다.
+    const help = this.chromeButton({
+      tone: 'stone',
+      width: HELP_HEAD_W,
+      height: HEAD_H,
+      fontSize: 20,
+      label: t('guardians.help'),
+      onClick: () => {
+        this.helpOpen = true;
+        this.helpScroll = 0;
+        this.renderModal();
+      },
+    });
+    help.container.position.set(HELP_X, HEAD_Y);
+    this.root.addChild(help.container);
   }
 
   /**
@@ -1211,6 +1241,21 @@ export class GuardianRosterScreen {
     for (const child of [...host.children]) {
       host.removeChild(child);
       child.destroy({ children: true });
+    }
+    if (this.helpOpen) {
+      this.root.setChildIndex(host, this.root.children.length - 1);
+      this.modalPanel = openHelpOverlay(host, {
+        spec: ROSTER_HELP,
+        get: () => this.helpScroll,
+        set: (v) => {
+          this.helpScroll = v;
+        },
+        onClose: () => {
+          this.helpOpen = false;
+          this.renderModal();
+        },
+      });
+      return;
     }
     if (this.confirming === null) return;
 
