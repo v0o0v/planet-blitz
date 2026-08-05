@@ -89,6 +89,7 @@ import { makeScrollArea } from './scrollArea.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
 import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
+import { HELP_HEAD_W, openHelpOverlay, type HelpSpec } from './helpModal.js';
 import { makeShipDock, type ShipDock } from './shipDock.js';
 import {
   makeHangarTitle,
@@ -183,6 +184,14 @@ const TREE_H = TREE_BAND_H;
 
 /** 헤더 닫기 한 변. */
 const CLOSE_W = 56;
+const HEAD_GAP = 12;
+const CLOSE_X = DESIGN_WIDTH - EDGE_X - CLOSE_W;
+const HELP_X = CLOSE_X - HEAD_GAP - 2 - HELP_HEAD_W;
+
+export const CHAMPION_HELP: HelpSpec = {
+  prefix: 'champion.help',
+  sections: ['s1', 's2', 's3', 's4'],
+};
 
 /**
  * 좌상단 예약 밴드 — `main.ts` SettingsScreen 의 설정 톱니가 쓰는 **전 화면 공용 자리**다.
@@ -346,9 +355,10 @@ export function championSelectLayout(): {
       { id: 'trees', rect: { x: TREE_X, y: TREE_Y, w: TREE_W, h: TREE_H } },
     ],
     headerControls: [
+      { id: 'help', rect: { x: HELP_X, y: HEAD_Y, w: HELP_HEAD_W, h: HEAD_H } },
       {
         id: 'close',
-        rect: { x: DESIGN_WIDTH - EDGE_X - CLOSE_W, y: HEAD_Y, w: CLOSE_W, h: HEAD_H },
+        rect: { x: CLOSE_X, y: HEAD_Y, w: CLOSE_W, h: HEAD_H },
       },
     ],
     windows: [heroWindowRect()],
@@ -574,6 +584,8 @@ export class ChampionSelectScreen {
   private selected = 0;
   private scrollY = 0;
   private confirming = false;
+  private helpOpen = false;
+  private helpScroll = 0;
   private hint = '';
   /** 서버 왕복 중 — 같은 퇴역을 두 번 보내면 수호 행이 둘 생긴다(되돌릴 수 없다). */
   private busy = false;
@@ -988,8 +1000,23 @@ export class ChampionSelectScreen {
       label: '✕',
       onClick: () => this.close(),
     });
-    close.container.position.set(DESIGN_WIDTH - EDGE_X - CLOSE_W, HEAD_Y);
+    close.container.position.set(CLOSE_X, HEAD_Y);
     this.root.addChild(close.container);
+
+    const help = this.chromeButton({
+      tone: 'stone',
+      width: HELP_HEAD_W,
+      height: HEAD_H,
+      fontSize: 20,
+      label: t('champion.help'),
+      onClick: () => {
+        this.helpOpen = true;
+        this.helpScroll = 0;
+        this.renderModal();
+      },
+    });
+    help.container.position.set(HELP_X, HEAD_Y);
+    this.root.addChild(help.container);
   }
 
   /**
@@ -1570,6 +1597,21 @@ export class ChampionSelectScreen {
     for (const child of [...host.children]) {
       host.removeChild(child);
       child.destroy({ children: true });
+    }
+    if (this.helpOpen) {
+      this.root.setChildIndex(host, this.root.children.length - 1);
+      this.modalPanel = openHelpOverlay(host, {
+        spec: CHAMPION_HELP,
+        get: () => this.helpScroll,
+        set: (v) => {
+          this.helpScroll = v;
+        },
+        onClose: () => {
+          this.helpOpen = false;
+          this.renderModal();
+        },
+      });
+      return;
     }
     if (!this.confirming) return;
 
