@@ -1291,6 +1291,28 @@ export const EN = {
   'ctl.ladder.empty': 'No ranks yet.',
   'ctl.ladder.rank': 'Rank',
   'ctl.ladder.name': 'Name',
+
+  // 관제탑 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 모듈 주석 ①).
+  'ctl.help': 'Help',
+  'ctl.help.title': 'Control Tower Guide',
+  'ctl.help.s1.h': 'What this screen is for',
+  'ctl.help.s1.b':
+    'This is the attacking half of PvP. You scout other pilots\' bases here and launch invasions against them. The defending half — arranging what meets them at your own base — lives in Defense Command.\nEverything on this screen needs a server connection. Offline, the lists stay empty while the rest of the game plays normally.',
+  'ctl.help.s2.h': 'The ladder',
+  'ctl.help.s2.b':
+    'The ladder is one permanent queue of every pilot. There is no season reset, so a rank you take is a rank you keep until someone takes it from you.\nOnly three things move a rank: a successful invasion swaps the two pilots, placement inserts a newcomer, and inactivity sinks you slowly.',
+  'ctl.help.s3.h': 'Placement',
+  'ctl.help.s3.b':
+    'Your first five invasions after PvP opens are placement matches, fought against NPC seed bases rather than real pilots. Your record across them decides where you enter the ladder.\nPlacement inserts you without moving anyone else, so nobody loses a rank to your arrival.',
+  'ctl.help.s4.h': 'Scouting before you commit',
+  'ctl.help.s4.b':
+    'Selecting a target shows its defense layout in the recon panel: how many wave slots, facilities, and props are filled across the three layers, and what boss sits in the core room.\nWhat you see first is silhouettes, grades, and ascension stars — not exact numbers. Precise stats and defense-unit affixes are revealed only after you have invaded that base once, which makes a losing first attempt worth something.',
+  'ctl.help.s5.h': 'Revenge',
+  'ctl.help.s5.b':
+    'When your base falls, the pilot who took your rank appears in the revenge list for 24 hours. A revenge strike ignores the normal retry cooldown, and winning reclaims your seat and pays bonus minerals.\nThe window expires on its own. Nothing is lost by letting it pass except the free swing.',
+  'ctl.help.s6.h': 'Results are decided by the server',
+  'ctl.help.s6.b':
+    'Your client shows a provisional outcome the moment a run ends, but the verdict is not final until the server re-simulates your replay in full and agrees. That is why a result can read "confirming" for a short while.\nIncoming attacks on your own base land in the notifications list, where you can watch the replay or leave a taunt sticker for a pilot you repelled.',
   'ctl.ladder.record': 'Record',
   'ctl.ladder.wl': '{w}W {l}L',
   // 관제탑 팝업(순위표 · 알림 · 전투 기록)
@@ -3284,6 +3306,29 @@ export const KO: Record<MessageKey, string> = {
   'ctl.ladder.empty': '아직 순위가 없습니다.',
   'ctl.ladder.rank': '순위',
   'ctl.ladder.name': '이름',
+
+  // 관제탑 도움말(사용자 요청 2026-08-05). 용어는 KO 정본표를 따른다 — `래더`(랭킹·리더보드 ✗) ·
+  // `배치전`(예선전 ✗) · `복수전`(리벤지 매치 ✗) · `침공`(PvP) · `방어체`. 이모지 금지, 존댓말.
+  'ctl.help': '도움말',
+  'ctl.help.title': '관제탑 안내',
+  'ctl.help.s1.h': '이 화면은 무엇을 하는 곳인가요',
+  'ctl.help.s1.b':
+    'PvP 의 공격하는 쪽입니다. 다른 파일럿의 기지를 정찰하고 침공을 걸러 나가는 곳입니다. 반대로 내 기지에 쳐들어온 상대를 맞이할 배치를 짜는 일은 방어 사령부가 맡습니다.\n이 화면의 내용은 전부 서버에 있습니다. 접속돼 있지 않으면 목록이 빈 채로 있고, 나머지 게임은 평소처럼 즐기실 수 있습니다.',
+  'ctl.help.s2.h': '래더',
+  'ctl.help.s2.b':
+    '래더는 전체 파일럿이 한 줄로 늘어선 영구 순위표입니다. 시즌 리셋이 없으므로 한 번 차지한 순위는 누군가 빼앗아 가기 전까지 그대로 유지됩니다.\n순위를 움직이는 것은 세 가지뿐입니다. 침공에 성공하면 두 파일럿의 자리가 맞바뀌고, 배치전은 신규 파일럿을 끼워 넣으며, 오래 활동하지 않으면 서서히 내려갑니다.',
+  'ctl.help.s3.h': '배치전',
+  'ctl.help.s3.b':
+    'PvP 가 열린 뒤 처음 다섯 번의 침공은 배치전입니다. 실제 파일럿이 아니라 NPC 시드 기지를 상대로 치릅니다. 그 다섯 판의 성적이 래더 어디쯤에서 시작할지를 정합니다.\n배치전은 기존 순위를 밀어내지 않고 끼워 넣는 방식이라, 내가 들어온다고 해서 누군가 순위를 잃지는 않습니다.',
+  'ctl.help.s4.h': '걸기 전에 정찰하기',
+  'ctl.help.s4.b':
+    '대상을 고르면 정찰 패널에 그 기지의 방어 배치가 나옵니다. 세 레이어에 편대 슬롯과 설비, 기물이 각각 몇 칸이나 차 있는지, 코어방에 어떤 방어 보스가 앉아 있는지를 볼 수 있습니다.\n처음 보이는 것은 실루엣과 등급, 승격 별까지입니다. 정확한 스탯과 방어체 어픽스는 그 기지를 한 번 침공해 본 뒤에야 공개됩니다. 그래서 첫 도전은 져도 얻는 것이 있습니다.',
+  'ctl.help.s5.h': '복수전',
+  'ctl.help.s5.b':
+    '내 기지가 함락되면 내 순위를 가져간 파일럿이 24시간 동안 복수전 목록에 올라옵니다. 복수전은 평소의 재도전 쿨다운을 무시하며, 성공하면 자리를 되찾고 보너스 광물을 받습니다.\n기한이 지나면 저절로 닫힙니다. 그냥 흘려보내도 잃는 것은 이 공짜 한 번뿐입니다.',
+  'ctl.help.s6.h': '결과는 서버가 정합니다',
+  'ctl.help.s6.b':
+    '런이 끝나는 순간 화면에 뜨는 결과는 잠정입니다. 서버가 리플레이를 처음부터 다시 돌려 같은 결과가 나오는지 확인한 뒤에야 확정됩니다. 결과가 잠시 확인 중으로 보이는 것은 그 때문입니다.\n내 기지가 받은 공격은 침공 알림 목록에 쌓입니다. 거기서 리플레이를 관전하거나, 막아 낸 상대에게 도발 스티커를 남기실 수 있습니다.',
   'ctl.ladder.record': '전적',
   'ctl.ladder.wl': '{w}승 {l}패',
   // 관제탑 팝업(순위표 · 알림 · 전투 기록)

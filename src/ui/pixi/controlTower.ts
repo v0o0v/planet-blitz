@@ -81,7 +81,7 @@ import { activeGuardians } from '../../save/guardianLifecycle.js';
 import type { InvasionLayers } from '../../sim/invasion/types.js';
 import { shipTypeDef } from '../../../data/ships/index.js';
 import { shipTypeName } from './shipLabels.js';
-import { t } from '../../i18n/index.js';
+import { t, type MessageKey } from '../../i18n/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { stickerLabel } from '../../../data/stickers.js';
 import { seedBaseByProfileId } from '../../../data/seedBases.js';
@@ -141,6 +141,13 @@ import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from '.
 import { HangarBackdrop } from './hangarBackdrop.js';
 import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
 import {
+  HELP_HEAD_W,
+  HELP_MODAL,
+  renderHelpSections,
+  helpTitleKey,
+  type HelpSpec,
+} from './helpModal.js';
+import {
   makeHangarTitle,
   cinematicButtonTexture,
   chromeFallbackColor,
@@ -151,7 +158,7 @@ import {
 export type { ControlTowerCallbacks, ControlTowerShowOpts, InvasionResultView };
 
 /** 열려 있는 팝업 종류(없으면 null). `sortie` = 출격 기체 선택(ADR-0024 예비역 소집). */
-type ModalKind = 'ladder' | 'alerts' | 'history' | 'sortie';
+type ModalKind = 'ladder' | 'alerts' | 'history' | 'sortie' | 'help';
 
 /** 전투 기록 필터(공/수). */
 type HistoryFilter = 'all' | 'attack' | 'defense';
@@ -245,6 +252,14 @@ const BOX_O = titledBox(OPS_W, PANEL_H);
 // --- 헤더 컨트롤(형제 화면과 **같은 x**) ---
 const CLOSE_W = 56;
 const CLOSE_X = DESIGN_WIDTH - EDGE_X - CLOSE_W;
+/** 도움말 버튼 — 닫기 왼쪽(여섯 화면 공통 자리 · {@link HELP_HEAD_W} 주석). */
+const HELP_X = CLOSE_X - 12 - 2 - HELP_HEAD_W;
+
+/** 관제탑 도움말 절 목록. 기구는 공용 모듈이 쥔다 — 여기서는 무엇을 말할지만 정한다. */
+export const TOWER_HELP: HelpSpec = {
+  prefix: 'ctl.help',
+  sections: ['s1', 's2', 's3', 's4', 's5', 's6'],
+};
 
 /**
  * 각인 제목이 실제로 차지하는 가로 반폭. 중앙 정렬 Text 는 사각형이 없어 겹침 테스트가 못
@@ -379,7 +394,10 @@ export function controlTowerLayout(): {
       { id: 'ops', rect: { x: OPS_X, y: PANEL_Y, w: OPS_W, h: PANEL_H } },
     ],
     footer: { band: { x: EDGE_X, y: FOOT_Y, w: CONTENT_W, h: FOOT_H }, buttons },
-    headerControls: [{ id: 'close', rect: { x: CLOSE_X, y: HEAD_Y, w: CLOSE_W, h: HEAD_H } }],
+    headerControls: [
+      { id: 'help', rect: { x: HELP_X, y: HEAD_Y, w: HELP_HEAD_W, h: HEAD_H } },
+      { id: 'close', rect: { x: CLOSE_X, y: HEAD_Y, w: CLOSE_W, h: HEAD_H } },
+    ],
     windows: [],
   };
 }
@@ -1424,6 +1442,18 @@ export class ControlTowerScreen {
     });
     close.container.position.set(CLOSE_X, HEAD_Y);
     this.root.addChild(close.container);
+
+    // 도움말 — 닫기와 **같은 세로 띠**를 쓰고 가로로만 자리를 잡는다.
+    const help = this.chromeButton({
+      tone: 'stone',
+      width: HELP_HEAD_W,
+      height: HEAD_H,
+      fontSize: 20,
+      label: t('ctl.help'),
+      onClick: () => this.openModal('help'),
+    });
+    help.container.position.set(HELP_X, HEAD_Y);
+    this.root.addChild(help.container);
   }
 
   /**
@@ -2214,11 +2244,17 @@ export class ControlTowerScreen {
                 h: alertsModalHeight((this.incoming ?? []).length),
                 title: t('ctl.notif.title'),
               }
-            : {
-                w: TOWER_MODALS.sortie.w,
-                h: sortieModalHeight(this.callupEligible().length + 1),
-                title: t('sortie.title'),
-              };
+            : kind === 'help'
+              ? {
+                  w: HELP_MODAL.w,
+                  h: HELP_MODAL.h,
+                  title: t(helpTitleKey(TOWER_HELP) as MessageKey),
+                }
+              : {
+                  w: TOWER_MODALS.sortie.w,
+                  h: sortieModalHeight(this.callupEligible().length + 1),
+                  title: t('sortie.title'),
+                };
 
     // ① · ② 암막.
     const scrim = new Graphics();
@@ -2247,7 +2283,17 @@ export class ControlTowerScreen {
     if (kind === 'ladder') this.renderLadderModal(panel, px, py);
     else if (kind === 'history') this.renderHistoryModal(panel, px, py);
     else if (kind === 'alerts') this.renderAlertsModal(panel);
-    else this.renderSortieModal(panel);
+    else if (kind === 'help') {
+      // 기구는 공용 모듈이 쥔다 — 화면 여섯이 같은 팝업을 쓰므로 여기서 다시 조립하면 갈린다.
+      renderHelpSections(panel, {
+        spec: TOWER_HELP,
+        get: () => this.modalScrollY,
+        set: (v) => {
+          this.modalScrollY = v;
+        },
+        onClose: () => this.closeModal(),
+      });
+    } else this.renderSortieModal(panel);
   }
 
   /** 팝업 안 표 헤더 한 줄 + 밑줄. 열 정의는 상자 기준 상대 좌표. */
