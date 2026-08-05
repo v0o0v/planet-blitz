@@ -6,7 +6,7 @@
 --
 -- 이 마이그레이션이 더하는 것:
 --   1. grant_blueprints(jsonb) — 행성 파밍으로 얻은 설계도 지급(정산 경로).
---   2. craft_defense_unit(smallint, integer) 재정의 — **설계도 + 희귀 광물**(기획 §4의
+--   2. craft_defense_unit(smallint, integer) 재정의 — **설계도 + 광물**(기획 §4의
 --      "반복 파밍의 천장값"). 20260722000000 판은 설계도만 받았다.
 --   3. loot_defense_blueprint(uuid) — 침공 성공 시 낮은 확률로 상대 배치 방어체 1종의
 --      **설계도를 복제**. ADR-0003 방어자 무손실: 방어자 데이터는 한 행도 바뀌지 않는다.
@@ -93,10 +93,10 @@ revoke all on function public.grant_blueprints(jsonb) from anon;
 grant execute on function public.grant_blueprints(jsonb) to authenticated, service_role;
 
 -- -----------------------------------------------------------------------------
--- 2. 제작 재정의 — 설계도 + 희귀 광물
+-- 2. 제작 재정의 — 설계도 + 광물
 -- -----------------------------------------------------------------------------
 -- 20260722000000 의 craft_defense_unit 은 설계도 1장만 받았다. 기획 §4 는 제작을 "반복
--- 파밍의 천장값"으로 두므로 희귀 광물을 함께 받는다 — 설계도만 쌓아도, 광물만 쌓아도
+-- 파밍의 천장값"으로 두므로 광물을 함께 받는다 — 설계도만 쌓아도, 광물만 쌓아도
 -- 못 만든다. 광물 부족이면 **설계도는 차감하지 않는다**(차감 순서: 광물 → 설계도).
 create or replace function public.craft_defense_unit(p_kind smallint, p_catalog integer)
 returns jsonb

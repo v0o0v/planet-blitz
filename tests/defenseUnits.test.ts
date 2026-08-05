@@ -416,7 +416,7 @@ describe('강화 비용', () => {
     }
   });
 
-  it('희귀 광물은 20레벨부터 10레벨 구간마다 1씩 는다', () => {
+  it('광물은 20레벨부터 10레벨 구간마다 1씩 는다', () => {
     expect(defenseUnitLevelUpCost('normal', 19)!.minerals).toBe(0);
     expect(defenseUnitLevelUpCost('normal', 20)!.minerals).toBe(1);
     expect(defenseUnitLevelUpCost('normal', 29)!.minerals).toBe(1);

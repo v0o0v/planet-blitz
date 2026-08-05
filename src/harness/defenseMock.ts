@@ -73,7 +73,7 @@ import { SeededRng } from '../sim/rng.js';
 
 /** 초기 크레딧. 레벨업을 수십 번 눌러도 바닥나지 않을 만큼 넉넉히 둔다. */
 export const MOCK_INITIAL_CREDITS = 200_000;
-/** 초기 희귀 광물. */
+/** 초기 광물. */
 export const MOCK_INITIAL_MINERALS = 4_000;
 /** 초기 설계도(단일 풀). */
 export const MOCK_INITIAL_BLUEPRINTS = 200;

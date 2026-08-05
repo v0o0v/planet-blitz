@@ -64,7 +64,7 @@ export interface DefenseUnitUpgradeResult {
   unit?: DefenseUnitInstance;
   /** 차감 후 서버 잔여 크레딧(성공 시). */
   credits?: number;
-  /** 차감 후 서버 잔여 희귀 광물(성공 시). */
+  /** 차감 후 서버 잔여 광물(성공 시). */
   minerals?: number;
   code?: string;
 }
@@ -76,11 +76,11 @@ export interface DefenseUnitsGateway {
   listUnits(): Promise<DefenseUnitOwned[]>;
   /** 설계도 보유 조회(defense_blueprints, RLS 본인). 실패 시 throw. */
   listBlueprints(): Promise<BlueprintOwned[]>;
-  /** 레벨업 1단계(크레딧+희귀 광물 차감). */
+  /** 레벨업 1단계(크레딧+광물 차감). */
   levelUp(unitId: string): Promise<DefenseUnitUpgradeResult>;
   /** 승급 1단계(중복 설계도+크레딧 차감). */
   ascend(unitId: string): Promise<DefenseUnitUpgradeResult>;
-  /** 방어체 어픽스 리롤(희귀 광물 차감, 서버가 새 시드 부여). */
+  /** 방어체 어픽스 리롤(광물 차감, 서버가 새 시드 부여). */
   rerollAffixes(unitId: string): Promise<DefenseUnitUpgradeResult>;
   /** 설계도로 등급 승급(중복 설계도 차감, 서버가 새 시드로 재롤). */
   promoteRarity(unitId: string): Promise<DefenseUnitUpgradeResult>;
@@ -200,7 +200,7 @@ export async function listBlueprints(
 }
 
 /**
- * 레벨업 1단계. 성공 시 서버가 크레딧·희귀 광물을 차감하고 갱신된 방어체를 돌려준다.
+ * 레벨업 1단계. 성공 시 서버가 크레딧·광물을 차감하고 갱신된 방어체를 돌려준다.
  * 성공 후 `save.credits`·`save.minerals` 는 서버가 진실이므로 호출부가 profileSync 로 pull 한다.
  */
 export async function levelUpDefenseUnit(
@@ -219,7 +219,7 @@ export async function ascendDefenseUnit(
 }
 
 /**
- * 방어체 어픽스 리롤(희귀 광물 소모). 서버가 새 `affixSeed` 를 부여하므로 결과 어픽스는
+ * 방어체 어픽스 리롤(광물 소모). 서버가 새 `affixSeed` 를 부여하므로 결과 어픽스는
  * 클라가 예측할 수 없다(예측 가능하면 광물 없이 결과만 골라 담을 수 있다).
  */
 export async function rerollDefenseUnitAffixes(

@@ -4,9 +4,9 @@
  * ## 무엇인가
  * `InvasionRef = {catalogId, level, ascension, affixSeed, rarity}`(src/sim/invasion/types.ts)는
  * **이미 sim 에 배선돼 있다**. 이 모듈은 그 5필드를 **만들고·기르고·저장하는 메타 경제**다.
- *   ① 방어체 레벨(크레딧 + 희귀 광물, 1~99)
+ *   ① 방어체 레벨(크레딧 + 광물, 1~99)
  *   ② 승급(중복 설계도, 0~5 — 외형 변화 신호)
- *   ③ 방어체 어픽스 리롤(희귀 광물)
+ *   ③ 방어체 어픽스 리롤(광물)
  *
  * ## 왜 복제인가 (data/defenseCards.ts / src/items/types.ts)
  * - **방어체 어픽스**는 장비 어픽스(`StatKey` — 플레이어 파생 스탯 어휘)와 **다른 어휘**다.
@@ -502,7 +502,7 @@ export function defenseUnitPowerBp(
 }
 
 // ---------------------------------------------------------------------------
-// 축 ① 방어체 레벨 — 크레딧 + 희귀 광물
+// 축 ① 방어체 레벨 — 크레딧 + 광물
 // ---------------------------------------------------------------------------
 
 /** 레벨업 1회 기본 크레딧(레벨 1 → 2). 📝 시작값. */
@@ -512,16 +512,16 @@ export const LEVEL_CREDIT_STEP = 24;
 /** 등급 1단계당 레벨업 비용 가산(basis-point). unique(3) = +90%. 📝 시작값. */
 export const LEVEL_RARITY_COST_BP = 3000;
 
-/** 희귀 광물이 요구되기 시작하는 레벨(이 미만은 크레딧만). 📝 시작값. */
+/** 광물이 요구되기 시작하는 레벨(이 미만은 크레딧만). 📝 시작값. */
 export const LEVEL_MINERAL_FROM = 20;
-/** 희귀 광물 요구 구간 크기 — 이 레벨마다 광물 1 씩 늘어난다. 📝 시작값. */
+/** 광물 요구 구간 크기 — 이 레벨마다 광물 1 씩 늘어난다. 📝 시작값. */
 export const LEVEL_MINERAL_PER_TIER = 10;
 
 /** 강화 1회에 드는 재화(정수). */
 export interface DefenseUnitCost {
   /** 크레딧. */
   readonly credits: number;
-  /** 희귀 광물. */
+  /** 광물. */
   readonly minerals: number;
   /** 중복 설계도(승급 전용 — 그 외 0). */
   readonly blueprints: number;
@@ -617,7 +617,7 @@ export function ascensionVisualTier(ascension: number): number {
 export const ASCENSION_VISUAL_TIERS = 4;
 
 // ---------------------------------------------------------------------------
-// 축 ③ 방어체 어픽스 리롤 — 희귀 광물
+// 축 ③ 방어체 어픽스 리롤 — 광물
 // ---------------------------------------------------------------------------
 
 /** 리롤 기본 광물. 📝 시작값(장비 정제소 REROLL_BASE=6 대비 상향 — 방어체가 더 오래 쓰인다). */
@@ -628,7 +628,7 @@ export const UNIT_REROLL_PER_RARITY = 8;
 export const UNIT_REROLL_PER_AFFIX = 3;
 
 /**
- * 방어체 어픽스 리롤 비용(희귀 광물). BASE + PER_RARITY×등급랭크 + PER_AFFIX×**등급 어픽스 상한**.
+ * 방어체 어픽스 리롤 비용(광물). BASE + PER_RARITY×등급랭크 + PER_AFFIX×**등급 어픽스 상한**.
  *
  * ## 왜 실제 롤 개수가 아니라 등급 상한인가
  * DB(`defense_units`)는 어픽스를 **저장하지 않는다** — `affix_seed` 정수 하나만 갖고 어픽스는

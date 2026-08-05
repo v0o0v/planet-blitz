@@ -159,7 +159,7 @@ export class SupabaseDefenseUnitsGateway implements DefenseUnitsGateway {
   }
 
   async craftFromBlueprint(kind: number, catalogId: number): Promise<DefenseUnitUpgradeResult> {
-    // 20260722020000 재정의판: 설계도 1장 + 희귀 광물(보스 40 / 그 외 12). 광물 부족은
+    // 20260722020000 재정의판: 설계도 1장 + 광물(보스 40 / 그 외 12). 광물 부족은
     // insufficient-funds, 설계도 부족은 트랜잭션째 raise → supabase-js error → 여기서 throw
     // (공개 API `call` 래퍼가 null 로 흡수해 UI 는 '서버가 거부했다'로 표시한다).
     const { data, error } = await this.client.rpc('craft_defense_unit', {

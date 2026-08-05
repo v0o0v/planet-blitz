@@ -95,7 +95,7 @@ export interface HarnessCatalystControl {
  * 방어체 강화 하네스 제어(DEV). 방어 사령부의 강화(레벨업·승급·리롤·등급 승급·제작)는
  * **서버 권위**라 로그인 없이는 한 줄도 돌지 않는다 — 그래서 하네스는 인메모리 모의
  * 게이트웨이(`src/harness/defenseMock.ts`)를 `setDefenseUnitsGatewayOverride` 로 끼워 넣고,
- * 그 모의 원장의 재화(크레딧·희귀 광물·설계도)를 이 제어로 조절한다.
+ * 그 모의 원장의 재화(크레딧·광물·설계도)를 이 제어로 조절한다.
  *
  * 로직은 전부 mock/main 쪽에 있고 여기 UI 는 숫자를 넣고 버튼만 건다
  * ({@link HarnessCatalystControl} 과 같은 규율).
@@ -1408,7 +1408,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     /**
      * 방어체 강화 재화 섹션(침공 탭). 방어 사령부의 강화는 **서버 권위**라 로그인 없이는
      * 아무것도 안 돌아간다 — 모의 게이트웨이를 켜면 오프라인에서도 레벨업·승급·리롤·등급
-     * 승급·제작 흐름을 그대로 밟을 수 있고, 그 원장의 크레딧·희귀 광물·설계도를 여기서 준다.
+     * 승급·제작 흐름을 그대로 밟을 수 있고, 그 원장의 크레딧·광물·설계도를 여기서 준다.
      */
     function appendDefenseCurrency(s: HTMLElement): void {
       s.appendChild(subLabel('방어체 강화 재화 (모의 원장)'));
@@ -1453,7 +1453,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       const minIn = numInput(cur.minerals, 72);
       const bpIn = numInput(cur.blueprints, 64);
       crIn.title = '크레딧(레벨업·승급 비용)';
-      minIn.title = '희귀 광물(레벨업·리롤 비용)';
+      minIn.title = '광물(레벨업·리롤 비용)';
       bpIn.title = '설계도(승급·등급 승급·제작 재료)';
       const crLbl = document.createElement('span');
       crLbl.className = 'pb-c-lbl';
