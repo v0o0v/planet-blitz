@@ -27,21 +27,27 @@ import type { ShipTypeDef } from './types.js';
 export type {
   ShipTypeDef,
   ShipTreeDef,
+  ShipSkillDef,
   ShipBaseBp,
   TreeAffinity,
+  SkillSpec,
 } from './types.js';
 export {
   TREE_AFFINITIES,
   LEGACY_TREE_AFFINITY,
   AFFINITY_LEGACY_TREE,
   TREES_PER_SHIP,
+  SKILLS_PER_AXIS,
+  SKILL_MAX_LEVEL,
+  ACTIVE_HI_GATE_DEFAULT,
   SIGNATURE_BIT_MIN,
   SIGNATURE_BIT_MAX,
   NO_SIGNATURE_BIT,
   shipNodeCount,
   shipTreeRange,
-  shipCapstoneIndex,
+  shipAxisIndexOf,
   flattenShipNodes,
+  buildShipAxis,
 } from './types.js';
 export { STRIKER } from './striker.js';
 export { BRUISER } from './bruiser.js';

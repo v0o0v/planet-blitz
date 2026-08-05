@@ -1,193 +1,83 @@
 /**
- * hatchling = 기체 타입 4, 부화 소환 (설계서 §3).
+ * hatchling = 기체 타입 4, 부화 소환 (ADR-0019 · ADR-0049). 설계 정본은
+ * `.omc/plans/skill-rebuild-2026-08-05/hatchling.md`(확정 3판) — 레벨 공식·침공 판정·구현
+ * 태그는 전부 거기 있고, 이 파일은 **와이어 레이아웃과 표시 문구**만 담는다.
  *
  * ## 컨셉
- * 알 모양 모선이 병아리 드론을 부화시켜 내보낸다. **메커니즘은 그대로다** — 처치를 적립해
- * 임계에 닿으면 동료가 자동으로 출격한다. 바뀐 것은 fiction·naming·아트뿐이다.
- * (구 slug `bion`(곤충·생체 컨셉)에서 개명. 2026-07-21 사용자 반려: "벌레 말고 귀여운 걸로."
- * `id = 4` 와 `signatureBit = 21` 은 **세이브·리플레이 wire 계약이라 그대로 유지**한다.)
+ * 알 모양 모선이 병아리 드론을 부화시켜 내보낸다 — 처치를 적립해 임계에 닿으면 동료가
+ * 자동 출격한다(시그니처, 변경 없음). 얕고 넓은 무리: 최고 연사·최고 경험치 획득, 대신
+ * 단발 피해는 로스터 최저.
+ * (구 slug `bion`(곤충·생체 컨셉)에서 개명. `id = 4` 와 `signatureBit = 21` 은
+ * **세이브·리플레이 wire 계약이라 그대로 유지**한다.)
  *
- * ## 빌드 방향
- * 얕고 넓은 무리. **최고 연사 + 최고 경험치 획득**, 대신 단발 피해가 로스터에서 가장 낮다.
- * 다른 기체와 갈리는 축이 하나 더 있다 — **노드 수 자체가 다르다.**
+ * ## 축 대응표 (설계서 → 이 파일)
+ * 설계서 축 이니셜 BD(brood/offense) · NU(nurture/utility) · SH(shelter/defense) 는 이 파일의
+ * `brood`/`nurture`/`shelter` 축과 이름·순서·affinity 가 그대로 1:1이다(구 파일부터 유지된
+ * 순서 — 액티브 `treeIndex`·i18n 키가 걸려 있어 바꾸지 않는다).
  *
- * ### 왜 트리당 25노드인가 (다른 타입은 20)
- * 1. **컨셉**: 무리는 "큰 한 방"이 아니라 "작은 것이 많이"다. 같은 포인트 예산(만렙 ~99pt)을
- *    더 잘게 쪼개 넣는 형태를 노드 수로 표현했다 — perPoint 를 낮추기만 해서는 단순 하향이다.
- * 2. **아키텍처 검증**: `nodesPerTree` 는 타입별 필드인데(설계서 §2), **전 타입이 63이면
- *    어딘가 남아 있는 하드코딩 63 이 영원히 보이지 않는다.** 이 프로젝트에서 8회 재발한
- *    "단위 테스트는 그린인데 배선이 통째로 없다" 의 전형이다. 해츨링의 78(=3×26) 이 그
- *    하드코딩을 실제로 밟는 유일한 타입이며, `tests/save.test.ts` 의 꼬리 인덱스 가드가 이
- *    타입에서만 판별력을 갖는다.
- * 3. **63 미만은 피했다**: 노드 수가 63보다 *적은* 타입을 만들면 리플레이 폴드의 길이 계약이
- *    취약해진다. 63 **초과**는 초과분이 투자 불가로 남을 뿐 손상되지 않는다.
- *
- * ### capstoneGate = 44 (스트라이커·나머지 기체는 40)
- * 게이트는 "계열 base 누적 투자 하한"이라 **포인트 단위**다. 해츨링의 계열 base 용량은 103
- * (스트라이커 83)이지만 플레이어의 포인트 예산은 같으므로 비율(83의 48% = 40)을 그대로 옮기면
- * 50pt 가 되어 다른 기체보다 캡스톤이 훨씬 멀어진다. 절대 포인트를 기준으로 소폭만 올려
- * "노드가 얕은 대신 조금 더 넓게 투자해야 한다"를 표현했다(103의 43%).
- *
- * ## 확정 계약 (재번호·재배치 금지)
- *   - `id = 4` · `signatureBit = 21`(`src/sim/shipSignature.ts` 의 `SIG_HATCHLING_BROOD` 가 정본)
- *   - 트리 3계열: brood/offense · nurture/utility · shelter/defense
- *   - 시그니처 패시브: 처치 적립, 임계에서 병아리 드론 자동 출격
- *
- * ## 신규 StatKey 0 · 캡스톤 효과는 affinity 가 정한다
- * 근거는 `data/ships/bruiser.ts` 헤더 참조.
+ * ## 25노드·capstoneGate=44 예외는 걷는다
+ * 구 버전은 트리당 25노드(78 = 3×26)·`capstoneGate = 44` 로 **해츨링만** 다른 규격이었다.
+ * 근거는 "해츨링 트리가 더 크다"였는데, ADR-0049 가 축당 10스킬로 전 기체를 통일하면서 그
+ * 용량 차이 자체가 사라졌다 — 그래서 두 예외 모두 걷고 `ACTIVE_HI_GATE_DEFAULT`(40)를 쓴다.
+ * (근거 소실이지 밸런스 판단이 아니다 — 수치 재조정은 `defer-balance-tuning` 소관.)
  */
 
-import { buildShipTree } from './authoring.js';
-import type { NodeSpec } from './authoring.js';
-import type { ShipTypeDef } from './types.js';
+import { ACTIVE_HI_GATE_DEFAULT, buildShipAxis } from './types.js';
+import type { ShipTypeDef, SkillSpec } from './types.js';
 
 const SLUG = 'hatchling';
 
-/** 트리당 base 노드 수 — 5티어 × 5노드. 다른 타입(20)과 의도적으로 다르다(위 헤더). */
-const HATCHLING_NODES_PER_TREE = 25;
-
-/** 계열 base 용량 103pt 대비 43% 게이트. 스트라이커는 83 대비 48%(=40). */
-const HATCHLING_CAPSTONE_GATE = 44;
-
-// --- brood (offense): 연사 축. 단발 피해는 로스터 최저 -------------------------
-const BROOD: readonly (readonly NodeSpec[])[] = [
-  [
-    ['종종걸음 격발', '연사 속도 +2%/pt', 'fireRatePct', 2, 4],
-    ['깃털 산탄', '탄환 +1/4pt(내림)', 'bulletCount', 0.25, 4],
-    ['부리 쪼기', '탄환 데미지 +2%/pt', 'damagePct', 2, 4],
-    ['날갯짓 사출', '탄속 +2%/pt', 'bulletSpeedPct', 2, 4],
-    ['무리 신호', '연사 속도 +2%/pt', 'fireRatePct', 2, 4],
-  ],
-  [
-    ['부화 격발', '연사 속도 +3%/pt', 'fireRatePct', 3, 4],
-    ['솜털 산탄', '탄환 +1/4pt(내림)', 'bulletCount', 0.25, 4],
-    ['야무진 쪼기', '탄환 데미지 +2%/pt', 'damagePct', 2, 4],
-    ['도약 사출', '탄속 +3%/pt', 'bulletSpeedPct', 3, 4],
-    ['무리 반사', '연사 속도 +3%/pt', 'fireRatePct', 3, 4],
-  ],
-  [
-    ['재잘 격발', '연사 속도 +3%/pt', 'fireRatePct', 3, 4],
-    ['다발 깃털', '탄환 +1/4pt(내림)', 'bulletCount', 0.25, 4],
-    ['단단한 부리', '탄환 데미지 +3%/pt', 'damagePct', 3, 4],
-    ['관통 부리', '관통 +1/2pt(내림)', 'pierce', 0.5, 4],
-    ['무리 가속', '연사 속도 +3%/pt', 'fireRatePct', 3, 4],
-  ],
-  [
-    ['폭풍 종종걸음', '연사 속도 +4%/pt', 'fireRatePct', 4, 4],
-    ['깃털 폭죽', '탄환 +1/4pt(내림)', 'bulletCount', 0.25, 4],
-    ['힘찬 쪼기', '탄환 데미지 +3%/pt', 'damagePct', 3, 4],
-    ['질주 사출', '탄속 +4%/pt', 'bulletSpeedPct', 4, 4],
-    ['무리 공명', '연사 속도 +4%/pt', 'fireRatePct', 4, 4],
-  ],
-  [
-    ['무한 재잘 교리', '연사 속도 +5%/pt', 'fireRatePct', 5, 5],
-    ['만개 깃털 교리', '탄환 +1/4pt(내림)', 'bulletCount', 0.25, 5],
-    ['강철 부리 교리', '탄환 데미지 +4%/pt', 'damagePct', 4, 5],
-    ['관통 부리 교리', '관통 +1/2pt(내림)', 'pierce', 0.5, 4],
-    ['광란 종종 교리', '연사 속도 +5%/pt', 'fireRatePct', 5, 4],
-  ],
+/** 부화 — 병아리 무리의 연사·출격 리듬을 직접 만지는 축. 단발 피해는 로스터 최저. */
+const BROOD: readonly SkillSpec[] = [
+  ['BD1', 'early-hatch', '조기 부화', '부화 요구 처치 수가 줄어 같은 처치량으로 더 자주 부화한다'],
+  ['BD2', 'twin-hatch', '쌍둥이 부화', 'N번째 출격마다 병아리 2기가 동시에 출격한다'],
+  ['BD3', 'farewell-volley', '작별 격발', '병아리가 소멸하는 순간 그 자리에서 부채꼴 작별 사격을 남긴다'],
+  ['BD4', 'target-share', '표적 공유', '병아리가 플레이어의 자동 조준 표적을 우선 공격하고, 명중 직후 한동안 그 표적에 대한 병아리 탄 피해가 증폭된다'],
+  ['BD5', 'volley-resonance', '격발 공명', '플레이어가 주무기를 발사할 때마다 살아 있는 병아리 전원의 발사 쿨다운이 함께 깎인다'],
+  ['BD6', 'hatch-shockwave', '부화 충격파', '출격 지점에서 충격파가 터져 광역 피해를 주고 적탄을 소거한다'],
+  ['BD7', 'veteran-chick', '노병 병아리', '발사를 거듭할수록 그 병아리 개체의 탄이 점점 강해진다'],
+  ['BD8', 'brood-assault', '브루드 강습', 'brood 액티브 발동 시 살아 있는 병아리 전원이 쿨다운을 무시하고 즉시 일제 사격한다'],
+  ['BD9', 'overcrowd-instinct', '과밀 본능', '상한이 만석이라 출격이 보류 중인 동안 병아리 전원의 발사 간격이 짧아진다'],
+  ['BD10', 'matriarch-launch', '여왕 사출', '동시 출격 상한이 줄어드는 대신 그 결손만큼 출격하는 병아리의 탄 피해와 수명이 강화된다'],
 ];
 
-// --- nurture (utility): 경험치·수집 축. 성장 속도가 이 기체의 정체성 ----------
-const NURTURE: readonly (readonly NodeSpec[])[] = [
-  [
-    ['알 품기', '경험치 +2%/pt', 'xpPct', 2, 4],
-    ['모이 자석', '젬 자석 반경 +4%/pt', 'magnetPct', 4, 4],
-    ['아장 걸음', '이동 속도 +2%/pt', 'moveSpeedPct', 2, 4],
-    ['성장 촉진', '경험치 +2%/pt', 'xpPct', 2, 4],
-    ['부리 감지', '젬 자석 반경 +4%/pt', 'magnetPct', 4, 4],
-  ],
-  [
-    ['따뜻한 둥지', '경험치 +3%/pt', 'xpPct', 3, 4],
-    ['모이 견인', '젬 자석 반경 +5%/pt', 'magnetPct', 5, 4],
-    ['총총 질주', '이동 속도 +3%/pt', 'moveSpeedPct', 3, 4],
-    ['둥지 도약', '대시 재충전 -3%/pt', 'dashCdPct', 3, 4],
-    ['학습 지저귐', '경험치 +3%/pt', 'xpPct', 3, 4],
-  ],
-  [
-    ['급속 성장', '경험치 +3%/pt', 'xpPct', 3, 4],
-    ['모이 그물', '젬 자석 반경 +5%/pt', 'magnetPct', 5, 4],
-    ['폭신 추진', '이동 속도 +3%/pt', 'moveSpeedPct', 3, 4],
-    ['깃털 회피', '대시 재충전 -3%/pt', 'dashCdPct', 3, 4],
-    ['무리 학습', '경험치 +3%/pt', 'xpPct', 3, 4],
-  ],
-  [
-    ['깃털 갈이', '경험치 +4%/pt', 'xpPct', 4, 4],
-    ['광역 모이', '젬 자석 반경 +6%/pt', 'magnetPct', 6, 4],
-    ['활공 추진', '이동 속도 +4%/pt', 'moveSpeedPct', 4, 4],
-    ['연속 도약', '대시 재충전 -4%/pt', 'dashCdPct', 4, 4],
-    ['무리 지혜', '경험치 +4%/pt', 'xpPct', 4, 4],
-  ],
-  [
-    ['초성장 교리', '경험치 +5%/pt', 'xpPct', 5, 5],
-    ['모이 지배 교리', '젬 자석 반경 +7%/pt', 'magnetPct', 7, 5],
-    ['활공 지배 교리', '이동 속도 +5%/pt', 'moveSpeedPct', 5, 5],
-    ['무한 도약 교리', '대시 재충전 -5%/pt', 'dashCdPct', 5, 4],
-    ['무리 지혜 교리', '경험치 +5%/pt', 'xpPct', 5, 4],
-  ],
+/** 양육 — 경험치·수집·재배치를 얽는 축. 무리의 성장 속도가 이 기체의 정체성. */
+const NURTURE: readonly SkillSpec[] = [
+  ['NU1', 'gem-fetch', '모이 물어오기', '병아리 주변에도 자석장이 서서 근처 젬을 플레이어에게 끌어온다'],
+  ['NU2', 'eggshell-nutrients', '알껍질 영양', '출격하는 순간 깨진 알껍질이 소형 경험치 젬으로 흩어진다'],
+  ['NU3', 'piggyback', '업어 나르기', '대시 경로 위의 병아리를 업어서 대시 도착 지점 주위로 함께 옮긴다'],
+  ['NU4', 'nest-recall', '둥지 소집', 'nurture 액티브 발동 시 살아 있는 병아리 전원이 도착 지점 주위로 재배치되고 잠깐 연사 창을 얻는다'],
+  ['NU5', 'egg-roll', '알 굴리기', '대시할 때마다 부화 적립이 1 전진하고 대시 경로 위의 젬을 즉시 수거한다'],
+  ['NU6', 'shared-warmth', '온기 나눔', '콤보가 유지되는 동안 병아리의 수명 감소 속도가 절반으로 줄어든다'],
+  ['NU7', 'expedition-hatch', '원정 부화', '병아리가 플레이어 곁이 아니라 가장 가까운 젬의 위치에서 부화한다'],
+  ['NU8', 'migration-instinct', '이주 본능', '병아리가 정지형에서 추종형으로 바뀌어 플레이어와 멀어지면 걸어서 따라온다'],
+  ['NU9', 'nest-beacon', '둥지 표식', '병아리가 소멸한 자리에 자석 버프를 내는 표식이 남는다'],
+  ['NU10', 'egg-bank', '알 저금', '만석 보류 중 초과 적립된 처치가 저금되어, 자리가 나면 다음 부화 요구치에 선납된다'],
 ];
 
-// --- shelter (defense): 얕고 넓은 방어. **노드당 HP 는 일부러 낮다** -----------
-// 해츨링의 계열 용량이 103(다른 타입 83)이라 flat 값을 같은 눈금으로 주면 만렙 총량이
-// 브루저의 장갑과 맞먹어 "무리는 물렁하다" 는 축이 사라진다. 포인트당으로 읽으면
-// 브루저 5.3HP/pt · 해츨링 3.5HP/pt — 총량과 효율 두 지표 모두에서 브루저가 앞선다.
-const SHELTER: readonly (readonly NodeSpec[])[] = [
-  [
-    ['알껍질', '최대 HP +5/pt', 'maxHpFlat', 5, 4],
-    ['두툼한 껍질', '최대 HP +5/pt', 'maxHpFlat', 5, 4],
-    ['솜털 보온', '최대 HP +2%/pt', 'maxHpPct', 2, 4],
-    ['둥지 벽', '최대 HP +5/pt', 'maxHpFlat', 5, 4],
-    ['온기 순환', '최대 HP +2%/pt', 'maxHpPct', 2, 4],
-  ],
-  [
-    ['단단한 껍질', '최대 HP +7/pt', 'maxHpFlat', 7, 4],
-    ['자라는 솜털', '최대 HP +3%/pt', 'maxHpPct', 3, 4],
-    ['겹둥지', '최대 HP +7/pt', 'maxHpFlat', 7, 4],
-    ['놀란 회피', '대시 재충전 -3%/pt', 'dashCdPct', 3, 4],
-    ['포근한 이불', '최대 HP +2%/pt', 'maxHpPct', 2, 4],
-  ],
-  [
-    ['강화 껍질', '최대 HP +8/pt', 'maxHpFlat', 8, 4],
-    ['두꺼운 솜털', '최대 HP +3%/pt', 'maxHpPct', 3, 4],
-    ['삼중 둥지', '최대 HP +8/pt', 'maxHpFlat', 8, 4],
-    ['미끄럼 회피', '이동 속도 +2%/pt', 'moveSpeedPct', 2, 4],
-    ['따뜻한 공기층', '최대 HP +3%/pt', 'maxHpPct', 3, 4],
-  ],
-  [
-    ['다층 껍질', '최대 HP +10/pt', 'maxHpFlat', 10, 4],
-    ['촘촘한 솜털', '최대 HP +4%/pt', 'maxHpPct', 4, 4],
-    ['요새 둥지', '최대 HP +10/pt', 'maxHpFlat', 10, 4],
-    ['재빠른 회피', '대시 재충전 -4%/pt', 'dashCdPct', 4, 4],
-    ['깃털 방석', '최대 HP +3%/pt', 'maxHpPct', 3, 4],
-  ],
-  [
-    ['불괴 둥지 교리', '최대 HP +5%/pt', 'maxHpPct', 5, 5],
-    ['거대 껍질 교리', '최대 HP +12/pt', 'maxHpFlat', 12, 5],
-    ['무한 솜털 교리', '최대 HP +5%/pt', 'maxHpPct', 5, 5],
-    ['철벽 둥지 교리', '최대 HP +10/pt', 'maxHpFlat', 10, 4],
-    ['질풍 회피 교리', '대시 재충전 -4%/pt', 'dashCdPct', 4, 4],
-  ],
+/** 둥지 — 무리를 방어 자원(희생·필터·엄폐)으로 소모하는 축. */
+const SHELTER: readonly SkillSpec[] = [
+  ['SH1', 'escort-sacrifice', '호위 희생', 'HP 가 깎이는 피격이 들어오면 병아리 1기가 대신 소멸하며 피해 일부를 흡수한다'],
+  ['SH2', 'crisis-scatter', '위기 산개', 'HP 가 깎이는 피격을 받으면 병아리 전원이 피격 방향으로 산개 돌진하며 경로 위 적탄을 소거한다'],
+  ['SH3', 'full-nest-warmth', '만석 둥지 온기', '동시 출격 상한이 만석인 동안 주기적으로 HP 를 회복한다'],
+  ['SH4', 'brooding-formation', '품기 진형', 'shelter 액티브 지속 중 병아리 전원이 사격을 멈추고 플레이어 주위에 밀착해 적탄을 몸으로 막는다'],
+  ['SH5', 'alarm-chirp', '경계 지저귐', '병아리의 탄이 적에게 명중하면 그 적에게 냉기 감속을 건다'],
+  ['SH6', 'egg-membrane', '알막', '출격하는 순간 모선이 짧은 무적 시간을 얻는다'],
+  ['SH7', 'rebirth-hatch', '회생 부화', '치명적인 피격이 남으면 살아 있는 병아리 전원을 소멸시켜 그 수에 비례해 HP 를 남기고 생존한다'],
+  ['SH8', 'feather-bulwark', '탄받이 깃털', '적탄이 병아리에 닿으면 소거되는 대신 그 병아리의 수명이 깎인다'],
+  ['SH9', 'fledge-nest', '이소 둥지', '수명이 자연히 다한 병아리는 그 자리에 파괴 가능한 낮은 HP 둥지벽을 남긴다'],
+  ['SH10', 'expanded-nest', '확장 둥지', '동시 출격 상한이 늘어나는 대신 부화에 필요한 처치 수가 늘어난다'],
 ];
 
 export const HATCHLING: ShipTypeDef = {
   id: 4,
   slug: SLUG,
   trees: [
-    buildShipTree(SLUG, 'brood', 'offense', BROOD, [
-      '햇살 광선',
-      '1.5초마다 전방 광선이 적탄을 소거',
-    ]),
-    buildShipTree(SLUG, 'nurture', 'utility', NURTURE, [
-      '깃털 잔상',
-      '대시 시 반경 320 내 적탄을 소거',
-    ]),
-    buildShipTree(SLUG, 'shelter', 'defense', SHELTER, [
-      '둥지 보호',
-      '런당 1회 치명 피격을 무효화 + 짧은 무적',
-    ]),
+    buildShipAxis(SLUG, 'brood', 'offense', BROOD),
+    buildShipAxis(SLUG, 'nurture', 'utility', NURTURE),
+    buildShipAxis(SLUG, 'shelter', 'defense', SHELTER),
   ],
-  nodesPerTree: HATCHLING_NODES_PER_TREE,
-  capstoneGate: HATCHLING_CAPSTONE_GATE,
+  activeHiGate: ACTIVE_HI_GATE_DEFAULT,
   signatureBit: 21,
   baseBp: { damageBp: -500, fireRateBp: 500, maxHpBp: 1000, moveSpeedBp: 0 },
 };

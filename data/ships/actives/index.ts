@@ -83,10 +83,12 @@ export function wireIdOf(id: string): number {
 export function activeGateThreshold(def: ActiveSkillDef): number {
   if (def.tier === 'lo') return ACTIVE_LO_GATE;
   const ship: ShipTypeDef | undefined = SHIP_TYPES[def.shipTypeId];
-  return ship?.capstoneGate ?? 40;
+  // ADR-0049: 구 `capstoneGate` 를 이어받은 `activeHiGate`. 캡스톤이 폐기되면서 이 임계의
+  // 소비자가 상위 액티브 하나만 남아 이름을 소비자에 맞췄다(수치는 승계).
+  return ship?.activeHiGate ?? ACTIVE_HI_GATE_DEFAULT;
 }
 
-/** 그 계열에 실제로 투자된 base 누적 포인트(캡스톤 제외). */
+/** 그 **축**에 실제로 투자된 누적 포인트(ADR-0049 — 캡스톤 칸 자체가 없어졌다). */
 export function investedInTree(skillInvest: readonly number[], def: ActiveSkillDef): number {
   const ship = SHIP_TYPES[def.shipTypeId];
   if (ship === undefined) return 0;

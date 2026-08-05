@@ -1,160 +1,84 @@
 /**
- * bubble = 기체 타입 6, 거품 방막 (로스터 7종 확장, 2026-07-21 사용자 지시).
+ * bubble = 기체 타입 6, 거품 방막 (로스터 7종 확장, 2026-07-21 사용자 지시 · ADR-0049 재편).
  *
- * ## 컨셉
- * 주기적으로 일정 피해를 흡수하는 막이 생기고, 막이 터질 때 주변을 밀어낸다. 시그니처
- * 상수·순수 함수는 `src/sim/shipSignature.ts` 의 `SIG_BUBBLE_FILM`(비트 23) 구역이 정본이고,
- * sim 배선은 아직 없다(설계서 §3: 브루저·아크캐스터만 완전 배선이 우선).
+ * 정체성: **탄속 1위 + 자석 1위**. 주기적으로 일정 피해를 흡수하는 막이 생기고, 막이 터질
+ * 때 주변을 밀어낸다. 막이 실질 체력을 대신하므로 선체 자체는 얇고(`baseBp` HP −14%), 대신
+ * 탄이 빠르고 관통이 잘 되며(터지는 압력) 젬을 멀리서 끌어온다(떠다니는 거품). 브루저·
+ * 말로우가 "맞아도 버틴다" 라면 버블은 **주기마다 한 번씩 안 맞는다** — 같은 defense
+ * affinity 를 두고도 축이 다르다. 시그니처 상수·순수 함수는 `src/sim/shipSignature.ts` 의
+ * `SIG_BUBBLE_FILM`(비트 23) 구역이 정본이고, 30스킬 설계 정본은
+ * `.omc/plans/skill-rebuild-2026-08-05/bubble.md`(승인본 4판) — 레벨 공식·침공 판정·구현
+ * 태그는 전부 거기 있고, 이 파일은 **와이어 레이아웃과 표시 문구**만 담는다.
  *
- * ## 빌드 방향
- * **탄속 1위 + 자석 1위.** 막이 실질 체력을 대신하므로 선체 자체는 얇고(`baseBp` HP −14%),
- * 대신 탄이 빠르고 관통이 잘 되며(터지는 압력) 젬을 멀리서 끌어온다(떠다니는 거품).
- * 브루저·말로우가 "맞아도 버틴다" 라면 버블은 **주기마다 한 번씩 안 맞는다** — 같은 defense
- * affinity 를 두고도 축이 다르다. 사거리 노드는 하나도 없다: 붙지도 멀지도 않은 중거리에서
- * 빠른 탄으로 밀어내는 기체다.
+ * ## 설계서 축 ↔ 코드 축 slug 대응
+ * 설계서 「파열(pop/offense)」→ `pop`(offense) · 「표류(drift/utility)」→ `drift`(utility) ·
+ * 「피막(film/defense)」→ `film`(defense). 이름·순서 전부 설계서와 코드가 이미 일치한다.
  *
  * ## 확정 계약 (재번호·재배치 금지)
  *   - `id = 6` — SHIP_TYPES 인덱스 = 세이브 wire 값. append-only
  *   - `signatureBit = 23`(`src/sim/shipSignature.ts` 의 `SIG_BUBBLE_FILM` 이 정본,
  *     `tests/shipSignatureRegistry.test.ts` 가 두 값을 마주 세운다)
- *   - 트리 3계열: pop/offense · drift/utility · film/defense
- *   - 시그니처 패시브: 주기적 피해 흡수막, 막이 터질 때 주변 밀어내기
- *
- * ## 신규 StatKey 0 · 캡스톤 효과는 affinity 가 정한다
- * 근거는 `data/ships/bruiser.ts` 헤더 참조.
+ *   - 축 순서: `[pop(offense), drift(utility), film(defense)]` — 액티브 레지스트리
+ *     (`data/ships/actives/bubble.ts`)가 `treeIndex` 로 축을 가리키고 i18n 키가 축 slug 를
+ *     쓰므로, 순서를 바꾸면 스킬 재편과 무관한 배선이 함께 밀린다.
  */
 
-import { NODES_PER_TREE, CAPSTONE_GATE } from '../skills.js';
-import { buildShipTree } from './authoring.js';
-import type { NodeSpec } from './authoring.js';
-import type { ShipTypeDef } from './types.js';
+import { ACTIVE_HI_GATE_DEFAULT, buildShipAxis } from './types.js';
+import type { ShipTypeDef, SkillSpec } from './types.js';
 
 const SLUG = 'bubble';
 
-// --- pop (offense): 터지는 압력 = 탄속·관통 축. 단발 피해는 중하위 ------------
-const POP: readonly (readonly NodeSpec[])[] = [
-  [
-    ['터짐 압력', '탄속 +4%/pt', 'bulletSpeedPct', 4, 4],
-    ['얇은 막 탄', '탄환 데미지 +3%/pt', 'damagePct', 3, 4],
-    ['비눗물 관통', '관통 +1/2pt(내림)', 'pierce', 0.5, 4],
-    ['잔거품', '탄환 +1/4pt(내림)', 'bulletCount', 0.25, 4],
-  ],
-  [
-    ['파열 가속', '탄속 +4%/pt', 'bulletSpeedPct', 4, 4],
-    ['표면장력 탄두', '탄환 데미지 +3%/pt', 'damagePct', 3, 4],
-    ['미끄러운 관통', '관통 +1/2pt(내림)', 'pierce', 0.5, 4],
-    ['분열 거품', '탄환 +1/4pt(내림)', 'bulletCount', 0.25, 4],
-  ],
-  [
-    ['고압 사출', '탄속 +5%/pt', 'bulletSpeedPct', 5, 4],
-    ['터지는 탄두', '탄환 데미지 +4%/pt', 'damagePct', 4, 4],
-    ['막 관통', '관통 +1/2pt(내림)', 'pierce', 0.5, 4],
-    ['연쇄 파열', '연사 속도 +2%/pt', 'fireRatePct', 2, 4],
-  ],
-  [
-    ['초고압 사출', '탄속 +5%/pt', 'bulletSpeedPct', 5, 4],
-    ['압축 파열', '탄환 데미지 +4%/pt', 'damagePct', 4, 4],
-    ['투과 관통', '관통 +1/2pt(내림)', 'pierce', 0.5, 4],
-    ['다중 거품', '탄환 +1/4pt(내림)', 'bulletCount', 0.25, 4],
-  ],
-  [
-    ['파열 지배 교리', '탄속 +7%/pt', 'bulletSpeedPct', 7, 5],
-    ['압력 지배 교리', '탄환 데미지 +5%/pt', 'damagePct', 5, 5],
-    ['투과 지배 교리', '관통 +1/2pt(내림)', 'pierce', 0.5, 5],
-    ['거품 폭풍 교리', '탄환 +1/4pt(내림)', 'bulletCount', 0.25, 4],
-  ],
+/** 파열 — 터지는 압력(탄속·관통)과 파열 훅 화력을 겸하는 축. */
+const POP: readonly SkillSpec[] = [
+  ['PO1', 'burst-warhead', '파열 탄두', '파열이 밀어내기에 더해 반경 안 적에게 즉발 폭발 피해를 준다'],
+  ['PO2', 'pressure-transfer', '압력 전환 사출', '막이 서 있는 동안 기준 탄속 초과분이 발사 시점에 피해로 전환된다'],
+  ['PO3', 'burst-scatter', '거품 산탄 파열', '파열 틱에 플레이어 중심 전방위로 거품탄을 사출한다'],
+  ['PO4', 'crush-impact', '압착 충돌', '파열에 밀린 적이 벽에 막히면 충돌 피해를 받는다'],
+  ['PO5', 'full-film-pierce', '만재 투과', '막이 만재인 동안 발사되는 볼리에 관통과 피해가 추가된다'],
+  ['PO6', 'fire-recondense', '격발 재응결', '막이 없는 동안 주무기가 명중할 때마다 재생 타이머가 전진한다'],
+  ['PO7', 'static-burst', '정전 파열', '파열 틱에 반경 안 적 최대 3기에게 전격 연쇄를 건다'],
+  ['PO8', 'residue-mines', '잔거품 기뢰', '파열 지점 둘레에 정지 거품 기뢰 링을 남긴다'],
+  ['PO9', 'pop-tuning', '고압 격발 조율', 'pop 액티브 두 종의 파열 반경과 내구→탄약 환산 효율을 강화한다'],
+  ['PO10', 'chain-pressure', '연쇄 압력', '파열 후 짧은 창 안의 처치 수에 비례해 다음 막의 내구가 보강된다'],
 ];
 
-// --- drift (utility): 떠다니며 끌어온다 = **자석 1위** + 부력(대시) ------------
-const DRIFT: readonly (readonly NodeSpec[])[] = [
-  [
-    ['떠오름', '이동 속도 +3%/pt', 'moveSpeedPct', 3, 4],
-    ['거품 인력', '젬 자석 반경 +5%/pt', 'magnetPct', 5, 4],
-    ['가벼운 부력', '대시 재충전 -3%/pt', 'dashCdPct', 3, 4],
-    ['무지개 관찰', '경험치 +2%/pt', 'xpPct', 2, 4],
-  ],
-  [
-    ['상승 기류', '이동 속도 +3%/pt', 'moveSpeedPct', 3, 4],
-    ['흡착 거품', '젬 자석 반경 +5%/pt', 'magnetPct', 5, 4],
-    ['탄성 도약', '대시 재충전 -3%/pt', 'dashCdPct', 3, 4],
-    ['빛 분산 학습', '경험치 +3%/pt', 'xpPct', 3, 4],
-  ],
-  [
-    ['표류 항법', '이동 속도 +3%/pt', 'moveSpeedPct', 3, 4],
-    ['광역 인력', '젬 자석 반경 +7%/pt', 'magnetPct', 7, 4],
-    ['연쇄 부력', '대시 재충전 -4%/pt', 'dashCdPct', 4, 4],
-    ['막 굴절 학습', '경험치 +3%/pt', 'xpPct', 3, 4],
-  ],
-  [
-    ['부유 추진', '이동 속도 +4%/pt', 'moveSpeedPct', 4, 4],
-    ['소용돌이 인력', '젬 자석 반경 +7%/pt', 'magnetPct', 7, 4],
-    ['무중력 도약', '대시 재충전 -4%/pt', 'dashCdPct', 4, 4],
-    ['간섭 무늬 학습', '경험치 +3%/pt', 'xpPct', 3, 4],
-  ],
-  [
-    ['표류 지배 교리', '젬 자석 반경 +8%/pt', 'magnetPct', 8, 5],
-    ['부력 지배 교리', '대시 재충전 -5%/pt', 'dashCdPct', 5, 5],
-    ['부유 항법 교리', '이동 속도 +5%/pt', 'moveSpeedPct', 5, 5],
-    ['무지개 지배 교리', '경험치 +4%/pt', 'xpPct', 4, 4],
-  ],
+/** 표류 — 자석 1위와 무막 기동을 잇는 축. */
+const DRIFT: readonly SkillSpec[] = [
+  ['DR1', 'reverse-current', '역류 수거', '파열 틱에 반경 안 젬을 즉시 수거한다'],
+  ['DR2', 'surface-tension-bath', '표면장력 세례', '막이 서 있는 동안 젬을 수거하면 짧은 창 동안 막의 흡수 효율이 오른다'],
+  ['DR3', 'blink-magnetize', '도약 자기장', 'drift 액티브 착지 틱에 전용 자석 확장 버프를 얻는다'],
+  ['DR4', 'bare-hull-trim', '공막 경량화', '막이 없는 동안 이동 감속에 면역이 되고 이동 속도가 빨라진다'],
+  ['DR5', 'prism-resonance', '무지개 공명', '콤보 스택이 자석 반경에 곱해진다'],
+  ['DR6', 'burst-propulsion', '파열 추진', '파열 틱에 대시 쿨다운을 환급한다'],
+  ['DR7', 'signal-drift', '신호 표류', '에코·조우가 활성인 동안 재생 타이머가 2배로 돌고 안정화 완수 시 막이 즉시 만재된다'],
+  ['DR8', 'remote-forager', '원격 채집기', '기믹 픽업 3종의 접촉 반경이 자석 반경에 비례해 확장된다'],
+  ['DR9', 'departure-ripple', '이탈 잔파동', 'drift 액티브 출발 지점에 잔파동을 남기고 막이 서 있으면 반경이 강화된다'],
+  ['DR10', 'bare-hull-current', '공막 유속', '막이 없는 동안 젬 흡인이 빨라지고 재생이 완료되는 틱에 광역 견인 펄스가 걸린다'],
 ];
 
-// --- film (defense): 얇은 막을 여러 겹. flat·비율 둘 다 중위권 ---------------
-// 방어 총량으로 이기려 하지 않는다 — 이 기체의 생존은 시그니처(주기적 흡수막)가 담당하고,
-// 트리는 그 사이를 버티는 만큼만 준다. 그래서 flat 은 브루저(442)·말로우(175) 아래,
-// 비율은 말로우(192) 아래로 묶었다.
-const FILM: readonly (readonly NodeSpec[])[] = [
-  [
-    ['비누막', '최대 HP +5/pt', 'maxHpFlat', 5, 4],
-    ['표면 장력', '최대 HP +3%/pt', 'maxHpPct', 3, 4],
-    ['얇은 보호막', '최대 HP +5/pt', 'maxHpFlat', 5, 4],
-    ['미끄러짐', '이동 속도 +2%/pt', 'moveSpeedPct', 2, 4],
-  ],
-  [
-    ['이중막', '최대 HP +3%/pt', 'maxHpPct', 3, 4],
-    ['점성 강화', '최대 HP +6/pt', 'maxHpFlat', 6, 4],
-    ['탄력 반사', '대시 재충전 -3%/pt', 'dashCdPct', 3, 4],
-    ['막 복원', '최대 HP +3%/pt', 'maxHpPct', 3, 4],
-  ],
-  [
-    ['삼중막', '최대 HP +4%/pt', 'maxHpPct', 4, 4],
-    ['응결 강화', '최대 HP +7/pt', 'maxHpFlat', 7, 4],
-    ['반발 회피', '대시 재충전 -3%/pt', 'dashCdPct', 3, 4],
-    ['막 확장', '최대 HP +4%/pt', 'maxHpPct', 4, 4],
-  ],
-  [
-    ['경화 막', '최대 HP +8/pt', 'maxHpFlat', 8, 4],
-    ['압력 균형', '최대 HP +4%/pt', 'maxHpPct', 4, 4],
-    ['미끄러운 표면', '이동 속도 +3%/pt', 'moveSpeedPct', 3, 4],
-    ['파열 반동', '대시 재충전 -4%/pt', 'dashCdPct', 4, 4],
-  ],
-  [
-    ['불괴 막 교리', '최대 HP +5%/pt', 'maxHpPct', 5, 5],
-    ['거대 거품 교리', '최대 HP +10/pt', 'maxHpFlat', 10, 5],
-    ['반발 지배 교리', '대시 재충전 -5%/pt', 'dashCdPct', 5, 5],
-    ['표면 지배 교리', '최대 HP +4%/pt', 'maxHpPct', 4, 4],
-  ],
+/** 피막 — 막의 흡수·회복·파열 성질을 다듬는 축. */
+const FILM: readonly SkillSpec[] = [
+  ['FI1', 'early-condense', '조기 응결', '파열 직후 재생 타이머가 선급값에서 시작한다'],
+  ['FI2', 'durability-recondense', '내구 재응결', '막이 서 있는 동안 내구가 서서히 회복된다'],
+  ['FI3', 'reflective-film', '반사 응막', '막이 피해를 흡수한 틱에 주변 적탄을 소거한다'],
+  ['FI4', 'pressure-vent', '압력 배출', '막이 흡수할 때마다 흡수량에 비례한 소형 밀어내기가 일어난다'],
+  ['FI5', 'burst-phase', '파열 위상', '파열 틱의 무적 창이 연장된다'],
+  ['FI6', 'film-offering', '헌막 의식', '불멸 막 지속 중 흡수한 총량이 만료 파열의 폭발 피해에 가산된다'],
+  ['FI7', 'wall-echo', '벽면 반향', '벽에 접촉 중 일어난 파열은 밀어내기 반경과 변위가 강화된다'],
+  ['FI8', 'hydrophobic-coat', '발수 코팅', '해저드 피해를 막이 2배 효율로 흡수한다'],
+  ['FI9', 'last-bubble', '최후의 거품', '막이 없는데 치명 피격을 받으면 재생 진행분을 소모해 즉석 비상막을 세운다'],
+  ['FI10', 'purge-burst', '정화 파열', '파열이 반경 안 적탄을 전부 소거하고 감속 디버프를 해제한다'],
 ];
 
 export const BUBBLE: ShipTypeDef = {
   id: 6,
   slug: SLUG,
   trees: [
-    buildShipTree(SLUG, 'pop', 'offense', POP, [
-      '파열 광선',
-      '1.5초마다 전방 광선이 적탄을 소거',
-    ]),
-    buildShipTree(SLUG, 'drift', 'utility', DRIFT, [
-      '거품 잔상',
-      '대시 시 반경 320 내 적탄을 소거',
-    ]),
-    buildShipTree(SLUG, 'film', 'defense', FILM, [
-      '막 재생',
-      '런당 1회 치명 피격을 무효화 + 짧은 무적',
-    ]),
+    buildShipAxis(SLUG, 'pop', 'offense', POP),
+    buildShipAxis(SLUG, 'drift', 'utility', DRIFT),
+    buildShipAxis(SLUG, 'film', 'defense', FILM),
   ],
-  nodesPerTree: NODES_PER_TREE,
-  capstoneGate: CAPSTONE_GATE,
+  activeHiGate: ACTIVE_HI_GATE_DEFAULT,
   signatureBit: 23,
   baseBp: { damageBp: 300, fireRateBp: 700, maxHpBp: -1400, moveSpeedBp: 200 },
 };

@@ -14,11 +14,9 @@
 import type { Item, StatKey } from './types.js';
 import type { LoadoutConfig } from '../sim/world.js';
 import { UNIQUE_REGISTRY } from './uniques.js';
-import { computeSkillStats, shipCapstoneActive } from './skills.js';
 import { normalizeLineageBonus } from '../../data/guardian.js';
 import { DEFAULT_SHIP_TYPE, shipTypeDef } from '../../data/ships/index.js';
-import type { ShipBaseBp, TreeAffinity } from '../../data/ships/index.js';
-import { CAP_FIREPOWER_LASER, CAP_SURVIVAL_CRIT, CAP_MOBILITY_DASH } from '../sim/capstones.js';
+import type { ShipBaseBp } from '../../data/ships/index.js';
 // side-effect: M2 유니크 5점을 레지스트리에 등록(장착 유니크의 bit → uniqueMask).
 import '../../data/uniques.js';
 
@@ -225,37 +223,29 @@ function applyShipTypeBase(lo: LoadoutConfig, baseBp: ShipBaseBp): void {
 }
 
 /**
- * 계열 affinity → 그 계열 캡스톤이 켜는 `uniqueMask` 비트. 캡스톤 효과는 sim 이 비트로
- * 게이트하므로(`src/sim/capstones.ts`), 신규 타입도 **역할이 같은** 계열이 같은 효과를
- * 얻는다. 스트라이커 매핑(firepower→offense·survival→defense·mobility→utility)이 1:1 이라
- * 타입 0 의 마스크는 비트값·OR 순서까지 기존과 동일하다.
- */
-const CAPSTONE_BIT_BY_AFFINITY: Readonly<Record<TreeAffinity, number>> = {
-  offense: CAP_FIREPOWER_LASER,
-  defense: CAP_SURVIVAL_CRIT,
-  utility: CAP_MOBILITY_DASH,
-};
-
-/**
- * Fold the equipped items (and optional skill investment) into a derived stat
- * block + meta mods. Order of the items does not matter (all contributions are
- * summed). When `invest` is supplied, the skill-derived stats stack on top of
- * the gear pass (multiplicatively across the two sources — standard ARPG stack),
- * so a deep build strengthens the run through the same block gear does. Absent /
- * empty `invest` reproduces the M2 gear-only result exactly (backward compat).
- * `shipBonusBp`(계보 기체 가지, data/lineage.ts shipBonusBp)가 주어지면 마지막에
+ * 장착 장비를 파생 스탯 블록 + 메타 모드로 접는다. 아이템 순서는 무관하다(전부 합산).
+ * `shipBonusBp`(계보 기체 가지, `data/lineage.ts` `shipBonusBp`)가 주어지면 마지막에
  * {@link applyShipLineageBonus} 로 겹친다 — 미지정/0 은 기존 결과와 완전 동일.
  *
- * `typeId`(ADR-0019 기체 타입, M8)는 **optional 이며 미지정 = 0(스트라이커)** 이다. 타입 0 은
- * 시그니처 비트가 없고(-1) baseBp 가 전 축 0 이며 트리 슬라이스가 기존과 동일하므로,
- * `computeLoadoutStats(eq, inv, bp)` 와 `computeLoadoutStats(eq, inv, bp, 0)` 는 물론
- * M8 이전 구현과도 결과가 **완전히 동일**하다(설계 §5 — 스트라이커 불변의 핵심 관문,
- * tests/skills.test.ts 가 명시적으로 못 박는다). 범위 밖 typeId 는 손상 세이브로 보고
- * 스트라이커로 되돌린다(`shipTypeDef` 가 정규화).
+ * `typeId`(ADR-0019 기체 타입)는 **optional 이며 미지정 = 0(스트라이커)** 이다. 범위 밖
+ * `typeId` 는 손상 세이브로 보고 스트라이커로 되돌린다(`shipTypeDef` 가 정규화).
+ *
+ * ## `invest` 인자가 사라진 이유 (ADR-0049)
+ * 구 버전은 `skillInvest` 를 받아 ①`computeSkillStats` 로 파생 스탯을 겹치고 ②계열 캡스톤
+ * 비트를 `uniqueMask` 에 OR 했다. ADR-0049 가 **스킬을 스탯에서 메커닉으로 옮기고 캡스톤을
+ * 폐기**하면서 두 소비처가 동시에 사라졌다 — 스킬 효과는 이제 사전 계산된 스탯 블록이 아니라
+ * sim 안의 규칙이고, `WorldConfig.skillInvest` 를 sim 이 직접 읽는다.
+ *
+ * 인자를 "받되 안 쓰는" 형태로 남기지 않는다. 그러면 호출부가 계속 벡터를 넘기면서 효과가
+ * 반영된다고 **오해**하게 되고, 이 리포의 반복 결함 8건이 전부 그 형태였다(단위 테스트는
+ * 그린인데 배선이 통째로 없음). 인자를 지우면 갱신 안 된 호출부를 `tsc` 가 잡는다.
+ *
+ * 방어측 수호 기체의 대표 스탯 계승(`prerequisites.md` §0-B 결정 C)은 여기가 아니라
+ * `mapLoadoutToGuardianSnapshot`(`data/guardian.ts`) **한 곳**에서 파생한다 — 같은 술어를
+ * 두 곳에 적으면 화면과 규칙이 갈린다.
  */
 export function computeLoadoutStats(
   equipped: readonly Item[],
-  invest?: readonly number[],
   shipBonusBp?: number,
   typeId: number = DEFAULT_SHIP_TYPE,
 ): ComputedLoadout {
@@ -289,22 +279,7 @@ export function computeLoadoutStats(
 
   // Gear pass: convert integer percent/flat affix sums into multipliers/adds.
   applyStatSums(lo, sums);
-  // Skill pass: fold skill-derived stats on top (synergy applied in skills.ts).
-  if (invest !== undefined) applyStatSums(lo, computeSkillStats(invest, shipType.id));
-  // 스킬트리 최상위 질적 캡스톤(GDD §4): 게이트(계열 base 40pt) + 캡스톤 1pt 가 찍힌 계열의
-  // 효과 비트를 uniqueMask 상위 비트(15~17)에 OR 한다. 신규 필드/해시 폴드 없이 sim이
-  // hasCapstone 으로 게이트한다(캡스톤 미보유 런은 uniqueMask 불변 → 기존 해시 완전 불변).
-  // M8: 계열은 타입별이므로 트리 인덱스로 순회하고, 비트는 affinity 로 고른다. 스트라이커는
-  // 트리 순서·affinity 매핑이 1:1 이라 OR 되는 비트도 순서도 M7 이전과 동일하다.
-  if (invest !== undefined) {
-    for (let ti = 0; ti < shipType.trees.length; ti++) {
-      const tree = shipType.trees[ti];
-      if (tree === undefined) continue;
-      if (shipCapstoneActive(invest, shipType, ti)) {
-        uniqueMask |= 1 << CAPSTONE_BIT_BY_AFFINITY[tree.affinity];
-      }
-    }
-  }
+  // (삭제됨 — ADR-0049) 스킬 파생 스탯 겹침 · 계열 캡스톤 비트 OR. 위 함수 주석 참조.
   // 기체 시그니처 패시브(M8 설계 §4): 타입이 가진 미사용 상위 비트(18~21)를 OR 한다.
   // **스트라이커는 signatureBit = -1 이라 무연산** → 기존 런의 uniqueMask 가 바이트 불변.
   const sig = shipType.signatureBit;

@@ -1,159 +1,86 @@
 /**
- * bruiser = 기체 타입 1, 맞으며 전진 (설계서 §3).
+ * bruiser = 기체 타입 1, 맞으며 전진 (ADR-0019 · ADR-0049).
  *
- * ## 빌드 방향
- * 근접 압박형. **최고 단일 노드 피해 + 최고 flat 최대HP**, 대신 사거리·탄수·연사가 얕다.
- * 스트라이커 대비 화력 트리의 `damagePct` 총량이 두 배 남짓이고 방어 트리의 `maxHpFlat`
- * 총량도 가장 크다 — "맞으며 붙어서 부순다" 를 스탯 분포만으로 표현한 것이다.
- * `baseBp`(dmg +8% · 연사 −6% · HP +25% · 이동 −5%)가 같은 축을 한 번 더 밀어 준다.
+ * 정체성: **근접 최고 단일피해 · 최고 flat HP · 느림. 피격이 자원이다**. 시그니처 장갑
+ * 스택(피격 시 적립, 상한 8, 스택당 250bp 감소, 비피격 180틱마다 1스택 소멸)을 "쌓고 ·
+ * 태우고 · 붙잡고 · 넘치게 하는" 서른 가지 비틀기가 이 기체의 축이다. 설계 정본은
+ * `.omc/plans/skill-rebuild-2026-08-05/bruiser.md`(확정 후보 3판) — 레벨 공식·구현
+ * 태그·침공 판정은 전부 거기 있고, 이 파일은 **와이어 레이아웃과 표시 문구**만 담는다.
+ *
+ * ## 축 대응
+ * 설계서의 BL(칼날/blade)·MO(변형/morph)·FO(강화/fortify) 는 현재 파일의 축 slug
+ * blade·morph·fortify 에 **그대로(1:1, 재배치 없음)** 대응한다.
+ *
+ * ## 축 순서를 바꾸지 않는다
+ * `[blade(offense), morph(utility), fortify(defense)]` — 구 트리 순서 그대로다. 액티브
+ * 레지스트리(`data/ships/actives/bruiser.ts`)가 `treeIndex` 로 축을 가리키고 i18n 키가
+ * 축 slug 를 쓰므로, 순서를 바꾸면 스킬 재편과 무관한 배선이 함께 밀린다.
  *
  * ## 확정 계약 (재번호·재배치 금지)
  *   - `id = 1` — SHIP_TYPES 인덱스 = 세이브 wire 값
  *   - `signatureBit = 18` — `src/sim/shipSignature.ts` 의 `SIG_BRUISER_ARMOR` 가 정본,
- *     `tests/shipSignatureRegistry.test.ts` 가 두 값을 마주 세운다
- *   - 트리 3계열: blade/offense · morph/utility · fortify/defense
- *   - 시그니처 패시브: 피격 시 장갑 스택(상한 8, 스택당 250bp 감소, 비피격 180틱마다 1스택 소멸)
- *
- * ## 신규 StatKey 0 (설계서 §2)
- * 기존 16종 StatKey 안에서만 짰다. 스킬이 주지 않기로 한 4종(`mineralFindPct`·`fireDmg`·
- * `coldSlow`·`lightning`)은 쓰지 않는다 — 앞은 메타 재화, 뒤 셋은 장비 어픽스 전용이다.
- *
- * ## 캡스톤 효과는 affinity 가 정한다
- * `src/items/loadout.ts` 가 `capstoneActive(invest, 'firepower'|'survival'|'mobility')` 로
- * 캡스톤 비트를 세우고, 신규 타입 노드의 레거시 `tree` 필드는 affinity 의 역매핑이다. 따라서
- * offense 캡스톤 = 탄막 상쇄 레이저, defense = 치명타 1회 무효, utility = 대시 잔상 소거로
- * **효과가 이미 정해져 있다**. 이름만 기체 색으로 갈아입히고 설명은 실제 효과를 적는다
- * (없는 효과를 약속하면 UI 가 거짓말을 한다).
+ *     `tests/shipSignatureRegistry.test.ts` 가 두 값을 마주 세운다. 시그니처 자체는 이미
+ *     라이브라 이 재편으로 마이그레이션되지 않는다(설계서 ⑥-1).
+ *   - `baseBp`(dmg +8% · 연사 −6% · HP +25% · 이동 −5%) — 값 불변, 밸런스 일괄 레인 소관
+ *     (`defer-balance-tuning`).
  */
 
-import { NODES_PER_TREE, CAPSTONE_GATE } from '../skills.js';
-import { buildShipTree } from './authoring.js';
-import type { NodeSpec } from './authoring.js';
-import type { ShipTypeDef } from './types.js';
+import { ACTIVE_HI_GATE_DEFAULT, buildShipAxis } from './types.js';
+import type { ShipTypeDef, SkillSpec } from './types.js';
 
 const SLUG = 'bruiser';
 
-// --- blade (offense): 단발 피해와 관통. 사거리는 일부러 얕다 ------------------
-const BLADE: readonly (readonly NodeSpec[])[] = [
-  [
-    ['분쇄 타격', '탄환 데미지 +4%/pt', 'damagePct', 4, 4],
-    ['근접 조준', '탄환 데미지 +4%/pt', 'damagePct', 4, 4],
-    ['톱니 탄자', '관통 +1/2pt(내림)', 'pierce', 0.5, 4],
-    ['돌격 격발', '연사 속도 +2%/pt', 'fireRatePct', 2, 4],
-  ],
-  [
-    ['파쇄 탄두', '탄환 데미지 +5%/pt', 'damagePct', 5, 4],
-    ['강습 관통', '관통 +1/2pt(내림)', 'pierce', 0.5, 4],
-    ['육박 사거리', '사거리 +25/pt', 'rangeFlat', 25, 4],
-    ['충각 가속', '탄속 +3%/pt', 'bulletSpeedPct', 3, 4],
-  ],
-  [
-    ['절단 각인', '탄환 데미지 +5%/pt', 'damagePct', 5, 4],
-    ['이중 날', '탄환 +1/4pt(내림)', 'bulletCount', 0.25, 4],
-    ['관통 톱날', '관통 +1/2pt(내림)', 'pierce', 0.5, 4],
-    ['격돌 격발', '연사 속도 +3%/pt', 'fireRatePct', 3, 4],
-  ],
-  [
-    ['파열 절단', '탄환 데미지 +6%/pt', 'damagePct', 6, 4],
-    ['중격 탄두', '탄환 데미지 +6%/pt', 'damagePct', 6, 4],
-    ['압착 장약', '탄환 데미지 +6%/pt', 'damagePct', 6, 4],
-    ['강타 속사', '연사 속도 +3%/pt', 'fireRatePct', 3, 4],
-  ],
-  [
-    ['참격 교리', '탄환 데미지 +8%/pt', 'damagePct', 8, 5],
-    ['절멸 관통 교리', '관통 +1/2pt(내림)', 'pierce', 0.5, 5],
-    ['일격 증폭 교리', '탄환 데미지 +7%/pt', 'damagePct', 7, 5],
-    ['돌파 격발 교리', '연사 속도 +4%/pt', 'fireRatePct', 4, 4],
-  ],
+/** 칼날 — 장갑 스택(만재·피격)을 단발 피해와 관통으로 환산하는 축. */
+const BLADE: readonly SkillSpec[] = [
+  ['BL1', 'retort-volley', '응전 사출', '실제로 HP 가 깎인 피격 틱에 조준 방향으로 반격 볼리를 자동 발사한다'],
+  ['BL2', 'point-blank-doctrine', '백병 격발', '자동 조준 표적과의 거리가 근접 임계 이내일 때 발사되는 볼리가 관통과 피해 증폭을 얻는다'],
+  ['BL3', 'full-plate-slug', '만재 중탄', '장갑 스택이 만재일 때 발사되는 탄이 명중 지점에 소형 폭발을 남긴다'],
+  ['BL4', 'overflow-vent', '과적 배출', '만재 상태에서 실피격당하면 전방 부채꼴로 파편이 배출된다'],
+  ['BL5', 'ram-cleave', '충각 절단', '기동 액티브 돌진 경로상의 적이 절단 피해를 받는다'],
+  ['BL6', 'mass-slug', '중량 탄자', '탄속이 느려지는 대신 명중한 적을 밀어내고 피해가 강화된 무거운 탄을 쏜다'],
+  ['BL7', 'wall-breaker', '파성퇴', '볼리가 파괴가능 벽을 일격 파괴하고 그 자리에서 전방 충격파를 낸다'],
+  ['BL8', 'impact-temper', '격돌 담금질', '몸통 접촉으로 실피격당할 때마다 담금질 탄이 적립되고 다음 볼리가 이를 소모해 대구경화된다'],
+  ['BL9', 'crush-cadence', '중압 리듬', '일정 명중마다 확정 강타가 터지며 그 주기는 장갑 스택이 많을수록 짧아진다'],
+  ['BL10', 'burn-off-heat', '소각 여열', '칼날 액티브가 스택을 소각할 때 소각한 스택 1개당 주무기 쿨다운을 환급한다'],
 ];
 
-// --- morph (utility): 돌진 재충전과 접근. 파편 회수로 자원 유지 ---------------
-const MORPH: readonly (readonly NodeSpec[])[] = [
-  [
-    ['돌진 조율', '대시 재충전 -3%/pt', 'dashCdPct', 3, 4],
-    ['관성 제어', '이동 속도 +2%/pt', 'moveSpeedPct', 2, 4],
-    ['파편 회수', '젬 자석 반경 +4%/pt', 'magnetPct', 4, 4],
-    ['전투 학습', '경험치 +2%/pt', 'xpPct', 2, 4],
-  ],
-  [
-    ['충각 전개', '대시 재충전 -3%/pt', 'dashCdPct', 3, 4],
-    ['중장 추진', '이동 속도 +2%/pt', 'moveSpeedPct', 2, 4],
-    ['자기 견인', '젬 자석 반경 +5%/pt', 'magnetPct', 5, 4],
-    ['전장 적응', '경험치 +2%/pt', 'xpPct', 2, 4],
-  ],
-  [
-    ['변형 프레임', '대시 재충전 -4%/pt', 'dashCdPct', 4, 4],
-    ['강행 돌파', '이동 속도 +3%/pt', 'moveSpeedPct', 3, 4],
-    ['파편 자석', '젬 자석 반경 +5%/pt', 'magnetPct', 5, 4],
-    ['실전 교본', '경험치 +3%/pt', 'xpPct', 3, 4],
-  ],
-  [
-    ['연속 충각', '대시 재충전 -4%/pt', 'dashCdPct', 4, 4],
-    ['돌진 관성', '이동 속도 +3%/pt', 'moveSpeedPct', 3, 4],
-    ['광역 회수', '젬 자석 반경 +6%/pt', 'magnetPct', 6, 4],
-    ['백병 숙련', '경험치 +3%/pt', 'xpPct', 3, 4],
-  ],
-  [
-    ['무한 충각 교리', '대시 재충전 -5%/pt', 'dashCdPct', 5, 5],
-    ['폭주 추진 교리', '이동 속도 +4%/pt', 'moveSpeedPct', 4, 5],
-    ['전장 흡인 교리', '젬 자석 반경 +7%/pt', 'magnetPct', 7, 5],
-    ['백병 지배 교리', '경험치 +4%/pt', 'xpPct', 4, 4],
-  ],
+/** 변형 — 대시·젬·벽을 장갑 적립·유지 자원으로 얽는 축. */
+const MORPH: readonly SkillSpec[] = [
+  ['MO1', 'dash-loading', '충각 적재', '일반 대시 발동 시 장갑 스택이 적립되고 감쇠 타이머가 리셋되며 이속이 잠시 증가한다'],
+  ['MO2', 'wreck-harvest', '파쇄 수확', '근접 임계 이내에서 처치한 적이 떨군 젬을 자석 반경과 무관하게 즉시 견인한다'],
+  ['MO3', 'heavy-momentum', '둔중 관성', '같은 방향으로 이동을 지속하면 이속이 점증하고 방향 급전환·정지 시 리셋된다'],
+  ['MO4', 'armor-skid', '장갑 활주', '이동 감속 디버프가 걸리는 틱에 장갑 스택 1개를 소모해 그 감속을 무효화한다'],
+  ['MO5', 'haul-blink', '견인 돌진', '기동 액티브 돌진 경로 안의 젬·픽업을 도착 지점까지 끌고 온다'],
+  ['MO6', 'crush-field', '압쇄장', '장갑 스택이 1개 이상인 동안 근접 반경 내 적을 주기적으로 압쇄한다'],
+  ['MO7', 'debris-reclaim', '잔해 회수', '파괴가능 벽·destructible 이 부서질 때 대시 쿨다운이 환급되고 자원이 소량 적립된다'],
+  ['MO8', 'wall-rebound', '벽 되튐', '직전 틱에 벽 슬라이드가 일어난 상태에서 대시를 발동하면 쿨다운 일부가 즉시 환급된다'],
+  ['MO9', 'harvest-clamp', '수확 고정', '젬을 수거할 때마다 장갑 감쇠 타이머를 되감아 소멸을 지연시킨다'],
+  ['MO10', 'arrival-shock', '착탄 충격', '기동 액티브 고티어 도착 틱에 반경 내 적을 밀어내고 적탄을 소거하는 충격파를 남긴다'],
 ];
 
-// --- fortify (defense): flat 최대HP 축. 이 기체의 정체성 ----------------------
-const FORTIFY: readonly (readonly NodeSpec[])[] = [
-  [
-    ['중장 도금', '최대 HP +8/pt', 'maxHpFlat', 8, 4],
-    ['격벽 보강', '최대 HP +8/pt', 'maxHpFlat', 8, 4],
-    ['완충 장갑', '최대 HP +2%/pt', 'maxHpPct', 2, 4],
-    ['버팀 자세', '대시 재충전 -2%/pt', 'dashCdPct', 2, 4],
-  ],
-  [
-    ['복합 장갑판', '최대 HP +10/pt', 'maxHpFlat', 10, 4],
-    ['생체 보강', '최대 HP +3%/pt', 'maxHpPct', 3, 4],
-    ['충격 분산', '최대 HP +10/pt', 'maxHpFlat', 10, 4],
-    ['고정 발판', '이동 속도 +2%/pt', 'moveSpeedPct', 2, 4],
-  ],
-  [
-    ['강화 늑골', '최대 HP +12/pt', 'maxHpFlat', 12, 4],
-    ['적응 도금', '최대 HP +3%/pt', 'maxHpPct', 3, 4],
-    ['반응 장갑', '최대 HP +12/pt', 'maxHpFlat', 12, 4],
-    ['반동 제어', '대시 재충전 -3%/pt', 'dashCdPct', 3, 4],
-  ],
-  [
-    ['초중량 프레임', '최대 HP +14/pt', 'maxHpFlat', 14, 4],
-    ['재생 조직', '최대 HP +4%/pt', 'maxHpPct', 4, 4],
-    ['내충격 코어', '최대 HP +14/pt', 'maxHpFlat', 14, 4],
-    ['견고한 발놀림', '이동 속도 +2%/pt', 'moveSpeedPct', 2, 4],
-  ],
-  [
-    ['불괴 교리', '최대 HP +5%/pt', 'maxHpPct', 5, 5],
-    ['타이탄 늑골 교리', '최대 HP +18/pt', 'maxHpFlat', 18, 5],
-    ['강철 의지 교리', '최대 HP +5%/pt', 'maxHpPct', 5, 5],
-    ['부동 자세 교리', '대시 재충전 -4%/pt', 'dashCdPct', 4, 4],
-  ],
+/** 강화 — flat 최대HP 와 장갑 파라미터 자체를 키우는 축. 이 기체의 정체성. */
+const FORTIFY: readonly SkillSpec[] = [
+  ['FO1', 'over-plating', '과적 장갑', '장갑 스택 상한이 확장된다'],
+  ['FO2', 'clot-plating', '응혈 장갑', '실피격으로 잃은 HP 의 일부가 응혈 풀에 적립되고 장갑이 만재에 도달하는 순간 전액 회복으로 정산된다'],
+  ['FO3', 'recoil-armor', '반동 갑주', '몸통 접촉으로 피격당한 틱에 그 접촉 적에게 반사 피해를 준다'],
+  ['FO4', 'unmoved-accretion', '부동 역적립', '정지 중에는 장갑 감쇠 판정의 부호가 반전돼 스택이 소멸하는 대신 적립된다'],
+  ['FO5', 'unbreakable-chain', '불괴 연쇄', '치명 피격 무효화 캡스톤이 발동하는 틱에 장갑이 즉시 만재가 되고 주변 적탄이 전량 소거된다'],
+  ['FO6', 'load-transfer', '하중 전이', '받는 피해의 일부를 대시 쿨다운 증가로 전이해 그만큼 피해를 경감한다'],
+  ['FO7', 'trophy-refit', '전리 개장', '엘리트·보스를 격파하면 그 시점 장갑 스택에 비례해 최대 HP 가 런 내 영구 증가하고 장갑이 만재가 된다'],
+  ['FO8', 'molt-regen', '탈피 재생', '장갑 스택이 감쇠로 소멸하는 틱마다 소멸한 스택이 회복으로 전환된다'],
+  ['FO9', 'last-stand-instinct', '사투 본능', 'HP 가 30% 이하인 동안 장갑 감쇠가 멈추고 피격당 적립이 늘며 스택당 감소량이 강화된다'],
+  ['FO10', 'burst-cremation', '파열 소각장', '강화 액티브 고티어의 만료 폭발이 적탄을 소거하고 맞은 적에게 화상을 부여한다'],
 ];
 
 export const BRUISER: ShipTypeDef = {
   id: 1,
   slug: SLUG,
   trees: [
-    buildShipTree(SLUG, 'blade', 'offense', BLADE, [
-      '분쇄 광선',
-      '1.5초마다 전방 광선이 적탄을 소거',
-    ]),
-    buildShipTree(SLUG, 'morph', 'utility', MORPH, [
-      '충각 잔상',
-      '대시 시 반경 320 내 적탄을 소거',
-    ]),
-    buildShipTree(SLUG, 'fortify', 'defense', FORTIFY, [
-      '불괴 장갑',
-      '런당 1회 치명 피격을 무효화 + 짧은 무적',
-    ]),
+    buildShipAxis(SLUG, 'blade', 'offense', BLADE),
+    buildShipAxis(SLUG, 'morph', 'utility', MORPH),
+    buildShipAxis(SLUG, 'fortify', 'defense', FORTIFY),
   ],
-  nodesPerTree: NODES_PER_TREE,
-  capstoneGate: CAPSTONE_GATE,
+  activeHiGate: ACTIVE_HI_GATE_DEFAULT,
   signatureBit: 18,
   baseBp: { damageBp: 800, fireRateBp: -600, maxHpBp: 2500, moveSpeedBp: -500 },
 };
