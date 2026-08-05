@@ -766,6 +766,11 @@ async function main(): Promise<void> {
     // 조우 프롬프트도 런 전용 UI 다. 렌더 루프가 매 프레임 재도출하므로 보통은 저절로
     // 사라지지만, 화면 전환과 다음 프레임 사이에 프롬프트가 남는 한 프레임을 없앤다.
     encounterOverlay.hide();
+    // 런 이탈 버튼도 런 전용 UI 다. **끄는 것을 여기 하나로 몰아 둔 것이 핵심 안전장치**다 —
+    // 켜는 곳은 시험 침공 한 곳뿐이고, 모든 런 진입점이 첫 줄에서 clearToMenu 를 부르므로
+    // "정식 런에 이탈 버튼이 남는" 경로가 구조적으로 없다(진입점마다 끄게 두면 하나 빠뜨리는
+    // 순간 정산을 건너뛰고 빠져나가는 길이 열린다).
+    hud.setExitRun(null);
     shownLevel = 0;
   }
 
@@ -1220,6 +1225,18 @@ async function main(): Promise<void> {
     harnessInvasionRun = true;
     currentRunKind = 'invasion'; // 하네스 침공도 침공 런 → invasion 존(AC3).
     hud.setRunInfo(null); // 정식 침공과 동일 — 행성/촉매 축 없음.
+    // 이탈 버튼(사용자 요청 2026-08-05). **이 런에만** 뜬다 — 오염 런이라 정산도 리플레이 제출도
+    // 타지 않으므로 중도에 나가도 잃는 것이 없고, 반대로 정식 런에 이 버튼이 있으면 정산을
+    // 건너뛰는 구멍이 된다. 끄는 일은 clearToMenu 가 전담한다(그 주석이 근거).
+    //
+    // 돌아가는 곳은 기지 맵이 아니라 **방어 사령부**다: 시험 침공은 배치를 고치던 중에 눌러
+    // 들어온 것이라, 나갈 때 필요한 것은 "기지"가 아니라 "고치던 그 화면"이다. 사령부는 저장본
+    // 에서 상태를 새로 만들므로(show 규약) 저장하지 않은 초안이 남아 있다는 착각도 생기지 않는다.
+    hud.setExitRun(t('hud.exitTest'), () => {
+      clearToMenu();
+      setScreen('defense');
+      openDefenseCommand();
+    });
     setScreen('run');
   }
 

@@ -741,6 +741,19 @@ const CLOSE_W = 56;
 const CLOSE_X = DESIGN_WIDTH - EDGE_X - CLOSE_W;
 const CREDIT_CHIP_X = CLOSE_X - HEAD_GAP - 2 - CHIP_W;
 const MINERAL_CHIP_X = CREDIT_CHIP_X - HEAD_GAP - 2 - CHIP_W;
+/**
+ * 도움말 버튼 — 재화 칩 왼쪽, 헤더 컨트롤 줄의 맨 끝(사용자 요청 2026-08-05).
+ *
+ * ⚠️ 여기가 **헤더에 남은 마지막 자리다.** 오른쪽은 칩 둘과 닫기가 끝까지 차 있고, 왼쪽은
+ * `x < 120` 이 설정 톱니 예약 밴드이며, 가운데는 각인 제목 대역({@link TITLE_BAND_HALF_W})이다.
+ * 폭을 키우면 제목 대역을 물어 실화면에서 글자가 겹친다(연구소가 실제로 밟은 결함) — 남는
+ * 여유는 30px 뿐이고, 레이아웃 테스트가 그 셋을 전부 등호로 잠근다.
+ *
+ * 라벨을 `?` 한 글자로 줄이지 않는다: 관제탑에서 사용자가 "꽉 채운 칩과 `?` 가 가장 튄다"고
+ * 지적한 그 기호다. 폭은 충분하므로 낱말을 쓴다.
+ */
+const HELP_W = 140;
+const HELP_X = MINERAL_CHIP_X - HEAD_GAP - 2 - HELP_W;
 
 /**
  * 각인 제목이 실제로 차지하는 가로 반폭. 중앙 정렬 Text 는 사각형이 없어 겹침 테스트가 못
@@ -835,6 +848,7 @@ export function defenseCommandLayout(): {
       buttons,
     },
     headerControls: [
+      { id: 'help', rect: head(HELP_X, HELP_W) },
       { id: 'minerals', rect: head(MINERAL_CHIP_X, CHIP_W) },
       { id: 'credits', rect: head(CREDIT_CHIP_X, CHIP_W) },
       { id: 'close', rect: head(CLOSE_X, CLOSE_W) },
@@ -895,6 +909,39 @@ const CONFIRM_BODY_H = 110;
 const CONFIRM_BTN_H = 56;
 const CONFIRM_BLOCK_H = CONFIRM_BODY_H + 20 + CONFIRM_BTN_H;
 
+/**
+ * 도움말 절 목록(사용자 요청 2026-08-05 — "처음 오는 사람이 전체 내용을 다 알 수 있게").
+ *
+ * 각 원소 `sN` 은 카탈로그의 `def3.cmd.help.sN.h`(제목)·`def3.cmd.help.sN.b`(본문) 짝이다.
+ * 배열로 내보내는 이유는 둘이다: ① 화면이 순서를 여기 하나에서만 읽어 절을 넣고 빼는 일이
+ * 렌더 코드를 안 건드린다 ② **i18n 테스트가 두 로케일에 짝이 다 있는지 이 목록으로 훑는다**
+ * (문자열을 화면에 하드코딩하면 EN/KO 한쪽이 빠져도 조용히 키 이름이 그려진다).
+ */
+export const DEF_HELP_SECTIONS = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'] as const;
+
+/**
+ * 도움말 팝업 세로 뭉치(스크롤 창 → 닫기 버튼).
+ *
+ * 다른 셋과 달리 높이를 내용에서 **역산하지 않는다** — 본문이 로케일마다 줄 수가 달라 역산하면
+ * 팝업 크기가 언어를 따라 출렁이고, 어차피 화면 세로를 넘는 분량이라 스크롤이 전제다. 대신
+ * 창 높이를 못 박고 그 안에서 스크롤한다(`pick` 팝업이 쓰는 `makeScrollArea` 와 같은 기구).
+ */
+const HELP_BODY_H = 700;
+const HELP_BTN_H = 56;
+const HELP_BLOCK_H = HELP_BODY_H + 16 + HELP_BTN_H;
+/**
+ * 도움말 간격 셋 — 제목→본문 · 문단 사이 · 절 사이. 셋이 **서로 달라야** 글 뭉치가 계층으로
+ * 읽힌다(전부 같으면 절 경계가 문단 경계와 구분되지 않는다).
+ *
+ * ⚠️ 문단 나눔을 문자열 안 빈 줄(`\n\n`)로 하지 마라. Pixi 라벨은 전부 {@link stripEmoji} 를
+ * 거치는데 그 함수가 `\s{2,}` 를 공백 하나로 접는다 — 빈 줄은 **화면에 도달하지 못하고 조용히
+ * 사라진다**(m7b 통합 테스트가 def3 문자열 전체에 이 불변식을 걸어 두고 실제로 잡아냈다).
+ * 그래서 카탈로그의 문단 구분자는 홑 `\n` 이고, 문단 사이 여백은 여기 이 값이 만든다.
+ */
+const HELP_HEAD_GAP = 8;
+const HELP_PARA_GAP = 12;
+const HELP_SECTION_GAP = 28;
+
 export const DEFENSE_MODALS = {
   pick: {
     w: 1180,
@@ -906,6 +953,13 @@ export const DEFENSE_MODALS = {
   },
   unit: { w: 900, h: TITLED_BOX_Y + UNIT_BLOCK_H + PANEL_EDGE_PAD, blockH: UNIT_BLOCK_H },
   confirm: { w: 900, h: TITLED_BOX_Y + CONFIRM_BLOCK_H + PANEL_EDGE_PAD, blockH: CONFIRM_BLOCK_H },
+  help: {
+    w: 1180,
+    h: TITLED_BOX_Y + HELP_BLOCK_H + PANEL_EDGE_PAD,
+    blockH: HELP_BLOCK_H,
+    bodyH: HELP_BODY_H,
+    btnH: HELP_BTN_H,
+  },
   /** 콘텐츠 상자 기하(세 팝업 공통) — 테스트가 역산식을 되짚는다. */
   boxY: TITLED_BOX_Y,
   edgePad: PANEL_EDGE_PAD,
@@ -1067,8 +1121,11 @@ function recessedWell(x: number, y: number, w: number, h: number): Graphics {
 // 화면
 // ===========================================================================
 
-/** 팝업 종류. `confirmTest` = 미저장 편집이 있는 채로 시험 침공을 누른 경우의 확인. */
-type ModalKind = 'pick' | 'unit' | 'confirmTest' | null;
+/**
+ * 팝업 종류. `confirmTest` = 미저장 편집이 있는 채로 시험 침공을 누른 경우의 확인.
+ * `help` = 헤더 도움말 버튼이 여는 화면 안내(읽기 전용 — 초안을 건드리지 않는다).
+ */
+type ModalKind = 'pick' | 'unit' | 'confirmTest' | 'help' | null;
 
 /** 방어 사령부 화면 콜백. */
 export interface DefenseCommandCallbacks {
@@ -1667,6 +1724,19 @@ export class DefenseCommandScreen {
     });
     close.container.position.set(CLOSE_X, HEAD_Y);
     this.root.addChild(close.container);
+
+    // 도움말 — 재화 칩·닫기와 **같은 세로 띠**를 쓰고 가로로만 자리를 잡는다(격납고 헤더 겹침
+    // 결함 이력). 초안을 읽지도 쓰지도 않으므로 오프라인·로딩 중에도 그대로 눌린다.
+    const help = this.chromeButton({
+      tone: 'stone',
+      width: HELP_W,
+      height: HEAD_H,
+      fontSize: 20,
+      label: tCmd('def3.cmd.help'),
+      onClick: () => this.openModal('help'),
+    });
+    help.container.position.set(HELP_X, HEAD_Y);
+    this.root.addChild(help.container);
 
     // 칩은 값이 구워진 컨테이너라 갱신이 아니라 재조립이다 — 그릇만 잡아 둔다.
     const chips = new Container();
@@ -2443,11 +2513,13 @@ export class DefenseCommandScreen {
           }
         : kind === 'unit'
           ? { w: DEFENSE_MODALS.unit.w, h: DEFENSE_MODALS.unit.h, title: tCmd('def3.cmd.unit.title') }
-          : {
-              w: DEFENSE_MODALS.confirm.w,
-              h: DEFENSE_MODALS.confirm.h,
-              title: tCmd('def3.cmd.test.confirm.title'),
-            };
+          : kind === 'help'
+            ? { w: DEFENSE_MODALS.help.w, h: DEFENSE_MODALS.help.h, title: tCmd('def3.cmd.help.title') }
+            : {
+                w: DEFENSE_MODALS.confirm.w,
+                h: DEFENSE_MODALS.confirm.h,
+                title: tCmd('def3.cmd.test.confirm.title'),
+              };
 
     // ① · ② 암막.
     const scrim = new Graphics();
@@ -2475,7 +2547,76 @@ export class DefenseCommandScreen {
 
     if (kind === 'pick') this.renderPickModal(panel);
     else if (kind === 'unit') this.renderUnitModal(panel);
+    else if (kind === 'help') this.renderHelpModal(panel);
     else this.renderConfirmTestModal(panel);
+  }
+
+  /**
+   * 화면 안내 팝업(사용자 요청 2026-08-05). 절 목록은 {@link DEF_HELP_SECTIONS} 가 정본이고
+   * 여기서는 그리기만 한다.
+   *
+   * ## 왜 높이를 역산하지 않는가
+   * 형제 팝업 셋은 전부 내용에서 높이를 역산해 빈 세로가 0 이다. 여기만 다르다 — 본문이 로케일
+   * 마다 줄 수가 달라 역산하면 팝업 크기가 언어를 따라 출렁이고, 어느 로케일이든 화면 세로를
+   * 넘으므로 결국 스크롤이 전제다. 그래서 창 높이를 못 박고(`bodyH`) 안에서 스크롤한다.
+   * 총 높이는 **실제로 조판된 Text 높이의 합**이라 로케일이 길어져도 잘리지 않는다.
+   */
+  private renderHelpModal(panel: CinematicPanel): void {
+    const box = panel.box;
+    const bodyH = DEFENSE_MODALS.help.bodyH;
+
+    // ① 먼저 전부 조판해 높이를 잰다 — 스크롤 총량은 측정값이어야 한다(상수로 두면 로케일이
+    //    길어지는 순간 마지막 절이 예외 없이 잘린다).
+    const nodes: { node: Text; y: number }[] = [];
+    let cy = 0;
+    for (const id of DEF_HELP_SECTIONS) {
+      const head = this.label(tCmd(`def3.cmd.help.${id}.h`), 23, COLOR.gold, '800', box.w - 40);
+      nodes.push({ node: head, y: cy });
+      cy += head.height + HELP_HEAD_GAP;
+      // 문단은 **노드로** 나눈다 — 문자열 안 빈 줄은 stripEmoji 가 접어 버린다(간격 상수 주석).
+      const paras = tCmd(`def3.cmd.help.${id}.b`).split('\n');
+      for (const [i, para] of paras.entries()) {
+        const body = this.wrapped(para, 18, SLAB_BODY_FILL, box.w - 40);
+        nodes.push({ node: body, y: cy });
+        cy += body.height + (i === paras.length - 1 ? HELP_SECTION_GAP : HELP_PARA_GAP);
+      }
+    }
+    const total = Math.max(0, cy - HELP_SECTION_GAP);
+
+    // ② 파낸 챔버 위에 얹는다 — 이 화면의 "글만 있는 자리"는 전부 `recessedWell` 이다.
+    panel.container.addChild(recessedWell(box.x, box.y, box.w, bodyH));
+    const content = makeScrollArea(panel.container, {
+      x: box.x + 20,
+      y: box.y + 16,
+      w: box.w - 40,
+      h: bodyH - 32,
+      totalH: total,
+      thumb: true,
+      get: () => this.modalScroll,
+      set: (v) => {
+        this.modalScroll = v;
+      },
+    });
+    for (const n of nodes) {
+      n.node.position.set(0, n.y);
+      content.addChild(n.node);
+    }
+
+    // ③ 닫기. 암막 탭으로도 닫히지만(공용 규약) 처음 오는 사람에게는 나가는 길이 **보여야** 한다
+    //    — 이 팝업을 여는 사람은 정의상 이 화면을 처음 보는 사람이다.
+    const btn = this.chromeButton({
+      tone: 'stone',
+      width: 240,
+      height: DEFENSE_MODALS.help.btnH,
+      fontSize: 21,
+      label: tCmd('common.close'),
+      onClick: () => this.closeModal(),
+    });
+    btn.container.position.set(
+      box.x + Math.round((box.w - 240) / 2),
+      box.bottom - DEFENSE_MODALS.help.btnH,
+    );
+    panel.container.addChild(btn.container);
   }
 
   /** 방어체 고르기 팝업이 보여줄 행(높이 역산에도 쓰이므로 한 곳에서 만든다). */

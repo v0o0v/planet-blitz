@@ -573,6 +573,9 @@ export const EN = {
 
   // --- HUD ---
   'hud.supplyRaid': '⚠ Supply Raid — Shoot it down!',
+  // 시험 침공 이탈 버튼(사용자 요청 2026-08-05). 시험 침공은 정산도 리플레이 제출도 타지 않는
+  // 오염 런이라 "끝까지 가야 하는" 이유가 없는데, 여태 나가는 길이 화면에 없었다.
+  'hud.exitTest': 'Exit test invasion',
   'hud.combo': 'Combo x{mult} ({combo})',
   'hud.phaseTransition': '⚙ Phase {n} transition…',
   'hud.overheat': "🔥 Overheat — now's your chance! (2× damage)",
@@ -1745,9 +1748,15 @@ export const EN = {
   'def3.cmd.inv.empty': 'No defense units yet. Craft one from a blueprint.',
   'def3.cmd.inv.blueprints': 'Blueprints',
   'def3.cmd.unit.title': 'Upgrade defense unit',
-  'def3.cmd.inv.more': 'More defense units come from blueprints and invasion rewards.',
-  'def3.cmd.inv.bpMore': 'Blueprints drop from defended invasions.',
-  'def3.cmd.inv.bpEmpty': 'No blueprints yet. They drop from planet runs and invasion loot.',
+  // ⚠️ 획득 경로는 CONTEXT.md "설계도" 항목과 ADR-0018 이 정본이다. 예전 문구는 **방어 성공을
+  // 획득 경로로 적었는데 그런 경로는 없다**(ADR-0018: 부익부 방지로 명시 제외). 게다가 같은
+  // 패널에서 bpEmpty 는 "행성 런과 침공 약탈", bpMore 는 "침공을 막아 내면"이라 서로 모순이었다
+  // (사용자 신고 2026-08-05 "약탈 때도 나오고 막아도 나온다는 말이야?"). 경로는 둘뿐이다 —
+  // 행성 런 드랍, 그리고 **공격에 성공했을 때**의 복제 약탈.
+  'def3.cmd.inv.more': 'Defense units drop from planet runs, or you craft them from blueprints.',
+  'def3.cmd.inv.bpMore':
+    'Blueprints drop from planet runs, or are copied from the loser when your own invasion succeeds.',
+  'def3.cmd.inv.bpEmpty': 'No blueprints yet.',
   'def3.cmd.inv.craft': 'Craft',
   'def3.cmd.inv.count': 'x{n}',
   'def3.cmd.unit.level': 'Lv {n}',
@@ -1773,6 +1782,36 @@ export const EN = {
   'def3.cmd.err.failed': 'Server rejected the request.',
   'def3.cmd.err.offline': 'Not connected.',
   'def3.cmd.ok.upgrade': 'Upgraded.',
+
+  // 방어 사령부 도움말(사용자 요청 2026-08-05) — 이 화면은 레이어 셋·획득 경로·강화 3축·풍화·
+  // 코어 모듈·초안 저장 규약이 한 화면에 겹쳐 있어 처음 오는 사람이 무엇부터 볼지 알 수 없다.
+  // 절 단위로 쪼갠 이유는 스크롤 팝업이 제목으로 훑을 수 있어야 하기 때문이다.
+  'def3.cmd.help': 'Help',
+  'def3.cmd.help.title': 'Defense Command Guide',
+  'def3.cmd.help.s1.h': 'What this screen is for',
+  'def3.cmd.help.s1.b':
+    'This is where you arrange the defense that meets other pilots when they invade your base. You never pilot it yourself — the layout you save here fights on your behalf while you are away.\nOne invasion is a single uninterrupted run through three layers: L1 Upper Atmosphere, L2 Corridor, L3 Core Chamber. The attacker carries hull and resources across the boundaries, so damage you inflict early is what protects the layers behind it.',
+  'def3.cmd.help.s2.h': 'The three layers',
+  'def3.cmd.help.s2.b':
+    'L1 Upper Atmosphere — wave slots. Slot your squadrons and decide the order only; each squadron carries its own formation and path.\nL2 Corridor — pick the corridor terrain, then fit facilities into its mounting sockets. Facilities come in three kinds: wall turrets, gimmick hazards, and drone spawners. Socket count and placement belong to the terrain, which is what stops everything being stacked in one spot.\nL3 Core Chamber — one defense boss slot, guardian slots, prop sockets, and the core itself. When core durability reaches zero the defense has failed.\nEmpty slots are filled by the default garrison, the planet\'s lowest-grade units. Leaving them empty is legal but weak.',
+  'def3.cmd.help.s3.h': 'Getting defense units',
+  'def3.cmd.help.s3.b':
+    'Defense units drop from planet runs, or you craft them from a blueprint plus rare minerals.\nBlueprints have exactly two sources: planet run drops, and copy-loot — when your own invasion of someone else succeeds, you may copy one of their blueprints. Being invaded is not a source.\nWhen someone invades you, you lose nothing at all. What they take is a copy, never your original.',
+  'def3.cmd.help.s4.h': 'Growing a defense unit',
+  'def3.cmd.help.s4.b':
+    'Level — credits and rare minerals raise its stats. This is the everyday sink.\nAscension — collect duplicate blueprints of the same unit. Ascension jumps its stats and changes its appearance, and that appearance is visible on the attacker\'s screen.\nAffix reroll — rare minerals reroll the random defense-unit affixes carried by magic and rare units.\nGrade promotion — normal to magic to rare to unique. Unique units carry their own effects and rule changes.',
+  'def3.cmd.help.s5.h': 'Neglect',
+  'def3.cmd.help.s5.b':
+    'Only deployed defense units decay. Anything sitting in your collection keeps its condition indefinitely, so there is no cost to holding spares. Guardians are the one exception to repair — their condition cannot be restored.',
+  'def3.cmd.help.s6.h': 'Core modules',
+  'def3.cmd.help.s6.b':
+    'Core modules are consumable instances rather than catalog picks, so they have their own screen.\nA module\'s effect is frozen at the moment an invasion begins — swapping modules never changes an invasion already in progress. Charges are deducted only when an invasion result is finalized, so an attacker who starts and abandons a run costs you nothing.',
+  'def3.cmd.help.s7.h': 'Saving and testing a layout',
+  'def3.cmd.help.s7.b':
+    'Your edits are a draft. Nothing defends you until you press Save layout. Revert restores the last saved state.\nTest invasion lets you attack your own current draft. Nothing is recorded — it touches neither the ladder nor any settlement — and the Exit test button on the game screen brings you straight back here.\nLeaving this screen discards unsaved edits, so save first if you want to keep them.',
+  'def3.cmd.help.s8.h': 'Worth knowing',
+  'def3.cmd.help.s8.b':
+    'Slots are the budget. There is no separate cost pool — the map fixes how many wave slots, sockets, and boss or guardian slots you get, and fairness is handled by ladder matchmaking instead.\nAn attacker choosing a target sees only silhouettes, grades, and ascension stars. Exact stats and defense-unit affixes are revealed to them only after they have invaded you once.\nManaging defense units — crafting and upgrading — needs a login. Editing the layout works offline.',
 
   // 액티브 스킬 42종 i18n (ADR-0041 · .omc/plans/active-skills-catalog.md 저작 카탈로그 정본).
   'activeSkill.as_striker_firepower_lo.name': 'Straight Volley',
@@ -2520,6 +2559,7 @@ export const KO: Record<MessageKey, string> = {
   'item.subWeapon.4': '유도 플레어',
 
   'hud.supplyRaid': '⚠ 보급선 습격 — 격추하세요!',
+  'hud.exitTest': '시험 침공 종료',
   'hud.combo': '콤보 x{mult} ({combo})',
   'hud.phaseTransition': '⚙ 페이즈 {n} 전환 중…',
   'hud.overheat': '🔥 과열 — 지금이 기회입니다! (피해 2배)',
@@ -3626,9 +3666,15 @@ export const KO: Record<MessageKey, string> = {
   'def3.cmd.inv.empty': '보유 방어체가 없습니다. 설계도로 제작하세요.',
   'def3.cmd.inv.blueprints': '설계도',
   'def3.cmd.unit.title': '방어체 강화',
-  'def3.cmd.inv.more': '방어체는 설계도로 제작하거나 침공 방어 보상으로 얻습니다.',
-  'def3.cmd.inv.bpMore': '설계도는 침공을 막아 내면 나옵니다.',
-  'def3.cmd.inv.bpEmpty': '보유 설계도가 없습니다. 행성 런과 침공 약탈에서 나옵니다.',
+  // ⚠️ 사용자 신고 2026-08-05: "설계도가 침공 약탈때도 나오고 막아도 나온다는 말이야?" — 두 줄이
+  // 실제로 서로 다른 말을 하고 있었다. 그리고 `막아 내면` 쪽이 틀린 쪽이다(ADR-0018: 방어 실적은
+  // 획득 경로에서 명시 제외 — 부익부 방지). 경로는 **행성 런 드랍**과 **내가 공격에 성공했을 때의
+  // 복제 약탈** 둘뿐이다. 두 줄이 이어 붙어 한 문단으로 읽히므로(`bpEmpty\nbpMore`) 빈 상태 문장은
+  // 사실만 말하고 경로 설명은 bpMore 한 곳에만 둔다.
+  'def3.cmd.inv.more': '방어체는 행성 런에서 드랍되거나, 설계도로 제작해 얻습니다.',
+  'def3.cmd.inv.bpMore':
+    '설계도는 행성 런에서 드랍되고, 내가 다른 기지 침공에 성공하면 상대 설계도를 복제해 얻습니다.',
+  'def3.cmd.inv.bpEmpty': '보유 설계도가 없습니다.',
   'def3.cmd.inv.craft': '제작',
   'def3.cmd.inv.count': '{n}장',
   'def3.cmd.unit.level': 'Lv {n}',
@@ -3654,6 +3700,38 @@ export const KO: Record<MessageKey, string> = {
   'def3.cmd.err.failed': '서버가 요청을 거부했습니다.',
   'def3.cmd.err.offline': '서버에 연결돼 있지 않습니다.',
   'def3.cmd.ok.upgrade': '강화했습니다.',
+
+  // 방어 사령부 도움말(사용자 요청 2026-08-05 — "처음 오는 사람이 전체 내용을 다 알 수 있게").
+  // ⚠️ 용어는 이 파일 KO 선언부의 정본표를 따른다 — `편대`(웨이브 ✗) · `설비`(포탑 ✗) ·
+  // `수호기` · `내구도`(방어체·코어의 HP) · `보관함`(창고 ✗) · `침공`(PvP, 침략 ✗) ·
+  // `승격`/`등급 승급`(이 화면의 강화 버튼 라벨과 같은 낱말이어야 도움말이 화면을 가리킬 수 있다).
+  // ⚠️ 이모지 금지(사용자 지시이자 `text.ts` stripEmoji 가 두부로 떨군다). 문장은 존댓말.
+  'def3.cmd.help': '도움말',
+  'def3.cmd.help.title': '방어 사령부 안내',
+  'def3.cmd.help.s1.h': '이 화면은 무엇을 하는 곳인가요',
+  'def3.cmd.help.s1.b':
+    '다른 파일럿이 내 기지를 침공해 왔을 때 그를 맞이할 방어 배치를 짜는 곳입니다. 그 순간 조종간을 잡는 것은 내가 아니라 여기서 저장해 둔 배치이며, 내가 접속해 있지 않아도 이 배치가 대신 싸웁니다.\n침공 한 번은 L1 대기권, L2 회랑, L3 코어방 세 레이어를 끊김 없이 이어 달리는 단일 런입니다. 공격자는 레이어 경계에서 선체와 자원을 그대로 가지고 넘어가므로, 앞 레이어에서 깎아 둔 만큼이 뒤 레이어를 지켜 줍니다.',
+  'def3.cmd.help.s2.h': '세 레이어',
+  'def3.cmd.help.s2.b':
+    'L1 대기권 — 편대 슬롯입니다. 보유한 편대를 슬롯에 꽂아 등장 순서만 정하시면 됩니다. 진형과 이동 경로는 편대마다 내장돼 있어 직접 그리지 않습니다.\nL2 회랑 — 회랑 지형을 고르고, 그 지형에 뚫려 있는 설치 소켓에 설비를 넣습니다. 설비는 세 갈래입니다. 화력을 담당하는 벽부착 방어포, 회피를 강요하는 기믹 해저드, 파괴 전까지 소형 드론을 계속 뽑아내는 드론 스포너입니다. 소켓의 수와 위치는 지형이 정하므로 한 곳에 몰아 넣을 수는 없습니다.\nL3 코어방 — 방어 보스 한 자리, 수호기 자리, 기물 소켓, 그리고 코어가 있습니다. 코어 내구도가 0이 되는 순간 방어는 실패합니다.\n비어 있는 슬롯은 기본 수비대가 자동으로 채웁니다. 행성 소속 최저 등급이라 화면이 비지는 않지만 약합니다. 내가 모은 방어체로 바꿔 꽂을수록 기지가 강해집니다.',
+  'def3.cmd.help.s3.h': '방어체는 어떻게 얻나요',
+  'def3.cmd.help.s3.b':
+    '방어체는 행성 런에서 직접 드랍되거나, 설계도와 희귀 광물을 들여 제작해 얻습니다.\n설계도의 획득 경로는 정확히 둘입니다. 하나는 행성 런 드랍이고, 다른 하나는 복제 약탈입니다. 복제 약탈은 내가 다른 기지를 침공해 성공했을 때 낮은 확률로 상대의 설계도를 복제해 오는 것입니다. 침공을 막아 냈을 때 설계도가 나오지는 않습니다.\n반대로 내가 침공당했을 때 잃는 것도 없습니다. 공격자가 가져가는 것은 언제나 사본이며 내 원본은 그대로 남습니다.',
+  'def3.cmd.help.s4.h': '방어체를 키우는 방법',
+  'def3.cmd.help.s4.b':
+    '레벨 — 크레딧과 희귀 광물을 넣어 스탯을 올립니다. 가장 자주 쓰게 되는 축입니다.\n승격 — 같은 방어체의 설계도가 중복으로 모였을 때 씁니다. 스탯이 크게 뛰는 동시에 외형이 달라지며, 이 외형은 나를 침공하러 온 공격자의 화면에 그대로 보입니다.\n어픽스 리롤 — 희귀 광물로 방어체 어픽스를 다시 굴립니다. 방어체 어픽스는 매직과 레어 등급 방어체에 붙는 무작위 옵션입니다.\n등급 승급 — 노말에서 매직, 레어, 유니크 순으로 올립니다. 유니크 방어체는 다른 등급에는 없는 고유 효과를 가집니다.',
+  'def3.cmd.help.s5.h': '풍화',
+  'def3.cmd.help.s5.b':
+    '풍화는 배치해 둔 방어체에만 작용합니다. 보관함에 넣어 둔 방어체는 아무리 오래 두어도 닳지 않으므로 예비 전력을 쌓아 두는 데에는 비용이 들지 않습니다. 다만 수호기만은 예외로, 한 번 닳은 정비도를 되돌릴 수 없습니다.',
+  'def3.cmd.help.s6.h': '코어 모듈',
+  'def3.cmd.help.s6.b':
+    '코어 모듈은 목록에서 골라 쓰는 것이 아니라 한 번 쓰면 없어지는 개별 물품이라, 이 화면이 아닌 전용 화면에서 다룹니다.\n모듈의 효력은 침공이 시작되는 시점에 고정됩니다. 이미 진행 중인 침공은 도중에 모듈을 바꿔도 달라지지 않습니다. 사용 횟수는 침공 결과가 확정될 때에만 줄어들므로, 공격자가 시작만 하고 도중에 버린 침공은 내 모듈을 소모시키지 않습니다.',
+  'def3.cmd.help.s7.h': '배치를 저장하고 시험해 보기',
+  'def3.cmd.help.s7.b':
+    '이 화면에서 고친 내용은 아직 초안입니다. 화면 아래 배치 저장을 눌러야 실제 방어에 쓰입니다. 되돌리기를 누르면 마지막으로 저장한 상태로 돌아갑니다.\n시험 침공은 지금 편집 중인 배치를 내가 직접 공격해 보는 기능입니다. 결과는 어디에도 기록되지 않아 래더에도 정산에도 영향이 없으며, 게임 화면에 뜨는 시험 침공 종료 버튼을 누르면 언제든 이 화면으로 돌아옵니다.\n이 화면을 떠나면 저장하지 않은 변경은 사라집니다. 남기고 싶으시다면 먼저 저장해 주세요.',
+  'def3.cmd.help.s8.h': '알아 두면 좋은 것',
+  'def3.cmd.help.s8.b':
+    '슬롯이 곧 예산입니다. 별도의 코스트 포인트는 없고, 편대 슬롯과 설치 소켓, 보스와 수호기 자리의 수는 맵이 고정합니다. 전력 차이의 공정성은 래더 매칭이 맞춰 줍니다.\n공격자는 대상을 고르는 화면에서 내 방어체의 실루엣과 등급, 승격 별만 봅니다. 정확한 스탯과 방어체 어픽스는 나를 한 번 침공해 본 뒤에야 공개됩니다.\n방어체 제작과 강화는 로그인이 필요합니다. 배치 편집은 로그인 없이도 됩니다.',
 
   // 액티브 스킬 42종 i18n (ADR-0041 · .omc/plans/active-skills-catalog.md 저작 카탈로그 정본).
   'activeSkill.as_striker_firepower_lo.name': '직사 제압',

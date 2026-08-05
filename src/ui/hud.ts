@@ -309,6 +309,14 @@ const STYLE = `
 #pb-actives .pb-ac-key { position:absolute; left:0; top:0; z-index:3; padding:1px 5px; font-size:11px; font-weight:800; color:#0d0f1c; background:rgba(255,210,76,.92); border-radius:8px 0 8px 0; }
 #pb-actives .pb-ac-cd { position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center; font-size:17px; font-weight:800; color:#ffe6b0; text-shadow:0 1px 3px #000; }
 #pb-actives .pb-ac-name { margin-top:3px; text-align:center; font-size:10px; font-weight:700; line-height:12px; max-height:24px; overflow:hidden; color:#cdd6f5; text-shadow:0 1px 2px #000; }
+/* 시험 침공 이탈 버튼 — **하단 중앙**. 이 화면에서 남은 유일한 빈 자리다: 좌상단은 설정 톱니
+   (캔버스)와 침공 진행 패널, 우상단은 레이더(캔버스), 좌하단은 런 HUD 와 액티브 칸, 우하단은
+   DEV 텔레메트리와 치트 패널 버튼이 이미 쓴다. 그리고 이것은 HUD 에서 **유일하게 클릭을 받는**
+   요소라, 자리를 잘못 잡으면 겹친 쪽의 클릭을 조용히 훔친다(다른 판들은 전부 pointer-events:none
+   이라 겹쳐도 티가 안 났다). */
+#pb-exitrun { position:absolute; bottom:18px; left:50%; transform:translateX(-50%); display:flex; }
+#pb-exitrun button { font:800 15px 'Segoe UI',system-ui,sans-serif; letter-spacing:.6px; color:#ffe6b0; background:rgba(24,16,20,.86); border:2px solid rgba(255,150,110,.62); border-radius:10px; padding:9px 22px; cursor:pointer; text-shadow:0 1px 3px #000; box-shadow:0 2px 10px rgba(0,0,0,.55); }
+#pb-exitrun button:hover { color:#fff3d6; border-color:#ff9b6e; background:rgba(40,22,26,.92); }
 #pb-lore { position:absolute; top:352px; left:50%; transform:translateX(-50%); max-width:80vw; background:rgba(18,24,44,.82); border:1px solid rgba(120,200,255,.55); box-shadow:0 0 18px 2px rgba(60,140,220,.35) inset; color:#dbe8ff; padding:10px 22px; border-radius:12px; font-family:'Segoe UI',system-ui,sans-serif; text-align:center; pointer-events:none; user-select:none; }
 #pb-lore .pb-lore-line { font-size:14px; font-weight:600; letter-spacing:.4px; text-shadow:0 1px 3px #000; line-height:1.5; }
 #pb-lore .pb-lore-line + .pb-lore-line { font-size:12px; font-weight:500; color:#a9c6ff; }
@@ -369,6 +377,17 @@ export class Hud {
   private readonly invTimeTotal: HTMLElement;
   /** 방어 잔존 4항목 값 노드(설비·수호·기물·적 순). 라벨은 생성 시 한 번만 쓴다. */
   private readonly invDefValues: readonly HTMLElement[];
+  /**
+   * 시험 침공 이탈 버튼(하단 중앙). 기본 숨김 — {@link setExitRun} 이 켜는 런에서만 뜬다.
+   *
+   * ⚠️ HUD 에서 **유일하게 `pointer-events` 를 받는 요소다.** 나머지 판은 전부 `none` 이라 캔버스
+   * 클릭을 통과시키지만, 이 버튼은 그 자리의 클릭을 먹는다 — 그래서 자리(하단 중앙)와 크기를
+   * 함부로 늘리면 안 된다(CSS 주석이 어느 자리가 왜 막혀 있는지 열거해 뒀다).
+   */
+  private readonly exitRoot: HTMLElement;
+  private readonly exitBtn: HTMLButtonElement;
+  /** 지금 걸려 있는 이탈 핸들러(`null` = 버튼 숨김). 버튼은 한 번만 짓고 핸들러만 갈아 끼운다. */
+  private exitHandler: (() => void) | null = null;
   /** 스토리 로어 토스트 배너(에코 안정화 등). 기본 숨김, {@link showLore} 로 잠깐 표시. */
   private readonly loreToast: HTMLElement;
   private loreTimer: ReturnType<typeof setTimeout> | null = null;
@@ -573,10 +592,43 @@ export class Hud {
     this.activesRoot.style.display = 'none';
     document.body.appendChild(this.activesRoot);
 
+    // 시험 침공 이탈 버튼 — 한 번만 짓고 라벨·핸들러만 갈아 끼운다. 클릭은 **현재 핸들러**를
+    // 읽어서 부른다(리스너를 붙였다 뗐다 하면 해제 누락 한 번으로 옛 런의 핸들러가 살아남는다).
+    this.exitRoot = document.createElement('div');
+    this.exitRoot.id = 'pb-exitrun';
+    this.exitBtn = document.createElement('button');
+    this.exitBtn.type = 'button';
+    this.exitBtn.addEventListener('click', () => {
+      this.exitHandler?.();
+    });
+    this.exitRoot.appendChild(this.exitBtn);
+    this.exitRoot.style.display = 'none';
+    document.body.appendChild(this.exitRoot);
+
     this.loreToast = document.createElement('div');
     this.loreToast.id = 'pb-lore';
     this.loreToast.style.display = 'none';
     document.body.appendChild(this.loreToast);
+  }
+
+  /**
+   * 런 화면의 이탈 버튼을 켜거나 끈다(`null` = 끔). 지금 쓰는 곳은 **방어 사령부의 시험 침공**
+   * 하나다 — 그 런은 정산도 리플레이 제출도 타지 않는 오염 런이라 끝까지 갈 이유가 없는데,
+   * 여태 화면에 나가는 길이 없어 죽거나 시간이 다 될 때까지 기다려야 했다(사용자 요청 2026-08-05).
+   *
+   * ⚠️ **런을 시작하는 모든 경로가 이 값을 명시로 세워야 한다.** 한 곳이라도 빠뜨리면 시험 침공에서
+   * 나간 뒤 시작한 정식 런에 이탈 버튼이 그대로 남아, 정산을 건너뛰고 빠져나가는 길이 열린다.
+   * 그래서 화면 전환의 단일 관문(`clearToMenu`)에서 끄는 것을 기본으로 삼는다.
+   */
+  setExitRun(label: string | null, onExit?: () => void): void {
+    if (label === null || onExit === undefined) {
+      this.exitHandler = null;
+      this.exitRoot.style.display = 'none';
+      return;
+    }
+    this.exitHandler = onExit;
+    this.exitBtn.textContent = label;
+    this.exitRoot.style.display = 'flex';
   }
 
   /**
@@ -604,6 +656,9 @@ export class Hud {
       this.runInfo,
       this.invRoot,
       this.activesRoot,
+      // 이탈 버튼도 함께 덮는다 — 정산 화면 위에 남으면 "결과를 보는 중에 런에서 나가기"라는
+      // 있지도 않은 동작을 제안하게 된다. `visibility` 는 클릭도 함께 막으므로 이 하나로 끝난다.
+      this.exitRoot,
     ]) {
       el.style.visibility = v;
     }
