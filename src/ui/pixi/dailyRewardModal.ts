@@ -34,7 +34,7 @@
  * ③ `Sprite` 에 자식을 붙이지 않는다(리포 규율) — 이 파일은 `Container` + `Text` + `Graphics` 만 쓴다.
  */
 
-import { Container, Graphics, Text, Ticker } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, Ticker } from 'pixi.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { makeModal } from './modal.js';
 import { modalBodyTop } from './modal.js';
@@ -209,6 +209,21 @@ function lineHeight(fontSize: number): number {
   return Math.round(fontSize * 1.34);
 }
 
+/**
+ * 지급물 아이콘의 **표시 한 변**(px).
+ *
+ * ⚠️ **원본은 전부 64×64 다**(실측: `assets/ui_icon_*.png` 16종 전부). 이 값이 64 를 넘는
+ * 순간 확대가 되고, 이 리포에서 *"구려 보인다"* 의 절반이 정확히 그 과확대였다(64px 자산을
+ * 280px 로 늘려 쓴 전례). 개봉 연출의 `iconScale` 이 중간에 1 을 살짝 넘기므로 그 최대까지
+ * 포함해 원본 안에 들어와야 한다 — 44 × 최대 배율(약 1.09) ≈ 48 < 64 라 여유가 있다.
+ *
+ * 글자 크기와의 관계도 이 값을 정한다: 지급물 줄이 {@link FS_SUBJECT}(23px)이므로 아이콘이
+ * 그 두 배쯤이어야 "글자보다 먼저 읽히는" 통지가 된다.
+ */
+export const ICON_SIZE = 44;
+/** 아이콘과 글자 사이, 그리고 아이콘끼리의 간격. */
+const ICON_GAP = 10;
+
 /** 연속 접속 게이지 두께. */
 const BAR_H = 12;
 /** 절과 절 사이. 줄 사이(작은 값)와 확실히 달라야 절 경계가 읽힌다. */
@@ -239,6 +254,39 @@ export interface DailyRewardTextRow {
   readonly estWidth: number;
   /** 이 줄이 차지하는 세로(px). */
   readonly height: number;
+}
+
+/**
+ * 축 → UI 아이콘 텍스처 키.
+ *
+ * 재화 축만 **두 개**를 쓴다(크레딧=동전 · 광물=결정) — 그 둘은 기지 헤더·격납고·촉매 보관함이
+ * 이미 같은 아이콘으로 쓰고 있어서, 여기서 다른 그림을 쓰면 같은 재화가 화면마다 달라 보인다.
+ *
+ * ⚠️ 나머지 다섯은 **기존 16종 UI 아이콘에서 고른 잠정 배정**이다(그 축 전용 그림이 아직 없다).
+ * 축을 알아보게 하는 것이 목적이고, 전용 아트가 생기면 이 표 한 줄씩만 바꾸면 된다.
+ * 촉매는 `assets/catalyst_<slug>.png` 로 종류별 실그림이 이미 있지만, 예고(내일)에는 종류까지만
+ * 적히고 **어느 촉매인지는 감춰야 하므로**(AC-21) 축 아이콘 하나로 통일한다.
+ */
+const AXIS_ICON: Readonly<Record<DailyRewardAxis, string>> = {
+  currency: 'ui_icon_coin.png',
+  catalyst: 'ui_icon_star.png',
+  blueprint: 'ui_icon_upgrade.png',
+  coreModule: 'ui_icon_gear.png',
+  gear: 'ui_icon_shield.png',
+  commission: 'ui_icon_rocket.png',
+};
+
+/** 그려질 아이콘 하나. 좌표는 **패널 로컬**이며 전부 정수다. */
+export interface DailyRewardIcon {
+  /** 어느 줄에 붙는가(`todaySubject` · `tomorrowSubject`). 테스트가 이 키로 짝을 본다. */
+  readonly row: string;
+  /** `uiTextures` 의 키. 텍스처가 아직 안 왔으면 렌더가 그 자리를 비운다. */
+  readonly texture: string;
+  /** 왼쪽 위 모서리(정수). 배율은 연출이 곱하되 **가운데를 축으로** 한다. */
+  readonly x: number;
+  readonly y: number;
+  /** 표시 한 변. 원본(64)보다 작아야 한다 — {@link ICON_SIZE} 주석. */
+  readonly size: number;
 }
 
 /** 연속 접속 게이지 사각형(패널 로컬, 정수). */
@@ -285,8 +333,25 @@ export interface DailyRewardModalLayout {
   /** 콘텐츠가 쓸 수 있는 안쪽 가로. */
   readonly innerWidth: number;
   readonly rows: readonly DailyRewardTextRow[];
+  /** 지급물·예고 아이콘. 줄 왼쪽에 붙고 그만큼 글자가 들여쓰인다. */
+  readonly icons: readonly DailyRewardIcon[];
   readonly bar: DailyRewardBar;
   readonly interactive: readonly string[];
+}
+
+/**
+ * 한 지급물이 쓸 아이콘 텍스처들.
+ *
+ * 재화 축은 **실제로 들어온 것만** 보여준다 — 광물이 0 인데 결정 아이콘을 띄우면 화면이
+ * 받지 않은 것을 받았다고 말한다. 둘 다 0 이면(예고이거나 보정분만 있는 날) 동전 하나로
+ * 축을 표시한다.
+ */
+function iconTexturesFor(s: DailyRewardModalSubject): string[] {
+  if (s.axis !== 'currency') return [AXIS_ICON[s.axis]];
+  const out: string[] = [];
+  if (s.credits !== undefined && s.credits > 0) out.push('ui_icon_coin.png');
+  if (s.minerals !== undefined && s.minerals > 0) out.push('ui_icon_crystal.png');
+  return out.length > 0 ? out : ['ui_icon_coin.png'];
 }
 
 /** 천 단위 구분(순수 — 로케일 함수를 쓰지 않는다. 같은 입력에 같은 문자열이어야 한다). */
@@ -336,33 +401,60 @@ export function layoutDailyRewardModal(data: DailyRewardModalData): DailyRewardM
   const probe = panelContent(DAILY_MODAL_W, 0);
   const innerWidth = probe.w;
   const rows: DailyRewardTextRow[] = [];
+  const icons: DailyRewardIcon[] = [];
   let cy = modalBodyTop(probe);
 
+  /**
+   * @param iconTextures 이 줄 왼쪽에 붙일 아이콘들. 있으면 글자가 그만큼 들여쓰이고
+   *   **쓸 수 있는 가로도 그만큼 줄어든다** — 줄이지 않으면 아이콘 폭만큼 오른쪽으로 넘친다.
+   *   줄바꿈 추정이 그 좁아진 폭을 봐야 넘침 보증이 성립한다.
+   */
   const push = (
     id: string,
     text: string,
     fontSize: number,
     weight: '400' | '800',
     color: number,
+    iconTextures: readonly string[] = [],
   ): void => {
+    const indent = iconTextures.length * (ICON_SIZE + ICON_GAP);
+    const maxWidth = Math.max(1, innerWidth - indent);
     const clean = stripEmoji(text);
-    const lines = wrapByEstimate(clean, fontSize, innerWidth);
+    const lines = wrapByEstimate(clean, fontSize, maxWidth);
     const estWidth = lines.reduce((m, l) => Math.max(m, estimateTextWidth(l, fontSize)), 0);
-    const height = lineHeight(fontSize) * lines.length;
+    const textHeight = lineHeight(fontSize) * lines.length;
+    // 아이콘이 글자보다 크면 **블록** 높이를 아이콘에 맞춘다. 안 그러면 아이콘이 다음 줄을 덮는다.
+    const blockH = iconTextures.length > 0 ? Math.max(textHeight, ICON_SIZE) : textHeight;
+    const x = Math.round(probe.x + indent);
+    const top = Math.round(cy);
+    // 아이콘이 더 높으면 글자를 블록 안에서 세로 가운데로 내린다(위에 붙으면 어긋나 보인다).
+    const textTop = Math.round(top + (blockH - textHeight) / 2);
     rows.push({
       id,
       text: clean,
-      x: Math.round(probe.x),
-      y: Math.round(cy),
+      x,
+      y: textTop,
       fontSize,
       weight,
       color,
-      maxWidth: innerWidth,
+      maxWidth,
       lines,
       estWidth,
-      height,
+      // ⚠️ **글자를 내린 만큼 빼야 `y + height` 가 블록 바닥이 된다.** 빼지 않으면 겹침
+      //    단언(`다음 줄 y >= 이전 줄 y + height`)이 가운데 정렬 오프셋만큼 거짓 겹침을
+      //    보고한다 — 실제로 이 줄을 빠뜨려 `todaySubject → todayNotice` 가 1px 겹쳤다.
+      height: blockH - (textTop - top),
     });
-    cy += height + ROW_GAP;
+    iconTextures.forEach((texture, i) => {
+      icons.push({
+        row: id,
+        texture,
+        x: Math.round(probe.x + i * (ICON_SIZE + ICON_GAP)),
+        y: Math.round(top + (blockH - ICON_SIZE) / 2),
+        size: ICON_SIZE,
+      });
+    });
+    cy += blockH + ROW_GAP;
   };
 
   // ── 연속 접속 ── 몇 일차인지와 "30일차가 최고점"이 한 덩어리로 읽혀야 한다.
@@ -381,7 +473,14 @@ export function layoutDailyRewardModal(data: DailyRewardModalData): DailyRewardM
 
   // ── 오늘 받은 것 ── 굴림 값을 드러낸다(이미 열어 본 물건이다).
   push('todayHead', t('daily.today'), FS_SECTION, '800', COLOR.gold);
-  push('todaySubject', subjectLine(data.today, true), FS_SUBJECT, '800', COLOR.cream);
+  push(
+    'todaySubject',
+    subjectLine(data.today, true),
+    FS_SUBJECT,
+    '800',
+    COLOR.cream,
+    iconTexturesFor(data.today),
+  );
   push('todayNotice', t('daily.today.notice'), FS_META, '400', COLOR.muted);
   if (data.sideCredits !== undefined && data.sideCredits > 0) {
     push(
@@ -405,9 +504,20 @@ export function layoutDailyRewardModal(data: DailyRewardModalData): DailyRewardM
   push('tomorrowHead', t('daily.tomorrow'), FS_SECTION, '800', COLOR.gold);
   const tomorrow = data.tomorrow;
   if (tomorrow === undefined) {
+    // 아직 적힌 것이 없다 — 아이콘도 없다. 자리표시 아이콘을 두면 무언가 온다고 말하게 된다.
     push('tomorrowSubject', t('daily.tomorrow.none'), FS_SUBJECT, '800', COLOR.cream);
   } else {
-    push('tomorrowSubject', subjectLine(tomorrow, false), FS_SUBJECT, '800', COLOR.cream);
+    push(
+      'tomorrowSubject',
+      subjectLine(tomorrow, false),
+      FS_SUBJECT,
+      '800',
+      COLOR.cream,
+      // ⚠️ 예고 아이콘은 **축까지만** 말한다. 재화 축이면 `credits`/`minerals` 가 예고에
+      //    실리지 않으므로 `iconTexturesFor` 가 동전 하나로 접는다 — 값이 아이콘 개수로
+      //    새어 나가는 경로가 구조적으로 없다(AC-21).
+      iconTexturesFor(tomorrow),
+    );
     push('tomorrowHidden', t('daily.tomorrow.hidden'), FS_META, '400', COLOR.muted);
   }
   cy += SECTION_GAP;
@@ -425,6 +535,7 @@ export function layoutDailyRewardModal(data: DailyRewardModalData): DailyRewardM
     bodyTop: modalBodyTop(probe),
     innerWidth,
     rows,
+    icons,
     bar,
     interactive: DAILY_MODAL_INTERACTIVE,
   };
@@ -437,10 +548,6 @@ export function layoutDailyRewardModal(data: DailyRewardModalData): DailyRewardM
 /** 게이지 배경·채움 색(파낸 홈 위에 금빛 눈금 — 이 리포의 "채워지는 것" 어휘). */
 const BAR_TRACK = 0x14100a;
 const BAR_FILL = 0xffd678;
-
-/** 봉인 판의 색(개봉 연출). 게이지 금빛과 같은 계열이되 한 단계 어둡다 — 밝으면 눈이 그쪽으로 간다. */
-const SEAL_FILL = 0x8a6a2a;
-const SEAL_EDGE = 0xffd678;
 
 let host: Container | null = null;
 let root: Container | null = null;
@@ -465,8 +572,8 @@ let revealElapsed = 0;
 /** 연출이 만지는 노드들. 연출이 없거나 끝났으면 전부 정착값으로 고정된다. */
 interface RevealNodes {
   readonly root: Container;
-  readonly seal: Graphics;
-  readonly sweep: Graphics;
+  /** 아이콘 스프라이트와 그 **정착 크기**. 배율은 가운데를 축으로 곱한다. */
+  readonly icons: readonly { sprite: Sprite; cx: number; cy: number; size: number }[];
   readonly subject: Text | null;
   readonly subjectY: number;
   readonly bar: Graphics;
@@ -488,15 +595,19 @@ function drawBar(g: Graphics, geom: DailyRewardBar, progress: number): void {
 function applyReveal(n: RevealNodes, f: RevealFrame): void {
   n.root.scale.set(f.panelScale);
   n.root.alpha = f.panelAlpha;
-  n.seal.alpha = f.sealAlpha;
-  n.seal.scale.set(f.sealScale);
   if (n.subject !== null) {
     n.subject.alpha = f.subjectAlpha;
     // 정수 좌표 — 반픽셀 부유가 글자 테두리를 번쩍이게 한다(리포 실측).
     n.subject.position.y = n.subjectY + f.subjectRise;
   }
-  n.sweep.alpha = f.sweepAlpha;
-  n.sweep.position.x = Math.round((f.sweepT * DAILY_MODAL_W) / 2);
+  for (const ic of n.icons) {
+    ic.sprite.alpha = f.iconAlpha;
+    // 가운데를 축으로 키운다. 왼쪽 위 기준으로 키우면 튀어나오는 대신 오른쪽 아래로 밀린다.
+    const side = ic.size * f.iconScale;
+    ic.sprite.width = side;
+    ic.sprite.height = side;
+    ic.sprite.position.set(ic.cx - side / 2, ic.cy - side / 2);
+  }
   drawBar(n.bar, n.barGeom, f.barProgress);
 }
 
@@ -580,7 +691,6 @@ function build(data: DailyRewardModalData): Container {
 
   let subjectText: Text | null = null;
   let subjectY = 0;
-  let subjectRow: DailyRewardTextRow | null = null;
   for (const row of layout.rows) {
     const el = label(row);
     el.position.set(row.x, row.y);
@@ -588,50 +698,38 @@ function build(data: DailyRewardModalData): Container {
     if (row.id === 'todaySubject') {
       subjectText = el;
       subjectY = row.y;
-      subjectRow = row;
     }
   }
 
-  // ── 봉인 ── "오늘 받은 것" 줄을 덮는 금빛 판. 개봉 연출이 이것을 부수며 지급물을 드러낸다.
+  // ── 지급물·예고 아이콘 ── 금빛 봉인·쓸림을 걷어낸 자리다(사용자 지시 2026-08-05).
   //
-  // ⚠️ 크기를 **그 줄의 실측 기하**에서 잡는다(`row.estWidth`·`row.height`). 상수로 두면
-  //    긴 축 이름(예: "코어 모듈 · 레어")에서 줄보다 짧아 글자가 봉인 밖으로 삐져나온 채로
-  //    보인다 — 이 리포에서 "구려 보인다"의 절반이 자산·기하의 배율 문제였다.
-  //    가로는 안쪽 폭을 넘지 않게 접는다(넘치면 판 밖으로 나간다).
-  const seal = new Graphics();
-  if (subjectRow !== null) {
-    const padX = 10;
-    const padY = 6;
-    const w = Math.min(layout.innerWidth, Math.round(subjectRow.estWidth) + padX * 2);
-    const h = subjectRow.height + padY * 2;
-    // 원점을 사각형 가운데로 두어야 `scale` 이 **가운데에서** 부푼다(왼쪽 위 기준이면
-    // 봉인이 오른쪽 아래로 밀려나며 사라져 깨지는 것으로 안 보인다).
-    seal
-      .roundRect(-w / 2, -h / 2, w, h, 8)
-      .fill({ color: SEAL_FILL, alpha: 0.95 })
-      .roundRect(-w / 2, -h / 2, w, h, 8)
-      .stroke({ color: SEAL_EDGE, width: 2, alpha: 0.9 });
-    seal.position.set(
-      Math.round(subjectRow.x + w / 2),
-      Math.round(subjectRow.y + subjectRow.height / 2),
-    );
+  // ⚠️ **원본 크기를 넘겨 확대하지 않는다.** 원본은 64×64 이고 표시는 `ICON_SIZE`(44)다.
+  //    `Sprite.width/height` 로 크기를 주므로 텍스처가 늦게 와도 배율이 어긋나지 않는다.
+  // ⚠️ `Sprite` 에 자식을 붙이지 않는다(리포 규율) — 전부 패널의 형제로 얹는다.
+  const iconNodes: { sprite: Sprite; cx: number; cy: number; size: number }[] = [];
+  for (const ic of layout.icons) {
+    const tex = ui[ic.texture];
+    // 텍스처가 아직 안 왔으면 그 자리를 **비운다.** 자리표시 사각형을 그리면 로딩 지연이
+    // "빈 회색 칸"으로 보여 결함처럼 읽힌다 — 도착하면 `rebuild()` 가 다시 세운다.
+    // ⚠️ `UiTextures` 의 값은 `Texture | null` 이다(로드 실패를 null 로 적는다). `undefined`
+    //    만 걸러 내면 실패한 자산이 `new Sprite(null)` 로 들어가 렌더가 죽는다.
+    if (tex === undefined || tex === null) continue;
+    const sprite = new Sprite(tex);
+    sprite.width = ic.size;
+    sprite.height = ic.size;
+    sprite.position.set(ic.x, ic.y);
+    parts.panel.addChild(sprite);
+    iconNodes.push({
+      sprite,
+      cx: ic.x + ic.size / 2,
+      cy: ic.y + ic.size / 2,
+      size: ic.size,
+    });
   }
-  seal.alpha = revealing ? 1 : 0;
-  parts.panel.addChild(seal);
-
-  // ── 금빛 쓸림 ── 판을 가로지르는 좁은 빛. 개봉에만 보이고 정착값은 투명이다.
-  const sweep = new Graphics();
-  sweep
-    .rect(-26, 0, 52, layout.height)
-    .fill({ color: BAR_FILL, alpha: 0.5 });
-  sweep.position.set(0, 0);
-  sweep.alpha = 0;
-  parts.panel.addChild(sweep);
 
   revealNodes = {
     root: parts.root,
-    seal,
-    sweep,
+    icons: iconNodes,
     subject: subjectText,
     subjectY,
     bar,
