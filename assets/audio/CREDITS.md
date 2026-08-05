@@ -62,9 +62,25 @@ Planet Blitz 는 원래 SFX 를 전부 절차 합성(`src/render/audio.ts`)하�
 | 피격(내 기체) | `sfx_hit.ogg` | `impactMetal_000.ogg` | Sci-Fi Sounds | H1 |
 | 렙업 카드 등장 | `sfx_card.ogg` | `confirmation_002.ogg` | Interface Sounds | C3 |
 | 보스 예고 루프 | `sfx_boss_warn.ogg` | `forceField_004.ogg` | Sci-Fi Sounds | B3 / P1 |
+| 일일 보상 개봉 | `sfx_daily_reward.ogg` | `maximize_004.ogg` | Interface Sounds | M4 |
 
 출처: [Sci-Fi Sounds](https://kenney.nl/assets/sci-fi-sounds) · [Interface Sounds](https://kenney.nl/assets/interface-sounds) — 둘 다 CC0 1.0.
 파일은 **바이트 그대로** 복사했다(리네임만, 재인코딩 없음).
+
+### 일일 보상 개봉음은 연출 길이에 맞춰 골랐다
+
+개봉 연출은 **1.1초**다(`src/ui/pixi/dailyRewardReveal.ts` — 판이 열리고 → 봉인이 깨지고 →
+지급물이 올라오고 → 게이지가 찬다). 소리는 연출 **시작 시점에 한 번** 나므로 원본이 그보다
+길면 게이지가 다 찬 뒤에도 소리가 남는다. `maximize_004.ogg` 는 **0.418초**(mono 44.1kHz,
+실측)라 봉인이 깨지는 구간(120~420ms)과 정확히 겹치고 연출이 끝나기 한참 전에 사라진다.
+
+⚠️ 교체할 때는 **길이를 먼저 재라.** 후보 중 `maximize_005` 가 더 화려했지만 매일 한 번
+듣는 소리라 사흘째부터 거슬리는 쪽으로 판단했고, `confirmation_004` 는 렙업 카드음
+(`confirmation_002`)과 같은 계열이라 두 사건이 안 구분된다.
+
+⚠️ **`SoundName` 짝을 만들지 않는다.** 호출부(`src/main.ts`)가 `playSample('dailyReward')` 를
+직접 부른다 — `play()` 를 쓰면 샘플이 없을 때 절차 합성으로 떨어지는데, 이 리포는 **절차 합성
+SFX 가 전원 거부된 전례**가 있다(2026-08-05). 파일이 없으면 무음이 옳다.
 
 ### 보스는 "등장음" 이 아니라 "예고 루프" 다
 

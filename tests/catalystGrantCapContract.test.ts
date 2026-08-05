@@ -74,17 +74,67 @@ function declaredConstant(code: string, name: string): string {
   return (m![1] ?? '').replace(/\s+/g, ' ').trim();
 }
 
-const GRANT = effectiveFunctionBody('grant_catalyst');
+/** 클라가 부르는 진입점. 캡 본문을 직접 갖거나, 갖지 않으면 `_for` 에 위임한다. */
+const ENTRY = effectiveFunctionBody('grant_catalyst');
+
+/**
+ * **캡 본문이 실제로 사는 함수**를 위임을 따라가 찾는다.
+ *
+ * 2026-08-05(ADR-0048 슬라이스 2)부터 `grant_catalyst` 는 얇은 래퍼다 — 본문이
+ * `grant_catalyst_for(uuid, int, int)` 로 옮겨졌고 수신자만 인자가 됐다(EF 가 service_role 로
+ * 부르는데 `auth.uid()` 가 null 이라 옮길 수밖에 없었다. `grant_currency`/`grant_currency_for`
+ * 와 같은 2단 구조다).
+ *
+ * ⚠️ 이름을 하드코딩하면 이 계약이 **래퍼를 읽고 "캡이 사라졌다"** 고 말한다. 그렇다고 새
+ * 이름을 하드코딩하면 다음에 또 옮길 때 같은 일이 반복된다. 그래서 위임을 따라간다 —
+ * 계약이 재려는 것은 *"어느 이름에 있는가"* 가 아니라 *"클라 진입점에서 출발하면 캡을 반드시
+ * 지나는가"* 이기 때문이다.
+ */
+function resolveCapBody(): { file: string; code: string; via: string } {
+  const delegate = /public\.(grant_catalyst_[a-z_]+)\s*\(/.exec(ENTRY.code);
+  if (delegate === null) return { ...ENTRY, via: 'grant_catalyst' };
+  const name = delegate[1] ?? '';
+  const body = effectiveFunctionBody(name);
+  // 2단까지만 허용한다. 래퍼의 래퍼가 생기면 "진입점에서 캡까지"를 사람이 못 따라간다.
+  expect(
+    /public\.(grant_catalyst_[a-z_]+)\s*\(/.exec(body.code),
+    `${name} 이 또 위임한다 — 위임은 1단까지만 허용한다`,
+  ).toBeNull();
+  return { ...body, via: name };
+}
+
+const GRANT = resolveCapBody();
 
 // ---------------------------------------------------------------------------
-// 0. 대상 확정 — 개정본이 실제로 마지막 정의인지 먼저 못 박는다
+// 0. 대상 확정 — 캡 본문이 실제로 어디 있는지 먼저 못 박는다
 // ---------------------------------------------------------------------------
 
 describe('grant_catalyst 유효 정의', () => {
-  it('마지막 정의는 캡 개정본(20260801000000)이다', () => {
+  it('클라 진입점에서 출발하면 캡 본문에 반드시 닿는다', () => {
     // 이 단언이 없으면, 누군가 뒤에 붙인 마이그레이션이 캡 없는 본문으로 되돌려도 아래 단언들이
     // "옛 파일을 읽고" 통과할 수 있다 — 어느 정의를 재고 있는지가 계약의 전제다.
-    expect(GRANT.file).toBe('20260801000000_catalyst_grant_cap.sql');
+    //
+    // 양성 앵커: 해석기가 엉뚱한(비어 있는) 함수를 가리키면 여기서 죽는다. 이것이 없으면
+    // 위임 추적이 빗나가도 아래가 전부 조용히 통과할 수 있다.
+    expect(GRANT.code, `캡 본문을 못 찾았다(via=${GRANT.via})`).toContain('CAP_HOURLY_CATALYSTS');
+    expect(GRANT.file).toMatch(/^\d{14}_.*\.sql$/);
+  });
+
+  it('진입점이 본문을 갖거나 정확히 하나에 위임한다 — 캡 우회 경로가 없다', () => {
+    if (GRANT.via === 'grant_catalyst') {
+      // 옛 형태: 진입점이 곧 본문이다.
+      expect(ENTRY.code).toContain('insert into public.catalyst_grants');
+      return;
+    }
+    // 2단 형태: 래퍼는 **본문을 갖지 않는다.** 본문이 두 벌이 되면 한쪽만 튜닝돼 캡이 갈리고,
+    // 그때 클라 경로가 어느 쪽을 타는지는 아무도 모른다.
+    expect(ENTRY.code, '래퍼가 아직 자기 캡 본문을 들고 있다').not.toContain('CAP_HOURLY_CATALYSTS');
+    expect(ENTRY.code, '래퍼가 자기 원장을 쓴다').not.toContain('insert into public.catalyst_grants');
+    // 그리고 래퍼는 수신자를 **자기 JWT 에서만** 만든다 — 인자로 받으면 클라가 남의 촉매를
+    // 늘릴 수 있고, 그 순간 이 함수가 authenticated 에 열려 있다는 사실이 결함이 된다.
+    expect(ENTRY.code, '래퍼가 auth.uid() 가 아닌 값을 수신자로 넘긴다').toMatch(
+      /grant_catalyst_[a-z_]+\(\s*auth\.uid\(\)/,
+    );
   });
 });
 

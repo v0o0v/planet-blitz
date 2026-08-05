@@ -260,10 +260,22 @@ describe('claim_daily_reward_for — 수령 경로의 하중 부재', () => {
   });
 
   it('연속 판정이 원장을 스캔하지 않는다 (AC-7)', () => {
+    // ⚠️ **`count(` 전면 금지에서 "원장에 대한 집계 금지" 로 좁혔다.** 슬라이스 2 가 의뢰서
+    //    보관 상한을 claim 본문에 인라인하면서 `select count(*) from commission_inventory` 가
+    //    들어왔고, 넓은 규칙은 그것을 **연속일 회귀로 오인**했다. AC-7 이 금지하는 것은
+    //    *"연속일을 `daily_reward_claims` 집계로 파생하는 것"* 이지 집계 일반이 아니다.
+    //    그래서 문 단위로 잘라 **원장을 만지는 문**에만 규칙을 건다 — 규칙을 지우지 않는다.
     for (const fn of [claim, preview]) {
-      expect(fn.code, '원장 집계가 연속일 읽기의 핫 경로가 됐다').not.toMatch(/count\s*\(/);
-      expect(fn.code).not.toContain('group by');
+      for (const stmt of fn.code.split(';')) {
+        if (!stmt.includes('daily_reward_claims')) continue;
+        expect(stmt, '원장 집계가 연속일 읽기의 핫 경로가 됐다').not.toMatch(/count\s*\(/);
+        expect(stmt, '원장 집계가 연속일 읽기의 핫 경로가 됐다').not.toContain('group by');
+      }
     }
+    // 규칙이 헛돌지 않는지 — 원장을 만지는 문이 실제로 있어야 위 루프가 무언가를 본다.
+    expect(claim.code, '원장을 만지는 문이 없다 — 위 검사가 공집합을 돌았다').toContain(
+      'daily_reward_claims',
+    );
     // 양성 짝: 직전 seed 하나만 읽는가.
     expect(preview.code).toContain('daily_last_claim_seed');
     expect(preview.code).toMatch(/from public\.profiles where id = p_recipient/);
@@ -437,6 +449,249 @@ describe('ABBA 데드락 — 한 호출에 등장하는 인벤토리는 최대 1
     const locked = [...new Set([...claim, ...grant].filter((t) => INVENTORY_TABLES.includes(t)))];
     expect(locked.length, `한 호출에 인벤토리가 둘 이상 잠긴다: ${locked.join(', ')}`)
       .toBeLessThanOrEqual(1);
+  });
+
+  // ── 슬라이스 2 (§C7) ── 촉매 축이 붙으면서 훑기 범위가 하나 늘었다.
+  it('grant_catalyst_for 까지 훑어도 인벤토리 잠금은 여전히 최대 1개다', () => {
+    // ⚠️ 이 훑기를 빠뜨리면 촉매 축의 잠금 순서 단언이 **아무것도 안 보고 통과한다** —
+    //    그 `for update` 는 claim 본문이 아니라 grant_catalyst_for 본문에 있다.
+    //    `grant_currency_for` 에서 이미 한 번 놓쳤던 사각지대와 동형이다.
+    const claim = forUpdateLockOrder(effectiveFunctionBody('claim_daily_reward_for').code);
+    const currency = forUpdateLockOrder(effectiveFunctionBody('grant_currency_for').code);
+    const catalyst = forUpdateLockOrder(effectiveFunctionBody('grant_catalyst_for').code);
+    // 선행 단언 — 파서가 헛돌면 아래 집합이 공집합이라 공허하게 통과한다.
+    expect(catalyst, 'grant_catalyst_for 에서 catalyst_inventory 잠금을 찾지 못했다')
+      .toContain('catalyst_inventory');
+    const locked = [
+      ...new Set([...claim, ...currency, ...catalyst].filter((t) => INVENTORY_TABLES.includes(t))),
+    ];
+    expect(locked, '촉매 축 한 갈래에 등장하는 인벤토리는 catalyst_inventory 하나여야 한다')
+      .toEqual(['catalyst_inventory']);
+  });
+
+  it('grant_catalyst_for 의 잠금 방향이 catalyst_inventory → profiles 다', () => {
+    // 이 방향이 buy_catalyst·salvage_catalyst 의 선언된 규약이다
+    // (20260731000000_catalyst_shop.sql:37-40). 뒤집으면 정면 ABBA 다.
+    const order = forUpdateLockOrder(effectiveFunctionBody('grant_catalyst_for').code);
+    expect(order.indexOf('catalyst_inventory')).toBeGreaterThan(-1);
+    expect(order.indexOf('profiles')).toBeGreaterThan(order.indexOf('catalyst_inventory'));
+  });
+
+  it('촉매 축 지급이 곁들이 크레딧 grant 보다 **앞**에 온다 (축별 호출 위치 계약)', () => {
+    // 계획 §C3 이 "문자 위치 비교"로 못박은 그 단언이다. 뒤집히면 claim 이
+    // `profiles → catalyst_inventory` 순으로 잠가 buy_catalyst 와 정확히 반대가 된다.
+    const code = effectiveFunctionBody('claim_daily_reward_for').code;
+    const catalystAt = code.indexOf('public.grant_catalyst_for(');
+    const currencyAt = code.indexOf('public.grant_currency_for(');
+    expect(catalystAt, '촉매 축 분기가 없다').toBeGreaterThan(-1);
+    expect(currencyAt, '곁들이 크레딧 grant 가 없다').toBeGreaterThan(-1);
+    expect(catalystAt, '곁들이 크레딧 grant 가 촉매 지급보다 먼저 온다 — 잠금 순서가 뒤집혔다')
+      .toBeLessThan(currencyAt);
+  });
+
+  it('코어 모듈 축은 기존 행을 잠그지 않는다 — 그 축엔 따를 단일 관례가 없다', () => {
+    // salvage_core_module 은 core_modules → profiles, apply_module_purchase 는 profiles 먼저다.
+    // 어느 쪽을 따라도 나머지 하나와 반대가 되므로 **잠그지 않는 것**이 유일하게 안전하다.
+    const code = effectiveFunctionBody('claim_daily_reward_for').code;
+    expect(forUpdateLockOrder(code)).not.toContain('core_modules');
+    // 양성 짝 — 그 축이 아예 빠진 것이 아니라 insert 로 살아 있다.
+    expect(code).toContain('insert into public.core_modules');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6b. 축 분기 — 슬라이스 2 (§C7)
+// ---------------------------------------------------------------------------
+
+describe('축 분기 — 다섯 축이 실제로 무언가를 준다', () => {
+  const claimCode = (): string => effectiveFunctionBody('claim_daily_reward_for').code;
+
+  it('501 로 막던 자리가 사라졌다 — EF 가 축을 가려내지 않는다', () => {
+    const ef = new TextDecoder().decode(
+      readFileSync(fileURLToPath(new URL('../supabase/functions/daily-reward/index.ts', import.meta.url))),
+    );
+    expect(ef).not.toContain('axis-not-implemented');
+    // 양성 짝: 낙찰된 축을 그대로 넘긴다(하드코딩된 'currency' 가 아니다).
+    expect(ef).toContain('p_axis: subject.axis');
+  });
+
+  it('다섯 축이 각각 자기 지급 경로를 갖는다', () => {
+    const code = claimCode();
+    const paths: { axis: string; needle: string }[] = [
+      { axis: 'catalyst', needle: 'public.grant_catalyst_for(' },
+      { axis: 'blueprint', needle: 'insert into public.defense_blueprints' },
+      { axis: 'coreModule', needle: 'insert into public.core_modules' },
+      // 의뢰서는 **인라인**이다 — 별도 함수를 만들면 commissionLedgerContract 의
+      // §만들지 않은 것이 잡는다("존재하지 않는 함수는 권한 실수로 노출될 수 없다").
+      { axis: 'commission', needle: 'insert into public.commission_inventory' },
+    ];
+    for (const p of paths) {
+      expect(code, `${p.axis} 축의 지급 경로가 없다`).toContain(p.needle);
+      expect(code, `${p.axis} 축의 분기 조건이 없다`).toContain(`p_axis = '${p.axis}'`);
+    }
+    // 장비 축만 서버 테이블을 안 만진다 — 배송함이 그 축의 지급 경로다.
+    expect(code).toContain("p_axis = 'gear'");
+  });
+
+  it('예산 보정분이 축과 무관하게 지급된다 — 값싼 목표가 낙찰된 날 램프가 사라지지 않는다', () => {
+    // 슬라이스 1 은 `case when p_axis = 'currency' then ... else 0 end` 로 재화 축만 실었다.
+    // 그 형태가 남아 있으면 보정분(budgetTopUpCredits)이 통째로 사라져 30일차에 40 크레딧이
+    // 나온다 — 실화면에서 실제로 본 화면이다.
+    const code = claimCode();
+    const at = code.indexOf('public.grant_currency_for(');
+    expect(at).toBeGreaterThan(-1);
+    const call = code.slice(at, code.indexOf(');', at) + 2);
+    expect(call, "grant 인자에 축 필터가 남아 있다 — 보정분이 재화 축에서만 지급된다")
+      .not.toContain("p_axis = 'currency'");
+    expect(call).toContain("v_result->>'credits'");
+    expect(call).toContain("v_result->>'minerals'");
+  });
+
+  it('나눌 수 없는 축은 절삭 후 예산이 그 하나를 감당할 때만 지급한다', () => {
+    // 이 비교가 빠지면 예산이 얼마든 그 축은 항상 지급되고, **상한 유계가 그 축에서만
+    // 조용히 사라진다.** 상한 유계는 이 설계의 유일한 안전장치다.
+    const code = claimCode();
+    expect(code).toContain('axis_value');
+    // ⚠️ **비교의 방향을 단언하지 않는다.** `v_axis_value <= v_value` 와
+    //    `v_axis_value > v_value` 는 같은 규칙의 두 표기이고, 분기 구조에 따라 어느 쪽이
+    //    자연스러운지가 달라진다. 방향을 못 박으면 **코드가 옳은데 빨개진다.**
+    //    재는 것은 *"세 축 각각의 분기 안에서 그 값을 실제로 본다"* 하나다.
+    //
+    // 축 분기를 잘라 축마다 따로 본다 — 전체에서 개수만 세면 한 축에 두 번 걸고 다른 축에
+    // 안 건 상태가 통과한다(그 축에서만 상한 유계가 조용히 사라진다).
+    const INDIVISIBLE = ['coreModule', 'commission', 'gear'];
+    const marks = INDIVISIBLE.map((a) => ({ axis: a, at: code.indexOf(`p_axis = '${a}'`) }));
+    for (const m of marks) expect(m.at, `${m.axis} 분기가 없다`).toBeGreaterThan(-1);
+    const sorted = [...marks].sort((x, y) => x.at - y.at);
+    for (let i = 0; i < sorted.length; i++) {
+      const from = sorted[i]!.at;
+      const to = i + 1 < sorted.length ? sorted[i + 1]!.at : code.length;
+      expect(
+        code.slice(from, to),
+        `${sorted[i]!.axis} 축이 v_axis_value 를 안 본다 — 그 축에서만 상한 유계가 사라진다`,
+      ).toContain('v_axis_value');
+    }
+  });
+
+  it('나눌 수 있는 축은 수량을 절삭 비율로 깎는다', () => {
+    const code = claimCode();
+    const scaled = code.match(/floor\(coalesce\(\(p_result->>'count'\)::numeric, 0\) \* v_scale\)/g) ?? [];
+    expect(scaled.length, '촉매·설계도 두 축이 v_scale 로 깎여야 한다').toBe(2);
+  });
+
+  it('절삭된 장비는 배송함에서 지워진다 — 서버에 없는 아이템이 세이브에 남지 않게', () => {
+    const code = claimCode();
+    expect(code).toContain('set item_payload = null');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6c. grant_catalyst 2단 구조 — 본문이 한 곳에만 산다
+// ---------------------------------------------------------------------------
+
+describe('grant_catalyst — 적립 캡을 우회하는 두 번째 경로가 없다', () => {
+  it('grant_catalyst 는 본문을 갖지 않고 _for 에 위임한다', () => {
+    const wrapper = effectiveFunctionBody('grant_catalyst');
+    expect(wrapper.code).toContain('public.grant_catalyst_for(');
+    // 본문이 두 벌이 되면 한쪽만 튜닝돼 캡이 갈린다.
+    expect(wrapper.code, 'grant_catalyst 가 아직 자기 캡 본문을 들고 있다')
+      .not.toContain('CAP_HOURLY_CATALYSTS');
+    expect(wrapper.code, 'grant_catalyst 가 아직 자기 원장을 쓴다')
+      .not.toContain('insert into public.catalyst_grants');
+  });
+
+  it('캡 상수 전집합과 값이 원본에서 한 개도 흘러내리지 않았다', () => {
+    // 본문을 손으로 옮겨 적었다면 여기서 드러난다 — 20260802000000 이 프로덕션을 100%
+    // 깨뜨린 것이 정확히 그 형상(낡거나 어긋난 본문 복제)이다.
+    const origin = functionCodeInFile('20260801000000_catalyst_grant_cap.sql', 'grant_catalyst');
+    const moved = effectiveFunctionBody('grant_catalyst_for').code;
+    const NAMES = [
+      'CAP_GRANT_PER_CALL',
+      'PLAUSIBLE_RUNS_PER_HOUR',
+      'PLAUSIBLE_CATALYSTS_PER_RUN',
+      'CAP_HEADROOM',
+      'FLAG_MULTIPLE',
+    ];
+    for (const n of NAMES) {
+      const before = sqlConstants(origin, n);
+      const after = sqlConstants(moved, n);
+      expect(before.length, `${n} 을 원본에서 읽지 못했다`).toBeGreaterThan(0);
+      expect(after, `${n} 이 이동 중에 갈렸다`).toEqual(before);
+    }
+    // 파생 상수는 리터럴이 아니라 식이므로 이름 존재로 잠근다.
+    expect(moved).toContain('CAP_HOURLY_CATALYSTS');
+    expect(moved).toContain('CAP_DAILY_CATALYSTS');
+  });
+
+  it('수신자만 바뀌었다 — 본문은 여전히 auth.uid() 를 쓰지 않는다', () => {
+    const moved = effectiveFunctionBody('grant_catalyst_for').code;
+    expect(moved).toContain('v_me    uuid := p_recipient;');
+    expect(moved, '_for 본문이 아직 auth.uid() 를 읽는다 — service_role 호출에서 null 이 된다')
+      .not.toContain('auth.uid()');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6d. grant_commission_for — 정산 발령과 갈리지 않는가
+// ---------------------------------------------------------------------------
+
+describe('의뢰서 축 — 발령 payload 가 정산 경로와 같은 모양이다', () => {
+  const ISSUE_FILE = '20260803030000_commission_segment_rebalance.sql';
+  /** 의뢰서 발령은 `claim_daily_reward_for` 안에 **인라인**돼 있다(§만들지 않은 것). */
+  const dailyCommissionCode = (): string => effectiveFunctionBody('claim_daily_reward_for').code;
+
+  it('의뢰서를 나눠 주는 별도 함수를 만들지 않는다', () => {
+    // `commissionLedgerContract.test.ts` §만들지 않은 것과 **같은 계약**을 이쪽에서도 건다 —
+    // 그 테스트는 이름 부재만 보므로 `grant_commission_for` 는 잡아도 `issue_daily_commission`
+    // 은 못 잡는다. 여기서는 **claim 이 자기 안에서 넣는가**를 양성으로 확인해, 발령이 다른
+    // 함수로 빠져나가면 이 단언이 먼저 죽는다.
+    expect(dailyCommissionCode()).toContain('insert into public.commission_inventory');
+    const all = migrationsInOrder().map((m) => m.sql).join('\n');
+    expect(all, '의뢰서를 나눠 주는 함수가 새로 생겼다 — 권한 실수로 노출될 수 있다').not.toContain(
+      'function public.grant_commission',
+    );
+  });
+
+  it('payload 키 집합이 issue_commission_for_run 과 같다', () => {
+    // 다르면 그 의뢰서는 보관함에 있는데 출격이 안 된다 — 클라 파서가 필드를 못 찾는다.
+    const keysOf = (code: string): string[] =>
+      [...new Set([...code.matchAll(/'(version|commissionId|grade|order|segments|rewards|replayBudgetTicks)'/g)]
+        .map((m) => grp(m, 1, 'payload key')))].sort();
+    const issue = keysOf(functionCodeInFile(ISSUE_FILE, 'issue_commission_for_run'));
+    const daily = keysOf(dailyCommissionCode());
+    expect(issue.length, 'issue_commission_for_run 에서 payload 키를 읽지 못했다').toBe(7);
+    expect(daily).toEqual(issue);
+  });
+
+  it('보관 상한과 구간 상수가 정산 경로와 같은 값이다', () => {
+    const issue = functionCodeInFile(ISSUE_FILE, 'issue_commission_for_run');
+    const daily = dailyCommissionCode();
+    for (const n of ['COMMISSION_STOCK_CAP', 'SEGMENT_TICK_CAP', 'PLANET_COUNT']) {
+      expect(sqlConstants(daily, n), `${n} 이 정산 경로와 갈렸다`).toEqual(sqlConstants(issue, n));
+    }
+  });
+
+  it('계급을 다시 굴리지 않는다 — 예고가 약속한 값이 그대로 나가야 한다', () => {
+    const daily = dailyCommissionCode();
+    // 정산 경로의 계급 굴리기(누적 CDF 비교)가 복사돼 들어오면 예고가 거짓이 된다.
+    expect(daily, '계급을 다시 굴린다 — 어제 예고가 약속한 값이 아니게 된다').not.toContain('v_roll');
+    // 양성 짝: 낙찰이 넘긴 계급을 그대로 쓴다.
+    expect(daily).toMatch(/p_result->>'grade'/);
+  });
+
+  it('정산 발령의 빈도·쿨다운 예산을 건드리지 않는다', () => {
+    // 건드리면 매일 접속이 정직한 플레이의 발령 슬롯을 하나씩 먹는다.
+    const daily = dailyCommissionCode();
+    expect(daily).not.toContain('commission_issues');
+    expect(daily).not.toContain('next_eligible_at');
+  });
+
+  it('보관 상한이 실제로 물어 만석에서 지급하지 않는다', () => {
+    const daily = dailyCommissionCode();
+    expect(daily).toContain('COMMISSION_STOCK_CAP');
+    expect(daily).toContain("'stock'");
+    // 양성 짝 — 상한을 넘지 않을 때는 실제로 넣는다.
+    expect(daily).toContain('insert into public.commission_inventory');
   });
 });
 

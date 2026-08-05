@@ -166,7 +166,8 @@ import { reconcileAccountScope, clearAccountScope, accountStore } from './net/ac
 // 의뢰서 시스템 Phase E — 서버 원장 payload → `WorldConfig` 형태 변환(sim 입력이 아닌
 // rewards 를 뺀다). 봉인 로드아웃은 지시 수신소 화면이 출격 시점에 직접 계산해 싣는다.
 import { commissionRunConfigFromPayload } from './run/commission.js';
-import type { CommissionPayload } from './run/commission.js';
+import type { CommissionGrade, CommissionPayload } from './run/commission.js';
+import type { Rarity } from './items/types.js';
 import { commissionXpReward } from './run/commissionConstants.js';
 // 행성 인기 배율(ADR-0038): 30분 폴링 캐시. 출격 경로를 블로킹하지 않는 **동기** 리더만 쓴다.
 import {
@@ -903,6 +904,14 @@ async function main(): Promise<void> {
       : null;
   }
 
+  /** 서버 문자열 → 등급 유니온. 위와 같은 이유로 캐스팅하지 않는다(`item.rarity.<모르는 값>`). */
+  function narrowRarity(rarity: string | null): Rarity | null {
+    if (rarity === 'normal' || rarity === 'magic' || rarity === 'rare' || rarity === 'unique') {
+      return rarity;
+    }
+    return null;
+  }
+
   /**
    * 수령 응답 → 모달 데이터.
    *
@@ -912,13 +921,30 @@ async function main(): Promise<void> {
    */
   function toDailyRewardModalData(claim: {
     streak: number;
-    result: { axis: string; credits: number; minerals: number; step: { index: number; total: number } | null } | null;
+    result: {
+      axis: string;
+      credits: number;
+      minerals: number;
+      rarity: string | null;
+      grade: number | null;
+      count: number | null;
+      step: { index: number; total: number } | null;
+    } | null;
     next: { axis: string; rarity?: string; grade?: number } | null;
   }): DailyRewardModalData {
     const axis = narrowDailyAxis(claim.result?.axis ?? '') ?? 'currency';
+    // ⚠️ **주 보상의 등급·계급·개수를 함께 싣는다**(슬라이스 2). 안 실으면 여섯 축이 전부
+    //    *"<축 이름> · 크레딧 N"* 으로 보인다 — 그 크레딧은 곁들이와 예산 보정분이라 축과
+    //    무관하게 늘 있고, 결국 화면이 "오늘 무엇을 받았는가"를 말하지 못한다.
+    const r = claim.result;
     const today: DailyRewardModalSubject = {
       axis,
-      ...(claim.result !== null ? { credits: claim.result.credits, minerals: claim.result.minerals } : {}),
+      ...(r !== null ? { credits: r.credits, minerals: r.minerals } : {}),
+      ...(r !== null && narrowRarity(r.rarity) !== null ? { rarity: narrowRarity(r.rarity)! } : {}),
+      ...(r !== null && r.grade !== null
+        ? { grade: Math.min(4, Math.max(1, r.grade)) as CommissionGrade }
+        : {}),
+      ...(r !== null && r.count !== null && r.count > 1 ? { count: r.count } : {}),
     };
     const nextAxis = claim.next === null ? null : narrowDailyAxis(claim.next.axis);
     const step = claim.result?.step ?? null;
@@ -972,7 +998,17 @@ async function main(): Promise<void> {
       baseMap.show(profile, baseMapHandlers(), dailyRewardChipOptions());
       if (!wantModal) return;
       saveDailySeenSeed(nowSeed); // 가드 ③
-      showDailyRewardModal(toDailyRewardModalData(outcome.claim));
+      // 그날 첫 통지 — **개봉 연출을 튼다**(칩 재열람은 아래에서 끄고 부른다).
+      //
+      // 개봉음은 `playSample` 을 **직접** 부른다. `audio.play()` 를 쓰면 샘플이 없을 때 절차
+      // 합성으로 떨어지는데, 이 리포는 절차 합성 SFX 가 전원 거부된 전례가 있다 — 파일이
+      // 없으면 무음이 옳다(연출은 시각이 주다).
+      showDailyRewardModal(toDailyRewardModalData(outcome.claim), undefined, {
+        reveal: true,
+        onOpenSound: () => {
+          audio.playSample('dailyReward');
+        },
+      });
     })();
   }
 

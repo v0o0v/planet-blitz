@@ -16,14 +16,20 @@ import {
   DAILY_FALLBACK_GOAL_ID,
   DAILY_REWARD_AXES,
   DAILY_REWARD_PRODUCERS,
+  type BlueprintUnitProgress,
   type DailyRewardCandidate,
   type DailyRewardProgressInput,
   type DailyRewardSubject,
+  blueprintCandidates,
   blueprintValue,
+  catalystCandidates,
   catalystValue,
+  commissionCandidates,
   commissionValue,
+  coreModuleCandidates,
   coreModuleValue,
   currencyCandidates,
+  gearCandidates,
   currencyValue,
   gearValue,
   makeCandidate,
@@ -37,6 +43,7 @@ import { DAILY_BUDGET_DAY_1, resolveDailyBudget } from '../data/dailyReward.js';
 import type { Rarity } from '../src/items/types.js';
 import { RARITY_BY_CODE } from '../src/items/types.js';
 import { stashExpansionCost } from '../data/economy.js';
+import { CATALYSTS, SLOT_CAP } from '../src/data/catalysts.js';
 import { moduleBuyPrice } from '../data/coreModules.js';
 
 // ---------------------------------------------------------------------------
@@ -61,6 +68,11 @@ function emptyInput(): DailyRewardProgressInput {
 
 function withCurrency(patch: Partial<DailyRewardProgressInput['currency']>): DailyRewardProgressInput {
   return { currency: { ...emptyInput().currency, ...patch } };
+}
+
+/** 슬라이스 2 의 형제 축 하나만 켠 입력. 나머지 축은 부재 → 후보 0개. */
+function withAxis(patch: Partial<DailyRewardProgressInput>): DailyRewardProgressInput {
+  return { ...emptyInput(), ...patch };
 }
 
 /** 거리·가치를 직접 지정한 합성 후보(낙찰 규칙만 시험할 때 쓴다). */
@@ -495,24 +507,233 @@ describe('pickDailyReward — 동점은 시드로 결정론적으로 갈린다 (
 });
 
 // ---------------------------------------------------------------------------
+// 나머지 5축 생산기 (슬라이스 2 · C7)
+// ---------------------------------------------------------------------------
+
+describe('촉매 축 — 주입 슬롯을 채우는 것이 목표다', () => {
+  it('보유 총량이 슬롯 상한 이상이면 후보가 없다 — 견인할 것이 없다', () => {
+    const out = catalystCandidates(
+      withAxis({ catalyst: { owned: [{ catalystId: 0, qty: SLOT_CAP }] } }),
+    );
+    expect(out).toEqual([]);
+  });
+
+  it('보유 종류가 있으면 그 종류만 후보다 — 부족분 전액을 준다', () => {
+    const out = catalystCandidates(
+      withAxis({ catalyst: { owned: [{ catalystId: 3, qty: 2 }, { catalystId: 7, qty: 1 }] } }),
+    );
+    expect(out.map((c) => c.detail.goalId).sort()).toEqual(
+      ['catalyst:slots:3', 'catalyst:slots:7'].sort(),
+    );
+    for (const c of out) {
+      const s = c.detail.subject;
+      expect(s.axis).toBe('catalyst');
+      // 총 3개 보유 → 슬롯 8칸 중 5칸이 빈다.
+      if (s.axis === 'catalyst') expect(s.count).toBe(SLOT_CAP - 3);
+    }
+  });
+
+  it('보유가 하나도 없으면 공용 촉매만 후보다 — 특산은 행성이 잠근다', () => {
+    const out = catalystCandidates(withAxis({ catalyst: { owned: [] } }));
+    expect(out.length).toBeGreaterThan(0);
+    const commonIds = new Set(CATALYSTS.filter((c) => c.kind === 'common').map((c) => c.id));
+    for (const c of out) {
+      const s = c.detail.subject;
+      if (s.axis === 'catalyst') expect(commonIds.has(s.catalystId)).toBe(true);
+    }
+  });
+
+  it('많이 가질수록 목표가 가깝다 — 거리가 단조 감소한다', () => {
+    const at = (qty: number): number => {
+      const out = catalystCandidates(withAxis({ catalyst: { owned: [{ catalystId: 0, qty }] } }));
+      return out[0]?.distance ?? Number.POSITIVE_INFINITY;
+    };
+    expect(at(1)).toBeGreaterThan(at(4));
+    expect(at(4)).toBeGreaterThan(at(7));
+  });
+});
+
+describe('설계도 축 — 막고 있는 것이 설계도인 목표만 본다', () => {
+  const unit = (patch: Partial<BlueprintUnitProgress> = {}): BlueprintUnitProgress => ({
+    key: 'u1',
+    kind: 0,
+    catalogId: 2,
+    rarity: 'normal',
+    ascension: 0,
+    dupBlueprints: 0,
+    ...patch,
+  });
+
+  it('설계도가 이미 충분하면 승급 후보를 만들지 않는다', () => {
+    const plenty = unit({ dupBlueprints: 999, rarity: 'unique' });
+    expect(blueprintCandidates(withAxis({ blueprint: { units: [plenty] } }))).toEqual([]);
+  });
+
+  it('승급·등급승급 두 목표가 서로 다른 goalId 로 선다', () => {
+    const out = blueprintCandidates(withAxis({ blueprint: { units: [unit()] } }));
+    const ids = out.map((c) => c.detail.goalId);
+    expect(ids).toContain('bpAscend:u1:0');
+    expect(ids).toContain('bpRarity:u1:normal');
+  });
+
+  it('지급물이 그 방어체의 (kind, catalogId) 를 그대로 겨눈다 — 다른 설계도는 승급을 못 연다', () => {
+    const out = blueprintCandidates(
+      withAxis({ blueprint: { units: [unit({ kind: 2, catalogId: 5 })] } }),
+    );
+    expect(out.length).toBeGreaterThan(0);
+    for (const c of out) {
+      const s = c.detail.subject;
+      expect(s.axis).toBe('blueprint');
+      if (s.axis === 'blueprint') {
+        expect(s.kind).toBe(2);
+        expect(s.catalogId).toBe(5);
+        expect(s.count).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('보유 장수가 늘수록 거리가 준다 — 부족분 비율이다', () => {
+    const at = (dup: number): number => {
+      const out = blueprintCandidates(
+        withAxis({ blueprint: { units: [unit({ ascension: 3, dupBlueprints: dup })] } }),
+      );
+      const c = out.find((x) => x.detail.goalId === 'bpAscend:u1:3');
+      return c?.distance ?? Number.POSITIVE_INFINITY;
+    };
+    expect(at(1)).toBeGreaterThan(at(3));
+  });
+});
+
+describe('코어 모듈 축 — 강화 슬롯을 채우는 것이 목표다', () => {
+  it('슬롯 수만큼 이미 갖고 있으면 후보가 없다', () => {
+    const out = coreModuleCandidates(
+      withAxis({ coreModule: { equipSlots: 2, owned: 2, rarities: RARITY_BY_CODE } }),
+    );
+    expect(out).toEqual([]);
+  });
+
+  it('등급마다 후보가 서고 값이 등급에 단조 증가한다 — 예산이 고른다', () => {
+    const out = coreModuleCandidates(
+      withAxis({ coreModule: { equipSlots: 2, owned: 0, rarities: RARITY_BY_CODE } }),
+    );
+    expect(out.length).toBe(RARITY_BY_CODE.length);
+    for (let i = 1; i < out.length; i++) {
+      expect(out[i]!.value).toBeGreaterThan(out[i - 1]!.value);
+    }
+  });
+
+  it('걸음 순번이 남은 슬롯을 표시한다 — 부족분 전액 등식이 성립하지 않는 축이다', () => {
+    const out = coreModuleCandidates(
+      withAxis({ coreModule: { equipSlots: 2, owned: 1, rarities: ['normal'] } }),
+    );
+    expect(out[0]?.step).toEqual({ index: 2, total: 2 });
+    expect(out[0]?.distance).toBeCloseTo(0.5);
+  });
+});
+
+describe('장비 축 — 등급마다 후보가 하나씩 선다', () => {
+  /** 여덟 장착 위치. `-1` = 빈 슬롯. */
+  const slots = (...codes: number[]): number[] => codes;
+
+  it('전 슬롯이 그 등급 이상이면 그 등급의 목표는 끝났다', () => {
+    const full = slots(3, 3, 3, 3, 3, 3, 3, 3);
+    const out = gearCandidates(withAxis({ gear: { slotRarityCodes: full, shipLevel: 40 } }));
+    expect(out).toEqual([]);
+  });
+
+  it('낮은 등급일수록 목표가 가깝다 — 빈 슬롯만 세기 때문이다', () => {
+    // 빈 2칸 + 노말 3칸 + 매직 3칸.
+    const mixed = slots(-1, -1, 0, 0, 0, 1, 1, 1);
+    const out = gearCandidates(withAxis({ gear: { slotRarityCodes: mixed, shipLevel: 20 } }));
+    const byId = new Map(out.map((c) => [c.detail.goalId, c]));
+    expect(byId.get('gear:normal')!.distance).toBeLessThan(byId.get('gear:magic')!.distance);
+    expect(byId.get('gear:magic')!.distance).toBeLessThan(byId.get('gear:rare')!.distance);
+  });
+
+  it('요구 레벨이 기체 레벨을 넘지 않는다 (ADR-0030)', () => {
+    const out = gearCandidates(
+      withAxis({ gear: { slotRarityCodes: slots(-1, -1, -1, -1, -1, -1, -1, -1), shipLevel: 7 } }),
+    );
+    expect(out.length).toBeGreaterThan(0);
+    for (const c of out) {
+      const s = c.detail.subject;
+      if (s.axis === 'gear') expect(s.requiredLevel).toBeLessThanOrEqual(7);
+    }
+  });
+});
+
+describe('의뢰서 축 — 보관 상한이 후보를 먼저 거른다', () => {
+  it('만석이면 후보가 없다 — 낙찰만 되고 지급이 없는 하루를 막는다', () => {
+    const out = commissionCandidates(withAxis({ commission: { stock: 12, stockCap: 12 } }));
+    expect(out).toEqual([]);
+  });
+
+  it('상한을 넘겨 보관 중이어도 후보가 없다(손상 상태 방어)', () => {
+    expect(commissionCandidates(withAxis({ commission: { stock: 30, stockCap: 12 } }))).toEqual([]);
+  });
+
+  it('계급 1..4 가 후보로 서고 값이 계급에 단조 증가한다', () => {
+    const out = commissionCandidates(withAxis({ commission: { stock: 0, stockCap: 12 } }));
+    expect(out.length).toBe(4);
+    for (let i = 1; i < out.length; i++) {
+      expect(out[i]!.value).toBeGreaterThan(out[i - 1]!.value);
+    }
+  });
+
+  it('재고가 찰수록 거리가 준다', () => {
+    const at = (stock: number): number =>
+      commissionCandidates(withAxis({ commission: { stock, stockCap: 12 } }))[0]!.distance;
+    expect(at(1)).toBeGreaterThan(at(9));
+  });
+});
+
+describe('5축이 붙어도 낙찰 결정론은 유지된다 (AC-13)', () => {
+  it('축을 늘려도 같은 후보 집합은 같은 낙찰을 낸다 — 배열 순서를 안 본다', () => {
+    const input = withAxis({
+      catalyst: { owned: [{ catalystId: 0, qty: 1 }] },
+      commission: { stock: 3, stockCap: 12 },
+      coreModule: { equipSlots: 2, owned: 0, rarities: ['normal', 'magic'] },
+      gear: { slotRarityCodes: [-1, -1, 0, 0, 1, 1, 2, 2], shipLevel: 30 },
+    });
+    const cs = produceDailyRewardCandidates(input);
+    expect(cs.length).toBeGreaterThan(4);
+    const forward = pickDailyReward(cs, 50_000, 77, 5).candidate.detail.goalId;
+    const reversed = pickDailyReward([...cs].reverse(), 50_000, 77, 5).candidate.detail.goalId;
+    expect(reversed).toBe(forward);
+  });
+
+  it('축이 늘면 폴백이 줄어든다 — 재화 후보가 0개인 입력에서도 낙찰이 난다', () => {
+    // 재화 목표가 하나도 없는 상태(전부 이미 살 수 있음)인데 다른 축은 살아 있다.
+    const input = withAxis({ commission: { stock: 0, stockCap: 12 } });
+    expect(currencyCandidates(input)).toEqual([]);
+    const pick = pickDailyReward(produceDailyRewardCandidates(input), 50_000, 1, 1);
+    expect(pick.fallback).toBe(false);
+    expect(pick.candidate.axis).toBe('commission');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 축·레지스트리 (슬라이스 경계)
 // ---------------------------------------------------------------------------
 
-describe('축 레지스트리 — 슬라이스 1 은 재화만 관통한다', () => {
+describe('축 레지스트리 — 슬라이스 2 에서 6축이 전부 등록됐다', () => {
   it('6축이 전부 선언돼 있다 — 가치 환산표는 6축을 덮는다 (AC-16)', () => {
     expect([...DAILY_REWARD_AXES].sort()).toEqual(
       ['blueprint', 'catalyst', 'commission', 'coreModule', 'currency', 'gear'].sort(),
     );
   });
 
-  it('등록된 생산기는 재화 하나뿐이다 — 나머지는 슬라이스 2 다', () => {
-    expect(Object.keys(DAILY_REWARD_PRODUCERS)).toEqual(['currency']);
+  it('6축 전부에 생산기가 등록돼 있다 (C7)', () => {
+    expect([...Object.keys(DAILY_REWARD_PRODUCERS)].sort()).toEqual([...DAILY_REWARD_AXES].sort());
   });
 
-  it('미등록 축은 빈 스텁이 아니라 부재다 — 폴백 원인이 읽힌다 (AC-12)', () => {
+  it('축 상태가 안 실린 호출은 그 축의 후보가 0개다 — 스텁이 아니라 입력 부재다', () => {
+    // 재화 상태만 실어 보낸다. 나머지 다섯은 각자 `undefined` 를 보고 빈 배열을 낸다 —
+    // 이것이 "미구현"과 구분되는 이유는 레지스트리에 **키가 있기** 때문이다(AC-12).
+    const onlyCurrency = withCurrency({ stashExpansions: 0, stashMaxExpansions: 4, credits: 100 });
     for (const axis of DAILY_REWARD_AXES) {
       if (axis === 'currency') continue;
-      expect(DAILY_REWARD_PRODUCERS[axis]).toBeUndefined();
+      expect(DAILY_REWARD_PRODUCERS[axis]?.(onlyCurrency)).toEqual([]);
     }
   });
 

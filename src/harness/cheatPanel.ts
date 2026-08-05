@@ -47,6 +47,7 @@ import { activeShip, INVENTORY_CAP, stashCapacity } from '../save/profile.js';
 import type { Profile } from '../save/profile.js';
 import { clearDailySeenSeed } from '../save/dailySeen.js';
 import { DAILY_STREAK_CYCLE, dailyDateSeed } from '../../data/dailyReward.js';
+import { DAILY_REWARD_AXES } from '../../data/dailyRewardSelection.js';
 import {
   HarnessDailyRewardGateway,
   harnessDailyRewardGateway,
@@ -2064,6 +2065,42 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         ),
       );
       s.appendChild(pendRow);
+
+      // 축 강제 — 6축 중 원하는 것을 낙찰시킨다(슬라이스 2 육안 확인).
+      //
+      // 이 손잡이가 없으면 축별 화면을 볼 방법이 사실상 없다: 낙찰은 거리 최소값이라 그날
+      // 진행 상태가 정하고, 원하는 축이 며칠이고 안 나올 수 있다. **낙찰 규칙은 안 건드린다** —
+      // 후보 집합만 그 축으로 좁혀 같은 `pickDailyReward` 에 넣는다(규칙을 우회하면 검증
+      // 대상이 아닌 것을 보게 된다). 그 축에 오늘 줄 것이 없으면 폴백이 뜬다 — 그것도 정보다.
+      const axisRow = document.createElement('div');
+      axisRow.className = 'pb-c-row';
+      const forced = gw.forcedAxisName();
+      const inv = gw.axisInventory();
+      const axisState = document.createElement('div');
+      axisState.className = 'pb-c-lbl';
+      axisState.textContent =
+        `축 강제: ${forced ?? '없음'} · 미러 촉매 ${inv.catalysts} · 모듈 ${inv.modules} · 의뢰서 ${inv.commissions}`;
+      s.appendChild(axisState);
+      for (const axis of DAILY_REWARD_AXES) {
+        axisRow.appendChild(
+          btn(
+            axis === forced ? `[${axis}]` : axis,
+            () => {
+              gw.forceAxis(axis === forced ? null : axis);
+              clearDailySeenSeed();
+              host.refreshScreen();
+              setHint(
+                axis === forced
+                  ? '축 강제 해제 — 다시 거리 최소값이 고른다'
+                  : `축 강제 → ${axis} (오늘 행은 지웠다 · 기지 재진입하면 그 축으로 낙찰된다)`,
+              );
+            },
+            '후보를 이 축으로 좁혀 낙찰시킨다. 설계도 축은 하네스에 방어체 모의가 없어 후보가 ' +
+              '없다 — 강제해도 폴백이 뜨는 것이 옳다.',
+          ),
+        );
+      }
+      s.appendChild(axisRow);
 
       // 생애 누적 — 예산 천장의 앵커. 낮추면 상한 절삭(지표 ③)이 켜진다.
       const lifeRow = document.createElement('div');

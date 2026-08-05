@@ -74,8 +74,25 @@ export interface DailyRewardStepInfo {
 
 /** 오늘 실제 지급된 것(원장 `result_payload` 정규화본). */
 export interface DailyRewardResult {
-  /** 지급 축. 슬라이스 1 은 항상 `'currency'`. */
+  /** 지급 축. 6축 전부가 올 수 있다(슬라이스 2). */
   readonly axis: string;
+  /**
+   * 주 보상의 등급(장비·코어 모듈) — 없으면 `null`.
+   *
+   * ⚠️ **이 셋(`rarity`·`grade`·`count`)이 없으면 모달이 모든 축을 "재화 · 크레딧 N" 으로
+   * 표시한다.** 곁들이 크레딧과 예산 보정분이 `credits` 로 실려 오기 때문에, 축만 바뀌고
+   * 내용이 안 바뀐 화면이 되어 *"오늘 촉매를 받았다"* 가 플레이어에게 전달되지 않는다.
+   */
+  readonly rarity: string | null;
+  /** 주 보상의 지시 계급(의뢰서 1..4) — 없으면 `null`. */
+  readonly grade: number | null;
+  /** 주 보상의 개수·장수(촉매·설계도) — 없으면 `null`. */
+  readonly count: number | null;
+  /**
+   * 축별 지급 결과(`{granted, reason?, ...}`). **낙찰은 됐는데 지급이 없던 날**을 읽는 자리다 —
+   * 지시 수신소 만석·상한 절삭·모듈 페이로드 부재가 전부 여기로 모인다. 서버가 안 실어 주면 `null`.
+   */
+  readonly axisGrant: { readonly granted: boolean; readonly reason: string | null } | null;
   /** 크레딧 환산 가치(서버가 예산으로 절삭한 뒤의 값). */
   readonly value: number;
   readonly credits: number;
@@ -136,11 +153,22 @@ function normalizeResult(raw: unknown): DailyRewardResult | null {
   if (raw === null || raw === undefined) return null;
   const r = asRecord(raw);
   if (typeof r.axis !== 'string') return null;
+  const ag = r.axis_grant;
   return {
     axis: r.axis,
     value: asNumber(r.value),
     credits: asNumber(r.credits),
     minerals: asNumber(r.minerals),
+    rarity: typeof r.rarity === 'string' ? r.rarity : null,
+    grade: typeof r.grade === 'number' && Number.isFinite(r.grade) ? Math.trunc(r.grade) : null,
+    count: typeof r.count === 'number' && Number.isFinite(r.count) ? Math.trunc(r.count) : null,
+    axisGrant:
+      ag === null || ag === undefined
+        ? null
+        : {
+            granted: asRecord(ag).granted === true,
+            reason: typeof asRecord(ag).reason === 'string' ? (asRecord(ag).reason as string) : null,
+          },
     goalId: asString(r.goal_id),
     fallback: r.fallback === true,
     announcementMissed: r.announcement_missed === true,

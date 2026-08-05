@@ -90,7 +90,16 @@ export type SampleKey =
    * 뚝 끊기는 **정적 자체가** 등장 신호이고, 같은 순간 보스 BGM 존으로 전환된다. 등장음을
    * 얹으면 그 정적이 메워져 구조가 무너지므로 `'boss'` 키는 의도적으로 없다.
    */
-  | 'bossWarn';
+  | 'bossWarn'
+  /**
+   * 일일 보상 **개봉음**(ADR-0048 · 계획 §C10). UI 버스.
+   *
+   * ⚠️ **`SoundName` 짝을 만들지 않는다** — 호출부가 {@link GameAudio.playSample} 를 직접
+   * 부른다. {@link GameAudio.play} 를 쓰면 샘플이 없을 때 절차 합성으로 떨어지는데, 이 리포는
+   * **절차 합성 SFX 가 전원 거부된 전례**가 있다(2026-08-05). 파일이 없으면 소리가 없는 편이
+   * 사용자가 거부한 소리를 내는 것보다 낫고, 개봉 연출은 소리 없이도 성립한다(시각이 주다).
+   */
+  | 'dailyReward';
 
 /**
  * 샘플 키 → `assets/audio/sfx/` 안의 basename + 재생 게인.
@@ -120,6 +129,9 @@ const SFX_MANIFEST: Readonly<Record<SampleKey, { file: string; gain: number; max
   hit: { file: 'sfx_hit.ogg', gain: 0.85 },
   card: { file: 'sfx_card.ogg', gain: 0.7 },
   bossWarn: { file: 'sfx_boss_warn.ogg', gain: 0.7 },
+  // 하루에 한 번만 울린다 — 연사 겹침이 없으므로 `maxSec` 상한이 필요 없다. 게인은 카드음보다
+  // 살짝 낮다: 개봉 연출은 1.1초 동안 시각이 주인공이고 소리는 그 시작을 알리는 역할이다.
+  dailyReward: { file: 'sfx_daily_reward.ogg', gain: 0.6 },
 };
 
 /**
@@ -531,8 +543,9 @@ export class GameAudio {
     this.ensureCtx();
     const ctx = this.ctx;
     const buf = this.samples.get(key);
-    // 발사음은 SFX, 카드는 UI 버스다 — 이름 규칙이 아니라 키로 가른다.
-    const bus = key === 'card' ? this.uiGain : this.sfxGain;
+    // 발사음은 SFX, 메타 화면 소리(카드·일일 보상 개봉)는 UI 버스다 — 이름 규칙이 아니라
+    // 키로 가른다. 여기를 빼먹으면 UI 볼륨을 0 으로 내린 사람에게 개봉음만 계속 들린다.
+    const bus = key === 'card' || key === 'dailyReward' ? this.uiGain : this.sfxGain;
     if (ctx === null || buf === undefined || bus === null || ctx.state !== 'running') return false;
     const now = ctx.currentTime;
     const dest = this.applyPan(bus, opts?.pan, now);

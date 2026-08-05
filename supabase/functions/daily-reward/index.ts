@@ -1,5 +1,5 @@
 /**
- * daily-reward Edge Function — 일일 보상 수령 진입점 (ADR-0048 · 계획 §C4, 슬라이스 1 = 재화 축).
+ * daily-reward Edge Function — 일일 보상 수령 진입점 (ADR-0048 · 계획 §C4·§C7, 6축 전부).
  *
  * ## 이 파일이 하는 일과 하지 않는 일
  *
@@ -25,7 +25,8 @@
  * ## ⚠️ `items` 테이블을 읽지 않는다
  *
  * 클라가 그 테이블에 한 줄도 쓰지 않으므로(`src/**` 에 `.from('items')` 0건) 비어 있다. 장비는
- * `profiles.save` 안에 있다. 슬라이스 1(재화 축)은 장비를 아예 보지 않는다.
+ * `profiles.save` 안에 있고, 장비 축은 그 미러에서 **장착 위치별 등급**만 읽는다
+ * ({@link readGearSlots}). 지급물은 서버 테이블이 아니라 원장의 `item_payload`(배송함)로 간다.
  *
  * ## 계약
  *
@@ -40,20 +41,34 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-import { shopDateSeedFromMs, shopUserSeed, rollModuleShopRotation } from '../../../data/coreModules.ts';
+import {
+  shopDateSeedFromMs,
+  shopUserSeed,
+  rollModuleShopRotation,
+  rollModule,
+  MODULE_EQUIP_SLOTS,
+} from '../../../data/coreModules.ts';
 import { valueBudgetForStreak, DAILY_STREAK_CYCLE } from '../../../data/dailyReward.ts';
 import {
   produceDailyRewardCandidates,
   pickDailyReward,
   budgetTopUpCredits,
   toppedUpValue,
+  gearValue,
   type DailyRewardAxis,
   type DailyRewardCandidate,
   type DailyRewardProgressInput,
+  type CatalystOwnedEntry,
+  type BlueprintUnitProgress,
   type DefenseUnitProgress,
 } from '../../../data/dailyRewardSelection.ts';
-import type { Rarity } from '../../../src/items/types.ts';
-import { RARITY_BY_CODE } from '../../../src/items/types.ts';
+import type { Item, ItemSource, Rarity } from '../../../src/items/types.ts';
+import { EQUIP_SLOTS, RARITY_BY_CODE, RARITY_CODE } from '../../../src/items/types.ts';
+import { rollItem } from '../../../src/items/roll.ts';
+import { requiredLevel } from '../../../src/items/requiredLevel.ts';
+import { LEVEL_PER_STAGE } from '../../../src/save/progressionPath.ts';
+import { COMMISSION_STOCK_CAP } from '../../../src/run/commissionServerConstants.ts';
+import { SeededRng } from '../../../src/sim/rng.ts';
 
 /**
  * 창고 확장 상한 미러. 정본은 `src/save/profile.ts` 의 `MAX_STASH_EXPANSIONS` 다.
@@ -222,12 +237,81 @@ function readDefenseUnits(unitRows: unknown[], blueprintRows: unknown[]): Defens
 }
 
 /**
+ * 설계도 축이 보는 방어체 목록. 재화 축의 {@link readDefenseUnits} 와 **같은 행을 다르게 읽는다** —
+ * 재화 축은 인스턴스 키·레벨·승급만 쓰고, 설계도 축은 지급물이 겨눌 `(kind, catalogId)` 가 필요하다.
+ * 두 형을 하나로 합치지 않는 이유는 순수 데이터 계층이 자기 축에 필요한 것만 받는 규율이다.
+ */
+function readBlueprintUnits(unitRows: unknown[], blueprintRows: unknown[]): BlueprintUnitProgress[] {
+  const dup = new Map<string, number>();
+  for (const raw of blueprintRows) {
+    const r = asRecord(raw);
+    dup.set(`${Math.trunc(asNum(r.kind))}:${Math.trunc(asNum(r.catalog_id))}`, Math.trunc(asNum(r.count)));
+  }
+  const out: BlueprintUnitProgress[] = [];
+  for (const raw of unitRows) {
+    const r = asRecord(raw);
+    const id = typeof r.id === 'string' ? r.id : '';
+    if (id === '') continue;
+    const kind = Math.trunc(asNum(r.kind));
+    const catalogId = Math.trunc(asNum(r.catalog_id));
+    out.push({
+      key: id,
+      kind,
+      catalogId,
+      rarity: toRarity(r.rarity),
+      ascension: Math.max(0, Math.trunc(asNum(r.ascension, 0))),
+      dupBlueprints: Math.max(0, dup.get(`${kind}:${catalogId}`) ?? 0),
+    });
+  }
+  return out;
+}
+
+/** `catalyst_inventory` 행 → 보유 목록. qty 0 행은 그대로 넘긴다(생산기가 거른다). */
+function readCatalystOwned(rows: unknown[]): CatalystOwnedEntry[] {
+  const out: CatalystOwnedEntry[] = [];
+  for (const raw of rows) {
+    const r = asRecord(raw);
+    out.push({
+      catalystId: Math.trunc(asNum(r.catalyst_id, -1)),
+      qty: Math.max(0, Math.trunc(asNum(r.qty, 0))),
+    });
+  }
+  return out;
+}
+
+/**
+ * 활성 기체의 장착 위치별 등급 코드. **빈 슬롯은 `-1`** 이다.
+ *
+ * ⚠️ `src/save/profile.ts` 를 import 하지 않는다 — 세이브 계층 전체(아이템 레지스트리·기체
+ * 트리·유니크)가 EF 번들로 들어온다. `EQUIP_SLOTS` 는 `src/items/types.ts` 의 순수 배열이라
+ * 안전하다. 손상된 `equipped` 는 빈 슬롯으로 접힌다(못 읽는 것은 없는 것이다).
+ */
+function readGearSlots(save: Record<string, unknown>): number[] {
+  const ships = asArray(save.ships);
+  const idx = Math.trunc(asNum(save.activeShipIndex, 0));
+  const ship = asRecord(ships[idx >= 0 && idx < ships.length ? idx : 0]);
+  const equipped = asRecord(ship.equipped);
+  return EQUIP_SLOTS.map((slot) => {
+    const item = asRecord(equipped[slot]);
+    const rarity = item.rarity;
+    if (typeof rarity !== 'string') return -1;
+    if (rarity === 'normal' || rarity === 'magic' || rarity === 'rare' || rarity === 'unique') {
+      return RARITY_CODE[rarity];
+    }
+    return -1;
+  });
+}
+
+/**
  * 진행 견인 입력 전체.
  *
  * ⚠️ **`refining` 은 넣지 않는다.** 정제소에 올려 둔 장비는 `Profile` 에 저장되지 않는다 —
  * 화면 세션 상태다(`src/ui/pixi/refinery.ts`). 없는 것을 추측으로 만들면 정제소를 쓰지 않는
  * 플레이어에게 "정련 굴림까지 12 광물" 목표가 매일 뜬다. 그 축은 정련 상태가 세이브로
  * 승격되는 날 함께 붙는다.
+ *
+ * ⚠️ **부수 테이블 조회가 실패한 축은 필드를 빼고 부른다**(슬라이스 2). 그러면 그 축만 후보가
+ * 0개가 되고 나머지는 그대로 선다 — 여기서 500 을 내면 촉매 테이블 장애가 그날 보상 전체를 막는다.
  */
 function buildProgressInput(
   save: Record<string, unknown>,
@@ -235,6 +319,12 @@ function buildProgressInput(
   minerals: number,
   moduleOffers: readonly Rarity[],
   defenseUnits: readonly DefenseUnitProgress[],
+  axes: {
+    readonly catalystOwned: readonly CatalystOwnedEntry[] | null;
+    readonly blueprintUnits: readonly BlueprintUnitProgress[] | null;
+    readonly moduleCount: number | null;
+    readonly commissionStock: number | null;
+  },
 ): DailyRewardProgressInput {
   const ship = readActiveShip(save);
   return {
@@ -248,7 +338,58 @@ function buildProgressInput(
       defenseUnits,
       moduleOffers,
     },
+    ...(axes.catalystOwned !== null ? { catalyst: { owned: axes.catalystOwned } } : {}),
+    ...(axes.blueprintUnits !== null ? { blueprint: { units: axes.blueprintUnits } } : {}),
+    ...(axes.moduleCount !== null
+      ? {
+          coreModule: {
+            equipSlots: MODULE_EQUIP_SLOTS,
+            owned: axes.moduleCount,
+            // 오늘 사령부 재고의 등급을 그대로 후보 등급으로 쓴다 — "오늘 살 수 있는 것"과
+            // "오늘 받을 수 있는 것"이 같은 표에서 나와야 플레이어가 두 화면을 견줄 수 있다.
+            rarities: moduleOffers,
+          },
+        }
+      : {}),
+    // 장비 축은 미러(`save`)만 보므로 조회 실패라는 상태가 없다 — 항상 실린다.
+    gear: { slotRarityCodes: readGearSlots(save), shipLevel: ship.level },
+    ...(axes.commissionStock !== null
+      ? { commission: { stock: axes.commissionStock, stockCap: COMMISSION_STOCK_CAP } }
+      : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// 축별 지급물 굽기 — SQL 이 조립할 수 없는 것만 여기서 만든다
+// ---------------------------------------------------------------------------
+
+/**
+ * 축별 굴림 시드. `(dateSeed, userSeed, 축)` 에서 결정론적으로 파생한다 — 같은 날 같은 유저의
+ * 재시도가 같은 물건을 만들어야 하고(AC-5), 축을 키에 넣지 않으면 같은 날 코어 모듈과 장비가
+ * 같은 시드를 써서 두 굴림이 상관된다.
+ *
+ * ⚠️ `Math.random` 이 아니다. 서버 시드이므로 클라가 예측해도 이득이 없지만(굴림은 서버에서
+ * 한 번만 일어나고 결과가 원장에 박힌다), 재시도 멱등이 이 결정론에 걸려 있다.
+ */
+function axisSeed(dateSeed: number, userSeed: number, axis: DailyRewardAxis): number {
+  return new SeededRng(dateSeed >>> 0).fork(userSeed >>> 0).fork(axis).nextU32() >>> 0;
+}
+
+/**
+ * 일일 보상 장비의 출처. `levelCap` 이 **요구 레벨 상한**이라 "받은 즉시 입는다"가 성립한다
+ * (ADR-0030 개정 — `ItemSource.levelCap` 주석).
+ *
+ * `stage` 를 기체 레벨에서 역산하는 이유: 요구 레벨의 실효 상한은 `min(단계 상한, 소유자 상한)`
+ * 이고 단계 상한은 **밴드의 첫 레벨**(`LEVEL_PER_STAGE × (stage-1) + 1`)이다. 단계를 낮게 두면
+ * 그쪽이 먼저 물어 고레벨 조종사에게 요구 1 짜리 장비가 나간다 — 예산은 다 쓰고 값은 바닥인
+ * 최악이다. 그래서 단계 상한이 소유자 상한 **위로** 오도록 한 밴드 넉넉히 잡는다.
+ */
+function dailyGearSource(shipLevel: number): ItemSource {
+  const lv = Math.max(1, Math.trunc(shipLevel));
+  const stage = Math.floor((lv - 1) / LEVEL_PER_STAGE) + 2;
+  // planet 은 요구 레벨·가치에 관여하지 않는 출처 표기다. 0(카르곤)으로 고정한다 —
+  // 시드로 흩뿌리면 "어느 행성에서 왔는가"가 뜻 없는 난수가 되어 화면 문구가 거짓이 된다.
+  return { planet: 0, stage, levelCap: lv };
 }
 
 // ---------------------------------------------------------------------------
@@ -364,6 +505,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
     .select('kind, catalog_id, count')
     .eq('profile_id', callerId);
 
+  // 슬라이스 2 의 세 조회. 전부 **실패해도 치명이 아니다** — 그 축만 후보에서 빠진다.
+  // `error` 를 구분해 읽는 이유: 빈 배열(진짜로 하나도 없다)과 조회 실패(모른다)를 같게 다루면
+  // 촉매를 하나도 안 가진 유저와 촉매 테이블이 죽은 유저가 구분되지 않는다.
+  const { data: catalystRows, error: catalystErr } = await service
+    .from('catalyst_inventory')
+    .select('catalyst_id, qty')
+    .eq('profile_id', callerId);
+  const { count: moduleCount, error: moduleErr } = await service
+    .from('core_modules')
+    .select('id', { count: 'exact', head: true })
+    .eq('profile_id', callerId);
+  const { count: commissionStock, error: commissionErr } = await service
+    .from('commission_inventory')
+    .select('commission_id', { count: 'exact', head: true })
+    .eq('profile_id', callerId);
+
   const moduleOffers = rollModuleShopRotation(dateSeed, userSeed).map((m) => m.rarity);
   const input = buildProgressInput(
     save,
@@ -371,6 +528,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
     asNum(profRow.minerals, 0),
     moduleOffers,
     readDefenseUnits(asArray(unitRows), asArray(blueprintRows)),
+    {
+      catalystOwned: catalystErr !== null ? null : readCatalystOwned(asArray(catalystRows)),
+      // 방어체 조회가 실패하면 설계도 축도 함께 죽는다 — 그 축의 목표가 전부 방어체에 걸려 있다.
+      blueprintUnits:
+        unitRows === null ? null : readBlueprintUnits(asArray(unitRows), asArray(blueprintRows)),
+      moduleCount: moduleErr !== null ? null : Math.max(0, moduleCount ?? 0),
+      commissionStock: commissionErr !== null ? null : Math.max(0, commissionStock ?? 0),
+    },
   );
   const candidates = produceDailyRewardCandidates(input);
 
@@ -392,13 +557,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const pick = pickDailyReward(pool, budget, dateSeed, userSeed);
   const subject = pick.candidate.detail.subject;
 
-  // 슬라이스 1 은 재화 축만 낙찰된다(레지스트리에 그것만 등록돼 있고, 폴백도 재화다). 다른 축이
-  // 나왔다면 슬라이스 2 배선이 절반만 들어온 상태이므로 **조용히 크레딧으로 바꾸지 않고 막는다** —
-  // 바꾸면 그 축의 지급이 유실된 채로 원장에는 수령으로 적혀 하루가 소멸한다.
-  if (subject.axis !== 'currency') {
-    return json({ ok: false, code: 'axis-not-implemented', detail: subject.axis }, 501);
-  }
-
   // ⚠️ **여기서 예산으로 미리 깎지 않는다. 원값을 그대로 넘긴다.**
   //
   // 초안은 이 자리에서 `budget / value` 비율로 접었다. SQL 의 절삭이 `value` 필드만 고치고
@@ -417,9 +575,64 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // (`budgetTopUpCredits`, 그 함수 머리에 근거 전부). 이 줄이 없으면 예산이 천장 필터로만
   // 작동해 30일차에 40 크레딧이 나온다 — 실화면에서 실제로 본 화면이다.
   // 폴백 후보는 이미 예산 전액이라 보정이 0 이므로, 폴백 지표는 흐려지지 않는다.
+  //
+  // ⚠️ **보정분은 축과 무관하게 실린다**(슬라이스 2). 촉매가 낙찰돼도 남은 예산은 크레딧으로
+  //    채워진다 — 그러지 않으면 값싼 목표가 낙찰된 날 램프가 화면에서 사라진다. SQL 쪽도
+  //    같은 이유로 `case when p_axis = 'currency'` 를 걷어냈다(20260805020000 §3).
   const topUp = budgetTopUpCredits(pick, budget);
-  const grantCredits = Math.max(0, Math.floor(subject.credits) + topUp);
-  const grantMinerals = Math.max(0, Math.floor(subject.minerals));
+  const grantCredits = Math.max(
+    0,
+    (subject.axis === 'currency' ? Math.floor(subject.credits) : 0) + topUp,
+  );
+  const grantMinerals = subject.axis === 'currency' ? Math.max(0, Math.floor(subject.minerals)) : 0;
+
+  // ── 축별 지급물 굽기 ──
+  //
+  // SQL 이 조립할 수 없는 것(ModuleInstance 직렬화 계약 · rollItem 결과)만 여기서 만든다.
+  // 그 계약이 SQL 과 TS 두 곳에 살면 조용히 갈리기 때문이다. 나머지 축은 SQL 에 숫자만 넘긴다.
+  //
+  // `axis_value` 는 **주 보상 하나의 가치**다(곁들이·보정분 제외). SQL 의 나눌 수 없는 축이
+  // *"절삭 후 예산이 이 하나를 감당하는가"* 를 이 값으로 판정한다 — 넘기지 않으면 그 판정이
+  // 0 과 비교하게 되어 **항상 통과**하고, 상한 유계가 그 축에서만 조용히 사라진다.
+  let itemPayload: Item | null = null;
+  const axisFields: Record<string, unknown> = { axis_value: pick.candidate.value };
+  switch (subject.axis) {
+    case 'currency':
+      break;
+    case 'catalyst':
+      axisFields.catalyst_id = subject.catalystId;
+      axisFields.count = subject.count;
+      break;
+    case 'blueprint':
+      axisFields.kind = subject.kind;
+      axisFields.catalog_id = subject.catalogId;
+      axisFields.count = subject.count;
+      break;
+    case 'coreModule':
+      axisFields.module = rollModule(axisSeed(dateSeed, userSeed, 'coreModule'), subject.rarity);
+      break;
+    case 'commission':
+      axisFields.grade = subject.grade;
+      break;
+    case 'gear': {
+      // 배송함 아이템 id 는 **`date_seed` 에서 파생**해야 클라의 멱등 판정과 맞는다
+      // (`src/net/dailyReward.ts` 의 `dailyRewardItemId` = `daily:{date_seed}`). `rollItem` 은
+      // `it-{seed}` 를 붙이므로 여기서 **덮어쓴다** — 이 한 줄이 빠지면 재부팅마다 같은 장비가
+      // 다시 심긴다(그 파일 머리가 경고하는 복제의 정확한 형상이다).
+      const rolled = rollItem(
+        axisSeed(dateSeed, userSeed, 'gear'),
+        subject.rarity,
+        dailyGearSource(subject.requiredLevel),
+      );
+      itemPayload = { ...rolled, id: `daily:${dateSeed}` };
+      // 실제 굴림의 요구 레벨로 가치를 다시 잰다. 후보 가치는 `shipLevel` 을 상한으로 쓴
+      // **추정치**였고 실물은 그 이하다 — 낮은 쪽을 넘겨야 절삭 판정이 정확해진다.
+      axisFields.rarity = subject.rarity;
+      axisFields.required_level = requiredLevel(itemPayload);
+      axisFields.axis_value = gearValue(subject.rarity, requiredLevel(itemPayload));
+      break;
+    }
+  }
 
   // (6) 내일 예고 확정 — **내일 예산(연속일 + 1)** 으로 다시 고른다.
   //
@@ -437,12 +650,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // (7) 수령 확정. `date_seed` 를 넘기지 않는다 — SQL 이 서버 시각으로 계산한다(그 파라미터가
   //     있으면 복합 PK 가 서로 다른 seed 를 안 막아 하루 여러 번 수령이 열린다).
   //
-  //     `p_item_payload` 는 슬라이스 1 에서 **항상 null** 이다(장비 축은 슬라이스 2). 그래도
-  //     넘기는 이유는 배선을 미리 세워 두기 위해서다 — 축이 붙는 날 EF·SQL·클라 셋 중 하나만
-  //     고치면 되게.
+  //     `p_item_payload` 는 **장비 축에서만** 채워진다(슬라이스 2). 그 행이 곧 배송함이고,
+  //     세이브에 심는 것은 클라다 — 반영 → push → 재-pull 확인 → mark 순서가
+  //     `src/net/dailyReward.ts` 에 산다.
   const { data: claimedRaw, error: claimErr } = await service.rpc('claim_daily_reward_for', {
     p_recipient: callerId,
-    p_axis: 'currency',
+    p_axis: subject.axis,
     // ⚠️ 보정분을 포함한 **실제 지급 가치**를 넘긴다. 목표 값만 넘기면 SQL 의 절삭 비교가
     // 보정분을 모르는 채로 돌아, 보정으로 채운 크레딧이 예산 검사를 통과하지 않은 것이 된다.
     p_value: toppedUpValue(pick, budget),
@@ -456,9 +669,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
       ...(pick.candidate.step !== undefined
         ? { step: { index: pick.candidate.step.index, total: pick.candidate.step.total } }
         : {}),
+      ...axisFields,
     },
     p_next_payload: nextPayload,
-    p_item_payload: null,
+    p_item_payload: itemPayload,
   });
   if (claimErr !== null) {
     return json({ ok: false, code: 'claim-failed', detail: claimErr.message }, 500);
@@ -479,7 +693,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
       // 원장에 적힌 그대로. EF 가 다시 가공하지 않는다(화면과 원장이 갈리지 않게).
       result: claimed.result_payload ?? null,
       next: claimed.next_payload ?? null,
+      // ⚠️ `itemPayload` 가 아니라 **RPC 가 돌려준 것**을 싣는다. 절삭이 물면 SQL 이 배송함을
+      //    비우는데(20260805020000 §3 gear 분기), 여기서 EF 가 굽던 값을 그대로 돌려주면 클라가
+      //    서버에 없는 아이템을 심고 mark 로 행을 닫는다 — 원장에 없는 아이템이 영구히 생긴다.
       item: claimed.item_payload ?? null,
+      /** 축별 지급 결과(만석·절삭·모듈 부재). 낙찰만 되고 지급이 없던 날을 읽는 자리다. */
+      axis_grant: claimed.axis_grant ?? null,
       grant: claimed.grant ?? null,
     },
     200,
