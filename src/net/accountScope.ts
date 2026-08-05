@@ -65,6 +65,10 @@ export const ACCOUNT_SCOPED_KEYS = [
   // 침공 로컬 상태(invasion.ts) — 상대별 쿨다운과 결과 확인 시각. 둘 다 "내" 상태다.
   'planet-blitz:net:invasionCooldowns',
   'planet-blitz:net:invasionsSeenAt',
+  // 일일 보상 모달을 마지막으로 띄운 날(save/dailySeen.ts). 진행도가 아니라 표시 상태이지만
+  // **계정 것**이다 — 남겨 두면 계정을 바꾼 직후 새 계정에서 그날 모달이 안 뜨고, 그러면
+  // 그 계정의 첫날 보상 예고를 못 본 채로 지나간다(수령 자체는 서버가 하므로 지급은 된다).
+  'planet-blitz:daily-seen',
 ] as const;
 
 /**

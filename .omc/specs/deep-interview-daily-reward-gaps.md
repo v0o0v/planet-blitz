@@ -27,7 +27,7 @@
 | Component | Status | Description | Coverage |
 |---|---|---|---|
 | delivery | active | 서버가 굴린 물건이 플레이어 소유가 되는 경로 | AC-1~AC-5 |
-| streak-state | active | 연속일 저장·판정·리셋 | AC-6~AC-9 |
+| streak-state | active | 연속일 저장·판정·리셋 + 상한 앵커 컬럼 봉인 | AC-6·AC-6b·AC-7~AC-9 |
 | selection | active | 진행 견인 후보 생산기와 낙찰 | AC-10~AC-14 |
 | ramp-shape | active | 연속일이 미는 것(공통 가치 예산)의 구조 | AC-15~AC-17 |
 | ui-copy | active | 모달·칩·i18n·도움말·연출·사운드 | AC-18~AC-23 |
@@ -45,9 +45,18 @@
 ## Constraints
 
 - **정산 요약 밖의 지급 경로**라는 예외를 넓히지 않는다. 유계 근거는 상한 유계 하나뿐이다.
-- 재화·촉매 지급은 기존 `currency_grants`·`catalyst_grants` 누적 캡을 **통과**한다(캡 상수는 손대지 않는다).
+- 재화·촉매 지급은 기존 `currency_grants`·`catalyst_grants` 누적 캡을 **통과**한다. **시간당·일일
+  누적 캡 상수는 손대지 않는다.** ⚠️ 다만 **per-call 캡은 예외다** — `grant_currency_for` 의
+  `case p_source` 에 `daily_reward` 가 없으면 `CAP_DEFAULT`(1000/1000)로 **조용히 절삭**돼
+  30일차 예산(20,000)이 못 나간다. 그래서 `CAP_DAILY_REWARD_CREDITS`·`_MINERALS`(각 25,000)를
+  **신설한다**. "캡 상수를 손대지 않는다"가 겨눈 것은 **누적 캡의 총량 예산**이고, per-call 캡은
+  그 예산을 바꾸지 않는다(누적 캡이 여전히 위에서 자른다).
 - **새 재화를 만들지 않는다.** 지급 풀은 이미 다른 획득 경로가 있는 6축뿐이다.
-- 지급 상한은 **서버 권위 상태에서만** 파생한다 — `pve_runs` 의 검증된 최고 클리어 단계.
+- 지급 상한은 **서버 권위 상태에서만** 파생한다 — **`profiles.lifetime_granted`(생애 누적 지급액,
+  신설)**. ⚠️ 초판은 여기에 *"`pve_runs` 의 검증된 최고 클리어 단계"* 라 적었고 **그것은 사실
+  오류였다**(ADR-0048 §상한의 축이 비어 있었다 — stage 는 `summary jsonb` 안의 **클라 주장**이고
+  `verified_status` 는 무조건 리터럴이다). **Constraint 는 AC 보다 상위 계약**이므로 이 줄이
+  낡은 채로 남아 있는 것이 AC 하나가 낡은 것보다 무겁다.
 - 클라 쓰기 미러(`profiles.save`·`ships`·`items`)는 *무엇을 제안할지* 고르는 데만 쓴다.
 - 수령 원장은 **TTL 대상이 아니다** — 지우면 미반영 배송함 행이 사라져 물건이 영구 유실된다.
 - 연속일 컬럼은 `credits`/`minerals` 와 같이 **클라 UPDATE 를 트리거로 봉인**한다.
@@ -77,6 +86,11 @@
 
 ### streak-state
 - [ ] AC-6 `profiles` 에 직전 수령 `date_seed` 와 현재 연속일 두 컬럼이 정본으로 있고, 클라 UPDATE 가 트리거로 봉인된다.
+- [ ] AC-6b `profiles.lifetime_granted`(상한 앵커)가 신설되고, 클라 UPDATE 와 **INSERT 가 둘 다**
+  트리거로 봉인된다. ⚠️ AC-6 을 "컬럼 3개"로 넓히지 않고 별도 AC 로 세운 이유 — 앵커는 *연속일
+  저장*이 아니라 *상한*의 개체다(§Ontology). 섞으면 AC-6 의 주제가 흐려진다. INSERT 봉인을
+  명시한 것도 이 컬럼 때문이다: 클라가 자기 프로필을 `lifetime_granted` 가 부풀려진 채로
+  최초 INSERT 하면 UPDATE 봉인만으로는 못 막는다(RLS 는 소유권만 검사한다).
 - [ ] AC-7 연속 판정은 "직전 수령 `date_seed` 가 오늘−1 인가" 하나이며, 수령 원장을 스캔하지 않는다.
 - [ ] AC-8 하루를 놓치면 연속일이 **1** 이 된다(0 도, 절반도, 유지도 아니다).
 - [ ] AC-9 30일차 수령 다음 수령은 연속일 1 로 돌아간다.
@@ -98,12 +112,19 @@
 - [ ] AC-19 모달에 "받기" 버튼이 없다 — 열린 시점에 이미 지급됐고 화면은 통지다.
 - [ ] AC-20 헤더에 연속일 칩이 있고, 눌러 같은 모달을 재열람한다. 크레딧·광물 칩과 제목이 **겹치지 않는다**(실화면 실측).
 - [ ] AC-21 예고는 종류·등급·지시 계급까지만 보여주고, 랜덤 값(어픽스·사용 횟수 등)은 감춘다.
-- [ ] AC-22 도움말 모달이 있고 **"하루 놓치면 1일차로 리셋"** 과 **"상한이 자기 최고 클리어 단계에 묶인다"** 를 말한다.
+- [ ] AC-22 도움말 모달이 있고 **"하루 놓치면 1일차로 리셋"** 과 **"받을 수 있는 것의 상한이 지금까지 서버가 지급한 총량에 묶인다"** 를 말한다. ⚠️ 초판의 *"상한이 자기 최고 클리어 단계에 묶인다"* 는 앵커 교체 뒤 **플레이어에게 거짓을 말하는 문구**가 됐다.
 - [ ] AC-23 KO/EN 카탈로그 키가 짝으로 있고, KO 문구가 `catalog.ts` 의 `KO` 선언부 주석에 있는 용어 정본표를 따른다.
 
 ### verification
 - [ ] AC-24 `dailyRewardContract.test.ts` 가 마이그레이션 SQL 본문을 읽어 상한 산식·RLS 정책·복합 PK·트리거 봉인을 잠근다.
-- [ ] AC-25 `prove-daily-reward-cap.ps1` 이 **미러를 위조한 상태로** `authenticated` 역할 수령을 실행해 상한이 무는 것을 실증한다(`BEGIN…ROLLBACK`).
+- [ ] AC-25 **`authenticated` 가 수령 RPC 에 도달하지 못하고**(`prove-daily-reward-seal.ps1` 의
+  `[OK] RPC_DENIED_AUTHENTICATED`), **`service_role` 수령에서 상한이 문다**
+  (`prove-daily-reward-cap.ps1` 의 `[OK] CAP_CLAMPED`). 둘 다 `BEGIN…ROLLBACK` 안이다.
+  - ⚠️ 초판의 *"미러를 위조한 상태로 `authenticated` 역할 수령을 실행해"* 는 **두 번 틀렸다.**
+    ①앵커가 미러에서 `lifetime_granted` 로 바뀐 순간 **미러 위조는 상한과 무관**해져 항진
+    테스트가 됐다(무엇을 구현하든 통과한다). ②수령 RPC 는 `revoke all ... from authenticated`
+    이므로 그 절차대로 짜면 **permission denied 로 즉시 실패**한다 — 그리고 그 거부야말로
+    이 AC 가 실제로 재야 할 것이었다.
 - [ ] AC-26 하네스에서 30일차까지 치트로 밀어 모달·칩·연속일 표시를 실화면으로 확인한다.
 
 ## Assumptions Exposed & Resolved
@@ -150,7 +171,7 @@
 | 목표 후보 | core domain | 축, 거리 점수, 걸음 순번 | 진행 견인이 생산한다 · 공통 가치 예산이 거른다 |
 | 공통 가치 예산 | supporting | 연속일 파생 점수, 상한 천장 | 연속 접속이 정한다 · 목표 후보를 거른다 |
 | 진행 견인 | supporting | 축별 생산기 | 목표 후보를 만든다 |
-| 상한 | supporting | pve_runs 최고 클리어 단계 파생 | 공통 가치 예산의 천장이 된다 |
+| 상한 | supporting | `profiles.lifetime_granted`(생애 누적 지급액) 파생 + 신규 계정 하한 `FLOOR` | 공통 가치 예산의 천장이 된다 · `currency_grants` AFTER INSERT 트리거가 앵커를 가산한다 |
 
 ## Ontology Convergence
 

@@ -25,6 +25,7 @@ import {
   CAP_VERIFY_ATTEMPTS,
   COMMISSION_ACTIVE_TTL_MS,
   COMMISSION_EXCLUSIVE_UNIQUE_BITS,
+  COMMISSION_EXCLUSIVE_UNIQUE_ID_BITS,
 } from '../../../src/run/commissionServerConstants.ts';
 
 /**
@@ -190,9 +191,26 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .eq('profile_id', callerId)
       .eq('kind', 'unique');
     if (Array.isArray(grantRows)) {
-      grantedUniqueBits = grantRows
-        .map((r) => asRecord((r as { item_payload?: unknown }).item_payload).bit)
-        .filter((b): b is number => typeof b === 'number' && Number.isFinite(b));
+      // ⚠️ **`bit` 와 `uniqueId` 를 둘 다 읽는다.** 초판은 `item_payload.bit` 만 봤는데
+      //    `settle_commission` 이 실제로 쓰는 것은 `{"uniqueId": ...}` 다
+      //    (20260803000000:872) — **쓰는 이름과 읽는 이름이 어긋나 있었다.**
+      //    오늘은 `COMMISSION_EXCLUSIVE_UNIQUE_BITS` 가 비어 게이트가 구조적으로 아무것도
+      //    안 보므로 무해하지만, 카탈로그가 채워지는 날 이 조회가 항상 빈 집합을 돌려주어
+      //    **정직하게 발급받은 플레이어가 `commission-unauthorized-unique` 로 오거부된다.**
+      //    고치는 자리로 SQL 이 아니라 EF 를 고른 근거: `settle_commission` 재정의를 피한다
+      //    (낡은 본문 복제가 프로덕션을 100% 깨뜨린 전례 — 20260802000000:4-15).
+      //    `uniqueId` → `bit` 접기는 `COMMISSION_EXCLUSIVE_UNIQUE_ID_BITS` 가 맡는다(그쪽
+      //    주석에 UNIQUE_REGISTRY 를 직접 못 읽는 이유가 있다).
+      const bits: number[] = [];
+      for (const r of grantRows) {
+        const p = asRecord((r as { item_payload?: unknown }).item_payload);
+        if (typeof p.bit === 'number' && Number.isFinite(p.bit)) bits.push(p.bit);
+        if (typeof p.uniqueId === 'string') {
+          const mapped = COMMISSION_EXCLUSIVE_UNIQUE_ID_BITS[p.uniqueId];
+          if (typeof mapped === 'number' && Number.isFinite(mapped)) bits.push(mapped);
+        }
+      }
+      grantedUniqueBits = bits;
     }
   }
 

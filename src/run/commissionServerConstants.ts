@@ -140,6 +140,32 @@ export function isGrantCurrencyClientSource(source: string): source is GrantCurr
 export const COMMISSION_EXCLUSIVE_UNIQUE_BITS: readonly number[] = [];
 
 /**
+ * 의뢰 전용 유니크의 **`uniqueId` → `bit`** 대응표(게이트 4의 발급 기록 조회용).
+ *
+ * ## 왜 이것이 필요한가 — 필드 이름이 어긋나 있었다
+ * `settle_commission` 은 발급 행에 `item_payload = {"uniqueId": ...}` 를 쓰는데
+ * (20260803000000:872), EF 게이트 4 는 `item_payload.bit` 를 읽었다. 즉 **쓰는 이름과 읽는
+ * 이름이 다르다.** 오늘은 {@link COMMISSION_EXCLUSIVE_UNIQUE_BITS} 가 비어 게이트가 구조적으로
+ * 아무것도 안 보므로 무해하지만, 카탈로그가 채워지는 날 조회가 항상 빈 집합을 돌려주어
+ * **정직하게 발급받은 플레이어가 `commission-unauthorized-unique` 로 오거부된다.**
+ *
+ * 고치는 자리로 SQL 이 아니라 EF 를 고른 이유: `settle_commission` 재정의를 피하기 위해서다
+ * (낡은 본문 복제가 이 리포의 프로덕션을 100% 깨뜨린 전례 — 20260802000000:4-15).
+ * EF 는 이제 `bit`·`uniqueId` **둘 다** 읽고, 후자를 이 표로 비트로 접는다.
+ *
+ * ## 왜 `UNIQUE_REGISTRY` 를 직접 읽지 않는가
+ * 그쪽이 정본이고 여기는 미러라 드리프트 위험이 있다 — 그럼에도 미러인 이유는 EF(Deno)가
+ * `data/uniques.ts` 를 import 하면 그 파일의 `.js` 확장자 스펙파이어 체인(`src/sim/uniques.js`
+ * 등)까지 끌려와 Deno 해석이 깨지기 때문이다. EF 가 이미 문제없이 import 하고 있는 모듈은
+ * 이 상수 파일뿐이라 여기에 둔다.
+ *
+ * ⚠️ **플레이스홀더 — 현재 비어 있다.** Phase D 가 의뢰 전용 유니크를 등록할 때
+ *    `COMMISSION_EXCLUSIVE_UNIQUE_BITS` 와 **함께** 채워야 한다. 한쪽만 채우면 게이트가
+ *    켜지는데 발급 기록을 못 읽어 정직한 플레이어를 막는다.
+ */
+export const COMMISSION_EXCLUSIVE_UNIQUE_ID_BITS: Readonly<Record<string, number>> = {};
+
+/**
  * 시간 상수 정렬 불변식 — `GRACE < ACTIVE_TTL < BLOB_TTL < ISSUES_RETENTION` (서버 계약 §10).
  *
  * 이 부등식이 깨지면 수명·GC 검증표의 "안전" 판정 중 하나가 무너진다. 대표적으로
