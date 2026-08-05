@@ -7,7 +7,21 @@
 
 import { describe, it, expect } from 'vitest';
 import { gridPositions, fitGridCols, itemGlyph } from '../src/ui/pixi/slotGrid.js';
-import { arrangeItems, FILTER_KINDS, SORT_MODES } from '../src/ui/pixi/hangar.js';
+import {
+  arrangeItems,
+  FILTER_KINDS,
+  SORT_MODES,
+  hangarHeaderLayout,
+  TITLE_BAND_HALF_W,
+} from '../src/ui/pixi/hangar.js';
+import { DESIGN_WIDTH } from '../src/render/app.js';
+
+interface HeadRect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
 import { rollItem } from '../src/items/roll.js';
 import { panelContent } from '../src/ui/pixi/nineSlicePanel.js';
 import type { Item, SlotKind } from '../src/items/types.js';
@@ -137,5 +151,70 @@ describe('itemGlyph', () => {
     expect(itemGlyph('main')).toBe('✷');
     expect(itemGlyph('sub')).toBe('❋');
     expect(itemGlyph('armor')).toBe('◈');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 헤더 밴드 — 이 화면은 헤더가 게임에서 가장 붐빈다(요소 여덟)
+//
+// 좌표가 `renderTitleBar` 안 지역 변수였고, 이 화면은 헤더 겹침 결함을 이미 겪었는데도
+// 형제 화면들과 달리 그것을 잠그는 테스트가 없었다. 도움말 버튼을 끼우면서 상수로 끌어올려
+// 여기서 잠근다.
+// ---------------------------------------------------------------------------
+
+describe('격납고 헤더 — 여덟 컨트롤이 겹치지 않는다', () => {
+  const controls = hangarHeaderLayout();
+  const overlaps = (a: HeadRect, b: HeadRect): boolean =>
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+  it('서로 겹치지 않고 같은 세로 띠를 쓴다', () => {
+    for (let i = 0; i < controls.length; i++) {
+      for (let j = i + 1; j < controls.length; j++) {
+        const a = controls[i];
+        const b = controls[j];
+        if (a === undefined || b === undefined) continue;
+        expect(overlaps(a.rect, b.rect), `${a.id} 와 ${b.id} 가 겹친다`).toBe(false);
+      }
+    }
+    for (const c of controls) {
+      expect(c.rect.y, `${c.id} 의 세로 띠가 다르다`).toBe(26);
+      expect(c.rect.h).toBe(52);
+    }
+  });
+
+  it('화면 밖으로 나가지 않고 오른쪽 끝 여백 32 를 남긴다', () => {
+    for (const c of controls) {
+      expect(c.rect.x).toBeGreaterThanOrEqual(0);
+      expect(c.rect.x + c.rect.w).toBeLessThanOrEqual(DESIGN_WIDTH);
+    }
+    const right = Math.max(...controls.map((c) => c.rect.x + c.rect.w));
+    expect(DESIGN_WIDTH - right).toBe(32);
+  });
+
+  it('각인 제목이 앉는 중앙 대역이 비어 있다', () => {
+    // 중앙 정렬 Text 는 사각형이 없어 겹침 테스트가 못 잡는다 — 대역을 상수로 못 박고 잠근다.
+    // ⚠️ 도움말 버튼이 이 대역에 가장 가깝다(공통 폭 140 이면 여유가 12px 로 떨어져 128 을 쓴다).
+    const band: HeadRect = {
+      x: DESIGN_WIDTH / 2 - TITLE_BAND_HALF_W,
+      y: 0,
+      w: TITLE_BAND_HALF_W * 2,
+      h: 104,
+    };
+    for (const c of controls) {
+      expect(overlaps(c.rect, band), `${c.id} 가 제목 대역에 걸린다`).toBe(false);
+    }
+  });
+
+  it('설정 톱니 예약 밴드(좌상단 120×120)에는 컨트롤을 두지 않는다', () => {
+    // 톱니는 매 프레임 stage 최상위로 올라온다 — 여기에 두면 통째로 클릭 불가가 된다.
+    const gear: HeadRect = { x: 0, y: 0, w: 120, h: 120 };
+    for (const c of controls) {
+      expect(overlaps(c.rect, gear), `${c.id} 가 톱니 밴드에 걸린다`).toBe(false);
+    }
+  });
+
+  it('도움말 버튼이 헤더에 등록돼 있다', () => {
+    // 목록에서 빠지면 위 검사들이 조용히 통과한다 — 존재 자체를 못 박는다.
+    expect(controls.map((c) => c.id)).toContain('help');
   });
 });

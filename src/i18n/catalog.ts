@@ -791,6 +791,24 @@ export const EN = {
 
   // --- 격납고 카툰 UI (Pixi 리스킨) ---
   'hangar.title': 'Hangar',
+  // 격납고 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 주석 ①).
+  'hangar.help': 'Help',
+  'hangar.help.title': 'Hangar Guide',
+  'hangar.help.s1.h': 'What this screen is for',
+  'hangar.help.s1.b':
+    'This is where you dress your active ship. Gear equipped here is permanent progress — it survives every run, unlike the powerups you pick up during one.\nThe stat panel shows what your current loadout actually produces, with every source already folded in. That total is the number to compare builds by, not the numbers on individual pieces.',
+  'hangar.help.s2.h': 'Gear and the stash',
+  'hangar.help.s2.b':
+    'Eight slots take gear, and every ship type uses the same eight — farming carries across ship generations rather than restarting with each one.\nGear comes in four grades, normal through unique, and carries random affixes. A piece may also have a required level; you cannot equip it below that. Stage difficulty sets the ceiling on what drops there, so higher stages hand out gear you can wear sooner rather than gear you must wait for.',
+  'hangar.help.s3.h': 'Changing ships',
+  'hangar.help.s3.b':
+    'Change Ship stays locked until your current ship reaches level 100. Swapping early would throw away growth the ship has not finished, so the button is gated rather than merely discouraged.\nRetiring at the cap is an endgame move: the retired ship keeps its equipped gear, becomes a guardian, and pays out lineage points. The next ship is a free pick from the whole roster with nothing to unlock.',
+  'hangar.help.s4.h': 'Guardians and lineage',
+  'hangar.help.s4.b':
+    'Guardians are your retired ships. They can stand in your Defense Command core room, and their gear stays locked inside them.\nLineage points accumulate across retirements and buy permanent bonuses that apply to every future ship. The two buttons in the header open those screens.',
+  'hangar.help.s5.h': 'Catalysts',
+  'hangar.help.s5.b':
+    'Catalysts are consumables that season an ordinary run, raising its difficulty and its rewards together. The header button opens the collection where you manage them; you choose which to inject just before launching.\nCatalysts never appear in a commission run — that run already has its stage and rewards written.',
   'hangar.panel.stats': 'Ship Stats',
   'hangar.stat.element.fire': 'Fire',
   'hangar.stat.element.cold': 'Cold',
@@ -2865,6 +2883,25 @@ export const KO: Record<MessageKey, string> = {
 
   // --- 격납고 카툰 UI (Pixi 리스킨) ---
   'hangar.title': '격납고',
+  // 격납고 도움말(사용자 요청 2026-08-05). 용어는 KO 정본표를 따른다 — `창고`(장비 Stash) ·
+  // `보관함`은 촉매·모듈 전용 · `수호기` · `퇴역` · `요구 레벨` · `파워업`. 이모지 금지, 존댓말.
+  'hangar.help': '도움말',
+  'hangar.help.title': '격납고 안내',
+  'hangar.help.s1.h': '이 화면은 무엇을 하는 곳인가요',
+  'hangar.help.s1.b':
+    '현역 기체에 장비를 입히는 곳입니다. 여기서 장착한 장비는 영구 성장이라 런이 끝나도 그대로 남습니다. 런 도중에 줍는 파워업과는 다른 축입니다.\n스탯 패널은 지금 장착 구성이 실제로 만들어 내는 값을 보여 줍니다. 모든 출처가 이미 합산된 값이므로, 빌드를 비교하실 때는 개별 장비의 수치가 아니라 이 총합을 보시면 됩니다.',
+  'hangar.help.s2.h': '장비와 창고',
+  'hangar.help.s2.b':
+    '장비 슬롯은 8칸이고, 기체 타입이 달라도 8칸은 그대로입니다. 그래서 파밍한 장비가 기체 세대를 넘어 이어집니다.\n장비는 노말·매직·레어·유니크 4등급이며 무작위 어픽스가 붙습니다. 요구 레벨이 붙은 장비는 그 레벨 아래에서는 착용할 수 없습니다. 침략 단계가 그 단계에서 나오는 장비의 요구 레벨 상한을 정하므로, 높은 단계일수록 한참 기다렸다 입는 장비가 아니라 바로 입을 수 있는 장비가 나옵니다.',
+  'hangar.help.s3.h': '기체 교체',
+  'hangar.help.s3.b':
+    '기체 교체는 현재 기체가 레벨 100에 닿기 전까지 잠겨 있습니다. 아직 자랄 여지가 남은 기체를 버리는 셈이 되기 때문에, 권고가 아니라 버튼 자체를 잠급니다.\n만렙에서의 교체는 퇴역이라는 엔드게임 행위입니다. 퇴역한 기체는 장착 장비를 품은 채 수호기가 되고 계보 포인트를 지급합니다. 다음 기체는 로스터 전체에서 자유롭게 고르며 따로 해금할 것이 없습니다.',
+  'hangar.help.s4.h': '수호기와 계보',
+  'hangar.help.s4.b':
+    '수호기는 퇴역시킨 기체들입니다. 방어 사령부의 코어방에 세울 수 있고, 품고 있는 장비는 그 안에 잠긴 채로 남습니다.\n계보 포인트는 퇴역을 거듭할수록 쌓이며, 앞으로 타게 될 모든 기체에 적용되는 영구 강화를 삽니다. 헤더의 두 버튼이 각각 그 화면을 엽니다.',
+  'hangar.help.s5.h': '촉매',
+  'hangar.help.s5.b':
+    '촉매는 평범한 런의 난이도와 보상을 함께 올리는 소모품입니다. 헤더의 버튼이 촉매를 관리하는 보관함을 열고, 어떤 촉매를 넣을지는 출격 직전에 고르시게 됩니다.\n의뢰 런에는 촉매가 들어가지 않습니다. 그 런은 무대와 보상이 이미 적혀 있기 때문입니다.',
   'hangar.panel.stats': '기체 스탯',
   'hangar.stat.element.fire': '화염',
   'hangar.stat.element.cold': '냉기',
