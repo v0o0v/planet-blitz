@@ -27,6 +27,7 @@ import { claimDailyRewardOnServer } from '../src/net/index.js';
 import {
   nextStreak,
   valueBudgetForStreak,
+  DAILY_SIDE_CREDITS,
   DAILY_STREAK_CYCLE,
 } from '../data/dailyReward.js';
 import { defaultProfile, type Profile } from '../src/save/profile.js';
@@ -278,5 +279,54 @@ describe('일일 보상 모의 — 30일차 램프', () => {
     // 나쁜 상태: 여기서 30일차 예산이 그대로 나오면 상한 유계가 무너져 봇 접속이 이득이 된다.
     expect(claim.budget).toBe(valueBudgetForStreak(1));
     expect(claim.clamped).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 모의가 서버와 갈리지 않는가 — 실화면 검증이 잡은 두 건
+// ---------------------------------------------------------------------------
+
+describe('모의 충실도 — 서버 계약과 어긋나면 하네스가 없는 결함을 만들거나 있는 결함을 숨긴다', () => {
+  /**
+   * 둘 다 **테스트 전부 초록인 채로** 실화면에서 처음 드러났다. 모의는 검증 도구이므로
+   * 서버와 갈리는 순간 그 자체가 결함이다 — 이 리포에 *"대조 없이 OK 를 내는 검증 도구가
+   * 그 자체로 결함"* 이라는 교훈이 이미 있다.
+   */
+
+  it('앵커를 밀지 않는다 — 서버의 `when (new.source <> \'daily_reward\')` 필터와 같아야 한다', async () => {
+    const gw = makeGateway();
+    const before = gw.status().lifetimeGranted;
+    await gw.claimDailyReward();
+    const after = gw.status().lifetimeGranted;
+    // 나쁜 상태: 여기가 오르면 하네스에서만 접속으로 천장이 자라, ADR-0048 의 유일한
+    // 정당화가 성립하는지를 하네스로는 영영 확인할 수 없다.
+    expect(after).toBe(before);
+  });
+
+  it('연속 수령이 천장을 한 뼘도 올리지 않는다(되먹임 누적 방지)', async () => {
+    const gw = makeGateway();
+    const before = gw.status().ceiling;
+    for (let d = 0; d < 10; d++) {
+      await gw.claimDailyReward();
+      gw.advanceDays(1);
+    }
+    expect(gw.status().ceiling).toBe(before);
+  });
+
+  it('곁들이 크레딧이 실제로 잔액에 들어온다 — 모달이 말한 것과 잔액이 같아야 한다', async () => {
+    const gw = makeGateway();
+    const first = await gw.claimDailyReward();
+    const mainCredits = first.result?.credits ?? 0;
+    // 나쁜 상태: 주 보상만 들어오면 모달은 "곁들여 크레딧 500 이 함께 들어왔습니다" 라고
+    // 말하는데 잔액은 그만큼 안 오른다 — 실화면에서 정확히 그렇게 보였다.
+    expect(first.creditsLeft).toBe(mainCredits + DAILY_SIDE_CREDITS);
+
+    // 이틀째도 같은 규율(누적)이어야 한다 — 첫날만 맞고 이후가 틀리면 더 못 잡는다.
+    gw.advanceDays(1);
+    const second = await gw.claimDailyReward();
+    const secondMain = second.result?.credits ?? 0;
+    expect(second.creditsLeft).toBe(
+      mainCredits + DAILY_SIDE_CREDITS + secondMain + DAILY_SIDE_CREDITS,
+    );
   });
 });

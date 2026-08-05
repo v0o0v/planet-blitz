@@ -51,6 +51,7 @@ import {
   resolveDailyBudget,
   valueBudgetForStreak,
   DAILY_SEED_NEVER,
+  DAILY_SIDE_CREDITS,
   DAILY_STREAK_CYCLE,
 } from '../../data/dailyReward.js';
 import {
@@ -393,7 +394,10 @@ export class HarnessDailyRewardGateway implements DailyRewardGateway {
     if (subject.axis !== 'currency') {
       throw new Error(`daily-reward: axis-not-implemented (${subject.axis})`);
     }
-    // 예산 초과분 방어(EF 와 같은 자리·같은 식). 정상 경로에서는 scale === 1 이다.
+    // 절삭은 **서버(SQL)가 한다** — EF 는 원값을 넘기고 `claim_daily_reward_for` 가 `v_scale`
+    // 로 축 성분까지 깎는다. 모의도 같은 자리에서 같은 식으로 깎아야 하네스가 서버와 갈리지
+    // 않는다. ⚠️ EF 쪽에서 미리 깎으면 `clamped` 플래그가 false 로 기록돼 절삭 지표가
+    // 죽는데, 모의는 지표를 직접 세우므로 여기서 깎고 플래그도 함께 세운다.
     const scale =
       pick.candidate.value > budget.budget && pick.candidate.value > 0
         ? budget.budget / pick.candidate.value
@@ -432,11 +436,21 @@ export class HarnessDailyRewardGateway implements DailyRewardGateway {
     };
     this.rows.set(this.seed, row);
 
-    // 지급 확정 — 서버 원장(재화 컬럼 + 생애 누적)을 민다. `lifetime_granted` 는 단조라
-    // 천장이 내려가지 않는다.
-    this.credits += grantCredits;
+    // 지급 확정 — 서버 원장(재화 컬럼)을 민다.
+    //
+    // ⚠️ **곁들이 크레딧을 함께 넣는다.** SQL 은 `grant_currency_for` 에
+    // `DAILY_SIDE_CREDITS + 주 보상 크레딧` 을 한 번에 넘긴다(마이그레이션 7절). 모의가 주
+    // 보상만 넣으면 모달은 *"곁들여 크레딧 500 이 함께 들어왔습니다"* 라고 말하는데 잔액은
+    // 안 오르는 상태가 된다 — 실화면 검증에서 실제로 그렇게 보였다.
+    //
+    // ⚠️ **생애 누적(앵커)은 밀지 않는다.** 서버는 `currency_grants` AFTER 트리거의
+    // `when (new.source <> 'daily_reward')` 로 자기 지급을 앵커에서 제외한다. 모의가 밀면
+    // 하네스에서만 천장이 접속으로 자라, ADR-0048 의 **유일한 정당화**(*"위조해도 정직한
+    // 플레이로 이미 닿는 범위 안"*)가 성립하는지를 하네스로는 영영 못 본다. 초판이 정확히
+    // 그렇게 돼 있었고 실화면 검증이 잡았다(누적이 1,000,000 → 1,000,040 으로 움직였다).
+    // 앵커를 움직여 보려면 치트 패널의 `생애 누적 세팅`(= 다른 경로의 지급을 흉내)을 쓴다.
+    this.credits += grantCredits + DAILY_SIDE_CREDITS;
     this.minerals += grantMinerals;
-    this.lifetimeGranted += grantCredits + grantMinerals;
     this.lastSeed = this.seed;
     this.lastStreak = streak;
 
