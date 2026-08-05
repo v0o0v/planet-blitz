@@ -27,6 +27,7 @@ import { claimDailyRewardOnServer } from '../src/net/index.js';
 import {
   nextStreak,
   valueBudgetForStreak,
+  DAILY_CEILING_RATE,
   DAILY_SIDE_CREDITS,
   DAILY_STREAK_CYCLE,
 } from '../data/dailyReward.js';
@@ -328,5 +329,36 @@ describe('모의 충실도 — 서버 계약과 어긋나면 하네스가 없는
     expect(second.creditsLeft).toBe(
       mainCredits + DAILY_SIDE_CREDITS + secondMain + DAILY_SIDE_CREDITS,
     );
+  });
+});
+
+describe('예산 보정이 모의에서도 램프를 보이게 한다 (2026-08-05 확정)', () => {
+  it('하네스 기본 누적이 30일차 천장을 열어 둔다 — 계수를 바꾸면 이 부등식이 먼저 빨개진다', () => {
+    expect(HARNESS_DEFAULT_LIFETIME * DAILY_CEILING_RATE).toBeGreaterThanOrEqual(
+      valueBudgetForStreak(DAILY_STREAK_CYCLE),
+    );
+  });
+
+  it('목표가 낙찰돼도 지급 총액이 예산과 같다 — 30일차에 40 크레딧이 나오던 자리다', async () => {
+    const gw = makeGateway();
+    gw.setStreak(DAILY_STREAK_CYCLE);
+    const claim = await gw.claimDailyReward();
+    const paid = (claim.result?.credits ?? 0) + (claim.result?.minerals ?? 0) * 8;
+    // 보정이 없으면 목표 부족분만 나와 예산에 한참 못 미친다(실화면에서 본 그 화면).
+    expect(paid).toBeGreaterThanOrEqual(Math.floor(claim.budget) - 1);
+  });
+
+  it('30일 내내 지급이 램프를 따라 오른다 — 1일차보다 30일차가 크다', async () => {
+    const gw = makeGateway();
+    const paidOf = (c: Awaited<ReturnType<typeof gw.claimDailyReward>>): number =>
+      (c.result?.credits ?? 0) + (c.result?.minerals ?? 0) * 8;
+    const first = paidOf(await gw.claimDailyReward());
+    let last = first;
+    for (let d = 2; d <= DAILY_STREAK_CYCLE; d++) {
+      gw.advanceDays(1);
+      last = paidOf(await gw.claimDailyReward());
+    }
+    // 나쁜 상태: 여기가 같거나 작으면 연속 접속이 화면에서 아무 의미가 없다.
+    expect(last).toBeGreaterThan(first * 5);
   });
 });

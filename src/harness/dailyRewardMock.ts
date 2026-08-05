@@ -57,6 +57,7 @@ import {
 import {
   produceDailyRewardCandidates,
   pickDailyReward,
+  budgetTopUpCredits,
   DAILY_REWARD_AXES,
   type DailyRewardAxis,
   type DailyRewardCandidate,
@@ -77,10 +78,11 @@ import type { DailyRewardNetDeps } from '../net/index.js';
 export const HARNESS_DAILY_UID = 'harness-daily-uid';
 
 /**
- * 생애 누적 지급액 기본값. **1,000,000 이상이어야 램프가 보인다** —
- * `budgetCeilingFromLifetime` 이 `lifetime × 0.02` 이고 30일차 램프가 20,000 이므로, 누적이
- * 그 밑이면 예산이 천장에 눌려 **30일을 밀어도 30일차 물건이 안 나온다.** 하네스의 1차 용도가
- * AC-26(30일차 화면 육안 확인)이라 기본값을 "천장이 안 무는 계정"으로 둔다.
+ * 생애 누적 지급액 기본값. **100,000 이상이어야 램프가 끝까지 보인다** —
+ * `budgetCeilingFromLifetime` 이 `lifetime × DAILY_CEILING_RATE`(0.2)이고 30일차 램프가
+ * 20,000 이므로, 누적이 그 밑이면 예산이 천장에 눌려 **30일을 밀어도 30일차 물건이 안 나온다.**
+ * 하네스의 1차 용도가 AC-26(30일차 화면 육안 확인)이라 기본값을 "천장이 안 무는 계정"으로 둔다.
+ * ⚠️ 계수를 바꾸면 이 값도 함께 봐라 — 테스트가 `기본값 × RATE >= 30일차 램프` 를 단언한다.
  *
  * 상한 절삭(관측 지표 ③)을 보고 싶으면 {@link HarnessDailyRewardGateway.setLifetimeGranted}
  * 로 낮춘다 — 0 으로 두면 신규 계정과 같은 상태(예산이 1일차에 고정)가 재현된다.
@@ -402,7 +404,10 @@ export class HarnessDailyRewardGateway implements DailyRewardGateway {
       pick.candidate.value > budget.budget && pick.candidate.value > 0
         ? budget.budget / pick.candidate.value
         : 1;
-    const grantCredits = Math.max(0, Math.floor(subject.credits * scale));
+    // 예산 보정 — EF 와 **같은 자리·같은 함수**다. 갈리면 하네스가 서버에 없는 결함을
+    // 만들거나 있는 결함을 숨긴다(모의 충실도 §).
+    const topUp = budgetTopUpCredits(pick, budget.budget);
+    const grantCredits = Math.max(0, Math.floor(subject.credits * scale) + topUp);
     const grantMinerals = Math.max(0, Math.floor(subject.minerals * scale));
 
     // 내일 예고 확정. 시드가 `seed + 1` 인 것이 계약이다 — 같은 시드면 tie-break 가 오늘과

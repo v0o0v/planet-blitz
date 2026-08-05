@@ -45,6 +45,8 @@ import { valueBudgetForStreak, DAILY_STREAK_CYCLE } from '../../../data/dailyRew
 import {
   produceDailyRewardCandidates,
   pickDailyReward,
+  budgetTopUpCredits,
+  toppedUpValue,
   type DailyRewardAxis,
   type DailyRewardCandidate,
   type DailyRewardProgressInput,
@@ -411,7 +413,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // 정상 경로에서는 애초에 초과가 없다(`pickDailyReward` 가 `value <= budget` 로 걸렀고
   // 폴백은 `floor(budget)` 이다). 초과가 생긴다면 그것은 TOCTOU — 그 사이 앵커가 움직였다는
   // 뜻이고, **그 사실이 기록되어야** 한다. 권위는 SQL 하나다.
-  const grantCredits = Math.max(0, Math.floor(subject.credits));
+  // 예산 보정 — 낙찰된 목표가 예산을 다 못 쓰면 **남는 만큼을 크레딧으로 채운다**
+  // (`budgetTopUpCredits`, 그 함수 머리에 근거 전부). 이 줄이 없으면 예산이 천장 필터로만
+  // 작동해 30일차에 40 크레딧이 나온다 — 실화면에서 실제로 본 화면이다.
+  // 폴백 후보는 이미 예산 전액이라 보정이 0 이므로, 폴백 지표는 흐려지지 않는다.
+  const topUp = budgetTopUpCredits(pick, budget);
+  const grantCredits = Math.max(0, Math.floor(subject.credits) + topUp);
   const grantMinerals = Math.max(0, Math.floor(subject.minerals));
 
   // (6) 내일 예고 확정 — **내일 예산(연속일 + 1)** 으로 다시 고른다.
@@ -436,7 +443,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const { data: claimedRaw, error: claimErr } = await service.rpc('claim_daily_reward_for', {
     p_recipient: callerId,
     p_axis: 'currency',
-    p_value: pick.candidate.value,
+    // ⚠️ 보정분을 포함한 **실제 지급 가치**를 넘긴다. 목표 값만 넘기면 SQL 의 절삭 비교가
+    // 보정분을 모르는 채로 돌아, 보정으로 채운 크레딧이 예산 검사를 통과하지 않은 것이 된다.
+    p_value: toppedUpValue(pick, budget),
     p_result: {
       credits: grantCredits,
       minerals: grantMinerals,
