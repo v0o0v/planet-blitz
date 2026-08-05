@@ -14,6 +14,7 @@ import {
   stepWorld,
   emptyInput,
   DEFAULT_CONFIG,
+  PLAYER_DAMAGE_TAKEN_MULT,
 } from '../src/sim/world.js';
 import type { WorldConfig, WorldState } from '../src/sim/world.js';
 import { spawnEnemyBullet } from '../src/sim/entities.js';
@@ -240,7 +241,8 @@ describe('② 생존 캡스톤 — 치명타 1회 무효', () => {
     const player = state.entities[0]!;
     const hp0 = player.hp;
     lethalHit(state, 10); // 비치명
-    expect(player.hp).toBe(hp0 - 10);
+    // 선체에 들어오는 양은 피격 피해 배수를 탄다 — 리터럴로 적으면 배수를 바꿀 때마다 썩는다.
+    expect(player.hp).toBe(hp0 - 10 * PLAYER_DAMAGE_TAKEN_MULT);
   });
 
   it('미투자면 치명 피격에 그대로 죽는다(하위 호환)', () => {

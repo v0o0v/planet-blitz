@@ -16,7 +16,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
+import {
+  createWorld,
+  stepWorld,
+  emptyInput,
+  PLAYER_DAMAGE_TAKEN_MULT,
+} from '../src/sim/world.js';
 import type { WorldConfig, WorldState } from '../src/sim/world.js';
 import { spawnHazard } from '../src/sim/entities.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
@@ -84,13 +89,16 @@ describe('목표 게이트형 무대 생존 축 — 피격 피해 배율', () =>
     const vampire = hullLostToProbeHazard(PLANET_MODE.vampire);
     // 대조군이 먼저다 — 시험 해저드가 실제로 최대 피해원으로 적용됐는지 확인한다. 이게 없으면
     // 아래 비교가 "배율이 걸렸다" 가 아니라 "둘 다 다른 무언가에 맞았다" 일 수 있다.
-    expect(vampire).toBe(PROBE_DAMAGE);
+    // ⚠️ 선체에서 깎이는 양은 무대 배율 **뒤에** 피격 피해 배수를 한 번 더 탄다. 순서가
+    //    그대로여야 한다 — `Math.round` 는 무대 배율에만 걸리고(그 상수 주석), 배수는 f64 에서
+    //    정확한 2 배라 반올림이 없다. 여기 곱셈 순서를 뒤집으면 ±1 로 어긋난다.
+    expect(vampire).toBe(PROBE_DAMAGE * PLAYER_DAMAGE_TAKEN_MULT);
 
     expect(hullLostToProbeHazard(PLANET_MODE.contamination)).toBe(
-      Math.round(PROBE_DAMAGE * CONTAMINATION_DAMAGE_SCALE),
+      Math.round(PROBE_DAMAGE * CONTAMINATION_DAMAGE_SCALE) * PLAYER_DAMAGE_TAKEN_MULT,
     );
     expect(hullLostToProbeHazard(PLANET_MODE.chase)).toBe(
-      Math.round(PROBE_DAMAGE * CHASE_DAMAGE_SCALE),
+      Math.round(PROBE_DAMAGE * CHASE_DAMAGE_SCALE) * PLAYER_DAMAGE_TAKEN_MULT,
     );
   });
 
