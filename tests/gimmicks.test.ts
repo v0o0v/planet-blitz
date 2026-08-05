@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createWorld, stepWorld } from '../src/sim/world.js';
+import { createWorld, stepWorld, PLAYER_DAMAGE_TAKEN_MULT } from '../src/sim/world.js';
 import type { WorldState } from '../src/sim/world.js';
 import { blankEntity, addEntity, spawnDestructible, spawnEventObject } from '../src/sim/entities.js';
 import { MAGNET_BUFF_TICKS, TURRET_LIFE_TICKS, BOMB_DAMAGE } from '../src/sim/events.js';
@@ -75,7 +75,8 @@ describe('terrain hazard (plan F2, AC6)', () => {
     const hazard = spawnTerrainHazard(state, player.x, player.y);
 
     stepWorld(state, idle);
-    expect(player.hp).toBe(hpBefore - TERRAIN_HAZARD_DAMAGE);
+    // 해저드도 피격 통로를 지나므로 선체에서 깎이는 양은 피격 피해 배수를 탄다.
+    expect(player.hp).toBe(hpBefore - TERRAIN_HAZARD_DAMAGE * PLAYER_DAMAGE_TAKEN_MULT);
     // Permanent: it is still alive after the tick (unlike a timed hazard window).
     expect(state.entities.includes(hazard)).toBe(true);
     expect(hazard.life).toBeLessThan(0);
