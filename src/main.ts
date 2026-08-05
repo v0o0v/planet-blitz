@@ -1365,6 +1365,10 @@ async function main(): Promise<void> {
   ): Promise<void> {
     const outcome = await consumeCatalystsOnServer(cats, sel.planet);
     if (outcome.status === 'ok') {
+      // 소모가 확정된 순간 주입 선택을 비운다(사용자 신고 2026-08-05). 성계 지도 화면 객체는
+      // 런 사이에 재사용되므로, 안 비우면 다음 성계 지도에 지난 주입이 그대로 남고 그대로
+      // 출격하면 **고르지도 않은 촉매가 한 번 더 소모된다**.
+      planetSelect.clearInjectedCatalysts();
       startRun(seed, { ...sel, catalysts: cats, runId: outcome.runId });
       return;
     }
@@ -1372,12 +1376,16 @@ async function main(): Promise<void> {
     catalystSortieModal.show({
       onRetry: () => void consumeAndLaunch(seed, sel, cats),
       // 촉매·runId 를 뺀 무촉매 sel 로 시작(오프라인 폴백 보존). 명시 재조립으로 잔여 필드 누락 방지.
-      onSkip: () =>
+      // 여기서도 주입을 비운다 — 아이템은 미소모지만 **런이 실제로 떠났다**. 남겨 두면 다음
+      // 성계 지도에 지난 선택이 살아 있어, 그때는 소모에 성공해 모르는 사이에 빠져나간다.
+      onSkip: () => {
+        planetSelect.clearInjectedCatalysts();
         startRun(seed, {
           planet: sel.planet,
           stage: sel.stage,
           ...(sel.maxSegments !== undefined ? { maxSegments: sel.maxSegments } : {}),
-        }),
+        });
+      },
       onCancel: () => openStarMap(),
     });
   }

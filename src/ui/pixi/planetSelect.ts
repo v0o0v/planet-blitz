@@ -2106,6 +2106,26 @@ export class PlanetSelectScreen {
     return this.injectedCatalysts.slice();
   }
 
+  /**
+   * 주입 선택을 비운다 — **출격이 실제로 떠난 뒤** 호출부(`main.ts`)가 부른다.
+   *
+   * ⚠️ 왜 `launch()` 안이 아닌가(사용자 신고 2026-08-05 "전 런에 주입한 촉매가 다음 런에도
+   * 주입된 상태로 남아있다"): 출격은 `consume_catalysts` 를 거치는데 **거부·오프라인이면 런이
+   * 시작되지 않고 성계 지도로 되돌아온다**. 그 경로에서 아이템은 미소모라 주입이 남아 있어야
+   * 재시도가 된다(`consumeAndLaunch` 주석). 그래서 비우는 시점은 이 화면이 알 수 없고,
+   * 런이 실제로 떠났는지 아는 출격 오케스트레이터만 안다.
+   *
+   * 이 화면 객체는 런 사이에 **재사용**된다(`main.ts` 가 한 번 만들어 계속 쓴다). 안 비우면
+   * 다음 성계 지도에 지난 주입이 그대로 남고, 그대로 출격하면 **고르지도 않은 촉매가 한 번 더
+   * 소모된다**.
+   */
+  clearInjectedCatalysts(): void {
+    if (this.injectedCatalysts.length === 0) return;
+    this.injectedCatalysts = [];
+    // 숨어 있을 때도 상태는 비운다(출격 직후엔 이미 hide 된 뒤다) — 다시 그리기만 건너뛴다.
+    if (this.root.visible) this.refresh();
+  }
+
   /** 주입 촉매를 직접 세팅한다(하네스 셋업용). 현재 행성 특산 정합에 맞게 정리한다. */
   setInjectedCatalysts(ids: readonly number[]): void {
     this.injectedCatalysts = normalizeCatalystArray([...ids]);
