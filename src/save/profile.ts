@@ -620,6 +620,7 @@ export function migrate(raw: unknown): Profile {
   if (version < 8) data = migrateV7toV8(data);
   if (version < 9) data = migrateV8toV9(data);
   if (version < 10) data = migrateV9toV10(data);
+  if (version < 11) data = migrateV10toV11(data);
   return normalizeProfile(data);
 }
 
@@ -654,6 +655,58 @@ function migrateV9toV10(v9: Record<string, unknown>): Record<string, unknown> {
     fillStarterEquipment(equipped);
     return { ...ship, equipped };
   });
+  return out;
+}
+
+/**
+ * v10 → v11 (ADR-0049 스킬 전면 재구축): **전 기체 무료 전액 리스펙.**
+ *
+ * `skillInvest` 의 **와이어 레이아웃 자체가 바뀌었다** — 구 `[base 0..59][캡스톤 60..62]`
+ * (스트라이커 63 · 해츨링 78)에서 신규 `[축0 0..9][축1 10..19][축2 20..29]`(전 기체 30)로.
+ * 인덱스의 의미가 통째로 갈렸으므로 구 벡터를 그대로 두면 **투자한 적 없는 스킬이 찍혀 있는**
+ * 상태가 된다. 포인트는 전액 환급이라 진행도는 보존된다(리스펙 비용 없음).
+ *
+ * ## 환급 누계를 **정규화 전에** 세는 것이 핵심이다
+ * `normalizeSkillInvest` 는 `zeroSkillInvest(typeId)`(신규 길이 30)를 만들어 그 길이만큼만
+ * 옮겨 담는다. 즉 정규화를 먼저 태우면 구 63/78칸 중 **뒤쪽 33/48칸이 조용히 잘려** 그만큼
+ * 환급이 증발한다. `migrate()` 사다리가 `normalizeProfile` **앞**에서 도는 것이 그 방어이고,
+ * v8→v9 도 같은 순서였다.
+ *
+ * 벡터는 `[]` 로 비운다(구 길이의 0 배열이 아니라). 정규화가 신규 길이 30칸의 0 벡터를 새로
+ * 만들어 주므로 결과는 같고, **구 레이아웃을 폐기했다는 의도가 코드에 그대로 남는다.**
+ *
+ * ## 퇴역 수호기(`GuardianBuild.skillInvest`)는 여기서 다루지 않는다
+ * v8→v9 는 "투자 경로가 없는 스냅샷이라 규칙 적용 대상이 아니다"라며 의도적으로 제외했고,
+ * 그때는 **길이가 안 바뀌어서** 제외가 곧 무해였다. 이번엔 다르다 — 길이가 바뀌므로 제외하면
+ * 구 벡터의 앞 30칸이 **신규 스킬로 재해석**된다. 그런데 수호 레코드는 **서버에 저장돼 계속
+ * 흘러 들어오므로**(`src/net/lineageMirror.ts` → `normalizeGuardianRecords`) 세이브를 한 번
+ * 훑는 마이그레이션으로는 못 막는다. 그래서 그 처리는 상시 관문인
+ * {@link normalizeGuardianBuild} 에 둔다(길이 기반 판정 — 사용자 결정 2026-08-06).
+ *
+ * 손상 방어: `ships` 가 배열이 아니거나 원소가 객체가 아니면 그 칸은 건너뛴다. 환급 누계는
+ * 유한 양수만 더한다.
+ */
+function migrateV10toV11(v10: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...v10, saveVersion: 11 };
+  if (!Array.isArray(out.ships)) return out;
+  let refund = 0;
+  out.ships = out.ships.map((raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null) return raw;
+    const ship = raw as Record<string, unknown>;
+    const invest = ship.skillInvest;
+    if (!Array.isArray(invest)) return ship;
+    for (const v of invest) {
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) refund += Math.trunc(v);
+    }
+    return { ...ship, skillInvest: [] };
+  });
+  if (refund > 0) {
+    const banked =
+      typeof out.skillPoints === 'number' && Number.isFinite(out.skillPoints)
+        ? Math.trunc(out.skillPoints)
+        : 0;
+    out.skillPoints = banked + refund;
+  }
   return out;
 }
 
@@ -941,10 +994,41 @@ function normalizeGuardianSnapshot(v: unknown): GuardianSnapshot | null {
 }
 
 /**
+ * 퇴역 수호기 빌드의 스킬 벡터 정규화 — **구 레이아웃 벡터는 전부 0 으로 만든다**
+ * (ADR-0049, 사용자 결정 2026-08-06).
+ *
+ * ## 왜 살아 있는 기체와 다른 규칙인가
+ * 살아 있는 기체는 세이브 마이그레이션(`migrateV10toV11`)이 한 번 훑어 환급하고 비운다.
+ * 퇴역 수호기는 그럴 수 없다 — 빌드가 **서버에 저장돼 매번 새로 흘러 들어오고**
+ * (`src/net/lineageMirror.ts` → `normalizeGuardianRecords`), 퇴역기에는 포인트 풀이 없어
+ * 환급할 곳도 없다. 그래서 상시 관문인 여기서 판정한다.
+ *
+ * ## 판정은 **길이**로 한다
+ * 구 레이아웃은 기체마다 63(스트라이커 등) 또는 78(해츨링)이고 신규는 전 기체 30이다.
+ * 길이가 신규 노드 수와 다르면 구 벡터다. 그대로 두면 `normalizeSkillInvest` 가 앞 30칸만
+ * 옮겨 담아 **구 트리 노드 값이 신규 스킬 레벨로 재해석**되고, 예비역 소집
+ * (`callupPilot.ts` → `buildRunConfig`)에서 플레이어가 투자한 적 없는 스킬이 공짜로
+ * 해금된다 — ADR-0049 「해금은 포인트로만」 정면 위반이다.
+ *
+ * ## 받아들인 대가
+ * 방어 스냅샷(`GuardianSnapshot` 12칸)은 **퇴역 시점에 이미 동결**돼 있어 이 변경의 영향을
+ * 받지 않고, 전투력 점수(`combat_score`)도 서버에 저장된 값 그대로다. 따라서 legacy 수호기는
+ * "점수는 그대로인데 소집하면 스킬이 없는" 상태가 된다 — §0-B 결정 C 가 줄이려던 괴리가
+ * legacy 에 한해 남는다. 대안(구 벡터를 신규 축에 재분배)은 어느 스킬에 들어갈지가 임의라
+ * "안 찍은 스킬이 찍혀 있다"는 같은 문제를 형태만 바꿔 남긴다.
+ */
+function normalizeGuardianSkillInvest(v: unknown, typeId: number): number[] {
+  const fresh = zeroSkillInvest(typeId);
+  if (!Array.isArray(v) || v.length !== fresh.length) return fresh;
+  return normalizeSkillInvest(v, typeId);
+}
+
+/**
  * 저장된 수호 기체 실물 빌드(ADR-0024, v7)를 정규화한다. build 블롭이 객체가 아니면(부재·손상)
  * undefined 를 돌려주고, 이때 레코드 자체는 유지된다(소집 비활성 = 구 수호기와 동일 상태).
- * typeId·equipped·skillInvest 는 **기존 정본 헬퍼로만** 정규화한다(규칙 중복 금지 — equipped 루프는
- * {@link normalizeShip} 과 동일 필터, typeId 는 normalizeShipTypeId, 벡터는 normalizeSkillInvest).
+ * typeId·equipped 는 **기존 정본 헬퍼로만** 정규화한다(규칙 중복 금지 — equipped 루프는
+ * {@link normalizeShip} 과 동일 필터, typeId 는 normalizeShipTypeId). 스킬 벡터만
+ * {@link normalizeGuardianSkillInvest} 로 따로 간다(살아 있는 기체와 규칙이 다르다).
  */
 function normalizeGuardianBuild(v: unknown): GuardianBuild | undefined {
   if (typeof v !== 'object' || v === null) return undefined;
@@ -959,7 +1043,7 @@ function normalizeGuardianBuild(v: unknown): GuardianBuild | undefined {
   return {
     typeId,
     equipped,
-    skillInvest: normalizeSkillInvest(d.skillInvest, typeId),
+    skillInvest: normalizeGuardianSkillInvest(d.skillInvest, typeId),
     // 액티브 장착 박제(v8, 계획 PM-3). 구 레코드는 필드가 없으므로 빈 슬롯 2칸으로 정규화된다 —
     // **기존 guardian 레코드까지 정규화**가 AC-15 의 요구다.
     activeSlots: normalizeActiveSlots(d.activeSlots, typeId),
