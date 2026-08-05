@@ -2069,6 +2069,25 @@ export const EN = {
   'commission.about.stock': 'Storage',
   'commission.about.stockBody':
     'You may hold up to {cap}. While full, no new commission is issued — launch or clear space first.',
+
+  // 지시 수신소 도움말(사용자 요청 2026-08-05). 문단 구분은 홑 개행(`helpModal.ts` 주석 ①).
+  'commission.help': 'Help',
+  'commission.help.title': 'Order Desk Guide',
+  'commission.help.s1.h': 'What a commission is',
+  'commission.help.s1.b':
+    'A commission is a sealed order. Its stages, its restrictions, and its rewards are all fixed the moment it is issued, and clearing it pays exactly what is written on it — no roll, no variance.\nBecause the reward is a promise rather than a drop, the planet popularity multiplier does not apply to it.',
+  'commission.help.s2.h': 'How you get one',
+  'commission.help.s2.b':
+    'Planet bosses issue a commission on defeat, rarely, and only from runs you won by killing the boss. Higher invasion stages issue higher grades.\nA commission run never issues another commission. To get more you have to go back to ordinary farming, which is what keeps the loop from feeding itself.\nYou may hold a limited number at once. While your desk is full, no new order is issued — launch one or clear space first.',
+  'commission.help.s3.h': 'What a commission run is like',
+  'commission.help.s3.b':
+    'A commission run follows the same grammar as an invasion: several stages passed in a single run with one settlement at the end, resources carried across the boundaries, and no checkpoint if you die partway.\nThe difference is what changes at a boundary. An invasion changes scroll direction; a commission changes the entire planet mode.\nCommissions and catalysts never share a run. A catalyst seasons an ordinary run; a commission opens a separate one with its stage already written.',
+  'commission.help.s4.h': 'Restrictions',
+  'commission.help.s4.b':
+    'Some orders carry restrictions. These are not policed during the run — what is forbidden is simply removed from your loadout options and from the powerup pool, so violating one is impossible rather than punished.\nIf an order lists no restrictions, the detail column says so plainly.',
+  'commission.help.s5.h': 'Why this screen needs a login',
+  'commission.help.s5.b':
+    'The server holds the record of both the orders you have and the guaranteed items they pay out. That is why obtaining a commission and launching a commission run both need a connection.\nA commission run is also the one PvE run that submits a replay. Because the reward is guaranteed rather than rolled, the server re-simulates the run in full before paying it.',
 } as const;
 
 /** 카탈로그 키 = 영어 정본의 키 집합. */
@@ -4066,6 +4085,26 @@ export const KO: Record<MessageKey, string> = {
   'commission.about.stock': '보관',
   'commission.about.stockBody':
     '{cap}장까지 보관합니다. 꽉 차 있는 동안에는 새 의뢰서가 들어오지 않습니다 — 먼저 출격해 자리를 비우세요.',
+
+  // 지시 수신소 도움말(사용자 요청 2026-08-05). 용어는 KO 정본표를 따른다 — `의뢰서`(건물명
+  // `지시 수신소`는 세계관 플레이버라 유지) · `촉매` · `침략 단계` · `파워업`. 이모지 금지, 존댓말.
+  'commission.help': '도움말',
+  'commission.help.title': '지시 수신소 안내',
+  'commission.help.s1.h': '의뢰서란 무엇인가요',
+  'commission.help.s1.b':
+    '의뢰서는 봉인된 주문서입니다. 어느 무대를 도는지, 어떤 제약이 걸리는지, 무엇을 받는지가 발급되는 순간 전부 적혀 확정됩니다. 완수하면 적힌 그대로 지급되며 굴림도 편차도 없습니다.\n보상이 굴림이 아니라 약속이라서 행성 인기 배율이 걸리지 않습니다.',
+  'commission.help.s2.h': '어떻게 얻나요',
+  'commission.help.s2.b':
+    '행성 보스가 쓰러질 때 드물게 발급합니다. 보스를 잡아 이긴 런에서만 나오며, 침략 단계가 높을수록 높은 등급이 나옵니다.\n의뢰 런은 다시 의뢰서를 낳지 않습니다. 더 얻으려면 평범한 파밍으로 돌아와야 하고, 이것이 순환이 스스로 불어나지 않게 막습니다.\n보관 장수에는 상한이 있습니다. 꽉 차 있는 동안에는 새 의뢰서가 들어오지 않으니 먼저 출격해 자리를 비워 주세요.',
+  'commission.help.s3.h': '의뢰 런은 어떤 런인가요',
+  'commission.help.s3.b':
+    '의뢰 런은 침공과 같은 문법입니다. 여러 구간을 한 번의 런으로 통과해 정산을 한 번만 하고, 자원이 구간을 넘어 승계되며, 중간에 죽어도 돌아갈 체크포인트가 없습니다.\n다른 점은 구간 경계에서 바뀌는 것입니다. 침공은 스크롤 방향이 바뀌지만 의뢰 런은 행성 모드가 통째로 바뀝니다.\n의뢰서와 촉매는 같은 런에 함께 서지 않습니다. 촉매는 평범한 런에 치는 조미료이고, 의뢰서는 무대가 이미 적혀 있는 별개의 런을 여는 것이기 때문입니다.',
+  'commission.help.s4.h': '제약',
+  'commission.help.s4.b':
+    '의뢰서에 제약이 붙는 경우가 있습니다. 이 제약은 런 도중에 감시하는 것이 아니라, 금지된 것을 출격 조립과 파워업 후보에서 아예 빼는 방식으로 강제합니다. 어기는 것이 벌을 받는 일이 아니라 애초에 불가능한 일입니다.\n제약이 없는 의뢰서는 상세 열에 없다고 분명히 적어 드립니다.',
+  'commission.help.s5.h': '이 화면은 왜 로그인이 필요한가요',
+  'commission.help.s5.b':
+    '보유한 의뢰서와 그것이 확정 지급하는 물건의 기록을 서버가 쥐고 있습니다. 그래서 의뢰서 획득과 의뢰 출격은 접속이 필요합니다.\n의뢰 런은 리플레이를 제출하는 유일한 PvE 런이기도 합니다. 보상이 굴림이 아니라 확정 지급이라, 서버가 런을 처음부터 다시 돌려 확인한 뒤에 지급합니다.',
 };
 
 /** 로케일별 카탈로그 묶음. */
