@@ -19,13 +19,16 @@ import {
   REVEAL_TOTAL_MS,
   SUBJECT_RISE_PX,
   PANEL_OPEN_SCALE,
+  ICON_POP_SCALE,
 } from '../src/ui/pixi/dailyRewardReveal.js';
+import { ICON_SIZE } from '../src/ui/pixi/dailyRewardModal.js';
 
 describe('개봉 연출 — 시작과 끝', () => {
-  it('시작 프레임은 지급물을 감춘다 — 봉인이 덮여 있고 게이지가 비어 있다', () => {
+  it('시작 프레임은 지급물을 감춘다 — 아이콘도 글자도 안 보이고 게이지가 비어 있다', () => {
     const f = revealFrame(0);
     expect(f.subjectAlpha).toBe(0);
-    expect(f.sealAlpha).toBe(1);
+    expect(f.iconAlpha).toBe(0);
+    expect(f.iconScale).toBeCloseTo(ICON_POP_SCALE, 5);
     expect(f.barProgress).toBe(0);
     expect(f.panelScale).toBeCloseTo(PANEL_OPEN_SCALE, 5);
     expect(f.subjectRise).toBe(SUBJECT_RISE_PX);
@@ -39,16 +42,25 @@ describe('개봉 연출 — 시작과 끝', () => {
     expect(revealFrame(REVEAL_TOTAL_MS + 5_000)).toBe(REVEAL_SETTLED);
   });
 
-  it('정착값이 정적 화면이다 — 봉인과 쓸림은 사라지고 나머지는 100% 다', () => {
+  it('정착값이 정적 화면이다 — 전부 100% 이고 아이콘 배율이 정확히 1 이다', () => {
     expect(REVEAL_SETTLED.panelScale).toBe(1);
     expect(REVEAL_SETTLED.panelAlpha).toBe(1);
     expect(REVEAL_SETTLED.subjectAlpha).toBe(1);
     expect(REVEAL_SETTLED.subjectRise).toBe(0);
     expect(REVEAL_SETTLED.barProgress).toBe(1);
-    // 이 둘이 0 이 아니면 팝업 위에 금빛 판이 영구히 남는다.
-    expect(REVEAL_SETTLED.sealAlpha).toBe(0);
-    expect(REVEAL_SETTLED.sweepAlpha).toBe(0);
+    expect(REVEAL_SETTLED.iconAlpha).toBe(1);
+    // ⚠️ **정확히 1 이어야 한다.** 1 을 넘기면 아이콘이 정착 상태에서 원본(64px)보다 크게
+    //    확대돼 남는다 — 이 리포에서 "구려 보인다"의 절반이 그 과확대였다.
+    expect(REVEAL_SETTLED.iconScale).toBe(1);
     expect(REVEAL_SETTLED.done).toBe(true);
+  });
+
+  it('금빛 연출(봉인·쓸림) 필드가 남아 있지 않다 (사용자 지시 2026-08-05)', () => {
+    // 필드를 남기고 0 을 넣는 안은 기각했다 — 아무도 안 읽는 필드가 타임라인에 남으면
+    // 다음 사람이 그것을 되살릴 자리로 오해한다.
+    for (const dead of ['sealAlpha', 'sealScale', 'sweepT', 'sweepAlpha']) {
+      expect(Object.keys(REVEAL_SETTLED), `${dead} 가 되살아났다`).not.toContain(dead);
+    }
   });
 
   it('연출이 실제로 무언가를 한다 — 시작과 끝이 다르다', () => {
@@ -56,7 +68,7 @@ describe('개봉 연출 — 시작과 끝', () => {
     const start = revealFrame(0);
     expect(start.subjectAlpha).not.toBe(REVEAL_SETTLED.subjectAlpha);
     expect(start.panelScale).not.toBe(REVEAL_SETTLED.panelScale);
-    expect(start.sealAlpha).not.toBe(REVEAL_SETTLED.sealAlpha);
+    expect(start.iconScale).not.toBe(REVEAL_SETTLED.iconScale);
   });
 });
 
@@ -76,14 +88,24 @@ describe('개봉 연출 — 단조성과 정의역', () => {
     }
   });
 
-  it('봉인은 뒤로 가지 않고 사라진다(불투명도 단조 감소)', () => {
-    let prev = 2;
+  it('아이콘은 뒤로 가지 않는다(불투명도 단조 증가)', () => {
+    let prev = -1;
     for (let i = 0; i <= SAMPLES; i++) {
       const f = revealFrame(at(i));
-      expect(f.sealAlpha).toBeLessThanOrEqual(prev + 1e-9);
-      prev = f.sealAlpha;
+      expect(f.iconAlpha).toBeGreaterThanOrEqual(prev - 1e-9);
+      prev = f.iconAlpha;
     }
-    expect(revealFrame(REVEAL_TOTAL_MS).sealAlpha).toBe(0);
+    expect(revealFrame(REVEAL_TOTAL_MS).iconAlpha).toBe(1);
+  });
+
+  it('아이콘 배율이 원본 해상도를 넘지 않는다 — 표시 크기 × 최대 배율 <= 64', () => {
+    // ⚠️ 이것이 이 연출에서 **자산 품질에 직결되는 유일한 수치 계약**이다. 튀어나오는
+    //    느낌을 키우려고 오버슛을 올리면 어느 순간 원본을 넘겨 확대되고, 그 흐릿함은
+    //    "연출이 과하다"가 아니라 "아이콘이 구리다"로 보고된다.
+    let peak = 0;
+    for (let i = 0; i <= SAMPLES; i++) peak = Math.max(peak, revealFrame(at(i)).iconScale);
+    expect(peak).toBeGreaterThan(1); // 양성 짝 — 실제로 살짝 넘겨야 튀어나온다.
+    expect(ICON_SIZE * peak).toBeLessThanOrEqual(64);
   });
 
   it('지급물이 내려간 거리는 줄기만 하고 **정수**다 — 반픽셀 부유가 테두리를 번쩍이게 한다', () => {
@@ -99,15 +121,14 @@ describe('개봉 연출 — 단조성과 정의역', () => {
   it('모든 값이 유한하고 정의역 안이다', () => {
     for (let i = -5; i <= SAMPLES + 5; i++) {
       const f = revealFrame(at(i));
-      for (const v of [f.panelScale, f.panelAlpha, f.sealAlpha, f.sealScale, f.subjectAlpha, f.barProgress, f.sweepT, f.sweepAlpha, f.subjectRise]) {
+      for (const v of [f.panelScale, f.panelAlpha, f.iconScale, f.iconAlpha, f.subjectAlpha, f.barProgress, f.subjectRise]) {
         expect(Number.isFinite(v)).toBe(true);
       }
-      for (const a of [f.panelAlpha, f.sealAlpha, f.subjectAlpha, f.barProgress, f.sweepAlpha]) {
+      for (const a of [f.panelAlpha, f.iconAlpha, f.subjectAlpha, f.barProgress]) {
         expect(a).toBeGreaterThanOrEqual(0);
         expect(a).toBeLessThanOrEqual(1);
       }
-      expect(f.sweepT).toBeGreaterThanOrEqual(-1);
-      expect(f.sweepT).toBeLessThanOrEqual(1);
+      expect(f.iconScale).toBeGreaterThanOrEqual(ICON_POP_SCALE - 1e-9);
       // 판이 축소되며 열리다 살짝 넘긴다. 넘침이 크면 팝업이 튄 것으로 보인다.
       expect(f.panelScale).toBeGreaterThanOrEqual(PANEL_OPEN_SCALE - 1e-9);
       expect(f.panelScale).toBeLessThan(1.12);
@@ -130,13 +151,9 @@ describe('개봉 연출 — 단조성과 정의역', () => {
     }
   });
 
-  it('쓸림은 들어오고 나갈 때 안 보인다 — 양 끝 불투명도가 0 이다', () => {
-    // 0 이 아니면 빛 막대가 판 가장자리에서 갑자기 나타났다 사라진다.
-    expect(revealFrame(0).sweepAlpha).toBe(0);
-    expect(revealFrame(REVEAL_TOTAL_MS).sweepAlpha).toBe(0);
-    // 양성 짝 — 중간에는 실제로 보인다(안 보이면 이 연출은 없는 것과 같다).
-    let peak = 0;
-    for (let i = 0; i <= SAMPLES; i++) peak = Math.max(peak, revealFrame(at(i)).sweepAlpha);
-    expect(peak).toBeGreaterThan(0.2);
+  it('아이콘이 글자보다 먼저 나타난다 — 무엇을 받았는지가 먼저 읽혀야 한다', () => {
+    // 순서가 뒤집히면 글자를 읽고 나서 아이콘이 뒤늦게 튀어나와 두 번 보게 된다.
+    const mid = revealFrame(300);
+    expect(mid.iconAlpha).toBeGreaterThan(mid.subjectAlpha);
   });
 });

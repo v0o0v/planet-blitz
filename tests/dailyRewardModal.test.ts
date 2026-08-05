@@ -34,6 +34,7 @@ import { DAILY_STREAK_CYCLE } from '../data/dailyReward.js';
 import {
   DAILY_MODAL_W,
   DAILY_MODAL_INTERACTIVE,
+  ICON_SIZE,
   estimateTextWidth,
   layoutDailyRewardModal,
   wrapByEstimate,
@@ -405,5 +406,92 @@ describe('폭 추정기', () => {
     const lines = wrapByEstimate(blob, 16, 160);
     expect(lines.length).toBeGreaterThan(1);
     for (const line of lines) expect(estimateTextWidth(line, 16)).toBeLessThanOrEqual(160);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// 지급물·예고 아이콘 (사용자 지시 2026-08-05 — 금빛 연출을 걷어내고 아이콘으로)
+// ---------------------------------------------------------------------------
+
+describe('지급물·예고 아이콘', () => {
+  it('오늘과 내일 두 줄에 각각 아이콘이 붙는다', () => {
+    const icons = layoutDailyRewardModal(FULL).icons;
+    expect(icons.map((i) => i.row)).toContain('todaySubject');
+    expect(icons.map((i) => i.row)).toContain('tomorrowSubject');
+  });
+
+  it('⚠️ 표시 배율이 원본 해상도(64px)를 넘지 않는다', () => {
+    // 이 리포에서 "구려 보인다"의 절반이 과확대였다(64px 자산을 280px 로 늘려 쓴 전례).
+    // 개봉 연출이 중간에 배율을 살짝 넘기므로 그 여유까지 남겨 둬야 한다.
+    for (const ic of layoutDailyRewardModal(FULL).icons) {
+      expect(ic.size, `${ic.row} 아이콘이 원본보다 크다`).toBeLessThanOrEqual(64);
+    }
+  });
+
+  it('아이콘이 붙은 줄은 그만큼 들여쓰이고 쓸 수 있는 가로가 줄어든다', () => {
+    // 줄이지 않으면 아이콘 폭만큼 오른쪽으로 넘친다 — 추정 줄바꿈이 좁아진 폭을 봐야
+    // "안쪽 폭에 들어오면 실제 글자도 들어온다"는 이 파일의 보증이 성립한다.
+    const layout = layoutDailyRewardModal(FULL);
+    const row = layout.rows.find((r) => r.id === 'todaySubject');
+    const plain = layout.rows.find((r) => r.id === 'todayNotice');
+    expect(row).toBeDefined();
+    expect(plain).toBeDefined();
+    expect(row!.x).toBeGreaterThan(plain!.x);
+    expect(row!.maxWidth).toBeLessThan(layout.innerWidth);
+    expect(row!.estWidth).toBeLessThanOrEqual(row!.maxWidth);
+  });
+
+  it('재화 축은 실제로 들어온 것만 아이콘으로 보여준다', () => {
+    // 광물이 0 인데 결정 아이콘을 띄우면 화면이 받지 않은 것을 받았다고 말한다.
+    const creditsOnly: DailyRewardModalData = {
+      streak: 3,
+      today: { axis: 'currency', credits: 1200, minerals: 0 },
+    };
+    const one = layoutDailyRewardModal(creditsOnly).icons.filter((i) => i.row === 'todaySubject');
+    expect(one.length).toBe(1);
+
+    const both: DailyRewardModalData = {
+      streak: 3,
+      today: { axis: 'currency', credits: 1200, minerals: 40 },
+    };
+    const two = layoutDailyRewardModal(both).icons.filter((i) => i.row === 'todaySubject');
+    expect(two.length).toBe(2);
+    // 겹치면 안 된다 — 두 번째가 첫 번째 오른쪽에 선다.
+    expect(two[1]!.x).toBeGreaterThanOrEqual(two[0]!.x + two[0]!.size);
+  });
+
+  it('예고 아이콘은 개수로 값을 흘리지 않는다 (AC-21)', () => {
+    // 예고에는 credits/minerals 가 실리지 않으므로 재화 축이어도 **항상 하나**여야 한다.
+    // 여기서 둘이 나오면 내일 광물이 온다는 사실이 아이콘 개수로 새어 나간 것이다.
+    const data: DailyRewardModalData = {
+      streak: 3,
+      today: { axis: 'currency', credits: 1200, minerals: 40 },
+      tomorrow: { axis: 'currency' },
+    };
+    const tomorrow = layoutDailyRewardModal(data).icons.filter((i) => i.row === 'tomorrowSubject');
+    expect(tomorrow.length).toBe(1);
+  });
+
+  it('예고가 아직 없으면 아이콘도 없다 — 자리표시가 "무언가 온다"고 말하면 안 된다', () => {
+    const none: DailyRewardModalData = { streak: 3, today: { axis: 'currency', credits: 10 } };
+    const icons = layoutDailyRewardModal(none).icons;
+    expect(icons.filter((i) => i.row === 'tomorrowSubject')).toEqual([]);
+  });
+
+  it('여섯 축 전부가 아이콘을 갖는다 — 빠진 축은 빈 자리로 보인다', () => {
+    for (const axis of ['currency', 'catalyst', 'blueprint', 'coreModule', 'gear', 'commission'] as const) {
+      const data: DailyRewardModalData = { streak: 5, today: { axis } };
+      const icons = layoutDailyRewardModal(data).icons.filter((i) => i.row === 'todaySubject');
+      expect(icons.length, `${axis} 축에 아이콘이 없다`).toBeGreaterThan(0);
+    }
+  });
+
+  it('좌표가 전부 정수다 — 반픽셀 부유가 테두리를 번쩍이게 한다', () => {
+    for (const ic of layoutDailyRewardModal(FULL).icons) {
+      expect(Number.isInteger(ic.x)).toBe(true);
+      expect(Number.isInteger(ic.y)).toBe(true);
+      expect(ic.size).toBe(ICON_SIZE);
+    }
   });
 });

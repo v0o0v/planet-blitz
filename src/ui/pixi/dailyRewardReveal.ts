@@ -18,12 +18,21 @@
  * ## 화면에 무엇이 일어나는가
  *
  *   0 ─ 180ms   판이 0.88 에서 1.0 으로 열린다(살짝 넘겼다 돌아오는 back-out).
- *  120 ─ 420ms  **봉인**이 부풀며 사라진다 — "오늘 받은 것" 줄을 덮고 있던 금빛 판이다.
+ *  120 ─ 460ms  **아이콘이 튀어나온다** — 0.6 배에서 살짝 넘겨 1.0 으로.
  *  300 ─ 620ms  지급물 줄이 14px 올라오며 나타난다.
  *  300 ─ 1100ms 연속 접속 게이지가 0 에서 오늘 값까지 찬다.
- *  380 ─ 760ms  금빛 쓸림이 판을 가로지른다.
  *
- * 겹치는 구간이 있는 것이 의도다. 순차로 두면 1.1초가 네 개의 짧은 정지로 쪼개져 길게 느껴진다.
+ * 겹치는 구간이 있는 것이 의도다. 순차로 두면 1.1초가 세 개의 짧은 정지로 쪼개져 길게 느껴진다.
+ *
+ * ## ⚠️ 금빛 연출(봉인·쓸림)은 걷어냈다 (사용자 지시 2026-08-05)
+ *
+ * 초판은 "오늘 받은 것" 줄을 금빛 판으로 덮었다가 부수고, 판을 가로지르는 금빛 쓸림을 얹었다.
+ * 사용자가 둘 다 걷어내라고 했고 그 자리를 **아이콘**이 대신한다 — 무엇을 받았는지가 글자보다
+ * 먼저 읽히는 편이 통지의 목적에 맞는다.
+ *
+ * 그래서 `sealAlpha`·`sealScale`·`sweepT`·`sweepAlpha` 네 필드를 **지웠다.** 남겨 두고 0 을
+ * 넣는 안은 기각했다 — 아무도 안 읽는 필드가 타임라인에 남으면 다음 사람이 그것을 되살릴
+ * 자리로 오해하고, "순수 타임라인"이라는 이 파일의 값어치가 거기서부터 썩는다.
  *
  * ## 규율
  *  - `Date.now`·`Math.random` 을 쓰지 않는다. 경과 시간은 **호출자가 준다**(`Ticker` 가 소유).
@@ -40,26 +49,36 @@ export const SUBJECT_RISE_PX = 14;
 /** 판이 열리기 시작하는 배율. 1 에 너무 가까우면 열린다는 느낌이 안 나고, 낮으면 튄다. */
 export const PANEL_OPEN_SCALE = 0.88;
 
+/**
+ * 아이콘이 튀어나오기 시작하는 배율.
+ *
+ * ⚠️ **이것은 연출 배율이지 표시 배율이 아니다.** 아이콘 원본은 64×64 이고 화면 표시 크기는
+ * `dailyRewardModal.ts` 의 `ICON_SIZE`(원본보다 작다)가 정한다. 여기 값은 그 표시 크기에
+ * 곱해지는 0..1 계수이므로, 정착(1.0)에서도 원본 해상도를 넘겨 확대하는 일이 없다 —
+ * 과확대가 "구려 보인다"의 절반이었던 전례를 이 분리로 막는다.
+ */
+export const ICON_POP_SCALE = 0.6;
+
 /** 한 프레임의 연출 값 전부. 렌더는 이 객체를 Pixi 노드에 옮기기만 한다. */
 export interface RevealFrame {
   /** 팝업 전체 배율. 정착 1. */
   readonly panelScale: number;
   /** 팝업 전체 불투명도. 정착 1. */
   readonly panelAlpha: number;
-  /** 봉인 판의 불투명도. 정착 **0**(사라진다). */
-  readonly sealAlpha: number;
-  /** 봉인 판의 배율(부풀며 사라진다). 정착 값은 의미가 없다(투명하므로). */
-  readonly sealScale: number;
+  /**
+   * 아이콘 배율 **계수**(표시 크기에 곱한다). 정착 **1** — 즉 원본을 넘겨 확대하지 않는다.
+   * 중간에 1 을 살짝 넘겨 튀어나오는 느낌을 만들지만 그 최대가 원본 해상도 안에 있도록
+   * 표시 크기를 잡는 것은 호출부의 몫이다({@link ICON_POP_SCALE} 주석).
+   */
+  readonly iconScale: number;
+  /** 아이콘 불투명도. 정착 1. */
+  readonly iconAlpha: number;
   /** 지급물 줄의 불투명도. 정착 1. */
   readonly subjectAlpha: number;
   /** 지급물 줄이 아직 내려가 있는 거리(px, **정수**). 정착 0. */
   readonly subjectRise: number;
   /** 게이지 채움 진행 0..1. 호출자가 목표 채움률에 곱한다. 정착 1. */
   readonly barProgress: number;
-  /** 쓸림의 가로 위치 −1..1(팝업 폭 기준 정규화). */
-  readonly sweepT: number;
-  /** 쓸림의 불투명도. 정착 **0**. */
-  readonly sweepAlpha: number;
   /** 연출이 끝났는가(호출자가 `Ticker` 구독을 끊는 신호). */
   readonly done: boolean;
 }
@@ -73,13 +92,11 @@ export interface RevealFrame {
 export const REVEAL_SETTLED: RevealFrame = {
   panelScale: 1,
   panelAlpha: 1,
-  sealAlpha: 0,
-  sealScale: 1,
+  iconScale: 1,
+  iconAlpha: 1,
   subjectAlpha: 1,
   subjectRise: 0,
   barProgress: 1,
-  sweepT: 1,
-  sweepAlpha: 0,
   done: true,
 };
 
@@ -130,24 +147,20 @@ export function revealFrame(elapsedMs: number): RevealFrame {
   if (t >= REVEAL_TOTAL_MS) return REVEAL_SETTLED;
 
   const open = span(t, 0, 180);
-  const seal = span(t, 120, 420);
+  const icon = span(t, 120, 460);
   const subject = span(t, 300, 620);
   const bar = span(t, 300, REVEAL_TOTAL_MS);
-  const sweep = span(t, 380, 760);
 
   return {
     panelScale: PANEL_OPEN_SCALE + (1 - PANEL_OPEN_SCALE) * easeOutBack(open),
     panelAlpha: easeOut(span(t, 0, 140)),
-    // 봉인은 **깨지는 것**이지 서서히 옅어지는 것이 아니다 — 뒤로 갈수록 빨리 사라지도록
-    // 제곱을 걸어 초반에 오래 남긴다.
-    sealAlpha: 1 - seal * seal,
-    sealScale: 1 + 0.6 * easeOut(seal),
+    // 아이콘은 **튀어나온다** — 살짝 넘겼다 1.0 으로 돌아온다. 판이 열리는 곡선과 같은
+    // easeOutBack 을 쓰는 것이 의도다: 두 움직임이 같은 성질이어야 한 동작으로 읽힌다.
+    iconScale: ICON_POP_SCALE + (1 - ICON_POP_SCALE) * easeOutBack(icon),
+    iconAlpha: easeOut(span(t, 120, 300)),
     subjectAlpha: easeOut(subject),
     subjectRise: Math.round(SUBJECT_RISE_PX * (1 - easeOut(subject))),
     barProgress: easeOut(bar),
-    sweepT: -1 + 2 * sweep,
-    // 쓸림은 가운데서 가장 밝다. 양 끝에서 0 이라 들어오고 나가는 것이 안 보인다.
-    sweepAlpha: 0.55 * Math.sin(Math.PI * sweep),
     done: false,
   };
 }
