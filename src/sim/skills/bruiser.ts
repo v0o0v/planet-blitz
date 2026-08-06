@@ -27,7 +27,15 @@ import type { VolleyParams } from '../skillHooks.js';
 import { fanStrike, clearEnemyBullets } from '../activeTypes.js';
 import { isElite } from '../elite.js';
 import { cos, sin } from '../math.js';
-import { readSlot, writeSlot, BruiserCarry, BruiserStage } from '../skillSlots.js';
+import type { DamageSourceMask } from '../skillSlots.js';
+import {
+  readSlot,
+  writeSlot,
+  BruiserCarry,
+  BruiserStage,
+  DamageSource,
+  hasDamageSource,
+} from '../skillSlots.js';
 import { ARMOR_MAX_STACKS, clampArmorStacks } from '../shipSignature.js';
 import { skillLv } from '../../items/skills.js';
 
@@ -50,6 +58,7 @@ const enum Sk {
   /** BL3 만재 중탄 */ fullPlateSlug = 2,
   /** BL4 과적 배출 */ overflowVent = 3,
   /** BL6 중량 탄자 */ massSlug = 5,
+  /** BL8 격돌 담금질 */ impactTemper = 7,
   /** BL9 중압 리듬 */ crushCadence = 8,
   /** MO1 충각 적재 */ dashLoading = 10,
   /** MO6 압쇄장 */ crushField = 15,
@@ -109,6 +118,11 @@ function reboundRefundBp(level: number): number {
 function cadencePeriod(stacks: number): number {
   const n = Math.round(48 / (4 + stacks));
   return n >= 1 ? n : 1;
+}
+
+/** BL8: 적립 상한 = round(1 + 5×Lv/(Lv+10)) — Lv1 = 1, Lv20 ≈ 4, 점근 6. */
+function temperCap(level: number): number {
+  return Math.round(1 + (5 * level) / (level + 10));
 }
 
 /** FO2 정산 회복 비율(고정 60% — 잔여 40% 소멸, 완전 환급 금지). */
@@ -200,6 +214,7 @@ export function bruiserPlayerDamaged(
   player: Entity,
   dmg: number,
   lethalSurvived: boolean,
+  sources: DamageSourceMask,
 ): void {
   // --- BL4 과적 배출 -------------------------------------------------------
   // ⚠️ **설계와 어긋나는 지점(레인 보고서에 적었다).** 설계서는 "만재 **상태에서** 실피격" 을
@@ -230,6 +245,18 @@ export function bruiserPlayerDamaged(
         readSlot(state.skillCarry, BruiserCarry.clotPool) + add,
       );
     }
+  }
+
+  // --- BL8 격돌 담금질(적립처) --------------------------------------------
+  // 트리거는 **접촉 기여**뿐이다 — `sources` 는 비트합이라 같은 틱에 적탄이 더 아팠어도
+  // (`world.ts` 의 `max` 가 적탄을 골랐어도) 접촉 비트가 서 있으면 적립한다. 설계서가 명시한
+  // 술어 그대로다. 단일 유니온이었다면 이 자리가 바로 `max` 에 삼켜지는 지점이다.
+  // ⚠️ `dmg` 크기는 보지 않는다 — 적립 단위가 "접촉 피격 1회 = 강화탄 1발" 이라 비례가 아니다.
+  const bl8 = lv(state, Sk.impactTemper);
+  if (bl8 >= 1 && hasDamageSource(sources, DamageSource.contact)) {
+    const cap = temperCap(bl8);
+    const cur = readSlot(state.skillStage, BruiserStage.temperCharges);
+    if (cur < cap) writeSlot(state.skillStage, BruiserStage.temperCharges, cur + 1);
   }
 
   // --- FO5 불괴 연쇄 -------------------------------------------------------
@@ -476,13 +503,15 @@ export function bruiserEnemyDeath(state: WorldState, player: Entity, elite: bool
  *    표적도 그 거리도 없었고(`nearestTarget` 은 `world.ts` 소유이고 런타임 import 는 계약
  *    위반이다), 여기서 최근접 적을 다시 고르면 조준 선택 규칙의 **두 번째 사본**이 생겨
  *    조용히 갈린다. S2.1 이 *world 가 이미 고른 결과의 거리만* 싣는 칸을 열어 그대로 닫혔다.
- *  - **BL8 격돌 담금질**: 소모처(선두탄 대구경화)는 여기서 되지만 **적립처(몸통 접촉으로 인한
- *    실피격)** 가 없다. 앵커 ④ 는 피해원을 구분하지 않고(`world.ts` 의 max 수집 루프가 접촉원
- *    기여를 지역 변수로도 남기지 않는다) 접촉 판별 앵커가 아직 없다. 소비처 없는 카운터만
- *    돌리는 것이 이 저장소가 금지한 반쪽 배선이라 **양쪽이 열릴 때까지 넣지 않는다.**
- *    (2026-08-07 재확인 — 사유는 아직 **유효**하다. 앵커 ④ `onPlayerDamaged` 의 인자는
- *     `dmg`·`lethalSurvived` 뿐이라 여전히 피해원을 구분하지 않고, 접촉 판별 앵커도 새로
- *     생기지 않았다. BL2 를 연 `targetDist` 는 발사축 필드라 이 축과 무관하다.)
+ *  - **BL8 격돌 담금질**: ✅ **배선됐다**(W2). 막고 있던 사유는 근거로 남긴다 — 소모처(선두탄
+ *    대구경화)는 여기서 됐지만 **적립처(몸통 접촉으로 인한 실피격)** 가 없었다. 앵커 ④ 는
+ *    피해원을 구분하지 않았고(`world.ts` 의 max 수집 루프가 접촉원 기여를 지역 변수로도 남기지
+ *    않았다) 접촉 판별 앵커가 없었다. 소비처 없는 카운터만 돌리는 것이 이 저장소가 금지한
+ *    반쪽 배선이라 양쪽이 열릴 때까지 넣지 않았다.
+ *    (2026-08-07 재확인 시점까지도 사유는 유효했다 — 앵커 ④ 의 인자가 `dmg`·`lethalSurvived`
+ *     뿐이었다. W2 가 그 자리에 `sources`(피해원 **비트합**)를 실어 적립처를 열었고, 같은
+ *     레인이 `VolleyParams.leadDamageBonus`·`leadPierceBonus` 로 「선두탄 1발」을 열어 소모처를
+ *     닫았다. 비트합인 이유는 `DamageSource` 주석 — 단일 값이면 `max` 가 접촉을 삼킨다.)
  */
 export function bruiserVolleyParams(
   state: WorldState,
@@ -514,6 +543,26 @@ export function bruiserVolleyParams(
   const bl3 = lv(state, Sk.fullPlateSlug);
   if (bl3 >= 1 && player.aux0 >= state.armorMaxStacks) {
     params.mark |= MARK_FULL_PLATE;
+  }
+
+  // --- BL8 격돌 담금질(소모처) --------------------------------------------
+  // 적립처는 앵커 ④ 다. 여기서는 **1 발만** 꺼내 선두탄 전용 칸에 싣는다 — 적립 단위가
+  // "접촉 피격 1회 = 강화탄 1발" 이라 볼리 전체(`params.damage`)에 실으면 부채꼴 무기에서
+  // `count` 배로 부푼다. 그래서 `leadDamageBonus`·`leadPierceBonus` 칸을 이 레인이 열었다.
+  // ⚠️ 게이트가 `bl8 >= 1 && charges > 0` 인 것이 계약이다. 미투자 런은 적립 자체가 없어
+  //    슬롯이 영구 0 이고 이 블록을 한 줄도 안 지난다(전 슬롯 0 = 무폴드).
+  const bl8 = lv(state, Sk.impactTemper);
+  if (bl8 >= 1) {
+    const charges = readSlot(state.skillStage, BruiserStage.temperCharges);
+    if (charges > 0) {
+      writeSlot(state.skillStage, BruiserStage.temperCharges, charges - 1);
+      // 피해 +60% + 3%p/Lv. 산술은 BL2·BL6 과 동형(정수 bp · 단일 나눗셈 · 반올림 1회)이고
+      // 반올림은 게이트 **안**이다(규율 ③). 기준은 `params.damage` — 이 앵커가 다른 스킬의
+      // 증폭을 이미 실어 둔 값이라 그 위에 얹힌다.
+      params.leadDamageBonus += Math.round((params.damage * (6000 + 300 * bl8)) / 10000);
+      // 관통 +1 은 1레벨에서 온전(BL2 와 같은 규율).
+      params.leadPierceBonus += 1;
+    }
   }
 
   // --- BL6 중량 탄자 -------------------------------------------------------

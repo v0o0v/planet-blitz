@@ -32,7 +32,7 @@ import {
 } from '../src/sim/skillHooks.js';
 import type { VolleyParams } from '../src/sim/skillHooks.js';
 import { SIG_STRIKER_MARKSMAN, MARKSMAN_TRIGGER_AUX0 } from '../src/sim/shipSignature.js';
-import { StrikerCarry, readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
+import { StrikerCarry, readSlot, SKILL_SLOT_COUNT, DamageSource } from '../src/sim/skillSlots.js';
 import { STRIKER_HANDLERS } from '../src/sim/activeHandlers/striker.js';
 import { ALL_ACTIVES } from '../data/ships/actives/index.js';
 import type { ActiveSkillDef } from '../data/ships/actives/types.js';
@@ -173,14 +173,14 @@ describe('③ S1 · S2', () => {
   it('S1: 피격 틱에 사이클이 만충된다', () => {
     const w = mk([[S1, 1]]);
     player(w).aux0 = 2;
-    onPlayerDamaged(w, player(w), 7, false);
+    onPlayerDamaged(w, player(w), 7, false, DamageSource.bullet);
     expect(player(w).aux0).toBe(MARKSMAN_TRIGGER_AUX0);
   });
 
   it('S1: 이미 임계를 넘긴 카운터를 되돌리지 않는다 (F1 과의 부호 반전 방지)', () => {
     const w = mk([[S1, 1]]);
     player(w).aux0 = MARKSMAN_TRIGGER_AUX0 + 9;
-    onPlayerDamaged(w, player(w), 7, false);
+    onPlayerDamaged(w, player(w), 7, false, DamageSource.bullet);
     expect(player(w).aux0).toBe(MARKSMAN_TRIGGER_AUX0 + 9);
   });
 
@@ -194,7 +194,7 @@ describe('③ S1 · S2', () => {
     far.x = p.x + 400;
     far.y = p.y;
     w.entities.push(near, far);
-    onPlayerDamaged(w, p, 7, false);
+    onPlayerDamaged(w, p, 7, false, DamageSource.bullet);
     expect(near.dead).toBe(true);
     expect(far.dead).toBe(false);
   });
@@ -206,7 +206,7 @@ describe('③ S1 · S2', () => {
     near.x = p.x + 50;
     near.y = p.y;
     w.entities.push(near);
-    onPlayerDamaged(w, p, 7, false);
+    onPlayerDamaged(w, p, 7, false, DamageSource.bullet);
     expect(near.dead).toBe(false);
   });
 });
@@ -398,6 +398,8 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     aimAngle: 0,
     cloakBreak: false,
     mark: 0,
+    leadDamageBonus: 0,
+    leadPierceBonus: 0,
     recordSpawnDamage: false,
     ...over,
   };

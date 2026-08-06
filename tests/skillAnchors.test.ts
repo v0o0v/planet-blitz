@@ -63,6 +63,12 @@ const hoisted = vi.hoisted(() => ({
    * 좌표는 **호출 시점 값을 복사**한다 — 엔티티 참조를 담으면 압축 뒤 값으로 바뀐다.
    */
   expiries: [] as { x: number; y: number; reason: string }[],
+  /**
+   * 앵커 ④ 가 받은 **피해원 비트합**. 횟수만으로는 *"접촉인가 적탄인가"* 를 못 재고, 못 재면
+   * 접촉 전용 스킬(브루저 BL8)의 미발동이 흔적을 안 남긴다 — 앵커 ⑥ `BulletExpiryReason` 과
+   * 같은 사유다.
+   */
+  damageSources: [] as number[],
 }));
 
 vi.mock('../src/sim/skillHooks.js', async (orig) => {
@@ -96,6 +102,9 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
         const v = args[2] as { aimAngle: number; targetDist: number };
         hoisted.volleys.push({ aimAngle: v.aimAngle, targetDist: v.targetDist });
       }
+      if (name === 'onPlayerDamaged') {
+        hoisted.damageSources.push(args[4] as number);
+      }
       if (name === 'onBulletExpired') {
         const b = args[1] as { x: number; y: number };
         hoisted.expiries.push({ x: b.x, y: b.y, reason: args[2] as string });
@@ -125,6 +134,7 @@ const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS, BROOD_MARK, cushionSettled } = 
   '../src/sim/shipSignature.js'
 );
 const { isActiveTurret, TURRET_LIFE_TICKS } = await import('../src/sim/events.js');
+const { DamageSource } = await import('../src/sim/skillSlots.js');
 type WorldState = import('../src/sim/world.js').WorldState;
 type InputFrame = import('../src/sim/world.js').InputFrame;
 type Entity = import('../src/sim/entities.js').Entity;
@@ -172,6 +182,7 @@ beforeEach(() => {
   hoisted.order = [];
   hoisted.volleys = [];
   hoisted.expiries = [];
+  hoisted.damageSources = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -335,6 +346,76 @@ describe('앵커 ④⑧ onPlayerDamaged · onDamageChain — 피격', () => {
     stepWorld(s, idle);
     expect(count('onDamageChain')).toBe(0);
     expect(count('onPlayerDamaged')).toBe(0);
+  });
+
+  // ── 피해원 분류(W2) — 호출부마다 하나씩 잠근다 ──────────────────────────
+  // `world.ts` 의 수집 루프에는 피해원 분기가 **정확히 셋**이다(적탄 · 몸통 접촉 4종 · 해저드).
+  // 하나라도 사유를 안 달면 그 경로가 조용히 다른 사유로 흘러들므로 셋 다 여기서 잠근다.
+  describe('앵커 ④ 의 피해원 비트합', () => {
+    it('몸통 접촉만 있으면 contact 비트 하나뿐이다', () => {
+      const s = skilled(0x9106);
+      plantEnemy(s, 0, 0, 7);
+      stepWorld(s, idle);
+      // 하한을 **먼저** 단언한다 — 피격 자체가 없으면 아래 비트 단언은 빈 배열에 대한 항진이다.
+      expect(hoisted.damageSources).toHaveLength(1);
+      expect(hoisted.damageSources[0]).toBe(DamageSource.contact);
+    });
+
+    it('적탄만 있으면 bullet 비트 하나뿐이다', () => {
+      const s = skilled(0x9106);
+      const eb = blankEntity('enemyBullet');
+      eb.radius = 6;
+      eb.damage = 7;
+      addEntity(s, eb);
+      stepWorld(s, idle);
+      expect(hoisted.damageSources).toHaveLength(1);
+      expect(hoisted.damageSources[0]).toBe(DamageSource.bullet);
+    });
+
+    it('해저드만 있으면 hazard 비트 하나뿐이다', () => {
+      const s = skilled(0x9106);
+      const h = blankEntity('hazard');
+      h.radius = 40;
+      h.damage = 7;
+      h.timer = 0;
+      h.life = -1; // 상시 활성(`hazardActive`)
+      addEntity(s, h);
+      stepWorld(s, idle);
+      expect(hoisted.damageSources).toHaveLength(1);
+      expect(hoisted.damageSources[0]).toBe(DamageSource.hazard);
+    });
+
+    it('⭐ 접촉과 적탄이 겹친 틱에 **둘 다** 실린다 — `max` 가 접촉을 삼키지 않는다', () => {
+      // 이 저장소의 앵커 ⑰ 이 정확히 이 형태(`min` 이 개입을 삼킴)로 무효였다. 여기서는
+      // 적탄(20)이 `max` 를 이기게 두고, 그럼에도 접촉(7) 비트가 살아 있는지를 잰다.
+      const s = skilled(0x9106);
+      plantEnemy(s, 0, 0, 7);
+      const eb = blankEntity('enemyBullet');
+      eb.radius = 6;
+      eb.damage = 20;
+      addEntity(s, eb);
+      const hpBefore = s.entities[0]?.hp ?? 0;
+      stepWorld(s, idle);
+      expect(hoisted.damageSources).toHaveLength(1);
+      const mask = hoisted.damageSources[0]!;
+      // `max` 가 고른 쪽(적탄)만이 아니라 **접촉 기여도** 서 있어야 한다.
+      expect(mask & DamageSource.bullet).toBe(DamageSource.bullet);
+      expect(mask & DamageSource.contact).toBe(DamageSource.contact);
+      // 그리고 실제로 깎인 피해는 `max` 인 20(×피격 배수)이다 — 합산이 아니다(거동 불변).
+      expect(hpBefore - (s.entities[0]?.hp ?? 0)).toBe(20 * 2);
+    });
+
+    it('피해 0 짜리 접촉은 비트를 세우지 않는다 (기여가 없으면 피해원이 아니다)', () => {
+      const s = skilled(0x9106);
+      plantEnemy(s, 0, 0, 0); // 접촉하되 피해 0
+      const eb = blankEntity('enemyBullet');
+      eb.radius = 6;
+      eb.damage = 9;
+      addEntity(s, eb);
+      stepWorld(s, idle);
+      expect(hoisted.damageSources).toHaveLength(1);
+      expect(hoisted.damageSources[0]).toBe(DamageSource.bullet);
+    });
   });
 
   it('onDamageChain 은 S0 에서 **항등**이다 (사슬에 계수가 안 실린다)', () => {
