@@ -39,7 +39,8 @@
 | `encounter.ts` · `encounterDetour.ts` · `encounters/light.ts` | 조우 프레임워크(ADR-0033) — 런당 최대 1회 opt-in 희귀 이벤트. detour(보물 격실)와 경량 4종 |
 | `echo.ts` | 에코 신호 — 시드 파생 ~3% 로 나오는 서사 이벤트(ADR-0023) |
 | `commissionOrders.ts` · `commissionSegment.ts` · `commissionCarry.ts` | 의뢰 주문 4종 판정 / 구간 전환 층 / **승계 계약**(구간을 넘는 것과 버려지는 것) |
-| `autopilot.ts` | 순수 결정론 입력 봇 — 벤치·회귀 런이 사람 없이 런을 진행하는 수단(ADR-0008) |
+| `autopilot.ts` | 순수 결정론 입력 봇 — 벤치·회귀 런이 사람 없이 런을 진행하는 수단(ADR-0008). 조향 정본(`pilotSteer`) 소유. **출력 동결**(골든이 그 위에 산다) |
+| `measurePilot.ts` | **측정 전용** 파일럿(ADR-0049 §0-A 결정 B) — 조향은 위와 공유하고 **대시·액티브 발동 + 벽 접근 정책**만 더한다. 호출부가 고르는 순수 입력 생성기라 `WorldConfig`·해시에 안 남는다 |
 | `replay.ts` | 입력로그 기록·재생 + FNV-1a 상태 해시(float64 비트 단위) |
 | `snapshot.ts` | 렌더용 직렬화 스냅샷 — sim → render 의 **유일한 통로** |
 | `events.ts` | 근접 발동 기믹 오브젝트 |
