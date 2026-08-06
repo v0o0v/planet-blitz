@@ -390,6 +390,8 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     countUsed: true,
     ballisticsUsed: true,
     targetDist: 300,
+    // 발사 방위(rad). F5(조준선 관통)가 언젠가 읽을 항이지만 아직 미배선 — 기본 0(순수 +x).
+    aimAngle: 0,
     cloakBreak: false,
     mark: 0,
     ...over,

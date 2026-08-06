@@ -641,6 +641,8 @@ describe('⑫ AS2 은막 침투 (앵커 ⑯)', () => {
       // 기본은 `false`(강화탄이 아닌 평범한 볼리)이므로, AS3 을 재는 케이스는 뒤집어야 한다.
       ballisticsUsed: true,
       targetDist: 200,
+      // 발사 방위(rad). 읽기 전용 사실이라 훅이 고치지 않는다 — 기본 0(순수 +x).
+      aimAngle: 0,
       cloakBreak: false,
     };
   }
