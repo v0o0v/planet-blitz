@@ -116,6 +116,7 @@ import {
   bruiserSignatureStep,
   bruiserEnemyDamaged,
   bruiserEnemyDeath,
+  bruiserVolleyParams,
 } from './skills/bruiser.js';
 import {
   mallowGemCollected,
@@ -820,8 +821,11 @@ function dispatchEnemyDamagedSkill(
       // ⚠️ BL7(파성퇴)은 여기 없다 — 이 앵커에는 `destructible` 도 오지만, 그 스킬은 "일격
       // 파괴 + 그 자리 충격파" 라 **명중 해소 자체를 바꿔야** 한다(hp 를 0 으로 만들어도
       // `dead` 판정은 이 앵커 앞에서 이미 끝났다 — 앵커 주석의 금지 사항 그대로다).
+      //
+      // BL3 만재 중탄 · BL6 중량 탄자도 여기다 — 둘은 앵커 ⑯ 에서 **탄 `aux0` 에 찍은 표식**을
+      // 읽어 명중 지점 폭발·변위를 낸다. 그래서 `source`(가해 아군탄)가 필요하다.
       const p = playerOf(state);
-      if (p !== undefined) bruiserEnemyDamaged(state, p, target, dmg);
+      if (p !== undefined) bruiserEnemyDamaged(state, p, target, dmg, source);
       break;
     }
     case SIG_HATCHLING_BROOD:
@@ -1313,6 +1317,15 @@ export function onVolleyParams(
       //    (`countUsed` 가 아키타입 판정을 world 에 두고 결과만 실은 것과 같은 형태).
       // 사유 전문은 효과 함수 `phantomVolleyParams` 주석에 있다.
       phantomVolleyParams(state, player, params);
+      break;
+    case SIG_BRUISER_ARMOR:
+      // BL3 만재 중탄 · BL6 중량 탄자 — 둘 다 여기서는 `mark`(+BL6 은 피해·탄속·수명)만
+      // 건드리고, 실효는 앵커 ⑩ 이 그 표식을 읽어 낸다.
+      //
+      // ⚠️ BL2(백병 격발)·BL8(격돌 담금질)은 여기 **없다** — 사유는 `bruiserVolleyParams`
+      // 의 doc 주석에 적혀 있다(BL2 는 표적 거리가 이 레코드에 없고, BL8 은 적립처인 접촉
+      // 피격 판별 앵커가 아직 없다).
+      bruiserVolleyParams(state, player, params);
       break;
     default:
       break;

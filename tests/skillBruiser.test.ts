@@ -36,6 +36,8 @@ import {
   onSignatureStep,
   onEnemyDamaged,
   onEnemyDeath,
+  onVolleyParams,
+  type VolleyParams,
 } from '../src/sim/skillHooks.js';
 import { SIG_BRUISER_ARMOR, ARMOR_MAX_STACKS } from '../src/sim/shipSignature.js';
 import {
@@ -54,7 +56,9 @@ const SHIP_BRUISER = 1;
  * `[blade(offense), morph(utility), fortify(defense)]` → BL 0..9 · MO 10..19 · FO 20..29.
  * ⚠️ 스트라이커와 축 종류의 순서가 다르다(스트라이커는 축1=defense).
  */
+const BL3 = 2;
 const BL4 = 3;
+const BL6 = 5;
 const BL9 = 8;
 const MO1 = 10;
 const MO6 = 15;
@@ -564,5 +568,194 @@ describe('⑫ FO7 전리 개장 (앵커 ⑪)', () => {
     expect(p.maxHp).toBe(before);
     expect(p.aux0).toBe(2);
     expect(readSlot(w.skillCarry, BruiserCarry.trophyBaseHp)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑯ 앵커 ⑯ — BL3 만재 중탄 · BL6 중량 탄자
+// ---------------------------------------------------------------------------
+//
+// 두 스킬은 **두 앵커에 걸쳐 있다**: ⑯ 에서 탄 `aux0` 에 표식을 찍고, ⑩ 에서 그 표식을 읽어
+// 폭발·변위를 낸다. 그래서 §⑯ 은 표식·파라미터를, §⑯-명중 은 표식을 단 탄이 실제로 무엇을
+// 하는지를 따로 잰다 — 한쪽만 재면 "찍기는 하는데 아무도 안 읽는" 반쪽 배선이 초록으로 선다.
+
+function volley(over: Partial<VolleyParams> = {}): VolleyParams {
+  return {
+    damage: 100,
+    pierce: 1,
+    count: 3,
+    speed: 1800,
+    radius: 6,
+    life: 55,
+    spread: 0.3,
+    cooldownQ: 1280,
+    mark: 0,
+    // 아크캐스터 레인이 BA10 을 위해 추가한 필드(머지에서 합류). `true` = 이번 아키타입이
+    // `count` 를 실제로 읽는다(발칸/스프레드/미사일). 판정 정본은 `world.ts` 의 아키타입
+    // 분기이고 여기엔 **결과만** 실린다 — 훅이 `WEAPON_TYPE_*` 를 복제하면 그 사본이
+    // 갈리는 순간 결함이 조용해지기 때문이다.
+    countUsed: true,
+    ...over,
+  };
+}
+
+describe('⑯ BL3 만재 중탄 (앵커 ⑯ 표식)', () => {
+  it('장갑이 만재인 볼리에만 중탄 표식이 찍힌다', () => {
+    const w = mk([[BL3, 5]]);
+    const p = player(w);
+    p.aux0 = w.armorMaxStacks;
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v.mark & 2).toBe(2);
+  });
+
+  it('만재 미만이면 표식이 없다', () => {
+    const w = mk([[BL3, 5]]);
+    const p = player(w);
+    p.aux0 = w.armorMaxStacks - 1;
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v.mark).toBe(0);
+  });
+
+  it('만재 판정은 고정 8 이 아니라 FO1 이 늘린 상한을 따른다', () => {
+    const w = mk([
+      [BL3, 5],
+      [FO1, 20],
+    ]);
+    const p = player(w);
+    onSignatureStep(w, p, emptyInput()); // FO1 이 상한을 세운다
+    expect(w.armorMaxStacks).toBeGreaterThan(ARMOR_MAX_STACKS);
+    p.aux0 = ARMOR_MAX_STACKS; // 종전 상한 — 확장된 상한 기준으로는 만재가 아니다
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v.mark).toBe(0);
+    p.aux0 = w.armorMaxStacks;
+    const v2 = volley();
+    onVolleyParams(w, p, v2);
+    expect(v2.mark & 2).toBe(2);
+  });
+
+  it('미투자 런은 만재여도 표식을 안 찍는다', () => {
+    const w = mk([[MO9, 5]]);
+    const p = player(w);
+    p.aux0 = w.armorMaxStacks;
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v.mark).toBe(0);
+  });
+});
+
+describe('⑯ BL6 중량 탄자 (앵커 ⑯ 파라미터)', () => {
+  it('피해가 오르고 탄속이 절반이 되며 수명이 두 배가 된다', () => {
+    const w = mk([[BL6, 10]]);
+    const p = player(w);
+    const v = volley();
+    onVolleyParams(w, p, v);
+    // 피해 +20% + 2%p/Lv = +40% → 100 + round(100×4000/10000) = 140
+    expect(v.damage).toBe(140);
+    expect(v.speed).toBe(900);
+    expect(v.life).toBe(110);
+    expect(v.mark & 4).toBe(4);
+  });
+
+  it('도달 거리(탄속×수명)가 정확히 불변이다 — 사거리 계약', () => {
+    const w = mk([[BL6, 3]]);
+    const p = player(w);
+    const v = volley({ speed: 1234.5, life: 71 });
+    const reachBefore = v.speed * v.life;
+    onVolleyParams(w, p, v);
+    expect(v.speed * v.life).toBe(reachBefore);
+  });
+
+  it('BL3 과 같은 볼리에 겹쳐도 표식이 서로를 지우지 않는다', () => {
+    const w = mk([
+      [BL3, 5],
+      [BL6, 5],
+    ]);
+    const p = player(w);
+    p.aux0 = w.armorMaxStacks;
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v.mark & 2).toBe(2);
+    expect(v.mark & 4).toBe(4);
+  });
+
+  it('미투자 런은 파라미터를 한 칸도 안 건드린다', () => {
+    const w = mk([[MO9, 5]]);
+    const p = player(w);
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v).toEqual(volley());
+  });
+});
+
+describe('⑯-명중 BL3·BL6 (앵커 ⑩ 이 표식을 읽는다)', () => {
+  it('중탄 표식이 있는 탄만 명중 지점에 폭발을 남긴다', () => {
+    const w = mk([[BL3, 10]]);
+    const p = player(w);
+    const t = addEnemy(w, p.x + 400, p.y, 1000);
+    const near = addEnemy(w, t.x + 30, t.y, 1000); // 반경 50+50 = 100 안
+    const far = addEnemy(w, t.x + 300, t.y, 1000); // 밖
+    const src: Entity = { ...blankEntity('bullet'), damage: 40, aux0: 2 };
+    onEnemyDamaged(w, t, 40, src);
+    // 폭발 = round(40 × (2500 + 150×10)/10000) = round(16) = 16
+    expect(near.hp).toBe(1000 - 16);
+    expect(far.hp).toBe(1000);
+    // 맞은 표적 자신은 제외 — 넣으면 "단일 표적 피해 +25%" 로 퇴화한다
+    expect(t.hp).toBe(1000);
+  });
+
+  it('표식 없는 탄은 폭발을 안 남긴다', () => {
+    const w = mk([[BL3, 10]]);
+    const p = player(w);
+    const t = addEnemy(w, p.x + 400, p.y, 1000);
+    const near = addEnemy(w, t.x + 30, t.y, 1000);
+    const src: Entity = { ...blankEntity('bullet'), damage: 40, aux0: 0 };
+    onEnemyDamaged(w, t, 40, src);
+    expect(near.hp).toBe(1000);
+  });
+
+  it('중량 표식이 있는 탄은 명중한 적을 탄 진행 방향으로 민다', () => {
+    const w = mk([[BL6, 10]]);
+    const p = player(w);
+    const t = addEnemy(w, p.x + 400, p.y, 1000);
+    const x0 = t.x;
+    const y0 = t.y;
+    const src: Entity = { ...blankEntity('bullet'), damage: 40, aux0: 4, angle: 0 };
+    onEnemyDamaged(w, t, 40, src);
+    // 변위 16 + 2×10 = 36, 각 0 → +X 로 36.
+    // ⚠️ 오차 3자리인 이유: `math.ts` 의 `cos`/`sin` 은 결정론 **룩업 테이블**이라 cos(0) 이
+    //    정확히 1 이 아니다(≈0.9999965). 이 sim 의 모든 각도 산술이 같은 표를 쓴다.
+    expect(t.x).toBeCloseTo(x0 + 36, 3);
+    expect(t.y).toBeCloseTo(y0, 3);
+  });
+
+  it('엘리트·보스는 변위가 반감된다', () => {
+    const w = mk([[BL6, 10]]);
+    const p = player(w);
+    const elite = addEnemy(w, p.x + 400, p.y, 1000);
+    elite.pierce = 1; // isElite = kind 'enemy' && pierce > 0
+    const bossE: Entity = { ...blankEntity('boss'), x: p.x + 900, y: p.y, hp: 1000, radius: 40 };
+    w.entities.push(bossE);
+    const src: Entity = { ...blankEntity('bullet'), damage: 40, aux0: 4, angle: 0 };
+    const ex = elite.x;
+    const bx = bossE.x;
+    onEnemyDamaged(w, elite, 40, src);
+    onEnemyDamaged(w, bossE, 40, src);
+    expect(elite.x).toBeCloseTo(ex + 18, 3);
+    expect(bossE.x).toBeCloseTo(bx + 18, 3);
+  });
+
+  it('미투자 런은 표식이 찍힌 탄이 와도 아무 일도 안 한다', () => {
+    const w = mk([[MO9, 5]]);
+    const p = player(w);
+    const t = addEnemy(w, p.x + 400, p.y, 1000);
+    const near = addEnemy(w, t.x + 30, t.y, 1000);
+    const x0 = t.x;
+    const src: Entity = { ...blankEntity('bullet'), damage: 40, aux0: 2 | 4, angle: 0 };
+    onEnemyDamaged(w, t, 40, src);
+    expect(near.hp).toBe(1000);
+    expect(t.x).toBe(x0);
   });
 });
