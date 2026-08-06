@@ -9,10 +9,12 @@
  * `stepShipSignature` 의 팬텀 분기가 정한 구조적 상한은
  * `CLOAK_UNHIT_TICKS + CLOAK_HOLD_TICKS - 1` = 359 다(360 에 닿는 틱에 사이클이 되감긴다).
  *
- * ## 두 슬롯을 항상 **짝으로** 다룬다
- * 세계 코드에서 두 값은 늘 같이 선다(`aux0 === CLOAK_UNHIT_TICKS` 인 틱에 `aux1 = 1`) —
- * 그래서 여기서도 "은신 진입"은 `aux0` 과 `aux1` 을 함께 세우고, "은신 이탈"은 `aux0` 을
- * 0 으로 되돌린다. 한쪽만 만지면 배율이 조용히 두 번 실리거나 영영 안 실린다.
+ * ## 두 슬롯의 시점이 **갈라졌다** (선결 C-3, 사용자 승인 2026-08-06)
+ * 종전에는 진입 틱에 두 값이 같이 섰다(`aux0 === CLOAK_UNHIT_TICKS` 인 틱에 `aux1 = 1`).
+ * C-3 이 토큰을 **창 종료 에지**로 옮긴 뒤로는 "은신 진입"이 `aux0` 만 세우고, 토큰은
+ * `world.ts` 의 되감기 지점(또는 여기 `breakCloak` 처럼 창을 **끊는** 액티브)에서만 선다.
+ * 그래서 진입은 `enterCloak`, 이탈은 `breakCloak` 로 여전히 함수 하나씩에 묶어 둔다 —
+ * 직접 대입하면 배율이 조용히 두 번 실리거나 영영 안 실린다.
  *
  * 작성자 분리(0c 계약): **버프 잔여 틱은 핸들러가 세운다**(`setBuffTicks`). 공통 발동 코드는
  * 쿨다운만 세우고 버프는 감소만 한다 — 공통 코드가 세우면 관측량 단언이 항진이 된다.
@@ -21,7 +23,7 @@
 import { CLOAK_HOLD_TICKS, CLOAK_UNHIT_TICKS } from '../shipSignature.js';
 import type { Entity } from '../entities.js';
 import type { WorldState } from '../world.js';
-import { fireCloakEntry, setBreakToken } from '../cloak.js';
+import { advanceCloak, fireCloakEntry, setBreakToken } from '../cloak.js';
 import { blink, fanStrike, powerCentiOf, scaleCenti, setBuffTicks } from '../activeTypes.js';
 import type { ActiveExpireTable, ActiveHandlerTable, ActiveSustainTable } from '../activeTypes.js';
 
@@ -38,11 +40,11 @@ function setUnhitTicks(player: Entity, ticks: number): void {
 }
 
 /**
- * 은신 진입 — 두 슬롯을 **짝으로** 세운다(세계 코드의 진입 에지 틱과 같은 결과).
+ * 은신 진입 — `aux0` 을 임계로 올리고 진입 에지 정본을 발화한다(세계 코드의 진입 틱과 동형).
  *
- * 토큰은 `fireCloakEntry`(= 진입 에지 정본)를 거친다(E1). 훗날 진입 훅 스킬(PH7·DI7·DI8)이
- * 그 함수 안에 얹히므로, 여기서 `aux1` 을 직접 세우면 **액티브로 진입했을 때만 훅이 안 도는**
- * 반쪽 배선이 된다.
+ * 진입 훅은 `fireCloakEntry`(= 진입 에지 정본)를 거친다(E1). 훗날 진입 훅 스킬(PH7·DI7·DI8)이
+ * 그 함수 안에 얹히므로, 여기서 훅을 다시 적으면 **액티브로 진입했을 때만 도는** 반쪽 배선이
+ * 된다. C-3 이후 진입은 배율 토큰을 세우지 않는다(토큰은 창 종료 에지에서만).
  */
 function enterCloak(state: WorldState, player: Entity): void {
   setUnhitTicks(player, CLOAK_UNHIT_TICKS);
@@ -94,15 +96,11 @@ export const PHANTOM_HANDLERS: ActiveHandlerTable = {
     blink(state, player, def.coeff.distance ?? 0, dir);
     // 은신 진입 조건을 advance 만큼 **앞당긴다**(진입시키지는 않는다 — 저티어의 절제).
     //
-    // ⚠️ **여기는 `advanceCloak` 이관 대상이다**(E1 · `phantom.md` ①-6). 현행은
-    // `setUnhitTicks` = **359 clamp · 진입 토큰 미발화**이고, 설계 `advanceCloak` 은
-    // **240 clamp · 통과 에지에서 `fireCloakEntry`** 다. 주입이 임계를 넘거나 창 안일 때
-    // 두 규칙의 값이 갈리므로 이관은 곧 **거동 변경**(= 골든 재생성 + EF 재배포)이다.
-    // 이 커밋의 계약이 거동 불변이라 이관하지 않았고, `advanceCloak` 자체도 소비자가 0 이면
-    // "배선이 있다" 는 착각을 만들어 아예 만들지 않았다(리드 결정 2026-08-06).
-    // **주입 스킬(PH5·PH6) 커밋에서 헬퍼 신설과 이 줄의 이관을 함께** 하라 — 그때라야
-    // 헬퍼 규칙(240 clamp·에지 발화)이 실제 소비자와 함께 검증된다.
-    setUnhitTicks(player, player.aux0 + (def.coeff.advance ?? 0));
+    // **`advanceCloak` 이관 완료**(E1 · `phantom.md` ①-6). 종전 `setUnhitTicks(aux0 + k)` 는
+    // 359 clamp · 진입 에지 미발화라 ①임계를 건너뛰면 진입 훅이 죽고 ②창 안 주입이 다음 틱에
+    // 360 에 닿아 사이클을 파괴했다. 헬퍼는 240 clamp · 창 안 무효 · 통과 에지 발화다 —
+    // 주입이 임계를 넘거나 창 안일 때 값이 갈리므로 **거동 변경**(골든 재생성 + EF 재배포).
+    advanceCloak(state, player, def.coeff.advance ?? 0);
   },
   as_phantom_phase_hi: (state, player, def, dir) => {
     blink(state, player, def.coeff.distance ?? 0, dir);

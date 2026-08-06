@@ -313,6 +313,16 @@ const GUARDIAN_BASE_BULLET_RADIUS = 10;
 const GUARDIAN_BASE_BULLET_LIFE = 100;
 /** 조준·발사 사거리 universal base(+ rangeAdd). placeholder. */
 const GUARDIAN_BASE_RANGE = 1000;
+/**
+ * 이동 배율 계승 상한(프리셋 기준 이속의 최대 배수). 이속 어픽스를 통째로 흘리면 수호가
+ * standoff 를 넘나들며 진동해 이동 AI 자체가 망가진다 — 계승은 하되 거동이 깨지지 않는 선까지.
+ */
+const MAX_GUARDIAN_MOVE_SPEED_MULT = 2;
+/**
+ * 탄 수명 상한(틱). 사거리 계승에 맞춰 늘어난 수명이 장수명 탄 누적으로 bulletCap·CPU 예산을
+ * 먹는 것을 막는다(240틱 = 기본 탄속에서 사거리 2400 까지 커버).
+ */
+const MAX_GUARDIAN_BULLET_LIFE = 240;
 /** 산탄 팬 펠릿 수 상한(병리적 빌드의 탄 폭주로 성능·bulletCap 파괴 방어). */
 const MAX_GUARDIAN_BULLET_COUNT = 12;
 /** 팬 각 상한(밀리라디안, π ≈ 3142 — 전방위 초과 방지). */
@@ -352,6 +362,8 @@ export interface GuardianLoadoutInput {
   readonly spreadAdd: number;
   readonly rangeAdd: number;
   readonly maxHpAdd: number;
+  /** 이동 배율(> 1 = 빠름). 프리셋 기본 이속에 곱해 계승한다 — {@link MAX_GUARDIAN_MOVE_SPEED_MULT} 상한. */
+  readonly moveSpeedMult: number;
 }
 
 /** 안전 유한화(비유한 → 폴백). */
@@ -371,14 +383,66 @@ function clampGuardianSpreadMrad(spreadAdd: number): number {
   return normalizeGuardianSpread(Math.round(spreadAdd * 1000));
 }
 
+/** 이동 배율을 [0, {@link MAX_GUARDIAN_MOVE_SPEED_MULT}] 로 클램프(손상값 → 1). */
+function clampGuardianMoveSpeedMult(mult: number): number {
+  const m = finiteOr(mult, 1);
+  if (m < 0) return 0;
+  return m > MAX_GUARDIAN_MOVE_SPEED_MULT ? MAX_GUARDIAN_MOVE_SPEED_MULT : m;
+}
+
+/**
+ * 탄 수명(틱) — 계승한 사거리·탄속에 맞춘다. **사거리만 계승하고 수명을 고정으로 두면 사거리
+ * 어픽스가 조용히 무효**가 된다(탄이 사거리에 닿기 전에 소멸). universal base 는
+ * "수명 {@link GUARDIAN_BASE_BULLET_LIFE} 틱이 탄속 {@link GUARDIAN_BASE_BULLET_SPEED} 로
+ * 사거리 {@link GUARDIAN_BASE_RANGE} 를 커버한다"로 보정돼 있으므로, 그 비례식을 **단일
+ * 나눗셈**으로 다시 푼다(틱레이트를 몰라도 되고 결정론 정수).
+ *
+ * 하한은 항상 base 다 — 계승이 기존 수호를 **약화시키지는 않는다**(느린 탄·짧은 사거리 빌드가
+ * 수명을 깎아 오히려 못 쏘게 되는 역효과 차단). 상한은 {@link MAX_GUARDIAN_BULLET_LIFE}.
+ */
+function guardianBulletLife(range: number, bulletSpeed: number): number {
+  const need = Math.ceil(
+    (GUARDIAN_BASE_BULLET_LIFE * range * GUARDIAN_BASE_BULLET_SPEED) /
+      (GUARDIAN_BASE_RANGE * bulletSpeed),
+  );
+  if (!Number.isFinite(need) || need < GUARDIAN_BASE_BULLET_LIFE) return GUARDIAN_BASE_BULLET_LIFE;
+  return need > MAX_GUARDIAN_BULLET_LIFE ? MAX_GUARDIAN_BULLET_LIFE : need;
+}
+
 /**
  * 실물 빌드 loadout → 방어 스냅샷(ADR-0025 — "한 기체 = 한 스펙"의 방어측 파생). 순수 결정론
  * 정수 매핑이라 클라(Node)·서버(Deno) 재실행이 비트 동일하다(단일 나눗셈 + Math.round).
  *
- * - **프리셋(이동 AI):** radius·moveSpeed·standoff 는 {@link PRESET_BASE}[preset] 에서.
+ * - **프리셋(이동 AI):** radius·standoff 는 {@link PRESET_BASE}[preset] 에서, moveSpeed 는
+ *   프리셋 기본값 × loadout 이동 배율(계승 — 아래 §대표 스탯 계승).
  * - **파워:** hp(maxHpAdd)·접촉/탄피해(damageMult)·발사간격(fireRateMult)·탄속(bulletSpeedMult)·
  *   사거리(rangeAdd)는 universal base × loadout 배율.
  * - **발사체:** weaponType·bulletCount·spread 는 loadout 에서(무기 아키타입 복제 서술자).
+ *
+ * ## 대표 스탯 계승 (prerequisites.md §0-B 결정 C) — **파생 지점은 여기 한 곳이다**
+ * 방어측 수호가 실물 빌드의 대표 스탯을 이어받게 하는 규칙을 **여기서만** 정의한다(같은 술어를
+ * 여러 곳에 적어 화면과 규칙이 갈린 전례가 있다). `GuardianSnapshot` 필드는 늘리지 않으므로
+ * 침공 해시 계약 변경·골든 재생성이 없다.
+ *
+ * 계승하는 축(이번에 채운 것):
+ * - `moveSpeed` — `moveSpeedMult` 를 계승한다. 이전에는 프리셋 기본값만 실려 이속 어픽스가
+ *   방어측에서 **통째로 유실**됐다. 상한 {@link MAX_GUARDIAN_MOVE_SPEED_MULT}(이동 AI 진동 방지).
+ * - `bulletLife` — 계승한 `range`·`bulletSpeed` 에 맞춰 늘린다({@link guardianBulletLife}).
+ *   고정 수명이면 사거리 계승이 조용히 무효였다(탄이 사거리에 닿기 전 소멸).
+ *
+ * **계승하지 않는 축과 그 근거(전부 하한 = 0 — 가동률을 곱하지 않는다):**
+ * - `pierceAdd` — 관통의 추가 타격은 "직선 위에 적이 더 있을 때"만 발생하는 조건부다. 방어측
+ *   수호의 표적은 침공자 1인이므로 **구조적으로 하한 0**.
+ * - `fireDmg`·`coldSlow`·`lightning`(원소 어픽스) — `src/sim/status.ts` 의 상태이상은 `enemy`
+ *   kind 전용이다. 수호탄은 플레이어를 맞히므로 부여 경로 자체가 없다 → **구조적으로 0**.
+ * - `uniqueMask` — 유니크 효과는 대부분 조건부(체력 구간·연속 명중 등)이고, 하한(조건 미충족)
+ *   값은 0 이다. 기대값(가동률 × 효과)을 실으면 런마다 다른 가동률을 고정값으로 굳혀
+ *   **실제보다 강한 수호**가 서고 방어측이 과대평가된다.
+ * - `subWeaponType`·`dashCdMult`·`magnetMult`·`xpMult` — 스냅샷에 대응 칸이 없거나(부무장)
+ *   방어 거동과 무관하다(대시·자석·경험치). 칸 신설은 해시 계약 변경이라 결정 C 밖이다.
+ *
+ * ⚠️ 어픽스는 이 계승에 타지 않는 축이 있으므로 **`cpWeight` 를 올리면 안 된다** — 올리는 순간
+ * 결정 C 가 줄이려던 "점수만 높고 실제로는 약한" 괴리를 도로 벌린다.
  *
  * ⚠️ 모든 반환 필드는 유한 정수여야 한다 — normalize.ts `normalizeGuardianPlacement` 가 non-finite
  * 필드를 만나면 슬롯을 통째로 null 로 버려 방어 수호가 소실된다. standoff 는 range 이내로 클램프해
@@ -395,6 +459,8 @@ export function mapLoadoutToGuardianSnapshot(
   const bs = finiteOr(loadout.bulletSpeedMult, 1);
   const playerHp = PLAYER_BASE_HP + finiteOr(loadout.maxHpAdd, 0);
   const range = Math.max(1, Math.round(GUARDIAN_BASE_RANGE + finiteOr(loadout.rangeAdd, 0)));
+  const bulletSpeed = Math.max(1, Math.round(GUARDIAN_BASE_BULLET_SPEED * bs));
+  const ms = clampGuardianMoveSpeedMult(loadout.moveSpeedMult);
   return {
     preset: p,
     radius: beh.radius,
@@ -402,11 +468,11 @@ export function mapLoadoutToGuardianSnapshot(
     contactDamage: Math.max(0, Math.round(GUARDIAN_BASE_CONTACT_DAMAGE * dmg)),
     fireCooldown: Math.max(2, Math.round(GUARDIAN_BASE_FIRE_COOLDOWN * fr)),
     bulletDamage: Math.max(0, Math.round(GUARDIAN_BASE_BULLET_DAMAGE * dmg)),
-    bulletSpeed: Math.max(1, Math.round(GUARDIAN_BASE_BULLET_SPEED * bs)),
+    bulletSpeed,
     bulletRadius: GUARDIAN_BASE_BULLET_RADIUS,
-    bulletLife: GUARDIAN_BASE_BULLET_LIFE,
+    bulletLife: guardianBulletLife(range, bulletSpeed),
     range,
-    moveSpeed: beh.moveSpeed,
+    moveSpeed: Math.max(1, Math.round(beh.moveSpeed * ms)),
     standoff: Math.min(beh.standoff, range),
     weaponType: normalizeGuardianWeaponType(loadout.weaponType),
     bulletCount: clampGuardianBulletCount(loadout.bulletCountAdd),

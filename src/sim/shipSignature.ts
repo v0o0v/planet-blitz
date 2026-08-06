@@ -277,6 +277,18 @@ export const CUSHION_DEFER_BP = 3500;
 export const CUSHION_RECOVER_TICKS = 180;
 /** 임계를 넘겼을 때 지연분에서 회복되는 비율(basis-point). 나머지는 그대로 남는다. */
 export const CUSHION_RECOVER_BP = 6000;
+/**
+ * 완충 무피격 카운터(`aux1`)의 **상한**. 정산은 임계({@link CUSHION_RECOVER_TICKS})에서
+ * 일어나므로 정상 경로에서는 도달하지 않지만, **적립분이 0 인 구간**(정산할 것이 없어 카운터가
+ * 리셋되지 않는 구간)에서 aux1 이 무한히 커지는 것을 막는다 — aux 는 u32 로 해시된다
+ * (`replay.ts` `hashEntity`). 상한에 걸려도 임계는 이미 넘긴 뒤라 거동에는 영향이 없다.
+ *
+ * ⚠️ **이 값은 세 곳이 공유한다** — `world.ts` 의 시그니처 틱 진행 · `activeHandlers/mallow.ts`
+ * 의 `addUnhitTicks` · `skills/mallow.ts` 의 ME1「조기 상환」. 배선 레인 이전에는 앞의 두 곳이
+ * 각자 지역 상수로 **같은 값을 두 벌** 갖고 있었고, 세 번째 소비처가 생기는 시점에 여기로
+ * 합쳤다(상수를 복제하면 한쪽만 고쳐질 때 조용히 갈린다).
+ */
+export const CUSHION_TICK_CAP = 600;
 
 /**
  * 이 피격에서 **지연분으로 적립되는** 피해(정수). 나눗셈 1회.

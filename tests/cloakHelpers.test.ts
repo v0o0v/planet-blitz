@@ -122,20 +122,29 @@ describe('E1 — 자연 적립 사이클이 그대로다', () => {
     expect(aux0).toContain(CLOAK_UNHIT_TICKS);
   });
 
-  it('토큰은 진입 틱에 정확히 한 번 서고, 그 전에는 서지 않는다', () => {
+  // ⚠️ 아래 두 케이스의 전제가 **선결 C-3 으로 뒤집혔다**(사용자 승인 2026-08-06).
+  //    종전: 토큰은 **진입** 틱에 서고 되감기 틱에 회수된다.
+  //    현행: 토큰은 진입에 서지 않고 **창 종료(되감기) 에지**에 선다.
+  //    근거는 P1 실측 — 소진의 99.81%가 창 *안*에서 진입 직후에 일어나 2.5배가 "은신을 풀며
+  //    내리치는 한 방"이 아니라 "들어가자마자 나가는 첫 발"이었다(`prerequisites.md` C-3).
+  //    단언을 약화시키지 않고 **시점만 반대로** 옮겨 다시 세운다 — 창 전 구간 0 · 종료 틱 1.
+
+  it('토큰은 창 종료 틱에 서고, 진입~창 안 전 구간에서는 서지 않는다', () => {
     const { aux0, aux1 } = runIsolatedPhantom(TOTAL);
     const entryIdx = aux0.indexOf(CLOAK_UNHIT_TICKS);
     expect(entryIdx, '진입 임계에 도달하지 못했다 — 계량이 공허하다').toBeGreaterThanOrEqual(0);
-    for (let i = 0; i < entryIdx; i++) expect(aux1[i], `tick ${i}`).toBe(0);
-    expect(aux1[entryIdx]).toBe(1);
+    const exitIdx = entryIdx + CLOAK_HOLD_TICKS;
+    // 적립 구간과 은신 창 전체 — 창 종료 직전까지 한 틱도 서면 안 된다(진입 장전 부활 방지).
+    for (let i = 0; i < exitIdx; i++) expect(aux1[i], `tick ${i}`).toBe(0);
+    expect(aux1[exitIdx], '창 종료 틱').toBe(1);
   });
 
-  it('유지 창이 끝나면 사이클이 통째로 되감긴다(aux0·aux1 동시 0)', () => {
+  it('유지 창이 끝나면 사이클이 되감기고(aux0 = 0) 그 틱에 토큰이 장전된다', () => {
     const { aux0, aux1, cloaked } = runIsolatedPhantom(TOTAL);
     const entryIdx = aux0.indexOf(CLOAK_UNHIT_TICKS);
     const rewindIdx = entryIdx + CLOAK_HOLD_TICKS;
     expect(aux0[rewindIdx], '되감기 틱').toBe(0);
-    expect(aux1[rewindIdx], '되감기 틱의 토큰').toBe(0);
+    expect(aux1[rewindIdx], '되감기 틱의 토큰').toBe(1);
     // 은신 점유는 진입부터 되감기 직전까지 — 창 길이와 정확히 같다.
     expect(cloaked.filter(Boolean).length).toBe(CLOAK_HOLD_TICKS);
   });

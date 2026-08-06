@@ -151,16 +151,100 @@ export function onTickCatalyst(state: WorldState, player: Entity): void {
 }
 
 // ---------------------------------------------------------------------------
+// 신규 앵커 ⑩⑪ (S1) — 적 단위 사건. **전 분기 비어 있음**
+// ---------------------------------------------------------------------------
+
+/**
+ * 앵커 ⑩ — **적성 표적이 아군탄에 맞아 피해가 확정된 직후**. 스킬 디스패치 **뒤**.
+ *
+ * 계약·주의사항은 전부 `skillHooks.ts` 의 {@link import('./skillHooks.js').onEnemyDamaged}
+ * 주석이 정본이다(어느 지점이고 무엇이 보장되며 무엇을 하면 안 되는가). 여기 다시 적지 않는다.
+ *
+ * ⚠️ 이 앵커는 **아군탄 명중 경로만** 덮는다. 화염 DoT·전격 연쇄·폭탄 기물·액티브 폭발·조우
+ * 격실 탄은 `world.ts` 밖(leaf 모듈)에서 적 hp 를 깎으므로 여기 오지 않는다 — 그 목록과 사유는
+ * `skillHooks.ts` 쪽 주석에 실측으로 적혀 있다.
+ */
+export function onEnemyDamagedCatalyst(
+  state: WorldState,
+  target: Entity,
+  dmg: number,
+  source: Entity | undefined,
+): void {
+  if (!state.catalystOn) return;
+  void target;
+  void dmg;
+  void source;
+}
+
+/**
+ * 앵커 ⑪ — **잡몹 하나가 실제로 격추된 사건**(좌표 포함). 스킬 디스패치 **뒤**.
+ *
+ * 기존 앵커 ⑤ `onKillsDeltaCatalyst` 는 **개수만** 주고 좌표를 안 준다. 촉매 조사가 지적한
+ * "id 43 은 좌표를 못 받아 시그니처가 부족하다"가 이 앵커로 풀린다.
+ *
+ * 계약은 `skillHooks.ts` 의 {@link import('./skillHooks.js').onEnemyDeath} 주석이 정본이다.
+ */
+export function onEnemyDeathCatalyst(
+  state: WorldState,
+  x: number,
+  y: number,
+  elite: boolean,
+): void {
+  if (!state.catalystOn) return;
+  void x;
+  void y;
+  void elite;
+}
+
+// ---------------------------------------------------------------------------
+// 신규 앵커 ⑫⑬⑭ (S1) — 성장 축. **전 분기 비어 있음**
+// ---------------------------------------------------------------------------
+
+/** 레벨이 오른 직후. 스킬 디스패치 **뒤**. 계약은 `skillHooks.ts` 쪽 주석이 정본이다. */
+export function onLevelUpCatalyst(state: WorldState, level: number): void {
+  if (!state.catalystOn) return;
+  void level;
+}
+
+/**
+ * 파워업 3택이 제시된 직후. 스킬 디스패치 **뒤**.
+ *
+ * ⚠️ `choices` 는 **읽기 전용**이다. 선택지를 바꾸는 카드는 `state.powerupChoices` 를 직접
+ * 갈아 끼워야 하고, 그때 **`drawPowerupChoices` 가 이미 `powerupRng` 를 소비한 뒤**라는 것을
+ * 기억해라 — 재추첨은 스트림을 밀어 같은 시드의 전개를 통째로 바꾼다(공통 계약 "굴리고-버리기 금지").
+ */
+export function onPowerupOfferCatalyst(state: WorldState, choices: readonly number[]): void {
+  if (!state.catalystOn) return;
+  void choices;
+}
+
+/** 파워업이 실제로 적용된 직후. 스킬 디스패치 **뒤**. */
+export function onPowerupPickedCatalyst(
+  state: WorldState,
+  poolIndex: number,
+  offeredIndex: number,
+): void {
+  if (!state.catalystOn) return;
+  void poolIndex;
+  void offeredIndex;
+}
+
+// ---------------------------------------------------------------------------
 // 신규 앵커 — **촉매 배선 레인이 `world.ts` 에 지점을 뚫고 여기에 본체를 둔다**
 // ---------------------------------------------------------------------------
 //
 // 겹침 판정 결과, 기존 9지점으로 커버되는 촉매는 완전 3종 / 부분 9종뿐이고 나머지 36종은
-// 새 지점을 요구한다. 필요한 신규 앵커(조사 실측):
+// 새 지점을 요구한다. 필요한 신규 앵커(조사 실측). **취소선 = S1 이 뚫었다**:
 //
-//   onEnemyDeath(좌표 포함 — 9종이 쓴다) · onLootRoll · onLootCollected · onPowerupOffer ·
-//   onPowerupPicked · onLevelUp · onWaveAdvanced · onEnemyContact · onResourceGranted ·
-//   onEnemyStep · onEnemyDamaged · onDashPierce · 촉매 해저드→적 피해 루프 ·
+//   ~~onEnemyDeath(좌표 포함 — 9종이 쓴다)~~ · ~~onEnemyDamaged~~ · ~~onPowerupOffer~~ ·
+//   ~~onPowerupPicked~~ · ~~onLevelUp~~ ·
+//   onLootRoll · onLootCollected · onWaveAdvanced · onEnemyContact · onResourceGranted ·
+//   onEnemyStep · onDashPierce · 촉매 해저드→적 피해 루프 ·
 //   isPlayerTargetable 등재/제외 · 정산 채널
+//
+// ⚠️ **`onWaveAdvanced` 는 S1 이 손대지 않았다** — 웨이브 전진은 `waves.ts`(leaf) 안에서
+// 일어나고, 거기서 이 파일을 부르면 `skillHooks → skills/*` 사슬과 엮여 순환 위험이 생긴다.
+// `world.ts` 쪽에서 `updateWaves` 전후의 웨이브 인덱스를 비교해 뚫는 형태가 안전하다.
 //
 // ⚠️ **해저드→적 피해 루프**는 지금 존재하지 않는다 — 현행 해저드 피해는 *플레이어 충돌 질의
 // 콜백 안*에만 있어 적을 못 때린다. 이것은 `stepWorld` 에 **새 per-tick 단계**를 만드는

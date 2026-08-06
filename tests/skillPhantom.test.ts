@@ -1,0 +1,489 @@
+/**
+ * 팬텀 30스킬 배선(ADR-0049 배치 4) — **앵커를 통과하는 관측 테스트**.
+ *
+ * ## 왜 효과 함수를 직접 부르지 않는가
+ * `src/sim/skills/phantom.ts` 의 함수를 직접 부르면 "효과 산술이 맞다"만 잰다. 이 저장소가
+ * 반복해서 밟은 실패는 그쪽이 아니라 **"고쳐 놨는데 아무도 안 부른다"** 였다. 그래서 전부
+ * `skillHooks.ts` 의 **공개 앵커**(또는 `stepWorld`)를 통해 자극한다.
+ *
+ * ## 뮤테이션으로 계측기를 검사했다 (2026-08-07)
+ *  ① **효과 본체 삭제** — `phantomWallContact` 의 `advanceCloak` 한 줄을 지우면 §④ 가 실패한다.
+ *  ② **배선 이음매 치환** — 앵커 ⑨(`dispatchSignatureStepSkill`)의 `case SIG_PHANTOM_CLOAK:`
+ *     를 지우면 §⑦ DI2 · §⑧ DI5 쿨다운 진행이 함께 실패한다.
+ * 초록인데 아무것도 안 재는 테스트가 아니다.
+ */
+
+import { describe, it, expect } from 'vitest';
+import {
+  createWorld,
+  stepWorld,
+  emptyInput,
+  DEFAULT_CONFIG,
+  type WorldConfig,
+  type WorldState,
+} from '../src/sim/world.js';
+import type { Entity } from '../src/sim/entities.js';
+import { blankEntity } from '../src/sim/entities.js';
+import { hashWorld } from '../src/sim/replay.js';
+import { neutralLoadout } from '../src/items/loadout.js';
+import {
+  onDashFired,
+  onGemCollected,
+  onWallContact,
+  onPlayerDamaged,
+  onDamageChain,
+  onSignatureStep,
+  onEnemyDamaged,
+} from '../src/sim/skillHooks.js';
+import { SIG_PHANTOM_CLOAK, CLOAK_UNHIT_TICKS } from '../src/sim/shipSignature.js';
+import { PhantomCarry, readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
+
+/** `data/ships/index.ts` 의 타입 id (STRIKER 0 · BRUISER 1 · ARCCASTER 2 · **PHANTOM 3**). */
+const SHIP_PHANTOM = 3;
+
+/**
+ * flat 인덱스 — **정본은 `data/ships/phantom.ts` 의 `trees` 배열**이다:
+ * `[assassin(offense), phase(utility), disrupt(defense)]` → AS 0..9 · PH 10..19 · DI 20..29.
+ */
+const AS4 = 3;
+const AS5 = 4;
+const PH1 = 10;
+const PH7 = 16;
+const PH8 = 17;
+const DI2 = 21;
+const DI3 = 22;
+const DI4 = 23;
+const DI5 = 24;
+const DI6 = 25;
+const DI7 = 26;
+const DI8 = 27;
+
+function invest(points: ReadonlyArray<readonly [number, number]>): number[] {
+  const v = new Array<number>(30).fill(0);
+  for (const [i, n] of points) v[i] = n;
+  return v;
+}
+
+function phantomConfig(): WorldConfig {
+  return {
+    ...DEFAULT_CONFIG,
+    planet: 0,
+    stage: 1,
+    shipType: SHIP_PHANTOM,
+    playerHp: 100_000_000,
+    loadout: { ...neutralLoadout(), weaponType: 0 },
+  };
+}
+
+function mk(points: ReadonlyArray<readonly [number, number]> = []): WorldState {
+  return createWorld(1234, { ...phantomConfig(), skillInvest: invest(points) });
+}
+
+function player(state: WorldState): Entity {
+  const p = state.entities[0];
+  if (p === undefined) throw new Error('player missing');
+  return p;
+}
+
+function addEnemy(state: WorldState, x: number, y: number, hp: number): Entity {
+  const e: Entity = { ...blankEntity('enemy'), x, y, hp, maxHp: hp, radius: 20 };
+  state.entities.push(e);
+  return e;
+}
+
+// ---------------------------------------------------------------------------
+// ⓪ 전제
+// ---------------------------------------------------------------------------
+
+describe('⓪ 전제', () => {
+  it('shipType 3 런은 팬텀 시그니처이고 투자 벡터는 30칸이다', () => {
+    const w = mk([[PH1, 1]]);
+    expect(w.sigBit).toBe(SIG_PHANTOM_CLOAK);
+    expect(w.skillsOn).toBe(true);
+    expect(w.config.skillInvest).toHaveLength(30);
+    expect(w.skillDerived.shipType).toBe(SHIP_PHANTOM);
+  });
+
+  it('투자 0 런은 `skillsOn` 이 거짓이라 앵커가 첫 줄에서 반환한다', () => {
+    expect(mk().skillsOn).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ① 불변 계약 — 투자 0 런은 바이트 불변이어야 한다
+// ---------------------------------------------------------------------------
+
+describe('① 투자 0 런 불변', () => {
+  it('투자 0 팬텀 런 두 개가 400틱 뒤 같은 해시다 (슬롯도 전부 0)', () => {
+    const a = mk();
+    const b = mk();
+    for (let i = 0; i < 400; i++) {
+      stepWorld(a, emptyInput());
+      stepWorld(b, emptyInput());
+    }
+    expect(hashWorld(a)).toBe(hashWorld(b));
+    for (let s = 0; s < SKILL_SLOT_COUNT; s++) {
+      expect(readSlot(a.skillCarry, s)).toBe(0);
+      expect(readSlot(a.skillStage, s)).toBe(0);
+    }
+  });
+
+  it('`skillInvest` 미지정 런과 전 칸 0 런의 **시뮬 상태**가 같다', () => {
+    // ⚠️ 여기서 `hashWorld` 를 마주 세우면 안 된다 — `hashWorld` 가 `config.skillInvest` 배열
+    // 자체를 접어서 **배선과 무관하게** 갈린다(스트라이커 레인이 밟았다). 배선이 재야 하는
+    // 것은 "스킬 경로가 한 줄도 안 돌았다" 이고, 그 관측면은 **엔티티·슬롯 상태**다.
+    const none = createWorld(77, { ...phantomConfig() });
+    const zero = createWorld(77, { ...phantomConfig(), skillInvest: invest([]) });
+    for (let i = 0; i < 400; i++) {
+      stepWorld(none, emptyInput());
+      stepWorld(zero, emptyInput());
+    }
+    expect(zero.entities.length).toBe(none.entities.length);
+    for (let i = 0; i < none.entities.length; i++) {
+      const a = none.entities[i];
+      const b = zero.entities[i];
+      expect(b?.x).toBe(a?.x);
+      expect(b?.y).toBe(a?.y);
+      expect(b?.hp).toBe(a?.hp);
+      expect(b?.maxHp).toBe(a?.maxHp);
+      expect(b?.aux0).toBe(a?.aux0);
+      expect(b?.aux1).toBe(a?.aux1);
+    }
+    for (let s = 0; s < SKILL_SLOT_COUNT; s++) {
+      expect(readSlot(zero.skillCarry, s)).toBe(readSlot(none.skillCarry, s));
+      expect(readSlot(zero.skillStage, s)).toBe(readSlot(none.skillStage, s));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ② PH1 잔상 이탈 — 앵커 ②(대시 발동)
+// ---------------------------------------------------------------------------
+
+describe('② PH1 잔상 이탈 (앵커 ②)', () => {
+  it('대시 발동이 무피격 스트릭을 전진시킨다 (미투자면 불변)', () => {
+    const off = mk();
+    const p0 = player(off);
+    p0.aux0 = 0;
+    onDashFired(off, p0);
+    expect(p0.aux0).toBe(0);
+
+    const on = mk([[PH1, 5]]);
+    const p1 = player(on);
+    p1.aux0 = 0;
+    onDashFired(on, p1);
+    // 20 + 4×5 = 40.
+    expect(p1.aux0).toBe(40);
+  });
+
+  it('창 안(aux0 ≥ 240) 대시는 무효다 — 창 조작은 PH6 의 전유 축이다', () => {
+    const w = mk([[PH1, 20]]);
+    const p = player(w);
+    p.aux0 = 260;
+    onDashFired(w, p);
+    expect(p.aux0).toBe(260);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ③ PH8 흔적 흡수 — 앵커 ③(젬 수거)
+// ---------------------------------------------------------------------------
+
+describe('③ PH8 흔적 흡수 (앵커 ③)', () => {
+  it('젬 수거가 스트릭을 전진시킨다 (미투자면 불변)', () => {
+    const off = mk();
+    const g0 = blankEntity('gem');
+    player(off).aux0 = 0;
+    onGemCollected(off, g0);
+    expect(player(off).aux0).toBe(0);
+
+    const on = mk([[PH8, 10]]);
+    player(on).aux0 = 0;
+    onGemCollected(on, blankEntity('gem'));
+    // 1 + ceil(10/5) = 3.
+    expect(player(on).aux0).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ④ DI6 차폐 잠행 — 앵커 ⑦(벽 접촉)
+// ---------------------------------------------------------------------------
+
+describe('④ DI6 차폐 잠행 (앵커 ⑦)', () => {
+  it('벽 접촉 틱이 적립을 가속한다 (미투자면 불변)', () => {
+    const off = mk();
+    player(off).aux0 = 0;
+    onWallContact(off, player(off));
+    expect(player(off).aux0).toBe(0);
+
+    const on = mk([[DI6, 20]]);
+    const p = player(on);
+    p.aux0 = 0;
+    onWallContact(on, p);
+    // 1 + floor(20/10) = 3.
+    expect(p.aux0).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑤ DI3 초탄 감쇄 — 앵커 ⑧(감쇠 사슬)
+// ---------------------------------------------------------------------------
+
+describe('⑤ DI3 초탄 감쇄 (앵커 ⑧)', () => {
+  it('스트릭이 길수록 받는 피해가 줄고, 스트릭 0 이면 감소가 없다', () => {
+    const off = mk();
+    player(off).aux0 = 300;
+    expect(onDamageChain(off, player(off), 100)).toBe(100);
+
+    const on = mk([[DI3, 10]]);
+    const p = player(on);
+    p.aux0 = 0;
+    // 피격 직후(스트릭 0)에는 무력하다 — 연타 억제가 공식에 내장돼 있다.
+    expect(onDamageChain(on, p, 100)).toBe(100);
+    p.aux0 = 240;
+    const mid = onDamageChain(on, p, 100);
+    expect(mid).toBeLessThan(100);
+    p.aux0 = 359;
+    expect(onDamageChain(on, p, 100)).toBeLessThan(mid);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑥ DI4 반발 위상 — 앵커 ④(피격 후속)
+// ---------------------------------------------------------------------------
+
+describe('⑥ DI4 반발 위상 (앵커 ④)', () => {
+  function setup(points: ReadonlyArray<readonly [number, number]>): {
+    w: WorldState;
+    e: Entity;
+    x0: number;
+  } {
+    const w = mk(points);
+    // 벽 슬라이드 재해결이 변위를 되돌리는 무대 의존을 없앤다 — 이 절이 재는 것은 "밀렸는가" 다.
+    w.activeWalls = [];
+    const p = player(w);
+    p.maxHp = 100;
+    p.hp = 90;
+    const e = addEnemy(w, p.x + 60, p.y, 500);
+    return { w, e, x0: e.x };
+  }
+
+  it('실피격 틱에 주변 적이 밀려난다 (미투자면 제자리)', () => {
+    const off = setup([]);
+    onPlayerDamaged(off.w, player(off.w), 5, false);
+    expect(off.e.x).toBe(off.x0);
+
+    const on = setup([[DI4, 10]]);
+    onPlayerDamaged(on.w, player(on.w), 5, false);
+    // 변위 60 + 8×10 = 140 (일반 잡몹은 반감 없음).
+    expect(on.e.x).toBeCloseTo(on.x0 + 140, 6);
+  });
+
+  it('엘리트(pierce > 0)는 반감된다', () => {
+    const on = setup([[DI4, 10]]);
+    on.e.pierce = 1;
+    onPlayerDamaged(on.w, player(on.w), 5, false);
+    expect(on.e.x).toBeCloseTo(on.x0 + 70, 6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑦ DI2 은둔 재생 — 앵커 ⑨(시그니처 틱)
+// ---------------------------------------------------------------------------
+
+describe('⑦ DI2 은둔 재생 (앵커 ⑨)', () => {
+  it('은신 창 안 60틱 주기에만 회복한다 (미투자면 회복 0)', () => {
+    const off = mk();
+    const q = player(off);
+    q.maxHp = 100;
+    q.hp = 50;
+    q.aux0 = 300;
+    onSignatureStep(off, q, emptyInput());
+    expect(q.hp).toBe(50);
+
+    const on = mk([[DI2, 10]]);
+    const p = player(on);
+    p.maxHp = 100;
+    p.hp = 50;
+    // 진입 틱(240)은 공짜 회복이 없다 — 첫 회복은 진입 60틱 뒤다.
+    p.aux0 = CLOAK_UNHIT_TICKS;
+    onSignatureStep(on, p, emptyInput());
+    expect(p.hp).toBe(50);
+    // 창 밖(적립 중)도 회복 없음.
+    p.aux0 = 120;
+    onSignatureStep(on, p, emptyInput());
+    expect(p.hp).toBe(50);
+    // 진입 60틱 뒤 = 2 + Lv.
+    p.aux0 = CLOAK_UNHIT_TICKS + 60;
+    onSignatureStep(on, p, emptyInput());
+    expect(p.hp).toBe(62);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑧ DI5 최후 위상 — 앵커 ④(트리거) + 앵커 ⑨(쿨다운 진행)
+// ---------------------------------------------------------------------------
+
+describe('⑧ DI5 최후 위상 (앵커 ④ + ⑨)', () => {
+  function hurt(w: WorldState): Entity {
+    const p = player(w);
+    p.maxHp = 100;
+    p.hp = 25;
+    onPlayerDamaged(w, p, 10, false); // 피격 전 35% → 25% 로 임계 통과
+    return p;
+  }
+
+  it('30% 임계를 통과하는 피격 틱에 즉시 은신 진입 + 내부 쿨다운이 선다', () => {
+    const off = mk();
+    const q = hurt(off);
+    expect(q.aux0).toBe(0);
+    expect(readSlot(off.skillCarry, PhantomCarry.lastPhaseCooldown)).toBe(0);
+
+    const on = mk([[DI5, 20]]);
+    const p = hurt(on);
+    expect(p.aux0).toBe(CLOAK_UNHIT_TICKS);
+    // 3600 − floor(3600×20/50) = 2160.
+    expect(readSlot(on.skillCarry, PhantomCarry.lastPhaseCooldown)).toBe(2160);
+  });
+
+  it('이미 임계 아래였던 피격은 통과가 아니라 재발동시키지 않는다', () => {
+    const w = mk([[DI5, 20]]);
+    const p = player(w);
+    p.maxHp = 100;
+    p.hp = 20;
+    onPlayerDamaged(w, p, 5, false); // 25% → 20%, 둘 다 임계 아래
+    expect(p.aux0).toBe(0);
+    expect(readSlot(w.skillCarry, PhantomCarry.lastPhaseCooldown)).toBe(0);
+  });
+
+  it('내부 쿨다운이 앵커 ⑨ 에서 깎이고, 남아 있는 동안은 재발동하지 않는다', () => {
+    const w = mk([[DI5, 20]]);
+    const p = hurt(w);
+    const cd = readSlot(w.skillCarry, PhantomCarry.lastPhaseCooldown);
+    onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillCarry, PhantomCarry.lastPhaseCooldown)).toBe(cd - 1);
+    // 쿨 중 재시도 — 스트릭을 되돌려도 진입이 다시 서지 않는다.
+    p.aux0 = 0;
+    p.hp = 25;
+    onPlayerDamaged(w, p, 10, false);
+    expect(p.aux0).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑨ AS4 급소 해부 · AS5 배후 격살 — 앵커 ⑩(적 피격)
+// ---------------------------------------------------------------------------
+
+describe('⑨ AS4 · AS5 (앵커 ⑩)', () => {
+  it('AS4 — 만피 적에게 명중한 첫 타에만 추가 피해가 붙는다', () => {
+    const off = mk();
+    const e0 = addEnemy(off, 400, 400, 100);
+    e0.hp = 90;
+    onEnemyDamaged(off, e0, 10, undefined);
+    expect(e0.hp).toBe(90);
+
+    const on = mk([[AS4, 10]]);
+    const e1 = addEnemy(on, 400, 400, 100);
+    e1.hp = 90; // 피격 전 100 = 만피
+    onEnemyDamaged(on, e1, 10, undefined);
+    // round(10 × (1200 + 1800)/10000) = 3.
+    expect(e1.hp).toBe(87);
+
+    // 만피가 아니면 붙지 않는다.
+    const e2 = addEnemy(on, 400, 400, 100);
+    e2.hp = 50;
+    onEnemyDamaged(on, e2, 10, undefined);
+    expect(e2.hp).toBe(50);
+  });
+
+  it('AS4 — 피해가 전량 흡수된 명중(dmg 0)은 제외된다', () => {
+    const on = mk([[AS4, 10]]);
+    const e = addEnemy(on, 400, 400, 100);
+    onEnemyDamaged(on, e, 0, undefined);
+    expect(e.hp).toBe(100);
+  });
+
+  it('AS5 — 적의 후방 반구에서만 추가 피해가 붙는다 (정지 적은 제외)', () => {
+    const on = mk([[AS5, 10]]);
+    const p = player(on);
+
+    // 적이 플레이어에게서 멀어지는 방향(+x)으로 이동 = 플레이어가 후방에 있다.
+    const back = addEnemy(on, p.x + 100, p.y, 100);
+    back.hp = 50;
+    back.vx = 1;
+    onEnemyDamaged(on, back, 20, undefined);
+    // round(20 × (1000 + 1500)/10000) = 5.
+    expect(back.hp).toBe(45);
+
+    // 플레이어를 향해 오는 적(−x)은 배후가 없다.
+    const front = addEnemy(on, p.x + 100, p.y, 100);
+    front.hp = 50;
+    front.vx = -1;
+    onEnemyDamaged(on, front, 20, undefined);
+    expect(front.hp).toBe(50);
+
+    // 정지 적은 내적이 0 이라 증폭 없음.
+    const still = addEnemy(on, p.x + 100, p.y, 100);
+    still.hp = 50;
+    onEnemyDamaged(on, still, 20, undefined);
+    expect(still.hp).toBe(50);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑩ 진입 에지 3종(PH7·DI7·DI8) — `stepWorld` 가 임계를 넘는 틱
+// ---------------------------------------------------------------------------
+
+describe('⑩ 진입 에지 PH7 · DI7 · DI8 (fireCloakEntry)', () => {
+  /** 자연 적립이 이번 틱에 240 을 통과하도록 세팅하고 한 틱 돌린다. */
+  function crossEntry(points: ReadonlyArray<readonly [number, number]>): {
+    w: WorldState;
+    e: Entity;
+    maxHpBefore: number;
+  } {
+    const w = mk(points);
+    const p = player(w);
+    p.aux0 = CLOAK_UNHIT_TICKS - 1;
+    const e = addEnemy(w, p.x + 120, p.y, 5000);
+    const maxHpBefore = p.maxHp;
+    stepWorld(w, emptyInput());
+    return { w, e, maxHpBefore };
+  }
+
+  it('은신 진입 틱에 폭발(PH7) · 냉기(DI7) · 최대 HP 침전(DI8)이 함께 발화한다', () => {
+    const off = crossEntry([]);
+    expect(player(off.w).aux0).toBe(CLOAK_UNHIT_TICKS);
+    expect(off.e.hp).toBe(5000);
+    expect(off.e.ownerId).toBe(0);
+    expect(player(off.w).maxHp).toBe(off.maxHpBefore);
+
+    const on = crossEntry([
+      [PH7, 10],
+      [DI7, 10],
+      [DI8, 20],
+    ]);
+    expect(player(on.w).aux0).toBe(CLOAK_UNHIT_TICKS);
+    // PH7 — 반경 150 + 120 = 270 안, 피해 15 + 30 = 45.
+    expect(on.e.hp).toBeLessThan(5000);
+    // DI7 — 반경 200 + 150 = 350 안이라 냉기(감속 잔여 틱)가 선다.
+    expect(on.e.ownerId).toBeGreaterThan(0);
+    // DI8 — round(2 + 16×20/44) = 9.
+    expect(player(on.w).maxHp).toBe(on.maxHpBefore + 9);
+  });
+
+  it('진입하지 않은 틱에는 아무것도 발화하지 않는다', () => {
+    const w = mk([
+      [PH7, 10],
+      [DI7, 10],
+      [DI8, 20],
+    ]);
+    const p = player(w);
+    p.aux0 = 100;
+    const e = addEnemy(w, p.x + 120, p.y, 5000);
+    const maxHpBefore = p.maxHp;
+    stepWorld(w, emptyInput());
+    expect(e.hp).toBe(5000);
+    expect(e.ownerId).toBe(0);
+    expect(player(w).maxHp).toBe(maxHpBefore);
+  });
+});

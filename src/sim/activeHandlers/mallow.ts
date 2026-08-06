@@ -16,19 +16,16 @@
  * 쿨다운만 세우고 버프는 감소만 한다 — 공통 코드가 세우면 관측량 단언이 항진이 된다.
  */
 
-import { CUSHION_RECOVER_TICKS } from '../shipSignature.js';
+import { CUSHION_RECOVER_TICKS, CUSHION_TICK_CAP } from '../shipSignature.js';
 import type { Entity } from '../entities.js';
 import { blink, fanStrike, powerCentiOf, scaleCenti, setBuffTicks } from '../activeTypes.js';
 import type { ActiveExpireTable, ActiveHandlerTable, ActiveSustainTable } from '../activeTypes.js';
 
 /**
- * 완충 무피격 카운터 상한. `world.ts` 의 동명 상수(비공개)와 같은 값이며 같은 이유로 둔다 —
- * `aux` 는 u32 로 해시되므로(replay.ts hashEntity) 정수를 유계로 유지한다. 임계(180)는 이미
- * 넘긴 뒤라 거동에는 영향이 없다.
+ * 무피격 카운터(`aux1`)를 상한 안에서 흘린다. 상한은 `shipSignature.ts` 의
+ * {@link CUSHION_TICK_CAP} 이 정본이다 — 이 파일과 `world.ts` 가 같은 값을 각자 들고 있던 것을
+ * `skills/mallow.ts` 의 ME1 이 세 번째 소비처가 되는 시점에 합쳤다.
  */
-const CUSHION_TICK_CAP = 600;
-
-/** 무피격 카운터(`aux1`)를 상한 안에서 흘린다. */
 function addUnhitTicks(player: Entity, by: number): void {
   const next = Math.trunc(player.aux1) + Math.trunc(by);
   player.aux1 = next > CUSHION_TICK_CAP ? CUSHION_TICK_CAP : next;

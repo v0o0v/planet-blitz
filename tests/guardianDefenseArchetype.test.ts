@@ -91,6 +91,58 @@ describe('mapLoadoutToGuardianSnapshot — 빌드 파생 구조 (ADR-0025)', () 
 });
 
 // ---------------------------------------------------------------------------
+// ①-b 대표 스탯 계승 (prerequisites.md §0-B 결정 C) — 파생 지점은 mapLoadoutToGuardianSnapshot 한 곳
+// ---------------------------------------------------------------------------
+
+describe('mapLoadoutToGuardianSnapshot — 대표 스탯 계승 (결정 C)', () => {
+  it('이속 배율을 계승한다(이전에는 프리셋 기본값만 실려 통째로 유실됐다)', () => {
+    const base = mapLoadoutToGuardianSnapshot(GUARDIAN_TITAN, loadout());
+    const fast = mapLoadoutToGuardianSnapshot(GUARDIAN_TITAN, loadout({ moveSpeedMult: 1.5 }));
+    expect(fast.moveSpeed).toBe(Math.round(base.moveSpeed * 1.5));
+    expect(Number.isInteger(fast.moveSpeed)).toBe(true);
+  });
+
+  it('이속 계승은 프리셋 기본값의 2배에서 멈춘다(이동 AI 진동 방지 상한)', () => {
+    const base = mapLoadoutToGuardianSnapshot(GUARDIAN_TITAN, loadout());
+    const insane = mapLoadoutToGuardianSnapshot(GUARDIAN_TITAN, loadout({ moveSpeedMult: 99 }));
+    expect(insane.moveSpeed).toBe(Math.round(base.moveSpeed * 2));
+  });
+
+  it('사거리를 늘리면 탄 수명도 함께 늘어난다(고정 수명이면 사거리 계승이 조용히 무효)', () => {
+    const base = mapLoadoutToGuardianSnapshot(GUARDIAN_TITAN, loadout());
+    const longRange = mapLoadoutToGuardianSnapshot(GUARDIAN_TITAN, loadout({ rangeAdd: 1000 }));
+    expect(longRange.range).toBeGreaterThan(base.range);
+    expect(longRange.bulletLife).toBeGreaterThan(base.bulletLife);
+    // 사거리 2배(1000→2000), 탄속 동일 → 수명도 2배여야 탄이 사거리 끝까지 간다.
+    expect(longRange.bulletLife).toBe(base.bulletLife * 2);
+  });
+
+  it('느린 탄은 수명이 늘고, 빠른 탄이어도 수명은 기본값 아래로 내려가지 않는다(하한)', () => {
+    const base = mapLoadoutToGuardianSnapshot(GUARDIAN_TITAN, loadout());
+    const slow = mapLoadoutToGuardianSnapshot(GUARDIAN_TITAN, loadout({ bulletSpeedMult: 0.5 }));
+    const quick = mapLoadoutToGuardianSnapshot(GUARDIAN_TITAN, loadout({ bulletSpeedMult: 2 }));
+    expect(slow.bulletLife).toBe(base.bulletLife * 2);
+    expect(quick.bulletLife).toBe(base.bulletLife); // 계승이 기존 수호를 약화시키지는 않는다
+  });
+
+  it('탄 수명 상한이 있다(장수명 탄 누적으로 예산을 먹지 않게)', () => {
+    const huge = mapLoadoutToGuardianSnapshot(
+      GUARDIAN_TITAN,
+      loadout({ rangeAdd: 100000, bulletSpeedMult: 0.1 }),
+    );
+    expect(huge.bulletLife).toBe(240);
+    for (const v of Object.values(huge)) expect(Number.isInteger(v)).toBe(true);
+  });
+
+  it('손상된 이속 배율(NaN)에도 유한 정수 스냅샷이 나온다(슬롯 폐기 방지)', () => {
+    const broken = mapLoadoutToGuardianSnapshot(GUARDIAN_TITAN, loadout({ moveSpeedMult: NaN }));
+    const base = mapLoadoutToGuardianSnapshot(GUARDIAN_TITAN, loadout());
+    expect(broken.moveSpeed).toBe(base.moveSpeed);
+    for (const v of Object.values(broken)) expect(Number.isInteger(v)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ② 실제 퇴역 경로가 장착 무기 타입을 스냅샷에 전파한다
 // ---------------------------------------------------------------------------
 

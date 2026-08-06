@@ -97,10 +97,260 @@ export function writeSlot(slots: number[], slot: number, value: number): void {
 // S0 시점에는 **전 기체 미배정**이다 — 그래서 전 슬롯이 런 끝까지 0 이고 `hashWorld` 의
 // 스킬 슬롯 폴드가 한 번도 실행되지 않는다(기존 골든 바이트 불변).
 //
-//   스트라이커 (SIG_STRIKER_MARKSMAN) — 미배정
-//   브루저     (SIG_BRUISER_ARMOR)    — 미배정
-//   아크캐스터 (SIG_ARC_OVERCHARGE)   — 미배정
-//   팬텀       (SIG_PHANTOM_CLOAK)    — 미배정
-//   해츨링     (SIG_HATCHLING_BROOD)  — 미배정
-//   말로우     (SIG_MALLOW_CUSHION)   — 미배정
-//   버블       (SIG_BUBBLE_FILM)      — 미배정
+//   스트라이커 (SIG_STRIKER_MARKSMAN) — StrikerCarry / StrikerStage
+//   아크캐스터 (SIG_ARC_OVERCHARGE)   — ArccasterCarry / ArccasterStage
+//   브루저     (SIG_BRUISER_ARMOR)    — BruiserCarry / BruiserStage
+//   해츨링     (SIG_HATCHLING_BROOD)  — HatchlingCarry / HatchlingStage
+//   말로우     (SIG_MALLOW_CUSHION)   — MallowCarry / MallowStage (배선 6종이 **한 칸도 안 쓴다**)
+//   팬텀       (SIG_PHANTOM_CLOAK)    — PhantomCarry / PhantomStage
+//   버블       (SIG_BUBBLE_FILM)      — BubbleCarry / BubbleStage (**실배정 0칸**)
+//
+// ⚠️ 이 색인은 **병렬 배선 머지에서 중복되기 쉽다** — 레인마다 자기 줄을 고치는데 git 이
+// 양쪽을 다 살리기 때문이다(실제로 브루저·아크캐스터가 2줄씩 중복된 채 들어왔다).
+// 머지 후 이 목록의 기체 수가 **정확히 7** 인지 눈으로 확인하라.
+
+/**
+ * **스트라이커 이월 슬롯**(ADR-0049 배치 1). 효과 본체는 `src/sim/skills/striker.ts`.
+ *
+ * 둘 다 S10「선체 증축」의 저금이라 **구간을 넘어 살아야 한다** — 의뢰 다구간 런에서 구간이
+ * 바뀔 때마다 리셋되면 400XP 임계에 영영 못 닿는 구간이 생긴다. 그래서 `Stage` 가 아니라
+ * `Carry` 다.
+ */
+export const enum StrikerCarry {
+  /**
+   * S10 — **직전에 관측한 `state.xp`**. `state.xp` 는 레벨업마다 `-= need` 되는 잔여 풀이라
+   * 누적이 아니고, 그래서 "늘어난 만큼만" 적립하려면 직전 값이 필요하다. 0 = 아직 관측 없음
+   * (런 시작 xp 가 0 이라 자연 센티넬 — 값 규약 1).
+   */
+  hullXpSeen = 0,
+  /** S10 — 아직 임계(400)를 못 넘긴 **잔여 누적 XP**. 지급할 때마다 400 씩 뺀다. */
+  hullXpPool = 1,
+}
+
+/**
+ * **스트라이커 구간 슬롯** — 이 배치가 배선한 9종은 **한 칸도 쓰지 않는다.**
+ *
+ * 설계서가 `구현: B`(신규 상태)로 표시한 스트라이커 6종 중 이 배치가 닿은 것은 M5·S4 둘인데,
+ * 둘의 술어("직전 틱 벽 접촉")는 S0 의 E5 가 세운 {@link WorldState.wallContactTicks} 가 이미
+ * 제공한다 — 같은 술어를 슬롯에 다시 적으면 두 곳이 조용히 갈린다. 나머지 넷(F7 락온 정수 2 ·
+ * F8 창 연장 카운터 1 · M10 2충전 카운터 1)은 앵커 9개 밖이라 **아직 코드가 없고**, 그 레인이
+ * 자기 번호를 여기에 선언한다.
+ *
+ * ⚠️ 지금 예약 번호를 미리 적지 마라 — 미사용 슬롯이 영구 0 으로 남는 것이 이 파일 헤더가
+ * 폭을 8 로 좁힌 이유 자체다(오인덱스가 조용한 무연산이 된다).
+ */
+export const enum StrikerStage {
+  /**
+   * 자리표시자 — **읽지도 쓰지도 않는다.** TypeScript 는 멤버 0개인 `const enum` 을 허용하지만,
+   * 빈 선언은 "배정이 끝났다" 와 "아직 아무도 안 잡았다" 를 구분해 주지 못한다. 실제 배정이
+   * 생기면 이 줄을 **지우고** 0번부터 다시 매겨라.
+   */
+  unassigned = 0,
+}
+
+/**
+ * **아크캐스터 이월 슬롯**(ADR-0049 배치 3). 효과 본체는 `src/sim/skills/arccaster.ts`.
+ *
+ * ⚠️ BR10「최후 접지」의 **「런당 1회」 억제는 여기 없다** — 플레이어 `targetX` 를 쓴다
+ * (`skillHooks.ts` 의 `survivedLethalBlow` 주석이 지정한 칸이고, 이미 `commissionCarry` 의
+ * `ENTITY_CARRY` 에 있어 의뢰 다구간에서도 "런당 1회"가 정확히 성립한다). 슬롯을 잡으면
+ * 같은 억제가 두 곳에 생겨 조용히 갈린다.
+ */
+export const enum ArccasterCarry {
+  /**
+   * BR6「전하 역류」의 **내부 쿨다운 잔여 틱**. 0 = 발동 준비됨(값 규약 1 — 0 이 자연 센티넬).
+   *
+   * `Stage` 가 아니라 `Carry` 인 이유: 쿨다운이 Lv1 에서 4800틱(80초)이라 의뢰 구간 길이를
+   * 우습게 넘는다. 구간마다 리셋하면 "구간 전환 = 쿨다운 초기화"가 되어 억제가 사실상
+   * 사라진다(설계서가 이 스킬의 억제로 명시한 것이 바로 내부 쿨다운이다).
+   */
+  backflowCooldown = 0,
+}
+
+/**
+ * **아크캐스터 구간 슬롯.** 둘 다 구간을 넘겨 살면 안 되는 값이다.
+ */
+export const enum ArccasterStage {
+  /**
+   * BR4「잉여 전하 방벽」의 **적립된 흡수량**. 새 구간은 aux0 0 에서 다시 쌓는 것이 맞고,
+   * 넘기면 구간 전환이 공짜 방어 자원이 된다.
+   */
+  surplusStore = 0,
+  /**
+   * CH4「진입 뇌격」의 **직전 틱 말 aux0 스냅샷**. 통과 판정(`이전 < 90 && 현재 ≥ 90`)의
+   * 비교 기준이다. 구간이 바뀌면 월드가 새로 서고 aux0 도 0 이므로 넘기면 안 된다 —
+   * 만충 상태로 구간을 마친 런이 새 구간 첫 틱에 **유령 통과**를 만든다.
+   */
+  entryAux0Seen = 1,
+}
+
+/**
+ * **브루저 이월 슬롯**(ADR-0049 배치 2). 효과 본체는 `src/sim/skills/bruiser.ts`.
+ *
+ * 셋 다 **런 단위 자원**이라 구간을 넘어 살아야 한다 — 의뢰 다구간 런에서 구간마다 리셋되면
+ * 응혈 풀은 영영 정산되지 못하고(만재 엣지가 구간 초반에 잘 안 뜬다), FO7 의 50% 상한은
+ * 구간 수만큼 곱해져 상한이 사실상 사라진다. 그래서 `Stage` 가 아니라 `Carry` 다.
+ */
+export const enum BruiserCarry {
+  /**
+   * FO2 — **응혈 풀**. 실피격으로 잃은 HP 중 적립된 몫(정수 HP). 장갑이 상한에 도달하는
+   * **상승 엣지**에서 60% 가 회복으로 정산되고 나머지 40% 는 소멸한다. 0 = 적립 없음.
+   */
+  clotPool = 0,
+  /**
+   * FO7 — **런 시작 최대 HP**(누적 상한 50% 의 기준선). 첫 `stepShipSignature` 에 한 번만
+   * 잡는다. 0 = 아직 관측 없음 — `maxHp` 는 항상 양수라 자연 센티넬이다(값 규약 1).
+   */
+  trophyBaseHp = 1,
+  /**
+   * FO7 — 이 런에서 **FO7 이 실제로 준 최대 HP 누적분**. 파워업(`reinforced-hull` 등)이 같은
+   * `maxHp` 를 수시로 가산해 차분으로는 FO7 몫을 분리할 수 없어 전용 칸이 필요하다(설계서 R-6).
+   */
+  trophyGranted = 2,
+}
+
+/**
+ * **브루저 구간 슬롯**. 둘 다 구간이 바뀌면 새로 시작하는 것이 옳다 — 명중 카운터와 직전 스택
+ * 관측값은 **그 구간의 진행 상태**이지 저금이 아니다(새 월드의 `aux0` 도 0 에서 다시 시작한다).
+ */
+export const enum BruiserStage {
+  /**
+   * FO2 — **직전 틱에 관측한 장갑 스택**. 만재 상승 엣지(`prev < 상한 && cur >= 상한`)를 재는
+   * 데만 쓴다. 레벨 술어(`aux0 == 상한`)로 대체하면 fortify 액티브의 SUSTAIN 이 매 틱 만재를
+   * 재설정하는 동안 **매 틱 정산**이 된다.
+   */
+  prevArmorStacks = 0,
+  /**
+   * BL9 — **N 주기 명중 카운터**. 강타가 터진 틱에 0 으로 되돌아간다. N 은 고정이 아니라
+   * 장갑 스택에서 매 명중마다 파생되므로(`max(1, round(48/(4+스택)))`) 이 칸에는 카운트만 산다.
+   */
+  cadenceHits = 1,
+}
+
+/**
+ * **해츨링 이월 슬롯**(ADR-0049 배치 5) — 이 배치가 배선한 9종은 **한 칸도 쓰지 않는다.**
+ *
+ * 설계서가 `구현: B`(신규 상태)로 표시한 해츨링 3종은 BD2(출격 카운터)·BD4(표적 id·명중 틱)·
+ * NU10(저금)인데, 셋 다 이 배치의 미배선 목록에 있다(효과 지점이 `stepHatchBrood` 안 또는
+ * 앵커 ⑩ 의 사후 시점 — 사유는 `skills/hatchling.ts` 헤더). 그중 **NU10 저금만이 `Carry` 후보**
+ * 다(만석 보류가 의뢰 구간을 넘어 이어질 수 있다) — 그 레인이 자기 번호를 여기에 선언한다.
+ * **팬텀 이월 슬롯**(ADR-0049 배치 4). 효과 본체는 `src/sim/skills/phantom.ts`.
+ *
+ * ⚠️ 팬텀의 `player.aux0`/`aux1` 은 **시그니처(은신)가 점유**한다(aux0 = 연속 무피격 틱 ·
+ * aux1 = 해제 첫 타 배율 토큰). 스킬 상태를 그 두 칸에 얹지 마라 — 사이클과 조용히 갈린다.
+ */
+export const enum PhantomCarry {
+  /**
+   * DI5「최후 위상」의 **내부 쿨다운 잔여 틱**. 0 = 발동 준비됨(값 규약 1 — 0 이 자연 센티넬).
+   *
+   * `Stage` 가 아니라 `Carry` 인 이유는 아크캐스터 `backflowCooldown` 과 같다: 쿨다운이 Lv1 에서
+   * 3484틱(약 58초)이라 의뢰 구간 길이를 우습게 넘는다. 구간마다 리셋하면 "구간 전환 = 쿨다운
+   * 초기화"가 되어 설계서가 이 스킬의 유일한 억제로 명시한 내부 쿨다운이 사실상 사라진다.
+   */
+  lastPhaseCooldown = 0,
+}
+
+/**
+ * **팬텀 구간 슬롯** — 이 배치가 배선한 12종은 **한 칸도 쓰지 않는다.**
+ *
+ * 설계서가 `구현: B`(신규 상태)로 표시한 팬텀 6종 중 이 배치가 닿은 것은 DI5 하나이고 그것은
+ * 위 `Carry` 다. 나머지 다섯(AS7 원한 표적 정수 1 · AS8 적공 스택 1 · PH5 유지 창 config 파생
+ * 승격 · PH6 창당 정지 예산 1 · DI6 벽 접촉 플래그)은 앵커 14개 밖이거나(AS7·AS8·PH5·PH6)
+ * 이미 엔진 상태가 제공한다(DI6 = `state.wallContactTicks`) — **아직 코드가 없다.**
+ *
+ * ⚠️ 지금 예약 번호를 미리 적지 마라 — 미사용 슬롯이 영구 0 으로 남는 것이 이 파일 헤더가
+ * 폭을 8 로 좁힌 이유 자체다(오인덱스가 조용한 무연산이 된다).
+ */
+export const enum HatchlingCarry {
+  /**
+   * 자리표시자 — **읽지도 쓰지도 않는다**(`StrikerStage.unassigned` 선례). 실제 배정이 생기면
+   * 이 줄을 **지우고** 0번부터 다시 매겨라.
+   */
+  unassigned = 0,
+}
+
+/**
+ * **버블 이월 슬롯**(ADR-0049 배치 4). 효과 본체는 `src/sim/skills/bubble.ts`.
+ */
+export const enum BubbleCarry {
+  /**
+   * 자리표시자 — **읽지도 쓰지도 않는다.** 형태는 `StrikerStage.unassigned` 와 같다.
+   *
+   * 배치 4(버블)가 배선한 9종은 슬롯을 **한 칸도 쓰지 않는다** — 전부 기존 필드(`aux0`·
+   * `aux1`·`iframes`·`dashCooldown`·`playerSlowTicks`)와 `state.tick` 파생만 만진다.
+   * 설계서가 `구현: B`(신규 상태)로 표시한 버블 5종은 이 배치 밖이다:
+   *  · PO10(창 틱 + kills 스냅샷 2칸) — `aux0 ≤ FILM_ABSORB_FLAT` 불변식 개정이 선결
+   *  · DR2(효율 창 1칸) · FI6(흡수 누적 1칸) — 소비처가 막 흡수 지점이라 앵커가 없다
+   *  · DR3(전용 자석 버프 1칸) — 액티브 착지 훅이 없다
+   *  · FI7(벽 접촉 플래그) — 슬롯이 아니라 `state.wallContactTicks` 로 이미 있다
+   *
+   * ⚠️ 실제 배정이 생기면 이 줄을 **지우고** 0번부터 다시 매겨라. 예약 번호를 미리 적지
+   * 마라 — 미사용 슬롯이 영구 0 으로 남는 것이 이 파일 헤더가 폭을 8 로 좁힌 이유다.
+   */
+  unassigned = 0,
+}
+
+/**
+ * **말로우 이월 슬롯**(ADR-0049 배치 4). 효과 본체는 `src/sim/skills/mallow.ts`.
+ *
+ * 이 배치가 배선한 6종은 **한 칸도 쓰지 않는다.** 설계서가 `구현: B`(신규 상태)로 표시한 말로우
+ * 6종(SQ5 장전 잔량 · SQ8 누적 선체행 · ME5 분할 이월 · ME9 벽 접촉 카운터 · CU6 런당 표식 ·
+ * CU10 지급 카운터) 중 이 배치가 닿은 것이 **0종**이기 때문이다 — 여섯 전부 정산 분기 또는
+ * 지연 전환 분기를 요구하는데 그 둘에 앵커가 없다(`skills/mallow.ts` 헤더).
+ *
+ * 배선된 6종의 상태는 전부 **이미 엔진에 있는 칸**에서 온다: `player.aux0`(부채)·`player.aux1`
+ * (무피격 스트릭)은 시그니처가 소유하고, ME10 이 쓰는 `state.xp` 는 런 풀이다. 같은 술어를
+ * 슬롯에 복제하면 갱신 시점이 갈려 조용히 어긋난다.
+ *
+ * ⚠️ ME9「솜틀 요양」의 **연속 벽 접촉 카운터를 여기 미리 잡지 마라.** 설계서 ⑥-4 가 그것을
+ * 스트라이커 M5 와 **한 벌**로 못 박았고, S0 의 E5 가 이미 {@link WorldState.wallContactTicks}
+ * 로 엔진 상태에 세워 두었다 — ME9 배선 레인은 그 값을 읽기만 하면 된다.
+ */
+export const enum MallowCarry {
+  /**
+   * 자리표시자 — **읽지도 쓰지도 않는다.** 실제 배정이 생기면 이 줄을 **지우고** 0번부터 다시
+   * 매겨라(`StrikerStage` 와 같은 규약).
+   */
+  unassigned = 0,
+}
+
+/**
+ * **해츨링 구간 슬롯**. 한 칸뿐이고 `Carry` 가 아니라 `Stage` 인 이유가 이 칸의 의미 자체다 —
+ * 아래 스냅샷은 **그 구간의 `aux0` 진행 상태**이고, 의뢰 구간이 바뀌면 월드가 새로 서면서
+ * `player.aux0` 도 0 에서 다시 시작한다. 승계하면 새 구간 첫 틱에 "감소"로 읽혀 유령 판정이 된다.
+ */
+export const enum HatchlingStage {
+  /**
+   * SH6 알막 — **직전 틱에 관측한 `player.aux0`**(부화 스냅샷). 출격 성공만이 `aux0` 를
+   * **올리는**(`aux0 = state.kills`) 유일한 경로라, `cur > seen` 이 곧 "직전 틱에 출격했다"다.
+   * 반대 방향(감소)은 액티브 6종의 `advanceHatch` 와 NU5 뿐이라 오검출이 없다.
+   * 0 = 아직 관측 없음 — 런 시작 `aux0` 가 0 이라 자연 센티넬이다(값 규약 1).
+   */
+  launchAux0Seen = 0,
+}
+
+/**
+ * **말로우 구간 슬롯** — {@link MallowCarry} 와 같은 이유로 **미배정**이다.
+ *
+ * ⚠️ `Carry` 와 `Stage` 를 한 enum 에 섞지 마라(이 파일 헤더). 말로우에서 그 구분이 특히 날카롭다:
+ * CU6「파산 보호」의 런당 1회 표식은 **구간을 넘어 살아야** 하고(`Carry`), SQ5「탕감 장전」의
+ * 잔량은 구간마다 새로 시작해야 한다(`Stage`). 두 벌을 미리 갈라 둔 것은 나중 레인이 그 판단을
+ * 다시 하지 않게 하기 위함이다.
+ */
+export const enum MallowStage {
+  /** 자리표시자 — {@link MallowCarry.unassigned} 와 같은 규약. */
+  unassigned = 0,
+}
+export const enum PhantomStage {
+  /**
+   * 자리표시자 — **읽지도 쓰지도 않는다.** 실제 배정이 생기면 이 줄을 **지우고** 0번부터
+   * 다시 매겨라(스트라이커 `StrikerStage.unassigned` 와 같은 형식).
+   */
+  unassigned = 0,
+}
+
+/** **버블 구간 슬롯** — {@link BubbleCarry} 와 같은 사유로 실배정 0칸이다. */
+export const enum BubbleStage {
+  /** 자리표시자 — 읽지도 쓰지도 않는다. 사유는 {@link BubbleCarry.unassigned}. */
+  unassigned = 0,
+}

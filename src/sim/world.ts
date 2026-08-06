@@ -19,7 +19,15 @@
 
 import { SeededRng } from './rng.js';
 import { cos, sin, atan2, length, TWO_PI, wrapAngle } from './math.js';
-import { DT, VIEW_WIDTH, VIEW_HEIGHT, OFFSCREEN_X, FIRE_CD_Q, FIRE_CD_MIN_Q } from './constants.js';
+import {
+  DT,
+  VIEW_WIDTH,
+  VIEW_HEIGHT,
+  OFFSCREEN_X,
+  FIRE_CD_Q,
+  FIRE_CD_MIN_Q,
+  COMBO_WINDOW_TICKS,
+} from './constants.js';
 import type { PlanetMode } from './planetMode.js';
 // 타입 전용 import 다 — `verbatimModuleSyntax` 로 런타임에 완전히 지워지므로 sim → run 런타임
 // 의존이 생기지 않는다(Deno 검증 경로가 `src/sim` 을 소스 그대로 import 하는 계약에 무영향).
@@ -127,11 +135,12 @@ import {
   clampArmorStacks,
   overchargeBp,
   CLOAK_BREAK_BP,
-  CLOAK_UNHIT_TICKS,
-  CLOAK_HOLD_TICKS,
+  // ⚠️ CLOAK_UNHIT_TICKS·CLOAK_HOLD_TICKS 는 더 이상 여기서 직접 읽지 않는다 — 진입/종료
+  //    임계는 `cloak.ts` 의 통과 판정 짝(`cloakEntryCrossed`·`cloakExitCrossed`)이 정본이다.
   hatchThreshold,
   BROOD_MARK,
   CUSHION_RECOVER_TICKS,
+  CUSHION_TICK_CAP,
   cushionDeferredDamage,
   cushionRecovered,
   cushionSettled,
@@ -147,11 +156,11 @@ import {
   resolveFilmBurst,
 } from './filmBurst.js';
 // 은신 사이클 헬퍼(E1) — `playerCloaked` 과 같은 leaf 모듈. 토큰 쓰기의 단일 경로다.
-import { cloakEntryCrossed, fireCloakEntry, setBreakToken } from './cloak.js';
+import { cloakEntryCrossed, cloakExitCrossed, fireCloakEntry, setBreakToken } from './cloak.js';
 import { shipTypeDef, DEFAULT_SHIP_TYPE } from '../../data/ships/index.js';
 import { hasAnyInvestment } from '../items/skills.js';
 import { createSkillSlots } from './skillSlots.js';
-// 210스킬 앵커 9개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
+// 210스킬 앵커 11개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
 import {
   survivedLethalBlow,
   onVolleyFired,
@@ -163,6 +172,11 @@ import {
   onWallContact,
   onDamageChain,
   onSignatureStep,
+  onEnemyDamaged,
+  onEnemyDeath,
+  onLevelUp,
+  onPowerupOffer,
+  onPowerupPicked,
 } from './skillHooks.js';
 import { onDamageChainCatalyst } from './catalystHooks.js';
 import { createCatalystSlots } from './catalystSlots.js';
@@ -374,8 +388,9 @@ export { SPECIAL_ACTIVE_SLOT1, SPECIAL_ACTIVE_SLOT2, activeSlotBit } from '../..
 
 // --- Progression / feel tuning (M1 prototype values; spec fixes only the
 //     structure — combo cap x1.5, 20s supply window, boss 3-phase/overheat). ---
-/** Ticks a combo survives without a pickup before it resets. */
-const COMBO_WINDOW_TICKS = 120;
+// `COMBO_WINDOW_TICKS`(콤보 창)는 **`./constants.js` 로 옮겼다**(S1). 이 파일의 비공개 상수인
+// 동안에는 `src/sim/skills/*` 가 읽을 수 없어 스트라이커 S8 의 콤보 창 회복이 미배선이었다.
+// 여기 다시 적지 마라 — 정본이 둘이 되면 조용히 갈린다.
 /** Multiplier gained per stacked pickup. */
 const COMBO_STEP = 0.05;
 /** Stacks at which the multiplier reaches its x1.5 cap (spec). */
@@ -1673,6 +1688,9 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
         if (poolIndex !== undefined) applyPowerup(state, poolIndex);
         state.pendingLevelUp = false;
         state.powerupChoices = [];
+        // 앵커 ⑭(S1) — 픽이 **실제로 소비된** 뒤. 범위 밖 인덱스 가드 **안쪽**이라, 프리즈를
+        // 유지한 채 버려지는 악성 프레임에는 불리지 않는다.
+        if (poolIndex !== undefined) onPowerupPicked(state, poolIndex, idxOffered);
       }
     }
     state.tick++;
@@ -2337,13 +2355,9 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
 /** 과충전 정지 카운터 상한. bp 는 190틱에서 이미 상한이라 거동 무영향, 정수 유계 유지용. */
 const OVERCHARGE_TICK_CAP = 600;
 
-/**
- * 완충 무피격 카운터 상한. 정산은 임계(CUSHION_RECOVER_TICKS=180)에서 일어나므로 정상
- * 경로에서는 도달하지 않지만, **적립분이 0 인 구간**(정산할 것이 없어 카운터가 리셋되지 않는
- * 구간)에서 aux1 이 무한히 커지는 것을 막는다 — aux 는 u32 로 해시된다(replay.ts hashEntity).
- * 상한에 걸려도 임계(180)는 이미 넘긴 뒤라 거동에는 영향이 없다.
- */
-const CUSHION_TICK_CAP = 600;
+// 완충 무피격 카운터 상한(`CUSHION_TICK_CAP`)은 `shipSignature.ts` 가 정본이다 — 이 파일과
+// `activeHandlers/mallow.ts` 가 같은 값을 각자 들고 있었고, `skills/mallow.ts` 의 ME1 이 세 번째
+// 소비처가 되는 시점에 그리로 합쳤다(위 import 목록 참조).
 
 /**
  * 이 런의 **유일한** 시그니처 비트를 config 에서 계산한다(없으면 -1). `createWorld` 가 딱 한 번
@@ -2449,9 +2463,18 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
     if (cloakEntryCrossed(prevUnhit, player.aux0)) fireCloakEntry(state, player);
     // 유지 창(CLOAK_HOLD_TICKS)이 끝나면 사이클을 통째로 되감는다 — 다시 240틱을 채워야 한다.
     // 여기가 aux0 의 구조적 상한이기도 하다(0..CLOAK_UNHIT_TICKS+CLOAK_HOLD_TICKS-1 = 0..359).
-    else if (player.aux0 >= CLOAK_UNHIT_TICKS + CLOAK_HOLD_TICKS) {
+    //
+    // ⚠️ **배율 토큰이 서는 자리는 여기다**(선결 C-3, 사용자 승인 2026-08-06). 초판은 진입
+    //    에지에서 장전했는데, P1 실측이 그 전제를 부정했다 — 소진의 99.81%가 창 *안*에서
+    //    진입 후 평균 10.4~13.3틱 만에 일어났다(발사는 은신을 풀지 않으므로). 즉 2.5배가
+    //    "은신을 풀며 내리치는 한 방"이 아니라 "들어가자마자 나가는 첫 발"이었다. 창 종료로
+    //    옮겨야 AS1·AS3·AS8·AS9·DI10 다섯의 시점 전제가 설계대로 선다.
+    // ⚠️ 판정은 `>= 360` 이 아니라 **통과 판정**(`cloakExitCrossed`)이다 — PH5 가 HOLD 를
+    //    늘리고 주입 스킬이 aux0 을 여러 칸 올려도 임계를 건너뛰지 않게. 자연 적립은 +1 이라
+    //    오늘의 값은 종전 `>=` 와 동일하다.
+    else if (cloakExitCrossed(prevUnhit, player.aux0)) {
       player.aux0 = 0;
-      setBreakToken(state, player, 0);
+      setBreakToken(state, player, 1);
     }
     // ⚠️ 아크캐스터·해츨링 분기와 같은 이유로 **명시적으로** 반환한다.
     return;
@@ -3505,10 +3528,10 @@ function stepTurrets(state: WorldState, _player: Entity): void {
  * ## ⚠️ 병아리 탄 마커(`ownerId = BROOD_MARK`)가 들어올 자리는 **여기 한 곳**이다
  * 설계(`hatchling.md` ⑤ 공통 고지 ⑦)는 SH5·BD4·NU5 가 "이 탄이 병아리 탄인가"를 이 마커로
  * 판정하도록 정했고, 스탬프 지점은 이 함수뿐이어야 한다(`t.ownerId === BROOD_MARK` 인 포탑이
- * 쏜 탄에만). **다만 이 커밋에서는 찍지 않았다** — `ownerId` 는 `ENTITY_HASH_LAYOUT` 의 u32
- * 폴드 대상이라 스탬프는 거동·해시 변경이고(병아리가 쏘는 모든 런의 탄 해시가 갈린다),
- * 이 커밋의 계약은 「거동 불변」이다. 스킬 배선 커밋에서 골든 재생성·EF 재배포와 **한 원자로**
- * 찍어라. 여기 말고 다른 곳에서 찍으면 드론 베이·센트리 탄까지 물들거나 경로가 반쪽이 된다.
+ * 쏜 탄에만). **배선 커밋에서 찍었다**(아래 본문) — `ownerId` 는 `ENTITY_HASH_LAYOUT` 의 u32
+ * 폴드 대상이라 거동·해시 변경이고(병아리가 쏘는 모든 런의 탄 해시가 갈린다) 골든 재생성·
+ * EF 재배포와 한 원자다. 여기 말고 다른 곳에서 찍으면 드론 베이·센트리 탄까지 물들거나
+ * 경로가 반쪽이 된다.
  *
  * @returns 실제로 쐈으면 `true`. 사거리 안에 LOS 가 통하는 표적이 없으면 `false`(무발사).
  */
@@ -3516,7 +3539,7 @@ function fireTurretShot(state: WorldState, t: Entity): boolean {
   const target = nearestTarget(state, t, TURRET_RANGE);
   if (target === undefined) return false;
   const ang = atan2(target.y - t.y, target.x - t.x);
-  spawnBullet(
+  const shot = spawnBullet(
     state,
     t.x,
     t.y,
@@ -3529,6 +3552,12 @@ function fireTurretShot(state: WorldState, t: Entity): boolean {
     cos(ang),
     sin(ang),
   );
+  // 병아리 탄 소속 마커 — 스탬프 지점은 **이 한 줄뿐**이다(`hatchling.md` ⑤ 공통 고지 ⑦).
+  // SH5·BD4·NU5 가 "이 탄이 병아리 탄인가"를 이것으로 판정한다. 다른 곳에서 찍으면 드론
+  // 베이(DRONE_MARK)·센트리 탄까지 물들거나 경로가 반쪽이 된다.
+  // ⚠️ `ownerId` 는 `ENTITY_HASH_LAYOUT` 의 u32 폴드 대상이라 이 스탬프는 **거동·해시 변경**
+  //    이다(병아리가 쏘는 모든 런의 탄 해시가 갈린다) — 골든 재생성 + EF 재배포와 한 원자다.
+  if (t.ownerId === BROOD_MARK) shot.ownerId = BROOD_MARK;
   return true;
 }
 
@@ -3986,6 +4015,11 @@ function resolveCollisions(state: WorldState, player: Entity): void {
           }
         }
       }
+      // 앵커 ⑩(S1) — **피해 확정 + 격추/부활 판정 직후**. 여기여야 `t.hp`·`t.dead` 가 그 틱의
+      // 진실이고, 원소 상태이상·과열·분열 같은 *명중 부가효과*보다 앞이라 훅이 그것들의 전제를
+      // 못 바꾼다. `dealt` 는 실제 차감량이고 `b` 는 가해탄이다(`ownerId` 로 파생탄을 가른다).
+      // ⚠️ 이 지점은 `for (const b of state.entities)` 순회 안이다 — 훅에서 스폰하지 마라.
+      onEnemyDamaged(state, t, dealt, b);
       // M3 원소 상태이상(plan B4): 적 명중 시 화염/냉기/전격 부여(장착 시에만).
       if (elementalOn && t.kind === 'enemy') {
         if (fireDmg > 0) applyBurn(t, fireDmg, FIRE_DURATION);
@@ -4441,6 +4475,11 @@ function compact(state: WorldState): void {
   // survivor array is rebuilt so we never mutate `state.entities` mid-iteration.
   const lootDrops: { x: number; y: number; seed: number; rarity: number }[] = [];
   const splitElites: Entity[] = [];
+  // 앵커 ⑪(S1)의 **캡처 버퍼**. 격추 좌표는 여기서 잡고 통지는 배열 재구축 뒤에 한다 —
+  // 시체는 `state.entities = survivors` 이후 어디서도 조회할 수 없고(그래서 캡처가 여기여야
+  // 한다), 루프 안에서 통지하면 훅이 순회 중인 배열을 변형할 수 있다(그래서 통지는 뒤여야 한다).
+  // 드랍·젬·파편이 전부 같은 이유로 루프 뒤로 미뤄져 있다.
+  const enemyDeaths: { x: number; y: number; elite: boolean }[] = [];
   const stage = state.config.stage ?? 1;
   const planet = state.config.planet ?? 0;
   // 이 compact에서 보스가 죽어 승리가 확정됐는지. 승리 tick에는 다음 stepWorld가
@@ -4471,9 +4510,14 @@ function compact(state: WorldState): void {
       if (ocKill) state.overchargeKills++; // 사연 관측(비-해시): 과충전 활성 중 처치.
       const def = enemyDefFor(e);
       drops.push({ x: e.x, y: e.y, xp: def?.xpValue ?? 1 });
+      // 앵커 ⑪ 캡처 — 게이트가 `state.kills++` 와 **같은 술어**라 호출 수 합 = 처치 델타 합이다.
+      // `isElite` 는 순수 술어(`kind==='enemy' && pierce>0`)이므로 아래 전리품 게이트와 같은 값을
+      // 보고, 두 번 부르지 않도록 한 번만 평가한다(거동 동일).
+      const eIsElite = isElite(e);
+      enemyDeaths.push({ x: e.x, y: e.y, elite: eIsElite });
       // Elites are the only rank-and-file loot source (GDD §3); a 분열하는 elite
       // additionally bursts fragments on death (B4).
-      if (isElite(e)) {
+      if (eIsElite) {
         // 엘리트 드랍은 **확정이 아니라 확률**이다(ADR-0035). eliteDropChance 가 eliteCount 에
         // 반비례해 런당 기대 수량을 고정하므로, 적 곡선 레인이 eliteCount 를 움직여도 인벤
         // 유입은 그대로다. 게이트 실패면 등급 롤 자체를 하지 않는다(드랍이 없으면 등급도 없다).
@@ -4572,6 +4616,10 @@ function compact(state: WorldState): void {
   // 앵커 ⑤(S0) — 처치가 실제로 늘어난 틱에만. **확보(전리품·젬 스폰) 이후**라 스킬이 이번 틱
   // 드랍을 보려면 한 틱 늦는다(알려진 성질 — 니플헤임 레인이 같은 형태를 실측해 뒀다).
   const killsDelta = state.kills - killsBefore;
+  // 앵커 ⑪(S1) 통지 — **개별이 먼저, 집계가 나중**. 배열 재구축·확보가 전부 끝난 뒤라 훅이
+  // 스폰해도 안전하다. 캡처 게이트가 `state.kills++` 와 같은 술어이므로
+  // `enemyDeaths.length === killsDelta` 가 항등이다(`skillAnchors.test.ts` 가 잠근다).
+  for (const d of enemyDeaths) onEnemyDeath(state, d.x, d.y, d.elite);
   if (killsDelta > 0) onKillsDelta(state, killsDelta);
 }
 
@@ -4605,6 +4653,11 @@ function checkLevelUp(state: WorldState): void {
   const choiceCount = gambleOn ? 3 + GAMBLER_EXTRA_CHOICES : 3;
   state.powerupChoices = drawPowerupChoices(state, choiceCount);
   state.pendingLevelUp = true;
+  // 앵커 ⑫⑬(S1) — **레벨 증가 → 3택 제시** 순서로, 둘 다 상태가 완전히 선 뒤에 불린다.
+  // 여기가 함수 말미인 것은 의도다: 앞쪽(레벨 증가 직후)에 두면 훅이 `drawPowerupChoices` 의
+  // 전제를 바꿀 수 있고, 그 함수는 `powerupRng` 를 굴리므로 스트림이 밀린다.
+  onLevelUp(state, state.level);
+  onPowerupOffer(state, state.powerupChoices);
 }
 
 function checkGameOver(state: WorldState, player: Entity): void {
