@@ -105,6 +105,8 @@ import {
   arccasterDamageChain,
   arccasterSignatureStep,
   arccasterEnemyDamaged,
+  arccasterEnemyDeath,
+  arccasterVolleyParams,
 } from './skills/arccaster.js';
 import {
   bruiserDashFired,
@@ -799,12 +801,13 @@ function dispatchEnemyDamagedSkill(
   void dmg;
   switch (state.sigBit) {
     case SIG_ARC_OVERCHARGE:
-      // CH6 과잉 전하 이월 — 초과 피해(= 차감 후 `target.hp` 의 음수부)를 가해 탄에 되싣는다.
+      // CH1 유도 낙뢰 · CH8 접지 관통로 · CH6 과잉 전하 이월. 셋 다 **가해 탄**을 만진다:
+      // 앞 둘은 앵커 ⑯ 이 단 과충전 표식(`b.aux0`)을 읽고, CH6 은 초과 피해(= 차감 후
+      // `target.hp` 의 음수부)를 그 탄에 되싣는다.
       //
-      // ⚠️ **아크캐스터의 전격 계열 스킬은 여기에 없다.** 이 앵커는 **아군탄 명중 경로 하나**만
-      // 덮는데(위 주석), 이 기체의 연쇄 부여 3종은 셋 다 다른 이유로 못 온다: CH1·CH10 은
-      // 발사 시점 탄 표식이 전제라 발사부/액티브 핸들러가 필요하고, BR2 는 애초에 피격축이라
-      // 앵커 ④ 에 있다. 즉 "전격 DoT 가 이 앵커에 안 온다"는 한계에 이 기체는 **부딪히지 않았다**.
+      // ⚠️ **CH10「주입 전격」은 여전히 여기 없다.** 연쇄 부여 3종 중 액티브축인 그 스킬은
+      // strike 투사체에 표식을 달아야 하는데, 그 탄은 `autoAttack` 이 아니라 액티브 핸들러가
+      // 낳는다 — 앵커 ⑯ 은 주무기 볼리 전용이라 닿지 않는다(BR2 는 피격축이라 앵커 ④ 에 있다).
       arccasterEnemyDamaged(state, target, source);
       break;
     case SIG_BRUISER_ARMOR: {
@@ -921,11 +924,17 @@ function dispatchEnemyDeathSkill(
   void y;
   switch (state.sigBit) {
     // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다.
-    //
-    // ⚠️ **아크캐스터는 여기 case 가 없다 — 필요한 것이 사건이 아니라 인자이기 때문이다.**
-    // CH9「낙뢰 인양」은 `rollEliteDrop` 의 `rarityMult` 파라미터에 곱해야 하는데, 그 굴림은
-    // 이 앵커보다 **앞**(`compact` 의 확보 단계)에서 이미 끝나 있다. 여기서 뒤늦게 알아 봐야
-    // 드랍은 이미 정해졌다. 이 스킬은 `drops.ts` 호출부에 손잡이가 필요하다.
+    case SIG_ARC_OVERCHARGE:
+      // BA7 연발 축전기 — 처치 6기마다 다음 볼리를 장전한다. 소비는 앵커 ⑯ 이다.
+      //
+      // ⚠️ **CH9「낙뢰 인양」은 여전히 여기 없다 — 필요한 것이 사건이 아니라 인자이기
+      // 때문이다.** `rollEliteDrop` 의 `rarityMult` 파라미터에 곱해야 하는데, 그 굴림은 이
+      // 앵커보다 **앞**(`compact` 의 확보 단계)에서 이미 끝나 있다. 여기서 뒤늦게 알아 봐야
+      // 드랍은 이미 정해졌다. 이 스킬은 `drops.ts` 호출부에 손잡이가 필요하다.
+      //
+      // `elite` 를 안 보는 것은 의도다 — BA7 은 "적 6기" 이지 "엘리트 6기" 가 아니다.
+      arccasterEnemyDeath(state);
+      break;
     case SIG_BRUISER_ARMOR: {
       // FO7 전리 개장 — 엘리트 격파 시 스택당 최대 HP 영구 증가 + 만재 재무장.
       //
@@ -1201,6 +1210,21 @@ export interface VolleyParams {
   /** 이번 발사 뒤 더할 쿨다운(Q 단위). 전 아키타입이 공통으로 쓴다. */
   cooldownQ: number;
   /**
+   * **읽기 전용 사실** — 이번 볼리의 아키타입이 `count`(와 `spread`)를 실제로 읽는가.
+   * 발칸/스프레드·미사일 = `true`, 레일건·빔 = `false`.
+   *
+   * ## 왜 훅이 `weaponType` 을 직접 보지 않는가
+   * 아래 표가 경고하는 「안 읽히는 필드를 고치면 조용히 무연산」은 **탄수 축 스킬에서 무연산을
+   * 넘어 손해**가 된다: 탄수와 간격을 함께 바꾸는 교환형 스킬(아크캐스터 BA10)이 레일건·빔에
+   * 실리면 탄수는 그대로인데 간격만 늘어 **순손실**이 된다. 그 판정을 기체 모듈마다 하려면
+   * `WEAPON_TYPE_*` 값이 `world.ts` 밖으로 복제돼야 하고(이 저장소가 금지한 값 복제),
+   * 복제본이 갈리는 순간 결함은 조용하다. 그래서 **판정 결과만** 여기 싣는다 — 정본은
+   * `world.ts` 의 아키타입 분기 하나뿐이다.
+   *
+   * ⚠️ 훅이 이 값을 **쓰지 마라**(읽기 전용). 고쳐도 아키타입 분기는 안 본다.
+   */
+  countUsed: boolean;
+  /**
    * 이번 볼리로 태어나는 **모든 탄의 `aux0` 에 찍을 표식**(0 = 안 찍는다).
    *
    * ## ⚠️ 이 칸은 이미 점유돼 있다 — 값 공간을 나눠 써라
@@ -1256,11 +1280,19 @@ export function onVolleyParams(
   params: VolleyParams,
 ): void {
   if (!state.skillsOn) return;
-  void player;
-  void params;
   switch (state.sigBit) {
     // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다. **`break;` 를 반드시 붙여라** —
     // 병렬 배선 머지에서 fallthrough 가 누적 4건 나왔고 전부 `tsc TS7029` 만이 잡았다.
+    case SIG_ARC_OVERCHARGE:
+      // CH1·CH8 과충전 발사 표식 · BA7 장전 소비(탄수) · BA10 탄수 ×2 + 간격 배율.
+      //
+      // ⚠️ **CH3「종말점 방전」은 여기 없다.** 표식을 다는 것까지는 이 앵커가 하지만, 그
+      // 스킬의 트리거는 **탄 수명 만료 소멸**이고 현행 앵커 ⑥(`onBulletExpired`)은
+      // **관통 예산 소진** 분기 하나뿐이다(그 앵커 주석이 "수명 만료·화면 밖 컬링이 아니다"
+      // 라고 명시). 수명 만료 지점에 앵커가 서기 전에는 폭발을 낳을 자리가 없다 —
+      // 표식만 달고 소비처를 비워 두면 반쪽 배선이 되므로 손대지 않았다.
+      arccasterVolleyParams(state, player, params);
+      break;
     default:
       break;
   }

@@ -27,6 +27,7 @@ import {
   FIRE_CD_Q,
   FIRE_CD_MIN_Q,
   COMBO_WINDOW_TICKS,
+  OVERCHARGE_TICK_CAP,
 } from './constants.js';
 import type { PlanetMode } from './planetMode.js';
 // 타입 전용 import 다 — `verbatimModuleSyntax` 로 런타임에 완전히 지워지므로 sim → run 런타임
@@ -2360,8 +2361,9 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
 // 타입 축이 항상 하나를 골라 준다(스트라이커 포함, 아래 `computeActiveSignature` ③ 참조).
 // ---------------------------------------------------------------------------
 
-/** 과충전 정지 카운터 상한. bp 는 190틱에서 이미 상한이라 거동 무영향, 정수 유계 유지용. */
-const OVERCHARGE_TICK_CAP = 600;
+// 과충전 정지 카운터 상한(`OVERCHARGE_TICK_CAP`)은 `constants.ts` 가 정본이다 — 이 파일과
+// `activeHandlers/arccaster.ts`·`skills/arccaster.ts` 가 같은 600 을 각자 들고 있었고, S2 에서
+// 그리로 합쳤다(위 import 목록 참조. `CUSHION_TICK_CAP` 과 같은 형태의 정리다).
 
 // 완충 무피격 카운터 상한(`CUSHION_TICK_CAP`)은 `shipSignature.ts` 가 정본이다 — 이 파일과
 // `activeHandlers/mallow.ts` 가 같은 값을 각자 들고 있었고, `skills/mallow.ts` 의 ME1 이 세 번째
@@ -3030,6 +3032,10 @@ function autoAttack(state: WorldState, player: Entity): void {
     // `if (marksmanFire) b.aux0 = 1` 이 흩어져 있었고, 새 표식이 필요한 기체(팬텀 AS3·AS10 ·
     // 아크캐스터 CH1·CH8)는 그 네 곳을 전부 고쳐야 했다. 이제 표식 경로는 한 곳뿐이다.
     mark: marksmanFire ? 1 : 0,
+    // 아키타입 분기가 `count`·`spread` 를 실제로 읽는가 — 판정 정본은 아래 분기 하나뿐이고
+    // 훅은 결과만 읽는다(필드 주석에 사유). 레일건은 1발 고정, 빔은 세그먼트 수가 사거리에서
+    // 나오므로 둘 다 `count` 를 안 본다.
+    countUsed: w.weaponType !== WEAPON_TYPE_RAILGUN && w.weaponType !== WEAPON_TYPE_BEAM,
   };
   onVolleyParams(state, player, volley);
 

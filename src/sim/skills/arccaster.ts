@@ -8,20 +8,26 @@
  *
  * ---
  *
- * ## ⚠️ 이 배치가 배선한 것은 30종 중 **13종**이다
- * 나머지 17종은 앵커 14개로 닿지 않는 지점(주무기 발사부의 탄 표식·탄수·간격 · 액티브 핸들러 ·
- * 탄 수명 만료 분기 · `stepGems` 반경 · 콤보 감소 지점 · 드랍 희귀도 · `applyChain` 파라미터화)을
- * 요구한다. 여기 없는 스킬은 "구현했는데 안 불린다"가 아니라 **아직 코드가 없다** —
- * 사유는 각 앵커의 `case` 주석과 레인 보고서에 있다.
+ * ## ⚠️ 배선된 것은 30종 중 **17종**이다 (1차 13종 + S2 앵커 ⑯ 으로 4종)
+ * S2 가 연 앵커 ⑯(`onVolleyParams` — 볼리 파라미터 확정 직후)이 「발사부 앵커 부재」로 막혀
+ * 있던 다섯 중 **넷**(CH1·CH8·BA7·BA10)을 열었다. 남은 13종은 여전히 앵커가 닿지 않는
+ * 지점(**탄 수명 만료 분기**(CH3) · 액티브 핸들러(CH10·BA1·BA4·BA6·CH7) · `stepGems` 반경(BA2) ·
+ * 콤보 감소 지점(BA5) · 드랍 희귀도(CH9) · `applyChain` 파라미터화(CH2) · 명중 비행거리(CH5) ·
+ * 해저드 적립 분기(BA8) · 이동 리셋 분기(BA9))을 요구한다. 여기 없는 스킬은 "구현했는데 안
+ * 불린다"가 아니라 **아직 코드가 없다** — 사유는 각 앵커의 `case` 주석에 있다.
  *
- * ## ⚠️ 전격 연쇄 부여는 설계상 정확히 3종(CH1·BR2·CH10)인데 이 배치는 **BR2 하나만** 켰다
- * CH1·CH10 은 둘 다 **탄 표식**이 전제라 발사부/액티브 핸들러 없이는 성립하지 않는다. 연쇄를
+ * ## ⚠️ 전격 연쇄 부여는 설계상 정확히 3종(CH1·BR2·CH10)이고 이제 **둘**이 켜져 있다
+ * CH1 은 앵커 ⑯ 의 발사 시점 표식 + 앵커 ⑩ 의 명중 소비로 성립했다. CH10 은 여전히 미배선 —
+ * strike 투사체는 액티브 핸들러가 낳으므로 주무기 볼리 전용인 앵커 ⑯ 이 닿지 않는다. 연쇄를
  * "대충 명중 시점 과충전 술어"로 바꿔 흉내 내지 않았다 — 설계서가 CH9 를 유일한 처치 시점
  * 예외로 못 박았고, 그 예외를 늘리면 두 문서가 갈린다.
  */
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
+// 앵커 ⑯ 의 레코드 타입. **type-only 라 런타임 import 0건 규율을 깨지 않는다**(컴파일에서
+// 지워진다) — `skillHooks.ts` 가 이 파일을 값으로 import 하므로 값 import 는 순환이 된다.
+import type { VolleyParams } from '../skillHooks.js';
 import { clearEnemyBullets, fanStrike } from '../activeTypes.js';
 import { applyChain } from '../status.js';
 import { readSlot, writeSlot, ArccasterCarry, ArccasterStage } from '../skillSlots.js';
@@ -32,7 +38,7 @@ import {
   OVERCHARGE_RAMP_BP,
   OVERCHARGE_MAX_BP,
 } from '../shipSignature.js';
-import { FIRE_CD_Q } from '../constants.js';
+import { FIRE_CD_Q, OVERCHARGE_TICK_CAP } from '../constants.js';
 import { skillLv } from '../../items/skills.js';
 
 // ---------------------------------------------------------------------------
@@ -47,9 +53,13 @@ import { skillLv } from '../../items/skills.js';
 // 데이터가 우연히 일치하지만, 정본은 언제나 `data/ships/{ship}.ts` 의 `trees` 배열이다.
 
 const enum Sk {
+  /** CH1 유도 낙뢰 */ guidedArc = 0,
   /** CH4 진입 뇌격 */ entryLance = 3,
   /** CH6 과잉 전하 이월 */ overkillCarry = 5,
+  /** CH8 접지 관통로 */ groundedPierce = 7,
   /** BA3 정지 관측 사격 */ stillSpotter = 12,
+  /** BA7 연발 축전기 */ killCapacitor = 16,
+  /** BA10 일제 사격 통제 */ salvoDoctrine = 19,
   /** BR1 정전 척력장 */ staticRepulsor = 20,
   /** BR2 피뢰 접지 */ lightningRod = 21,
   /** BR3 위상 결합 방벽 */ phaseCoupling = 22,
@@ -79,12 +89,9 @@ function lv(state: WorldState, flat: Sk): number {
 // 시그니처 유도 상수
 // ---------------------------------------------------------------------------
 
-/**
- * 과충전 정지 카운터 상한. `world.ts` 의 `OVERCHARGE_TICK_CAP`(=600)이 **파일 지역 상수**라
- * import 할 수 없다 — `activeHandlers/arccaster.ts:35` 가 이미 같은 사유로 같은 값을 지역
- * 선언했고, 이 파일은 그 선례를 따른다(값이 바뀌면 세 곳을 함께 고쳐야 한다).
- */
-const OVERCHARGE_TICK_CAP = 600;
+// 과충전 정지 카운터 상한(`OVERCHARGE_TICK_CAP`)은 **`constants.ts` 가 정본**이다. 종전에는
+// 세 파일(`world.ts`·`activeHandlers/arccaster.ts`·이 파일)이 같은 600 을 각자 선언하고
+// 있었고, S2 에서 leaf 로 합쳤다(위 import 목록 참조).
 
 /**
  * `overchargeBp` 가 상한 4000bp 에 닿는 정지 틱(=190). `activeHandlers/arccaster.ts:41` 과
@@ -97,6 +104,15 @@ const OVERCHARGE_APEX_TICKS =
 function overcharged(player: Entity): boolean {
   return overchargeBp(player.aux0) > 0;
 }
+
+/**
+ * **과충전 발사 표식** — 이번 볼리가 과충전 중에 나갔음을 탄 `aux0` 에 남기는 값.
+ *
+ * ⚠️ **`1` 은 스트라이커 정조준탄이 점유했다**(앵커 ⑯ `VolleyParams.mark` 주석). 기체는 한
+ * 런에 하나뿐이라 값이 겹쳐도 오작동하지는 않지만, 렌더·후속 판정이 두 표식을 구분하지
+ * 못하므로 다른 값을 골랐다. 이 상수를 읽는 곳은 이 파일 안 두 스킬(CH1·CH8)뿐이다.
+ */
+const ARC_OVERCHARGE_MARK = 2;
 
 // ---------------------------------------------------------------------------
 // 레벨 스케일 — 설계서 ② 의 공식 그대로
@@ -342,6 +358,92 @@ export function arccasterSignatureStep(state: WorldState, player: Entity): void 
 }
 
 // ---------------------------------------------------------------------------
+// 앵커 ⑪ — 적 격추(BA7 의 충전만)
+// ---------------------------------------------------------------------------
+
+/** BA7 이 한 번 장전되는 데 필요한 처치 수(설계서 고정값 — 레벨로 안 변한다). */
+const CAPACITOR_KILLS = 6;
+
+/**
+ * **BA7 연발 축전기(충전부)** — 처치 6기마다 다음 볼리 한 번을 장전한다.
+ *
+ * 소비처는 앵커 ⑯ 의 {@link arccasterVolleyParams} 다 — **카운터만 돌고 소비처가 없는 반쪽
+ * 배선이 아니다.** 6 에서 멈추는(누적하지 않는) 것은 설계서의 "다음 볼리"가 한 번이기
+ * 때문이고, 그래서 슬롯은 0..6 유계다.
+ *
+ * ⚠️ **레일건·빔 런에서는 장전이 6 에 멈춘 채 소비되지 않는다** — 두 아키타입은 볼리 탄수
+ * (`count`)를 읽지 않아 소비처가 아키타입 계약상 존재하지 않기 때문이다(앵커 ⑯ 의
+ * `countUsed`). 설계서 BA10 이 빔을 no-op 으로 못 박은 것과 같은 사상이며, 잔여 6 은 그
+ * 런에서 아무 일도 하지 않는다(무기 의존 no-op이지 미배선이 아니다).
+ */
+export function arccasterEnemyDeath(state: WorldState): void {
+  const ba7 = lv(state, Sk.killCapacitor);
+  if (ba7 < 1) return;
+  const charge = readSlot(state.skillStage, ArccasterStage.killCapacitorCharge);
+  if (charge >= CAPACITOR_KILLS) return; // 이미 장전됨 — 초과 처치는 이월하지 않는다.
+  writeSlot(state.skillStage, ArccasterStage.killCapacitorCharge, charge + 1);
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ⑯ — 볼리 파라미터 확정 직후 · 탄 생성 직전
+// ---------------------------------------------------------------------------
+
+/**
+ * **CH1 유도 낙뢰 · CH8 접지 관통로(표식) · BA7 연발 축전기(소비) · BA10 일제 사격 통제.**
+ *
+ * ## 표식은 한 칸을 둘이 나눠 쓴다
+ * CH1(과충전 탄 명중 → 연쇄)과 CH8(과충전 탄 관통 → 증폭)은 **같은 술어**("이 탄이 과충전
+ * 중에 나갔는가")를 쓰므로 표식도 하나다. 둘 중 하나만 투자해도 표식이 서고, 소비는 각자
+ * 자기 레벨 게이트 안에서 한다(앵커 ⑩).
+ *
+ * ⚠️ **과충전 판정은 여기서 다시 한다.** `world.ts` 가 이미 계산한 `ocBp` 는 지역 변수라
+ * 넘어오지 않고, `params.damage` 에서 역산할 수도 없다(파워업·정조준 배율이 섞인 뒤다).
+ * 술어의 정본은 `player.aux0` 하나이므로 두 곳이 갈릴 여지는 없다.
+ *
+ * ## ⚠️ BA7·BA10 은 `countUsed` 가 참일 때만 실린다
+ * 레일건·빔은 `count` 를 안 읽는다. BA10 을 그대로 태우면 탄수는 그대로인데 간격만 늘어
+ * **순손실**이 된다(설계서가 빔을 no-op 으로 못 박은 이유가 그것이고, 레일건도 같은 형태다).
+ *
+ * ## ⚠️ 설계-코드 어긋남 (문서는 고치지 않았다 — 규약대로 보고만)
+ * 설계서 BA10 은 **레일건 = 같은 표적 방향 2연발**로 규정했다. 이 앵커는 파라미터 한 벌을
+ * 넘길 뿐 탄을 낳지 않으므로(주석: "훅에서 스폰하지 마라") 2연발은 여기서 성립하지 않는다.
+ * 레일건은 no-op 으로 두었다 — 간격만 늘리는 순손실보다 무연산이 낫다.
+ */
+export function arccasterVolleyParams(
+  state: WorldState,
+  player: Entity,
+  params: VolleyParams,
+): void {
+  // ── CH1·CH8 — 과충전 중 발사한 탄에 표식. 소비는 앵커 ⑩.
+  const ch1 = lv(state, Sk.guidedArc);
+  const ch8 = lv(state, Sk.groundedPierce);
+  if ((ch1 >= 1 || ch8 >= 1) && overcharged(player)) {
+    params.mark = ARC_OVERCHARGE_MARK;
+  }
+
+  if (!params.countUsed) return;
+
+  // ── BA7 — 장전됐으면 이번 볼리에만 탄수 가산(2 + floor(Lv/5)) 후 방전.
+  const ba7 = lv(state, Sk.killCapacitor);
+  if (ba7 >= 1) {
+    const charge = readSlot(state.skillStage, ArccasterStage.killCapacitorCharge);
+    if (charge >= CAPACITOR_KILLS) {
+      params.count += 2 + Math.floor(ba7 / 5);
+      writeSlot(state.skillStage, ArccasterStage.killCapacitorCharge, 0);
+    }
+  }
+
+  // ── BA10 — 탄수 ×2 · 간격 배율 `2 − 0.6×Lv/(Lv+10)`(점근 ×1.4, 1.0 밑으로 안 내려간다).
+  //    간격은 **늘어나기만** 하므로 `cooldownQ` 가 0 이하로 갈 수 없다(앵커 ⑯ 의 금지 사항).
+  const ba10 = lv(state, Sk.salvoDoctrine);
+  if (ba10 >= 1) {
+    params.count *= 2;
+    const multBp = 20000 - Math.round((6000 * ba10) / (ba10 + 10));
+    params.cooldownQ = Math.round((params.cooldownQ * multBp) / 10000);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 앵커 ⑩ — 적성 표적이 아군탄에 맞아 피해가 확정된 직후
 // ---------------------------------------------------------------------------
 
@@ -362,9 +464,34 @@ export function arccasterEnemyDamaged(
   target: Entity,
   source: Entity | undefined,
 ): void {
+  if (source === undefined) return;
+
+  // ── CH1·CH8 — **과충전 표식이 붙은 탄**의 명중(표식은 앵커 ⑯ 이 단다).
+  //    대상은 `enemy`·`boss` 한정이다(설계서 ④ 표 — 침공 구조물·코어는 정의상 제외).
+  if (source.aux0 === ARC_OVERCHARGE_MARK && (target.kind === 'enemy' || target.kind === 'boss')) {
+    // CH1 유도 낙뢰 — 연쇄 피해 = **이 탄의 피해**의 20% + 2%p/Lv. 아래 CH8·CH6 이
+    // `source.damage` 를 올리기 **전**에 읽는다(순서를 바꾸면 같은 명중이 두 번 증폭된다).
+    const ch1 = lv(state, Sk.guidedArc);
+    if (ch1 >= 1) {
+      const chain = Math.round((source.damage * (2000 + 200 * ch1)) / 10000);
+      if (chain > 0) applyChain(state, target, chain);
+    }
+    // CH8 접지 관통로 — 관통을 소모할 때마다 +6% + 0.6%p/Lv. 이 앵커가 관통 차감 **직전**이라
+    // 명중 1회 = 관통 소모 1회이고, 증폭분은 **다음 대상**부터 실린다("뚫을수록 아프다").
+    //
+    // ⚠️ **자이로·프리즘 경로에서는 한 번만 실린다.** 그 둘만 `b.phase` 를 올리는데
+    // (`world.ts` 의 관통 처리 분기), 자이로는 관통을 **소모하지 않아** 명중 수가 관통 예산으로
+    // 유계가 아니다 — 매 명중 곱하면 수명이 다할 때까지 복리로 폭주한다. `phase === 0` 술어가
+    // 그 경로를 첫 명중 1회로 묶는다(설계서 CH8 의 "자이로는 중첩 곱 금지"의 코드 형태).
+    const ch8 = lv(state, Sk.groundedPierce);
+    if (ch8 >= 1 && source.phase === 0) {
+      const gain = Math.round((source.damage * (600 + 60 * ch8)) / 10000);
+      if (gain > 0) source.damage += gain;
+    }
+  }
+
   const ch6 = lv(state, Sk.overkillCarry);
   if (ch6 < 1) return;
-  if (source === undefined) return;
   if (target.kind !== 'enemy' || target.hp > 0) return;
   const overkill = -target.hp;
   if (overkill <= 0) return;
