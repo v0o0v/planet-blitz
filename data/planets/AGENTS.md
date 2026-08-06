@@ -37,8 +37,12 @@
 
 ### 테스트 요구사항
 
-`tests/berdan.test.ts` 등 행성별 테스트 + `tests/planetTierCompletion.test.ts`(**sim 레인**).
-난이도 델타는 60시드 오토파일럿 스캔으로 잰다.
+`tests/berdan.test.ts` 등 행성별 테스트. 난이도 델타는 60시드 오토파일럿 스캔으로 잰다.
+
+⚠️ **행성 × 티어 완주 커버리지는 없다**(2026-08-06, ADR-0051). `tests/planetTierCompletion.test.ts`
+가 니플헤임·아르케를 정찰·섬멸에서 완주시켰지만, 완주를 만들려고 `damagePct 2000`(DPS 약 210배)
+짜리 합성 장비까지 동원하는 지경이 됐고 그마저 main 에서 빨갰다. **새 행성·새 티어가 완주
+가능한지는 이제 자동으로 안 잡힌다** — 출시 직전 밸런스 패스에서 `pnpm balance` 로 확인한다.
 
 ### 공통 패턴
 

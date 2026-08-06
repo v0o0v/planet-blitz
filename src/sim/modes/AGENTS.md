@@ -38,7 +38,9 @@
 
 - 모드별 짝: `tests/blockBreakMode.test.ts` · `chaseMode.test.ts` · `racing*.test.ts` ·
   `shrink*.test.ts` · `contamination*.test.ts` · `midClash*.test.ts`.
-- 모드는 sim 이므로 완주 e2e(`tests/fullRun.test.ts`, sim 레인)가 최종 확인이다.
+- ⚠️ **완주 e2e 는 최종 확인이 아니다**(2026-08-06, ADR-0051). `tests/fullRun.test.ts` 는
+  삭제됐다 — 단언이 "봇이 이길 수 있는가"에 의존해 밸런스마다 깨졌다. 모드 변경의 최종 확인은
+  **모드별 짝 테스트 + 하네스 육안 확인**이고, 완주 가능성은 출시 직전 밸런스 패스 소관이다.
 
 ### 공통 패턴
 

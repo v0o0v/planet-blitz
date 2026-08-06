@@ -38,7 +38,10 @@
 
 `tests/bossProgress.test.ts` · `tests/bossWarn.test.ts` · `tests/bossLabels.test.ts` ·
 `tests/commissionBossRender.test.ts`.
-보스 처치가 런 완주 조건이므로 `tests/fullRun.test.ts`(sim 레인)도 본다.
+⚠️ **보스 완주 e2e 는 없다**(2026-08-06, ADR-0051). `tests/fullRun.test.ts` 가 "내구 파일럿이
+보스를 처치한다"를 단언했지만, 그 단언은 밸런스가 조금만 어려워지면 깨져 main 에서 상시 실패로
+방치됐다. 보스가 **실제로 죽는지**는 이제 자동으로 안 잡힌다 — 출시 직전 밸런스 패스에서
+`pnpm balance` 하네스와 `src/bench` 로 확인한다.
 
 ### 공통 패턴
 

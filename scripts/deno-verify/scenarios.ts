@@ -104,7 +104,9 @@ function driveWithActives(seed: number, config: WorldConfig, maxTicks: number): 
 /**
  * 내구 파일럿 스티어링: 보스가 있으면 추적, 파워업 대기 시 0번 선택, 승리 후 남은
  * 바닥 loot로 이동해 수거, 그 외 idle. 순수 상태 함수라 프레임이 결정론적이다.
- * (tests/fullRun.test.ts·integration.test.ts의 검증된 정책과 동일 골자.)
+ * (구 tests/fullRun.test.ts·integration.test.ts 의 정책과 동일 골자. `fullRun` 은 2026-08-06
+ * ADR-0051 로 삭제됐지만 **이 스티어링 정책 자체는 그 파일과 무관하게 유효하다** — 여기서
+ * 재는 것은 봇의 실력이 아니라 결정론이고, 그 축은 이 스크립트가 계속 지킨다.)
  */
 function driveDurable(seed: number, config: WorldConfig, maxTicks: number): InputFrame[] {
   const state: WorldState = createWorld(seed, config);

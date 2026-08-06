@@ -4,7 +4,16 @@
  * 고정 타이머(구 segmentTimer 2700틱)를 폐지하고 세그먼트 진행을 처치 할당(killGoal)에
  * 묶었음을 검증한다: (1) 아무도 안 죽으면 시간이 아무리 흘러도 안 넘어간다(타이머 부재),
  * (2) 할당을 채우면 넘어간다, (3) 급행 소환이 결정론적이고 미달 시 적이 쌓인다,
- * (4) 보스전에도 일반몹이 계속 등장한다, (5) 오토파일럿이 par 근처에 완주한다.
+ * (4) 보스전에도 일반몹이 계속 등장한다.
+ *
+ * ## 삭제된 (5) — "오토파일럿이 par 근처에 완주한다" (2026-08-06, ADR-0051)
+ * `expect(outcome).toBe('victory')` + 완주 시간 40~150초 밴드였다. 단언이 통째로 "봇이 이길 수
+ * 있는가"에 의존하므로 게이트에서 내린다(ADR-0051 §1 · §2 갈래 ②). 증인 시드는 여섯 번 갈렸고
+ * (`0x50c1a1`→`a2`→`a3`→`af`→`b0`→`a0`), 한 번은 시드 재선정으로 풀리지 않아 **파일럿 자체를
+ * 표준 빌드로 갈아야** 했다 — 밸런스를 만질 때마다 재선정이 일이 되는 그 병리다. 최소 틱으로
+ * 다시 쓸 수 없다(런 길이는 완주해야 나오는 값이다). 그래서 **런 길이가 par 근처인지는 이제
+ * 자동으로 못 잡는다** — 출시 직전 밸런스 패스의 1회성 봇 계측(ADR-0051 §3)에서 본다.
+ * 이 파일이 계속 지키는 것은 그 위의 (1)~(4), **처치 할당 게이트라는 메커니즘 자체**다.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -13,10 +22,6 @@ import { autopilotInput } from '../src/sim/autopilot.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { SEGMENTS } from '../data/waves.js';
 import { PVE_DENSITY_MULT } from '../src/sim/waves.js';
-import { buildRunConfig } from '../src/run/runConfig.js';
-import { defaultProfile, activeShip } from '../src/save/profile.js';
-import { standardEquipped, standardSkillInvest } from '../src/bench/standardBuild.js';
-import { LEVEL_PER_STAGE } from '../src/save/progressionPath.js';
 
 const BOSS_INDEX = SEGMENTS.length - 1;
 /** 내구(글래스캐논 방지) — 게이트/스폰 관찰이 사망으로 중단되지 않게. */
@@ -142,85 +147,3 @@ describe('보스전 몹 등장 (ADR-0011)', () => {
   });
 });
 
-describe('오토파일럿 완주 (ADR-0011, par 창발)', () => {
-  it('적정 화력으로 par 근처에 완주한다', () => {
-    // 무장갑(기본 HP 100) 오토파일럿 = 적정 티어 기준선. 고정 타이머 폐지로 런 길이가
-    // 상대적 강함의 결과로 창발한다 — 러프 범위로 단언(정확한 par 강제 아님).
-    // ⚠️ 증인 시드는 sim 이 바뀌면 다시 골라야 한다. `fix/weapon-range-semantics`
-    // (무제한 조준 폐지)로 0x50c1a1 → 0x50c1a2 로 갈았다 — 무장갑 오토파일럿의 완주는
-    // 원래 시드마다 갈리는 값이고(kargon-t0 P0 클리어율 33~63%), 표본 12시드 중 7시드가
-    // 여전히 40~70초에 완주하므로 단언이 약해진 것이 아니라 증인만 바뀐 것이다.
-    //
-    // 2026-07-26 에 0x50c1a2 → **0x50c1a3** 으로 다시 갈았다. 원인은 같은 브랜치의 두 변경이다:
-    // PvE 밀도 배율 1.5(`PVE_DENSITY_MULT`)와 플레이어탄 선분 판정(`sweptCircleOverlap`).
-    // 재표본(0x50c1a0..0x50c1c7 연속 40시드): 완주 **8/40**, 그리고 **완주한 8시드 전부가
-    // 44~59초** 로 이 테스트의 40~150초 밴드 안에 들어온다. 즉 "짧고 강렬한 루프" 라는 계약은
-    // 그대로고 시드 운만 빡빡해졌다. 클리어율이 기록된 33~63% 보다 낮아진 것은 밀도 상승의
-    // 직접 결과이며, 고단계·저투자 빌드 생존성 보정과 함께 출시 직전 밸런스 패스에서 다룬다
-    // (tests/shipHashBaseline.test.ts 의 `MIN_LEVELUPS` 주석에 같은 신호가 기록돼 있다).
-    //
-    // 2026-07-27 에 0x50c1a3 → **0x50c1af** 로 다시 갈았다. 원인은 경험치 이원화(ADR-0036)의
-    // 런 풀 커브 상향(`xpToNext` 10+6L → 10+13L)이다 — 런당 레벨업이 줄어 파워업이 덜 쌓이므로
-    // 무장갑 오토파일럿이 약해진다. 재표본(0x50c1a0..0x50c1ff 연속 96시드): 완주 **3/96**,
-    // 완주 3시드 전부가 **49.7·63.6·66.4초** 로 이 테스트의 40~150초 밴드 안에 들어온다.
-    // 즉 "짧고 강렬한 루프" 계약은 그대로고 시드 운만 더 빡빡해졌다. 클리어율 자체(20%→3%)는
-    // **적 축에서** 되돌린다(ADR-0037 — 난이도 곡선은 적 축에서만) — 표준 진행 경로의 합격선은
-    // "표준 레벨·표준 장비·표준 투자 봇의 클리어율 60~80%"이고 무장갑 무투자 봇은 그 기준이
-    // 아니다(ADR-0035 2026-07-27 개정).
-    //
-    // ⚠️ 2026-07-27 (밸런스 패스 ADR-0037): **시드가 아니라 파일럿을 갈았다.**
-    // 무장갑 무투자 오토파일럿은 이제 이 무대를 **구조적으로 완주하지 못한다** — 적 축
-    // `SEGMENTS.killGoal` 합계가 80 → 240(×3)이 되면서 96시드 실측 **승리 0 · 사망 96 ·
-    // 최장 생존 43.9초**이고, `0x50c1a0` 부터 연속 **2,000시드**를 더 훑어도 완주 0건이다.
-    // 즉 증인 재선정으로는 풀리지 않는다.
-    //
-    // 그래서 파일럿을 **ADR-0035 표준 빌드**(표준 레벨 5 = 단계1 · 표준 장비 · 표준 투자)로
-    // 바꿨다. 이것은 밴드 완화가 아니라 **"적정 화력"의 정의를 따라간 것**이다 — ADR-0035
-    // 2026-07-27 개정이 합격선을 "표준 레벨·표준 장비·표준 투자 봇"으로 재정의했고, 바로 위
-    // 문단이 이미 "무장갑 무투자 봇은 그 기준이 아니다"라고 적어 두고 있었다.
-    // **40~150초 밴드와 단언은 한 글자도 바꾸지 않았고, 증인 시드 `0x50c1af` 도 그대로다**
-    // (표준 빌드 실측 **93.3초** — 32시드 중 22승, 승리 런 86.4~116.0초로 전부 밴드 안).
-    //
-    // ## 이제 커버되지 않는 것
-    // **무장갑 무투자 파일럿의 완주 경로.** 현 밸런스에 그 경로는 존재하지 않는다(위 2,096시드
-    // 실측). 무장갑 거동 자체는 `tests/autopilot.test.ts`(1,200틱 생존)가 계속 밟는다.
-    //
-    // ## ⚠️ `gearSeed` 는 런 시드와 같게 둔다
-    // 상수로 고정하면 "그 장비 세트 한 벌의 운"을 재게 된다 — 같은 설계값에서도 `gearSeed`
-    // 만 바꾸면 클리어율이 48.3~100.0% 로 갈린다
-    // (`.omc/research/economy-recalibrated-2026-07-27.md` §0.1).
-    // 2026-08-03 에 0x50c1af → **0x50c1b0** 으로 갈았다. 원인은 봇의 **전리품 수거** 신설
-    // (`LOOT_SEEK_RADIUS`, autopilot ③)이다 — 이동 경로가 바뀌므로 시드별 결과가 재추첨된다.
-    // 재표본(0x50c1a0..0x50c1ff 연속 96시드): 완주 **71/96** 이고 전부 40~150초 밴드 안이다
-    // (직전 재선정 때의 3/96 보다 오히려 넉넉해졌다 — 수거가 성장을 늘렸기 때문). 즉 계약은
-    // 건재하고 **증인 하나만 어긋났다**. 0x50c1b0 은 87.3초.
-    //
-    // 2026-08-04(5레인 통합)에 0x50c1b0 → **0x50c1a0** 으로 갈았다. 원인은 발사 간격
-    // 고정소수점화(밸런스 큐 §R39)다 — 발사 틱이 재배치되므로 시드별 결과가 또 재추첨된다.
-    // 재표본(0x50c1a0..0x50c1ff 연속 96시드, 같은 절차): 완주 **67/96** 이고 전부 40~150초
-    // 밴드 안이다(직전 71/96 과 사실상 같다). **이번엔 창의 첫 시드가 조건을 만족**해서
-    // 0x50c1a0 을 골랐다(82.8초). 계약도 밴드도 단언도 그대로다.
-    const RUN_SEED = 0x50c1a0;
-    const STANDARD_LEVEL = LEVEL_PER_STAGE * 1; // 표준 레벨 = 5 × 단계
-    const profile = defaultProfile();
-    const ship = activeShip(profile);
-    ship.level = STANDARD_LEVEL;
-    ship.skillInvest = standardSkillInvest(ship.typeId, STANDARD_LEVEL);
-    ship.equipped = standardEquipped(STANDARD_LEVEL, RUN_SEED, 0);
-    const state = createWorld(RUN_SEED, buildRunConfig(profile, { planet: 0, stage: 1 }));
-    let ticks = 0;
-    for (let t = 0; t < 60 * 300; t++) {
-      stepWorld(state, autopilotInput(state));
-      ticks++;
-      if (state.victory || state.gameOver) break;
-    }
-    // 실패 시 원인이 메시지로 드러나게(victory/death/timeout 구분 — 리뷰 MEDIUM 반영)
-    const outcome = state.victory ? 'victory' : state.gameOver ? 'death' : 'timeout';
-    expect(outcome).toBe('victory');
-    const sec = ticks / 60;
-    // 웨이브 ≈ 1분 + 보스(무장갑은 생존 한계로 짧게). 40~150초 러프 범위 — 구 고정
-    // 타이머(런 5분+)와 확연히 다른 짧고 강렬한 루프임을 확인.
-    expect(sec).toBeGreaterThan(40);
-    expect(sec).toBeLessThan(150);
-  });
-});

@@ -7,11 +7,6 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createWorld, stepWorld } from '../src/sim/world.js';
-import { autopilotInput } from '../src/sim/autopilot.js';
-import { buildRunConfig } from '../src/run/runConfig.js';
-import { defaultProfile, activeShip } from '../src/save/profile.js';
-import { standardEquipped, standardSkillInvest } from '../src/bench/standardBuild.js';
 import {
   LEVEL_PER_STAGE,
   MAX_STANDARD_STAGE,
@@ -141,85 +136,27 @@ describe('설계 테이블 — 10시간 산술 게이트 (ADR-0035 §1.2)', () =
 });
 
 /**
- * 경제 축 **정규 경로 실런 가드** — 설계 상수가 코드 현실에서 떨어져 나가면 큰 소리로 실패한다.
+ * ## 삭제된 가드 — 경제 축 "정규 경로 실런" (2026-08-06, ADR-0051)
  *
- * ## 왜 필요한가 (이 가드가 존재하는 이유)
- * 위의 산술 게이트는 **상수만 가지고 하는 순수 산술**이다. 그래서 `RUN_META_XP_STAGE1` 이나
- * `RUN_SECONDS_PAR` 가 현실과 4배 어긋나 있어도 **전량 통과한다.** 실제로 그랬다: 두 상수는
- * `killGoal` 합계 80 · 무장비 시절 값(433 / 150)이었는데, 적 곡선 레인이 합계를 240 으로
- * 올리고 표준 장비 세트가 도입되면서 실제 값이 1,676 / 95 가 됐다. **그 사이 이 파일의
- * 테스트는 한 번도 빨개지지 않았다.** 이 리포의 반복 결함("단위 테스트 그린인데 배선이 통째로
- * 어긋나 있다")과 정확히 같은 형태이고, `tests/drops.test.ts` 가 드랍 축에 넣은 것과 같은 처방이다.
+ * 여기에 표준 빌드 12시드 × 단계 {1, 11} 을 **완주까지** 돌려 메타 XP 평균과 런당 레벨업이
+ * 설계값 대비 밴드 안인지 보는 가드가 있었다. 두 이유로 게이트에서 내린다.
  *
- * ## 무엇을 세는가
- * `runCurveSweep`(`src/bench/rosterBench.ts`)과 **동일한 정규 경로**로 표준 빌드 런을 끝까지
- * 돌려 ①정산이 받는 `state.xpTotal` ②런 풀 종료 레벨을 실측한다. `gearSeed` 는 **고정하지
- * 않는다**(런 시드를 장비 시드로) — 고정하면 장비 세트 하나의 운을 재게 되고 실측 폭이
- * 48~100% 로 벌어진다.
+ * ① **공허 가드가 승리 건수였다** — `expect(승리 건수).toBeGreaterThan(0)`. 단언의 성립
+ *    자체가 "봇이 이길 수 있는가"에 얹혀 있었다(ADR-0051 §1).
+ * ② **재는 것이 곧 폐기될 중간 밸런스였다.** 하한은 이미 두 번 완화됐다 — 벽 프리팹 레인에서
+ *    XP 하한 0.7 → 0.55(단계 11), 레벨업 하한 5 → 4.5. 그러고도 2026-08-05 피격 피해 2배
+ *    이후 단계 1 레벨업 실측이 4.83 으로 내려가 main 상시 실패였다. 밸런스를 만질 때마다
+ *    깨지고 갱신이 일이 되는, ADR-0051 이 지목한 그 병리다.
  *
- * ## 대역이 넓은 이유
- * 시드 12개는 이항 SE 가 크고(승패가 XP 를 약 1.4배 가른다) 상수는 96시드 평균이라, ±30% 는
- * "상수가 낡았다"만 잡고 통상 표본 변동은 통과시키는 폭이다. 좁히려면 시드를 늘려야 하는데
- * 그만큼 느려진다(현 구성 12시드 × 2단계 ≈ 5초).
+ * **최소 틱으로 다시 쓰지 못했다.** 이 가드가 재는 `RUN_META_XP_STAGE1` · `RUN_SECONDS_PAR`
+ * 는 런 전체의 창발 결과이고, 수백 틱의 부분 런에서 파생시킬 방법이 없다.
+ *
+ * ## 그래서 지금 못 잡는 것
+ * 위의 산술 게이트는 **상수만 가지고 하는 순수 산술**이라, `RUN_META_XP_STAGE1` 이 현실과
+ * 4배 어긋나 있어도 전량 통과한다(실제로 433 → 1,676 으로 어긋나는 동안 한 번도 안 빨개졌다).
+ * 그 감시자가 없어졌다 — 재측정은 출시 직전 밸런스 패스의 1회성 봇 계측(ADR-0051 §3)과
+ * `src/bench` 의 `runCurveSweep` 로 한다.
  */
-describe('경제 축 정규 경로 실런 가드 (ADR-0035 · ADR-0036)', () => {
-  /** 곡선 스윕과 동일한 조립 — 표준 레벨·표준 장비·표준 투자로 대응 단계를 끝까지 돈다. */
-  function standardRun(stage: number, seed: number, planet = 0) {
-    const p = defaultProfile();
-    const s = activeShip(p);
-    s.level = stage * LEVEL_PER_STAGE;
-    s.skillInvest = standardSkillInvest(s.typeId, s.level);
-    // gearSeed = 런 시드(runCurveSweep 규약). 고정하지 않는다.
-    s.equipped = standardEquipped(s.level, seed, planet);
-    const state = createWorld(seed, buildRunConfig(p, { planet, stage }));
-    for (let i = 0; i < 60 * 300; i++) {
-      stepWorld(state, autopilotInput(state));
-      if (state.gameOver || state.victory) break;
-    }
-    return { xpTotal: state.xpTotal, level: state.level, victory: state.victory };
-  }
-
-  const SEEDS = [1, 5, 11, 17, 23, 31, 41, 43, 53, 61, 71, 79];
-  const mean = (a: readonly number[]) => a.reduce((x, y) => x + y, 0) / a.length;
-
-  for (const stage of [1, 11]) {
-    // 두 단언을 한 `it` 에 묶는다 — 같은 96런을 두 번 돌리면 가드 비용이 두 배가 된다.
-    it(`단계 ${stage}: 메타 XP 적립과 런 풀 레벨업이 설계값 근처다`, () => {
-      const rows = SEEDS.map((sd) => standardRun(stage, sd));
-      // 표준 빌드가 대응 단계를 아예 못 돌면 이 가드는 아무것도 증명하지 못한다(공허 런 방어).
-      expect(rows.filter((r) => r.victory).length, '표준 빌드 승리 0건 — 적 곡선을 먼저 봐라').toBeGreaterThan(0);
-
-      const actual = mean(rows.map((r) => r.xpTotal));
-      const design = metaXpPerRun(stage);
-      const ratio = actual / design;
-      expect(
-        ratio,
-        `단계 ${stage} 메타 XP 실측 ${actual.toFixed(0)} vs 설계 ${design} (비 ${ratio.toFixed(2)}). ` +
-          'data/waves.ts 의 SEGMENTS.killGoal 합계나 src/sim/world.ts 의 xpToNext 를 바꿨다면 ' +
-          'RUN_META_XP_STAGE1 · RUN_XP_GROWTH_* 를 96시드로 재측정해서 갱신해라 ' +
-          '(절차: .omc/research/economy-recalibrated-2026-07-27.md §재현).',
-        // ⚠️ 하한이 단계별로 갈린다(2026-08-04, 벽 프리팹 레인 · 밸런스 큐 §R50). 벽이 낱개
-        // 사각형에서 조각 7~16개짜리 구조물이 되면서 **봇의 사선이 지형에 더 자주 막히고**,
-        // 단계 11 실측이 설계의 0.61 로 내려갔다(단계 1 은 밴드 안). 상수를 지형에 맞춰 다시
-        // 쓰지 않은 이유는 §R50 에 있다 — 그러면 경제 모델이 지형에 종속된다. 복구는 적·보상
-        // 축에서 하고, 그때 이 하한을 0.7 로 되돌린다.
-      ).toBeGreaterThan(stage >= 11 ? 0.55 : 0.7);
-      expect(ratio).toBeLessThan(1.3);
-
-      // 런 내 리듬(ADR-0036 §2.3) — 파워업 3택 횟수 그 자체다.
-      const levelUps = mean(rows.map((r) => r.level - 1));
-      expect(
-        levelUps,
-        `단계 ${stage} 런당 레벨업 ${levelUps.toFixed(2)}회. ` +
-          'SEGMENTS.killGoal 합계를 바꿨다면 src/sim/world.ts 의 xpToNext 계수를 다시 재라 — ' +
-          '런이 길어지면 처치·젬이 늘어 같은 커브에서 레벨업이 함께 오른다.',
-        // 하한이 단계별로 갈리는 이유는 위 메타 XP 하한과 같다(밸런스 큐 §R50) — 지형이 막아
-        // 처치가 줄면 젬도 줄어 레벨업이 함께 내려간다(단계 11 실측 4.92). 같이 되돌린다.
-      ).toBeGreaterThanOrEqual(stage >= 11 ? 4.5 : 5);
-      expect(levelUps).toBeLessThanOrEqual(8);
-    });
-  }
-});
 
 describe('런 풀 XP 단계 성장 보정 (ADR-0036 — E(s) = E1 × s 선형 가정 폐기)', () => {
   it('단계1 은 정확히 ×1.0 이다 — 단계1 기준선 불변', () => {
