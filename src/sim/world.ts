@@ -160,7 +160,9 @@ import { cloakEntryCrossed, cloakExitCrossed, fireCloakEntry, setBreakToken } fr
 import { shipTypeDef, DEFAULT_SHIP_TYPE } from '../../data/ships/index.js';
 import { hasAnyInvestment } from '../items/skills.js';
 import { createSkillSlots } from './skillSlots.js';
-// 210스킬 앵커 11개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
+// 210스킬 앵커 20개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
+// (⑮ `onFilmBurst` 는 `filmBurst.ts` 가 부르므로 여기 없다 — 총 21개 중 20개가 이 파일 소유다.)
+import type { VolleyParams } from './skillHooks.js';
 import {
   survivedLethalBlow,
   onVolleyFired,
@@ -177,6 +179,12 @@ import {
   onLevelUp,
   onPowerupOffer,
   onPowerupPicked,
+  onVolleyParams,
+  onFilmShield,
+  onFilmAbsorbed,
+  onCushionThreshold,
+  onCushionSettled,
+  onCloakBreakReset,
 } from './skillHooks.js';
 import { onDamageChainCatalyst } from './catalystHooks.js';
 import { createCatalystSlots } from './catalystSlots.js';
@@ -2525,11 +2533,21 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
     // 완충은 "안전해질 때까지 피해를 미루는" 기체이고, 미룬 분은 교전이 끊기는 순간 들어온다.
     // 풀은 비음 정수이고 런 누적 피해로 유계라 u32 폴드에 안전하다.
     if (player.aux1 < CUSHION_TICK_CAP) player.aux1++;
-    if (player.aux0 > 0 && player.aux1 >= CUSHION_RECOVER_TICKS) {
+    // 앵커 ⑲(S2) — **정산 임계 비교 직전.** ME9「솜틀 요양」은 임계 자체를 낮추는 스킬인데
+    // 술어(`state.wallContactTicks >= 60`)는 앵커 ⑦ 에서 이미 읽을 수 있었고 **적용부가**
+    // 없었다. 기본값을 인자로 넘기므로 기체 모듈이 `CUSHION_RECOVER_TICKS` 를 복제하지 않는다.
+    // ⚠️ **이 앵커만으로는 ME9 가 실제로 돌지 않는다** — 아래 `cushionSettled`·`cushionRecovered`
+    //    가 자기 안에서 `unhitTicks < CUSHION_RECOVER_TICKS` 를 **다시** 검사해 0 을 돌려주므로,
+    //    임계를 낮춰 분기에 진입시켜도 정산액이 0 이 되어 조용히 아무 일도 안 일어난다. 근거와
+    //    선결 조건은 앵커 주석에 있다. S2 는 기본값을 그대로 돌려주므로 비트 동일이다.
+    const settleAt = onCushionThreshold(state, player, CUSHION_RECOVER_TICKS);
+    if (player.aux0 > 0 && player.aux1 >= settleAt) {
       const due = cushionSettled(player.aux0, player.aux1);
       // 사연 관측(비-해시): 이번 정산에서 회복으로 사라진 지연분 HP 를 누적한다(aux0 을 0 으로
       // 되돌리기 **전**에 읽는다). 결정론 무영향 — hashWorld 가 접지 않는 순수 메타.
-      state.cushionHealed += cushionRecovered(player.aux0, player.aux1);
+      // 지역 변수로 뽑은 것은 앵커 ⑳ 이 같은 값을 받기 위함이다 — 두 번 부르면 리셋 뒤라 0 이 된다.
+      const healed = cushionRecovered(player.aux0, player.aux1);
+      state.cushionHealed += healed;
       player.aux0 = 0;
       player.aux1 = 0;
       // ⚠️ 완충은 절대 치명적이지 않다. 미룬 피해가 hp 를 1 미만으로 내리지 못하게 클램프한다 —
@@ -2539,6 +2557,14 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
       const room = Math.floor(player.hp) - 1;
       const applied = due > room ? room : due;
       if (applied > 0) player.hp -= applied;
+      // 앵커 ⑳(S2) — **정산 직후**(hp 차감·클램프까지 반영된 뒤). 말로우 30종 중 **9종**이
+      // "정산 틱" 을 트리거로 삼는데 앵커 ⑨ 는 `stepShipSignature` 진입점이라 정산보다 앞이다.
+      // 거기서 `aux1 + 1 >= 임계` 로 **예측**하지 않은 이유는 그 앵커 주석에 있다 — 술어·정산액·
+      // 탕감액·클램프 후 적용액이 전부 두 번째 사본이 되고, 액티브 4종이 임계를 수동 주입하는
+      // 기체라 어긋남이 조용히 커진다. 여기서는 **계산된 값 그대로** 넘긴다.
+      // `applied` 는 음수일 수 있어(hp 여유가 없으면 `room < 0`) 하한을 걸어 넘긴다 —
+      // 훅의 계약은 "hp 에서 실제로 깎인 양" 이다.
+      onCushionSettled(state, player, due, healed, applied > 0 ? applied : 0);
     }
     // ⚠️ 아크캐스터 분기와 같은 이유로 **명시적으로** 반환한다 — 뒤에 버블 분기를 append 한
     // 지금, return 이 없으면 말로우 런이 버블 분기까지 흘러 aux 의미가 두 겹으로 겹친다.
@@ -2982,6 +3008,31 @@ function autoAttack(state: WorldState, player: Entity): void {
   // 다섯 자리를 고쳐야 하고 그중 하나를 빠뜨리는 것이 이 저장소의 반쪽 배선이다.
   onVolleyFired(state, player);
 
+  // 앵커 ⑯(S2) — **볼리 파라미터가 확정된 직후 · 탄이 태어나기 직전.** 앵커 ① 을 옮기지 않고
+  // 새로 뚫은 이유는 그 앵커 주석에 있다: ① 은 *"조기 반환에 걸린 틱에는 도달하지 않는다"* 는
+  // 계측 의미를 이미 지고 있고, 여기서 필요한 값들(탄수·간격·탄속)은 그 뒤에 정해진다.
+  // 7기체 1차 배선에서 **21종이 정확히 이 지점의 부재로 막혀 있었다.**
+  //
+  // ⚠️ **아래 아키타입 분기는 이 레코드에서만 읽는다.** `w.bulletCount` 처럼 무기 원본을 직접
+  // 읽는 자리가 하나라도 남으면 훅이 그 필드를 고쳐도 조용히 무연산이 된다 — 이 저장소가
+  // 반복해 밟은 반쪽 배선의 전형이다. 초기값이 종전에 각 분기가 읽던 값과 **정확히 같으므로**
+  // S2 는 거동·해시가 비트 동일이다.
+  const volley: VolleyParams = {
+    damage: wDamage,
+    pierce,
+    count: w.bulletCount,
+    speed: w.bulletSpeed,
+    radius: w.bulletRadius,
+    life: bulletLife,
+    spread: w.spread,
+    cooldownQ: fireCd,
+    // 정조준탄 마커를 이 필드로 흡수했다 — 종전에는 아키타입 분기 **네 곳**에 똑같은
+    // `if (marksmanFire) b.aux0 = 1` 이 흩어져 있었고, 새 표식이 필요한 기체(팬텀 AS3·AS10 ·
+    // 아크캐스터 CH1·CH8)는 그 네 곳을 전부 고쳐야 했다. 이제 표식 경로는 한 곳뿐이다.
+    mark: marksmanFire ? 1 : 0,
+  };
+  onVolleyParams(state, player, volley);
+
   const baseAngle = atan2(target.y - player.y, target.x - player.x);
   // Firing archetypes off `weaponType` (M2 B2 + M3 C1):
   //   2 = 레일건: one shot straight at the target (pierce/speed do the work).
@@ -2994,26 +3045,27 @@ function autoAttack(state: WorldState, player: Entity): void {
       player.x,
       player.y,
       baseAngle,
-      w.bulletSpeed,
-      wDamage,
-      pierce,
-      w.bulletRadius,
-      bulletLife,
+      volley.speed,
+      volley.damage,
+      volley.pierce,
+      volley.radius,
+      volley.life,
       cos(baseAngle),
       sin(baseAngle),
     );
-    // 정조준탄 마커(설계서 §1) — `ownerId` 는 MISSILE_MARK 등과 슬롯이 겹쳐 배제하고 `aux0`
-    // 를 대신 쓴다(전수 확인: 'bullet' kind 는 어디서도 aux0 를 읽지 않는다, shipSignature.ts
-    // 헤더의 비트 배정과 같은 "이미 해시되는 필드 재활용" 규율).
-    if (marksmanFire) b.aux0 = 1;
-    player.cooldown += fireCd;
+    // 볼리 표식(설계서 §1 의 정조준탄 마커가 값 1 을 쓴다) — `ownerId` 는 MISSILE_MARK 등과
+    // 슬롯이 겹쳐 배제하고 `aux0` 를 대신 쓴다(전수 확인: 'bullet' kind 는 어디서도 aux0 를
+    // 읽지 않는다, shipSignature.ts 헤더의 "이미 해시되는 필드 재활용" 규율).
+    // 값의 출처는 앵커 ⑯ 의 `volley.mark` 한 곳뿐이다.
+    if (volley.mark !== 0) b.aux0 = volley.mark;
+    player.cooldown += volley.cooldownQ;
     return;
   }
 
   if (w.weaponType === WEAPON_TYPE_MISSILE) {
-    const n = w.bulletCount < 1 ? 1 : w.bulletCount;
-    const start = n > 1 ? baseAngle - w.spread / 2 : baseAngle;
-    const stepA = n > 1 ? w.spread / (n - 1) : 0;
+    const n = volley.count < 1 ? 1 : volley.count;
+    const start = n > 1 ? baseAngle - volley.spread / 2 : baseAngle;
+    const stepA = n > 1 ? volley.spread / (n - 1) : 0;
     for (let i = 0; i < n; i++) {
       const ang = start + stepA * i;
       const m = spawnBullet(
@@ -3021,19 +3073,19 @@ function autoAttack(state: WorldState, player: Entity): void {
         player.x,
         player.y,
         ang,
-        w.bulletSpeed,
-        wDamage,
-        pierce,
-        w.bulletRadius,
-        bulletLife,
+        volley.speed,
+        volley.damage,
+        volley.pierce,
+        volley.radius,
+        volley.life,
         cos(ang),
         sin(ang),
       );
       m.ownerId = MISSILE_MARK; // 유도 마커: stepProjectiles가 매 틱 제한 선회.
-      // 정조준 마커는 `ownerId` 가 아니라 `aux0` 라 유도 마커와 슬롯이 겹치지 않는다.
-      if (marksmanFire) m.aux0 = 1;
+      // 볼리 표식은 `ownerId` 가 아니라 `aux0` 라 유도 마커와 슬롯이 겹치지 않는다.
+      if (volley.mark !== 0) m.aux0 = volley.mark;
     }
-    player.cooldown += fireCd;
+    player.cooldown += volley.cooldownQ;
     return;
   }
 
@@ -3054,22 +3106,25 @@ function autoAttack(state: WorldState, player: Entity): void {
       // fire so a fast cadence reads as a continuous line.
       // 관통은 이미 9999(사실상 무제한)라 정조준 +1 을 더해도 관측 가능한 차이가 없다 —
       // 그래서 리터럴을 그대로 둔다(피해 강화·마커는 다른 무기 타입과 동일하게 받는다).
+      // ⚠️ 같은 이유로 이 분기는 앵커 ⑯ 의 `pierce`·`speed`·`radius`·`life`·`count`·`spread`
+      // 를 **읽지 않는다** — 정지·전용 반경/수명·무제한 관통은 무기 스탯이 아니라 "빔 선분은
+      // 겹친 적을 전부 때린다" 는 아키타입 정의다. 그 사실은 `VolleyParams` 주석의 표에 있다.
       const seg = spawnBullet(
         state,
         player.x + ca * dist,
         player.y + sa * dist,
         baseAngle,
         0,
-        wDamage,
+        volley.damage,
         9999,
         BEAM_SEGMENT_RADIUS,
         BEAM_SEGMENT_LIFE,
         ca,
         sa,
       );
-      if (marksmanFire) seg.aux0 = 1;
+      if (volley.mark !== 0) seg.aux0 = volley.mark;
     }
-    player.cooldown += fireCd;
+    player.cooldown += volley.cooldownQ;
     return;
   }
 
@@ -3078,10 +3133,10 @@ function autoAttack(state: WorldState, player: Entity): void {
   //    무기에서만 발화(리뷰 MED-1 이중 게이트 — roll.ts 페어링과 정합). 발칸 등 타
   //    무기에 롤될 수 없고, 설령 실려도 no-op.
   const twinOn = hasUnique(mask, UQ_TWIN_STAR) && w.weaponType === WEAPON_TYPE_SPREAD;
-  const n = twinOn ? w.bulletCount * 2 : w.bulletCount;
-  const dmg = twinOn ? wDamage * TWIN_STAR_DAMAGE_MULT : wDamage;
-  const start = n > 1 ? baseAngle - w.spread / 2 : baseAngle;
-  const stepA = n > 1 ? w.spread / (n - 1) : 0;
+  const n = twinOn ? volley.count * 2 : volley.count;
+  const dmg = twinOn ? volley.damage * TWIN_STAR_DAMAGE_MULT : volley.damage;
+  const start = n > 1 ? baseAngle - volley.spread / 2 : baseAngle;
+  const stepA = n > 1 ? volley.spread / (n - 1) : 0;
   for (let i = 0; i < n; i++) {
     const ang = start + stepA * i;
     const b = spawnBullet(
@@ -3089,17 +3144,17 @@ function autoAttack(state: WorldState, player: Entity): void {
       player.x,
       player.y,
       ang,
-      w.bulletSpeed,
+      volley.speed,
       dmg,
-      pierce,
-      w.bulletRadius,
-      bulletLife,
+      volley.pierce,
+      volley.radius,
+      volley.life,
       cos(ang),
       sin(ang),
     );
-    if (marksmanFire) b.aux0 = 1;
+    if (volley.mark !== 0) b.aux0 = volley.mark;
   }
-  player.cooldown += fireCd;
+  player.cooldown += volley.cooldownQ;
 }
 
 // --- Sub-weapon 5종 (M2 plan B2, OQ-M2-2: 독립 발사 슬롯; GDD §5 "보조무기 5종") ------
@@ -4245,12 +4300,26 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // 막 내구도 소모되지 않는다 — 무적은 이미 완전 방어라 막을 함께 태우면 이중 손실이다.
     if (signatureOn(state, SIG_BUBBLE_FILM) && player.aux0 > 0) {
       dmg = Math.round(dmg);
-      const absorbed = filmAbsorbed(dmg, player.aux0);
+      // 앵커 ⑰(S2) — **이번 피격에 쓸 유효 내구.** 버블의 감쇠 사슬 스킬 6종이 이 지점을
+      // 기다리고 있었다 — 앵커 ⑧ 은 브루저 장갑보다도 앞이라 거기서 본 `dmg` 는 막을 아직
+      // 지나지 않았고 `aux0` 도 한 점 안 닳았다.
+      // 훅이 "흡수량" 이 아니라 "내구" 를 돌려주는 이유는 그 앵커 주석에 있다: 아래 두 순수
+      // 함수의 합 보존 계약(`absorbed + rest === dmg`)이 world 에 복제되지 않고 한 곳에 남는다.
+      // S2 는 `player.aux0` 을 그대로 돌려주므로 비트 동일이다.
+      // ⚠️ 훅이 실제 내구보다 큰 값을 돌려주면 아래 차감이 **`aux0` 을 음수로 만든다**(u32
+      //    폴드가 40억대 값으로 접어 클라와 서버 재실행이 갈린다) — 부풀리는 case 는 자기
+      //    안에서 상한을 걸어야 한다. 그 근거는 앵커 주석.
+      const shield = onFilmShield(state, player, dmg, player.aux0);
+      const absorbed = filmAbsorbed(dmg, shield);
       // 남는 피해는 순수 함수로 받는다(= dmg - absorbed). 두 값의 합이 원래 피해와 같다는
       // 계약(shipSignature.ts ⑥절)을 world 배선이 재구현하지 않고 그대로 상속한다.
-      const rest = filmRemainingDamage(dmg, player.aux0);
+      const rest = filmRemainingDamage(dmg, shield);
       player.aux0 -= absorbed;
       dmg = rest;
+      // 앵커 ⑱(S2) — **막이 실제로 닳은 직후 · 파열 판정보다 앞.** ⑰ 과 이 지점의 `player.aux0`
+      // 이 다르다(저기는 안 닳음, 여기는 이번 피격분이 빠짐) — 그 차이가 둘을 나눈 이유이고,
+      // 앵커 ⑮ 가 밀어내기 앞/뒤로 갈리며 실증한 것과 같은 형태다.
+      onFilmAbsorbed(state, player, absorbed, rest);
       // 막이 이번 피격으로 **소진된 순간**이 파열이다. "피격 시 항상 터진다" 를 택하지 않은
       // 이유: 그러면 내구(FILM_ABSORB_FLAT)가 사실상 무의미해지고 막이 한 대만 막는 유틸이
       // 된다. 소진 조건이라야 "흡수량을 다 쓰면 터진다" 는 축이 성립한다. 재생 타이머(aux1)는
@@ -4326,6 +4395,13 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // 팬텀 시그니처 — 실제로 피해를 입은 이번 피격에서만 무피격 스트릭과 해제 표식을 리셋한다.
     // `aux1` 은 직접 대입하지 않고 `setBreakToken` 을 거친다(E1 — 토큰 쓰기 단일 경로).
     if (signatureOn(state, SIG_PHANTOM_CLOAK)) {
+      // 앵커 ㉑(S2) — **리셋 직전.** 7기체 배선이 [치명] 으로 분류한 지점이다: 앵커 ④ 는 이
+      // 리셋 **뒤**라 거기 도달한 `aux0` 은 **항상 0** 이고, 그래서 DI1「위상 정산」은 상시
+      // 최소 반경 · PH10「발각 즉응」은 상시 미발동이 된다. 설계서 공통 구현 고지 ④ 가 요구한
+      // 순서(DI1 → PH10 → 리셋 → DI5) 중 DI5 만 앵커 ④ 에서 성립했다 — 이 앵커가 앞의 둘을 연다.
+      // 스트릭·표식을 **인자로** 넘기는 것은 읽는 시점이 리셋 앞이라는 사실을 시그니처로 못
+      // 박기 위함이다(훅을 뒤로 옮기면 조용히 0 이 되는 대신 인자가 어긋난다).
+      onCloakBreakReset(state, player, dmg, player.aux0, player.aux1 !== 0);
       player.aux0 = 0;
       setBreakToken(state, player, 0);
     }

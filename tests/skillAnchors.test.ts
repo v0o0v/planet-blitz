@@ -63,6 +63,9 @@ const { blankEntity, addEntity, spawnBullet, spawnGem, spawnWall } = await impor
 );
 const { DT } = await import('../src/sim/constants.js');
 const { hashWorld } = await import('../src/sim/replay.js');
+const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS } = await import(
+  '../src/sim/shipSignature.js'
+);
 type WorldState = import('../src/sim/world.js').WorldState;
 type InputFrame = import('../src/sim/world.js').InputFrame;
 type Entity = import('../src/sim/entities.js').Entity;
@@ -78,10 +81,14 @@ function count(name: string): number {
  * 훅이 즉시 반환한다 — 그래도 **호출 자체는 일어나므로** 이 계측은 게이트와 무관하게 성립한다.
  * 그래도 투자를 넣는 이유는 배선 레인이 실제로 밟을 경로와 같은 상태에서 재기 위함이다.
  */
-function skilled(seed: number): WorldState {
+function skilled(seed: number, shipType?: number): WorldState {
   const invest = new Array<number>(60).fill(0);
   invest[0] = 1;
-  return createWorld(seed, { ...DEFAULT_CONFIG, skillInvest: invest });
+  return createWorld(seed, {
+    ...DEFAULT_CONFIG,
+    skillInvest: invest,
+    ...(shipType !== undefined ? { shipType } : {}),
+  });
 }
 
 /** 잡몹 하나를 세운다. hp 를 크게 잡아 한 방에 죽지 않게 한다(킬 사건과 분리). */
@@ -106,11 +113,17 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('앵커 15개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 21개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
         'onBulletExpired',
+        // ⚠️ S2 여섯은 **미배선 141종이 몰려 있던 지점 넷**을 연다. 넷인데 여섯인 것은 막 흡수와
+        // 정산이 각각 "산술에 개입" 과 "사건을 관측" 으로 갈리기 때문이다 — 한 지점에 하나만
+        // 두면 앵커 ⑮ 가 실제로 밟은 함정(관측 대상이 그 지점에 이미 없다)을 되풀이한다.
+        'onCloakBreakReset', // S2 ㉑ — 팬텀 리셋 직전([치명] 이었던 지점)
+        'onCushionSettled', // S2 ⑳ — 정산 직후
+        'onCushionThreshold', // S2 ⑲ — 정산 임계
         'onDamageChain',
         'onDashFired',
         'onEnemyDamaged', // S1
@@ -119,6 +132,8 @@ describe('계측 이음매', () => {
         // 파열)이라 `stepWorld` 가 아니라 `filmBurst.ts` 가 부르고, 촉매 짝도 없다. 배치 4가
         // 뚫었다(`skillHooks.ts` 의 그 함수 주석이 사유의 정본).
         'onFilmBurst',
+        'onFilmAbsorbed', // S2 ⑱ — 막이 닳은 직후(파열 판정보다 앞)
+        'onFilmShield', // S2 ⑰ — 막 흡수 산술 직전(유효 내구)
         'onGemCollected',
         'onKillsDelta',
         'onLevelUp', // S1
@@ -127,6 +142,7 @@ describe('계측 이음매', () => {
         'onPowerupPicked', // S1
         'onSignatureStep',
         'onVolleyFired',
+        'onVolleyParams', // S2 ⑯ — 발사부(전 기체 최다 미배선 사유)
         'onWallContact',
         'survivedLethalBlow',
       ].sort(),
@@ -474,6 +490,154 @@ describe('앵커 ⑫⑬⑭ onLevelUp · onPowerupOffer · onPowerupPicked — �
     stepWorld(s, { ...idle, special: SPECIAL_POWERUP_PICK | (3 << 1) });
     expect(s.pendingLevelUp).toBe(true);
     expect(count('onPowerupPicked')).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 앵커 ⑯~㉑ (S2) — 7기체 배선이 뚫은 지점 넷
+// ---------------------------------------------------------------------------
+
+describe('앵커 ⑯ onVolleyParams — 발사부(전 기체 최다 미배선 사유)', () => {
+  it('앵커 ①과 같은 틱에 정확히 같은 횟수로 불린다 (① → ⑯ 순으로 연달아)', () => {
+    const s = skilled(0xb001);
+    plantEnemy(s, 400, 0);
+    stepWorld(s, idle);
+    expect(count('onVolleyFired')).toBe(1);
+    expect(count('onVolleyParams')).toBe(count('onVolleyFired'));
+  });
+
+  it('음성 대조: 쿨다운이 안 찼으면 발사가 없어 ①⑯ 둘 다 0이다', () => {
+    // "표적이 없는 틱"으로 잡으면 웨이브 디렉터가 사거리 안에 적을 낳는 시드에서 조용히
+    // 뒤집힌다(앵커 ① 절의 실측 근거 0x9005). 같은 이유로 쿨다운 게이트를 쓴다.
+    const s = skilled(0xb002);
+    plantEnemy(s, 400, 0);
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.cooldown = 999;
+    stepWorld(s, idle);
+    expect(count('onVolleyFired')).toBe(0);
+    expect(count('onVolleyParams')).toBe(0);
+  });
+});
+
+describe('앵커 ⑰⑱ onFilmShield · onFilmAbsorbed — 버블 막 흡수(산술 직전 · 직후)', () => {
+  it('버블 + 막이 선 상태(aux0>0)에서 피격하면 ⑰⑱ 이 각각 한 번씩 불린다', () => {
+    const s = skilled(0xc001, 6); // 버블(id=6, SIG_BUBBLE_FILM)
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.aux0 = FILM_ABSORB_FLAT;
+    plantEnemy(s, 0, 0, 10); // 플레이어에 겹친 적 — 접촉 피해
+    stepWorld(s, idle);
+    expect(count('onFilmShield')).toBe(1);
+    expect(count('onFilmAbsorbed')).toBe(1);
+  });
+
+  it('음성 대조 ①: 막이 없으면(aux0=0) 피격해도 0이다', () => {
+    const s = skilled(0xc002, 6);
+    const hpBefore = s.entities[0]?.hp ?? 0;
+    plantEnemy(s, 0, 0, 10);
+    stepWorld(s, idle);
+    // 막 없이도 피격 자체는 일어났다는 것을 확인해 "애초에 안 맞았다" 는 거짓 음성을 배제한다.
+    expect(s.entities[0]?.hp).toBeLessThan(hpBefore);
+    expect(count('onFilmShield')).toBe(0);
+    expect(count('onFilmAbsorbed')).toBe(0);
+  });
+
+  it('음성 대조 ②: 다른 기체(막 없는 시그니처)에서는 0이다', () => {
+    const s = skilled(0xc003); // 기본 기체(스트라이커, SIG_STRIKER_MARKSMAN)
+    const hpBefore = s.entities[0]?.hp ?? 0;
+    plantEnemy(s, 0, 0, 10);
+    stepWorld(s, idle);
+    expect(s.entities[0]?.hp).toBeLessThan(hpBefore);
+    expect(count('onFilmShield')).toBe(0);
+    expect(count('onFilmAbsorbed')).toBe(0);
+  });
+});
+
+describe('앵커 ⑲ onCushionThreshold — 말로우 완충 정산 임계(매 틱)', () => {
+  it('말로우 런에서 정산 여부와 무관하게 매 틱 불린다', () => {
+    const s = skilled(0xd001, 5); // 말로우(id=5, SIG_MALLOW_CUSHION)
+    stepWorld(s, idle);
+    expect(count('onCushionThreshold')).toBe(1);
+    stepWorld(s, idle);
+    expect(count('onCushionThreshold')).toBe(2);
+  });
+
+  it('음성 대조: 다른 기체에서는 0이다', () => {
+    const s = skilled(0xd002); // 기본 기체
+    stepWorld(s, idle);
+    stepWorld(s, idle);
+    expect(count('onCushionThreshold')).toBe(0);
+  });
+});
+
+describe('앵커 ⑳ onCushionSettled — 말로우 완충 정산 직후', () => {
+  it('부채(aux0>0) + 무피격 임계 도달에서만 불린다', () => {
+    const s = skilled(0xe001, 5);
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.aux0 = 100; // 적립된 지연 피해
+    p.aux1 = CUSHION_RECOVER_TICKS - 1; // 이번 틱에 임계를 채운다
+    stepWorld(s, idle);
+    expect(count('onCushionThreshold')).toBe(1);
+    expect(count('onCushionSettled')).toBe(1);
+    expect(p.aux0).toBe(0); // 정산 후 리셋됐다는 전제 확인
+  });
+
+  it('⚠️ ⑲ 이 불려도 ⑳ 은 안 불리는 틱이 존재한다 (임계 미도달)', () => {
+    const s = skilled(0xe002, 5);
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.aux0 = 100;
+    p.aux1 = 0; // 이번 틱엔 1이 될 뿐, 임계(180)에 한참 못 미친다
+    stepWorld(s, idle);
+    expect(count('onCushionThreshold')).toBe(1);
+    expect(count('onCushionSettled')).toBe(0);
+  });
+
+  it('음성 대조: 부채가 없으면(aux0=0) 임계에 도달해도 0이다', () => {
+    const s = skilled(0xe003, 5);
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.aux0 = 0;
+    p.aux1 = CUSHION_RECOVER_TICKS - 1;
+    stepWorld(s, idle);
+    expect(count('onCushionThreshold')).toBe(1);
+    expect(count('onCushionSettled')).toBe(0);
+  });
+});
+
+describe('앵커 ㉑ onCloakBreakReset — 팬텀 무피격 스트릭 리셋 직전', () => {
+  it('실제로 hp가 깎인 피격을 받아야 불린다', () => {
+    const s = skilled(0xf001, 3); // 팬텀(id=3, SIG_PHANTOM_CLOAK)
+    const hpBefore = s.entities[0]?.hp ?? 0;
+    plantEnemy(s, 0, 0, 10); // 플레이어에 겹친 적 — 접촉 피해
+    stepWorld(s, idle);
+    expect(s.entities[0]?.hp).toBeLessThan(hpBefore);
+    expect(count('onCloakBreakReset')).toBe(1);
+  });
+
+  it('음성 대조 ①: 무적(iframes) 중에는 접촉해도 hp가 안 깎여 0이다', () => {
+    // 버블의 막 전량 흡수와 같은 형태(hp 가 안 깎이는 경로)를 팬텀에서 재현한 것 —
+    // `invulnerable` 게이트가 접촉 피해 수집을 아예 막아 dmg 가 0인 채로 남는다.
+    const s = skilled(0xf002, 3);
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.iframes = 40;
+    const hpBefore = p.hp;
+    plantEnemy(s, 0, 0, 10);
+    stepWorld(s, idle);
+    expect(s.entities[0]?.hp).toBe(hpBefore);
+    expect(count('onCloakBreakReset')).toBe(0);
+  });
+
+  it('음성 대조 ②: 다른 기체에서는 0이다', () => {
+    const s = skilled(0xf003); // 기본 기체
+    const hpBefore = s.entities[0]?.hp ?? 0;
+    plantEnemy(s, 0, 0, 10);
+    stepWorld(s, idle);
+    expect(s.entities[0]?.hp).toBeLessThan(hpBefore);
+    expect(count('onCloakBreakReset')).toBe(0);
   });
 });
 
