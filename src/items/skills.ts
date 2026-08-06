@@ -28,6 +28,7 @@ import {
   shipAxisIndexOf,
   shipTreeRange,
   flattenShipNodes,
+  TREE_AFFINITIES,
 } from '../../data/ships/index.js';
 import type { ShipTypeDef, TreeAffinity } from '../../data/ships/index.js';
 
@@ -108,6 +109,63 @@ export function skillPoints(
 ): number {
   const v = invest[flatIndex];
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0;
+}
+
+/**
+ * 한 스킬의 **실효 레벨** — 투자 포인트 + 축 어픽스. **sim 의 모든 스킬 훅이 이것만 부른다.**
+ * 중복 구현 금지(`affixes.md` ①-4 의 정본 4조).
+ *
+ * ## 계약 (네 줄이 전부다)
+ *  1. **투자 ≥ 1 인 스킬에만 가산한다.** `base <= 0` 이면 **0 을 반환하고 끝** — 어픽스를
+ *     더하지 않는다. 이 한 줄이 "해금은 포인트로만"(ADR-0049 · E7)의 전부다.
+ *  2. **상한 20 을 초과한다.** 결과를 **clamp 하지 않는다** — 20 초과가 설계이고, 실효 상한
+ *     24(= 20 + 4)는 입력 쪽 `clampSkillAffixLv`(loadout.ts)가 이미 보장한다. 여기서 자르면
+ *     그 초과분이 조용히 사라진다.
+ *  3. **발동 여부는 어픽스가 못 바꾼다.** 이 함수는 레벨만 돌려준다 — 트레이드 스킬 본체의
+ *     발동은 투자 유무로만 판정한다.
+ *  4. **침공 판정을 상속한다.** 게이트된 스킬은 레벨이 얼마든 침공에서 no-op 이다. 그 게이트는
+ *     호출부(앵커)의 몫이고 이 함수는 관여하지 않는다.
+ *
+ * ## ⚠️ `axisOfIndex` 의 `undefined` 를 반드시 명시 처리한다
+ * `axisOfIndex(flatIndex, typeId)` 는 범위 밖·손상 인덱스에 `undefined` 를 준다. 그 JSDoc 이
+ * *"호출부가 조용히 offense 로 흘리지 않도록 기본값을 주지 않는다"* 를 계약으로 못 박았으므로,
+ * 여기서는 **어픽스 가산 없이 base 를 반환**한다(0 축으로 흘리면 손상 인덱스가 공격 어픽스를
+ * 얻는다). `affixes.md:123-131` 의 의사코드는 인자 순서와 반환 타입이 실제 구현과 **반대**다 —
+ * 베끼지 마라.
+ *
+ * ## 축 → 인덱스
+ * `TREE_AFFINITIES` 순서가 정본이다 — `deriveSkillAffixLv`(loadout.ts)가 정확히 그 순서로
+ * 배열을 만든다. **축 수 3 을 하드코딩하지 않는다.**
+ *
+ * ## 성능
+ * sim 루프가 매 틱 부른다. 이 함수 자체는 정수 덧셈과 배열 조회뿐이라 루프에 두어도 된다.
+ * **나눗셈이 낀 레벨 스케일은 여기가 아니라 `createWorld` 의 `skillDerived` 에서 1회 확정**한다
+ * (구현 고지 ③).
+ *
+ * @param invest `WorldConfig.skillInvest` (미지정 = 투자 없음)
+ * @param flatIndex 기체 내 flat 스킬 인덱스
+ * @param affixLv `WorldConfig.skillAffixLv` (미지정 = 어픽스 없음 — 조건부 스탬프라 흔하다)
+ * @param typeId 기체 타입 id (미지정 = 스트라이커)
+ */
+export function skillLv(
+  invest: readonly number[] | undefined,
+  flatIndex: number,
+  affixLv?: readonly number[],
+  typeId: number = DEFAULT_SHIP_TYPE,
+): number {
+  const base = invest === undefined ? 0 : skillPoints(invest, flatIndex);
+  // 정본 1: 미해금(0레벨)은 어픽스로 켜지지 않는다.
+  if (base <= 0) return 0;
+  if (affixLv === undefined) return base;
+  const axis = axisOfIndex(flatIndex, typeId);
+  // 손상 인덱스 — 어픽스를 붙이지 않는다(조용히 offense 로 흘리지 않는다).
+  if (axis === undefined) return base;
+  const ai = TREE_AFFINITIES.indexOf(axis);
+  if (ai < 0) return base;
+  const add = affixLv[ai];
+  if (typeof add !== 'number' || !Number.isFinite(add) || add <= 0) return base;
+  // 정본 2: clamp 하지 않는다 — 20 초과가 설계다.
+  return base + Math.trunc(add);
 }
 
 /** flat 인덱스 → 스킬 정의. 범위 밖이면 `undefined`. */

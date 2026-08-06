@@ -84,6 +84,10 @@ const EXPECTED_WORLD_CARRY: readonly string[] = [
   'filmPops',
   // 의뢰 런타임: `totalTicks` 가 런 단위 누적이라 승계한다(`segmentDone` 은 승계 후 0 으로 내린다).
   'commissionRuntime',
+  // 스킬 이월 슬롯 8칸(S0 · ADR-0049). "런당 1회 소진"·"런 누적 저금" 스킬이 구간을 넘어야
+  // 성립한다. **참조를 그대로 넘긴다**(`weapon`·`loot` 와 같은 규율) — 아래 CARRY 대조가
+  // `toBe` 라 값 복사로 바꾸면 오히려 빨개진다. 짝인 `skillStage` 는 `WORLD_FRESH` 다.
+  'skillCarry',
 ];
 
 /** 플레이어 승계·0리셋 목록의 독립 전사본. 근거는 위와 동일. */
@@ -145,7 +149,7 @@ describe('① 전수 대조 — 분류 배열이 필드 전부를 덮는다', ()
     expect(unclassified, `미분류 엔티티 키: ${unclassified.join(', ')}`).toEqual([]);
   });
 
-  it('배열 길이 합이 실제 필드 수와 같다 (WorldState 72 · Entity 25)', () => {
+  it('배열 길이 합이 실제 필드 수와 같다 (WorldState 76 · Entity 25)', () => {
     // 숫자를 박아 두는 이유: 필드가 늘었는데 분류도 같이 늘면 위 대조는 통과하지만, 그때
     // **분류 판단이 실제로 있었는지**는 이 숫자가 바뀌는 것으로만 드러난다.
     // 61 → 62: `commissionRuntime` 신설(의뢰 구간 전환 코어 2단계). 62 → 64: `activeTune0/1`
@@ -157,7 +161,14 @@ describe('① 전수 대조 — 분류 배열이 필드 전부를 덮는다', ()
     // 다 — 앞의 둘은 `createWorld` 가 config 에서 재도출하는 파생값이고(승계하면 정본이 둘이
     // 된다), 파열 요청 6칸은 세운 틱 안에서 0 으로 되돌아가는 스크래치라 구간 경계에 값이
     // 설 수 없다.
-    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(72);
+    // 72 → 76: 210스킬 공유 기반(S0 · ADR-0049) 넷. `skillCarry`(8칸, **CARRY** — "런당 1회
+    // 소진"·"런 누적 저금"이 구간을 넘어야 성립한다) · `skillStage`(8칸, FRESH — 창 잔여 틱처럼
+    // 무대와 함께 사라져야 하는 상태) · `skillsOn`·`skillDerived`(둘 다 FRESH — `sigBit`·
+    // `armorMaxStacks` 와 같이 승계된 config 에서 `createWorld` 가 재도출하는 순수 파생값이라
+    // 승계 목록에 넣으면 정본이 둘이 된다).
+    // ⚠️ `WORLD_RESET_ZERO` 는 선언이 `NumericKeys<WorldState>` 라 배열 필드를 못 받는다 —
+    // 두 슬롯 배열의 선택지는 CARRY 와 FRESH 둘뿐이었다.
+    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(76);
     expect(ENTITY_CARRY.length + ENTITY_RESET_ZERO.length + ENTITY_FRESH.length).toBe(25);
   });
 });
@@ -194,6 +205,23 @@ describe('② 뮤테이션 진단력 — carryAcrossSegment 가 필드별로 실
     // 참조 동일성 — 얕은 복사로 바꿔치기하면 여기서 걸린다.
     expect(next.weapon).toBe(prev.weapon);
     expect(next.loot).toBe(prev.loot);
+  });
+
+  it('skillCarry 는 **8칸 전부** 이월되고 skillStage 는 전부 0 으로 시작한다', () => {
+    // ⚠️ 위 CARRY 대조는 이 결함을 **원리적으로 못 잡는다.** `seedPrev()` 는 `number`/`boolean`
+    // 만 심어 배열 **안**을 안 채우고, 대조도 `toBe`(참조 동일성)라 8칸 중 4칸만 옮기는 부분
+    // 이월이 통과한다. 그래서 원소마다 구별 가능한 값을 심고 값으로 비교한다.
+    const prev = createWorld(0x7777, { ...DEFAULT_CONFIG });
+    const next = createWorld(0x8888, { ...DEFAULT_CONFIG });
+    for (let i = 0; i < prev.skillCarry.length; i++) prev.skillCarry[i] = 100 + i;
+    for (let i = 0; i < prev.skillStage.length; i++) prev.skillStage[i] = 200 + i;
+
+    carryAcrossSegment(prev, next);
+
+    expect(next.skillCarry).toEqual([100, 101, 102, 103, 104, 105, 106, 107]);
+    // 구간 슬롯은 무대와 함께 사라진다 — 이월되면 새 무대 첫 틱부터 "창이 이미 열려 있었다"가 된다.
+    expect(next.skillStage).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(next.skillStage).not.toBe(prev.skillStage);
   });
 
   it('FRESH 필드는 새 월드 값을 유지한다 (승계가 새는지 반대 방향으로 본다)', () => {

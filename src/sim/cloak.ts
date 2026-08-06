@@ -122,5 +122,27 @@ export function fireCloakEntry(state: WorldState, player: Entity): void {
  * "조용한 미발현" — 스트라이커 `marksmanTriggered` 주석과 같은 사유).
  */
 export function cloakEntryCrossed(prev: number, next: number): boolean {
-  return Math.trunc(prev) < CLOAK_UNHIT_TICKS && Math.trunc(next) >= CLOAK_UNHIT_TICKS;
+  return crossed(prev, next, CLOAK_UNHIT_TICKS);
+}
+
+/**
+ * **임계 통과 판정의 일반형** — `prev` 에서 `next` 로 가며 `threshold` 를 넘었는가(ADR-0049 S0).
+ *
+ * 위 {@link cloakEntryCrossed} 가 이것으로 구현된다. **정본을 둘로 나누지 않으려고** 같은
+ * 파일에 나란히 둔다: 210스킬 배선이 만들 임계 훅(저금 만충 · 스택 개방 · 연속 접촉 K틱)이
+ * 전부 같은 모양인데, 각자 다시 적으면 그중 하나가 `===` 로 쓰이는 것을 아무도 못 잡는다.
+ *
+ * ## `=== 임계` 가 아니라 통과 판정인 이유 (구현 고지 ④)
+ * 카운터를 한 번에 여러 칸 올리는 주입 스킬이 존재하면 `===` 는 **임계를 건너뛴 틱에 영영
+ * 발화하지 않는다.** 그 미발동은 화면에도 테스트에도 흔적을 남기지 않는다 — 이 저장소가
+ * 반복 겪은 "조용한 미발현"(스트라이커 `marksmanTriggered` 주석과 같은 사유).
+ *
+ * `Math.trunc` 를 양쪽에 거는 이유는 슬롯·`aux` 가 u32 로 해시되기 때문이다: 소수 입력이
+ * 판정에서만 정수로 취급되면 판정과 저장이 갈린다.
+ *
+ * ⚠️ **`threshold` 자체는 게이트 안에서 결정하라.** 임계가 스킬 레벨에서 나오면 나눗셈이
+ * 끼는데, 그 계산은 sim 루프가 아니라 `createWorld` 의 `skillDerived` 자리다(구현 고지 ③).
+ */
+export function crossed(prev: number, next: number, threshold: number): boolean {
+  return Math.trunc(prev) < threshold && Math.trunc(next) >= threshold;
 }

@@ -24,6 +24,7 @@ import { INVASION_HASH_VERSION } from './invasion/constants.js';
 import { GUARDIAN_SNAPSHOT_FIELDS } from './invasion/normalize.js';
 import { stepRun } from './commissionSegment.js';
 import { commissionOrderWire } from '../run/commission.js';
+import { SKILL_SLOT_COUNT } from './skillSlots.js';
 import type {
   Invasion3Config,
   InvasionGuardianPlacement,
@@ -689,6 +690,46 @@ export function hashWorld(state: WorldState): number {
     h = hashU32(h, sk0);
     h = hashU32(h, sk1);
     h = hashU32(h, sk2);
+  }
+  // --- 스킬 슬롯 16칸(APPEND-ONLY, 조건부 꼬리 · ADR-0049 S0) ---
+  // `state.skillCarry`(이월 8) + `state.skillStage`(구간 8). 210스킬이 런타임 상태를 두는
+  // **유일한 자리**이고(`src/sim/skillSlots.ts` 가 폭·값 규약의 정본), 접는 이유는 그 값이
+  // sim 산술에 실제로 들어가기 때문이다 — 같은 시드·같은 입력이라도 슬롯이 다르면 다른 런이다.
+  //
+  // ⚠️ **all-or-nothing, 그리고 배열별 독립 조건도 금지.** 16칸을 **하나의 OR 조건**으로 묶고,
+  // 참이면 16칸 전부를 고정 폭으로 접는다. 이유가 둘이다:
+  //  ① 필드별로 "0이면 그 필드만 생략"하면 (1,0,…) 과 (0,1,…) 이 같은 바이트열이 되어 충돌한다
+  //     (액티브 런타임 폴드 ①·`hashEntity` 의 aux 꼬리와 같은 규율).
+  //  ② **배열마다 조건을 나누면** carry 전0/stage 비0 인 런과 그 반대인 런이 **같은 길이의
+  //     같은 바이트열**을 낳는다(둘 다 8칸만 접힌다). 조건이 하나여야 그 충돌이 원리적으로 없다.
+  //
+  // ⚠️ **길이 프리픽스를 접지 마라.** 폭이 `SKILL_SLOT_COUNT` 고정이라 길이는 상수이고, 접으면
+  // 정보량 0 의 파생 폴드가 되어 금지 규율 위반이다(`totalTicks` 선례).
+  //
+  // **왜 맨 꼬리인가.** 이 파일은 APPEND-ONLY 다 — 위 스킬 어픽스 폴드 뒤에 이어 붙여야 그
+  // 폴드까지의 기존 리플레이 재현 계약이 하나도 안 흔들린다. 신규 필드는 이 아래에만 append.
+  //
+  // **무폴드가 깨지는 조건은 넷뿐이고 전부 `skillSlots.ts` 값 규약이 막는다**: `-1` 센티넬 금지
+  // (0 = "없음") · 투자 게이트 밖 쓰기 금지 · `createWorld` 초기값 전 슬롯 0 · 다른 기체 코드의
+  // 게이트 없는 쓰기 금지(앵커의 `switch (state.sigBit)` 가 그 게이트다).
+  // 구간 승계로 carry 가 0 이 아닌 것은 **의도된 거동**이다.
+  //
+  // ⚠️ **침공에서도 실릴 수 있다.** `buildRunConfig` 는 침공 분기 없이 `skillInvest` 를 스탬프한다
+  // — "침공은 스킬 상태가 전부 0" 은 거짓이다. 무폴드 설계는 그래도 성립하지만(전 슬롯 0 이면
+  // 무폴드), 210스킬이 라이브가 되는 순간 `verify-invasion`/`verify-commission` 의 sim 재실행이
+  // 이 폴드를 모르는 번들이면 정직한 제출을 `defense-mismatch` 로 오거부한다.
+  const sc = state.skillCarry;
+  const ss = state.skillStage;
+  let skillSlotAny = false;
+  for (let i = 0; i < SKILL_SLOT_COUNT; i++) {
+    if (((sc[i] ?? 0) >>> 0) !== 0 || ((ss[i] ?? 0) >>> 0) !== 0) {
+      skillSlotAny = true;
+      break;
+    }
+  }
+  if (skillSlotAny) {
+    for (let i = 0; i < SKILL_SLOT_COUNT; i++) h = hashU32(h, (sc[i] ?? 0) >>> 0);
+    for (let i = 0; i < SKILL_SLOT_COUNT; i++) h = hashU32(h, (ss[i] ?? 0) >>> 0);
   }
   return h >>> 0;
 }

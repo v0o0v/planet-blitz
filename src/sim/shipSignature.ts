@@ -2,7 +2,7 @@
  * 기체 시그니처 패시브 — `uniqueMask` 비트 상수 정본 + 순수 정수 헬퍼 (M8, 설계 §4).
  *
  * 기체 타입(ADR-0019)마다 하나씩 붙는 고유 패시브를 시뮬이 게이트하는 축이다. 배치는
- * 캡스톤(src/sim/capstones.ts)과 완전히 동형이다 — 비트 상수는 sim 에 살고, 파생
+ * (구)캡스톤과 완전히 동형이었다 — 비트 상수는 sim 에 살고, 파생
  * 레이어(src/items/loadout.ts)가 이 상수를 import 해 `LoadoutConfig.uniqueMask` 에 OR 한다.
  *
  * ⚠️ 결정론·해시 불변(ADR-0005): 시그니처는 **유니크·(구)캡스톤과 같은 `uniqueMask` 필드의
@@ -18,7 +18,8 @@
  *
  * ⚠️ **비트 15~17(구 캡스톤 3종)은 ADR-0049 로 캡스톤 시스템 자체가 폐기되며 함께 죽었다** —
  * `src/items/loadout.ts` 가 더 이상 이 비트들을 세우지 않고, world.ts 도 이 비트를 읽던 게이트를
- * 전부 걷어냈다(`src/sim/capstones.ts` 주석 참조). **지금 다른 용도로 재할당하지 마라** — 구
+ * 전부 걷어냈다(캡스톤 전용 등가 헬퍼는 이 파일의 `hasSignature` 와 완전히 같은 연산이라
+ * 통합됐고, 그 헬퍼가 있던 파일 자체도 삭제됐다). **지금 다른 용도로 재할당하지 마라** — 구
  * 리플레이·세이브가 이 비트를 세운 uniqueMask 를 담은 채 재생될 가능성을 배제할 수 없고, 재할당
  * 즉시 그 낡은 데이터가 새 의미로 조용히 재해석된다(예: 예전에 화력 캡스톤을 켰던 세이브가 새
  * 시그니처를 켠 것처럼 로드된다). 재사용하려면 먼저 replay/세이브 마이그레이션 경로에서 15~17
@@ -86,7 +87,8 @@ export const SIGNATURE_BITS = [
  */
 export const SIGNATURE_BIT_MAX = 30;
 
-/** uniqueMask 에 시그니처 `bit` 이 켜져 있는지(hasUnique·hasCapstone 과 동일 연산, 의미 분리용). */
+/** uniqueMask 에 시그니처 `bit` 이 켜져 있는지(hasUnique 와 동일 연산 — (구)캡스톤 전용 등가
+ *  헬퍼는 이 함수와 완전히 같은 연산이었기에 통합됐고, 그 헬퍼가 있던 파일은 삭제됐다). */
 export function hasSignature(mask: number, bit: number): boolean {
   return (mask & (1 << bit)) !== 0;
 }

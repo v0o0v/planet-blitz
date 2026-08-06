@@ -26,7 +26,6 @@ import { createWorld, stepWorld, playerCloaked } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig } from '../src/sim/world.js';
 import { PLANET_MODE } from '../src/sim/planetMode.js';
 import { hashWorld } from '../src/sim/replay.js';
-import { hasCapstone } from '../src/sim/capstones.js';
 import {
   SIG_PHANTOM_CLOAK,
   SIGNATURE_BITS,
@@ -34,6 +33,7 @@ import {
   CLOAK_BREAK_BP,
   cloakActive,
   cloakBreakDamage,
+  hasSignature,
 } from '../src/sim/shipSignature.js';
 import { zeroSkillInvest } from '../data/ships/index.js';
 
@@ -195,10 +195,10 @@ describe('팬텀(typeId 3) 정규 경로 배선 — Profile → buildRunConfig �
     const cfg = buildRunConfig(profileWithType(3), { planet: 0, stage: 1 });
     expect(cfg.shipType).toBe(3);
     const mask = cfg.loadout?.uniqueMask ?? 0;
-    expect(hasCapstone(mask, SIG_PHANTOM_CLOAK)).toBe(true);
+    expect(hasSignature(mask, SIG_PHANTOM_CLOAK)).toBe(true);
     for (const bit of SIGNATURE_BITS) {
       if (bit === SIG_PHANTOM_CLOAK) continue;
-      expect(hasCapstone(mask, bit), `bit ${bit}`).toBe(false);
+      expect(hasSignature(mask, bit), `bit ${bit}`).toBe(false);
     }
   });
 

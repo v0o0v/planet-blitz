@@ -42,7 +42,7 @@ import type { Entity } from './entities.js';
 type NumericKeys<T> = { [K in keyof T]-?: T[K] extends number ? K : never }[keyof T];
 
 // ---------------------------------------------------------------------------
-// WorldState 분류 (72필드)
+// WorldState 분류 (76필드)
 // ---------------------------------------------------------------------------
 
 /**
@@ -99,6 +99,23 @@ export const WORLD_CARRY = [
   // `segmentDone = 1` 로 세워진 바로 그 객체라, 안 내리면 `stepRun` 이 다음 틱에 또 전환해
   // **구간이 한 틱에 하나씩 소진되고 의뢰가 즉시 끝난다**. {@link carryAcrossSegment} 참조.
   'commissionRuntime',
+  // --- 스킬 이월 슬롯 8칸(S0 · ADR-0049) ---
+  // 의뢰 런은 여러 **구간**으로 이뤄진 하나의 **런**이다(`commissionRuntime.totalTicks` 가 런
+  // 전체 누적이고 `state.tick` 만 구간마다 0 이다). "런당 1회 소진"·"런 누적 저금"·"런 누적
+  // 락온 스택" 스킬은 구간을 넘어야 성립하므로 CARRY 다. 구간마다 새로 시작해야 하는 상태는
+  // 같은 폭의 **별도 배열** `skillStage` 가 갖고, 그쪽은 {@link WORLD_FRESH} 다.
+  //
+  // ⚠️ **참조를 그대로 넘긴다 — `weapon`·`loot` 와 같은 규율이다**(위 §참조: 이전 월드는 전환
+  // 직후 버려지므로 공유가 안전하다). 원소별 값 복사로 바꾸지 마라: `copyKeys` 는 참조 대입이고
+  // `tests/commissionCarry.test.ts` 의 CARRY 대조가 `toBe`(= `Object.is`)라, 값 복사로 만들면
+  // 참조가 갈려 **오히려 빨개진다.**
+  // ⚠️ 그 안전성은 **호출부 전수**에 의존한다(`commissionRuntime` 참조 공유와 같은 등급의
+  // 경고다 — 다만 이쪽은 해시 대상이라 더 무겁다: 스킬 슬롯 16칸은 `hashWorld` 꼬리 폴드에
+  // 접힌다). **전환 후 이전 월드를 계속 들고 있거나 다시 해싱하는 경로를 만들지 마라** —
+  // 만들어야 한다면 여기를 값 복사(`prev.skillCarry.slice()`)로 먼저 바꾸고, 위 테스트의
+  // `toBe` 를 그 필드에 한해 `toEqual` 로 함께 고쳐라.
+  // ⚠️ `_WorldExhaustive` 는 이 별칭을 **못 잡는다** — `keyof` 는 최상위 키만 본다(위 §한계).
+  'skillCarry',
 ] as const satisfies readonly (keyof WorldState)[];
 
 /**
@@ -188,6 +205,17 @@ export const WORLD_FRESH = [
   'shrinkRuntime',
   'echoRuntime',
   'encounterRuntime',
+  // --- 스킬 구간 슬롯 8칸(S0 · ADR-0049) ---
+  // `wallContactTicks` 와 같은 부류다 — 창 잔여 틱·이번 구간 킬 스냅샷처럼 **무대와 함께
+  // 사라져야 하는** 상태를 담는다. 이월하면 새 무대 첫 틱부터 "이미 창이 열려 있었다"가 된다.
+  // 이월이 필요한 상태는 {@link WORLD_CARRY} 의 `skillCarry` 로 간다 — 둘을 섞지 마라.
+  'skillStage',
+  // --- 스킬 투자 게이트 · 파생 블록(S0 · ADR-0049) ---
+  // 둘 다 `sigBit`·`armorMaxStacks` 와 **같은 부류**다: 승계된 `config` 로부터 `createWorld` 가
+  // 재도출하는 순수 파생값이라 승계 목록에 넣으면 정본이 둘이 된다. 승계된 config 가 같으면
+  // 재도출값도 같으므로 구간 경계에서 값이 흔들리지 않는다.
+  'skillsOn',
+  'skillDerived',
 ] as const satisfies readonly (keyof WorldState)[];
 
 // ---------------------------------------------------------------------------

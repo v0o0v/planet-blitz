@@ -31,7 +31,6 @@ import type { Fixture } from '../scripts/deno-verify/common.js';
 import { SCENARIOS } from '../scripts/deno-verify/scenarios.js';
 import { shipSkillNodeCount } from '../data/ships/index.js';
 import { OVERCHARGE_STILL_TICKS } from '../src/sim/shipSignature.js';
-import { hasCapstone } from '../src/sim/capstones.js';
 import {
   SIG_BRUISER_ARMOR,
   SIG_ARC_OVERCHARGE,
@@ -39,6 +38,7 @@ import {
   SIG_HATCHLING_BROOD,
   SIG_MALLOW_CUSHION,
   SIG_BUBBLE_FILM,
+  hasSignature,
 } from '../src/sim/shipSignature.js';
 
 /** 비스트라이커 시나리오 마크 — 아래 두 케이스가 같은 목록을 본다(한쪽만 늘어나면 구멍이 난다). */
@@ -134,7 +134,7 @@ describe('Deno 교차 검증 픽스처 (M4 스파이크)', () => {
       // `shipType` 과 아래 시그니처 비트가 한다 — 이 줄은 벡터가 실려 있는지만 본다.
       expect(sc!.config.skillInvest?.length).toBe(shipSkillNodeCount(typeId));
       // 시그니처 비트가 실제 로드아웃 마스크에 OR 돼 있다(§10-1 을 fixture 축에서 재확인).
-      expect(hasCapstone(sc!.config.loadout!.uniqueMask, bit)).toBe(true);
+      expect(hasSignature(sc!.config.loadout!.uniqueMask, bit)).toBe(true);
     }
     // ⚠️ **(ADR-0049) 길이 축 커버리지가 구조적으로 사라졌다 — 되살릴 수 없다.**
     // 구 버전은 해츨링(⑦)이 78칸이라 "길이가 스트라이커와 다른 `skillInvest`" 를 태우는 유일한

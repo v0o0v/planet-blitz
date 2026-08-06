@@ -2,10 +2,11 @@
  * M8-L2 — 기체 시그니처 패시브: 비트 상수 + 순수 정수 함수 게이트.
  *
  * ## 무엇을 막는가
- * 1. **비트 충돌** — 시그니처 비트가 유니크(0~14)·캡스톤(15~17)과 겹치면 장착 유니크가
- *    시그니처를 켜거나 그 반대가 된다. 마스크 연산이라 예외가 없고 조용히 오작동한다.
- *    그래서 하드코딩 목록이 아니라 `src/sim/uniques.ts`·`capstones.ts` **원문을 파싱해**
- *    대조한다 — 나중에 그쪽이 비트를 늘려도 이 테스트가 먼저 터진다.
+ * 1. **비트 충돌** — 시그니처 비트가 유니크(0~14)·(구)캡스톤(15~17, ADR-0049 로 폐기)과 겹치면
+ *    장착 유니크가 시그니처를 켜거나 그 반대가 된다. 마스크 연산이라 예외가 없고 조용히
+ *    오작동한다. 그래서 하드코딩 목록이 아니라 `src/sim/uniques.ts` **원문을 파싱해** 대조한다
+ *    (캡스톤은 그 등가 헬퍼가 있던 파일이 삭제된 뒤로 항상 빈 집합) — 나중에 그쪽이 비트를
+ *    늘려도 이 테스트가 먼저 터진다.
  * 2. **f64 누적** — `damage *= 0.975` 반복·`Math.pow`·중간 f64 보관은 클라이언트와 Edge
  *    Function 재검증의 반올림 경로를 가를 수 있다(ADR-0005). 소스 grep 게이트로 부재를 강제.
  * 3. **비정수 유출** — 전 함수 파라미터 스윕으로 `Number.isInteger` 전수 검사.
@@ -70,7 +71,6 @@ import {
   filmRemainingDamage,
 } from '../src/sim/shipSignature.js';
 import { hasUnique } from '../src/sim/uniques.js';
-import { hasCapstone } from '../src/sim/capstones.js';
 import { createWorld, stepWorld } from '../src/sim/world.js';
 import type { InputFrame } from '../src/sim/world.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
@@ -94,7 +94,6 @@ function readSource(relative: string): string {
 
 const SIG_SRC = readSource('../src/sim/shipSignature.ts');
 const UNIQ_SRC = readSource('../src/sim/uniques.ts');
-const CAP_SRC = readSource('../src/sim/capstones.ts');
 
 /** 주석을 제거한 소스(주석 안의 `/`·금지 문구가 grep 게이트를 오염시키지 않게). */
 function stripComments(src: string): string {
@@ -116,13 +115,13 @@ function declaredIntConsts(src: string): Map<string, number> {
   return out;
 }
 
-/** 유니크 비트(UQ_*)·캡스톤 비트(CAP_*) 실측 집합. */
+/** 유니크 비트(UQ_*) 실측 집합. 캡스톤 비트(CAP_*)는 ADR-0049 로 폐기돼 소스 자체가 없다 —
+ *  구 캡스톤 전용 헬퍼 파일이 있던 시절엔 그 원문을 파싱해 0건임을 실측했지만, 파일이
+ *  없어진 뒤로는 항상 빈 배열이라는 사실 자체가 그 폐기를 증언한다(아래 단언들은 여전히 유효). */
 const UNIQUE_BITS = [...declaredIntConsts(UNIQ_SRC)]
   .filter(([name]) => name.startsWith('UQ_'))
   .map(([, v]) => v);
-const CAPSTONE_BITS = [...declaredIntConsts(CAP_SRC)]
-  .filter(([name]) => name.startsWith('CAP_'))
-  .map(([, v]) => v);
+const CAPSTONE_BITS: number[] = [];
 
 // ---------------------------------------------------------------------------
 // ④ 비트 대조
@@ -164,12 +163,11 @@ describe('시그니처 비트 배정', () => {
     }
   });
 
-  it('hasSignature 가 hasUnique·hasCapstone 과 같은 연산이고 비트별로 독립이다', () => {
+  it('hasSignature 가 hasUnique 와 같은 연산이고 비트별로 독립이다', () => {
     for (const bit of SIGNATURE_BITS) {
       const mask = 1 << bit;
       expect(hasSignature(mask, bit)).toBe(true);
       expect(hasUnique(mask, bit)).toBe(true);
-      expect(hasCapstone(mask, bit)).toBe(true);
       for (const other of SIGNATURE_BITS) {
         if (other !== bit) expect(hasSignature(mask, other)).toBe(false);
       }

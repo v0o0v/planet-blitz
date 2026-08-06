@@ -24,7 +24,6 @@ import type { Profile } from '../src/save/profile.js';
 import { createWorld, stepWorld } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
-import { hasCapstone } from '../src/sim/capstones.js';
 import {
   SIG_HATCHLING_BROOD,
   HATCH_BASE_KILLS,
@@ -32,6 +31,7 @@ import {
   HATCH_SCALE_KILLS,
   HATCH_MAX_KILLS,
   hatchThreshold,
+  hasSignature,
 } from '../src/sim/shipSignature.js';
 import { zeroSkillInvest } from '../data/ships/index.js';
 
@@ -208,7 +208,7 @@ describe('해츨링(typeId 4) 정규 경로 배선 — Profile → buildRunConfi
   it('병아리가 실제로 출격한다 — 트리거 굶긴 대조군에는 아군 포탑이 하나도 없다', () => {
     const cfg = buildRunConfig(profileWithType(4), STAGE);
     expect(cfg.shipType).toBe(4);
-    expect(hasCapstone(cfg.loadout?.uniqueMask ?? 0, SIG_HATCHLING_BROOD)).toBe(true);
+    expect(hasSignature(cfg.loadout?.uniqueMask ?? 0, SIG_HATCHLING_BROOD)).toBe(true);
 
     const live = runObserved(SEED, cfg, TICKS);
     // starve=true: 같은 cfg(같은 shipType·마스크, 시그니처는 계속 켜져 있다) · 매 틱
