@@ -220,7 +220,8 @@ export function renderReport(runs: readonly RunRecord[], meta: ReportMeta): stri
   L.push(
     '- **액티브 스킬은 발동되지 않는다.** `autopilotInput` 이 `special` 로 파워업 선택만 내므로 ' +
       '(`src/sim/autopilot.ts`) 액티브 축(ADR-0041)은 이 측정에 들어오지 않는다. ' +
-      '봇에 발동이 들어오면 `src/bench/balance/cell.ts` 에 표준 액티브 세트 한 줄만 추가하면 된다.',
+      '발동하는 파일럿은 이미 있다(`src/sim/measurePilot.ts`) — 이 하네스가 아직 안 쓸 뿐이고, ' +
+      '갈아 끼우는 절차와 대가는 `src/bench/balance/cell.ts` 헤더에 적혀 있다.',
   );
   L.push(
     '- **봇은 최적 플레이가 아니다.** 카이팅 + 탄 회피 휴리스틱이라(ADR-0008) 절대 클리어율은 ' +
