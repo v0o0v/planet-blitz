@@ -153,10 +153,18 @@ export function setBuffTicks(state: WorldState, slot: number, ticks: number): vo
   else state.activeBuff1 = ticks;
 }
 
-/** 반경 안의 적·보스에게 즉시 피해. 폭발형 효과의 공용 형태. */
-export function blastDamage(
+/**
+ * **임의 좌표 중심** 반경 안의 적·보스에게 즉시 피해. 폭발형 효과의 공용 형태.
+ *
+ * ⚠️ **엔티티를 낳지 않는다** — `hp` 만 깎는다. 그래서 `for (const e of state.entities)` 순회
+ * **안**에서 불러도 배열이 변형되지 않는다(아크캐스터 CH3 이 앵커 ⑥ 에서 그렇게 쓴다).
+ * 이 성질을 깨는 개조(파편·이펙트 스폰)를 여기 넣지 마라 — 넣으려면 호출부가 `splitSpawns`
+ * 처럼 목록을 모아 루프 뒤에 비워야 한다.
+ */
+export function blastDamageAt(
   state: WorldState,
-  player: Entity,
+  x: number,
+  y: number,
   radius: number,
   damage: number,
 ): void {
@@ -164,10 +172,24 @@ export function blastDamage(
   for (const e of state.entities) {
     if (e.dead) continue;
     if (e.kind !== 'enemy' && e.kind !== 'boss') continue;
-    const dx = e.x - player.x;
-    const dy = e.y - player.y;
+    const dx = e.x - x;
+    const dy = e.y - y;
     if (dx * dx + dy * dy <= r2) e.hp -= damage;
   }
+}
+
+/**
+ * 반경 안의 적·보스에게 즉시 피해 — **플레이어 중심 고정**.
+ * 동결 5종이 쓰는 시그니처라 인자를 바꾸지 않고 {@link blastDamageAt} 에 위임한다
+ * (위임이라 반복 순서·부동소수 연산이 종전과 비트 동일).
+ */
+export function blastDamage(
+  state: WorldState,
+  player: Entity,
+  radius: number,
+  damage: number,
+): void {
+  blastDamageAt(state, player.x, player.y, radius, damage);
 }
 
 /** 반경 안의 적탄을 소거한다(회피형 효과의 공용 형태). */

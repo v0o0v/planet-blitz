@@ -3079,6 +3079,8 @@ function autoAttack(state: WorldState, player: Entity): void {
     // `if (marksmanFire) b.aux0 = 1` 이 흩어져 있었고, 새 표식이 필요한 기체(팬텀 AS3·AS10 ·
     // 아크캐스터 CH1·CH8)는 그 네 곳을 전부 고쳐야 했다. 이제 표식 경로는 한 곳뿐이다.
     mark: marksmanFire ? 1 : 0,
+    // 발사 시점 피해를 탄 `aux1` 에 새길 것인가(기본 false = 한 칸도 안 쓴다).
+    recordSpawnDamage: false,
     // 아키타입 분기가 `count`·`spread` 를 실제로 읽는가 — 판정 정본은 아래 분기 하나뿐이고
     // 훅은 결과만 읽는다(필드 주석에 사유). 레일건은 1발 고정, 빔은 세그먼트 수가 사거리에서
     // 나오므로 둘 다 `count` 를 안 본다.
@@ -3127,6 +3129,9 @@ function autoAttack(state: WorldState, player: Entity): void {
     // 읽지 않는다, shipSignature.ts 헤더의 "이미 해시되는 필드 재활용" 규율).
     // 값의 출처는 앵커 ⑯ 의 `volley.mark` 한 곳뿐이다.
     if (volley.mark !== 0) b.aux0 = volley.mark;
+    // 발사 시점 확정 피해를 `aux1` 에 새긴다 — **탄이 태어난 뒤**라 아키타입이 실제로 실은
+    // 값(`b.damage`)이다. 비행 중 갱신(CH6 이월·CH8 증폭)보다 앞이라 재증폭이 안 섞인다.
+    if (volley.recordSpawnDamage) b.aux1 = Math.round(b.damage);
     player.cooldown += volley.cooldownQ;
     return;
   }
@@ -3153,6 +3158,7 @@ function autoAttack(state: WorldState, player: Entity): void {
       m.ownerId = MISSILE_MARK; // 유도 마커: stepProjectiles가 매 틱 제한 선회.
       // 볼리 표식은 `ownerId` 가 아니라 `aux0` 라 유도 마커와 슬롯이 겹치지 않는다.
       if (volley.mark !== 0) m.aux0 = volley.mark;
+      if (volley.recordSpawnDamage) m.aux1 = Math.round(m.damage);
     }
     player.cooldown += volley.cooldownQ;
     return;
@@ -3192,6 +3198,7 @@ function autoAttack(state: WorldState, player: Entity): void {
         sa,
       );
       if (volley.mark !== 0) seg.aux0 = volley.mark;
+      if (volley.recordSpawnDamage) seg.aux1 = Math.round(seg.damage);
     }
     player.cooldown += volley.cooldownQ;
     return;
@@ -3222,6 +3229,9 @@ function autoAttack(state: WorldState, player: Entity): void {
       sin(ang),
     );
     if (volley.mark !== 0) b.aux0 = volley.mark;
+    // 쌍둥이 항성 배율(`dmg`)이 **이미 실린 뒤**라, `volley.damage` 를 훅에서 저장했으면
+    // 빠졌을 배율이 여기서는 그대로 들어간다(그 필드 주석이 근거).
+    if (volley.recordSpawnDamage) b.aux1 = Math.round(b.damage);
   }
   player.cooldown += volley.cooldownQ;
 }

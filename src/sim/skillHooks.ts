@@ -112,6 +112,7 @@ import {
   arccasterEnemyDamaged,
   arccasterEnemyDeath,
   arccasterVolleyParams,
+  arccasterBulletExpiredLife,
 } from './skills/arccaster.js';
 import {
   bruiserDashFired,
@@ -541,13 +542,15 @@ function dispatchBulletExpiredSkill(
       // 두 배로 터진다 — 그것은 거동 변경이다.
       if (reason === 'pierce') strikerBulletExpired(state, bullet); // F4 파편 격발
       break;
-    // ⚠️ **아크캐스터 CH3「종말점 방전」의 자리는 이제 여기 있다**(S3-2 가 수명 만료 호출부를
-    // 뚫었다). ~~case 가 없는 사유~~ 였던 아래 문장은 **왜 이 자리가 사유를 구분해야 하는지**의
-    // 근거로 남긴다: CH3 는 **수명 만료**(reachLife) 소멸이 트리거인데 스트라이커 F4 는
-    // **관통 예산 소진**이고, 설계서가 그 둘을 분화점으로 못 박았다 — 사유 없이 한 앵커에
-    // 얹으면 두 스킬이 같은 것이 된다. 그래서 뚫은 것은 `reason` 을 가진 앵커다.
-    // **효과 본체는 아직 없다** — 이 레인은 자리만 만들고 거동·해시를 비트 불변으로 뒀다
-    // (`case SIG_ARC_OVERCHARGE:` 를 지금 넣으면 빈 case 가 fallthrough 위험만 남긴다).
+    case SIG_ARC_OVERCHARGE:
+      // ⚠️ **`reason` 게이트가 CH3 와 스트라이커 F4 의 분화점 그 자체다.** ~~case 가 없던
+      // 사유~~ 였던 아래 근거는 지우지 않는다: CH3 는 **수명 만료**(reachLife) 소멸이
+      // 트리거인데 F4 는 **관통 예산 소진**이고, 설계서가 그 둘을 분화점으로 못 박았다 —
+      // 사유 없이 한 앵커에 얹으면 두 스킬이 같은 것이 된다. 그래서 뚫은 것은 `reason` 을
+      // 가진 앵커다. 기체가 갈리므로 F4 와 이중 발화할 여지는 애초에 없지만, 게이트를 빼면
+      // 아크캐스터의 관통 소진에서도 방전이 터져 설계서와 갈린다.
+      if (reason === 'life') arccasterBulletExpiredLife(state, bullet); // CH3 종말점 방전
+      break;
     // ⚠️ **브루저는 여기 case 가 없다 — 쓸 설계 항목이 없다.** 관통 예산 소진에 반응하는
     // 브루저 스킬은 0종이다. BL3(만재 중탄)의 "명중 지점 폭발" 은 **명중마다**여야 하는데 이
     // 앵커는 예산이 바닥난 마지막 명중에서만 불린다 — 그 자리는 앵커 ⑩ 이다.
@@ -1411,6 +1414,26 @@ export interface VolleyParams {
    * 점유했고, 미사일 분기는 표식과 유도 마커를 **동시에** 단다.
    */
   mark: number;
+  /**
+   * 이번 볼리로 태어나는 **모든 탄의 `aux1` 에 자기 발사 시점 피해**(`round(damage)`)를
+   * 새길 것인가. `false` 면 한 칸도 안 쓴다(`aux1` 은 0 그대로 → 리플레이 바이트 불변).
+   *
+   * ## 왜 `damage` 를 훅이 직접 안 읽고 이 플래그를 두는가
+   * 이 레코드의 `damage` 는 **아키타입 분기에 들어가기 전** 값이라 발당 최종 피해가 아니다 —
+   * 쌍둥이 항성(`TWIN_STAR_DAMAGE_MULT`)이 발칸/스프레드 분기 안에서 한 번 더 곱한다. 훅이
+   * `params.damage` 를 그대로 저장하면 그 배율만 조용히 빠진다. 그래서 **저장 시점을 탄이
+   * 태어난 직후로 미루고**, 훅은 "새겨라" 만 말한다(`countUsed` 가 아키타입 판정을 world 에
+   * 두고 결과만 실은 것과 같은 방향, 쓰기/읽기만 반대다).
+   *
+   * ## 왜 `damage` 를 나중에 다시 읽으면 안 되는가 — 이 칸의 존재 이유
+   * 탄의 `damage` 는 **비행 중에 갱신된다**(아크캐스터 CH6 이월 가산 · CH8 관통 증폭). 소멸
+   * 시점에 그 값을 읽으면 발사 시점 기준이 아니라 **재증폭된 값**이 된다. CH3「종말점 방전」
+   * 이 정확히 그 구분을 요구했다(설계서 「폭발 피해 기준 정의」).
+   *
+   * ⚠️ **`aux0` 표식(`mark`)과 칸이 다르다** — 둘은 같은 탄에 공존할 수 있어야 한다
+   * (CH1·CH8 표식 + CH3 기준 피해). 'bullet' kind 는 `aux1` 을 어디서도 읽지 않는다(전수 확인).
+   */
+  recordSpawnDamage: boolean;
 }
 
 /**
@@ -1458,14 +1481,15 @@ export function onVolleyParams(
     // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다. **`break;` 를 반드시 붙여라** —
     // 병렬 배선 머지에서 fallthrough 가 누적 4건 나왔고 전부 `tsc TS7029` 만이 잡았다.
     case SIG_ARC_OVERCHARGE:
-      // CH1·CH8 과충전 발사 표식 · BA7 장전 소비(탄수) · BA10 탄수 ×2 + 간격 배율.
+      // CH1·CH8 과충전 발사 표식 · CH3 발사 시점 기준 피해 각인 · BA7 장전 소비(탄수) ·
+      // BA10 탄수 ×2 + 간격 배율.
       //
-      // ⚠️ **CH3「종말점 방전」의 소비처는 이제 앵커 ⑥ 에 있다**(S3-2). 표식을 다는 것까지는
-      // 이 앵커가 하고, 폭발이 터질 자리는 `onBulletExpired(..., 'life')` 다.
-      // ~~막혀 있던 사유~~ 는 근거로 남긴다: 그 스킬의 트리거는 **탄 수명 만료 소멸**인데
+      // ⚠️ **CH3「종말점 방전」은 이 앵커와 앵커 ⑥ 에 걸쳐 있다.** 기준 피해를 탄에 새기는
+      // 것이 여기(`recordSpawnDamage`)이고, 폭발이 터지는 자리는 `onBulletExpired(..., 'life')`
+      // 다. ~~막혀 있던 사유~~ 는 근거로 남긴다: 그 스킬의 트리거는 **탄 수명 만료 소멸**인데
       // S3-2 이전의 앵커 ⑥ 은 **관통 예산 소진** 분기 하나뿐이었다(그 앵커 주석이 "수명
       // 만료·화면 밖 컬링이 아니다" 라고 명시). 소비처가 없는 동안 표식만 달면 반쪽 배선이라
-      // 손대지 않았던 것이고, 이제 자리는 섰다 — **효과 본체 배선은 아직 남아 있다.**
+      // 손대지 않았던 것이고, 이제 양쪽이 다 섰다.
       arccasterVolleyParams(state, player, params);
       break;
     case SIG_STRIKER_MARKSMAN:
