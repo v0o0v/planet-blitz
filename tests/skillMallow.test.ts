@@ -13,6 +13,12 @@
  *  ② **배선 이음매 치환** — 앵커 ⑩(`dispatchEnemyDamagedSkill`)의 `case SIG_MALLOW_CUSHION:`
  *     를 지우면 §⑤ SQ4 가 실패한다(2건).
  * 초록인데 아무것도 안 재는 테스트가 아니다.
+ *
+ * ## S2 앵커 확장분(§⑦~⑩)도 같은 방식으로 검사했다 (2026-08-07)
+ *  ③ 앵커 ⑳ 의 `mallowCushionSettled(…)` 호출 제거 → **13건 실패**.
+ *  ④ 앵커 ⑯ 의 `mallowVolleyParams(…)` 호출 제거 → **5건 실패**.
+ *  ⑤ ME4 의 `if (heal > hit) heal = hit;`(수지 불변식 1) 무력화 → **1건 실패**.
+ *  ⑥ SQ2 가 CU3 이 깎기 **전**의 `applied` 를 보게 바꿈(적용 순서 위반) → **1건 실패**.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -34,11 +40,17 @@ import {
   onDamageChain,
   onEnemyDamaged,
   onPowerupPicked,
+  onCushionSettled,
+  onCushionThreshold,
+  onVolleyParams,
+  type VolleyParams,
 } from '../src/sim/skillHooks.js';
 import {
   SIG_MALLOW_CUSHION,
   CUSHION_RECOVER_TICKS,
   CUSHION_TICK_CAP,
+  cushionSettled,
+  cushionRecovered,
 } from '../src/sim/shipSignature.js';
 import { readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
 
@@ -50,12 +62,24 @@ const SHIP_MALLOW = 5;
  * `[squish(offense), mend(utility), cushion(defense)]` → SQ 0..9 · ME 10..19 · CU 20..29.
  * ⚠️ 스트라이커(축1=defense)와 순서가 다르다.
  */
+const SQ1 = 0;
+const SQ2 = 1;
 const SQ3 = 2;
 const SQ4 = 3;
+const SQ5 = 4;
+const SQ8 = 7;
 const ME1 = 10;
+const ME4 = 13;
 const ME10 = 19;
+const CU3 = 22;
 const CU4 = 23;
 const CU7 = 26;
+const CU9 = 28;
+const CU10 = 29;
+
+/** 슬롯 번호 — 정본은 `src/sim/skillSlots.ts` 의 `MallowCarry`/`MallowStage` 다. */
+const SLOT_SCAR = 0; // MallowCarry.scarApplied — SQ8 누적 선체행
+const SLOT_LOAD = 0; // MallowStage.forgivenessLoad — SQ5 장전 잔량
 
 function invest(points: ReadonlyArray<readonly [number, number]>): number[] {
   const v = new Array<number>(30).fill(0);
@@ -95,6 +119,25 @@ function addEnemyBullet(state: WorldState, x: number, y: number): Entity {
   const e: Entity = { ...blankEntity('enemyBullet'), x, y, radius: 6 };
   state.entities.push(e);
   return e;
+}
+
+/** 앵커 ⑯ 이 넘기는 레코드 한 벌. 말로우 세 스킬은 `damage` 만 만진다. */
+function volley(damage = 100): VolleyParams {
+  return {
+    damage,
+    pierce: 1,
+    count: 3,
+    speed: 500,
+    radius: 6,
+    life: 60,
+    spread: 0.4,
+    cooldownQ: 100,
+    countUsed: true,
+    ballisticsUsed: true,
+    targetDist: 200,
+    cloakBreak: false,
+    mark: 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -152,9 +195,9 @@ describe('① 투자 0 런 불변', () => {
     expect(zero.xp).toBe(none.xp);
   });
 
-  it('말로우 배선 6종은 슬롯을 한 칸도 쓰지 않는다 (전 스킬 만렙 런도 슬롯 0)', () => {
-    // 슬롯을 잡지 않는다는 것은 `MallowCarry`/`MallowStage` 가 자리표시자로 남아 있다는 뜻이고,
-    // 그래야 `hashWorld` 의 스킬 슬롯 폴드가 말로우 런에서 한 번도 실행되지 않는다.
+  it('배치 4 의 6종은 슬롯을 한 칸도 쓰지 않는다 (슬롯을 잡는 것은 SQ5·SQ8 둘뿐이다)', () => {
+    // 슬롯을 쓰는 것은 S2 확장분 둘(SQ5 장전 잔량 · SQ8 누적 선체행)뿐이고, 그 둘을 안 찍은
+    // 런에서는 전 슬롯이 0 이라 `hashWorld` 의 스킬 슬롯 폴드가 한 번도 실행되지 않는다.
     const w = mk([
       [SQ3, 20],
       [SQ4, 20],
@@ -424,5 +467,275 @@ describe('⑥ ME10 성장 환전 (앵커 ⑭ 파워업 적용)', () => {
     // 부채 소각량 자체는 레벨과 무관하게 절반 고정이다(전환율만 레벨을 탄다).
     expect(player(lo).aux0).toBe(100);
     expect(player(hi).aux0).toBe(100);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑦ 앵커 ⑳ (S2) — 정산 직후 7종
+// ---------------------------------------------------------------------------
+
+describe('⑦ 앵커 ⑳ 정산 직후', () => {
+  /** 정산이 이미 hp 를 깎고 온 상태를 흉내 낸다 — 앵커 ⑳ 의 계약이 그 시점이다. */
+  function settledWorld(points: ReadonlyArray<readonly [number, number]>, hp = 400): WorldState {
+    const w = mk(points);
+    const p = player(w);
+    p.maxHp = 1000;
+    p.hp = hp;
+    p.aux0 = 0; // 정산이 이미 리셋했다
+    p.aux1 = 0;
+    return w;
+  }
+
+  it('CU3 — 회당 상한 초과분이 hp 로 되돌아오고 잔여가 `aux0` 로 이월된다', () => {
+    // Lv20: 상한 비율 = round(30 − 18×20/30) = 18% → maxHp 1000 의 180.
+    const w = settledWorld([[CU3, 20]]);
+    const p = player(w);
+    onCushionSettled(w, p, 500, 0, 500);
+    expect(p.hp).toBe(720); // 400 + (500 − 180)
+    expect(p.aux0).toBe(320); // 500 − 180 이 다음 정산으로 이월
+    expect(p.aux1).toBe(0); // 임계 재충전 규칙은 건드리지 않는다
+  });
+
+  it('CU3 — 상한 이하의 정산은 손대지 않는다 (이월도 없다)', () => {
+    const w = settledWorld([[CU3, 20]]);
+    const p = player(w);
+    onCushionSettled(w, p, 100, 0, 100);
+    expect(p.hp).toBe(400);
+    expect(p.aux0).toBe(0);
+  });
+
+  it('SQ2 — `applied` 비례 폭발이 반경 안 적에게만 들어간다', () => {
+    const w = settledWorld([[SQ2, 20]]);
+    const p = player(w);
+    const near = addEnemy(w, p.x + 100, p.y, 500);
+    const far = addEnemy(w, p.x + 400, p.y, 500); // 반경 180 + 200 = 380 밖
+    onCushionSettled(w, p, 50, 0, 50);
+    expect(near.hp).toBe(400); // round(50 × 200/100) = 100
+    expect(far.hp).toBe(500);
+    expect(near.dead).toBe(false); // 격추 판정은 `compact()` 단일 수렴점
+  });
+
+  it('SQ2 — 선체에 한 톨도 안 들어간 정산(클램프 전량 소멸)은 터지지 않는다', () => {
+    const w = settledWorld([[SQ2, 20]]);
+    const p = player(w);
+    const foe = addEnemy(w, p.x + 100, p.y, 500);
+    onCushionSettled(w, p, 500, 0, 0); // applied 0
+    expect(foe.hp).toBe(500);
+  });
+
+  it('SQ5 — 탕감된 몫이 장전 슬롯에 쌓인다', () => {
+    const w = settledWorld([[SQ5, 20]]);
+    onCushionSettled(w, player(w), 0, 40, 0);
+    // 장전량 = round(40 × (50 + 5×20)/100) = 60.
+    expect(readSlot(w.skillStage, SLOT_LOAD)).toBe(60);
+  });
+
+  it('SQ8 — `applied` 가 런 내 누적 슬롯에 쌓인다 (정산마다 더해진다)', () => {
+    const w = settledWorld([[SQ8, 20]]);
+    const p = player(w);
+    onCushionSettled(w, p, 30, 0, 30);
+    onCushionSettled(w, p, 25, 0, 25);
+    expect(readSlot(w.skillCarry, SLOT_SCAR)).toBe(55);
+  });
+
+  it('ME4 — 탕감분의 일부가 실제 HP 회복이 된다', () => {
+    const w = settledWorld([[ME4, 20]]);
+    const p = player(w);
+    // 전환율 = 20 + 60×20/35 ≈ 54.29% → round(100 × 54.29/100) = 54.
+    onCushionSettled(w, p, 100, 100, 100);
+    expect(p.hp).toBe(454);
+  });
+
+  it('⚠️ ME4 — 회복은 `applied` 를 절대 못 넘는다 (수지 불변식 1)', () => {
+    const w = settledWorld([[ME4, 20]]);
+    const p = player(w);
+    // 탕감 100 이면 회복 54 가 나올 자리지만 선체행이 10 뿐이라 10 으로 잘린다.
+    onCushionSettled(w, p, 10, 100, 10);
+    expect(p.hp).toBe(410);
+  });
+
+  it('CU9 — 정산 틱에 무적이 서되, 더 긴 기존 무적은 깎지 않는다', () => {
+    const w = settledWorld([[CU9, 20]]);
+    const p = player(w);
+    p.iframes = 0;
+    onCushionSettled(w, p, 10, 0, 10);
+    expect(p.iframes).toBe(100); // 20 + 4×20
+    p.iframes = 200;
+    onCushionSettled(w, p, 10, 0, 10);
+    expect(p.iframes).toBe(200);
+  });
+
+  it('CU10 — `maxHp` 만 오르고 `hp` 는 오르지 않는다 (회복이 아니다)', () => {
+    const w = settledWorld([[CU10, 20]]);
+    const p = player(w);
+    // 전환율 = round(4 + 16×20/36) = 13% → round(100 × 13/100) = 13, 회당 상한 23.
+    onCushionSettled(w, p, 10, 100, 10);
+    expect(p.maxHp).toBe(1013);
+    expect(p.hp).toBe(400);
+  });
+
+  it('CU10 — 회당 상한(3 + Lv)이 실제로 문다', () => {
+    const w = settledWorld([[CU10, 20]]);
+    const p = player(w);
+    onCushionSettled(w, p, 10, 1000, 10); // round(1000 × 13/100) = 130 → 23 으로 절삭
+    expect(p.maxHp).toBe(1023);
+  });
+
+  it('⚠️ 적용 순서 — CU3 이 깎은 값을 SQ2·SQ8 이 본다 (설계 공통 고지 ④)', () => {
+    const w = settledWorld([
+      [CU3, 20],
+      [SQ2, 20],
+      [SQ8, 20],
+    ]);
+    const p = player(w);
+    const foe = addEnemy(w, p.x + 100, p.y, 5000);
+    onCushionSettled(w, p, 500, 0, 500);
+    // CU3 이 180 으로 깎았으므로 폭발은 round(180 × 200/100) = 360 이어야 한다.
+    // 순서가 뒤집혀 500 을 봤다면 1000 이 들어가 4000 이 된다.
+    expect(foe.hp).toBe(4640);
+    expect(readSlot(w.skillCarry, SLOT_SCAR)).toBe(180);
+  });
+
+  it('투자 전/후 대조 — 다른 스킬만 찍은 런은 ⑳ 에서 아무것도 하지 않는다', () => {
+    const w = settledWorld([[ME1, 20]]);
+    const p = player(w);
+    const foe = addEnemy(w, p.x + 100, p.y, 500);
+    onCushionSettled(w, p, 500, 100, 500);
+    expect(p.hp).toBe(400);
+    expect(p.maxHp).toBe(1000);
+    expect(p.aux0).toBe(0);
+    expect(p.iframes).toBe(0);
+    expect(foe.hp).toBe(500);
+    for (let s = 0; s < SKILL_SLOT_COUNT; s++) {
+      expect(readSlot(w.skillCarry, s)).toBe(0);
+      expect(readSlot(w.skillStage, s)).toBe(0);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑧ 앵커 ⑯ (S2) — 발사부 3종
+// ---------------------------------------------------------------------------
+
+describe('⑧ 앵커 ⑯ 볼리 파라미터', () => {
+  it('SQ1 — 현재 부채에 비례해 발당 피해가 증폭된다', () => {
+    const w = mk([[SQ1, 20]]);
+    const p = player(w);
+    p.aux0 = 100;
+    const v = volley(100);
+    onVolleyParams(w, p, v);
+    // bp = 100 × (4 + 20) = 2400 → 100 + round(100 × 2400/10000) = 124.
+    expect(v.damage).toBe(124);
+  });
+
+  it('SQ1 — 증폭 상한이 문다 (부채가 두 배여도 상한 3000bp)', () => {
+    const w = mk([[SQ1, 20]]);
+    const p = player(w);
+    p.aux0 = 200; // raw 4800 > cap 3000
+    const v = volley(100);
+    onVolleyParams(w, p, v);
+    expect(v.damage).toBe(130);
+  });
+
+  it('SQ1 — 부채가 0 이면 무연산이다 (술어가 부채 게이트다)', () => {
+    const w = mk([[SQ1, 20]]);
+    const p = player(w);
+    p.aux0 = 0;
+    const v = volley(100);
+    onVolleyParams(w, p, v);
+    expect(v.damage).toBe(100);
+  });
+
+  it('SQ8 — ⑳ 에서 적립하고 ⑯ 에서 소비한다 (두 앵커 왕복)', () => {
+    const w = mk([[SQ8, 20]]);
+    const p = player(w);
+    const before = volley(100);
+    onVolleyParams(w, p, before);
+    expect(before.damage).toBe(100); // 아직 갚은 적이 없다
+
+    onCushionSettled(w, p, 10, 0, 10);
+    const after = volley(100);
+    onVolleyParams(w, p, after);
+    // bp = 10 × (6 + 2×20) = 460 → 100 + round(100 × 460/10000) = 105.
+    expect(after.damage).toBe(105);
+  });
+
+  it('SQ5 — 볼리마다 잔량의 25% 가 발당 피해로 실리고 잔량이 줄어든다', () => {
+    const w = mk([[SQ5, 1]]);
+    const p = player(w);
+    onCushionSettled(w, p, 0, 200, 0); // 장전 = round(200 × 55/100) = 110
+    expect(readSlot(w.skillStage, SLOT_LOAD)).toBe(110);
+    const v = volley(100);
+    onVolleyParams(w, p, v);
+    expect(v.damage).toBe(127); // floor(110 × 25/100) = 27
+    expect(readSlot(w.skillStage, SLOT_LOAD)).toBe(83);
+  });
+
+  it('⚠️ SQ5 — 잔량은 반드시 0 에 도달한다 (내림만 쓰면 3 이하에서 영영 안 빈다)', () => {
+    const w = mk([[SQ5, 1]]);
+    const p = player(w);
+    onCushionSettled(w, p, 0, 200, 0);
+    for (let i = 0; i < 200; i++) onVolleyParams(w, p, volley(100));
+    expect(readSlot(w.skillStage, SLOT_LOAD)).toBe(0);
+    const dry = volley(100);
+    onVolleyParams(w, p, dry);
+    expect(dry.damage).toBe(100); // 빈 탄창은 무연산
+  });
+
+  it('투자 전/후 대조 — 다른 스킬만 찍은 런은 ⑯ 에서 파라미터를 안 만진다', () => {
+    const w = mk([[ME1, 20]]);
+    const p = player(w);
+    p.aux0 = 200;
+    const v = volley(100);
+    onVolleyParams(w, p, v);
+    expect(v.damage).toBe(100);
+    expect(v.mark).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑨ 엔진 경로 — `stepWorld` 의 정산이 실제로 앵커 ⑳ 을 부른다
+// ---------------------------------------------------------------------------
+
+describe('⑨ 엔진 경로', () => {
+  it('임계를 채운 틱에 정산이 일어나고 SQ8 누적이 실제로 쌓인다', () => {
+    const w = mk([[SQ8, 20]]);
+    const p = player(w);
+    p.aux0 = 100;
+    p.aux1 = CUSHION_RECOVER_TICKS - 1; // 이번 틱에 +1 되어 임계에 닿는다
+    stepWorld(w, emptyInput());
+    expect(p.aux0).toBe(0); // 정산으로 풀이 비었다
+    // 탕감 = round(100 × 6000/10000) = 60 → 선체행 40. hp 여유가 커서 클램프가 안 문다.
+    expect(readSlot(w.skillCarry, SLOT_SCAR)).toBe(40);
+  });
+
+  it('임계 미달 틱에는 아무 일도 없다 (정산 술어가 살아 있다)', () => {
+    const w = mk([[SQ8, 20]]);
+    const p = player(w);
+    p.aux0 = 100;
+    p.aux1 = 10;
+    stepWorld(w, emptyInput());
+    expect(p.aux0).toBe(100);
+    expect(readSlot(w.skillCarry, SLOT_SCAR)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑩ 앵커 ⑲ — ME9 가 **왜 아직 없는지**를 잠근다
+// ---------------------------------------------------------------------------
+
+describe('⑩ 앵커 ⑲ 와 ME9 의 선결', () => {
+  it('말로우 런의 ⑲ 는 기본 임계를 그대로 돌려준다 (case 없음 = 비트 동일)', () => {
+    const w = mk([[CU7, 20]]);
+    expect(onCushionThreshold(w, player(w), CUSHION_RECOVER_TICKS)).toBe(CUSHION_RECOVER_TICKS);
+  });
+
+  it('⚠️ 임계를 낮춰도 순수 함수가 0 을 돌려준다 — ME9 는 ⑲ 만으로 안 돈다', () => {
+    // ME9 Lv20 의 실효 임계 129. 여기 진입해도 정산액·탕감액이 0 이라 **조용히 무연산**이다.
+    // 이것이 ME9 를 배선하지 않은 근거이고, 순수 함수 둘이 임계를 인자로 받도록 고쳐지면
+    // (골든에 닿는 변경) 이 단언이 빨개진다 — 그때 ME9 를 열어라.
+    expect(cushionSettled(100, 129)).toBe(0);
+    expect(cushionRecovered(100, 129)).toBe(0);
+    expect(cushionSettled(100, CUSHION_RECOVER_TICKS)).toBeGreaterThan(0);
   });
 });

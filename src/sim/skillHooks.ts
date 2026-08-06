@@ -124,6 +124,8 @@ import {
   mallowDamageChain,
   mallowEnemyDamaged,
   mallowPowerupPicked,
+  mallowCushionSettled,
+  mallowVolleyParams,
 } from './skills/mallow.js';
 import {
   phantomDashFired,
@@ -1374,6 +1376,18 @@ export function onVolleyParams(
       // 피격 판별 앵커가 아직 없다).
       bruiserVolleyParams(state, player, params);
       break;
+    case SIG_MALLOW_CUSHION:
+      // SQ1 부채 격노(현재 부채 → 피해 증폭) · SQ8 흉터 포문(누적 선체행 → 피해 증폭) ·
+      // SQ5 탕감 장전(잔량 25% 소진). 뒤 둘의 **적립처는 앵커 ⑳** 이고 여기가 소비처다 —
+      // 한쪽만 배선하면 "카운터만 돌고 소비처가 없는" 반쪽이 된다.
+      //
+      // ⚠️ SQ7(관성 사출)은 여기 없다 — 설계 술어가 *"그 틱 입력 벡터와 **발사각**의 내적"*
+      // 인데 `VolleyParams` 에 **발사각이 없다**. `player.angle` 로 대용하면 자동 조준이 실제
+      // 발사각을 정하는 sim 에서 두 값이 갈릴 수 있고(조준각은 적이 없는 방향을 가리킬 수
+      // 있다 — 설계서 SQ10 의 폴백 경고와 같은 함정), 그 어긋남은 조용하다. `targetDist` 처럼
+      // **world 가 이미 고른 발사각을 레코드에 싣는 것**이 값싼 길이다.
+      mallowVolleyParams(state, player, params);
+      break;
     default:
       break;
   }
@@ -1500,6 +1514,17 @@ export function onCushionThreshold(
   if (!state.skillsOn) return base;
   void player;
   switch (state.sigBit) {
+    // ⚠️ **말로우 ME9「솜틀 요양」의 case 를 여기 넣지 마라 — 넣어도 안 돈다.**
+    // 술어(`state.wallContactTicks >= 60`)와 인하폭(`round(20 + 50×Lv/(Lv+12))`)은 전부
+    // 계산 가능하고, 이 앵커가 낮춘 임계로 `world.ts` 의 분기에 실제로 진입도 한다. 그런데
+    // 그 안에서 정산액을 내는 `cushionSettled`·`cushionRecovered` 가 **자기 안에서
+    // `unhitTicks < CUSHION_RECOVER_TICKS` 를 다시 검사해 0 을 돌려준다**
+    // (`shipSignature.ts:320·339`). 결과는 "분기에는 들어갔는데 정산액이 0" 이라
+    // **조용히 아무 일도 일어나지 않는 반쪽 배선**이다 — 이 저장소의 지배적 실패 형태 그대로다.
+    // 배선 레인(S2 확장)이 `tests/skillMallow.test.ts` §⑫ 로 이 사실을 실증해 잠갔다.
+    // → ME9 를 열려면 순수 함수 둘이 **임계를 인자로 받도록** 함께 고쳐야 하고, 그것은 골든에
+    //   닿는 변경이라 배선 레인이 단독으로 할 수 없다. CU7 의 분모(현행 상수 180)도 같은
+    //   선결에 묶여 있다 — ME9 가 도는 날 `mallowDamageChain` 의 분모를 함께 옮겨야 한다.
     default:
       break;
   }
@@ -1538,11 +1563,19 @@ export function onCushionSettled(
   applied: number,
 ): void {
   if (!state.skillsOn) return;
-  void player;
-  void settled;
-  void recovered;
-  void applied;
   switch (state.sigBit) {
+    case SIG_MALLOW_CUSHION:
+      // 정산 트리거 **7종**: CU3 무통 정산(회당 상한 + 잔여 이월) → SQ2 청산 폭발 →
+      // SQ5 탕감 장전 → SQ8 흉터 포문 → ME4 반환 요법 → CU9 유예의 은총 → CU10 자본화.
+      // 적용 순서는 설계서 공통 고지 ④ 고정이고 효과 함수가 그대로 지킨다.
+      //
+      // ⚠️ ME5(분할 상환)·ME8(리듬 탕감)·ME9(솜틀 요양)는 여기 **없다.** 셋 다 정산 **산술
+      // 자체**를 바꾸는데 이 앵커는 hp 차감·hp−1 클램프가 끝난 뒤다. 사후 환급으로 흉내 내면
+      // 클램프가 물린 정산에서 값이 갈린다("탕감을 늘려 덜 깎인" 것과 "깎고 나서 되돌린" 것은
+      // 소멸분 때문에 다른 수치가 된다). ME8·ME9 는 추가로 탕감률·임계가 `shipSignature.ts`
+      // 의 순수 함수 안에 있어 골든에 닿는 선결이 붙는다 — 사유 전문은 `skills/mallow.ts` 헤더.
+      mallowCushionSettled(state, player, settled, recovered, applied);
+      break;
     default:
       break;
   }
