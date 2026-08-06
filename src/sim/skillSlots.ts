@@ -97,10 +97,49 @@ export function writeSlot(slots: number[], slot: number, value: number): void {
 // S0 시점에는 **전 기체 미배정**이다 — 그래서 전 슬롯이 런 끝까지 0 이고 `hashWorld` 의
 // 스킬 슬롯 폴드가 한 번도 실행되지 않는다(기존 골든 바이트 불변).
 //
-//   스트라이커 (SIG_STRIKER_MARKSMAN) — 미배정
+//   스트라이커 (SIG_STRIKER_MARKSMAN) — 아래 두 enum
 //   브루저     (SIG_BRUISER_ARMOR)    — 미배정
 //   아크캐스터 (SIG_ARC_OVERCHARGE)   — 미배정
 //   팬텀       (SIG_PHANTOM_CLOAK)    — 미배정
 //   해츨링     (SIG_HATCHLING_BROOD)  — 미배정
 //   말로우     (SIG_MALLOW_CUSHION)   — 미배정
 //   버블       (SIG_BUBBLE_FILM)      — 미배정
+
+/**
+ * **스트라이커 이월 슬롯**(ADR-0049 배치 1). 효과 본체는 `src/sim/skills/striker.ts`.
+ *
+ * 둘 다 S10「선체 증축」의 저금이라 **구간을 넘어 살아야 한다** — 의뢰 다구간 런에서 구간이
+ * 바뀔 때마다 리셋되면 400XP 임계에 영영 못 닿는 구간이 생긴다. 그래서 `Stage` 가 아니라
+ * `Carry` 다.
+ */
+export const enum StrikerCarry {
+  /**
+   * S10 — **직전에 관측한 `state.xp`**. `state.xp` 는 레벨업마다 `-= need` 되는 잔여 풀이라
+   * 누적이 아니고, 그래서 "늘어난 만큼만" 적립하려면 직전 값이 필요하다. 0 = 아직 관측 없음
+   * (런 시작 xp 가 0 이라 자연 센티넬 — 값 규약 1).
+   */
+  hullXpSeen = 0,
+  /** S10 — 아직 임계(400)를 못 넘긴 **잔여 누적 XP**. 지급할 때마다 400 씩 뺀다. */
+  hullXpPool = 1,
+}
+
+/**
+ * **스트라이커 구간 슬롯** — 이 배치가 배선한 9종은 **한 칸도 쓰지 않는다.**
+ *
+ * 설계서가 `구현: B`(신규 상태)로 표시한 스트라이커 6종 중 이 배치가 닿은 것은 M5·S4 둘인데,
+ * 둘의 술어("직전 틱 벽 접촉")는 S0 의 E5 가 세운 {@link WorldState.wallContactTicks} 가 이미
+ * 제공한다 — 같은 술어를 슬롯에 다시 적으면 두 곳이 조용히 갈린다. 나머지 넷(F7 락온 정수 2 ·
+ * F8 창 연장 카운터 1 · M10 2충전 카운터 1)은 앵커 9개 밖이라 **아직 코드가 없고**, 그 레인이
+ * 자기 번호를 여기에 선언한다.
+ *
+ * ⚠️ 지금 예약 번호를 미리 적지 마라 — 미사용 슬롯이 영구 0 으로 남는 것이 이 파일 헤더가
+ * 폭을 8 로 좁힌 이유 자체다(오인덱스가 조용한 무연산이 된다).
+ */
+export const enum StrikerStage {
+  /**
+   * 자리표시자 — **읽지도 쓰지도 않는다.** TypeScript 는 멤버 0개인 `const enum` 을 허용하지만,
+   * 빈 선언은 "배정이 끝났다" 와 "아직 아무도 안 잡았다" 를 구분해 주지 못한다. 실제 배정이
+   * 생기면 이 줄을 **지우고** 0번부터 다시 매겨라.
+   */
+  unassigned = 0,
+}

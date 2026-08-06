@@ -62,6 +62,16 @@ import {
   onWallContactCatalyst,
   onTickCatalyst,
 } from './catalystHooks.js';
+import { SIG_STRIKER_MARKSMAN } from './shipSignature.js';
+import {
+  strikerDashFired,
+  strikerGemCollected,
+  strikerPlayerDamaged,
+  strikerKillsDelta,
+  strikerBulletExpired,
+  strikerDamageChain,
+  strikerSignatureStep,
+} from './skills/striker.js';
 
 // ---------------------------------------------------------------------------
 // 공유 술어
@@ -120,7 +130,13 @@ function dispatchVolleySkill(state: WorldState, player: Entity): void {
   if (!state.skillsOn) return;
   void player;
   switch (state.sigBit) {
-    // S0: 전 기체 미배선. 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다.
+    // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다.
+    //
+    // ⚠️ **스트라이커는 여기 case 가 없다 — 누락이 아니라 미배선이다.** 이 앵커를 쓰는 설계
+    // 항목은 S8「콤보 차폐」의 콤보 창 부분 회복(`comboTimer = min(comboTimer + 창/2, 창)`)
+    // 하나인데, 그 `창`(`COMBO_WINDOW_TICKS`)이 `world.ts` 의 **비공개 상수**라 leaf 에서 읽을
+    // 길이 없다. 값을 여기 다시 적으면 두 곳이 조용히 갈리므로 적지 않았다(S8 의 흡수 절반은
+    // 앵커 ⑧ 에 배선돼 있다). 푸는 방법은 그 상수를 leaf 로 옮기는 것이고, 그건 이 레인 밖이다.
     default:
       break;
   }
@@ -134,8 +150,10 @@ export function onDashFired(state: WorldState, player: Entity): void {
 
 function dispatchDashSkill(state: WorldState, player: Entity): void {
   if (!state.skillsOn) return;
-  void player;
   switch (state.sigBit) {
+    case SIG_STRIKER_MARKSMAN:
+      strikerDashFired(state, player);
+      break;
     default:
       break;
   }
@@ -155,9 +173,29 @@ function dispatchGemSkill(state: WorldState, gem: Entity): void {
   if (!state.skillsOn) return;
   void gem;
   switch (state.sigBit) {
+    case SIG_STRIKER_MARKSMAN: {
+      // M3 는 **플레이어**의 대시 쿨다운을 만지는데 이 앵커가 넘기는 것은 젬이다. leaf 규율상
+      // `world.ts` 를 런타임 import 할 수 없으므로 아래 사본으로 집는다.
+      const p = playerOf(state);
+      if (p !== undefined) strikerGemCollected(state, p);
+      break;
+    }
     default:
       break;
   }
+}
+
+/**
+ * 플레이어 엔티티 조회 — **`world.ts` 를 런타임 import 하지 않기 위한 leaf 사본**이다(헤더 ①).
+ * 규약상 플레이어는 `entities[0]` 이고 `createWorld` 가 그 불변식을 세운다(`bench/**` 전역이
+ * 같은 조회를 쓴다).
+ *
+ * ⚠️ **`undefined` 를 돌려줄 수 있다.** `compact()` 는 생존자만 재구축하므로 플레이어가 죽은
+ * 틱 이후에는 배열이 빌 수 있고, 앵커 ⑤(처치 증분)는 바로 그 `compact()` 뒤에 불린다.
+ * 호출부가 반드시 확인한다 — `!` 로 지우면 조용한 예외가 sim 한복판에서 터진다.
+ */
+function playerOf(state: WorldState): Entity | undefined {
+  return state.entities[0];
 }
 
 /**
@@ -184,10 +222,14 @@ function dispatchPlayerDamagedSkill(
   lethalSurvived: boolean,
 ): void {
   if (!state.skillsOn) return;
-  void player;
   void dmg;
   void lethalSurvived;
   switch (state.sigBit) {
+    case SIG_STRIKER_MARKSMAN:
+      // S1 응전 조준 · S2 반사 도금. 둘 다 피해량과 무관하고 "hp 가 실제로 깎였다" 만 본다 —
+      // 그것이 이 앵커의 정의라 `dmg` 를 넘기지 않는다.
+      strikerPlayerDamaged(state, player);
+      break;
     default:
       break;
   }
@@ -207,8 +249,14 @@ export function onKillsDelta(state: WorldState, delta: number): void {
 
 function dispatchKillsDeltaSkill(state: WorldState, delta: number): void {
   if (!state.skillsOn) return;
-  void delta;
   switch (state.sigBit) {
+    case SIG_STRIKER_MARKSMAN: {
+      // F1 전과 확장 — 사이클 카운터(`player.aux0`)를 충전한다. 플레이어가 이번 틱에 함께
+      // 죽었다면 `compact()` 뒤라 배열에서 사라져 있다(위 `playerOf` 주석).
+      const p = playerOf(state);
+      if (p !== undefined) strikerKillsDelta(state, p, delta);
+      break;
+    }
     default:
       break;
   }
@@ -225,8 +273,10 @@ export function onBulletExpired(state: WorldState, bullet: Entity): void {
 
 function dispatchBulletExpiredSkill(state: WorldState, bullet: Entity): void {
   if (!state.skillsOn) return;
-  void bullet;
   switch (state.sigBit) {
+    case SIG_STRIKER_MARKSMAN:
+      strikerBulletExpired(state, bullet); // F4 파편 격발
+      break;
     default:
       break;
   }
@@ -245,6 +295,10 @@ function dispatchWallContactSkill(state: WorldState, player: Entity): void {
   if (!state.skillsOn) return;
   void player;
   switch (state.sigBit) {
+    // ⚠️ **스트라이커는 여기 case 가 없다 — 세울 상태가 없기 때문이다.** 설계서는 M5·S4 를 위해
+    // "직전 틱 벽 접촉 플래그" 를 슬롯에 세우라고 적었으나(구현 태그 B), S0 의 E5 가 같은 술어를
+    // `state.wallContactTicks` 로 이미 세워 뒀다. 두 기체 모듈은 그 값을 읽기만 한다 — 같은
+    // 술어를 슬롯에 복제하면 갱신 시점이 갈려 조용히 어긋난다.
     default:
       break;
   }
@@ -280,9 +334,10 @@ function dispatchWallContactSkill(state: WorldState, player: Entity): void {
  */
 export function onDamageChain(state: WorldState, player: Entity, dmg: number): number {
   if (!state.skillsOn) return dmg;
-  void player;
   switch (state.sigBit) {
     // 각 `case` 는 **① 감소 → ② 흡수** 순서로 처리하고, 정수화는 자기 게이트 안에서 한다.
+    case SIG_STRIKER_MARKSMAN:
+      return strikerDamageChain(state, player, dmg); // ① S4 감소 → ② S8 흡수
     default:
       break;
   }
@@ -308,9 +363,11 @@ function dispatchSignatureStepSkill(
   input: InputFrame,
 ): void {
   if (!state.skillsOn) return;
-  void player;
   void input;
   switch (state.sigBit) {
+    case SIG_STRIKER_MARKSMAN:
+      strikerSignatureStep(state, player); // S10 선체 증축(런 누적 XP 폴링)
+      break;
     default:
       break;
   }
