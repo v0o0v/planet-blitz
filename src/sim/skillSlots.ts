@@ -103,7 +103,7 @@ export function writeSlot(slots: number[], slot: number, value: number): void {
 //   해츨링     (SIG_HATCHLING_BROOD)  — HatchlingCarry / HatchlingStage
 //   말로우     (SIG_MALLOW_CUSHION)   — MallowCarry / MallowStage (배선 6종이 **한 칸도 안 쓴다**)
 //   팬텀       (SIG_PHANTOM_CLOAK)    — PhantomCarry / PhantomStage
-//   버블       (SIG_BUBBLE_FILM)      — 미배정
+//   버블       (SIG_BUBBLE_FILM)      — BubbleCarry / BubbleStage (**실배정 0칸**)
 //
 // ⚠️ 이 색인은 **병렬 배선 머지에서 중복되기 쉽다** — 레인마다 자기 줄을 고치는데 git 이
 // 양쪽을 다 살리기 때문이다(실제로 브루저·아크캐스터가 2줄씩 중복된 채 들어왔다).
@@ -270,6 +270,27 @@ export const enum HatchlingCarry {
 }
 
 /**
+ * **버블 이월 슬롯**(ADR-0049 배치 4). 효과 본체는 `src/sim/skills/bubble.ts`.
+ */
+export const enum BubbleCarry {
+  /**
+   * 자리표시자 — **읽지도 쓰지도 않는다.** 형태는 `StrikerStage.unassigned` 와 같다.
+   *
+   * 배치 4(버블)가 배선한 9종은 슬롯을 **한 칸도 쓰지 않는다** — 전부 기존 필드(`aux0`·
+   * `aux1`·`iframes`·`dashCooldown`·`playerSlowTicks`)와 `state.tick` 파생만 만진다.
+   * 설계서가 `구현: B`(신규 상태)로 표시한 버블 5종은 이 배치 밖이다:
+   *  · PO10(창 틱 + kills 스냅샷 2칸) — `aux0 ≤ FILM_ABSORB_FLAT` 불변식 개정이 선결
+   *  · DR2(효율 창 1칸) · FI6(흡수 누적 1칸) — 소비처가 막 흡수 지점이라 앵커가 없다
+   *  · DR3(전용 자석 버프 1칸) — 액티브 착지 훅이 없다
+   *  · FI7(벽 접촉 플래그) — 슬롯이 아니라 `state.wallContactTicks` 로 이미 있다
+   *
+   * ⚠️ 실제 배정이 생기면 이 줄을 **지우고** 0번부터 다시 매겨라. 예약 번호를 미리 적지
+   * 마라 — 미사용 슬롯이 영구 0 으로 남는 것이 이 파일 헤더가 폭을 8 로 좁힌 이유다.
+   */
+  unassigned = 0,
+}
+
+/**
  * **말로우 이월 슬롯**(ADR-0049 배치 4). 효과 본체는 `src/sim/skills/mallow.ts`.
  *
  * 이 배치가 배선한 6종은 **한 칸도 쓰지 않는다.** 설계서가 `구현: B`(신규 상태)로 표시한 말로우
@@ -325,5 +346,11 @@ export const enum PhantomStage {
    * 자리표시자 — **읽지도 쓰지도 않는다.** 실제 배정이 생기면 이 줄을 **지우고** 0번부터
    * 다시 매겨라(스트라이커 `StrikerStage.unassigned` 와 같은 형식).
    */
+  unassigned = 0,
+}
+
+/** **버블 구간 슬롯** — {@link BubbleCarry} 와 같은 사유로 실배정 0칸이다. */
+export const enum BubbleStage {
+  /** 자리표시자 — 읽지도 쓰지도 않는다. 사유는 {@link BubbleCarry.unassigned}. */
   unassigned = 0,
 }

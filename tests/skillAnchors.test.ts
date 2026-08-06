@@ -106,7 +106,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('앵커 11개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 15개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
@@ -115,6 +115,10 @@ describe('계측 이음매', () => {
         'onDashFired',
         'onEnemyDamaged', // S1
         'onEnemyDeath', // S1
+        // ⚠️ 앵커 ⑮ 는 앞의 14개와 성질이 다르다 — **한 기체의 시그니처 사건**(버블 방막
+        // 파열)이라 `stepWorld` 가 아니라 `filmBurst.ts` 가 부르고, 촉매 짝도 없다. 배치 4가
+        // 뚫었다(`skillHooks.ts` 의 그 함수 주석이 사유의 정본).
+        'onFilmBurst',
         'onGemCollected',
         'onKillsDelta',
         'onLevelUp', // S1

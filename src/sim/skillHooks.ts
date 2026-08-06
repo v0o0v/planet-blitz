@@ -1,8 +1,13 @@
 /**
- * **210스킬 배선의 앵커 14개** — sim 이 스킬 훅을 부르는 **유일한 지점들**(ADR-0049 S0 + S1).
+ * **210스킬 배선의 앵커 15개** — sim 이 스킬 훅을 부르는 **유일한 지점들**(ADR-0049 S0 + S1).
  *
  * S0 가 플레이어 축 9개를 세웠고, **S1 이 적 단위 축 2개(⑩ `onEnemyDamaged` · ⑪ `onEnemyDeath`)와
  * 성장 축 3개(⑫ `onLevelUp` · ⑬ `onPowerupOffer` · ⑭ `onPowerupPicked`)를 더했다.**
+ *
+ * ⚠️ **⑮ `onFilmBurst` 는 앞의 14개와 성질이 다르다**(배치 4가 뚫었다) — 전 기체 공통 사건이
+ * 아니라 **한 기체의 시그니처 사건**(버블 방막 파열)이라, 부르는 쪽도 `stepWorld` 가 아니라
+ * `filmBurst.ts` 고 촉매 짝도 없다. 아래 "전 스킬 디스패치 공통 계약" 중 촉매 관련 항목만
+ * 그 앵커에 해당하지 않는다.
  * 두 커밋 다 전 분기가 비어 있다 — 만드는 것은 **자리**이지 효과가 아니다 —
  * 전 슬롯 0 · 계수 0 · 빈 `switch` 라 산술이 `v*1===v`·`v-0===v` 로 비트 동일하고, 그래서
  * 골든·침공 해시가 **바이트 불변**이다.
@@ -76,6 +81,7 @@ import {
   SIG_HATCHLING_BROOD,
   SIG_MALLOW_CUSHION,
   SIG_PHANTOM_CLOAK,
+  SIG_BUBBLE_FILM,
 } from './shipSignature.js';
 import {
   hatchlingVolleyFired,
@@ -125,6 +131,11 @@ import {
   phantomSignatureStep,
   phantomEnemyDamaged,
 } from './skills/phantom.js';
+import {
+  bubbleSignatureStep,
+  bubbleEnemyDamaged,
+  bubbleFilmBurst,
+} from './skills/bubble.js';
 
 // ---------------------------------------------------------------------------
 // 공유 술어
@@ -216,6 +227,11 @@ function dispatchVolleySkill(state: WorldState, player: Entity): void {
     // ⚠️ **팬텀도 여기 case 가 없다 — 같은 벽이다.** 이 앵커를 쓰려는 설계 항목은 AS2(은신 창
     // 중 발사탄 관통 +1 · 탄속)·AS3(강화탄 마커)·AS10(창 중 발사탄 벽 통과 마커) 셋인데, 전부
     // **이번 볼리의 탄**에 표식이나 파라미터를 얹어야 한다. 이 앵커에는 탄이 아직 없다.
+    // ⚠️ **버블도 여기 case 가 없다 — 같은 한계다.** 이 앵커를 쓰려는 설계 항목은 둘
+    // (PO2 압력 전환 사출 · PO5 만재 투과)인데 둘 다 **이번 볼리 탄의 피해·관통**을 바꿔야
+    // 한다. 술어(`aux0 > 0` · `aux0 >= FILM_ABSORB_FLAT`)는 여기서 완전히 성립하지만 적용할
+    // 대상이 아직 존재하지 않는다 — 술어만 세워 슬롯에 담고 발사부가 읽게 하는 대안은
+    // 기각했다(아크캐스터 BA7 과 같은 사유: 소비처 없는 값이 해시에만 접힌다).
     default:
       break;
   }
@@ -321,6 +337,13 @@ function dispatchGemSkill(state: WorldState, gem: Entity): void {
       if (p !== undefined) phantomGemCollected(state, p);
       break;
     }
+    // ⚠️ **버블은 여기 case 가 없다 — 트리거는 맞는데 소비처가 없다.** DR2「표면장력 세례」는
+    // 이 앵커에서 "막이 서 있는 동안 수거" 를 정확히 재고 창 슬롯을 세울 수 있지만, 그 창이
+    // 소비되는 자리는 **막 흡수 산술**(`world.ts:4249-4256`)이고 거기엔 앵커가 없다(앵커 ⑧ 은
+    // 브루저 장갑보다 앞이라 막이 아직 한 점도 닳지 않았다). 창만 돌리면 슬롯 1칸이 영구히
+    // 아무것도 안 하는 상태로 해시에 접힌다 — 통째로 미배선으로 뒀다.
+    // ⚠️ DR1「역류 수거」도 여기가 아니다 — 그쪽은 **파열 틱에** 젬을 끌어오는 스킬이고,
+    // 수거 자체는 `collectGem`(world.ts 소유)이라 leaf 에서 부를 수 없다.
     default:
       break;
   }
@@ -590,6 +613,13 @@ export function onDamageChain(state: WorldState, player: Entity, dmg: number): n
       // 이 자리는 팬텀 피격 리셋(`aux0 = 0`)보다 **앞**이라 여기서 읽는 스트릭이 설계서가
       // 요구한 "이 피격 직전까지 쌓인 무피격 틱"이다 — 효과 함수 주석이 그 순서의 근거다.
       return phantomDamageChain(state, player, dmg);
+    // ⚠️ **버블은 여기 case 가 없다 — 이 앵커가 막보다 앞이기 때문이다.** 버블의 감쇠 사슬
+    // 스킬 6종(DR2 흡수 효율 · FI3 흡수 반응 소거 · FI4 흡수 비례 밀어내기 · FI6 흡수 누적 ·
+    // FI8 해저드 2배 효율 · FI9 비상막)은 전부 **막이 실제로 흡수하는 그 산술**
+    // (`world.ts:4249-4256`)을 요구한다. 이 앵커는 `world.ts:4224` 로 브루저 장갑(4234)보다도
+    // 앞이라, 여기서 본 `dmg` 는 막을 아직 지나지 않았고 `player.aux0` 도 한 점 안 닳았다.
+    // 여기서 흉내 내면 "막이 막은 양" 과 "스킬이 본 양" 이 조용히 갈린다 — 막 흡수 지점에
+    // 별도 앵커가 필요하다(이 레인 밖).
     default:
       break;
   }
@@ -673,6 +703,24 @@ function dispatchSignatureStepSkill(
       // 앵커에서 사후 관측으로 흉내 내면 액티브 진입(`activeHandlers/phantom.ts`)과 구분이
       // 안 돼 조용히 오발동한다(브루저 FO4·FO8·FO9 와 같은 판단).
       phantomSignatureStep(state, player);
+      break;
+    case SIG_BUBBLE_FILM:
+      // FI2 내구 재응결 — 막이 서 있고 만재가 아닌 동안 주기마다 내구 +1.
+      //
+      // 이 앵커가 `stepShipSignature` **진입점**이라 버블 재생 분기(`world.ts:2562-2568`)보다
+      // 앞이다. FI2 는 `aux0 > 0` 술어라 그 분기(`aux0 === 0` 게이트)와 배타적이라서 순서가
+      // 결과를 바꾸지 않는다 — 한쪽이 도는 틱에 다른 쪽은 반드시 쉰다.
+      //
+      // ⚠️ DR7(신호 표류)은 여기 없다 — 재생 배율 자체는 이 앵커에서 `aux1 += 1` 을 더해
+      // 구현할 수 있지만, 술어 "에코 신호·조우 오브젝트가 **활성**" 을 세울 값이 없다.
+      // `state.encounterRuntime` 은 "이 런에 조우가 굴려졌다" 이지 활성이 아니고,
+      // `inDetour === 1` 은 격실 진입이라 에코 안정화와 다른 사건이다. 두 번째 절반(완수 틱
+      // 즉시 만재)은 에코 완수 지점에 손잡이가 필요해 어차피 이 레인 밖이다.
+      // ⚠️ DR10(공막 유속)·PO10(연쇄 압력)도 없다 — 둘 다 "재생이 완료된 틱" 이라는 엣지가
+      // 필요한데 이 앵커는 재생 분기보다 앞이라 그 엣지를 이번 틱에 볼 수 없다. 다음 틱에
+      // 사후 관측하면 액티브의 즉시 만재(`film_lo`/`film_hi`)와 구분이 안 된다.
+      // PO10 은 더해서 `aux0 ≤ FILM_ABSORB_FLAT` 불변식 개정(설계서 ⑥절 3)이 선결이다.
+      bubbleSignatureStep(state, player);
       break;
     default:
       break;
@@ -803,6 +851,16 @@ function dispatchEnemyDamagedSkill(
       // 창 안 전 발사가 2.5배가 된다 — 설계와 정반대다.
       const p = playerOf(state);
       if (p !== undefined) phantomEnemyDamaged(state, p, target, dmg);
+      break;
+    }
+    case SIG_BUBBLE_FILM: {
+      // PO6 격발 재응결 — 무막 중 주무기 명중마다 재생 타이머(`aux1`)가 전진한다. 대상이
+      // 표적이 아니라 **플레이어**의 aux1 이라 사본으로 집는다(스트라이커 M3 와 같은 사유).
+      //
+      // 이 앵커의 "아군탄 명중 경로 하나뿐" 이라는 한계에 이 스킬은 **부딪히지 않는다** —
+      // 설계서 PO6 의 문면이 "**주무기** 탄이 명중할 때마다" 라 범위가 정확히 일치한다.
+      const p = playerOf(state);
+      if (p !== undefined) bubbleEnemyDamaged(state, p, target);
       break;
     }
     default:
@@ -1001,6 +1059,82 @@ function dispatchPowerupPickedSkill(
       // 골랐는가" 가 아니라 **레벨업 리듬 그 자체**라 어느 픽이든 같게 작동해야 한다.
       const p = playerOf(state);
       if (p !== undefined) mallowPowerupPicked(state, p);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ⑮ (배치 4) — **시그니처 사건**
+// ---------------------------------------------------------------------------
+
+/**
+ * 앵커 ⑮ — **버블 방막이 파열한 직후, 밀어내기보다 앞**(`filmBurst.ts` 의 `resolveFilmBurst` 첫 줄).
+ *
+ * ## 왜 이 앵커가 필요했는가
+ * 앞의 14개는 **전 기체 공통 사건**(발사·대시·피격·수거·벽·틱·명중·격추·성장)이라 특정 기체의
+ * 시그니처 사건에는 자리가 없다. 버블 30종 중 **10종이 「파열 틱」을 트리거로 삼는다**
+ * (PO1·PO3·PO7·PO8·DR1·DR6·FI1·FI5·FI7·FI10). 앵커 없이 배선하면 파열이 일어나는 두 경로
+ * (액티브 요청 소비 `world.ts:1823` · 시그니처 소진 파열 `world.ts:4268`)에 같은 훅을 두 벌
+ * 얹어야 하고, 그것이 `bubble.md` ①-3 이 `resolveFilmBurst` 로 없앤 바로 그 복제다.
+ *
+ * `filmBurst.ts` 헤더가 "FI1 선급 · 파열 훅 9종 · DR9 잔파동 — 소비자가 아직 없다. 넷 다
+ * **스킬 배선 커밋**에서 넣어라" 라고 이 레인에 명시 인계한 자리다.
+ *
+ * ## 무엇이 보장되는가
+ *  - ⚠️ **밀어내기는 아직 일어나지 않았다.** 여기서 보는 적 좌표는 파열 **직전**의 값이고,
+ *    그것이 계약이다 — 밀어내기 변위(260)가 파열 반경(220)보다 커서, 뒤에 두면 반경 술어로
+ *    대상을 고르는 스킬이 전부 조용히 0건이 된다(근거는 호출 지점 주석). 반대로 **밀어낸
+ *    결과**를 봐야 하는 스킬(PO4 압착 충돌)은 이 앵커로 못 한다.
+ *  - `(x, y)` 는 **파열 중심**이고 `player.x/y` 와 다를 수 있다(액티브 요청은 요청 시점
+ *    좌표를 박아 둔다 — 같은 틱 blink 가 플레이어를 옮겼으면 갈린다). 어느 기준점을 쓸지는
+ *    효과마다 다르다 — `skills/bubble.ts` 의 {@link bubbleFilmBurst} 주석이 그 표다.
+ *  - 두 소비 위상 모두에서 불린다. 시그니처 소진 파열은 **피격 처리 한복판**이라, 여기서
+ *    `player.iframes` 를 올리면 바로 뒤의 막 전량 흡수 분기(`world.ts:4281-4284`)가
+ *    `iframes = hitIframes` 로 **덮어쓴다** — FI5 가 가산이 아니라 max 갱신인 이유다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **`state.entities` 에 직접 push 하지 마라.** 시그니처 파열 경로는 `resolveCollisions`
+ *    의 엔티티 순회 안이다. `fanStrike` 는 `spawnBullet` 이 배열 말미에 append 하는 형태라
+ *    안전하다(액티브 핸들러가 같은 자리에서 이미 쓰던 경로다) — 그 밖의 직접 push 는 금지.
+ *  - ⚠️ **파열을 재귀시키지 마라.** 여기서 `aux0` 을 0 으로 만들어도 파열은 다시 안 돈다.
+ *  - **RNG 를 소비하지 마라**(공통 계약).
+ *
+ * ## ⚠️ 촉매를 부르지 않는다
+ * 이 앵커는 **한 기체의 시그니처 사건**이라 촉매 48종에 대응 카드가 없다. 훗날 파열 반응
+ * 촉매가 생기면 `onFilmBurstCatalyst` 를 여기 붙여라 — 지금 빈 함수를 미리 두면 "배선이
+ * 있다" 는 착각을 만든다(이 저장소의 재발 패턴).
+ *
+ * @param x 파열 중심 x
+ * @param y 파열 중심 y
+ */
+export function onFilmBurst(state: WorldState, x: number, y: number): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    case SIG_BUBBLE_FILM: {
+      // PO1 파열 탄두 · PO3 거품 산탄 파열 · PO7 정전 파열 · DR6 파열 추진 · FI1 조기 응결 ·
+      // FI5 파열 위상 · FI10 정화 파열.
+      //
+      // ⚠️ **PO4·PO8·DR1·FI7 은 여기 없다 — 훅으로 닿지 않는다.**
+      //  · FI7(벽면 반향)은 밀어내기의 **반경·변위 그 자체**를 배율해야 한다. 훅은 그 산술
+      //    바깥이라 값을 건넬 길이 없다 — `resolveFilmBurst` 가 배율을 인자로 받는 형태여야
+      //    하고, 그건 훅이 아니라 함수 시그니처 변경이다.
+      //  · PO4(압착 충돌)는 밀어내기 목표 변위와 슬라이드 후 실제 좌표의 **차이**가 판정인데,
+      //    이 앵커는 밀어내기보다 **앞**이라 그 차이가 아직 존재하지 않는다(앞에 둔 사유는
+      //    호출 지점 주석 — 뒤로 옮기면 PO1·PO7 이 죽는다. 훅을 pre/post 둘로 쪼개야 한다).
+      //  · PO8(잔거품 기뢰)은 기뢰 엔티티 생성 규약(`isGimmick` 컬링 제외 + 전용 마커 동시
+      //    생존 상한 12)이 선결이다. 상한 없이 넣으면 파열 4회 창에 최대 36기가 서서 청크
+      //    예산(160)을 조용히 먹는다.
+      //  · DR1(역류 수거)은 `collectGem` 이 `world.ts` 소유라 leaf 에서 부를 수 없다. 젬을
+      //    여기서 직접 지우면 콤보·XP·촉매 경로가 통째로 빠진다.
+      //
+      // ⚠️ **DR9(이탈 잔파동)은 이 앵커의 대상이 아니다.** 잔파동은 파열이 아니라서
+      // (`filmBurst.ts` 의 종류 코드 2) 파열 훅을 태우면 안 된다 — 종류 코드 2 는 아직
+      // 소비자가 없어 상수조차 선언돼 있지 않다.
+      const p = playerOf(state);
+      if (p !== undefined) bubbleFilmBurst(state, p, x, y);
       break;
     }
     default:
