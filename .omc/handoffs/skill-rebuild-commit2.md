@@ -69,12 +69,24 @@ E5 를 구현할 때 **어느 의미를 택했는지 주석에 명시**하고, "
 | 10 | 골든 3종 재생성 | 아래 표 |
 | 11 | 녹화기의 레거시 `data/skills.ts` API 의존 정리 | `scripts/recordStrikerBaseline.ts:48-56`, `scripts/deno-verify/scenarios.ts:40` |
 
+### ⚠️ `vite-node` 는 PATH 에 없다 — 스토어 경로로 직접 부른다
+
+`npx vite-node` 는 이 워크트리에서 **해결되지 않는다**(pnpm strict 라 hoist 안 됨,
+`node_modules/.bin` 에 없다). 서브에이전트 셋이 연달아 여기서 막혔다. 실제로 도는 경로:
+
+```
+node node_modules/.pnpm/vite-node@2.1.9_supports-color@7.2.0/node_modules/vite-node/vite-node.mjs <스크립트>
+```
+
+(버전 디렉터리명은 `ls node_modules/.pnpm | grep '^vite-node'` 로 확인. 임시 vitest 파일을
+만들어 우회하는 방법도 쓰이지만, 녹화기처럼 부작용이 있는 스크립트는 이 경로가 낫다.)
+
 ### 골든 재생성 명령 (스크립트 없음 — 직접 실행)
 
 | 골든 | 파일 | 명령 |
 |---|---|---|
-| W0 스트라이커 | `tests/fixtures/striker-prem8.json` | `RECORD_STRIKER_BASELINE=1 npx vite-node scripts/recordStrikerBaseline.ts` |
-| 조우·침공 | `tests/fixtures/encounter-baseline.json` | `RECORD_ENCOUNTER_BASELINE=1 npx vite-node scripts/recordEncounterBaseline.ts` |
+| W0 스트라이커 | `tests/fixtures/striker-prem8.json` | `RECORD_STRIKER_BASELINE=1 node node_modules/.pnpm/vite-node@2.1.9_supports-color@7.2.0/node_modules/vite-node/vite-node.mjs scripts/recordStrikerBaseline.ts` |
+| 조우·침공 | `tests/fixtures/encounter-baseline.json` | `RECORD_ENCOUNTER_BASELINE=1 node node_modules/.pnpm/vite-node@2.1.9_supports-color@7.2.0/node_modules/vite-node/vite-node.mjs scripts/recordEncounterBaseline.ts` |
 | deno 교차검증 | `scripts/deno-verify/fixtures.json` | `REGEN_DENO_FIXTURES=1 npx vitest run tests/denoFixture.test.ts` |
 
 `tests/invasionHash.test.ts` 는 **파일 골든이 아니다**(인라인 레이아웃 계약). 값 재생성 대상이
@@ -87,15 +99,35 @@ E5 를 구현할 때 **어느 의미를 택했는지 주석에 명시**하고, "
 `tests/planetTierCompletion.test.ts` · `tests/autopilot.test.ts` · `tests/emergentRunLength.test.ts`
 (`.omc/plans/balance-queue.md:2042-2052` 선례).
 
-## 커밋 2 이후 (문서 순서 그대로)
+## ⚠️ 스트라이커 시그니처를 커밋 2 에 **합쳤다** (사용자 결정 2026-08-06)
+
+`prerequisites.md` §5 는 와이어 재정의(3번)와 스트라이커 시그니처(5번)를 **따로** 뒀고, 둘 다
+`SHIP_HASH_VERSION` bump + 골든 전량 재생성 + EF 재배포를 요구한다 — 즉 **같은 비용을 두 번**
+치른다. 어픽스 해시 영향분을 3번에 합친 것과 정확히 같은 논리로 시그니처도 합친다.
+
+대가: "무엇이 골든을 바꿨는가"가 한 커밋에 섞인다. 그래서 커밋 메시지에 **골든을 움직인
+원인 셋**(와이어 길이 63/78→30 · 어픽스 3키 폴드 · 스트라이커 `uniqueMask` 비트 24)을
+분리해 적고, 각각의 "안 바뀌어야 하는 것" 단언을 재생성 **전에** 통과시켜 둔다.
+
+## 커밋 2 이후 (문서 순서에서 5번이 빠진다)
 
 3. E1·E3·E4·E5·E6 엔진 리팩터 — 각 독립 커밋, **이 시점엔 거동 불변**
-4. 스트라이커 시그니처 신설(비트 24 — 실측 확인: 24~30 이 비어 있다) + 골든 재생성
-5. 프로브 P1 (P2·P3 는 **선행 실시**, 결과는 `.omc/research/mallow-settle-probe-2026-08-06.md`)
-6. 기체별 30스킬 배선 (7레인 병렬 — 단 E5 공유 벽 접촉 플래그 때문에 스트라이커 M5 가 먼저)
-7. 어픽스 재편 **해시 무관분만**(슬롯별 풀·가중 draw·정련 `rerollable` 분모·CP).
+   (E2·E7 은 완료. E5 는 위 「경계 스냅 함정」 절을 반드시 읽어라)
+4. 프로브 P1 (P2·P3 는 **선행 실시·둘 다 성립**, 결과는 `.omc/research/mallow-*.md` 2건)
+5. **기체별 210스킬 sim 배선** (7레인 병렬 — 단 E5 공유 벽 접촉 플래그 때문에 스트라이커 M5 가 먼저)
+6. 어픽스 재편 **해시 무관분만**(슬롯별 풀·가중 draw·정련 `rerollable` 분모·CP).
    ⚠️ `affixes.md` ⑥-2 의 단계 3(암묵 고착)과 6(분모·완주)은 **반드시 한 커밋**
-8. 밸런스 일괄은 **하지 않는다**(출시 직전 별도 레인)
+7. 밸런스 일괄은 **하지 않는다**(출시 직전 별도 레인)
+
+## 설계 문서에 없는데 해야 하는 것
+
+- **측정 전용 파일럿 프로파일**(§0-A 결정 B) — P3 재측정이 실증했듯 **벽 접근 정책이 반드시
+  들어가야** 한다. 없으면 벽 플래그를 무는 스킬 5종(M5·S4·MO8·FI7·ME9)이 자동 측정 밖에 남는다.
+- **방어측 수호기 대표 스탯 계승**(§0-B 결정 C) — `mapLoadoutToGuardianSnapshot` **한 곳**에서
+  파생. 어픽스는 이 계승에 안 타므로 `cpWeight` 를 올리면 안 된다.
+- 스킬 아이콘 3종 자산(`skill_axis_{offense,defense,utility}`) — 지금은 계열색 placeholder 폴백.
+- `hasCapstone` 개명 — 캡스톤은 폐기됐는데 이름이 남았다(시그니처 비트 검사용 범용 헬퍼).
+- i18n `champion.tree.meta` 문구가 아직 "캡스톤 게이트"다(실제는 `activeHiGate`).
 
 ## 배포 순서 (EF 마다 반대다 — `affixes.md` ⑥-3)
 
