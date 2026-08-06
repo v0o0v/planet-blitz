@@ -75,6 +75,7 @@ import {
   SIG_BRUISER_ARMOR,
   SIG_HATCHLING_BROOD,
   SIG_MALLOW_CUSHION,
+  SIG_PHANTOM_CLOAK,
 } from './shipSignature.js';
 import {
   hatchlingVolleyFired,
@@ -115,6 +116,15 @@ import {
   mallowEnemyDamaged,
   mallowPowerupPicked,
 } from './skills/mallow.js';
+import {
+  phantomDashFired,
+  phantomGemCollected,
+  phantomWallContact,
+  phantomDamageChain,
+  phantomPlayerDamaged,
+  phantomSignatureStep,
+  phantomEnemyDamaged,
+} from './skills/phantom.js';
 
 // ---------------------------------------------------------------------------
 // 공유 술어
@@ -203,6 +213,9 @@ function dispatchVolleySkill(state: WorldState, player: Entity): void {
     // SQ1(부채 비례 볼리 증폭)·SQ5(탕감 장전분 소진)·SQ7(입력 방향 일치도 비례 탄속·피해)·
     // SQ8(누적 선체행 비례 증폭) 넷인데, 넷 다 **이번 볼리의 탄 피해·탄속**을 바꿔야 한다.
     // SQ7 은 그 위에 `input` 까지 필요한데 이 앵커는 인자로 받지 않는다.
+    // ⚠️ **팬텀도 여기 case 가 없다 — 같은 벽이다.** 이 앵커를 쓰려는 설계 항목은 AS2(은신 창
+    // 중 발사탄 관통 +1 · 탄속)·AS3(강화탄 마커)·AS10(창 중 발사탄 벽 통과 마커) 셋인데, 전부
+    // **이번 볼리의 탄**에 표식이나 파라미터를 얹어야 한다. 이 앵커에는 탄이 아직 없다.
     default:
       break;
   }
@@ -232,6 +245,15 @@ function dispatchDashSkill(state: WorldState, player: Entity): void {
       // ⚠️ 같은 스킬의 나머지 절반(대시 경로 젬 수거)은 `collectGem` 이 `world.ts` 비공개라
       //    미배선이고, 그래서 **레벨 스케일이 통째로 없다** — 효과 함수 주석이 근거.
       hatchlingDashFired(state, player);
+      break;
+    case SIG_PHANTOM_CLOAK:
+      // PH1 잔상 이탈 — 대시가 무피격 스트릭을 전진시킨다(`advanceCloak` 경유).
+      //
+      // ⚠️ PH6(정지된 시계)은 여기 없다. 그 스킬은 "창 안 대시 틱에 `aux0` 증가가 멈춘다"인데,
+      // 이 앵커는 `stepShipSignature` 의 팬텀 적립(`aux0++`)보다 **앞**이라 여기서는 아직
+      // 일어나지 않은 증가를 막을 수 없다. 사후에 1 을 빼는 흉내는 창당 정지 예산·되감기
+      // 경계와 갈려 조용히 어긋난다 — 그 자리는 적립 분기 자체다.
+      phantomDashFired(state, player);
       break;
     default:
       break;
@@ -285,6 +307,18 @@ function dispatchGemSkill(state: WorldState, gem: Entity): void {
       // (브루저 MO2 가 같은 자리에서 같은 이유로 빠졌다).
       const p = playerOf(state);
       if (p !== undefined) mallowGemCollected(state, p);
+      break;
+    }
+    case SIG_PHANTOM_CLOAK: {
+      // PH8 흔적 흡수 — 젬 수거마다 무피격 스트릭 전진(`advanceCloak` 경유). 대상이 젬이 아니라
+      // **플레이어**라 위와 같은 사본으로 집는다.
+      //
+      // ⚠️ PH3(그림자 장부)은 여기 없다. 본체는 "은신 창 동안 `comboTimer` 가 감소하지 않는다"
+      // 인데 그 감소 지점은 `world.ts` 이고 앵커가 아니다. 레벨 스케일(창 중 수거 시 회복량
+      // 가산)만 여기 얹으면 **본체 없는 곁가지**가 되어, 창 정지라는 스킬 이름값이 영영 안
+      // 도는 채 수치만 도는 반쪽 배선이 된다(아크캐스터 BA7 선례와 같은 판단).
+      const p = playerOf(state);
+      if (p !== undefined) phantomGemCollected(state, p);
       break;
     }
     default:
@@ -363,6 +397,19 @@ function dispatchPlayerDamagedSkill(
       // 순서라(첫 피격도 발동해야 한다) 여기서 적립을 흉내 내 보정하지 않는다.
       mallowPlayerDamaged(state, player, dmg);
       break;
+    case SIG_PHANTOM_CLOAK:
+      // DI4 반발 위상 · DI5 최후 위상. `lethalSurvived` 를 넘기지 않는 것은 의도다 — 팬텀
+      // 30종 중 치명 생존 술어를 쓰는 스킬이 0종이다(DI5 의 트리거는 30% 임계 통과이지
+      // "죽을 뻔했다"가 아니다). `dmg` 는 DI5 가 피격 **전** hp 를 복원하는 데 쓴다.
+      //
+      // ⚠️ DI1(위상 정산)·PH10(발각 즉응)은 여기 없다 — **이 앵커가 팬텀 피격 리셋보다
+      // 뒤이기 때문이다.** `world.ts` 는 hp 차감 직후 `player.aux0 = 0` +
+      // `setBreakToken(…, 0)` 을 실행하고 그 **뒤에** 이 앵커를 부른다. 둘 다 리셋 **전**의
+      // `aux0`(DI1 은 반경 보정, PH10 은 창 술어)을 요구하므로 여기서는 각각 상시 최소 반경 ·
+      // 상시 미발동이 된다. 설계서 공통 구현 고지 ④ 가 요구한 순서(DI1 → PH10 → 리셋 → DI5)
+      // 중 **DI5 만** 이 자리에서 성립한다. 나머지 둘은 리셋 분기에 손잡이가 필요하다.
+      phantomPlayerDamaged(state, player, dmg);
+      break;
     default:
       break;
   }
@@ -397,6 +444,10 @@ function dispatchKillsDeltaSkill(state: WorldState, delta: number): void {
     // ⚠️ **브루저는 여기 case 가 없다 — 쓸 설계 항목이 없다.** 처치 "개수" 에 반응하는 브루저
     // 스킬은 0종이다. 유일한 처치 트리거 FO7 은 **엘리트인지**와 **격파 시점 스택**을 함께
     // 봐야 해서 개별 사건 앵커(⑪)로 갔다. MO2(파쇄 수확)는 처치가 아니라 젬 스폰 시점이다.
+    // ⚠️ **팬텀도 여기 case 가 없다 — 반쪽 배선을 피한 결과다(아크캐스터 BA7 과 같은 판단).**
+    // AS8「처형인의 적공」이 이 앵커로 처치 스택을 셀 수는 있지만, 그 스택이 **소모되는 자리**
+    // (해제 첫 타 배율의 소진 지점 = `world.ts` autoAttack)는 앵커가 아니다. 카운터만 돌리면
+    // 슬롯 1칸이 영구히 아무것도 안 하는 상태로 해시에 접힌다.
     default:
       break;
   }
@@ -424,6 +475,9 @@ function dispatchBulletExpiredSkill(state: WorldState, bullet: Entity): void {
     // ⚠️ **브루저는 여기 case 가 없다 — 쓸 설계 항목이 없다.** 관통 예산 소진에 반응하는
     // 브루저 스킬은 0종이다. BL3(만재 중탄)의 "명중 지점 폭발" 은 **명중마다**여야 하는데 이
     // 앵커는 예산이 바닥난 마지막 명중에서만 불린다 — 그 자리는 앵커 ⑩ 이다.
+    // ⚠️ **팬텀도 여기 case 가 없다 — 쓸 설계 항목이 0종이다.** 관통 예산 소진에 반응하는
+    // 팬텀 스킬은 없다. AS10(유령 탄도)의 다중 벽 통과는 관통 예산과 **별개 축**이라고 설계서가
+    // 못 박았고(유지율은 벽마다 곱연산), 그 판정 자리는 `world.ts` 의 벽 차단 분기다.
     default:
       break;
   }
@@ -459,6 +513,15 @@ function dispatchWallContactSkill(state: WorldState, player: Entity): void {
     // 있는 것은 **적용부**다: 이 스킬은 정산 임계 자체를 낮추는데, 그 비교
     // (`aux1 >= CUSHION_RECOVER_TICKS`)는 `world.ts` 의 정산 분기 안이라 앵커가 없다.
     // 그래서 ME9 는 통째로 미배선이고, CU7 의 분모도 함께 상수 180 에 묶여 있다.
+    case SIG_PHANTOM_CLOAK:
+      // DI6 차폐 잠행 — 벽 접촉 틱의 무피격 적립을 가속한다(`advanceCloak` 경유).
+      // **팬텀만 이 앵커에 case 가 있다.** 앞 세 기체는 술어를 읽기만 했지만 이 스킬은 접촉
+      // 사건 자체가 트리거라, 사건이 일어난 틱을 아는 자리가 여기밖에 없다.
+      //
+      // 설계서는 이 스킬에 신규 벽 접촉 플래그(구현 태그 B)를 세우라고 적었으나 S0 의 E5 가
+      // 같은 술어를 `state.wallContactTicks` 로 이미 세워 뒀다 — 슬롯을 잡지 않는다.
+      phantomWallContact(state, player);
+      break;
     default:
       break;
   }
@@ -522,6 +585,11 @@ export function onDamageChain(state: WorldState, player: Entity, dmg: number): n
       // 자리에만 걸면 자기 기체의 지연 정산분에는 안 걸린다 — CU7 은 설계 자체가 피격 경로
       // 한정이라 해당하지 않지만, 뒤 레인이 같은 자리에 다른 스킬을 얹을 때 반드시 볼 것.
       return mallowDamageChain(state, player, dmg);
+    case SIG_PHANTOM_CLOAK:
+      // ① DI3 초탄 감쇄(감소). 흡수 칸을 쓰는 팬텀 스킬은 없다.
+      // 이 자리는 팬텀 피격 리셋(`aux0 = 0`)보다 **앞**이라 여기서 읽는 스트릭이 설계서가
+      // 요구한 "이 피격 직전까지 쌓인 무피격 틱"이다 — 효과 함수 주석이 그 순서의 근거다.
+      return phantomDamageChain(state, player, dmg);
     default:
       break;
   }
@@ -595,6 +663,17 @@ function dispatchSignatureStepSkill(
     // 이 저장소의 지배적 실패 모드가 정확히 그 형태이고(같은 술어를 여러 곳에 적어 화면과
     // 규칙이 갈린다), 액티브 4종이 임계를 수동 주입하는 기체라 어긋남이 조용히 커진다.
     // 정산 분기에 앵커가 뚫릴 때까지 9종은 **코드가 없다**.
+    case SIG_PHANTOM_CLOAK:
+      // DI2 은둔 재생(창 안 주기 회복) · DI5 내부 쿨다운 진행.
+      // 이 앵커는 `stepShipSignature` **진입점**이라 팬텀 적립(`aux0++`)보다 앞이다 — DI2 의
+      // 주기 판정이 그 전제 위에 서 있다(효과 함수 주석).
+      //
+      // ⚠️ PH5(연장 위상)·PH6(정지된 시계)은 여기 없다. 둘 다 **적립 분기 그 자리**(`aux0++`
+      // 와 되감기 조건)를 고쳐야 하는데 그 분기는 이 앵커 **뒤**의 `world.ts` 코드다.
+      // 앵커에서 사후 관측으로 흉내 내면 액티브 진입(`activeHandlers/phantom.ts`)과 구분이
+      // 안 돼 조용히 오발동한다(브루저 FO4·FO8·FO9 와 같은 판단).
+      phantomSignatureStep(state, player);
+      break;
     default:
       break;
   }
@@ -714,6 +793,18 @@ function dispatchEnemyDamagedSkill(
       if (p !== undefined) mallowEnemyDamaged(state, p, target, source);
       break;
     }
+    case SIG_PHANTOM_CLOAK: {
+      // AS4 급소 해부(만피 선타) · AS5 배후 격살. 둘 다 **플레이어 좌표**가 필요하다(AS5 의
+      // 후방 반구 판정) — 이 앵커는 표적만 넘기므로 위 사본으로 집는다.
+      //
+      // ⚠️ AS3(처형 재장전)은 여기 없다 — 트리거가 "**해제 첫 타(강화탄)**로 처치" 인데,
+      // 그 강화탄을 식별할 마커는 **발사 시점**에 탄에 심어야 하고 앵커 ① 에는 탄이 없다.
+      // `source` 만 보고 "지금 은신 창인가"로 대체하면 강화탄이 아닌 탄까지 재장전을 일으켜
+      // 창 안 전 발사가 2.5배가 된다 — 설계와 정반대다.
+      const p = playerOf(state);
+      if (p !== undefined) phantomEnemyDamaged(state, p, target, dmg);
+      break;
+    }
     default:
       break;
   }
@@ -789,6 +880,11 @@ function dispatchEnemyDeathSkill(
       if (p !== undefined) bruiserEnemyDeath(state, p, elite);
       break;
     }
+    // ⚠️ **팬텀은 여기 case 가 없다 — 필요한 것이 사건이 아니라 지점이기 때문이다.**
+    // AS6「무성 격살」은 "은신 창 중 처치한 적이 죽음의 잔재를 남기지 않는다" 인데, 그 잔재를
+    // 만드는 곳은 `elite.ts` 의 `explodeElite` 와 `world.ts` 의 BK_SPLIT 분열이고 둘 다 이
+    // 앵커보다 **앞**에서 이미 실행됐다. 여기서 뒤늦게 알아 봐야 파편은 이미 태어났다.
+    // AS9(절멸 선고)는 격추가 아니라 **해제 첫 타의 명중 지점**이 트리거라 축이 다르다.
     default:
       break;
   }
@@ -801,6 +897,10 @@ function dispatchEnemyDeathSkill(
 // ⚠️ **아크캐스터는 세 앵커 전부 case 가 없다 — 설계에 레벨업·파워업 결속 스킬이 한 종도
 // 없기 때문이다.** 이 기체의 30종은 시그니처(과충전)·액티브·피격·정지 경제에만 붙는다.
 // 누락이 아니라 **해당 없음**이다.
+//
+// ⚠️ **팬텀도 세 앵커 전부 case 가 없다 — 같은 사유다.** 팬텀 30종 중 레벨업·파워업 제시·
+// 파워업 선택에 반응하는 스킬이 0종이다(런 내 성장은 DI8 이 담당하는데 그 트리거는 은신 진입
+// 에지이고, 그 자리는 `cloak.ts` 의 `fireCloakEntry` 다).
 
 /**
  * 앵커 ⑫ — **레벨이 오른 직후**(`checkLevelUp`).

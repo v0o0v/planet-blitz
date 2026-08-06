@@ -19,6 +19,9 @@ import {
   cloakWindowActive,
   SIG_PHANTOM_CLOAK,
 } from './shipSignature.js';
+// ⚠️ **`skills/phantom.ts` 가 아니라 `skills/phantomEntry.ts` 다.** 전자는 `advanceCloak` 을
+// 쓰려고 이 파일을 런타임 import 하므로 여기서 부르면 순환이 된다(그 파일 헤더의 그래프 참조).
+import { phantomCloakEntry } from './skills/phantomEntry.js';
 
 /**
  * 팬텀 은신 — **적이 지금 플레이어를 조준 대상으로 삼을 수 있는가**의 술어.
@@ -110,11 +113,16 @@ export function setBreakToken(state: WorldState, player: Entity, value: number):
  * 필요한 "직전 값" 은 호출부의 지역 변수이고, 여기서 다시 만들면 정본이 둘이 된다.
  */
 export function fireCloakEntry(state: WorldState, player: Entity): void {
-  // 진입 훅 스킬이 얹히기 전까지는 빈 디스패처다(S0 §5 의 앵커 규율과 같은 형태).
-  // 인자를 지우면 훅을 넣을 때 호출부 셋을 다시 고쳐야 하고, 그때 하나를 빠뜨리는 것이
-  // 정확히 이 함수가 막으려는 실패다.
-  void state;
-  void player;
+  // 첫 줄은 앵커 공통 계약과 같다 — 미투자 런은 여기서 즉시 빠져나가므로 바이트 단위로 종전과
+  // 같다(`skillHooks.ts` 의 전 디스패치가 같은 형태).
+  if (!state.skillsOn) return;
+  // 기체 게이트는 **호출부가 이미 걸었다** — 이 함수에 닿는 경로는 `stepShipSignature` 의 팬텀
+  // 분기 · `advanceCloak` · `activeHandlers/phantom.ts` 셋뿐이고 셋 다 팬텀 전용이다.
+  // 그래도 `sigBit` 을 여기서 한 번 더 보는 이유는 `skillSlots.ts` 값 규약 4 다: 진입 훅이
+  // 손대는 `maxHp`/적 상태는 슬롯이 아니라 **공용 칸**이라, 훗날 다른 기체가 이 헬퍼를
+  // 재사용하는 순간 게이트 없는 쓰기가 된다.
+  if (state.sigBit !== SIG_PHANTOM_CLOAK) return;
+  phantomCloakEntry(state, player);
 }
 
 /**
