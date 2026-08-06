@@ -50,21 +50,46 @@ import { defineConfig, configDefaults } from 'vitest/config';
  * 합쳐도 165초라 16워커에 흩어지면 벽시계에 안 나타나고, 반대로 회귀 면적(진행 곡선·드롭
  * 테이블·리플레이 검증)은 매 편집에 지키고 싶은 축이다.
  */
+/**
+ * ## 재편 (2026-08-06, ADR-0051) — 레인이 **결정론 골든 전용**으로 줄었다
+ *
+ * 위 두 블록은 **이력**이다. 거기 나열된 계측 4 · 완주 e2e 2 가 이제 이 배열에 없다 —
+ * `docs/adr/0051-balance-by-telemetry-bot-measurement-off-the-gate.md` 가 판정 규칙 하나로
+ * 갈랐다: **단언이 "봇이 이길 수 있는가"에 의존하면 게이트에서 내리고, "값이 흘러가는가"에만
+ * 의존하면 남기되 완주가 아니라 최소 틱으로 증명한다.**
+ *
+ * - 계측(`commissionBandMeasure`·`invasionBalance` 의 통계분) → `bench/` CLI 로 이관.
+ *   `include` 가 `tests/**` 라 **구조적으로 수집 불가**다. `exclude` 에 넣지 마라 — 넣으면
+ *   "수집 대상이었다"는 오해를 만든다.
+ * - 완주 e2e(`fullRun`·`planetTierCompletion`) → 삭제.
+ * - 배선 증명(`balanceHarness`·`planetPopularity`·`invasionBalance` 의 배선분) → **최소 틱으로
+ *   다시 써서 기본 스위트로 복귀**. 실측 121.3초 → 8.3초.
+ *
+ * ## ⚠️ ADR-0051 은 "레인이 사라진다"고 적었다. 사라지지 않는다 — 실측이 막았다
+ *
+ * ADR 의 §결과 는 `test:sim` 폐지와 검증 2단화를 예상했다. 남은 셋을 실제로 재 보니 그럴 수 없다
+ * (2026-08-06, 같은 16코어):
+ *
+ * | 파일 | 벽시계 |
+ * |---|---|
+ * | `encounterHashInvariance` (18건) | 약 10초 |
+ * | `shipHashBaseline` (34건) | 20.4초 |
+ * | **`denoFixture` (5건)** | **443.7초** |
+ * | 합계 (57건, 전부 초록) | **445.3초** |
+ *
+ * `denoFixture` 혼자 **7분 24초**다. 이걸 기본 스위트에 넣으면 `pnpm verify` 가 2분 30초에서
+ * 10분대가 된다 — ADR-0051 이 줄이려던 바로 그 비용을 다시 만든다.
+ *
+ * **ADR 의 판정 규칙과 모순되지 않는다.** 남은 셋은 갈래 ①(봇 실력 계측)도 ②(봇 완주)도
+ * 아니고 **재현성**을 잰다 — ADR 이 다루지 않은 제3의 축이다. 규칙은 그대로 두고 경계만
+ * 여기서 실측으로 정한다.
+ */
 export const SIM_LANE_FILES: readonly string[] = [
-  // 계측 — 수치를 잰다.
-  'tests/commissionBandMeasure.test.ts',
-  'tests/planetPopularity.test.ts',
-  'tests/invasionBalance.test.ts',
-  'tests/balanceHarness.test.ts',
-
-  // 결정론·골든 해시 — 재현성을 잰다.
+  // 결정론·골든 해시 — 재현성을 잰다. **이것이 이 레인의 전부다**(ADR-0051 이후).
+  // 돌려야 하는 때: `src/sim/**` 을 건드려 해시·거동이 갈릴 수 있을 때.
   'tests/denoFixture.test.ts',
   'tests/shipHashBaseline.test.ts',
   'tests/encounterHashInvariance.test.ts',
-
-  // 완주 e2e — 런 전체를 돌린다.
-  'tests/fullRun.test.ts',
-  'tests/planetTierCompletion.test.ts',
 ];
 
 export default defineConfig(({ command, mode }) => ({
