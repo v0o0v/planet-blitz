@@ -149,7 +149,7 @@ describe('① 전수 대조 — 분류 배열이 필드 전부를 덮는다', ()
     expect(unclassified, `미분류 엔티티 키: ${unclassified.join(', ')}`).toEqual([]);
   });
 
-  it('배열 길이 합이 실제 필드 수와 같다 (WorldState 76 · Entity 25)', () => {
+  it('배열 길이 합이 실제 필드 수와 같다 (WorldState 78 · Entity 25)', () => {
     // 숫자를 박아 두는 이유: 필드가 늘었는데 분류도 같이 늘면 위 대조는 통과하지만, 그때
     // **분류 판단이 실제로 있었는지**는 이 숫자가 바뀌는 것으로만 드러난다.
     // 61 → 62: `commissionRuntime` 신설(의뢰 구간 전환 코어 2단계). 62 → 64: `activeTune0/1`
@@ -168,7 +168,11 @@ describe('① 전수 대조 — 분류 배열이 필드 전부를 덮는다', ()
     // 승계 목록에 넣으면 정본이 둘이 된다).
     // ⚠️ `WORLD_RESET_ZERO` 는 선언이 `NumericKeys<WorldState>` 라 배열 필드를 못 받는다 —
     // 두 슬롯 배열의 선택지는 CARRY 와 FRESH 둘뿐이었다.
-    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(76);
+    // 76 → 78: 촉매 재구축 공유 기반(ADR-0052) 둘. `catalystSlots`(6칸) · `catalystOn` —
+    // **둘 다 FRESH** 다. 스킬과 달리 이월/구간 2벌로 가르지 않은 근거는 헌장의 "침공·의뢰
+    // 런에는 촉매가 들어가지 않는다" 이고(구간 전환이 존재하지 않으므로 이월/0리셋이 둘 다
+    // 관측 불가한 무연산이다), 덕분에 `skillCarry` 가 밟고 있는 참조 대입 공유를 안 밟는다.
+    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(78);
     expect(ENTITY_CARRY.length + ENTITY_RESET_ZERO.length + ENTITY_FRESH.length).toBe(25);
   });
 });

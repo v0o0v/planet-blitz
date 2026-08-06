@@ -22,7 +22,25 @@
  * > ⚠️ 지시서 `s0-shared-foundation.md` §7 은 이 `switch` 들이 `world.ts` 에 있다고 적었다.
  * > 위 ①②가 그 배치를 막았다 — **레인이 만지는 파일이 `world.ts` 가 아니라 이 파일**이다.
  *
- * ## 전 앵커 공통 계약
+ * ## ⚠️ 앵커는 **2단 디스패치**다 — 스킬과 촉매가 같은 지점을 공유한다
+ * 공개 앵커(이 파일의 `export function on*`)는 sim 이 부르는 **진입점**일 뿐이고, 본체는
+ * 두 갈래로 갈린다:
+ *
+ * ```
+ * onVolleyFired(…)  →  dispatchVolleySkill(…)      ← 이 파일. 스킬 7레인이 만진다.
+ *                   →  onVolleyFiredCatalyst(…)    ← catalystHooks.ts. 촉매 레인이 만진다.
+ * ```
+ *
+ * **왜 쪼갰는가.** 스킬 디스패치는 `if (!state.skillsOn) return;` + `switch (state.sigBit)` 로
+ * 시작하는데 촉매는 ①스킬 투자와 무관하고 ②기체와 무관하다. 한 본체에 두면 **무투자 런에
+ * 촉매만 켠 경우 첫 줄에서 즉시 반환**해 촉매가 한 장도 못 탄다. 파일을 가른 것은 그 위에
+ * 더해, 7 스킬 레인과 촉매 레인이 **같은 9개 함수를 동시에 만지는 것**을 막기 위해서다.
+ *
+ * 호출 순서는 **스킬 먼저, 촉매 나중**이다. 예외가 하나 있다 — 감쇠 사슬의 촉매 배율은
+ * `preMitigationDmg` 캡처보다 앞이어야 해서 `world.ts` 가 직접 부른다(`onDamageChainCatalyst`
+ * 주석 참조). 이 파일의 {@link onDamageChain} 은 촉매를 부르지 않는다.
+ *
+ * ## 전 스킬 디스패치 공통 계약
  *  - 첫 줄은 **항상** `if (!state.skillsOn) return;` 이다. 미투자 런은 여기서 즉시 빠져나가므로
  *    바이트 단위로 종전과 같다.
  *  - 다음은 `switch (state.sigBit)` 다. 슬롯 번호가 기체별로 겹치므로(`skillSlots.ts` 값 규약 4)
@@ -34,6 +52,16 @@
 
 import type { WorldState, InputFrame } from './world.js';
 import type { Entity } from './entities.js';
+import {
+  onVolleyFiredCatalyst,
+  onDashFiredCatalyst,
+  onGemCollectedCatalyst,
+  onPlayerDamagedCatalyst,
+  onKillsDeltaCatalyst,
+  onBulletExpiredCatalyst,
+  onWallContactCatalyst,
+  onTickCatalyst,
+} from './catalystHooks.js';
 
 // ---------------------------------------------------------------------------
 // 공유 술어
@@ -84,6 +112,11 @@ export function survivedLethalBlow(
  * 카운터가 같은 자리에 있는 이유와 같다.
  */
 export function onVolleyFired(state: WorldState, player: Entity): void {
+  dispatchVolleySkill(state, player);
+  onVolleyFiredCatalyst(state, player);
+}
+
+function dispatchVolleySkill(state: WorldState, player: Entity): void {
   if (!state.skillsOn) return;
   void player;
   switch (state.sigBit) {
@@ -95,6 +128,11 @@ export function onVolleyFired(state: WorldState, player: Entity): void {
 
 /** 앵커 ② — **대시가 실제로 발동한 지점**(`input.dash && dashCooldown === 0` 안쪽). */
 export function onDashFired(state: WorldState, player: Entity): void {
+  dispatchDashSkill(state, player);
+  onDashFiredCatalyst(state, player);
+}
+
+function dispatchDashSkill(state: WorldState, player: Entity): void {
   if (!state.skillsOn) return;
   void player;
   switch (state.sigBit) {
@@ -109,6 +147,11 @@ export function onDashFired(state: WorldState, player: Entity): void {
  * `compact` 가 젬을 뿌린다(지시서 §8 X-1 이 이 전제를 뒤집었다). "침공엔 젬이 없다"로 짜지 마라.
  */
 export function onGemCollected(state: WorldState, gem: Entity): void {
+  dispatchGemSkill(state, gem);
+  onGemCollectedCatalyst(state, gem);
+}
+
+function dispatchGemSkill(state: WorldState, gem: Entity): void {
   if (!state.skillsOn) return;
   void gem;
   switch (state.sigBit) {
@@ -125,6 +168,16 @@ export function onGemCollected(state: WorldState, gem: Entity): void {
  * @param lethalSurvived {@link survivedLethalBlow} 의 결과 — **여기서 다시 계산하지 마라**
  */
 export function onPlayerDamaged(
+  state: WorldState,
+  player: Entity,
+  dmg: number,
+  lethalSurvived: boolean,
+): void {
+  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived);
+  onPlayerDamagedCatalyst(state, player, dmg, lethalSurvived);
+}
+
+function dispatchPlayerDamagedSkill(
   state: WorldState,
   player: Entity,
   dmg: number,
@@ -148,6 +201,11 @@ export function onPlayerDamaged(
  * 스킬이 이번 틱 드랍을 보려면 한 틱 늦는다 — 이건 알려진 성질이지 결함이 아니다.
  */
 export function onKillsDelta(state: WorldState, delta: number): void {
+  dispatchKillsDeltaSkill(state, delta);
+  onKillsDeltaCatalyst(state, delta);
+}
+
+function dispatchKillsDeltaSkill(state: WorldState, delta: number): void {
   if (!state.skillsOn) return;
   void delta;
   switch (state.sigBit) {
@@ -161,6 +219,11 @@ export function onKillsDelta(state: WorldState, delta: number): void {
  * "명중해서 예산이 바닥났다" 다(자이로 무한 관통·프리즘 세그먼트는 이 분기 밖이다).
  */
 export function onBulletExpired(state: WorldState, bullet: Entity): void {
+  dispatchBulletExpiredSkill(state, bullet);
+  onBulletExpiredCatalyst(state, bullet);
+}
+
+function dispatchBulletExpiredSkill(state: WorldState, bullet: Entity): void {
   if (!state.skillsOn) return;
   void bullet;
   switch (state.sigBit) {
@@ -174,6 +237,11 @@ export function onBulletExpired(state: WorldState, bullet: Entity): void {
  * 술어의 권위는 `slideCircleWalls` 다 — 여기서 기하를 다시 적지 마라(그 지점 주석의 근거).
  */
 export function onWallContact(state: WorldState, player: Entity): void {
+  dispatchWallContactSkill(state, player);
+  onWallContactCatalyst(state, player);
+}
+
+function dispatchWallContactSkill(state: WorldState, player: Entity): void {
   if (!state.skillsOn) return;
   void player;
   switch (state.sigBit) {
@@ -201,7 +269,13 @@ export function onWallContact(state: WorldState, player: Entity): void {
  * 스킬이 없는 런의 소수 피해까지 바뀌어 기존 해시가 통째로 갈린다 — 이 경고는 브루저·버블·
  * 말로우 세 곳에 이미 같은 문장으로 적혀 있고, 그 셋이 전부 게이트 **안**에서 정수화한다.
  *
- * @param dmg 무대 배율·피격 배수까지 반영된 사슬 진입 피해
+ * ## ⚠️ 이 앵커만 촉매를 부르지 않는다
+ * 촉매 피해원 배율은 **`preMitigationDmg` 캡처보다 앞**이어야 하는데 이 함수는 캡처 **뒤**에
+ * 불린다. 그래서 `world.ts` 가 `onDamageChainCatalyst` 를 캡처 직전에 따로 부른다 —
+ * 여기서 촉매를 부르면 `survivedLethalBlow` 의 "경감 전 피해"가 촉매를 못 보게 되어 브루저
+ * FO5 · 아크캐스터 BR10 의 의미가 조용히 뒤집힌다.
+ *
+ * @param dmg 무대 배율·피격 배수·**촉매 피해원 배율**까지 반영된 사슬 진입 피해
  * @returns 스킬 감소·흡수를 거친 피해. S0 는 인자를 그대로 돌려준다(비트 동일).
  */
 export function onDamageChain(state: WorldState, player: Entity, dmg: number): number {
@@ -222,6 +296,17 @@ export function onDamageChain(state: WorldState, player: Entity, dmg: number): n
  * 있어야 전 기체에서 매 틱 돈다. 분기 안으로 옮기지 마라.
  */
 export function onSignatureStep(state: WorldState, player: Entity, input: InputFrame): void {
+  dispatchSignatureStepSkill(state, player, input);
+  // 촉매의 매-틱 자리. `input` 을 넘기지 않는 것은 의도다 — 촉매 48종 중 입력을 읽는 카드가
+  // 없고, 넘기면 "촉매가 입력에 반응해도 된다"는 잘못된 여지가 생긴다.
+  onTickCatalyst(state, player);
+}
+
+function dispatchSignatureStepSkill(
+  state: WorldState,
+  player: Entity,
+  input: InputFrame,
+): void {
   if (!state.skillsOn) return;
   void player;
   void input;

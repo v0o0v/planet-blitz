@@ -25,6 +25,7 @@ import { GUARDIAN_SNAPSHOT_FIELDS } from './invasion/normalize.js';
 import { stepRun } from './commissionSegment.js';
 import { commissionOrderWire } from '../run/commission.js';
 import { SKILL_SLOT_COUNT } from './skillSlots.js';
+import { CATALYST_SLOT_COUNT } from './catalystSlots.js';
 import type {
   Invasion3Config,
   InvasionGuardianPlacement,
@@ -730,6 +731,36 @@ export function hashWorld(state: WorldState): number {
   if (skillSlotAny) {
     for (let i = 0; i < SKILL_SLOT_COUNT; i++) h = hashU32(h, (sc[i] ?? 0) >>> 0);
     for (let i = 0; i < SKILL_SLOT_COUNT; i++) h = hashU32(h, (ss[i] ?? 0) >>> 0);
+  }
+  // --- 촉매 슬롯 6칸(APPEND-ONLY, 조건부 꼬리 · ADR-0052) ---
+  // `state.catalystSlots` 한 벌. 촉매 48종이 런타임 상태를 두는 **유일한 자리**이고
+  // (`src/sim/catalystSlots.ts` 가 폭·값 규약의 정본), 접는 이유는 그 값이 sim 산술에 실제로
+  // 들어가기 때문이다 — 같은 시드·같은 입력이라도 슬롯이 다르면 다른 런이다.
+  //
+  // **왜 스킬 폴드 뒤인가.** 이 파일은 APPEND-ONLY 다. 스킬 슬롯 폴드가 직전까지의 진짜 꼬리
+  // 였으므로 그 뒤에 이어 붙여야 기존 리플레이 재현 계약이 하나도 안 흔들린다. 신규 필드는
+  // 이 아래에만 append 하고, **커밋 직전에 꼬리를 다시 열어 진짜 맨 끝인지 확인하라** —
+  // 스킬 레인과 촉매 레인이 같은 재생성 창에 착지하는 동안 이 자리가 두 번 밀렸다.
+  //
+  // ⚠️ **all-or-nothing.** 6칸을 하나의 OR 조건으로 묶고, 참이면 6칸 전부를 고정 폭으로
+  // 접는다. 칸별로 "0이면 생략"하면 (1,0,…) 과 (0,1,…) 이 같은 바이트열이 되어 충돌한다.
+  //
+  // ⚠️ **길이 프리픽스를 접지 마라.** 폭이 `CATALYST_SLOT_COUNT` 고정이라 길이는 상수이고,
+  // 접으면 정보량 0 의 파생 폴드가 되어 금지 규율 위반이다(`totalTicks` 선례).
+  //
+  // **`catalystOn` 은 접지 않는다** — `config.catalysts` 의 순수 파생이고 그 배열이 이미
+  // 해시에 실린다(파생 폴드는 정보량 0). 무촉매 런은 전 슬롯 0 이라 이 폴드가 한 번도
+  // 실행되지 않는다 = 기존 골든 바이트 불변.
+  const cat = state.catalystSlots;
+  let catalystSlotAny = false;
+  for (let i = 0; i < CATALYST_SLOT_COUNT; i++) {
+    if (((cat[i] ?? 0) >>> 0) !== 0) {
+      catalystSlotAny = true;
+      break;
+    }
+  }
+  if (catalystSlotAny) {
+    for (let i = 0; i < CATALYST_SLOT_COUNT; i++) h = hashU32(h, (cat[i] ?? 0) >>> 0);
   }
   return h >>> 0;
 }
