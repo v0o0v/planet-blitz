@@ -100,6 +100,8 @@ export function writeSlot(slots: number[], slot: number, value: number): void {
 //   스트라이커 (SIG_STRIKER_MARKSMAN) — 아래 두 enum
 //   브루저     (SIG_BRUISER_ARMOR)    — 미배정
 //   아크캐스터 (SIG_ARC_OVERCHARGE)   — 파일 끝 두 enum
+//   브루저     (SIG_BRUISER_ARMOR)    — 아래 두 enum
+//   아크캐스터 (SIG_ARC_OVERCHARGE)   — 미배정
 //   팬텀       (SIG_PHANTOM_CLOAK)    — 미배정
 //   해츨링     (SIG_HATCHLING_BROOD)  — 미배정
 //   말로우     (SIG_MALLOW_CUSHION)   — 미배정
@@ -178,4 +180,47 @@ export const enum ArccasterStage {
    * 만충 상태로 구간을 마친 런이 새 구간 첫 틱에 **유령 통과**를 만든다.
    */
   entryAux0Seen = 1,
+}
+
+/**
+ * **브루저 이월 슬롯**(ADR-0049 배치 2). 효과 본체는 `src/sim/skills/bruiser.ts`.
+ *
+ * 셋 다 **런 단위 자원**이라 구간을 넘어 살아야 한다 — 의뢰 다구간 런에서 구간마다 리셋되면
+ * 응혈 풀은 영영 정산되지 못하고(만재 엣지가 구간 초반에 잘 안 뜬다), FO7 의 50% 상한은
+ * 구간 수만큼 곱해져 상한이 사실상 사라진다. 그래서 `Stage` 가 아니라 `Carry` 다.
+ */
+export const enum BruiserCarry {
+  /**
+   * FO2 — **응혈 풀**. 실피격으로 잃은 HP 중 적립된 몫(정수 HP). 장갑이 상한에 도달하는
+   * **상승 엣지**에서 60% 가 회복으로 정산되고 나머지 40% 는 소멸한다. 0 = 적립 없음.
+   */
+  clotPool = 0,
+  /**
+   * FO7 — **런 시작 최대 HP**(누적 상한 50% 의 기준선). 첫 `stepShipSignature` 에 한 번만
+   * 잡는다. 0 = 아직 관측 없음 — `maxHp` 는 항상 양수라 자연 센티넬이다(값 규약 1).
+   */
+  trophyBaseHp = 1,
+  /**
+   * FO7 — 이 런에서 **FO7 이 실제로 준 최대 HP 누적분**. 파워업(`reinforced-hull` 등)이 같은
+   * `maxHp` 를 수시로 가산해 차분으로는 FO7 몫을 분리할 수 없어 전용 칸이 필요하다(설계서 R-6).
+   */
+  trophyGranted = 2,
+}
+
+/**
+ * **브루저 구간 슬롯**. 둘 다 구간이 바뀌면 새로 시작하는 것이 옳다 — 명중 카운터와 직전 스택
+ * 관측값은 **그 구간의 진행 상태**이지 저금이 아니다(새 월드의 `aux0` 도 0 에서 다시 시작한다).
+ */
+export const enum BruiserStage {
+  /**
+   * FO2 — **직전 틱에 관측한 장갑 스택**. 만재 상승 엣지(`prev < 상한 && cur >= 상한`)를 재는
+   * 데만 쓴다. 레벨 술어(`aux0 == 상한`)로 대체하면 fortify 액티브의 SUSTAIN 이 매 틱 만재를
+   * 재설정하는 동안 **매 틱 정산**이 된다.
+   */
+  prevArmorStacks = 0,
+  /**
+   * BL9 — **N 주기 명중 카운터**. 강타가 터진 틱에 0 으로 되돌아간다. N 은 고정이 아니라
+   * 장갑 스택에서 매 명중마다 파생되므로(`max(1, round(48/(4+스택)))`) 이 칸에는 카운트만 산다.
+   */
+  cadenceHits = 1,
 }

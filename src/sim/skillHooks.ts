@@ -69,7 +69,11 @@ import {
   onPowerupOfferCatalyst,
   onPowerupPickedCatalyst,
 } from './catalystHooks.js';
-import { SIG_STRIKER_MARKSMAN, SIG_ARC_OVERCHARGE } from './shipSignature.js';
+import {
+  SIG_STRIKER_MARKSMAN,
+  SIG_ARC_OVERCHARGE,
+  SIG_BRUISER_ARMOR,
+} from './shipSignature.js';
 import {
   strikerDashFired,
   strikerGemCollected,
@@ -86,6 +90,15 @@ import {
   arccasterSignatureStep,
   arccasterEnemyDamaged,
 } from './skills/arccaster.js';
+import {
+  bruiserDashFired,
+  bruiserGemCollected,
+  bruiserPlayerDamaged,
+  bruiserDamageChain,
+  bruiserSignatureStep,
+  bruiserEnemyDamaged,
+  bruiserEnemyDeath,
+} from './skills/bruiser.js';
 
 // ---------------------------------------------------------------------------
 // 공유 술어
@@ -160,6 +173,11 @@ function dispatchVolleySkill(state: WorldState, player: Entity): void {
     // 탄수 · BA1 의 착지 볼리) 전부 **이 지점 뒤에서 정해지는 값**을 요구한다. 이 앵커는 "무기
     // 아키타입 분기보다 앞"이라 탄이 아직 없고 `bulletCount`/`fireCooldownQ` 도 아직 안 읽혔다.
     // 표식·배율은 `world.ts` 의 발사부가 소유해야 한다.
+    // ⚠️ **브루저도 여기 case 가 없다 — 누락이 아니라 미배선이다.** 이 앵커를 쓰는 설계 항목은
+    // BL2(근접 볼리 증폭+관통)·BL3(만재 중탄)·BL6(중량 탄자)·BL8(담금질 탄) 넷인데, 전부
+    // **이번 볼리의 탄 파라미터**(피해·관통·탄속·수명)를 바꿔야 한다. 이 앵커는 무기 아키타입
+    // 분기보다 **앞**이라 탄이 아직 없고, 인자도 `(state, player)` 뿐이다 — 여기서는 원리적으로
+    // 닿지 않는다. 그 절반은 `world.ts` 의 볼리 생성부가 소유해야 한다.
     default:
       break;
   }
@@ -179,6 +197,11 @@ function dispatchDashSkill(state: WorldState, player: Entity): void {
       break;
     // ⚠️ **아크캐스터는 여기 case 가 없다 — 설계에 대시 결속 스킬이 한 종도 없기 때문이다.**
     // 이 기체의 이동 결속은 전부 blink 액티브(BA1·BA4·BA6)이고 그것은 액티브 핸들러의 자리다.
+    case SIG_BRUISER_ARMOR:
+      // MO1 충각 적재(스택 +1 · 감쇠 타이머 리셋) · MO8 벽 되튐(쿨다운 환급).
+      // 둘 다 이 앵커가 `dashCooldown` 대입 **뒤**라는 데 의존한다 — 그 근거는 효과 함수 주석.
+      bruiserDashFired(state, player);
+      break;
     default:
       break;
   }
@@ -210,6 +233,16 @@ function dispatchGemSkill(state: WorldState, gem: Entity): void {
       // **플레이어**라 위 사본으로 집는다(스트라이커 M3 와 같은 사유).
       const p = playerOf(state);
       if (p !== undefined) arccasterGemCollected(state, p);
+      break;
+    }
+    case SIG_BRUISER_ARMOR: {
+      // MO9 수확 고정 — 젬 수거마다 감쇠 타이머(`aux1`)를 되감는다. 대상이 젬이 아니라
+      // **플레이어**라 위와 같은 사본으로 집는다.
+      //
+      // ⚠️ MO2(파쇄 수확)는 여기 없다 — 그 스킬은 **젬 스폰 시점**에 견인 상태를 초기화해야
+      // 하는데(`stepGems` 흡인 로직), 이 앵커는 이미 **수거가 끝난 뒤**라 견인할 젬이 없다.
+      const p = playerOf(state);
+      if (p !== undefined) bruiserGemCollected(state, p);
       break;
     }
     default:
@@ -265,6 +298,19 @@ function dispatchPlayerDamagedSkill(
       // 치명 생존 술어를 **둘 다** 보므로 인자를 그대로 넘긴다(스트라이커와 다른 점).
       arccasterPlayerDamaged(state, player, dmg, lethalSurvived);
       break;
+    case SIG_BRUISER_ARMOR:
+      // BL4 과적 배출 · FO2 응혈 적립 · FO5 불괴 연쇄.
+      // 브루저는 스트라이커와 달리 **둘 다 필요하다** — FO2 는 적립량이 `dmg` 에 비례하고,
+      // FO5 는 `lethalSurvived` 가 트리거 자체다(사슬 안에서 계산된 값을 그대로 넘긴다).
+      //
+      // ⚠️ BL1(응전 사출)은 여기 없다 — **설계서의 내부 쿨 술어가 이 지점에서 성립하지 않는다.**
+      // 설계는 "내부 쿨 60틱은 `aux1` < 60 판정으로 대체 가능(신규 상태 0)" 이라고 적었으나,
+      // 장갑 적립이 이 앵커보다 **앞**이라(world.ts 4317-4320) 여기 도달한 시점의 `aux1` 은
+      // **항상 0** 이다. 그 술어를 그대로 쓰면 쿨이 영영 안 풀리거나(< 60 이면 스킵) 매 피격
+      // 발동(≥ 60 이면 스킵)이 되어 어느 쪽이든 설계와 다르다. 슬롯 1칸이 필요하고, 그것은
+      // 칼날 축 B 예산(BL8·BL9 로 2/2 포화)을 넘기므로 설계로 되돌아가야 한다.
+      bruiserPlayerDamaged(state, player, dmg, lethalSurvived);
+      break;
     default:
       break;
   }
@@ -296,6 +342,9 @@ function dispatchKillsDeltaSkill(state: WorldState, delta: number): void {
     // 이 앵커로 처치 6기를 셀 수는 있지만, 그 카운터가 **적용되는 자리**(다음 볼리의 탄수)는
     // 앵커 ① 뒤의 발사부라 지금 닿지 않는다. 카운터만 돌리면 슬롯 2칸이 영구히 아무것도 안 하는
     // 상태로 해시에 접힌다 — "구현했는데 안 불린다"의 전형이라 통째로 미배선으로 뒀다.
+    // ⚠️ **브루저는 여기 case 가 없다 — 쓸 설계 항목이 없다.** 처치 "개수" 에 반응하는 브루저
+    // 스킬은 0종이다. 유일한 처치 트리거 FO7 은 **엘리트인지**와 **격파 시점 스택**을 함께
+    // 봐야 해서 개별 사건 앵커(⑪)로 갔다. MO2(파쇄 수확)는 처치가 아니라 젬 스폰 시점이다.
     default:
       break;
   }
@@ -320,6 +369,9 @@ function dispatchBulletExpiredSkill(state: WorldState, bullet: Entity): void {
     // **수명 만료**(reachLife) 소멸이 트리거인데 이 앵커는 **관통 예산 소진**이다. 설계서가 그
     // 둘을 스트라이커 F4 와의 분화점으로 못 박았으므로 여기 얹으면 두 스킬이 같은 것이 된다.
     // 수명 만료 분기에 앵커를 뚫는 것은 이 레인 밖이다.
+    // ⚠️ **브루저는 여기 case 가 없다 — 쓸 설계 항목이 없다.** 관통 예산 소진에 반응하는
+    // 브루저 스킬은 0종이다. BL3(만재 중탄)의 "명중 지점 폭발" 은 **명중마다**여야 하는데 이
+    // 앵커는 예산이 바닥난 마지막 명중에서만 불린다 — 그 자리는 앵커 ⑩ 이다.
     default:
       break;
   }
@@ -338,6 +390,9 @@ function dispatchWallContactSkill(state: WorldState, player: Entity): void {
   if (!state.skillsOn) return;
   void player;
   switch (state.sigBit) {
+    // ⚠️ **브루저도 여기 case 가 없다 — 같은 사유다.** MO8(벽 되튐)의 술어는 `wallContactTicks`
+    // 를 앵커 ② 에서 읽는 것으로 충분하다(설계서가 요구한 "직전 틱" 이 정확히 그 값이다).
+    //
     // ⚠️ **스트라이커는 여기 case 가 없다 — 세울 상태가 없기 때문이다.** 설계서는 M5·S4 를 위해
     // "직전 틱 벽 접촉 플래그" 를 슬롯에 세우라고 적었으나(구현 태그 B), S0 의 E5 가 같은 술어를
     // `state.wallContactTicks` 로 이미 세워 뒀다. 두 기체 모듈은 그 값을 읽기만 한다 — 같은
@@ -387,6 +442,11 @@ export function onDamageChain(state: WorldState, player: Entity, dmg: number): n
     case SIG_ARC_OVERCHARGE:
       // ① BR3·BR5 감소 → ② BR4 흡수. 순서는 이 앵커 주석이 못 박은 그대로다.
       return arccasterDamageChain(state, player, dmg);
+    case SIG_BRUISER_ARMOR:
+      // FO6 하중 전이(경감 + 대시 쿨 전이). 흡수 칸을 쓰는 브루저 스킬은 없다.
+      // ⚠️ 설계서는 이 스킬의 자리를 "브루저 장갑 **뒤**" 로 지정했는데 이 앵커는 장갑 **앞**
+      // 이다 — 사슬에 뚫린 유일한 스킬 자리라 여기 말고 둘 곳이 없다(효과 함수 주석에 근거).
+      return bruiserDamageChain(state, player, dmg);
     default:
       break;
   }
@@ -422,6 +482,17 @@ function dispatchSignatureStepSkill(
       // `input` 을 넘기지 않는 것은 의도다 — 여섯 전부 `aux0`(입력 기반 적립의 결과)만 읽는다.
       // 정지 술어를 입력에서 다시 유도하면 시그니처와 두 곳이 조용히 갈린다.
       arccasterSignatureStep(state, player);
+      break;
+    case SIG_BRUISER_ARMOR:
+      // FO1 상한 확장 · FO2 만재 상승 엣지 정산 · FO7 기준선 · MO6 압쇄장 주기.
+      // 이 앵커가 `stepShipSignature` **진입점**이라 브루저 감쇠 분기(바로 아래)와 이번 틱
+      // `resolveCollisions` 양쪽이 FO1 의 새 상한을 본다.
+      //
+      // ⚠️ FO4(부동 역적립)·FO8(탈피 재생)·FO9(사투 본능)은 여기 없다 — 셋 다 **감쇠 분기
+      // 그 자리**(소멸이 일어나는 `aux1 >= 180` 안쪽)를 고쳐야 하는데 그 분기는 이 앵커
+      // **뒤**의 `world.ts` 코드다. 앵커에서 스택 감소를 사후 관측해 흉내 내면 액티브의 스택
+      // 소각(blade_lo/hi)과 구분이 안 돼 조용히 오발동한다.
+      bruiserSignatureStep(state, player);
       break;
     default:
       break;
@@ -508,6 +579,17 @@ function dispatchEnemyDamagedSkill(
       // 앵커 ④ 에 있다. 즉 "전격 DoT 가 이 앵커에 안 온다"는 한계에 이 기체는 **부딪히지 않았다**.
       arccasterEnemyDamaged(state, target, source);
       break;
+    case SIG_BRUISER_ARMOR: {
+      // BL9 중압 리듬 — 명중 카운터 × 장갑 스택 파생 주기. 주기가 스택에서 나오므로
+      // **플레이어**가 필요하다(이 앵커는 표적만 넘긴다).
+      //
+      // ⚠️ BL7(파성퇴)은 여기 없다 — 이 앵커에는 `destructible` 도 오지만, 그 스킬은 "일격
+      // 파괴 + 그 자리 충격파" 라 **명중 해소 자체를 바꿔야** 한다(hp 를 0 으로 만들어도
+      // `dead` 판정은 이 앵커 앞에서 이미 끝났다 — 앵커 주석의 금지 사항 그대로다).
+      const p = playerOf(state);
+      if (p !== undefined) bruiserEnemyDamaged(state, p, target, dmg);
+      break;
+    }
     default:
       break;
   }
@@ -564,7 +646,6 @@ function dispatchEnemyDeathSkill(
   if (!state.skillsOn) return;
   void x;
   void y;
-  void elite;
   switch (state.sigBit) {
     // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다.
     //
@@ -572,6 +653,18 @@ function dispatchEnemyDeathSkill(
     // CH9「낙뢰 인양」은 `rollEliteDrop` 의 `rarityMult` 파라미터에 곱해야 하는데, 그 굴림은
     // 이 앵커보다 **앞**(`compact` 의 확보 단계)에서 이미 끝나 있다. 여기서 뒤늦게 알아 봐야
     // 드랍은 이미 정해졌다. 이 스킬은 `drops.ts` 호출부에 손잡이가 필요하다.
+    case SIG_BRUISER_ARMOR: {
+      // FO7 전리 개장 — 엘리트 격파 시 스택당 최대 HP 영구 증가 + 만재 재무장.
+      //
+      // ⚠️ **보스 격파는 이 앵커에 오지 않는다**(`compact` 의 보스/코어 분기는 `state.kills` 를
+      // 올리지 않는다). 설계서 FO7 은 "엘리트·보스" 이므로 **현재 배선은 엘리트 절반뿐**이다.
+      // 여기에 보스를 끼워 넣으면 처치 수와 호출 수의 항등이 깨진다 — 별도 앵커가 필요하다.
+      //
+      // 플레이어는 `compact()` 뒤라 사라져 있을 수 있다(같은 틱에 함께 죽은 경우).
+      const p = playerOf(state);
+      if (p !== undefined) bruiserEnemyDeath(state, p, elite);
+      break;
+    }
     default:
       break;
   }
@@ -611,6 +704,9 @@ function dispatchLevelUpSkill(state: WorldState, level: number): void {
   if (!state.skillsOn) return;
   void level;
   switch (state.sigBit) {
+    // ⚠️ **브루저는 성장 축 앵커 ⑫⑬⑭ 를 한 곳도 쓰지 않는다 — 쓸 설계 항목이 0종이다.**
+    // 브루저 30종 중 레벨업·파워업 제시·파워업 선택에 반응하는 스킬이 없다(런 내 성장은
+    // FO7 이 담당하는데 그 트리거는 엘리트 격파다). 누락이 아니라 설계 자체가 비어 있다.
     default:
       break;
   }
