@@ -237,7 +237,13 @@ export function bubbleFilmBurst(state: WorldState, player: Entity, x: number, y:
       if (e.dead || e.kind !== 'enemy') continue;
       const dx = e.x - x;
       const dy = e.y - y;
-      if (dx * dx + dy * dy <= r2) e.hp -= dmg;
+      if (dx * dx + dy * dy > r2) continue;
+      e.hp -= dmg;
+      // ⚠️ `compact` 는 **`dead === true` 만 수거**한다 — `hp <= 0` 단독으로는 안 걷는다.
+      //    여기서 안 세우면 파열 폭발로만 죽은 적이 좀비로 남아 처치·젬·전리품이 전부 사라진다.
+      //    `status.ts` 의 `applyChain`·`tickEnemyStatus` 와 같은 형태다(집계는 `compact` 몫).
+      //    보스는 위 게이트가 이미 걸러내므로(설계서 enemy 한정) 마킹 질문 자체가 없다.
+      if (e.hp <= 0) e.dead = true;
     }
   }
 

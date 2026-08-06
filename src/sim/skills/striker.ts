@@ -403,6 +403,11 @@ export function strikerVolleyParams(
  * hp≤0 좀비가 된다 — `world.ts:4595`). 그래서 화상 정산은 원소 DoT 의 정본
  * (`status.ts:82-85` `e.hp -= …; if (e.hp <= 0) e.dead = true`)과 **완전히 같은 두 줄**로 쓴다.
  * `blastDamage` 를 빌리는 대안은 기각했다 — 그 함수는 `e.hp -=` 만 하고 `dead` 를 안 세운다.
+ * ⚠️ **그때는 그랬고 지금은 세운다**(선결 과제 ⑨ 이후 `blastDamageAt` 이 `if (e.hp <= 0)
+ * e.dead = true` 를 한다). 그럼에도 **기각은 유지된다** — 사유가 바뀌었을 뿐이다: 그 함수는
+ * **좌표 반경 AoE** 라 반경 안의 적을 전부 때리는데, F6 정산은 화상을 **자기가 지고 있던 표적
+ * 하나**에 대한 결산이다. 빌리면 무관한 이웃까지 잔여 화상 피해를 맞는다(반경 0 으로 불러도
+ * 표적 좌표에 겹친 다른 적이 같이 맞는다).
  *
  * ⚠️ **정산을 "다음 status 틱으로 접는"(iframes=1 · dashCooldown=총피해) 대안도 기각했다.**
  * 이 앵커 **바로 뒤**에서 원소 어픽스가 `applyBurn(t, fireDmg, FIRE_DURATION)` 를 부르는데

@@ -299,7 +299,53 @@ describe('③ 앵커 ④ 피격 후속', () => {
     // 반환 배율 = 60 + 8×20 = 220% → round(10 × 220/100) = 22.
     expect(near.hp).toBe(78);
     expect(far.hp).toBe(100); // "최근접 1기" — 반경 안이어도 두 번째는 안 맞는다
-    expect(near.dead).toBe(false); // 격추 판정은 `compact()` 단일 수렴점이다
+    expect(near.dead).toBe(false); // hp 가 남았다 — 마킹은 hp≤0 에서만 선다
+  });
+
+  it('SQ3 — 반격으로 hp≤0 이 된 적은 dead 로 마킹돼 처치·젬까지 간다 (좀비 회귀)', () => {
+    const w = mk([[SQ3, 20]]);
+    const p = player(w);
+    // ⚠️ **계측기 함정**: 적을 플레이어 코앞에 두면 자동사격 탄이 같은 틱에 마무리해서
+    //    수정 전에도 초록이 된다(거짓 통과). 반격 반경 260 의 **바깥 끝**(250)에 두어
+    //    사망 경로를 SQ3 하나로 좁힌다 — 탄은 ≈30px/tick 이라 1틱에 못 닿는다.
+    const foe = addEnemy(w, p.x + 250, p.y, 20);
+    const killsBefore = w.kills;
+    const gemsBefore = w.entities.filter((e) => e.kind === 'gem').length;
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
+    // 하한 ① — SQ3 이 **실제로 발동했다**(반환 배율 220% → round(10×2.2) = 22).
+    expect(foe.hp).toBe(20 - 22);
+    // 하한 ② — hp 가 실제로 0 이하다(아래 dead 단언이 공회전이 아니다).
+    expect(foe.hp).toBeLessThanOrEqual(0);
+    // 본단언 — `compact()` 은 `dead === true` 만 수거하므로 여기서 안 세우면 좀비가 된다.
+    expect(foe.dead).toBe(true);
+    // 수거까지 간다 — 처치가 세어지고 젬이 떨어진다.
+    stepWorld(w, emptyInput());
+    expect(w.kills).toBe(killsBefore + 1);
+    expect(w.entities.includes(foe)).toBe(false);
+    expect(w.entities.filter((e) => e.kind === 'gem').length).toBeGreaterThan(gemsBefore);
+  });
+
+  it('SQ3 미투자 — 같은 배치에서 적은 멀쩡하고 처치도 젬도 없다 (음성 대조)', () => {
+    const w = mk();
+    const p = player(w);
+    const foe = addEnemy(w, p.x + 250, p.y, 20);
+    const killsBefore = w.kills;
+    const gemsBefore = w.entities.filter((e) => e.kind === 'gem').length;
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
+    expect(foe.hp).toBe(20);
+    expect(foe.dead).toBe(false);
+    stepWorld(w, emptyInput());
+    expect(w.kills).toBe(killsBefore);
+    expect(w.entities.filter((e) => e.kind === 'gem').length).toBe(gemsBefore);
+  });
+
+  it('SQ3 — 안 죽인 적(hp 잔존)은 dead 가 서지 않는다 (회귀)', () => {
+    const w = mk([[SQ3, 20]]);
+    const p = player(w);
+    const foe = addEnemy(w, p.x + 250, p.y, 100);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
+    expect(foe.hp).toBe(78); // 하한 — 반격이 실제로 들어갔다
+    expect(foe.dead).toBe(false);
   });
 
   it('SQ3 — 탐색 반경 260 밖의 적은 반격받지 않는다', () => {

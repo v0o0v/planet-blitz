@@ -1003,3 +1003,91 @@ describe('⑯-BL2 백병 격발 (앵커 ⑯)', () => {
     expect(farOn).toBe(farOff);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ⑯ MO6 압쇄장 사망 마킹 — 좀비 결함
+// ---------------------------------------------------------------------------
+
+/**
+ * `compact()`(`world.ts`)는 **`e.dead === true` 만 수거**한다 — `hp <= 0` 단독으로는 안 걷는다.
+ * MO6 는 `e.hp -=` 만 했으므로 압쇄장으로만 hp≤0 이 된 적이 **좀비**로 남았다: 계속 움직이고
+ * 공격하며 `state.kills`·젬·전리품이 전부 사라진다. 정본 형태는 `status.ts` 111-112 의 두 줄이다.
+ *
+ * ⚠️ **계측기 함정** — 적을 플레이어 코앞에 두면 자동사격 탄(≈30px/tick)이 같은 틱에 마무리해
+ * 수정 전에도 통과한다. 그래서 반경(Lv10 = 200)의 **바깥 끝 190px** 에 둬 사망 경로를 압쇄장
+ * 하나로 좁힌다.
+ *
+ * ⚠️ **보스는 대상이 아니다** — MO6 은 `kind !== 'enemy'` 를 걸러내므로(설계서가 명시한 enemy
+ * 한정) 보스 마킹 질문 자체가 생기지 않는다. `blastDamageAt`(enemy+boss)과 다른 이유다.
+ */
+describe('⑯ MO6 사망 마킹 (좀비 결함)', () => {
+  const CRUSH_EDGE = 190; // 반경 200(Lv10)의 바깥 끝 — 자동사격 탄이 1틱에 못 닿는다
+
+  it('전제 — 그 거리의 적이 실제로 압쇄장에 맞고 hp 가 줄어든다 (하한)', () => {
+    const w = mk([[MO6, 10]]);
+    const p = player(w);
+    p.aux0 = 1;
+    const e = addEnemy(w, p.x + CRUSH_EDGE, p.y, 500);
+    expect(Math.hypot(e.x - p.x, e.y - p.y)).toBeLessThanOrEqual(120 + 8 * 10);
+    expect(w.tick % 30).toBe(0);
+    onSignatureStep(w, p, emptyInput());
+    expect(e.hp).toBe(500 - (4 + 10));
+    expect(e.hp).toBeGreaterThan(0); // 이 케이스는 죽이지 않는다
+  });
+
+  it('재현 — 압쇄장만으로 hp≤0 이 되면 그 자리에서 dead 로 마킹된다', () => {
+    const w = mk([[MO6, 10]]);
+    const p = player(w);
+    p.aux0 = 1;
+    const e = addEnemy(w, p.x + CRUSH_EDGE, p.y, 10);
+    expect(e.dead).toBe(false);
+    onSignatureStep(w, p, emptyInput());
+    expect(e.hp).toBeLessThanOrEqual(0); // 실제로 죽을 만큼 맞았다 (하한)
+    expect(e.dead).toBe(true);
+  });
+
+  it('재현 — 다음 stepWorld 에서 수거되고 처치·젬으로 집계된다 (좀비로 안 남는다)', () => {
+    const w = mk([[MO6, 10]]);
+    const p = player(w);
+    p.aux0 = 1;
+    const e = addEnemy(w, p.x + CRUSH_EDGE, p.y, 10);
+    const id = e.id;
+    const gx = e.x;
+    const gy = e.y;
+    const killsBefore = w.kills;
+    onSignatureStep(w, p, emptyInput());
+    expect(e.hp).toBeLessThanOrEqual(0);
+    stepWorld(w, emptyInput());
+    // 엔티티 동일성으로 본다 — 같은 틱에 다른 적이 죽어도 이 단언은 안 흔들린다.
+    expect(w.entities.some((x) => x.id === id)).toBe(false);
+    expect(w.kills).toBeGreaterThanOrEqual(killsBefore + 1);
+    const gems = w.entities.filter(
+      (x) => x.kind === 'gem' && Math.hypot(x.x - gx, x.y - gy) <= 200,
+    );
+    expect(gems.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('회귀 — 안 죽인 적은 종전 그대로 살아 있다', () => {
+    const w = mk([[MO6, 10]]);
+    const p = player(w);
+    p.aux0 = 1;
+    const e = addEnemy(w, p.x + CRUSH_EDGE, p.y, 500);
+    const killsBefore = w.kills;
+    onSignatureStep(w, p, emptyInput());
+    expect(e.hp).toBe(500 - 14); // 실제로 맞았다 (하한)
+    expect(e.dead).toBe(false);
+    stepWorld(w, emptyInput());
+    expect(w.entities.some((x) => x.id === e.id)).toBe(true);
+    expect(w.kills).toBe(killsBefore);
+  });
+
+  it('음성 대조 — MO6 미투자면 hp 도 안 줄고 dead 도 안 선다', () => {
+    const w = mk([]);
+    const p = player(w);
+    p.aux0 = 1;
+    const e = addEnemy(w, p.x + CRUSH_EDGE, p.y, 10);
+    onSignatureStep(w, p, emptyInput());
+    expect(e.hp).toBe(10);
+    expect(e.dead).toBe(false);
+  });
+});
