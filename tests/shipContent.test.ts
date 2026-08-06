@@ -30,6 +30,7 @@ import type { ShipTypeDef, ShipBaseBp } from '../data/ships/index.js';
 import { createWorld, stepWorld } from '../src/sim/world.js';
 import type { WorldConfig, InputFrame } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
+import { SIG_STRIKER_MARKSMAN } from '../src/sim/shipSignature.js';
 import { defaultProfile, activeShip } from '../src/save/profile.js';
 import type { Profile } from '../src/save/profile.js';
 import { retireAtCap } from './support/retireAtCap.js';
@@ -156,12 +157,15 @@ describe('정규 경로 통합 — 퇴역으로 기체 전환 → 런 설정 →
     }
   });
 
-  it('타입 0 런은 신규 데이터에 영향받지 않는다 (회귀 탐지기 보존)', () => {
-    // 신규 타입 데이터를 채운 뒤에도 스트라이커 config 는 30 길이·uniqueMask 0 이어야 한다.
+  it('타입 0 런은 신규 데이터에 영향받지 않는다 (회귀 탐지기 갱신 — uniqueMask 는 자기 시그니처 비트)', () => {
+    // ⚠️ 2026-08-06 — 신규 타입 데이터를 채운 뒤에도 스트라이커 config 는 30 길이 · 무투자 전부
+    // 0 이어야 한다는 것은 그대로다. `uniqueMask` 만 갱신됐다 — ADR-0049 로 스트라이커도 자기
+    // 시그니처 비트(24, 정조준 사이클)를 켜므로 0 은 더 이상 기준선이 아니다(그래도 다른 6기체
+    // 데이터가 늘어도 "자기 비트 하나만" 이라는 불변식은 여전히 지킨다).
     const config = assembleRunConfigLikeMain(defaultProfile(), 0, 1);
     expect(config.skillInvest?.length).toBe(30);
     expect(config.skillInvest?.every((v) => v === 0)).toBe(true);
-    expect(config.loadout?.uniqueMask).toBe(0);
+    expect(config.loadout?.uniqueMask).toBe(1 << SIG_STRIKER_MARKSMAN);
     expect(shipTypeDef(0)).toBe(STRIKER);
   });
 });

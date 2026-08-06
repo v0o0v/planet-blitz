@@ -40,12 +40,12 @@ import {
 import {
   SHIP_TYPES,
   DEFAULT_SHIP_TYPE,
-  NO_SIGNATURE_BIT,
   shipTypeDef,
   flattenShipNodes,
   zeroSkillInvest as registryZeroInvest,
 } from '../data/ships/index.js';
 import { hasCapstone } from '../src/sim/capstones.js';
+import { SIG_STRIKER_MARKSMAN } from '../src/sim/shipSignature.js';
 import type { Item, StatKey } from '../src/items/types.js';
 
 function m8Item(slot: 'main' | 'sub' | 'armor', affixes: { stat: StatKey; value: number }[]): Item {
@@ -193,9 +193,15 @@ describe('profile — invest + respec (AC1, plan A3)', () => {
 });
 
 describe('기체 타입 baseBp — 정수 bp, 단일 나눗셈 (설계서 §4)', () => {
-  it('스트라이커는 전 축 0 이라 무연산', () => {
+  it('스트라이커는 baseBp 전 축 0 이라 스탯 무연산(uniqueMask 는 예외 — 자기 시그니처 비트가 켜진다)', () => {
+    // ⚠️ 2026-08-06 — ADR-0049 로 스트라이커도 시그니처(정조준 사이클, 비트24)를 갖는다.
+    // baseBp 무연산(스탯 축 불변)과 uniqueMask 무연산(시그니처 없음)은 별개 계약이었는데,
+    // 후자는 폐기됐다 — 전자만 지금도 참이다.
     expect(shipTypeDef(0).baseBp).toEqual({ damageBp: 0, fireRateBp: 0, maxHpBp: 0, moveSpeedBp: 0 });
-    expect(computeLoadoutStats([], undefined, 0).loadout).toEqual(neutralLoadout());
+    expect(computeLoadoutStats([], undefined, 0).loadout).toEqual({
+      ...neutralLoadout(),
+      uniqueMask: 1 << SIG_STRIKER_MARKSMAN,
+    });
   });
 
   it('브루저(타입 1)의 4축이 basis-point 정의대로 적용된다', () => {
@@ -231,20 +237,17 @@ describe('기체 타입 baseBp — 정수 bp, 단일 나눗셈 (설계서 §4)',
 });
 
 describe('시그니처 비트 OR-in (설계서 §4 — §10-1 예측 결함)', () => {
-  it('typeId ≥ 1 은 자기 시그니처 비트를 실제로 켠다(hasCapstone 확인)', () => {
+  it('전 타입(스트라이커 포함)이 자기 시그니처 비트만 켠다(hasCapstone 확인)', () => {
+    // ⚠️ 2026-08-06 — 스트라이커도 이제 유효한 signatureBit(24, ADR-0049)을 가지므로 "타입 0 은
+    // 예외" 분기(구 버전)는 더 이상 밟히지 않는다. 전 타입이 같은 규율을 따른다.
     for (const def of SHIP_TYPES) {
       const mask = computeLoadoutStats([], 0, def.id).loadout.uniqueMask;
-      if (def.signatureBit < 0) {
-        expect(def.id).toBe(0); // 스트라이커만 시그니처 없음
-        expect(mask).toBe(0);
-        continue;
-      }
-      expect(def.signatureBit).toBeGreaterThanOrEqual(18);
-      expect(hasCapstone(mask, def.signatureBit)).toBe(true);
+      expect(def.signatureBit, def.slug).toBeGreaterThanOrEqual(18);
+      expect(hasCapstone(mask, def.signatureBit), def.slug).toBe(true);
       // 다른 타입의 시그니처 비트는 절대 켜지지 않는다(비트 혼선 = 다른 기체 패시브 발동).
       for (const other of SHIP_TYPES) {
-        if (other.id === def.id || other.signatureBit < 0) continue;
-        expect(hasCapstone(mask, other.signatureBit)).toBe(false);
+        if (other.id === def.id) continue;
+        expect(hasCapstone(mask, other.signatureBit), `${def.slug} vs ${other.slug}`).toBe(false);
       }
     }
   });
@@ -281,9 +284,12 @@ describe('computeLoadoutStats — 손상 typeId 정규화 (조용한 중립 금�
     }
   });
 
-  it('스트라이커는 시그니처 비트가 없다 → uniqueMask 가 커지지 않는다', () => {
-    expect(shipTypeDef(0).signatureBit).toBe(NO_SIGNATURE_BIT);
-    expect(computeLoadoutStats([], 0, 0).loadout.uniqueMask).toBe(0);
+  it('스트라이커도 자기 시그니처 비트(24)를 uniqueMask 에 켠다 — "시그니처 없음"은 더 이상 존재하지 않는다', () => {
+    // ⚠️ 2026-08-06 — 구 계약("타입 0 은 시그니처 없음 · uniqueMask 는 절대 0 을 벗어나지 않는다")
+    // 은 ADR-0049 가 스트라이커에 정조준 사이클(비트24)을 부여하며 폐기됐다. 지금 참인 것은
+    // "스트라이커도 6기체와 같은 규율로 자기 비트 하나만 켠다"이다.
+    expect(shipTypeDef(0).signatureBit).toBe(SIG_STRIKER_MARKSMAN);
+    expect(computeLoadoutStats([], 0, 0).loadout.uniqueMask).toBe(1 << SIG_STRIKER_MARKSMAN);
   });
 
   it('호출이 equipped 아이템·어픽스 배열을 변형하지 않는다(벡터 불변)', () => {

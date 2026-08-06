@@ -275,12 +275,29 @@ describe('파워업 풀 — affinity 태그 wire 안정성 (설계서 §2·§10-
 });
 
 describe('M8 시그니처 sim 배선 — 브루저 장갑 · 아크캐스터 과충전 (설계서 §3·§4)', () => {
-  /** 시그니처가 없는 런은 aux 슬롯을 건드리지 않는다 = 조건부 꼬리 폴드 무실행. */
-  it('스트라이커(shipType 미지정)는 aux0/aux1 을 영원히 0 으로 둔다', () => {
+  /**
+   * ⚠️ 2026-08-06 — 구 계약("시그니처가 없는 런은 aux 슬롯을 건드리지 않는다 = 조건부 꼬리 폴드
+   * 무실행")은 ADR-0049 가 스트라이커에 정조준 사이클(aux0 0..11)을 부여하며 폐기됐다(실측:
+   * 이 무대·시드에서 600틱에 aux0 최대 4 — 구 단언 `aux0 === 0` 은 발사가 한 번이라도 일어나면
+   * 거짓이 된다). 이 describe(브루저/아크캐스터 대조)의 취지를 지키려면 스트라이커의 정조준
+   * 트리거만 매 틱 굶긴다(`tests/shipSignatureWiring.test.ts` `starveTrigger` 와 같은 패턴 —
+   * 기체를 바꾸지 않으므로 baseBp 오염이 없다). 굶긴 트리거는 `marksmanTriggered(aux0)` 가
+   * 항상 0 을 보게 하므로 정조준은 영영 발동하지 않지만, 발사 자체는 그 틱에 일어날 수 있어
+   * aux0 은 최대 1(이번 틱 발사분)까지는 오를 수 있다 — 그래서 상한은 `<=1` 이지 `===0` 이 아니다.
+   */
+  it('스트라이커(shipType 미지정)의 정조준 트리거를 굶기면 aux0 은 0~1 을 벗어나지 않고 aux1 은 끝까지 0 이다', () => {
     const state = createWorld(7, weaponConfig(0));
-    for (let i = 0; i < 600; i++) stepWorld(state, emptyInput());
     const p = state.entities[0] as Entity;
-    expect(p.aux0).toBe(0);
+    let sawFire = false;
+    for (let i = 0; i < 600; i++) {
+      p.aux0 = 0; // 정조준 카운터가 임계(11)에 영영 못 닿게 매 틱 되돌린다.
+      stepWorld(state, emptyInput());
+      if (p.aux0 > 0) sawFire = true;
+      expect(p.aux0, `tick ${i}`).toBeLessThanOrEqual(1);
+    }
+    expect(sawFire, '공허 런 — 이 무대에서 한 번도 발사되지 않아 굶기기 계량이 vacuous 하다').toBe(
+      true,
+    );
     expect(p.aux1).toBe(0);
   });
 
@@ -330,15 +347,23 @@ describe('M8 시그니처 sim 배선 — 브루저 장갑 · 아크캐스터 과
     }
   });
 
-  it('과충전이 실제 발사 피해에 반영된다 (스트라이커는 절대 증폭되지 않는다)', () => {
+  it('과충전이 실제 발사 피해에 반영된다 (스트라이커는 정조준 트리거를 굶긴 대조군에서 증폭되지 않는다)', () => {
     // 처치 수 대신 **아군 탄의 피해 배율**을 본다 — 처치 수는 과잉피해·스폰 갈림에
     // 흔들려 효과가 있어도 줄 수 있는 노이즈 지표다(실측 확인).
-    const maxAmp = (shipType?: number): number => {
+    //
+    // ⚠️ 2026-08-06 — `maxAmp()`(shipType 미지정 = 스트라이커)는 ADR-0049 이후 더 이상
+    // "증폭 경로 무실행" 이 아니다 — 정조준 볼리가 그 자체로 +50% 증폭이라 그대로 두면 1.5 가
+    // 나온다. `starveMarksmanTrigger` 로 스트라이커의 정조준 트리거만 굶긴다(위 테스트와 같은
+    // 패턴) — 굶기면 marksmanFire 가 영원히 false 라 amp 는 정확히 0 을 유지한다(값을 완화한
+    // 것이 아니라 대조군을 오염 없이 다시 만든 것).
+    const maxAmp = (shipType?: number, starveMarksmanTrigger = false): number => {
       const cfg: WorldConfig = { ...weaponConfig(0), playerHp: 100_000_000 };
       if (shipType !== undefined) cfg.shipType = shipType;
       const s = createWorld(0xa2c, cfg);
+      const p = s.entities[0] as Entity;
       let amp = 0;
       for (let i = 0; i < 1800; i++) {
+        if (starveMarksmanTrigger) p.aux0 = 0;
         stepWorld(s, emptyInput());
         for (const e of s.entities) {
           if (e.kind !== 'bullet') continue;
@@ -348,7 +373,7 @@ describe('M8 시그니처 sim 배선 — 브루저 장갑 · 아크캐스터 과
       }
       return amp;
     };
-    expect(maxAmp()).toBe(0);
+    expect(maxAmp(undefined, true)).toBe(0); // 스트라이커: 정조준 트리거 굶김(대조군)
     expect(maxAmp(1)).toBe(0); // 브루저는 발사 경로를 건드리지 않는다
     expect(maxAmp(2)).toBeGreaterThan(1);
   });

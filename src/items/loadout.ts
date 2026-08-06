@@ -339,7 +339,8 @@ export function computeLoadoutStats(
   applyStatSums(lo, sums);
   // (삭제됨 — ADR-0049) 스킬 파생 스탯 겹침 · 계열 캡스톤 비트 OR. 위 함수 주석 참조.
   // 기체 시그니처 패시브(M8 설계 §4): 타입이 가진 미사용 상위 비트(18~21)를 OR 한다.
-  // **스트라이커는 signatureBit = -1 이라 무연산** → 기존 런의 uniqueMask 가 바이트 불변.
+  // ⚠️ **구 주석의 "스트라이커는 -1 이라 무연산" 은 ADR-0049 로 끝났다** — 정조준 사이클(비트 24)이
+  // 부여돼 7기체 전부 여기서 비트를 켠다. 산술은 그대로이고 무연산 케이스만 사라졌다.
   const sig = shipType.signatureBit;
   if (sig >= 0) uniqueMask |= 1 << sig;
   lo.uniqueMask = uniqueMask;

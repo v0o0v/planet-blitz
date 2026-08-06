@@ -17,9 +17,21 @@ import {
   WEAPON_RAILGUN,
   SUB_WEAPON_NONE,
 } from '../src/items/loadout.js';
+import { SIG_STRIKER_MARKSMAN } from '../src/sim/shipSignature.js';
 import type { Item, ItemSource, SlotKind, StatKey } from '../src/items/types.js';
 
 const SRC: ItemSource = { planet: 0, stage: 1 };
+
+/**
+ * ⚠️ 2026-08-06 — ADR-0049 로 스트라이커(typeId 미지정 = 0)도 시그니처(정조준 사이클, 비트24)를
+ * 갖는다. `neutralLoadout()` 자체는 여전히 `uniqueMask:0` 인 "완전 무연산" 기준선이지만,
+ * `computeLoadoutStats` 가 실제로 만드는 "타입 0·무보정" 결과는 그 기준선과 **`uniqueMask` 한
+ * 필드만** 다르다 — 자기 시그니처 비트가 항상 OR-in 되기 때문이다(`loadout.ts` `computeLoadoutStats`
+ * 꼬리). 아래 비교들은 그 한 필드를 분리해 "나머지는 완전히 중립"이라는 원래 계약을 그대로 지키고,
+ * `uniqueMask` 는 별도로 스트라이커 비트임을 못박는다(값을 느슨하게 맞춘 것이 아니라 계약을
+ * 재정의한 것 — `neutralLoadout()` 은 여전히 0 이고, "스트라이커 config" 만 0 이 아니다).
+ */
+const STRIKER_NEUTRAL = { ...neutralLoadout(), uniqueMask: 1 << SIG_STRIKER_MARKSMAN };
 
 function item(slot: SlotKind, affixes: { stat: StatKey; value: number }[], weaponType?: number): Item {
   return {
@@ -33,9 +45,9 @@ function item(slot: SlotKind, affixes: { stat: StatKey; value: number }[], weapo
 }
 
 describe('computeLoadoutStats — derived stats pipeline (AC4)', () => {
-  it('empty loadout is neutral', () => {
+  it('empty loadout is neutral (스트라이커 자기 시그니처 비트는 예외)', () => {
     const { loadout } = computeLoadoutStats([]);
-    expect(loadout).toEqual(neutralLoadout());
+    expect(loadout).toEqual(STRIKER_NEUTRAL);
     expect(loadout.weaponType).toBe(WEAPON_VULCAN);
     expect(loadout.subWeaponType).toBe(SUB_WEAPON_NONE);
   });
@@ -95,8 +107,8 @@ describe('computeLoadoutStats — derived stats pipeline (AC4)', () => {
 });
 
 describe('computeLoadoutStats — 계보 기체 가지 보너스 (ADR-0007)', () => {
-  it('미지정·0 보너스는 기존 결과와 완전 동일 (하위 호환)', () => {
-    expect(computeLoadoutStats([], 0).loadout).toEqual(neutralLoadout());
+  it('미지정·0 보너스는 기존 결과와 완전 동일 (하위 호환, 스트라이커 시그니처 비트는 예외)', () => {
+    expect(computeLoadoutStats([], 0).loadout).toEqual(STRIKER_NEUTRAL);
     expect(computeLoadoutStats([], 0)).toEqual(computeLoadoutStats([]));
   });
 
@@ -117,7 +129,7 @@ describe('computeLoadoutStats — 계보 기체 가지 보너스 (ADR-0007)', ()
     expect(mid.damageMult).toBeCloseTo(1.25);
     expect(mid.maxHpAdd).toBe(25);
     // 음수 → 0, 5000 초과 → 5000 (normalizeLineageBonus 클램프)
-    expect(computeLoadoutStats([], -100).loadout).toEqual(neutralLoadout());
+    expect(computeLoadoutStats([], -100).loadout).toEqual(STRIKER_NEUTRAL);
     expect(computeLoadoutStats([], 99999).loadout).toEqual(
       computeLoadoutStats([], 5000).loadout,
     );

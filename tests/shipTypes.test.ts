@@ -42,6 +42,7 @@ import {
 import { createWorld, stepWorld } from '../src/sim/world.js';
 import type { WorldConfig, InputFrame } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
+import { SIG_STRIKER_MARKSMAN } from '../src/sim/shipSignature.js';
 import { defaultProfile, activeShip } from '../src/save/profile.js';
 import type { Profile } from '../src/save/profile.js';
 
@@ -89,13 +90,20 @@ describe('① SHIP_TYPES 인덱스 계약 (wire)', () => {
 });
 
 describe('② 시그니처 비트', () => {
-  it('타입 0(스트라이커)은 시그니처가 없다 (-1)', () => {
-    expect(STRIKER.signatureBit).toBe(NO_SIGNATURE_BIT);
+  it('타입 0(스트라이커)도 이제 시그니처 비트(24)를 갖는다 — NO_SIGNATURE_BIT 는 손상 데이터 방어용 센티넬로만 남는다', () => {
+    // ⚠️ 2026-08-06 — 구 계약("타입 0 은 시그니처 없음, signatureBit === -1")은 ADR-0049 가
+    // 스트라이커에 정조준 사이클(비트24, `SIG_STRIKER_MARKSMAN`)을 부여하며 폐기됐다(shipSignature.ts
+    // 헤더 · data/ships/types.ts 의 `NO_SIGNATURE_BIT` 주석). 그 값 자체는 사라지지 않았다 —
+    // `normalizeShipTypeId`/`shipTypeDef` 가 손상 typeId 를 되돌릴 때 참조하는 방어용 센티넬로
+    // 남는다. 여기서는 (a) 스트라이커가 실제로 유효 비트를 갖고 (b) 그 센티넬이 현재 로스터
+    // 어느 타입에도 실제로 쓰이지 않는다는 것을 함께 못박는다.
+    expect(STRIKER.signatureBit).toBe(SIG_STRIKER_MARKSMAN);
     expect(NO_SIGNATURE_BIT).toBeLessThan(0);
+    expect(SHIP_TYPES.some((d) => d.signatureBit === NO_SIGNATURE_BIT)).toBe(false);
   });
 
-  it('타입 1..N 은 [18,30] 범위의 정수 비트를 갖는다', () => {
-    for (const def of SHIP_TYPES.slice(1)) {
+  it('전 타입(스트라이커 포함)이 [18,30] 범위의 정수 비트를 갖는다', () => {
+    for (const def of SHIP_TYPES) {
       expect(Number.isInteger(def.signatureBit), def.slug).toBe(true);
       expect(def.signatureBit, def.slug).toBeGreaterThanOrEqual(SIGNATURE_BIT_MIN);
       expect(def.signatureBit, def.slug).toBeLessThanOrEqual(SIGNATURE_BIT_MAX);
@@ -107,10 +115,11 @@ describe('② 시그니처 비트', () => {
     expect(new Set(bits).size).toBe(bits.length);
   });
 
-  it('설계서 §4 배정 + 7종 확장과 일치한다 (18·19·20·21·22·23)', () => {
+  it('설계서 §4 배정 + 7종 확장과 일치한다 (24·18·19·20·21·22·23)', () => {
     // L2 의 src/sim/shipSignature.ts SIG_* 상수가 이 값과 같아야 한다(정본은 그쪽, 여기는 데이터).
-    // bruiser 18 · arccaster 19 · phantom 20 · hatchling 21 · mallow 22 · bubble 23.
-    expect(SHIP_TYPES.map((d) => d.signatureBit)).toEqual([-1, 18, 19, 20, 21, 22, 23]);
+    // striker 24(ADR-0049 별도 부여, 선언은 최상위 비트지만 id 순서는 여전히 0) · bruiser 18 ·
+    // arccaster 19 · phantom 20 · hatchling 21 · mallow 22 · bubble 23.
+    expect(SHIP_TYPES.map((d) => d.signatureBit)).toEqual([24, 18, 19, 20, 21, 22, 23]);
   });
 
   it('1 << bit 이 양수다 (마스크 연산 안전 — 31 비트 금지의 이유)', () => {
@@ -202,8 +211,9 @@ describe('정규 경로 통합 — Profile → 런 설정 → createWorld/stepWo
     const config = assembleRunConfigLikeMain(defaultProfile(), 0, 1);
     expect(config.skillInvest).toEqual(zeroSkillInvest(0));
     expect(config.skillInvest?.length).toBe(30);
-    // 스트라이커는 시그니처가 없으므로 무투자 런의 uniqueMask 는 0 이어야 한다.
-    expect(config.loadout?.uniqueMask).toBe(0);
+    // ⚠️ 2026-08-06 — 스트라이커도 자기 시그니처 비트(24, 정조준 사이클)를 켠다(ADR-0049).
+    // 무투자 런이라도 uniqueMask 는 0 이 아니다 — "시그니처 없음" 은 더 이상 없다.
+    expect(config.loadout?.uniqueMask).toBe(1 << SIG_STRIKER_MARKSMAN);
 
     const hashes = runTicks(12345, config, 120);
     expect(hashes.length).toBe(120);

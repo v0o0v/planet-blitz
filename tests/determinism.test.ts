@@ -235,18 +235,34 @@ interface RunProbe {
 /**
  * 레벨업 프리즈를 자동으로 소화하며 런을 진행시킨다. 이것이 없으면 첫 레벨업에서 sim 이
  * 멈춰(`pendingLevelUp`) 런이 2분 내내 정지하고, 피격도 발사도 더 이상 일어나지 않는다.
+ *
+ * `starveMarksmanTrigger`: 스트라이커 **대조군** 전용(2026-08-06) — ADR-0049 로 스트라이커도
+ * 시그니처(정조준 사이클, aux0)를 갖게 되어 "시그니처 없음" 대조군이 사라졌다
+ * (`tests/shipSignatureWiring.test.ts` `starveTrigger` 헤더 주석 참조). 기체를 바꾸지 않고
+ * (바꾸면 baseBp 까지 갈려 오염이 더 커진다) **스트라이커의 aux0 트리거만 매 틱 굶겨** 정조준이
+ * 영영 발동하지 않게 한다 — 「트리거 굶기기」 패턴. `marksmanTriggered` 는 `aux0` 를 매 틱 진입
+ * 직전에 읽으므로, 매 스텝 앞에서 0 으로 되돌리면 그 판정은 항상 0(<11)을 보고 절대 트리거되지
+ * 않는다. maxAux0/maxBulletAmp 갱신도 굶기는 동안은 건너뛴다 — 이번 틱 발사분이 잠깐
+ * aux0=1 을 만들어도(되돌리기 전 시점) 그 값은 "굶긴 대조군의 관측"이 아니라 우리가 만든
+ * 잡음이라 반영하지 않는다.
  */
-function probeRun(seed: number, config: WorldConfig, ticks: number): RunProbe {
+function probeRun(
+  seed: number,
+  config: WorldConfig,
+  ticks: number,
+  starveMarksmanTrigger = false,
+): RunProbe {
   const state = createWorld(seed, config);
   const player = state.entities[0] as Entity;
   const startHp = player.hp;
   let maxAux0 = 0;
   let maxBulletAmp = 0;
   for (let i = 0; i < ticks; i++) {
+    if (starveMarksmanTrigger) player.aux0 = 0;
     const frame = emptyInput();
     if (state.pendingLevelUp) frame.special = SPECIAL_POWERUP_PICK;
     stepWorld(state, frame);
-    if (player.aux0 > maxAux0) maxAux0 = player.aux0;
+    if (!starveMarksmanTrigger && player.aux0 > maxAux0) maxAux0 = player.aux0;
     for (const e of state.entities) {
       if (e.kind !== 'bullet') continue;
       const ratio = e.damage / state.weapon.damage;
@@ -266,7 +282,9 @@ describe('M8 정규 경로 통합 — Profile{typeId} → 런 설정 → createW
     activeShip(profile).typeId = 1;
     const config = assembleRunConfigLikeMain(profile, DURABLE_HP);
     expect(config.shipType).toBe(1);
-    // 스트라이커 프로필은 미지정이 아니라 0 이며, 0 은 폴드도 시그니처도 켜지 않는다.
+    // 스트라이커 프로필은 미지정이 아니라 0 이다. `shipType` 해시 꼬리 폴드는 지금도 0 에서
+    // 무실행이지만(replay.ts, 설계서 §5), ADR-0049 이후 `uniqueMask` 자체는 무연산이 아니다 —
+    // 스트라이커도 자기 시그니처 비트(24, 정조준 사이클)를 켠다.
     expect(assembleRunConfigLikeMain(defaultProfile(), DURABLE_HP).shipType).toBe(0);
   });
 
@@ -275,10 +293,18 @@ describe('M8 정규 경로 통합 — Profile{typeId} → 런 설정 → createW
     const bruiser = defaultProfile();
     activeShip(bruiser).typeId = 1;
 
-    const a = probeRun(PROBE_SEED, assembleRunConfigLikeMain(striker, DURABLE_HP), PROBE_TICKS);
+    // ⚠️ 2026-08-06 — 대조군(스트라이커)은 더 이상 "시그니처 없음"이 아니다(ADR-0049, 정조준
+    // 사이클이 aux0 0..11 을 돈다). 기체를 바꾸지 않고 트리거만 굶긴다(probeRun 헤더 주석 —
+    // 「트리거 굶기기」 패턴, `shipSignatureWiring.test.ts` 선례).
+    const a = probeRun(
+      PROBE_SEED,
+      assembleRunConfigLikeMain(striker, DURABLE_HP),
+      PROBE_TICKS,
+      true,
+    );
     const b = probeRun(PROBE_SEED, assembleRunConfigLikeMain(bruiser, DURABLE_HP), PROBE_TICKS);
 
-    // ① 스트라이커는 aux 를 건드리지 않는다(= 조건부 꼬리 폴드 무실행 → 해시 바이트 불변).
+    // ① 정조준 트리거를 굶긴 스트라이커는 aux0 이 끝까지 0 이다(= 장갑 스택 관측과 안 섞인다).
     expect(a.maxAux0).toBe(0);
     // ② 브루저는 정규 경로만으로 스택이 상한까지 쌓인다(패시브가 실제로 배선돼 있다).
     expect(b.maxAux0).toBeGreaterThan(0);
@@ -293,10 +319,17 @@ describe('M8 정규 경로 통합 — Profile{typeId} → 런 설정 → createW
     const arc = defaultProfile();
     activeShip(arc).typeId = 2;
 
-    const a = probeRun(PROBE_SEED, assembleRunConfigLikeMain(striker, DURABLE_HP), PROBE_TICKS);
+    // ⚠️ 위 브루저 케이스와 같은 이유로 대조군(스트라이커)의 정조준 트리거를 굶긴다 — 굶기지
+    // 않으면 정조준 볼리(+50%)가 maxBulletAmp 를 1.5 로 밀어 올려 "증폭 무실행" 기준선이 깨진다.
+    const a = probeRun(
+      PROBE_SEED,
+      assembleRunConfigLikeMain(striker, DURABLE_HP),
+      PROBE_TICKS,
+      true,
+    );
     const b = probeRun(PROBE_SEED, assembleRunConfigLikeMain(arc, DURABLE_HP), PROBE_TICKS);
 
-    // 스트라이커는 아군 탄이 기본 피해를 절대 넘지 않는다(증폭 경로 무실행).
+    // 트리거를 굶긴 스트라이커는 아군 탄이 기본 피해를 절대 넘지 않는다(증폭 경로 무실행).
     expect(a.maxBulletAmp).toBe(0);
     // 아크캐스터는 정지 유지로 상한(OVERCHARGE_MAX_BP = 4000bp = ×1.4)에 근접한다.
     expect(b.maxBulletAmp).toBeGreaterThan(1);
