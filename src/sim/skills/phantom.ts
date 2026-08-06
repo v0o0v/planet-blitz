@@ -23,20 +23,30 @@
  *
  * ---
  *
- * ## ⚠️ 이 배치가 배선한 것은 30종 중 **12종**이다
- * 나머지 18종은 앵커 14개로 닿지 않는 지점을 요구한다 — 사유는 각 앵커의 `case` 주석과 레인
+ * ## ⚠️ 이 배치가 배선한 것은 30종 중 **15종**이다 (S2 앵커로 12 → 15)
+ * S2 가 앵커 ㉑(`onCloakBreakReset`, 팬텀 리셋 **직전**)과 ⑯(`onVolleyParams`, 탄 생성 직전)을
+ * 열면서 셋이 살아났다 — **DI1「위상 정산」·PH10「발각 즉응」**(둘 다 리셋 전 스트릭을 요구해
+ * 앵커 ④ 에서는 상시 0·상시 거짓이었다)과 **AS2「은막 침투」**(볼리 파라미터가 필요했다).
+ *
+ * 나머지 15종은 아직 앵커가 닿지 않는 지점을 요구한다 — 사유는 각 앵커의 `case` 주석과 레인
  * 보고서에 있다. 여기 없는 스킬은 "구현했는데 안 불린다"가 아니라 **아직 코드가 없다.**
- * 가장 큰 덩어리는 **해제 첫 타 배율의 소진 지점**(`world.ts` autoAttack)이다 — AS1·AS3·AS8·
- * AS9·DI10 다섯이 전부 거기에 달려 있고, 그 자리에는 앵커가 없다.
+ * 가장 큰 덩어리는 여전히 **해제 첫 타 배율의 소진 지점**(`world.ts` autoAttack 의 `aux1`
+ * 소진 분기)이다 — AS1·AS3·AS8·AS9·DI10 다섯이 전부 거기에 달려 있다. 앵커 ⑯ 은 그 소진
+ * **뒤**라 "이번 볼리가 그 강화탄이었나" 를 알 신호가 없다(`params.mark === 1` 은 스트라이커
+ * 정조준 전용이고, 팬텀 소진 분기는 표식을 남기지 않는다).
  */
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
-import { advanceCloak } from '../cloak.js';
+// ⚠️ **타입 전용이다.** `skillHooks.ts` 는 이 파일을 런타임 import 하므로 값으로 당기면 곧바로
+// 순환이다 — `import type` 은 컴파일에서 지워져 그래프에 간선을 만들지 않는다.
+import type { VolleyParams } from '../skillHooks.js';
+import { advanceCloak, playerCloaked } from '../cloak.js';
+import { clearEnemyBullets } from '../activeTypes.js';
 import { slideCircleWalls } from '../los.js';
 import { length } from '../math.js';
 import { readSlot, writeSlot, PhantomCarry } from '../skillSlots.js';
-import { CLOAK_UNHIT_TICKS } from '../shipSignature.js';
+import { CLOAK_UNHIT_TICKS, cloakWindowActive } from '../shipSignature.js';
 import { skillLv } from '../../items/skills.js';
 
 // ---------------------------------------------------------------------------
@@ -51,10 +61,13 @@ import { skillLv } from '../../items/skills.js';
 // 순서와 우연히 맞아도 정본은 언제나 `trees` 배열이다.
 
 const enum Sk {
+  /** AS2 은막 침투 */ cloakPierce = 1,
   /** AS4 급소 해부 */ vitalDissection = 3,
   /** AS5 배후 격살 */ backstab = 4,
   /** PH1 잔상 이탈 */ afterimageExit = 10,
   /** PH8 흔적 흡수 */ traceSiphon = 17,
+  /** PH10 발각 즉응 */ blownCoverReflex = 19,
+  /** DI1 위상 정산 */ phaseLiquidation = 20,
   /** DI2 은둔 재생 */ cloakedMending = 21,
   /** DI3 초탄 감쇄 */ firstHitAttenuation = 22,
   /** DI4 반발 위상 */ repulsePhase = 23,
@@ -181,13 +194,13 @@ export function phantomDamageChain(state: WorldState, player: Entity, dmg: numbe
 /**
  * 앵커 ④ **선체 hp 가 깎인 피격의 후속** — DI4 반발 위상 · DI5 최후 위상.
  *
- * ## ⚠️ DI1·PH10 은 여기 없다 — **앵커가 리셋보다 뒤이기 때문이다**
+ * ## ⚠️ DI1·PH10 은 여기 없다 — **앵커 ㉑ 으로 옮겨 갔다**(S2)
  * 설계서 공통 구현 고지 ④ 는 순서를 **DI1(리셋 전 aux0 읽기) → PH10(창 술어) → 리셋 →
  * DI5(진입)** 로 못 박았는데, 이 앵커는 팬텀 피격 리셋(`world.ts` 의 `aux0 = 0` +
  * `setBreakToken(…, 0)`) **뒤**에 있다. 즉 여기 도달한 시점의 `aux0` 은 **항상 0** 이라
  * DI1 의 반경 보정(aux0/2)은 영영 0 이 되고 PH10 의 "창 중 피격" 술어는 영영 거짓이다.
- * 그 둘은 리셋 분기 자체에 손잡이가 필요하다 — 흉내 내면 화면과 규칙이 갈린다.
- * (DI5 만 "리셋 **이후**"가 설계 순서라 여기서 정확히 성립한다.)
+ * S2 가 리셋 **직전**에 앵커 ㉑ 을 뚫었고, 그 둘은 {@link phantomCloakBreakReset} 에 산다.
+ * (DI5 만 "리셋 **이후**"가 설계 순서라 여기서 정확히 성립한다 — 그래서 여기 남는다.)
  *
  * @param dmg 실제로 hp 에서 차감된 피해 — DI5 의 임계 통과 판정이 피격 **전** hp 를 복원하는 데 쓴다
  */
@@ -328,4 +341,96 @@ export function phantomEnemyDamaged(
       if (extra > 0) target.hp -= extra;
     }
   }
+}
+
+/**
+ * 앵커 ㉑ **팬텀 무피격 스트릭 리셋 직전** — DI1 위상 정산 · PH10 발각 즉응.
+ *
+ * ## 이 자리가 [치명] 이던 것을 S2 가 풀었다
+ * 두 스킬 다 **리셋 전**의 스트릭을 요구하는데 앵커 ④ 는 리셋 뒤였다 — DI1 은 상시 최소 반경,
+ * PH10 은 상시 미발동이었다. 여기서는 `streak` 이 인자로 온다: `player.aux0` 을 직접 읽어도
+ * 같은 값이지만 인자를 쓰는 것이 **읽는 시점이 리셋 앞이라는 사실**을 코드로 못 박는다(앵커
+ * 주석의 계약). 설계서 공통 구현 고지 ④ 의 순서 **DI1 → PH10** 을 이 함수 안에서 지킨다.
+ *
+ * ## ⚠️ 여기서 `aux0`/`aux1` 을 세우지 않는다
+ * 이 훅 **직후**에 world 가 `aux0 = 0` 과 `setBreakToken(…, 0)` 을 실행한다. 스트릭을 보존하는
+ * 계열(PH5 연장 위상)은 이 자리가 아니라 리셋 분기 자체를 조건부로 만들어야 한다 — 이 레인 밖.
+ *
+ * @param streak 리셋 **직전**의 무피격 스트릭
+ * @param broken 리셋 직전에 해제 표식(`aux1`)이 서 있었는가.
+ *   ⚠️ **두 스킬 다 이 값을 보지 않는다** — DI1 은 "잃는 스트릭에 비례" 이고 PH10 은 "창 중
+ *   피격" 이라, 둘 다 *이미 해제 첫 타를 쏜 뒤였는가* 와 무관하다. 그 구분을 쓰는 카드가
+ *   생기면 그때 읽는다(지금 억지로 엮으면 설계에 없는 조건이 하나 는다).
+ */
+export function phantomCloakBreakReset(
+  state: WorldState,
+  player: Entity,
+  streak: number,
+  broken: boolean,
+): void {
+  void broken;
+  const s = Math.trunc(streak);
+
+  // ① DI1 위상 정산 — 반경 = (40 + 4×Lv) + streak/2. 쌓아둔 은신이 방벽으로 정산된다.
+  //
+  // 침공에서도 이 앵커는 돈다(리셋 분기의 게이트는 `signatureOn` 뿐이다). 설계서 ④ 표가 DI1 을
+  // **허용**으로 판정한 근거가 그것이다: 스트릭 보정항은 침공에서 aux0 이 상시 0 이라 자연히
+  // 죽고, 남는 기본항은 대가(실피격)가 PvE 와 똑같이 걸리는 무대가 스킬이다. 그래서 여기에
+  // `invasion3` 게이트를 걸지 않는다 — 걸면 설계 판정과 코드가 갈린다.
+  const di1 = lv(state, Sk.phaseLiquidation);
+  if (di1 >= 1) {
+    // 반올림은 게이트 **안**이다(규율 ③). `streak / 2` 의 홀수 나머지를 버리는 것은 반경이
+    // 정수여야 해서다 — 소거 판정은 `r * r` 이라 소수가 끼면 경계 탄이 틱마다 갈린다.
+    clearEnemyBullets(state, player, 40 + 4 * di1 + Math.floor(s / 2));
+  }
+
+  // ② PH10 발각 즉응 — **은신 창 중에** 깨졌을 때만 대시 쿨다운 전액 환급 + 무적 가산.
+  //
+  // 창 술어는 `playerCloaked` 가 아니라 `cloakWindowActive(streak)` 다: 전자는 `player.aux0` 을
+  // 읽는데 이 지점의 aux0 은 아직 리셋 전이라 값은 같지만, **인자를 쓰는 쪽만이** 훅이 리셋
+  // 뒤로 밀렸을 때 조용히 거짓이 되지 않는다(위 계약). 침공은 스트릭이 끝까지 0 이라 창이 안
+  // 열려 자연 no-op 이고, 상수항이 없다(설계서 ④ 표 PH10).
+  const ph10 = lv(state, Sk.blownCoverReflex);
+  if (ph10 >= 1 && cloakWindowActive(s)) {
+    player.dashCooldown = 0;
+    // `player.iframes` 는 이 시점에 이미 `config.hitIframes` 로 세워져 있다(world 의 피격
+    // 블록이 앞에 있다) — 그래서 대입이 아니라 **가산**이다. DI9(유령 선체)가 배선되면 같은
+    // 필드를 만지므로 순서 고정(DI9 → PH10)이 설계서 구현 고지 ④ 의 요구다.
+    player.iframes += 1 + Math.floor(ph10 / 4);
+  }
+}
+
+/**
+ * 앵커 ⑯ **볼리 파라미터 확정 직후 · 탄 생성 직전** — AS2 은막 침투.
+ *
+ * ## AS2 만 있는 이유 (AS3·AS10 이 여기 없는 사유는 각각 다르다)
+ *  - **AS10 유령 탄도**: 창 중 발사탄에 `mark` 를 찍는 것 자체는 여기서 된다. 그런데 그 표식을
+ *    **읽는 자리가 없다** — 설계서가 지정한 소비처 셋(`world.ts` 의 차단 판정 · 파괴가능 벽
+ *    피해 · 표적 선택의 `segmentBlocked`)이 전부 앵커가 아니다. 표식만 찍으면 해시에 실리는
+ *    무연산이 되므로 넣지 않는다(반쪽 배선 금지 — AS8 이 빠진 사유와 같다).
+ *  - **AS3 처형 재장전**: 트리거가 "해제 첫 타(**강화탄**)로 처치" 인데, 이 앵커는 `aux1` 소진
+ *    **뒤**라 이번 볼리가 그 강화탄인지 알 신호가 없고(소진 분기는 표식을 남기지 않는다),
+ *    설령 표식을 찍어도 처치를 보는 앵커 ⑩ 은 **탄을 넘기지 않아** 어느 탄이 죽였는지 모른다.
+ *    `source` 만 보고 "지금 은신 창인가"로 대체하면 창 안 전 발사가 2.5배가 된다 — 설계와
+ *    정반대다.
+ *
+ * ## ⚠️ 빔은 `pierce`·`speed` 를 안 읽는다 — 아키타입 한계를 넓혀 약속하지 않는다
+ * 앵커 주석의 표가 정본이다(빔은 `damage`·`mark`·`cooldownQ` 뿐). 레일건·미사일·발칸/스프레드
+ * 에서는 두 필드가 그대로 반영된다. 빔 런에서 AS2 가 무연산인 것은 배선 누락이 아니라
+ * 아키타입 정의이고, 여기서 `damage` 로 대체 보상을 얹으면 설계에 없는 축이 하나 는다.
+ */
+export function phantomVolleyParams(
+  state: WorldState,
+  player: Entity,
+  params: VolleyParams,
+): void {
+  // AS2 은막 침투 — 은신 창 동안 발사한 탄에 관통 +1 · 탄속 +6% + 1.5%p/Lv.
+  const as2 = lv(state, Sk.cloakPierce);
+  if (as2 < 1) return;
+  // 창 술어는 정본 하나(`playerCloaked`)를 쓴다 — 침공 차단과 기체 게이트가 그 안에 있다.
+  if (!playerCloaked(state, player)) return;
+  params.pierce += 1;
+  // 탄속은 정수 bp · 나눗셈 1회. `speed` 는 소수일 수 있어 `Math.round` 를 걸지 않는다 —
+  // 반올림하면 스킬 없는 런과 같은 값이어야 할 이유가 없는 자리에서 정수화가 새로 생긴다.
+  params.speed = (params.speed * (10600 + 150 * as2)) / 10000;
 }
