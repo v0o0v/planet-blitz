@@ -919,7 +919,7 @@ export const EN = {
   'champion.chassis.pick': 'Selected',
   'champion.role': 'Role',
   'champion.trees': 'Skill trees',
-  'champion.tree.meta': '{n} nodes · capstone gate {g}pt',
+  'champion.tree.meta': '{n} nodes · {g}pt unlocks Tier II actives',
   'champion.retire.title': 'Retire your ship?',
   'champion.retire.body':
     'Your current ship (Lv {level}) becomes a Guardian. Level, skill points and gear slots reset; your equipped gear stays locked to that Guardian and returns to your stash only when you dismiss it. You will pilot a fresh {name}.',
@@ -3121,7 +3121,7 @@ export const KO: Record<MessageKey, string> = {
   'champion.chassis.pick': '선택',
   'champion.role': '전투 역할',
   'champion.trees': '스킬 계열',
-  'champion.tree.meta': '노드 {n}개 · 캡스톤 게이트 {g}pt',
+  'champion.tree.meta': '노드 {n}개 · {g}pt 로 2티어 액티브 해금',
   'champion.retire.title': '기체를 퇴역시킬까요?',
   'champion.retire.body':
     '현재 기체(Lv {level})가 수호기로 넘어갑니다. 레벨·스킬 포인트·장착 슬롯이 초기화되고, 장착한 장비는 그 수호기에 잠긴 채 소멸시킬 때에만 창고로 돌아옵니다. 새 {name}(으)로 출격하게 됩니다.',

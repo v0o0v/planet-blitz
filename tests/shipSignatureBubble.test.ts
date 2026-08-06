@@ -25,7 +25,6 @@ import { createWorld, stepWorld } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig } from '../src/sim/world.js';
 import { PLANET_MODE } from '../src/sim/planetMode.js';
 import { hashWorld } from '../src/sim/replay.js';
-import { hasCapstone } from '../src/sim/capstones.js';
 import {
   SIG_BUBBLE_FILM,
   FILM_PERIOD_TICKS,
@@ -37,6 +36,7 @@ import {
   filmAbsorbed,
   filmRemainingDamage,
   filmBurstPush,
+  hasSignature,
 } from '../src/sim/shipSignature.js';
 import { zeroSkillInvest } from '../data/ships/index.js';
 
@@ -202,7 +202,7 @@ describe('버블(typeId 6) 정규 경로 배선 — Profile → buildRunConfig �
   it('방막이 실제로 발현한다 — 트리거 굶긴 대조군보다 피해가 작고 막 내구가 소모된다', () => {
     const cfg = buildRunConfig(profileWithType(6), STAGE);
     expect(cfg.shipType).toBe(6);
-    expect(hasCapstone(cfg.loadout?.uniqueMask ?? 0, SIG_BUBBLE_FILM)).toBe(true);
+    expect(hasSignature(cfg.loadout?.uniqueMask ?? 0, SIG_BUBBLE_FILM)).toBe(true);
 
     const live = runObserved(SEED, cfg, TICKS);
     // starve=true: 같은 cfg(같은 shipType·마스크, 시그니처는 계속 켜져 있다) · 재생 타이머만

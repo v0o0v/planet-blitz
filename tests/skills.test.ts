@@ -44,8 +44,7 @@ import {
   flattenShipNodes,
   zeroSkillInvest as registryZeroInvest,
 } from '../data/ships/index.js';
-import { hasCapstone } from '../src/sim/capstones.js';
-import { SIG_STRIKER_MARKSMAN } from '../src/sim/shipSignature.js';
+import { hasSignature, SIG_STRIKER_MARKSMAN } from '../src/sim/shipSignature.js';
 import type { Item, StatKey } from '../src/items/types.js';
 
 function m8Item(slot: 'main' | 'sub' | 'armor', affixes: { stat: StatKey; value: number }[]): Item {
@@ -237,24 +236,24 @@ describe('기체 타입 baseBp — 정수 bp, 단일 나눗셈 (설계서 §4)',
 });
 
 describe('시그니처 비트 OR-in (설계서 §4 — §10-1 예측 결함)', () => {
-  it('전 타입(스트라이커 포함)이 자기 시그니처 비트만 켠다(hasCapstone 확인)', () => {
+  it('전 타입(스트라이커 포함)이 자기 시그니처 비트만 켠다(hasSignature 확인)', () => {
     // ⚠️ 2026-08-06 — 스트라이커도 이제 유효한 signatureBit(24, ADR-0049)을 가지므로 "타입 0 은
     // 예외" 분기(구 버전)는 더 이상 밟히지 않는다. 전 타입이 같은 규율을 따른다.
     for (const def of SHIP_TYPES) {
       const mask = computeLoadoutStats([], 0, def.id).loadout.uniqueMask;
       expect(def.signatureBit, def.slug).toBeGreaterThanOrEqual(18);
-      expect(hasCapstone(mask, def.signatureBit), def.slug).toBe(true);
+      expect(hasSignature(mask, def.signatureBit), def.slug).toBe(true);
       // 다른 타입의 시그니처 비트는 절대 켜지지 않는다(비트 혼선 = 다른 기체 패시브 발동).
       for (const other of SHIP_TYPES) {
         if (other.id === def.id) continue;
-        expect(hasCapstone(mask, other.signatureBit), `${def.slug} vs ${other.slug}`).toBe(false);
+        expect(hasSignature(mask, other.signatureBit), `${def.slug} vs ${other.slug}`).toBe(false);
       }
     }
   });
 
   it('시그니처 비트는 typeId 미지정에서도 켜진다(투자와 무관한 타입 고유 속성)', () => {
     const mask = computeLoadoutStats([], undefined, 1).loadout.uniqueMask;
-    expect(hasCapstone(mask, shipTypeDef(1).signatureBit)).toBe(true);
+    expect(hasSignature(mask, shipTypeDef(1).signatureBit)).toBe(true);
   });
 });
 

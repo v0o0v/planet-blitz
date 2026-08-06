@@ -23,7 +23,6 @@ import { createWorld, stepWorld } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig } from '../src/sim/world.js';
 import { PLANET_MODE } from '../src/sim/planetMode.js';
 import { hashWorld } from '../src/sim/replay.js';
-import { hasCapstone } from '../src/sim/capstones.js';
 import {
   SIG_MALLOW_CUSHION,
   CUSHION_DEFER_BP,
@@ -32,6 +31,7 @@ import {
   cushionDeferredDamage,
   cushionRecovered,
   cushionSettled,
+  hasSignature,
 } from '../src/sim/shipSignature.js';
 import { zeroSkillInvest } from '../data/ships/index.js';
 
@@ -193,7 +193,7 @@ describe('말로우(typeId 5) 정규 경로 배선 — Profile → buildRunConfi
     // 굶길 수 없으므로, 이 절은 **직접 증거**만으로 배선을 증명한다.
     const cfg = buildRunConfig(profileWithType(5), STAGE);
     expect(cfg.shipType).toBe(5);
-    expect(hasCapstone(cfg.loadout?.uniqueMask ?? 0, SIG_MALLOW_CUSHION)).toBe(true);
+    expect(hasSignature(cfg.loadout?.uniqueMask ?? 0, SIG_MALLOW_CUSHION)).toBe(true);
 
     const live = runObserved(SEED, cfg, TICKS);
 

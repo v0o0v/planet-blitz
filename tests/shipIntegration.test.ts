@@ -29,7 +29,6 @@ import type { KeyValueStore, Profile } from '../src/save/profile.js';
 import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig, WorldState } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
-import { hasCapstone } from '../src/sim/capstones.js';
 import {
   SIG_BRUISER_ARMOR,
   SIG_ARC_OVERCHARGE,
@@ -37,6 +36,7 @@ import {
   SIG_BUBBLE_FILM,
   SIG_STRIKER_MARKSMAN,
   SIGNATURE_BITS,
+  hasSignature,
 } from '../src/sim/shipSignature.js';
 import { SHIP_TYPES, shipSkillNodeCount, zeroSkillInvest } from '../data/ships/index.js';
 import { createHarness } from '../src/harness/core.js';
@@ -92,7 +92,7 @@ describe('① Profile{typeId} → buildRunConfig → createWorld → stepWorld',
     const cfg = buildRunConfig(profileWithType(1), { planet: 0, stage: 1 });
     // ⚠️ 정의만 되고 OR 이 안 되는 결함(§10-1)은 여기서만 잡힌다 — L1·L2·L4 단위 테스트는
     //    전부 통과하면서 패시브만 영구 미발동이 된다.
-    expect(hasCapstone(cfg.loadout?.uniqueMask ?? 0, SIG_BRUISER_ARMOR)).toBe(true);
+    expect(hasSignature(cfg.loadout?.uniqueMask ?? 0, SIG_BRUISER_ARMOR)).toBe(true);
     expect(cfg.shipType).toBe(1);
   });
 
@@ -103,19 +103,19 @@ describe('① Profile{typeId} → buildRunConfig → createWorld → stepWorld',
     const cfg = buildRunConfig(defaultProfile(), { planet: 0, stage: 1 });
     expect(cfg.shipType).toBe(0);
     const mask = cfg.loadout?.uniqueMask ?? 0;
-    expect(hasCapstone(mask, SIG_STRIKER_MARKSMAN)).toBe(true);
+    expect(hasSignature(mask, SIG_STRIKER_MARKSMAN)).toBe(true);
     for (const other of SIGNATURE_BITS) {
       if (other === SIG_STRIKER_MARKSMAN) continue;
-      expect(hasCapstone(mask, other), `비트 ${other} 오점등`).toBe(false);
+      expect(hasSignature(mask, other), `비트 ${other} 오점등`).toBe(false);
     }
   });
 
   it('타입별로 서로 다른 시그니처 비트가 켜진다(한 비트가 전 타입에 새지 않는다)', () => {
     const bruiser = buildRunConfig(profileWithType(1), { planet: 0, stage: 1 });
     const arc = buildRunConfig(profileWithType(2), { planet: 0, stage: 1 });
-    expect(hasCapstone(bruiser.loadout?.uniqueMask ?? 0, SIG_ARC_OVERCHARGE)).toBe(false);
-    expect(hasCapstone(arc.loadout?.uniqueMask ?? 0, SIG_ARC_OVERCHARGE)).toBe(true);
-    expect(hasCapstone(arc.loadout?.uniqueMask ?? 0, SIG_BRUISER_ARMOR)).toBe(false);
+    expect(hasSignature(bruiser.loadout?.uniqueMask ?? 0, SIG_ARC_OVERCHARGE)).toBe(false);
+    expect(hasSignature(arc.loadout?.uniqueMask ?? 0, SIG_ARC_OVERCHARGE)).toBe(true);
+    expect(hasSignature(arc.loadout?.uniqueMask ?? 0, SIG_BRUISER_ARMOR)).toBe(false);
   });
 
   it('신규 2종(typeId 5·6)도 자기 비트만 켜고 타입 0 과 관측 결과가 갈린다', () => {
@@ -132,11 +132,11 @@ describe('① Profile{typeId} → buildRunConfig → createWorld → stepWorld',
       const cfg = buildRunConfig(profileWithType(typeId), { planet: 0, stage: 1 });
       expect(cfg.shipType, String(typeId)).toBe(typeId);
       const mask = cfg.loadout?.uniqueMask ?? 0;
-      expect(hasCapstone(mask, bit), `typeId ${typeId}: 시그니처 비트 미점등`).toBe(true);
+      expect(hasSignature(mask, bit), `typeId ${typeId}: 시그니처 비트 미점등`).toBe(true);
       // 자기 비트 하나만 켜져야 한다 — 남의 패시브가 함께 켜지면 여기서 터진다.
       for (const other of SIGNATURE_BITS) {
         if (other === bit) continue;
-        expect(hasCapstone(mask, other), `typeId ${typeId}: 비트 ${other} 오점등`).toBe(false);
+        expect(hasSignature(mask, other), `typeId ${typeId}: 비트 ${other} 오점등`).toBe(false);
       }
       const hashes = runHashes(3311, cfg, 180);
       expect(hashes, `typeId ${typeId}: 타입 0 과 관측이 같다`).not.toEqual(strikerHashes);
@@ -425,7 +425,7 @@ describe('④ 하네스 기체 타입 치트', () => {
     expect(harness.setShipType(1)).toBe(1);
     harness.startRun({ seed: 123 });
     expect(host.lastConfig?.shipType).toBe(1);
-    expect(hasCapstone(host.lastConfig?.loadout?.uniqueMask ?? 0, SIG_BRUISER_ARMOR)).toBe(true);
+    expect(hasSignature(host.lastConfig?.loadout?.uniqueMask ?? 0, SIG_BRUISER_ARMOR)).toBe(true);
   });
 
   it('투자 벡터를 그 타입의 무투자 벡터로 초기화한다(옛 타입 벡터를 오독하지 않는다)', () => {

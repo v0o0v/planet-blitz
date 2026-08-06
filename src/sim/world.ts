@@ -148,7 +148,22 @@ import {
 } from './filmBurst.js';
 // 은신 사이클 헬퍼(E1) — `playerCloaked` 과 같은 leaf 모듈. 토큰 쓰기의 단일 경로다.
 import { cloakEntryCrossed, fireCloakEntry, setBreakToken } from './cloak.js';
-import { shipTypeDef } from '../../data/ships/index.js';
+import { shipTypeDef, DEFAULT_SHIP_TYPE } from '../../data/ships/index.js';
+import { hasAnyInvestment } from '../items/skills.js';
+import { createSkillSlots } from './skillSlots.js';
+// 210스킬 앵커 9개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
+import {
+  survivedLethalBlow,
+  onVolleyFired,
+  onDashFired,
+  onGemCollected,
+  onPlayerDamaged,
+  onKillsDelta,
+  onBulletExpired,
+  onWallContact,
+  onDamageChain,
+  onSignatureStep,
+} from './skillHooks.js';
 import { SpatialHash, circlesOverlap, sweptCircleHitT } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
 import { updateBoss, bossDefFor } from './boss.js';
@@ -1181,6 +1196,71 @@ export interface WorldState {
   filmBurstReqX1: number;
   /** 슬롯 1 요청의 파열 중심 y. */
   filmBurstReqY1: number;
+  // --- 210스킬 공유 기반(S0 · ADR-0049) --------------------------------------------------
+  /**
+   * 스킬 **이월 슬롯** 8칸 — 구간을 넘어 사는 상태(런당 1회 소진 표식 · 누적 저금 · 락온 스택).
+   * 폭·값 규약·기체별 배정표는 {@link file://./skillSlots.ts} 가 정본이다.
+   *
+   * ⚠️ **의뢰 구간 전환에서 참조가 아니라 값으로 승계된다.** `WORLD_CARRY` 분류지만
+   * `copyKeys` 의 참조 대입을 `carryAcrossSegment` 가 값 복사로 덮어쓴다 — 그러지 않으면 두
+   * 구간이 같은 배열 객체를 공유하고, `_WorldExhaustive` 는 `keyof` 가 최상위 키만 보므로
+   * 그것을 못 잡는다. 근거는 `commissionCarry.ts` 의 해당 주석.
+   *
+   * ⚠️ **배열에 직접 대입하지 마라** — `writeSlot` 이 정수·비음을 강제한다(u32 폴드 정합).
+   */
+  skillCarry: number[];
+  /**
+   * 스킬 **구간 슬롯** 8칸 — 구간마다 새로 시작하는 상태(창 잔여 틱 · 이번 구간 킬 스냅샷).
+   * `WORLD_FRESH` 라 승계하지 않는다(= 새 월드의 0 초기값을 쓴다).
+   */
+  skillStage: number[];
+  /**
+   * 이 런에 스킬이 하나라도 투자돼 있는가. `createWorld` 가 `config.skillInvest` 에서 **한 번**
+   * 확정하고 런 중 절대 바뀌지 않는다. 앵커 9개의 첫 줄 게이트가 이것이다.
+   *
+   * ## 해시 폴드 — 하지 않는다 (의도적)
+   * `sigBit`·`armorMaxStacks` 와 **같은 규율**이다: 이미 해시에 접히는 입력(`config.skillInvest`,
+   * `replay.ts` 의 투자 벡터 폴드)의 순수 파생이라, 두 런의 이 값이 다르면 그 원인 입력이 먼저
+   * 갈려 해시가 이미 다르다. 파생 폴드는 정보량 0 이고 접는 순간 골든 전량 재생성이다.
+   * 미투자 런은 이 게이트에서 즉시 반환하므로 **바이트 단위로 종전과 같다.**
+   */
+  skillsOn: boolean;
+  /**
+   * 스킬 **파생 정수 블록** — `createWorld` 가 1회 확정하고 런 중 불변이다.
+   * 규율·근거는 {@link SkillDerived} 선언 주석.
+   */
+  skillDerived: SkillDerived;
+}
+
+/**
+ * 스킬 레벨에서 파생되는 **정수 상수 블록**. `createWorld` 가 한 번 계산해 봉인한다.
+ *
+ * ## 왜 이 블록이 있는가 (구현 고지 ③)
+ * 스킬 레벨 스케일은 나눗셈을 포함한다(예: `round(1 + 3·Lv/(Lv+12))`). sim 루프가 매 틱
+ * 나누면 부동소수 경로가 늘어나고 클라·검증 EF 의 재실행 정합 표면이 커진다. 그래서
+ * **나눗셈은 `createWorld` 에서 1회 정수로 확정**하고 루프는 정수만 읽는다. 선례는
+ * {@link WorldState.armorMaxStacks} 이고 그 필드 주석이 같은 근거를 적어 두었다.
+ *
+ * ## 해시 폴드 — 하지 않는다 (의도적)
+ * 여기 실리는 값은 전부 **이미 해시에 접히는 입력**(`config.skillInvest` · `config.skillAffixLv` ·
+ * `config.loadout` · `config.shipType`)의 순수 파생이다. 두 런의 파생값이 다르면 그 원인 입력이
+ * 먼저 갈려 해시가 이미 다르므로, 따로 접는 것은 정보량 0 이고 접는 순간 골든 전량 재생성이다.
+ *
+ * ⚠️ **이 근거는 "파생원이 config 안에 있다"에 전적으로 의존한다.** 파생을 그 밖의 입력에서
+ * 끌어오게 되면 근거가 깨진다 — 그때는 이 주석을 고치기 전에 폴드부터 다시 판단하라.
+ *
+ * 레인은 자기 파생 정수를 이 인터페이스에 **이름 있는 필드**로 추가한다(익명 배열 금지 —
+ * 미배정 인덱스가 조용한 0 이 되는 것이 `skillSlots.ts` 가 폭을 좁게 잡은 이유와 같다).
+ */
+export interface SkillDerived {
+  /**
+   * 이 파생 블록이 계산된 기체 타입 id(`config.shipType` 의 정규화값).
+   *
+   * 슬롯 번호가 기체별로 겹치므로(`skillSlots.ts` 값 규약 4) 파생 정수도 기체마다 의미가
+   * 다르다. 이 필드가 있으면 배선 레인이 "이 블록은 내 기체 것인가"를 단언할 수 있고, 없으면
+   * 다른 기체의 파생값을 자기 것으로 읽는 오류가 **조용히** 통과한다.
+   */
+  shipType: number;
 }
 
 /**
@@ -1459,6 +1539,18 @@ export function createWorld(
     filmBurstReq1: FILM_BURST_REQ_NONE,
     filmBurstReqX1: 0,
     filmBurstReqY1: 0,
+    // 스킬 슬롯 8칸 × 2벌(S0). **초기값은 전 슬롯 0** 이다 — 그래야 미배선·미투자 런에서 끝까지
+    // 0 이고 `hashWorld` 스킬 슬롯 폴드가 미실행이라 기존 골든이 바이트 불변이다. "만충으로
+    // 시작"하는 스킬은 0 을 만충으로 **해석**해라(0 아닌 초기값을 넣지 마라 — `skillSlots.ts`
+    // 값 규약 1·3).
+    skillCarry: createSkillSlots(),
+    skillStage: createSkillSlots(),
+    // 스킬 투자 게이트(S0). 앵커 9개의 첫 줄이 이 값이라, false 면 스킬 경로가 한 줄도 실행되지
+    // 않는다. `sigBit`·`armorMaxStacks` 와 같은 파생·동결 규율이고 hashWorld 는 접지 않는다.
+    skillsOn: hasAnyInvestment(cfg.skillInvest),
+    // 스킬 파생 정수 블록(S0). **이 한 줄이 파생의 유일한 지점**이다 — 런 중 불변이고 hashWorld
+    // 는 접지 않는다(근거는 `SkillDerived` 주석). 나눗셈이 낀 레벨 스케일은 여기서 확정한다.
+    skillDerived: { shipType: cfg.shipType ?? DEFAULT_SHIP_TYPE },
     // 탄-벽 broad-phase 는 침공 3레이어에서만 쓴다. PvE 는 null → 기존 직접 스윕 그대로라
     // 해시가 바이트 불변이다(회랑 벽이 '활성 벽 ≤~19' 전제를 깨는 것은 침공 경로뿐).
     wallIndex: invasion3Runtime !== undefined ? new InvasionWallIndex() : null,
@@ -2088,6 +2180,9 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
         if (ex * ex + ey * ey <= clearR2) t.dead = true;
       }
     }
+    // 앵커 ②(S0) — 대시가 **실제로 발동한** 이 블록 안이다. 쿨다운·입력 게이트 밖에 두면
+    // "대시를 시도했다"가 아니라 매 틱이 되어 술어 자체가 달라진다.
+    onDashFired(state, player);
   }
 
   // 벽 슬라이드의 "직전 좌표" — 속도 적분 **이전**. 강제 스크롤에서는 이 시점의 좌표가 이미
@@ -2172,6 +2267,9 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
   //    **다음 틱** 이 지점이 정상적으로 접촉을 집는다 — 한 틱 늦을 뿐 누락은 없다.
   // ③ `activeWalls` 가 비면(벽 없는 무대·포켓 방) 접촉은 거짓이라 0 리셋이다.
   state.wallContactTicks = wallContact ? state.wallContactTicks + 1 : 0;
+  // 앵커 ⑦(S0) — 갱신 **직후**, 접촉이 참인 틱에만. 술어의 권위는 위 `slideCircleWalls` 이고
+  // 훅에서 기하를 다시 재면 두 판정이 조용히 갈린다(위 블록 주석의 근거).
+  if (wallContact) onWallContact(state, player);
   // ⚠️ 모드별 경계 규칙(창 클램프·압사·후방압박·수축 밖 판정)은 **여기 있지 않다**. 조우
   // detour(ADR-0033)가 stepPlayer 를 의존성 주입으로 재사용하는데, 포켓 방 안에서는 그 규칙이
   // 하나도 성립하지 않기 때문이다(포켓 좌표는 창 밖 12만 유닛). 그래서 stepWorld 의
@@ -2261,6 +2359,9 @@ export { playerCloaked } from './cloak.js';
  * 아니라 `autoAttack` 에 있다(아래 스트라이커 분기 주석 참조).
  */
 function stepShipSignature(state: WorldState, player: Entity, input: InputFrame): void {
+  // 앵커 ⑨(S0) — **기체 분기보다 앞**이다. 아래 분기들은 각자 조기 반환하므로, 안쪽에 두면
+  // 기체마다 도는 틱이 달라진다. 미투자 런은 훅 첫 줄에서 즉시 반환한다(바이트 불변).
+  onSignatureStep(state, player, input);
   if (signatureOn(state, SIG_BRUISER_ARMOR)) {
     // 비피격 지속 시 스택이 하나씩 빠진다(설계서 §3: 비피격 180틱 후 1스택 소멸).
     player.aux1++;
@@ -2823,6 +2924,12 @@ function autoAttack(state: WorldState, player: Entity): void {
   // 같은 조건식 옆에 두어 "정조준 볼리의 두 강화(피해·관통)가 항상 같이 켜진다" 를 코드로
   // 보이게 한다.
   const pierce = marksmanFire ? w.pierce + MARKSMAN_PIERCE : w.pierce;
+
+  // 앵커 ①(S0) — **발사가 확정된 지점**. 스트라이커 정조준 카운터가 같은 자리에 있는 이유와
+  // 같다: 위쪽 조기 반환(쿨다운 미준비 · 사거리 안 표적 없음)에 걸린 틱에는 도달하지 않고,
+  // 여기 아래는 아키타입 분기마다 예외 없이 발사하고 return 한다. 아키타입 분기 안으로 옮기면
+  // 다섯 자리를 고쳐야 하고 그중 하나를 빠뜨리는 것이 이 저장소의 반쪽 배선이다.
+  onVolleyFired(state, player);
 
   const baseAngle = atan2(target.y - player.y, target.x - player.x);
   // Firing archetypes off `weaponType` (M2 B2 + M3 C1):
@@ -3880,6 +3987,9 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         b.pierce--;
       } else {
         b.dead = true;
+        // 앵커 ⑥(S0) — **관통 예산이 바닥나 소멸**하는 분기. 수명 만료·화면 밖 컬링이 아니다
+        // (자이로 무한 관통·프리즘 세그먼트는 위 분기라 여기 오지 않는다).
+        onBulletExpired(state, b);
       }
     }
   }
@@ -4031,6 +4141,15 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // `modeScale` 의 반올림 **뒤**에 곱한다: 그래야 이 지점의 값이 종전 값의 정확히 2 배라,
     // 무대 배율이 걸리는 런에서도 "두 배" 가 반올림 순서 때문에 ±1 로 흔들리지 않는다.
     dmg *= PLAYER_DAMAGE_TAKEN_MULT;
+    // 스킬 감쇠 사슬 슬롯 2칸(S0 · 앵커 ⑧) — **`PLAYER_DAMAGE_TAKEN_MULT` 직후, 브루저 장갑 앞.**
+    // 스트라이커 S4 문서가 지정한 자리 그대로이고, 훅 안에서 **감소 → 흡수** 순으로 처리한다.
+    // 사슬 진입 피해를 여기서 붙잡아 두는 이유는 아래 `survivedLethalBlow` 다 — 그 술어의
+    // "경감 전 피해"는 **이 시점의 값**이지 hp 차감 직전 값이 아니다.
+    // ⚠️ 반올림을 이 자리(게이트 밖)에 두지 마라 — 시그니처·스킬 없는 런의 소수 접촉 피해
+    // (엘리트 배율)까지 바뀐다. S0 는 훅이 인자를 그대로 돌려주므로 비트 동일이다.
+    const preMitigationDmg = dmg;
+    const hpBeforeChain = player.hp;
+    dmg = onDamageChain(state, player, dmg);
     // 브루저 시그니처 — 장갑 스택 피해 감소(설계서 §3·§4). 이후 시그니처들이 감소된 피해를 보고
     // 판정하도록 앞에 둔다. 미보유면 armorOn=false 로 한 줄도 실행되지 않는다.
     // ⚠️ 산술은 shipSignature.ts 의 `armorReducedDamage` 와 동형(합산 bp · 단일 나눗셈)이되
@@ -4115,6 +4234,11 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     player.hp -= dmg;
     if (player.hp < 0) player.hp = 0;
     player.iframes = state.config.hitIframes;
+    // 치명타 생존 술어(C-2) — **여기서 딱 한 번 계산한다.** 위상 전환막 회복(아래)보다 앞이라
+    // "사슬을 거치고도 살아남았다"만 재고, 그 뒤의 회복은 섞이지 않는다. 두 기체(브루저 FO5 ·
+    // 아크캐스터 BR10)가 같은 술어를 쓰는데 각자 적으면 조용히 갈린다 — 그 둘은 한 런에
+    // 공존하지 않아 차이를 드러낼 테스트가 원리적으로 없다.
+    const lethalSurvived = survivedLethalBlow(preMitigationDmg, hpBeforeChain, player.hp);
     // 브루저 시그니처 — 실제로 피해를 입은 이번 피격으로 장갑 1스택 적립 + 소멸 타이머 리셋.
     // 적립 상한도 감소 상한과 **같은 정본**(`state.armorMaxStacks`)을 읽는다 — 둘이 갈리면
     // "쌓이는데 안 깎이는"(또는 반대) 상태가 조용히 생긴다(E4).
@@ -4169,6 +4293,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       player.hp = Math.min(player.maxHp, player.hp + Math.round(player.maxHp * PHASE_MEMBRANE_HEAL_FRAC));
       player.targetY = PHASE_MEMBRANE_COOLDOWN;
     }
+    // 앵커 ④(S0) — **실제로 선체 hp 가 깎인** 피격의 후속. 막이 전량 흡수한 피격은 위에서
+    // 반환하므로 여기 오지 않는다. 기존 시그니처·유니크 후속이 전부 반영된 뒤에 두어, 스킬이
+    // 이번 피격의 **최종 상태**를 본다. `lethalSurvived` 는 위에서 한 번 계산한 값을 넘긴다.
+    onPlayerDamaged(state, player, dmg, lethalSurvived);
   }
 }
 
@@ -4201,6 +4329,8 @@ function collectGem(state: WorldState, gem: Entity): void {
   // 것과의 차이는 **능동 소비 여부**다(촉매는 플레이어가 넣은 것, 인기 배율은 전체 통계 파생).
   // 중립(planetMult === 1)이면 곱셈이 정확히 무연산 → 기존 골든 바이트 불변.
   state.xpTotal += gained * stageMetaXpMult(state.config.stage) * state.planetMult;
+  // 앵커 ③(S0) — 콤보·XP 가 이미 반영된 뒤. 젬 하나당 정확히 한 번 불린다.
+  onGemCollected(state, gem);
 }
 
 /** Collect a loot drop: record its seed + rarity + provenance for settlement. */
@@ -4266,6 +4396,9 @@ export function endCommissionSegment(state: WorldState, outcome: 'cleared' | 'es
 }
 
 function compact(state: WorldState): void {
+  // 앵커 ⑤(S0)의 기준점. `compact` 이 킬 집계의 **단일 수렴점**이라(탄 명중·화염 DoT·전격·
+  // 폭탄 기물이 전부 여기서 `dead` 로 수거된다) 이 델타 하나가 전 사망 경로를 덮는다.
+  const killsBefore = state.kills;
   const survivors: Entity[] = [];
   const drops: { x: number; y: number; xp: number }[] = [];
   const supplyDrops: { x: number; y: number }[] = [];
@@ -4401,6 +4534,10 @@ function compact(state: WorldState): void {
       spawnGem(state, d.x + cos(ang) * 40, d.y + sin(ang) * 40, SUPPLY_GEM_XP);
     }
   }
+  // 앵커 ⑤(S0) — 처치가 실제로 늘어난 틱에만. **확보(전리품·젬 스폰) 이후**라 스킬이 이번 틱
+  // 드랍을 보려면 한 틱 늦는다(알려진 성질 — 니플헤임 레인이 같은 형태를 실측해 뒀다).
+  const killsDelta = state.kills - killsBefore;
+  if (killsDelta > 0) onKillsDelta(state, killsDelta);
 }
 
 // ---------------------------------------------------------------------------
