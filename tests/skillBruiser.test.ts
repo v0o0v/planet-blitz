@@ -393,6 +393,35 @@ describe('⑥-b BL8 격돌 담금질', () => {
     expect(v.leadPierceBonus).toBe(0);
   });
 
+  it('⭐ 선두탄 증분이 **실제 탄까지 닿는다** — 아키타입 분기가 삼키지 않는다', () => {
+    // ⚠️ `VolleyParams` 만 단언하면 반쪽이다. `world.ts` 가 그 칸을 안 읽거나 `spawnBullet` 이
+    //    clamp 로 삼키면 훅은 초록인데 탄은 종전 그대로다 — 앵커 ⑰ 이 정확히 그 형태로
+    //    무효였다. 그래서 **태어난 탄의 피해**를 직접 잰다.
+    function firstVolleyDamages(charge: boolean): number[] {
+      const w = mk([[BL8, 20]]);
+      const p = player(w);
+      if (charge) writeSlot(w.skillStage, BruiserStage.temperCharges, 1);
+      addEnemy(w, p.x + 300, p.y, 1_000_000);
+      for (let i = 0; i < 240; i++) {
+        stepWorld(w, emptyInput());
+        const shots = w.entities.filter((e) => e.kind === 'bullet' && !e.dead);
+        if (shots.length > 1) return shots.map((e) => e.damage);
+      }
+      return [];
+    }
+    const off = firstVolleyDamages(false);
+    const on = firstVolleyDamages(true);
+    // 하한 먼저 — 볼리가 안 났으면 아래 비교는 빈 배열끼리의 항진이다.
+    expect(off.length, '볼리가 나지 않았다 — 잴 것이 없다').toBeGreaterThan(1);
+    expect(on.length).toBe(off.length);
+    // 미적립 볼리는 전 탄이 같은 피해다(선두 개념이 관측되지 않는다).
+    expect(new Set(off).size).toBe(1);
+    // 적립 볼리는 **정확히 한 발만** 더 아프다.
+    const base = off[0]!;
+    expect(on.filter((d) => d > base)).toHaveLength(1);
+    expect(on.filter((d) => d === base)).toHaveLength(off.length - 1);
+  });
+
   it('미투자 런은 접촉 피격에서도 슬롯을 안 건드리고 비트가 불변이다', () => {
     const a = mk([[MO9, 5]]);
     onPlayerDamaged(a, player(a), 10, false, DamageSource.contact);
