@@ -43,6 +43,11 @@
 
 import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
+// 앵커 ⑭(성장 축)가 **중첩 적용**에 쓴다. `powerups.ts` 는 `world.js`/`entities.js` 를
+// **type-only** 로만 끌고 나머지는 leaf(constants·data·commissionOrders)라 순환이 생기지 않는다.
+// ⚠️ `applyPowerup` 은 RNG 를 한 칸도 안 쓴다 — `powerupRng` 소비는 `drawPowerupChoices`
+// (`powerups.ts:517`) 한 곳뿐이고, 그 함수는 이 앵커보다 **앞에서** 이미 끝나 있다.
+import { applyPowerup } from './powerups.js';
 // 앵커 ⑥ 의 소멸 사유. **type-only 라 순환이 되지 않는다**(`skillHooks.ts` 가 이 파일을
 // 값으로 import 하므로 값 import 는 순환이다) — 컴파일에서 지워진다.
 import type { BulletExpiryReason } from './skillHooks.js';
@@ -223,7 +228,39 @@ export function onEnemyDeathCatalyst(
 // 신규 앵커 ⑫⑬⑭ (S1) — 성장 축. **전 분기 비어 있음**
 // ---------------------------------------------------------------------------
 
-/** 레벨이 오른 직후. 스킬 디스패치 **뒤**. 계약은 `skillHooks.ts` 쪽 주석이 정본이다. */
+// ---------------------------------------------------------------------------
+// 성장 축 카드 판정
+// ---------------------------------------------------------------------------
+
+/** id 9 — `epiphany`(깨달음). 3택이 **1택**이 되고 2중첩으로 들어온다. */
+const CAT_EPIPHANY = 9;
+/** id 14 — `mastery`(숙련). 3택이 **같은 파워업 셋**이 되고 3중첩으로 들어온다. */
+const CAT_MASTERY = 14;
+
+/**
+ * 이 런에 카드가 실렸는가. `config.catalysts` 는 **정규화 전 배열**이고 같은 id 가 여러 번
+ * 들어올 수 있으므로 존재 여부만 본다(중첩 장수는 배율 번들 `catalystMods` 의 축이지
+ * 규칙 카드의 축이 아니다 — 헌장 §유니크 주입 "한 런에 같은 촉매 2장 금지").
+ *
+ * ⚠️ 순수 읽기다 — RNG·슬롯 어느 쪽도 건드리지 않는다.
+ */
+function hasCatalyst(state: WorldState, id: number): boolean {
+  const list = state.config.catalysts;
+  if (list === undefined) return false;
+  for (const c of list) {
+    if (c === id) return true;
+  }
+  return false;
+}
+
+/**
+ * 레벨이 오른 직후. 스킬 디스패치 **뒤**. 계약은 `skillHooks.ts` 쪽 주석이 정본이다.
+ *
+ * ⚠️ **미배선이다.** 이 지점을 요구하는 카드는 `id 4 cornucopia`(레벨업 시 바닥 전리품이
+ * 전부 폭발 → 적 피해 + 등급 강등 + 회수) 하나인데, 그 본체가 **드랍·전리품·적 사망 마킹**에
+ * 걸려 성장 축 앵커 그룹 밖이다. 여기서 카운터만 돌리면 슬롯이 해시에만 접히는 반쪽 배선이
+ * 되므로 켜지 않았다(헌장 §축소 작동 규율이 말하는 "죽은 슬롯"과는 다른, 순수 미배선이다).
+ */
 export function onLevelUpCatalyst(state: WorldState, level: number): void {
   if (!state.catalystOn) return;
   void level;
@@ -238,18 +275,55 @@ export function onLevelUpCatalyst(state: WorldState, level: number): void {
  */
 export function onPowerupOfferCatalyst(state: WorldState, choices: readonly number[]): void {
   if (!state.catalystOn) return;
-  void choices;
+  if (choices.length === 0) return;
+  // `choices` 는 `state.powerupChoices` 그 자체다(world.ts 의 호출부). 쓰기는 규약대로
+  // `state.powerupChoices` 쪽으로만 한다.
+  const offers = state.powerupChoices;
+  const first = offers[0];
+  if (first === undefined) return;
+
+  // ⚠️⚠️ **RNG 미소비.** 아래 둘 다 `drawPowerupChoices` 가 이미 뽑아 놓은 결과를 **자리째
+  // 덮을 뿐** 재추첨·추가 뽑기를 하지 않는다. 그래서 같은 시드의 `powerupRng` 스트림 위치가
+  // 촉매 유무와 무관하게 동일하고, 이후 레벨의 3택도 통째로 같다.
+  // ⚠️ 적용 순서는 **mastery → epiphany 고정**이다(둘 다 실린 런에서 결과가 갈리지 않게).
+  //    mastery 가 전 칸을 첫 칸으로 채운 뒤 epiphany 가 1칸으로 접으므로, 남는 것은 첫 칸이다.
+
+  // id 14 mastery — 세 자리가 전부 같은 파워업이 된다(폭을 잃고 깊이를 얻는다).
+  // ⚠️ `GAMBLER_EXTRA_CHOICES` 로 4택이 된 런에서도 자리 수와 무관하게 전부 덮는다.
+  if (hasCatalyst(state, CAT_MASTERY)) {
+    for (let i = 1; i < offers.length; i++) offers[i] = first;
+  }
+  // id 9 epiphany — 3택이 1택으로 접힌다(거부할 수 없다). 프리즈는 그대로라 픽 입력이
+  // 와야 런이 재개되고, `world.ts` 의 `idxOffered < length` 가드가 1칸만 허용한다.
+  if (hasCatalyst(state, CAT_EPIPHANY)) {
+    offers.length = 1;
+  }
 }
 
-/** 파워업이 실제로 적용된 직후. 스킬 디스패치 **뒤**. */
+/**
+ * 파워업이 실제로 적용된 직후. 스킬 디스패치 **뒤**.
+ *
+ * 성장 축 두 카드의 **중첩분**이 여기서 들어간다. `world.ts` 가 이미 기본 1중첩을 적용한
+ * 뒤이므로 이 함수는 **추가분만** 얹는다.
+ *
+ * ⭐ `min`/`clamp` 삼킴 점검: `applyPowerup` 은 `POWERUPS[i].apply(state)` 순수 디스패치라
+ * 상한이 **카드마다 따로**다. 실제로 `dashCooldownTicks` 는 `Math.max(12, ·)` 바닥이 있어
+ * 이미 12 면 추가분이 삼켜지고, `reinforced-hull`(`playerHp`/`maxHp` 가산)·`gem-magnet`
+ * (`magnetRadius` ×1.15) 처럼 바닥이 없는 축은 그대로 쌓인다. 즉 **개입이 원리적으로
+ * 무효가 되지는 않는다**(앵커 ⑰ 이 밟은 형태와 다르다) — 다만 어떤 파워업이 뽑히느냐에
+ * 따라 체감이 갈리고, 그것이 두 카드의 `약해지는 상황:` 칸에 이미 적힌 대가다.
+ */
 export function onPowerupPickedCatalyst(
   state: WorldState,
   poolIndex: number,
   offeredIndex: number,
 ): void {
   if (!state.catalystOn) return;
-  void poolIndex;
   void offeredIndex;
+  let extra = 0;
+  if (hasCatalyst(state, CAT_MASTERY)) extra += 2; // 3중첩 = 기본 1 + 2
+  if (hasCatalyst(state, CAT_EPIPHANY)) extra += 1; // 2중첩 = 기본 1 + 1
+  for (let i = 0; i < extra; i++) applyPowerup(state, poolIndex);
 }
 
 // ---------------------------------------------------------------------------
