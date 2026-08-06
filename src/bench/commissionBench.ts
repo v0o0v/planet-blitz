@@ -29,10 +29,18 @@
  * 밴드 복구 레인에서 `[1, grade+1]` 에서 좁혔다). {@link typicalSegments} 는 이 분포를 시드마다
  * 결정론적으로 재현한다(`Math.random` 아님 — 고정 PRNG).
  *
- * ## 실행 — 이 워크트리에는 `vite-node` 가 없다
- * `tests/commissionBandMeasure.test.ts` 가 이 모듈의 export 를 직접 호출해 계측을 수행하는
- * **영구** vitest 파일이다(로스터 벤치·침공 밸런스 선례와 동일 패턴). `main()` 은 참고용 CLI
- * 진입점이고 `isCliEntry()` 가 없으면 돌지 않는다(import 만으로 무거운 스윕이 실행되는 것을 막는다).
+ * ## 실행 — CLI 다 (ADR-0051)
+ * 진입점은 `bench/commissionBands.ts` 이고, `vite-node` 로 돈다(PATH 에 없으므로 경로를 직접
+ * 적는다 — 실행법은 그 파일 머리 주석에 있다).
+ *
+ * 예전에는 `tests/commissionBandMeasure.test.ts` 가 이 모듈의 export 를 직접 호출해 **모듈
+ * 스코프에서** 계측을 9번 돌리고 그 값을 단언으로 굳혔다. ADR-0051 이 그 단언을 내렸다 —
+ * 재는 대상이 참조봇의 실력이라 절대 계약으로 쓸 근거가 없고, 그 파일 스스로 "니플헤임은 봇
+ * 한계로 왜곡된다"며 96시드 중 26런을 제외하고 있었다. 자동 수집이 **구조적으로** 불가능하도록
+ * 계측을 `tests/` 글롭 밖(`bench/`)으로 옮겼다.
+ *
+ * `main()` 은 참고용 CLI 진입점이고 `isCliEntry()` 가 없으면 돌지 않는다(import 만으로 무거운
+ * 스윕이 실행되는 것을 막는다).
  */
 
 import { createWorld } from '../sim/world.js';
@@ -333,11 +341,17 @@ export interface CommissionBandStat {
   readonly runCount: number;
 }
 
-/** 그 계급·모드·주문의 96시드 밴드를 잰다. */
+/**
+ * 그 계급·모드·주문의 96시드 밴드를 잰다.
+ *
+ * `seeds` 는 CLI(`bench/commissionBands.ts`)가 **축소 실행**할 때만 넘긴다 — 배선이 도는지
+ * 확인하는 용도다. 축소 표본으로 낸 수치는 계측 결과로 인용하지 마라(96시드가 정본 좌표계다).
+ */
 export function measureCommissionBand(
   grade: CommissionGrade,
   mode: CommissionBenchMode,
   order: CommissionOrder = 'chain',
+  seeds: readonly number[] = SEEDS,
 ): CommissionBandStat {
   let wins = 0;
   let winsExNiflheim = 0;
@@ -347,7 +361,7 @@ export function measureCommissionBand(
   const totalTicksArr: number[] = [];
   const violations: TickCapViolation[] = [];
 
-  for (const seed of SEEDS) {
+  for (const seed of seeds) {
     const segments = commissionSegments(grade, mode, seed);
     const outcome = playCommissionRun(seed, grade, order, segments);
     if (outcome.win) {
@@ -365,12 +379,12 @@ export function measureCommissionBand(
     }
   }
 
-  const nonNiflheimCount = SEEDS.length - niflheimRunCount;
+  const nonNiflheimCount = seeds.length - niflheimRunCount;
   return {
     grade,
     mode,
     order,
-    winRate: (wins / SEEDS.length) * 100,
+    winRate: (wins / seeds.length) * 100,
     winRateExNiflheim: nonNiflheimCount > 0 ? (winsExNiflheim / nonNiflheimCount) * 100 : 0,
     niflheimRunCount,
     segmentTicks: dist(allSegTicks),
@@ -378,7 +392,7 @@ export function measureCommissionBand(
     tickCapViolationsExNiflheim: violations.filter((v) => !v.touchesNiflheim),
     totalTicks: dist(totalTicksArr),
     tickCapViolations: violations,
-    runCount: SEEDS.length,
+    runCount: seeds.length,
   };
 }
 
@@ -390,9 +404,13 @@ export function measureCommissionBand(
 export function measureEliteBand(
   grade: CommissionGrade = 2,
   mode: CommissionBenchMode = 'typical',
+  seeds: readonly number[] = SEEDS,
 ): CommissionBandStat {
-  return measureCommissionBand(grade, mode, 'elite');
+  return measureCommissionBand(grade, mode, 'elite', seeds);
 }
+
+/** 계측 시드 정본(96개) — CLI 가 축소 실행할 때 앞에서부터 잘라 쓴다. */
+export const COMMISSION_BENCH_SEEDS: readonly number[] = SEEDS;
 
 // ---------------------------------------------------------------------------
 // 마크다운
