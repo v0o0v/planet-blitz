@@ -636,12 +636,28 @@ hazard sub-state", `spawnBoss` 주석(`entities.ts:423-429`)이 "`phase`(0/1/2)�
 레인 골든 2개가 포함된다** — `denoFixture.test.ts` · `shipHashBaseline.test.ts`. 즉 **210스킬
 배선은 sim 레인 골든을 반드시 깨뜨린다**(이미 알던 사실이지만 범위가 확인됐다).
 
-⚠️ **"싣는다"와 "동결값으로 대조한다"는 다르다.** 50파일 대부분은 동적 단언이라 배선 후에도
-통과한다. **D 단계 전에 그 50에서 「하드코딩된 해시·기대값 표」를 가진 것만 가려내라** —
-지금까지 확인된 것: `denoFixture` · `shipHashBaseline` · `pilotFrameFreeze` ·
-`shipSignaturePhantom`(시드) · `shipSignatureWiring`(시드).
-인계 D 의 원래 목록(`fullRun`·`planetTierCompletion`·`autopilot`·`emergentRunLength`)은
-**이 중 하나도 포함하지 않는다.** 목록을 다시 만들어야 한다.
+⚠️ **"싣는다"와 "동결값으로 대조한다"는 다르다.** 50파일 대부분은 동적 단언이라 배선 후에도 통과한다.
+**가려내는 법**: `tests/` 에서 `\b\d{9,10}\b`(u32 해시 리터럴)를 grep 하면 **11파일 27건**뿐이고,
+그중 17건이 `pilotFrameFreeze` 하나에 몰려 있다(18칸 골든 표). 나머지는 대부분 시드·상수다.
+
+#### ⭐ D 단계 재생성 대상 — **실측 확정본** (인계 D 의 원래 4파일 목록은 이 중 하나도 포함하지 않는다)
+
+| 대상 | 누가 읽는가 | 재생성 방법 |
+|---|---|---|
+| **`tests/fixtures/striker-prem8.json`** (780KB) | `shipHashBaseline`(**sim 레인**) · `encounterHashInvariance` | **`RECORD_STRIKER_BASELINE=1`** |
+| `scripts/deno-verify/fixtures.json` | `denoFixture`(**sim 레인**) | **`REGEN_DENO_FIXTURES=1`** |
+| `tests/fixtures/encounter-baseline.json` (264KB) | `encounterHashInvariance` | 헤더 참조(변경 **전** 커밋 체크아웃으로 떴다 — 재생성 절차가 다르다) |
+| `pilotFrameFreeze.test.ts` 의 `EXPECTED` 18칸 | 자기 자신 | **인라인 표라 수동 갱신** |
+| `shipSignaturePhantom` / `shipSignatureWiring` 증인 시드 | 자기 자신 | 시드 재선정(§위) |
+
+> ⚠️ **`striker-prem8.json` 은 스트라이커 빌드의 per-tick 해시다 — 이번 스트라이커 배선이 정확히
+> 이것을 깨뜨린다.** 다만 `shipHashBaseline` 은 `SIM_LANE_FILES` 라 `vitest run` 이 수집하지 않아
+> **기본 스위트에서는 보이지 않는다.** 배선 레인이 초록을 보고도 골든이 깨져 있을 수 있다 —
+> 관측면은 리드의 `pnpm test:sim` 뿐이다.
+>
+> ⚠️ 그 파일 헤더가 남긴 경고: 과거 한 번 **재생성을 미뤄 27건이 깨진 채 쌓인 빚**이 있었고 다음
+> 재생성이 그것을 함께 갚았다. **미루지 마라 — 미루면 다음 사람이 "무엇이 언제 왜 갈렸는지"를
+> 분리할 수 없다.**
 
 #### 시드 노후화 상세
 
