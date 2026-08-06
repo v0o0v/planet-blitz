@@ -734,6 +734,10 @@ describe('⑬ AS3 처형 재장전 (앵커 ⑯ 표식)', () => {
       aimAngle: 0,
       // ⚠️ 기본은 **평범한 볼리**다. AS3 을 재는 케이스만 뒤집는다.
       cloakBreak: false,
+      // 아크캐스터 CH3 이 신설한 필수 필드. 팬텀은 각인을 요구하지 않으므로 `false` 다.
+      // ⚠️ 이 줄이 `...over` **앞**에 있어야 한다 — `Partial` 스프레드가 뒤에 오면
+      //    필수 필드가 optional 로 좁혀져 `tsc` 가 대입을 거부한다(병렬 레인 합류 지점).
+      recordSpawnDamage: false,
       ...over,
     };
   }
