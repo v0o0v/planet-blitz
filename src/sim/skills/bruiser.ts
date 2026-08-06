@@ -394,9 +394,15 @@ export function bruiserSignatureStep(state: WorldState, player: Entity): void {
  * 조우 격실 탄은 leaf 에서 적 hp 를 깎아 이 앵커에 오지 않는다 — BL9 의 "명중" 은 그래서
  * 주무기·파생탄 명중만 센다.
  *
- * `target.hp` 를 더 깎는 것은 되돌리기가 아니라 **추가 피해**다. `compact` 의 처치 게이트가
- * `hp <= 0` 이라 이 감산으로 넘어간 적은 같은 틱에 정상 격추된다(부활 판정은 이 앵커 앞에서
- * 이미 해소됐다).
+ * `target.hp` 를 더 깎는 것은 되돌리기가 아니라 **추가 피해**다(부활 판정은 이 앵커 앞에서 이미
+ * 해소됐다 — 이 사유는 유효하다).
+ *
+ * ⚠️ **정정(좀비 부류의 뿌리)**: 여기 원래 *"`compact` 의 처치 게이트가 `hp <= 0` 이라 이 감산으로
+ * 넘어간 적은 같은 틱에 정상 격추된다"* 고 적혀 있었는데 **틀렸다**. `compact`(`world.ts:4753`)의
+ * **1차 게이트는 `e.dead === true`** 이고, `hp <= 0` 은 그 **안쪽**의 킬 집계 게이트일 뿐이다
+ * (`world.ts:4763`). 즉 `hp` 만 깎고 `dead` 를 안 세우면 그 적은 수거되지 않고 **좀비**로 남는다 —
+ * 계속 움직이고 공격하며 처치·젬·전리품이 전부 사라진다. sim 전체에 `hp<=0 → dead` 를 훑는
+ * 일반 스윕은 **없다**(`world.ts`·`status.ts` 전수 확인). 이 오해가 좀비 결함 여러 건을 낳았다.
  */
 export function bruiserEnemyDamaged(
   state: WorldState,
@@ -424,7 +430,15 @@ export function bruiserEnemyDamaged(
         if (e.kind !== 'enemy' && e.kind !== 'boss') continue;
         const dx = e.x - target.x;
         const dy = e.y - target.y;
-        if (dx * dx + dy * dy <= r2) e.hp -= blast;
+        if (dx * dx + dy * dy > r2) continue;
+        e.hp -= blast;
+        // ⚠️ **여기의 `e` 는 맞은 표적이 아니라 「주변 적」이다** — `world.ts` 의 격추 판정
+        //    (`t.hp -= dealt; if (t.hp <= 0) …`)은 `t` 하나만 본다. 이들은 그 판정을 한 번도
+        //    안 거치므로, `dead` 를 안 세우면 `compact` 가 못 걷어 **좀비**로 남는다(처치·젬·
+        //    전리품 전부 유실). 형태는 `status.ts` 의 `applyChain`·`blastDamageAt` 과 같은 두
+        //    줄이고, 대상 범위(enemy+boss)도 `blastDamageAt` 과 같아 사실이 두 벌이 안 된다.
+        // ⚠️ 순회 중 변형 금지 — 플래그만 세우고 엔티티를 낳거나 지우지 않는다.
+        if (e.hp <= 0) e.dead = true;
       }
     }
   }
@@ -452,6 +466,16 @@ export function bruiserEnemyDamaged(
   const n = cadencePeriod(stacks);
   if (count >= n) {
     // 강타 = 이번 명중 피해의 +80% + 4%p/Lv. 반올림은 게이트 안이다.
+    //
+    // ⚠️ **여기는 BL3 과 달리 `dead` 를 안 세운다 — 의도적이다.** 대상이 「주변 적」이 아니라
+    //    **맞은 표적 자신**이라, 이 값은 `world.ts:4170-4197` 의 격추 판정을 **이미 거친** 뒤다.
+    //    앵커 ⑩ 은 `target.hp`/`target.dead` 를 **되돌리지 않는다**를 금지 사항으로 못 박았고
+    //    (`phantom.ts:320` 이 같은 선례를 명시한다), 여기서 `dead` 를 세우면 그 틱의 격추 판정
+    //    결과를 사후에 뒤집는 것이 된다.
+    // ⚠️ 다만 **잔여 위험은 사실대로 적어 둔다**: 표적이 탄 피해를 견뎠는데 이 강타가 hp 를 0
+    //    이하로 내리면, 그 표적은 다시 피격될 때까지 `dead` 가 안 선다(일반 스윕이 없다).
+    //    앵커 규율과 충돌하는 축이라 이 레인에서 단독으로 바꾸지 않았다 — 팬텀 AS4·AS5 가 같은
+    //    형태를 공유하므로 셋을 함께 판단해야 한다.
     const bonus = Math.round((dmg * (8000 + 400 * bl9)) / 10000);
     if (bonus > 0) target.hp -= bonus;
     writeSlot(state.skillStage, BruiserStage.cadenceHits, 0);

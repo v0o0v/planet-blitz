@@ -1091,3 +1091,98 @@ describe('⑯ MO6 사망 마킹 (좀비 결함)', () => {
     expect(e.dead).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ⑯-좀비 BL3 폭발 사망 마킹 — `compact` 의 1차 게이트는 `dead` 다
+// ---------------------------------------------------------------------------
+
+/**
+ * BL3 은 앵커 ⑩(`onEnemyDamaged`) **안**이라 "격추 판정 뒤라 의도적" 으로 보이기 쉽다. 그러나
+ * 이 스킬이 깎는 것은 **맞은 표적이 아니라 「주변 적」**이고, 그 주변 적들은 `world.ts:4170-4197`
+ * 의 격추 판정을 **한 번도 거치지 않는다** — 그 판정은 `t`(맞은 표적) 하나만 본다.
+ *
+ * ⚠️ 계측기 함정: 적을 플레이어 코앞에 두면 자동사격 탄이 같은 틱에 마무리해 **수정 전에도**
+ * 통과한다. 그래서 표적을 600px(자동사격 탄 ≈30px/tick) 밖에 두고, 주변 적은 폭발 반경
+ * (50+5×Lv = 100) 의 **바깥 끝** 90px 에 둔다 — 사망 경로가 BL3 폭발 하나뿐이 된다.
+ * ⚠️ 그리고 **맞은 표적이 아니라 주변 적이 죽는 것**을 잰다(표적이 죽으면 그건 다른 경로다).
+ */
+describe('⑯-좀비 BL3 폭발 사망 마킹', () => {
+  /** BL3 Lv10 · 탄 피해 40 → 폭발 = round(40 × 4000/10000) = 16. */
+  const BLAST = 16;
+
+  function bl3Setup(nearHp: number): { w: WorldState; t: Entity; near: Entity } {
+    const w = mk([[BL3, 10]]);
+    const p = player(w);
+    const t = addEnemy(w, p.x, p.y + 600, 1_000_000);
+    const near = addEnemy(w, t.x + 90, t.y, nearHp); // 반경 100 안, 바깥 끝
+    return { w, t, near };
+  }
+
+  const src = (): Entity => ({ ...blankEntity('bullet'), damage: 40, aux0: 2 });
+
+  it('전제 — 주변 적은 반경 안이고 표적은 안 죽는다 (하한)', () => {
+    const { w, t, near } = bl3Setup(1000);
+    expect(Math.hypot(near.x - t.x, near.y - t.y)).toBeLessThanOrEqual(100);
+    onEnemyDamaged(w, t, 40, src());
+    expect(near.hp).toBe(1000 - BLAST);
+    expect(t.hp).toBe(1_000_000); // 표적은 이 경로로 안 죽는다
+  });
+
+  it('폭발만으로 hp≤0 이 된 주변 적은 그 자리에서 dead 로 마킹된다', () => {
+    const { w, t, near } = bl3Setup(BLAST);
+    expect(near.dead).toBe(false);
+    onEnemyDamaged(w, t, 40, src());
+    expect(near.hp).toBeLessThanOrEqual(0); // 실제로 죽을 만큼 맞았다 (하한)
+    expect(near.dead).toBe(true);
+  });
+
+  it('다음 stepWorld 에서 수거되고 처치·젬으로 집계된다 (좀비로 안 남는다)', () => {
+    const { w, t, near } = bl3Setup(BLAST);
+    const gx = near.x;
+    const gy = near.y;
+    const killsBefore = w.kills;
+    const gemsBefore = w.entities.filter((x) => x.kind === 'gem').length;
+    onEnemyDamaged(w, t, 40, src());
+    expect(near.hp).toBeLessThanOrEqual(0);
+    stepWorld(w, emptyInput());
+    // ⚠️ `id` 가 아니라 **객체 동일성**으로 본다 — 이 파일의 `addEnemy` 는 id 를 안 매겨
+    //    표적과 주변 적의 id 가 둘 다 0 이다(id 로 보면 표적 생존이 이 단언을 통과시킨다).
+    expect(w.entities.includes(near)).toBe(false);
+    expect(w.entities.includes(t)).toBe(true); // 표적은 살아 있다 — 죽은 것은 주변 적이다
+    expect(w.kills).toBeGreaterThanOrEqual(killsBefore + 1);
+    const gems = w.entities.filter(
+      (x) => x.kind === 'gem' && Math.hypot(x.x - gx, x.y - gy) <= 200,
+    );
+    expect(gems.length).toBeGreaterThanOrEqual(1);
+    expect(w.entities.filter((x) => x.kind === 'gem').length).toBeGreaterThan(gemsBefore);
+  });
+
+  it('보스도 같은 마킹을 받는다 — `blastDamageAt` 과 사실이 두 벌이 되지 않는다', () => {
+    const w = mk([[BL3, 10]]);
+    const p = player(w);
+    const t = addEnemy(w, p.x, p.y + 600, 1_000_000);
+    const bossE: Entity = {
+      ...blankEntity('boss'),
+      x: t.x + 90,
+      y: t.y,
+      hp: BLAST,
+      maxHp: BLAST,
+      radius: 40,
+    };
+    w.entities.push(bossE);
+    onEnemyDamaged(w, t, 40, src());
+    expect(bossE.hp).toBeLessThanOrEqual(0);
+    expect(bossE.dead).toBe(true);
+  });
+
+  it('회귀 — hp 가 남은 주변 적은 dead 가 안 서고 stepWorld 뒤에도 살아 있다', () => {
+    const { w, t, near } = bl3Setup(1000);
+    const killsBefore = w.kills;
+    onEnemyDamaged(w, t, 40, src());
+    expect(near.hp).toBe(1000 - BLAST); // 실제로 맞았다 (하한)
+    expect(near.dead).toBe(false);
+    stepWorld(w, emptyInput());
+    expect(w.entities.includes(near)).toBe(true);
+    expect(w.kills).toBe(killsBefore);
+  });
+});
