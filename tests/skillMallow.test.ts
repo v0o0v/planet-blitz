@@ -68,6 +68,7 @@ const SQ2 = 1;
 const SQ3 = 2;
 const SQ4 = 3;
 const SQ5 = 4;
+const SQ7 = 6;
 const SQ8 = 7;
 const ME1 = 10;
 const ME4 = 13;
@@ -123,8 +124,11 @@ function addEnemyBullet(state: WorldState, x: number, y: number): Entity {
   return e;
 }
 
-/** 앵커 ⑯ 이 넘기는 레코드 한 벌. 말로우 세 스킬은 `damage` 만 만진다. */
-function volley(damage = 100): VolleyParams {
+/**
+ * 앵커 ⑯ 이 넘기는 레코드 한 벌. SQ1·SQ5·SQ8 은 `damage` 만 만지고, **SQ7 은 `speed` 도**
+ * 만진다. 입력 벡터·발사각은 인자로 열어 둔다 — SQ7 의 술어가 그 둘의 내적이다.
+ */
+function volley(damage = 100, inputX = 0, inputY = 0, aimAngle = 0): VolleyParams {
   return {
     damage,
     pierce: 1,
@@ -137,8 +141,10 @@ function volley(damage = 100): VolleyParams {
     countUsed: true,
     ballisticsUsed: true,
     targetDist: 200,
-    // 발사 방위(rad). SQ7(관성 사출)이 언젠가 읽을 항이지만 아직 미배선 — 기본 0(순수 +x).
-    aimAngle: 0,
+    // 발사 방위(rad) · 그 틱 이동 입력 벡터. **SQ7(관성 사출)이 이 셋의 내적을 읽는다.**
+    aimAngle,
+    inputX,
+    inputY,
     cloakBreak: false,
     mark: 0,
     recordSpawnDamage: false,
@@ -878,5 +884,172 @@ describe('⑪ 앵커 ㉕ ME5 분할 상환', () => {
     const h = hashWorld(w);
     for (let i = 0; i < 20; i++) stepWorld(w, emptyInput());
     expect(hashWorld(w)).not.toBe(h); // 해시 폴드가 살아 있다(고정 해시 단언의 항진 방지)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑫ SQ7 관성 사출 — 앵커 ⑯ + **입력 배관**(W2)
+// ---------------------------------------------------------------------------
+//
+// 이 절이 잠그는 것은 스킬 하나가 아니라 **배관 자체**다: `autoAttack` 은 오래도록
+// `InputFrame` 을 인자로 받지 않았고 `WorldState` 에 그 틱 입력 보관도 없었다. 그래서
+// 술어(*"그 틱 입력 벡터와 발사각의 내적"*)의 한 항이 통째로 부재했고, 발사각(`aimAngle`)만
+// 실렸을 때도 SQ7 은 열리지 않았다.
+//
+// ⚠️ 부정 항목(무입력·역방향에 무연산)은 뮤테이션에 **원리적으로 안 걸린다** — 효과를 통째로
+//    지워도 통과한다. 그래서 모든 부정 단언 옆에 **같은 세팅의 긍정 짝**을 둔다.
+// ⚠️ 비례·단조 단언 앞에는 **하한**을 먼저 놓는다 — 배선이 끊기면 양변이 모두 기본값이 되어
+//    성립하는 항진이 이 리포에 실제로 있었다.
+//
+// 수치 정본(설계서 SQ7): 최대 보정(dot = 1) 피해 bp = 400 + 100×Lv · 탄속 bp = 1000 + 100×Lv.
+describe('⑫ SQ7 관성 사출', () => {
+  const AIMS = [0, Math.PI / 2, Math.PI, -2.3, 0.77];
+
+  it('양성 — 입력이 발사각과 완전히 일치하면 피해·탄속이 최대로 실린다 (다섯 방위)', () => {
+    const w = mk([[SQ7, 20]]);
+    const p = player(w);
+    for (const aim of AIMS) {
+      const v = volley(100, Math.cos(aim), Math.sin(aim), aim);
+      onVolleyParams(w, p, v);
+      // 방위가 달라도 **일치도가 같으면 결과가 같다** — 각도 자체가 아니라 내적이 술어다.
+      // 한 각도만 재면 우연 일치(예: `aimAngle` 을 무시하고 `inputX` 만 읽는 구현)를 못 가른다.
+      expect(v.damage).toBe(124); // 100 + round(100 × 2400/10000)
+      expect(v.speed).toBeCloseTo(650, 9); // 500 × 13000/10000
+    }
+  });
+
+  it('양성 — 입력 크기는 무관하다 (정규화 뒤의 내적이 술어다)', () => {
+    const w = mk([[SQ7, 20]]);
+    const p = player(w);
+    const full = volley(100, 1, 0, 0);
+    const short = volley(100, 0.3, 0, 0); // 같은 방향, 짧은 벡터
+    onVolleyParams(w, p, full);
+    onVolleyParams(w, p, short);
+    expect(full.damage).toBe(124);
+    expect(short.damage).toBe(full.damage);
+    expect(short.speed).toBeCloseTo(full.speed, 9);
+  });
+
+  it('단조 — 일치도가 낮아질수록 보정이 줄어든다 (하한을 먼저 잠근다)', () => {
+    const w = mk([[SQ7, 20]]);
+    const p = player(w);
+    // 발사각은 +x 고정, 입력만 0° → 45° → 90° 로 돌린다.
+    const got = [0, Math.PI / 4, Math.PI / 2].map((a) => {
+      const v = volley(100, Math.cos(a), Math.sin(a), 0);
+      onVolleyParams(w, p, v);
+      return v;
+    });
+    // ⚠️ 하한 — "볼리가 실제로 보정을 받았다". 이게 없으면 전부 100/500 이어도 단조가 선다.
+    expect(got[0]!.damage).toBeGreaterThan(100);
+    expect(got[0]!.speed).toBeGreaterThan(500);
+    expect(got[1]!.damage).toBeGreaterThan(100);
+    expect(got[1]!.speed).toBeGreaterThan(500);
+    expect(got[0]!.damage).toBeGreaterThan(got[1]!.damage);
+    expect(got[1]!.damage).toBeGreaterThan(got[2]!.damage);
+    expect(got[0]!.speed).toBeGreaterThan(got[1]!.speed);
+    expect(got[1]!.speed).toBeGreaterThan(got[2]!.speed);
+    // 직각(내적 0)은 무보정 — 아래 음성 절과 같은 경계다.
+    expect(got[2]!.damage).toBe(100);
+    expect(got[2]!.speed).toBe(500);
+  });
+
+  it('음성 짝 — 무입력·역방향은 레코드를 한 칸도 안 만진다 (긍정을 옆에 둔다)', () => {
+    const w = mk([[SQ7, 20]]);
+    const p = player(w);
+    const still = volley(100, 0, 0, 0);
+    onVolleyParams(w, p, still);
+    expect(still).toEqual(volley(100, 0, 0, 0));
+
+    const backward = volley(100, -1, 0, 0);
+    onVolleyParams(w, p, backward);
+    expect(backward).toEqual(volley(100, -1, 0, 0)); // 감산도 없다(설계서에 페널티가 없다)
+
+    // 긍정 짝 — 같은 런·같은 발사각에서 입력 방향만 뒤집으면 보정이 실린다.
+    const forward = volley(100, 1, 0, 0);
+    onVolleyParams(w, p, forward);
+    expect(forward.damage).toBe(124);
+    expect(forward.speed).toBeCloseTo(650, 9);
+  });
+
+  it('미투자 무연산 — 다른 스킬만 찍은 런은 입력이 완전히 일치해도 안 만진다', () => {
+    const w = mk([[ME1, 20]]);
+    const p = player(w);
+    const v = volley(100, 1, 0, 0);
+    onVolleyParams(w, p, v);
+    expect(v).toEqual(volley(100, 1, 0, 0));
+    // 긍정 짝 — 같은 입력·같은 앵커에 SQ7 만 얹으면 갈린다(앵커 자체는 살아 있다).
+    const inv = mk([[SQ7, 1]]);
+    const v2 = volley(100, 1, 0, 0);
+    onVolleyParams(inv, player(inv), v2);
+    expect(v2.damage).toBe(105); // Lv1: 피해 bp 500 → 100 + 5
+    expect(v2.speed).toBeCloseTo(555, 9); // 500 × 11100/10000
+  });
+
+  /**
+   * 실제 런에서 첫 아군탄 하나를 받아 온다. 이동 입력을 **매 틱 그대로** 넣는다.
+   * ⚠️ 표적이 우리가 놓은 적이 맞는지 진행 방위로 확인한다 — 웨이브가 더 가까운 적을 놓으면
+   *    발사 방위가 갈리고, 그러면 이 비교는 의미가 없다(조용히 틀리는 대신 크게 실패한다).
+   */
+  function firstBullet(points: ReadonlyArray<readonly [number, number]>, moveX: number): Entity {
+    const w = mk(points);
+    const p = player(w);
+    addEnemy(w, p.x + 200, p.y, 1_000_000); // dy = 0 → 발사 방위가 정확히 +x
+    let b: Entity | undefined;
+    for (let i = 0; i < 30 && b === undefined; i++) {
+      stepWorld(w, { ...emptyInput(), moveX, aim: 0 });
+      b = w.entities.find((e) => e.kind === 'bullet');
+    }
+    expect(b).toBeDefined();
+    expect(Math.abs(Math.atan2(b!.vy, b!.vx))).toBeLessThan(0.05);
+    return b!;
+  }
+
+  it('⚠️ 엔진 경로 — 그 틱 이동 입력이 **발사 시점까지 살아 있다**', () => {
+    // 질문 ①: 입력이 이동에 소비된 뒤 초기화되지 않는가. `stepPlayer` 는 지역 복사본만 쓰고
+    // `input` 을 한 칸도 안 고치므로(`src/sim/**` 전수: `input.<필드> =` 대입 0건)
+    // `autoAttack` 이 같은 값을 본다 — 그 사실을 훅 단위가 아니라 **실제 런**으로 잠근다.
+    const base = mk().weapon.bulletSpeed;
+    const idle = firstBullet([[SQ7, 20]], 0);
+    const moving = firstBullet([[SQ7, 20]], 1);
+    const sIdle = Math.hypot(idle.vx, idle.vy);
+    const sMoving = Math.hypot(moving.vx, moving.vy);
+    // ⚠️ 정밀도 1(±0.05)인 것은 여유가 아니다 — 탄 속도는 `speed` 를 `math.ts` 의 **근사**
+    //    `cos`/`sin` 으로 풀어 저장하므로 되감은 크기가 `speed` 와 소수점 두째 자리에서
+    //    갈린다(여기서 1800 대 1800.0064). 배선이 끊기는 실패는 30% 차이라 남김없이 잡힌다.
+    // 하한 — 정지 런의 탄속이 **무기 기본값 그대로**다(보정이 새지 않았다).
+    expect(sIdle).toBeCloseTo(base, 1);
+    // 배선 증명 — 같은 런에서 이동 입력만 켜면 탄이 실제로 빨라진다(Lv20 정방향 = ×1.3).
+    expect(sMoving).toBeGreaterThan(sIdle);
+    expect(sMoving).toBeCloseTo(base * 1.3, 1);
+  });
+
+  it('미투자 비트 불변 — 이동 입력으로 쏴도 투자 0 런의 탄은 기본값 그대로다', () => {
+    const w0 = mk();
+    const none = firstBullet([], 1);
+    // 정밀도 1 의 사유는 위 「엔진 경로」와 같다(근사 `cos`/`sin` 왕복 오차).
+    expect(Math.hypot(none.vx, none.vy)).toBeCloseTo(w0.weapon.bulletSpeed, 1);
+    expect(none.damage).toBe(w0.weapon.damage);
+    // 긍정 짝 — 같은 입력·같은 세팅에 SQ7 만 얹으면 두 축이 다 움직인다.
+    const on = firstBullet([[SQ7, 20]], 1);
+    expect(Math.hypot(on.vx, on.vy)).toBeGreaterThan(Math.hypot(none.vx, none.vy));
+    expect(on.damage).toBeGreaterThan(none.damage);
+  });
+
+  it('미투자 런은 이동 입력으로 240틱을 돌려도 결정론이 그대로다', () => {
+    const mv = { ...emptyInput(), moveX: 1, moveY: 0.5 };
+    const a = mk();
+    const b = mk();
+    for (let i = 0; i < 240; i++) {
+      stepWorld(a, mv);
+      stepWorld(b, mv);
+    }
+    expect(hashWorld(a)).toBe(hashWorld(b));
+    // 항진 방지 — 해시가 애초에 안 움직여서 위 단언이 서는 것이 아님을 보인다.
+    // ⚠️ 여기서 SQ7 투자 런을 마주 세우면 **안 된다**: `hashWorld` 가 `config.skillInvest`
+    //    배열 자체를 접어 배선과 무관하게 갈린다(① 절의 경고). 배선 증명은 위 두 테스트가
+    //    관측면(탄속·피해)으로 한다.
+    const h = hashWorld(a);
+    for (let i = 0; i < 20; i++) stepWorld(a, mv);
+    expect(hashWorld(a)).not.toBe(h);
   });
 });

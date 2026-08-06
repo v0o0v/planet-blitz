@@ -396,6 +396,9 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     // 발사 방위(rad). **F5(조준선 관통)가 이 값을 술어로 읽는다** — 기본 0(순수 +x)이라
     // `player.angle` 기본값 0 과 짝이 맞으면 콘 안이다. F2·S8 절은 F5 미투자 런이라 무영향.
     aimAngle: 0,
+    // W2 가 더한 칸 — 그 틱 이동 입력 벡터(읽기 전용). 기본은 무입력(정지).
+    inputX: 0,
+    inputY: 0,
     cloakBreak: false,
     mark: 0,
     recordSpawnDamage: false,

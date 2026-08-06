@@ -56,7 +56,7 @@ const hoisted = vi.hoisted(() => ({
    * 앵커 ⑯ 이 받은 `VolleyParams` 의 **훅 실행 전 스냅숏**. 참조를 그대로 담으면 훅이 고친
    * 뒤의 값을 보게 되어 "읽기 전용인가" 를 못 잰다 — 그래서 값으로 떠 둔다.
    */
-  volleys: [] as { aimAngle: number; targetDist: number }[],
+  volleys: [] as { aimAngle: number; targetDist: number; inputX: number; inputY: number }[],
   /**
    * 앵커 ⑥ 이 받은 인자 기록. 횟수만으로는 **사유가 갈렸는가**를 못 재고, 사유를 못 재면
    * "수명 만료에서도 불린다" 와 "기존 스킬이 두 배로 터진다" 가 같은 관측이 된다.
@@ -93,8 +93,13 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
         hoisted.launched.push({ x: c.x, y: c.y, active: c.phase === 1 });
       }
       if (name === 'onVolleyParams') {
-        const v = args[2] as { aimAngle: number; targetDist: number };
-        hoisted.volleys.push({ aimAngle: v.aimAngle, targetDist: v.targetDist });
+        const v = args[2] as { aimAngle: number; targetDist: number; inputX: number; inputY: number };
+        hoisted.volleys.push({
+          aimAngle: v.aimAngle,
+          targetDist: v.targetDist,
+          inputX: v.inputX,
+          inputY: v.inputY,
+        });
       }
       if (name === 'onBulletExpired') {
         const b = args[1] as { x: number; y: number };
@@ -796,6 +801,72 @@ describe('앵커 ⑯ `VolleyParams.aimAngle` — 자동 조준이 고른 발사 
     expect(headings.length).toBeGreaterThan(0);
     const mid = (Math.min(...headings) + Math.max(...headings)) / 2;
     expect(mid).toBeCloseTo(before, 9);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 앵커 ⑯ `inputX`/`inputY` (W2) — **입력 배관이 발사부까지 닿았는가**
+// ---------------------------------------------------------------------------
+//
+// `autoAttack(state, player)` 은 `InputFrame` 을 인자로 받지 않았고 `WorldState` 에 그 틱
+// 입력을 보관하는 칸도 없었다. 그래서 *"그 틱 입력 벡터"* 를 술어로 쓰는 스킬(말로우 SQ7)이
+// `aimAngle` 이 선 뒤에도 열리지 않았다 — 내적의 한 항이 통째로 부재했다.
+//
+// ⚠️ 이 절이 잡으려는 실패는 "칸은 있는데 항상 0" 과 "이동에 소비된 뒤 초기화된 값이 온다"
+// 둘이다. 앞의 것은 **여러 입력**으로만, 뒤의 것은 **이동이 실제로 일어난 틱**으로만 갈린다.
+describe('앵커 ⑯ `VolleyParams.inputX/inputY` — 그 틱 이동 입력', () => {
+  const MOVES: { name: string; mx: number; my: number }[] = [
+    { name: '정지', mx: 0, my: 0 },
+    { name: '+x', mx: 1, my: 0 },
+    { name: '-y', mx: 0, my: -1 },
+    { name: '대각', mx: 0.6, my: 0.8 },
+  ];
+
+  for (const [i, m] of MOVES.entries()) {
+    it(`양성: 입력 ${m.name} 이 레코드에 그대로 온다`, () => {
+      const s = skilled(0xe100 + i);
+      const p = s.entities[0];
+      if (p === undefined) throw new Error('플레이어가 0번에 없다');
+      plantEnemy(s, p.x + 150, p.y);
+      stepWorld(s, { ...emptyInput(), moveX: m.mx, moveY: m.my });
+      // 하한 먼저 — 발사가 아예 없으면 아래 단언이 빈 기록 위에서 항진이 된다.
+      expect(hoisted.volleys.length).toBeGreaterThan(0);
+      const v = hoisted.volleys[0];
+      if (v === undefined) throw new Error('볼리 기록이 없다');
+      // ⚠️ 정확 일치다 — 정규화·클램프 없이 원본을 싣는 것이 이 칸의 계약이다.
+      expect(v.inputX).toBe(m.mx);
+      expect(v.inputY).toBe(m.my);
+    });
+  }
+
+  it('음성 대조: 입력이 다르면 레코드도 다르다 (상수 0 을 배제한다)', () => {
+    const seen: string[] = [];
+    for (const [i, m] of MOVES.entries()) {
+      hoisted.volleys = [];
+      const s = skilled(0xe200 + i);
+      const p = s.entities[0];
+      if (p === undefined) throw new Error('플레이어가 0번에 없다');
+      plantEnemy(s, p.x + 150, p.y);
+      stepWorld(s, { ...emptyInput(), moveX: m.mx, moveY: m.my });
+      expect(hoisted.volleys.length).toBeGreaterThan(0);
+      seen.push(`${hoisted.volleys[0]?.inputX},${hoisted.volleys[0]?.inputY}`);
+    }
+    expect(new Set(seen).size).toBe(MOVES.length);
+  });
+
+  it('⚠️ 관측 대상이 살아 있다: 이동이 실제로 일어난 틱에도 값이 초기화되지 않는다', () => {
+    // `stepPlayer` 는 입력을 **지역 복사본**으로만 쓴다(`src/sim/**` 전수: `input.<필드> =`
+    // 대입 0건). 그래도 "이동에 소비된 뒤 0 이 온다" 는 이 배관의 대표 실패라 물증을 남긴다:
+    // 같은 틱에 플레이어가 정말 움직였는데 레코드는 원래 입력 그대로여야 한다.
+    const s = skilled(0xe300);
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    plantEnemy(s, p.x + 150, p.y);
+    const x0 = p.x;
+    stepWorld(s, { ...emptyInput(), moveX: 1, moveY: 0 });
+    expect(p.x).toBeGreaterThan(x0); // 이동이 실제로 일어났다(하한)
+    expect(hoisted.volleys.length).toBeGreaterThan(0);
+    expect(hoisted.volleys[0]?.inputX).toBe(1);
   });
 });
 

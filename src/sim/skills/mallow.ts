@@ -8,8 +8,8 @@
  *
  * ---
  *
- * ## 배선 현황 — 배치 4 가 **6종**, S2 앵커 확장 레인이 **+8종**, S3 배선 레인이 **+1종(ME5)**
- * = 지금 **15종**
+ * ## 배선 현황 — 배치 4 가 **6종**, S2 앵커 확장 레인이 **+8종**, S3 배선 레인이 **+1종(ME5)**,
+ * W2 입력 배관 레인이 **+1종(SQ7)** = 지금 **16종**
  *
  * 말로우 30종의 설계는 시그니처 완충의 **두 분기**에 압도적으로 몰려 있었고, 배치 4 시점에는
  * 그 둘 다 앵커가 없었다. **S2 가 그중 하나(정산 분기)를 열었다.**
@@ -23,6 +23,9 @@
  *    요구 10종 중 **8종**이 돌고, **ME8·ME9 둘만 남았다** — 둘은 ㉕ 으로도 못 온다(아래).
  *  - **발사부**(`autoAttack` 의 아키타입 분기) — S2 의 앵커 ⑯({@link onVolleyParams})이 열어
  *    SQ1 이 배선됐고, SQ5·SQ8 의 **소비처**도 여기다(적립만 하고 소비처가 없으면 반쪽이다).
+ *    **SQ7(관성 사출)도 여기다.** 술어의 두 항 중 발사각은 S3 가(`aimAngle`), 입력 벡터는
+ *    W2 가(`inputX`/`inputY` — `autoAttack` 이 `InputFrame` 을 아예 안 받고 있었다) 실었다.
+ *    한 항만으로는 열리지 않았다는 점이 이 스킬의 기록이다.
  *  - **지연 전환 분기**(`cushionOn` 게이트, `cushionDeferredDamage` 분리부) — **여전히 앵커가
  *    없다.** CU1·CU2·CU5·CU6 이 그대로 막혀 있다. 앵커 ⑧({@link onDamageChain})은 이 분기보다
  *    앞이라 "지연분을 얼마나 뗄지"에는 닿지 않는다.
@@ -64,6 +67,7 @@ import { blastDamage, clearEnemyBullets } from '../activeTypes.js';
 import { CUSHION_RECOVER_TICKS, CUSHION_TICK_CAP } from '../shipSignature.js';
 import { readSlot, writeSlot, MallowCarry, MallowStage } from '../skillSlots.js';
 import { skillLv } from '../../items/skills.js';
+import { cos, sin, length } from '../math.js';
 
 // ---------------------------------------------------------------------------
 // flat 인덱스 — `data/ships/mallow.ts` 의 축 순서가 정본
@@ -84,6 +88,7 @@ const enum Sk {
   /** SQ3 몸통 반발 */ bodyRecoil = 2,
   /** SQ4 압인 탄두 */ debtStamp = 3,
   /** SQ5 탕감 장전 */ forgivenessLoader = 4,
+  /** SQ7 관성 사출 */ momentumLaunch = 6,
   /** SQ8 흉터 포문 */ scarCannon = 7,
   /** ME1 조기 상환 */ earlyRepayment = 10,
   /** ME4 반환 요법 */ rebateTherapy = 13,
@@ -580,6 +585,40 @@ export function mallowVolleyParams(
       if (use > rem) use = rem;
       writeSlot(state.skillStage, MallowStage.forgivenessLoad, rem - use);
       params.damage += use;
+    }
+  }
+  // --- SQ7 관성 사출 — 달리는 방향으로 쏠수록 탄속·피해가 실린다 -----------------
+  //
+  // 술어는 설계서 그대로 **그 틱 입력 벡터와 발사각의 내적**이다. 두 항의 출처가 다르다:
+  //  · 입력 벡터 = `params.inputX/inputY`(W2 가 `autoAttack` 에 `InputFrame` 을 배관해 실은
+  //    읽기 전용 사실). **실속도로 대용하지 않는다** — 감속 장판·이속 모듈·넉백이 속도를
+  //    갈아 놓아 "무엇을 지시했는가" 와 갈린다(인벤토리 1.5 「상태 판정은 입력으로」).
+  //  · 발사각 = `params.aimAngle`(자동 조준이 실제로 고른 방위). `player.angle`(조준각)은
+  //    적이 없는 방향을 가리킬 수 있어 갈린다 — 그 필드 doc 의 ⚠️ 가 근거다.
+  //
+  // ⚠️ 내적이 0 이하면 **한 칸도 안 만진다**(뒤로 달리며 쏘면 보정 없음 — 설계서의 "일치도
+  //    만큼"). 감산은 하지 않는다: 설계서가 페널티를 주지 않았고, 여기서 만들면 손잡이가
+  //    하나 더 생긴다.
+  // ⚠️ 탄속은 `ballisticsUsed` 로 게이트하지 않는다 — 이 스킬은 탄속·피해가 **둘 다 이득**
+  //    이라 빔(탄속 미독)에서 최악이 무연산이다. BL6 처럼 대가가 탄속에 실린 교환형이었다면
+  //    게이트가 필수였겠지만(그 필드 doc), 여기서 게이트를 걸면 빔만 피해까지 잃는다.
+  const sq7 = lv(state, Sk.momentumLaunch);
+  if (sq7 >= 1) {
+    const len = length(params.inputX, params.inputY);
+    if (len > 0) {
+      // 정규화는 여기서 한다 — 레코드는 원본을 싣는다(길이를 술어로 쓸 스킬을 위해).
+      let dot =
+        (params.inputX / len) * cos(params.aimAngle) + (params.inputY / len) * sin(params.aimAngle);
+      // 부동소수 오차로 1 을 아주 조금 넘을 수 있다. 상한만 자른다(하한은 아래 `> 0` 이 판다).
+      if (dot > 1) dot = 1;
+      if (dot > 0) {
+        // 최대 보정(정방향 완전 일치): 탄속 +10% + 1%p/Lv · 피해 +4% + 1%p/Lv. 내적 비례.
+        // bp 를 먼저 정수로 접는 것이 이 저장소 관용구다(정수 bp · 나눗셈 1회 · 반올림 1회).
+        const speedBp = Math.round((1000 + 100 * sq7) * dot);
+        const damageBp = Math.round((400 + 100 * sq7) * dot);
+        if (damageBp > 0) params.damage += Math.round((params.damage * damageBp) / 10000);
+        if (speedBp > 0) params.speed = (params.speed * (10000 + speedBp)) / 10000;
+      }
     }
   }
 }

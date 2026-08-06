@@ -603,6 +603,9 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     targetDist: 200,
     // 발사 방위(rad). 읽기 전용 사실이라 훅이 고치지 않는다 — 기본 0(순수 +x).
     aimAngle: 0,
+    // W2 가 더한 칸 — 그 틱 이동 입력 벡터(읽기 전용). 기본은 무입력(정지).
+    inputX: 0,
+    inputY: 0,
     cloakBreak: false,
     ...over,
   };

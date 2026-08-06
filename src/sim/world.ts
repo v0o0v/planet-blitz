@@ -1905,7 +1905,12 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
     purifyContamination(state);
   }
   stepBoss(state, player);
-  autoAttack(state, player);
+  // ⚠️ `input` 을 넘기는 이유 — 앵커 ⑯ 이 **그 틱 입력 벡터**를 레코드에 실어야 하기 때문이다.
+  // `player.vx/vy`(실속도)로 대용하면 안 된다: 감속 장판·이속 모듈·넉백이 속도를 갈아 놓아
+  // "플레이어가 무엇을 지시했는가" 와 갈린다(인벤토리 1.5 계약 「상태 판정은 입력으로」).
+  // `input` 은 이 틱 어디서도 변형되지 않는다(전수 확인: `src/sim/**` 에 `input.<필드> =`
+  // 대입이 0건) — 이동에 소비돼도 초기화되지 않으므로 발사 시점에도 그대로 유효하다.
+  autoAttack(state, player, input);
   subWeapon(state, player);
   droneBay(state, player);
   stepTurrets(state, player);
@@ -2943,7 +2948,7 @@ function reachLife(w: WeaponStats, reach: number): number {
   return need > w.bulletLife ? need : w.bulletLife;
 }
 
-function autoAttack(state: WorldState, player: Entity): void {
+function autoAttack(state: WorldState, player: Entity, input: InputFrame): void {
   const w = state.weapon;
   // ⚠️ **플레이어의 `cooldown` 은 Q 단위**(1/FIRE_CD_Q 틱)다 — 적 엔티티의 `cooldown` 은
   // 여전히 정수 틱이다(같은 필드, 다른 소유자). 매 틱 FIRE_CD_Q 씩 깎고, 발사 때 남은
@@ -3100,6 +3105,13 @@ function autoAttack(state: WorldState, player: Entity): void {
     //    `onVolleyParams` 의 어느 구현체도 `player`·`target` 의 좌표를 쓰지 않는다
     //    (좌표를 미는 스킬은 전부 피격·시그니처 훅 쪽이다).
     aimAngle: atan2(target.y - player.y, target.x - player.x),
+    // 이 틱의 **이동 입력 벡터 원본**([-1,1] 각 축, 정규화 전). `targetDist`·`aimAngle` 과
+    // 같은 성격의 읽기 전용 사실이다 — world 가 이미 가진 값을 그대로 싣는다.
+    // ⚠️ 정규화를 여기서 하지 않는 이유: 대각 입력의 길이(√2/2 씩)를 술어로 쓰고 싶은 스킬과
+    //    방향만 쓰고 싶은 스킬이 갈릴 수 있고, 정규화는 나눗셈 1회라 훅 쪽이 필요할 때만
+    //    치르면 된다. 원본을 실으면 두 용도가 다 성립하지만 미리 나누면 길이가 소실된다.
+    inputX: input.moveX,
+    inputY: input.moveY,
     cloakBreak: cloakBreakFired,
   };
   onVolleyParams(state, player, volley);

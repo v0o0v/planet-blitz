@@ -645,6 +645,9 @@ describe('⑫ AS2 은막 침투 (앵커 ⑯)', () => {
       targetDist: 200,
       // 발사 방위(rad). 읽기 전용 사실이라 훅이 고치지 않는다 — 기본 0(순수 +x).
       aimAngle: 0,
+      // W2 가 더한 칸 — 그 틱 이동 입력 벡터(읽기 전용). 기본은 무입력(정지).
+      inputX: 0,
+      inputY: 0,
       cloakBreak: false,
     };
   }
@@ -732,6 +735,9 @@ describe('⑬ AS3 처형 재장전 (앵커 ⑯ 표식)', () => {
       ballisticsUsed: true,
       targetDist: 200,
       aimAngle: 0,
+      // W2 가 더한 칸 — 그 틱 이동 입력 벡터(읽기 전용). 기본은 무입력(정지).
+      inputX: 0,
+      inputY: 0,
       // ⚠️ 기본은 **평범한 볼리**다. AS3 을 재는 케이스만 뒤집는다.
       cloakBreak: false,
       // 아크캐스터 CH3 이 신설한 필수 필드. 팬텀은 각인을 요구하지 않으므로 `false` 다.
