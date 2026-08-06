@@ -35,6 +35,14 @@ const hoisted = vi.hoisted(() => ({
    * `player` 는 이후 틱에서 계속 변하므로 **호출 순간에 스칼라로 떠 둔다.**
    */
   filmEntries: [] as { hp: number; aux0: number; dmg: number }[],
+  /**
+   * 앵커 ㉓ 의 레코드를 **실제로 고치는 가짜 훅**. 호출 횟수만 세면 "불렸다" 밖에 못 재고,
+   * 앵커 ⑰ 이 `min` 에 삼켜져 무효였던 전례가 정확히 그 사각지대에서 났다. 여기서 값을
+   * 고쳐 보고 **결과가 실제로 달라지는지**를 잰다.
+   */
+  broodPatch: null as null | ((p: Record<string, number>) => void),
+  /** 앵커 ㉔ 가 받은 개체 기록 — 좌표·활성 여부가 실려 오는가. */
+  launched: [] as { x: number; y: number; active: boolean }[],
 }));
 
 vi.mock('../src/sim/skillHooks.js', async (orig) => {
@@ -59,8 +67,17 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
         const p = args[1] as { hp: number; aux0: number };
         hoisted.filmEntries.push({ hp: p.hp, aux0: p.aux0, dmg: args[2] as number });
       }
+      if (name === 'onBroodLaunched') {
+        const c = args[2] as { x: number; y: number; phase: number };
+        hoisted.launched.push({ x: c.x, y: c.y, active: c.phase === 1 });
+      }
       // **원본을 그대로 태운다** — 감싸기가 거동을 바꾸면 이 파일이 재는 것이 프로덕션이 아니게 된다.
-      return fn(...args);
+      const out = fn(...args);
+      // 진짜 훅이 돈 **뒤**에 레코드를 고친다 — 배선 레인의 효과 함수와 같은 자리다.
+      if (name === 'onBroodLaunchParams' && hoisted.broodPatch !== null) {
+        hoisted.broodPatch(args[2] as Record<string, number>);
+      }
+      return out;
     };
   }
   return wrapped;
@@ -74,9 +91,10 @@ const { blankEntity, addEntity, spawnBullet, spawnGem, spawnWall } = await impor
 );
 const { DT } = await import('../src/sim/constants.js');
 const { hashWorld } = await import('../src/sim/replay.js');
-const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS } = await import(
+const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS, BROOD_MARK } = await import(
   '../src/sim/shipSignature.js'
 );
+const { isActiveTurret, TURRET_LIFE_TICKS } = await import('../src/sim/events.js');
 type WorldState = import('../src/sim/world.js').WorldState;
 type InputFrame = import('../src/sim/world.js').InputFrame;
 type Entity = import('../src/sim/entities.js').Entity;
@@ -118,6 +136,8 @@ beforeEach(() => {
   for (const k of Object.keys(hoisted.calls)) delete hoisted.calls[k];
   hoisted.deaths = [];
   hoisted.filmEntries = [];
+  hoisted.broodPatch = null;
+  hoisted.launched = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -125,10 +145,12 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('앵커 22개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 24개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
+        'onBroodLaunchParams', // S3-4 ㉓ — 해츨링 출격 판정 파라미터(임계 조기 반환보다 앞)
+        'onBroodLaunched', // S3-4 ㉔ — 병아리 1기가 태어난 직후(기당 1회)
         'onBulletExpired',
         // ⚠️ S2 여섯은 **미배선 141종이 몰려 있던 지점 넷**을 연다. 넷인데 여섯인 것은 막 흡수와
         // 정산이 각각 "산술에 개입" 과 "사건을 관측" 으로 갈리기 때문이다 — 한 지점에 하나만
@@ -727,6 +749,165 @@ describe('앵커 ㉑ onCloakBreakReset — 팬텀 무피격 스트릭 리셋 직
 // ---------------------------------------------------------------------------
 // S1 거동 불변 — **신규 앵커가 실제로 불린 런**에서 재는 것이 핵심이다
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉓·㉔ — 해츨링 출격 지점(S3-4)
+// ---------------------------------------------------------------------------
+//
+// ## 이 절이 세는 것 — **호출 횟수만으로는 모자란다**
+// 이 지점의 스킬 여덟은 전부 *"임계·상한·기수를 고친다"* 라서, 앵커가 불리기만 하고 world 가
+// 그 값을 안 읽으면 전부 조용히 0 건이 된다. 앵커 ⑰ 이 `min(d, s)` 때문에 원리적으로 무효가
+// 되어 살린 스킬이 0종이었던 전례가 정확히 그 사각지대다. 그래서 여기서는 `hoisted.broodPatch`
+// 로 **레코드를 실제로 고쳐 보고 결과가 달라지는지**를 잰다(뮤테이션 없이 계측기를 믿지 않는다).
+//
+// ## ⚠️ 비례·단조 단언에 하한을 짝으로 붙인다
+// "패치하면 더 많이 뜬다" 만 재면 배선이 끊겨 **양변이 모두 0** 인 항진이 통과한다(이 저장소에
+// 실제로 있었다). 그래서 모든 증가 단언 앞에 **"최소 1기는 떴다"** 를 먼저 잠근다.
+
+/** 해츨링(shipType 4) 스킬 런. */
+function hatchRun(seed: number): WorldState {
+  return skilled(seed, 4);
+}
+
+/**
+ * 살아 있는 병아리 수. 술어는 `stepHatchBrood` 의 3중 술어와 **글자 그대로 같다** —
+ * 한 칸이라도 다르게 적으면 이 계측이 프로덕션과 다른 것을 센다.
+ */
+function chickCount(state: WorldState): number {
+  let n = 0;
+  for (const e of state.entities) {
+    if (!e.dead && e.ownerId === BROOD_MARK && isActiveTurret(e)) n++;
+  }
+  return n;
+}
+
+/** 병아리 1기를 손으로 세운다(kind·ownerId·phase 셋이 정체의 계약이다). */
+function plantChick(state: WorldState, dx: number): Entity {
+  const p = state.entities[0]!;
+  const c = blankEntity('turretPickup');
+  c.x = p.x + dx;
+  c.y = p.y;
+  c.radius = 44;
+  c.ownerId = BROOD_MARK;
+  c.phase = 1;
+  c.life = TURRET_LIFE_TICKS;
+  return addEntity(state, c);
+}
+
+describe('앵커 ㉓ onBroodLaunchParams — 해츨링 출격 판정(매 틱 · 조기 반환보다 앞)', () => {
+  it('임계 미달 틱에도 불린다 — 조기 반환 뒤에 있으면 BD1(임계 감산)이 영영 0 건이다', () => {
+    const s = hatchRun(0xb001);
+    expect(s.kills).toBe(0); // 임계(최소 12)에 한참 못 미친다
+    stepWorld(s, idle);
+    expect(count('onBroodLaunchParams')).toBe(1);
+    stepWorld(s, idle);
+    expect(count('onBroodLaunchParams')).toBe(2);
+    // 음성 대조 — 출격 자체는 없었다(㉔ 은 0). "매 틱 불린다" 가 "매 틱 출격한다" 가 아니다.
+    expect(count('onBroodLaunched')).toBe(0);
+    expect(chickCount(s)).toBe(0);
+  });
+
+  it('상한 포화(만석 보류) 틱에도 불린다 — BD10·SH10·NU10 이 사는 자리다', () => {
+    const s = hatchRun(0xb002);
+    for (let i = 0; i < 4; i++) plantChick(s, 60 + 20 * i);
+    expect(chickCount(s)).toBe(4);
+    s.kills = 1000; // 임계는 통과 · 상한에서 막힌다
+    s.entities[0]!.aux0 = 0;
+    stepWorld(s, idle);
+    expect(count('onBroodLaunchParams')).toBe(1);
+    expect(count('onBroodLaunched')).toBe(0); // 보류 — 태어난 기체가 없다
+    expect(s.entities[0]!.aux0).toBe(0); // 보류는 스냅샷을 갱신하지 않는다(적립 유지)
+  });
+
+  it('해츨링이 아닌 런에서는 0 이다 (매 틱 무조건 불리는 훅이 아니다)', () => {
+    const s = skilled(0xb003);
+    for (let i = 0; i < 5; i++) stepWorld(s, idle);
+    expect(count('onBroodLaunchParams')).toBe(0);
+    expect(count('onBroodLaunched')).toBe(0);
+  });
+
+  it('`threshold` 를 낮추면 실제로 더 일찍 출격한다 (world 가 그 칸을 읽는다)', () => {
+    // 대조군 — 패치 없이는 임계에 못 미쳐 한 기도 안 뜬다.
+    const base = hatchRun(0xb004);
+    stepWorld(base, idle);
+    expect(chickCount(base)).toBe(0);
+    expect(count('onBroodLaunched')).toBe(0);
+    // 긍정 짝 — 임계만 낮추면 같은 상태에서 뜬다.
+    const s = hatchRun(0xb004);
+    hoisted.broodPatch = (p): void => {
+      p.threshold = 0;
+    };
+    stepWorld(s, idle);
+    expect(chickCount(s)).toBeGreaterThanOrEqual(1); // ⚠️ 하한 먼저(양변 0 항진 차단)
+    expect(count('onBroodLaunched')).toBe(chickCount(s));
+  });
+
+  it('`maxDrones` 를 올리면 실제로 더 많이 뜬다 — `min`/`clamp` 에 삼켜지지 않는다', () => {
+    const base = hatchRun(0xb005);
+    hoisted.broodPatch = (p): void => {
+      p.threshold = 0;
+    };
+    for (let i = 0; i < 8; i++) stepWorld(base, idle);
+    expect(chickCount(base)).toBeGreaterThanOrEqual(1); // 하한
+    expect(chickCount(base)).toBe(4); // 기본 상한에서 멈춘다
+
+    const s = hatchRun(0xb005);
+    hoisted.broodPatch = (p): void => {
+      p.threshold = 0;
+      p.maxDrones = 6;
+    };
+    for (let i = 0; i < 8; i++) stepWorld(s, idle);
+    expect(chickCount(s)).toBeGreaterThanOrEqual(1); // 하한
+    expect(chickCount(s)).toBeGreaterThan(chickCount(base));
+    expect(chickCount(s)).toBe(6);
+  });
+
+  it('`launchCount` 를 올리면 같은 틱에 여러 기가 뜬다 (BD2 쌍둥이의 자리)', () => {
+    const s = hatchRun(0xb006);
+    hoisted.broodPatch = (p): void => {
+      p.threshold = 0;
+      p.launchCount = 3;
+    };
+    stepWorld(s, idle);
+    expect(chickCount(s)).toBeGreaterThanOrEqual(1); // 하한
+    expect(chickCount(s)).toBe(3);
+    expect(count('onBroodLaunched')).toBe(3); // ㉔ 은 **기당** 1회다
+  });
+
+  it('빈 자리가 모자라면 `maxDrones` 가 이긴다 — 설계 BD2 의 "상한·보류 규율 유지"', () => {
+    const s = hatchRun(0xb007);
+    for (let i = 0; i < 3; i++) plantChick(s, 60 + 20 * i);
+    hoisted.broodPatch = (p): void => {
+      p.threshold = 0;
+      p.launchCount = 3; // 3기 요청 · 자리는 1칸
+    };
+    stepWorld(s, idle);
+    expect(count('onBroodLaunched')).toBe(1);
+    expect(chickCount(s)).toBe(4);
+  });
+});
+
+describe('앵커 ㉔ onBroodLaunched — 병아리가 태어난 직후', () => {
+  it('활성 상태의 개체와 출격 좌표를 넘긴다 (BD6·NU2·NU7 이 읽을 것)', () => {
+    const s = hatchRun(0xb008);
+    const p = s.entities[0]!;
+    const px = p.x;
+    const py = p.y;
+    hoisted.broodPatch = (q): void => {
+      q.threshold = 0;
+    };
+    stepWorld(s, idle);
+    expect(hoisted.launched.length).toBeGreaterThanOrEqual(1); // 하한
+    const first = hoisted.launched[0]!;
+    // `phase === 1` — `activateTurret` **뒤**에 불린다. 여기가 앞이면 NU7 이 옮길 개체가
+    // 아직 포탑이 아니고, BD6 이 재는 좌표도 확정 전이다.
+    expect(first.active).toBe(true);
+    // 좌표는 모선 곁 고정 4방향(변위 크기는 world 소유 상수)이라 근방이어야 한다.
+    expect(Math.abs(first.x - px) + Math.abs(first.y - py)).toBeGreaterThan(0);
+    expect(Math.abs(first.x - px)).toBeLessThan(400);
+    expect(Math.abs(first.y - py)).toBeLessThan(400);
+  });
+});
 
 describe('S1 앵커는 거동을 바꾸지 않는다', () => {
   it('앵커가 도는 240틱 런 두 개가 같은 해시다', () => {
