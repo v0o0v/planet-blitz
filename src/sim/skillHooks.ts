@@ -82,6 +82,7 @@ import {
   SIG_MALLOW_CUSHION,
   SIG_PHANTOM_CLOAK,
   SIG_BUBBLE_FILM,
+  FILM_EFFICIENCY_BASE_BP,
 } from './shipSignature.js';
 import {
   hatchlingVolleyFired,
@@ -133,6 +134,7 @@ import {
   mallowCushionSettleDue,
   mallowCushionSettled,
   mallowVolleyParams,
+  mallowSettleThreshold,
 } from './skills/mallow.js';
 import {
   phantomDashFired,
@@ -152,6 +154,7 @@ import {
   bubbleVolleyParams,
   bubbleFilmAbsorbed,
   bubbleFilmEntry,
+  bubbleFilmEfficiency,
 } from './skills/bubble.js';
 
 // ---------------------------------------------------------------------------
@@ -1238,7 +1241,8 @@ export function onFilmBurst(state: WorldState, x: number, y: number): void {
 //
 //   ⑯ onVolleyParams   — 발사부(전 기체 최다). 스트라이커 3 · 아크캐스터 5 · 브루저 4 ·
 //                        말로우 4 · 팬텀 3 · 버블 2 가 같은 이유로 막혀 있었다.
-//   ⑰ onFilmShield     — 막 흡수 **산술**(버블 6종). 앵커 ⑧ 은 막보다 앞이라 못 온다.
+//   ⑰ onFilmEfficiency — 막 흡수 **효율**(버블). 앵커 ⑧ 은 막보다 앞이라 못 온다.
+//      ⚠️ 구 이름 `onFilmShield`(유효 **내구** 반환)는 원리적으로 무효였다 — 사유는 그 함수 doc.
 //   ⑱ onFilmAbsorbed   — 막 흡수 **직후**(버블 관측축).
 //   ⑲ onCushionThreshold — 정산 **임계**(말로우 ME9 · CU7 분모).
 //   ⑳ onCushionSettled — 정산 **직후**(말로우 9종). 앵커 ⑨ 는 진입점이라 정산보다 앞이다.
@@ -1634,73 +1638,80 @@ export function onFilmEntry(state: WorldState, player: Entity, dmg: number): voi
 }
 
 /**
- * 앵커 ⑰ — **막 흡수 산술 직전**. 이번 피격에 한해 막의 **유효 내구**를 바꾼다.
+ * 앵커 ⑰ — **막 흡수 산술 직전**. 이번 피격에 한해 막의 **흡수 효율**(bp)을 바꾼다.
  *
- * ## 왜 "흡수량" 이 아니라 "유효 내구" 를 반환하는가
- * 흡수 산술은 순수 함수 두 개가 소유한다 — `filmAbsorbed(dmg, shield)` 와
- * `filmRemainingDamage(dmg, shield)`. 둘의 합이 원래 피해와 같다는 계약(`shipSignature.ts` ⑥절)을
- * `world.ts` 배선이 **재구현하지 않고 상속**하는 것이 현재 구조이고, 호출 지점 주석이 그것을
- * 명시적으로 못 박았다. 훅이 흡수량을 직접 반환하면 남는 피해는 `dmg - absorbed` 로 world 가
- * 다시 계산해야 하고, 그 순간 합 보존 계약의 **두 번째 사본**이 생긴다 — 이 저장소의 지배적
- * 실패 형태다. 유효 내구를 반환하면 두 순수 함수가 그대로 서고 계약은 한 곳에 남는다.
+ * ## ⚠️ 이 앵커는 한 배치 동안 **원리적으로 무효**였다 — 그 사유를 지우지 않는다
+ * 종전 계약은 "이번 피격에 쓸 **유효 내구**를 돌려준다" 였고, 그 형태로는 **어떤 스킬도 열 수
+ * 없었다.** 근거(배선 레인 실측, ADR-0049 버블 S2):
+ *  · 순수 함수가 `filmAbsorbed(d, s) = min(d, s)` 였고 world 가 `aux0 -= absorbed` 를 하므로,
+ *    `absorbed ≤ player.aux0` 을 지키려면 `shield ≤ player.aux0` 여야 했다.
+ *  · 그런데 `shield` 의 기본값이 이미 `player.aux0` 이다 → 훅은 **낮추는 방향으로만** 유효했다.
+ *  · `dmg ≤ aux0` 이면 부풀려도 `absorbed = dmg` 라 **아무것도 안 바뀌고**,
+ *    `dmg > aux0` 이면 부풀리는 순간 `aux0` 이 음수가 되어 u32 폴드가 40억대로 접었다.
+ * → "내구 1당 막는 피해가 1+α" 는 **흡수량 ≡ 내구 소모량**이라는 구조에서 성립할 수 없었다.
+ *   **이 앵커가 살린 스킬은 0종이었다.**
+ *
+ * ## 무엇이 바뀌었나 — 순수 함수가 *태운 내구*와 *막은 피해*를 분리했다
+ * `filmAbsorbed`/`filmRemainingDamage` 가 **효율 인자**를 받는다(`shipSignature.ts` ⑥절).
+ * 막을 수 있는 피해 총량이 `내구 × 효율` 이 되고, 태우는 내구는 그것을 효율로 되돌린 값이다.
+ * 그래서 효율을 올리면 **막은 피해가 실제로 늘고**(통과 피해가 준다) **태운 내구는 그와
+ * 독립적으로** 정해진다 — `min` 이 개입을 삼키던 경로가 끊겼다.
  *
  * 설계축과도 맞다: 버블의 흡수 강화 스킬(DR2 흡수 효율 · FI8 해저드 2배 효율)은 의미상
- * **"이 피격에 한해 막이 두껍다"** 이지 "흡수량만 늘고 통과 피해는 그대로" 가 아니다.
+ * **"이 피격에 한해 막이 두껍다"** 이지 "내구가 늘어난다" 가 아니다(설계서 DR2 문면: *"내구는
+ * 늘지 않는다 — 같은 내구로 더 버틴다"*).
  *
- * ## ⚠️ 반환값은 `player.aux0` 을 **덮어쓰지 않는다**
- * world 는 `player.aux0 -= filmAbsorbed(dmg, shield)` 로 **실제 내구**에서 뺀다. 유효 내구를
- * 실제보다 크게 반환하면 흡수량이 실제 내구를 넘어 **`aux0` 이 음수가 된다** — `aux0` 은 u32 로
- * 해시되므로(`replay.ts` `hashEntity` 의 `>>> 0`) 음수는 40억대 값으로 접혀 클라와 서버 재실행이
- * 갈린다. **부풀리는 case 는 반드시 자기 안에서 상한을 걸어라**(`FILM_ABSORB_FLAT` 이 아니라
- * `player.aux0` 이 상한이다 — 실제로 닳을 수 있는 양은 그것뿐이다).
+ * ## ⚠️ `aux0` 이 음수가 되는 경로는 없다
+ * `filmAbsorbed` 의 반환값이 어떤 효율에서도 `player.aux0` 을 넘지 않도록 순수 함수가
+ * 자기 안에서 못 박았다(그 doc 이 정본). 그래서 이 훅은 **상한을 걸 필요가 없다** — 종전
+ * 계약이 case 마다 요구하던 부담이 구조적으로 사라졌다.
  *
  * @param dmg 브루저 장갑까지 통과한 **정수화된** 피격 피해
- * @param shield 이 피격에 쓸 막 내구. S2 는 `player.aux0` 을 그대로 돌려준다(비트 동일)
- * @returns 조정된 유효 내구. **비음 정수여야 한다.**
+ * @param shield 이 피격에 쓸 **실제** 막 내구(= `player.aux0`). 술어용 읽기값이다
+ * @returns 흡수 효율(bp). {@link FILM_EFFICIENCY_BASE_BP}(10000)가 항등이고, S2/미투자 런은
+ *   그 값을 그대로 돌려주므로 **비트 동일**이다. **양의 정수여야 한다**(0 이하면 막이 아무것도
+ *   못 막는다 — 그런 축은 설계에 없다).
  */
-export function onFilmShield(
+export function onFilmEfficiency(
   state: WorldState,
   player: Entity,
   dmg: number,
   shield: number,
+  fromHazard: boolean,
 ): number {
-  if (!state.skillsOn) return shield;
-  void player;
-  void dmg;
+  if (!state.skillsOn) return FILM_EFFICIENCY_BASE_BP;
+  void shield;
   switch (state.sigBit) {
     // ⚠️ **버블 전용 지점이다.** 다른 기체는 막이 없어 호출 자체가 일어나지 않는다
     // (호출부가 `signatureOn(state, SIG_BUBBLE_FILM) && player.aux0 > 0` 게이트 안이다).
     // 그래도 `switch` 를 두는 것은 나머지 다섯 앵커와 형태를 맞춰 배선 레인이 규약을
     // 한 번만 익히게 하기 위함이다.
-    //
-    // ⚠️ **FI8「해저드 2배 효율」은 이 앵커만으로 성립하지 않는다 — 설계-코드 어긋남이다.**
-    // 그 스킬은 *피해원이 해저드일 때만* 흡수를 2배로 하는데, 이 지점의 `dmg` 는 이미
-    // **여러 접촉원의 합류값**이다(`world.ts` 의 수집 루프가 적 접촉·적탄·해저드를 같은
-    // 변수에 더한다). 피해원 종류를 복원할 방법이 없다. 이 앵커에 태우면 "해저드에서만" 이
-    // "언제나" 가 된다 — 설계와 정반대다. **문서는 고치지 않았다**(규약: 어긋남은 보고한다).
-    //
-    // ⚠️ **그리고 「흡수 효율」 축은 이 앵커로 아예 표현되지 않는다 — DR2 도 여기 못 온다.**
-    // 배선 레인 실측(ADR-0049 버블 S2 레인). 근거는 위 doc 의 상한 규칙과 순수 함수 정의를
-    // 겹쳐 보면 나온다: `filmAbsorbed(d, s) = min(d, s)` 이고 world 가 `aux0 -= absorbed` 를
-    // 하므로, **`absorbed ≤ player.aux0` 을 지키려면 `shield ≤ player.aux0`** 여야 한다.
-    // 그런데 `shield` 의 기본값이 이미 `player.aux0` 이다 → 이 훅은 내구를 **낮추는 방향으로만**
-    // 유효하다. 두 경우로 갈라 봐도 같다:
-    //  · `dmg ≤ aux0` 이면 부풀리든 말든 `absorbed = dmg` 라 **아무것도 안 바뀐다**.
-    //  · `dmg > aux0` 이면 부풀리는 순간 `aux0` 이 음수가 된다(u32 폴드 → 클라·서버 발산).
-    // 즉 "내구 1당 막는 피해가 1+α" 는 **흡수량 = 내구 소모량**이라는 이 구조에서 성립할 수
-    // 없다. 표현하려면 `filmAbsorbed`/`filmRemainingDamage` 가 효율 인자를 받아 *태운 내구*와
-    // *막은 피해*를 분리해야 하고, 그것은 골든에 닿는 순수 함수 변경이라 배선 레인 단독으로는
-    // 하지 않는다(앵커 ⑲ 의 ME9 가 같은 형태로 막혀 있는 것과 동형이다).
-    //
-    // ⚠️ **FI9「최후의 거품」은 여전히 여기 못 온다 — 다만 이제 갈 곳이 생겼다(앵커 ㉒).**
-    // 사유는 그대로다: 호출부 게이트가 `player.aux0 > 0` 이라 *막이 없는* 치명 피격에서는
-    // 이 훅이 **불리지 않는다.** 그 스킬의 자리는 흡수 산술 안이 아니라 막 흡수 분기의
-    // **진입 술어 직전**이고, S3-5 가 그 지점에 `onFilmEntry`(㉒)를 열었다 — 게이트를
-    // `aux0 > 0 || 치명` 으로 넓히지 **않은** 이유(파열 오발동)는 ㉒ 의 doc 이 정본이다.
+    case SIG_BUBBLE_FILM:
+      // FI8「발수 코팅」이 **여기서 돈다**(이 레인이 순수 함수를 개정해 자리를 열었다).
+      // ⚠️ 종전 주석은 *"FI8 은 이 앵커만으로 성립하지 않는다 — 이 지점의 `dmg` 가 여러
+      //    접촉원의 합류값이라 피해원 종류를 복원할 방법이 없다"* 였다. **그 관측은 옳았고**,
+      //    그래서 이 레인은 훅에 `fromHazard` 인자를 추가해 수집 루프가 **max 를 갱신한 그
+      //    항목의 출처**를 함께 실어 보내게 했다(설계서 FI8 「구현: A」의 문면 그대로 —
+      //    출처 플래그 배열이 아니라 지역 변수 2개). 인자가 없었으면 "해저드에서만" 이
+      //    "언제나" 가 되어 설계와 정반대가 됐을 것이다.
+      //
+      // ⚠️ **DR2「표면장력 세례」는 여전히 미배선이다 — 다만 사유가 바뀌었다.**
+      //    종전 사유("효율 축은 이 앵커로 표현되지 않는다")는 **해소됐다**. 남은 사유는 하나뿐:
+      //    DR2 는 *막이 서 있는 동안 젬을 수거하면 60틱 창이 열린다* 라는 술어이고, 그 창은
+      //    설계서가 「구현: B」로 못 박은 **신규 WorldState 정수 1개**를 요구한다(잔여 틱).
+      //    이 레인은 순수 함수·앵커 개정이 본무라 신규 해시 필드를 함께 들이지 않았다 —
+      //    필드만 만들고 감소·수거 배선 중 하나라도 빠지면 슬롯이 영구히 해시에만 접히는
+      //    반쪽 배선이 된다. **그 필드가 서는 날 이 case 에 곱연산으로 얹으면 된다**(설계서
+      //    R3-2: DR2 는 전 출처·유한 창, FI8 은 단일 출처·상시 — 곱 중첩이 의도된 설계다).
+      //
+      // ⚠️ **FI9「최후의 거품」은 여전히 여기 못 온다.** 호출부 게이트가 `player.aux0 > 0`
+      //    이라 *막이 없는* 치명 피격에서는 이 훅이 **불리지 않는다.** 그 자리는 앵커 ㉒
+      //    (`onFilmEntry`)이고 S3-5 가 열어 이미 배선됐다.
+      return bubbleFilmEfficiency(state, player, dmg, fromHazard);
     default:
       break;
   }
-  return shield;
+  return FILM_EFFICIENCY_BASE_BP;
 }
 
 /**
@@ -1764,17 +1775,21 @@ export function onFilmAbsorbed(
  * `CUSHION_RECOVER_TICKS` 를 기체 모듈이 다시 import 해 자기 식을 세우면 정본이 둘이 된다.
  * 이 앵커는 기본값을 넘겨 주므로 case 는 **그 값에서 깎기만** 하면 된다.
  *
- * ## ⚠️ 반환값은 순수 함수와 **함께** 움직여야 한다
- * 정산액·회복액은 `cushionSettled(aux0, aux1)` · `cushionRecovered(aux0, aux1)` 가 계산하는데,
- * **그 두 함수도 각자 `unhitTicks < CUSHION_RECOVER_TICKS` 를 다시 검사해 0 을 돌려준다**
- * (`shipSignature.ts:320·339`). 즉 임계를 180 **아래로** 낮춰 분기에 진입시켜도, 두 함수가
- * 자기 상수로 다시 걸러 **정산액이 0 이 되어 조용히 아무 일도 일어나지 않는다.**
- * → **ME9 를 실제로 배선하려면 이 앵커만으로 부족하다.** 순수 함수 둘이 임계를 인자로 받도록
- * 함께 고쳐야 하고, 그것은 골든에 닿는 변경이라 배선 레인이 단독으로 하면 안 된다.
- * S2 는 **자리만** 연다 — 이 한계를 모르고 case 를 넣으면 "구현했는데 안 도는" 반쪽 배선이 된다.
+ * ## ⚠️ 반환값은 순수 함수와 **함께** 움직여야 한다 — 한 배치 동안 그것이 안 돼 무효였다
+ * 종전에는 정산액·회복액을 내는 `cushionSettled`·`cushionRecovered` 가 **자기 안에서**
+ * `unhitTicks < CUSHION_RECOVER_TICKS` 를 다시 검사해 0 을 돌려주었다. 즉 이 앵커가 임계를
+ * 180 **아래로** 낮춰 `world.ts` 의 분기에 진입시켜도 두 함수가 자기 상수로 다시 걸러
+ * **정산액이 0 이 되어 조용히 아무 일도 일어나지 않았다** — 이 저장소의 지배적 실패 형태
+ * ("구현했는데 안 도는" 반쪽 배선) 그대로였고, 그래서 ME9 는 통째로 미배선이었다.
+ * **그 사유를 지우지 않고 남긴다.**
  *
- * @param base `CUSHION_RECOVER_TICKS`. S2 는 그대로 돌려준다(비트 동일)
- * @returns 이번 틱에 쓸 임계. **양의 정수여야 한다**(0 이하면 매 틱 정산이 된다)
+ * 이 레인이 두 순수 함수를 개정해 **임계를 필수 인자로** 받게 했고(`shipSignature.ts` ⑤절),
+ * `world.ts` 가 이 앵커의 반환값을 그 인자로 그대로 넘긴다. 그래서 지금은 임계를 낮추면
+ * 정산 시점이 **실제로** 앞당겨진다.
+ *
+ * @param base `CUSHION_RECOVER_TICKS`. 미투자 런은 그대로 돌려받는다(비트 동일)
+ * @returns 이번 틱에 쓸 임계. **양의 정수여야 한다**(0 이하면 매 틱 정산이 된다 — 순수 함수가
+ *   자기 안에서 1 로 올려 한 번 더 막지만, 그것에 기대지 마라)
  */
 export function onCushionThreshold(
   state: WorldState,
@@ -1784,17 +1799,15 @@ export function onCushionThreshold(
   if (!state.skillsOn) return base;
   void player;
   switch (state.sigBit) {
-    // ⚠️ **말로우 ME9「솜틀 요양」의 case 를 여기 넣지 마라 — 넣어도 안 돈다.**
-    // 술어(`state.wallContactTicks >= 60`)와 인하폭(`round(20 + 50×Lv/(Lv+12))`)은 전부
-    // 계산 가능하고, 이 앵커가 낮춘 임계로 `world.ts` 의 분기에 실제로 진입도 한다. 그런데
-    // 그 안에서 정산액을 내는 `cushionSettled`·`cushionRecovered` 가 **자기 안에서
-    // `unhitTicks < CUSHION_RECOVER_TICKS` 를 다시 검사해 0 을 돌려준다**
-    // (`shipSignature.ts:320·339`). 결과는 "분기에는 들어갔는데 정산액이 0" 이라
-    // **조용히 아무 일도 일어나지 않는 반쪽 배선**이다 — 이 저장소의 지배적 실패 형태 그대로다.
-    // 배선 레인(S2 확장)이 `tests/skillMallow.test.ts` §⑫ 로 이 사실을 실증해 잠갔다.
-    // → ME9 를 열려면 순수 함수 둘이 **임계를 인자로 받도록** 함께 고쳐야 하고, 그것은 골든에
-    //   닿는 변경이라 배선 레인이 단독으로 할 수 없다. CU7 의 분모(현행 상수 180)도 같은
-    //   선결에 묶여 있다 — ME9 가 도는 날 `mallowDamageChain` 의 분모를 함께 옮겨야 한다.
+    // ME9「솜틀 요양」이 **여기서 돈다**(이 레인이 순수 함수 둘을 개정해 자리를 열었다).
+    // ⚠️ 종전 주석은 *"여기 case 를 넣지 마라 — 넣어도 안 돈다"* 였다. 그 관측은 옳았고
+    //    (사유는 위 doc 에 남겼다), 이 레인이 `cushionSettled`·`cushionRecovered` 를
+    //    **임계 인자 필수**로 고쳐 그 사유를 해소했다. 배선 레인이 `tests/skillMallow.test.ts`
+    //    §⑫ 로 잠가 둔 "안 돈다" 실증도 이 레인이 함께 갱신했다.
+    // ⚠️ CU7 의 감소 분모도 같은 선결에 묶여 있었다 — `mallowSettleThreshold` 를 **한 곳**에
+    //    두고 이 앵커와 `mallowDamageChain` 이 **같은 함수**를 부른다. 상수를 복제하지 않는다.
+    case SIG_MALLOW_CUSHION:
+      return mallowSettleThreshold(state, base);
     default:
       break;
   }

@@ -31,7 +31,7 @@ import {
   type WorldState,
 } from '../src/sim/world.js';
 import type { Entity } from '../src/sim/entities.js';
-import { blankEntity } from '../src/sim/entities.js';
+import { blankEntity, spawnWall } from '../src/sim/entities.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { neutralLoadout } from '../src/items/loadout.js';
 import {
@@ -72,6 +72,7 @@ const SQ8 = 7;
 const ME1 = 10;
 const ME4 = 13;
 const ME5 = 14;
+const ME9 = 18;
 const ME10 = 19;
 const CU3 = 22;
 const CU4 = 23;
@@ -726,22 +727,94 @@ describe('⑨ 엔진 경로', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ⑩ 앵커 ⑲ — ME9 가 **왜 아직 없는지**를 잠근다
+// ⑩ 앵커 ⑲ — ME9 솜틀 요양 (임계 인하) · CU7 분모 연동
 // ---------------------------------------------------------------------------
 
-describe('⑩ 앵커 ⑲ 와 ME9 의 선결', () => {
-  it('말로우 런의 ⑲ 는 기본 임계를 그대로 돌려준다 (case 없음 = 비트 동일)', () => {
+describe('⑩ 앵커 ⑲ ME9 솜틀 요양', () => {
+  // ⚠️ 이 절은 종전에 **"ME9 는 ⑲ 만으로 안 돈다"를 잠그는** 절이었다. 사유는 지우지 않는다:
+  //    `cushionSettled`·`cushionRecovered` 가 **자기 안에서** `unhitTicks < CUSHION_RECOVER_TICKS`
+  //    를 다시 검사해 0 을 돌려줬기 때문에, 임계를 낮춰 분기에 진입시켜도 정산액이 0 이 되어
+  //    **조용히 아무 일도 안 일어났다.** 순수 함수 개정 레인이 임계를 **필수 인자**로 만들면서
+  //    그 사유가 해소됐고, 아래가 "실제로 돈다" 를 잰다.
+
+  it('⚠️ 되살아남 증명 — 순수 함수가 임계 인자를 실제로 따른다 (종전에는 삼켰다)', () => {
+    // ME9 Lv20 의 실효 임계 129. 종전에는 이 두 줄이 0 이었다 — 그것이 미배선의 근거였다.
+    expect(cushionSettled(100, 129, 129)).toBeGreaterThan(0);
+    expect(cushionRecovered(100, 129, 129)).toBeGreaterThan(0);
+    // 긍정 짝의 **하한**: 정산이 실제로 일어났음을 절대값으로 못 박는다(항진 방지).
+    expect(cushionRecovered(100, 129, 129)).toBe(60);
+    expect(cushionSettled(100, 129, 129)).toBe(40);
+    // 음성 짝 — 기본 임계를 넘기면 129틱은 여전히 미달이라 0 이다(게이트가 살아 있다).
+    expect(cushionSettled(100, 129, CUSHION_RECOVER_TICKS)).toBe(0);
+    expect(cushionRecovered(100, 129, CUSHION_RECOVER_TICKS)).toBe(0);
+  });
+
+  it('항등 — 기본 임계를 넘기면 종전 결과와 정확히 같다 (미투자 비트 불변의 뿌리)', () => {
+    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS)).toBe(600);
+    expect(cushionSettled(1000, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS)).toBe(400);
+    expect(cushionSettled(1000, CUSHION_RECOVER_TICKS - 1, CUSHION_RECOVER_TICKS)).toBe(0);
+  });
+
+  it('음성 — ME9 미투자면 벽에 붙어 있어도 기본 임계 그대로다', () => {
     const w = mk([[CU7, 20]]);
+    w.wallContactTicks = 600;
     expect(onCushionThreshold(w, player(w), CUSHION_RECOVER_TICKS)).toBe(CUSHION_RECOVER_TICKS);
   });
 
-  it('⚠️ 임계를 낮춰도 순수 함수가 0 을 돌려준다 — ME9 는 ⑲ 만으로 안 돈다', () => {
-    // ME9 Lv20 의 실효 임계 129. 여기 진입해도 정산액·탕감액이 0 이라 **조용히 무연산**이다.
-    // 이것이 ME9 를 배선하지 않은 근거이고, 순수 함수 둘이 임계를 인자로 받도록 고쳐지면
-    // (골든에 닿는 변경) 이 단언이 빨개진다 — 그때 ME9 를 열어라.
-    expect(cushionSettled(100, 129)).toBe(0);
-    expect(cushionRecovered(100, 129)).toBe(0);
-    expect(cushionSettled(100, CUSHION_RECOVER_TICKS)).toBeGreaterThan(0);
+  it('음성 — ME9 투자해도 벽 접촉이 60틱 미만이면 기본 임계다', () => {
+    const w = mk([[ME9, 20]]);
+    w.wallContactTicks = 59;
+    expect(onCushionThreshold(w, player(w), CUSHION_RECOVER_TICKS)).toBe(CUSHION_RECOVER_TICKS);
+  });
+
+  it('양성 — ME9 Lv20 + 벽 60틱이면 임계가 129 로 내려간다', () => {
+    const w = mk([[ME9, 20]]);
+    w.wallContactTicks = 60;
+    // 인하폭 = round(20 + 50×20/32) = round(51.25) = 51 → 180 − 51 = 129.
+    expect(onCushionThreshold(w, player(w), CUSHION_RECOVER_TICKS)).toBe(129);
+  });
+
+  it('⚠️ 뮤테이션 — 임계를 바꾸면 정산 **시점**이 실제로 달라진다 (엔진 경로)', () => {
+    // ⚠️ `w.wallContactTicks` 를 손으로 세우면 소용없다 — `stepWorld` 가 매 틱 벽 판정으로
+    //    덮어쓴다. **실제로 벽에 겹쳐야** 한다(앵커 ⑦ 테스트와 같은 수법: 플레이어를 덮는 벽).
+    const runAgainstWall = (pts: ReadonlyArray<readonly [number, number]>, wall: boolean) => {
+      const w = mk(pts);
+      const p = player(w);
+      if (wall) spawnWall(w, p.x, p.y, 200, 200);
+      for (let i = 0; i < 70; i++) stepWorld(w, emptyInput());
+      p.aux0 = 100;
+      p.aux1 = 128; // 이번 틱에 +1 되어 129 — ME9 실효 임계엔 닿고 기본 임계엔 못 닿는다
+      stepWorld(w, emptyInput());
+      return { pool: p.aux0, wall: w.wallContactTicks };
+    };
+    // 전제 — 벽 접촉이 실제로 60틱을 넘었는가(이게 거짓이면 아래 판정은 무의미하다).
+    const wired = runAgainstWall([[ME9, 20]], true);
+    expect(wired.wall).toBeGreaterThanOrEqual(60);
+    // 양성: ME9 Lv20 + 벽 접촉 → 129틱에 정산이 일어나 풀이 비었다.
+    expect(wired.pool).toBe(0);
+    // 음성 ①: 같은 벽 접촉인데 ME9 미투자 → 129틱은 미달이라 풀이 그대로다.
+    expect(runAgainstWall([[CU7, 20]], true).pool).toBe(100);
+    // 음성 ②: ME9 투자했는데 벽에서 떨어짐 → 술어가 살아 있다는 증거.
+    const off = runAgainstWall([[ME9, 20]], false);
+    expect(off.wall).toBe(0);
+    expect(off.pool).toBe(100);
+  });
+
+  it('CU7 분모가 실효 임계를 따른다 — 같은 aux1 에서 감소가 커진다', () => {
+    const base = mk([[CU7, 20]]);
+    base.wallContactTicks = 600;
+    player(base).aux1 = 129;
+    const wired = mk([
+      [CU7, 20],
+      [ME9, 20],
+    ]);
+    wired.wallContactTicks = 600;
+    player(wired).aux1 = 129;
+    const dBase = onDamageChain(base, player(base), 1000);
+    const dWired = onDamageChain(wired, player(wired), 1000);
+    // 하한 짝 — 배선이 끊기면 양변이 1000 이 되어 성립하는 항진을 막는다.
+    expect(dBase).toBeLessThan(1000); // CU7 이 실제로 깎고 있다
+    expect(dWired).toBeLessThan(dBase); // 분모가 129 로 줄어 만충(= 상한 K)에 닿았다
   });
 });
 
@@ -834,7 +907,7 @@ describe('⑪ 앵커 ㉕ ME5 분할 상환', () => {
 
   it('엔진 경로 — 정산 틱의 hp 감소분과 완충 잔량이 **함께** 달라진다', () => {
     // 전제: 정산이 실제로 일어난다(항진 방지). 풀 100·임계 도달 시 탕감 60 · 선체행 40.
-    expect(cushionSettled(100, CUSHION_RECOVER_TICKS)).toBe(40);
+    expect(cushionSettled(100, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS)).toBe(40);
 
     const base = mk([[ME1, 20]]); // ME5 미투자 대조군
     const bp = player(base);

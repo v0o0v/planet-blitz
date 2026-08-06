@@ -19,8 +19,9 @@
  *    **정산 직후**를 열어 그중 **7종**(SQ2·SQ5·SQ8·ME4·CU3·CU9·CU10)이 배선됐다.
  *    남은 셋(ME5·ME8·ME9)은 ⑳ 으로 닿지 않는다 — 사유는 아래 「⑳ 으로도 못 여는 셋」.
  *    **S3 가 그중 ME5 의 자리를 열었고**(앵커 ㉕ `onCushionSettleDue`, 정산액 확정 **직전**)
- *    **배선 레인이 ME5 를 그 자리에 넣었다**({@link mallowCushionSettleDue}). 그래서 정산 분기
- *    요구 10종 중 **8종**이 돌고, **ME8·ME9 둘만 남았다** — 둘은 ㉕ 으로도 못 온다(아래).
+ *    **배선 레인이 ME5 를 그 자리에 넣었다**({@link mallowCushionSettleDue}). 그리고 **순수 함수
+ *    개정 레인이 ME9 를 열었다**({@link mallowSettleThreshold}, 앵커 ⑲). 그래서 정산 분기
+ *    요구 10종 중 **9종**이 돌고, **ME8 하나만 남았다**(아래).
  *  - **발사부**(`autoAttack` 의 아키타입 분기) — S2 의 앵커 ⑯({@link onVolleyParams})이 열어
  *    SQ1 이 배선됐고, SQ5·SQ8 의 **소비처**도 여기다(적립만 하고 소비처가 없으면 반쪽이다).
  *  - **지연 전환 분기**(`cushionOn` 게이트, `cushionDeferredDamage` 분리부) — **여전히 앵커가
@@ -34,11 +35,12 @@
  *
  * ### ⚠️ ⑳ 으로는 못 여는 셋 — ME5(→ S3 의 ㉕ 로 옮겨졌다)·ME8·ME9 (반쪽 배선 금지)
  * 셋 다 **정산 산술 자체**를 바꾸는 스킬인데 ⑳ 은 hp 차감이 끝난 **뒤**다.
- *  - **ME9(임계 인하)** — 앵커 ⑲({@link onCushionThreshold})이 자리를 열었지만,
+ *  - **ME9(임계 인하)** — ✅ **배선됐다**({@link mallowSettleThreshold}). ⚠️ 종전 사유를
+ *    지우지 않는다: 앵커 ⑲({@link onCushionThreshold})이 자리를 열었지만
  *    `cushionSettled`·`cushionRecovered` 가 **자기 안에서 `unhitTicks < CUSHION_RECOVER_TICKS`
- *    를 다시 검사해 0 을 돌려준다**(`shipSignature.ts:320·339`). 임계를 낮춰 분기에 진입시켜도
- *    정산액이 0 이라 **조용히 아무 일도 안 일어난다**(테스트 §⑫ 가 이 사실을 잠갔다).
- *    순수 함수 둘이 임계를 인자로 받도록 함께 고쳐야 하고 그것은 골든에 닿는다.
+ *    를 다시 검사해 0 을 돌려주었고**, 임계를 낮춰 분기에 진입시켜도 정산액이 0 이라 **조용히
+ *    아무 일도 안 일어났다**(테스트 §⑩ 이 그 사실을 잠갔었다). 순수 함수 개정 레인이 두 함수를
+ *    **임계 필수 인자**로 고쳐 그 선결을 해소했고, CU7 의 분모도 같은 함수로 함께 옮겼다.
  *  - **ME8(탕감률 상승)** — 탕감 bp(`CUSHION_RECOVER_BP`)가 `cushionRecovered` 안에 있다.
  *    ME9 와 **같은 계열의 선결**이다. ⑳ 에서 사후 환급으로 흉내 낼 수는 없다: hp−1 클램프가
  *    이미 물린 정산에서는 "탕감을 늘려 선체행을 줄인" 결과와 "깎고 나서 되돌린" 결과가
@@ -46,10 +48,11 @@
  *  - **ME5(분할 상환)** — 같은 이유였다. 절반만 선체로 보내려면 hp 차감 **전**에 정산액을 갈라야
  *    하고, 사후 환급은 클램프가 물린 정산에서 어긋난다. 정산액 확정 **직전**의 앵커가 필요했다.
  *    → **S3 가 그 앵커를 뚫었고**(㉕ `onCushionSettleDue`) **배선이 끝났다** — ME5 는 ⑳ 이
- *    아니라 **㉕** 에서 돈다. **ME8·ME9 는 ㉕ 으로도 여전히 못 온다** — 탕감률
- *    (`CUSHION_RECOVER_BP`)·임계(`CUSHION_RECOVER_TICKS`)가 `shipSignature.ts` 순수 함수
- *    **안**이라 ㉕ 에 닿은 시점엔 이미 그 상수로 계산이 끝나 있다. 순수 함수 개정(골든 재생성
- *    창)이 여전히 선결이고, 그 창이 열리기 전에는 어떤 앵커로도 열 수 없다.
+ *    아니라 **㉕** 에서 돈다. **ME8 은 ㉕ 으로도 여전히 못 온다** — 탕감률
+ *    (`CUSHION_RECOVER_BP`)이 `shipSignature.ts` 순수 함수 **안**이라 ㉕ 에 닿은 시점엔 이미
+ *    그 상수로 계산이 끝나 있다. ⚠️ ME9 도 같은 사유(임계가 순수 함수 안)로 막혀 있었고,
+ *    이 레인이 **임계만** 인자로 빼서 열었다 — 탕감률은 손대지 않았으므로 ME8 의 선결은
+ *    그대로 남아 있다(`cushionRecovered` 가 `CUSHION_RECOVER_BP` 를 인자로 받는 개정이 필요).
  *    ⚠️ ME5 의 레벨 스케일에 나오는 「현재율」이 바로 ME8 이 올려 둔 탕감률이라, ME8 이 도는
  *    날 {@link mallowCushionSettleDue} 의 호출부를 여백 합성으로 고쳐야 한다.
  *
@@ -88,6 +91,7 @@ const enum Sk {
   /** ME1 조기 상환 */ earlyRepayment = 10,
   /** ME4 반환 요법 */ rebateTherapy = 13,
   /** ME5 분할 상환 */ installmentPlan = 14,
+  /** ME9 솜틀 요양 */ fluffConvalescence = 18,
   /** ME10 성장 환전 */ growthConversion = 19,
   /** CU3 무통 정산 */ painlessSettlement = 22,
   /** CU4 반발 세척 */ recoilRinse = 23,
@@ -124,6 +128,45 @@ function lv(state: WorldState, flat: Sk): number {
  */
 function healedHideMaxBp(level: number): number {
   return 1500 + (3500 * level) / (level + 12);
+}
+
+/**
+ * ME9 가 요구하는 **연속** 벽 접촉 틱(설계서 3R M3: K = 60 고정).
+ *
+ * ⚠️ "정산 틱에 접촉" 이 아니라 **직전 60틱 연속 접촉**이다. 3판 안(정산 틱만 판정)은 129틱을
+ * 멀리서 보내고 마지막 1틱만 벽을 짚어 정산을 임의 발동하는 기술이 됐고, CU9(정산 무적)·
+ * SQ2(정산 폭발)와 조합하면 정산이 리듬이 아니라 스킬샷이 된다 — 설계서가 폐기한 안이다.
+ * `state.wallContactTicks` 는 접촉이 끊기면 0 으로 리셋되는 **연속** 카운터라 그대로 쓴다.
+ */
+const ME9_WALL_TICKS = 60;
+
+/** ME9 의 임계 **인하폭**(틱) = round(20 + 50×Lv/(Lv+12)). Lv1 ≈ 24 · Lv20 ≈ 51 · 점근 70. */
+function fluffConvalescenceCut(level: number): number {
+  return Math.round(20 + (50 * level) / (level + 12));
+}
+
+/**
+ * 이번 틱의 **실효 정산 임계**(양의 정수). 앵커 ⑲(`onCushionThreshold`)과 CU7 의 감소 분모가
+ * **둘 다 이 함수 하나**를 부른다 — 설계서 2R M2 가 "분모 180 하드코딩은 ME9 임계 인하와
+ * 충돌해 아키타입 3 이 자기모순" 이라고 지목한 자리를 한 곳으로 합친 것이다.
+ *
+ * ⚠️ **상수를 복제하지 않는다.** `base` 는 앵커가 넘겨 주는 `CUSHION_RECOVER_TICKS` 다.
+ * CU7 경로만은 앵커를 거치지 않으므로(감쇠 사슬은 정산 분기 밖이다) 그 호출부가 같은 상수를
+ * 넘긴다 — 값의 출처는 여전히 `shipSignature.ts` 하나다.
+ *
+ * ⚠️ 하한 1 을 건다. 인하폭이 임계를 넘기면 `unhitTicks >= 0` 이 항상 참이 되어 **매 틱 정산**
+ * 이 되고 완충이라는 축이 사라진다(앵커 ⑲ 의 계약이 "양의 정수" 인 이유). 현행 수치로는
+ * 도달하지 않지만(점근 인하폭 70 < 180) 어픽스 연장이 붙는 축이라 구조로 막는다.
+ *
+ * ⚠️ **미투자 런은 `base` 를 그대로 돌려준다** — RNG 미소비이고 비트 불변이다.
+ */
+export function mallowSettleThreshold(state: WorldState, base: number): number {
+  const me9 = lv(state, Sk.fluffConvalescence);
+  if (me9 < 1) return base;
+  if (state.wallContactTicks < ME9_WALL_TICKS) return base;
+  const cut = fluffConvalescenceCut(me9);
+  const t = base - cut;
+  return t > 1 ? t : 1;
 }
 
 /** ME10 의 부채→XP 전환율(%) = 20 + 50×Lv/(Lv+10). Lv20 ≈ 53 · 점근 70. */
@@ -252,12 +295,17 @@ export function mallowPlayerDamaged(state: WorldState, player: Entity, dmg: numb
  * 연속 무피격 틱(`aux1`)에 비례해 받는 피해가 줄어든다 — 브루저(맞아야 장갑)의 정확한 반대
  * 문법이고, 정산이 `aux1` 을 0 으로 되돌리므로 "탕감 직후가 가장 약하다"는 긴장이 내장된다.
  *
- * ## ⚠️ 분모 T 는 지금 **상수 180 이다** — 설계서의 "실효 임계" 가 아니다
- * 설계서(2R M2)는 T 를 *"그 틱의 실효 정산 임계(기본 180, ME9 벽 접촉 중엔 인하된 값)"* 로
- * 정의했다. **ME9(솜틀 요양)가 이 배치에서 미배선**이라 실효 임계가 언제나 기본값이고, 그래서
- * 지금은 두 정의가 같은 값이다. ME9 를 배선하는 레인은 **이 함수의 분모를 반드시 함께
- * 옮겨야 한다** — 안 옮기면 "임계에 가까울수록 단단하다"는 의미가 두 스킬 병존에서 깨진다
- * (설계서가 무상한 하드코딩 180 을 결함으로 지목한 자리가 정확히 여기다).
+ * ## 분모 T 는 **그 틱의 실효 정산 임계**다 — ME9 와 함께 움직인다
+ * 설계서(2R M2)의 정의 그대로다: *"기본 180, ME9 벽 접촉 중엔 인하된 값"*.
+ * ⚠️ 종전에는 여기가 **상수 180 하드코딩**이었고, 그 이유는 ME9 가 미배선이라 실효 임계가
+ * 언제나 기본값이었기 때문이다(설계서가 무상한 하드코딩을 결함으로 지목한 자리가 정확히
+ * 여기였다 — **사유를 지우지 않는다**). 이 레인이 ME9 를 배선하면서 분모를
+ * {@link mallowSettleThreshold} 로 함께 옮겼다. 안 옮겼으면 "임계에 가까울수록 단단하다" 는
+ * 의미가 두 스킬 병존에서 깨진다(ME9 로 임계가 130 이 돼도 분모는 180 이라, 만충 무피격에서
+ * 감소량이 K 에 못 미친다).
+ *
+ * ⚠️ CU7 만 투자하고 ME9 는 미투자인 런에서는 `mallowSettleThreshold` 가 `base` 를 그대로
+ * 돌려주므로 종전과 **비트 동일**이다.
  *
  * ## ⚠️ 이 자리는 설계서가 지정한 자리보다 **앞**이다 — 말로우 런에서는 같은 값이다
  * 설계서 구현 항은 *"지연 전환 분기 직전"* 을 요구했는데, 사슬에 뚫린 스킬 자리는 앵커 ⑧
@@ -275,7 +323,7 @@ export function mallowDamageChain(state: WorldState, player: Entity, dmg: number
   if (cu7 < 1) return dmg;
   const unhit = Math.trunc(player.aux1);
   if (unhit <= 0) return dmg;
-  const t = CUSHION_RECOVER_TICKS;
+  const t = mallowSettleThreshold(state, CUSHION_RECOVER_TICKS);
   const capped = unhit > t ? t : unhit;
   // 감소 bp = round(min(aux1, T) × K / T). 정수 bp 단일 나눗셈 + 반올림 1회로, 브루저 장갑·
   // 스트라이커 S4 와 동형이다(소수 피해가 들어와도 같은 방식으로 접힌다).

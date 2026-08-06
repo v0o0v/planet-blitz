@@ -8,20 +8,22 @@
  *
  * ---
  *
- * ## ⚠️ 배선된 것은 30종 중 **14종**이다 (배치 4 의 9종 + S2 앵커로 연 4종 + S3 앵커로 연 1종)
- * S2 가 앵커 ⑯(`onVolleyParams`)·⑰(`onFilmShield`)·⑱(`onFilmAbsorbed`)을 열어
- * **PO2·PO5(⑯) · FI3·FI4(⑱)** 넷이 추가됐고, S3 이 앵커 ㉒(`onFilmEntry`)를 열어 **FI9** 가
- * 붙었다. 사유별 묶음은 `skillHooks.ts` 의 각 `case`/미배선 주석에 있고, 남은 16종의 큰 줄기는
- * 넷이다:
- *  1. **흡수 「효율」 축은 앵커 ⑰ 으로도 표현이 안 된다** — `filmAbsorbed = min(dmg, shield)`
- *     이고 world 가 `aux0 -= absorbed` 를 하므로 **흡수량과 내구 소모량이 같은 값**이다.
- *     "내구 1당 막는 피해가 1+α" 는 그 둘을 분리해야 성립하는데, 분리는 순수 함수 시그니처
- *     변경(= 골든)이라 배선 레인 밖이다. DR2·FI8 이 여기 걸린다(FI8 은 피해원 복원 불가라는
- *     별도 사유도 함께 — ⑰ 주석이 정본). FI9 는 호출부 게이트(`aux0 > 0`)가 *막 없음*을
- *     배제해 애초에 이 앵커에 도달하지 않는다 — **그 사유는 그대로이고, S3-5 가 게이트
- *     앞에 앵커 ㉒(`onFilmEntry`)를 열어 FI9 가 갈 자리를 따로 만들었다**. ✅ **FI9 는 그
- *     자리에 배선됐다**(`bubbleFilmEntry` — 비상막 내구 산식과 `aux1` 소모를 한 번에 넣어
- *     반쪽을 만들지 않았다). DR2·FI8 은 여전히 위 사유에 걸려 밖이다.
+ * ## ⚠️ 배선된 것은 30종 중 **15종**이다 (배치 4 의 9종 + S2 앵커 4종 + S3 앵커 1종 + FI8)
+ * S2 가 앵커 ⑯(`onVolleyParams`)·⑰·⑱(`onFilmAbsorbed`)을 열어 **PO2·PO5(⑯) · FI3·FI4(⑱)**
+ * 넷이 추가됐고, S3 이 앵커 ㉒(`onFilmEntry`)를 열어 **FI9** 가 붙었으며, 순수 함수 개정 레인이
+ * 앵커 ⑰(`onFilmEfficiency`)을 되살려 **FI8** 이 붙었다. 사유별 묶음은 `skillHooks.ts` 의 각
+ * `case`/미배선 주석에 있고, 남은 15종의 큰 줄기는 넷이다:
+ *  1. **흡수 「효율」 축** — ⚠️ 종전 사유는 *"앵커 ⑰ 으로도 표현이 안 된다"* 였다:
+ *     `filmAbsorbed = min(dmg, shield)` 이고 world 가 `aux0 -= absorbed` 를 하므로 **흡수량과
+ *     내구 소모량이 같은 값**이었고, "내구 1당 막는 피해가 1+α" 는 그 둘을 분리해야 성립하는데
+ *     분리가 순수 함수 시그니처 변경(= 골든)이라 배선 레인 밖이었다. **그 사유는 해소됐다** —
+ *     순수 함수 개정 레인이 두 함수에 효율 인자를 넣었고 ⑰ 이 효율(bp)을 돌려주게 바뀌었다.
+ *     ✅ **FI8 은 배선됐다**(`bubbleFilmEfficiency` — 피해원 복원 불가라는 별도 사유는 수집
+ *     루프가 출처를 함께 실어 보내면서 해소됐다). **DR2 는 아직 밖이다** — 남은 사유는 효율이
+ *     아니라 **술어**다(막 있음 + 젬 수거로 열리는 60틱 창 = 신규 WorldState 정수 1개).
+ *     FI9 는 호출부 게이트(`aux0 > 0`)가 *막 없음*을 배제해 애초에 이 앵커에 도달하지 않는다 —
+ *     **그 사유는 그대로이고**, S3-5 가 게이트 앞에 앵커 ㉒ 를 열어 자리를 따로 만들었다.
+ *     ✅ **FI9 는 그 자리에 배선됐다**(`bubbleFilmEntry`).
  *  2. **자석·이동·젬 이동 축에 앵커가 없다** — DR3·DR4·DR5·DR8·DR10 은 `stepGems` 흡인 배율,
  *     이동 감속 적용부, 기믹 접촉 판정처럼 전부 `world.ts` 의 비-앵커 지점을 요구한다.
  *  3. **파열의 종류를 구분할 신호가 없다** — FI6 은 *액티브 만료* 파열에만 얹혀야 하는데
@@ -47,7 +49,12 @@ import { clearEnemyBullets, fanStrike } from '../activeTypes.js';
 import { applyChain } from '../status.js';
 import { slideCircleWalls } from '../los.js';
 import { length } from '../math.js';
-import { FILM_ABSORB_FLAT, FILM_BURST_RADIUS, FILM_PERIOD_TICKS } from '../shipSignature.js';
+import {
+  FILM_ABSORB_FLAT,
+  FILM_BURST_RADIUS,
+  FILM_PERIOD_TICKS,
+  FILM_EFFICIENCY_BASE_BP,
+} from '../shipSignature.js';
 import { skillLv } from '../../items/skills.js';
 
 // ---------------------------------------------------------------------------
@@ -74,6 +81,7 @@ const enum Sk {
   /** FI3 반사 응막 */ reflectiveFilm = 22,
   /** FI4 압력 배출 */ pressureVent = 23,
   /** FI5 파열 위상 */ burstPhase = 24,
+  /** FI8 발수 코팅 */ hydrophobicCoat = 27,
   /** FI9 최후의 거품 */ lastBubble = 28,
   /** FI10 정화 파열 */ purgeBurst = 29,
 }
@@ -459,4 +467,41 @@ export function bubbleFilmEntry(state: WorldState, player: Entity, dmg: number):
   player.aux0 = shield;
   // 대가 — 재생 진행분 전액 소모.
   player.aux1 = 0;
+}
+
+/**
+ * 앵커 ⑰ **막 흡수 효율**(bp) — FI8 발수 코팅.
+ *
+ * 설계서 FI8: *"해저드 피해(용암·박격)는 막이 2배 효율로 흡수한다 — 내구 1당 해저드 피해 2."*
+ * 레벨 스케일 = **200% + 10%p/Lv** (bp). Lv1 = 21000 · Lv20 = 40000.
+ *
+ * ## ⚠️ `fromHazard` 없이는 이 스킬이 설계와 **정반대**가 된다
+ * 이 지점의 `dmg` 는 이미 여러 접촉원을 `max` 로 합류시킨 값이라 종류가 남아 있지 않다.
+ * 그래서 호출부(`world.ts` 수집 루프)가 **max 를 갱신한 그 항목의 출처**를 지역 변수로 함께
+ * 실어 보낸다(설계서 「구현: A」 문면 그대로). 이 인자를 무시하고 상시 배율을 걸면
+ * "해저드에서만" 이 "언제나" 가 된다 — 종전 앵커 주석이 경고하던 바로 그 형태다.
+ *
+ * ## ⚠️ 효율은 **막은 피해**를 늘린다 — 내구를 늘리지 않는다
+ * `aux0` 은 한 점도 안 건드린다. 태우는 내구는 `filmAbsorbed` 가 효율로 되돌려 내고, 그 값은
+ * 어떤 효율에서도 `aux0` 을 넘지 않는다(그 doc 이 정본) — u32 폴드 발산 경로가 없다.
+ *
+ * ## ⚠️ DR2「표면장력 세례」는 여기 없다 — 신규 WorldState 정수(효율 창 잔여 틱)가 선결이다
+ * 사유 전문은 앵커 ⑰(`onFilmEfficiency`)의 case 주석이 정본이다. 그 필드가 서면 이 함수의
+ * 반환값에 **곱연산**으로 얹는다(설계서 R3-2: 두 축은 직교하고 곱 중첩이 의도된 설계다).
+ *
+ * @returns 흡수 효율(bp). 미투자·비해저드 피격은 {@link FILM_EFFICIENCY_BASE_BP} 그대로다(비트 동일).
+ */
+export function bubbleFilmEfficiency(
+  state: WorldState,
+  player: Entity,
+  dmg: number,
+  fromHazard: boolean,
+): number {
+  void player;
+  void dmg;
+  if (!fromHazard) return FILM_EFFICIENCY_BASE_BP;
+  const fi8 = lv(state, Sk.hydrophobicCoat);
+  if (fi8 < 1) return FILM_EFFICIENCY_BASE_BP;
+  // 200% + 10%p/Lv — 정수 산술만(나눗셈 0회). 레벨은 `skillLv` 가 정수로 준다.
+  return 20000 + 1000 * fi8;
 }
