@@ -230,7 +230,9 @@ describe('④ F4 파편 격발', () => {
     far.x = 9600;
     far.y = 9000;
     w.entities.push(bullet, near, far);
-    onBulletExpired(w, bullet);
+    // 사유 `'pierce'` — F4 는 **관통 예산 소진에서만** 터진다(S3-2 가 앵커에 사유를 넣었고,
+    // 수명 만료(`'life'`)에서는 안 터지는 것이 거동 불변의 정의다).
+    onBulletExpired(w, bullet, 'pierce');
     return { hp: near.hp, far: far.hp };
   }
 

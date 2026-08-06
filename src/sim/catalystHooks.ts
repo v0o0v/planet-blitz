@@ -43,6 +43,9 @@
 
 import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
+// 앵커 ⑥ 의 소멸 사유. **type-only 라 순환이 되지 않는다**(`skillHooks.ts` 가 이 파일을
+// 값으로 import 하므로 값 import 는 순환이다) — 컴파일에서 지워진다.
+import type { BulletExpiryReason } from './skillHooks.js';
 
 // ---------------------------------------------------------------------------
 // 기존 앵커 9지점에 대응하는 촉매 디스패치 (S0: 전 분기 비어 있음)
@@ -89,10 +92,20 @@ export function onKillsDeltaCatalyst(state: WorldState, delta: number): void {
   void delta;
 }
 
-/** 아군탄이 관통 예산을 다 써 소멸. 스킬 디스패치 **뒤**. */
-export function onBulletExpiredCatalyst(state: WorldState, bullet: Entity): void {
+/**
+ * 아군탄 소멸. 스킬 디스패치 **뒤**.
+ *
+ * ⚠️ `reason` 이 `'pierce'`(관통 예산 소진)와 `'life'`(수명 만료)로 갈린다(S3-2). 여기에
+ * 촉매를 얹는 레인은 **반드시 사유를 게이트**해라 — 안 하면 한 촉매가 두 사유에서 다 터진다.
+ */
+export function onBulletExpiredCatalyst(
+  state: WorldState,
+  bullet: Entity,
+  reason: BulletExpiryReason,
+): void {
   if (!state.catalystOn) return;
   void bullet;
+  void reason;
 }
 
 /** 벽 접촉 틱. 스킬 디스패치 **뒤**. */

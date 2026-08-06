@@ -494,24 +494,56 @@ function dispatchKillsDeltaSkill(state: WorldState, delta: number): void {
 }
 
 /**
- * 앵커 ⑥ — **아군탄이 관통 예산을 다 써 소멸하는 지점**. 수명 만료·화면 밖 컬링이 아니라
- * "명중해서 예산이 바닥났다" 다(자이로 무한 관통·프리즘 세그먼트는 이 분기 밖이다).
+ * 앵커 ⑥ 이 서는 **두 소멸 사유**. 사유마다 발동해야 할 스킬이 다르므로 앵커가 인자로 받는다.
+ *
+ * - `'pierce'` — 명중해서 **관통 예산이 바닥났다**(자이로 무한 관통·프리즘 세그먼트는 이 분기 밖).
+ * - `'life'` — 탄 **수명이 다했다**(`e.life` 가 0 에 닿은 틱). 화면 밖 컬링·벽 차단은 **여기 아니다**.
+ *
+ * ⚠️ **타입 전용 union 이다(런타임 export 0건).** `const enum` 으로 만들면 `skillHooks.ts` 에
+ * 값 export 가 하나 늘어 `tests/skillAnchors.test.ts` 의 "앵커 이름 전수" 단언이 깨진다 —
+ * 그 단언은 앵커 이름이 조용히 바뀌는 것을 잡는 계측기라 사유 상수 때문에 흔들면 안 된다.
  */
-export function onBulletExpired(state: WorldState, bullet: Entity): void {
-  dispatchBulletExpiredSkill(state, bullet);
-  onBulletExpiredCatalyst(state, bullet);
+export type BulletExpiryReason = 'pierce' | 'life';
+
+/**
+ * 앵커 ⑥ — **아군탄이 소멸하는 지점**. 사유는 {@link BulletExpiryReason} 로 갈린다.
+ *
+ * ⚠️ **`reason` 은 기본값이 없다(필수 인자).** 기본값을 두면 새 호출부가 사유를 빠뜨린 채
+ * 기존 사유로 흘러들어, 여기 붙은 스킬들이 **조용히 두 배로 발동**한다. 그 실패를 컴파일
+ * 시점에 잡으려고 일부러 필수로 뒀다.
+ *
+ * ⚠️ **두 호출부 모두 `for (const e of state.entities)` 순회 안**이다 — 훅에서 엔티티를
+ * 스폰하지 마라(호출부 주석의 근거). 스폰이 필요한 스킬은 `splitSpawns` 처럼 루프 뒤로 미뤄야 한다.
+ */
+export function onBulletExpired(
+  state: WorldState,
+  bullet: Entity,
+  reason: BulletExpiryReason,
+): void {
+  dispatchBulletExpiredSkill(state, bullet, reason);
+  onBulletExpiredCatalyst(state, bullet, reason);
 }
 
-function dispatchBulletExpiredSkill(state: WorldState, bullet: Entity): void {
+function dispatchBulletExpiredSkill(
+  state: WorldState,
+  bullet: Entity,
+  reason: BulletExpiryReason,
+): void {
   if (!state.skillsOn) return;
   switch (state.sigBit) {
     case SIG_STRIKER_MARKSMAN:
-      strikerBulletExpired(state, bullet); // F4 파편 격발
+      // ⚠️ **`reason` 게이트가 거동 불변의 전부다.** F4 는 S3-2 이전부터 **관통 예산 소진에서만**
+      // 불리고 있었다. 수명 만료 호출부가 새로 생겼으므로, 게이트가 없으면 같은 런에서 F4 가
+      // 두 배로 터진다 — 그것은 거동 변경이다.
+      if (reason === 'pierce') strikerBulletExpired(state, bullet); // F4 파편 격발
       break;
-    // ⚠️ **아크캐스터는 여기 case 가 없다 — 소멸 사유가 다르기 때문이다.** CH3「종말점 방전」은
-    // **수명 만료**(reachLife) 소멸이 트리거인데 이 앵커는 **관통 예산 소진**이다. 설계서가 그
-    // 둘을 스트라이커 F4 와의 분화점으로 못 박았으므로 여기 얹으면 두 스킬이 같은 것이 된다.
-    // 수명 만료 분기에 앵커를 뚫는 것은 이 레인 밖이다.
+    // ⚠️ **아크캐스터 CH3「종말점 방전」의 자리는 이제 여기 있다**(S3-2 가 수명 만료 호출부를
+    // 뚫었다). ~~case 가 없는 사유~~ 였던 아래 문장은 **왜 이 자리가 사유를 구분해야 하는지**의
+    // 근거로 남긴다: CH3 는 **수명 만료**(reachLife) 소멸이 트리거인데 스트라이커 F4 는
+    // **관통 예산 소진**이고, 설계서가 그 둘을 분화점으로 못 박았다 — 사유 없이 한 앵커에
+    // 얹으면 두 스킬이 같은 것이 된다. 그래서 뚫은 것은 `reason` 을 가진 앵커다.
+    // **효과 본체는 아직 없다** — 이 레인은 자리만 만들고 거동·해시를 비트 불변으로 뒀다
+    // (`case SIG_ARC_OVERCHARGE:` 를 지금 넣으면 빈 case 가 fallthrough 위험만 남긴다).
     // ⚠️ **브루저는 여기 case 가 없다 — 쓸 설계 항목이 없다.** 관통 예산 소진에 반응하는
     // 브루저 스킬은 0종이다. BL3(만재 중탄)의 "명중 지점 폭발" 은 **명중마다**여야 하는데 이
     // 앵커는 예산이 바닥난 마지막 명중에서만 불린다 — 그 자리는 앵커 ⑩ 이다.
@@ -1369,11 +1401,12 @@ export function onVolleyParams(
     case SIG_ARC_OVERCHARGE:
       // CH1·CH8 과충전 발사 표식 · BA7 장전 소비(탄수) · BA10 탄수 ×2 + 간격 배율.
       //
-      // ⚠️ **CH3「종말점 방전」은 여기 없다.** 표식을 다는 것까지는 이 앵커가 하지만, 그
-      // 스킬의 트리거는 **탄 수명 만료 소멸**이고 현행 앵커 ⑥(`onBulletExpired`)은
-      // **관통 예산 소진** 분기 하나뿐이다(그 앵커 주석이 "수명 만료·화면 밖 컬링이 아니다"
-      // 라고 명시). 수명 만료 지점에 앵커가 서기 전에는 폭발을 낳을 자리가 없다 —
-      // 표식만 달고 소비처를 비워 두면 반쪽 배선이 되므로 손대지 않았다.
+      // ⚠️ **CH3「종말점 방전」의 소비처는 이제 앵커 ⑥ 에 있다**(S3-2). 표식을 다는 것까지는
+      // 이 앵커가 하고, 폭발이 터질 자리는 `onBulletExpired(..., 'life')` 다.
+      // ~~막혀 있던 사유~~ 는 근거로 남긴다: 그 스킬의 트리거는 **탄 수명 만료 소멸**인데
+      // S3-2 이전의 앵커 ⑥ 은 **관통 예산 소진** 분기 하나뿐이었다(그 앵커 주석이 "수명
+      // 만료·화면 밖 컬링이 아니다" 라고 명시). 소비처가 없는 동안 표식만 달면 반쪽 배선이라
+      // 손대지 않았던 것이고, 이제 자리는 섰다 — **효과 본체 배선은 아직 남아 있다.**
       arccasterVolleyParams(state, player, params);
       break;
     case SIG_STRIKER_MARKSMAN:

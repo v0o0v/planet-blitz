@@ -28,6 +28,12 @@ const hoisted = vi.hoisted(() => ({
   calls: {} as Record<string, number>,
   /** 앵커 ⑪ 이 받은 인자 기록 — **좌표가 실제로 실려 오는가**를 재려면 횟수만으로는 부족하다. */
   deaths: [] as { x: number; y: number; elite: boolean }[],
+  /**
+   * 앵커 ⑥ 이 받은 인자 기록. 횟수만으로는 **사유가 갈렸는가**를 못 재고, 사유를 못 재면
+   * "수명 만료에서도 불린다" 와 "기존 스킬이 두 배로 터진다" 가 같은 관측이 된다.
+   * 좌표는 **호출 시점 값을 복사**한다 — 엔티티 참조를 담으면 압축 뒤 값으로 바뀐다.
+   */
+  expiries: [] as { x: number; y: number; reason: string }[],
 }));
 
 vi.mock('../src/sim/skillHooks.js', async (orig) => {
@@ -47,6 +53,10 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
           y: args[2] as number,
           elite: args[3] as boolean,
         });
+      }
+      if (name === 'onBulletExpired') {
+        const b = args[1] as { x: number; y: number };
+        hoisted.expiries.push({ x: b.x, y: b.y, reason: args[2] as string });
       }
       // **원본을 그대로 태운다** — 감싸기가 거동을 바꾸면 이 파일이 재는 것이 프로덕션이 아니게 된다.
       return fn(...args);
@@ -106,6 +116,7 @@ function plantEnemy(state: WorldState, x: number, y: number, damage = 0): Entity
 beforeEach(() => {
   for (const k of Object.keys(hoisted.calls)) delete hoisted.calls[k];
   hoisted.deaths = [];
+  hoisted.expiries = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -297,7 +308,7 @@ describe('앵커 ⑤ onKillsDelta — 처치 증분', () => {
   });
 });
 
-describe('앵커 ⑥ onBulletExpired — 관통 예산 소진', () => {
+describe('앵커 ⑥ onBulletExpired — 관통 예산 소진 · 수명 만료', () => {
   /**
    * 무대 좌표는 `bulletHitOrder.test.ts` 의 근거를 그대로 쓴다: 오토어택 사거리(1650) **밖**,
    * 탄 컬링 반경(≈2200) **안**. 그래야 플레이어 자기 볼리가 계측을 오염시키지 않는다.
@@ -320,11 +331,111 @@ describe('앵커 ⑥ onBulletExpired — 관통 예산 소진', () => {
     expect(count('onBulletExpired')).toBe(0);
   });
 
-  it('음성 대조: 명중 없이 날아가는 탄은 0 이다 (수명 만료는 이 앵커가 아니다)', () => {
+  it('음성 대조: 수명이 남은 채 명중 없이 날아가는 탄은 0 이다', () => {
     const s = skilled(0x9008);
     spawnBullet(s, STAGE_X, 0, Math.PI, 250 / DT, 100, 0, 5, 120, -1, 0);
     stepWorld(s, idle);
     expect(count('onBulletExpired')).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // S3-2 — 수명 만료 소멸에도 앵커가 선다 (CH3「종말점 방전」이 요구한 자리)
+  // -------------------------------------------------------------------------
+
+  it('수명이 다해 소멸하는 탄에서 불리고, 사유가 `life` 이며, 좌표가 마지막 위치다', () => {
+    const s = skilled(0x9008);
+    // 수명 2틱. 적을 세우지 않으므로 이 탄은 **오직 수명으로만** 죽는다.
+    spawnBullet(s, STAGE_X, 0, Math.PI, 250 / DT, 100, 0, 5, 2, -1, 0);
+    stepWorld(s, idle); // life 2 → 1 (아직 살아 있다)
+    expect(count('onBulletExpired')).toBe(0); // 하한: 아직 안 죽었다
+    stepWorld(s, idle); // life 1 → 0 → 소멸
+    // ⚠️ **하한 먼저**. 배선이 끊기면 `expiries` 가 빈 배열이 되고, 그러면 아래 좌표 단언이
+    // "없는 원소를 안 본다"로 조용히 성립한다(이 리포에서 실제로 난 항진).
+    expect(count('onBulletExpired')).toBe(1);
+    expect(hoisted.expiries).toHaveLength(1);
+    const hit = hoisted.expiries[0]!;
+    expect(hit.reason).toBe('life');
+    // 좌표는 **소멸 틱까지 적분이 끝난 마지막 위치**여야 한다(스폰 지점이 아니다).
+    // 틱당 250유닛 × 2틱 = 1480. 스폰 지점(1980)과 다르다는 것이 "종말점" 의 물증이다.
+    expect(hit.x).toBeCloseTo(STAGE_X - 500, 6);
+    expect(hit.y).toBeCloseTo(0, 6);
+  });
+
+  it('회귀: 관통 소진 소멸의 사유는 종전 그대로 `pierce` 다', () => {
+    const s = skilled(0x9008);
+    plantEnemy(s, STAGE_X - 60, 0);
+    spawnBullet(s, STAGE_X, 0, Math.PI, 250 / DT, 100, 0, 5, 120, -1, 0);
+    stepWorld(s, idle);
+    expect(hoisted.expiries).toHaveLength(1); // 하한 — 실제로 소멸했다
+    expect(hoisted.expiries[0]!.reason).toBe('pierce');
+  });
+
+  it('적탄이 수명으로 소멸해도 0 이다 (앵커 ⑥ 의 계약은 아군탄이다)', () => {
+    const s = skilled(0x9008);
+    const eb = blankEntity('enemyBullet');
+    eb.x = STAGE_X;
+    eb.y = 0;
+    eb.vx = -250 / DT;
+    eb.radius = 5;
+    eb.life = 1;
+    eb.enemyType = -1; // BK_NONE — 거동 없는 순수 직진탄
+    addEntity(s, eb);
+    stepWorld(s, idle);
+    expect(count('onBulletExpired')).toBe(0);
+  });
+});
+
+/**
+ * **거동 불변의 물증** — 앵커 ⑥ 에 사유가 생기면서 기존에 붙어 있던 스킬(스트라이커 F4)이
+ * **수명 만료에서도 터지면 두 배 발동**이 된다. 그것이 안 일어남을 스킬 쪽 효과로 잰다.
+ *
+ * 여기만 효과를 단언하는 이유: 이 파일의 헤더가 "효과는 배선 레인의 몫" 이라고 못 박았지만,
+ * 이 단언은 **효과를 잠그는 것이 아니라 효과가 늘지 않았음**을 잠근다 — 성질이 반대다.
+ */
+describe('앵커 ⑥ 사유 게이트 — 기존 스킬이 두 배로 터지지 않는다', () => {
+  const STAGE_X = 1980;
+
+  /**
+   * F4(flat 인덱스 3) 만 투자한 런. `DEFAULT_CONFIG` 런이 스트라이커 시그니처라는 것은
+   * `tests/skillStriker.test.ts` 의 ⓪ 전제가 잠근다 — 여기서 다시 적지 않는다.
+   */
+  function striker(): WorldState {
+    const v = new Array<number>(30).fill(0);
+    v[3] = 5; // F4 파편 격발 (폭발 반경 60 + 6×5 = 90)
+    return createWorld(0x9008, { ...DEFAULT_CONFIG, skillInvest: v });
+  }
+
+  /**
+   * 탄이 죽는 자리는 **1틱 뒤 1730** 이다(1980 − 250). 오토어택 사거리(1650) 밖이라
+   * 플레이어 자기 볼리가 끼어들지 않는다 — 2틱을 돌리면 1480 이 되어 사거리 안이고,
+   * 그러면 방관자가 자기 볼리에 맞아 계측이 오염된다.
+   */
+  const DEATH_X = STAGE_X - 250;
+
+  it('수명 만료로 죽는 탄은 F4 폭발을 일으키지 않는다 (관통 소진에서만 터진다)', () => {
+    const s = striker();
+    // 폭발 반경 90 **안**이면서 탄 경로(y=0)의 명중 반경(32+5=37) **밖**인 자리 — y 로 뗀다.
+    // 경로 위에 두면 탄이 맞아 죽어(`'pierce'`) 재려던 사유가 바뀐다.
+    const bystander = plantEnemy(s, DEATH_X, 60);
+    const before = bystander.hp;
+    spawnBullet(s, STAGE_X, 0, Math.PI, 250 / DT, 100, 0, 5, 1, -1, 0);
+    stepWorld(s, idle);
+    // 하한 — 탄이 **실제로 수명으로 소멸했다**. 이게 없으면 아래 `toBe(before)` 는
+    // "탄이 아예 안 죽어서 아무 일도 없었다" 로도 성립한다(항진).
+    expect(hoisted.expiries.filter((e) => e.reason === 'life').length).toBe(1);
+    expect(bystander.hp).toBe(before);
+  });
+
+  it('대조: 같은 방관자가 관통 소진 소멸에서는 F4 폭발에 맞는다 (계측기가 살아 있다)', () => {
+    const s = striker();
+    const bystander = plantEnemy(s, DEATH_X, 60);
+    const before = bystander.hp;
+    // 표적을 경로 위에 세워 **관통 예산을 소진시켜** 같은 자리에서 죽게 한다.
+    plantEnemy(s, DEATH_X, 0);
+    spawnBullet(s, STAGE_X, 0, Math.PI, 250 / DT, 100, 0, 5, 120, -1, 0);
+    stepWorld(s, idle);
+    expect(hoisted.expiries.filter((e) => e.reason === 'pierce').length).toBe(1);
+    expect(bystander.hp).toBeLessThan(before);
   });
 });
 
