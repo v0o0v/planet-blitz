@@ -37,7 +37,7 @@ import {
 import { EQUIP_SLOTS, RARITY_CODE } from '../items/types.js';
 import type { EquipSlotId, Item } from '../items/types.js';
 import { UNIQUE_REGISTRY } from '../items/uniques.js';
-import { computeLoadoutStats } from '../items/loadout.js';
+import { computeLoadoutStats, deriveSkillAffixLv } from '../items/loadout.js';
 import { shipBonusBp } from '../../data/lineage.js';
 import { activeShip } from '../save/profile.js';
 import type { Profile } from '../save/profile.js';
@@ -167,7 +167,6 @@ export function commissionSealedLoadout(profile: Profile, rules?: CommissionEqui
   const typeId = normalizeShipTypeId(ship.typeId);
   const { loadout } = computeLoadoutStats(
     equippedItems(profile, rules),
-    ship.skillInvest.slice(),
     shipBonusBp(profile.lineage),
     typeId,
   );
@@ -226,14 +225,18 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
   // 소집은 스냅샷 장비를 그대로 쓴다(프로필 재조회 금지). 계보 기체 가지(ADR-0007)는 계정
   // 단위 파일럿 버프라 소집이든 활성이든 동일하게 얹는다(계정의 버프는 무엇을 타든 적용).
   // loadout 은 config 로 리플레이에 스냅샷되므로 서버 재실행 검증(EF)과 호환된다.
-  const { loadout } = computeLoadoutStats(
-    // 의뢰 제약 계약(장비축)은 **여기서** 걸러야 한다 — 이 목록이 `loadout` 이 되고, 그 `loadout`
-    // 이 리플레이 스냅샷에 실려 서버 EF 재실행과 정합이 된다(`equipBanned` 주석).
-    pilot !== undefined ? pilot.equipped : equippedItems(profile, opts.commission?.constraints?.equipRules),
-    skillInvest,
-    shipBonusBp(profile.lineage),
-    typeId,
-  );
+  //
+  // 의뢰 제약 계약(장비축)은 **여기서** 걸러야 한다 — 이 목록이 `loadout` 과 `skillAffixLv`
+  // 둘 다의 소스가 되고, 그 값들이 리플레이 스냅샷에 실려 서버 EF 재실행과 정합이 된다
+  // (`equipBanned` 주석). `skillAffixLv` 를 원본 `ship.equipped` 에서 따로 파생하면 의뢰
+  // 장비축 금지가 우회된다(affixes.md ⑤-2c) — 그래서 아래 두 파생이 **같은 배열**을 쓴다.
+  const equippedForLoadout =
+    pilot !== undefined ? pilot.equipped : equippedItems(profile, opts.commission?.constraints?.equipRules);
+  const { loadout } = computeLoadoutStats(equippedForLoadout, shipBonusBp(profile.lineage), typeId);
+  // 스킬 어픽스 축별 레벨(ADR-0049, affixes.md ①-5) — `skillInvest` 와 완전히 분리된 이중
+  // 벡터다. 전부 0이면 아래에서 필드 자체를 스탬프하지 않는다(조건부 스탬프, `planetMultCenti`
+  // 선례) → 어픽스 없는 런의 config·해시가 바이트 불변이다.
+  const skillAffixLv = deriveSkillAffixLv(equippedForLoadout);
   // 성능% 감쇠(소집 전용) — resolveGuardianStats 철학 그대로: **크기(피해·HP)만** 스케일하고
   // 기하(발사 간격·탄속·사거리 등)는 불변이다. perf 는 centi-percent [5000,10000] 이라 완전
   // 성능(10000)이면 damageMult ×1·maxHpAdd round(x×1)=x 로 무연산 → 활성 빌드와 loadout 바이트
@@ -329,5 +332,10 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
     // 싣지 않아 기존 런의 config 직렬화가 바이트 동일하다. 이것이 `Commission`→`WorldConfig` 의
     // **유일한 배선 지점**이다(호출부에서 config 를 손보지 마라 — 파일 머리말 계약).
     ...(opts.commission !== undefined ? { commission: opts.commission } : {}),
+    // 스킬 어픽스 축별 레벨(ADR-0049) — **전 축 0이면 필드 자체를 싣지 않는다**(위
+    // `planetMultCenti`/`activeSlots`/`commission` 과 같은 조건부 스탬프 규율). 어픽스
+    // 없는 런의 config 직렬화·해시가 기존과 바이트 동일해야 골든 대조가 성립한다
+    // (affixes.md ⑤-2).
+    ...(skillAffixLv.some((v) => v !== 0) ? { skillAffixLv } : {}),
   };
 }

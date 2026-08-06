@@ -35,6 +35,7 @@ import {
   SIG_ARC_OVERCHARGE,
   SIG_MALLOW_CUSHION,
   SIG_BUBBLE_FILM,
+  SIG_STRIKER_MARKSMAN,
   SIGNATURE_BITS,
 } from '../src/sim/shipSignature.js';
 import { SHIP_TYPES, shipSkillNodeCount, zeroSkillInvest } from '../data/ships/index.js';
@@ -95,10 +96,18 @@ describe('① Profile{typeId} → buildRunConfig → createWorld → stepWorld',
     expect(cfg.shipType).toBe(1);
   });
 
-  it('스트라이커(typeId 0) 런은 시그니처 비트를 하나도 켜지 않는다 (회귀 탐지기 보존)', () => {
+  it('스트라이커(typeId 0) 런은 자기 시그니처 비트(24)만 켠다 — 다른 6개는 안 샌다 (회귀 탐지기 갱신)', () => {
+    // ⚠️ 2026-08-06 — 구 계약("스트라이커는 시그니처 비트를 하나도 켜지 않는다")은 ADR-0049 가
+    // 정조준 사이클(비트24)을 부여하며 폐기됐다. 지금 지켜야 하는 것은 "스트라이커도 6기체와
+    // 같은 규율로 자기 비트 하나만 켠다"이다.
     const cfg = buildRunConfig(defaultProfile(), { planet: 0, stage: 1 });
-    expect(cfg.loadout?.uniqueMask).toBe(0);
     expect(cfg.shipType).toBe(0);
+    const mask = cfg.loadout?.uniqueMask ?? 0;
+    expect(hasCapstone(mask, SIG_STRIKER_MARKSMAN)).toBe(true);
+    for (const other of SIGNATURE_BITS) {
+      if (other === SIG_STRIKER_MARKSMAN) continue;
+      expect(hasCapstone(mask, other), `비트 ${other} 오점등`).toBe(false);
+    }
   });
 
   it('타입별로 서로 다른 시그니처 비트가 켜진다(한 비트가 전 타입에 새지 않는다)', () => {
@@ -170,7 +179,8 @@ describe('① Profile{typeId} → buildRunConfig → createWorld → stepWorld',
       activeShip(p).typeId = bad;
       const cfg = buildRunConfig(p, { planet: 0, stage: 1 });
       expect(cfg.shipType, String(bad)).toBe(0);
-      expect(cfg.loadout?.uniqueMask, String(bad)).toBe(0);
+      // 폴백도 스트라이커의 실제 config 와 완전히 같아야 한다 — 자기 시그니처 비트(24) 포함.
+      expect(cfg.loadout?.uniqueMask, String(bad)).toBe(1 << SIG_STRIKER_MARKSMAN);
     }
   });
 
@@ -285,9 +295,17 @@ describe('③ 투자 → 저장 → 재로드 → buildRunConfig 왕복', () => 
     expect(cfg.skillInvest?.[0]).toBe(1);
     // 저장 직전 프로필과 재로드 프로필이 같은 런을 만든다(직렬화 왕복 무손실).
     expect(cfg).toEqual(buildRunConfig(p, { planet: 0, stage: 1 }));
-    // 투자가 파생 스탯으로 실제로 접혔는가(중립 loadout 이 아님).
-    expect(cfg.loadout).not.toEqual(
-      buildRunConfig(defaultProfile(), { planet: 0, stage: 1 }).loadout,
+    // ⚠️ **ADR-0049 로 관측량이 바뀐 자리다.** 구 버전은 "투자가 파생 스탯으로 접혔는가"를
+    // 봤다(`cfg.loadout` 이 중립과 다른가). 스킬이 스탯에서 **메커닉**으로 옮겨 가면서
+    // `computeLoadoutStats` 는 더 이상 투자를 읽지 않으므로 그 단언은 영영 거짓이 됐다 —
+    // 결함이 아니라 폐기된 계약이다.
+    //
+    // 대신 지금 참인 것을 건다: **투자 벡터 자체가 런 설정까지 흘러가는가.** sim 이
+    // `WorldConfig.skillInvest` 를 직접 읽으므로 이쪽이 오히려 배선의 정본에 가깝다.
+    // (아래 `runHashes` 단언이 "그래서 실제로 다르게 굴러가는가"를 마저 증명한다 — 벡터가
+    // 실렸는데 sim 이 안 읽는 상태를 배제하는 것은 그쪽이다.)
+    expect(cfg.skillInvest).not.toEqual(
+      buildRunConfig(defaultProfile(), { planet: 0, stage: 1 }).skillInvest,
     );
     // sim 이 실제로 다르게 굴러가는가.
     expect(runHashes(31337, cfg, 120)).not.toEqual(

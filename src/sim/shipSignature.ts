@@ -5,16 +5,24 @@
  * 캡스톤(src/sim/capstones.ts)과 완전히 동형이다 — 비트 상수는 sim 에 살고, 파생
  * 레이어(src/items/loadout.ts)가 이 상수를 import 해 `LoadoutConfig.uniqueMask` 에 OR 한다.
  *
- * ⚠️ 결정론·해시 불변(ADR-0005): 시그니처는 **유니크·캡스톤과 같은 `uniqueMask` 필드의
+ * ⚠️ 결정론·해시 불변(ADR-0005): 시그니처는 **유니크·(구)캡스톤과 같은 `uniqueMask` 필드의
  * 미사용 상위 비트(18~23)** 를 재활용한다. 신규 LoadoutConfig 필드도 신규 hashWorld 폴드도
  * 만들지 않으므로 **시그니처 없는 런(스트라이커 = 기존 fixtures 전부)의 상태 해시가 바이트
  * 단위로 완전 불변**이다. 비트 가용 현황(실측):
- *   - 0~14  유니크 15종      (src/sim/uniques.ts)
- *   - 15~17 캡스톤 3종       (src/sim/capstones.ts)
- *   - 18~23 시그니처 6종     (이 파일)
- *   - 24~30 미사용 7비트
+ *   - 0~14  유니크 15종        (src/sim/uniques.ts)
+ *   - 15~17 (구)캡스톤 3종·폐기 — 아래 문단 참조
+ *   - 18~24 시그니처 7종       (이 파일, 스트라이커 포함 — ADR-0049 §1 "정조준 사이클")
+ *   - 25~30 미사용 6비트
  *   - 31    **사용 금지** — `1 << 31` 이 음수라 마스크 연산이 취약해진다
  * 절대 재번호 금지 — uniqueMask 는 해시에 접힌다(src/sim/replay.ts).
+ *
+ * ⚠️ **비트 15~17(구 캡스톤 3종)은 ADR-0049 로 캡스톤 시스템 자체가 폐기되며 함께 죽었다** —
+ * `src/items/loadout.ts` 가 더 이상 이 비트들을 세우지 않고, world.ts 도 이 비트를 읽던 게이트를
+ * 전부 걷어냈다(`src/sim/capstones.ts` 주석 참조). **지금 다른 용도로 재할당하지 마라** — 구
+ * 리플레이·세이브가 이 비트를 세운 uniqueMask 를 담은 채 재생될 가능성을 배제할 수 없고, 재할당
+ * 즉시 그 낡은 데이터가 새 의미로 조용히 재해석된다(예: 예전에 화력 캡스톤을 켰던 세이브가 새
+ * 시그니처를 켠 것처럼 로드된다). 재사용하려면 먼저 replay/세이브 마이그레이션 경로에서 15~17
+ * 비트를 명시적으로 지우거나 무시하는지 확인해야 한다.
  *
  * ## 산술 규약
  * 이 모듈의 모든 함수는 **정수 in / 정수 out** 이며 배율은 정수 basis-point(10000 = 1배)로만
@@ -42,10 +50,25 @@ export const SIG_HATCHLING_BROOD = 21;
 export const SIG_MALLOW_CUSHION = 22;
 /** 버블 — 주기적으로 피해 흡수막이 생기고, 터질 때 주변을 밀어낸다. */
 export const SIG_BUBBLE_FILM = 23;
+/**
+ * 스트라이커 — 정조준 사이클. 주무기 볼리 12회마다 다음 1볼리가 「정조준 볼리」가 되어
+ * 볼리 내 모든 탄이 피해 +50%·관통 +1 을 받는다(ADR-0049 §1, 승인본 4판). 별도 커밋으로
+ * 부여된 7번째 시그니처 — 스트라이커는 이제 "시그니처 없음" 이 아니다(구 §11 채택안 A 폐기).
+ */
+export const SIG_STRIKER_MARKSMAN = 24;
 
 /**
- * 시그니처 비트 전량(선언 순서 = 타입 id 1~6 순서). 테스트·검증이 하드코딩 목록 대신
- * 이 배열을 순회하도록 두면 비트가 늘 때 게이트가 자동으로 따라온다.
+ * 시그니처 비트 전량 — **오름차순 정본**(18→24). `computeActiveSignature`(world.ts)가 이
+ * 배열을 순회해 **첫 매치를 승자**로 고르므로("최저 비트 승자" 계약), 배열 자체가 오름차순이
+ * 아니면 그 계약이 조용히 깨진다.
+ *
+ * ⚠️ **선언 순서가 더는 타입 id 순서와 같지 않다.** 스트라이커(타입 id 0)가 최상위 비트
+ * 24 를 받으면서, 타입 id 순(0→6)은 `[24,18,19,20,21,22,23]` 인데 이 배열은 오름차순
+ * `[18,19,20,21,22,23,24]` 이다. 레지스트리 교차 테스트(`shipSignatureRegistry.test.ts`)는
+ * 두 목록을 **집합으로만** 대조하고, 이 배열이 오름차순인지는 별도 단언으로 못 박는다.
+ *
+ * 테스트·검증이 하드코딩 목록 대신 이 배열을 순회하도록 두면 비트가 늘 때 게이트가 자동으로
+ * 따라온다.
  */
 export const SIGNATURE_BITS = [
   SIG_BRUISER_ARMOR,
@@ -54,6 +77,7 @@ export const SIGNATURE_BITS = [
   SIG_HATCHLING_BROOD,
   SIG_MALLOW_CUSHION,
   SIG_BUBBLE_FILM,
+  SIG_STRIKER_MARKSMAN,
 ] as const;
 
 /**
@@ -323,4 +347,51 @@ export function filmRemainingDamage(damage: number, shield: number): number {
   const d = Math.trunc(damage);
   if (d <= 0) return 0;
   return d - filmAbsorbed(d, shield);
+}
+
+// --- ⑦ 스트라이커: 정조준 사이클 -----------------------------------------------
+/** 사이클 주기(볼리 수). 12번째 볼리가 정조준이고, 그 발사 틱에 카운터가 0 으로 되돌아간다. */
+export const MARKSMAN_CYCLE_SHOTS = 12;
+/** 정조준 볼리의 피해 증폭(basis-point). 5000 = +50%. */
+export const MARKSMAN_BONUS_BP = 5000;
+/** 정조준 볼리가 추가로 얻는 관통. */
+export const MARKSMAN_PIERCE = 1;
+/**
+ * 카운터가 이 값 **이상**이면 다음 발사가 정조준 볼리다(`marksmanTriggered` 의 임계).
+ * `MARKSMAN_CYCLE_SHOTS - 1` — 카운터는 0 에서 시작해 볼리마다 +1 되므로, 11번째 증가분을
+ * 만드는 발사(= 12번째 발사)가 정조준이다.
+ */
+export const MARKSMAN_TRIGGER_AUX0 = MARKSMAN_CYCLE_SHOTS - 1;
+
+/**
+ * 이번 발사가 정조준 볼리인가 — **통과 판정(`>=`)이지 `=== MARKSMAN_TRIGGER_AUX0` 가 아니다.**
+ *
+ * ## 왜 `===` 가 아닌가 (이 파일의 다른 임계 판정과 다른 이유)
+ * 위 팬텀 은신 진입(`aux0 === CLOAK_UNHIT_TICKS`, world.ts stepShipSignature)이나 아크캐스터의
+ * 진행은 `===`/`>=` 어느 쪽이든 안전하다 — 그 카운터들은 **항상 1씩만** 오르므로 정확히 그
+ * 값을 밟고 지나간다. 이 카운터(`aux0`)는 다르다: 설계서(§2 F1·S1)가 예고한 후속 스킬이
+ * **카운터를 점프시킨다** — F1(전과 확장)은 처치당 `1 + ceil(Lv/4)` 를 한 번에 더하고,
+ * S1(응전 조준)은 피격 시 카운터를 곧장 만충으로 못박는다. 두 스킬은 이 커밋의 담당 파일
+ * 밖(스킬 30종은 별도 레인)이라 아직 그 가산 코드는 없지만, **트리거 판정을 미리 `>=` 로
+ * 짜 둬야** 그 스킬들이 배선되는 순간 이 판정이 조용히 깨지지 않는다. `===` 로 짰다면
+ * 카운터가 11 을 건너뛰어 12·13…으로 점프한 틱에 트리거가 **영영 서지 않고**, 그 미발동은
+ * 화면에도 테스트에도 흔적을 남기지 않는다(이 저장소가 반복 겪은 "조용한 미발현" 패턴 —
+ * 해츨링 BROOD_MARK 주석의 드론 베이 상한 공유 사례와 같은 형태). `>=` 는 몇 배로 점프해도
+ * 다음 발사에서 반드시 잡고, 정상 경로(1씩 증가)에서는 `===` 와 완전히 같은 틱에 발동하므로
+ * 지금 당장의 대가는 없다.
+ */
+export function marksmanTriggered(aux0: number): boolean {
+  return Math.trunc(aux0) >= MARKSMAN_TRIGGER_AUX0;
+}
+
+/** 정조준 볼리의 피해(정수). 나눗셈 1회. */
+export function marksmanDamage(damage: number): number {
+  const d = Math.trunc(damage);
+  if (d <= 0) return 0;
+  return d + Math.round((d * MARKSMAN_BONUS_BP) / 10000);
+}
+
+/** 정조준 볼리의 관통(정수). 나눗셈 없음 — 정수 가산뿐이다. */
+export function marksmanPierce(pierce: number): number {
+  return Math.trunc(pierce) + MARKSMAN_PIERCE;
 }

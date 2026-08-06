@@ -65,7 +65,10 @@ import {
   WEAPON_MISSILE,
   WEAPON_BEAM,
 } from '../src/items/loadout.js';
-import { SKILL_NODE_COUNT } from '../data/skills.js';
+import { shipSkillNodeCount } from '../data/ships/index.js';
+
+/** 스트라이커(타입 0)의 flat 벡터 길이 — ADR-0049 로 전 기체 30 균일. */
+const SKILL_NODE_COUNT = shipSkillNodeCount(0);
 
 /** uniqueMask 비트만 세운 로드아웃 config. */
 function uniqueCfg(bit: number): WorldConfig {
@@ -84,9 +87,11 @@ function weaponUniqueCfg(weaponType: number, mask: number, extra: Partial<WorldC
 /** 몇 개 노드에만 투자한 길이 60 스킬 벡터(Lane1 결정론 필드 자극용). */
 function sampleSkillInvest(): number[] {
   const v = Array<number>(SKILL_NODE_COUNT).fill(0);
-  v[0] = 3; // firepower tier0
-  v[20] = 2; // survival tier0
-  v[40] = 4; // mobility tier0
+  // ADR-0049 축 시작점(축당 10칸). 구 값 0·20·40 은 63칸 레이아웃의 트리 시작점이었고,
+  // 30칸 배열에 `v[40]` 을 쓰면 **배열이 41칸으로 늘어나** 길이 계약이 조용히 깨진다.
+  v[0] = 3; // 축0(offense)
+  v[10] = 2; // 축1(defense)
+  v[20] = 4; // 축2(utility)
   return v;
 }
 

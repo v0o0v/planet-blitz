@@ -20,14 +20,13 @@
 import { SAVE_VERSION, SLOT_KINDS, RARITY_BY_CODE } from '../items/types.js';
 import type { Item, EquipSlotId } from '../items/types.js';
 import { fillStarterEquipment } from '../items/starterKit.js';
-import type { SkillNode } from '../../data/skills.js';
-import { shipCapstoneUnlocked, chainPrereqMet } from '../items/skills.js';
 import {
   shipTypeDef,
   flattenShipNodes,
   normalizeShipTypeId,
   zeroSkillInvest as registryZeroSkillInvest,
 } from '../../data/ships/index.js';
+import type { ShipSkillDef } from '../../data/ships/index.js';
 import { activeById } from '../../data/ships/actives/index.js';
 import { ACTIVE_SLOT_COUNT } from '../../data/ships/actives/types.js';
 import type { InvasionLayers } from '../sim/invasion/types.js';
@@ -293,12 +292,12 @@ export interface KeyValueStore {
  * 레지스트리의 `normalizeShipTypeId` 를 그대로 쓴다 — 규칙을 두 벌 두지 않는다).
  * 아래 한 함수로 좁혀 둔다: 레지스트리 형태가 바뀌어도 갈아끼울 자리가 여기 하나다.
  *
- * ⚠️ 노드 순서는 **`flattenShipNodes` 로만** 얻는다. `trees.flatMap((t) => t.nodes)` 로
- * 단순 concat 하면 안 된다 — flat 벡터의 실제 배치는 `[base 블록 전부][캡스톤 3개]` 라서
- * concat 은 인덱스를 밀어 ① 리플레이 해시 폴드 ② 파생 스탯 ③ 파워업 RNG 슬라이스의
- * 삼중 계약을 조용히 깬다(`data/ships/types.ts` §flat 벡터 레이아웃 계약).
+ * ⚠️ 노드 순서는 **`flattenShipNodes` 로만** 얻는다(ADR-0049: `[축0 0..9][축1 10..19]
+ * [축2 20..29]`, 30칸). `trees.flatMap((t) => t.nodes)` 로 단순 concat 해도 순서는 같지만,
+ * `flattenShipNodes` 는 축당 스킬 수가 어긋난 저작 실수를 조립 시점에 던져서 잡는다
+ * (`data/ships/types.ts` §flat 벡터 레이아웃 계약).
  */
-function shipTypeNodes(typeId: number): readonly SkillNode[] {
+function shipTypeNodes(typeId: number): readonly ShipSkillDef[] {
   return flattenShipNodes(shipTypeDef(typeId));
 }
 
@@ -441,15 +440,12 @@ export function totalInvested(profile: Profile): number {
  * 투자는 계정이 아니라 기체에 쌓인다). No-ops (returns false) when the index is out of
  * range, the node is already maxed, or no points are banked.
  *
- * ⚠️ 노드 정의·캡스톤 게이트는 **활성 기체 타입의 것**을 쓴다(M8 통합 게이트에서 일반화).
- * 스트라이커 정본(`SKILLS`/`capstoneUnlocked`)을 쓰던 구현은 실측상 다음 3가지를 조용히
- * 깼다 — 예외도 타입 오류도 나지 않아 단위 테스트가 전부 그린이었다:
- *   ① 노드 수가 63 을 넘는 타입(hatchling=78)의 인덱스 63~77 이 **영구 투자 불가**
- *   ② `maxPoints` 가 타입별로 다른 노드에서 상한 오판정(과투자 또는 조기 차단)
- *   ③ 캡스톤 판정이 스트라이커 flat 레이아웃(60~62)·게이트 폭(20/40)으로 이뤄져,
- *      다른 레이아웃의 타입은 **base 노드가 캡스톤으로 오인**되고 진짜 캡스톤은 투자 불가
- * 그래서 노드는 `flattenShipNodes(shipTypeDef(ship.typeId))`, 게이트는
- * `shipCapstoneUnlocked(invest, def, treeIndex)` 로만 얻는다.
+ * ⚠️ 노드 정의는 **활성 기체 타입의 것**을 쓴다(`flattenShipNodes(shipTypeDef(ship.typeId))`).
+ * 상한은 `node.maxPoints`(= `SKILL_MAX_LEVEL` 20, 전 기체·전 축 동일).
+ *
+ * ADR-0049 가 캡스톤 게이트와 사슬 선행 조건(ADR-0047)을 폐기했다 — 축당 10스킬은 처음부터
+ * 전부 투자 가능하고, 상위 액티브 해금은 별도 축 누적 투자 게이트(`activeById` 소비 경로)가
+ * 담당한다. 이 함수는 더 이상 게이트를 판정하지 않는다.
  */
 export function investSkill(profile: Profile, index: number): boolean {
   if (profile.skillPoints <= 0) return false;
@@ -460,17 +456,6 @@ export function investSkill(profile: Profile, index: number): boolean {
   const invest = ship.skillInvest;
   const cur = invest[index] ?? 0;
   if (cur >= node.maxPoints) return false;
-  // 최상위 캡스톤(GDD §4)은 해당 계열 base 게이트(`def.capstoneGate`)를 통과해야 투자 가능.
-  // flat 레이아웃이 `[base 블록 전부][캡스톤 trees.length 개]` 이므로 계열 인덱스는
-  // 캡스톤 블록 시작점으로부터의 오프셋이다.
-  if (node.capstone === true) {
-    const treeIndex = index - def.nodesPerTree * def.trees.length;
-    if (!shipCapstoneUnlocked(invest, def, treeIndex)) return false;
-  }
-  // 사슬 선행 조건(ADR-0047): 같은 계열·같은 스탯의 더 낮은 티어가 전부 max 여야 한다.
-  // 캡스톤은 사슬 밖이라 `chainPrereqMet` 이 항상 true 를 낸다(위 게이트가 유일한 조건).
-  // 여기가 **유일한 관문**이다 — 파생(`computeSkillStats`)·sim·서버는 이 규칙을 모른다.
-  if (!chainPrereqMet(invest, def, index)) return false;
   invest[index] = cur + 1;
   profile.skillPoints -= 1;
   return true;
@@ -620,6 +605,7 @@ export function migrate(raw: unknown): Profile {
   if (version < 8) data = migrateV7toV8(data);
   if (version < 9) data = migrateV8toV9(data);
   if (version < 10) data = migrateV9toV10(data);
+  if (version < 11) data = migrateV10toV11(data);
   return normalizeProfile(data);
 }
 
@@ -654,6 +640,58 @@ function migrateV9toV10(v9: Record<string, unknown>): Record<string, unknown> {
     fillStarterEquipment(equipped);
     return { ...ship, equipped };
   });
+  return out;
+}
+
+/**
+ * v10 → v11 (ADR-0049 스킬 전면 재구축): **전 기체 무료 전액 리스펙.**
+ *
+ * `skillInvest` 의 **와이어 레이아웃 자체가 바뀌었다** — 구 `[base 0..59][캡스톤 60..62]`
+ * (스트라이커 63 · 해츨링 78)에서 신규 `[축0 0..9][축1 10..19][축2 20..29]`(전 기체 30)로.
+ * 인덱스의 의미가 통째로 갈렸으므로 구 벡터를 그대로 두면 **투자한 적 없는 스킬이 찍혀 있는**
+ * 상태가 된다. 포인트는 전액 환급이라 진행도는 보존된다(리스펙 비용 없음).
+ *
+ * ## 환급 누계를 **정규화 전에** 세는 것이 핵심이다
+ * `normalizeSkillInvest` 는 `zeroSkillInvest(typeId)`(신규 길이 30)를 만들어 그 길이만큼만
+ * 옮겨 담는다. 즉 정규화를 먼저 태우면 구 63/78칸 중 **뒤쪽 33/48칸이 조용히 잘려** 그만큼
+ * 환급이 증발한다. `migrate()` 사다리가 `normalizeProfile` **앞**에서 도는 것이 그 방어이고,
+ * v8→v9 도 같은 순서였다.
+ *
+ * 벡터는 `[]` 로 비운다(구 길이의 0 배열이 아니라). 정규화가 신규 길이 30칸의 0 벡터를 새로
+ * 만들어 주므로 결과는 같고, **구 레이아웃을 폐기했다는 의도가 코드에 그대로 남는다.**
+ *
+ * ## 퇴역 수호기(`GuardianBuild.skillInvest`)는 여기서 다루지 않는다
+ * v8→v9 는 "투자 경로가 없는 스냅샷이라 규칙 적용 대상이 아니다"라며 의도적으로 제외했고,
+ * 그때는 **길이가 안 바뀌어서** 제외가 곧 무해였다. 이번엔 다르다 — 길이가 바뀌므로 제외하면
+ * 구 벡터의 앞 30칸이 **신규 스킬로 재해석**된다. 그런데 수호 레코드는 **서버에 저장돼 계속
+ * 흘러 들어오므로**(`src/net/lineageMirror.ts` → `normalizeGuardianRecords`) 세이브를 한 번
+ * 훑는 마이그레이션으로는 못 막는다. 그래서 그 처리는 상시 관문인
+ * {@link normalizeGuardianBuild} 에 둔다(길이 기반 판정 — 사용자 결정 2026-08-06).
+ *
+ * 손상 방어: `ships` 가 배열이 아니거나 원소가 객체가 아니면 그 칸은 건너뛴다. 환급 누계는
+ * 유한 양수만 더한다.
+ */
+function migrateV10toV11(v10: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...v10, saveVersion: 11 };
+  if (!Array.isArray(out.ships)) return out;
+  let refund = 0;
+  out.ships = out.ships.map((raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null) return raw;
+    const ship = raw as Record<string, unknown>;
+    const invest = ship.skillInvest;
+    if (!Array.isArray(invest)) return ship;
+    for (const v of invest) {
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) refund += Math.trunc(v);
+    }
+    return { ...ship, skillInvest: [] };
+  });
+  if (refund > 0) {
+    const banked =
+      typeof out.skillPoints === 'number' && Number.isFinite(out.skillPoints)
+        ? Math.trunc(out.skillPoints)
+        : 0;
+    out.skillPoints = banked + refund;
+  }
   return out;
 }
 
@@ -941,10 +979,41 @@ function normalizeGuardianSnapshot(v: unknown): GuardianSnapshot | null {
 }
 
 /**
+ * 퇴역 수호기 빌드의 스킬 벡터 정규화 — **구 레이아웃 벡터는 전부 0 으로 만든다**
+ * (ADR-0049, 사용자 결정 2026-08-06).
+ *
+ * ## 왜 살아 있는 기체와 다른 규칙인가
+ * 살아 있는 기체는 세이브 마이그레이션(`migrateV10toV11`)이 한 번 훑어 환급하고 비운다.
+ * 퇴역 수호기는 그럴 수 없다 — 빌드가 **서버에 저장돼 매번 새로 흘러 들어오고**
+ * (`src/net/lineageMirror.ts` → `normalizeGuardianRecords`), 퇴역기에는 포인트 풀이 없어
+ * 환급할 곳도 없다. 그래서 상시 관문인 여기서 판정한다.
+ *
+ * ## 판정은 **길이**로 한다
+ * 구 레이아웃은 기체마다 63(스트라이커 등) 또는 78(해츨링)이고 신규는 전 기체 30이다.
+ * 길이가 신규 노드 수와 다르면 구 벡터다. 그대로 두면 `normalizeSkillInvest` 가 앞 30칸만
+ * 옮겨 담아 **구 트리 노드 값이 신규 스킬 레벨로 재해석**되고, 예비역 소집
+ * (`callupPilot.ts` → `buildRunConfig`)에서 플레이어가 투자한 적 없는 스킬이 공짜로
+ * 해금된다 — ADR-0049 「해금은 포인트로만」 정면 위반이다.
+ *
+ * ## 받아들인 대가
+ * 방어 스냅샷(`GuardianSnapshot` 12칸)은 **퇴역 시점에 이미 동결**돼 있어 이 변경의 영향을
+ * 받지 않고, 전투력 점수(`combat_score`)도 서버에 저장된 값 그대로다. 따라서 legacy 수호기는
+ * "점수는 그대로인데 소집하면 스킬이 없는" 상태가 된다 — §0-B 결정 C 가 줄이려던 괴리가
+ * legacy 에 한해 남는다. 대안(구 벡터를 신규 축에 재분배)은 어느 스킬에 들어갈지가 임의라
+ * "안 찍은 스킬이 찍혀 있다"는 같은 문제를 형태만 바꿔 남긴다.
+ */
+function normalizeGuardianSkillInvest(v: unknown, typeId: number): number[] {
+  const fresh = zeroSkillInvest(typeId);
+  if (!Array.isArray(v) || v.length !== fresh.length) return fresh;
+  return normalizeSkillInvest(v, typeId);
+}
+
+/**
  * 저장된 수호 기체 실물 빌드(ADR-0024, v7)를 정규화한다. build 블롭이 객체가 아니면(부재·손상)
  * undefined 를 돌려주고, 이때 레코드 자체는 유지된다(소집 비활성 = 구 수호기와 동일 상태).
- * typeId·equipped·skillInvest 는 **기존 정본 헬퍼로만** 정규화한다(규칙 중복 금지 — equipped 루프는
- * {@link normalizeShip} 과 동일 필터, typeId 는 normalizeShipTypeId, 벡터는 normalizeSkillInvest).
+ * typeId·equipped 는 **기존 정본 헬퍼로만** 정규화한다(규칙 중복 금지 — equipped 루프는
+ * {@link normalizeShip} 과 동일 필터, typeId 는 normalizeShipTypeId). 스킬 벡터만
+ * {@link normalizeGuardianSkillInvest} 로 따로 간다(살아 있는 기체와 규칙이 다르다).
  */
 function normalizeGuardianBuild(v: unknown): GuardianBuild | undefined {
   if (typeof v !== 'object' || v === null) return undefined;
@@ -959,7 +1028,7 @@ function normalizeGuardianBuild(v: unknown): GuardianBuild | undefined {
   return {
     typeId,
     equipped,
-    skillInvest: normalizeSkillInvest(d.skillInvest, typeId),
+    skillInvest: normalizeGuardianSkillInvest(d.skillInvest, typeId),
     // 액티브 장착 박제(v8, 계획 PM-3). 구 레코드는 필드가 없으므로 빈 슬롯 2칸으로 정규화된다 —
     // **기존 guardian 레코드까지 정규화**가 AC-15 의 요구다.
     activeSlots: normalizeActiveSlots(d.activeSlots, typeId),

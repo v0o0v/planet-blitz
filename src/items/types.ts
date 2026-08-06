@@ -65,8 +65,22 @@
  *  ⚠️ 퇴역 수호기의 `GuardianBuild.equipped` 는 **건드리지 않는다** — 퇴역 순간 고정된
  *  봉인 빌드이고(ADR-0024), 채우면 기존 수호 전력이 소급 강화된다.
  *  ⚠️ DB 변경 없음 — `profiles.save` 는 불투명 jsonb. 장비는 `equipped` 에만 들어가므로
- *  `progressScore`(inventory/stash 길이 합산)도 흔들지 않는다. */
-export const SAVE_VERSION = 10;
+ *  `progressScore`(inventory/stash 길이 합산)도 흔들지 않는다.
+ *
+ *  v11 (ADR-0049 스킬 전면 재구축): `skillInvest` 의 **와이어 레이아웃 자체가 바뀐다** —
+ *  구 `[base 0..59][캡스톤 60..62]`(스트라이커 63 · 해츨링 78)에서 신규
+ *  `[축0 0..9][축1 10..19][축2 20..29]`(전 기체 30)로. 인덱스의 의미가 통째로 갈렸으므로
+ *  `migrateV10toV11` 이 전 기체 벡터를 비우고 투자분을 `skillPoints` 로 **전액 환급**한다
+ *  (리스펙 비용 없음, 장비·진행도 불변). 환급 누계는 **정규화 전에** 세야 한다 — 정규화가
+ *  신규 길이 30칸만 옮겨 담아 뒤쪽 33/48칸이 조용히 잘리기 때문이다.
+ *  ⚠️ **v9·v10 과 달리 퇴역 수호기를 그냥 두면 안 된다.** 그때는 길이가 안 바뀌어 제외가 곧
+ *  무해였지만, 이번엔 구 벡터의 앞 30칸이 **신규 스킬로 재해석**된다(예비역 소집에서 안 찍은
+ *  스킬이 공짜 해금). 게다가 수호 레코드는 서버에서 계속 흘러 들어와 마이그레이션 한 번으로는
+ *  못 막는다 → 상시 관문 `normalizeGuardianSkillInvest`(`src/save/profile.ts`)가 **길이로
+ *  판정해 0 처리**한다(사용자 결정 2026-08-06).
+ *  ⚠️ DB 변경 없음 — `profiles.save` 는 불투명 jsonb. 단 `SHIP_HASH_VERSION` bump ·
+ *  골든 3종 재생성 · `verify-*` EF 재배포가 **같은 원자**다. */
+export const SAVE_VERSION = 11;
 
 // ---------------------------------------------------------------------------
 // Rarity
@@ -137,6 +151,13 @@ export type EquipSlotId = (typeof EQUIP_SLOTS)[number];
  * prefixes (fire/cold/lightning) with the status-effect system (OQ-M3-5), completing
  * the 24-affix pool. Each elemental key feeds a status effect via the loadout →
  * LoadoutConfig elemental block (fireDmg / coldSlow / lightning).
+ *
+ * ADR-0049 스킬 어픽스(affixes.md ①-2)가 축 단위 3키를 더한다 — `skillLvOffense/Defense/
+ * Utility`. 이 셋은 위 13종과 성질이 다르다: `applyStatSums`(loadout.ts)가 접는 배율/가산이
+ * **아니라** `WorldConfig.skillAffixLv`(축별 정수 3칸, 이중 벡터)로 별도 파생된다
+ * (`deriveSkillAffixLv`). **열거처가 셋이다** — 이 유니온 · `zeroStatSums()`(skills.ts) ·
+ * `zeroSums()`(loadout.ts). 하나라도 빠지면 컴파일은 되는데 어픽스 합이 조용히 새거나
+ * `undefined` 가 된다(affixes.md ⑥-1 항목 5).
  */
 export type StatKey =
   // --- Prefix (offence) ---
@@ -157,7 +178,11 @@ export type StatKey =
   | 'dashCdPct'
   | 'magnetPct'
   | 'xpPct'
-  | 'mineralFindPct';
+  | 'mineralFindPct'
+  // --- Suffix (ADR-0049 스킬 어픽스 — 축 단위 +N 레벨, affixes.md ①-2) ---
+  | 'skillLvOffense' // 공격 계열 스킬 전체 +N 레벨(투자 ≥1 인 스킬에만 가산, ①-4)
+  | 'skillLvDefense' // 방어 계열
+  | 'skillLvUtility'; // 유틸 계열
 
 export type AffixKind = 'prefix' | 'suffix';
 

@@ -126,6 +126,10 @@ export function hudActives(w: WorldState): readonly HudActiveState[] {
   if (wires === undefined) return [];
   const invest = w.config.skillInvest ?? [];
   const cds = [w.activeCd0, w.activeCd1];
+  // E7: 조율 포인트(파워업 24/25) 슬롯별 누적. 런 밖(프로필 화면 등)에서는 이 함수 자체가
+  // 안 불리므로 여기는 항상 라이브 런 값이다 — HUD 가 sim 과 같은 실효 쿨다운을 봐야 화면과
+  // 실측이 갈리지 않는다(`src/sim/actives.ts` 의 `activeCooldownTicks` 호출과 같은 파생식).
+  const tunes = [w.activeTune0, w.activeTune1];
   const out: HudActiveState[] = [];
   for (let slot = 0; slot < ACTIVE_SLOT_COUNT; slot++) {
     const def = activeByWireId(wires[slot] ?? -1);
@@ -137,7 +141,7 @@ export function hudActives(w: WorldState): readonly HudActiveState[] {
       // ⚠️ 이 호출이 84키의 사문화 방지 참조다(AC-22 · tests/i18n.test.ts).
       name: tShipKey(activeSkillNameKey(def.id), def.id),
       cd: Math.max(0, cds[slot] ?? 0),
-      cdMax: activeCooldownTicks(def, investedInTree(invest, def)),
+      cdMax: activeCooldownTicks(def, investedInTree(invest, def) + (tunes[slot] ?? 0)),
       // 아이콘 URL 은 **있을 때만** 싣는다(exactOptionalPropertyTypes: undefined 대입 금지).
       // 파일명 규약의 정본은 `activeSkillIconName` 하나이고, 인덱스는 그 기체 안 순서다.
       ...(() => {

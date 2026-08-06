@@ -42,7 +42,7 @@ import { updateEnemy, chargerHitWall } from '../src/sim/patterns/index.js';
 import { summonEnemy } from '../src/sim/waves.js';
 import { BERDAN } from '../data/planets/index.js';
 import { CHARGER, GUNNER } from '../data/enemies.js';
-import type { InputFrame, WorldConfig } from '../src/sim/world.js';
+import type { InputFrame, WorldConfig, WorldState } from '../src/sim/world.js';
 import type { Entity } from '../src/sim/entities.js';
 import { hashWorld } from '../src/sim/replay.js';
 import {
@@ -54,6 +54,7 @@ import {
   SIG_HATCHLING_BROOD,
   SIG_MALLOW_CUSHION,
   SIG_BUBBLE_FILM,
+  SIG_STRIKER_MARKSMAN,
   ARMOR_MAX_STACKS,
   OVERCHARGE_STILL_TICKS,
   CLOAK_UNHIT_TICKS,
@@ -81,19 +82,62 @@ function profileWithType(typeId: number): Profile {
 }
 
 /**
- * 시그니처 억제 동형 대조군 — `signatureOn` 의 2축을 **둘 다** 눌러 끈다. 프로덕션 코드를 한
- * 줄도 건드리지 않고 config 만으로 만든다(테스트가 sim 을 조립하는 것이 아니라, 정규 경로가
- * 만들어 준 config 에서 시그니처 축만 뺀다).
+ * ⚠️ 2026-08-06 — **`suppressSignature`(shipType:0 강제)는 ADR-0049 이후 오염된 대조군이라
+ * 삭제했다.** 그 헬퍼는 "typeId 0(스트라이커)는 시그니처가 없다(`shipTypeDef(0).signatureBit
+ * === -1`)"는 전제로 마스크 비트를 지우고 shipType 을 0 으로 눌러 "시그니처 완전 off" 런을
+ * 만들었다. ADR-0049 가 스트라이커에 비트24(정조준 사이클)를 부여하면서 그 전제가 깨졌다 —
+ * shipType:0 은 이제 "시그니처 없음"이 아니라 **"이 기체 대신 스트라이커 정조준이 켜진 런"**
+ * 이다(실측: `ctrl.maxAux0` 가 0 대신 정조준 사이클 0..11 을 돈다). 유효 shipType 0~6 전부가
+ * 시그니처 비트를 하나씩 가지므로(shipSignature.ts SIGNATURE_BITS, 7개) **"시그니처 없음"은
+ * 이제 제품에 존재하지 않는 상태다** — 그 상태를 config 로 만들어 대조군 삼는 설계 자체가
+ * 틀렸다. (개별 파일 shipSignaturePhantom.test.ts 머리말에 더 자세한 물증이 있다.)
+ *
+ * ## 대신 무엇을 쓰는가 — 시그니처별 트리거 입력 굶기기(ⓐ)
+ * shipType·mask 는 **live 와 완전히 동일하게 두고**(시그니처는 계속 켜져 있다), 그 시그니처가
+ * 읽는 aux 슬롯만 매 틱 stepWorld 직전에 되돌려 트리거 임계에 영영 못 닿게 한다. 6개 시그니처
+ * 중 5개(브루저·아크캐스터·팬텀·해츨링·버블)는 진짜 임계 트리거라 이 기법이 그대로 통한다.
+ * **말로우만 다르다** — 유예(35% 이연)는 `cushionOn` 하나만 게이트하고 임계가 없어(피격마다
+ * 무조건 발동) 굶길 트리거가 없다. 그래서 말로우는 **정산**(무피격 aux1 이 임계 도달) 축만
+ * 굶긴다 — CASES 의 말로우 항목은 이 축이 실제로 갈리는 무대(정산이 자연히 발생하는 저압
+ * 무대)로 따로 골랐다(아래 주석).
+ *
+ * shipType 이 안 바뀌므로 baseBp(damage/maxHp/moveSpeed) 오염이 없다 — 옛 방식이 스스로
+ * 경고했던 "가짜 증거" #2가 사라진다. 대가: 굶기는 슬롯 자체(예: 팬텀의 aux0/aux1, 버블의
+ * aux1)는 우리가 직접 건드리므로 그 슬롯의 "ctrl 에서 0"이라는 관측은 항진이다 — §②·§③ 단언은
+ * 그 슬롯이 아니라 **하류 관측**(cloakedTicks·hatched 성격의 관측·hpLost 등, world.ts 의 다른
+ * 코드 경로가 독립적으로 계산하는 값)으로 옮겼다.
  */
-function suppressSignature(cfg: WorldConfig, typeId: number): WorldConfig {
-  const bit = shipTypeDef(typeId).signatureBit;
-  const loadout = cfg.loadout;
-  if (loadout === undefined) throw new Error('정규 경로 config 에 loadout 이 없다');
-  return {
-    ...cfg,
-    shipType: 0, // 축 2: shipTypeDef(0).signatureBit === -1
-    loadout: { ...loadout, uniqueMask: (loadout.uniqueMask & ~(1 << bit)) >>> 0 }, // 축 1
-  };
+function starveTrigger(state: WorldState, player: Entity, bit: number): void {
+  switch (bit) {
+    case SIG_BRUISER_ARMOR:
+      // 장갑 스택(aux0)을 매 틱 0 으로 되돌린다 — 피격 시 감소율 계산이 항상 bp=0 을 본다.
+      player.aux0 = 0;
+      break;
+    case SIG_ARC_OVERCHARGE:
+      // 정지 카운터(aux0)를 매 틱 0 으로 되돌린다 — 임계(90틱)에 영영 못 닿아 증폭이 안 선다.
+      player.aux0 = 0;
+      break;
+    case SIG_PHANTOM_CLOAK:
+      // 무피격 스트릭(aux0)·해제 대기 플래그(aux1)를 매 틱 0 으로 되돌린다("방금 피격당한 것처럼").
+      player.aux0 = 0;
+      player.aux1 = 0;
+      break;
+    case SIG_HATCHLING_BROOD:
+      // 출격 스냅샷(aux0)을 매 틱 state.kills 로 덮어써 부화 갭을 항상 0 에 묶는다.
+      player.aux0 = state.kills;
+      break;
+    case SIG_MALLOW_CUSHION:
+      // 무피격 카운터(aux1)를 매 틱 0 으로 되돌린다 — **유예 자체는 못 굶긴다**(무조건 발동,
+      // 위 헤더 주석). 이 케이스는 정산 축만 굶겨 "정산 없는 완충"을 만든다.
+      player.aux1 = 0;
+      break;
+    case SIG_BUBBLE_FILM:
+      // 재생 타이머(aux1)를 매 틱 0 으로 되돌린다 — 임계(420틱)에 영영 못 닿아 막이 안 선다.
+      player.aux1 = 0;
+      break;
+    default:
+      throw new Error(`starveTrigger: 처리 안 된 시그니처 비트 ${bit}`);
+  }
 }
 
 interface Observed {
@@ -142,7 +186,17 @@ interface Observed {
   maxAux1: number;
 }
 
-function observe(seed: number, cfg: WorldConfig, ticks: number): Observed {
+/**
+ * `starveBit` 을 주면 매 틱 stepWorld **직전에** 그 시그니처의 트리거 aux 슬롯을
+ * `starveTrigger`(위 헤더 주석)로 되돌린다. shipType·mask 는 손대지 않는다 — 시그니처는
+ * live 와 똑같이 켜진 채로 트리거만 굶는다.
+ */
+function observe(
+  seed: number,
+  cfg: WorldConfig,
+  ticks: number,
+  starveBit?: number,
+): Observed {
   // 함선 시그니처 관측은 **중립 서바이벌 아레나**(vampire)에서 돈다. CASES 의 planet 2(니플헤임)는
   // Lane6 에서 chase 로 배정돼 무적 포식자가 정지·저속 플레이어를 접촉 즉사시키므로(MED-1 수정 후
   // 치명적), planetMode 를 vampire 로 덮어 장시간 관측 런이 조기 종료되지 않게 한다(로스터 유지·chase만 끔).
@@ -159,6 +213,7 @@ function observe(seed: number, cfg: WorldConfig, ticks: number): Observed {
   let prevCooldown = new Map<number, number>();
   let prevPierce = -1;
   for (let i = 0; i < ticks; i++) {
+    if (starveBit !== undefined) starveTrigger(state, state.entities[0]!, starveBit);
     stepWorld(state, NEUTRAL);
     const p = state.entities[0];
     if (p === undefined) break;
@@ -447,19 +502,30 @@ const CASES: Case[] = [
     typeId: 5,
     slug: 'mallow',
     bit: SIG_MALLOW_CUSHION,
-    planet: 2,
-    // 단계 21 → 11: 위 "무대 재기준화" 주석 참조.
-    stage: 11,
-    seed: 3311,
+    // ⚠️ 2026-08-06 무대 재선정(p2/s11/seed3311 → p0/s1/seed3) — 다른 세 니플헤임 무대(브루저·
+    // 아크캐스터·버블)와 갈라진 이유. 이 케이스의 ctrl 은 이제 `starveTrigger` 로 **정산만**
+    // 굶긴다(유예 자체는 굶길 트리거가 없다 — 위 §② 헤더 주석). p2/s11 은 압박이 끊기지 않아
+    // live 조차 **정산이 자연히 0 회**다(shipSignatureMallow.test.ts 테스트1과 동일 무대) — 그
+    // 무대에서는 "정산을 굶긴 대조군"이 live 와 사실상 같은 궤적이 되어(둘 다 한 번도 정산 안
+    // 함) coreObservablesEqual 가 갈리지 않는다. 정산이 실제로 반복 발현하는 저압 무대(p0/s1)
+    // 로 옮겨야 이 케이스가 재는 축(정산 타이밍)이 살아난다 — shipSignatureMallow.test.ts
+    // 테스트2 와 같은 무대·시드다(그 파일이 실측으로 고른 증인을 재사용).
+    planet: 0,
+    stage: 1,
+    seed: 3,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
-      // 완충 = 피해의 35% 를 지연시키고 무피격 180틱을 채우면 60% 를 지운다 → 순 경감.
-      expect(live.hpLost, '말로우: 완충이 피해를 줄이지 못했다').toBeLessThan(ctrl.hpLost);
-      // aux0 = 적립된 지연 피해 풀(비음 정수). 압박이 끊기지 않는 무대라 풀이 남는다.
+      // aux0 = 적립된 지연 피해 풀(비음 정수) — cushionOn 게이트 안에서만 쓰이므로 이 값이
+      // 양수라는 것 자체가 유예 코드가 실행됐다는 무모호 직접 증거다(대조군과 무관하게 성립).
       expect(live.maxAux0, '말로우: 지연 피해가 적립되지 않았다').toBeGreaterThan(0);
       expect(Number.isInteger(live.maxAux0), '말로우: 지연 풀이 정수가 아니다(u32 해시 오염)').toBe(
         true,
       );
+      // ⚠️ 부호가 옛 버전과 반대다(위 무대 재선정 주석) — ctrl 은 정산 트리거만 굶긴 "정산 없는
+      // 완충"이라, 정산이 선체에 되돌리는 40%("due") 몫을 영영 안 떠안는다. live 는 정산될 때마다
+      // 그 몫을 추가로 깎이므로 hpLost 가 ctrl 보다 **크다**(shipSignatureMallow.test.ts 테스트2
+      // 와 같은 방향).
+      expect(live.hpLost, '말로우: 정산이 선체에 반영되지 않았다').toBeGreaterThan(ctrl.hpLost);
     },
   },
   {
@@ -504,24 +570,27 @@ describe('① buildRunConfig 가 타입별 시그니처 비트를 켠다', () =>
 });
 
 // ---------------------------------------------------------------------------
-// ② 억제 동형 대조군 — 배선 유무의 **직접** 측정 (이 파일의 핵심)
+// ② 트리거 굶긴 동형 대조군 — 배선 유무의 **직접** 측정 (이 파일의 핵심)
 // ---------------------------------------------------------------------------
+//
+// ⚠️ 2026-08-06: 이 절은 원래 "시그니처를 config 로 끈" 대조군(shipType:0 강제)을 썼다.
+// ADR-0049 가 스트라이커에도 시그니처(정조준 사이클, 비트24)를 부여하면서 그 대조군이
+// 오염됐다 — shipType:0 은 더 이상 "시그니처 없음"이 아니라 "이 기체 대신 스트라이커 정조준이
+// 켜진 런"이다. 위 `starveTrigger`/`suppressSignature` 자리의 헤더 주석에 상세 물증이 있다.
+// 지금은 **shipType·mask 를 live 와 완전히 동일하게 둔 채**(시그니처는 계속 켜져 있다) 그
+// 시그니처의 트리거 aux 슬롯만 매 틱 굶겨 발현을 막는다 — `observe(seed, live, ticks, c.bit)`.
 
-describe('② 시그니처를 끄면 관측이 달라진다 (= world.ts 배선이 실재한다)', () => {
+describe('② 시그니처 트리거를 굶기면 관측이 달라진다 (= world.ts 배선이 실재한다)', () => {
   it.each(CASES)(
-    'typeId $typeId ($slug): live 와 시그니처 억제 대조군의 관측이 갈린다',
+    'typeId $typeId ($slug): live 와 트리거 굶긴 대조군의 관측이 갈린다',
     (c) => {
       const live = buildRunConfig(profileWithType(c.typeId), { planet: c.planet, stage: c.stage });
-      const ctrl = suppressSignature(live, c.typeId);
-
-      // 대조군은 시그니처 축만 다르다 — 나머지 파생 스탯(baseBp·트리)은 그대로다.
-      expect(ctrl.loadout?.damageMult).toBe(live.loadout?.damageMult);
-      expect(ctrl.loadout?.maxHpAdd).toBe(live.loadout?.maxHpAdd);
-      expect(hasSignature(ctrl.loadout?.uniqueMask ?? 0, c.bit)).toBe(false);
-      expect(shipTypeDef(ctrl.shipType ?? 0).signatureBit).not.toBe(c.bit);
+      expect(hasSignature(live.loadout?.uniqueMask ?? 0, c.bit)).toBe(true);
 
       const liveObs = observe(c.seed, live, c.ticks);
-      const ctrlObs = observe(c.seed, ctrl, c.ticks);
+      // ctrl 은 **같은 config**(같은 shipType·마스크)로 굴리되 c.bit 의 트리거만 굶긴다 —
+      // baseBp(damage/maxHp/moveSpeed) 오염이 원천적으로 없다.
+      const ctrlObs = observe(c.seed, live, c.ticks, c.bit);
 
       // 공허 런 가드 — 아무 일도 안 일어난 런은 아무것도 증명하지 않는다.
       expect(liveObs.kills, `${c.slug}: 공허 런(처치 0)`).toBeGreaterThan(0);
@@ -529,7 +598,7 @@ describe('② 시그니처를 끄면 관측이 달라진다 (= world.ts 배선�
 
       expect(
         coreObservablesEqual(liveObs, ctrlObs),
-        `${c.slug}: 시그니처를 꺼도 관측이 완전히 같다 = world.ts 배선 없음`,
+        `${c.slug}: 트리거를 굶겨도 관측이 완전히 같다 = world.ts 배선 없음`,
       ).toBe(false);
 
       // 타입 고유 효과.
@@ -539,35 +608,51 @@ describe('② 시그니처를 끄면 관측이 달라진다 (= world.ts 배선�
 });
 
 // ---------------------------------------------------------------------------
-// ③ aux 슬롯 규약 — 시그니처 비활성 런에서 aux 는 끝까지 0
+// ③ aux 슬롯 규약
 // ---------------------------------------------------------------------------
+//
+// ⚠️ 2026-08-06: 원래 이 절의 이름은 "시그니처 비활성 런에서 aux 는 끝까지 0"이었다. 그 문장은
+// **"시그니처 비활성 런"이 존재한다는 전제** 위에 서 있었는데, ADR-0049 이후 유효 shipType
+// 0~6 전부가 시그니처 비트를 하나씩 갖는다 — 이 로스터 안에서 "시그니처가 꺼진 런"은 이제
+// 존재하지 않는다. `starveTrigger` 로 만드는 대조군도 "트리거가 굶주린 채 시그니처는 켜진
+// 런"이지 "시그니처가 꺼진 런"이 아니다(위 §② 헤더 주석). 그래서 "아무 시그니처도 안 켜진
+// 런에서 aux 가 오염되지 않는다"는 원래 주장은 **더는 검증할 대상이 없어 이 절에서 뺐다** —
+// 대신 "aux 슬롯을 공유하는 다른 시그니처가 서로의 하류 관측을 오염시키지 않는다"(실제로
+// 남아 있는, 검증 가능한 불변식)로 좁힌다. 그 불변식은 이미 두 곳이 커버한다: 아래 스트라이커
+// 테스트(정조준이 다른 6개의 고유 하류 관측을 안 건드린다) + §⑦(마스크에 여러 비트가 켜져도
+// 최저 비트 하나만 동작 — aux 별칭 자체가 구조적으로 봉인된다). 개별 파일
+// (shipSignaturePhantom/Bubble/Hatchling/Mallow.test.ts)의 "스트라이커 런은 이 축을 안
+// 건드린다" 테스트들도 같은 불변식을 각 기체 관점에서 반복 검증한다.
 
-describe('③ aux0/aux1 조건부 폴드 규약', () => {
-  it.each(CASES)('typeId $typeId ($slug): live 는 aux 를 쓰고 억제 대조군은 끝까지 0', (c) => {
+describe('③ aux0/aux1 사용 — live 는 실제로 쓴다', () => {
+  it.each(CASES)('typeId $typeId ($slug): live 는 aux 를 실제로 쓴다', (c) => {
     const live = buildRunConfig(profileWithType(c.typeId), { planet: c.planet, stage: c.stage });
     const liveObs = observe(c.seed, live, c.ticks);
-    const ctrlObs = observe(c.seed, suppressSignature(live, c.typeId), c.ticks);
 
     expect(liveObs.maxAux0 + liveObs.maxAux1, `${c.slug}: 시그니처가 aux 를 전혀 쓰지 않는다`)
       .toBeGreaterThan(0);
-    expect(ctrlObs.maxAux0, `${c.slug}: 억제 런에서 aux0 오염`).toBe(0);
-    expect(ctrlObs.maxAux1, `${c.slug}: 억제 런에서 aux1 오염`).toBe(0);
     // 비음 정수라야 u32 폴드(replay.ts hashEntity 의 `>>> 0`)가 안전하다.
     for (const v of [liveObs.maxAux0, liveObs.maxAux1]) {
       expect(Number.isInteger(v) && v >= 0, `${c.slug}: aux 가 비음 정수가 아니다`).toBe(true);
     }
   });
 
-  it('스트라이커(typeId 0) 런은 어떤 무대에서도 aux 를 건드리지 않는다', () => {
+  it('스트라이커(typeId 0) 런은 다른 6개 시그니처의 고유 하류 관측을 건드리지 않는다', () => {
+    // ⚠️ 2026-08-06: ADR-0049 가 스트라이커에 정조준 사이클(비트24)을 부여해 마스크가 더 이상
+    // 0 이 아니고(정규 경로가 비트24 를 OR-in 한다) aux0 도 0..11 로 돈다(정조준 카운터, 볼리
+    // 발사마다 진행) — "aux 를 어떤 무대에서도 안 건드린다"는 더 이상 참이 아니다. 정조준은
+    // aux1 을 쓰지 않고, 팬텀 고유 술어(`playerCloaked`/`cloakedTicks`)도 aux0 슬롯 값과 무관하게
+    // signatureOn(SIG_PHANTOM_CLOAK) 게이트로 독립 계산되므로 — 이 둘은 그대로 무모호한 증거다.
     for (const { planet, stage, seed } of [
       { planet: 0, stage: 1, seed: 3311 },
       { planet: 2, stage: 21, seed: 3311 },
       { planet: 0, stage: 1, seed: 42 },
     ]) {
       const cfg = buildRunConfig(defaultProfile(), { planet, stage });
-      expect(cfg.loadout?.uniqueMask).toBe(0);
+      expect(hasSignature(cfg.loadout?.uniqueMask ?? 0, SIG_STRIKER_MARKSMAN), `p${planet}s${stage}`)
+        .toBe(true);
       const o = observe(seed, cfg, 1200);
-      expect(o.maxAux0, `p${planet}s${stage} sd${seed}`).toBe(0);
+      expect(o.maxAux0, `p${planet}s${stage} sd${seed}`).toBeGreaterThanOrEqual(0);
       expect(o.maxAux1, `p${planet}s${stage} sd${seed}`).toBe(0);
       expect(o.cloakedTicks, `p${planet}s${stage} sd${seed}`).toBe(0);
     }

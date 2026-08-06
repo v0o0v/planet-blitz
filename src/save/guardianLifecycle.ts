@@ -168,7 +168,7 @@ export function retirementPayload(
   const equippedItems: Item[] = Object.values(build.equipped).filter(
     (it): it is Item => it !== undefined,
   );
-  const { loadout } = computeLoadoutStats(equippedItems, build.skillInvest, undefined, build.typeId);
+  const { loadout } = computeLoadoutStats(equippedItems, undefined, build.typeId);
   return { preset: p, combatScore, snapshot: mapLoadoutToGuardianSnapshot(p, loadout), build };
 }
 

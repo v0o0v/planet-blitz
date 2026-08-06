@@ -1,36 +1,42 @@
 /**
- * Skill investment → derived-stats pipeline (M3 Phase A2 — plan §4, AC1/AC2).
+ * 스킬 투자 벡터의 **파생·조회 층** (ADR-0049 재정의).
  *
- * `computeSkillStats(invest)` folds a 60-length investment vector into a
- * per-`StatKey` sum, applying the tier-synergy rule (OQ-M3-2 default): a node's
- * output is amplified by the points invested in LOWER tiers of the same tree
- * (Diablo2-style — deep investment makes capstones hit harder). The result is
- * summed into the SAME derived block the loadout pipeline produces
- * (src/items/loadout.ts), so gear and skills stack through one code path and one
- * hash fold (plan §2 ①A).
+ * ## 이 모듈에서 사라진 것 — 파생 스탯 파이프라인
+ * 구 버전의 본체는 `computeSkillStats(invest)` 였다: 60칸 벡터를 `StatKey` 별 합으로 접고
+ * 하위 티어 시너지(Diablo2 식)를 곱해 `src/items/loadout.ts` 가 만드는 파생 블록에 겹쳤다.
+ * ADR-0049 가 스킬을 **스탯에서 메커닉으로** 옮기면서 그 축이 통째로 사라졌다 — 스킬 효과는
+ * 이제 사전 계산된 스탯이 아니라 sim 안의 규칙이고, `WorldConfig.skillInvest` 를 sim 이 직접
+ * 읽는다. 함께 폐기된 것:
  *
- * PURE — no RNG, no wall-clock, only basic arithmetic — so the client and the
- * verification Edge Function derive byte-identical stats from the same vector.
+ *   - **티어 시너지** — flat 구조에는 티어가 없다.
+ *   - **캡스톤 3종**(게이트·비트 OR·`shipCapstoneActive`) — ADR-0049 가 캡스톤을 폐기했다.
+ *   - **사슬 선행 조건**(ADR-0047) — ADR-0049 가 명시적으로 폐기했다. 축당 10스킬은 처음부터
+ *     전부 투자 가능하다.
+ *
+ * 껍데기만 남겨 두지 않고 **지운다.** 항상 0 을 돌려주는 함수를 호출부가 계속 부르면
+ * "효과가 반영된다"는 오해가 남고, 이 리포의 반복 결함 8건이 전부 그 형태였다.
+ *
+ * ## 남은 것
+ * 축(affinity) 조회와 투자 합계 — sim·UI·어픽스가 공유하는 **순수 파생**이다. RNG·시계 없음.
+ * 클라와 검증 EF 가 같은 벡터에서 바이트 동일한 값을 얻어야 한다(ADR-0005).
  */
 
 import type { StatKey } from './types.js';
-import type { SkillNode } from '../../data/skills.js';
 import {
   DEFAULT_SHIP_TYPE,
   shipTypeDef,
+  shipAxisIndexOf,
   shipTreeRange,
-  shipCapstoneIndex,
   flattenShipNodes,
 } from '../../data/ships/index.js';
-import type { ShipTypeDef } from '../../data/ships/index.js';
+import type { ShipTypeDef, TreeAffinity } from '../../data/ships/index.js';
 
-/** Synergy amplifier per point invested in a lower tier of the same tree. A
- *  fully-fed lower tree (16 nodes ×4 = 64 pts) amplifies a capstone by ~+25.6%. */
-const SYNERGY_PER_LOWER_POINT = 0.004;
-/** Hard cap on the synergy amplifier (guards a corrupt/over-invested vector). */
-const SYNERGY_MAX = 0.5;
-
-/** All-zero stat sums (same shape the loadout pipeline consumes). */
+/**
+ * 전 축 0 인 스탯 합. **스킬은 더 이상 이 블록에 기여하지 않는다** — 어픽스 합산의 초기값이
+ * 필요한 곳이 아직 이 모듈을 통해 형태를 참조하므로 형태 정본으로만 남긴다.
+ * (어픽스 누산기의 실제 초기값은 `src/items/loadout.ts` 의 `zeroSums()` 다 — 두 곳이
+ * 갈리지 않게 `tests/loadout.test.ts` 가 키 집합 동일을 못 박는다.)
+ */
 export function zeroStatSums(): Record<StatKey, number> {
   return {
     damagePct: 0,
@@ -46,111 +52,41 @@ export function zeroStatSums(): Record<StatKey, number> {
     magnetPct: 0,
     xpPct: 0,
     mineralFindPct: 0,
-    // M3 통합: 원소 상태이상 스탯은 스킬 트리에서 나오지 않음(장비 어픽스 전용) → 항상 0.
+    // 원소 상태이상은 장비 어픽스 전용(스킬 트리에서 나오지 않음) → 항상 0.
     fireDmg: 0,
     coldSlow: 0,
     lightning: 0,
+    // ADR-0049 스킬 어픽스(축 단위 +N 레벨)도 장비 어픽스 전용 → 항상 0. 실제 파생값은
+    // `WorldConfig.skillAffixLv`(이중 벡터, `deriveSkillAffixLv` in loadout.ts)이고 이
+    // 블록에는 절대 섞이지 않는다(affixes.md ①-5 — skillInvest 오염 재발 방지).
+    skillLvOffense: 0,
+    skillLvDefense: 0,
+    skillLvUtility: 0,
   };
 }
 
-function clampPoints(v: number | undefined, max: number): number {
-  if (typeof v !== 'number' || !Number.isFinite(v)) return 0;
-  const n = Math.trunc(v);
-  return n < 0 ? 0 : n > max ? max : n;
-}
-
 /**
- * 타입별 flat 노드 배열 캐시. `flattenShipNodes` 는 매 호출마다 새 배열을 만드는데
- * `computeSkillStats` 는 런 시작·UI 미리보기에서 반복 호출된다. 레지스트리는 모듈 상수라
- * 캐시가 stale 해질 수 없고, 반환값은 readonly 라 공유해도 안전하다(변이 없음 = 결정론 유지).
- */
-const FLAT_NODE_CACHE = new Map<number, readonly SkillNode[]>();
-
-function shipFlatNodes(def: ShipTypeDef): readonly SkillNode[] {
-  const cached = FLAT_NODE_CACHE.get(def.id);
-  if (cached !== undefined) return cached;
-  const flat = flattenShipNodes(def);
-  FLAT_NODE_CACHE.set(def.id, flat);
-  return flat;
-}
-
-/**
- * Fold the investment vector into derived stat sums. `invest[i]` is the points
- * put into the flat node `i` **of `typeId`'s tree** (clamped to that node's max).
- * Integer-typed stats (bulletCount, pierce) are floored after synergy so the
- * weapon never fans a fractional volley. Skills never grant mineralFind (meta),
- * so that key stays 0.
+ * flat 인덱스 → 축(affinity). **이 매핑의 단일 정본이다.**
  *
- * `typeId` 미지정 = 스트라이커(타입 0). 스트라이커에 대해 이 함수는 M3~M7 구현과
- * **바이트 동일**하다 — `flattenShipNodes(STRIKER)` 가 `data/skills.ts` 의 `SKILLS` 와
- * 원소 동일(참조까지)이고, 트리 슬라이스도 `NODES_PER_TREE` 와 같은 폭이기 때문이다.
- * 티어 누적 배열 길이만 `TREE_DEPTH`(5) 에서 `nodesPerTree + 1` 로 늘었는데, 이 배열은
- * `row[t]` 합산에만 쓰이고 여분 칸은 항상 0 이라 결과가 달라지지 않는다.
+ * `Math.floor(i / SKILLS_PER_AXIS)` → `def.trees[t].affinity` 를 sim·loadout·UI 세 곳에
+ * 복제하면 재편에서 조용히 갈린다(`affixes.md` ⑥-1 항목 4). 인덱스 산술 자체는
+ * `shipAxisIndexOf`(`data/ships/types.ts`)가 갖고, 이 함수는 그 결과를 affinity 로 옮긴다.
+ *
+ * 범위 밖·손상 인덱스는 `undefined`. 호출부가 조용히 offense 로 흘리지 않도록 기본값을
+ * 주지 않는다.
  */
-export function computeSkillStats(
-  invest: readonly number[],
+export function axisOfIndex(
+  flatIndex: number,
   typeId: number = DEFAULT_SHIP_TYPE,
-): Record<StatKey, number> {
-  const sums = zeroStatSums();
+): TreeAffinity | undefined {
   const def = shipTypeDef(typeId);
-  const nodes = shipFlatNodes(def);
-  const nodeCount = nodes.length;
-  const perTree = def.nodesPerTree;
-
-  // Per-tree, per-tier invested points (for the lower-tier synergy lookup).
-  const treeCount = def.trees.length;
-  const tierPoints: number[][] = [];
-  for (let t = 0; t < treeCount; t++) tierPoints.push(new Array<number>(perTree + 1).fill(0));
-  for (let i = 0; i < nodeCount; i++) {
-    const node = nodes[i];
-    if (node === undefined) continue;
-    // 질적 캡스톤(flat 벡터 최후미)은 수치를 기여하지 않는다 — sim이 uniqueMask 비트로 게이트.
-    if (node.capstone === true) continue;
-    const pts = clampPoints(invest[i], node.maxPoints);
-    if (pts === 0) continue;
-    const treeIdx = Math.floor(i / perTree);
-    const row = tierPoints[treeIdx];
-    if (row !== undefined) row[node.tier] = (row[node.tier] ?? 0) + pts;
-  }
-
-  for (let i = 0; i < nodeCount; i++) {
-    const node = nodes[i];
-    if (node === undefined) continue;
-    if (node.capstone === true) continue; // 캡스톤은 파생 스탯에 기여하지 않음(위와 동일).
-    const pts = clampPoints(invest[i], node.maxPoints);
-    if (pts === 0) continue;
-    const treeIdx = Math.floor(i / perTree);
-    const row = tierPoints[treeIdx];
-    let lower = 0;
-    if (row !== undefined) {
-      for (let t = 0; t < node.tier; t++) lower += row[t] ?? 0;
-    }
-    let amp = SYNERGY_PER_LOWER_POINT * lower;
-    if (amp > SYNERGY_MAX) amp = SYNERGY_MAX;
-    sums[node.stat] += pts * node.perPoint * (1 + amp);
-  }
-
-  // Integer-typed adds must stay whole (fractional pierce/bulletCount is invalid).
-  sums.bulletCount = Math.floor(sums.bulletCount);
-  sums.pierce = Math.floor(sums.pierce);
-  return sums;
+  const ti = shipAxisIndexOf(def, flatIndex);
+  if (ti < 0) return undefined;
+  return def.trees[ti]?.affinity;
 }
 
-// ---------------------------------------------------------------------------
-// 타입별 캡스톤 게이트 (M8-L4)
-//
-// `data/skills.ts` 의 `treeBaseInvested`/`capstoneUnlocked`/`capstoneActive` 는 스트라이커
-// 전용이다(트리를 `'firepower'|'survival'|'mobility'` 문자열로 받고 인덱스를 `SKILL_TREES`
-// 순서로 계산). 아래 3함수는 같은 규칙을 **`ShipTypeDef` + 트리 인덱스** 로 일반화한 것이며,
-// 스트라이커(타입 0)에 대해서는 인덱스·게이트·판정이 전부 동일하다:
-//   shipTreeRange(STRIKER,0)     === treeRange('firepower')      = [0,20)
-//   shipCapstoneIndex(STRIKER,0) === capstoneIndex('firepower')  = 60
-//   STRIKER.capstoneGate         === CAPSTONE_GATE               = 40
-// tests/capstones.test.ts 가 세 함수와 레거시 함수의 동치를 전 계열·전 경계에서 못 박는다.
-// ---------------------------------------------------------------------------
-
-/** 한 계열의 base 노드 누적 투자(캡스톤 자체는 제외). 손상/짧은 벡터도 안전(누락 = 0). */
-export function shipTreeBaseInvested(
+/** 한 축의 누적 투자. 손상/짧은 벡터도 안전(누락 = 0). */
+export function axisInvested(
   invest: readonly number[],
   def: ShipTypeDef,
   treeIndex: number,
@@ -161,98 +97,25 @@ export function shipTreeBaseInvested(
   return sum;
 }
 
-/** 계열 캡스톤이 게이트를 통과했는지(base 투자 ≥ `def.capstoneGate`). */
-export function shipCapstoneUnlocked(
-  invest: readonly number[],
-  def: ShipTypeDef,
-  treeIndex: number,
-): boolean {
-  return shipTreeBaseInvested(invest, def, treeIndex) >= def.capstoneGate;
-}
-
 /**
- * 계열 캡스톤 효과가 실제 활성인지 = 게이트 통과 AND 캡스톤 노드에 1포인트 투자.
- * 게이트 미달인데 캡스톤만 찍힌 손상 벡터는 비활성(robust) — 레거시와 같은 규칙.
+ * 한 스킬의 **투자 레벨**(어픽스 가산 전). 상한 clamp 는 하지 않는다 — 스킬 어픽스가
+ * `SKILL_MAX_LEVEL` 을 초과할 수 있는 것이 ADR-0049 의 설계이고, 여기서 자르면 그 초과분이
+ * 조용히 사라진다. 저장 벡터의 상한은 `normalizeSkillInvest`(`src/save/profile.ts`)가 본다.
  */
-export function shipCapstoneActive(
+export function skillPoints(
   invest: readonly number[],
-  def: ShipTypeDef,
-  treeIndex: number,
-): boolean {
-  if (!shipCapstoneUnlocked(invest, def, treeIndex)) return false;
-  return (invest[shipCapstoneIndex(def, treeIndex)] ?? 0) > 0;
+  flatIndex: number,
+): number {
+  const v = invest[flatIndex];
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0;
 }
 
-// ---------------------------------------------------------------------------
-// 사슬 선행 조건 (ADR-0047)
-//
-// 사슬 = **한 계열 안에서 `stat` 이 같은 base 노드들**, 티어 오름차순. 노드에 저작된
-// 필드가 아니라 `(계열, 스탯)` 에서 파생한다 — 데이터 수정 0줄로 기체 7종이 같은 규칙을
-// 받고, 신규 기체도 저작 없이 물려받는다.
-//
-// ⚠️ 이 규칙은 **투자 시점 규율이지 파생 규칙이 아니다.** `computeSkillStats` 는 한 줄도
-// 안 건드린다 — 서버(`verify-*` EF)가 `skillInvest` 합법성을 검증하지 않으므로(ADR-0028)
-// 파생에 넣어도 위조 방어가 되지 않고, 리플레이 해시 폴드·파워업 RNG 슬라이스만 위험해진다.
-// 따라서 런 중 벡터(`config.skillInvest` 사본, 파워업이 t0 칸을 올린다)는 판정 대상이 아니다.
-// ---------------------------------------------------------------------------
-
-/**
- * `index` 노드에 투자하기 위해 **아직 max 가 아닌 같은 사슬의 더 낮은 티어 노드**들의
- * flat 인덱스를 티어 오름차순으로 돌려준다. 빈 배열 = 투자 가능.
- *
- * 캡스톤은 사슬에 속하지 않는다 — 항상 빈 배열이고, 게이트는 `shipCapstoneUnlocked` 가
- * 따로 본다(캡스톤 노드의 `stat` 은 전부 자리표시자 `'damagePct'` 라, 사슬에 편입시키면
- * damagePct 노드가 하나도 없는 계열의 캡스톤까지 엉뚱한 사슬에 붙는다).
- *
- * 티어에 구멍이 있으면 그냥 건너뛴다(사슬에 없는 티어는 조건이 아니다). 한 티어에 같은
- * 스탯 노드가 둘이면 **둘 다** 걸린다. 노드가 하나뿐인 사슬은 항상 빈 배열이다.
- */
-export function chainMissingPrereqs(
-  invest: readonly number[],
-  def: ShipTypeDef,
-  index: number,
-): number[] {
-  const nodes = shipFlatNodes(def);
-  const node = nodes[index];
-  if (node === undefined) return [];
-  if (node.capstone === true) return [];
-  const treeIndex = Math.floor(index / def.nodesPerTree);
-  const { start, end } = shipTreeRange(def, treeIndex);
-  const out: number[] = [];
-  for (let i = start; i < end; i++) {
-    const other = nodes[i];
-    if (other === undefined || other.capstone === true) continue;
-    if (other.stat !== node.stat) continue;
-    if (other.tier >= node.tier) continue;
-    if ((invest[i] ?? 0) < other.maxPoints) out.push(i);
-  }
-  // flat 순서가 곧 티어 오름차순이라 별도 정렬이 필요 없다(`buildTree` 가 티어별로 쌓는다).
-  return out;
+/** flat 인덱스 → 스킬 정의. 범위 밖이면 `undefined`. */
+export function skillDefAt(flatIndex: number, typeId: number = DEFAULT_SHIP_TYPE) {
+  return flattenShipNodes(shipTypeDef(typeId))[flatIndex];
 }
 
-/** 사슬 선행 조건을 만족했는지 — `chainMissingPrereqs(...).length === 0` 의 빠른 판정. */
-export function chainPrereqMet(
-  invest: readonly number[],
-  def: ShipTypeDef,
-  index: number,
-): boolean {
-  const nodes = shipFlatNodes(def);
-  const node = nodes[index];
-  if (node === undefined) return true;
-  if (node.capstone === true) return true;
-  const treeIndex = Math.floor(index / def.nodesPerTree);
-  const { start, end } = shipTreeRange(def, treeIndex);
-  for (let i = start; i < end; i++) {
-    const other = nodes[i];
-    if (other === undefined || other.capstone === true) continue;
-    if (other.stat !== node.stat) continue;
-    if (other.tier >= node.tier) continue;
-    if ((invest[i] ?? 0) < other.maxPoints) return false;
-  }
-  return true;
-}
-
-/** True if any node has a non-zero investment (cheap "has skills" guard). */
+/** 하나라도 투자돼 있는가 — "스킬 보유" 저비용 판정. */
 export function hasAnyInvestment(invest: readonly number[] | undefined): boolean {
   if (invest === undefined) return false;
   for (let i = 0; i < invest.length; i++) {

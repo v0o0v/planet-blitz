@@ -697,45 +697,22 @@ export const EN = {
   'lab.tree.pop': 'Pop',
   'lab.tree.drift': 'Drift',
   'lab.tree.film': 'Film',
-  'lab.tree.sub': 'Invested {n}pt · lower tiers amplify higher nodes',
   'lab.browseAll': 'All Skills ({n}/{m} invested)',
   'lab.noInvested': 'Nothing invested in this tree yet.\nOpen the full list above to invest.',
   'lab.all.title': '{tree} — All Skills',
   'lab.all.sub': 'Points available {n} · invested in this tree {m}pt',
   'lab.all.hint': 'Wheel to scroll · click a row to invest 1pt',
-  'lab.node.meta': 'tier {t} · max {m}pt',
   'lab.bar.points': 'Skill Points',
   'lab.bar.invest': 'Invested',
   'lab.bar.credits': 'Credits',
   'lab.bar.shipLv': 'Ship Lv',
-  'lab.stat.damage': 'Bullet Damage',
-  'lab.stat.fireRate': 'Fire Rate',
-  'lab.stat.bulletCount': 'Extra Bullets',
-  'lab.stat.pierce': 'Pierce',
-  'lab.stat.bulletSpeed': 'Bullet Speed',
-  'lab.stat.range': 'Range',
-  'lab.stat.maxHpFlat': 'Max HP (flat)',
-  'lab.stat.maxHp': 'Max HP',
-  'lab.stat.dashCd': 'Dash Cooldown ↓',
-  'lab.stat.moveSpeed': 'Move Speed',
-  'lab.stat.magnet': 'Magnet Radius',
-  'lab.stat.xp': 'XP',
-  'lab.derivedStats': 'Derived Stats (with synergy)',
-  'lab.noStats': 'Invest skill points to see the derived stats here.',
-  'lab.synergy':
-    "Synergy: each node's output is amplified by points invested in lower tiers of the same tree (up to +50%). Investing deeper strengthens higher nodes.",
   'lab.err.noPoints': 'Not enough skill points.',
   'lab.err.maxed': 'Already invested to the maximum.',
   // 사슬 선행 조건(ADR-0047). `prereq` 는 팝업 잠긴 행의 설명줄, `chainLocked` 는 클릭 힌트.
-  'lab.node.prereq': 'Requires {name} {cur}/{max}',
-  'lab.node.prereqMore': 'Requires {name} {cur}/{max} and {n} more',
-  'lab.err.chainLocked': 'Locked — fill the lower tier of this chain first: {name} {cur}/{max}',
   'lab.err.noInvest': 'No investment to undo.',
   'lab.err.noCredits': 'Not enough credits (need {n}).',
   'lab.respecDone': 'Reset the skill tree and refunded the points.',
   'lab.respecBtn': 'Respec ({n} credits)',
-  'lab.capstone.locked': 'Locked — invest {g}pt in this tree to unlock',
-  'lab.capstone.needGate': 'Capstone locked: invest {g} points in this tree first.',
 
   // 연구소 도움말(사용자 요청 2026-08-05). 문단 구분은 **홑 개행**이다 — 빈 줄은 Pixi 라벨이
   // 거치는 stripEmoji 가 접어 화면에 도달하지 못한다(`helpModal.ts` 모듈 주석 ①).
@@ -746,16 +723,16 @@ export const EN = {
     'This is where permanent growth happens. Skill points spent here stay with your ship forever — nothing you build in this screen is lost when a run ends.\nEach ship type has its own three trees. Switching to a different ship means a different set of trees, not the same ones relearned.',
   'lab.help.s2.h': 'Skill points',
   'lab.help.s2.b':
-    'Every ship level grants one skill point, and ship level rises from experience carried out of runs. Level 100 is the cap, so points are finite over a ship\'s life and where you spend them is the build.\nSpending is a click on a node row. Higher tiers need their prerequisites filled first, so a tree is entered from the bottom.',
-  'lab.help.s3.h': 'Lower tiers amplify higher ones',
+    'Every ship level grants one skill point, and ship level rises from experience carried out of runs. Level 100 is the cap, so points are finite over a ship\'s life and where you spend them is the build.\nSpending is a click on a skill row. Filling all thirty costs 600 points while a lifetime yields around 100, so what you give up is the build.',
+  'lab.help.s3.h': 'No prerequisites',
   'lab.help.s3.b':
-    'Investment is not a flat sum. Points sitting in the lower tiers of a chain amplify the nodes above them, which is why going deep in one tree beats spreading thin across three.\nThe strip along the bottom shows your derived stats with that synergy already applied — read that, not the individual node numbers.',
-  'lab.help.s4.h': 'Capstones',
+    'Each tree holds ten skills and all ten are open from the start. There are no tiers and no chains, so you can put a point straight into whichever skill you want.\nWhat you lack is points. Every tree mixes skills worth a single point with skills that only shine at twenty, so the question is which few to go deep on.',
+  'lab.help.s4.h': 'One point opens it fully',
   'lab.help.s4.b':
-    'The final node of each tree is a capstone, gated on total investment in that tree rather than on any single prerequisite. It stays locked until the tree total reaches its threshold, and the node tells you how far short you are.',
+    'A skill\'s behaviour switches on completely at one point. Levels two through twenty only grow that behaviour\'s core number — no level suddenly turns it into something else.\nSo there is no level to wait for. A one-point skill already does its job.',
   'lab.help.s5.h': 'Active skills',
   'lab.help.s5.b':
-    'Each ship has six active skills, two per tree, opened by cumulative investment in that tree — 8 points for the lower one, 40 for the higher, the same threshold a capstone uses. Open the Active Skills button in the header to equip them.\nYou may equip two at a time and fire them with Z and X during a run. Their only cost is cooldown; they consume no resource and no hull.\nInvestment keeps improving their power and cooldown whether or not they are equipped, so points are never wasted on a tree whose skill you left at home.',
+    'Each ship has six active skills, two per tree, opened by cumulative investment in that tree — 8 points for the lower one, 40 for the higher. Open the Active Skills button in the header to equip them.\nYou may equip two at a time and fire them with Z and X during a run. Their only cost is cooldown; they consume no resource and no hull.\nInvestment keeps improving their power and cooldown whether or not they are equipped, so points are never wasted on a tree whose skill you left at home.',
   'lab.help.s6.h': 'Respec',
   'lab.help.s6.b':
     'Respec costs credits and refunds every point at once, so a build is never permanent. The button in the header shows the current price.\nYour ship\'s signature passive is not part of the tree — it is always on, cannot be invested in, and respec does not touch it.',
@@ -876,12 +853,14 @@ export const EN = {
   // --- 기체 타입(M8, ADR-0019) ---
   // 키의 축은 `ShipTypeDef.slug` 다(`src/ui/pixi/shipLabels.ts` 가 유도한다). 하드코딩 목록이
   // 아니라 SHIP_TYPES 파생이므로, 타입이 늘면 `tests/i18n.test.ts` 가 누락을 잡는다.
-  // `.signature` 는 **시그니처를 가진 타입만** 둔다 — 스트라이커는 `signatureBit = -1`(설계서
-  // §11: 의도된 부재)이라 키가 있으면 오히려 고아다. 수치는 sim 정본
-  // (`src/sim/shipSignature.ts`)에서 그대로 옮겼다. 문구가 없는 효과를 약속하면 UI 가 거짓말을
-  // 한다. 컬러 이모지 금지(Pixi stripEmoji 가 두부로 떨군다).
+  // `.signature` 는 **시그니처를 가진 타입만** 둔다. 스트라이커도 ADR-0049 §1(정조준 사이클,
+  // 비트 24)로 이제 시그니처를 갖는다 — "시그니처 없는 타입" 이라는 구 §11 채택안 A 는
+  // 폐기됐다. 수치는 sim 정본(`src/sim/shipSignature.ts`)에서 그대로 옮겼다. 문구가 없는
+  // 효과를 약속하면 UI 가 거짓말을 한다. 컬러 이모지 금지(Pixi stripEmoji 가 두부로 떨군다).
   'ship.striker.name': 'Striker',
   'ship.striker.role': 'Balanced baseline — no chassis bias in any direction.',
+  'ship.striker.signature':
+    'Marksman Cycle — every 12th volley from your main weapon is a marksman volley: every bullet in it deals +50% damage and gains +1 pierce, then the cycle starts over.',
   'ship.bruiser.name': 'Bruiser',
   'ship.bruiser.role': 'Brawler that walks into fire. Heaviest hull, shortest reach.',
   'ship.bruiser.signature':
@@ -2923,46 +2902,23 @@ export const KO: Record<MessageKey, string> = {
   'lab.tree.pop': '터트리기',
   'lab.tree.drift': '표류',
   'lab.tree.film': '방막',
-  'lab.tree.sub': '누적 투자 {n}pt · 하위 투자가 상위 노드를 증폭',
   'lab.browseAll': '전체 스킬 보기 ({n}/{m} 투자)',
   'lab.noInvested': '이 계열에 투자한 스킬이 없습니다.\n위 버튼으로 전체 목록에서 투자하세요.',
   'lab.all.title': '{tree} — 전체 스킬',
   'lab.all.sub': '보유 포인트 {n} · 이 계열 투자 {m}pt',
   'lab.all.hint': '휠로 스크롤 · 행을 클릭하면 1pt 투자',
-  'lab.node.meta': '티어 {t} · 최대 {m}pt',
   'lab.bar.points': '스킬 포인트',
   'lab.bar.invest': '투자',
   'lab.bar.credits': '크레딧',
   'lab.bar.shipLv': '기체 Lv',
-  'lab.stat.damage': '탄 피해량',
-  'lab.stat.fireRate': '연사 속도',
-  'lab.stat.bulletCount': '추가 탄 수',
-  'lab.stat.pierce': '관통',
-  'lab.stat.bulletSpeed': '탄속',
-  'lab.stat.range': '사거리',
-  'lab.stat.maxHpFlat': '최대 체력(고정)',
-  'lab.stat.maxHp': '최대 체력',
-  'lab.stat.dashCd': '대시 쿨다운 감소',
-  'lab.stat.moveSpeed': '이동 속도',
-  'lab.stat.magnet': '자석 반경',
-  'lab.stat.xp': '경험치',
-  'lab.derivedStats': '파생 스탯 (시너지 반영)',
-  'lab.noStats': '스킬 포인트를 투자하면 여기에 파생 스탯이 표시됩니다.',
-  'lab.synergy':
-    '시너지: 각 노드의 출력은 같은 계열 하위 티어에 투자한 포인트만큼 소폭 증폭됩니다(최대 +50%). 깊게 투자할수록 상위 노드가 강해집니다.',
   'lab.err.noPoints': '스킬 포인트가 부족합니다.',
   'lab.err.maxed': '이미 최대까지 투자했습니다.',
   // 사슬 선행 조건(ADR-0047). `prereq` 는 팝업 잠긴 행의 설명줄, `chainLocked` 는 클릭 힌트.
-  'lab.node.prereq': '선행 {name} {cur}/{max} 필요',
-  'lab.node.prereqMore': '선행 {name} {cur}/{max} 외 {n}개 필요',
   // 조사(을/를)를 쓰지 않는 형태다 — 노드 이름의 받침이 제각각이라 정적으로 고를 수 없다.
-  'lab.err.chainLocked': '잠김 — 같은 사슬의 낮은 티어를 먼저 채우세요: {name} {cur}/{max}',
   'lab.err.noInvest': '되돌릴 투자가 없습니다.',
   'lab.err.noCredits': '크레딧이 부족합니다 (필요 {n}).',
   'lab.respecDone': '스킬 트리를 초기화하고 포인트를 환급했습니다.',
   'lab.respecBtn': '리스펙 ({n} 크레딧)',
-  'lab.capstone.locked': '잠김 — 이 계열에 {g}pt 투자 시 해금',
-  'lab.capstone.needGate': '캡스톤 잠김: 이 계열에 먼저 {g}포인트를 투자하세요.',
 
   // 연구소 도움말(사용자 요청 2026-08-05). 용어는 KO 선언부 정본표를 따른다 —
   // `스킬 트리`(화면 제목 `lab.title`·기지 건물 설명이 띄어 쓴다. 붙여 쓴 `스킬트리` 금지)·
@@ -2975,16 +2931,16 @@ export const KO: Record<MessageKey, string> = {
     '기체를 영구히 성장시키는 곳입니다. 여기에 쓴 스킬 포인트는 기체에 그대로 남아 런이 끝나도 사라지지 않습니다. 런 안에서 얻는 파워업과는 완전히 다른 축입니다.\n스킬 트리는 기체 타입마다 다르고, 한 기체에 3계열이 있습니다. 다른 기체로 갈아타면 같은 트리를 다시 배우는 것이 아니라 아예 다른 트리를 처음부터 익히게 됩니다.',
   'lab.help.s2.h': '스킬 포인트',
   'lab.help.s2.b':
-    '기체 레벨이 1 오를 때마다 스킬 포인트를 1 받습니다. 기체 레벨은 런에서 가지고 나온 경험치로 오르고 100이 상한이라, 한 기체가 평생 쓸 수 있는 포인트는 정해져 있습니다. 어디에 넣느냐가 곧 빌드입니다.\n노드 행을 누르면 그 노드에 1pt 가 들어갑니다. 위 티어는 선행 노드가 차 있어야 열리므로 트리는 아래에서부터 올라갑니다.',
-  'lab.help.s3.h': '아래 티어가 위 티어를 증폭합니다',
+    '기체 레벨이 1 오를 때마다 스킬 포인트를 1 받습니다. 기체 레벨은 런에서 가지고 나온 경험치로 오르고 100이 상한이라, 한 기체가 평생 쓸 수 있는 포인트는 정해져 있습니다. 어디에 넣느냐가 곧 빌드입니다.\n스킬 행을 누르면 그 스킬에 1pt 가 들어갑니다. 30종을 다 채우려면 600pt 가 드는데 평생 받는 것은 100pt 남짓이라, 무엇을 포기하느냐가 빌드의 본질입니다.',
+  'lab.help.s3.h': '선행 조건이 없습니다',
   'lab.help.s3.b':
-    '투자는 단순 합산이 아닙니다. 한 사슬의 아래 티어에 쌓인 포인트가 그 위 노드의 효과를 증폭하기 때문에, 세 계열에 얇게 펴 바르는 것보다 한 계열을 깊게 파는 쪽이 강합니다.\n화면 아래 가로 띠가 그 증폭까지 반영한 파생 스탯을 보여 줍니다. 개별 노드의 수치가 아니라 이 띠를 보고 판단하세요.',
-  'lab.help.s4.h': '캡스톤',
+    '계열마다 스킬이 10종 있고, 열 종 전부 처음부터 투자할 수 있습니다. 티어도 사슬 선행 조건도 없으니 원하는 스킬에 곧바로 1pt 를 넣으면 됩니다.\n대신 포인트가 모자랍니다. 1pt 만 찍어도 값어치가 있는 스킬과 20pt 를 몰아야 빛나는 스킬이 계열마다 섞여 있어서, 몇 개를 깊게 파고 몇 개를 1pt 유틸로 둘지가 고민이 됩니다.',
+  'lab.help.s4.h': '1pt 에 전부 열립니다',
   'lab.help.s4.b':
-    '각 계열의 마지막 노드는 캡스톤입니다. 선행 노드 하나가 아니라 그 계열에 넣은 누적 투자량이 문턱을 넘어야 열립니다. 아직 모자라면 노드가 얼마나 남았는지 알려 줍니다.',
+    '스킬은 1pt 를 넣는 순간 그 동작이 온전히 켜집니다. 레벨 2부터 20까지는 그 동작의 핵심 수치만 자랍니다 — 특정 레벨에서 갑자기 다른 것으로 변하는 구간은 없습니다.\n그래서 몇 레벨부터 쓸 만한지 걱정할 필요가 없습니다. 1pt 짜리 스킬도 그 자리에서 제 몫을 합니다.',
   'lab.help.s5.h': '액티브 스킬',
   'lab.help.s5.b':
-    '기체마다 액티브 스킬이 6종 있고 계열마다 2종씩 붙습니다. 해금은 그 계열의 누적 투자량으로, 낮은 쪽은 8, 높은 쪽은 40입니다(캡스톤과 같은 문턱입니다). 헤더의 액티브 스킬 버튼에서 장착합니다.\n한 번에 2개까지 장착할 수 있고 런에서 Z·X 키로 직접 발동합니다. 비용은 쿨다운뿐이라 자원도 선체도 소모하지 않습니다.\n계열에 투자할수록 장착 여부와 무관하게 그 계열 스킬 2종의 위력과 쿨다운이 계속 좋아집니다. 그래서 지금 장착하지 않은 스킬이라도 그 계열에 넣은 포인트는 헛되지 않습니다.',
+    '기체마다 액티브 스킬이 6종 있고 계열마다 2종씩 붙습니다. 해금은 그 계열의 누적 투자량으로, 낮은 쪽은 8, 높은 쪽은 40입니다. 헤더의 액티브 스킬 버튼에서 장착합니다.\n한 번에 2개까지 장착할 수 있고 런에서 Z·X 키로 직접 발동합니다. 비용은 쿨다운뿐이라 자원도 선체도 소모하지 않습니다.\n계열에 투자할수록 장착 여부와 무관하게 그 계열 스킬 2종의 위력과 쿨다운이 계속 좋아집니다. 그래서 지금 장착하지 않은 스킬이라도 그 계열에 넣은 포인트는 헛되지 않습니다.',
   'lab.help.s6.h': '리스펙',
   'lab.help.s6.b':
     '리스펙은 크레딧을 내고 투자한 포인트를 한 번에 전부 돌려받는 기능입니다. 빌드는 영구 결정이 아니니 편하게 실험하셔도 됩니다. 헤더의 버튼에 현재 비용이 적혀 있습니다.\n기체의 시그니처 패시브는 스킬 트리 밖입니다. 항상 켜져 있고 투자 대상이 아니며 리스펙으로도 바뀌지 않습니다.',
@@ -3103,6 +3059,8 @@ export const KO: Record<MessageKey, string> = {
 
   'ship.striker.name': '스트라이커',
   'ship.striker.role': '균형 잡힌 기준점. 어느 축으로도 섀시 보정이 없습니다.',
+  'ship.striker.signature':
+    '정조준 사이클 — 주무기 볼리 12회마다 다음 1볼리가 정조준 볼리가 되어, 그 볼리의 모든 탄이 피해 +50%·관통 +1 을 받습니다. 이후 사이클이 다시 시작됩니다.',
   'ship.bruiser.name': '브루저',
   'ship.bruiser.role': '맞으며 전진하는 근접형. 가장 두꺼운 선체, 가장 짧은 사거리.',
   'ship.bruiser.signature':

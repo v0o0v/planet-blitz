@@ -61,8 +61,7 @@ import {
   SHIP_TYPES,
   selectableShipTypes,
   shipTypeDef,
-  flattenShipNodes,
-  shipCapstoneIndex,
+  SKILLS_PER_AXIS,
   type ShipTypeDef,
 } from '../../../data/ships/index.js';
 import {
@@ -1396,7 +1395,6 @@ export class ChampionSelectScreen {
       row.value.style.fill = value > 0 ? 0x8affc0 : value < 0 ? WARN_FILL : SLAB_BODY_FILL;
     });
 
-    const nodes = flattenShipNodes(def);
     d.trees.forEach((card, i) => {
       const tree = def.trees[i];
       const has = tree !== undefined;
@@ -1409,12 +1407,15 @@ export class ChampionSelectScreen {
       card.name.text = shipTreeName(tree);
       card.name.style.fill = accent;
       card.meta.text = tShipKey('champion.tree.meta', '{n} nodes · gate {g}', {
-        n: def.nodesPerTree,
-        g: def.capstoneGate,
+        n: SKILLS_PER_AXIS,
+        g: def.activeHiGate,
       });
-      const capstone = nodes[shipCapstoneIndex(def, i)];
-      card.cap.text = capstone === undefined ? '' : `★ ${capstone.name}`;
-      card.capDesc.text = capstone?.desc ?? '';
+      // ADR-0049: 캡스톤(축당 1개)이 폐기돼 대표 스킬이라는 개념이 없다. 가장 보수적인
+      // 대체로 그 축의 마지막(최고 번호) 스킬을 미리보기로 보여준다 — 판단이 필요한 자리,
+      // 확정 문구는 아니다(보고 참조).
+      const showcase = tree.nodes[tree.nodes.length - 1];
+      card.cap.text = showcase === undefined ? '' : `★ ${showcase.name}`;
+      card.capDesc.text = showcase?.desc ?? '';
     });
 
     d.current.text = tShipKey('champion.current', 'Current: {name}', {

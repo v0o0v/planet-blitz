@@ -20,7 +20,13 @@ import {
 } from '../data/ships/actives/index.js';
 import { ACTIVE_LO_GATE } from '../data/ships/actives/types.js';
 import { equipActive, unequipActive, activeSlotViews } from '../src/items/activeSkills.js';
-import { SHIP_TYPES, zeroSkillInvest, shipTreeRange } from '../data/ships/index.js';
+import { POWERUPS, applyPowerup } from '../src/sim/powerups.js';
+import {
+  ACTIVE_HI_GATE_DEFAULT,
+  SHIP_TYPES,
+  zeroSkillInvest,
+  shipTreeRange,
+} from '../data/ships/index.js';
 import { migrate, defaultProfile } from '../src/save/profile.js';
 import { SAVE_VERSION } from '../src/items/types.js';
 
@@ -60,9 +66,9 @@ describe('AC-12 — 해금 게이트 (저티어 8 · 고티어 capstoneGate 추�
     }
   });
 
-  it('고티어는 그 기체의 `capstoneGate` 를 추종한다 (해츨링만 44, 나머지 40)', () => {
+  it('고티어는 그 기체의 `activeHiGate` 를 추종한다', () => {
     for (const def of ALL_ACTIVES.filter((d) => d.tier === 'hi')) {
-      const gate = SHIP_TYPES[def.shipTypeId]?.capstoneGate ?? 40;
+      const gate = SHIP_TYPES[def.shipTypeId]?.activeHiGate ?? ACTIVE_HI_GATE_DEFAULT;
       expect(activeGateThreshold(def), def.id).toBe(gate);
       expect(
         isActiveUnlocked(investExactly(def.shipTypeId, def.treeIndex, gate - 1), def),
@@ -74,10 +80,26 @@ describe('AC-12 — 해금 게이트 (저티어 8 · 고티어 capstoneGate 추�
     }
   });
 
-  it('해츨링의 고티어 문턱은 실제로 40 이 아니라 44 다 (추종의 물증)', () => {
-    const hatchling = SHIP_TYPES.findIndex((s) => s.slug === 'hatchling');
-    expect(hatchling).toBeGreaterThanOrEqual(0);
-    expect(SHIP_TYPES[hatchling]?.capstoneGate).toBe(44);
+  /**
+   * ⚠️ 이 단언은 **구 버전의 "추종의 물증"을 대체한 것**이다. 예전에는 해츨링만 44 였고
+   * (트리가 25노드로 더 컸다는 근거) 그 예외가 곧 "하드코딩 40 이 아니라 기체 필드를
+   * 읽는다"는 물증이었다. ADR-0049 가 축당 10스킬로 통일하면서 **용량 차이 자체가 사라져**
+   * 그 예외를 걷었고(근거 소실이지 밸런스 판단이 아니다), 물증도 함께 사라졌다.
+   *
+   * 그래서 물증 대신 **필드를 실제로 읽는지**를 직접 건다: 전 기체가 같은 값이어도, 게이트가
+   * 상수로 되돌아가면 이 단언이 깨진다. 훗날 다시 기체별 값이 생기면 그때 예외 물증을
+   * 되살려라.
+   */
+  it('전 기체의 고티어 문턱이 자기 `activeHiGate` 필드에서 온다 (상수 하드코딩 회귀 방지)', () => {
+    for (const def of ALL_ACTIVES.filter((d) => d.tier === 'hi')) {
+      const ship = SHIP_TYPES[def.shipTypeId];
+      expect(ship, def.id).toBeDefined();
+      expect(activeGateThreshold(def), def.id).toBe(ship?.activeHiGate);
+    }
+    // 현재는 예외가 없다 — 전 기체가 기본값을 공유한다는 사실 자체를 기록해 둔다.
+    expect(new Set(SHIP_TYPES.map((s) => s.activeHiGate))).toEqual(
+      new Set([ACTIVE_HI_GATE_DEFAULT]),
+    );
   });
 });
 
@@ -209,11 +231,90 @@ describe('AC-2 — 쿨다운 설정 · 매 틱 감소 · 중 재입력 무시', 
   }
 });
 
+/**
+ * E7(선결, ADR-0049) — 파워업 24/25(`active-tune-1/2`)의 재설계 회귀 시험.
+ *
+ * ⚠️ 구현은 `config.skillInvest` 를 절대 건드리지 않는다 — flat 재편 후 "계열 base 첫 칸에
+ * +2" 는 그 칸 스킬을 포인트 0인데 해금시키는 결함이었다(`src/sim/powerups.ts` 의
+ * `bumpActiveTree` 헤더 참조). 대신 `WorldState.activeTune0/1` 슬롯 전용 정수를 올리고,
+ * 소비 지점(`actives.ts:179`·`activeTypes.ts` 의 `powerCentiOf`·`hud.ts` 의 `hudActives`)이
+ * `investedInTree(...) + tune` 으로 합산한다.
+ */
+describe('E7 — 조율 포인트(파워업 24/25)는 skillInvest 를 변형하지 않는다', () => {
+  const def = ALL_ACTIVES[0];
+  const tuneIdx1 = POWERUPS.findIndex((p) => p.id === 'active-tune-1');
+  const tuneIdx2 = POWERUPS.findIndex((p) => p.id === 'active-tune-2');
+
+  it('파워업 24/25 가 실제로 레지스트리에 있다(전제 확인)', () => {
+    expect(tuneIdx1).toBeGreaterThanOrEqual(0);
+    expect(tuneIdx2).toBeGreaterThanOrEqual(0);
+  });
+
+  it('슬롯 1 조율을 먹어도 config.skillInvest 는 런 전후로 불변이다(E7 본체)', () => {
+    if (def === undefined) return;
+    const invest = investTree(def.shipTypeId, def.treeIndex, 2);
+    const before = [...invest];
+    const cfg: WorldConfig = {
+      ...DEFAULT_CONFIG,
+      shipType: def.shipTypeId,
+      skillInvest: invest,
+      activeSlots: [wireIdOf(def.id), -1],
+    };
+    const s = createWorld(0xe7a1, cfg);
+    applyPowerup(s, tuneIdx1);
+    expect([...s.config.skillInvest!]).toEqual(before);
+    expect(s.activeTune0).toBe(2);
+    expect(s.activeTune1).toBe(0);
+  });
+
+  it('슬롯 2 조율은 activeTune1 만 올리고 activeTune0 는 그대로다(슬롯 배타)', () => {
+    if (def === undefined) return;
+    const invest = investTree(def.shipTypeId, def.treeIndex, 2);
+    const cfg: WorldConfig = {
+      ...DEFAULT_CONFIG,
+      shipType: def.shipTypeId,
+      skillInvest: invest,
+      activeSlots: [-1, wireIdOf(def.id)],
+    };
+    const s = createWorld(0xe7a2, cfg);
+    applyPowerup(s, tuneIdx2);
+    expect(s.activeTune0).toBe(0);
+    expect(s.activeTune1).toBe(2);
+  });
+
+  it('미장착 슬롯에 조율을 먹여도 무연산이다(기존 동결 거동 승계)', () => {
+    const cfg: WorldConfig = { ...DEFAULT_CONFIG, activeSlots: [-1, -1] };
+    const s = createWorld(0xe7a3, cfg);
+    applyPowerup(s, tuneIdx1);
+    applyPowerup(s, tuneIdx2);
+    expect(s.activeTune0).toBe(0);
+    expect(s.activeTune1).toBe(0);
+  });
+
+  it('조율 포인트가 실효 쿨다운을 낮춘다(관측량 — sim 에 실제로 도달하는지)', () => {
+    if (def === undefined) return;
+    // 투자 2 → 조율 +2 = 4 가 `floor(inv/4)` 경계(0→1)를 넘어야 차이가 관측된다.
+    const invest = investExactly(def.shipTypeId, def.treeIndex, 2);
+    const cfg: WorldConfig = {
+      ...DEFAULT_CONFIG,
+      shipType: def.shipTypeId,
+      skillInvest: invest,
+      activeSlots: [wireIdOf(def.id), -1],
+    };
+    const s = createWorld(0xe7a4, cfg);
+    applyPowerup(s, tuneIdx1);
+    stepWorld(s, FIRE);
+    expect(s.activeCd0).toBe(activeCooldownTicks(def, 2 + 2));
+    expect(s.activeCd0).toBeLessThan(activeCooldownTicks(def, 2));
+  });
+});
+
 describe('AC-15 — SAVE_VERSION 8 마이그레이션 (손실 0 · 빈 슬롯 2칸)', () => {
   // 핀은 "액티브 슬롯이 v8 에서 들어왔다"가 아니라 "스키마 버전이 의도치 않게 안 움직였다"를
   // 지킨다. v9(사슬 선행 조건, ADR-0047)가 뒤에 붙었으므로 값만 따라 올린다.
-  it('SAVE_VERSION 이 10 이다', () => {
-    expect(SAVE_VERSION).toBe(10);
+  it('SAVE_VERSION 이 11 이다', () => {
+    // v11 = ADR-0049 스킬 와이어 재정의(전액 환급 + 퇴역 수호기 구 벡터 0 처리).
+    expect(SAVE_VERSION).toBe(11);
   });
 
   it('V7 프로필을 올리면 슬롯 2칸이 생기고 기존 진행은 그대로다', () => {

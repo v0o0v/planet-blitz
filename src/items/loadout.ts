@@ -14,11 +14,9 @@
 import type { Item, StatKey } from './types.js';
 import type { LoadoutConfig } from '../sim/world.js';
 import { UNIQUE_REGISTRY } from './uniques.js';
-import { computeSkillStats, shipCapstoneActive } from './skills.js';
 import { normalizeLineageBonus } from '../../data/guardian.js';
-import { DEFAULT_SHIP_TYPE, shipTypeDef } from '../../data/ships/index.js';
+import { DEFAULT_SHIP_TYPE, shipTypeDef, TREE_AFFINITIES } from '../../data/ships/index.js';
 import type { ShipBaseBp, TreeAffinity } from '../../data/ships/index.js';
-import { CAP_FIREPOWER_LASER, CAP_SURVIVAL_CRIT, CAP_MOBILITY_DASH } from '../sim/capstones.js';
 // side-effect: M2 유니크 5점을 레지스트리에 등록(장착 유니크의 bit → uniqueMask).
 import '../../data/uniques.js';
 
@@ -143,6 +141,11 @@ function applyStatSums(lo: LoadoutConfig, sums: Record<StatKey, number>): void {
   lo.dashCdMult *= 1 - sums.dashCdPct / 100;
   lo.magnetMult *= 1 + sums.magnetPct / 100;
   lo.xpMult *= 1 + sums.xpPct / 100;
+  // `skillLvOffense`/`Defense`/`Utility`(ADR-0049 스킬 어픽스)는 **여기서 접지 않는다** —
+  // 이 함수는 `LoadoutConfig` 배율/가산 전용이고, 그 3키는 `WorldConfig.skillAffixLv`
+  // (이중 벡터)로 따로 소비된다(`deriveSkillAffixLv`, `skillLv()` 경로 — affixes.md ①-4/①-5).
+  // 이 함수는 switch 가 아니라 직선 나열이라 fallthrough 위험은 없지만, 이 주석이 없으면
+  // "이 3키를 왜 여기서 안 접지"가 다음 결함 후보가 된다(⑥-1 항목 6).
 }
 
 /** Accumulate one affix's contribution into per-stat integer sums. */
@@ -168,7 +171,60 @@ function zeroSums(): Record<StatKey, number> {
     fireDmg: 0,
     coldSlow: 0,
     lightning: 0,
+    // ADR-0049 스킬 어픽스 3종. 이 누산기(`addStat` 의 실제 대상)에도 반드시 있어야 한다 —
+    // 1판에서 빠졌던 자리(affixes.md ⑥-1 항목 5) — 없으면 `deriveSkillAffixLv` 가 읽는
+    // `sums[stat]` 이 `undefined` 로 흘러 파생값이 `NaN` 이 된다. 값 자체는 `applyStatSums`
+    // 로 접지 않고(`LoadoutConfig` 무관) `deriveSkillAffixLv` 가 별도로 읽는다.
+    skillLvOffense: 0,
+    skillLvDefense: 0,
+    skillLvUtility: 0,
   };
+}
+
+/** `skillAffixLv` 축당 상한 — 슬롯 배치가 만드는 구조적 상한(offense/defense/utility 각
+ *  2슬롯 × 슬롯당 최대 +2, affixes.md ①-3). 이 상한을 넘는 손상 세이브도 잘린다. */
+const SKILL_AFFIX_LV_MAX = 4;
+
+function clampSkillAffixLv(v: number): number {
+  const n = Math.trunc(v);
+  if (n < 0) return 0;
+  if (n > SKILL_AFFIX_LV_MAX) return SKILL_AFFIX_LV_MAX;
+  return n;
+}
+
+/** 축(`TreeAffinity`) → 스킬 어픽스 `StatKey`. `Record` 전량이라 `TreeAffinity` 에 축이
+ *  느는 순간 이 매핑도 `tsc` 가 강제로 갱신시킨다(축 수 하드코딩 회피, ⑥-1 항목 5 보완). */
+const AXIS_SKILL_AFFIX_STAT: Readonly<Record<TreeAffinity, StatKey>> = {
+  offense: 'skillLvOffense',
+  defense: 'skillLvDefense',
+  utility: 'skillLvUtility',
+};
+
+/**
+ * 장착 장비의 축 어픽스(`skillLvOffense`/`Defense`/`Utility`)를 축별 정수로 접는다
+ * (ADR-0049, affixes.md ①-5). **`skillInvest` 와 완전히 분리된 이중 벡터**의 파생 함수다 —
+ * 이 결과를 투자 벡터에 더하지 마라, 그러면 "포인트 0인데 해금"(E7) 결함이 어픽스 경로로
+ * 되살아난다. `computeLoadoutStats` 와 나란히 두되 `LoadoutConfig` 는 건드리지 않는다(별도
+ * 파생 — `applyStatSums` 주석 참조).
+ *
+ * **`zeroSums`/`addStat` 를 그대로 재사용한다** — 어픽스 합산의 실제 누산기가 그 둘이고
+ * (⑥-1 항목 5), 여기서 독립적으로 다시 세면 두 합산 경로가 갈릴 여지가 생긴다. 그 대신
+ * `zeroSums()` 가 신규 3키를 빠뜨리면 `sums[stat]` 이 `undefined` 로 흘러 `clampSkillAffixLv`
+ * 가 `NaN` 을 내므로(트렁케이트·비교 전부 실패), 이 함수는 그 누락을 조용히 삼키지 않는다.
+ *
+ * ⚠️ **호출부는 `computeLoadoutStats` 에 넘긴 바로 그(제약 필터를 통과한) 배열을 넘겨야
+ * 한다** — 원본 `ship.equipped` 에서 따로 파생하면 의뢰 장비축 금지가 우회된다(affixes.md
+ * ⑤-2c). `buildRunConfig`(`src/run/runConfig.ts`) 가 그 배열을 그대로 재사용한다.
+ *
+ * 길이는 `TREE_AFFINITIES.length`(현재 3) — 축 수 3 을 하드코딩하지 않는다. 각 축은
+ * `[0, {@link SKILL_AFFIX_LV_MAX}]` 로 클램프한다(구조적 상한 보완 방어).
+ */
+export function deriveSkillAffixLv(equipped: readonly Item[]): number[] {
+  const sums = zeroSums();
+  for (const it of equipped) {
+    for (const a of it.affixes) addStat(sums, a.stat, a.value);
+  }
+  return TREE_AFFINITIES.map((affinity) => clampSkillAffixLv(sums[AXIS_SKILL_AFFIX_STAT[affinity]]));
 }
 
 /**
@@ -225,37 +281,29 @@ function applyShipTypeBase(lo: LoadoutConfig, baseBp: ShipBaseBp): void {
 }
 
 /**
- * 계열 affinity → 그 계열 캡스톤이 켜는 `uniqueMask` 비트. 캡스톤 효과는 sim 이 비트로
- * 게이트하므로(`src/sim/capstones.ts`), 신규 타입도 **역할이 같은** 계열이 같은 효과를
- * 얻는다. 스트라이커 매핑(firepower→offense·survival→defense·mobility→utility)이 1:1 이라
- * 타입 0 의 마스크는 비트값·OR 순서까지 기존과 동일하다.
- */
-const CAPSTONE_BIT_BY_AFFINITY: Readonly<Record<TreeAffinity, number>> = {
-  offense: CAP_FIREPOWER_LASER,
-  defense: CAP_SURVIVAL_CRIT,
-  utility: CAP_MOBILITY_DASH,
-};
-
-/**
- * Fold the equipped items (and optional skill investment) into a derived stat
- * block + meta mods. Order of the items does not matter (all contributions are
- * summed). When `invest` is supplied, the skill-derived stats stack on top of
- * the gear pass (multiplicatively across the two sources — standard ARPG stack),
- * so a deep build strengthens the run through the same block gear does. Absent /
- * empty `invest` reproduces the M2 gear-only result exactly (backward compat).
- * `shipBonusBp`(계보 기체 가지, data/lineage.ts shipBonusBp)가 주어지면 마지막에
+ * 장착 장비를 파생 스탯 블록 + 메타 모드로 접는다. 아이템 순서는 무관하다(전부 합산).
+ * `shipBonusBp`(계보 기체 가지, `data/lineage.ts` `shipBonusBp`)가 주어지면 마지막에
  * {@link applyShipLineageBonus} 로 겹친다 — 미지정/0 은 기존 결과와 완전 동일.
  *
- * `typeId`(ADR-0019 기체 타입, M8)는 **optional 이며 미지정 = 0(스트라이커)** 이다. 타입 0 은
- * 시그니처 비트가 없고(-1) baseBp 가 전 축 0 이며 트리 슬라이스가 기존과 동일하므로,
- * `computeLoadoutStats(eq, inv, bp)` 와 `computeLoadoutStats(eq, inv, bp, 0)` 는 물론
- * M8 이전 구현과도 결과가 **완전히 동일**하다(설계 §5 — 스트라이커 불변의 핵심 관문,
- * tests/skills.test.ts 가 명시적으로 못 박는다). 범위 밖 typeId 는 손상 세이브로 보고
- * 스트라이커로 되돌린다(`shipTypeDef` 가 정규화).
+ * `typeId`(ADR-0019 기체 타입)는 **optional 이며 미지정 = 0(스트라이커)** 이다. 범위 밖
+ * `typeId` 는 손상 세이브로 보고 스트라이커로 되돌린다(`shipTypeDef` 가 정규화).
+ *
+ * ## `invest` 인자가 사라진 이유 (ADR-0049)
+ * 구 버전은 `skillInvest` 를 받아 ①`computeSkillStats` 로 파생 스탯을 겹치고 ②계열 캡스톤
+ * 비트를 `uniqueMask` 에 OR 했다. ADR-0049 가 **스킬을 스탯에서 메커닉으로 옮기고 캡스톤을
+ * 폐기**하면서 두 소비처가 동시에 사라졌다 — 스킬 효과는 이제 사전 계산된 스탯 블록이 아니라
+ * sim 안의 규칙이고, `WorldConfig.skillInvest` 를 sim 이 직접 읽는다.
+ *
+ * 인자를 "받되 안 쓰는" 형태로 남기지 않는다. 그러면 호출부가 계속 벡터를 넘기면서 효과가
+ * 반영된다고 **오해**하게 되고, 이 리포의 반복 결함 8건이 전부 그 형태였다(단위 테스트는
+ * 그린인데 배선이 통째로 없음). 인자를 지우면 갱신 안 된 호출부를 `tsc` 가 잡는다.
+ *
+ * 방어측 수호 기체의 대표 스탯 계승(`prerequisites.md` §0-B 결정 C)은 여기가 아니라
+ * `mapLoadoutToGuardianSnapshot`(`data/guardian.ts`) **한 곳**에서 파생한다 — 같은 술어를
+ * 두 곳에 적으면 화면과 규칙이 갈린다.
  */
 export function computeLoadoutStats(
   equipped: readonly Item[],
-  invest?: readonly number[],
   shipBonusBp?: number,
   typeId: number = DEFAULT_SHIP_TYPE,
 ): ComputedLoadout {
@@ -289,24 +337,10 @@ export function computeLoadoutStats(
 
   // Gear pass: convert integer percent/flat affix sums into multipliers/adds.
   applyStatSums(lo, sums);
-  // Skill pass: fold skill-derived stats on top (synergy applied in skills.ts).
-  if (invest !== undefined) applyStatSums(lo, computeSkillStats(invest, shipType.id));
-  // 스킬트리 최상위 질적 캡스톤(GDD §4): 게이트(계열 base 40pt) + 캡스톤 1pt 가 찍힌 계열의
-  // 효과 비트를 uniqueMask 상위 비트(15~17)에 OR 한다. 신규 필드/해시 폴드 없이 sim이
-  // hasCapstone 으로 게이트한다(캡스톤 미보유 런은 uniqueMask 불변 → 기존 해시 완전 불변).
-  // M8: 계열은 타입별이므로 트리 인덱스로 순회하고, 비트는 affinity 로 고른다. 스트라이커는
-  // 트리 순서·affinity 매핑이 1:1 이라 OR 되는 비트도 순서도 M7 이전과 동일하다.
-  if (invest !== undefined) {
-    for (let ti = 0; ti < shipType.trees.length; ti++) {
-      const tree = shipType.trees[ti];
-      if (tree === undefined) continue;
-      if (shipCapstoneActive(invest, shipType, ti)) {
-        uniqueMask |= 1 << CAPSTONE_BIT_BY_AFFINITY[tree.affinity];
-      }
-    }
-  }
+  // (삭제됨 — ADR-0049) 스킬 파생 스탯 겹침 · 계열 캡스톤 비트 OR. 위 함수 주석 참조.
   // 기체 시그니처 패시브(M8 설계 §4): 타입이 가진 미사용 상위 비트(18~21)를 OR 한다.
-  // **스트라이커는 signatureBit = -1 이라 무연산** → 기존 런의 uniqueMask 가 바이트 불변.
+  // ⚠️ **구 주석의 "스트라이커는 -1 이라 무연산" 은 ADR-0049 로 끝났다** — 정조준 사이클(비트 24)이
+  // 부여돼 7기체 전부 여기서 비트를 켠다. 산술은 그대로이고 무연산 케이스만 사라졌다.
   const sig = shipType.signatureBit;
   if (sig >= 0) uniqueMask |= 1 << sig;
   lo.uniqueMask = uniqueMask;

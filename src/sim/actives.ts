@@ -176,6 +176,9 @@ export function stepActives(
     const def = defForSlot(state, slot);
     if (def === undefined) continue;
     ACTIVE_HANDLERS[def.id]?.(state, player, def, dir, slot);
-    setCooldown(state, slot, activeCooldownTicks(def, investedInTree(invest, def)));
+    // E7: 실효 쿨다운은 계열 투자 + 조율 포인트(파워업 24/25, `WorldState.activeTune0/1`)의
+    // 합에서 파생한다. `slot` 이 이미 루프 변수라 wire 역탐색 없이 직접 고른다.
+    const tune = slot === 0 ? state.activeTune0 : state.activeTune1;
+    setCooldown(state, slot, activeCooldownTicks(def, investedInTree(invest, def) + tune));
   }
 }

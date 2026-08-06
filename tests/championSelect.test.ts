@@ -42,7 +42,7 @@ import { LEVEL_CAP } from '../data/waves.js';
 import { t, setLocale } from '../src/i18n/index.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
-import { hasSignature } from '../src/sim/shipSignature.js';
+import { hasSignature, SIG_STRIKER_MARKSMAN } from '../src/sim/shipSignature.js';
 
 /** 인메모리 스토어(vitest 는 node 환경이라 localStorage 가 없다). */
 function memStore(): KeyValueStore & { data: Map<string, string>; writes: number } {
@@ -158,9 +158,9 @@ describe('표시명은 SHIP_TYPES 파생이고, 키를 화면에 노출하지 �
     }
   });
 
-  it('스트라이커는 시그니처가 없다 — 설명도 빈 문자열(설계서 §11 채택안 A)', () => {
-    expect(SHIP_TYPES[0]!.signatureBit).toBeLessThan(0);
-    expect(shipSignatureDesc(SHIP_TYPES[0]!)).toBe('');
+  it('스트라이커도 이제 시그니처가 있다 — 정조준 사이클, 설명도 비어 있지 않다(ADR-0049 §1, 구 §11 채택안 A 폐기)', () => {
+    expect(SHIP_TYPES[0]!.signatureBit).toBe(SIG_STRIKER_MARKSMAN);
+    expect(shipSignatureDesc(SHIP_TYPES[0]!).length).toBeGreaterThan(0);
   });
 });
 
@@ -311,15 +311,17 @@ describe('정규 경로 통합 — 선택 → buildRunConfig → createWorld →
     expect(world.tick).toBe(60);
   });
 
-  it('스트라이커는 시그니처 비트를 하나도 세우지 않는다(회귀 탐지기 보존)', () => {
+  it('스트라이커는 자기 비트(24)만 세우고 다른 6종의 시그니처 비트는 하나도 세우지 않는다 — 계약 반전(ADR-0049 §1)', () => {
     const store = memStore();
     const profile = maxedProfile();
     applyChampionChoice(profile, 0, store);
     const cfg = buildRunConfig(profile, { planet: 0, stage: 1 });
     expect(cfg.shipType).toBe(0);
+    const mask = cfg.loadout?.uniqueMask ?? 0;
+    expect(hasSignature(mask, SIG_STRIKER_MARKSMAN)).toBe(true);
     for (const def of SHIP_TYPES) {
-      if (def.signatureBit < 0) continue;
-      expect(hasSignature(cfg.loadout?.uniqueMask ?? 0, def.signatureBit), def.slug).toBe(false);
+      if (def.signatureBit < 0 || def.signatureBit === SIG_STRIKER_MARKSMAN) continue;
+      expect(hasSignature(mask, def.signatureBit), def.slug).toBe(false);
     }
   });
 

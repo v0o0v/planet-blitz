@@ -344,18 +344,21 @@ export const POWERUPS: readonly PowerupDef[] = [
   // 장착한 슬롯에만 후보로 오른다(`activeSlot` 태그 + `drawPowerupChoices` 의 `continue` 필터).
   // 미장착 런은 **pool 진입 자체가 없어** 길이·가중 총합이 바이트 동일하다(계획 PM-2).
   //
-  // ## 왜 "계열 투자 +N" 인가 — 신규 상태 0
-  // 액티브의 위력·쿨다운은 이미 `investedInTree(config.skillInvest, def)` 에서만 파생한다
-  // (AC-13 "값은 `skillInvest` 에서만 파생한다"). 그래서 그 계열 투자를 올리는 것이
-  // **신규 필드·신규 해시 폴드 없이** 강화를 표현하는 형태다 — `skillInvest` 는 이미 매 틱
-  // 폴드되고(`replay.ts:383-390`), `config.skillInvest` 는 `buildRunConfig` 가 만든
-  // **복사본**이라 런 중 변형이 프로필로 새지 않는다.
-  // 부수로 파워업 가중(`investedInAffinity`)도 같이 오르는데, 그것도 결정론적 파생이라
-  // 리플레이·EF 재실행이 그대로 재현한다.
+  // ## 왜 "조율 포인트" 인가 (E7 · ADR-0049 선결)
+  // 액티브의 위력·쿨다운은 `investedInTree(config.skillInvest, def) + tune` 에서 파생한다
+  // (AC-13 "값은 `skillInvest` 에서만 파생한다" — tune 은 그 파생식의 가산항일 뿐, 해금
+  // 판정(`isActiveUnlocked`)은 여전히 `skillInvest` 만 본다). 예전에는 이 파워업이
+  // `config.skillInvest` 계열 base 첫 칸을 직접 올렸다 — 구 트리는 "계열 합만 읽힌다"가
+  // 성립해 무해했지만, ADR-0049 flat 재편 후에는 칸마다 다른 메커닉이라 **그 칸 스킬이
+  // 포인트 0인데 해금돼 버렸다**(해금은 포인트로만 · 트레이드형 배타 우회). 그래서 지금은
+  // `WorldState.activeTune0/1` 슬롯 전용 정수를 올린다(`world.ts` 필드 주석 참조) —
+  // `skillInvest` 는 런 내내 불변이고, 조율분은 `replay.ts` 꼬리 폴드가 조건부로 접는다.
+  // 부수로 파워업 가중(`investedInAffinity`)은 더 이상 같이 오르지 않는다 — tune 은
+  // `skillInvest` 밖이라 가중 계산에 안 잡힌다(범위 밖 부작용 제거, 순수화).
   {
     id: 'active-tune-1',
     name: '슬롯 1 조율',
-    desc: '슬롯 1 액티브의 계열 투자 +2 (위력↑ · 쿨다운↓)',
+    desc: '슬롯 1 액티브 조율 +2 (위력↑ · 쿨다운↓)',
     activeSlot: 0,
     apply: (s) => {
       bumpActiveTree(s, 0);
@@ -364,7 +367,7 @@ export const POWERUPS: readonly PowerupDef[] = [
   {
     id: 'active-tune-2',
     name: '슬롯 2 조율',
-    desc: '슬롯 2 액티브의 계열 투자 +2 (위력↑ · 쿨다운↓)',
+    desc: '슬롯 2 액티브 조율 +2 (위력↑ · 쿨다운↓)',
     activeSlot: 1,
     apply: (s) => {
       bumpActiveTree(s, 1);
@@ -372,22 +375,24 @@ export const POWERUPS: readonly PowerupDef[] = [
   },
 ];
 
-/** 액티브 강화 파워업 1회당 올려 주는 계열 base 누적 포인트. */
+/** 액티브 강화 파워업 1회당 올려 주는 조율 누적 포인트. */
 const ACTIVE_TUNE_POINTS = 2;
 
 /**
- * 슬롯에 장착된 액티브가 속한 계열의 base 누적 투자를 올린다. 미장착·미지 wire 면 무연산.
- * 누적 지점은 그 계열 base 구간의 **첫 인덱스**로 고정한다 — 합만 읽히므로 어느 칸이든
- * 결과가 같지만, 고정해야 결정론과 감사 가능성이 유지된다.
+ * 슬롯에 장착된 액티브의 조율 누적(`WorldState.activeTune0/1`)을 올린다. 미장착·미지 wire 면
+ * 무연산.
+ *
+ * ⚠️ **E7(선결) — `config.skillInvest` 를 절대 건드리지 않는다.** 예전에는 계열 base 첫
+ * 인덱스에 직접 `+= 2` 했다(구 트리에서는 "합만 읽힌다"가 성립해 무해했다). ADR-0049 flat
+ * 재편 후에는 칸마다 다른 메커닉이라 그 자리 스킬이 포인트 0인데 해금돼 버렸다 — 그래서
+ * 투자 벡터는 손대지 않고 슬롯 전용 정수로 분리했다(`world.ts` 필드 주석 참조).
  */
 function bumpActiveTree(state: WorldState, slot: number): void {
   const wire = state.config.activeSlots?.[slot] ?? -1;
   const def = activeByWireId(wire);
   if (def === undefined) return;
-  const invest = state.config.skillInvest;
-  if (invest === undefined) return;
-  const { start } = shipTreeRange(shipTypeDef(def.shipTypeId), def.treeIndex);
-  invest[start] = (invest[start] ?? 0) + ACTIVE_TUNE_POINTS;
+  if (slot === 0) state.activeTune0 += ACTIVE_TUNE_POINTS;
+  else state.activeTune1 += ACTIVE_TUNE_POINTS;
 }
 
 // --- Soft-weighting tuning (integer weights → deterministic weighted draw) -----

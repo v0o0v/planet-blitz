@@ -32,7 +32,6 @@ import {
   zeroSkillInvest,
   flattenShipNodes,
   shipTreeRange,
-  shipCapstoneIndex,
 } from '../../data/ships/index.js';
 // ⚠️ `STANDARD_PROGRESSION_PATH` 를 여기서 import 하지 않는다 — 측정 기준자가 튜닝 대상에
 // 런타임 의존하면 순환 결합이 된다({@link STANDARD_BAND_RUNS} 주석). 두 값의 정합은
@@ -565,11 +564,11 @@ export function standardEquipped(
 // ---------------------------------------------------------------------------
 
 /**
- * flat `skillInvest` 벡터를 만든다. 트리별로 base 노드를 앞에서부터 `maxPoints` 까지 채우고,
- * 계열 투자가 `capstoneGate` 이상이면 그 트리 캡스톤에 1점.
+ * flat `skillInvest` 벡터를 만든다. 축별로 스킬을 앞에서부터 `maxPoints`(=`SKILL_MAX_LEVEL`)
+ * 까지 채운다(ADR-0049 — 캡스톤 폐기, 축당 10스킬은 처음부터 전부 투자 가능).
  *
- * ⚠️ `flattenShipNodes` 로 얻은 인덱스를 그대로 쓴다 — 트리 배열을 concat 하면 안 된다
- * (레이아웃 `[트리0 base][트리1 base][트리2 base][캡스톤 3]` 이 해시 계약이다).
+ * ⚠️ `flattenShipNodes` 로 얻은 인덱스를 그대로 쓴다 — 레이아웃은 `[축0 0..9][축1 10..19]
+ * [축2 20..29]`(전 기체 30칸)이 해시 계약이다(`data/ships/types.ts`).
  *
  * (M8 `rosterBench.ts` 에서 옮겨왔다. 매트릭스 모드와 곡선 모드가 **같은 배분 함수**를 쓰게
  * 해서 두 측정이 비교 가능하도록 유지한다.)
@@ -581,7 +580,6 @@ export function investVector(typeId: number, perTree: readonly number[]): number
   for (let t = 0; t < def.trees.length; t++) {
     let rest = perTree[t] ?? 0;
     if (rest <= 0) continue;
-    const spent = rest;
     const { start, end } = shipTreeRange(def, t);
     for (let i = start; i < end && rest > 0; i++) {
       const node = nodes[i];
@@ -590,7 +588,6 @@ export function investVector(typeId: number, perTree: readonly number[]): number
       v[i] = put;
       rest -= put;
     }
-    if (spent >= def.capstoneGate) v[shipCapstoneIndex(def, t)] = 1;
   }
   return v;
 }
@@ -606,8 +603,8 @@ export function standardSkillBudget(level: number): number {
 
 /**
  * 표준 투자 배분 비율. `rosterBench.ts` 의 P2(만렙 99점 = 45/27/27)를 기준으로 삼는다 —
- * 공격 계열 45pt 는 `capstoneGate`(40, 해츨링 44)를 전 기체에서 넘겨 캡스톤이 실제로 붙는
- * 유일한 배분이고, 만렙 표준 빌드는 그 상태여야 한다.
+ * 공격 계열 45pt 는 상위 액티브 해금 게이트(`ACTIVE_HI_GATE_DEFAULT` 40, ADR-0049 이전 이름
+ * `capstoneGate`)를 전 기체에서 넘기는 배분이고, 만렙 표준 빌드는 그 상태여야 한다.
  */
 const STANDARD_RATIO: readonly [number, number, number] = [45, 27, 27];
 const STANDARD_RATIO_TOTAL = 99;

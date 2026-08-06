@@ -734,18 +734,20 @@ export class HangarScreen {
   }
 
   /**
-   * 격납고 미리보기가 쓰는 파생 스탯. **런과 같은 입력 4종**(장착 · 스킬 투자 · 계보 bp ·
-   * 기체 타입)을 전부 넘긴다.
+   * 격납고 미리보기가 쓰는 파생 스탯. **런과 같은 입력**(장착 · 계보 bp · 기체 타입)을 전부
+   * 넘긴다.
    *
-   * ⚠️ 이전 구현은 `computeLoadoutStats(this.equippedItems())` 뿐이라 투자·계보·기체 타입이
+   * ⚠️ 이전 구현은 `computeLoadoutStats(this.equippedItems())` 뿐이라 계보·기체 타입이
    * 통째로 빠져 있었다 — 유저가 격납고에서 보는 수치와 실제 런 수치가 갈렸고, 브루저의
    * HP +25% 같은 섀시 보정은 화면 어디에도 나타나지 않았다(M8 통합 게이트 findings ④).
+   *
+   * ADR-0049: 스킬은 파생 스탯을 만들지 않는다(메커닉으로 옮겨 갔다) — `computeLoadoutStats`
+   * 가 더 이상 스킬 투자 벡터를 받지 않는다.
    */
   private computeStats(): ReturnType<typeof computeLoadoutStats> {
     const ship = activeShip(this.profile);
     return computeLoadoutStats(
       this.equippedItems(),
-      ship.skillInvest,
       shipBonusBp(this.profile.lineage),
       ship.typeId,
     );

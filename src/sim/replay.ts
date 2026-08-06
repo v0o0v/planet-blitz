@@ -48,11 +48,19 @@ const FNV_OFFSET = 0x811c9dc5;
 const FNV_PRIME = 0x01000193;
 
 /**
- * 기체 타입 꼬리 폴드의 포맷 버전(M8, 설계서 §4). 타입 0(스트라이커)에서는 **접히지 않으므로**
- * 이 값을 올려도 기존 PvE·침공 해시는 불변이다. 비스트라이커 폴드 레이아웃이 바뀌면 이 값만
- * 올려 구·신을 즉시 갈라놓는다(INVASION_HASH_VERSION 과 같은 규율).
+ * 기체 타입 꼬리 폴드의 포맷 버전(M8, 설계서 §4). 폴드 레이아웃이 바뀌면 이 값을 올려 구·신을
+ * 즉시 갈라놓는다(`INVASION_HASH_VERSION` 과 같은 규율).
+ *
+ * **2 (ADR-0049 스킬 전면 재구축, 2026-08-06)** — 이 회차는 세 원인이 동시에 해시를 움직인다:
+ *   1. `skillInvest` 와이어 길이가 63/78 → **30**(길이 프리픽스가 접히므로 값이 같아도 갈린다)
+ *   2. 스킬 어픽스 `skillAffixLv` 조건부 꼬리 폴드 신설(어픽스 0인 런은 무폴드 = 바이트 불변)
+ *   3. 스트라이커 시그니처(비트 24) 신설 → 전 스트라이커 런의 `uniqueMask` 변화
+ *
+ * ⚠️ **구 주석의 "타입 0 에서는 접히지 않으므로 이 값을 올려도 기존 해시는 불변" 은 더 이상
+ * 안전 근거가 아니다.** 그 문장은 참이지만(아래 `st !== 0` 게이트는 그대로다), 위 ①③이 타입 0
+ * 런의 해시를 다른 경로로 바꾼다 — 이 상수의 무해함과 회차 전체의 무해함은 별개다.
  */
-export const SHIP_HASH_VERSION = 1;
+export const SHIP_HASH_VERSION = 2;
 
 const scratch = new ArrayBuffer(8);
 const scratchF64 = new Float64Array(scratch);
@@ -384,7 +392,11 @@ export function hashWorld(state: WorldState): number {
   h = hashU32(h, state.playerSlowTicks >>> 0);
   // (2) 스킬 투자 스냅샷: 빌드 시점에 cfg.loadout에 이미 접혔지만, 재현/감사용으로
   // 접는다 — 스킬 유/무 런이 발산 전에도 해시가 갈리고, 서버가 벡터를 정확히 재도출.
-  // 길이 프리픽스로 미존재/빈 벡터를 구분.
+  // ⚠️ 구 주석은 "길이 프리픽스로 **미존재/빈 벡터를 구분**한다" 였는데 **사실이 아니다** —
+  // `invest?.length ?? 0` 이라 `undefined` 와 `[]` 가 둘 다 0 을 접어 같은 바이트열을 낸다.
+  // 그리고 그게 옳다(둘 다 "투자 없음"이라 갈리면 같은 런이 두 해시를 갖는다). 길이 프리픽스의
+  // 실제 역할은 **길이가 다른 벡터끼리**를 가르는 것이다(값이 전부 같아도 갈려야 한다).
+  // 이 두 사실은 `tests/shipSkillLayout.test.ts` 가 각각 단언으로 못 박는다.
   const invest = state.config.skillInvest;
   h = hashU32(h, (invest?.length ?? 0) >>> 0);
   if (invest !== undefined) {
@@ -628,6 +640,55 @@ export function hashWorld(state: WorldState): number {
     h = hashU32(h, (state.commissionRuntime?.segmentDone ?? 0) >>> 0);
     h = hashU32(h, commissionOrderWire(cmn.order) >>> 0);
     h = hashU32(h, cmn.grade >>> 0);
+  }
+  // --- 액티브 스킬 ③: 조율 포인트 2개(APPEND-ONLY, 조건부 꼬리 · E7/ADR-0049 선결) ---
+  // 파워업 24/25(`active-tune-1/2`)가 세우는 `activeTune0/1`. 예전에는 이 강화가
+  // `config.skillInvest` 를 직접 변형했다(그 폴드가 이미 실린다, `:383-390`) — 그런데
+  // ADR-0049 flat 재편 후 그 방식은 **투자 0인 칸을 해금시키는 결함**이 됐다(계획 §2 E7).
+  // 그래서 지금은 `skillInvest` 를 건드리지 않고 슬롯 전용 정수를 별도로 올리므로, 그 정수
+  // 자체를 접어야 정보량이 보존된다 — 안 접으면 조율을 먹은 런과 안 먹은 런이 같은 해시를
+  // 낼 수 있다(파워업 24/25 는 `powerupRng` 소비는 이미 다른 폴드가 잡지만, 그 파워업이
+  // *만든 효과*는 여기서만 잡힌다).
+  //
+  // **왜 여기(맨 꼬리)인가.** 이 파일은 APPEND-ONLY 다 — 기존 폴드 사이에 끼워 넣으면 그
+  // 뒤에 오는 모든 조건부 꼬리의 "런 A 는 여기까지 폴드했다"는 재현 계약이 깨진다. 개념적으로
+  // 가장 가까운 이웃은 액티브 런타임 폴드(①, `:587-596`)와 장착 슬롯 폴드(②, `:602-606`)지만,
+  // 그 사이에 이미 의뢰 꼬리가 append 됐으므로 **그 다음에** 붙인다.
+  //
+  // ⚠️ **부분 폴드 금지 — all-or-nothing.** 둘 다 0이면 한 폴드도 실행하지 않는다(조율을
+  // 안 쓴 런·이 필드가 생기기 전 골든이 **바이트 불변**). 하나라도 0이 아니면 **둘 다** 고정
+  // 폭으로 접는다 — (2,0) 과 (0,2) 가 같은 바이트열을 낳으면 충돌이다(`hashEntity` 의
+  // `aux0/aux1` 꼬리·액티브 런타임 폴드 ①과 같은 규율). `>>> 0` 정규화는 정수 전용 보증이다
+  // (소수부는 u32 폴드에서 조용히 사라지므로 애초에 정수만 저장한다 — `bumpActiveTree`).
+  const atn0 = state.activeTune0 >>> 0;
+  const atn1 = state.activeTune1 >>> 0;
+  if (atn0 !== 0 || atn1 !== 0) {
+    h = hashU32(h, atn0);
+    h = hashU32(h, atn1);
+  }
+  // --- 스킬 어픽스: 축별 레벨 3칸(APPEND-ONLY, 조건부 꼬리 · ADR-0049, affixes.md ①-5/⑤-2) ---
+  // `WorldConfig.skillAffixLv` — 장착 장비의 축 어픽스(skillLvOffense/Defense/Utility)를
+  // `deriveSkillAffixLv`(src/items/loadout.ts)가 축별 정수 3칸으로 접은 값. `skillInvest`
+  // 폴드(:388-392)와는 **완전히 분리된 정보**다 — 합쳐 접지 않는다.
+  //
+  // **all-or-nothing.** 전 축이 0이면(어픽스 없는 런 · 이 필드가 생기기 전 골든) 한 폴드도
+  // 실행하지 않는다 → 그 런들의 config·해시가 **바이트 불변**이다(이 조건이 골든 재생성
+  // 전 대조의 근거, affixes.md ⑤-2). 하나라도 0이 아니면 **셋 전부**를 고정 폭으로 접는다 —
+  // (1,0,0)과 (0,1,0)이 같은 바이트열을 낳으면 충돌이다(`hashEntity` 의 aux0/aux1 · 바로 위
+  // 액티브 조율 폴드와 같은 규율). `>>> 0` 은 정수 전용 보증(파생 시 clampSkillAffixLv 를
+  // 이미 거쳐 정수다).
+  //
+  // **왜 맨 꼬리인가.** 이 파일은 APPEND-ONLY 다 — 위 조율 포인트 폴드(E7/ADR-0049 선결) 뒤에
+  // 이어 붙여야 그 폴드까지의 기존 리플레이 재현 계약이 하나도 안 흔들린다. 신규 필드는 이
+  // 아래에만 append.
+  const skAff = state.config.skillAffixLv;
+  const sk0 = (skAff?.[0] ?? 0) >>> 0;
+  const sk1 = (skAff?.[1] ?? 0) >>> 0;
+  const sk2 = (skAff?.[2] ?? 0) >>> 0;
+  if (sk0 !== 0 || sk1 !== 0 || sk2 !== 0) {
+    h = hashU32(h, sk0);
+    h = hashU32(h, sk1);
+    h = hashU32(h, sk2);
   }
   return h >>> 0;
 }

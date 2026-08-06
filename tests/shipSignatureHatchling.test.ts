@@ -84,17 +84,29 @@ function profileWithType(typeId: number): Profile {
 }
 
 /**
- * 시그니처만 끈 동형 대조군. `signatureOn`(world.ts)은 **마스크 축 OR shipType 축**이므로
- * 둘 다 눌러야 한다. 프로덕션 코드는 한 줄도 건드리지 않는다.
+ * ⚠️ 2026-08-06 — **`suppressSignature`(shipType:0 강제)는 ADR-0049 이후 오염된 대조군이라
+ * 삭제했다.** ADR-0049 가 스트라이커(typeId 0)에 비트24(정조준 사이클)를 부여해
+ * `shipTypeDef(0).signatureBit` 이 더 이상 -1 이 아니다 — shipType:0 강제는 "시그니처 없음"이
+ * 아니라 "해츨링 대신 스트라이커 정조준이 켜진 런"이 된다(상세 물증은
+ * shipSignaturePhantom.test.ts 머리말). 유효 shipType 0~6 전부가 시그니처 비트를 하나씩
+ * 가지므로(shipSignature.ts SIGNATURE_BITS) "시그니처 없음"은 이제 제품에 존재하지 않는
+ * 상태다 — 그 상태를 config 로 만들어 대조군 삼는 설계 자체가 틀렸다.
+ *
+ * ## 대신 무엇을 쓰는가 — 트리거 입력 굶기기(ⓐ)
+ * 해츨링의 부화는 **`state.kills - player.aux0 >= hatchThreshold(state.kills)`** 가 트리거다
+ * (aux0 = 마지막 출격 시점의 kills 스냅샷). 그래서 매 틱 stepWorld **직전에** `aux0 = state.kills`
+ * 를 강제하면 — **시그니처 비트는 그대로 켜진 채로**(shipType·mask 는 live 와 완전히 동일) —
+ * 갭(`state.kills - aux0`)이 항상 0 에 묶여 임계(최소 12)에 영원히 못 미쳐 부화가 트리거되지
+ * 않는다. 이것이 `runObserved` 의 `starve` 플래그다. 처치(kills) 자체는 억제하지 않는다 —
+ * 병아리 "출격"만 굶긴다(ⓐ 원안의 "처치 0" 대신 이 축을 굶기는 쪽을 택한 이유: 처치를 억제하려면
+ * 무기를 꺼야 하는데, 그러면 대조군이 "무기 없는 런"이 되어 또 다른 축을 오염시킨다).
+ *
+ * shipType 을 바꾸지 않으므로 baseBp(damage/maxHp/moveSpeed) 오염이 없고, live 의 처치 수와
+ * ctrl 의 처치 수를 그대로 비교해도 "무기·체력 차이"가 섞이지 않는다 — 옛 suppressSignature 보다
+ * **더 정직한 비교**다. 대가: `ctrl.maxAux0` 자체는 우리가 직접 매 틱 kills 로 덮어쓰므로 항진이라
+ * "aux0 가 0" 같은 형태로는 못 잰다 — 대신 `hatched`(병아리 출격 수, world.ts 의 독립된 임계
+ * 판정이 낸 결과)로 잰다.
  */
-function suppressSignature(cfg: WorldConfig, bit: number): WorldConfig {
-  const loadout = cfg.loadout!;
-  return {
-    ...cfg,
-    shipType: 0,
-    loadout: { ...loadout, uniqueMask: loadout.uniqueMask & ~(1 << bit) },
-  };
-}
 
 interface Observed {
   kills: number;
@@ -111,7 +123,16 @@ interface Observed {
   hashes: number[];
 }
 
-function runObserved(seed: number, cfg: WorldConfig, ticks: number): Observed {
+/**
+ * `starve=true` 면 매 틱 stepWorld **직전에** `aux0 = state.kills` 를 강제한다(부화 갭을 항상 0
+ * 에 묶는다) — 위 헤더 주석의 트리거 굶기기 기법. 시그니처 비트·처치 자체는 손대지 않는다.
+ */
+function runObserved(
+  seed: number,
+  cfg: WorldConfig,
+  ticks: number,
+  starve = false,
+): Observed {
   const state = createWorld(seed, { ...cfg, playerHp: DURABLE_HP });
   let maxAux0 = 0;
   let maxAux1 = 0;
@@ -123,6 +144,7 @@ function runObserved(seed: number, cfg: WorldConfig, ticks: number): Observed {
   const snapshots: number[] = [];
   const hashes: number[] = [];
   for (let i = 0; i < ticks; i++) {
+    if (starve) state.entities[0]!.aux0 = state.kills;
     stepWorld(state, NEUTRAL);
     const p = state.entities[0]!;
     // 활성 아군 포탑 집계 — 신규 id 가 곧 이번 틱의 출격이다.
@@ -183,29 +205,34 @@ describe('해츨링(typeId 4) 정규 경로 배선 — Profile → buildRunConfi
   // 임계 4회(12·24·36·48)까지 "반복 발현" 을 보려면 3600틱이 필요하다(1800틱으로는 부족).
   const TICKS = 3600;
 
-  it('병아리가 실제로 출격한다 — 억제 대조군에는 아군 포탑이 하나도 없다', () => {
+  it('병아리가 실제로 출격한다 — 트리거 굶긴 대조군에는 아군 포탑이 하나도 없다', () => {
     const cfg = buildRunConfig(profileWithType(4), STAGE);
     expect(cfg.shipType).toBe(4);
     expect(hasCapstone(cfg.loadout?.uniqueMask ?? 0, SIG_HATCHLING_BROOD)).toBe(true);
 
     const live = runObserved(SEED, cfg, TICKS);
-    const ctrl = runObserved(SEED, suppressSignature(cfg, SIG_HATCHLING_BROOD), TICKS);
+    // starve=true: 같은 cfg(같은 shipType·마스크, 시그니처는 계속 켜져 있다) · 매 틱
+    // aux0=state.kills 로 갭을 0 에 묶어 부화 트리거만 굶긴다(위 헤더 주석 참조).
+    const ctrl = runObserved(SEED, cfg, TICKS, true);
 
     // 공허 런 가드 — 월드가 멈춰 있으면 이 케이스는 아무것도 증명하지 못한다.
     expect(new Set(live.hashes).size).toBeGreaterThan(900);
     expect(ctrl.kills).toBeGreaterThan(HATCH_BASE_KILLS);
 
-    // 핵심 단언: 시그니처 하나만 제거하면 병아리가 사라진다(= 배선이 실제로 산 상태다).
+    // 핵심 단언: 부화 트리거만 굶기면 병아리가 사라진다(= 배선이 실제로 산 상태다).
     // 실측 기준선(seed 9 / p0t0 / 3600틱): 출격 4기 · 최종 aux0 48 · kills 49 vs 24.
     expect(live.hatched).toBeGreaterThanOrEqual(3);
     expect(ctrl.hatched).toBe(0);
     expect(live.firstHatchTick).toBeGreaterThan(0);
 
-    // 병아리가 실제로 싸운다 — 같은 seed·무대에서 처치가 대조군보다 많다.
+    // 병아리가 실제로 싸운다 — 같은 seed·무대에서 처치가 대조군보다 많다. 두 config 는
+    // shipType·마스크가 완전히 같으므로(옛 suppressSignature 와 달리 baseBp 오염이 없다) 이
+    // 차이의 원인은 병아리 지원 화력뿐이다.
     expect(live.kills).toBeGreaterThan(ctrl.kills);
 
-    // 억제 대조군은 aux 를 한 번도 건드리지 않는다(조건부 폴드 규약).
-    expect(ctrl.maxAux0).toBe(0);
+    // 트리거 굶긴 대조군은 부화 임계에 못 닿아 aux1(해츨링이 안 쓰는 슬롯)은 그대로 0 이다.
+    // ⚠️ maxAux0 는 우리가 매 틱 state.kills 로 직접 덮어쓰므로 항진이라 여기서 재지 않는다
+    // (`hatched`(위)가 world.ts 의 독립된 임계 판정이 낸, 항진이 아닌 직접 증거다).
     expect(ctrl.maxAux1).toBe(0);
   });
 
@@ -234,10 +261,14 @@ describe('해츨링(typeId 4) 정규 경로 배선 — Profile → buildRunConfi
     expect(live.maxLiveDrones).toBeLessThanOrEqual(BROOD_MAX_DRONES);
   });
 
-  it('스트라이커(typeId 0) 런은 aux 를 끝까지 0 으로 두고 병아리도 없다 (해시 폴드 불변)', () => {
+  it('스트라이커(typeId 0) 런은 병아리가 없다 (다른 시그니처를 쓰지만 해츨링 축은 끝까지 미발현)', () => {
+    // ⚠️ 2026-08-06: ADR-0049 가 스트라이커에 정조준 사이클(비트24)을 부여해 aux0(정조준 카운터,
+    // 0..11 순환)를 이제 스트라이커도 쓴다 — "aux 를 끝까지 0"은 더 이상 참이 아니다(상세는
+    // shipSignaturePhantom.test.ts 머리말). 정조준은 aux1 을 쓰지 않고, `hatched`(신규 turretPickup
+    // 엔티티 집계)도 aux0 슬롯과 무관하게 독립 계산되므로 둘 다 그대로 무모호 증거다.
     const striker = buildRunConfig(defaultProfile(), STAGE);
     const obs = runObserved(SEED, striker, 900);
-    expect(obs.maxAux0).toBe(0);
+    expect(obs.maxAux0).toBeGreaterThanOrEqual(0);
     expect(obs.maxAux1).toBe(0);
     expect(obs.hatched).toBe(0);
     expect(new Set(obs.hashes).size).toBeGreaterThan(450);

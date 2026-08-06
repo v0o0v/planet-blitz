@@ -81,14 +81,14 @@ describe('AC-16 · 연구소 액티브 칸의 해금 표시', () => {
     }
   });
 
-  it('고티어 문턱은 기체별 capstoneGate 를 추종한다(해츨링만 44 — 숫자 하드코딩 금지의 근거)', () => {
+  it('고티어 문턱은 기체별 activeHiGate 를 추종한다(ADR-0049: 전 기체 40 균일 — 숫자 하드코딩 금지의 근거)', () => {
     for (let ship = 0; ship < ACTIVES_BY_SHIP.length; ship++) {
       const list = ACTIVES_BY_SHIP[ship] ?? [];
       if (list.length === 0) continue;
       const def = SHIP_TYPES[ship]!;
       const views = activeSlotViews(ship, zeroSkillInvest(def.id), [null, null]);
       for (const v of views) {
-        expect(v.threshold, `${v.def.id}`).toBe(v.def.tier === 'lo' ? 8 : def.capstoneGate);
+        expect(v.threshold, `${v.def.id}`).toBe(v.def.tier === 'lo' ? 8 : def.activeHiGate);
       }
     }
   });

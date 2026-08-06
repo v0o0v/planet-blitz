@@ -327,9 +327,11 @@ function shipNameKeys(): string[] {
 }
 
 /**
- * `ship.<slug>.signature` — **시그니처를 가진 타입만.** 스트라이커는 `signatureBit = -1`
- * (설계서 §11: 의도된 부재)이라 키가 있으면 고아다. `shipSignatureDesc` 도 같은 조건으로
- * 갈라지므로 화면과 검증이 같은 규칙을 쓴다.
+ * `ship.<slug>.signature` — **시그니처를 가진 타입만.** ⚠️ 계약 반전(ADR-0049 §1): 스트라이커도
+ * 이제 시그니처가 있다(비트 24, 정조준 사이클) — 구 §11 채택안 A("스트라이커는 의도된 부재")는
+ * 폐기됐다. 이 함수는 여전히 `signatureBit >= 0` 로 파생하므로 **코드는 손대지 않아도 되지만**,
+ * 필터가 걸러내는 대상이 이제 아무도 없다(전 타입이 `signatureBit >= 0`). `shipSignatureDesc`
+ * 도 같은 조건으로 갈라지므로 화면과 검증이 같은 규칙을 쓴다.
  */
 function shipSignatureKeys(): string[] {
   return SHIP_TYPES.filter((d) => d.signatureBit >= 0).map((d) => `ship.${d.slug}.signature`);
@@ -390,9 +392,14 @@ describe('기체 타입 카탈로그 완전성 (SHIP_TYPES 파생)', () => {
     }
   });
 
-  it('시그니처를 가진 타입만 ship.<slug>.signature 를 갖는다(스트라이커는 없다)', () => {
+  it('시그니처를 가진 타입만 ship.<slug>.signature 를 갖는다 — 이제 전 타입(스트라이커 포함)이 해당된다', () => {
+    // ⚠️ 계약 반전(ADR-0049 §1): 이 테스트 이름의 "스트라이커는 없다" 는 구 계약이었다.
+    // 스트라이커도 비트 24(정조준 사이클)로 시그니처를 가지면서, `signatureBit < 0` 인 타입이
+    // 더는 없다 — 아래 "고아 없음" 루프는 이제 순회할 대상이 0개라 항상 통과하지만, 로직은
+    // 그대로 둔다(미래에 시그니처 없는 타입이 다시 생겨도 그 즉시 이 테스트가 지켜본다).
     const keys = shipSignatureKeys();
     expect(keys.length).toBe(SHIP_TYPES.filter((d) => d.signatureBit >= 0).length);
+    expect(keys.length).toBe(SHIP_TYPES.length);
     for (const key of keys) {
       expect(EN, `EN missing ${key}`).toHaveProperty(key);
       expect(KO, `KO missing ${key}`).toHaveProperty(key);
@@ -471,8 +478,8 @@ describe('기체 타입 카탈로그 완전성 (SHIP_TYPES 파생)', () => {
    * 문구가 조용히 남아 썩는다(`def3` 고아 가드와 같은 논리).
    */
   it('레지스트리에서 파생되지 않는 고아 ship.* / lab.tree.* 키가 없다', () => {
-    // `lab.tree.sub` 는 계열 이름이 아니라 트리 패널 부제다 — 접두사만 겹친다.
-    const treeAllow = new Set([...shipTreeKeys(), 'lab.tree.sub']);
+    // (`lab.tree.sub` 는 ADR-0049 로 삭제됐다 — 티어 시너지 부제였다.)
+    const treeAllow = new Set(shipTreeKeys());
     const shipAllow = new Set([...shipNameKeys(), ...shipSignatureKeys()]);
     for (const [label, table] of [
       ['EN', EN as unknown as Record<string, string>],

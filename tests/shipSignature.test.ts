@@ -26,9 +26,17 @@ import {
   SIG_HATCHLING_BROOD,
   SIG_MALLOW_CUSHION,
   SIG_BUBBLE_FILM,
+  SIG_STRIKER_MARKSMAN,
   SIGNATURE_BITS,
   SIGNATURE_BIT_MAX,
   hasSignature,
+  MARKSMAN_CYCLE_SHOTS,
+  MARKSMAN_BONUS_BP,
+  MARKSMAN_PIERCE,
+  MARKSMAN_TRIGGER_AUX0,
+  marksmanTriggered,
+  marksmanDamage,
+  marksmanPierce,
   ARMOR_MAX_STACKS,
   ARMOR_PER_STACK_BP,
   ARMOR_DECAY_TICKS,
@@ -128,16 +136,18 @@ describe('시그니처 비트 배정', () => {
     expect(SIG_HATCHLING_BROOD).toBe(21);
     expect(SIG_MALLOW_CUSHION).toBe(22);
     expect(SIG_BUBBLE_FILM).toBe(23);
-    expect(SIGNATURE_BITS).toEqual([18, 19, 20, 21, 22, 23]);
+    // 스트라이커 — 정조준 사이클(ADR-0049 §1). 별도 커밋으로 부여된 7번째 시그니처라
+    // 나머지 6종보다 뒤에 선언되지만, 값 자체는 이 배열에서도 오름차순 마지막(최상위 비트)이다.
+    expect(SIG_STRIKER_MARKSMAN).toBe(24);
+    expect(SIGNATURE_BITS).toEqual([18, 19, 20, 21, 22, 23, 24]);
   });
 
-  it('원문 실측: 유니크 15종(0~14) · 캡스톤 3종(15~17) 이 실제로 그 범위다', () => {
+  it('원문 실측: 유니크 15종(0~14) 이 실제로 그 범위다 · (구)캡스톤 3종(15~17)은 ADR-0049 로 폐기돼 더 이상 선언되지 않는다', () => {
     expect(UNIQUE_BITS.length).toBe(15);
     expect([...UNIQUE_BITS].sort((a, b) => a - b)).toEqual([
       0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
     ]);
-    expect(CAPSTONE_BITS.length).toBe(3);
-    expect([...CAPSTONE_BITS].sort((a, b) => a - b)).toEqual([15, 16, 17]);
+    expect(CAPSTONE_BITS.length).toBe(0);
   });
 
   it('시그니처 비트가 서로 유일하고 유니크·캡스톤과 하나도 겹치지 않는다', () => {
@@ -467,6 +477,48 @@ describe('경계 골든 — 버블 방막 (주기 흡수 + 파열)', () => {
   });
 });
 
+describe('경계 골든 — 스트라이커 정조준 사이클', () => {
+  it('주기·배율·관통 상수가 설계값이다', () => {
+    expect(MARKSMAN_CYCLE_SHOTS).toBe(12);
+    expect(MARKSMAN_BONUS_BP).toBe(5000);
+    expect(MARKSMAN_PIERCE).toBe(1);
+    expect(MARKSMAN_TRIGGER_AUX0).toBe(11);
+  });
+
+  it('트리거는 `>=` 통과 판정이다 — 10/11/12 에서 갈리고, 11 을 넘겨도(점프) 계속 참', () => {
+    expect(marksmanTriggered(10)).toBe(false);
+    expect(marksmanTriggered(MARKSMAN_TRIGGER_AUX0)).toBe(true);
+    expect(marksmanTriggered(12)).toBe(true);
+    // F1/S1(미구현, 별도 레인)이 카운터를 점프시켜도 `===` 였다면 놓쳤을 값들.
+    expect(marksmanTriggered(15)).toBe(true);
+    expect(marksmanTriggered(999)).toBe(true);
+    expect(marksmanTriggered(0)).toBe(false);
+    expect(marksmanTriggered(-5)).toBe(false);
+  });
+
+  it('정조준 피해 = +50%, 관통 = +1', () => {
+    expect(marksmanDamage(100)).toBe(150);
+    expect(marksmanDamage(0)).toBe(0);
+    expect(marksmanDamage(-10)).toBe(0);
+    expect(marksmanPierce(0)).toBe(1);
+    expect(marksmanPierce(3)).toBe(4);
+  });
+
+  it('전 피해 구간이 정수이고 원본 이상이다(음수 없음)', () => {
+    for (const d of DAMAGE_SWEEP) {
+      const out = marksmanDamage(d);
+      expect(Number.isInteger(out), `damage=${d} → ${out}`).toBe(true);
+      expect(out).toBeGreaterThanOrEqual(Math.max(0, d));
+    }
+  });
+
+  it('비정수 입력이 들어와도 정수만 나온다', () => {
+    expect(Number.isInteger(marksmanDamage(77.4))).toBe(true);
+    expect(Number.isInteger(marksmanPierce(3.9))).toBe(true);
+    expect(typeof marksmanTriggered(11.9)).toBe('boolean');
+  });
+});
+
 describe('경계 골든 — 해츨링 부화', () => {
   it('0 처치 시 기본 임계', () => {
     expect(hatchThreshold(0)).toBe(HATCH_BASE_KILLS);
@@ -523,8 +575,15 @@ describe('재현성 — 같은 입력 2회', () => {
 //
 // 이 레인은 world.ts·loadout.ts 를 소유하지 않으므로 "시그니처가 켜진다" 를 아직 증명할 수
 // 없다. 대신 **지금 증명 가능한 계약**을 못 박는다: 실제 앱 경로(Profile → 런 설정 →
-// createWorld → stepWorld)가 만드는 uniqueMask 가 18~21 비트대를 전혀 쓰지 않는다는 것.
-// 이것이 깨지면 L4 의 OR-in 이 기존 유니크/캡스톤과 충돌하게 된다.
+// createWorld → stepWorld)가 만드는 uniqueMask 가 **자기 시그니처 비트만** 쓰고 다른 5종의
+// 비트대는 전혀 쓰지 않는다는 것. 이것이 깨지면 L4 의 OR-in 이 기존 유니크/캡스톤(또는 다른
+// 기체의 시그니처)과 충돌하게 된다.
+//
+// ⚠️ **계약 반전(ADR-0049 §1, 이 커밋)**: 베이스라인은 전부 스트라이커(typeId 0) 빌드다
+// (`scripts/recordStrikerBaseline.ts`). 스트라이커가 "시그니처 없음" 이던 시절에는 이 마스크가
+// 18~23 비트대를 전혀 안 쓰는 것이 계약이었다. 스트라이커가 비트 24(`SIG_STRIKER_MARKSMAN`)를
+// 받으면서 계약이 뒤집혔다 — 이제는 **24 는 반드시 켜지고, 18~23(다른 6종의 비트)은 전혀
+// 켜지지 않는다** 가 맞는 계약이다.
 //
 // ✅ M8-L7 완료: 조립을 재현하지 않고 실제 앱이 쓰는 `buildRunConfig` 를 그대로 부른다.
 // ---------------------------------------------------------------------------
@@ -536,24 +595,31 @@ function assembleRunConfigLikeMain(invest: readonly number[]) {
   return { loadout: cfg.loadout!, skillInvest: cfg.skillInvest! };
 }
 
+/** 스트라이커 자신의 비트를 뺀 나머지 6종의 비트 — 베이스라인이 절대 켜면 안 되는 대역. */
+const OTHER_SIGNATURE_BITS = SIGNATURE_BITS.filter((b) => b !== SIG_STRIKER_MARKSMAN);
+
 describe('정규 경로 통합 — Profile → 런 설정 → createWorld/stepWorld', () => {
   const planet = BASELINE_PLANETS[0]!;
 
-  it('현행 파생 경로의 uniqueMask 가 시그니처 비트대를 전혀 쓰지 않는다 (전 빌드)', () => {
+  it('현행 파생 경로의 uniqueMask 가 스트라이커 자신의 비트만 켜고 다른 5종 비트대는 쓰지 않는다 (전 빌드)', () => {
     for (const build of BASELINE_BUILDS) {
       const { loadout } = assembleRunConfigLikeMain(build.invest);
       const mask = loadout.uniqueMask;
-      for (const bit of SIGNATURE_BITS) {
+      expect(
+        hasSignature(mask, SIG_STRIKER_MARKSMAN),
+        `${build.id}: 스트라이커 자신의 비트 24 가 안 켜졌다`,
+      ).toBe(true);
+      for (const bit of OTHER_SIGNATURE_BITS) {
         expect(hasSignature(mask, bit), `${build.id}: 비트 ${bit} 가 이미 점유됨`).toBe(false);
       }
-      // 캡스톤 빌드는 실제로 15~17 대역을 켠다(경로가 살아 있다는 증거).
-      if (build.id.startsWith('capstone') || build.id === 'near-max') {
-        expect(mask, `${build.id}: 캡스톤 비트 미점등`).toBeGreaterThan(0);
-      }
+      // (구) 캡스톤 빌드가 15~17 대역을 켜는지 보던 자리 — 캡스톤 개념 자체가 ADR-0049 로
+      // 폐기돼(`scripts/recordStrikerBaseline.ts` 갱신 주석 참조) 그 증거가 더 이상 성립하지
+      // 않는다. 축 몰빵 빌드로 대체된 뒤에도 uniqueMask 는 유니크 비트(0~14) + 자기 시그니처
+      // 비트(24)만 쓴다.
     }
   });
 
-  it('스트라이커 런을 실제로 굴려도 시그니처 대역이 켜지지 않고, 실 피해값이 정수로 남는다', () => {
+  it('스트라이커 런을 실제로 굴려도 자기 시그니처 대역(24)만 켜지고, 실 피해값이 정수로 남는다', () => {
     const build = BASELINE_BUILDS[5]!; // 만렙 근접 — 파생이 가장 많이 붙는 빌드
     const { loadout, skillInvest } = assembleRunConfigLikeMain(build.invest);
     const config = baselineConfig(planet, build.invest);
@@ -568,7 +634,8 @@ describe('정규 경로 통합 — Profile → 런 설정 → createWorld/stepWo
     expect(state.tick).toBe(600);
 
     const mask = config.loadout?.uniqueMask ?? 0;
-    for (const bit of SIGNATURE_BITS) expect(hasSignature(mask, bit)).toBe(false);
+    expect(hasSignature(mask, SIG_STRIKER_MARKSMAN)).toBe(true);
+    for (const bit of OTHER_SIGNATURE_BITS) expect(hasSignature(mask, bit)).toBe(false);
 
     // 실제 sim 이 만든 피해 크기를 시그니처 함수에 통과시켜 정수 계약을 확인한다
     // (합성 스윕만으로는 실 게임 값 대역을 안 탄다).

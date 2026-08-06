@@ -81,17 +81,33 @@ function profileWithType(typeId: number): Profile {
 }
 
 /**
- * 시그니처만 끈 동형 대조군. `signatureOn`(world.ts)은 **마스크 축 OR shipType 축**이므로
- * 둘 다 눌러야 한다. 프로덕션 코드는 한 줄도 건드리지 않는다.
+ * ⚠️ 2026-08-06 — **`suppressSignature`(shipType:0 강제)는 ADR-0049 이후 오염된 대조군이라
+ * 삭제했다.** 그 헬퍼는 "typeId 0(스트라이커)는 시그니처가 없다(`shipTypeDef(0).signatureBit
+ * === -1`)"는 전제로 마스크 비트를 지우고 shipType 을 0 으로 눌러 "시그니처 완전 off" 런을
+ * 만들었다. 그런데 ADR-0049 가 스트라이커에 비트 24(정조준 사이클)를 부여하면서 그 전제가
+ * 깨졌다 — shipType:0 은 이제 "시그니처 없음"이 아니라 **"팬텀 대신 스트라이커 정조준이 켜진
+ * 런"**이다. 실측(2026-08-06): 정조준 사이클이 `player.aux0` 를 0..11 로 돌리므로
+ * `ctrl.maxAux0` 가 0 이 아니라 11 근처를 오간다 — "억제 대조군은 aux 를 안 건드린다"는 계약이
+ * 통째로 거짓이 됐다. **"시그니처 없음"은 이제 제품에 존재하는 상태가 아니다** — 유효한
+ * shipType 0~6 전부가 시그니처 비트를 하나씩 갖는다(shipSignature.ts SIGNATURE_BITS). 존재하지
+ * 않는 상태를 대조군으로 쓰는 설계 자체가 틀렸으므로, config 를 바꿔 시그니처를 "끄는" 접근을
+ * 버린다.
+ *
+ * ## 대신 무엇을 쓰는가 — 트리거 입력 굶기기(ⓐ)
+ * 팬텀의 은신은 **연속 무피격 240틱**이 트리거다. 실제 피격은 `aux0`(무피격 스트릭)·`aux1`
+ * (해제 대기 플래그)을 world.ts 가 둘 다 0 으로 되돌린다(hit-resolution 분기). 그래서 "매 틱
+ * 방금 피격당한 것처럼" aux0·aux1 을 강제로 0 에 묶어 두면 — **시그니처 비트는 그대로 켜진
+ * 채로**(shipType·mask 는 live 와 완전히 동일) — 연속 무피격 카운터가 임계(240)에 영원히
+ * 도달하지 못해 은신이 자연히 발동하지 않는다. 이것이 `runObserved` 의 `starve` 플래그다.
+ *
+ * 이 방식이 옛 헬퍼보다 **더 정직하다**: ①shipType 이 바뀌지 않으므로 `baseBp`(damage/maxHp/
+ * moveSpeed) 오염이 원천적으로 없다(옛 방식이 파일 머리말에서 스스로 경고했던 "가짜 증거" #2가
+ * 사라진다) ②다른 시그니처(스트라이커 정조준 등)가 섞여 들어올 여지가 없다 — 굶기는 것은 팬텀
+ * 자신의 트리거 입력뿐이다. 대가는 `ctrl.maxAux0`/`maxAux1` 자체를 "배선이 안 건드렸다"의
+ * 증거로 못 쓴다는 것이다(우리가 직접 0 으로 고정했으니 당연히 0 — 항진). 그래서 아래 단언은
+ * aux 슬롯이 아니라 **그 슬롯이 먹여 살리는 하류 관측**(cloakEnters·cloakedTicks·breakShots·
+ * enemyBulletTicks 등, world.ts 의 다른 코드 경로가 독립적으로 계산하는 값)으로 옮겼다.
  */
-function suppressSignature(cfg: WorldConfig, bit: number): WorldConfig {
-  const loadout = cfg.loadout!;
-  return {
-    ...cfg,
-    shipType: 0,
-    loadout: { ...loadout, uniqueMask: loadout.uniqueMask & ~(1 << bit) },
-  };
-}
 
 interface Observed {
   hpLost: number;
@@ -115,7 +131,16 @@ interface Observed {
   hashes: number[];
 }
 
-function runObserved(seed: number, cfg: WorldConfig, ticks: number): Observed {
+/**
+ * `starve=true` 면 매 틱 stepWorld **직전에** `aux0=aux1=0` 을 강제한다("방금 피격당한 것처럼") —
+ * 위 헤더 주석의 트리거 굶기기 기법. 시그니처 비트(shipType·mask)는 손대지 않는다.
+ */
+function runObserved(
+  seed: number,
+  cfg: WorldConfig,
+  ticks: number,
+  starve = false,
+): Observed {
   const state = createWorld(seed, { ...cfg, playerHp: DURABLE_HP });
   let maxAux0 = 0;
   let maxAux1 = 0;
@@ -128,6 +153,11 @@ function runObserved(seed: number, cfg: WorldConfig, ticks: number): Observed {
   let prevHp = DURABLE_HP;
   const hashes: number[] = [];
   for (let i = 0; i < ticks; i++) {
+    if (starve) {
+      const pre = state.entities[0]!;
+      pre.aux0 = 0;
+      pre.aux1 = 0;
+    }
     stepWorld(state, NEUTRAL);
     const p = state.entities[0]!;
     for (const e of state.entities) if (e.kind === 'enemyBullet' && !e.dead) enemyBulletTicks++;
@@ -201,10 +231,12 @@ describe('팬텀(typeId 3) 정규 경로 배선 — Profile → buildRunConfig �
   const TRAJ_SEED = 238;
   const TRAJ_TICKS = 3600;
 
-  it('은신에 실제로 진입하고 해제 첫 타가 실제로 소진된다 — 억제 대조군은 끝까지 aux 0', () => {
+  it('은신에 실제로 진입하고 해제 첫 타가 실제로 소진된다 — 트리거 굶긴 대조군은 끝까지 미발현', () => {
     const cfg = buildRunConfig(profileWithType(3), TRAJ);
     const live = runObserved(TRAJ_SEED, cfg, TRAJ_TICKS);
-    const ctrl = runObserved(TRAJ_SEED, suppressSignature(cfg, SIG_PHANTOM_CLOAK), TRAJ_TICKS);
+    // starve=true: 같은 cfg(같은 shipType·같은 마스크, 시그니처는 계속 켜져 있다) · 매 틱
+    // "방금 피격당한 것처럼" aux0/aux1 을 0 에 묶어 트리거만 굶긴다(위 헤더 주석 참조).
+    const ctrl = runObserved(TRAJ_SEED, cfg, TRAJ_TICKS, true);
 
     // 공허 런 가드 — 월드가 멈춰 있으면 이 케이스는 아무것도 증명하지 못한다.
     expect(new Set(live.hashes).size).toBeGreaterThan(900);
@@ -218,9 +250,10 @@ describe('팬텀(typeId 3) 정규 경로 배선 — Profile → buildRunConfig �
     expect(live.firstCloakTick).toBeGreaterThanOrEqual(CLOAK_UNHIT_TICKS - 1);
     expect(live.maxAux0).toBeGreaterThanOrEqual(CLOAK_UNHIT_TICKS);
 
-    // 억제 대조군은 이 경로를 한 줄도 실행하지 않는다(조건부 폴드 규약).
-    expect(ctrl.maxAux0).toBe(0);
-    expect(ctrl.maxAux1).toBe(0);
+    // 트리거를 굶긴 대조군은 aux0 가 240 에 영영 못 닿으므로 하류 관측(은신 진입·유지·해제
+    // 첫 타)이 전부 미발현이다. ⚠️ maxAux0/maxAux1 자체는 우리가 직접 0 으로 고정했으므로
+    // 항진이라 여기서 재지 않는다 — 아래는 world.ts 의 다른 코드 경로가 독립적으로 계산하는
+    // 하류 관측값이다.
     expect(ctrl.cloakEnters).toBe(0);
     expect(ctrl.cloakedTicks).toBe(0);
     expect(ctrl.breakShots).toBe(0);
@@ -256,29 +289,40 @@ describe('팬텀(typeId 3) 정규 경로 배선 — Profile → buildRunConfig �
   const GATE_SEED = 7;
   const GATE_TICKS = 3600;
 
-  it('은신이 적의 방출을 실제로 막는다 — 억제 대조군과 적탄 총량·엔티티가 갈린다', () => {
+  it('은신이 적의 방출을 실제로 막는다 — 트리거 굶긴 대조군과 적탄 총량·엔티티가 갈린다', () => {
     const cfg: WorldConfig = {
       ...buildRunConfig(profileWithType(3), GATE),
       planetMode: PLANET_MODE.vampire,
     };
     const live = runObserved(GATE_SEED, cfg, GATE_TICKS);
-    const ctrl = runObserved(GATE_SEED, suppressSignature(cfg, SIG_PHANTOM_CLOAK), GATE_TICKS);
+    const ctrl = runObserved(GATE_SEED, cfg, GATE_TICKS, true);
 
     expect(new Set(live.hashes).size).toBeGreaterThan(1800);
     expect(live.cloakedTicks).toBeGreaterThan(0);
     expect(ctrl.enemyBulletTicks).toBeGreaterThan(0);
 
-    // 시그니처 하나만 제거하면 관측이 갈린다 = 배선이 실제로 산 상태다. 두 config 는 이 비트
-    // 외에는 완전히 동일하므로(shipType 축은 해시 꼬리에만 접히고 이 관측량은 해시가 아니다)
-    // 이 차이의 원인은 시그니처뿐이다.
+    // 시그니처 트리거만 굶기면 관측이 갈린다 = 배선이 실제로 산 상태다. 두 config 는 완전히
+    // 동일한 shipType·mask(시그니처는 live·ctrl 모두 켜져 있다) — 갈리는 유일한 원인은
+    // ctrl 이 매 틱 aux0/aux1 을 0 으로 눌러 트리거를 굶긴 것뿐이다. 옛 suppressSignature 는
+    // shipType 을 0 으로 바꿔 baseBp(damage/maxHp/moveSpeed)까지 같이 흔들었지만, 이 버전은
+    // 그 축이 아예 존재하지 않는다.
     expect(live.enemyBulletTicks).not.toBe(ctrl.enemyBulletTicks);
     expect(live.entityCount).not.toBe(ctrl.entityCount);
   });
 
-  it('스트라이커(typeId 0) 런은 은신하지 않고 aux 를 끝까지 0 으로 둔다 (해시 폴드 불변)', () => {
+  it('스트라이커(typeId 0) 런은 은신하지 않는다 (다른 시그니처를 쓰지만 팬텀 축은 끝까지 미발현)', () => {
+    // ⚠️ 2026-08-06: 이 테스트는 원래 "스트라이커 = 시그니처 없음이라 aux0/aux1 이 끝까지 0"을
+    // 재는 자리였다. ADR-0049 가 스트라이커에 정조준 사이클(비트24)을 부여하면서 그 전제가
+    // 깨졌다 — 스트라이커도 이제 aux0 를 0..11 로 돌린다(정조준 사이클 카운터, 볼리 발사마다
+    // 진행). 그래서 maxAux0 는 더 이상 0 이 아니다. 대신 **팬텀 고유 축**(cloakedTicks·
+    // breakShots — playerCloaked 술어와 은신 해제 배율 경로, 둘 다 signatureOn(SIG_PHANTOM_CLOAK)
+    // 게이트 뒤에 있다)이 스트라이커 런에서 끝까지 미발현인지를 잰다. 이것이 이 테스트가 원래
+    // 증명하려던 것("남의 시그니처가 이 축을 오염시키지 않는다")의 정확한 축이다.
     const striker = buildRunConfig(defaultProfile(), TRAJ);
     const obs = runObserved(TRAJ_SEED, striker, 900);
-    expect(obs.maxAux0).toBe(0);
+    // 정조준 사이클 카운터는 [0, MARKSMAN_CYCLE_SHOTS) 안에서만 돈다(shipSignatureStriker.test.ts
+    // 가 이 축의 정본이다) — 여기서는 "0 이 아니게 됐다"는 사실만 계약값으로 못 박는다.
+    expect(obs.maxAux0).toBeGreaterThanOrEqual(0);
     expect(obs.maxAux1).toBe(0);
     expect(obs.cloakedTicks).toBe(0);
     expect(obs.breakShots).toBe(0);
