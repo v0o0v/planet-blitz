@@ -3769,6 +3769,21 @@ function stepProjectiles(state: WorldState, player: Entity): void {
     const dy = e.y - cullY;
     if (e.life === 0 || dx * dx + dy * dy > cullR2) {
       e.dead = true;
+      // 앵커 ⑥(S3-2) — **아군탄이 수명이 다해 소멸**하는 지점(`'life'`). 아크캐스터
+      // CH3「종말점 방전」이 요구한 자리다.
+      //
+      // ⚠️ **세 가지를 좁혀서 부른다.**
+      //  ① `e.life === 0` 일 때만 — 같은 `if` 안의 **컬링 반경 이탈은 사유가 다르다**(화면 밖
+      //     정리이지 "수명이 다했다"가 아니다). 둘을 합쳐 부르면 CH3 가 화면 밖에서도 터진다.
+      //     `life < 0` 은 무한 수명 표식이라 애초에 이 분기에 오지 않는다.
+      //  ② `e.kind === 'bullet'` 일 때만 — 이 루프는 **적탄(`enemyBullet`)도 함께** 돈다.
+      //     앵커 ⑥ 의 계약은 "아군탄" 이므로 적탄까지 부르면 관통 소진 호출부와 성격이 갈린다.
+      //  ③ **벽 차단 소멸(아래 스윕)은 여기가 아니다** — 사유가 셋째이고 CH3 의 술어가 아니다.
+      //     필요해지면 `'wall'` 을 사유에 추가하는 것이 맞지, 이 호출을 넓히는 것이 아니다.
+      //
+      // 좌표 유효성: `e.x`/`e.y` 는 **이번 틱 적분이 끝난 마지막 위치**이고 압축 전이라 아직
+      // 살아 있다 — CH3 가 재야 할 "종말점" 그 자체다(`dead` 표식은 좌표를 건드리지 않는다).
+      if (e.life === 0 && e.kind === 'bullet') onBulletExpired(state, e, 'life');
       continue;
     }
     // Both factions' bullets are stopped by walls (activeWalls direct sweep —
@@ -4173,9 +4188,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         b.pierce--;
       } else {
         b.dead = true;
-        // 앵커 ⑥(S0) — **관통 예산이 바닥나 소멸**하는 분기. 수명 만료·화면 밖 컬링이 아니다
-        // (자이로 무한 관통·프리즘 세그먼트는 위 분기라 여기 오지 않는다).
-        onBulletExpired(state, b);
+        // 앵커 ⑥(S0) — **관통 예산이 바닥나 소멸**하는 분기(`'pierce'`). 수명 만료는 여기가
+        // 아니라 `stepProjectiles` 의 `'life'` 호출부다(S3-2 가 뚫었다). 자이로 무한 관통·
+        // 프리즘 세그먼트는 위 분기라 여기 오지 않는다.
+        onBulletExpired(state, b, 'pierce');
       }
     }
   }
