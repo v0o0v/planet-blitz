@@ -161,9 +161,9 @@ import { cloakEntryCrossed, cloakExitCrossed, fireCloakEntry, setBreakToken } fr
 import { shipTypeDef, DEFAULT_SHIP_TYPE } from '../../data/ships/index.js';
 import { hasAnyInvestment } from '../items/skills.js';
 import { createSkillSlots } from './skillSlots.js';
-// 210스킬 앵커 20개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
-// (⑮ `onFilmBurst` 는 `filmBurst.ts` 가 부르므로 여기 없다 — 총 21개 중 20개가 이 파일 소유다.)
-import type { VolleyParams } from './skillHooks.js';
+// 210스킬 앵커 22개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
+// (⑮ `onFilmBurst` 는 `filmBurst.ts` 가 부르므로 여기 없다 — 총 23개 중 22개가 이 파일 소유다.)
+import type { VolleyParams, BroodParams } from './skillHooks.js';
 import {
   survivedLethalBlow,
   onVolleyFired,
@@ -186,6 +186,8 @@ import {
   onCushionThreshold,
   onCushionSettled,
   onCloakBreakReset,
+  onBroodLaunchParams,
+  onBroodLaunched,
 } from './skillHooks.js';
 import { onDamageChainCatalyst } from './catalystHooks.js';
 import { createCatalystSlots } from './catalystSlots.js';
@@ -2643,35 +2645,58 @@ const BROOD_DRONE_RADIUS = 44;
  * `spawnEventObject`·`activateTurret` 은 어느 RNG 스트림도 건드리지 않는다. 배치 좌표도
  * 살아 있는 드론 수로 고른 고정 4방향이라 난수가 없다 — 웨이브 구성·드랍 시퀀스가 해츨링
  * 런에서도 밀리지 않는다.
+ *
+ * ⚠️ **이 계약은 앵커 ㉒·㉓ 에도 그대로 걸린다.** 두 훅 중 하나라도 난수를 소비하면 해츨링
+ * 런의 웨이브·드랍 시퀀스가 통째로 밀린다(두 훅의 doc 이 같은 경고를 다시 적는다).
  */
 function stepHatchBrood(state: WorldState, player: Entity): void {
-  if (state.kills - player.aux0 < hatchThreshold(state.kills)) return;
+  // 앵커 ㉒ — **임계 체크보다 앞**이다(그 자리인 사유는 훅 doc 의 「왜 최상단인가」).
+  // 세 칸의 초기값이 현행 상수·리터럴과 정확히 같으므로 미투자 런의 거동·해시는 비트 동일이다.
+  const brood: BroodParams = {
+    threshold: hatchThreshold(state.kills),
+    maxDrones: BROOD_MAX_DRONES,
+    launchCount: 1,
+  };
+  onBroodLaunchParams(state, player, brood);
+  if (state.kills - player.aux0 < brood.threshold) return;
   // 임계를 넘긴 틱에만 스캔한다(수십 틱에 한 번) — 매 틱 전체 순회를 만들지 않기 위해서다.
+  // ⚠️ 그래서 **앵커 ㉒ 에는 `live` 를 실을 수 없다**(이 스캔보다 앞이다). 훅이 살아 있는
+  // 병아리 수를 알아야 하면 `skills/hatchling.ts` 의 `countChicks` 를 쓴다 — 그 술어는 아래
+  // 3중 술어와 글자 그대로 같게 유지하는 것이 계약이다(그 함수 주석이 근거).
   let live = 0;
   for (const e of state.entities) {
     if (!e.dead && e.ownerId === BROOD_MARK && isActiveTurret(e)) live++;
   }
   // 상한에 걸리면 **aux0 을 갱신하지 않고** 보류한다 — 자리가 나는 즉시 다음 틱에 출격하고,
   // 그동안 쌓인 처치가 소멸하지 않는다.
-  if (live >= BROOD_MAX_DRONES) return;
-  // 배치는 살아 있는 대수로 고른 고정 4방향(우·좌·하·상). 여러 기가 정확히 겹쳐 한 대처럼
-  // 보이는 것을 막는 목적이고, 난수·삼각함수를 쓰지 않아 결정론이 자명하다.
-  const slot = live % 4;
-  const ox = slot === 0 ? DRONE_SPAWN_OFFSET : slot === 1 ? -DRONE_SPAWN_OFFSET : 0;
-  const oy = slot === 2 ? DRONE_SPAWN_OFFSET : slot === 3 ? -DRONE_SPAWN_OFFSET : 0;
-  const chick = spawnEventObject(
-    state,
-    'turretPickup',
-    player.x + ox,
-    player.y + oy,
-    BROOD_DRONE_RADIUS,
-  );
-  chick.ownerId = BROOD_MARK; // 청크 기믹과 구분(isGimmick 제외 → 컬링 비대상) + 병아리 전용 상한
-  activateTurret(chick); // 즉시 활성 포탑(TURRET_LIFE_TICKS 동안 자동 사격)
-  // 사연 관측(비-해시): 병아리 드론이 실제로 출격한 이 지점에서만 센다(상한·보류로 미출격이면
-  // 여기 도달 안 함). 결정론 무영향 — hashWorld 가 접지 않는 순수 메타.
-  state.broodLaunches++;
+  if (live >= brood.maxDrones) return;
+  // `launchCount` 만큼 같은 틱에 출격시킨다(BD2 쌍둥이 부화). **상한이 항상 이긴다** — 자리가
+  // 1칸이면 1기만 나가고 나머지는 보류로 남는다(설계 BD2 의 "상한·보류 규율 유지"가 정본).
+  for (let n = 0; n < brood.launchCount && live < brood.maxDrones; n++) {
+    // 배치는 살아 있는 대수로 고른 고정 4방향(우·좌·하·상). 여러 기가 정확히 겹쳐 한 대처럼
+    // 보이는 것을 막는 목적이고, 난수·삼각함수를 쓰지 않아 결정론이 자명하다.
+    const slot = live % 4;
+    const ox = slot === 0 ? DRONE_SPAWN_OFFSET : slot === 1 ? -DRONE_SPAWN_OFFSET : 0;
+    const oy = slot === 2 ? DRONE_SPAWN_OFFSET : slot === 3 ? -DRONE_SPAWN_OFFSET : 0;
+    const chick = spawnEventObject(
+      state,
+      'turretPickup',
+      player.x + ox,
+      player.y + oy,
+      BROOD_DRONE_RADIUS,
+    );
+    chick.ownerId = BROOD_MARK; // 청크 기믹과 구분(isGimmick 제외 → 컬링 비대상) + 병아리 전용 상한
+    activateTurret(chick); // 즉시 활성 포탑(TURRET_LIFE_TICKS 동안 자동 사격)
+    // 사연 관측(비-해시): 병아리 드론이 실제로 출격한 이 지점에서만 센다(상한·보류로 미출격이면
+    // 여기 도달 안 함). 결정론 무영향 — hashWorld 가 접지 않는 순수 메타.
+    state.broodLaunches++;
+    // 앵커 ㉓ — 이 한 기가 **실제로 태어난 직후**. 출격 좌표(`chick.x`/`chick.y`)와 개체가
+    // 둘 다 살아 있는 유일한 지점이다. 기당 1회이므로 쌍둥이면 두 번 불린다.
+    onBroodLaunched(state, player, chick);
+    live++;
+  }
   // 출격 성공 시에만 스냅샷을 갱신한다 = 순수 함수 계약의 "카운터 0 리셋".
+  // (위 상한 조기 반환을 지났으므로 루프는 최소 1기를 출격시켰다 — 갱신은 무조건이다.)
   player.aux0 = state.kills;
 }
 
