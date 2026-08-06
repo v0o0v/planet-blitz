@@ -147,6 +147,7 @@ import {
   bubbleFilmBurst,
   bubbleVolleyParams,
   bubbleFilmAbsorbed,
+  bubbleFilmEntry,
 } from './skills/bubble.js';
 
 // ---------------------------------------------------------------------------
@@ -1577,21 +1578,21 @@ export function onVolleyParams(
  */
 export function onFilmEntry(state: WorldState, player: Entity, dmg: number): void {
   if (!state.skillsOn) return;
-  void player;
-  void dmg;
   switch (state.sigBit) {
     // ⚠️ **버블 전용 지점이다** — 호출부가 `signatureOn(state, SIG_BUBBLE_FILM)` 안이다.
     // 그래도 `switch` 를 두는 것은 나머지 앵커와 형태를 맞추기 위함이다.
-    //
-    // FI9「최후의 거품」의 자리가 **여기**다(S3-5 는 자리만 열었고 배선은 하지 않았다 —
-    // 반쪽 배선을 만들지 않으려면 비상막 내구 산식·`aux1` 소모가 한 번에 들어와야 한다).
-    // 배선 레인이 넣을 것은 설계서대로 이 셋이다:
-    //  ① 술어 `player.aux0 === 0 && player.hp - dmg <= 0`
-    //  ② `player.aux0 = floor(aux1 × FILM_ABSORB_FLAT / FILM_PERIOD_TICKS) × (60% + 3%p/Lv)`
-    //     — **비음 정수로 자른 뒤** 대입한다(위 ⚠️).
-    //  ③ 대가로 `player.aux1 = 0`(재생 진행분 전액 소모).
-    // ②가 0 으로 떨어지면 **아무것도 쓰지 마라** — `aux0 = 0` 대입은 무해하지만 `aux1` 만
-    // 태우면 대가만 치르고 효과가 없는 조용한 손해가 된다.
+    case SIG_BUBBLE_FILM:
+      // FI9「최후의 거품」의 자리가 **여기**다(S3-5 가 자리를 열었고, 이 레인이 배선했다).
+      // 설계서대로 셋이 한 번에 들어갔다 — 반쪽 배선이 되지 않게:
+      //  ① 술어 `player.aux0 === 0 && player.hp - dmg <= 0`
+      //  ② `player.aux0 = floor(aux1 × FILM_ABSORB_FLAT / FILM_PERIOD_TICKS) × (60% + 3%p/Lv)`
+      //     — **비음 정수로 자른 뒤** 대입한다(위 ⚠️). 0 이하면 아무것도 쓰지 않는다:
+      //     `aux0 = 0` 대입은 무해하지만 `aux1` 만 태우면 대가만 치르고 효과가 없다.
+      //  ③ 대가로 `player.aux1 = 0`(재생 진행분 전액 소모).
+      // ⚠️ 만재 상한(`FILM_ABSORB_FLAT`)은 설계 산식에 없지만 엔진 불변식이라 `bubbleFilmEntry`
+      //    가 건다 — 어긋남의 근거는 그 함수 doc 이 정본이다(문서는 고치지 않았다).
+      bubbleFilmEntry(state, player, dmg);
+      break;
     default:
       break;
   }
