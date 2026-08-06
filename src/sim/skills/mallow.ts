@@ -14,7 +14,8 @@
  * 없다:
  *
  *  - **정산 분기**(`world.ts` 의 `stepShipSignature` 말로우 가지, `aux1 >= CUSHION_RECOVER_TICKS`
- *    안쪽) — 여기를 요구하는 스킬이 **9종**이다(SQ2·SQ5·SQ8·ME4·ME5·ME8·ME9·CU3·CU9·CU10).
+ *    안쪽) — 여기를 요구하는 스킬이 **10종**이다: 정산 틱을 트리거로 삼는 9종
+ *    (SQ2·SQ5·SQ8·ME4·ME5·ME8·CU3·CU9·CU10) + 정산 **임계 자체**를 낮추는 ME9.
  *    앵커 ⑨({@link onSignatureStep})는 `stepShipSignature` **진입점**이라 이 분기보다 **앞**이다.
  *  - **지연 전환 분기**(`world.ts` 의 `cushionOn` 게이트, `cushionDeferredDamage` 분리부) —
  *    **5종**(CU1·CU2·CU5·CU6 + CU7 의 설계상 자리). 앵커 ⑧({@link onDamageChain})은 이 분기보다
