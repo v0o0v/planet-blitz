@@ -13,6 +13,13 @@
  *   2. 위협적인 최근접 적탄이 있으면 그 탄선에서 수직으로 회피한다.
  *   3. 그 외에는 최근접 적/보스 주위를 카이팅한다(너무 가까우면 물러나고 멀면 접근).
  * 조준은 항상 최근접 적/보스를 향한다.
+ *
+ * ## 이 파일은 **조향**만 소유한다 — 발동 정책은 파일럿마다 다르다 (ADR-0049 §0-A 결정 B)
+ * {@link pilotSteer} 가 이동·조준을 정하고, 각 파일럿이 거기에 자기 발동 정책(대시·액티브)을
+ * 얹어 프레임을 완성한다. 파일럿은 둘이다:
+ *   - {@link autopilotInput} — 전 분기 `dash: false` · `special: SPECIAL_NONE`. **동결**이다.
+ *   - `measurePilot.ts` 의 `measurePilotInput` — 측정 전용. 쿨다운이 차면 누른다.
+ * 조향을 복제하지 마라. 두 규칙이 조용히 어긋난다(`resolveDirFallback` 단일 정본과 같은 규율).
  */
 
 import type { InputFrame, WorldState } from './world.js';
@@ -71,17 +78,61 @@ const STATION_COMFORT_SLACK = 880;
 const LOOT_SEEK_RADIUS = 900;
 
 /**
+ * 두 파일럿이 공유하는 **조향 결정**(이동 + 조준). 발동 정책(대시·액티브)은 여기 없다 —
+ * 그것이 오토파일럿과 측정 전용 파일럿(`measurePilot.ts`)을 가르는 **유일한** 축이기 때문이다.
+ *
+ * ## 왜 나눠 놓는가 (ADR-0049 §0-A 결정 B)
+ * 측정 파일럿을 만들면서 조향을 복제하면 두 규칙이 조용히 어긋난다 — `resolveDirFallback` 을
+ * 단일 정본으로 못박은 것과 같은 이유다. 그래서 **조향은 여기 하나**이고, 각 파일럿은
+ * 이 결과에 자기 발동 정책만 얹는다.
+ *
+ * `freeze` 가 참이면 레벨업 프리즈 틱이다 — 호출부는 {@link pilotFreezeFrame} 을 그대로
+ * 돌려줘야 하고 **발동 비트를 실으면 안 된다**(`data/inputBits.ts` 「프리즈 규율」: 프리즈
+ * 중 z/x 는 큐잉되지 않고 구조적으로 버려진다).
+ */
+export interface PilotSteer {
+  readonly moveX: number;
+  readonly moveY: number;
+  readonly aim: number;
+  /** 레벨업 프리즈 틱인가(참이면 `moveX`/`moveY`/`aim` 은 전부 0 이고 의미가 없다). */
+  readonly freeze: boolean;
+}
+
+/**
+ * 레벨업 프리즈 프레임 — 오퍼 0번을 선택해 런을 진행시킨다(선택하지 않으면 영원히 멈춘다).
+ *
+ * **두 파일럿이 이 함수 하나만 쓴다.** 프리즈 프레임을 따로 적으면 한쪽이 발동 비트를 싣거나
+ * 오퍼 인덱스를 달리 골라도 아무 데서도 안 걸린다.
+ */
+export function pilotFreezeFrame(): InputFrame {
+  return { moveX: 0, moveY: 0, aim: 0, dash: false, special: packPowerupPick(0) };
+}
+
+/**
  * 이번 틱의 입력 프레임을 생성한다. `world` 상태만의 순수 함수 — 부작용 없음.
+ *
+ * ⚠️ **이 함수의 출력은 동결이다**(ADR-0049 §0-A 결정 B). 벤치·회귀 골든 전부가 그 위에 산다.
+ * `tests/pilotFrameFreeze.test.ts` 가 프레임 열을 비트 단위로 접어 잠근다.
  */
 export function autopilotInput(world: WorldState): InputFrame {
-  // 레벨업 프리즈: 오퍼 0번을 선택해 런을 진행시킨다(선택하지 않으면 영원히 멈춘다).
+  const s = pilotSteer(world);
+  if (s.freeze) return pilotFreezeFrame();
+  // 오토파일럿은 대시도 액티브도 누르지 않는다 — 그것이 동결의 내용이다.
+  return { moveX: s.moveX, moveY: s.moveY, aim: s.aim, dash: false, special: SPECIAL_NONE };
+}
+
+/**
+ * 조향 정본. 분기 순서·수치는 구 `autopilotInput` 본문 그대로다(리팩터 시점 거동 불변).
+ */
+export function pilotSteer(world: WorldState): PilotSteer {
+  // 레벨업 프리즈: 호출부가 파워업 픽 프레임을 낸다.
   if (world.pendingLevelUp) {
-    return { moveX: 0, moveY: 0, aim: 0, dash: false, special: packPowerupPick(0) };
+    return { moveX: 0, moveY: 0, aim: 0, freeze: true };
   }
 
   const player = world.entities[0];
   if (player === undefined) {
-    return { moveX: 0, moveY: 0, aim: 0, dash: false, special: SPECIAL_NONE };
+    return { moveX: 0, moveY: 0, aim: 0, freeze: false };
   }
 
   const target = nearestTarget(world, player);
@@ -92,14 +143,14 @@ export function autopilotInput(world: WorldState): InputFrame {
   const forward = scrollForward(world);
   const slack = forward !== undefined ? rearSlack(world, player) : Infinity;
   if (forward !== undefined && slack <= STATION_CRITICAL_SLACK) {
-    return { moveX: forward.x, moveY: forward.y, aim, dash: false, special: SPECIAL_NONE };
+    return { moveX: forward.x, moveY: forward.y, aim, freeze: false };
   }
 
   // ① 위협 회피 우선: 접근 중인 최근접 적탄의 탄선에서 수직으로 비킨다.
   const dodge = dodgeVector(world, player);
   if (dodge !== undefined) {
     const v = clampBackward(dodge, forward, slack);
-    return { moveX: v.x, moveY: v.y, aim, dash: false, special: SPECIAL_NONE };
+    return { moveX: v.x, moveY: v.y, aim, freeze: false };
   }
 
   // ② 목표물 우선: 무대 진행이 걸린 파괴 대상이 남아 있으면 **가장 가까운 것으로 곧장 붙는다**
@@ -119,9 +170,9 @@ export function autopilotInput(world: WorldState): InputFrame {
     const d = length(dx, dy);
     const devAim = atan2(dy, dx);
     if (d > 0.0001) {
-      return { moveX: dx / d, moveY: dy / d, aim: devAim, dash: false, special: SPECIAL_NONE };
+      return { moveX: dx / d, moveY: dy / d, aim: devAim, freeze: false };
     }
-    return { moveX: 0, moveY: 0, aim: devAim, dash: false, special: SPECIAL_NONE };
+    return { moveX: 0, moveY: 0, aim: devAim, freeze: false };
   }
 
   // ③ 전리품 수거: 위협이 없고(①을 지났다) 무대 목표도 없을 때(②), 가까운 바닥 전리품을
@@ -140,7 +191,7 @@ export function autopilotInput(world: WorldState): InputFrame {
     const d = length(dx, dy);
     if (d > 0.0001) {
       const v = clampBackward({ x: dx / d, y: dy / d }, forward, slack);
-      return { moveX: v.x, moveY: v.y, aim, dash: false, special: SPECIAL_NONE };
+      return { moveX: v.x, moveY: v.y, aim, freeze: false };
     }
   }
 
@@ -155,11 +206,11 @@ export function autopilotInput(world: WorldState): InputFrame {
       if (d < KITE_DISTANCE * KITE_BACKOFF) {
         // 너무 가까움 → 물러난다. 강제 스크롤 무대에서는 뒤 경계 쪽 성분만 잘라낸다.
         const v = clampBackward({ x: -nx, y: -ny }, forward, slack);
-        return { moveX: v.x, moveY: v.y, aim, dash: false, special: SPECIAL_NONE };
+        return { moveX: v.x, moveY: v.y, aim, freeze: false };
       }
       if (d > KITE_DISTANCE) {
         // 멀다 → 접근한다(젬 수거 + 사격 사거리 확보).
-        return { moveX: nx, moveY: ny, aim, dash: false, special: SPECIAL_NONE };
+        return { moveX: nx, moveY: ny, aim, freeze: false };
       }
     }
   }
@@ -169,9 +220,9 @@ export function autopilotInput(world: WorldState): InputFrame {
   // ⚠️ 강제 스크롤 무대에서는 **정지가 곧 후퇴다** — 창이 매 틱 전진하므로 가만히 서 있으면
   // 창 기준 속도만큼 뒤로 밀린다. 그래서 그 무대에서만 기본 행동을 전진으로 바꾼다.
   if (forward !== undefined) {
-    return { moveX: forward.x, moveY: forward.y, aim, dash: false, special: SPECIAL_NONE };
+    return { moveX: forward.x, moveY: forward.y, aim, freeze: false };
   }
-  return { moveX: 0, moveY: 0, aim, dash: false, special: SPECIAL_NONE };
+  return { moveX: 0, moveY: 0, aim, freeze: false };
 }
 
 /**
