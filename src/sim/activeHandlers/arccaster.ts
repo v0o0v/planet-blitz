@@ -27,12 +27,9 @@ import type { Entity } from '../entities.js';
 import { blink, fanStrike, powerCentiOf, scaleCenti, setBuffTicks } from '../activeTypes.js';
 import type { ActiveExpireTable, ActiveHandlerTable, ActiveSustainTable } from '../activeTypes.js';
 
-/**
- * 과충전 정지 카운터 상한. `world.ts` 의 `OVERCHARGE_TICK_CAP`(=600, 파일 지역 상수라
- * export 되지 않는다)과 **같은 값**이어야 한다 — 넘겨 쓰면 시그니처 카운터가 상한 밖으로
- * 새고, `aux` 는 u32 로 해시된다(`replay.ts` hashEntity).
- */
-const OVERCHARGE_TICK_CAP = 600;
+// 과충전 정지 카운터 상한은 `constants.ts` 의 `OVERCHARGE_TICK_CAP` 이 정본이다 — 종전에는
+// 이 파일이 `world.ts` 의 비공개 상수와 같은 600 을 따로 들고 있었고, S2 에서 leaf 로 합쳤다.
+import { OVERCHARGE_TICK_CAP } from '../constants.js';
 
 /**
  * 증폭 상한에 정확히 닿는 정지 틱(= 90 + 100 = 190). 리터럴 190 을 박지 않고 상수에서

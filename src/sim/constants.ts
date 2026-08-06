@@ -75,3 +75,18 @@ export const FIRE_CD_MIN_Q = 2 * FIRE_CD_Q;
  * ⚠️ 값을 바꾸면 콤보 유지 시간이 바뀌어 **골든 해시가 전량 갈린다**(XP 배율이 콤보에 걸린다).
  */
 export const COMBO_WINDOW_TICKS = 120;
+
+/**
+ * 아크캐스터 과충전 **정지 카운터 상한**(`Entity.aux0`). 증폭 bp 는 190틱에서 이미 상한이라
+ * 거동에는 영향이 없고, `aux0` 을 정수 유계로 묶어 두는 것이 이 상수의 일이다
+ * (`aux` 는 u32 로 해시된다 — `replay.ts` `hashEntity`).
+ *
+ * ## 왜 leaf 로 옮겼는가 (S2)
+ * `world.ts` 의 **비공개 상수**였던 탓에 소비처 셋(`world.ts` 의 적립 · `activeHandlers/
+ * arccaster.ts` 의 액티브 6종 · `skills/arccaster.ts` 의 BR7·BR10)이 **같은 600 을 각자 선언**
+ * 하고 있었다. 셋 중 하나만 고치면 시그니처 카운터가 상한 밖으로 새거나 주입이 조용히 잘린다.
+ * `COMBO_WINDOW_TICKS` 가 S1 에서 같은 사유로 여기 온 선례를 따른다.
+ *
+ * ⚠️ **값 복제 금지.** 필요하면 여기서 import 해라.
+ */
+export const OVERCHARGE_TICK_CAP = 600;
