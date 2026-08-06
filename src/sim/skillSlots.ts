@@ -97,15 +97,17 @@ export function writeSlot(slots: number[], slot: number, value: number): void {
 // S0 시점에는 **전 기체 미배정**이다 — 그래서 전 슬롯이 런 끝까지 0 이고 `hashWorld` 의
 // 스킬 슬롯 폴드가 한 번도 실행되지 않는다(기존 골든 바이트 불변).
 //
-//   스트라이커 (SIG_STRIKER_MARKSMAN) — 아래 두 enum
-//   브루저     (SIG_BRUISER_ARMOR)    — 미배정
-//   아크캐스터 (SIG_ARC_OVERCHARGE)   — 파일 끝 두 enum
-//   브루저     (SIG_BRUISER_ARMOR)    — 아래 두 enum
-//   아크캐스터 (SIG_ARC_OVERCHARGE)   — 미배정
+//   스트라이커 (SIG_STRIKER_MARKSMAN) — StrikerCarry / StrikerStage
+//   아크캐스터 (SIG_ARC_OVERCHARGE)   — ArccasterCarry / ArccasterStage
+//   브루저     (SIG_BRUISER_ARMOR)    — BruiserCarry / BruiserStage
+//   해츨링     (SIG_HATCHLING_BROOD)  — HatchlingCarry / HatchlingStage
 //   팬텀       (SIG_PHANTOM_CLOAK)    — 미배정
-//   해츨링     (SIG_HATCHLING_BROOD)  — 파일 끝 두 enum
 //   말로우     (SIG_MALLOW_CUSHION)   — 미배정
 //   버블       (SIG_BUBBLE_FILM)      — 미배정
+//
+// ⚠️ 이 색인은 **병렬 배선 머지에서 중복되기 쉽다** — 레인마다 자기 줄을 고치는데 git 이
+// 양쪽을 다 살리기 때문이다(실제로 브루저·아크캐스터가 2줄씩 중복된 채 들어왔다).
+// 머지 후 이 목록의 기체 수가 **정확히 7** 인지 눈으로 확인하라.
 
 /**
  * **스트라이커 이월 슬롯**(ADR-0049 배치 1). 효과 본체는 `src/sim/skills/striker.ts`.
