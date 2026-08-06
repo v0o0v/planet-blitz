@@ -877,3 +877,111 @@ describe('⑨ FI8 발수 코팅 (앵커 ⑰) — 되살아난 앵커', () => {
     expect(burnedBy([[FI8, 20]])).toBeLessThan(base);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PO1 파열 탄두 사망 마킹 — 좀비 결함
+// ---------------------------------------------------------------------------
+
+/**
+ * `compact()`(`world.ts`)는 **`e.dead === true` 만 수거**한다 — `hp <= 0` 단독으로는 안 걷는다.
+ * PO1 은 `e.hp -=` 만 했으므로 파열 폭발로만 hp≤0 이 된 적이 **좀비**로 남았다: 계속 움직이고
+ * 공격하며 `state.kills`·젬·전리품이 전부 사라진다. 정본 형태는 `status.ts` 111-112 의 두 줄이다.
+ *
+ * ⚠️ **계측기 함정** — 파열 중심을 플레이어 근처에 두면 자동사격 탄(≈30px/tick)이 같은 틱에
+ * 마무리해 수정 전에도 통과한다. 그래서 파열 중심을 플레이어에서 2000px 떼어 사망 경로를
+ * PO1 하나로 좁힌다. **PO1 만 투자**하는 것도 같은 이유다(PO3 산탄·PO7 연쇄 배제).
+ *
+ * ⚠️ **보스는 대상이 아니다** — PO1 은 `kind !== 'enemy'` 를 걸러낸다(설계서 PO1 본체와 ④ 침공
+ * 판정표가 enemy 한정을 명시). `blastDamageAt`(enemy+boss)과 대상 집합이 다른 것이 그 이유다.
+ */
+describe('PO1 사망 마킹 (좀비 결함)', () => {
+  /** 자동사격 탄이 1틱에 못 닿는 거리 — 사망 경로를 PO1 하나로 좁히는 장치. */
+  const AWAY = 2000;
+
+  it('전제 — 파열 반경 안의 적이 실제로 맞고 hp 가 줄어든다 (하한)', () => {
+    const w = mk([[PO1, 10]]);
+    const p = player(w);
+    const cx = p.x + AWAY;
+    const cy = p.y + AWAY;
+    const e = addEnemy(w, cx + 10, cy, 500);
+    expect(Math.hypot(e.x - cx, e.y - cy)).toBeLessThanOrEqual(FILM_BURST_RADIUS);
+    onFilmBurst(w, cx, cy);
+    expect(e.hp).toBe(500 - (18 + 4 * 10));
+    expect(e.hp).toBeGreaterThan(0); // 이 케이스는 죽이지 않는다
+  });
+
+  it('재현 — PO1 만으로 hp≤0 이 되면 그 자리에서 dead 로 마킹된다', () => {
+    const w = mk([[PO1, 10]]);
+    const p = player(w);
+    const cx = p.x + AWAY;
+    const cy = p.y + AWAY;
+    const e = addEnemy(w, cx + 10, cy, 10);
+    expect(e.dead).toBe(false);
+    onFilmBurst(w, cx, cy);
+    expect(e.hp).toBeLessThanOrEqual(0); // 실제로 죽을 만큼 맞았다 (하한)
+    expect(e.dead).toBe(true);
+  });
+
+  it('재현 — 다음 stepWorld 에서 수거되고 처치·젬으로 집계된다 (좀비로 안 남는다)', () => {
+    const w = mk([[PO1, 10]]);
+    const p = player(w);
+    const cx = p.x + AWAY;
+    const cy = p.y + AWAY;
+    const e = addEnemy(w, cx + 10, cy, 10);
+    const id = e.id;
+    const gx = e.x;
+    const gy = e.y;
+    const killsBefore = w.kills;
+    onFilmBurst(w, cx, cy);
+    expect(e.hp).toBeLessThanOrEqual(0);
+    stepWorld(w, emptyInput());
+    // 엔티티 동일성으로 본다 — 같은 틱에 다른 적이 죽어도 이 단언은 안 흔들린다.
+    expect(w.entities.some((x) => x.id === id)).toBe(false);
+    expect(w.kills).toBeGreaterThanOrEqual(killsBefore + 1);
+    const gems = w.entities.filter(
+      (x) => x.kind === 'gem' && Math.hypot(x.x - gx, x.y - gy) <= 200,
+    );
+    expect(gems.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('회귀 — 안 죽인 적은 종전 그대로 살아 있다', () => {
+    const w = mk([[PO1, 10]]);
+    const p = player(w);
+    const cx = p.x + AWAY;
+    const cy = p.y + AWAY;
+    const e = addEnemy(w, cx + 10, cy, 500);
+    const killsBefore = w.kills;
+    onFilmBurst(w, cx, cy);
+    expect(e.hp).toBe(500 - 58); // 실제로 맞았다 (하한)
+    expect(e.dead).toBe(false);
+    stepWorld(w, emptyInput());
+    expect(w.entities.some((x) => x.id === e.id)).toBe(true);
+    expect(w.kills).toBe(killsBefore);
+  });
+
+  it('회귀 — 반경 밖 적과 보스는 hp 도 안 줄고 dead 도 안 선다', () => {
+    const w = mk([[PO1, 10]]);
+    const p = player(w);
+    const cx = p.x + AWAY;
+    const cy = p.y + AWAY;
+    const far = addEnemy(w, cx + FILM_BURST_RADIUS + 50, cy, 10);
+    const boss: Entity = { ...blankEntity('boss'), x: cx, y: cy, hp: 10, maxHp: 10 };
+    w.entities.push(boss);
+    onFilmBurst(w, cx, cy);
+    expect(far.hp).toBe(10);
+    expect(far.dead).toBe(false);
+    expect(boss.hp).toBe(10); // 보스 제외 — `blastDamage` 를 재사용하지 않은 이유
+    expect(boss.dead).toBe(false);
+  });
+
+  it('음성 대조 — PO1 미투자면 hp 도 안 줄고 dead 도 안 선다', () => {
+    const w = mk([]);
+    const p = player(w);
+    const cx = p.x + AWAY;
+    const cy = p.y + AWAY;
+    const e = addEnemy(w, cx + 10, cy, 10);
+    onFilmBurst(w, cx, cy);
+    expect(e.hp).toBe(10);
+    expect(e.dead).toBe(false);
+  });
+});

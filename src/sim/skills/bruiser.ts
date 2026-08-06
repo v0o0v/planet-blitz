@@ -372,6 +372,10 @@ export function bruiserSignatureStep(state: WorldState, player: Entity): void {
       const d2 = dx * dx + dy * dy;
       if (d2 > r2) continue;
       e.hp -= dealt;
+      // ⚠️ `compact` 는 **`dead === true` 만 수거**한다 — `hp <= 0` 단독으로는 안 걷는다.
+      //    여기서 안 세우면 압쇄장으로만 죽은 적이 좀비로 남아 처치·젬·전리품이 전부 사라진다.
+      //    `status.ts` 의 `applyChain`·`tickEnemyStatus` 와 같은 형태다(집계는 `compact` 몫).
+      if (e.hp <= 0) e.dead = true;
       // 넉백 규율(7.1) — 속도 대입이 아니라 **좌표 직접 변위**다. 적 속도는 이동 컴포넌트가
       // 매 틱 덮어쓰므로 속도에 실으면 화면에는 아무 일도 안 일어나고 해시만 갈린다.
       if (d2 > 0) {
