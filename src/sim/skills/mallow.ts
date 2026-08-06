@@ -275,9 +275,17 @@ export function mallowPlayerDamaged(state: WorldState, player: Entity, dmg: numb
           best = e;
         }
       }
-      // `hp` 만 깎고 `dead` 는 건드리지 않는다 — 격추 판정은 `compact()` 가 단일 수렴점이다
-      // (`blastDamage` 와 정확히 같은 형태. 여기서 `dead` 를 세우면 킬 집계가 두 벌이 된다).
-      if (best !== undefined) best.hp -= back;
+      // `hp<=0` 이면 그 자리에서 `dead` 를 세운다 — `compact()`(`world.ts`)는 **`dead === true`
+      // 만 수거**하므로 안 세우면 hp≤0 인 적이 **좀비**로 남아 처치·젬·드랍이 전부 유실된다.
+      // 형태는 `status.ts` 의 `applyChain`·`tickEnemyStatus`(그리고 이제 `blastDamageAt`)와
+      // 같은 두 줄이다 — 플래그만 세우고 **집계는 `compact()` 단일 수렴점**에 맡긴다. `dead` 는
+      // 수거 대상 표시일 뿐 킬을 세는 행위가 아니라서 킬이 두 벌이 되지 않는다(집계 술어는
+      // `compact` 안의 `e.kind === 'enemy' && e.hp <= 0` 에서 `state.kills++` 단 한 곳이고,
+      // 수거된 적은 `survivors` 에 안 실려 다음 틱에 다시 보이지 않는다).
+      if (best !== undefined) {
+        best.hp -= back;
+        if (best.hp <= 0) best.dead = true;
+      }
     }
   }
   // --- CU4 반발 세척 — 부채 보유 중에만 발동, 반경도 부채 파생 -----------------
@@ -522,8 +530,8 @@ export function mallowCushionSettled(
   const sq2 = lv(state, Sk.settlementBlast);
   if (sq2 >= 1 && hit > 0) {
     const dmg = Math.round((hit * (80 + 6 * sq2)) / 100);
-    // `blastDamage` 는 `hp` 만 깎고 `dead` 는 건드리지 않는다 — 격추 집계는 `compact()` 단일
-    // 수렴점이다(SQ3 와 같은 규율).
+    // `blastDamage` 는 hp≤0 이 된 적을 `dead` 로 마킹하고(선결 과제 ⑨ 이후), 격추 **집계**는
+    // 여전히 `compact()` 단일 수렴점이다 — 마킹은 수거 대상 표시일 뿐이다(SQ3 와 같은 규율).
     if (dmg > 0) blastDamage(state, player, 180 + 10 * sq2, dmg);
   }
   // --- SQ5 탕감 장전 — 사라진 몫이 탄약이 된다 ---------------------------------
