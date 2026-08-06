@@ -31,7 +31,7 @@ import {
   type WorldState,
 } from '../src/sim/world.js';
 import type { Entity } from '../src/sim/entities.js';
-import { blankEntity } from '../src/sim/entities.js';
+import { blankEntity, spawnWall } from '../src/sim/entities.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { neutralLoadout } from '../src/items/loadout.js';
 import {
@@ -54,6 +54,7 @@ import {
   cushionRecovered,
 } from '../src/sim/shipSignature.js';
 import { readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
+import { DamageSource } from '../src/sim/skillSlots.js';
 
 /** `data/ships/index.ts` 의 타입 id — `data/ships/mallow.ts` 의 `id: 5` 가 정본이다. */
 const SHIP_MALLOW = 5;
@@ -68,10 +69,12 @@ const SQ2 = 1;
 const SQ3 = 2;
 const SQ4 = 3;
 const SQ5 = 4;
+const SQ7 = 6;
 const SQ8 = 7;
 const ME1 = 10;
 const ME4 = 13;
 const ME5 = 14;
+const ME9 = 18;
 const ME10 = 19;
 const CU3 = 22;
 const CU4 = 23;
@@ -123,8 +126,11 @@ function addEnemyBullet(state: WorldState, x: number, y: number): Entity {
   return e;
 }
 
-/** 앵커 ⑯ 이 넘기는 레코드 한 벌. 말로우 세 스킬은 `damage` 만 만진다. */
-function volley(damage = 100): VolleyParams {
+/**
+ * 앵커 ⑯ 이 넘기는 레코드 한 벌. SQ1·SQ5·SQ8 은 `damage` 만 만지고, **SQ7 은 `speed` 도**
+ * 만진다. 입력 벡터·발사각은 인자로 열어 둔다 — SQ7 의 술어가 그 둘의 내적이다.
+ */
+function volley(damage = 100, inputX = 0, inputY = 0, aimAngle = 0): VolleyParams {
   return {
     damage,
     pierce: 1,
@@ -137,10 +143,14 @@ function volley(damage = 100): VolleyParams {
     countUsed: true,
     ballisticsUsed: true,
     targetDist: 200,
-    // 발사 방위(rad). SQ7(관성 사출)이 언젠가 읽을 항이지만 아직 미배선 — 기본 0(순수 +x).
-    aimAngle: 0,
+    // 발사 방위(rad) · 그 틱 이동 입력 벡터. **SQ7(관성 사출)이 이 셋의 내적을 읽는다.**
+    aimAngle,
+    inputX,
+    inputY,
     cloakBreak: false,
     mark: 0,
+    leadDamageBonus: 0,
+    leadPierceBonus: 0,
     recordSpawnDamage: false,
   };
 }
@@ -216,7 +226,7 @@ describe('① 투자 0 런 불변', () => {
     p.aux1 = 90;
     onGemCollected(w, { ...blankEntity('gem'), x: p.x, y: p.y });
     onDamageChain(w, p, 100);
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     onPowerupPicked(w, 0, 0);
     for (let s = 0; s < SKILL_SLOT_COUNT; s++) {
       expect(readSlot(w.skillCarry, s)).toBe(0);
@@ -234,7 +244,7 @@ describe('① 투자 0 런 불변', () => {
     const shot = addEnemyBullet(w, p.x + 20, p.y);
     const xpBefore = w.xp;
     expect(onDamageChain(w, p, 100)).toBe(100); // CU7 미투자 → 감액 0
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     expect(foe.hp).toBe(100); // SQ3 미투자 → 반격 없음
     expect(shot.dead).toBe(false); // CU4 미투자 → 소거 없음
     onPowerupPicked(w, 0, 0);
@@ -285,7 +295,7 @@ describe('③ 앵커 ④ 피격 후속', () => {
     const p = player(w);
     const near = addEnemy(w, p.x + 60, p.y, 100);
     const far = addEnemy(w, p.x + 200, p.y, 100);
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     // 반환 배율 = 60 + 8×20 = 220% → round(10 × 220/100) = 22.
     expect(near.hp).toBe(78);
     expect(far.hp).toBe(100); // "최근접 1기" — 반경 안이어도 두 번째는 안 맞는다
@@ -296,7 +306,7 @@ describe('③ 앵커 ④ 피격 후속', () => {
     const w = mk([[SQ3, 20]]);
     const p = player(w);
     const away = addEnemy(w, p.x + 400, p.y, 100);
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     expect(away.hp).toBe(100);
   });
 
@@ -305,7 +315,7 @@ describe('③ 앵커 ④ 피격 후속', () => {
     const p = player(w);
     const boss: Entity = { ...blankEntity('boss'), x: p.x + 50, y: p.y, hp: 500, maxHp: 500 };
     w.entities.push(boss);
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     expect(boss.hp).toBe(500);
   });
 
@@ -314,7 +324,7 @@ describe('③ 앵커 ④ 피격 후속', () => {
     const p = player(w);
     p.aux0 = 0;
     const shot = addEnemyBullet(w, p.x + 10, p.y);
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     expect(shot.dead).toBe(false);
   });
 
@@ -325,7 +335,7 @@ describe('③ 앵커 ④ 피격 후속', () => {
     ps.aux0 = 5;
     const inside = addEnemyBullet(small, ps.x + 80, ps.y);
     const outside = addEnemyBullet(small, ps.x + 120, ps.y);
-    onPlayerDamaged(small, ps, 10, false);
+    onPlayerDamaged(small, ps, 10, false, DamageSource.bullet);
     expect(inside.dead).toBe(true);
     expect(outside.dead).toBe(false);
 
@@ -334,7 +344,7 @@ describe('③ 앵커 ④ 피격 후속', () => {
     const pb = player(big);
     pb.aux0 = 30;
     const reached = addEnemyBullet(big, pb.x + 120, pb.y);
-    onPlayerDamaged(big, pb, 10, false);
+    onPlayerDamaged(big, pb, 10, false, DamageSource.bullet);
     expect(reached.dead).toBe(true);
   });
 });
@@ -726,22 +736,94 @@ describe('⑨ 엔진 경로', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ⑩ 앵커 ⑲ — ME9 가 **왜 아직 없는지**를 잠근다
+// ⑩ 앵커 ⑲ — ME9 솜틀 요양 (임계 인하) · CU7 분모 연동
 // ---------------------------------------------------------------------------
 
-describe('⑩ 앵커 ⑲ 와 ME9 의 선결', () => {
-  it('말로우 런의 ⑲ 는 기본 임계를 그대로 돌려준다 (case 없음 = 비트 동일)', () => {
+describe('⑩ 앵커 ⑲ ME9 솜틀 요양', () => {
+  // ⚠️ 이 절은 종전에 **"ME9 는 ⑲ 만으로 안 돈다"를 잠그는** 절이었다. 사유는 지우지 않는다:
+  //    `cushionSettled`·`cushionRecovered` 가 **자기 안에서** `unhitTicks < CUSHION_RECOVER_TICKS`
+  //    를 다시 검사해 0 을 돌려줬기 때문에, 임계를 낮춰 분기에 진입시켜도 정산액이 0 이 되어
+  //    **조용히 아무 일도 안 일어났다.** 순수 함수 개정 레인이 임계를 **필수 인자**로 만들면서
+  //    그 사유가 해소됐고, 아래가 "실제로 돈다" 를 잰다.
+
+  it('⚠️ 되살아남 증명 — 순수 함수가 임계 인자를 실제로 따른다 (종전에는 삼켰다)', () => {
+    // ME9 Lv20 의 실효 임계 129. 종전에는 이 두 줄이 0 이었다 — 그것이 미배선의 근거였다.
+    expect(cushionSettled(100, 129, 129)).toBeGreaterThan(0);
+    expect(cushionRecovered(100, 129, 129)).toBeGreaterThan(0);
+    // 긍정 짝의 **하한**: 정산이 실제로 일어났음을 절대값으로 못 박는다(항진 방지).
+    expect(cushionRecovered(100, 129, 129)).toBe(60);
+    expect(cushionSettled(100, 129, 129)).toBe(40);
+    // 음성 짝 — 기본 임계를 넘기면 129틱은 여전히 미달이라 0 이다(게이트가 살아 있다).
+    expect(cushionSettled(100, 129, CUSHION_RECOVER_TICKS)).toBe(0);
+    expect(cushionRecovered(100, 129, CUSHION_RECOVER_TICKS)).toBe(0);
+  });
+
+  it('항등 — 기본 임계를 넘기면 종전 결과와 정확히 같다 (미투자 비트 불변의 뿌리)', () => {
+    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS)).toBe(600);
+    expect(cushionSettled(1000, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS)).toBe(400);
+    expect(cushionSettled(1000, CUSHION_RECOVER_TICKS - 1, CUSHION_RECOVER_TICKS)).toBe(0);
+  });
+
+  it('음성 — ME9 미투자면 벽에 붙어 있어도 기본 임계 그대로다', () => {
     const w = mk([[CU7, 20]]);
+    w.wallContactTicks = 600;
     expect(onCushionThreshold(w, player(w), CUSHION_RECOVER_TICKS)).toBe(CUSHION_RECOVER_TICKS);
   });
 
-  it('⚠️ 임계를 낮춰도 순수 함수가 0 을 돌려준다 — ME9 는 ⑲ 만으로 안 돈다', () => {
-    // ME9 Lv20 의 실효 임계 129. 여기 진입해도 정산액·탕감액이 0 이라 **조용히 무연산**이다.
-    // 이것이 ME9 를 배선하지 않은 근거이고, 순수 함수 둘이 임계를 인자로 받도록 고쳐지면
-    // (골든에 닿는 변경) 이 단언이 빨개진다 — 그때 ME9 를 열어라.
-    expect(cushionSettled(100, 129)).toBe(0);
-    expect(cushionRecovered(100, 129)).toBe(0);
-    expect(cushionSettled(100, CUSHION_RECOVER_TICKS)).toBeGreaterThan(0);
+  it('음성 — ME9 투자해도 벽 접촉이 60틱 미만이면 기본 임계다', () => {
+    const w = mk([[ME9, 20]]);
+    w.wallContactTicks = 59;
+    expect(onCushionThreshold(w, player(w), CUSHION_RECOVER_TICKS)).toBe(CUSHION_RECOVER_TICKS);
+  });
+
+  it('양성 — ME9 Lv20 + 벽 60틱이면 임계가 129 로 내려간다', () => {
+    const w = mk([[ME9, 20]]);
+    w.wallContactTicks = 60;
+    // 인하폭 = round(20 + 50×20/32) = round(51.25) = 51 → 180 − 51 = 129.
+    expect(onCushionThreshold(w, player(w), CUSHION_RECOVER_TICKS)).toBe(129);
+  });
+
+  it('⚠️ 뮤테이션 — 임계를 바꾸면 정산 **시점**이 실제로 달라진다 (엔진 경로)', () => {
+    // ⚠️ `w.wallContactTicks` 를 손으로 세우면 소용없다 — `stepWorld` 가 매 틱 벽 판정으로
+    //    덮어쓴다. **실제로 벽에 겹쳐야** 한다(앵커 ⑦ 테스트와 같은 수법: 플레이어를 덮는 벽).
+    const runAgainstWall = (pts: ReadonlyArray<readonly [number, number]>, wall: boolean) => {
+      const w = mk(pts);
+      const p = player(w);
+      if (wall) spawnWall(w, p.x, p.y, 200, 200);
+      for (let i = 0; i < 70; i++) stepWorld(w, emptyInput());
+      p.aux0 = 100;
+      p.aux1 = 128; // 이번 틱에 +1 되어 129 — ME9 실효 임계엔 닿고 기본 임계엔 못 닿는다
+      stepWorld(w, emptyInput());
+      return { pool: p.aux0, wall: w.wallContactTicks };
+    };
+    // 전제 — 벽 접촉이 실제로 60틱을 넘었는가(이게 거짓이면 아래 판정은 무의미하다).
+    const wired = runAgainstWall([[ME9, 20]], true);
+    expect(wired.wall).toBeGreaterThanOrEqual(60);
+    // 양성: ME9 Lv20 + 벽 접촉 → 129틱에 정산이 일어나 풀이 비었다.
+    expect(wired.pool).toBe(0);
+    // 음성 ①: 같은 벽 접촉인데 ME9 미투자 → 129틱은 미달이라 풀이 그대로다.
+    expect(runAgainstWall([[CU7, 20]], true).pool).toBe(100);
+    // 음성 ②: ME9 투자했는데 벽에서 떨어짐 → 술어가 살아 있다는 증거.
+    const off = runAgainstWall([[ME9, 20]], false);
+    expect(off.wall).toBe(0);
+    expect(off.pool).toBe(100);
+  });
+
+  it('CU7 분모가 실효 임계를 따른다 — 같은 aux1 에서 감소가 커진다', () => {
+    const base = mk([[CU7, 20]]);
+    base.wallContactTicks = 600;
+    player(base).aux1 = 129;
+    const wired = mk([
+      [CU7, 20],
+      [ME9, 20],
+    ]);
+    wired.wallContactTicks = 600;
+    player(wired).aux1 = 129;
+    const dBase = onDamageChain(base, player(base), 1000);
+    const dWired = onDamageChain(wired, player(wired), 1000);
+    // 하한 짝 — 배선이 끊기면 양변이 1000 이 되어 성립하는 항진을 막는다.
+    expect(dBase).toBeLessThan(1000); // CU7 이 실제로 깎고 있다
+    expect(dWired).toBeLessThan(dBase); // 분모가 129 로 줄어 만충(= 상한 K)에 닿았다
   });
 });
 
@@ -834,7 +916,7 @@ describe('⑪ 앵커 ㉕ ME5 분할 상환', () => {
 
   it('엔진 경로 — 정산 틱의 hp 감소분과 완충 잔량이 **함께** 달라진다', () => {
     // 전제: 정산이 실제로 일어난다(항진 방지). 풀 100·임계 도달 시 탕감 60 · 선체행 40.
-    expect(cushionSettled(100, CUSHION_RECOVER_TICKS)).toBe(40);
+    expect(cushionSettled(100, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS)).toBe(40);
 
     const base = mk([[ME1, 20]]); // ME5 미투자 대조군
     const bp = player(base);
@@ -878,5 +960,172 @@ describe('⑪ 앵커 ㉕ ME5 분할 상환', () => {
     const h = hashWorld(w);
     for (let i = 0; i < 20; i++) stepWorld(w, emptyInput());
     expect(hashWorld(w)).not.toBe(h); // 해시 폴드가 살아 있다(고정 해시 단언의 항진 방지)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑫ SQ7 관성 사출 — 앵커 ⑯ + **입력 배관**(W2)
+// ---------------------------------------------------------------------------
+//
+// 이 절이 잠그는 것은 스킬 하나가 아니라 **배관 자체**다: `autoAttack` 은 오래도록
+// `InputFrame` 을 인자로 받지 않았고 `WorldState` 에 그 틱 입력 보관도 없었다. 그래서
+// 술어(*"그 틱 입력 벡터와 발사각의 내적"*)의 한 항이 통째로 부재했고, 발사각(`aimAngle`)만
+// 실렸을 때도 SQ7 은 열리지 않았다.
+//
+// ⚠️ 부정 항목(무입력·역방향에 무연산)은 뮤테이션에 **원리적으로 안 걸린다** — 효과를 통째로
+//    지워도 통과한다. 그래서 모든 부정 단언 옆에 **같은 세팅의 긍정 짝**을 둔다.
+// ⚠️ 비례·단조 단언 앞에는 **하한**을 먼저 놓는다 — 배선이 끊기면 양변이 모두 기본값이 되어
+//    성립하는 항진이 이 리포에 실제로 있었다.
+//
+// 수치 정본(설계서 SQ7): 최대 보정(dot = 1) 피해 bp = 400 + 100×Lv · 탄속 bp = 1000 + 100×Lv.
+describe('⑫ SQ7 관성 사출', () => {
+  const AIMS = [0, Math.PI / 2, Math.PI, -2.3, 0.77];
+
+  it('양성 — 입력이 발사각과 완전히 일치하면 피해·탄속이 최대로 실린다 (다섯 방위)', () => {
+    const w = mk([[SQ7, 20]]);
+    const p = player(w);
+    for (const aim of AIMS) {
+      const v = volley(100, Math.cos(aim), Math.sin(aim), aim);
+      onVolleyParams(w, p, v);
+      // 방위가 달라도 **일치도가 같으면 결과가 같다** — 각도 자체가 아니라 내적이 술어다.
+      // 한 각도만 재면 우연 일치(예: `aimAngle` 을 무시하고 `inputX` 만 읽는 구현)를 못 가른다.
+      expect(v.damage).toBe(124); // 100 + round(100 × 2400/10000)
+      expect(v.speed).toBeCloseTo(650, 9); // 500 × 13000/10000
+    }
+  });
+
+  it('양성 — 입력 크기는 무관하다 (정규화 뒤의 내적이 술어다)', () => {
+    const w = mk([[SQ7, 20]]);
+    const p = player(w);
+    const full = volley(100, 1, 0, 0);
+    const short = volley(100, 0.3, 0, 0); // 같은 방향, 짧은 벡터
+    onVolleyParams(w, p, full);
+    onVolleyParams(w, p, short);
+    expect(full.damage).toBe(124);
+    expect(short.damage).toBe(full.damage);
+    expect(short.speed).toBeCloseTo(full.speed, 9);
+  });
+
+  it('단조 — 일치도가 낮아질수록 보정이 줄어든다 (하한을 먼저 잠근다)', () => {
+    const w = mk([[SQ7, 20]]);
+    const p = player(w);
+    // 발사각은 +x 고정, 입력만 0° → 45° → 90° 로 돌린다.
+    const got = [0, Math.PI / 4, Math.PI / 2].map((a) => {
+      const v = volley(100, Math.cos(a), Math.sin(a), 0);
+      onVolleyParams(w, p, v);
+      return v;
+    });
+    // ⚠️ 하한 — "볼리가 실제로 보정을 받았다". 이게 없으면 전부 100/500 이어도 단조가 선다.
+    expect(got[0]!.damage).toBeGreaterThan(100);
+    expect(got[0]!.speed).toBeGreaterThan(500);
+    expect(got[1]!.damage).toBeGreaterThan(100);
+    expect(got[1]!.speed).toBeGreaterThan(500);
+    expect(got[0]!.damage).toBeGreaterThan(got[1]!.damage);
+    expect(got[1]!.damage).toBeGreaterThan(got[2]!.damage);
+    expect(got[0]!.speed).toBeGreaterThan(got[1]!.speed);
+    expect(got[1]!.speed).toBeGreaterThan(got[2]!.speed);
+    // 직각(내적 0)은 무보정 — 아래 음성 절과 같은 경계다.
+    expect(got[2]!.damage).toBe(100);
+    expect(got[2]!.speed).toBe(500);
+  });
+
+  it('음성 짝 — 무입력·역방향은 레코드를 한 칸도 안 만진다 (긍정을 옆에 둔다)', () => {
+    const w = mk([[SQ7, 20]]);
+    const p = player(w);
+    const still = volley(100, 0, 0, 0);
+    onVolleyParams(w, p, still);
+    expect(still).toEqual(volley(100, 0, 0, 0));
+
+    const backward = volley(100, -1, 0, 0);
+    onVolleyParams(w, p, backward);
+    expect(backward).toEqual(volley(100, -1, 0, 0)); // 감산도 없다(설계서에 페널티가 없다)
+
+    // 긍정 짝 — 같은 런·같은 발사각에서 입력 방향만 뒤집으면 보정이 실린다.
+    const forward = volley(100, 1, 0, 0);
+    onVolleyParams(w, p, forward);
+    expect(forward.damage).toBe(124);
+    expect(forward.speed).toBeCloseTo(650, 9);
+  });
+
+  it('미투자 무연산 — 다른 스킬만 찍은 런은 입력이 완전히 일치해도 안 만진다', () => {
+    const w = mk([[ME1, 20]]);
+    const p = player(w);
+    const v = volley(100, 1, 0, 0);
+    onVolleyParams(w, p, v);
+    expect(v).toEqual(volley(100, 1, 0, 0));
+    // 긍정 짝 — 같은 입력·같은 앵커에 SQ7 만 얹으면 갈린다(앵커 자체는 살아 있다).
+    const inv = mk([[SQ7, 1]]);
+    const v2 = volley(100, 1, 0, 0);
+    onVolleyParams(inv, player(inv), v2);
+    expect(v2.damage).toBe(105); // Lv1: 피해 bp 500 → 100 + 5
+    expect(v2.speed).toBeCloseTo(555, 9); // 500 × 11100/10000
+  });
+
+  /**
+   * 실제 런에서 첫 아군탄 하나를 받아 온다. 이동 입력을 **매 틱 그대로** 넣는다.
+   * ⚠️ 표적이 우리가 놓은 적이 맞는지 진행 방위로 확인한다 — 웨이브가 더 가까운 적을 놓으면
+   *    발사 방위가 갈리고, 그러면 이 비교는 의미가 없다(조용히 틀리는 대신 크게 실패한다).
+   */
+  function firstBullet(points: ReadonlyArray<readonly [number, number]>, moveX: number): Entity {
+    const w = mk(points);
+    const p = player(w);
+    addEnemy(w, p.x + 200, p.y, 1_000_000); // dy = 0 → 발사 방위가 정확히 +x
+    let b: Entity | undefined;
+    for (let i = 0; i < 30 && b === undefined; i++) {
+      stepWorld(w, { ...emptyInput(), moveX, aim: 0 });
+      b = w.entities.find((e) => e.kind === 'bullet');
+    }
+    expect(b).toBeDefined();
+    expect(Math.abs(Math.atan2(b!.vy, b!.vx))).toBeLessThan(0.05);
+    return b!;
+  }
+
+  it('⚠️ 엔진 경로 — 그 틱 이동 입력이 **발사 시점까지 살아 있다**', () => {
+    // 질문 ①: 입력이 이동에 소비된 뒤 초기화되지 않는가. `stepPlayer` 는 지역 복사본만 쓰고
+    // `input` 을 한 칸도 안 고치므로(`src/sim/**` 전수: `input.<필드> =` 대입 0건)
+    // `autoAttack` 이 같은 값을 본다 — 그 사실을 훅 단위가 아니라 **실제 런**으로 잠근다.
+    const base = mk().weapon.bulletSpeed;
+    const idle = firstBullet([[SQ7, 20]], 0);
+    const moving = firstBullet([[SQ7, 20]], 1);
+    const sIdle = Math.hypot(idle.vx, idle.vy);
+    const sMoving = Math.hypot(moving.vx, moving.vy);
+    // ⚠️ 정밀도 1(±0.05)인 것은 여유가 아니다 — 탄 속도는 `speed` 를 `math.ts` 의 **근사**
+    //    `cos`/`sin` 으로 풀어 저장하므로 되감은 크기가 `speed` 와 소수점 두째 자리에서
+    //    갈린다(여기서 1800 대 1800.0064). 배선이 끊기는 실패는 30% 차이라 남김없이 잡힌다.
+    // 하한 — 정지 런의 탄속이 **무기 기본값 그대로**다(보정이 새지 않았다).
+    expect(sIdle).toBeCloseTo(base, 1);
+    // 배선 증명 — 같은 런에서 이동 입력만 켜면 탄이 실제로 빨라진다(Lv20 정방향 = ×1.3).
+    expect(sMoving).toBeGreaterThan(sIdle);
+    expect(sMoving).toBeCloseTo(base * 1.3, 1);
+  });
+
+  it('미투자 비트 불변 — 이동 입력으로 쏴도 투자 0 런의 탄은 기본값 그대로다', () => {
+    const w0 = mk();
+    const none = firstBullet([], 1);
+    // 정밀도 1 의 사유는 위 「엔진 경로」와 같다(근사 `cos`/`sin` 왕복 오차).
+    expect(Math.hypot(none.vx, none.vy)).toBeCloseTo(w0.weapon.bulletSpeed, 1);
+    expect(none.damage).toBe(w0.weapon.damage);
+    // 긍정 짝 — 같은 입력·같은 세팅에 SQ7 만 얹으면 두 축이 다 움직인다.
+    const on = firstBullet([[SQ7, 20]], 1);
+    expect(Math.hypot(on.vx, on.vy)).toBeGreaterThan(Math.hypot(none.vx, none.vy));
+    expect(on.damage).toBeGreaterThan(none.damage);
+  });
+
+  it('미투자 런은 이동 입력으로 240틱을 돌려도 결정론이 그대로다', () => {
+    const mv = { ...emptyInput(), moveX: 1, moveY: 0.5 };
+    const a = mk();
+    const b = mk();
+    for (let i = 0; i < 240; i++) {
+      stepWorld(a, mv);
+      stepWorld(b, mv);
+    }
+    expect(hashWorld(a)).toBe(hashWorld(b));
+    // 항진 방지 — 해시가 애초에 안 움직여서 위 단언이 서는 것이 아님을 보인다.
+    // ⚠️ 여기서 SQ7 투자 런을 마주 세우면 **안 된다**: `hashWorld` 가 `config.skillInvest`
+    //    배열 자체를 접어 배선과 무관하게 갈린다(① 절의 경고). 배선 증명은 위 두 테스트가
+    //    관측면(탄속·피해)으로 한다.
+    const h = hashWorld(a);
+    for (let i = 0; i < 20; i++) stepWorld(a, mv);
+    expect(hashWorld(a)).not.toBe(h);
   });
 });

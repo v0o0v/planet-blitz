@@ -25,6 +25,12 @@ const hoisted = vi.hoisted(() => ({
   forceSkillDamage: null as number | null,
   /** `onPlayerDamaged` 가 받은 `lethalSurvived` 인자의 기록. */
   lethalSeen: [] as boolean[],
+  /**
+   * `onPlayerDamagedCatalyst` 가 받은 인자 기록(W2). 스킬 짝이 인자를 하나 늘렸으므로 **촉매
+   * 짝에도 같은 값이 같은 자리로** 오는지를 잰다 — 둘이 갈리면 촉매 레인이 스킬과 다른 사유를
+   * 보고도 흔적이 안 남는다.
+   */
+  catalystDamaged: [] as { dmg: number; lethal: boolean; sources: number }[],
 }));
 
 vi.mock('../src/sim/catalystHooks.js', async (orig) => {
@@ -38,6 +44,13 @@ vi.mock('../src/sim/catalystHooks.js', async (orig) => {
     const fn = value as (...args: unknown[]) => unknown;
     wrapped[name] = (...args: unknown[]): unknown => {
       hoisted.calls[name] = (hoisted.calls[name] ?? 0) + 1;
+      if (name === 'onPlayerDamagedCatalyst') {
+        hoisted.catalystDamaged.push({
+          dmg: args[2] as number,
+          lethal: args[3] as boolean,
+          sources: args[4] as number,
+        });
+      }
       if (name === 'onDamageChainCatalyst' && hoisted.forceCatalystDamage !== null) {
         return hoisted.forceCatalystDamage;
       }
@@ -73,6 +86,7 @@ const { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG, SPECIAL_POWERUP_PICK
 );
 const { blankEntity, addEntity, spawnGem, spawnBullet } = await import('../src/sim/entities.js');
 const { DT } = await import('../src/sim/constants.js');
+const { DamageSource } = await import('../src/sim/skillSlots.js');
 type WorldState = import('../src/sim/world.js').WorldState;
 type InputFrame = import('../src/sim/world.js').InputFrame;
 type Entity = import('../src/sim/entities.js').Entity;
@@ -111,6 +125,7 @@ beforeEach(() => {
   hoisted.forceCatalystDamage = null;
   hoisted.forceSkillDamage = null;
   hoisted.lethalSeen = [];
+  hoisted.catalystDamaged = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -182,6 +197,19 @@ describe('촉매 디스패치가 스킬 앵커와 같은 지점에서 불린다'
     stepWorld(s, idle);
     expect(count('onDamageChainCatalyst')).toBe(0);
     expect(count('onPlayerDamagedCatalyst')).toBe(0);
+  });
+
+  it('회귀(W2): 촉매 짝도 스킬 짝과 **같은 인자**를 받는다 — 피해원 포함', () => {
+    const s = withCatalyst(0xca04);
+    const p = player(s);
+    plantEnemy(s, p.x, p.y, 5);
+    stepWorld(s, idle);
+    // 하한을 먼저 — 피격이 없으면 아래 인자 단언은 빈 배열에 대한 항진이다.
+    expect(hoisted.catalystDamaged).toHaveLength(1);
+    const seen = hoisted.catalystDamaged[0]!;
+    expect(seen.dmg).toBe(5 * 2); // 종전과 같은 실피해(피격 배수만)
+    expect(seen.lethal).toBe(false);
+    expect(seen.sources).toBe(DamageSource.contact);
   });
 
   it('S1 앵커 ⑩: 아군탄이 적에 명중하면 `onEnemyDamagedCatalyst` 가 불린다', () => {

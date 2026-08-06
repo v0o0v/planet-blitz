@@ -43,6 +43,7 @@ import {
 } from '../src/sim/skillHooks.js';
 import { SIG_PHANTOM_CLOAK, CLOAK_UNHIT_TICKS } from '../src/sim/shipSignature.js';
 import { PhantomCarry, readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
+import { DamageSource } from '../src/sim/skillSlots.js';
 
 /** `data/ships/index.ts` 의 타입 id (STRIKER 0 · BRUISER 1 · ARCCASTER 2 · **PHANTOM 3**). */
 const SHIP_PHANTOM = 3;
@@ -280,11 +281,11 @@ describe('⑥ DI4 반발 위상 (앵커 ④)', () => {
 
   it('실피격 틱에 주변 적이 밀려난다 (미투자면 제자리)', () => {
     const off = setup([]);
-    onPlayerDamaged(off.w, player(off.w), 5, false);
+    onPlayerDamaged(off.w, player(off.w), 5, false, DamageSource.bullet);
     expect(off.e.x).toBe(off.x0);
 
     const on = setup([[DI4, 10]]);
-    onPlayerDamaged(on.w, player(on.w), 5, false);
+    onPlayerDamaged(on.w, player(on.w), 5, false, DamageSource.bullet);
     // 변위 60 + 8×10 = 140 (일반 잡몹은 반감 없음).
     expect(on.e.x).toBeCloseTo(on.x0 + 140, 6);
   });
@@ -292,7 +293,7 @@ describe('⑥ DI4 반발 위상 (앵커 ④)', () => {
   it('엘리트(pierce > 0)는 반감된다', () => {
     const on = setup([[DI4, 10]]);
     on.e.pierce = 1;
-    onPlayerDamaged(on.w, player(on.w), 5, false);
+    onPlayerDamaged(on.w, player(on.w), 5, false, DamageSource.bullet);
     expect(on.e.x).toBeCloseTo(on.x0 + 70, 6);
   });
 });
@@ -339,7 +340,7 @@ describe('⑧ DI5 최후 위상 (앵커 ④ + ⑨)', () => {
     const p = player(w);
     p.maxHp = 100;
     p.hp = 25;
-    onPlayerDamaged(w, p, 10, false); // 피격 전 35% → 25% 로 임계 통과
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet); // 피격 전 35% → 25% 로 임계 통과
     return p;
   }
 
@@ -361,7 +362,7 @@ describe('⑧ DI5 최후 위상 (앵커 ④ + ⑨)', () => {
     const p = player(w);
     p.maxHp = 100;
     p.hp = 20;
-    onPlayerDamaged(w, p, 5, false); // 25% → 20%, 둘 다 임계 아래
+    onPlayerDamaged(w, p, 5, false, DamageSource.bullet); // 25% → 20%, 둘 다 임계 아래
     expect(p.aux0).toBe(0);
     expect(readSlot(w.skillCarry, PhantomCarry.lastPhaseCooldown)).toBe(0);
   });
@@ -375,7 +376,7 @@ describe('⑧ DI5 최후 위상 (앵커 ④ + ⑨)', () => {
     // 쿨 중 재시도 — 스트릭을 되돌려도 진입이 다시 서지 않는다.
     p.aux0 = 0;
     p.hp = 25;
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     expect(p.aux0).toBe(0);
   });
 });
@@ -634,6 +635,8 @@ describe('⑫ AS2 은막 침투 (앵커 ⑯)', () => {
       spread: 0.5,
       cooldownQ: 12,
       mark: 0,
+      leadDamageBonus: 0,
+      leadPierceBonus: 0,
       recordSpawnDamage: false,
       // 아크캐스터 레인이 BA10 을 위해 추가한 필드(머지에서 합류). `true` = 이번 아키타입이
       // `count` 를 실제로 읽는다(발칸/스프레드/미사일). AS2 는 `pierce`·`speed` 만 만져서
@@ -645,6 +648,9 @@ describe('⑫ AS2 은막 침투 (앵커 ⑯)', () => {
       targetDist: 200,
       // 발사 방위(rad). 읽기 전용 사실이라 훅이 고치지 않는다 — 기본 0(순수 +x).
       aimAngle: 0,
+      // W2 가 더한 칸 — 그 틱 이동 입력 벡터(읽기 전용). 기본은 무입력(정지).
+      inputX: 0,
+      inputY: 0,
       cloakBreak: false,
     };
   }
@@ -732,11 +738,16 @@ describe('⑬ AS3 처형 재장전 (앵커 ⑯ 표식)', () => {
       ballisticsUsed: true,
       targetDist: 200,
       aimAngle: 0,
+      // W2 가 더한 칸 — 그 틱 이동 입력 벡터(읽기 전용). 기본은 무입력(정지).
+      inputX: 0,
+      inputY: 0,
       // ⚠️ 기본은 **평범한 볼리**다. AS3 을 재는 케이스만 뒤집는다.
       cloakBreak: false,
       // 아크캐스터 CH3 이 신설한 필수 필드. 팬텀은 각인을 요구하지 않으므로 `false` 다.
       // ⚠️ 이 줄이 `...over` **앞**에 있어야 한다 — `Partial` 스프레드가 뒤에 오면
       //    필수 필드가 optional 로 좁혀져 `tsc` 가 대입을 거부한다(병렬 레인 합류 지점).
+      leadDamageBonus: 0,
+      leadPierceBonus: 0,
       recordSpawnDamage: false,
       ...over,
     };

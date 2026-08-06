@@ -1,3 +1,4 @@
+
 /**
  * 스킬 슬롯의 **폭·접근 규약과 7기체 배정표**(ADR-0049 S0 공유 기반).
  *
@@ -30,6 +31,44 @@
  *  4. **슬롯 번호는 기체별로 겹친다**(런당 기체 1대라 가능). 그래서 다른 기체 코드가 게이트
  *     없이 쓰면 안 된다 — 쓰기는 항상 앵커의 `switch (state.sigBit)` 안에서만 일어난다.
  */
+
+/**
+ * 앵커 ④(`onPlayerDamaged`)의 **피해원 비트** — 그 틱 피격에 기여한 접촉원의 종류.
+ *
+ * ## ⚠️ 왜 단일 유니온이 아니라 **비트합**인가
+ * `world.ts` 의 수집 루프는 피해를 **더하지 않고 `max`** 로 고른다(`if (t.damage > dmg)`).
+ * 단일 유니온으로 "이긴 쪽" 하나만 실으면, 같은 틱에 적탄(20)과 몸통 접촉(10)이 함께 닿았을 때
+ * 접촉 사실이 `max` 에 통째로 삼켜진다 — 접촉을 트리거로 쓰는 스킬(브루저 BL8)이 조용히
+ * 미발동한다. 설계 정본(`bruiser.md` BL8)이 *"max 가 적탄이어도 접촉 기여가 있으면 적립"* 이라고
+ * 명시한 것이 바로 이 실패 모드다. 그래서 **기여한 종류를 전부** 싣는다.
+ *
+ * ⚠️ 비트는 **`t.damage > 0` 인 접촉원만** 세운다 — 피해 0 짜리 접촉은 `dmg` 에 한 점도
+ * 기여하지 않으므로 "피해원" 이 아니다.
+ *
+ * ## 왜 `skillHooks.ts` 가 아니라 여기인가
+ * 스킬 모듈(`skills/*.ts`)이 이 값을 **런타임에** 읽어야 하는데, 그 파일들의 `skillHooks.js`
+ * import 는 전부 `import type` 다 — `skillHooks` 가 스킬 모듈을 런타임 import 하므로 값 import
+ * 를 열면 순환이 생긴다. 이 파일은 import 0 인 순수 leaf 라 그 순환이 구조적으로 없다.
+ */
+export const DamageSource = {
+  /** 몸통 접촉 — `enemy`·`boss`·`guardian`·`defenseBoss`(설계 R-4: kind 전부 포함). */
+  contact: 1,
+  /** 적탄 — `enemyBullet`. */
+  bullet: 2,
+  /** 해저드 장판 — `hazard`(활성 상태). */
+  hazard: 4,
+} as const;
+
+/** {@link DamageSource} 의 개별 비트. */
+export type DamageSourceBit = (typeof DamageSource)[keyof typeof DamageSource];
+
+/** {@link DamageSource} 비트합. 0 은 원리적으로 오지 않는다(`dmg > 0` 이 앵커의 전제다). */
+export type DamageSourceMask = number;
+
+/** 비트합에 그 피해원이 들어 있는가. */
+export function hasDamageSource(mask: DamageSourceMask, bit: DamageSourceBit): boolean {
+  return (mask & bit) !== 0;
+}
 
 /**
  * 두 배열의 **고정 폭**. `hashWorld` 가 이 상수 × 2 칸을 고정 폭으로 접으므로, 늘리면
@@ -235,6 +274,14 @@ export const enum BruiserStage {
    * 장갑 스택에서 매 명중마다 파생되므로(`max(1, round(48/(4+스택)))`) 이 칸에는 카운트만 산다.
    */
   cadenceHits = 1,
+  /**
+   * BL8 — **담금질 탄 적립 수**. 몸통 접촉으로 실피격당할 때마다 1 씩 늘고(상한은 레벨 파생),
+   * 다음 볼리의 선두탄이 **1 발** 소모한다. 0 = 적립 없음.
+   *
+   * 구간 슬롯인 이유는 BL9 와 같다 — 이 칸은 저금이 아니라 **그 구간의 탄약**이고, 새 무대에서
+   * 다시 부딪혀 모으는 것이 설계다(*"몸으로 부딪히는 플레이에 보상"*).
+   */
+  temperCharges = 2,
 }
 
 /**

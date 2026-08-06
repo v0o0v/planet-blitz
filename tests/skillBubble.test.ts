@@ -44,6 +44,7 @@ import {
   onVolleyParams,
   onFilmAbsorbed,
   onFilmEntry,
+  onFilmEfficiency,
   type VolleyParams,
 } from '../src/sim/skillHooks.js';
 import { resolveFilmBurst } from '../src/sim/filmBurst.js';
@@ -52,6 +53,7 @@ import {
   FILM_ABSORB_FLAT,
   FILM_BURST_RADIUS,
   FILM_PERIOD_TICKS,
+  FILM_EFFICIENCY_BASE_BP,
   filmAbsorbed,
   filmRemainingDamage,
 } from '../src/sim/shipSignature.js';
@@ -77,6 +79,7 @@ const FI2 = 21;
 const FI3 = 22;
 const FI4 = 23;
 const FI5 = 24;
+const FI8 = 27;
 const FI9 = 28;
 const FI10 = 29;
 
@@ -444,8 +447,13 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     targetDist: 400,
     // 발사 방위(rad). 읽기 전용 사실이라 훅이 고치지 않는다 — 기본 0(순수 +x).
     aimAngle: 0,
+    // W2 가 더한 칸 — 그 틱 이동 입력 벡터(읽기 전용). 기본은 무입력(정지).
+    inputX: 0,
+    inputY: 0,
     cloakBreak: false,
     mark: 0,
+    leadDamageBonus: 0,
+    leadPierceBonus: 0,
     recordSpawnDamage: false,
     ...over,
   };
@@ -653,9 +661,9 @@ describe('⑧ FI9 최후의 거품 (앵커 ㉒)', () => {
     expect(p.aux0).toBe(36);
     expect(p.aux1).toBe(0); // 대가 — 재생 진행분 전액 소모
     // 생존 — 선체로 가는 피해가 0 이라 hp 가 한 점도 안 깎인다.
-    expect(filmAbsorbed(30, p.aux0)).toBe(30);
-    expect(filmRemainingDamage(30, p.aux0)).toBe(0);
-    expect(p.hp - filmRemainingDamage(30, p.aux0)).toBeGreaterThan(0);
+    expect(filmAbsorbed(30, p.aux0, FILM_EFFICIENCY_BASE_BP)).toBe(30);
+    expect(filmRemainingDamage(30, p.aux0, FILM_EFFICIENCY_BASE_BP)).toBe(0);
+    expect(p.hp - filmRemainingDamage(30, p.aux0, FILM_EFFICIENCY_BASE_BP)).toBeGreaterThan(0);
   });
 
   it('**대조군: 미투자 런은 같은 피격에서 죽는다**', () => {
@@ -664,7 +672,7 @@ describe('⑧ FI9 최후의 거품 (앵커 ㉒)', () => {
     onFilmEntry(w, p, 30);
     expect(p.aux0).toBe(0);
     expect(p.aux1).toBe(210); // 대가도 안 치른다
-    expect(p.hp - filmRemainingDamage(30, p.aux0)).toBeLessThanOrEqual(0);
+    expect(p.hp - filmRemainingDamage(30, p.aux0, FILM_EFFICIENCY_BASE_BP)).toBeLessThanOrEqual(0);
   });
 
   it('투자 레벨이 높을수록 비상막이 두껍다 (하한 짝 포함)', () => {
@@ -752,5 +760,120 @@ describe('⑧ FI9 최후의 거품 (앵커 ㉒)', () => {
     onFilmEntry(w, p, 30);
     expect(p.aux0).toBe(0);
     expect(p.aux1).toBe(210);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑨ FI8 발수 코팅 (앵커 ⑰) — **되살아난 앵커**
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 앵커 ⑰ 은 한 배치 동안 **원리적으로 무효**였다. 사유를 지우지 않는다:
+// 훅이 *유효 내구*를 돌려주는 계약이었고 `filmAbsorbed = min(dmg, shield)` 였으므로
+// **흡수량 ≡ 내구 소모량**이었다. 내구를 부풀려도 (a) `dmg ≤ aux0` 이면 흡수량이 그대로거나
+// (b) `dmg > aux0` 이면 `aux0` 이 음수가 되어 u32 폴드가 발산했다. 그 앵커가 살린 스킬은 0종.
+// 순수 함수 개정 레인이 **효율 인자**를 넣어 *태운 내구*와 *막은 피해*를 분리했고, 이 절이
+// "min 이 개입을 더 이상 삼키지 않는다" 를 실측으로 못 박는다.
+
+describe('⑨ FI8 발수 코팅 (앵커 ⑰) — 되살아난 앵커', () => {
+  it('⚠️ 되살아남 증명 — 효율을 올리면 **막은 피해**가 실제로 늘어난다', () => {
+    // 내구 60, 피해 100. 항등 효율에서는 60 만 막고 40 이 통과한다(종전 결과 그대로).
+    expect(filmAbsorbed(100, 60, FILM_EFFICIENCY_BASE_BP)).toBe(60);
+    expect(filmRemainingDamage(100, 60, FILM_EFFICIENCY_BASE_BP)).toBe(40);
+    // 효율 200% → 같은 내구 60 이 120 까지 막는다. 통과 피해가 **실제로** 0 이 된다.
+    expect(filmRemainingDamage(100, 60, 20000)).toBe(0);
+    // 그리고 **태운 내구는 독립적으로** 50 이다(60 이 아니다) — 두 축이 갈렸다는 물증.
+    expect(filmAbsorbed(100, 60, 20000)).toBe(50);
+  });
+
+  it('두 축이 각각 독립적으로 움직인다 (막은 피해 ↑ · 태운 내구 =)', () => {
+    // 피해 150 > 용량 120 → 막이 소진된다. 태운 내구는 양쪽 다 전량 60 이지만…
+    expect(filmAbsorbed(150, 60, FILM_EFFICIENCY_BASE_BP)).toBe(60);
+    expect(filmAbsorbed(150, 60, 20000)).toBe(60);
+    // …막은 피해는 60 → 120 으로 갈린다(통과 피해 90 → 30).
+    expect(filmRemainingDamage(150, 60, FILM_EFFICIENCY_BASE_BP)).toBe(90);
+    expect(filmRemainingDamage(150, 60, 20000)).toBe(30);
+  });
+
+  it('⚠️ `aux0` 음수 경로가 없다 — 태운 내구는 어떤 효율에서도 내구를 넘지 않는다', () => {
+    for (const eff of [1, 100, 5000, 9999, 10000, 10001, 20000, 40000, 999_999]) {
+      for (const s of [1, 7, 60, 137]) {
+        for (const d of [0, 1, 13, 60, 100, 1000, 100_000]) {
+          const burned = filmAbsorbed(d, s, eff);
+          expect(Number.isInteger(burned), `eff=${eff} s=${s} d=${d} → ${burned}`).toBe(true);
+          expect(burned).toBeGreaterThanOrEqual(0);
+          expect(burned).toBeLessThanOrEqual(s);
+          const rest = filmRemainingDamage(d, s, eff);
+          expect(Number.isInteger(rest)).toBe(true);
+          expect(rest).toBeGreaterThanOrEqual(0);
+          expect(rest).toBeLessThanOrEqual(d);
+          // 내구가 남았는데(태운 내구 < 전량) 피해가 통과하는 일은 없다 — 그런 상태는
+          // "막을 힘은 없는데 파열도 안 하는 유령 막" 이라 파열 판정(`aux0 === 0`)이 어긋난다.
+          // ⚠️ `burned > 0` 조건이 필요하다: 효율이 극히 낮아 용량이 0 으로 접히면(예: eff=1)
+          //    막이 애초에 아무것도 못 막으므로 태운 내구도 0 이고 전량 통과가 옳다.
+          if (burned > 0 && burned < s) expect(rest).toBe(0);
+        }
+      }
+    }
+  });
+
+  it('양성 — FI8 투자 + 해저드 피격이면 효율이 오른다', () => {
+    const w = mk([[FI8, 20]]);
+    const p = player(w);
+    p.aux0 = 60;
+    // 200% + 10%p/Lv → Lv20 = 40000bp.
+    expect(onFilmEfficiency(w, p, 100, p.aux0, true)).toBe(40000);
+  });
+
+  it('음성 ① — 같은 런이라도 해저드가 아니면 항등이다 (설계축이 "해저드에서만")', () => {
+    const w = mk([[FI8, 20]]);
+    const p = player(w);
+    p.aux0 = 60;
+    expect(onFilmEfficiency(w, p, 100, p.aux0, false)).toBe(FILM_EFFICIENCY_BASE_BP);
+  });
+
+  it('음성 ② — 다른 스킬만 찍은 런은 해저드 피격에도 항등이다', () => {
+    const w = mk([[FI2, 20]]);
+    const p = player(w);
+    p.aux0 = 60;
+    expect(onFilmEfficiency(w, p, 100, p.aux0, true)).toBe(FILM_EFFICIENCY_BASE_BP);
+  });
+
+  it('레벨 단조 — 하한 짝 포함', () => {
+    const at = (level: number): number => {
+      const w = mk([[FI8, level]]);
+      const p = player(w);
+      p.aux0 = 60;
+      return onFilmEfficiency(w, p, 100, p.aux0, true);
+    };
+    // 하한 먼저 — 배선이 끊기면 아래 단조가 10000 대 10000 으로 성립하는 항진이 된다.
+    expect(at(1)).toBeGreaterThan(FILM_EFFICIENCY_BASE_BP);
+    expect(at(1)).toBe(21000);
+    expect(at(20)).toBeGreaterThan(at(1));
+  });
+
+  it('⚠️ 엔진 경로 — 해저드 피격에서 막이 **실제로 덜 닳는다**', () => {
+    const burnedBy = (pts: ReadonlyArray<readonly [number, number]>): number => {
+      const w = mk(pts);
+      const p = player(w);
+      p.aux0 = 60; // 막이 서 있다
+      p.hp = 100_000;
+      const hz: Entity = {
+        ...blankEntity('hazard'),
+        x: p.x,
+        y: p.y,
+        radius: 60,
+        damage: 20,
+        timer: 0,
+        life: -1, // 영구 지형 해저드 = 항상 활성
+      };
+      w.entities.push(hz);
+      stepWorld(w, emptyInput());
+      return 60 - p.aux0;
+    };
+    const base = burnedBy([[FI2, 20]]);
+    // 하한 먼저 — "막이 실제로 닳았다" 를 못 박지 않으면 아래 비교가 0 대 0 항진이 된다.
+    expect(base).toBeGreaterThan(0);
+    // FI8 Lv20 = 효율 400% → 같은 해저드 피해를 1/4 내구로 막는다.
+    expect(burnedBy([[FI8, 20]])).toBeLessThan(base);
   });
 });

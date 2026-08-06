@@ -59,6 +59,9 @@
 
 import type { WorldState, InputFrame } from './world.js';
 import type { Entity } from './entities.js';
+// 앵커 ④ 의 피해원 비트합. 정본이 `skillSlots.ts`(import 0 인 leaf)인 사유는 그 파일 주석 —
+// 스킬 모듈이 이 값을 **런타임에** 읽어야 하는데 여기 두면 순환이 생긴다.
+import type { DamageSourceMask } from './skillSlots.js';
 import {
   onVolleyFiredCatalyst,
   onDashFiredCatalyst,
@@ -82,6 +85,7 @@ import {
   SIG_MALLOW_CUSHION,
   SIG_PHANTOM_CLOAK,
   SIG_BUBBLE_FILM,
+  FILM_EFFICIENCY_BASE_BP,
 } from './shipSignature.js';
 import {
   hatchlingVolleyFired,
@@ -91,6 +95,7 @@ import {
   hatchlingEnemyDamaged,
   hatchlingBroodLaunchParams,
   hatchlingBroodLaunched,
+  hatchlingTurretShotParams,
 } from './skills/hatchling.js';
 import {
   strikerDashFired,
@@ -133,6 +138,7 @@ import {
   mallowCushionSettleDue,
   mallowCushionSettled,
   mallowVolleyParams,
+  mallowSettleThreshold,
 } from './skills/mallow.js';
 import {
   phantomDashFired,
@@ -152,6 +158,7 @@ import {
   bubbleVolleyParams,
   bubbleFilmAbsorbed,
   bubbleFilmEntry,
+  bubbleFilmEfficiency,
 } from './skills/bubble.js';
 
 // ---------------------------------------------------------------------------
@@ -389,15 +396,19 @@ function playerOf(state: WorldState): Entity | undefined {
  *
  * @param dmg 실제로 hp 에서 차감된 피해(사슬 전량 통과 후)
  * @param lethalSurvived {@link survivedLethalBlow} 의 결과 — **여기서 다시 계산하지 마라**
+ * @param sources {@link DamageSource} 비트합. **기본값 없는 필수 인자다** — 기본값을 두면 새
+ *   호출부가 사유를 빠뜨린 채 기존 사유로 흘러들어 조용히 오분류된다(앵커 ⑥
+ *   {@link BulletExpiryReason} 와 같은 규율).
  */
 export function onPlayerDamaged(
   state: WorldState,
   player: Entity,
   dmg: number,
   lethalSurvived: boolean,
+  sources: DamageSourceMask,
 ): void {
-  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived);
-  onPlayerDamagedCatalyst(state, player, dmg, lethalSurvived);
+  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived, sources);
+  onPlayerDamagedCatalyst(state, player, dmg, lethalSurvived, sources);
 }
 
 function dispatchPlayerDamagedSkill(
@@ -405,6 +416,7 @@ function dispatchPlayerDamagedSkill(
   player: Entity,
   dmg: number,
   lethalSurvived: boolean,
+  sources: DamageSourceMask,
 ): void {
   if (!state.skillsOn) return;
   switch (state.sigBit) {
@@ -419,7 +431,8 @@ function dispatchPlayerDamagedSkill(
       arccasterPlayerDamaged(state, player, dmg, lethalSurvived);
       break;
     case SIG_BRUISER_ARMOR:
-      // BL4 과적 배출 · FO2 응혈 적립 · FO5 불괴 연쇄.
+      // BL4 과적 배출 · FO2 응혈 적립 · FO5 불괴 연쇄 · **BL8 격돌 담금질(적립처)**.
+      // BL8 만 `sources` 를 본다 — 나머지 셋은 피해원과 무관하다(종전 인자만 쓴다).
       // 브루저는 스트라이커와 달리 **둘 다 필요하다** — FO2 는 적립량이 `dmg` 에 비례하고,
       // FO5 는 `lethalSurvived` 가 트리거 자체다(사슬 안에서 계산된 값을 그대로 넘긴다).
       //
@@ -429,7 +442,7 @@ function dispatchPlayerDamagedSkill(
       // **항상 0** 이다. 그 술어를 그대로 쓰면 쿨이 영영 안 풀리거나(< 60 이면 스킵) 매 피격
       // 발동(≥ 60 이면 스킵)이 되어 어느 쪽이든 설계와 다르다. 슬롯 1칸이 필요하고, 그것은
       // 칼날 축 B 예산(BL8·BL9 로 2/2 포화)을 넘기므로 설계로 되돌아가야 한다.
-      bruiserPlayerDamaged(state, player, dmg, lethalSurvived);
+      bruiserPlayerDamaged(state, player, dmg, lethalSurvived, sources);
       break;
     case SIG_MALLOW_CUSHION:
       // SQ3 몸통 반발(즉시분 비례 반격) · CU4 반발 세척(부채 보유 중 적탄 소거).
@@ -1238,7 +1251,8 @@ export function onFilmBurst(state: WorldState, x: number, y: number): void {
 //
 //   ⑯ onVolleyParams   — 발사부(전 기체 최다). 스트라이커 3 · 아크캐스터 5 · 브루저 4 ·
 //                        말로우 4 · 팬텀 3 · 버블 2 가 같은 이유로 막혀 있었다.
-//   ⑰ onFilmShield     — 막 흡수 **산술**(버블 6종). 앵커 ⑧ 은 막보다 앞이라 못 온다.
+//   ⑰ onFilmEfficiency — 막 흡수 **효율**(버블). 앵커 ⑧ 은 막보다 앞이라 못 온다.
+//      ⚠️ 구 이름 `onFilmShield`(유효 **내구** 반환)는 원리적으로 무효였다 — 사유는 그 함수 doc.
 //   ⑱ onFilmAbsorbed   — 막 흡수 **직후**(버블 관측축).
 //   ⑲ onCushionThreshold — 정산 **임계**(말로우 ME9 · CU7 분모).
 //   ⑳ onCushionSettled — 정산 **직후**(말로우 9종). 앵커 ⑨ 는 진입점이라 정산보다 앞이다.
@@ -1287,6 +1301,11 @@ export function onFilmBurst(state: WorldState, x: number, y: number): void {
 // ## ⚠️ 촉매 짝이 없다 — ⑮·⑰~㉑ 과 같다
 // 출격은 **해츨링 시그니처 고유 사건**이라 촉매 48종에 대응 카드가 없다. 빈 촉매 함수를 미리
 // 두지 마라.
+//
+// ## ⚠️ 이 둘만으로는 BD10 이 반쪽이었다 — **㉖ 이 세 번째 축**이다
+// 상한 −1 은 ㉓ 이고 수명 가산은 ㉔ 인데 **탄 피해 배율**은 포탑 루프 소관이라 둘 다 안 닿아,
+// 앞 레인이 BD10 을 통째로 미배선으로 남겼다(상한만 깎으면 순손해). W2 가 세운 앵커 ㉖
+// (`onTurretShotParams`, 이 파일 말미)이 그 축이다 — **셋을 함께 봐야 BD10 이 성립한다.**
 
 /**
  * 앵커 ⑯ 이 넘기는 **이번 볼리의 파라미터 한 벌**. 훅이 제자리에서 고친다.
@@ -1372,9 +1391,15 @@ export interface VolleyParams {
    * 흔적을 안 남긴다. 그래서 이 칸이 생겼다.
    *
    * ## 왜 레코드에 싣는가
-   * 방위를 술어로 쓰는 두 스킬이 **정확히 이 값의 부재로** 미배선이었다:
-   *  · 스트라이커 F5(조준선 관통) — *"표적이 `player.angle` 기준 반각 20° 콘 안인가"*
-   *  · 말로우 SQ7(관성 사출) — *"그 틱 입력 벡터와 발사각의 내적"*
+   * 방위를 술어로 쓰는 두 스킬이 이 값을 요구했다:
+   *  · 스트라이커 F5(조준선 관통) — *"표적이 `player.angle` 기준 반각 20° 콘 안인가"*.
+   *    **정확히 이 값의 부재로** 미배선이었고, 이 칸이 서자 배선됐다.
+   *  · 말로우 SQ7(관성 사출) — *"그 틱 입력 벡터와 발사각의 내적"*.
+   *    ⚠️ **이 칸만으로는 열리지 않았다** — 내적의 나머지 한 항인 입력 벡터가 통째로
+   *    부재했기 때문이다(`autoAttack` 이 `InputFrame` 을 인자로 받지 않았고 `WorldState` 에
+   *    그 틱 입력 보관도 없었다). 실제로 SQ7 을 막고 있던 것은 **발사각이 아니라 입력 배관**
+   *    이었다. W2 레인이 `autoAttack` 에 `input` 을 더해 {@link VolleyParams.inputX}·
+   *    {@link VolleyParams.inputY} 를 실었고, 두 항이 모두 선 뒤에야 SQ7 이 배선됐다.
    * 훅이 최근접 적을 **다시 고르면** `nearestTarget` 선택 규칙의 **두 번째 사본**이 생기고,
    * 그 함수는 `world.ts` 소유라 leaf 가 런타임 import 할 수도 없다(계약 위반). `targetDist`
    * 와 같은 사유로, world 가 이미 고른 결과만 넘긴다.
@@ -1386,6 +1411,28 @@ export interface VolleyParams {
    * 열면 거동 불변 증명이 성립하지 않으므로, S3-1 은 **자리만** 만들고 읽기 전용으로 둔다.
    */
   aimAngle: number;
+  /**
+   * 이 틱의 **이동 입력 벡터**(`InputFrame.moveX`/`moveY` 원본, 각 축 [-1,1]). 정규화 **전**
+   * 이라 길이가 0(무입력)일 수 있고, 대각 입력은 축당 √2/2 근처다.
+   *
+   * ## 왜 레코드에 싣는가 — `autoAttack` 이 `InputFrame` 을 아예 못 보고 있었다
+   * 이 sim 의 유일한 외부 영향은 `InputFrame` 인데, 발사부 `autoAttack(state, player)` 은 그
+   * 인자를 받지 않았고 `WorldState` 에 그 틱 입력을 보관하는 칸도 없었다. 그래서 *"그 틱 입력
+   * 벡터와 발사각의 내적"* 을 술어로 쓰는 **말로우 SQ7(관성 사출)** 이 `aimAngle` 이 선 뒤에도
+   * 열리지 않았다 — 내적의 한 항이 통째로 부재했다. 이 레인이 `autoAttack` 에 `input` 을 더해
+   * 배관하고, `targetDist`·`aimAngle` 과 같은 형태로 **결과만** 여기 실었다.
+   *
+   * ## ⚠️ `player.vx`/`vy`(실속도)로 대용하지 마라
+   * 감속 장판·이속 모듈·넉백·대시가 실속도를 갈아 놓아 "플레이어가 무엇을 지시했는가" 와
+   * 갈린다. 인벤토리 1.5 계약 「상태 판정은 입력으로」가 그 사유이고, 아크캐스터 정지 판정
+   * (`input.moveX === 0 && input.moveY === 0 && !input.dash`)도 같은 정본 규칙을 쓴다.
+   *
+   * ⚠️ 훅이 이 값을 **쓰지 마라**(읽기 전용). 이 레코드는 이번 볼리 한 벌의 수명이고, 여기서
+   * 고쳐도 `InputFrame` 원본도 리플레이 기록도 바뀌지 않는다 — 조용한 무연산이 된다.
+   */
+  inputX: number;
+  /** 이 틱의 이동 입력 Y. 성질·주의는 {@link VolleyParams.inputX} 와 같다(읽기 전용). */
+  inputY: number;
   /**
    * 이번 볼리가 **팬텀 은신 해제 첫 타**인가(배율이 실제로 실린 볼리).
    *
@@ -1416,6 +1463,30 @@ export interface VolleyParams {
    * 점유했고, 미사일 분기는 표식과 유도 마커를 **동시에** 단다.
    */
   mark: number;
+  /**
+   * **선두탄에만** 더할 피해(0 = 없음). 나머지 탄은 `damage` 그대로다.
+   *
+   * ## 왜 이 칸이 필요했는가 — `damage` 로는 「1발」을 표현할 수 없다
+   * 브루저 BL8「격돌 담금질」은 *"적립분을 소모해 **선두탄**이 대구경화"* 다. 적립 단위가
+   * **접촉 피격 1회 = 강화탄 1발**이라 볼리 전체에 실으면 부채꼴 무기에서 `count` 배로 부풀고,
+   * `damage`·`pierce` 는 아키타입 분기 넷이 전부 **모든 탄에** 그대로 넘긴다. 그래서 선두탄
+   * 전용 칸을 따로 연다 — 값이 0 이면 `damage + 0`, `pierce + 0` 이라 **바이트 불변**이다.
+   *
+   * ## 「선두」의 정의(아키타입별)
+   *  · 레일건 — 유일한 그 한 발. · 미사일·부채꼴 — `i === 0`(부채 시작단).
+   *  · 빔 — `i === 1`, 즉 플레이어에 **가장 가까운** 세그먼트.
+   *
+   * ⚠️ 부채꼴 분기의 ⑦ 쌍둥이 항성 배율은 `damage` 에만 실린다 — 이 보너스는 훅이 계산한
+   * 값 그대로 더해진다(유니크 배율이 스킬 보너스까지 증폭하지 않는다).
+   */
+  leadDamageBonus: number;
+  /**
+   * **선두탄에만** 더할 관통(0 = 없음). {@link leadDamageBonus} 와 같은 규율이다.
+   *
+   * ⚠️ 빔은 관통을 리터럴 9999 로 쓰므로 이 칸이 **무연산**이다(`ballisticsUsed === false`).
+   * BL2 가 같은 자리에서 같은 판단을 했다 — 관통 무연산은 아키타입 정의이지 결함이 아니다.
+   */
+  leadPierceBonus: number;
   /**
    * 이번 볼리로 태어나는 **모든 탄의 `aux1` 에 자기 발사 시점 피해**(`round(damage)`)를
    * 새길 것인가. `false` 면 한 칸도 안 쓴다(`aux1` 은 0 그대로 → 리플레이 바이트 불변).
@@ -1531,14 +1602,15 @@ export function onVolleyParams(
       phantomVolleyParams(state, player, params);
       break;
     case SIG_BRUISER_ARMOR:
-      // BL2 백병 격발 · BL3 만재 중탄 · BL6 중량 탄자.
+      // BL2 백병 격발 · BL3 만재 중탄 · BL6 중량 탄자 · **BL8 격돌 담금질(소모처)**.
       // BL3·BL6 은 여기서는 `mark`(+BL6 은 피해·탄속·수명)만 건드리고 실효는 앵커 ⑩ 이 그
       // 표식을 읽어 낸다. BL2 만 이 앵커 안에서 끝난다(`targetDist` 술어 → 관통·피해 직접 증폭).
       //
-      // ⚠️ BL8(격돌 담금질)은 여전히 여기 **없다** — 적립처인 접촉 피격 판별 앵커가 아직 없다
-      // (앵커 ④ 의 인자는 `dmg`·`lethalSurvived` 뿐이라 피해원을 구분하지 않는다). BL2 를
-      // 막던 "표적 거리가 이 레코드에 없다" 는 S2.1 의 `targetDist` 로 해소됐다. 사유 전문은
-      // `bruiserVolleyParams` 의 doc 주석에 있다.
+      // ⚠️ **BL8 은 이제 여기 있다**(W2). 막던 사유는 근거로 남긴다 — 적립처인 접촉 피격 판별이
+      // 없었다(앵커 ④ 의 인자가 `dmg`·`lethalSurvived` 뿐이라 피해원을 구분하지 않았다).
+      // W2 가 앵커 ④ 에 `sources` 비트합을 실어 적립처를, `leadDamageBonus`·`leadPierceBonus`
+      // 로 「선두탄 1발」소모처를 함께 열었다. BL2 를 막던 "표적 거리가 이 레코드에 없다" 는
+      // S2.1 의 `targetDist` 로 해소됐다. 사유 전문은 `bruiserVolleyParams` 의 doc 주석에 있다.
       bruiserVolleyParams(state, player, params);
       break;
     case SIG_BUBBLE_FILM:
@@ -1556,14 +1628,12 @@ export function onVolleyParams(
       // SQ5 탕감 장전(잔량 25% 소진). 뒤 둘의 **적립처는 앵커 ⑳** 이고 여기가 소비처다 —
       // 한쪽만 배선하면 "카운터만 돌고 소비처가 없는" 반쪽이 된다.
       //
-      // ⚠️ SQ7(관성 사출)은 아직 여기 없다 — 설계 술어가 *"그 틱 입력 벡터와 **발사각**의
-      // 내적"* 인데, 그 두 항 중 **발사각은 이제 있다**(S3-1 이 `params.aimAngle` 을 실었다).
-      // `player.angle` 로 대용하면 안 되는 사유는 그대로다: 자동 조준이 실제 발사각을 정하는
-      // sim 에서 두 값이 갈릴 수 있고(조준각은 적이 없는 방향을 가리킬 수 있다 — 설계서 SQ10
-      // 의 폴백 경고와 같은 함정), 그 어긋남은 조용하다. `targetDist` 처럼 **world 가 이미
-      // 고른 발사각을 레코드에 싣는 것**이 값싼 길이었고, 그렇게 했다.
-      // ⚠️ 다만 **입력 벡터는 아직 이 레코드에 없다.** 내적의 나머지 한 항이 비어 있으므로
-      // SQ7 은 여전히 배선 불가다 — 발사각만으로는 반쪽이다.
+      // SQ7 관성 사출(그 틱 입력 벡터와 발사각의 내적 → 탄속·피해)도 **여기서 돈다.**
+      // 술어의 두 항이 서는 데 두 레인이 걸렸다: **발사각**은 S3-1 이 `params.aimAngle` 로
+      // 실었고(`player.angle` 로 대용하면 안 되는 사유는 그 필드 doc), **입력 벡터**는 W2 가
+      // `autoAttack` 에 `InputFrame` 을 배관해 `params.inputX/inputY` 로 실었다 — 발사부는
+      // 그 인자를 아예 받지 않았고 `WorldState` 에 그 틱 입력 보관도 없었다.
+      // ⚠️ 실속도(`player.vx/vy`)로 대용하지 않은 것이 핵심이다(감속·모듈이 속도를 갈아 놓는다).
       mallowVolleyParams(state, player, params);
       break;
     default:
@@ -1634,73 +1704,80 @@ export function onFilmEntry(state: WorldState, player: Entity, dmg: number): voi
 }
 
 /**
- * 앵커 ⑰ — **막 흡수 산술 직전**. 이번 피격에 한해 막의 **유효 내구**를 바꾼다.
+ * 앵커 ⑰ — **막 흡수 산술 직전**. 이번 피격에 한해 막의 **흡수 효율**(bp)을 바꾼다.
  *
- * ## 왜 "흡수량" 이 아니라 "유효 내구" 를 반환하는가
- * 흡수 산술은 순수 함수 두 개가 소유한다 — `filmAbsorbed(dmg, shield)` 와
- * `filmRemainingDamage(dmg, shield)`. 둘의 합이 원래 피해와 같다는 계약(`shipSignature.ts` ⑥절)을
- * `world.ts` 배선이 **재구현하지 않고 상속**하는 것이 현재 구조이고, 호출 지점 주석이 그것을
- * 명시적으로 못 박았다. 훅이 흡수량을 직접 반환하면 남는 피해는 `dmg - absorbed` 로 world 가
- * 다시 계산해야 하고, 그 순간 합 보존 계약의 **두 번째 사본**이 생긴다 — 이 저장소의 지배적
- * 실패 형태다. 유효 내구를 반환하면 두 순수 함수가 그대로 서고 계약은 한 곳에 남는다.
+ * ## ⚠️ 이 앵커는 한 배치 동안 **원리적으로 무효**였다 — 그 사유를 지우지 않는다
+ * 종전 계약은 "이번 피격에 쓸 **유효 내구**를 돌려준다" 였고, 그 형태로는 **어떤 스킬도 열 수
+ * 없었다.** 근거(배선 레인 실측, ADR-0049 버블 S2):
+ *  · 순수 함수가 `filmAbsorbed(d, s) = min(d, s)` 였고 world 가 `aux0 -= absorbed` 를 하므로,
+ *    `absorbed ≤ player.aux0` 을 지키려면 `shield ≤ player.aux0` 여야 했다.
+ *  · 그런데 `shield` 의 기본값이 이미 `player.aux0` 이다 → 훅은 **낮추는 방향으로만** 유효했다.
+ *  · `dmg ≤ aux0` 이면 부풀려도 `absorbed = dmg` 라 **아무것도 안 바뀌고**,
+ *    `dmg > aux0` 이면 부풀리는 순간 `aux0` 이 음수가 되어 u32 폴드가 40억대로 접었다.
+ * → "내구 1당 막는 피해가 1+α" 는 **흡수량 ≡ 내구 소모량**이라는 구조에서 성립할 수 없었다.
+ *   **이 앵커가 살린 스킬은 0종이었다.**
+ *
+ * ## 무엇이 바뀌었나 — 순수 함수가 *태운 내구*와 *막은 피해*를 분리했다
+ * `filmAbsorbed`/`filmRemainingDamage` 가 **효율 인자**를 받는다(`shipSignature.ts` ⑥절).
+ * 막을 수 있는 피해 총량이 `내구 × 효율` 이 되고, 태우는 내구는 그것을 효율로 되돌린 값이다.
+ * 그래서 효율을 올리면 **막은 피해가 실제로 늘고**(통과 피해가 준다) **태운 내구는 그와
+ * 독립적으로** 정해진다 — `min` 이 개입을 삼키던 경로가 끊겼다.
  *
  * 설계축과도 맞다: 버블의 흡수 강화 스킬(DR2 흡수 효율 · FI8 해저드 2배 효율)은 의미상
- * **"이 피격에 한해 막이 두껍다"** 이지 "흡수량만 늘고 통과 피해는 그대로" 가 아니다.
+ * **"이 피격에 한해 막이 두껍다"** 이지 "내구가 늘어난다" 가 아니다(설계서 DR2 문면: *"내구는
+ * 늘지 않는다 — 같은 내구로 더 버틴다"*).
  *
- * ## ⚠️ 반환값은 `player.aux0` 을 **덮어쓰지 않는다**
- * world 는 `player.aux0 -= filmAbsorbed(dmg, shield)` 로 **실제 내구**에서 뺀다. 유효 내구를
- * 실제보다 크게 반환하면 흡수량이 실제 내구를 넘어 **`aux0` 이 음수가 된다** — `aux0` 은 u32 로
- * 해시되므로(`replay.ts` `hashEntity` 의 `>>> 0`) 음수는 40억대 값으로 접혀 클라와 서버 재실행이
- * 갈린다. **부풀리는 case 는 반드시 자기 안에서 상한을 걸어라**(`FILM_ABSORB_FLAT` 이 아니라
- * `player.aux0` 이 상한이다 — 실제로 닳을 수 있는 양은 그것뿐이다).
+ * ## ⚠️ `aux0` 이 음수가 되는 경로는 없다
+ * `filmAbsorbed` 의 반환값이 어떤 효율에서도 `player.aux0` 을 넘지 않도록 순수 함수가
+ * 자기 안에서 못 박았다(그 doc 이 정본). 그래서 이 훅은 **상한을 걸 필요가 없다** — 종전
+ * 계약이 case 마다 요구하던 부담이 구조적으로 사라졌다.
  *
  * @param dmg 브루저 장갑까지 통과한 **정수화된** 피격 피해
- * @param shield 이 피격에 쓸 막 내구. S2 는 `player.aux0` 을 그대로 돌려준다(비트 동일)
- * @returns 조정된 유효 내구. **비음 정수여야 한다.**
+ * @param shield 이 피격에 쓸 **실제** 막 내구(= `player.aux0`). 술어용 읽기값이다
+ * @returns 흡수 효율(bp). {@link FILM_EFFICIENCY_BASE_BP}(10000)가 항등이고, S2/미투자 런은
+ *   그 값을 그대로 돌려주므로 **비트 동일**이다. **양의 정수여야 한다**(0 이하면 막이 아무것도
+ *   못 막는다 — 그런 축은 설계에 없다).
  */
-export function onFilmShield(
+export function onFilmEfficiency(
   state: WorldState,
   player: Entity,
   dmg: number,
   shield: number,
+  fromHazard: boolean,
 ): number {
-  if (!state.skillsOn) return shield;
-  void player;
-  void dmg;
+  if (!state.skillsOn) return FILM_EFFICIENCY_BASE_BP;
+  void shield;
   switch (state.sigBit) {
     // ⚠️ **버블 전용 지점이다.** 다른 기체는 막이 없어 호출 자체가 일어나지 않는다
     // (호출부가 `signatureOn(state, SIG_BUBBLE_FILM) && player.aux0 > 0` 게이트 안이다).
     // 그래도 `switch` 를 두는 것은 나머지 다섯 앵커와 형태를 맞춰 배선 레인이 규약을
     // 한 번만 익히게 하기 위함이다.
-    //
-    // ⚠️ **FI8「해저드 2배 효율」은 이 앵커만으로 성립하지 않는다 — 설계-코드 어긋남이다.**
-    // 그 스킬은 *피해원이 해저드일 때만* 흡수를 2배로 하는데, 이 지점의 `dmg` 는 이미
-    // **여러 접촉원의 합류값**이다(`world.ts` 의 수집 루프가 적 접촉·적탄·해저드를 같은
-    // 변수에 더한다). 피해원 종류를 복원할 방법이 없다. 이 앵커에 태우면 "해저드에서만" 이
-    // "언제나" 가 된다 — 설계와 정반대다. **문서는 고치지 않았다**(규약: 어긋남은 보고한다).
-    //
-    // ⚠️ **그리고 「흡수 효율」 축은 이 앵커로 아예 표현되지 않는다 — DR2 도 여기 못 온다.**
-    // 배선 레인 실측(ADR-0049 버블 S2 레인). 근거는 위 doc 의 상한 규칙과 순수 함수 정의를
-    // 겹쳐 보면 나온다: `filmAbsorbed(d, s) = min(d, s)` 이고 world 가 `aux0 -= absorbed` 를
-    // 하므로, **`absorbed ≤ player.aux0` 을 지키려면 `shield ≤ player.aux0`** 여야 한다.
-    // 그런데 `shield` 의 기본값이 이미 `player.aux0` 이다 → 이 훅은 내구를 **낮추는 방향으로만**
-    // 유효하다. 두 경우로 갈라 봐도 같다:
-    //  · `dmg ≤ aux0` 이면 부풀리든 말든 `absorbed = dmg` 라 **아무것도 안 바뀐다**.
-    //  · `dmg > aux0` 이면 부풀리는 순간 `aux0` 이 음수가 된다(u32 폴드 → 클라·서버 발산).
-    // 즉 "내구 1당 막는 피해가 1+α" 는 **흡수량 = 내구 소모량**이라는 이 구조에서 성립할 수
-    // 없다. 표현하려면 `filmAbsorbed`/`filmRemainingDamage` 가 효율 인자를 받아 *태운 내구*와
-    // *막은 피해*를 분리해야 하고, 그것은 골든에 닿는 순수 함수 변경이라 배선 레인 단독으로는
-    // 하지 않는다(앵커 ⑲ 의 ME9 가 같은 형태로 막혀 있는 것과 동형이다).
-    //
-    // ⚠️ **FI9「최후의 거품」은 여전히 여기 못 온다 — 다만 이제 갈 곳이 생겼다(앵커 ㉒).**
-    // 사유는 그대로다: 호출부 게이트가 `player.aux0 > 0` 이라 *막이 없는* 치명 피격에서는
-    // 이 훅이 **불리지 않는다.** 그 스킬의 자리는 흡수 산술 안이 아니라 막 흡수 분기의
-    // **진입 술어 직전**이고, S3-5 가 그 지점에 `onFilmEntry`(㉒)를 열었다 — 게이트를
-    // `aux0 > 0 || 치명` 으로 넓히지 **않은** 이유(파열 오발동)는 ㉒ 의 doc 이 정본이다.
+    case SIG_BUBBLE_FILM:
+      // FI8「발수 코팅」이 **여기서 돈다**(이 레인이 순수 함수를 개정해 자리를 열었다).
+      // ⚠️ 종전 주석은 *"FI8 은 이 앵커만으로 성립하지 않는다 — 이 지점의 `dmg` 가 여러
+      //    접촉원의 합류값이라 피해원 종류를 복원할 방법이 없다"* 였다. **그 관측은 옳았고**,
+      //    그래서 이 레인은 훅에 `fromHazard` 인자를 추가해 수집 루프가 **max 를 갱신한 그
+      //    항목의 출처**를 함께 실어 보내게 했다(설계서 FI8 「구현: A」의 문면 그대로 —
+      //    출처 플래그 배열이 아니라 지역 변수 2개). 인자가 없었으면 "해저드에서만" 이
+      //    "언제나" 가 되어 설계와 정반대가 됐을 것이다.
+      //
+      // ⚠️ **DR2「표면장력 세례」는 여전히 미배선이다 — 다만 사유가 바뀌었다.**
+      //    종전 사유("효율 축은 이 앵커로 표현되지 않는다")는 **해소됐다**. 남은 사유는 하나뿐:
+      //    DR2 는 *막이 서 있는 동안 젬을 수거하면 60틱 창이 열린다* 라는 술어이고, 그 창은
+      //    설계서가 「구현: B」로 못 박은 **신규 WorldState 정수 1개**를 요구한다(잔여 틱).
+      //    이 레인은 순수 함수·앵커 개정이 본무라 신규 해시 필드를 함께 들이지 않았다 —
+      //    필드만 만들고 감소·수거 배선 중 하나라도 빠지면 슬롯이 영구히 해시에만 접히는
+      //    반쪽 배선이 된다. **그 필드가 서는 날 이 case 에 곱연산으로 얹으면 된다**(설계서
+      //    R3-2: DR2 는 전 출처·유한 창, FI8 은 단일 출처·상시 — 곱 중첩이 의도된 설계다).
+      //
+      // ⚠️ **FI9「최후의 거품」은 여전히 여기 못 온다.** 호출부 게이트가 `player.aux0 > 0`
+      //    이라 *막이 없는* 치명 피격에서는 이 훅이 **불리지 않는다.** 그 자리는 앵커 ㉒
+      //    (`onFilmEntry`)이고 S3-5 가 열어 이미 배선됐다.
+      return bubbleFilmEfficiency(state, player, dmg, fromHazard);
     default:
       break;
   }
-  return shield;
+  return FILM_EFFICIENCY_BASE_BP;
 }
 
 /**
@@ -1764,17 +1841,21 @@ export function onFilmAbsorbed(
  * `CUSHION_RECOVER_TICKS` 를 기체 모듈이 다시 import 해 자기 식을 세우면 정본이 둘이 된다.
  * 이 앵커는 기본값을 넘겨 주므로 case 는 **그 값에서 깎기만** 하면 된다.
  *
- * ## ⚠️ 반환값은 순수 함수와 **함께** 움직여야 한다
- * 정산액·회복액은 `cushionSettled(aux0, aux1)` · `cushionRecovered(aux0, aux1)` 가 계산하는데,
- * **그 두 함수도 각자 `unhitTicks < CUSHION_RECOVER_TICKS` 를 다시 검사해 0 을 돌려준다**
- * (`shipSignature.ts:320·339`). 즉 임계를 180 **아래로** 낮춰 분기에 진입시켜도, 두 함수가
- * 자기 상수로 다시 걸러 **정산액이 0 이 되어 조용히 아무 일도 일어나지 않는다.**
- * → **ME9 를 실제로 배선하려면 이 앵커만으로 부족하다.** 순수 함수 둘이 임계를 인자로 받도록
- * 함께 고쳐야 하고, 그것은 골든에 닿는 변경이라 배선 레인이 단독으로 하면 안 된다.
- * S2 는 **자리만** 연다 — 이 한계를 모르고 case 를 넣으면 "구현했는데 안 도는" 반쪽 배선이 된다.
+ * ## ⚠️ 반환값은 순수 함수와 **함께** 움직여야 한다 — 한 배치 동안 그것이 안 돼 무효였다
+ * 종전에는 정산액·회복액을 내는 `cushionSettled`·`cushionRecovered` 가 **자기 안에서**
+ * `unhitTicks < CUSHION_RECOVER_TICKS` 를 다시 검사해 0 을 돌려주었다. 즉 이 앵커가 임계를
+ * 180 **아래로** 낮춰 `world.ts` 의 분기에 진입시켜도 두 함수가 자기 상수로 다시 걸러
+ * **정산액이 0 이 되어 조용히 아무 일도 일어나지 않았다** — 이 저장소의 지배적 실패 형태
+ * ("구현했는데 안 도는" 반쪽 배선) 그대로였고, 그래서 ME9 는 통째로 미배선이었다.
+ * **그 사유를 지우지 않고 남긴다.**
  *
- * @param base `CUSHION_RECOVER_TICKS`. S2 는 그대로 돌려준다(비트 동일)
- * @returns 이번 틱에 쓸 임계. **양의 정수여야 한다**(0 이하면 매 틱 정산이 된다)
+ * 이 레인이 두 순수 함수를 개정해 **임계를 필수 인자로** 받게 했고(`shipSignature.ts` ⑤절),
+ * `world.ts` 가 이 앵커의 반환값을 그 인자로 그대로 넘긴다. 그래서 지금은 임계를 낮추면
+ * 정산 시점이 **실제로** 앞당겨진다.
+ *
+ * @param base `CUSHION_RECOVER_TICKS`. 미투자 런은 그대로 돌려받는다(비트 동일)
+ * @returns 이번 틱에 쓸 임계. **양의 정수여야 한다**(0 이하면 매 틱 정산이 된다 — 순수 함수가
+ *   자기 안에서 1 로 올려 한 번 더 막지만, 그것에 기대지 마라)
  */
 export function onCushionThreshold(
   state: WorldState,
@@ -1784,17 +1865,15 @@ export function onCushionThreshold(
   if (!state.skillsOn) return base;
   void player;
   switch (state.sigBit) {
-    // ⚠️ **말로우 ME9「솜틀 요양」의 case 를 여기 넣지 마라 — 넣어도 안 돈다.**
-    // 술어(`state.wallContactTicks >= 60`)와 인하폭(`round(20 + 50×Lv/(Lv+12))`)은 전부
-    // 계산 가능하고, 이 앵커가 낮춘 임계로 `world.ts` 의 분기에 실제로 진입도 한다. 그런데
-    // 그 안에서 정산액을 내는 `cushionSettled`·`cushionRecovered` 가 **자기 안에서
-    // `unhitTicks < CUSHION_RECOVER_TICKS` 를 다시 검사해 0 을 돌려준다**
-    // (`shipSignature.ts:320·339`). 결과는 "분기에는 들어갔는데 정산액이 0" 이라
-    // **조용히 아무 일도 일어나지 않는 반쪽 배선**이다 — 이 저장소의 지배적 실패 형태 그대로다.
-    // 배선 레인(S2 확장)이 `tests/skillMallow.test.ts` §⑫ 로 이 사실을 실증해 잠갔다.
-    // → ME9 를 열려면 순수 함수 둘이 **임계를 인자로 받도록** 함께 고쳐야 하고, 그것은 골든에
-    //   닿는 변경이라 배선 레인이 단독으로 할 수 없다. CU7 의 분모(현행 상수 180)도 같은
-    //   선결에 묶여 있다 — ME9 가 도는 날 `mallowDamageChain` 의 분모를 함께 옮겨야 한다.
+    // ME9「솜틀 요양」이 **여기서 돈다**(이 레인이 순수 함수 둘을 개정해 자리를 열었다).
+    // ⚠️ 종전 주석은 *"여기 case 를 넣지 마라 — 넣어도 안 돈다"* 였다. 그 관측은 옳았고
+    //    (사유는 위 doc 에 남겼다), 이 레인이 `cushionSettled`·`cushionRecovered` 를
+    //    **임계 인자 필수**로 고쳐 그 사유를 해소했다. 배선 레인이 `tests/skillMallow.test.ts`
+    //    §⑫ 로 잠가 둔 "안 돈다" 실증도 이 레인이 함께 갱신했다.
+    // ⚠️ CU7 의 감소 분모도 같은 선결에 묶여 있었다 — `mallowSettleThreshold` 를 **한 곳**에
+    //    두고 이 앵커와 `mallowDamageChain` 이 **같은 함수**를 부른다. 상수를 복제하지 않는다.
+    case SIG_MALLOW_CUSHION:
+      return mallowSettleThreshold(state, base);
     default:
       break;
   }
@@ -2080,11 +2159,12 @@ export function onBroodLaunchParams(
  *  - ⚠️ **`chick.ownerId` 를 바꾸지 마라** — `BROOD_MARK` 가 곧 상한 계수의 정의이고
  *    `isGimmick` 컬링 제외의 근거다.
  *
- * ## ⚠️ 이 앵커로도 안 열리는 것
+ * ## ⚠️ 이 앵커로도 안 열리는 것 — ✅ **㉖ 이 열었다(W2)**
  * BD10 「여왕 사출」의 **탄 피해 배율**은 여기 없다. 병아리의 사격은 `stepTurrets`/
  * `fireTurretShot` 이 매 틱 정하고 개체에 피해 필드가 없어서, 태어난 순간에 실을 자리가
- * 없다(수명 가산은 `chick.life` 로 여기서 가능하다). 그 축은 포탑 루프에 앵커가 서야 열린다
- * — `skills/hatchling.ts` 헤더 사유 2묶음과 같은 지점이다.
+ * 없다(수명 가산은 `chick.life` 로 여기서 가능하고, **BD10 의 그 축은 실제로 여기 있다**).
+ * 그 축은 포탑 루프에 앵커가 서야 열린다 — 이 파일 말미의 **앵커 ㉖ `onTurretShotParams`**
+ * 가 그것이다. 위 문장은 *왜 ㉔ 로는 안 되는가* 의 기록으로 남긴다(지금도 참이다).
  */
 export function onBroodLaunched(state: WorldState, player: Entity, chick: Entity): void {
   if (!state.skillsOn) return;
@@ -2092,6 +2172,100 @@ export function onBroodLaunched(state: WorldState, player: Entity, chick: Entity
     // 배선 레인은 자기 `case SIG_HATCHLING_BROOD:` 를 여기에 넣는다. **`break;` 필수**(위와 같음).
     case SIG_HATCHLING_BROOD:
       hatchlingBroodLaunched(state, player, chick);
+      break;
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉖ (W2) — **포탑 사격 지점**(`world.ts` 의 `fireTurretShot`)
+// ---------------------------------------------------------------------------
+//
+//   ㉖ onTurretShotParams — 포탑탄 1발의 파라미터가 정해지는 지점(표적 확정 **뒤** ·
+//                           `spawnBullet` **앞**). 해츨링 BD10 의 탄 피해 배율.
+//
+// `skills/hatchling.ts` 헤더 사유 2묶음(「포탑 루프 소관 — 6종」)과 앵커 ㉔ doc 말미의
+// 「이 앵커로도 안 열리는 것」이 가리키던 그 지점이다. BD10 은 상한 −1(㉓) · 수명 가산(㉔) ·
+// **탄 피해 배율(㉖)** 의 3축인데 셋째가 없어 *"−1기를 내주고 정예화는 안 받는"* 순손해라
+// 앞 레인이 통째로 미배선으로 남겼다. 셋이 다 있어야 배선이 성립한다.
+//
+// ## ⚠️ 포탑은 해츨링 전용이 아니다 — 훅은 전부에서 불리고, **효과 게이트는 훅 안**이다
+// `stepTurrets` 는 병아리(`BROOD_MARK`) · 액티브 센트리 · 자율 드론 베이(둘 다 `DRONE_MARK`)
+// 를 한 루프로 돌린다. 앵커를 소환물 종류로 미리 거르지 **않는다** — 그러면 훗날 센트리를
+// 만지는 축이 다시 막힌다. 대신 `turret` 을 넘겨 **훅이 스스로 판별**하게 한다
+// (`hatchlingTurretShotParams` 의 첫 줄이 `ownerId === BROOD_MARK` 다).
+//
+// ## ⚠️ 왜 표적 확정 뒤인가
+// 표적이 없는 틱은 무발사(`fireTurretShot` 이 `false` 반환)라 실릴 탄이 없다. 앞에 두면
+// 사거리 밖 대기 중에도 매 틱 훅이 돌아 상시 비용만 붙는다.
+//
+// ## ⚠️ 촉매 짝이 없다 — ⑮·⑰~㉔ 과 같다
+// 포탑탄은 촉매 48종에 대응 카드가 없다. 빈 촉매 함수를 미리 두지 마라.
+
+/**
+ * 앵커 ㉖ 이 넘기는 **포탑탄 1발의 파라미터**. 훅이 제자리에서 고친다.
+ *
+ * ## 왜 인자 나열이 아니라 레코드인가
+ * `VolleyParams`·`BroodParams` 와 같은 사유다 — 포탑 루프를 기다리는 축이 여럿이고
+ * (BD7 누적 강화 등) 고치려는 칸이 서로 달라, 인자로 늘어놓으면 칸이 하나 늘 때마다 앵커
+ * 시그니처가 바뀐다. 레코드는 필드를 더해도 기존 `case` 가 그대로 선다.
+ *
+ * ## ⚠️ 칸이 하나뿐인 이유 — **증명한 칸만 연다**
+ * `speed`·`life`·`pierce`·`radius` 도 `spawnBullet` 이 그대로 싣는 값이라 열 수 **있지만**,
+ * 이 커밋에 소비자가 없다. 이 저장소는 "미리 열어 둔 자리"가 *"배선이 있다"* 는 착각을
+ * 만든 재발 패턴을 갖고 있고(앵커 ⑮ 주석), 무엇보다 **여는 칸마다 클램프 삼킴을 따로
+ * 확인해야** 한다(앵커 ⑰ 이 `min(d,s)` 로 원리적 무효였던 전례). 필요해지는 레인이 자기
+ * 칸을 확인하고 더해라 — 레코드라 그 추가는 앵커 시그니처를 안 바꾼다.
+ */
+export interface TurretShotParams {
+  /**
+   * 이 1발의 피해. 초기값은 `events.ts` 의 `TURRET_BULLET_DAMAGE`(=10).
+   *
+   * ## ⚠️ 클램프에 안 삼켜진다 — 소비 경로를 끝까지 따라갔다
+   * `spawnBullet` 이 `b.damage = damage` 로 **그대로** 싣고(산술 0), 명중 지점은
+   * `dealt = b.damage * mult * gyroAmp * prismAmp * eliteDamageTakenMult(t)` 뒤
+   * `t.hp -= dealt` 다. **`min`·`max`·클램프가 경로에 하나도 없다.** 배율을 키우면 적 hp 가
+   * 실제로 그만큼 더 준다(뮤테이션으로 확인 — 훅의 곱셈을 지우면 단언이 빨개진다).
+   * (`core` 실드 흡수 분기만 예외적으로 감산하는데 그건 침공 방어체 전용이다.)
+   */
+  damage: number;
+}
+
+/**
+ * 앵커 ㉖ — **포탑 1기의 1발이 실제로 나가기 직전**(표적 확정 뒤 · `spawnBullet` 앞).
+ *
+ * ## 이 지점에서만 살아 있는 것
+ *  - **포탑 개체와 탄 파라미터가 둘 다 유효하다.** 앵커 ⑯(`onVolleyParams`)은 플레이어
+ *    주무기 전용이라 포탑탄을 안 본다. 탄이 태어난 뒤로 미루면 *"어느 포탑이 쐈는가"* 가
+ *    남지 않는다 — 남는 것은 `ownerId` 스탬프뿐이고 그건 소환물 종류이지 개체가 아니다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.** `fireTurretShot` 의 RNG 미소비 계약(그 함수 doc)이 이
+ *    앵커에도 그대로 걸린다. 난수를 뽑으면 웨이브 구성·드랍 시퀀스가 통째로 밀린다.
+ *  - ⚠️ **엔티티를 낳지 마라.** 이 지점은 `stepTurrets` 의 `state.entities` **순회 안**이다.
+ *    (`spawnBullet` 은 배열 말미 append 라 world 자신이 쓰는 안전한 경로지만, 훅이 임의로
+ *    개체를 밀어 넣으면 같은 틱의 순회가 갈린다 — `splitSpawns` 처럼 순회 밖으로 미루는
+ *    버퍼가 필요하다.)
+ *  - ⚠️ **`turret` 을 죽이거나 `cooldown` 을 만지지 마라.** 쿨다운 리듬은 호출부
+ *    (`stepTurrets`)가 반환값을 보고 정한다 — 여기서 손대면 BD8 의 "쿨다운 무시 격발"
+ *    계약이 갈린다.
+ *
+ * @param turret 이 발을 쏘는 포탑 개체. **소환물 종류 판별은 훅 책임이다**(`ownerId` —
+ *   병아리 `BROOD_MARK` · 센트리/드론 베이 `DRONE_MARK`).
+ */
+export function onTurretShotParams(
+  state: WorldState,
+  turret: Entity,
+  params: TurretShotParams,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라** — 병렬 배선
+    // 머지에서 두 `case` 가 `break;` 하나를 공유하는 fallthrough 가 누적 5건 나왔고 전부
+    // `tsc` 만이 잡았다.
+    case SIG_HATCHLING_BROOD:
+      hatchlingTurretShotParams(state, turret, params);
       break;
     default:
       break;

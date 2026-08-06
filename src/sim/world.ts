@@ -160,10 +160,10 @@ import {
 import { cloakEntryCrossed, cloakExitCrossed, fireCloakEntry, setBreakToken } from './cloak.js';
 import { shipTypeDef, DEFAULT_SHIP_TYPE } from '../../data/ships/index.js';
 import { hasAnyInvestment } from '../items/skills.js';
-import { createSkillSlots } from './skillSlots.js';
+import { createSkillSlots, DamageSource } from './skillSlots.js';
 // 210스킬 앵커 25개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
 // (⑮ `onFilmBurst` 는 `filmBurst.ts` 가 부르므로 여기 없다 — 총 26개 중 25개가 이 파일 소유다.)
-import type { VolleyParams, BroodParams } from './skillHooks.js';
+import type { VolleyParams, BroodParams, TurretShotParams } from './skillHooks.js';
 import {
   survivedLethalBlow,
   onVolleyFired,
@@ -182,7 +182,7 @@ import {
   onPowerupPicked,
   onVolleyParams,
   onFilmEntry,
-  onFilmShield,
+  onFilmEfficiency,
   onFilmAbsorbed,
   onCushionThreshold,
   onCushionSettleDue,
@@ -190,6 +190,7 @@ import {
   onCloakBreakReset,
   onBroodLaunchParams,
   onBroodLaunched,
+  onTurretShotParams,
 } from './skillHooks.js';
 import { onDamageChainCatalyst } from './catalystHooks.js';
 import { createCatalystSlots } from './catalystSlots.js';
@@ -1905,7 +1906,12 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
     purifyContamination(state);
   }
   stepBoss(state, player);
-  autoAttack(state, player);
+  // ⚠️ `input` 을 넘기는 이유 — 앵커 ⑯ 이 **그 틱 입력 벡터**를 레코드에 실어야 하기 때문이다.
+  // `player.vx/vy`(실속도)로 대용하면 안 된다: 감속 장판·이속 모듈·넉백이 속도를 갈아 놓아
+  // "플레이어가 무엇을 지시했는가" 와 갈린다(인벤토리 1.5 계약 「상태 판정은 입력으로」).
+  // `input` 은 이 틱 어디서도 변형되지 않는다(전수 확인: `src/sim/**` 에 `input.<필드> =`
+  // 대입이 0건) — 이동에 소비돼도 초기화되지 않으므로 발사 시점에도 그대로 유효하다.
+  autoAttack(state, player, input);
   subWeapon(state, player);
   droneBay(state, player);
   stepTurrets(state, player);
@@ -2542,17 +2548,19 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
     // 앵커 ⑲(S2) — **정산 임계 비교 직전.** ME9「솜틀 요양」은 임계 자체를 낮추는 스킬인데
     // 술어(`state.wallContactTicks >= 60`)는 앵커 ⑦ 에서 이미 읽을 수 있었고 **적용부가**
     // 없었다. 기본값을 인자로 넘기므로 기체 모듈이 `CUSHION_RECOVER_TICKS` 를 복제하지 않는다.
-    // ⚠️ **이 앵커만으로는 ME9 가 실제로 돌지 않는다** — 아래 `cushionSettled`·`cushionRecovered`
-    //    가 자기 안에서 `unhitTicks < CUSHION_RECOVER_TICKS` 를 **다시** 검사해 0 을 돌려주므로,
-    //    임계를 낮춰 분기에 진입시켜도 정산액이 0 이 되어 조용히 아무 일도 안 일어난다. 근거와
-    //    선결 조건은 앵커 주석에 있다. S2 는 기본값을 그대로 돌려주므로 비트 동일이다.
+    // ⚠️ 종전에는 **이 앵커만으로 ME9 가 돌지 않았다** — `cushionSettled`·`cushionRecovered`
+    //    가 자기 안에서 `unhitTicks < CUSHION_RECOVER_TICKS` 를 **다시** 검사해 0 을 돌려주었고,
+    //    임계를 낮춰 분기에 진입시켜도 정산액이 0 이 되어 조용히 아무 일도 안 일어났다.
+    //    이 레인이 두 순수 함수를 **임계 필수 인자**로 개정해 그 사유를 해소했다 — 아래 두
+    //    호출이 `settleAt` 을 그대로 넘기는 것이 배선의 전부이고, 넘기지 않으면 다시 무효가 된다.
+    //    미투자 런은 훅이 기본값을 그대로 돌려주므로 비트 동일이다.
     const settleAt = onCushionThreshold(state, player, CUSHION_RECOVER_TICKS);
     if (player.aux0 > 0 && player.aux1 >= settleAt) {
-      const due = cushionSettled(player.aux0, player.aux1);
+      const due = cushionSettled(player.aux0, player.aux1, settleAt);
       // 사연 관측(비-해시): 이번 정산에서 회복으로 사라진 지연분 HP 를 누적한다(aux0 을 0 으로
       // 되돌리기 **전**에 읽는다). 결정론 무영향 — hashWorld 가 접지 않는 순수 메타.
       // 지역 변수로 뽑은 것은 앵커 ⑳ 이 같은 값을 받기 위함이다 — 두 번 부르면 리셋 뒤라 0 이 된다.
-      const healed = cushionRecovered(player.aux0, player.aux1);
+      const healed = cushionRecovered(player.aux0, player.aux1, settleAt);
       state.cushionHealed += healed;
       player.aux0 = 0;
       player.aux1 = 0;
@@ -2943,7 +2951,7 @@ function reachLife(w: WeaponStats, reach: number): number {
   return need > w.bulletLife ? need : w.bulletLife;
 }
 
-function autoAttack(state: WorldState, player: Entity): void {
+function autoAttack(state: WorldState, player: Entity, input: InputFrame): void {
   const w = state.weapon;
   // ⚠️ **플레이어의 `cooldown` 은 Q 단위**(1/FIRE_CD_Q 틱)다 — 적 엔티티의 `cooldown` 은
   // 여전히 정수 틱이다(같은 필드, 다른 소유자). 매 틱 FIRE_CD_Q 씩 깎고, 발사 때 남은
@@ -3079,6 +3087,9 @@ function autoAttack(state: WorldState, player: Entity): void {
     // `if (marksmanFire) b.aux0 = 1` 이 흩어져 있었고, 새 표식이 필요한 기체(팬텀 AS3·AS10 ·
     // 아크캐스터 CH1·CH8)는 그 네 곳을 전부 고쳐야 했다. 이제 표식 경로는 한 곳뿐이다.
     mark: marksmanFire ? 1 : 0,
+    // 선두탄 전용 증분(기본 0 = `damage + 0`·`pierce + 0` 이라 바이트 불변).
+    leadDamageBonus: 0,
+    leadPierceBonus: 0,
     // 발사 시점 피해를 탄 `aux1` 에 새길 것인가(기본 false = 한 칸도 안 쓴다).
     recordSpawnDamage: false,
     // 아키타입 분기가 `count`·`spread` 를 실제로 읽는가 — 판정 정본은 아래 분기 하나뿐이고
@@ -3100,6 +3111,13 @@ function autoAttack(state: WorldState, player: Entity): void {
     //    `onVolleyParams` 의 어느 구현체도 `player`·`target` 의 좌표를 쓰지 않는다
     //    (좌표를 미는 스킬은 전부 피격·시그니처 훅 쪽이다).
     aimAngle: atan2(target.y - player.y, target.x - player.x),
+    // 이 틱의 **이동 입력 벡터 원본**([-1,1] 각 축, 정규화 전). `targetDist`·`aimAngle` 과
+    // 같은 성격의 읽기 전용 사실이다 — world 가 이미 가진 값을 그대로 싣는다.
+    // ⚠️ 정규화를 여기서 하지 않는 이유: 대각 입력의 길이(√2/2 씩)를 술어로 쓰고 싶은 스킬과
+    //    방향만 쓰고 싶은 스킬이 갈릴 수 있고, 정규화는 나눗셈 1회라 훅 쪽이 필요할 때만
+    //    치르면 된다. 원본을 실으면 두 용도가 다 성립하지만 미리 나누면 길이가 소실된다.
+    inputX: input.moveX,
+    inputY: input.moveY,
     cloakBreak: cloakBreakFired,
   };
   onVolleyParams(state, player, volley);
@@ -3117,8 +3135,9 @@ function autoAttack(state: WorldState, player: Entity): void {
       player.y,
       baseAngle,
       volley.speed,
-      volley.damage,
-      volley.pierce,
+      // 레일건의 유일한 한 발이 곧 **선두탄**이다(증분 0 이면 종전 값 그대로).
+      volley.damage + volley.leadDamageBonus,
+      volley.pierce + volley.leadPierceBonus,
       volley.radius,
       volley.life,
       cos(baseAngle),
@@ -3148,8 +3167,9 @@ function autoAttack(state: WorldState, player: Entity): void {
         player.y,
         ang,
         volley.speed,
-        volley.damage,
-        volley.pierce,
+        // 선두 = 부채 시작단(`i === 0`). 증분 0 이면 종전 값 그대로다.
+        i === 0 ? volley.damage + volley.leadDamageBonus : volley.damage,
+        i === 0 ? volley.pierce + volley.leadPierceBonus : volley.pierce,
         volley.radius,
         volley.life,
         cos(ang),
@@ -3190,7 +3210,9 @@ function autoAttack(state: WorldState, player: Entity): void {
         player.y + sa * dist,
         baseAngle,
         0,
-        volley.damage,
+        // 빔의 선두 = 플레이어에 **가장 가까운** 세그먼트(`i === 1` — 루프가 1 부터 돈다).
+        // 관통은 리터럴 9999 라 `leadPierceBonus` 가 무연산이다(아키타입 정의, 필드 주석 참조).
+        i === 1 ? volley.damage + volley.leadDamageBonus : volley.damage,
         9999,
         BEAM_SEGMENT_RADIUS,
         BEAM_SEGMENT_LIFE,
@@ -3221,8 +3243,10 @@ function autoAttack(state: WorldState, player: Entity): void {
       player.y,
       ang,
       volley.speed,
-      dmg,
-      volley.pierce,
+      // 선두 = 부채 시작단(`i === 0`). 쌍둥이 항성 배율은 `dmg` 에만 실린다 — 유니크 배율이
+      // 스킬 보너스까지 증폭하지 않는다(필드 주석의 계약).
+      i === 0 ? dmg + volley.leadDamageBonus : dmg,
+      i === 0 ? volley.pierce + volley.leadPierceBonus : volley.pierce,
       volley.radius,
       volley.life,
       cos(ang),
@@ -3658,6 +3682,9 @@ function stepTurrets(state: WorldState, _player: Entity): void {
  *  · **RNG 를 소비하지 않는다.** `nearestTarget` 은 거리·id tie-break 결정론이고 `spawnBullet` 도
  *    난수를 안 쓴다. 이 계약은 `stepHatchBrood` 의 RNG 미소비 계약과 한 몸이다 — 병아리 경로
  *    어디에서도 스트림이 밀리면 안 된다(공통-B).
+ *    ⚠️ **앵커 ㉖ 에도 그대로 걸린다**(그 훅 doc 이 같은 경고를 다시 적는다).
+ *  · **이 함수는 `stepTurrets` 의 엔티티 순회 안**이다 — 앵커 ㉖ 이 엔티티를 낳으면 같은 틱의
+ *    순회가 갈린다. `spawnBullet` 의 말미 append 만이 world 가 쓰는 안전 경로다.
  *
  * ## ⚠️ 병아리 탄 마커(`ownerId = BROOD_MARK`)가 들어올 자리는 **여기 한 곳**이다
  * 설계(`hatchling.md` ⑤ 공통 고지 ⑦)는 SH5·BD4·NU5 가 "이 탄이 병아리 탄인가"를 이 마커로
@@ -3673,13 +3700,18 @@ function fireTurretShot(state: WorldState, t: Entity): boolean {
   const target = nearestTarget(state, t, TURRET_RANGE);
   if (target === undefined) return false;
   const ang = atan2(target.y - t.y, target.x - t.x);
+  // 앵커 ㉖ — **표적이 확정된 뒤**다(그 자리인 사유는 훅 doc). 초기값이 현행 상수와 정확히
+  // 같으므로 미투자 런·타 기체 런의 거동·해시는 비트 동일이다. 포탑 개체(`t`)를 넘기므로
+  // 훅이 병아리(BROOD_MARK)와 센트리·드론 베이(DRONE_MARK)를 **스스로** 구분한다.
+  const shotParams: TurretShotParams = { damage: TURRET_BULLET_DAMAGE };
+  onTurretShotParams(state, t, shotParams);
   const shot = spawnBullet(
     state,
     t.x,
     t.y,
     ang,
     TURRET_BULLET_SPEED,
-    TURRET_BULLET_DAMAGE,
+    shotParams.damage,
     0,
     TURRET_BULLET_RADIUS,
     TURRET_BULLET_LIFE,
@@ -4258,6 +4290,21 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   // 브로드페이즈 검색은 기존대로 기체 반지름(player.radius)으로 훑고(픽업 후보 누락 방지),
   // 좁은 판정은 콜백 안에서 종류별로 나눠 정확 거리 테스트한다.
   let dmg = 0;
+  // 앵커 ④ 의 **피해원 비트합**(W2). `dmg` 는 아래에서 **더하지 않고 `max`** 로 뽑히므로,
+  // 이긴 피해원 하나만 실으면 같은 틱의 다른 접촉이 통째로 삼켜진다 — 접촉을 트리거로 쓰는
+  // 스킬(브루저 BL8)이 적탄이 더 아픈 틱마다 조용히 미발동한다. 그래서 **기여한 종류를 전부**
+  // 세운다. `dmg` 산술에는 한 줄도 개입하지 않으므로 기존 해시는 바이트 불변이다.
+  // ⚠️ 비트는 `t.damage > 0` 일 때만 세운다 — 피해 0 짜리 접촉은 `dmg` 에 기여가 없다.
+  let dmgSources = 0;
+  // 버블 FI8 — 위 `dmg` 를 **마지막으로 갱신한 항목**이 해저드였는가. `dmg` 와 한 벌로 움직인다
+  // (설계서 FI8 「구현: A」의 "지역 변수 2개"). 스킬 무관하게 계산되지만 소비처가 앵커 ⑰
+  // 하나뿐이라, 미투자 런에서는 훅이 항등 효율을 돌려주어 **비트 불변**이다.
+  //
+  // ⚠️ **`dmgSources` 와 성격이 다르다 — 둘을 합치지 마라.** `dmgSources` 는 *기여한 종류
+  //    전부*(비트합)이고 이것은 *`max` 를 이긴 그 한 항목*이다. FI8 은 "이번 피격이 해저드
+  //    피해인가"를 물으므로 비트합으로는 답이 안 나오고(적탄이 더 아파도 해저드 비트가 서
+  //    있다), BL8 은 "접촉 기여가 있었는가"를 물으므로 승자만으로는 답이 안 나온다.
+  let dmgFromHazard = false;
   const invulnerable = player.iframes > 0;
   const px = player.x;
   const py = player.y;
@@ -4315,7 +4362,15 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     }
     if (invulnerable) return;
     if (t.kind === 'enemyBullet') {
-      if (t.damage > dmg) dmg = t.damage;
+      if (t.damage > 0) dmgSources |= DamageSource.bullet;
+      // 버블 FI8「발수 코팅」 — **max 를 갱신한 그 항목의 출처**를 함께 기록한다(설계서 FI8
+      // 「구현: A」: 출처 플래그 배열이 아니라 지역 변수 2개). 이 loop 는 여러 접촉원을 `max`
+      // 로 합류시키므로, 여기서 안 잡으면 흡수 지점(앵커 ⑰)에서 종류를 **복원할 방법이 없다**.
+      // 대입 순서가 계약이다 — `dmg` 를 갱신한 그 분기에서만 플래그를 바꾼다.
+      if (t.damage > dmg) {
+        dmg = t.damage;
+        dmgFromHazard = false;
+      }
       t.dead = true;
       // 'prop'(L3 기물)은 여기 넣지 않는다 — 기물의 damage 는 탄·장판 피해라 접촉 피해로
       // 겸용하면 코어방에 들어서기만 해도 플레이어가 갈린다.
@@ -4328,9 +4383,21 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       // 수호 기체(M5)는 추적형 요격 유닛 — 접촉(램) 피해를 준다(방어전에만 존재). 단 마일스톤 ①
       // 격추 재기동 딜레이 중(iframes>0)인 수호는 정지·무력 상태라 접촉 피해도 주지 않는다.
       if (t.kind === 'guardian' && t.iframes > 0) return;
-      if (t.damage > dmg) dmg = t.damage;
+      // 접촉원 kind 는 네 종 **전부** 접촉으로 센다(설계 R-4) — 여기서 접촉원은 트리거일 뿐
+      // 대상 지정이 없어 어떤 kind 여도 무해하다.
+      if (t.damage > 0) dmgSources |= DamageSource.contact;
+      if (t.damage > dmg) {
+        dmg = t.damage;
+        dmgFromHazard = false;
+      }
     } else if (t.kind === 'hazard' && hazardActive(t)) {
-      if (t.damage > dmg) dmg = t.damage;
+      if (t.damage > 0) dmgSources |= DamageSource.hazard;
+      // 유일하게 `dmgFromHazard = true` 를 세우는 자리다 — FI8 의 "해저드 피해" 정의가
+      // `kind === 'hazard' && hazardActive(t)` 그것이다(용암·박격 장판).
+      if (t.damage > dmg) {
+        dmg = t.damage;
+        dmgFromHazard = true;
+      }
     }
     // Supply raiders never harm the player (they do not attack).
   });
@@ -4409,20 +4476,22 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     }
     if (filmSig && player.aux0 > 0) {
       dmg = Math.round(dmg);
-      // 앵커 ⑰(S2) — **이번 피격에 쓸 유효 내구.** 버블의 감쇠 사슬 스킬 6종이 이 지점을
+      // 앵커 ⑰ — **이번 피격에 쓸 흡수 효율(bp).** 버블의 감쇠 사슬 스킬이 이 지점을
       // 기다리고 있었다 — 앵커 ⑧ 은 브루저 장갑보다도 앞이라 거기서 본 `dmg` 는 막을 아직
       // 지나지 않았고 `aux0` 도 한 점 안 닳았다.
-      // 훅이 "흡수량" 이 아니라 "내구" 를 돌려주는 이유는 그 앵커 주석에 있다: 아래 두 순수
-      // 함수의 합 보존 계약(`absorbed + rest === dmg`)이 world 에 복제되지 않고 한 곳에 남는다.
-      // S2 는 `player.aux0` 을 그대로 돌려주므로 비트 동일이다.
-      // ⚠️ 훅이 실제 내구보다 큰 값을 돌려주면 아래 차감이 **`aux0` 을 음수로 만든다**(u32
-      //    폴드가 40억대 값으로 접어 클라와 서버 재실행이 갈린다) — 부풀리는 case 는 자기
-      //    안에서 상한을 걸어야 한다. 그 근거는 앵커 주석.
-      const shield = onFilmShield(state, player, dmg, player.aux0);
-      const absorbed = filmAbsorbed(dmg, shield);
-      // 남는 피해는 순수 함수로 받는다(= dmg - absorbed). 두 값의 합이 원래 피해와 같다는
-      // 계약(shipSignature.ts ⑥절)을 world 배선이 재구현하지 않고 그대로 상속한다.
-      const rest = filmRemainingDamage(dmg, shield);
+      // ⚠️ 종전 계약은 "유효 **내구**를 돌려준다" 였고 그 형태로는 **어떤 스킬도 열리지 않았다**
+      //    (`filmAbsorbed = min(d, s)` 가 개입을 삼켰다). 사유 전문은 앵커 doc 이 정본이다.
+      //    이 레인이 순수 함수 둘을 **효율 인자**를 받게 개정해 *태운 내구*와 *막은 피해*를
+      //    분리했고, 그래서 이 훅이 효율을 돌려주는 형태가 됐다.
+      // ⚠️ `aux0` 이 음수가 되는 경로는 없다 — `filmAbsorbed` 의 반환값이 어떤 효율에서도
+      //    `player.aux0` 을 넘지 않도록 순수 함수가 자기 안에서 못 박았다.
+      // 미투자 런은 훅이 항등값(10000)을 돌려주므로 비트 동일이다.
+      const effBp = onFilmEfficiency(state, player, dmg, player.aux0, dmgFromHazard);
+      // ⚠️ `filmAbsorbed` 는 **태운 내구**, `filmRemainingDamage` 는 **통과 피해**다. 효율이
+      // 항등이 아니면 둘의 합은 `dmg` 가 아니다 — 그 분리가 개정의 목적이다. 두 호출에 **같은**
+      // `effBp` 를 넘겨야 한다(다르면 서로 다른 막을 가리킨다). 산술은 여전히 순수 함수 소유다.
+      const absorbed = filmAbsorbed(dmg, player.aux0, effBp);
+      const rest = filmRemainingDamage(dmg, player.aux0, effBp);
       player.aux0 -= absorbed;
       dmg = rest;
       // 앵커 ⑱(S2) — **막이 실제로 닳은 직후 · 파열 판정보다 앞.** ⑰ 과 이 지점의 `player.aux0`
@@ -4550,7 +4619,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // 앵커 ④(S0) — **실제로 선체 hp 가 깎인** 피격의 후속. 막이 전량 흡수한 피격은 위에서
     // 반환하므로 여기 오지 않는다. 기존 시그니처·유니크 후속이 전부 반영된 뒤에 두어, 스킬이
     // 이번 피격의 **최종 상태**를 본다. `lethalSurvived` 는 위에서 한 번 계산한 값을 넘긴다.
-    onPlayerDamaged(state, player, dmg, lethalSurvived);
+    // `dmgSources` 는 수집 루프가 세운 **기여 비트합**이다 — `max` 가 고른 하나가 아니다.
+    onPlayerDamaged(state, player, dmg, lethalSurvived, dmgSources);
   }
 }
 

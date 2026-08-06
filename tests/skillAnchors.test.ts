@@ -56,13 +56,25 @@ const hoisted = vi.hoisted(() => ({
    * 앵커 ⑯ 이 받은 `VolleyParams` 의 **훅 실행 전 스냅숏**. 참조를 그대로 담으면 훅이 고친
    * 뒤의 값을 보게 되어 "읽기 전용인가" 를 못 잰다 — 그래서 값으로 떠 둔다.
    */
-  volleys: [] as { aimAngle: number; targetDist: number }[],
+  volleys: [] as { aimAngle: number; targetDist: number; inputX: number; inputY: number }[],
   /**
    * 앵커 ⑥ 이 받은 인자 기록. 횟수만으로는 **사유가 갈렸는가**를 못 재고, 사유를 못 재면
    * "수명 만료에서도 불린다" 와 "기존 스킬이 두 배로 터진다" 가 같은 관측이 된다.
    * 좌표는 **호출 시점 값을 복사**한다 — 엔티티 참조를 담으면 압축 뒤 값으로 바뀐다.
    */
   expiries: [] as { x: number; y: number; reason: string }[],
+  /**
+   * 앵커 ㉖ 이 받은 인자의 **훅 실행 전** 스냅숏. `ownerId` 를 같이 담는 이유는 이 앵커가
+   * 병아리(BROOD_MARK)·센트리/드론 베이(DRONE_MARK)에서 **전부** 불리기 때문이다 —
+   * 종류를 안 담으면 "센트리에서도 불렸는가" 를 원리적으로 못 잰다.
+   */
+  turretShots: [] as { ownerId: number; damage: number }[],
+  /**
+   * 앵커 ④ 가 받은 **피해원 비트합**. 횟수만으로는 *"접촉인가 적탄인가"* 를 못 재고, 못 재면
+   * 접촉 전용 스킬(브루저 BL8)의 미발동이 흔적을 안 남긴다 — 앵커 ⑥ `BulletExpiryReason` 과
+   * 같은 사유다.
+   */
+  damageSources: [] as number[],
 }));
 
 vi.mock('../src/sim/skillHooks.js', async (orig) => {
@@ -93,8 +105,21 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
         hoisted.launched.push({ x: c.x, y: c.y, active: c.phase === 1 });
       }
       if (name === 'onVolleyParams') {
-        const v = args[2] as { aimAngle: number; targetDist: number };
-        hoisted.volleys.push({ aimAngle: v.aimAngle, targetDist: v.targetDist });
+        const v = args[2] as { aimAngle: number; targetDist: number; inputX: number; inputY: number };
+        hoisted.volleys.push({
+          aimAngle: v.aimAngle,
+          targetDist: v.targetDist,
+          inputX: v.inputX,
+          inputY: v.inputY,
+        });
+      }
+      if (name === 'onTurretShotParams') {
+        const t = args[1] as { ownerId: number };
+        const q = args[2] as { damage: number };
+        hoisted.turretShots.push({ ownerId: t.ownerId, damage: q.damage });
+      }
+      if (name === 'onPlayerDamaged') {
+        hoisted.damageSources.push(args[4] as number);
       }
       if (name === 'onBulletExpired') {
         const b = args[1] as { x: number; y: number };
@@ -125,6 +150,8 @@ const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS, BROOD_MARK, cushionSettled } = 
   '../src/sim/shipSignature.js'
 );
 const { isActiveTurret, TURRET_LIFE_TICKS } = await import('../src/sim/events.js');
+const { DRONE_MARK } = await import('../src/sim/uniques.js');
+const { DamageSource } = await import('../src/sim/skillSlots.js');
 type WorldState = import('../src/sim/world.js').WorldState;
 type InputFrame = import('../src/sim/world.js').InputFrame;
 type Entity = import('../src/sim/entities.js').Entity;
@@ -172,6 +199,8 @@ beforeEach(() => {
   hoisted.order = [];
   hoisted.volleys = [];
   hoisted.expiries = [];
+  hoisted.turretShots = [];
+  hoisted.damageSources = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -179,7 +208,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('앵커 25개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 26개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
@@ -205,7 +234,7 @@ describe('계측 이음매', () => {
         // ⚠️ ㉒ 는 ⑰⑱ 과 **게이트가 다르다** — 저 둘은 `aux0 > 0` 안이라 *막이 없는* 피격을
         // 원리적으로 못 본다. FI9「최후의 거품」의 술어가 정확히 그 바깥이라 지점을 따로 열었다.
         'onFilmEntry', // S3 ㉒ — 막 진입 술어 **직전**(막 없음까지 관측)
-        'onFilmShield', // S2 ⑰ — 막 흡수 산술 직전(유효 내구)
+        'onFilmEfficiency', // S2 ⑰ — 막 흡수 산술 직전(유효 내구)
         'onGemCollected',
         'onKillsDelta',
         'onLevelUp', // S1
@@ -213,6 +242,9 @@ describe('계측 이음매', () => {
         'onPowerupOffer', // S1
         'onPowerupPicked', // S1
         'onSignatureStep',
+        // ⚠️ ㉖ 은 **포탑 루프**다 — 병아리·센트리·드론 베이가 한 함수를 공유하므로 앵커는
+        // 셋 모두에서 불리고, 소환물 종류 판별은 **훅 안**에서 한다(`ownerId`).
+        'onTurretShotParams', // W2 ㉖ — 포탑탄 1발의 파라미터(표적 확정 뒤 · spawnBullet 앞)
         'onVolleyFired',
         'onVolleyParams', // S2 ⑯ — 발사부(전 기체 최다 미배선 사유)
         'onWallContact',
@@ -335,6 +367,76 @@ describe('앵커 ④⑧ onPlayerDamaged · onDamageChain — 피격', () => {
     stepWorld(s, idle);
     expect(count('onDamageChain')).toBe(0);
     expect(count('onPlayerDamaged')).toBe(0);
+  });
+
+  // ── 피해원 분류(W2) — 호출부마다 하나씩 잠근다 ──────────────────────────
+  // `world.ts` 의 수집 루프에는 피해원 분기가 **정확히 셋**이다(적탄 · 몸통 접촉 4종 · 해저드).
+  // 하나라도 사유를 안 달면 그 경로가 조용히 다른 사유로 흘러들므로 셋 다 여기서 잠근다.
+  describe('앵커 ④ 의 피해원 비트합', () => {
+    it('몸통 접촉만 있으면 contact 비트 하나뿐이다', () => {
+      const s = skilled(0x9106);
+      plantEnemy(s, 0, 0, 7);
+      stepWorld(s, idle);
+      // 하한을 **먼저** 단언한다 — 피격 자체가 없으면 아래 비트 단언은 빈 배열에 대한 항진이다.
+      expect(hoisted.damageSources).toHaveLength(1);
+      expect(hoisted.damageSources[0]).toBe(DamageSource.contact);
+    });
+
+    it('적탄만 있으면 bullet 비트 하나뿐이다', () => {
+      const s = skilled(0x9106);
+      const eb = blankEntity('enemyBullet');
+      eb.radius = 6;
+      eb.damage = 7;
+      addEntity(s, eb);
+      stepWorld(s, idle);
+      expect(hoisted.damageSources).toHaveLength(1);
+      expect(hoisted.damageSources[0]).toBe(DamageSource.bullet);
+    });
+
+    it('해저드만 있으면 hazard 비트 하나뿐이다', () => {
+      const s = skilled(0x9106);
+      const h = blankEntity('hazard');
+      h.radius = 40;
+      h.damage = 7;
+      h.timer = 0;
+      h.life = -1; // 상시 활성(`hazardActive`)
+      addEntity(s, h);
+      stepWorld(s, idle);
+      expect(hoisted.damageSources).toHaveLength(1);
+      expect(hoisted.damageSources[0]).toBe(DamageSource.hazard);
+    });
+
+    it('⭐ 접촉과 적탄이 겹친 틱에 **둘 다** 실린다 — `max` 가 접촉을 삼키지 않는다', () => {
+      // 이 저장소의 앵커 ⑰ 이 정확히 이 형태(`min` 이 개입을 삼킴)로 무효였다. 여기서는
+      // 적탄(20)이 `max` 를 이기게 두고, 그럼에도 접촉(7) 비트가 살아 있는지를 잰다.
+      const s = skilled(0x9106);
+      plantEnemy(s, 0, 0, 7);
+      const eb = blankEntity('enemyBullet');
+      eb.radius = 6;
+      eb.damage = 20;
+      addEntity(s, eb);
+      const hpBefore = s.entities[0]?.hp ?? 0;
+      stepWorld(s, idle);
+      expect(hoisted.damageSources).toHaveLength(1);
+      const mask = hoisted.damageSources[0]!;
+      // `max` 가 고른 쪽(적탄)만이 아니라 **접촉 기여도** 서 있어야 한다.
+      expect(mask & DamageSource.bullet).toBe(DamageSource.bullet);
+      expect(mask & DamageSource.contact).toBe(DamageSource.contact);
+      // 그리고 실제로 깎인 피해는 `max` 인 20(×피격 배수)이다 — 합산이 아니다(거동 불변).
+      expect(hpBefore - (s.entities[0]?.hp ?? 0)).toBe(20 * 2);
+    });
+
+    it('피해 0 짜리 접촉은 비트를 세우지 않는다 (기여가 없으면 피해원이 아니다)', () => {
+      const s = skilled(0x9106);
+      plantEnemy(s, 0, 0, 0); // 접촉하되 피해 0
+      const eb = blankEntity('enemyBullet');
+      eb.radius = 6;
+      eb.damage = 9;
+      addEntity(s, eb);
+      stepWorld(s, idle);
+      expect(hoisted.damageSources).toHaveLength(1);
+      expect(hoisted.damageSources[0]).toBe(DamageSource.bullet);
+    });
   });
 
   it('onDamageChain 은 S0 에서 **항등**이다 (사슬에 계수가 안 실린다)', () => {
@@ -799,7 +901,73 @@ describe('앵커 ⑯ `VolleyParams.aimAngle` — 자동 조준이 고른 발사 
   });
 });
 
-describe('앵커 ⑰⑱ onFilmShield · onFilmAbsorbed — 버블 막 흡수(산술 직전 · 직후)', () => {
+// ---------------------------------------------------------------------------
+// 앵커 ⑯ `inputX`/`inputY` (W2) — **입력 배관이 발사부까지 닿았는가**
+// ---------------------------------------------------------------------------
+//
+// `autoAttack(state, player)` 은 `InputFrame` 을 인자로 받지 않았고 `WorldState` 에 그 틱
+// 입력을 보관하는 칸도 없었다. 그래서 *"그 틱 입력 벡터"* 를 술어로 쓰는 스킬(말로우 SQ7)이
+// `aimAngle` 이 선 뒤에도 열리지 않았다 — 내적의 한 항이 통째로 부재했다.
+//
+// ⚠️ 이 절이 잡으려는 실패는 "칸은 있는데 항상 0" 과 "이동에 소비된 뒤 초기화된 값이 온다"
+// 둘이다. 앞의 것은 **여러 입력**으로만, 뒤의 것은 **이동이 실제로 일어난 틱**으로만 갈린다.
+describe('앵커 ⑯ `VolleyParams.inputX/inputY` — 그 틱 이동 입력', () => {
+  const MOVES: { name: string; mx: number; my: number }[] = [
+    { name: '정지', mx: 0, my: 0 },
+    { name: '+x', mx: 1, my: 0 },
+    { name: '-y', mx: 0, my: -1 },
+    { name: '대각', mx: 0.6, my: 0.8 },
+  ];
+
+  for (const [i, m] of MOVES.entries()) {
+    it(`양성: 입력 ${m.name} 이 레코드에 그대로 온다`, () => {
+      const s = skilled(0xe100 + i);
+      const p = s.entities[0];
+      if (p === undefined) throw new Error('플레이어가 0번에 없다');
+      plantEnemy(s, p.x + 150, p.y);
+      stepWorld(s, { ...emptyInput(), moveX: m.mx, moveY: m.my });
+      // 하한 먼저 — 발사가 아예 없으면 아래 단언이 빈 기록 위에서 항진이 된다.
+      expect(hoisted.volleys.length).toBeGreaterThan(0);
+      const v = hoisted.volleys[0];
+      if (v === undefined) throw new Error('볼리 기록이 없다');
+      // ⚠️ 정확 일치다 — 정규화·클램프 없이 원본을 싣는 것이 이 칸의 계약이다.
+      expect(v.inputX).toBe(m.mx);
+      expect(v.inputY).toBe(m.my);
+    });
+  }
+
+  it('음성 대조: 입력이 다르면 레코드도 다르다 (상수 0 을 배제한다)', () => {
+    const seen: string[] = [];
+    for (const [i, m] of MOVES.entries()) {
+      hoisted.volleys = [];
+      const s = skilled(0xe200 + i);
+      const p = s.entities[0];
+      if (p === undefined) throw new Error('플레이어가 0번에 없다');
+      plantEnemy(s, p.x + 150, p.y);
+      stepWorld(s, { ...emptyInput(), moveX: m.mx, moveY: m.my });
+      expect(hoisted.volleys.length).toBeGreaterThan(0);
+      seen.push(`${hoisted.volleys[0]?.inputX},${hoisted.volleys[0]?.inputY}`);
+    }
+    expect(new Set(seen).size).toBe(MOVES.length);
+  });
+
+  it('⚠️ 관측 대상이 살아 있다: 이동이 실제로 일어난 틱에도 값이 초기화되지 않는다', () => {
+    // `stepPlayer` 는 입력을 **지역 복사본**으로만 쓴다(`src/sim/**` 전수: `input.<필드> =`
+    // 대입 0건). 그래도 "이동에 소비된 뒤 0 이 온다" 는 이 배관의 대표 실패라 물증을 남긴다:
+    // 같은 틱에 플레이어가 정말 움직였는데 레코드는 원래 입력 그대로여야 한다.
+    const s = skilled(0xe300);
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    plantEnemy(s, p.x + 150, p.y);
+    const x0 = p.x;
+    stepWorld(s, { ...emptyInput(), moveX: 1, moveY: 0 });
+    expect(p.x).toBeGreaterThan(x0); // 이동이 실제로 일어났다(하한)
+    expect(hoisted.volleys.length).toBeGreaterThan(0);
+    expect(hoisted.volleys[0]?.inputX).toBe(1);
+  });
+});
+
+describe('앵커 ⑰⑱ onFilmEfficiency · onFilmAbsorbed — 버블 막 흡수(산술 직전 · 직후)', () => {
   it('버블 + 막이 선 상태(aux0>0)에서 피격하면 ⑰⑱ 이 각각 한 번씩 불린다', () => {
     const s = skilled(0xc001, 6); // 버블(id=6, SIG_BUBBLE_FILM)
     const p = s.entities[0];
@@ -807,7 +975,7 @@ describe('앵커 ⑰⑱ onFilmShield · onFilmAbsorbed — 버블 막 흡수(산
     p.aux0 = FILM_ABSORB_FLAT;
     plantEnemy(s, 0, 0, 10); // 플레이어에 겹친 적 — 접촉 피해
     stepWorld(s, idle);
-    expect(count('onFilmShield')).toBe(1);
+    expect(count('onFilmEfficiency')).toBe(1);
     expect(count('onFilmAbsorbed')).toBe(1);
   });
 
@@ -818,7 +986,7 @@ describe('앵커 ⑰⑱ onFilmShield · onFilmAbsorbed — 버블 막 흡수(산
     stepWorld(s, idle);
     // 막 없이도 피격 자체는 일어났다는 것을 확인해 "애초에 안 맞았다" 는 거짓 음성을 배제한다.
     expect(s.entities[0]?.hp).toBeLessThan(hpBefore);
-    expect(count('onFilmShield')).toBe(0);
+    expect(count('onFilmEfficiency')).toBe(0);
     expect(count('onFilmAbsorbed')).toBe(0);
   });
 
@@ -828,7 +996,7 @@ describe('앵커 ⑰⑱ onFilmShield · onFilmAbsorbed — 버블 막 흡수(산
     plantEnemy(s, 0, 0, 10);
     stepWorld(s, idle);
     expect(s.entities[0]?.hp).toBeLessThan(hpBefore);
-    expect(count('onFilmShield')).toBe(0);
+    expect(count('onFilmEfficiency')).toBe(0);
     expect(count('onFilmAbsorbed')).toBe(0);
   });
 });
@@ -846,7 +1014,7 @@ describe('앵커 ㉒ onFilmEntry — 막 진입 술어 직전(막이 **없는** 
     expect(count('onFilmEntry')).toBe(1);
     // ⚠️ 이 두 줄이 이 절의 존재 이유다 — **종전에는 이 순간을 볼 수 있는 앵커가 0 개**였고,
     // 그것이 FI9「최후의 거품」이 배선되지 못한 사유였다(⑰ 주석).
-    expect(count('onFilmShield')).toBe(0);
+    expect(count('onFilmEfficiency')).toBe(0);
     expect(count('onFilmAbsorbed')).toBe(0);
 
     const e = hoisted.filmEntries[0];
@@ -883,7 +1051,7 @@ describe('앵커 ㉒ onFilmEntry — 막 진입 술어 직전(막이 **없는** 
     stepWorld(s, idle);
 
     expect(count('onFilmEntry')).toBe(1);
-    expect(count('onFilmShield')).toBe(1);
+    expect(count('onFilmEfficiency')).toBe(1);
     expect(count('onFilmAbsorbed')).toBe(1);
 
     const e = hoisted.filmEntries[0];
@@ -969,7 +1137,7 @@ function armSettlement(state: WorldState, debt = 100): { p: Entity; due: number 
   if (p === undefined) throw new Error('플레이어가 0번에 없다');
   p.aux0 = debt;
   p.aux1 = CUSHION_RECOVER_TICKS - 1; // 이번 틱에 임계를 채운다
-  return { p, due: cushionSettled(debt, CUSHION_RECOVER_TICKS) };
+  return { p, due: cushionSettled(debt, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS) };
 }
 
 describe('앵커 ㉕ onCushionSettleDue — 정산액 확정 직전(hp 차감 전)', () => {
@@ -1241,6 +1409,60 @@ describe('앵커 ㉔ onBroodLaunched — 병아리가 태어난 직후', () => {
     expect(Math.abs(first.x - px) + Math.abs(first.y - py)).toBeGreaterThan(0);
     expect(Math.abs(first.x - px)).toBeLessThan(400);
     expect(Math.abs(first.y - py)).toBeLessThan(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉖ — 포탑 사격 지점(`fireTurretShot`)
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 이 앵커의 함정은 **소환물 종류**다. `stepTurrets` 는 병아리·센트리·드론 베이를 한
+// 루프로 돌리므로 앵커는 셋 모두에서 불린다 — 그래서 "불렸는가" 만 재면 *"센트리 거동이
+// 갈렸는가"* 를 못 잡는다. 아래는 **불린다**(계측)와 **효과는 병아리에만**(회귀)을 따로 잰다.
+
+/** 포탑 1기 — `activateTurret` 이 세우는 것과 같은 세 값(kind·phase·life). */
+function plantTurret(state: WorldState, ownerId: number, x: number, y: number): Entity {
+  const t = blankEntity('turretPickup');
+  t.ownerId = ownerId;
+  t.phase = 1;
+  t.life = TURRET_LIFE_TICKS;
+  t.cooldown = 0;
+  t.radius = 44;
+  t.x = x;
+  t.y = y;
+  return addEntity(state, t);
+}
+
+describe('앵커 ㉖ onTurretShotParams — 포탑탄 1발의 파라미터', () => {
+  it('표적이 있는 포탑이 쏘는 틱에만 불리고, 초기값은 현행 상수다', () => {
+    const s = hatchRun(0xb010);
+    const p = s.entities[0]!;
+    const t = plantTurret(s, BROOD_MARK, p.x + 120, p.y);
+    plantEnemy(s, t.x + 200, t.y);
+    stepWorld(s, idle);
+    expect(hoisted.turretShots.length).toBeGreaterThanOrEqual(1); // 하한 — 아래 등식의 항진 방지
+    expect(hoisted.turretShots[0]!.damage).toBe(10); // TURRET_BULLET_DAMAGE
+    expect(hoisted.turretShots[0]!.ownerId).toBe(BROOD_MARK);
+  });
+
+  it('표적이 하나도 없으면 한 번도 안 불린다 (무발사 틱에 상시 비용을 안 만든다)', () => {
+    const s = hatchRun(0xb011);
+    const p = s.entities[0]!;
+    // 사거리(900) 로는 절대 못 닿는 자리 — 적을 지우는 방식은 못 쓴다(웨이브·지형 기물이
+    // 같은 틱에 다시 서므로 "표적 없음" 이 성립하지 않는다).
+    plantTurret(s, BROOD_MARK, p.x + 400_000, p.y + 400_000);
+    stepWorld(s, idle);
+    expect(hoisted.turretShots.length).toBe(0);
+  });
+
+  it('센트리·드론 베이(DRONE_MARK)에서도 **불린다** — 걸러내기는 훅 안의 책임이다', () => {
+    const s = hatchRun(0xb012);
+    const p = s.entities[0]!;
+    const t = plantTurret(s, DRONE_MARK, p.x + 120, p.y);
+    plantEnemy(s, t.x + 200, t.y);
+    stepWorld(s, idle);
+    expect(hoisted.turretShots.length).toBeGreaterThanOrEqual(1);
+    expect(hoisted.turretShots.every((q) => q.ownerId === DRONE_MARK)).toBe(true);
   });
 });
 

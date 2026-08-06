@@ -64,9 +64,11 @@ import {
   cushionDeferredDamage,
   cushionImmediateDamage,
   cushionRecovered,
+  cushionSettled,
   FILM_PERIOD_TICKS,
   FILM_ABSORB_FLAT,
   filmReady,
+  FILM_EFFICIENCY_BASE_BP,
   filmAbsorbed,
   filmRemainingDamage,
 } from '../src/sim/shipSignature.js';
@@ -187,6 +189,59 @@ describe('시그니처 비트 배정', () => {
 // ② 소스 grep 게이트 — f64 누적 부재
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// ⓪ 항등값 동치 — 개정 **전** 정의와 바이트 단위로 같다 (미투자 비트 불변의 뿌리)
+// ---------------------------------------------------------------------------
+//
+// 네 순수 함수가 효율·임계를 **필수 인자**로 받게 개정됐다. 미투자 런이 비트 불변이려면
+// "항등 인자에서 종전 정의와 정확히 같다" 가 성립해야 하고, 이 절이 그것을 **개정 전 산식을
+// 테스트 안에 다시 적어** 전수 대조한다. 두 런의 해시를 마주 세우는 방식(§ 각 기체 레인)은
+// 같은 빌드끼리라 개정 자체는 못 잡는다 — 그래서 이 절이 따로 필요하다.
+
+describe('⓪ 항등값 동치 (개정 전 정의와 전수 대조)', () => {
+  /** 개정 **전** `filmAbsorbed` 정의. */
+  const oldFilmAbsorbed = (damage: number, shield: number): number => {
+    const d = Math.trunc(damage);
+    const s = Math.trunc(shield);
+    if (d <= 0 || s <= 0) return 0;
+    return d < s ? d : s;
+  };
+
+  it('filmAbsorbed·filmRemainingDamage — 효율 10000 에서 종전 정의와 같다', () => {
+    for (const s of [-3, 0, 1, 5, 17, 60, 137, 4000]) {
+      for (const d of [-2, 0, 1, 5, 17, 59, 60, 61, 137, 4000, 100_000]) {
+        expect(filmAbsorbed(d, s, FILM_EFFICIENCY_BASE_BP), `d=${d} s=${s}`).toBe(
+          oldFilmAbsorbed(d, s),
+        );
+        const oldRest = Math.trunc(d) <= 0 ? 0 : Math.trunc(d) - oldFilmAbsorbed(d, s);
+        expect(filmRemainingDamage(d, s, FILM_EFFICIENCY_BASE_BP), `d=${d} s=${s}`).toBe(oldRest);
+      }
+    }
+  });
+
+  it('cushionRecovered·cushionSettled — 임계 180 에서 종전 정의와 같다', () => {
+    /** 개정 **전** `cushionRecovered` 정의(임계를 자기 안에서 읽던 형태). */
+    const oldRecovered = (deferred: number, unhitTicks: number): number => {
+      const v = Math.trunc(deferred);
+      if (v <= 0) return 0;
+      if (Math.trunc(unhitTicks) < CUSHION_RECOVER_TICKS) return 0;
+      return Math.round((v * 6000) / 10000);
+    };
+    for (const v of [-5, 0, 1, 7, 77, 100, 1000, 123_457]) {
+      for (const t of [0, 1, 179, 180, 181, 600]) {
+        expect(cushionRecovered(v, t, CUSHION_RECOVER_TICKS), `v=${v} t=${t}`).toBe(
+          oldRecovered(v, t),
+        );
+        const oldSettled =
+          Math.trunc(v) <= 0 || Math.trunc(t) < CUSHION_RECOVER_TICKS
+            ? 0
+            : Math.trunc(v) - oldRecovered(v, t);
+        expect(cushionSettled(v, t, CUSHION_RECOVER_TICKS), `v=${v} t=${t}`).toBe(oldSettled);
+      }
+    }
+  });
+});
+
 describe('결정론 산술 게이트 (소스 grep)', () => {
   const CODE = stripComments(SIG_SRC);
 
@@ -212,7 +267,11 @@ describe('결정론 산술 게이트 (소스 grep)', () => {
     expect(divisors.length).toBeGreaterThan(0);
     // 허용은 bp 제수(10000)와 **이름 있는 정수 상수**뿐이다 — 리터럴 제수는 계속 금지다.
     // FILM_PUSH_SCALE 은 버블 파열 눈금(FILM_BURST_PUSH 가 "속도 × 100" 으로 저장됨)의 제수.
-    const allowed = new Set(['10000', 'HATCH_SCALE_KILLS', 'FILM_PUSH_SCALE']);
+    // `eff` 는 이 파일 **유일한 런타임 제수**다(버블 막 흡수 효율, 앵커 ⑰). 규율의 취지는
+    // f64 누적 방지인데 `eff` 는 `Math.trunc` 로 정수화된 뒤 `filmCapacity` 가 `<= 0` 을 걸러
+    // **양의 정수**임이 보장되고, 피제수도 정수이며 단일 나눗셈 + 반올림 1회 형태를 지킨다.
+    // 리터럴 제수 금지는 그대로다.
+    const allowed = new Set(['10000', 'HATCH_SCALE_KILLS', 'FILM_PUSH_SCALE', 'eff']);
     for (const d of divisors) expect(allowed.has(d), `허용되지 않은 제수: ${d}`).toBe(true);
   });
 
@@ -220,7 +279,8 @@ describe('결정론 산술 게이트 (소스 grep)', () => {
     const rounds = [...CODE.matchAll(/Math\.round\(([^;]*?)\)\s*;/g)].map((m) => m[1] as string);
     expect(rounds.length).toBeGreaterThan(0);
     for (const body of rounds) {
-      expect(body, `Math.round 본문: ${body}`).toMatch(/\*[^/]*\)\s*\/\s*10000/);
+      // 제수는 리터럴 10000 이거나 위 절이 허용한 런타임 bp 제수(`eff`)뿐이다.
+      expect(body, `Math.round 본문: ${body}`).toMatch(/\*[^/]*\)\s*\/\s*(10000|eff)\b/);
       // 본문 안에 나눗셈이 정확히 1회.
       expect((body.match(/\//g) ?? []).length, `나눗셈 횟수: ${body}`).toBe(1);
     }
@@ -418,12 +478,12 @@ describe('경계 골든 — 말로우 완충 (지연 피해 + 무피격 회복)'
   it('회복은 무피격 임계 179 / 180 / 181 에서 갈리고 상한을 넘지 않는다', () => {
     expect(CUSHION_RECOVER_TICKS).toBe(180);
     expect(CUSHION_RECOVER_BP).toBe(6000);
-    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS - 1)).toBe(0);
-    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS)).toBe(600);
-    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS + 1)).toBe(600);
+    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS - 1, CUSHION_RECOVER_TICKS)).toBe(0);
+    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS)).toBe(600);
+    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS + 1, CUSHION_RECOVER_TICKS)).toBe(600);
     for (const v of DAMAGE_SWEEP) {
       for (const t of [-3, 0, 179, 180, 5000]) {
-        const out = cushionRecovered(v, t);
+        const out = cushionRecovered(v, t, CUSHION_RECOVER_TICKS);
         expect(Number.isInteger(out), `deferred=${v} ticks=${t}`).toBe(true);
         expect(out).toBeGreaterThanOrEqual(0);
         expect(out).toBeLessThanOrEqual(Math.max(0, v));
@@ -434,7 +494,7 @@ describe('경계 골든 — 말로우 완충 (지연 피해 + 무피격 회복)'
   it('비정수 입력이 들어와도 정수만 나온다', () => {
     expect(Number.isInteger(cushionDeferredDamage(77.4))).toBe(true);
     expect(Number.isInteger(cushionImmediateDamage(77.4))).toBe(true);
-    expect(Number.isInteger(cushionRecovered(77.4, 180.9))).toBe(true);
+    expect(Number.isInteger(cushionRecovered(77.4, 180.9, CUSHION_RECOVER_TICKS))).toBe(true);
   });
 });
 
@@ -451,8 +511,8 @@ describe('경계 골든 — 버블 방막 (주기 흡수 + 파열)', () => {
   it('흡수량 + 통과 피해 = 원래 피해이고 둘 다 정수·비음수다', () => {
     for (const d of DAMAGE_SWEEP) {
       for (const shield of [-5, 0, 1, FILM_ABSORB_FLAT, FILM_ABSORB_FLAT + 1, 100_000]) {
-        const a = filmAbsorbed(d, shield);
-        const r = filmRemainingDamage(d, shield);
+        const a = filmAbsorbed(d, shield, FILM_EFFICIENCY_BASE_BP);
+        const r = filmRemainingDamage(d, shield, FILM_EFFICIENCY_BASE_BP);
         expect(Number.isInteger(a), `d=${d} s=${shield}`).toBe(true);
         expect(Number.isInteger(r), `d=${d} s=${shield}`).toBe(true);
         expect(a).toBeGreaterThanOrEqual(0);
@@ -465,13 +525,13 @@ describe('경계 골든 — 버블 방막 (주기 흡수 + 파열)', () => {
 
   it('막 내구가 남아 있는 만큼만 먹고 나머지는 선체로 간다', () => {
     expect(FILM_ABSORB_FLAT).toBe(60);
-    expect(filmAbsorbed(100, FILM_ABSORB_FLAT)).toBe(60);
-    expect(filmRemainingDamage(100, FILM_ABSORB_FLAT)).toBe(40);
-    expect(filmAbsorbed(30, FILM_ABSORB_FLAT)).toBe(30);
-    expect(filmRemainingDamage(30, FILM_ABSORB_FLAT)).toBe(0);
+    expect(filmAbsorbed(100, FILM_ABSORB_FLAT, FILM_EFFICIENCY_BASE_BP)).toBe(60);
+    expect(filmRemainingDamage(100, FILM_ABSORB_FLAT, FILM_EFFICIENCY_BASE_BP)).toBe(40);
+    expect(filmAbsorbed(30, FILM_ABSORB_FLAT, FILM_EFFICIENCY_BASE_BP)).toBe(30);
+    expect(filmRemainingDamage(30, FILM_ABSORB_FLAT, FILM_EFFICIENCY_BASE_BP)).toBe(0);
     // 막이 없으면 무연산 — 피해가 그대로 들어간다.
-    expect(filmAbsorbed(100, 0)).toBe(0);
-    expect(filmRemainingDamage(100, 0)).toBe(100);
+    expect(filmAbsorbed(100, 0, FILM_EFFICIENCY_BASE_BP)).toBe(0);
+    expect(filmRemainingDamage(100, 0, FILM_EFFICIENCY_BASE_BP)).toBe(100);
   });
 });
 
@@ -558,9 +618,9 @@ describe('재현성 — 같은 입력 2회', () => {
         sink.push(hatchThreshold(d));
         sink.push(cushionDeferredDamage(d));
         sink.push(cushionImmediateDamage(d));
-        sink.push(cushionRecovered(d, CUSHION_RECOVER_TICKS));
-        sink.push(filmAbsorbed(d, FILM_ABSORB_FLAT));
-        sink.push(filmRemainingDamage(d, FILM_ABSORB_FLAT));
+        sink.push(cushionRecovered(d, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS));
+        sink.push(filmAbsorbed(d, FILM_ABSORB_FLAT, FILM_EFFICIENCY_BASE_BP));
+        sink.push(filmRemainingDamage(d, FILM_ABSORB_FLAT, FILM_EFFICIENCY_BASE_BP));
         sink.push(filmReady(d) ? 1 : 0);
       }
     }
