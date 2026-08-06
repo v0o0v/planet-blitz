@@ -96,10 +96,16 @@ function resolveCapBody(): { file: string; code: string; via: string } {
   const name = delegate[1] ?? '';
   const body = effectiveFunctionBody(name);
   // 2단까지만 허용한다. 래퍼의 래퍼가 생기면 "진입점에서 캡까지"를 사람이 못 따라간다.
-  expect(
-    /public\.(grant_catalyst_[a-z_]+)\s*\(/.exec(body.code),
-    `${name} 이 또 위임한다 — 위임은 1단까지만 허용한다`,
-  ).toBeNull();
+  //
+  // ⚠️ **자기 자신은 위임이 아니다.** `effectiveFunctionBody` 는 `create or replace function
+  // public.<name>(` **마커부터** 잘라 오므로 본문의 첫 줄이 자기 시그니처다. 그것까지 세면
+  // 위임이 1단만 생겨도 이 계약이 항상 실패한다 — 2026-08-05(ADR-0048 슬라이스 2)에
+  // `grant_catalyst` 가 얇은 래퍼가 된 순간부터 main 이 이 파일에서 상시 빨간 이유가 이것이고,
+  // 실제 SQL 에는 2단 위임이 없다(`20260805020000_daily_reward_axes.sql`).
+  const nested = [...body.code.matchAll(/public\.(grant_catalyst_[a-z_]+)\s*\(/g)]
+    .map((m) => m[1])
+    .filter((n) => n !== name);
+  expect(nested, `${name} 이 또 위임한다 — 위임은 1단까지만 허용한다`).toEqual([]);
   return { ...body, via: name };
 }
 
@@ -280,7 +286,11 @@ describe('catalyst_grants GC', () => {
 describe('ABBA 데드락 방지 — catalyst_inventory → profiles (3종 전부)', () => {
   for (const name of ['salvage_catalyst', 'buy_catalyst', 'grant_catalyst'] as const) {
     it(`${name} 의 for update 등장 순서가 inventory → profiles 다`, () => {
-      const order = forUpdateLockOrder(effectiveFunctionBody(name).code);
+      // ⚠️ `grant_catalyst` 는 2026-08-05(ADR-0048 슬라이스 2)부터 **얇은 래퍼**라 자기 본문에
+      // `for update` 가 한 줄도 없다 — 이름을 하드코딩하면 빈 배열을 읽고 "잠금이 사라졌다"고
+      // 말한다. §0 과 같은 원칙으로 **위임을 따라간 본문**({@link GRANT})을 쓴다.
+      const code = name === 'grant_catalyst' ? GRANT.code : effectiveFunctionBody(name).code;
+      const order = forUpdateLockOrder(code);
       expect(
         order,
         '잠금 순서가 뒤집히면 세 RPC 가 정면 교착한다 — 단위 테스트·1바퀴 플레이·육안 중 무엇으로도 안 잡힌다',
