@@ -31,6 +31,12 @@ const hoisted = vi.hoisted(() => ({
    * 보고도 흔적이 안 남는다.
    */
   catalystDamaged: [] as { dmg: number; lethal: boolean; sources: number }[],
+  /**
+   * `onBulletExpiredCatalyst` 가 받은 소멸 사유 기록. 사유가 촉매 짝까지 **같은 자리로**
+   * 오는지를 재려면 인자를 봐야 한다 — 호출 횟수만으로는 `'pierce'`/`'life'` 가 뒤바뀐
+   * 배선이 통과한다.
+   */
+  catalystExpiries: [] as string[],
 }));
 
 vi.mock('../src/sim/catalystHooks.js', async (orig) => {
@@ -50,6 +56,9 @@ vi.mock('../src/sim/catalystHooks.js', async (orig) => {
           lethal: args[3] as boolean,
           sources: args[4] as number,
         });
+      }
+      if (name === 'onBulletExpiredCatalyst') {
+        hoisted.catalystExpiries.push(args[2] as string);
       }
       if (name === 'onDamageChainCatalyst' && hoisted.forceCatalystDamage !== null) {
         return hoisted.forceCatalystDamage;
@@ -84,7 +93,9 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
 const { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG, SPECIAL_POWERUP_PICK } = await import(
   '../src/sim/world.js'
 );
-const { blankEntity, addEntity, spawnGem, spawnBullet } = await import('../src/sim/entities.js');
+const { blankEntity, addEntity, spawnGem, spawnBullet, spawnWall } = await import(
+  '../src/sim/entities.js'
+);
 const { DT } = await import('../src/sim/constants.js');
 const { DamageSource } = await import('../src/sim/skillSlots.js');
 type WorldState = import('../src/sim/world.js').WorldState;
@@ -126,6 +137,7 @@ beforeEach(() => {
   hoisted.forceSkillDamage = null;
   hoisted.lethalSeen = [];
   hoisted.catalystDamaged = [];
+  hoisted.catalystExpiries = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -181,6 +193,103 @@ describe('촉매 디스패치가 스킬 앵커와 같은 지점에서 불린다'
     const s = withCatalyst(0xca03);
     stepWorld(s, idle);
     expect(count('onGemCollectedCatalyst')).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // 앵커 ①②⑥⑦ — 「발사·대시·벽·탄소멸」 그룹. **카드가 아직 한 장도 안 얹혔다**
+  // (근거는 `catalystHooks.ts` 의 각 함수 주석). 그래서 이 넷은 효과로는 못 재고,
+  // **호출 자체가 사라지는 것**이 유일하게 관측 가능한 회귀다. 여기서 잠근다.
+  // -------------------------------------------------------------------------
+
+  it('앵커 ①: 사거리 안 표적이 있는 틱에 `onVolleyFiredCatalyst` 가 불린다', () => {
+    const s = withCatalyst(0xca20);
+    plantEnemy(s, 400, 0);
+    stepWorld(s, idle);
+    expect(count('onVolleyFiredCatalyst')).toBe(1);
+  });
+
+  it('음성 대조: 쿨다운이 안 찼으면 표적이 있어도 0 이다', () => {
+    // 술어는 "표적이 있다" 가 아니라 **"이번 틱에 반드시 발사한다"** 다. "표적이 없는 틱"으로
+    // 대조를 잡으면 웨이브 디렉터가 사거리 안에 적을 낳는 시드에서 조용히 뒤집힌다
+    // (`skillAnchors.test.ts` 의 같은 절이 실측으로 겪은 함정).
+    const s = withCatalyst(0xca20);
+    plantEnemy(s, 400, 0);
+    player(s).cooldown = 999;
+    stepWorld(s, idle);
+    expect(count('onVolleyFiredCatalyst')).toBe(0);
+  });
+
+  it('앵커 ②: 대시 입력이 있고 쿨다운이 0 인 틱에 `onDashFiredCatalyst` 가 불린다', () => {
+    const s = withCatalyst(0xca21);
+    stepWorld(s, { ...idle, dash: true });
+    expect(count('onDashFiredCatalyst')).toBe(1);
+  });
+
+  it('음성 대조: 대시 입력이 없으면 0, 쿨다운 중에도 0 이다', () => {
+    const s = withCatalyst(0xca21);
+    stepWorld(s, idle);
+    expect(count('onDashFiredCatalyst')).toBe(0);
+    stepWorld(s, { ...idle, dash: true }); // 여기서 쿨다운이 선다
+    hoisted.calls['onDashFiredCatalyst'] = 0;
+    stepWorld(s, { ...idle, dash: true });
+    expect(count('onDashFiredCatalyst')).toBe(0);
+  });
+
+  it('앵커 ⑦: 벽에 겹친 틱에 `onWallContactCatalyst` 가 불린다', () => {
+    const s = withCatalyst(0xca22);
+    spawnWall(s, 0, 0, 200, 200); // 플레이어(원점)를 통째로 덮는 벽
+    stepWorld(s, idle);
+    expect(s.wallContactTicks, '전제: 접촉 술어가 참이다').toBeGreaterThan(0);
+    expect(count('onWallContactCatalyst')).toBe(1);
+  });
+
+  it('음성 대조: 벽이 없는 무대에서는 0 이다', () => {
+    const s = withCatalyst(0xca22);
+    stepWorld(s, idle);
+    // 절차 지형이 원점 근처에 벽을 놓는 시드를 배제하기 위해 접촉 플래그로 전제를 확인한다.
+    if (s.wallContactTicks === 0) expect(count('onWallContactCatalyst')).toBe(0);
+  });
+
+  it('앵커 ⑥: 아군탄 소멸에서 불리고 **사유가 촉매 짝까지 그대로 온다**', () => {
+    // 무대 좌표 근거는 `skillAnchors.test.ts` 앵커 ⑥ 절과 같다 — 오토어택 사거리(1650) 밖,
+    // 탄 컬링 반경(≈2200) 안이라 플레이어 자기 볼리가 계측을 오염시키지 않는다.
+    const STAGE_X = 1980;
+    const pierced = withCatalyst(0xca23);
+    plantEnemy(pierced, STAGE_X - 60, 0);
+    spawnBullet(pierced, STAGE_X, 0, Math.PI, 250 / DT, 100, 0, 5, 120, -1, 0);
+    stepWorld(pierced, idle);
+    // ⚠️ **하한 먼저.** 배선이 끊기면 기록 배열이 비고, 그러면 아래 사유 단언이 "없는 원소를
+    // 안 본다"로 조용히 성립한다(이 리포에서 실제로 난 항진).
+    expect(count('onBulletExpiredCatalyst')).toBe(1);
+    expect(hoisted.catalystExpiries).toEqual(['pierce']);
+
+    hoisted.catalystExpiries = [];
+    hoisted.calls['onBulletExpiredCatalyst'] = 0;
+    const expired = withCatalyst(0xca24);
+    // 수명 2틱 · 적 없음 → **오직 수명으로만** 죽는다.
+    spawnBullet(expired, STAGE_X, 0, Math.PI, 250 / DT, 100, 0, 5, 2, -1, 0);
+    stepWorld(expired, idle);
+    expect(count('onBulletExpiredCatalyst'), '아직 안 죽었다').toBe(0);
+    stepWorld(expired, idle);
+    expect(count('onBulletExpiredCatalyst')).toBe(1);
+    expect(hoisted.catalystExpiries).toEqual(['life']);
+  });
+
+  it('음성 대조: 관통 예산이 남은 명중과 적탄 소멸에서는 0 이다', () => {
+    const STAGE_X = 1980;
+    const s = withCatalyst(0xca25);
+    plantEnemy(s, STAGE_X - 60, 0);
+    spawnBullet(s, STAGE_X, 0, Math.PI, 250 / DT, 100, 1, 5, 120, -1, 0); // pierce 1 — 안 죽는다
+    const eb = blankEntity('enemyBullet');
+    eb.x = STAGE_X + 200;
+    eb.y = 0;
+    eb.vx = -250 / DT;
+    eb.radius = 5;
+    eb.life = 1; // 이번 틱에 수명 만료 — 앵커 ⑥ 의 계약은 **아군탄**이라 세면 안 된다
+    eb.enemyType = -1;
+    addEntity(s, eb);
+    stepWorld(s, idle);
+    expect(count('onBulletExpiredCatalyst')).toBe(0);
   });
 
   it('피격 틱에 `onDamageChainCatalyst` 와 `onPlayerDamagedCatalyst` 가 둘 다 불린다', () => {

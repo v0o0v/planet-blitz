@@ -55,20 +55,59 @@ import type { DamageSourceMask } from './skillSlots.js';
 // ⚠️ 아래 함수들은 `skillHooks.ts` 의 앵커가 **두 번째 호출**로 부른다. 호출 순서는 앵커마다
 // 주석에 명시돼 있다 — 감쇠 사슬만 촉매가 **먼저**이고 나머지는 스킬이 먼저다.
 
-/** 주무기 볼리 발사 확정. 스킬 디스패치 **뒤**에 불린다. */
+/**
+ * 주무기 볼리 발사 확정. 스킬 디스패치 **뒤**에 불린다.
+ *
+ * ⚠️ **여기 분기가 없다 — 누락이 아니라 미배선이다**(배선 레인 실측, 48종 전수 대조).
+ * 이 앵커에 걸리는 카드는 `id 25 overdrive`(열 누적 → 피해 상승 → 임계 침묵) 하나인데,
+ * 세 조각 중 **이 지점에서 닿는 것은 열 누적뿐**이다:
+ *  - 피해 상승 — 이 앵커는 `onVolleyFired` 헤더가 명시하듯 **무기 아키타입 분기보다 앞**이라
+ *    탄이 아직 없고 `fireCooldownQ` 도 안 읽혔다. 브루저 BL2·말로우 SQ1·버블 PO2 가 같은
+ *    벽에 걸려 미배선인 그 지점이다.
+ *  - 자원 2배(백열 처치) — 처치 앵커(⑪ · `onEnemyDeathCatalyst`)의 자리라 **이 앵커 그룹 밖**.
+ * 열 카운터만 돌리면 슬롯이 소비처 없이 해시에만 접힌다(아크캐스터 BA7·팬텀 AS8 이 통째로
+ * 미배선인 그 판단). **`id 25` 는 발사부 소유 지점과 처치 앵커를 같이 쥔 레인이 배선해야 한다.**
+ */
 export function onVolleyFiredCatalyst(state: WorldState, player: Entity): void {
   if (!state.catalystOn) return;
   void player;
-  // S0: 미배선. 촉매 레인이 카드별 분기를 여기에 넣는다.
+  // 미배선(위 주석의 근거). 카드별 분기는 발사부 지점을 함께 쥔 레인이 넣는다.
 }
 
-/** 대시 발동. 스킬 디스패치 **뒤**. */
+/**
+ * 대시 발동. 스킬 디스패치 **뒤**.
+ *
+ * ⚠️ **여기 분기가 없다 — 누락이 아니라 미배선이고, 막고 있는 것은 앵커가 아니라 엔진이다.**
+ * 이 앵커에 걸리는 카드는 셋(`id 12 ascension` · `id 27 afterburner` · `id 29 ascendant`)이고
+ * **셋 다 되돌림 조항이 "대시로 적을 관통해 죽인다"/"대시 무적 중 통과한 적"** 에 걸려 있다.
+ * 그런데 **이 sim 에는 대시가 적에게 주는 피해도, 대시 통과 판정도 없다** — 대시 블록
+ * (`world.ts:2222-2251`)은 `vx`/`vy` 가산 · `dashCooldown` · `iframes` · 잔상 추진기 적탄 소거가
+ * 전부이고, `iframes` 중 접촉은 **플레이어가 안 맞을 뿐 적도 안 맞는다**(`world.ts:4308`).
+ * 즉 세 카드의 **대가는 이 앵커에서 걸 수 있지만 되돌림은 원리적으로 못 건다** — 그대로 얹으면
+ * 되돌릴 수 없는 단조 감소가 되어 헌장 §페널티 규율 3 위반이다.
+ * → **설계 문서 ↔ 코드 어긋남으로 보고했다. 문서를 고치지 말고 선결(대시 관통 판정)을 세워라.**
+ *
+ * 참고로 **이 지점의 산술은 개입을 삼키지 않는다**: 앵커가 `dashCooldown` 대입(2231/2234행)
+ * **뒤**라 여기서 쓴 값이 그대로 남고, 다음 틱의 `if (player.dashCooldown > 0)` ·
+ * `dashCooldown === 0` 게이트가 그것을 그대로 읽는다(`min`/`clamp` 없음). 막고 있는 것은
+ * 산술이 아니라 **짝이 되는 소비처의 부재**다.
+ */
 export function onDashFiredCatalyst(state: WorldState, player: Entity): void {
   if (!state.catalystOn) return;
   void player;
 }
 
-/** 젬 수거. 스킬 디스패치 **뒤**. */
+/**
+ * 젬 수거. 스킬 디스패치 **뒤**.
+ *
+ * ⚠️ **여기 분기가 없다 — 쓸 카드가 0종이기 때문이다**(48종 전수 대조).
+ * 젬을 언급하는 카드는 셋인데(`id 2`·`id 13` 의 "관통한 적이 젬을 더 뱉는다", `id 10` 의
+ * "예고선 위에서 경험치 세 배") 전부 **젬이 생기는 시점**(드랍·XP 산정)이고 **수거 시점이
+ * 아니다**. 게다가 이 앵커는 `onGemCollected` 헤더가 명시하듯 **콤보·XP 가 이미 반영된 뒤**라
+ * 그 젬의 XP 배율을 여기서 되돌릴 수 없다 — XP 축 촉매 배율은 이미 `state.catalystMods.xp` 가
+ * 적립 지점(`world.ts:4643`)에서 곱하고 있고 **그것이 그 축의 단일 정본**이다. 같은 배율을
+ * 여기 다시 세우면 두 곳이 조용히 갈린다.
+ */
 export function onGemCollectedCatalyst(state: WorldState, gem: Entity): void {
   if (!state.catalystOn) return;
   void gem;
@@ -107,6 +146,12 @@ export function onKillsDeltaCatalyst(state: WorldState, delta: number): void {
  *
  * ⚠️ `reason` 이 `'pierce'`(관통 예산 소진)와 `'life'`(수명 만료)로 갈린다(S3-2). 여기에
  * 촉매를 얹는 레인은 **반드시 사유를 게이트**해라 — 안 하면 한 촉매가 두 사유에서 다 터진다.
+ *
+ * ⚠️ **여기 분기가 없다 — 쓸 카드가 0종이기 때문이다**(48종 + 공명 12 전수 대조).
+ * 관통을 언급하는 것은 `id 2`(수확 지대 위 관통) · 정밀 약공명(다음 한 발 관통) · 밀도 강공명
+ * (관통 소실 = `bullet.pierce = 0`) 셋인데, 셋 다 **탄이 태어나는 시점에 `pierce` 를 정하는**
+ * 규칙이지 **예산이 바닥난 소멸 시점**의 규칙이 아니다. 수명 만료(`'life'`)에 반응하는 카드는
+ * 아예 없다. 브루저·팬텀이 이 앵커에 case 가 없는 것과 같은 사유다.
  */
 export function onBulletExpiredCatalyst(
   state: WorldState,
@@ -118,7 +163,18 @@ export function onBulletExpiredCatalyst(
   void reason;
 }
 
-/** 벽 접촉 틱. 스킬 디스패치 **뒤**. */
+/**
+ * 벽 접촉 틱. 스킬 디스패치 **뒤**.
+ *
+ * ⚠️ **여기 분기가 없다 — 누락이 아니라 미배선이다.** 이 앵커에 걸리는 카드는
+ * `id 39 arke-overclock` 하나인데 네 조각 중 **이 지점이 소유하는 것은 "부딪힐 때마다 최대
+ * 속도 한 단계 하락" 하나뿐**이다:
+ *  - 스크롤 2배 — `createWorld`/모드 노브.
+ *  - 벽이 부서지며 자원 — 벽 파괴 지점(`blockBreak`)이고 이 앵커는 **접촉 틱**일 뿐이다.
+ *  - 무충돌 구간 통과 시 한 단계 복구 — 세그먼트 전진(`state.wave.segmentIndex`) 축.
+ * 되돌림(복구)이 이 앵커 밖이라 하락만 얹으면 §페널티 규율 3(되돌릴 수단 동봉)을 어긴다.
+ * **`id 39` 는 벽 파괴 + 세그먼트 축을 같이 쥔 레인이 배선해야 한다.**
+ */
 export function onWallContactCatalyst(state: WorldState, player: Entity): void {
   if (!state.catalystOn) return;
   void player;
