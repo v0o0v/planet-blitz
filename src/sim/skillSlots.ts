@@ -104,7 +104,7 @@ export function writeSlot(slots: number[], slot: number, value: number): void {
 //   아크캐스터 (SIG_ARC_OVERCHARGE)   — 미배정
 //   팬텀       (SIG_PHANTOM_CLOAK)    — 미배정
 //   해츨링     (SIG_HATCHLING_BROOD)  — 미배정
-//   말로우     (SIG_MALLOW_CUSHION)   — 미배정
+//   말로우     (SIG_MALLOW_CUSHION)   — 파일 끝 두 enum (배선 6종이 **한 칸도 쓰지 않는다**)
 //   버블       (SIG_BUBBLE_FILM)      — 미배정
 
 /**
@@ -223,4 +223,41 @@ export const enum BruiserStage {
    * 장갑 스택에서 매 명중마다 파생되므로(`max(1, round(48/(4+스택)))`) 이 칸에는 카운트만 산다.
    */
   cadenceHits = 1,
+}
+
+/**
+ * **말로우 이월 슬롯**(ADR-0049 배치 4). 효과 본체는 `src/sim/skills/mallow.ts`.
+ *
+ * 이 배치가 배선한 6종은 **한 칸도 쓰지 않는다.** 설계서가 `구현: B`(신규 상태)로 표시한 말로우
+ * 6종(SQ5 장전 잔량 · SQ8 누적 선체행 · ME5 분할 이월 · ME9 벽 접촉 카운터 · CU6 런당 표식 ·
+ * CU10 지급 카운터) 중 이 배치가 닿은 것이 **0종**이기 때문이다 — 여섯 전부 정산 분기 또는
+ * 지연 전환 분기를 요구하는데 그 둘에 앵커가 없다(`skills/mallow.ts` 헤더).
+ *
+ * 배선된 6종의 상태는 전부 **이미 엔진에 있는 칸**에서 온다: `player.aux0`(부채)·`player.aux1`
+ * (무피격 스트릭)은 시그니처가 소유하고, ME10 이 쓰는 `state.xp` 는 런 풀이다. 같은 술어를
+ * 슬롯에 복제하면 갱신 시점이 갈려 조용히 어긋난다.
+ *
+ * ⚠️ ME9「솜틀 요양」의 **연속 벽 접촉 카운터를 여기 미리 잡지 마라.** 설계서 ⑥-4 가 그것을
+ * 스트라이커 M5 와 **한 벌**로 못 박았고, S0 의 E5 가 이미 {@link WorldState.wallContactTicks}
+ * 로 엔진 상태에 세워 두었다 — ME9 배선 레인은 그 값을 읽기만 하면 된다.
+ */
+export const enum MallowCarry {
+  /**
+   * 자리표시자 — **읽지도 쓰지도 않는다.** 실제 배정이 생기면 이 줄을 **지우고** 0번부터 다시
+   * 매겨라(`StrikerStage` 와 같은 규약).
+   */
+  unassigned = 0,
+}
+
+/**
+ * **말로우 구간 슬롯** — {@link MallowCarry} 와 같은 이유로 **미배정**이다.
+ *
+ * ⚠️ `Carry` 와 `Stage` 를 한 enum 에 섞지 마라(이 파일 헤더). 말로우에서 그 구분이 특히 날카롭다:
+ * CU6「파산 보호」의 런당 1회 표식은 **구간을 넘어 살아야** 하고(`Carry`), SQ5「탕감 장전」의
+ * 잔량은 구간마다 새로 시작해야 한다(`Stage`). 두 벌을 미리 갈라 둔 것은 나중 레인이 그 판단을
+ * 다시 하지 않게 하기 위함이다.
+ */
+export const enum MallowStage {
+  /** 자리표시자 — {@link MallowCarry.unassigned} 와 같은 규약. */
+  unassigned = 0,
 }
