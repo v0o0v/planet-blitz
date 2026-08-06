@@ -438,7 +438,7 @@ export interface CatalystOwnedEntry {
 /**
  * 촉매 축 상태 — 목표는 **다음 런의 주입 슬롯을 채우는 것**이다.
  *
- * 주입은 `SLOT_CAP`(8) 칸이고 한 칸에 촉매 1개가 들어간다(`src/data/catalystInject.ts` 의
+ * 주입은 `SLOT_CAP`(3, ADR-0052) 칸이고 한 칸에 촉매 1개가 들어간다(`src/data/catalystInject.ts` 의
  * 세 규칙 중 ①③). 그래서 *"보유 총량이 슬롯 수에 얼마나 모자란가"* 가 그대로 거리가 되고,
  * 모자란 만큼을 한 번에 줄 수 있으므로 **부족분 전액 등식이 이 축에서는 성립한다.**
  */
@@ -688,6 +688,11 @@ export function catalystCandidates(input: DailyRewardProgressInput): DailyReward
     total += qty;
     ownedIds.push(Math.trunc(e.catalystId));
   }
+  // ⚠️ ADR-0052 로 SLOT_CAP 이 8→3 이 되면서 **이 축의 사거리가 줄었다**(거동 변경, 의도됨).
+  //    보유 총량 3 이상이면 short<=0 이라 촉매 축이 후보를 아예 안 낸다 — 예전 문턱은 8이었다.
+  //    거리도 {1/3, 2/3, 1} 세 값만 갖고(예전 8단계), 1회 지급 최대량도 3으로 줄어든다.
+  //    분모가 슬롯 수인 것은 유지한다: "다음 런의 주입 슬롯을 채운다"가 이 축의 목표라
+  //    슬롯이 줄면 목표 자체가 줄어드는 것이 정합이다.
   const short = SLOT_CAP - total;
   if (short <= 0) return [];
 

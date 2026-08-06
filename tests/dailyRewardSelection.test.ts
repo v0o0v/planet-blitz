@@ -520,7 +520,7 @@ describe('촉매 축 — 주입 슬롯을 채우는 것이 목표다', () => {
 
   it('보유 종류가 있으면 그 종류만 후보다 — 부족분 전액을 준다', () => {
     const out = catalystCandidates(
-      withAxis({ catalyst: { owned: [{ catalystId: 3, qty: 2 }, { catalystId: 7, qty: 1 }] } }),
+      withAxis({ catalyst: { owned: [{ catalystId: 3, qty: 1 }, { catalystId: 7, qty: 1 }] } }),
     );
     expect(out.map((c) => c.detail.goalId).sort()).toEqual(
       ['catalyst:slots:3', 'catalyst:slots:7'].sort(),
@@ -528,8 +528,9 @@ describe('촉매 축 — 주입 슬롯을 채우는 것이 목표다', () => {
     for (const c of out) {
       const s = c.detail.subject;
       expect(s.axis).toBe('catalyst');
-      // 총 3개 보유 → 슬롯 8칸 중 5칸이 빈다.
-      if (s.axis === 'catalyst') expect(s.count).toBe(SLOT_CAP - 3);
+      // 총 2개 보유 → 남은 칸은 SLOT_CAP-2. 수량을 SLOT_CAP 상대로 적는 것이 계약이다 —
+      // 예전 판은 2+1=3 을 박아 두어 ADR-0052(8→3)에서 후보가 0이 되며 단언이 공허해졌다.
+      if (s.axis === 'catalyst') expect(s.count).toBe(SLOT_CAP - 2);
     }
   });
 
@@ -548,8 +549,12 @@ describe('촉매 축 — 주입 슬롯을 채우는 것이 목표다', () => {
       const out = catalystCandidates(withAxis({ catalyst: { owned: [{ catalystId: 0, qty }] } }));
       return out[0]?.distance ?? Number.POSITIVE_INFINITY;
     };
-    expect(at(1)).toBeGreaterThan(at(4));
-    expect(at(4)).toBeGreaterThan(at(7));
+    // 상한 상대로 잰다. 절대 수량(1·4·7)을 박으면 SLOT_CAP 이 내려갈 때 상한 이상인 표본이
+    // 후보 0 → Infinity 가 되어 "단조 감소"가 아니라 "둘 다 없음"을 통과시킨다.
+    expect(at(0)).toBeGreaterThan(at(1));
+    expect(at(1)).toBeGreaterThan(at(SLOT_CAP - 1));
+    // 상한에 닿으면 후보 자체가 사라진다(위 첫 케이스의 짝) — Infinity 가 정상 종단이다.
+    expect(at(SLOT_CAP)).toBe(Number.POSITIVE_INFINITY);
   });
 });
 
