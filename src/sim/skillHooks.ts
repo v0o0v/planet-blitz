@@ -127,6 +127,7 @@ import {
   mallowDamageChain,
   mallowEnemyDamaged,
   mallowPowerupPicked,
+  mallowCushionSettleDue,
   mallowCushionSettled,
   mallowVolleyParams,
 } from './skills/mallow.js';
@@ -1784,8 +1785,8 @@ export function onCushionThreshold(
  *  - `player.aux0`·`aux1` 은 **이미 0 으로 리셋**됐다. 그래서 이 훅이 `aux0` 에 쓴 값은
  *    **살아남는다** — ME5 가 "선체로 안 보낸 나머지" 를 다시 미루려면 여기서 **대입**해라
  *    (가산이면 리셋 전 값과 두 겹이 된다). 정산 전 풀 크기는 `due + recovered` 다.
- *    ⚠️ 단 CU3(⑳)의 이월도 같은 칸에 **대입**한다 — 둘을 함께 배선하는 레인은 CU3 쪽을
- *    가산으로 바꿔야 ME5 의 나머지가 조용히 덮이지 않는다.
+ *    ⚠️ CU3(⑳)의 이월도 같은 칸을 쓴다 — 배선 레인이 **CU3 쪽을 가산으로 바꿨다**(대입이면
+ *    ME5 의 나머지가 조용히 덮인다). 지금 ME5 도 가산으로 쓴다(리셋 직후라 값은 대입과 같다).
  *  - `player.hp` 는 **아직 안 깎였다**. 정산 후 hp 가 필요하면 이 자리가 아니라 ⑳ 이다.
  *
  * ## ⚠️ 뒤 산술이 반환값을 삼키는 구간이 하나 있다
@@ -1806,11 +1807,13 @@ export function onCushionSettleDue(
   recovered: number,
 ): number {
   if (!state.skillsOn) return due;
-  void player;
   void recovered;
   switch (state.sigBit) {
-    // ⚠️ 말로우 ME5「분할 상환」의 case 가 **여기** 로 온다(⑳ 이 아니다). S3 는 자리만 연다 —
-    // 인자를 그대로 돌려주므로 거동·해시가 비트 동일이다.
+    case SIG_MALLOW_CUSHION:
+      // ME5「분할 상환」 **1종** — 이번 정산의 절반만 선체로 보내고 나머지를 `aux0` 으로 미룬다
+      // (이월분은 탕감률만큼 줄어든다). 설계 정본의 순서에서 **분할**이 여기다.
+      // 미투자 런은 `due` 를 그대로 돌려주므로 비트 동일이다.
+      return mallowCushionSettleDue(state, player, due);
     // ⚠️ ME8「리듬 탕감」·ME9「솜틀 요양」은 **여전히 여기로도 못 온다.** 둘은 탕감률
     // (`CUSHION_RECOVER_BP`)·임계(`CUSHION_RECOVER_TICKS`)가 `shipSignature.ts` 의 순수 함수
     // `cushionRecovered`·`cushionSettled` **안에** 있어, 이 앵커에 도달한 시점에는 이미 그
@@ -1845,8 +1848,8 @@ export function onCushionSettleDue(
  *
  * @param settled 선체로 들어가기로 **확정된** 지연 피해. S3 부터 이 값은 앵커 ㉔
  *   ({@link onCushionSettleDue})이 돌려준 몫이다(분할 전 `cushionSettled` 원값이 아니다) —
- *   CU3 의 이월이 "상한이 막은 몫" 만 세려면 분할 **후** 기준이어야 한다. ㉔ 이 비어 있는
- *   지금은 두 값이 같다
+ *   CU3 의 이월이 "상한이 막은 몫" 만 세려면 분할 **후** 기준이어야 한다. ME5 미투자 런에서는
+ *   두 값이 같다
  * @param recovered 무피격 보상으로 **사라진** 지연 피해
  * @param applied hp 에서 실제로 깎인 양(클램프 후). `settled` 이하다
  */

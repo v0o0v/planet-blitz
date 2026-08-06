@@ -2562,7 +2562,7 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
       // 소멸분 때문에 값이 갈린다(사유 전문은 앵커 주석).
       // 자리는 `aux0`·`aux1` 리셋 **뒤**여야 한다 — 훅이 "안 보낸 나머지" 를 `aux0` 에 다시
       // 미루려면 리셋보다 앞에서 쓴 값이 곧바로 지워지면 안 된다.
-      // S3 는 `due` 를 그대로 돌려주므로 비트 동일이다.
+      // 말로우 ME5「분할 상환」이 여기서 돈다 — 미투자 런은 `due` 를 그대로 돌려받는다.
       const hull = onCushionSettleDue(state, player, due, healed);
       // ⚠️ 완충은 절대 치명적이지 않다. 미룬 피해가 hp 를 1 미만으로 내리지 못하게 클램프한다 —
       // 안전한 곳으로 빠진 직후 화면상 아무 원인 없이 죽는 사인은 플레이어가 관측할 수도
@@ -2583,7 +2583,7 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
       // 훅의 계약은 "hp 에서 실제로 깎인 양" 이다.
       // `settled` 로 넘기는 것은 `due` 가 아니라 **㉕ 이 확정한 `hull`** 이다 — CU3 의 이월이
       // "상한이 막은 몫" 만 세려면 분할 **후** 기준이어야 하고, `due` 를 넘기면 ME5 가 다시
-      // 미룬 몫까지 CU3 이 한 번 더 이월해 두 겹이 된다. ㉕ 이 빈 지금은 둘이 같은 값이다.
+      // 미룬 몫까지 CU3 이 한 번 더 이월해 두 겹이 된다. ME5 미투자 런에서는 둘이 같은 값이다.
       onCushionSettled(state, player, hull, healed, applied > 0 ? applied : 0);
     }
     // ⚠️ 아크캐스터 분기와 같은 이유로 **명시적으로** 반환한다 — 뒤에 버블 분기를 append 한

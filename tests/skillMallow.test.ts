@@ -41,6 +41,7 @@ import {
   onEnemyDamaged,
   onPowerupPicked,
   onCushionSettled,
+  onCushionSettleDue,
   onCushionThreshold,
   onVolleyParams,
   type VolleyParams,
@@ -70,6 +71,7 @@ const SQ5 = 4;
 const SQ8 = 7;
 const ME1 = 10;
 const ME4 = 13;
+const ME5 = 14;
 const ME10 = 19;
 const CU3 = 22;
 const CU4 = 23;
@@ -739,5 +741,141 @@ describe('⑩ 앵커 ⑲ 와 ME9 의 선결', () => {
     expect(cushionSettled(100, 129)).toBe(0);
     expect(cushionRecovered(100, 129)).toBe(0);
     expect(cushionSettled(100, CUSHION_RECOVER_TICKS)).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑪ 앵커 ㉕ — ME5 분할 상환
+// ---------------------------------------------------------------------------
+
+describe('⑪ 앵커 ㉕ ME5 분할 상환', () => {
+  it('절반만 선체로 가고 나머지가 `aux0` 로 미뤄진다 (탕감률만큼 줄어서)', () => {
+    const w = mk([[ME5, 20]]);
+    const p = player(w);
+    p.aux0 = 0; // 정산이 이미 리셋했다 — ㉕ 의 계약이 그 시점이다
+    // Lv20 탕감 bp = 6000×20/40 = 3000. defer = floor(100/2) = 50,
+    // 탕감 = floor(50 × 3000/10000) = 15, 이월 = 35, 선체행 = 50.
+    expect(onCushionSettleDue(w, p, 100, 0)).toBe(50);
+    expect(p.aux0).toBe(35);
+  });
+
+  it('레벨이 낮으면 탕감이 거의 없다 — 분할 폭은 그대로다 (두 축이 갈린다)', () => {
+    const w = mk([[ME5, 1]]);
+    const p = player(w);
+    p.aux0 = 0;
+    // Lv1 탕감 bp = 6000/21 ≈ 285.7 → floor(50 × 285.7/10000) = 1.
+    expect(onCushionSettleDue(w, p, 100, 0)).toBe(50);
+    expect(p.aux0).toBe(49);
+  });
+
+  it('`due <= 1` 은 무연산이다 — 1 을 반으로 계속 나누면 영영 안 비는 풀이 된다', () => {
+    const w = mk([[ME5, 20]]);
+    const p = player(w);
+    p.aux0 = 0;
+    expect(onCushionSettleDue(w, p, 1, 0)).toBe(1);
+    expect(p.aux0).toBe(0);
+    expect(onCushionSettleDue(w, p, 0, 0)).toBe(0);
+    expect(p.aux0).toBe(0);
+  });
+
+  it('⚠️ 보존 — 미룬 몫은 사라지지도 두 배가 되지도 않는다 (연쇄 정산 총합을 잠근다)', () => {
+    const w = mk([[ME5, 20]]);
+    const p = player(w);
+    let due = 1000;
+    let hullSum = 0;
+    let forgivenSum = 0;
+    let rounds = 0;
+    while (due > 1) {
+      p.aux0 = 0; // 매 정산의 리셋을 흉내 낸다
+      const hull = onCushionSettleDue(w, p, due, 0);
+      const carry = p.aux0;
+      // ⚠️ 항진 방지 — 분할이 **실제로 일어났다**를 먼저 잠근다. 배선이 끊기면 `carry` 가 0 이
+      //    되어 루프가 첫 회전에서 끝나고 아래 총합 단언이 공짜로 성립한다.
+      expect(hull).toBeGreaterThan(0);
+      expect(carry).toBeGreaterThan(0);
+      expect(hull).toBeLessThan(due); // 줄이는 방향이다
+      // 매 회차 항등식: due = 선체행 + 탕감 + 이월. 정수 산술이라 잔차가 없다.
+      const forgiven = due - hull - carry;
+      expect(forgiven).toBeGreaterThanOrEqual(0);
+      hullSum += hull;
+      forgivenSum += forgiven;
+      due = carry;
+      rounds++;
+    }
+    expect(rounds).toBeGreaterThan(3); // 정말 여러 정산에 걸쳐 흘렀다
+    // 총합 보존 — 처음 1000 이 선체행 + 탕감 + 마지막 잔량으로 **정확히** 분해된다.
+    expect(hullSum + forgivenSum + due).toBe(1000);
+  });
+
+  it('⚠️ CU3 과 이중 이월이 되지 않는다 (⑳ 이 받는 `settled` 는 분할 **후** 값이다)', () => {
+    const w = mk([
+      [ME5, 20],
+      [CU3, 20],
+    ]);
+    const p = player(w);
+    p.maxHp = 1000;
+    p.hp = 900;
+    p.aux0 = 0;
+    p.aux1 = 0;
+    const due = 500;
+    // ㉕ — defer 250, 탕감 75, 이월 175, 선체행 250.
+    const hull = onCushionSettleDue(w, p, due, 0);
+    expect(hull).toBe(250);
+    expect(p.aux0).toBe(175);
+    const room = Math.floor(p.hp) - 1;
+    const applied = hull > room ? room : hull;
+    // ⑳ — CU3 상한 180. 이월분 = 250 − 180 = 70 이 **가산**된다.
+    onCushionSettled(w, p, hull, 0, applied > 0 ? applied : 0);
+    expect(p.aux0).toBe(245); // 175 + 70
+    // 두 겹이 아니라는 증거: 이월 245 + 탕감 75 + 실제 선체행 180 = 500 = due 정확히.
+    expect(245 + 75 + 180).toBe(due);
+  });
+
+  it('엔진 경로 — 정산 틱의 hp 감소분과 완충 잔량이 **함께** 달라진다', () => {
+    // 전제: 정산이 실제로 일어난다(항진 방지). 풀 100·임계 도달 시 탕감 60 · 선체행 40.
+    expect(cushionSettled(100, CUSHION_RECOVER_TICKS)).toBe(40);
+
+    const base = mk([[ME1, 20]]); // ME5 미투자 대조군
+    const bp = player(base);
+    bp.aux0 = 100;
+    bp.aux1 = CUSHION_RECOVER_TICKS - 1;
+    const baseHp = bp.hp;
+    stepWorld(base, emptyInput());
+    expect(baseHp - bp.hp).toBe(40);
+    expect(bp.aux0).toBe(0);
+
+    const w = mk([[ME5, 20]]);
+    const p = player(w);
+    p.aux0 = 100;
+    p.aux1 = CUSHION_RECOVER_TICKS - 1;
+    const hp0 = p.hp;
+    stepWorld(w, emptyInput());
+    // 선체행 40 → 분할 20(탕감 6, 이월 14). 두 축이 **함께** 움직인다.
+    expect(hp0 - p.hp).toBe(20);
+    expect(p.aux0).toBe(14);
+  });
+
+  it('음성 — ME5 미투자 런의 ㉕ 는 `due` 를 그대로 돌려주고 `aux0` 을 안 만진다', () => {
+    const w = mk([[CU3, 20]]);
+    const p = player(w);
+    p.aux0 = 0;
+    expect(onCushionSettleDue(w, p, 500, 30)).toBe(500);
+    expect(p.aux0).toBe(0);
+  });
+
+  it('음성 — 투자 0 런의 정산 궤적이 종전 그대로다 (분할이 한 톨도 안 샌다)', () => {
+    // ⚠️ 두 런을 마주 세우지 않는다 — 배선이 통째로 죽으면 양변이 같이 죽어 성립하는 항진이
+    //    이 리포에 실제로 있었다. 순수 함수 `cushionSettled` 가 내는 **절대값**으로 잠근다.
+    const w = mk([]);
+    const p = player(w);
+    p.aux0 = 100;
+    p.aux1 = CUSHION_RECOVER_TICKS - 1;
+    const hp0 = p.hp;
+    stepWorld(w, emptyInput());
+    expect(hp0 - p.hp).toBe(40); // 분할 없이 선체행 전량이 들어간다
+    expect(p.aux0).toBe(0); // 이월도 없다
+    const h = hashWorld(w);
+    for (let i = 0; i < 20; i++) stepWorld(w, emptyInput());
+    expect(hashWorld(w)).not.toBe(h); // 해시 폴드가 살아 있다(고정 해시 단언의 항진 방지)
   });
 });
