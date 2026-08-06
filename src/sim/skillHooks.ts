@@ -140,6 +140,8 @@ import {
   bubbleSignatureStep,
   bubbleEnemyDamaged,
   bubbleFilmBurst,
+  bubbleVolleyParams,
+  bubbleFilmAbsorbed,
 } from './skills/bubble.js';
 
 // ---------------------------------------------------------------------------
@@ -1374,6 +1376,16 @@ export function onVolleyParams(
       // 피격 판별 앵커가 아직 없다).
       bruiserVolleyParams(state, player, params);
       break;
+    case SIG_BUBBLE_FILM:
+      // PO2 압력 전환 사출(막 있음 · 탄속 초과분 → 피해) · PO5 만재 투과(만재 · 관통 +1 + 피해).
+      //
+      // ⚠️ PO2 는 `params.ballisticsUsed` 로 **게이트된다** — 빔은 `speed` 를 안 읽으므로
+      // 그 값을 피해로 바꾸면 대가 없는 순이득이 된다(그 필드 주석의 BL6 경고와 같은 형태).
+      //
+      // ⚠️ 버블의 나머지 볼리 축은 여기 **없다** — PO9(액티브 계수)·PO10(다음 막 내구)은
+      // 발사와 무관하고, DR 계열은 자석·이동 축이라 이 레코드에 대응 필드가 없다.
+      bubbleVolleyParams(state, player, params);
+      break;
     default:
       break;
   }
@@ -1424,6 +1436,24 @@ export function onFilmShield(
     // **여러 접촉원의 합류값**이다(`world.ts` 의 수집 루프가 적 접촉·적탄·해저드를 같은
     // 변수에 더한다). 피해원 종류를 복원할 방법이 없다. 이 앵커에 태우면 "해저드에서만" 이
     // "언제나" 가 된다 — 설계와 정반대다. **문서는 고치지 않았다**(규약: 어긋남은 보고한다).
+    //
+    // ⚠️ **그리고 「흡수 효율」 축은 이 앵커로 아예 표현되지 않는다 — DR2 도 여기 못 온다.**
+    // 배선 레인 실측(ADR-0049 버블 S2 레인). 근거는 위 doc 의 상한 규칙과 순수 함수 정의를
+    // 겹쳐 보면 나온다: `filmAbsorbed(d, s) = min(d, s)` 이고 world 가 `aux0 -= absorbed` 를
+    // 하므로, **`absorbed ≤ player.aux0` 을 지키려면 `shield ≤ player.aux0`** 여야 한다.
+    // 그런데 `shield` 의 기본값이 이미 `player.aux0` 이다 → 이 훅은 내구를 **낮추는 방향으로만**
+    // 유효하다. 두 경우로 갈라 봐도 같다:
+    //  · `dmg ≤ aux0` 이면 부풀리든 말든 `absorbed = dmg` 라 **아무것도 안 바뀐다**.
+    //  · `dmg > aux0` 이면 부풀리는 순간 `aux0` 이 음수가 된다(u32 폴드 → 클라·서버 발산).
+    // 즉 "내구 1당 막는 피해가 1+α" 는 **흡수량 = 내구 소모량**이라는 이 구조에서 성립할 수
+    // 없다. 표현하려면 `filmAbsorbed`/`filmRemainingDamage` 가 효율 인자를 받아 *태운 내구*와
+    // *막은 피해*를 분리해야 하고, 그것은 골든에 닿는 순수 함수 변경이라 배선 레인 단독으로는
+    // 하지 않는다(앵커 ⑲ 의 ME9 가 같은 형태로 막혀 있는 것과 동형이다).
+    //
+    // ⚠️ **FI9「최후의 거품」도 여기 못 온다** — 호출부 게이트가 `player.aux0 > 0` 이라
+    // *막이 없는* 치명 피격에서는 이 훅이 **불리지 않는다.** 그 스킬의 자리는 막 흡수 분기의
+    // **진입 술어**(`aux0 > 0` 을 `aux0 > 0 || (치명 && aux1 > 0)` 로 넓히는 것)이지
+    // 흡수 산술 안이 아니다.
     default:
       break;
   }
@@ -1458,10 +1488,21 @@ export function onFilmAbsorbed(
   rest: number,
 ): void {
   if (!state.skillsOn) return;
-  void player;
-  void absorbed;
-  void rest;
   switch (state.sigBit) {
+    case SIG_BUBBLE_FILM:
+      // FI3 반사 응막(흡수 틱 적탄 소거) · FI4 압력 배출(흡수량 비례 소형 밀어내기).
+      //
+      // ⚠️ **FI6「헌막 의식」은 여기 없다.** 흡수 누적 자체는 이 앵커가 정확히 잴 수 있지만,
+      // 소비처가 `as_bubble_film_hi`(불멸 막) **만료 파열의 폭발 피해**다. 문제가 둘이다:
+      //  ① 앵커 ⑮(`onFilmBurst`)는 파열의 **종류를 구분하지 못한다** — 시그니처 소진 파열과
+      //     액티브 만료 파열이 같은 `resolveFilmBurst` 를 지나고 요청 슬롯의 종류 코드는
+      //     소비 시점에 이미 비워진다. "만료 파열일 때만" 을 잴 신호가 없다.
+      //  ② `resolveFilmBurst` 의 기본 파열에는 애초에 **폭발 피해가 없다**(밀어내기뿐).
+      //     가산할 대상이 PO1 투자에 의존하면 설계서의 "만료 파열의 폭발" 과 다른 것이 된다.
+      // 누적만 세우고 소비를 비워 두면 슬롯 1칸이 영구히 아무것도 안 하는 채 해시에 접힌다 —
+      // 반쪽 배선이라 통째로 뒀다.
+      bubbleFilmAbsorbed(state, player, absorbed, rest);
+      break;
     default:
       break;
   }

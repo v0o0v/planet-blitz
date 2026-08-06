@@ -14,6 +14,14 @@
  *  ② **배선 이음매 치환** — 앵커 ⑮(`onFilmBurst`)의 `case SIG_BUBBLE_FILM:` 을
  *     `case SIG_STRIKER_MARKSMAN:` 으로 바꾸면 §④ 일곱 항목과 §⑤ 가 함께 실패한다.
  * 초록인데 아무것도 안 재는 테스트가 아니다.
+ *
+ * ## S2 앵커 추가분의 뮤테이션 (2026-08-07 · §⑥ ⑯ · §⑦ ⑱)
+ *  ③ 앵커 ⑯·⑱ 의 `case SIG_BUBBLE_FILM:` 본문 호출을 지우면 **5항목이 실패**한다
+ *     (PO2 전환 · PO5 관통+피해 · PO5 빔 · FI3 소거 · FI4 변위).
+ *  ⚠️ 그 실측이 **항진 1건을 잡았다**: FI4 「흡수량 비례」는 배선이 끊기면 두 변위가 모두 0 이라
+ *     비례식이 성립해 버렸다 — 그래서 `d1 > 0` 하한을 먼저 못 박았다. **부정 테스트(무연산을
+ *     기대하는 항목)는 뮤테이션에 원리적으로 안 걸린다** — §⑥·§⑦ 의 "꺼진다" 항목들이 그것이고,
+ *     짝이 되는 긍정 항목이 옆에 있어야 의미가 선다.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -29,7 +37,14 @@ import type { Entity } from '../src/sim/entities.js';
 import { blankEntity } from '../src/sim/entities.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { neutralLoadout } from '../src/items/loadout.js';
-import { onSignatureStep, onEnemyDamaged, onFilmBurst } from '../src/sim/skillHooks.js';
+import {
+  onSignatureStep,
+  onEnemyDamaged,
+  onFilmBurst,
+  onVolleyParams,
+  onFilmAbsorbed,
+  type VolleyParams,
+} from '../src/sim/skillHooks.js';
 import { resolveFilmBurst } from '../src/sim/filmBurst.js';
 import {
   SIG_BUBBLE_FILM,
@@ -47,12 +62,16 @@ const SHIP_BUBBLE = 6;
  * ⚠️ 스트라이커와 축 종류의 순서가 다르다(스트라이커는 축1=defense).
  */
 const PO1 = 0;
+const PO2 = 1;
 const PO3 = 2;
+const PO5 = 4;
 const PO6 = 5;
 const PO7 = 6;
 const DR6 = 15;
 const FI1 = 20;
 const FI2 = 21;
+const FI3 = 22;
+const FI4 = 23;
 const FI5 = 24;
 const FI10 = 29;
 
@@ -393,5 +412,196 @@ describe('⑤ filmBurst → skillHooks 이음매', () => {
     expect(foe.x).toBeGreaterThan(x0);
     expect(foe.hp).toBe(500);
     expect(p.aux1).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑥ 앵커 ⑯ — PO2 압력 전환 사출 · PO5 만재 투과
+// ---------------------------------------------------------------------------
+
+/**
+ * 발칸(탄도 파라미터를 전부 읽는 아키타입)이 넘길 법한 한 벌. `ballisticsUsed: true`.
+ * ⚠️ 읽기 전용 세 필드(`countUsed`·`ballisticsUsed`·`cloakBreak`)를 훅이 고치지 않는지도
+ * 이 레코드로 함께 잰다.
+ */
+function volley(over: Partial<VolleyParams> = {}): VolleyParams {
+  return {
+    damage: 100,
+    pierce: 1,
+    count: 3,
+    speed: 1800,
+    radius: 8,
+    life: 55,
+    spread: 0.4,
+    cooldownQ: 60,
+    countUsed: true,
+    ballisticsUsed: true,
+    targetDist: 400,
+    cloakBreak: false,
+    mark: 0,
+    ...over,
+  };
+}
+
+describe('⑥ 볼리 파라미터 (앵커 ⑯)', () => {
+  it('PO2 — 막이 서 있으면 기준 탄속(1800) 초과분의 20% + 2%p/Lv 가 피해로 전환된다', () => {
+    const w = mk([[PO2, 5]]);
+    const p = player(w);
+    p.aux0 = 1; // 막이 한 점이라도 남아 있으면 켜진다(만재 요구는 PO5 쪽)
+    const v = volley({ speed: 3600 }); // 초과분 = +10000bp
+    onVolleyParams(w, p, v);
+    // 전환율 3000bp × 초과 10000bp = 피해 +3000bp
+    expect(v.damage).toBeCloseTo(130, 9);
+    expect(v.speed).toBe(3600); // 탄속은 대가로 깎지 않는다(설계서: 전환이지 교환이 아니다)
+  });
+
+  it('PO2 — **막이 없으면 꺼진다** · 기준 탄속 이하에서도 꺼진다', () => {
+    const w = mk([[PO2, 20]]);
+    const p = player(w);
+    p.aux0 = 0;
+    const off = volley({ speed: 5400 });
+    onVolleyParams(w, p, off);
+    expect(off.damage).toBe(100);
+
+    p.aux0 = FILM_ABSORB_FLAT;
+    const slow = volley({ speed: 1500 }); // 초과분이 음수 → 피해를 **깎지 않는다**
+    onVolleyParams(w, p, slow);
+    expect(slow.damage).toBe(100);
+  });
+
+  it('PO2 — 빔(`ballisticsUsed: false`)에서는 통째로 꺼진다 (대가 없는 순이득 차단)', () => {
+    const w = mk([[PO2, 20]]);
+    const p = player(w);
+    p.aux0 = FILM_ABSORB_FLAT;
+    const beam = volley({ speed: 5400, ballisticsUsed: false, countUsed: false });
+    onVolleyParams(w, p, beam);
+    expect(beam.damage).toBe(100);
+  });
+
+  it('PO5 — **만재**인 동안 관통 +1 · 피해 +6% + 1.5%p/Lv', () => {
+    const w = mk([[PO5, 4]]);
+    const p = player(w);
+    p.aux0 = FILM_ABSORB_FLAT;
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v.pierce).toBe(2);
+    expect(v.damage).toBeCloseTo(112, 9); // 100 × 11200/10000
+  });
+
+  it('PO5 — 만재가 아니면(첫 피격이 깬 뒤) 꺼진다 — 내장 억제', () => {
+    const w = mk([[PO5, 20]]);
+    const p = player(w);
+    p.aux0 = FILM_ABSORB_FLAT - 1;
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v.pierce).toBe(1);
+    expect(v.damage).toBe(100);
+  });
+
+  it('PO5 — 빔에서는 관통 가산만 빠지고 피해 보정은 남는다 (부호 반전 없음)', () => {
+    const w = mk([[PO5, 4]]);
+    const p = player(w);
+    p.aux0 = FILM_ABSORB_FLAT;
+    const beam = volley({ ballisticsUsed: false, countUsed: false });
+    onVolleyParams(w, p, beam);
+    expect(beam.pierce).toBe(1);
+    expect(beam.damage).toBeCloseTo(112, 9);
+  });
+
+  it('**다른 스킬만 찍은 런**에서는 ⑯ 이 한 필드도 안 건드린다', () => {
+    const w = mk([[FI2, 20]]);
+    const p = player(w);
+    p.aux0 = FILM_ABSORB_FLAT;
+    const v = volley({ speed: 5400 });
+    onVolleyParams(w, p, v);
+    expect(v).toEqual(volley({ speed: 5400 }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑦ 앵커 ⑱ — FI3 반사 응막 · FI4 압력 배출
+// ---------------------------------------------------------------------------
+
+describe('⑦ 막 흡수 직후 (앵커 ⑱)', () => {
+  it('FI3 — 흡수한 틱에 반경 80 + 8×Lv 안의 적탄이 소거된다', () => {
+    const w = mk([[FI3, 2]]);
+    const p = player(w);
+    p.aux0 = 20;
+    const radius = 80 + 8 * 2;
+    const inside = addEnemyBullet(w, p.x + radius - 10, p.y);
+    const outside = addEnemyBullet(w, p.x + radius + 50, p.y);
+    onFilmAbsorbed(w, p, 10, 0);
+    expect(inside.dead).toBe(true);
+    expect(outside.dead).toBe(false);
+  });
+
+  it('FI3 — 막이 한 점도 안 닳은 피격(`absorbed === 0`)에는 안 걸린다', () => {
+    const w = mk([[FI3, 20]]);
+    const p = player(w);
+    p.aux0 = 20;
+    const shot = addEnemyBullet(w, p.x + 10, p.y);
+    onFilmAbsorbed(w, p, 0, 5);
+    expect(shot.dead).toBe(false);
+  });
+
+  it('FI4 — 흡수량 × (1.2 + 0.15×Lv) 만큼 반경 120 안 잡몹을 민다', () => {
+    const w = mk([[FI4, 2]]);
+    const p = player(w);
+    p.aux0 = 20;
+    const near = addEnemy(w, p.x + 50, p.y, 500);
+    const far = addEnemy(w, p.x + 300, p.y, 500);
+    const farX0 = far.x;
+    onFilmAbsorbed(w, p, 10, 0);
+    // 변위 = 10 × 1.5 = 15 (방향은 플레이어 → 적)
+    expect(near.x).toBeCloseTo(p.x + 65, 6);
+    expect(far.x).toBe(farX0); // 반경 120 밖
+  });
+
+  it('FI4 — 흡수량에 비례한다 (같은 레벨에서 흡수 2배 = 변위 2배)', () => {
+    const w = mk([[FI4, 8]]);
+    const p = player(w);
+    p.aux0 = 20;
+    const a = addEnemy(w, p.x + 50, p.y, 500);
+    onFilmAbsorbed(w, p, 5, 0);
+    const d1 = a.x - (p.x + 50);
+    const b = addEnemy(w, p.x + 50, p.y, 500);
+    onFilmAbsorbed(w, p, 10, 0);
+    const d2 = b.x - (p.x + 50);
+    // ⚠️ 하한을 먼저 못 박는다 — 배선이 끊기면 `d1 = d2 = 0` 이라 비례식만으로는 **항진**이다
+    //    (뮤테이션 실측: 이 줄이 없을 때 case 를 지워도 이 항목만 초록으로 남았다).
+    expect(d1).toBeGreaterThan(0);
+    expect(d2).toBeCloseTo(d1 * 2, 6);
+  });
+
+  it('FI4 — **파열하는 틱(`aux0 === 0`)에는 밀지 않는다** — 파열 훅의 반경 술어를 비우지 않기 위해', () => {
+    const w = mk([[FI4, 20]]);
+    const p = player(w);
+    p.aux0 = 0; // 이번 흡수로 막이 소진됐다 = 곧 `resolveFilmBurst` 가 돈다
+    const foe = addEnemy(w, p.x + 50, p.y, 500);
+    const x0 = foe.x;
+    onFilmAbsorbed(w, p, FILM_ABSORB_FLAT, 0);
+    expect(foe.x).toBe(x0);
+  });
+
+  it('FI4 — 잡몹만 민다 (보스·구조물 제외)', () => {
+    const w = mk([[FI4, 20]]);
+    const p = player(w);
+    p.aux0 = 20;
+    const boss: Entity = { ...blankEntity('boss'), x: p.x + 50, y: p.y, hp: 999, maxHp: 999 };
+    w.entities.push(boss);
+    onFilmAbsorbed(w, p, 30, 0);
+    expect(boss.x).toBe(p.x + 50);
+  });
+
+  it('**다른 스킬만 찍은 런**에서는 ⑱ 이 아무것도 안 한다', () => {
+    const w = mk([[FI2, 20]]);
+    const p = player(w);
+    p.aux0 = 20;
+    const shot = addEnemyBullet(w, p.x + 10, p.y);
+    const foe = addEnemy(w, p.x + 50, p.y, 500);
+    const x0 = foe.x;
+    onFilmAbsorbed(w, p, 30, 0);
+    expect(shot.dead).toBe(false);
+    expect(foe.x).toBe(x0);
   });
 });
