@@ -8,10 +8,13 @@
  *
  * ---
  *
- * ## ⚠️ 배선 현황 — **30종 중 16종**(배치 5 의 9종 + 2026-08-07 W레인의 7종)
- * W레인이 앵커 ㉓·㉔ 로 **BD1·BD2·SH10·NU10·BD6·NU2·NU7** 7종을 얹었다. 아래 4묶음은
- * **배치 5 시점의 기록**이고 그 사유 문장은 지금도 참이므로 지우지 않는다 — 다만 1묶음
- * (출격 지점 8종)은 이제 **BD10 하나만 남았다**(사유는 그 묶음 말미와 {@link broodMaxDrones}).
+ * ## ⚠️ 배선 현황 — **30종 중 17종**(배치 5 의 9종 + W레인 7종 + W2 레인의 BD10)
+ * W레인이 앵커 ㉓·㉔ 로 **BD1·BD2·SH10·NU10·BD6·NU2·NU7** 7종을 얹었고, **W2 레인이 앵커 ㉖
+ * (`onTurretShotParams`, 포탑 사격 지점)을 새로 세워 BD10 을 3축 전부 배선했다** — 상한 −1(㉓의
+ * {@link broodMaxDrones}) · 수명 가산(㉔) · 탄 피해 배율(㉖). 아래 4묶음은 **배치 5 시점의
+ * 기록**이고 그 사유 문장은 지금도 참이므로 지우지 않는다 — 다만 1묶음(출격 지점 8종)은
+ * **8종 전부 배선됐고**, 2묶음(포탑 루프 6종)은 앵커 ㉖ 이 서면서 **탄 파라미터 축이 열렸다**
+ * (BD7 은 그 레코드에 자기 칸을 더하면 된다 — `TurretShotParams` doc 참조).
  *
  * ## ⚠️ (배치 5 시점 기록) 이 배치가 배선한 것은 30종 중 **9종**이다 — 해츨링이 7기체 중 가장 적다
  * 사유는 기체 고유다. **해츨링 스킬 30종 중 21종의 효과 지점이 `world.ts` 의 두 비공개 함수
@@ -31,10 +34,11 @@
  *     BD10 의 **탄 피해 배율**만은 ㉔ 로도 안 닿는다 — 사유는 그 앵커 doc 말미에 있다(수명
  *     가산은 닿는다).
  *     ✅ **2026-08-07(W레인)이 이 묶음의 8종 중 7종을 배선했다** — BD1·BD2·SH10·NU10 은
- *     앵커 ㉓ 에, BD6·NU2·NU7 은 앵커 ㉔ 에 있다. **남은 것은 BD10 하나뿐**이고, 넣지 않은
- *     이유는 반쪽 배선 금지다: 상한 −1 과 수명 가산은 ㉓·㉔ 로 닿지만 **탄 피해 배율**이
- *     `stepTurrets`/`fireTurretShot` 소관이라 안 닿아, 상한만 깎으면 순손해 스킬이 된다
- *     ({@link broodMaxDrones} 주석이 합산식과 함께 그 자리를 비워 두고 있다).
+ *     앵커 ㉓ 에, BD6·NU2·NU7 은 앵커 ㉔ 에 있다. 남은 BD10 을 넣지 않은 이유는 반쪽 배선
+ *     금지였다: 상한 −1 과 수명 가산은 ㉓·㉔ 로 닿지만 **탄 피해 배율**이 `stepTurrets`/
+ *     `fireTurretShot` 소관이라 안 닿아, 상한만 깎으면 순손해 스킬이 된다.
+ *     ✅ **2026-08-07(W2 레인)이 앵커 ㉖ 으로 그 셋째 축을 열고 BD10 을 배선했다** — 이 묶음은
+ *     **8종 전부 배선**이다.
  *  2. **포탑 루프(`stepTurrets`/`fireTurretShot`) 소관 — 6종**: BD7(발사 횟수 누적 강화) ·
  *     BD9(보류 중 발사 간격) · NU1(병아리 자석장) · SH8(적탄 소거·수명 소모) ·
  *     SH9(자연 만료 시 둥지벽) · BD3/NU9 의 자연 만료 경로. 쿨다운 리셋·수명 만료·표적 조회가
@@ -61,7 +65,7 @@ import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
 // ⚠️ **타입 전용 import 다**(erasable) — `skillHooks.ts` 가 이 파일을 런타임 import 하므로
 // 값으로 끌어오면 순환이 된다. `BroodParams` 는 앵커 ㉓ 의 계약 그 자체라 사본을 만들지 않는다.
-import type { BroodParams } from '../skillHooks.js';
+import type { BroodParams, TurretShotParams } from '../skillHooks.js';
 import { isActiveTurret, TURRET_LIFE_TICKS } from '../events.js';
 import { blastDamage, clearEnemyBullets } from '../activeTypes.js';
 import { spawnGem } from '../entities.js';
@@ -88,6 +92,7 @@ const enum Sk {
   /** BD2 쌍둥이 부화 */ twinHatch = 1,
   /** BD5 격발 공명 */ volleyResonance = 4,
   /** BD6 부화 충격파 */ hatchShockwave = 5,
+  /** BD10 여왕 사출 */ matriarchLaunch = 9,
   /** NU2 알껍질 영양 */ eggshellNutrients = 11,
   /** NU5 알 굴리기 */ eggRoll = 14,
   /** NU6 온기 나눔 */ sharedWarmth = 15,
@@ -124,7 +129,8 @@ function lv(state: WorldState, flat: Sk): number {
  * 수 없다 — `skills/arccaster.ts` 가 `OVERCHARGE_TICK_CAP` 에서 이미 같은 사유로 같은 값을
  * 지역 선언했고 이 파일은 그 선례를 따른다(값이 바뀌면 두 곳을 함께 고쳐야 한다).
  *
- * ⚠️ **BD10(−1)·SH10(+1)이 미배선이라 이 배치에서 실효 상한은 항상 4 다.** 설계 BD10 의
+ * ⚠️ (배치 5 시점 기록) **BD10(−1)·SH10(+1)이 미배선이라 그 배치에서 실효 상한은 항상 4 였다.**
+ * 지금은 둘 다 {@link broodMaxDrones} 에 있다. 설계 BD10 의
  * 정본 합산식(`4 − BD10투자 + SH10투자`, 하한 1)은 두 스킬이 `stepHatchBrood` 에 배선되는
  * 레인이 여기 대신 세운다 — 지금 여기에 합산식만 미리 적으면 SH3 의 만석 술어와 실제 출격
  * 상한이 조용히 갈린다(만석이 아닌데 만석이라고 읽는다).
@@ -143,17 +149,37 @@ const BROOD_MAX_DRONES = 4;
  * **실효 병아리 상한** — 위 상수의 유일한 소비 지점이다. 앵커 ㉓ 의 `params.maxDrones` 와
  * SH3 의 만석 술어가 **둘 다 이 함수를 읽는다**(위 경고가 요구한 "한 곳").
  *
- * 정본 합산식(설계 BD10)은 `4 − BD10투자유무 + SH10투자유무 (하한 1)` 인데, 여기에는
- * **SH10 항만 있다.** ⚠️ **BD10 은 이 레인의 범위 밖**이고 그 사유는 반쪽 배선 금지다 —
- * BD10 은 상한 −1·수명 가산·**탄 피해 배율**의 3축인데 피해 배율만 `stepTurrets`/
- * `fireTurretShot` 소관이라 앵커 ㉓·㉔ 어느 쪽으로도 닿지 않는다(앵커 ㉔ doc 말미가 같은
- * 사실을 적는다). 상한만 먼저 넣으면 *"−1기를 내주고 정예화는 안 받는"* 순손해 스킬이
- * 되므로 넣지 않았다. BD10 을 배선하는 레인은 **이 함수에 `− (bd10 >= 1 ? 1 : 0)` 한 항만**
- * 더하면 된다(하한 1 클램프는 이미 여기 있다 — 그 항을 위한 것이다).
+ * 정본 합산식(설계 BD10)은 `4 − BD10투자유무 + SH10투자유무 (하한 1)` 이고, **이제 두 항이
+ * 다 있다**(2026-08-07 W2 레인). 앞 레인이 BD10 항을 비워 둔 사유는 반쪽 배선 금지였다 —
+ * 상한 −1·수명 가산은 앵커 ㉓·㉔ 로 닿지만 **탄 피해 배율**이 `stepTurrets`/`fireTurretShot`
+ * 소관이라 안 닿아, 상한만 깎으면 *"−1기를 내주고 정예화는 안 받는"* 순손해가 됐다. W2 가
+ * **앵커 ㉖(`onTurretShotParams`)** 를 그 루프에 세워 세 번째 축을 열었고, 그래서 여기 −1 이
+ * 들어왔다. 세 축이 한 커밋에 다 있다 — 하나라도 떼면 다시 순손해다.
+ *
+ * ⚠️ **투자 "유무"이지 레벨 비례가 아니다**(설계 문구 그대로). 레벨은 강화 배율에만 실린다.
  */
 function broodMaxDrones(state: WorldState): number {
-  const n = BROOD_MAX_DRONES + (lv(state, Sk.expandedNest) >= 1 ? 1 : 0);
+  const n =
+    BROOD_MAX_DRONES -
+    (lv(state, Sk.matriarchLaunch) >= 1 ? 1 : 0) +
+    (lv(state, Sk.expandedNest) >= 1 ? 1 : 0);
   return n > 1 ? n : 1;
+}
+
+/**
+ * **BD10 결손** = `max(0, 4 − 실효상한)`. 강화 배율의 유일한 계수다(설계 BD10).
+ *
+ * ⚠️ **SH10 동시 투자면 결손이 0 이라 강화도 0 이다** — 설계가 명시한 구조적 배타(1R
+ * CRITICAL-2)를 산술이 그대로 만든다. 그러라고 여기서 `broodMaxDrones` 를 읽는다: 실효
+ * 상한을 두 곳에 따로 적으면 배타가 조용히 풀린다.
+ *
+ * ⚠️ **미투자면 0 을 돌려준다** — 호출부는 이 값이 0 인지로 조기 반환하지 말고 BD10 투자
+ * 여부를 따로 봐라. 상한을 SH10 이 5 로 올린 런은 미투자와 같은 0 이지만, 그건 "BD10 이
+ * 꺼졌다"가 아니라 "결손을 되샀다"다(같은 결과, 다른 사유).
+ */
+function broodDeficit(state: WorldState): number {
+  const d = BROOD_MAX_DRONES - broodMaxDrones(state);
+  return d > 0 ? d : 0;
 }
 
 /**
@@ -579,7 +605,12 @@ const NU2_GEM_OY = [0, 0, 30, -30, 21, 21, -21, -21] as const;
 const NU2_SHELL_GEM_XP = 2;
 
 /**
- * **NU7 원정 부화 · BD6 부화 충격파 · NU2 알껍질 영양.**
+ * **NU7 원정 부화 · BD6 부화 충격파 · NU2 알껍질 영양 · BD10 여왕 사출(수명 축).**
+ *
+ * ## BD10 수명 가산이 왜 여기인가
+ * `chick.life` 는 `activateTurret` 이 방금 `TURRET_LIFE_TICKS` 로 세운 값이고, 이 앵커가
+ * 그것을 고칠 수 있는 **유일한 지점**이다(앵커 ㉓ 시점엔 개체가 없고, 다음 틱부터는
+ * `stepTurrets` 가 이미 깎기 시작한다). 좌표와 무관하므로 NU7 보다 앞에 둔다.
  *
  * ## 순서가 곧 설계다 — NU7 이 **먼저**다
  * 설계 NU7 의 「출격 좌표 상호작용 절」이 *"NU7 투자 시 BD6·NU2 의 발생지가 전부 원격 젬
@@ -593,6 +624,16 @@ const NU2_SHELL_GEM_XP = 2;
  * tie-break 이고 젬 오프셋은 고정 표라, 이 훅 전체가 RNG 0 이다 — 앵커 doc 의 계약 준수.
  */
 export function hatchlingBroodLaunched(state: WorldState, player: Entity, chick: Entity): void {
+  // ── BD10 여왕 사출(수명 축) — 결손 1기당 수명 +(60 + 10×Lv) 틱.
+  //    ⚠️ `chick.life` 를 `stepTurrets` 가 삼키지 않는다: 그 루프는 `if (life > 0) life--`
+  //    뒤 `life === 0` 이면 죽이는 **순수 감산**이라 상한·클램프가 없다(그 함수 본문 확인).
+  //    이 항을 지우면 수명 단언이 실제로 빨개진다(뮤테이션 확인 — W2 레인 보고서).
+  const bd10 = lv(state, Sk.matriarchLaunch);
+  if (bd10 >= 1) {
+    const deficit = broodDeficit(state);
+    if (deficit > 0) chick.life += deficit * (60 + 10 * bd10);
+  }
+
   // ── NU7 원정 부화 — 허용 거리(400 + 40×Lv) 안의 **최근접 젬** 좌표에서 부화한다.
   //    젬이 없거나 전부 거리 밖이면 아무것도 하지 않는다 = world 의 기본 4방향 폴백.
   const nu7 = lv(state, Sk.expeditionHatch);
@@ -649,4 +690,42 @@ export function hatchlingBroodLaunched(state: WorldState, player: Entity, chick:
       );
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉖ — 포탑탄 1발의 파라미터가 정해지는 지점(`fireTurretShot`)
+// ---------------------------------------------------------------------------
+
+/**
+ * **BD10 여왕 사출(탄 피해 축)** — 결손 1기당 피해 `+30% + 3%p/Lv`.
+ *
+ * ## ⚠️ 포탑은 해츨링 전용이 아니다 — 게이트가 **두 겹**이다
+ * `stepTurrets` 는 병아리(`BROOD_MARK`)뿐 아니라 **액티브 센트리·자율 드론 베이
+ * (`DRONE_MARK`)** 도 태운다(`world.ts` 의 `SUB_TYPE_SENTRY` 분기 · `droneBay`). 앵커는
+ * 셋 모두에서 불리므로 여기서 **`turret.ownerId === BROOD_MARK` 를 반드시 본다** — 이
+ * 한 줄을 지우면 해츨링 런의 센트리·드론 탄까지 정예화돼 다른 소환물의 거동이 갈린다.
+ * 바깥 게이트(기체 = 해츨링)는 `skillHooks.ts` 의 `case SIG_HATCHLING_BROOD:` 가 이미 걸었다.
+ *
+ * ## ⚠️ 이 개입은 삼켜지지 않는다 — 소비 지점을 짚어 확인했다
+ * `params.damage` 는 `spawnBullet` 이 `b.damage` 에 **그대로** 싣고(산술 0), 명중 지점
+ * (`resolveCollisions`)은 `dealt = b.damage * mult * gyroAmp * prismAmp * …` 뒤
+ * `t.hp -= dealt` 다. **`min`·`clamp`·`max` 가 경로에 하나도 없다.** 앵커 ⑰ 이 `min(d,s)`
+ * 때문에 원리적으로 무효였던 전례가 있어 칸을 열기 전에 이 경로를 따라갔다.
+ * (실드 흡수 분기는 `kind === 'core'` 전용이라 PvE 적에는 안 닿는다.)
+ *
+ * ## RNG 미소비
+ * 곱셈 하나뿐이다 — `fireTurretShot` 의 RNG 미소비 계약(그 함수 doc)을 지킨다.
+ */
+export function hatchlingTurretShotParams(
+  state: WorldState,
+  turret: Entity,
+  params: TurretShotParams,
+): void {
+  // 병아리 탄만 정예화한다(센트리·드론 베이 회귀 방지 — 위 doc).
+  if (turret.ownerId !== BROOD_MARK) return;
+  const bd10 = lv(state, Sk.matriarchLaunch);
+  if (bd10 < 1) return;
+  const deficit = broodDeficit(state);
+  if (deficit <= 0) return; // SH10 동시 투자로 결손을 되산 런 — 설계상 강화 0.
+  params.damage *= 1 + deficit * (0.3 + 0.03 * bd10);
 }

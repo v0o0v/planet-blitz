@@ -63,6 +63,12 @@ const hoisted = vi.hoisted(() => ({
    * 좌표는 **호출 시점 값을 복사**한다 — 엔티티 참조를 담으면 압축 뒤 값으로 바뀐다.
    */
   expiries: [] as { x: number; y: number; reason: string }[],
+  /**
+   * 앵커 ㉖ 이 받은 인자의 **훅 실행 전** 스냅숏. `ownerId` 를 같이 담는 이유는 이 앵커가
+   * 병아리(BROOD_MARK)·센트리/드론 베이(DRONE_MARK)에서 **전부** 불리기 때문이다 —
+   * 종류를 안 담으면 "센트리에서도 불렸는가" 를 원리적으로 못 잰다.
+   */
+  turretShots: [] as { ownerId: number; damage: number }[],
 }));
 
 vi.mock('../src/sim/skillHooks.js', async (orig) => {
@@ -96,6 +102,11 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
         const v = args[2] as { aimAngle: number; targetDist: number };
         hoisted.volleys.push({ aimAngle: v.aimAngle, targetDist: v.targetDist });
       }
+      if (name === 'onTurretShotParams') {
+        const t = args[1] as { ownerId: number };
+        const q = args[2] as { damage: number };
+        hoisted.turretShots.push({ ownerId: t.ownerId, damage: q.damage });
+      }
       if (name === 'onBulletExpired') {
         const b = args[1] as { x: number; y: number };
         hoisted.expiries.push({ x: b.x, y: b.y, reason: args[2] as string });
@@ -125,6 +136,7 @@ const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS, BROOD_MARK, cushionSettled } = 
   '../src/sim/shipSignature.js'
 );
 const { isActiveTurret, TURRET_LIFE_TICKS } = await import('../src/sim/events.js');
+const { DRONE_MARK } = await import('../src/sim/uniques.js');
 type WorldState = import('../src/sim/world.js').WorldState;
 type InputFrame = import('../src/sim/world.js').InputFrame;
 type Entity = import('../src/sim/entities.js').Entity;
@@ -172,6 +184,7 @@ beforeEach(() => {
   hoisted.order = [];
   hoisted.volleys = [];
   hoisted.expiries = [];
+  hoisted.turretShots = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -179,7 +192,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('앵커 25개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 26개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
@@ -213,6 +226,9 @@ describe('계측 이음매', () => {
         'onPowerupOffer', // S1
         'onPowerupPicked', // S1
         'onSignatureStep',
+        // ⚠️ ㉖ 은 **포탑 루프**다 — 병아리·센트리·드론 베이가 한 함수를 공유하므로 앵커는
+        // 셋 모두에서 불리고, 소환물 종류 판별은 **훅 안**에서 한다(`ownerId`).
+        'onTurretShotParams', // W2 ㉖ — 포탑탄 1발의 파라미터(표적 확정 뒤 · spawnBullet 앞)
         'onVolleyFired',
         'onVolleyParams', // S2 ⑯ — 발사부(전 기체 최다 미배선 사유)
         'onWallContact',
@@ -1241,6 +1257,60 @@ describe('앵커 ㉔ onBroodLaunched — 병아리가 태어난 직후', () => {
     expect(Math.abs(first.x - px) + Math.abs(first.y - py)).toBeGreaterThan(0);
     expect(Math.abs(first.x - px)).toBeLessThan(400);
     expect(Math.abs(first.y - py)).toBeLessThan(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉖ — 포탑 사격 지점(`fireTurretShot`)
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 이 앵커의 함정은 **소환물 종류**다. `stepTurrets` 는 병아리·센트리·드론 베이를 한
+// 루프로 돌리므로 앵커는 셋 모두에서 불린다 — 그래서 "불렸는가" 만 재면 *"센트리 거동이
+// 갈렸는가"* 를 못 잡는다. 아래는 **불린다**(계측)와 **효과는 병아리에만**(회귀)을 따로 잰다.
+
+/** 포탑 1기 — `activateTurret` 이 세우는 것과 같은 세 값(kind·phase·life). */
+function plantTurret(state: WorldState, ownerId: number, x: number, y: number): Entity {
+  const t = blankEntity('turretPickup');
+  t.ownerId = ownerId;
+  t.phase = 1;
+  t.life = TURRET_LIFE_TICKS;
+  t.cooldown = 0;
+  t.radius = 44;
+  t.x = x;
+  t.y = y;
+  return addEntity(state, t);
+}
+
+describe('앵커 ㉖ onTurretShotParams — 포탑탄 1발의 파라미터', () => {
+  it('표적이 있는 포탑이 쏘는 틱에만 불리고, 초기값은 현행 상수다', () => {
+    const s = hatchRun(0xb010);
+    const p = s.entities[0]!;
+    const t = plantTurret(s, BROOD_MARK, p.x + 120, p.y);
+    plantEnemy(s, t.x + 200, t.y);
+    stepWorld(s, idle);
+    expect(hoisted.turretShots.length).toBeGreaterThanOrEqual(1); // 하한 — 아래 등식의 항진 방지
+    expect(hoisted.turretShots[0]!.damage).toBe(10); // TURRET_BULLET_DAMAGE
+    expect(hoisted.turretShots[0]!.ownerId).toBe(BROOD_MARK);
+  });
+
+  it('표적이 하나도 없으면 한 번도 안 불린다 (무발사 틱에 상시 비용을 안 만든다)', () => {
+    const s = hatchRun(0xb011);
+    const p = s.entities[0]!;
+    // 사거리(900) 로는 절대 못 닿는 자리 — 적을 지우는 방식은 못 쓴다(웨이브·지형 기물이
+    // 같은 틱에 다시 서므로 "표적 없음" 이 성립하지 않는다).
+    plantTurret(s, BROOD_MARK, p.x + 400_000, p.y + 400_000);
+    stepWorld(s, idle);
+    expect(hoisted.turretShots.length).toBe(0);
+  });
+
+  it('센트리·드론 베이(DRONE_MARK)에서도 **불린다** — 걸러내기는 훅 안의 책임이다', () => {
+    const s = hatchRun(0xb012);
+    const p = s.entities[0]!;
+    const t = plantTurret(s, DRONE_MARK, p.x + 120, p.y);
+    plantEnemy(s, t.x + 200, t.y);
+    stepWorld(s, idle);
+    expect(hoisted.turretShots.length).toBeGreaterThanOrEqual(1);
+    expect(hoisted.turretShots.every((q) => q.ownerId === DRONE_MARK)).toBe(true);
   });
 });
 

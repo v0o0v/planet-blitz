@@ -32,8 +32,10 @@ import {
   onEnemyDamaged,
   onBroodLaunchParams,
   onBroodLaunched,
+  onTurretShotParams,
 } from '../src/sim/skillHooks.js';
-import type { BroodParams } from '../src/sim/skillHooks.js';
+import type { BroodParams, TurretShotParams } from '../src/sim/skillHooks.js';
+import { DRONE_MARK } from '../src/sim/uniques.js';
 import { SIG_HATCHLING_BROOD, BROOD_MARK } from '../src/sim/shipSignature.js';
 import { readSlot, SKILL_SLOT_COUNT, HatchlingStage } from '../src/sim/skillSlots.js';
 import { COLD_DURATION } from '../src/sim/status.js';
@@ -47,6 +49,7 @@ const NU8 = 17;
 const BD1 = 0;
 const BD2 = 1;
 const BD6 = 5;
+const BD10 = 9;
 const NU2 = 11;
 const NU7 = 16;
 const NU10 = 19;
@@ -760,5 +763,158 @@ describe('⑨ 앵커 ㉔ 출격 직후', () => {
     expect(c.x).toBe(p.x + 300);
     expect(target.hp).toBeLessThan(1000); // 원격 폭격이 성립했다
     expect(countGems(w) - before).toBe(2); // 젬도 모이밭에 떨어졌다
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑩ BD10 여왕 사출 — **3축 전부**(상한 ㉓ · 수명 ㉔ · 탄 피해 ㉖)
+// ---------------------------------------------------------------------------
+//
+// ⚠️ **셋을 한 절에 두는 것이 이 절의 요점이다.** 앞 레인이 BD10 을 통째로 미배선으로 남긴
+// 사유가 *"상한만 깎으면 순손해"* 였다 — 축 하나가 빠지면 스킬이 반쪽이 아니라 **마이너스**다.
+// 어느 하나가 회귀로 빠지면 여기서 빨개져야 한다.
+//
+// ⚠️ **뮤테이션으로 계측기를 검사했다(2026-08-07 W2)**: ①`hatchlingTurretShotParams` 의
+// 곱셈 한 줄 삭제 ②앵커 ㉖ 의 `case SIG_HATCHLING_BROOD:` 삭제 ③`ownerId !== BROOD_MARK`
+// 조기 반환 삭제 ④`broodMaxDrones` 의 BD10 항 삭제 ⑤㉔ 의 수명 가산 삭제 — 결과는 레인 보고서.
+
+/** 앵커 ㉖ 이 받는 것과 같은 초기값(`fireTurretShot` 의 `TURRET_BULLET_DAMAGE`). */
+function shotParams(): TurretShotParams {
+  return { damage: 10 };
+}
+
+/** 포탑 1기 — `ownerId` 만 다르게 세운다(병아리 vs 센트리·드론 베이). */
+function turretOf(state: WorldState, ownerId: number): Entity {
+  const t = chick(state, 120, 0);
+  t.ownerId = ownerId;
+  return t;
+}
+
+describe('⑩ BD10 여왕 사출 — 3축', () => {
+  it('축① 상한 — 실효 상한이 실제로 3 으로 줄고, 미투자 런은 4 다', () => {
+    const w = mk([[BD10, 1]]);
+    const a = broodParams(40);
+    onBroodLaunchParams(w, player(w), a);
+    expect(a.maxDrones).toBe(3);
+    expect(a.maxDrones).toBeLessThan(4); // 단조 짝 — 위 등식이 항진이 아님을 고정
+
+    const n = mk(); // 음성 대조
+    const b = broodParams(40);
+    onBroodLaunchParams(n, player(n), b);
+    expect(b.maxDrones).toBe(4);
+  });
+
+  it('축① 상한 — SH3 만석 술어가 **같은 3** 을 읽는다(상한을 ㉓ 에서만 깎으면 갈린다)', () => {
+    const w = mk([
+      [SH3, 1],
+      [BD10, 1],
+    ]);
+    const p = player(w);
+    p.hp = 10;
+    for (let i = 0; i < 3; i++) chick(w, 60 + i, 0);
+    onSignatureStep(w, p, emptyInput());
+    expect(p.hp).toBe(12); // 3기 = 만석(상한 3) → SH3 이 돈다
+
+    const two = mk([
+      [SH3, 1],
+      [BD10, 1],
+    ]);
+    const p2 = player(two);
+    p2.hp = 10;
+    for (let i = 0; i < 2; i++) chick(two, 60 + i, 0);
+    onSignatureStep(two, p2, emptyInput());
+    expect(p2.hp).toBe(10); // 부정 짝 — 2기는 만석이 아니다
+  });
+
+  it('축② 수명 — 태어난 병아리의 수명이 결손×(60 + 10×Lv) 만큼 실제로 늘어난다', () => {
+    const w = mk([[BD10, 4]]); // 결손 1 · 가산 = 1 × (60 + 40) = 100
+    const c = chick(w, 60, 0);
+    expect(c.life).toBe(TURRET_LIFE_TICKS); // 하한 짝 — 기준선이 살아 있다
+    onBroodLaunched(w, player(w), c);
+    expect(c.life).toBeGreaterThan(TURRET_LIFE_TICKS); // 단조 짝
+    expect(c.life).toBe(TURRET_LIFE_TICKS + 100);
+
+    const n = mk(); // 음성 대조
+    const nc = chick(n, 60, 0);
+    onBroodLaunched(n, player(n), nc);
+    expect(nc.life).toBe(TURRET_LIFE_TICKS);
+  });
+
+  it('축③ 탄 피해 — 배율이 결손×(30% + 3%p/Lv) 만큼 실제로 실린다', () => {
+    const w = mk([[BD10, 10]]); // 결손 1 · 배율 = 1 + (0.3 + 0.3) = 1.6
+    const t = turretOf(w, BROOD_MARK);
+    const q = shotParams();
+    onTurretShotParams(w, t, q);
+    expect(q.damage).toBeGreaterThan(10); // 단조 짝 — 아래 등식의 항진 방지
+    expect(q.damage).toBeCloseTo(16, 10);
+
+    const n = mk(); // 음성 대조 — 미투자 런은 종전 값 그대로
+    const nq = shotParams();
+    onTurretShotParams(n, turretOf(n, BROOD_MARK), nq);
+    expect(nq.damage).toBe(10);
+  });
+
+  it('축③ 회귀(핵심) — **센트리·드론 베이 탄은 안 갈린다**', () => {
+    // 같은 BD10 런에서 병아리는 오르고 DRONE_MARK 포탑은 그대로여야 한다. 부정 단언만 두면
+    // 뮤테이션에 안 걸리므로 **같은 런의 긍정 짝**을 옆에 세운다.
+    const w = mk([[BD10, 10]]);
+    const sentry = shotParams();
+    onTurretShotParams(w, turretOf(w, DRONE_MARK), sentry);
+    expect(sentry.damage).toBe(10);
+
+    const brood = shotParams();
+    onTurretShotParams(w, turretOf(w, BROOD_MARK), brood);
+    expect(brood.damage).toBeCloseTo(16, 10); // 긍정 짝 — 훅이 죽어서 10 인 게 아니다
+  });
+
+  it('SH10 동시 투자는 결손 0 → **세 축이 전부 0** 이다(설계의 구조적 배타)', () => {
+    const w = mk([
+      [BD10, 20],
+      [SH10, 20],
+    ]);
+    const a = broodParams(40);
+    onBroodLaunchParams(w, player(w), a);
+    expect(a.maxDrones).toBe(4); // −1 +1
+
+    const c = chick(w, 60, 0);
+    onBroodLaunched(w, player(w), c);
+    expect(c.life).toBe(TURRET_LIFE_TICKS); // 수명 가산 0
+
+    const q = shotParams();
+    onTurretShotParams(w, turretOf(w, BROOD_MARK), q);
+    expect(q.damage).toBe(10); // 피해 배율 0
+  });
+
+  it('축③ 통합 — 병아리가 **실제로 쏘고** 적 hp 가 **실제로 더** 준다', () => {
+    // ⚠️ 하한을 먼저 잰다: 배선이 끊기면 양변이 0 이 되어 성립하는 항진을 막는다.
+    function run(points: ReadonlyArray<readonly [number, number]>): {
+      drop: number;
+      shots: number;
+    } {
+      const w = mk(points);
+      const c = chick(w, 600, 0);
+      c.cooldown = 0;
+      const target = enemyNear(w, 1000, 0); // 병아리 기준 400(사거리 900 안)
+      target.hp = 100_000;
+      target.maxHp = 100_000;
+      target.radius = 40;
+      let shots = 0;
+      for (let i = 0; i < 40; i++) {
+        stepWorld(w, emptyInput());
+        for (const e of w.entities) {
+          if (e.kind === 'bullet' && e.ownerId === BROOD_MARK && !e.dead) shots++;
+        }
+      }
+      return { drop: 100_000 - target.hp, shots };
+    }
+
+    const base = run([[NU8, 1]]); // BD10 무투자 대조(투자 0 이면 skillsOn 이 꺼진다)
+    const boosted = run([
+      [NU8, 1],
+      [BD10, 10],
+    ]);
+    expect(base.shots).toBeGreaterThan(0); // 하한 — 포탑이 실제로 쐈다
+    expect(base.drop).toBeGreaterThan(0); // 하한 — 적 hp 가 실제로 줄었다
+    expect(boosted.drop).toBeGreaterThan(base.drop); // 본 단언
   });
 });
