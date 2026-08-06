@@ -15,9 +15,26 @@
  *   · 음성   — 나머지 25종: 투자를 부어도 관측량이 **바이트 불변**이다(ADR-0041 개정의 명문).
  *
  * ## 쿨다운 축과 섞이지 않게 하는 방법
- * `skillInvest` 는 sim 안에서 딱 두 곳에만 도달한다 — `src/sim/actives.ts:179`(쿨다운)와
- * `src/sim/activeTypes.ts:60`(위력). 그래서 **한 번만 발동**시키면(재발동 없음) 쿨다운 차이가
- * 관측에 들어올 길이 없고, 남는 차이는 전부 위력 축이다.
+ * 투자량은 sim 안에서 딱 두 곳에만 도달한다 — `src/sim/actives.ts:182`(쿨다운)와
+ * `src/sim/activeTypes.ts:78` `powerCentiOf`(위력). 그래서 **한 번만 발동**시키면(재발동 없음)
+ * 쿨다운 차이가 관측에 들어올 길이 없고, 남는 차이는 전부 위력 축이다.
+ *
+ * ## ⚠️ 투자를 `skillInvest` 로 주입하지 마라 — `activeTune0` 로 주입한다 (ADR-0049)
+ * 예전 판은 축 40점을 **그 축의 첫 칸**(`v[start]`)에 몰아넣었다. 구 트리에서는 액티브가
+ * 계열 **합**만 읽으므로 "어느 칸이든 같다"가 성립해 무해했지만, ADR-0049 의 flat 재편 후
+ * `v[start]` 는 **각 축의 머리 노드**(flat 0·10·20 = SQ1·ME1·CU1 / PO1·DR1·FI1 …)라
+ * **실제 스킬이 켜진다.** 그 노드가 관측량(탄수·탄피해·적HP합·플레이어HP·좌표)에 닿는 순간
+ * 음성 25종과 양성 strike 14종이 **동시에** 거짓 실패한다.
+ *
+ * 그래서 `skillInvest` 는 **전 칸 0 으로 고정**하고 투자량을 슬롯 조율 정수로 넣는다.
+ * 두 경로가 같은 합(`investedInTree(skillInvest, def) + tuneSlotOf(state, def)`)을 읽는 것이
+ * 이 치환의 근거다 — 쿨다운은 `actives.ts:182`, 위력은 `activeTypes.ts:79` 가 **한 줄씩**
+ * 그 합을 만든다(`activeSkills.test.ts:307` 이 "투자 + 조율 합산이 유일한 입력"을 못 박았다).
+ * `tune` 만 올리면 **스킬은 한 칸도 안 켜지고 액티브 축만 움직인다.**
+ *
+ * ⚠️ 발동 자체는 게이트를 안 본다 — `stepActives` 는 `config.activeSlots` 에 실린 wire 를
+ * 그대로 부르고 `activeGateThreshold` 는 장착 경로(UI)에서만 쓰인다. 그래서 `skillInvest`
+ * 가 전부 0 이어도 42종이 정상 발동한다.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -25,7 +42,7 @@ import { createWorld, stepWorld, DEFAULT_CONFIG, SPECIAL_ACTIVE_SLOT1 } from '..
 import type { InputFrame, WorldConfig, WorldState } from '../src/sim/world.js';
 import { ALL_ACTIVES, activeGateThreshold, wireIdOf } from '../data/ships/actives/index.js';
 import type { ActiveSkillDef } from '../data/ships/actives/types.js';
-import { SHIP_TYPES, zeroSkillInvest, shipTreeRange } from '../data/ships/index.js';
+import { zeroSkillInvest } from '../data/ships/index.js';
 
 const IDLE: InputFrame = { moveX: 0, moveY: 0, aim: 0, dash: false, special: 0 };
 const FIRE: InputFrame = { ...IDLE, special: SPECIAL_ACTIVE_SLOT1 };
@@ -47,23 +64,23 @@ const EXPIRE_ONLY_IDS: readonly string[] = [
   'as_bubble_film_hi', // coeff.blastDamage
 ];
 
-function investExactly(shipTypeId: number, treeIndex: number, total: number): number[] {
-  const ship = SHIP_TYPES[shipTypeId];
-  const v = zeroSkillInvest(shipTypeId);
-  if (ship === undefined) return v;
-  const { start } = shipTreeRange(ship, treeIndex);
-  v[start] = total;
-  return v;
-}
-
+/**
+ * 액티브 축에만 `invested` 점을 넣은 월드.
+ *
+ * `skillInvest` 는 **전 칸 0** 이고(스킬 노드는 한 개도 안 켜진다) 투자량은 슬롯 0 의 조율
+ * 정수로 들어간다. 파일 헤더 §"투자를 `skillInvest` 로 주입하지 마라" 참조.
+ */
 function worldFor(def: ActiveSkillDef, invested: number): WorldState {
   const cfg: WorldConfig = {
     ...DEFAULT_CONFIG,
     shipType: def.shipTypeId,
-    skillInvest: investExactly(def.shipTypeId, def.treeIndex, invested),
+    skillInvest: zeroSkillInvest(def.shipTypeId),
     activeSlots: [wireIdOf(def.id), -1],
   };
-  return createWorld(0xc001d, cfg);
+  const s = createWorld(0xc001d, cfg);
+  // 슬롯 0 에만 장착했으므로 `tuneSlotOf` 가 읽는 칸은 `activeTune0` 다.
+  s.activeTune0 = invested;
+  return s;
 }
 
 /** 한 틱의 관측량 — 투사체 수·피해 합 · 적 HP 합 · 플레이어 HP·좌표 · 버프 잔여 틱. */
@@ -122,6 +139,26 @@ describe('AC-13 위력 적용 범위 — 전제 (분류가 카탈로그와 어�
     expect(UNSCALED.length).toBe(25);
     // 만료 한정 3종은 전부 buff 다(strike 로 새면 양성 A 와 이중 계산이 된다).
     for (const d of EXPIRE_ONLY) expect(d.kind, d.id).toBe('buff');
+  });
+
+  /**
+   * 하네스 자체의 전제. ADR-0049 의 flat 재편 후 `skillInvest` 에 한 점이라도 넣으면 그것은
+   * **실제 스킬 노드**라, 이 파일의 음성 25종이 "스킬이 관측량을 움직였다"는 이유로 거짓
+   * 실패한다. 투자 주입이 다시 `skillInvest` 로 돌아가면 여기서 먼저 빨개진다.
+   */
+  it('하네스는 스킬 노드를 한 칸도 켜지 않는다 — 투자는 조율 정수로만 들어간다', () => {
+    const def = ALL_ACTIVES[0];
+    expect(def).toBeDefined();
+    if (def === undefined) return;
+    const s = worldFor(def, activeGateThreshold(def) + INVEST_DELTA);
+    const invest = s.config.skillInvest ?? [];
+    expect(invest.length, 'skillInvest 가 비어 있으면 이 단언이 항진이다').toBeGreaterThan(0);
+    expect(
+      invest.every((n) => n === 0),
+      `skillInvest 에 투자가 실렸다 — 음성 25종이 거짓 실패한다: [${invest.join(',')}]`,
+    ).toBe(true);
+    // 그리고 투자량은 실제로 액티브 축에 도착해 있어야 한다(죽은 계측기 방지).
+    expect(s.activeTune0).toBe(activeGateThreshold(def) + INVEST_DELTA);
   });
 });
 

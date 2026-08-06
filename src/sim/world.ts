@@ -164,6 +164,8 @@ import {
   onDamageChain,
   onSignatureStep,
 } from './skillHooks.js';
+import { onDamageChainCatalyst } from './catalystHooks.js';
+import { createCatalystSlots } from './catalystSlots.js';
 import { SpatialHash, circlesOverlap, sweptCircleHitT } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
 import { updateBoss, bossDefFor } from './boss.js';
@@ -1230,6 +1232,29 @@ export interface WorldState {
    * 규율·근거는 {@link SkillDerived} 선언 주석.
    */
   skillDerived: SkillDerived;
+  // --- 촉매 재구축 공유 기반(ADR-0052) ---------------------------------------------------
+  /**
+   * 촉매 슬롯 6칸. 폭·값 규약은 {@link file://./catalystSlots.ts} 가 정본이다.
+   *
+   * **`WORLD_FRESH` 다** — 스킬처럼 이월/구간 2벌로 가르지 않는다. 그 분리의 근거가 의뢰
+   * 다구간인데 ADR-0052 헌장이 *"침공·의뢰 런에는 촉매가 들어가지 않는다"* 고 못 박아,
+   * 촉매가 실린 런에는 구간 전환이 존재하지 않는다. 덕분에 `skillCarry` 가 밟고 있는
+   * `WORLD_CARRY` 참조 대입 공유 함정을 원천적으로 안 밟는다.
+   *
+   * ⚠️ **배열에 직접 대입하지 마라** — `writeCatalystSlot` 이 정수·비음을 강제한다(u32 폴드 정합).
+   */
+  catalystSlots: number[];
+  /**
+   * 이 런에 촉매가 하나라도 실려 있는가. `createWorld` 가 `config.catalysts` 에서 **한 번**
+   * 확정하고 런 중 절대 바뀌지 않는다. 촉매 디스패치 9개의 첫 줄 게이트가 이것이다.
+   *
+   * ## 해시 폴드 — 하지 않는다 (의도적)
+   * `skillsOn`·`sigBit`·`armorMaxStacks` 와 **같은 규율**이다: 이미 해시에 접히는 입력
+   * (`config.catalysts`)의 순수 파생이라, 두 런의 이 값이 다르면 원인 입력이 먼저 갈려 해시가
+   * 이미 다르다. 파생 폴드는 정보량 0 이고 접는 순간 골든 전량 재생성이다.
+   * 무촉매 런은 이 게이트에서 즉시 반환하므로 **바이트 단위로 종전과 같다.**
+   */
+  catalystOn: boolean;
 }
 
 /**
@@ -1551,6 +1576,9 @@ export function createWorld(
     // 스킬 파생 정수 블록(S0). **이 한 줄이 파생의 유일한 지점**이다 — 런 중 불변이고 hashWorld
     // 는 접지 않는다(근거는 `SkillDerived` 주석). 나눗셈이 낀 레벨 스케일은 여기서 확정한다.
     skillDerived: { shipType: cfg.shipType ?? DEFAULT_SHIP_TYPE },
+    catalystSlots: createCatalystSlots(),
+    // 촉매 게이트(ADR-0052). `skillsOn` 과 같은 형태 — config 에서 1회 확정하고 런 중 불변이다.
+    catalystOn: (cfg.catalysts?.length ?? 0) > 0,
     // 탄-벽 broad-phase 는 침공 3레이어에서만 쓴다. PvE 는 null → 기존 직접 스윕 그대로라
     // 해시가 바이트 불변이다(회랑 벽이 '활성 벽 ≤~19' 전제를 깨는 것은 침공 경로뿐).
     wallIndex: invasion3Runtime !== undefined ? new InvasionWallIndex() : null,
@@ -4141,6 +4169,13 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // `modeScale` 의 반올림 **뒤**에 곱한다: 그래야 이 지점의 값이 종전 값의 정확히 2 배라,
     // 무대 배율이 걸리는 런에서도 "두 배" 가 반올림 순서 때문에 ±1 로 흔들리지 않는다.
     dmg *= PLAYER_DAMAGE_TAKEN_MULT;
+    // 촉매 피해원 배율(ADR-0052) — **`preMitigationDmg` 캡처 바로 앞**이라 이 자리다.
+    // 여기 있는 카드는 *경감 수단*이 아니라 **들어오는 피해의 성질**이므로 `modeScale`·
+    // `PLAYER_DAMAGE_TAKEN_MULT` 와 같은 층이다. 아래 캡처가 이 값을 **포함**하는 것이 계약이다
+    // — 포함하지 않으면 `survivedLethalBlow` 가 "실제로 날아오지 않은 피해"로 치명 여부를
+    // 판정한다(근거는 `catalystHooks.ts` 의 해당 주석). 스킬 훅 안으로 옮기지 마라.
+    // S0 는 훅이 인자를 그대로 돌려주므로 비트 동일이다.
+    dmg = onDamageChainCatalyst(state, player, dmg);
     // 스킬 감쇠 사슬 슬롯 2칸(S0 · 앵커 ⑧) — **`PLAYER_DAMAGE_TAKEN_MULT` 직후, 브루저 장갑 앞.**
     // 스트라이커 S4 문서가 지정한 자리 그대로이고, 훅 안에서 **감소 → 흡수** 순으로 처리한다.
     // 사슬 진입 피해를 여기서 붙잡아 두는 이유는 아래 `survivedLethalBlow` 다 — 그 술어의

@@ -216,6 +216,16 @@ export const WORLD_FRESH = [
   // 재도출값도 같으므로 구간 경계에서 값이 흔들리지 않는다.
   'skillsOn',
   'skillDerived',
+  // --- 촉매 슬롯 6칸 · 촉매 게이트(ADR-0052) ---
+  // 둘 다 여기가 **유일하게 정직한 분류**다. ADR-0052 헌장이 "침공·의뢰 런에는 촉매가
+  // 들어가지 않는다" 고 못 박았으므로, 촉매가 실린 런에는 구간 전환 자체가 없다 — 이월/0리셋
+  // 어느 쪽도 관측 불가한 무연산이다. 그리고 `catalystOn` 은 `skillsOn` 과 같은 부류로
+  // 승계된 `config` 에서 `createWorld` 가 재도출하는 순수 파생값이다.
+  //
+  // ⚠️ 훗날 의뢰에 촉매를 들이는 결정이 나면 `catalystSlots` 를 `WORLD_CARRY` 로 옮기기 전에
+  // `skillCarry` 의 참조 대입 주석을 먼저 읽어라 — `copyKeys` 는 배열을 **참조로** 넘긴다.
+  'catalystSlots',
+  'catalystOn',
 ] as const satisfies readonly (keyof WorldState)[];
 
 // ---------------------------------------------------------------------------
