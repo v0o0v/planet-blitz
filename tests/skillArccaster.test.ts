@@ -19,7 +19,7 @@ import { describe, it, expect } from 'vitest';
 import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { WorldState } from '../src/sim/world.js';
 import type { Entity } from '../src/sim/entities.js';
-import { blankEntity } from '../src/sim/entities.js';
+import { blankEntity, spawnBullet } from '../src/sim/entities.js';
 import { hashWorld } from '../src/sim/replay.js';
 import {
   onGemCollected,
@@ -29,6 +29,7 @@ import {
   onEnemyDamaged,
   onEnemyDeath,
   onVolleyParams,
+  onBulletExpired,
 } from '../src/sim/skillHooks.js';
 import type { VolleyParams } from '../src/sim/skillHooks.js';
 import { SIG_ARC_OVERCHARGE } from '../src/sim/shipSignature.js';
@@ -37,6 +38,7 @@ import { FIRE_CD_Q } from '../src/sim/constants.js';
 
 /** flat 인덱스 — `data/ships/arccaster.ts` 축 순서(CH 0..9 · BA 10..19 · BR 20..29). */
 const CH1 = 0;
+const CH3 = 2;
 const CH4 = 3;
 const CH6 = 5;
 const CH8 = 7;
@@ -549,6 +551,8 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     aimAngle: 0,
     cloakBreak: false,
     mark: 0,
+    // S3-2 가 더한 칸 — "발사 시점 피해를 탄 `aux1` 에 새겨라"(기본은 안 새긴다).
+    recordSpawnDamage: false,
     ...over,
   };
 }
@@ -712,5 +716,174 @@ describe('앵커 ⑩ — CH1 유도 낙뢰 · CH8 접지 관통로', () => {
     const target = enemyNear(w, 0, 0);
     const b = hit(w, target, 2);
     expect(b.damage).toBe(100);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑥ 앵커 — 탄 소멸(사유 구분) · CH3 종말점 방전
+// ---------------------------------------------------------------------------
+
+/**
+ * CH3 은 **두 앵커에 걸쳐 있다** — ⑯ 이 발사 시점 피해를 탄 `aux1` 에 새기고, ⑥ 의
+ * `reason === 'life'` 경로가 그 값으로 방전을 터뜨린다. 그래서 두 축을 따로 잠근다.
+ *
+ * ⚠️ 부정 항목("안 터진다")은 뮤테이션에 원리적으로 안 걸리므로 **긍정 짝을 옆에 뒀다** —
+ * 같은 무대에서 `'life'` 는 터지고 `'pierce'` 는 안 터진다를 한 번에 잰다.
+ */
+
+/** 임의 좌표에 놓인 **소멸 직전의 아군탄**(발사 시점 피해 각인 포함). */
+function expiredBullet(state: WorldState, x: number, y: number, spawnDamage: number): Entity {
+  const b = blankEntity('bullet');
+  b.id = 70000 + state.entities.length;
+  b.x = x;
+  b.y = y;
+  b.damage = spawnDamage;
+  b.aux1 = spawnDamage; // 앵커 ⑯ 이 새기는 값과 같은 자리
+  return b;
+}
+
+describe('⑥ CH3 종말점 방전', () => {
+  it('CH3: 수명이 다한 탄의 **마지막 위치**에서 방전이 적을 실제로 때린다', () => {
+    const w = mk([[CH3, 1]]);
+    // 적은 탄 소멸 지점(+400, 0) 곁에 있고, **플레이어 곁에도 하나** 세운다 — 폭발 중심이
+    // 플레이어면(`blastDamage` 를 그대로 쓴 구현) 두 적의 피해가 정확히 뒤바뀐다.
+    const near = enemyNear(w, 420, 0);
+    const far = enemyNear(w, 0, 0);
+    onBulletExpired(w, expiredBullet(w, player(w).x + 400, player(w).y, 200), 'life');
+
+    // 하한 먼저 — 배선이 끊기면 양변이 모두 1000 이라 아래 비교가 항진이 된다.
+    expect(near.hp).toBeLessThan(1000);
+    // 피해 = round(200 × (2500 + 200×1) / 10000) = 54.
+    expect(near.hp).toBe(1000 - 54);
+    // 플레이어 곁의 적은 반경(50 + 5×1 = 55) 밖이라 무사하다 = 중심이 탄이라는 물증.
+    expect(far.hp).toBe(1000);
+  });
+
+  it('CH3: 방전 피해가 투자 레벨에 **단조 증가**한다 (양변 모두 실제로 깎인다)', () => {
+    const dealt = (level: number): number => {
+      const w = mk([[CH3, level]]);
+      const e = enemyNear(w, 400, 0);
+      onBulletExpired(w, expiredBullet(w, player(w).x + 400, player(w).y, 200), 'life');
+      return 1000 - e.hp;
+    };
+    const lo = dealt(1);
+    const hi = dealt(10);
+    expect(lo).toBeGreaterThan(0); // 하한 ①
+    expect(hi).toBeGreaterThan(0); // 하한 ②
+    expect(hi).toBeGreaterThan(lo);
+    expect(lo).toBe(54); // round(200 × 2700/10000)
+    expect(hi).toBe(90); // round(200 × 4500/10000)
+  });
+
+  it('CH3: 반경도 레벨을 따라 넓어진다 (Lv1 에선 안 닿던 적이 Lv20 에선 맞는다)', () => {
+    const hitAt = (level: number): boolean => {
+      const w = mk([[CH3, level]]);
+      const e = enemyNear(w, 500, 0); // 탄에서 100u
+      onBulletExpired(w, expiredBullet(w, player(w).x + 400, player(w).y, 200), 'life');
+      return e.hp < 1000;
+    };
+    expect(hitAt(1)).toBe(false); // 반경 55
+    expect(hitAt(20)).toBe(true); // 반경 150
+  });
+
+  it('회귀: **관통 소진** 소멸에서는 안 터진다 (같은 무대에서 `life` 는 터진다)', () => {
+    const w = mk([[CH3, 5]]);
+    const e = enemyNear(w, 400, 0);
+    const px = player(w).x;
+    const py = player(w).y;
+
+    onBulletExpired(w, expiredBullet(w, px + 400, py, 200), 'pierce');
+    expect(e.hp).toBe(1000); // 부정 항목
+
+    // 긍정 짝 — 같은 좌표·같은 각인인데 사유만 `life` 면 터진다. 이게 없으면 위 단언은
+    // "CH3 을 통째로 지워도 초록" 인 항진이다.
+    onBulletExpired(w, expiredBullet(w, px + 400, py, 200), 'life');
+    expect(e.hp).toBe(1000 - 70); // round(200 × 3500/10000)
+  });
+
+  it('음성 대조: CH3 미투자 런은 수명 만료에서도 아무 일이 없다', () => {
+    const w = mk([[CH1, 5]]);
+    const e = enemyNear(w, 400, 0);
+    onBulletExpired(w, expiredBullet(w, player(w).x + 400, player(w).y, 200), 'life');
+    expect(e.hp).toBe(1000);
+  });
+
+  it('음성 대조: 각인이 없는 탄(과충전 밖 발사)은 CH3 투자에도 안 터진다', () => {
+    const w = mk([[CH3, 5]]);
+    const e = enemyNear(w, 400, 0);
+    const b = expiredBullet(w, player(w).x + 400, player(w).y, 200);
+    b.aux1 = 0; // 과충전 밖에서 나간 탄
+    onBulletExpired(w, b, 'life');
+    expect(e.hp).toBe(1000);
+  });
+
+  it('CH3: 기준은 `aux1`(발사 시점) 이지 비행 중 갱신된 `damage` 가 아니다', () => {
+    const w = mk([[CH3, 5]]);
+    const e = enemyNear(w, 400, 0);
+    const b = expiredBullet(w, player(w).x + 400, player(w).y, 200);
+    b.damage = 900; // CH6 이월·CH8 증폭이 비행 중 부풀린 값
+    onBulletExpired(w, b, 'life');
+    expect(e.hp).toBe(1000 - 70); // 200 기준 그대로 — 900 이었다면 315 였다
+  });
+
+  it('⑯: CH3 투자 + 과충전 볼리에만 각인 지시가 선다', () => {
+    const w = mk([[CH3, 1]]);
+    const p = player(w);
+    p.aux0 = 200; // 과충전 중
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v.recordSpawnDamage).toBe(true);
+
+    // 음성 대조 ① — 과충전 밖.
+    const cold = volley();
+    p.aux0 = 0;
+    onVolleyParams(w, p, cold);
+    expect(cold.recordSpawnDamage).toBe(false);
+
+    // 음성 대조 ② — CH3 미투자 런.
+    const noSkill = mk([[CH1, 1]]);
+    const p2 = player(noSkill);
+    p2.aux0 = 200;
+    const v2 = volley();
+    onVolleyParams(noSkill, p2, v2);
+    expect(v2.recordSpawnDamage).toBe(false);
+    expect(v2.mark).toBe(2); // 하한: 이 런에서 앵커 자체는 살아 있다
+  });
+
+  it('world 배선: 각인 지시가 실제로 태어난 탄의 `aux1` 에 실린다', () => {
+    const w = mk([[CH3, 5]]);
+    const p = player(w);
+    enemyNear(w, 300, 0, 100000); // 사거리 안 — 오토어택이 실제로 발사한다
+    p.aux0 = 200; // 과충전 유지(정지 입력이라 계속 오른다)
+    for (let i = 0; i < 40; i++) stepWorld(w, emptyInput());
+
+    const bullets = w.entities.filter((e) => e.kind === 'bullet' && !e.dead);
+    expect(bullets.length).toBeGreaterThan(0); // 하한: 정말 쐈다
+    expect(bullets.every((b) => b.aux1 === Math.round(b.damage))).toBe(true);
+    expect(bullets[0]!.aux1).toBeGreaterThan(0);
+  });
+
+  it('순회 중 변형 없음: 같은 틱에 여러 탄이 만료돼도 크래시·누락이 없다', () => {
+    const w = mk([[CH3, 5]]);
+    const p = player(w);
+    // 오토어택 사거리(1650) 밖 · 컬링 반경 안 무대 — 플레이어 볼리가 계측을 오염시키지 않는다.
+    // 세로로 200u 씩 벌린다 — 폭발 반경(50 + 5×5 = 75)이 서로 겹치지 않아야 "정확히 한 번씩"
+    // 맞았음을 잴 수 있다(겹치면 두 번 맞은 것과 한 번 맞은 것이 구분되지 않는다).
+    const stage = 1800;
+    const marks: Entity[] = [];
+    for (let i = 0; i < 4; i++) {
+      const dy = i * 200 - 300;
+      marks.push(enemyNear(w, stage, dy + 20, 100000));
+      const b = spawnBullet(w, p.x + stage, p.y + dy, 0, 0, 200, 0, 5, 1, 0, 0);
+      b.aux1 = 200;
+    }
+    expect(() => stepWorld(w, emptyInput())).not.toThrow();
+
+    // 넷 **전부** 맞았다 = 순회 중 배열이 흔들려 일부가 건너뛰이지 않았다.
+    for (const e of marks) expect(e.hp).toBe(100000 - 70);
+    // 심은 넷은 하나도 안 남는다(플레이어 자기 볼리는 계측 대상이 아니라 `aux1` 로 가른다).
+    expect(w.entities.filter((e) => e.kind === 'bullet' && !e.dead && e.aux1 === 200)).toHaveLength(
+      0,
+    );
   });
 });

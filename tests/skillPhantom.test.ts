@@ -633,6 +633,7 @@ describe('⑫ AS2 은막 침투 (앵커 ⑯)', () => {
       spread: 0.5,
       cooldownQ: 12,
       mark: 0,
+      recordSpawnDamage: false,
       // 아크캐스터 레인이 BA10 을 위해 추가한 필드(머지에서 합류). `true` = 이번 아키타입이
       // `count` 를 실제로 읽는다(발칸/스프레드/미사일). AS2 는 `pierce`·`speed` 만 만져서
       // 이 값과 무관하지만, 레코드 타입이 요구하므로 **읽는 쪽**을 기본으로 둔다.

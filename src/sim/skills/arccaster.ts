@@ -8,10 +8,11 @@
  *
  * ---
  *
- * ## ⚠️ 배선된 것은 30종 중 **17종**이다 (1차 13종 + S2 앵커 ⑯ 으로 4종)
+ * ## ⚠️ 배선된 것은 30종 중 **18종**이다 (1차 13종 + S2 앵커 ⑯ 으로 4종 + S3 앵커 ⑥ 으로 1종)
  * S2 가 연 앵커 ⑯(`onVolleyParams` — 볼리 파라미터 확정 직후)이 「발사부 앵커 부재」로 막혀
- * 있던 다섯 중 **넷**(CH1·CH8·BA7·BA10)을 열었다. 남은 13종은 여전히 앵커가 닿지 않는
- * 지점(**탄 수명 만료 분기**(CH3) · 액티브 핸들러(CH10·BA1·BA4·BA6·CH7) · `stepGems` 반경(BA2) ·
+ * 있던 다섯 중 **넷**(CH1·CH8·BA7·BA10)을 열었고, S3-2 가 앵커 ⑥ 에 **수명 만료 사유**를
+ * 뚫어 **CH3** 을 열었다(⑯ 이 기준 피해를 새기고 ⑥ 이 터뜨리는 2단 배선). 남은 12종은 여전히
+ * 앵커가 닿지 않는 지점(액티브 핸들러(CH10·BA1·BA4·BA6·CH7) · `stepGems` 반경(BA2) ·
  * 콤보 감소 지점(BA5) · 드랍 희귀도(CH9) · `applyChain` 파라미터화(CH2) · 명중 비행거리(CH5) ·
  * 해저드 적립 분기(BA8) · 이동 리셋 분기(BA9))을 요구한다. 여기 없는 스킬은 "구현했는데 안
  * 불린다"가 아니라 **아직 코드가 없다** — 사유는 각 앵커의 `case` 주석에 있다.
@@ -28,7 +29,7 @@ import type { Entity } from '../entities.js';
 // 앵커 ⑯ 의 레코드 타입. **type-only 라 런타임 import 0건 규율을 깨지 않는다**(컴파일에서
 // 지워진다) — `skillHooks.ts` 가 이 파일을 값으로 import 하므로 값 import 는 순환이 된다.
 import type { VolleyParams } from '../skillHooks.js';
-import { clearEnemyBullets, fanStrike } from '../activeTypes.js';
+import { blastDamageAt, clearEnemyBullets, fanStrike } from '../activeTypes.js';
 import { applyChain } from '../status.js';
 import { readSlot, writeSlot, ArccasterCarry, ArccasterStage } from '../skillSlots.js';
 import {
@@ -54,6 +55,7 @@ import { skillLv } from '../../items/skills.js';
 
 const enum Sk {
   /** CH1 유도 낙뢰 */ guidedArc = 0,
+  /** CH3 종말점 방전 */ endpointBurst = 2,
   /** CH4 진입 뇌격 */ entryLance = 3,
   /** CH6 과잉 전하 이월 */ overkillCarry = 5,
   /** CH8 접지 관통로 */ groundedPierce = 7,
@@ -389,7 +391,8 @@ export function arccasterEnemyDeath(state: WorldState): void {
 // ---------------------------------------------------------------------------
 
 /**
- * **CH1 유도 낙뢰 · CH8 접지 관통로(표식) · BA7 연발 축전기(소비) · BA10 일제 사격 통제.**
+ * **CH1 유도 낙뢰 · CH8 접지 관통로(표식) · CH3 종말점 방전(기준 피해 각인) · BA7 연발
+ * 축전기(소비) · BA10 일제 사격 통제.**
  *
  * ## 표식은 한 칸을 둘이 나눠 쓴다
  * CH1(과충전 탄 명중 → 연쇄)과 CH8(과충전 탄 관통 → 증폭)은 **같은 술어**("이 탄이 과충전
@@ -417,8 +420,15 @@ export function arccasterVolleyParams(
   // ── CH1·CH8 — 과충전 중 발사한 탄에 표식. 소비는 앵커 ⑩.
   const ch1 = lv(state, Sk.guidedArc);
   const ch8 = lv(state, Sk.groundedPierce);
-  if ((ch1 >= 1 || ch8 >= 1) && overcharged(player)) {
+  const ch3 = lv(state, Sk.endpointBurst);
+  const oc = (ch1 >= 1 || ch8 >= 1 || ch3 >= 1) && overcharged(player);
+  if (oc && (ch1 >= 1 || ch8 >= 1)) {
     params.mark = ARC_OVERCHARGE_MARK;
+  }
+  // ── CH3 — 과충전 중 발사한 탄에 **발사 시점 확정 피해**를 새긴다. 소비는 앵커 ⑥('life').
+  //    표식 칸이 `aux0`(CH1·CH8) 과 갈린 사유는 `VolleyParams.recordSpawnDamage` 주석에 있다.
+  if (oc && ch3 >= 1) {
+    params.recordSpawnDamage = true;
   }
 
   if (!params.countUsed) return;
@@ -441,6 +451,43 @@ export function arccasterVolleyParams(
     const multBp = 20000 - Math.round((6000 * ba10) / (ba10 + 10));
     params.cooldownQ = Math.round((params.cooldownQ * multBp) / 10000);
   }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ⑥ — 아군탄이 소멸하는 지점(사유 구분)
+// ---------------------------------------------------------------------------
+
+/**
+ * **CH3 종말점 방전** — 과충전 중 발사한 탄이 **수명을 다해** 사라지면 그 지점에 방전 폭발.
+ *
+ * 반경 = 50 + 5×Lv, 피해 = **발사 시점 확정 피해**의 25% + 2%p/Lv (설계서 ② 공식 그대로).
+ *
+ * ## ⚠️ 호출부는 `for (const e of state.entities)` 순회 **안**이다 — 스폰이 없다
+ * `blastDamageAt` 은 `hp` 만 깎고 **엔티티를 한 개도 낳지 않는다**(그 함수 주석이 근거). 그래서
+ * `splitSpawns` 식 지연 목록이 필요 없다 — 필요해지는 순간(파편·이펙트)에는 목록을 모아 루프
+ * 뒤에 비우는 그 패턴으로 가야 하고, 이 자리에서 직접 `push` 하면 안 된다.
+ *
+ * ## ⚠️ 사유 게이트는 호출부(`skillHooks.ts`)가 이미 걸었다 — 여기서 다시 걸지 않는다
+ * `reason === 'life'` 만 여기로 온다. 관통 예산 소진(`'pierce'`)은 스트라이커 F4 의 자리이고,
+ * 그 둘이 설계서의 분화점이다. 술어를 두 곳에 적으면 조용히 갈린다.
+ *
+ * ## 기준 피해는 `bullet.damage` 가 아니라 `bullet.aux1` 이다
+ * `damage` 는 비행 중 갱신된다(CH6 이월 가산 · CH8 관통 증폭) — 그 값을 읽으면 이월분이 다시
+ * 증폭돼 설계서가 금지한 재증폭이 된다. `aux1` 은 앵커 ⑯ 이 **발사 직후 한 번만** 새긴 값이라
+ * 과충전 증폭·정조준·쌍둥이 항성 배율은 반영하고 이월만 배제한다.
+ *
+ * `aux1 === 0` 이면 **과충전 밖에서 나간 탄**(또는 미투자 런)이라 무연산이다 — 게이트 그 자체다.
+ * RNG 를 한 번도 소비하지 않는다(반경·피해 모두 레벨의 결정론적 함수).
+ */
+export function arccasterBulletExpiredLife(state: WorldState, bullet: Entity): void {
+  const ch3 = lv(state, Sk.endpointBurst);
+  if (ch3 < 1) return;
+  const base = bullet.aux1;
+  if (base <= 0) return;
+  const damage = Math.round((base * (2500 + 200 * ch3)) / 10000);
+  if (damage <= 0) return;
+  // 좌표는 **이번 틱 적분이 끝난 마지막 위치**다(호출부 주석이 근거) — 스폰 지점이 아니다.
+  blastDamageAt(state, bullet.x, bullet.y, 50 + 5 * ch3, damage);
 }
 
 // ---------------------------------------------------------------------------

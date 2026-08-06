@@ -590,6 +590,7 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     spread: 0.3,
     cooldownQ: 1280,
     mark: 0,
+    recordSpawnDamage: false,
     // 아크캐스터 레인이 BA10 을 위해 추가한 필드(머지에서 합류). `true` = 이번 아키타입이
     // `count` 를 실제로 읽는다(발칸/스프레드/미사일). 판정 정본은 `world.ts` 의 아키타입
     // 분기이고 여기엔 **결과만** 실린다 — 훅이 `WEAPON_TYPE_*` 를 복제하면 그 사본이

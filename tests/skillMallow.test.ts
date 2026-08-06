@@ -139,6 +139,7 @@ function volley(damage = 100): VolleyParams {
     aimAngle: 0,
     cloakBreak: false,
     mark: 0,
+    recordSpawnDamage: false,
   };
 }
 
