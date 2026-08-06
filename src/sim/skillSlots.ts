@@ -99,7 +99,7 @@ export function writeSlot(slots: number[], slot: number, value: number): void {
 //
 //   스트라이커 (SIG_STRIKER_MARKSMAN) — 아래 두 enum
 //   브루저     (SIG_BRUISER_ARMOR)    — 미배정
-//   아크캐스터 (SIG_ARC_OVERCHARGE)   — 미배정
+//   아크캐스터 (SIG_ARC_OVERCHARGE)   — 파일 끝 두 enum
 //   팬텀       (SIG_PHANTOM_CLOAK)    — 미배정
 //   해츨링     (SIG_HATCHLING_BROOD)  — 미배정
 //   말로우     (SIG_MALLOW_CUSHION)   — 미배정
@@ -142,4 +142,40 @@ export const enum StrikerStage {
    * 생기면 이 줄을 **지우고** 0번부터 다시 매겨라.
    */
   unassigned = 0,
+}
+
+/**
+ * **아크캐스터 이월 슬롯**(ADR-0049 배치 3). 효과 본체는 `src/sim/skills/arccaster.ts`.
+ *
+ * ⚠️ BR10「최후 접지」의 **「런당 1회」 억제는 여기 없다** — 플레이어 `targetX` 를 쓴다
+ * (`skillHooks.ts` 의 `survivedLethalBlow` 주석이 지정한 칸이고, 이미 `commissionCarry` 의
+ * `ENTITY_CARRY` 에 있어 의뢰 다구간에서도 "런당 1회"가 정확히 성립한다). 슬롯을 잡으면
+ * 같은 억제가 두 곳에 생겨 조용히 갈린다.
+ */
+export const enum ArccasterCarry {
+  /**
+   * BR6「전하 역류」의 **내부 쿨다운 잔여 틱**. 0 = 발동 준비됨(값 규약 1 — 0 이 자연 센티넬).
+   *
+   * `Stage` 가 아니라 `Carry` 인 이유: 쿨다운이 Lv1 에서 4800틱(80초)이라 의뢰 구간 길이를
+   * 우습게 넘는다. 구간마다 리셋하면 "구간 전환 = 쿨다운 초기화"가 되어 억제가 사실상
+   * 사라진다(설계서가 이 스킬의 억제로 명시한 것이 바로 내부 쿨다운이다).
+   */
+  backflowCooldown = 0,
+}
+
+/**
+ * **아크캐스터 구간 슬롯.** 둘 다 구간을 넘겨 살면 안 되는 값이다.
+ */
+export const enum ArccasterStage {
+  /**
+   * BR4「잉여 전하 방벽」의 **적립된 흡수량**. 새 구간은 aux0 0 에서 다시 쌓는 것이 맞고,
+   * 넘기면 구간 전환이 공짜 방어 자원이 된다.
+   */
+  surplusStore = 0,
+  /**
+   * CH4「진입 뇌격」의 **직전 틱 말 aux0 스냅샷**. 통과 판정(`이전 < 90 && 현재 ≥ 90`)의
+   * 비교 기준이다. 구간이 바뀌면 월드가 새로 서고 aux0 도 0 이므로 넘기면 안 된다 —
+   * 만충 상태로 구간을 마친 런이 새 구간 첫 틱에 **유령 통과**를 만든다.
+   */
+  entryAux0Seen = 1,
 }

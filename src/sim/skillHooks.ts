@@ -69,7 +69,7 @@ import {
   onPowerupOfferCatalyst,
   onPowerupPickedCatalyst,
 } from './catalystHooks.js';
-import { SIG_STRIKER_MARKSMAN } from './shipSignature.js';
+import { SIG_STRIKER_MARKSMAN, SIG_ARC_OVERCHARGE } from './shipSignature.js';
 import {
   strikerDashFired,
   strikerGemCollected,
@@ -79,6 +79,13 @@ import {
   strikerDamageChain,
   strikerSignatureStep,
 } from './skills/striker.js';
+import {
+  arccasterGemCollected,
+  arccasterPlayerDamaged,
+  arccasterDamageChain,
+  arccasterSignatureStep,
+  arccasterEnemyDamaged,
+} from './skills/arccaster.js';
 
 // ---------------------------------------------------------------------------
 // 공유 술어
@@ -147,6 +154,12 @@ function dispatchVolleySkill(state: WorldState, player: Entity): void {
     // leaf 에서 읽을 길이 없었는데, 이제 `./constants.js` 에 있어 기체 모듈이 그대로 import
     // 한다. 남은 것은 스트라이커 레인이 `case SIG_STRIKER_MARKSMAN:` 한 줄을 넣는 일뿐이다.
     // (S1 은 **자리만** 만드는 커밋이라 효과를 넣지 않았다 — 값 복제는 여전히 금지다.)
+    //
+    // ⚠️ **아크캐스터도 여기 case 가 없다 — 누락이 아니라 미배선이다.** 이 앵커를 쓰려는 설계
+    // 항목은 넷인데(CH1·CH3·CH8 의 발사 시점 탄 표식 · BA10 의 탄수/간격 배율 · BA7 의 보너스
+    // 탄수 · BA1 의 착지 볼리) 전부 **이 지점 뒤에서 정해지는 값**을 요구한다. 이 앵커는 "무기
+    // 아키타입 분기보다 앞"이라 탄이 아직 없고 `bulletCount`/`fireCooldownQ` 도 아직 안 읽혔다.
+    // 표식·배율은 `world.ts` 의 발사부가 소유해야 한다.
     default:
       break;
   }
@@ -164,6 +177,8 @@ function dispatchDashSkill(state: WorldState, player: Entity): void {
     case SIG_STRIKER_MARKSMAN:
       strikerDashFired(state, player);
       break;
+    // ⚠️ **아크캐스터는 여기 case 가 없다 — 설계에 대시 결속 스킬이 한 종도 없기 때문이다.**
+    // 이 기체의 이동 결속은 전부 blink 액티브(BA1·BA4·BA6)이고 그것은 액티브 핸들러의 자리다.
     default:
       break;
   }
@@ -188,6 +203,13 @@ function dispatchGemSkill(state: WorldState, gem: Entity): void {
       // `world.ts` 를 런타임 import 할 수 없으므로 아래 사본으로 집는다.
       const p = playerOf(state);
       if (p !== undefined) strikerGemCollected(state, p);
+      break;
+    }
+    case SIG_ARC_OVERCHARGE: {
+      // BA3 정지 관측 사격 — 정지 중 수거한 젬만 발사 쿨다운을 환급한다. 대상은 젬이 아니라
+      // **플레이어**라 위 사본으로 집는다(스트라이커 M3 와 같은 사유).
+      const p = playerOf(state);
+      if (p !== undefined) arccasterGemCollected(state, p);
       break;
     }
     default:
@@ -232,13 +254,16 @@ function dispatchPlayerDamagedSkill(
   lethalSurvived: boolean,
 ): void {
   if (!state.skillsOn) return;
-  void dmg;
-  void lethalSurvived;
   switch (state.sigBit) {
     case SIG_STRIKER_MARKSMAN:
       // S1 응전 조준 · S2 반사 도금. 둘 다 피해량과 무관하고 "hp 가 실제로 깎였다" 만 본다 —
       // 그것이 이 앵커의 정의라 `dmg` 를 넘기지 않는다.
       strikerPlayerDamaged(state, player);
+      break;
+    case SIG_ARC_OVERCHARGE:
+      // BR2 피뢰 접지 · BR7 완충 콘덴서 · BR6 전하 역류 · BR10 최후 접지. 뒤 셋은 피해량과
+      // 치명 생존 술어를 **둘 다** 보므로 인자를 그대로 넘긴다(스트라이커와 다른 점).
+      arccasterPlayerDamaged(state, player, dmg, lethalSurvived);
       break;
     default:
       break;
@@ -267,6 +292,10 @@ function dispatchKillsDeltaSkill(state: WorldState, delta: number): void {
       if (p !== undefined) strikerKillsDelta(state, p, delta);
       break;
     }
+    // ⚠️ **아크캐스터는 여기 case 가 없다 — 반쪽 배선을 피한 결과다.** BA7「연발 축전기」가
+    // 이 앵커로 처치 6기를 셀 수는 있지만, 그 카운터가 **적용되는 자리**(다음 볼리의 탄수)는
+    // 앵커 ① 뒤의 발사부라 지금 닿지 않는다. 카운터만 돌리면 슬롯 2칸이 영구히 아무것도 안 하는
+    // 상태로 해시에 접힌다 — "구현했는데 안 불린다"의 전형이라 통째로 미배선으로 뒀다.
     default:
       break;
   }
@@ -287,6 +316,10 @@ function dispatchBulletExpiredSkill(state: WorldState, bullet: Entity): void {
     case SIG_STRIKER_MARKSMAN:
       strikerBulletExpired(state, bullet); // F4 파편 격발
       break;
+    // ⚠️ **아크캐스터는 여기 case 가 없다 — 소멸 사유가 다르기 때문이다.** CH3「종말점 방전」은
+    // **수명 만료**(reachLife) 소멸이 트리거인데 이 앵커는 **관통 예산 소진**이다. 설계서가 그
+    // 둘을 스트라이커 F4 와의 분화점으로 못 박았으므로 여기 얹으면 두 스킬이 같은 것이 된다.
+    // 수명 만료 분기에 앵커를 뚫는 것은 이 레인 밖이다.
     default:
       break;
   }
@@ -309,6 +342,9 @@ function dispatchWallContactSkill(state: WorldState, player: Entity): void {
     // "직전 틱 벽 접촉 플래그" 를 슬롯에 세우라고 적었으나(구현 태그 B), S0 의 E5 가 같은 술어를
     // `state.wallContactTicks` 로 이미 세워 뒀다. 두 기체 모듈은 그 값을 읽기만 한다 — 같은
     // 술어를 슬롯에 복제하면 갱신 시점이 갈려 조용히 어긋난다.
+    //
+    // ⚠️ **아크캐스터도 같은 이유로 case 가 없다.** BR5「접지 케이블」의 벽 술어도
+    // `state.wallContactTicks` 를 읽기만 하고, 그 읽기는 앵커 ⑧(감쇠 사슬) 안에 있다.
     default:
       break;
   }
@@ -348,6 +384,9 @@ export function onDamageChain(state: WorldState, player: Entity, dmg: number): n
     // 각 `case` 는 **① 감소 → ② 흡수** 순서로 처리하고, 정수화는 자기 게이트 안에서 한다.
     case SIG_STRIKER_MARKSMAN:
       return strikerDamageChain(state, player, dmg); // ① S4 감소 → ② S8 흡수
+    case SIG_ARC_OVERCHARGE:
+      // ① BR3·BR5 감소 → ② BR4 흡수. 순서는 이 앵커 주석이 못 박은 그대로다.
+      return arccasterDamageChain(state, player, dmg);
     default:
       break;
   }
@@ -377,6 +416,12 @@ function dispatchSignatureStepSkill(
   switch (state.sigBit) {
     case SIG_STRIKER_MARKSMAN:
       strikerSignatureStep(state, player); // S10 선체 증축(런 누적 XP 폴링)
+      break;
+    case SIG_ARC_OVERCHARGE:
+      // CH4 진입 뇌격 · BR1 정전 척력장 · BR4 적립 · BR6 쿨다운 · BR8 정지 수복 · BR9 척력 외피.
+      // `input` 을 넘기지 않는 것은 의도다 — 여섯 전부 `aux0`(입력 기반 적립의 결과)만 읽는다.
+      // 정지 술어를 입력에서 다시 유도하면 시그니처와 두 곳이 조용히 갈린다.
+      arccasterSignatureStep(state, player);
       break;
     default:
       break;
@@ -452,11 +497,17 @@ function dispatchEnemyDamagedSkill(
   source: Entity | undefined,
 ): void {
   if (!state.skillsOn) return;
-  void target;
   void dmg;
-  void source;
   switch (state.sigBit) {
-    // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다. S1 은 전 분기 비어 있다.
+    case SIG_ARC_OVERCHARGE:
+      // CH6 과잉 전하 이월 — 초과 피해(= 차감 후 `target.hp` 의 음수부)를 가해 탄에 되싣는다.
+      //
+      // ⚠️ **아크캐스터의 전격 계열 스킬은 여기에 없다.** 이 앵커는 **아군탄 명중 경로 하나**만
+      // 덮는데(위 주석), 이 기체의 연쇄 부여 3종은 셋 다 다른 이유로 못 온다: CH1·CH10 은
+      // 발사 시점 탄 표식이 전제라 발사부/액티브 핸들러가 필요하고, BR2 는 애초에 피격축이라
+      // 앵커 ④ 에 있다. 즉 "전격 DoT 가 이 앵커에 안 온다"는 한계에 이 기체는 **부딪히지 않았다**.
+      arccasterEnemyDamaged(state, target, source);
+      break;
     default:
       break;
   }
@@ -515,7 +566,12 @@ function dispatchEnemyDeathSkill(
   void y;
   void elite;
   switch (state.sigBit) {
-    // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다. S1 은 전 분기 비어 있다.
+    // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다.
+    //
+    // ⚠️ **아크캐스터는 여기 case 가 없다 — 필요한 것이 사건이 아니라 인자이기 때문이다.**
+    // CH9「낙뢰 인양」은 `rollEliteDrop` 의 `rarityMult` 파라미터에 곱해야 하는데, 그 굴림은
+    // 이 앵커보다 **앞**(`compact` 의 확보 단계)에서 이미 끝나 있다. 여기서 뒤늦게 알아 봐야
+    // 드랍은 이미 정해졌다. 이 스킬은 `drops.ts` 호출부에 손잡이가 필요하다.
     default:
       break;
   }
@@ -524,6 +580,10 @@ function dispatchEnemyDeathSkill(
 // ---------------------------------------------------------------------------
 // 앵커 ⑫⑬⑭ (S1: 전 분기 비어 있음) — **성장 축**
 // ---------------------------------------------------------------------------
+//
+// ⚠️ **아크캐스터는 세 앵커 전부 case 가 없다 — 설계에 레벨업·파워업 결속 스킬이 한 종도
+// 없기 때문이다.** 이 기체의 30종은 시그니처(과충전)·액티브·피격·정지 경제에만 붙는다.
+// 누락이 아니라 **해당 없음**이다.
 
 /**
  * 앵커 ⑫ — **레벨이 오른 직후**(`checkLevelUp`).
