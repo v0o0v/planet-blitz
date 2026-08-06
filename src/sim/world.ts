@@ -184,6 +184,7 @@ import {
   onFilmShield,
   onFilmAbsorbed,
   onCushionThreshold,
+  onCushionSettleDue,
   onCushionSettled,
   onCloakBreakReset,
 } from './skillHooks.js';
@@ -2552,12 +2553,23 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
       state.cushionHealed += healed;
       player.aux0 = 0;
       player.aux1 = 0;
+      // 앵커 ㉔(S3) — **정산액 확정 직전.** hp 차감 **전**이고 hp−1 클램프보다 **앞**이며,
+      // ⑳ 안의 CU3 회당 상한보다도 앞이다. 설계 정본의 순서(*분할(ME5) → CU3 → applied 확정
+      // → 파생 소비*)에서 **분할**이 여기다 — ⑳ 은 클램프가 이미 물린 뒤라 사후 환급으로는
+      // 소멸분 때문에 값이 갈린다(사유 전문은 앵커 주석).
+      // 자리는 `aux0`·`aux1` 리셋 **뒤**여야 한다 — 훅이 "안 보낸 나머지" 를 `aux0` 에 다시
+      // 미루려면 리셋보다 앞에서 쓴 값이 곧바로 지워지면 안 된다.
+      // S3 는 `due` 를 그대로 돌려주므로 비트 동일이다.
+      const hull = onCushionSettleDue(state, player, due, healed);
       // ⚠️ 완충은 절대 치명적이지 않다. 미룬 피해가 hp 를 1 미만으로 내리지 못하게 클램프한다 —
       // 안전한 곳으로 빠진 직후 화면상 아무 원인 없이 죽는 사인은 플레이어가 관측할 수도
       // 반응할 수도 없다("완충" 이라는 축과도 정면으로 어긋난다). 초과분은 소멸시킨다.
       // hp 는 f64 일 수 있으므로(엘리트 배율 접촉 피해) floor 로 정수 여유분을 잡는다.
+      // ⚠️ 이 `min` 은 ㉔ 의 개입을 **키우는 방향에서만** 삼킬 수 있다(정산액이 이미 hp 여유를
+      // 넘긴 치사급 정산). 그것은 이 클램프의 존재 이유 그 자체이고, ME5 처럼 **줄이는** 방향은
+      // 온전히 반영된다 — 실증은 `tests/skillAnchors.test.ts` 의 뮤테이션 두 절이다.
       const room = Math.floor(player.hp) - 1;
-      const applied = due > room ? room : due;
+      const applied = hull > room ? room : hull;
       if (applied > 0) player.hp -= applied;
       // 앵커 ⑳(S2) — **정산 직후**(hp 차감·클램프까지 반영된 뒤). 말로우 30종 중 **9종**이
       // "정산 틱" 을 트리거로 삼는데 앵커 ⑨ 는 `stepShipSignature` 진입점이라 정산보다 앞이다.
@@ -2566,7 +2578,10 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
       // 기체라 어긋남이 조용히 커진다. 여기서는 **계산된 값 그대로** 넘긴다.
       // `applied` 는 음수일 수 있어(hp 여유가 없으면 `room < 0`) 하한을 걸어 넘긴다 —
       // 훅의 계약은 "hp 에서 실제로 깎인 양" 이다.
-      onCushionSettled(state, player, due, healed, applied > 0 ? applied : 0);
+      // `settled` 로 넘기는 것은 `due` 가 아니라 **㉔ 이 확정한 `hull`** 이다 — CU3 의 이월이
+      // "상한이 막은 몫" 만 세려면 분할 **후** 기준이어야 하고, `due` 를 넘기면 ME5 가 다시
+      // 미룬 몫까지 CU3 이 한 번 더 이월해 두 겹이 된다. ㉔ 이 빈 지금은 둘이 같은 값이다.
+      onCushionSettled(state, player, hull, healed, applied > 0 ? applied : 0);
     }
     // ⚠️ 아크캐스터 분기와 같은 이유로 **명시적으로** 반환한다 — 뒤에 버블 분기를 append 한
     // 지금, return 이 없으면 말로우 런이 버블 분기까지 흘러 aux 의미가 두 겹으로 겹친다.

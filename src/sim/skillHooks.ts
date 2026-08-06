@@ -1612,6 +1612,64 @@ export function onCushionThreshold(
 }
 
 /**
+ * 앵커 ㉔(S3) — **정산액이 확정되기 직전**. `due`(= `cushionSettled`)가 hp 로 들어가기 **전**,
+ * hp−1 클램프보다도 **앞**이다. 이번 정산에서 **선체로 보낼 몫**을 돌려준다.
+ *
+ * ## 왜 ⑳ 으로는 안 됐는가 — ME5「분할 상환」이 못 오던 자리
+ * ⑳ 은 hp 차감·hp−1 클램프가 끝난 **뒤**다. 거기서 사후 환급으로 분할을 흉내 내면 **클램프가
+ * 소멸시킨 초과분이 복원되지 않아** "절반만 선체로 보낸" 결과와 "다 보내고 절반을 되돌린"
+ * 결과가 수치로 갈린다(`skills/mallow.ts` 헤더가 못 박은 사유 그대로다). 그래서 분할은
+ * **정산액이 확정되기 전**에 일어나야 하고, 이 앵커가 그 자리다.
+ *
+ * ## 설계 정본이 요구하는 순서를 코드가 실제로 밟는다
+ * 설계서 공통 고지 ④ 는 *분할(ME5) → 회당 상한(CU3) → `applied` 확정 → 파생 소비* 다.
+ * ㉔ 이 분할, ⑳ 안의 `mallowCushionSettled` 가 나머지 셋이다 — 즉 **㉔ 은 ⑳ 보다 반드시 앞**
+ * 에서 불린다(`tests/skillAnchors.test.ts` 가 호출 순서로 잠갔다).
+ *
+ * ## 무엇이 보장되는가
+ *  - `player.aux0`·`aux1` 은 **이미 0 으로 리셋**됐다. 그래서 이 훅이 `aux0` 에 쓴 값은
+ *    **살아남는다** — ME5 가 "선체로 안 보낸 나머지" 를 다시 미루려면 여기서 **대입**해라
+ *    (가산이면 리셋 전 값과 두 겹이 된다). 정산 전 풀 크기는 `due + recovered` 다.
+ *    ⚠️ 단 CU3(⑳)의 이월도 같은 칸에 **대입**한다 — 둘을 함께 배선하는 레인은 CU3 쪽을
+ *    가산으로 바꿔야 ME5 의 나머지가 조용히 덮이지 않는다.
+ *  - `player.hp` 는 **아직 안 깎였다**. 정산 후 hp 가 필요하면 이 자리가 아니라 ⑳ 이다.
+ *
+ * ## ⚠️ 뒤 산술이 반환값을 삼키는 구간이 하나 있다
+ * 반환값은 `applied = min(반환값, floor(hp) − 1)` 로 hp 에 들어간다. 즉 **정산액이 이미 hp
+ * 여유를 넘긴 치사급 정산에서는 값을 키워도 최종 hp 가 안 바뀐다**(완충은 절대 치명적이지
+ * 않다는 규칙 그 자체다). 값을 **줄이는** 방향(= ME5 의 분할)은 그 구간에서도 온전히 반영된다.
+ * 하한 클램프는 걸지 않는다 — `min` 을 하나 더 두면 키우는 방향이 통째로 죽는다(앵커 ⑰ 이
+ * `min(d,s)` 때문에 원리적으로 무효가 된 전례가 이 저장소에 있다).
+ *
+ * @param due `cushionSettled(aux0, aux1)` — 회복분을 뗀 뒤 선체로 갈 예정인 지연 피해
+ * @param recovered `cushionRecovered(aux0, aux1)` — 무피격 보상으로 사라진 몫
+ * @returns 이번 정산에서 **선체로 보낼 몫**. 비음이어야 한다(음수는 hp 를 늘리지 않고 버려진다)
+ */
+export function onCushionSettleDue(
+  state: WorldState,
+  player: Entity,
+  due: number,
+  recovered: number,
+): number {
+  if (!state.skillsOn) return due;
+  void player;
+  void recovered;
+  switch (state.sigBit) {
+    // ⚠️ 말로우 ME5「분할 상환」의 case 가 **여기** 로 온다(⑳ 이 아니다). S3 는 자리만 연다 —
+    // 인자를 그대로 돌려주므로 거동·해시가 비트 동일이다.
+    // ⚠️ ME8「리듬 탕감」·ME9「솜틀 요양」은 **여전히 여기로도 못 온다.** 둘은 탕감률
+    // (`CUSHION_RECOVER_BP`)·임계(`CUSHION_RECOVER_TICKS`)가 `shipSignature.ts` 의 순수 함수
+    // `cushionRecovered`·`cushionSettled` **안에** 있어, 이 앵커에 도달한 시점에는 이미 그
+    // 상수로 계산이 끝나 있다. 열려면 순수 함수 둘이 탕감률·임계를 **인자로 받도록** 고쳐야
+    // 하고 그것은 골든에 닿는 변경이다(재생성 창과 묶기로 정해져 있다). 사유 전문은
+    // `skills/mallow.ts` 헤더와 앵커 ⑲ 주석.
+    default:
+      break;
+  }
+  return due;
+}
+
+/**
  * 앵커 ⑳ — **완충 정산이 끝난 직후**(hp 차감·클램프까지 전부 반영된 뒤).
  *
  * ## 왜 앵커 ⑨ 가 아니라 여기인가 — **예측을 금지한 자리**
@@ -1631,7 +1689,10 @@ export function onCushionThreshold(
  *  - ⚠️ **이 지점은 감쇠 사슬 밖이다.** 정산이 hp 를 깎는 이 경로는 앵커 ⑧ 을 타지 않는다 —
  *    "받는 피해" 축 스킬을 사슬에만 걸면 자기 기체의 지연 정산분에는 영영 안 걸린다.
  *
- * @param settled 회복분을 뗀 뒤 선체로 들어가기로 확정된 지연 피해
+ * @param settled 선체로 들어가기로 **확정된** 지연 피해. S3 부터 이 값은 앵커 ㉔
+ *   ({@link onCushionSettleDue})이 돌려준 몫이다(분할 전 `cushionSettled` 원값이 아니다) —
+ *   CU3 의 이월이 "상한이 막은 몫" 만 세려면 분할 **후** 기준이어야 한다. ㉔ 이 비어 있는
+ *   지금은 두 값이 같다
  * @param recovered 무피격 보상으로 **사라진** 지연 피해
  * @param applied hp 에서 실제로 깎인 양(클램프 후). `settled` 이하다
  */
@@ -1654,6 +1715,9 @@ export function onCushionSettled(
       // 클램프가 물린 정산에서 값이 갈린다("탕감을 늘려 덜 깎인" 것과 "깎고 나서 되돌린" 것은
       // 소멸분 때문에 다른 수치가 된다). ME8·ME9 는 추가로 탕감률·임계가 `shipSignature.ts`
       // 의 순수 함수 안에 있어 골든에 닿는 선결이 붙는다 — 사유 전문은 `skills/mallow.ts` 헤더.
+      // → **ME5 는 S3 의 앵커 ㉔({@link onCushionSettleDue})으로 갔다** — 그 자리가 hp 차감
+      //   **전**이라 위 사유(클램프 소멸분)가 성립하지 않는다. ME8·ME9 는 ㉔ 으로도 못 온다:
+      //   탕감률·임계가 순수 함수 **안**이라 ㉔ 시점엔 이미 그 상수로 계산이 끝나 있다.
       mallowCushionSettled(state, player, settled, recovered, applied);
       break;
     default:
