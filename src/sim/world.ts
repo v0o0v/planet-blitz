@@ -127,8 +127,8 @@ import {
   clampArmorStacks,
   overchargeBp,
   CLOAK_BREAK_BP,
-  CLOAK_UNHIT_TICKS,
-  CLOAK_HOLD_TICKS,
+  // ⚠️ CLOAK_UNHIT_TICKS·CLOAK_HOLD_TICKS 는 더 이상 여기서 직접 읽지 않는다 — 진입/종료
+  //    임계는 `cloak.ts` 의 통과 판정 짝(`cloakEntryCrossed`·`cloakExitCrossed`)이 정본이다.
   hatchThreshold,
   BROOD_MARK,
   CUSHION_RECOVER_TICKS,
@@ -147,7 +147,7 @@ import {
   resolveFilmBurst,
 } from './filmBurst.js';
 // 은신 사이클 헬퍼(E1) — `playerCloaked` 과 같은 leaf 모듈. 토큰 쓰기의 단일 경로다.
-import { cloakEntryCrossed, fireCloakEntry, setBreakToken } from './cloak.js';
+import { cloakEntryCrossed, cloakExitCrossed, fireCloakEntry, setBreakToken } from './cloak.js';
 import { shipTypeDef, DEFAULT_SHIP_TYPE } from '../../data/ships/index.js';
 import { hasAnyInvestment } from '../items/skills.js';
 import { createSkillSlots } from './skillSlots.js';
@@ -2449,9 +2449,18 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
     if (cloakEntryCrossed(prevUnhit, player.aux0)) fireCloakEntry(state, player);
     // 유지 창(CLOAK_HOLD_TICKS)이 끝나면 사이클을 통째로 되감는다 — 다시 240틱을 채워야 한다.
     // 여기가 aux0 의 구조적 상한이기도 하다(0..CLOAK_UNHIT_TICKS+CLOAK_HOLD_TICKS-1 = 0..359).
-    else if (player.aux0 >= CLOAK_UNHIT_TICKS + CLOAK_HOLD_TICKS) {
+    //
+    // ⚠️ **배율 토큰이 서는 자리는 여기다**(선결 C-3, 사용자 승인 2026-08-06). 초판은 진입
+    //    에지에서 장전했는데, P1 실측이 그 전제를 부정했다 — 소진의 99.81%가 창 *안*에서
+    //    진입 후 평균 10.4~13.3틱 만에 일어났다(발사는 은신을 풀지 않으므로). 즉 2.5배가
+    //    "은신을 풀며 내리치는 한 방"이 아니라 "들어가자마자 나가는 첫 발"이었다. 창 종료로
+    //    옮겨야 AS1·AS3·AS8·AS9·DI10 다섯의 시점 전제가 설계대로 선다.
+    // ⚠️ 판정은 `>= 360` 이 아니라 **통과 판정**(`cloakExitCrossed`)이다 — PH5 가 HOLD 를
+    //    늘리고 주입 스킬이 aux0 을 여러 칸 올려도 임계를 건너뛰지 않게. 자연 적립은 +1 이라
+    //    오늘의 값은 종전 `>=` 와 동일하다.
+    else if (cloakExitCrossed(prevUnhit, player.aux0)) {
       player.aux0 = 0;
-      setBreakToken(state, player, 0);
+      setBreakToken(state, player, 1);
     }
     // ⚠️ 아크캐스터·해츨링 분기와 같은 이유로 **명시적으로** 반환한다.
     return;
@@ -3505,10 +3514,10 @@ function stepTurrets(state: WorldState, _player: Entity): void {
  * ## ⚠️ 병아리 탄 마커(`ownerId = BROOD_MARK`)가 들어올 자리는 **여기 한 곳**이다
  * 설계(`hatchling.md` ⑤ 공통 고지 ⑦)는 SH5·BD4·NU5 가 "이 탄이 병아리 탄인가"를 이 마커로
  * 판정하도록 정했고, 스탬프 지점은 이 함수뿐이어야 한다(`t.ownerId === BROOD_MARK` 인 포탑이
- * 쏜 탄에만). **다만 이 커밋에서는 찍지 않았다** — `ownerId` 는 `ENTITY_HASH_LAYOUT` 의 u32
- * 폴드 대상이라 스탬프는 거동·해시 변경이고(병아리가 쏘는 모든 런의 탄 해시가 갈린다),
- * 이 커밋의 계약은 「거동 불변」이다. 스킬 배선 커밋에서 골든 재생성·EF 재배포와 **한 원자로**
- * 찍어라. 여기 말고 다른 곳에서 찍으면 드론 베이·센트리 탄까지 물들거나 경로가 반쪽이 된다.
+ * 쏜 탄에만). **배선 커밋에서 찍었다**(아래 본문) — `ownerId` 는 `ENTITY_HASH_LAYOUT` 의 u32
+ * 폴드 대상이라 거동·해시 변경이고(병아리가 쏘는 모든 런의 탄 해시가 갈린다) 골든 재생성·
+ * EF 재배포와 한 원자다. 여기 말고 다른 곳에서 찍으면 드론 베이·센트리 탄까지 물들거나
+ * 경로가 반쪽이 된다.
  *
  * @returns 실제로 쐈으면 `true`. 사거리 안에 LOS 가 통하는 표적이 없으면 `false`(무발사).
  */
@@ -3516,7 +3525,7 @@ function fireTurretShot(state: WorldState, t: Entity): boolean {
   const target = nearestTarget(state, t, TURRET_RANGE);
   if (target === undefined) return false;
   const ang = atan2(target.y - t.y, target.x - t.x);
-  spawnBullet(
+  const shot = spawnBullet(
     state,
     t.x,
     t.y,
@@ -3529,6 +3538,12 @@ function fireTurretShot(state: WorldState, t: Entity): boolean {
     cos(ang),
     sin(ang),
   );
+  // 병아리 탄 소속 마커 — 스탬프 지점은 **이 한 줄뿐**이다(`hatchling.md` ⑤ 공통 고지 ⑦).
+  // SH5·BD4·NU5 가 "이 탄이 병아리 탄인가"를 이것으로 판정한다. 다른 곳에서 찍으면 드론
+  // 베이(DRONE_MARK)·센트리 탄까지 물들거나 경로가 반쪽이 된다.
+  // ⚠️ `ownerId` 는 `ENTITY_HASH_LAYOUT` 의 u32 폴드 대상이라 이 스탬프는 **거동·해시 변경**
+  //    이다(병아리가 쏘는 모든 런의 탄 해시가 갈린다) — 골든 재생성 + EF 재배포와 한 원자다.
+  if (t.ownerId === BROOD_MARK) shot.ownerId = BROOD_MARK;
   return true;
 }
 

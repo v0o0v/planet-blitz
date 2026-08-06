@@ -13,7 +13,12 @@
 
 import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
-import { CLOAK_UNHIT_TICKS, cloakWindowActive, SIG_PHANTOM_CLOAK } from './shipSignature.js';
+import {
+  CLOAK_HOLD_TICKS,
+  CLOAK_UNHIT_TICKS,
+  cloakWindowActive,
+  SIG_PHANTOM_CLOAK,
+} from './shipSignature.js';
 
 /**
  * 팬텀 은신 — **적이 지금 플레이어를 조준 대상으로 삼을 수 있는가**의 술어.
@@ -72,43 +77,71 @@ export function playerCloaked(state: WorldState, player: Entity): boolean {
  * 화면에도 테스트에도 흔적을 안 남긴다. 그래서 값의 형태와 무관하게 **경로를 먼저 하나로**
  * 모은다.
  *
- * ## ⚠️ 침공 no-op 은 **아직 넣지 않았다** — 여기가 그 자리다
- * `phantom.md` ①-4 는 이 헬퍼에 침공 no-op(`state.config.invasion3 !== undefined` 면 쓰지
- * 않음)을 내장하라고 정한다. 이 커밋에서 빼 둔 이유는 둘이다:
- *  1. **거동 불변이 이 커밋의 계약**인데, `aux1` 은 `ENTITY_HASH_LAYOUT` 의 u32 폴드 대상이라
- *     침공에서 1 → 0 은 곧 `hashEntity` 변경이다(= `invasionHash` 재생성 + EF 재배포 필요).
- *  2. **소진 지점 게이트(E2, `world.ts` 의 `invasion3 === undefined`)가 이미 서 있다.** 그래서
- *     오늘자 침공에서 이 토큰은 **읽히지 않는다** — no-op 을 넣어도 게임플레이 변화는 0 이고
- *     해시만 갈린다. 순이득 없이 리플레이 계약만 흔드는 변경이라 미뤘다.
- * 스킬 배선 커밋에서 `invasionHash` 재생성·EF 재배포와 **한 원자로** 넣어라. 넣는 자리는
- * 이 함수 첫 줄 하나뿐이고, 그것이 이 헬퍼가 존재하는 이유다.
+ * ## 침공 no-op — **내장 완료**(`phantom.md` ①-4)
+ * 침공(`state.config.invasion3 !== undefined`)에서는 **쓰지 않는다.** 침공에서 억제(조준 제외)를
+ * 방어체 어픽스 좌표 계약 때문에 걸 수 없으므로 이득(배율)도 대칭 차단하는 것이 기존 계약이고
+ * (`playerCloaked` invariants-4), 그 대칭을 **쓰기 지점에서** 못 박는 것이 이 한 줄이다.
+ * 심층 방어 2겹의 바깥쪽이며, 안쪽은 `world.ts` 소진 지점의 `invasion3 === undefined` 게이트다.
  *
- * ⚠️ 그때 **`tests/phantomCloakInvasionGate.test.ts` 의 ②가 함께 빨개진다** — 그 케이스는
- * "침공에서도 SUSTAIN 이 돌아 `aux1` 이 선다"(= ③이 미배선 때문에 참이 된 것이 아님)를
- * 단언하는데, 쓰기 자체를 막으면 그 전제가 바뀌기 때문이다. 결함이 아니라 같은 커밋이
- * 함께 고쳐야 하는 자리다(항진 방지 축을 "쓰기가 막혔다" 쪽으로 옮겨 다시 세워라).
+ * ⚠️ `aux1` 은 `ENTITY_HASH_LAYOUT` 의 u32 폴드 대상이라 침공에서 1 → 0 은 곧 `hashEntity`
+ * 변경이다 — **`invasionHash` 재생성 + EF 재배포**가 이 변경과 한 원자다.
  *
  * @param value 0(회수) 또는 1(장전). 토큰은 0/1 이진이 인코딩 계약이다.
  */
 export function setBreakToken(state: WorldState, player: Entity, value: number): void {
-  // `state` 를 받는 이유는 위 「침공 no-op」 절이다 — 지금은 읽지 않는다. 인자를 지우면
-  // 그 규칙을 넣을 때 호출부 여섯을 다시 고쳐야 하고, 그때 하나를 빠뜨리는 것이 정확히
-  // 이 헬퍼가 막으려는 실패다.
-  void state;
+  if (state.config.invasion3 !== undefined) return;
   player.aux1 = value === 0 ? 0 : 1;
 }
 
 /**
- * **은신 진입 에지에서 정확히 한 번** 발화하는 지점 — 지금은 배율 토큰을 장전한다.
+ * **은신 진입 에지에서 정확히 한 번** 발화하는 지점.
  *
  * 진입 훅 스킬(PH7·DI7·DI8)이 전부 이 함수 안에 얹힐 자리다. 훅을 진입 판정 지점마다 흩어
- * 심으면(자연 적립 · 액티브 진입 · 훗날의 주입) 셋 중 하나에서만 도는 반쪽 배선이 된다.
+ * 심으면(자연 적립 · 액티브 진입 · `advanceCloak` 주입) 셋 중 하나에서만 도는 반쪽 배선이 된다.
+ *
+ * ## ⚠️ 배율 토큰은 **여기서 서지 않는다**(선결 C-3, 사용자 승인 2026-08-06)
+ * 초판은 이 자리에서 `aux1` 을 장전했다. P1 실측(360런·1,328,935틱)이 그 전제를 부정했다 —
+ * 소진 2,570건 중 2,565건(99.81%)이 **은신 창 안에서** 진입 후 평균 10.4~13.3틱 만에 일어났다.
+ * 발사는 은신을 풀지 않으므로(`world.ts` autoAttack 주석) 2.5배는 "은신을 풀며 내리치는 한 방"이
+ * 아니라 "들어가자마자 창 안에서 나가는 첫 발" 이었다. 그래서 토큰은 **창 종료 에지**
+ * ({@link cloakExitCrossed})로 옮겼다. 이 함수는 진입 훅의 정본 자리로 남는다.
  *
  * ⚠️ 호출부는 **에지를 스스로 판정해서** 부른다. 이 함수가 에지를 판정하지 않는 이유: 판정에
  * 필요한 "직전 값" 은 호출부의 지역 변수이고, 여기서 다시 만들면 정본이 둘이 된다.
  */
 export function fireCloakEntry(state: WorldState, player: Entity): void {
-  setBreakToken(state, player, 1);
+  // 진입 훅 스킬이 얹히기 전까지는 빈 디스패처다(S0 §5 의 앵커 규율과 같은 형태).
+  // 인자를 지우면 훅을 넣을 때 호출부 셋을 다시 고쳐야 하고, 그때 하나를 빠뜨리는 것이
+  // 정확히 이 함수가 막으려는 실패다.
+  void state;
+  void player;
+}
+
+/**
+ * **은신 사이클 전진의 유일한 경로**(`phantom.md` ①-1·①-3, 심각-1).
+ *
+ * PH1(대시)·PH8(젬 수거)·PH9(에코)·DI5(빈사)·DI6(벽 접촉)이 전부 이것을 거친다. `aux0` 을
+ * 직접 `setUnhitTicks(aux0 + k)` 로 미는 것은 **전면 금지**다 — 그 형태는 두 가지로 조용히
+ * 깨진다: ①임계(240)를 **건너뛰면** 진입 에지가 영영 안 서서 진입 훅(PH7·DI7·DI8)이 통째로
+ * 죽고 ②창 안(aux0 ≥ 240) 주입은 359 clamp 를 거쳐 다음 틱에 360 에 닿아 **사이클을 즉시
+ * 리셋**한다(은신을 앞당기는 게 아니라 파괴한다).
+ *
+ * 규칙 셋(설계 ①-3 그대로):
+ *  1. **침공 → no-op.** `setBreakToken` 과 같은 대칭 차단.
+ *  2. **창 안(`aux0 >= CLOAK_UNHIT_TICKS`) → no-op.** 창 연장은 PH5 의 전유 축이라 전진형
+ *     스킬이 겸하지 않는다(택일 확정).
+ *  3. 창 밖 → `next = min(aux0 + k, CLOAK_UNHIT_TICKS)` 후 **통과 에지**에서 `fireCloakEntry`.
+ */
+export function advanceCloak(state: WorldState, player: Entity, k: number): void {
+  if (state.config.invasion3 !== undefined) return;
+  const step = Math.trunc(k);
+  if (step <= 0) return;
+  const prev = Math.trunc(player.aux0);
+  // 창 안이면 무효 — 되감기 유발(②)을 원천 차단한다.
+  if (prev >= CLOAK_UNHIT_TICKS) return;
+  const next = prev + step >= CLOAK_UNHIT_TICKS ? CLOAK_UNHIT_TICKS : prev + step;
+  player.aux0 = next;
+  if (cloakEntryCrossed(prev, next)) fireCloakEntry(state, player);
 }
 
 /**
@@ -123,6 +156,25 @@ export function fireCloakEntry(state: WorldState, player: Entity): void {
  */
 export function cloakEntryCrossed(prev: number, next: number): boolean {
   return crossed(prev, next, CLOAK_UNHIT_TICKS);
+}
+
+/**
+ * 은신 창 **종료 통과 판정** — `prev` 에서 `next` 로 가며 사이클 끝(`UNHIT + HOLD`)을 넘었는가.
+ *
+ * {@link cloakEntryCrossed} 의 **짝**이다(선결 C-3 이 "같은 형태의 짝을 한 파일에 두라"고
+ * 지정했다 — 정본을 둘로 나누지 않는다). 배율 토큰은 진입이 아니라 **이 에지**에서 선다.
+ *
+ * ## `=== 360` 이 아니라 통과 판정인 이유
+ * PH5(연장 위상)가 `HOLD` 를 늘리고 주입 스킬(PH6 등)이 `aux0` 을 한 번에 여러 칸 올리므로,
+ * 등호로 두면 **임계를 건너뛴 틱에 토큰이 영영 안 서고** AS1·AS3·AS8·AS9·DI10 다섯이 통째로
+ * 조용히 죽는다(이 저장소가 반복 겪은 "조용한 미발현").
+ *
+ * ⚠️ **피격으로 창이 끝난 경우는 이 에지가 아니다** — 피격 리셋(`world.ts` 팬텀 피격 분기)은
+ * `aux0` 을 0 으로 되돌리며 토큰도 **회수**한다. 설계 의도는 "잠행하다 튀어나오며 내리치는
+ * 일격" 이고 맞아서 벗겨진 것은 그 서사가 아니다(헌장 제3 기준과 같은 결의 대칭).
+ */
+export function cloakExitCrossed(prev: number, next: number): boolean {
+  return crossed(prev, next, CLOAK_UNHIT_TICKS + CLOAK_HOLD_TICKS);
 }
 
 /**

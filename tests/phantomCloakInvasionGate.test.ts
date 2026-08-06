@@ -17,13 +17,26 @@
  * `aux1 = 1` 을 세우므로, `autoAttack` 의 소진 지점에 같은 게이트가 없으면 버프 지속
  * 300틱 내내 전 발사가 `CLOAK_BREAK_BP`(2.5배)를 받았다.
  *
- * ## 항진 방지 — "침공에서 0 이다" 만으로는 부족하다
- * 게이트가 아니라 **액티브 자체가 침공에서 안 도는 것**이어도 관측은 똑같이 0 이다. 그래서
- * 세 단언을 짝으로 둔다:
- *   ① PvE 대조군에서 소진이 실제로 일어난다 (관측기가 살아 있다)
- *   ② 침공에서 `aux1` 이 실제로 서 있다 (SUSTAIN 이 돌고 있다 = 무연산이 아니다)
- *   ③ 그런데 침공에서 소진은 0 이다 (막은 것은 게이트다)
+ * ## ⚠️ 전제가 바뀌었다 — 이제 **쓰기부터 막힌다** (배선 커밋, 이월 ①)
+ * 선결 E2 시점에는 게이트가 **소진 지점 한 겹**뿐이었고 토큰 쓰기는 침공에서도 통과했다.
+ * 배선 커밋이 `setBreakToken` 에 침공 no-op 을 내장하면서(`phantom.md` ①-4) **심층 방어가
+ * 두 겹**이 됐다: ⓐ쓰기 헬퍼 ⓑ소진 지점. 그래서 침공에서는 `aux1` 이 애초에 서지 않는다.
+ *
+ * ## 항진 방지 — 축을 "쓰기가 막혔다" 쪽으로 옮겨 다시 세웠다
+ * "침공에서 0 이다" 만으로는 부족하다. 게이트가 아니라 **액티브 자체가 침공에서 안 도는
+ * 것**이어도 관측은 똑같이 0 이기 때문이다. 종전에는 그 살아있음을 `aux1` 로 쟀는데, 이제
+ * `aux1` 자체가 막히므로 **같은 액티브의 다른 관측량**으로 옮긴다 — `disrupt_hi` 는
+ * `kind='buff'` 이고 그 잔여 틱(`state.activeBuff0`)은 **핸들러가 직접 세운다**(0c 계약 2번,
+ * 공통 발동 코드는 세우지 않는다). 즉 잔여 틱이 서 있다는 것은 **이 핸들러 본문이 침공에서
+ * 실제로 실행됐다**는 증거이고, 게이트가 무연산이 아님을 `aux1` 없이 증명한다.
+ *
+ *   ① PvE 대조군에서 `aux1` 이 서고 소진이 실제로 일어난다 (관측기가 살아 있다)
+ *   ② 침공에서도 핸들러 본문이 돈다 — `activeBuff0` 이 선다 (무연산이 아니다)
+ *   ③ 그런데 침공에서 `aux1` 은 한 번도 서지 않는다 (ⓐ 쓰기 헬퍼 게이트)
+ *   ④ 그리고 소진도 0 이다 (ⓑ 소진 지점 게이트 — 한 겹이 사라져도 이 단언이 남는다)
  * ②가 없으면 이 파일은 액티브 배선이 끊겨도 통과하는 항진 테스트가 된다.
+ * ③과 ④를 **둘 다** 두는 이유는 두 겹이 서로의 알리바이가 되지 않게 하기 위해서다 —
+ * 하나만 두면 나머지 한 겹이 지워져도 초록이다.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -89,17 +102,28 @@ function playerOf(s: WorldState) {
   return p;
 }
 
-/** 발동 후 `OBSERVE` 틱을 돌리며 `aux1` 이 한 번이라도 섰는지 함께 관측한다. */
-function runFired(invasion: boolean): { state: WorldState; aux1Seen: boolean } {
+/**
+ * 발동 후 `OBSERVE` 틱을 돌리며 두 관측량을 함께 잡는다.
+ *  · `aux1Seen` — 배율 토큰이 한 번이라도 섰는가(쓰기 헬퍼 게이트의 관측면).
+ *  · `buffSeen` — 슬롯0 버프 잔여 틱이 한 번이라도 섰는가. `setBuffTicks` 는 **핸들러만**
+ *    부르므로(공통 발동 코드는 감소만 한다) 이것이 곧 "핸들러 본문이 실행됐다"의 증거다.
+ */
+function runFired(invasion: boolean): {
+  state: WorldState;
+  aux1Seen: boolean;
+  buffSeen: boolean;
+} {
   const state = createWorld(0xc10a4, phantomConfig(invasion));
   for (let t = 0; t < WARMUP; t++) stepWorld(state, IDLE);
   stepWorld(state, FIRE);
   let aux1Seen = playerOf(state).aux1 !== 0;
+  let buffSeen = state.activeBuff0 > 0;
   for (let t = 0; t < OBSERVE; t++) {
     stepWorld(state, IDLE);
     if (playerOf(state).aux1 !== 0) aux1Seen = true;
+    if (state.activeBuff0 > 0) buffSeen = true;
   }
-  return { state, aux1Seen };
+  return { state, aux1Seen, buffSeen };
 }
 
 describe('팬텀 은신 해제 배율 — 침공 게이트 (선결 E2)', () => {
@@ -112,8 +136,11 @@ describe('팬텀 은신 해제 배율 — 침공 게이트 (선결 E2)', () => {
     expect(def?.coeff.ticks ?? 0).toBeGreaterThan(OBSERVE);
   });
 
-  it('① PvE 에서는 은신 해제 배율이 실제로 소진된다 (관측기가 살아 있다)', () => {
-    const { state, aux1Seen } = runFired(false);
+  it('① PvE 에서는 aux1 이 서고 은신 해제 배율이 실제로 소진된다 (관측기가 살아 있다)', () => {
+    const { state, aux1Seen, buffSeen } = runFired(false);
+    expect(buffSeen, 'PvE 에서 버프 잔여 틱이 서지 않았다 — 액티브가 아예 발동하지 않았다').toBe(
+      true,
+    );
     expect(aux1Seen, 'PvE 에서 aux1 이 한 번도 서지 않았다 — 액티브 배선이 끊겼다').toBe(true);
     expect(
       state.cloakBreaks,
@@ -121,15 +148,25 @@ describe('팬텀 은신 해제 배율 — 침공 게이트 (선결 E2)', () => {
     ).toBeGreaterThan(0);
   });
 
-  it('② 침공에서도 SUSTAIN 이 돌아 aux1 이 선다 (게이트가 막는 것이 무연산이 아니다)', () => {
-    const { aux1Seen } = runFired(true);
+  it('② 침공에서도 핸들러 본문이 돈다 — 버프 잔여 틱이 선다 (막는 것이 무연산이 아니다)', () => {
+    const { buffSeen } = runFired(true);
+    // `setBuffTicks` 는 핸들러만 부른다(0c 계약 2번) → 잔여 틱이 섰다 = 본문이 실행됐다.
+    // 이 단언이 없으면 ③·④는 게이트가 아니라 **액티브 미배선** 때문에 참이 될 수 있다.
     expect(
-      aux1Seen,
-      '침공에서 aux1 이 한 번도 서지 않았다 — 그렇다면 ③은 게이트가 아니라 미배선 때문에 참이 된다',
+      buffSeen,
+      '침공에서 버프 잔여 틱이 한 번도 서지 않았다 — 그렇다면 ③·④는 게이트가 아니라 미배선 때문에 참이 된다',
     ).toBe(true);
   });
 
-  it('③ 그럼에도 침공에서는 배율이 한 번도 실리지 않는다', () => {
+  it('③ 침공에서는 배율 토큰이 애초에 서지 않는다 (setBreakToken 침공 no-op)', () => {
+    const { aux1Seen } = runFired(true);
+    expect(
+      aux1Seen,
+      '침공에서 aux1 이 섰다 — setBreakToken 의 invasion3 no-op(쓰기 게이트, 심층 방어 바깥겹)이 사라졌다',
+    ).toBe(false);
+  });
+
+  it('④ 그리고 침공에서 배율은 한 번도 실리지 않는다 (소진 지점 게이트)', () => {
     const { state } = runFired(true);
     expect(
       state.cloakBreaks,
