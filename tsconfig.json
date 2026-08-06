@@ -26,6 +26,7 @@
     "src",
     "tests",
     "data",
+    "bench",
     "vite.config.ts",
     "vite.sim.config.ts",
     "vite.balance.config.ts",

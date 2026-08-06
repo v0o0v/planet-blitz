@@ -8,8 +8,17 @@
  *    깨진다. 이 리포가 반복해서 겪은 결함(“카탈로그는 늘었는데 목록이 안 늘어 조용히 빠짐”)의
  *    방어선이다.
  * 2. **예산은 지켜진다** — 라운드 판정과 격자 축소가 예산 안에서 끝나는 형태인지 검사한다.
+ * 3. **파워업 정책이 런에 실제로 흘러간다** — `cell.powerup` → `pickOverride` → `stepWorld`
+ *    배선의 교환 대조(ADR-0051 갈래 ③, 이 파일에서 가장 값진 축).
  *
- * 실제 sim 을 도는 것은 결정론 확인 한 건뿐이다(가장 짧은 셀 1개 × 2회).
+ * ## 실런은 **최소 틱**으로만 돈다 (2026-08-06, ADR-0051)
+ * 종전에는 배선을 증명하려고 런을 **완주**시켰고, 그 결과 45건 중 두 건이 벽시계 91.6초 중
+ * 86.1초를 썼다(나머지 43건은 합쳐 3초). 배선은 완주를 요구하지 않는다 — 값이 적용점
+ * (레벨업 프리즈)에 도달했는지만 보면 되므로 1,200틱이면 족하다. 근거 실측은 `WIRE_TICKS`
+ * 주석에 있다.
+ *
+ * 같은 결정으로 **"승리 런은 보스를 관측한다" 3건은 삭제됐다**(갈래 ② — 단언의 전제가
+ * "봇이 이길 수 있는가"였다). 사유는 `런 실행` describe 머리말.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -27,6 +36,8 @@ import {
   POWERUP_POLICY_BASELINE,
   POWERUP_POLICY_MINIMAL,
   bossEngageable,
+  choosePowerupOffer,
+  MAX_TICKS,
   METRIC_KEYS,
   MIN_AXIS_POINTS,
   RUN_METRICS,
@@ -48,7 +59,6 @@ import {
   spreadOf,
   statsOf,
   type RunRecord,
-  type CellRunResult,
 } from '../src/bench/balance/index.js';
 
 // ---------------------------------------------------------------------------
@@ -333,78 +343,57 @@ describe('보스 교전 판정', () => {
 
 describe('런 실행', () => {
   /**
-   * 이 셀의 **첫 승리 런**을 찾는다(없으면 undefined).
+   * 실런 단언의 틱 상한. **완주를 요구하지 않는다**(ADR-0051 갈래 ③).
    *
-   * 밸런스 수치가 움직여도 "승리 런은 보스를 관측한다" 같은 **불변식** 테스트가 살아남게 하는
-   * 장치다. 시드 목록은 하네스 정본(`seedsUpTo`)의 앞부분을 쓴다.
+   * ⚠️ 여기 있던 "승리 런은 보스를 관측한다" 3건은 **삭제했다**(2026-08-06, ADR-0051 갈래 ②).
+   * 셋 다 `firstWin()` 이 16시드 안에서 승리 런을 찾아내는 데 의존했다 — 즉 단언의 전제가
+   * **"봇이 이길 수 있는가"** 였고, ADR-0051 §1 판정 규칙이 정확히 그것을 게이트에서 내린다.
+   * (셋 합쳐 1.6초라 비용 때문은 아니다. 밸런스를 만질 때마다 불변식과 무관한 이유로 빨개지는
+   * 것이 이유다.) 지키던 불변식 — "PvE 승리 = 보스 처치이므로 `bossReachRate` 는 1" — 은
+   * 완주 없이 잴 방법이 없다. 재도입하려면 계측 CLI 쪽에 얹어야 한다.
    */
-  function firstWin(cell: { planet: number; ship: number; level: number }): CellRunResult | undefined {
-    for (const seed of seedsUpTo(16)) {
-      const r = runCellSeed(cell, seed);
-      if (r.won) return r;
-    }
-    return undefined;
-  }
-
-  /**
-   * **항진 방어** — PvE 승리는 곧 보스 처치(`compact()` 의 보스 분기)다. 따라서 승리한 런은
-   * 반드시 보스를 관측했어야 한다.
-   *
-   * 이 단언이 없을 때 실제로 니플헤임(추격) 승리 422건이 전부 `bossReachRate=0` 인 채로
-   * 리포트에 실렸다 — 게이트는 통과하는데 지표가 아무것도 보지 않는 상태였다.
-   *
-   * ⚠️ **시드를 못박지 않는다.** 예전에는 스윕에서 뽑은 가장 짧은 승리 런 하나를 `(셀, 시드)`
-   * 로 고정했는데, 그러면 밸런스 수치가 바뀔 때마다 그 런이 패배로 돌아서 **불변식과 무관한
-   * 이유로** 테스트가 깨진다(2026-08-02 실제로 그랬다). 지키려는 성질은 "승리 런은 보스를
-   * 관측한다" 이지 "이 시드가 이긴다" 가 아니므로, 승리 런을 찾아서 그 위에 단언한다.
-   */
-  it('추격 모드(니플헤임) 승리 런은 보스를 관측한다 — 회귀 방어', () => {
-    const r = firstWin({ planet: 2, ship: 2, level: 95 });
-    expect(r, '승리 런을 하나도 못 찾았다 — 추격 난이도가 무너졌거나 하네스가 깨졌다').toBeDefined();
-    expect(r!.values['bossReachRate']).toBe(1);
-    expect(r!.values['bossDps']).toBeGreaterThan(0);
-  });
-
-  it('일반 모드 승리 런도 보스를 관측한다(같은 불변식)', () => {
-    // 아르케(racing) = 보스 도달률 100% 로 관측된 무대 중 가장 짧다.
-    const r = runCellSeed({ planet: 3, ship: 0, level: 5 }, 1);
-    if (r.won) {
-      expect(r.values['bossReachRate']).toBe(1);
-      expect(r.values['bossDps']).toBeGreaterThan(0);
-    }
-  });
-
-  /**
-   * 보스가 **스폰된 바로 그 틱에 처치**되는 런. `stepWorld` 안에서 스폰→피격→`compact` 제거가
-   * 모두 끝나므로 반환 후 스캔하는 관측기는 보스를 한 번도 보지 못한다. 승리 사실이 교전을
-   * 증명하므로 `bossReachRate` 는 1 이어야 한다(`cell.ts` 승리 보정 ②).
-   *
-   * ⚠️ 여기서도 시드를 못박지 않는다(위 테스트와 같은 이유). 관측 창 0틱이라는 **하위 경우**는
-   * 밸런스 수치에 따라 나타나기도 사라지기도 하므로, 오염 무대의 승리 런을 찾아 같은 불변식을
-   * 건다. 창이 0틱인 런이 섞여 있으면 그 런에서 `bossReachRate` 가 1 인지가 정확히 이 보정을
-   * 검사한다.
-   */
-  it('보스 스폰 틱에 처치된 승리 런도 교전으로 센다 — 회귀 방어', () => {
-    const r = firstWin({ planet: 4, ship: 0, level: 20 });
-    expect(r, '승리 런을 하나도 못 찾았다 — 오염 난이도가 무너졌거나 하네스가 깨졌다').toBeDefined();
-    expect(r!.values['bossReachRate']).toBe(1);
-  });
+  const RUN_TICKS = 900;
 
   it('같은 (셀, 시드) 는 항상 같은 결과다', () => {
     // 가장 짧은 무대를 고른다(아르케 = racing, 런 길이 약 20초분).
     const cell = { planet: 3, ship: 0, level: 5 };
-    const a = runCellSeed(cell, 1);
-    const b = runCellSeed(cell, 1);
+    const a = runCellSeed(cell, 1, RUN_TICKS);
+    const b = runCellSeed(cell, 1, RUN_TICKS);
     expect(a.ticks).toBe(b.ticks);
     expect(a.won).toBe(b.won);
     expect(a.values).toEqual(b.values);
   });
 
+  /**
+   * **틱 상한 인자를 안 주면 `MAX_TICKS` 여야 한다.**
+   *
+   * 이 스위트의 실런은 전부 상한을 명시하지만 **계측 CLI 는 안 준다**
+   * (`scripts/balance/worker.mjs` 의 `runCellSeed(msg.cell, msg.seed)`). 즉 기본값이 조용히
+   * 바뀌거나 `undefined` 로 새면 — 루프가 `i < undefined` 로 **0틱** 이 된다 — 스위트는 전부
+   * 초록인 채로 `pnpm balance` 가 빈 런을 재게 된다. 정확히 이 리포가 반복해서 겪은
+   * "단위 테스트는 초록인데 배선이 없다"의 형태라 여기에 못을 박는다.
+   *
+   * 비용을 위해 **스스로 일찍 끝나는 셀**을 쓴다(실측: 시드 1 에서 1,144틱에 사망). 상한이
+   * 살아 있으면 이 런은 `RUN_TICKS` 를 넘고, 죽어 있으면 0틱이라 즉시 갈린다.
+   */
+  it('틱 상한 미지정이면 MAX_TICKS 다(계측 CLI 가 쓰는 경로)', () => {
+    const r = runCellSeed({ planet: 0, ship: 1, level: 25 }, 1);
+    expect(
+      r.ticks,
+      '기본 상한이 MAX_TICKS 에 안 묶였다 — scripts/balance 가 조용히 짧은 런을 잰다',
+    ).toBeGreaterThan(RUN_TICKS);
+    expect(r.ticks).toBeLessThanOrEqual(MAX_TICKS);
+  });
+
   it('전 지표가 유한한 수로 채워진다', () => {
-    const r = runCellSeed({ planet: 3, ship: 0, level: 5 }, 1);
+    const r = runCellSeed({ planet: 3, ship: 0, level: 5 }, 1, RUN_TICKS);
     for (const key of METRIC_KEYS) {
       expect(Number.isFinite(r.values[key]), key).toBe(true);
     }
+    // **공허 방어** — 상한을 줄인 탓에 관측기가 통째로 안 밟히면 전 지표가 0 이어도 위 단언은
+    // 통과한다("정확히 0"은 구조적 무발사 신호다). 실런이 실제로 굴렀다는 물증을 하나 건다.
+    expect(r.ticks, '런이 한 틱도 안 돌았다').toBe(RUN_TICKS);
+    expect(r.values['metaXp'], '메타XP 가 0 — 격추가 한 건도 없다면 관측기가 아무것도 안 본다').toBeGreaterThan(0);
   });
 });
 
@@ -416,9 +405,49 @@ describe('파워업 정책 축', () => {
   /** 여러 무대 · 여러 레벨에서 교차 검증한다 — 한 셀만 보면 우연히 같을 수 있다. */
   const PROBE_CELLS = [
     { planet: 3, ship: 0, level: 5 },
-    { planet: 0, ship: 1, level: 25 },
     { planet: 5, ship: 3, level: 60 },
   ] as const;
+
+  /**
+   * **배선 증명은 완주를 요구하지 않는다** (ADR-0051 갈래 ③).
+   *
+   * 이 축이 증명해야 하는 것은 "`cell.powerup` 이 `runCellSeed` → `pickOverride` →
+   * `stepWorld` 로 흘러가는가" 이지 "봇이 그 정책으로 이기는가"가 아니다. 적용점은 **레벨업
+   * 프리즈**이므로 프리즈가 몇 번 지나가는 만큼만 돌리면 된다.
+   *
+   * ## 왜 1,200인가 — 실측 (2026-08-06)
+   * 프리즈 발생 틱을 직접 재 보면 `p3/s0/lv5` 는 226·320·830·1410, `p5/s3/lv60` 은
+   * 265·543·1021·1682 이다. 즉 1,200틱이면 **두 셀 모두 프리즈 3회**를 지난다. 그보다 짧으면
+   * (300~600틱 스캔) 프리즈가 1~2회뿐이라 정책이 우연히 기준선과 **같은 오퍼**를 골라
+   * 갈림이 관측되지 않는 구간이 넓었다 — 그 상태로 굳혔으면 "틱이 모자란 것"을 "배선이
+   * 없는 것"으로 오독하게 된다.
+   *
+   * 대가는 **`won` 이 항상 false 라는 것**이다(1,200틱에 끝나는 런이 없다). 그래서 아래
+   * 대조는 승패가 아니라 **전 지표 + 틱**으로 본다. 완주 여부는 이 축이 답할 질문이 아니다.
+   *
+   * 실측 비용: 종전 97초 중 86초를 쓰던 두 단언이 합쳐 2초 미만이 된다.
+   */
+  const WIRE_TICKS = 1200;
+  const WIRE_SEED = 1;
+
+  /**
+   * **적용점 자체가 정책을 가르는가** — 공허 방어의 1층(sim 없이, 즉시).
+   *
+   * 아래 두 실런 단언이 빨개졌을 때 "배선이 끊겼다"와 "정책이 애초에 같은 오퍼를 고른다"를
+   * 갈라 주는 진단선이다. 오퍼 배열을 합성해 직접 물어본다 — `POWERUP_LINES` 는 실제
+   * 카탈로그에서 파생되므로 계열이 사라지면 여기서 먼저 깨진다.
+   */
+  it('정책은 같은 오퍼에서 서로 다른 인덱스를 고른다(공허 방어)', () => {
+    const firstOf = (line: string) => POWERUP_LINES.findIndex((l) => l === line);
+    const offense = firstOf('offense');
+    const survival = firstOf('survival');
+    expect(offense, 'offense 계열 파워업이 하나도 없다').toBeGreaterThanOrEqual(0);
+    expect(survival, 'survival 계열 파워업이 하나도 없다').toBeGreaterThanOrEqual(0);
+    // 오퍼 0번 = 생존, 1번 = 화력. 기준선은 0번을, 화력우선(1)은 1번을 골라야 한다.
+    const state = { powerupChoices: [survival, offense] } as unknown as WorldState;
+    expect(choosePowerupOffer(state, POWERUP_POLICY_BASELINE)).toBe(0);
+    expect(choosePowerupOffer(state, 1)).toBe(1);
+  });
 
   /**
    * **이 축의 존재 조건** — 기본값이 현행 거동과 바이트 동일해야 한다.
@@ -429,14 +458,16 @@ describe('파워업 정책 축', () => {
    */
   it('정책 미지정 = 정책 0(기준선) = 현행 거동 — 런이 바이트 동일하다', () => {
     for (const cell of PROBE_CELLS) {
-      for (const seed of seedsUpTo(3)) {
-        const base = runCellSeed(cell, seed);
-        const explicit = runCellSeed({ ...cell, powerup: POWERUP_POLICY_BASELINE }, seed);
-        const label = `${cellKey(cell)} seed=${seed}`;
-        expect(explicit.ticks, label).toBe(base.ticks);
-        expect(explicit.won, label).toBe(base.won);
-        expect(explicit.values, label).toEqual(base.values);
-      }
+      const base = runCellSeed(cell, WIRE_SEED, WIRE_TICKS);
+      const explicit = runCellSeed(
+        { ...cell, powerup: POWERUP_POLICY_BASELINE },
+        WIRE_SEED,
+        WIRE_TICKS,
+      );
+      const label = `${cellKey(cell)} seed=${WIRE_SEED}`;
+      expect(explicit.ticks, label).toBe(base.ticks);
+      expect(explicit.won, label).toBe(base.won);
+      expect(explicit.values, label).toEqual(base.values);
     }
   });
 
@@ -445,27 +476,33 @@ describe('파워업 정책 축', () => {
    * 정책은 실제로 다른 런을 만들어야 한다. 하나라도 갈리면 배선이 살아 있는 것이다.
    *
    * 특정 정책이 특정 셀에서 우연히 기준선과 같은 픽을 낼 수는 있으므로(오퍼 0번이 이미 그
-   * 계열이면 같다) 셀·시드 전체에서 **적어도 하나**가 갈리는지를 본다.
+   * 계열이면 같다) 셀 · 정책 전체에서 **적어도 하나**가 갈리는지를 본다.
+   *
+   * ⚠️ 승패로 대조하지 않는다 — 1,200틱에서는 양쪽 다 미완주라 `won` 이 항상 false 다.
+   * 갈림은 **전 지표 + 틱**에서 읽는다(실측: `p3/s0/lv5` 정책1, `p5/s3/lv60` 정책1 이 갈린다).
    */
   it('다른 정책은 실제로 다른 런을 만든다 — 배선 항진 방어', () => {
-    let differed = 0;
+    const split: string[] = [];
     for (const cell of PROBE_CELLS) {
-      for (const seed of seedsUpTo(3)) {
-        const base = runCellSeed(cell, seed);
-        for (const p of POWERUP_POLICIES) {
-          if (p.id === POWERUP_POLICY_BASELINE) continue;
-          const r = runCellSeed({ ...cell, powerup: p.id }, seed);
-          if (r.ticks !== base.ticks || r.won !== base.won) differed++;
-        }
+      const base = runCellSeed(cell, WIRE_SEED, WIRE_TICKS);
+      for (const p of POWERUP_POLICIES) {
+        if (p.id === POWERUP_POLICY_BASELINE) continue;
+        const r = runCellSeed({ ...cell, powerup: p.id }, WIRE_SEED, WIRE_TICKS);
+        const same =
+          r.ticks === base.ticks && JSON.stringify(r.values) === JSON.stringify(base.values);
+        if (!same) split.push(`${cellKey(cell)}/pw${p.id}`);
       }
     }
-    expect(differed, '어떤 정책도 런을 바꾸지 못했다 — 픽 오버라이드가 배선되지 않았다').toBeGreaterThan(0);
+    expect(
+      split.length,
+      '어떤 정책도 런을 바꾸지 못했다 — 픽 오버라이드가 배선되지 않았거나(위 공허 방어가 초록이면 이쪽) WIRE_TICKS 가 프리즈에 못 미친다',
+    ).toBeGreaterThan(0);
   });
 
   it('같은 (셀, 정책, 시드) 는 항상 같은 결과다', () => {
     const cell = { planet: 3, ship: 0, level: 5, powerup: POWERUP_POLICY_MINIMAL };
-    const a = runCellSeed(cell, 1);
-    const b = runCellSeed(cell, 1);
+    const a = runCellSeed(cell, 1, WIRE_TICKS);
+    const b = runCellSeed(cell, 1, WIRE_TICKS);
     expect(a.ticks).toBe(b.ticks);
     expect(a.values).toEqual(b.values);
   });
@@ -522,8 +559,8 @@ describe('파워업 정책 축', () => {
    */
   it('단계 override 미지정 = standardStage(level) 와 바이트 동일하다', () => {
     const cell = { planet: 3, ship: 0, level: 25 };
-    const a = runCellSeed(cell, 1);
-    const b = runCellSeed({ ...cell, stage: 5 }, 1); // ceil(25/5) = 5
+    const a = runCellSeed(cell, 1, WIRE_TICKS);
+    const b = runCellSeed({ ...cell, stage: 5 }, 1, WIRE_TICKS); // ceil(25/5) = 5
     expect(b.ticks).toBe(a.ticks);
     expect(b.values).toEqual(a.values);
   });

@@ -145,13 +145,19 @@ describe('① 전수 대조 — 분류 배열이 필드 전부를 덮는다', ()
     expect(unclassified, `미분류 엔티티 키: ${unclassified.join(', ')}`).toEqual([]);
   });
 
-  it('배열 길이 합이 실제 필드 수와 같다 (WorldState 62 · Entity 25)', () => {
+  it('배열 길이 합이 실제 필드 수와 같다 (WorldState 72 · Entity 25)', () => {
     // 숫자를 박아 두는 이유: 필드가 늘었는데 분류도 같이 늘면 위 대조는 통과하지만, 그때
     // **분류 판단이 실제로 있었는지**는 이 숫자가 바뀌는 것으로만 드러난다.
     // 61 → 62: `commissionRuntime` 신설(의뢰 구간 전환 코어 2단계). 62 → 64: `activeTune0/1`
     // 신설(E7 · ADR-0049 선결). 이 숫자가 실제로 이 레인에서 컴파일과 테스트를 동시에
     // 깨뜨렸고, 그 강제가 곧 분류가 판단됐다는 물증이다.
-    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(64);
+    // 64 → 72: 엔진 선결 리팩터 3건이 한 레인에서 함께 들어왔다 — `armorMaxStacks`(E4 장갑
+    // 상한 config 파생화) · `wallContactTicks`(E5 벽 접촉 플래그) · 파열 요청 6칸
+    // `filmBurstReq0/X0/Y0/Req1/X1/Y1`(E3 버블 파열 후처리 단일화). 여덟 개 전부 `WORLD_FRESH`
+    // 다 — 앞의 둘은 `createWorld` 가 config 에서 재도출하는 파생값이고(승계하면 정본이 둘이
+    // 된다), 파열 요청 6칸은 세운 틱 안에서 0 으로 되돌아가는 스크래치라 구간 경계에 값이
+    // 설 수 없다.
+    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(72);
     expect(ENTITY_CARRY.length + ENTITY_RESET_ZERO.length + ENTITY_FRESH.length).toBe(25);
   });
 });

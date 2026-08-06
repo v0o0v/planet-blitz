@@ -66,7 +66,9 @@ function runTicks(state: WorldState, ticks: number, input: InputFrame = idle): v
 }
 
 /**
- * 한 틱 진행하되 레벨업 프리즈를 자동 해소한다(planetTierCompletion 선례). idle 파일럿은
+ * 한 틱 진행하되 레벨업 프리즈를 자동 해소한다(구 planetTierCompletion 선례 — 그 파일은
+ * 2026-08-06 ADR-0051 로 삭제됐고, 같은 관용구는 `tests/invasionIntegration.test.ts` 의
+ * `step()` 에 살아 있다). idle 파일럿은
  * 오토어택으로 적을 잡아 결국 레벨업하는데, 픽을 안 주면 월드가 얼어(pendingLevelUp) 스크롤이
  * 정체한다. 픽(0)을 넣어 즉시 해소하면 idle 을 유지하며 코스를 끝까지 밀 수 있다.
  */

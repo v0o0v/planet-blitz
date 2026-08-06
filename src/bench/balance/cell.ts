@@ -229,8 +229,17 @@ function gearSeed(cell: BalanceCell, seed: number): number {
 
 /**
  * 셀 한 칸을 시드 하나로 돌린다. 결정론적이다 — 같은 `(cell, seed)` 는 항상 같은 결과다.
+ *
+ * `maxTicks` 는 **테스트 전용 축소 손잡이**다(ADR-0051 갈래 ③). 기본값이 {@link MAX_TICKS} 라
+ * 계측 경로(`scripts/balance/worker.mjs`)는 인자를 안 넘기고 거동이 바이트 동일하다. 배선 증명은
+ * "값이 적용점에 도달했는가"만 보면 되므로 완주가 필요 없고, 수백 틱이면 족하다 —
+ * 완주를 요구하면 그 한 축이 스위트 벽시계의 대부분을 먹는다(2026-08-06 실측: 92s/97s).
  */
-export function runCellSeed(cell: BalanceCell, seed: number): CellRunResult {
+export function runCellSeed(
+  cell: BalanceCell,
+  seed: number,
+  maxTicks: number = MAX_TICKS,
+): CellRunResult {
   const profile = defaultProfile();
   const ship = activeShip(profile);
   ship.typeId = cell.ship;
@@ -250,7 +259,7 @@ export function runCellSeed(cell: BalanceCell, seed: number): CellRunResult {
   const policy = cell.powerup;
 
   let prevHp = state.entities[0]?.hp ?? 0;
-  for (let i = 0; i < MAX_TICKS; i++) {
+  for (let i = 0; i < maxTicks; i++) {
     // 파워업 픽 오버라이드는 **여기**에 있지 `autopilot.ts` 에 있지 않다. 오토파일럿은 sim 계층
     // 이고 그 파일을 건드리면 골든 해시 계약이 걸린다 — 반면 여기서 프레임을 갈아 끼우면
     // 정책 미지정 런은 `autopilotInput(state)` 결과가 **그대로** 들어가 바이트 동일이 구조적으로

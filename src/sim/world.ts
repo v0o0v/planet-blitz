@@ -121,8 +121,9 @@ import {
   MARKSMAN_BONUS_BP,
   MARKSMAN_PIERCE,
   marksmanTriggered,
-  ARMOR_PER_STACK_BP,
+  ARMOR_MAX_STACKS,
   ARMOR_DECAY_TICKS,
+  armorReductionBp,
   clampArmorStacks,
   overchargeBp,
   CLOAK_BREAK_BP,
@@ -135,12 +136,18 @@ import {
   cushionRecovered,
   cushionSettled,
   FILM_ABSORB_FLAT,
-  FILM_BURST_RADIUS,
   filmReady,
   filmAbsorbed,
   filmRemainingDamage,
-  filmBurstPush,
 } from './shipSignature.js';
+// 파열 후처리(E3) — world 와 액티브 핸들러가 **같은 함수**를 부르도록 leaf 로 내렸다.
+import {
+  FILM_BURST_REQ_NONE,
+  consumeFilmBurstRequests,
+  resolveFilmBurst,
+} from './filmBurst.js';
+// 은신 사이클 헬퍼(E1) — `playerCloaked` 과 같은 leaf 모듈. 토큰 쓰기의 단일 경로다.
+import { cloakEntryCrossed, fireCloakEntry, setBreakToken } from './cloak.js';
 import { shipTypeDef } from '../../data/ships/index.js';
 import { SpatialHash, circlesOverlap, sweptCircleHitT } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
@@ -1045,6 +1052,36 @@ export interface WorldState {
   cushionHealed: number;
   /** 방막 파열 횟수(버블 사연 metric). */
   filmPops: number;
+  // --- 벽 접촉 런타임 정수 1개(E5 · ADR-0049 · 비-해시) ---------------------------------------
+  // ⚠️ **hashWorld 에서 접지 않는다** — 위 사연 카운터·`tainted` 와 같은 자리다(순수 메타).
+  // 근거: 이 값은 매 틱 **플레이어 좌표 + `activeWalls` 기하**만으로 완전히 파생된다. 두 입력은
+  // 이미 hashWorld 가 접고 있으므로(엔티티 폴드), 이 정수가 갈리려면 그보다 먼저 좌표가 갈려야
+  // 한다 — 접어도 탐지력이 0 인데 골든 전량 재생성 + EF 재배포 비용만 든다. 그래서 접지 않는다.
+  // (스트라이커 M5 문서가 "해시 폴드 여부는 sim 레인 판단"으로 남긴 미결의 답이다.)
+  /**
+   * **연속 벽 접촉 틱 수**(이번 틱 포함). 접촉 중이면 매 틱 +1, 접촉이 끊기면 0 으로 리셋.
+   *
+   * ## 의미 — "접촉 중"이지 "이번 틱 밀려남"이 아니다
+   * `SlideResult.hit` 단독은 **"이번 틱에 벽에서 밀려났다"** 를 뜻한다. 벽을 계속 밀고 있으면
+   * 매 틱 겹쳐서 참이지만, `slideCircleWalls` 가 겹침을 풀 때 좌표를 벽 경계값에 **정확히
+   * 스냅**하므로 벽에 붙어 정지한 다음 틱에는 `dx < hw` 가 거짓이 되어 **실제로 붙어 있는데
+   * `hit=false`** 가 된다(`.omc/research/mallow-wall-streak-p3-rerun-2026-08-06.md` §① 실측 —
+   * 카르곤에서 t=100~1500 좌표가 비트 단위로 동결되고 `gapY` 가 정확히 0 이었다).
+   * 이 필드를 무는 다섯 스킬의 술어는 전부 **"접촉 중"**(S4 피격 감소 · ME9 K=60 연속 접촉 ·
+   * MO8/M5 대시 강화 · FI7 파열 반향)이라 후자를 참으로 봐야 한다 — 밀려남 의미를 쓰면 다섯이
+   * "벽을 계속 밀 때만" 작동하고 붙어 서 있을 때는 화면상 아무 표시 없이 조용히 꺼진다.
+   * 그래서 갱신식은 `hit || 경계 접촉`이다(갱신 지점 주석 참조).
+   *
+   * ## 읽는 시점이 곧 의미다 (한 정수를 다섯이 공유한다 — 두 벌 금지)
+   * - **직전 틱 접촉** = 벽 슬라이드(`stepPlayer` 꼬리) **이전**에 `> 0` 으로 읽는다.
+   *   대시 판정이 슬라이드보다 앞이라 이 시점 값은 아직 지난 틱 것이다 — 스트라이커 M5,
+   *   브루저 MO8, 스트라이커 S4 가 이쪽이다.
+   * - **이번 틱 접촉** = 슬라이드 **이후**에 `> 0` 으로 읽는다 — 버블 FI7(파열 후처리) 이쪽.
+   * - **K틱 연속 접촉** = 슬라이드 이후에 `>= K` 로 읽는다 — 말로우 ME9(K = 60).
+   *
+   * 정수다(소수부 없음). 이 커밋 시점에는 **아무도 소비하지 않는다** — 거동·해시 불변.
+   */
+  wallContactTicks: number;
   // --- 액티브 스킬 런타임 정수 4개(ADR-0041 · 계획 0a-4) --------------------------------------
   // ⚠️ **`aux0`/`aux1` 재사용 불가** — 그 두 칸은 기체별 시그니처 런타임 상태가 이미 점유했다
   // (world.ts 의 인코딩 표). `Entity` 에 넣는 것도 불가다: `ENTITY_HASH_LAYOUT` 이 바뀌어
@@ -1089,6 +1126,61 @@ export interface WorldState {
   activeTune0: number;
   /** 슬롯 2 액티브의 조율 누적(파워업 25 `active-tune-2`). `bumpActiveTree` 만 쓴다. */
   activeTune1: number;
+  // --- 브루저 장갑 스택 상한(E4 · ADR-0049 선결) ------------------------------------------
+  /**
+   * 이 런의 **유효 장갑 스택 상한**. `createWorld` 가 config 에서 **한 번 정수로 확정**하고
+   * 런 중에는 절대 바뀌지 않는다(`sigBit` 과 같은 파생·동결 규율).
+   *
+   * ## 왜 상수가 아니라 필드인가
+   * ADR-0049 FO1(과적 장갑)이 상한 자체를 스킬 투자로 넓힌다. 그 확장폭은 나눗셈을 포함하므로
+   * (`round(1 + 3·Lv/(Lv+12))`) **구현 고지 ③** 에 따라 sim 루프가 아니라 `createWorld` 에서
+   * 1회 정수로 확정해야 한다. 이 필드가 그 자리다. 지금은 스킬이 아직 아무도 이 값을 넓히지
+   * 않으므로 항상 `ARMOR_MAX_STACKS`(8) 이고, 그래서 **모든 기존 런의 산술이 비트 동일**이다.
+   *
+   * ## 해시 폴드 — 하지 않는다 (의도적)
+   * `hashWorld` 는 이 필드를 접지 않는다. 접을 필요가 없다: 이 값은 **이미 해시에 접히는 입력**
+   * (`config.loadout` 의 `skillInvest`·`uniqueMask`)의 순수 파생이라, 두 런의 상한이 다르면
+   * 그 원인이 되는 입력이 먼저 갈려 해시가 이미 다르다. 파생값을 따로 접는 것은 정보량 0 이고
+   * (`commissionRuntime.totalTicks` 를 접지 않는 것과 같은 규율), 접는 순간 기존 골든이 전량
+   * 재생성 대상이 된다. **상한을 config·loadout 밖의 입력에서 파생시키게 되면 이 근거가 깨진다**
+   * — 그때는 이 주석을 고치기 전에 폴드부터 다시 판단하라.
+   *
+   * 소비 지점은 셋이고 전부 `armorReductionBp`/`clampArmorStacks` 에 **이 값을 넘겨서만**
+   * 읽는다: 피해 감소(`resolveCollisions`)·적립 clamp(같은 함수 아래쪽)·액티브 핸들러
+   * (`activeHandlers/bruiser.ts` 의 `setArmorStacks`). 상한을 그 자리에서 따로 해석하는 코드를
+   * 만들지 마라 — 감소 상한과 스택 상한이 조용히 갈리는 것이 E4 가 막으려던 결함이다.
+   */
+  armorMaxStacks: number;
+  // --- 버블 파열 요청 슬롯 2칸(E3 · ADR-0049 선결) ----------------------------------------
+  /**
+   * 이번 틱의 막 파열 요청 — **종류 코드 2칸 + 좌표 2쌍**(`src/sim/filmBurst.ts` 가 정본).
+   *
+   * 액티브 핸들러는 파열을 직접 수행하지 않고 여기에 **요청만 세운다**. 소비는 `stepWorld` 의
+   * `stepActives` 직후 단일 지점(`consumeFilmBurstRequests`)이고, 소비 즉시 전부 0 으로
+   * 되돌아간다. 2칸인 이유는 `stepActives` 의 만료 훅 루프와 발동 루프가 별개라 한 틱에 두
+   * 요청이 설 수 있기 때문이다(1칸이면 하나가 조용히 유실된다).
+   *
+   * ## 해시 폴드 — 하지 않는다 (의도적 · E3 요구사항)
+   * 여섯 정수는 **세워진 그 틱 안에서 소비되고 0 으로 지워진다.** `hashWorld` 는 `stepWorld` 가
+   * 반환된 뒤에 불리므로 관측 시점에는 언제나 0 이고, 접어 봐야 항상 같은 바이트만 늘린다 —
+   * 정보량 0 의 폴드는 금지 규율이다(`commissionRuntime.totalTicks` 선례). 접지 않는 덕에
+   * 기존 골든이 **바이트 단위로 불변**이다.
+   *
+   * ⚠️ 이 근거는 "요청이 틱을 넘기지 않는다" 에 전적으로 의존한다. 훗날 요청을 다음 틱으로
+   * 미루는 설계가 들어오면 **그 순간 조건부 꼬리 폴드가 필요해진다**(여섯이 전부 0이면 무폴드).
+   * 미루기 전에 이 주석부터 다시 읽어라.
+   */
+  filmBurstReq0: number;
+  /** 슬롯 0 요청의 파열 중심 x(요청 시점 좌표를 박아 둔다 — `requestFilmBurst` 주석 참조). */
+  filmBurstReqX0: number;
+  /** 슬롯 0 요청의 파열 중심 y. */
+  filmBurstReqY0: number;
+  /** 슬롯 1 요청 종류 코드. 의미·규율은 {@link WorldState.filmBurstReq0} 과 같다. */
+  filmBurstReq1: number;
+  /** 슬롯 1 요청의 파열 중심 x. */
+  filmBurstReqX1: number;
+  /** 슬롯 1 요청의 파열 중심 y. */
+  filmBurstReqY1: number;
 }
 
 /**
@@ -1340,6 +1432,9 @@ export function createWorld(
     broodLaunches: 0,
     cushionHealed: 0,
     filmPops: 0,
+    // 벽 접촉 런타임(E5 · 비-해시). 0 초기화 = 런 시작은 미접촉. 갱신은 stepPlayer 의 벽 슬라이드
+    // 직후 **단 한 곳**이다(작성자 단일화 — 아래 갱신 지점 주석의 "블링크 슬라이드는 안 쓴다" 절).
+    wallContactTicks: 0,
     invasion3Bombs: 0,
     // 액티브 스킬 런타임 정수 4개(ADR-0041). 0 초기화 = 미장착·미발동 런에서 끝까지 0 →
     // hashWorld 꼬리 폴드 미실행(바이트 불변).
@@ -1351,6 +1446,19 @@ export function createWorld(
     // hashWorld 꼬리 폴드 미실행(바이트 불변).
     activeTune0: 0,
     activeTune1: 0,
+    // 브루저 장갑 스택 상한(E4). **이 한 줄이 상한 파생의 유일한 지점**이다 — 런 중 불변이고
+    // hashWorld 는 접지 않는다(근거는 필드 주석). ADR-0049 FO1(과적 장갑)이 상한을 넓힐 때는
+    // `config`(→ `skillInvest`)에서 계산한 정수를 **여기서** 확정한다. 지금은 확장 스킬이
+    // 아직 없어 항상 기본값 → 기존 런의 감소·적립 산술이 비트 동일이다.
+    armorMaxStacks: ARMOR_MAX_STACKS,
+    // 버블 파열 요청 슬롯(E3). 세운 틱 안에서 소비·초기화되므로 hashWorld 시점엔 항상 0 이고,
+    // 그래서 폴드하지 않는다(필드 주석의 근거).
+    filmBurstReq0: FILM_BURST_REQ_NONE,
+    filmBurstReqX0: 0,
+    filmBurstReqY0: 0,
+    filmBurstReq1: FILM_BURST_REQ_NONE,
+    filmBurstReqX1: 0,
+    filmBurstReqY1: 0,
     // 탄-벽 broad-phase 는 침공 3레이어에서만 쓴다. PvE 는 null → 기존 직접 스윕 그대로라
     // 해시가 바이트 불변이다(회랑 벽이 '활성 벽 ≤~19' 전제를 깨는 것은 침공 경로뿐).
     wallIndex: invasion3Runtime !== undefined ? new InvasionWallIndex() : null,
@@ -1571,6 +1679,11 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // 으로 버려진다(AC-8·AC-9). 위로 옮기면 AC-8 이 즉시 깨진다. 미장착 런은 `stepActives` 가
   // `config.activeSlots` 부재로 조기 반환하고 정수 4개가 끝까지 0 이라 해시 폴드가 미실행이다.
   stepActives(state, player, input, activeDirOf(input, player));
+  // 버블 파열 요청 소비(E3) — **`stepActives` 직후가 계약이다.** 액티브 핸들러는 파열을 직접
+  // 수행하지 않고 요청만 세우고, 그 요청이 여기서 한 번에 해소된다. 요청이 없으면(= 버블
+  // 액티브를 안 썼거나 아예 미장착) 함수가 첫 줄에서 조기 반환하므로 거동·해시 불변이다.
+  // 위치를 옮기면 파열과 그 뒤 단계(경계 규칙·적 이동·충돌) 사이의 순서가 바뀐다.
+  consumeFilmBurstRequests(state);
   // ── 모드별 플레이어 경계 규칙 (원래 stepPlayer 꼬리에 있던 3블록을 그대로 옮겨 왔다) ──
   // 조우 detour 는 stepPlayer 를 재사용하지만 포켓 방(창 밖 12만 유닛)에서는 이 규칙들이
   // 전부 오작동한다(창 클램프가 좌표를 되돌리고, 수축 밖 판정이 즉사를 낸다). detour 분기는
@@ -1912,6 +2025,17 @@ function activeDirOf(input: InputFrame, player: Entity): { x: number; y: number 
   return resolveDirFallback(mx, my, player.angle);
 }
 
+/**
+ * 벽 **접촉** 판정에만 쓰는 반경 여유(E5 · ADR-0049). 이동·충돌 산술에는 절대 섞지 마라 —
+ * 순수 관측용이라 좌표를 한 바이트도 바꾸지 않는다.
+ *
+ * 왜 필요한가: `slideCircleWalls` 는 겹침을 풀 때 좌표를 벽 경계값에 **정확히** 스냅하고
+ * 겹침 판정은 엄격 부등호(`dx < hw`)라, 벽에 붙어 정지한 상태가 `hit=false` 로 떨어진다.
+ * 0.1 은 틱당 최소 이동량보다 두 자릿수 작아 "가까이 있을 뿐인데 접촉"이 되는 오탐이 사실상
+ * 없다(P3 재측정이 같은 값으로 실증 — `.omc/research/mallow-wall-streak-p3-rerun-2026-08-06.md`).
+ */
+const WALL_CONTACT_EPS = 0.1;
+
 function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void {
   const config = state.config;
   let mx = input.moveX;
@@ -1980,6 +2104,7 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
   // 벽 안으로 밀어 넣은 상태에서 최소 침투가 **먼 쪽 면**을 골라 플레이어를 벽 반대편으로 뱉는
   // 관통을 막는다(근거·실측은 `slideCircleWalls` 주석). 창이 없으면 `undefined` 를 넘겨 기존
   // 최소 침투 경로가 그대로 돈다 — 뱀서류·수축·추격·오염은 해시 바이트 불변.
+  let wallContact = false;
   if (state.activeWalls.length > 0) {
     const slid = slideCircleWalls(
       player.x,
@@ -1992,7 +2117,61 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     );
     player.x = slid.x;
     player.y = slid.y;
+    // E5 벽 접촉 판정(ADR-0049) — 자세한 계약은 `WorldState.wallContactTicks` 선언 주석.
+    //
+    // ## `slid.hit` 단독은 틀린 술어다
+    // `hit` 은 "이번 틱에 벽에서 밀려났다"이지 "벽에 닿아 있다"가 아니다. `slideCircleWalls` 는
+    // 겹침을 풀 때 좌표를 경계값(`w.x ± hw`)에 **정확히** 스냅하므로, 벽에 붙어 정지한 다음
+    // 틱에는 겹침이 없어 `hit=false` 다 — 실제로는 붙어 있는데. 다섯 스킬(M5·S4·MO8·FI7·ME9)의
+    // 술어는 전부 "접촉 중"이라 그 상태가 참이어야 한다. 그래서 밀려남(`hit`)과 **경계 접촉**을
+    // OR 로 묶는다.
+    //
+    // ## 경계 접촉은 같은 함수를 반경 +eps 로 다시 태워서 잰다
+    // 판정 기하를 여기서 다시 적으면(축별 AABB 겹침) `slideCircleWalls` 의 근사(원을 경계상자로
+    // 근사 — 면에서 정확, 모서리에서 보수적)와 조용히 갈릴 수 있다. 같은 함수를 태우면 술어가
+    // **구성상 동일**하고 헬퍼 시그니처도 안 건드린다(0c 동결). 반환 좌표는 버리고 `hit` 만 읽는
+    // 순수 호출이다. `preX/preY`·`pin` 을 안 넘기는 이유도 같다 — 되밀 쪽이 어디든 겹침 여부는
+    // 불변이라 판정에 무관하다.
+    // `WALL_CONTACT_EPS` 는 위 스냅이 남기는 `dx === hw` 를 흡수하려고 붙인 여유이고, 틱당 최소
+    // 이동량보다 두 자릿수 작아 근접 오탐이 사실상 없다(프로브가 같은 값으로 실증).
+    //
+    // ## ⚠️ `circleOverlapsWall` 로 바꾸지 마라 (검토·기각 2026-08-06)
+    // "`circleOverlapsWall` 은 `<=` 라 경계 포함이니 eps 없이 된다" 는 대안이 검토됐고, 더 싸고
+    // 매직 상수도 없어 매력적이지만 **두 자리에서 접촉을 잃는다**(둘 다 `tests/wallContactFlag`
+    // 이 태운다):
+    // ① **모서리 띠** — 벽 끝을 살짝 넘어선 높이에서 면에 막혀 정지하면, 밀려남도 거짓이고
+    //    정확 원 판정도 거짓이다(원 대 상자 간극이 최대 `r(√2−1)` ≈ 5.8u). `||` 의 왼쪽이
+    //    잡아 준다는 기대가 여기서 깨진다 — **정지 상태에서는 `slid.hit` 이 바로 그 거짓**이라
+    //    두 항이 함께 거짓이 된다. 그런데 벽 쪽으로 밀면 되밀리므로 플레이어는 실제로 막혀 있다.
+    // ② **1 ULP** — `<=` 의 경계 포함은 `dx` 가 정확히 `r` 일 때만 구원인데, 스냅은
+    //    `fl(x + fl(hw + r))` 이고 최근접점은 `fl(x + hw)` 라 차이가 `r ± ulp` 다. 비정수 기하
+    //    표본에서 **31~43% 가 `dx > r` 로 떨어졌다**(좌표 크기 0~1e5 전 구간에서 재현).
+    //    결정론적 함정보다 나쁘다 — 간헐적이라 테스트가 우연히 초록일 수 있다.
+    // 즉 이 자리의 권위 기하는 **이동을 실제로 막는 경계상자**여야 하고, 그래서 `slideCircleWalls`
+    // 를 그대로 재사용한다. 비용은 벽 목록 1회 추가 순회이고 `activeWalls` 는 수십 개 규모다.
+    wallContact =
+      slid.hit ||
+      slideCircleWalls(
+        player.x,
+        player.y,
+        player.radius + WALL_CONTACT_EPS,
+        state.activeWalls,
+      ).hit;
   }
+  // 갱신 지점은 **여기 한 곳**이다 — 순서와 작성자 단일화가 곧 계약이다(인벤토리 공통-A).
+  //
+  // ① **창 클램프보다 앞**이다. 클램프는 stepWorld 의 `stepPlayer(...)` 직후로 빠져 있고(아래
+  //    주석), 인벤토리 §1.8 이 말하는 "슬라이드 이후가 최종 권위"는 **좌표**의 권위 순서다.
+  //    벽 술어의 권위는 벽 슬라이드다 — 클램프는 창 경계 규칙이라 벽 겹침을 풀지 않으므로,
+  //    클램프가 밀어 넣은 좌표를 "접촉"으로 세면 슬라이드가 이미 "겹침 없음"으로 확정한 틱과
+  //    답이 갈린다. 게다가 클램프 블록은 detour 에서 실행되지 않아, 그 자리에 두면 포켓 방
+  //    동안 카운터가 리셋도 증가도 안 되고 **얼어붙는다**.
+  // ② **블링크 슬라이드(`activeTypes.ts` 의 순간이동 해소)는 쓰지 않는다.** 그건 stepActives
+  //    안이라 이 지점보다 뒤이고, 거기서도 쓰면 한 틱에 두 번 증가해 "연속 틱" 이 무너진다
+  //    (ME9 의 K=60 이 30틱에 열린다). 블링크로 벽에 붙은 자리는 플레이어가 그대로 있으므로
+  //    **다음 틱** 이 지점이 정상적으로 접촉을 집는다 — 한 틱 늦을 뿐 누락은 없다.
+  // ③ `activeWalls` 가 비면(벽 없는 무대·포켓 방) 접촉은 거짓이라 0 리셋이다.
+  state.wallContactTicks = wallContact ? state.wallContactTicks + 1 : 0;
   // ⚠️ 모드별 경계 규칙(창 클램프·압사·후방압박·수축 밖 판정)은 **여기 있지 않다**. 조우
   // detour(ADR-0033)가 stepPlayer 를 의존성 주입으로 재사용하는데, 포켓 방 안에서는 그 규칙이
   // 하나도 성립하지 않기 때문이다(포켓 좌표는 창 밖 12만 유닛). 그래서 stepWorld 의
@@ -2130,15 +2309,20 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
     // 걸 수 없는데(cloak.ts 헤더) 배율(이득)만 남기면 침공에서 팬텀이 공짜로 강해진다. 여기서
     // 통째로 반환하면 aux0/aux1 이 끝까지 0 이라 "둘 다 0 이면 무폴드" 조건부 해시 규약도 그대로다.
     if (state.config.invasion3 !== undefined) return;
+    const prevUnhit = player.aux0;
     player.aux0++;
-    // 토큰은 임계를 **넘는 그 틱에 한 번만** 선다(`>=` 가 아니라 `===`). 매 틱 다시 세우면
-    // 발사로 소진해도 다음 틱에 부활해 **모든 발사에 2.5배가 실린다.**
-    if (player.aux0 === CLOAK_UNHIT_TICKS) player.aux1 = 1;
+    // 토큰은 임계를 **넘는 그 틱에 한 번만** 선다. 매 틱 다시 세우면 발사로 소진해도 다음 틱에
+    // 부활해 **모든 발사에 2.5배가 실린다.**
+    // ⚠️ 판정이 `=== CLOAK_UNHIT_TICKS` 에서 **통과 판정**(`cloakEntryCrossed`)으로 승격됐다(E1).
+    //    자연 적립은 항상 +1 이라 두 판정은 **같은 틱에 발화**한다 → 값 비트 동일. 승격의 값은
+    //    훗날 카운터를 여러 칸 올리는 주입 스킬이 붙었을 때 임계를 건너뛰어도 안 죽는 것이다
+    //    (근거는 `cloak.ts` `cloakEntryCrossed` 주석).
+    if (cloakEntryCrossed(prevUnhit, player.aux0)) fireCloakEntry(state, player);
     // 유지 창(CLOAK_HOLD_TICKS)이 끝나면 사이클을 통째로 되감는다 — 다시 240틱을 채워야 한다.
     // 여기가 aux0 의 구조적 상한이기도 하다(0..CLOAK_UNHIT_TICKS+CLOAK_HOLD_TICKS-1 = 0..359).
     else if (player.aux0 >= CLOAK_UNHIT_TICKS + CLOAK_HOLD_TICKS) {
       player.aux0 = 0;
-      player.aux1 = 0;
+      setBreakToken(state, player, 0);
     }
     // ⚠️ 아크캐스터·해츨링 분기와 같은 이유로 **명시적으로** 반환한다.
     return;
@@ -2312,28 +2496,6 @@ function stepHatchBrood(state: WorldState, player: Entity): void {
 }
 
 /**
- * 버블 방막 파열 — 반경 안의 적을 **좌표로** 직접 밀어낸다(설계서 §3).
- *
- * ⚠️ `e.vx`/`e.vy` 에 실으면 안 된다. 적 속도는 이동 컴포넌트가 매 틱 대입으로 덮어쓰므로
- * (patterns/index.ts 의 moveStandoff·moveSeekWounded·stationary) 밀어내기가 다음 틱에 흔적
- * 없이 사라지고, **화면상 아무 일도 안 일어나는데 그 1틱의 해시만 갈린다.** 좌표를 직접
- * 옮기는 선례가 바로 위 `applySingularityPull` 이며 산술 형태를 그대로 복제했다 —
- * `length` 1회 · 나눗셈 1회 · 곱셈 1회, `Math.pow`/`Math.hypot`/각도 경유 없음.
- * (ADR-0005 의 정수 bp 규율은 배율·피해 산술에 대한 것이고 위치는 f64 로 해시된다.)
- *
- * 대상은 `enemy` 로만 좁힌다 — 침공 방어체(prop·facility*)는 배치 좌표가 소켓 계약이라
- * 밀면 안 되고, 벽은 activeWalls·wallIndex 재빌드와 얽힌다.
- *
- * ## 침공에서도 그대로 작동한다 — 팬텀과 달리 게이트하지 않는 근거 (적대적 리뷰 wiring MED-2)
- * 침공 L1 편대원은 `kind === 'enemy'` 라 이 밀어내기의 대상이고, `refreshFormationAffixes`
- * (invasion/formation.ts)가 **매 틱** `resolveDefenseMods(set, trigger, e.x, e.y)` 로 좌표 기반
- * 어픽스를 다시 접는다. 그럼에도 게이트하지 않는 이유: 그 재계산은 원래 **매 틱 살아 있는 좌표**
- * 에서 이뤄지고 적은 어차피 매 틱 이동한다 — 파열은 "한 틱에 크게 움직인 이동" 일 뿐 계약을
- * 깨지 않는다. 팬텀을 침공에서 뺀 사유는 좌표가 아니라 **방어체가 공격할 수 있는지 여부**를
- * 바꾸는 것이었다(DefenseTriggerState 의 입력 자체가 사라진다). 둘은 같은 문제가 아니다.
- * (이 판단을 문서에 남기지 않으면 다음 세션이 "왜 하나만 게이트돼 있나" 를 다시 묻게 된다.)
- */
-/**
  * `resolveCollisions` 의 시그니처 완화 스택(브루저 장갑 → 버블 방막 → 말로우 완충)을 타지 않고
  * `player.hp` 를 **직접** 깎는 경로에서, 시그니처의 "무피격" 의미만이라도 맞춰 준다.
  *
@@ -2357,34 +2519,15 @@ function noteDirectPlayerDamage(state: WorldState, player: Entity): void {
   }
 }
 
-function burstFilm(state: WorldState, player: Entity): void {
-  const push = filmBurstPush();
-  const r2 = FILM_BURST_RADIUS * FILM_BURST_RADIUS;
-  for (const e of state.entities) {
-    if (e.dead || e.kind !== 'enemy') continue;
-    const dx = e.x - player.x;
-    const dy = e.y - player.y;
-    const d2 = dx * dx + dy * dy;
-    // 반경 판정은 제곱 비교로(선례: nearestTarget·applySingularityPull) — sqrt 를 아끼는 것이
-    // 아니라 반경 밖 적에 대해 산술 자체를 실행하지 않기 위해서다.
-    if (d2 > r2) continue;
-    const d = length(dx, dy);
-    // 플레이어와 정확히 겹친 적은 밀 방향이 정의되지 않는다 — 임의 방향을 만들지 않고 둔다.
-    if (d <= 1) continue;
-    e.x += (dx / d) * push;
-    e.y += (dy / d) * push;
-    // ⚠️ 밀어낸 직후 벽 충돌을 **즉시** 재해결한다(적대적 리뷰 MED-4). 260 유닛은 벽 두께보다
-    // 크므로, 그냥 두면 침공 회랑처럼 벽이 촘촘한 무대에서 적이 벽 안쪽 깊숙이 박힌다. 다음 틱
-    // 이동 단계의 `slideCircleWalls` 는 **최근접 면**으로 밀어내므로 침투 깊이가 두께의 절반을
-    // 넘으면 반대편으로 튀어나온다(터널링) — 결정론은 유지되므로 서버 재실행도 같은 결과를 내고,
-    // 그래서 해시 검증으로는 절대 잡히지 않는 조용한 배치 계약 위반이 된다.
-    if (state.activeWalls.length > 0) {
-      const slid = slideCircleWalls(e.x, e.y, e.radius, state.activeWalls);
-      e.x = slid.x;
-      e.y = slid.y;
-    }
-  }
-}
+/**
+ * ⚠️ **본문은 `src/sim/filmBurst.ts` 의 `resolveFilmBurst` 로 옮겨졌다**(E3).
+ *
+ * 여기 있던 `burstFilm` 은 `activeHandlers/bubble.ts` 의 `pushBurst` 와 **같은 산술의 두 벌**
+ * 이었다(핸들러가 world 를 런타임 import 하면 순환이라 손으로 베낀 것). 둘을 leaf 모듈 하나로
+ * 합쳐 복제를 없앴다 — 위 문단들의 논거(속도 대신 좌표 변위 · `enemy` 한정 · 침공 무게이트 ·
+ * 벽 재해결)는 전부 그 함수의 주석으로 함께 옮겼다. 새 파열 경로를 만들 때는 이 자리가 아니라
+ * 그 모듈에 얹어라.
+ */
 
 // ---------------------------------------------------------------------------
 // Enemies (pattern engine)
@@ -2645,7 +2788,7 @@ function autoAttack(state: WorldState, player: Entity): void {
     // 토큰만 소진한다 — **aux0(무피격 스트릭)은 건드리지 않는다.** 은신을 푸는 것은 피격이지
     // 발사가 아니다(stepShipSignature 팬텀 분기 주석). aux0 을 여기서 0 으로 되돌리면 은신이
     // 사실상 발동하지 않는 초판 결함으로 되돌아간다.
-    player.aux1 = 0;
+    setBreakToken(state, player, 0); // 토큰 쓰기 단일 경로(E1).
   }
 
   // 스트라이커 시그니처 — 정조준 사이클(설계서 §1). aux0 = 사이클 진행 카운터(0..11+) ·
@@ -3201,24 +3344,57 @@ function stepTurrets(state: WorldState, _player: Entity): void {
       t.cooldown--;
       continue;
     }
-    const target = nearestTarget(state, t, TURRET_RANGE);
-    if (target === undefined) continue;
-    const ang = atan2(target.y - t.y, target.x - t.x);
-    spawnBullet(
-      state,
-      t.x,
-      t.y,
-      ang,
-      TURRET_BULLET_SPEED,
-      TURRET_BULLET_DAMAGE,
-      0,
-      TURRET_BULLET_RADIUS,
-      TURRET_BULLET_LIFE,
-      cos(ang),
-      sin(ang),
-    );
-    t.cooldown = TURRET_FIRE_COOLDOWN;
+    // 쿨다운은 **쏜 경우에만** 리셋한다 — 표적이 없어 못 쏜 틱에 리셋하면 사거리 밖에서
+    // 대기하는 동안 쿨다운이 계속 되감겨 표적이 들어오는 순간의 첫 발이 늦어진다.
+    if (fireTurretShot(state, t)) t.cooldown = TURRET_FIRE_COOLDOWN;
   }
+}
+
+/**
+ * 포탑 1기의 **1발 격발** — 표적 조회 → 아군탄 생성. `stepTurrets` 에서 추출했다
+ * (E6 · ADR-0049 선결, `prerequisites.md` §2).
+ *
+ * ## 왜 추출하는가
+ * 해츨링 BD8(브루드 강습)은 **액티브 발동 틱에 살아 있는 병아리 전원이 쿨다운을 무시하고 즉시
+ * 1발 격발**한다. 그 발사가 `stepTurrets` 루프 안에만 있으면 핸들러가 같은 코드를 복제해야 하고,
+ * 복제된 두 발사는 조용히 갈린다(탄속·피해·수명이 한쪽에서만 바뀌는 식). 이 커밋에서는 아무도
+ * 이 헬퍼를 두 번째로 부르지 않으므로 **거동은 완전히 불변**이다 — 추출만 한다.
+ *
+ * ## 계약
+ *  · **쿨다운을 건드리지 않는다.** 리듬 관리는 호출부 책임이다 — BD8 이 "쿨다운을 무시하고"
+ *    쏘려면 발사와 쿨다운이 분리돼 있어야 한다. `stepTurrets` 는 반환값을 보고 자기가 리셋한다.
+ *  · **RNG 를 소비하지 않는다.** `nearestTarget` 은 거리·id tie-break 결정론이고 `spawnBullet` 도
+ *    난수를 안 쓴다. 이 계약은 `stepHatchBrood` 의 RNG 미소비 계약과 한 몸이다 — 병아리 경로
+ *    어디에서도 스트림이 밀리면 안 된다(공통-B).
+ *
+ * ## ⚠️ 병아리 탄 마커(`ownerId = BROOD_MARK`)가 들어올 자리는 **여기 한 곳**이다
+ * 설계(`hatchling.md` ⑤ 공통 고지 ⑦)는 SH5·BD4·NU5 가 "이 탄이 병아리 탄인가"를 이 마커로
+ * 판정하도록 정했고, 스탬프 지점은 이 함수뿐이어야 한다(`t.ownerId === BROOD_MARK` 인 포탑이
+ * 쏜 탄에만). **다만 이 커밋에서는 찍지 않았다** — `ownerId` 는 `ENTITY_HASH_LAYOUT` 의 u32
+ * 폴드 대상이라 스탬프는 거동·해시 변경이고(병아리가 쏘는 모든 런의 탄 해시가 갈린다),
+ * 이 커밋의 계약은 「거동 불변」이다. 스킬 배선 커밋에서 골든 재생성·EF 재배포와 **한 원자로**
+ * 찍어라. 여기 말고 다른 곳에서 찍으면 드론 베이·센트리 탄까지 물들거나 경로가 반쪽이 된다.
+ *
+ * @returns 실제로 쐈으면 `true`. 사거리 안에 LOS 가 통하는 표적이 없으면 `false`(무발사).
+ */
+function fireTurretShot(state: WorldState, t: Entity): boolean {
+  const target = nearestTarget(state, t, TURRET_RANGE);
+  if (target === undefined) return false;
+  const ang = atan2(target.y - t.y, target.x - t.x);
+  spawnBullet(
+    state,
+    t.x,
+    t.y,
+    ang,
+    TURRET_BULLET_SPEED,
+    TURRET_BULLET_DAMAGE,
+    0,
+    TURRET_BULLET_RADIUS,
+    TURRET_BULLET_LIFE,
+    cos(ang),
+    sin(ang),
+  );
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -3861,9 +4037,11 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // 그 함수의 `Math.trunc` 만 뺐다 — 접촉 피해에는 엘리트 배율이 섞여 소수가 될 수 있고,
     // trunc 는 스택 0(bp=0)일 때조차 소수부를 지워 **무스택 피해까지 바꾼다.** 정수 피해에
     // 대해 두 경로가 같은 값임은 tests/weapons.test.ts 가 못 박는다.
+    // ⚠️ bp 계산은 **직접 곱하지 말고 반드시 `armorReductionBp`** 로 한다(E4): 상한이 런마다
+    // 달라지므로 이 자리에서 상한을 따로 해석하면 순수 함수 경로와 조용히 갈린다.
     const armorOn = signatureOn(state, SIG_BRUISER_ARMOR);
     if (armorOn) {
-      const bp = clampArmorStacks(player.aux0) * ARMOR_PER_STACK_BP;
+      const bp = armorReductionBp(player.aux0, state.armorMaxStacks);
       if (bp > 0) dmg -= Math.round((dmg * bp) / 10000);
     }
     // 버블 시그니처 — 방막 흡수(설계서 §3·§4). 막은 선체 **바깥** 층이므로 브루저 장갑 감소
@@ -3893,7 +4071,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         // 사연 관측(비-해시): 막이 이번 피격으로 소진돼 파열한 이 지점에서만 센다. 결정론
         // 무영향 — hashWorld 가 접지 않는 순수 메타.
         state.filmPops++;
-        burstFilm(state, player);
+        // 시그니처 소진 파열은 **요청을 거치지 않고 그 자리에서** 해소한다(E3, `bubble.md` ①-3
+        // 의 소비 위상 ②). 피격 처리 한복판이라 이 틱의 남은 피해 계산이 파열 결과를 보아야
+        // 하고, 액티브 요청 소비 지점은 이미 지나갔다.
+        resolveFilmBurst(state, player.x, player.y);
       }
       // ⚠️ 막이 전량 흡수했으면 **여기서 함수를 빠져나간다** — 다만 무적 창은 세우고 나간다.
       //    · 나머지 피격 후속(과열 스택 리셋·반응 장갑 펄스·위상 전환막·장갑 적립)은
@@ -3935,8 +4116,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     if (player.hp < 0) player.hp = 0;
     player.iframes = state.config.hitIframes;
     // 브루저 시그니처 — 실제로 피해를 입은 이번 피격으로 장갑 1스택 적립 + 소멸 타이머 리셋.
+    // 적립 상한도 감소 상한과 **같은 정본**(`state.armorMaxStacks`)을 읽는다 — 둘이 갈리면
+    // "쌓이는데 안 깎이는"(또는 반대) 상태가 조용히 생긴다(E4).
     if (armorOn) {
-      player.aux0 = clampArmorStacks(player.aux0 + 1);
+      player.aux0 = clampArmorStacks(player.aux0 + 1, state.armorMaxStacks);
       player.aux1 = 0;
     }
     // 말로우 시그니처 — 실제로 피해를 입은 이번 피격에서만 지연분을 적립하고 무피격 스트릭을
@@ -3948,9 +4131,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       player.aux0 += deferred;
     }
     // 팬텀 시그니처 — 실제로 피해를 입은 이번 피격에서만 무피격 스트릭과 해제 표식을 리셋한다.
+    // `aux1` 은 직접 대입하지 않고 `setBreakToken` 을 거친다(E1 — 토큰 쓰기 단일 경로).
     if (signatureOn(state, SIG_PHANTOM_CLOAK)) {
       player.aux0 = 0;
-      player.aux1 = 0;
+      setBreakToken(state, player, 0);
     }
     // ① 과열 드럼: 피격 시 연속 명중 스택 리셋(장착 시에만 phase가 비0).
     if (overheatOn) player.phase = 0;

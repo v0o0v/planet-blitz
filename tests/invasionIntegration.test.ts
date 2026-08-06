@@ -73,10 +73,28 @@ function step(state: WorldState, input: InputFrame = IDLE): void {
   stepWorld(state, state.pendingLevelUp ? { ...input, special: packPowerupPick(0) } : input);
 }
 
+/**
+ * 관측 대상 레이어에 **도착시키는** 이동 수단이다 — 파일럿의 실력을 재는 장치가 아니다.
+ *
+ * 페이즈 전이는 soft 예산(`INVASION_LAYER_TICKS`)이 보장한다(`phase.ts` `shouldAdvancePhase`) —
+ * 잘 싸워서 구간을 비우면 빨리, 못 싸워도 예산이 차면 강제로 넘어간다. **단 하나의 전제는
+ * 파일럿이 살아 있는 것**이라, 무입력 파일럿이 도중에 죽으면 이 함수가 L1 에 갇힌 채 반환하고
+ * 아래 배선 단언들이 "L3 에 코어가 없다"로 무더기 실패한다(2026-08-05~08-06 main 상시 실패).
+ *
+ * 그래서 **가는 길에서만** HP 를 채운다(ADR-0051 §1 — 배선 단언은 "봇이 이길 수 있는가"에
+ * 의존해선 안 된다). 목표 레이어에 도착한 뒤로는 손대지 않으므로, 그 레이어의 유해성을 재는
+ * 단언(§④ 코어방 피해)은 온전한 실측으로 남는다.
+ */
+function sustainPlayer(state: WorldState): void {
+  const p = state.entities[0];
+  if (p !== undefined && p.kind === 'player' && !p.dead) p.hp = p.maxHp;
+}
+
 /** 페이즈가 바뀔 때까지(또는 상한까지) 돌린다. 반환 = 실제로 돈 틱 수. */
 function runUntilPhase(state: WorldState, target: number, maxTicks: number): number {
   let t = 0;
   while (t < maxTicks && state.invasion3!.phase !== target && !state.gameOver) {
+    sustainPlayer(state);
     step(state);
     t++;
   }
@@ -249,17 +267,22 @@ describe('침공 3레이어 통합 — 런 수명', () => {
     // 측정에 섞인다 — 레벨업을 소비해야 런이 진행되는데(step 주석), 그 선택이 플레이어를
     // 강화해 치사 여부가 밸런스 조정마다 뒤집힌다. 그래서 사망이 아니라 **L3 구간 피해량**을
     // 잰다: 무입력 플레이어가 코어방에서 최대 HP 의 상당 비율을 잃어야 한다.
-    // (L3 진입 시 HP 는 레이어 클리어 회복 보너스로 채워지므로 진입 시점을 기준선으로 쓴다.)
+    //
+    // L1·L2 는 이 단언의 관측 대상이 아니다 — 거기서 죽으면 코어방을 아예 못 재므로
+    // `runUntilPhase` 가 가는 길에서만 HP 를 채워 데려온다(`sustainPlayer` 주석). **L3 진입
+    // 이후로는 한 번도 채우지 않으므로** 아래 피해량은 코어방이 실제로 낸 값 그대로다.
     const state = makeInvasionWorld();
-    let hpAtL3 = -1;
+    runUntilPhase(state, PHASE_L3, INVASION_TOTAL_TICKS);
+    expect(state.invasion3?.phase).toBe(PHASE_L3);
+    const player = state.entities[0]!;
+    const hpAtL3 = player.hp;
+    expect(hpAtL3).toBeGreaterThan(0);
     for (let i = 0; i < INVASION_TOTAL_TICKS; i++) {
       step(state);
-      if (hpAtL3 < 0 && state.invasion3!.phase === PHASE_L3) hpAtL3 = state.entities[0]!.hp;
       if (state.gameOver || state.victory) break;
     }
-    expect(hpAtL3).toBeGreaterThan(0);
-    const lost = hpAtL3 - state.entities[0]!.hp;
-    expect(lost).toBeGreaterThanOrEqual(Math.round(state.entities[0]!.maxHp / 4));
+    const lost = hpAtL3 - player.hp;
+    expect(lost).toBeGreaterThanOrEqual(Math.round(player.maxHp / 4));
   });
 });
 

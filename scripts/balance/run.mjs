@@ -167,6 +167,39 @@ function emitReport(rs, m, extra, dir, writeRaw) {
             .join(' ') + (g.violations.length > 5 ? ` (+${g.violations.length - 5})` : '');
     log(`  ${g.pass ? 'PASS' : 'FAIL'} ${g.metric} [${band}] (${g.scope}) ${detail}`);
   }
+  // -------------------------------------------------------------------------
+  // 계측기 자기점검 — "죽은 계측기(항상 0)는 갈아 끼워라"
+  // -------------------------------------------------------------------------
+  // PvE 승리는 **정의상 보스 처치**다(`compact()` 의 보스 분기가 유일한 승리 경로). 따라서
+  // "이겼는데 보스를 한 번도 못 봤다"는 밸런스 신호가 아니라 **관측기 고장**이다.
+  //
+  // 실제로 니플헤임(추격) 2,240런 중 승리 422건이 전부 `bossReachRate=0` 으로 이 리포트에
+  // 실린 적이 있다. 원인은 `wave.boss` 를 게이트로 쓴 것이었고(추격 모드에서 구조적으로 거짓),
+  // 그동안 **게이트는 전부 초록**이었다 — 지표가 아무것도 안 보는 상태를 아무도 못 잡았다.
+  //
+  // ⚠️ 이 점검은 **봇의 승리를 요구하지 않는다.** 승리가 0건이면 후보 집합이 비어 조용하다.
+  //    승리가 있는데 그 중 `bossReachRate=0` 이 섞였을 때만 운다. 그래서 "봇이 이기는가"에
+  //    의존하는 단언(ADR-0051 갈래 ②)이 아니라 계측기의 자기점검이다.
+  // ⚠️ 런 단위로 본다(집계 평균이 아니라). 한 행성만 고장 나면 전체 평균 뒤에 숨기 때문이다.
+  // ⚠️ 출력은 **ASCII 만**이다 — 사용자가 PowerShell 콘솔에서 돌리므로 한글은 mojibake 가 된다.
+  //    그래서 행성도 이름 대신 `p<index>` 로 쓴다(`planetAxis()` 라벨은 한글이다).
+  const blindWins = rs.filter((r) => r.won === true && !((r.values?.bossReachRate ?? 0) > 0));
+  if (blindWins.length > 0) {
+    const wins = rs.filter((r) => r.won === true).length;
+    const byPlanet = new Map();
+    for (const r of blindWins) byPlanet.set(r.planet, (byPlanet.get(r.planet) ?? 0) + 1);
+    const where = [...byPlanet.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([p, n]) => `p${p}=${n}`)
+      .join(' ');
+    log(`[INSTRUMENT-FAULT] ${blindWins.length}/${wins} winning runs have bossReachRate=0 (by planet: ${where})`);
+    log('[INSTRUMENT-FAULT] This combination is structurally impossible: a PvE win IS a boss kill,');
+    log('[INSTRUMENT-FAULT] so every winning run must have observed an engageable boss.');
+    log('[INSTRUMENT-FAULT] => MEASUREMENT WIRING is broken, this is NOT a balance result.');
+    log('[INSTRUMENT-FAULT] => Do NOT tune numbers from this report. Fix bossEngageable() in');
+    log('[INSTRUMENT-FAULT]    src/bench/balance/cell.ts first (boss reachability is per-mode).');
+  }
+
   log(`report: ${join(dir, 'report.md')}`);
   return failed.length;
 }

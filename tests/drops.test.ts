@@ -25,10 +25,6 @@ import {
 import { SeededRng } from '../src/sim/rng.js';
 import { isElite } from '../src/sim/elite.js';
 import { stageParams } from '../data/waves.js';
-import { autopilotInput } from '../src/sim/autopilot.js';
-import { buildRunConfig } from '../src/run/runConfig.js';
-import { defaultProfile, activeShip } from '../src/save/profile.js';
-import { standardEquipped, standardSkillInvest } from '../src/bench/standardBuild.js';
 
 function countKind(state: { entities: { kind: string }[] }, kind: string): number {
   return state.entities.filter((e) => e.kind === kind).length;
@@ -139,62 +135,25 @@ describe('엘리트 드랍 확률화 (ADR-0035, L3)', () => {
 });
 
 /**
- * ADR-0035 "런당 장비 유입 2~3개" 를 **정규 경로 실런**으로 못박는 통합 가드.
+ * ## 삭제된 가드 — "런당 장비 유입 2~3개" 통합 가드 (2026-08-06, ADR-0051)
  *
- * ## 왜 단위 테스트로는 부족한가 (이 가드가 존재하는 이유)
- * `eliteDropChance` 의 단위 테스트는 `기대 = 카드수 × eliteCount × p` 가 상수임만 확인한다.
- * 그런데 그 산식의 입력인 {@link EXPECTED_CARDS_PER_RUN} 은 **런 길이에 종속된 실측 상수**다 —
- * `data/waves.ts` 의 `SEGMENTS.killGoal` 예산이 바뀌면 조용히 낡는다. 2026-07-27 적 곡선 레인이
- * killGoal 합계를 80 → 240 으로 올리자 카드가 15 → 42장이 되어 **런당 장비가 2.5개에서 5.4개로
- * 뛰었는데, 단위 테스트는 전부 초록이었다.** 이 리포의 반복 결함("단위 테스트 그린인데 배선이
- * 통째로 어긋나 있다")과 정확히 같은 형태다.
+ * 여기에 표준 빌드 16시드를 **완주까지** 돌려 런당 장비 드랍 평균이 2~3개인지 보는 가드가
+ * 있었다. 그 가드는 `filter((r) => r.victory)` 로 표본을 만들고 `승리 4건 이상`을 공허 가드로
+ * 걸었으므로, 단언이 통째로 **"봇이 이길 수 있는가"에 의존**했다 — ADR-0051 §1 의 판정 규칙에
+ * 정확히 걸린다. 실제로 2026-08-05 피격 피해 2배 이후 승리가 2건으로 떨어져 main 상시 실패였다.
  *
- * ## 무엇을 세는가
- * 촉매 무주입이면 `bonusLootSeeds` 가 빈 배열이므로 **그 런이 만든 장비 드랍 전량**은
- * `state.loot`(수거분 + 승리 틱 직접 기록분) + 바닥에 남은 `loot` 엔티티다. 수거율은 봇이
- * 바닥 전리품을 향해 이동하지 않는 특성에 좌우되므로(`autopilotInput` 은 loot 를 안 본다)
- * **수거분이 아니라 생성 전량**을 세야 설계값과 비교된다.
+ * **최소 틱으로 다시 쓰지 못했다.** 이 가드가 지키던 것은 {@link EXPECTED_CARDS_PER_RUN} 이
+ * 낡는 것인데, 카드 수는 `cardInterval` · `killGoal` · 급행 램프가 함께 만드는 **런 길이 종속
+ * 창발값**이라 `SEGMENTS` 에서 산술로 파생시킬 수가 없다. 수백 틱으로는 잴 수 없고, 재려면
+ * 완주가 필요하다.
+ *
+ * ## 그래서 지금 못 잡는 것
+ * `SEGMENTS.killGoal` **합계**를 바꿔 카드 수가 달라져도 스위트는 초록이다(2026-07-27 에
+ * 80 → 240 으로 올라 런당 장비가 2.5 → 5.4개가 됐던 그 사고). `src/sim/drops.ts` 의
+ * `EXPECTED_CARDS_PER_RUN` 주석이 "이 가드가 어긋나면 큰 소리로 실패한다"고 적고 있으나
+ * **그 문장은 이제 사실이 아니다.** 재측정은 출시 직전 밸런스 패스의 1회성 봇 계측
+ * (ADR-0051 §3)에서 한다.
  */
-describe('런당 장비 유입 통합 가드 (ADR-0035 §3.1 — 정규 경로 실런)', () => {
-  /** 표준 빌드(ADR-0035 표준 진행 경로)로 한 런을 끝까지 돌린다. */
-  function standardRun(stage: number, seed: number, planet = 0) {
-    const p = defaultProfile();
-    const s = activeShip(p);
-    s.level = stage * 5;
-    s.skillInvest = standardSkillInvest(s.typeId, s.level);
-    s.equipped = standardEquipped(s.level, 0xbeef, planet);
-    // ⚠️ **행성 인기 배율 1.0 기준으로 고정한다**(ADR-0038). `planetMult` 를 넘기지 않으므로
-    // `planetMultCenti` 가 스탬프되지 않아 배율이 정확히 1 이다. 이 가드가 검증하는 것은
-    // "런당 장비 유입 설계값"이지 배율 합성 결과가 아니다 — 배율 1.20 × 촉매 2.2 같은 조합의
-    // 유입 재보정은 밸런스 큐(출시 전 일괄) 소관이고, 여기서 흔들리면 상수 재측정 신호가 흐려진다.
-    const state = createWorld(seed, buildRunConfig(p, { planet, stage }));
-    for (let i = 0; i < 60 * 400; i++) {
-      stepWorld(state, autopilotInput(state));
-      if (state.gameOver || state.victory) break;
-    }
-    // 촉매 무주입 → bonusLootSeeds 빈 배열 → 아래 합계가 곧 "그 런이 만든 장비 드랍 전량".
-    return { victory: state.victory, drops: state.loot.length + countKind(state, 'loot') };
-  }
-
-  it('완주 런의 장비 드랍이 2~3개다 — 보스 확정 1 + 엘리트 기대 1.5', () => {
-    // ⚠️ 표본을 8 → 16 으로 늘렸다(2026-08-04, 벽 프리팹 레인 · 밸런스 큐 §R50). 벽이 구조물이
-    // 되면서 단계 11 표준 빌드의 완주율이 내려가 8시드로는 승리 런이 2건뿐이었다. 여기서 재는
-    // 것은 **완주 런 한 건당 드랍 수**이므로, 합격선(승리 4건 이상)을 낮추는 대신 **표본을 늘려**
-    // 같은 강도의 가드를 유지한다 — 합격선을 낮추면 이 가드가 재는 표본 자체가 얇아진다.
-    const seeds = [
-      1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014,
-      1015,
-    ];
-    const wins = seeds.map((sd) => standardRun(11, sd)).filter((r) => r.victory);
-    // 표준 빌드가 대응 단계를 완주하지 못하면 이 가드는 아무것도 증명하지 못한다(공허 런 방어).
-    expect(wins.length).toBeGreaterThanOrEqual(4);
-    const mean = wins.reduce((a, r) => a + r.drops, 0) / wins.length;
-    // 상한은 설계 3 에 표본 오차 여유를 얹은 3.5. 이 단언이 깨지면 십중팔구
-    // EXPECTED_CARDS_PER_RUN 이 낡은 것이다 — 카드 수를 다시 재고 상수를 갱신하라.
-    expect(mean, `런당 장비 ${mean.toFixed(2)}개 — EXPECTED_CARDS_PER_RUN 재측정 필요`).toBeGreaterThanOrEqual(2);
-    expect(mean, `런당 장비 ${mean.toFixed(2)}개 — EXPECTED_CARDS_PER_RUN 재측정 필요`).toBeLessThanOrEqual(3.5);
-  });
-});
 
 describe('단계 품질 곡선 (ADR-0035, L8)', () => {
   it('단계1 은 정확히 1.0 이다(단계1 불변 계약 — 부동소수 오차 금지)', () => {

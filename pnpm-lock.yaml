@@ -45,6 +45,9 @@ importers:
       vite:
         specifier: ^6.0.7
         version: 6.4.3
+      vite-node:
+        specifier: ^2.1.9
+        version: 2.1.9(supports-color@7.2.0)
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(supports-color@7.2.0)

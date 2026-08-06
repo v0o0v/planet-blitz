@@ -42,7 +42,7 @@ import type { Entity } from './entities.js';
 type NumericKeys<T> = { [K in keyof T]-?: T[K] extends number ? K : never }[keyof T];
 
 // ---------------------------------------------------------------------------
-// WorldState 분류 (61필드)
+// WorldState 분류 (72필드)
 // ---------------------------------------------------------------------------
 
 /**
@@ -152,6 +152,18 @@ export const WORLD_FRESH = [
   'bulletCap',
   'enemyBulletCount',
   'sigBit',
+  // `armorMaxStacks` 는 `sigBit`·`catalystMods` 와 같은 부류다 — 승계된 `config` 로부터
+  // `createWorld` 가 재도출하는 순수 파생값이라 승계 목록에 넣으면 정본이 둘이 된다(E4).
+  'armorMaxStacks',
+  // E3 버블 파열 요청 슬롯 6칸. **틱 내 스크래치**다 — 세운 틱 안에서 소비되고 0 으로
+  // 되돌아가므로 구간 경계에서 값이 서 있을 수 없다. 승계·0리셋 어느 쪽도 관측 불가한
+  // 무연산이라, 새 월드의 초기값을 그대로 쓰는 이 분류가 유일하게 정직하다.
+  'filmBurstReq0',
+  'filmBurstReqX0',
+  'filmBurstReqY0',
+  'filmBurstReq1',
+  'filmBurstReqX1',
+  'filmBurstReqY1',
   'combo',
   'comboTimer',
   'playerSlowTicks',
@@ -165,6 +177,10 @@ export const WORLD_FRESH = [
   'generatedChunks',
   'activeWalls',
   'wallIndex',
+  // E5 벽 접촉(ADR-0049). `activeWalls` 와 같은 부류다 — 벽 기하에서 매 틱 파생되는 스크래치라
+  // 구간이 바뀌면 벽도 좌표도 통째로 새것이다. 이월하면 **새 무대 첫 틱부터 "이미 60틱 붙어
+  // 있었다"** 가 되어 ME9(K=60 연속 접촉)가 접촉 없이 열린다.
+  'wallContactTicks',
   'moduleRuntime',
   'invasion3',
   'invasion3Bombs',

@@ -12,17 +12,23 @@
  *    대응 단계(`ceil(Lv/5)`)를 도는 절대 난이도 곡선. 적 곡선 튜닝(Lane D)의 입력이다.
  *    시드 96개(이항 SE ±4.7pp)를 쓴다.
  *
- * Run:
- *   npx vite-node src/bench/rosterBench.ts                      (전 무대, 진행 로그만)
- *   npx vite-node src/bench/rosterBench.ts --stages=0,1 --json  (부분 실행 + JSON stdout)
- *   npx vite-node src/bench/rosterBench.ts --json > out.json
- *   npx vite-node src/bench/rosterBench.ts --md                 (요약 마크다운 stdout)
- *   npx vite-node src/bench/rosterBench.ts --curve --md         (표준 빌드 곡선)
+ * ## 실행 (2026-08-06 정정 — 종전 사용법이 실제로는 안 돌았다)
  *
- * ⚠️ **이 워크트리에는 `vite-node` 가 없다.** 위 명령은 참고용이고, 실제 실행은 임시 vitest
- * 파일에서 아래 export 를 직접 호출한다(재현 절차는 `.omc/research/roster-curve-baseline-2026-07-27.md`
- * §재측정 방법). 그래서 `main()` 은 CLI 진입일 때만 실행되도록 게이트돼 있다 — import 만으로
- * 2016런이 돌지 않게 하는 장치다.
+ * **곡선 모드는 `bench/runCurve.ts` 가 유일한 진입점이다.** 실행법은 그 파일 머리 주석에 있다.
+ *   SEEDS=3 node <vite-node.mjs 경로> bench/runCurve.ts -- --levels=10,40
+ *
+ * **매트릭스 모드**(아래 `main()`)는 `argv[1]` 이 이 파일일 때만 돈다({@link isCliEntry}).
+ * `--stages=0,1` · `--json` · `--md` 를 받는다.
+ * ⚠️ **`vite-node` 로는 매트릭스가 안 돈다** — `vite-node` 가 스크립트 경로를 argv 에서 지워
+ * 게이트가 거짓이 되기 때문이다(전말은 {@link isCliEntry} 주석). 곡선처럼 전용 CLI 로 빼면
+ * 풀리지만, 매트릭스는 2016런짜리라 상시 수요가 없어 그대로 뒀다. 필요해지면 `bench/` 에
+ * `runMatrix.ts` 를 같은 형태로 추가해라.
+ *
+ * ⚠️ 종전 이 자리에는 `npx vite-node src/bench/rosterBench.ts --curve --md` 가 사용법으로
+ * 적혀 있었다. `vite-node` 가 `.bin` 에 링크되지 않아 `npx` 로는 애초에 실행되지 않았고,
+ * 경로를 직접 줘도 위 게이트 때문에 **출력 0바이트 · 종료 코드 0** 으로 조용히 끝났다.
+ * 문서에 적힌 버튼이 눌리지 않는 상태가 오래 유지됐으므로, 사용법을 고칠 때는 **적기 전에
+ * 실제로 한 번 돌려라.**
  *
  * ## 결정론
  * 시드는 아래 {@link SEEDS} 하드코딩 목록이다 — `Math.random` 을 쓰지 않는다.
@@ -83,8 +89,15 @@ import { CI_SEEDS, FIXED_SEEDS } from './balance/seeds.js';
  */
 const SEEDS: readonly number[] = FIXED_SEEDS;
 
+/**
+ * {@link SEEDS} 의 공개 이름 — `bench/runCurve.ts` 가 축소 실행(`SEEDS=n`)의 기준 목록으로 쓴다.
+ * 별칭을 둔 이유는 CLI 쪽에서 `SEEDS` 가 환경변수 이름과 겹쳐 읽기 나쁘기 때문이다.
+ * **새 시드 배열을 만들지 마라** — 위 주석대로 이 배열이 유일한 96시드 정본이다.
+ */
+export const ROSTER_SEEDS: readonly number[] = SEEDS;
+
 /** 게임 자체에는 타임아웃이 없다(보스 처치 or 사망만 종료) — 저장소 표준 상한 18000틱. */
-const MAX_TICKS = 60 * 300;
+export const MAX_TICKS = 60 * 300;
 
 interface Stage {
   readonly key: string;
@@ -160,6 +173,18 @@ interface RunResult {
   readonly kills: number;
   readonly level: number;
   readonly xpTotal: number;
+  /**
+   * 런 동안 **수거한** 장비 드랍 수(= `state.loot.length`) — 런당 장비 유입 축.
+   *
+   * ⚠️ **하한이다.** 바닥 드랍은 접촉 자동 수거라 대부분 들어오지만, 일찍 죽은 런은 수거하지
+   * 못한 바닥 전리품을 남긴다. 그래서 "유입된 장비 수 이하"가 항상 참이고 그 반대는 아니다 —
+   * 대리 지표는 **하한으로만** 안전하다는 규율 그대로 읽어라(평균만 보지 말고 분포로 본다).
+   *
+   * 이것은 {@link ../sim/drops.ts EXPECTED_CARDS_PER_RUN} 이 세는 **카드 수가 아니다.**
+   * 카드는 `cardInterval`·`killGoal`·급행 램프가 함께 만드는 런 길이 종속 창발값이라 sim 에
+   * 누적 카운터가 없다(집계에서 뺀 것이 아니라 애초에 세지 않는다).
+   */
+  readonly lootCount: number;
   readonly segment: number;
   /** 보스 세그먼트에 도달했는가. */
   readonly sawBoss: boolean;
@@ -283,6 +308,7 @@ function runOne(
       kills: state.kills,
       level: state.level,
       xpTotal: state.xpTotal,
+      lootCount: state.loot.length,
       segment: state.wave.segmentIndex,
       sawBoss,
       bossDps,
@@ -521,6 +547,22 @@ export interface CurvePoint {
   readonly deathSec: Dist;
   readonly bossReachRate: number;
   readonly killsPerSec: Dist;
+  /**
+   * 런당 메타 XP 총량 분포(`state.xpTotal`) — `RUN_META_XP_STAGE1` · 런당 레벨업 재측정 진입점.
+   *
+   * ADR-0051 이 봇 완주 e2e 게이트를 내리면서 이 축의 자동 감시가 사라졌고, 완화책이 "①을
+   * 도구로 살려 둔 것"이다. 그 도구가 XP 를 못 재면 완화가 성립하지 않으므로 여기 얹었다 —
+   * 데이터는 `RunResult.xpTotal` 이 원래 들고 있었고 집계에서만 떨어뜨리고 있었다.
+   *
+   * ⚠️ **평균만 읽지 마라.** 승리 런과 조기 사망 런의 XP 는 자릿수가 다르므로 평균 하나로는
+   * 두 무리가 섞인 것을 못 본다 — `p25/p50/p75` 를 함께 봐야 분포가 갈라졌는지 드러난다.
+   */
+  readonly xpTotal: Dist;
+  /**
+   * 런당 **수거한** 장비 드랍 수 분포. 세부 규율은 {@link RunResult.lootCount} 주석 참고 —
+   * 요점은 ①유입량의 **하한**이고 ②`EXPECTED_CARDS_PER_RUN` 이 세는 카드 수가 **아니라는** 것.
+   */
+  readonly lootCount: Dist;
   /** 스킬 배분(offense/utility/defense). */
   readonly perTree: readonly [number, number, number];
   /** 표준 장비 설계값 요약. `affixes` = 세트 전체 어픽스 총합(등급이 정한다 — 밴드 축이 아니다). */
@@ -630,6 +672,10 @@ export function runCurveSweep(opts: CurveOpts = {}): CurvePoint[] {
       deathSec: dist(losses.map((r) => r.ticks / 60)),
       bossReachRate: rows.length > 0 ? rows.filter((r) => r.sawBoss).length / rows.length : 0,
       killsPerSec: dist(rows.map((r) => r.killsPerSec)),
+      // 전 런(승패 무관)을 센다 — 이 두 축이 재려는 것은 "이긴 런이 얼마나 벌었나"가 아니라
+      // "런 하나가 경제에 얼마를 넣는가"이고, 조기 사망 런도 그 분포의 일부다.
+      xpTotal: dist(rows.map((r) => r.xpTotal)),
+      lootCount: dist(rows.map((r) => r.lootCount)),
       perTree,
       gear: {
         fill: design.fill,
@@ -694,6 +740,30 @@ export function renderCurveMarkdown(
     );
   }
   L.push('');
+  L.push('### 런당 경제 유입 — 메타 XP · 장비 드랍');
+  L.push('');
+  L.push(
+    '`RUN_META_XP_STAGE1`(런당 레벨업)과 런당 장비 유입을 재는 자리다. ' +
+      '**전 런(승패 무관)** 집계이며, 장비 수는 *수거한* 드랍이라 유입량의 **하한**이다.',
+  );
+  L.push('');
+  L.push(
+    '⚠️ 평균만 읽지 마라 — 승리 런과 조기 사망 런은 자릿수가 다르므로 p25/p50/p75 가 갈라져 ' +
+      '있으면 두 무리가 섞인 것이다. 카드 수(`EXPECTED_CARDS_PER_RUN`)는 **이 표에 없다**: ' +
+      'sim 에 누적 카운터가 없어 세지 못한다.',
+  );
+  L.push('');
+  L.push('| 표준 Lv | XP 총량 | XP p25/p50/p75 | 장비 드랍 | 장비 p25/p50/p75 |');
+  L.push('|---|---|---|---|---|');
+  for (const p of points) {
+    L.push(
+      `| ${p.level} | ${f1(p.xpTotal.mean)}±${f1(p.xpTotal.sd)} | ` +
+        `${f1(p.xpTotal.p25)}/${f1(p.xpTotal.p50)}/${f1(p.xpTotal.p75)} | ` +
+        `${f1(p.lootCount.mean)}±${f1(p.lootCount.sd)} | ` +
+        `${f1(p.lootCount.p25)}/${f1(p.lootCount.p50)}/${f1(p.lootCount.p75)} |`,
+    );
+  }
+  L.push('');
   L.push('### 파생 시작 스탯 (전 시드 평균±sd — 시드마다 장비 롤이 다르므로 분포로 읽는다)');
   L.push('');
   L.push(
@@ -728,44 +798,11 @@ function main(): void {
   const wantJson = argv.includes('--json');
   const wantMd = argv.includes('--md');
 
-  // 곡선 모드는 매트릭스와 완전히 다른 축이라 조기 분기한다(시드도 96 vs 24 로 다르다).
-  if (argv.includes('--curve')) {
-    const seedArgC = argOf(argv, 'seeds');
-    const seedsC = seedArgC === undefined ? SEEDS : SEEDS.slice(0, Number(seedArgC));
-    const shipC = Number(argOf(argv, 'ship') ?? 0);
-    const planetC = Number(argOf(argv, 'planet') ?? 0);
-    const t0c = performance.now();
-    const points = runCurveSweep({
-      ship: shipC,
-      planet: planetC,
-      seeds: seedsC,
-      onPoint: (p) =>
-        console.error(
-          `[rosterBench:curve] Lv${p.level} 단계${p.stage}: clear=${pct(p.clearRate)} survive=${f1(p.survivalSec.mean)}s`,
-        ),
-    });
-    const elapsedC = performance.now() - t0c;
-    if (wantJson) {
-      console.log(
-        JSON.stringify(
-          { meta: { mode: 'curve', ship: shipC, planet: planetC, seeds: seedsC, maxTicks: MAX_TICKS, elapsedMs: elapsedC }, points },
-          null,
-          2,
-        ),
-      );
-    }
-    if (wantJson && wantMd) console.log('===MARKDOWN===');
-    if (wantMd)
-      console.log(
-        renderCurveMarkdown(points, {
-          ship: shipC,
-          planet: planetC,
-          seeds: seedsC.length,
-          elapsedMs: elapsedC,
-        }),
-      );
-    return;
-  }
+  // ⚠️ **곡선 모드(`--curve`)는 여기 없다 — `bench/runCurve.ts` 가 유일한 진입점이다.**
+  // 이 자리에 분기가 있던 시절, `isCliEntry()` 가 `vite-node` 를 못 알아봐서 **출력 0바이트 ·
+  // 종료 코드 0** 으로 조용히 끝났다(그 실패 방식의 전말은 아래 `isCliEntry` 주석). 손잡이를
+  // 둘로 두면 조용히 갈리므로(축소 인자 `--levels` 를 한쪽에만 붙일 뻔했다) 곡선은 전용 CLI
+  // 하나로 모았다. 이 `main()` 은 이제 **매트릭스 모드 전용**이다.
 
   const stageArg = argOf(argv, 'stages');
   const stages =
@@ -838,12 +875,29 @@ function main(): void {
 }
 
 /**
- * CLI 진입일 때만 `main()` 을 돈다.
+ * CLI 진입일 때만 `main()` 을 돈다. 게이트가 없으면 import 만으로 매트릭스 2016런이 돌아
+ * 측정이 불가능해진다.
  *
- * 이 모듈은 이제 곡선 스윕(`runCurveSweep`)을 **export** 한다 — 이 워크트리에는 `vite-node` 가
- * 없어서 임시 vitest 파일이 그것을 import 해 실행하기 때문이다. 게이트가 없으면 import 만으로
- * 매트릭스 2016런이 돌아 측정이 불가능해진다. `process.argv[1]`(실행 스크립트 경로)이 이 파일일
- * 때만 CLI 로 간주한다 — vitest 아래에서는 argv[1] 이 vitest 진입점이라 자연히 거짓이다.
+ * ## ⚠️ 이 게이트는 `vite-node` 를 **못 알아본다** — 알고 남긴 것이다 (2026-08-06)
+ * `vite-node` 는 **스크립트 경로를 argv 에서 통째로 지운다.** 실측:
+ *   `node vite-node.mjs src/bench/rosterBench.ts -- --curve --md`
+ *   -> `argv = [node, vite-node.mjs, --curve, --md]`
+ * argv 어디에도 `rosterBench.ts` 가 없어 게이트가 거짓이 되고, `main()` 이 안 돌아
+ * **stdout 0바이트 · 종료 코드 0** 으로 끝난다. argv[2] 를 함께 보는 수정도 같은 이유로
+ * 실패한다(둘 다 확인함). 곡선 스윕이 이 함정에 빠져 "성공한 척"하고 있었다.
+ *
+ * **해법은 게이트를 느슨하게 푸는 것이 아니라 진입점을 옮기는 것이었다** — 곡선은
+ * `bench/runCurve.ts` 로 나갔고, 그 파일은 `main()` 을 안 거치고 `runCurveSweep` 을 직접
+ * 부르므로 이 게이트와 무관하다. 한때 `ROSTER_BENCH_CLI=1` env 우회를 뒀다가 **지웠다**:
+ * 전용 CLI 가 생긴 뒤에는 손잡이가 둘이 되어 조용히 갈리기 때문이다.
+ *
+ * ## 왜 게이트를 아예 지우지 않았는가 — 원래 위험이 되살아난다 (확인함)
+ * 게이트를 없애고 `main()` 을 무조건 부르면 **import 만으로 매트릭스 2016런이 돈다.**
+ * `bench/runCurve.ts` 가 이 모듈을 import 하므로 곡선을 한 번 돌 때마다 매트릭스가 딸려
+ * 붙는다(실측 근거: 이 게이트가 거짓인 동안 `runCurveSweep` import 는 매트릭스를 돌리지
+ * **않았다** = 게이트가 실제로 그것을 막고 있다는 증거다). 그래서 게이트는 남기고,
+ * 매트릭스 모드 전용으로 범위를 좁혔다. 매트릭스는 `node`(또는 tsx)로 이 파일을 **직접**
+ * 실행할 때만 돈다 — 그때는 argv[1] 이 이 파일이라 게이트가 참이 된다.
  */
 function isCliEntry(): boolean {
   const argv = (globalThis as { process?: { argv?: readonly string[] } }).process?.argv ?? [];
