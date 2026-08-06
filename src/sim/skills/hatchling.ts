@@ -8,7 +8,12 @@
  *
  * ---
  *
- * ## ⚠️ 이 배치가 배선한 것은 30종 중 **9종**이다 — 해츨링이 7기체 중 가장 적다
+ * ## ⚠️ 배선 현황 — **30종 중 16종**(배치 5 의 9종 + 2026-08-07 W레인의 7종)
+ * W레인이 앵커 ㉓·㉔ 로 **BD1·BD2·SH10·NU10·BD6·NU2·NU7** 7종을 얹었다. 아래 4묶음은
+ * **배치 5 시점의 기록**이고 그 사유 문장은 지금도 참이므로 지우지 않는다 — 다만 1묶음
+ * (출격 지점 8종)은 이제 **BD10 하나만 남았다**(사유는 그 묶음 말미와 {@link broodMaxDrones}).
+ *
+ * ## ⚠️ (배치 5 시점 기록) 이 배치가 배선한 것은 30종 중 **9종**이다 — 해츨링이 7기체 중 가장 적다
  * 사유는 기체 고유다. **해츨링 스킬 30종 중 21종의 효과 지점이 `world.ts` 의 두 비공개 함수
  * (`stepHatchBrood` · `stepTurrets`)와 액티브 핸들러 안**이고, 앵커 14개는 그중 어느 것에도
  * 닿지 않는다. 이건 "구현했는데 안 불린다"가 아니라 **아직 코드가 없다** — 미배선 21종의
@@ -25,6 +30,11 @@
  *     위 사유는 **왜 ⑨ 로는 안 되는가**의 기록으로 남긴다(그 문장은 지금도 참이다). 다만
  *     BD10 의 **탄 피해 배율**만은 ㉔ 로도 안 닿는다 — 사유는 그 앵커 doc 말미에 있다(수명
  *     가산은 닿는다).
+ *     ✅ **2026-08-07(W레인)이 이 묶음의 8종 중 7종을 배선했다** — BD1·BD2·SH10·NU10 은
+ *     앵커 ㉓ 에, BD6·NU2·NU7 은 앵커 ㉔ 에 있다. **남은 것은 BD10 하나뿐**이고, 넣지 않은
+ *     이유는 반쪽 배선 금지다: 상한 −1 과 수명 가산은 ㉓·㉔ 로 닿지만 **탄 피해 배율**이
+ *     `stepTurrets`/`fireTurretShot` 소관이라 안 닿아, 상한만 깎으면 순손해 스킬이 된다
+ *     ({@link broodMaxDrones} 주석이 합산식과 함께 그 자리를 비워 두고 있다).
  *  2. **포탑 루프(`stepTurrets`/`fireTurretShot`) 소관 — 6종**: BD7(발사 횟수 누적 강화) ·
  *     BD9(보류 중 발사 간격) · NU1(병아리 자석장) · SH8(적탄 소거·수명 소모) ·
  *     SH9(자연 만료 시 둥지벽) · BD3/NU9 의 자연 만료 경로. 쿨다운 리셋·수명 만료·표적 조회가
@@ -49,7 +59,13 @@
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
+// ⚠️ **타입 전용 import 다**(erasable) — `skillHooks.ts` 가 이 파일을 런타임 import 하므로
+// 값으로 끌어오면 순환이 된다. `BroodParams` 는 앵커 ㉓ 의 계약 그 자체라 사본을 만들지 않는다.
+import type { BroodParams } from '../skillHooks.js';
 import { isActiveTurret, TURRET_LIFE_TICKS } from '../events.js';
+import { blastDamage, clearEnemyBullets } from '../activeTypes.js';
+import { spawnGem } from '../entities.js';
+import { slideCircleWalls } from '../los.js';
 import { applySlow, COLD_DURATION } from '../status.js';
 import { readSlot, writeSlot, HatchlingStage } from '../skillSlots.js';
 import { BROOD_MARK } from '../shipSignature.js';
@@ -68,15 +84,22 @@ import { skillLv } from '../../items/skills.js';
 // 의 `trees` 배열을 보라. 해츨링은 서술 순서(부화→양육→둥지)와 데이터가 일치한다.
 
 const enum Sk {
+  /** BD1 조기 부화 */ earlyHatch = 0,
+  /** BD2 쌍둥이 부화 */ twinHatch = 1,
   /** BD5 격발 공명 */ volleyResonance = 4,
+  /** BD6 부화 충격파 */ hatchShockwave = 5,
+  /** NU2 알껍질 영양 */ eggshellNutrients = 11,
   /** NU5 알 굴리기 */ eggRoll = 14,
   /** NU6 온기 나눔 */ sharedWarmth = 15,
+  /** NU7 원정 부화 */ expeditionHatch = 16,
   /** NU8 이주 본능 */ migrationInstinct = 17,
+  /** NU10 알 저금 */ eggBank = 19,
   /** SH1 호위 희생 */ escortSacrifice = 20,
   /** SH3 만석 둥지 온기 */ fullNestWarmth = 22,
   /** SH5 경계 지저귐 */ alarmChirp = 24,
   /** SH6 알막 */ eggMembrane = 25,
   /** SH7 회생 부화 */ rebirthHatch = 26,
+  /** SH10 확장 둥지 */ expandedNest = 29,
 }
 
 /**
@@ -110,8 +133,28 @@ function lv(state: WorldState, flat: Sk): number {
  * 안 됐으므로 위 경고는 그대로 유효하다**: 두 스킬을 ㉓ 에 얹는 레인은 합산식을 **한 곳에만**
  * 두고(예: 이 파일의 공용 헬퍼) ㉓ 와 SH3 의 만석 술어가 **같은 함수를 읽게** 해라. 두 곳에
  * 따로 적는 순간 위 문단이 경고한 그 갈림이 그대로 재현된다.
+ *
+ * ✅ **2026-08-07(W-해츨링)이 그 헬퍼를 세웠다** — {@link broodMaxDrones} 다. 이 리터럴은
+ * 이제 **기본항 4** 이고, 실효 상한을 읽는 쪽은 앵커 ㉓ 도 SH3 도 전부 그 함수를 통한다.
  */
 const BROOD_MAX_DRONES = 4;
+
+/**
+ * **실효 병아리 상한** — 위 상수의 유일한 소비 지점이다. 앵커 ㉓ 의 `params.maxDrones` 와
+ * SH3 의 만석 술어가 **둘 다 이 함수를 읽는다**(위 경고가 요구한 "한 곳").
+ *
+ * 정본 합산식(설계 BD10)은 `4 − BD10투자유무 + SH10투자유무 (하한 1)` 인데, 여기에는
+ * **SH10 항만 있다.** ⚠️ **BD10 은 이 레인의 범위 밖**이고 그 사유는 반쪽 배선 금지다 —
+ * BD10 은 상한 −1·수명 가산·**탄 피해 배율**의 3축인데 피해 배율만 `stepTurrets`/
+ * `fireTurretShot` 소관이라 앵커 ㉓·㉔ 어느 쪽으로도 닿지 않는다(앵커 ㉔ doc 말미가 같은
+ * 사실을 적는다). 상한만 먼저 넣으면 *"−1기를 내주고 정예화는 안 받는"* 순손해 스킬이
+ * 되므로 넣지 않았다. BD10 을 배선하는 레인은 **이 함수에 `− (bd10 >= 1 ? 1 : 0)` 한 항만**
+ * 더하면 된다(하한 1 클램프는 이미 여기 있다 — 그 항을 위한 것이다).
+ */
+function broodMaxDrones(state: WorldState): number {
+  const n = BROOD_MAX_DRONES + (lv(state, Sk.expandedNest) >= 1 ? 1 : 0);
+  return n > 1 ? n : 1;
+}
 
 /**
  * 살아 있는 병아리 수. 술어는 `world.ts:2627` 의 3중 술어와 **글자 그대로 같다** —
@@ -331,7 +374,9 @@ export function hatchlingSignatureStep(state: WorldState, player: Entity): void 
   // ── SH3 만석 둥지 온기 — 실효 상한 만석인 동안 주기마다 +2(maxHp 클램프).
   //    주기는 config 확정 정수라 `% 0` 이 불가능하다(하한 60).
   if (sh3 >= 1 && player.hp > 0 && player.hp < player.maxHp) {
-    if (state.tick % warmthPeriodTicks(sh3) === 0 && countChicks(state) >= BROOD_MAX_DRONES) {
+    // ⚠️ 만석 술어는 **실효 상한**을 읽는다({@link broodMaxDrones}) — SH10 을 함께 찍으면
+    //    상한이 5 이므로 4기로는 만석이 아니다. 여기서 리터럴을 읽으면 출격 상한과 갈린다.
+    if (state.tick % warmthPeriodTicks(sh3) === 0 && countChicks(state) >= broodMaxDrones(state)) {
       const t = player.hp + 2;
       player.hp = t > player.maxHp ? player.maxHp : t;
     }
@@ -412,4 +457,196 @@ export function hatchlingEnemyDamaged(
   if (source === undefined || source.ownerId !== BROOD_MARK) return;
   if (target.kind !== 'enemy' || target.dead) return;
   applySlow(target, COLD_DURATION + 6 * sh5);
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉓ — `stepHatchBrood` 최상단(두 조기 반환보다 앞)
+// ---------------------------------------------------------------------------
+
+/**
+ * **BD1 조기 부화 · SH10 확장 둥지 · NU10 알 저금 · BD2 쌍둥이 부화.**
+ *
+ * ## 적용 순서가 곧 계약이다
+ * `SH10 페널티(+) → BD1 감산(하한 6) → NU10 선납(−)` 이다. BD1 의 `max(6, …)` 바닥은
+ * **BD1 자신의 것**이라(설계 BD1 이 `max(6, hatchThreshold(k) − …)` 로 명시) SH10 페널티를
+ * 먼저 얹고 그 위에서 깎는다 — 순서를 뒤집으면 SH10 페널티가 바닥을 뚫고 들어와 "큰 둥지가
+ * 더 싸진다"는 반대 거동이 된다. NU10 선납은 바닥 밖이다(설계가 `min(저금, 임계−1)` 로
+ * 자체 하한 1 을 갖는다 — 전액 선납 = 즉시 재출격 루프 차단).
+ *
+ * ⚠️ 앵커 doc 의 경고대로 **`threshold` 에는 엔진 쪽 클램프가 없다** — 하한 6 은 이 훅이
+ * 스스로 건다.
+ *
+ * ## `willLaunch` 는 world 의 두 조기 반환을 **글자 그대로 미러**한 것이다
+ * BD2 의 사건 카운터와 NU10 의 선납 차감은 *"이번 틱에 실제로 출격이 나는가"* 를 알아야
+ * 하는데, 앵커 ㉓ 은 그 판정보다 앞이다. 그래서 같은 두 술어를 여기서 다시 세운다:
+ * `pending >= threshold`(`world.ts` 의 임계 반환) · `live < maxDrones`(상한 반환). 그 둘이
+ * 이 훅이 방금 확정한 값과 **같은 값**을 보므로 판정이 일치한다.
+ * ⚠️ **world 의 두 반환문을 고치면 이 미러도 같이 고쳐야 한다.** 앵커 ㉔ 에서 사후 처리하는
+ * 대안은 안 된다 — ㉔ 은 **기당** 1회라 쌍둥이 틱에 두 번 불리고, 사건 카운터·선납 차감은
+ * 사건당 1회여야 한다(㉔ doc 의 「호출 횟수」).
+ *
+ * `live` 스캔은 BD2·NU10 중 하나라도 투자했을 때만 돈다 — 앵커 doc 이 경고한 "상시 비용"을
+ * 미투자 런에 지우지 않기 위해서다.
+ */
+export function hatchlingBroodLaunchParams(
+  state: WorldState,
+  player: Entity,
+  params: BroodParams,
+): void {
+  // ── SH10 확장 둥지 — 상한 +1 / 요구치 페널티 max(0, 6 − floor(Lv/4)).
+  //    상한은 반드시 공용 헬퍼를 통한다(SH3 만석 술어와 한 몸 — 그 함수 주석이 근거).
+  params.maxDrones = broodMaxDrones(state);
+  const sh10 = lv(state, Sk.expandedNest);
+  if (sh10 >= 1) {
+    const penalty = 6 - Math.floor(sh10 / 4);
+    if (penalty > 0) params.threshold += penalty;
+  }
+
+  // ── BD1 조기 부화 — 요구치 −(1 + floor(Lv/5)), **하한 6**(기본항 12 의 절반).
+  const bd1 = lv(state, Sk.earlyHatch);
+  if (bd1 >= 1) {
+    const t = params.threshold - (1 + Math.floor(bd1 / 5));
+    params.threshold = t > 6 ? t : 6;
+  }
+
+  const bd2 = lv(state, Sk.twinHatch);
+  const nu10 = lv(state, Sk.eggBank);
+  if (bd2 < 1 && nu10 < 1) return;
+
+  // ── NU10 알 저금 — 선납은 **임계를 낮추는 형태**다(앵커 doc: `aux0` 을 만지지 마라).
+  let bank = readSlot(state.skillStage, HatchlingStage.eggBank);
+  let prepay = 0;
+  if (nu10 >= 1 && bank > 0) {
+    const room = params.threshold - 1;
+    prepay = bank < room ? bank : room;
+    if (prepay < 0) prepay = 0;
+    params.threshold -= prepay;
+  }
+
+  const live = countChicks(state);
+  const pending = state.kills - player.aux0;
+  const willLaunch = pending >= params.threshold && live < params.maxDrones;
+
+  if (nu10 >= 1) {
+    const kills = Math.trunc(state.kills);
+    const seen = readSlot(state.skillStage, HatchlingStage.eggBankKillsSeen);
+    if (willLaunch) {
+      bank -= prepay; // 선납분만 차감 — 잔액은 다음 출격으로 이어진다(2R R5 택일).
+    } else if (live >= params.maxDrones && pending >= params.threshold) {
+      // 만석 보류 중 — 이 틱에 늘어난 처치를 적립한다. 상한 = round(8 + 40×Lv/(Lv+16)).
+      const gained = kills - seen;
+      if (gained > 0) {
+        const cap = Math.round(8 + (40 * nu10) / (nu10 + 16));
+        bank += gained;
+        if (bank > cap) bank = cap;
+      }
+    }
+    writeSlot(state.skillStage, HatchlingStage.eggBank, bank);
+    writeSlot(state.skillStage, HatchlingStage.eggBankKillsSeen, kills);
+  }
+
+  // ── BD2 쌍둥이 부화 — N번째 **사건**마다 2기. N = 2 + round(18/(Lv+2)) (Lv1 = 8, Lv20 = 3).
+  //    상한·보류 규율은 world 루프가 이미 지킨다(자리가 1칸이면 1기만 나가고 보류 유지).
+  if (bd2 >= 1 && willLaunch) {
+    const n = 2 + Math.round(18 / (bd2 + 2));
+    const count = readSlot(state.skillStage, HatchlingStage.twinLaunchCount) + 1;
+    writeSlot(state.skillStage, HatchlingStage.twinLaunchCount, count);
+    if (count % n === 0) params.launchCount = 2;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉔ — 병아리 1기가 태어난 직후(기당 1회)
+// ---------------------------------------------------------------------------
+
+/**
+ * 고정 오프셋 8방향(반지름 30 의 정팔각 근사 — 정수 리터럴이라 삼각함수·난수 0).
+ * NU2 의 젬 수는 최대 `2 + floor(Lv/5)` 인데 어픽스가 레벨을 더 올릴 수 있어 `% 8` 로 감는다.
+ */
+const NU2_GEM_OX = [30, -30, 0, 0, 21, -21, 21, -21] as const;
+const NU2_GEM_OY = [0, 0, 30, -30, 21, 21, -21, -21] as const;
+
+/**
+ * NU2 알껍질 젬 1개당 XP.
+ *
+ * ⚠️ **설계와 코드가 갈리는 지점이다 — 문서를 고치지 않고 여기 적는다.** 설계 NU2 는
+ * "개당 XP = 젬 기본값의 50% 고정" 이라 하지만 이 리포에 *"젬 기본값"* 이라는 단일 정본이
+ * **없다**: 젬 XP 는 적별 `xpValue` 다(`data/enemies.ts` 잡몹 3~5, 정예 24~28,
+ * `world.ts` 의 폴백 1, `SUPPLY_GEM_XP` 6, `DESTRUCTIBLE_GEM_XP` 5). 여기서는 가장 흔한
+ * 기준인 **기본 잡몹 젬(3~4)의 50%** 를 정수로 확정해 2 로 둔다. 이 확정은 레인 보고서에
+ * 올렸다 — 설계가 다른 기준을 뜻했다면 이 상수 하나만 고치면 된다.
+ */
+const NU2_SHELL_GEM_XP = 2;
+
+/**
+ * **NU7 원정 부화 · BD6 부화 충격파 · NU2 알껍질 영양.**
+ *
+ * ## 순서가 곧 설계다 — NU7 이 **먼저**다
+ * 설계 NU7 의 「출격 좌표 상호작용 절」이 *"NU7 투자 시 BD6·NU2 의 발생지가 전부 원격 젬
+ * 좌표로 이전된다"* 고 확정했다. 그래서 좌표를 먼저 옮기고, 그 뒤 둘이 `chick.x`/`chick.y`
+ * 를 읽는다. 순서를 뒤집으면 폭발·젬만 플레이어 곁에 남아 설계와 갈린다.
+ * (SH6 모선 무적만은 좌표 무관이라 이전되지 않는다 — 그쪽은 앵커 ⑨ 에 그대로 있다.)
+ *
+ * ## RNG 미소비
+ * `blastDamage`·`clearEnemyBullets`·`spawnGem`·`slideCircleWalls` 는 어느 것도 난수를
+ * 뽑지 않는다(각 함수 본문 확인). 최근접 젬 탐색도 거리 제곱 비교 + 엔티티 배열 순서
+ * tie-break 이고 젬 오프셋은 고정 표라, 이 훅 전체가 RNG 0 이다 — 앵커 doc 의 계약 준수.
+ */
+export function hatchlingBroodLaunched(state: WorldState, player: Entity, chick: Entity): void {
+  // ── NU7 원정 부화 — 허용 거리(400 + 40×Lv) 안의 **최근접 젬** 좌표에서 부화한다.
+  //    젬이 없거나 전부 거리 밖이면 아무것도 하지 않는다 = world 의 기본 4방향 폴백.
+  const nu7 = lv(state, Sk.expeditionHatch);
+  if (nu7 >= 1) {
+    const maxDist = 400 + 40 * nu7;
+    const max2 = maxDist * maxDist;
+    let bestX = 0;
+    let bestY = 0;
+    let best2 = 0;
+    let found = false;
+    for (const e of state.entities) {
+      if (e.dead || e.kind !== 'gem') continue;
+      const dx = e.x - player.x;
+      const dy = e.y - player.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > max2) continue;
+      // 동률은 **엔티티 배열 순서**로 앞선 것이 이긴다(`homeMissile` 선례와 같은 tie-break).
+      if (!found || d2 < best2) {
+        found = true;
+        best2 = d2;
+        bestX = e.x;
+        bestY = e.y;
+      }
+    }
+    if (found) {
+      // 젬 좌표가 벽 내부·경계일 수 있으므로 1회 밀어낸다(설계 구현란 명시).
+      const slid = slideCircleWalls(bestX, bestY, chick.radius, state.activeWalls);
+      chick.x = slid.x;
+      chick.y = slid.y;
+    }
+  }
+
+  // ── BD6 부화 충격파 — 출격 좌표 기준 반경 폭발 + 적탄 소거.
+  //    두 헬퍼의 두 번째 인자는 **좌표 출처**일 뿐이다(본문이 `.x`/`.y` 만 읽는다) — 병아리를
+  //    넘겨 발생지를 출격 좌표로 만든다. 병아리는 `enemy`/`boss` 가 아니라 자해가 없다.
+  const bd6 = lv(state, Sk.hatchShockwave);
+  if (bd6 >= 1) {
+    const radius = 110 + 9 * bd6;
+    blastDamage(state, chick, radius, 12 + 3 * bd6);
+    clearEnemyBullets(state, chick, radius);
+  }
+
+  // ── NU2 알껍질 영양 — 출격 좌표에 소형 XP 젬 `2 + floor(Lv/5)` 개(고정 오프셋).
+  const nu2 = lv(state, Sk.eggshellNutrients);
+  if (nu2 >= 1) {
+    const count = 2 + Math.floor(nu2 / 5);
+    for (let i = 0; i < count; i++) {
+      const k = i % 8;
+      spawnGem(
+        state,
+        chick.x + (NU2_GEM_OX[k] ?? 0),
+        chick.y + (NU2_GEM_OY[k] ?? 0),
+        NU2_SHELL_GEM_XP,
+      );
+    }
+  }
 }
