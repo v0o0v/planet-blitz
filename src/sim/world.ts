@@ -161,9 +161,9 @@ import { cloakEntryCrossed, cloakExitCrossed, fireCloakEntry, setBreakToken } fr
 import { shipTypeDef, DEFAULT_SHIP_TYPE } from '../../data/ships/index.js';
 import { hasAnyInvestment } from '../items/skills.js';
 import { createSkillSlots } from './skillSlots.js';
-// 210스킬 앵커 20개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
-// (⑮ `onFilmBurst` 는 `filmBurst.ts` 가 부르므로 여기 없다 — 총 21개 중 20개가 이 파일 소유다.)
-import type { VolleyParams } from './skillHooks.js';
+// 210스킬 앵커 25개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
+// (⑮ `onFilmBurst` 는 `filmBurst.ts` 가 부르므로 여기 없다 — 총 26개 중 25개가 이 파일 소유다.)
+import type { VolleyParams, BroodParams } from './skillHooks.js';
 import {
   survivedLethalBlow,
   onVolleyFired,
@@ -181,11 +181,15 @@ import {
   onPowerupOffer,
   onPowerupPicked,
   onVolleyParams,
+  onFilmEntry,
   onFilmShield,
   onFilmAbsorbed,
   onCushionThreshold,
+  onCushionSettleDue,
   onCushionSettled,
   onCloakBreakReset,
+  onBroodLaunchParams,
+  onBroodLaunched,
 } from './skillHooks.js';
 import { onDamageChainCatalyst } from './catalystHooks.js';
 import { createCatalystSlots } from './catalystSlots.js';
@@ -2552,12 +2556,23 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
       state.cushionHealed += healed;
       player.aux0 = 0;
       player.aux1 = 0;
+      // 앵커 ㉕(S3) — **정산액 확정 직전.** hp 차감 **전**이고 hp−1 클램프보다 **앞**이며,
+      // ⑳ 안의 CU3 회당 상한보다도 앞이다. 설계 정본의 순서(*분할(ME5) → CU3 → applied 확정
+      // → 파생 소비*)에서 **분할**이 여기다 — ⑳ 은 클램프가 이미 물린 뒤라 사후 환급으로는
+      // 소멸분 때문에 값이 갈린다(사유 전문은 앵커 주석).
+      // 자리는 `aux0`·`aux1` 리셋 **뒤**여야 한다 — 훅이 "안 보낸 나머지" 를 `aux0` 에 다시
+      // 미루려면 리셋보다 앞에서 쓴 값이 곧바로 지워지면 안 된다.
+      // S3 는 `due` 를 그대로 돌려주므로 비트 동일이다.
+      const hull = onCushionSettleDue(state, player, due, healed);
       // ⚠️ 완충은 절대 치명적이지 않다. 미룬 피해가 hp 를 1 미만으로 내리지 못하게 클램프한다 —
       // 안전한 곳으로 빠진 직후 화면상 아무 원인 없이 죽는 사인은 플레이어가 관측할 수도
       // 반응할 수도 없다("완충" 이라는 축과도 정면으로 어긋난다). 초과분은 소멸시킨다.
       // hp 는 f64 일 수 있으므로(엘리트 배율 접촉 피해) floor 로 정수 여유분을 잡는다.
+      // ⚠️ 이 `min` 은 ㉕ 의 개입을 **키우는 방향에서만** 삼킬 수 있다(정산액이 이미 hp 여유를
+      // 넘긴 치사급 정산). 그것은 이 클램프의 존재 이유 그 자체이고, ME5 처럼 **줄이는** 방향은
+      // 온전히 반영된다 — 실증은 `tests/skillAnchors.test.ts` 의 뮤테이션 두 절이다.
       const room = Math.floor(player.hp) - 1;
-      const applied = due > room ? room : due;
+      const applied = hull > room ? room : hull;
       if (applied > 0) player.hp -= applied;
       // 앵커 ⑳(S2) — **정산 직후**(hp 차감·클램프까지 반영된 뒤). 말로우 30종 중 **9종**이
       // "정산 틱" 을 트리거로 삼는데 앵커 ⑨ 는 `stepShipSignature` 진입점이라 정산보다 앞이다.
@@ -2566,7 +2581,10 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
       // 기체라 어긋남이 조용히 커진다. 여기서는 **계산된 값 그대로** 넘긴다.
       // `applied` 는 음수일 수 있어(hp 여유가 없으면 `room < 0`) 하한을 걸어 넘긴다 —
       // 훅의 계약은 "hp 에서 실제로 깎인 양" 이다.
-      onCushionSettled(state, player, due, healed, applied > 0 ? applied : 0);
+      // `settled` 로 넘기는 것은 `due` 가 아니라 **㉕ 이 확정한 `hull`** 이다 — CU3 의 이월이
+      // "상한이 막은 몫" 만 세려면 분할 **후** 기준이어야 하고, `due` 를 넘기면 ME5 가 다시
+      // 미룬 몫까지 CU3 이 한 번 더 이월해 두 겹이 된다. ㉕ 이 빈 지금은 둘이 같은 값이다.
+      onCushionSettled(state, player, hull, healed, applied > 0 ? applied : 0);
     }
     // ⚠️ 아크캐스터 분기와 같은 이유로 **명시적으로** 반환한다 — 뒤에 버블 분기를 append 한
     // 지금, return 이 없으면 말로우 런이 버블 분기까지 흘러 aux 의미가 두 겹으로 겹친다.
@@ -2643,35 +2661,58 @@ const BROOD_DRONE_RADIUS = 44;
  * `spawnEventObject`·`activateTurret` 은 어느 RNG 스트림도 건드리지 않는다. 배치 좌표도
  * 살아 있는 드론 수로 고른 고정 4방향이라 난수가 없다 — 웨이브 구성·드랍 시퀀스가 해츨링
  * 런에서도 밀리지 않는다.
+ *
+ * ⚠️ **이 계약은 앵커 ㉓·㉔ 에도 그대로 걸린다.** 두 훅 중 하나라도 난수를 소비하면 해츨링
+ * 런의 웨이브·드랍 시퀀스가 통째로 밀린다(두 훅의 doc 이 같은 경고를 다시 적는다).
  */
 function stepHatchBrood(state: WorldState, player: Entity): void {
-  if (state.kills - player.aux0 < hatchThreshold(state.kills)) return;
+  // 앵커 ㉓ — **임계 체크보다 앞**이다(그 자리인 사유는 훅 doc 의 「왜 최상단인가」).
+  // 세 칸의 초기값이 현행 상수·리터럴과 정확히 같으므로 미투자 런의 거동·해시는 비트 동일이다.
+  const brood: BroodParams = {
+    threshold: hatchThreshold(state.kills),
+    maxDrones: BROOD_MAX_DRONES,
+    launchCount: 1,
+  };
+  onBroodLaunchParams(state, player, brood);
+  if (state.kills - player.aux0 < brood.threshold) return;
   // 임계를 넘긴 틱에만 스캔한다(수십 틱에 한 번) — 매 틱 전체 순회를 만들지 않기 위해서다.
+  // ⚠️ 그래서 **앵커 ㉓ 에는 `live` 를 실을 수 없다**(이 스캔보다 앞이다). 훅이 살아 있는
+  // 병아리 수를 알아야 하면 `skills/hatchling.ts` 의 `countChicks` 를 쓴다 — 그 술어는 아래
+  // 3중 술어와 글자 그대로 같게 유지하는 것이 계약이다(그 함수 주석이 근거).
   let live = 0;
   for (const e of state.entities) {
     if (!e.dead && e.ownerId === BROOD_MARK && isActiveTurret(e)) live++;
   }
   // 상한에 걸리면 **aux0 을 갱신하지 않고** 보류한다 — 자리가 나는 즉시 다음 틱에 출격하고,
   // 그동안 쌓인 처치가 소멸하지 않는다.
-  if (live >= BROOD_MAX_DRONES) return;
-  // 배치는 살아 있는 대수로 고른 고정 4방향(우·좌·하·상). 여러 기가 정확히 겹쳐 한 대처럼
-  // 보이는 것을 막는 목적이고, 난수·삼각함수를 쓰지 않아 결정론이 자명하다.
-  const slot = live % 4;
-  const ox = slot === 0 ? DRONE_SPAWN_OFFSET : slot === 1 ? -DRONE_SPAWN_OFFSET : 0;
-  const oy = slot === 2 ? DRONE_SPAWN_OFFSET : slot === 3 ? -DRONE_SPAWN_OFFSET : 0;
-  const chick = spawnEventObject(
-    state,
-    'turretPickup',
-    player.x + ox,
-    player.y + oy,
-    BROOD_DRONE_RADIUS,
-  );
-  chick.ownerId = BROOD_MARK; // 청크 기믹과 구분(isGimmick 제외 → 컬링 비대상) + 병아리 전용 상한
-  activateTurret(chick); // 즉시 활성 포탑(TURRET_LIFE_TICKS 동안 자동 사격)
-  // 사연 관측(비-해시): 병아리 드론이 실제로 출격한 이 지점에서만 센다(상한·보류로 미출격이면
-  // 여기 도달 안 함). 결정론 무영향 — hashWorld 가 접지 않는 순수 메타.
-  state.broodLaunches++;
+  if (live >= brood.maxDrones) return;
+  // `launchCount` 만큼 같은 틱에 출격시킨다(BD2 쌍둥이 부화). **상한이 항상 이긴다** — 자리가
+  // 1칸이면 1기만 나가고 나머지는 보류로 남는다(설계 BD2 의 "상한·보류 규율 유지"가 정본).
+  for (let n = 0; n < brood.launchCount && live < brood.maxDrones; n++) {
+    // 배치는 살아 있는 대수로 고른 고정 4방향(우·좌·하·상). 여러 기가 정확히 겹쳐 한 대처럼
+    // 보이는 것을 막는 목적이고, 난수·삼각함수를 쓰지 않아 결정론이 자명하다.
+    const slot = live % 4;
+    const ox = slot === 0 ? DRONE_SPAWN_OFFSET : slot === 1 ? -DRONE_SPAWN_OFFSET : 0;
+    const oy = slot === 2 ? DRONE_SPAWN_OFFSET : slot === 3 ? -DRONE_SPAWN_OFFSET : 0;
+    const chick = spawnEventObject(
+      state,
+      'turretPickup',
+      player.x + ox,
+      player.y + oy,
+      BROOD_DRONE_RADIUS,
+    );
+    chick.ownerId = BROOD_MARK; // 청크 기믹과 구분(isGimmick 제외 → 컬링 비대상) + 병아리 전용 상한
+    activateTurret(chick); // 즉시 활성 포탑(TURRET_LIFE_TICKS 동안 자동 사격)
+    // 사연 관측(비-해시): 병아리 드론이 실제로 출격한 이 지점에서만 센다(상한·보류로 미출격이면
+    // 여기 도달 안 함). 결정론 무영향 — hashWorld 가 접지 않는 순수 메타.
+    state.broodLaunches++;
+    // 앵커 ㉔ — 이 한 기가 **실제로 태어난 직후**. 출격 좌표(`chick.x`/`chick.y`)와 개체가
+    // 둘 다 살아 있는 유일한 지점이다. 기당 1회이므로 쌍둥이면 두 번 불린다.
+    onBroodLaunched(state, player, chick);
+    live++;
+  }
   // 출격 성공 시에만 스냅샷을 갱신한다 = 순수 함수 계약의 "카운터 0 리셋".
+  // (위 상한 조기 반환을 지났으므로 루프는 최소 1기를 출격시켰다 — 갱신은 무조건이다.)
   player.aux0 = state.kills;
 }
 
@@ -3049,11 +3090,19 @@ function autoAttack(state: WorldState, player: Entity): void {
     // 자동 조준이 **이미 고른** 표적까지의 거리. 훅이 최근접 적을 다시 고르면 `nearestTarget`
     // 선택 규칙의 두 번째 사본이 생기고, 그 함수는 이 파일 소유라 leaf 가 부를 수도 없다.
     targetDist: Math.hypot(target.x - player.x, target.y - player.y),
+    // 자동 조준이 실제로 고른 **발사 방위**. 종전에는 이 식이 앵커 **뒤**에 따로 있었는데,
+    // 그 자리에 두면 훅이 방위를 알 길이 없어 `player.angle`(조준각)로 대용하게 되고 둘은
+    // 갈릴 수 있다(조준각은 적이 없는 방향을 가리킬 수 있다). 레코드로 올려 **계산 사본을
+    // 하나로** 만든다 — 아래 `baseAngle` 은 이 값을 그대로 읽는다.
+    // ⚠️ 순서를 앞으로 옮겨도 거동은 불변이다: `atan2` 는 순수 함수이고, 사이에 끼는
+    //    `onVolleyParams` 의 어느 구현체도 `player`·`target` 의 좌표를 쓰지 않는다
+    //    (좌표를 미는 스킬은 전부 피격·시그니처 훅 쪽이다).
+    aimAngle: atan2(target.y - player.y, target.x - player.x),
     cloakBreak: cloakBreakFired,
   };
   onVolleyParams(state, player, volley);
 
-  const baseAngle = atan2(target.y - player.y, target.x - player.x);
+  const baseAngle = volley.aimAngle;
   // Firing archetypes off `weaponType` (M2 B2 + M3 C1):
   //   2 = 레일건: one shot straight at the target (pierce/speed do the work).
   //   3 = 미사일: `bulletCount` homing missiles — slow, hard, limited turn.
@@ -3720,6 +3769,21 @@ function stepProjectiles(state: WorldState, player: Entity): void {
     const dy = e.y - cullY;
     if (e.life === 0 || dx * dx + dy * dy > cullR2) {
       e.dead = true;
+      // 앵커 ⑥(S3-2) — **아군탄이 수명이 다해 소멸**하는 지점(`'life'`). 아크캐스터
+      // CH3「종말점 방전」이 요구한 자리다.
+      //
+      // ⚠️ **세 가지를 좁혀서 부른다.**
+      //  ① `e.life === 0` 일 때만 — 같은 `if` 안의 **컬링 반경 이탈은 사유가 다르다**(화면 밖
+      //     정리이지 "수명이 다했다"가 아니다). 둘을 합쳐 부르면 CH3 가 화면 밖에서도 터진다.
+      //     `life < 0` 은 무한 수명 표식이라 애초에 이 분기에 오지 않는다.
+      //  ② `e.kind === 'bullet'` 일 때만 — 이 루프는 **적탄(`enemyBullet`)도 함께** 돈다.
+      //     앵커 ⑥ 의 계약은 "아군탄" 이므로 적탄까지 부르면 관통 소진 호출부와 성격이 갈린다.
+      //  ③ **벽 차단 소멸(아래 스윕)은 여기가 아니다** — 사유가 셋째이고 CH3 의 술어가 아니다.
+      //     필요해지면 `'wall'` 을 사유에 추가하는 것이 맞지, 이 호출을 넓히는 것이 아니다.
+      //
+      // 좌표 유효성: `e.x`/`e.y` 는 **이번 틱 적분이 끝난 마지막 위치**이고 압축 전이라 아직
+      // 살아 있다 — CH3 가 재야 할 "종말점" 그 자체다(`dead` 표식은 좌표를 건드리지 않는다).
+      if (e.life === 0 && e.kind === 'bullet') onBulletExpired(state, e, 'life');
       continue;
     }
     // Both factions' bullets are stopped by walls (activeWalls direct sweep —
@@ -4124,9 +4188,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         b.pierce--;
       } else {
         b.dead = true;
-        // 앵커 ⑥(S0) — **관통 예산이 바닥나 소멸**하는 분기. 수명 만료·화면 밖 컬링이 아니다
-        // (자이로 무한 관통·프리즘 세그먼트는 위 분기라 여기 오지 않는다).
-        onBulletExpired(state, b);
+        // 앵커 ⑥(S0) — **관통 예산이 바닥나 소멸**하는 분기(`'pierce'`). 수명 만료는 여기가
+        // 아니라 `stepProjectiles` 의 `'life'` 호출부다(S3-2 가 뚫었다). 자이로 무한 관통·
+        // 프리즘 세그먼트는 위 분기라 여기 오지 않는다.
+        onBulletExpired(state, b, 'pierce');
       }
     }
   }
@@ -4318,7 +4383,21 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     //    소수부가 조용히 잘려 클라와 서버 재실행이 갈린다.
     // 무적(iframes) 중에는 위 수집 루프가 피해를 아예 누적하지 않으므로(2280행 조기 반환)
     // 막 내구도 소모되지 않는다 — 무적은 이미 완전 방어라 막을 함께 태우면 이중 손실이다.
-    if (signatureOn(state, SIG_BUBBLE_FILM) && player.aux0 > 0) {
+    const filmSig = signatureOn(state, SIG_BUBBLE_FILM);
+    if (filmSig) {
+      // 앵커 ㉒(S3) — **막 진입 술어보다 앞.** 아래 게이트(`aux0 > 0`) 안에서는 *막이 없는*
+      // 피격을 원리적으로 못 본다(⑰⑱ 이 FI9 를 못 받은 이유가 그것이다). 여기서 훅이
+      // `player.aux0` 을 0 → 양수로 올리면 **바로 다음 줄의 게이트가 열려** 기존 흡수·파열
+      // 코드가 그대로 돈다 — 게이트 자체는 한 글자도 넓히지 않았다.
+      // ⚠️ 게이트를 넓히지 않은 이유는 `onFilmEntry` doc 이 정본이다(요지: 넓히면 막이 없던
+      //    틱에도 본문의 파열 판정 `aux0 === 0` 이 참이 되어 `resolveFilmBurst` 가 오발동한다).
+      // ⚠️ 넘기는 `dmg` 는 게이트 안이 쓸 값과 **같게** 정수화한 사본이다 — 치명 술어
+      //    (`hp - dmg <= 0`)가 실제 처리와 어긋나지 않게. 바깥 `dmg` 는 건드리지 않으므로
+      //    게이트가 안 열리는 경우 비트 불변이다(반올림은 여전히 게이트 안에서만 일어난다).
+      // ⚠️ 이 지점의 `player.hp` 는 아직 한 점도 안 깎였다 — 치명 판정이 성립하는 근거다.
+      onFilmEntry(state, player, Math.round(dmg));
+    }
+    if (filmSig && player.aux0 > 0) {
       dmg = Math.round(dmg);
       // 앵커 ⑰(S2) — **이번 피격에 쓸 유효 내구.** 버블의 감쇠 사슬 스킬 6종이 이 지점을
       // 기다리고 있었다 — 앵커 ⑧ 은 브루저 장갑보다도 앞이라 거기서 본 `dmg` 는 막을 아직

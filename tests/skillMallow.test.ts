@@ -135,6 +135,8 @@ function volley(damage = 100): VolleyParams {
     countUsed: true,
     ballisticsUsed: true,
     targetDist: 200,
+    // 발사 방위(rad). SQ7(관성 사출)이 언젠가 읽을 항이지만 아직 미배선 — 기본 0(순수 +x).
+    aimAngle: 0,
     cloakBreak: false,
     mark: 0,
   };
