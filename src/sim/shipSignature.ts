@@ -92,29 +92,65 @@ export function hasSignature(mask: number, bit: number): boolean {
 }
 
 // --- ① 브루저: 장갑 스택 ------------------------------------------------------
-/** 장갑 스택 상한. */
+/**
+ * 장갑 스택 **기본** 상한 = 시그니처 단독일 때의 값.
+ *
+ * ⚠️ **이 상수를 "현재 런의 상한" 으로 읽지 마라.** ADR-0049 FO1(과적 장갑)이 상한 자체를
+ * 넓히므로, 런 중 유효 상한의 정본은 `WorldState.armorMaxStacks`(createWorld 가 config 에서
+ * 한 번 정수로 확정)다. 이 상수는 그 파생의 **기본값**이고, 아래 함수들의 `cap` 기본 인자로만
+ * 남는다(미투자 런은 8 이라 기존 산술과 비트 동일).
+ */
 export const ARMOR_MAX_STACKS = 8;
-/** 스택당 피해 감소(basis-point). 상한 8스택 = 2000bp = 20% 감소. */
+/** 스택당 피해 감소(basis-point). 기본 상한 8스택 = 2000bp = 20% 감소. */
 export const ARMOR_PER_STACK_BP = 250;
 /** 이 틱 수만큼 피격이 없으면 스택 1개가 소멸한다(world.ts 배선이 참조). */
 export const ARMOR_DECAY_TICKS = 180;
 
-/** 스택 수를 [0, ARMOR_MAX_STACKS] 정수로 정규화. */
-export function clampArmorStacks(stacks: number): number {
+/**
+ * 스택 수를 `[0, cap]` 정수로 정규화. `cap` 도 정수로 절삭하며 음수 cap 은 0 으로 접는다
+ * (상한이 0 이면 장갑이 통째로 꺼진 것과 같다 — 예외를 던지지 않는 이유는 이 모듈이 leaf
+ * 순수 함수만 담고 sim 루프 한복판에서 불리기 때문이다).
+ */
+export function clampArmorStacks(stacks: number, cap: number = ARMOR_MAX_STACKS): number {
+  const c = Math.trunc(cap);
+  if (c <= 0) return 0;
   const s = Math.trunc(stacks);
   if (s <= 0) return 0;
-  if (s >= ARMOR_MAX_STACKS) return ARMOR_MAX_STACKS;
+  if (s >= c) return c;
   return s;
+}
+
+/**
+ * 스택 수 → **합산 감소 bp**(정수). 감소를 적용하는 **두 경로의 단일 정본**이다.
+ *
+ * ## 왜 이 함수가 따로 있는가 (E4, ADR-0049 선결)
+ * 감소 산술은 두 곳에 산다 — 이 파일의 {@link armorReducedDamage}(정수 전용 순수 함수)와
+ * `world.ts` 의 피격 통로(소수 피해 보존 때문에 `Math.trunc` 만 뺀 동형 코드). 상한이
+ * 상수였을 때는 두 곳이 같은 상수를 읽어 자동으로 일치했지만, 상한이 런마다 달라지는 순간
+ * **한쪽만 상한을 반영하면 감소 상한과 스택 상한이 조용히 갈린다**(그리고 그 어긋남은 화면에
+ * 아무 흔적을 남기지 않는다). 그래서 "스택과 상한으로부터 bp 를 낸다" 는 계산 자체를 여기
+ * 하나로 모으고, 두 경로가 **이 함수를 호출**하게 한다 — 테스트로 뒤쫓는 대신 구조적으로
+ * 갈릴 수 없게 만드는 편이 싸다.
+ */
+export function armorReductionBp(stacks: number, cap: number = ARMOR_MAX_STACKS): number {
+  return clampArmorStacks(stacks, cap) * ARMOR_PER_STACK_BP;
 }
 
 /**
  * 장갑 스택이 적용된 실제 피해량(정수). 스택 배율을 곱셈으로 **반복하지 않고** 합산 bp 로
  * 한 번에 적용한다 — 반복 곱은 f64 누적이라 결정론이 깨진다.
+ *
+ * `cap` 은 이 런의 유효 스택 상한(`WorldState.armorMaxStacks`). 생략하면 기본 상한이라
+ * 미투자 런에서 종전과 비트 동일이다.
  */
-export function armorReducedDamage(damage: number, stacks: number): number {
+export function armorReducedDamage(
+  damage: number,
+  stacks: number,
+  cap: number = ARMOR_MAX_STACKS,
+): number {
   const d = Math.trunc(damage);
   if (d <= 0) return 0;
-  const bp = clampArmorStacks(stacks) * ARMOR_PER_STACK_BP;
+  const bp = armorReductionBp(stacks, cap);
   if (bp === 0) return d;
   return d - Math.round((d * bp) / 10000);
 }

@@ -13,7 +13,7 @@
 
 import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
-import { cloakWindowActive, SIG_PHANTOM_CLOAK } from './shipSignature.js';
+import { CLOAK_UNHIT_TICKS, cloakWindowActive, SIG_PHANTOM_CLOAK } from './shipSignature.js';
 
 /**
  * 팬텀 은신 — **적이 지금 플레이어를 조준 대상으로 삼을 수 있는가**의 술어.
@@ -55,4 +55,72 @@ export function playerCloaked(state: WorldState, player: Entity): boolean {
   if (state.config.invasion3 !== undefined) return false;
   if (state.sigBit !== SIG_PHANTOM_CLOAK) return false;
   return cloakWindowActive(player.aux0);
+}
+
+// ---------------------------------------------------------------------------
+// 은신 사이클 조작 헬퍼 (E1 · ADR-0049 선결, `phantom.md` ①)
+// ---------------------------------------------------------------------------
+
+/**
+ * **은신 해제 첫 타 배율 토큰(`aux1`)의 유일한 쓰기 경로.**
+ *
+ * ## 왜 헬퍼가 필요한가 (SEVERE-3)
+ * 토큰을 세우는 자리가 여섯이었다 — `stepShipSignature` 의 진입 적립 하나와 액티브 다섯
+ * (`assassin_lo`·`assassin_hi` 의 `breakCloak`, `disrupt_hi` 발동, 그 SUSTAIN, `EXPIRE` 의 회수).
+ * 흩어진 쓰기는 **규칙을 하나 얹는 순간 반쪽 배선**이 된다: 설계가 요구하는 침공 차단을
+ * 예로 들면, 여섯 중 하나만 빠뜨려도 침공에서 전 발사에 2.5배가 실리는데 그 미배선은
+ * 화면에도 테스트에도 흔적을 안 남긴다. 그래서 값의 형태와 무관하게 **경로를 먼저 하나로**
+ * 모은다.
+ *
+ * ## ⚠️ 침공 no-op 은 **아직 넣지 않았다** — 여기가 그 자리다
+ * `phantom.md` ①-4 는 이 헬퍼에 침공 no-op(`state.config.invasion3 !== undefined` 면 쓰지
+ * 않음)을 내장하라고 정한다. 이 커밋에서 빼 둔 이유는 둘이다:
+ *  1. **거동 불변이 이 커밋의 계약**인데, `aux1` 은 `ENTITY_HASH_LAYOUT` 의 u32 폴드 대상이라
+ *     침공에서 1 → 0 은 곧 `hashEntity` 변경이다(= `invasionHash` 재생성 + EF 재배포 필요).
+ *  2. **소진 지점 게이트(E2, `world.ts` 의 `invasion3 === undefined`)가 이미 서 있다.** 그래서
+ *     오늘자 침공에서 이 토큰은 **읽히지 않는다** — no-op 을 넣어도 게임플레이 변화는 0 이고
+ *     해시만 갈린다. 순이득 없이 리플레이 계약만 흔드는 변경이라 미뤘다.
+ * 스킬 배선 커밋에서 `invasionHash` 재생성·EF 재배포와 **한 원자로** 넣어라. 넣는 자리는
+ * 이 함수 첫 줄 하나뿐이고, 그것이 이 헬퍼가 존재하는 이유다.
+ *
+ * ⚠️ 그때 **`tests/phantomCloakInvasionGate.test.ts` 의 ②가 함께 빨개진다** — 그 케이스는
+ * "침공에서도 SUSTAIN 이 돌아 `aux1` 이 선다"(= ③이 미배선 때문에 참이 된 것이 아님)를
+ * 단언하는데, 쓰기 자체를 막으면 그 전제가 바뀌기 때문이다. 결함이 아니라 같은 커밋이
+ * 함께 고쳐야 하는 자리다(항진 방지 축을 "쓰기가 막혔다" 쪽으로 옮겨 다시 세워라).
+ *
+ * @param value 0(회수) 또는 1(장전). 토큰은 0/1 이진이 인코딩 계약이다.
+ */
+export function setBreakToken(state: WorldState, player: Entity, value: number): void {
+  // `state` 를 받는 이유는 위 「침공 no-op」 절이다 — 지금은 읽지 않는다. 인자를 지우면
+  // 그 규칙을 넣을 때 호출부 여섯을 다시 고쳐야 하고, 그때 하나를 빠뜨리는 것이 정확히
+  // 이 헬퍼가 막으려는 실패다.
+  void state;
+  player.aux1 = value === 0 ? 0 : 1;
+}
+
+/**
+ * **은신 진입 에지에서 정확히 한 번** 발화하는 지점 — 지금은 배율 토큰을 장전한다.
+ *
+ * 진입 훅 스킬(PH7·DI7·DI8)이 전부 이 함수 안에 얹힐 자리다. 훅을 진입 판정 지점마다 흩어
+ * 심으면(자연 적립 · 액티브 진입 · 훗날의 주입) 셋 중 하나에서만 도는 반쪽 배선이 된다.
+ *
+ * ⚠️ 호출부는 **에지를 스스로 판정해서** 부른다. 이 함수가 에지를 판정하지 않는 이유: 판정에
+ * 필요한 "직전 값" 은 호출부의 지역 변수이고, 여기서 다시 만들면 정본이 둘이 된다.
+ */
+export function fireCloakEntry(state: WorldState, player: Entity): void {
+  setBreakToken(state, player, 1);
+}
+
+/**
+ * 은신 진입 **통과 판정** — `prev` 에서 `next` 로 가며 임계를 넘었는가.
+ *
+ * ## `=== 임계` 가 아니라 통과 판정인 이유 (구현 고지 ④)
+ * 자연 적립은 항상 `+1` 이라 두 판정이 **같은 틱에 발화**한다 — 그래서 지금 바꿔도 값이
+ * 비트 단위로 같다. 그런데 설계가 예고한 주입 스킬(PH5·PH6 등)은 카운터를 한 번에 여러 칸
+ * 올리므로, `===` 로 두면 **임계를 건너뛴 틱에 진입이 영영 안 서고** 토큰·진입 훅이 통째로
+ * 죽는다. 그 미발동은 화면에도 테스트에도 흔적을 남기지 않는다(이 저장소가 반복 겪은
+ * "조용한 미발현" — 스트라이커 `marksmanTriggered` 주석과 같은 사유).
+ */
+export function cloakEntryCrossed(prev: number, next: number): boolean {
+  return Math.trunc(prev) < CLOAK_UNHIT_TICKS && Math.trunc(next) >= CLOAK_UNHIT_TICKS;
 }
