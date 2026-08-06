@@ -878,3 +878,100 @@ describe('⑬-처치 AS3 (앵커 ⑩ 이 표식을 읽어 토큰을 재장전한
     for (const b of off.bullets) expect(b.aux0 & 2).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ⑯-좀비 AS4·AS5 추가 피해 사망 마킹 — 「표적이 탄을 견디고 추가분에 죽는」 경우
+// ---------------------------------------------------------------------------
+
+/**
+ * 둘 다 대상이 **맞은 표적 자신**이라 "격추 판정 뒤라 의도적" 으로 분류돼 있었다. 그 분류는
+ * **표적이 이미 죽은 경우**에만 맞다. 표적이 탄 피해를 **견디고**(hp > 0) 추가분이 hp 를 0
+ * 이하로 내리면 `world.ts:4170-4197` 의 격추 판정은 이미 지나간 뒤라 아무도 `dead` 를 안
+ * 세운다 — `hp<=0 → dead` 를 훑는 일반 스윕이 sim 에 **없으므로** 그 표적은 **좀비**다.
+ * (`phantom.ts` 의 옛 주석 *"다음 틱에 죽는다"* 가 바로 그 오해였다.)
+ *
+ * ⚠️ 계측기 함정: 표적을 플레이어 코앞에 두면 자동사격 탄이 같은 틱에 마무리해 **수정 전에도**
+ * 통과한다. 그래서 600px(자동사격 탄 ≈30px/tick) 밖에 둔다.
+ * ⚠️ 표적 hp 를 **추가분과 정확히 같게** 잡아, 죽는 경로가 추가분 하나뿐이 되게 한다.
+ */
+describe('⑯-좀비 AS4·AS5 추가 피해 사망 마킹', () => {
+  const DMG = 40;
+  /** AS4 Lv10 — round(40 × (1200+1800)/10000) = 12. 선타 게이트는 `hp + dmg === maxHp`. */
+  const AS4_EXTRA = 12;
+  /** AS5 Lv10 — round(40 × (1000+1500)/10000) = 10. 후방 반구는 dot < 0. */
+  const AS5_EXTRA = 10;
+
+  const src = (): Entity => ({ ...blankEntity('bullet'), damage: DMG });
+
+  /** AS4: 표적을 "탄을 맞기 직전 만피" 상태로 세운다 — `maxHp = hp + dmg`. */
+  function as4Setup(hp: number): { w: WorldState; t: Entity } {
+    const w = mk([[AS4, 10]]);
+    const p = player(w);
+    const t = addEnemy(w, p.x, p.y + 600, hp);
+    t.maxHp = hp + DMG;
+    return { w, t };
+  }
+
+  /** AS5: 표적이 플레이어에게서 **멀어지는** 방향(vy > 0, 플레이어는 위쪽)이라 dot < 0. */
+  function as5Setup(hp: number): { w: WorldState; t: Entity } {
+    const w = mk([[AS5, 10]]);
+    const p = player(w);
+    const t = addEnemy(w, p.x, p.y + 600, hp);
+    t.maxHp = 1_000_000; // AS4 선타 게이트와 무관하게 만든다
+    t.vx = 0;
+    t.vy = 1;
+    return { w, t };
+  }
+
+  it('전제 — AS4 추가분 12 · AS5 추가분 10 이 실제로 들어간다 (하한)', () => {
+    const a = as4Setup(1000);
+    a.t.maxHp = 1000 + DMG;
+    onEnemyDamaged(a.w, a.t, DMG, src());
+    expect(a.t.hp).toBe(1000 - AS4_EXTRA);
+
+    const b = as5Setup(1000);
+    expect((b.w.entities[0]!.y - b.t.y) * b.t.vy).toBeLessThan(0); // 후방 반구다
+    onEnemyDamaged(b.w, b.t, DMG, src());
+    expect(b.t.hp).toBe(1000 - AS5_EXTRA);
+  });
+
+  it('AS4 — 탄을 견딘 표적이 추가분으로 hp≤0 이 되면 dead 로 마킹되고 처치·젬까지 간다', () => {
+    const { w, t } = as4Setup(AS4_EXTRA);
+    expect(t.dead).toBe(false);
+    const killsBefore = w.kills;
+    const gemsBefore = w.entities.filter((x) => x.kind === 'gem').length;
+    onEnemyDamaged(w, t, DMG, src());
+    expect(t.hp).toBeLessThanOrEqual(0);
+    expect(t.dead).toBe(true);
+    stepWorld(w, emptyInput());
+    // ⚠️ id 가 아니라 **객체 동일성** — 이 파일의 `addEnemy` 는 id 를 안 매긴다.
+    expect(w.entities.includes(t)).toBe(false);
+    expect(w.kills).toBeGreaterThanOrEqual(killsBefore + 1);
+    expect(w.entities.filter((x) => x.kind === 'gem').length).toBeGreaterThan(gemsBefore);
+  });
+
+  it('AS5 — 탄을 견딘 표적이 추가분으로 hp≤0 이 되면 dead 로 마킹되고 처치·젬까지 간다', () => {
+    const { w, t } = as5Setup(AS5_EXTRA);
+    expect(t.dead).toBe(false);
+    const killsBefore = w.kills;
+    const gemsBefore = w.entities.filter((x) => x.kind === 'gem').length;
+    onEnemyDamaged(w, t, DMG, src());
+    expect(t.hp).toBeLessThanOrEqual(0);
+    expect(t.dead).toBe(true);
+    stepWorld(w, emptyInput());
+    expect(w.entities.includes(t)).toBe(false);
+    expect(w.kills).toBeGreaterThanOrEqual(killsBefore + 1);
+    expect(w.entities.filter((x) => x.kind === 'gem').length).toBeGreaterThan(gemsBefore);
+  });
+
+  it('표적이 살아남으면 dead 를 세우지 않는다 (과잉 마킹 금지)', () => {
+    const { w, t } = as4Setup(AS4_EXTRA + 1);
+    onEnemyDamaged(w, t, DMG, src());
+    expect(t.hp).toBe(1);
+    expect(t.dead).toBe(false);
+    const killsBefore = w.kills;
+    stepWorld(w, emptyInput());
+    expect(w.entities.includes(t)).toBe(true);
+    expect(w.kills).toBe(killsBefore);
+  });
+});

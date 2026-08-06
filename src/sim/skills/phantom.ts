@@ -314,10 +314,21 @@ export function phantomSignatureStep(state: WorldState, player: Entity): void {
  *
  * ## 두 스킬 다 "증폭"이 아니라 **추가 피해**로 구현된다
  * 설계서는 둘을 "명중 피해 증폭"으로 적었지만 이 앵커는 차감·격추 판정이 **이미 끝난** 자리다.
- * 그래서 증폭분을 추가 피해로 얹는다 — 총 피해량은 같고, 다른 것은 **격추 시점**뿐이다:
- * 추가분이 마지막 일격이면 그 적은 이번 틱이 아니라 다음 틱에 죽는다. 브루저 BL9(중압 리듬)의
- * 강타가 같은 자리에서 같은 형태(`target.hp -= bonus`)를 이미 쓰고 있어 선례를 따랐다.
- * ⚠️ `target.hp`/`target.dead` 를 **되돌리지는 않는다**(앵커 ⑩ 의 금지 사항).
+ * 그래서 증폭분을 추가 피해로 얹는다 — 총 피해량은 같고, 다른 것은 **격추 시점**뿐이다.
+ * 브루저 BL9(중압 리듬)의 강타가 같은 자리에서 같은 형태(`target.hp -= bonus`)를 이미 쓰고 있어
+ * 선례를 따랐다.
+ *
+ * ⚠️ **정정(2026-08-07)**: 이 문단에 원래 *"추가분이 마지막 일격이면 그 적은 이번 틱이 아니라
+ * **다음 틱에 죽는다**"* 고 적혀 있었는데 **사실이 아니다**. `hp<=0 → dead` 를 훑는 일반 스윕이
+ * sim 에 **없다**(`world.ts`·`status.ts` 전수 확인) — 다음 틱에도, 그 뒤로도 저절로 죽지 않는다.
+ * 표적이 탄을 **견디고**(hp > 0) 추가분에 hp≤0 이 되면 격추 판정(`world.ts:4171`)은 이미 지나간
+ * 뒤라 아무도 `dead` 를 안 세우고, `compact` 의 1차 게이트가 `dead` 이므로(`world.ts:4753`) 그
+ * 표적은 **좀비**로 남는다 — 계속 움직이고 공격하며 처치·젬·전리품이 전부 유실된다.
+ * 그래서 아래 두 자리에서 `hp<=0 → dead` 를 **함께** 세운다(`status.ts:111-112` 와 같은 형태).
+ * ⚠️ 여전히 `target.hp`/`target.dead` 를 **되돌리지는 않는다**(앵커 ⑩ 의 금지 사항). 표적이 이미
+ * 죽었으면 `dead` 는 참이라 그 마킹이 **무연산**이고, 살아남았으면 격추 판정을 탄 적이 없어
+ * 뒤집을 판정 자체가 없다. 앵커 ⑩ 의 금지 문장(`skillHooks.ts:828-830`)은 오히려
+ * *"hp 를 0 으로 만들어도 `dead` 가 거짓이면 죽지 않는다"* 며 이 결함을 직접 경고한다.
  *
  * ## 덮는 범위는 아군탄 명중 하나뿐이다
  * 화염 DoT·전격 연쇄·폭탄 기물·액티브 폭발·격실 탄은 leaf 라 이 앵커에 오지 않는다(앵커 주석).
@@ -364,7 +375,14 @@ export function phantomEnemyDamaged(
   const as4 = lv(state, Sk.vitalDissection);
   if (as4 >= 1 && target.hp + dmg === target.maxHp) {
     const extra = Math.round((dmg * (1200 + 180 * as4)) / 10000);
-    if (extra > 0) target.hp -= extra;
+    if (extra > 0) {
+      target.hp -= extra;
+      // 좀비 방지 — 대상 범위(enemy+boss)는 `blastDamageAt`·BL3 과 같게 맞춘다. guardian·core 는
+      // 일부러 뺐다(그 둘만 `world.ts:4175-4183` 에 부활 분기가 있어 마킹하면 충전을 건너뛴다).
+      if (target.hp <= 0 && (target.kind === 'enemy' || target.kind === 'boss')) {
+        target.dead = true;
+      }
+    }
   }
 
   // ② AS5 배후 격살 — 적의 후방 반구(적→플레이어 벡터와 적 이동 방향의 내적 음수)에서 +10% + 1.5%p/Lv.
@@ -375,7 +393,13 @@ export function phantomEnemyDamaged(
     const dot = (player.x - target.x) * target.vx + (player.y - target.y) * target.vy;
     if (dot < 0) {
       const extra = Math.round((dmg * (1000 + 150 * as5)) / 10000);
-      if (extra > 0) target.hp -= extra;
+      if (extra > 0) {
+        target.hp -= extra;
+        // 좀비 방지 — 위 AS4 와 같은 두 줄·같은 대상 범위다(사실이 두 벌이 되지 않게).
+        if (target.hp <= 0 && (target.kind === 'enemy' || target.kind === 'boss')) {
+          target.dead = true;
+        }
+      }
     }
   }
 }
