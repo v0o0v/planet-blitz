@@ -160,7 +160,7 @@ import {
 import { cloakEntryCrossed, cloakExitCrossed, fireCloakEntry, setBreakToken } from './cloak.js';
 import { shipTypeDef, DEFAULT_SHIP_TYPE } from '../../data/ships/index.js';
 import { hasAnyInvestment } from '../items/skills.js';
-import { createSkillSlots } from './skillSlots.js';
+import { createSkillSlots, DamageSource } from './skillSlots.js';
 // 210스킬 앵커 25개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
 // (⑮ `onFilmBurst` 는 `filmBurst.ts` 가 부르므로 여기 없다 — 총 26개 중 25개가 이 파일 소유다.)
 import type { VolleyParams, BroodParams, TurretShotParams } from './skillHooks.js';
@@ -3085,6 +3085,9 @@ function autoAttack(state: WorldState, player: Entity, input: InputFrame): void 
     // `if (marksmanFire) b.aux0 = 1` 이 흩어져 있었고, 새 표식이 필요한 기체(팬텀 AS3·AS10 ·
     // 아크캐스터 CH1·CH8)는 그 네 곳을 전부 고쳐야 했다. 이제 표식 경로는 한 곳뿐이다.
     mark: marksmanFire ? 1 : 0,
+    // 선두탄 전용 증분(기본 0 = `damage + 0`·`pierce + 0` 이라 바이트 불변).
+    leadDamageBonus: 0,
+    leadPierceBonus: 0,
     // 발사 시점 피해를 탄 `aux1` 에 새길 것인가(기본 false = 한 칸도 안 쓴다).
     recordSpawnDamage: false,
     // 아키타입 분기가 `count`·`spread` 를 실제로 읽는가 — 판정 정본은 아래 분기 하나뿐이고
@@ -3130,8 +3133,9 @@ function autoAttack(state: WorldState, player: Entity, input: InputFrame): void 
       player.y,
       baseAngle,
       volley.speed,
-      volley.damage,
-      volley.pierce,
+      // 레일건의 유일한 한 발이 곧 **선두탄**이다(증분 0 이면 종전 값 그대로).
+      volley.damage + volley.leadDamageBonus,
+      volley.pierce + volley.leadPierceBonus,
       volley.radius,
       volley.life,
       cos(baseAngle),
@@ -3161,8 +3165,9 @@ function autoAttack(state: WorldState, player: Entity, input: InputFrame): void 
         player.y,
         ang,
         volley.speed,
-        volley.damage,
-        volley.pierce,
+        // 선두 = 부채 시작단(`i === 0`). 증분 0 이면 종전 값 그대로다.
+        i === 0 ? volley.damage + volley.leadDamageBonus : volley.damage,
+        i === 0 ? volley.pierce + volley.leadPierceBonus : volley.pierce,
         volley.radius,
         volley.life,
         cos(ang),
@@ -3203,7 +3208,9 @@ function autoAttack(state: WorldState, player: Entity, input: InputFrame): void 
         player.y + sa * dist,
         baseAngle,
         0,
-        volley.damage,
+        // 빔의 선두 = 플레이어에 **가장 가까운** 세그먼트(`i === 1` — 루프가 1 부터 돈다).
+        // 관통은 리터럴 9999 라 `leadPierceBonus` 가 무연산이다(아키타입 정의, 필드 주석 참조).
+        i === 1 ? volley.damage + volley.leadDamageBonus : volley.damage,
         9999,
         BEAM_SEGMENT_RADIUS,
         BEAM_SEGMENT_LIFE,
@@ -3234,8 +3241,10 @@ function autoAttack(state: WorldState, player: Entity, input: InputFrame): void 
       player.y,
       ang,
       volley.speed,
-      dmg,
-      volley.pierce,
+      // 선두 = 부채 시작단(`i === 0`). 쌍둥이 항성 배율은 `dmg` 에만 실린다 — 유니크 배율이
+      // 스킬 보너스까지 증폭하지 않는다(필드 주석의 계약).
+      i === 0 ? dmg + volley.leadDamageBonus : dmg,
+      i === 0 ? volley.pierce + volley.leadPierceBonus : volley.pierce,
       volley.radius,
       volley.life,
       cos(ang),
@@ -4279,6 +4288,12 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   // 브로드페이즈 검색은 기존대로 기체 반지름(player.radius)으로 훑고(픽업 후보 누락 방지),
   // 좁은 판정은 콜백 안에서 종류별로 나눠 정확 거리 테스트한다.
   let dmg = 0;
+  // 앵커 ④ 의 **피해원 비트합**(W2). `dmg` 는 아래에서 **더하지 않고 `max`** 로 뽑히므로,
+  // 이긴 피해원 하나만 실으면 같은 틱의 다른 접촉이 통째로 삼켜진다 — 접촉을 트리거로 쓰는
+  // 스킬(브루저 BL8)이 적탄이 더 아픈 틱마다 조용히 미발동한다. 그래서 **기여한 종류를 전부**
+  // 세운다. `dmg` 산술에는 한 줄도 개입하지 않으므로 기존 해시는 바이트 불변이다.
+  // ⚠️ 비트는 `t.damage > 0` 일 때만 세운다 — 피해 0 짜리 접촉은 `dmg` 에 기여가 없다.
+  let dmgSources = 0;
   const invulnerable = player.iframes > 0;
   const px = player.x;
   const py = player.y;
@@ -4336,6 +4351,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     }
     if (invulnerable) return;
     if (t.kind === 'enemyBullet') {
+      if (t.damage > 0) dmgSources |= DamageSource.bullet;
       if (t.damage > dmg) dmg = t.damage;
       t.dead = true;
       // 'prop'(L3 기물)은 여기 넣지 않는다 — 기물의 damage 는 탄·장판 피해라 접촉 피해로
@@ -4349,8 +4365,12 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       // 수호 기체(M5)는 추적형 요격 유닛 — 접촉(램) 피해를 준다(방어전에만 존재). 단 마일스톤 ①
       // 격추 재기동 딜레이 중(iframes>0)인 수호는 정지·무력 상태라 접촉 피해도 주지 않는다.
       if (t.kind === 'guardian' && t.iframes > 0) return;
+      // 접촉원 kind 는 네 종 **전부** 접촉으로 센다(설계 R-4) — 여기서 접촉원은 트리거일 뿐
+      // 대상 지정이 없어 어떤 kind 여도 무해하다.
+      if (t.damage > 0) dmgSources |= DamageSource.contact;
       if (t.damage > dmg) dmg = t.damage;
     } else if (t.kind === 'hazard' && hazardActive(t)) {
+      if (t.damage > 0) dmgSources |= DamageSource.hazard;
       if (t.damage > dmg) dmg = t.damage;
     }
     // Supply raiders never harm the player (they do not attack).
@@ -4571,7 +4591,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // 앵커 ④(S0) — **실제로 선체 hp 가 깎인** 피격의 후속. 막이 전량 흡수한 피격은 위에서
     // 반환하므로 여기 오지 않는다. 기존 시그니처·유니크 후속이 전부 반영된 뒤에 두어, 스킬이
     // 이번 피격의 **최종 상태**를 본다. `lethalSurvived` 는 위에서 한 번 계산한 값을 넘긴다.
-    onPlayerDamaged(state, player, dmg, lethalSurvived);
+    // `dmgSources` 는 수집 루프가 세운 **기여 비트합**이다 — `max` 가 고른 하나가 아니다.
+    onPlayerDamaged(state, player, dmg, lethalSurvived, dmgSources);
   }
 }
 

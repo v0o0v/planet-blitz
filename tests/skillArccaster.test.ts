@@ -32,6 +32,7 @@ import {
   onBulletExpired,
 } from '../src/sim/skillHooks.js';
 import type { VolleyParams } from '../src/sim/skillHooks.js';
+import { DamageSource } from '../src/sim/skillSlots.js';
 import { SIG_ARC_OVERCHARGE } from '../src/sim/shipSignature.js';
 import { readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
 import { FIRE_CD_Q } from '../src/sim/constants.js';
@@ -159,7 +160,7 @@ describe('① 투자 0 런 불변', () => {
     p.maxHp = 100;
     p.cooldown = 1000;
     const e = enemyNear(w, 60, 0);
-    onPlayerDamaged(w, p, 40, true);
+    onPlayerDamaged(w, p, 40, true, DamageSource.bullet);
     onSignatureStep(w, p, emptyInput());
     onGemCollected(w, blankEntity('gem'));
     expect(p.aux0).toBe(600);
@@ -214,7 +215,7 @@ describe('앵커 ④ — 피격 후속 4종', () => {
     const p = player(w);
     const near = enemyNear(w, 100, 0);
     const far = enemyNear(w, 900, 0);
-    onPlayerDamaged(w, p, 7, false);
+    onPlayerDamaged(w, p, 7, false, DamageSource.bullet);
     expect(near.hp).toBe(1000 - (15 + 4));
     expect(far.hp).toBe(1000);
   });
@@ -223,7 +224,7 @@ describe('앵커 ④ — 피격 후속 4종', () => {
     const w = mk([[BR7, 1]]);
     const p = player(w);
     const near = enemyNear(w, 100, 0);
-    onPlayerDamaged(w, p, 7, false);
+    onPlayerDamaged(w, p, 7, false, DamageSource.bullet);
     expect(near.hp).toBe(1000);
   });
 
@@ -231,11 +232,11 @@ describe('앵커 ④ — 피격 후속 4종', () => {
     const w = mk([[BR7, 1]]);
     const p = player(w);
     p.aux0 = 0;
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     // round(10 × (5000 + 500)/10000) = round(5.5) = 6
     expect(p.aux0).toBe(6);
     p.aux0 = 599;
-    onPlayerDamaged(w, p, 400, false);
+    onPlayerDamaged(w, p, 400, false, DamageSource.bullet);
     expect(p.aux0).toBe(600);
   });
 
@@ -245,7 +246,7 @@ describe('앵커 ④ — 피격 후속 4종', () => {
     p.maxHp = 100;
     p.hp = 20; // 피격 후 hp. dmg 50 이므로 이전 hp = 70 (> 30) → 통과
     p.aux0 = 600;
-    onPlayerDamaged(w, p, 50, false);
+    onPlayerDamaged(w, p, 50, false, DamageSource.bullet);
     expect(p.aux0).toBe(0);
     // round(600 × (500 + 50)/10000) = 33
     expect(p.hp).toBe(53);
@@ -257,13 +258,13 @@ describe('앵커 ④ — 피격 후속 4종', () => {
     p.maxHp = 100;
     p.hp = 20;
     p.aux0 = 600;
-    onPlayerDamaged(w, p, 50, false);
+    onPlayerDamaged(w, p, 50, false, DamageSource.bullet);
     const cdAfter = readSlot(w.skillCarry, 0); // ArccasterCarry.backflowCooldown
     expect(cdAfter).toBe(1200 + Math.floor(43200 / 12));
     // 두 번째 빈사 진입 — 쿨다운이 남아 있어 무발동
     p.hp = 20;
     p.aux0 = 600;
-    onPlayerDamaged(w, p, 50, false);
+    onPlayerDamaged(w, p, 50, false, DamageSource.bullet);
     expect(p.aux0).toBe(600);
     expect(p.hp).toBe(20);
   });
@@ -274,7 +275,7 @@ describe('앵커 ④ — 피격 후속 4종', () => {
     p.maxHp = 100;
     p.hp = 20;
     p.aux0 = 600;
-    onPlayerDamaged(w, p, 5, false); // 이전 hp = 25 — 이미 30 이하였다
+    onPlayerDamaged(w, p, 5, false, DamageSource.bullet); // 이전 hp = 25 — 이미 30 이하였다
     expect(p.aux0).toBe(600);
     expect(p.hp).toBe(20);
   });
@@ -284,14 +285,14 @@ describe('앵커 ④ — 피격 후속 4종', () => {
     const p = player(w);
     p.aux0 = 0;
     p.iframes = 0;
-    onPlayerDamaged(w, p, 5, true);
+    onPlayerDamaged(w, p, 5, true, DamageSource.bullet);
     expect(p.aux0).toBe(600);
     expect(p.iframes).toBe(2);
     expect(p.targetX).toBe(1);
     // 두 번째 치명 생존 — 억제 표식이 이미 서 있어 무발동
     p.aux0 = 0;
     p.iframes = 0;
-    onPlayerDamaged(w, p, 5, true);
+    onPlayerDamaged(w, p, 5, true, DamageSource.bullet);
     expect(p.aux0).toBe(0);
     expect(p.iframes).toBe(0);
   });
@@ -300,7 +301,7 @@ describe('앵커 ④ — 피격 후속 4종', () => {
     const w = mk([[BR10, 1]]);
     const p = player(w);
     p.aux0 = 0;
-    onPlayerDamaged(w, p, 5, false);
+    onPlayerDamaged(w, p, 5, false, DamageSource.bullet);
     expect(p.aux0).toBe(0);
     expect(p.targetX).toBe(0);
   });
@@ -480,7 +481,7 @@ describe('앵커 ⑨ — 시그니처 틱 6종', () => {
     p.maxHp = 100;
     p.hp = 20;
     p.aux0 = 600;
-    onPlayerDamaged(w, p, 50, false);
+    onPlayerDamaged(w, p, 50, false, DamageSource.bullet);
     const cd0 = readSlot(w.skillCarry, 0);
     onSignatureStep(w, p, emptyInput());
     expect(readSlot(w.skillCarry, 0)).toBe(cd0 - 1);
@@ -555,6 +556,8 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     cloakBreak: false,
     mark: 0,
     // S3-2 가 더한 칸 — "발사 시점 피해를 탄 `aux1` 에 새겨라"(기본은 안 새긴다).
+    leadDamageBonus: 0,
+    leadPierceBonus: 0,
     recordSpawnDamage: false,
     ...over,
   };

@@ -54,6 +54,7 @@ import {
   cushionRecovered,
 } from '../src/sim/shipSignature.js';
 import { readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
+import { DamageSource } from '../src/sim/skillSlots.js';
 
 /** `data/ships/index.ts` 의 타입 id — `data/ships/mallow.ts` 의 `id: 5` 가 정본이다. */
 const SHIP_MALLOW = 5;
@@ -147,6 +148,8 @@ function volley(damage = 100, inputX = 0, inputY = 0, aimAngle = 0): VolleyParam
     inputY,
     cloakBreak: false,
     mark: 0,
+    leadDamageBonus: 0,
+    leadPierceBonus: 0,
     recordSpawnDamage: false,
   };
 }
@@ -222,7 +225,7 @@ describe('① 투자 0 런 불변', () => {
     p.aux1 = 90;
     onGemCollected(w, { ...blankEntity('gem'), x: p.x, y: p.y });
     onDamageChain(w, p, 100);
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     onPowerupPicked(w, 0, 0);
     for (let s = 0; s < SKILL_SLOT_COUNT; s++) {
       expect(readSlot(w.skillCarry, s)).toBe(0);
@@ -240,7 +243,7 @@ describe('① 투자 0 런 불변', () => {
     const shot = addEnemyBullet(w, p.x + 20, p.y);
     const xpBefore = w.xp;
     expect(onDamageChain(w, p, 100)).toBe(100); // CU7 미투자 → 감액 0
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     expect(foe.hp).toBe(100); // SQ3 미투자 → 반격 없음
     expect(shot.dead).toBe(false); // CU4 미투자 → 소거 없음
     onPowerupPicked(w, 0, 0);
@@ -291,7 +294,7 @@ describe('③ 앵커 ④ 피격 후속', () => {
     const p = player(w);
     const near = addEnemy(w, p.x + 60, p.y, 100);
     const far = addEnemy(w, p.x + 200, p.y, 100);
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     // 반환 배율 = 60 + 8×20 = 220% → round(10 × 220/100) = 22.
     expect(near.hp).toBe(78);
     expect(far.hp).toBe(100); // "최근접 1기" — 반경 안이어도 두 번째는 안 맞는다
@@ -302,7 +305,7 @@ describe('③ 앵커 ④ 피격 후속', () => {
     const w = mk([[SQ3, 20]]);
     const p = player(w);
     const away = addEnemy(w, p.x + 400, p.y, 100);
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     expect(away.hp).toBe(100);
   });
 
@@ -311,7 +314,7 @@ describe('③ 앵커 ④ 피격 후속', () => {
     const p = player(w);
     const boss: Entity = { ...blankEntity('boss'), x: p.x + 50, y: p.y, hp: 500, maxHp: 500 };
     w.entities.push(boss);
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     expect(boss.hp).toBe(500);
   });
 
@@ -320,7 +323,7 @@ describe('③ 앵커 ④ 피격 후속', () => {
     const p = player(w);
     p.aux0 = 0;
     const shot = addEnemyBullet(w, p.x + 10, p.y);
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     expect(shot.dead).toBe(false);
   });
 
@@ -331,7 +334,7 @@ describe('③ 앵커 ④ 피격 후속', () => {
     ps.aux0 = 5;
     const inside = addEnemyBullet(small, ps.x + 80, ps.y);
     const outside = addEnemyBullet(small, ps.x + 120, ps.y);
-    onPlayerDamaged(small, ps, 10, false);
+    onPlayerDamaged(small, ps, 10, false, DamageSource.bullet);
     expect(inside.dead).toBe(true);
     expect(outside.dead).toBe(false);
 
@@ -340,7 +343,7 @@ describe('③ 앵커 ④ 피격 후속', () => {
     const pb = player(big);
     pb.aux0 = 30;
     const reached = addEnemyBullet(big, pb.x + 120, pb.y);
-    onPlayerDamaged(big, pb, 10, false);
+    onPlayerDamaged(big, pb, 10, false, DamageSource.bullet);
     expect(reached.dead).toBe(true);
   });
 });

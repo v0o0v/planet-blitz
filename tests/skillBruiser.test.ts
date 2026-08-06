@@ -47,6 +47,7 @@ import {
   writeSlot,
   SKILL_SLOT_COUNT,
 } from '../src/sim/skillSlots.js';
+import { DamageSource } from '../src/sim/skillSlots.js';
 
 /** `data/ships/index.ts` 의 타입 id. `armorCapDerivation.test.ts` 와 같은 상수다. */
 const SHIP_BRUISER = 1;
@@ -60,6 +61,7 @@ const BL2 = 1;
 const BL3 = 2;
 const BL4 = 3;
 const BL6 = 5;
+const BL8 = 7;
 const BL9 = 8;
 const MO1 = 10;
 const MO6 = 15;
@@ -275,9 +277,9 @@ describe('⑤ BL4 과적 배출 (앵커 ④)', () => {
     player(partial).aux0 = 1;
     player(off).aux0 = off.armorMaxStacks;
     const before = countBullets(full);
-    onPlayerDamaged(full, player(full), 20, false);
-    onPlayerDamaged(partial, player(partial), 20, false);
-    onPlayerDamaged(off, player(off), 20, false);
+    onPlayerDamaged(full, player(full), 20, false, DamageSource.bullet);
+    onPlayerDamaged(partial, player(partial), 20, false, DamageSource.bullet);
+    onPlayerDamaged(off, player(off), 20, false, DamageSource.bullet);
     // 파편 수 = 4 + ceil(6/3) = 6.
     expect(countBullets(full) - before).toBe(6);
     expect(countBullets(partial)).toBe(before);
@@ -294,12 +296,12 @@ describe('⑥ FO5 불괴 연쇄 (앵커 ④)', () => {
     w.entities.push({ ...blankEntity('enemyBullet'), x: p.x + 10, y: p.y });
 
     // ① 평범한 피격 — 미발동.
-    onPlayerDamaged(w, p, 10, false);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
     expect(p.aux0).toBe(0);
     expect(p.targetX).toBe(0);
 
     // ② 치명 생존 — 발동.
-    onPlayerDamaged(w, p, 10, true);
+    onPlayerDamaged(w, p, 10, true, DamageSource.bullet);
     expect(p.aux0).toBe(w.armorMaxStacks);
     expect(p.targetX).toBe(1);
     expect(w.entities.some((e) => e.kind === 'enemyBullet' && !e.dead)).toBe(false);
@@ -307,7 +309,7 @@ describe('⑥ FO5 불괴 연쇄 (앵커 ④)', () => {
     // ③ 두 번째 치명 생존 — 억제로 미발동.
     p.aux0 = 2;
     w.entities.push({ ...blankEntity('enemyBullet'), x: p.x + 10, y: p.y });
-    onPlayerDamaged(w, p, 10, true);
+    onPlayerDamaged(w, p, 10, true, DamageSource.bullet);
     expect(p.aux0).toBe(2);
     expect(w.entities.some((e) => e.kind === 'enemyBullet' && !e.dead)).toBe(true);
   });
@@ -315,8 +317,117 @@ describe('⑥ FO5 불괴 연쇄 (앵커 ④)', () => {
   it('미투자 런은 치명 생존에서도 표식을 세우지 않는다', () => {
     const w = mk([[MO9, 5]]);
     const p = player(w);
-    onPlayerDamaged(w, p, 10, true);
+    onPlayerDamaged(w, p, 10, true, DamageSource.bullet);
     expect(p.targetX).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑥-b BL8 격돌 담금질 (앵커 ④ 적립 · 앵커 ⑯ 소모)
+// ---------------------------------------------------------------------------
+
+describe('⑥-b BL8 격돌 담금질', () => {
+  function charges(w: WorldState): number {
+    return readSlot(w.skillStage, BruiserStage.temperCharges);
+  }
+
+  it('접촉 피격에서만 적립된다 (양성 · 음성 짝)', () => {
+    // ⚠️ 부정 항목("적탄에서는 안 쌓인다")은 뮤테이션에 원리적으로 안 걸린다 — 게이트를
+    //    지워도 그 단언만으로는 빨개지지 않는다. 그래서 **양성 짝을 바로 옆에 둔다.**
+    const w = mk([[BL8, 1]]);
+    const p = player(w);
+
+    onPlayerDamaged(w, p, 10, false, DamageSource.contact);
+    expect(charges(w), '접촉인데 적립이 없다 — 적립처 미배선').toBe(1);
+
+    const off = mk([[BL8, 1]]);
+    onPlayerDamaged(off, player(off), 10, false, DamageSource.bullet);
+    expect(charges(off)).toBe(0);
+
+    const hz = mk([[BL8, 1]]);
+    onPlayerDamaged(hz, player(hz), 10, false, DamageSource.hazard);
+    expect(charges(hz)).toBe(0);
+  });
+
+  it('⭐ 적탄이 `max` 를 이긴 틱에도 접촉 비트가 서 있으면 적립된다', () => {
+    // 설계서가 명시한 술어("max 가 적탄이어도 접촉 기여가 있으면 적립") 그대로다.
+    // 앵커에 단일 유니온을 실었다면 이 케이스가 조용히 0 이 된다.
+    const w = mk([[BL8, 1]]);
+    onPlayerDamaged(w, player(w), 20, false, DamageSource.contact | DamageSource.bullet);
+    expect(charges(w)).toBe(1);
+  });
+
+  it('적립 상한은 레벨 파생이다 — Lv1 = 1, Lv20 = 4', () => {
+    const lo = mk([[BL8, 1]]);
+    for (let i = 0; i < 10; i++) onPlayerDamaged(lo, player(lo), 5, false, DamageSource.contact);
+    expect(charges(lo)).toBe(1);
+
+    const hi = mk([[BL8, 20]]);
+    for (let i = 0; i < 10; i++) onPlayerDamaged(hi, player(hi), 5, false, DamageSource.contact);
+    expect(charges(hi)).toBe(4);
+  });
+
+  it('소모처: 볼리 하나가 **1 발만** 꺼내 선두탄 칸에 싣는다', () => {
+    const w = mk([[BL8, 4]]);
+    const p = player(w);
+    onPlayerDamaged(w, p, 5, false, DamageSource.contact);
+    onPlayerDamaged(w, p, 5, false, DamageSource.contact);
+    expect(charges(w), '적립이 없으면 아래 소모 단언이 항진이다').toBe(2);
+
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(charges(w)).toBe(1); // 볼리당 정확히 1 발
+    // 피해 +60% + 3%p/Lv → Lv4 = 72% of 100 = 72. 선두탄 칸에만 실린다.
+    expect(v.leadDamageBonus).toBe(72);
+    expect(v.leadPierceBonus).toBe(1);
+    // 볼리 전체 값은 한 칸도 안 건드린다 — 부채꼴에서 `count` 배로 부푸는 것을 막는 계약이다.
+    expect(v.damage).toBe(100);
+    expect(v.pierce).toBe(1);
+  });
+
+  it('음성 대조: 적립이 0 이면 볼리가 선두탄 칸을 안 건드린다', () => {
+    const w = mk([[BL8, 4]]);
+    const v = volley();
+    onVolleyParams(w, player(w), v);
+    expect(v.leadDamageBonus).toBe(0);
+    expect(v.leadPierceBonus).toBe(0);
+  });
+
+  it('⭐ 선두탄 증분이 **실제 탄까지 닿는다** — 아키타입 분기가 삼키지 않는다', () => {
+    // ⚠️ `VolleyParams` 만 단언하면 반쪽이다. `world.ts` 가 그 칸을 안 읽거나 `spawnBullet` 이
+    //    clamp 로 삼키면 훅은 초록인데 탄은 종전 그대로다 — 앵커 ⑰ 이 정확히 그 형태로
+    //    무효였다. 그래서 **태어난 탄의 피해**를 직접 잰다.
+    function firstVolleyDamages(charge: boolean): number[] {
+      const w = mk([[BL8, 20]]);
+      const p = player(w);
+      if (charge) writeSlot(w.skillStage, BruiserStage.temperCharges, 1);
+      addEnemy(w, p.x + 300, p.y, 1_000_000);
+      for (let i = 0; i < 240; i++) {
+        stepWorld(w, emptyInput());
+        const shots = w.entities.filter((e) => e.kind === 'bullet' && !e.dead);
+        if (shots.length > 1) return shots.map((e) => e.damage);
+      }
+      return [];
+    }
+    const off = firstVolleyDamages(false);
+    const on = firstVolleyDamages(true);
+    // 하한 먼저 — 볼리가 안 났으면 아래 비교는 빈 배열끼리의 항진이다.
+    expect(off.length, '볼리가 나지 않았다 — 잴 것이 없다').toBeGreaterThan(1);
+    expect(on.length).toBe(off.length);
+    // 미적립 볼리는 전 탄이 같은 피해다(선두 개념이 관측되지 않는다).
+    expect(new Set(off).size).toBe(1);
+    // 적립 볼리는 **정확히 한 발만** 더 아프다.
+    const base = off[0]!;
+    expect(on.filter((d) => d > base)).toHaveLength(1);
+    expect(on.filter((d) => d === base)).toHaveLength(off.length - 1);
+  });
+
+  it('미투자 런은 접촉 피격에서도 슬롯을 안 건드리고 비트가 불변이다', () => {
+    const a = mk([[MO9, 5]]);
+    onPlayerDamaged(a, player(a), 10, false, DamageSource.contact);
+    expect(charges(a)).toBe(0);
+    const b = mk([[MO9, 5]]);
+    expect(hashWorld(a)).toBe(hashWorld(b));
   });
 });
 
@@ -360,7 +471,7 @@ describe('⑧ FO2 응혈 장갑 (앵커 ④ 적립 → 앵커 ⑨ 정산)', () =
     p.hp = p.maxHp - 500;
 
     // 적립: round(100 × (2000 + 100×10) / 10000) = 30.
-    onPlayerDamaged(w, p, 100, false);
+    onPlayerDamaged(w, p, 100, false, DamageSource.bullet);
     expect(readSlot(w.skillCarry, BruiserCarry.clotPool)).toBe(30);
 
     // 아직 만재가 아니면 정산이 없다.
@@ -377,7 +488,7 @@ describe('⑧ FO2 응혈 장갑 (앵커 ④ 적립 → 앵커 ⑨ 정산)', () =
     expect(readSlot(w.skillCarry, BruiserCarry.clotPool)).toBe(0);
 
     // 만재를 **유지**하는 다음 틱은 엣지가 아니다(SUSTAIN 이 매 틱 정산되면 안 된다).
-    onPlayerDamaged(w, p, 100, false);
+    onPlayerDamaged(w, p, 100, false, DamageSource.bullet);
     const hpHold = p.hp;
     onSignatureStep(w, p, emptyInput());
     expect(p.hp).toBe(hpHold);
@@ -388,7 +499,7 @@ describe('⑧ FO2 응혈 장갑 (앵커 ④ 적립 → 앵커 ⑨ 정산)', () =
     const w = mk([[MO9, 5]]);
     const p = player(w);
     p.hp = p.maxHp - 500;
-    onPlayerDamaged(w, p, 100, false);
+    onPlayerDamaged(w, p, 100, false, DamageSource.bullet);
     p.aux0 = w.armorMaxStacks;
     onSignatureStep(w, p, emptyInput());
     expect(readSlot(w.skillCarry, BruiserCarry.clotPool)).toBe(0);
@@ -591,6 +702,8 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     spread: 0.3,
     cooldownQ: 1280,
     mark: 0,
+    leadDamageBonus: 0,
+    leadPierceBonus: 0,
     recordSpawnDamage: false,
     // 아크캐스터 레인이 BA10 을 위해 추가한 필드(머지에서 합류). `true` = 이번 아키타입이
     // `count` 를 실제로 읽는다(발칸/스프레드/미사일). 판정 정본은 `world.ts` 의 아키타입

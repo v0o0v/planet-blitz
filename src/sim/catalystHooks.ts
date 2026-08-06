@@ -46,6 +46,7 @@ import type { Entity } from './entities.js';
 // 앵커 ⑥ 의 소멸 사유. **type-only 라 순환이 되지 않는다**(`skillHooks.ts` 가 이 파일을
 // 값으로 import 하므로 값 import 는 순환이다) — 컴파일에서 지워진다.
 import type { BulletExpiryReason } from './skillHooks.js';
+import type { DamageSourceMask } from './skillSlots.js';
 
 // ---------------------------------------------------------------------------
 // 기존 앵커 9지점에 대응하는 촉매 디스패치 (S0: 전 분기 비어 있음)
@@ -73,17 +74,26 @@ export function onGemCollectedCatalyst(state: WorldState, gem: Entity): void {
   void gem;
 }
 
-/** 선체 hp 가 실제로 깎인 피격의 후속. 스킬 디스패치 **뒤**. */
+/**
+ * 선체 hp 가 실제로 깎인 피격의 후속. 스킬 디스패치 **뒤**.
+ *
+ * ⚠️ `sources` 는 {@link DamageSource} **비트합**이지 단일 값이 아니다(W2 — `world.ts` 의
+ * 수집 루프가 `max` 라 한 틱에 여러 피해원이 함께 기여할 수 있다). 여기에 촉매를 얹는 레인은
+ * `hasDamageSource(sources, DamageSource.contact)` 처럼 **비트로 게이트**해라 —
+ * `sources === DamageSource.contact` 로 쓰면 적탄이 겹친 틱에 조용히 빠진다.
+ */
 export function onPlayerDamagedCatalyst(
   state: WorldState,
   player: Entity,
   dmg: number,
   lethalSurvived: boolean,
+  sources: DamageSourceMask,
 ): void {
   if (!state.catalystOn) return;
   void player;
   void dmg;
   void lethalSurvived;
+  void sources;
 }
 
 /** 이번 틱의 처치 증분. 스킬 디스패치 **뒤**. */

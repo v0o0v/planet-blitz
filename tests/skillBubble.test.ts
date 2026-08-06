@@ -449,6 +449,8 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     inputY: 0,
     cloakBreak: false,
     mark: 0,
+    leadDamageBonus: 0,
+    leadPierceBonus: 0,
     recordSpawnDamage: false,
     ...over,
   };

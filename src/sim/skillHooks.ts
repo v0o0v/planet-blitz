@@ -59,6 +59,9 @@
 
 import type { WorldState, InputFrame } from './world.js';
 import type { Entity } from './entities.js';
+// 앵커 ④ 의 피해원 비트합. 정본이 `skillSlots.ts`(import 0 인 leaf)인 사유는 그 파일 주석 —
+// 스킬 모듈이 이 값을 **런타임에** 읽어야 하는데 여기 두면 순환이 생긴다.
+import type { DamageSourceMask } from './skillSlots.js';
 import {
   onVolleyFiredCatalyst,
   onDashFiredCatalyst,
@@ -390,15 +393,19 @@ function playerOf(state: WorldState): Entity | undefined {
  *
  * @param dmg 실제로 hp 에서 차감된 피해(사슬 전량 통과 후)
  * @param lethalSurvived {@link survivedLethalBlow} 의 결과 — **여기서 다시 계산하지 마라**
+ * @param sources {@link DamageSource} 비트합. **기본값 없는 필수 인자다** — 기본값을 두면 새
+ *   호출부가 사유를 빠뜨린 채 기존 사유로 흘러들어 조용히 오분류된다(앵커 ⑥
+ *   {@link BulletExpiryReason} 와 같은 규율).
  */
 export function onPlayerDamaged(
   state: WorldState,
   player: Entity,
   dmg: number,
   lethalSurvived: boolean,
+  sources: DamageSourceMask,
 ): void {
-  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived);
-  onPlayerDamagedCatalyst(state, player, dmg, lethalSurvived);
+  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived, sources);
+  onPlayerDamagedCatalyst(state, player, dmg, lethalSurvived, sources);
 }
 
 function dispatchPlayerDamagedSkill(
@@ -406,6 +413,7 @@ function dispatchPlayerDamagedSkill(
   player: Entity,
   dmg: number,
   lethalSurvived: boolean,
+  sources: DamageSourceMask,
 ): void {
   if (!state.skillsOn) return;
   switch (state.sigBit) {
@@ -420,7 +428,8 @@ function dispatchPlayerDamagedSkill(
       arccasterPlayerDamaged(state, player, dmg, lethalSurvived);
       break;
     case SIG_BRUISER_ARMOR:
-      // BL4 과적 배출 · FO2 응혈 적립 · FO5 불괴 연쇄.
+      // BL4 과적 배출 · FO2 응혈 적립 · FO5 불괴 연쇄 · **BL8 격돌 담금질(적립처)**.
+      // BL8 만 `sources` 를 본다 — 나머지 셋은 피해원과 무관하다(종전 인자만 쓴다).
       // 브루저는 스트라이커와 달리 **둘 다 필요하다** — FO2 는 적립량이 `dmg` 에 비례하고,
       // FO5 는 `lethalSurvived` 가 트리거 자체다(사슬 안에서 계산된 값을 그대로 넘긴다).
       //
@@ -430,7 +439,7 @@ function dispatchPlayerDamagedSkill(
       // **항상 0** 이다. 그 술어를 그대로 쓰면 쿨이 영영 안 풀리거나(< 60 이면 스킵) 매 피격
       // 발동(≥ 60 이면 스킵)이 되어 어느 쪽이든 설계와 다르다. 슬롯 1칸이 필요하고, 그것은
       // 칼날 축 B 예산(BL8·BL9 로 2/2 포화)을 넘기므로 설계로 되돌아가야 한다.
-      bruiserPlayerDamaged(state, player, dmg, lethalSurvived);
+      bruiserPlayerDamaged(state, player, dmg, lethalSurvived, sources);
       break;
     case SIG_MALLOW_CUSHION:
       // SQ3 몸통 반발(즉시분 비례 반격) · CU4 반발 세척(부채 보유 중 적탄 소거).
@@ -1451,6 +1460,30 @@ export interface VolleyParams {
    */
   mark: number;
   /**
+   * **선두탄에만** 더할 피해(0 = 없음). 나머지 탄은 `damage` 그대로다.
+   *
+   * ## 왜 이 칸이 필요했는가 — `damage` 로는 「1발」을 표현할 수 없다
+   * 브루저 BL8「격돌 담금질」은 *"적립분을 소모해 **선두탄**이 대구경화"* 다. 적립 단위가
+   * **접촉 피격 1회 = 강화탄 1발**이라 볼리 전체에 실으면 부채꼴 무기에서 `count` 배로 부풀고,
+   * `damage`·`pierce` 는 아키타입 분기 넷이 전부 **모든 탄에** 그대로 넘긴다. 그래서 선두탄
+   * 전용 칸을 따로 연다 — 값이 0 이면 `damage + 0`, `pierce + 0` 이라 **바이트 불변**이다.
+   *
+   * ## 「선두」의 정의(아키타입별)
+   *  · 레일건 — 유일한 그 한 발. · 미사일·부채꼴 — `i === 0`(부채 시작단).
+   *  · 빔 — `i === 1`, 즉 플레이어에 **가장 가까운** 세그먼트.
+   *
+   * ⚠️ 부채꼴 분기의 ⑦ 쌍둥이 항성 배율은 `damage` 에만 실린다 — 이 보너스는 훅이 계산한
+   * 값 그대로 더해진다(유니크 배율이 스킬 보너스까지 증폭하지 않는다).
+   */
+  leadDamageBonus: number;
+  /**
+   * **선두탄에만** 더할 관통(0 = 없음). {@link leadDamageBonus} 와 같은 규율이다.
+   *
+   * ⚠️ 빔은 관통을 리터럴 9999 로 쓰므로 이 칸이 **무연산**이다(`ballisticsUsed === false`).
+   * BL2 가 같은 자리에서 같은 판단을 했다 — 관통 무연산은 아키타입 정의이지 결함이 아니다.
+   */
+  leadPierceBonus: number;
+  /**
    * 이번 볼리로 태어나는 **모든 탄의 `aux1` 에 자기 발사 시점 피해**(`round(damage)`)를
    * 새길 것인가. `false` 면 한 칸도 안 쓴다(`aux1` 은 0 그대로 → 리플레이 바이트 불변).
    *
@@ -1565,14 +1598,15 @@ export function onVolleyParams(
       phantomVolleyParams(state, player, params);
       break;
     case SIG_BRUISER_ARMOR:
-      // BL2 백병 격발 · BL3 만재 중탄 · BL6 중량 탄자.
+      // BL2 백병 격발 · BL3 만재 중탄 · BL6 중량 탄자 · **BL8 격돌 담금질(소모처)**.
       // BL3·BL6 은 여기서는 `mark`(+BL6 은 피해·탄속·수명)만 건드리고 실효는 앵커 ⑩ 이 그
       // 표식을 읽어 낸다. BL2 만 이 앵커 안에서 끝난다(`targetDist` 술어 → 관통·피해 직접 증폭).
       //
-      // ⚠️ BL8(격돌 담금질)은 여전히 여기 **없다** — 적립처인 접촉 피격 판별 앵커가 아직 없다
-      // (앵커 ④ 의 인자는 `dmg`·`lethalSurvived` 뿐이라 피해원을 구분하지 않는다). BL2 를
-      // 막던 "표적 거리가 이 레코드에 없다" 는 S2.1 의 `targetDist` 로 해소됐다. 사유 전문은
-      // `bruiserVolleyParams` 의 doc 주석에 있다.
+      // ⚠️ **BL8 은 이제 여기 있다**(W2). 막던 사유는 근거로 남긴다 — 적립처인 접촉 피격 판별이
+      // 없었다(앵커 ④ 의 인자가 `dmg`·`lethalSurvived` 뿐이라 피해원을 구분하지 않았다).
+      // W2 가 앵커 ④ 에 `sources` 비트합을 실어 적립처를, `leadDamageBonus`·`leadPierceBonus`
+      // 로 「선두탄 1발」소모처를 함께 열었다. BL2 를 막던 "표적 거리가 이 레코드에 없다" 는
+      // S2.1 의 `targetDist` 로 해소됐다. 사유 전문은 `bruiserVolleyParams` 의 doc 주석에 있다.
       bruiserVolleyParams(state, player, params);
       break;
     case SIG_BUBBLE_FILM:
