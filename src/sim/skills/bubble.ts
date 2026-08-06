@@ -8,31 +8,41 @@
  *
  * ---
  *
- * ## ⚠️ 이 배치가 배선한 것은 30종 중 **9종**이다
- * 사유별 묶음은 `skillHooks.ts` 의 각 `case`/미배선 주석과 레인 보고서에 있다. 큰 줄기는 셋:
- *  1. **막 흡수 지점에 앵커가 없다** — 감쇠 사슬의 스킬 슬롯(앵커 ⑧)은 `world.ts:4224` 이고
- *     막 흡수는 `world.ts:4249` 다. 그 사이에 브루저 장갑(4234)이 있어 앵커 ⑧ 에서는 막이
- *     아직 한 점도 닳지 않았다. 흡수량·흡수 효율·비상막을 요구하는 6종(DR2·FI3·FI4·FI6·
- *     FI8·FI9)이 전부 여기 걸린다.
- *  2. **볼리 파라미터에 닿지 않는다** — 앵커 ① 은 무기 아키타입 분기보다 앞이라 탄이 없다
- *     (PO2·PO5).
- *  3. **후처리 본문의 반경·변위·생성물** — FI7 은 밀어내기 산술 자체를 배율해야 하고(훅이
+ * ## ⚠️ 배선된 것은 30종 중 **13종**이다 (배치 4 의 9종 + S2 앵커로 연 4종)
+ * S2 가 앵커 ⑯(`onVolleyParams`)·⑰(`onFilmShield`)·⑱(`onFilmAbsorbed`)을 열어
+ * **PO2·PO5(⑯) · FI3·FI4(⑱)** 넷이 추가됐다. 사유별 묶음은 `skillHooks.ts` 의 각 `case`/
+ * 미배선 주석에 있고, 남은 17종의 큰 줄기는 넷이다:
+ *  1. **흡수 「효율」 축은 앵커 ⑰ 으로도 표현이 안 된다** — `filmAbsorbed = min(dmg, shield)`
+ *     이고 world 가 `aux0 -= absorbed` 를 하므로 **흡수량과 내구 소모량이 같은 값**이다.
+ *     "내구 1당 막는 피해가 1+α" 는 그 둘을 분리해야 성립하는데, 분리는 순수 함수 시그니처
+ *     변경(= 골든)이라 배선 레인 밖이다. DR2·FI8 이 여기 걸린다(FI8 은 피해원 복원 불가라는
+ *     별도 사유도 함께 — ⑰ 주석이 정본). FI9 는 호출부 게이트(`aux0 > 0`)가 *막 없음*을
+ *     배제해 애초에 이 앵커에 도달하지 않는다.
+ *  2. **자석·이동·젬 이동 축에 앵커가 없다** — DR3·DR4·DR5·DR8·DR10 은 `stepGems` 흡인 배율,
+ *     이동 감속 적용부, 기믹 접촉 판정처럼 전부 `world.ts` 의 비-앵커 지점을 요구한다.
+ *  3. **파열의 종류를 구분할 신호가 없다** — FI6 은 *액티브 만료* 파열에만 얹혀야 하는데
+ *     앵커 ⑮ 는 시그니처 소진 파열과 만료 파열을 구분하지 못한다(요청 슬롯의 종류 코드는
+ *     소비 시점에 이미 비워진다).
+ *  4. **후처리 본문의 반경·변위·생성물** — FI7 은 밀어내기 산술 자체를 배율해야 하고(훅이
  *     아니라 함수 파라미터), PO4 는 슬라이드 전후 좌표 차이를, PO8 은 기뢰 엔티티 생성 규약을
  *     요구한다.
  *
  * 여기 없는 스킬은 "구현했는데 안 불린다"가 아니라 **아직 코드가 없다**.
  *
  * ## ⚠️ 슬롯을 **한 칸도 잡지 않았다**
- * 배선한 9종이 전부 기존 필드(`aux0`·`aux1`·`iframes`·`dashCooldown`·`playerSlowTicks`)와
- * `state.tick` 파생만 쓴다. 설계서가 `구현: B` 로 표시한 버블 5종(PO10·DR2·DR3·FI6·FI7)은
- * 전부 위 세 사유 중 하나에 걸려 이 배치 밖이다 — 그래서 `BubbleCarry`/`BubbleStage` 는
+ * 배선한 13종이 전부 기존 필드(`aux0`·`aux1`·`iframes`·`dashCooldown`·`playerSlowTicks`)와
+ * `state.tick`·볼리 파라미터 파생만 쓴다. 설계서가 `구현: B` 로 표시한 버블 5종(PO10·DR2·
+ * DR3·FI6·FI7)은 전부 위 사유 중 하나에 걸려 아직 밖이다 — 그래서 `BubbleCarry`/`BubbleStage` 는
  * 자리표시자뿐이고, `hashWorld` 의 스킬 슬롯 폴드는 버블 런에서도 한 번도 돌지 않는다.
  */
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
+import type { VolleyParams } from '../skillHooks.js';
 import { clearEnemyBullets, fanStrike } from '../activeTypes.js';
 import { applyChain } from '../status.js';
+import { slideCircleWalls } from '../los.js';
+import { length } from '../math.js';
 import { FILM_ABSORB_FLAT, FILM_BURST_RADIUS } from '../shipSignature.js';
 import { skillLv } from '../../items/skills.js';
 
@@ -49,15 +59,39 @@ import { skillLv } from '../../items/skills.js';
 
 const enum Sk {
   /** PO1 파열 탄두 */ burstWarhead = 0,
+  /** PO2 압력 전환 사출 */ pressureTransfer = 1,
   /** PO3 거품 산탄 파열 */ burstScatter = 2,
+  /** PO5 만재 투과 */ fullFilmPierce = 4,
   /** PO6 격발 재응결 */ fireRecondense = 5,
   /** PO7 정전 파열 */ staticBurst = 6,
   /** DR6 파열 추진 */ burstPropulsion = 15,
   /** FI1 조기 응결 */ earlyCondense = 20,
   /** FI2 내구 재응결 */ durabilityRecondense = 21,
+  /** FI3 반사 응막 */ reflectiveFilm = 22,
+  /** FI4 압력 배출 */ pressureVent = 23,
   /** FI5 파열 위상 */ burstPhase = 24,
   /** FI10 정화 파열 */ purgeBurst = 29,
 }
+
+/**
+ * PO2 가 "초과분" 을 재는 **기준 탄속**. 설계서 PO2 문면이 못 박은 상수(1800)다.
+ *
+ * ## 왜 `world.ts` 의 기본 무기 `bulletSpeed` 를 읽지 않는가
+ * 값이 우연히 같지만 **의미가 다르다**. 저쪽은 "기본 발칸이 이 속도로 쏜다" 는 무기 스탯이고,
+ * 이쪽은 "여기를 넘은 만큼만 화력으로 바꾼다" 는 **스킬의 문턱**이다. 무기 기본값을 밸런스
+ * 패스가 1600 으로 내리면 이 스킬은 *투자 없이도* 전환이 켜지는 쪽으로 조용히 강해진다 —
+ * 문턱은 그 패스와 독립이어야 한다. (그리고 그 값은 `world.ts` 가 export 하지 않는다 —
+ * leaf 규율상 런타임 import 도 불가능하다.)
+ */
+const PO2_SPEED_BASE = 1800;
+
+/**
+ * FI4 배출 밀어내기의 **반경**(sim 좌표). 설계서 FI4 가 "반경 120 고정" 으로 못 박았다.
+ *
+ * ⚠️ `FILM_BURST_RADIUS`(220)를 재사용하지 **않는다** — 파열 반경과 같은 값이 되면 "파열 전에도
+ * 민다" 가 아니라 "매 피격이 작은 파열" 이 되어 축이 무너진다. 두 값이 다르다는 것이 설계다.
+ */
+const FI4_VENT_RADIUS = 120;
 
 /**
  * 이 런에서 그 스킬의 **실효 레벨**(투자 + 축 어픽스). 미투자면 0 이다(`skillLv` 정본 1).
@@ -246,5 +280,129 @@ export function bubbleFilmBurst(state: WorldState, player: Entity, x: number, y:
   if (fi10 >= 1) {
     clearEnemyBullets(state, player, FILM_BURST_RADIUS + 15 * fi10);
     state.playerSlowTicks = 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ⑯ — 볼리 파라미터 확정 직후 · 탄이 태어나기 직전
+// ---------------------------------------------------------------------------
+
+/**
+ * **PO2 압력 전환 사출 · PO5 만재 투과** — 버블의 "막이 서 있는 동안" 이중 모드 화력 둘.
+ *
+ * 두 스킬 다 앵커 ① 에서는 배선할 수 없었다(그 지점은 아키타입 분기보다 앞이라 `speed`·
+ * `pierce` 가 아직 안 읽혔다). S2.1 의 ⑯ 이 그 자리를 열었다.
+ *
+ * ## ⚠️ 술어의 기준점이 다르다 — 둘을 한 게이트로 묶지 마라
+ * PO2 는 **막이 서 있기만** 하면 되고(`aux0 > 0`), PO5 는 **만재**를 요구한다
+ * (`aux0 >= FILM_ABSORB_FLAT`). 설계서가 PO5 에 "첫 피격이 만재를 깨는 내장 억제" 를 명시했고,
+ * PO2 에는 그 억제가 없다(막이 한 점이라도 남으면 켜진다). 합치면 PO2 가 조용히 PO5 의
+ * 억제를 물려받는다.
+ *
+ * ## ⚠️ `ballisticsUsed` 게이트가 **PO2 에서는 필수**다
+ * 빔은 `speed` 를 한 칸도 안 읽는다(정지 세그먼트). PO2 는 그 안 읽히는 `speed` 를 **피해로
+ * 바꾸는** 스킬이라, 게이트 없이 태우면 빔에서 *대가 없이 피해만* 오른다 — 앵커 ⑯ 의
+ * `ballisticsUsed` 주석이 브루저 BL6 을 두고 경고한 「무연산이 아니라 일방적 이득」과 정확히
+ * 같은 형태다. 빔에서 PO2 는 통째로 꺼진다.
+ *
+ * PO5 의 관통 +1 도 같은 사유로 `ballisticsUsed` 안이지만, **피해 보정은 밖**이다 — 그쪽은
+ * 대가가 아니라 이득이라, 빔에서 빠져도 *이득이 줄 뿐* 부호가 뒤집히지 않는다. 빔이 관통을
+ * 리터럴 9999 로 쓰는 이상 `pierce += 1` 은 어차피 무연산이다.
+ */
+export function bubbleVolleyParams(
+  state: WorldState,
+  player: Entity,
+  params: VolleyParams,
+): void {
+  // ── PO2 압력 전환 사출 — 막이 서 있는 동안, 기준 탄속 초과분 bp 의 20% + 2%p/Lv 가 피해 bp 로.
+  const po2 = lv(state, Sk.pressureTransfer);
+  if (po2 >= 1 && player.aux0 > 0 && params.ballisticsUsed) {
+    // 초과분을 **비율(bp)** 로 잰다 — 절대 속도 차를 그대로 피해에 더하면 단위가 다른 두 축이
+    // 섞인다(속도 1 = 피해 1 이 될 이유가 없다).
+    const excessBp = Math.round(((params.speed - PO2_SPEED_BASE) * 10000) / PO2_SPEED_BASE);
+    if (excessBp > 0) {
+      // 반올림은 **게이트 안에서만**(공통 규율). 미투자 런은 이 줄에 도달하지 않는다.
+      const gainBp = Math.round((excessBp * (2000 + 200 * po2)) / 10000);
+      params.damage = (params.damage * (10000 + gainBp)) / 10000;
+    }
+  }
+
+  // ── PO5 만재 투과 — 막이 **만재**인 동안 관통 +1 · 피해 +6% + 1.5%p/Lv.
+  const po5 = lv(state, Sk.fullFilmPierce);
+  if (po5 >= 1 && player.aux0 >= FILM_ABSORB_FLAT) {
+    if (params.ballisticsUsed) params.pierce += 1;
+    params.damage = (params.damage * (10600 + 150 * po5)) / 10000;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ⑱ — 막이 실제로 흡수하고 `aux0` 이 닳은 직후(파열 판정보다 앞)
+// ---------------------------------------------------------------------------
+
+/**
+ * **FI3 반사 응막 · FI4 압력 배출** — 막이 *막아 낸* 피격에 반응하는 둘.
+ *
+ * 앵커 ⑧(`onDamageChain`)으로는 못 했다: 그 지점은 브루저 장갑보다도 앞이라 막이 아직 한 점도
+ * 안 닳았고, "막이 얼마나 흡수했는가" 라는 트리거 자체가 존재하지 않았다.
+ *
+ * ## ⚠️ `rest === 0` 이어도 이 함수는 정상 동작한다 — 다만 뒤가 없다
+ * 막이 전량 흡수하면 호출부는 무적 창만 세우고 반환한다(앵커 ⑱ 주석). 여기 둘은 **그 자리에서
+ * 끝나는 즉시 효과**라 소비처를 뒤에 두지 않는다 — 값을 세워 두고 나중에 쓰는 형태였다면
+ * 전량 흡수 틱마다 조용히 유실됐을 것이다.
+ *
+ * ## ⚠️ 파열 틱에 FI4 를 **일부러 끈다** — 설계 문면과 어긋나 보이는 지점이라 근거를 남긴다
+ * 설계서 FI4 는 "막이 흡수할 때마다" 이되 본체 문면이 **"파열 전에도 막이 민다"** 다. 그리고
+ * 이 앵커는 파열 판정보다 **앞**이라, 여기서 밀면 곧 이어질 `resolveFilmBurst` 의 파열 훅
+ * (PO1 폭발 · PO7 연쇄)이 **반경 안에서 적을 한 기도 못 찾는다** — Lv20 에서 FI4 변위는
+ * 흡수 60 × 4.2 = 252 로 파열 반경 220 을 이미 넘는다. 이것은 앵커 ⑮ 가 밀어내기 뒤에 놓였다가
+ * PO1·PO7 을 조용히 0건으로 만든 그 사건과 **같은 형태**이고, 화면에도 테스트에도 "안 터진다"
+ * 는 흔적만 남는다. 그래서 파열하는 틱(`aux0 === 0`)에는 배출을 건너뛴다 — 그 틱의 밀어내기는
+ * 파열이 이미 (더 크게) 수행한다.
+ */
+export function bubbleFilmAbsorbed(
+  state: WorldState,
+  player: Entity,
+  absorbed: number,
+  rest: number,
+): void {
+  void rest;
+  // 막이 실제로 태운 내구가 0 이면 "막아 냈다" 가 성립하지 않는다(피해 0 인 접촉 등).
+  if (absorbed <= 0) return;
+
+  // ── FI3 반사 응막 — 흡수한 틱에 주변 적탄 소거. 반경 80 + 8×Lv.
+  //    소거 수에 대한 보상은 없다(FI10 과 같은 규약 — 부수효과만).
+  const fi3 = lv(state, Sk.reflectiveFilm);
+  if (fi3 >= 1) {
+    clearEnemyBullets(state, player, 80 + 8 * fi3);
+  }
+
+  // ── FI4 압력 배출 — 흡수량 비례 소형 밀어내기. 변위 = 흡수량 × (1.2 + 0.15×Lv) · 반경 120.
+  const fi4 = lv(state, Sk.pressureVent);
+  if (fi4 >= 1 && player.aux0 > 0) {
+    // 배율은 정수 bp · 나눗셈 1회(ADR-0005). 변위 자체는 좌표라 f64 로 해시된다.
+    const push = (absorbed * (12000 + 1500 * fi4)) / 10000;
+    const r2 = FI4_VENT_RADIUS * FI4_VENT_RADIUS;
+    for (const e of state.entities) {
+      // 대상 `enemy` 한정 — 침공 방어체(prop·facility*)는 배치 좌표가 소켓 계약이고 벽은
+      // `activeWalls` 재빌드와 얽힌다(`filmBurst.ts` 의 같은 판단).
+      if (e.dead || e.kind !== 'enemy') continue;
+      const dx = e.x - player.x;
+      const dy = e.y - player.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > r2) continue;
+      const d = length(dx, dy);
+      // 정확히 겹친 적은 밀 방향이 정의되지 않는다 — 임의 방향을 만들지 않고 둔다.
+      if (d <= 1) continue;
+      e.x += (dx / d) * push;
+      e.y += (dy / d) * push;
+      // ⚠️ 벽 충돌 **즉시** 재해결. 변위가 벽 두께를 넘으면 다음 틱 `slideCircleWalls` 가
+      // 최근접 면으로 밀어 반대편으로 튀어나온다(터널링) — 결정론은 유지되므로 해시 검증으로는
+      // 절대 안 잡히는 조용한 배치 계약 위반이다(`resolveFilmBurst` 의 같은 경고).
+      if (state.activeWalls.length > 0) {
+        const slid = slideCircleWalls(e.x, e.y, e.radius, state.activeWalls);
+        e.x = slid.x;
+        e.y = slid.y;
+      }
+    }
   }
 }

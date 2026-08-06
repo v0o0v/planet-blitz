@@ -98,6 +98,9 @@ import {
   strikerBulletExpired,
   strikerDamageChain,
   strikerSignatureStep,
+  strikerVolleyParams,
+  strikerEnemyDamaged,
+  strikerEnemyDeath,
 } from './skills/striker.js';
 import {
   arccasterGemCollected,
@@ -124,6 +127,8 @@ import {
   mallowDamageChain,
   mallowEnemyDamaged,
   mallowPowerupPicked,
+  mallowCushionSettled,
+  mallowVolleyParams,
 } from './skills/mallow.js';
 import {
   phantomDashFired,
@@ -140,6 +145,8 @@ import {
   bubbleSignatureStep,
   bubbleEnemyDamaged,
   bubbleFilmBurst,
+  bubbleVolleyParams,
+  bubbleFilmAbsorbed,
 } from './skills/bubble.js';
 
 // ---------------------------------------------------------------------------
@@ -206,9 +213,13 @@ function dispatchVolleySkill(state: WorldState, player: Entity): void {
     // 하나다(S8 의 흡수 절반은 앵커 ⑧ 에 이미 배선돼 있다).
     //
     // **막고 있던 것은 S1 이 치웠다** — `COMBO_WINDOW_TICKS` 가 `world.ts` 의 비공개 상수라
-    // leaf 에서 읽을 길이 없었는데, 이제 `./constants.js` 에 있어 기체 모듈이 그대로 import
-    // 한다. 남은 것은 스트라이커 레인이 `case SIG_STRIKER_MARKSMAN:` 한 줄을 넣는 일뿐이다.
-    // (S1 은 **자리만** 만드는 커밋이라 효과를 넣지 않았다 — 값 복제는 여전히 금지다.)
+    // leaf 에서 읽을 길이 없었는데, 이제 `./constants.js` 에 있어 기체 모듈이 그대로 import 한다.
+    //
+    // ⚠️ **그런데 배선은 여기가 아니라 앵커 ⑯ 에 들어갔다.** 이 앵커는 `autoAttack` 의
+    // 스트라이커 카운터 갱신(`player.aux0 = marksmanFire ? 0 : aux0 + 1`) **뒤**라, 도달 시점의
+    // `aux0` 은 이미 *다음* 볼리를 가리킨다 — "이번 볼리가 정조준이었는가" 를 직접 못 읽는다.
+    // ⑯ 은 그 판정을 `params.mark === 1` 로 싣고 있고 그 필드가 정조준 표식의 정본이므로,
+    // 같은 술어를 여기에 다시 세우면 두 곳이 조용히 갈린다. **누락이 아니라 이동이다.**
     //
     // ⚠️ **아크캐스터도 여기 case 가 없다 — 누락이 아니라 미배선이다.** 이 앵커를 쓰려는 설계
     // 항목은 넷인데(CH1·CH3·CH8 의 발사 시점 탄 표식 · BA10 의 탄수/간격 배율 · BA7 의 보너스
@@ -804,6 +815,15 @@ function dispatchEnemyDamagedSkill(
   if (!state.skillsOn) return;
   void dmg;
   switch (state.sigBit) {
+    case SIG_STRIKER_MARKSMAN:
+      // F6 소이 정조준 · F9 제압 사격. 둘 다 트리거가 **정조준탄 명중**이라 앵커 ⑯ 이 찍은
+      // 표식(`params.mark = 1` → 탄 `aux0`)을 `source` 에서 읽는다.
+      //
+      // ⚠️ F7(표적 고정)·S7(최후 처형)은 여기 **없다** — 이 앵커의 금지 사항에 정면으로 걸린다
+      // (F7 은 차감 **뒤**라 이번 일격에 안 실리고, S7 은 doc 가 "처형 축은 이 앵커가 아니다"
+      // 로 명시 배제했다). 사유 전문은 `strikerEnemyDamaged` 의 doc 주석에 있다.
+      strikerEnemyDamaged(state, target, source);
+      break;
     case SIG_ARC_OVERCHARGE:
       // CH1 유도 낙뢰 · CH8 접지 관통로 · CH6 과잉 전하 이월. 셋 다 **가해 탄**을 만진다:
       // 앞 둘은 앵커 ⑯ 이 단 과충전 표식(`b.aux0`)을 읽고, CH6 은 초과 피해(= 차감 후
@@ -931,6 +951,15 @@ function dispatchEnemyDeathSkill(
   void y;
   switch (state.sigBit) {
     // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다.
+    case SIG_STRIKER_MARKSMAN: {
+      // S3 전리 응급 — 엘리트 격파 시 선체 회복. `elite` 는 전리품 게이트가 굴린 그 판정과
+      // 같은 값이라 여기서 다시 세지 않는다.
+      //
+      // 플레이어는 `compact()` 뒤라 사라져 있을 수 있다(같은 틱에 함께 죽은 경우).
+      const p = playerOf(state);
+      if (p !== undefined) strikerEnemyDeath(state, p, elite);
+      break;
+    }
     case SIG_ARC_OVERCHARGE:
       // BA7 연발 축전기 — 처치 6기마다 다음 볼리를 장전한다. 소비는 앵커 ⑯ 이다.
       //
@@ -1347,6 +1376,20 @@ export function onVolleyParams(
       // 표식만 달고 소비처를 비워 두면 반쪽 배선이 되므로 손대지 않았다.
       arccasterVolleyParams(state, player, params);
       break;
+    case SIG_STRIKER_MARKSMAN:
+      // F2 반동 전달(대시 직후 창 = 집속·가속·증폭) · S8 콤보 차폐의 **뒤 절반**(정조준 볼리
+      // 발사 틱에 콤보 유지 창을 창 절반까지만 회복).
+      //
+      // ⚠️ S8 의 창 회복은 앵커 ① 이 아니라 **여기** 다. ① 의 주석은 그 자리를 가리키고 있었지만,
+      // ① 은 스트라이커 카운터 갱신 **뒤**라 `player.aux0` 이 이미 *다음* 볼리를 가리켜
+      // "이번 볼리가 정조준이었는가" 를 직접 못 읽는다. ⑯ 은 그 판정을 `params.mark === 1` 로
+      // 싣고 있고(그 필드의 정본이 정조준 표식이다), 같은 술어를 두 곳에 적으면 조용히 갈린다.
+      //
+      // ⚠️ F5(조준선 관통)·F10(연장 탄창)은 여기 **없다** — ⑯ 으로도 안 닿는다. F5 는 표적
+      // **방위**가 이 레코드에 없고(`targetDist` 는 거리뿐), F10 은 볼리를 **하나 더 낳아야**
+      // 한다. 사유 전문은 효과 함수 `strikerVolleyParams` 의 doc 주석에 있다.
+      strikerVolleyParams(state, player, params);
+      break;
     case SIG_PHANTOM_CLOAK:
       // AS2 은막 침투 — 은신 창 동안 발사한 탄에 관통 +1 · 탄속 증가.
       //
@@ -1373,6 +1416,28 @@ export function onVolleyParams(
       // 의 doc 주석에 적혀 있다(BL2 는 표적 거리가 이 레코드에 없고, BL8 은 적립처인 접촉
       // 피격 판별 앵커가 아직 없다).
       bruiserVolleyParams(state, player, params);
+      break;
+    case SIG_BUBBLE_FILM:
+      // PO2 압력 전환 사출(막 있음 · 탄속 초과분 → 피해) · PO5 만재 투과(만재 · 관통 +1 + 피해).
+      //
+      // ⚠️ PO2 는 `params.ballisticsUsed` 로 **게이트된다** — 빔은 `speed` 를 안 읽으므로
+      // 그 값을 피해로 바꾸면 대가 없는 순이득이 된다(그 필드 주석의 BL6 경고와 같은 형태).
+      //
+      // ⚠️ 버블의 나머지 볼리 축은 여기 **없다** — PO9(액티브 계수)·PO10(다음 막 내구)은
+      // 발사와 무관하고, DR 계열은 자석·이동 축이라 이 레코드에 대응 필드가 없다.
+      bubbleVolleyParams(state, player, params);
+      break;
+    case SIG_MALLOW_CUSHION:
+      // SQ1 부채 격노(현재 부채 → 피해 증폭) · SQ8 흉터 포문(누적 선체행 → 피해 증폭) ·
+      // SQ5 탕감 장전(잔량 25% 소진). 뒤 둘의 **적립처는 앵커 ⑳** 이고 여기가 소비처다 —
+      // 한쪽만 배선하면 "카운터만 돌고 소비처가 없는" 반쪽이 된다.
+      //
+      // ⚠️ SQ7(관성 사출)은 여기 없다 — 설계 술어가 *"그 틱 입력 벡터와 **발사각**의 내적"*
+      // 인데 `VolleyParams` 에 **발사각이 없다**. `player.angle` 로 대용하면 자동 조준이 실제
+      // 발사각을 정하는 sim 에서 두 값이 갈릴 수 있고(조준각은 적이 없는 방향을 가리킬 수
+      // 있다 — 설계서 SQ10 의 폴백 경고와 같은 함정), 그 어긋남은 조용하다. `targetDist` 처럼
+      // **world 가 이미 고른 발사각을 레코드에 싣는 것**이 값싼 길이다.
+      mallowVolleyParams(state, player, params);
       break;
     default:
       break;
@@ -1424,6 +1489,24 @@ export function onFilmShield(
     // **여러 접촉원의 합류값**이다(`world.ts` 의 수집 루프가 적 접촉·적탄·해저드를 같은
     // 변수에 더한다). 피해원 종류를 복원할 방법이 없다. 이 앵커에 태우면 "해저드에서만" 이
     // "언제나" 가 된다 — 설계와 정반대다. **문서는 고치지 않았다**(규약: 어긋남은 보고한다).
+    //
+    // ⚠️ **그리고 「흡수 효율」 축은 이 앵커로 아예 표현되지 않는다 — DR2 도 여기 못 온다.**
+    // 배선 레인 실측(ADR-0049 버블 S2 레인). 근거는 위 doc 의 상한 규칙과 순수 함수 정의를
+    // 겹쳐 보면 나온다: `filmAbsorbed(d, s) = min(d, s)` 이고 world 가 `aux0 -= absorbed` 를
+    // 하므로, **`absorbed ≤ player.aux0` 을 지키려면 `shield ≤ player.aux0`** 여야 한다.
+    // 그런데 `shield` 의 기본값이 이미 `player.aux0` 이다 → 이 훅은 내구를 **낮추는 방향으로만**
+    // 유효하다. 두 경우로 갈라 봐도 같다:
+    //  · `dmg ≤ aux0` 이면 부풀리든 말든 `absorbed = dmg` 라 **아무것도 안 바뀐다**.
+    //  · `dmg > aux0` 이면 부풀리는 순간 `aux0` 이 음수가 된다(u32 폴드 → 클라·서버 발산).
+    // 즉 "내구 1당 막는 피해가 1+α" 는 **흡수량 = 내구 소모량**이라는 이 구조에서 성립할 수
+    // 없다. 표현하려면 `filmAbsorbed`/`filmRemainingDamage` 가 효율 인자를 받아 *태운 내구*와
+    // *막은 피해*를 분리해야 하고, 그것은 골든에 닿는 순수 함수 변경이라 배선 레인 단독으로는
+    // 하지 않는다(앵커 ⑲ 의 ME9 가 같은 형태로 막혀 있는 것과 동형이다).
+    //
+    // ⚠️ **FI9「최후의 거품」도 여기 못 온다** — 호출부 게이트가 `player.aux0 > 0` 이라
+    // *막이 없는* 치명 피격에서는 이 훅이 **불리지 않는다.** 그 스킬의 자리는 막 흡수 분기의
+    // **진입 술어**(`aux0 > 0` 을 `aux0 > 0 || (치명 && aux1 > 0)` 로 넓히는 것)이지
+    // 흡수 산술 안이 아니다.
     default:
       break;
   }
@@ -1458,10 +1541,21 @@ export function onFilmAbsorbed(
   rest: number,
 ): void {
   if (!state.skillsOn) return;
-  void player;
-  void absorbed;
-  void rest;
   switch (state.sigBit) {
+    case SIG_BUBBLE_FILM:
+      // FI3 반사 응막(흡수 틱 적탄 소거) · FI4 압력 배출(흡수량 비례 소형 밀어내기).
+      //
+      // ⚠️ **FI6「헌막 의식」은 여기 없다.** 흡수 누적 자체는 이 앵커가 정확히 잴 수 있지만,
+      // 소비처가 `as_bubble_film_hi`(불멸 막) **만료 파열의 폭발 피해**다. 문제가 둘이다:
+      //  ① 앵커 ⑮(`onFilmBurst`)는 파열의 **종류를 구분하지 못한다** — 시그니처 소진 파열과
+      //     액티브 만료 파열이 같은 `resolveFilmBurst` 를 지나고 요청 슬롯의 종류 코드는
+      //     소비 시점에 이미 비워진다. "만료 파열일 때만" 을 잴 신호가 없다.
+      //  ② `resolveFilmBurst` 의 기본 파열에는 애초에 **폭발 피해가 없다**(밀어내기뿐).
+      //     가산할 대상이 PO1 투자에 의존하면 설계서의 "만료 파열의 폭발" 과 다른 것이 된다.
+      // 누적만 세우고 소비를 비워 두면 슬롯 1칸이 영구히 아무것도 안 하는 채 해시에 접힌다 —
+      // 반쪽 배선이라 통째로 뒀다.
+      bubbleFilmAbsorbed(state, player, absorbed, rest);
+      break;
     default:
       break;
   }
@@ -1500,6 +1594,17 @@ export function onCushionThreshold(
   if (!state.skillsOn) return base;
   void player;
   switch (state.sigBit) {
+    // ⚠️ **말로우 ME9「솜틀 요양」의 case 를 여기 넣지 마라 — 넣어도 안 돈다.**
+    // 술어(`state.wallContactTicks >= 60`)와 인하폭(`round(20 + 50×Lv/(Lv+12))`)은 전부
+    // 계산 가능하고, 이 앵커가 낮춘 임계로 `world.ts` 의 분기에 실제로 진입도 한다. 그런데
+    // 그 안에서 정산액을 내는 `cushionSettled`·`cushionRecovered` 가 **자기 안에서
+    // `unhitTicks < CUSHION_RECOVER_TICKS` 를 다시 검사해 0 을 돌려준다**
+    // (`shipSignature.ts:320·339`). 결과는 "분기에는 들어갔는데 정산액이 0" 이라
+    // **조용히 아무 일도 일어나지 않는 반쪽 배선**이다 — 이 저장소의 지배적 실패 형태 그대로다.
+    // 배선 레인(S2 확장)이 `tests/skillMallow.test.ts` §⑫ 로 이 사실을 실증해 잠갔다.
+    // → ME9 를 열려면 순수 함수 둘이 **임계를 인자로 받도록** 함께 고쳐야 하고, 그것은 골든에
+    //   닿는 변경이라 배선 레인이 단독으로 할 수 없다. CU7 의 분모(현행 상수 180)도 같은
+    //   선결에 묶여 있다 — ME9 가 도는 날 `mallowDamageChain` 의 분모를 함께 옮겨야 한다.
     default:
       break;
   }
@@ -1538,11 +1643,19 @@ export function onCushionSettled(
   applied: number,
 ): void {
   if (!state.skillsOn) return;
-  void player;
-  void settled;
-  void recovered;
-  void applied;
   switch (state.sigBit) {
+    case SIG_MALLOW_CUSHION:
+      // 정산 트리거 **7종**: CU3 무통 정산(회당 상한 + 잔여 이월) → SQ2 청산 폭발 →
+      // SQ5 탕감 장전 → SQ8 흉터 포문 → ME4 반환 요법 → CU9 유예의 은총 → CU10 자본화.
+      // 적용 순서는 설계서 공통 고지 ④ 고정이고 효과 함수가 그대로 지킨다.
+      //
+      // ⚠️ ME5(분할 상환)·ME8(리듬 탕감)·ME9(솜틀 요양)는 여기 **없다.** 셋 다 정산 **산술
+      // 자체**를 바꾸는데 이 앵커는 hp 차감·hp−1 클램프가 끝난 뒤다. 사후 환급으로 흉내 내면
+      // 클램프가 물린 정산에서 값이 갈린다("탕감을 늘려 덜 깎인" 것과 "깎고 나서 되돌린" 것은
+      // 소멸분 때문에 다른 수치가 된다). ME8·ME9 는 추가로 탕감률·임계가 `shipSignature.ts`
+      // 의 순수 함수 안에 있어 골든에 닿는 선결이 붙는다 — 사유 전문은 `skills/mallow.ts` 헤더.
+      mallowCushionSettled(state, player, settled, recovered, applied);
+      break;
     default:
       break;
   }
