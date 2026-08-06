@@ -34,6 +34,7 @@ import type { WorldState } from './world.js';
 import { FILM_BURST_RADIUS, filmBurstPush } from './shipSignature.js';
 import { slideCircleWalls } from './los.js';
 import { length } from './math.js';
+import { onFilmBurst } from './skillHooks.js';
 
 /** 요청 없음. 슬롯의 정상 상태이며, 소비 직후 항상 이 값으로 되돌아간다. */
 export const FILM_BURST_REQ_NONE = 0;
@@ -125,6 +126,25 @@ export function consumeFilmBurstRequests(state: WorldState): void {
  * 그래서 해시 검증으로는 절대 잡히지 않는 조용한 배치 계약 위반이 된다.
  */
 export function resolveFilmBurst(state: WorldState, x: number, y: number): void {
+  // 파열 훅(앵커 ⑮) — **밀어내기보다 앞**이다. 순서가 계약인 이유:
+  // 밀어내기 변위는 260 이고 파열 반경은 220 이다(그 부등식이 `FILM_BURST_PUSH_TICKS` 를
+  // 100 으로 고른 이유 자체다 — "반경 안의 적을 반경 밖으로"). 그래서 밀어낸 **뒤**에 훅을
+  // 태우면 반경 안 적이 **한 기도 남지 않고**, 반경 술어로 대상을 고르는 스킬(PO1 폭발 ·
+  // PO7 연쇄 · 훗날의 PO8 기뢰 · DR1 수거)이 전부 **조용히 0건**이 된다. 화면에도 테스트에도
+  // "안 터진다" 는 흔적만 남고 원인이 안 보이는, 이 저장소의 지배적 실패 모드다.
+  // (실측: 배선 레인이 훅을 뒤에 뒀다가 PO1 이 아무 피해도 안 주는 것을 테스트가 잡았다.)
+  //
+  // ⚠️ 이 순서는 **밀어낸 결과를 봐야 하는 스킬을 배제한다** — PO4「압착 충돌」은 슬라이드
+  // 전후 좌표 차이가 판정이라 이 훅으로는 못 한다(미배선 사유 중 하나). 그 스킬이 오면
+  // 훅을 둘로 쪼개라(pre/post). 하나로 합치려 하면 둘 중 하나가 반드시 틀린다.
+  //
+  // ⚠️ 순환 없음: `skillHooks.ts` 는 `WorldState`/`Entity` 를 type-only 로만 보는 leaf 이고,
+  // 그 하위(`catalystHooks`·`skills/*`·`activeTypes`·`status`)에서 이 모듈을 되당기는 경로가
+  // 없다(실측: `filmBurst.js` 를 import 하는 곳은 `world.ts` 와 `activeHandlers/bubble.ts`
+  // 둘뿐). **`skills/bubble.ts` 가 이 모듈을 import 하는 순간 순환이 된다 — 하지 마라.**
+  //
+  // 미투자 런은 훅 첫 줄(`skillsOn`)에서 즉시 반환하므로 바이트 단위로 종전과 같다.
+  onFilmBurst(state, x, y);
   const push = filmBurstPush();
   const r2 = FILM_BURST_RADIUS * FILM_BURST_RADIUS;
   for (const e of state.entities) {

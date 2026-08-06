@@ -98,14 +98,16 @@ export function writeSlot(slots: number[], slot: number, value: number): void {
 // 스킬 슬롯 폴드가 한 번도 실행되지 않는다(기존 골든 바이트 불변).
 //
 //   스트라이커 (SIG_STRIKER_MARKSMAN) — 아래 두 enum
-//   브루저     (SIG_BRUISER_ARMOR)    — 미배정
-//   아크캐스터 (SIG_ARC_OVERCHARGE)   — 파일 끝 두 enum
+//   아크캐스터 (SIG_ARC_OVERCHARGE)   — 아래 두 enum
 //   브루저     (SIG_BRUISER_ARMOR)    — 아래 두 enum
-//   아크캐스터 (SIG_ARC_OVERCHARGE)   — 미배정
+//   버블       (SIG_BUBBLE_FILM)      — 아래 두 enum (**실배정 0칸** — 그 사유는 그 블록 주석)
 //   팬텀       (SIG_PHANTOM_CLOAK)    — 미배정
 //   해츨링     (SIG_HATCHLING_BROOD)  — 미배정
 //   말로우     (SIG_MALLOW_CUSHION)   — 미배정
-//   버블       (SIG_BUBBLE_FILM)      — 미배정
+//
+// ⚠️ 이 목록은 배치 2·3 을 수동 머지하며 **브루저·아크캐스터가 각각 두 줄씩** 서로 모순되는
+// 상태("미배정" 과 "두 enum")로 들어와 있었다. 위가 현행 실측이다 — 목록을 고칠 때는 아래
+// 선언부를 눈으로 세어라(이 파일이 중복·누락을 한눈에 보이게 하려고 존재한다).
 
 /**
  * **스트라이커 이월 슬롯**(ADR-0049 배치 1). 효과 본체는 `src/sim/skills/striker.ts`.
@@ -223,4 +225,31 @@ export const enum BruiserStage {
    * 장갑 스택에서 매 명중마다 파생되므로(`max(1, round(48/(4+스택)))`) 이 칸에는 카운트만 산다.
    */
   cadenceHits = 1,
+}
+
+/**
+ * **버블 이월 슬롯**(ADR-0049 배치 4). 효과 본체는 `src/sim/skills/bubble.ts`.
+ */
+export const enum BubbleCarry {
+  /**
+   * 자리표시자 — **읽지도 쓰지도 않는다.** 형태는 `StrikerStage.unassigned` 와 같다.
+   *
+   * 배치 4(버블)가 배선한 9종은 슬롯을 **한 칸도 쓰지 않는다** — 전부 기존 필드(`aux0`·
+   * `aux1`·`iframes`·`dashCooldown`·`playerSlowTicks`)와 `state.tick` 파생만 만진다.
+   * 설계서가 `구현: B`(신규 상태)로 표시한 버블 5종은 이 배치 밖이다:
+   *  · PO10(창 틱 + kills 스냅샷 2칸) — `aux0 ≤ FILM_ABSORB_FLAT` 불변식 개정이 선결
+   *  · DR2(효율 창 1칸) · FI6(흡수 누적 1칸) — 소비처가 막 흡수 지점이라 앵커가 없다
+   *  · DR3(전용 자석 버프 1칸) — 액티브 착지 훅이 없다
+   *  · FI7(벽 접촉 플래그) — 슬롯이 아니라 `state.wallContactTicks` 로 이미 있다
+   *
+   * ⚠️ 실제 배정이 생기면 이 줄을 **지우고** 0번부터 다시 매겨라. 예약 번호를 미리 적지
+   * 마라 — 미사용 슬롯이 영구 0 으로 남는 것이 이 파일 헤더가 폭을 8 로 좁힌 이유다.
+   */
+  unassigned = 0,
+}
+
+/** **버블 구간 슬롯** — {@link BubbleCarry} 와 같은 사유로 실배정 0칸이다. */
+export const enum BubbleStage {
+  /** 자리표시자 — 읽지도 쓰지도 않는다. 사유는 {@link BubbleCarry.unassigned}. */
+  unassigned = 0,
 }
