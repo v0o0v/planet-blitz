@@ -320,4 +320,133 @@ describe('감쇠 사슬 순서 — 촉매 배율은 preMitigationDmg 캡처보�
     expect(hoisted.lethalSeen.length).toBeGreaterThan(0);
     expect(hoisted.lethalSeen.every((v) => v === false)).toBe(true);
   });
+
+  /**
+   * ⭐ 질문 ③ — 앵커 ⑰ 이 `min(d, s)` 때문에 **원리적으로 무효**였던 전례가 있어, 값을 돌려주는
+   * 이 칸도 반환이 뒤에서 삼켜지지 않는지를 뮤테이션으로 실증해 둔다. 위 두 절은
+   * `survivedLethalBlow` 의 **의미**를 재지 hp 차감량을 재지 않는다.
+   */
+  it('⭐ 반환 배율이 hp 차감에 그대로 도달한다 (뒤에 min·clamp 가 없다)', () => {
+    const base = withCatalyst(0xca10);
+    const bp = player(base);
+    const hp0 = bp.hp;
+    plantEnemy(base, bp.x, bp.y, 5);
+    stepWorld(base, idle);
+    const plain = hp0 - bp.hp;
+    expect(plain, '피격이 일어나지 않았다 — 아래 비교는 항진이다').toBeGreaterThan(0);
+
+    const s = withCatalyst(0xca10);
+    const p = player(s);
+    plantEnemy(s, p.x, p.y, 5);
+    hoisted.forceCatalystDamage = plain * 3;
+    stepWorld(s, idle);
+    expect(hp0 - p.hp).toBe(plain * 3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ④ `id 24 chainreaction` — 피해 전이 · 최대 HP 상한 하락 · 세그먼트 전환 복구
+// ---------------------------------------------------------------------------
+
+/** 지정한 카드만 실린 런. `id 24` 절은 소지 게이트가 카드 단위인지까지 잰다. */
+function withCards(seed: number, cards: number[]): WorldState {
+  return createWorld(seed, { ...DEFAULT_CONFIG, catalysts: cards });
+}
+
+/**
+ * 접촉 피해원 하나를 플레이어 위에 세우고 **오토어택 피해를 0 으로 잠근다.**
+ * 안 잠그면 자기 볼리가 표적 hp 를 같이 깎아 "전이가 깎은 양"을 분리할 수 없다.
+ */
+function contactSetup(s: WorldState, enemyHp: number): { p: Entity; e: Entity } {
+  s.weapon.damage = 0;
+  const p = player(s);
+  const e = plantEnemy(s, p.x, p.y, 5);
+  e.hp = enemyHp;
+  e.maxHp = enemyHp;
+  return { p, e };
+}
+
+describe('id 24 chainreaction — 받은 피해가 가장 가까운 적에게 전이된다', () => {
+  it('전이: 표적 hp 가 **실피해량만큼** 깎인다', () => {
+    const s = withCards(0xc240, [24]);
+    const { e } = contactSetup(s, 1_000_000);
+    stepWorld(s, idle);
+    // 하한 먼저 — 피격이 없으면 아래 비교가 0 == 0 항진이 된다.
+    expect(hoisted.catalystDamaged.length, '피격이 일어나지 않았다').toBeGreaterThan(0);
+    const dealt = hoisted.catalystDamaged[0]!.dmg;
+    expect(dealt).toBeGreaterThan(0);
+    expect(1_000_000 - e.hp).toBe(Math.round(dealt));
+  });
+
+  it('음성 대조: `id 24` 가 없는 촉매 런에서는 표적 hp 가 그대로다', () => {
+    const s = withCards(0xc240, [1]);
+    const { e } = contactSetup(s, 1_000_000);
+    stepWorld(s, idle);
+    expect(hoisted.catalystDamaged.length, '피격이 일어나지 않았다').toBeGreaterThan(0);
+    expect(e.hp).toBe(1_000_000);
+  });
+
+  it('전이로 hp 가 바닥나면 **격추로 집계된다** (`dead` 마킹 누락 = 좀비 회귀)', () => {
+    const s = withCards(0xc241, [24]);
+    contactSetup(s, 1); // 전이 한 방에 죽는 표적.
+    expect(s.kills).toBe(0);
+    stepWorld(s, idle);
+    expect(hoisted.catalystDamaged.length, '피격이 일어나지 않았다').toBeGreaterThan(0);
+    expect(s.kills, 'hp 만 0 이고 dead 가 안 서면 compact 가 그냥 통과시킨다').toBe(1);
+  });
+
+  it('대가: 전이한 만큼 최대 HP 상한이 내려가고 현재 hp 가 따라 내려온다', () => {
+    const s = withCards(0xc242, [24]);
+    const { p } = contactSetup(s, 1_000_000);
+    const maxHp0 = p.maxHp;
+    p.hp = maxHp0; // 상한에 붙여 두면 클램프가 관측된다.
+    stepWorld(s, idle);
+    const dealt = Math.round(hoisted.catalystDamaged[0]!.dmg);
+    expect(dealt).toBeGreaterThan(0);
+    expect(maxHp0 - p.maxHp).toBe(dealt);
+    expect(p.hp).toBeLessThanOrEqual(p.maxHp);
+  });
+
+  it('음성 대조: `id 24` 가 없으면 최대 HP 상한이 안 움직인다', () => {
+    const s = withCards(0xc242, [1]);
+    const { p } = contactSetup(s, 1_000_000);
+    const maxHp0 = p.maxHp;
+    stepWorld(s, idle);
+    expect(hoisted.catalystDamaged.length, '피격이 일어나지 않았다').toBeGreaterThan(0);
+    expect(p.maxHp).toBe(maxHp0);
+  });
+
+  it('되돌릴 수단: 세그먼트가 넘어가면 깎인 상한이 통째로 복구된다', () => {
+    const s = withCards(0xc243, [24]);
+    const { p } = contactSetup(s, 1_000_000);
+    const maxHp0 = p.maxHp;
+    stepWorld(s, idle);
+    const cut = maxHp0 - p.maxHp;
+    expect(cut, '상한이 안 깎였다 — 복구 단언이 항진이 된다').toBeGreaterThan(0);
+
+    s.wave.segmentIndex++;
+    stepWorld(s, idle);
+    expect(p.maxHp).toBe(maxHp0);
+  });
+
+  it('복구는 세그먼트당 한 번이다 (같은 세그먼트에서 상한이 계속 불어나지 않는다)', () => {
+    const s = withCards(0xc244, [24]);
+    const { p } = contactSetup(s, 1_000_000);
+    const maxHp0 = p.maxHp;
+    stepWorld(s, idle);
+    expect(maxHp0 - p.maxHp).toBeGreaterThan(0);
+    s.wave.segmentIndex++;
+    stepWorld(s, idle);
+    expect(p.maxHp).toBe(maxHp0);
+    for (let i = 0; i < 5; i++) stepWorld(s, idle);
+    expect(p.maxHp, '매 틱 복구가 돌아 상한이 폭주했다').toBe(maxHp0);
+  });
+
+  it('슬롯 규약: `id 24` 가 없는 런은 촉매 슬롯이 전 칸 0 으로 남는다', () => {
+    const s = withCards(0xc245, [1]);
+    contactSetup(s, 1_000_000);
+    stepWorld(s, idle);
+    expect(hoisted.catalystDamaged.length, '피격이 일어나지 않았다').toBeGreaterThan(0);
+    expect(s.catalystSlots.every((v) => v === 0)).toBe(true);
+  });
 });

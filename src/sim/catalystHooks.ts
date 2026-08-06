@@ -47,6 +47,28 @@ import type { Entity } from './entities.js';
 // 값으로 import 하므로 값 import 는 순환이다) — 컴파일에서 지워진다.
 import type { BulletExpiryReason } from './skillHooks.js';
 import type { DamageSourceMask } from './skillSlots.js';
+import { ChainReactionSlot, readCatalystSlot, writeCatalystSlot } from './catalystSlots.js';
+
+// ---------------------------------------------------------------------------
+// 카드 소지 판정
+// ---------------------------------------------------------------------------
+
+/** `id 24 chainreaction`. 정본은 `src/data/catalysts.ts` 의 `id: 24, slug: 'chainreaction'`. */
+const CARD_CHAINREACTION = 24;
+
+/**
+ * 이 런에 촉매 `id` 가 실려 있는가.
+ *
+ * `state.catalystOn` 은 "촉매가 하나라도 있는가" 까지만 말한다. 카드별 분기는 반드시 이 술어를
+ * 한 번 더 통과해야 한다 — 안 그러면 아무 촉매 한 장만 껴도 48종 전부의 효과가 켜진다.
+ *
+ * 순회 비용은 **최대 3**이다(헌장 §구조 계약: 슬롯 3장). 매 틱 도는 앵커 ⑨ 에서도 무시할 수
+ * 있고, 그래서 파생 비트마스크를 `WorldState` 에 새로 만들지 않았다(새 칸을 만들면 §B 다).
+ */
+function hasCatalyst(state: WorldState, id: number): boolean {
+  const cats = state.config.catalysts;
+  return cats !== undefined && cats.includes(id);
+}
 
 // ---------------------------------------------------------------------------
 // 기존 앵커 9지점에 대응하는 촉매 디스패치 (S0: 전 분기 비어 있음)
@@ -90,10 +112,70 @@ export function onPlayerDamagedCatalyst(
   sources: DamageSourceMask,
 ): void {
   if (!state.catalystOn) return;
-  void player;
-  void dmg;
+  // `id 24` 는 **피해원을 가리지 않는다** — 규칙이 "네가 받은 피해"라 접촉·적탄·해저드를
+  // 구분하지 않는다. 사유를 보는 카드가 이 앵커에 배선되면 그때 `sources` 를
+  // `hasDamageSource` 로 게이트해라(이 함수 doc 참조).
   void lethalSurvived;
   void sources;
+  if (hasCatalyst(state, CARD_CHAINREACTION)) chainReactionOnDamaged(state, player, dmg);
+}
+
+/**
+ * `id 24 chainreaction` — **받은 피해를 가장 가까운 잡몹에게 전이하고, 전이한 만큼 최대 HP
+ * 상한을 깎는다.** 복구는 {@link onTickCatalyst} 의 세그먼트 전환 감지가 한다.
+ *
+ * ## 왜 이 앵커에서 적을 직접 깎아도 격추가 정상 집계되는가
+ * 이 앵커는 `stepPlayer`(`world.ts:2196`) 안에서 불리고, 격추 집계·젬·엘리트 루팅의 **단일
+ * 수렴점**인 `compact()` 는 같은 틱의 **뒤**에서 돈다(`world.ts:1828` → `1926`). 그래서 여기서
+ * hp 를 0 이하로 만든 적은 이번 틱에 그대로 처치로 잡힌다.
+ *
+ * ⚠️ 단 **`dead` 를 직접 세워야 한다.** `compact()` 의 첫 줄이 `if (!e.dead) { survivors.push;
+ * continue; }` 라, hp 만 0 으로 만들고 마킹을 빠뜨리면 **처치도 젬도 전리품도 안 나오는
+ * 좀비**가 된다(`activeTypes.ts` 의 `blastDamageAt` 이 정확히 그 형태이고, 헌장이 `id 22` 항목에
+ * 같은 함정을 적어 두었다).
+ *
+ * ## 표적을 못 찾으면 대가도 없다
+ * 화면에 잡몹이 하나도 없는 구간(보스 단독 등)에서는 전이도 상한 하락도 일어나지 않는다.
+ * 헌장 §축소 작동 규율이 요구하는 것은 "무효 조합에서도 축소된 형태로 작동"이지 "표적이 없어도
+ * 대가만 물린다"가 아니다 — 이득 없는 대가는 규칙 한 문장의 인과를 끊는다.
+ *
+ * ## RNG 미소비
+ * 이 함수는 난수를 한 칸도 굴리지 않는다. 표적 선택은 `state.entities` **순회 순서 + 동률은
+ * 먼저 만난 쪽**이라 결정론적이다.
+ */
+function chainReactionOnDamaged(state: WorldState, player: Entity, dmg: number): void {
+  // 상한 하락이 정수여야 하므로(슬롯 값 규약 2) 전이량도 같은 정수로 맞춘다. 접촉 피해는
+  // 엘리트 배율 때문에 소수일 수 있다 — 여기서 한 번 접고 그 값 하나를 두 곳에 쓴다.
+  const transfer = Math.round(dmg);
+  if (transfer <= 0) return;
+  let target: Entity | undefined;
+  let bestD2 = 0;
+  for (const e of state.entities) {
+    if (e.dead || e.kind !== 'enemy') continue;
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    const d2 = dx * dx + dy * dy;
+    if (target === undefined || d2 < bestD2) {
+      target = e;
+      bestD2 = d2;
+    }
+  }
+  if (target === undefined) return;
+  target.hp -= transfer;
+  if (target.hp <= 0) target.dead = true;
+  // 대가 — 하한 1. 0 까지 허용하면 페널티 자체가 사망 원인이 되어 헌장 §페널티 3(되돌릴 수단이
+  // 규칙 안에 있어야 한다)이 무의미해진다. 실제로 깎인 양만 슬롯에 쌓아 복구가 되감기게 한다.
+  const cut = Math.min(transfer, player.maxHp - 1);
+  if (cut <= 0) return;
+  player.maxHp -= cut;
+  // 상한이 현재 hp 아래로 내려오면 현재 hp 도 따라 내려온다 — 이것이 화면에서 읽히는 대가다.
+  if (player.hp > player.maxHp) player.hp = player.maxHp;
+  const slots = state.catalystSlots;
+  writeCatalystSlot(
+    slots,
+    ChainReactionSlot.MaxHpCut,
+    readCatalystSlot(slots, ChainReactionSlot.MaxHpCut) + cut,
+  );
 }
 
 /** 이번 틱의 처치 증분. 스킬 디스패치 **뒤**. */
@@ -163,14 +245,57 @@ export function onWallContactCatalyst(state: WorldState, player: Entity): void {
  */
 export function onDamageChainCatalyst(state: WorldState, player: Entity, dmg: number): number {
   if (!state.catalystOn) return dmg;
+  // **미배선 — 사유를 남긴다.** 이 칸의 유일한 후보인 `id 22 cascade`(자기 폭발 피해 절반)는
+  // ①폭발 자체가 앵커 ⑪(적 격추) 소유라 이 레인 밖이고 ②이 시그니처가 **피해원을 안 받아**
+  // "자기 폭발이 때린 피해"를 다른 피해와 구별할 수 없다. 반값을 무조건 곱하면 카드가
+  // "받는 모든 피해 절반"이 되어 규칙 문장과 화면이 갈린다.
+  // 배선하려면 인자에 피해원(또는 촉매 해저드 표식)이 추가돼야 한다 — 그 결정은 리드 몫이다.
+  //
+  // ✅ **반환값은 뒤에서 삼켜지지 않는다**(질문 ③): 사슬 꼬리가 `player.hp -= dmg` 로 그대로
+  //    쓰고 클램프는 `hp` 쪽(`if (player.hp < 0) player.hp = 0`)에만 있다(`world.ts:4550`).
+  //    `tests/catalystAnchors.test.ts` 의 «반환 배율이 hp 차감에 그대로 도달한다» 가 뮤테이션으로
+  //    잠근다 — 앵커 ⑰ 이 `min(d,s)` 에 먹혀 무효였던 전례가 있어 이 칸은 실증해 두었다.
   void player;
   return dmg;
 }
 
-/** 매 틱 1회(시그니처 틱 진행 지점). 스킬 디스패치 **뒤**. */
+/**
+ * 매 틱 1회(시그니처 틱 진행 지점). 스킬 디스패치 **뒤**.
+ *
+ * ⚠️ **매 틱 도는 자리다.** 여기 얹는 카드는 ①카드 소지 게이트를 먼저 통과시키고 ②단조
+ * 증가하는 누적을 두지 마라. 지금 배선된 `id 24` 복구는 **세그먼트 인덱스가 바뀐 틱에만**
+ * 한 번 돌고, 되돌리는 양이 슬롯에 실제로 쌓인 값이라 폭주할 수 없다(복구 뒤 슬롯이 0 이 되므로
+ * 같은 세그먼트에서 두 번 복구되지도 않는다).
+ */
 export function onTickCatalyst(state: WorldState, player: Entity): void {
   if (!state.catalystOn) return;
-  void player;
+  if (hasCatalyst(state, CARD_CHAINREACTION)) chainReactionOnTick(state, player);
+}
+
+/**
+ * `id 24 chainreaction` 의 **되돌릴 수단** — 세그먼트(카탈로그의 "웨이브")가 넘어가면 그 동안
+ * 깎인 최대 HP 상한이 통째로 복구된다.
+ *
+ * 전환 감지를 `state.wave.segmentIndex` 의 **순수 파생**으로 한 이유: 이 값은 이미 해시에
+ * 접히므로(`replay.ts`) 새 상태 없이 "언제 넘어갔는가"를 틱의 닫힌 함수로 쓸 수 있다. 헌장이
+ * `침식` 강공명에서 이벤트 의존(리더 처치)을 같은 사유로 기각하고 이 필드로 바꿔 적었다.
+ *
+ * ⚠️ 현재 hp 는 **되돌리지 않는다.** 깎인 것은 상한이고, 복구는 상한을 되돌려 다시 회복할
+ * 여지를 주는 것이지 공짜 회복이 아니다.
+ */
+function chainReactionOnTick(state: WorldState, player: Entity): void {
+  const slots = state.catalystSlots;
+  const mark = state.wave.segmentIndex + 1; // +1 은 값 규약 1(0 = "없음") — 슬롯 doc 참조.
+  const seen = readCatalystSlot(slots, ChainReactionSlot.SegmentMark);
+  if (seen === mark) return;
+  if (seen !== 0) {
+    const cut = readCatalystSlot(slots, ChainReactionSlot.MaxHpCut);
+    if (cut > 0) {
+      player.maxHp += cut;
+      writeCatalystSlot(slots, ChainReactionSlot.MaxHpCut, 0);
+    }
+  }
+  writeCatalystSlot(slots, ChainReactionSlot.SegmentMark, mark);
 }
 
 // ---------------------------------------------------------------------------
