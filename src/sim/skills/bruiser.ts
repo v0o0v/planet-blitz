@@ -13,15 +13,19 @@
  *
  * ---
  *
- * ## ⚠️ 이 배치가 배선한 것은 30종 중 11종이다
- * 나머지 19종은 앵커 14개만으로는 닿지 않는 지점(볼리 생성 파라미터·액티브 핸들러·접촉 피격
- * 판별 루프·감쇠 분기·젬 스폰·벽 파괴 집계)을 요구한다. 여기 없는 스킬은 "구현했는데 안
+ * ## ⚠️ 지금 배선된 것은 30종 중 13종이다
+ * 1차 배선이 11종(앵커 ②③④⑧⑨⑩⑪), S2 의 앵커 ⑯(볼리 파라미터)이 **BL3·BL6** 둘을 더
+ * 열었다. 나머지 17종은 아직 앵커가 없는 지점(액티브 핸들러·접촉 피격 판별 루프·감쇠 분기·
+ * 젬 스폰·벽 파괴 집계·이동 배율·표적 거리)을 요구한다. 여기 없는 스킬은 "구현했는데 안
  * 불린다"가 아니라 **아직 코드가 없다** — 반쪽 배선과 구분하라. 사유는 레인 보고서에 있다.
  */
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
+import type { VolleyParams } from '../skillHooks.js';
 import { fanStrike, clearEnemyBullets } from '../activeTypes.js';
+import { isElite } from '../elite.js';
+import { cos, sin } from '../math.js';
 import { readSlot, writeSlot, BruiserCarry, BruiserStage } from '../skillSlots.js';
 import { ARMOR_MAX_STACKS, clampArmorStacks } from '../shipSignature.js';
 import { skillLv } from '../../items/skills.js';
@@ -41,7 +45,9 @@ import { skillLv } from '../../items/skills.js';
 // 같지만, **그 일치는 우연이 아니라 데이터 확인의 결과**다.
 
 const enum Sk {
+  /** BL3 만재 중탄 */ fullPlateSlug = 2,
   /** BL4 과적 배출 */ overflowVent = 3,
+  /** BL6 중량 탄자 */ massSlug = 5,
   /** BL9 중압 리듬 */ crushCadence = 8,
   /** MO1 충각 적재 */ dashLoading = 10,
   /** MO6 압쇄장 */ crushField = 15,
@@ -113,6 +119,19 @@ const CRUSH_FIELD_PERIOD = 30;
 const CRUSH_FIELD_PUSH = 6;
 /** FO7 런당 누적 가산 상한 = 런 시작 최대 HP 의 이 비율(bp). */
 const TROPHY_RUN_CAP_BP = 5000;
+
+// ---------------------------------------------------------------------------
+// 탄 표식 — 앵커 ⑯ 이 찍고 앵커 ⑩ 이 읽는다(`VolleyParams.mark` → 탄 `aux0`)
+// ---------------------------------------------------------------------------
+//
+// ⚠️ **값 `1` 은 정조준탄(스트라이커)이 점유했다.** 기체는 한 런에 하나뿐이라 물리적으로
+// 겹치지 않지만, 값이 겹치면 렌더·후속 판정이 두 표식을 구분하지 못한다(앵커 ⑯ 주석).
+// 브루저는 **비트 플래그**로 나눠 쓴다 — BL3 과 BL6 은 같은 볼리에 **동시에** 걸릴 수 있어
+// 배타적 정수로는 한쪽이 다른 쪽을 조용히 지운다. `|=` 로 얹고 `&` 로 읽는다.
+/** BL3 만재 중탄 — 이 탄은 명중 지점에 소형 폭발을 남긴다. */
+const MARK_FULL_PLATE = 2;
+/** BL6 중량 탄자 — 이 탄은 명중한 적을 진행 방향으로 밀어낸다. */
+const MARK_MASS_SLUG = 4;
 
 // ---------------------------------------------------------------------------
 // 앵커별 진입점 — `skillHooks.ts` 의 `case SIG_BRUISER_ARMOR:` 가 부른다
@@ -344,7 +363,45 @@ export function bruiserEnemyDamaged(
   player: Entity,
   target: Entity,
   dmg: number,
+  source: Entity | undefined,
 ): void {
+  // --- BL3 만재 중탄(명중 지점 폭발) ---------------------------------------
+  // 트리거는 **탄에 찍힌 표식**이지 지금의 만재 여부가 아니다 — "만재일 때 **발사된** 탄"이
+  // 설계 본체라, 비행 중에 스택이 빠져도 이미 나간 중탄은 중탄이다(앵커 ⑯ 에서 찍는다).
+  const bl3 = lv(state, Sk.fullPlateSlug);
+  if (bl3 >= 1 && source !== undefined && (source.aux0 & MARK_FULL_PLATE) !== 0) {
+    // 폭발 반경 50 + 5×Lv · 폭발 피해 = 탄 피해의 25% + 1.5%p/Lv. 반올림은 게이트 안이다.
+    const blast = Math.round((source.damage * (2500 + 150 * bl3)) / 10000);
+    if (blast > 0) {
+      const radius = 50 + 5 * bl3;
+      const r2 = radius * radius;
+      // ⚠️ `blastDamage` 를 못 쓴다 — 그 헬퍼는 **플레이어**를 중심으로 삼는데 설계서는 "명중
+      //    지점" 을 명시했다. 대상 범위(enemy+boss)는 그 헬퍼와 같게 맞춘다.
+      // ⚠️ **맞은 표적 자신은 제외한다.** 넣으면 이 스킬이 "단일 표적 피해 +25%" 로 퇴화해
+      //    광역이라는 본체가 사라진다.
+      for (const e of state.entities) {
+        if (e.dead || e === target) continue;
+        if (e.kind !== 'enemy' && e.kind !== 'boss') continue;
+        const dx = e.x - target.x;
+        const dy = e.y - target.y;
+        if (dx * dx + dy * dy <= r2) e.hp -= blast;
+      }
+    }
+  }
+
+  // --- BL6 중량 탄자(명중 변위) --------------------------------------------
+  const bl6 = lv(state, Sk.massSlug);
+  if (bl6 >= 1 && source !== undefined && (source.aux0 & MARK_MASS_SLUG) !== 0) {
+    // 변위 16 + 2×Lv, 보스·엘리트는 반감. 넉백 규율(7.1) — 속도 대입이 아니라 **좌표 직접
+    // 변위**다(적 이동 컴포넌트가 매 틱 속도를 덮어써 속도에 실으면 해시만 갈린다).
+    let push = 16 + 2 * bl6;
+    if (target.kind === 'boss' || isElite(target)) push *= 0.5;
+    // 방향은 **탄의 진행 방향**이다. 플레이어 기준으로 잡으면 관통탄이 뒤쪽 표적을 플레이어
+    // 쪽으로 당겨 "밀어낸다" 가 부호 반전된다.
+    target.x += cos(source.angle) * push;
+    target.y += sin(source.angle) * push;
+  }
+
   const bl9 = lv(state, Sk.crushCadence);
   if (bl9 < 1) return;
   // 코어 실드가 전량 흡수한 명중은 `dmg === 0` 으로도 온다 — "맞았다"가 아니라 "깎였다"를 센다.
@@ -395,4 +452,54 @@ export function bruiserEnemyDeath(state: WorldState, player: Entity, elite: bool
   // ③ 만재 세팅. FO2 엣지 규칙의 대상이다(직전이 상한 미만이었다면 다음 ⑨ 에서 정산이 뜬다).
   player.aux0 = state.armorMaxStacks;
   player.aux1 = 0;
+}
+
+/**
+ * 앵커 ⑯ **볼리 파라미터 확정 직후·탄 생성 직전** — BL3 만재 중탄 · BL6 중량 탄자.
+ *
+ * 둘 다 **여기서 표식만 찍고 실효는 앵커 ⑩(명중)에서** 난다. 표식을 발사 시점에 찍는 것이
+ * 설계 본체다 — BL3 은 "만재일 때 **발사된** 탄", BL6 은 "무겁게 **쏜** 탄"이라 비행 중 상태
+ * 변화에 좌우되면 안 된다.
+ *
+ * ## ⚠️ 여기 없는 브루저 발사축 2종(BL2·BL8) — 사유
+ *  - **BL2 백병 격발**: 술어가 *"자동 조준 표적과의 거리"* 인데 `VolleyParams` 에 표적도 그
+ *    거리도 없다(`nearestTarget` 은 `world.ts` 소유이고 런타임 import 는 계약 위반이다).
+ *    여기서 최근접 적을 다시 고르면 조준 선택 규칙의 **두 번째 사본**이 생겨 조용히 갈린다.
+ *    앵커에 표적 거리 필드가 하나 추가되면 그날 3줄로 끝난다.
+ *  - **BL8 격돌 담금질**: 소모처(선두탄 대구경화)는 여기서 되지만 **적립처(몸통 접촉으로 인한
+ *    실피격)** 가 없다. 앵커 ④ 는 피해원을 구분하지 않고(`world.ts` 의 max 수집 루프가 접촉원
+ *    기여를 지역 변수로도 남기지 않는다) 접촉 판별 앵커가 아직 없다. 소비처 없는 카운터만
+ *    돌리는 것이 이 저장소가 금지한 반쪽 배선이라 **양쪽이 열릴 때까지 넣지 않는다.**
+ */
+export function bruiserVolleyParams(
+  state: WorldState,
+  player: Entity,
+  params: VolleyParams,
+): void {
+  // --- BL3 만재 중탄 -------------------------------------------------------
+  // 만재 판정은 **고정 8 이 아니라** `state.armorMaxStacks` 를 읽는다 — FO1 이 상한을 늘리면
+  // 그 확장을 따라간다(설계서 ② BL3 "고정 8 하드코딩 금지").
+  const bl3 = lv(state, Sk.fullPlateSlug);
+  if (bl3 >= 1 && player.aux0 >= state.armorMaxStacks) {
+    params.mark |= MARK_FULL_PLATE;
+  }
+
+  // --- BL6 중량 탄자 -------------------------------------------------------
+  const bl6 = lv(state, Sk.massSlug);
+  if (bl6 >= 1) {
+    // 피해 +20% + 2%p/Lv. 산술은 스트라이커 정조준 배율과 동형(정수 bp · 단일 나눗셈 ·
+    // 반올림 1회)이고, 반올림은 게이트 **안**이다(규율 ③).
+    params.damage += Math.round((params.damage * (2000 + 200 * bl6)) / 10000);
+    // 탄속 ×0.5 · 수명 ×2. **곱만 정확히 상쇄되므로 도달 거리(속도×수명)가 비트 단위로
+    // 불변**이다 — 사거리 계약(3.1 `weaponReach` = `reachLife` 동일값)이 요구하는 것이 정확히
+    // 그것이라 `reach` 를 다시 구할 필요가 없다(구할 수도 없다 — params 에 없다).
+    // 반올림을 끼우면 그 상쇄가 깨지므로 여기서는 정수화하지 않는다.
+    params.speed *= 0.5;
+    params.life *= 2;
+    params.mark |= MARK_MASS_SLUG;
+    // ⚠️ **설계와 어긋나는 지점(보고서에 적었다).** 빔 아키타입은 `speed`·`life` 를 읽지 않아
+    //    (앵커 ⑯ 의 아키타입 표) 빔 브루저에서는 **대가 없이 피해만 오른다**. 게이트하려면
+    //    `weaponType === 4` 를 봐야 하는데 그 상수는 `world.ts` 모듈 사유이고 런타임 import 는
+    //    계약 위반이다 — 리터럴 4 를 복제하는 쪽이 더 나쁘다고 판단해 남겨 두고 보고한다.
+  }
 }
