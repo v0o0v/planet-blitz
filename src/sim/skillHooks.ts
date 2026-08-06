@@ -73,7 +73,15 @@ import {
   SIG_STRIKER_MARKSMAN,
   SIG_ARC_OVERCHARGE,
   SIG_BRUISER_ARMOR,
+  SIG_HATCHLING_BROOD,
 } from './shipSignature.js';
+import {
+  hatchlingVolleyFired,
+  hatchlingDashFired,
+  hatchlingDamageChain,
+  hatchlingSignatureStep,
+  hatchlingEnemyDamaged,
+} from './skills/hatchling.js';
 import {
   strikerDashFired,
   strikerGemCollected,
@@ -178,6 +186,11 @@ function dispatchVolleySkill(state: WorldState, player: Entity): void {
     // **이번 볼리의 탄 파라미터**(피해·관통·탄속·수명)를 바꿔야 한다. 이 앵커는 무기 아키타입
     // 분기보다 **앞**이라 탄이 아직 없고, 인자도 `(state, player)` 뿐이다 — 여기서는 원리적으로
     // 닿지 않는다. 그 절반은 `world.ts` 의 볼리 생성부가 소유해야 한다.
+    case SIG_HATCHLING_BROOD:
+      // BD5 격발 공명 — 모선의 볼리가 병아리 전원의 발사 쿨다운을 깎는다. 탄을 보지 않고
+      // "볼리가 나갔다"만 보므로 이 앵커의 "탄이 아직 없다" 한계에 걸리지 않는 유일한 예다.
+      hatchlingVolleyFired(state, player);
+      break;
     default:
       break;
   }
@@ -201,6 +214,12 @@ function dispatchDashSkill(state: WorldState, player: Entity): void {
       // MO1 충각 적재(스택 +1 · 감쇠 타이머 리셋) · MO8 벽 되튐(쿨다운 환급).
       // 둘 다 이 앵커가 `dashCooldown` 대입 **뒤**라는 데 의존한다 — 그 근거는 효과 함수 주석.
       bruiserDashFired(state, player);
+      break;
+    case SIG_HATCHLING_BROOD:
+      // NU5 알 굴리기 — 부화 스냅샷 1 전진(액티브 `advanceHatch` 와 같은 문법).
+      // ⚠️ 같은 스킬의 나머지 절반(대시 경로 젬 수거)은 `collectGem` 이 `world.ts` 비공개라
+      //    미배선이고, 그래서 **레벨 스케일이 통째로 없다** — 효과 함수 주석이 근거.
+      hatchlingDashFired(state, player);
       break;
     default:
       break;
@@ -447,6 +466,10 @@ export function onDamageChain(state: WorldState, player: Entity, dmg: number): n
       // ⚠️ 설계서는 이 스킬의 자리를 "브루저 장갑 **뒤**" 로 지정했는데 이 앵커는 장갑 **앞**
       // 이다 — 사슬에 뚫린 유일한 스킬 자리라 여기 말고 둘 곳이 없다(효과 함수 주석에 근거).
       return bruiserDamageChain(state, player, dmg);
+    case SIG_HATCHLING_BROOD:
+      // 감소 칸은 비어 있다(해츨링에 감소류 스킬이 없다) → ② 흡수만: SH1 호위 희생 →
+      // SH7 회생 부화. 둘의 순서는 설계 SH1 의 1R 확정("건별 잔돈 먼저, 전액 청산은 최후")이다.
+      return hatchlingDamageChain(state, player, dmg);
     default:
       break;
   }
@@ -493,6 +516,19 @@ function dispatchSignatureStepSkill(
       // **뒤**의 `world.ts` 코드다. 앵커에서 스택 감소를 사후 관측해 흉내 내면 액티브의 스택
       // 소각(blade_lo/hi)과 구분이 안 돼 조용히 오발동한다.
       bruiserSignatureStep(state, player);
+      break;
+    case SIG_HATCHLING_BROOD:
+      // SH6 알막 · SH3 만석 둥지 온기 · NU6 온기 나눔 · NU8 이주 본능.
+      //
+      // ⚠️ 이 앵커가 `stepShipSignature` **진입점**이라 `stepHatchBrood`(출격)·`stepTurrets`
+      // (수명·발사) 둘 다보다 앞이다. 그 순서에 셋이 의존한다 — NU6 의 +1 상쇄는 같은 틱의
+      // `life--` 를 정확히 지우고, NU8 이 옮긴 좌표에서 그 틱의 사격이 나간다. SH6 만은 출격
+      // 여부를 그 시점에 알 수 없어 `aux0` 증가로 **한 틱 늦게** 잡는다(유실 없음).
+      //
+      // ⚠️ 출격 지점 훅 8종(BD1·BD2·BD6·BD10·NU2·NU7·NU10·SH10)은 여기 없다 — 전부
+      // "출격이 성사되는 그 한 지점"에서 임계·상한·좌표를 바꿔야 하는데, 이 앵커는 그보다
+      // 앞이라 출격 여부도 좌표도 모른다. 사후 관측으로 흉내 내면 보류·상한 분기까지 발동한다.
+      hatchlingSignatureStep(state, player);
       break;
     default:
       break;
@@ -590,6 +626,16 @@ function dispatchEnemyDamagedSkill(
       if (p !== undefined) bruiserEnemyDamaged(state, p, target, dmg);
       break;
     }
+    case SIG_HATCHLING_BROOD:
+      // SH5 경계 지저귐 — **병아리 탄** 명중에 냉기 감속. 출처 식별은 `source.ownerId ===
+      // BROOD_MARK` 이고 스탬프 지점은 `fireTurretShot` 한 곳뿐이다(이미 배선돼 있다).
+      // 병아리 탄은 `spawnBullet` 이 만든 평범한 아군탄이라 이 앵커에 **전부 온다**.
+      //
+      // ⚠️ BD4(표적 공유 증폭)는 여기 없다 — 이 앵커는 `t.hp -= dealt` 와 격추 판정이 **끝난
+      // 뒤**라, 여기서 증폭분을 더해도 그 일격으로 격추되지 않는다(앵커 주석의 금지 사항).
+      // 증폭은 명중 해소 안, 차감 **전**의 자리라 `world.ts` 가 소유해야 한다.
+      hatchlingEnemyDamaged(state, target, source);
+      break;
     default:
       break;
   }

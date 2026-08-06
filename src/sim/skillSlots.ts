@@ -103,7 +103,7 @@ export function writeSlot(slots: number[], slot: number, value: number): void {
 //   브루저     (SIG_BRUISER_ARMOR)    — 아래 두 enum
 //   아크캐스터 (SIG_ARC_OVERCHARGE)   — 미배정
 //   팬텀       (SIG_PHANTOM_CLOAK)    — 미배정
-//   해츨링     (SIG_HATCHLING_BROOD)  — 미배정
+//   해츨링     (SIG_HATCHLING_BROOD)  — 파일 끝 두 enum
 //   말로우     (SIG_MALLOW_CUSHION)   — 미배정
 //   버블       (SIG_BUBBLE_FILM)      — 미배정
 
@@ -223,4 +223,38 @@ export const enum BruiserStage {
    * 장갑 스택에서 매 명중마다 파생되므로(`max(1, round(48/(4+스택)))`) 이 칸에는 카운트만 산다.
    */
   cadenceHits = 1,
+}
+
+/**
+ * **해츨링 이월 슬롯**(ADR-0049 배치 5) — 이 배치가 배선한 9종은 **한 칸도 쓰지 않는다.**
+ *
+ * 설계서가 `구현: B`(신규 상태)로 표시한 해츨링 3종은 BD2(출격 카운터)·BD4(표적 id·명중 틱)·
+ * NU10(저금)인데, 셋 다 이 배치의 미배선 목록에 있다(효과 지점이 `stepHatchBrood` 안 또는
+ * 앵커 ⑩ 의 사후 시점 — 사유는 `skills/hatchling.ts` 헤더). 그중 **NU10 저금만이 `Carry` 후보**
+ * 다(만석 보류가 의뢰 구간을 넘어 이어질 수 있다) — 그 레인이 자기 번호를 여기에 선언한다.
+ *
+ * ⚠️ 지금 예약 번호를 미리 적지 마라 — 미사용 슬롯이 영구 0 으로 남는 것이 이 파일 헤더가
+ * 폭을 8 로 좁힌 이유 자체다(오인덱스가 조용한 무연산이 된다).
+ */
+export const enum HatchlingCarry {
+  /**
+   * 자리표시자 — **읽지도 쓰지도 않는다**(`StrikerStage.unassigned` 선례). 실제 배정이 생기면
+   * 이 줄을 **지우고** 0번부터 다시 매겨라.
+   */
+  unassigned = 0,
+}
+
+/**
+ * **해츨링 구간 슬롯**. 한 칸뿐이고 `Carry` 가 아니라 `Stage` 인 이유가 이 칸의 의미 자체다 —
+ * 아래 스냅샷은 **그 구간의 `aux0` 진행 상태**이고, 의뢰 구간이 바뀌면 월드가 새로 서면서
+ * `player.aux0` 도 0 에서 다시 시작한다. 승계하면 새 구간 첫 틱에 "감소"로 읽혀 유령 판정이 된다.
+ */
+export const enum HatchlingStage {
+  /**
+   * SH6 알막 — **직전 틱에 관측한 `player.aux0`**(부화 스냅샷). 출격 성공만이 `aux0` 를
+   * **올리는**(`aux0 = state.kills`) 유일한 경로라, `cur > seen` 이 곧 "직전 틱에 출격했다"다.
+   * 반대 방향(감소)은 액티브 6종의 `advanceHatch` 와 NU5 뿐이라 오검출이 없다.
+   * 0 = 아직 관측 없음 — 런 시작 `aux0` 가 0 이라 자연 센티넬이다(값 규약 1).
+   */
+  launchAux0Seen = 0,
 }
