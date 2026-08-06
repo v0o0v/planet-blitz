@@ -156,10 +156,20 @@ export function setBuffTicks(state: WorldState, slot: number, ticks: number): vo
 /**
  * **임의 좌표 중심** 반경 안의 적·보스에게 즉시 피해. 폭발형 효과의 공용 형태.
  *
- * ⚠️ **엔티티를 낳지 않는다** — `hp` 만 깎는다. 그래서 `for (const e of state.entities)` 순회
- * **안**에서 불러도 배열이 변형되지 않는다(아크캐스터 CH3 이 앵커 ⑥ 에서 그렇게 쓴다).
- * 이 성질을 깨는 개조(파편·이펙트 스폰)를 여기 넣지 마라 — 넣으려면 호출부가 `splitSpawns`
- * 처럼 목록을 모아 루프 뒤에 비워야 한다.
+ * ⚠️ **엔티티를 낳지 않는다** — `hp` 를 깎고 `dead` 플래그만 세운다. 그래서
+ * `for (const e of state.entities)` 순회 **안**에서 불러도 배열이 변형되지 않는다(아크캐스터
+ * CH3 이 앵커 ⑥ 에서 그렇게 쓴다). 이 성질을 깨는 개조(파편·이펙트 스폰)를 여기 넣지 마라 —
+ * 넣으려면 호출부가 `splitSpawns` 처럼 목록을 모아 루프 뒤에 비워야 한다.
+ *
+ * ## `hp <= 0` 이면 그 자리에서 `dead` 를 세운다 (선결 과제 ⑨)
+ * `compact()`(`world.ts`)는 **`dead === true` 만 수거**한다 — `hp <= 0` 단독으로는 안 걷는다.
+ * 마킹을 빼면 폭발로 hp≤0 이 된 적이 **좀비**로 남아 계속 움직이고 공격하며, 처치·젬·전리품이
+ * 전부 유실된다. 형태는 `status.ts` 의 `applyChain`·`tickEnemyStatus` 와 같다 — 플래그만 세우고
+ * 집계는 `compact()` 단일 수렴점에 맡긴다(그래서 킬이 두 벌이 되지 않는다).
+ *
+ * 보스도 같이 마킹한다: `world.ts` 의 탄 명중 경로가 `hp <= 0` 에서 boss 를 예외 없이 `dead` 로
+ * 세우기 때문이다(예외는 guardian 재기동·core 부활뿐인데, 둘 다 여기서 훑는 kind 가 아니다).
+ * 폭발만 다르게 두면 같은 사실에 대한 진실이 두 벌이 된다.
  */
 export function blastDamageAt(
   state: WorldState,
@@ -174,7 +184,10 @@ export function blastDamageAt(
     if (e.kind !== 'enemy' && e.kind !== 'boss') continue;
     const dx = e.x - x;
     const dy = e.y - y;
-    if (dx * dx + dy * dy <= r2) e.hp -= damage;
+    if (dx * dx + dy * dy <= r2) {
+      e.hp -= damage;
+      if (e.hp <= 0) e.dead = true;
+    }
   }
 }
 
