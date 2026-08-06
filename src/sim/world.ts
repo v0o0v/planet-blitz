@@ -3090,11 +3090,19 @@ function autoAttack(state: WorldState, player: Entity): void {
     // 자동 조준이 **이미 고른** 표적까지의 거리. 훅이 최근접 적을 다시 고르면 `nearestTarget`
     // 선택 규칙의 두 번째 사본이 생기고, 그 함수는 이 파일 소유라 leaf 가 부를 수도 없다.
     targetDist: Math.hypot(target.x - player.x, target.y - player.y),
+    // 자동 조준이 실제로 고른 **발사 방위**. 종전에는 이 식이 앵커 **뒤**에 따로 있었는데,
+    // 그 자리에 두면 훅이 방위를 알 길이 없어 `player.angle`(조준각)로 대용하게 되고 둘은
+    // 갈릴 수 있다(조준각은 적이 없는 방향을 가리킬 수 있다). 레코드로 올려 **계산 사본을
+    // 하나로** 만든다 — 아래 `baseAngle` 은 이 값을 그대로 읽는다.
+    // ⚠️ 순서를 앞으로 옮겨도 거동은 불변이다: `atan2` 는 순수 함수이고, 사이에 끼는
+    //    `onVolleyParams` 의 어느 구현체도 `player`·`target` 의 좌표를 쓰지 않는다
+    //    (좌표를 미는 스킬은 전부 피격·시그니처 훅 쪽이다).
+    aimAngle: atan2(target.y - player.y, target.x - player.x),
     cloakBreak: cloakBreakFired,
   };
   onVolleyParams(state, player, volley);
 
-  const baseAngle = atan2(target.y - player.y, target.x - player.x);
+  const baseAngle = volley.aimAngle;
   // Firing archetypes off `weaponType` (M2 B2 + M3 C1):
   //   2 = 레일건: one shot straight at the target (pierce/speed do the work).
   //   3 = 미사일: `bulletCount` homing missiles — slow, hard, limited turn.

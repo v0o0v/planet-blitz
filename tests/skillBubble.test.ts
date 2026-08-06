@@ -437,6 +437,8 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     countUsed: true,
     ballisticsUsed: true,
     targetDist: 400,
+    // 발사 방위(rad). 읽기 전용 사실이라 훅이 고치지 않는다 — 기본 0(순수 +x).
+    aimAngle: 0,
     cloakBreak: false,
     mark: 0,
     ...over,

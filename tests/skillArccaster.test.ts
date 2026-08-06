@@ -545,6 +545,8 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     // `ballisticsUsed: true`(빔이 아니다) · 표적이 중거리 · 은신 해제 첫 타가 아니다.
     ballisticsUsed: true,
     targetDist: 200,
+    // 발사 방위(rad). 읽기 전용 사실이라 훅이 고치지 않는다 — 기본 0(순수 +x).
+    aimAngle: 0,
     cloakBreak: false,
     mark: 0,
     ...over,

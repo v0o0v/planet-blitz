@@ -29,6 +29,7 @@ const hoisted = vi.hoisted(() => ({
   /** 앵커 ⑪ 이 받은 인자 기록 — **좌표가 실제로 실려 오는가**를 재려면 횟수만으로는 부족하다. */
   deaths: [] as { x: number; y: number; elite: boolean }[],
   /**
+<<<<<<< HEAD
    * 앵커 ㉒ 가 받은 인자 + **그 시점의** 플레이어 상태. FI9 의 술어가 `hp - dmg <= 0` 이라
    * "그 지점에서 관측 대상이 아직 살아 있는가"(hp 가 아직 안 깎였는가)를 재야 한다 —
    * 횟수만으로는 앵커 ⑮ 가 밟은 함정(대상이 그 지점에 이미 없다)을 다시 놓친다.
@@ -52,6 +53,11 @@ const hoisted = vi.hoisted(() => ({
    * 재는 것이 그 유일한 물증이다. 기본은 비어 있고 `beforeEach` 가 비운다.
    */
   mutate: {} as Record<string, (ret: unknown, args: unknown[]) => unknown>,
+  /**
+   * 앵커 ⑯ 이 받은 `VolleyParams` 의 **훅 실행 전 스냅숏**. 참조를 그대로 담으면 훅이 고친
+   * 뒤의 값을 보게 되어 "읽기 전용인가" 를 못 잰다 — 그래서 값으로 떠 둔다.
+   */
+  volleys: [] as { aimAngle: number; targetDist: number }[],
 }));
 
 vi.mock('../src/sim/skillHooks.js', async (orig) => {
@@ -80,6 +86,10 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
       if (name === 'onBroodLaunched') {
         const c = args[2] as { x: number; y: number; phase: number };
         hoisted.launched.push({ x: c.x, y: c.y, active: c.phase === 1 });
+      }
+      if (name === 'onVolleyParams') {
+        const v = args[2] as { aimAngle: number; targetDist: number };
+        hoisted.volleys.push({ aimAngle: v.aimAngle, targetDist: v.targetDist });
       }
       // **원본을 그대로 태운다** — 감싸기가 거동을 바꾸면 이 파일이 재는 것이 프로덕션이 아니게 된다.
       const out = fn(...args);
@@ -151,6 +161,7 @@ beforeEach(() => {
   hoisted.broodPatch = null;
   hoisted.launched = [];
   hoisted.order = [];
+  hoisted.volleys = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -568,6 +579,113 @@ describe('앵커 ⑯ onVolleyParams — 발사부(전 기체 최다 미배선 �
     stepWorld(s, idle);
     expect(count('onVolleyFired')).toBe(0);
     expect(count('onVolleyParams')).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 앵커 ⑯ `aimAngle` (S3-1) — **자리만 만든 필드가 실제로 그 값인가**
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 이 절이 잡으려는 실패는 "필드가 있는데 값이 엉뚱하다" 와 "레코드 값과 실제 발사각이
+// 갈린다" 둘이다. 앞의 것은 **여러 방위**로만 갈린다 — 한 방위만 재면 0 과의 우연 일치를
+// 못 가른다. 뒤의 것은 **스폰된 탄의 속도 벡터**로만 갈린다.
+
+/** 이번 런에서 살아 있는 아군 탄의 진행 방위(rad) 목록. */
+function bulletHeadings(s: WorldState): number[] {
+  const out: number[] = [];
+  for (const e of s.entities) {
+    if (e.kind !== 'bullet' || e.dead) continue;
+    out.push(Math.atan2(e.vy, e.vx));
+  }
+  return out;
+}
+
+describe('앵커 ⑯ `VolleyParams.aimAngle` — 자동 조준이 고른 발사 방위', () => {
+  // 표적을 **가까이**(150) 두는 이유: 웨이브 디렉터가 사거리 안에 적을 낳는 시드가 있어
+  // (앵커 ⑯ 음성 대조 절의 근거) 멀리 두면 심어 둔 적이 최근접이 아닐 수 있다.
+  const D = 150;
+  const cases: { name: string; dx: number; dy: number; want: number }[] = [
+    { name: '순수 +x', dx: D, dy: 0, want: 0 },
+    { name: '순수 +y', dx: 0, dy: D, want: Math.PI / 2 },
+    { name: '순수 -y', dx: 0, dy: -D, want: -Math.PI / 2 },
+    { name: '대각 +x+y', dx: D, dy: D, want: Math.PI / 4 },
+    { name: '대각 +x-y', dx: D, dy: -D, want: -Math.PI / 4 },
+  ];
+
+  for (const [i, c] of cases.entries()) {
+    it(`양성: 표적이 ${c.name} 방향이면 aimAngle 이 그 방위다`, () => {
+      const s = skilled(0xd100 + i);
+      const p = s.entities[0];
+      if (p === undefined) throw new Error('플레이어가 0번에 없다');
+      plantEnemy(s, p.x + c.dx, p.y + c.dy);
+      stepWorld(s, idle);
+      // 하한 먼저 — 발사가 아예 없으면 아래 단언이 빈 배열 위에서 항진이 된다.
+      expect(hoisted.volleys.length).toBeGreaterThan(0);
+      const v = hoisted.volleys[0];
+      if (v === undefined) throw new Error('볼리 기록이 없다');
+      // 틱 안에서 플레이어가 조금 움직이므로 정확 일치가 아니라 방위 구분 수준으로 잰다.
+      // 다섯 방위는 최소 π/4 만큼 떨어져 있어 0.2rad 여유로도 서로 섞이지 않는다.
+      expect(Math.abs(v.aimAngle - c.want)).toBeLessThan(0.2);
+    });
+  }
+
+  it('음성 대조: 방위가 다르면 aimAngle 도 다르다 (상수 0 을 배제한다)', () => {
+    const seen: number[] = [];
+    for (const [i, c] of cases.entries()) {
+      hoisted.volleys = [];
+      const s = skilled(0xd200 + i);
+      const p = s.entities[0];
+      if (p === undefined) throw new Error('플레이어가 0번에 없다');
+      plantEnemy(s, p.x + c.dx, p.y + c.dy);
+      stepWorld(s, idle);
+      expect(hoisted.volleys.length).toBeGreaterThan(0);
+      seen.push(hoisted.volleys[0]?.aimAngle ?? NaN);
+    }
+    // 다섯 값이 전부 서로 다르다 — 하나라도 상수로 굳어 있으면 여기서 깨진다.
+    expect(new Set(seen).size).toBe(cases.length);
+  });
+
+  it('짝 증명: aimAngle 이 **실제로 발사된 탄의 진행 방위**와 같다', () => {
+    // 이것이 "레코드 값과 실제 발사각이 갈리지 않는다" 는 유일한 물증이다. 기본 무기는
+    // 부채꼴 1발(`bulletCount` 기본값 1)이라 부채꼴 중심 = 그 한 발의 방위다.
+    for (const [i, c] of cases.entries()) {
+      hoisted.volleys = [];
+      const s = skilled(0xd300 + i);
+      const p = s.entities[0];
+      if (p === undefined) throw new Error('플레이어가 0번에 없다');
+      plantEnemy(s, p.x + c.dx, p.y + c.dy);
+      stepWorld(s, idle);
+      expect(hoisted.volleys.length).toBeGreaterThan(0);
+      const v = hoisted.volleys[0];
+      if (v === undefined) throw new Error('볼리 기록이 없다');
+      const headings = bulletHeadings(s);
+      // 하한 — 탄이 안 났으면 아래 비교가 통째로 항진이다.
+      expect(headings.length).toBeGreaterThan(0);
+      // 부채꼴은 `aimAngle` 을 중심으로 대칭이라 (min+max)/2 가 중심축이다. 1발이면 그 값
+      // 자체다. ⚠️ ±π 를 넘는 방위는 넣지 않았으므로 감싸기(wrap) 걱정이 없다.
+      const mid = (Math.min(...headings) + Math.max(...headings)) / 2;
+      // ⚠️ 정밀도 9 는 여유가 아니라 **탄이 방위를 `cos`/`sin` 으로 풀었다가 `atan2` 로 되
+      // 감는 왕복 오차** 때문이다(같은 값이어도 마지막 몇 비트가 흔들린다). 배선이 갈리는
+      // 실패는 rad 단위 차이라 9 자리로도 남김없이 잡힌다.
+      expect(mid).toBeCloseTo(v.aimAngle, 9);
+    }
+  });
+
+  it('읽기 전용: 훅이 지나간 뒤에도 aimAngle 이 그대로다(스냅숏 == 발사 방위)', () => {
+    // 앞 케이스가 이미 이것을 함의한다 — 기록은 **훅 실행 전** 스냅숏이고 탄은 **훅 실행
+    // 후** 값으로 난다. 그래도 의도를 이름으로 못 박아 둔다: 이 필드가 쓰기 가능해지면
+    // 여기가 먼저 빨개진다.
+    const s = skilled(0xd400);
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    plantEnemy(s, p.x + D, p.y + D);
+    stepWorld(s, idle);
+    expect(hoisted.volleys.length).toBeGreaterThan(0);
+    const before = hoisted.volleys[0]?.aimAngle ?? NaN;
+    const headings = bulletHeadings(s);
+    expect(headings.length).toBeGreaterThan(0);
+    const mid = (Math.min(...headings) + Math.max(...headings)) / 2;
+    expect(mid).toBeCloseTo(before, 9);
   });
 });
 

@@ -599,6 +599,8 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     // 볼리(빔)에서 페널티가 통째로 증발하므로**, 그 경로를 재는 케이스는 `over` 로 뒤집어라.
     ballisticsUsed: true,
     targetDist: 200,
+    // 발사 방위(rad). 읽기 전용 사실이라 훅이 고치지 않는다 — 기본 0(순수 +x).
+    aimAngle: 0,
     cloakBreak: false,
     ...over,
   };
