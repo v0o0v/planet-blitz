@@ -56,6 +56,7 @@ const SHIP_BRUISER = 1;
  * `[blade(offense), morph(utility), fortify(defense)]` → BL 0..9 · MO 10..19 · FO 20..29.
  * ⚠️ 스트라이커와 축 종류의 순서가 다르다(스트라이커는 축1=defense).
  */
+const BL2 = 1;
 const BL3 = 2;
 const BL4 = 3;
 const BL6 = 5;
@@ -792,5 +793,96 @@ describe('⑯-명중 BL3·BL6 (앵커 ⑩ 이 표식을 읽는다)', () => {
     onEnemyDamaged(w, t, 40, src);
     expect(near.hp).toBe(1000);
     expect(t.x).toBe(x0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑯-BL2 백병 격발 — 앵커 ⑯ 의 `targetDist` 술어
+// ---------------------------------------------------------------------------
+//
+// BL3·BL6 과 달리 **이 앵커 안에서 실효까지 끝난다**(표식이 아니라 관통·피해 직접 증폭).
+// 그래서 §⑯-BL2 는 파라미터 산술과 **실제 발사 경로의 hp 감소**를 둘 다 잰다 — 파라미터만
+// 재면 "레코드는 고쳤는데 아키타입이 안 읽는" 무연산이 초록으로 선다.
+
+describe('⑯-BL2 백병 격발 (앵커 ⑯)', () => {
+  it('근접 임계 이내 볼리는 관통 +1 · 피해 +8%+1.5%p/Lv 를 얻는다', () => {
+    const w = mk([[BL2, 10]]);
+    const p = player(w);
+    const v = volley({ targetDist: 200 });
+    onVolleyParams(w, p, v);
+    expect(v.pierce).toBe(2); // 1 → 2
+    // 800 + 150×10 = 2300bp → round(100 × 0.23) = 23.
+    expect(v.damage).toBe(123);
+    // BL2 는 두 축뿐이다 — 표식·탄속·수명은 건드리지 않는다.
+    expect(v.mark).toBe(0);
+    expect(v.speed).toBe(1800);
+    expect(v.life).toBe(55);
+  });
+
+  it('임계 밖 볼리는 한 칸도 안 변한다 — 거리 술어가 실제 게이트다 (음성 짝)', () => {
+    const w = mk([[BL2, 10]]);
+    const p = player(w);
+    const v = volley({ targetDist: 351 });
+    onVolleyParams(w, p, v);
+    expect(v.pierce).toBe(1);
+    expect(v.damage).toBe(100);
+  });
+
+  it('임계 350 은 포함이고 그 위는 밖이다 — 경계가 `<=` 로 고정돼 있다', () => {
+    const w = mk([[BL2, 1]]);
+    const p = player(w);
+    const on = volley({ targetDist: 350 });
+    onVolleyParams(w, p, on);
+    expect(on.damage).toBeGreaterThan(100);
+    const off = volley({ targetDist: 350.0001 });
+    onVolleyParams(w, p, off);
+    expect(off.damage).toBe(100);
+  });
+
+  it('`targetDist === 0`(적이 겹침)에서 NaN·무한대가 나오지 않는다', () => {
+    const w = mk([[BL2, 20]]);
+    const p = player(w);
+    const v = volley({ targetDist: 0 });
+    onVolleyParams(w, p, v);
+    expect(Number.isFinite(v.damage)).toBe(true);
+    expect(Number.isFinite(v.speed)).toBe(true);
+    expect(Number.isInteger(v.pierce)).toBe(true);
+    // 800 + 150×20 = 3800bp → 100 + 38.
+    expect(v.damage).toBe(138);
+    expect(v.pierce).toBe(2);
+  });
+
+  it('미투자 런은 근접이어도 볼리가 종전 그대로다 (음성 대조)', () => {
+    const w = mk([[BL3, 10]]);
+    const p = player(w);
+    const v = volley({ targetDist: 10 });
+    onVolleyParams(w, p, v);
+    expect(v.pierce).toBe(1);
+    expect(v.damage).toBe(100);
+  });
+
+  it('실제 발사 경로가 앵커를 관통한다 — 근접 표적의 hp 가 더 많이 깎인다 (stepWorld)', () => {
+    // ⚠️ 하한을 먼저 세운다: 배선이 끊기면 **양변이 모두 0** 이 되어 "같다/크다" 가 항진으로
+    //    성립한다(이 저장소가 실제로 밟은 결함). "볼리가 실제로 나가 hp 를 깎았다" 를 각
+    //    변에서 따로 단언한 뒤에야 비교가 의미를 가진다.
+    function run(points: ReadonlyArray<readonly [number, number]>, dist: number): number {
+      const w = mk(points);
+      const p = player(w);
+      const e = addEnemy(w, p.x + dist, p.y, 5_000_000);
+      p.cooldown = 0;
+      for (let i = 0; i < 30; i++) stepWorld(w, emptyInput());
+      return 5_000_000 - e.hp;
+    }
+    const nearOff = run([[BL3, 10]], 150);
+    const nearOn = run([[BL2, 10]], 150);
+    expect(nearOff).toBeGreaterThan(0); // 하한 — 볼리가 실제로 나갔다
+    expect(nearOn).toBeGreaterThan(0);
+    expect(nearOn).toBeGreaterThan(nearOff);
+
+    // 음성 짝 — 먼 표적에서는 증폭이 없다. 여기서도 하한을 먼저 본다.
+    const farOff = run([[BL3, 10]], 900);
+    const farOn = run([[BL2, 10]], 900);
+    expect(farOff).toBeGreaterThan(0);
+    expect(farOn).toBe(farOff);
   });
 });

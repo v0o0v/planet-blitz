@@ -52,6 +52,7 @@ const SHIP_PHANTOM = 3;
  * `[assassin(offense), phase(utility), disrupt(defense)]` → AS 0..9 · PH 10..19 · DI 20..29.
  */
 const AS2 = 1;
+const AS3 = 2;
 const AS4 = 3;
 const AS5 = 4;
 const PH1 = 10;
@@ -702,5 +703,162 @@ describe('⑫ AS2 은막 침투 (앵커 ⑯)', () => {
     const sa = Math.hypot(a.vx, a.vy);
     const sb = Math.hypot(b.vx, b.vy);
     expect(sb).toBeCloseTo(sa * 1.21, 6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑬ AS3 처형 재장전 — 앵커 ⑯(강화탄 표식) + 앵커 ⑩(토큰 재장전)
+// ---------------------------------------------------------------------------
+//
+// 이 스킬은 **두 앵커에 걸쳐 있다**. 한쪽만 재면 반쪽 배선이 초록으로 선다:
+//  · ⑯ 만 재면 "표식은 찍는데 아무도 안 읽는" 무연산이 통과한다.
+//  · ⑩ 만 재면 "읽기는 하는데 아무도 안 찍는" 상시 미발동이 통과한다.
+// 그래서 절을 둘로 나누고, 마지막에 실제 발사 경로(stepWorld)로 이음매를 한 번 더 관통시킨다.
+
+describe('⑬ AS3 처형 재장전 (앵커 ⑯ 표식)', () => {
+  function av(over: Partial<VolleyParams> = {}): VolleyParams {
+    return {
+      damage: 100,
+      pierce: 1,
+      count: 3,
+      speed: 100,
+      radius: 4,
+      life: 60,
+      spread: 0.5,
+      cooldownQ: 12,
+      mark: 0,
+      countUsed: true,
+      ballisticsUsed: true,
+      targetDist: 200,
+      aimAngle: 0,
+      // ⚠️ 기본은 **평범한 볼리**다. AS3 을 재는 케이스만 뒤집는다.
+      cloakBreak: false,
+      ...over,
+    };
+  }
+
+  it('해제 첫 타 볼리에만 강화탄 표식과 관통 계단이 붙는다', () => {
+    const w = mk([[AS3, 10]]);
+    const p = player(w);
+    const v = av({ cloakBreak: true });
+    onVolleyParams(w, p, v);
+    expect(v.mark & 2).toBe(2);
+    expect(v.pierce).toBe(1 + Math.floor(10 / 5)); // 3
+    // AS3 은 두 축뿐이다 — 피해는 이미 world 가 실었으므로 여기서 또 곱하면 두 배가 된다.
+    expect(v.damage).toBe(100);
+    expect(v.speed).toBe(100);
+  });
+
+  it('평범한 볼리에는 표식도 관통도 안 붙는다 — `cloakBreak` 이 실제 게이트다 (음성 짝)', () => {
+    const w = mk([[AS3, 10]]);
+    const p = player(w);
+    const v = av({ cloakBreak: false });
+    onVolleyParams(w, p, v);
+    expect(v.mark).toBe(0);
+    expect(v.pierce).toBe(1);
+  });
+
+  it('관통 계단은 5레벨 폭이다 (Lv4 = +0 · Lv5 = +1 · Lv20 = +4)', () => {
+    for (const [level, bonus] of [
+      [4, 0],
+      [5, 1],
+      [20, 4],
+    ] as const) {
+      const w = mk([[AS3, level]]);
+      const v = av({ cloakBreak: true });
+      onVolleyParams(w, player(w), v);
+      expect(v.pierce).toBe(1 + bonus);
+      // 계단이 0 인 레벨에서도 **표식은 찍힌다** — 표식이 스킬 본체이고 관통은 레벨 스케일이다.
+      expect(v.mark & 2).toBe(2);
+    }
+  });
+
+  it('미투자 런은 해제 첫 타여도 표식이 없다 (음성 대조)', () => {
+    const w = mk([[AS2, 10]]);
+    const p = player(w);
+    p.aux0 = 0; // 창 밖 — AS2 도 안 걸리게 둔다
+    const v = av({ cloakBreak: true });
+    onVolleyParams(w, p, v);
+    expect(v.mark).toBe(0);
+    expect(v.pierce).toBe(1);
+  });
+});
+
+describe('⑬-처치 AS3 (앵커 ⑩ 이 표식을 읽어 토큰을 재장전한다)', () => {
+  /** 강화탄 표식이 찍힌 아군탄. `MARK_CLOAK_BREAK = 2`(정본은 `skills/phantom.ts`). */
+  function markedBullet(): Entity {
+    return { ...blankEntity('bullet'), damage: 40, aux0: 2 };
+  }
+
+  it('강화탄으로 처치하면 배율 토큰이 그 자리에서 다시 선다', () => {
+    const w = mk([[AS3, 10]]);
+    const p = player(w);
+    // 하한 — 소진 직후를 재현한다. 여기서 토큰이 이미 서 있으면 아래 단언이 항진이 된다.
+    p.aux1 = 0;
+    const t = addEnemy(w, p.x + 300, p.y, 40);
+    t.hp = 0;
+    t.dead = true;
+    onEnemyDamaged(w, t, 40, markedBullet());
+    expect(p.aux1).toBe(1);
+  });
+
+  it('강화탄이어도 **죽지 않았으면** 재장전이 없다 (음성 짝)', () => {
+    const w = mk([[AS3, 10]]);
+    const p = player(w);
+    p.aux1 = 0;
+    const t = addEnemy(w, p.x + 300, p.y, 1000);
+    onEnemyDamaged(w, t, 40, markedBullet());
+    expect(p.aux1).toBe(0);
+  });
+
+  it('표식 없는 탄으로 처치하면 재장전이 없다 — 창 안 전 발사가 강화탄이 되지 않는다', () => {
+    const w = mk([[AS3, 10]]);
+    const p = player(w);
+    p.aux0 = 300; // 은신 창 안 — "지금 창인가" 로 대체 구현했다면 여기서 통과해 버린다
+    p.aux1 = 0;
+    const t = addEnemy(w, p.x + 300, p.y, 40);
+    t.hp = 0;
+    t.dead = true;
+    onEnemyDamaged(w, t, 40, { ...blankEntity('bullet'), damage: 40, aux0: 0 });
+    expect(p.aux1).toBe(0);
+  });
+
+  it('미투자 런은 강화탄 표식이 붙은 탄이 죽여도 아무 일도 안 한다 (음성 대조)', () => {
+    const w = mk([[AS2, 10]]);
+    const p = player(w);
+    p.aux1 = 0;
+    const t = addEnemy(w, p.x + 300, p.y, 40);
+    t.hp = 0;
+    t.dead = true;
+    onEnemyDamaged(w, t, 40, markedBullet());
+    expect(p.aux1).toBe(0);
+  });
+
+  it('실제 발사 경로가 앵커를 관통한다 — 해제 첫 타 탄에 표식이 실려 나간다 (stepWorld)', () => {
+    function fire(points: ReadonlyArray<readonly [number, number]>): {
+      breaks: number;
+      bullets: Entity[];
+    } {
+      const w = mk(points);
+      const p = player(w);
+      p.aux0 = 300; // 은신 창 안
+      p.aux1 = 1; // 배율 토큰 장전 — 이번 볼리가 해제 첫 타가 된다
+      p.cooldown = 0;
+      addEnemy(w, p.x + 150, p.y, 100_000);
+      stepWorld(w, emptyInput());
+      return { breaks: w.cloakBreaks, bullets: w.entities.filter((e) => e.kind === 'bullet') };
+    }
+    // 하한 두 개를 먼저 세운다 — "강화탄이 실제로 나갔다" 가 성립하지 않으면 표식 단언은
+    // 아무것도 재지 않는다.
+    const on = fire([[AS3, 10]]);
+    expect(on.breaks).toBe(1);
+    expect(on.bullets.length).toBeGreaterThan(0);
+    for (const b of on.bullets) expect(b.aux0 & 2).toBe(2);
+
+    // 음성 대조 — 미투자 런에서도 시그니처 배율은 소진되지만(같은 하한) 표식은 안 붙는다.
+    const off = fire([[AS2, 10]]);
+    expect(off.breaks).toBe(1);
+    expect(off.bullets.length).toBe(on.bullets.length);
+    for (const b of off.bullets) expect(b.aux0 & 2).toBe(0);
   });
 });

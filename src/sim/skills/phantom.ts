@@ -41,7 +41,7 @@ import type { Entity } from '../entities.js';
 // ⚠️ **타입 전용이다.** `skillHooks.ts` 는 이 파일을 런타임 import 하므로 값으로 당기면 곧바로
 // 순환이다 — `import type` 은 컴파일에서 지워져 그래프에 간선을 만들지 않는다.
 import type { VolleyParams } from '../skillHooks.js';
-import { advanceCloak, playerCloaked } from '../cloak.js';
+import { advanceCloak, playerCloaked, setBreakToken } from '../cloak.js';
 import { clearEnemyBullets } from '../activeTypes.js';
 import { slideCircleWalls } from '../los.js';
 import { length } from '../math.js';
@@ -62,6 +62,7 @@ import { skillLv } from '../../items/skills.js';
 
 const enum Sk {
   /** AS2 은막 침투 */ cloakPierce = 1,
+  /** AS3 처형 재장전 */ executionReload = 2,
   /** AS4 급소 해부 */ vitalDissection = 3,
   /** AS5 배후 격살 */ backstab = 4,
   /** PH1 잔상 이탈 */ afterimageExit = 10,
@@ -91,6 +92,16 @@ function lv(state: WorldState, flat: Sk): number {
 // ---------------------------------------------------------------------------
 // 상수 · 레벨 스케일
 // ---------------------------------------------------------------------------
+
+/**
+ * AS3 강화탄 표식 — 앵커 ⑯ 이 `VolleyParams.mark` 로 찍고 앵커 ⑩ 이 탄 `aux0` 에서 읽는다.
+ *
+ * ⚠️ **값 `1` 은 정조준탄(스트라이커)이 점유했다.** 기체는 한 런에 하나뿐이라 물리적으로
+ * 겹치지 않지만 값이 겹치면 렌더·후속 판정이 두 표식을 구분하지 못한다(앵커 ⑯ 주석).
+ * 브루저와 같은 **비트 플래그** 형태로 둔다 — AS10(유령 탄도)이 훗날 배선되면 탄 `aux1` 을
+ * 쓰므로(설계서 AS10 "AS3 의 `aux0` 마커와 칸 분리") 이 비트와 다투지 않는다.
+ */
+const MARK_CLOAK_BREAK = 2;
 
 /**
  * DI2 회복 주기. 설계서 고정값(창 안 60틱마다) — 진입 틱 공짜 회복을 없애려고 `aux0 > 240` 을
@@ -295,7 +306,8 @@ export function phantomSignatureStep(state: WorldState, player: Entity): void {
 }
 
 /**
- * 앵커 ⑩ **적성 표적이 아군탄에 맞아 피해가 확정된 직후** — AS4 급소 해부 · AS5 배후 격살.
+ * 앵커 ⑩ **적성 표적이 아군탄에 맞아 피해가 확정된 직후** — AS3 처형 재장전(회수 절반) ·
+ * AS4 급소 해부 · AS5 배후 격살.
  *
  * ## 두 스킬 다 "증폭"이 아니라 **추가 피해**로 구현된다
  * 설계서는 둘을 "명중 피해 증폭"으로 적었지만 이 앵커는 차감·격추 판정이 **이미 끝난** 자리다.
@@ -307,15 +319,37 @@ export function phantomSignatureStep(state: WorldState, player: Entity): void {
  * ## 덮는 범위는 아군탄 명중 하나뿐이다
  * 화염 DoT·전격 연쇄·폭탄 기물·액티브 폭발·격실 탄은 leaf 라 이 앵커에 오지 않는다(앵커 주석).
  * 두 스킬 다 설계상 "명중"이 트리거라 그 한계와 정확히 겹친다 — 넓혀 약속하지 않았다.
+ * AS3 도 같은 한계 안이고, 설계서가 **"명중 틱 즉시 처치만 인정"** 으로 범위를 스스로 좁혀
+ * 뒀다(지연 처치 포섭은 적 필드 신규 상태를 요구하는데 그 필드가 포화라 4판이 배제했다).
+ *
+ * @param source 가해 아군탄. AS3 이 `aux0` 의 강화탄 표식을 여기서 읽는다.
  */
 export function phantomEnemyDamaged(
   state: WorldState,
   player: Entity,
   target: Entity,
   dmg: number,
+  source: Entity | undefined,
 ): void {
   // 코어 실드가 전량 흡수한 명중은 `dmg === 0` 으로도 온다 — "맞았다"가 아니라 "깎였다"를 센다.
   if (dmg <= 0) return;
+
+  // ⓪ AS3 처형 재장전(회수 절반) — 해제 첫 타(강화탄)로 **그 명중 틱에** 죽였으면 배율 토큰을
+  //    그 자리에서 다시 세운다.
+  //
+  // `target.dead` 는 이 앵커에서 **이미 확정**이다(부활·코어 실드가 전부 앞에서 해소됐다).
+  // 아래 AS4·AS5 가 얹는 추가 피해는 `dead` 를 바꾸지 않으므로(앵커 ⑩ 의 금지 사항) 순서와
+  // 무관하지만, "이 명중이 죽였는가" 를 재는 자리라 셋 중 **맨 앞**에 둔다.
+  // ⚠️ 토큰 쓰기는 `setBreakToken` 단일 경로를 거친다(E1) — 침공 차단이 그 헬퍼 안에 있다.
+  const as3 = lv(state, Sk.executionReload);
+  if (
+    as3 >= 1 &&
+    target.dead &&
+    source !== undefined &&
+    (source.aux0 & MARK_CLOAK_BREAK) !== 0
+  ) {
+    setBreakToken(state, player, 1);
+  }
 
   // ① AS4 급소 해부 — 만피 적에게 명중하는 첫 타에 +12% + 1.8%p/Lv.
   //
@@ -401,18 +435,23 @@ export function phantomCloakBreakReset(
 }
 
 /**
- * 앵커 ⑯ **볼리 파라미터 확정 직후 · 탄 생성 직전** — AS2 은막 침투.
+ * 앵커 ⑯ **볼리 파라미터 확정 직후 · 탄 생성 직전** — AS2 은막 침투 · AS3 처형 재장전(발사 절반).
  *
- * ## AS2 만 있는 이유 (AS3·AS10 이 여기 없는 사유는 각각 다르다)
+ * ## AS10 만 여기 없다 (AS3 은 배선됐다)
  *  - **AS10 유령 탄도**: 창 중 발사탄에 `mark` 를 찍는 것 자체는 여기서 된다. 그런데 그 표식을
  *    **읽는 자리가 없다** — 설계서가 지정한 소비처 셋(`world.ts` 의 차단 판정 · 파괴가능 벽
  *    피해 · 표적 선택의 `segmentBlocked`)이 전부 앵커가 아니다. 표식만 찍으면 해시에 실리는
  *    무연산이 되므로 넣지 않는다(반쪽 배선 금지 — AS8 이 빠진 사유와 같다).
- *  - **AS3 처형 재장전**: 트리거가 "해제 첫 타(**강화탄**)로 처치" 인데, 이 앵커는 `aux1` 소진
- *    **뒤**라 이번 볼리가 그 강화탄인지 알 신호가 없고(소진 분기는 표식을 남기지 않는다),
- *    설령 표식을 찍어도 처치를 보는 앵커 ⑩ 은 **탄을 넘기지 않아** 어느 탄이 죽였는지 모른다.
- *    `source` 만 보고 "지금 은신 창인가"로 대체하면 창 안 전 발사가 2.5배가 된다 — 설계와
- *    정반대다.
+ *  - **AS3 처형 재장전**: ✅ **배선됐다**(S2.1 이 연 `VolleyParams.cloakBreak` 를 쓴다).
+ *    막고 있던 사유는 근거로 남긴다 — 트리거가 "해제 첫 타(**강화탄**)로 처치" 인데, 이 앵커는
+ *    `aux1` 소진 **뒤**라 이번 볼리가 그 강화탄인지 알 신호가 없었다(소진 분기는 표식을 남기지
+ *    않는다). `source` 만 보고 "지금 은신 창인가"로 대체하면 창 안 전 발사가 2.5배가 된다 —
+ *    설계와 정반대다. 그 신호를 `cloakBreak` 가 세웠고, 표식(`MARK_CLOAK_BREAK`)의 회수는
+ *    앵커 ⑩ 에서 한다.
+ *    ⚠️ 같은 문장에 붙어 있던 *"처치를 보는 앵커 ⑩ 은 **탄을 넘기지 않아** 어느 탄이 죽였는지
+ *    모른다"* 는 **사실이 아니었다** — 지우지 않고 정정만 적어 둔다: 앵커 ⑩ 은 `source`
+ *    (가해 아군탄)를 넘기고 `target.dead` 가 **이미 확정**이다(그 앵커 doc 의 계약). AS3 을
+ *    막던 것은 처음부터 소진 신호 부재 **하나뿐**이었다.
  *
  * ## ⚠️ 빔은 `pierce`·`speed` 를 안 읽는다 — 아키타입 한계를 넓혀 약속하지 않는다
  * 앵커 주석의 표가 정본이다(빔은 `damage`·`mark`·`cooldownQ` 뿐). 레일건·미사일·발칸/스프레드
@@ -424,7 +463,26 @@ export function phantomVolleyParams(
   player: Entity,
   params: VolleyParams,
 ): void {
-  // AS2 은막 침투 — 은신 창 동안 발사한 탄에 관통 +1 · 탄속 +6% + 1.5%p/Lv.
+  // --- AS3 처형 재장전(발사 절반) ------------------------------------------
+  // 이번 볼리가 **해제 첫 타(강화탄)** 인지는 `params.cloakBreak` 하나로만 안다 — 소진은 이
+  // 앵커보다 앞이고 표식을 남기지 않는다(그 필드 doc 가 정본).
+  // ⚠️ `params.mark === 1` 은 **스트라이커 정조준 전용**이라 대용하지 마라.
+  // ⚠️ 침공에서는 `cloakBreak` 이 항상 `false` 다(소진 분기 자체가 게이트된다) — 여기에
+  //    `invasion3` 게이트를 겹쳐 걸지 않는 이유가 그것이고, 겹쳐 걸면 술어가 둘이 된다.
+  const as3 = lv(state, Sk.executionReload);
+  if (as3 >= 1 && params.cloakBreak) {
+    // 표식을 찍어야 앵커 ⑩ 이 "**그 탄으로** 죽였다" 를 잴 수 있다. `|=` 로 얹는다 —
+    // 배타 대입이면 다른 팬텀 표식이 생기는 날 한쪽이 다른 쪽을 조용히 지운다.
+    params.mark |= MARK_CLOAK_BREAK;
+    // 관통 +floor(Lv/5) (Lv20 = +4 — 5레벨 폭 정수 계단, 20 초과 자연 연장).
+    // ⚠️ 설계 3판이 **첫 타와 재장전 타를 구분하지 않는 것을 확정**했다(`aux1` 은 0/1 이진이라
+    //    구분할 상태가 없고, 레벨 스케일 항이 "신규 상태 0" 으로 못 박혀 있다). 그래서 이
+    //    보너스는 강화탄 **전부**에 실린다 — 구분하려고 새 슬롯을 잡으면 설계와 갈린다.
+    params.pierce += Math.floor(as3 / 5);
+  }
+
+  // --- AS2 은막 침투 --------------------------------------------------------
+  // 은신 창 동안 발사한 탄에 관통 +1 · 탄속 +6% + 1.5%p/Lv.
   const as2 = lv(state, Sk.cloakPierce);
   if (as2 < 1) return;
   // 창 술어는 정본 하나(`playerCloaked`)를 쓴다 — 침공 차단과 기체 게이트가 그 안에 있다.
