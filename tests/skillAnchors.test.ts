@@ -28,6 +28,13 @@ const hoisted = vi.hoisted(() => ({
   calls: {} as Record<string, number>,
   /** 앵커 ⑪ 이 받은 인자 기록 — **좌표가 실제로 실려 오는가**를 재려면 횟수만으로는 부족하다. */
   deaths: [] as { x: number; y: number; elite: boolean }[],
+  /**
+   * 앵커 ㉒ 가 받은 인자 + **그 시점의** 플레이어 상태. FI9 의 술어가 `hp - dmg <= 0` 이라
+   * "그 지점에서 관측 대상이 아직 살아 있는가"(hp 가 아직 안 깎였는가)를 재야 한다 —
+   * 횟수만으로는 앵커 ⑮ 가 밟은 함정(대상이 그 지점에 이미 없다)을 다시 놓친다.
+   * `player` 는 이후 틱에서 계속 변하므로 **호출 순간에 스칼라로 떠 둔다.**
+   */
+  filmEntries: [] as { hp: number; aux0: number; dmg: number }[],
 }));
 
 vi.mock('../src/sim/skillHooks.js', async (orig) => {
@@ -47,6 +54,10 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
           y: args[2] as number,
           elite: args[3] as boolean,
         });
+      }
+      if (name === 'onFilmEntry') {
+        const p = args[1] as { hp: number; aux0: number };
+        hoisted.filmEntries.push({ hp: p.hp, aux0: p.aux0, dmg: args[2] as number });
       }
       // **원본을 그대로 태운다** — 감싸기가 거동을 바꾸면 이 파일이 재는 것이 프로덕션이 아니게 된다.
       return fn(...args);
@@ -106,6 +117,7 @@ function plantEnemy(state: WorldState, x: number, y: number, damage = 0): Entity
 beforeEach(() => {
   for (const k of Object.keys(hoisted.calls)) delete hoisted.calls[k];
   hoisted.deaths = [];
+  hoisted.filmEntries = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -113,7 +125,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('앵커 21개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 22개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
@@ -133,6 +145,9 @@ describe('계측 이음매', () => {
         // 뚫었다(`skillHooks.ts` 의 그 함수 주석이 사유의 정본).
         'onFilmBurst',
         'onFilmAbsorbed', // S2 ⑱ — 막이 닳은 직후(파열 판정보다 앞)
+        // ⚠️ ㉒ 는 ⑰⑱ 과 **게이트가 다르다** — 저 둘은 `aux0 > 0` 안이라 *막이 없는* 피격을
+        // 원리적으로 못 본다. FI9「최후의 거품」의 술어가 정확히 그 바깥이라 지점을 따로 열었다.
+        'onFilmEntry', // S3 ㉒ — 막 진입 술어 **직전**(막 없음까지 관측)
         'onFilmShield', // S2 ⑰ — 막 흡수 산술 직전(유효 내구)
         'onGemCollected',
         'onKillsDelta',
@@ -494,7 +509,7 @@ describe('앵커 ⑫⑬⑭ onLevelUp · onPowerupOffer · onPowerupPicked — �
 });
 
 // ---------------------------------------------------------------------------
-// 앵커 ⑯~㉑ (S2) — 7기체 배선이 뚫은 지점 넷
+// 앵커 ⑯~㉑ (S2) — 7기체 배선이 뚫은 지점 넷 · ㉒ (S3) — 진입 술어가 막고 있던 축
 // ---------------------------------------------------------------------------
 
 describe('앵커 ⑯ onVolleyParams — 발사부(전 기체 최다 미배선 사유)', () => {
@@ -551,6 +566,74 @@ describe('앵커 ⑰⑱ onFilmShield · onFilmAbsorbed — 버블 막 흡수(산
     expect(s.entities[0]?.hp).toBeLessThan(hpBefore);
     expect(count('onFilmShield')).toBe(0);
     expect(count('onFilmAbsorbed')).toBe(0);
+  });
+});
+
+describe('앵커 ㉒ onFilmEntry — 막 진입 술어 직전(막이 **없는** 피격까지 관측)', () => {
+  it('양성: 막이 없는(aux0=0) 치명 피격에서 불린다 — 같은 순간 ⑰⑱ 은 0 이다', () => {
+    const s = skilled(0xc101, 6); // 버블(id=6, SIG_BUBBLE_FILM)
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.aux0 = 0; // 막 없음
+    p.hp = 1; // 어떤 피격도 치명이 되는 상태
+    plantEnemy(s, 0, 0, 10); // 플레이어에 겹친 적 — 접촉 피해
+    stepWorld(s, idle);
+
+    expect(count('onFilmEntry')).toBe(1);
+    // ⚠️ 이 두 줄이 이 절의 존재 이유다 — **종전에는 이 순간을 볼 수 있는 앵커가 0 개**였고,
+    // 그것이 FI9「최후의 거품」이 배선되지 못한 사유였다(⑰ 주석).
+    expect(count('onFilmShield')).toBe(0);
+    expect(count('onFilmAbsorbed')).toBe(0);
+
+    const e = hoisted.filmEntries[0];
+    if (e === undefined) throw new Error('㉒ 인자 기록이 비어 있다');
+    expect(e.aux0).toBe(0); // 막이 정말 없는 상태에서 도달했다
+    // ⚠️ **하한 짝** — 배선이 끊기면 `dmg` 가 0 이 되어 아래 치명 술어가 "0 - 0 <= 0" 으로
+    //    항진한다(버블 FI4 가 실제로 그렇게 통과했다). 피해가 실려 왔음을 먼저 잠근다.
+    expect(e.dmg).toBeGreaterThan(0);
+    // ⚠️ **질문 ①** — 이 지점의 hp 는 아직 한 점도 안 깎였다. 깎인 뒤였다면 FI9 는 잴 것을
+    //    못 잰다(앵커 ⑮ 가 밀어내기 뒤에 놓여 대상을 못 찾은 것과 같은 형태).
+    expect(e.hp).toBe(1);
+    expect(e.hp - e.dmg).toBeLessThanOrEqual(0); // FI9 의 술어가 여기서 참이 된다
+  });
+
+  it('음성 대조: 막 시그니처가 없는 기체에서는 0 이다', () => {
+    const s = skilled(0xc102); // 기본 기체(스트라이커)
+    const hpBefore = s.entities[0]?.hp ?? 0;
+    plantEnemy(s, 0, 0, 10);
+    stepWorld(s, idle);
+    // "애초에 안 맞았다" 는 거짓 음성을 배제한다.
+    expect(s.entities[0]?.hp).toBeLessThan(hpBefore);
+    expect(count('onFilmEntry')).toBe(0);
+  });
+
+  it('회귀: 막이 선 피격의 ⑰⑱ 호출·인자·결과가 종전 그대로다 (㉒ 가 앞에 한 번 더 불릴 뿐)', () => {
+    // ⚠️ 위 ⑰⑱ 절과 **같은 시드·같은 배치**(0xc001)다 — 게이트를 넓히지 않았으므로 그 절의
+    //    단언이 한 줄도 안 바뀌었다는 것과 짝을 이룬다.
+    const s = skilled(0xc001, 6);
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.aux0 = FILM_ABSORB_FLAT;
+    const hpBefore = p.hp;
+    plantEnemy(s, 0, 0, 10);
+    stepWorld(s, idle);
+
+    expect(count('onFilmEntry')).toBe(1);
+    expect(count('onFilmShield')).toBe(1);
+    expect(count('onFilmAbsorbed')).toBe(1);
+
+    const e = hoisted.filmEntries[0];
+    if (e === undefined) throw new Error('㉒ 인자 기록이 비어 있다');
+    expect(e.aux0).toBe(FILM_ABSORB_FLAT); // 막이 서 있는 채로 진입했다
+    // **하한 짝** — 아래 두 단언은 `dmg = 0` 이면 항진이다.
+    expect(e.dmg).toBeGreaterThan(0);
+    expect(e.dmg).toBeLessThan(FILM_ABSORB_FLAT); // 소진 전이라 파열이 없다
+
+    // 결과가 비트 동일하다: 막이 전량 흡수해 선체는 한 점도 안 깎이고 `aux0` 만 그만큼 닳는다.
+    // ㉒ 가 본 `dmg` 와 실제 차감량이 같다는 것이 "훅이 아무것도 안 바꿨다" 의 물증이다.
+    expect(p.hp).toBe(hpBefore);
+    expect(p.aux0).toBe(FILM_ABSORB_FLAT - e.dmg);
+    expect(s.filmPops).toBe(0); // 파열 오발동 없음 — 게이트를 넓혔다면 여기가 갈렸다
   });
 });
 

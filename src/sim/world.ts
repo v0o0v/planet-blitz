@@ -161,8 +161,8 @@ import { cloakEntryCrossed, cloakExitCrossed, fireCloakEntry, setBreakToken } fr
 import { shipTypeDef, DEFAULT_SHIP_TYPE } from '../../data/ships/index.js';
 import { hasAnyInvestment } from '../items/skills.js';
 import { createSkillSlots } from './skillSlots.js';
-// 210스킬 앵커 20개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
-// (⑮ `onFilmBurst` 는 `filmBurst.ts` 가 부르므로 여기 없다 — 총 21개 중 20개가 이 파일 소유다.)
+// 210스킬 앵커 21개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
+// (⑮ `onFilmBurst` 는 `filmBurst.ts` 가 부르므로 여기 없다 — 총 22개 중 21개가 이 파일 소유다.)
 import type { VolleyParams } from './skillHooks.js';
 import {
   survivedLethalBlow,
@@ -181,6 +181,7 @@ import {
   onPowerupOffer,
   onPowerupPicked,
   onVolleyParams,
+  onFilmEntry,
   onFilmShield,
   onFilmAbsorbed,
   onCushionThreshold,
@@ -4318,7 +4319,21 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     //    소수부가 조용히 잘려 클라와 서버 재실행이 갈린다.
     // 무적(iframes) 중에는 위 수집 루프가 피해를 아예 누적하지 않으므로(2280행 조기 반환)
     // 막 내구도 소모되지 않는다 — 무적은 이미 완전 방어라 막을 함께 태우면 이중 손실이다.
-    if (signatureOn(state, SIG_BUBBLE_FILM) && player.aux0 > 0) {
+    const filmSig = signatureOn(state, SIG_BUBBLE_FILM);
+    if (filmSig) {
+      // 앵커 ㉒(S3) — **막 진입 술어보다 앞.** 아래 게이트(`aux0 > 0`) 안에서는 *막이 없는*
+      // 피격을 원리적으로 못 본다(⑰⑱ 이 FI9 를 못 받은 이유가 그것이다). 여기서 훅이
+      // `player.aux0` 을 0 → 양수로 올리면 **바로 다음 줄의 게이트가 열려** 기존 흡수·파열
+      // 코드가 그대로 돈다 — 게이트 자체는 한 글자도 넓히지 않았다.
+      // ⚠️ 게이트를 넓히지 않은 이유는 `onFilmEntry` doc 이 정본이다(요지: 넓히면 막이 없던
+      //    틱에도 본문의 파열 판정 `aux0 === 0` 이 참이 되어 `resolveFilmBurst` 가 오발동한다).
+      // ⚠️ 넘기는 `dmg` 는 게이트 안이 쓸 값과 **같게** 정수화한 사본이다 — 치명 술어
+      //    (`hp - dmg <= 0`)가 실제 처리와 어긋나지 않게. 바깥 `dmg` 는 건드리지 않으므로
+      //    게이트가 안 열리는 경우 비트 불변이다(반올림은 여전히 게이트 안에서만 일어난다).
+      // ⚠️ 이 지점의 `player.hp` 는 아직 한 점도 안 깎였다 — 치명 판정이 성립하는 근거다.
+      onFilmEntry(state, player, Math.round(dmg));
+    }
+    if (filmSig && player.aux0 > 0) {
       dmg = Math.round(dmg);
       // 앵커 ⑰(S2) — **이번 피격에 쓸 유효 내구.** 버블의 감쇠 사슬 스킬 6종이 이 지점을
       // 기다리고 있었다 — 앵커 ⑧ 은 브루저 장갑보다도 앞이라 거기서 본 `dmg` 는 막을 아직
