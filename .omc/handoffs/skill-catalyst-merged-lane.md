@@ -605,11 +605,37 @@ hazard sub-state", `spawnBoss` 주석(`entities.ts:423-429`)이 "`phase`(0/1/2)�
 이 파일은 어느 쪽 Grep 목록에도 안 걸렸다. **이것이 "전원 착지 후 리드 단독 실행"이 필요한
 이유의 실물 사례다.**
 
-⚠️ **`pilotFrameFreeze` 는 인계 D 단계의 증인 4파일 목록(`fullRun`·`planetTierCompletion`·
-`autopilot`·`emergentRunLength`)에 **없다**. 목록에 추가하라.** 그리고 **"동결값 노후화"는 아직
-추정이다** — 이월 4건이 바꾼 것(은신 토큰 시점·침공 게이트·병아리 탄 마커)이 **autopilot 입력
-선택에 도달하는 경로**를 확인해야 결함이 아님이 확정된다. `pnpm test:changed` 단계에서는 이
-파일이 초록이었으므로(이월 4건 **전**) 원인이 이 커밋인 것은 확실하다.
+#### ⭐ `pilotFrameFreeze` — 조사 완료. 결함 아님이 **확정**이고, 그보다 중요한 사실이 나왔다
+
+`tests/pilotFrameFreeze.test.ts:132` 는 `shipTypeId = (planet + (seed % 7)) % 7` 로 **7기체를 전부
+순회**하고, `:77` 에서 **`ship.skillInvest = investVector(shipTypeId, standardPerTree(LEVEL))` 로
+투자를 넣는다.**
+
+**귀결 둘:**
+
+1. **지금 실패는 결함이 아니다.** 봇 입력은 은신 상태를 직접 안 읽지만(`dodgeVector` 는
+   `kind !== 'enemyBullet'` 로만 거른다 — `ownerId` 를 안 본다, 즉 **이월 ③ 병아리 탄 마커는 봇
+   입력에 영향이 없다**), 순회에 **팬텀이 포함**되므로 C-3(은신 소진 시점 이동)이 그 런의 전개를
+   갈라 프레임 열이 바뀐다. **사용자 승인된 설계 변경의 정상 귀결이다.**
+2. ⚠️ **더 중요 — 이 파일은 「투자가 실린 런」의 골든이다.** 그래서 **210스킬 배선이 라이브가 되는
+   순간 반드시 깨진다.** 스트라이커 하나만 배선해도 깨지고, 7기체가 다 들어오면 18칸이 전부 갈린다.
+   → **배선 레인들에게 "이 파일이 빨개지는 것은 정상"이라고 미리 알려라.** 회귀로 오인해 되돌리면
+   배선을 통째로 잃는다.
+   → **지금 재생성하지 마라.** 배선 착지 전에 재생성하면 배선이 그것을 즉시 무효로 만든다.
+   **D 단계에서 한 번에.**
+
+#### ⚠️ D 단계의 "증인 4파일" 목록은 **심각하게 좁다** — 실측 50파일
+
+`tests/` 에서 `skillInvest|investVector|standardPerTree` 를 쓰는 파일이 **50개**다. 그중 **sim
+레인 골든 2개가 포함된다** — `denoFixture.test.ts` · `shipHashBaseline.test.ts`. 즉 **210스킬
+배선은 sim 레인 골든을 반드시 깨뜨린다**(이미 알던 사실이지만 범위가 확인됐다).
+
+⚠️ **"싣는다"와 "동결값으로 대조한다"는 다르다.** 50파일 대부분은 동적 단언이라 배선 후에도
+통과한다. **D 단계 전에 그 50에서 「하드코딩된 해시·기대값 표」를 가진 것만 가려내라** —
+지금까지 확인된 것: `denoFixture` · `shipHashBaseline` · `pilotFrameFreeze` ·
+`shipSignaturePhantom`(시드) · `shipSignatureWiring`(시드).
+인계 D 의 원래 목록(`fullRun`·`planetTierCompletion`·`autopilot`·`emergentRunLength`)은
+**이 중 하나도 포함하지 않는다.** 목록을 다시 만들어야 한다.
 
 #### 시드 노후화 상세
 
