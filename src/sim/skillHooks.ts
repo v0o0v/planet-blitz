@@ -98,6 +98,9 @@ import {
   strikerBulletExpired,
   strikerDamageChain,
   strikerSignatureStep,
+  strikerVolleyParams,
+  strikerEnemyDamaged,
+  strikerEnemyDeath,
 } from './skills/striker.js';
 import {
   arccasterGemCollected,
@@ -208,9 +211,13 @@ function dispatchVolleySkill(state: WorldState, player: Entity): void {
     // 하나다(S8 의 흡수 절반은 앵커 ⑧ 에 이미 배선돼 있다).
     //
     // **막고 있던 것은 S1 이 치웠다** — `COMBO_WINDOW_TICKS` 가 `world.ts` 의 비공개 상수라
-    // leaf 에서 읽을 길이 없었는데, 이제 `./constants.js` 에 있어 기체 모듈이 그대로 import
-    // 한다. 남은 것은 스트라이커 레인이 `case SIG_STRIKER_MARKSMAN:` 한 줄을 넣는 일뿐이다.
-    // (S1 은 **자리만** 만드는 커밋이라 효과를 넣지 않았다 — 값 복제는 여전히 금지다.)
+    // leaf 에서 읽을 길이 없었는데, 이제 `./constants.js` 에 있어 기체 모듈이 그대로 import 한다.
+    //
+    // ⚠️ **그런데 배선은 여기가 아니라 앵커 ⑯ 에 들어갔다.** 이 앵커는 `autoAttack` 의
+    // 스트라이커 카운터 갱신(`player.aux0 = marksmanFire ? 0 : aux0 + 1`) **뒤**라, 도달 시점의
+    // `aux0` 은 이미 *다음* 볼리를 가리킨다 — "이번 볼리가 정조준이었는가" 를 직접 못 읽는다.
+    // ⑯ 은 그 판정을 `params.mark === 1` 로 싣고 있고 그 필드가 정조준 표식의 정본이므로,
+    // 같은 술어를 여기에 다시 세우면 두 곳이 조용히 갈린다. **누락이 아니라 이동이다.**
     //
     // ⚠️ **아크캐스터도 여기 case 가 없다 — 누락이 아니라 미배선이다.** 이 앵커를 쓰려는 설계
     // 항목은 넷인데(CH1·CH3·CH8 의 발사 시점 탄 표식 · BA10 의 탄수/간격 배율 · BA7 의 보너스
@@ -806,6 +813,15 @@ function dispatchEnemyDamagedSkill(
   if (!state.skillsOn) return;
   void dmg;
   switch (state.sigBit) {
+    case SIG_STRIKER_MARKSMAN:
+      // F6 소이 정조준 · F9 제압 사격. 둘 다 트리거가 **정조준탄 명중**이라 앵커 ⑯ 이 찍은
+      // 표식(`params.mark = 1` → 탄 `aux0`)을 `source` 에서 읽는다.
+      //
+      // ⚠️ F7(표적 고정)·S7(최후 처형)은 여기 **없다** — 이 앵커의 금지 사항에 정면으로 걸린다
+      // (F7 은 차감 **뒤**라 이번 일격에 안 실리고, S7 은 doc 가 "처형 축은 이 앵커가 아니다"
+      // 로 명시 배제했다). 사유 전문은 `strikerEnemyDamaged` 의 doc 주석에 있다.
+      strikerEnemyDamaged(state, target, source);
+      break;
     case SIG_ARC_OVERCHARGE:
       // CH1 유도 낙뢰 · CH8 접지 관통로 · CH6 과잉 전하 이월. 셋 다 **가해 탄**을 만진다:
       // 앞 둘은 앵커 ⑯ 이 단 과충전 표식(`b.aux0`)을 읽고, CH6 은 초과 피해(= 차감 후
@@ -933,6 +949,15 @@ function dispatchEnemyDeathSkill(
   void y;
   switch (state.sigBit) {
     // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다.
+    case SIG_STRIKER_MARKSMAN: {
+      // S3 전리 응급 — 엘리트 격파 시 선체 회복. `elite` 는 전리품 게이트가 굴린 그 판정과
+      // 같은 값이라 여기서 다시 세지 않는다.
+      //
+      // 플레이어는 `compact()` 뒤라 사라져 있을 수 있다(같은 틱에 함께 죽은 경우).
+      const p = playerOf(state);
+      if (p !== undefined) strikerEnemyDeath(state, p, elite);
+      break;
+    }
     case SIG_ARC_OVERCHARGE:
       // BA7 연발 축전기 — 처치 6기마다 다음 볼리를 장전한다. 소비는 앵커 ⑯ 이다.
       //
@@ -1348,6 +1373,20 @@ export function onVolleyParams(
       // 라고 명시). 수명 만료 지점에 앵커가 서기 전에는 폭발을 낳을 자리가 없다 —
       // 표식만 달고 소비처를 비워 두면 반쪽 배선이 되므로 손대지 않았다.
       arccasterVolleyParams(state, player, params);
+      break;
+    case SIG_STRIKER_MARKSMAN:
+      // F2 반동 전달(대시 직후 창 = 집속·가속·증폭) · S8 콤보 차폐의 **뒤 절반**(정조준 볼리
+      // 발사 틱에 콤보 유지 창을 창 절반까지만 회복).
+      //
+      // ⚠️ S8 의 창 회복은 앵커 ① 이 아니라 **여기** 다. ① 의 주석은 그 자리를 가리키고 있었지만,
+      // ① 은 스트라이커 카운터 갱신 **뒤**라 `player.aux0` 이 이미 *다음* 볼리를 가리켜
+      // "이번 볼리가 정조준이었는가" 를 직접 못 읽는다. ⑯ 은 그 판정을 `params.mark === 1` 로
+      // 싣고 있고(그 필드의 정본이 정조준 표식이다), 같은 술어를 두 곳에 적으면 조용히 갈린다.
+      //
+      // ⚠️ F5(조준선 관통)·F10(연장 탄창)은 여기 **없다** — ⑯ 으로도 안 닿는다. F5 는 표적
+      // **방위**가 이 레코드에 없고(`targetDist` 는 거리뿐), F10 은 볼리를 **하나 더 낳아야**
+      // 한다. 사유 전문은 효과 함수 `strikerVolleyParams` 의 doc 주석에 있다.
+      strikerVolleyParams(state, player, params);
       break;
     case SIG_PHANTOM_CLOAK:
       // AS2 은막 침투 — 은신 창 동안 발사한 탄에 관통 +1 · 탄속 증가.

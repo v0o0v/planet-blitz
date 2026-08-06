@@ -26,18 +26,31 @@ import {
   onBulletExpired,
   onDamageChain,
   onSignatureStep,
+  onVolleyParams,
+  onEnemyDamaged,
+  onEnemyDeath,
 } from '../src/sim/skillHooks.js';
+import type { VolleyParams } from '../src/sim/skillHooks.js';
 import { SIG_STRIKER_MARKSMAN, MARKSMAN_TRIGGER_AUX0 } from '../src/sim/shipSignature.js';
 import { StrikerCarry, readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
+import { STRIKER_HANDLERS } from '../src/sim/activeHandlers/striker.js';
+import { ALL_ACTIVES } from '../data/ships/actives/index.js';
+import type { ActiveSkillDef } from '../data/ships/actives/types.js';
 
 /** flat 인덱스 — `data/ships/striker.ts` 축 순서(F 0..9 · S 10..19 · M 20..29). */
 const F1 = 0;
+const F2 = 1;
+const F3 = 2;
 const F4 = 3;
+const F6 = 5;
+const F9 = 8;
 const S1 = 10;
 const S2 = 11;
+const S3 = 12;
 const S4 = 13;
 const S8 = 17;
 const S10 = 19;
+const M1 = 20;
 const M3 = 22;
 const M5 = 24;
 
@@ -356,5 +369,325 @@ describe('⑦ S10 선체 증축', () => {
     onSignatureStep(w, player(w), emptyInput());
     expect(readSlot(w.skillCarry, StrikerCarry.hullXpSeen)).toBe(0);
     expect(readSlot(w.skillCarry, StrikerCarry.hullXpPool)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑧ F2 반동 전달 · S8 콤보 창 회복 — 앵커 ⑯(볼리 파라미터 확정 직후)
+// ---------------------------------------------------------------------------
+
+/** 앵커 ⑯ 이 넘기는 레코드의 **중립 초기값**. 각 테스트가 필요한 칸만 바꾼다. */
+function volley(over: Partial<VolleyParams> = {}): VolleyParams {
+  return {
+    damage: 100,
+    pierce: 1,
+    count: 3,
+    speed: 100,
+    radius: 6,
+    life: 60,
+    spread: 0.5,
+    cooldownQ: 40,
+    countUsed: true,
+    ballisticsUsed: true,
+    targetDist: 300,
+    cloakBreak: false,
+    mark: 0,
+    ...over,
+  };
+}
+
+describe('⑧ F2 반동 전달 (앵커 ⑯)', () => {
+  it('대시 직후 창 안이면 확산이 0 으로 집속되고 피해·탄속이 같은 bp 로 오른다', () => {
+    const w = mk([[F2, 10]]);
+    const p = player(w);
+    p.dashCooldown = w.config.dashCooldownTicks; // 발동 직후 = 만충
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v.spread).toBe(0);
+    // bp 2000 → 100 + round(100 × 2000/10000) = 120
+    expect(v.damage).toBe(120);
+    // 탄속 100 × (11000 + 1000)/10000 = 120
+    expect(v.speed).toBeCloseTo(120, 10);
+  });
+
+  it('창을 벗어난 뒤(쿨다운 잔여 1틱)에는 한 칸도 안 바뀐다', () => {
+    const w = mk([[F2, 10]]);
+    const p = player(w);
+    p.dashCooldown = 1;
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v).toEqual(volley());
+  });
+
+  it('대시를 안 쓴 런(쿨다운 0)에는 발동하지 않는다', () => {
+    const w = mk([[F2, 20]]);
+    const p = player(w);
+    p.dashCooldown = 0;
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v).toEqual(volley());
+  });
+
+  it('미투자면 만충이어도 무연산이다', () => {
+    const w = mk([[F1, 1]]);
+    const p = player(w);
+    p.dashCooldown = w.config.dashCooldownTicks;
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v).toEqual(volley());
+  });
+});
+
+describe('⑧ S8 콤보 유지 창 회복 (앵커 ⑯)', () => {
+  it('정조준 볼리(mark=1)에만 창이 절반 회복된다', () => {
+    const w = mk([[S8, 3]]);
+    w.combo = 4;
+    w.comboTimer = 10;
+    onVolleyParams(w, player(w), volley({ mark: 1 }));
+    expect(w.comboTimer).toBe(70); // 10 + 120/2
+  });
+
+  it('평상시 볼리(mark=0)는 창을 건드리지 않는다', () => {
+    const w = mk([[S8, 3]]);
+    w.combo = 4;
+    w.comboTimer = 10;
+    onVolleyParams(w, player(w), volley({ mark: 0 }));
+    expect(w.comboTimer).toBe(10);
+  });
+
+  it('전액 리셋이 아니라 창 상한에서 멈춘다 — XP 축 트레이드가 이 형태에 달려 있다', () => {
+    const w = mk([[S8, 3]]);
+    w.combo = 4;
+    w.comboTimer = 100;
+    onVolleyParams(w, player(w), volley({ mark: 1 }));
+    expect(w.comboTimer).toBe(120);
+  });
+
+  it('콤보 스택이 0 이면 유지할 창이 없어 회복하지 않는다', () => {
+    const w = mk([[S8, 3]]);
+    w.combo = 0;
+    w.comboTimer = 10;
+    onVolleyParams(w, player(w), volley({ mark: 1 }));
+    expect(w.comboTimer).toBe(10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑨ F6 소이 정조준 · F9 제압 사격 — 앵커 ⑩(아군탄 명중, 피해 확정 직후)
+// ---------------------------------------------------------------------------
+
+/** 정조준 표식(aux0=1)이 찍힌 아군탄. 각도 0 = +X 방향. */
+function marksmanBullet(): Entity {
+  const b = blankEntity('bullet');
+  b.aux0 = 1;
+  b.angle = 0;
+  b.damage = 100;
+  return b;
+}
+
+describe('⑨ F6 소이 정조준 (앵커 ⑩)', () => {
+  it('화상이 없던 적에게는 화상을 부여한다(틱당 1 + floor(Lv/4) · FIRE_DURATION)', () => {
+    const w = mk([[F6, 8]]);
+    const t = blankEntity('enemy');
+    t.hp = 500;
+    onEnemyDamaged(w, t, 10, marksmanBullet());
+    expect(t.iframes).toBe(120);
+    expect(t.dashCooldown).toBe(3);
+    expect(t.hp).toBe(500);
+  });
+
+  it('이미 화상 중이면 잔여를 일괄 정산하고 화상을 끝낸다', () => {
+    const w = mk([[F6, 8]]);
+    const t = blankEntity('enemy');
+    t.hp = 500;
+    t.iframes = 10; // 남은 틱
+    t.dashCooldown = 4; // 틱당 피해
+    onEnemyDamaged(w, t, 10, marksmanBullet());
+    // 잔여 40 × (100% + 5%p×8) = 56
+    expect(t.hp).toBe(444);
+    expect(t.iframes).toBe(0);
+    expect(t.dashCooldown).toBe(0);
+    expect(t.dead).toBe(false);
+  });
+
+  it('정산이 치명적이면 hp 와 dead 가 **함께** 움직인다(hp≤0 좀비 금지)', () => {
+    const w = mk([[F6, 20]]);
+    const t = blankEntity('enemy');
+    t.hp = 10;
+    t.iframes = 30;
+    t.dashCooldown = 4;
+    onEnemyDamaged(w, t, 1, marksmanBullet());
+    expect(t.hp).toBeLessThanOrEqual(0);
+    expect(t.dead).toBe(true);
+  });
+
+  it('표식 없는 평상시 탄에는 발동하지 않는다', () => {
+    const w = mk([[F6, 8]]);
+    const t = blankEntity('enemy');
+    t.hp = 500;
+    const b = marksmanBullet();
+    b.aux0 = 0;
+    onEnemyDamaged(w, t, 10, b);
+    expect(t.iframes).toBe(0);
+    expect(t.dashCooldown).toBe(0);
+  });
+
+  it('보스에는 화상을 걸지 않는다 — `iframes` 가 보스에서는 과열 취약 창이다', () => {
+    const w = mk([[F6, 8]]);
+    const t = blankEntity('boss');
+    t.hp = 5000;
+    t.iframes = 40; // 과열 창 잔여
+    onEnemyDamaged(w, t, 10, marksmanBullet());
+    expect(t.iframes).toBe(40);
+    expect(t.hp).toBe(5000);
+  });
+});
+
+describe('⑨ F9 제압 사격 (앵커 ⑩)', () => {
+  function push(points: ReadonlyArray<readonly [number, number]>, t: Entity): number {
+    const w = mk(points);
+    const b = blankEntity('bullet');
+    b.aux0 = 1;
+    b.angle = 0; // +X
+    const x0 = t.x;
+    onEnemyDamaged(w, t, 10, b);
+    return t.x - x0;
+  }
+
+  it('일반 적은 24 + 4×Lv 만큼 탄 진행 방향으로 밀린다', () => {
+    const t = blankEntity('enemy');
+    t.hp = 100;
+    expect(push([[F9, 5]], t)).toBeCloseTo(44, 2);
+  });
+
+  it('엘리트(pierce>0)는 반감된다', () => {
+    const t = blankEntity('enemy');
+    t.hp = 100;
+    t.pierce = 1;
+    expect(push([[F9, 5]], t)).toBeCloseTo(22, 2);
+  });
+
+  it('보스도 반감되어 밀린다', () => {
+    const t = blankEntity('boss');
+    t.hp = 9000;
+    expect(push([[F9, 5]], t)).toBeCloseTo(22, 2);
+  });
+
+  it('미투자면 밀리지 않는다', () => {
+    const t = blankEntity('enemy');
+    t.hp = 100;
+    expect(push([[F1, 1]], t)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑩ S3 전리 응급 — 앵커 ⑪(잡몹 격추 사건)
+// ---------------------------------------------------------------------------
+
+describe('⑩ S3 전리 응급 (앵커 ⑪)', () => {
+  it('엘리트 격파에 4 + 1×Lv 회복한다', () => {
+    const w = mk([[S3, 6]]);
+    const p = player(w);
+    p.hp = p.maxHp - 30;
+    onEnemyDeath(w, 100, 100, true);
+    expect(p.hp).toBe(p.maxHp - 20);
+  });
+
+  it('일반 잡몹 격추로는 회복하지 않는다', () => {
+    const w = mk([[S3, 6]]);
+    const p = player(w);
+    p.hp = p.maxHp - 30;
+    onEnemyDeath(w, 100, 100, false);
+    expect(p.hp).toBe(p.maxHp - 30);
+  });
+
+  it('최대 HP 를 넘지 않는다', () => {
+    const w = mk([[S3, 20]]);
+    const p = player(w);
+    p.hp = p.maxHp - 3;
+    onEnemyDeath(w, 100, 100, true);
+    expect(p.hp).toBe(p.maxHp);
+  });
+
+  it('미투자면 회복이 없다', () => {
+    const w = mk([[F1, 1]]);
+    const p = player(w);
+    p.hp = p.maxHp - 30;
+    onEnemyDeath(w, 100, 100, true);
+    expect(p.hp).toBe(p.maxHp - 30);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑪ F3 과열 배출 · M1 관성 방출 — 액티브 핸들러(발동 틱)
+// ---------------------------------------------------------------------------
+
+function activeDef(id: string): ActiveSkillDef {
+  const def = ALL_ACTIVES.find((d) => d.id === id);
+  if (def === undefined) throw new Error(`active def missing: ${id}`);
+  return def;
+}
+
+describe('⑪ F3 과열 배출 (화력 액티브)', () => {
+  function fire(points: ReadonlyArray<readonly [number, number]>, cooldown: number) {
+    const w = mk(points);
+    const p = player(w);
+    p.cooldown = cooldown;
+    const before = w.entities.length;
+    const handler = STRIKER_HANDLERS['as_striker_firepower_lo'];
+    if (handler === undefined) throw new Error('handler missing');
+    handler(w, p, activeDef('as_striker_firepower_lo'), { x: 1, y: 0 }, 0);
+    const shots = w.entities.slice(before).filter((e) => e.kind === 'bullet');
+    return { cooldown: p.cooldown, damage: shots[0]?.damage ?? 0, count: shots.length };
+  }
+
+  it('주무기 쿨다운 잔여를 환급하고 fanStrike 탄을 (10% + 2%p/Lv) 증폭한다', () => {
+    // ⚠️ 대조군은 **같은 축에 같은 점수**여야 한다. 액티브 위력(`powerCentiOf`)이 축 투자
+    // 총점에서 나오므로, 화력축 1점 vs 5점을 마주 세우면 F3 이 아니라 축 총점 차이를 잰다
+    // (실측: 기준 피해 16 vs 18 로 갈렸다).
+    const off = fire([[F1, 5]], 7);
+    const on = fire([[F3, 5]], 7);
+    expect(off.cooldown).toBe(7);
+    expect(on.cooldown).toBe(0);
+    expect(on.count).toBe(off.count); // 탄 수는 그대로 — 피해만 오른다
+    expect(off.damage).toBeGreaterThan(0);
+    // bp 2000 → 기준 피해 + round(기준 × 2000/10000)
+    expect(on.damage).toBe(off.damage + Math.round((off.damage * 2000) / 10000));
+  });
+
+  it('⚠️ 음수 carry(선지급분)를 버리지 않는다 — `cooldown > 0` 가드', () => {
+    expect(fire([[F3, 5]], -3).cooldown).toBe(-3);
+  });
+});
+
+describe('⑪ M1 관성 방출 (기동 액티브)', () => {
+  function blinkOnce(points: ReadonlyArray<readonly [number, number]>) {
+    const w = mk(points);
+    const p = player(w);
+    const near = blankEntity('enemy');
+    near.hp = 500;
+    near.x = p.x + 100;
+    near.y = p.y;
+    const far = blankEntity('enemy');
+    far.hp = 500;
+    far.x = p.x + 900;
+    far.y = p.y;
+    const shot = blankEntity('enemyBullet');
+    shot.x = p.x + 100;
+    shot.y = p.y;
+    w.entities.push(near, far, shot);
+    const handler = STRIKER_HANDLERS['as_striker_mobility_lo'];
+    if (handler === undefined) throw new Error('handler missing');
+    handler(w, p, activeDef('as_striker_mobility_lo'), { x: 1, y: 0 }, 0);
+    return { near: near.hp, far: far.hp, cleared: shot.dead };
+  }
+
+  it('출발 지점 반경(120 + 10×Lv) 안에 폭발과 적탄 소거를 남긴다', () => {
+    // Lv4 → 반경 160 · 피해 36
+    expect(blinkOnce([[M1, 4]])).toEqual({ near: 464, far: 500, cleared: true });
+  });
+
+  it('미투자면 도약만 하고 출발 지점에 아무 일도 없다', () => {
+    expect(blinkOnce([[F1, 1]])).toEqual({ near: 500, far: 500, cleared: false });
   });
 });
