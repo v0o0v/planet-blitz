@@ -2956,11 +2956,17 @@ function autoAttack(state: WorldState, player: Entity): void {
   // 싣는 조건이 갈리면 안 되므로 여기에도 같은 술어를 건다.
   // (ADR-0049 구현 레인 선결 E2. 이 게이트로 침공에서 `aux1` 이 소진되지 않고 남으므로
   //  `invasionHash` 골든이 함께 갈린다 — 재생성·EF 재배포와 한 커밋이다.)
+  // 앵커 ⑯ 이 이번 볼리가 강화탄이었는지 알 수 있게 소진을 여기서 한 번 기록한다(S2.1).
+  // 이 분기가 `setBreakToken(…, 0)` 으로 토큰을 지우고 표식을 남기지 않아, 앵커에 도달한
+  // 시점에는 판별할 신호가 하나도 없었다 — 팬텀 AS3 이 정확히 그 이유로 미배선이었다.
+  // `countUsed` 와 같은 형태다: **판정은 여기(정본), 결과만 레코드에.**
+  let cloakBreakFired = false;
   if (
     signatureOn(state, SIG_PHANTOM_CLOAK) &&
     player.aux1 !== 0 &&
     state.config.invasion3 === undefined
   ) {
+    cloakBreakFired = true;
     wDamage = Math.round((wDamage * CLOAK_BREAK_BP) / 10000);
     // 사연 관측(비-해시): 은신 해제 첫 타가 실제로 발동한 이 지점에서만 센다. 결정론 무영향 —
     // hashWorld 가 접지 않는 순수 메타.
@@ -3036,6 +3042,14 @@ function autoAttack(state: WorldState, player: Entity): void {
     // 훅은 결과만 읽는다(필드 주석에 사유). 레일건은 1발 고정, 빔은 세그먼트 수가 사거리에서
     // 나오므로 둘 다 `count` 를 안 본다.
     countUsed: w.weaponType !== WEAPON_TYPE_RAILGUN && w.weaponType !== WEAPON_TYPE_BEAM,
+    // 빔만 탄도 파라미터를 한 칸도 안 읽는다(정지 세그먼트 · 전용 반경/수명 · 관통 9999).
+    // ⚠️ 이 사실이 없으면 **탄속·수명을 대가로 피해를 올리는 교환형 스킬**(브루저 BL6)이
+    //    빔에서 페널티만 증발하고 이득만 남는다 — 무연산이 아니라 **일방적 이득**이다.
+    ballisticsUsed: w.weaponType !== WEAPON_TYPE_BEAM,
+    // 자동 조준이 **이미 고른** 표적까지의 거리. 훅이 최근접 적을 다시 고르면 `nearestTarget`
+    // 선택 규칙의 두 번째 사본이 생기고, 그 함수는 이 파일 소유라 leaf 가 부를 수도 없다.
+    targetDist: Math.hypot(target.x - player.x, target.y - player.y),
+    cloakBreak: cloakBreakFired,
   };
   onVolleyParams(state, player, volley);
 
