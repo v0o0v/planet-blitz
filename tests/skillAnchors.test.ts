@@ -234,7 +234,7 @@ describe('계측 이음매', () => {
         // ⚠️ ㉒ 는 ⑰⑱ 과 **게이트가 다르다** — 저 둘은 `aux0 > 0` 안이라 *막이 없는* 피격을
         // 원리적으로 못 본다. FI9「최후의 거품」의 술어가 정확히 그 바깥이라 지점을 따로 열었다.
         'onFilmEntry', // S3 ㉒ — 막 진입 술어 **직전**(막 없음까지 관측)
-        'onFilmShield', // S2 ⑰ — 막 흡수 산술 직전(유효 내구)
+        'onFilmEfficiency', // S2 ⑰ — 막 흡수 산술 직전(유효 내구)
         'onGemCollected',
         'onKillsDelta',
         'onLevelUp', // S1
@@ -967,7 +967,7 @@ describe('앵커 ⑯ `VolleyParams.inputX/inputY` — 그 틱 이동 입력', ()
   });
 });
 
-describe('앵커 ⑰⑱ onFilmShield · onFilmAbsorbed — 버블 막 흡수(산술 직전 · 직후)', () => {
+describe('앵커 ⑰⑱ onFilmEfficiency · onFilmAbsorbed — 버블 막 흡수(산술 직전 · 직후)', () => {
   it('버블 + 막이 선 상태(aux0>0)에서 피격하면 ⑰⑱ 이 각각 한 번씩 불린다', () => {
     const s = skilled(0xc001, 6); // 버블(id=6, SIG_BUBBLE_FILM)
     const p = s.entities[0];
@@ -975,7 +975,7 @@ describe('앵커 ⑰⑱ onFilmShield · onFilmAbsorbed — 버블 막 흡수(산
     p.aux0 = FILM_ABSORB_FLAT;
     plantEnemy(s, 0, 0, 10); // 플레이어에 겹친 적 — 접촉 피해
     stepWorld(s, idle);
-    expect(count('onFilmShield')).toBe(1);
+    expect(count('onFilmEfficiency')).toBe(1);
     expect(count('onFilmAbsorbed')).toBe(1);
   });
 
@@ -986,7 +986,7 @@ describe('앵커 ⑰⑱ onFilmShield · onFilmAbsorbed — 버블 막 흡수(산
     stepWorld(s, idle);
     // 막 없이도 피격 자체는 일어났다는 것을 확인해 "애초에 안 맞았다" 는 거짓 음성을 배제한다.
     expect(s.entities[0]?.hp).toBeLessThan(hpBefore);
-    expect(count('onFilmShield')).toBe(0);
+    expect(count('onFilmEfficiency')).toBe(0);
     expect(count('onFilmAbsorbed')).toBe(0);
   });
 
@@ -996,7 +996,7 @@ describe('앵커 ⑰⑱ onFilmShield · onFilmAbsorbed — 버블 막 흡수(산
     plantEnemy(s, 0, 0, 10);
     stepWorld(s, idle);
     expect(s.entities[0]?.hp).toBeLessThan(hpBefore);
-    expect(count('onFilmShield')).toBe(0);
+    expect(count('onFilmEfficiency')).toBe(0);
     expect(count('onFilmAbsorbed')).toBe(0);
   });
 });
@@ -1014,7 +1014,7 @@ describe('앵커 ㉒ onFilmEntry — 막 진입 술어 직전(막이 **없는** 
     expect(count('onFilmEntry')).toBe(1);
     // ⚠️ 이 두 줄이 이 절의 존재 이유다 — **종전에는 이 순간을 볼 수 있는 앵커가 0 개**였고,
     // 그것이 FI9「최후의 거품」이 배선되지 못한 사유였다(⑰ 주석).
-    expect(count('onFilmShield')).toBe(0);
+    expect(count('onFilmEfficiency')).toBe(0);
     expect(count('onFilmAbsorbed')).toBe(0);
 
     const e = hoisted.filmEntries[0];
@@ -1051,7 +1051,7 @@ describe('앵커 ㉒ onFilmEntry — 막 진입 술어 직전(막이 **없는** 
     stepWorld(s, idle);
 
     expect(count('onFilmEntry')).toBe(1);
-    expect(count('onFilmShield')).toBe(1);
+    expect(count('onFilmEfficiency')).toBe(1);
     expect(count('onFilmAbsorbed')).toBe(1);
 
     const e = hoisted.filmEntries[0];
@@ -1137,7 +1137,7 @@ function armSettlement(state: WorldState, debt = 100): { p: Entity; due: number 
   if (p === undefined) throw new Error('플레이어가 0번에 없다');
   p.aux0 = debt;
   p.aux1 = CUSHION_RECOVER_TICKS - 1; // 이번 틱에 임계를 채운다
-  return { p, due: cushionSettled(debt, CUSHION_RECOVER_TICKS) };
+  return { p, due: cushionSettled(debt, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS) };
 }
 
 describe('앵커 ㉕ onCushionSettleDue — 정산액 확정 직전(hp 차감 전)', () => {

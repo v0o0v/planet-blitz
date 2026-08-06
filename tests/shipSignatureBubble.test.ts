@@ -33,6 +33,7 @@ import {
   FILM_BURST_PUSH,
   FILM_BURST_PUSH_TICKS,
   filmReady,
+  FILM_EFFICIENCY_BASE_BP,
   filmAbsorbed,
   filmRemainingDamage,
   filmBurstPush,
@@ -48,8 +49,8 @@ describe('버블 방막 — 순수 산술 골든', () => {
   it('흡수분 + 잔여분 = 원래 피해 (막은 총량 흡수지 배율이 아니다)', () => {
     for (let d = 0; d <= 200; d++) {
       for (const s of [0, 1, 17, FILM_ABSORB_FLAT]) {
-        const a = filmAbsorbed(d, s);
-        const r = filmRemainingDamage(d, s);
+        const a = filmAbsorbed(d, s, FILM_EFFICIENCY_BASE_BP);
+        const r = filmRemainingDamage(d, s, FILM_EFFICIENCY_BASE_BP);
         expect(a + r, `d=${d} s=${s}`).toBe(d);
         expect(Number.isInteger(a) && Number.isInteger(r)).toBe(true);
         expect(a).toBeLessThanOrEqual(s);

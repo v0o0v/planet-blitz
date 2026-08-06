@@ -311,13 +311,37 @@ export function cushionImmediateDamage(damage: number): number {
 }
 
 /**
+ * 이번 정산에 쓸 임계를 **정수로 정규화**한다. 0 이하는 1 로 올린다 — 0 이면 `unhitTicks >= 0`
+ * 이 항상 참이라 **매 틱 정산**이 되어 완충이라는 축 자체가 사라진다. 앵커 ⑲ 의 계약이
+ * "양의 정수" 인 것과 같은 규율이고, 여기서 한 번 더 막는 것은 순수 함수가 호출부의 실수에
+ * 조용히 끌려가지 않게 하기 위함이다.
+ */
+function cushionThresholdOf(settleAt: number): number {
+  const t = Math.trunc(settleAt);
+  return t > 0 ? t : 1;
+}
+
+/**
  * 연속 무피격 `unhitTicks` 시점에 적립된 지연분 `deferred` 중 회복되는 양(정수).
  * 임계 미만이면 0 — 계속 맞는 런은 이 경로에서 아무 연산도 하지 않는다.
+ *
+ * ## ⚠️ 임계는 **인자**다 — 상수를 자기 안에서 다시 읽지 않는다(기본값도 두지 않는다)
+ * 종전에는 이 함수가 `CUSHION_RECOVER_TICKS` 를 **자기 안에서** 다시 검사했다. 그래서 앵커
+ * ⑲(`onCushionThreshold`)가 임계를 낮춰 `world.ts` 의 정산 분기에 진입시켜도 이 함수가 자기
+ * 상수로 다시 걸러 **정산액이 0** 이 되었고, 말로우 ME9「솜틀 요양」은 "분기에는 들어갔는데
+ * 아무 일도 안 일어나는" 반쪽 배선이라 통째로 미배선으로 남아 있었다. 임계를 인자로 받으면서
+ * 그 경로가 열렸다.
+ *
+ * 인자에 **기본값을 두지 않는** 것이 규율이다 — 기본값을 두면 옛 호출부가 조용히 옛 거동으로
+ * 흘러 개정이 무연산이 된다(`BulletExpiryReason` 선례). `tsc` 가 누락을 잡게 둔다.
+ *
+ * @param settleAt 이번 틱의 **실효** 정산 임계. 기본값은 {@link CUSHION_RECOVER_TICKS} 이고,
+ *   그 값을 넘기면 종전과 **비트 동일**이다.
  */
-export function cushionRecovered(deferred: number, unhitTicks: number): number {
+export function cushionRecovered(deferred: number, unhitTicks: number, settleAt: number): number {
   const v = Math.trunc(deferred);
   if (v <= 0) return 0;
-  if (Math.trunc(unhitTicks) < CUSHION_RECOVER_TICKS) return 0;
+  if (Math.trunc(unhitTicks) < cushionThresholdOf(settleAt)) return 0;
   return Math.round((v * CUSHION_RECOVER_BP) / 10000);
 }
 
@@ -332,12 +356,20 @@ export function cushionRecovered(deferred: number, unhitTicks: number): number {
  *
  * 임계 미만이면 0 — 아직 정산 자체가 일어나지 않는다(`cushionRecovered` 와 동일 게이트라
  * 호출부가 임계를 두 번 판정할 필요가 없다).
+ *
+ * ## ⚠️ 임계는 **인자**다 — 사유는 {@link cushionRecovered} doc 이 정본이다
+ * 요지: 이 함수가 자기 안에서 `CUSHION_RECOVER_TICKS` 를 다시 검사하던 것이 ME9 를 반쪽
+ * 배선으로 만든 원인이었다. `settleAt` 을 `cushionRecovered` 와 **같은 값**으로 넘겨야
+ * "회복분 + 정산분 = 적립분" 합 보존이 성립한다.
+ *
+ * @param settleAt 이번 틱의 **실효** 정산 임계. {@link CUSHION_RECOVER_TICKS} 를 넘기면 종전과
+ *   **비트 동일**이다.
  */
-export function cushionSettled(deferred: number, unhitTicks: number): number {
+export function cushionSettled(deferred: number, unhitTicks: number, settleAt: number): number {
   const v = Math.trunc(deferred);
   if (v <= 0) return 0;
-  if (Math.trunc(unhitTicks) < CUSHION_RECOVER_TICKS) return 0;
-  return v - cushionRecovered(v, unhitTicks);
+  if (Math.trunc(unhitTicks) < cushionThresholdOf(settleAt)) return 0;
+  return v - cushionRecovered(v, unhitTicks, settleAt);
 }
 
 // --- ⑥ 버블: 방막(주기적 흡수 + 파열 밀어내기) --------------------------------
@@ -384,19 +416,83 @@ export function filmReady(ticksSinceBurst: number): boolean {
   return Math.trunc(ticksSinceBurst) >= FILM_PERIOD_TICKS;
 }
 
-/** 남은 막 내구 `shield` 가 이 피격에서 실제로 흡수하는 양(정수). 나눗셈 없음. */
-export function filmAbsorbed(damage: number, shield: number): number {
+/**
+ * 막 흡수 **효율**의 항등값(basis-point). 10000 = "내구 1 이 피해 1 을 막는다" = 종전 거동.
+ * 앵커 ⑰(`onFilmEfficiency`)이 이 값에서 올리거나 내린다.
+ */
+export const FILM_EFFICIENCY_BASE_BP = 10000;
+
+/**
+ * 이 막이 이번 피격에서 막아낼 수 있는 **피해 총량**(정수) = 내구 × 효율.
+ * 항등 효율(10000)에서는 내구 그대로라 종전과 비트 동일이다.
+ */
+function filmCapacity(shield: number, effBp: number): number {
+  const s = Math.trunc(shield);
+  const e = Math.trunc(effBp);
+  if (s <= 0 || e <= 0) return 0;
+  return Math.round((s * e) / 10000);
+}
+
+/**
+ * 이 피격에서 실제로 **태우는 막 내구**(정수). `world.ts` 가 `player.aux0` 에서 빼는 값이다.
+ *
+ * ## ⚠️ 이 함수는 "막은 피해" 가 아니라 "태운 내구" 를 돌려준다 — 둘은 이제 다른 값이다
+ * 종전 정의는 `min(damage, shield)` 여서 **태운 내구 ≡ 막은 피해**였고, 그 항등이 앵커 ⑰ 을
+ * 원리적으로 무효로 만들었다. 사유를 지우지 않고 그대로 적어 둔다(다음 세션이 같은 형태를 또
+ * 만들지 않도록):
+ *  · `absorbed ≤ player.aux0` 을 지키려면 훅이 돌려주는 `shield ≤ player.aux0` 여야 했는데,
+ *    `shield` 의 기본값이 이미 `player.aux0` 이라 훅은 **내구를 낮추는 방향으로만** 유효했다.
+ *  · `dmg ≤ aux0` 이면 부풀리든 말든 `absorbed = dmg` 라 아무것도 안 바뀌고,
+ *    `dmg > aux0` 이면 부풀리는 순간 `aux0` 이 음수가 되어 u32 폴드가 40억대로 접었다.
+ * → 즉 "내구 1당 막는 피해가 1+α" 는 **흡수량 = 내구 소모량**이라는 구조에서 성립할 수 없었다.
+ *
+ * 효율 인자가 그 항등을 끊는다. 이제 막을 수 있는 피해 총량은 `내구 × 효율`(={@link filmCapacity})
+ * 이고, 태우는 내구는 **막은 피해를 효율로 되돌린 값**이다. 두 값이 독립적으로 움직인다.
+ *
+ * ## ⚠️ `aux0` 이 음수가 되는 경로는 새로 생기지 않는다
+ * 반환값은 어떤 효율에서도 `Math.trunc(shield)` 를 넘지 않는다 — 막이 다 닳는 경우
+ * (`d >= cap`)를 **내구 전량으로 못 박아** 나눗셈 반올림이 상한을 넘길 여지를 없앴다.
+ * 그 자리는 동시에 파열 판정(`aux0 === 0`)이 정확히 성립해야 하는 자리이기도 하다 —
+ * 반올림으로 내구 1 이 남으면 "막을 힘은 없는데 파열도 안 하는" 유령 막이 된다.
+ *
+ * @param effBp 흡수 효율(bp). {@link FILM_EFFICIENCY_BASE_BP} 를 넘기면 종전과 **비트 동일**이다.
+ *   기본값을 두지 않는 것이 규율이다 — 두면 옛 호출부가 조용히 옛 거동으로 흐른다.
+ */
+export function filmAbsorbed(damage: number, shield: number, effBp: number): number {
   const d = Math.trunc(damage);
   const s = Math.trunc(shield);
   if (d <= 0 || s <= 0) return 0;
-  return d < s ? d : s;
+  const cap = filmCapacity(s, effBp);
+  if (cap <= 0) return 0;
+  // 막이 이번 피격으로 소진되는 경우 — 태우는 내구는 **정확히 전량**이다(위 ⚠️).
+  if (d >= cap) return s;
+  // 아직 남는 경우 — 막은 피해(= d 전량)를 효율로 되돌려 태운 내구를 낸다. 나눗셈 1회.
+  // ⚠️ 이 파일에서 **처음으로 제수가 런타임 값**이다(`eff`). 결정론 규율(ADR-0005)이 지금까지
+  // "제수는 이름 있는 정수 상수" 였던 이유는 f64 누적을 막기 위함인데, `eff` 는 위에서
+  // `Math.trunc` 로 정수화됐고 `filmCapacity` 가 `e <= 0` 을 이미 걸러 **양의 정수**임이
+  // 보장된다(피제수도 정수). 따라서 단일 나눗셈 + 반올림 1회라는 형태는 그대로다.
+  const eff = Math.trunc(effBp);
+  const burned = Math.round((d * FILM_EFFICIENCY_BASE_BP) / eff);
+  if (burned <= 0) return 0;
+  return burned < s ? burned : s;
 }
 
-/** 막을 통과해 실제로 선체에 들어가는 피해(정수). 흡수량과 합하면 원래 피해와 같다. */
-export function filmRemainingDamage(damage: number, shield: number): number {
+/**
+ * 막을 통과해 실제로 선체에 들어가는 피해(정수).
+ *
+ * ## ⚠️ 합 보존 계약이 바뀌었다 — `absorbed + rest === damage` 는 더 이상 성립하지 않는다
+ * 효율이 항등(10000)일 때만 성립한다. 일반형은 **`막은 피해 + rest === damage`** 이고,
+ * 막은 피해 = `min(damage, 내구 × 효율)` 이다. `filmAbsorbed` 가 돌려주는 것은 막은 피해가
+ * 아니라 *태운 내구*이므로 두 반환값을 그냥 더하면 안 된다 — 그 분리가 이 개정의 목적이다.
+ *
+ * @param effBp {@link filmAbsorbed} 와 **같은 값**을 넘겨야 한다. 다르면 두 값이 서로 다른
+ *   막을 가리킨다.
+ */
+export function filmRemainingDamage(damage: number, shield: number, effBp: number): number {
   const d = Math.trunc(damage);
   if (d <= 0) return 0;
-  return d - filmAbsorbed(d, shield);
+  const cap = filmCapacity(shield, effBp);
+  return d > cap ? d - cap : 0;
 }
 
 // --- ⑦ 스트라이커: 정조준 사이클 -----------------------------------------------
