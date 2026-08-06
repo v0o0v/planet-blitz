@@ -43,6 +43,15 @@ const hoisted = vi.hoisted(() => ({
   broodPatch: null as null | ((p: Record<string, number>) => void),
   /** 앵커 ㉔ 가 받은 개체 기록 — 좌표·활성 여부가 실려 오는가. */
   launched: [] as { x: number; y: number; active: boolean }[],
+  /** 호출 **순서**. "㉕ 가 ⑳ 보다 앞" 같은 순서 계약은 횟수로는 못 잰다. */
+  order: [] as string[],
+  /**
+   * 앵커 반환값 **뮤테이션**. 값을 돌려주는 앵커는 "불렸다" 만으로는 부족하다 — 뒤 산술의
+   * `min`/`clamp` 가 개입을 통째로 삼켜 **원리적으로 무효인 앵커**가 될 수 있고, 이 저장소에
+   * 실제로 그런 전례가 있다(앵커 ⑰). 훅의 반환을 실제로 바꿔 **최종 상태가 달라지는지**를
+   * 재는 것이 그 유일한 물증이다. 기본은 비어 있고 `beforeEach` 가 비운다.
+   */
+  mutate: {} as Record<string, (ret: unknown, args: unknown[]) => unknown>,
 }));
 
 vi.mock('../src/sim/skillHooks.js', async (orig) => {
@@ -56,6 +65,7 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
     const fn = value as (...args: unknown[]) => unknown;
     wrapped[name] = (...args: unknown[]): unknown => {
       hoisted.calls[name] = (hoisted.calls[name] ?? 0) + 1;
+      hoisted.order.push(name);
       if (name === 'onEnemyDeath') {
         hoisted.deaths.push({
           x: args[1] as number,
@@ -77,7 +87,8 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
       if (name === 'onBroodLaunchParams' && hoisted.broodPatch !== null) {
         hoisted.broodPatch(args[2] as Record<string, number>);
       }
-      return out;
+      const m = hoisted.mutate[name];
+      return m === undefined ? out : m(out, args);
     };
   }
   return wrapped;
@@ -91,7 +102,7 @@ const { blankEntity, addEntity, spawnBullet, spawnGem, spawnWall } = await impor
 );
 const { DT } = await import('../src/sim/constants.js');
 const { hashWorld } = await import('../src/sim/replay.js');
-const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS, BROOD_MARK } = await import(
+const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS, BROOD_MARK, cushionSettled } = await import(
   '../src/sim/shipSignature.js'
 );
 const { isActiveTurret, TURRET_LIFE_TICKS } = await import('../src/sim/events.js');
@@ -134,10 +145,12 @@ function plantEnemy(state: WorldState, x: number, y: number, damage = 0): Entity
 
 beforeEach(() => {
   for (const k of Object.keys(hoisted.calls)) delete hoisted.calls[k];
+  for (const k of Object.keys(hoisted.mutate)) delete hoisted.mutate[k];
   hoisted.deaths = [];
   hoisted.filmEntries = [];
   hoisted.broodPatch = null;
   hoisted.launched = [];
+  hoisted.order = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -145,7 +158,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('앵커 24개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 25개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
@@ -156,6 +169,7 @@ describe('계측 이음매', () => {
         // 정산이 각각 "산술에 개입" 과 "사건을 관측" 으로 갈리기 때문이다 — 한 지점에 하나만
         // 두면 앵커 ⑮ 가 실제로 밟은 함정(관측 대상이 그 지점에 이미 없다)을 되풀이한다.
         'onCloakBreakReset', // S2 ㉑ — 팬텀 리셋 직전([치명] 이었던 지점)
+        'onCushionSettleDue', // S3 ㉕ — 정산액 확정 **직전**(ME5 분할). ⑳ 은 클램프 뒤라 못 온다
         'onCushionSettled', // S2 ⑳ — 정산 직후
         'onCushionThreshold', // S2 ⑲ — 정산 임계
         'onDamageChain',
@@ -709,6 +723,99 @@ describe('앵커 ⑳ onCushionSettled — 말로우 완충 정산 직후', () =>
     stepWorld(s, idle);
     expect(count('onCushionThreshold')).toBe(1);
     expect(count('onCushionSettled')).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉕ (S3) — 값을 **돌려주는** 앵커라 계측 방식이 다르다
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 이 절만 "효과가 있다" 에 해당하는 단언을 한다. 파일 헤더의 금지("효과는 배선 레인의 몫")
+// 와 어긋나 보이지만 재는 것이 다르다 — **스킬 효과**가 아니라 **앵커가 원리적으로 유효한가**,
+// 즉 훅의 반환이 뒤 산술의 `min`/클램프에 삼켜지지 않고 최종 상태에 도달하는가다. 이 물증이
+// 없으면 "자리는 열었는데 넣어도 아무 일도 안 일어나는" 앵커가 된다(앵커 ⑰ 의 전례).
+
+/** 말로우 완충 정산이 **이번 틱에** 일어나도록 세운다. 반환은 정산 예정액(`due`). */
+function armSettlement(state: WorldState, debt = 100): { p: Entity; due: number } {
+  const p = state.entities[0];
+  if (p === undefined) throw new Error('플레이어가 0번에 없다');
+  p.aux0 = debt;
+  p.aux1 = CUSHION_RECOVER_TICKS - 1; // 이번 틱에 임계를 채운다
+  return { p, due: cushionSettled(debt, CUSHION_RECOVER_TICKS) };
+}
+
+describe('앵커 ㉕ onCushionSettleDue — 정산액 확정 직전(hp 차감 전)', () => {
+  it('정산 틱에 불리고, ⑳ 보다 **앞**이다 (정본 순서: 분할 → CU3 상한 → applied → 파생)', () => {
+    const s = skilled(0xe101, 5);
+    armSettlement(s);
+    stepWorld(s, idle);
+    // 전제 — 정산이 실제로 일어난 틱이다(이게 없으면 아래 순서 단언이 항진이 된다).
+    expect(count('onCushionSettleDue')).toBe(1);
+    expect(count('onCushionSettled')).toBe(1);
+    // CU3 회당 상한은 ⑳ 안(`mallowCushionSettled`)에 있으므로 "㉕ < ⑳" 이 곧 "㉕ < CU3" 이다.
+    expect(hoisted.order.indexOf('onCushionSettleDue')).toBeLessThan(
+      hoisted.order.indexOf('onCushionSettled'),
+    );
+  });
+
+  it('회귀: 훅이 아무것도 안 하면 정산 결과가 종전과 비트 동일이다', () => {
+    const s = skilled(0xe102, 5);
+    const { p, due } = armSettlement(s);
+    const hpBefore = p.hp;
+    stepWorld(s, idle);
+    expect(due, '정산액이 0 이면 아래 단언이 전부 항진이다').toBeGreaterThan(0);
+    expect(hpBefore - p.hp).toBe(due); // 앵커 삽입 전 산술 = `min(due, floor(hp)-1)`
+    expect(p.aux0).toBe(0); // 완충 잔량도 종전 그대로
+  });
+
+  it('⭐ 뮤테이션 ①: 반환을 **키우면** 최종 hp 가 실제로 더 깎인다 (뒤 클램프가 안 삼킨다)', () => {
+    const s = skilled(0xe103, 5);
+    const { p, due } = armSettlement(s);
+    const hpBefore = p.hp;
+    // 전제 — hp 여유(room)가 충분해야 `min` 이 개입을 삼키지 않는다. 여유가 없는 치사급
+    // 정산에서는 삼켜지는 것이 **의도**다(완충은 절대 치명적이지 않다).
+    expect(Math.floor(hpBefore) - 1).toBeGreaterThan(due + 20);
+    hoisted.mutate['onCushionSettleDue'] = (ret) => (ret as number) + 20;
+    stepWorld(s, idle);
+    expect(count('onCushionSettleDue')).toBe(1);
+    expect(hpBefore - p.hp).toBe(due + 20);
+  });
+
+  it('⭐ 뮤테이션 ②: 절반만 선체로 보내고 나머지를 다시 미루면 hp 와 **완충 잔량**이 함께 달라진다', () => {
+    // ME5「분할 상환」이 실제로 취할 형태다 — 반환을 줄이고 남은 몫을 `aux0` 에 **대입**한다
+    // (앵커가 `aux0` 리셋 **뒤**에 있어야 이 쓰기가 살아남는다. 그 자리 선택의 물증이 이 절이다).
+    const s = skilled(0xe104, 5);
+    const { p, due } = armSettlement(s);
+    const hpBefore = p.hp;
+    const half = Math.floor(due / 2);
+    expect(half, '분할 몫이 0 이면 아래가 회귀 절과 구분되지 않는다').toBeGreaterThan(0);
+    hoisted.mutate['onCushionSettleDue'] = (ret, args) => {
+      const player = args[1] as Entity;
+      player.aux0 = (ret as number) - half; // 안 보낸 나머지를 다시 미룬다
+      return half;
+    };
+    stepWorld(s, idle);
+    expect(count('onCushionSettleDue')).toBe(1);
+    expect(hpBefore - p.hp).toBe(half); // 선체행이 실제로 줄었다
+    expect(p.aux0).toBe(due - half); // 완충 잔량이 실제로 남았다
+    expect(p.aux0).toBeGreaterThan(0);
+  });
+
+  it('음성 대조: 정산이 없는 틱(임계 미도달)에는 0 이다', () => {
+    const s = skilled(0xe105, 5);
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.aux0 = 100;
+    p.aux1 = 0;
+    stepWorld(s, idle);
+    expect(count('onCushionThreshold')).toBe(1); // 매 틱 훅은 돈다
+    expect(count('onCushionSettleDue')).toBe(0);
+  });
+
+  it('음성 대조: 다른 기체에서는 0 이다', () => {
+    const s = skilled(0xe106);
+    stepWorld(s, idle);
+    expect(count('onCushionSettleDue')).toBe(0);
   });
 });
 
