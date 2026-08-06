@@ -8,18 +8,20 @@
  *
  * ---
  *
- * ## ⚠️ 배선된 것은 30종 중 **13종**이다 (배치 4 의 9종 + S2 앵커로 연 4종)
+ * ## ⚠️ 배선된 것은 30종 중 **14종**이다 (배치 4 의 9종 + S2 앵커로 연 4종 + S3 앵커로 연 1종)
  * S2 가 앵커 ⑯(`onVolleyParams`)·⑰(`onFilmShield`)·⑱(`onFilmAbsorbed`)을 열어
- * **PO2·PO5(⑯) · FI3·FI4(⑱)** 넷이 추가됐다. 사유별 묶음은 `skillHooks.ts` 의 각 `case`/
- * 미배선 주석에 있고, 남은 17종의 큰 줄기는 넷이다:
+ * **PO2·PO5(⑯) · FI3·FI4(⑱)** 넷이 추가됐고, S3 이 앵커 ㉒(`onFilmEntry`)를 열어 **FI9** 가
+ * 붙었다. 사유별 묶음은 `skillHooks.ts` 의 각 `case`/미배선 주석에 있고, 남은 16종의 큰 줄기는
+ * 넷이다:
  *  1. **흡수 「효율」 축은 앵커 ⑰ 으로도 표현이 안 된다** — `filmAbsorbed = min(dmg, shield)`
  *     이고 world 가 `aux0 -= absorbed` 를 하므로 **흡수량과 내구 소모량이 같은 값**이다.
  *     "내구 1당 막는 피해가 1+α" 는 그 둘을 분리해야 성립하는데, 분리는 순수 함수 시그니처
  *     변경(= 골든)이라 배선 레인 밖이다. DR2·FI8 이 여기 걸린다(FI8 은 피해원 복원 불가라는
  *     별도 사유도 함께 — ⑰ 주석이 정본). FI9 는 호출부 게이트(`aux0 > 0`)가 *막 없음*을
  *     배제해 애초에 이 앵커에 도달하지 않는다 — **그 사유는 그대로이고, S3-5 가 게이트
- *     앞에 앵커 ㉒(`onFilmEntry`)를 열어 FI9 가 갈 자리를 따로 만들었다**(아직 미배선:
- *     비상막 내구 산식과 `aux1` 소모가 한 번에 들어와야 반쪽이 되지 않는다).
+ *     앞에 앵커 ㉒(`onFilmEntry`)를 열어 FI9 가 갈 자리를 따로 만들었다**. ✅ **FI9 는 그
+ *     자리에 배선됐다**(`bubbleFilmEntry` — 비상막 내구 산식과 `aux1` 소모를 한 번에 넣어
+ *     반쪽을 만들지 않았다). DR2·FI8 은 여전히 위 사유에 걸려 밖이다.
  *  2. **자석·이동·젬 이동 축에 앵커가 없다** — DR3·DR4·DR5·DR8·DR10 은 `stepGems` 흡인 배율,
  *     이동 감속 적용부, 기믹 접촉 판정처럼 전부 `world.ts` 의 비-앵커 지점을 요구한다.
  *  3. **파열의 종류를 구분할 신호가 없다** — FI6 은 *액티브 만료* 파열에만 얹혀야 하는데
@@ -45,7 +47,7 @@ import { clearEnemyBullets, fanStrike } from '../activeTypes.js';
 import { applyChain } from '../status.js';
 import { slideCircleWalls } from '../los.js';
 import { length } from '../math.js';
-import { FILM_ABSORB_FLAT, FILM_BURST_RADIUS } from '../shipSignature.js';
+import { FILM_ABSORB_FLAT, FILM_BURST_RADIUS, FILM_PERIOD_TICKS } from '../shipSignature.js';
 import { skillLv } from '../../items/skills.js';
 
 // ---------------------------------------------------------------------------
@@ -72,6 +74,7 @@ const enum Sk {
   /** FI3 반사 응막 */ reflectiveFilm = 22,
   /** FI4 압력 배출 */ pressureVent = 23,
   /** FI5 파열 위상 */ burstPhase = 24,
+  /** FI9 최후의 거품 */ lastBubble = 28,
   /** FI10 정화 파열 */ purgeBurst = 29,
 }
 
@@ -407,4 +410,53 @@ export function bubbleFilmAbsorbed(
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉒ — 막 흡수 분기의 **진입 술어 직전**(막이 없는 피격까지 관측)
+// ---------------------------------------------------------------------------
+
+/**
+ * **FI9 최후의 거품** — *막이 없는데* 이 피격으로 죽는다면, 재생 진행분을 전액 태워 **즉석
+ * 비상막**을 세운다. 막이 서면 바로 다음 줄의 게이트(`aux0 > 0`)가 열려 기존 흡수·파열 코드가
+ * 그대로 돌고, 그 피격부터 흡수가 일어난다(설계서 FI9 「구현: A」).
+ *
+ * ## 왜 앵커 ⑰⑱ 이 아닌가
+ * 저 둘은 호출부 게이트 **안**이라 *막 없음*을 원리적으로 못 본다 — 이 스킬이 배선되지 못하고
+ * 있던 사유가 그것이고, S3-5 가 게이트 **앞**에 이 지점을 열어 해소했다(`onFilmEntry` doc 정본).
+ *
+ * ## ⚠️ `player.aux0` 에 넣는 값은 **양의 정수뿐**이다
+ * `aux0` 은 u32 로 해시되므로(`replay.ts` `hashEntity`) 음수는 40억대 값으로 접혀 클라와 서버
+ * 재실행이 갈리고 소수는 조용히 잘린다. 두 단계 모두 `Math.floor` 로 자르고, 그 결과가 **0 이하면
+ * 아무것도 쓰지 않고 반환**한다 — 이 두 줄이 비음 정수 보장의 전부다(음수 대입 경로가 없다).
+ * 0 일 때 `aux1` 만 태우지 않는 것도 같은 반환이 처리한다(대가만 치르는 조용한 손해 방지).
+ *
+ * ## ⚠️ 만재 상한을 건다 — 설계 문면과 어긋나 보이는 지점이라 근거를 남긴다
+ * 설계서 산식은 `floor(aux1 × FILM_ABSORB_FLAT / FILM_PERIOD_TICKS) × (60% + 3%p/Lv)` 인데,
+ * 재생 직전(`aux1` = 419)에 Lv20(×1.2)이면 71 이 나와 **`aux0 ≤ FILM_ABSORB_FLAT` 엔진
+ * 불변식**(FI2 「내구 재응결」이 지키는 그 불변식)을 넘는다. 불변식이 이긴다 — 넘으면 만재로
+ * 자른다. 설계 문서는 고치지 않았다(규약: 어긋남은 보고한다).
+ *
+ * ## ⚠️ 런당 1회 제한은 두지 않았다 — 설계에 없고, 대가가 이미 제한이다
+ * `aux1 = 0` 이 곧 재생 리셋이라 다음 치명 피격에서는 진행분이 0 → 내구 0 → 위 반환에 걸린다.
+ * 별도 카운터를 두면 슬롯 1칸을 해시에 접어야 하는데 설계가 요구하지 않는 상태다.
+ */
+export function bubbleFilmEntry(state: WorldState, player: Entity, dmg: number): void {
+  const fi9 = lv(state, Sk.lastBubble);
+  if (fi9 < 1) return;
+  // 술어 — ㉒ 는 **막이 서 있는 피격에도 불린다.** 막 없음은 여기서 직접 확인해야 한다.
+  if (player.aux0 !== 0) return;
+  // 치명 판정. 이 지점의 `hp` 는 아직 한 점도 안 깎였고 `dmg` 는 호출부가 정수화해 넘긴다.
+  if (player.hp - dmg > 0) return;
+  // 재생 진행분(aux1 = 마지막 파열 이후 경과 틱)을 만재 내구로 환산 → 레벨 배율(정수 bp).
+  // 각 단계 나눗셈 1회 · 피제수 정수(ADR-0005).
+  const progress = Math.floor((player.aux1 * FILM_ABSORB_FLAT) / FILM_PERIOD_TICKS);
+  const shield = Math.min(
+    FILM_ABSORB_FLAT,
+    Math.floor((progress * (6000 + 300 * fi9)) / 10000),
+  );
+  if (shield <= 0) return;
+  player.aux0 = shield;
+  // 대가 — 재생 진행분 전액 소모.
+  player.aux1 = 0;
 }

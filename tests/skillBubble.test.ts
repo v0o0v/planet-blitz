@@ -43,6 +43,7 @@ import {
   onFilmBurst,
   onVolleyParams,
   onFilmAbsorbed,
+  onFilmEntry,
   type VolleyParams,
 } from '../src/sim/skillHooks.js';
 import { resolveFilmBurst } from '../src/sim/filmBurst.js';
@@ -50,6 +51,9 @@ import {
   SIG_BUBBLE_FILM,
   FILM_ABSORB_FLAT,
   FILM_BURST_RADIUS,
+  FILM_PERIOD_TICKS,
+  filmAbsorbed,
+  filmRemainingDamage,
 } from '../src/sim/shipSignature.js';
 import { readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
 
@@ -73,6 +77,7 @@ const FI2 = 21;
 const FI3 = 22;
 const FI4 = 23;
 const FI5 = 24;
+const FI9 = 28;
 const FI10 = 29;
 
 function invest(points: ReadonlyArray<readonly [number, number]>): number[] {
@@ -441,6 +446,7 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     aimAngle: 0,
     cloakBreak: false,
     mark: 0,
+    recordSpawnDamage: false,
     ...over,
   };
 }
@@ -605,5 +611,146 @@ describe('⑦ 막 흡수 직후 (앵커 ⑱)', () => {
     onFilmAbsorbed(w, p, 30, 0);
     expect(shot.dead).toBe(false);
     expect(foe.x).toBe(x0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑧ 막 진입 술어 직전 (앵커 ㉒) — FI9 최후의 거품
+// ---------------------------------------------------------------------------
+//
+// ⚠️ **이 절만 게이트 밖을 잰다.** ⑰⑱ 은 호출부 게이트(`aux0 > 0`) 안이라 *막이 없는* 피격을
+// 원리적으로 못 본다 — FI9 가 배선되지 못하고 있던 사유가 그것이고, ㉒ 는 그 게이트 **앞**이다.
+//
+// ## 생존을 어떻게 재는가
+// ㉒ 는 `aux0` 을 세우기만 한다 — 흡수는 바로 다음 줄의 기존 코드가 한다. 그래서 이 절은
+// 세운 내구를 **world 가 쓰는 그 순수 함수**(`filmAbsorbed`/`filmRemainingDamage`)에 그대로
+// 통과시켜 "선체로 가는 피해가 0 이 되어 살아남는다" 를 잰다 — 산술을 재구현하지 않는다.
+// world 가 이 훅을 실제로 부르는가(이음매)는 `skillAnchors.test.ts` 가 호출 1회로 못 박는다.
+//
+// ## 뮤테이션으로 계측기를 검사했다 (2026-08-07)
+// 앵커 ㉒ 의 `case SIG_BUBBLE_FILM:` 본문 호출(`bubbleFilmEntry`)을 지우면 **양성 4항목이
+// 실패**한다(막이 선다+생존 · 레벨 단조 · 두 번째 치명의 긍정 짝 · 만재 상한). 실측이다.
+// 부정 항목(무연산을 기대하는 것들)은 원리적으로 뮤테이션에 안 걸린다 — 그래서 짝이 되는
+// 긍정 항목을 같은 절에 뒀고, 대조군(미투자)도 그 자체로는 안 걸린다는 것을 알고 둔다.
+
+describe('⑧ FI9 최후의 거품 (앵커 ㉒)', () => {
+  /** 막 없음 + 이 피해로 죽는 상황. `aux1` = 재생 진행분(마지막 파열 이후 경과 틱). */
+  function lethal(w: WorldState, regenTicks: number): Entity {
+    const p = player(w);
+    p.aux0 = 0;
+    p.aux1 = regenTicks;
+    p.hp = 30;
+    return p;
+  }
+
+  it('**막이 없는 치명 피격에서 막이 서고 살아남는다** — Lv20 · 진행분 210틱', () => {
+    const w = mk([[FI9, 20]]);
+    const p = lethal(w, 210);
+    onFilmEntry(w, p, 30);
+    // ⚠️ 하한 먼저 — 배선이 끊기면 아래 생존 단언이 0 대 0 으로 성립하는 항진이 된다.
+    expect(p.aux0).toBeGreaterThan(0);
+    // floor(210×60/420) = 30 → floor(30 × 12000bp) = 36
+    expect(p.aux0).toBe(36);
+    expect(p.aux1).toBe(0); // 대가 — 재생 진행분 전액 소모
+    // 생존 — 선체로 가는 피해가 0 이라 hp 가 한 점도 안 깎인다.
+    expect(filmAbsorbed(30, p.aux0)).toBe(30);
+    expect(filmRemainingDamage(30, p.aux0)).toBe(0);
+    expect(p.hp - filmRemainingDamage(30, p.aux0)).toBeGreaterThan(0);
+  });
+
+  it('**대조군: 미투자 런은 같은 피격에서 죽는다**', () => {
+    const w = mk();
+    const p = lethal(w, 210);
+    onFilmEntry(w, p, 30);
+    expect(p.aux0).toBe(0);
+    expect(p.aux1).toBe(210); // 대가도 안 치른다
+    expect(p.hp - filmRemainingDamage(30, p.aux0)).toBeLessThanOrEqual(0);
+  });
+
+  it('투자 레벨이 높을수록 비상막이 두껍다 (하한 짝 포함)', () => {
+    const shieldAt = (level: number): number => {
+      const w = mk([[FI9, level]]);
+      const p = lethal(w, 210);
+      onFilmEntry(w, p, 30);
+      return p.aux0;
+    };
+    const s1 = shieldAt(1);
+    const s10 = shieldAt(10);
+    const s20 = shieldAt(20);
+    // ⚠️ 하한 — 셋 다 0 이어도 단조는 성립한다(FI4 에서 실제로 밟은 항진).
+    expect(s1).toBeGreaterThan(0);
+    expect(s1).toBe(18); // 30 × 6300bp
+    expect(s10).toBe(27); // 30 × 9000bp
+    expect(s20).toBe(36); // 30 × 12000bp
+    expect(s10).toBeGreaterThan(s1);
+    expect(s20).toBeGreaterThan(s10);
+  });
+
+  it('**막이 이미 서 있는 피격은 종전 거동** — ㉒ 는 그 경우에도 불린다', () => {
+    const w = mk([[FI9, 20]]);
+    const p = lethal(w, 210);
+    p.aux0 = 10;
+    onFilmEntry(w, p, 30);
+    expect(p.aux0).toBe(10);
+    expect(p.aux1).toBe(210);
+  });
+
+  it('**치명이 아닌 피격에는 안 선다**', () => {
+    const w = mk([[FI9, 20]]);
+    const p = lethal(w, 210);
+    p.hp = 1000;
+    onFilmEntry(w, p, 30);
+    expect(p.aux0).toBe(0);
+    expect(p.aux1).toBe(210);
+  });
+
+  it('내구가 0 으로 떨어지면 **`aux1` 을 태우지 않는다** (대가만 치르는 손해 방지)', () => {
+    const w = mk([[FI9, 20]]);
+    const p = lethal(w, 5); // floor(5×60/420) = 0
+    onFilmEntry(w, p, 30);
+    expect(p.aux0).toBe(0);
+    expect(p.aux1).toBe(5);
+  });
+
+  it('**두 번째 치명에는 안 선다** — 진행분을 다 태웠기 때문이다 (첫 번째는 선다)', () => {
+    const w = mk([[FI9, 20]]);
+    const p = lethal(w, 210);
+    onFilmEntry(w, p, 30);
+    expect(p.aux0).toBeGreaterThan(0); // 긍정 짝
+    // 세운 막이 이 피격으로 소진됐다고 두고 다시 치명을 받는다.
+    p.aux0 = 0;
+    onFilmEntry(w, p, 30);
+    expect(p.aux0).toBe(0);
+    expect(p.aux1).toBe(0);
+  });
+
+  it('**만재를 넘기지 않는다** — `aux0 ≤ FILM_ABSORB_FLAT` 엔진 불변식이 산식을 이긴다', () => {
+    const w = mk([[FI9, 20]]);
+    const p = lethal(w, FILM_PERIOD_TICKS - 1); // floor(419×60/420)=59 → ×1.2 = 70
+    onFilmEntry(w, p, 30);
+    expect(p.aux0).toBe(FILM_ABSORB_FLAT);
+  });
+
+  it('**`aux0` 은 언제나 비음 정수**다 — u32 폴드 발산을 원천 차단한다', () => {
+    for (const level of [0, 1, 5, 13, 20]) {
+      for (const ticks of [0, 1, 5, 7, 209, 210, 419, FILM_PERIOD_TICKS]) {
+        const w = mk(level > 0 ? [[FI9, level]] : []);
+        const p = lethal(w, ticks);
+        onFilmEntry(w, p, 30);
+        expect(Number.isInteger(p.aux0)).toBe(true);
+        expect(p.aux0).toBeGreaterThanOrEqual(0);
+        expect(p.aux0).toBeLessThanOrEqual(FILM_ABSORB_FLAT);
+        expect(Number.isInteger(p.aux1)).toBe(true);
+        expect(p.aux1).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
+  it('**다른 스킬만 찍은 런**에서는 ㉒ 가 아무것도 안 한다', () => {
+    const w = mk([[FI2, 20]]);
+    const p = lethal(w, 210);
+    onFilmEntry(w, p, 30);
+    expect(p.aux0).toBe(0);
+    expect(p.aux1).toBe(210);
   });
 });

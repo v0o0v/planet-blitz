@@ -16,7 +16,7 @@ import { describe, it, expect } from 'vitest';
 import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { WorldState } from '../src/sim/world.js';
 import type { Entity } from '../src/sim/entities.js';
-import { blankEntity } from '../src/sim/entities.js';
+import { blankEntity, addEntity } from '../src/sim/entities.js';
 import { hashWorld } from '../src/sim/replay.js';
 import {
   onDashFired,
@@ -42,6 +42,7 @@ const F1 = 0;
 const F2 = 1;
 const F3 = 2;
 const F4 = 3;
+const F5 = 4;
 const F6 = 5;
 const F9 = 8;
 const S1 = 10;
@@ -392,10 +393,12 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     countUsed: true,
     ballisticsUsed: true,
     targetDist: 300,
-    // 발사 방위(rad). F5(조준선 관통)가 언젠가 읽을 항이지만 아직 미배선 — 기본 0(순수 +x).
+    // 발사 방위(rad). **F5(조준선 관통)가 이 값을 술어로 읽는다** — 기본 0(순수 +x)이라
+    // `player.angle` 기본값 0 과 짝이 맞으면 콘 안이다. F2·S8 절은 F5 미투자 런이라 무영향.
     aimAngle: 0,
     cloakBreak: false,
     mark: 0,
+    recordSpawnDamage: false,
     ...over,
   };
 }
@@ -473,6 +476,147 @@ describe('⑧ S8 콤보 유지 창 회복 (앵커 ⑯)', () => {
     w.comboTimer = 10;
     onVolleyParams(w, player(w), volley({ mark: 1 }));
     expect(w.comboTimer).toBe(10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑧-b F5 조준선 관통 — 앵커 ⑯ (S3-1 이 실은 `aimAngle` 을 술어로 읽는다)
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 이 절이 잡으려는 실패는 셋이다:
+//  ① 콘 판정이 아예 안 걸린다(무배선) — 양성이 잡는다.
+//  ② 콘이 무한대다(어떤 방위든 발동) — 음성 짝이 잡는다. **부정 단언은 뮤테이션에 원리적으로
+//     안 걸리므로** 반드시 양성과 같은 세팅에서 방위만 바꿔 짝지어 둔다.
+//  ③ 각도 차를 래핑 없이 뺀다 — `±π` 경계 짝이 잡는다. 단순 뺄셈이면 두 단언의 결과가 정확히
+//     서로 뒤집힌다.
+
+/** F5 콘 반각(rad). 설계서 고정 20°. */
+const F5_CONE_HALF = Math.PI / 9;
+
+describe('⑧-b F5 조준선 관통 (앵커 ⑯)', () => {
+  it('양성: 표적 방위가 조준각과 같으면 관통 +1 · 피해가 오른다', () => {
+    const w = mk([[F5, 10]]);
+    const p = player(w);
+    p.angle = 0;
+    const base = volley();
+    const v = volley({ aimAngle: 0 });
+    onVolleyParams(w, p, v);
+    // 하한 먼저 — 두 값이 **실제로 늘었다**. 배선이 끊겨 양변이 0 이 되는 항진을 막는다.
+    expect(v.pierce).toBeGreaterThan(base.pierce);
+    expect(v.damage).toBeGreaterThan(base.damage);
+    // 정확값: 관통 1→2 · bp 600 + 150×10 = 2100 → 100 + round(100×2100/10000) = 121.
+    expect(v.pierce).toBe(2);
+    expect(v.damage).toBe(121);
+    // 안 건드리는 축은 그대로다(F5 는 페널티가 한 칸도 없다).
+    expect(v.speed).toBe(base.speed);
+    expect(v.spread).toBe(base.spread);
+    expect(v.count).toBe(base.count);
+    // 읽기 전용 필드를 쓰지 않았다.
+    expect(v.aimAngle).toBe(0);
+    expect(v.targetDist).toBe(base.targetDist);
+  });
+
+  it('음성 짝: 같은 세팅에서 방위만 90° 틀면 한 칸도 안 바뀐다', () => {
+    const w = mk([[F5, 10]]);
+    const p = player(w);
+    p.angle = 0;
+    const v = volley({ aimAngle: Math.PI / 2 });
+    onVolleyParams(w, p, v);
+    expect(v).toEqual(volley({ aimAngle: Math.PI / 2 }));
+  });
+
+  it('레벨이 오르면 피해 증폭도 오른다 (bp 600 + 150×Lv)', () => {
+    const dmg = (n: number): number => {
+      const w = mk([[F5, n]]);
+      const p = player(w);
+      p.angle = 0;
+      const v = volley({ aimAngle: 0 });
+      onVolleyParams(w, p, v);
+      return v.damage;
+    };
+    // Lv1 = 100 + round(100×750/10000) = 108 · Lv20 = 100 + round(100×3600/10000) = 136.
+    expect(dmg(1)).toBe(108);
+    expect(dmg(20)).toBe(136);
+    expect(dmg(20)).toBeGreaterThan(dmg(1));
+  });
+
+  it('경계: 반각 20° 는 안(포함), 그 바깥은 밖이다', () => {
+    const at = (aim: number): VolleyParams => {
+      const w = mk([[F5, 10]]);
+      const p = player(w);
+      p.angle = 0;
+      const v = volley({ aimAngle: aim });
+      onVolleyParams(w, p, v);
+      return v;
+    };
+    expect(at(F5_CONE_HALF - 1e-9).pierce).toBe(2);
+    expect(at(-(F5_CONE_HALF - 1e-9)).pierce).toBe(2);
+    expect(at(F5_CONE_HALF + 1e-6).pierce).toBe(1);
+    expect(at(-(F5_CONE_HALF + 1e-6)).pierce).toBe(1);
+  });
+
+  it('경계: ±π 를 가로지르는 짝에서 판정이 뒤집히지 않는다 (래핑)', () => {
+    // 조준각 +179.4° · 발사 방위 −179.4°. **단순 뺄셈이면 −358.7°** 라 콘 밖으로 잘못 보이지만
+    // 실제 사잇각은 1.3° 라 콘 **안**이다.
+    const w1 = mk([[F5, 10]]);
+    const p1 = player(w1);
+    p1.angle = 3.13;
+    const v1 = volley({ aimAngle: -3.13 });
+    onVolleyParams(w1, p1, v1);
+    expect(v1.pierce).toBe(2);
+
+    // 짝: 같은 경계를 가로지르지만 실제 사잇각이 25.9° 라 콘 **밖**이다. 앞 단언만 있으면
+    // "래핑 뒤 항상 참" 인 구현도 통과하므로 이 음성이 반드시 옆에 있어야 한다.
+    const w2 = mk([[F5, 10]]);
+    const p2 = player(w2);
+    p2.angle = 3.13;
+    const v2 = volley({ aimAngle: -2.7 });
+    onVolleyParams(w2, p2, v2);
+    expect(v2).toEqual(volley({ aimAngle: -2.7 }));
+  });
+
+  it('음성 대조: 미투자 런은 콘 정중앙이어도 종전 거동이다', () => {
+    const w = mk([[F1, 20]]);
+    const p = player(w);
+    p.angle = 0;
+    const v = volley({ aimAngle: 0 });
+    onVolleyParams(w, p, v);
+    expect(v).toEqual(volley({ aimAngle: 0 }));
+  });
+
+  it('짝 증명: 그 탄이 실제 `stepWorld` 에서 **한 번 더 뚫는다**', () => {
+    // ⚠️ `params.pierce` 를 고쳐도 아키타입 분기가 그 값을 안 읽으면 조용한 무연산이다. 단위
+    // 단언만으로는 그것을 못 가르므로 진짜 런에서 관통 예산이 **소비되는지** 를 잰다.
+    //
+    // ⚠️ 「적을 하나 더」가 아니라 「명중이 한 번 더」로 재는 것은 관측한 엔진 사실 때문이다:
+    // 아군탄은 매 틱 선분 판정을 하고 **같은 적을 연속 틱에 다시 때린다**(반경 32 적을 틱당
+    // 30 유닛 전진하는 탄이 두 틱에 걸쳐 지난다). 그래서 관통 +1 은 실제로 「적 한 마리 더」가
+    // 아니라 「명중 1회 더」로 나타난다 — 이것은 F5 가 만든 성질이 아니라 모든 관통 소스가
+    // 공유하는 기존 거동이고, 여기서 잴 것은 **예산이 실제로 소비되는가** 다.
+    const dealt = (points: ReadonlyArray<readonly [number, number]>): number => {
+      const w = createWorld(0xf500, { ...DEFAULT_CONFIG, skillInvest: invest(points) });
+      const p = player(w);
+      // +x 축 정면. 조준각(`input.aim`)도 0 이라 콘 정중앙이다. hp 를 크게 둬 죽지 않게 한다.
+      const e = blankEntity('enemy');
+      e.x = p.x + 150;
+      e.y = p.y;
+      e.radius = 32;
+      e.hp = 1_000_000;
+      e.maxHp = 1_000_000;
+      e.damage = 0;
+      const target = addEntity(w, e);
+      const input = { ...emptyInput(), aim: 0 };
+      // 6틱 = **첫 볼리 한 벌만**. 다음 볼리는 7틱째에 난다(실측).
+      for (let t = 0; t < 6; t++) stepWorld(w, input);
+      return target.maxHp - target.hp;
+    };
+    const baseline = dealt([[F1, 1]]);
+    const withF5 = dealt([[F1, 1], [F5, 20]]);
+    // 하한 먼저 — **볼리가 실제로 나갔고 적이 실제로 맞았다.** 없으면 아래 부등식이 0 ≥ 0 항진.
+    expect(baseline).toBeGreaterThan(0);
+    // 발당 피해 증폭은 Lv20 에 +36% 뿐이다. 총 피해가 **2배 이상**이면 명중이 1회가 아니라
+    // 2회였다는 뜻 — 관통 예산 +1 이 실제로 소비된 물증이다(증폭만이면 1.36배에 그친다).
+    expect(withF5).toBeGreaterThanOrEqual(2 * baseline);
   });
 });
 

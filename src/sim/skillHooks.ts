@@ -89,6 +89,8 @@ import {
   hatchlingDamageChain,
   hatchlingSignatureStep,
   hatchlingEnemyDamaged,
+  hatchlingBroodLaunchParams,
+  hatchlingBroodLaunched,
 } from './skills/hatchling.js';
 import {
   strikerDashFired,
@@ -110,6 +112,7 @@ import {
   arccasterEnemyDamaged,
   arccasterEnemyDeath,
   arccasterVolleyParams,
+  arccasterBulletExpiredLife,
 } from './skills/arccaster.js';
 import {
   bruiserDashFired,
@@ -127,6 +130,7 @@ import {
   mallowDamageChain,
   mallowEnemyDamaged,
   mallowPowerupPicked,
+  mallowCushionSettleDue,
   mallowCushionSettled,
   mallowVolleyParams,
 } from './skills/mallow.js';
@@ -147,6 +151,7 @@ import {
   bubbleFilmBurst,
   bubbleVolleyParams,
   bubbleFilmAbsorbed,
+  bubbleFilmEntry,
 } from './skills/bubble.js';
 
 // ---------------------------------------------------------------------------
@@ -537,13 +542,15 @@ function dispatchBulletExpiredSkill(
       // 두 배로 터진다 — 그것은 거동 변경이다.
       if (reason === 'pierce') strikerBulletExpired(state, bullet); // F4 파편 격발
       break;
-    // ⚠️ **아크캐스터 CH3「종말점 방전」의 자리는 이제 여기 있다**(S3-2 가 수명 만료 호출부를
-    // 뚫었다). ~~case 가 없는 사유~~ 였던 아래 문장은 **왜 이 자리가 사유를 구분해야 하는지**의
-    // 근거로 남긴다: CH3 는 **수명 만료**(reachLife) 소멸이 트리거인데 스트라이커 F4 는
-    // **관통 예산 소진**이고, 설계서가 그 둘을 분화점으로 못 박았다 — 사유 없이 한 앵커에
-    // 얹으면 두 스킬이 같은 것이 된다. 그래서 뚫은 것은 `reason` 을 가진 앵커다.
-    // **효과 본체는 아직 없다** — 이 레인은 자리만 만들고 거동·해시를 비트 불변으로 뒀다
-    // (`case SIG_ARC_OVERCHARGE:` 를 지금 넣으면 빈 case 가 fallthrough 위험만 남긴다).
+    case SIG_ARC_OVERCHARGE:
+      // ⚠️ **`reason` 게이트가 CH3 와 스트라이커 F4 의 분화점 그 자체다.** ~~case 가 없던
+      // 사유~~ 였던 아래 근거는 지우지 않는다: CH3 는 **수명 만료**(reachLife) 소멸이
+      // 트리거인데 F4 는 **관통 예산 소진**이고, 설계서가 그 둘을 분화점으로 못 박았다 —
+      // 사유 없이 한 앵커에 얹으면 두 스킬이 같은 것이 된다. 그래서 뚫은 것은 `reason` 을
+      // 가진 앵커다. 기체가 갈리므로 F4 와 이중 발화할 여지는 애초에 없지만, 게이트를 빼면
+      // 아크캐스터의 관통 소진에서도 방전이 터져 설계서와 갈린다.
+      if (reason === 'life') arccasterBulletExpiredLife(state, bullet); // CH3 종말점 방전
+      break;
     // ⚠️ **브루저는 여기 case 가 없다 — 쓸 설계 항목이 없다.** 관통 예산 소진에 반응하는
     // 브루저 스킬은 0종이다. BL3(만재 중탄)의 "명중 지점 폭발" 은 **명중마다**여야 하는데 이
     // 앵커는 예산이 바닥난 마지막 명중에서만 불린다 — 그 자리는 앵커 ⑩ 이다.
@@ -907,12 +914,14 @@ function dispatchEnemyDamagedSkill(
       // AS4 급소 해부(만피 선타) · AS5 배후 격살. 둘 다 **플레이어 좌표**가 필요하다(AS5 의
       // 후방 반구 판정) — 이 앵커는 표적만 넘기므로 위 사본으로 집는다.
       //
-      // ⚠️ AS3(처형 재장전)은 여기 없다 — 트리거가 "**해제 첫 타(강화탄)**로 처치" 인데,
-      // 그 강화탄을 식별할 마커는 **발사 시점**에 탄에 심어야 하고 앵커 ① 에는 탄이 없다.
-      // `source` 만 보고 "지금 은신 창인가"로 대체하면 강화탄이 아닌 탄까지 재장전을 일으켜
-      // 창 안 전 발사가 2.5배가 된다 — 설계와 정반대다.
+      // AS3(처형 재장전)의 **회수 절반**도 이제 여기 있다 — 막고 있던 사유는 근거로 남긴다:
+      // 트리거가 "**해제 첫 타(강화탄)**로 처치" 인데 그 강화탄을 식별할 마커는 **발사 시점**에
+      // 탄에 심어야 하고 앵커 ① 에는 탄이 없었다. `source` 만 보고 "지금 은신 창인가"로
+      // 대체하면 강화탄이 아닌 탄까지 재장전을 일으켜 창 안 전 발사가 2.5배가 된다 — 설계와
+      // 정반대다. 마커를 심을 자리는 앵커 ⑯ 이고(`VolleyParams.cloakBreak` 가 그 술어를 실었다),
+      // 회수는 이 앵커가 `source`(가해 아군탄)와 확정된 `target.dead` 로 한다.
       const p = playerOf(state);
-      if (p !== undefined) phantomEnemyDamaged(state, p, target, dmg);
+      if (p !== undefined) phantomEnemyDamaged(state, p, target, dmg, source);
       break;
     }
     case SIG_BUBBLE_FILM: {
@@ -1407,6 +1416,26 @@ export interface VolleyParams {
    * 점유했고, 미사일 분기는 표식과 유도 마커를 **동시에** 단다.
    */
   mark: number;
+  /**
+   * 이번 볼리로 태어나는 **모든 탄의 `aux1` 에 자기 발사 시점 피해**(`round(damage)`)를
+   * 새길 것인가. `false` 면 한 칸도 안 쓴다(`aux1` 은 0 그대로 → 리플레이 바이트 불변).
+   *
+   * ## 왜 `damage` 를 훅이 직접 안 읽고 이 플래그를 두는가
+   * 이 레코드의 `damage` 는 **아키타입 분기에 들어가기 전** 값이라 발당 최종 피해가 아니다 —
+   * 쌍둥이 항성(`TWIN_STAR_DAMAGE_MULT`)이 발칸/스프레드 분기 안에서 한 번 더 곱한다. 훅이
+   * `params.damage` 를 그대로 저장하면 그 배율만 조용히 빠진다. 그래서 **저장 시점을 탄이
+   * 태어난 직후로 미루고**, 훅은 "새겨라" 만 말한다(`countUsed` 가 아키타입 판정을 world 에
+   * 두고 결과만 실은 것과 같은 방향, 쓰기/읽기만 반대다).
+   *
+   * ## 왜 `damage` 를 나중에 다시 읽으면 안 되는가 — 이 칸의 존재 이유
+   * 탄의 `damage` 는 **비행 중에 갱신된다**(아크캐스터 CH6 이월 가산 · CH8 관통 증폭). 소멸
+   * 시점에 그 값을 읽으면 발사 시점 기준이 아니라 **재증폭된 값**이 된다. CH3「종말점 방전」
+   * 이 정확히 그 구분을 요구했다(설계서 「폭발 피해 기준 정의」).
+   *
+   * ⚠️ **`aux0` 표식(`mark`)과 칸이 다르다** — 둘은 같은 탄에 공존할 수 있어야 한다
+   * (CH1·CH8 표식 + CH3 기준 피해). 'bullet' kind 는 `aux1` 을 어디서도 읽지 않는다(전수 확인).
+   */
+  recordSpawnDamage: boolean;
 }
 
 /**
@@ -1454,14 +1483,15 @@ export function onVolleyParams(
     // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다. **`break;` 를 반드시 붙여라** —
     // 병렬 배선 머지에서 fallthrough 가 누적 4건 나왔고 전부 `tsc TS7029` 만이 잡았다.
     case SIG_ARC_OVERCHARGE:
-      // CH1·CH8 과충전 발사 표식 · BA7 장전 소비(탄수) · BA10 탄수 ×2 + 간격 배율.
+      // CH1·CH8 과충전 발사 표식 · CH3 발사 시점 기준 피해 각인 · BA7 장전 소비(탄수) ·
+      // BA10 탄수 ×2 + 간격 배율.
       //
-      // ⚠️ **CH3「종말점 방전」의 소비처는 이제 앵커 ⑥ 에 있다**(S3-2). 표식을 다는 것까지는
-      // 이 앵커가 하고, 폭발이 터질 자리는 `onBulletExpired(..., 'life')` 다.
-      // ~~막혀 있던 사유~~ 는 근거로 남긴다: 그 스킬의 트리거는 **탄 수명 만료 소멸**인데
+      // ⚠️ **CH3「종말점 방전」은 이 앵커와 앵커 ⑥ 에 걸쳐 있다.** 기준 피해를 탄에 새기는
+      // 것이 여기(`recordSpawnDamage`)이고, 폭발이 터지는 자리는 `onBulletExpired(..., 'life')`
+      // 다. ~~막혀 있던 사유~~ 는 근거로 남긴다: 그 스킬의 트리거는 **탄 수명 만료 소멸**인데
       // S3-2 이전의 앵커 ⑥ 은 **관통 예산 소진** 분기 하나뿐이었다(그 앵커 주석이 "수명
       // 만료·화면 밖 컬링이 아니다" 라고 명시). 소비처가 없는 동안 표식만 달면 반쪽 배선이라
-      // 손대지 않았던 것이고, 이제 자리는 섰다 — **효과 본체 배선은 아직 남아 있다.**
+      // 손대지 않았던 것이고, 이제 양쪽이 다 섰다.
       arccasterVolleyParams(state, player, params);
       break;
     case SIG_STRIKER_MARKSMAN:
@@ -1473,36 +1503,42 @@ export function onVolleyParams(
       // "이번 볼리가 정조준이었는가" 를 직접 못 읽는다. ⑯ 은 그 판정을 `params.mark === 1` 로
       // 싣고 있고(그 필드의 정본이 정조준 표식이다), 같은 술어를 두 곳에 적으면 조용히 갈린다.
       //
-      // ⚠️ F5(조준선 관통)·F10(연장 탄창)은 여기 **없다** — ⑯ 으로도 안 닿는다. F5 는 표적
-      // **방위**가 이 레코드에 없고(`targetDist` 는 거리뿐), F10 은 볼리를 **하나 더 낳아야**
-      // 한다. 사유 전문은 효과 함수 `strikerVolleyParams` 의 doc 주석에 있다.
+      // ⚠️ **F5(조준선 관통)는 이제 여기 있다** — S3-1 이 실은 `params.aimAngle` 을 술어로만
+      // 읽는다(조준각과의 각도 차를 `wrapAngle` 로 정규화해 반각 20° 콘 판정). ~~막혀 있던
+      // 사유~~ 는 근거로 남긴다: 이 레코드에 표적 **방위**가 없고 `targetDist` 는 거리뿐이었다.
+      //
+      // ⚠️ **F10(연장 탄창)은 여전히 없다** — ⑯ 으로도 안 닿는다. 볼리를 **하나 더 낳아야**
+      // 하는데 이 앵커는 이번 볼리 한 벌의 파라미터만 준다. 사유 전문은 효과 함수
+      // `strikerVolleyParams` 의 doc 주석에 있다.
       strikerVolleyParams(state, player, params);
       break;
     case SIG_PHANTOM_CLOAK:
       // AS2 은막 침투 — 은신 창 동안 발사한 탄에 관통 +1 · 탄속 증가.
       //
-      // ⚠️ AS10(유령 탄도)·AS3(처형 재장전)은 여기 없다.
-      //  · AS10 은 `mark` 를 찍을 수는 있으나 **읽는 자리가 없다** — 설계서가 지정한 소비처
-      //    셋(차단 판정 · 파괴가능 벽 피해 · 표적 선택의 `segmentBlocked`)이 전부 `world.ts`
-      //    의 비-앵커 지점이라 표식만 남는 무연산이 된다.
-      //  · AS3 은 **이 앵커가 `aux1` 소진(`world.ts` 팬텀 배율 분기) 뒤**라, 이번 볼리가 그
-      //    강화탄인지 알 신호가 여기 없다. 소진 분기가 표식을 남기지 않고 `params.mark === 1`
-      //    은 스트라이커 정조준 전용이다.
-      //    ⚠️ **막는 것은 이 한 가지뿐이다** — 처치 판정 쪽은 열려 있다. 앵커 ⑩ 은 `source`
-      //    (가해 아군탄)를 넘기고 `target.dead` 가 **이미 확정**이라, 강화탄 표식만 서면
-      //    "그 탄으로 죽였다" 를 ⑩ 에서 그대로 잴 수 있다. 즉 AS3 을 여는 값싼 길은
-      //    **`autoAttack` 의 소진 분기에서 지역 플래그를 세워 `VolleyParams` 에 싣는 것**이다
-      //    (`countUsed` 가 아키타입 판정을 world 에 두고 결과만 실은 것과 같은 형태).
+      // AS3 처형 재장전 — 강화탄 표식(`mark`) + 관통 계단. 실효(토큰 재장전)는 앵커 ⑩ 이다.
+      //
+      // ⚠️ AS10(유령 탄도)은 아직 여기 없다 — `mark` 를 찍을 수는 있으나 **읽는 자리가 없다**.
+      //    설계서가 지정한 소비처 셋(차단 판정 · 파괴가능 벽 피해 · 표적 선택의 `segmentBlocked`)
+      //    이 전부 `world.ts` 의 비-앵커 지점이라 표식만 남는 무연산이 된다.
+      //
+      // AS3 을 막던 사유는 근거로 남긴다: **이 앵커가 `aux1` 소진(`world.ts` 팬텀 배율 분기)
+      // 뒤**라 이번 볼리가 그 강화탄인지 알 신호가 여기 없었다(소진 분기가 표식을 남기지 않고
+      // `params.mark === 1` 은 스트라이커 정조준 전용이다). **막는 것은 이 한 가지뿐이었다** —
+      // 처치 판정 쪽은 처음부터 열려 있었다(앵커 ⑩ 은 `source` 를 넘기고 `target.dead` 가 이미
+      // 확정이다). 그 주석이 지목한 값싼 길 — *소진 분기에서 지역 플래그를 세워 `VolleyParams`
+      // 에 싣는 것* — 을 S2.1 이 `cloakBreak` 으로 그대로 시공했고, 이 레인이 그것을 쓴다.
       // 사유 전문은 효과 함수 `phantomVolleyParams` 주석에 있다.
       phantomVolleyParams(state, player, params);
       break;
     case SIG_BRUISER_ARMOR:
-      // BL3 만재 중탄 · BL6 중량 탄자 — 둘 다 여기서는 `mark`(+BL6 은 피해·탄속·수명)만
-      // 건드리고, 실효는 앵커 ⑩ 이 그 표식을 읽어 낸다.
+      // BL2 백병 격발 · BL3 만재 중탄 · BL6 중량 탄자.
+      // BL3·BL6 은 여기서는 `mark`(+BL6 은 피해·탄속·수명)만 건드리고 실효는 앵커 ⑩ 이 그
+      // 표식을 읽어 낸다. BL2 만 이 앵커 안에서 끝난다(`targetDist` 술어 → 관통·피해 직접 증폭).
       //
-      // ⚠️ BL2(백병 격발)·BL8(격돌 담금질)은 여기 **없다** — 사유는 `bruiserVolleyParams`
-      // 의 doc 주석에 적혀 있다(BL2 는 표적 거리가 이 레코드에 없고, BL8 은 적립처인 접촉
-      // 피격 판별 앵커가 아직 없다).
+      // ⚠️ BL8(격돌 담금질)은 여전히 여기 **없다** — 적립처인 접촉 피격 판별 앵커가 아직 없다
+      // (앵커 ④ 의 인자는 `dmg`·`lethalSurvived` 뿐이라 피해원을 구분하지 않는다). BL2 를
+      // 막던 "표적 거리가 이 레코드에 없다" 는 S2.1 의 `targetDist` 로 해소됐다. 사유 전문은
+      // `bruiserVolleyParams` 의 doc 주석에 있다.
       bruiserVolleyParams(state, player, params);
       break;
     case SIG_BUBBLE_FILM:
@@ -1577,21 +1613,21 @@ export function onVolleyParams(
  */
 export function onFilmEntry(state: WorldState, player: Entity, dmg: number): void {
   if (!state.skillsOn) return;
-  void player;
-  void dmg;
   switch (state.sigBit) {
     // ⚠️ **버블 전용 지점이다** — 호출부가 `signatureOn(state, SIG_BUBBLE_FILM)` 안이다.
     // 그래도 `switch` 를 두는 것은 나머지 앵커와 형태를 맞추기 위함이다.
-    //
-    // FI9「최후의 거품」의 자리가 **여기**다(S3-5 는 자리만 열었고 배선은 하지 않았다 —
-    // 반쪽 배선을 만들지 않으려면 비상막 내구 산식·`aux1` 소모가 한 번에 들어와야 한다).
-    // 배선 레인이 넣을 것은 설계서대로 이 셋이다:
-    //  ① 술어 `player.aux0 === 0 && player.hp - dmg <= 0`
-    //  ② `player.aux0 = floor(aux1 × FILM_ABSORB_FLAT / FILM_PERIOD_TICKS) × (60% + 3%p/Lv)`
-    //     — **비음 정수로 자른 뒤** 대입한다(위 ⚠️).
-    //  ③ 대가로 `player.aux1 = 0`(재생 진행분 전액 소모).
-    // ②가 0 으로 떨어지면 **아무것도 쓰지 마라** — `aux0 = 0` 대입은 무해하지만 `aux1` 만
-    // 태우면 대가만 치르고 효과가 없는 조용한 손해가 된다.
+    case SIG_BUBBLE_FILM:
+      // FI9「최후의 거품」의 자리가 **여기**다(S3-5 가 자리를 열었고, 이 레인이 배선했다).
+      // 설계서대로 셋이 한 번에 들어갔다 — 반쪽 배선이 되지 않게:
+      //  ① 술어 `player.aux0 === 0 && player.hp - dmg <= 0`
+      //  ② `player.aux0 = floor(aux1 × FILM_ABSORB_FLAT / FILM_PERIOD_TICKS) × (60% + 3%p/Lv)`
+      //     — **비음 정수로 자른 뒤** 대입한다(위 ⚠️). 0 이하면 아무것도 쓰지 않는다:
+      //     `aux0 = 0` 대입은 무해하지만 `aux1` 만 태우면 대가만 치르고 효과가 없다.
+      //  ③ 대가로 `player.aux1 = 0`(재생 진행분 전액 소모).
+      // ⚠️ 만재 상한(`FILM_ABSORB_FLAT`)은 설계 산식에 없지만 엔진 불변식이라 `bubbleFilmEntry`
+      //    가 건다 — 어긋남의 근거는 그 함수 doc 이 정본이다(문서는 고치지 않았다).
+      bubbleFilmEntry(state, player, dmg);
+      break;
     default:
       break;
   }
@@ -1784,8 +1820,8 @@ export function onCushionThreshold(
  *  - `player.aux0`·`aux1` 은 **이미 0 으로 리셋**됐다. 그래서 이 훅이 `aux0` 에 쓴 값은
  *    **살아남는다** — ME5 가 "선체로 안 보낸 나머지" 를 다시 미루려면 여기서 **대입**해라
  *    (가산이면 리셋 전 값과 두 겹이 된다). 정산 전 풀 크기는 `due + recovered` 다.
- *    ⚠️ 단 CU3(⑳)의 이월도 같은 칸에 **대입**한다 — 둘을 함께 배선하는 레인은 CU3 쪽을
- *    가산으로 바꿔야 ME5 의 나머지가 조용히 덮이지 않는다.
+ *    ⚠️ CU3(⑳)의 이월도 같은 칸을 쓴다 — 배선 레인이 **CU3 쪽을 가산으로 바꿨다**(대입이면
+ *    ME5 의 나머지가 조용히 덮인다). 지금 ME5 도 가산으로 쓴다(리셋 직후라 값은 대입과 같다).
  *  - `player.hp` 는 **아직 안 깎였다**. 정산 후 hp 가 필요하면 이 자리가 아니라 ⑳ 이다.
  *
  * ## ⚠️ 뒤 산술이 반환값을 삼키는 구간이 하나 있다
@@ -1806,11 +1842,13 @@ export function onCushionSettleDue(
   recovered: number,
 ): number {
   if (!state.skillsOn) return due;
-  void player;
   void recovered;
   switch (state.sigBit) {
-    // ⚠️ 말로우 ME5「분할 상환」의 case 가 **여기** 로 온다(⑳ 이 아니다). S3 는 자리만 연다 —
-    // 인자를 그대로 돌려주므로 거동·해시가 비트 동일이다.
+    case SIG_MALLOW_CUSHION:
+      // ME5「분할 상환」 **1종** — 이번 정산의 절반만 선체로 보내고 나머지를 `aux0` 으로 미룬다
+      // (이월분은 탕감률만큼 줄어든다). 설계 정본의 순서에서 **분할**이 여기다.
+      // 미투자 런은 `due` 를 그대로 돌려주므로 비트 동일이다.
+      return mallowCushionSettleDue(state, player, due);
     // ⚠️ ME8「리듬 탕감」·ME9「솜틀 요양」은 **여전히 여기로도 못 온다.** 둘은 탕감률
     // (`CUSHION_RECOVER_BP`)·임계(`CUSHION_RECOVER_TICKS`)가 `shipSignature.ts` 의 순수 함수
     // `cushionRecovered`·`cushionSettled` **안에** 있어, 이 앵커에 도달한 시점에는 이미 그
@@ -1845,8 +1883,8 @@ export function onCushionSettleDue(
  *
  * @param settled 선체로 들어가기로 **확정된** 지연 피해. S3 부터 이 값은 앵커 ㉔
  *   ({@link onCushionSettleDue})이 돌려준 몫이다(분할 전 `cushionSettled` 원값이 아니다) —
- *   CU3 의 이월이 "상한이 막은 몫" 만 세려면 분할 **후** 기준이어야 한다. ㉔ 이 비어 있는
- *   지금은 두 값이 같다
+ *   CU3 의 이월이 "상한이 막은 몫" 만 세려면 분할 **후** 기준이어야 한다. ME5 미투자 런에서는
+ *   두 값이 같다
  * @param recovered 무피격 보상으로 **사라진** 지연 피해
  * @param applied hp 에서 실제로 깎인 양(클램프 후). `settled` 이하다
  */
@@ -2008,12 +2046,13 @@ export function onBroodLaunchParams(
   params: BroodParams,
 ): void {
   if (!state.skillsOn) return;
-  void player;
-  void params;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case SIG_HATCHLING_BROOD:` 를 여기에 넣는다. **`break;` 를 반드시
     // 붙여라** — 병렬 배선 머지에서 두 `case` 가 `break;` 하나를 공유하는 fallthrough 가
     // 누적 5건 나왔고 전부 `tsc` 만이 잡았다.
+    case SIG_HATCHLING_BROOD:
+      hatchlingBroodLaunchParams(state, player, params);
+      break;
     default:
       break;
   }
@@ -2049,10 +2088,11 @@ export function onBroodLaunchParams(
  */
 export function onBroodLaunched(state: WorldState, player: Entity, chick: Entity): void {
   if (!state.skillsOn) return;
-  void player;
-  void chick;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case SIG_HATCHLING_BROOD:` 를 여기에 넣는다. **`break;` 필수**(위와 같음).
+    case SIG_HATCHLING_BROOD:
+      hatchlingBroodLaunched(state, player, chick);
+      break;
     default:
       break;
   }

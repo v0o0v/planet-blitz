@@ -30,7 +30,10 @@ import {
   onDamageChain,
   onSignatureStep,
   onEnemyDamaged,
+  onBroodLaunchParams,
+  onBroodLaunched,
 } from '../src/sim/skillHooks.js';
+import type { BroodParams } from '../src/sim/skillHooks.js';
 import { SIG_HATCHLING_BROOD, BROOD_MARK } from '../src/sim/shipSignature.js';
 import { readSlot, SKILL_SLOT_COUNT, HatchlingStage } from '../src/sim/skillSlots.js';
 import { COLD_DURATION } from '../src/sim/status.js';
@@ -41,11 +44,18 @@ const BD5 = 4;
 const NU5 = 14;
 const NU6 = 15;
 const NU8 = 17;
+const BD1 = 0;
+const BD2 = 1;
+const BD6 = 5;
+const NU2 = 11;
+const NU7 = 16;
+const NU10 = 19;
 const SH1 = 20;
 const SH3 = 22;
 const SH5 = 24;
 const SH6 = 25;
 const SH7 = 26;
+const SH10 = 29;
 
 /** 지정한 flat 인덱스에만 포인트를 넣은 30칸 투자 벡터. */
 function invest(points: ReadonlyArray<readonly [number, number]>): number[] {
@@ -450,10 +460,305 @@ describe('⑦ 슬롯 규약', () => {
     for (let s = 0; s < SKILL_SLOT_COUNT; s++) {
       expect(readSlot(w.skillCarry, s)).toBe(0);
     }
-    // Stage 는 SH6 스냅샷 한 칸뿐이다.
+    // 이 9종이 쓰는 Stage 칸은 SH6 스냅샷 하나뿐이다(BD2·NU10 칸은 W레인 소유 — ⑨절이 잠근다).
     for (let s = 1; s < SKILL_SLOT_COUNT; s++) {
       expect(readSlot(w.skillStage, s)).toBe(0);
     }
     expect(readSlot(w.skillStage, HatchlingStage.launchAux0Seen)).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑧ 앵커 ㉓ — 출격 파라미터(BD1 · SH10 · NU10 · BD2)
+// ---------------------------------------------------------------------------
+//
+// ⚠️ **뮤테이션으로 계측기를 검사했다(2026-08-07 W레인)**: ①`hatchlingBroodLaunchParams` 의
+// 각 축 한 줄씩 삭제 ②앵커 ㉓·㉔ 의 `case SIG_HATCHLING_BROOD:` 삭제 — 결과는 레인 보고서.
+// ⚠️ **비례·단조 단언에는 하한을 짝으로 붙였다**: "배선이 끊기면 양변이 0" 이 되어 성립하는
+// 항진(버블 FI4 선례)을 막으려고 "드론이 최소 1대 떴다"·"젬이 최소 1개 떨어졌다"를 먼저 잰다.
+
+/** 앵커 ㉓ 이 받는 것과 같은 초기값(`stepHatchBrood` 최상단 리터럴). */
+function broodParams(threshold = 40): BroodParams {
+  return { threshold, maxDrones: 4, launchCount: 1 };
+}
+
+describe('⑧ 앵커 ㉓ 출격 파라미터', () => {
+  it('BD1 — 요구치가 (1 + floor(Lv/5)) 만큼 줄고, 미투자 런은 그대로다', () => {
+    const w = mk([[BD1, 5]]); // 감산 = 1 + 1 = 2
+    const a = broodParams(40);
+    onBroodLaunchParams(w, player(w), a);
+    expect(a.threshold).toBe(38);
+    expect(a.threshold).toBeLessThan(40); // 단조 — 위 등식이 항진이 아님을 짝으로 고정
+    expect(a.threshold).toBeGreaterThanOrEqual(6);
+
+    const n = mk(); // 음성 대조 — 미투자면 종전 거동
+    const b = broodParams(40);
+    onBroodLaunchParams(n, player(n), b);
+    expect(b.threshold).toBe(40);
+    expect(b.maxDrones).toBe(4);
+    expect(b.launchCount).toBe(1);
+  });
+
+  it('BD1 — 하한 6 은 훅이 스스로 건다(엔진에 클램프가 없다)', () => {
+    const w = mk([[BD1, 20]]); // 감산 = 1 + 4 = 5
+    const p = broodParams(7); // 7 − 5 = 2 → 바닥 6 이 이긴다
+    onBroodLaunchParams(w, player(w), p);
+    expect(p.threshold).toBe(6);
+  });
+
+  it('SH10 — 상한 +1 과 요구치 페널티가 동시에 걸린다(Lv20 은 +1)', () => {
+    const lo = mk([[SH10, 1]]); // 페널티 = 6 − 0 = 6
+    const a = broodParams(40);
+    onBroodLaunchParams(lo, player(lo), a);
+    expect(a.maxDrones).toBe(5);
+    expect(a.threshold).toBe(46);
+
+    const hi = mk([[SH10, 20]]); // 페널티 = 6 − 5 = 1
+    const b = broodParams(40);
+    onBroodLaunchParams(hi, player(hi), b);
+    expect(b.maxDrones).toBe(5);
+    expect(b.threshold).toBe(41);
+  });
+
+  it('SH10 — SH3 만석 술어가 **같은 실효 상한**을 읽는다 (상한 5 에서 4기는 만석이 아니다)', () => {
+    // 함정: 상한을 ㉓ 에서만 올리고 SH3 이 리터럴 4 를 읽으면 "만석이 아닌데 만석"이 된다.
+    const four = mk([
+      [SH3, 1],
+      [SH10, 1],
+    ]);
+    const p4 = player(four);
+    p4.hp = 10;
+    for (let i = 0; i < 4; i++) chick(four, 60 + i, 0);
+    onSignatureStep(four, p4, emptyInput());
+    expect(p4.hp).toBe(10); // 상한 5 → 4기는 만석 아님
+
+    const five = mk([
+      [SH3, 1],
+      [SH10, 1],
+    ]);
+    const p5 = player(five);
+    p5.hp = 10;
+    for (let i = 0; i < 5; i++) chick(five, 60 + i, 0);
+    onSignatureStep(five, p5, emptyInput());
+    expect(p5.hp).toBe(12); // 긍정 짝 — 부정 단언만 두면 뮤테이션에 안 걸린다
+  });
+
+  it('BD2 — N번째 출격 사건마다 2기가 나가고, 미투자 런은 항상 1기다', () => {
+    const w = mk([[BD2, 20]]); // N = 2 + round(18/22) = 3
+    const p = player(w);
+    p.aux0 = 0;
+    w.kills = 100; // 임계는 넉넉히 넘기고 병아리는 0기 → 매 호출이 출격 성사다
+    const counts: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const q = broodParams(12);
+      onBroodLaunchParams(w, p, q);
+      counts.push(q.launchCount);
+    }
+    expect(counts).toEqual([1, 1, 2, 1, 1, 2]);
+    expect(readSlot(w.skillStage, HatchlingStage.twinLaunchCount)).toBe(6);
+
+    const n = mk([[BD2, 0]]);
+    const np = player(n);
+    n.kills = 100;
+    const nc: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const q = broodParams(12);
+      onBroodLaunchParams(n, np, q);
+      nc.push(q.launchCount);
+    }
+    expect(nc).toEqual([1, 1, 1, 1, 1, 1]);
+  });
+
+  it('BD2 — 출격이 성사되지 않는 틱은 사건 카운터를 올리지 않는다', () => {
+    const w = mk([[BD2, 20]]); // N = 3
+    const p = player(w);
+    w.kills = 0; // 임계 미달 = 출격 없음
+    for (let i = 0; i < 5; i++) onBroodLaunchParams(w, p, broodParams(12));
+    expect(readSlot(w.skillStage, HatchlingStage.twinLaunchCount)).toBe(0);
+
+    w.kills = 100; // 이제 성사 — 3번째에 쌍둥이가 나와야 한다(앞의 5틱이 안 셌다는 증거)
+    const counts: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const q = broodParams(12);
+      onBroodLaunchParams(w, p, q);
+      counts.push(q.launchCount);
+    }
+    expect(counts).toEqual([1, 1, 2]);
+  });
+
+  it('NU10 — 만석 보류 중 적립하고, 자리가 나면 임계에 선납한다(잔액 보존)', () => {
+    const w = mk([[NU10, 20]]); // 저금 상한 = round(8 + 800/36) = 30
+    const p = player(w);
+    p.aux0 = 0;
+    for (let i = 0; i < 4; i++) chick(w, 60 + i, 0); // 만석(상한 4)
+
+    onBroodLaunchParams(w, p, broodParams(12)); // kills 0 관측만
+    expect(readSlot(w.skillStage, HatchlingStage.eggBank)).toBe(0);
+
+    w.kills = 20; // 보류 중 20처치 — 임계 12 초과분이 저금된다
+    onBroodLaunchParams(w, p, broodParams(12));
+    const bank = readSlot(w.skillStage, HatchlingStage.eggBank);
+    expect(bank).toBeGreaterThan(0); // 하한 짝 — 아래 등식이 0 == 0 항진이 되는 것을 막는다
+    expect(bank).toBe(20);
+
+    for (const e of w.entities) if (e.ownerId === BROOD_MARK) e.dead = true; // 자리가 났다
+    const q = broodParams(12);
+    onBroodLaunchParams(w, p, q);
+    expect(q.threshold).toBe(1); // 선납 = min(20, 12−1) = 11 → 12 − 11
+    expect(readSlot(w.skillStage, HatchlingStage.eggBank)).toBe(9); // 잔액 보존(소각 없음)
+  });
+
+  it('NU10 — 미투자 런은 임계도 슬롯도 건드리지 않는다', () => {
+    const w = mk();
+    const p = player(w);
+    for (let i = 0; i < 4; i++) chick(w, 60 + i, 0);
+    w.kills = 50;
+    const q = broodParams(12);
+    onBroodLaunchParams(w, p, q);
+    expect(q.threshold).toBe(12);
+    expect(readSlot(w.skillStage, HatchlingStage.eggBank)).toBe(0);
+    expect(readSlot(w.skillStage, HatchlingStage.eggBankKillsSeen)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑨ 앵커 ㉔ — 출격 직후(NU7 · BD6 · NU2)
+// ---------------------------------------------------------------------------
+
+/** 젬 1개(런 풀 XP 젬과 같은 kind). */
+function gemAt(state: WorldState, dx: number, dy: number): Entity {
+  const p = player(state);
+  const g = blankEntity('gem');
+  g.id = 60000 + state.entities.length;
+  g.radius = 20;
+  g.hp = 1;
+  g.damage = 4;
+  g.x = p.x + dx;
+  g.y = p.y + dy;
+  state.entities.push(g);
+  return g;
+}
+
+/** 적탄 1개. */
+function enemyBulletAt(state: WorldState, x: number, y: number): Entity {
+  const b = blankEntity('enemyBullet');
+  b.id = 50000 + state.entities.length;
+  b.x = x;
+  b.y = y;
+  state.entities.push(b);
+  return b;
+}
+
+function countGems(state: WorldState): number {
+  let n = 0;
+  for (const e of state.entities) if (e.kind === 'gem' && !e.dead) n++;
+  return n;
+}
+
+describe('⑨ 앵커 ㉔ 출격 직후', () => {
+  it('BD6 — 출격 좌표에서 폭발하고 적탄을 지운다(모선 곁이 아니다)', () => {
+    const w = mk([[BD6, 1]]); // 반경 119 · 피해 15
+    const p = player(w);
+    const c = chick(w, 500, 0); // 모선에서 500 떨어진 원격 출격
+    const near = enemyNear(w, 550, 0); // 병아리 기준 50 · 모선 기준 550
+    const far = enemyNear(w, 60, 0); // 모선 곁 — 병아리 기준 440 이라 안 맞아야 한다
+    const bullet = enemyBulletAt(w, c.x + 40, c.y);
+    onBroodLaunched(w, p, c);
+    expect(near.hp).toBeLessThan(1000); // 긍정 하한 — 아래 등식의 항진 방지
+    expect(near.hp).toBe(985);
+    expect(far.hp).toBe(1000); // 부정 짝(긍정은 바로 위)
+    expect(bullet.dead).toBe(true);
+
+    const n = mk(); // 음성 대조
+    const np = player(n);
+    const nc = chick(n, 500, 0);
+    const ne = enemyNear(n, 550, 0);
+    const nb = enemyBulletAt(n, nc.x + 40, nc.y);
+    onBroodLaunched(n, np, nc);
+    expect(ne.hp).toBe(1000);
+    expect(nb.dead).toBe(false);
+  });
+
+  it('NU2 — 출격 좌표에 젬 (2 + floor(Lv/5))개가 떨어진다', () => {
+    const w = mk([[NU2, 10]]); // 2 + 2 = 4개
+    const p = player(w);
+    const c = chick(w, 120, 0);
+    const before = countGems(w);
+    onBroodLaunched(w, p, c);
+    const after = countGems(w);
+    expect(after).toBeGreaterThan(before); // 하한 짝
+    expect(after - before).toBe(4);
+    for (const e of w.entities) {
+      if (e.kind === 'gem' && e.id >= 0) {
+        expect(Math.abs(e.x - c.x)).toBeLessThanOrEqual(30);
+        expect(Math.abs(e.y - c.y)).toBeLessThanOrEqual(30);
+      }
+    }
+
+    const n = mk(); // 음성 대조
+    const nb = countGems(n);
+    onBroodLaunched(n, player(n), chick(n, 120, 0));
+    expect(countGems(n)).toBe(nb);
+  });
+
+  it('NU2 — 기당 1회이므로 쌍둥이 틱에는 두 배가 떨어진다', () => {
+    const w = mk([[NU2, 1]]); // 2개
+    const p = player(w);
+    const before = countGems(w);
+    onBroodLaunched(w, p, chick(w, 120, 0));
+    onBroodLaunched(w, p, chick(w, -120, 0));
+    expect(countGems(w) - before).toBe(4);
+  });
+
+  it('NU7 — 허용 거리 안의 최근접 젬 좌표로 부화 지점이 옮겨진다', () => {
+    const w = mk([[NU7, 1]]); // 허용 거리 440
+    const p = player(w);
+    const far = gemAt(w, 400, 0);
+    const near = gemAt(w, 300, 0); // 더 가깝다 — 배열 뒤에 있어도 이긴다
+    const c = chick(w, 40, 0);
+    onBroodLaunched(w, p, c);
+    expect(c.x).toBe(near.x);
+    expect(c.y).toBe(near.y);
+    expect(c.x).not.toBe(far.x);
+
+    const n = mk(); // 음성 대조 — 미투자면 좌표 그대로
+    const np = player(n);
+    gemAt(n, 300, 0);
+    const nc = chick(n, 40, 0);
+    const ox = nc.x;
+    onBroodLaunched(n, np, nc);
+    expect(nc.x).toBe(ox);
+  });
+
+  it('NU7 — 젬이 없거나 거리 밖이면 기본 배치 폴백이다(부정 짝은 위 긍정과 한 쌍)', () => {
+    const none = mk([[NU7, 1]]);
+    const c1 = chick(none, 40, 0);
+    const x1 = c1.x;
+    onBroodLaunched(none, player(none), c1);
+    expect(c1.x).toBe(x1);
+
+    const outOfRange = mk([[NU7, 1]]); // 허용 440
+    gemAt(outOfRange, 1000, 0);
+    const c2 = chick(outOfRange, 40, 0);
+    const x2 = c2.x;
+    onBroodLaunched(outOfRange, player(outOfRange), c2);
+    expect(c2.x).toBe(x2);
+  });
+
+  it('NU7 — BD6·NU2 의 발생지가 함께 옮겨간다(설계 「출격 좌표 상호작용 절」)', () => {
+    const w = mk([
+      [NU7, 1],
+      [BD6, 1],
+      [NU2, 1],
+    ]);
+    const p = player(w);
+    gemAt(w, 300, 0);
+    const target = enemyNear(w, 340, 0); // 젬 곁 — 모선 기준 340 이라 BD6 반경 119 밖
+    const c = chick(w, 40, 0);
+    const before = countGems(w);
+    onBroodLaunched(w, p, c);
+    expect(c.x).toBe(p.x + 300);
+    expect(target.hp).toBeLessThan(1000); // 원격 폭격이 성립했다
+    expect(countGems(w) - before).toBe(2); // 젬도 모이밭에 떨어졌다
   });
 });
