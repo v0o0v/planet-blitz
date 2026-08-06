@@ -74,6 +74,7 @@ import {
   SIG_ARC_OVERCHARGE,
   SIG_BRUISER_ARMOR,
   SIG_HATCHLING_BROOD,
+  SIG_MALLOW_CUSHION,
 } from './shipSignature.js';
 import {
   hatchlingVolleyFired,
@@ -107,6 +108,13 @@ import {
   bruiserEnemyDamaged,
   bruiserEnemyDeath,
 } from './skills/bruiser.js';
+import {
+  mallowGemCollected,
+  mallowPlayerDamaged,
+  mallowDamageChain,
+  mallowEnemyDamaged,
+  mallowPowerupPicked,
+} from './skills/mallow.js';
 
 // ---------------------------------------------------------------------------
 // 공유 술어
@@ -191,6 +199,10 @@ function dispatchVolleySkill(state: WorldState, player: Entity): void {
       // "볼리가 나갔다"만 보므로 이 앵커의 "탄이 아직 없다" 한계에 걸리지 않는 유일한 예다.
       hatchlingVolleyFired(state, player);
       break;
+    // ⚠️ **말로우도 여기 case 가 없다 — 브루저와 같은 벽이다.** 이 앵커를 쓰는 설계 항목은
+    // SQ1(부채 비례 볼리 증폭)·SQ5(탕감 장전분 소진)·SQ7(입력 방향 일치도 비례 탄속·피해)·
+    // SQ8(누적 선체행 비례 증폭) 넷인데, 넷 다 **이번 볼리의 탄 피해·탄속**을 바꿔야 한다.
+    // SQ7 은 그 위에 `input` 까지 필요한데 이 앵커는 인자로 받지 않는다.
     default:
       break;
   }
@@ -264,6 +276,17 @@ function dispatchGemSkill(state: WorldState, gem: Entity): void {
       if (p !== undefined) bruiserGemCollected(state, p);
       break;
     }
+    case SIG_MALLOW_CUSHION: {
+      // ME1 조기 상환 — 젬 수거마다 무피격 카운터(`aux1`)를 상한 안에서 밀어 정산을 앞당긴다.
+      // 대상이 젬이 아니라 **플레이어**라 위 사본으로 집는다(스트라이커 M3 와 같은 사유).
+      //
+      // ⚠️ ME2(채무 자석)는 여기 없다 — 그 스킬은 **자석 반경 판정**(`stepGems` 의 흡인 거리
+      // 비교)에 배율을 얹어야 하는데, 이 앵커는 이미 **수거가 끝난 뒤**라 반경이 무의미하다
+      // (브루저 MO2 가 같은 자리에서 같은 이유로 빠졌다).
+      const p = playerOf(state);
+      if (p !== undefined) mallowGemCollected(state, p);
+      break;
+    }
     default:
       break;
   }
@@ -329,6 +352,16 @@ function dispatchPlayerDamagedSkill(
       // 발동(≥ 60 이면 스킵)이 되어 어느 쪽이든 설계와 다르다. 슬롯 1칸이 필요하고, 그것은
       // 칼날 축 B 예산(BL8·BL9 로 2/2 포화)을 넘기므로 설계로 되돌아가야 한다.
       bruiserPlayerDamaged(state, player, dmg, lethalSurvived);
+      break;
+    case SIG_MALLOW_CUSHION:
+      // SQ3 몸통 반발(즉시분 비례 반격) · CU4 반발 세척(부채 보유 중 적탄 소거).
+      // `dmg` 는 **지연분을 뗀 뒤의 즉시분**이고 그것이 SQ3 설계가 요구한 값이다.
+      // `lethalSurvived` 는 넘기지 않는다 — 말로우의 치명 축(CU6 파산 보호)은 사슬 안 지연
+      // 전환 자리를 요구해 이 앵커에 오지 않는다(아래 미배선 사유).
+      //
+      // ⚠️ 이 앵커는 완충 적립(`aux0 += deferred`) **뒤**다 — CU4 설계가 명시적으로 요구한
+      // 순서라(첫 피격도 발동해야 한다) 여기서 적립을 흉내 내 보정하지 않는다.
+      mallowPlayerDamaged(state, player, dmg);
       break;
     default:
       break;
@@ -419,6 +452,13 @@ function dispatchWallContactSkill(state: WorldState, player: Entity): void {
     //
     // ⚠️ **아크캐스터도 같은 이유로 case 가 없다.** BR5「접지 케이블」의 벽 술어도
     // `state.wallContactTicks` 를 읽기만 하고, 그 읽기는 앵커 ⑧(감쇠 사슬) 안에 있다.
+    //
+    // ⚠️ **말로우도 여기 case 가 없다 — 술어는 있는데 적용 지점이 없다.** ME9「솜틀 요양」의
+    // "직전 60틱 연속 벽 접촉" 은 `state.wallContactTicks >= 60` 으로 이미 읽을 수 있다(설계서
+    // ⑥-4 가 스트라이커 M5 와 **한 벌**로 못 박은 그 카운터다 — 슬롯에 복제하지 마라). 막고
+    // 있는 것은 **적용부**다: 이 스킬은 정산 임계 자체를 낮추는데, 그 비교
+    // (`aux1 >= CUSHION_RECOVER_TICKS`)는 `world.ts` 의 정산 분기 안이라 앵커가 없다.
+    // 그래서 ME9 는 통째로 미배선이고, CU7 의 분모도 함께 상수 180 에 묶여 있다.
     default:
       break;
   }
@@ -470,6 +510,18 @@ export function onDamageChain(state: WorldState, player: Entity, dmg: number): n
       // 감소 칸은 비어 있다(해츨링에 감소류 스킬이 없다) → ② 흡수만: SH1 호위 희생 →
       // SH7 회생 부화. 둘의 순서는 설계 SH1 의 1R 확정("건별 잔돈 먼저, 전액 청산은 최후")이다.
       return hatchlingDamageChain(state, player, dmg);
+    case SIG_MALLOW_CUSHION:
+      // ① CU7 아문 살갗(감소). 흡수 칸을 쓰는 말로우 스킬은 없다.
+      //
+      // ⚠️ 설계서는 이 스킬의 자리를 "지연 전환 분기 직전" 으로 지정했는데 이 앵커는 브루저
+      // 장갑·버블 막보다 **앞**이다 — 사슬에 뚫린 유일한 스킬 자리라 여기 말고 둘 곳이 없고,
+      // 그 둘은 말로우 런에 존재하지 않아 관측 가능한 차이가 없다(효과 함수 주석에 근거).
+      //
+      // ⚠️ **이 사슬은 완충의 지연 정산분을 덮지 못한다.** 정산이 hp 를 깎는 경로
+      // (`stepShipSignature` 의 말로우 가지)는 감쇠 사슬 밖이다. "받는 피해" 축 스킬을 이
+      // 자리에만 걸면 자기 기체의 지연 정산분에는 안 걸린다 — CU7 은 설계 자체가 피격 경로
+      // 한정이라 해당하지 않지만, 뒤 레인이 같은 자리에 다른 스킬을 얹을 때 반드시 볼 것.
+      return mallowDamageChain(state, player, dmg);
     default:
       break;
   }
@@ -530,6 +582,19 @@ function dispatchSignatureStepSkill(
       // 앞이라 출격 여부도 좌표도 모른다. 사후 관측으로 흉내 내면 보류·상한 분기까지 발동한다.
       hatchlingSignatureStep(state, player);
       break;
+    // ⚠️ **말로우는 여기 case 가 없다 — 이 레인이 내린 가장 무거운 판단이다.**
+    //
+    // 말로우 30종 중 **9종**(SQ2·SQ5·SQ8·ME4·ME5·ME8·CU3·CU9·CU10)이 "정산 틱" 을 트리거로
+    // 삼는데, 정산은 이 앵커 **뒤**의 `world.ts` 코드(`stepShipSignature` 말로우 가지의
+    // `aux0 > 0 && aux1 >= CUSHION_RECOVER_TICKS` 안쪽)에서 일어난다. 이 앵커는 진입점이라
+    // 정산 **전**의 aux 만 본다.
+    //
+    // 여기서 `aux0 > 0 && aux1 + 1 >= 임계` 로 "이번 틱에 정산이 일어날 것" 을 **예측**할 수는
+    // 있다. 하지 않았다 — 그 순간 정산 술어가 두 곳에 살고, 정산액(`cushionSettled`)·탕감액
+    // (`cushionRecovered`)·hp−1 클램프 후 실제 적용액(`applied`)까지 전부 두 번째 사본이 된다.
+    // 이 저장소의 지배적 실패 모드가 정확히 그 형태이고(같은 술어를 여러 곳에 적어 화면과
+    // 규칙이 갈린다), 액티브 4종이 임계를 수동 주입하는 기체라 어긋남이 조용히 커진다.
+    // 정산 분기에 앵커가 뚫릴 때까지 9종은 **코드가 없다**.
     default:
       break;
   }
@@ -636,6 +701,19 @@ function dispatchEnemyDamagedSkill(
       // 증폭은 명중 해소 안, 차감 **전**의 자리라 `world.ts` 가 소유해야 한다.
       hatchlingEnemyDamaged(state, target, source);
       break;
+    case SIG_MALLOW_CUSHION: {
+      // SQ4 압인 탄두 — 부채 보유 중 명중한 적을 좌표 직접 변위로 민다. 술어(`aux0 > 0`)가
+      // **플레이어** 상태라 사본으로 집는다(이 앵커는 표적만 넘긴다).
+      //
+      // ⚠️ SQ9(이자 소각)는 여기 없다 — **반쪽도 못 된다.** 화상 부여는 이 앵커로 가능하지만
+      // ⓐ설계서의 틱당 피해가 "기본 화염 기준 +4%p/Lv" 라 장비 화염이 없는 런에서는 기준값
+      // 자체가 0 이고(설계 정본 밖의 수치를 발명해야 한다) ⓑ탕감 절반은 `status.ts` 의 화상
+      // 만료 지점과 `compact()` 의 사망 집계 두 곳을 요구하는데 둘 다 앵커가 없다. 부여만
+      // 켜면 "부채가 줄지 않는 화염 스킬" 이 되어 설계와 다른 물건이 된다.
+      const p = playerOf(state);
+      if (p !== undefined) mallowEnemyDamaged(state, p, target, source);
+      break;
+    }
     default:
       break;
   }
@@ -814,6 +892,17 @@ function dispatchPowerupPickedSkill(
   void poolIndex;
   void offeredIndex;
   switch (state.sigBit) {
+    case SIG_MALLOW_CUSHION: {
+      // ME10 성장 환전 — 픽 적용 틱에 부채(`aux0`)의 절반이 **런 풀 XP**(`state.xp`)로 환전된다.
+      // 설계서가 이 자리를 "픽 적용 지점 뒤" 로 지정했고, 이 앵커가 정확히 그 자리다(프리즈
+      // 해제 틱 · 범위 밖 선택 가드 안쪽).
+      //
+      // 인자 둘(`poolIndex`·`offeredIndex`)은 넘기지 않는다 — 설계서의 트리거는 "어떤 파워업을
+      // 골랐는가" 가 아니라 **레벨업 리듬 그 자체**라 어느 픽이든 같게 작동해야 한다.
+      const p = playerOf(state);
+      if (p !== undefined) mallowPowerupPicked(state, p);
+      break;
+    }
     default:
       break;
   }

@@ -140,6 +140,7 @@ import {
   hatchThreshold,
   BROOD_MARK,
   CUSHION_RECOVER_TICKS,
+  CUSHION_TICK_CAP,
   cushionDeferredDamage,
   cushionRecovered,
   cushionSettled,
@@ -2354,13 +2355,9 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
 /** 과충전 정지 카운터 상한. bp 는 190틱에서 이미 상한이라 거동 무영향, 정수 유계 유지용. */
 const OVERCHARGE_TICK_CAP = 600;
 
-/**
- * 완충 무피격 카운터 상한. 정산은 임계(CUSHION_RECOVER_TICKS=180)에서 일어나므로 정상
- * 경로에서는 도달하지 않지만, **적립분이 0 인 구간**(정산할 것이 없어 카운터가 리셋되지 않는
- * 구간)에서 aux1 이 무한히 커지는 것을 막는다 — aux 는 u32 로 해시된다(replay.ts hashEntity).
- * 상한에 걸려도 임계(180)는 이미 넘긴 뒤라 거동에는 영향이 없다.
- */
-const CUSHION_TICK_CAP = 600;
+// 완충 무피격 카운터 상한(`CUSHION_TICK_CAP`)은 `shipSignature.ts` 가 정본이다 — 이 파일과
+// `activeHandlers/mallow.ts` 가 같은 값을 각자 들고 있었고, `skills/mallow.ts` 의 ME1 이 세 번째
+// 소비처가 되는 시점에 그리로 합쳤다(위 import 목록 참조).
 
 /**
  * 이 런의 **유일한** 시그니처 비트를 config 에서 계산한다(없으면 -1). `createWorld` 가 딱 한 번
