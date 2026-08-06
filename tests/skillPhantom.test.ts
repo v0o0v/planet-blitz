@@ -10,6 +10,9 @@
  *  ① **효과 본체 삭제** — `phantomWallContact` 의 `advanceCloak` 한 줄을 지우면 §④ 가 실패한다.
  *  ② **배선 이음매 치환** — 앵커 ⑨(`dispatchSignatureStepSkill`)의 `case SIG_PHANTOM_CLOAK:`
  *     를 지우면 §⑦ DI2 · §⑧ DI5 쿨다운 진행이 함께 실패한다.
+ *  ③ **앵커 ㉑ 배선 제거**(S2 레인, 2026-08-07) — `onCloakBreakReset` 의 `case SIG_PHANTOM_CLOAK:`
+ *     호출을 지우면 §⑪ 의 3건이 실패한다(DI1 반경 · PH10 환급 · stepWorld 관통).
+ *  ④ **앵커 ⑯ 배선 제거** — `onVolleyParams` 의 호출을 지우면 §⑫ 의 2건이 실패한다.
  * 초록인데 아무것도 안 재는 테스트가 아니다.
  */
 
@@ -34,6 +37,9 @@ import {
   onDamageChain,
   onSignatureStep,
   onEnemyDamaged,
+  onCloakBreakReset,
+  onVolleyParams,
+  type VolleyParams,
 } from '../src/sim/skillHooks.js';
 import { SIG_PHANTOM_CLOAK, CLOAK_UNHIT_TICKS } from '../src/sim/shipSignature.js';
 import { PhantomCarry, readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
@@ -45,9 +51,12 @@ const SHIP_PHANTOM = 3;
  * flat 인덱스 — **정본은 `data/ships/phantom.ts` 의 `trees` 배열**이다:
  * `[assassin(offense), phase(utility), disrupt(defense)]` → AS 0..9 · PH 10..19 · DI 20..29.
  */
+const AS2 = 1;
 const AS4 = 3;
 const AS5 = 4;
 const PH1 = 10;
+const PH10 = 19;
+const DI1 = 20;
 const PH7 = 16;
 const PH8 = 17;
 const DI2 = 21;
@@ -485,5 +494,202 @@ describe('⑩ 진입 에지 PH7 · DI7 · DI8 (fireCloakEntry)', () => {
     expect(e.hp).toBe(5000);
     expect(e.ownerId).toBe(0);
     expect(player(w).maxHp).toBe(maxHpBefore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑪ DI1 위상 정산 · PH10 발각 즉응 — 앵커 ㉑(S2, 팬텀 리셋 **직전**)
+// ---------------------------------------------------------------------------
+//
+// ## 이 절이 재는 것은 산술이 아니라 **순서**다
+// 두 스킬은 앵커 ④ 에서 배선할 수 없었다 — ④ 는 리셋 **뒤**라 거기 도달한 `aux0` 이 항상 0 이고,
+// 그래서 DI1 은 상시 최소 반경 · PH10 은 상시 미발동이었다. 그러니 여기서 훅만 직접 불러
+// 산술을 재면 **정확히 그 결함을 못 잡는다**(리셋 뒤로 옮겨도 초록이다). 그래서 §⑪-3 은
+// `stepWorld` 로 실제 피격을 만들어 **엔진이 리셋 전에 부르는가**를 잰다.
+
+describe('⑪ DI1 · PH10 (앵커 ㉑)', () => {
+  function addEnemyBullet(w: WorldState, x: number, y: number, damage: number): Entity {
+    const b: Entity = {
+      ...blankEntity('enemyBullet'),
+      x,
+      y,
+      radius: 4,
+      damage,
+      life: 600,
+      hp: 1,
+      maxHp: 1,
+    };
+    w.entities.push(b);
+    return b;
+  }
+
+  it('DI1 — 소거 반경이 리셋 전 스트릭에 비례해 커진다 (미투자면 소거 0)', () => {
+    // 반경 = (40 + 4×Lv) + streak/2. Lv1·streak 300 → 44 + 150 = 194.
+    const off = mk();
+    const q = player(off);
+    const bq = addEnemyBullet(off, q.x + 100, q.y, 1);
+    onCloakBreakReset(off, q, 7, 300, false);
+    expect(bq.dead).toBe(false);
+
+    const on = mk([[DI1, 1]]);
+    const p = player(on);
+    const near = addEnemyBullet(on, p.x + 100, p.y, 1);
+    const far = addEnemyBullet(on, p.x + 250, p.y, 1);
+    onCloakBreakReset(on, p, 7, 300, false);
+    expect(near.dead).toBe(true);
+    expect(far.dead).toBe(false);
+  });
+
+  it('DI1 — 스트릭 0 이면 기본항 반경만 남는다', () => {
+    const w = mk([[DI1, 1]]);
+    const p = player(w);
+    const b = addEnemyBullet(w, p.x + 100, p.y, 1);
+    onCloakBreakReset(w, p, 7, 0, false);
+    // 기본항 44 < 100 이라 안 닿는다 — 스트릭 보정이 실제로 반경을 키우고 있다는 음성 대조.
+    expect(b.dead).toBe(false);
+  });
+
+  it('PH10 — 창 안 피격에만 대시 쿨 환급 + 무적 가산 (창 밖·미투자는 불변)', () => {
+    const off = mk();
+    const q = player(off);
+    q.dashCooldown = 55;
+    q.iframes = 40;
+    onCloakBreakReset(off, q, 7, 300, false);
+    expect(q.dashCooldown).toBe(55);
+    expect(q.iframes).toBe(40);
+
+    // 창 밖(스트릭 239)에서는 발동하지 않는다.
+    const outside = mk([[PH10, 8]]);
+    const r = player(outside);
+    r.dashCooldown = 55;
+    r.iframes = 40;
+    onCloakBreakReset(outside, r, 7, CLOAK_UNHIT_TICKS - 1, false);
+    expect(r.dashCooldown).toBe(55);
+    expect(r.iframes).toBe(40);
+
+    const on = mk([[PH10, 8]]);
+    const p = player(on);
+    p.dashCooldown = 55;
+    p.iframes = 40;
+    onCloakBreakReset(on, p, 7, 300, false);
+    expect(p.dashCooldown).toBe(0);
+    // 대입이 아니라 **가산**이다 — 이 시점의 iframes 는 이미 hitIframes 로 서 있다.
+    // 1 + floor(8/4) = 3.
+    expect(p.iframes).toBe(43);
+  });
+
+  it('실제 피격 경로가 **리셋 전에** 앵커를 부른다 (stepWorld 관통)', () => {
+    function run(points: ReadonlyArray<readonly [number, number]>): {
+      w: WorldState;
+      p: Entity;
+      far: Entity;
+    } {
+      const w = mk(points);
+      const p = player(w);
+      // 창 한복판. 한 틱 적립돼 301 로 리셋에 닿는다 — 되감기(360) 경계와 멀다.
+      p.aux0 = 300;
+      p.iframes = 0;
+      p.dashCooldown = 55;
+      // 판정점 안의 적탄이 실피해를 만든다(막·완충 없는 기체라 그대로 hp 로 간다).
+      addEnemyBullet(w, p.x, p.y, 10);
+      // 기본항 반경(44)으로는 못 닿고 스트릭 보정(+150)이 있어야 닿는 거리.
+      const far = addEnemyBullet(w, p.x + 100, p.y + 60, 1);
+      stepWorld(w, emptyInput());
+      return { w, p, far };
+    }
+
+    const off = run([]);
+    expect(off.p.aux0).toBe(0); // 리셋은 실제로 일어났다 = 피격이 성립했다
+    expect(off.far.dead).toBe(false);
+    // 틱 진행이 쿨을 1 깎았을 뿐 환급은 없다(55 → 54).
+    expect(off.p.dashCooldown).toBe(54);
+
+    const on = run([
+      [DI1, 1],
+      [PH10, 8],
+    ]);
+    expect(on.p.aux0).toBe(0);
+    // DI1 — 리셋 뒤에 불렸다면 반경이 44 로 줄어 이 탄이 살아남는다.
+    expect(on.far.dead).toBe(true);
+    // PH10 — 리셋 뒤에 불렸다면 창 술어가 거짓이라 환급이 없다.
+    expect(on.p.dashCooldown).toBe(0);
+    expect(on.p.iframes).toBe(on.w.config.hitIframes + 3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑫ AS2 은막 침투 — 앵커 ⑯(S2, 볼리 파라미터 확정 직후)
+// ---------------------------------------------------------------------------
+
+describe('⑫ AS2 은막 침투 (앵커 ⑯)', () => {
+  function params(): VolleyParams {
+    return {
+      damage: 10,
+      pierce: 0,
+      count: 3,
+      speed: 100,
+      radius: 4,
+      life: 60,
+      spread: 0.5,
+      cooldownQ: 12,
+      mark: 0,
+    };
+  }
+
+  it('은신 창 안 발사에만 관통 +1 · 탄속 가산이 붙는다', () => {
+    const off = mk();
+    const q = player(off);
+    q.aux0 = 300;
+    const a = params();
+    onVolleyParams(off, q, a);
+    expect(a.pierce).toBe(0);
+    expect(a.speed).toBe(100);
+
+    const on = mk([[AS2, 10]]);
+    const p = player(on);
+    p.aux0 = 300;
+    const b = params();
+    onVolleyParams(on, p, b);
+    expect(b.pierce).toBe(1);
+    // 탄속 +6% + 1.5%p×10 = ×1.21.
+    expect(b.speed).toBeCloseTo(121, 9);
+    // 다른 필드는 건드리지 않는다 — AS2 는 두 축뿐이다.
+    expect(b.damage).toBe(10);
+    expect(b.count).toBe(3);
+    expect(b.mark).toBe(0);
+  });
+
+  it('창 밖 발사는 불변이다 — 창 술어가 실제 게이트다', () => {
+    const w = mk([[AS2, 10]]);
+    const p = player(w);
+    p.aux0 = CLOAK_UNHIT_TICKS - 1;
+    const a = params();
+    onVolleyParams(w, p, a);
+    expect(a.pierce).toBe(0);
+    expect(a.speed).toBe(100);
+  });
+
+  it('실제 발사 경로가 앵커를 관통한다 — 창 안 아군탄이 더 빠르다 (stepWorld)', () => {
+    function fire(points: ReadonlyArray<readonly [number, number]>): Entity[] {
+      const w = mk(points);
+      const p = player(w);
+      p.aux0 = 300;
+      p.cooldown = 0;
+      addEnemy(w, p.x + 150, p.y, 100_000);
+      stepWorld(w, emptyInput());
+      return w.entities.filter((e) => e.kind === 'bullet');
+    }
+    const off = fire([]);
+    const on = fire([[AS2, 10]]);
+    expect(off.length).toBeGreaterThan(0);
+    expect(on.length).toBe(off.length);
+    const a = off[0];
+    const b = on[0];
+    if (a === undefined || b === undefined) throw new Error('bullet missing');
+    expect(b.pierce).toBe(a.pierce + 1);
+    // 속도는 성분으로만 관측 가능하다 — 같은 각도이므로 크기 비가 곧 탄속 비다.
+    const sa = Math.hypot(a.vx, a.vy);
+    const sb = Math.hypot(b.vx, b.vy);
+    expect(sb).toBeCloseTo(sa * 1.21, 6);
   });
 });

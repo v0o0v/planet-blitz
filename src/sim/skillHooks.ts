@@ -130,6 +130,8 @@ import {
   phantomPlayerDamaged,
   phantomSignatureStep,
   phantomEnemyDamaged,
+  phantomCloakBreakReset,
+  phantomVolleyParams,
 } from './skills/phantom.js';
 import {
   bubbleSignatureStep,
@@ -430,7 +432,8 @@ function dispatchPlayerDamagedSkill(
       // `setBreakToken(…, 0)` 을 실행하고 그 **뒤에** 이 앵커를 부른다. 둘 다 리셋 **전**의
       // `aux0`(DI1 은 반경 보정, PH10 은 창 술어)을 요구하므로 여기서는 각각 상시 최소 반경 ·
       // 상시 미발동이 된다. 설계서 공통 구현 고지 ④ 가 요구한 순서(DI1 → PH10 → 리셋 → DI5)
-      // 중 **DI5 만** 이 자리에서 성립한다. 나머지 둘은 리셋 분기에 손잡이가 필요하다.
+      // 중 **DI5 만** 이 자리에서 성립한다.
+      // → 나머지 둘은 S2 가 리셋 **직전**에 뚫은 앵커 ㉑(`onCloakBreakReset`)에 산다.
       phantomPlayerDamaged(state, player, dmg);
       break;
     default:
@@ -1261,6 +1264,16 @@ export function onVolleyParams(
   switch (state.sigBit) {
     // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다. **`break;` 를 반드시 붙여라** —
     // 병렬 배선 머지에서 fallthrough 가 누적 4건 나왔고 전부 `tsc TS7029` 만이 잡았다.
+    case SIG_PHANTOM_CLOAK:
+      // AS2 은막 침투 — 은신 창 동안 발사한 탄에 관통 +1 · 탄속 증가.
+      //
+      // ⚠️ AS10(유령 탄도)·AS3(처형 재장전)은 여기 없다. AS10 은 `mark` 를 찍을 수는 있으나
+      // **읽는 자리가 없다**(설계서가 지정한 소비처 셋이 전부 `world.ts` 의 비-앵커 지점)라
+      // 표식만 남는 무연산이 되고, AS3 은 이 앵커가 `aux1` 소진 **뒤**라 이번 볼리가 그
+      // 강화탄인지 알 신호가 없다(게다가 처치를 보는 앵커 ⑩ 은 탄을 넘기지 않는다).
+      // 사유 전문은 효과 함수 `phantomVolleyParams` 주석에 있다.
+      phantomVolleyParams(state, player, params);
+      break;
     default:
       break;
   }
@@ -1479,6 +1492,16 @@ export function onCloakBreakReset(
   void streak;
   void broken;
   switch (state.sigBit) {
+    case SIG_PHANTOM_CLOAK:
+      // DI1 위상 정산(잃는 스트릭에 비례한 반경으로 적탄 소거) · PH10 발각 즉응(창 중 피격이면
+      // 대시 쿨 전액 환급 + 무적 가산). 설계서 공통 구현 고지 ④ 의 순서 **DI1 → PH10 → 리셋 →
+      // DI5** 중 앞의 둘이 여기, DI5 는 리셋 뒤인 앵커 ④ 다.
+      //
+      // `dmg` 를 넘기지 않는 것은 의도다 — 두 스킬 다 피해량을 보지 않는다(DI1 은 스트릭, PH10
+      // 은 창 술어). 안 쓰는 값을 시그니처에 실으면 "이 훅은 피해량에 반응한다"는 거짓 계약이
+      // 남는다. 필요해지는 카드가 생기면 그때 넓힌다.
+      phantomCloakBreakReset(state, player, streak, broken);
+      break;
     default:
       break;
   }
