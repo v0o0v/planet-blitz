@@ -229,34 +229,57 @@ function wallRig(gap: number): { state: WorldState; player: Entity; tick: (f: In
   return { state, player, tick };
 }
 
+/**
+ * 한 판을 `ticks` 만큼 굴리고 관측치를 돌려준다.
+ *
+ * ⚠️ **`gate` 만 보면 안 된다** — 뮤테이션이 그것을 실증했다. 벽이 가까우면(gap 260)
+ * 벽 접근 정책을 통째로 지운 뮤턴트도 게이트를 통과한다: 측정 파일럿은 대시를 누르므로
+ * 조향이 카이팅이어도 **대시 임펄스가 플레이어를 옆 벽에 밀어붙인다**. 즉 그 단언은
+ * "벽 접근 정책"이 아니라 "대시가 벽에 부딪힌다"를 재고 있었다.
+ * 그래서 **접촉 유지 비율**을 함께 본다 — 지속 추종이 아니면 높은 비율이 안 나온다.
+ */
+function wallStats(
+  gap: number,
+  pilot: (s: WorldState) => InputFrame,
+  ticks = 300,
+): { gate: number; ratio: number; firstContact: number } {
+  const r = wallRig(gap);
+  let contact = 0;
+  let gate = 0;
+  let firstContact = -1;
+  for (let i = 0; i < ticks; i++) {
+    r.tick(pilot(r.state));
+    if (r.state.wallContactTicks > 0) {
+      contact++;
+      if (firstContact < 0) firstContact = i;
+    }
+    if (r.state.wallContactTicks > gate) gate = r.state.wallContactTicks;
+  }
+  return { gate, ratio: contact / ticks, firstContact };
+}
+
 describe('④ 벽 접근 정책 — `wallContactTicks` 가 실제로 선다', () => {
-  it('측정 파일럿은 ME9 게이트(60틱 연속)를 넘긴다', () => {
-    const r = wallRig(260);
-    for (let i = 0; i < 200; i++) r.tick(measurePilotInput(r.state));
+  it('먼 벽(900)에도 접근해 붙고 ME9 게이트(60틱 연속)를 넘긴다', () => {
+    const s = wallStats(900, measurePilotInput);
     // "벽 쪽으로 갔다"가 아니라 **플래그가 섰다**가 증거다.
-    expect(r.state.wallContactTicks).toBeGreaterThanOrEqual(60);
+    expect(s.firstContact).toBeGreaterThan(0);
+    expect(s.gate).toBeGreaterThanOrEqual(60);
+    expect(s.ratio).toBeGreaterThan(0.6);
   });
 
-  it('대조군: 같은 판에서 오토파일럿은 게이트를 못 연다', () => {
-    const r = wallRig(260);
-    let maxContact = 0;
-    for (let i = 0; i < 200; i++) {
-      r.tick(autopilotInput(r.state));
-      if (r.state.wallContactTicks > maxContact) maxContact = r.state.wallContactTicks;
-    }
-    // 대조군이 우연히 열면 ④ 전체가 항진이다 — 그 상태를 명시적으로 막는다.
-    expect(maxContact).toBeLessThan(60);
+  it('가까운 벽(260)에서는 **접촉을 유지**한다 (게이트만으로는 부족하다)', () => {
+    const s = wallStats(260, measurePilotInput);
+    expect(s.gate).toBeGreaterThanOrEqual(60);
+    // 지속 추종의 서명. 대시가 우연히 부딪히는 것으로는 이 비율이 안 나온다.
+    expect(s.ratio).toBeGreaterThan(0.9);
   });
 
-  it('벽에서 시작이 멀어도 붙는다 (접근 → 접촉 → 유지)', () => {
-    const r = wallRig(900);
-    let firstContactTick = -1;
-    for (let i = 0; i < 300; i++) {
-      r.tick(measurePilotInput(r.state));
-      if (firstContactTick < 0 && r.state.wallContactTicks > 0) firstContactTick = i;
+  it('대조군: 같은 두 판에서 오토파일럿은 게이트를 못 연다', () => {
+    for (const gap of [260, 900]) {
+      const s = wallStats(gap, autopilotInput);
+      // 대조군이 우연히 열면 ④ 전체가 항진이다 — 그 상태를 명시적으로 막는다.
+      expect(s.gate, `gap ${gap}`).toBeLessThan(60);
     }
-    expect(firstContactTick).toBeGreaterThan(0);
-    expect(r.state.wallContactTicks).toBeGreaterThanOrEqual(60);
   });
 
   it('벽이 없는 무대에서는 조향이 정본 그대로다 (벽 정책이 새지 않는다)', () => {
