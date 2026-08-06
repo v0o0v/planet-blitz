@@ -60,3 +60,18 @@ export const HAZARD_LINE_SPAN = VIEW_WIDTH;
 export const FIRE_CD_Q = 256;
 /** 발사 간격 하한(2틱). 프레임당 발사 폭주 방지 가드 — **없애지 마라**. */
 export const FIRE_CD_MIN_Q = 2 * FIRE_CD_Q;
+
+/**
+ * 콤보가 픽업 없이 버티는 틱 수(= 콤보 창). `world.ts` 의 `updateCombo`·`bumpCombo` 가 유일한
+ * 소유자였다.
+ *
+ * ## 왜 leaf 로 옮겼는가 (S1)
+ * `world.ts` 의 **비공개 상수**였던 탓에 `src/sim/skills/*` 가 이 값을 읽을 수 없었고, 그래서
+ * 스트라이커 S8「콤보 차폐」의 *콤보 창 부분 회복*(`comboTimer = min(comboTimer + 창/2, 창)`)이
+ * 미배선으로 남아 있었다(`skillHooks.ts` 앵커 ① 주석). 값을 기체 모듈에 다시 적는 대안은
+ * **두 정본이 조용히 갈리므로** 기각했다 — 이동이 유일하게 옳은 해법이다.
+ *
+ * ⚠️ **값 복제 금지.** 콤보 창이 필요하면 여기서 import 해라. `world.ts` 도 그렇게 한다.
+ * ⚠️ 값을 바꾸면 콤보 유지 시간이 바뀌어 **골든 해시가 전량 갈린다**(XP 배율이 콤보에 걸린다).
+ */
+export const COMBO_WINDOW_TICKS = 120;

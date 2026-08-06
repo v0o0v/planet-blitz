@@ -1,7 +1,9 @@
 /**
- * **210스킬 배선의 앵커 9개** — sim 이 스킬 훅을 부르는 **유일한 지점들**(ADR-0049 S0).
+ * **210스킬 배선의 앵커 14개** — sim 이 스킬 훅을 부르는 **유일한 지점들**(ADR-0049 S0 + S1).
  *
- * S0 시점에는 전 분기가 비어 있다. 이 커밋이 만드는 것은 **자리**이지 효과가 아니다 —
+ * S0 가 플레이어 축 9개를 세웠고, **S1 이 적 단위 축 2개(⑩ `onEnemyDamaged` · ⑪ `onEnemyDeath`)와
+ * 성장 축 3개(⑫ `onLevelUp` · ⑬ `onPowerupOffer` · ⑭ `onPowerupPicked`)를 더했다.**
+ * 두 커밋 다 전 분기가 비어 있다 — 만드는 것은 **자리**이지 효과가 아니다 —
  * 전 슬롯 0 · 계수 0 · 빈 `switch` 라 산술이 `v*1===v`·`v-0===v` 로 비트 동일하고, 그래서
  * 골든·침공 해시가 **바이트 불변**이다.
  *
@@ -61,6 +63,11 @@ import {
   onBulletExpiredCatalyst,
   onWallContactCatalyst,
   onTickCatalyst,
+  onEnemyDamagedCatalyst,
+  onEnemyDeathCatalyst,
+  onLevelUpCatalyst,
+  onPowerupOfferCatalyst,
+  onPowerupPickedCatalyst,
 } from './catalystHooks.js';
 import { SIG_STRIKER_MARKSMAN } from './shipSignature.js';
 import {
@@ -112,7 +119,7 @@ export function survivedLethalBlow(
 }
 
 // ---------------------------------------------------------------------------
-// 앵커 9개 (S0: 전 분기 비어 있음)
+// 앵커 ①~⑨ (S0: 전 분기 비어 있음) — **플레이어 축**
 // ---------------------------------------------------------------------------
 
 /**
@@ -134,9 +141,12 @@ function dispatchVolleySkill(state: WorldState, player: Entity): void {
     //
     // ⚠️ **스트라이커는 여기 case 가 없다 — 누락이 아니라 미배선이다.** 이 앵커를 쓰는 설계
     // 항목은 S8「콤보 차폐」의 콤보 창 부분 회복(`comboTimer = min(comboTimer + 창/2, 창)`)
-    // 하나인데, 그 `창`(`COMBO_WINDOW_TICKS`)이 `world.ts` 의 **비공개 상수**라 leaf 에서 읽을
-    // 길이 없다. 값을 여기 다시 적으면 두 곳이 조용히 갈리므로 적지 않았다(S8 의 흡수 절반은
-    // 앵커 ⑧ 에 배선돼 있다). 푸는 방법은 그 상수를 leaf 로 옮기는 것이고, 그건 이 레인 밖이다.
+    // 하나다(S8 의 흡수 절반은 앵커 ⑧ 에 이미 배선돼 있다).
+    //
+    // **막고 있던 것은 S1 이 치웠다** — `COMBO_WINDOW_TICKS` 가 `world.ts` 의 비공개 상수라
+    // leaf 에서 읽을 길이 없었는데, 이제 `./constants.js` 에 있어 기체 모듈이 그대로 import
+    // 한다. 남은 것은 스트라이커 레인이 `case SIG_STRIKER_MARKSMAN:` 한 줄을 넣는 일뿐이다.
+    // (S1 은 **자리만** 만드는 커밋이라 효과를 넣지 않았다 — 값 복제는 여전히 금지다.)
     default:
       break;
   }
@@ -368,6 +378,240 @@ function dispatchSignatureStepSkill(
     case SIG_STRIKER_MARKSMAN:
       strikerSignatureStep(state, player); // S10 선체 증축(런 누적 XP 폴링)
       break;
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ⑩⑪ (S1: 전 분기 비어 있음) — **적 단위 사건**
+// ---------------------------------------------------------------------------
+//
+// 기존 앵커 9개는 전부 **플레이어 축**이다(발사·대시·피격·수거·벽·틱). 적 하나하나에 반응하는
+// 자리가 통째로 없어서, 스킬 5종(스트라이커 F6~F9 계열의 명중 처리)과 촉매 다수가 배선 불가로
+// 남아 있었다. 이 두 앵커가 그 축을 연다.
+
+/**
+ * 앵커 ⑩ — **적성 표적이 아군탄에 맞아 피해가 확정된 직후**.
+ *
+ * ## 언제 불리는가
+ * `resolveCollisions` 의 아군탄 명중 해소 루프에서, `t.hp -= dealt` 와 **격추/부활 판정이 끝난
+ * 직후**·원소 상태이상 부여보다 **앞**. 명중 하나당 정확히 한 번이고, 탄 하나가 한 틱에 여러
+ * 표적을 관통하면 표적 수만큼 불린다(경로 순서 = 진입 매개변수 오름차순).
+ *
+ * ## 무엇이 보장되는가
+ *  - `target.hp` 는 **이미 차감된 최종값**이고 `target.dead` 는 **이미 확정**이다. 즉 이 앵커
+ *    안에서 보는 생사가 그 틱의 진실이다 — 수호 기체 부활·코어 '최후의 재기동'·코어 실드 흡수가
+ *    전부 앞에서 해소됐다.
+ *  - `dmg` 는 **실제로 hp 에서 깎인 양**이다(과열 2배·관통 증폭·엘리트 피해 감소·방어 배율·
+ *    코어 실드 흡수를 전부 통과한 뒤). 코어 실드가 전량 흡수하면 **0 으로 불린다** — "맞았다"와
+ *    "깎였다"를 구분해야 하는 카드는 `dmg > 0` 을 스스로 봐라.
+ *  - `source` 는 **가해 아군탄 엔티티**다. 귀속 판정에 필요한 것이 여기 있다: `ownerId`
+ *    (`MISSILE_MARK`·`SPLIT_FRAGMENT_MARK` 등 파생탄 마커), `damage`(기본 피해), `phase`
+ *    (지금까지 관통한 횟수), `x`/`y`/`angle`. 타입이 `Entity | undefined` 인 것은 훗날 비-탄
+ *    피해원(해저드·DoT)이 같은 앵커를 타게 될 여지를 남기기 위함이다 — **지금은 항상 정의된다.**
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **`target.hp`/`target.dead` 를 되돌리지 마라.** 격추 판정은 이미 끝났다. 여기서 hp 를
+ *    올려도 `dead` 는 참인 채라 `compact` 이 그대로 수거하고, 반대로 hp 를 0 으로 만들어도
+ *    `dead` 가 거짓이면 죽지 않는다 — 둘 다 조용히 어긋난다. 처형·부활 축은 이 앵커가 아니다.
+ *  - ⚠️ **`state.entities` 에 스폰하지 마라.** 이 지점은 격자 순회(`grid.query`) 콜백 **바깥**
+ *    이지만 여전히 `for (const b of state.entities)` 순회 안이다. 스폰이 필요하면 `world.ts` 의
+ *    `splitSpawns`/`hiveSpawns` 처럼 좌표를 모아 루프 뒤에 뿌리는 형태여야 한다.
+ *  - **RNG 를 소비하지 마라**(공통 계약). 명중은 틱당 수백 건이라 한 칸만 밀려도 드랍·웨이브
+ *    스트림이 통째로 갈린다.
+ *
+ * ## ⚠️ 덮는 범위 — **아군탄 명중 경로 하나뿐**이다
+ * 적 hp 가 깎이는 지점은 실측 6곳인데, 이 앵커가 있는 곳은 그중 `world.ts` 의 명중 해소
+ * 하나다. 나머지 다섯은 전부 **leaf 모듈**이라 여기를 부르면 순환이 된다
+ * (`skillHooks → skills/striker → activeTypes` 가 이미 서 있다):
+ *   `activeTypes.ts:169`(액티브 폭발·F4 파편) · `status.ts:82`(화염 DoT) ·
+ *   `status.ts:111`(전격 연쇄) · `events.ts:66`(폭탄 기물) · `encounterDetour.ts:332`(격실 탄).
+ * "모든 피해"를 약속하는 카드는 이 앵커만으로 성립하지 않는다 — 화면과 규칙이 갈린다.
+ * (`world.ts:3661` 의 `w.hp -=` 는 **파괴가능 벽**이라 적이 아니다.)
+ *
+ * @param target 맞은 적성 표적. `enemy`·`boss`·`guardian`·`core`·`defenseBoss`·`destructible`·
+ *   `supply`·`prop`·침공 설비까지 **전부 온다**. 잡몹만 원하면 `target.kind === 'enemy'` 를 봐라.
+ * @param dmg 실제로 hp 에서 깎인 피해(0 일 수 있다)
+ * @param source 가해 아군탄
+ */
+export function onEnemyDamaged(
+  state: WorldState,
+  target: Entity,
+  dmg: number,
+  source: Entity | undefined,
+): void {
+  dispatchEnemyDamagedSkill(state, target, dmg, source);
+  onEnemyDamagedCatalyst(state, target, dmg, source);
+}
+
+function dispatchEnemyDamagedSkill(
+  state: WorldState,
+  target: Entity,
+  dmg: number,
+  source: Entity | undefined,
+): void {
+  if (!state.skillsOn) return;
+  void target;
+  void dmg;
+  void source;
+  switch (state.sigBit) {
+    // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다. S1 은 전 분기 비어 있다.
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 ⑪ — **잡몹 하나가 실제로 격추된 사건**. 앵커 ⑤(`onKillsDelta`)가 개수만 주는 것과 달리
+ * **격추 좌표**를 준다.
+ *
+ * ## 언제 불리는가
+ * `compact()` 안, 이번 틱에 `state.kills` 를 올린 적 **하나당 한 번**. 순서는
+ * `onEnemyDeath × N` → `onKillsDelta(N)` 이다(개별이 먼저, 집계가 나중).
+ *
+ * ## 무엇이 보장되는가
+ *  - 게이트는 `kind === 'enemy' && hp <= 0` 로 **`state.kills++` 와 완전히 같은 술어**다.
+ *    강제 스크롤 컬링(도망친 적, `hp > 0` 인 채 `dead`)은 처치가 아니므로 오지 않는다.
+ *    그래서 `onEnemyDeath` 호출 수의 합 = `onKillsDelta` 델타의 합이 **항등**이다.
+ *  - ⚠️ **좌표는 `compact` 의 생존자 루프 안에서 캡처하고, 통지는 배열 재구축이 끝난 뒤 한다.**
+ *    `compact()` 는 `state.entities = survivors` 로 배열을 갈아 끼우므로 죽은 엔티티는 그
+ *    시점 이후 어디서도 조회할 수 없다 — 통지 시점에 좌표를 읽으려 하면 원리적으로 불가능하다.
+ *    그렇다고 루프 **안**에서 부르면 훅이 스폰하는 순간 순회 중인 배열을 변형하게 된다
+ *    (`compact` 가 드랍·젬·파편을 전부 루프 뒤로 미룬 것과 같은 사유). 그래서 **캡처 시점과
+ *    통지 시점을 분리**했다.
+ *  - 통지 시점은 **확보(전리품·젬·보급 젬 스폰) 이후**다. 앵커 ⑤ 와 같은 성질이라, 이번 틱
+ *    드랍을 훅이 보려면 한 틱 늦는다 — 알려진 성질이지 결함이 아니다.
+ *  - `elite` 는 `isElite(e)`(= `kind === 'enemy' && pierce > 0`)를 격추 시점에 평가한 값이다.
+ *    전리품 게이트가 굴러간 그 판정과 **같은 값**이다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **죽은 엔티티를 넘기지 않는 것은 의도다.** 시체는 이미 `state.entities` 밖이라 거기에
+ *    쓴 값은 아무 데도 반영되지 않는다 — 조용한 무연산을 만들 여지 자체를 없앴다. 잡몹 종류·
+ *    어픽스 등 좌표 밖 정보가 필요해지면 캡처 지점(`compact` 의 루프)에서 인자를 늘려라.
+ *  - **RNG 를 소비하지 마라**(공통 계약). 드랍 롤이 바로 앞에서 `dropRng` 를 굴렸다.
+ *
+ * ## ⚠️ 보스·코어 격파는 이 앵커가 **아니다**
+ * `compact` 의 보스/코어 분기는 `state.kills` 를 올리지 않는다(승리 판정·전리품 축이다).
+ * 그 사건이 필요하면 별도 앵커를 뚫어라 — 여기에 끼워 넣으면 처치 수와 호출 수의 항등이 깨진다.
+ *
+ * @param x 격추 좌표 x (`compact` 루프 안에서 캡처)
+ * @param y 격추 좌표 y
+ * @param elite 그 적이 엘리트였는가
+ */
+export function onEnemyDeath(state: WorldState, x: number, y: number, elite: boolean): void {
+  dispatchEnemyDeathSkill(state, x, y, elite);
+  onEnemyDeathCatalyst(state, x, y, elite);
+}
+
+function dispatchEnemyDeathSkill(
+  state: WorldState,
+  x: number,
+  y: number,
+  elite: boolean,
+): void {
+  if (!state.skillsOn) return;
+  void x;
+  void y;
+  void elite;
+  switch (state.sigBit) {
+    // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다. S1 은 전 분기 비어 있다.
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ⑫⑬⑭ (S1: 전 분기 비어 있음) — **성장 축**
+// ---------------------------------------------------------------------------
+
+/**
+ * 앵커 ⑫ — **레벨이 오른 직후**(`checkLevelUp`).
+ *
+ * ## 무엇이 보장되는가
+ *  - `state.level` 은 **이미 증가**했고 `state.xp` 는 **임계만큼 차감**됐다. `level` 인자는
+ *    올라간 뒤의 값이다.
+ *  - 파워업 3택이 이미 뽑혀 `state.powerupChoices` 에 실려 있고 `pendingLevelUp` 이 참이다.
+ *    즉 이 앵커 뒤로 sim 은 **선택 입력이 올 때까지 정지**한다(레벨업 프리즈).
+ *  - `checkLevelUp` 은 `pendingLevelUp` 이면 즉시 반환하므로 **틱당 최대 1레벨**이다. XP 를 한
+ *    번에 많이 얻어도 이 앵커가 한 틱에 두 번 불리는 일은 없다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **`state.xp` 를 올려 다단 레벨업을 유도하지 마라.** 프리즈 구조상 다음 레벨은 픽이
+ *    소비된 뒤에야 열린다 — 여기서 xp 를 부풀리면 픽 한 번에 여러 레벨이 몰려 파워업 개수와
+ *    레벨 수가 어긋난다.
+ *  - **RNG 를 소비하지 마라**(공통 계약). `drawPowerupChoices` 가 바로 앞에서 굴렸다.
+ */
+export function onLevelUp(state: WorldState, level: number): void {
+  dispatchLevelUpSkill(state, level);
+  onLevelUpCatalyst(state, level);
+}
+
+function dispatchLevelUpSkill(state: WorldState, level: number): void {
+  if (!state.skillsOn) return;
+  void level;
+  switch (state.sigBit) {
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 ⑬ — **파워업 3택이 제시된 직후**(`checkLevelUp` 의 마지막). 앵커 ⑫ **바로 뒤**에 불린다.
+ *
+ * @param choices 제시된 파워업 풀 인덱스. **읽기 전용**이다 — 선택지를 바꾸려면
+ *   `state.powerupChoices` 를 직접 갈아 끼워야 하고, 그때 재추첨은 금지다(`powerupRng` 가 이미
+ *   소비된 뒤라 다시 굴리면 같은 시드의 전개가 통째로 밀린다).
+ *
+ * ⚠️ 3개 고정이 아니다 — 유니크 ⑬「도박사의 칩」이면 4개다. 길이를 상수로 가정하지 마라.
+ */
+export function onPowerupOffer(state: WorldState, choices: readonly number[]): void {
+  dispatchPowerupOfferSkill(state, choices);
+  onPowerupOfferCatalyst(state, choices);
+}
+
+function dispatchPowerupOfferSkill(state: WorldState, choices: readonly number[]): void {
+  if (!state.skillsOn) return;
+  void choices;
+  switch (state.sigBit) {
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 ⑭ — **파워업이 실제로 적용된 직후**(레벨업 프리즈 해제 틱).
+ *
+ * ## 무엇이 보장되는가
+ *  - `applyPowerup` 이 이미 끝났다(스탯이 반영된 뒤다). `pendingLevelUp` 은 거짓이고
+ *    `state.powerupChoices` 는 이미 비워졌다 — 그래서 `poolIndex` 를 인자로 넘긴다.
+ *  - **범위 밖 선택 프레임에는 불리지 않는다.** 제시 개수보다 큰 인덱스가 오면 sim 은 픽을
+ *    소비하지 않고 프리즈를 유지하는데(악성 프레임이 빌드 선택을 건너뛰지 못하게 하는 가드),
+ *    이 앵커는 그 가드 **안쪽**에 있다.
+ *  - 이 틱은 **프리즈 틱**이다 — `stepWorld` 가 `state.tick++` 만 하고 즉시 반환하므로 적·탄·
+ *    충돌이 한 칸도 움직이지 않는다. 여기서 세운 값이 다음 틱 전에 소비되리라 가정하지 마라.
+ *
+ * @param poolIndex 적용된 파워업의 **풀 인덱스**(제시 순번이 아니다)
+ * @param offeredIndex 그것이 몇 번째 선택지였는가(0-based, 입력 프레임의 2비트)
+ */
+export function onPowerupPicked(
+  state: WorldState,
+  poolIndex: number,
+  offeredIndex: number,
+): void {
+  dispatchPowerupPickedSkill(state, poolIndex, offeredIndex);
+  onPowerupPickedCatalyst(state, poolIndex, offeredIndex);
+}
+
+function dispatchPowerupPickedSkill(
+  state: WorldState,
+  poolIndex: number,
+  offeredIndex: number,
+): void {
+  if (!state.skillsOn) return;
+  void poolIndex;
+  void offeredIndex;
+  switch (state.sigBit) {
     default:
       break;
   }

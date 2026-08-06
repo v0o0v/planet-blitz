@@ -19,7 +19,15 @@
 
 import { SeededRng } from './rng.js';
 import { cos, sin, atan2, length, TWO_PI, wrapAngle } from './math.js';
-import { DT, VIEW_WIDTH, VIEW_HEIGHT, OFFSCREEN_X, FIRE_CD_Q, FIRE_CD_MIN_Q } from './constants.js';
+import {
+  DT,
+  VIEW_WIDTH,
+  VIEW_HEIGHT,
+  OFFSCREEN_X,
+  FIRE_CD_Q,
+  FIRE_CD_MIN_Q,
+  COMBO_WINDOW_TICKS,
+} from './constants.js';
 import type { PlanetMode } from './planetMode.js';
 // 타입 전용 import 다 — `verbatimModuleSyntax` 로 런타임에 완전히 지워지므로 sim → run 런타임
 // 의존이 생기지 않는다(Deno 검증 경로가 `src/sim` 을 소스 그대로 import 하는 계약에 무영향).
@@ -151,7 +159,7 @@ import { cloakEntryCrossed, cloakExitCrossed, fireCloakEntry, setBreakToken } fr
 import { shipTypeDef, DEFAULT_SHIP_TYPE } from '../../data/ships/index.js';
 import { hasAnyInvestment } from '../items/skills.js';
 import { createSkillSlots } from './skillSlots.js';
-// 210스킬 앵커 9개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
+// 210스킬 앵커 11개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
 import {
   survivedLethalBlow,
   onVolleyFired,
@@ -163,6 +171,11 @@ import {
   onWallContact,
   onDamageChain,
   onSignatureStep,
+  onEnemyDamaged,
+  onEnemyDeath,
+  onLevelUp,
+  onPowerupOffer,
+  onPowerupPicked,
 } from './skillHooks.js';
 import { onDamageChainCatalyst } from './catalystHooks.js';
 import { createCatalystSlots } from './catalystSlots.js';
@@ -374,8 +387,9 @@ export { SPECIAL_ACTIVE_SLOT1, SPECIAL_ACTIVE_SLOT2, activeSlotBit } from '../..
 
 // --- Progression / feel tuning (M1 prototype values; spec fixes only the
 //     structure — combo cap x1.5, 20s supply window, boss 3-phase/overheat). ---
-/** Ticks a combo survives without a pickup before it resets. */
-const COMBO_WINDOW_TICKS = 120;
+// `COMBO_WINDOW_TICKS`(콤보 창)는 **`./constants.js` 로 옮겼다**(S1). 이 파일의 비공개 상수인
+// 동안에는 `src/sim/skills/*` 가 읽을 수 없어 스트라이커 S8 의 콤보 창 회복이 미배선이었다.
+// 여기 다시 적지 마라 — 정본이 둘이 되면 조용히 갈린다.
 /** Multiplier gained per stacked pickup. */
 const COMBO_STEP = 0.05;
 /** Stacks at which the multiplier reaches its x1.5 cap (spec). */
@@ -1673,6 +1687,9 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
         if (poolIndex !== undefined) applyPowerup(state, poolIndex);
         state.pendingLevelUp = false;
         state.powerupChoices = [];
+        // 앵커 ⑭(S1) — 픽이 **실제로 소비된** 뒤. 범위 밖 인덱스 가드 **안쪽**이라, 프리즈를
+        // 유지한 채 버려지는 악성 프레임에는 불리지 않는다.
+        if (poolIndex !== undefined) onPowerupPicked(state, poolIndex, idxOffered);
       }
     }
     state.tick++;
@@ -4001,6 +4018,11 @@ function resolveCollisions(state: WorldState, player: Entity): void {
           }
         }
       }
+      // 앵커 ⑩(S1) — **피해 확정 + 격추/부활 판정 직후**. 여기여야 `t.hp`·`t.dead` 가 그 틱의
+      // 진실이고, 원소 상태이상·과열·분열 같은 *명중 부가효과*보다 앞이라 훅이 그것들의 전제를
+      // 못 바꾼다. `dealt` 는 실제 차감량이고 `b` 는 가해탄이다(`ownerId` 로 파생탄을 가른다).
+      // ⚠️ 이 지점은 `for (const b of state.entities)` 순회 안이다 — 훅에서 스폰하지 마라.
+      onEnemyDamaged(state, t, dealt, b);
       // M3 원소 상태이상(plan B4): 적 명중 시 화염/냉기/전격 부여(장착 시에만).
       if (elementalOn && t.kind === 'enemy') {
         if (fireDmg > 0) applyBurn(t, fireDmg, FIRE_DURATION);
@@ -4456,6 +4478,11 @@ function compact(state: WorldState): void {
   // survivor array is rebuilt so we never mutate `state.entities` mid-iteration.
   const lootDrops: { x: number; y: number; seed: number; rarity: number }[] = [];
   const splitElites: Entity[] = [];
+  // 앵커 ⑪(S1)의 **캡처 버퍼**. 격추 좌표는 여기서 잡고 통지는 배열 재구축 뒤에 한다 —
+  // 시체는 `state.entities = survivors` 이후 어디서도 조회할 수 없고(그래서 캡처가 여기여야
+  // 한다), 루프 안에서 통지하면 훅이 순회 중인 배열을 변형할 수 있다(그래서 통지는 뒤여야 한다).
+  // 드랍·젬·파편이 전부 같은 이유로 루프 뒤로 미뤄져 있다.
+  const enemyDeaths: { x: number; y: number; elite: boolean }[] = [];
   const stage = state.config.stage ?? 1;
   const planet = state.config.planet ?? 0;
   // 이 compact에서 보스가 죽어 승리가 확정됐는지. 승리 tick에는 다음 stepWorld가
@@ -4486,9 +4513,14 @@ function compact(state: WorldState): void {
       if (ocKill) state.overchargeKills++; // 사연 관측(비-해시): 과충전 활성 중 처치.
       const def = enemyDefFor(e);
       drops.push({ x: e.x, y: e.y, xp: def?.xpValue ?? 1 });
+      // 앵커 ⑪ 캡처 — 게이트가 `state.kills++` 와 **같은 술어**라 호출 수 합 = 처치 델타 합이다.
+      // `isElite` 는 순수 술어(`kind==='enemy' && pierce>0`)이므로 아래 전리품 게이트와 같은 값을
+      // 보고, 두 번 부르지 않도록 한 번만 평가한다(거동 동일).
+      const eIsElite = isElite(e);
+      enemyDeaths.push({ x: e.x, y: e.y, elite: eIsElite });
       // Elites are the only rank-and-file loot source (GDD §3); a 분열하는 elite
       // additionally bursts fragments on death (B4).
-      if (isElite(e)) {
+      if (eIsElite) {
         // 엘리트 드랍은 **확정이 아니라 확률**이다(ADR-0035). eliteDropChance 가 eliteCount 에
         // 반비례해 런당 기대 수량을 고정하므로, 적 곡선 레인이 eliteCount 를 움직여도 인벤
         // 유입은 그대로다. 게이트 실패면 등급 롤 자체를 하지 않는다(드랍이 없으면 등급도 없다).
@@ -4587,6 +4619,10 @@ function compact(state: WorldState): void {
   // 앵커 ⑤(S0) — 처치가 실제로 늘어난 틱에만. **확보(전리품·젬 스폰) 이후**라 스킬이 이번 틱
   // 드랍을 보려면 한 틱 늦는다(알려진 성질 — 니플헤임 레인이 같은 형태를 실측해 뒀다).
   const killsDelta = state.kills - killsBefore;
+  // 앵커 ⑪(S1) 통지 — **개별이 먼저, 집계가 나중**. 배열 재구축·확보가 전부 끝난 뒤라 훅이
+  // 스폰해도 안전하다. 캡처 게이트가 `state.kills++` 와 같은 술어이므로
+  // `enemyDeaths.length === killsDelta` 가 항등이다(`skillAnchors.test.ts` 가 잠근다).
+  for (const d of enemyDeaths) onEnemyDeath(state, d.x, d.y, d.elite);
   if (killsDelta > 0) onKillsDelta(state, killsDelta);
 }
 
@@ -4620,6 +4656,11 @@ function checkLevelUp(state: WorldState): void {
   const choiceCount = gambleOn ? 3 + GAMBLER_EXTRA_CHOICES : 3;
   state.powerupChoices = drawPowerupChoices(state, choiceCount);
   state.pendingLevelUp = true;
+  // 앵커 ⑫⑬(S1) — **레벨 증가 → 3택 제시** 순서로, 둘 다 상태가 완전히 선 뒤에 불린다.
+  // 여기가 함수 말미인 것은 의도다: 앞쪽(레벨 증가 직후)에 두면 훅이 `drawPowerupChoices` 의
+  // 전제를 바꿀 수 있고, 그 함수는 `powerupRng` 를 굴리므로 스트림이 밀린다.
+  onLevelUp(state, state.level);
+  onPowerupOffer(state, state.powerupChoices);
 }
 
 function checkGameOver(state: WorldState, player: Entity): void {

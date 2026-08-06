@@ -24,7 +24,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 /** 앵커별 호출 횟수. `vi.mock` 팩토리가 모듈 평가보다 먼저 도므로 `vi.hoisted` 로 올린다. */
-const hoisted = vi.hoisted(() => ({ calls: {} as Record<string, number> }));
+const hoisted = vi.hoisted(() => ({
+  calls: {} as Record<string, number>,
+  /** 앵커 ⑪ 이 받은 인자 기록 — **좌표가 실제로 실려 오는가**를 재려면 횟수만으로는 부족하다. */
+  deaths: [] as { x: number; y: number; elite: boolean }[],
+}));
 
 vi.mock('../src/sim/skillHooks.js', async (orig) => {
   const actual = await orig<typeof import('../src/sim/skillHooks.js')>();
@@ -37,6 +41,13 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
     const fn = value as (...args: unknown[]) => unknown;
     wrapped[name] = (...args: unknown[]): unknown => {
       hoisted.calls[name] = (hoisted.calls[name] ?? 0) + 1;
+      if (name === 'onEnemyDeath') {
+        hoisted.deaths.push({
+          x: args[1] as number,
+          y: args[2] as number,
+          elite: args[3] as boolean,
+        });
+      }
       // **원본을 그대로 태운다** — 감싸기가 거동을 바꾸면 이 파일이 재는 것이 프로덕션이 아니게 된다.
       return fn(...args);
     };
@@ -44,11 +55,14 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
   return wrapped;
 });
 
-const { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } = await import('../src/sim/world.js');
+const { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG, SPECIAL_POWERUP_PICK } = await import(
+  '../src/sim/world.js'
+);
 const { blankEntity, addEntity, spawnBullet, spawnGem, spawnWall } = await import(
   '../src/sim/entities.js'
 );
 const { DT } = await import('../src/sim/constants.js');
+const { hashWorld } = await import('../src/sim/replay.js');
 type WorldState = import('../src/sim/world.js').WorldState;
 type InputFrame = import('../src/sim/world.js').InputFrame;
 type Entity = import('../src/sim/entities.js').Entity;
@@ -84,6 +98,7 @@ function plantEnemy(state: WorldState, x: number, y: number, damage = 0): Entity
 
 beforeEach(() => {
   for (const k of Object.keys(hoisted.calls)) delete hoisted.calls[k];
+  hoisted.deaths = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -91,16 +106,21 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('앵커 9개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 11개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
         'onBulletExpired',
         'onDamageChain',
         'onDashFired',
+        'onEnemyDamaged', // S1
+        'onEnemyDeath', // S1
         'onGemCollected',
         'onKillsDelta',
+        'onLevelUp', // S1
         'onPlayerDamaged',
+        'onPowerupOffer', // S1
+        'onPowerupPicked', // S1
         'onSignatureStep',
         'onVolleyFired',
         'onWallContact',
@@ -285,5 +305,197 @@ describe('앵커 ⑥ onBulletExpired — 관통 예산 소진', () => {
     spawnBullet(s, STAGE_X, 0, Math.PI, 250 / DT, 100, 0, 5, 120, -1, 0);
     stepWorld(s, idle);
     expect(count('onBulletExpired')).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 앵커 ⑩⑪ (S1) — 적 단위 축
+// ---------------------------------------------------------------------------
+
+describe('앵커 ⑩ onEnemyDamaged — 아군탄 명중으로 피해가 확정된 지점', () => {
+  /** 앵커 ⑥ 절과 같은 근거의 무대 좌표 — 오토어택 사거리 밖, 탄 컬링 반경 안. */
+  const STAGE_X = 1980;
+
+  it('아군탄이 적에 명중하면 불린다', () => {
+    const s = skilled(0xa001);
+    plantEnemy(s, STAGE_X - 60, 0);
+    spawnBullet(s, STAGE_X, 0, Math.PI, 250 / DT, 100, 0, 5, 120, -1, 0);
+    stepWorld(s, idle);
+    expect(count('onEnemyDamaged')).toBe(1);
+  });
+
+  it('음성 대조 ①: 명중하지 않고 날아가는 탄은 0 이다', () => {
+    const s = skilled(0xa001);
+    spawnBullet(s, STAGE_X, 0, Math.PI, 250 / DT, 100, 0, 5, 120, -1, 0);
+    stepWorld(s, idle);
+    expect(count('onEnemyDamaged')).toBe(0);
+  });
+
+  it('음성 대조 ②: 아군탄이 없는 첫 틱에는 0 이다 (적이 서 있어도)', () => {
+    // 적은 사거리(1650) 밖에 세운다 — 그러지 않으면 플레이어 자기 볼리가 계측을 오염시킨다.
+    const s = skilled(0xa002);
+    plantEnemy(s, STAGE_X, 0);
+    stepWorld(s, idle);
+    expect(count('onEnemyDamaged')).toBe(0);
+  });
+
+  it('관통탄은 한 틱에 맞춘 표적 수만큼 불린다 (명중 단위이지 탄 단위가 아니다)', () => {
+    const s = skilled(0xa003);
+    plantEnemy(s, STAGE_X - 40, 0);
+    plantEnemy(s, STAGE_X - 90, 0);
+    // pierce 를 넉넉히 줘 앞 표적에서 소멸하지 않게 한다.
+    spawnBullet(s, STAGE_X, 0, Math.PI, 250 / DT, 100, 5, 5, 120, -1, 0);
+    stepWorld(s, idle);
+    expect(count('onEnemyDamaged')).toBe(2);
+  });
+});
+
+describe('앵커 ⑪ onEnemyDeath — 격추 하나당 한 번 · 좌표 포함', () => {
+  it('처치가 생기면 격추당 한 번 불리고 좌표가 실려 온다', () => {
+    const s = skilled(0xa004);
+    const e = plantEnemy(s, 600, 600);
+    e.hp = 0;
+    e.dead = true;
+    stepWorld(s, idle);
+    expect(count('onEnemyDeath')).toBe(1);
+    const d = hoisted.deaths[0];
+    if (d === undefined) throw new Error('격추 인자 기록 없음');
+    // 좌표가 **실제 격추 지점**에서 왔다는 것을 잰다(0 이나 undefined 가 아니다). `compact` 이
+    // 생존자 배열을 갈아 끼운 뒤에 통지하므로, 캡처를 루프 밖으로 옮기면 여기가 먼저 빨개진다.
+    expect(Math.abs(d.x - 600)).toBeLessThan(400);
+    expect(Math.abs(d.y - 600)).toBeLessThan(400);
+    expect(d.elite).toBe(false);
+  });
+
+  it('엘리트 격추는 `elite` 가 참으로 온다', () => {
+    const s = skilled(0xa005);
+    const e = plantEnemy(s, 600, 600);
+    e.pierce = 1; // `isElite` 의 정의(kind==='enemy' && pierce>0)
+    e.hp = 0;
+    e.dead = true;
+    stepWorld(s, idle);
+    expect(hoisted.deaths.some((d) => d.elite)).toBe(true);
+  });
+
+  it('⚠️ 호출 수 = 처치 델타 (앵커 ⑤ 와 같은 술어라는 항등)', () => {
+    const s = skilled(0xa006);
+    for (const [x, y] of [
+      [600, 600],
+      [700, 600],
+      [800, 600],
+    ]) {
+      const e = plantEnemy(s, x as number, y as number);
+      e.hp = 0;
+      e.dead = true;
+    }
+    const killsBefore = s.kills;
+    stepWorld(s, idle);
+    expect(count('onEnemyDeath')).toBe(s.kills - killsBefore);
+    expect(count('onEnemyDeath')).toBe(3);
+    expect(count('onKillsDelta')).toBe(1); // 집계는 여전히 틱당 한 번이다
+  });
+
+  it('음성 대조 ①: 처치가 없는 틱에는 0 이다 (`compact` 은 매 틱 도는데도)', () => {
+    const s = skilled(0xa007);
+    stepWorld(s, idle);
+    expect(count('onEnemyDeath')).toBe(0);
+  });
+
+  it('음성 대조 ②: hp 가 남은 채 컬링된 적(도망)은 격추가 아니다', () => {
+    // `state.kills++` 와 같은 술어(`hp <= 0`)를 쓰는지 재는 판별식이다. `dead` 만 보고 통지하는
+    // 구현이면 여기가 빨개진다 — 강제 스크롤에 밀려 사라진 적이 공짜 처치가 된다.
+    const s = skilled(0xa008);
+    const e = plantEnemy(s, 600, 600);
+    e.dead = true; // hp 는 1_000_000 그대로
+    const killsBefore = s.kills;
+    stepWorld(s, idle);
+    expect(s.kills).toBe(killsBefore);
+    expect(count('onEnemyDeath')).toBe(0);
+  });
+});
+
+describe('앵커 ⑫⑬⑭ onLevelUp · onPowerupOffer · onPowerupPicked — 성장 축', () => {
+  it('XP 가 임계를 넘은 틱에 ⑫⑬ 이 각각 한 번 불린다', () => {
+    const s = skilled(0xa00a);
+    s.xp = 1_000_000; // 임계를 확실히 넘긴다
+    const levelBefore = s.level;
+    stepWorld(s, idle);
+    expect(s.level).toBe(levelBefore + 1);
+    expect(s.pendingLevelUp).toBe(true);
+    expect(count('onLevelUp')).toBe(1);
+    expect(count('onPowerupOffer')).toBe(1);
+  });
+
+  it('음성 대조: XP 가 모자란 틱에는 ⑫⑬ 이 0 이다', () => {
+    const s = skilled(0xa00b);
+    stepWorld(s, idle);
+    expect(count('onLevelUp')).toBe(0);
+    expect(count('onPowerupOffer')).toBe(0);
+  });
+
+  it('⚠️ XP 가 아무리 많아도 한 틱에 한 번뿐이다 (프리즈가 다단 레벨업을 막는다)', () => {
+    const s = skilled(0xa00c);
+    s.xp = 1_000_000;
+    stepWorld(s, idle);
+    stepWorld(s, idle); // 프리즈 틱 — `checkLevelUp` 은 도달조차 하지 않는다
+    expect(count('onLevelUp')).toBe(1);
+  });
+
+  it('픽 프레임이 오면 ⑭ 가 불린다', () => {
+    const s = skilled(0xa00d);
+    s.xp = 1_000_000;
+    stepWorld(s, idle);
+    expect(s.powerupChoices.length).toBeGreaterThan(0);
+    stepWorld(s, { ...idle, special: SPECIAL_POWERUP_PICK });
+    expect(s.pendingLevelUp).toBe(false);
+    expect(count('onPowerupPicked')).toBe(1);
+  });
+
+  it('음성 대조 ①: 프리즈 중 픽 프레임이 없으면 ⑭ 가 0 이다', () => {
+    const s = skilled(0xa00e);
+    s.xp = 1_000_000;
+    stepWorld(s, idle);
+    stepWorld(s, idle);
+    expect(s.pendingLevelUp).toBe(true);
+    expect(count('onPowerupPicked')).toBe(0);
+  });
+
+  it('⚠️ 음성 대조 ②: 범위 밖 선택 인덱스는 ⑭ 를 부르지 않는다 (가드 안쪽에 있다)', () => {
+    // 3택(도박사의 칩 없음)에 4번째(index 3)를 고르는 악성 프레임. sim 은 픽을 소비하지 않고
+    // 프리즈를 유지한다 — 앵커가 가드 **밖**에 있으면 여기가 빨개진다.
+    const s = skilled(0xa00f);
+    s.xp = 1_000_000;
+    stepWorld(s, idle);
+    expect(s.powerupChoices.length).toBe(3);
+    stepWorld(s, { ...idle, special: SPECIAL_POWERUP_PICK | (3 << 1) });
+    expect(s.pendingLevelUp).toBe(true);
+    expect(count('onPowerupPicked')).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S1 거동 불변 — **신규 앵커가 실제로 불린 런**에서 재는 것이 핵심이다
+// ---------------------------------------------------------------------------
+
+describe('S1 앵커는 거동을 바꾸지 않는다', () => {
+  it('앵커가 도는 240틱 런 두 개가 같은 해시다', () => {
+    // 240틱을 돌려 오토어택이 웨이브 적을 실제로 때리고 죽이게 한다 — "앵커가 한 번도 안 불린
+    // 런에서 해시가 같다"는 아무것도 증명하지 못하므로, 아래 두 단언이 **전제 확인**이다.
+    const a = skilled(0xa009);
+    const b = skilled(0xa009);
+    for (let t = 0; t < 240; t++) {
+      stepWorld(a, idle);
+      stepWorld(b, idle);
+    }
+    expect(count('onEnemyDamaged'), '이 런은 명중이 없어 앵커 ⑩ 을 못 쟀다').toBeGreaterThan(0);
+    expect(count('onEnemyDeath'), '이 런은 처치가 없어 앵커 ⑪ 을 못 쟀다').toBeGreaterThan(0);
+    expect(hashWorld(a)).toBe(hashWorld(b));
+  });
+
+  it('⚠️ 이 절이 못 잡는 것: "예전 코드와 같은 해시인가"', () => {
+    // 위는 **상대 비교**라, 앵커가 거동을 바꾸는 구현도 두 런이 똑같이 바뀌면 통과한다.
+    // 절대 판정은 골든 픽스처(`pnpm test:sim`)가 진다 — 리드가 돌린다.
+    // 이 커밋이 낼 수 있는 나머지 근거는 **전 분기가 비어 있다**는 구조적 사실이다.
+    expect(true).toBe(true);
   });
 });

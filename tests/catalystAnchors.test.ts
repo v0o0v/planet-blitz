@@ -68,8 +68,11 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
   return wrapped;
 });
 
-const { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } = await import('../src/sim/world.js');
-const { blankEntity, addEntity, spawnGem } = await import('../src/sim/entities.js');
+const { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG, SPECIAL_POWERUP_PICK } = await import(
+  '../src/sim/world.js'
+);
+const { blankEntity, addEntity, spawnGem, spawnBullet } = await import('../src/sim/entities.js');
+const { DT } = await import('../src/sim/constants.js');
 type WorldState = import('../src/sim/world.js').WorldState;
 type InputFrame = import('../src/sim/world.js').InputFrame;
 type Entity = import('../src/sim/entities.js').Entity;
@@ -115,7 +118,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('촉매 디스패치 9개가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('촉매 디스패치 11개가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/catalystHooks.js');
     for (const name of [
       'onVolleyFiredCatalyst',
@@ -127,6 +130,11 @@ describe('계측 이음매', () => {
       'onWallContactCatalyst',
       'onDamageChainCatalyst',
       'onTickCatalyst',
+      'onEnemyDamagedCatalyst', // S1
+      'onEnemyDeathCatalyst', // S1
+      'onLevelUpCatalyst', // S1
+      'onPowerupOfferCatalyst', // S1
+      'onPowerupPickedCatalyst', // S1
     ]) {
       expect(typeof (mod as Record<string, unknown>)[name], name).toBe('function');
     }
@@ -174,6 +182,57 @@ describe('촉매 디스패치가 스킬 앵커와 같은 지점에서 불린다'
     stepWorld(s, idle);
     expect(count('onDamageChainCatalyst')).toBe(0);
     expect(count('onPlayerDamagedCatalyst')).toBe(0);
+  });
+
+  it('S1 앵커 ⑩: 아군탄이 적에 명중하면 `onEnemyDamagedCatalyst` 가 불린다', () => {
+    const s = withCatalyst(0xca09);
+    // 오토어택 사거리(1650) 밖 · 탄 컬링 반경 안 — 플레이어 자기 볼리가 계측을 오염시키지 않게.
+    plantEnemy(s, 1920, 0);
+    spawnBullet(s, 1980, 0, Math.PI, 250 / DT, 100, 0, 5, 120, -1, 0);
+    stepWorld(s, idle);
+    expect(count('onEnemyDamagedCatalyst')).toBe(1);
+  });
+
+  it('음성 대조: 명중이 없는 틱에는 `onEnemyDamagedCatalyst` 가 0 이다', () => {
+    const s = withCatalyst(0xca0a);
+    plantEnemy(s, 1920, 0);
+    stepWorld(s, idle);
+    expect(count('onEnemyDamagedCatalyst')).toBe(0);
+  });
+
+  it('S1 앵커 ⑪: 격추가 생기면 `onEnemyDeathCatalyst` 가 격추당 한 번 불린다', () => {
+    const s = withCatalyst(0xca0b);
+    const e = plantEnemy(s, 600, 600);
+    e.hp = 0;
+    e.dead = true;
+    stepWorld(s, idle);
+    expect(count('onEnemyDeathCatalyst')).toBe(1);
+    expect(count('onKillsDeltaCatalyst')).toBe(1);
+  });
+
+  it('음성 대조: 격추가 없는 틱에는 `onEnemyDeathCatalyst` 가 0 이다', () => {
+    const s = withCatalyst(0xca0c);
+    stepWorld(s, idle);
+    expect(count('onEnemyDeathCatalyst')).toBe(0);
+  });
+
+  it('S1 앵커 ⑫⑬⑭: 레벨업 → 3택 제시 → 픽 소비가 각각 한 번씩 불린다', () => {
+    const s = withCatalyst(0xca0d);
+    s.xp = 1_000_000;
+    stepWorld(s, idle);
+    expect(count('onLevelUpCatalyst')).toBe(1);
+    expect(count('onPowerupOfferCatalyst')).toBe(1);
+    expect(count('onPowerupPickedCatalyst')).toBe(0); // 아직 픽 전
+    stepWorld(s, { ...idle, special: SPECIAL_POWERUP_PICK });
+    expect(count('onPowerupPickedCatalyst')).toBe(1);
+  });
+
+  it('음성 대조: 레벨업이 없는 틱에는 ⑫⑬⑭ 이 전부 0 이다', () => {
+    const s = withCatalyst(0xca0e);
+    stepWorld(s, idle);
+    expect(count('onLevelUpCatalyst')).toBe(0);
+    expect(count('onPowerupOfferCatalyst')).toBe(0);
+    expect(count('onPowerupPickedCatalyst')).toBe(0);
   });
 
   it('⚠️ 무촉매 런에서도 **호출은 일어난다** — 게이트는 함수 안에 있다', () => {
