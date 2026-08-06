@@ -91,6 +91,7 @@ import {
   hatchlingEnemyDamaged,
   hatchlingBroodLaunchParams,
   hatchlingBroodLaunched,
+  hatchlingTurretShotParams,
 } from './skills/hatchling.js';
 import {
   strikerDashFired,
@@ -1287,6 +1288,11 @@ export function onFilmBurst(state: WorldState, x: number, y: number): void {
 // ## ⚠️ 촉매 짝이 없다 — ⑮·⑰~㉑ 과 같다
 // 출격은 **해츨링 시그니처 고유 사건**이라 촉매 48종에 대응 카드가 없다. 빈 촉매 함수를 미리
 // 두지 마라.
+//
+// ## ⚠️ 이 둘만으로는 BD10 이 반쪽이었다 — **㉖ 이 세 번째 축**이다
+// 상한 −1 은 ㉓ 이고 수명 가산은 ㉔ 인데 **탄 피해 배율**은 포탑 루프 소관이라 둘 다 안 닿아,
+// 앞 레인이 BD10 을 통째로 미배선으로 남겼다(상한만 깎으면 순손해). W2 가 세운 앵커 ㉖
+// (`onTurretShotParams`, 이 파일 말미)이 그 축이다 — **셋을 함께 봐야 BD10 이 성립한다.**
 
 /**
  * 앵커 ⑯ 이 넘기는 **이번 볼리의 파라미터 한 벌**. 훅이 제자리에서 고친다.
@@ -2106,11 +2112,12 @@ export function onBroodLaunchParams(
  *  - ⚠️ **`chick.ownerId` 를 바꾸지 마라** — `BROOD_MARK` 가 곧 상한 계수의 정의이고
  *    `isGimmick` 컬링 제외의 근거다.
  *
- * ## ⚠️ 이 앵커로도 안 열리는 것
+ * ## ⚠️ 이 앵커로도 안 열리는 것 — ✅ **㉖ 이 열었다(W2)**
  * BD10 「여왕 사출」의 **탄 피해 배율**은 여기 없다. 병아리의 사격은 `stepTurrets`/
  * `fireTurretShot` 이 매 틱 정하고 개체에 피해 필드가 없어서, 태어난 순간에 실을 자리가
- * 없다(수명 가산은 `chick.life` 로 여기서 가능하다). 그 축은 포탑 루프에 앵커가 서야 열린다
- * — `skills/hatchling.ts` 헤더 사유 2묶음과 같은 지점이다.
+ * 없다(수명 가산은 `chick.life` 로 여기서 가능하고, **BD10 의 그 축은 실제로 여기 있다**).
+ * 그 축은 포탑 루프에 앵커가 서야 열린다 — 이 파일 말미의 **앵커 ㉖ `onTurretShotParams`**
+ * 가 그것이다. 위 문장은 *왜 ㉔ 로는 안 되는가* 의 기록으로 남긴다(지금도 참이다).
  */
 export function onBroodLaunched(state: WorldState, player: Entity, chick: Entity): void {
   if (!state.skillsOn) return;
@@ -2118,6 +2125,100 @@ export function onBroodLaunched(state: WorldState, player: Entity, chick: Entity
     // 배선 레인은 자기 `case SIG_HATCHLING_BROOD:` 를 여기에 넣는다. **`break;` 필수**(위와 같음).
     case SIG_HATCHLING_BROOD:
       hatchlingBroodLaunched(state, player, chick);
+      break;
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉖ (W2) — **포탑 사격 지점**(`world.ts` 의 `fireTurretShot`)
+// ---------------------------------------------------------------------------
+//
+//   ㉖ onTurretShotParams — 포탑탄 1발의 파라미터가 정해지는 지점(표적 확정 **뒤** ·
+//                           `spawnBullet` **앞**). 해츨링 BD10 의 탄 피해 배율.
+//
+// `skills/hatchling.ts` 헤더 사유 2묶음(「포탑 루프 소관 — 6종」)과 앵커 ㉔ doc 말미의
+// 「이 앵커로도 안 열리는 것」이 가리키던 그 지점이다. BD10 은 상한 −1(㉓) · 수명 가산(㉔) ·
+// **탄 피해 배율(㉖)** 의 3축인데 셋째가 없어 *"−1기를 내주고 정예화는 안 받는"* 순손해라
+// 앞 레인이 통째로 미배선으로 남겼다. 셋이 다 있어야 배선이 성립한다.
+//
+// ## ⚠️ 포탑은 해츨링 전용이 아니다 — 훅은 전부에서 불리고, **효과 게이트는 훅 안**이다
+// `stepTurrets` 는 병아리(`BROOD_MARK`) · 액티브 센트리 · 자율 드론 베이(둘 다 `DRONE_MARK`)
+// 를 한 루프로 돌린다. 앵커를 소환물 종류로 미리 거르지 **않는다** — 그러면 훗날 센트리를
+// 만지는 축이 다시 막힌다. 대신 `turret` 을 넘겨 **훅이 스스로 판별**하게 한다
+// (`hatchlingTurretShotParams` 의 첫 줄이 `ownerId === BROOD_MARK` 다).
+//
+// ## ⚠️ 왜 표적 확정 뒤인가
+// 표적이 없는 틱은 무발사(`fireTurretShot` 이 `false` 반환)라 실릴 탄이 없다. 앞에 두면
+// 사거리 밖 대기 중에도 매 틱 훅이 돌아 상시 비용만 붙는다.
+//
+// ## ⚠️ 촉매 짝이 없다 — ⑮·⑰~㉔ 과 같다
+// 포탑탄은 촉매 48종에 대응 카드가 없다. 빈 촉매 함수를 미리 두지 마라.
+
+/**
+ * 앵커 ㉖ 이 넘기는 **포탑탄 1발의 파라미터**. 훅이 제자리에서 고친다.
+ *
+ * ## 왜 인자 나열이 아니라 레코드인가
+ * `VolleyParams`·`BroodParams` 와 같은 사유다 — 포탑 루프를 기다리는 축이 여럿이고
+ * (BD7 누적 강화 등) 고치려는 칸이 서로 달라, 인자로 늘어놓으면 칸이 하나 늘 때마다 앵커
+ * 시그니처가 바뀐다. 레코드는 필드를 더해도 기존 `case` 가 그대로 선다.
+ *
+ * ## ⚠️ 칸이 하나뿐인 이유 — **증명한 칸만 연다**
+ * `speed`·`life`·`pierce`·`radius` 도 `spawnBullet` 이 그대로 싣는 값이라 열 수 **있지만**,
+ * 이 커밋에 소비자가 없다. 이 저장소는 "미리 열어 둔 자리"가 *"배선이 있다"* 는 착각을
+ * 만든 재발 패턴을 갖고 있고(앵커 ⑮ 주석), 무엇보다 **여는 칸마다 클램프 삼킴을 따로
+ * 확인해야** 한다(앵커 ⑰ 이 `min(d,s)` 로 원리적 무효였던 전례). 필요해지는 레인이 자기
+ * 칸을 확인하고 더해라 — 레코드라 그 추가는 앵커 시그니처를 안 바꾼다.
+ */
+export interface TurretShotParams {
+  /**
+   * 이 1발의 피해. 초기값은 `events.ts` 의 `TURRET_BULLET_DAMAGE`(=10).
+   *
+   * ## ⚠️ 클램프에 안 삼켜진다 — 소비 경로를 끝까지 따라갔다
+   * `spawnBullet` 이 `b.damage = damage` 로 **그대로** 싣고(산술 0), 명중 지점은
+   * `dealt = b.damage * mult * gyroAmp * prismAmp * eliteDamageTakenMult(t)` 뒤
+   * `t.hp -= dealt` 다. **`min`·`max`·클램프가 경로에 하나도 없다.** 배율을 키우면 적 hp 가
+   * 실제로 그만큼 더 준다(뮤테이션으로 확인 — 훅의 곱셈을 지우면 단언이 빨개진다).
+   * (`core` 실드 흡수 분기만 예외적으로 감산하는데 그건 침공 방어체 전용이다.)
+   */
+  damage: number;
+}
+
+/**
+ * 앵커 ㉖ — **포탑 1기의 1발이 실제로 나가기 직전**(표적 확정 뒤 · `spawnBullet` 앞).
+ *
+ * ## 이 지점에서만 살아 있는 것
+ *  - **포탑 개체와 탄 파라미터가 둘 다 유효하다.** 앵커 ⑯(`onVolleyParams`)은 플레이어
+ *    주무기 전용이라 포탑탄을 안 본다. 탄이 태어난 뒤로 미루면 *"어느 포탑이 쐈는가"* 가
+ *    남지 않는다 — 남는 것은 `ownerId` 스탬프뿐이고 그건 소환물 종류이지 개체가 아니다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.** `fireTurretShot` 의 RNG 미소비 계약(그 함수 doc)이 이
+ *    앵커에도 그대로 걸린다. 난수를 뽑으면 웨이브 구성·드랍 시퀀스가 통째로 밀린다.
+ *  - ⚠️ **엔티티를 낳지 마라.** 이 지점은 `stepTurrets` 의 `state.entities` **순회 안**이다.
+ *    (`spawnBullet` 은 배열 말미 append 라 world 자신이 쓰는 안전한 경로지만, 훅이 임의로
+ *    개체를 밀어 넣으면 같은 틱의 순회가 갈린다 — `splitSpawns` 처럼 순회 밖으로 미루는
+ *    버퍼가 필요하다.)
+ *  - ⚠️ **`turret` 을 죽이거나 `cooldown` 을 만지지 마라.** 쿨다운 리듬은 호출부
+ *    (`stepTurrets`)가 반환값을 보고 정한다 — 여기서 손대면 BD8 의 "쿨다운 무시 격발"
+ *    계약이 갈린다.
+ *
+ * @param turret 이 발을 쏘는 포탑 개체. **소환물 종류 판별은 훅 책임이다**(`ownerId` —
+ *   병아리 `BROOD_MARK` · 센트리/드론 베이 `DRONE_MARK`).
+ */
+export function onTurretShotParams(
+  state: WorldState,
+  turret: Entity,
+  params: TurretShotParams,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라** — 병렬 배선
+    // 머지에서 두 `case` 가 `break;` 하나를 공유하는 fallthrough 가 누적 5건 나왔고 전부
+    // `tsc` 만이 잡았다.
+    case SIG_HATCHLING_BROOD:
+      hatchlingTurretShotParams(state, turret, params);
       break;
     default:
       break;

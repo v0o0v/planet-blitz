@@ -163,7 +163,7 @@ import { hasAnyInvestment } from '../items/skills.js';
 import { createSkillSlots } from './skillSlots.js';
 // 210스킬 앵커 25개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
 // (⑮ `onFilmBurst` 는 `filmBurst.ts` 가 부르므로 여기 없다 — 총 26개 중 25개가 이 파일 소유다.)
-import type { VolleyParams, BroodParams } from './skillHooks.js';
+import type { VolleyParams, BroodParams, TurretShotParams } from './skillHooks.js';
 import {
   survivedLethalBlow,
   onVolleyFired,
@@ -190,6 +190,7 @@ import {
   onCloakBreakReset,
   onBroodLaunchParams,
   onBroodLaunched,
+  onTurretShotParams,
 } from './skillHooks.js';
 import { onDamageChainCatalyst } from './catalystHooks.js';
 import { createCatalystSlots } from './catalystSlots.js';
@@ -3670,6 +3671,9 @@ function stepTurrets(state: WorldState, _player: Entity): void {
  *  · **RNG 를 소비하지 않는다.** `nearestTarget` 은 거리·id tie-break 결정론이고 `spawnBullet` 도
  *    난수를 안 쓴다. 이 계약은 `stepHatchBrood` 의 RNG 미소비 계약과 한 몸이다 — 병아리 경로
  *    어디에서도 스트림이 밀리면 안 된다(공통-B).
+ *    ⚠️ **앵커 ㉖ 에도 그대로 걸린다**(그 훅 doc 이 같은 경고를 다시 적는다).
+ *  · **이 함수는 `stepTurrets` 의 엔티티 순회 안**이다 — 앵커 ㉖ 이 엔티티를 낳으면 같은 틱의
+ *    순회가 갈린다. `spawnBullet` 의 말미 append 만이 world 가 쓰는 안전 경로다.
  *
  * ## ⚠️ 병아리 탄 마커(`ownerId = BROOD_MARK`)가 들어올 자리는 **여기 한 곳**이다
  * 설계(`hatchling.md` ⑤ 공통 고지 ⑦)는 SH5·BD4·NU5 가 "이 탄이 병아리 탄인가"를 이 마커로
@@ -3685,13 +3689,18 @@ function fireTurretShot(state: WorldState, t: Entity): boolean {
   const target = nearestTarget(state, t, TURRET_RANGE);
   if (target === undefined) return false;
   const ang = atan2(target.y - t.y, target.x - t.x);
+  // 앵커 ㉖ — **표적이 확정된 뒤**다(그 자리인 사유는 훅 doc). 초기값이 현행 상수와 정확히
+  // 같으므로 미투자 런·타 기체 런의 거동·해시는 비트 동일이다. 포탑 개체(`t`)를 넘기므로
+  // 훅이 병아리(BROOD_MARK)와 센트리·드론 베이(DRONE_MARK)를 **스스로** 구분한다.
+  const shotParams: TurretShotParams = { damage: TURRET_BULLET_DAMAGE };
+  onTurretShotParams(state, t, shotParams);
   const shot = spawnBullet(
     state,
     t.x,
     t.y,
     ang,
     TURRET_BULLET_SPEED,
-    TURRET_BULLET_DAMAGE,
+    shotParams.damage,
     0,
     TURRET_BULLET_RADIUS,
     TURRET_BULLET_LIFE,
