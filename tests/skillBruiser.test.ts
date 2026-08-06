@@ -1,0 +1,568 @@
+/**
+ * 브루저 30스킬 배선(ADR-0049 배치 2) — **앵커를 통과하는 관측 테스트**.
+ *
+ * ## 왜 효과 함수를 직접 부르지 않는가
+ * `src/sim/skills/bruiser.ts` 의 함수를 직접 부르면 "효과 산술이 맞다"만 잰다. 이 저장소가
+ * 반복해서 밟은 실패는 그쪽이 아니라 **"고쳐 놨는데 아무도 안 부른다"** 였다. 그래서 전부
+ * `skillHooks.ts` 의 **공개 앵커**를 통해 자극한다 — `case SIG_BRUISER_ARMOR:` 를 지우면
+ * 즉시 빨개진다(뮤테이션으로 확인했다, 아래).
+ *
+ * ## 뮤테이션으로 계측기를 검사했다 (2026-08-06)
+ *  ① **효과 본체 삭제** — `bruiserDashFired` 의 MO1 블록(`aux0` 가산 + `aux1 = 0`)을 지우면
+ *     §② 가 실패한다.
+ *  ② **배선 이음매 치환** — 앵커 ⑨(`dispatchSignatureStepSkill`)의 `case SIG_BRUISER_ARMOR:`
+ *     를 지우면 §⑦ FO1 · §⑧ FO2 정산 · §⑨ MO6 이 함께 실패한다.
+ * 초록인데 아무것도 안 재는 테스트가 아니다.
+ */
+
+import { describe, it, expect } from 'vitest';
+import {
+  createWorld,
+  stepWorld,
+  emptyInput,
+  DEFAULT_CONFIG,
+  type WorldConfig,
+  type WorldState,
+} from '../src/sim/world.js';
+import type { Entity } from '../src/sim/entities.js';
+import { blankEntity } from '../src/sim/entities.js';
+import { hashWorld } from '../src/sim/replay.js';
+import { neutralLoadout } from '../src/items/loadout.js';
+import {
+  onDashFired,
+  onGemCollected,
+  onPlayerDamaged,
+  onDamageChain,
+  onSignatureStep,
+  onEnemyDamaged,
+  onEnemyDeath,
+} from '../src/sim/skillHooks.js';
+import { SIG_BRUISER_ARMOR, ARMOR_MAX_STACKS } from '../src/sim/shipSignature.js';
+import {
+  BruiserCarry,
+  BruiserStage,
+  readSlot,
+  writeSlot,
+  SKILL_SLOT_COUNT,
+} from '../src/sim/skillSlots.js';
+
+/** `data/ships/index.ts` 의 타입 id. `armorCapDerivation.test.ts` 와 같은 상수다. */
+const SHIP_BRUISER = 1;
+
+/**
+ * flat 인덱스 — **정본은 `data/ships/bruiser.ts` 의 `trees` 배열**이다:
+ * `[blade(offense), morph(utility), fortify(defense)]` → BL 0..9 · MO 10..19 · FO 20..29.
+ * ⚠️ 스트라이커와 축 종류의 순서가 다르다(스트라이커는 축1=defense).
+ */
+const BL4 = 3;
+const BL9 = 8;
+const MO1 = 10;
+const MO6 = 15;
+const MO8 = 17;
+const MO9 = 18;
+const FO1 = 20;
+const FO2 = 21;
+const FO5 = 24;
+const FO6 = 25;
+const FO7 = 26;
+
+function invest(points: ReadonlyArray<readonly [number, number]>): number[] {
+  const v = new Array<number>(30).fill(0);
+  for (const [i, n] of points) v[i] = n;
+  return v;
+}
+
+/** 브루저 런. `armorCapDerivation.test.ts` 의 레시피와 동형(피격이 잦되 죽지 않는다). */
+function bruiserConfig(): WorldConfig {
+  return {
+    ...DEFAULT_CONFIG,
+    planet: 0,
+    stage: 1,
+    shipType: SHIP_BRUISER,
+    playerHp: 100_000_000,
+    loadout: { ...neutralLoadout(), weaponType: 0 },
+  };
+}
+
+function mk(points: ReadonlyArray<readonly [number, number]> = []): WorldState {
+  return createWorld(1234, { ...bruiserConfig(), skillInvest: invest(points) });
+}
+
+function player(state: WorldState): Entity {
+  const p = state.entities[0];
+  if (p === undefined) throw new Error('player missing');
+  return p;
+}
+
+function addEnemy(state: WorldState, x: number, y: number, hp: number): Entity {
+  const e: Entity = { ...blankEntity('enemy'), x, y, hp, maxHp: hp, radius: 20 };
+  state.entities.push(e);
+  return e;
+}
+
+function countBullets(state: WorldState): number {
+  let n = 0;
+  for (const e of state.entities) if (e.kind === 'bullet' && !e.dead) n++;
+  return n;
+}
+
+// ---------------------------------------------------------------------------
+// ⓪ 전제 — 이 테스트가 브루저를 자극하고 있는가
+// ---------------------------------------------------------------------------
+
+describe('⓪ 전제', () => {
+  it('shipType 1 런은 브루저 시그니처이고 투자 벡터는 30칸이다', () => {
+    const w = mk([[MO1, 1]]);
+    expect(w.sigBit).toBe(SIG_BRUISER_ARMOR);
+    expect(w.skillsOn).toBe(true);
+    expect(w.config.skillInvest).toHaveLength(30);
+    expect(w.skillDerived.shipType).toBe(SHIP_BRUISER);
+  });
+
+  it('투자 0 런은 `skillsOn` 이 거짓이라 앵커가 첫 줄에서 반환한다', () => {
+    expect(mk().skillsOn).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ① 불변 계약 — 투자 0 런은 바이트 불변이어야 한다
+// ---------------------------------------------------------------------------
+
+describe('① 투자 0 런 불변', () => {
+  it('투자 0 브루저 런 두 개가 240틱 뒤 같은 해시다 (슬롯도 전부 0)', () => {
+    const a = mk();
+    const b = mk();
+    for (let i = 0; i < 240; i++) {
+      stepWorld(a, emptyInput());
+      stepWorld(b, emptyInput());
+    }
+    expect(hashWorld(a)).toBe(hashWorld(b));
+    for (let s = 0; s < SKILL_SLOT_COUNT; s++) {
+      expect(readSlot(a.skillCarry, s)).toBe(0);
+      expect(readSlot(a.skillStage, s)).toBe(0);
+    }
+  });
+
+  it('`skillInvest` 미지정 런과 전 칸 0 런의 **시뮬 상태**가 같다', () => {
+    // ⚠️ 여기서 `hashWorld` 를 마주 세우면 안 된다 — `hashWorld` 가 `config.skillInvest` 배열
+    // 자체를 접어서 **배선과 무관하게** 갈린다(스트라이커 레인이 밟았다). 배선이 재야 하는
+    // 것은 "스킬 경로가 한 줄도 안 돌았다" 이고, 그 관측면은 **엔티티·슬롯 상태**다.
+    const none = createWorld(77, { ...bruiserConfig() });
+    const zero = createWorld(77, { ...bruiserConfig(), skillInvest: invest([]) });
+    for (let i = 0; i < 180; i++) {
+      stepWorld(none, emptyInput());
+      stepWorld(zero, emptyInput());
+    }
+    expect(zero.entities.length).toBe(none.entities.length);
+    expect(player(zero).aux0).toBe(player(none).aux0);
+    expect(player(zero).aux1).toBe(player(none).aux1);
+    expect(player(zero).hp).toBe(player(none).hp);
+    expect(player(zero).maxHp).toBe(player(none).maxHp);
+    expect(player(zero).targetX).toBe(player(none).targetX);
+    expect(zero.armorMaxStacks).toBe(none.armorMaxStacks);
+  });
+
+  it('**다른 스킬만 찍은 런**에서도 미투자 스킬은 작동하지 않는다 (`skillsOn` 만으로는 부족)', () => {
+    // MO9 만 찍었는데 MO1(대시 적립)이 돌면 게이트가 `skillsOn` 에 기대고 있다는 뜻이다.
+    const w = mk([[MO9, 20]]);
+    const p = player(w);
+    p.aux0 = 3;
+    p.aux1 = 99;
+    p.dashCooldown = 40;
+    w.wallContactTicks = 5;
+    onDashFired(w, p);
+    expect(p.aux0).toBe(3); // MO1 미투자 → 적립 없음
+    expect(p.aux1).toBe(99); // MO1 미투자 → 타이머 불변
+    expect(p.dashCooldown).toBe(40); // MO8 미투자 → 환급 없음
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ② 앵커 ② 대시 — MO1 충각 적재
+// ---------------------------------------------------------------------------
+
+describe('② MO1 충각 적재 (앵커 ②)', () => {
+  it('대시 발동이 장갑 스택을 올리고 감쇠 타이머를 리셋한다', () => {
+    const off = mk();
+    const on = mk([[MO1, 1]]);
+    for (const w of [off, on]) {
+      const p = player(w);
+      p.aux0 = 2;
+      p.aux1 = 150;
+      onDashFired(w, p);
+    }
+    expect(player(off).aux0).toBe(2);
+    expect(player(off).aux1).toBe(150);
+    expect(player(on).aux0).toBe(3);
+    expect(player(on).aux1).toBe(0);
+  });
+
+  it('적립은 이 런의 유효 상한을 넘지 않는다', () => {
+    const w = mk([[MO1, 5]]);
+    const p = player(w);
+    p.aux0 = w.armorMaxStacks;
+    onDashFired(w, p);
+    expect(p.aux0).toBe(w.armorMaxStacks);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ③ 앵커 ② 대시 — MO8 벽 되튐
+// ---------------------------------------------------------------------------
+
+describe('③ MO8 벽 되튐 (앵커 ②)', () => {
+  it('직전 틱 벽 접촉이 있을 때만 대시 쿨다운이 환급된다', () => {
+    const hit = mk([[MO8, 10]]);
+    const miss = mk([[MO8, 10]]);
+    hit.wallContactTicks = 3;
+    miss.wallContactTicks = 0;
+    player(hit).dashCooldown = 100;
+    player(miss).dashCooldown = 100;
+    onDashFired(hit, player(hit));
+    onDashFired(miss, player(miss));
+    // 비율 = 3000 + round(2000×10/20) = 4000bp → 100 − 40 = 60.
+    expect(player(hit).dashCooldown).toBe(60);
+    expect(player(miss).dashCooldown).toBe(100);
+  });
+
+  it('환급은 0 밑으로 내려가지 않는다', () => {
+    const w = mk([[MO8, 20]]);
+    w.wallContactTicks = 1;
+    player(w).dashCooldown = 1;
+    onDashFired(w, player(w));
+    expect(player(w).dashCooldown).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ④ 앵커 ③ 젬 — MO9 수확 고정
+// ---------------------------------------------------------------------------
+
+describe('④ MO9 수확 고정 (앵커 ③)', () => {
+  it('젬 수거가 감쇠 타이머를 되감고, 0 밑으로는 안 내려간다', () => {
+    const off = mk();
+    const on = mk([[MO9, 7]]);
+    const gem: Entity = blankEntity('gem');
+    for (const w of [off, on]) {
+      player(w).aux1 = 100;
+      onGemCollected(w, gem);
+    }
+    expect(player(off).aux1).toBe(100);
+    expect(player(on).aux1).toBe(100 - (6 + 2 * 7)); // 80
+
+    const floor = mk([[MO9, 20]]);
+    player(floor).aux1 = 3;
+    onGemCollected(floor, gem);
+    expect(player(floor).aux1).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑤ 앵커 ④ 피격 — BL4 과적 배출 · FO5 불괴 연쇄
+// ---------------------------------------------------------------------------
+
+describe('⑤ BL4 과적 배출 (앵커 ④)', () => {
+  it('만재 피격이 파편을 뿌리고, 만재가 아니면 안 뿌린다', () => {
+    const full = mk([[BL4, 6]]);
+    const partial = mk([[BL4, 6]]);
+    const off = mk();
+    player(full).aux0 = full.armorMaxStacks;
+    player(partial).aux0 = 1;
+    player(off).aux0 = off.armorMaxStacks;
+    const before = countBullets(full);
+    onPlayerDamaged(full, player(full), 20, false);
+    onPlayerDamaged(partial, player(partial), 20, false);
+    onPlayerDamaged(off, player(off), 20, false);
+    // 파편 수 = 4 + ceil(6/3) = 6.
+    expect(countBullets(full) - before).toBe(6);
+    expect(countBullets(partial)).toBe(before);
+    expect(countBullets(off)).toBe(before);
+  });
+});
+
+describe('⑥ FO5 불괴 연쇄 (앵커 ④)', () => {
+  it('죽을 뻔한 틱에만 발동하고, **런당 1회**로 억제된다', () => {
+    const w = mk([[FO5, 3]]);
+    const p = player(w);
+    p.aux0 = 0;
+    // 적탄을 반경 안에 둔다.
+    w.entities.push({ ...blankEntity('enemyBullet'), x: p.x + 10, y: p.y });
+
+    // ① 평범한 피격 — 미발동.
+    onPlayerDamaged(w, p, 10, false);
+    expect(p.aux0).toBe(0);
+    expect(p.targetX).toBe(0);
+
+    // ② 치명 생존 — 발동.
+    onPlayerDamaged(w, p, 10, true);
+    expect(p.aux0).toBe(w.armorMaxStacks);
+    expect(p.targetX).toBe(1);
+    expect(w.entities.some((e) => e.kind === 'enemyBullet' && !e.dead)).toBe(false);
+
+    // ③ 두 번째 치명 생존 — 억제로 미발동.
+    p.aux0 = 2;
+    w.entities.push({ ...blankEntity('enemyBullet'), x: p.x + 10, y: p.y });
+    onPlayerDamaged(w, p, 10, true);
+    expect(p.aux0).toBe(2);
+    expect(w.entities.some((e) => e.kind === 'enemyBullet' && !e.dead)).toBe(true);
+  });
+
+  it('미투자 런은 치명 생존에서도 표식을 세우지 않는다', () => {
+    const w = mk([[MO9, 5]]);
+    const p = player(w);
+    onPlayerDamaged(w, p, 10, true);
+    expect(p.targetX).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑦ 앵커 ⑨ — FO1 과적 장갑
+// ---------------------------------------------------------------------------
+
+describe('⑦ FO1 과적 장갑 (앵커 ⑨)', () => {
+  it('상한이 확장되고, 미투자 런은 기본 상한 그대로다', () => {
+    const off = mk();
+    const on = mk([[FO1, 20]]);
+    onSignatureStep(off, player(off), emptyInput());
+    onSignatureStep(on, player(on), emptyInput());
+    expect(off.armorMaxStacks).toBe(ARMOR_MAX_STACKS);
+    // round(1 + 3×20/32) = round(2.875) = 3.
+    expect(on.armorMaxStacks).toBe(ARMOR_MAX_STACKS + 3);
+  });
+
+  it('확장된 상한을 적립 경로(MO1)가 실제로 따른다', () => {
+    const w = mk([
+      [FO1, 20],
+      [MO1, 1],
+    ]);
+    onSignatureStep(w, player(w), emptyInput());
+    const p = player(w);
+    p.aux0 = ARMOR_MAX_STACKS;
+    onDashFired(w, p);
+    expect(p.aux0).toBe(ARMOR_MAX_STACKS + 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑧ 앵커 ④ + ⑨ — FO2 응혈 장갑
+// ---------------------------------------------------------------------------
+
+describe('⑧ FO2 응혈 장갑 (앵커 ④ 적립 → 앵커 ⑨ 정산)', () => {
+  it('피격이 풀에 쌓이고, **만재 상승 엣지**에서만 60% 가 회복된다', () => {
+    const w = mk([[FO2, 10]]);
+    const p = player(w);
+    p.aux0 = 0;
+    p.hp = p.maxHp - 500;
+
+    // 적립: round(100 × (2000 + 100×10) / 10000) = 30.
+    onPlayerDamaged(w, p, 100, false);
+    expect(readSlot(w.skillCarry, BruiserCarry.clotPool)).toBe(30);
+
+    // 아직 만재가 아니면 정산이 없다.
+    const hpBefore = p.hp;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.hp).toBe(hpBefore);
+    expect(readSlot(w.skillCarry, BruiserCarry.clotPool)).toBe(30);
+    expect(readSlot(w.skillStage, BruiserStage.prevArmorStacks)).toBe(0);
+
+    // 만재 상승 엣지 → round(30 × 0.6) = 18 회복, 풀은 0.
+    p.aux0 = w.armorMaxStacks;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.hp).toBe(hpBefore + 18);
+    expect(readSlot(w.skillCarry, BruiserCarry.clotPool)).toBe(0);
+
+    // 만재를 **유지**하는 다음 틱은 엣지가 아니다(SUSTAIN 이 매 틱 정산되면 안 된다).
+    onPlayerDamaged(w, p, 100, false);
+    const hpHold = p.hp;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.hp).toBe(hpHold);
+    expect(readSlot(w.skillCarry, BruiserCarry.clotPool)).toBe(30);
+  });
+
+  it('미투자 런은 풀도 안 쌓고 회복도 없다', () => {
+    const w = mk([[MO9, 5]]);
+    const p = player(w);
+    p.hp = p.maxHp - 500;
+    onPlayerDamaged(w, p, 100, false);
+    p.aux0 = w.armorMaxStacks;
+    onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillCarry, BruiserCarry.clotPool)).toBe(0);
+    expect(p.hp).toBe(p.maxHp - 500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑨ 앵커 ⑨ — MO6 압쇄장
+// ---------------------------------------------------------------------------
+
+describe('⑨ MO6 압쇄장 (앵커 ⑨)', () => {
+  it('스택이 있을 때 주기 틱마다 근접 적을 깎고 밀어낸다', () => {
+    const w = mk([[MO6, 10]]);
+    const p = player(w);
+    p.aux0 = 1;
+    const near = addEnemy(w, p.x + 50, p.y, 500);
+    const far = addEnemy(w, p.x + 5000, p.y, 500);
+    const nearX = near.x;
+    expect(w.tick % 30).toBe(0);
+    onSignatureStep(w, p, emptyInput());
+    expect(near.hp).toBe(500 - (4 + 10));
+    expect(near.x).toBeGreaterThan(nearX); // 바깥쪽(+X)으로 밀렸다
+    expect(far.hp).toBe(500);
+  });
+
+  it('스택이 0 이면 돌지 않는다', () => {
+    const w = mk([[MO6, 10]]);
+    const p = player(w);
+    p.aux0 = 0;
+    const near = addEnemy(w, p.x + 50, p.y, 500);
+    onSignatureStep(w, p, emptyInput());
+    expect(near.hp).toBe(500);
+  });
+
+  it('주기 밖 틱에는 돌지 않는다', () => {
+    const w = mk([[MO6, 10]]);
+    const p = player(w);
+    p.aux0 = 4;
+    w.tick = 7;
+    const near = addEnemy(w, p.x + 50, p.y, 500);
+    onSignatureStep(w, p, emptyInput());
+    expect(near.hp).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑩ 앵커 ⑩ — BL9 중압 리듬
+// ---------------------------------------------------------------------------
+
+describe('⑩ BL9 중압 리듬 (앵커 ⑩)', () => {
+  it('스택 파생 주기의 N번째 명중에서만 강타가 터진다', () => {
+    const w = mk([[BL9, 10]]);
+    const p = player(w);
+    p.aux0 = 8; // N = max(1, round(48/12)) = 4
+    const t = addEnemy(w, p.x + 300, p.y, 1000);
+    const src: Entity = { ...blankEntity('bullet'), damage: 10 };
+    for (let i = 0; i < 3; i++) {
+      onEnemyDamaged(w, t, 10, src);
+      expect(t.hp).toBe(1000); // 앵커는 기본 피해를 다시 적용하지 않는다
+    }
+    onEnemyDamaged(w, t, 10, src);
+    // 강타 = round(10 × (8000 + 400×10)/10000) = round(12) = 12.
+    expect(t.hp).toBe(1000 - 12);
+    expect(readSlot(w.skillStage, BruiserStage.cadenceHits)).toBe(0);
+  });
+
+  it('스택이 많을수록 주기가 짧아진다 (스택 0 = 12타, 만재 = 4타)', () => {
+    const lowStack = mk([[BL9, 1]]);
+    const pl = player(lowStack);
+    pl.aux0 = 0;
+    const t = addEnemy(lowStack, pl.x + 300, pl.y, 1000);
+    const src: Entity = { ...blankEntity('bullet'), damage: 10 };
+    for (let i = 0; i < 11; i++) onEnemyDamaged(lowStack, t, 10, src);
+    expect(t.hp).toBe(1000);
+    onEnemyDamaged(lowStack, t, 10, src);
+    expect(t.hp).toBeLessThan(1000);
+  });
+
+  it('`dmg === 0` 인 명중(코어 실드 전량 흡수)은 세지 않는다', () => {
+    const w = mk([[BL9, 10]]);
+    player(w).aux0 = 8;
+    const t = addEnemy(w, 0, 0, 1000);
+    const src: Entity = { ...blankEntity('bullet'), damage: 10 };
+    for (let i = 0; i < 10; i++) onEnemyDamaged(w, t, 0, src);
+    expect(readSlot(w.skillStage, BruiserStage.cadenceHits)).toBe(0);
+    expect(t.hp).toBe(1000);
+  });
+
+  it('미투자 런은 카운터도 안 돌린다', () => {
+    const w = mk([[MO9, 5]]);
+    const t = addEnemy(w, 0, 0, 1000);
+    const src: Entity = { ...blankEntity('bullet'), damage: 10 };
+    for (let i = 0; i < 20; i++) onEnemyDamaged(w, t, 10, src);
+    expect(t.hp).toBe(1000);
+    expect(readSlot(w.skillStage, BruiserStage.cadenceHits)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑪ 앵커 ⑧ — FO6 하중 전이
+// ---------------------------------------------------------------------------
+
+describe('⑪ FO6 하중 전이 (앵커 ⑧)', () => {
+  it('피해를 깎고 그만큼 대시 쿨다운을 지불한다', () => {
+    const off = mk();
+    const on = mk([[FO6, 10]]);
+    player(off).dashCooldown = 0;
+    player(on).dashCooldown = 0;
+    expect(onDamageChain(off, player(off), 1000)).toBe(1000);
+    expect(player(off).dashCooldown).toBe(0);
+    // 경감 = round(1000 × (800 + 80×10)/10000) = 160.
+    expect(onDamageChain(on, player(on), 1000)).toBe(1000 - 160);
+    expect(player(on).dashCooldown).toBe(20);
+  });
+
+  it('경감이 0 으로 접히면 대가도 물리지 않는다', () => {
+    const w = mk([[FO6, 1]]);
+    player(w).dashCooldown = 0;
+    // round(1 × 880/10000) = 0.
+    expect(onDamageChain(w, player(w), 1)).toBe(1);
+    expect(player(w).dashCooldown).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑫ 앵커 ⑪ — FO7 전리 개장
+// ---------------------------------------------------------------------------
+
+describe('⑫ FO7 전리 개장 (앵커 ⑪)', () => {
+  it('엘리트 격파가 스택당 최대 HP 를 올리고 이어서 만재로 재무장한다', () => {
+    const w = mk([[FO7, 10]]);
+    const p = player(w);
+    onSignatureStep(w, p, emptyInput()); // 기준선 확보
+    expect(readSlot(w.skillCarry, BruiserCarry.trophyBaseHp)).toBe(p.maxHp);
+
+    p.aux0 = 8;
+    const before = p.maxHp;
+    onEnemyDeath(w, 100, 100, true);
+    // per = round(1 + 6×10/24) = round(3.5) = 4 → 8스택 × 4 = 32.
+    expect(p.maxHp).toBe(before + 32);
+    expect(readSlot(w.skillCarry, BruiserCarry.trophyGranted)).toBe(32);
+    expect(p.aux0).toBe(w.armorMaxStacks); // ③ 만재 세팅
+  });
+
+  it('엘리트가 아닌 격파에는 반응하지 않는다', () => {
+    const w = mk([[FO7, 10]]);
+    const p = player(w);
+    onSignatureStep(w, p, emptyInput());
+    p.aux0 = 3;
+    const before = p.maxHp;
+    onEnemyDeath(w, 100, 100, false);
+    expect(p.maxHp).toBe(before);
+    expect(p.aux0).toBe(3);
+  });
+
+  it('런당 누적 상한(기준선의 50%)을 넘지 않는다', () => {
+    const w = mk([[FO7, 10]]);
+    const p = player(w);
+    onSignatureStep(w, p, emptyInput());
+    const base = readSlot(w.skillCarry, BruiserCarry.trophyBaseHp);
+    const cap = Math.round((base * 5000) / 10000);
+    writeSlot(w.skillCarry, BruiserCarry.trophyGranted, cap - 5);
+    p.aux0 = 8;
+    const before = p.maxHp;
+    onEnemyDeath(w, 0, 0, true);
+    expect(p.maxHp).toBe(before + 5); // 32 를 요구했지만 남은 여유는 5 뿐
+    expect(readSlot(w.skillCarry, BruiserCarry.trophyGranted)).toBe(cap);
+  });
+
+  it('미투자 런은 격파에 반응하지 않는다', () => {
+    const w = mk([[MO9, 5]]);
+    const p = player(w);
+    p.aux0 = 2;
+    const before = p.maxHp;
+    onSignatureStep(w, p, emptyInput());
+    onEnemyDeath(w, 0, 0, true);
+    expect(p.maxHp).toBe(before);
+    expect(p.aux0).toBe(2);
+    expect(readSlot(w.skillCarry, BruiserCarry.trophyBaseHp)).toBe(0);
+  });
+});
