@@ -637,6 +637,11 @@ describe('⑫ AS2 은막 침투 (앵커 ⑯)', () => {
       // `count` 를 실제로 읽는다(발칸/스프레드/미사일). AS2 는 `pierce`·`speed` 만 만져서
       // 이 값과 무관하지만, 레코드 타입이 요구하므로 **읽는 쪽**을 기본으로 둔다.
       countUsed: true,
+      // S2.1 이 더한 셋. ⚠️ **`cloakBreak` 이 AS3(처형 재장전)을 여는 신호다** — 이 픽스처의
+      // 기본은 `false`(강화탄이 아닌 평범한 볼리)이므로, AS3 을 재는 케이스는 뒤집어야 한다.
+      ballisticsUsed: true,
+      targetDist: 200,
+      cloakBreak: false,
     };
   }
 

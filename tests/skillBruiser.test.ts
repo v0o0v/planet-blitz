@@ -595,6 +595,11 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     // 분기이고 여기엔 **결과만** 실린다 — 훅이 `WEAPON_TYPE_*` 를 복제하면 그 사본이
     // 갈리는 순간 결함이 조용해지기 때문이다.
     countUsed: true,
+    // S2.1 이 더한 셋. `ballisticsUsed: true` = 빔이 아니다 — ⚠️ **BL6 은 이 값이 `false` 인
+    // 볼리(빔)에서 페널티가 통째로 증발하므로**, 그 경로를 재는 케이스는 `over` 로 뒤집어라.
+    ballisticsUsed: true,
+    targetDist: 200,
+    cloakBreak: false,
     ...over,
   };
 }
@@ -657,6 +662,34 @@ describe('⑯ BL6 중량 탄자 (앵커 ⑯ 파라미터)', () => {
     expect(v.speed).toBe(900);
     expect(v.life).toBe(110);
     expect(v.mark & 4).toBe(4);
+  });
+
+  // ⚠️ **이 셋이 이 스킬의 성립 조건을 잠근다.** BL6 은 탄속·수명을 대가로 피해를 올리는
+  // **교환**인데, 빔 아키타입은 `speed`·`life` 를 한 칸도 안 읽는다. 게이트가 없으면 빔에서
+  // **페널티만 증발하고 이득만 남아** 무연산이 아니라 **일방적 이득**이 된다 — 밸런스가
+  // 조용히 깨지는 형태라 테스트 없이는 되돌아가도 아무도 모른다.
+  it('빔 볼리(ballisticsUsed=false)에는 피해 증가가 실리지 않는다 — 대가 없는 이득 차단', () => {
+    const w = mk([[BL6, 10]]);
+    const p = player(w);
+    const v = volley({ ballisticsUsed: false });
+    onVolleyParams(w, p, v);
+    expect(v.damage).toBe(100); // 게이트가 열려 있으면 140 이 된다
+  });
+
+  it('빔 볼리에는 표식도 찍히지 않는다 — ⑩ 의 변위까지 함께 막는다', () => {
+    const w = mk([[BL6, 10]]);
+    const p = player(w);
+    const v = volley({ ballisticsUsed: false });
+    onVolleyParams(w, p, v);
+    expect(v.mark & 4).toBe(0);
+  });
+
+  it('빔이 아닌 볼리에서는 종전대로 걸린다 — 게이트가 과잉 차단이 아니다', () => {
+    const w = mk([[BL6, 10]]);
+    const p = player(w);
+    const v = volley({ ballisticsUsed: true });
+    onVolleyParams(w, p, v);
+    expect(v.damage).toBe(140);
   });
 
   it('도달 거리(탄속×수명)가 정확히 불변이다 — 사거리 계약', () => {

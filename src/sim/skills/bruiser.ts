@@ -485,8 +485,17 @@ export function bruiserVolleyParams(
   }
 
   // --- BL6 중량 탄자 -------------------------------------------------------
+  // ⚠️ **`params.ballisticsUsed` 게이트가 이 스킬의 성립 조건이다**(S2.1 이 열었다).
+  // 이 스킬은 **탄속·수명을 대가로 피해를 올리는 교환**인데, 빔 아키타입은 `speed`·`life` 를
+  // 한 칸도 읽지 않는다(정지 세그먼트 · 전용 반경/수명 — 앵커 ⑯ 의 아키타입 표). 게이트 없이
+  // 태우면 빔 브루저에서 **페널티만 통째로 증발하고 이득만 남는다** — 무연산이 아니라
+  // **일방적 이득**이라 밸런스가 조용히 깨진다.
+  //
+  // 초판은 `weaponType === 4` 를 봐야 하는데 그 상수가 `world.ts` 모듈 사유라 막혀 있었다.
+  // S2.1 이 **판정 결과만** 레코드에 실어(정본은 `world.ts` 아키타입 분기 하나) 값 복제 없이
+  // 닫았다 — `countUsed` 가 BA10 에서 쓴 것과 같은 형태다.
   const bl6 = lv(state, Sk.massSlug);
-  if (bl6 >= 1) {
+  if (bl6 >= 1 && params.ballisticsUsed) {
     // 피해 +20% + 2%p/Lv. 산술은 스트라이커 정조준 배율과 동형(정수 bp · 단일 나눗셈 ·
     // 반올림 1회)이고, 반올림은 게이트 **안**이다(규율 ③).
     params.damage += Math.round((params.damage * (2000 + 200 * bl6)) / 10000);
@@ -497,9 +506,5 @@ export function bruiserVolleyParams(
     params.speed *= 0.5;
     params.life *= 2;
     params.mark |= MARK_MASS_SLUG;
-    // ⚠️ **설계와 어긋나는 지점(보고서에 적었다).** 빔 아키타입은 `speed`·`life` 를 읽지 않아
-    //    (앵커 ⑯ 의 아키타입 표) 빔 브루저에서는 **대가 없이 피해만 오른다**. 게이트하려면
-    //    `weaponType === 4` 를 봐야 하는데 그 상수는 `world.ts` 모듈 사유이고 런타임 import 는
-    //    계약 위반이다 — 리터럴 4 를 복제하는 쪽이 더 나쁘다고 판단해 남겨 두고 보고한다.
   }
 }

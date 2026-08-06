@@ -541,6 +541,11 @@ function volley(over: Partial<VolleyParams> = {}): VolleyParams {
     spread: 0.5,
     cooldownQ: 256,
     countUsed: true,
+    // S2.1 이 더한 셋. 기본값은 "아무 스킬도 안 걸린 발칸/스프레드 볼리" 를 뜻한다 —
+    // `ballisticsUsed: true`(빔이 아니다) · 표적이 중거리 · 은신 해제 첫 타가 아니다.
+    ballisticsUsed: true,
+    targetDist: 200,
+    cloakBreak: false,
     mark: 0,
     ...over,
   };
