@@ -101,7 +101,7 @@ export function writeSlot(slots: number[], slot: number, value: number): void {
 //   아크캐스터 (SIG_ARC_OVERCHARGE)   — ArccasterCarry / ArccasterStage
 //   브루저     (SIG_BRUISER_ARMOR)    — BruiserCarry / BruiserStage
 //   해츨링     (SIG_HATCHLING_BROOD)  — HatchlingCarry / HatchlingStage
-//   말로우     (SIG_MALLOW_CUSHION)   — MallowCarry / MallowStage (배선 6종이 **한 칸도 안 쓴다**)
+//   말로우     (SIG_MALLOW_CUSHION)   — MallowCarry / MallowStage (S2 확장으로 각 1칸 — SQ8·SQ5)
 //   팬텀       (SIG_PHANTOM_CLOAK)    — PhantomCarry / PhantomStage
 //   버블       (SIG_BUBBLE_FILM)      — BubbleCarry / BubbleStage (**실배정 0칸**)
 //
@@ -301,27 +301,30 @@ export const enum BubbleCarry {
 }
 
 /**
- * **말로우 이월 슬롯**(ADR-0049 배치 4). 효과 본체는 `src/sim/skills/mallow.ts`.
+ * **말로우 이월 슬롯**(ADR-0049 배치 4 · S2 확장). 효과 본체는 `src/sim/skills/mallow.ts`.
  *
- * 이 배치가 배선한 6종은 **한 칸도 쓰지 않는다.** 설계서가 `구현: B`(신규 상태)로 표시한 말로우
- * 6종(SQ5 장전 잔량 · SQ8 누적 선체행 · ME5 분할 이월 · ME9 벽 접촉 카운터 · CU6 런당 표식 ·
- * CU10 지급 카운터) 중 이 배치가 닿은 것이 **0종**이기 때문이다 — 여섯 전부 정산 분기 또는
- * 지연 전환 분기를 요구하는데 그 둘에 앵커가 없다(`skills/mallow.ts` 헤더).
+ * 배치 4 시점에는 배정 0칸이었다 — 설계서가 `구현: B` 로 표시한 말로우 6종이 전부 정산 분기
+ * 또는 지연 전환 분기를 요구했고 그 둘에 앵커가 없었기 때문이다. **S2 의 앵커 ⑳**
+ * (`onCushionSettled`)이 정산 분기를 열면서 그중 SQ5·SQ8 둘이 살아났고, 그 둘만 칸을 잡는다.
  *
- * 배선된 6종의 상태는 전부 **이미 엔진에 있는 칸**에서 온다: `player.aux0`(부채)·`player.aux1`
- * (무피격 스트릭)은 시그니처가 소유하고, ME10 이 쓰는 `state.xp` 는 런 풀이다. 같은 술어를
- * 슬롯에 복제하면 갱신 시점이 갈려 조용히 어긋난다.
+ * 나머지 넷은 여전히 미배정이다: ME5(분할 이월)·CU6(런당 표식)은 정산액·지연 전환 **산술에
+ * 개입**해야 하는데 ⑳ 은 hp 차감이 끝난 뒤라 닿지 않고, ME9(벽 접촉 카운터)는 슬롯이 아니라
+ * {@link WorldState.wallContactTicks} 가 이미 제공하며, CU10(지급 카운터)은 회당 상한만 있으면
+ * 되는 것으로 실측돼 칸이 필요 없었다(`maxHp` 자체가 누적을 들고 있다).
  *
- * ⚠️ ME9「솜틀 요양」의 **연속 벽 접촉 카운터를 여기 미리 잡지 마라.** 설계서 ⑥-4 가 그것을
+ * ⚠️ ME9「솜틀 요양」의 **연속 벽 접촉 카운터를 여기 잡지 마라.** 설계서 ⑥-4 가 그것을
  * 스트라이커 M5 와 **한 벌**로 못 박았고, S0 의 E5 가 이미 {@link WorldState.wallContactTicks}
  * 로 엔진 상태에 세워 두었다 — ME9 배선 레인은 그 값을 읽기만 하면 된다.
  */
 export const enum MallowCarry {
   /**
-   * 자리표시자 — **읽지도 쓰지도 않는다.** 실제 배정이 생기면 이 줄을 **지우고** 0번부터 다시
-   * 매겨라(`StrikerStage` 와 같은 규약).
+   * SQ8「흉터 포문」의 **런 내 누적 선체행**(정산으로 hp 에서 실제로 깎인 양의 합). 앵커 ⑳ 이
+   * 넘기는 `applied` 를 더하고, 앵커 ⑯ 이 볼리 피해 증폭 bp 로 읽는다. 0 = 아직 갚은 적 없음.
+   *
+   * `Stage` 가 아니라 `Carry` 인 이유는 스킬 본체 그 자체다 — *"런이 아프게 흘러갈수록 세진다"*
+   * 는 **런 단위 이력**이라, 의뢰 다구간에서 구간마다 리셋되면 스킬 이름값이 사라진다.
    */
-  unassigned = 0,
+  scarApplied = 0,
 }
 
 /**
@@ -348,8 +351,15 @@ export const enum HatchlingStage {
  * 다시 하지 않게 하기 위함이다.
  */
 export const enum MallowStage {
-  /** 자리표시자 — {@link MallowCarry.unassigned} 와 같은 규약. */
-  unassigned = 0,
+  /**
+   * SQ5「탕감 장전」의 **장전 잔량**. 정산에서 탕감된 양(앵커 ⑳ 의 `recovered`)의 일부가 여기
+   * 쌓이고, 볼리마다(앵커 ⑯) 잔량의 25% 가 추가 피해로 소진된다. 0 = 빈 탄창.
+   *
+   * `Carry` 가 아니라 `Stage` 인 이유는 이 파일 헤더가 예고한 그대로다 — 장전은 **이번 구간의
+   * 전투 리듬**이고, 구간을 넘겨 살면 새 구간 첫 볼리가 이전 구간의 탕감으로 굵어진다
+   * (아크캐스터 `killCapacitorCharge` 와 같은 사유).
+   */
+  forgivenessLoad = 0,
 }
 export const enum PhantomStage {
   /**

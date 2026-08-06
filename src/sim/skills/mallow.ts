@@ -8,26 +8,39 @@
  *
  * ---
  *
- * ## ⚠️ 이 배치가 배선한 것은 30종 중 **6종**이다 — 앞 세 기체(9·13·11)보다 적고, 그 이유가 구조적이다
+ * ## 배선 현황 — 배치 4 가 **6종**, S2 앵커 확장 레인이 **+8종** = 지금 **14종**
  *
- * 말로우 30종의 설계는 시그니처 완충의 **두 분기**에 압도적으로 몰려 있는데, 그 둘 다 앵커가
- * 없다:
+ * 말로우 30종의 설계는 시그니처 완충의 **두 분기**에 압도적으로 몰려 있었고, 배치 4 시점에는
+ * 그 둘 다 앵커가 없었다. **S2 가 그중 하나(정산 분기)를 열었다.**
  *
- *  - **정산 분기**(`world.ts` 의 `stepShipSignature` 말로우 가지, `aux1 >= CUSHION_RECOVER_TICKS`
- *    안쪽) — 여기를 요구하는 스킬이 **10종**이다: 정산 틱을 트리거로 삼는 9종
- *    (SQ2·SQ5·SQ8·ME4·ME5·ME8·CU3·CU9·CU10) + 정산 **임계 자체**를 낮추는 ME9.
- *    앵커 ⑨({@link onSignatureStep})는 `stepShipSignature` **진입점**이라 이 분기보다 **앞**이다.
- *  - **지연 전환 분기**(`world.ts` 의 `cushionOn` 게이트, `cushionDeferredDamage` 분리부) —
- *    **5종**(CU1·CU2·CU5·CU6 + CU7 의 설계상 자리). 앵커 ⑧({@link onDamageChain})은 이 분기보다
+ *  - **정산 분기**(`world.ts` 의 `stepShipSignature` 말로우 가지, `aux1 >= 임계` 안쪽) —
+ *    여기를 요구하는 스킬이 **10종**이었다. S2 의 앵커 ⑳({@link onCushionSettled})이
+ *    **정산 직후**를 열어 그중 **7종**(SQ2·SQ5·SQ8·ME4·CU3·CU9·CU10)이 배선됐다.
+ *    남은 셋(ME5·ME8·ME9)은 ⑳ 으로 닿지 않는다 — 사유는 아래 「⑳ 으로도 못 여는 셋」.
+ *  - **발사부**(`autoAttack` 의 아키타입 분기) — S2 의 앵커 ⑯({@link onVolleyParams})이 열어
+ *    SQ1 이 배선됐고, SQ5·SQ8 의 **소비처**도 여기다(적립만 하고 소비처가 없으면 반쪽이다).
+ *  - **지연 전환 분기**(`cushionOn` 게이트, `cushionDeferredDamage` 분리부) — **여전히 앵커가
+ *    없다.** CU1·CU2·CU5·CU6 이 그대로 막혀 있다. 앵커 ⑧({@link onDamageChain})은 이 분기보다
  *    앞이라 "지연분을 얼마나 뗄지"에는 닿지 않는다.
  *
- * ### ⚠️ 정산 분기를 앵커 ⑨ 에서 **예측**하지 않았다 — 그것이 이 레인의 핵심 판단이다
- * 앵커 ⑨ 시점의 `aux0`·`aux1` 로 "이번 틱에 정산이 일어날 것"을 `aux0 > 0 && aux1 + 1 >= 임계`
- * 로 계산할 수는 있다. 하지만 그 순간 **정산 술어가 두 곳에 살게 된다** — 그리고 정산액
- * (`cushionSettled`)·탕감액(`cushionRecovered`)·hp−1 클램프 후 실제 적용액(`applied`)까지
- * 전부 다시 적어야 한다. 이 저장소가 반복해서 당한 결함이 정확히 그 형태다("같은 술어를 세 곳에
- * 적어 화면과 규칙이 갈렸다"). 정산 트리거 9종은 **`world.ts` 정산 분기에 앵커가 뚫릴 때까지
- * 코드가 없다** — 반쪽으로 흉내 내지 않았다.
+ * ### ⚠️ 정산 분기를 앵커 ⑨ 에서 **예측**하지 않았다 — 그것이 배치 4 의 핵심 판단이었고 옳았다
+ * 앵커 ⑨ 시점의 `aux0`·`aux1` 로 `aux0 > 0 && aux1 + 1 >= 임계` 를 계산할 수는 있었다. 그러면
+ * 정산액(`cushionSettled`)·탕감액(`cushionRecovered`)·hp−1 클램프 후 적용액(`applied`)이 전부
+ * 두 번째 사본이 된다. S2 의 ⑳ 은 그 셋을 **계산된 값 그대로** 넘긴다.
+ *
+ * ### ⚠️ ⑳ 으로도 못 여는 셋 — ME5·ME8·ME9 (반쪽 배선 금지)
+ * 셋 다 **정산 산술 자체**를 바꾸는 스킬인데 ⑳ 은 hp 차감이 끝난 **뒤**다.
+ *  - **ME9(임계 인하)** — 앵커 ⑲({@link onCushionThreshold})이 자리를 열었지만,
+ *    `cushionSettled`·`cushionRecovered` 가 **자기 안에서 `unhitTicks < CUSHION_RECOVER_TICKS`
+ *    를 다시 검사해 0 을 돌려준다**(`shipSignature.ts:320·339`). 임계를 낮춰 분기에 진입시켜도
+ *    정산액이 0 이라 **조용히 아무 일도 안 일어난다**(테스트 §⑫ 가 이 사실을 잠갔다).
+ *    순수 함수 둘이 임계를 인자로 받도록 함께 고쳐야 하고 그것은 골든에 닿는다.
+ *  - **ME8(탕감률 상승)** — 탕감 bp(`CUSHION_RECOVER_BP`)가 `cushionRecovered` 안에 있다.
+ *    ME9 와 **같은 계열의 선결**이다. ⑳ 에서 사후 환급으로 흉내 낼 수는 없다: hp−1 클램프가
+ *    이미 물린 정산에서는 "탕감을 늘려 선체행을 줄인" 결과와 "깎고 나서 되돌린" 결과가
+ *    **수치로 갈린다**(클램프가 소멸시킨 초과분이 복원되지 않는다).
+ *  - **ME5(분할 상환)** — 같은 이유. 절반만 선체로 보내려면 hp 차감 **전**에 정산액을 갈라야
+ *    하고, 사후 환급은 클램프가 물린 정산에서 어긋난다. 정산액 확정 **직전**의 앵커가 필요하다.
  *
  * 여기 없는 스킬은 "구현했는데 안 불린다"가 아니라 **아직 코드가 없다.** 사유는 각 앵커의
  * `case` 주석과 레인 보고서에 있다.
@@ -35,8 +48,10 @@
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
-import { clearEnemyBullets } from '../activeTypes.js';
+import type { VolleyParams } from '../skillHooks.js';
+import { blastDamage, clearEnemyBullets } from '../activeTypes.js';
 import { CUSHION_RECOVER_TICKS, CUSHION_TICK_CAP } from '../shipSignature.js';
+import { readSlot, writeSlot, MallowCarry, MallowStage } from '../skillSlots.js';
 import { skillLv } from '../../items/skills.js';
 
 // ---------------------------------------------------------------------------
@@ -53,12 +68,20 @@ import { skillLv } from '../../items/skills.js';
 // 것에 기대지 마라.
 
 const enum Sk {
+  /** SQ1 부채 격노 */ debtFury = 0,
+  /** SQ2 청산 폭발 */ settlementBlast = 1,
   /** SQ3 몸통 반발 */ bodyRecoil = 2,
   /** SQ4 압인 탄두 */ debtStamp = 3,
+  /** SQ5 탕감 장전 */ forgivenessLoader = 4,
+  /** SQ8 흉터 포문 */ scarCannon = 7,
   /** ME1 조기 상환 */ earlyRepayment = 10,
+  /** ME4 반환 요법 */ rebateTherapy = 13,
   /** ME10 성장 환전 */ growthConversion = 19,
+  /** CU3 무통 정산 */ painlessSettlement = 22,
   /** CU4 반발 세척 */ recoilRinse = 23,
   /** CU7 아문 살갗 */ healedHide = 26,
+  /** CU9 유예의 은총 */ graceOfSettlement = 28,
+  /** CU10 영구 채무 자본화 */ perpetualCapitalization = 29,
 }
 
 /**
@@ -94,6 +117,31 @@ function healedHideMaxBp(level: number): number {
 /** ME10 의 부채→XP 전환율(%) = 20 + 50×Lv/(Lv+10). Lv20 ≈ 53 · 점근 70. */
 function growthConversionPct(level: number): number {
   return 20 + (50 * level) / (level + 10);
+}
+
+/** SQ1 의 증폭 상한 bp = 1000 + 3000×Lv/(Lv+10). Lv20 = 3000 · 점근 4000. */
+function debtFuryCapBp(level: number): number {
+  return 1000 + (3000 * level) / (level + 10);
+}
+
+/** SQ8 의 증폭 상한 bp = 800 + 2400×Lv/(Lv+12). Lv20 = 2300 · 점근 3200. */
+function scarCannonCapBp(level: number): number {
+  return 800 + (2400 * level) / (level + 12);
+}
+
+/** ME4 의 탕감→회복 전환율(%) = 20 + 60×Lv/(Lv+15). Lv20 = 54 · 점근 80. */
+function rebateTherapyPct(level: number): number {
+  return 20 + (60 * level) / (level + 15);
+}
+
+/** CU3 의 회당 상한 비율(%) = round(30 − 18×Lv/(Lv+10)). Lv20 = 18 · 점근 12. */
+function painlessSettlementPct(level: number): number {
+  return Math.round(30 - (18 * level) / (level + 10));
+}
+
+/** CU10 의 탕감→maxHp 전환율(%) = round(4 + 16×Lv/(Lv+16)). Lv20 ≈ 13 · 점근 20. */
+function capitalizationPct(level: number): number {
+  return Math.round(4 + (16 * level) / (level + 16));
 }
 
 // ---------------------------------------------------------------------------
@@ -283,4 +331,169 @@ export function mallowPowerupPicked(state: WorldState, player: Entity): void {
   player.aux0 = left;
   const gain = Math.floor((burned * growthConversionPct(me10)) / 100);
   if (gain > 0) state.xp += gain;
+}
+
+/**
+ * 앵커 ⑳ **완충 정산 직후**(hp 차감·hp−1 클램프까지 반영된 뒤) — 정산 트리거 **7종**:
+ * CU3 무통 정산 · SQ2 청산 폭발 · SQ5 탕감 장전 · SQ8 흉터 포문 · ME4 반환 요법 ·
+ * CU9 유예의 은총 · CU10 영구 채무 자본화.
+ *
+ * ## 적용 순서는 설계서 공통 고지 ④ 가 못 박았다
+ * *분할(ME5) → 회당 상한(CU3) → applied 확정 → 파생 소비(SQ2·SQ5·SQ8·ME4·CU9·CU10)* 다.
+ * ME5 는 미배선(헤더)이므로 이 함수는 **CU3 부터** 시작하고, CU3 이 확정한 `hit` 을 나머지
+ * 여섯이 읽는다. 순서를 뒤집으면 상한에 걸린 정산에서 폭발·누적·회복이 **깎이기 전 값**을
+ * 보게 되어 CU3 이 조용히 무력화된다.
+ *
+ * ## ⚠️ `applied` 와 `settled` 는 다르다 — 무엇을 어디에 쓰는가
+ *  - `applied`(= 이 함수의 `hit`) — **hp 에서 실제로 깎인 양.** "미룬 피해를 갚았다" 를 재는
+ *    축(SQ2 폭발·SQ8 누적·ME4 의 회복 상한)은 전부 이쪽이다.
+ *  - `settled` — 선체로 **들어가기로 확정됐던** 양. hp−1 클램프가 물면 `applied < settled` 다.
+ *    CU3 의 **이월분**만 이쪽 기준인데, 이유는 이월이 "상한이 막은 몫" 이지 "클램프가 소멸시킨
+ *    몫" 이 아니기 때문이다(소멸분을 이월로 되살리면 완충이 순 감쇄가 아니라 순 부채가 된다).
+ *  - `recovered` — 무피격 보상으로 **사라진** 몫. 산출이 HP 밖인 축(SQ5 화력·CU10 maxHp)과
+ *    ME4 회복의 **재료**다. 정산 전 풀 크기가 필요하면 `settled + recovered` 로 복원한다.
+ *
+ * ## ⚠️ `player.aux0`·`aux1` 은 이미 0 이다
+ * CU3 의 이월이 `aux0` 에 **대입**인 것이 그래서 성립한다(가산이면 리셋 전 값과 두 겹이 된다).
+ * `aux1` 은 건드리지 않는다 — 임계 재충전 규칙은 CU3 의 변경 대상이 아니다(설계서 CU3 구현항).
+ */
+export function mallowCushionSettled(
+  state: WorldState,
+  player: Entity,
+  settled: number,
+  recovered: number,
+  applied: number,
+): void {
+  // --- CU3 무통 정산 — 회당 상한 + 잔여 이월 -----------------------------------
+  let hit = applied;
+  const cu3 = lv(state, Sk.painlessSettlement);
+  if (cu3 >= 1) {
+    // 상한 = maxHp × round(30 − 18×Lv/(Lv+10))%. 반올림은 이 게이트 **안**이다(규율 ③).
+    const cap = Math.round((player.maxHp * painlessSettlementPct(cu3)) / 100);
+    if (hit > cap) {
+      // 이미 깎인 몫을 상한까지 되돌린다. `min` 은 결합적이라 사후 보정이어도
+      // min(settled, cap, room) 으로 정확히 같은 값이 나온다 — 클램프와 순서가 무관하다.
+      player.hp += hit - cap;
+      hit = cap;
+    }
+    const carry = settled - cap;
+    if (carry > 0) player.aux0 = carry;
+  }
+  // --- SQ2 청산 폭발 — 갚은 만큼 되쏜다 ----------------------------------------
+  const sq2 = lv(state, Sk.settlementBlast);
+  if (sq2 >= 1 && hit > 0) {
+    const dmg = Math.round((hit * (80 + 6 * sq2)) / 100);
+    // `blastDamage` 는 `hp` 만 깎고 `dead` 는 건드리지 않는다 — 격추 집계는 `compact()` 단일
+    // 수렴점이다(SQ3 와 같은 규율).
+    if (dmg > 0) blastDamage(state, player, 180 + 10 * sq2, dmg);
+  }
+  // --- SQ5 탕감 장전 — 사라진 몫이 탄약이 된다 ---------------------------------
+  const sq5 = lv(state, Sk.forgivenessLoader);
+  if (sq5 >= 1 && recovered > 0) {
+    const add = Math.round((recovered * (50 + 5 * sq5)) / 100);
+    if (add > 0) {
+      const rem = readSlot(state.skillStage, MallowStage.forgivenessLoad);
+      writeSlot(state.skillStage, MallowStage.forgivenessLoad, rem + add);
+    }
+  }
+  // --- SQ8 흉터 포문 — 갚은 이력이 포문을 벼린다 -------------------------------
+  const sq8 = lv(state, Sk.scarCannon);
+  if (sq8 >= 1 && hit > 0) {
+    const cum = readSlot(state.skillCarry, MallowCarry.scarApplied);
+    writeSlot(state.skillCarry, MallowCarry.scarApplied, cum + hit);
+  }
+  // --- ME4 반환 요법 — 회복 ≤ 선체행(수지 불변식 1 을 이 스킬이 집행한다) ------
+  const me4 = lv(state, Sk.rebateTherapy);
+  if (me4 >= 1 && recovered > 0 && hit > 0) {
+    let heal = Math.round((recovered * rebateTherapyPct(me4)) / 100);
+    // ⚠️ 이 `min` 이 불변식 1 그 자체다 — 빼면 정산이 **순 회복**이 되어 맞는 것이 이득이 된다.
+    if (heal > hit) heal = hit;
+    if (heal > 0) {
+      const room = player.maxHp - player.hp;
+      if (room > 0) player.hp += heal > room ? room : heal;
+    }
+  }
+  // --- CU9 유예의 은총 — 갚는 순간의 무적 --------------------------------------
+  const cu9 = lv(state, Sk.graceOfSettlement);
+  if (cu9 >= 1) {
+    const grace = 20 + 4 * cu9;
+    // `max` 형태다 — 통상 피격 무적이 더 길게 남아 있으면 그것을 **깎으면 안 된다**.
+    if (player.iframes < grace) player.iframes = grace;
+  }
+  // --- CU10 영구 채무 자본화 — 갚아 본 빚이 몸집이 된다 ------------------------
+  const cu10 = lv(state, Sk.perpetualCapitalization);
+  if (cu10 >= 1 && recovered > 0) {
+    let gain = Math.round((recovered * capitalizationPct(cu10)) / 100);
+    const per = 3 + cu10;
+    if (gain > per) gain = per;
+    // ⚠️ `maxHp` 만 올리고 `hp` 는 올리지 않는다(설계서 명시) — 회복이 아니므로 불변식 1
+    // 대상 밖이고, 파워업 `reinforced-hull` 의 "즉시 회복" 과 여기서 갈린다. ME4 **뒤**라
+    // 이번 정산의 회복이 늘어난 상한을 미리 쓰지 못한다(설계서 파생 소비 순서 그대로).
+    if (gain > 0) player.maxHp += gain;
+  }
+}
+
+/**
+ * 앵커 ⑯ **볼리 파라미터 확정 직후 · 탄이 태어나기 직전** — SQ1 부채 격노 · SQ8 흉터 포문의
+ * 소비처 · SQ5 탕감 장전의 소비처.
+ *
+ * ## 세 스킬 모두 `damage` 한 칸만 만진다 — 교환형이 아니다
+ * S2.1 이 실은 `ballisticsUsed`·`countUsed` 게이트는 **대가를 탄속·탄수에 싣는 교환형**을 위한
+ * 것이다(브루저 BL6 이 빔에서 페널티만 증발하고 이득만 남았던 결함). 여기 셋은 **페널티가
+ * 없고** `damage` 는 전 아키타입이 읽으므로(앵커 ⑯ 의 아키타입 표) 게이트가 필요 없다 —
+ * 게이트를 붙이면 빔 말로우에서 세 스킬이 통째로 조용히 죽는다.
+ *
+ * ## SQ1·SQ8 은 bp 를 **합산**한 뒤 한 번만 적용한다
+ * 순차로 곱하면 적용 순서가 결과를 바꾸고(두 스킬 사이에 우열이 생긴다), 두 상한이 곱해져
+ * 설계가 계산한 점근 상한이 깨진다. 각자 자기 상한으로 잘린 bp 를 더하는 것이 설계서의
+ * "증폭 상한" 문언과 정합한다.
+ *
+ * ## ⚠️ SQ5 의 소진은 **볼리당 1회**다 — 탄당이 아니다
+ * `params.damage` 는 **발당 피해**라, 소진량을 여기 더하면 발칸(부채꼴 다발)에서는 탄수만큼
+ * 곱해져 들어간다. 설계서가 정한 관측량은 "볼리당 잔량의 25% 소진" 이고 그것은 여기서 정확히
+ * 성립한다 — 발당 반영은 이 앵커가 제공하는 유일한 피해 칸이기 때문이며, 아키타입 간 위력
+ * 격차는 밸런스 축(defer-balance-tuning)으로 넘긴다.
+ */
+export function mallowVolleyParams(
+  state: WorldState,
+  player: Entity,
+  params: VolleyParams,
+): void {
+  let bp = 0;
+  // --- SQ1 부채 격노 — 지금 진 빚이 클수록 세게 때린다 -------------------------
+  const sq1 = lv(state, Sk.debtFury);
+  if (sq1 >= 1) {
+    const debt = Math.trunc(player.aux0);
+    if (debt > 0) {
+      const raw = debt * (4 + sq1);
+      const cap = debtFuryCapBp(sq1);
+      bp += raw > cap ? Math.round(cap) : raw;
+    }
+  }
+  // --- SQ8 흉터 포문 — 갚아 본 이력이 클수록 세게 때린다 -----------------------
+  const sq8 = lv(state, Sk.scarCannon);
+  if (sq8 >= 1) {
+    const cum = readSlot(state.skillCarry, MallowCarry.scarApplied);
+    if (cum > 0) {
+      const raw = cum * (6 + 2 * sq8);
+      const cap = scarCannonCapBp(sq8);
+      bp += raw > cap ? Math.round(cap) : raw;
+    }
+  }
+  if (bp > 0) params.damage += Math.round((params.damage * bp) / 10000);
+  // --- SQ5 탕감 장전 — 잔량의 25% 를 이번 볼리에 싣는다 ------------------------
+  const sq5 = lv(state, Sk.forgivenessLoader);
+  if (sq5 >= 1) {
+    const rem = readSlot(state.skillStage, MallowStage.forgivenessLoad);
+    if (rem > 0) {
+      // ⚠️ 하한 1 이 **종료 보장**이다. 설계서의 "정수 내림 · 0 도달 시 종료" 를 floor 만으로
+      // 쓰면 잔량 3 이하에서 소진이 0 이 되어 **영영 안 비는 탄창**이 된다(잔량이 해시에
+      // 접히므로 조용한 영구 발산이다).
+      let use = Math.floor((rem * 25) / 100);
+      if (use < 1) use = 1;
+      if (use > rem) use = rem;
+      writeSlot(state.skillStage, MallowStage.forgivenessLoad, rem - use);
+      params.damage += use;
+    }
+  }
 }
