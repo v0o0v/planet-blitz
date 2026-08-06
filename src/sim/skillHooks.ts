@@ -89,6 +89,8 @@ import {
   hatchlingDamageChain,
   hatchlingSignatureStep,
   hatchlingEnemyDamaged,
+  hatchlingBroodLaunchParams,
+  hatchlingBroodLaunched,
 } from './skills/hatchling.js';
 import {
   strikerDashFired,
@@ -2009,12 +2011,13 @@ export function onBroodLaunchParams(
   params: BroodParams,
 ): void {
   if (!state.skillsOn) return;
-  void player;
-  void params;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case SIG_HATCHLING_BROOD:` 를 여기에 넣는다. **`break;` 를 반드시
     // 붙여라** — 병렬 배선 머지에서 두 `case` 가 `break;` 하나를 공유하는 fallthrough 가
     // 누적 5건 나왔고 전부 `tsc` 만이 잡았다.
+    case SIG_HATCHLING_BROOD:
+      hatchlingBroodLaunchParams(state, player, params);
+      break;
     default:
       break;
   }
@@ -2050,10 +2053,11 @@ export function onBroodLaunchParams(
  */
 export function onBroodLaunched(state: WorldState, player: Entity, chick: Entity): void {
   if (!state.skillsOn) return;
-  void player;
-  void chick;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case SIG_HATCHLING_BROOD:` 를 여기에 넣는다. **`break;` 필수**(위와 같음).
+    case SIG_HATCHLING_BROOD:
+      hatchlingBroodLaunched(state, player, chick);
+      break;
     default:
       break;
   }
