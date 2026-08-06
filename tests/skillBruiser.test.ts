@@ -1186,3 +1186,78 @@ describe('⑯-좀비 BL3 폭발 사망 마킹', () => {
     expect(w.kills).toBe(killsBefore);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ⑯-좀비 BL9 강타 사망 마킹 — 「표적이 탄을 견디고 강타에 죽는」 경우
+// ---------------------------------------------------------------------------
+
+/**
+ * BL9 는 대상이 **맞은 표적 자신**이라 "격추 판정 뒤라 의도적" 으로 분류돼 있었다. 그 분류는
+ * **표적이 이미 죽은 경우**에만 맞다. 표적이 탄 피해를 **견디고**(hp > 0) 강타가 hp 를 0 이하로
+ * 내리면 `world.ts:4170-4197` 의 격추 판정은 이미 지나간 뒤라 아무도 `dead` 를 안 세운다 —
+ * `hp<=0 → dead` 를 훑는 일반 스윕이 sim 에 **없으므로** 그 표적은 **좀비**다.
+ *
+ * ⚠️ 계측기 함정: 표적을 플레이어 코앞에 두면 자동사격 탄이 같은 틱에 마무리해 **수정 전에도**
+ * 통과한다. 그래서 600px(자동사격 탄 ≈30px/tick) 밖에 둔다.
+ * ⚠️ 그리고 표적 hp 를 **강타분과 정확히 같게** 잡아, 죽는 경로가 강타 하나뿐이 되게 한다.
+ */
+describe('⑯-좀비 BL9 강타 사망 마킹', () => {
+  /** BL9 Lv10 · 명중 피해 40 → 강타 = round(40 × 12000/10000) = 48. */
+  const BONUS = 48;
+  /** 장갑 스택 0 → 주기 = round(48/(4+0)) = 12. 11 을 미리 채워 다음 명중이 강타가 되게 한다. */
+  const PERIOD = 12;
+
+  function bl9Setup(hp: number): { w: WorldState; t: Entity } {
+    const w = mk([[BL9, 10]]);
+    const p = player(w);
+    writeSlot(w.skillStage, BruiserStage.cadenceHits, PERIOD - 1);
+    const t = addEnemy(w, p.x, p.y + 600, hp);
+    return { w, t };
+  }
+
+  const src = (): Entity => ({ ...blankEntity('bullet'), damage: 40 });
+
+  it('전제 — 이번 명중이 강타 주기이고 강타분은 48 이다 (하한)', () => {
+    const { w, t } = bl9Setup(1_000_000);
+    onEnemyDamaged(w, t, 40, src());
+    expect(t.hp).toBe(1_000_000 - BONUS);
+  });
+
+  it('탄을 견딘 표적이 강타로 hp≤0 이 되면 그 자리에서 dead 로 마킹된다', () => {
+    const { w, t } = bl9Setup(BONUS);
+    expect(t.dead).toBe(false); // 탄 피해는 견뎠다 — 앵커가 세운 dead 가 아니다
+    onEnemyDamaged(w, t, 40, src());
+    expect(t.hp).toBeLessThanOrEqual(0);
+    expect(t.dead).toBe(true);
+  });
+
+  it('다음 stepWorld 에서 수거되고 처치·젬으로 집계된다 (좀비로 안 남는다)', () => {
+    const { w, t } = bl9Setup(BONUS);
+    const gx = t.x;
+    const gy = t.y;
+    const killsBefore = w.kills;
+    const gemsBefore = w.entities.filter((x) => x.kind === 'gem').length;
+    onEnemyDamaged(w, t, 40, src());
+    expect(t.hp).toBeLessThanOrEqual(0);
+    stepWorld(w, emptyInput());
+    // ⚠️ id 가 아니라 **객체 동일성** — 이 파일의 `addEnemy` 는 id 를 안 매긴다.
+    expect(w.entities.includes(t)).toBe(false);
+    expect(w.kills).toBeGreaterThanOrEqual(killsBefore + 1);
+    const gems = w.entities.filter(
+      (x) => x.kind === 'gem' && Math.hypot(x.x - gx, x.y - gy) <= 200,
+    );
+    expect(gems.length).toBeGreaterThanOrEqual(1);
+    expect(w.entities.filter((x) => x.kind === 'gem').length).toBeGreaterThan(gemsBefore);
+  });
+
+  it('표적이 살아남으면 dead 를 세우지 않는다 (과잉 마킹 금지)', () => {
+    const { w, t } = bl9Setup(BONUS + 1);
+    onEnemyDamaged(w, t, 40, src());
+    expect(t.hp).toBe(1);
+    expect(t.dead).toBe(false);
+    const killsBefore = w.kills;
+    stepWorld(w, emptyInput());
+    expect(w.entities.includes(t)).toBe(true);
+    expect(w.kills).toBe(killsBefore);
+  });
+});
