@@ -102,7 +102,7 @@ export function writeSlot(slots: number[], slot: number, value: number): void {
 //   아크캐스터 (SIG_ARC_OVERCHARGE)   — 파일 끝 두 enum
 //   브루저     (SIG_BRUISER_ARMOR)    — 아래 두 enum
 //   아크캐스터 (SIG_ARC_OVERCHARGE)   — 미배정
-//   팬텀       (SIG_PHANTOM_CLOAK)    — 미배정
+//   팬텀       (SIG_PHANTOM_CLOAK)    — 파일 끝 두 enum
 //   해츨링     (SIG_HATCHLING_BROOD)  — 미배정
 //   말로우     (SIG_MALLOW_CUSHION)   — 미배정
 //   버블       (SIG_BUBBLE_FILM)      — 미배정
@@ -223,4 +223,40 @@ export const enum BruiserStage {
    * 장갑 스택에서 매 명중마다 파생되므로(`max(1, round(48/(4+스택)))`) 이 칸에는 카운트만 산다.
    */
   cadenceHits = 1,
+}
+
+/**
+ * **팬텀 이월 슬롯**(ADR-0049 배치 4). 효과 본체는 `src/sim/skills/phantom.ts`.
+ *
+ * ⚠️ 팬텀의 `player.aux0`/`aux1` 은 **시그니처(은신)가 점유**한다(aux0 = 연속 무피격 틱 ·
+ * aux1 = 해제 첫 타 배율 토큰). 스킬 상태를 그 두 칸에 얹지 마라 — 사이클과 조용히 갈린다.
+ */
+export const enum PhantomCarry {
+  /**
+   * DI5「최후 위상」의 **내부 쿨다운 잔여 틱**. 0 = 발동 준비됨(값 규약 1 — 0 이 자연 센티넬).
+   *
+   * `Stage` 가 아니라 `Carry` 인 이유는 아크캐스터 `backflowCooldown` 과 같다: 쿨다운이 Lv1 에서
+   * 3484틱(약 58초)이라 의뢰 구간 길이를 우습게 넘는다. 구간마다 리셋하면 "구간 전환 = 쿨다운
+   * 초기화"가 되어 설계서가 이 스킬의 유일한 억제로 명시한 내부 쿨다운이 사실상 사라진다.
+   */
+  lastPhaseCooldown = 0,
+}
+
+/**
+ * **팬텀 구간 슬롯** — 이 배치가 배선한 12종은 **한 칸도 쓰지 않는다.**
+ *
+ * 설계서가 `구현: B`(신규 상태)로 표시한 팬텀 6종 중 이 배치가 닿은 것은 DI5 하나이고 그것은
+ * 위 `Carry` 다. 나머지 다섯(AS7 원한 표적 정수 1 · AS8 적공 스택 1 · PH5 유지 창 config 파생
+ * 승격 · PH6 창당 정지 예산 1 · DI6 벽 접촉 플래그)은 앵커 14개 밖이거나(AS7·AS8·PH5·PH6)
+ * 이미 엔진 상태가 제공한다(DI6 = `state.wallContactTicks`) — **아직 코드가 없다.**
+ *
+ * ⚠️ 지금 예약 번호를 미리 적지 마라 — 미사용 슬롯이 영구 0 으로 남는 것이 이 파일 헤더가
+ * 폭을 8 로 좁힌 이유 자체다(오인덱스가 조용한 무연산이 된다).
+ */
+export const enum PhantomStage {
+  /**
+   * 자리표시자 — **읽지도 쓰지도 않는다.** 실제 배정이 생기면 이 줄을 **지우고** 0번부터
+   * 다시 매겨라(스트라이커 `StrikerStage.unassigned` 와 같은 형식).
+   */
+  unassigned = 0,
 }
