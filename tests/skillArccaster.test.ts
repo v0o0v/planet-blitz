@@ -27,15 +27,22 @@ import {
   onDamageChain,
   onSignatureStep,
   onEnemyDamaged,
+  onEnemyDeath,
+  onVolleyParams,
 } from '../src/sim/skillHooks.js';
+import type { VolleyParams } from '../src/sim/skillHooks.js';
 import { SIG_ARC_OVERCHARGE } from '../src/sim/shipSignature.js';
 import { readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
 import { FIRE_CD_Q } from '../src/sim/constants.js';
 
 /** flat 인덱스 — `data/ships/arccaster.ts` 축 순서(CH 0..9 · BA 10..19 · BR 20..29). */
+const CH1 = 0;
 const CH4 = 3;
 const CH6 = 5;
+const CH8 = 7;
 const BA3 = 12;
+const BA7 = 16;
+const BA10 = 19;
 const BR1 = 20;
 const BR2 = 21;
 const BR3 = 22;
@@ -515,5 +522,188 @@ describe('앵커 ⑩ — CH6 과잉 전하 이월', () => {
 
   it('미투자면 이월이 없다', () => {
     expect(shot(0, -30)).toBe(100);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑯ 앵커 ⑯ 볼리 파라미터 — CH1·CH8 표식 · BA7 소비 · BA10 교환
+// ---------------------------------------------------------------------------
+
+/** 앵커 ⑯ 이 받는 레코드 한 벌. 초기값은 "아무 스킬도 안 걸린 볼리". */
+function volley(over: Partial<VolleyParams> = {}): VolleyParams {
+  return {
+    damage: 100,
+    pierce: 1,
+    count: 4,
+    speed: 900,
+    radius: 6,
+    life: 60,
+    spread: 0.5,
+    cooldownQ: 256,
+    countUsed: true,
+    mark: 0,
+    ...over,
+  };
+}
+
+describe('앵커 ⑯ — 발사부 4종', () => {
+  it('CH1: 과충전 중 발사한 볼리에만 표식이 선다', () => {
+    const w = mk([[CH1, 1]]);
+    const p = player(w);
+    p.aux0 = 200; // 과충전 중(≥90)
+    const on = volley();
+    onVolleyParams(w, p, on);
+    expect(on.mark).toBe(2);
+
+    p.aux0 = 10; // 정지 중이지만 과충전은 아니다
+    const off = volley();
+    onVolleyParams(w, p, off);
+    expect(off.mark).toBe(0);
+  });
+
+  it('CH8 단독 투자도 같은 표식을 세운다 (한 칸을 둘이 나눠 쓴다)', () => {
+    const w = mk([[CH8, 1]]);
+    const p = player(w);
+    p.aux0 = 200;
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v.mark).toBe(2);
+  });
+
+  it('CH1·CH8 미투자면 과충전이어도 표식이 없다', () => {
+    const w = mk([[BA7, 1]]);
+    const p = player(w);
+    p.aux0 = 600;
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v.mark).toBe(0);
+  });
+
+  it('BA10: 탄수 ×2 · 간격 배율(Lv1 ≈ ×1.9455) — 순이득이 아닌 교환이다', () => {
+    const w = mk([[BA10, 1]]);
+    const p = player(w);
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v.count).toBe(8);
+    // 20000 − round(6000×1/11) = 19455 → round(256 × 19455 / 10000) = 498
+    expect(v.cooldownQ).toBe(498);
+    expect(v.cooldownQ).toBeGreaterThan(256); // 간격은 **늘어나기만** 한다
+  });
+
+  it('BA10 Lv20 은 간격 배율이 ×1.6 이다 (몰빵할수록 페널티가 준다)', () => {
+    const w = mk([[BA10, 20]]);
+    const p = player(w);
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v.cooldownQ).toBe(Math.round((256 * 16000) / 10000));
+  });
+
+  it('⚠️ `countUsed` 가 거짓이면(레일건·빔) BA10 은 간격도 안 건드린다', () => {
+    const w = mk([[BA10, 20]]);
+    const p = player(w);
+    const v = volley({ countUsed: false });
+    onVolleyParams(w, p, v);
+    expect(v.count).toBe(4);
+    expect(v.cooldownQ).toBe(256); // 탄수는 안 늘고 간격만 느는 **순손실**이 되면 안 된다
+  });
+
+  it('BA7: 처치 6기가 모여야 다음 볼리 한 번에만 탄수가 실린다', () => {
+    const w = mk([[BA7, 1]]);
+    const p = player(w);
+    for (let i = 0; i < 5; i++) onEnemyDeath(w, 0, 0, false);
+    const early = volley();
+    onVolleyParams(w, p, early);
+    expect(early.count).toBe(4); // 5기로는 장전되지 않는다
+
+    onEnemyDeath(w, 0, 0, false); // 6기째
+    const loaded = volley();
+    onVolleyParams(w, p, loaded);
+    expect(loaded.count).toBe(6); // 2 + floor(1/5)
+
+    const next = volley();
+    onVolleyParams(w, p, next);
+    expect(next.count).toBe(4); // 방전됐다 — 다음 볼리에는 안 실린다
+  });
+
+  it('BA7 충전은 6 에서 멈춘다 (초과 처치는 이월하지 않는다)', () => {
+    const w = mk([[BA7, 1]]);
+    for (let i = 0; i < 20; i++) onEnemyDeath(w, 0, 0, false);
+    expect(readSlot(w.skillStage, 2)).toBe(6);
+  });
+
+  it('BA7 미투자 런은 처치가 쌓여도 슬롯이 0 이다 (무폴드 계약)', () => {
+    const w = mk([[CH1, 1]]);
+    for (let i = 0; i < 20; i++) onEnemyDeath(w, 0, 0, false);
+    expect(readSlot(w.skillStage, 2)).toBe(0);
+  });
+
+  it('투자 0 런은 앵커 ⑯ 을 손으로 때려도 레코드가 그대로다', () => {
+    const w = mk();
+    const p = player(w);
+    p.aux0 = 600;
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v).toEqual(volley());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑯+⑩ 표식의 소비 — CH1 유도 낙뢰 · CH8 접지 관통로
+// ---------------------------------------------------------------------------
+
+describe('앵커 ⑩ — CH1 유도 낙뢰 · CH8 접지 관통로', () => {
+  /** 표식 유무를 지정한 아군탄이 `target` 에 명중한 상황. */
+  function hit(w: WorldState, target: Entity, mark: number, phase = 0): Entity {
+    const bullet = blankEntity('bullet');
+    bullet.id = 90500;
+    bullet.damage = 100;
+    bullet.aux0 = mark;
+    bullet.phase = phase;
+    w.entities.push(bullet);
+    onEnemyDamaged(w, target, 100, bullet);
+    return bullet;
+  }
+
+  it('CH1: 표식 붙은 탄이 명중하면 주변 적에게 연쇄가 터진다', () => {
+    const w = mk([[CH1, 1]]);
+    const target = enemyNear(w, 0, 0);
+    const near = enemyNear(w, 120, 0);
+    const far = enemyNear(w, 900, 0);
+    hit(w, target, 2);
+    // 탄 피해 100 × (2000 + 200)/10000 = 22
+    expect(near.hp).toBe(1000 - 22);
+    expect(far.hp).toBe(1000);
+  });
+
+  it('CH1: 표식 없는 탄(비과충전 발사)은 연쇄를 만들지 않는다', () => {
+    const w = mk([[CH1, 1]]);
+    const target = enemyNear(w, 0, 0);
+    const near = enemyNear(w, 120, 0);
+    hit(w, target, 0);
+    expect(near.hp).toBe(1000);
+  });
+
+  it('CH8: 표식 붙은 탄은 관통할 때마다 피해가 증폭된다', () => {
+    const w = mk([[CH8, 1]]);
+    const target = enemyNear(w, 0, 0);
+    // Lv1 증폭률 = 6% + 0.6%p = 6.6%. 100 → +round(6.6) = 107.
+    const b = hit(w, target, 2);
+    expect(b.damage).toBe(107);
+    onEnemyDamaged(w, target, 107, b); // 두 번째 관통: 107 → +round(7.062) = 114
+    expect(b.damage).toBe(114);
+  });
+
+  it('CH8: 자이로·프리즘 경로(phase > 0)에서는 중첩 곱이 없다', () => {
+    const w = mk([[CH8, 1]]);
+    const target = enemyNear(w, 0, 0);
+    const b = hit(w, target, 2, 3);
+    expect(b.damage).toBe(100);
+  });
+
+  it('CH8 미투자 런은 표식이 붙어도 피해가 안 변한다', () => {
+    const w = mk([[CH1, 1]]);
+    const target = enemyNear(w, 0, 0);
+    const b = hit(w, target, 2);
+    expect(b.damage).toBe(100);
   });
 });
