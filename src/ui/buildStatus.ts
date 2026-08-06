@@ -13,7 +13,7 @@
 import type { WorldState } from '../sim/world.js';
 import { FIRE_CD_Q } from '../sim/constants.js';
 import { POWERUPS } from '../sim/powerups.js';
-import type { SkillTree } from '../../data/skills.js';
+import type { SkillTree } from '../../data/ships/types.js';
 import { AFFINITY_LEGACY_TREE } from '../../data/ships/index.js';
 
 /** 무기 아키타입 표시명(weaponType 인덱스 → 한글). autoAttack 분기와 동일 코드. */

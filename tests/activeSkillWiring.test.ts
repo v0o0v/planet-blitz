@@ -19,8 +19,14 @@
  * ## ③ 시그니처 델타 — 구 `touchesSignature` 의 대체
  * `def.touchesSignature === SHIP_TYPES[def.shipTypeId].signatureBit` 는 우변이 `shipTypeId`
  * 로 100% 파생 가능해 "저작자가 베껴 적었는가"만 검사하는 또 다른 항진이었다. 대신 **발동군의
- * `aux0`/`aux1` 이 대조군과 달라지는지**를 본다. 스트라이커 6종은 `signatureBit: -1` 이라
- * 제외하되, **제외 목록 크기가 정확히 6임을 별도 단언**해 조용히 늘지 못하게 한다.
+ * `aux0`/`aux1` 이 대조군과 달라지는지**를 본다. 스트라이커 6종은 제외하되, **제외 목록
+ * 크기가 정확히 6임을 별도 단언**해 조용히 늘지 못하게 한다.
+ *
+ * ⚠️ **계약 반전(ADR-0049 §1)**: 스트라이커는 이제 `signatureBit: -1` 이 아니다(비트 24,
+ * 정조준 사이클). 그래도 스트라이커의 액티브 6종은 여전히 제외 대상이다 — 이유가 "시그니처가
+ * 없어서" 에서 **"이 6종이 구조적으로 `aux` 를 건드리지 않아서"** 로 바뀌었을 뿐이다
+ * (`data/ships/actives/striker.ts` 저작 자체가 `aux0`/`aux1` 을 한 줄도 참조하지 않는다 —
+ * 정조준 카운터 갱신은 액티브가 아니라 `autoAttack`/`stepShipSignature` 에 있다).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -33,7 +39,12 @@ import { OBSERVABLE_BY_KIND, ACTIVES_PER_SHIP } from '../data/ships/actives/type
 import type { ActiveSkillDef } from '../data/ships/actives/types.js';
 import { SHIP_TYPES, zeroSkillInvest, shipTreeRange } from '../data/ships/index.js';
 
-/** 시그니처가 없는(= `aux` 를 건드리지 않는 것이 설계인) 기체 타입. */
+/**
+ * 액티브가 `aux` 를 건드리지 않는 것이 설계인 기체 타입 — 스트라이커. 이름은 구 계약("시그니처가
+ * 없다")에서 왔지만 지금도 변수로 남긴 것은 `withSignature`/`excluded` 필터 표현이 여전히
+ * 읽기 쉬워서다. 스트라이커는 이제 시그니처가 있다(비트 24) — 아래 "제외 목록" 테스트가
+ * 실제 계약(6종이 구조적으로 aux 를 안 건드린다)을 못 박는다.
+ */
 const NO_SIGNATURE_SHIP = 0; // 스트라이커
 
 /** 그 스킬이 열리고도 남을 만큼 해당 계열에 투자한 벡터. */
@@ -247,8 +258,13 @@ describe('액티브 스킬 배선 전수 ③ — 시그니처 델타 (aux0/aux1)
     const strikerList = ACTIVES_BY_SHIP[NO_SIGNATURE_SHIP] ?? [];
     expect(excluded.length).toBe(strikerList.length);
     if (strikerList.length !== 0) expect(excluded.length).toBe(ACTIVES_PER_SHIP);
-    // 스트라이커는 `signatureBit: -1` 이라 aux 를 건드리지 않는 것이 **설계**다(ADR-0041).
-    expect(SHIP_TYPES[NO_SIGNATURE_SHIP]?.signatureBit).toBe(-1);
+    // ⚠️ 계약 반전(ADR-0049 §1): 스트라이커도 이제 시그니처가 있다(비트 24) — 그래서 더는
+    // `signatureBit === -1` 을 이 제외의 근거로 못 박을 수 없다. 제외의 실제 근거는 "이 6종의
+    // 저작이 `aux0`/`aux1` 을 한 줄도 참조하지 않는다" 는 구조적 사실이다(정조준 카운터는
+    // 액티브가 아니라 `autoAttack`/`stepShipSignature` 에서 갱신된다). 여기서는 그 반대(=
+    // 시그니처가 실제로 있다)를 못 박아 "제외 = 시그니처 없음" 이라는 낡은 전제가 되살아나지
+    // 않게 한다.
+    expect(SHIP_TYPES[NO_SIGNATURE_SHIP]?.signatureBit).toBeGreaterThanOrEqual(0);
   });
 
   it.each(withSignature.map((d) => [d.id, d] as const))(

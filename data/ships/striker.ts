@@ -18,11 +18,15 @@
  * 축 slug 를 쓰므로, 순서를 바꾸면 스킬 재편과 무관한 배선이 함께 밀린다. **설계서가 F→M→S
  * 순으로 서술하는 것은 편집 순서일 뿐 flat 순서가 아니다.**
  *
- * 시그니처 패시브(정조준 사이클, 비트 24)는 **별도 커밋**에서 부여한다 — `SHIP_HASH_VERSION`
- * bump 와 골든 재생성을 동반하므로 와이어 재정의와 섞지 않는다(`prerequisites.md` §5-5).
+ * 시그니처 패시브(정조준 사이클, 비트 24 = `SIG_STRIKER_MARKSMAN`)는 이 커밋에서 부여한다 —
+ * `src/sim/shipSignature.ts` 가 상수·순수 함수 정본이고, `src/sim/world.ts` 가 `aux0` 사이클
+ * 카운터 배선(stepShipSignature 분기 + autoAttack 정조준 적용)을 소유한다. 골든 3종
+ * (shipHashBaseline·denoFixture·encounterHashInvariance)이 이 변경으로 깨지는 것은 **의도된
+ * 결과다** — 스트라이커가 fixtures 의 기본 기체라 `uniqueMask` 가 바뀐다(재생성은 레인 리드
+ * 소관, `prerequisites.md` §5-5).
  */
 
-import { ACTIVE_HI_GATE_DEFAULT, buildShipAxis, NO_SIGNATURE_BIT } from './types.js';
+import { ACTIVE_HI_GATE_DEFAULT, buildShipAxis } from './types.js';
 import type { ShipTypeDef, SkillSpec } from './types.js';
 
 const SLUG = 'striker';
@@ -78,6 +82,9 @@ export const STRIKER: ShipTypeDef = {
     buildShipAxis(SLUG, 'mobility', 'utility', MOBILITY),
   ],
   activeHiGate: ACTIVE_HI_GATE_DEFAULT,
-  signatureBit: NO_SIGNATURE_BIT,
+  // 정조준 사이클 — `src/sim/shipSignature.ts` 의 `SIG_STRIKER_MARKSMAN` 이 정본,
+  // `tests/shipSignatureRegistry.test.ts` 가 두 값을 마주 세운다(브루저 등 나머지 6종과 같은
+  // 규율 — 이 파일이 sim 모듈을 직접 import 하지 않는다).
+  signatureBit: 24,
   baseBp: { damageBp: 0, fireRateBp: 0, maxHpBp: 0, moveSpeedBp: 0 },
 };

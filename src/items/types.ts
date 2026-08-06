@@ -151,6 +151,13 @@ export type EquipSlotId = (typeof EQUIP_SLOTS)[number];
  * prefixes (fire/cold/lightning) with the status-effect system (OQ-M3-5), completing
  * the 24-affix pool. Each elemental key feeds a status effect via the loadout →
  * LoadoutConfig elemental block (fireDmg / coldSlow / lightning).
+ *
+ * ADR-0049 스킬 어픽스(affixes.md ①-2)가 축 단위 3키를 더한다 — `skillLvOffense/Defense/
+ * Utility`. 이 셋은 위 13종과 성질이 다르다: `applyStatSums`(loadout.ts)가 접는 배율/가산이
+ * **아니라** `WorldConfig.skillAffixLv`(축별 정수 3칸, 이중 벡터)로 별도 파생된다
+ * (`deriveSkillAffixLv`). **열거처가 셋이다** — 이 유니온 · `zeroStatSums()`(skills.ts) ·
+ * `zeroSums()`(loadout.ts). 하나라도 빠지면 컴파일은 되는데 어픽스 합이 조용히 새거나
+ * `undefined` 가 된다(affixes.md ⑥-1 항목 5).
  */
 export type StatKey =
   // --- Prefix (offence) ---
@@ -171,7 +178,11 @@ export type StatKey =
   | 'dashCdPct'
   | 'magnetPct'
   | 'xpPct'
-  | 'mineralFindPct';
+  | 'mineralFindPct'
+  // --- Suffix (ADR-0049 스킬 어픽스 — 축 단위 +N 레벨, affixes.md ①-2) ---
+  | 'skillLvOffense' // 공격 계열 스킬 전체 +N 레벨(투자 ≥1 인 스킬에만 가산, ①-4)
+  | 'skillLvDefense' // 방어 계열
+  | 'skillLvUtility'; // 유틸 계열
 
 export type AffixKind = 'prefix' | 'suffix';
 

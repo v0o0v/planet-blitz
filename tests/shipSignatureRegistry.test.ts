@@ -23,19 +23,19 @@ import {
   SIG_HATCHLING_BROOD,
   SIG_MALLOW_CUSHION,
   SIG_BUBBLE_FILM,
+  SIG_STRIKER_MARKSMAN,
   SIGNATURE_BITS,
   SIGNATURE_BIT_MAX as SIM_SIGNATURE_BIT_MAX,
   hasSignature,
 } from '../src/sim/shipSignature.js';
-import {
-  SHIP_TYPES,
-  NO_SIGNATURE_BIT,
-  SIGNATURE_BIT_MIN,
-  SIGNATURE_BIT_MAX,
-} from '../data/ships/index.js';
+import { SHIP_TYPES, SIGNATURE_BIT_MIN, SIGNATURE_BIT_MAX } from '../data/ships/index.js';
 
-/** sim 상수 배열의 순서 계약: 인덱스 i ↔ typeId i+1(스트라이커는 시그니처 없음). */
+/**
+ * sim 상수 배열의 순서 계약: 인덱스 i ↔ typeId i(ADR-0049 §1 — 스트라이커도 이제 시그니처를
+ * 갖는다. 구 계약은 "스트라이커는 시그니처 없음" 이라 typeId 1~6 만 적었다).
+ */
 const EXPECTED_BY_TYPE_ID: readonly (readonly [number, number])[] = [
+  [0, SIG_STRIKER_MARKSMAN],
   [1, SIG_BRUISER_ARMOR],
   [2, SIG_ARC_OVERCHARGE],
   [3, SIG_PHANTOM_CLOAK],
@@ -57,19 +57,31 @@ describe('시그니처 비트 교차 계약 (sim 상수 ↔ 기체 레지스트�
     }
   });
 
-  it('스트라이커(타입 0)만 시그니처가 없다 — 설계서 §11 채택안 A(바이트 불변)', () => {
-    expect(SHIP_TYPES[0]?.signatureBit).toBe(NO_SIGNATURE_BIT);
-    expect(NO_SIGNATURE_BIT).toBeLessThan(0);
-    for (const def of SHIP_TYPES.slice(1)) {
-      expect(def.signatureBit, `${def.slug}: 스트라이커 외에는 시그니처가 있어야 한다`).toBeGreaterThanOrEqual(
+  it('전 타입(0~6)이 시그니처를 갖는다 — 계약 반전(ADR-0049 §1, 구 §11 채택안 A 폐기)', () => {
+    // 스트라이커도 이제 자기 시그니처(비트 24, 정조준 사이클)를 갖는다 — "시그니처 없는
+    // 기체" 라는 개념 자체가 사라졌다. NO_SIGNATURE_BIT(-1) 은 방어적 폴백값으로만 남는다.
+    expect(SHIP_TYPES[0]?.signatureBit).toBe(SIG_STRIKER_MARKSMAN);
+    for (const def of SHIP_TYPES) {
+      expect(def.signatureBit, `${def.slug}: 전 타입이 시그니처를 가져야 한다`).toBeGreaterThanOrEqual(
         SIGNATURE_BIT_MIN,
       );
     }
   });
 
-  it('sim 의 SIGNATURE_BITS 가 레지스트리의 비트 전량과 같은 집합·같은 순서다', () => {
+  it('sim 의 SIGNATURE_BITS 가 레지스트리의 비트 전량과 같은 집합이다(순서는 오름차순이 정본)', () => {
+    // ⚠️ 순서 계약 반전: 스트라이커(타입 id 0)가 최상위 비트 24 를 받으면서, 레지스트리
+    // 순서(타입 id 0→6 = [24,18,19,20,21,22,23])와 SIGNATURE_BITS 선언 순서(오름차순
+    // [18,19,20,21,22,23,24])가 더는 같지 않다 — "최저 비트 승자" 계약(shipSignature.ts
+    // SIGNATURE_BITS 주석, computeActiveSignature)이 성립하려면 후자가 항상 오름차순이어야
+    // 하므로, 여기서는 **집합만** 대조하고 오름차순 여부는 별도로 못 박는다.
     const fromRegistry = SHIP_TYPES.filter((d) => d.signatureBit >= 0).map((d) => d.signatureBit);
-    expect(fromRegistry).toEqual([...SIGNATURE_BITS]);
+    expect([...fromRegistry].sort((a, b) => a - b)).toEqual([...SIGNATURE_BITS].sort((a, b) => a - b));
+    for (let i = 1; i < SIGNATURE_BITS.length; i++) {
+      expect(
+        SIGNATURE_BITS[i],
+        'SIGNATURE_BITS 는 오름차순이어야 한다 — computeActiveSignature 의 "최저 비트 승자" 계약',
+      ).toBeGreaterThan(SIGNATURE_BITS[i - 1]!);
+    }
   });
 
   it('비트가 타입 간 유일하다 — 두 기체가 같은 비트를 쓰면 서로의 패시브가 켜진다', () => {

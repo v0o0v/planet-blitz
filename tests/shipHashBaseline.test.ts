@@ -106,7 +106,12 @@ import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile, activeShip } from '../src/save/profile.js';
 import { standardEquipped } from '../src/bench/standardBuild.js';
 import type { Profile } from '../src/save/profile.js';
-import { SKILL_NODE_COUNT } from '../data/skills.js';
+// ADR-0049: 노드 수 정본이 `data/skills.ts` 의 스트라이커 전용 상수(63)에서 레지스트리
+// 파생(전 기체 30 균일)으로 옮겨졌다. 골든 meta 는 재생성 회차의 실제 길이를 담는다.
+import { shipSkillNodeCount } from '../data/ships/index.js';
+
+/** 스트라이커(타입 0)의 flat 벡터 길이 — 레지스트리 파생. */
+const SKILL_NODE_COUNT = shipSkillNodeCount(0);
 import { PLANET_MODE } from '../src/sim/planetMode.js';
 
 // tests/node-shims.d.ts 의 readFileSync 는 Uint8Array 만 반환한다(encoding 오버로드 없음).

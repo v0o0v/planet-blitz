@@ -133,9 +133,9 @@ describe('src/items/skills.ts — 순수 조회 함수 (ADR-0049)', () => {
     expect(v).toEqual(snapshot);
   });
 
-  it('zeroStatSums: 16개 StatKey 전부 0(어픽스 누산기 초기값 형태 정본)', () => {
+  it('zeroStatSums: 19개 StatKey 전부 0(어픽스 누산기 초기값 형태 정본, 스킬 어픽스 3종 포함)', () => {
     const sums = zeroStatSums();
-    expect(Object.keys(sums)).toHaveLength(16);
+    expect(Object.keys(sums)).toHaveLength(19);
     for (const [key, v] of Object.entries(sums)) expect(v, key).toBe(0);
   });
 });

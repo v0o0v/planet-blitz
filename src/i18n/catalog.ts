@@ -853,12 +853,14 @@ export const EN = {
   // --- 기체 타입(M8, ADR-0019) ---
   // 키의 축은 `ShipTypeDef.slug` 다(`src/ui/pixi/shipLabels.ts` 가 유도한다). 하드코딩 목록이
   // 아니라 SHIP_TYPES 파생이므로, 타입이 늘면 `tests/i18n.test.ts` 가 누락을 잡는다.
-  // `.signature` 는 **시그니처를 가진 타입만** 둔다 — 스트라이커는 `signatureBit = -1`(설계서
-  // §11: 의도된 부재)이라 키가 있으면 오히려 고아다. 수치는 sim 정본
-  // (`src/sim/shipSignature.ts`)에서 그대로 옮겼다. 문구가 없는 효과를 약속하면 UI 가 거짓말을
-  // 한다. 컬러 이모지 금지(Pixi stripEmoji 가 두부로 떨군다).
+  // `.signature` 는 **시그니처를 가진 타입만** 둔다. 스트라이커도 ADR-0049 §1(정조준 사이클,
+  // 비트 24)로 이제 시그니처를 갖는다 — "시그니처 없는 타입" 이라는 구 §11 채택안 A 는
+  // 폐기됐다. 수치는 sim 정본(`src/sim/shipSignature.ts`)에서 그대로 옮겼다. 문구가 없는
+  // 효과를 약속하면 UI 가 거짓말을 한다. 컬러 이모지 금지(Pixi stripEmoji 가 두부로 떨군다).
   'ship.striker.name': 'Striker',
   'ship.striker.role': 'Balanced baseline — no chassis bias in any direction.',
+  'ship.striker.signature':
+    'Marksman Cycle — every 12th volley from your main weapon is a marksman volley: every bullet in it deals +50% damage and gains +1 pierce, then the cycle starts over.',
   'ship.bruiser.name': 'Bruiser',
   'ship.bruiser.role': 'Brawler that walks into fire. Heaviest hull, shortest reach.',
   'ship.bruiser.signature':
@@ -3057,6 +3059,8 @@ export const KO: Record<MessageKey, string> = {
 
   'ship.striker.name': '스트라이커',
   'ship.striker.role': '균형 잡힌 기준점. 어느 축으로도 섀시 보정이 없습니다.',
+  'ship.striker.signature':
+    '정조준 사이클 — 주무기 볼리 12회마다 다음 1볼리가 정조준 볼리가 되어, 그 볼리의 모든 탄이 피해 +50%·관통 +1 을 받습니다. 이후 사이클이 다시 시작됩니다.',
   'ship.bruiser.name': '브루저',
   'ship.bruiser.role': '맞으며 전진하는 근접형. 가장 두꺼운 선체, 가장 짧은 사거리.',
   'ship.bruiser.signature':

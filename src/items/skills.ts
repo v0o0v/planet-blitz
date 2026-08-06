@@ -56,6 +56,12 @@ export function zeroStatSums(): Record<StatKey, number> {
     fireDmg: 0,
     coldSlow: 0,
     lightning: 0,
+    // ADR-0049 스킬 어픽스(축 단위 +N 레벨)도 장비 어픽스 전용 → 항상 0. 실제 파생값은
+    // `WorldConfig.skillAffixLv`(이중 벡터, `deriveSkillAffixLv` in loadout.ts)이고 이
+    // 블록에는 절대 섞이지 않는다(affixes.md ①-5 — skillInvest 오염 재발 방지).
+    skillLvOffense: 0,
+    skillLvDefense: 0,
+    skillLvUtility: 0,
   };
 }
 

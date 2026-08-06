@@ -14,7 +14,6 @@ import { stickerByIndex } from '../../../data/stickers.js';
 import { PLANETS as PLANET_CONTENT } from '../../../data/planets/index.js';
 import { ENEMY_ASSET_FILES, BOSS_ASSET_FILES } from '../../render/textures.js';
 import { CATALYST_ICON_NAMES } from '../../data/catalysts.js';
-import type { SkillNode } from '../../../data/skills.js';
 import { SHIP_TYPES, DEFAULT_SHIP_TYPE, shipTypeDef } from '../../../data/ships/index.js';
 import { ACTIVES_BY_SHIP } from '../../../data/ships/actives/index.js';
 import { activeSkillIconName } from '../../../data/ships/actives/types.js';
@@ -315,41 +314,16 @@ export const UI_ASSET_NAMES: readonly string[] = [
 ];
 
 /** StatKey(camelCase) → 파일명 조각(snake_case). `maxHpFlat` → `max_hp_flat`. */
-function statSlug(stat: string): string {
-  return stat.replace(/([A-Z])/g, '_$1').toLowerCase();
-}
-
-/** 아이콘 티어대 5구간 — 스킬 tier 0~4 를 1:1 로 접는 순수 시각 묶음(런타임 파생 타입). */
-export type SkillIconBand = 'low' | 'lowmid' | 'mid' | 'midhigh' | 'high';
-
 /**
- * 노드 티어 → 아이콘 티어대 **5구간**(저·중·상·최상·초월 = tier 0·1·2·3·4 1:1, Lane 10).
+ * ⚠️ **(ADR-0049) 구 스킬 노드 아이콘 규칙은 여기서 삭제됐다.**
+ * `statSlug`/`skillIconBand`/`SkillIconBand`/`skillIconName` 은 `SkillNode.stat`+`tier` 에서
+ * 아이콘 이름을 유도했는데, flat 재편으로 그 두 필드가 사라져 **호출부가 0** 이 됐다.
+ * 신규 규칙은 축(affinity)만 읽는 `skillNodeIconName`(`src/ui/pixi/researchLab.ts`)이다.
  *
- * §7-R #6 의 단계 25/50/75/100/100+ 는 개념 앵커(기체 Lv≈단계, 스킬 tier 는 레벨 진행으로
- * 해금)일 뿐, 아이콘 밴드의 물리적 입력은 여전히 `SkillNode.tier` 0~4 다(ADR-0015·ADR-0022).
- *
- * 3밴드에서 확장할 때 **기존 low/mid/high 아트를 tier 0/2/4 에 그대로 보존**해 회귀를 최소화했다 —
- * tier 0/2/4 아이콘은 그림이 바뀌지 않는다. 새로 갈라진 `lowmid`(tier 1)·`midhigh`(tier 3)만
- * 아직 PNG 가 없어 로더가 조용히 null 폴백한다(M8 부채 4장과 동급, 후속 아트패스로 채운다 —
- * `uiTextures.ts:22-28` 관용). 밴드는 **아이콘을 묶기 위한 구분일 뿐 게임 데이터가 아니다** —
- * `data/skills.ts` 의 `tier` 는 이 함수가 읽기만 하고 절대 바꾸지 않는다. 캡스톤은 오지 않는다.
+ * ⚠️ **{@link SKILL_ICON_NAMES} 의 62종은 이제 아무도 부르지 않는다.** 상수와 PNG 를 함께
+ * 걷어내는 것은 아트 결정이라 이 레인에서 하지 않았다 — 지금은 프리로드 목록에만 남아 있다.
+ * 신규 축 아이콘 3종(`skill_axis_{offense,defense,utility}.png`)이 생길 때 같이 정리하라.
  */
-export function skillIconBand(tier: number): SkillIconBand {
-  if (tier <= 0) return 'low';
-  if (tier <= 1) return 'lowmid';
-  if (tier <= 2) return 'mid';
-  if (tier <= 3) return 'midhigh';
-  return 'high';
-}
-
-/**
- * 스킬 노드 → 아이콘 basename. 캡스톤은 계열별 개별 아트, 그 외는 (스탯 × 티어대) 공유 아트.
- * 순수 함수(Pixi 미의존)라 단위 테스트로 {@link SKILL_ICON_NAMES} 와의 정합을 고정한다.
- */
-export function skillIconName(node: SkillNode): string {
-  if (node.capstone === true) return `skill_capstone_${node.tree}.png`;
-  return `skill_${statSlug(node.stat)}_${skillIconBand(node.tier)}.png`;
-}
 
 /**
  * 스티커 인덱스(서버 smallint 0..11) → 아이콘 basename. 범위 밖/손상 값이면 null.

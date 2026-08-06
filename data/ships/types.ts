@@ -24,7 +24,15 @@
  * 데이터·순수 정수 연산만. 무작위·시계 없음(ADR-0005, eslint 가 `data/**` 에도 강제).
  */
 
-import type { SkillTree } from '../skills.js';
+/**
+ * 스트라이커의 **레거시 계열 이름**. 구 `data/skills.ts` 가 소유했으나 ADR-0049 로 그 파일의
+ * 63노드 데이터가 통째로 폐기되면서 이 타입만 남아 여기로 옮겼다.
+ *
+ * 왜 아직 있는가: 신규 기체의 `SkillNode.tree` 필드가 이 3리터럴로 고정돼 있고
+ * ({@link AFFINITY_LEGACY_TREE}), 아이콘 파일명·i18n 키 일부가 이 이름을 쓴다. affinity 로
+ * 완전히 갈아엎는 것은 자산·문구 개명을 동반하므로 별도 레인이다.
+ */
+export type SkillTree = 'firepower' | 'survival' | 'mobility';
 
 /**
  * 트리의 **역할 축**. 트리 이름(slug)과 분리한 이유: 파워업 가중(`src/sim/powerups.ts`)이
@@ -123,10 +131,16 @@ export interface ShipTypeDef {
    */
   readonly activeHiGate: number;
   /**
-   * `uniqueMask` 에서 이 타입의 시그니처 패시브가 쓰는 비트. **스트라이커는 -1(시그니처 없음)** —
-   * 설계서 §11 채택안 A(스트라이커 바이트 불변). 신규 폴드 없이 미사용 상위 비트를 쓰는 기법은
-   * `src/sim/capstones.ts` 가 명문화했다. 0~17 은 유니크·캡스톤이 점유, 31 은 `1<<31` 이 음수라
-   * 쓰지 않는다 → 가용 구간 **[18, 30]**.
+   * `uniqueMask` 에서 이 타입의 시그니처 패시브가 쓰는 비트. 신규 폴드 없이 미사용 상위 비트를
+   * 쓰는 기법이다.
+   *
+   * 비트 배정: 0~14 유니크 15종 · **15~17 은 구 캡스톤이 쓰던 자리(ADR-0049 로 폐기, 재할당
+   * 금지 — 사유는 `src/sim/shipSignature.ts` 헤더)** · 18~24 시그니처 7종 · 25~30 여유 ·
+   * 31 은 `1<<31` 이 음수라 영구 금지.
+   *
+   * ⚠️ **"스트라이커는 -1" 은 더 이상 사실이 아니다.** ADR-0049 가 정조준 사이클(비트 24)을
+   * 부여해 7기체 전부 시그니처를 갖는다 — {@link NO_SIGNATURE_BIT} 는 손상 데이터 방어용
+   * 센티넬로만 남는다.
    */
   readonly signatureBit: number;
   /** 기본 스탯 보정. 전 축 0 = 보정 없음(적용부가 조기 반환). */

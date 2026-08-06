@@ -15,8 +15,8 @@ import type { Item, StatKey } from './types.js';
 import type { LoadoutConfig } from '../sim/world.js';
 import { UNIQUE_REGISTRY } from './uniques.js';
 import { normalizeLineageBonus } from '../../data/guardian.js';
-import { DEFAULT_SHIP_TYPE, shipTypeDef } from '../../data/ships/index.js';
-import type { ShipBaseBp } from '../../data/ships/index.js';
+import { DEFAULT_SHIP_TYPE, shipTypeDef, TREE_AFFINITIES } from '../../data/ships/index.js';
+import type { ShipBaseBp, TreeAffinity } from '../../data/ships/index.js';
 // side-effect: M2 유니크 5점을 레지스트리에 등록(장착 유니크의 bit → uniqueMask).
 import '../../data/uniques.js';
 
@@ -141,6 +141,11 @@ function applyStatSums(lo: LoadoutConfig, sums: Record<StatKey, number>): void {
   lo.dashCdMult *= 1 - sums.dashCdPct / 100;
   lo.magnetMult *= 1 + sums.magnetPct / 100;
   lo.xpMult *= 1 + sums.xpPct / 100;
+  // `skillLvOffense`/`Defense`/`Utility`(ADR-0049 스킬 어픽스)는 **여기서 접지 않는다** —
+  // 이 함수는 `LoadoutConfig` 배율/가산 전용이고, 그 3키는 `WorldConfig.skillAffixLv`
+  // (이중 벡터)로 따로 소비된다(`deriveSkillAffixLv`, `skillLv()` 경로 — affixes.md ①-4/①-5).
+  // 이 함수는 switch 가 아니라 직선 나열이라 fallthrough 위험은 없지만, 이 주석이 없으면
+  // "이 3키를 왜 여기서 안 접지"가 다음 결함 후보가 된다(⑥-1 항목 6).
 }
 
 /** Accumulate one affix's contribution into per-stat integer sums. */
@@ -166,7 +171,60 @@ function zeroSums(): Record<StatKey, number> {
     fireDmg: 0,
     coldSlow: 0,
     lightning: 0,
+    // ADR-0049 스킬 어픽스 3종. 이 누산기(`addStat` 의 실제 대상)에도 반드시 있어야 한다 —
+    // 1판에서 빠졌던 자리(affixes.md ⑥-1 항목 5) — 없으면 `deriveSkillAffixLv` 가 읽는
+    // `sums[stat]` 이 `undefined` 로 흘러 파생값이 `NaN` 이 된다. 값 자체는 `applyStatSums`
+    // 로 접지 않고(`LoadoutConfig` 무관) `deriveSkillAffixLv` 가 별도로 읽는다.
+    skillLvOffense: 0,
+    skillLvDefense: 0,
+    skillLvUtility: 0,
   };
+}
+
+/** `skillAffixLv` 축당 상한 — 슬롯 배치가 만드는 구조적 상한(offense/defense/utility 각
+ *  2슬롯 × 슬롯당 최대 +2, affixes.md ①-3). 이 상한을 넘는 손상 세이브도 잘린다. */
+const SKILL_AFFIX_LV_MAX = 4;
+
+function clampSkillAffixLv(v: number): number {
+  const n = Math.trunc(v);
+  if (n < 0) return 0;
+  if (n > SKILL_AFFIX_LV_MAX) return SKILL_AFFIX_LV_MAX;
+  return n;
+}
+
+/** 축(`TreeAffinity`) → 스킬 어픽스 `StatKey`. `Record` 전량이라 `TreeAffinity` 에 축이
+ *  느는 순간 이 매핑도 `tsc` 가 강제로 갱신시킨다(축 수 하드코딩 회피, ⑥-1 항목 5 보완). */
+const AXIS_SKILL_AFFIX_STAT: Readonly<Record<TreeAffinity, StatKey>> = {
+  offense: 'skillLvOffense',
+  defense: 'skillLvDefense',
+  utility: 'skillLvUtility',
+};
+
+/**
+ * 장착 장비의 축 어픽스(`skillLvOffense`/`Defense`/`Utility`)를 축별 정수로 접는다
+ * (ADR-0049, affixes.md ①-5). **`skillInvest` 와 완전히 분리된 이중 벡터**의 파생 함수다 —
+ * 이 결과를 투자 벡터에 더하지 마라, 그러면 "포인트 0인데 해금"(E7) 결함이 어픽스 경로로
+ * 되살아난다. `computeLoadoutStats` 와 나란히 두되 `LoadoutConfig` 는 건드리지 않는다(별도
+ * 파생 — `applyStatSums` 주석 참조).
+ *
+ * **`zeroSums`/`addStat` 를 그대로 재사용한다** — 어픽스 합산의 실제 누산기가 그 둘이고
+ * (⑥-1 항목 5), 여기서 독립적으로 다시 세면 두 합산 경로가 갈릴 여지가 생긴다. 그 대신
+ * `zeroSums()` 가 신규 3키를 빠뜨리면 `sums[stat]` 이 `undefined` 로 흘러 `clampSkillAffixLv`
+ * 가 `NaN` 을 내므로(트렁케이트·비교 전부 실패), 이 함수는 그 누락을 조용히 삼키지 않는다.
+ *
+ * ⚠️ **호출부는 `computeLoadoutStats` 에 넘긴 바로 그(제약 필터를 통과한) 배열을 넘겨야
+ * 한다** — 원본 `ship.equipped` 에서 따로 파생하면 의뢰 장비축 금지가 우회된다(affixes.md
+ * ⑤-2c). `buildRunConfig`(`src/run/runConfig.ts`) 가 그 배열을 그대로 재사용한다.
+ *
+ * 길이는 `TREE_AFFINITIES.length`(현재 3) — 축 수 3 을 하드코딩하지 않는다. 각 축은
+ * `[0, {@link SKILL_AFFIX_LV_MAX}]` 로 클램프한다(구조적 상한 보완 방어).
+ */
+export function deriveSkillAffixLv(equipped: readonly Item[]): number[] {
+  const sums = zeroSums();
+  for (const it of equipped) {
+    for (const a of it.affixes) addStat(sums, a.stat, a.value);
+  }
+  return TREE_AFFINITIES.map((affinity) => clampSkillAffixLv(sums[AXIS_SKILL_AFFIX_STAT[affinity]]));
 }
 
 /**
