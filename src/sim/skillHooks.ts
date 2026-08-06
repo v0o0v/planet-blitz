@@ -1473,9 +1473,13 @@ export function onVolleyParams(
       // "이번 볼리가 정조준이었는가" 를 직접 못 읽는다. ⑯ 은 그 판정을 `params.mark === 1` 로
       // 싣고 있고(그 필드의 정본이 정조준 표식이다), 같은 술어를 두 곳에 적으면 조용히 갈린다.
       //
-      // ⚠️ F5(조준선 관통)·F10(연장 탄창)은 여기 **없다** — ⑯ 으로도 안 닿는다. F5 는 표적
-      // **방위**가 이 레코드에 없고(`targetDist` 는 거리뿐), F10 은 볼리를 **하나 더 낳아야**
-      // 한다. 사유 전문은 효과 함수 `strikerVolleyParams` 의 doc 주석에 있다.
+      // ⚠️ **F5(조준선 관통)는 이제 여기 있다** — S3-1 이 실은 `params.aimAngle` 을 술어로만
+      // 읽는다(조준각과의 각도 차를 `wrapAngle` 로 정규화해 반각 20° 콘 판정). ~~막혀 있던
+      // 사유~~ 는 근거로 남긴다: 이 레코드에 표적 **방위**가 없고 `targetDist` 는 거리뿐이었다.
+      //
+      // ⚠️ **F10(연장 탄창)은 여전히 없다** — ⑯ 으로도 안 닿는다. 볼리를 **하나 더 낳아야**
+      // 하는데 이 앵커는 이번 볼리 한 벌의 파라미터만 준다. 사유 전문은 효과 함수
+      // `strikerVolleyParams` 의 doc 주석에 있다.
       strikerVolleyParams(state, player, params);
       break;
     case SIG_PHANTOM_CLOAK:
