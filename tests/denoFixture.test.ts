@@ -130,15 +130,21 @@ describe('Deno 교차 검증 픽스처 (M4 스파이크)', () => {
       const sc = SCENARIOS.find((s) => s.name.startsWith(mark));
       expect(sc, `${mark} 비스트라이커 시나리오가 존재해야 한다`).toBeDefined();
       expect(sc!.config.shipType).toBe(typeId);
+      // ⚠️ ADR-0049: 길이는 더 이상 기체 판별자가 아니다(전 기체 30 균일). 판별은 위
+      // `shipType` 과 아래 시그니처 비트가 한다 — 이 줄은 벡터가 실려 있는지만 본다.
       expect(sc!.config.skillInvest?.length).toBe(shipSkillNodeCount(typeId));
       // 시그니처 비트가 실제 로드아웃 마스크에 OR 돼 있다(§10-1 을 fixture 축에서 재확인).
       expect(hasCapstone(sc!.config.loadout!.uniqueMask, bit)).toBe(true);
     }
-    // ⚠️ **길이 축은 ⑦ 전담이다.** 말로우·버블은 `nodesPerTree` 가 스트라이커와 같아 스킬 노드
-    // 수가 63 으로 동일하다 — ⑧·⑨ 는 "길이가 다른 skillInvest" 를 대신하지 못하므로, ⑦ 이
-    // 사라지면 길이 프리픽스 폴드 커버리지가 통째로 없어진다.
-    const hatchling = SCENARIOS.find((s) => s.name.startsWith('⑦'))!;
-    expect(hatchling.config.skillInvest?.length).not.toBe(shipSkillNodeCount(0));
+    // ⚠️ **(ADR-0049) 길이 축 커버리지가 구조적으로 사라졌다 — 되살릴 수 없다.**
+    // 구 버전은 해츨링(⑦)이 78칸이라 "길이가 스트라이커와 다른 `skillInvest`" 를 태우는 유일한
+    // 시나리오였고, 그것이 리플레이 해시의 **길이 프리픽스 폴드**를 지키는 유일한 자리였다.
+    // flat 재편이 전 기체를 30 으로 통일하면서 **길이가 다른 유효 config 자체가 존재하지
+    // 않는다** — 여기서 억지로 다른 길이를 만들면 제품이 만들 수 없는 상태를 검사하는 것이 된다.
+    //
+    // 그래서 그 커버리지는 이 파일을 떠나 `tests/shipSkillLayout.test.ts` 의 값싼 단위 단언으로
+    // 옮겼다(길이만 다른 두 벡터가 서로 다른 해시를 낸다). 여기 남기면 300초짜리 시나리오
+    // 파일이 그 한 줄 때문에 계속 돌아야 한다.
     // 그리고 스트라이커 시나리오들은 여전히 shipType 미지정이어야 한다(골든 불변의 전제).
     for (const s of SCENARIOS) {
       if (NON_STRIKER_MARKS.some((m) => s.name.startsWith(m))) continue;

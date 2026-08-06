@@ -392,7 +392,11 @@ export function hashWorld(state: WorldState): number {
   h = hashU32(h, state.playerSlowTicks >>> 0);
   // (2) 스킬 투자 스냅샷: 빌드 시점에 cfg.loadout에 이미 접혔지만, 재현/감사용으로
   // 접는다 — 스킬 유/무 런이 발산 전에도 해시가 갈리고, 서버가 벡터를 정확히 재도출.
-  // 길이 프리픽스로 미존재/빈 벡터를 구분.
+  // ⚠️ 구 주석은 "길이 프리픽스로 **미존재/빈 벡터를 구분**한다" 였는데 **사실이 아니다** —
+  // `invest?.length ?? 0` 이라 `undefined` 와 `[]` 가 둘 다 0 을 접어 같은 바이트열을 낸다.
+  // 그리고 그게 옳다(둘 다 "투자 없음"이라 갈리면 같은 런이 두 해시를 갖는다). 길이 프리픽스의
+  // 실제 역할은 **길이가 다른 벡터끼리**를 가르는 것이다(값이 전부 같아도 갈려야 한다).
+  // 이 두 사실은 `tests/shipSkillLayout.test.ts` 가 각각 단언으로 못 박는다.
   const invest = state.config.skillInvest;
   h = hashU32(h, (invest?.length ?? 0) >>> 0);
   if (invest !== undefined) {

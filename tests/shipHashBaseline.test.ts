@@ -109,6 +109,7 @@ import type { Profile } from '../src/save/profile.js';
 // ADR-0049: 노드 수 정본이 `data/skills.ts` 의 스트라이커 전용 상수(63)에서 레지스트리
 // 파생(전 기체 30 균일)으로 옮겨졌다. 골든 meta 는 재생성 회차의 실제 길이를 담는다.
 import { shipSkillNodeCount } from '../data/ships/index.js';
+import { SIG_STRIKER_MARKSMAN } from '../src/sim/shipSignature.js';
 
 /** 스트라이커(타입 0)의 flat 벡터 길이 — 레지스트리 파생. */
 const SKILL_NODE_COUNT = shipSkillNodeCount(0);
@@ -278,18 +279,28 @@ describe('스트라이커 해시 골든 (M8-L0 안전망)', () => {
       const sigs = inPlanet.map((r) => JSON.stringify(r.powerupDraws));
       expect(new Set(sigs).size, `${planet.id}: 빌드별 추첨 시퀀스 종류`).toBe(inPlanet.length);
     }
-    // 무투자 vs 화력 캡스톤은 첫 추첨부터 갈려야 한다(가중이 첫 draw 에 이미 반영된다).
+    // 무투자 vs 화력 축 몰빵은 첫 추첨부터 갈려야 한다(가중이 첫 draw 에 이미 반영된다).
+    // ADR-0049: 녹화 빌드가 `capstone-*` 에서 `axis-*` 로 바뀌었다(캡스톤 폐기).
     const noInvest = findRun(GOLDEN, 'kargon-recon/no-invest');
-    const fp = findRun(GOLDEN, 'kargon-recon/capstone-firepower');
+    const fp = findRun(GOLDEN, 'kargon-recon/axis-firepower');
     expect(noInvest.powerupDraws[0]).not.toEqual(fp.powerupDraws[0]);
   });
 
-  it('캡스톤 빌드가 실제로 uniqueMask 비트를 켠다(투자가 sim 게이트에 도달)', () => {
-    const noBit = new Set(['no-invest', 'mixed-three']);
+  /**
+   * ⚠️ **ADR-0049 로 관측 대상이 바뀐 자리다.** 구 단언은 "캡스톤 빌드가 `uniqueMask` 비트를
+   * 켠다 = 투자가 sim 게이트에 도달한다" 였다. 캡스톤이 폐기되면서 **투자는 이제 어떤
+   * `uniqueMask` 비트도 켜지 않는다** — 그 축의 관측은 위 「파워업 추첨 시퀀스가 빌드마다
+   * 다르다」가 이어받는다(축 슬라이스 가중이 `powerupRng` 소비를 바꾼다).
+   *
+   * 대신 여기서는 **스트라이커 시그니처(비트 24)가 전 런에 실리는지**를 본다. 이 골든의
+   * 기본 기체가 스트라이커라, 비트가 빠지면 `computeActiveSignature` 폴백이나 loadout 의
+   * OR-in 이 끊긴 것이다 — 구 단언이 지키던 "투자·게이트가 sim 까지 간다"와 같은 결의
+   * 배선 증명이고, 투자와 달리 **빌드에 무관하게 항상 참**이어야 하므로 전 런을 훑는다.
+   */
+  it('스트라이커 시그니처 비트가 전 런의 uniqueMask 에 실린다 (배선이 sim 까지 도달)', () => {
+    const bit = 1 << SIG_STRIKER_MARKSMAN;
     for (const r of GOLDEN.runs) {
-      const buildId = r.key.split('/')[1] as string;
-      if (noBit.has(buildId)) expect(r.summary.uniqueMask, r.key).toBe(0);
-      else expect(r.summary.uniqueMask, r.key).toBeGreaterThan(0);
+      expect(r.summary.uniqueMask & bit, `${r.key}: 시그니처 비트`).toBe(bit);
     }
   });
 });

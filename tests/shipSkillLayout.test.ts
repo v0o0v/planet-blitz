@@ -28,6 +28,9 @@ import {
   zeroSkillInvest,
 } from '../data/ships/index.js';
 import { axisOfIndex } from '../src/items/skills.js';
+import { createWorld, DEFAULT_CONFIG } from '../src/sim/world.js';
+import type { WorldConfig } from '../src/sim/world.js';
+import { hashWorld } from '../src/sim/replay.js';
 
 /** ADR-0049 의 총량 — 기체 7종 × 3축 × 10스킬. */
 const EXPECTED_TOTAL = 210;
@@ -137,5 +140,49 @@ describe('flat 스킬 레이아웃 — 구조 계약 (ADR-0049)', () => {
         expect(axisOfIndex(bad, def.id), `${def.slug}: 범위 밖 ${bad}`).toBeUndefined();
       }
     }
+  });
+});
+
+/**
+ * 리플레이 해시의 **길이 프리픽스 폴드** 가드.
+ *
+ * `src/sim/replay.ts` 는 `skillInvest` 를 접기 전에 `hashU32(h, invest.length)` 로 길이를 먼저
+ * 접는다 — 값이 전부 같아도 길이가 다르면 첫 틱부터 해시가 갈려야 한다는 계약이다.
+ *
+ * ## 왜 여기로 옮겼나
+ * 이 축을 지키던 유일한 자리는 `tests/denoFixture.test.ts` 의 해츨링 시나리오였다(구 레이아웃에서
+ * 해츨링만 78칸이라 "길이가 다른 벡터"를 태우는 유일한 런이었다). ADR-0049 가 전 기체를 30 으로
+ * 통일하면서 **길이가 다른 유효 config 자체가 존재하지 않게** 됐고, 그 커버리지는 구조적으로
+ * 사라졌다. 폴드 자체는 살아 있고 앞으로도 기체별 길이 분화·손상 벡터를 막아야 하므로,
+ * 300초짜리 시나리오 파일 대신 여기서 직접 만든 두 벡터로 값싸게 잠근다.
+ *
+ * ⚠️ 여기 쓰는 짧은/긴 벡터는 **제품이 만들 수 없는 상태**다 — 저장 경로는 `normalizeSkillInvest`
+ * 가 항상 30칸으로 맞춘다. 이 단언은 "그 정규화가 뚫렸을 때 해시가 침묵하지 않는다"는 2차 방어다.
+ */
+describe('리플레이 길이 프리픽스 폴드 (ADR-0049 로 deno 시나리오에서 이관)', () => {
+  const cfgWith = (invest: number[]): WorldConfig =>
+    ({ ...DEFAULT_CONFIG, skillInvest: invest }) as WorldConfig;
+
+  it('값이 전부 0 이어도 길이가 다르면 해시가 갈린다', () => {
+    const a = hashWorld(createWorld(0x1e46, cfgWith(new Array<number>(30).fill(0))));
+    const b = hashWorld(createWorld(0x1e46, cfgWith(new Array<number>(29).fill(0))));
+    expect(a, '길이 30 vs 29 가 같은 해시를 냈다 — 길이 프리픽스 폴드가 사라졌다').not.toBe(b);
+  });
+
+  /**
+   * ⚠️ **`replay.ts` 의 주석이 틀렸다는 것을 이 단언이 밝혔다(2026-08-06).**
+   * 그 주석은 "길이 프리픽스로 **미존재/빈 벡터를 구분**한다" 고 적었지만, 실제 폴드는
+   * `hashU32(h, invest?.length ?? 0)` 이라 `undefined` 와 `[]` 가 **둘 다 0** 을 접는다 —
+   * 구분되지 않는다.
+   *
+   * 그리고 **구분되지 않는 것이 옳다.** 둘 다 "투자 없음"이라는 같은 상태를 뜻하므로 다른
+   * 해시를 내면 오히려 같은 런이 두 바이트열을 갖게 된다. 고칠 것은 코드가 아니라 주석이었고,
+   * 주석은 정정했다. 이 단언은 그 사실을 **못 박아** 다음 사람이 주석만 읽고 "구분되겠지" 하고
+   * 배선을 바꾸는 것을 막는다.
+   */
+  it('벡터 미존재와 길이 0 벡터는 같은 해시다 (둘 다 "투자 없음")', () => {
+    const none = hashWorld(createWorld(0x1e46, { ...DEFAULT_CONFIG } as WorldConfig));
+    const empty = hashWorld(createWorld(0x1e46, cfgWith([])));
+    expect(none, 'undefined 와 [] 가 갈렸다 — 같은 상태가 두 바이트열을 갖는다').toBe(empty);
   });
 });
