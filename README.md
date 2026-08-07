@@ -95,22 +95,25 @@ pnpm balance
 **무엇이 올라가 있는지는 `supabase/DEPLOYMENTS.md` 가 정본이다** — 함수별 버전·번들 해시와,
 재배포가 필요한지 **바이트로 판정하는 법**이 거기 있다.
 
-**`src/sim/**` 을 건드렸으면 재배포가 필수다.** 배포 대상 Edge Function 이 `src/sim` 을 직접
-import 해 번들에 시뮬 코어가 통째로 들어가고, 서버는 리플레이를 그 번들로 재계산한다. 방치하면
-서버가 옛 시뮬로 계산해 **제출이 전부 해시 불일치로 거부**된다.
+⭐ **`src/sim/**` 을 건드려도 이제 재배포가 필요 없다 (2026-08-07, ADR-0050 §결정 1).**
+EF 에서 재실행 검증을 걷어내면서 **어떤 Edge Function 도 `src/sim` 을 번들하지 않는다.**
+재배포가 필요한 때는 **그 EF 자체의 코드를 고쳤을 때뿐**이다.
 
-배포 대상은 **둘**이다 — `verify-invasion`(`src/sim/**`)과 `verify-commission`(`src/sim/**` 또는
-`src/run/commission*`). `verify-run` 은 로컬 전용(`bundle` 태스크 없음), `modules` 는 type-only
-import 라 시뮬을 번들하지 않는다.
+> ⚠️ **이 문단은 2026-08-07 이전과 정반대다.** 그전에는 *"`src/sim/**` 을 건드렸으면 재배포가
+> 필수 — 방치하면 서버가 옛 시뮬로 계산해 제출이 전부 해시 불일치로 거부된다"* 였다. 그 규칙이
+> 사라진 것이 이 ADR 이 산 가장 큰 것이다(*"sim 을 만지는 레인이 EF 배포·교차 골든·픽스처
+> 재생성에서 완전히 풀린다"*). **옛 문장이 적힌 문서를 만나면 그쪽이 낡은 것이다.**
+
+배포 대상은 **둘**이다 — `verify-invasion`(래더 스왑·복제 약탈)과 `verify-commission`
+(`commission_grants` 발급). 둘 다 **service_role 만 할 수 있는 쓰기** 때문에 남았지 검증
+때문에 남은 것이 아니다. `verify-run` 은 **삭제됐다**(service_role 쓰기가 0건인 순수 재실행
+검증기였다). `modules` 는 type-only import 라 시뮬을 번들하지 않는다.
 
 > ⚠️ 이 문단은 2026-08-03 까지 "배포 대상은 `verify-invasion` 하나뿐"이라고 적혀 있었고, 그
 > 문장을 믿은 레인들이 `verify-commission` 을 재배포하지 않아 **이틀간 스테일**이었다. 배포
-> 대상이 늘면 여기와 `supabase/DEPLOYMENTS.md` 를 같이 갱신할 것.
+> 대상이 바뀌면 여기와 `supabase/DEPLOYMENTS.md` 를 같이 갱신할 것.
 
-놓치기 쉬운 것 넷:
-
-- **`pnpm test` 와 `scripts/deno-verify/fixtures.json` 이 전부 그린이어도 재배포는 필요하다.**
-  그 12 시나리오는 침공 경로를 태우지 않아 침공 시뮬이 바뀌어도 통과한다.
+놓치기 쉬운 것 셋:
 - **번들은 폐기용 detached 워크트리에서 만들고, 번들 소스 커밋이 `origin/main` 과 같은지 대조한다.**
   배포 절차가 `index.ts` 를 자립 번들로 덮어쓰기 때문에 본 부준치에서 하면 오염이 남고, 커밋 대조를
   빼먹으면 스테일 번들이 올라가 "배포했는데 안 고쳐진" 상태가 된다(실제 발생 이력 있음).

@@ -187,7 +187,6 @@ import {
   buildClientResult,
   maintenanceToCenti,
   beginInvasion,
-  fetchInvasionReplay,
   setInvasionSticker,
 } from './net/invasion.js';
 import type { InvasionTarget } from './net/invasion.js';
@@ -210,7 +209,10 @@ import {
 import type { Invasion3Config } from './sim/invasion/index.js';
 import type { CoreModuleConfig } from './sim/moduleEffects.js';
 import type { ModuleInstance } from '../data/coreModules.js';
-// M4 Phase F: 리플레이 관전(F3) + 도발 스티커(F2).
+// M4 Phase F: 도발 스티커(F2) + 재생 오버레이(F3 UI). 서버 침공 관전(상대 리플레이 로드)은
+// ADR-0050 으로 폐지됐지만, 재생 오버레이 자체는 **하네스 로컬 리플레이 재생**(cheatPanel.ts
+// `playReplay`)이 그대로 재사용한다 — 자기가 방금 돈 런을 재생·해시 검증하는 디버그 기능이라
+// 서버 제출과 무관하다(주석 근거: `beginSpectate` 아래 참조).
 import { SpectateOverlay, isPlayableReplay, nextSpectateSpeed } from './ui/replaySpectate.js';
 import type { SpectateSpeed } from './ui/replaySpectate.js';
 import { StickerPicker } from './ui/stickerPicker.js';
@@ -518,7 +520,7 @@ async function main(): Promise<void> {
       },
     });
   }
-  // M4 Phase F: 관전 컨트롤 오버레이(F3) + 도발 스티커 선택(F2).
+  // M4 Phase F: 도발 스티커 선택(F2) + 재생 컨트롤 오버레이(F3 UI, 하네스 로컬 재생이 재사용).
   const spectateOverlay = new SpectateOverlay();
   const stickerPicker = new StickerPicker();
   // 타이틀도 카툰나무풍 Pixi 다(#8 과 같은 PR) — DOM 판이면 캔버스 안 설정 톱니를 덮는다.
@@ -636,9 +638,13 @@ async function main(): Promise<void> {
    */
   let commissionPayload: CommissionPayload | null = null;
 
-  // --- 리플레이 관전(F3) 상태 ---
-  // spectateReplay !== null 이면 현재 화면은 관전 재생이다 → ticker 가 리플레이 입력을
-  // 주입하고, 정산/레벨업 오버레이/제출 경로를 모두 건너뛴다(월드는 markTainted 됨).
+  // --- 리플레이 재생 상태(F3 UI) ---
+  // ⚠️ **서버 침공 관전(상대 리플레이를 서버에서 받아 보는 기능)은 ADR-0050 으로 폐지됐다** —
+  // "방어자는 자신이 어떻게 졌는지 볼 수 없다"(ADR-0050 §결과). 이 상태·`beginSpectate`가 아직
+  // 남아 있는 이유는 **하네스 로컬 재생**(cheatPanel.ts `playReplay` — 방금 돈 자기 런을 재생·
+  // 해시 검증하는 디버그 기능)이 같은 렌더 경로를 그대로 쓰기 때문이다. spectateReplay !== null
+  // 이면 현재 화면은 재생 중이다 → ticker 가 리플레이 입력을 주입하고, 정산/레벨업 오버레이/
+  // 제출 경로를 모두 건너뛴다(월드는 markTainted 됨).
   let spectateReplay: Replay | null = null;
   let spectateCursor = 0;
   let spectatePlaying = false;
@@ -668,7 +674,7 @@ async function main(): Promise<void> {
       case 'run':
         return currentRunKind === 'invasion' ? 'invasion' : 'combatPvE';
       case 'spectate':
-        return 'invasion';
+        return 'invasion'; // 하네스 로컬 재생(F3 UI 재사용)도 같은 존을 쓴다.
       case 'result':
         return null; // 스팅어(playStinger)가 존 정지→one-shot→menu 복귀를 담당(AC6).
       default:
@@ -804,7 +810,7 @@ async function main(): Promise<void> {
     commissionDesk.hide();
     spectateOverlay.hide();
     stickerPicker.hide();
-    spectateReplay = null; // 관전 종료(화면 전환 시 항상 해제)
+    spectateReplay = null; // 재생 종료(화면 전환 시 항상 해제)
     titleScreen.hide();
     // 레벨업 오버레이는 런 종료(정산) 경로에서만 숨겨 왔다 — 런을 정산 없이 벗어나면
     // (하네스 goto 등) 메뉴 화면 위에 남는다. 런 전용 UI 이므로 화면 전환에서도 숨긴다.
@@ -1126,7 +1132,9 @@ async function main(): Promise<void> {
       {
         onInvade: (target, layout, pilotGuardianId) =>
           void startInvasionRun(target, layout, pilotGuardianId),
-        onSpectate: (invasionId, attackerName) => void startSpectate(invasionId, attackerName),
+        // ⚠️ 서버 침공 관전은 ADR-0050 으로 폐지됐다 — 리플레이를 저장하지도 재실행하지도
+        //    않으므로 재생할 원본이 없다. · 와 함께
+        //     의 버튼·콜백까지 전부 제거했다(no-op prop 을 남기지 않는다).
         onSticker: (invasionId, attackerName) => promptSticker(invasionId, t('sticker.prompt.defend'), attackerName),
         onBack: () => openBaseMap(),
       },
@@ -1151,19 +1159,9 @@ async function main(): Promise<void> {
     );
   }
 
-  /**
-   * 리플레이 관전(F3): 침공 리플레이를 로드해 렌더와 함께 실시간 재생한다. 월드는 진입 즉시
-   * markTainted 되어 정산·제출 대상에서 빠진다(렌더 전용). 로드 실패/손상이면 관제탑 유지.
-   */
-  async function startSpectate(invasionId: string, attackerName: string): Promise<void> {
-    const replay = await fetchInvasionReplay(invasionId);
-    if (replay === null || !isPlayableReplay(replay)) {
-      // 로드 불가(미설정/오프라인/부재/손상) — 관제탑을 다시 열어 안내 상태로 둔다.
-      openControlTower();
-      return;
-    }
-    beginSpectate(replay, attackerName);
-  }
+  // 서버 침공 관전(startSpectate — invasionId 로 상대 리플레이를 서버에서 받아 재생)은
+  // ADR-0050 으로 폐지됐다. 아래 `beginSpectate` 는 하네스 로컬 재생(cheatPanel.ts
+  // `playReplay`) 전용 진입점으로 남는다.
 
   /** 관전 월드를 세팅하고 컨트롤 오버레이를 띄운다(재생 상태 초기화). */
   function beginSpectate(replay: Replay, attackerName: string): void {
@@ -1322,11 +1320,12 @@ async function main(): Promise<void> {
 
     const seed = nextSeed();
     // 방어 정비도(풍화, ADR-0006)를 sim centi-percent 로 변환해 config 에 싣는다.
-    // 공식 Math.round(db*100)은 서버 EF 재실행과 동일해야 한다(어긋나면 해시 발산 오거부).
+    // 공식 Math.round(db*100) 고정 — 서버는 더 이상 이 값으로 재실행 대조를 하지 않지만
+    // (ADR-0050), 결정론 계측이 같은 정비도 입력에 같은 sim 결과를 전제한다.
     const maintenance = maintenanceToCenti(runMaintenanceDb);
     // 코어 모듈 효력(M7b · ADR-0018). 서버 권위 스냅샷이 준 {instances,matchup} 을 그대로
-    // 싣는다 — EF 가 같은 고정본으로 재실행하므로 hashStream 이 일치한다. 미장착이면 필드
-    // 자체를 두지 않는다(조건부 접기 → 거동·해시 바이트 불변).
+    // 싣는다 — 재실행 대조는 더 이상 없다(ADR-0050). 미장착이면 필드 자체를 두지 않는다
+    // (조건부 접기 → 거동·해시 바이트 불변).
     const invasion3: Invasion3Config = {
       layers: normalizeInvasionLayers(runLayoutRaw),
       timeLimitTicks: INVASION_TOTAL_TICKS,
@@ -2872,9 +2871,10 @@ async function main(): Promise<void> {
         lastFinishedReplay === null || lastFinishedHash === null
           ? null
           : { replay: lastFinishedReplay, hash: lastFinishedHash },
-      // 재생은 정식 관전(F3)과 **같은 경로**를 탄다 — 재생 루프를 하네스가 따로 가지면
-      // "하네스에서는 되는데 실제 관전은 깨지는" 갈림이 생긴다. 관전 월드는 beginSpectate 가
-      // 진입 즉시 markTainted 하므로 정산·제출 대상에서 빠진다(ADR-0008).
+      // 서버 침공 관전(F3, 상대 리플레이 로드)은 ADR-0050 으로 폐지됐다 — 이 `playReplay`
+      // 는 그 남은 렌더 경로(`beginSpectate`/`SpectateOverlay`)를 재사용하는 **하네스 로컬
+      // 재생 전용** 진입점이다. 재생 월드는 진입 즉시 markTainted 하므로 정산·제출 대상에서
+      // 빠진다(ADR-0008).
       playReplay: (replay, name) => {
         if (!isPlayableReplay(replay)) return false;
         // 관전 진입은 `clearToMenu` 로 world·recorder 를 버린다 — 진행 중이던 런은 endRun 을

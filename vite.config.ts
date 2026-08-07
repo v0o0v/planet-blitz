@@ -1,9 +1,17 @@
 import { defineConfig, configDefaults } from 'vitest/config';
 
 /**
- * **sim 레인** — 기본 스위트에서 빼고 필요할 때만 도는 계측·골든 파일 목록.
+ * ⛔ **「sim 레인」은 더 이상 없다 (2026-08-07, ADR-0050 §결정 1).** 아래는 **이력**이다 —
+ * `pnpm test:sim`·`vite.sim.config.ts`·`SIM_LANE_FILES` 는 전부 삭제됐고, 결정론은
+ * `tests/determinismGate.test.ts` 가 **기본 스위트 안에서** 지킨다. 결론만 필요하면
+ * 맨 아래 §「레인 자체가 사라졌다」로 건너뛰어라.
  *
- * 실행: `pnpm test:sim` (설정은 {@link file://./vite.sim.config.ts}).
+ * 남겨 두는 이유는 **왜 뺐다가 왜 도로 넣었는지**가 다음 사람이 같은 실수를 안 하게 하는
+ * 유일한 기록이기 때문이다(계측을 게이트에 매달았다가 빨간 채 방치된 이력).
+ *
+ * ---
+ *
+ * (이력) **sim 레인** — 기본 스위트에서 빼고 필요할 때만 돌던 계측·골든 파일 목록.
  *
  * ## 왜 뺐는가 — 실측 (2026-08-03, 16코어)
  * 전체 275파일의 작업량 1591초 중 **이 8개가 1296초(81%)** 다. 특히
@@ -51,46 +59,31 @@ import { defineConfig, configDefaults } from 'vitest/config';
  * 테이블·리플레이 검증)은 매 편집에 지키고 싶은 축이다.
  */
 /**
- * ## 재편 (2026-08-06, ADR-0051) — 레인이 **결정론 골든 전용**으로 줄었다
+ * ## 재편 (2026-08-06, ADR-0051) — 레인이 **결정론 골든 전용**으로 줄었다 (이력)
  *
- * 위 두 블록은 **이력**이다. 거기 나열된 계측 4 · 완주 e2e 2 가 이제 이 배열에 없다 —
- * `docs/adr/0051-balance-by-telemetry-bot-measurement-off-the-gate.md` 가 판정 규칙 하나로
- * 갈랐다: **단언이 "봇이 이길 수 있는가"에 의존하면 게이트에서 내리고, "값이 흘러가는가"에만
- * 의존하면 남기되 완주가 아니라 최소 틱으로 증명한다.**
+ * 위 두 블록은 **이력**이다. 거기 나열된 계측 4 · 완주 e2e 2 가 그 시점에 이미 이 배열을
+ * 빠져나갔다 — `docs/adr/0051-balance-by-telemetry-bot-measurement-off-the-gate.md` 가 판정
+ * 규칙 하나로 갈랐다: **단언이 "봇이 이길 수 있는가"에 의존하면 게이트에서 내리고, "값이
+ * 흘러가는가"에만 의존하면 남기되 완주가 아니라 최소 틱으로 증명한다.**
  *
  * - 계측(`commissionBandMeasure`·`invasionBalance` 의 통계분) → `bench/` CLI 로 이관.
- *   `include` 가 `tests/**` 라 **구조적으로 수집 불가**다. `exclude` 에 넣지 마라 — 넣으면
- *   "수집 대상이었다"는 오해를 만든다.
  * - 완주 e2e(`fullRun`·`planetTierCompletion`) → 삭제.
  * - 배선 증명(`balanceHarness`·`planetPopularity`·`invasionBalance` 의 배선분) → **최소 틱으로
  *   다시 써서 기본 스위트로 복귀**. 실측 121.3초 → 8.3초.
  *
- * ## ⚠️ ADR-0051 은 "레인이 사라진다"고 적었다. 사라지지 않는다 — 실측이 막았다
+ * ## 레인 자체가 사라졌다 (2026-08-07, ADR-0050 §결정 1) — sim 레인은 이제 없다
  *
- * ADR 의 §결과 는 `test:sim` 폐지와 검증 2단화를 예상했다. 남은 셋을 실제로 재 보니 그럴 수 없다
- * (2026-08-06, 같은 16코어):
+ * ADR-0051 이후 이 배열에 남은 셋(`denoFixture`·`shipHashBaseline`·`encounterHashInvariance`)
+ * 은 전부 **Deno↔Node 교차 검증 또는 골든 상수 대조**였다. 서버 검증이 Deno 에서 Node(Supabase
+ * Edge Functions)로 옮겨가며 교차 런타임 축 자체가 무의미해졌고(ADR-0050), 그 김에 골든 대조도
+ * 함께 재검토했다 — "동결값과 같은가"보다 "두 번 돌리면 같은가"가 실제로 지키려던 불변식이었다.
  *
- * | 파일 | 벽시계 |
- * |---|---|
- * | `encounterHashInvariance` (18건) | 약 10초 |
- * | `shipHashBaseline` (34건) | 20.4초 |
- * | **`denoFixture` (5건)** | **443.7초** |
- * | 합계 (57건, 전부 초록) | **445.3초** |
- *
- * `denoFixture` 혼자 **7분 24초**다. 이걸 기본 스위트에 넣으면 `pnpm verify` 가 2분 30초에서
- * 10분대가 된다 — ADR-0051 이 줄이려던 바로 그 비용을 다시 만든다.
- *
- * **ADR 의 판정 규칙과 모순되지 않는다.** 남은 셋은 갈래 ①(봇 실력 계측)도 ②(봇 완주)도
- * 아니고 **재현성**을 잰다 — ADR 이 다루지 않은 제3의 축이다. 규칙은 그대로 두고 경계만
- * 여기서 실측으로 정한다.
+ * 세 파일과 `scripts/deno-verify/**`·`vite.sim.config.ts`·`pnpm test:sim` 을 전부 지웠다.
+ * 그 셋이 지키던 축 중 **골든 상수에 의존하지 않는 자기-재현성**만 `tests/determinismGate.test.ts`
+ * 로 옮겨 기본 스위트에 편입했다(실측 약 3초 — sim 레인 445초와 비교가 안 될 만큼 싸다).
+ * 그래서 `SIM_LANE_FILES` 도, 그것을 쓰는 `exclude` 도 더 없다 — **검증은 이제 `pnpm verify`
+ * 한 층**이고, 결정론은 그 안의 `determinismGate` 가 상시로 지킨다.
  */
-export const SIM_LANE_FILES: readonly string[] = [
-  // 결정론·골든 해시 — 재현성을 잰다. **이것이 이 레인의 전부다**(ADR-0051 이후).
-  // 돌려야 하는 때: `src/sim/**` 을 건드려 해시·거동이 갈릴 수 있을 때.
-  'tests/denoFixture.test.ts',
-  'tests/shipHashBaseline.test.ts',
-  'tests/encounterHashInvariance.test.ts',
-];
 
 export default defineConfig(({ command, mode }) => ({
   /**
@@ -154,11 +147,11 @@ export default defineConfig(({ command, mode }) => ({
     environment: 'node',
     include: ['tests/**/*.test.ts'],
     /**
-     * 계측·골든 레인은 기본 스위트에서 뺀다({@link SIM_LANE_FILES} 에 근거).
-     * `configDefaults.exclude` 를 반드시 펼쳐 넣어야 한다 — 통째로 덮으면 `node_modules`
-     * 와 `dist` 가 다시 수집 대상이 된다.
+     * sim 레인은 없다(2026-08-07, ADR-0050 §결정 1 — 상단 큰 주석 참조). `exclude` 는
+     * `configDefaults.exclude` 그대로다 — 통째로 덮지 않는다. 덮으면 `node_modules` 와
+     * `dist` 가 다시 수집 대상이 된다.
      */
-    exclude: [...configDefaults.exclude, ...SIM_LANE_FILES],
+    exclude: [...configDefaults.exclude],
     /**
      * `forks`(기본) 대신 `threads`.
      *

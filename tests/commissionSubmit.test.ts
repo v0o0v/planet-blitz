@@ -17,13 +17,17 @@
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { submitCommissionRun, flushPendingCommissionSubmissions } from '../src/net/index.js';
+import {
+  submitCommissionRun,
+  flushPendingCommissionSubmissions,
+  buildCommissionClaim,
+} from '../src/net/index.js';
 import type {
   CommissionGateway,
   CommissionRunSubmission,
   VerifyCommissionResult,
 } from '../src/net/commissionGateway.js';
-import { finalHttpStatus } from '../src/net/commissionGateway.js';
+import { finalHttpStatus, SupabaseCommissionGateway } from '../src/net/commissionGateway.js';
 import {
   readPendingCommissionSubmissions,
   PENDING_COMMISSION_QUEUE_MAX,
@@ -282,7 +286,7 @@ describe('제출 — 전송 실패는 큐에 남아 다음 기회에 재시도�
     expect(q[0]?.runId).toBe('run-1');
   });
 
-  it('큐 저장분은 hashStream 을 들고 있지 않다 (쿼터 절약 — EF 에서 optional)', async () => {
+  it('큐 저장분은 hashStream 을 들고 있지 않다 (ADR-0050 — 서버가 재실행 대조를 안 하므로 애초에 안 만든다)', async () => {
     const store = memStore();
     await submitCommissionRun('run-1', tinyReplay(), { gateway: fakeGateway(NET_DOWN), store });
     const e = readPendingCommissionSubmissions(store)[0];
@@ -294,6 +298,53 @@ describe('제출 — 전송 실패는 큐에 남아 다음 기회에 재시도�
     expect(e?.claim.finalHash).toBeTypeOf('number');
     expect(e?.claim.outcome).toBeDefined();
     expect(e?.claim.outcome.victory).toBeTypeOf('boolean');
+  });
+
+  it('제출이 런 수익(runCredits)을 실어 보낸다 — 서버가 개연성 캡으로 깎는다 (ADR-0050)', async () => {
+    // ADR-0050 이 서버 재실행을 걷어내면서 런 수익의 서버측 권위 소스가 사라졌다. 0 으로
+    // 죽이지 않고 **클라가 주장하고 settle_commission 이 least(주장, v_plaus_run) 로 깎는**
+    // 형태를 택했다(사용자 결정 2026-08-07). 그 주장이 실제로 실려 나가는지가 이 단언이다.
+    const gw = fakeGateway(() => OK);
+    await submitCommissionRun('run-1', tinyReplay(), { gateway: gw, store: memStore() });
+    expect(gw.calls.length).toBe(1);
+    const sub = gw.calls[0]?.submission;
+    const expected = buildCommissionClaim(tinyReplay()).runCredits;
+    // 배선이 **없으면** `undefined` 라 이 단언이 깨진다(`undefined !== 0`) — 부재는 잡는다.
+    expect(sub?.runCredits).toBe(expected);
+    //
+    // ⚠️ **이 테스트가 증명하지 않는 것**: `tinyReplay()` 는 자원을 **0** 번다(짧고 처치가
+    //    없다 — 실측). 그래서 위 단언은 **배관의 존재**를 잡을 뿐 **값의 운반**은 못 잡는다.
+    //    배선이 `runCredits: 0` 을 하드코딩해도 초록이다.
+    //    값 운반은 아래 게이트웨이 단위 테스트가 wire 레벨에서 따로 잡는다 — 그쪽이 자원을
+    //    버는 replay 없이도 되는 유일한 자리다(임의 수를 넣고 body 를 본다).
+    //    ⛔ 이 두 줄을 지우고 "배선을 증명했다"고 쓰지 마라.
+  });
+
+  it('게이트웨이가 runCredits 를 wire 의 run_credits 로 그대로 싣는다 (값 운반 증명)', async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fakeClient = {
+      functions: {
+        invoke: (_name: string, opts: { body: Record<string, unknown> }) => {
+          bodies.push(opts.body);
+          return Promise.resolve({ data: { accepted: true }, error: null });
+        },
+      },
+    };
+    // 생성자가 클라이언트를 내부에서 만든다(주입구가 없다) — 만든 뒤 갈아 끼운다. 이 테스트가
+    // 재는 것은 **body 조립 한 줄**이라 실제 네트워크 계층은 필요 없다.
+    const gw = new SupabaseCommissionGateway({ url: 'http://localhost', anonKey: 'test-anon-key' });
+    (gw as unknown as { client: unknown }).client = fakeClient;
+    await gw.verifyCommission('run-1', {
+      seed: 1,
+      config: {},
+      inputs: [],
+      claim: {},
+      runCredits: 4242,
+    });
+    expect(bodies[0]?.['run_credits']).toBe(4242);
+    // 광물 짝은 **일부러 안 보낸다** — 재실행 시절에도 항상 0 이었다. 키가 생기면 다음 사람이
+    // 채우려 든다.
+    expect(bodies[0]?.['run_minerals']).toBeUndefined();
   });
 
   it('다음 flush 에서 같은 run_id 로 재전송되고, 성공하면 큐가 비워진다', async () => {

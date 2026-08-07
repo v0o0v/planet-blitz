@@ -17,17 +17,17 @@ function sampleReplay(): Replay {
 }
 
 // ADR-0026: PvE 리플레이 업로드(pve_runs)·샘플링 재검증은 폐기됐다(재화 서버 권위로 이관). 따라서
-// `recordPveRun`/`insertPveRun` 배선 테스트는 제거했다. `buildPveRunResult` 는 리플레이 재실행의
-// 결정론 계약(hashStream)을 문서화하는 순수 함수로 남겨 두고 여기서 계속 못박는다.
+// `recordPveRun`/`insertPveRun` 배선 테스트는 제거했다. ADR-0050 이 남은 침공·의뢰 경로의 서버
+// 재실행 대조도 걷어냈으므로 `hashStream` 은 더 이상 제출 계약이 아니다 — `buildPveRunResult` 는
+// 리플레이 재실행의 결정론(같은 리플레이 → 같은 해시)을 문서화하는 순수 함수로 남겨 두고
+// 여기서 계속 못박는다.
 describe('pveRun — buildPveRunResult(순수·결정론)', () => {
-  it('리플레이 재실행 결과(승패·해시 스트림)를 담고, hashStream 길이 === finalTick', () => {
+  it('리플레이 재실행 결과(승패·최종 해시)를 담고, finalTick === inputs 길이', () => {
     const replay = sampleReplay();
     const result = buildPveRunResult(replay);
     const direct = runReplay(replay);
     expect(result.finalHash).toBe(direct.finalHash);
     expect(result.finalTick).toBe(replay.inputs.length);
-    expect(result.hashStream.length).toBe(replay.inputs.length);
-    expect(result.hashStream).toEqual(direct.hashes);
     expect(result.victory).toBe(direct.finalState.victory);
     expect(result.gameOver).toBe(direct.finalState.gameOver);
   });

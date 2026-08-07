@@ -1,9 +1,0 @@
-{
-  "//": "verify-run Edge Function (M4 Phase A). sloppy-imports(unstable)로 verifyCore가 src/sim의 .js specifier를 .ts에 resolve하여 공유 소스를 무수정 import(갈림길①A). Supabase 프로젝트 미생성 — 배포 전 로컬 확인 전용.",
-  "unstable": ["sloppy-imports"],
-  "lock": false,
-  "tasks": {
-    "serve": "deno run --allow-read --allow-net index.ts",
-    "check": "deno check verifyCore.ts index.ts"
-  }
-}

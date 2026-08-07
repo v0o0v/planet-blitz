@@ -880,20 +880,42 @@ export async function markCommissionActiveOnServer(
 // ---------------------------------------------------------------------------
 
 /**
- * 리플레이 → 제출용 `claim`(`RunClaim` 형, `verify-run/verifyCore.ts` 계약). **원본 config 로
- * 만든 `Replay` 를 그대로 재실행한다** — `world.config`(파생 사본)를 실으면 재실행이 실제
- * 플레이와 달라지는 결함을 이 저장소가 이미 겪었다(PR#191, `main.ts:1308-1325` 주석 정본).
- * 호출부(`main.ts`)가 `recorder.toReplay()`(= 원본 config)를 그대로 넘기는 한 이 함수는
- * 안전하다. 순수·결정론이라 같은 리플레이는 항상 같은 claim 을 낸다(ADR-0005).
+ * 리플레이 → 제출용 `claim`. **원본 config 로 만든 `Replay` 를 그대로 재실행한다** —
+ * `world.config`(파생 사본)를 실으면 재실행이 실제 플레이와 달라지는 결함을 이 저장소가
+ * 이미 겪었다(PR#191, `main.ts:1308-1325` 주석 정본). 호출부(`main.ts`)가
+ * `recorder.toReplay()`(= 원본 config)를 그대로 넘기는 한 이 함수는 안전하다. 순수·결정론이라
+ * 같은 리플레이는 항상 같은 claim 을 낸다.
+ *
+ * ⚠️ **서버는 이 claim 을 재실행해 대조하지 않는다(ADR-0050)** — `verify-commission` 은
+ * `victory`/`gameOver` 주장을 그대로 신뢰해 의뢰 지급을 확정한다. `hashStream` 은 대조 근거가
+ * 없어졌으므로 제출 payload 에서 뺐다.
  */
-export function buildCommissionClaim(
-  replay: Replay,
-): { finalHash: number; hashStream: readonly number[]; outcome: { victory: boolean; gameOver: boolean } } {
+/** 저장된 claim 에서 되꺼낸 값의 방어적 정수화(구 항목·손상 저장분 → 0). */
+function numOrZero(v: unknown): number {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+export function buildCommissionClaim(replay: Replay): {
+  finalHash: number;
+  outcome: { victory: boolean; gameOver: boolean };
+  /**
+   * 런 중에 번 자원(`finalState.resources`). ADR-0050 이 서버 재실행을 걷어내면서 이 값의
+   * 서버측 권위 소스가 사라졌다 — 예전에는 EF 의 `extractRunResources` 가 같은 replay 를 한
+   * 번 더 돌려 뽑았다. 이제 **클라가 주장하고 `settle_commission` 이 개연성 캡으로 깎는다**
+   * (사용자 결정 2026-08-07 · ADR §4 "차단이 아니라 유계").
+   *
+   * ⚠️ **광물 짝은 만들지 않았다** — 재실행 시절에도 `p_run_minerals` 는 항상 0 이었다
+   * (`WorldState` 에 결정론적 minerals 필드가 없다). 여기에 필드를 하나 더 만들면 다음
+   * 사람이 "왜 비어 있지"라며 채운다.
+   */
+  runCredits: number;
+} {
   const res = runReplay(replay);
   return {
     finalHash: res.finalHash,
-    hashStream: res.hashes,
     outcome: { victory: res.finalState.victory, gameOver: res.finalState.gameOver },
+    runCredits: res.finalState.resources,
   };
 }
 
@@ -953,7 +975,17 @@ export async function submitCommissionRun(
     return { status: 'rejected', reason: 'client-malformed-replay' };
   }
   const claim = buildCommissionClaim(replay);
-  const submission = { seed: replay.seed, config, inputs: replay.inputs, claim };
+  // ⭐ `runCredits` 를 **claim 안에도 남긴 채** 최상위로 올린다 — 대기 큐가 `claim` 을 통째로
+  //    저장하므로, 오프라인 재전송 경로가 저장 스키마 변경 없이 같은 값을 그대로 다시 보낸다
+  //    (아래 `flushPendingCommissionQueue`). 큐에 이미 쌓인 구 항목은 `undefined` → 0 이라
+  //    옛 거동과 같다.
+  const submission = {
+    seed: replay.seed,
+    config,
+    inputs: replay.inputs,
+    claim,
+    runCredits: claim.runCredits,
+  };
   try {
     const res = await gateway.verifyCommission(runId, submission);
     if (store !== null) removePendingCommissionSubmission(store, runId);
@@ -971,9 +1003,9 @@ export async function submitCommissionRun(
   } catch {
     // 전송 실패 — 판정을 못 받았다. 대기 큐에 남긴다(재시도 주체 = 클라이언트, 계약 §5-4).
     if (store !== null) {
-      // ⚠️ `hashStream` 은 **저장하지 않는다** — 45,000틱이면 그 배열만 ~0.5MB 라 쿼터를
-      //    잡아먹는데, `verifyRun` 은 이 필드를 optional 로 받는다(없으면 조기 발산 인덱스만
-      //    못 받고 finalHash·outcome 대조는 그대로 성립한다). 재해싱 비용보다 쿼터가 비싸다.
+      // `claim`(`buildCommissionClaim`)에는 애초에 `hashStream` 이 없다(ADR-0050 — 서버가
+      // 더 이상 재실행 대조를 하지 않으므로 제출 payload 에서 뺐다) — 그래서 여기 저장하는
+      // 것도 finalHash·outcome 뿐이다.
       const stash = stashPendingCommissionSubmission(store, {
         runId,
         seed: replay.seed,
@@ -1052,6 +1084,9 @@ async function flushPendingCommissionQueue(
         config: entry.config,
         inputs: entry.inputs,
         claim: entry.claim,
+        // 큐에 저장된 claim 에서 되꺼낸다(저장 스키마 무변경). 구 항목은 이 키가 없어 0 이
+        // 되는데, 그것이 정확히 옛 거동이므로 마이그레이션이 필요 없다.
+        runCredits: numOrZero((entry.claim as Record<string, unknown> | null)?.['runCredits']),
       });
       // 응답을 받았다 — 성공/거부 무관 최종 판정. 이 큐는 "제출"만 보증한다. 그 판정이 실은
       // 재화·지급 반영은 이 함수의 책임이 아니다(호출부가 이미 화면을 떠났을 수 있다) — 다음
