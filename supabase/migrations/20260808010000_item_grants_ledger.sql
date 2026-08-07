@@ -59,6 +59,15 @@
 --   5. mark_item_grant_applied(grant_id) — 배송 확인(멱등)
 -- =============================================================================
 
+-- ⚠️ **pgcrypto 함수는 `extensions.` 로 한정한다 — `public.` 이 아니다.**
+--    Supabase 는 pgcrypto 를 `extensions` 스키마에 미리 심어 둔다. 그래서 아래 선언은 이미
+--    설치돼 있어 **조용한 no-op** 이고, `public.gen_random_bytes` 로 부르면 원격 적용이
+--    `ERROR: 42883: function public.gen_random_bytes(integer) does not exist` 로 터진다
+--    (2026-08-08 배포에서 실제로 밟았다 — 이 파일이 그 상태로 머지돼 있었다. 이 리포의 SQL
+--    계약 테스트는 마이그레이션을 **텍스트로만** 읽고 실행하지 않아 `pnpm verify` 가 전량
+--    초록인 채로 적용 불가능한 마이그레이션이 쌓였다).
+--    ⭐ `gen_random_uuid` 만은 반대다 — `pg_catalog` 에도 있어 **한정 없이** 써야 항상 풀린다.
+--    이 부류는 `tests/migrationExtensionSchema.test.ts` 가 기계로 막는다.
 create extension if not exists pgcrypto;
 
 -- -----------------------------------------------------------------------------
@@ -80,7 +89,7 @@ revoke all on table public.server_secrets from anon, authenticated;
 -- 32바이트 난수 1회 시드. `on conflict do nothing` 이라 **재적용해도 비밀이 바뀌지 않는다** —
 -- 바뀌면 이미 발급된 원장 행의 시드를 재확정할 수 없어 아이템이 통째로 달라진다.
 insert into public.server_secrets (key, secret)
-values ('drop_seed', public.gen_random_bytes(32))
+values ('drop_seed', extensions.gen_random_bytes(32))
 on conflict (key) do nothing;
 
 -- -----------------------------------------------------------------------------
@@ -93,7 +102,7 @@ on conflict (key) do nothing;
 --
 -- 컬럼이 payload 가 아니라 3필드인 이유는 위 §저장 예산.
 create table if not exists public.item_grants (
-  grant_id   uuid        primary key default public.gen_random_uuid(),
+  grant_id   uuid        primary key default gen_random_uuid(),
   profile_id uuid        not null references public.profiles(id) on delete cascade,
   run_id     uuid        not null references public.pve_runs(id) on delete cascade,
   drop_index integer     not null check (drop_index >= 0),
@@ -274,13 +283,13 @@ begin
     -- ⭐ 시드 = hash(비밀, run_id, drop_index). 클라 입력이 한 바이트도 안 들어간다.
     --   sha256 앞 4바이트를 u32 로. drop_index 가 달라지면 전혀 다른 시드가 나온다.
     v_seed := ('x' || encode(
-                 substring(public.digest(v_secret || p_run_id::text::bytea
+                 substring(extensions.digest(v_secret || p_run_id::text::bytea
                                          || i::text::bytea, 'sha256') from 1 for 4),
                  'hex'))::bit(32)::bigint;
     -- 등급 판정용 균등 난수는 **별도 도메인**에서 뽑는다 — 같은 해시를 시드와 등급에 겹쳐
     -- 쓰면 "시드를 보면 등급을 안다"가 되어 원장 조회만으로 유니크 자리를 역산할 수 있다.
     v_r := (('x' || encode(
-              substring(public.digest(v_secret || p_run_id::text::bytea
+              substring(extensions.digest(v_secret || p_run_id::text::bytea
                                       || i::text::bytea || 'rarity'::bytea, 'sha256')
                         from 1 for 4), 'hex'))::bit(32)::bigint)::numeric / 4294967296.0;
 
