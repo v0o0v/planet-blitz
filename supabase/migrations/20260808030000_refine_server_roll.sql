@@ -45,6 +45,15 @@
 -- 오히려 그쪽이 예측 불가라 더 강하다(드랍은 원장 재확정 때문에 결정론이 **필요**했을 뿐이다).
 -- =============================================================================
 
+-- ⚠️ **pgcrypto 함수는 `extensions.` 로 한정한다 — `public.` 이 아니다.**
+--    Supabase 는 pgcrypto 를 `extensions` 스키마에 미리 심어 둔다. 그래서 아래 선언은 이미
+--    설치돼 있어 **조용한 no-op** 이고, `public.gen_random_bytes` 로 부르면 원격 적용이
+--    `ERROR: 42883: function public.gen_random_bytes(integer) does not exist` 로 터진다
+--    (2026-08-08 배포에서 실제로 밟았다 — 이 파일이 그 상태로 머지돼 있었다. 이 리포의 SQL
+--    계약 테스트는 마이그레이션을 **텍스트로만** 읽고 실행하지 않아 `pnpm verify` 가 전량
+--    초록인 채로 적용 불가능한 마이그레이션이 쌓였다).
+--    ⭐ `gen_random_uuid` 만은 반대다 — `pg_catalog` 에도 있어 **한정 없이** 써야 항상 풀린다.
+--    이 부류는 `tests/migrationExtensionSchema.test.ts` 가 기계로 막는다.
 create extension if not exists pgcrypto;
 
 -- -----------------------------------------------------------------------------
@@ -85,8 +94,8 @@ begin
   -- 굴림 값. 앞 4바이트 → u32 시드, 뒤 4바이트 → [0,1) 용해 주사위.
   -- 두 값을 **다른 바이트**에서 뽑는다 — 같은 바이트를 접어 쓰면 시드를 보는 것만으로
   -- 용해 여부를 알 수 있고, 그러면 클라가 손해 보는 굴림을 골라 버릴 수 있다.
-  v_seed := ('x' || encode(public.gen_random_bytes(4), 'hex'))::bit(32)::bigint;
-  v_risk := (('x' || encode(public.gen_random_bytes(4), 'hex'))::bit(32)::bigint)::numeric
+  v_seed := ('x' || encode(extensions.gen_random_bytes(4), 'hex'))::bit(32)::bigint;
+  v_risk := (('x' || encode(extensions.gen_random_bytes(4), 'hex'))::bit(32)::bigint)::numeric
             / 4294967296.0;
 
   return jsonb_build_object(
