@@ -95,7 +95,7 @@ import {
 } from '../../items/refiningChain.js';
 import { isSkillAffix, refinePoolFor } from '../../items/affixPool.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../../save/profile.js';
-import { spendCurrencyOnServer } from '../../net/index.js';
+import { rollRefineOnServer } from '../../net/index.js';
 import { t, type MessageKey } from '../../i18n/index.js';
 import { rollCost, meltRisk, canAfford, HEATS, type Heat } from '../../../data/economy.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
@@ -967,13 +967,22 @@ export class RefineryScreen {
     try {
       // 재화 서버 권위(ADR-0027): 온라인이면 spend_currency 로 광물 차감을 확정(ok 일 때만 굴림),
       // 미설정이면 기존 로컬 차감. 잔액 부족·오프라인(rejected)이면 굴리지도 용해하지도 않는다.
-      const res = await spendCurrencyOnServer(0, cost, 'reroll');
+      // ⭐ 차감과 **굴림 값**을 한 번에 받는다(ADR-0050 §3 단계 1 둘째 축). 종전에는 차감만
+      // 서버를 타고 시드는 아래에서 `Math.random()` 으로 만들었는데, `rollChain` 이 난수를
+      // 주입받는 순수 함수라 **광물을 한 번만 내고 원하는 어픽스가 나올 때까지 로컬에서
+      // 굴릴 수 있었다.** 시드를 서버가 주면 대가를 치른 횟수만큼만 굴린다.
+      const res = await rollRefineOnServer(cost);
+      // 서버가 준 굴림 값. `null` 이면 미설정(오프라인)이라 아래에서 로컬로 만든다.
+      let serverSeed: number | null = null;
+      let serverRisk: number | null = null;
       if (res.status === 'ok') {
         this.profile.credits = res.creditsLeft;
         this.profile.minerals = res.mineralsLeft;
+        serverSeed = res.seed;
+        serverRisk = res.riskRoll;
       } else if (res.status === 'unconfigured') {
         this.profile.minerals -= cost;
-      } else if (res.reason === 'insufficient') {
+      } else if (res.status === 'rejected') {
         // 서버 원장이 판정해 거부했다. 로컬 미러는 치트·오프라인 가산으로 부풀 수 있으므로
         // **서버 잔액을 그대로 보여준다** — "광물이 부족합니다" 한 줄만 내면 광물을 잔뜩 든
         // 유저에게 거짓말이 된다(격납고 창고 확장에서 실제로 신고된 오탐과 같은 부류).
@@ -993,9 +1002,13 @@ export class RefineryScreen {
       const stillSame = this.selectedId === item.id;
       const stillVisible = this.root.visible;
 
-      // 굴림 시드·용해 주사위는 UI 레이어에서 만든다(sim 밖이라 Math.random 자유).
-      const seed = (Math.random() * 0xffffffff) >>> 0;
-      const riskRoll = Math.random();
+      // 굴림 시드·용해 주사위. 온라인이면 **서버가 준 값**을 쓴다 — 클라가 고르면 대가를 한 번만
+      // 치르고 원하는 어픽스가 나올 때까지 굴릴 수 있다(`rollChain` 은 순수 함수다).
+      // 미설정(오프라인 단일플레이)일 때만 로컬에서 만든다 — sim 밖이라 `Math.random` 자유다.
+      // ⛔ 이 폴백을 온라인 실패 경로까지 넓히지 마라. 넓히면 "차감됐는지 모르는 채 굴리는"
+      //    경로가 생겨 공짜 굴림의 문이 그대로 다시 열린다(위 `failed` 분기가 return 하는 이유).
+      const seed = serverSeed ?? ((Math.random() * 0xffffffff) >>> 0);
+      const riskRoll = serverRisk ?? Math.random();
       const outcome = rollChain(chain, heat, seed, riskRoll);
 
       // 인벤토리 반영·저장은 **무조건** 한다 — 이 장비의 굴림 값을 이미 지불했으므로 결과를

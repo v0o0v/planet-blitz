@@ -502,9 +502,10 @@ describe('정련 공정: UI 경로 규칙', () => {
     const item = itemOfSlot(31, 'main');
     profile.inventory.push(item);
 
-    vi.spyOn(net, 'spendCurrencyOnServer').mockResolvedValue({
+    // ADR-0050 §3 단계 1 둘째 축: 정련은 차감과 **굴림 값**을 한 RPC 로 받는다(`roll_refine`).
+    // 시드를 클라가 고르면 대가를 한 번만 치르고 원하는 어픽스가 나올 때까지 로컬에서 굴릴 수 있다.
+    vi.spyOn(net, 'rollRefineOnServer').mockResolvedValue({
       status: 'rejected',
-      reason: 'insufficient',
       creditsLeft: 0,
       mineralsLeft: 3,
     });
@@ -554,10 +555,9 @@ describe('정련 공정: UI 경로 규칙', () => {
     const item = itemOfSlot(31, 'main');
     profile.inventory.push(item);
 
-    vi.spyOn(net, 'spendCurrencyOnServer').mockResolvedValue({
-      status: 'rejected',
-      reason: 'unavailable',
-    });
+    // 판정 자체를 못 받은 경우. ⛔ 여기서 로컬 굴림으로 강등하면 "차감됐는지 모르는 채
+    // 굴리는" 경로가 생겨 공짜 굴림의 문이 다시 열린다 — 그래서 `failed` 는 굴리지 않는다.
+    vi.spyOn(net, 'rollRefineOnServer').mockResolvedValue({ status: 'failed' });
 
     const { probe } = makeRefinery(profile);
     probe.select(item);
@@ -672,8 +672,8 @@ describe('정련 공정: 서버 왕복 창 동안 상태가 바뀌어도 장비�
     itemA: Item;
     itemB: Item;
     idsBefore: string[];
-    /** 아직 resolve 되지 않은 spend 왕복들(호출 순서대로). */
-    pending: ((out: net.SpendOutcome) => void)[];
+    /** 아직 resolve 되지 않은 정련 굴림 왕복들(호출 순서대로). */
+    pending: ((out: net.RollRefineOutcome) => void)[];
   }
 
   function setup(): Fixture {
@@ -687,9 +687,9 @@ describe('정련 공정: 서버 왕복 창 동안 상태가 바뀌어도 장비�
     profile.inventory.push(itemA, itemB);
     const idsBefore = profile.inventory.map((it) => it.id);
 
-    const pending: ((out: net.SpendOutcome) => void)[] = [];
-    vi.spyOn(net, 'spendCurrencyOnServer').mockImplementation(
-      () => new Promise<net.SpendOutcome>((res) => pending.push(res)),
+    const pending: ((out: net.RollRefineOutcome) => void)[] = [];
+    vi.spyOn(net, 'rollRefineOnServer').mockImplementation(
+      () => new Promise<net.RollRefineOutcome>((res) => pending.push(res)),
     );
 
     const { screen, probe } = makeRefinery(profile);

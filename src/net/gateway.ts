@@ -144,6 +144,20 @@ export interface SpendCurrencyResult {
 }
 
 /**
+ * `roll_refine` 반환(ADR-0050 §3 단계 1 둘째 축). 광물 차감과 **굴림 값**을 한 트랜잭션에서
+ * 받는다 — 나뉘어 있으면 "차감은 실패했는데 시드는 받았다"가 곧 공짜 굴림이다.
+ *
+ * `ok=false` 면 `seed`·`riskRoll` 이 null 이고 클라는 **굴리지 않는다**.
+ */
+export interface RollRefineResult {
+  ok: boolean;
+  credits_left: number;
+  minerals_left: number;
+  seed: number | null;
+  risk_roll: number | null;
+}
+
+/**
  * `begin_pve_run` 반환(ADR-0050 §3 단계 1). 런 시작을 서버에 등록해 **서버가 `started_at` 을
  * 찍게** 한다 — 그 시각이 드랍 개수 캡·축 D 캡의 분모다(클라가 못 만지는 유일한 시계).
  *
@@ -228,6 +242,13 @@ export interface ServerGateway {
    * 드랍 개수 캡의 분모를 만든다. 구버전 게이트웨이면 `undefined` — 호출부가 로컬 롤로 강등한다.
    */
   beginPveRun?(planet: number): Promise<BeginPveRunResult>;
+  /**
+   * 정련 굴림(ADR-0050 §3 단계 1 둘째 축) — 서버 `roll_refine` RPC. 광물을 차감하고 **서버가
+   * 만든 시드·용해 주사위**를 돌려준다. 클라가 시드를 고르면 대가를 한 번만 치르고 원하는
+   * 어픽스가 나올 때까지 로컬에서 굴릴 수 있다. 구버전 게이트웨이면 undefined — 호출부가
+   * 종전 로컬 굴림으로 강등한다(오프라인 보존).
+   */
+  rollRefine?(cost: number): Promise<RollRefineResult>;
   /**
    * 런 드랍 발급(ADR-0050 §3 단계 1) — 서버 `grant_run_drops` RPC. 클라는 **주운 개수만**
    * 주장하고 서버가 개연성 캡으로 깎은 뒤 자기 시드로 그 수만큼 굴려 원장에 적는다.
@@ -487,6 +508,22 @@ export class SupabaseGateway implements ServerGateway {
     const runId = typeof r.run_id === 'string' ? r.run_id : '';
     if (runId === '') throw new Error('consume_catalysts: run_id 미발급');
     return { run_id: runId, resource_mult: num(r.resource_mult, 1) };
+  }
+
+  async rollRefine(cost: number): Promise<RollRefineResult> {
+    const { data, error } = await this.client.rpc('roll_refine', { p_cost: cost });
+    if (error !== null) throw error;
+    const r = asRec(data);
+    const ok = r.ok === true;
+    return {
+      ok,
+      credits_left: num(r.credits_left),
+      minerals_left: num(r.minerals_left),
+      // ok=false 면 서버가 null 을 준다 — 0 으로 접지 않는다. 접으면 "시드 0 으로 굴려도 된다"가
+      // 되어 차감 실패한 굴림이 그대로 진행된다.
+      seed: ok && r.seed !== null && r.seed !== undefined ? num(r.seed) : null,
+      risk_roll: ok && r.risk_roll !== null && r.risk_roll !== undefined ? num(r.risk_roll) : null,
+    };
   }
 
   async beginPveRun(planet: number): Promise<BeginPveRunResult> {
