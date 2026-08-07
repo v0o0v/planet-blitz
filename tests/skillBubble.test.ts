@@ -73,6 +73,7 @@ const PO3 = 2;
 const PO5 = 4;
 const PO6 = 5;
 const PO7 = 6;
+const DR1 = 10;
 const DR6 = 15;
 const FI1 = 20;
 const FI2 = 21;
@@ -118,6 +119,16 @@ function addEnemy(state: WorldState, x: number, y: number, hp: number): Entity {
 
 function addEnemyBullet(state: WorldState, x: number, y: number): Entity {
   const e: Entity = { ...blankEntity('enemyBullet'), x, y, radius: 6 };
+  state.entities.push(e);
+  return e;
+}
+
+/**
+ * 젬 하나. `damage` 가 XP 값이다(`collectGem` 의 `baseXp = gem.damage`) — 0 으로 두면
+ * "수거됐는데 XP 가 안 올랐다" 가 배선 결함과 구분되지 않는다.
+ */
+function addGem(state: WorldState, x: number, y: number): Entity {
+  const e: Entity = { ...blankEntity('gem'), x, y, radius: 8, damage: 5 };
   state.entities.push(e);
   return e;
 }
@@ -339,6 +350,52 @@ describe('④ 파열 훅 (앵커 ⑮)', () => {
     expect(foe.hp).toBe(500 - (12 + 3 * 4));
   });
 
+  it('DR1 역류 수거 — 반경 술어는 **파열 중심**, 목적지는 **플레이어**', () => {
+    const w = mk([[DR1, 1]]);
+    const p = player(w);
+    // 파열 중심을 플레이어에서 멀리 둔다 — 둘이 같으면 "중심 기준"인지 "플레이어 기준"인지
+    // 구분되지 않고, 젬이 이미 픽업·자석 반경 안이라 배선을 끊어도 통과한다(항진 방지).
+    const cx = p.x + 2000;
+    const cy = p.y + 2000;
+    const radius = FILM_BURST_RADIUS * 1.08; // Lv1 = 220 × (100% + 8%p) = 237.6
+    const inside = addGem(w, cx + radius - 30, cy);
+    const outside = addGem(w, cx + radius + 30, cy);
+    const outX = outside.x;
+    onFilmBurst(w, cx, cy);
+    expect(inside.x).toBe(p.x);
+    expect(inside.y).toBe(p.y);
+    expect(inside.vx).toBe(0); // 잔여 자석 속도 소거
+    expect(outside.x).toBe(outX); // 반경 밖은 한 칸도 안 움직인다
+  });
+
+  it('DR1 — 수거 반경이 레벨에 비례해 늘어난다 (Lv1 = 1.08배 · Lv20 = 2.6배)', () => {
+    /** `cx` 에서 `d` 만큼 떨어진 젬이 걷혔는가. */
+    function pulled(level: number, d: number): boolean {
+      const w = mk([[DR1, level]]);
+      const p = player(w);
+      const cx = p.x + 2000;
+      const cy = p.y + 2000;
+      const gem = addGem(w, cx + d, cy);
+      onFilmBurst(w, cx, cy);
+      return gem.x === p.x && gem.y === p.y;
+    }
+    const mid = FILM_BURST_RADIUS * 2; // 440 — Lv1(237.6) 밖 · Lv20(572) 안
+    expect(pulled(1, mid)).toBe(false);
+    expect(pulled(20, mid)).toBe(true);
+    // ⚠️ 부정 항목만 두면 배선이 끊겨도(전부 false) 성립한다 — 긍정 짝을 옆에 둔다.
+    expect(pulled(1, FILM_BURST_RADIUS)).toBe(true); // 220 < 237.6
+    expect(pulled(20, FILM_BURST_RADIUS * 3)).toBe(false); // 660 > 572 — 상한도 있다
+  });
+
+  it('DR1 — 미투자 런은 젬을 한 칸도 안 옮긴다', () => {
+    const w = mk([[DR6, 5]]); // 다른 스킬만 찍어 `skillsOn` 은 참으로 만든다
+    const p = player(w);
+    const gem = addGem(w, p.x + 100, p.y + 100);
+    onFilmBurst(w, p.x, p.y);
+    expect(gem.x).toBe(p.x + 100);
+    expect(gem.y).toBe(p.y + 100);
+  });
+
   it('DR6 파열 추진 — 대시 쿨다운 환급(30 + 5×Lv), **0 아래로 안 내려간다**', () => {
     const w = mk([[DR6, 2]]);
     const p = player(w);
@@ -420,6 +477,36 @@ describe('⑤ filmBurst → skillHooks 이음매', () => {
     expect(foe.x).toBeGreaterThan(x0);
     expect(foe.hp).toBe(500);
     expect(p.aux1).toBe(0);
+  });
+
+  it('DR1 이 옮긴 젬은 **정본 픽업 경로**로 걷힌다 — 콤보·XP 가 함께 오른다', () => {
+    // 이 테스트가 DR1 배선의 핵심 근거다. 스킬은 젬을 지우지 않고 좌표만 옮기므로,
+    // "옮겼다" 만으로는 수확이 실제로 일어났는지 알 수 없다 — `stepWorld` 를 태워
+    // `collectGem`(콤보·XP·촉매)이 그대로 도는 것을 확인한다.
+    const w = mk([[DR1, 20]]);
+    const p = player(w);
+    // 자석 반경(420) **밖** · DR1 Lv20 반경(220 × 2.6 = 572) **안**. 자석 안에 두면
+    // 배선을 끊어도 자석이 걷어 와 통과한다(항진).
+    const gem = addGem(w, p.x + 500, p.y);
+    const gems0 = w.gems;
+    const xp0 = w.xp;
+    resolveFilmBurst(w, p.x, p.y);
+    for (let i = 0; i < 5; i++) stepWorld(w, emptyInput());
+    expect(gem.dead).toBe(true);
+    expect(w.gems).toBeGreaterThanOrEqual(gems0 + 1);
+    expect(w.xp).toBeGreaterThan(xp0);
+    expect(w.combo).toBeGreaterThanOrEqual(1);
+  });
+
+  it('DR1 미투자 대조 — 같은 자리 젬은 자석이 못 닿아 그대로 남는다', () => {
+    const w = mk([[DR6, 5]]);
+    const p = player(w);
+    const gem = addGem(w, p.x + 500, p.y);
+    const gems0 = w.gems;
+    resolveFilmBurst(w, p.x, p.y);
+    for (let i = 0; i < 5; i++) stepWorld(w, emptyInput());
+    expect(gem.dead).toBe(false);
+    expect(w.gems).toBe(gems0);
   });
 });
 
