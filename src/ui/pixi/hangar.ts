@@ -56,10 +56,11 @@
  */
 
 import { Container, Graphics, Rectangle, Text } from 'pixi.js';
-import type { Item, EquipSlotId, SlotKind, Rarity } from '../../items/types.js';
+import type { Item, EquipSlotId, SlotKind, Rarity, AffixRoll } from '../../items/types.js';
 import { EQUIP_SLOTS, RARITY_CODE } from '../../items/types.js';
 import { LEVEL_CAP } from '../../../data/waves.js';
-import { affixLines } from '../affixText.js';
+import { affixLinesForHangar, type AffixLine } from '../affixText.js';
+import { axisInvested } from '../../items/skills.js';
 import { itemDisplayName, slotLabel, weaponLabel } from '../itemNames.js';
 import { compareLines } from '../itemCompare.js';
 import { computeLoadoutStats } from '../../items/loadout.js';
@@ -773,6 +774,22 @@ export class HangarScreen {
     return itemDisplayName(item);
   }
 
+  /**
+   * 어픽스 툴팁 줄 — 스킬 축 어픽스(ADR-0049)가 활성 기체의 그 축에 투자 0이면 회색 +
+   * `hangar.affix.noInvest` 로 무효과임을 밝힌다(설계 ①-10 · 정본 1: 미투자 스킬에는
+   * 가산되지 않는다). 다른 화면(정제소·인벤토리·드랍 팁·결과창)은 기체 문맥이 없어
+   * `affixText.ts` 의 기본 `affixLines` 를 그대로 쓴다 — 이 메서드는 격납고 전용이다.
+   */
+  private hangarAffixLines(affixes: readonly AffixRoll[]): AffixLine[] {
+    const ship = activeShip(this.profile);
+    const def = shipTypeDef(ship.typeId);
+    return affixLinesForHangar(affixes, (axis) => {
+      const ti = def.trees.findIndex((tr) => tr.affinity === axis);
+      if (ti < 0) return 0;
+      return axisInvested(ship.skillInvest, def, ti);
+    });
+  }
+
   // --- 툴팁 ----------------------------------------------------------------
 
   /**
@@ -797,7 +814,7 @@ export class HangarScreen {
         titleColor: RARITY_COLOR_NUM[equipped.rarity],
         subtitle: t('inv.tip.equippedNow'),
         reqLine: { text: t('item.reqLevel', { n: req }), color: met ? 0x8896b8 : 0xff5a5a },
-        lines: affixLines(equipped.affixes),
+        lines: this.hangarAffixLines(equipped.affixes),
       },
       0,
       0,
@@ -840,7 +857,7 @@ export class HangarScreen {
 
   private showTip(item: Item, globalX: number, globalY: number, compareTo?: Item): void {
     // 어픽스 = 제목 줄(이름 · 표시명 +수치) + 설명 줄. raw StatKey 노출을 없앤다(2026-07-26 지적).
-    const lines = affixLines(item.affixes);
+    const lines = this.hangarAffixLines(item.affixes);
     // 장착 장비 대비 스탯 증감(사용자 요청 2026-07-27). 어픽스 **개수**만 알려 주던 한 줄로는
     // 좋고 나쁨을 판단할 수 없었다 — 무슨 수치가 얼마나 오르내리는지를 색으로 보여준다.
     const cmp = compareTo !== undefined ? compareLines(item, compareTo) : [];

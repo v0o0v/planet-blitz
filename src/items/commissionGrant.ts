@@ -75,8 +75,10 @@ export function itemFromCommissionGrant(
   if (def === undefined) return null;
 
   const seed = seedFromGrantId(grantId);
-  // 어픽스 정본 위임(위 주석). 슬롯 추첨 결과는 버린다 — 이 축의 슬롯은 레지스트리가 정한다.
-  const rolled = rollItem(seed, 'unique', source);
+  // 어픽스 정본 위임(위 주석). `slotOverride=def.slot` 으로 어픽스 풀 자체를 레지스트리
+  // 슬롯에 맞춘다(ADR-0049 단계 2 ⑤-2b) — 이전에는 굴린 슬롯의 풀로 어픽스를 뽑고 슬롯만
+  // 버렸으므로, 예를 들어 core 유니크에 무기 전속 `flaming` 이 붙는 풀 불일치가 있었다.
+  const rolled = rollItem(seed, 'unique', source, def.slot);
 
   // `weaponType` 은 레지스트리 정의가 있으면 그것을 따른다(빔 유니크가 발칸에 붙는 짝 어긋남
   // 방지 — uniques.ts 의 MED-1 규율). 무기타입 무관 유니크(undefined)면서 슬롯이 무기면

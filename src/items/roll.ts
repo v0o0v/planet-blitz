@@ -13,9 +13,11 @@
  */
 
 import { SeededRng } from '../sim/rng.js';
-import type { AffixDef, AffixRoll, Item, ItemSource, Rarity, SlotKind } from './types.js';
+import type { AffixRoll, Item, ItemSource, Rarity, SlotKind } from './types.js';
 import { SLOT_KINDS } from './types.js';
-import { AFFIXES } from '../../data/affixes.js';
+import { SKILL_AFFIX_IDS } from '../../data/affixes.js';
+import { affixPoolFor, refinePoolFor, skillAffixSibling } from './affixPool.js';
+import type { AffixPoolEntry } from './affixPool.js';
 import { uniquesForSlot } from './uniques.js';
 // side-effect: M2 유니크 5점을 레지스트리에 등록(rarity=unique 롤이 슬롯별로 선택).
 import '../../data/uniques.js';
@@ -47,19 +49,54 @@ function affixCountFor(rarity: Rarity, rng: SeededRng): number {
 }
 
 /**
- * Draw `count` DISTINCT affixes from the pool and roll each value. Selection is
- * without replacement over a working copy of the pool, so the same seed always
- * yields the same affix set in the same order.
+ * Draw a single entry from a weighted pool via a cumulative-sum draw:
+ * `rng.int(0, totalWeight - 1)` picks a point, then a linear scan finds the
+ * bucket it landed in. Exactly ONE `nextU32` is consumed regardless of pool
+ * size or weight shape (RNG stream shape invariant — plan §2 최우선 제약).
+ * Returns the index into `pool`, or -1 if the pool is empty.
  */
-function rollAffixes(rng: SeededRng, count: number): AffixRoll[] {
-  const pool: AffixDef[] = AFFIXES.slice();
+function drawWeightedIndex(rng: SeededRng, pool: readonly AffixPoolEntry[]): number {
+  if (pool.length === 0) return -1;
+  let total = 0;
+  for (const e of pool) total += e.weight;
+  const r = rng.int(0, total - 1);
+  let acc = 0;
+  for (let j = 0; j < pool.length; j++) {
+    acc += pool[j]!.weight;
+    if (r < acc) return j;
+  }
+  return pool.length - 1;
+}
+
+/**
+ * Draw `count` DISTINCT affixes from the slot's weighted pool (`affixPoolFor`)
+ * and roll each value. Selection is a weighted draw without replacement over a
+ * working copy of the pool, so the same seed always yields the same affix set
+ * in the same order. When a skill affix is drawn, its sibling def (+1 ↔ +2 on
+ * the same axis) is spliced out of the pool too — at most one skill affix per
+ * item (affixes.md ①-3) — without costing an extra RNG draw.
+ */
+function rollAffixes(
+  rng: SeededRng,
+  count: number,
+  slot: SlotKind,
+  rarity: Rarity,
+  stage: number,
+): AffixRoll[] {
+  const pool: AffixPoolEntry[] = affixPoolFor(slot, rarity, stage).slice();
   const rolls: AffixRoll[] = [];
   const n = count < pool.length ? count : pool.length;
   for (let k = 0; k < n; k++) {
-    const j = rng.int(0, pool.length - 1);
-    const def = pool[j];
-    pool.splice(j, 1);
-    if (def === undefined) continue;
+    const j = drawWeightedIndex(rng, pool);
+    const entry = j >= 0 ? pool[j] : undefined;
+    if (j >= 0) pool.splice(j, 1);
+    if (entry === undefined) continue;
+    const def = entry.def;
+    const siblingId = skillAffixSibling(def.id);
+    if (siblingId !== undefined) {
+      const sibIdx = pool.findIndex((e) => e.def.id === siblingId);
+      if (sibIdx >= 0) pool.splice(sibIdx, 1);
+    }
     const value = rng.int(def.min, def.max);
     rolls.push({ id: def.id, stat: def.stat, value });
   }
@@ -69,32 +106,54 @@ function rollAffixes(rng: SeededRng, count: number): AffixRoll[] {
 /**
  * Confirm the item a drop stands for. Deterministic in (`dropSeed`, `rarity`,
  * `source`).
+ *
+ * `slotOverride` forces the affix pool (and the returned item's `slot`) to a
+ * caller-chosen slot instead of the drawn one — used by
+ * {@link import('./commissionGrant.js').itemFromCommissionGrant} so a unique's
+ * fixed slot (from its registry def) drives the affix pool instead of the
+ * randomly-drawn slot (plan ⑤-2b).
+ *
+ * ⚠️ **Draw shape stays anchored to the drawn slot, not the override.** The
+ * slot draw is UNCONDITIONALLY consumed, and whether a weaponType draw
+ * happens is decided by `drawnSlot` alone — never by `slotOverride`. If it
+ * were decided by the override, a weapon/non-weapon override mismatch would
+ * add or remove a draw and shift every later draw (RNG stream shape
+ * invariant). The override touches ONLY the affix pool's `slot` argument.
  */
-export function rollItem(dropSeed: number, rarity: Rarity, source: ItemSource): Item {
+export function rollItem(
+  dropSeed: number,
+  rarity: Rarity,
+  source: ItemSource,
+  slotOverride?: SlotKind,
+): Item {
   const seed = dropSeed >>> 0;
   const rng = new SeededRng(seed);
 
-  const slot = SLOT_KINDS[rng.int(0, SLOT_KINDS.length - 1)] as SlotKind;
+  const drawnSlot = SLOT_KINDS[rng.int(0, SLOT_KINDS.length - 1)] as SlotKind;
+  const slot = slotOverride ?? drawnSlot;
 
   // Weapon variant: main → 0..4 (발칸/스프레드/레일건/미사일/빔), sub → 0..1 sub
   // variant. `int` consumes one nextU32 regardless of span, so widening the main
   // range from 0..2 to 0..4 does NOT shift any later draw (RNG stream shape is
   // preserved) — only the resolved main weapon value changes (M3 C1: 5 types).
+  // Gated on `drawnSlot`, NOT `slot` — see the slotOverride doc above.
   let weaponType: number | undefined;
-  if (slot === 'main') weaponType = rng.int(0, 4);
-  else if (slot === 'sub') weaponType = rng.int(0, SUB_WEAPON_VARIANTS - 1);
+  if (drawnSlot === 'main') weaponType = rng.int(0, 4);
+  else if (drawnSlot === 'sub') weaponType = rng.int(0, SUB_WEAPON_VARIANTS - 1);
 
-  const affixes = rollAffixes(rng, affixCountFor(rarity, rng));
+  const affixes = rollAffixes(rng, affixCountFor(rarity, rng), slot, rarity, source.stage);
 
   // Unique id (Lane 3 registry). Draw the RNG unconditionally-shaped: only when
   // the rarity is unique AND a unique exists for this slot. Empty registry →
   // undefined (item behaves as a high rare until Lane 3 wires the effect).
+  // Keyed on `drawnSlot` (not `slot`) so an affix-pool override never shifts
+  // this draw's shape either.
   let uniqueId: string | undefined;
   if (rarity === 'unique') {
     // main 슬롯은 아이템 weaponType과 일치하는(또는 무기타입 무관인) 유니크만 후보로
     // 삼는다(리뷰 MED-1: 페어링 보장). 후보 LIST만 좁힐 뿐 아래 draw는 항상 1회이므로
     // RNG 스트림 형태는 불변이다.
-    const candidates = uniquesForSlot(slot, slot === 'main' ? weaponType : undefined);
+    const candidates = uniquesForSlot(drawnSlot, drawnSlot === 'main' ? weaponType : undefined);
     // RNG 스트림 형태를 레지스트리 population과 무관하게 유지: unique면 무조건 draw 1회
     // (int은 span과 상관없이 nextU32 1회 소비 — rng.ts), 빈 레지스트리면 결과만 버린다.
     // 이렇게 해야 Lane 3가 유니크를 채워도 이후 아이템의 롤이 밀리지 않는다(결정론).
@@ -149,12 +208,32 @@ function normalizeFastened(item: Item, fastened: readonly number[] | undefined):
   return out;
 }
 
+/** `item.affixes` 중 스킬 어픽스인 인덱스 전부(id 기준 — `SKILL_AFFIX_IDS` 가 정본). */
+function skillAffixIndices(item: Item): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < item.affixes.length; i++) {
+    const a = item.affixes[i];
+    if (a !== undefined && SKILL_AFFIX_IDS.has(a.id)) out.push(i);
+  }
+  return out;
+}
+
 /**
  * 정련 공정의 재단조(ADR-0040). 순수 함수 — (`item` 의 어픽스 형태, `rerollSeed`, `opts`)
  * 에만 의존한다. `rerollSeed` 로 시드한 로컬 RNG 가 **고착되지 않은** 어픽스를 전부 다시
  * 뽑는다. 고착된 어픽스는 값·인덱스가 그대로 유지되고, 그 `def.id` 가 재추첨 풀에서 빠져
  * 중복이 생기지 않는다. 어픽스 **개수**는 언제나 보존된다(재단조는 슬롯을 늘리거나 줄이지
  * 않는다 — `requiredLevel` 이 개수 파생이라 구조적 불변이 여기 걸려 있다).
+ *
+ * ## 풀 (ADR-0049 단계 3)
+ * 재추첨 풀은 `refinePoolFor(item.slot)`(base-24 만 — 스킬 어픽스는 정련으로 얻거나 잃지
+ * 않는다, affixes.md ①-9) 에서 고착 `id` 를 뺀 것이고, 선택은 가중 누적합 위의 draw다
+ * (드랍과 같은 형태 — `drawWeightedIndex`).
+ *
+ * ## 암묵 고착 — 스킬 어픽스는 정련이 절대 건드리지 않는다
+ * `opts.fastened`(명시 고착)에 **스킬 어픽스가 붙은 인덱스 전부**를 합류시킨다. `refinePoolFor`
+ * 가 애초에 스킬 어픽스를 안 주므로 재추첨 풀에 다시 나타날 일은 없지만, 그 칸이 "재추첨
+ * 대상"으로 잡혀 원래 자리의 값·id 를 잃는 것 자체를 막아야 하므로 고착 집합에 넣는다.
  *
  * ## RNG 스트림 형태 불변 (최우선 제약)
  * 값 밴드가 걸려도 값 추첨은 `rng.int()` **정확히 1회**다:
@@ -172,7 +251,10 @@ function normalizeFastened(item: Item, fastened: readonly number[] | undefined):
 export function reforgeAffixes(item: Item, rerollSeed: number, opts?: ReforgeOpts): Item {
   const count = item.affixes.length;
   const band = clampBand(opts?.band);
-  const fastened = normalizeFastened(item, opts?.fastened);
+  const fastened = normalizeFastened(item, [
+    ...(opts?.fastened ?? []),
+    ...skillAffixIndices(item),
+  ]);
 
   // 다시 뽑을 것이 없다(어픽스 0개, 또는 전부 고착): 순수·부작용 없는 재단조가 되도록
   // 동일한 복사본을 돌려준다.
@@ -185,15 +267,16 @@ export function reforgeAffixes(item: Item, rerollSeed: number, opts?: ReforgeOpt
   // 재추첨 풀에서 고착 어픽스의 def 를 뺀다 → 다른 슬롯에 다시 뽑히지 않는다(아이템 전체
   // 어픽스 중복 없음이 보존된다).
   const keptIds = new Set<string>(fastened.map((i) => (item.affixes[i] as AffixRoll).id));
-  const pool: AffixDef[] = AFFIXES.filter((d) => !keptIds.has(d.id));
+  const pool: AffixPoolEntry[] = refinePoolFor(item.slot).filter((e) => !keptIds.has(e.def.id));
   const needed = count - fastened.length;
   const fresh: AffixRoll[] = [];
   const n = needed < pool.length ? needed : pool.length;
   for (let k = 0; k < n; k++) {
-    const j = rng.int(0, pool.length - 1);
-    const def = pool[j];
-    pool.splice(j, 1);
-    if (def === undefined) continue;
+    const j = drawWeightedIndex(rng, pool);
+    const entry = j >= 0 ? pool[j] : undefined;
+    if (j >= 0) pool.splice(j, 1);
+    if (entry === undefined) continue;
+    const def = entry.def;
     // 값 추첨은 밴드 유무와 무관하게 int() 1회 — 스트림 형태 불변.
     const lo = def.min + Math.round((def.max - def.min) * band);
     const value = rng.int(lo, def.max);

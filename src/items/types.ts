@@ -186,6 +186,14 @@ export type StatKey =
 
 export type AffixKind = 'prefix' | 'suffix';
 
+/**
+ * 슬롯별 정수 가중(ADR-0049 · affixes.md ②). 0 = 그 슬롯 풀에 안 들어간다.
+ *
+ * `SlotKind` 전 키가 **필수**다 — 옵셔널로 두면 새 어픽스가 가중 없이 들어와 전 슬롯에서
+ * 조용히 사라진다. 값 척도는 `data/affixes.ts` 머리말.
+ */
+export type SlotWeights = Readonly<Record<SlotKind, number>>;
+
 /** A designer-authored affix template (data/affixes.ts). Value rolls uniformly
  *  in the inclusive integer range [min, max] via the drop-seed RNG. */
 export interface AffixDef {
@@ -196,6 +204,11 @@ export interface AffixDef {
   readonly stat: StatKey;
   readonly min: number;
   readonly max: number;
+  /**
+   * 슬롯별 등장 가중. 스킬 어픽스 6종은 이 값이 **담당 슬롯 마스크(0/1)** 이고 실제
+   * 가중은 `affixPoolFor` 가 슬롯 총량에서 파생한다(affixes.md ①-6).
+   */
+  readonly weights: SlotWeights;
 }
 
 /** A concrete rolled affix on an item instance. */

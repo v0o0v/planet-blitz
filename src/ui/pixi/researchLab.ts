@@ -1246,6 +1246,31 @@ export class ResearchLabScreen {
     this.root.addChild(respec.container);
     this.respecBtn = respec;
 
+    // 리스펙은 **확인 모달이 없고** 클릭 즉시 전액 환급이다(이 화면에도 리포에도 공용 confirm
+    // 헬퍼가 없다 — 실측). 그런데 어픽스 정본 1(투자 ≥1 인 스킬에만 가산) 때문에 환급하는
+    // 순간 **장착 장비의 계열 스킬 레벨 보너스가 전부 함께 꺼진다**(affixes.md ①-10).
+    // 결함이 아니라 의도된 귀결이지만 **말없이 일어나면 "어픽스가 고장 났다"로 읽힌다.**
+    // 확인 모달을 새로 짓는 것은 이 레인 범위 밖이라, 누르기 **전에** 읽을 수 있는 유일한
+    // 자리인 hover 툴팁에 고지를 건다. 모달이 생기면 그쪽으로 옮겨라(키는 그대로 쓴다).
+    respec.container.eventMode = 'static';
+    respec.container.on('pointerover', (e) => {
+      const p = this.root.toLocal(e.global);
+      this.tooltip.show(
+        {
+          title: t('lab.respecBtn', { n: respecCost(this.profile) }),
+          titleColor: 0xe0685a,
+          subtitle: '',
+          lines: [t('lab.respec.affixNotice')],
+        },
+        p.x,
+        p.y,
+        0xe0685a,
+      );
+      this.root.setChildIndex(this.tooltip.container, this.root.children.length - 1);
+    });
+    respec.container.on('pointermove', (e) => this.moveTip(e.global.x, e.global.y));
+    respec.container.on('pointerout', () => this.tooltip.hide());
+
     const close = this.chromeButton({
       tone: 'stone',
       width: CLOSE_W,

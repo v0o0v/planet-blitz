@@ -19,6 +19,7 @@
 
 import type { Item } from './types.js';
 import { reforgeAffixes } from './roll.js';
+import { isSkillAffixId, skillAffixCount } from './affixPool.js';
 import { HEAT, meltRisk, type Heat } from '../../data/economy.js';
 
 /** 정련 공정의 진행 상태. 전 필드 불변 — 갱신은 항상 새 객체다. */
@@ -41,10 +42,29 @@ export function openChain(item: Item): ChainState {
   return { baseline: item, current: item, fastened: [], canFasten: false };
 }
 
-/** 모든 어픽스가 고착됐는가(= 더 굴릴 것이 없다). */
+/**
+ * 재굴림 가능한 어픽스 수 = 전체 − 스킬 어픽스. 스킬 어픽스는 정련에서 암묵 고착이다
+ * (`roll.ts` 의 `reforgeAffixes` 가 `fastened` 와 무관하게 항상 유지한다 — 소유는 그쪽이고
+ * 이 파일은 인터페이스만 본다). 분자(사용자가 실제로 누른 고착 수, `s.fastened.length`)에는
+ * 스킬 어픽스가 절대 들어가지 않는다 — UI 가 그 행의 고착 버튼을 비활성화한다.
+ *
+ * `refinery.ts` 의 표시용 위험도·고착 카운터도 **반드시 이 함수를 통해서만** 분모를 구해야
+ * 한다 — 따로 계산하면 표시와 판정이 갈려 "숫자를 보고 눌렀는데 다르게 터진다."
+ */
+export function rerollableCount(item: Item): number {
+  return item.affixes.length - skillAffixCount(item.affixes);
+}
+
+/**
+ * 모든 재굴림 가능 어픽스가 고착됐는가(= 더 굴릴 것이 없다).
+ *
+ * 분모는 `affixes.length` 가 아니라 {@link rerollableCount} 다 — 스킬 어픽스가 하나라도
+ * 섞이면 옛 분모로는 `fastened.length` 가 영영 `count` 에 못 닿는 무한 함정이 열린다(스킬
+ * 어픽스 행은 고착 버튼이 비활성이라 도달 불가능한 지점을 목표로 잡는 셈이다).
+ */
 export function isComplete(s: ChainState): boolean {
-  const count = s.baseline.affixes.length;
-  return count > 0 && s.fastened.length >= count;
+  const rerollable = rerollableCount(s.baseline);
+  return rerollable > 0 && s.fastened.length >= rerollable;
 }
 
 /**
@@ -57,6 +77,13 @@ export function fasten(s: ChainState, index: number): ChainState {
   if (!Number.isInteger(index)) return s;
   if (index < 0 || index >= s.baseline.affixes.length) return s;
   if (s.fastened.indexOf(index) >= 0) return s;
+  // 스킬 어픽스는 **이미 암묵 고착**이라(`reforgeAffixes` 가 풀에서 영구 제외한다) 사용자
+  // 고착 목록에 넣을 것이 없다. 넣으면 분자만 늘고 분모(`rerollableCount`)는 그대로라
+  // `fastened.length` 가 `rerollable` 을 넘어 위험도가 1 을 초과하고 완주 판정이 조기에
+  // 선다. UI 는 버튼을 비활성으로 이미 막지만, **UI 가 유일한 방어면 하네스·테스트·향후
+  // 호출부가 그 뒤로 걸어 들어간다** — 상태기계가 자기 불변식을 스스로 지킨다.
+  const at = s.baseline.affixes[index];
+  if (at !== undefined && isSkillAffixId(at.id)) return s;
   const next = s.fastened.slice();
   next.push(index);
   next.sort((a, b) => a - b);
@@ -96,8 +123,10 @@ export function rollChain(
     return { next: s, melted: false, complete: true };
   }
 
-  const affixCount = s.baseline.affixes.length;
-  const risk = meltRisk(s.fastened.length, affixCount, heat);
+  // 위험도 분모는 재굴림 가능 수(rerollable)다 — 스킬 어픽스는 분자에도 분모에도 안 들어간다
+  // (JSDoc {@link rerollableCount} 참조). 분자(s.fastened.length)는 그대로 사용자 고착 수다.
+  const rerollable = rerollableCount(s.baseline);
+  const risk = meltRisk(s.fastened.length, rerollable, heat);
 
   if (riskRoll < risk) {
     const next: ChainState = {

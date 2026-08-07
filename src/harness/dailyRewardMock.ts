@@ -65,7 +65,10 @@ import {
 } from '../../data/dailyRewardSelection.js';
 import { shopUserSeed, rollModuleShopRotation, MODULE_EQUIP_SLOTS } from '../../data/coreModules.js';
 import { activeShip, MAX_STASH_EXPANSIONS, type Profile } from '../save/profile.js';
-import { EQUIP_SLOTS, RARITY_CODE } from '../items/types.js';
+import { EQUIP_SLOTS, RARITY_CODE, type ItemSource } from '../items/types.js';
+import { rollItem } from '../items/roll.js';
+import { LEVEL_PER_STAGE } from '../save/progressionPath.js';
+import { SeededRng } from '../sim/rng.js';
 import { COMMISSION_STOCK_CAP } from '../run/commissionServerConstants.js';
 import type {
   DailyRewardAnnouncement,
@@ -75,6 +78,29 @@ import type {
   DailyRewardResult,
 } from '../net/dailyReward.js';
 import type { DailyRewardNetDeps } from '../net/index.js';
+
+/**
+ * 축별 굴림 시드 — `supabase/functions/daily-reward/index.ts` 의 `axisSeed` 그대로다(EF 전용
+ * 글루라 이 파일이 직접 든다, 머리말 "순수 산식을 재구현하지 않는다" 예외 — 순수 데이터 모듈이
+ * 아니라 EF 안에만 있는 함수라 import 할 곳이 없다).
+ */
+function axisSeed(dateSeed: number, userSeed: number, axis: DailyRewardAxis): number {
+  return new SeededRng(dateSeed >>> 0).fork(userSeed >>> 0).fork(axis).nextU32() >>> 0;
+}
+
+/**
+ * 일일 보상 장비의 출처 — `dailyGearSource`(EF) 실측 그대로 미러한다(레인 3 실측, 2026-08-07):
+ * `stage = floor((shipLevel-1) / LEVEL_PER_STAGE) + 2`. **이전 코드는 stage 를 3으로 고정**해
+ * 실서버와 갈렸었다(모의에서는 항상 요구 레벨이 낮은 장비만 나와, 저레벨 축 슬롯에서만 스킬
+ * 어픽스가 뽑히는 표본 편향이 생긴다 — `AFFIX_POOL` 자체는 stage 와 무관하지만 이 함수가 정하는
+ * `levelCap` 이 `requiredLevel()` 상한을 정하므로 완전히 무관하지는 않다). EF 와 자리·산식이
+ * 갈리면 하네스가 없는 결함을 만들거나 있는 결함을 숨긴다(모의 충실도 §, 파일 머리말).
+ */
+function dailyGearSource(shipLevel: number): ItemSource {
+  const lv = Math.max(1, Math.trunc(shipLevel));
+  const stage = Math.floor((lv - 1) / LEVEL_PER_STAGE) + 2;
+  return { planet: 0, stage, levelCap: lv };
+}
 
 /** 모의 서버가 쓰는 uid. 실 서버의 JWT sub 자리 — 유저 시드가 여기서 파생된다. */
 export const HARNESS_DAILY_UID = 'harness-daily-uid';
@@ -512,15 +538,16 @@ export class HarnessDailyRewardGateway implements DailyRewardGateway {
       case 'gear':
         // 장비는 서버 테이블이 아니라 배송함으로 간다. 치트로 페이로드를 안 세웠으면
         // 그 자리를 대신 채운다 — 안 그러면 장비 축을 강제해도 배송함이 비어 육안 확인이 죽는다.
+        // ⚠️ EF 와 같은 함수(`rollItem`)·같은 시드 파생(`axisSeed`)·같은 출처(`dailyGearSource`)
+        // 를 타야 한다 — 손수 조립한 `affixes: []` 짜리 빈 아이템은 스킬 어픽스를 영영 못
+        // 낸다(레인 3 실측, 이전 결함).
         if (itemPayload === null) {
-          itemPayload = {
-            id: `daily:${this.seed}`,
-            slot: 'main',
-            rarity: subject.rarity,
-            affixes: [],
-            source: { planet: 0, stage: 3, levelCap: subject.requiredLevel },
-            weaponType: 0,
-          };
+          const rolled = rollItem(
+            axisSeed(this.seed, userSeed, 'gear'),
+            subject.rarity,
+            dailyGearSource(subject.requiredLevel),
+          );
+          itemPayload = { ...rolled, id: `daily:${this.seed}` };
         }
         break;
     }
