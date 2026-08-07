@@ -236,8 +236,8 @@ function census(): { perShip: Map<string, string[]>; unread: string[] } {
  */
 const GOLDEN: Readonly<Record<string, readonly string[]>> = {
   arccaster: [
-    'CH1@0', 'CH2@1', 'CH3@2', 'CH4@3', 'CH5@4', 'CH6@5', 'CH8@7', 'CH9@8',
-    'BA3@12', 'BA5@14', 'BA7@16', 'BA8@17', 'BA9@18', 'BA10@19',
+    'CH1@0', 'CH2@1', 'CH3@2', 'CH4@3', 'CH5@4', 'CH6@5', 'CH7@6', 'CH8@7', 'CH9@8', 'CH10@9',
+    'BA1@10', 'BA2@11', 'BA3@12', 'BA4@13', 'BA5@14', 'BA6@15', 'BA7@16', 'BA8@17', 'BA9@18', 'BA10@19',
     'BR1@20', 'BR2@21', 'BR3@22', 'BR4@23', 'BR5@24', 'BR6@25', 'BR7@26', 'BR8@27', 'BR9@28', 'BR10@29',
   ],
   bruiser: [
@@ -252,7 +252,7 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
   ],
   hatchling: [
     'BD1@0', 'BD2@1', 'BD3@2', 'BD5@4', 'BD6@5', 'BD7@6', 'BD8@7', 'BD9@8', 'BD10@9',
-    'NU2@11', 'NU4@13', 'NU5@14', 'NU6@15', 'NU7@16', 'NU8@17', 'NU9@18', 'NU10@19',
+    'NU1@10', 'NU2@11', 'NU4@13', 'NU5@14', 'NU6@15', 'NU7@16', 'NU8@17', 'NU9@18', 'NU10@19',
     'SH1@20', 'SH2@21', 'SH3@22', 'SH5@24', 'SH6@25', 'SH7@26', 'SH9@28', 'SH10@29',
   ],
   mallow: [

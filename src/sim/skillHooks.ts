@@ -129,6 +129,7 @@ import {
   hatchlingTurretCadence,
   hatchlingTurretExpired,
   hatchlingPlayerDamaged,
+  hatchlingGemMagnetParams,
 } from './skills/hatchling.js';
 import {
   strikerDashFired,
@@ -155,6 +156,8 @@ import {
   arccasterEliteLootRarity,
   arccasterOverchargeAccrual,
   arccasterComboDecay,
+  arccasterActiveFired,
+  arccasterGemMagnetParams,
 } from './skills/arccaster.js';
 import {
   bruiserDashFired,
@@ -2848,9 +2851,8 @@ export function onActiveFired(
 ): void {
   if (!state.skillsOn) return;
   // 아직 소비처가 없는 인자들. 자기 `case` 가 쓰기 시작하면 해당 줄을 지워라.
-  void dir;
+  // (`dir`·`origin` 은 아크캐스터 BA1·BA6·CH7·CH10 이 쓰기 시작해 지웠다.)
   void slot;
-  void origin;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라** — 병렬 배선
     // 머지에서 두 `case` 가 `break;` 하나를 공유하는 fallthrough 가 누적 5건 나왔고 전부
@@ -2858,6 +2860,11 @@ export function onActiveFired(
     case SIG_PHANTOM_CLOAK:
       // PH2 위상 착지 — 위상 계열(`treeIndex === 1`) 액티브의 **착지 지점** 정화.
       phantomActiveFired(state, player, def);
+      break;
+    case SIG_ARC_OVERCHARGE:
+      // CH7 잔류 방전 · CH10 주입 전격(둘 다 방전 = chain hi) ·
+      // BA1 재배치 일제사 · BA4 소거 항로 · BA6 분신 포좌(점멸 = barrage).
+      arccasterActiveFired(state, player, def, dir, origin);
       break;
     default:
       break;
@@ -2991,6 +2998,14 @@ export function onGemMagnetParams(
     case SIG_MALLOW_CUSHION:
       // ME2 채무 자석 — 부채(`player.aux0`)에 비례해 반경이 커진다.
       mallowGemMagnetParams(state, player, params);
+      break;
+    case SIG_ARC_OVERCHARGE:
+      // BA2 정지 흡인장 — 정지 시간(`player.aux0`)에 비례해 반경이 커진다.
+      arccasterGemMagnetParams(state, player, params);
+      break;
+    case SIG_HATCHLING_BROOD:
+      // NU1 모이 물어오기 — `broodRadius` 의 **첫 소비처**(소비 경로는 `stepGems`).
+      hatchlingGemMagnetParams(state, params);
       break;
     default:
       break;

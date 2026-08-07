@@ -34,8 +34,18 @@ import {
   onEliteLootRarity,
   onOverchargeAccrual,
   onComboDecay,
+  onActiveFired,
+  onGemMagnetParams,
 } from '../src/sim/skillHooks.js';
-import type { VolleyParams, BulletHitParams } from '../src/sim/skillHooks.js';
+import type {
+  VolleyParams,
+  BulletHitParams,
+  ActiveFiredOrigin,
+  GemMagnetParams,
+} from '../src/sim/skillHooks.js';
+import { ALL_ACTIVES } from '../data/ships/actives/index.js';
+import type { ActiveSkillDef } from '../data/ships/actives/types.js';
+import { DRONE_MARK } from '../src/sim/uniques.js';
 import { onChainParams } from '../src/sim/chainHooks.js';
 import { applyChain, CHAIN_RADIUS, CHAIN_MAX_TARGETS } from '../src/sim/status.js';
 import { DamageSource } from '../src/sim/skillSlots.js';
@@ -50,8 +60,14 @@ const CH3 = 2;
 const CH4 = 3;
 const CH5 = 4;
 const CH6 = 5;
+const CH7 = 6;
 const CH8 = 7;
 const CH9 = 8;
+const CH10 = 9;
+const BA1 = 10;
+const BA2 = 11;
+const BA4 = 13;
+const BA6 = 15;
 const BA3 = 12;
 const BA5 = 14;
 const BA7 = 16;
@@ -1306,5 +1322,337 @@ describe('앵커 ⑧ 확장 — BA8 절연 포좌(해저드 경감)', () => {
     const w = mk([[BR1, 1]]);
     const p = player(w);
     expect(onDamageChain(w, p, 100, DamageSource.hazard)).toBe(100);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⓯ 앵커 ㉗ (onActiveFired) — CH7 · CH10 · BA1 · BA4 · BA6
+// ---------------------------------------------------------------------------
+//
+// 계열 게이트가 이 절의 절반이다. 「방전」은 chain **hi** 한 종, 「점멸」은 barrage 두 종,
+// 「장거리 점멸」은 barrage **hi** 한 종이다 — 부정 항목마다 **긍정 짝**을 옆에 뒀다.
+
+function activeDef(id: string): ActiveSkillDef {
+  const d = ALL_ACTIVES.find((a) => a.id === id);
+  if (d === undefined) throw new Error(`active not found: ${id}`);
+  return d;
+}
+
+const CHAIN_LO = 'as_arccaster_chain_lo';
+const CHAIN_HI = 'as_arccaster_chain_hi';
+const BLINK_LO = 'as_arccaster_barrage_lo';
+const BLINK_HI = 'as_arccaster_barrage_hi';
+
+/** 호출부가 찍는 스냅샷. 기본값은 "출발=착지 · 소모 0 · 워터마크=현재 길이". */
+function origin(state: WorldState, over: Partial<ActiveFiredOrigin> = {}): ActiveFiredOrigin {
+  const p = player(state);
+  return {
+    preX: p.x,
+    preY: p.y,
+    preAux0: p.aux0,
+    spawnWatermark: state.entities.length,
+    ...over,
+  };
+}
+
+function countBullets(state: WorldState): number {
+  let n = 0;
+  for (const e of state.entities) if (e.kind === 'bullet' && !e.dead) n++;
+  return n;
+}
+
+/** 젬 1개. */
+function gemAt(state: WorldState, x: number, y: number): Entity {
+  const g = blankEntity('gem');
+  g.id = 60000 + state.entities.length;
+  g.radius = 20;
+  g.hp = 1;
+  g.damage = 4;
+  g.x = x;
+  g.y = y;
+  state.entities.push(g);
+  return g;
+}
+
+describe('⓯ 앵커 ㉗ — CH7 잔류 방전', () => {
+  it('소모한 정지 시간에 비례해 여진탄이 나간다 (Lv10: ⌊190/40⌋ = 4발)', () => {
+    const w = mk([[CH7, 10]]);
+    const p = player(w);
+    enemyNear(w, 0, 300);
+    p.aux0 = 0; // 방전 직후
+    const before = countBullets(w);
+    onActiveFired(w, p, activeDef(CHAIN_HI), { x: 1, y: 0 }, 0, origin(w, { preAux0: 190 }));
+    expect(countBullets(w) - before).toBe(4);
+  });
+
+  it('여진탄은 발동 방향이 아니라 **최근접 적**을 향한다', () => {
+    const w = mk([[CH7, 10]]);
+    const p = player(w);
+    enemyNear(w, 0, 300); // +y 쪽
+    p.aux0 = 0;
+    const mark = w.entities.length;
+    onActiveFired(w, p, activeDef(CHAIN_HI), { x: 1, y: 0 }, 0, origin(w, { preAux0: 190 }));
+    const born = w.entities.slice(mark).filter((e) => e.kind === 'bullet');
+    expect(born.length).toBe(4); // 하한 — 실제로 났다
+    for (const b of born) {
+      expect(b.vy).toBeGreaterThan(0);
+      expect(Math.abs(b.vx)).toBeLessThan(1e-6);
+    }
+  });
+
+  it('소모가 0이면 · 미투자면 한 발도 안 난다 (하한 짝)', () => {
+    const zero = mk([[CH7, 10]]);
+    const p0 = player(zero);
+    enemyNear(zero, 0, 300);
+    p0.aux0 = 190;
+    const b0 = countBullets(zero);
+    onActiveFired(zero, p0, activeDef(CHAIN_HI), { x: 1, y: 0 }, 0, origin(zero, { preAux0: 190 }));
+    expect(countBullets(zero)).toBe(b0);
+
+    const off = mk([[BR1, 10]]);
+    const p1 = player(off);
+    enemyNear(off, 0, 300);
+    p1.aux0 = 0;
+    const b1 = countBullets(off);
+    onActiveFired(off, p1, activeDef(CHAIN_HI), { x: 1, y: 0 }, 0, origin(off, { preAux0: 190 }));
+    expect(countBullets(off)).toBe(b1);
+  });
+
+  it('⚠️ 주입형 chain **lo** 로는 안 난다 — 「방전 액티브」는 hi 한 종이다', () => {
+    const w = mk([[CH7, 10]]);
+    const p = player(w);
+    enemyNear(w, 0, 300);
+    p.aux0 = 90; // lo 는 90 으로 **세운다**(만충 600 에서 쓰면 차분이 510 이 된다)
+    const before = countBullets(w);
+    onActiveFired(w, p, activeDef(CHAIN_LO), { x: 1, y: 0 }, 0, origin(w, { preAux0: 600 }));
+    expect(countBullets(w)).toBe(before);
+  });
+
+  it('적이 하나도 없으면 안 난다 (「최근접 적에게」의 경계)', () => {
+    const w = mk([[CH7, 10]]);
+    const p = player(w);
+    p.aux0 = 0;
+    const before = countBullets(w);
+    onActiveFired(w, p, activeDef(CHAIN_HI), { x: 1, y: 0 }, 0, origin(w, { preAux0: 190 }));
+    expect(countBullets(w)).toBe(before);
+  });
+});
+
+describe('⓯ 앵커 ㉗ — CH10 주입 전격', () => {
+  it('그 발동이 낳은 탄에만 표식이 붙는다 (워터마크 **앞** 탄은 안 붙는다)', () => {
+    const w = mk([[CH10, 5]]);
+    const p = player(w);
+    const stale = spawnBullet(w, p.x, p.y, 0, 100, 10, 0, 6, 60, 1, 0);
+    const org = origin(w); // 워터마크 = 지금 길이
+    const fresh = spawnBullet(w, p.x, p.y, 0, 100, 10, 0, 6, 60, 1, 0);
+    onActiveFired(w, p, activeDef(CHAIN_HI), { x: 1, y: 0 }, 0, org);
+    expect(fresh.aux0).toBe(3);
+    expect(stale.aux0).toBe(0);
+  });
+
+  it('표식이 붙은 탄의 명중이 앵커 ⑩ 에서 **전격 연쇄**가 된다', () => {
+    const w = mk([[CH10, 10]]);
+    const p = player(w);
+    const org = origin(w);
+    const bullet = spawnBullet(w, p.x, p.y, 0, 100, 200, 0, 6, 60, 1, 0);
+    onActiveFired(w, p, activeDef(CHAIN_HI), { x: 1, y: 0 }, 0, org);
+    const target = enemyNear(w, 40, 0);
+    const neighbor = enemyNear(w, 40, 30); // 연쇄 반경 안
+    const hp0 = neighbor.hp;
+    onEnemyDamaged(w, target, 200, bullet);
+    expect(neighbor.hp).toBeLessThan(hp0);
+  });
+
+  it('미투자면 표식도 연쇄도 없다 (하한 짝)', () => {
+    const w = mk([[BR1, 10]]);
+    const p = player(w);
+    const org = origin(w);
+    const bullet = spawnBullet(w, p.x, p.y, 0, 100, 200, 0, 6, 60, 1, 0);
+    onActiveFired(w, p, activeDef(CHAIN_HI), { x: 1, y: 0 }, 0, org);
+    expect(bullet.aux0).toBe(0);
+    const target = enemyNear(w, 40, 0);
+    const neighbor = enemyNear(w, 40, 30);
+    const hp0 = neighbor.hp;
+    onEnemyDamaged(w, target, 200, bullet);
+    expect(neighbor.hp).toBe(hp0);
+  });
+
+  it('⚠️ 점멸 액티브가 낳은 탄에는 안 붙는다 — CH10 은 「방전」 전용이다', () => {
+    const w = mk([[CH10, 10]]);
+    const p = player(w);
+    const org = origin(w);
+    const bullet = spawnBullet(w, p.x, p.y, 0, 100, 200, 0, 6, 60, 1, 0);
+    onActiveFired(w, p, activeDef(BLINK_HI), { x: 1, y: 0 }, 0, org);
+    expect(bullet.aux0).toBe(0);
+  });
+});
+
+describe('⓯ 앵커 ㉗ — BA1 재배치 일제사', () => {
+  it('점멸 착지에 원형 볼리가 난다 (Lv10: 6 + 5 = 11발) · 두 tier 모두', () => {
+    for (const id of [BLINK_LO, BLINK_HI]) {
+      const w = mk([[BA1, 10]]);
+      const p = player(w);
+      const before = countBullets(w);
+      onActiveFired(w, p, activeDef(id), { x: 1, y: 0 }, 0, origin(w));
+      expect(countBullets(w) - before, id).toBe(11);
+    }
+  });
+
+  it('전방위다 — 발동 방향(+x)의 반대쪽으로도 탄이 간다', () => {
+    const w = mk([[BA1, 10]]);
+    const p = player(w);
+    const mark = w.entities.length;
+    onActiveFired(w, p, activeDef(BLINK_LO), { x: 1, y: 0 }, 0, origin(w));
+    const born = w.entities.slice(mark).filter((e) => e.kind === 'bullet');
+    expect(born.length).toBe(11); // 하한
+    expect(born.some((b) => b.vx > 0)).toBe(true);
+    expect(born.some((b) => b.vx < 0)).toBe(true);
+  });
+
+  it('미투자면 · 방전 액티브로는 안 난다 (하한 짝은 위 긍정 항목)', () => {
+    const off = mk([[BR1, 10]]);
+    const p0 = player(off);
+    const b0 = countBullets(off);
+    onActiveFired(off, p0, activeDef(BLINK_LO), { x: 1, y: 0 }, 0, origin(off));
+    expect(countBullets(off)).toBe(b0);
+
+    const w = mk([[BA1, 10]]);
+    const p = player(w);
+    const b1 = countBullets(w);
+    onActiveFired(w, p, activeDef(CHAIN_HI), { x: 1, y: 0 }, 0, origin(w));
+    expect(countBullets(w)).toBe(b1);
+  });
+});
+
+describe('⓯ 앵커 ㉗ — BA4 소거 항로', () => {
+  it('항로 위 젬·전리품이 플레이어 자리로 당겨진다 (수거는 `resolveCollisions` 몫)', () => {
+    const w = mk([[BA4, 10]]); // 폭 = 60 + 40 = 100
+    const p = player(w);
+    const onLane = gemAt(w, p.x - 200, p.y + 20); // 선분에서 20
+    const loot = blankEntity('loot');
+    loot.id = 61000 + w.entities.length;
+    loot.x = p.x - 300;
+    loot.y = p.y - 30;
+    w.entities.push(loot);
+    onActiveFired(w, p, activeDef(BLINK_LO), { x: 1, y: 0 }, 0, origin(w, { preX: p.x - 400 }));
+    expect(onLane.x).toBe(p.x);
+    expect(onLane.y).toBe(p.y);
+    expect(loot.x).toBe(p.x);
+    expect(loot.y).toBe(p.y);
+  });
+
+  it('항로 **밖** 젬은 안 움직인다 · 미투자면 항로 위 젬도 안 움직인다 (하한 짝)', () => {
+    const w = mk([[BA4, 10]]);
+    const p = player(w);
+    const far = gemAt(w, p.x - 200, p.y + 400); // 폭 100 밖
+    onActiveFired(w, p, activeDef(BLINK_LO), { x: 1, y: 0 }, 0, origin(w, { preX: p.x - 400 }));
+    expect(far.x).toBe(p.x - 200);
+    expect(far.y).toBe(p.y + 400);
+
+    const off = mk([[BR1, 10]]);
+    const p2 = player(off);
+    const g = gemAt(off, p2.x - 200, p2.y + 20);
+    onActiveFired(off, p2, activeDef(BLINK_LO), { x: 1, y: 0 }, 0, origin(off, { preX: p2.x - 400 }));
+    expect(g.x).toBe(p2.x - 200);
+  });
+});
+
+describe('⓯ 앵커 ㉗ — BA6 분신 포좌', () => {
+  it('장거리 점멸(hi)이 **출발 자리**에 활성 포탑을 남긴다', () => {
+    const w = mk([[BA6, 5]]);
+    const p = player(w);
+    const startX = p.x - 500;
+    onActiveFired(w, p, activeDef(BLINK_HI), { x: 1, y: 0 }, 0, origin(w, { preX: startX }));
+    const mounts = w.entities.filter((e) => e.kind === 'turretPickup' && e.ownerId === DRONE_MARK);
+    expect(mounts.length).toBe(1);
+    const m = mounts[0];
+    if (m === undefined) throw new Error('mount missing');
+    expect(m.x).toBe(startX); // 착지(p.x)가 아니라 출발 자리다
+    expect(m.phase).toBe(1); // `activateTurret` 이 세우는 활성 스위치
+    expect(m.life).toBeGreaterThan(0); // 「임시」 — 수명이 있다
+  });
+
+  it('단거리 점멸(lo)·미투자에서는 안 선다 (하한 짝은 위 긍정 항목)', () => {
+    const lo = mk([[BA6, 5]]);
+    onActiveFired(lo, player(lo), activeDef(BLINK_LO), { x: 1, y: 0 }, 0, origin(lo));
+    expect(lo.entities.some((e) => e.kind === 'turretPickup' && e.ownerId === DRONE_MARK)).toBe(
+      false,
+    );
+
+    const off = mk([[BR1, 5]]);
+    onActiveFired(off, player(off), activeDef(BLINK_HI), { x: 1, y: 0 }, 0, origin(off));
+    expect(off.entities.some((e) => e.kind === 'turretPickup' && e.ownerId === DRONE_MARK)).toBe(
+      false,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⓰ 앵커 ㉘ (onGemMagnetParams) — BA2 정지 흡인장
+// ---------------------------------------------------------------------------
+
+function magnetParams(radius: number): GemMagnetParams {
+  return { radius, broodRadius: 0 };
+}
+
+describe('⓰ 앵커 ㉘ — BA2 정지 흡인장', () => {
+  it('정지 시간에 비례해 반경이 커진다 (도달치 190에서 Lv10 = +40%)', () => {
+    const w = mk([[BA2, 10]]);
+    const p = player(w);
+    p.aux0 = 190;
+    const params = magnetParams(100);
+    onGemMagnetParams(w, p, params);
+    expect(params.radius).toBeCloseTo(140, 6);
+  });
+
+  it('단조 — 정지가 길수록 반경이 크다 (양변에 하한을 짝지었다)', () => {
+    const w = mk([[BA2, 10]]);
+    const p = player(w);
+    p.aux0 = 50;
+    const short = magnetParams(100);
+    onGemMagnetParams(w, p, short);
+    p.aux0 = 190;
+    const long = magnetParams(100);
+    onGemMagnetParams(w, p, long);
+    expect(short.radius).toBeGreaterThan(100); // 하한 — 짧은 정지도 실제로 늘었다
+    expect(long.radius).toBeGreaterThan(short.radius);
+  });
+
+  it('⚠️ 도달치(190) 위에서는 더 안 자란다 — `aux0` 상한 600 을 분모로 쓰지 않았다', () => {
+    const w = mk([[BA2, 10]]);
+    const p = player(w);
+    p.aux0 = 190;
+    const apex = magnetParams(100);
+    onGemMagnetParams(w, p, apex);
+    p.aux0 = 600;
+    const full = magnetParams(100);
+    onGemMagnetParams(w, p, full);
+    expect(apex.radius).toBeGreaterThan(100); // 하한
+    expect(full.radius).toBe(apex.radius);
+  });
+
+  it('이동 중(aux0 = 0)이면 · 미투자면 항등이다 (하한 짝)', () => {
+    const w = mk([[BA2, 10]]);
+    const p = player(w);
+    p.aux0 = 0;
+    const moving = magnetParams(100);
+    onGemMagnetParams(w, p, moving);
+    expect(moving.radius).toBe(100);
+
+    const off = mk([[BR1, 10]]);
+    const p2 = player(off);
+    p2.aux0 = 190;
+    const params = magnetParams(100);
+    onGemMagnetParams(off, p2, params);
+    expect(params.radius).toBe(100);
+  });
+
+  it('`broodRadius` 는 아크캐스터가 안 건드린다 (해츨링 NU1 전용 칸)', () => {
+    const w = mk([[BA2, 10]]);
+    const p = player(w);
+    p.aux0 = 190;
+    const params = magnetParams(100);
+    onGemMagnetParams(w, p, params);
+    expect(params.broodRadius).toBe(0);
   });
 });
