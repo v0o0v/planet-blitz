@@ -1265,9 +1265,13 @@ export function strikerContactInvuln(state: WorldState, player: Entity, target: 
  * 명확하고, `treeIndex`/`tier` 인코딩을 다시 해석할 필요가 없어서다.
  *
  * ## 정지 축은 배치7 F1 선결(`status.ts`) — 저장 필드는 `life`
- * `applyStasis`/`enemyStatusStopMult` 가 이미 서 있고(`STASIS_DURATION` 은 자리표시자), 이동
- * 배율 산식(`world.ts` `stepEnemies`)에도 이미 곱해져 있다. 여기서는 **설계서 수치로
- * 지속·반경을 확정**할 뿐이다 — 정지 = 45 + 5×Lv 틱 · 반경 = 160 + 12×Lv.
+ * `applyStasis`/`enemyStatusStopMult` 가 이미 서 있고, 이동 배율 산식(`world.ts` `stepEnemies`)
+ * 에도 이미 곱해져 있다. 여기서는 **설계서 수치로 지속·반경을 확정**할 뿐이다 —
+ * 정지 = 45 + 5×Lv 틱 · 반경 = 160 + 12×Lv.
+ *
+ * ⚠️ `status.ts` 에 있던 `STASIS_DURATION` 자리표시자(90)는 **리드가 지웠다** — 지속이
+ * 레벨의 함수라 스칼라 상수로 표현할 수 있는 값이 아니고, 아무도 안 쓰는 export 로 남으면
+ * *"배선이 있다"* 는 착각을 만든다. **밸런스 수치의 정본은 이 함수다.**
  *
  * ⚠️ **대상은 `kind === 'enemy'` 한정이다.** `stepEnemies` 자체가 `enemy` kind 만 이 배율을
  * 읽으므로(그 함수의 필터 루프) guardian·boss·defenseBoss 에 걸어도 이동에 영향이 없지만,
