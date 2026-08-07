@@ -746,7 +746,7 @@ describe('⑩ S3 전리 응급 (앵커 ⑪)', () => {
     const w = mk([[S3, 6]]);
     const p = player(w);
     p.hp = p.maxHp - 30;
-    onEnemyDeath(w, 100, 100, true);
+    onEnemyDeath(w, 100, 100, true, false);
     expect(p.hp).toBe(p.maxHp - 20);
   });
 
@@ -754,7 +754,7 @@ describe('⑩ S3 전리 응급 (앵커 ⑪)', () => {
     const w = mk([[S3, 6]]);
     const p = player(w);
     p.hp = p.maxHp - 30;
-    onEnemyDeath(w, 100, 100, false);
+    onEnemyDeath(w, 100, 100, false, false);
     expect(p.hp).toBe(p.maxHp - 30);
   });
 
@@ -762,7 +762,7 @@ describe('⑩ S3 전리 응급 (앵커 ⑪)', () => {
     const w = mk([[S3, 20]]);
     const p = player(w);
     p.hp = p.maxHp - 3;
-    onEnemyDeath(w, 100, 100, true);
+    onEnemyDeath(w, 100, 100, true, false);
     expect(p.hp).toBe(p.maxHp);
   });
 
@@ -770,7 +770,7 @@ describe('⑩ S3 전리 응급 (앵커 ⑪)', () => {
     const w = mk([[F1, 1]]);
     const p = player(w);
     p.hp = p.maxHp - 30;
-    onEnemyDeath(w, 100, 100, true);
+    onEnemyDeath(w, 100, 100, true, false);
     expect(p.hp).toBe(p.maxHp - 30);
   });
 });

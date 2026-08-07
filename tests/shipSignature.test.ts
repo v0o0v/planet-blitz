@@ -229,14 +229,14 @@ describe('⓪ 항등값 동치 (개정 전 정의와 전수 대조)', () => {
     };
     for (const v of [-5, 0, 1, 7, 77, 100, 1000, 123_457]) {
       for (const t of [0, 1, 179, 180, 181, 600]) {
-        expect(cushionRecovered(v, t, CUSHION_RECOVER_TICKS), `v=${v} t=${t}`).toBe(
+        expect(cushionRecovered(v, t, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP), `v=${v} t=${t}`).toBe(
           oldRecovered(v, t),
         );
         const oldSettled =
           Math.trunc(v) <= 0 || Math.trunc(t) < CUSHION_RECOVER_TICKS
             ? 0
             : Math.trunc(v) - oldRecovered(v, t);
-        expect(cushionSettled(v, t, CUSHION_RECOVER_TICKS), `v=${v} t=${t}`).toBe(oldSettled);
+        expect(cushionSettled(v, t, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP), `v=${v} t=${t}`).toBe(oldSettled);
       }
     }
   });
@@ -478,12 +478,12 @@ describe('경계 골든 — 말로우 완충 (지연 피해 + 무피격 회복)'
   it('회복은 무피격 임계 179 / 180 / 181 에서 갈리고 상한을 넘지 않는다', () => {
     expect(CUSHION_RECOVER_TICKS).toBe(180);
     expect(CUSHION_RECOVER_BP).toBe(6000);
-    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS - 1, CUSHION_RECOVER_TICKS)).toBe(0);
-    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS)).toBe(600);
-    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS + 1, CUSHION_RECOVER_TICKS)).toBe(600);
+    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS - 1, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP)).toBe(0);
+    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP)).toBe(600);
+    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS + 1, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP)).toBe(600);
     for (const v of DAMAGE_SWEEP) {
       for (const t of [-3, 0, 179, 180, 5000]) {
-        const out = cushionRecovered(v, t, CUSHION_RECOVER_TICKS);
+        const out = cushionRecovered(v, t, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP);
         expect(Number.isInteger(out), `deferred=${v} ticks=${t}`).toBe(true);
         expect(out).toBeGreaterThanOrEqual(0);
         expect(out).toBeLessThanOrEqual(Math.max(0, v));
@@ -494,7 +494,7 @@ describe('경계 골든 — 말로우 완충 (지연 피해 + 무피격 회복)'
   it('비정수 입력이 들어와도 정수만 나온다', () => {
     expect(Number.isInteger(cushionDeferredDamage(77.4))).toBe(true);
     expect(Number.isInteger(cushionImmediateDamage(77.4))).toBe(true);
-    expect(Number.isInteger(cushionRecovered(77.4, 180.9, CUSHION_RECOVER_TICKS))).toBe(true);
+    expect(Number.isInteger(cushionRecovered(77.4, 180.9, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP))).toBe(true);
   });
 });
 
@@ -618,7 +618,7 @@ describe('재현성 — 같은 입력 2회', () => {
         sink.push(hatchThreshold(d));
         sink.push(cushionDeferredDamage(d));
         sink.push(cushionImmediateDamage(d));
-        sink.push(cushionRecovered(d, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS));
+        sink.push(cushionRecovered(d, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP));
         sink.push(filmAbsorbed(d, FILM_ABSORB_FLAT, FILM_EFFICIENCY_BASE_BP));
         sink.push(filmRemainingDamage(d, FILM_ABSORB_FLAT, FILM_EFFICIENCY_BASE_BP));
         sink.push(filmReady(d) ? 1 : 0);

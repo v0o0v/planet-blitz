@@ -310,6 +310,11 @@ describe('어픽스 24종 완성 (B4, AC6)', () => {
 });
 
 describe('원소 상태이상 시스템 (B4, AC6)', () => {
+  // `tickEnemyStatus` 는 만료 지점에 앵커 ㉚(`onEnemyStatusExpired`)을 부르고, 그 훅은
+  // `state.skillsOn` 이 거짓이면 **첫 줄에서 반환**한다. 이 절이 재는 것은 상태이상 산술
+  // 자체라 월드가 필요 없으므로 인자 자리만 채운다(스킬 경로는 `skillMallow.test.ts` 몫).
+  const w = { skillsOn: false } as unknown as WorldState;
+
   it('화염: 지속피해가 매 틱 HP를 깎고 타이머가 끝나면 멈춘다', () => {
     const e = blankEntity('enemy');
     e.hp = 100;
@@ -317,13 +322,13 @@ describe('원소 상태이상 시스템 (B4, AC6)', () => {
     applyBurn(e, 5, 3);
     expect(e.iframes).toBe(3);
     expect(e.dashCooldown).toBe(5);
-    tickEnemyStatus(e); // 95
-    tickEnemyStatus(e); // 90
-    tickEnemyStatus(e); // 85, 타이머 0 → dashCooldown 리셋
+    tickEnemyStatus(w, e); // 95
+    tickEnemyStatus(w, e); // 90
+    tickEnemyStatus(w, e); // 85, 타이머 0 → dashCooldown 리셋
     expect(e.hp).toBe(85);
     expect(e.iframes).toBe(0);
     expect(e.dashCooldown).toBe(0);
-    tickEnemyStatus(e); // no-op
+    tickEnemyStatus(w, e); // no-op
     expect(e.hp).toBe(85);
   });
 
@@ -331,9 +336,9 @@ describe('원소 상태이상 시스템 (B4, AC6)', () => {
     const e = blankEntity('enemy');
     applySlow(e, 2);
     expect(enemyStatusSlowMult(e)).toBe(COLD_SLOW_MULT);
-    tickEnemyStatus(e);
+    tickEnemyStatus(w, e);
     expect(e.ownerId).toBe(1);
-    tickEnemyStatus(e);
+    tickEnemyStatus(w, e);
     expect(e.ownerId).toBe(0);
     expect(enemyStatusSlowMult(e)).toBe(1);
   });

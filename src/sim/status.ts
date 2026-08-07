@@ -23,6 +23,7 @@
 
 import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
+import { onEnemyStatusExpired } from './skillHooks.js';
 
 // --- 플레이어 감속(감속 지대) ----------------------------------------------
 /** 감속 지대 접촉 시 이동 속도 배율(< 1 = 느려짐). */
@@ -76,15 +77,33 @@ export function enemyStatusSlowMult(e: Entity): number {
 /**
  * 적의 원소 상태이상을 1틱 진행: 화염 지속피해 적용 + 타이머 감소. 화염으로 HP가
  * 0 이하가 되면 dead로 표시(compact가 처치·드랍 처리). enemy에만 호출한다.
+ *
+ * ## ⚠️ `state` 를 받는 이유 — 앵커 ㉚ 의 자리가 여기밖에 없다
+ * 말로우 SQ9「이자 소각」은 *화상이 **만료**되는 순간*(부여 순간이 아니다) 부채를 소액
+ * 탕감한다. 만료 판정(`iframes` 가 이번 틱에 0 에 닿았는가)은 감소 규칙과 같은 곳에서만
+ * 관측 가능하고, 호출부(`world.ts`)에서 before/after 를 다시 재면 **만료 술어가 두 곳에
+ * 살게 된다**(이 저장소가 반복해서 대가를 치른 형태다). 그래서 훅을 여기 둔다.
+ *
+ * 갱신 규칙("더 강한 값 유지")·만료 규칙(틱 0 소멸)은 **한 줄도 바꾸지 않았다** — 만료
+ * 지점에 관측 훅 하나를 얹었을 뿐이다(설계서 SQ9 「재발 패턴 ① 판정」이 요구한 형태).
  */
-export function tickEnemyStatus(e: Entity): void {
+export function tickEnemyStatus(state: WorldState, e: Entity): void {
   if (e.iframes > 0) {
     e.hp -= e.dashCooldown;
     e.iframes--;
-    if (e.iframes === 0) e.dashCooldown = 0;
+    if (e.iframes === 0) {
+      e.dashCooldown = 0;
+      // 앵커 ㉚ — **화상이 이번 틱에 만료된 그 지점.** hp≤0 판정보다 앞이라, 같은 틱에
+      // 화상 피해로 죽은 적도 "만료" 로 한 번만 통지된다(사망 경로 ②와 배타 — 죽는 순간
+      // `iframes` 가 이미 0 이라 `compact` 의 화상 잔존 게이트에 걸리지 않는다).
+      onEnemyStatusExpired(state, e, 'burn');
+    }
     if (e.hp <= 0) e.dead = true;
   }
-  if (e.ownerId > 0) e.ownerId--;
+  if (e.ownerId > 0) {
+    e.ownerId--;
+    if (e.ownerId === 0) onEnemyStatusExpired(state, e, 'cold');
+  }
 }
 
 /**

@@ -28,6 +28,7 @@
 import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
 import { spawnEcho } from './entities.js';
+import { onObjectiveResolved } from './skillHooks.js';
 import type { SeededRng } from './rng.js';
 
 // --- 플레이스홀더 계수 (TODO(밸런스): 출시 전 일괄 튜닝, 구조만 고정) ---
@@ -124,6 +125,10 @@ export function stepEchoStabilize(state: WorldState, player: Entity): void {
     state.resources += ECHO_REWARD_CREDITS;
     rt.state = 2;
     echo.dead = true; // compact 가 다음에 수거한다.
+    // 앵커 ㉙ — **목표 완수 틱**(에코 안정화). 말로우 ME7「에코 채권」이 여기서 부채를
+    // 전액 소각한다. ⚠️ 이 앵커는 `encounterDetour.ts` 의 조우 완수 지점과 **한 벌**이다 —
+    // 한쪽만 걸면 설계서가 "에코 안정화·조우 완수" 로 묶어 둔 술어가 반쪽이 된다.
+    onObjectiveResolved(state, player, 'echo');
   }
 }
 

@@ -141,6 +141,7 @@ import {
   hatchThreshold,
   BROOD_MARK,
   CUSHION_RECOVER_TICKS,
+  CUSHION_RECOVER_BP,
   CUSHION_TICK_CAP,
   cushionDeferredDamage,
   cushionRecovered,
@@ -163,7 +164,12 @@ import { hasAnyInvestment } from '../items/skills.js';
 import { createSkillSlots, DamageSource } from './skillSlots.js';
 // 210스킬 앵커 25개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
 // (⑮ `onFilmBurst` 는 `filmBurst.ts` 가 부르므로 여기 없다 — 총 26개 중 25개가 이 파일 소유다.)
-import type { VolleyParams, BroodParams, TurretShotParams } from './skillHooks.js';
+import type {
+  VolleyParams,
+  BroodParams,
+  TurretShotParams,
+  CushionSplitParams,
+} from './skillHooks.js';
 import {
   survivedLethalBlow,
   onVolleyFired,
@@ -185,6 +191,8 @@ import {
   onFilmEfficiency,
   onFilmAbsorbed,
   onCushionThreshold,
+  onCushionRecoverBp,
+  onCushionSplit,
   onCushionSettleDue,
   onCushionSettled,
   onCloakBreakReset,
@@ -2556,11 +2564,17 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
     //    미투자 런은 훅이 기본값을 그대로 돌려주므로 비트 동일이다.
     const settleAt = onCushionThreshold(state, player, CUSHION_RECOVER_TICKS);
     if (player.aux0 > 0 && player.aux1 >= settleAt) {
-      const due = cushionSettled(player.aux0, player.aux1, settleAt);
+      // 앵커 ㉘ — **탕감률 확정.** 자리는 ⑲ 직후이되 게이트 **안**이다: 값은 어느 쪽이든
+      // 같고(정산이 안 일어나는 틱에는 아무도 안 읽는다), 게이트 밖에 두면 ME8 의 나눗셈이
+      // 정산이 없는 틱에도 매 틱 돈다. 아래 **세 호출이 같은 값을 받는 것이 배선의 전부**다 —
+      // 하나라도 상수로 흐르면 "회복분 + 정산분 = 적립분" 합 보존이 깨지거나 ME5 의 여백
+      // 합성이 조용히 옛 값으로 돈다. 미투자 런은 훅이 기본값을 그대로 돌려주므로 비트 동일이다.
+      const recoverBp = onCushionRecoverBp(state, player, CUSHION_RECOVER_BP);
+      const due = cushionSettled(player.aux0, player.aux1, settleAt, recoverBp);
       // 사연 관측(비-해시): 이번 정산에서 회복으로 사라진 지연분 HP 를 누적한다(aux0 을 0 으로
       // 되돌리기 **전**에 읽는다). 결정론 무영향 — hashWorld 가 접지 않는 순수 메타.
       // 지역 변수로 뽑은 것은 앵커 ⑳ 이 같은 값을 받기 위함이다 — 두 번 부르면 리셋 뒤라 0 이 된다.
-      const healed = cushionRecovered(player.aux0, player.aux1, settleAt);
+      const healed = cushionRecovered(player.aux0, player.aux1, settleAt, recoverBp);
       state.cushionHealed += healed;
       player.aux0 = 0;
       player.aux1 = 0;
@@ -2571,7 +2585,7 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
       // 자리는 `aux0`·`aux1` 리셋 **뒤**여야 한다 — 훅이 "안 보낸 나머지" 를 `aux0` 에 다시
       // 미루려면 리셋보다 앞에서 쓴 값이 곧바로 지워지면 안 된다.
       // 말로우 ME5「분할 상환」이 여기서 돈다 — 미투자 런은 `due` 를 그대로 돌려받는다.
-      const hull = onCushionSettleDue(state, player, due, healed);
+      const hull = onCushionSettleDue(state, player, due, healed, recoverBp);
       // ⚠️ 완충은 절대 치명적이지 않다. 미룬 피해가 hp 를 1 미만으로 내리지 못하게 클램프한다 —
       // 안전한 곳으로 빠진 직후 화면상 아무 원인 없이 죽는 사인은 플레이어가 관측할 수도
       // 반응할 수도 없다("완충" 이라는 축과도 정면으로 어긋난다). 초과분은 소멸시킨다.
@@ -2774,7 +2788,7 @@ function stepEnemies(state: WorldState, player: Entity): void {
   for (const e of enemies) {
     // 원소 상태이상 진행(화염 지속피해·냉기/전격 타이머). 상태이상 없는 적은 세 재활용
     // 필드가 모두 0이라 no-op(거동 불변). 화염으로 처치되면 dead 표시 후 스킵.
-    tickEnemyStatus(e);
+    tickEnemyStatus(state, e);
     if (e.dead) continue;
     // 재생하는 엘리트: 매 틱 HP 회복(그 외 no-op).
     applyEliteRegen(e);
@@ -4541,6 +4555,19 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     if (cushionOn) {
       dmg = Math.round(dmg);
       deferred = cushionDeferredDamage(dmg);
+      // 앵커 ㉗ — **지연 전환 분기 안 · 즉시분 확정 직전.** 말로우 4종(CU1 과부하 흡수 ·
+      // CU2 부채 한도 · CU5 전량 유예 태세 · CU6 파산 보호)이 전부 "얼마를 미룰지" 를 바꾸는
+      // 스킬인데 이 자리에만 앵커가 없어 통째로 미배선이었다. 앵커 ⑧(감쇠 사슬)은 이 분기보다
+      // **앞**이라 지연 비율에 닿지 않고, ④(피격 후속)는 적립이 끝난 **뒤**다.
+      // `player.hp` 를 **인자로** 넘기는 것은 CU6 의 치명 판정이 hp 차감 앞이라는 사실을
+      // 시그니처로 못 박기 위함이다(훅을 뒤로 옮기면 조용히 0 이 되는 대신 인자가 어긋난다).
+      const split: CushionSplitParams = { deferred };
+      onCushionSplit(state, player, dmg, split, player.hp);
+      // ⚠️ 클램프는 **호출부 몫**이다(훅 규율에만 맡기지 않는다). 음수면 즉시분이 원래 피해보다
+      // 커져 "미룰수록 더 아픈" 부호 반전이 되고, `dmg` 초과면 즉시분이 음수가 되어 피격이
+      // 회복이 된다. 정수화는 `aux0` 의 u32 규율(replay.ts hashEntity) 때문에 필수다.
+      const raw = Math.trunc(split.deferred);
+      deferred = raw < 0 ? 0 : raw > dmg ? dmg : raw;
       dmg -= deferred;
     }
     // 사연 관측(비-해시): 실제로 선체 피해를 입은 이 지점에서만 센다(막 전량 흡수는 여기
@@ -4734,7 +4761,7 @@ function compact(state: WorldState): void {
   // 시체는 `state.entities = survivors` 이후 어디서도 조회할 수 없고(그래서 캡처가 여기여야
   // 한다), 루프 안에서 통지하면 훅이 순회 중인 배열을 변형할 수 있다(그래서 통지는 뒤여야 한다).
   // 드랍·젬·파편이 전부 같은 이유로 루프 뒤로 미뤄져 있다.
-  const enemyDeaths: { x: number; y: number; elite: boolean }[] = [];
+  const enemyDeaths: { x: number; y: number; elite: boolean; burning: boolean }[] = [];
   const stage = state.config.stage ?? 1;
   const planet = state.config.planet ?? 0;
   // 이 compact에서 보스가 죽어 승리가 확정됐는지. 승리 tick에는 다음 stepWorld가
@@ -4769,7 +4796,10 @@ function compact(state: WorldState): void {
       // `isElite` 는 순수 술어(`kind==='enemy' && pierce>0`)이므로 아래 전리품 게이트와 같은 값을
       // 보고, 두 번 부르지 않도록 한 번만 평가한다(거동 동일).
       const eIsElite = isElite(e);
-      enemyDeaths.push({ x: e.x, y: e.y, elite: eIsElite });
+      // `burning` = **화상이 남은 채 죽었는가**(`iframes > 0`). 좌표와 같은 이유로 여기서
+      // 캡처한다 — 통지 시점엔 시체가 `state.entities` 밖이라 조회가 원리적으로 불가능하다.
+      // 이 분기는 `kind === 'enemy'` 게이트 안이라 보스 `iframes`(과열 취약 창)가 섞이지 않는다.
+      enemyDeaths.push({ x: e.x, y: e.y, elite: eIsElite, burning: e.iframes > 0 });
       // Elites are the only rank-and-file loot source (GDD §3); a 분열하는 elite
       // additionally bursts fragments on death (B4).
       if (eIsElite) {
@@ -4874,7 +4904,7 @@ function compact(state: WorldState): void {
   // 앵커 ⑪(S1) 통지 — **개별이 먼저, 집계가 나중**. 배열 재구축·확보가 전부 끝난 뒤라 훅이
   // 스폰해도 안전하다. 캡처 게이트가 `state.kills++` 와 같은 술어이므로
   // `enemyDeaths.length === killsDelta` 가 항등이다(`skillAnchors.test.ts` 가 잠근다).
-  for (const d of enemyDeaths) onEnemyDeath(state, d.x, d.y, d.elite);
+  for (const d of enemyDeaths) onEnemyDeath(state, d.x, d.y, d.elite, d.burning);
   if (killsDelta > 0) onKillsDelta(state, killsDelta);
 }
 
