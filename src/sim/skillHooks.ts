@@ -152,6 +152,8 @@ import {
   strikerBulletHitParams,
   strikerGemPull,
   strikerObjectiveResolved,
+  strikerContactInvuln,
+  strikerActiveExpired,
 } from './skills/striker.js';
 import {
   arccasterGemCollected,
@@ -3672,6 +3674,11 @@ export function onActiveExpired(
       // 이미 끝났고, 훅은 그 폭발의 반경(`def.coeff.blastRadius`)을 그대로 재사용한다.
       bruiserActiveExpired(state, player, def);
       break;
+    case SIG_STRIKER_MARKSMAN:
+      // S9 만료 정지장 — 생존 액티브(`as_striker_survival_lo/hi`)가 끝나는 이 틱에 반경 안
+      // 잡몹의 이동을 정지시킨다(`status.ts` 의 `applyStasis`, 배치7 F1 선결).
+      strikerActiveExpired(state, player, def);
+      break;
     default:
       break;
   }
@@ -3961,15 +3968,16 @@ export function onPlayerWallSlide(
  * 부른다 — 적탄·해저드 분기에서는 부르지 않는다. 이 함수 안에서 `target.kind` 를 다시 걸러도
  * 안전하지만(방어적 이중 게이트), 판별 자체는 호출부 책임이다.
  *
- * 아직 소비처가 없다 — `case` 가 없어 항상 무연산(비트 동일)이다. M9 가 배선되는 레인은
- * `skills/striker.ts`(배선 레인 소유)에 case 를 더해라 — 이 앵커는 자리만 연다.
+ * **소비처 — M9 충각 기동**(배선 레인, `skills/striker.ts`). 미투자·타 기체 런은 `state.skillsOn`·
+ * `sigBit` 게이트가 그대로 막아 비트 동일이다.
  */
 export function onContactInvuln(state: WorldState, player: Entity, target: Entity): void {
   if (!state.skillsOn) return;
-  void player;
-  void target;
   switch (state.sigBit) {
-    // ⚠️ **스트라이커 case 는 아직 없다** — M9 배선은 `skills/striker.ts` 소유(이 레인 밖).
+    case SIG_STRIKER_MARKSMAN:
+      // M9 충각 기동 — 무적프레임 중 접촉이 상쇄되는 이 자리에서 역전해 접촉 상대를 다치게 한다.
+      strikerContactInvuln(state, player, target);
+      break;
     default:
       break;
   }

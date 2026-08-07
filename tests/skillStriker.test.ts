@@ -33,6 +33,8 @@ import {
   onBulletHitParams,
   onGemPull,
   onObjectiveResolved,
+  onContactInvuln,
+  onActiveExpired,
 } from '../src/sim/skillHooks.js';
 import type {
   VolleyParams,
@@ -49,7 +51,7 @@ import {
   DamageSource,
 } from '../src/sim/skillSlots.js';
 import { STRIKER_HANDLERS, STRIKER_SUSTAIN } from '../src/sim/activeHandlers/striker.js';
-import { COLD_DURATION } from '../src/sim/status.js';
+import { COLD_DURATION, enemyStatusStopMult } from '../src/sim/status.js';
 import { ALL_ACTIVES } from '../data/ships/actives/index.js';
 import type { ActiveSkillDef } from '../data/ships/actives/types.js';
 
@@ -71,6 +73,7 @@ const S5 = 14;
 const S6 = 15;
 const S7 = 16;
 const S8 = 17;
+const S9 = 18;
 const S10 = 19;
 const M1 = 20;
 const M2 = 21;
@@ -79,7 +82,11 @@ const M4 = 23;
 const M5 = 24;
 const M6 = 25;
 const M7 = 26;
+const M8 = 27;
+const M9 = 28;
 const M10 = 29;
+// F10 은 F 대역(0..9)의 마지막 칸이라 F9 바로 뒤에 둔다.
+const F10 = 9;
 
 /** 지정한 flat 인덱스에만 포인트를 넣은 30칸 투자 벡터. */
 function invest(points: ReadonlyArray<readonly [number, number]>): number[] {
@@ -1541,5 +1548,264 @@ describe('⑰-M7 신호 추적 (앵커 ② · ㉙ 목표 완수)', () => {
     expect(player(w).dashCooldown).toBe(100);
     onObjectiveResolved(w, player(w), 'echo');
     expect(player(w).dashCooldown).toBe(100);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑱ 배치7 — F10·M8·M9·S9 (배선 레인 · 30종 최종 4종)
+// ---------------------------------------------------------------------------
+//
+// 뮤테이션(2026-08-07 · 아래는 전부 실제로 부수고 빨간 것을 확인했다 — 결과는 보고 참조):
+//  ① `strikerVolleyParams` 의 F10 `emitVolley(...)` 호출을 지우면 §⑱-F10 전체가 빨개진다.
+//  ② `strikerVaultShot` 의 `emitVolley(...)` 호출을 지우면 §⑱-M8 전체가 빨개진다.
+//  ③ `onContactInvuln` 의 `case SIG_STRIKER_MARKSMAN:` 을 지우면 §⑱-M9 전체가 빨개진다.
+//  ④ `strikerContactInvuln` 의 `target.dead = true` 를 지우면 「좀비 금지」가 빨개진다.
+//  ⑤ `strikerActiveExpired` 의 `def.id` 게이트를 반대로 뒤집으면(survival 대신 firepower 만
+//     통과) §⑱-S9 의 「화력 액티브는 무연산」이 빨개진다.
+
+describe('⑱-F10 연장 탄창 (앵커 ⑯ onVolleyParams)', () => {
+  it('정조준 볼리 발사 틱에 같은 방향으로 감쇠 피해의 후속 볼리가 추가로 나간다', () => {
+    const w = mk([[F10, 1]]); // bp = 10000 − round(120000/20) = 4000 (40%)
+    const p = player(w);
+    const before = w.entities.length;
+    onVolleyParams(w, p, volley({ mark: 1, damage: 100, count: 1, pierce: 1 }));
+    const spawned = w.entities.slice(before).filter((e) => e.kind === 'bullet');
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]?.damage).toBe(40);
+    // 마커도 물려받는다 — 후속탄도 F6·F7·F8·F9·S7 명중 연계가 걸린다.
+    expect(spawned[0]?.aux0).toBe(1);
+  });
+
+  it('평상시 볼리(mark=0)에는 추가 발사가 없다 (긍정 짝은 위 테스트다)', () => {
+    const w = mk([[F10, 20]]);
+    const p = player(w);
+    const before = w.entities.length;
+    onVolleyParams(w, p, volley({ mark: 0, count: 1 }));
+    expect(w.entities.length).toBe(before);
+  });
+
+  it('미투자면 정조준 볼리여도 추가 발사가 없다', () => {
+    const w = mk([[F1, 1]]);
+    const p = player(w);
+    const before = w.entities.length;
+    onVolleyParams(w, p, volley({ mark: 1, count: 1 }));
+    expect(w.entities.length).toBe(before);
+  });
+
+  it('레벨이 오르면 후속 피해가 커진다 (하한 짝)', () => {
+    const dmgAt = (level: number): number => {
+      const w = mk([[F10, level]]);
+      const p = player(w);
+      const before = w.entities.length;
+      onVolleyParams(w, p, volley({ mark: 1, damage: 1000, count: 1 }));
+      const spawned = w.entities.slice(before).filter((e) => e.kind === 'bullet');
+      return spawned[0]?.damage ?? 0;
+    };
+    const lo = dmgAt(1);
+    const hi = dmgAt(20);
+    expect(lo).toBeGreaterThan(0); // 긍정 하한 — 배선이 끊기면 0
+    expect(hi).toBeGreaterThan(lo);
+  });
+
+  it('F2·F5 로 이미 강화된 볼리를 물려받는다 (최종 파라미터를 복제한다)', () => {
+    // F2 대시 직후 창(집속 + 피해 증폭) 안에서 발사 — F10 이 그 강화분까지 감쇠해 물려받는지 확인.
+    const w = mk([
+      [F2, 10],
+      [F10, 20],
+    ]); // F10 Lv20 bp = 10000 − round(120000/39) = 6923
+    const p = player(w);
+    p.dashCooldown = w.config.dashCooldownTicks;
+    const before = w.entities.length;
+    onVolleyParams(w, p, volley({ mark: 1, damage: 100, count: 1, pierce: 1 }));
+    const spawned = w.entities.slice(before).filter((e) => e.kind === 'bullet');
+    // F2 가 먼저 100 → 120 으로 올린 뒤, F10 이 그 120 을 감쇠한다: round(120 × 6923/10000) = 83.
+    expect(spawned[0]?.damage).toBe(83);
+  });
+
+  it('`player.cooldown` 을 한 비트도 안 만진다 (쿨다운 미소비)', () => {
+    const w = mk([[F10, 20]]);
+    const p = player(w);
+    p.cooldown = 17;
+    onVolleyParams(w, p, volley({ mark: 1, count: 1 }));
+    expect(p.cooldown).toBe(17);
+  });
+});
+
+describe('⑱-M8 도약 사격 (액티브 핸들러 as_striker_mobility_hi)', () => {
+  function vault(points: ReadonlyArray<readonly [number, number]>): Entity[] {
+    const w = mk(points);
+    const p = player(w);
+    const before = w.entities.length;
+    const handler = STRIKER_HANDLERS['as_striker_mobility_hi'];
+    if (handler === undefined) throw new Error('handler missing');
+    handler(w, p, activeDef('as_striker_mobility_hi'), { x: 1, y: 0 }, 0);
+    return w.entities.slice(before).filter((e) => e.kind === 'bullet');
+  }
+
+  it('2단 도약의 단 사이(1단 착지 직후)에 정조준 볼리 1회가 자동 발사된다', () => {
+    const shots = vault([[M8, 1]]);
+    expect(shots).toHaveLength(1); // vaults=2 라 「사이」는 정확히 한 번뿐이다
+    expect(shots[0]?.aux0).toBe(1); // mark=1 — 정조준탄 연계가 걸린다
+    // 자동 볼리 피해 = round(기본 피해 8 × (60%+3%)) = round(8 × 0.63) = 5.
+    expect(shots[0]?.damage).toBe(5);
+  });
+
+  it('레벨이 오르면 자동 볼리 피해가 오른다 (하한 짝)', () => {
+    const lo = vault([[M8, 1]])[0]?.damage ?? 0;
+    const hi = vault([[M8, 20]])[0]?.damage ?? 0;
+    expect(lo).toBeGreaterThan(0);
+    expect(hi).toBeGreaterThan(lo);
+  });
+
+  it('미투자면 도약만 하고 추가 발사가 없다', () => {
+    expect(vault([[F1, 1]])).toHaveLength(0);
+  });
+
+  it('`player.cooldown` 을 한 비트도 안 만진다 (쿨다운 미소비)', () => {
+    const w = mk([[M8, 20]]);
+    const p = player(w);
+    p.cooldown = 12;
+    const handler = STRIKER_HANDLERS['as_striker_mobility_hi'];
+    if (handler === undefined) throw new Error('handler missing');
+    handler(w, p, activeDef('as_striker_mobility_hi'), { x: 1, y: 0 }, 0);
+    expect(p.cooldown).toBe(12);
+  });
+});
+
+describe('⑱-M9 충각 기동 (앵커 onContactInvuln)', () => {
+  it('무적프레임 중 접촉하면 플레이어 대신 적이 피해를 받는다', () => {
+    const w = mk([[M9, 5]]); // 충각 피해 = 10 + 15 = 25
+    const p = player(w);
+    p.iframes = 10;
+    const t = blankEntity('enemy');
+    t.hp = 100;
+    addEntity(w, t);
+    onContactInvuln(w, p, t);
+    expect(t.hp).toBe(75);
+  });
+
+  it('처치되면 dead 가 hp 와 함께 선다 (좀비 금지)', () => {
+    const w = mk([[M9, 20]]); // 충각 피해 = 10 + 60 = 70
+    const p = player(w);
+    const t = blankEntity('enemy');
+    t.hp = 10;
+    addEntity(w, t);
+    onContactInvuln(w, p, t);
+    expect(t.hp).toBeLessThanOrEqual(0);
+    expect(t.dead).toBe(true);
+  });
+
+  it('적 1기당 재충돌 간격은 30틱이다 (그 안엔 무연산 · 지나면 다시 발동)', () => {
+    const w = mk([[M9, 5]]);
+    const p = player(w);
+    const t = blankEntity('enemy');
+    t.hp = 1000;
+    addEntity(w, t);
+    w.tick = 100;
+    onContactInvuln(w, p, t);
+    expect(t.hp).toBe(975); // 첫 충돌 — 실제로 깎인다(긍정 짝)
+    w.tick = 110; // +10 < 30
+    onContactInvuln(w, p, t);
+    expect(t.hp).toBe(975); // 쿨 중 — 무연산
+    w.tick = 131; // +31 ≥ 30
+    onContactInvuln(w, p, t);
+    expect(t.hp).toBe(950); // 쿨 지남 — 다시 깎인다
+  });
+
+  it('guardian·boss·defenseBoss 는 대상이 아니다 (부활 분기 보호)', () => {
+    const w = mk([[M9, 20]]);
+    const p = player(w);
+    for (const kind of ['guardian', 'boss', 'defenseBoss'] as const) {
+      const t = blankEntity(kind);
+      t.hp = 100;
+      addEntity(w, t);
+      onContactInvuln(w, p, t);
+      expect(t.hp).toBe(100);
+    }
+  });
+
+  it('미투자면 무연산이다', () => {
+    const w = mk([[F1, 1]]);
+    const p = player(w);
+    const t = blankEntity('enemy');
+    t.hp = 100;
+    addEntity(w, t);
+    onContactInvuln(w, p, t);
+    expect(t.hp).toBe(100);
+  });
+});
+
+describe('⑱-S9 만료 정지장 (앵커 onActiveExpired)', () => {
+  it('생존 액티브가 끝나는 틱에 반경 안 잡몹이 정지한다(속도 배율 0)', () => {
+    const w = mk([[S9, 4]]); // 정지 45+20=65틱 · 반경 160+48=208
+    const p = player(w);
+    const inner = blankEntity('enemy'); // 거리 200 < 208
+    inner.x = p.x + 200;
+    inner.y = p.y;
+    addEntity(w, inner);
+    const outer = blankEntity('enemy'); // 거리 300 > 208
+    outer.x = p.x + 300;
+    outer.y = p.y;
+    addEntity(w, outer);
+    onActiveExpired(w, p, activeDef('as_striker_survival_hi'), 0);
+    expect(enemyStatusStopMult(inner)).toBe(0);
+    expect(enemyStatusStopMult(outer)).toBe(1); // 긍정 짝 — 반경 밖은 안 걸린다
+  });
+
+  it('저티어 생존 액티브(as_striker_survival_lo) 만료에도 걸린다', () => {
+    const w = mk([[S9, 20]]);
+    const p = player(w);
+    const t = blankEntity('enemy');
+    t.x = p.x + 100;
+    t.y = p.y;
+    addEntity(w, t);
+    onActiveExpired(w, p, activeDef('as_striker_survival_lo'), 0);
+    expect(enemyStatusStopMult(t)).toBe(0);
+  });
+
+  it('화력·기동 액티브 만료에는 무연산이다 (생존만 트리거)', () => {
+    const w = mk([[S9, 20]]);
+    const p = player(w);
+    const t = blankEntity('enemy');
+    t.x = p.x;
+    t.y = p.y;
+    addEntity(w, t);
+    onActiveExpired(w, p, activeDef('as_striker_firepower_hi'), 0);
+    expect(enemyStatusStopMult(t)).toBe(1);
+  });
+
+  it('guardian 은 대상이 아니다', () => {
+    const w = mk([[S9, 20]]);
+    const p = player(w);
+    const g = blankEntity('guardian');
+    g.x = p.x;
+    g.y = p.y;
+    addEntity(w, g);
+    onActiveExpired(w, p, activeDef('as_striker_survival_hi'), 0);
+    expect(enemyStatusStopMult(g)).toBe(1);
+  });
+
+  it('미투자면 무연산이다', () => {
+    const w = mk([[F1, 1]]);
+    const p = player(w);
+    const t = blankEntity('enemy');
+    t.x = p.x;
+    t.y = p.y;
+    addEntity(w, t);
+    onActiveExpired(w, p, activeDef('as_striker_survival_hi'), 0);
+    expect(enemyStatusStopMult(t)).toBe(1);
+  });
+
+  it('만료가 적을 죽이지 않는다 (배치7 F1 선결 계약과 정합)', () => {
+    const w = mk([[S9, 20]]);
+    const p = player(w);
+    const t = blankEntity('enemy');
+    t.hp = 50;
+    t.x = p.x;
+    t.y = p.y;
+    addEntity(w, t);
+    onActiveExpired(w, p, activeDef('as_striker_survival_hi'), 0);
+    expect(t.hp).toBe(50);
+    expect(t.dead).toBe(false);
   });
 });
