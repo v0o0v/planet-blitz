@@ -108,6 +108,7 @@ const DI5 = 24;
 const DI6 = 25;
 const DI7 = 26;
 const DI8 = 27;
+const DI10 = 29;
 
 function invest(points: ReadonlyArray<readonly [number, number]>): number[] {
   const v = new Array<number>(30).fill(0);
@@ -2268,5 +2269,126 @@ describe('㉘ AS7 원한 청산 (앵커 ④ + 앵커 ⑩)', () => {
     e.damage = 5;
     stepWorld(w, emptyInput());
     expect(readSlot(w.skillStage, PhantomStage.grudgeTargetId)).toBe(654);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ㉙ DI10 공허 계약 — 이득(앵커 ⑯) + 대가(앵커 ⑨, 런당 정확히 1회)
+// ---------------------------------------------------------------------------
+//
+// 리드가 `PhantomCarry.voidCovenantApplied`(0=미물림·1=물림) 슬롯을 세워 대가의 "런당
+// 정확히 1회" 를 잠글 수 있게 됐다(`skillSlots.ts` 커밋 7d3a91e). 이득·대가를 **각각**
+// 재고, 대가는 훅이 여러 번 불려도(구간 재진입 상정) 한 번만 적용됨을 반드시 단언한다 —
+// 이 슬롯이 존재하는 이유가 정확히 그 잠금이다.
+
+describe('㉙ DI10 공허 계약 (앵커 ⑯ + 앵커 ⑨)', () => {
+  function vp10(over: Partial<VolleyParams> = {}): VolleyParams {
+    return {
+      damage: 100,
+      pierce: 0,
+      count: 3,
+      speed: 100,
+      radius: 4,
+      life: 60,
+      spread: 0.5,
+      cooldownQ: 12,
+      mark: 0,
+      countUsed: true,
+      ballisticsUsed: true,
+      targetDist: 200,
+      aimAngle: 0,
+      inputX: 0,
+      inputY: 0,
+      cloakBreak: false,
+      leadDamageBonus: 0,
+      leadPierceBonus: 0,
+      recordSpawnDamage: false,
+      ...over,
+    };
+  }
+
+  it('이득 — 해제 첫 타 배율이 영구 가산된다 (미투자·평범한 볼리는 불변)', () => {
+    const off = mk();
+    const a = vp10({ cloakBreak: true });
+    onVolleyParams(off, player(off), a);
+    expect(a.damage).toBe(100);
+
+    const on = mk([[DI10, 10]]);
+    // add = 500 + 250×10 = 3000. (25000+3000)/25000 × 100 = 112.
+    const b = vp10({ cloakBreak: true });
+    onVolleyParams(on, player(on), b);
+    expect(b.damage).toBe(112);
+
+    // 평범한 볼리(cloakBreak=false)는 손대지 않는다 — 상시 이득이 아니다.
+    const c = vp10();
+    onVolleyParams(on, player(on), c);
+    expect(c.damage).toBe(100);
+  });
+
+  it('이득이 레벨에 단조 증가한다 (하한 포함)', () => {
+    function dealt(level: number): number {
+      const w = mk([[DI10, level]]);
+      const v = vp10({ cloakBreak: true });
+      onVolleyParams(w, player(w), v);
+      return v.damage;
+    }
+    const lo = dealt(1);
+    expect(lo).toBeGreaterThan(100); // 하한 — Lv1 에서도 원배율보다 크다
+    expect(dealt(20)).toBeGreaterThan(lo);
+  });
+
+  it('대가 — 최대 HP 가 고정 8% 줄어들고 hp 도 새 상한으로 눌린다 (미투자 불변)', () => {
+    const off = mk();
+    const q = player(off);
+    q.maxHp = 1000;
+    q.hp = 1000;
+    onSignatureStep(off, q, emptyInput());
+    expect(q.maxHp).toBe(1000);
+    expect(q.hp).toBe(1000);
+
+    const on = mk([[DI10, 1]]);
+    const p = player(on);
+    p.maxHp = 1000;
+    p.hp = 1000;
+    onSignatureStep(on, p, emptyInput());
+    // round(1000 × 800/10000) = 80 → 920. 레벨 무관 고정이라 Lv1 도 전액.
+    expect(p.maxHp).toBe(920);
+    expect(p.hp).toBe(920);
+  });
+
+  it('대가는 레벨이 올라도 그대로다 (레벨 무관 고정 — 이득과 다른 축)', () => {
+    const w = mk([[DI10, 20]]);
+    const p = player(w);
+    p.maxHp = 1000;
+    p.hp = 1000;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.maxHp).toBe(920);
+  });
+
+  it('대가는 **런당 정확히 1회** — 훅이 여러 번 불려도(구간 재진입 상정) 다시 물리지 않는다', () => {
+    const w = mk([[DI10, 1]]);
+    const p = player(w);
+    p.maxHp = 1000;
+    p.hp = 1000;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.maxHp).toBe(920);
+    expect(readSlot(w.skillCarry, PhantomCarry.voidCovenantApplied)).toBe(1);
+
+    // 반복 호출 — 게이트가 없으면 매번 8%씩 복리로 더 깎인다(920→846→...).
+    onSignatureStep(w, p, emptyInput());
+    onSignatureStep(w, p, emptyInput());
+    onSignatureStep(w, p, emptyInput());
+    expect(p.maxHp).toBe(920);
+  });
+
+  it('침공에서는 대가가 비활성이다 (헌장 제3 기준 — 이득 차단과 대칭)', () => {
+    const w = mk([[DI10, 10]]);
+    // 이 훅은 `invasion3 !== undefined` 만 본다 — 침공 세부 형태는 무관하다.
+    (w.config as { invasion3?: unknown }).invasion3 = {};
+    const p = player(w);
+    p.maxHp = 1000;
+    p.hp = 1000;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.maxHp).toBe(1000);
   });
 });

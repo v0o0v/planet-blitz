@@ -23,7 +23,20 @@
  *
  * ---
  *
- * ## ⚠️ 배치7 F2a 선결 위에서 이 레인이 더한 둘 — 27 → **29**
+ * ## ✅ 30 종 전부 배선 완료 (팬텀 최종)
+ * 리드가 `skillSlots.ts` 잠금을 풀고 `PhantomCarry.voidCovenantApplied`(0=미물림·1=물림)를
+ * 커밋 `7d3a91e` 로 세웠다 — 이 레인의 "슬롯이 없다" 보고는 **틀렸다**: 진짜 원인은 이 레인의
+ * 프롬프트가 `skillSlots.ts` 편집을 금지했던 것이지 칸 자체가 없던 것이 아니었다(`PhantomCarry`
+ * 는 그때도 0·1 두 칸만 썼고 2~7 은 비어 있었다). DI10 배선:
+ *  - **이득**(해제 첫 타 배율 +500bp + 250bp/Lv) — AS8 과 같은 비율 변환으로 앵커 ⑯
+ *    (`phantomVolleyParams`, `params.cloakBreak`)에서 닿는다(이 레인이 이미 실증했던 형태).
+ *  - **대가**(최대 HP 고정 −8%, 레벨 무관) — 앵커 ⑨(`phantomSignatureStep`)에서
+ *    `PhantomCarry.voidCovenantApplied` 게이트로 **런당 정확히 1회**만 물린다. ⚠️ DI8 의
+ *    "진입마다 가산"과 규율이 **정반대**다 — 베끼면 게이트가 사라져 복리로 HP 가 녹는다.
+ *  - **침공**: 이득은 `params.cloakBreak` 상시 거짓으로 자동 no-op, 대가는 `invasion3` 을
+ *    명시적으로 게이트해 대칭 차단한다(헌장 제3 기준, 설계서 ④ 표).
+ *
+ * ## 배치7 F2a 선결 위에서 이 레인이 더한 셋 — 27 → **30**
  *  - **AS6「무성 격살」** — 인계 문서·설계서 둘 다 틀렸었다: 설계서가 적은 정본 함수명
  *    `explodeElite` 는 존재하지 않고 정본은 {@link spawnEliteDeathFx}(`elite.ts:119`)이며,
  *    막던 벽("스폰이 앵커 ⑪ 보다 앞이라 못 한다")도 틀렸다 — 실제 스폰은 앵커 ⑪(처치 통지)
@@ -36,22 +49,6 @@
  *    접촉 적 자신의 id)를 실어 날려 풀었다. 표적 저장 칸(`PhantomStage.grudgeTargetId`)도
  *    F2a 가 이미 열어 뒀다. 증폭·해제는 앵커 ⑩(`phantomEnemyDamaged`)에 산다 — AS4·AS5 와
  *    같은 "추가 피해" 형태이고, 그 표적이 이 히트로 죽으면 표식을 지운다.
- *
- * ## 남은 1종과 사유(DI10) — 이 레인이 조사하고 **일부러 안 넣었다**
- *  - **DI10「공허 계약」** — 인계 문서·설계서가 짚은 *"대가의 자리가 스탯 파생이라 앵커가
- *    없다"* 는 과장이었다: 이득(해제 첫 타 배율 영구 가산)은 AS8 이 이미 쓰고 있는 것과
- *    **같은 비율 변환**(`params.damage *= (CLOAK_BREAK_BP + add)/CLOAK_BREAK_BP`)으로 앵커
- *    ⑯(`phantomVolleyParams`, `params.cloakBreak`)에서 그대로 닿는다 — DI8 이 이미
- *    `player.maxHp +=` 로 스탯 파생을 앵커에서 만지는 선례도 있다. 진짜로 막힌 것은
- *    **대가(−8% maxHp, "런당 정확히 1회")** 다: "정확히 1회"를 지키려면 "이미 지불했다"를
- *    구간 전환을 넘겨 기억할 칸이 필요한데(FO7 `trophyBaseHp` 와 같은 결의 `Carry` 1칸),
- *    이 레인이 편집할 수 있는 파일 목록에 **`skillSlots.ts` 가 없다**(레인 규율의 명시적
- *    금지 목록 — 병렬 레인 슬롯 배정 충돌을 막으려는 잠금으로 보인다). DI8 의 "진입마다
- *    가산"은 애초에 "1회 한정" 요구를 못 채워 베낄 수 없고(설계서가 직접 짚은 함정 그대로),
- *    `state.tick` 은 구간마다 0 으로 리셋돼(`CommissionRuntime` 계약) 다구간 런에서 "1회"를
- *    보장 못한다. 새 슬롯 없이는 대가를 정확히 1회로 고정할 방법이 없고, **이득만 넣으면
- *    순수 상향**이라(레인 규율 금지) 이득도 함께 보류한다. 슬롯 배정은 이 레인 밖이다 —
- *    리드가 `PhantomCarry` 에 1칸(예: `voidCovenantPaid`)을 배정하면 다음 커밋에서 닫힌다.
  *
  * ## (앞 단계) 지금까지 배선된 것은 30종 중 27종이었다 (배치5 까지 22, 배치6 이 +5)
  *
@@ -72,8 +69,8 @@
  *  - **AS1「이중 각인」** — 앵커 ⑯ + 예약 슬롯. 소진 값이 아니라 *"직전 볼리가 첫 타였는가"* 만
  *    있으면 되고, 그것은 `params.cloakBreak` 를 다음 볼리까지 나르면 된다.
  *
- * (AS6·AS7·DI10 은 위 "배치7 F2a 선결 위에서 이 레인이 더한 둘" / "남은 1종" 절이 정본이다 —
- * 배치6 당시의 판정은 낡았다.)
+ * (AS6·AS7·DI10 은 위 "30 종 전부 배선 완료" / "배치7 F2a 선결 위에서 이 레인이 더한 셋" 절이
+ * 정본이다 — 배치6 당시의 판정은 낡았다.)
  *
  * 공유 앵커 레인이 더한 하나는 **PH2「위상 착지」**({@link phantomActiveFired}) — 앵커 ㉗
  * (`onActiveFired`, 액티브 핸들러 **직후**)이 열었다. 막고 있던 것은 "착지 지점을 아는 자리가
@@ -178,6 +175,7 @@ const enum Sk {
   /** DI5 최후 위상 */ lastPhase = 24,
   /** DI6 차폐 잠행 */ coverStalk = 25,
   /** DI9 유령 선체 */ ghostHull = 28,
+  /** DI10 공허 계약 */ voidCovenant = 29,
 }
 
 /**
@@ -316,6 +314,17 @@ function lastPhaseCooldownTicks(level: number): number {
 function grudgeAmplifyBp(level: number): number {
   return 2000 + Math.floor((6000 * level) / (level + 12));
 }
+
+/**
+ * DI10 해제 첫 타 배율 **영구 가산** bp = 500 + 250×Lv (Lv1 = 750 · Lv20 = 5500 →
+ * 원배율 25000 + 5500 = 30500bp = 3.05배). 선형 — 20 초과 자연 연장.
+ */
+function voidCovenantAddBp(level: number): number {
+  return 500 + 250 * level;
+}
+
+/** DI10 대가 — 최대 HP 고정 −8%(레벨 무관, bp). */
+const VOID_COVENANT_HP_CUT_BP = 800;
 
 /**
  * DI3 감소 bp = 6000×s/(s+2000), s = aux0×(4+Lv).
@@ -697,6 +706,44 @@ export function phantomSignatureStep(state: WorldState, player: Entity): void {
   if (ph9 >= 1 && player.dashCooldown > 0 && objectiveActiveOf(state)) {
     const next = player.dashCooldown - (1 + Math.floor(ph9 / 10));
     player.dashCooldown = next > 0 ? next : 0;
+  }
+
+  // ⑦ DI10 공허 계약(대가 절반) — 최대 HP **−8% 고정**(레벨 무관)을 **런당 정확히 1회** 물린다.
+  // 이득 절반(해제 첫 타 배율 영구 가산)은 {@link phantomVolleyParams} 에 있다.
+  //
+  // ## 왜 여기(앵커 ⑨)이고, 왜 `PhantomCarry.voidCovenantApplied` 게이트가 필수인가
+  // 이 앵커는 `state.skillsOn && sigBit === SIG_PHANTOM_CLOAK` 이기만 하면 **매 틱 정확히
+  // 한 번** 불린다(함수 doc) — 그래서 DI10 투자 런은 반드시 첫 틱에 이 블록에 닿는다. 문제는
+  // "닿는다"가 아니라 "그 다음도 계속 닿는다" 는 것 — 게이트가 없으면 매 틱 −8%가 복리로
+  // 깎여 몇 초 만에 HP 가 0에 수렴한다. `Carry` 슬롯(구간을 넘겨 산다)에 "이미 물렸는가"를
+  // 적어 두는 것이 유일하게 안전한 형태다 — `Stage`(구간마다 0)를 썼다면 의뢰 다구간 런에서
+  // 구간이 바뀔 때마다 대가가 다시 물려 **HP 가 계단식으로 녹는다**(`skillSlots.ts` 의
+  // `voidCovenantApplied` doc 이 정본 사유).
+  //
+  // ⚠️ **DI8 을 선례로 베끼지 마라(파일 헤더·설계서의 명시적 경고)** — DI8
+  // (`phantomEntry.ts`)은 진입 에지마다 `player.maxHp +=` 를 가산해 "매번" 적용되는 것이
+  // 계약이다. DI10 은 같은 `maxHp` 필드를 만지지만 "런당 정확히 1회"가 계약이라 규율이
+  // 정반대다 — 게이트 없는 대입은 두 스킬을 조용히 같은 형태로 만든다.
+  //
+  // ⚠️ 침공 게이트 — 헌장 제3 기준(설계서 ④ 표 DI10): "이득이 구조적으로 차단되면 대가도
+  //    대칭 차단한다". 이득(위 `phantomVolleyParams`)은 `params.cloakBreak` 가 침공에서
+  //    상시 거짓이라(소진 지점의 `invasion3` 게이트) 이미 무연산이다 — 대가만 침공에서 살면
+  //    "공짜로 HP 를 깎이기만 하는" 순손해가 된다. 그래서 여기 명시적으로 막는다.
+  const di10 = lv(state, Sk.voidCovenant);
+  if (
+    di10 >= 1 &&
+    state.config.invasion3 === undefined &&
+    readSlot(state.skillCarry, PhantomCarry.voidCovenantApplied) === 0
+  ) {
+    writeSlot(state.skillCarry, PhantomCarry.voidCovenantApplied, 1);
+    // 반올림은 게이트 **안**이다(규율 ③).
+    const cut = Math.round((player.maxHp * VOID_COVENANT_HP_CUT_BP) / 10000);
+    const reduced = player.maxHp - cut;
+    player.maxHp = reduced > 0 ? reduced : 1;
+    // hp 가 새 상한을 넘으면 눌러 담는다(대가 적용 시점은 통상 hp === maxHp 인 런 시작
+    // 직후라 실질적으로는 항상 무연산이지만, 방어적으로 유계를 지킨다 — DI2 의 회복 클램프와
+    // 같은 형태).
+    if (player.hp > player.maxHp) player.hp = player.maxHp;
   }
 }
 
@@ -1120,6 +1167,26 @@ export function phantomVolleyParams(
       params.damage = Math.round((params.damage * (CLOAK_BREAK_BP + add)) / CLOAK_BREAK_BP);
       writeSlot(state.skillCarry, PhantomCarry.executionerStacks, 0);
     }
+  }
+
+  // --- DI10 공허 계약(이득 절반) ---------------------------------------------
+  // 해제 첫 타 배율에 **영구 가산**(+500bp + 250bp/Lv) — 대가(최대 HP −8%)는
+  // {@link phantomSignatureStep} 이 런당 정확히 1회로 물린다.
+  //
+  // ## 왜 AS8 과 같은 비율 변환으로 닿는가
+  // 이 앵커에 도달한 `params.damage` 는 `world.ts` 소진 지점이 이미
+  // `× CLOAK_BREAK_BP/10000` 을 먹인 값이다(AS8 문단과 같은 사실). 그래서 원하는 총 배율
+  // `(CLOAK_BREAK_BP + add)` 는 **현재 값에 `(CLOAK_BREAK_BP + add)/CLOAK_BREAK_BP` 를
+  // 곱하면** 정확히 나온다 — DI10 은 가산이 **레벨에서만** 나오고 소진 스택 같은 별도 상태가
+  // 없어 AS8 보다도 단순하다.
+  // ⚠️ AS8 과 **독립적으로** 곱한다(같은 슬롯을 다투지 않는다) — 스택 소모(AS8)와 영구 가산
+  // (DI10)은 서로 다른 원천이라 함께 투자하면 두 배율이 곱으로 겹친다(설계에 상호 배제 규정
+  // 없음 — 두 축을 동시에 태우는 것 자체가 이 스킬들의 존재 이유다).
+  const di10 = lv(state, Sk.voidCovenant);
+  if (di10 >= 1 && params.cloakBreak) {
+    const add = voidCovenantAddBp(di10);
+    // 반올림은 게이트 **안**이다(규율 ③).
+    params.damage = Math.round((params.damage * (CLOAK_BREAK_BP + add)) / CLOAK_BREAK_BP);
   }
 
   // --- AS1 이중 각인 --------------------------------------------------------
