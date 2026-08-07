@@ -90,3 +90,34 @@ export const COMBO_WINDOW_TICKS = 120;
  * ⚠️ **값 복제 금지.** 필요하면 여기서 import 해라.
  */
 export const OVERCHARGE_TICK_CAP = 600;
+
+/**
+ * 무기 아키타입 코드(`src/items/loadout.ts` 의 `WEAPON_SPREAD`/`WEAPON_RAILGUN`/`WEAPON_MISSILE`/
+ * `WEAPON_BEAM` 과 같은 값 — 그 파일이 정본, 여기는 sim 내부 판정용 별칭).
+ *
+ * ## 왜 leaf 로 옮겼는가 (배치7 F2b, W2b 「발사부 leaf 화」 선결)
+ * `world.ts` 의 **비공개 상수**였던 탓에 `activeTypes.ts` 의 `emitVolley`(스트라이커 F10「연장
+ * 탄창」· M8「도약 사격」이 요구하는 발사 leaf)가 아키타입을 판정할 수 없었다. `COMBO_WINDOW_TICKS`·
+ * `OVERCHARGE_TICK_CAP` 이 같은 사유로 여기 온 선례를 따른다.
+ *
+ * ⚠️ **값 복제 금지.** 필요하면 여기서 import 해라. `world.ts` 도 그렇게 한다.
+ * ⚠️ 값을 바꾸면 아키타입 분기가 통째로 갈려 **골든 해시가 전량 갈린다**.
+ */
+export const WEAPON_TYPE_SPREAD = 1;
+export const WEAPON_TYPE_RAILGUN = 2;
+export const WEAPON_TYPE_MISSILE = 3;
+export const WEAPON_TYPE_BEAM = 4;
+
+/**
+ * 유도 미사일 마커(아군탄 `ownerId`, 이미 해시됨). `stepProjectiles` 가 이 마커를 단 탄을 매 틱
+ * 최근접 표적으로 소폭 재선회시킨다(`MISSILE_TURN_RATE` 로 클램프). `emitVolley` 가 미사일
+ * 분기에서 이 값을 찍어야 해서 `WEAPON_TYPE_*` 와 같은 사유로 leaf 에 왔다.
+ */
+export const MISSILE_MARK = 0x3155110;
+
+/** 빔 세그먼트 간격(월드 유닛). `emitVolley` 의 빔 분기와 `weaponReach` 의 상한 파생이 공유한다. */
+export const BEAM_SEGMENT_SPACING = 90;
+/** 빔 세그먼트 반경. 겹치며 깔아 연속 판정처럼 보이게 한다. */
+export const BEAM_SEGMENT_RADIUS = 52;
+/** 빔 세그먼트 수명(틱). 매 발사마다 다시 깔리는 짧은 정지 히트라인. */
+export const BEAM_SEGMENT_LIFE = 2;

@@ -28,6 +28,21 @@ import { spawnBullet } from './entities.js';
 import { slideCircleWalls } from './los.js';
 import { activePowerCenti, investedInTree, wireIdOf } from '../../data/ships/actives/index.js';
 import type { ActiveSkillDef } from '../../data/ships/actives/types.js';
+import { cos, sin } from './math.js';
+import {
+  WEAPON_TYPE_SPREAD,
+  WEAPON_TYPE_RAILGUN,
+  WEAPON_TYPE_MISSILE,
+  WEAPON_TYPE_BEAM,
+  MISSILE_MARK,
+  BEAM_SEGMENT_SPACING,
+  BEAM_SEGMENT_RADIUS,
+  BEAM_SEGMENT_LIFE,
+} from './constants.js';
+import { hasUnique, UQ_TWIN_STAR, TWIN_STAR_DAMAGE_MULT } from './uniques.js';
+// `VolleyParams` 는 타입으로만 당긴다 — `skillHooks.ts` 는 이 파일을 모르므로 순환이 아니고,
+// 값으로 당기면 그 파일의 `onVolleyFiredCatalyst` 등 런타임 초기화를 불필요하게 끌고 온다.
+import type { VolleyParams } from './skillHooks.js';
 
 /** 발동 효과. **부수효과만**(반환값 없음). */
 export type ActiveHandler = (
@@ -213,5 +228,156 @@ export function clearEnemyBullets(state: WorldState, player: Entity, radius: num
     const dx = e.x - player.x;
     const dy = e.y - player.y;
     if (dx * dx + dy * dy <= r2) e.dead = true;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// emitVolley — 주무기 볼리 1벌의 **발사 자체** (배치7 F2b, W2b 「발사부 leaf 화」 선결)
+// ---------------------------------------------------------------------------
+//
+// `world.ts` 의 `autoAttack` 이 사설(비-export)이고 표적을 자기 안에서 골라(`nearestTarget`)
+// leaf 가 재사용할 수 없었다 — `activeHandlers/striker.ts:92-95` 의 주석이 그 사실을 이미 적어
+// 뒀다("M8 은 여기 없다, autoAttack 이 world 비공개라 leaf 가 못 부른다"). `nearestTarget` 자체는
+// 여전히 `world.ts` 소유(leaf 런타임 import 금지 계약)이므로, 이 함수는 **표적 선택을 통째로
+// 인자(`angle`)로 받아** 그 문제를 비켜간다 — 아키타입별 탄 스폰(레일건·미사일·빔·발칸/스프레드
+// + 쌍둥이 항성 유니크 배율)만 한다.
+
+/**
+ * 주무기 볼리 1벌을 **실제로 쏜다**. `world.ts` 의 `autoAttack` 아키타입 분기를 그대로 뽑았다 —
+ * 거동은 추출 전후 비트 동일(`tests/volleyExtraction.test.ts` 가 해시로 잠근다).
+ *
+ * ## 계약 — 위반하면 F10「연장 탄창」·M8「도약 사격」이 원리적으로 성립하지 않는다
+ *  · **`player.cooldown` 을 한 비트도 안 만진다.** 소비(감산)도 적립(`+=`)도 호출부 책임이다.
+ *    두 스킬은 "쿨다운을 소비하지 않는 추가 볼리" 이므로, 이 함수가 쿨다운을 스스로 적립하면
+ *    추가 호출마다 정상 발사 리듬이 흔들린다.
+ *  · **표적을 스스로 고르지 않는다.** `angle` 은 호출부가 이미 확정한 발사 방위다(자동조준이든
+ *    액티브가 정한 고정 방향이든). `nearestTarget` 은 `world.ts` 소유라 이 leaf 는 부를 수 없다
+ *    (계층 규율 — 이 파일 헤더).
+ *  · **`state.weapon` 의 아키타입(`weaponType`)으로 스스로 분기한다.** 별도 아키타입 인자를 받지
+ *    않는 이유는 이 함수가 대표하는 발사가 전부 "지금 장착한 무기로 한 벌 더 쏜다" 이기
+ *    때문이다 — F10·M8 둘 다 주무기 스탯을 그대로 쓴다(새 무기를 만들지 않는다).
+ *  · **RNG 를 소비하지 않는다**(`spawnBullet`·삼각함수 전부 결정론 — 원본 `autoAttack` 과 동일).
+ *
+ * @param angle 이 볼리의 발사 방위(rad). `volley.aimAngle` 을 그대로 넘겨라(원본은 `onVolleyParams`
+ *   실행 **뒤**의 값을 썼다 — 훅이 고칠 수 있는 값이므로 미리 캡처해 두지 마라).
+ * @param volley 발사 파라미터. **원본 레코드를 그대로** 넘겨야 한다 — 복사본을 만들면 `mark`·
+ *   `recordSpawnDamage`·`recordSpawnOrigin` 등 앵커 ⑯ 이 이미 채운 값이 갈릴 수 있다.
+ * @param reach 이 볼리의 사거리. **빔 분기만** 세그먼트 커버리지 산정에 쓴다(`weaponReach` 가
+ *   이미 상한을 잘라 준 값). `VolleyParams` 에 넣지 않은 이유는 그 인터페이스가 6개 기체
+ *   테스트 픽스처에 값을 채워야 하는 필수 필드로 걸리기 때문이다(그 파일의 "선택 필드다"
+ *   규율과 같은 사유 — 별도 인자로 받는 편이 기존 픽스처를 하나도 안 건드린다).
+ */
+export function emitVolley(
+  state: WorldState,
+  player: Entity,
+  angle: number,
+  volley: VolleyParams,
+  reach: number,
+): void {
+  if (state.weapon.weaponType === WEAPON_TYPE_RAILGUN) {
+    const b = spawnBullet(
+      state,
+      player.x,
+      player.y,
+      angle,
+      volley.speed,
+      // 레일건의 유일한 한 발이 곧 **선두탄**이다(증분 0 이면 종전 값 그대로).
+      volley.damage + volley.leadDamageBonus,
+      volley.pierce + volley.leadPierceBonus,
+      volley.radius,
+      volley.life,
+      cos(angle),
+      sin(angle),
+    );
+    if (volley.mark !== 0) b.aux0 = volley.mark;
+    if (volley.recordSpawnDamage) b.aux1 = Math.round(b.damage);
+    if (volley.recordSpawnOrigin === true) b.targetX = b.life;
+    return;
+  }
+
+  if (state.weapon.weaponType === WEAPON_TYPE_MISSILE) {
+    const n = volley.count < 1 ? 1 : volley.count;
+    const start = n > 1 ? angle - volley.spread / 2 : angle;
+    const stepA = n > 1 ? volley.spread / (n - 1) : 0;
+    for (let i = 0; i < n; i++) {
+      const ang = start + stepA * i;
+      const m = spawnBullet(
+        state,
+        player.x,
+        player.y,
+        ang,
+        volley.speed,
+        // 선두 = 부채 시작단(`i === 0`). 증분 0 이면 종전 값 그대로다.
+        i === 0 ? volley.damage + volley.leadDamageBonus : volley.damage,
+        i === 0 ? volley.pierce + volley.leadPierceBonus : volley.pierce,
+        volley.radius,
+        volley.life,
+        cos(ang),
+        sin(ang),
+      );
+      m.ownerId = MISSILE_MARK; // 유도 마커: stepProjectiles가 매 틱 제한 선회.
+      if (volley.mark !== 0) m.aux0 = volley.mark;
+      if (volley.recordSpawnDamage) m.aux1 = Math.round(m.damage);
+      if (volley.recordSpawnOrigin === true) m.targetX = m.life;
+    }
+    return;
+  }
+
+  if (state.weapon.weaponType === WEAPON_TYPE_BEAM) {
+    // 타격선은 `reach` 만큼 깐다 — 상한 클램프가 따로 없는 이유는 호출부(`weaponReach`)가
+    // 이미 BEAM_MAX_REACH 로 잘라 주기 때문이다(원본 주석 그대로, `world.ts` `weaponReach`).
+    let segs = Math.floor(reach / BEAM_SEGMENT_SPACING);
+    if (segs < 1) segs = 1;
+    const ca = cos(angle);
+    const sa = sin(angle);
+    for (let i = 1; i <= segs; i++) {
+      const dist = i * BEAM_SEGMENT_SPACING;
+      const seg = spawnBullet(
+        state,
+        player.x + ca * dist,
+        player.y + sa * dist,
+        angle,
+        0,
+        // 빔의 선두 = 플레이어에 **가장 가까운** 세그먼트(`i === 1`).
+        i === 1 ? volley.damage + volley.leadDamageBonus : volley.damage,
+        9999,
+        BEAM_SEGMENT_RADIUS,
+        BEAM_SEGMENT_LIFE,
+        ca,
+        sa,
+      );
+      if (volley.mark !== 0) seg.aux0 = volley.mark;
+      if (volley.recordSpawnDamage) seg.aux1 = Math.round(seg.damage);
+    }
+    return;
+  }
+
+  // 발칸 / 스프레드 — 쌍둥이 항성(유니크): 부채꼴 발사체 2배 + 발당 피해 ×TWIN_STAR_DAMAGE_MULT.
+  // 미장착 시 n·dmg 그대로(거동 불변). 스프레드 파생 유니크이므로 스프레드 무기에서만 발화
+  // (roll.ts 페어링과 정합). 발칸 등 타 무기에 롤될 수 없고, 설령 실려도 no-op.
+  const mask = state.config.loadout?.uniqueMask ?? 0;
+  const twinOn = hasUnique(mask, UQ_TWIN_STAR) && state.weapon.weaponType === WEAPON_TYPE_SPREAD;
+  const n = twinOn ? volley.count * 2 : volley.count;
+  const dmg = twinOn ? volley.damage * TWIN_STAR_DAMAGE_MULT : volley.damage;
+  const start = n > 1 ? angle - volley.spread / 2 : angle;
+  const stepA = n > 1 ? volley.spread / (n - 1) : 0;
+  for (let i = 0; i < n; i++) {
+    const ang = start + stepA * i;
+    const b = spawnBullet(
+      state,
+      player.x,
+      player.y,
+      ang,
+      volley.speed,
+      i === 0 ? dmg + volley.leadDamageBonus : dmg,
+      i === 0 ? volley.pierce + volley.leadPierceBonus : volley.pierce,
+      volley.radius,
+      volley.life,
+      cos(ang),
+      sin(ang),
+    );
+    if (volley.mark !== 0) b.aux0 = volley.mark;
+    if (volley.recordSpawnDamage) b.aux1 = Math.round(b.damage);
+    if (volley.recordSpawnOrigin === true) b.targetX = b.life;
   }
 }

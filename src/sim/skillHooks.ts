@@ -1,6 +1,7 @@
 /**
  * **210스킬 배선의 앵커** — sim 이 스킬 훅을 부르는 **유일한 지점들**(ADR-0049 S0~S3 + W2
- * + 배치4 앵커 레인 + 배치5 벽 축). 이 파일에 **41개**, `chainHooks.ts` 에 **2개** = 모두 **43개**다.
+ * + 배치4 앵커 레인 + 배치5 벽 축 + 배치7 F2b). 이 파일에 **44개**, `chainHooks.ts` 에 **2개**
+ * = 모두 **46개**다(`onAutoAimTarget`·`onTurretTargetPick`·`onEnemyBulletMoved` 가 배치7 F2b 몫).
  *
  * ## ⛔⛔ 동그라미 번호(①②③…)는 **㉖ 에서 끝났다 — 새 앵커에 번호를 붙이지 마라**
  * 배치4 에서 **네 레인이 병렬로 앵커 9개를 세웠고, ㉗㉘ 가 세 갈래로 중복됐다**:
@@ -3014,6 +3015,26 @@ export interface TurretCadenceParams {
    * 매 틱 발사가 된다(BD5 가 `0` 클램프로 피한 것과 같은 함정의 반대편이다).
    */
   cooldownTicks: number;
+  /**
+   * 이 포탑이 **이번 틱에 사격 자체를 정지**하는가(해츨링 SH4「품기 진형」선결, 배치7 F2b).
+   * 기본값 `false` — 미투자·미소비 런은 이 필드가 항상 거짓이라 `stepTurrets` 가 아래
+   * 분기를 절대 타지 않고 비트 동일이다.
+   *
+   * ⚠️ **선택 필드다.** 필수로 만들면 이 레코드를 손으로 짓는 기존 픽스처
+   * (`tests/skillHatchling.test.ts` 의 `cadence()` 등)가 깨진다(`VolleyParams.recordSpawnOrigin`
+   * 의 "선택 필드다" 규율과 같은 사유). 훅이 안 채우면 `undefined` 라 `if (params.suppressed)` 가
+   * 자연히 거짓이다 — 명시적으로 `false` 를 넣을 필요가 없다.
+   *
+   * ## 소비 경로 — `cooldownTicks` 보다 강하다(먼저 검사한다)
+   * `stepTurrets` 는 이 값이 참이면 **쿨다운 감산도 격발도 둘 다 건너뛴다**(쿨다운 보존).
+   *
+   * ## ⚠️ 왜 감산까지 막는가 — "정지" 가 리듬 자체를 멈추는 것이지 공짜로 흘려보내는 게 아니다
+   * 감산만 허용하고 격발만 막으면, 정지가 오래 걸릴수록 쿨다운이 0 밑으로 계속 감산되어
+   * **해제되는 순간 그 포탑이 즉시(그리고 어쩌면 여러 발 밀려) 쏜다** — "진형이 풀리자마자
+   * 일제 사격" 이 되어 SH4 의 설계 의도(사격을 죽이는 대신 몸으로 막는다)와 정반대로 읽힌다.
+   * 쿨다운을 그 자리에 묶어 두면 해제 직후 리듬이 정지 **전과 정확히 같은 지점**에서 이어진다.
+   */
+  suppressed?: boolean;
 }
 
 /**
@@ -3254,6 +3275,148 @@ export function onTurretExpired(state: WorldState, turret: Entity): void {
     default:
       break;
   }
+}
+
+// ---------------------------------------------------------------------------
+// 배치7 F2b 셋 — **표적 공유 · 탄받이** (해츨링 BD4 · SH8 선결)
+// ---------------------------------------------------------------------------
+//
+//   onAutoAimTarget    — 플레이어 자동조준이 표적을 확정한 직후(`world.ts` 의 `autoAttack`).
+//   onTurretTargetPick — 포탑 1기가 `nearestTarget` 을 부르기 **앞**(`world.ts` 의 `fireTurretShot`).
+//   onEnemyBulletMoved — 적탄이 이번 틱 위치 적분을 끝낸 직후(`world.ts` 의 적탄 이동 루프).
+//
+// ⛔ **동그라미 번호를 붙이지 않는다** — ㉖ 에서 끝났다(파일 헤더). 정본은 함수 이름이다.
+//
+// ## 왜 셋을 한데 묶었는가
+// BD4「표적 공유」는 *플레이어가 고른 표적을 병아리도 우선 쏜다* 이고, 그러려면 (a) 플레이어
+// 표적을 **기록할 자리**와 (b) 포탑이 그 기록을 **읽을 자리**가 둘 다 있어야 한다 — 한쪽만
+// 열면 반쪽 배선이다. SH8「탄받이 깃털」은 이 표적 공유와 무관하지만 같은 배치의 같은 포탑
+// 계열(병아리) 선결이라 옆에 둔다.
+//
+// ## ⚠️ 촉매 짝이 없다 — ⑮·⑰~㉔·㉖㉗ 과 같다.
+
+/**
+ * 앵커 — **플레이어 자동조준이 이번 틱 표적을 확정한 직후**(`world.ts` 의 `autoAttack`,
+ * `nearestTarget` 호출 바로 뒤 · 사거리 밖이라 표적이 없으면 이 앵커에 도달하지 않는다).
+ * 해츨링 BD4「표적 공유」선결.
+ *
+ * ## 왜 필요한가 — 포탑 사격 시점에는 이 정보가 이미 없다
+ * 병아리(포탑)의 사격 시점(`fireTurretShot`)은 `autoAttack` 과 **다른 함수·다른 틱 단계**다.
+ * `autoAttack` 의 표적은 그 함수의 지역 변수(`const target`)라 함수가 끝나면 사라진다. BD4 가
+ * "병아리도 플레이어가 고른 표적을 우선 쏜다" 를 표현하려면 그 표적을 **어딘가에 기록**해
+ * 다음 틱(또는 같은 틱의 뒤 단계) 포탑 사격까지 살려 둬야 한다.
+ *
+ * ## ⚠️ 기록 자체는 이 앵커의 일이 아니다 — 배선 레인의 몫이다
+ * 이 함수는 자리만 연다(전 분기가 비어 있다). 슬롯 쓰기(`writeSlot`)로 표적 id 를 기록하는
+ * 것은 `case SIG_HATCHLING_BROOD` 가 생길 때 그 안에서 한다 — "미리 열어 둔 자리가 배선이
+ * 있다는 착각을 만든다"(앵커 ⑮ 주석)와 같은 사유로, 지금은 훅 본문을 비워 둔다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라**(공통 계약).
+ *  - ⚠️ **`target`을 죽이거나 좌표를 바꾸지 마라.** 이 앵커는 관측 전용이다 — 이 표적은 이번
+ *    틱 플레이어 발사가 이미 겨눈 그 개체이므로, 여기서 건드리면 `autoAttack` 의 나머지 로직
+ *    (아직 안 끝났다 — 이 앵커는 발사 파이프라인 **중간**이다)까지 갈린다.
+ *
+ * @param target 이번 틱 자동조준이 확정한 표적.
+ */
+export function onAutoAimTarget(state: WorldState, player: Entity, target: Entity): void {
+  if (!state.skillsOn) return;
+  void player;
+  void target;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 `onTurretTargetPick` 이 넘기는 **우선 표적 지정**. 훅이 제자리에서 고친다.
+ *
+ * ## 왜 레코드인가 — 값이 아니라 "지정했는가/안 했는가" 자체가 신호다
+ * `targetId` 가 0(엔티티 id 는 1부터 시작 — `world.ts` `nextEntityId = 1`)이면 *지정 없음*
+ * 이고, `fireTurretShot` 은 종전대로 `nearestTarget` 을 부른다. 인자 나열이 아니라 레코드로
+ * 연 이유는 `TurretShotParams`·`TurretCadenceParams` 와 같다 — 소비처가 늘 때 칸만 더한다.
+ */
+export interface TurretTargetPick {
+  /**
+   * 이 포탑이 **우선** 쏠 표적의 엔티티 id. `0` = 지정 없음(폴백: `nearestTarget`).
+   *
+   * ## ⚠️ 무효 표적(죽었거나 사거리 밖) 폴백 규약 — **종전 경로로 돌아간다**
+   * `fireTurretShot` 은 이 id 로 엔티티를 찾아 ①`dead` 이거나 ②포탑 사거리(`TURRET_RANGE`)
+   * 밖이면 **이 지정을 버리고** `nearestTarget` 을 그대로 부른다. 무효 지정을 그대로 밀어붙여
+   * "사거리 밖 표적을 향해 허공 발사" 나 "죽은 표적을 향해 무발사" 를 만들지 않기 위해서다 —
+   * BD4 의 취지는 *"우선순위 힌트"* 이지 *"조회를 대체"* 가 아니다. 폴백이 없으면 플레이어가
+   * 방금 표적을 바꾼 틱에 병아리가 허공에 대고 쏘는 정지 사격이 생긴다.
+   */
+  targetId: number;
+}
+
+/**
+ * 앵커 `onTurretTargetPick` — **포탑 1기가 `nearestTarget` 을 부르기 직전**(`fireTurretShot`).
+ * 해츨링 BD4「표적 공유」선결.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라**(㉖ 과 같은 계약 — `fireTurretShot` 은 RNG 미소비가 계약이다).
+ *  - ⚠️ **엔티티를 낳지 마라.** 이 지점은 `stepTurrets` 의 `state.entities` **순회 안**이다
+ *    (㉖ 과 같은 규율).
+ *
+ * @param turret 이 발을 쏘는 포탑 개체. **소환물 종류 판별은 훅 책임이다**(`ownerId`).
+ */
+export function onTurretTargetPick(
+  state: WorldState,
+  turret: Entity,
+  pick: TurretTargetPick,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    default:
+      break;
+  }
+  void turret;
+  void pick;
+}
+
+/**
+ * 앵커 `onEnemyBulletMoved` — **적탄이 이번 틱 위치 적분(과 수명 감산)을 끝낸 직후**
+ * (`world.ts` 의 적탄·아군탄 공용 이동 루프, `kind === 'enemyBullet'` 만). 해츨링 SH8「탄받이
+ * 깃털」선결(설계서 구현안 A — 적탄 이동 판정에 근접 검사, 틱당 O(적탄×생존 병아리 ≤5)).
+ *
+ * ## 왜 필요한가 — 적탄↔병아리 충돌 경로가 코드에 0건이었다
+ * 적탄이 실제로 소비되는 지점은 플레이어 탐침(`grid.query` 안의 `if (t.kind === 'enemyBullet')`)
+ * **한 곳뿐**이고 그것은 플레이어 반경 판정이다. 병아리(`kind: 'turretPickup'` +
+ * `ownerId === BROOD_MARK`)를 향한 적탄 판정은 어디에도 없었다(`collision.ts`·`bullets.ts` grep
+ * 0건). 이 앵커가 그 판정 지점을 연다 — **직접 `dead=true`** 로 소거하는 형태다.
+ *
+ * ## 반환값 — `true` 면 이 앵커가 그 탄을 **소거한다**
+ * 반환은 `boolean`이다(이 파일의 다른 앵커 대부분과 다르다 — {@link survivedLethalBlow} 처럼
+ * "판정 결과"가 곧 사건이라 레코드보다 반환값이 자연스럽다). 호출부가 `true` 를 받으면 그
+ * 자리에서 `e.dead = true` 를 세우고 이번 틱 나머지 처리(벽 스윕 등)를 건너뛴다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **훅이 없는 런은 비트 동일이어야 한다.** 전 분기가 `false` 를 반환하므로(빈 스위치의
+ *    기본 반환), 미투자·미소비 런은 이 앵커가 매 적탄마다 불려도 결과가 전부 무시된다.
+ *  - ⚠️ **RNG 를 소비하지 마라**(공통 계약).
+ *  - ⚠️ **엔티티를 낳지 마라.** 이 지점은 적탄·아군탄 공용 루프의 `state.entities`
+ *    **순회 안**이다 — `spawnBullet` 의 말미 append 조차 안전하지 않다(이 루프는 `bulletSplits`
+ *    처럼 지연 스폰 버퍼를 따로 쓴다, 호출부 주석 참조).
+ *  - ⚠️ **`life` 를 병아리 판별에 재활용하지 마라.** F1 레인이 적(`enemy`/`boss` kind) 정지
+ *    상태이상에 `life` 를 재활용할 예정이다 — 병아리는 `kind: 'turretPickup'` 이라 칸이 겹치지
+ *    않지만, 다음 레인이 헷갈리지 않도록 여기 명시한다.
+ *
+ * @param bullet 이번 틱 위치가 이미 갱신된 적탄. 좌표는 **이번 틱의 최종 위치**다.
+ */
+export function onEnemyBulletMoved(state: WorldState, bullet: Entity): boolean {
+  if (!state.skillsOn) return false;
+  let consumed = false;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    default:
+      break;
+  }
+  void bullet;
+  return consumed;
 }
 
 // ---------------------------------------------------------------------------

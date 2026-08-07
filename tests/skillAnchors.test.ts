@@ -75,6 +75,14 @@ const hoisted = vi.hoisted(() => ({
    * 같은 사유다.
    */
   damageSources: [] as number[],
+  /** 배치7 F2b `onAutoAimTarget` 이 받은 표적 좌표 — 자동조준이 실제로 표적을 실어 오는가. */
+  autoAimTargets: [] as { x: number; y: number }[],
+  /**
+   * 배치7 F2b `onTurretTargetPick` 을 **실제로 고치는 가짜 훅**. 호출 횟수만으로는 무효 표적
+   * 폴백(`TurretTargetPick.targetId` doc)이 실제로 동작하는지 못 잰다 — 앵커 ⑰ 이 `min` 에
+   * 삼켜져 무효였던 전례와 같은 사각지대다.
+   */
+  turretPick: null as null | ((p: { targetId: number }) => void),
   /**
    * 앵커 ⑧ 이 받은 **피해원 비트합**(선택 인자). ④ 와 따로 재는 이유는 **호출부가 다르기**
    * 때문이다 — ④ 는 hp 차감 뒤, ⑧ 은 감쇠 사슬 안이고, 둘 중 한쪽만 넘겨도 다른 쪽 계측은
@@ -125,6 +133,10 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
         const q = args[2] as { damage: number };
         hoisted.turretShots.push({ ownerId: t.ownerId, damage: q.damage });
       }
+      if (name === 'onAutoAimTarget') {
+        const t = args[2] as { x: number; y: number };
+        hoisted.autoAimTargets.push({ x: t.x, y: t.y });
+      }
       if (name === 'onPlayerDamaged') {
         hoisted.damageSources.push(args[4] as number);
       }
@@ -140,6 +152,9 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
       // 진짜 훅이 돈 **뒤**에 레코드를 고친다 — 배선 레인의 효과 함수와 같은 자리다.
       if (name === 'onBroodLaunchParams' && hoisted.broodPatch !== null) {
         hoisted.broodPatch(args[2] as Record<string, number>);
+      }
+      if (name === 'onTurretTargetPick' && hoisted.turretPick !== null) {
+        hoisted.turretPick(args[2] as { targetId: number });
       }
       const m = hoisted.mutate[name];
       return m === undefined ? out : m(out, args);
@@ -160,7 +175,8 @@ const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP, BROOD_MARK,
   await import(
   '../src/sim/shipSignature.js'
 );
-const { isActiveTurret, TURRET_LIFE_TICKS } = await import('../src/sim/events.js');
+const { isActiveTurret, TURRET_LIFE_TICKS, TURRET_BULLET_DAMAGE, TURRET_BULLET_RADIUS } =
+  await import('../src/sim/events.js');
 const { DRONE_MARK } = await import('../src/sim/uniques.js');
 const { DamageSource } = await import('../src/sim/skillSlots.js');
 type WorldState = import('../src/sim/world.js').WorldState;
@@ -213,6 +229,8 @@ beforeEach(() => {
   hoisted.turretShots = [];
   hoisted.damageSources = [];
   hoisted.chainSources = [];
+  hoisted.autoAimTargets = [];
+  hoisted.turretPick = null;
 });
 
 // ---------------------------------------------------------------------------
@@ -224,7 +242,7 @@ describe('계측 이음매', () => {
   //    배치4 에서 네 레인이 병렬로 앵커를 세우며 ㉗㉘ 가 **세 갈래로 중복**됐고(공유·해츨링·말로우)
   //    git 은 그 충돌을 전혀 몰랐다. 그래서 ㉖ 이후로는 번호를 붙이지 않는다
   //    (사유 전문은 `src/sim/skillHooks.ts` 헤더). 새 앵커는 **여기에 이름을 추가**해라.
-  it('앵커 46개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 49개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
@@ -308,6 +326,11 @@ describe('계측 이음매', () => {
         'onPlayerWallSlide', // 선체↔벽 겹침 해소 직전 (팬텀 DI9 — 탄↔벽 축이 아니었다)
         // ⚠️ `onEnemyStatusExpired`(적 화상 만료 → SQ9)는 여기 **없다** — `chainHooks.ts`
         //    에 산다. `status.ts` 가 부르는 앵커라 이 파일에 두면 런타임 순환이 된다.
+        // ⚠️ 배치7 F2b 셋(해츨링 BD4「표적 공유」· SH8「탄받이 깃털」선결). 전부 전 분기가
+        //    비어 있다(자리만 연다) — 배선은 다음 레인의 몫이다.
+        'onAutoAimTarget', // 자동조준이 이번 틱 표적을 확정한 직후(`autoAttack`)
+        'onTurretTargetPick', // 포탑이 `nearestTarget` 을 부르기 앞(`fireTurretShot`)
+        'onEnemyBulletMoved', // 적탄이 이번 틱 위치 적분을 끝낸 직후(적탄 이동 루프)
       ].sort(),
     );
   });
@@ -1534,6 +1557,133 @@ describe('앵커 ㉖ onTurretShotParams — 포탑탄 1발의 파라미터', () 
     stepWorld(s, idle);
     expect(hoisted.turretShots.length).toBeGreaterThanOrEqual(1);
     expect(hoisted.turretShots.every((q) => q.ownerId === DRONE_MARK)).toBe(true);
+  });
+});
+
+/** **포탑탄만** 센다(원본 판정은 `tests/turretFireExtraction.test.ts` 의 `isTurretBullet`). */
+const isTurretBullet = (e: Entity): boolean =>
+  e.kind === 'bullet' && !e.dead && e.damage === TURRET_BULLET_DAMAGE && e.radius === TURRET_BULLET_RADIUS;
+
+describe('배치7 F2b onAutoAimTarget — 자동조준 표적 확정 직후', () => {
+  it('사거리 안 표적이 있으면 그 좌표로 불린다', () => {
+    const s = skilled(0xc001);
+    const e = plantEnemy(s, 400, 0);
+    stepWorld(s, idle);
+    expect(hoisted.autoAimTargets.length).toBe(1);
+    expect(hoisted.autoAimTargets[0]).toEqual({ x: e.x, y: e.y });
+  });
+
+  it('음성 대조: 쿨다운이 안 찼으면 표적이 있어도 0 이다 (앵커 ① 과 같은 술어·같은 함정)', () => {
+    // "표적이 없는 틱"으로 재면 웨이브 디렉터가 사거리 안에 적을 낳는 시드에서 조용히
+    // 뒤집힌다(앵커 ① `onVolleyFired` 의 음성 대조 주석과 같은 함정) — 그래서 쿨다운 게이트로
+    // 잡는다. `onAutoAimTarget` 은 표적 확정 **뒤 · 쿨다운 재확인 전**이 아니라 애초에 쿨다운이
+    // 안 찬 틱은 `autoAttack` 이 조기 반환해 이 앵커 자체에 도달하지 않는다.
+    const s = skilled(0xc002);
+    plantEnemy(s, 400, 0);
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.cooldown = 999;
+    stepWorld(s, idle);
+    expect(hoisted.autoAimTargets.length).toBe(0);
+  });
+});
+
+describe('배치7 F2b onTurretTargetPick — 포탑 표적 지정', () => {
+  it('표적 유무와 무관하게 격발 리듬마다 불린다 — onTurretShotParams 와 다르다(음성 대조)', () => {
+    const s = hatchRun(0xc010);
+    const p = s.entities[0]!;
+    plantTurret(s, BROOD_MARK, p.x + 400_000, p.y + 400_000); // 사거리 밖 — 표적 없음
+    stepWorld(s, idle);
+    expect(count('onTurretTargetPick')).toBeGreaterThanOrEqual(1);
+    expect(hoisted.turretShots.length).toBe(0); // 대조: 실제 격발(⑯)은 없다
+  });
+
+  it('⭐ 유효한 강제 지정 — 최근접이 아닌 그 표적을 실제로 쏜다', () => {
+    const s = hatchRun(0xc011);
+    const p = s.entities[0]!;
+    const t = plantTurret(s, BROOD_MARK, p.x + 120, p.y);
+    plantEnemy(s, t.x + 100, t.y); // 최근접(강제 지정 대상이 아니다)
+    const far = plantEnemy(s, t.x + 500, t.y + 10); // 사거리 안이지만 더 멀다
+    hoisted.turretPick = (pick) => {
+      pick.targetId = far.id;
+    };
+    stepWorld(s, idle);
+    const shots = s.entities.filter(isTurretBullet);
+    expect(shots.length, '강제 지정이 있는데도 포탑이 한 발도 안 쐈다').toBeGreaterThanOrEqual(1);
+    const expected = Math.atan2(far.y - t.y, far.x - t.x);
+    const actual = Math.atan2(shots[0]!.vy, shots[0]!.vx);
+    expect(Math.abs(actual - expected)).toBeLessThan(1e-3);
+  });
+
+  it('무효 지정(존재하지 않는 id)이면 종전 nearestTarget 으로 폴백한다', () => {
+    const s = hatchRun(0xc012);
+    const p = s.entities[0]!;
+    const t = plantTurret(s, BROOD_MARK, p.x + 120, p.y);
+    const near = plantEnemy(s, t.x + 100, t.y);
+    hoisted.turretPick = (pick) => {
+      pick.targetId = 999_999; // 존재하지 않는 id
+    };
+    stepWorld(s, idle);
+    const shots = s.entities.filter(isTurretBullet);
+    expect(shots.length, '무효 지정이 격발 자체를 막았다').toBeGreaterThanOrEqual(1);
+    const expected = Math.atan2(near.y - t.y, near.x - t.x);
+    const actual = Math.atan2(shots[0]!.vy, shots[0]!.vx);
+    expect(Math.abs(actual - expected)).toBeLessThan(1e-3);
+  });
+});
+
+describe('배치7 F2b onTurretCadence.suppressed — 포탑 사격 정지', () => {
+  it('⭐ 참으로 바꾸면 쿨다운이 도는데도 격발이 완전히 멈춘다(뮤테이션)', () => {
+    const s = hatchRun(0xc020);
+    const p = s.entities[0]!;
+    const t = plantTurret(s, BROOD_MARK, p.x + 120, p.y);
+    plantEnemy(s, t.x + 200, t.y);
+    hoisted.mutate['onTurretCadence'] = (_ret, args) => {
+      (args[2] as { suppressed: boolean }).suppressed = true;
+      return _ret;
+    };
+    const cooldownBefore = t.cooldown;
+    for (let i = 0; i < 5; i++) stepWorld(s, idle);
+    expect(hoisted.turretShots.length, '정지 중인데도 격발했다').toBe(0);
+    expect(t.cooldown, '정지 중에도 쿨다운이 감산됐다').toBe(cooldownBefore);
+  });
+});
+
+describe('배치7 F2b onEnemyBulletMoved — 적탄 이동 판정 직후', () => {
+  it('적탄이 있으면 매 틱 불린다', () => {
+    const s = skilled(0xc030);
+    const eb = blankEntity('enemyBullet');
+    eb.radius = 6;
+    eb.vx = 100;
+    eb.vy = 0;
+    eb.life = 60;
+    addEntity(s, eb);
+    stepWorld(s, idle);
+    expect(count('onEnemyBulletMoved')).toBeGreaterThanOrEqual(1);
+  });
+
+  it('음성 대조: 적탄이 없으면 0 이다(아군탄만 있어도 불리지 않는다)', () => {
+    const s = skilled(0xc031);
+    const b = blankEntity('bullet');
+    b.radius = 6;
+    b.vx = 100;
+    b.life = 60;
+    addEntity(s, b);
+    stepWorld(s, idle);
+    expect(count('onEnemyBulletMoved')).toBe(0);
+  });
+
+  it('⭐ `true` 를 돌려주면 그 적탄이 그 자리에서 실제로 소거된다(뮤테이션)', () => {
+    const s = skilled(0xc032);
+    const eb = blankEntity('enemyBullet');
+    eb.radius = 6;
+    eb.vx = 100;
+    eb.vy = 0;
+    eb.life = 60;
+    addEntity(s, eb);
+    hoisted.mutate['onEnemyBulletMoved'] = () => true;
+    stepWorld(s, idle);
+    expect(eb.dead, '훅이 true 를 돌려줬는데도 탄이 안 죽었다').toBe(true);
   });
 });
 
