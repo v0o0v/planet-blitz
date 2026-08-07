@@ -136,6 +136,9 @@ import {
   hatchlingTurretExpired,
   hatchlingPlayerDamaged,
   hatchlingGemMagnetParams,
+  hatchlingAutoAimTarget,
+  hatchlingTurretTargetPick,
+  hatchlingEnemyBulletMoved,
 } from './skills/hatchling.js';
 import {
   strikerDashFired,
@@ -384,7 +387,9 @@ function dispatchDashSkill(
       // NU5 알 굴리기 — 부화 스냅샷 1 전진(액티브 `advanceHatch` 와 같은 문법).
       // ⚠️ 같은 스킬의 나머지 절반(대시 경로 젬 수거)은 `collectGem` 이 `world.ts` 비공개라
       //    미배선이고, 그래서 **레벨 스케일이 통째로 없다** — 효과 함수 주석이 근거.
-      hatchlingDashFired(state, player);
+      // NU3 업어 나르기 — 배치7 F1 이 실은 `dirX`/`dirY`(단위 벡터)의 소비처. 대시 경로 위
+      //    병아리를 방향 × 고정 거리로 산출한 가상 도착점 주위로 옮긴다(효과 함수 doc 참조).
+      hatchlingDashFired(state, player, dirX, dirY);
       break;
     case SIG_PHANTOM_CLOAK:
       // PH1 잔상 이탈 — 대시가 무피격 스트릭을 전진시킨다(`advanceCloak` 경유).
@@ -3334,10 +3339,12 @@ export function onTurretExpired(state: WorldState, turret: Entity): void {
  */
 export function onAutoAimTarget(state: WorldState, player: Entity, target: Entity): void {
   if (!state.skillsOn) return;
-  void player;
-  void target;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    case SIG_HATCHLING_BROOD:
+      // BD4 표적 공유(기록 절반) — 이번 틱 자동조준 표적을 슬롯에 적는다.
+      hatchlingAutoAimTarget(state, player, target);
+      break;
     default:
       break;
   }
@@ -3384,11 +3391,13 @@ export function onTurretTargetPick(
   if (!state.skillsOn) return;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    case SIG_HATCHLING_BROOD:
+      // BD4 표적 공유(우선순위 절반) — 공유 표적이 유효하면 이 포탑에 지정한다.
+      hatchlingTurretTargetPick(state, turret, pick);
+      break;
     default:
       break;
   }
-  void turret;
-  void pick;
 }
 
 /**
@@ -3425,10 +3434,13 @@ export function onEnemyBulletMoved(state: WorldState, bullet: Entity): boolean {
   let consumed = false;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    case SIG_HATCHLING_BROOD:
+      // SH8 탄받이 깃털 — 병아리에 닿은 적탄을 소거하고 그 병아리의 수명을 깎는다.
+      consumed = hatchlingEnemyBulletMoved(state, bullet);
+      break;
     default:
       break;
   }
-  void bullet;
   return consumed;
 }
 

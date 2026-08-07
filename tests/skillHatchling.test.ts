@@ -37,22 +37,27 @@ import {
   onTurretExpired,
   onPlayerDamaged,
   onGemMagnetParams,
+  onAutoAimTarget,
+  onTurretTargetPick,
+  onEnemyBulletMoved,
 } from '../src/sim/skillHooks.js';
 import type {
   BroodParams,
   TurretShotParams,
   TurretCadenceParams,
   GemMagnetParams,
+  TurretTargetPick,
 } from '../src/sim/skillHooks.js';
-import { HATCHLING_HANDLERS } from '../src/sim/activeHandlers/hatchling.js';
+import { HATCHLING_HANDLERS, HATCHLING_SUSTAIN } from '../src/sim/activeHandlers/hatchling.js';
 import { ALL_ACTIVES } from '../data/ships/actives/index.js';
 import type { ActiveSkillDef } from '../data/ships/actives/types.js';
 import { DamageSource } from '../src/sim/skillSlots.js';
 import { DRONE_MARK } from '../src/sim/uniques.js';
 import { SIG_HATCHLING_BROOD, BROOD_MARK } from '../src/sim/shipSignature.js';
-import { readSlot, SKILL_SLOT_COUNT, HatchlingStage } from '../src/sim/skillSlots.js';
+import { readSlot, writeSlot, SKILL_SLOT_COUNT, HatchlingStage } from '../src/sim/skillSlots.js';
 import { COLD_DURATION } from '../src/sim/status.js';
-import { TURRET_LIFE_TICKS } from '../src/sim/events.js';
+import { TURRET_LIFE_TICKS, TURRET_RANGE } from '../src/sim/events.js';
+import { DT } from '../src/sim/constants.js';
 
 /** flat 인덱스 — `data/ships/hatchling.ts` 축 순서(BD 0..9 · NU 10..19 · SH 20..29). */
 const BD5 = 4;
@@ -81,6 +86,10 @@ const SH5 = 24;
 const SH6 = 25;
 const SH7 = 26;
 const SH10 = 29;
+const BD4 = 3;
+const NU3 = 12;
+const SH4 = 23;
+const SH8 = 27;
 
 /** 지정한 flat 인덱스에만 포인트를 넣은 30칸 투자 벡터. */
 function invest(points: ReadonlyArray<readonly [number, number]>): number[] {
@@ -1485,5 +1494,321 @@ describe('⑫ 앵커 ㉘ 젬 자석 — NU1', () => {
     expect(g1.vx).toBeLessThan(0); // 하한 — 양변 0 항진 방지
     expect(g3.vx).toBe(g1.vx);
     expect(g3.x).toBe(g1.x);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S3-해츨링 배치7 — 앵커 `onAutoAimTarget`·`onTurretTargetPick`·`onEnemyBulletMoved`
+// (2026-08-07) — BD4·SH8·SH4·NU3
+// ---------------------------------------------------------------------------
+
+describe('⑲ BD4 표적 공유', () => {
+  it('앵커 `onAutoAimTarget` — 표적 id 를 +1 인코딩으로 적는다(미투자는 무시)', () => {
+    const w = mk([[BD4, 5]]);
+    const t = enemyNear(w, 300, 0);
+    onAutoAimTarget(w, player(w), t);
+    expect(readSlot(w.skillStage, HatchlingStage.shareTargetId)).toBe(t.id + 1);
+
+    const n = mk(); // 음성 대조
+    onAutoAimTarget(n, player(n), enemyNear(n, 300, 0));
+    expect(readSlot(n.skillStage, HatchlingStage.shareTargetId)).toBe(0);
+  });
+
+  it('앵커 `onTurretTargetPick` — 공유 표적이 유효하면 지정하고, 무효면 손대지 않는다', () => {
+    const w = mk([[BD4, 5]]);
+    const t = chick(w, 100, 0);
+    const target = enemyNear(w, 100, 400); // t 기준 400 (사거리 900 안)
+    writeSlot(w.skillStage, HatchlingStage.shareTargetId, target.id + 1);
+    const pick: TurretTargetPick = { targetId: 0 };
+    onTurretTargetPick(w, t, pick);
+    expect(pick.targetId).toBe(target.id);
+
+    // 부정 짝 ① — 표적이 사거리 밖이면 지정하지 않는다(0 유지).
+    const far = mk([[BD4, 5]]);
+    const t2 = chick(far, 100, 0);
+    const farTarget = enemyNear(far, 100, TURRET_RANGE + 200);
+    writeSlot(far.skillStage, HatchlingStage.shareTargetId, farTarget.id + 1);
+    const pick2: TurretTargetPick = { targetId: 0 };
+    onTurretTargetPick(far, t2, pick2);
+    expect(pick2.targetId).toBe(0);
+
+    // 부정 짝 ② — 표적이 죽었으면 지정하지 않는다.
+    const dead = mk([[BD4, 5]]);
+    const t3 = chick(dead, 100, 0);
+    const deadTarget = enemyNear(dead, 100, 400);
+    deadTarget.dead = true;
+    writeSlot(dead.skillStage, HatchlingStage.shareTargetId, deadTarget.id + 1);
+    const pick3: TurretTargetPick = { targetId: 0 };
+    onTurretTargetPick(dead, t3, pick3);
+    expect(pick3.targetId).toBe(0);
+
+    // 부정 짝 ③ — 미투자.
+    const off = mk();
+    const t4 = chick(off, 100, 0);
+    const offTarget = enemyNear(off, 100, 400);
+    writeSlot(off.skillStage, HatchlingStage.shareTargetId, offTarget.id + 1);
+    const pick4: TurretTargetPick = { targetId: 0 };
+    onTurretTargetPick(off, t4, pick4);
+    expect(pick4.targetId).toBe(0);
+  });
+
+  it('앵커 ⑩ — 플레이어 자신의 탄만 명중 틱을 적는다(병아리 탄은 안 적는다)', () => {
+    const w = mk([[BD4, 5]]);
+    const target = enemyNear(w, 200, 0);
+    writeSlot(w.skillStage, HatchlingStage.shareTargetId, target.id + 1);
+    w.tick = 50;
+    const playerBullet = blankEntity('bullet');
+    playerBullet.id = 82000;
+    onEnemyDamaged(w, target, 5, playerBullet);
+    expect(readSlot(w.skillStage, HatchlingStage.shareHitTick)).toBe(50);
+
+    // 부정 짝 — 병아리 탄(BROOD_MARK)은 기록하지 않는다.
+    const w2 = mk([[BD4, 5]]);
+    const target2 = enemyNear(w2, 200, 0);
+    writeSlot(w2.skillStage, HatchlingStage.shareTargetId, target2.id + 1);
+    w2.tick = 50;
+    onEnemyDamaged(w2, target2, 5, broodBullet(w2));
+    expect(readSlot(w2.skillStage, HatchlingStage.shareHitTick)).toBe(0);
+
+    // 부정 짝 — 공유 표적이 아닌 다른 적은 기록하지 않는다.
+    const w3 = mk([[BD4, 5]]);
+    const shared = enemyNear(w3, 200, 0);
+    const other = enemyNear(w3, 200, 50);
+    writeSlot(w3.skillStage, HatchlingStage.shareTargetId, shared.id + 1);
+    w3.tick = 50;
+    const pb = blankEntity('bullet');
+    pb.id = 82001;
+    onEnemyDamaged(w3, other, 5, pb);
+    expect(readSlot(w3.skillStage, HatchlingStage.shareHitTick)).toBe(0);
+  });
+
+  it('앵커 ㉖ — 창(30틱) 안에서만 증폭되고, 창 밖·표적 부재면 증폭되지 않는다', () => {
+    const w = mk([[BD4, 10]]); // 증폭 = 1 + (0.15 + 0.2) = 1.35
+    const t = chick(w, 100, 0);
+    const target = enemyNear(w, 100, 400);
+    writeSlot(w.skillStage, HatchlingStage.shareTargetId, target.id + 1);
+    writeSlot(w.skillStage, HatchlingStage.shareHitTick, 100);
+    w.tick = 120; // 창 안(20 <= 30)
+
+    const q = shotParams();
+    onTurretShotParams(w, t, q);
+    expect(q.damage).toBeGreaterThan(10); // 하한 — 항진 방지
+    expect(q.damage).toBeCloseTo(13.5, 10);
+
+    // 부정 짝 ① — 창 밖(31틱 경과)이면 증폭되지 않는다.
+    w.tick = 131;
+    const q2 = shotParams();
+    onTurretShotParams(w, t, q2);
+    expect(q2.damage).toBe(10);
+
+    // 부정 짝 ② — 명중 기록이 아예 없으면(0) 초반 틱에도 거짓양성이 없다.
+    const fresh = mk([[BD4, 10]]);
+    const t2 = chick(fresh, 100, 0);
+    const target2 = enemyNear(fresh, 100, 400);
+    writeSlot(fresh.skillStage, HatchlingStage.shareTargetId, target2.id + 1);
+    fresh.tick = 10; // shareHitTick = 0 이므로 10 − 0 = 10 <= 30 이지만 "명중 없음" 이 이겨야 한다
+    const q3 = shotParams();
+    onTurretShotParams(fresh, t2, q3);
+    expect(q3.damage).toBe(10);
+
+    // 부정 짝 ③ — 창은 안이지만 이 포탑 기준 표적이 사거리 밖이면 증폭되지 않는다.
+    const outOfRange = mk([[BD4, 10]]);
+    const t3 = chick(outOfRange, 100, 0);
+    const target3 = enemyNear(outOfRange, 100, TURRET_RANGE + 200);
+    writeSlot(outOfRange.skillStage, HatchlingStage.shareTargetId, target3.id + 1);
+    writeSlot(outOfRange.skillStage, HatchlingStage.shareHitTick, 100);
+    outOfRange.tick = 110;
+    const q4 = shotParams();
+    onTurretShotParams(outOfRange, t3, q4);
+    expect(q4.damage).toBe(10);
+  });
+
+  it('축 통합 — 병아리가 **실제로 공유 표적을 쏜다**(경로 밖 대조: 근접 미끼는 안 쏜다)', () => {
+    function run(points: ReadonlyArray<readonly [number, number]>): {
+      sharedDrop: number;
+      decoyDrop: number;
+    } {
+      const w = mk(points);
+      const c = chick(w, 1400, 0);
+      c.cooldown = 0;
+      // shared — 플레이어에 더 가까워 플레이어 자동조준이 이것을 고른다. 병아리 기준 500(사거리 안).
+      const shared = enemyNear(w, 900, 0);
+      shared.hp = 100_000;
+      shared.maxHp = 100_000;
+      shared.radius = 40;
+      // decoy — 병아리에 훨씬 가깝다(50) — BD4 없으면 병아리의 기본 nearestTarget 이 이것을 고른다.
+      // 플레이어 기준으로는 shared 보다 멀어 플레이어는 절대 이것을 고르지 않는다.
+      const decoy = enemyNear(w, 1450, 0);
+      decoy.hp = 100_000;
+      decoy.maxHp = 100_000;
+      decoy.radius = 40;
+      for (let i = 0; i < 60; i++) stepWorld(w, emptyInput());
+      return { sharedDrop: 100_000 - shared.hp, decoyDrop: 100_000 - decoy.hp };
+    }
+
+    const base = run([[NU8, 1]]); // BD4 무투자 대조(NU8 로 skillsOn 만 켠다)
+    const withBd4 = run([
+      [NU8, 1],
+      [BD4, 5],
+    ]);
+    expect(base.decoyDrop).toBeGreaterThan(0); // 하한 — 미투자 런은 병아리가 근접 미끼를 쏜다
+    expect(withBd4.decoyDrop).toBe(0); // 본 단언 — BD4 는 미끼를 전혀 안 쏜다(경로 밖 대조)
+    expect(withBd4.sharedDrop).toBeGreaterThan(base.sharedDrop); // 공유 표적에 병아리 화력이 더해진다
+  });
+});
+
+describe('⑳ SH8 탄받이 깃털', () => {
+  it('앵커 `onEnemyBulletMoved` — 접촉한 병아리의 수명을 깎고 탄을 소거한다(true 반환)', () => {
+    const w = mk([[SH8, 6]]); // 소모 = max(1, 12 − 3) = 9
+    const c = chick(w, 200, 0);
+    const before = c.life;
+    const bullet = blankEntity('enemyBullet');
+    bullet.id = 83000;
+    bullet.radius = 5;
+    bullet.x = c.x;
+    bullet.y = c.y; // 완전히 겹침 — 반경 합 안
+    const consumed = onEnemyBulletMoved(w, bullet);
+    expect(consumed).toBe(true); // "탄이 실제로 사라진다" — 반환값이 곧 그 판정
+    expect(c.life).toBe(before - 9);
+  });
+
+  it('음성 대조 — 병아리가 없는 런에서는 탄이 안 사라진다', () => {
+    const w = mk([[SH8, 6]]);
+    const bullet = blankEntity('enemyBullet');
+    bullet.id = 83001;
+    bullet.radius = 5;
+    bullet.x = player(w).x + 500; // 근처에 병아리가 하나도 없다
+    bullet.y = player(w).y;
+    const consumed = onEnemyBulletMoved(w, bullet);
+    expect(consumed).toBe(false);
+  });
+
+  it('미투자면 병아리가 있어도 소비하지 않는다', () => {
+    const w = mk([[BD5, 1]]);
+    const c = chick(w, 200, 0);
+    const before = c.life;
+    const bullet = blankEntity('enemyBullet');
+    bullet.id = 83002;
+    bullet.radius = 5;
+    bullet.x = c.x;
+    bullet.y = c.y;
+    expect(onEnemyBulletMoved(w, bullet)).toBe(false);
+    expect(c.life).toBe(before);
+  });
+
+  it('life 클램프 — 1 밑으로 내려가지 않는다(불사 방지, 다음 틱 자연 만료 보존)', () => {
+    const w = mk([[SH8, 20]]); // 소모 = max(1, 12 − 10) = 2
+    const c = chick(w, 200, 0);
+    c.life = 1;
+    const bullet = blankEntity('enemyBullet');
+    bullet.id = 83003;
+    bullet.radius = 5;
+    bullet.x = c.x;
+    bullet.y = c.y;
+    onEnemyBulletMoved(w, bullet);
+    expect(c.life).toBe(1); // 0 이나 음수로 내려가면 다음 틱 자연 만료(`life===0`)를 영영 못 만난다
+  });
+});
+
+describe('㉑ SH4 품기 진형', () => {
+  it('앵커 ㉗ — shelter 버프 지속 중 사격을 정지하고, 버프가 끝나면 다시 쏜다(긍정 짝)', () => {
+    const w = mk([[SH4, 5]]);
+    const t = chick(w, 100, 0);
+    w.activeBuff0 = 40; // shelter 지속 중(임의 슬롯 0)
+    const a = cadence();
+    onTurretCadence(w, t, a);
+    expect(a.suppressed).toBe(true);
+    expect(a.cooldownTicks).toBe(10); // 쿨다운 보존 — 감산도 건너뛴다
+
+    // 긍정 짝 — 버프가 끝나면(activeBuff 둘 다 0) 정상 사격 판정으로 돌아간다.
+    w.activeBuff0 = 0;
+    const b = cadence();
+    onTurretCadence(w, t, b);
+    expect(b.suppressed).toBeUndefined();
+    expect(b.cooldownTicks).toBe(10);
+  });
+
+  it('슬롯 1(activeBuff1)에서도 같은 정지가 걸린다', () => {
+    const w = mk([[SH4, 5]]);
+    const t = chick(w, 100, 0);
+    w.activeBuff1 = 10;
+    const a = cadence();
+    onTurretCadence(w, t, a);
+    expect(a.suppressed).toBe(true);
+  });
+
+  it('미투자면 버프가 지속 중이어도 정지하지 않는다', () => {
+    const w = mk([[BD5, 1]]);
+    const t = chick(w, 100, 0);
+    w.activeBuff0 = 40;
+    const a = cadence();
+    onTurretCadence(w, t, a);
+    expect(a.suppressed).toBeUndefined();
+  });
+
+  it('SUSTAIN(shelter_lo) — 병아리 전원이 플레이어 주위 고정 반경으로 밀착한다(레벨 스케일)', () => {
+    const w = mk([[SH4, 8]]); // 반경 = 60 + 40 = 100
+    const p = player(w);
+    const c = chick(w, 900, 900);
+    const before = Math.hypot(c.x - p.x, c.y - p.y);
+    expect(before).toBeGreaterThan(100); // 하한 — 실제로 멀리 있었다
+    HATCHLING_SUSTAIN.as_hatchling_shelter_lo?.(w, p, activeDef('as_hatchling_shelter_lo'));
+    const after = Math.hypot(c.x - p.x, c.y - p.y);
+    expect(after).toBeCloseTo(100, 5);
+    expect(after).toBeLessThan(before);
+  });
+
+  it('SUSTAIN(shelter_hi) 도 같은 밀착을 건다', () => {
+    const w = mk([[SH4, 8]]);
+    const p = player(w);
+    const c = chick(w, 900, 900);
+    HATCHLING_SUSTAIN.as_hatchling_shelter_hi?.(w, p, activeDef('as_hatchling_shelter_hi'));
+    expect(Math.hypot(c.x - p.x, c.y - p.y)).toBeCloseTo(100, 5);
+  });
+
+  it('미투자면 SUSTAIN 이 병아리 좌표를 안 건드린다', () => {
+    const w = mk();
+    const p = player(w);
+    const c = chick(w, 900, 900);
+    const ox = c.x;
+    const oy = c.y;
+    HATCHLING_SUSTAIN.as_hatchling_shelter_lo?.(w, p, activeDef('as_hatchling_shelter_lo'));
+    expect(c.x).toBe(ox);
+    expect(c.y).toBe(oy);
+  });
+});
+
+describe('㉒ NU3 업어 나르기', () => {
+  it('대시 경로 위 병아리는 도착 지점 주위로 옮겨지고, 경로 밖 병아리는 그대로다(둘 다 짝)', () => {
+    const w = mk([[NU3, 5]]); // 반폭 = 90 + 40 = 130
+    const p = player(w);
+    const travel = DEFAULT_CONFIG.dashSpeed * DT;
+    const onPath = chick(w, 20, 0); // 대시 선분 위(0,0)→(travel,0) 근방
+    const offPath = chick(w, 20, 200); // 수직으로 130 밖
+    const offX = offPath.x;
+    const offY = offPath.y;
+    onDashFired(w, p, 1, 0);
+    expect(onPath.x).toBeCloseTo(p.x + travel + 90, 5); // 팔각 슬롯 0(NU4 재사용) — (90,0)
+    expect(onPath.y).toBeCloseTo(p.y, 5);
+    expect(offPath.x).toBe(offX); // 부정 짝 — 경로 밖은 안 옮겨졌다
+    expect(offPath.y).toBe(offY);
+  });
+
+  it('방향이 없으면(선택 인자 생략) 아무 일도 없다', () => {
+    const w = mk([[NU3, 5]]);
+    const c = chick(w, 20, 0);
+    const ox = c.x;
+    onDashFired(w, player(w));
+    expect(c.x).toBe(ox);
+  });
+
+  it('미투자면 대시 방향이 와도 병아리가 안 움직인다', () => {
+    const w = mk([[NU5, 1]]); // 같은 앵커의 다른 스킬만 켠 대조
+    const c = chick(w, 20, 0);
+    const ox = c.x;
+    const oy = c.y;
+    onDashFired(w, player(w), 1, 0);
+    expect(c.x).toBe(ox);
+    expect(c.y).toBe(oy);
   });
 });
