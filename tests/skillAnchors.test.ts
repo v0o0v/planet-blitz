@@ -75,6 +75,13 @@ const hoisted = vi.hoisted(() => ({
    * 같은 사유다.
    */
   damageSources: [] as number[],
+  /**
+   * 앵커 ⑧ 이 받은 **피해원 비트합**(선택 인자). ④ 와 따로 재는 이유는 **호출부가 다르기**
+   * 때문이다 — ④ 는 hp 차감 뒤, ⑧ 은 감쇠 사슬 안이고, 둘 중 한쪽만 넘겨도 다른 쪽 계측은
+   * 초록이다. 아크캐스터 BA8「절연 포좌」의 해저드 경감이 **정확히 이 인자로만** 성립하므로,
+   * `world.ts` 가 인자를 빠뜨리면(기본 0) 스킬이 조용히 영구 미발동이 된다.
+   */
+  chainSources: [] as (number | undefined)[],
 }));
 
 vi.mock('../src/sim/skillHooks.js', async (orig) => {
@@ -120,6 +127,9 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
       }
       if (name === 'onPlayerDamaged') {
         hoisted.damageSources.push(args[4] as number);
+      }
+      if (name === 'onDamageChain') {
+        hoisted.chainSources.push(args[3] as number | undefined);
       }
       if (name === 'onBulletExpired') {
         const b = args[1] as { x: number; y: number };
@@ -201,6 +211,7 @@ beforeEach(() => {
   hoisted.expiries = [];
   hoisted.turretShots = [];
   hoisted.damageSources = [];
+  hoisted.chainSources = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -208,7 +219,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('앵커 29개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 33개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
@@ -221,6 +232,16 @@ describe('계측 이음매', () => {
         'onBroodLaunchParams', // S3-4 ㉓ — 해츨링 출격 판정 파라미터(임계 조기 반환보다 앞)
         'onBroodLaunched', // S3-4 ㉔ — 병아리 1기가 태어난 직후(기당 1회)
         'onBulletExpired',
+        // ⚠️ S3-아크캐스터 넷. **다섯 번째인 ⑰ `onChainParams` 는 이 목록에 없다** —
+        // `status.ts` 가 부르는데 그 파일을 `skills/arccaster.ts` 가 값으로 import 하므로
+        // 여기 두면 런타임 순환이다. 그래서 `src/sim/chainHooks.ts` 로 뗐다(그 파일 헤더 참조).
+        // ⑱ 은 ⑩ 과 **자리가 다르다** — ⑩ 은 `t.hp -= dealt` 뒤라
+        // 이번 명중의 피해를 못 바꾼다. ⑳ 도 ⑨ 와 다르다 — ⑨ 는 `stepShipSignature`
+        // 진입점이라 기체 분기(과충전 적립 대입)보다 앞이다.
+        'onBulletHitParams', // S3 ⑱ — 아군탄 명중 피해 확정 직전
+        'onComboDecay', // S3 ㉑ — 콤보 유지 시계 감소 직전
+        'onEliteLootRarity', // S3 ⑲ — 엘리트 등급 롤 직전(RNG 소비 불변)
+        'onOverchargeAccrual', // S3 ⑳ — 과충전 적립 분기 그 자체
         // ⚠️ S2 여섯은 **미배선 141종이 몰려 있던 지점 넷**을 연다. 넷인데 여섯인 것은 막 흡수와
         // 정산이 각각 "산술에 개입" 과 "사건을 관측" 으로 갈리기 때문이다 — 한 지점에 하나만
         // 두면 앵커 ⑮ 가 실제로 밟은 함정(관측 대상이 그 지점에 이미 없다)을 되풀이한다.
@@ -373,6 +394,18 @@ describe('앵커 ④⑧ onPlayerDamaged · onDamageChain — 피격', () => {
     stepWorld(s, idle);
     expect(count('onDamageChain')).toBe(0);
     expect(count('onPlayerDamaged')).toBe(0);
+  });
+
+  it('⑧ 도 피해원 비트합을 받는다 — **인자를 빠뜨리면 BA8 이 영구 미발동이다**', () => {
+    const s = skilled(0x9006);
+    plantEnemy(s, 0, 0, 7);
+    stepWorld(s, idle);
+    // 하한 짝을 먼저 — 피격이 없으면 아래 비트 단언은 빈 배열에 대한 항진이다.
+    expect(hoisted.chainSources).toHaveLength(1);
+    expect(
+      hoisted.chainSources[0],
+      '`world.ts` 가 `dmgSources` 를 안 넘겼다 — 기본 0 이면 출처 술어가 전부 거짓이 된다',
+    ).toBe(DamageSource.contact);
   });
 
   // ── 피해원 분류(W2) — 호출부마다 하나씩 잠근다 ──────────────────────────

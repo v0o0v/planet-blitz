@@ -23,6 +23,10 @@
 
 import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
+// 앵커 ⑰ — 연쇄 파라미터. **`skillHooks.ts` 가 아니라 `chainHooks.ts` 인 사유는 그 파일
+// 헤더**다(이 파일 → skillHooks → skills/arccaster → 이 파일 순환을 끊기 위해 앵커를 뗐다).
+import { onChainParams } from './chainHooks.js';
+import type { ChainParams } from './chainHooks.js';
 
 // --- 플레이어 감속(감속 지대) ----------------------------------------------
 /** 감속 지대 접촉 시 이동 속도 배율(< 1 = 느려짐). */
@@ -100,10 +104,16 @@ export function tickEnemyStatus(e: Entity): void {
  */
 export function applyChain(state: WorldState, origin: Entity, chainDmg: number): void {
   if (chainDmg <= 0) return;
-  const r2 = CHAIN_RADIUS * CHAIN_RADIUS;
+  // 앵커 ⑰ — 도약 반경·대상 수. 기본값은 상수 그대로이고, 미투자·타 기체 런은 훅 첫 줄에서
+  // 반환하므로 아래 산술이 종전과 **비트 동일**이다(`CHAIN_RADIUS`·`CHAIN_MAX_TARGETS` 를
+  // 그대로 곱하고 비교한다). ⚠️ 이 호출은 아래 순회 **밖**이다 — 훅에서 스폰하지 마라는
+  // 규율은 여기에도 적용되며, 이 레코드는 값 두 개뿐이라 스폰할 자리가 애초에 없다.
+  const params: ChainParams = { radius: CHAIN_RADIUS, maxTargets: CHAIN_MAX_TARGETS };
+  onChainParams(state, params);
+  const r2 = params.radius * params.radius;
   let hit = 0;
   for (const t of state.entities) {
-    if (hit >= CHAIN_MAX_TARGETS) break;
+    if (hit >= params.maxTargets) break;
     if (t.kind !== 'enemy' || t.id === origin.id || t.dead) continue;
     const dx = t.x - origin.x;
     const dy = t.y - origin.y;
