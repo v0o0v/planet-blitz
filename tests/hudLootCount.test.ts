@@ -140,6 +140,23 @@ describe('HUD — 회수 개수 칩', () => {
     expect(chip?.textContent).toBe('');
   });
 
+  it('⭐ topline 의 flex 자식은 정확히 둘이다 — 셋이면 콤보가 중앙으로 밀린다', () => {
+    // `.pb-topline` 은 `justify-content:space-between` 이라 자식 수가 곧 배치다. 회수 칩을
+    // topline 에 직접 붙였더니 **전리품이 0 이라 칩이 비어 있는 동안에도** 콤보가 오른쪽
+    // 끝에서 중앙으로 이동했다(빈 span 도 flex 아이템이라 자리를 차지한다).
+    // ⇒ 콤보와 회수는 오른쪽 묶음 하나(`.pb-topright`)로 감싼다.
+    const hud = new Hud('hud');
+    hud.update(baseState({ lootCount: 0 }));
+    const topline = findByClass(bodyEl, 'pb-topline');
+    expect(topline, 'topline 을 찾지 못했다').not.toBeNull();
+    expect(topline?.children.length).toBe(2);
+    // 양성 — 두 칩이 사라진 게 아니라 묶음 **안**에 있어야 한다.
+    const right = findByClass(bodyEl, 'pb-topright');
+    expect(right, '오른쪽 묶음이 없다').not.toBeNull();
+    expect(findByClass(right as StubElement, 'pb-combo')).not.toBeNull();
+    expect(findByClass(right as StubElement, 'pb-loot')).not.toBeNull();
+  });
+
   it('i18n 키 hud.lootCount 가 EN/KO 양쪽에 존재한다', () => {
     expect(EN['hud.lootCount']).toBeTruthy();
     expect(KO['hud.lootCount']).toBeTruthy();

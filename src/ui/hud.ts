@@ -430,9 +430,17 @@ export class Hud {
     this.comboEl.className = 'pb-combo';
     this.lootEl = document.createElement('span');
     this.lootEl.className = 'pb-loot';
+    // ⚠️ **topline 의 flex 자식은 정확히 둘로 유지한다.** `justify-content:space-between` 이라
+    //    자식이 셋이 되면 가운데 것이 중앙으로 밀린다 — 회수 칩을 topline 에 직접 붙였더니
+    //    전리품이 0 이라 칩이 비어 있는 동안에도 **콤보가 오른쪽 끝에서 중앙으로 이동**했다.
+    //    (빈 span 도 flex 아이템이라 자리를 차지한다.) 그래서 콤보와 회수를 오른쪽 묶음
+    //    하나로 감싼다 — 회수가 붙든 말든 콤보의 자리가 변하지 않는다.
+    const toplineRight = document.createElement('span');
+    toplineRight.className = 'pb-topright';
+    toplineRight.appendChild(this.comboEl);
+    toplineRight.appendChild(this.lootEl);
     this.topline.appendChild(this.timeEl);
-    this.topline.appendChild(this.comboEl);
-    this.topline.appendChild(this.lootEl);
+    this.topline.appendChild(toplineRight);
     this.hpBar = bar('HP', 'hp');
     this.xpBar = bar('LV', 'xp');
     this.root.appendChild(this.topline);
