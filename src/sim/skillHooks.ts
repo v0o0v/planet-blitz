@@ -3762,8 +3762,10 @@ export interface FilmBurstParams {
  *
  * ## ⭐ 여기서는 **스폰이 안전하다**
  * 밀어내기 루프(`for (const e of state.entities)`)가 이미 끝난 지점이다. 버블 PO8「잔거품
- * 기뢰」가 여기서 가능하다 — 단 그 스킬의 선결은 앵커가 아니라 **동시 생존 상한 규약**이다
- * (상한 없이 넣으면 파열 4회 창에 최대 36기가 서서 청크 예산 160 을 조용히 먹는다).
+ * 기뢰」가 배치7 에서 이 자리에 배선됐다(`bubbleFilmBurstPost` → `bubbleResidueMines`,
+ * `skills/bubble.ts`) — 동시 생존 상한(12)은 앵커가 아니라 그 함수 전용 `ownerId` 마커로
+ * 세고, `world.ts` 는 편집하지 않았다(기뢰가 `kind==='bullet'`이라 `isGimmick` 컬링·접촉
+ * 피해 둘 다 기존 아군탄 경로를 그대로 탄다).
  *
  * ## 무엇을 하면 안 되는가
  *  - ⚠️ **RNG 를 소비하지 마라.**

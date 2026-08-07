@@ -8,11 +8,12 @@
  *
  * ---
  *
- * ## ⚠️ 배선된 것은 30종 중 **29종**이다 (배치7 이 PO10·FI6 을 추가 — PO8 은 남았다)
+ * ## ✅ 배선된 것은 30종 중 **30종 전부**다 (배치7 이 PO10·FI6·PO8 을 추가 — 배선 완료)
  * 배치6 이 연 앵커 셋(`onFilmBurstPost` · `onPickupRadius` · 앵커 ⑮ 의 `FilmBurstParams`)과
  * 신설 leaf `objectiveState.ts`, 그리고 **`BubbleStage` 첫 실배정 1칸**이 그 다섯(PO4·DR3·DR7·
  * DR8·FI7 + 통합에서 DR2)을 열었다. 배치7 은 그 위에 「배치7 예약 슬롯」(`skillSlots.ts` S0
- * 배정표의 `offeringPool`·`chainWindow`·`chainKillsSnap`)을 얹어 PO10·FI6 을 배선했다:
+ * 배정표의 `offeringPool`·`chainWindow`·`chainKillsSnap`)을 얹어 PO10·FI6 을 배선했고, 마지막
+ * 으로 PO8「잔거품 기뢰」가 붙어 30종이 채워졌다:
  *  · **PO10** 은 예약된 두 칸(`chainWindow`·`chainKillsSnap` — `state.kills` 차분 방식)
  *    위에, 재생 완료와 보강 적용 사이의 한 틱 시차를 메우는 `chainPendingBoost`(예약표 밖 —
  *    이 레인이 실측으로 추가) 1칸을 더했다. 상한을 넘는 것도 안전하다 — 「`aux0 ≤ FLAT`
@@ -21,8 +22,10 @@
  *    필요 없었다(`bubbleFilmOfferingActive` doc 이 정본: 로드아웃 + 기존 버프 틱 필드
  *    조합만으로 판별된다). 인계 체크리스트가 이 표식을 별도 슬롯으로 예약해 뒀던 것은
  *    **불필요한 예약**이었던 셈이다.
- * **남은 하나는 PO8**이고, 사유는 이 파일 **말미의 미배선 주석**이 정본이다(`Sk` enum 에
- * 멤버가 없다 — 「없다」의 근거는 grep 이다).
+ *  · **PO8** 은 슬롯이 **아예 필요 없었다** — `WorldState`/`BubbleStage` 변경 0건. 인계
+ *    문서가 세운 "선결 셋(전용 마커·컬링 제외·접촉 피해, `world.ts` 편집 필요)" 중 마커
+ *    하나만 실제로 필요했고, 그 마커도 `ownerId` 위에 이 파일 전용 상수 하나로 끝났다 —
+ *    사유 전문은 이 파일 말미의 (구)미배선 주석과 {@link bubbleResidueMines} 가 정본이다.
  *
  * ⚠️ 배치5 가 DR3 을 *"신규 `WorldState` 정수가 선결"* 로 닫은 판정은 **틀렸다** — 슬롯 배열은
  * 전부 0 이면 폴드가 통째로 안 돈다. 근거는 `bubbleActiveFired` 의 DR3 블록 주석이 정본이다.
@@ -69,6 +72,10 @@
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
+// PO8「잔거품 기뢰」 전용 — `entities.ts` 는 world/patterns/waves 를 import 하지 않는 leaf 라
+// (그 파일 헤더가 근거) 런타임 import 해도 순환이 되지 않는다. 스트라이커·브루저 레인의
+// 같은 패턴을 그대로 따른다(`skills/striker.ts`·`skills/bruiser.ts` 의 `spawnBullet` import).
+import { spawnBullet } from '../entities.js';
 import type {
   ActiveFiredOrigin,
   FilmBurstParams,
@@ -83,7 +90,7 @@ import type { ActiveSkillDef } from '../../../data/ships/actives/types.js';
 import { clearEnemyBullets, fanStrike, powerCentiOf, scaleCenti } from '../activeTypes.js';
 import { applyChain } from '../status.js';
 import { slideCircleWalls } from '../los.js';
-import { length } from '../math.js';
+import { length, cos, sin, TWO_PI } from '../math.js';
 import { DT } from '../constants.js';
 import {
   FILM_ABSORB_FLAT,
@@ -122,6 +129,7 @@ const enum Sk {
   /** PO5 만재 투과 */ fullFilmPierce = 4,
   /** PO6 격발 재응결 */ fireRecondense = 5,
   /** PO7 정전 파열 */ staticBurst = 6,
+  /** PO8 잔거품 기뢰 */ residueMines = 7,
   /** PO9 고압 격발 조율 */ popTuning = 8,
   /** PO10 연쇄 압력 */ chainPressure = 9,
   /** DR1 역류 수거 */ reverseCurrent = 10,
@@ -216,6 +224,40 @@ const DR8_RADIUS_CAP_MULT = 4;
  * PO10「연쇄 압력」의 처치 집계 창(sim 틱). 설계서가 **"90틱 고정"** 으로 못 박았다(레벨 무관).
  */
 const CHAIN_WINDOW_TICKS = 90;
+
+/**
+ * PO8「잔거품 기뢰」— 기뢰장 동형(`world.ts` 보조무기 `SUB_TYPE_MINE` 과 같은 스폰 형태:
+ * `kind='bullet'`·속도 0·유한 수명·관통예산 = 총피해 상한) 상수.
+ *
+ * 설계서(`bubble.md` [PO8])가 수치로 못 박은 것은 기뢰 **수 공식**(4 + ⌊Lv/4⌋)·**피해**
+ * (10 + 2×Lv)·**수명**(120틱)·**관통예산**(3) 넷뿐이다. 링 배치 반경과 개별 기뢰의 접촉
+ * 반경은 설계 문서에 수치가 없어 이 레인이 정했다(⚠️ 가정치 — 보고 대상):
+ *  · 링 반경은 `FILM_BURST_RADIUS`(파열 반경)와 같게 잡았다 — "파열 지점 둘레"라는 문면이
+ *    파열이 실제로 적을 밀어내는 경계와 같은 원주를 가리킨다고 읽었다.
+ *  · 접촉 반경은 `world.ts` `SUB_MINE_RADIUS`(64)와 같은 자릿수를 쓰되, 한 파열에 최대
+ *    9기(Lv20)가 동시에 서는 것을 감안해 56 으로 살짝 줄였다(과도한 겹침 방지).
+ */
+const PO8_RING_RADIUS = FILM_BURST_RADIUS;
+const PO8_MINE_RADIUS = 56;
+const PO8_MINE_LIFE = 120;
+const PO8_MINE_PIERCE = 3;
+
+/**
+ * PO8 기뢰 전용 `ownerId` 마커 — 동시 생존 상한을 세는 유일한 수단(해츨링 `BROOD_MARK`
+ * 선례와 같은 형태, `world.ts`/`shipSignature.ts` 는 건드리지 않고 이 파일 안에서만 쓴다 —
+ * 마커 소비처가 전부 `kind==='bullet'` 판정이라 `isGimmick`(world.ts) 등록이 필요 없다).
+ * `MISSILE_MARK`(0x3155110)·`SPLIT_FRAGMENT_MARK`(0xf12a6)·`HIVE_MICRO_MARK`(0x81ce77) —
+ * 'bullet' kind 에 이미 쓰이는 세 센티널과 값이 겹치지 않는다.
+ */
+const PO8_MINE_MARK = 0xb0f0a3;
+
+/**
+ * 동시 생존 상한(설계서 R2-8 실측). 파열 소스 둘(피격 파열·강제 파열)이 어긋나게 맞물리면
+ * 기뢰 수명(120틱) 창 안에 이론 최대 4파열 × Lv20 9기 = 36개가 설 수 있다 — 상한 없이 넣으면
+ * 청크 활성 예산(`MAX_ACTIVE_GIMMICKS`, world.ts)과 무관하게(기뢰는 `isGimmick` 대상이 아니다)
+ * `state.bulletCap` 을 조용히 먹는다. 초과분은 스폰을 생략할 뿐 RNG 는 소비하지 않는다.
+ */
+const PO8_LIVE_CAP = 12;
 
 /**
  * 이 런에서 그 스킬의 **실효 레벨**(투자 + 축 어픽스). 미투자면 0 이다(`skillLv` 정본 1).
@@ -791,10 +833,12 @@ function filmBurstPushOf(state: WorldState): number {
  * 배열에 없다** — 여기서 다시 거를 필요가 없고, 거른다고 적으면 없는 경로를 방어하는 죽은
  * 코드가 된다. 다만 **같은 틱의 다른 축이 먼저 죽였을 수 있어** `dead` 는 확인한다.
  *
- * ## ⚠️ PO8「잔거품 기뢰」는 여기 없다 — 스폰이 안전한데도 안 넣었다
- * 이 지점은 순회 밖이라 엔티티 생성이 안전하고, 그것이 PO8 의 종전 차단 사유였다. 남은
- * 선결은 **동시 생존 상한 규약**이고 그것은 앵커가 아니다 — 사유 전문은 이 파일 말미의
- * 미배선 주석이 정본이다.
+ * ## ✅ PO8「잔거품 기뢰」는 배치7 에서 이 훅 안에 배선됐다
+ * 종전 차단 사유(*"동시 생존 상한 규약이 없다"*)는 실측으로 틀렸음이 드러났다 — 해츨링
+ * `BROOD_MARK` 가 이미 「전용 마커 + 동시 생존 상한 카운트 + `isGimmick` 컬링 제외」 3단
+ * 규약의 선례였고, PO8 은 그중 컬링 제외조차 필요 없다(기뢰가 `kind==='bullet'` 이라
+ * `isGimmick` 판정 대상 자체가 아니다 — world.ts 미편집). 접촉 피해도 신설이 아니라
+ * `resolveCollisions` 의 범용 아군탄↔적 경로 재사용이다(정본은 {@link bubbleResidueMines}).
  */
 export function bubbleFilmBurstPost(
   state: WorldState,
@@ -810,6 +854,13 @@ export function bubbleFilmBurstPost(
   if (po10 >= 1) {
     writeSlot(state.skillStage, BubbleStage.chainWindow, CHAIN_WINDOW_TICKS);
     writeSlot(state.skillStage, BubbleStage.chainKillsSnap, state.kills);
+  }
+
+  // ── PO8 잔거품 기뢰 — 파열마다 기뢰 링을 남긴다. PO10 과 같은 술어(`pushed` 무관 — 설계서
+  //    문면이 "파열 틱에" 이지 "밀 적이 있으면" 이 아니다)라 PO4 의 이른 반환보다 앞에 둔다.
+  const po8 = lv(state, Sk.residueMines);
+  if (po8 >= 1) {
+    bubbleResidueMines(state, x, y, po8);
   }
 
   const po4 = lv(state, Sk.crushImpact);
@@ -837,6 +888,59 @@ export function bubbleFilmBurstPost(
     // ⚠️ `compact` 의 1차 게이트는 `e.dead` 다 — 여기서 안 세우면 압착으로만 죽은 적이
     //    좀비로 남아 처치·젬·전리품이 통째로 사라진다(PO1 블록과 같은 형태).
     if (e.hp <= 0) e.dead = true;
+  }
+}
+
+/**
+ * **PO8 잔거품 기뢰** — 파열 지점 둘레에 정지 거품 기뢰 링을 남긴다(`bubbleFilmBurstPost`
+ * 전용 헬퍼 · 앵커 `onFilmBurstPost` 는 밀어내기 루프 **밖**이라 스폰이 안전하다).
+ *
+ * ## ⚠️ 「`bullet` kind 재사용은 접촉 판정이 자동으로 안 붙는다」는 추정은 틀렸다 — 실측 정정
+ * 인계 문서가 이 스킬을 미배선으로 닫으며 남긴 추정 사유였다. 실측(`tests/subWeapon.test.ts`
+ * `'2 기뢰장 — 위에 있는 적에게 피해를 준다'`)이 정확히 이 형태(`kind='bullet'`·속도 0)가
+ * `resolveCollisions` 의 아군탄↔적 스윕 판정(world.ts)을 그대로 통과해 접촉마다 피해를 주는
+ * 것을 이미 증명하고 있었다 — 그 판정은 탄의 **자기 이동 경로**(`bPrevX = b.x - b.vx*DT`)로
+ * 선분을 만드는데, 속도 0 이면 그 선분이 점으로 퇴화해 **그 틱의 정적 원-원 겹침 판정**과
+ * 같아진다. 그래서 접촉 피해·좀비 방지(`t.hp -= dealt; if (t.hp<=0) t.dead=true;`,
+ * world.ts 4270-4271 부근)는 **신설이 아니라 재사용**이다 — 이 함수는 스폰만 하고 적 `hp` 를
+ * 전혀 만지지 않는다(좀비 방지 규율이 이 함수에는 적용될 자리 자체가 없다).
+ *
+ * ## 배치 — RNG 0 · 결정론
+ * 파열 중심 둘레에 `mineCount`개를 오름차순 등각(`i · 2π / mineCount`, i = 0..)으로 놓는다.
+ * 난수를 쓰지 않으므로 같은 시드·같은 파열 횟수는 항상 같은 배치가 된다(웨이브 구성·드랍
+ * 시퀀스 불변).
+ *
+ * ## 동시 생존 상한 — {@link PO8_LIVE_CAP}
+ * `PO8_MINE_MARK` 로 표식한 살아있는 기뢰 수를 세어 상한을 넘기지 않는다. 이미 상한이면
+ * **스폰을 통째로 생략**한다(부분 배치 없음 — 링이 이지러지지 않는다). 상한 도달 여부와
+ * 무관하게 RNG 를 쓰지 않으므로 생략해도 이후 시드 소비에 영향이 없다.
+ */
+function bubbleResidueMines(state: WorldState, x: number, y: number, po8: number): void {
+  let live = 0;
+  for (const e of state.entities) {
+    if (!e.dead && e.kind === 'bullet' && e.ownerId === PO8_MINE_MARK) live++;
+  }
+  if (live >= PO8_LIVE_CAP) return;
+  // 기뢰 수 = 4 + ⌊Lv/4⌋(설계서 ② 레벨 스케일). 피해 = 10 + 2×Lv.
+  const mineCount = 4 + Math.floor(po8 / 4);
+  const dmg = 10 + 2 * po8;
+  for (let i = 0; i < mineCount && live < PO8_LIVE_CAP; i++) {
+    const ang = (TWO_PI * i) / mineCount;
+    const mine = spawnBullet(
+      state,
+      x + cos(ang) * PO8_RING_RADIUS,
+      y + sin(ang) * PO8_RING_RADIUS,
+      ang,
+      0, // 속도 0 — 기뢰장 동형(정지 발사체).
+      dmg,
+      PO8_MINE_PIERCE,
+      PO8_MINE_RADIUS,
+      PO8_MINE_LIFE,
+      0,
+      0,
+    );
+    mine.ownerId = PO8_MINE_MARK; // 동시 생존 상한 카운트 전용 마커.
+    live++;
   }
 }
 
@@ -1469,7 +1573,7 @@ export function bubblePlayerMoveParams(
 }
 
 // ---------------------------------------------------------------------------
-// 미배선 1종 — **왜 못 넣었는지**가 여기 있다 (배치7 갱신 — PO10·FI6 은 배선 완료로 이관)
+// 미배선 1종 — **왜 못 넣었는지**가 여기 있다 (배치7 갱신 — PO10·FI6·PO8 은 배선 완료로 이관)
 // ---------------------------------------------------------------------------
 //
 // ⚠️ 이 하나는 `Sk` enum 에 멤버를 **아예 만들지 않았다.** 「유령 선언」(선언만 있고 아무도 안
@@ -1488,21 +1592,21 @@ export function bubblePlayerMoveParams(
 // (`bubbleActiveFired`)이 세우고 만료(`bubbleFilmOfferingConsume`)가 지운다. 사유 전문은 그
 // 두 함수와 `bubbleFilmAbsorbed` FI6 블록 주석이 정본이다.
 //
-// ## PO8「잔거품 기뢰」 — 앵커는 열렸다. 막는 것은 **동시 생존 상한 규약**이다
-// 종전 차단 사유(*"파열 훅이 엔티티 순회 안이라 스폰이 위험하다"*)는 배치6 의
-// `onFilmBurstPost` 가 해소했다 — 그 지점은 밀어내기 루프 **밖**이라 생성이 안전하고,
-// {@link bubbleFilmBurstPost} 가 이미 그 자리에 서 있다. 남은 선결은 셋이고 전부 이 레인의
-// 열람·수정 범위 밖이다:
-//  ① **동시 생존 상한.** 상한 없이 넣으면 파열 4회 창에 최대 36기가 서서 청크 예산(160)을
-//     조용히 먹는다(앵커 doc 의 실측). 상한을 세우려면 "이 기뢰가 내 것인가" 를 세는
-//     **전용 마커**가 필요한데, 재사용 가능한 칸(`aux0`·`ownerId`)은 기뢰가 놓일 개체 종류마다
-//     의미가 이미 배정돼 있다.
-//  ② **컬링 제외.** 정지 기물은 `isGimmick` 계열의 컬링 예외에 들어가야 화면 밖에서 안 지워진다
-//     — 그 술어는 `world.ts` 소유이고 이 배치는 그 파일 편집을 금지한다.
-//  ③ **접촉 피해 경로.** 정지 기뢰가 적에게 피해를 주는 판정도 `world.ts` 의 충돌 해소에 있다.
-// `fanStrike` 로 **속도 0 인 아군탄**을 뿌리는 우회는 기각했다 — 탄은 수명·관통·컬링 규칙이
-// 기뢰와 다르고, 그 차이를 흉내 내려면 결국 위 셋을 탄 쪽에 다시 만들어야 한다.
-// ⇒ **기뢰 개체 규약을 세우는 레인이 얹어라.** 앵커는 더 필요 없다.
+// ✅ **PO8「잔거품 기뢰」도 배치7 에서 배선됐다** — 인계 문서가 세운 「선결 셋」(전용 마커·
+// `isGimmick` 컬링 제외·접촉 피해 경로 신설, 전부 `world.ts` 편집 필요로 닫혀 있었다) 중
+// **둘은 애초에 필요가 없었다**는 것이 실측으로 드러났다. 기뢰를 `world.ts` 의 보조무기
+// `SUB_TYPE_MINE` 과 같은 형태(`kind='bullet'`·속도 0)로 스폰하면:
+//  · **컬링 제외 불필요** — `isGimmick`(world.ts)이 훑는 kind 목록에 `'bullet'` 은 아예 없다.
+//    기뢰가 그 판정 대상 자체가 아니라 "제외"할 것이 없다.
+//  · **접촉 피해 신설 불필요** — `resolveCollisions` 의 아군탄↔적 스윕 판정이 이미 속도 0
+//    탄을 지원한다. `tests/subWeapon.test.ts` 의 `'2 기뢰장 — 위에 있는 적에게 피해를
+//    준다'`가 그 실측 증거다 — SUB_TYPE_MINE 이 지금도 이 경로로 피해를 준다.
+//  · **전용 마커만 실제로 필요했다** — 동시 생존 상한(12, 설계서 R2-8)을 세는 유일한 수단
+//    이라 `PO8_MINE_MARK`(이 파일 전용, `world.ts`/`shipSignature.ts` 미편집)를 신설했다.
+// 종전에 기각됐던 *"`fanStrike` 로 속도 0 탄을 뿌리면 탄의 수명·관통·컬링 규칙이 기뢰와
+// 달라 위 셋을 다시 만들어야 한다"* 는 판단도 다시 보면 **다르지 않다** — SUB_TYPE_MINE 이
+// 이미 `spawnBullet` 그 자체이므로 "기뢰 규칙"과 "탄 규칙"이 애초에 같은 규칙이었다.
+// 정본은 {@link bubbleResidueMines} 주석.
 //
 // ## DR2「표면장력 세례」 — 이 배치가 **명시적으로 금지**한 축이다
 // 신규 `WorldState` 정수 + 해시 꼬리 폴드가 필요하고, 그것은 D 단계 골든 재동결과 같은 커밋에

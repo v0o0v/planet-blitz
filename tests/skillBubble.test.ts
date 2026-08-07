@@ -92,6 +92,7 @@ const PO4 = 3;
 const PO5 = 4;
 const PO6 = 5;
 const PO7 = 6;
+const PO8 = 7;
 const PO9 = 8;
 const PO10 = 9;
 const DR1 = 10;
@@ -2281,5 +2282,133 @@ describe('⑲ PO10 연쇄 압력 (앵커 onFilmBurstPost · state.kills 차분 �
     onFilmBurstPost(w, 0, 0, []);
     expect(readSlot(w.skillStage, BubbleStage.chainWindow)).toBe(0);
     expect(readSlot(w.skillStage, BubbleStage.chainKillsSnap)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑳ PO8 잔거품 기뢰 (앵커 onFilmBurstPost · 기뢰장 동형 스폰) — 배치7 · 210/210 마지막 종
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션 실측 (2026-08-07)
+//  ① `bubbleFilmBurstPost` 의 `if (po8 >= 1) bubbleResidueMines(...)` 호출을 지우면 §ⓐ·§ⓑ
+//     전체가 실패한다(스폰 자체가 안 일어난다).
+//  ② `bubbleResidueMines` 의 `mine.ownerId = PO8_MINE_MARK` 대입을 지우면 §ⓑ 상한 절만
+//     실패한다 — `live` 카운트가 항상 0 이 되어 상한이 걸리지 않고 파열마다 무한정 쌓인다.
+//  ③ `spawnBullet` 호출의 damage 인자(`dmg`)를 0 으로 바꾸면 §ⓒ 의 접촉 피해 절이 실패한다.
+// PO8 은 접촉 피해·좀비 방지 코드를 **신설하지 않는다** — `resolveCollisions`(world.ts)의
+// 범용 아군탄↔적 경로를 재사용하므로, §ⓒ 는 "그 재사용이 실제로 배선됐는가"를 잰다(효과
+// 산술이 아니라 이음매가 검증 대상 — 이 파일 머리말의 방침과 같다).
+
+describe('⑳ PO8 잔거품 기뢰 (앵커 onFilmBurstPost · 기뢰장 동형)', () => {
+  describe('ⓐ 스폰 — 개체 수 델타', () => {
+    it('파열마다 mineCount 만큼 기뢰가 생긴다 (Lv1 = 4 + ⌊1/4⌋ = 4기)', () => {
+      const w = mk([[PO8, 1]]);
+      expect(countBullets(w)).toBe(0);
+      resolveFilmBurst(w, 0, 0);
+      expect(countBullets(w)).toBe(4);
+    });
+
+    it('레벨이 오르면 기뢰 수도 는다 (Lv20 = 4 + ⌊20/4⌋ = 9기)', () => {
+      const w = mk([[PO8, 20]]);
+      resolveFilmBurst(w, 0, 0);
+      expect(countBullets(w)).toBe(9);
+    });
+
+    it('미투자 런은 기뢰가 하나도 생기지 않는다 (음성 대조)', () => {
+      const w = mk();
+      resolveFilmBurst(w, 0, 0);
+      expect(countBullets(w)).toBe(0);
+    });
+
+    it('다른 스킬만 찍은 런도 기뢰가 생기지 않는다', () => {
+      const w = mk([[PO7, 20]]);
+      resolveFilmBurst(w, 0, 0);
+      expect(countBullets(w)).toBe(0);
+    });
+
+    it('기뢰는 속도 0 — 정지 발사체다(기뢰장 동형)', () => {
+      const w = mk([[PO8, 1]]);
+      resolveFilmBurst(w, 0, 0);
+      const mines = w.entities.filter((e) => e.kind === 'bullet');
+      expect(mines.length).toBe(4);
+      for (const m of mines) {
+        expect(m.vx).toBe(0);
+        expect(m.vy).toBe(0);
+      }
+    });
+  });
+
+  describe('ⓑ 동시 생존 상한(12) — 하한 짝 포함', () => {
+    it('상한 미만에서는 파열마다 실제로 늘어난다 (하한 짝)', () => {
+      const w = mk([[PO8, 1]]); // Lv1 = 4기/파열
+      resolveFilmBurst(w, 0, 0);
+      expect(countBullets(w)).toBe(4);
+      resolveFilmBurst(w, 1000, 0);
+      expect(countBullets(w)).toBe(8);
+    });
+
+    it('상한(12)을 넘기지 않는다', () => {
+      const w = mk([[PO8, 20]]); // Lv20 = 9기/파열
+      resolveFilmBurst(w, 0, 0);
+      expect(countBullets(w)).toBe(9);
+      resolveFilmBurst(w, 1000, 0); // 9 + 9 = 18 이지만 상한에서 자른다
+      expect(countBullets(w)).toBe(12);
+      resolveFilmBurst(w, 2000, 0); // 이미 상한 — 스폰 전부 생략(부분 배치 없음)
+      expect(countBullets(w)).toBe(12);
+    });
+  });
+
+  describe('ⓒ 접촉 피해 — 전체 stepWorld 파이프라인(엔진 경로 재사용 실증)', () => {
+    /**
+     * `enemyType` 을 지정하지 않은(-1 그대로) 적은 `enemyDefFor` 가 `undefined` 를 돌려줘
+     * `stepEnemies` 가 이동·발사를 건너뛴다(world.ts `if (def === undefined) continue;`) —
+     * 그래서 `stepWorld` 를 여러 틱 돌려도 제자리에 남아 접촉 판정만 순수하게 잰다.
+     */
+    it('기뢰가 실제로 적에게 피해를 주고 죽으면 dead 를 세운다(좀비 방지) — 처치 집계도 는다', () => {
+      const w = mk([[PO8, 1]]);
+      const p = player(w);
+      // 파열 중심을 플레이어 사거리(BASE_WEAPON_RANGE=1650) 밖 · 투사체 컬 반경
+      // (`PROJECTILE_CULL_RADIUS` ≈ 3304, world.ts) 안에 둔다 — 계측기 함정 둘: ①가까우면
+      // 플레이어 자동사격이 같은 틱에 끼어들어 "기뢰가 죽였다"는 사인이 흐려지고, ②너무 멀면
+      // 갓 태어난 기뢰가 스폰 직후 첫 `stepProjectiles`의 컬 판정에 걸려 즉사한다(실측 — 최초
+      // 시도는 +5000 이라 기뢰가 hp 를 한 번도 못 깎고 죽었다).
+      const bx = p.x + 2000;
+      const by = p.y;
+      resolveFilmBurst(w, bx, by);
+      const mine = w.entities.find((e) => e.kind === 'bullet' && !e.dead);
+      if (mine === undefined) throw new Error('mine missing');
+      const foe = addEnemy(w, mine.x, mine.y, 30);
+      const kills0 = w.kills;
+      for (let i = 0; i < 10 && !foe.dead; i++) stepWorld(w, emptyInput());
+      expect(foe.dead).toBe(true); // 좀비 방지 — hp<=0 인데 dead 가 안 서는 사고가 없다
+      expect(foe.hp).toBeLessThanOrEqual(0);
+      expect(w.kills).toBe(kills0 + 1); // 처치 집계도 실제로 늘었다(compact 의 단일 수렴점)
+    });
+
+    it('기뢰 접촉 반경 밖의 적은 맞지 않는다 (하한 짝)', () => {
+      const w = mk([[PO8, 1]]);
+      const p = player(w);
+      const bx = p.x + 2000;
+      const by = p.y;
+      resolveFilmBurst(w, bx, by);
+      const mine = w.entities.find((e) => e.kind === 'bullet' && !e.dead);
+      if (mine === undefined) throw new Error('mine missing');
+      // 기뢰 접촉 반경(56)보다 훨씬 밖 · 플레이어 사거리(1650)도 밖.
+      const foe = addEnemy(w, mine.x + 500, mine.y, 30);
+      const hp0 = foe.hp;
+      for (let i = 0; i < 10; i++) stepWorld(w, emptyInput());
+      expect(foe.hp).toBe(hp0);
+      expect(foe.dead).toBe(false);
+    });
+
+    it('미투자 런은 기뢰가 없어 적이 멀쩡하다', () => {
+      const w = mk();
+      const p = player(w);
+      resolveFilmBurst(w, p.x + 2000, p.y);
+      const foe = addEnemy(w, p.x + 2000, p.y, 30);
+      const hp0 = foe.hp;
+      for (let i = 0; i < 10; i++) stepWorld(w, emptyInput());
+      expect(foe.hp).toBe(hp0);
+    });
   });
 });
