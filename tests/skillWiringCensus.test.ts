@@ -209,7 +209,8 @@ function census(): { perShip: Map<string, string[]>; unread: string[] } {
 // ---------------------------------------------------------------------------
 
 /**
- * 기준: base `27225ba` (2026-08-07). 합계 **114 / 210**.
+ * 기준: base `27225ba` (2026-08-07) 에서 브루저 배선 레인(W3)이 **MO4·FO4·FO8·FO9** 넷을
+ * 더했다 — 브루저 15 → **19**, 합계 114 → **118 / 210**.
  *
  * 갱신 방법: 테스트가 빨개지면 실패 메시지가 **어떤 스킬이 늘고 줄었는지**를 찍는다.
  * 그 목록이 네 의도와 같은지 눈으로 확인한 뒤 여기에 반영해라. 통째로 복붙하지 마라 —
@@ -223,8 +224,8 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
   ],
   bruiser: [
     'BL2@1', 'BL3@2', 'BL4@3', 'BL6@5', 'BL8@7', 'BL9@8',
-    'MO1@10', 'MO6@15', 'MO8@17', 'MO9@18',
-    'FO1@20', 'FO2@21', 'FO5@24', 'FO6@25', 'FO7@26',
+    'MO1@10', 'MO4@13', 'MO6@15', 'MO8@17', 'MO9@18',
+    'FO1@20', 'FO2@21', 'FO4@23', 'FO5@24', 'FO6@25', 'FO7@26', 'FO8@27', 'FO9@28',
   ],
   bubble: [
     'PO1@0', 'PO2@1', 'PO3@2', 'PO5@4', 'PO6@5', 'PO7@6',
@@ -254,7 +255,7 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** 골든 합계. 기체별 표와 따로 적어, 한쪽만 고치면 아래 자기검증이 잡는다. */
-const GOLDEN_TOTAL = 114;
+const GOLDEN_TOTAL = 118;
 
 /** 늘고 준 것을 사람이 읽을 수 있게 찍는다 — 숫자만 틀렸다고 하면 원인을 못 찾는다. */
 function diffMsg(ship: string, actual: readonly string[], golden: readonly string[]): string {
