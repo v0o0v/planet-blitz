@@ -13,15 +13,17 @@
  *
  * ---
  *
- * ## ⚠️ 지금 배선된 것은 30종 중 14종이다
+ * ## ⚠️ 지금 배선된 것은 30종 중 19종이다
  * 1차 배선이 11종(앵커 ②③④⑧⑨⑩⑪), S2 의 앵커 ⑯(볼리 파라미터)이 **BL3·BL6** 둘을,
- * S2.1 이 연 `VolleyParams.targetDist` 가 **BL2** 하나를 더 열었다. 나머지 16종은 아직 앵커가
- * 없는 지점(액티브 핸들러·접촉 피격 판별 루프·감쇠 분기·젬 스폰·벽 파괴 집계·이동 배율)을
+ * S2.1 이 연 `VolleyParams.targetDist` 가 **BL2** 하나를, W2 가 앵커 ④ 의 `sources` 로 **BL8** 을
+ * 열었다. 이 레인(브루저 배선 W3)이 **MO4·FO4·FO8·FO9** 넷을 더 얹었다 — 넷 다 감쇠 분기를
+ * **선점**(앵커 ⑨ 가 그 분기보다 앞이라는 순서를 쓴다)해서 닫았다. 나머지 11종은 아직 앵커가
+ * 없는 지점(액티브 핸들러·접촉 피격 판별 루프·젬 스폰·벽 파괴 집계·이동 배율)을
  * 요구한다. 여기 없는 스킬은 "구현했는데 안
  * 불린다"가 아니라 **아직 코드가 없다** — 반쪽 배선과 구분하라. 사유는 레인 보고서에 있다.
  */
 
-import type { WorldState } from '../world.js';
+import type { WorldState, InputFrame } from '../world.js';
 import type { Entity } from '../entities.js';
 import type { VolleyParams } from '../skillHooks.js';
 import { fanStrike, clearEnemyBullets } from '../activeTypes.js';
@@ -36,7 +38,7 @@ import {
   DamageSource,
   hasDamageSource,
 } from '../skillSlots.js';
-import { ARMOR_MAX_STACKS, clampArmorStacks } from '../shipSignature.js';
+import { ARMOR_MAX_STACKS, ARMOR_DECAY_TICKS, clampArmorStacks } from '../shipSignature.js';
 import { skillLv } from '../../items/skills.js';
 
 // ---------------------------------------------------------------------------
@@ -61,14 +63,18 @@ const enum Sk {
   /** BL8 격돌 담금질 */ impactTemper = 7,
   /** BL9 중압 리듬 */ crushCadence = 8,
   /** MO1 충각 적재 */ dashLoading = 10,
+  /** MO4 장갑 활주 */ armorSkid = 13,
   /** MO6 압쇄장 */ crushField = 15,
   /** MO8 벽 되튐 */ wallRebound = 17,
   /** MO9 수확 고정 */ harvestClamp = 18,
   /** FO1 과적 장갑 */ overPlating = 20,
   /** FO2 응혈 장갑 */ clotPlating = 21,
+  /** FO4 부동 역적립 */ unmovedAccretion = 23,
   /** FO5 불괴 연쇄 */ unbreakableChain = 24,
   /** FO6 하중 전이 */ loadTransfer = 25,
   /** FO7 전리 개장 */ trophyRefit = 26,
+  /** FO8 탈피 재생 */ moltRegen = 27,
+  /** FO9 사투 본능 */ lastStandInstinct = 28,
 }
 
 /**
@@ -125,6 +131,11 @@ function temperCap(level: number): number {
   return Math.round(1 + (5 * level) / (level + 10));
 }
 
+/** MO4: 전용 내부 쿨 = round(60 + 2400/(Lv+19)) 틱 — Lv1 = 180, Lv20 = 122, 점근 60. */
+function skidCooldownTicks(level: number): number {
+  return Math.round(60 + 2400 / (level + 19));
+}
+
 /** FO2 정산 회복 비율(고정 60% — 잔여 40% 소멸, 완전 환급 금지). */
 const CLOT_SETTLE_BP = 6000;
 /** FO6 전이 대가 — 경감이 발동한 피격당 대시 쿨다운 가산(틱, 고정). */
@@ -135,6 +146,19 @@ const CRUSH_FIELD_PERIOD = 30;
 const CRUSH_FIELD_PUSH = 6;
 /** FO7 런당 누적 가산 상한 = 런 시작 최대 HP 의 이 비율(bp). */
 const TROPHY_RUN_CAP_BP = 5000;
+
+/**
+ * FO9 「빈사」 술어의 임계 — 현재 HP 가 최대 HP 의 이 비율(bp) **이하**.
+ *
+ * 비교는 **교차곱**(`hp × 10000 <= maxHp × bp`)으로 한다 — 나눗셈을 끼우면 소수 hp(엘리트
+ * 접촉 배율이 섞인 값)에서 부동소수 잔차가 임계 근처의 판정을 틱마다 뒤집는다.
+ */
+const LAST_STAND_HP_BP = 3000;
+
+/** FO9 술어 — 이 플레이어가 지금 「빈사」인가. 세 효과 지점이 같은 술어를 읽는다. */
+function inLastStand(player: Entity): boolean {
+  return player.hp * 10000 <= player.maxHp * LAST_STAND_HP_BP;
+}
 
 /**
  * BL2 근접 임계(sim 좌표). **레벨과 무관하게 고정**이다(설계 ② BL2 "임계 350 고정") — 레벨은
@@ -216,6 +240,22 @@ export function bruiserPlayerDamaged(
   lethalSurvived: boolean,
   sources: DamageSourceMask,
 ): void {
+  // --- FO9 사투 본능(적립 파라미터 변형) -----------------------------------
+  // 설계서: "HP 30% 이하인 동안 … 피격당 적립이 2스택이 된다". 엔진의 적립(+1)은 이 앵커
+  // **앞**에서 이미 끝났으므로(world.ts 4317-4320) 여기서 **한 개를 더** 얹는 것이 정확히
+  // 2스택이다.
+  //
+  // ⚠️ **이 블록이 함수 맨 앞인 것이 계약이다.** 뒤로 내리면 아래 BL4(만재 술어)·FO2(만재
+  //    엣지 기준)·FO5 가 "적립이 끝난 상태" 가 아니라 1스택 적은 상태를 보게 되어, 같은 틱의
+  //    같은 사건을 두 값으로 읽는다. 엔진이 2 를 적립한 것처럼 보이는 것이 이 스킬의 본체다.
+  // ⚠️ `aux1 = 0` 도 함께 세운다 — 엔진 적립부가 하는 일과 같은 짝이고, 빠뜨리면 "적립했는데
+  //    감쇠 타이머는 안 리셋" 이라는 엔진에 없는 상태가 생긴다.
+  const fo9Accrue = lv(state, Sk.lastStandInstinct);
+  if (fo9Accrue >= 1 && inLastStand(player)) {
+    player.aux0 = clampArmorStacks(player.aux0 + 1, state.armorMaxStacks);
+    player.aux1 = 0;
+  }
+
   // --- BL4 과적 배출 -------------------------------------------------------
   // ⚠️ **설계와 어긋나는 지점(레인 보고서에 적었다).** 설계서는 "만재 **상태에서** 실피격" 을
   //    요구하는데, 이 앵커는 적립 **뒤**라 `aux0` 이 이미 상한에 붙어 있다. 즉 적립 직전이
@@ -296,18 +336,58 @@ export function bruiserDamageChain(state: WorldState, player: Entity, dmg: numbe
       player.dashCooldown += LOAD_TRANSFER_DASH_TICKS;
     }
   }
+  // FO9 — 빈사 중 **스택당 감소량 강화**. 추가 감소 = 스택 × (20 + 5×Lv) bp.
+  //
+  // ⚠️ **설계와 어긋나는 지점(레인 보고서에 적었다).** 설계서는 이 강화를 감소 적용부
+  //    (`armorReductionBp` 를 쓰는 그 자리) 안에서 **스택당 bp 에 가산**하라고 적었는데, 이
+  //    앵커는 장갑 **앞**이라(앵커 ⑧ 은 사슬에 뚫린 유일한 스킬 자리다) 두 감소가 더해지지
+  //    않고 **곱해진다**. 같은 스택·같은 레벨에서 설계보다 총 경감이 근소하게 **작다**
+  //    (250bp 장갑 8스택 + 120bp 강화면 설계 29.6% vs 여기 1−0.8×0.904 = 27.7%). 부호가
+  //    유리한 쪽으로 틀리지 않으므로 이 순서로 배선했다 — 바로잡으려면 사슬에 슬롯을 하나 더
+  //    뚫어야 하고 그것은 이 레인 밖이다(FO6 이 같은 자리에서 같은 사유를 안고 있다).
+  // ⚠️ 순서는 FO6 **뒤**다. 그래야 FO6 의 전이량(대시 쿨 지불 빈도)이 종전과 비트 동일하고,
+  //    FO9 미투자 런은 이 블록을 한 줄도 안 지난다.
+  const fo9 = lv(state, Sk.lastStandInstinct);
+  if (fo9 >= 1 && out > 0 && inLastStand(player)) {
+    const stacks = clampArmorStacks(player.aux0, state.armorMaxStacks);
+    if (stacks > 0) {
+      // 반올림은 이 게이트 **안**이다(규율 ③).
+      const cut = Math.round((out * stacks * (20 + 5 * fo9)) / 10000);
+      if (cut > 0) {
+        out -= cut;
+        if (out < 0) out = 0;
+      }
+    }
+  }
   return out;
 }
 
 /**
- * 앵커 ⑨ **시그니처 틱 진행**(매 틱 정확히 한 번) — FO1 · FO2 정산 · FO7 기준선 · MO6.
+ * 앵커 ⑨ **시그니처 틱 진행**(매 틱 정확히 한 번) — FO1 · MO4 · **FO4·FO8·FO9①** · FO2 정산 ·
+ * FO7 기준선 · MO6.
  *
  * ## 이 앵커는 `stepShipSignature` 진입점이다
- * `world.ts` 실측 순서는 `stepPlayer`(1813) → `stepShipSignature`(1859, 이 앵커가 2409) →
- * `resolveCollisions`(1905) 다. 그래서 여기서 세운 값은 **이번 틱의 감쇠 분기(2410)와 이번 틱의
- * 피격 처리 양쪽에 모두 반영된다** — FO1 이 상한을 여기서 세워도 한 틱 늦지 않는다.
+ * `world.ts` 실측 순서는 `stepPlayer`(1813) → `stepShipSignature`(1859, 이 앵커가 2426) →
+ * `resolveCollisions`(1905) 다. 그래서 여기서 세운 값은 **이번 틱의 감쇠 분기(2427-2435)와 이번
+ * 틱의 피격 처리 양쪽에 모두 반영된다** — FO1 이 상한을 여기서 세워도 한 틱 늦지 않는다.
+ *
+ * ## ⚠️ 감쇠 분기를 **사후 관측이 아니라 선점**으로 다룬다 (FO4·FO8·FO9①)
+ * 종전 주석은 이 셋을 "감쇠 분기 그 자리를 고쳐야 하니 미배선" 으로 남겼고, 그 근거는
+ * *"앵커에서 스택 감소를 **사후 관측**해 흉내 내면 액티브의 스택 소각(blade_lo/hi)과 구분이
+ * 안 돼 조용히 오발동한다"* 였다. 그 경고는 **사후 관측 형태에만** 유효하다 — 이 배선은 감소를
+ * 한 번도 관측하지 않는다. 이 앵커가 분기보다 **앞**이라는 순서를 써서, 분기가 쓰는 것과
+ * **같은 술어**(`aux1 + 1 >= ARMOR_DECAY_TICKS`)로 *"이번 틱에 감쇠가 성사된다"* 를 판정하고
+ * 그 자리에서 부호를 바꾸거나(FO4) 막거나(FO9①) 회복으로 환산한다(FO8). 액티브의 소각은
+ * `aux1` 을 건드리지 않으므로 이 술어에 원리적으로 안 걸린다.
+ *
+ * `aux1 = 0` 으로 되돌리면 분기의 `aux1++` 가 1 을 만들어 소멸이 성사되지 않는다 — 분기를
+ * 고치지 않고 그 결과만 뒤집는 형태이고, 술어의 정본은 여전히 `world.ts` 한 곳이다.
  */
-export function bruiserSignatureStep(state: WorldState, player: Entity): void {
+export function bruiserSignatureStep(
+  state: WorldState,
+  player: Entity,
+  input: InputFrame,
+): void {
   // --- FO1 과적 장갑 -------------------------------------------------------
   // ⚠️ **설계와 어긋나는 지점.** 설계서(⑥-3)는 상한을 `createWorld` 가 config 에서 한 번
   //    확정하는 파생값으로 두라고 적었고 `commissionCarry.ts` 도 그 전제로 재파생 목록에
@@ -318,6 +398,66 @@ export function bruiserSignatureStep(state: WorldState, player: Entity): void {
   const fo1 = lv(state, Sk.overPlating);
   if (fo1 >= 1) {
     state.armorMaxStacks = ARMOR_MAX_STACKS + overPlatingBonus(fo1);
+  }
+
+  // --- MO4 장갑 활주 -------------------------------------------------------
+  // 감속이 걸려 있으면 장갑 1스택을 태워 무효화하고 전용 내부 쿨을 건다.
+  //
+  // ⚠️ **전용 쿨이 구조 필수다**(설계서 MO4). 감속 장판 적용부는 매 틱 감속을 재부여하므로,
+  //    쿨이 없으면 장판 위 8틱에 8스택이 증발한다.
+  // ⚠️ **한 틱 늦는다 — 알려진 성질이다.** 감속을 세우는 자리(`resolveCollisions`)는 이 앵커
+  //    **뒤**이고, 이동 배율을 읽는 자리(`stepPlayer`)는 이 앵커 **앞**이다. 그래서 부여된
+  //    감속은 다음 틱 이동에 정확히 한 번 실린 뒤 여기서 지워진다. "0틱 무효화" 를 만들려면
+  //    부여 지점 또는 `stepPlayer` 안에 손잡이가 필요하고 그것은 이 레인 밖이다.
+  // ⚠️ 무적 중에도 돈다 — 감속 부여가 무적 가드보다 위라(설계서 MO4) 무적 중에도 감속이
+  //    걸리고, 그러면 이 스킬의 소모·쿨도 같이 도는 것이 설계 명시다.
+  // ⚠️ 자리는 FO2 정산 **앞**이다. FO2 가 틱 말미 스냅샷(`prevArmorStacks`)을 세우므로, 소모를
+  //    그 뒤에 두면 스냅샷이 한 틱 낡아 만재 엣지 판정이 갈린다.
+  const mo4 = lv(state, Sk.armorSkid);
+  if (mo4 >= 1) {
+    const cd = readSlot(state.skillStage, BruiserStage.skidCooldown);
+    if (cd > 0) {
+      writeSlot(state.skillStage, BruiserStage.skidCooldown, cd - 1);
+    } else if (state.playerSlowTicks > 0 && player.aux0 > 0) {
+      player.aux0 -= 1;
+      state.playerSlowTicks = 0;
+      writeSlot(state.skillStage, BruiserStage.skidCooldown, skidCooldownTicks(mo4));
+    }
+  }
+
+  // --- 감쇠 판정 선점 — FO4 부동 역적립 · FO9① 감쇠 정지 · FO8 탈피 재생 ----
+  // 셋의 우선순위는 **FO4 → FO9① → FO8** 이고, 이 순서가 설계서가 적은 축 내 긴장 그대로다
+  // (*"감쇠를 막거나 뒤집을수록 FO8 이 죽는다"* — FO8 은 스택이 **실제로 소멸할 때만** 돈다).
+  const fo4 = lv(state, Sk.unmovedAccretion);
+  const fo8 = lv(state, Sk.moltRegen);
+  const fo9 = lv(state, Sk.lastStandInstinct);
+  if (fo4 >= 1 || fo8 >= 1 || fo9 >= 1) {
+    // 분기가 쓰는 것과 **같은 술어**다 — 분기는 `aux1++` 뒤에 `>= ARMOR_DECAY_TICKS` 를 본다.
+    const decayDue = player.aux1 + 1 >= ARMOR_DECAY_TICKS;
+    if (decayDue) {
+      // 정지 판정은 **입력**으로 한다(설계서 1.5 계약 · 아크캐스터 시그니처와 같은 술어).
+      // 속도로 판정하면 감속 장판·코어 모듈 배율이 섞여 "멈춰 있는데 이동 중" 이 된다.
+      const still = input.moveX === 0 && input.moveY === 0 && !input.dash;
+      if (fo4 >= 1 && still) {
+        // FO4 — 같은 판정 틱의 **부호 반전**: 소멸 대신 적립.
+        // ⚠️ **설계와 어긋나는 지점(레인 보고서에 적었다).** 설계서는 정지 중에만 쓰는 별도
+        //    주기(60 + 3600/(Lv+11) 틱, Lv1 = 360)를 요구하는데, 그 주기는 `aux1` 이 엔진 소유
+        //    (180 에서 강제 리셋)라 **전용 카운터 1칸 없이는 담을 수 없다**. 강화 축의 신규
+        //    상태 예산은 FO2·FO7 로 2/2 포화라 칸을 더 잡지 않았다. 그래서 주기는 엔진의
+        //    180 을 그대로 쓰고 **레벨은 게이트로만 작동한다**(MO1 이 같은 형태다) — Lv1 에서
+        //    설계(360틱)보다 두 배 자주 적립된다. 밸런스 일괄 레인이 볼 자리다.
+        player.aux0 = clampArmorStacks(player.aux0 + 1, state.armorMaxStacks);
+        player.aux1 = 0;
+      } else if (fo9 >= 1 && inLastStand(player)) {
+        // FO9① — 빈사 중 감쇠 정지. 스택이 줄지 않으므로 FO8 의 "소멸" 도 일어나지 않는다.
+        player.aux1 = 0;
+      } else if (fo8 >= 1 && player.aux0 > 0) {
+        // FO8 — 이번 틱에 **실제로 소멸할** 스택 1개를 회복으로 환산한다(3 + 1×Lv HP).
+        // 소멸 자체는 막지 않는다 — 분기가 그대로 1스택을 가져간다.
+        const heal = 3 + fo8;
+        player.hp = Math.min(player.maxHp, player.hp + heal);
+      }
+    }
   }
 
   // --- FO2 응혈 장갑(정산) -------------------------------------------------

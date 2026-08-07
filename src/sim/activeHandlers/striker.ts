@@ -19,7 +19,11 @@
 import type { Entity } from '../entities.js';
 import { blink, fanStrike, powerCentiOf, scaleCenti, setBuffTicks } from '../activeTypes.js';
 import type { ActiveExpireTable, ActiveHandlerTable, ActiveSustainTable } from '../activeTypes.js';
-import { strikerFirepowerActive, strikerBlinkOrigin } from '../skills/striker.js';
+import {
+  strikerFirepowerActive,
+  strikerBlinkOrigin,
+  strikerSurvivalSustain,
+} from '../skills/striker.js';
 
 /**
  * F3 과열 배출 — 화력 액티브 발동 틱에 주무기 쿨다운을 환급하고 fanStrike 탄을 증폭한다.
@@ -97,13 +101,22 @@ export const STRIKER_HANDLERS: ActiveHandlerTable = {
   },
 };
 
-/** `kind='buff'` 지속 중 매 틱 유지 훅 — 무적 프레임을 계속 다시 세운다. */
+/**
+ * `kind='buff'` 지속 중 매 틱 유지 훅 — 무적 프레임을 계속 다시 세우고, **S6 유지 보강**을
+ * 적용한다(자석 반경 배율 게이트 + 이동 감속 면역).
+ *
+ * S6 를 발동 표(`STRIKER_HANDLERS`)가 아니라 여기에 건 사유는 `strikerSurvivalSustain` 의
+ * doc 주석이다 — 트리거가 **지속 틱**이라 한 번 세우는 형태로는 버프 종료 뒤에도 남는다.
+ * 두 생존 액티브 모두에 건다(설계서가 등급을 가르지 않았다).
+ */
 export const STRIKER_SUSTAIN: ActiveSustainTable = {
-  as_striker_survival_lo: (_state, player, def) => {
+  as_striker_survival_lo: (state, player, def) => {
     refreshIframes(player, def.coeff.iframes ?? 0);
+    strikerSurvivalSustain(state, player);
   },
-  as_striker_survival_hi: (_state, player, def) => {
+  as_striker_survival_hi: (state, player, def) => {
     refreshIframes(player, def.coeff.iframes ?? 0);
+    strikerSurvivalSustain(state, player);
   },
 };
 

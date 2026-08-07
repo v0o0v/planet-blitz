@@ -275,6 +275,10 @@ function dispatchDashSkill(state: WorldState, player: Entity): void {
   if (!state.skillsOn) return;
   switch (state.sigBit) {
     case SIG_STRIKER_MARKSMAN:
+      // M5 벽차기(무적프레임) · **M6 활공 정화**(적탄 소거 + 반경 안 잡몹 냉기).
+      // ⚠️ M2(추진 항적)는 여기 없다 — 술어 "대시 방향" 의 정본이 `resolveDirFallback(mx, my,
+      // angle)` 인데 그 `mx/my` 는 `stepPlayer` 지역 변수이고 이 앵커는 `input` 을 받지 않는다.
+      // `player.vx/vy` 는 이미 이동 성분이 합산된 뒤라 방향 규칙의 두 번째 사본이 된다.
       strikerDashFired(state, player);
       break;
     // ⚠️ **아크캐스터는 여기 case 가 없다 — 설계에 대시 결속 스킬이 한 종도 없기 때문이다.**
@@ -293,10 +297,15 @@ function dispatchDashSkill(state: WorldState, player: Entity): void {
     case SIG_PHANTOM_CLOAK:
       // PH1 잔상 이탈 — 대시가 무피격 스트릭을 전진시킨다(`advanceCloak` 경유).
       //
-      // ⚠️ PH6(정지된 시계)은 여기 없다. 그 스킬은 "창 안 대시 틱에 `aux0` 증가가 멈춘다"인데,
-      // 이 앵커는 `stepShipSignature` 의 팬텀 적립(`aux0++`)보다 **앞**이라 여기서는 아직
-      // 일어나지 않은 증가를 막을 수 없다. 사후에 1 을 빼는 흉내는 창당 정지 예산·되감기
-      // 경계와 갈려 조용히 어긋난다 — 그 자리는 적립 분기 자체다.
+      // PH6 정지된 시계 — **여기서는 예약만** 한다(S3). 이 앵커는 `stepShipSignature` 의 팬텀
+      // 적립(`aux0++`)보다 **뒤**라(world.ts 2250 vs 1874) 이번 틱의 증가는 이미 끝나 있다.
+      // 그래서 슬롯에 플래그만 세우고 **다음 틱의 앵커 ⑨** 가 적립 직전에 1틱을 되돌린다.
+      //
+      // ⚠️ 이 자리의 옛 주석은 *"사후에 1 을 빼는 흉내는 창당 정지 예산·되감기 경계와 갈려
+      // 조용히 어긋난다"* 였다. 그 경고가 참인 것은 **예산과 되감기를 코드에 안 남길 때**다 —
+      // S3 은 예산 소비를 집행 지점에서 세고(`PhantomStage.frozenClockUsed`) 되감기는 진입
+      // 에지(`phantomCloakEntry`)에서 0 으로 되돌려 두 경계를 모두 남겼다. 한 틱 밀리지만
+      // 창당 정지 **총량**은 예산과 정확히 같다(DI6 의 "직전 틱 vs 이번 틱" 과 같은 등가 교환).
       phantomDashFired(state, player);
       break;
     default:
@@ -357,10 +366,13 @@ function dispatchGemSkill(state: WorldState, gem: Entity): void {
       // PH8 흔적 흡수 — 젬 수거마다 무피격 스트릭 전진(`advanceCloak` 경유). 대상이 젬이 아니라
       // **플레이어**라 위와 같은 사본으로 집는다.
       //
-      // ⚠️ PH3(그림자 장부)은 여기 없다. 본체는 "은신 창 동안 `comboTimer` 가 감소하지 않는다"
-      // 인데 그 감소 지점은 `world.ts` 이고 앵커가 아니다. 레벨 스케일(창 중 수거 시 회복량
-      // 가산)만 여기 얹으면 **본체 없는 곁가지**가 되어, 창 정지라는 스킬 이름값이 영영 안
-      // 도는 채 수치만 도는 반쪽 배선이 된다(아크캐스터 BA7 선례와 같은 판단).
+      // PH3 그림자 장부 — **레벨 스케일 절반**(창 중 수거 시 콤보 창 회복량 가산)이 여기 있다.
+      //
+      // 옛 주석은 "본체(창 중 `comboTimer` 감소 정지)의 감소 지점이 `world.ts` 라 앵커가 없고,
+      // 스케일만 얹으면 본체 없는 곁가지" 라며 통째로 뺐다. **본체가 앵커 ⑨ 에 섰다**(S3):
+      // 감소는 `updateCombo` 한 곳의 정확히 `-1` 이고 앵커 ⑨ 는 그보다 앞(world.ts 1874 vs
+      // 1936, 같은 틱)이라, 창 중에 `+1` 하면 감소부에서 스킵한 것과 값이 비트 단위로 같다.
+      // 그래서 이 절반은 더 이상 곁가지가 아니다.
       const p = playerOf(state);
       if (p !== undefined) phantomGemCollected(state, p);
       break;
@@ -431,7 +443,8 @@ function dispatchPlayerDamagedSkill(
       arccasterPlayerDamaged(state, player, dmg, lethalSurvived);
       break;
     case SIG_BRUISER_ARMOR:
-      // BL4 과적 배출 · FO2 응혈 적립 · FO5 불괴 연쇄 · **BL8 격돌 담금질(적립처)**.
+      // BL4 과적 배출 · FO2 응혈 적립 · FO5 불괴 연쇄 · **BL8 격돌 담금질(적립처)** ·
+      // **FO9② 사투 본능(적립 2스택)**.
       // BL8 만 `sources` 를 본다 — 나머지 셋은 피해원과 무관하다(종전 인자만 쓴다).
       // 브루저는 스트라이커와 달리 **둘 다 필요하다** — FO2 는 적립량이 `dmg` 에 비례하고,
       // FO5 는 `lethalSurvived` 가 트리거 자체다(사슬 안에서 계산된 값을 그대로 넘긴다).
@@ -657,7 +670,8 @@ export function onDamageChain(state: WorldState, player: Entity, dmg: number): n
       // ① BR3·BR5 감소 → ② BR4 흡수. 순서는 이 앵커 주석이 못 박은 그대로다.
       return arccasterDamageChain(state, player, dmg);
     case SIG_BRUISER_ARMOR:
-      // FO6 하중 전이(경감 + 대시 쿨 전이). 흡수 칸을 쓰는 브루저 스킬은 없다.
+      // ① 감소: FO6 하중 전이(경감 + 대시 쿨 전이) → **FO9③ 사투 본능(빈사 중 스택당 추가
+      // 감소)**. 흡수 칸을 쓰는 브루저 스킬은 없다.
       // ⚠️ 설계서는 이 스킬의 자리를 "브루저 장갑 **뒤**" 로 지정했는데 이 앵커는 장갑 **앞**
       // 이다 — 사슬에 뚫린 유일한 스킬 자리라 여기 말고 둘 곳이 없다(효과 함수 주석에 근거).
       return bruiserDamageChain(state, player, dmg);
@@ -726,15 +740,21 @@ function dispatchSignatureStepSkill(
       arccasterSignatureStep(state, player);
       break;
     case SIG_BRUISER_ARMOR:
-      // FO1 상한 확장 · FO2 만재 상승 엣지 정산 · FO7 기준선 · MO6 압쇄장 주기.
+      // FO1 상한 확장 · MO4 장갑 활주 · **FO4·FO8·FO9① 감쇠 판정 선점** · FO2 만재 상승 엣지
+      // 정산 · FO7 기준선 · MO6 압쇄장 주기.
       // 이 앵커가 `stepShipSignature` **진입점**이라 브루저 감쇠 분기(바로 아래)와 이번 틱
       // `resolveCollisions` 양쪽이 FO1 의 새 상한을 본다.
       //
-      // ⚠️ FO4(부동 역적립)·FO8(탈피 재생)·FO9(사투 본능)은 여기 없다 — 셋 다 **감쇠 분기
-      // 그 자리**(소멸이 일어나는 `aux1 >= 180` 안쪽)를 고쳐야 하는데 그 분기는 이 앵커
-      // **뒤**의 `world.ts` 코드다. 앵커에서 스택 감소를 사후 관측해 흉내 내면 액티브의 스택
-      // 소각(blade_lo/hi)과 구분이 안 돼 조용히 오발동한다.
-      bruiserSignatureStep(state, player);
+      // ⚠️ **FO4·FO8·FO9① 이 여기 온 근거는 「사후 관측이 아니라 선점」이다.** 종전에 이 셋을
+      // 막던 사유(*"스택 감소를 사후 관측해 흉내 내면 액티브의 스택 소각과 구분이 안 된다"*)는
+      // 근거로 남긴다 — 그 경고는 **감소를 관측하는 형태**에만 유효하다. 이 배선은 감소를 한 번도
+      // 보지 않고, 분기가 쓰는 것과 같은 술어(`aux1 + 1 >= ARMOR_DECAY_TICKS`)로 이번 틱의
+      // 성사 여부를 **미리** 판정한다. 액티브의 소각(blade_lo/hi)은 `aux1` 을 안 건드리므로
+      // 원리적으로 이 술어에 안 걸린다. 근거 전문은 효과 함수 주석.
+      //
+      // `input` 을 넘기는 것은 FO4 하나 때문이다 — 정지 판정은 속도가 아니라 **입력**이라고
+      // 설계서 1.5 계약이 못 박았고, 아크캐스터 시그니처가 같은 술어를 쓴다.
+      bruiserSignatureStep(state, player, input);
       break;
     case SIG_HATCHLING_BROOD:
       // SH6 알막 · SH3 만석 둥지 온기 · NU6 온기 나눔 · NU8 이주 본능.
@@ -767,8 +787,15 @@ function dispatchSignatureStepSkill(
       // 이 앵커는 `stepShipSignature` **진입점**이라 팬텀 적립(`aux0++`)보다 앞이다 — DI2 의
       // 주기 판정이 그 전제 위에 서 있다(효과 함수 주석).
       //
-      // ⚠️ PH5(연장 위상)·PH6(정지된 시계)은 여기 없다. 둘 다 **적립 분기 그 자리**(`aux0++`
-      // 와 되감기 조건)를 고쳐야 하는데 그 분기는 이 앵커 **뒤**의 `world.ts` 코드다.
+      // PH3 그림자 장부(본체 — 창 중 콤보 시계 정지) · PH6 정지된 시계(**집행**)도 여기다(S3).
+      // 둘 다 이 앵커가 "적립·감소보다 앞" 이라는 성질을 정면으로 쓴다: PH3 은 `updateCombo` 의
+      // `-1` 을 같은 틱에 `+1` 로 상쇄하고, PH6 은 `aux0++` 직전에 1 을 되돌려 순변화를 0 으로
+      // 만든다(예약은 앵커 ② 가 세운다).
+      //
+      // ⚠️ PH5(연장 위상)는 여전히 여기 없다. **적립 분기 그 자리**(되감기 조건과 `HOLD` 상한)를
+      // 고쳐야 하는데 그 분기는 이 앵커 **뒤**의 `world.ts` 코드다 — 상쇄로는 흉내 낼 수 없다
+      // (PH6 이 되는 것은 정지가 "한 틱 −1" 이라는 **가역 연산**이기 때문이고, 창 상한 재정의는
+      // 아니다).
       // 앵커에서 사후 관측으로 흉내 내면 액티브 진입(`activeHandlers/phantom.ts`)과 구분이
       // 안 돼 조용히 오발동한다(브루저 FO4·FO8·FO9 와 같은 판단).
       phantomSignatureStep(state, player);
@@ -780,11 +807,20 @@ function dispatchSignatureStepSkill(
       // 앞이다. FI2 는 `aux0 > 0` 술어라 그 분기(`aux0 === 0` 게이트)와 배타적이라서 순서가
       // 결과를 바꾸지 않는다 — 한쪽이 도는 틱에 다른 쪽은 반드시 쉰다.
       //
-      // ⚠️ DR7(신호 표류)은 여기 없다 — 재생 배율 자체는 이 앵커에서 `aux1 += 1` 을 더해
-      // 구현할 수 있지만, 술어 "에코 신호·조우 오브젝트가 **활성**" 을 세울 값이 없다.
-      // `state.encounterRuntime` 은 "이 런에 조우가 굴려졌다" 이지 활성이 아니고,
-      // `inDetour === 1` 은 격실 진입이라 에코 안정화와 다른 사건이다. 두 번째 절반(완수 틱
-      // 즉시 만재)은 에코 완수 지점에 손잡이가 필요해 어차피 이 레인 밖이다.
+      // ⚠️ DR7(신호 표류)은 여기 없다 — **종전 사유의 절반은 틀렸다. 정정해 둔다.**
+      // 재생 배율 자체는 이 앵커에서 `aux1 += 1` 을 더해 구현할 수 있고, 술어도 **있다**:
+      // `state.echoRuntime?.state === 1` 이 정확히 "에코 오브젝트가 서 있고 안정화 진행 중"
+      // 이다(`echo.ts` 의 `EchoRuntime.state` 주석 — 0 대기·1 출현·2 완료). 종전 주석이
+      // "세울 값이 없다" 고 적은 것은 `encounterRuntime`·`inDetour` 만 보고 `echoRuntime` 을
+      // 빠뜨린 것이다(그 둘에 대한 판정은 여전히 참 — 조우 쪽 술어는 아직 없다).
+      //
+      // 그럼에도 배선하지 않은 이유는 **반쪽이 되기 때문**이다. 설계서 DR7 은 효과가 셋이고
+      // (①활성 중 재생 2배 ②안정화 **완수 틱** 막 즉시 만재 ③완수 자원 보너스 +1+floor(Lv/2)),
+      // ②③ 은 둘 다 state 1→2 **엣지**를 요구한다. `stepEcho` 는 이 앵커 **뒤**(world.ts:1878)
+      // 라 완수 틱에는 아직 1 로 보이고 다음 틱부터 계속 2 로 보인다 — 엣지를 기억할 값이
+      // 없으면 "완수 틱"과 "완수 이후 매 틱"이 구분되지 않아 ② 는 *영구 만재*가 된다.
+      // 게다가 설계서가 **레벨은 ③ 에만 걸린다**고 못 박아서, ① 만 넣으면 Lv1 과 Lv20 이
+      // 완전히 같은 스킬이 된다. 엣지용 정수 1칸(또는 에코 완수 지점 앵커)이 선결이다.
       // ⚠️ DR10(공막 유속)·PO10(연쇄 압력)도 없다 — 둘 다 "재생이 완료된 틱" 이라는 엣지가
       // 필요한데 이 앵커는 재생 분기보다 앞이라 그 엣지를 이번 틱에 볼 수 없다. 다음 틱에
       // 사후 관측하면 액티브의 즉시 만재(`film_lo`/`film_hi`)와 구분이 안 된다.
@@ -868,8 +904,10 @@ function dispatchEnemyDamagedSkill(
   void dmg;
   switch (state.sigBit) {
     case SIG_STRIKER_MARKSMAN:
-      // F6 소이 정조준 · F9 제압 사격. 둘 다 트리거가 **정조준탄 명중**이라 앵커 ⑯ 이 찍은
-      // 표식(`params.mark = 1` → 탄 `aux0`)을 `source` 에서 읽는다.
+      // F6 소이 정조준 · F9 제압 사격 · **F8 과열 파쇄**. 앞 둘은 트리거가 **정조준탄 명중**이라
+      // 앵커 ⑯ 이 찍은 표식(`params.mark = 1` → 탄 `aux0`)을 `source` 에서 읽는다. F8 만
+      // 표식과 무관하다 — 설계서가 "보스 과열 창 동안 명중할 때마다" 로 적었고, 그래서 효과
+      // 함수에서 표식 게이트 **앞**에 있다(보스 `iframes` = 과열 창 잔여 틱).
       //
       // ⚠️ F7(표적 고정)·S7(최후 처형)은 여기 **없다** — 이 앵커의 금지 사항에 정면으로 걸린다
       // (F7 은 차감 **뒤**라 이번 일격에 안 실리고, S7 은 doc 가 "처형 축은 이 앵커가 아니다"
@@ -933,6 +971,11 @@ function dispatchEnemyDamagedSkill(
       // 대체하면 강화탄이 아닌 탄까지 재장전을 일으켜 창 안 전 발사가 2.5배가 된다 — 설계와
       // 정반대다. 마커를 심을 자리는 앵커 ⑯ 이고(`VolleyParams.cloakBreak` 가 그 술어를 실었다),
       // 회수는 이 앵커가 `source`(가해 아군탄)와 확정된 `target.dead` 로 한다.
+      //
+      // AS9(절멸 선고)도 여기다(S3) — **같은 마커를 읽는다.** 설계서의 `구현: A` 는 "소진 지점
+      // 명중 처리에서 `blastDamage` 1회" 인데 소진 지점은 앵커가 아니다. 그런데 그 판정을 이미
+      // 탄이 나르고 있으므로 소진 지점 자체는 필요 없었다. 형태는 브루저 BL3(명중 지점 폭발)와
+      // 같고 **맞은 표적 자신은 제외**한다(넣으면 단일 표적 증폭으로 퇴화한다).
       const p = playerOf(state);
       if (p !== undefined) phantomEnemyDamaged(state, p, target, dmg, source);
       break;
@@ -1041,7 +1084,8 @@ function dispatchEnemyDeathSkill(
     // AS6「무성 격살」은 "은신 창 중 처치한 적이 죽음의 잔재를 남기지 않는다" 인데, 그 잔재를
     // 만드는 곳은 `elite.ts` 의 `explodeElite` 와 `world.ts` 의 BK_SPLIT 분열이고 둘 다 이
     // 앵커보다 **앞**에서 이미 실행됐다. 여기서 뒤늦게 알아 봐야 파편은 이미 태어났다.
-    // AS9(절멸 선고)는 격추가 아니라 **해제 첫 타의 명중 지점**이 트리거라 축이 다르다.
+    // AS9(절멸 선고)는 격추가 아니라 **해제 첫 타의 명중 지점**이 트리거라 축이 다르다 —
+    // 그래서 여기가 아니라 **앵커 ⑩** 에 배선됐다(S3).
     default:
       break;
   }
@@ -1213,10 +1257,10 @@ export function onFilmBurst(state: WorldState, x: number, y: number): void {
   if (!state.skillsOn) return;
   switch (state.sigBit) {
     case SIG_BUBBLE_FILM: {
-      // PO1 파열 탄두 · PO3 거품 산탄 파열 · PO7 정전 파열 · DR6 파열 추진 · FI1 조기 응결 ·
-      // FI5 파열 위상 · FI10 정화 파열.
+      // PO1 파열 탄두 · PO3 거품 산탄 파열 · PO7 정전 파열 · DR1 역류 수거 · DR6 파열 추진 ·
+      // FI1 조기 응결 · FI5 파열 위상 · FI10 정화 파열.
       //
-      // ⚠️ **PO4·PO8·DR1·FI7 은 여기 없다 — 훅으로 닿지 않는다.**
+      // ⚠️ **PO4·PO8·FI7 은 여기 없다 — 훅으로 닿지 않는다.**
       //  · FI7(벽면 반향)은 밀어내기의 **반경·변위 그 자체**를 배율해야 한다. 훅은 그 산술
       //    바깥이라 값을 건넬 길이 없다 — `resolveFilmBurst` 가 배율을 인자로 받는 형태여야
       //    하고, 그건 훅이 아니라 함수 시그니처 변경이다.
@@ -1226,8 +1270,13 @@ export function onFilmBurst(state: WorldState, x: number, y: number): void {
       //  · PO8(잔거품 기뢰)은 기뢰 엔티티 생성 규약(`isGimmick` 컬링 제외 + 전용 마커 동시
       //    생존 상한 12)이 선결이다. 상한 없이 넣으면 파열 4회 창에 최대 36기가 서서 청크
       //    예산(160)을 조용히 먹는다.
-      //  · DR1(역류 수거)은 `collectGem` 이 `world.ts` 소유라 leaf 에서 부를 수 없다. 젬을
-      //    여기서 직접 지우면 콤보·XP·촉매 경로가 통째로 빠진다.
+      // ✅ **DR1(역류 수거)은 배선됐다.** `collectGem` 이 `world.ts` 모듈-로컬이라 leaf 에서
+      //    부를 수 없다는 종전 사유는 **지금도 참**이고(export 해도 규율 ① 위반, 여기로 올려도
+      //    `world.ts → skillHooks.ts` 와 순환), 젬을 직접 지우면 콤보·XP·촉매 경로가 통째로
+      //    빠지는 것도 그대로다. 바뀐 것은 **수단**이다 — 젬 좌표를 플레이어 위로 옮겨 정본
+      //    픽업 판정이 걷게 했다. 대가는 시그니처 소진 파열 경로에서 수거가 **1틱 늦는다**는
+      //    것뿐이고(그 틱의 격자는 옛 좌표로 빌드돼 있다), 사유 전문은 `skills/bubble.ts` 의
+      //    DR1 블록 주석이 정본이다.
       //
       // ⚠️ **DR9(이탈 잔파동)은 이 앵커의 대상이 아니다.** 잔파동은 파열이 아니라서
       // (`filmBurst.ts` 의 종류 코드 2) 파열 훅을 태우면 안 된다 — 종류 코드 2 는 아직
