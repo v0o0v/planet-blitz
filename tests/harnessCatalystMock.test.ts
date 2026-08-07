@@ -51,18 +51,52 @@ describe('HarnessCatalystGateway — 인메모리 원장', () => {
 
   it('consume: 성공 시 원장 차감 + runId 발급', async () => {
     const gw = new HarnessCatalystGateway(currency);
-    gw.seed([{ id: 15, qty: 2 }]);
-    const res = await gw.consumeCatalysts([15, 15], 0);
+    // ⚠️ ADR-0052 유니크 주입 — 같은 카드 2장이 아니라 **서로 다른** 카드를 넣는다.
+    // `id 17 greed` 가 자원축(개별 상한 2.6)이라 영수증 배율이 1을 넘는다.
+    gw.seed([
+      { id: 17, qty: 1 },
+      { id: 20, qty: 1 },
+    ]);
+    const res = await gw.consumeCatalysts([17, 20], 0);
     expect(res.run_id).toMatch(/^harness-run-/);
-    expect(res.resource_mult).toBeGreaterThan(1); // 자원축 촉매 2장.
-    expect(gw.snapshot().has(15)).toBe(false); // 2개 전부 차감.
+    expect(res.resource_mult).toBeGreaterThan(1); // 자원축 카드가 하나 들어 있다.
+    // 장당 정확히 1개씩 차감된다(스택 개념이 없어졌다).
+    expect(gw.snapshot().has(17)).toBe(false);
+    expect(gw.snapshot().has(20)).toBe(false);
   });
 
   it('consume: 보유 부족이면 throw(미차감)', async () => {
     const gw = new HarnessCatalystGateway(currency);
-    gw.seed([{ id: 15, qty: 1 }]);
-    await expect(gw.consumeCatalysts([15, 15], 0)).rejects.toThrow();
-    expect(gw.snapshot().get(15)).toBe(1); // 롤백 — 미차감.
+    gw.seed([{ id: 17, qty: 1 }]); // 20 은 안 시드 → 보유 0.
+    await expect(gw.consumeCatalysts([17, 20], 0)).rejects.toThrow();
+    expect(gw.snapshot().get(17)).toBe(1); // 롤백 — 미차감.
+    expect(gw.snapshot().has(20)).toBe(false);
+  });
+
+  it('consume: 같은 촉매 중복은 거부한다 (유니크 주입, 서버 게이트 (e) 미러)', async () => {
+    const gw = new HarnessCatalystGateway(currency);
+    gw.seed([{ id: 15, qty: 2 }]); // 2장 갖고 있어도 못 넣는다.
+    // ⚠️ 이 단언이 이 파일에서 가장 중요하다. `normalizeCatalystArray` 가 중복을 **제거**하므로,
+    // 모의가 정규화 결과만 보면 `[15,15]` 가 조용히 `[15]` 로 **성공**한다 — 그런데 서버는
+    // 거부한다. 그 갈림이 곧 "하네스에서는 되는데 출격하면 튕기는" 거짓 그린이다.
+    await expect(gw.consumeCatalysts([15, 15], 0)).rejects.toThrow(/중복/);
+    expect(gw.snapshot().get(15)).toBe(2); // 미차감.
+  });
+
+  it('consume: 특산 3장은 거부한다 (서버 게이트 (f) 미러)', async () => {
+    const gw = new HarnessCatalystGateway(currency);
+    // 카르곤(planet 0) 특산 셋 — 행성 정합은 통과하지만 특산 상한(2)에 걸린다.
+    gw.seed([
+      { id: 30, qty: 1 },
+      { id: 31, qty: 1 },
+      { id: 32, qty: 1 },
+    ]);
+    await expect(gw.consumeCatalysts([30, 31, 32], 0)).rejects.toThrow(/특산/);
+    expect(gw.snapshot().get(30)).toBe(1); // 롤백 — 셋 다 미차감.
+    expect(gw.snapshot().get(31)).toBe(1);
+    expect(gw.snapshot().get(32)).toBe(1);
+    // 긍정 짝: 둘이면 통과해야 한다(상한이 "전부 거부"가 아님을 실증).
+    await expect(gw.consumeCatalysts([30, 31], 0)).resolves.toBeTruthy();
   });
 
   it('consume: 특산-행성 불일치면 throw', async () => {

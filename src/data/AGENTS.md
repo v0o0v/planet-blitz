@@ -15,9 +15,9 @@
 
 | 파일 | 설명 |
 |---|---|
-| `catalysts.ts` | 촉매 카탈로그 & 배율 함수 — 데이터 계약 |
-| `catalystInject.ts` | 주입 게이트 규칙(순수) — 특산 촉매의 행성 귀속 등 |
-| `catalystSummary.ts` | 주입분의 **전체 효과 집계**(순수) |
+| `catalysts.ts` | 촉매 카탈로그(48종) & 태그·상한·훅 — 데이터 계약 |
+| `catalystResonance.ts` | 태그 공명 12종 & `resolveResonance` **유일 정본**(순수) |
+| `catalystInject.ts` | 주입 게이트 규칙(순수) — 슬롯·특산 귀속·**유니크**·특산 상한·보유 |
 | `catalystDrops.ts` | 촉매 드랍 파생 — 런 정산 입력 |
 
 ## AI 에이전트용
@@ -34,7 +34,7 @@
 
 ### 공통 패턴
 
-- 전부 순수 함수. 표시 문구는 `src/ui/catalystLabels.ts` 가 담당한다.
+- 전부 순수 함수. 표시 문구는 `src/ui/catalystText.ts` 가 담당한다.
 
 ## 의존성
 

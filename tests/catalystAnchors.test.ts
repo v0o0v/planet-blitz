@@ -37,6 +37,16 @@ const hoisted = vi.hoisted(() => ({
    * 배선이 통과한다.
    */
   catalystExpiries: [] as string[],
+  /**
+   * 보스 사망 앵커의 **승리 억제** 판별용. 세우면 `onBossDeathCatalyst` 가 원본 대신 `true` 를
+   * 돌려준다 — 억제가 실제로 승리·보스 드랍을 막는지는 이 조작 없이는 관측할 수 없다
+   * (S0 본체가 전부 비어 있어 `false` 만 나오기 때문).
+   */
+  forceBossSuppress: false,
+  /** `onDashPierceCatalyst` 가 받은 표적 좌표 기록. 통과 판정이 무엇을 집었는지 본다. */
+  dashPierced: [] as { x: number; y: number }[],
+  /** `onResourceGrantedCatalyst` 가 받은 인자 기록. */
+  resourceGrants: [] as { amount: number; x: number; y: number }[],
 }));
 
 vi.mock('../src/sim/catalystHooks.js', async (orig) => {
@@ -63,6 +73,18 @@ vi.mock('../src/sim/catalystHooks.js', async (orig) => {
       if (name === 'onDamageChainCatalyst' && hoisted.forceCatalystDamage !== null) {
         return hoisted.forceCatalystDamage;
       }
+      if (name === 'onDashPierceCatalyst') {
+        const t = args[2] as { x: number; y: number };
+        hoisted.dashPierced.push({ x: t.x, y: t.y });
+      }
+      if (name === 'onResourceGrantedCatalyst') {
+        hoisted.resourceGrants.push({
+          amount: args[1] as number,
+          x: args[2] as number,
+          y: args[3] as number,
+        });
+      }
+      if (name === 'onBossDeathCatalyst' && hoisted.forceBossSuppress) return true;
       return fn(...args);
     };
   }
@@ -138,6 +160,9 @@ beforeEach(() => {
   hoisted.lethalSeen = [];
   hoisted.catalystDamaged = [];
   hoisted.catalystExpiries = [];
+  hoisted.forceBossSuppress = false;
+  hoisted.dashPierced = [];
+  hoisted.resourceGrants = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -145,7 +170,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('촉매 디스패치 11개가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('촉매 디스패치가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/catalystHooks.js');
     for (const name of [
       'onVolleyFiredCatalyst',
@@ -162,6 +187,12 @@ describe('계측 이음매', () => {
       'onLevelUpCatalyst', // S1
       'onPowerupOfferCatalyst', // S1
       'onPowerupPickedCatalyst', // S1
+      // 선결 앵커 레인 — 대시 통과 · 보급 적립 · 보스 사망 · 정산 채널.
+      'onDashSweptCatalyst',
+      'onDashPierceCatalyst',
+      'onResourceGrantedCatalyst',
+      'onBossDeathCatalyst',
+      'catalystSettlementOf',
     ]) {
       expect(typeof (mod as Record<string, unknown>)[name], name).toBe('function');
     }
@@ -383,6 +414,108 @@ describe('촉매 디스패치가 스킬 앵커와 같은 지점에서 불린다'
 });
 
 // ---------------------------------------------------------------------------
+// ②-b 선결 앵커 넷 — 대시 통과 · 보급 적립 · 보스 사망
+// ---------------------------------------------------------------------------
+//
+// 넷 다 본체가 비어 있어 **효과로는 못 잰다.** 유일하게 관측 가능한 회귀는 「호출이 사라지는 것」
+// 이고(보스 앵커만 반환값 조작으로 억제까지 잴 수 있다), 여기서 그것을 잠근다.
+
+describe('선결 앵커 — 대시 통과 판정', () => {
+  it('대시 틱에 `onDashSweptCatalyst` 가 한 번, 경로 위 적마다 `onDashPierceCatalyst` 가 불린다', () => {
+    const s = withCatalyst(0xca30);
+    const p = player(s);
+    // ⭐ **선분 판정의 판별식**이다. 적을 대시 **출발점**(플레이어 자리)에 두면, 이동 후 좌표
+    //    한 점에서만 재는 구현은 이 적을 놓친다 — 대시 스텝 2800/60 ≈ 46.7 > 32(플레이어) + 1
+    //    이라 도착점에서는 반경 합 밖이기 때문이다. 선분 판정만 t=0 에서 잡는다.
+    const e = plantEnemy(s, p.x, p.y);
+    e.radius = 1;
+    stepWorld(s, { ...idle, dash: true });
+    expect(count('onDashSweptCatalyst')).toBe(1);
+    expect(count('onDashPierceCatalyst'), '점 판정으로 퇴화했다 — 출발점의 적을 놓쳤다').toBe(1);
+    expect(hoisted.dashPierced).toEqual([{ x: e.x, y: e.y }]);
+    // ⚠️ 이 틱은 대시 무적 창이 서 있는 틱이다. 통과 판정이 `iframes` 게이트와 **독립**이라는
+    //    것이 여기서 실증된다 — 엮으면 id 29(「대시 무적 중 통과한 적」)가 구조적으로 0 이 된다.
+    expect(p.iframes, '전제: 대시 무적이 서 있다').toBeGreaterThan(0);
+  });
+
+  it('음성 대조: 대시가 없으면 스윕 자체가 0, 경로 밖 적은 통과로 안 센다', () => {
+    const s = withCatalyst(0xca31);
+    plantEnemy(s, 800, 0); // 대시 스텝(≈47)보다 훨씬 멀다
+    stepWorld(s, idle);
+    expect(count('onDashSweptCatalyst')).toBe(0);
+    expect(count('onDashPierceCatalyst')).toBe(0);
+    stepWorld(s, { ...idle, dash: true });
+    expect(count('onDashSweptCatalyst')).toBe(1);
+    expect(count('onDashPierceCatalyst'), '경로 밖 적을 통과로 셌다').toBe(0);
+  });
+});
+
+describe('선결 앵커 — 보급 습격 격추 자원 적립', () => {
+  it('보급 습격이 격추된 틱에 `onResourceGrantedCatalyst` 가 적립액과 좌표를 싣고 불린다', () => {
+    const s = withCatalyst(0xca32);
+    const sup = blankEntity('supply');
+    sup.x = 700;
+    sup.y = 700;
+    sup.radius = 92;
+    sup.hp = 0; // 격추(도망 = hp > 0 과 구분되는 술어)
+    sup.dead = true;
+    addEntity(s, sup);
+    const before = s.resources;
+    stepWorld(s, idle);
+    expect(count('onResourceGrantedCatalyst')).toBe(1);
+    expect(hoisted.resourceGrants).toEqual([{ amount: s.resources - before, x: 700, y: 700 }]);
+    expect(hoisted.resourceGrants[0]!.amount, '적립 0 인 호출은 원리적으로 없다').toBeGreaterThan(
+      0,
+    );
+  });
+
+  it('음성 대조: 도망친 보급(hp > 0)에서는 0 이다', () => {
+    const s = withCatalyst(0xca33);
+    const sup = blankEntity('supply');
+    sup.x = 700;
+    sup.y = 700;
+    sup.radius = 92;
+    sup.hp = 10; // 창이 끝나 despawn — 보상 없음
+    sup.dead = true;
+    addEntity(s, sup);
+    stepWorld(s, idle);
+    expect(count('onResourceGrantedCatalyst')).toBe(0);
+  });
+});
+
+describe('선결 앵커 — 보스 사망(승리 억제 채널)', () => {
+  function killBoss(seed: number): WorldState {
+    const s = withCatalyst(seed);
+    const b = blankEntity('boss');
+    b.x = 900;
+    b.y = 900;
+    b.radius = 90;
+    b.hp = 0;
+    b.dead = true;
+    addEntity(s, b);
+    stepWorld(s, idle);
+    return s;
+  }
+
+  it('보스가 죽으면 `onBossDeathCatalyst` 가 불리고, 억제하지 않으면 종전대로 승리가 선다', () => {
+    const s = killBoss(0xca34);
+    expect(count('onBossDeathCatalyst')).toBe(1);
+    // 앵커 ⑪ 은 `kind === 'enemy'` 게이트라 보스를 안 덮는다 — 이 앵커가 필요했던 이유다.
+    expect(count('onEnemyDeathCatalyst')).toBe(0);
+    expect(s.victory).toBe(true);
+    expect(s.loot.length, '보스 확정 드랍이 종전대로 실렸다').toBeGreaterThan(0);
+  });
+
+  it('⭐ `true` 를 돌려주면 승리와 보스 드랍이 **둘 다** 억제된다 (id 44 가 승리를 가로챈다)', () => {
+    hoisted.forceBossSuppress = true;
+    const s = killBoss(0xca35);
+    expect(count('onBossDeathCatalyst')).toBe(1);
+    expect(s.victory, '억제가 승리 판정을 못 가로챘다 — 앵커가 판정 뒤에 서 있다').toBe(false);
+    expect(s.loot).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ③ ⭐ 감쇠 사슬의 **순서** — `preMitigationDmg` 가 촉매를 포함하는가
 // ---------------------------------------------------------------------------
 
@@ -428,5 +561,142 @@ describe('감쇠 사슬 순서 — 촉매 배율은 preMitigationDmg 캡처보�
     stepWorld(s, idle);
     expect(hoisted.lethalSeen.length).toBeGreaterThan(0);
     expect(hoisted.lethalSeen.every((v) => v === false)).toBe(true);
+  });
+
+  /**
+   * ⭐ 앵커 ⑰ 이 `min(d, s)` 때문에 **원리적으로 무효**였던 전례가 있어, 값을 돌려주는 이 칸도
+   * 반환이 뒤에서 삼켜지지 않는지를 뮤테이션으로 실증해 둔다. 위 두 절은 `survivedLethalBlow`
+   * 의 **의미**를 재지 hp 차감량을 재지 않는다.
+   */
+  it('⭐ 반환 배율이 hp 차감에 그대로 도달한다 (뒤에 min·clamp 가 없다)', () => {
+    const base = withCatalyst(0xca10);
+    const bp = player(base);
+    const hp0 = bp.hp;
+    plantEnemy(base, bp.x, bp.y, 5);
+    stepWorld(base, idle);
+    const plain = hp0 - bp.hp;
+    expect(plain, '피격이 일어나지 않았다 — 아래 비교는 항진이다').toBeGreaterThan(0);
+
+    const s = withCatalyst(0xca10);
+    const p = player(s);
+    plantEnemy(s, p.x, p.y, 5);
+    hoisted.forceCatalystDamage = plain * 3;
+    stepWorld(s, idle);
+    expect(hp0 - p.hp).toBe(plain * 3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑦ `id 24 chainreaction` — 피해 전이 · 최대 HP 상한 하락 · 세그먼트 전환 복구
+// ---------------------------------------------------------------------------
+
+/** 지정한 카드만 실린 런. `id 24` 절은 소지 게이트가 카드 단위인지까지 잰다. */
+function withCards(seed: number, cards: number[]): WorldState {
+  return createWorld(seed, { ...DEFAULT_CONFIG, catalysts: cards });
+}
+
+/**
+ * 접촉 피해원 하나를 플레이어 위에 세우고 **오토어택 피해를 0 으로 잠근다.**
+ * 안 잠그면 자기 볼리가 표적 hp 를 같이 깎아 "전이가 깎은 양"을 분리할 수 없다.
+ */
+function contactSetup(s: WorldState, enemyHp: number): { p: Entity; e: Entity } {
+  s.weapon.damage = 0;
+  const p = player(s);
+  const e = plantEnemy(s, p.x, p.y, 5);
+  e.hp = enemyHp;
+  e.maxHp = enemyHp;
+  return { p, e };
+}
+
+describe('id 24 chainreaction — 받은 피해가 가장 가까운 적에게 전이된다', () => {
+  it('전이: 표적 hp 가 **실피해량만큼** 깎인다', () => {
+    const s = withCards(0xc240, [24]);
+    const { e } = contactSetup(s, 1_000_000);
+    stepWorld(s, idle);
+    // 하한 먼저 — 피격이 없으면 아래 비교가 0 == 0 항진이 된다.
+    expect(hoisted.catalystDamaged.length, '피격이 일어나지 않았다').toBeGreaterThan(0);
+    const dealt = hoisted.catalystDamaged[0]!.dmg;
+    expect(dealt).toBeGreaterThan(0);
+    expect(1_000_000 - e.hp).toBe(Math.round(dealt));
+  });
+
+  it('음성 대조: `id 24` 가 없는 촉매 런에서는 표적 hp 가 그대로다', () => {
+    const s = withCards(0xc240, [1]);
+    const { e } = contactSetup(s, 1_000_000);
+    stepWorld(s, idle);
+    expect(hoisted.catalystDamaged.length, '피격이 일어나지 않았다').toBeGreaterThan(0);
+    expect(e.hp).toBe(1_000_000);
+  });
+
+  it('전이로 hp 가 바닥나면 **격추로 집계된다** (`dead` 마킹 누락 = 좀비 회귀)', () => {
+    const s = withCards(0xc241, [24]);
+    contactSetup(s, 1); // 전이 한 방에 죽는 표적.
+    expect(s.kills).toBe(0);
+    stepWorld(s, idle);
+    expect(hoisted.catalystDamaged.length, '피격이 일어나지 않았다').toBeGreaterThan(0);
+    expect(s.kills, 'hp 만 0 이고 dead 가 안 서면 compact 가 그냥 통과시킨다').toBe(1);
+  });
+
+  it('대가: 전이한 만큼 최대 HP 상한이 내려가고 현재 hp 가 따라 내려온다', () => {
+    const s = withCards(0xc242, [24]);
+    const { p } = contactSetup(s, 1_000_000);
+    const maxHp0 = p.maxHp;
+    p.hp = maxHp0; // 상한에 붙여 두면 클램프가 관측된다.
+    stepWorld(s, idle);
+    const dealt = Math.round(hoisted.catalystDamaged[0]!.dmg);
+    expect(dealt).toBeGreaterThan(0);
+    expect(maxHp0 - p.maxHp).toBe(dealt);
+    expect(p.hp).toBeLessThanOrEqual(p.maxHp);
+  });
+
+  it('음성 대조: `id 24` 가 없으면 최대 HP 상한이 안 움직인다', () => {
+    const s = withCards(0xc242, [1]);
+    const { p } = contactSetup(s, 1_000_000);
+    const maxHp0 = p.maxHp;
+    stepWorld(s, idle);
+    expect(hoisted.catalystDamaged.length, '피격이 일어나지 않았다').toBeGreaterThan(0);
+    expect(p.maxHp).toBe(maxHp0);
+  });
+
+  it('되돌릴 수단: 세그먼트가 넘어가면 깎인 상한이 통째로 복구된다', () => {
+    const s = withCards(0xc243, [24]);
+    const { p } = contactSetup(s, 1_000_000);
+    const maxHp0 = p.maxHp;
+    stepWorld(s, idle);
+    const cut = maxHp0 - p.maxHp;
+    expect(cut, '상한이 안 깎였다 — 복구 단언이 항진이 된다').toBeGreaterThan(0);
+
+    s.wave.segmentIndex++;
+    stepWorld(s, idle);
+    expect(p.maxHp).toBe(maxHp0);
+  });
+
+  it('복구는 세그먼트당 한 번이다 (같은 세그먼트에서 상한이 계속 불어나지 않는다)', () => {
+    const s = withCards(0xc244, [24]);
+    const { p } = contactSetup(s, 1_000_000);
+    const maxHp0 = p.maxHp;
+    stepWorld(s, idle);
+    expect(maxHp0 - p.maxHp).toBeGreaterThan(0);
+    s.wave.segmentIndex++;
+    stepWorld(s, idle);
+    expect(p.maxHp).toBe(maxHp0);
+    for (let i = 0; i < 5; i++) stepWorld(s, idle);
+    expect(p.maxHp, '매 틱 복구가 돌아 상한이 폭주했다').toBe(maxHp0);
+  });
+
+  it('슬롯 규약: `id 24` 가 없는 런은 촉매 슬롯이 전 칸 0 으로 남는다', () => {
+    const s = withCards(0xc245, [1]);
+    contactSetup(s, 1_000_000);
+    stepWorld(s, idle);
+    expect(hoisted.catalystDamaged.length, '피격이 일어나지 않았다').toBeGreaterThan(0);
+    expect(s.catalystSlots.every((v) => v === 0)).toBe(true);
+  });
+
+  it('배정표 규약: `id 24` 는 슬롯 7·8 만 쓴다(0·1 선점은 전역 배정표로 해소됐다)', () => {
+    const s = withCards(0xc246, [24]);
+    contactSetup(s, 1_000_000);
+    stepWorld(s, idle);
+    const used = s.catalystSlots.flatMap((v, i) => (v !== 0 ? [i] : []));
+    expect(used, '배정표(catalystSlots.ts)와 어긋난 칸을 썼다').toEqual([7, 8]);
   });
 });

@@ -39,6 +39,7 @@ import { makeBanner } from './titleBar.js';
 import { stripEmoji } from './text.js';
 import { bossName } from '../bossLabels.js';
 import { dropTipContent } from '../dropTip.js';
+import { catalystRule } from '../catalystText.js';
 
 export type { ResultDrop, SettlementSummary, ResultState, CommissionResultInfo };
 
@@ -461,7 +462,7 @@ export class ResultOverlayScreen {
         title: t(`catalyst.${def.slug}.name` as MessageKey),
         titleColor: COLOR.gold,
         subtitle: t(def.kind === 'signature' ? 'catalyst.kind.signature' : 'catalyst.kind.common'),
-        lines: [stripEmoji(t(`catalyst.${def.slug}.desc` as MessageKey))],
+        lines: [stripEmoji(catalystRule(def))],
       };
       chip.on('pointerover', (e) => this.showCatalystTip(tip, e.global.x, e.global.y));
       chip.on('pointermove', (e) => this.moveTip(e.global.x, e.global.y));

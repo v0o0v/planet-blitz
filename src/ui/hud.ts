@@ -162,11 +162,28 @@ export function hudActives(w: WorldState): readonly HudActiveState[] {
 }
 
 /**
+ * 런 중 촉매 슬롯 한 칸(헌장 §귀속 규율 1).
+ *
+ * 아이콘이 없으면(자산 누락) 이름 앞 두 글자로 접는다 — 칸 **자리 자체가 계약**이라 비면 안 된다.
+ */
+export interface CatalystSlotState {
+  /** `catalyst_id`. {@link Hud.flashCatalystSlot} 가 이 값으로 칸을 찾는다. */
+  id: number;
+  /** 이미 번역된 촉매 이름(툴팁·폴백 글자). */
+  name: string;
+  /** 아이콘 URL(있을 때만 — `exactOptionalPropertyTypes` 라 undefined 대입 금지). */
+  iconUrl?: string;
+}
+
+/**
  * 런 중 **침공 정보판**(화면 우측 가운데, 사용자 요청 2026-07-28).
  *
- * 지금 어느 행성 몇 단계를 돌고 있고, 주입한 촉매가 이 런에 어떤 페널티/보상을 걸고 있는지를
- * 한자리에 모은다. 예전에는 이 정보가 **출격 전 성계 지도에만** 있었다 — 런에 들어오면
- * 무엇을 걸고 싸우는지 확인할 방법이 없었다.
+ * 지금 어느 행성 몇 단계를 돌고 있고, 주입한 촉매가 무엇이며 무슨 공명이 섰는지를 한자리에
+ * 모은다. 예전에는 이 정보가 **출격 전 성계 지도에만** 있었다 — 런에 들어오면 무엇을 걸고
+ * 싸우는지 확인할 방법이 없었다.
+ *
+ * ⚠️ 예전 이 자리에는 축별 배율 2열(`페널티 적 내구도 +40%` …)이 있었다. ADR-0052 가 축 모델을
+ * 없애 표시할 값 자체가 사라졌고, 대신 들어온 것이 **3칸 촉매 스트립 + 공명 한 줄**이다.
  *
  * 값은 전부 호출부가 파생해 넣는다(HUD 는 순수 뷰 — `BossHudState.name` 과 같은 규율).
  */
@@ -177,14 +194,25 @@ export interface RunInfoState {
   stageLabel: string;
   /** `촉매 3장` / `주입 촉매 없음` — 이미 번역된 문구. */
   catalystLabel: string;
-  /** 페널티 줄(라벨 + `+40%`). 비어 있으면 그 열을 감춘다. */
-  penalties: readonly { label: string; value: string }[];
-  /** 보상 줄(라벨 + `+30%`). 비어 있으면 그 열을 감춘다. */
-  rewards: readonly { label: string; value: string }[];
-  /** 소제목 문구(`페널티`/`보상`) — i18n 은 호출부가 푼다. */
-  penaltyHead: string;
-  rewardHead: string;
+  /** 소제목 문구(`공명`) — i18n 은 호출부가 푼다. */
+  resonanceHead: string;
+  /** `불씨 (약공명)` / `아직 공명 없음` — 이미 번역된 문구. */
+  resonanceLabel: string;
+  /** 주입 촉매(정규화된 순서). 칸은 **항상 {@link CATALYST_SLOT_CELLS} 개**고 나머지는 빈 칸이다. */
+  catalysts: readonly CatalystSlotState[];
 }
+
+/**
+ * 촉매 스트립의 **고정 칸 수**. `SLOT_CAP`(3)의 화면 짝이다 — 픽커 헤더 스트립과 같은 배치라야
+ * "몇 번째 칸이 번쩍였나"가 곧 "어느 카드인가"로 읽힌다(헌장 §귀속 규율 1).
+ *
+ * ⚠️ `SLOT_CAP` 을 import 하지 않는 이유: `src/ui/hud.ts` 는 DOM 뷰 계층이고 데이터 상수를
+ * 끌어오면 순수 뷰 규율이 깨진다. 값이 갈리면 `tests/hudCatalystSlots.test.ts` 가 잡는다.
+ */
+export const CATALYST_SLOT_CELLS = 3;
+
+/** 번쩍임 지속(ms). CSS 애니메이션 길이와 **같아야** 클래스 제거가 어긋나지 않는다. */
+const CATALYST_FLASH_MS = 420;
 
 function bar(label: string, colorClass: string): { root: HTMLElement; fill: HTMLElement; text: HTMLElement } {
   const root = document.createElement('div');
@@ -290,6 +318,19 @@ const STYLE = `
 #pb-runinfo .pb-ri-row .v { font-weight:800; }
 #pb-runinfo .pb-ri-row.pen .v { color:#ff9a8a; }
 #pb-runinfo .pb-ri-row.rew .v { color:#8affc0; }
+/* 촉매 3칸 스트립(정보판 아래) — 칸 수는 고정이고 빈 칸도 자리를 지킨다(헌장 §귀속 규율 1).
+   ⚠️ 이 판은 클릭을 먹지 않는다 — 부모 #pb-runinfo 의 pointer-events:none 를 그대로 받는다. */
+#pb-runinfo .pb-ri-slots { display:flex; gap:6px; margin-top:8px; }
+#pb-runinfo .pb-ri-slot { position:relative; flex:1; height:40px; background:rgba(8,10,20,.8); border:1px solid rgba(255,255,255,.18); border-radius:8px; overflow:hidden; }
+#pb-runinfo .pb-ri-slot.empty { opacity:.45; }
+#pb-runinfo .pb-ri-slot img { position:absolute; inset:3px; width:calc(100% - 6px); height:calc(100% - 6px); object-fit:contain; image-rendering:pixelated; }
+#pb-runinfo .pb-ri-slot .pb-ri-slotname { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:#e8ecff; text-shadow:0 1px 2px #000; }
+/* 발동 번쩍임 — 지속은 CATALYST_FLASH_MS 와 **같은 값**이어야 클래스 제거가 어긋나지 않는다. */
+#pb-runinfo .pb-ri-slot.flash { animation:pb-cat-flash .42s ease-out; }
+@keyframes pb-cat-flash {
+  0% { box-shadow:0 0 0 0 rgba(255,231,138,.95); border-color:#ffe78a; background:rgba(255,231,138,.5); }
+  100% { box-shadow:0 0 14px 6px rgba(255,231,138,0); border-color:rgba(255,255,255,.18); background:rgba(8,10,20,.8); }
+}
 #pb-invprog { position:absolute; left:16px; top:16px; width:260px; background:rgba(12,16,30,.74); border:1px solid rgba(120,190,255,.35); border-radius:10px; padding:9px 11px; font-family:'Segoe UI',system-ui,sans-serif; color:#e8ecff; pointer-events:none; user-select:none; }
 #pb-invprog .pb-ip-head { display:flex; justify-content:space-between; align-items:baseline; font-size:11px; font-weight:800; letter-spacing:1.2px; color:#8ec8ff; text-shadow:0 1px 3px #000; }
 #pb-invprog .pb-ip-layer { font-size:13px; font-weight:800; color:#dbe8ff; margin-top:3px; text-shadow:0 1px 3px #000; }
@@ -373,6 +414,13 @@ export class Hud {
   private readonly contamMsg: HTMLElement;
   /** 런 중 침공 정보판(우측 가운데). 기본 숨김, {@link setRunInfo} 로 런 시작 때 채운다. */
   private readonly runInfo: HTMLElement;
+  /**
+   * 촉매 3칸 스트립의 칸 노드 — `catalyst_id → 칸`. {@link flashCatalystSlot} 이 여기서 찾는다.
+   * 빈 칸은 들어가지 않는다(번쩍일 대상이 없다).
+   */
+  private catalystSlotCells = new Map<number, HTMLElement>();
+  /** 칸별 번쩍임 해제 타이머. 연달아 발동하면 이전 타이머를 갈아 끼운다(겹치면 조기 해제된다). */
+  private readonly catalystFlashTimers = new Map<number, ReturnType<typeof setTimeout>>();
   /**
    * 침공 진행 패널(좌상단). 침공 런에서만 뜬다 — {@link setInvasion} 이 `null` 을 받으면 감춘다.
    * 좌하단 `#pb-hud`·상단중앙 `#pb-boss`/`#pb-bossmeter`·그 아래 `#pb-contam`·우중앙 `#pb-runinfo`
@@ -716,6 +764,7 @@ export class Hud {
   }
 
   setRunInfo(info: RunInfoState | null): void {
+    this.clearCatalystFlashes();
     if (info === null) {
       this.runInfo.style.display = 'none';
       this.runInfo.replaceChildren();
@@ -738,36 +787,88 @@ export class Hud {
     cat.textContent = info.catalystLabel;
     this.runInfo.appendChild(cat);
 
-    // 줄이 없는 축은 소제목까지 통째로 생략한다 — 무촉매 런에서 빈 '페널티'/'보상' 머리글만
-    // 남으면 "효과가 있는데 표시가 안 된다"로 오해된다.
-    this.appendRunInfoRows(info.penaltyHead, 'pen', info.penalties);
-    this.appendRunInfoRows(info.rewardHead, 'rew', info.rewards);
+    // 촉매 3칸 스트립 — 주입이 없어도 그린다. 빈 칸 셋이 "아무것도 안 걸었다"를 말하고,
+    // 그것은 "표시가 안 된다"와 구별되어야 한다(칸 자리 자체가 계약이다).
+    this.appendCatalystSlots(info.catalysts);
+
+    // 공명은 **한 런에 최대 하나**라 열이 아니라 한 줄이다.
+    const resoHead = document.createElement('div');
+    resoHead.className = 'pb-ri-head rew';
+    resoHead.textContent = info.resonanceHead;
+    this.runInfo.appendChild(resoHead);
+    const resoRow = document.createElement('div');
+    resoRow.className = 'pb-ri-row rew';
+    const resoLabel = document.createElement('span');
+    resoLabel.className = 'v';
+    resoLabel.textContent = info.resonanceLabel;
+    resoRow.appendChild(resoLabel);
+    this.runInfo.appendChild(resoRow);
 
     this.runInfo.style.display = 'block';
   }
 
-  private appendRunInfoRows(
-    heading: string,
-    kind: 'pen' | 'rew',
-    rows: readonly { label: string; value: string }[],
-  ): void {
-    if (rows.length === 0) return;
-    const head = document.createElement('div');
-    head.className = `pb-ri-head ${kind}`;
-    head.textContent = heading;
-    this.runInfo.appendChild(head);
-    for (const r of rows) {
-      const row = document.createElement('div');
-      row.className = `pb-ri-row ${kind}`;
-      const label = document.createElement('span');
-      label.textContent = r.label;
-      const value = document.createElement('span');
-      value.className = 'v';
-      value.textContent = r.value;
-      row.appendChild(label);
-      row.appendChild(value);
-      this.runInfo.appendChild(row);
+  /** 3칸 고정 스트립을 짓는다. 주입이 칸보다 적으면 나머지는 빈 칸으로 남는다. */
+  private appendCatalystSlots(slots: readonly CatalystSlotState[]): void {
+    const strip = document.createElement('div');
+    strip.className = 'pb-ri-slots';
+    const cells = new Map<number, HTMLElement>();
+    for (let i = 0; i < CATALYST_SLOT_CELLS; i++) {
+      const s = slots[i];
+      const cell = document.createElement('div');
+      cell.className = s === undefined ? 'pb-ri-slot empty' : 'pb-ri-slot';
+      if (s !== undefined) {
+        cell.title = s.name;
+        if (s.iconUrl !== undefined) {
+          const img = document.createElement('img');
+          img.src = s.iconUrl;
+          img.alt = s.name;
+          cell.appendChild(img);
+        } else {
+          // 자산이 없으면 이름 앞 두 글자 — 칸이 비어 보이면 "발동해도 어디가 번쩍이나"를 못 배운다.
+          const fallback = document.createElement('div');
+          fallback.className = 'pb-ri-slotname';
+          fallback.textContent = s.name.slice(0, 2);
+          cell.appendChild(fallback);
+        }
+        // ⚠️ 같은 촉매가 두 칸에 있을 수 없다(유니크 주입) — 먼저 온 칸을 지킨다.
+        if (!cells.has(s.id)) cells.set(s.id, cell);
+      }
+      strip.appendChild(cell);
     }
+    this.runInfo.appendChild(strip);
+    this.catalystSlotCells = cells;
+  }
+
+  /**
+   * 촉매 하나가 **발동했음**을 그 칸의 번쩍임으로 알린다(헌장 §귀속 규율 1 — "이펙트가 무엇이든
+   * 어느 카드인지가 화면 한 곳에서 항상 읽힌다").
+   *
+   * ⚠️ **호출부는 아직 없다.** 발동 이벤트를 쏘는 것은 sim 배선 레인의 몫이고, 여기서는 부를 수
+   * 있는 자리까지만 만들어 둔다. 없는 id·주입 안 된 id 는 조용히 무시한다(런마다 슬롯이 다르다).
+   */
+  flashCatalystSlot(catalystId: number): void {
+    const cell = this.catalystSlotCells.get(catalystId);
+    if (cell === undefined) return;
+    const prev = this.catalystFlashTimers.get(catalystId);
+    if (prev !== undefined) clearTimeout(prev);
+    // 클래스를 벗겼다 다시 입혀야 연달아 발동할 때 애니메이션이 처음부터 다시 돈다.
+    cell.classList.remove('flash');
+    void cell.offsetWidth;
+    cell.classList.add('flash');
+    this.catalystFlashTimers.set(
+      catalystId,
+      setTimeout(() => {
+        cell.classList.remove('flash');
+        this.catalystFlashTimers.delete(catalystId);
+      }, CATALYST_FLASH_MS),
+    );
+  }
+
+  /** 슬롯을 다시 짓기 전에 도는 타이머를 전부 끊는다(죽은 노드를 붙잡고 있으면 누수다). */
+  private clearCatalystFlashes(): void {
+    for (const timer of this.catalystFlashTimers.values()) clearTimeout(timer);
+    this.catalystFlashTimers.clear();
+    this.catalystSlotCells = new Map();
   }
 
   /**

@@ -17,7 +17,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createWorld, DEFAULT_CONFIG, stepWorld } from '../src/sim/world.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import {
+  createWorld,
+  DEFAULT_CONFIG,
+  stepWorld,
+  catalystSettlementOf,
+} from '../src/sim/world.js';
 import type { WorldState, InputFrame } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
 import {
@@ -39,10 +46,12 @@ function w(): WorldState {
 // ---------------------------------------------------------------------------
 
 describe('촉매 슬롯 접근자', () => {
-  it('새 배열은 고정폭 6 이고 전 슬롯 0 이다 (무폴드의 전제)', () => {
+  it('새 배열은 고정폭 24 이고 전 슬롯 0 이다 (무폴드의 전제)', () => {
     const s = createCatalystSlots();
     expect(s.length).toBe(CATALYST_SLOT_COUNT);
-    expect(CATALYST_SLOT_COUNT).toBe(6);
+    // 24 = 공용 15(전역 유일) + 특산 5(행성 간 재사용, 최대 수요 아르케) + 공명 2 + 예비 2.
+    // 도출 근거는 `catalystSlots.ts` 의 배정표가 정본이다.
+    expect(CATALYST_SLOT_COUNT).toBe(24);
     expect(s.every((v) => v === 0)).toBe(true);
   });
 
@@ -64,14 +73,18 @@ describe('촉매 슬롯 접근자', () => {
     expect(() => writeCatalystSlot(s, 1.5, 1)).toThrow();
   });
 
-  it('⚠️ 스킬 접근자를 빌려 쓰면 폭 검사가 새는 것을 보여 준다 (별도 접근자의 존재 이유)', () => {
-    // `writeSlot` 은 폭 8 을 검사하므로 6칸 배열의 슬롯 6·7 을 **통과시킨다** — 그 순간
-    // 배열이 조용히 늘어나 고정폭 폴드가 깨진다. 그래서 촉매는 자기 접근자를 갖는다.
-    const s = createCatalystSlots();
-    writeSlot(s, 6, 1); // 스킬 접근자는 막지 않는다.
-    expect(s.length).toBeGreaterThan(CATALYST_SLOT_COUNT);
-    // 촉매 접근자는 같은 시도를 막는다.
-    expect(() => writeCatalystSlot(createCatalystSlots(), 6, 1)).toThrow();
+  it('⚠️ 스킬 접근자를 빌려 쓰면 폭 검사가 어긋나는 것을 보여 준다 (별도 접근자의 존재 이유)', () => {
+    // 폭이 갈렸으므로 어긋남이 **양방향**이다. 그래서 접근자를 공유하면 안 된다.
+    //
+    // ① 촉매 폭(24) > 스킬 폭(8) — 스킬 접근자는 배정표가 실제로 쓰는 칸(예: 슬롯 13
+    //    `BulwarkSlot.Ticks`)을 **범위 밖이라며 거부한다**. 빌려 쓰면 정당한 쓰기가 죽는다.
+    expect(() => writeSlot(createCatalystSlots(), 13, 1)).toThrow();
+    expect(() => writeCatalystSlot(createCatalystSlots(), 13, 1)).not.toThrow();
+    // ② 반대 방향 — 촉매 접근자는 폭 24 를 검사하므로 8칸 스킬 배열의 슬롯 8..23 을
+    //    **통과시킨다**. 그 순간 배열이 조용히 늘어나 스킬 쪽 고정폭 폴드가 깨진다.
+    const skillLike = new Array<number>(8).fill(0);
+    writeCatalystSlot(skillLike, 12, 1);
+    expect(skillLike.length).toBeGreaterThan(8);
   });
 });
 
@@ -147,7 +160,7 @@ describe('hashWorld 촉매 슬롯 폴드', () => {
   });
 
   it('길이 프리픽스를 접지 않는다 — 배열 길이는 상수라 정보량 0 이다', () => {
-    expect(CATALYST_SLOT_COUNT).toBe(6);
+    expect(CATALYST_SLOT_COUNT).toBe(24);
     expect(w().catalystSlots.length).toBe(CATALYST_SLOT_COUNT);
   });
 
@@ -189,5 +202,53 @@ describe('무촉매 런 거동 불변 (골든 재생성 전에 통과해야 하�
     // 골든을 전량 갈아엎는데 기본 스위트는 초록이다. 실제 판정은 `pnpm test:sim` 의 골든
     // 픽스처가 진다 — 이 커밋을 올리기 전에 반드시 돌려라.
     expect(createCatalystSlots().every((v) => v === 0)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑤ 정산 채널 — S0 증명을 **대체하는** 새 불변식 (선결 앵커 레인)
+// ---------------------------------------------------------------------------
+//
+// 낡은 증명: *"`RunResult` 는 `WorldState` 를 import 조차 안 하는 닫힌 인터페이스"*.
+// id 5·18·21 이 정산 채널을 요구해 그것이 뚫렸으므로, 같은 것을 지키는 셋을 여기서 기계로
+// 검사한다(셋의 서술 정본은 `catalystHooks.ts` 의 `catalystSettlementOf` 주석).
+
+describe('정산 채널 — 원시값만 · 복사본 · 무촉매는 채널 부재', () => {
+  it('① 원시값만: `src/save/settlement.ts` 에 식별자 `WorldState` 가 한 번도 없다', () => {
+    // 이것이 낡은 증명의 **대체물**이다. 정산이 sim 타입을 알게 되는 순간 두 층의 경계가
+    // 사라지고, 그 경계가 촉매 48종이 정산을 임의로 오염시키지 못하게 막는 유일한 벽이다.
+    const src = readFileSync(
+      fileURLToPath(new URL('../src/save/settlement.ts', import.meta.url)),
+      'utf8',
+    );
+    expect(/\bWorldState\b/.test(src), '정산이 sim 타입을 들였다').toBe(false);
+    // 채널 필드 자체는 있어야 한다 — 없으면 위 단언이 "채널이 없어서 통과"하는 항진이 된다.
+    expect(src.includes('catalystSettlement?: readonly number[]')).toBe(true);
+  });
+
+  it('② 촉매 런: 고정폭 6 · 전부 비음 정수 (원시값 계약)', () => {
+    const s = createWorld(0xca7b, { ...DEFAULT_CONFIG, catalysts: [1] });
+    const out = catalystSettlementOf(s);
+    expect(out).toBeDefined();
+    expect(out).toHaveLength(CATALYST_SLOT_COUNT);
+    for (const v of out ?? []) {
+      expect(typeof v).toBe('number');
+      expect(Number.isInteger(v) && v >= 0).toBe(true);
+    }
+  });
+
+  it('② 복사본이다 — 정산이 변형해도 sim 슬롯이 안 움직인다', () => {
+    const s = createWorld(0xca7c, { ...DEFAULT_CONFIG, catalysts: [1] });
+    writeCatalystSlot(s.catalystSlots, 0, 7);
+    const out = catalystSettlementOf(s) as number[];
+    expect(out[0]).toBe(7);
+    out[0] = 999; // 정산 쪽 변형을 흉내 낸다
+    expect(s.catalystSlots[0], '참조를 내줬다 — 정산이 sim 상태의 두 번째 작성자가 된다').toBe(7);
+  });
+
+  it('③ 무촉매 런은 채널 자체가 없다 (`undefined` → RunResult 에 필드 미탑재)', () => {
+    const s = w();
+    expect(s.catalystOn).toBe(false);
+    expect(catalystSettlementOf(s)).toBeUndefined();
   });
 });

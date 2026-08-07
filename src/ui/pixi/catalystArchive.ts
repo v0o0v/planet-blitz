@@ -63,7 +63,6 @@ import {
   catalystIconKey,
   catalystIsPurchasable,
   catalystSalvageValue,
-  SLOT_CAP,
   type CatalystDef,
 } from '../../data/catalysts.js';
 import {
@@ -98,7 +97,7 @@ import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { PixiButton } from './button.js';
 import { makeScrollArea } from './scrollArea.js';
 import { attachRowClick, stopRowPropagation } from './listRow.js';
-import { penaltyRow, rewardRow } from '../catalystLabels.js';
+import { catalystCapLine, catalystRule, catalystTagLabel } from '../catalystText.js';
 import { loadHangarTextures, HANGAR_BACKDROP_NAME, type HangarTextures } from './hangarTextures.js';
 import { HangarBackdrop } from './hangarBackdrop.js';
 import { makeCinematicPanel, type CinematicPanel } from './cinematicPanel.js';
@@ -982,7 +981,7 @@ export class CatalystArchiveScreen {
    *
    * **수치를 그대로 보여준다.** 목록 행의 설명은 방향만 말하고("적 내구도 증가"), 얼마나인지는
    * 어디에도 안 나와 있었다 — 촉매는 페널티와 보상을 한 몸으로 갖는 도박이라 그 크기를 모르면
-   * 고를 근거가 없다. 축 이름은 `catalystLabels.ts` 한 곳에서만 유도한다(픽커·런 중 정보판과
+   * 고를 근거가 없다. 태그·상한 문구는 `catalystText.ts` 한 곳에서만 유도한다(픽커·런 중 정보판과
    * **같은 문구**여야 한다 — 각자 매핑을 들면 "픽커는 적 체력, HUD 는 Enemy HP" 가 된다).
    *
    * 위젯을 **한 번만 만들고** 선택이 바뀌면 `.text`·텍스처만 갈아끼운다. 목록 행 클릭마다
@@ -1099,26 +1098,12 @@ export class CatalystArchiveScreen {
     } else {
       d.icon.visible = false;
       d.glyph.visible = true;
-      d.glyph.text = AXIS_GLYPH[def.reward.axis] ?? '?';
+      d.glyph.text = AXIS_GLYPH[def.cap.axis] ?? '?';
     }
 
     d.name.text = t(`catalyst.${def.slug}.name` as MessageKey);
-    d.desc.text = t(`catalyst.${def.slug}.desc` as MessageKey);
-
-    // 장당 효과 — `mult = 1 + perStack` 이 `formatCatalystMult` 의 입력 계약이다.
-    const rew = rewardRow({
-      axis: def.reward.axis,
-      mult: 1 + def.reward.perStack,
-      ...(def.reward.powerStat === undefined ? {} : { powerStat: def.reward.powerStat }),
-    });
-    const pen = penaltyRow({ axis: def.penalty.axis, mult: 1 + def.penalty.perStack });
-    // 상한까지 몰았을 때 — 선형 가산이라 N장 = N·perStack(`catalysts.ts` 스택 수학 R9).
-    const capRew = rewardRow({
-      axis: def.reward.axis,
-      mult: 1 + def.reward.perStack * SLOT_CAP,
-      ...(def.reward.powerStat === undefined ? {} : { powerStat: def.reward.powerStat }),
-    });
-    const capPen = penaltyRow({ axis: def.penalty.axis, mult: 1 + def.penalty.perStack * SLOT_CAP });
+    // 본문은 **규칙문**이다 — 축별 배율 줄이 사라진 자리를 이 한 문장이 대신한다(ADR-0052).
+    d.desc.text = catalystRule(def);
 
     const purchasable = catalystIsPurchasable(def.id) && catalystBuyPrice(def.id) > 0;
     const lines: { label: string; value: string }[] = [
@@ -1130,12 +1115,11 @@ export class CatalystArchiveScreen {
         label: t('catalyst.archive.labelOwned'),
         value: t('catalyst.manage.owned', { n: this.inventory.get(def.id) ?? 0 }),
       },
-      { label: t('catalyst.archive.rewardPerStack'), value: `${rew.label}  ${rew.value}` },
-      { label: t('catalyst.archive.penaltyPerStack'), value: `${pen.label}  ${pen.value}` },
-      {
-        label: t('catalyst.archive.atCap', { n: SLOT_CAP }),
-        value: t('catalyst.archive.capValue', { reward: capRew.value, penalty: capPen.value }),
-      },
+      { label: t('catalyst.archive.rowTags'), value: def.tags.map(catalystTagLabel).join(' · ') },
+      // ⚠️ 예전 이 자리에는 "SLOT_CAP 장 주입 시 최대 배율"이 있었다. 그 미리보기는 **축 모델
+      // 파생**이라(장당 perStack × 장수) 스택이 사라진 지금 계산할 값 자체가 없다. 대신 카드가
+      // 실제로 갖는 유계 — **정산 상한** — 을 그대로 보여준다(ADR-0052 §경제 결합 규율).
+      { label: t('catalyst.archive.rowCap'), value: catalystCapLine(def.cap) },
       {
         label: t('catalyst.archive.labelSalvage'),
         value: t('catalyst.salvage.gained', { n: catalystSalvageValue(def.id) }),
@@ -1399,7 +1383,7 @@ export class CatalystArchiveScreen {
       row.addChild(token);
       const glyph = new Text({
         resolution: 2,
-        text: AXIS_GLYPH[def.reward.axis] ?? '?',
+        text: AXIS_GLYPH[def.cap.axis] ?? '?',
         style: { fontFamily: UI_FONT, fontSize: 28, fontWeight: '800', fill: COLOR.cream },
       });
       glyph.anchor.set(0.5);
@@ -1421,7 +1405,7 @@ export class CatalystArchiveScreen {
 
     const info = new Text({
       resolution: 2,
-      text: `${t(def.kind === 'signature' ? 'catalyst.kind.signature' : 'catalyst.kind.common')}  ·  ${t(`catalyst.${def.slug}.desc` as MessageKey)}`,
+      text: `${t(def.kind === 'signature' ? 'catalyst.kind.signature' : 'catalyst.kind.common')}  ·  ${catalystRule(def)}`,
       style: {
         fontFamily: UI_FONT,
         fontSize: 16,

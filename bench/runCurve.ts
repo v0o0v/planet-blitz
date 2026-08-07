@@ -12,6 +12,29 @@
  * 인자: `--levels=10,40` · `--ship=0` · `--planet=0` · `--json` · `--md`
  * 기본 출력은 **ASCII 요약표**다. `--md` 는 연구 문서용 마크다운(한글 포함)을 **추가로** 낸다.
  *
+ * ## 촉매 파워 스윕 모드 — `--catalysts=17,22,29` (ADR-0052 레인 F2, 감사표 §미해결 1)
+ * 지정하면 위 무촉매 모드 대신 **무촉매 기준선과 짝지은 배수**를 낸다 — 설계 명세 `파워:` 칸의
+ * 정의가 절대값이 아니라 "무촉매 대비 클리어 시간 등 배수"이기 때문이다. 같은 레벨·같은 시드로
+ * base(`catalysts:[]`)·cat(`catalysts:[...]`) 두 런을 돌려 clearRate·clearSec·bossReachRate·
+ * xpTotal·lootCount 의 catalyst/base 배수를 낸다. `--json`/`--md` 는 아직 이 모드에 없다.
+ *   SEEDS=5 node .../vite-node.mjs bench/runCurve.ts -- --levels=10,40 --catalysts=17,22,29
+ *
+ * ⚠️ **지금은 배수가 전부 1.00(±xp/loot 는 그대로) 이 정상이다** — `src/sim/catalystHooks.ts`
+ * 전 분기가 아직 스텁이라 촉매가 sim 산술에 실제로 개입하지 않는다(ADR-0052 배선 레인이 나중에
+ * 채운다). 대신 이 모드는 **계측기가 촉매 id 를 실제로 싣고 있다는 것**을 `hashDiverge` 열로
+ * 증명한다 — `config.catalysts` 는 `createWorld` 직후 정규화되어 해시 꼬리에 즉시 접히므로
+ * (`src/sim/replay.ts` :530-538), 시뮬레이션을 한 틱도 안 돌려도 촉매 유무 두 런의 tick0 해시가
+ * 갈린다. `hashDiverge=NO(bug!)` 가 뜨면 그건 계측기 결함이지 sim 배선 문제가 아니다.
+ *
+ * ⚠️ **조향은 `measurePilotInput` 을 쓴다**(얼어붙은 `autopilotInput` 이 아니다) — 대시 발동
+ * 촉매(id 27·29 등)를 재려면 봇이 실제로 대시를 눌러야 하는데 `autopilotInput` 은 전 분기
+ * `dash:false` 로 동결돼 있다(`src/sim/autopilot.ts`). `src/sim/measurePilot.ts` 가 이미
+ * "쿨다운 0 이면 누른다" 정책의 측정 전용 파일럿을 제공하므로 그것을 그대로 쓴다(정책은
+ * `autopilot.ts` 를 고치지 않고도 이 파일 안에서만 바꿀 수 있다). base·cat 두 런이 같은
+ * 파일럿을 쓰므로 비교는 여전히 촉매 유무만의 차이다. 단 `id 1`(plunder — 엘리트/보스를
+ * **몸으로 부딪혀야** 강탈)처럼 접촉 자체가 필요한 카드는 `measurePilotInput` 으로도 못 잰다
+ * — 그 파일럿도 카이팅 조향(`pilotSteer`)이라 근접전을 만들지 않는다. 자세한 사유는 아래 보고.
+ *
  * ## 왜 이 파일이 생겼는가 — "조용한 성공"이 있었다 (2026-08-06)
  * 곡선 스윕은 원래 `src/bench/rosterBench.ts` 의 `main()` 안 `--curve` 분기였고, 그 분기는
  * `isCliEntry()` 뒤에 있었다. 그런데 `isCliEntry()` 는 `argv[1]` 이 `rosterBench.ts` 인지만
@@ -41,6 +64,18 @@ import {
   runCurveSweep,
 } from '../src/bench/rosterBench.js';
 import type { CurvePoint } from '../src/bench/rosterBench.js';
+import {
+  standardEquipped,
+  standardPerTree,
+  standardStage,
+  investVector,
+} from '../src/bench/standardBuild.js';
+import { defaultProfile, activeShip } from '../src/save/profile.js';
+import { buildRunConfig } from '../src/run/runConfig.js';
+import { createWorld, stepWorld } from '../src/sim/world.js';
+import { hashWorld } from '../src/sim/replay.js';
+import { beginMeasureRun, measurePilotInput } from '../src/sim/measurePilot.js';
+import { catalystById, SLOT_CAP } from '../src/data/catalysts.js';
 
 interface NodeProcess {
   readonly argv?: readonly string[];
@@ -75,6 +110,228 @@ function resolveLevels(): readonly number[] {
     .split(',')
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isFinite(n) && n > 0);
+}
+
+/**
+ * `--catalysts=17,22,29` 로 이 런에 실을 촉매 id 를 받는다(ADR-0052 레인 F2, 감사표 미해결 1).
+ * 미지정이면 undefined(= 기존 무촉매 곡선 모드, 거동 불변). 지정되면 아래 `runPairedCurveSweep`
+ * 로 분기해 **무촉매 기준선과 짝지은 배수**를 낸다 — `파워:` 칸의 정의가 절대값이 아니라
+ * "무촉매 대비 배수"이기 때문이다(설계 감사표 §미해결 1).
+ *
+ * 미지 id 는 걸러내고 경고만 남긴다(죽이지 않는다 — 오타 하나로 축소 실행 전체를 잃을 이유가
+ * 없다). `SLOT_CAP`(런당 최대 3장) 초과도 마찬가지로 경고만 한다 — 벤치는 감도 분석 목적으로
+ * 정식 슬롯 캡보다 많은 조합을 재고 싶을 수 있다.
+ */
+function resolveCatalysts(): readonly number[] | undefined {
+  const raw = argOf('catalysts');
+  if (raw === undefined) return undefined;
+  const ids = raw
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n >= 0);
+  const known = ids.filter((id) => {
+    const def = catalystById(id);
+    if (def === undefined) {
+      console.error(`[runCurve] WARNING unknown catalyst id ${id} -- dropped.`);
+      return false;
+    }
+    return true;
+  });
+  if (known.length > SLOT_CAP) {
+    console.error(
+      `[runCurve] WARNING ${known.length} catalysts > SLOT_CAP(${SLOT_CAP}) -- ` +
+        'this exceeds what a real run can carry, proceeding for sensitivity analysis anyway.',
+    );
+  }
+  return known;
+}
+
+// ---------------------------------------------------------------------------
+// 촉매 짝지은 배수 스윕 (ADR-0052 레인 F2)
+// ---------------------------------------------------------------------------
+
+/**
+ * 한 시드에 대해 **무촉매 기준선**과 **촉매 런**을 같은 장비·투자·시드로 짝지어 돌린다.
+ *
+ * ⚠️ 조향은 `measurePilotInput`(+`beginMeasureRun`) 을 쓴다 — 얼어붙은 `autopilotInput`(전
+ * 분기 dash:false)로는 대시 발동 촉매(예 id 27·29)가 봇 런에서 영원히 이득 0 으로 측정된다
+ * (감사표 §미해결 2, 아래 `AUTOPILOT NOTE` 참고). 두 런(base·cat)이 같은 파일럿을 쓰므로
+ * 비교는 여전히 공정하다 — 파일럿 차이가 아니라 촉매 유무만 갈린다.
+ *
+ * `hashWorld` 를 tick0(스텝 이전)에서도 찍어 낸다 — `config.catalysts` 는 `createWorld` 호출
+ * 즉시 해시 꼬리에 접히므로(정규화 후, `replay.ts`), 시뮬레이션을 한 틱도 돌리지 않아도 이미
+ * 갈린다. 이것이 "계측기가 촉매를 실제로 싣고 있다"의 물증이다(sim 배선 여부와 무관).
+ */
+function runPaired(
+  ship: number,
+  planet: number,
+  level: number,
+  seed: number,
+  catalysts: readonly number[],
+): {
+  readonly hashBaseTick0: number;
+  readonly hashCatTick0: number;
+  readonly base: { victory: boolean; ticks: number; xpTotal: number; lootCount: number; sawBoss: boolean };
+  readonly cat: { victory: boolean; ticks: number; xpTotal: number; lootCount: number; sawBoss: boolean };
+} {
+  const stageNo = standardStage(level);
+  const perTree = standardPerTree(level);
+
+  function runOne(cats: readonly number[]) {
+    const p = defaultProfile();
+    const s = activeShip(p);
+    s.typeId = ship;
+    s.skillInvest = investVector(ship, perTree);
+    s.level = level;
+    s.equipped = standardEquipped(level, seed, planet);
+    const config = buildRunConfig(p, { planet, stage: stageNo, catalysts: [...cats] });
+    const state = createWorld(seed, config);
+    beginMeasureRun(state);
+    const hashTick0 = hashWorld(state);
+
+    let sawBoss = false;
+    for (let i = 0; i < MAX_TICKS; i++) {
+      stepWorld(state, measurePilotInput(state));
+      if (state.wave.boss) sawBoss = true;
+      if (state.victory || state.gameOver) break;
+    }
+    return {
+      hashTick0,
+      victory: state.victory,
+      ticks: state.tick,
+      xpTotal: state.xpTotal,
+      lootCount: state.loot.length,
+      sawBoss,
+    };
+  }
+
+  const base = runOne([]);
+  const cat = runOne(catalysts);
+  return {
+    hashBaseTick0: base.hashTick0,
+    hashCatTick0: cat.hashTick0,
+    base: { victory: base.victory, ticks: base.ticks, xpTotal: base.xpTotal, lootCount: base.lootCount, sawBoss: base.sawBoss },
+    cat: { victory: cat.victory, ticks: cat.ticks, xpTotal: cat.xpTotal, lootCount: cat.lootCount, sawBoss: cat.sawBoss },
+  };
+}
+
+interface RatioPoint {
+  readonly level: number;
+  readonly stage: number;
+  readonly runs: number;
+  readonly clearRateBase: number;
+  readonly clearRateCat: number;
+  readonly clearSecRatio: number | null;
+  readonly bossReachRatio: number | null;
+  readonly xpTotalRatio: number | null;
+  readonly lootCountRatio: number | null;
+  readonly hashesDiverge: boolean;
+}
+
+function ratioOf(catV: number, baseV: number): number | null {
+  if (baseV === 0) return null;
+  return catV / baseV;
+}
+
+/** `runPaired` 를 레벨×시드 그리드로 돌려 무촉매 대비 배수를 낸다 — `파워:` 칸의 정의. */
+function runPairedCurveSweep(opts: {
+  readonly ship: number;
+  readonly planet: number;
+  readonly seeds: readonly number[];
+  readonly levels: readonly number[];
+  readonly catalysts: readonly number[];
+  readonly onPoint?: (p: RatioPoint) => void;
+}): RatioPoint[] {
+  const out: RatioPoint[] = [];
+  for (const level of opts.levels) {
+    const stageNo = standardStage(level);
+    let baseWins = 0;
+    let catWins = 0;
+    let baseBossReach = 0;
+    let catBossReach = 0;
+    let baseClearSecSum = 0;
+    let catClearSecSum = 0;
+    let baseXpSum = 0;
+    let catXpSum = 0;
+    let baseLootSum = 0;
+    let catLootSum = 0;
+    let hashesDiverge = true;
+
+    for (const seed of opts.seeds) {
+      const r = runPaired(opts.ship, opts.planet, level, seed, opts.catalysts);
+      if (r.hashBaseTick0 === r.hashCatTick0) hashesDiverge = false;
+      if (r.base.victory) {
+        baseWins++;
+        baseClearSecSum += r.base.ticks / 60;
+      }
+      if (r.cat.victory) {
+        catWins++;
+        catClearSecSum += r.cat.ticks / 60;
+      }
+      if (r.base.sawBoss) baseBossReach++;
+      if (r.cat.sawBoss) catBossReach++;
+      baseXpSum += r.base.xpTotal;
+      catXpSum += r.cat.xpTotal;
+      baseLootSum += r.base.lootCount;
+      catLootSum += r.cat.lootCount;
+    }
+
+    const n = opts.seeds.length;
+    const point: RatioPoint = {
+      level,
+      stage: stageNo,
+      runs: n,
+      clearRateBase: n > 0 ? baseWins / n : 0,
+      clearRateCat: n > 0 ? catWins / n : 0,
+      clearSecRatio: ratioOf(
+        catWins > 0 ? catClearSecSum / catWins : 0,
+        baseWins > 0 ? baseClearSecSum / baseWins : 0,
+      ),
+      bossReachRatio: ratioOf(catBossReach, baseBossReach),
+      xpTotalRatio: ratioOf(catXpSum, baseXpSum),
+      lootCountRatio: ratioOf(catLootSum, baseLootSum),
+      hashesDiverge,
+    };
+    out.push(point);
+    opts.onPoint?.(point);
+  }
+  return out;
+}
+
+function r2(x: number | null): string {
+  return x === null ? '-' : x.toFixed(2);
+}
+
+function asciiRatioTable(points: readonly RatioPoint[], catalysts: readonly number[]): void {
+  console.log(
+    `--- catalyst power sweep (ratio vs 무촉매 기준선, ADR-0052 파워: 칸 정의) -- catalysts=[${catalysts.join(',')}] ---`,
+  );
+  console.log(
+    'lv  | stg | clear%(base->cat)     | clearSecX | bossReachX | xpTotalX | lootCountX | hashDiverge',
+  );
+  for (const p of points) {
+    console.log(
+      `${String(p.level).padStart(3)} | ${String(p.stage).padStart(3)} | ` +
+        `${`${(p.clearRateBase * 100).toFixed(1)}->${(p.clearRateCat * 100).toFixed(1)}`.padStart(21)} | ` +
+        `${r2(p.clearSecRatio).padStart(9)} | ${r2(p.bossReachRatio).padStart(10)} | ` +
+        `${r2(p.xpTotalRatio).padStart(8)} | ${r2(p.lootCountRatio).padStart(10)} | ` +
+        `${p.hashesDiverge ? 'yes' : 'NO(bug!)'}`,
+    );
+  }
+  console.log('');
+  console.log(
+    'NOTE ratio == 1.00 across the board is EXPECTED right now -- catalystHooks.ts branches are',
+  );
+  console.log(
+    '     all still stubs (ADR-0052 wiring lane lands later). hashDiverge=yes proves the harness',
+  );
+  console.log('     is actually loading the catalyst ids into the run config either way.');
+  console.log(
+    'AUTOPILOT NOTE this sweep uses measurePilotInput (dash+actives on cooldown), not the frozen',
+  );
+  console.log(
+    '     autopilotInput -- see report for why (dash-gated catalysts measure as 0 gain otherwise).',
+  );
 }
 
 /**
@@ -139,14 +396,41 @@ function main(): void {
   const planet = Number(argOf('planet') ?? 0);
   const wantJson = ARGV.includes('--json');
   const wantMd = ARGV.includes('--md');
+  const catalysts = resolveCatalysts();
 
   if (levels.length === 0) failEmpty('--levels resolved to an empty list.');
   if (seeds.length === 0) failEmpty('SEEDS resolved to an empty list.');
 
-  console.error(
-    `[runCurve] ship=${ship} planet=${planet} seeds=${seeds.length}/${ROSTER_SEEDS.length} ` +
-      `levels=${levels.join(',')} maxTicks=${MAX_TICKS}`,
-  );
+  if (catalysts !== undefined) {
+    // 촉매 파워 스윕 모드(ADR-0052 레인 F2) — 무촉매 기준선과 짝지은 배수를 낸다.
+    // `--json`/`--md` 는 이 모드에서 아직 안 만든다(요구되면 asciiRatioTable 과 같은 자리에 추가).
+    console.error(
+      `[runCurve] CATALYST SWEEP catalysts=[${catalysts.join(',')}] ship=${ship} planet=${planet} ` +
+        `seeds=${seeds.length}/${ROSTER_SEEDS.length} levels=${levels.join(',')} maxTicks=${MAX_TICKS} ` +
+        '(paired base vs catalyst runs; measurePilotInput, not frozen autopilot)',
+    );
+    const t0 = Date.now();
+    const points = runPairedCurveSweep({
+      ship,
+      planet,
+      seeds,
+      levels,
+      catalysts,
+      onPoint: (p) =>
+        console.error(
+          `[runCurve] Lv${p.level} stage${p.stage}: clear ${(p.clearRateBase * 100).toFixed(1)}%->` +
+            `${(p.clearRateCat * 100).toFixed(1)}% clearSecX=${r2(p.clearSecRatio)} ` +
+            `xpX=${r2(p.xpTotalRatio)} lootX=${r2(p.lootCountRatio)} hashDiverge=${p.hashesDiverge}`,
+        ),
+    });
+    const elapsedMs = Date.now() - t0;
+    if (points.length === 0) failEmpty('runPairedCurveSweep returned zero points.');
+    asciiRatioTable(points, catalysts);
+    console.log('');
+    console.log(`elapsed: ${(elapsedMs / 1000).toFixed(1)}s`);
+    console.log('done.');
+    return;
+  }
 
   const t0 = Date.now();
   const points = runCurveSweep({

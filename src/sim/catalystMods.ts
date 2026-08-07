@@ -25,9 +25,7 @@
  *     `power` 5스탯은 createWorld 에서 직접 `catalystPowerMult` 로 스탯에 곱한다 — 여기 아님.)
  */
 
-import { catalystPenaltyMult, catalystRewardMult } from '../data/catalysts.js';
-
-/** 촉매가 sim 노브에 미치는 배율 번들(런 시작에 1회 해석). */
+/** 런이 sim 노브에 거는 배율 번들(런 시작 시 중립, 규칙·조우가 런 중에 갱신). */
 export interface CatalystMods {
   // --- 페널티 6축(≥1, 클수록 난이도↑) ---
   /** 적 HP 배율(스폰 HP 에 곱). */
@@ -68,21 +66,27 @@ export const NEUTRAL_CATALYST_MODS: CatalystMods = {
 };
 
 /**
- * `config.catalysts` 로부터 배율 번들을 해석한다. 미지정/빈 배열이면 중립 번들을 그대로
- * 돌려준다(새 객체를 만들지 않아, 무촉매 런이 기존 경로와 산술적으로 바이트 동일하다).
+ * 런 시작 시의 번들. **ADR-0052 이후 촉매는 여기에 아무것도 싣지 않는다 — 항상 중립이다.**
+ *
+ * ## 왜 함수와 필드를 지우지 않았는가
+ * 이 번들의 소비자는 촉매만이 아니다. 실측으로 둘이 더 있다:
+ *  - **조우 제단 부스트**(`encounters/light.ts:406-412`)가 `drop` 을 런 중에 곱한다.
+ *  - **스킬 앵커**(`skillHooks.ts:950`)가 `rarity` 를 인자로 받는다.
+ * 즉 이것은 이제 "촉매 배율 번들"이 아니라 **런 배율 번들**이고, 촉매는 여러 기여자 중 하나였다가
+ * 축 모델과 함께 빠진 것이다. 통째로 지우면 촉매와 무관한 두 기능이 깨진다.
+ *
+ * 필드도 줄이지 않았다 — 재작성된 48종 중 여럿이 **런 중에** 이 노브들을 쓴다
+ * (`id 0` 전리품 더미가 적을 가속 · `id 30` 세그먼트 적 상한 누진 · `id 43` 구름 안 적 가속…).
+ * 구 모델과 다른 점은 **출격 시점에 축 테이블에서 한 번 접히는 것이 아니라, 규칙이 런 중에
+ * 조건부로 쓴다**는 것이다. 그래서 배선 레인이 쓸 자리로 남기고 여기서는 중립으로 시작만 시킨다.
+ *
+ * ⚠️ 그러므로 `state.catalystMods` 는 **읽기 전용이 아니다**(조우가 이미 교체한다). 규칙이 쓸
+ * 때도 필드 직접 대입이 아니라 **번들 통째 교체**(스프레드)를 따라라 —
+ * `encounters/light.ts:406-412` 가 그 선례이고 사유가 거기 적혀 있다.
+ *
+ * 인자는 호출부(`world.ts` 가 `cfg.catalysts` 를 넘긴다) 시그니처 호환을 위해 남긴다.
  */
 export function resolveCatalystMods(catalysts: readonly number[] | undefined): CatalystMods {
-  if (catalysts === undefined || catalysts.length === 0) return NEUTRAL_CATALYST_MODS;
-  return {
-    enemyHp: catalystPenaltyMult(catalysts, 'enemyHp'),
-    enemySpeed: catalystPenaltyMult(catalysts, 'enemySpeed'),
-    enemyDamage: catalystPenaltyMult(catalysts, 'enemyDamage'),
-    enemyCount: catalystPenaltyMult(catalysts, 'enemyCount'),
-    enemyBulletSpeed: catalystPenaltyMult(catalysts, 'enemyBulletSpeed'),
-    playerHpDown: catalystPenaltyMult(catalysts, 'playerHpDown'),
-    drop: catalystRewardMult(catalysts, 'drop'),
-    rarity: catalystRewardMult(catalysts, 'rarity'),
-    xp: catalystRewardMult(catalysts, 'xp'),
-    resource: catalystRewardMult(catalysts, 'resource'),
-  };
+  void catalysts;
+  return NEUTRAL_CATALYST_MODS;
 }

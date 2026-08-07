@@ -732,7 +732,7 @@ export function hashWorld(state: WorldState): number {
     for (let i = 0; i < SKILL_SLOT_COUNT; i++) h = hashU32(h, (sc[i] ?? 0) >>> 0);
     for (let i = 0; i < SKILL_SLOT_COUNT; i++) h = hashU32(h, (ss[i] ?? 0) >>> 0);
   }
-  // --- 촉매 슬롯 6칸(APPEND-ONLY, 조건부 꼬리 · ADR-0052) ---
+  // --- 촉매 슬롯 `CATALYST_SLOT_COUNT` 칸(APPEND-ONLY, 조건부 꼬리 · ADR-0052) ---
   // `state.catalystSlots` 한 벌. 촉매 48종이 런타임 상태를 두는 **유일한 자리**이고
   // (`src/sim/catalystSlots.ts` 가 폭·값 규약의 정본), 접는 이유는 그 값이 sim 산술에 실제로
   // 들어가기 때문이다 — 같은 시드·같은 입력이라도 슬롯이 다르면 다른 런이다.
@@ -742,8 +742,10 @@ export function hashWorld(state: WorldState): number {
   // 이 아래에만 append 하고, **커밋 직전에 꼬리를 다시 열어 진짜 맨 끝인지 확인하라** —
   // 스킬 레인과 촉매 레인이 같은 재생성 창에 착지하는 동안 이 자리가 두 번 밀렸다.
   //
-  // ⚠️ **all-or-nothing.** 6칸을 하나의 OR 조건으로 묶고, 참이면 6칸 전부를 고정 폭으로
+  // ⚠️ **all-or-nothing.** 전 칸을 하나의 OR 조건으로 묶고, 참이면 **전 칸을 고정 폭으로**
   // 접는다. 칸별로 "0이면 생략"하면 (1,0,…) 과 (0,1,…) 이 같은 바이트열이 되어 충돌한다.
+  // 폭이 6 → 24 로 늘었을 때(배정표 확정) 이 형태 덕에 **무촉매 런의 바이트가 그대로였다** —
+  // `scripts/catalystByteInvariance.ts` 의 sha256 이 폭 변경 전후로 동일함이 그 물증이다.
   //
   // ⚠️ **길이 프리픽스를 접지 마라.** 폭이 `CATALYST_SLOT_COUNT` 고정이라 길이는 상수이고,
   // 접으면 정보량 0 의 파생 폴드가 되어 금지 규율 위반이다(`totalTicks` 선례).

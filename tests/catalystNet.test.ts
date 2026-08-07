@@ -104,8 +104,10 @@ describe('consumeCatalystsOnServer', () => {
     const gw = new FakeGateway();
     const out = await consumeCatalystsOnServer([15, 2, 15], 0, { gateway: gw });
     expect(out).toEqual({ status: 'ok', runId: 'run-abc-uuid', resourceMult: 1.3 });
-    // 정규화(오름차순·중복 보존·미지 제거)로 서버에 넘어간다.
-    expect(gw.consumeArgs).toEqual({ ids: [2, 15, 15], planet: 0 });
+    // 정규화(오름차순·**중복 제거**·미지 제거)로 서버에 넘어간다.
+    // ⚠️ ADR-0052 유니크 주입으로 거동이 바뀌었다 — 구 모델은 중복을 **스택으로 보존**해
+    // `[2,15,15]` 를 넘겼다. 지금은 같은 카드 2장이 성립하지 않으므로 접힌다.
+    expect(gw.consumeArgs).toEqual({ ids: [2, 15], planet: 0 });
   });
 
   it('RPC 거부/오프라인이면 failed(아이템 미차감 — 서버 롤백)', async () => {
@@ -262,11 +264,12 @@ describe('정규경로 — 촉매 소모 runId 가 settle_pve_run summary 까지
     const cfg = buildRunConfig(profile, {
       planet: 0,
       stage: 3,
-      catalysts: [15, 15],
+      // ⚠️ ADR-0052 유니크 주입 — 서로 다른 두 장. 구 모델은 `[15,15]` 스택이었다.
+      catalysts: [15, 2],
       runId: 'run-abc-uuid',
     });
     expect(cfg.runId).toBe('run-abc-uuid');
-    expect(cfg.catalysts).toEqual([15, 15]);
+    expect(cfg.catalysts).toEqual([15, 2]);
 
     const gw = new FakeGateway();
     await settlePveRunCurrency(profile, summaryFromConfig(cfg, profile), { gateway: gw });
