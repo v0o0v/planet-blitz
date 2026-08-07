@@ -35,7 +35,9 @@
  * **남은 셋은 `lane/shared-anchors` 소유다** — CU8(`onPlayerMoveParams`) · ME2
  * (`onGemMagnetParams`) · ME3(`onActiveFired`/감속 소비부). 이 레인이 만들면 정의가 갈리고
  * `git` 은 그것을 못 잡는다(의미 충돌은 전부 `tsc` 만 잡았다).
- * → **CU8·ME2 는 그 레인이 실제로 배선해 착지했다**(위). 남은 것은 **ME3** 하나다.
+ * → **CU8·ME2 는 그 레인이 실제로 배선해 착지했다**(위). **ME3 는 배치 5 가 같은 앵커 ㉙
+ * (`onPlayerMoveParams`)에 얹어 끝냈다** — 감속 소비부가 곧 그 앵커였다({@link
+ * mallowPlayerMoveParams}). 그래서 말로우는 **30 / 30** 이다.
  *
  * 말로우 30종의 설계는 시그니처 완충의 **두 분기**에 압도적으로 몰려 있었고, 배치 4 시점에는
  * 그 둘 다 앵커가 없었다. **S2 가 그중 하나(정산 분기)를 열었다.**
@@ -127,6 +129,7 @@ const enum Sk {
   /** SQ10 만기 일제 */ maturityVolley = 9,
   /** ME1 조기 상환 */ earlyRepayment = 10,
   /** ME2 채무 자석 */ debtMagnet = 11,
+  /** ME3 무통 주행 */ painlessDrive = 12,
   /** ME4 반환 요법 */ rebateTherapy = 13,
   /** ME5 분할 상환 */ installmentPlan = 14,
   /** ME6 잔상 세척 */ afterimageRinse = 15,
@@ -374,8 +377,13 @@ export function mallowGemMagnetParams(
   params.radius *= 1 + bp / 10000;
 }
 
+/** ME3 과금 주기 N = `1 + floor(Lv/6)` 틱 (Lv1~5 = 매 틱 · Lv20 = 4틱당 1 — 6레벨 폭 정수 계단). */
+function painlessDrivePeriod(level: number): number {
+  return 1 + Math.floor(level / 6);
+}
+
 /**
- * 앵커 ㉙ **이동 배율 산출 직전** — CU8 통증 마취.
+ * 앵커 ㉙ **이동 배율 산출 직전** — ME3 무통 주행 · CU8 통증 마취.
  *
  * 설계서: *"부채 보유 중(aux0 > 0) 이동 속도가 오른다"* · 이속 bp = `400 + aux0 × (2 + 1×Lv)` ·
  * 상한 = `1500 + 1500×Lv/(Lv+10)` bp.
@@ -393,6 +401,41 @@ export function mallowPlayerMoveParams(
   player: Entity,
   params: PlayerMoveParams,
 ): void {
+  // --- ME3 무통 주행 — 감속을 부채로 **대납**한다 ------------------------------
+  //
+  // 설계서: *"감속이 걸려 있어야 할 동안 감속 대신 주기적으로 정수 1 씩 부채로 대납"* ·
+  // 과금 주기 N = 1 + floor(Lv/6).
+  //
+  // ⚠️ **`params.slowTicks = 0` 이 면역의 전부다.** 호출부가 이 값을 `state.playerSlowTicks`
+  //    로 되쓰고 **그 다음 줄**에서 `slowTicks > 0 ? PLAYER_SLOW_MULT : 1` 로 배율을 정한다.
+  //    `speedMult` 로 감속을 상쇄하는 대안은 기각이다 — 그건 부호 반전(스트라이커 S5 가
+  //    게이트된 형태)이고, 설계서 침공 판정표가 ME3 를 **허용**으로 판정한 근거가 정확히
+  //    "반전이 아니라 유상 무효화" 라는 점이다.
+  // ⚠️ **감속원의 재설정 규칙은 건드리지 않는다.** 매 틱 0 으로 밀 뿐이라, 해저드를 벗어나면
+  //    다음 틱에 아무도 다시 세우지 않아 감속이 자연히 끝난다(재발 패턴 ① 판정 그대로).
+  // ⚠️ **한도(CU2)에 닿으면 대납을 멈춘다** — 설계서 3R-5 인계가 "1줄 필수" 로 못 박은 자리다.
+  //    CU2 의 한도 게이트는 지연 전환 경로 전용이라 이 **직접 가산**은 그것을 안 본다. 멈추면
+  //    감속이 원래대로 걸릴 뿐이고 즉시 피해로 바뀌지 않는다(2R 부호 판정).
+  //    CU2 미투자 런에는 한도 자체가 없다 — 그 모델에서 부채의 배수구는 시그니처 정산이다.
+  const me3 = lv(state, Sk.painlessDrive);
+  if (me3 >= 1 && params.slowTicks > 0) {
+    let payable = true;
+    const cu2 = lv(state, Sk.debtCeiling);
+    if (cu2 >= 1) {
+      // 한도 산식은 CU2 본체({@link mallowCushionSplit})와 **같은 함수**를 쓴다 —
+      // 여기서 비율을 다시 적으면 두 정본이 조용히 갈린다.
+      const ceiling = Math.round((player.maxHp * debtCeilingPct(cu2)) / 100);
+      if (Math.trunc(player.aux0) >= ceiling) payable = false;
+    }
+    if (payable) {
+      // 과금은 주기적(N틱마다 1)이지만 **면역은 연속**이다 — 과금이 없는 틱에도 감속은 없다.
+      // 주기는 `state.tick` 파생이라 신규 상태가 0 이다(설계서 3판이 milli 캐리를 폐기한 사유).
+      if (state.tick % painlessDrivePeriod(me3) === 0) player.aux0 += 1;
+      params.slowTicks = 0;
+    }
+  }
+
+  // --- CU8 통증 마취 ----------------------------------------------------------
   const debt = player.aux0;
   if (debt <= 0) return;
   const cu8 = lv(state, Sk.painAnesthesia);

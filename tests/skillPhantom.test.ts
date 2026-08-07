@@ -44,7 +44,9 @@ import {
   onEnemyDamaged,
   onCloakBreakReset,
   onVolleyParams,
+  onPlayerMoveParams,
   type VolleyParams,
+  type PlayerMoveParams,
 } from '../src/sim/skillHooks.js';
 import {
   SIG_PHANTOM_CLOAK,
@@ -75,6 +77,7 @@ const AS9 = 8;
 const PH1 = 10;
 const PH2 = 11;
 const PH3 = 12;
+const PH4 = 13;
 const PH6 = 15;
 const PH10 = 19;
 const DI1 = 20;
@@ -1374,5 +1377,83 @@ describe('⑳ PH2 위상 착지 (앵커 ㉗)', () => {
     // 발동 자체는 일어났다(버프 틱이 섰다) — 그런데 적탄은 살아 있다.
     expect(w.activeBuff0).toBeGreaterThan(0);
     expect(b.dead).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑬ PH4 무흔 보행 (앵커 ㉙ `onPlayerMoveParams`) — 배치 5
+// ---------------------------------------------------------------------------
+//
+// 설계서: 은신 창 동안 이속 +8% + 1%p/Lv (bp) + 이동 감속 면역.
+//
+// 뮤테이션(2026-08-07): `phantomPlayerMoveParams` 의 `params.slowTicks = 0` 을 지우면 감속
+// 면역 2건이, `params.speedMult *= …` 를 지우면 이속 3건이, `onPlayerMoveParams` 의
+// `case SIG_PHANTOM_CLOAK:` 를 지우면 §⑬ 전체가 빨개진다.
+
+describe('⑬ PH4 무흔 보행 (앵커 ㉙)', () => {
+  function moveParams(w: WorldState, slow = 0): PlayerMoveParams {
+    const params: PlayerMoveParams = { speedMult: 1, slowTicks: slow };
+    onPlayerMoveParams(w, player(w), params);
+    return params;
+  }
+
+  it('창 밖이면 아무 일도 안 한다 (미투자 런 바이트 불변의 근거)', () => {
+    const w = mk([[PH4, 20]]);
+    player(w).aux0 = CLOAK_UNHIT_TICKS - 1; // 적립 중 · 창 전
+    const params = moveParams(w, 30);
+    expect(params.speedMult).toBe(1);
+    expect(params.slowTicks).toBe(30); // 왕복 항등
+  });
+
+  it('창이 닫힌 뒤(HOLD 만료)에도 안 걸린다 — 창 술어가 상한을 본다', () => {
+    const w = mk([[PH4, 20]]);
+    player(w).aux0 = CLOAK_UNHIT_TICKS + CLOAK_HOLD_TICKS;
+    expect(moveParams(w, 30).speedMult).toBe(1);
+  });
+
+  it('하한 짝 — PH4 미투자 런은 창 안이어도 배율 1 · 감속 그대로다 (항진 방지)', () => {
+    const w = mk([[PH6, 20]]);
+    player(w).aux0 = CLOAK_UNHIT_TICKS + 10;
+    const params = moveParams(w, 30);
+    expect(params.speedMult).toBe(1);
+    expect(params.slowTicks).toBe(30);
+  });
+
+  it('창 안이면 이속이 오르고 이동 감속이 사라진다', () => {
+    const w = mk([[PH4, 1]]);
+    player(w).aux0 = CLOAK_UNHIT_TICKS + 10;
+    const params = moveParams(w, 30);
+    expect(params.speedMult).toBeGreaterThan(1); // 하한 — 양변 1 인 항진이 아니다
+    expect(params.speedMult).toBeCloseTo(1.09, 9); // 800 + 100×1 bp
+    expect(params.slowTicks).toBe(0);
+  });
+
+  it('레벨에 단조 증가한다 (bp = 800 + 100×Lv)', () => {
+    function multAt(level: number): number {
+      const w = mk([[PH4, level]]);
+      player(w).aux0 = CLOAK_UNHIT_TICKS + 10;
+      return moveParams(w).speedMult;
+    }
+    const lo = multAt(1);
+    const hi = multAt(20);
+    expect(lo).toBeGreaterThan(1);
+    expect(hi).toBeGreaterThan(lo);
+    expect(hi).toBeCloseTo(1.28, 9);
+  });
+
+  it('`stepPlayer` 가 앵커를 실제로 부른다 — 감속 지대에서 창 안이면 만속이다', () => {
+    function vxUnderSlow(points: ReadonlyArray<readonly [number, number]>): number {
+      const w = mk(points);
+      const p = player(w);
+      p.aux0 = CLOAK_UNHIT_TICKS + 10;
+      w.playerSlowTicks = 60;
+      stepWorld(w, { ...emptyInput(), moveX: 1 });
+      return p.vx;
+    }
+    // 하한 — PH4 미투자 런은 감속 배율이 실제로 물린다.
+    const slowed = vxUnderSlow([[PH6, 20]]);
+    expect(slowed).toBeLessThan(DEFAULT_CONFIG.playerSpeed);
+    // 투자 런은 감속 면역 + 이속 배율이라 만속보다도 빠르다.
+    expect(vxUnderSlow([[PH4, 20]])).toBeGreaterThan(DEFAULT_CONFIG.playerSpeed);
   });
 });
