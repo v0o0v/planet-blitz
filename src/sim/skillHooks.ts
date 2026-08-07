@@ -129,6 +129,7 @@ import {
   hatchlingTurretCadence,
   hatchlingTurretExpired,
   hatchlingPlayerDamaged,
+  hatchlingGemMagnetParams,
 } from './skills/hatchling.js';
 import {
   strikerDashFired,
@@ -155,6 +156,8 @@ import {
   arccasterEliteLootRarity,
   arccasterOverchargeAccrual,
   arccasterComboDecay,
+  arccasterActiveFired,
+  arccasterGemMagnetParams,
 } from './skills/arccaster.js';
 import {
   bruiserDashFired,
@@ -2851,7 +2854,7 @@ export function onActiveFired(
 ): void {
   if (!state.skillsOn) return;
   // 아직 소비처가 없는 인자들. 자기 `case` 가 쓰기 시작하면 해당 줄을 지워라.
-  // (`dir`·`origin` 은 버블 PO9·DR9 가 쓰기 시작해 지웠다.)
+  // (`dir`·`origin` 은 버블 PO9·DR9 와 아크캐스터 BA1·BA6·CH7·CH10 이 쓰기 시작해 지웠다.)
   void slot;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라** — 병렬 배선
@@ -2864,6 +2867,11 @@ export function onActiveFired(
     case SIG_BUBBLE_FILM:
       // PO9 고압 격발 조율(pop 계열 환산 효율) · DR9 이탈 잔파동(drift 계열 **출발 지점**).
       bubbleActiveFired(state, player, def, dir, origin);
+      break;
+    case SIG_ARC_OVERCHARGE:
+      // CH7 잔류 방전 · CH10 주입 전격(둘 다 방전 = chain hi) ·
+      // BA1 재배치 일제사 · BA4 소거 항로 · BA6 분신 포좌(점멸 = barrage).
+      arccasterActiveFired(state, player, def, dir, origin);
       break;
     default:
       break;
@@ -3001,6 +3009,14 @@ export function onGemMagnetParams(
     case SIG_BUBBLE_FILM:
       // DR5 무지개 공명(콤보 → 반경) · DR10 공막 유속(무막 흡인 가속).
       bubbleGemMagnetParams(state, player, params);
+      break;
+    case SIG_ARC_OVERCHARGE:
+      // BA2 정지 흡인장 — 정지 시간(`player.aux0`)에 비례해 반경이 커진다.
+      arccasterGemMagnetParams(state, player, params);
+      break;
+    case SIG_HATCHLING_BROOD:
+      // NU1 모이 물어오기 — `broodRadius` 의 **첫 소비처**(소비 경로는 `stepGems`).
+      hatchlingGemMagnetParams(state, params);
       break;
     default:
       break;

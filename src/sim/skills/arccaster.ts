@@ -8,7 +8,14 @@
  *
  * ---
  *
- * ## ⚠️ 배선된 것은 30종 중 **24종**이다 (S3 아크캐스터 레인이 6종을 더했다)
+ * ## 배선은 30종 중 **30종**이다 — 배치5 가 마지막 6종을 얹었다
+ * 공유 앵커 레인이 세운 앵커 둘로 남은 여섯이 전부 열렸다:
+ *  · ㉗ `onActiveFired`(액티브 핸들러 직후) → **CH7 · CH10 · BA1 · BA4 · BA6**.
+ *  · ㉘ `onGemMagnetParams`(자석 반경 확정 직후 · 제곱 전) → **BA2**.
+ * ⚠️ CH10 은 CH1 과 **다른 표식값**을 쓴다(`ARC_PRIMED_MARK` 주석이 근거) · BA4 는 젬을
+ * 직접 걷지 않고 좌표만 당겨 `resolveCollisions` 의 정규 수거 경로에 태운다.
+ *
+ * ## (이전 판) 배선 24종의 경위 — S3 아크캐스터 레인이 6종을 더했다
  * 그 레인이 앵커 **다섯**을 새로 세우고 기존 앵커 하나의 인자를 넓혀 CH2·CH5·CH9·BA5·BA8·BA9
  * 를 열었다:
  *  · ⑰ `onChainParams`(`status.ts` 의 `applyChain` 진입) → **CH2**. 효과 본체만
@@ -20,10 +27,6 @@
  *  · ㉑ `onComboDecay`(`updateCombo`) → **BA5**.
  *  · ⑧ `onDamageChain` 에 `sources`(피해원 비트합) **선택 인자** 추가 → **BA8 뒤 절반**.
  *
- * ## 남은 6종은 여전히 앵커가 안 닿는다
- * 액티브 핸들러(CH10·BA1·BA4·BA6·CH7) · `stepGems` 반경(BA2). 앞의 다섯은 `onActiveFired`,
- * BA2 는 `onGemMagnetParams` 를 요구하고 **둘 다 다른 레인이 세우는 중**이다. 여기 없는
- * 스킬은 "구현했는데 안 불린다"가 아니라 **아직 코드가 없다**.
  *
  * ## (이전 판) 배선 18종의 경위 (1차 13종 + S2 앵커 ⑯ 으로 4종 + S3 앵커 ⑥ 으로 1종)
  * S2 가 연 앵커 ⑯(`onVolleyParams` — 볼리 파라미터 확정 직후)이 「발사부 앵커 부재」로 막혀
@@ -34,22 +37,36 @@
  * 해저드 적립 분기(BA8) · 이동 리셋 분기(BA9))을 요구한다. 여기 없는 스킬은 "구현했는데 안
  * 불린다"가 아니라 **아직 코드가 없다** — 사유는 각 앵커의 `case` 주석에 있다.
  *
- * ## ⚠️ 전격 연쇄 부여는 설계상 정확히 3종(CH1·BR2·CH10)이고 이제 **둘**이 켜져 있다
- * CH1 은 앵커 ⑯ 의 발사 시점 표식 + 앵커 ⑩ 의 명중 소비로 성립했다. CH10 은 여전히 미배선 —
- * strike 투사체는 액티브 핸들러가 낳으므로 주무기 볼리 전용인 앵커 ⑯ 이 닿지 않는다. 연쇄를
- * "대충 명중 시점 과충전 술어"로 바꿔 흉내 내지 않았다 — 설계서가 CH9 를 유일한 처치 시점
- * 예외로 못 박았고, 그 예외를 늘리면 두 문서가 갈린다.
+ * ## ⚠️ 전격 연쇄 부여는 설계상 정확히 3종(CH1·BR2·CH10)이고 이제 **셋 다** 켜져 있다
+ * CH1 은 앵커 ⑯ 의 발사 시점 표식 + 앵커 ⑩ 의 명중 소비로 성립했다. CH10 은 같은 2단 형태를
+ * 앵커 ㉗ + 앵커 ⑩ 으로 옮겨 성립한다 — 앵커 ⑯ 은 주무기 볼리 전용이라 액티브 투사체에
+ * 원리적으로 닿지 않으므로, 표식 지점만 ㉗ 으로 갈아 끼웠고 소비 지점은 그대로다.
  */
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
 // 앵커 ⑯ 의 레코드 타입. **type-only 라 런타임 import 0건 규율을 깨지 않는다**(컴파일에서
 // 지워진다) — `skillHooks.ts` 가 이 파일을 값으로 import 하므로 값 import 는 순환이 된다.
-import type { VolleyParams, BulletHitParams, OverchargeAccrual } from '../skillHooks.js';
+import type {
+  VolleyParams,
+  BulletHitParams,
+  OverchargeAccrual,
+  ActiveFiredOrigin,
+  GemMagnetParams,
+} from '../skillHooks.js';
+// 액티브 정의(계열 판별용 `treeIndex`/`tier`). 데이터 레지스트리라 순환이 없다.
+import type { ActiveSkillDef } from '../../../data/ships/actives/types.js';
 // 피해원 비트합의 정본은 `skillSlots.ts`(import 0 인 leaf)다 — 스킬 모듈이 **런타임에** 읽어야
 // 하는데 `skillHooks.ts` 에 두면 순환이 되기 때문이다(그 파일 주석이 근거).
 import type { DamageSourceMask } from '../skillSlots.js';
 import { blastDamageAt, clearEnemyBullets, fanStrike } from '../activeTypes.js';
+import { spawnEventObject } from '../entities.js';
+import { activateTurret } from '../events.js';
+// 플레이어 소환물 마커. `uniques.ts` 는 **import 0 인 leaf** 라 순환이 없다.
+// ⚠️ 새 마커를 만들면 안 된다 — `world.ts` 의 `isGimmick` 이 `turretPickup` 을 청크 기믹으로
+// 컬링하는데 그 예외 목록이 `DRONE_MARK`·`BROOD_MARK` 둘뿐이고, 그 목록은 이 레인이 만질
+// 자리가 아니다. `BROOD_MARK` 는 해츨링 병아리 상한의 정의라 재사용이 금지다.
+import { DRONE_MARK } from '../uniques.js';
 import { applyChain } from '../status.js';
 import {
   readSlot,
@@ -86,9 +103,15 @@ const enum Sk {
   /** CH4 진입 뇌격 */ entryLance = 3,
   /** CH5 전위차 저격 */ potentialSnipe = 4,
   /** CH6 과잉 전하 이월 */ overkillCarry = 5,
+  /** CH7 잔류 방전 */ residualDischarge = 6,
   /** CH8 접지 관통로 */ groundedPierce = 7,
   /** CH9 낙뢰 인양 */ boltSalvage = 8,
+  /** CH10 주입 전격 */ primedStrike = 9,
+  /** BA1 재배치 일제사 */ redeploySalvo = 10,
+  /** BA2 정지 흡인장 */ stillMagnet = 11,
   /** BA3 정지 관측 사격 */ stillSpotter = 12,
+  /** BA4 소거 항로 */ sweepLane = 13,
+  /** BA6 분신 포좌 */ echoMount = 15,
   /** BA5 정전 콤보 감속 */ staticCombo = 14,
   /** BA7 연발 축전기 */ killCapacitor = 16,
   /** BA8 절연 포좌 */ insulatedMount = 17,
@@ -147,6 +170,22 @@ function overcharged(player: Entity): boolean {
  * 못하므로 다른 값을 골랐다. 이 상수를 읽는 곳은 이 파일 안 두 스킬(CH1·CH8)뿐이다.
  */
 const ARC_OVERCHARGE_MARK = 2;
+
+/**
+ * **주입 전격 표식**(CH10) — *방전 액티브가 낳은 투사체* 임을 탄 `aux0` 에 남기는 값.
+ *
+ * ⚠️ **`ARC_OVERCHARGE_MARK`(2) 를 재사용하지 않았다.** 재사용하면 CH10 만 투자한 런의 액티브
+ * 투사체가 **CH1 의 소비 분기**(앵커 ⑩)로 들어가고, CH1 이 0레벨이라 연쇄가 안 걸린 채
+ * CH8 증폭만 조용히 켜진다 — 두 스킬의 게이트가 한 값으로 뭉개진다. 값 3 은 스트라이커
+ * 정조준탄(1)·과충전 표식(2) 어느 것과도 겹치지 않는다.
+ */
+const ARC_PRIMED_MARK = 3;
+
+/** chain(offense) 축 인덱스 — `data/ships/arccaster.ts` 의 `trees[0]`. 「방전 액티브」가 여기 산다. */
+const CHAIN_TREE_INDEX = 0;
+
+/** barrage(utility) 축 인덱스 — `trees[1]`. 「점멸 액티브」 2종(lo 600 · hi 900)이 여기 산다. */
+const BARRAGE_TREE_INDEX = 1;
 
 // ---------------------------------------------------------------------------
 // 레벨 스케일 — 설계서 ② 의 공식 그대로
@@ -599,6 +638,21 @@ export function arccasterEnemyDamaged(
     }
   }
 
+  // ── CH10 주입 전격 — **방전 액티브가 낳은 투사체**의 명중에 전격 연쇄를 부여한다.
+  //    표식은 앵커 ㉗({@link arccasterActiveFired})이 단다. 연쇄 = 이 탄 피해의 25% + 2%p/Lv.
+  //
+  //    ⚠️ CH1 분기와 **따로** 선 이유는 `ARC_PRIMED_MARK` 주석에 있다. 두 표식은 탄 `aux0`
+  //    한 칸을 공유하므로 한 탄이 둘 다일 수는 없다 — 액티브 투사체는 앵커 ⑯(주무기 볼리)을
+  //    지나지 않아 `ARC_OVERCHARGE_MARK` 가 원리적으로 안 붙는다.
+  //    대상 게이트(`enemy`/`boss`)는 CH1 과 같다(설계서 ④ 표).
+  if (source.aux0 === ARC_PRIMED_MARK && (target.kind === 'enemy' || target.kind === 'boss')) {
+    const ch10 = lv(state, Sk.primedStrike);
+    if (ch10 >= 1) {
+      const chain = Math.round((source.damage * (2500 + 200 * ch10)) / 10000);
+      if (chain > 0) applyChain(state, target, chain);
+    }
+  }
+
   const ch6 = lv(state, Sk.overkillCarry);
   if (ch6 < 1) return;
   if (target.kind !== 'enemy' || target.hp > 0) return;
@@ -766,4 +820,217 @@ export function arccasterComboDecay(state: WorldState, player: Entity): boolean 
   if (ba5 < 1) return false;
   if (!overcharged(player)) return false;
   return state.tick % (2 + Math.floor(ba5 / 4)) !== 0;
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉗ — 액티브 핸들러 호출 직후(쿨다운 대입 앞)
+// ---------------------------------------------------------------------------
+
+/** BA1 원형 볼리의 탄수 상한 — 레벨이 어픽스로 20을 넘어도 탄 폭주가 되지 않게 유계로 묶는다. */
+const REDEPLOY_SALVO_CAP = 20;
+
+/** CH7 여진탄 수 상한. `aux0` 상한이 600 이라 무클램프면 저레벨에서도 30발이 나간다. */
+const RESIDUAL_BOLT_CAP = 12;
+
+/** 점 → 선분 거리의 **제곱**. BA4 가 점멸 항로(출발→착지)를 띠로 훑는 데 쓴다. */
+function distSqToSegment(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const vx = bx - ax;
+  const vy = by - ay;
+  const len2 = vx * vx + vy * vy;
+  let t = 0;
+  if (len2 > 0) {
+    t = ((px - ax) * vx + (py - ay) * vy) / len2;
+    if (t < 0) t = 0;
+    else if (t > 1) t = 1;
+  }
+  const dx = px - (ax + vx * t);
+  const dy = py - (ay + vy * t);
+  return dx * dx + dy * dy;
+}
+
+/**
+ * 앵커 ㉗ — **CH7 잔류 방전 · CH10 주입 전격 · BA1 재배치 일제사 · BA4 소거 항로 · BA6 분신 포좌.**
+ *
+ * ## 계열 게이트는 **축 인덱스 + tier** 다 — id 문자열도 `kind` 도 아니다
+ * 설계 문면의 「방전 액티브」는 chain 축 **hi** 한 종뿐이다(`as_arccaster_chain_hi` — 발동 후
+ * `aux0 = 0`). **lo 를 같이 태우면 안 된다**: lo 는 `aux0` 를 90 으로 *세우는* 주입형이라,
+ * 만충(600)에서 쏘면 `preAux0 - aux0 = 510` 이 되어 CH7 이 "소모한 정지 시간"을 오독한다.
+ * 「점멸 액티브」는 barrage 축 두 종 모두(둘 다 `kind: 'dash'`), 「**장거리** 점멸」은 그중
+ * hi(distance 900) 한 종이다.
+ * ⚠️ `kind === 'dash'` 로 판정하지 마라 — 다른 축이 훗날 dash 를 얻으면 조용히 샌다(PH2 선례).
+ *
+ * ## ⚠️ 여기서 스폰이 안전한 근거
+ * 앵커 doc 그대로다 — `stepActives` 는 `state.entities` 를 순회하지 않는다. BA1(`fanStrike`)과
+ * BA6(`spawnEventObject`)이 그래서 이 자리에서 바로 돈다.
+ *
+ * ## ⚠️ 쿨다운을 만지지 않는다
+ * 호출부가 이 앵커 **직후** `state.activeCd0/1` 을 덮어쓴다(앵커 doc).
+ *
+ * ## 적 `hp` 를 깎는 경로가 없다
+ * 다섯 전부 탄·포탑·표식·수거뿐이라 좀비 결함(`dead` 미마킹)이 원리적으로 없다. RNG 소비 0.
+ */
+export function arccasterActiveFired(
+  state: WorldState,
+  player: Entity,
+  def: ActiveSkillDef,
+  dir: { x: number; y: number },
+  origin: ActiveFiredOrigin,
+): void {
+  if (def.treeIndex === CHAIN_TREE_INDEX && def.tier === 'hi') {
+    arccasterDischargeFired(state, player, origin);
+    return;
+  }
+  if (def.treeIndex === BARRAGE_TREE_INDEX) {
+    arccasterBlinkFired(state, player, def, dir, origin);
+  }
+}
+
+/** 방전 액티브(chain hi) 전용 절반 — CH7 · CH10. */
+function arccasterDischargeFired(
+  state: WorldState,
+  player: Entity,
+  origin: ActiveFiredOrigin,
+): void {
+  // ── CH10 주입 전격 — **이 발동이 낳은 탄만** 표식한다.
+  //    ⚠️ 워터마크는 `state.entities` 가 append-only 인 이번 틱 안에서만 유효하다(앵커 doc).
+  //    소비는 앵커 ⑩({@link arccasterEnemyDamaged}).
+  const ch10 = lv(state, Sk.primedStrike);
+  if (ch10 >= 1) {
+    for (let i = origin.spawnWatermark; i < state.entities.length; i++) {
+      const e = state.entities[i];
+      if (e === undefined || e.kind !== 'bullet') continue;
+      e.aux0 = ARC_PRIMED_MARK;
+    }
+  }
+
+  // ── CH7 잔류 방전 — 「충전을 비운 뒤 **소모한 정지 시간**에 비례해 최근접 적에게 여진탄」.
+  //    소모량은 `preAux0 - aux0` 다. 방전 액티브는 `aux0 = 0` 이므로 사실상 `preAux0` 이지만,
+  //    차분으로 적는 편이 핸들러가 부분 방전으로 바뀌어도 따라온다(앵커 doc 의 의도).
+  const ch7 = lv(state, Sk.residualDischarge);
+  if (ch7 < 1) return;
+  const spent = origin.preAux0 - player.aux0;
+  if (spent <= 0) return;
+  // 여진탄 1발당 요구 정지 틱 = 60 − 2×Lv (Lv1 = 58, Lv20 = 20). 하한 10 은 어픽스로 레벨이
+  // 20을 넘겼을 때 분모가 0/음수로 무너지는 것을 막는다(설계 수치가 아니라 방어다).
+  const perBolt = Math.max(10, 60 - 2 * ch7);
+  let count = Math.floor(spent / perBolt);
+  if (count <= 0) return;
+  if (count > RESIDUAL_BOLT_CAP) count = RESIDUAL_BOLT_CAP;
+  const target = nearestHostile(state, player);
+  if (target === undefined) return;
+  const tx = target.x - player.x;
+  const ty = target.y - player.y;
+  const d = Math.sqrt(tx * tx + ty * ty);
+  if (d <= 0) return;
+  // 전탄 동일 방향(spreadDeg = 0) = 「최근접 적에게」의 코드 형태. 피해 = 20 + 4×Lv.
+  fanStrike(state, player, count, 20 + 4 * ch7, 0, { x: tx / d, y: ty / d });
+}
+
+/** 최근접 적성 표적(`enemy`/`boss`). 없으면 `undefined`. RNG 를 쓰지 않는 순수 스캔이다. */
+function nearestHostile(state: WorldState, player: Entity): Entity | undefined {
+  let best: Entity | undefined;
+  let bestD2 = Infinity;
+  for (const e of state.entities) {
+    if (e.dead) continue;
+    if (e.kind !== 'enemy' && e.kind !== 'boss') continue;
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      best = e;
+    }
+  }
+  return best;
+}
+
+/** 점멸 액티브(barrage) 전용 절반 — BA1 · BA4 · BA6. */
+function arccasterBlinkFired(
+  state: WorldState,
+  player: Entity,
+  def: ActiveSkillDef,
+  dir: { x: number; y: number },
+  origin: ActiveFiredOrigin,
+): void {
+  // ── BA1 재배치 일제사 — 착지 순간 **전방위** 원형 볼리.
+  //    ⚠️ `spreadDeg` 를 360 으로 두면 첫 탄과 끝 탄이 같은 각도에 겹친다(`step = spread/(n-1)`).
+  //    360×(n−1)/n 이 균등 분포의 정본이다.
+  const ba1 = lv(state, Sk.redeploySalvo);
+  if (ba1 >= 1) {
+    let count = 6 + Math.floor(ba1 / 2);
+    if (count > REDEPLOY_SALVO_CAP) count = REDEPLOY_SALVO_CAP;
+    fanStrike(state, player, count, 18 + 3 * ba1, (360 * (count - 1)) / count, dir);
+  }
+
+  // ── BA4 소거 항로 — 출발→착지 선분에서 폭 안에 든 젬·전리품을 플레이어 자리로 당긴다.
+  //
+  //    ## ⚠️ 여기서 **수거하지 않는다** — 수거의 단일 수렴점은 `collectGem`/`collectLoot` 다
+  //    그 둘은 `world.ts` 비공개 함수이고, 이 파일은 `world.ts` 를 런타임 import 하지 않는다
+  //    (헤더 규율 ①). 대신 좌표를 플레이어에 붙이면 **같은 틱의** `resolveCollisions`
+  //    (`stepActives` → `stepTurrets` → `stepGems` → `resolveCollisions` 순서)가 정규 경로로
+  //    걷어간다 — 콤보·XP 가 한 곳에서만 갈린다. 사이에 낀 `stepGems` 는 거리 0 이라
+  //    `d2 > 0.0001` 이 거짓이 되어 속도를 0 으로 두고 좌표를 안 움직인다.
+  const ba4 = lv(state, Sk.sweepLane);
+  if (ba4 >= 1) {
+    const halfWidth = 60 + 4 * ba4;
+    const w2 = halfWidth * halfWidth;
+    for (const e of state.entities) {
+      if (e.dead) continue;
+      if (e.kind !== 'gem' && e.kind !== 'loot') continue;
+      if (distSqToSegment(e.x, e.y, origin.preX, origin.preY, player.x, player.y) > w2) continue;
+      e.x = player.x;
+      e.y = player.y;
+      e.vx = 0;
+      e.vy = 0;
+    }
+  }
+
+  // ── BA6 분신 포좌 — **장거리** 점멸(barrage hi)만. 출발 자리에 임시 자동 포탑.
+  //    수명은 `TURRET_LIFE_TICKS`(=600) 로 공용 규칙을 따른다 = 설계 문면의 「임시」.
+  //    반경 44 는 보조무기 센트리와 같은 값이다(`world.ts` 의 SUB_TYPE_SENTRY 분기).
+  if (def.tier !== 'hi') return;
+  const ba6 = lv(state, Sk.echoMount);
+  if (ba6 < 1) return;
+  const mount = spawnEventObject(state, 'turretPickup', origin.preX, origin.preY, 44);
+  mount.ownerId = DRONE_MARK; // 청크 기믹 컬링 제외(플레이어 소환물)
+  activateTurret(mount);
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉘ — 젬 자석 반경 확정 직후(제곱 **전**)
+// ---------------------------------------------------------------------------
+
+/**
+ * **BA2 정지 흡인장** — 「정지 중 자석 반경이 **정지 시간에 비례해** 커진다」.
+ *
+ * 반경 배율 = 1 + (min(aux0, 190) / 190) × (20% + 2%p/Lv). 정지가 증폭 상한 도달치
+ * (`OVERCHARGE_APEX_TICKS`)에 닿으면 Lv1 +20% · Lv20 +60% 다.
+ *
+ * ## ⚠️ 상한을 `OVERCHARGE_TICK_CAP`(600) 이 아니라 도달치(190) 로 잡은 이유
+ * `aux0` 는 600 까지 쌓이지만 이 기체의 다른 모든 축은 190 에서 평평해진다(`overchargeBp`).
+ * 600 으로 나누면 190~600 구간에서 **이 스킬만 계속 자라** 기체의 "만충" 감각이 축마다 갈린다.
+ *
+ * ## ⚠️ `radius` 는 **제곱 전**이다
+ * 앵커 doc 의 경고 그대로 — "×1.5" 를 `×2.25` 로 번역하면 안 된다. 여기서는 배율을 그대로
+ * 곱한다. 미투자(`ba2 < 1`)·이동 중(`aux0 === 0`)이면 대입 자체가 없어 비트 동일이다.
+ */
+export function arccasterGemMagnetParams(
+  state: WorldState,
+  player: Entity,
+  params: GemMagnetParams,
+): void {
+  const ba2 = lv(state, Sk.stillMagnet);
+  if (ba2 < 1) return;
+  const still = player.aux0;
+  if (still <= 0) return;
+  const t = still > OVERCHARGE_APEX_TICKS ? OVERCHARGE_APEX_TICKS : still;
+  const gainBp = Math.floor((t * (2000 + 200 * ba2)) / OVERCHARGE_APEX_TICKS);
+  params.radius = (params.radius * (10000 + gainBp)) / 10000;
 }

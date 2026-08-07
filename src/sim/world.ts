@@ -3998,12 +3998,45 @@ function stepGems(state: WorldState, player: Entity): void {
   const magnet: GemMagnetParams = { radius: r, broodRadius: 0 };
   onGemMagnetParams(state, player, magnet);
   const r2 = magnet.radius * magnet.radius;
+  // 해츨링 NU1 「모이 물어오기」 — `GemMagnetParams.broodRadius` 의 **유일한 소비처**다.
+  //
+  // ⚠️ **`broodRadius === 0` 이면 종전과 비트 동일이어야 한다.** 미투자 런·타 기체는 아래
+  // 수집이 통째로 건너뛰어 `chicks` 가 `undefined` 로 남고, 루프 안 추가 분기도 첫 비교
+  // (`chicks !== undefined`)에서 거짓이라 산술이 하나도 늘지 않는다 — 골든 해시 불변.
+  //
+  // ⚠️ **여기서 젬을 수거하지 않는다.** 수거의 단일 수렴점은 `collectGem`(앵커 ③)이고,
+  // 이 경로가 하는 일은 플레이어 자석과 **똑같은 속도**를 주는 것뿐이다. 그래서 병아리가
+  // 늘어도 흡인 속도(`MAGNET_SPEED`)는 안 빨라지고 "닿는 범위"만 넓어진다.
+  //
+  // 병아리 판별은 `world.ts:2744`·`skills/hatchling.ts` 의 `isChick` 과 **글자 그대로 같은**
+  // 3중 술어다 — 한 칸이라도 다르게 적으면 상한 계수와 흡인 범위가 갈린다.
+  let broodR2 = 0;
+  let chicks: Entity[] | undefined;
+  if (magnet.broodRadius > 0) {
+    broodR2 = magnet.broodRadius * magnet.broodRadius;
+    const found: Entity[] = [];
+    for (const e of state.entities) {
+      if (!e.dead && e.ownerId === BROOD_MARK && isActiveTurret(e)) found.push(e);
+    }
+    if (found.length > 0) chicks = found;
+  }
   for (const e of state.entities) {
     if (e.kind !== 'gem') continue;
     const dx = player.x - e.x;
     const dy = player.y - e.y;
     const d2 = dx * dx + dy * dy;
-    if (d2 <= r2 && d2 > 0.0001) {
+    let pull = d2 <= r2 && d2 > 0.0001;
+    if (!pull && chicks !== undefined && d2 > 0.0001) {
+      for (const c of chicks) {
+        const bx = c.x - e.x;
+        const by = c.y - e.y;
+        if (bx * bx + by * by <= broodR2) {
+          pull = true;
+          break;
+        }
+      }
+    }
+    if (pull) {
       const d = length(dx, dy);
       e.vx = (dx / d) * MAGNET_SPEED;
       e.vy = (dy / d) * MAGNET_SPEED;

@@ -36,11 +36,13 @@ import {
   onTurretCadence,
   onTurretExpired,
   onPlayerDamaged,
+  onGemMagnetParams,
 } from '../src/sim/skillHooks.js';
 import type {
   BroodParams,
   TurretShotParams,
   TurretCadenceParams,
+  GemMagnetParams,
 } from '../src/sim/skillHooks.js';
 import { HATCHLING_HANDLERS } from '../src/sim/activeHandlers/hatchling.js';
 import { ALL_ACTIVES } from '../data/ships/actives/index.js';
@@ -61,6 +63,7 @@ const BD1 = 0;
 const BD2 = 1;
 const BD6 = 5;
 const BD10 = 9;
+const NU1 = 10;
 const NU2 = 11;
 const NU7 = 16;
 const NU10 = 19;
@@ -1389,5 +1392,98 @@ describe('⑱ world 호출부 통합', () => {
     stepWorld(w, emptyInput());
     expect(w.hitsTaken).toBeGreaterThan(0); // 하한 — 실제로 맞았다
     expect(c.x).toBeGreaterThan(before); // 피격원(+x) 쪽으로 산개했다
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑫ 앵커 ㉘ — 젬 자석 반경 확정 직후(NU1 모이 물어오기)
+// ---------------------------------------------------------------------------
+//
+// NU1 은 `GemMagnetParams.broodRadius` 의 **첫 소비처**다. 그래서 재는 축이 둘이다:
+//  ⓐ 훅이 칸을 세우는가(앵커 통과) ⓑ `stepGems` 가 그 칸을 실제로 소비하는가(거동).
+// ⓑ 가 없으면 배치4 와 같은 "필드는 있는데 아무 일도 안 하는" 상태로 초록이 된다.
+
+/** 앵커 ㉘ 이 넘기는 레코드의 초기값(`stepGems` 가 세우는 것과 같은 모양). */
+function magnetParams(radius: number): GemMagnetParams {
+  return { radius, broodRadius: 0 };
+}
+
+describe('⑫ 앵커 ㉘ 젬 자석 — NU1', () => {
+  it('NU1 이 `broodRadius` 를 세운다 (100 + 10×Lv) · 미투자는 0 그대로', () => {
+    const on = mk([[NU1, 7]]);
+    const p1 = magnetParams(80);
+    onGemMagnetParams(on, player(on), p1);
+    expect(p1.broodRadius).toBe(170);
+    expect(p1.radius).toBe(80); // 플레이어 반경 칸은 안 건드린다(별개 칸이다)
+
+    // 하한 짝 — 다른 스킬만 투자한 런(=`skillsOn` 은 참)에서도 0 이어야 한다.
+    const off = mk([[NU2, 7]]);
+    const p0 = magnetParams(80);
+    onGemMagnetParams(off, player(off), p0);
+    expect(p0.broodRadius).toBe(0);
+  });
+
+  it('NU1 이 켜지면 **플레이어 자석 밖** 젬이 병아리 반경 안에서 플레이어 쪽으로 끌린다', () => {
+    const w = mk([[NU1, 10]]); // broodRadius = 200
+    expect(w.magnetRadius).toBeLessThan(500); // 전제 — 젬(500)은 플레이어 자석 밖이다
+    chick(w, 480, 0);
+    const g = gemAt(w, 500, 0);
+    const before = g.x;
+    stepWorld(w, emptyInput());
+    expect(g.vx).toBeLessThan(0); // 플레이어(-x) 쪽 속도가 실렸다
+    expect(g.x).toBeLessThan(before); // 실제로 움직였다
+  });
+
+  it('⚠️ `broodRadius === 0` 이면 **종전과 비트 동일**이다 — 같은 배치가 미동도 안 한다', () => {
+    // 위 테스트와 젬·병아리 배치가 **글자 그대로 같고** NU1 투자만 없다. 종전 코드의 거동은
+    // "플레이어 자석 밖 젬은 v=0 이고 좌표가 안 변한다" 였으므로, 그 정확한 값을 요구한다.
+    const w = mk([[NU2, 10]]); // 다른 스킬 투자 — `skillsOn` 은 참이다
+    expect(w.magnetRadius).toBeLessThan(500);
+    chick(w, 480, 0);
+    const g = gemAt(w, 500, 0);
+    const x0 = g.x;
+    const y0 = g.y;
+    stepWorld(w, emptyInput());
+    expect(g.vx).toBe(0);
+    expect(g.vy).toBe(0);
+    expect(g.x).toBe(x0);
+    expect(g.y).toBe(y0);
+  });
+
+  it('병아리가 없으면 NU1 을 켜도 그 젬은 안 끌린다 (반경의 주체가 병아리다)', () => {
+    const w = mk([[NU1, 10]]);
+    expect(w.magnetRadius).toBeLessThan(500);
+    const g = gemAt(w, 500, 0);
+    const x0 = g.x;
+    stepWorld(w, emptyInput());
+    expect(g.vx).toBe(0);
+    expect(g.x).toBe(x0);
+  });
+
+  it('병아리 반경 **밖** 젬은 NU1 을 켜도 안 끌린다 (반경이 실제 경계다)', () => {
+    const w = mk([[NU1, 1]]); // broodRadius = 110
+    expect(w.magnetRadius).toBeLessThan(500);
+    chick(w, 480, 0);
+    const g = gemAt(w, 500, 150); // 병아리에서 약 151 — 110 밖이다
+    const x0 = g.x;
+    stepWorld(w, emptyInput());
+    expect(g.vx).toBe(0);
+    expect(g.x).toBe(x0);
+  });
+
+  it('⚠️ 흡인 속도는 병아리 수와 무관하다 — 여기서 수거하지 않는다는 계약의 관측면', () => {
+    const one = mk([[NU1, 10]]);
+    chick(one, 480, 0);
+    const g1 = gemAt(one, 500, 0);
+    const three = mk([[NU1, 10]]);
+    chick(three, 480, 0);
+    chick(three, 500, 20);
+    chick(three, 460, -20);
+    const g3 = gemAt(three, 500, 0);
+    stepWorld(one, emptyInput());
+    stepWorld(three, emptyInput());
+    expect(g1.vx).toBeLessThan(0); // 하한 — 양변 0 항진 방지
+    expect(g3.vx).toBe(g1.vx);
+    expect(g3.x).toBe(g1.x);
   });
 });
