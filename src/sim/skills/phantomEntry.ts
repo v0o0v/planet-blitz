@@ -31,6 +31,7 @@ import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
 import { blastDamage, clearEnemyBullets } from '../activeTypes.js';
 import { applySlow, COLD_DURATION } from '../status.js';
+import { readSlot, writeSlot, PhantomStage } from '../skillSlots.js';
 import { skillLv } from '../../items/skills.js';
 
 // ---------------------------------------------------------------------------
@@ -43,6 +44,7 @@ import { skillLv } from '../../items/skills.js';
 // (스트라이커는 [offense, defense, utility], 아크캐스터는 [offense, utility, defense] 로 셋이 다 달랐다).
 
 const enum Sk {
+  /** PH6 정지된 시계 */ frozenClock = 15,
   /** PH7 진입 섬광 */ entryFlash = 16,
   /** DI7 소실 냉파 */ vanishingChill = 26,
   /** DI8 위상 침전 */ phaseSediment = 27,
@@ -107,5 +109,28 @@ export function phantomCloakEntry(state: WorldState, player: Entity): void {
   const di8 = lv(state, Sk.phaseSediment);
   if (di8 >= 1) {
     player.maxHp += Math.round(2 + (16 * di8) / (di8 + 24));
+  }
+
+  // ④ PH6 정지된 시계 — **창당 정지 예산 리셋**(효과 본체는 `skills/phantom.ts`).
+  //
+  //    설계서는 "창이 되감길 때 예산 리셋" 이라고 적었는데 되감기 지점(`world.ts` 의
+  //    `aux0 = 0`)은 앵커가 아니다. **진입 에지에서 0 으로 되돌리는 것이 값이 같다** —
+  //    되감기와 다음 진입 사이는 창 밖이라 `phantomDashFired` 의 `playerCloaked` 게이트가
+  //    예약 자체를 막아 소비가 원리적으로 일어나지 않기 때문이다. 그래서 "창당" 이 정확히
+  //    성립하고, 정본 지점이 하나(이 함수) 늘 뿐 술어가 둘로 갈리지 않는다.
+  //
+  //    ⚠️ 예약 플래그도 함께 지운다. 창 밖에서 걸린 예약이 새 창 첫 틱을 공짜로 얼리는 것을
+  //    막는 두 겹째다(첫 겹은 집행 지점의 `cloakWindowActive` 가드).
+  //
+  //    ⚠️ 게이트 안쪽 쓰기다(규율 ②) — 미투자 런은 슬롯이 0 인 채로 남아야 "전 슬롯 0 이면
+  //    무폴드" 가 성립한다.
+  const ph6 = lv(state, Sk.frozenClock);
+  if (ph6 >= 1) {
+    if (readSlot(state.skillStage, PhantomStage.frozenClockUsed) !== 0) {
+      writeSlot(state.skillStage, PhantomStage.frozenClockUsed, 0);
+    }
+    if (readSlot(state.skillStage, PhantomStage.frozenClockPending) !== 0) {
+      writeSlot(state.skillStage, PhantomStage.frozenClockPending, 0);
+    }
   }
 }
