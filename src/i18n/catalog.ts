@@ -621,6 +621,9 @@ export const EN = {
   // 오염 런이라 "끝까지 가야 하는" 이유가 없는데, 여태 나가는 길이 화면에 없었다.
   'hud.exitTest': 'Exit test invasion',
   'hud.combo': 'Combo x{mult} ({combo})',
+  // 회수 개수 HUD 연출(PR#366 서버 권위 드랍 후속). `WorldState.loot.length` 그대로 — 콤보와
+  // 같은 관용구로 0 이면 감춘다.
+  'hud.lootCount': 'Loot {n}',
   'hud.phaseTransition': '⚙ Phase {n} transition…',
   'hud.overheat': "🔥 Overheat — now's your chance! (2× damage)",
   'hud.phase': 'Phase {n}',
@@ -2851,6 +2854,7 @@ export const KO: Record<MessageKey, string> = {
   'hud.supplyRaid': '⚠ 보급선 습격 — 격추하세요!',
   'hud.exitTest': '시험 침공 종료',
   'hud.combo': '콤보 x{mult} ({combo})',
+  'hud.lootCount': '전리품 {n}',
   'hud.phaseTransition': '⚙ 페이즈 {n} 전환 중…',
   'hud.overheat': '🔥 과열 — 지금이 기회입니다! (피해 2배)',
   'hud.phase': '페이즈 {n}',

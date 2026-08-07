@@ -330,6 +330,7 @@ describe('AC-18 · HUD 액티브 쿨다운', () => {
       timeSec: 0,
       combo: 0,
       multiplier: 1,
+      lootCount: 0,
       supplyActive: false,
     };
     expect(base.actives).toBeUndefined();

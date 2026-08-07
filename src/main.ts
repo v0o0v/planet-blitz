@@ -2809,6 +2809,9 @@ async function main(): Promise<void> {
         timeSec: (w.commissionRuntime?.totalTicks ?? w.tick) / 60,
         combo: w.combo,
         multiplier: comboMultiplier(w.combo),
+        // 회수 개수(PR#366 서버 권위 드랍 후속). `w.loot` 는 push 전용이라 길이가 곧 런 전체
+        // 회수 개수다(수거·보스·승리틱 엘리트 전부 여기로 쌓인다) — 새 카운터를 두지 않는다.
+        lootCount: w.loot.length,
         boss,
         supplyActive,
         // 보스 등장 예고 게이지(사용자 요청 2026-07-26) — 읽기 전용 파생이라 sim 무영향.
