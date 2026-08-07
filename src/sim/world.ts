@@ -161,9 +161,16 @@ import { cloakEntryCrossed, cloakExitCrossed, fireCloakEntry, setBreakToken } fr
 import { shipTypeDef, DEFAULT_SHIP_TYPE } from '../../data/ships/index.js';
 import { hasAnyInvestment } from '../items/skills.js';
 import { createSkillSlots, DamageSource } from './skillSlots.js';
-// 210스킬 앵커 25개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
-// (⑮ `onFilmBurst` 는 `filmBurst.ts` 가 부르므로 여기 없다 — 총 26개 중 25개가 이 파일 소유다.)
-import type { VolleyParams, BroodParams, TurretShotParams } from './skillHooks.js';
+// 210스킬 앵커 27개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
+// (⑮ `onFilmBurst` 는 `filmBurst.ts` 가, ㉗ `onActiveFired` 는 `actives.ts` 가 부르므로 여기
+//  없다 — 총 29개 중 27개가 이 파일 소유다.)
+import type {
+  VolleyParams,
+  BroodParams,
+  TurretShotParams,
+  GemMagnetParams,
+  PlayerMoveParams,
+} from './skillHooks.js';
 import {
   survivedLethalBlow,
   onVolleyFired,
@@ -191,6 +198,8 @@ import {
   onBroodLaunchParams,
   onBroodLaunched,
   onTurretShotParams,
+  onGemMagnetParams,
+  onPlayerMoveParams,
 } from './skillHooks.js';
 import { onDamageChainCatalyst } from './catalystHooks.js';
 import { createCatalystSlots } from './catalystSlots.js';
@@ -2202,6 +2211,11 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     mx /= mlen;
     my /= mlen;
   }
+  // 앵커 ㉙(공유 앵커 레인) — **감속 배율 산출 앞**이라 감속 잔여 틱이 아직 안 깎였다.
+  // 미투자 런은 `speedMult === 1` · `slowTicks` 왕복 항등이라 산술이 비트 동일(해시 불변).
+  const move: PlayerMoveParams = { speedMult: 1, slowTicks: state.playerSlowTicks };
+  onPlayerMoveParams(state, player, move);
+  state.playerSlowTicks = move.slowTicks;
   // 감속 지대(plan B1): 잔여 틱 동안 이동 속도를 배율로 낮춘다(대시 임펄스에는
   // 미적용 — 아래 dash는 별도 가산). 매 틱 1 감소.
   const slowMult = state.playerSlowTicks > 0 ? PLAYER_SLOW_MULT : 1;
@@ -2209,8 +2223,8 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
   // 코어 모듈 mt-attrition(지연전): 공격자(플레이어) 이동 감속. 미장착·미발동이면 배율 1 이라
   // `v * 1 === v` 로 비트 동일(거동·해시 불변). 대시 임펄스에는 미적용(감속 지대와 동일 규율).
   const moduleSlow = state.moduleRuntime !== undefined ? state.moduleRuntime.attackerSlowMult : 1;
-  player.vx = mx * config.playerSpeed * slowMult * moduleSlow;
-  player.vy = my * config.playerSpeed * slowMult * moduleSlow;
+  player.vx = mx * config.playerSpeed * slowMult * moduleSlow * move.speedMult;
+  player.vy = my * config.playerSpeed * slowMult * moduleSlow * move.speedMult;
   player.angle = input.aim;
 
   if (player.dashCooldown > 0) player.dashCooldown--;
@@ -3895,7 +3909,11 @@ function stepGems(state: WorldState, player: Entity): void {
   if (state.magnetBuffTicks > 0) state.magnetBuffTicks--;
   // Magnet-emitter buff multiplies the (powerup-grown) base radius transiently.
   const r = state.magnetBuffTicks > 0 ? state.magnetRadius * MAGNET_BUFF_MULT : state.magnetRadius;
-  const r2 = r * r;
+  // 앵커 ㉘(공유 앵커 레인) — **반경이 아직 제곱되기 전**. 미투자 런은 훅이 첫 줄에서
+  // 반환하므로 `params.radius === r` 이고 `r2` 가 종전과 비트 동일(해시 불변).
+  const magnet: GemMagnetParams = { radius: r, broodRadius: 0 };
+  onGemMagnetParams(state, player, magnet);
+  const r2 = magnet.radius * magnet.radius;
   for (const e of state.entities) {
     if (e.kind !== 'gem') continue;
     const dx = player.x - e.x;

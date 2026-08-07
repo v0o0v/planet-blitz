@@ -44,7 +44,11 @@ import {
   onCushionSettleDue,
   onCushionThreshold,
   onVolleyParams,
+  onGemMagnetParams,
+  onPlayerMoveParams,
   type VolleyParams,
+  type GemMagnetParams,
+  type PlayerMoveParams,
 } from '../src/sim/skillHooks.js';
 import {
   SIG_MALLOW_CUSHION,
@@ -72,6 +76,7 @@ const SQ5 = 4;
 const SQ7 = 6;
 const SQ8 = 7;
 const ME1 = 10;
+const ME2 = 11;
 const ME4 = 13;
 const ME5 = 14;
 const ME9 = 18;
@@ -79,6 +84,7 @@ const ME10 = 19;
 const CU3 = 22;
 const CU4 = 23;
 const CU7 = 26;
+const CU8 = 27;
 const CU9 = 28;
 const CU10 = 29;
 
@@ -1173,5 +1179,142 @@ describe('⑫ SQ7 관성 사출', () => {
     const h = hashWorld(a);
     for (let i = 0; i < 20; i++) stepWorld(a, mv);
     expect(hashWorld(a)).not.toBe(h);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑬ ME2 채무 자석 (앵커 ㉘ `onGemMagnetParams`)
+// ---------------------------------------------------------------------------
+//
+// 설계서: 확장 bp = `aux0 × (6 + 2×Lv)` · 상한 = `3000 + 4000×Lv/(Lv+12)` bp.
+//
+// 두 층으로 잰다: ①앵커를 직접 자극해 **산술**을, ②`stepWorld` 로 **`stepGems` 가 그 앵커를
+// 실제로 부르는가**를. ② 없이 ① 만 두면 "고쳐 놨는데 아무도 안 부른다"를 못 잡는다.
+
+describe('⑬ ME2 채무 자석 (앵커 ㉘)', () => {
+  function magnetParams(w: WorldState, radius: number): GemMagnetParams {
+    const params: GemMagnetParams = { radius, broodRadius: 0 };
+    onGemMagnetParams(w, player(w), params);
+    return params;
+  }
+
+  it('부채가 없으면 반경이 **한 바이트도** 안 변한다 (부채 술어)', () => {
+    const w = mk([[ME2, 20]]);
+    player(w).aux0 = 0;
+    expect(magnetParams(w, 120).radius).toBe(120);
+  });
+
+  it('하한 짝 — ME2 미투자 런은 부채가 커도 반경이 그대로다 (항진 방지)', () => {
+    const w = mk([[ME1, 20]]);
+    player(w).aux0 = 500;
+    expect(magnetParams(w, 120).radius).toBe(120);
+  });
+
+  it('부채에 비례해 커진다 — 같은 레벨에서 부채 2배가 더 큰 반경을 낸다', () => {
+    const small = mk([[ME2, 1]]);
+    player(small).aux0 = 20;
+    const big = mk([[ME2, 1]]);
+    player(big).aux0 = 40;
+    const rs = magnetParams(small, 120).radius;
+    const rb = magnetParams(big, 120).radius;
+    expect(rs).toBeGreaterThan(120); // 하한 — 양변이 120 이어서 성립하는 항진이 아니다
+    expect(rb).toBeGreaterThan(rs);
+  });
+
+  it('상한이 실제로 문다 — Lv1 은 3308bp 를 넘지 못한다', () => {
+    // 상한 = 3000 + 4000×1/13 ≈ 3307.69bp → 반경 배율 ≈ 1.3308.
+    const w = mk([[ME2, 1]]);
+    player(w).aux0 = 1_000_000; // 원 bp 는 8,000,000 — 상한이 없으면 반경이 폭주한다
+    const capped = 120 * (1 + (3000 + 4000 / 13) / 10000);
+    expect(magnetParams(w, 120).radius).toBeCloseTo(capped, 6);
+  });
+
+  it('`stepGems` 가 앵커를 실제로 부른다 — 기본 반경 밖 젬이 견인되기 시작한다', () => {
+    /** 기본 반경보다 10 먼 곳의 젬이 이번 틱에 움직였는가. */
+    function drifts(points: ReadonlyArray<readonly [number, number]>, debt: number): boolean {
+      const w = mk(points);
+      const p = player(w);
+      p.aux0 = debt;
+      const gem: Entity = {
+        ...blankEntity('gem'),
+        x: p.x + w.magnetRadius + 10,
+        y: p.y,
+        radius: 8,
+      };
+      w.entities.push(gem);
+      stepWorld(w, emptyInput());
+      return gem.vx !== 0 || gem.vy !== 0;
+    }
+    // 하한 — 미투자 런에서 그 젬은 반경 밖이라 정지해 있다.
+    expect(drifts([[ME1, 20]], 500)).toBe(false);
+    // 투자 런에서도 부채가 0 이면 확장이 없다.
+    expect(drifts([[ME2, 20]], 0)).toBe(false);
+    // 부채가 있으면 같은 젬이 끌려온다.
+    expect(drifts([[ME2, 20]], 500)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑭ CU8 통증 마취 (앵커 ㉙ `onPlayerMoveParams`)
+// ---------------------------------------------------------------------------
+//
+// 설계서: 이속 bp = `400 + aux0 × (2 + 1×Lv)` · 상한 = `1500 + 1500×Lv/(Lv+10)` bp.
+
+describe('⑭ CU8 통증 마취 (앵커 ㉙)', () => {
+  function moveParams(w: WorldState): PlayerMoveParams {
+    const params: PlayerMoveParams = { speedMult: 1, slowTicks: w.playerSlowTicks };
+    onPlayerMoveParams(w, player(w), params);
+    return params;
+  }
+
+  it('부채가 없으면 배율이 정확히 1 이다 (미투자 런 바이트 불변의 근거)', () => {
+    const w = mk([[CU8, 20]]);
+    player(w).aux0 = 0;
+    expect(moveParams(w).speedMult).toBe(1);
+  });
+
+  it('하한 짝 — CU8 미투자 런은 부채가 커도 배율이 1 이다 (항진 방지)', () => {
+    const w = mk([[CU7, 20]]);
+    player(w).aux0 = 500;
+    expect(moveParams(w).speedMult).toBe(1);
+  });
+
+  it('부채에 비례해 오르고 상한이 문다', () => {
+    const lo = mk([[CU8, 1]]);
+    player(lo).aux0 = 10;
+    const hi = mk([[CU8, 1]]);
+    player(hi).aux0 = 100;
+    const mLo = moveParams(lo).speedMult;
+    const mHi = moveParams(hi).speedMult;
+    expect(mLo).toBeGreaterThan(1); // 하한 — 양변 1 인 항진이 아니다
+    expect(mHi).toBeGreaterThan(mLo);
+    // Lv1 상한 = 1500 + 1500/11 ≈ 1636.36bp.
+    const capped = mk([[CU8, 1]]);
+    player(capped).aux0 = 1_000_000;
+    expect(moveParams(capped).speedMult).toBeCloseTo(1 + (1500 + 1500 / 11) / 10000, 9);
+  });
+
+  it('`slowTicks` 는 왕복 항등이다 — CU8 은 감속 잔여 틱을 건드리지 않는다', () => {
+    const w = mk([[CU8, 20]]);
+    player(w).aux0 = 500;
+    w.playerSlowTicks = 42;
+    expect(moveParams(w).slowTicks).toBe(42);
+  });
+
+  it('`stepPlayer` 가 앵커를 실제로 부른다 — 같은 입력에서 이동 속도가 더 크다', () => {
+    function vxAfterTick(points: ReadonlyArray<readonly [number, number]>, debt: number): number {
+      const w = mk(points);
+      const p = player(w);
+      p.aux0 = debt;
+      stepWorld(w, { ...emptyInput(), moveX: 1 });
+      return p.vx;
+    }
+    // 하한 — 미투자 런의 속도는 정확히 `playerSpeed` 다(배율 1).
+    const base = vxAfterTick([[CU7, 20]], 500);
+    expect(base).toBe(DEFAULT_CONFIG.playerSpeed);
+    // 투자 런이라도 부채가 0 이면 같다.
+    expect(vxAfterTick([[CU8, 20]], 0)).toBe(base);
+    // 부채가 있으면 빨라진다.
+    expect(vxAfterTick([[CU8, 20]], 500)).toBeGreaterThan(base);
   });
 });

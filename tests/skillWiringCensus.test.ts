@@ -209,10 +209,15 @@ function census(): { perShip: Map<string, string[]>; unread: string[] } {
 // ---------------------------------------------------------------------------
 
 /**
- * 기준: base `1f69a36` (2026-08-07) + 배선 배치3. 합계 **125 / 210**.
+ * 기준: base `1f69a36` (2026-08-07) + 배선 배치3 + 공유 앵커 레인. 합계 **128 / 210**.
  *
  * 배치3 의 델타 **11종**: 버블 DR1 · 팬텀 AS9·PH3·PH6 · 스트라이커 F8·S6·M6 ·
  * 브루저 MO4·FO4·FO8·FO9.
+ *
+ * 공유 앵커 레인의 델타 **3종**(125 → 128): 팬텀 **PH2**(앵커 ㉗ `onActiveFired`) ·
+ * 말로우 **ME2**(앵커 ㉘ `onGemMagnetParams`) · 말로우 **CU8**(앵커 ㉙ `onPlayerMoveParams`).
+ * 셋 다 **앵커마다 소비처 1종**이라는 그 레인의 규약대로다 — 나머지 소비처(액티브 축 13종 ·
+ * 자석 축 6종 · 이동 축 6종)는 기체별 레인이 얹는다.
  *
  * ⚠️ 병렬 레인 머지 주의 — 이 표는 **기체별 줄과 `GOLDEN_TOTAL` 두 곳**을 함께 고쳐야 한다.
  * 다른 레인이 자기 기체 줄만 늘리고 합계를 안 고치면 아래 자기검증이 그 자리에서 잡는다.
@@ -246,12 +251,12 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
   ],
   mallow: [
     'SQ1@0', 'SQ2@1', 'SQ3@2', 'SQ4@3', 'SQ5@4', 'SQ7@6', 'SQ8@7',
-    'ME1@10', 'ME4@13', 'ME5@14', 'ME9@18', 'ME10@19',
-    'CU3@22', 'CU4@23', 'CU7@26', 'CU9@28', 'CU10@29',
+    'ME1@10', 'ME2@11', 'ME4@13', 'ME5@14', 'ME9@18', 'ME10@19',
+    'CU3@22', 'CU4@23', 'CU7@26', 'CU8@27', 'CU9@28', 'CU10@29',
   ],
   phantom: [
     'AS2@1', 'AS3@2', 'AS4@3', 'AS5@4', 'AS9@8',
-    'PH1@10', 'PH3@12', 'PH6@15', 'PH7@16', 'PH8@17', 'PH10@19',
+    'PH1@10', 'PH2@11', 'PH3@12', 'PH6@15', 'PH7@16', 'PH8@17', 'PH10@19',
     'DI1@20', 'DI2@21', 'DI3@22', 'DI4@23', 'DI5@24', 'DI6@25', 'DI7@26', 'DI8@27',
   ],
   striker: [
@@ -262,7 +267,7 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** 골든 합계. 기체별 표와 따로 적어, 한쪽만 고치면 아래 자기검증이 잡는다. */
-const GOLDEN_TOTAL = 125;
+const GOLDEN_TOTAL = 128;
 
 /** 늘고 준 것을 사람이 읽을 수 있게 찍는다 — 숫자만 틀렸다고 하면 원인을 못 찾는다. */
 function diffMsg(ship: string, actual: readonly string[], golden: readonly string[]): string {
