@@ -25,6 +25,8 @@ import { echoActiveOf, encounterActiveOf, objectiveActiveOf } from '../src/sim/o
 import { echoStabilizedOf } from '../src/sim/echo.js';
 import { encounterCompletedOf } from '../src/sim/encounter.js';
 
+// ⚠️ `exactOptionalPropertyTypes` 아래에서는 `s.echoRuntime = undefined` 대입이 금지다 —
+// "안 뜬 런" 을 재현하려면 **`delete`** 여야 한다(옵셔널 부재와 undefined 대입이 다른 타입이다).
 function world(): WorldState {
   return createWorld(0x0b1e, { ...DEFAULT_CONFIG });
 }
@@ -64,7 +66,7 @@ describe('echoActiveOf — 출현(1)만 활성이다', () => {
 
   it('에코가 안 뜬 런은 항상 거짓이다 (`echoRuntime` 자체가 undefined)', () => {
     const s = world();
-    s.echoRuntime = undefined;
+    delete s.echoRuntime;
     expect(echoActiveOf(s)).toBe(false);
   });
 
@@ -96,7 +98,7 @@ describe('encounterActiveOf — 출현(1)과 진행중(2) 둘 다 활성이다',
 
   it('조우가 안 뜬 런은 항상 거짓이다', () => {
     const s = world();
-    s.encounterRuntime = undefined;
+    delete s.encounterRuntime;
     expect(encounterActiveOf(s)).toBe(false);
   });
 
@@ -114,13 +116,13 @@ describe('encounterActiveOf — 출현(1)과 진행중(2) 둘 다 활성이다',
 describe('objectiveActiveOf — 두 축의 OR 합류가 정본이다', () => {
   it('에코만 활성이어도 참이다', () => {
     const s = withEcho(world(), 1);
-    s.encounterRuntime = undefined;
+    delete s.encounterRuntime;
     expect(objectiveActiveOf(s)).toBe(true);
   });
 
   it('조우만 활성이어도 참이다', () => {
     const s = withEncounter(world(), 2);
-    s.echoRuntime = undefined;
+    delete s.echoRuntime;
     expect(objectiveActiveOf(s)).toBe(true);
   });
 
@@ -138,8 +140,8 @@ describe('objectiveActiveOf — 두 축의 OR 합류가 정본이다', () => {
 
   it('음성 대조: 아무것도 안 뜬 런은 거짓이다', () => {
     const s = world();
-    s.echoRuntime = undefined;
-    s.encounterRuntime = undefined;
+    delete s.echoRuntime;
+    delete s.encounterRuntime;
     expect(objectiveActiveOf(s)).toBe(false);
   });
 });
