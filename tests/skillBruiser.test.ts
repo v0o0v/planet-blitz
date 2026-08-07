@@ -93,6 +93,7 @@ const SHIP_BRUISER = 1;
  * `[blade(offense), morph(utility), fortify(defense)]` → BL 0..9 · MO 10..19 · FO 20..29.
  * ⚠️ 스트라이커와 축 종류의 순서가 다르다(스트라이커는 축1=defense).
  */
+const BL1 = 0;
 const BL2 = 1;
 const BL3 = 2;
 const BL4 = 3;
@@ -2481,5 +2482,96 @@ describe('㉝ FO10 파열 소각장 (앵커 onActiveExpired)', () => {
     w.entities.push(b);
     onActiveExpired(w, p, FORTIFY_HI, 0);
     expect(b.iframes).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ㉞ 배치7 — BL1 응전 사출 (앵커 ④ 발사·재충전 · 앵커 ⑨ 내부 쿨 감산)
+// ---------------------------------------------------------------------------
+
+describe('㉞ BL1 응전 사출', () => {
+  it('실제로 hp 가 깎인 피격에서 볼리 1발을 추가 발사한다 — `dmg=0` 인 틱에는 안 나간다 (긍정/부정 짝)', () => {
+    const w = mk([[BL1, 1]]);
+    const before = countBullets(w);
+    onPlayerDamaged(w, player(w), 10, false, DamageSource.bullet);
+    expect(countBullets(w) - before).toBe(1);
+
+    const off = mk([[BL1, 1]]);
+    const beforeOff = countBullets(off);
+    onPlayerDamaged(off, player(off), 0, false, DamageSource.bullet);
+    expect(countBullets(off)).toBe(beforeOff);
+  });
+
+  it('미투자면 실피격에도 발사하지 않는다 (긍정 짝을 옆에 둔다)', () => {
+    const skip = mk([[FO2, 20]]); // 다른 스킬만 찍은 런
+    const beforeSkip = countBullets(skip);
+    onPlayerDamaged(skip, player(skip), 10, false, DamageSource.bullet);
+    expect(countBullets(skip)).toBe(beforeSkip);
+
+    const on = mk([[BL1, 1]]);
+    const beforeOn = countBullets(on);
+    onPlayerDamaged(on, player(on), 10, false, DamageSource.bullet);
+    expect(countBullets(on) - beforeOn).toBe(1);
+  });
+
+  it('발사해도 주무기 쿨다운(`player.cooldown`)을 한 비트도 안 건드린다 — 쿨다운 미소비가 정체성이다', () => {
+    const w = mk([[BL1, 1]]);
+    const p = player(w);
+    p.cooldown = 777;
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
+    expect(p.cooldown).toBe(777);
+  });
+
+  it('⭐ 내부 쿨 60틱 — 발사 직후(59틱 이내) 재피격은 안 나가고, 60틱째엔 다시 나간다 (부정/긍정 짝)', () => {
+    const w = mk([[BL1, 5]]);
+    const p = player(w);
+    const before = countBullets(w);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
+    expect(countBullets(w) - before, '1차 발사').toBe(1);
+    expect(readSlot(w.skillStage, BruiserStage.retortCooldown)).toBe(60);
+
+    // 내부 쿨이 59틱 돈 시점(아직 0 이 아니다) — 재피격해도 안 나간다.
+    for (let i = 0; i < 59; i++) onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BruiserStage.retortCooldown)).toBe(1);
+    const afterDecay = countBullets(w);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
+    expect(countBullets(w), '내부 쿨 중 재발사 — 벽이 안 걸렸다').toBe(afterDecay);
+
+    // 남은 1틱을 마저 깎아 쿨이 정확히 0 이 되는 순간 — 다시 나간다.
+    onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BruiserStage.retortCooldown)).toBe(0);
+    const before2 = countBullets(w);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
+    expect(countBullets(w) - before2, '쿨이 풀리면 다시 나간다').toBe(1);
+  });
+
+  it('감산은 앵커 ⑨(매 틱) 이 하고, 피격이 없는 동안에도 쿨이 준다', () => {
+    const w = mk([[BL1, 1]]);
+    const p = player(w);
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
+    expect(readSlot(w.skillStage, BruiserStage.retortCooldown)).toBe(60);
+    for (let i = 0; i < 60; i++) onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BruiserStage.retortCooldown)).toBe(0);
+  });
+
+  it('미투자면 내부 쿨 슬롯이 영구 0 이다(감산도 안 돈다)', () => {
+    const w = mk([[FO2, 5]]);
+    const p = player(w);
+    onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BruiserStage.retortCooldown)).toBe(0);
+  });
+
+  it('반격 볼리 피해가 레벨과 함께 는다 — 무기 기준 50% + 2%p/Lv (하한 짝 포함)', () => {
+    function retortDamage(level: number): number {
+      const w = mk([[BL1, level]]);
+      const p = player(w);
+      onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
+      const b = w.entities.find((e) => e.kind === 'bullet' && !e.dead);
+      if (b === undefined) throw new Error('반격 볼리가 안 나갔다');
+      return b.damage;
+    }
+    const one = retortDamage(1);
+    expect(one).toBeGreaterThan(0); // ← 하한. 없으면 아래 비교가 항진이 된다.
+    expect(retortDamage(20)).toBeGreaterThan(one);
   });
 });
