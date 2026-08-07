@@ -22,6 +22,7 @@
  */
 
 import type { StatKey } from './types.js';
+import { SKILL_AFFIX_LV_MAX } from './types.js';
 import {
   DEFAULT_SHIP_TYPE,
   shipTypeDef,
@@ -118,9 +119,19 @@ export function skillPoints(
  * ## 계약 (네 줄이 전부다)
  *  1. **투자 ≥ 1 인 스킬에만 가산한다.** `base <= 0` 이면 **0 을 반환하고 끝** — 어픽스를
  *     더하지 않는다. 이 한 줄이 "해금은 포인트로만"(ADR-0049 · E7)의 전부다.
- *  2. **상한 20 을 초과한다.** 결과를 **clamp 하지 않는다** — 20 초과가 설계이고, 실효 상한
- *     24(= 20 + 4)는 입력 쪽 `clampSkillAffixLv`(loadout.ts)가 이미 보장한다. 여기서 자르면
- *     그 초과분이 조용히 사라진다.
+ *  2. **상한 20 을 초과한다.** **결과(`base + add`)를 clamp 하지 않는다** — 20 초과가 설계다.
+ *     여기서 자르면 그 초과분이 조용히 사라진다.
+ *
+ *     ⚠️⚠️ **가산분(`add`)의 상한은 별개이고, 그것은 여기서 건다.** 두 문장을 뭉치지 마라.
+ *     2026-08-07 이전 이 자리는 *"실효 상한 24 는 입력 쪽 `clampSkillAffixLv`(loadout.ts)가
+ *     이미 보장한다"* 라고 적혀 있었는데 **그 전제가 틀렸다** — 그 클램프는 **클라의 파생
+ *     시점**에만 걸리고, `WorldConfig.skillAffixLv` 는 리플레이 config 로 그대로 들어오는
+ *     **신뢰 경계 밖의 입력**이다. 손으로 고친 config 는 `[9999, …]` 을 실을 수 있었고 sim 이
+ *     그대로 더했다. ADR-0050 으로 서버 재실행 대조가 사라져 **잡아 줄 뒷단도 없다.**
+ *     그래서 클램프를 **읽는 쪽**(= 신뢰 경계 안쪽)으로 옮겼다.
+ *     ⭐ 정상 런은 파생값이 이미 0~4 라 이 클램프가 **무연산**이다 → **해시 불변**.
+ *     (사용자 판정 2026-08-07: 의뢰 봉인은 **하지 않는다** — 승패 주장 자체를 서버가 믿는
+ *     상태라 이 한 축만 봉인해도 실효 방어가 거의 안 는다. 대신 클램프로 무제한만 막는다.)
  *  3. **발동 여부는 어픽스가 못 바꾼다.** 이 함수는 레벨만 돌려준다 — 트레이드 스킬 본체의
  *     발동은 투자 유무로만 판정한다.
  *  4. **침공 판정을 상속한다.** 게이트된 스킬은 레벨이 얼마든 침공에서 no-op 이다. 그 게이트는
@@ -164,8 +175,11 @@ export function skillLv(
   if (ai < 0) return base;
   const add = affixLv[ai];
   if (typeof add !== 'number' || !Number.isFinite(add) || add <= 0) return base;
-  // 정본 2: clamp 하지 않는다 — 20 초과가 설계다.
-  return base + Math.trunc(add);
+  // 가산분만 축당 구조 상한으로 자른다(§2 ⚠️ 참조) — `skillAffixLv` 는 리플레이 config 로
+  // 들어오는 신뢰 경계 밖 입력이고, 파생 쪽 클램프는 클라에만 걸린다. 정상 런은 이미 0~4 라
+  // 무연산이다(해시 불변). ⛔ **결과(`base + add`)는 여전히 자르지 않는다 — 24 가 실효 상한이다.**
+  const capped = Math.min(Math.trunc(add), SKILL_AFFIX_LV_MAX);
+  return base + capped;
 }
 
 /** flat 인덱스 → 스킬 정의. 범위 밖이면 `undefined`. */

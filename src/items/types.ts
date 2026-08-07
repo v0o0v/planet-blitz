@@ -184,6 +184,19 @@ export type StatKey =
   | 'skillLvDefense' // 방어 계열
   | 'skillLvUtility'; // 유틸 계열
 
+/**
+ * 스킬 어픽스 **축당 가산 상한**(ADR-0049 · affixes.md ①-3).
+ *
+ * `2칸 × 장비당 1개 × 개당 최대 +2 = 4` — 확률이 아니라 **슬롯 배치가 만드는 하드 상한**이다.
+ *
+ * ⚠️ **이 상수가 `types.ts`(leaf)에 있는 이유는 순환 회피다.** 파생 쪽(`loadout.ts`)과 소비 쪽
+ * (`skills.ts`)이 **둘 다** 이 값을 알아야 하는데, `skills.ts` 는 sim 런타임 그래프에 있고
+ * `loadout.ts` 는 유니크 레지스트리·계보를 끌고 온다. 소비 쪽이 파생 쪽을 import 하면 sim 이
+ * 로드아웃 모듈을 통째로 당기게 되고, 그것이 이 리포가 TDZ 로 대가를 치른 형태다
+ * (`status.ts → skillHooks.ts → skills/<기체>.ts → status.ts`). **효과 본체는 leaf 에.**
+ */
+export const SKILL_AFFIX_LV_MAX = 4;
+
 export type AffixKind = 'prefix' | 'suffix';
 
 /**

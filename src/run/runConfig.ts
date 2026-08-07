@@ -162,6 +162,24 @@ function equippedItems(profile: Profile, rules?: CommissionEquipRules): Item[] {
  * 계산한다. 소집(`pilot`)·촉매 배율은 여기 관여하지 않는다 — 의뢰 런은 그 둘과 상호배타다
  * (`buildRunConfig` 의 pilot 금지 가드).
  */
+/**
+ * ## ⚠️ 명시적 한계 — `skillAffixLv` 는 **일부러 봉인하지 않는다** (사용자 판정 2026-08-07)
+ *
+ * 이 함수가 봉인하는 것은 `LoadoutConfig` 뿐이다. 스킬 어픽스 축 레벨(`skillAffixLv`)은 별도
+ * config 필드라 봉인에 안 들어가고, 따라서 **EF 게이트 3 의 대조로는 그 축의 위조가 안 잡힌다.**
+ *
+ * 봉인하지 않기로 한 근거는 "작아서"가 아니라 **더 큰 구멍이 그 옆에 열려 있어서**다 —
+ * ADR-0050 으로 서버 재실행이 사라지면서 승패(`claim.outcome.victory`)를 **서버가 클라 주장
+ * 그대로 믿는다.** 스킬을 위조할 것도 없이 "이겼다"고 하면 되는 상태에서 이 한 축만 봉인해도
+ * 실효 방어가 거의 안 늘고, 서버 계약 §5-2 개정 + EF 재배포 + 기존 봉인 행 grandfather 비용만
+ * 치른다.
+ *
+ * **대신 무제한 위조만 막았다** — `skillLv()`(`src/items/skills.ts`)가 가산분을
+ * `SKILL_AFFIX_LV_MAX` 로 자른다. 파생 쪽 클램프는 클라에만 걸려 신뢰 경계 밖이었다.
+ *
+ * ⭐ **이 한계를 닫는 조건은 「봉인 추가」가 아니라 「승패를 서버가 판정하게 되는 것」이다.**
+ * ADR-0050 §3 단계 1(아이템 서버 원장)이 그 방향이고, 그때 이 절을 다시 열어라.
+ */
 export function commissionSealedLoadout(profile: Profile, rules?: CommissionEquipRules): LoadoutConfig {
   const ship = activeShip(profile);
   const typeId = normalizeShipTypeId(ship.typeId);
