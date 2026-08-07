@@ -209,7 +209,14 @@ function census(): { perShip: Map<string, string[]>; unread: string[] } {
 // ---------------------------------------------------------------------------
 
 /**
- * 기준: base `27225ba` (2026-08-07) + 버블 배선 2차(`lane/wire-bubble`, DR1). 합계 **115 / 210**.
+ * 기준: base `1f69a36` (2026-08-07) + 배선 배치3. 합계 **118 / 210**.
+ *
+ * 배치3 의 델타: 버블 DR1 · 팬텀 AS9·PH3·PH6.
+ *
+ * ⚠️ 병렬 레인 머지 주의 — 이 표는 **기체별 줄과 `GOLDEN_TOTAL` 두 곳**을 함께 고쳐야 한다.
+ * 다른 레인이 자기 기체 줄만 늘리고 합계를 안 고치면 아래 자기검증이 그 자리에서 잡는다.
+ * 배치3 에서 네 레인이 **각자 자기 수로 합계를 고쳐 와** 이 자리가 실제로 충돌했다 —
+ * 합계는 리드가 머지하며 **전 기체 합산으로 다시 계산한다.**
  *
  * 갱신 방법: 테스트가 빨개지면 실패 메시지가 **어떤 스킬이 늘고 줄었는지**를 찍는다.
  * 그 목록이 네 의도와 같은지 눈으로 확인한 뒤 여기에 반영해라. 통째로 복붙하지 마라 —
@@ -242,8 +249,8 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
     'CU3@22', 'CU4@23', 'CU7@26', 'CU9@28', 'CU10@29',
   ],
   phantom: [
-    'AS2@1', 'AS3@2', 'AS4@3', 'AS5@4',
-    'PH1@10', 'PH7@16', 'PH8@17', 'PH10@19',
+    'AS2@1', 'AS3@2', 'AS4@3', 'AS5@4', 'AS9@8',
+    'PH1@10', 'PH3@12', 'PH6@15', 'PH7@16', 'PH8@17', 'PH10@19',
     'DI1@20', 'DI2@21', 'DI3@22', 'DI4@23', 'DI5@24', 'DI6@25', 'DI7@26', 'DI8@27',
   ],
   striker: [
@@ -254,7 +261,7 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** 골든 합계. 기체별 표와 따로 적어, 한쪽만 고치면 아래 자기검증이 잡는다. */
-const GOLDEN_TOTAL = 115;
+const GOLDEN_TOTAL = 118;
 
 /** 늘고 준 것을 사람이 읽을 수 있게 찍는다 — 숫자만 틀렸다고 하면 원인을 못 찾는다. */
 function diffMsg(ship: string, actual: readonly string[], golden: readonly string[]): string {

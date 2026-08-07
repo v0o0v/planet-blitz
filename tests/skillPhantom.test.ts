@@ -41,8 +41,18 @@ import {
   onVolleyParams,
   type VolleyParams,
 } from '../src/sim/skillHooks.js';
-import { SIG_PHANTOM_CLOAK, CLOAK_UNHIT_TICKS } from '../src/sim/shipSignature.js';
-import { PhantomCarry, readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
+import {
+  SIG_PHANTOM_CLOAK,
+  CLOAK_UNHIT_TICKS,
+  CLOAK_HOLD_TICKS,
+} from '../src/sim/shipSignature.js';
+import {
+  PhantomCarry,
+  PhantomStage,
+  readSlot,
+  writeSlot,
+  SKILL_SLOT_COUNT,
+} from '../src/sim/skillSlots.js';
 import { DamageSource } from '../src/sim/skillSlots.js';
 
 /** `data/ships/index.ts` 의 타입 id (STRIKER 0 · BRUISER 1 · ARCCASTER 2 · **PHANTOM 3**). */
@@ -56,7 +66,10 @@ const AS2 = 1;
 const AS3 = 2;
 const AS4 = 3;
 const AS5 = 4;
+const AS9 = 8;
 const PH1 = 10;
+const PH3 = 12;
+const PH6 = 15;
 const PH10 = 19;
 const DI1 = 20;
 const PH7 = 16;
@@ -973,5 +986,266 @@ describe('⑯-좀비 AS4·AS5 추가 피해 사망 마킹', () => {
     stepWorld(w, emptyInput());
     expect(w.entities.includes(t)).toBe(true);
     expect(w.kills).toBe(killsBefore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑰ AS9 절멸 선고 — 앵커 ⑩ (강화탄 표식 → 명중 지점 폭발)
+// ---------------------------------------------------------------------------
+
+/**
+ * ⚠️ 계측기 함정 둘을 여기서 막는다.
+ *  ① **표적을 플레이어 코앞에 두면 안 된다** — 자동사격 탄(≈30px/tick)이 같은 틱에 마무리해
+ *     수정 전에도 통과한다. 그래서 전부 600px 밖에 둔다.
+ *  ② **반경 안/밖 짝을 둘 다 세운다** — 안쪽만 재면 "반경이 무한대" 인 오배선도 통과한다.
+ */
+describe('⑰ AS9 절멸 선고 (앵커 ⑩)', () => {
+  const DMG = 100;
+  /** AS9 Lv10 — 반경 100 + 10×10 = 200 · 폭발 = round(100 × (2500+1500)/10000) = 40. */
+  const RADIUS = 200;
+  const BLAST = 40;
+
+  /** 강화탄 표식(`MARK_CLOAK_BREAK = 2`)이 찍힌 아군탄. 정본은 `skills/phantom.ts`. */
+  const marked = (): Entity => ({ ...blankEntity('bullet'), damage: DMG, aux0: 2 });
+  const plain = (): Entity => ({ ...blankEntity('bullet'), damage: DMG, aux0: 0 });
+
+  /** 표적(600px 밖) · 반경 안 방관자 · 반경 밖 방관자. */
+  function scene(points: ReadonlyArray<readonly [number, number]>): {
+    w: WorldState;
+    t: Entity;
+    near: Entity;
+    far: Entity;
+  } {
+    const w = mk(points);
+    const p = player(w);
+    const t = addEnemy(w, p.x, p.y + 600, 1_000_000);
+    const near = addEnemy(w, p.x, p.y + 600 + (RADIUS - 20), 1000);
+    const far = addEnemy(w, p.x, p.y + 600 + (RADIUS + 20), 1000);
+    return { w, t, near, far };
+  }
+
+  it('강화탄 명중 지점 반경 안의 적만 폭발 피해를 받는다 (반경 밖은 무피해)', () => {
+    const { w, t, near, far } = scene([[AS9, 10]]);
+    onEnemyDamaged(w, t, DMG, marked());
+    // 하한 — 배선이 끊기면 양변이 1000 이 되어 "밖은 무피해" 만으로는 항진이다.
+    expect(near.hp).toBe(1000 - BLAST);
+    expect(far.hp).toBe(1000);
+  });
+
+  it('**맞은 표적 자신은 제외**한다 — 광역이 단일 표적 증폭으로 퇴화하지 않는다', () => {
+    const { w, t, near } = scene([[AS9, 10]]);
+    const hpBefore = t.hp;
+    onEnemyDamaged(w, t, DMG, marked());
+    expect(t.hp).toBe(hpBefore);
+    // 긍정 짝 — 같은 호출에서 주변 적에게는 실제로 들어갔다(부정 항목 단독은 항진이 된다).
+    expect(near.hp).toBe(1000 - BLAST);
+  });
+
+  it('표식 없는 탄은 폭발이 없다 — 창 안 전 명중이 폭탄이 되지 않는다 (음성 짝)', () => {
+    const { w, t, near } = scene([[AS9, 10]]);
+    player(w).aux0 = 300; // 은신 창 안 — "지금 창인가" 로 대체 구현했다면 여기서 통과해 버린다
+    onEnemyDamaged(w, t, DMG, plain());
+    expect(near.hp).toBe(1000);
+  });
+
+  it('미투자 런은 강화탄이 명중해도 아무 일도 안 한다 (음성 대조)', () => {
+    const { w, t, near } = scene([[AS2, 10]]);
+    onEnemyDamaged(w, t, DMG, marked());
+    expect(near.hp).toBe(1000);
+  });
+
+  it('레벨이 오르면 폭발 피해가 커진다 (단조 — 하한 포함)', () => {
+    /** Lv1 반경(110) 안쪽에 방관자를 둔다 — 피해 축만 재려면 반경 축을 고정해야 한다. */
+    function dealt(level: number): number {
+      const w = mk([[AS9, level]]);
+      const p = player(w);
+      const t = addEnemy(w, p.x, p.y + 600, 1_000_000);
+      const near = addEnemy(w, p.x, p.y + 680, 100_000); // 표적에서 80px
+      onEnemyDamaged(w, t, DMG, marked());
+      return 100_000 - near.hp;
+    }
+    const lo = dealt(1);
+    // 하한 — Lv1 에서도 0 이 아니어야 아래 비교가 항진이 아니다.
+    expect(lo).toBeGreaterThan(0);
+    expect(dealt(20)).toBeGreaterThan(lo);
+  });
+
+  it('레벨이 오르면 반경도 커진다 — Lv10 에서 밖이던 방관자가 Lv20 에서 안이다', () => {
+    const lo = scene([[AS9, 10]]);
+    onEnemyDamaged(lo.w, lo.t, DMG, marked());
+    expect(lo.far.hp).toBe(1000); // 하한 — Lv10 반경 200 < 220
+    const hi = scene([[AS9, 20]]);
+    onEnemyDamaged(hi.w, hi.t, DMG, marked());
+    expect(hi.far.hp).toBeLessThan(1000); // Lv20 반경 300 > 220
+  });
+
+  it('폭발이 주변 적을 죽이면 dead 로 마킹돼 처치·젬까지 간다 (좀비 방지)', () => {
+    const w = mk([[AS9, 10]]);
+    const p = player(w);
+    const t = addEnemy(w, p.x, p.y + 600, 1_000_000);
+    const near = addEnemy(w, p.x, p.y + 600 + 100, BLAST); // 폭발 한 방에 정확히 죽는다
+    const killsBefore = w.kills;
+    const gemsBefore = w.entities.filter((x) => x.kind === 'gem').length;
+    onEnemyDamaged(w, t, DMG, marked());
+    expect(near.hp).toBeLessThanOrEqual(0);
+    expect(near.dead).toBe(true);
+    stepWorld(w, emptyInput());
+    expect(w.entities.includes(near)).toBe(false);
+    expect(w.kills).toBeGreaterThanOrEqual(killsBefore + 1);
+    expect(w.entities.filter((x) => x.kind === 'gem').length).toBeGreaterThan(gemsBefore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑱ PH3 그림자 장부 — 앵커 ⑨(본체: 콤보 시계 정지) + 앵커 ③(스케일: 회복량 가산)
+// ---------------------------------------------------------------------------
+
+describe('⑱ PH3 그림자 장부 (앵커 ⑨ + 앵커 ③)', () => {
+  /** 콤보를 세워 두고 한 틱 굴린 뒤의 `comboTimer`. `updateCombo` 의 −1 이 앵커 ⑨ 뒤에 온다. */
+  function tickWithCombo(
+    points: ReadonlyArray<readonly [number, number]>,
+    unhit: number,
+    timer = 50,
+  ): number {
+    const w = mk(points);
+    const p = player(w);
+    p.aux0 = unhit;
+    w.combo = 3;
+    w.comboTimer = timer;
+    stepWorld(w, emptyInput());
+    return w.comboTimer;
+  }
+
+  it('은신 창 동안 콤보 시계가 멈춘다 (창 밖·미투자는 정상 감소 — 하한)', () => {
+    // 하한 둘 — 감소가 실제로 일어나는 것을 먼저 보여야 "멈춘다" 가 무언가를 잰다.
+    expect(tickWithCombo([[DI2, 1]], 300)).toBe(49); // 미투자(다른 스킬만) · 창 안
+    expect(tickWithCombo([[PH3, 10]], 100)).toBe(49); // 투자 · 창 밖(적립 중)
+    // 본체 — 투자 + 창 안이면 그 틱의 순변화가 0 이다.
+    expect(tickWithCombo([[PH3, 10]], 300)).toBe(50);
+  });
+
+  it('`comboTimer === 0` 이면 올리지 않는다 — 유령 시계를 만들지 않는다', () => {
+    expect(tickWithCombo([[PH3, 10]], 300, 0)).toBe(0);
+  });
+
+  it('창 중 젬 수거는 콤보 창 회복량이 +2 + Lv 만큼 가산된다 (창 밖·미투자는 불변)', () => {
+    function collect(points: ReadonlyArray<readonly [number, number]>, unhit: number): number {
+      const w = mk(points);
+      const p = player(w);
+      p.aux0 = unhit;
+      w.comboTimer = 120;
+      onGemCollected(w, { ...blankEntity('gem'), x: p.x, y: p.y });
+      return w.comboTimer;
+    }
+    // 음성 짝 둘 — 둘 다 하한 120 이라 아래 단언이 "무언가 늘었다" 를 실제로 잰다.
+    expect(collect([[DI2, 1]], 300)).toBe(120);
+    expect(collect([[PH3, 10]], 100)).toBe(120);
+    // Lv10 → +12.
+    expect(collect([[PH3, 10]], 300)).toBe(132);
+    // 단조 — Lv1 은 +3.
+    expect(collect([[PH3, 1]], 300)).toBe(123);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑲ PH6 정지된 시계 — 앵커 ②(예약) + 앵커 ⑨(집행) + 진입 에지(예산 리셋)
+// ---------------------------------------------------------------------------
+
+describe('⑲ PH6 정지된 시계 (앵커 ② + ⑨)', () => {
+  const pending = (w: WorldState): number =>
+    readSlot(w.skillStage, PhantomStage.frozenClockPending);
+  const used = (w: WorldState): number => readSlot(w.skillStage, PhantomStage.frozenClockUsed);
+
+  it('창 안 대시만 정지를 예약한다 (창 밖·미투자는 예약 0)', () => {
+    const off = mk([[PH1, 1]]);
+    const q = player(off);
+    q.aux0 = 300;
+    onDashFired(off, q);
+    expect(pending(off)).toBe(0);
+
+    const out = mk([[PH6, 10]]);
+    const r = player(out);
+    r.aux0 = 100; // 창 밖 — 이쪽은 PH1 의 영역이다
+    onDashFired(out, r);
+    expect(pending(out)).toBe(0);
+
+    const on = mk([[PH6, 10]]);
+    const p = player(on);
+    p.aux0 = 300;
+    onDashFired(on, p);
+    expect(pending(on)).toBe(1);
+  });
+
+  it('예약된 정지가 다음 시그니처 스텝에서 `aux0` 1 을 되돌린다 (미투자는 불변)', () => {
+    const off = mk([[PH1, 1]]);
+    const q = player(off);
+    q.aux0 = 300;
+    onDashFired(off, q);
+    onSignatureStep(off, q, emptyInput());
+    expect(q.aux0).toBe(300);
+
+    const on = mk([[PH6, 10]]);
+    const p = player(on);
+    p.aux0 = 300;
+    onDashFired(on, p);
+    onSignatureStep(on, p, emptyInput());
+    expect(p.aux0).toBe(299); // 곧바로 뒤따르는 world 의 `aux0++` 가 300 으로 되돌린다 = 정지
+    expect(used(on)).toBe(1);
+    expect(pending(on)).toBe(0); // 예약은 소비됐다
+  });
+
+  it('진입 임계(240) 정각에서는 얼리지 않는다 — 진입 훅 재발화 방지', () => {
+    const w = mk([[PH6, 10]]);
+    const p = player(w);
+    p.aux0 = CLOAK_UNHIT_TICKS;
+    onDashFired(w, p);
+    expect(pending(w)).toBe(1); // 예약은 선다(창 안이다)
+    onSignatureStep(w, p, emptyInput());
+    expect(p.aux0).toBe(CLOAK_UNHIT_TICKS); // 239 로 내려가지 않았다
+    expect(used(w)).toBe(0); // 예산도 안 깎였다
+    expect(pending(w)).toBe(0); // 예약은 그래도 소비된다
+  });
+
+  it('창당 예산이 상한이다 — 소진 후 대시는 정지를 못 산다', () => {
+    const w = mk([[PH6, 1]]);
+    const p = player(w);
+    p.aux0 = 320;
+    const budget = 12 + Math.floor((24 * 1) / 10); // = 14
+    for (let i = 0; i < budget + 6; i++) {
+      onDashFired(w, p);
+      onSignatureStep(w, p, emptyInput());
+    }
+    expect(used(w)).toBe(budget);
+    expect(p.aux0).toBe(320 - budget);
+    // 상한이 HOLD/2 를 못 넘는다(Lv20 에서 도달) — 설계서 심각-2 유계화.
+    expect(12 + Math.floor((24 * 20) / 10)).toBe(Math.floor(CLOAK_HOLD_TICKS / 2));
+  });
+
+  it('은신 진입 에지가 예산을 0 으로 되돌린다 (stepWorld 관통)', () => {
+    const w = mk([[PH6, 10]]);
+    const p = player(w);
+    writeSlot(w.skillStage, PhantomStage.frozenClockUsed, 7);
+    writeSlot(w.skillStage, PhantomStage.frozenClockPending, 1);
+    p.aux0 = CLOAK_UNHIT_TICKS - 1; // 이번 틱에 240 을 통과해 진입 에지가 선다
+    stepWorld(w, emptyInput());
+    expect(p.aux0).toBe(CLOAK_UNHIT_TICKS); // 하한 — 진입이 실제로 일어났다
+    expect(used(w)).toBe(0);
+    expect(pending(w)).toBe(0);
+  });
+
+  it('실제 입력 경로가 앵커를 관통한다 — 창 안 대시 다음 틱의 시계가 멈춘다 (stepWorld)', () => {
+    function run(points: ReadonlyArray<readonly [number, number]>): number {
+      const w = mk(points);
+      const p = player(w);
+      p.aux0 = 300;
+      p.dashCooldown = 0;
+      stepWorld(w, { ...emptyInput(), dash: true }); // 이 틱에 대시 → 예약
+      stepWorld(w, emptyInput()); // 다음 틱에 집행
+      return p.aux0;
+    }
+    // 하한 — 미투자 런은 두 틱 동안 정확히 2 늘어난다(피격이 끼면 0 이 되므로 이 값이 전제다).
+    expect(run([[PH1, 1]])).toBe(302);
+    // 투자 런은 한 틱이 멈춰 1 만 는다.
+    expect(run([[PH6, 10]])).toBe(301);
   });
 });

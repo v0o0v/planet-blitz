@@ -23,16 +23,33 @@
  *
  * ---
  *
- * ## ⚠️ 지금 배선된 것은 30종 중 **16종**이다 (S2 앵커로 12 → 15, S2.1 로 15 → 16)
+ * ## ⚠️ 지금 배선된 것은 30종 중 **19종**이다 (S3 이 16 → 19)
+ * S3 이 더한 셋은 전부 **기존 앵커만으로** 섰다:
+ *  - **AS9「절멸 선고」**(앵커 ⑩) — AS3 이 이미 나르던 강화탄 표식({@link MARK_CLOAK_BREAK})을
+ *    같은 자리에서 읽어 명중 지점 폭발을 낸다. 막고 있던 것은 "소진 지점이 앵커가 아니다" 였는데,
+ *    표식이 그 판정을 탄에 실어 나르므로 소진 지점이 필요 없었다.
+ *  - **PH3「그림자 장부」**(앵커 ⑨ 본체 + 앵커 ③ 스케일) — 콤보 시계 감소부(`world.ts`)가
+ *    앵커가 아니라는 벽은 그대로지만, **감소가 정확히 `-1` 한 곳뿐**이고 앵커 ⑨ 가 그보다
+ *    앞이라 같은 틱에 `+1` 하면 값이 비트 단위로 같다. 그래서 앵커 ③ 의 스케일이 더 이상
+ *    "본체 없는 곁가지"가 아니다.
+ *  - **PH6「정지된 시계」**(앵커 ② 예약 + 앵커 ⑨ 집행 + 진입 에지 리셋) — 앵커 ② 가 적립보다
+ *    뒤라는 벽을 **예약/집행 분리**로 넘었다. 창당 총량은 예산과 같다.
+ *
+ * ## (앞 단계) S2 앵커로 12 → 15, S2.1 로 15 → 16
  * S2 가 앵커 ㉑(`onCloakBreakReset`, 팬텀 리셋 **직전**)과 ⑯(`onVolleyParams`, 탄 생성 직전)을
  * 열면서 셋이 살아났다 — **DI1「위상 정산」·PH10「발각 즉응」**(둘 다 리셋 전 스트릭을 요구해
  * 앵커 ④ 에서는 상시 0·상시 거짓이었다)과 **AS2「은막 침투」**(볼리 파라미터가 필요했다).
  * S2.1 의 `VolleyParams.cloakBreak` 이 **AS3「처형 재장전」**을 더 열었다.
  *
- * 나머지 14종은 아직 앵커가 닿지 않는 지점을 요구한다 — 사유는 각 앵커의 `case` 주석과 레인
+ * 나머지 11종은 아직 앵커가 닿지 않는 지점을 요구한다 — 사유는 각 앵커의 `case` 주석과 레인
  * 보고서에 있다. 여기 없는 스킬은 "구현했는데 안 불린다"가 아니라 **아직 코드가 없다.**
  * 가장 큰 덩어리는 여전히 **해제 첫 타 배율의 소진 지점**(`world.ts` autoAttack 의 `aux1`
- * 소진 분기)이다 — AS1·AS8·AS9·DI10 넷이 아직 거기에 달려 있다. 앵커 ⑯ 은 그 소진 **뒤**라
+ * 소진 분기)이다 — AS1·AS8·DI10 셋이 아직 거기에 달려 있다.
+ * ⚠️ **AS1 을 `setBreakToken` 재장전으로 대체하지 마라.** 토큰은 0/1 이진이라 다시 세우면
+ * 후속 타가 **원배율(2.5배)** 을 받는데, 설계서 AS1 의 후속 배율은
+ * `25000 × (0.3 + 0.6×Lv/(Lv+15))` bp(Lv1 ≈ 0.85배 · Lv20 ≈ 1.6배)로 **원배율보다 작다.**
+ * 그 대체는 AS3(재장전 = 원배율)과 값이 같아져 두 스킬이 하나가 된다.
+ * 앵커 ⑯ 은 그 소진 **뒤**라
  * "이번 볼리가 그 강화탄이었나" 를 그 자리에서는 알 수 없었고(`params.mark === 1` 은 스트라이커
  * 정조준 전용이고, 팬텀 소진 분기는 표식을 남기지 않는다), S2.1 이 **판정 결과만** 레코드에
  * 실어 AS3 하나를 뽑아냈다. 남은 넷은 배율 **값**이나 소진 **직전** 상태를 요구해 그 칸으로는
@@ -48,8 +65,8 @@ import { advanceCloak, playerCloaked, setBreakToken } from '../cloak.js';
 import { clearEnemyBullets } from '../activeTypes.js';
 import { slideCircleWalls } from '../los.js';
 import { length } from '../math.js';
-import { readSlot, writeSlot, PhantomCarry } from '../skillSlots.js';
-import { CLOAK_UNHIT_TICKS, cloakWindowActive } from '../shipSignature.js';
+import { readSlot, writeSlot, PhantomCarry, PhantomStage } from '../skillSlots.js';
+import { CLOAK_HOLD_TICKS, CLOAK_UNHIT_TICKS, cloakWindowActive } from '../shipSignature.js';
 import { skillLv } from '../../items/skills.js';
 
 // ---------------------------------------------------------------------------
@@ -68,7 +85,10 @@ const enum Sk {
   /** AS3 처형 재장전 */ executionReload = 2,
   /** AS4 급소 해부 */ vitalDissection = 3,
   /** AS5 배후 격살 */ backstab = 4,
+  /** AS9 절멸 선고 */ annihilationVerdict = 8,
   /** PH1 잔상 이탈 */ afterimageExit = 10,
+  /** PH3 그림자 장부 */ shadowLedger = 12,
+  /** PH6 정지된 시계 */ frozenClock = 15,
   /** PH8 흔적 흡수 */ traceSiphon = 17,
   /** PH10 발각 즉응 */ blownCoverReflex = 19,
   /** DI1 위상 정산 */ phaseLiquidation = 20,
@@ -119,6 +139,22 @@ const MENDING_PERIOD = 60;
  */
 const REPULSE_RADIUS = 220;
 
+/**
+ * PH6 창당 정지 예산 = `min(12 + floor(2.4×Lv), CLOAK_HOLD_TICKS/2)` 틱 (설계서 PH6, 2판 유계화).
+ *
+ * `2.4 × Lv` 를 f64 로 곱하지 않고 `floor(24×Lv/10)` 으로 적는 것은 규율 ③ 이 아니라 **결정론**
+ * 때문이다 — `2.4` 는 이진 부동소수로 정확히 표현되지 않아 Lv 에 따라 `floor` 가 갈릴 수 있다.
+ *
+ * 상한이 `HOLD/2` 인 것이 유계의 전부다: 창 하나가 스스로를 1.5배 이상 늘릴 수 없고,
+ * PH5 가 HOLD 를 늘리면 상한도 절반씩 따라 늘어 비율이 보존된다(`shipSignature.ts` 가 폐기한
+ * 영구 은신이 재현되지 않는 근거).
+ */
+function frozenClockBudget(level: number): number {
+  const raw = 12 + Math.floor((24 * level) / 10);
+  const cap = Math.floor(CLOAK_HOLD_TICKS / 2);
+  return raw < cap ? raw : cap;
+}
+
 /** DI5 내부 쿨다운 = 3600 − 3600×Lv/(Lv+30) 틱 (Lv1 ≈ 3484, Lv20 = 2160, 점근 0·도달 없음). */
 function lastPhaseCooldownTicks(level: number): number {
   return 3600 - Math.floor((3600 * level) / (level + 30));
@@ -142,29 +178,69 @@ function attenuationBp(streak: number, level: number): number {
 // ---------------------------------------------------------------------------
 
 /**
- * 앵커 ② **대시 발동** — PH1 잔상 이탈.
+ * 앵커 ② **대시 발동** — PH1 잔상 이탈 · PH6 정지된 시계(예약 절반).
  *
  * 전진은 반드시 {@link advanceCloak} 경유다: 240 에서 멈추고 진입 에지를 정상 발화하며,
  * **창 안 대시는 무효**(창 조작은 PH6 의 전유 축 — 설계서 ①-3 의 택일 확정). 침공 no-op 도
  * 헬퍼에 내장돼 있어 여기서 다시 보지 않는다.
+ *
+ * ## ⚠️ PH6 은 여기서 **집행하지 않고 예약만** 한다 — 앵커 순서가 그렇게 강제한다
+ * 이 앵커는 `stepShipSignature` 의 팬텀 적립(`aux0++`)보다 **뒤**다(world.ts 2250 vs 1874).
+ * 즉 대시 틱에는 그 틱의 증가가 이미 끝나 있어 막을 수 없다. 그래서 여기서는 플래그
+ * ({@link PhantomStage.frozenClockPending})만 세우고, **다음 틱의 앵커 ⑨** 가 적립 직전에
+ * 1틱을 되돌려 집행한다({@link phantomSignatureStep}).
+ *
+ * 한 틱이 밀리지만 **창당 정지 총량은 예산과 정확히 같다** — DI6 이 "직전 틱 vs 이번 틱" 을
+ * 같은 근거로 처리한 것과 같은 등가 교환이고, 이쪽도 새 술어를 발명하지 않는다.
+ * `skillHooks.ts` 앵커 ② 의 옛 주석이 *"사후에 1 을 빼는 흉내는 예산·되감기 경계와 갈린다"* 고
+ * 경고했는데, 갈리는 것은 **예산 없이 사후 보정할 때**다: 예산 소비를 집행 지점에서 세고
+ * 되감기(진입 에지) 때 0 으로 되돌리면 두 경계가 모두 코드에 남는다.
+ *
+ * PH1 과의 상호 배타도 여기서 자연히 선다 — 창 밖 대시는 `playerCloaked` 가 거짓이라 PH6 이
+ * 안 걸리고, 창 안 대시는 `advanceCloak` 이 규칙 2 로 no-op 이라 PH1 이 안 걸린다(설계서 PH6).
  */
 export function phantomDashFired(state: WorldState, player: Entity): void {
+  // ① PH1 잔상 이탈
   const ph1 = lv(state, Sk.afterimageExit);
-  if (ph1 < 1) return;
-  advanceCloak(state, player, 20 + 4 * ph1);
+  if (ph1 >= 1) advanceCloak(state, player, 20 + 4 * ph1);
+
+  // ② PH6 정지된 시계 — 예약. 예산이 남아 있고 **지금 창 안일 때만** 산다.
+  const ph6 = lv(state, Sk.frozenClock);
+  if (ph6 < 1) return;
+  // `playerCloaked` 하나로 침공 차단·기체 게이트·창 술어가 전부 닫힌다(정본 하나).
+  if (!playerCloaked(state, player)) return;
+  if (readSlot(state.skillStage, PhantomStage.frozenClockUsed) >= frozenClockBudget(ph6)) return;
+  writeSlot(state.skillStage, PhantomStage.frozenClockPending, 1);
 }
 
 /**
- * 앵커 ③ **젬 수거** — PH8 흔적 흡수. 젬 1개당 +1 + ceil(Lv/5) 틱 (Lv20 = +5, 5레벨 폭 계단).
+ * 앵커 ③ **젬 수거** — PH8 흔적 흡수 · PH3 그림자 장부(레벨 스케일).
+ *
+ * PH8 은 젬 1개당 +1 + ceil(Lv/5) 틱 (Lv20 = +5, 5레벨 폭 계단).
  *
  * ⚠️ 이 앵커는 침공에서도 불린다(침공 편대원·스포너 드론이 젬을 뿌린다 — 앵커 ③ 주석).
- * 그래도 안전한 것은 `advanceCloak` 이 침공에서 no-op 이기 때문이다 — "침공엔 젬이 없다"에
- * 기대지 않는다.
+ * 그래도 안전한 것은 `advanceCloak` 이 침공에서 no-op 이고 `playerCloaked` 가 침공에서 거짓이기
+ * 때문이다 — "침공엔 젬이 없다"에 기대지 않는다.
+ *
+ * ## PH3 의 레벨 스케일이 여기 오는 것은 이제 **곁가지가 아니다**
+ * 앵커 ③ 의 옛 주석은 "본체(창 중 콤보 시계 정지)가 `world.ts` 라 여기 레벨 스케일만 얹으면
+ * 반쪽 배선" 이라고 적었다. 그 본체가 앵커 ⑨ 에 섰으므로({@link phantomSignatureStep} 의 PH3
+ * 문단) 전제가 사라졌다 — 본체와 스케일이 같은 런에서 함께 돈다.
+ *
+ * `state.comboTimer` 는 이 앵커 **직전에** `collectGem` 이 `COMBO_WINDOW_TICKS` 로 **대입**하고
+ * 탐욕 보너스를 더한 뒤다(world.ts 4632·4637). 그래서 여기 가산은 설계서의 "기본 회복에 가산"
+ * 그대로이고, 대입이 앞에 있으므로 젬을 아무리 주워도 상한이 `창 + 탐욕 + (2+Lv)` 로 유계다.
  */
 export function phantomGemCollected(state: WorldState, player: Entity): void {
+  // ① PH8 흔적 흡수
   const ph8 = lv(state, Sk.traceSiphon);
-  if (ph8 < 1) return;
-  advanceCloak(state, player, 1 + Math.ceil(ph8 / 5));
+  if (ph8 >= 1) advanceCloak(state, player, 1 + Math.ceil(ph8 / 5));
+
+  // ② PH3 그림자 장부 — 창 중 수거의 콤보 창 회복량 가산(+2 + 1×Lv 틱).
+  const ph3 = lv(state, Sk.shadowLedger);
+  if (ph3 < 1) return;
+  if (!playerCloaked(state, player)) return;
+  state.comboTimer += 2 + ph3;
 }
 
 /**
@@ -306,6 +382,49 @@ export function phantomSignatureStep(state: WorldState, player: Entity): void {
     const cd = readSlot(state.skillCarry, PhantomCarry.lastPhaseCooldown);
     if (cd > 0) writeSlot(state.skillCarry, PhantomCarry.lastPhaseCooldown, cd - 1);
   }
+
+  // ③ PH3 그림자 장부(본체) — 은신 창 동안 콤보 시계가 멈춘다.
+  //
+  // ## 왜 "감소부에서 스킵" 이 아니라 "여기서 +1" 인가
+  // 설계서의 `구현: A` 는 `updateCombo` 의 감소부에 `playerCloaked` 술어를 넣는 것이고 그 자리는
+  // `world.ts` 라 앵커가 아니다. 이 앵커는 그 감소부보다 **앞**이다(world.ts 1874 vs 1936, 같은
+  // 틱). 감소가 항상 정확히 `-1` 한 곳뿐이므로(world.ts 4886-4888) 여기서 `+1` 하면 그 틱의
+  // 순변화가 0 이 되어 **감소부에서 스킵한 것과 값이 비트 단위로 같다.**
+  //  - `comboTimer > 0` 게이트가 필수다. 0 일 때 올리면 콤보가 0 인데 시계만 도는 유령 상태가
+  //    생기고, 감소부의 `=== 0 → combo = 0` 이 영영 안 돌아 콤보 만료가 사라진다.
+  //  - 창은 유한(HOLD)이라 영구화가 없다. 적립 240틱 > 콤보 창 120틱이므로 사격·은신만으로는
+  //    콤보가 반드시 만료된다(설계서 PH3 의 콤보 수지 판정).
+  //
+  // ⚠️ 이 앵커의 `aux0` 은 **직전 틱 말**의 값이라, 창 경계에서 정지가 한 틱 어긋난다. DI2 가
+  //    같은 전제 위에 서 있고(위 ① 문단), 총 정지 틱 수는 창 길이와 같다.
+  const ph3 = lv(state, Sk.shadowLedger);
+  if (ph3 >= 1 && state.comboTimer > 0 && playerCloaked(state, player)) {
+    state.comboTimer++;
+  }
+
+  // ④ PH6 정지된 시계(집행) — 대시가 예약한 1틱을 적립 **직전**에 되돌린다.
+  //
+  // 예약이 왜 필요한지는 {@link phantomDashFired} 의 doc 가 정본이다. 여기서 `aux0` 을 1 내리면
+  // 곧바로 뒤따르는 world 의 `aux0++` 가 그것을 되돌려 **순변화 0** — 이것이 "시계가 멈춘다" 다.
+  //
+  // ## ⚠️ 세 가드가 전부 필요하다
+  //  ⓐ `a > CLOAK_UNHIT_TICKS`(**강부등호**) — `a === 240` 에서 239 로 내리면 world 의 `++` 가
+  //    `cloakEntryCrossed(239, 240)` 을 참으로 만들어 **진입 훅(PH7·DI7·DI8)이 재발화**한다.
+  //    DI8 은 최대 HP 영구 증가라 그 재발화는 창 하나당 무한 성장이 된다.
+  //  ⓑ `cloakWindowActive(a)` — 창 밖(되감기 직후)에서 예약이 남아 있어도 집행하지 않는다.
+  //  ⓒ 예산 재확인 — 예약 시점과 집행 시점 사이에 다른 대시가 끼어 예산을 다 쓸 수 있다.
+  // 예약은 조건 성립 여부와 무관하게 **소비한다**(대시 1회 = 예약 1회이지 "언젠가 반드시 정지"가
+  // 아니다). 안 지우면 창 밖에서 걸린 예약이 다음 창의 첫 틱을 공짜로 얼린다.
+  const ph6 = lv(state, Sk.frozenClock);
+  if (ph6 >= 1 && readSlot(state.skillStage, PhantomStage.frozenClockPending) !== 0) {
+    writeSlot(state.skillStage, PhantomStage.frozenClockPending, 0);
+    const used = readSlot(state.skillStage, PhantomStage.frozenClockUsed);
+    const a = Math.trunc(player.aux0);
+    if (used < frozenClockBudget(ph6) && a > CLOAK_UNHIT_TICKS && cloakWindowActive(a)) {
+      player.aux0 = a - 1;
+      writeSlot(state.skillStage, PhantomStage.frozenClockUsed, used + 1);
+    }
+  }
 }
 
 /**
@@ -399,6 +518,45 @@ export function phantomEnemyDamaged(
         if (target.hp <= 0 && (target.kind === 'enemy' || target.kind === 'boss')) {
           target.dead = true;
         }
+      }
+    }
+  }
+
+  // ③ AS9 절멸 선고 — **해제 첫 타(강화탄)가 명중한 지점**에서 폭발.
+  //    반경 100 + 10×Lv · 폭발 피해 = 그 첫 타 실피해의 25% + 1.5%p/Lv.
+  //
+  // ## 트리거는 AS3 과 같은 표식이고 그것이 의도다
+  // 설계서 AS9 의 `구현: A` 는 "소진 지점 명중 처리에서 `blastDamage` 1회" 인데, 소진 지점은
+  // 앵커가 아니다. 대신 앵커 ⑯ 이 `params.cloakBreak` 로 찍은 {@link MARK_CLOAK_BREAK} 가 그
+  // 판정을 탄에 실어 여기까지 나른다 — AS3 이 이미 같은 표식으로 서 있고, 설계서도 둘을
+  // "같은 사건의 다른 축"(탄 강화 vs 오브젝트 생성)으로 적었다. 표식이 하나라 두 스킬이
+  // 조용히 갈릴 여지가 없다.
+  //
+  // ## 형태는 브루저 BL3(만재 중탄)의 명중 지점 폭발을 그대로 따른다
+  //  - `blastDamage` 를 못 쓴다 — 그 헬퍼는 **플레이어** 중심이고 설계서는 "명중한 지점" 이다.
+  //  - **맞은 표적 자신은 제외한다.** 넣으면 AS9 가 "해제 첫 타 피해 +25%" 로 퇴화해 광역이라는
+  //    본체가 사라지고, AS1(탄 강화 축)과 구분이 없어진다.
+  //  - 대상 범위(enemy+boss)는 `blastDamageAt` 과 같게 맞춘다 — 같은 사실이 두 벌이 되지 않게.
+  //  - 순회 중 변형 금지: 플래그만 세우고 엔티티를 낳거나 지우지 않는다(앵커 ⑩ 의 금지 사항).
+  //  - 좀비 방지 두 줄이 필수다 — 여기의 `e` 는 격추 판정(`world.ts` 의 `t` 하나)을 **한 번도
+  //    안 거친** 주변 적이라, `dead` 를 안 세우면 `compact` 이 못 걷어 처치·젬·전리품이 유실된다.
+  const as9 = lv(state, Sk.annihilationVerdict);
+  if (as9 >= 1 && source !== undefined && (source.aux0 & MARK_CLOAK_BREAK) !== 0) {
+    // 반올림은 게이트 **안**이다(규율 ③). 기준은 `source.damage` 가 아니라 **실피해** `dmg` 다 —
+    // 설계서가 "첫 타 실피해의 25%" 로 적었고, 그래야 방어 배율·엘리트 감소를 통과한 뒤의 값이
+    // 기준이 된다(BL3 은 설계서가 "탄 피해" 라 `source.damage` 를 쓴다 — 문면이 다르다).
+    const blast = Math.round((dmg * (2500 + 150 * as9)) / 10000);
+    if (blast > 0) {
+      const radius = 100 + 10 * as9;
+      const r2 = radius * radius;
+      for (const e of state.entities) {
+        if (e.dead || e === target) continue;
+        if (e.kind !== 'enemy' && e.kind !== 'boss') continue;
+        const dx = e.x - target.x;
+        const dy = e.y - target.y;
+        if (dx * dx + dy * dy > r2) continue;
+        e.hp -= blast;
+        if (e.hp <= 0) e.dead = true;
       }
     }
   }
