@@ -13,8 +13,12 @@
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\query-remote.ps1 -Sql "select 1 as n;"
 
+# -SqlFile is the safer form for anything with quotes, semicolons or JSON literals: the
+# PowerShell command line mangles those (a bare `select ...` after a `;` is read as a second
+# positional argument and the call fails outright). Multi-statement SQL should always use a file.
 param(
-  [Parameter(Mandatory = $true)][string]$Sql
+  [string]$Sql,
+  [string]$SqlFile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,6 +35,13 @@ $pat  = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
 
 $hdr  = @{ Authorization = "Bearer $pat" }
 $utf8 = [Text.Encoding]::UTF8
+
+if ($SqlFile) {
+  if (-not (Test-Path $SqlFile)) { throw "sql file not found: $SqlFile" }
+  # NOT Get-Content -Raw (mangles the Korean comments).
+  $Sql = [IO.File]::ReadAllText((Resolve-Path $SqlFile), $utf8)
+}
+if (-not $Sql) { throw "give either -Sql or -SqlFile" }
 
 $proj = Invoke-RestMethod -Uri "https://api.supabase.com/v1/projects/$ref" -Headers $hdr -Method Get
 if ($proj.name -notmatch 'planet') { throw "refusing: project name '$($proj.name)' does not look like Planet Blitz" }
