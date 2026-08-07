@@ -1,12 +1,32 @@
 /**
- * **210스킬 배선의 앵커 29개** — sim 이 스킬 훅을 부르는 **유일한 지점들**(ADR-0049 S0~S3 + W2
- * + 공유 앵커 레인).
+ * **210스킬 배선의 앵커** — sim 이 스킬 훅을 부르는 **유일한 지점들**(ADR-0049 S0~S3 + W2
+ * + 배치4 앵커 레인). 이 파일에 **38개**, `chainHooks.ts` 에 **2개** = 모두 **40개**다.
  *
- * ⚠️ 이 첫 줄의 개수 표기는 **한동안 15 에 멈춰 있었다**(S2·S3·W2 가 ⑯~㉖ 을 더하는 동안 아무도
- * 안 고쳤다). 앵커를 더하면 **여기부터 고쳐라** — 이 수가 레인 인계의 첫 좌표다.
- * 내역: ①~⑨ 플레이어 축(S0) · ⑩⑪ 적 단위(S1) · ⑫⑬⑭ 성장(S1) · ⑮ 방막 파열(배치4) ·
- * ⑯~㉒ 볼리 파라미터·막·완충(S2) · ㉓㉔ 해츨링 출격(S3-4) · ㉕ 정산액 확정 직전(S3) ·
- * ㉖ 포탑 사격(W2) · **㉗㉘㉙ 공유 앵커 3종**(액티브 발동 · 젬 자석 · 플레이어 이동).
+ * ## ⛔⛔ 동그라미 번호(①②③…)는 **㉖ 에서 끝났다 — 새 앵커에 번호를 붙이지 마라**
+ * 배치4 에서 **네 레인이 병렬로 앵커 9개를 세웠고, ㉗㉘ 가 세 갈래로 중복됐다**:
+ * 공유 레인의 `onActiveFired`/`onGemMagnetParams` · 해츨링의 `onTurretCadence`/`onTurretExpired` ·
+ * 말로우의 `onCushionSplit`/`onCushionRecoverBp` 가 전부 자기를 ㉗ 또는 ㉘ 라 부른다.
+ * **git 은 이 충돌을 전혀 모른다**(다른 파일·다른 줄이라 자동 병합된다).
+ *
+ * 리드가 머지하며 재배번하는 규약으로 두 배치를 버텼지만, 레인이 늘수록 비용이 커지고
+ * **번호는 기계가 검사하지 않는다.** 그래서 여기서 끊는다:
+ *
+ *  - **앵커의 정본 이름은 함수 이름이다.** 문서·인계·프롬프트에서 `onActiveFired` 처럼 **이름으로**
+ *    불러라. 「㉗」 이라고만 적으면 지금은 셋 중 어느 것인지 알 수 없다.
+ *  - **기계가 검사하는 레지스트리는 `tests/skillAnchors.test.ts` 의 export 전수 표**다.
+ *    앵커를 더하면 거기에 이름을 추가해라 — 안 하면 그 테스트가 빨개진다.
+ *  - 기존 ①~㉖ 의 번호는 **이력이므로 그대로 둔다.** 그 범위는 중복이 없다.
+ *  - ⚠️ 배치4 가 붙인 ㉗ 이후 번호는 **파일 안에서 신뢰하지 마라** — 그 doc 이 붙어 있는
+ *    **함수 이름**이 정본이다.
+ *
+ * 내역(번호가 유효한 범위): ①~⑨ 플레이어 축(S0) · ⑩⑪ 적 단위(S1) · ⑫⑬⑭ 성장(S1) ·
+ * ⑮ 방막 파열 · ⑯~㉒ 볼리 파라미터·막·완충(S2) · ㉓㉔ 해츨링 출격(S3-4) ·
+ * ㉕ 정산액 확정 직전(S3) · ㉖ 포탑 사격(W2).
+ * 배치4 가 더한 9개(이름으로만 부른다): `onActiveFired` · `onGemMagnetParams` ·
+ * `onPlayerMoveParams` · `onBulletHitParams` · `onEliteLootRarity` · `onOverchargeAccrual` ·
+ * `onComboDecay` · `onTurretCadence` · `onTurretExpired` · `onCushionSplit` ·
+ * `onCushionRecoverBp` · `onObjectiveResolved`, 그리고 `chainHooks.ts` 의 `onChainParams` ·
+ * `onEnemyStatusExpired`.
  *
  * S0 가 플레이어 축 9개를 세웠고, **S1 이 적 단위 축 2개(⑩ `onEnemyDamaged` · ⑪ `onEnemyDeath`)와
  * 성장 축 3개(⑫ `onLevelUp` · ⑬ `onPowerupOffer` · ⑭ `onPowerupPicked`)를 더했다.**
