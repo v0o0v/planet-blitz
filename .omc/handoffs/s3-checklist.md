@@ -1,14 +1,19 @@
 # S3 체크리스트 — 다음 세션의 재개 지점
 
-**현재 main: `93fa7b4`** (배치3 = PR #345 머지 완료) · **배선 125 / 210 (계측으로 확정)** ·
-**앵커 26개** · 열린 PR 0
+**현재 main: `8beb8a2` + 배치4** · **배선 152 / 210 (계측으로 확정)** · **앵커 40개**
 
 | 기체 | 배선 | | 기체 | 배선 |
 |---|---|---|---|---|
-| 아크캐스터 | 18 / 30 | | 스트라이커 | **19** / 30 |
-| 해츨링 | 17 / 30 | | 브루저 | **19** / 30 |
-| 말로우 | 17 / 30 | | 버블 | **16** / 30 |
-| 팬텀 | **19** / 30 | | **합계** | **125 / 210** |
+| 말로우 | **29** / 30 | | 팬텀 | **20** / 30 |
+| 해츨링 | **25** / 30 | | 스트라이커 | 19 / 30 |
+| 아크캐스터 | **24** / 30 | | 브루저 | 19 / 30 |
+| 버블 | 16 / 30 | | **합계** | **152 / 210** |
+
+**앵커는 26 → 40개다.** `skillHooks.ts` 에 38개 · `chainHooks.ts` 에 2개.
+⛔ **동그라미 번호(①②③…)는 ㉖ 에서 끝났다 — 새 앵커에 번호를 붙이지 마라.** 배치4 에서
+네 레인이 병렬로 앵커를 세우며 **㉗㉘ 가 세 갈래로 중복**됐고(공유·해츨링·말로우) **git 은
+그 충돌을 전혀 몰랐다**. 앵커의 정본 이름은 **함수 이름**이고, 기계가 검사하는 레지스트리는
+`tests/skillAnchors.test.ts` 의 **export 전수 표**다. 사유 전문은 `skillHooks.ts` 헤더.
 
 이 수는 **`tests/skillWiringCensus.test.ts` 가 매 실행마다 다시 센다** — 배선이 늘거나 줄면
 골든 표와 어긋나 테스트가 깨지고, **어떤 스킬이 늘고 줄었는지**를 실패 메시지가 찍는다.
@@ -52,11 +57,11 @@
 
 | 앵커 | 자리 | **남은 소비처** |
 |---|---|---|
-| ㉗ `onActiveFired` | `actives.ts`(핸들러 호출 **직후**) | **13종** — 브루저 BL5·BL10·MO5·MO10·FO10 · 버블 PO9·DR3·DR9 · 아크캐스터 CH7·CH10·BA1·BA4·BA6 |
-| ㉘ `onGemMagnetParams` | `world.ts` `stepGems` | **6종** — 해츨링 NU1 · 아크캐스터 BA2 · 브루저 MO2 · 스트라이커 M4 · 버블 DR8·DR10 |
-| ㉙ `onPlayerMoveParams` | `world.ts` `stepPlayer` | **6종** — 말로우 ME3 · 브루저 MO3 · 스트라이커 M10 · 버블 DR4·DR5 · 팬텀 PH4 |
+| `onActiveFired` | `actives.ts`(핸들러 호출 **직후**) | **13종** — 브루저 BL5·BL10·MO5·MO10·FO10 · 버블 PO9·DR3·DR9 · 아크캐스터 CH7·CH10·BA1·BA4·BA6 |
+| `onGemMagnetParams` | `world.ts` `stepGems` | **6종** — 해츨링 NU1 · 아크캐스터 BA2 · 브루저 MO2 · 스트라이커 M4 · 버블 DR8·DR10 |
+| `onPlayerMoveParams` | `world.ts` `stepPlayer` | **6종** — 말로우 ME3 · 브루저 MO3 · 스트라이커 M10 · 버블 DR4·DR5 · 팬텀 PH4 |
 
-**㉗ 을 쓸 때 알아야 할 것 (앵커 doc 에도 있다)**
+**`onActiveFired` 를 쓸 때 알아야 할 것 (앵커 doc 에도 있다)**
 - **착지점 인자가 없다** — 앵커가 핸들러 **뒤**라 `player.x/y` 가 **이미 착지점**이다.
   *출발* 지점이 필요하면 `origin.preX/preY` 를 써라(버블 DR9·아크캐스터 BA6 가 그렇다).
 - `origin.preAux0` = 호출 전 `player.aux0`(아크캐스터 CH7 의 "소모한 정지 시간" 차분).
@@ -64,7 +69,7 @@
   탄만* 고르는 용도).
 - ⭐ **이 앵커는 엔티티 순회 밖이라 스폰이 안전하다**(BA1 원형 볼리·BA6 포탑이 여기서 가능).
   앵커 ⑥ 이 순회 **안**이라 스폰 금지인 것과 대비된다.
-- ㉘ 의 **`broodRadius` 는 아직 소비처가 없다**(해츨링 NU1 이 얹힐 자리). `stepGems` 가 읽지도
+- `onGemMagnetParams` 의 **`broodRadius` 는 아직 소비처가 없다**(해츨링 NU1 이 얹힐 자리). `stepGems` 가 읽지도
   않는다 — **필수 필드를 나중에 더하면 다른 레인 픽스처가 `Partial` 스프레드로 깨지므로**
   미리 잡아 둔 것이다(배치1 에서 실제로 났다).
 
@@ -145,10 +150,18 @@ HEAD 16칸. ⭐ **배선 배치가 착지할 때마다 발산 칸이 단조 증�
 
 | 레인 | 신설 앵커 | 배선 |
 |---|---|---|
-| 공유(단독 선행) | ㉗ `onActiveFired` · ㉘ `onGemMagnetParams` · ㉙ `onPlayerMoveParams` | 3종(앵커당 증명 1종) |
+| 공유(단독 선행) | `onActiveFired` · `onGemMagnetParams` · `onPlayerMoveParams` | 3종(앵커당 증명 1종) |
 | 아크캐스터 | `onChainParams`(chainHooks) · `onBulletHitParams` · `onEliteLootRarity` · `onOverchargeAccrual` · `onComboDecay` | 6종 → **24/30** |
-| 해츨링 | ㉞ `onTurretCadence` · ㉟ `onTurretExpired` | 8종 → **25/30** |
-| 말로우 | `onCushionSplit` · `onCushionRecoverBp` · `onObjectiveResolved` · `onEnemyStatusExpired` | 10종 → **27/30** |
+| 해츨링 | `onTurretCadence` · `onTurretExpired` | 8종 → **25/30** |
+| 말로우 | `onCushionSplit` · `onCushionRecoverBp` · `onObjectiveResolved` · `onEnemyStatusExpired`(chainHooks) | 10종 → **29/30** |
+
+### ⛔ 앵커 번호 체계를 **폐지했다** — 재배번이 아니라 폐지인 이유
+배치4 한 번에 **㉗㉘ 가 세 갈래로 겹쳤다**(공유 `onActiveFired`/`onGemMagnetParams` ·
+해츨링 `onTurretCadence`/`onTurretExpired` · 말로우 `onCushionSplit`/`onCushionRecoverBp`).
+리드가 두 배치를 재배번으로 버텼지만 **레인이 늘수록 비용이 커지고, 무엇보다 번호는 기계가
+검사하지 않는다.** 전수 재배번은 doc 주석 50여 곳을 손대며 오라벨 위험이 있는 데 비해 얻는 것이
+없다 — 그래서 **㉖ 에서 끊고 이름을 정본으로** 삼았다. ①~㉖ 은 중복이 없으니 이력으로 남긴다.
+**기계 검사 레지스트리는 `tests/skillAnchors.test.ts` 의 export 전수 표**이고 이름 기반이다.
 
 ### ⭐ 왜 공유 앵커를 **단독으로 먼저** 돌렸는가 (다음 배치도 이렇게 해라)
 ㉗㉘㉙ 은 **7기체가 전부 지나가는 지점**이다. 기체별 레인이 각자 뚫으면 같은 자리에 시그니처가
