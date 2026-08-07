@@ -209,7 +209,7 @@ function census(): { perShip: Map<string, string[]>; unread: string[] } {
 // ---------------------------------------------------------------------------
 
 /**
- * 기준: base `27225ba` (2026-08-07). 합계 **114 / 210**.
+ * 기준: base `27225ba` (2026-08-07) + 버블 배선 2차(`lane/wire-bubble`, DR1). 합계 **115 / 210**.
  *
  * 갱신 방법: 테스트가 빨개지면 실패 메시지가 **어떤 스킬이 늘고 줄었는지**를 찍는다.
  * 그 목록이 네 의도와 같은지 눈으로 확인한 뒤 여기에 반영해라. 통째로 복붙하지 마라 —
@@ -228,7 +228,7 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
   ],
   bubble: [
     'PO1@0', 'PO2@1', 'PO3@2', 'PO5@4', 'PO6@5', 'PO7@6',
-    'DR6@15',
+    'DR1@10', 'DR6@15',
     'FI1@20', 'FI2@21', 'FI3@22', 'FI4@23', 'FI5@24', 'FI8@27', 'FI9@28', 'FI10@29',
   ],
   hatchling: [
@@ -254,7 +254,7 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** 골든 합계. 기체별 표와 따로 적어, 한쪽만 고치면 아래 자기검증이 잡는다. */
-const GOLDEN_TOTAL = 114;
+const GOLDEN_TOTAL = 115;
 
 /** 늘고 준 것을 사람이 읽을 수 있게 찍는다 — 숫자만 틀렸다고 하면 원인을 못 찾는다. */
 function diffMsg(ship: string, actual: readonly string[], golden: readonly string[]): string {

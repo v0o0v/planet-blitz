@@ -8,11 +8,16 @@
  *
  * ---
  *
- * ## ⚠️ 배선된 것은 30종 중 **15종**이다 (배치 4 의 9종 + S2 앵커 4종 + S3 앵커 1종 + FI8)
+ * ## ⚠️ 배선된 것은 30종 중 **16종**이다 (배치 4 의 9종 + S2 앵커 4종 + S3 앵커 1종 + FI8 + DR1)
  * S2 가 앵커 ⑯(`onVolleyParams`)·⑰·⑱(`onFilmAbsorbed`)을 열어 **PO2·PO5(⑯) · FI3·FI4(⑱)**
  * 넷이 추가됐고, S3 이 앵커 ㉒(`onFilmEntry`)를 열어 **FI9** 가 붙었으며, 순수 함수 개정 레인이
  * 앵커 ⑰(`onFilmEfficiency`)을 되살려 **FI8** 이 붙었다. 사유별 묶음은 `skillHooks.ts` 의 각
- * `case`/미배선 주석에 있고, 남은 15종의 큰 줄기는 넷이다:
+ * `case`/미배선 주석에 있고, 남은 14종의 큰 줄기는 넷이다:
+ *
+ * ✅ **DR1「역류 수거」는 이 레인(버블 배선 2차)에서 붙었다.** 종전 사유는 *"`collectGem` 이
+ * `world.ts` 소유라 leaf 에서 부를 수 없다"* 였고 그것은 지금도 참이다 — 해소한 것은 **호출이
+ * 아니라 수단**이다: 젬을 지우는 대신 **좌표를 플레이어 위로 옮겨** 정본 픽업 판정이 걷게 했다
+ * (콤보·XP·촉매 경로 복제 0). 산술과 대가는 {@link bubbleFilmBurst} 의 DR1 블록 주석이 정본이다.
  *  1. **흡수 「효율」 축** — ⚠️ 종전 사유는 *"앵커 ⑰ 으로도 표현이 안 된다"* 였다:
  *     `filmAbsorbed = min(dmg, shield)` 이고 world 가 `aux0 -= absorbed` 를 하므로 **흡수량과
  *     내구 소모량이 같은 값**이었고, "내구 1당 막는 피해가 1+α" 는 그 둘을 분리해야 성립하는데
@@ -36,8 +41,8 @@
  * 여기 없는 스킬은 "구현했는데 안 불린다"가 아니라 **아직 코드가 없다**.
  *
  * ## ⚠️ 슬롯을 **한 칸도 잡지 않았다**
- * 배선한 13종이 전부 기존 필드(`aux0`·`aux1`·`iframes`·`dashCooldown`·`playerSlowTicks`)와
- * `state.tick`·볼리 파라미터 파생만 쓴다. 설계서가 `구현: B` 로 표시한 버블 5종(PO10·DR2·
+ * 배선한 16종이 전부 기존 필드(`aux0`·`aux1`·`iframes`·`dashCooldown`·`playerSlowTicks`·
+ * 엔티티 좌표)와 `state.tick`·볼리 파라미터 파생만 쓴다. 설계서가 `구현: B` 로 표시한 버블 5종(PO10·DR2·
  * DR3·FI6·FI7)은 전부 위 사유 중 하나에 걸려 아직 밖이다 — 그래서 `BubbleCarry`/`BubbleStage` 는
  * 자리표시자뿐이고, `hashWorld` 의 스킬 슬롯 폴드는 버블 런에서도 한 번도 돌지 않는다.
  */
@@ -75,6 +80,7 @@ const enum Sk {
   /** PO5 만재 투과 */ fullFilmPierce = 4,
   /** PO6 격발 재응결 */ fireRecondense = 5,
   /** PO7 정전 파열 */ staticBurst = 6,
+  /** DR1 역류 수거 */ reverseCurrent = 10,
   /** DR6 파열 추진 */ burstPropulsion = 15,
   /** FI1 조기 응결 */ earlyCondense = 20,
   /** FI2 내구 재응결 */ durabilityRecondense = 21,
@@ -206,8 +212,8 @@ export function bubbleEnemyDamaged(state: WorldState, player: Entity, target: En
 // ---------------------------------------------------------------------------
 
 /**
- * **PO1 파열 탄두 · PO3 거품 산탄 파열 · PO7 정전 파열 · DR6 파열 추진 · FI1 조기 응결 ·
- * FI5 파열 위상 · FI10 정화 파열.**
+ * **PO1 파열 탄두 · PO3 거품 산탄 파열 · PO7 정전 파열 · DR1 역류 수거 · DR6 파열 추진 ·
+ * FI1 조기 응결 · FI5 파열 위상 · FI10 정화 파열.**
  *
  * 설계서 ①-3 이 요구한 "파열 훅 전부가 단일 함수 안에만 산다"를 이 한 진입점이 만족한다 —
  * 시그니처 소진 파열(`world.ts:4268`)과 액티브 요청 소비(`world.ts:1823`) 둘 다 같은
@@ -216,7 +222,9 @@ export function bubbleEnemyDamaged(state: WorldState, player: Entity, target: En
  * ## ⚠️ 파열 중심 `(x, y)` 와 플레이어 좌표는 **같지 않을 수 있다**
  * 액티브 요청은 요청 시점 좌표를 박아 두므로(`requestFilmBurst` 주석), 같은 틱에 blink 가
  * 플레이어를 옮겼으면 둘이 갈린다. 그래서 **효과별로 기준점을 나눈다**:
- *  · **파열 중심** — PO1(폭발). 설계서가 "파열 지점" 이라고 적은 것들.
+ *  · **파열 중심** — PO1(폭발) · DR1(수거 **술어**. 목적지는 플레이어다 — 젬이 어디로 가는가와
+ *    어디까지 걷는가는 다른 축이고, 설계서 문면은 "반경 안 젬" 쪽만 반경으로 규정했다).
+ *    설계서가 "파열 지점" 이라고 적은 것들.
  *  · **플레이어 중심** — PO3(사출 출발점) · PO7(연쇄 원점) · FI10(소거). 셋 다 설계서 문면이
  *    "플레이어 중심"(PO3) 이거나, 재사용 헬퍼가 `Entity` 를 기준점으로 받아 좌표만 넘길 수
  *    없다(PO7·FI10). 산술을 여기 복제해 기준점을 바꾸는 대안은 기각했다 — 두 판정이 갈린다.
@@ -263,6 +271,46 @@ export function bubbleFilmBurst(state: WorldState, player: Entity, x: number, y:
   const po7 = lv(state, Sk.staticBurst);
   if (po7 >= 1) {
     applyChain(state, player, 12 + 3 * po7);
+  }
+
+  // ── DR1 역류 수거 — 파열 중심 반경 안 젬을 **플레이어 위로 끌어온다**.
+  //    수거 반경 = `FILM_BURST_RADIUS` × (100% + 8%p/Lv) (bp — 설계서 DR1 문면 그대로).
+  //
+  //    ## ⚠️ 설계서의 `collectGem` 직접 호출은 구조적으로 불가능하다 — 대체 수단을 쓴다
+  //    설계서 DR1 「구현: A」는 *"파열 훅에서 반경 내 `collectGem`"* 이지만, 그 함수는
+  //    `world.ts` 의 모듈-로컬이고 export 도 안 된다. export 시켜도 이 파일은 규율 ①
+  //    (`world.ts` 런타임 import 0건)에 걸리고, 한 단계 위인 `skillHooks.ts` 로 올려도
+  //    `world.ts → skillHooks.ts` 방향이 이미 있어 **순환**이다. 그래서 젬을 여기서 직접
+  //    지우는 대안(콤보·XP·촉매 경로가 통째로 빠진다)이 아니라, **젬 좌표를 플레이어 위로
+  //    옮긴다** — 수거 자체는 `resolveCollisions` 의 정본 픽업 판정이 하고, 그래서 콤보·XP·
+  //    `onGemCollected` 촉매 경로가 한 줄도 복제되지 않는다.
+  //
+  //    ⚠️ 이 형태의 대가는 **"즉시"가 최대 1틱 늦다**는 것뿐이다. 액티브 요청 파열
+  //    (`consumeFilmBurstRequests`)은 `stepGems`·`resolveCollisions` 보다 앞이라 **같은 틱**에
+  //    걷히고, 시그니처 소진 파열은 `resolveCollisions` 한복판이라 그 틱의 격자 질의
+  //    (옛 좌표로 빌드된 공간 해시)에 안 잡혀 **다음 틱**에 걷힌다. 옮긴 젬은 플레이어와
+  //    거리 0 이라 `stepGems` 가 속도를 0 으로 두고(그 함수의 `d2 > 0.0001` 술어) 픽업 반경
+  //    (`player.radius`)이 한 틱치 이동보다 훨씬 크므로 유실 경로가 없다.
+  //    (설계 문서는 고치지 않았다 — 규약: 어긋남은 보고한다.)
+  const dr1 = lv(state, Sk.reverseCurrent);
+  if (dr1 >= 1) {
+    // 반올림은 게이트 안(공통 규율). 반경은 좌표축이라 f64 로 남긴다.
+    const radius = (FILM_BURST_RADIUS * (10000 + 800 * dr1)) / 10000;
+    const r2 = radius * radius;
+    for (const e of state.entities) {
+      if (e.dead || e.kind !== 'gem') continue;
+      // 술어의 기준점은 **파열 중심**이다(설계서 "반경 안 젬"). 목적지만 플레이어다 —
+      // 액티브 요청 파열이 옛 좌표를 박아 두므로 둘이 갈릴 수 있다(이 함수 헤더의 표).
+      const dx = e.x - x;
+      const dy = e.y - y;
+      if (dx * dx + dy * dy > r2) continue;
+      e.x = player.x;
+      e.y = player.y;
+      // 잔여 자석 속도를 지운다 — `stepGems` 가 매 틱 덮어쓰지만, 파열이 그 함수 **뒤**
+      // (`resolveCollisions`)에서 도는 틱에는 이 값이 그대로 해시된다.
+      e.vx = 0;
+      e.vy = 0;
+    }
   }
 
   // ── DR6 파열 추진 — 대시 쿨다운 환급 30 + 5×Lv.
