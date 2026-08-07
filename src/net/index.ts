@@ -13,7 +13,7 @@
 
 import type { Profile, KeyValueStore } from '../save/profile.js';
 import { readSupabaseConfig, type SupabaseConfig } from './config.js';
-import type { ServerGateway, PveSettleSummary } from './gateway.js';
+import type { ServerGateway, PveSettleSummary, ItemGrantRow } from './gateway.js';
 import { normalizeCatalystArray } from '../data/catalysts.js';
 import type { CatalystDrop } from '../data/catalystDrops.js';
 import { isGrantCurrencyClientSource } from '../run/commissionServerConstants.js';
@@ -449,6 +449,119 @@ export async function consumeCatalystsOnServer(
   } catch {
     // 소모 거부/오프라인/오류 — 서버 롤백으로 아이템 미차감. 재시도/촉매 제외는 호출부가 결정.
     return { status: 'failed' };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 아이템 서버 원장(ADR-0050 §3 단계 1) — 런 등록 · 드랍 발급 · 배송
+// ---------------------------------------------------------------------------
+
+/**
+ * `beginPveRunOnServer` 결과.
+ *  - `unconfigured`: 미설정/구버전 게이트웨이 → **로컬 롤 경로**(종전 동작)로 강등한다.
+ *  - `ok`: 서버가 런을 등록하고 `started_at` 을 찍었다. 이 `runId` 가 드랍 발급의 키다.
+ *  - `throttled`: 축 D 캡(시간당 런) 초과 — 런은 정상 진행하되 서버 드랍을 못 받는다.
+ *  - `failed`: 온라인인데 실패(네트워크·미로그인). 로컬 롤로 강등한다.
+ *
+ * ⚠️ `throttled` 와 `failed` 를 가르는 이유는 **강등 방식이 같아도 의미가 다르기** 때문이다 —
+ * 전자는 서버가 의도적으로 거절한 것이라 재시도가 무의미하고, 후자는 일시적이다.
+ */
+export type BeginPveRunOutcome =
+  | { status: 'unconfigured' }
+  | { status: 'ok'; runId: string }
+  | { status: 'throttled' }
+  | { status: 'failed' };
+
+/**
+ * 런 시작 등록(ADR-0050 §3 단계 1). **출격을 막지 않는다** — 호출부는 이것을 기다리지 않고
+ * 런을 시작하고(`main.ts` 의 "출격이 서버를 기다리지 않는다" 계약), 결과가 늦게 와도 런이
+ * 분 단위라 정산 전에 도착한다. 절대 throw 하지 않는다.
+ */
+export async function beginPveRunOnServer(
+  planet: number,
+  deps: NetDeps = {},
+): Promise<BeginPveRunOutcome> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.beginPveRun === undefined) return { status: 'unconfigured' };
+  try {
+    await gateway.getUserId();
+    const res = await gateway.beginPveRun(planet);
+    if (res.run_id === null) return { status: res.throttled ? 'throttled' : 'failed' };
+    return { status: 'ok', runId: res.run_id };
+  } catch {
+    return { status: 'failed' };
+  }
+}
+
+/**
+ * `grantRunDropsOnServer` 결과. `ok` 의 `grants` 가 **서버가 굴린 전리품**이고, 클라는 이것을
+ * 받아서야 무엇이 나왔는지 안다(「개수만 계약」).
+ */
+export type GrantRunDropsOutcome =
+  | { status: 'unconfigured' }
+  | { status: 'ok'; granted: number; claimed: number; clamped: boolean; grants: ItemGrantRow[] }
+  | { status: 'failed' };
+
+/**
+ * 런 드랍 발급(ADR-0050 §3 단계 1) — 클라는 **주운 개수만** 주장하고 서버가 개연성 캡으로 깎은
+ * 뒤 자기 시드로 굴린다. 같은 런에 두 번 불러도 두 번째는 0건이다(서버 멱등).
+ * 실패해도 throw 하지 않는다 — 원장 행은 서버에 남아 있으므로 **다음 부팅의 배송 재개**가 줍는다.
+ */
+export async function grantRunDropsOnServer(
+  runId: string,
+  claimed: number,
+  planet: number,
+  stage: number,
+  levelCap: number,
+  deps: NetDeps = {},
+): Promise<GrantRunDropsOutcome> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.grantRunDrops === undefined) return { status: 'unconfigured' };
+  try {
+    await gateway.getUserId();
+    const res = await gateway.grantRunDrops(runId, claimed, planet, stage, levelCap);
+    return {
+      status: 'ok',
+      granted: res.granted,
+      claimed: res.claimed,
+      clamped: res.clamped,
+      grants: res.grants,
+    };
+  } catch {
+    return { status: 'failed' };
+  }
+}
+
+/**
+ * 미배송 아이템 원장 조회. `null` = 미설정/실패(호출부가 전체 no-op).
+ * 빈 배열과 `null` 을 가르는 이유는 배송함 패턴의 규율이다 — 빈 배열은 "받을 게 없다"이고
+ * `null` 은 "물어보지 못했다"라, 후자에서 세이브를 만지면 안 된다.
+ */
+export async function fetchPendingItemGrantsOnServer(
+  deps: NetDeps = {},
+): Promise<ItemGrantRow[] | null> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.fetchPendingItemGrants === undefined) return null;
+  try {
+    await gateway.getUserId();
+    return await gateway.fetchPendingItemGrants();
+  } catch {
+    return null;
+  }
+}
+
+/** 배송 확인. 실패해도 throw 하지 않는다 — 원장 행이 열린 채 남아 다음 부팅이 재시도한다. */
+export async function markItemGrantAppliedOnServer(
+  grantId: string,
+  deps: NetDeps = {},
+): Promise<boolean> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.markItemGrantApplied === undefined) return false;
+  try {
+    await gateway.markItemGrantApplied(grantId);
+    return true;
+  } catch {
+    return false;
   }
 }
 
