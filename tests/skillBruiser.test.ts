@@ -21,6 +21,18 @@
  *  ⑤ **FO8** — 회복량 `3 + fo8` 을 0 으로 바꾸면 §⑲ 네 건이 실패한다.
  *  ⑥ **FO9** — 세 지점(적립·감쇠 정지·사슬 감소)의 게이트를 동시에 막으면 §⑳ 의 ①②③ 이
  *     **각각** 실패한다(다섯 건) — 세 지점이 서로 다른 앵커에 실제로 붙어 있다는 뜻이다.
+ *
+ * ## 뮤테이션 추가 확인 — 배치6 의 FO3·FO10 (2026-08-07, **실제로 돌렸다**)
+ *  ⑦ **FO3 배선 이음매** — 앵커 ④ 의 `case SIG_BRUISER_ARMOR:` 에서 마지막 인자 `contact` 를
+ *     빼면(`bruiserPlayerDamaged(…, sources)`) §㉜ 가 **8건** 실패한다.
+ *  ⑧ **FO3 좀비 마킹** — `if (contact.hp <= 0) contact.dead = true;` 를 지우면 §㉜ 의 좀비 방지
+ *     **1건**만 정확히 실패한다(나머지는 초록 — 그 단언이 다른 것을 재고 있지 않다는 뜻).
+ *  ⑨ **FO10 배선 이음매** — `onActiveExpired` 의 `case SIG_BRUISER_ARMOR:` 호출을 지우면 §㉝ 이
+ *     **6건** 실패한다.
+ *  ⑩ **FO10 티어 판별** — `isFortifyHiActive(def)` 게이트를 지우면 §㉝ 의 티어 단언 **1건**만
+ *     실패한다. 이 한 건이 초록으로 새지 않는 것이 `FORTIFY_LO_WITH_BLAST` 픽스처의 존재 이유다
+ *     (레지스트리 원본 lo 로는 `radius <= 0` 조기 반환에 먼저 걸려 항진이 된다).
+ *  ⑪ **FO10 적탄 소거** — `clearEnemyBullets` 호출을 지우면 §㉝ 의 적탄 단언 **1건**만 실패한다.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -46,6 +58,7 @@ import {
   onEnemyDeath,
   onVolleyParams,
   onActiveFired,
+  onActiveExpired,
   onGemMagnetParams,
   onPlayerMoveParams,
   onWallHit,
@@ -2212,5 +2225,261 @@ describe('㉘ MO7 잔해 회수 (앵커 onWallDestroyed)', () => {
     p.aux0 = w.armorMaxStacks;
     destroy(w);
     expect(p.aux0).toBe(w.armorMaxStacks);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 배치6 — 앵커 ④ 의 `contact`(FO3) · 신설 앵커 `onActiveExpired`(FO10)
+// ---------------------------------------------------------------------------
+
+const FORTIFY_HI = activeDef('as_bruiser_fortify_hi'); // 강화 hi (FO10 의 유일한 트리거)
+
+/**
+ * FO10 의 **티어 손잡이 전용 적대 픽스처** — 강화 **lo** 에 폭발 반경만 얹은 것.
+ *
+ * ⚠️ 손으로 적지 않고 레지스트리에서 파생시키는 이유가 있다. 실제 레지스트리에서는
+ * fortify_lo·morph_hi 등 hi 가 아닌 정의에 `blastRadius` 가 **아예 없어서**, 그것들로 음성
+ * 대조를 하면 `radius <= 0` 조기 반환에 먼저 걸린다 — 즉 `isFortifyHiActive` 를 통째로 지워도
+ * 그 단언이 초록으로 남는다(항진). 반경만 억지로 채운 이 픽스처라야 **티어 판별 그 자체**를
+ * 잰다.
+ */
+const FORTIFY_LO_WITH_BLAST: ActiveSkillDef = {
+  ...FORTIFY_LO,
+  coeff: { ...FORTIFY_LO.coeff, blastRadius: 220 },
+};
+
+const FO3 = 22;
+const FO10 = 29;
+
+/** 앵커 ④ 자극 — 몸통 접촉 피격 1회. `contact` 를 생략하면 "접촉이 아닌 피격" 이다. */
+function contactHit(state: WorldState, dmg: number, contact?: Entity): void {
+  onPlayerDamaged(
+    state,
+    player(state),
+    dmg,
+    false,
+    DamageSource.contact,
+    undefined,
+    undefined,
+    contact,
+  );
+}
+
+describe('㉜ FO3 반동 갑주 (앵커 ④ 의 `contact`)', () => {
+  it('접촉 상대 적이 반사 피해를 받는다 — 접촉이 아닌 피격에서는 아무도 안 받는다 (긍정/부정 짝)', () => {
+    const hit = mk([[FO3, 5]]);
+    const e = addEnemy(hit, 40, 0, 500);
+    contactHit(hit, 30, e);
+    expect(e.hp).toBeLessThan(500);
+
+    // 부정 짝 — 같은 피해·같은 적인데 `contact` 가 없으면(적탄·해저드) 반사가 없다.
+    const miss = mk([[FO3, 5]]);
+    const e2 = addEnemy(miss, 40, 0, 500);
+    onPlayerDamaged(miss, player(miss), 30, false, DamageSource.bullet);
+    expect(e2.hp).toBe(500);
+  });
+
+  it('미투자면 접촉 적이 멀쩡하다 (긍정 짝을 옆에 둔다)', () => {
+    const off = mk([[FO2, 20]]); // 다른 강화 스킬만 찍은 런
+    const a = addEnemy(off, 40, 0, 500);
+    contactHit(off, 30, a);
+    expect(a.hp).toBe(500);
+
+    const on = mk([[FO3, 1]]);
+    const b = addEnemy(on, 40, 0, 500);
+    contactHit(on, 30, b);
+    expect(b.hp).toBeLessThan(500);
+  });
+
+  it('반사량이 레벨과 함께 는다 (하한 짝 포함 — 배선이 끊기면 양변이 0 이 되는 항진 방지)', () => {
+    function reflected(level: number): number {
+      const w = mk([[FO3, level]]);
+      const e = addEnemy(w, 40, 0, 5000);
+      contactHit(w, 100, e);
+      return 5000 - e.hp;
+    }
+    const one = reflected(1);
+    expect(one).toBeGreaterThan(0); // ← 하한. 없으면 아래 비교가 0 > 0 실패가 아니라 항진이 된다.
+    expect(reflected(20)).toBeGreaterThan(one);
+  });
+
+  it('반사량이 받은 피해와 함께 는다 (하한 짝 포함)', () => {
+    function reflected(dmg: number): number {
+      const w = mk([[FO3, 10]]);
+      const e = addEnemy(w, 40, 0, 5000);
+      contactHit(w, dmg, e);
+      return 5000 - e.hp;
+    }
+    const small = reflected(10);
+    expect(small).toBeGreaterThan(0);
+    expect(reflected(200)).toBeGreaterThan(small);
+  });
+
+  it('저피해 접촉에서도 최소 1 은 반사된다 (round 가 0 으로 삼키지 않는다)', () => {
+    const w = mk([[FO3, 1]]);
+    const e = addEnemy(w, 40, 0, 500);
+    contactHit(w, 1, e); // 1 × 2200bp = 0.22 → round = 0. `max(1, ·)` 하한이 이 자리다.
+    expect(500 - e.hp).toBe(1);
+  });
+
+  it('`dmg` 가 0 인 틱에서는 반사가 없다', () => {
+    const w = mk([[FO3, 20]]);
+    const e = addEnemy(w, 40, 0, 500);
+    contactHit(w, 0, e);
+    expect(e.hp).toBe(500);
+  });
+
+  it('좀비 방지 — 반사로 hp 가 0 이하가 된 적은 `dead` 가 함께 선다', () => {
+    const w = mk([[FO3, 20]]);
+    const e = addEnemy(w, 40, 0, 2);
+    expect(e.dead).toBe(false);
+    contactHit(w, 100, e);
+    expect(e.hp).toBeLessThanOrEqual(0);
+    expect(e.dead).toBe(true);
+  });
+
+  it('이미 죽은 접촉 적은 더 깎지 않는다', () => {
+    const w = mk([[FO3, 20]]);
+    const e = addEnemy(w, 40, 0, 500);
+    e.dead = true;
+    contactHit(w, 100, e);
+    expect(e.hp).toBe(500);
+  });
+
+  it('guardian·core 는 반사 대상이 아니다 — enemy 는 맞는다 (긍정/부정 짝)', () => {
+    // 그 둘만 `world.ts` 에 부활 분기가 있어 여기서 죽이면 충전을 건너뛴다.
+    const w = mk([[FO3, 20]]);
+    const g: Entity = { ...blankEntity('guardian'), x: 40, y: 0, hp: 500, maxHp: 500, radius: 20 };
+    w.entities.push(g);
+    contactHit(w, 100, g);
+    expect(g.hp).toBe(500);
+    expect(g.dead).toBe(false);
+
+    const c: Entity = { ...blankEntity('core'), x: 40, y: 0, hp: 500, maxHp: 500, radius: 20 };
+    w.entities.push(c);
+    contactHit(w, 100, c);
+    expect(c.hp).toBe(500);
+
+    const e = addEnemy(w, 40, 0, 500);
+    contactHit(w, 100, e);
+    expect(e.hp).toBeLessThan(500);
+  });
+
+  it('반사가 다른 적으로 새지 않는다 — 접촉한 그 한 기만 맞는다', () => {
+    const w = mk([[FO3, 20]]);
+    const hitOne = addEnemy(w, 40, 0, 500);
+    const bystander = addEnemy(w, 45, 0, 500);
+    contactHit(w, 100, hitOne);
+    expect(hitOne.hp).toBeLessThan(500);
+    expect(bystander.hp).toBe(500);
+  });
+});
+
+describe('㉝ FO10 파열 소각장 (앵커 onActiveExpired)', () => {
+  /** 반경. 화상·소거 둘 다 이 값 하나에서 나온다(정본은 레지스트리). */
+  const R = FORTIFY_HI.coeff.blastRadius ?? 0;
+
+  it('전제 — 강화 hi 정의가 폭발 반경을 갖고 있다 (이 절 전체가 그 값 위에 선다)', () => {
+    expect(R).toBeGreaterThan(0);
+  });
+
+  it('반경 안의 적이 화상을 얻는다 — 반경 밖은 안 얻는다 (긍정/부정 짝)', () => {
+    const w = mk([[FO10, 5]]);
+    const p = player(w);
+    const inside = addEnemy(w, p.x + (R - 10), p.y, 500);
+    const outside = addEnemy(w, p.x + (R + 10), p.y, 500);
+    onActiveExpired(w, p, FORTIFY_HI, 0);
+    expect(inside.iframes).toBeGreaterThan(0);
+    expect(inside.dashCooldown).toBeGreaterThan(0);
+    expect(outside.iframes).toBe(0);
+    expect(outside.dashCooldown).toBe(0);
+  });
+
+  it('반경 안의 적탄이 소거된다 — 반경 밖 적탄은 남는다 (긍정/부정 짝)', () => {
+    const w = mk([[FO10, 5]]);
+    const p = player(w);
+    const near: Entity = { ...blankEntity('enemyBullet'), x: p.x + (R - 10), y: p.y, radius: 4 };
+    const far: Entity = { ...blankEntity('enemyBullet'), x: p.x + (R + 10), y: p.y, radius: 4 };
+    w.entities.push(near, far);
+    onActiveExpired(w, p, FORTIFY_HI, 0);
+    expect(near.dead).toBe(true);
+    expect(far.dead).toBe(false);
+  });
+
+  it('미투자면 아무 일도 없다 (긍정 짝을 옆에 둔다)', () => {
+    const off = mk([[FO2, 20]]);
+    const a = addEnemy(off, player(off).x + 50, player(off).y, 500);
+    onActiveExpired(off, player(off), FORTIFY_HI, 0);
+    expect(a.iframes).toBe(0);
+
+    const on = mk([[FO10, 1]]);
+    const b = addEnemy(on, player(on).x + 50, player(on).y, 500);
+    onActiveExpired(on, player(on), FORTIFY_HI, 0);
+    expect(b.iframes).toBeGreaterThan(0);
+  });
+
+  it('티어가 손잡이다 — **폭발 반경을 억지로 채운 강화 lo** 에서도 안 돈다 (hi 는 돈다)', () => {
+    const lo = mk([[FO10, 20]]);
+    const a = addEnemy(lo, player(lo).x + 50, player(lo).y, 500);
+    onActiveExpired(lo, player(lo), FORTIFY_LO_WITH_BLAST, 0);
+    expect(a.iframes).toBe(0);
+    expect(a.dashCooldown).toBe(0);
+
+    const hi = mk([[FO10, 20]]);
+    const b = addEnemy(hi, player(hi).x + 50, player(hi).y, 500);
+    onActiveExpired(hi, player(hi), FORTIFY_HI, 0);
+    expect(b.iframes).toBeGreaterThan(0);
+  });
+
+  it('축도 손잡이다 — 기동 hi(morph)의 만료로는 안 돈다', () => {
+    const w = mk([[FO10, 20]]);
+    const e = addEnemy(w, player(w).x + 50, player(w).y, 500);
+    onActiveExpired(w, player(w), MORPH_HI, 0);
+    expect(e.iframes).toBe(0);
+  });
+
+  it('화상 틱당 피해가 레벨과 함께 는다 (하한 짝 포함)', () => {
+    function perTick(level: number): number {
+      const w = mk([[FO10, level]]);
+      const e = addEnemy(w, player(w).x + 50, player(w).y, 500);
+      onActiveExpired(w, player(w), FORTIFY_HI, 0);
+      return e.dashCooldown;
+    }
+    const one = perTick(1);
+    expect(one).toBeGreaterThan(0);
+    expect(perTick(20)).toBeGreaterThan(one);
+  });
+
+  it('hp 를 직접 깎지 않는다 — 폭발 본체는 이 앵커보다 앞이고 여기는 화상만 얹는다', () => {
+    const w = mk([[FO10, 20]]);
+    const e = addEnemy(w, player(w).x + 50, player(w).y, 500);
+    onActiveExpired(w, player(w), FORTIFY_HI, 0);
+    expect(e.hp).toBe(500);
+    expect(e.dead).toBe(false);
+  });
+
+  it('폭발로 이미 죽은 적에게는 화상을 얹지 않는다 (사체가 한 틱 더 사는 것을 막는다)', () => {
+    const w = mk([[FO10, 20]]);
+    const e = addEnemy(w, player(w).x + 50, player(w).y, 500);
+    e.dead = true;
+    onActiveExpired(w, player(w), FORTIFY_HI, 0);
+    expect(e.iframes).toBe(0);
+    expect(e.dashCooldown).toBe(0);
+  });
+
+  it('보스도 화상 대상이다 — 대상 범위가 `blastDamageAt`(enemy+boss)와 같다', () => {
+    const w = mk([[FO10, 5]]);
+    const p = player(w);
+    const b: Entity = {
+      ...blankEntity('boss'),
+      x: p.x + 50,
+      y: p.y,
+      hp: 900,
+      maxHp: 900,
+      radius: 40,
+    };
+    w.entities.push(b);
+    onActiveExpired(w, p, FORTIFY_HI, 0);
+    expect(b.iframes).toBeGreaterThan(0);
   });
 });

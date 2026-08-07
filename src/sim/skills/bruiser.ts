@@ -24,16 +24,31 @@
  * 여덟이다(19 → 27). 아홉째로 다룬 **MO4** 는 새 배선이 아니라 앵커 ⑨ 에서
  * `onPlayerMoveParams` 로 **이사**한 것이라 종수가 늘지 않는다.
  *
- * ## 여기 없는 둘 — **아직 코드가 없다**(반쪽 배선이 아니다)
+ * ## ✅ 배치6(2026-08-07)이 둘을 닫았다 — **27 → 29종**
+ *  - **FO10 파열 소각장** — 배치6 이 세운 앵커 `onActiveExpired`(액티브 버프가 0 이 된 그 한
+ *    틱). 아래 두 문단은 *왜 그 전에는 불가능했는가* 의 기록이고 지금도 참이다.
+ *  - **FO3 반동 갑주** — 앵커 ④ 가 배치6 부터 **접촉 상대 적**(후행 선택 인자 `contact`)을
+ *    넘긴다. 좌표(`srcX`/`srcY`)로 되찾는 대안은 접촉 판정의 두 번째 사본이라 기각됐다.
+ *
+ * ## (배치5 시점 기록) 그때 이 둘이 없던 사유 — **아직 코드가 없었다**(반쪽 배선이 아니다)
  *  - **FO10 파열 소각장**: 술어가 *"강화 액티브 고티어의 **만료** 폭발"* 인데 만료 지점
- *    (`actives.ts` 의 `ACTIVE_EXPIRE[def.id]`)에 앵커가 **하나도 없다**. `onActiveFired` 는
+ *    (`actives.ts` 의 `ACTIVE_EXPIRE[def.id]`)에 앵커가 **하나도 없었다**. `onActiveFired` 는
  *    **발동** 직후라 만료를 원리적으로 못 본다 — 발동 틱에 표식을 적어 둬도 그 표식을 읽을
  *    소비처(만료 훅)가 `activeHandlers/bruiser.ts` 에 있고 이 레인의 파일 밖이다. 소비처 없는
- *    표식만 적는 것이 이 저장소가 금지한 반쪽 배선이라 넣지 않았다. `onActiveExpired` 앵커가
- *    서면 그 자리에서 닫힌다(`skillHooks.ts` 전수 grep 으로 부재를 확인했다).
- *  - **FO3 반동 갑주**: 접촉 **상대 적**을 넘겨주는 앵커가 없다. 앵커 ④ 는 `sources` 비트합만
- *    실어 "접촉이었다"까지만 알려 주고 그 적의 참조가 없다(BL8 이 같은 자리에서 적립 단위를
+ *    표식만 적는 것이 이 저장소가 금지한 반쪽 배선이라 넣지 않았다.
+ *  - **FO3 반동 갑주**: 접촉 **상대 적**을 넘겨주는 앵커가 없었다. 앵커 ④ 는 `sources` 비트합만
+ *    실어 "접촉이었다"까지만 알려 주고 그 적의 참조가 없었다(BL8 이 같은 자리에서 적립 단위를
  *    "1회" 로 둔 이유가 그것이다). 반사 **대상**이 없으면 효과 본체가 성립하지 않는다.
+ *
+ * ## 여기 없는 하나 — **BL1 응전 사출**(앵커가 아니라 **설계**가 막는다)
+ * *"실제로 HP 가 깎인 피격 틱에 조준 방향으로 반격 볼리"* 의 트리거 자체는 앵커 ④ 에서 완전히
+ * 성립한다. 막는 것은 설계서가 적은 **내부 쿨 술어**다 — "60틱 내부 쿨은 `aux1 < 60` 판정으로
+ * 대체 가능(신규 상태 0)" 이라고 적었으나, 장갑 적립(`aux1 = 0`)이 이 앵커보다 **앞**이라
+ * (`world.ts` 4317-4320) 도달 시점의 `aux1` 은 **항상 0** 이다. 그 술어는 상시 스킵이거나 상시
+ * 발동 중 하나가 되어 어느 쪽도 설계가 아니다. 제대로 하려면 전용 내부 쿨 슬롯 1칸이 필요한데
+ * 그것은 칼날 축 B 예산(BL8 `temperCharges` · BL9 `cadenceHits` 로 **2/2 포화**)을 넘긴다 —
+ * 예산을 늘리는 것은 배선 레인이 아니라 설계 개정의 일이라 통째로 미배선으로 둔다.
+ * (같은 사유가 `skillHooks.ts` 의 앵커 ④ `case SIG_BRUISER_ARMOR` 주석에도 있다.)
  */
 
 import type { WorldState, InputFrame } from '../world.js';
@@ -60,6 +75,12 @@ import {
   DamageSource,
   hasDamageSource,
 } from '../skillSlots.js';
+// ⚠️ **값 import 다** — 규율 ① 은 `world.ts` 만 금지한다. `status.ts` 의 값 의존은 순환이
+// 아니다: `status.ts` → `chainHooks.ts` → `skills/{arccasterChain,mallowStatus}.ts` 로 끝나고
+// 어느 쪽도 `skills/bruiser.ts` 를 되짚지 않는다(`skills/hatchling.ts` 가 같은 근거로 이미
+// `applySlow` 를 값으로 끌어온다). 아크캐스터·말로우가 leaf 파일을 뗀 것은 그 두 기체의 훅이
+// **`chainHooks.ts` 안에** 있어서지 `status.ts` 를 쓰기 때문이 아니다.
+import { applyBurn, FIRE_DURATION } from '../status.js';
 import { ARMOR_MAX_STACKS, ARMOR_DECAY_TICKS, clampArmorStacks } from '../shipSignature.js';
 import { skillLv } from '../../items/skills.js';
 
@@ -99,12 +120,14 @@ const enum Sk {
   /** MO10 착탄 충격 */ arrivalShock = 19,
   /** FO1 과적 장갑 */ overPlating = 20,
   /** FO2 응혈 장갑 */ clotPlating = 21,
+  /** FO3 반동 갑주 */ recoilArmor = 22,
   /** FO4 부동 역적립 */ unmovedAccretion = 23,
   /** FO5 불괴 연쇄 */ unbreakableChain = 24,
   /** FO6 하중 전이 */ loadTransfer = 25,
   /** FO7 전리 개장 */ trophyRefit = 26,
   /** FO8 탈피 재생 */ moltRegen = 27,
   /** FO9 사투 본능 */ lastStandInstinct = 28,
+  /** FO10 파열 소각장 */ burstCremation = 29,
 }
 
 /**
@@ -211,6 +234,36 @@ const POINT_BLANK_RANGE = 350;
  */
 function isDashActive(def: ActiveSkillDef): boolean {
   return def.treeIndex === 1 && def.kind === 'dash';
+}
+
+/**
+ * **강화 액티브 고티어**(FO10 의 술어)의 정본 판별 — 축 `treeIndex === 2`(fortify) · `tier`
+ * `'hi'` · `kind === 'buff'`.
+ *
+ * 셋을 **함께** 보는 근거는 {@link isDashActive} 와 같다. 특히 `kind` 를 뺄 수 없다: FO10 의
+ * 문면은 *"만료 **폭발**"* 이고 그 폭발은 `ACTIVE_EXPIRE['as_bruiser_fortify_hi']` 하나뿐이라,
+ * 장래에 fortify 축 hi 자리에 buff 가 아닌 정의가 들어오면 이 스킬은 **터지지 않은 폭발에
+ * 화상을 얹는** 상태가 된다. `tier` 만 보는 판별은 그 순간 조용히 틀린다.
+ */
+function isFortifyHiActive(def: ActiveSkillDef): boolean {
+  return def.treeIndex === 2 && def.tier === 'hi' && def.kind === 'buff';
+}
+
+/**
+ * FO3 — 반사 피해 비율(bp): `2000 + 200×Lv`. Lv1 = 20% · Lv20 = 60% · 점근 없음(선형).
+ *
+ * ⚠️ **기준값은 `dmg`(사슬을 전부 통과해 hp 에서 실제로 깎인 값)다.** 경감 전 피해를 쓰고
+ * 싶어도 그 값은 사슬 중간의 지역 변수라 복원이 원리적으로 불가능하다(앵커 ④ doc).
+ * 부작용으로 **장갑 투자가 늘수록 반사도 준다** — FO2 의 적립이 같은 기준을 쓰는 것과 같은
+ * 결이고, 설계 문면("반사 피해")이 기준을 지정하지 않아 여기서 고른 것이다(레인 보고서).
+ */
+function recoilReflectBp(level: number): number {
+  return 2000 + 200 * level;
+}
+
+/** FO10 — 화상 틱당 피해: `2 + Lv`. Lv1 = 3 · Lv20 = 22. 지속은 `FIRE_DURATION` 공용값. */
+function cremationBurnPerTick(level: number): number {
+  return 2 + level;
 }
 
 /**
@@ -333,6 +386,13 @@ export function bruiserGemCollected(state: WorldState, player: Entity): void {
  *  - `dmg` 는 감쇠 사슬을 전부 통과해 hp 에서 실제로 깎인 값이다.
  *  - `lethalSurvived` 는 사슬 안에서 한 번 계산된 값이다 — **다시 계산하지 마라**(경감 전
  *    피해가 사슬 중간의 지역 변수라 복원이 원리적으로 불가능하다).
+ *
+ * ## 배치6 — `contact` 가 붙어 **FO3 반동 갑주**가 여기서 닫혔다
+ * `sources` 의 접촉 비트는 *"접촉이 있었다"* 까지만 말한다. 반사는 **대상**이 있어야 성립하고,
+ * 그 대상이 후행 선택 인자로 온다. ⚠️ 접촉이 아닌 피격(적탄·해저드)에서는 `undefined` 다.
+ *
+ * @param contact 이번 피격의 **몸통 접촉 상대 적**. `dmg` 의 `max` 를 이긴 그 한 항목이라,
+ *   같은 틱에 여러 적이 닿았어도 하나만 온다(`srcX`/`srcY` 와 같은 규율).
  */
 export function bruiserPlayerDamaged(
   state: WorldState,
@@ -340,6 +400,7 @@ export function bruiserPlayerDamaged(
   dmg: number,
   lethalSurvived: boolean,
   sources: DamageSourceMask,
+  contact?: Entity,
 ): void {
   // --- FO9 사투 본능(적립 파라미터 변형) -----------------------------------
   // 설계서: "HP 30% 이하인 동안 … 피격당 적립이 2스택이 된다". 엔진의 적립(+1)은 이 앵커
@@ -398,6 +459,31 @@ export function bruiserPlayerDamaged(
     const cap = temperCap(bl8);
     const cur = readSlot(state.skillStage, BruiserStage.temperCharges);
     if (cur < cap) writeSlot(state.skillStage, BruiserStage.temperCharges, cur + 1);
+  }
+
+  // --- FO3 반동 갑주 -------------------------------------------------------
+  // 트리거는 **접촉 상대 적이 실제로 있는 틱**이다. `sources` 의 접촉 비트를 함께 보지 않는
+  // 이유는 중복이기 때문이다 — `contact` 가 실리는 경로가 곧 접촉 분기 하나뿐이라(호출부
+  // `world.ts` 의 `max` 승자 기록), 비트를 겹쳐 보면 같은 사실을 두 벌로 적는 것이 된다.
+  //
+  // ⚠️ 대상 범위(enemy+boss)는 `blastDamageAt`·BL3·BL5·BL9 와 같게 맞춘다. guardian·core 는
+  //    **일부러 뺐다** — 그 둘만 `world.ts:4175-4183` 에 부활 분기가 있어 여기서 hp 를 깎고
+  //    `dead` 를 세우면 부활 충전을 건너뛰고 죽인다.
+  // ⚠️ 좀비 결함 — `compact()` 의 1차 게이트가 `e.dead` 다(정본 `status.ts` 111-112).
+  //    반사로만 죽은 적은 아무도 `dead` 를 안 세워 주므로 여기서 둘을 일치시킨다.
+  const fo3 = lv(state, Sk.recoilArmor);
+  if (
+    fo3 >= 1 &&
+    dmg > 0 &&
+    contact !== undefined &&
+    !contact.dead &&
+    (contact.kind === 'enemy' || contact.kind === 'boss')
+  ) {
+    // `max(1, ·)` 하한은 장식이 아니다 — `dmg` 가 1~4 인 저피해 접촉(감쇠가 거의 다 먹은
+    // 틱)에서 round 가 0 이 되어 **"반사 갑주를 찍었는데 아무 일도 안 일어난다"** 가 된다.
+    const reflect = Math.max(1, Math.round((dmg * recoilReflectBp(fo3)) / 10000));
+    contact.hp -= reflect;
+    if (contact.hp <= 0) contact.dead = true;
   }
 
   // --- FO5 불괴 연쇄 -------------------------------------------------------
@@ -996,6 +1082,51 @@ export function bruiserActiveFired(
       //    장치가 깨져 이후 연사가 통째로 어긋난다. 0 = "지금 쏠 수 있다" 로 이미 최대다.
       if (player.cooldown < 0) player.cooldown = 0;
     }
+  }
+}
+
+/**
+ * 앵커 `onActiveExpired` **액티브 버프가 이번 틱에 0 이 된 직후** — FO10 파열 소각장.
+ *
+ * ## 호출 순서가 이 배선의 전부다
+ * `stepActives` 는 `ACTIVE_EXPIRE[def.id]?.(...)` 를 먼저 부르고 **그 다음 줄**에서 이 앵커에
+ * 온다. 즉 도달 시점에 `as_bruiser_fortify_hi` 의 폭발(`blastDamage`)은 **이미 끝났고**, 반경
+ * 안에서 폭발로 죽은 적은 `dead` 가 서 있다. 그래서 이 함수는
+ *  - **화상을 얹을 뿐 hp 를 깎지 않는다**(`applyBurn` 은 `iframes`/`dashCooldown` 만 만진다) —
+ *    좀비 결함이 원리적으로 생기지 않는 형태다.
+ *  - `dead` 를 건너뛴다. 폭발로 이미 죽은 적에게 화상을 얹으면 `compact()` 의 화상 잔존 게이트를
+ *    통해 **사체가 한 틱 더 사는** 상태가 만들어진다(`status.ts` 의 만료 앵커 ㉚ 주석).
+ *
+ * ## 반경은 `def.coeff.blastRadius` 하나뿐이다 — 두 번째 정본을 만들지 마라
+ * 문면이 *"만료 **폭발**이 … 맞은 적에게"* 라 화상 대상은 **폭발이 닿은 집합과 같아야** 한다.
+ * 상수를 따로 적으면 밸런스 패스가 폭발 반경만 고치는 순간 둘이 조용히 갈린다.
+ *
+ * ⚠️ `slot` 은 이 기체에서 소비처가 없어 인자로 받지 않는다({@link bruiserActiveFired} 와 같다).
+ * ⚠️ RNG 0 소비 · 엔티티 생성 0(스폰은 이 앵커에서 안전하지만 이 스킬은 필요로 하지 않는다).
+ */
+export function bruiserActiveExpired(
+  state: WorldState,
+  player: Entity,
+  def: ActiveSkillDef,
+): void {
+  const fo10 = lv(state, Sk.burstCremation);
+  if (fo10 < 1 || !isFortifyHiActive(def)) return;
+  const radius = def.coeff.blastRadius ?? 0;
+  if (radius <= 0) return;
+
+  // 적탄 소거 — 폭발과 같은 반경·같은 중심(플레이어)이다.
+  clearEnemyBullets(state, player, radius);
+
+  // 화상 — 폭발이 닿은 그 집합. 대상 범위(enemy+boss)는 `blastDamageAt` 과 같게 맞춘다.
+  const perTick = cremationBurnPerTick(fo10);
+  const r2 = radius * radius;
+  for (const e of state.entities) {
+    if (e.dead) continue;
+    if (e.kind !== 'enemy' && e.kind !== 'boss') continue;
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    if (dx * dx + dy * dy > r2) continue;
+    applyBurn(e, perTick, FIRE_DURATION);
   }
 }
 

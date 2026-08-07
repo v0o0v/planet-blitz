@@ -243,7 +243,9 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
   bruiser: [
     'BL2@1', 'BL3@2', 'BL4@3', 'BL5@4', 'BL6@5', 'BL7@6', 'BL8@7', 'BL9@8', 'BL10@9',
     'MO1@10', 'MO2@11', 'MO3@12', 'MO4@13', 'MO5@14', 'MO6@15', 'MO7@16', 'MO8@17', 'MO9@18', 'MO10@19',
-    'FO1@20', 'FO2@21', 'FO4@23', 'FO5@24', 'FO6@25', 'FO7@26', 'FO8@27', 'FO9@28',
+    // 배치6 이 FO3@22(앵커 ④ 의 `contact`) · FO10@29(신설 앵커 `onActiveExpired`)를 더했다.
+    // 남은 미배선은 BL1 하나이고 사유는 앵커가 아니라 **설계 예산**이다(`skills/bruiser.ts` 헤더).
+    'FO1@20', 'FO2@21', 'FO3@22', 'FO4@23', 'FO5@24', 'FO6@25', 'FO7@26', 'FO8@27', 'FO9@28', 'FO10@29',
   ],
   bubble: [
     'PO1@0', 'PO2@1', 'PO3@2', 'PO5@4', 'PO6@5', 'PO7@6', 'PO9@8',

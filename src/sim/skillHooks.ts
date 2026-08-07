@@ -170,6 +170,7 @@ import {
   bruiserEnemyDeath,
   bruiserVolleyParams,
   bruiserActiveFired,
+  bruiserActiveExpired,
   bruiserGemMagnetParams,
   bruiserPlayerMoveParams,
   bruiserWallHit,
@@ -534,7 +535,7 @@ function dispatchPlayerDamagedSkill(
   // ⚠️ 접촉이 아닌 피격(적탄·해저드)에서는 `undefined` 다 — 훅이 반드시 확인해라.
   // ⚠️ **이 적은 `dmg` 의 `max` 를 이긴 그 한 항목**이다(`srcX`/`srcY` 와 같은 규율). 같은 틱에
   //    여러 적이 닿았어도 하나만 온다.
-  void contact;
+  // ✅ 첫 소비처는 `case SIG_BRUISER_ARMOR`(FO3)다 — 그래서 `void contact;` 를 지웠다.
   switch (state.sigBit) {
     case SIG_STRIKER_MARKSMAN:
       // S1 응전 조준 · S2 반사 도금. 둘 다 피해량과 무관하고 "hp 가 실제로 깎였다" 만 본다 —
@@ -558,8 +559,13 @@ function dispatchPlayerDamagedSkill(
       // 장갑 적립이 이 앵커보다 **앞**이라(world.ts 4317-4320) 여기 도달한 시점의 `aux1` 은
       // **항상 0** 이다. 그 술어를 그대로 쓰면 쿨이 영영 안 풀리거나(< 60 이면 스킵) 매 피격
       // 발동(≥ 60 이면 스킵)이 되어 어느 쪽이든 설계와 다르다. 슬롯 1칸이 필요하고, 그것은
-      // 칼날 축 B 예산(BL8·BL9 로 2/2 포화)을 넘기므로 설계로 되돌아가야 한다.
-      bruiserPlayerDamaged(state, player, dmg, lethalSurvived, sources);
+      // 칼날 축 B 예산(BL8 `temperCharges` · BL9 `cadenceHits` 로 2/2 포화)을 넘기므로 설계로
+      // 되돌아가야 한다. **배치6 이 이 문면을 다시 읽고 판단을 유지했다** — 배치6 이 더한
+      // `contact` 는 "누구에게 반격하는가" 가 아니라 "누구를 반사하는가" 라 BL1 의 벽(내부 쿨)과
+      // 무관하다. 같은 사유가 `skills/bruiser.ts` 헤더에도 있다.
+      //
+      // ⚠️ **FO3(반동 갑주)는 배치6 부터 여기 있다** — 후행 선택 인자 `contact` 가 그 자리다.
+      bruiserPlayerDamaged(state, player, dmg, lethalSurvived, sources, contact);
       break;
     case SIG_MALLOW_CUSHION:
       // SQ3 몸통 반발(즉시분 비례 반격) · CU4 반발 세척(부채 보유 중 적탄 소거).
@@ -3438,11 +3444,16 @@ export function onActiveExpired(
 ): void {
   if (!state.skillsOn) return;
   // 아직 소비처가 없는 인자들. 자기 `case` 가 쓰기 시작하면 해당 줄을 지워라.
-  void player;
-  void def;
+  // (`player`·`def` 는 배치6 의 브루저 FO10 이 첫 소비처라 지웠다.)
   void slot;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 13건 전례).
+    case SIG_BRUISER_ARMOR:
+      // FO10 파열 소각장 — 강화 액티브 **고티어**(`treeIndex 2` · `tier 'hi'` · `kind 'buff'`)의
+      // 만료 폭발에 적탄 소거와 화상을 얹는다. 폭발 본체(`ACTIVE_EXPIRE`)는 **바로 앞 줄**에서
+      // 이미 끝났고, 훅은 그 폭발의 반경(`def.coeff.blastRadius`)을 그대로 재사용한다.
+      bruiserActiveExpired(state, player, def);
+      break;
     default:
       break;
   }
