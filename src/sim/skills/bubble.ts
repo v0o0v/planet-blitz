@@ -8,10 +8,10 @@
  *
  * ---
  *
- * ## ⚠️ 배선된 것은 30종 중 **26종**이다 (배치6 이 PO4·DR3·DR7·DR8·FI7 다섯을 더했다)
+ * ## ⚠️ 배선된 것은 30종 중 **27종**이다 (배치6 이 PO4·DR3·DR7·DR8·FI7 + 통합에서 DR2)
  * 배치6 이 연 앵커 셋(`onFilmBurstPost` · `onPickupRadius` · 앵커 ⑮ 의 `FilmBurstParams`)과
  * 신설 leaf `objectiveState.ts`, 그리고 **`BubbleStage` 첫 실배정 1칸**이 그 다섯을 열었다.
- * 남은 **넷은 DR2·PO8·PO10·FI6** 이고, 사유는 이 파일 **말미의 미배선 주석**이 정본이다
+ * 남은 **셋은 PO8·PO10·FI6** 이고, 사유는 이 파일 **말미의 미배선 주석**이 정본이다
  * (넷 다 `Sk` enum 에 멤버가 없다 — 「없다」의 근거는 grep 이다).
  *
  * ⚠️ 배치5 가 DR3 을 *"신규 `WorldState` 정수가 선결"* 로 닫은 판정은 **틀렸다** — 슬롯 배열은
@@ -34,7 +34,7 @@
  *     분리가 순수 함수 시그니처 변경(= 골든)이라 배선 레인 밖이었다. **그 사유는 해소됐다** —
  *     순수 함수 개정 레인이 두 함수에 효율 인자를 넣었고 ⑰ 이 효율(bp)을 돌려주게 바뀌었다.
  *     ✅ **FI8 은 배선됐다**(`bubbleFilmEfficiency` — 피해원 복원 불가라는 별도 사유는 수집
- *     루프가 출처를 함께 실어 보내면서 해소됐다). **DR2 는 아직 밖이다** — 남은 사유는 효율이
+ *     루프가 출처를 함께 실어 보내면서 해소됐다). ~~DR2 는 아직 밖이다~~ → **DR2 도 배선됐다**(배치6 통합 — 슬롯이 「신규 상태」의 정본 자리다). 종전 사유는 효율이
  *     아니라 **술어**다(막 있음 + 젬 수거로 열리는 60틱 창 = 신규 WorldState 정수 1개).
  *     FI9 는 호출부 게이트(`aux0 > 0`)가 *막 없음*을 배제해 애초에 이 앵커에 도달하지 않는다 —
  *     **그 사유는 그대로이고**, S3-5 가 게이트 앞에 앵커 ㉒ 를 열어 자리를 따로 만들었다.
@@ -111,6 +111,7 @@ const enum Sk {
   /** PO7 정전 파열 */ staticBurst = 6,
   /** PO9 고압 격발 조율 */ popTuning = 8,
   /** DR1 역류 수거 */ reverseCurrent = 10,
+  /** DR2 표면장력 세례 */ surfaceTensionBath = 11,
   /** DR3 도약 자기장 */ blinkMagnetize = 12,
   /** DR4 공막 경량화 */ bareHullTrim = 13,
   /** DR5 무지개 공명 */ prismResonance = 14,
@@ -256,6 +257,10 @@ export function bubbleSignatureStep(state: WorldState, player: Entity): void {
   //    `stepGems` 내부 사정에 묶인다).
   blinkMagnetTick(state);
 
+  // ── DR2 표면장력 세례 — 효율 창 잔여 틱을 **매 틱 정확히 한 번** 깎는다. DR3 과 같은
+  //    사유로 앵커 ⑨ 다(효율 앵커 ⑰ 는 *피격이 있는 틱에만* 불려 창이 안 줄어든다).
+  tensionBathTick(state);
+
   // ── DR7 신호 표류(전반부) — 에코·조우가 활성인 동안 재생 타이머가 **2배**로 돈다.
   //    ⚠️ 아래 DR10 펄스보다 **앞**이어야 한다: 그 펄스는 엔진이 곧 할 일을
   //    `filmReady(aux1 + 1)` 로 한 틱 앞서 예측하는데, 여기서 aux1 을 올린 **뒤**의 값이
@@ -284,6 +289,57 @@ function blinkMagnetTick(state: WorldState): void {
   const left = readSlot(state.skillStage, BubbleStage.blinkMagnet);
   if (left <= 0) return;
   writeSlot(state.skillStage, BubbleStage.blinkMagnet, left - 1);
+}
+
+/**
+ * **DR2 표면장력 세례 — 창 지속 틱.** ⚠️ 밸런스 각주(설계에 수치가 없다): 기본 60틱 + 3틱/Lv.
+ * 문면의 *"짧은 창"* 만 있고 계단이 없어 이 배치가 정했다 — 출시 전 일괄 패스 대상이다.
+ */
+function tensionWindowTicks(lvl: number): number {
+  return 60 + 3 * lvl;
+}
+
+/**
+ * **DR2 표면장력 세례 — 창 효율 가산(bp).** ⚠️ 밸런스 각주: +20% + 2%p/Lv.
+ *
+ * ⚠️ **FI8 과 곱으로 겹친다** — 설계서 R3-2 가 *"DR2 는 전 출처·유한 창, FI8 은 단일
+ * 출처·상시"* 라 곱 중첩을 의도했다(앵커 ⑰ 의 case 주석이 그 인용의 정본).
+ */
+function tensionBonusBp(lvl: number): number {
+  return 10000 + 2000 + 200 * lvl;
+}
+
+/**
+ * **DR2 표면장력 세례(감소 절반)** — 창 잔여 틱을 1 깎는다.
+ *
+ * ⚠️ 미투자 런은 슬롯이 0 이라 `readSlot` 한 번으로 끝나고 `writeSlot` 을 호출하지 않는다 —
+ * 배열이 끝까지 안 건드려져 `hashWorld` 의 슬롯 폴드가 한 번도 안 돈다(DR3 과 같은 규율).
+ */
+function tensionBathTick(state: WorldState): void {
+  const left = readSlot(state.skillStage, BubbleStage.tensionWindow);
+  if (left <= 0) return;
+  writeSlot(state.skillStage, BubbleStage.tensionWindow, left - 1);
+}
+
+/**
+ * 앵커 ③ **젬 수거 직후** — DR2 표면장력 세례(적립 절반) **1종**.
+ *
+ * 설계서: *"막이 서 있는 동안 젬을 수거하면 짧은 창 동안 막의 흡수 효율이 오른다"*.
+ *
+ * ## ⚠️ 술어는 **수거 시점에 막이 서 있었는가**다
+ * `player.aux0 > 0` 이 그 정본이다(막 내구). 막이 없는 동안의 수거는 창을 열지 않는다 —
+ * 문면이 *"막이 서 있는 동안"* 이고, 그 게이트를 빼면 무막 런이 파열 직후 첫 피격마다
+ * 효율을 공짜로 얻는다.
+ *
+ * ## ⚠️ 창은 **갱신(대입)이지 누적(가산)이 아니다**
+ * 젬이 초당 수십 개 들어오는 후반 런에서 가산이면 창이 사실상 영구가 된다 — *"짧은 창"* 이라는
+ * 문면이 곧 상한이라, 매 수거가 잔여를 최대치로 **되돌린다**.
+ */
+export function bubbleGemCollected(state: WorldState, player: Entity): void {
+  const dr2 = lv(state, Sk.surfaceTensionBath);
+  if (dr2 < 1) return;
+  if (player.aux0 <= 0) return;
+  writeSlot(state.skillStage, BubbleStage.tensionWindow, tensionWindowTicks(dr2));
 }
 
 /**
@@ -941,11 +997,21 @@ export function bubbleFilmEfficiency(
 ): number {
   void player;
   void dmg;
-  if (!fromHazard) return FILM_EFFICIENCY_BASE_BP;
-  const fi8 = lv(state, Sk.hydrophobicCoat);
-  if (fi8 < 1) return FILM_EFFICIENCY_BASE_BP;
-  // 200% + 10%p/Lv — 정수 산술만(나눗셈 0회). 레벨은 `skillLv` 가 정수로 준다.
-  return 20000 + 1000 * fi8;
+  // ── FI8 발수 코팅 — **해저드 피해 한정** 상시 효율.
+  let eff = FILM_EFFICIENCY_BASE_BP;
+  if (fromHazard) {
+    const fi8 = lv(state, Sk.hydrophobicCoat);
+    // 200% + 10%p/Lv — 정수 산술만(나눗셈 0회). 레벨은 `skillLv` 가 정수로 준다.
+    if (fi8 >= 1) eff = 20000 + 1000 * fi8;
+  }
+  // ── DR2 표면장력 세례 — **전 출처** · 유한 창. FI8 과 **곱**으로 겹친다(설계서 R3-2).
+  //    ⚠️ 창 잔여 틱을 여기서 깎지 마라 — 이 앵커는 *피격이 있는 틱에만* 불려 창이 사실상
+  //    "피격 N회" 가 된다. 감소는 앵커 ⑨ 의 `tensionBathTick` 이 유일한 자리다.
+  const dr2 = lv(state, Sk.surfaceTensionBath);
+  if (dr2 >= 1 && readSlot(state.skillStage, BubbleStage.tensionWindow) > 0) {
+    eff = Math.round((eff * tensionBonusBp(dr2)) / 10000);
+  }
+  return eff;
 }
 
 // ---------------------------------------------------------------------------

@@ -48,6 +48,7 @@ import {
   onFilmAbsorbed,
   onFilmEntry,
   onFilmEfficiency,
+  onGemCollected,
   onActiveFired,
   onGemMagnetParams,
   onPlayerMoveParams,
@@ -91,6 +92,7 @@ const PO6 = 5;
 const PO7 = 6;
 const PO9 = 8;
 const DR1 = 10;
+const DR2 = 11;
 const DR3 = 12;
 const DR4 = 13;
 const DR5 = 14;
@@ -1955,5 +1957,109 @@ describe('⑰ DR3 도약 자기장 (앵커 ㉗ · ⑨ · ㉘)', () => {
       expect(readSlot(w.skillCarry, i)).toBe(0);
       expect(readSlot(w.skillStage, i)).toBe(0);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DR2 표면장력 세례 (앵커 ③ 적립 + 앵커 ⑨ 감소 + 앵커 ⑰ 소비)
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 이 스킬은 **두 번 잘못 닫혔다.** 배치5 는 "신규 WorldState 정수 + 해시 꼬리 폴드가
+// 선결", 배치6 버블 레인은 "설계서가 「구현: B」로 못 박은 신규 WorldState 정수 1개를
+// 요구한다" 로 닫았다. 둘 다 「신규 상태가 필요하다」를 「해시가 갈린다」와 같은 말로 읽었는데,
+// 신규 상태의 정본 자리는 `skillSlots.ts` 의 슬롯 배열이고 그 폴드는 16칸이 전부 0 이면
+// 통째로 안 돈다(`replay.ts` 의 `skillSlotAny`).
+//
+// 뮤테이션(배치6 통합) — 실제로 부숴 적색을 확인했다:
+//  - `bubbleGemCollected` 의 `writeSlot` 제거 → 4건
+//  - `bubbleFilmEfficiency` 의 DR2 곱 제거 → 4건
+//  - `tensionBathTick` 의 `writeSlot` 제거(창이 안 줄어든다) → 1건
+//  - 적립의 `player.aux0 <= 0` 게이트 제거 → 1건
+
+describe('DR2 표면장력 세례', () => {
+  /** 막이 서 있는 상태에서 젬 1개를 수거한다(앵커 ③ 경유 — 훅을 직접 안 부른다). */
+  function collectWithFilm(w: WorldState, filmHp: number): Entity {
+    const p = player(w);
+    p.aux0 = filmHp;
+    onGemCollected(w, addGem(w, p.x, p.y));
+    return p;
+  }
+
+  it('양성 — 막이 선 채 수거하면 창이 열리고 효율이 오른다', () => {
+    const w = mk([[DR2, 20]]);
+    const p = collectWithFilm(w, 60);
+    const eff = onFilmEfficiency(w, p, 100, p.aux0, false);
+    // 하한 먼저 — 배선이 끊기면 아래 비교가 10000 대 10000 으로 성립하는 항진이 된다.
+    expect(eff).toBeGreaterThan(FILM_EFFICIENCY_BASE_BP);
+    // +20% + 2%p/Lv → Lv20 = ×1.60.
+    expect(eff).toBe(16000);
+  });
+
+  it('음성 ① — **막이 없는 동안** 수거하면 창이 안 열린다 (문면의 게이트)', () => {
+    const w = mk([[DR2, 20]]);
+    const p = player(w);
+    p.aux0 = 0; // 무막
+    onGemCollected(w, addGem(w, p.x, p.y));
+    p.aux0 = 60; // 그 뒤에 막이 서더라도
+    expect(onFilmEfficiency(w, p, 100, p.aux0, false)).toBe(FILM_EFFICIENCY_BASE_BP);
+
+    // 긍정 짝 — 같은 런에서 막이 선 채 수거하면 열린다(위 음성이 항진이 아님의 물증).
+    onGemCollected(w, addGem(w, p.x, p.y));
+    expect(onFilmEfficiency(w, p, 100, p.aux0, false)).toBeGreaterThan(FILM_EFFICIENCY_BASE_BP);
+  });
+
+  it('음성 ② — 미투자 런은 수거해도 항등이다', () => {
+    const w = mk();
+    const p = collectWithFilm(w, 60);
+    expect(onFilmEfficiency(w, p, 100, p.aux0, false)).toBe(FILM_EFFICIENCY_BASE_BP);
+  });
+
+  it('창은 **유한**하다 — 지속 틱이 지나면 꺼진다 (앵커 ⑨ 가 실제로 깎는다)', () => {
+    const w = mk([[DR2, 1]]);
+    const p = collectWithFilm(w, 60);
+    expect(onFilmEfficiency(w, p, 100, p.aux0, false)).toBeGreaterThan(FILM_EFFICIENCY_BASE_BP);
+    // Lv1 창 = 60 + 3×1 = 63틱. 여유 있게 돌린다.
+    for (let i = 0; i < 70; i++) onSignatureStep(w, p, emptyInput());
+    expect(onFilmEfficiency(w, p, 100, p.aux0, false)).toBe(FILM_EFFICIENCY_BASE_BP);
+  });
+
+  it('창은 갱신이지 누적이 아니다 — 수거를 반복해도 상한을 안 넘는다', () => {
+    const w = mk([[DR2, 1]]);
+    const p = player(w);
+    p.aux0 = 60;
+    for (let i = 0; i < 50; i++) onGemCollected(w, addGem(w, p.x, p.y));
+    // 마지막 수거 기준 63틱이면 꺼져야 한다. 누적이면 3150틱이 되어 안 꺼진다.
+    for (let i = 0; i < 70; i++) onSignatureStep(w, p, emptyInput());
+    expect(onFilmEfficiency(w, p, 100, p.aux0, false)).toBe(FILM_EFFICIENCY_BASE_BP);
+  });
+
+  it('FI8 과 **곱**으로 겹친다 (설계서 R3-2: 전 출처 × 단일 출처)', () => {
+    const w = mk([
+      [DR2, 20],
+      [FI8, 20],
+    ]);
+    const p = collectWithFilm(w, 60);
+    // FI8(해저드 한정) 40000 × DR2 1.60 = 64000.
+    expect(onFilmEfficiency(w, p, 100, p.aux0, true)).toBe(64000);
+    // 해저드가 아니면 FI8 은 빠지고 DR2 만 남는다 — 두 축이 실제로 분리돼 있다.
+    expect(onFilmEfficiency(w, p, 100, p.aux0, false)).toBe(16000);
+  });
+
+  it('레벨 단조 — 하한 짝 포함', () => {
+    const at = (level: number): number => {
+      const w = mk([[DR2, level]]);
+      const p = collectWithFilm(w, 60);
+      return onFilmEfficiency(w, p, 100, p.aux0, false);
+    };
+    expect(at(1)).toBeGreaterThan(FILM_EFFICIENCY_BASE_BP);
+    expect(at(20)).toBeGreaterThan(at(1));
+  });
+
+  it('⚠️ 미투자 런은 슬롯 16칸이 끝까지 0 이다 — 골든 해시 불변의 근거', () => {
+    const w = mk([[FI2, 20]]); // 다른 스킬만 투자
+    const p = collectWithFilm(w, 60);
+    for (let i = 0; i < 30; i++) onSignatureStep(w, p, emptyInput());
+    expect(w.skillStage.every((v) => v === 0)).toBe(true);
+    expect(w.skillCarry.every((v) => v === 0)).toBe(true);
   });
 });

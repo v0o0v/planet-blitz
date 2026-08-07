@@ -249,7 +249,7 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
   ],
   bubble: [
     'PO1@0', 'PO2@1', 'PO3@2', 'PO4@3', 'PO5@4', 'PO6@5', 'PO7@6', 'PO9@8',
-    'DR1@10', 'DR3@12', 'DR4@13', 'DR5@14', 'DR6@15', 'DR7@16', 'DR8@17', 'DR9@18', 'DR10@19',
+    'DR1@10', 'DR2@11', 'DR3@12', 'DR4@13', 'DR5@14', 'DR6@15', 'DR7@16', 'DR8@17', 'DR9@18', 'DR10@19',
     'FI1@20', 'FI2@21', 'FI3@22', 'FI4@23', 'FI5@24', 'FI7@26', 'FI8@27', 'FI9@28', 'FI10@29',
   ],
   hatchling: [
@@ -277,7 +277,7 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** 골든 합계. 기체별 표와 따로 적어, 한쪽만 고치면 아래 자기검증이 잡는다. */
-const GOLDEN_TOTAL = 176;
+const GOLDEN_TOTAL = 195;
 
 /** 늘고 준 것을 사람이 읽을 수 있게 찍는다 — 숫자만 틀렸다고 하면 원인을 못 찾는다. */
 function diffMsg(ship: string, actual: readonly string[], golden: readonly string[]): string {
