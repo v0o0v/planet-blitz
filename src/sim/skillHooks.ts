@@ -206,6 +206,9 @@ import {
   bubbleFilmAbsorbed,
   bubbleFilmEntry,
   bubbleFilmEfficiency,
+  bubbleActiveFired,
+  bubbleGemMagnetParams,
+  bubblePlayerMoveParams,
 } from './skills/bubble.js';
 
 // ---------------------------------------------------------------------------
@@ -2848,9 +2851,8 @@ export function onActiveFired(
 ): void {
   if (!state.skillsOn) return;
   // 아직 소비처가 없는 인자들. 자기 `case` 가 쓰기 시작하면 해당 줄을 지워라.
-  void dir;
+  // (`dir`·`origin` 은 버블 PO9·DR9 가 쓰기 시작해 지웠다.)
   void slot;
-  void origin;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라** — 병렬 배선
     // 머지에서 두 `case` 가 `break;` 하나를 공유하는 fallthrough 가 누적 5건 나왔고 전부
@@ -2858,6 +2860,10 @@ export function onActiveFired(
     case SIG_PHANTOM_CLOAK:
       // PH2 위상 착지 — 위상 계열(`treeIndex === 1`) 액티브의 **착지 지점** 정화.
       phantomActiveFired(state, player, def);
+      break;
+    case SIG_BUBBLE_FILM:
+      // PO9 고압 격발 조율(pop 계열 환산 효율) · DR9 이탈 잔파동(drift 계열 **출발 지점**).
+      bubbleActiveFired(state, player, def, dir, origin);
       break;
     default:
       break;
@@ -2992,6 +2998,10 @@ export function onGemMagnetParams(
       // ME2 채무 자석 — 부채(`player.aux0`)에 비례해 반경이 커진다.
       mallowGemMagnetParams(state, player, params);
       break;
+    case SIG_BUBBLE_FILM:
+      // DR5 무지개 공명(콤보 → 반경) · DR10 공막 유속(무막 흡인 가속).
+      bubbleGemMagnetParams(state, player, params);
+      break;
     default:
       break;
   }
@@ -3055,6 +3065,10 @@ export function onPlayerMoveParams(
     case SIG_MALLOW_CUSHION:
       // CU8 통증 마취 — 부채(`player.aux0`) 보유 중 이동 속도가 오른다.
       mallowPlayerMoveParams(state, player, params);
+      break;
+    case SIG_BUBBLE_FILM:
+      // DR4 공막 경량화 — 막이 없는 동안(`aux0 === 0`) 감속 면역 + 이속 상승.
+      bubblePlayerMoveParams(state, player, params);
       break;
     default:
       break;

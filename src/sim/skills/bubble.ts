@@ -8,7 +8,15 @@
  *
  * ---
  *
- * ## ⚠️ 배선된 것은 30종 중 **16종**이다 (배치 4 의 9종 + S2 앵커 4종 + S3 앵커 1종 + FI8 + DR1)
+ * ## ⚠️ 배선된 것은 30종 중 **21종**이다 (종전 16종 + 배치5 버블 레인의 5종)
+ * 배치5(공유 앵커 ㉗㉘㉙)가 **PO9·DR4·DR5·DR9·DR10** 다섯을 더했다. 그 레인이 열려고 했으나
+ * **닫힌 채로 남은 셋**은 DR2·DR3·DR8 이고, 사유는 서로 다르므로 각각의 자리에 적어 두었다:
+ *  · **DR2·DR3** — 신규 `WorldState` 정수(효율 창 잔여 틱 / 전용 자석 버프 틱). 항상 0 인
+ *    필드라도 해시 꼬리 폴드에 들어가는 순간 지금 초록인 골든이 전부 갈린다.
+ *  · **DR8** — 기믹 **접촉** 반경은 `resolveCollisions` 의 지역 변수라 앵커 ㉘ 이 안 쥔다.
+ * (아래 3묶음 서술은 배치4 시점의 기록이라 그 시점 문면 그대로 둔다 — 위 세 줄이 현행이다.)
+ *
+ * ## (배치4 시점 기록) 배선된 것은 30종 중 **16종**이었다
  * S2 가 앵커 ⑯(`onVolleyParams`)·⑰·⑱(`onFilmAbsorbed`)을 열어 **PO2·PO5(⑯) · FI3·FI4(⑱)**
  * 넷이 추가됐고, S3 이 앵커 ㉒(`onFilmEntry`)를 열어 **FI9** 가 붙었으며, 순수 함수 개정 레인이
  * 앵커 ⑰(`onFilmEfficiency`)을 되살려 **FI8** 이 붙었다. 사유별 묶음은 `skillHooks.ts` 의 각
@@ -49,16 +57,24 @@
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
-import type { VolleyParams } from '../skillHooks.js';
-import { clearEnemyBullets, fanStrike } from '../activeTypes.js';
+import type {
+  ActiveFiredOrigin,
+  GemMagnetParams,
+  PlayerMoveParams,
+  VolleyParams,
+} from '../skillHooks.js';
+import type { ActiveSkillDef } from '../../../data/ships/actives/types.js';
+import { clearEnemyBullets, fanStrike, powerCentiOf, scaleCenti } from '../activeTypes.js';
 import { applyChain } from '../status.js';
 import { slideCircleWalls } from '../los.js';
 import { length } from '../math.js';
+import { DT } from '../constants.js';
 import {
   FILM_ABSORB_FLAT,
   FILM_BURST_RADIUS,
   FILM_PERIOD_TICKS,
   FILM_EFFICIENCY_BASE_BP,
+  filmReady,
 } from '../shipSignature.js';
 import { skillLv } from '../../items/skills.js';
 
@@ -80,8 +96,13 @@ const enum Sk {
   /** PO5 만재 투과 */ fullFilmPierce = 4,
   /** PO6 격발 재응결 */ fireRecondense = 5,
   /** PO7 정전 파열 */ staticBurst = 6,
+  /** PO9 고압 격발 조율 */ popTuning = 8,
   /** DR1 역류 수거 */ reverseCurrent = 10,
+  /** DR4 공막 경량화 */ bareHullTrim = 13,
+  /** DR5 무지개 공명 */ prismResonance = 14,
   /** DR6 파열 추진 */ burstPropulsion = 15,
+  /** DR9 이탈 잔파동 */ departureRipple = 18,
+  /** DR10 공막 유속 */ bareHullCurrent = 19,
   /** FI1 조기 응결 */ earlyCondense = 20,
   /** FI2 내구 재응결 */ durabilityRecondense = 21,
   /** FI3 반사 응막 */ reflectiveFilm = 22,
@@ -111,6 +132,33 @@ const PO2_SPEED_BASE = 1800;
  * 민다" 가 아니라 "매 피격이 작은 파열" 이 되어 축이 무너진다. 두 값이 다르다는 것이 설계다.
  */
 const FI4_VENT_RADIUS = 120;
+
+/**
+ * DR5 가 읽는 **콤보 스택 상한**. 설계서 DR5 가 *"10스택 상한은 기존 콤보 규칙 그대로"* 라고
+ * 적었고, 엔진의 그 상수는 `world.ts` 의 `COMBO_MAX_STACK`(=10)이다.
+ *
+ * ## ⚠️ 왜 베껴 적는가 — 그 상수는 **export 되지 않는다**
+ * `state.combo` 자체는 상한이 없다(수거마다 무한 증가하고, 상한은 `comboMultiplier` 가 XP
+ * 산술 안에서만 건다). 그래서 이 스킬이 상한을 스스로 걸지 않으면 콤보 50 인 구간에서 Lv20
+ * 자석이 +225% 가 되어 설계서의 *"풀콤보 자석 +30%"* 와 한 자릿수가 어긋난다 — 상한은 **선택이
+ * 아니라 필수**다. `world.ts` 런타임 import 는 이 파일의 규율 ① 이 금지하므로 값을 여기 둔다.
+ * ⚠️ 엔진 쪽 상한을 바꾸는 밸런스 패스는 **이 값도 같이** 고쳐라(둘은 같은 규칙이다 —
+ * 문턱을 일부러 독립시킨 {@link PO2_SPEED_BASE} 와는 정반대 성격이다).
+ */
+const DR5_COMBO_CAP = 10;
+
+/**
+ * DR9 잔파동의 **밀어내기 변위**(sim 좌표). 설계서 DR9 는 반경만 규정하고 변위는 *"소형"*
+ * 이라고만 적었다 — 그 문면을 수치로 옮긴 값이다.
+ *
+ * ## 왜 파열 밀어내기(`FILM_BURST_PUSH` = 260)를 재사용하지 않는가
+ * 설계서 DR9 본문이 **"잔파동은 파열이 아니다"** 를 못 박았다. 변위까지 같으면 이 스킬은
+ * *"쿨다운마다 임의 위치에서 파열을 한 번 더 쓴다"* 가 되어 시그니처 주기(420틱)를 우회한다.
+ * 260 의 3분의 1 근처인 90 이라 밀린 적이 반경(Lv1 = 108) 밖으로 나가지 않는다 — 잔파동은
+ * 자리를 비우는 것이지 적을 치우는 것이 아니다. 두 값은 **독립**이다(파열 변위를 올리는
+ * 밸런스 패스가 이 값을 끌고 가면 안 된다).
+ */
+const DR9_RIPPLE_PUSH = 90;
 
 /**
  * 이 런에서 그 스킬의 **실효 레벨**(투자 + 축 어픽스). 미투자면 0 이다(`skillLv` 정본 1).
@@ -167,10 +215,72 @@ function recondensePeriodTicks(level: number): number {
  * 0 이 되는 순간만 터진다"는 시그니처 계약이 그대로다.
  */
 export function bubbleSignatureStep(state: WorldState, player: Entity): void {
+  // ── DR10 견인 펄스 — **막이 서는 그 틱 한 번**. FI2 와 술어가 정반대(막 없음)라 아래
+  //    조기 반환보다 **앞**에 둔다. 둘을 한 게이트로 묶으면 어느 한쪽이 반드시 안 돈다.
+  bareHullCurrentPulse(state, player);
+
   const fi2 = lv(state, Sk.durabilityRecondense);
   if (fi2 < 1) return;
   if (player.aux0 <= 0 || player.aux0 >= FILM_ABSORB_FLAT) return;
   if (state.tick % recondensePeriodTicks(fi2) === 0) player.aux0 += 1;
+}
+
+/**
+ * 젬 하나를 플레이어 쪽으로 **최대 `step` 만큼** 당긴다(공용 — DR1 이 세운 「좌표 직접 변위」
+ * 규율의 재사용).
+ *
+ * ## ⚠️ 남은 거리를 넘겨 밀지 않는다 — 넘기면 젬이 플레이어를 **지나친다**
+ * `stepGems` 는 이 함수 뒤에 자기 흡인을 한 번 더 얹으므로, 여기서 지나쳐 버리면 다음 틱에
+ * 반대 방향으로 끌려와 진동한다. 남은 거리 이하로 자르고, 정확히 닿으면 플레이어 좌표에
+ * 스냅한다 — 그 자리는 `stepGems` 의 `d2 > 0.0001` 술어가 속도를 0 으로 두고 픽업 반경
+ * (`player.radius`)이 훨씬 크므로 유실 경로가 없다(DR1 블록 주석이 정본).
+ */
+function pullGemToward(player: Entity, gem: Entity, step: number): void {
+  if (step <= 0) return;
+  const dx = player.x - gem.x;
+  const dy = player.y - gem.y;
+  const d = length(dx, dy);
+  if (d <= step) {
+    gem.x = player.x;
+    gem.y = player.y;
+    gem.vx = 0;
+    gem.vy = 0;
+    return;
+  }
+  gem.x += (dx / d) * step;
+  gem.y += (dy / d) * step;
+}
+
+/**
+ * **DR10 공막 유속(견인 펄스 절반)** — *재생이 완료돼 막이 서는 그 틱*에, 자석 반경 2배 범위의
+ * 젬 전체를 한 번 끌어당긴다. 변위 = 60 + 6×Lv (설계서 DR10).
+ *
+ * ## ⚠️ 술어가 "막이 섰다" 가 아니라 "이 틱에 선다" 인 이유
+ * 앵커 ⑨ 는 `stepShipSignature` 의 **기체 분기보다 앞**이라, 이 함수가 도는 시점에는 아직
+ * `aux1++` 도 `aux0 = FILM_ABSORB_FLAT` 도 일어나지 않았다. 그래서 엔진이 곧 할 일을 **한 틱
+ * 앞서 예측**한다(`aux0 === 0 && filmReady(aux1 + 1)`) — 엔진의 재생 판정과 같은 순수 함수를
+ * 같은 인자로 부르므로 두 판정이 갈릴 수 없다. 사후에 재려면 "막이 섰다"를 기억할 상태가
+ * 필요한데, 그것이 곧 신규 `WorldState` 필드(= 해시 꼬리 폴드)다.
+ *
+ * ## ⚠️ 재생 완료 **만**이다 — 액티브가 세우는 막에는 안 걸린다
+ * `as_bubble_film_lo/hi` 는 `aux0` 을 직접 만재로 대입하고 이 술어를 지나지 않는다. 설계서
+ * 문면이 *"재생이 완료돼"* 라 그 범위가 정확히 일치한다(액티브 결속은 DR3·DR9 의 몫이다).
+ */
+function bareHullCurrentPulse(state: WorldState, player: Entity): void {
+  const dr10 = lv(state, Sk.bareHullCurrent);
+  if (dr10 < 1) return;
+  if (player.aux0 !== 0 || !filmReady(player.aux1 + 1)) return;
+  // 반올림은 게이트 안(공통 규율). 반경·변위 둘 다 좌표축이라 f64 로 남긴다.
+  const step = 60 + 6 * dr10;
+  const radius = state.magnetRadius * 2;
+  const r2 = radius * radius;
+  for (const e of state.entities) {
+    if (e.dead || e.kind !== 'gem') continue;
+    const dx = player.x - e.x;
+    const dy = player.y - e.y;
+    if (dx * dx + dy * dy > r2) continue;
+    pullGemToward(player, e, step);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -558,4 +668,234 @@ export function bubbleFilmEfficiency(
   if (fi8 < 1) return FILM_EFFICIENCY_BASE_BP;
   // 200% + 10%p/Lv — 정수 산술만(나눗셈 0회). 레벨은 `skillLv` 가 정수로 준다.
   return 20000 + 1000 * fi8;
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉗ — 액티브 핸들러가 자기 일을 끝낸 직후(쿨다운 대입 앞)
+// ---------------------------------------------------------------------------
+
+/**
+ * **PO9 고압 격발 조율 · DR9 이탈 잔파동** — 액티브 결속 둘.
+ *
+ * 계열 판별은 훅 책임이다(앵커 ㉗ doc): `def.treeIndex` 0 = pop · 1 = drift, `def.tier` 가
+ * 'lo'/'hi'. `def.shipTypeId` 는 보지 않는다 — 호출부의 `case SIG_BUBBLE_FILM` 이 이미 버블
+ * 런임을 보장하고, 액티브 슬롯에는 그 기체 것만 들어간다.
+ *
+ * ## ⚠️ PO9 의 **절반은 이 앵커로 못 한다** — 반쪽인 채로 두는 것이 아니라, 못 하는 쪽을 적는다
+ * 설계서 PO9 는 축이 둘이다: ①`as_bubble_pop_lo` 의 **파열 반경 확대** ②`as_bubble_pop_hi` 의
+ * **내구→탄약 환산 효율**. ② 는 아래에서 배선했고, ① 은 **구조적으로 닿지 않는다**:
+ * `pop_lo` 핸들러는 `requestFilmBurst(state, x, y)` 로 **좌표만** 요청에 싣고, 실제 반경은
+ * 소비 시점에 `resolveFilmBurst` 가 `FILM_BURST_RADIUS` 상수로 정한다 — 요청에 반경 칸이 없다.
+ * 칸을 열려면 `filmBurst.ts` 를 고쳐야 하는데 ⓐ그 산술은 이 배치의 수정 금지 대상이고
+ * ⓑ `skills/bubble.ts` 가 그 모듈을 import 하는 순간 **순환**이다(그 파일 헤더가 명시적으로
+ * 금지한다). 반경만 여기서 흉내 내는 대안(파열 반경 밖 고리를 따로 미는 것)은 **밀어내기 산술의
+ * 두 번째 사본**이라 기각했다 — E3 이 지운 `pushBurst` 가 정확히 그 형태였다.
+ * ⇒ **요청 슬롯에 반경(또는 배율) 칸을 여는 레인이 ① 을 얹어라.**
+ *
+ * ## ⚠️ PO9 ② 를 *추가 부채꼴*로 낸 이유 — 앵커가 핸들러 **뒤**다
+ * 설계서의 형태는 "환산 분모(`perFilm`)를 줄인다" 이지만, 이 앵커에 도달한 시점에는 핸들러가
+ * 이미 `floor(film / per)` 발을 쐈고 `player.aux0` 도 0 으로 비워졌다. 그래서 **늘어나는 몫만
+ * 따로 쏜다** — 총 탄수·탄당 피해는 설계와 같고(레지스트리의 `observable: 'projectileCount'` 가
+ * 재는 값이 그것이다), 다른 것은 각도 분포뿐이다(한 부채꼴이 아니라 겹친 두 부채꼴).
+ * 소모한 내구는 `origin.preAux0` 이 보존하고 있다 — 이 앵커가 그 값을 싣는 이유다.
+ */
+export function bubbleActiveFired(
+  state: WorldState,
+  player: Entity,
+  def: ActiveSkillDef,
+  dir: { x: number; y: number },
+  origin: ActiveFiredOrigin,
+): void {
+  // ── PO9 고압 격발 조율(환산 효율 절반) — `as_bubble_pop_hi` 가 환산한 탄수에 +4% + 1%p/Lv.
+  if (def.treeIndex === 0 && def.tier === 'hi') {
+    const po9 = lv(state, Sk.popTuning);
+    if (po9 >= 1) {
+      // 핸들러와 **같은 식**으로 기준 탄수를 되짚는다(핸들러: `floor(film / per)`).
+      // `preAux0` 은 핸들러가 비우기 전의 내구다.
+      const film = Math.max(0, Math.trunc(origin.preAux0));
+      const per = def.coeff.perFilm ?? 1;
+      const baseCount = per > 0 ? Math.floor(film / per) : 0;
+      // 반올림은 게이트 안(공통 규율). **`round` 이지 `floor` 가 아니다** — Lv1 의 +5% 는
+      // 만재(내구 60 · 분모 4 = 15발)에서도 0.75발이라, `floor` 면 설계서가 약속한
+      // *"1레벨: 액티브 2종 즉시 강화"* 가 저레벨 구간에서 통째로 무연산이 된다.
+      const extra = Math.round((baseCount * (400 + 100 * po9)) / 10000);
+      if (extra > 0) {
+        // 피해·확산·관통은 핸들러와 동일하게 def 에서 되읽는다 — 여기 숫자를 적으면
+        // 레지스트리와 두 벌이 된다.
+        const centi = powerCentiOf(state, def);
+        fanStrike(
+          state,
+          player,
+          extra,
+          scaleCenti(def.coeff.damage ?? 0, centi),
+          def.coeff.spreadDeg ?? 0,
+          dir,
+          { pierce: 1 },
+        );
+      }
+    }
+  }
+
+  // ── DR9 이탈 잔파동 — drift 액티브(blink) **출발 지점**에 소형 밀어내기 + 적탄 소거.
+  //    반경 = 100 + 8×Lv, 막이 서 있으면 ×1.5.
+  //
+  //    ## ⚠️ 이것은 파열이 **아니다**(설계서 DR9 본문)
+  //    `requestFilmBurst` 를 부르지 않고 `aux0`·`aux1` 을 한 점도 건드리지 않는다 — 파열 훅
+  //    (PO1·PO3·PO7·DR1·DR6·FI1·FI5·FI10)이 도약마다 덤으로 도는 일이 없다.
+  //
+  //    ## ⚠️ 기준점이 `player` 가 아니라 `origin.preX/preY` 다
+  //    앵커가 핸들러 **뒤**라 `player.x/y` 는 이미 *착지점*이다. 그래서 `clearEnemyBullets` 를
+  //    재사용할 수 없다 — 그 헬퍼는 중심을 `Entity` 로만 받는다(좌표 인자가 없다). 아래 두
+  //    루프는 그 좌표 차이 때문에 있는 것이지 산술을 달리 하려는 것이 아니다.
+  if (def.treeIndex === 1) {
+    const dr9 = lv(state, Sk.departureRipple);
+    if (dr9 >= 1) {
+      // 반올림은 게이트 안. 반경은 좌표축이라 f64 로 남긴다(막 보정은 정확히 3/2 배).
+      const base = 100 + 8 * dr9;
+      const radius = player.aux0 > 0 ? (base * 3) / 2 : base;
+      const r2 = radius * radius;
+      for (const e of state.entities) {
+        if (e.dead) continue;
+        const dx = e.x - origin.preX;
+        const dy = e.y - origin.preY;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > r2) continue;
+        if (e.kind === 'enemyBullet') {
+          e.dead = true;
+          continue;
+        }
+        // 대상 `enemy` 한정 — 침공 방어체·벽은 배치 좌표가 계약이다(FI4 와 같은 판단).
+        if (e.kind !== 'enemy') continue;
+        const d = length(dx, dy);
+        // 중심과 정확히 겹친 적은 밀 방향이 정의되지 않는다 — 임의 방향을 만들지 않고 둔다.
+        if (d <= 1) continue;
+        e.x += (dx / d) * DR9_RIPPLE_PUSH;
+        e.y += (dy / d) * DR9_RIPPLE_PUSH;
+        // 벽 충돌 즉시 재해결 — 터널링은 결정론이 유지되므로 해시로는 절대 안 잡힌다(FI4 주석).
+        if (state.activeWalls.length > 0) {
+          const slid = slideCircleWalls(e.x, e.y, e.radius, state.activeWalls);
+          e.x = slid.x;
+          e.y = slid.y;
+        }
+      }
+    }
+  }
+
+  // ## ⚠️ DR3「도약 자기장」은 여기 없다 — 전용 `WorldState` 정수가 선결이다
+  // 설계서 DR3 은 「구현: B」이고 요구 상태가 명시적이다: *전용* 자석 버프 잔여 틱 1칸
+  // (`blinkMagnetTicks`). 대체 수단을 셋 다 짚었고 셋 다 막혔다:
+  //  ① `state.magnetBuffTicks` 재사용 — **설계서가 명시적으로 금지**한다(희귀 기믹 픽업의 ×3
+  //     보상 칸이라, 도약마다 세우면 그 픽업이 무의미해진다).
+  //  ② `state.activeBuff0/1` 재사용 — drift 액티브는 `kind: 'dash'` 라 이 칸을 안 쓰지만,
+  //     그 칸은 `observable: 'buffTicks'` 의 계측 대상이다. 대시 액티브가 버프 틱을 세우기
+  //     시작하면 배선 전수 단언이 관측량과 어긋난다(= 계측기를 스킬이 오염시킨다).
+  //  ③ 액티브 쿨다운의 경과분으로 역산 — 세운 쿨다운 최댓값이 어디에도 남지 않는다(남는 것은
+  //     잔여뿐이라 쿨다운 감소 모드가 붙는 순간 경과 계산이 조용히 틀린다).
+  // ⇒ 남은 길은 신규 `WorldState` 필드 + 해시 꼬리 폴드뿐인데, **항상 0 인 필드라도 폴드에
+  //    들어가는 순간 지금 초록인 골든이 전부 갈린다.** 이 배치의 금지 사항이라 손대지 않았다.
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉘ — 젬 자석 반경 확정 직후 · 흡인 루프 직전
+// ---------------------------------------------------------------------------
+
+/**
+ * **DR5 무지개 공명 · DR10 공막 유속(흡인 절반)** — 자석 축 둘.
+ *
+ * ## ⚠️ 순서가 계약이다 — DR5(반경) 먼저, DR10(이동) 나중
+ * 설계서 ⑥절이 *"반경 = DR5·DR3·DR8 / 이동 = DR10"* 으로 두 축을 갈라 두었고, DR10 은
+ * "반경 안의 젬" 을 대상으로 한다. DR5 를 먼저 얹어야 그 대상 집합이 **이 틱의 최종 반경**과
+ * 같아진다 — 순서를 뒤집으면 DR5 로 새로 들어온 젬이 그 틱만 가속에서 빠진다.
+ *
+ * ## ⚠️ `broodRadius` 는 건드리지 않는다
+ * 해츨링 NU1 의 자리다(그 필드 doc 이 정본). 버블에는 병아리가 없다.
+ *
+ * ## ⚠️ DR8「원격 채집기」는 여기 없다 — **이 앵커가 그 반경을 안 쥐고 있다**
+ * 설계서 DR8 은 *기믹 픽업 3종(`magnetEmitter`·`bombDevice`·`turretPickup`)의 **접촉** 반경*을
+ * 자석 반경에 비례해 늘린다. 그 판정은 `resolveCollisions` 안의
+ * `circlesOverlap(px, py, pickR, t.x, t.y, t.radius)` 이고 — `pickR` 은 그 함수의 지역
+ * 변수다 — 이 앵커(`stepGems`)와는 **다른 함수·다른 값**이다. 여기서 `params.radius` 를
+ * 아무리 키워도 기믹 접촉은 한 픽셀도 안 움직인다(젬 흡인 반경만 커진다). 접촉 판정 쪽에
+ * 앵커를 여는 레인이 얹어라. `t.radius` 를 직접 부풀리는 우회는 기각했다 — 그 값은 렌더·
+ * 충돌 격자가 함께 읽는 개체 치수다.
+ */
+export function bubbleGemMagnetParams(
+  state: WorldState,
+  player: Entity,
+  params: GemMagnetParams,
+): void {
+  // ── DR5 무지개 공명 — 콤보 스택당 자석 +1.5% + 0.15%p/Lv. 콤보는 **읽기만** 한다
+  //    (만료·상한 규칙을 이 스킬이 건드리면 XP 경제가 함께 밀린다 — 설계서 재발 패턴 판정).
+  const dr5 = lv(state, Sk.prismResonance);
+  if (dr5 >= 1) {
+    const stacks = state.combo < DR5_COMBO_CAP ? state.combo : DR5_COMBO_CAP;
+    if (stacks > 0) {
+      // 배율은 정수 bp · 나눗셈 1회(ADR-0005). 반경은 좌표축이라 f64 로 남긴다.
+      params.radius = (params.radius * (10000 + stacks * (150 + 15 * dr5))) / 10000;
+    }
+  }
+
+  // ── DR10 공막 유속(흡인 절반) — 막이 없는 동안 젬이 **한 틱에 더 멀리** 끌려온다.
+  //    +20% + 3%p/Lv.
+  //
+  //    ## ⚠️ 왜 "속도 배율" 이 아니라 좌표 변위인가 — 이 앵커에 속도 칸이 없다
+  //    흡인 속도는 `stepGems` 안의 모듈-로컬 상수(`MAGNET_SPEED`)이고 `GemMagnetParams` 에
+  //    칸이 없다(그 doc 이 *"흡인 속도는 상수라 반경과 무관"* 이라고 못 박는다). 그래서
+  //    **엔진이 지난 틱에 이 젬에 실어 둔 속도**(`e.vx/e.vy` — `stepGems` 가 매 틱 덮어쓴다)의
+  //    α 배만큼 여기서 미리 옮기고, 곧 이어질 흡인 루프가 자기 몫을 그 위에 얹는다.
+  //    ⇒ 그 틱의 총 이동 = 기본 + α · 기본. 설계서의 배율과 같은 값이고, **상수 1520 을 이
+  //    파일에 베끼지 않는다**(베끼면 밸런스 패스가 한쪽만 고쳐 조용히 갈리는 이중 정본이 된다).
+  //    대가: 젬이 반경에 **들어온 첫 틱**은 `e.vx` 가 0 이라 가속이 없다(다음 틱부터 걸린다).
+  const dr10 = lv(state, Sk.bareHullCurrent);
+  if (dr10 >= 1 && player.aux0 === 0) {
+    const r2 = params.radius * params.radius;
+    // 반올림은 게이트 안. bp 는 정수, 변위는 좌표축이라 f64 다.
+    const bonusBp = 2000 + 300 * dr10;
+    for (const e of state.entities) {
+      if (e.dead || e.kind !== 'gem') continue;
+      const dx = player.x - e.x;
+      const dy = player.y - e.y;
+      if (dx * dx + dy * dy > r2) continue;
+      pullGemToward(player, e, (length(e.vx, e.vy) * DT * bonusBp) / 10000);
+    }
+  }
+
+  // ## ⚠️ DR2「표면장력 세례」도 여기 없다 — 사유는 앵커 ⑰(`bubbleFilmEfficiency`) doc 이 정본.
+  //    술어(막 있음 + 젬 수거로 열리는 60틱 창)에 신규 `WorldState` 정수 1칸이 필요하고,
+  //    그 칸은 해시 꼬리 폴드를 건드린다 — DR3 과 같은 벽이다.
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉙ — 플레이어 이동 배율 확정 직전(감속 배율 산출 앞)
+// ---------------------------------------------------------------------------
+
+/**
+ * **DR4 공막 경량화** — *막이 없는 동안* 이동 감속에 면역이고 이동이 빨라진다.
+ *
+ * ## ⚠️ 이 앵커가 아니면 감속 면역이 **한 틱 늦는다**
+ * 감속을 부여하는 지점은 여럿이고(해저드 접촉 · 침공 견인 자기장 `HAZARD_SLOW` · 냉기) 그
+ * 어디에도 앵커가 없다. 이 지점은 감속이 **소비되기 직전**이라 부여 지점이 몇 개든 그 틱 안에서
+ * 0 으로 되돌릴 수 있다 — 브루저 MO4 가 "한 틱 늦다" 로 남았던 그 자리다(앵커 ㉙ doc).
+ *
+ * ## ⚠️ `slowTicks = 0` 은 감산까지 함께 건너뛴다 — 그것이 옳다
+ * 호출부는 되쓴 값이 0 이면 배율을 1 로 두고 `if (> 0) --` 도 건너뛴다. 즉 **면역인 동안 잔여
+ * 틱이 줄지 않는다.** 막이 다시 서면 남아 있던 감속이 그대로 이어진다 — 설계서의 "면역" 은
+ * 무효화가 아니라 그 시간 동안 안 걸리는 것이고, 무막이 끝나는 순간 대가가 돌아오는 편이
+ * "무막으로 감속을 태워 없앤다" 보다 축(취약한 시간을 발로 갚는다)에 맞다.
+ *
+ * ## ⚠️ 대시 임펄스는 안 빨라진다
+ * `speedMult` 는 `mx * playerSpeed` 쪽에만 곱해진다(앵커 ㉙ doc). 설계서 DR4 문면도 "이동이
+ * 빨라진다" 라 범위가 일치한다 — 한계에 부딪히지 않았다.
+ */
+export function bubblePlayerMoveParams(
+  state: WorldState,
+  player: Entity,
+  params: PlayerMoveParams,
+): void {
+  const dr4 = lv(state, Sk.bareHullTrim);
+  if (dr4 < 1) return;
+  if (player.aux0 !== 0) return;
+  params.slowTicks = 0;
+  // 이속 +4% + 0.8%p/Lv. 배율은 정수 bp · 나눗셈 1회(ADR-0005) · 반올림은 게이트 안.
+  params.speedMult = (params.speedMult * (10400 + 80 * dr4)) / 10000;
 }
