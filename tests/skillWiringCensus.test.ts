@@ -278,8 +278,18 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
   ],
 };
 
-/** 골든 합계. 기체별 표와 따로 적어, 한쪽만 고치면 아래 자기검증이 잡는다. */
-const GOLDEN_TOTAL = 195;
+/**
+ * 골든 합계. 기체별 표와 따로 적어, 한쪽만 고치면 아래 자기검증이 잡는다.
+ *
+ * ⭐ **배치7(2026-08-07)에 210 에 닿았다** — 7기체 × 30 패시브 전량 배선.
+ *
+ * ⚠️ **이 수는 배선의 종수일 뿐 "완성"이 아니다.** 이 파일 헤더가 적은 두 한계가 210 에서도
+ * 그대로 유효하다: "enum 을 읽는다 ≠ 효과가 발동한다" 이고 **반쪽 배선도 1종으로 세어진다.**
+ * 배선의 진짜 물증은 `tests/skill{Ship}.test.ts` 의 **뮤테이션 단위 테스트**다.
+ *
+ * ⚠️ **액티브 42종(6×7)은 이 210 밖이다** — 두 수를 더하지 마라(헤더 참조).
+ */
+const GOLDEN_TOTAL = 210;
 
 /** 늘고 준 것을 사람이 읽을 수 있게 찍는다 — 숫자만 틀렸다고 하면 원인을 못 찾는다. */
 function diffMsg(ship: string, actual: readonly string[], golden: readonly string[]): string {
