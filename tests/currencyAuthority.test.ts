@@ -108,7 +108,20 @@ class FakeCurrencyGateway implements ServerGateway {
 }
 
 function summary(over: Partial<PveSettleSummary> = {}): PveSettleSummary {
-  return { victory: true, planet: 0, stage: 1, finalTick: 600, resources: 50, minerals: 0, kills: 10, ...over };
+  return {
+    victory: true,
+    planet: 0,
+    stage: 1,
+    finalTick: 600,
+    resources: 50,
+    minerals: 0,
+    kills: 10,
+    shipType: 0,
+    playerLevel: 1,
+    xpTotal: 0,
+    dropCount: 0,
+    ...over,
+  };
 }
 
 // ---------------------------------------------------------------------------
