@@ -246,8 +246,8 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
     'FO1@20', 'FO2@21', 'FO4@23', 'FO5@24', 'FO6@25', 'FO7@26', 'FO8@27', 'FO9@28',
   ],
   bubble: [
-    'PO1@0', 'PO2@1', 'PO3@2', 'PO5@4', 'PO6@5', 'PO7@6',
-    'DR1@10', 'DR6@15',
+    'PO1@0', 'PO2@1', 'PO3@2', 'PO5@4', 'PO6@5', 'PO7@6', 'PO9@8',
+    'DR1@10', 'DR4@13', 'DR5@14', 'DR6@15', 'DR9@18', 'DR10@19',
     'FI1@20', 'FI2@21', 'FI3@22', 'FI4@23', 'FI5@24', 'FI8@27', 'FI9@28', 'FI10@29',
   ],
   hatchling: [
