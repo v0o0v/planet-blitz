@@ -29,26 +29,21 @@
  *
  * ---
  *
- * ## ⚠️ 배치6 현재 — 30종 중 **26종**이 배선됐다
- * 배치6 이 여섯을 더했다: **M4**(신설 앵커 `onGemPull` — 젬 1개마다의 비등방 판정) ·
- * **M2**(앵커 ② 가 이제 **대시 방향**을 넘긴다) · **M7**(신설 leaf `objectiveState.ts` 의
- * 활성 술어 + 앵커 ㉙) · **F7**·**S7**(앵커 **⑱** — 배치1 이 「⑩ 의 금지에 걸린다」로 접었던
- * 둘인데, ⑱ 은 같은 명중을 **차감 전**에 본다. 자리를 잘못 보고 있었던 것이지 벽이 아니었다) ·
- * **S5**(앵커 ㉙ 의 `slowTicks` + 감쇠 사슬의 해저드 출처 비트 — 두 절반이 다른 앵커에 산다).
- *
- * ### 배치6 이 조사하고 **넣지 않은 넷** — 사유는 아래 표 그대로 산다
- *  · **F10 연장 탄창** · **M8 도약 사격**: 여전히 **볼리를 더 낳아야** 한다. 배치6 앵커 다섯
- *    (`onActiveExpired`·`onFilmBurstPost`·`onGemPull`·`onPickupRadius`·`onPlayerWallSlide`)에
- *    발사부는 없다 — `autoAttack` 의 아키타입 분기가 여전히 `world.ts` 비공개다.
- *  · **M9 충각 기동**: 무적프레임 중 접촉 해소가 통째로 건너뛰어지는 벽 그대로다.
- *  · **S9 만료 정지장**: 앵커(`onActiveExpired`)는 배치6 이 열었지만 **「적 이동 정지」를 실을
- *    축이 코드에 없다.** `src/sim/**` 전수 grep 재확인: 적 이동 배율의 정본은
- *    `stepEnemies` 의 `eliteSpeedMult(e) * enemyStatusSlowMult(e) * catalystMods.enemySpeed`
- *    한 줄이고, 그중 상태이상 항은 `enemyStatusSlowMult` = `ownerId > 0 ? COLD_SLOW_MULT : 1`
- *    이라 **0 을 표현할 수 없는 불리언 게이트**다(`status.ts`). `stun|freeze|frozen|stasis` 는
- *    레벨업 월드 프리즈·보스 페이즈 연출·팬텀 PH6 「정지된 시계」(플레이어 축)뿐이고 적 이동
- *    정지는 한 건도 없다. 감속(`applySlow`)으로 대신하는 것은 **다른 스킬**이라 기각했다 —
- *    앵커는 필요조건이었을 뿐이고 선결은 `status.ts` 의 **새 상태이상 축 신설**이다.
+ * ## ✅ 배치7(현재) — 30종 **전량** 배선됐다
+ * 배치6 이 막다른 벽으로 남긴 넷을 배치7 선결 레인(F1·F2a·F2b)이 각각 앵커·leaf 를 새로 열어
+ * 완결했다:
+ *  · **F10 연장 탄창** · **M8 도약 사격**: 배치7 F2b 가 `autoAttack` 의 발사부를 `emitVolley`
+ *    leaf(`activeTypes.ts`)로 뽑았다 — leaf(이 파일·액티브 핸들러)가 이제 그 경로를 직접
+ *    부를 수 있다. F10 은 앵커 ⑯(`onVolleyParams`)에서 정조준 볼리의 **최종 파라미터**를
+ *    복제해 감쇠 피해로 한 번 더 쏘고, M8 은 2단 도약 단 사이에서 자체 배율로 한 번 쏜다.
+ *    둘 다 `player.cooldown` 을 한 비트도 안 만진다(쿨다운 미소비가 계약).
+ *  · **M9 충각 기동**: 배치7 F2a 가 신설한 `onContactInvuln`(`resolveCollisions` 의
+ *    `if (invulnerable) return;` **직전**)이 실제 앵커다. 종전 "접촉이 통째로 건너뛰어져
+ *    앵커가 안 불린다"는 문면은 **틀렸다** — 그 반환 직전이 정확히 접촉 상대가 살아 있는
+ *    자리였다.
+ *  · **S9 만료 정지장**: 배치7 F1 이 `status.ts` 에 정지 축(`applyStasis`/
+ *    `enemyStatusStopMult`, 저장 필드 `life`)을 신설했다. 이 레인은 `onActiveExpired` 에서
+ *    생존 액티브 만료를 감지해 설계서 수치(지속·반경)로 그 축을 호출할 뿐이다.
  *
  * ## (사료) 배치5 시점의 판정 — 아래는 그때의 기록이다
  * ### ⚠️ 이 파일이 배선한 것은 30종 중 19종이다
@@ -130,8 +125,9 @@ import type {
   GemPullParams,
   ObjectiveKind,
 } from '../skillHooks.js';
-import { blastDamage, clearEnemyBullets } from '../activeTypes.js';
+import { blastDamage, clearEnemyBullets, emitVolley } from '../activeTypes.js';
 import { spawnBullet } from '../entities.js';
+import type { ActiveSkillDef } from '../../../data/ships/actives/types.js';
 // 「에코·조우가 활성인가」의 단일 정본. ⚠️ `echo.ts`·`encounter.ts` 를 값으로 당기면 런타임
 // 순환이다(그 파일들이 앵커 때문에 `skillHooks.ts` 를 값으로 본다) — 헤더 규율 ① · 이 leaf 의
 // 파일 doc 가 근거다.
@@ -143,8 +139,13 @@ import type { DamageSourceMask } from '../skillSlots.js';
 import { DamageSource, hasDamageSource } from '../skillSlots.js';
 import { readSlot, writeSlot, StrikerCarry, StrikerStage } from '../skillSlots.js';
 import { MARKSMAN_TRIGGER_AUX0 } from '../shipSignature.js';
-import { COMBO_WINDOW_TICKS } from '../constants.js';
-import { applyBurn, applySlow, COLD_DURATION, FIRE_DURATION } from '../status.js';
+import {
+  COMBO_WINDOW_TICKS,
+  WEAPON_TYPE_RAILGUN,
+  WEAPON_TYPE_BEAM,
+  BEAM_SEGMENT_SPACING,
+} from '../constants.js';
+import { applyBurn, applySlow, applyStasis, COLD_DURATION, FIRE_DURATION } from '../status.js';
 import { sin, cos, wrapAngle, PI } from '../math.js';
 import { skillLv } from '../../items/skills.js';
 
@@ -167,6 +168,7 @@ const enum Sk {
   /** F7 표적 고정 */ targetLock = 6,
   /** F8 과열 파쇄 */ overheatShatter = 7,
   /** F9 제압 사격 */ suppressShot = 8,
+  /** F10 연장 탄창 */ extendedMag = 9,
   /** S1 응전 조준 */ retaliationSight = 10,
   /** S2 반사 도금 */ reactivePlating = 11,
   /** S3 전리 응급 */ fieldTriage = 12,
@@ -175,6 +177,7 @@ const enum Sk {
   /** S6 유지 보강 */ sustainField = 15,
   /** S7 최후 처형 */ lastRites = 16,
   /** S8 콤보 차폐 */ comboShield = 17,
+  /** S9 만료 정지장 */ expiryStasis = 18,
   /** S10 선체 증축 */ hullAccretion = 19,
   /** M1 관성 방출 */ inertiaBurst = 20,
   /** M2 추진 항적 */ thrustWake = 21,
@@ -183,6 +186,8 @@ const enum Sk {
   /** M5 벽차기 */ wallKick = 24,
   /** M6 활공 정화 */ dashPurge = 25,
   /** M7 신호 추적 */ signalChaser = 26,
+  /** M8 도약 사격 */ vaultShot = 27,
+  /** M9 충각 기동 */ ramManeuver = 28,
   /** M10 이중 추진 */ twinThruster = 29,
 }
 
@@ -262,6 +267,41 @@ const F8_OVERHEAT_CAP = 300;
  * `PI / 9` 로 적는 것은 도수 리터럴을 라디안으로 바꾸는 사본을 만들지 않으려는 것이다.
  */
 const SIGHTLINE_CONE_HALF = PI / 9;
+
+/**
+ * `weaponReach`(`world.ts`, 사설)의 **복제**. F10·M8 이 `emitVolley` 를 직접 부를 때 빔
+ * 세그먼트 수가 정상 발사와 갈리지 않으려면 같은 사거리 규칙을 따라야 하는데, 그 함수는
+ * `world.ts` 비공개이고 leaf 는 그 파일을 런타임 import 할 수 없다(헤더 규율 ①).
+ *
+ * ⚠️ **독립 상수다**(F8_OVERHEAT_CAP 관용구와 같은 사유). `BEAM_MAX_SEGMENTS`(16, world.ts
+ * 정본)가 바뀌면 이 값은 **따라가지 않는다** — `BEAM_SEGMENT_SPACING` 은 leaf 인 `constants.ts`
+ * 에서 값으로 가져오지만, 세그먼트 상한(16)은 world.ts 전용이라 리터럴로 둔다.
+ */
+const BEAM_MAX_SEGMENTS_LOCAL = 16;
+
+/** `weaponReach` 복제(위 상수 doc 참조). 레일건/미사일/발칸/스프레드는 `range` 그대로. */
+function strikerWeaponReach(state: WorldState): number {
+  const w = state.weapon;
+  const r = w.range > 0 ? w.range : 0;
+  if (w.weaponType === WEAPON_TYPE_BEAM) {
+    const cap = BEAM_MAX_SEGMENTS_LOCAL * BEAM_SEGMENT_SPACING;
+    return r < cap ? r : cap;
+  }
+  return r;
+}
+
+/**
+ * F10 후속 볼리 피해 bp = 10000 − 120000/(Lv+19) (Lv1 = 40% · Lv20 ≈ 69% · 점근 100%,
+ * clamp 없는 연속 체감 — 설계서 그대로).
+ */
+function extendedMagBp(level: number): number {
+  return 10000 - Math.round(120000 / (level + 19));
+}
+
+/** M8 자동 볼리 피해 bp = 6000 + 300×Lv (Lv1 = 63% · Lv20 = 120%). */
+function vaultShotBp(level: number): number {
+  return 6000 + 300 * level;
+}
 
 // ---------------------------------------------------------------------------
 // 앵커별 진입점 — `skillHooks.ts` 의 `case SIG_STRIKER_MARKSMAN:` 이 부른다
@@ -817,6 +857,25 @@ export function strikerVolleyParams(
     const next = state.comboTimer + half;
     state.comboTimer = next > COMBO_WINDOW_TICKS ? COMBO_WINDOW_TICKS : next;
   }
+
+  // ── F10 연장 탄창 — 정조준 볼리 발사 틱에 같은 방향으로 후속 볼리 1회를 즉시 추가 발사한다.
+  //
+  // ## 배치7 F2b 가 뚫은 자리 — `emitVolley` leaf 화
+  // 종전에는 "탄을 더 낳아야 하는데 이 앵커는 이번 볼리 한 벌의 파라미터만 준다"(위 헤더
+  // 문서)로 막혀 있었다. `autoAttack` 의 아키타입 분기가 `emitVolley`(activeTypes.ts)로
+  // 뽑히면서 이 leaf 도 같은 발사부를 직접 부를 수 있게 됐다.
+  //
+  // ⚠️ **`params` 를 마지막에(F2·F5·S8 뒤에) 복제한다.** 그래야 후속 볼리가 F2 의 집속·증폭,
+  // F5 의 관통·증폭까지 이미 반영된 "이번 볼리의 최종 형태"를 그대로 물려받고, 감쇠 bp 만
+  // 얹으면 된다 — F10 자신의 산술을 F2·F5 와 별도로 다시 적지 않는다.
+  // ⚠️ **`player.cooldown` 을 한 비트도 안 만진다** — `emitVolley` 자체가 쿨다운을 안 건드리고,
+  // 여기서도 적립하지 않으므로 "쿨다운 미소비" 계약이 그대로 성립한다.
+  const f10 = lv(state, Sk.extendedMag);
+  if (f10 >= 1 && params.mark === 1) {
+    const bp = extendedMagBp(f10);
+    const follow: VolleyParams = { ...params, damage: Math.round((params.damage * bp) / 10000) };
+    emitVolley(state, player, params.aimAngle, follow, strikerWeaponReach(state));
+  }
 }
 
 /** F7 락온 스택 상한. 문면에 상한이 없어 여기서 정한다 — 없으면 한 표적에 무한 증폭이 된다. */
@@ -1096,4 +1155,140 @@ export function strikerBlinkOrigin(state: WorldState, player: Entity): void {
   const radius = 120 + 10 * m1;
   blastDamage(state, player, radius, 20 + 4 * m1);
   clearEnemyBullets(state, player, radius);
+}
+
+/**
+ * **액티브 핸들러 보조 — 2단 도약의 단 사이**(`as_striker_mobility_hi` 루프 안에서 호출).
+ * M8 도약 사격.
+ *
+ * ## 배치7 F2b 가 뚫은 자리 — 종전 주석의 벽을 정정한다
+ * `activeHandlers/striker.ts` 는 오래도록 *"M8 은 여기 없다, `autoAttack` 이 world 비공개라
+ * leaf 가 못 부른다"* 로 막혀 있었다. 발사부가 `emitVolley`(activeTypes.ts)로 뽑히면서 leaf
+ * (액티브 핸들러)가 그 경로를 직접 부를 수 있게 됐다 — 이 함수가 그 소비처다.
+ *
+ * ## 「조준 방향」은 `player.angle` 이다 — 자동조준이 고른 발사 방위가 아니다
+ * F5 조준선 관통이 이미 이 게임의 스킬 문면에서 그 용어를 이렇게 못 박았다: `player.angle`
+ * 이 "조준각"이고, 자동조준이 실제로 고르는 발사 방위(`VolleyParams.aimAngle`)는 별개다
+ * (F5 doc). `autoAttack` 의 표적 선택(`nearestTarget`)은 `world.ts` 사설이라 이 leaf 가 다시
+ * 계산하면 그 선택 규칙의 두 번째 사본이 된다(F5 doc 의 경고와 같은 함정) — 그래서 문면의
+ * "조준 방향"을 플레이어 자신의 조준각으로 읽는다.
+ *
+ * ## 마커 · 피해 · 사거리
+ * 「정조준 볼리」라 `mark = 1`을 찍어 F6·F7·F8·F9·S7 의 명중 연계가 그대로 걸리게 하되,
+ * `player.aux0`(사이클 카운터)은 건드리지 않는다 — 이 발사는 시그니처 사이클 밖의 강제
+ * 발사라 F1·S1 이 가속하는 그 축과 무관하다(설계서 "사이클 가속은 F1·S1 두 개로 한정"과
+ * 어긋나지 않는다). 피해는 이 스킬 고유 배율(60% + 3%p/Lv)만 쓰고 시그니처의
+ * `MARKSMAN_BONUS_BP` 를 다시 곱하지 않는다 — 그 배율 자체가 이미 최종값이다. 사거리는
+ * {@link strikerWeaponReach} 로 정상 발사와 같은 규칙을 따른다.
+ *
+ * ⚠️ **수명은 `w.bulletLife` 원본을 그대로 쓴다**(`reachLife`(world.ts 사설)의 사거리 보정을
+ * 복제하지 않는다). 그 함수는 `DT`·비공개 헬퍍이 더 얽혀 있어 복제 비용이 {@link
+ * strikerWeaponReach} 보다 크고, 기준 사거리를 이미 덮는 기본값(그 함수 doc)이라 대부분의
+ * 런에서 차이가 없다 — 사거리를 크게 투자한 소수 런에서만 보너스 발사가 사거리 끝까지 못
+ * 미치는 **알려진 근사**다.
+ *
+ * ⚠️ **`player.cooldown` 을 한 비트도 안 만진다** — `emitVolley` 자체가 안 건드리고 여기서도
+ * 적립하지 않으므로 "쿨다운 미소비" 계약이 F10 과 동일하게 성립한다.
+ */
+export function strikerVaultShot(state: WorldState, player: Entity): void {
+  if (!state.skillsOn) return;
+  const m8 = lv(state, Sk.vaultShot);
+  if (m8 < 1) return;
+  const w = state.weapon;
+  const bp = vaultShotBp(m8);
+  const params: VolleyParams = {
+    damage: Math.round((w.damage * bp) / 10000),
+    pierce: w.pierce,
+    count: w.bulletCount,
+    speed: w.bulletSpeed,
+    radius: w.bulletRadius,
+    life: w.bulletLife,
+    spread: w.spread,
+    cooldownQ: 0,
+    mark: 1,
+    leadDamageBonus: 0,
+    leadPierceBonus: 0,
+    recordSpawnDamage: false,
+    recordSpawnOrigin: false,
+    countUsed: w.weaponType !== WEAPON_TYPE_RAILGUN && w.weaponType !== WEAPON_TYPE_BEAM,
+    ballisticsUsed: w.weaponType !== WEAPON_TYPE_BEAM,
+    targetDist: 0,
+    aimAngle: player.angle,
+    inputX: 0,
+    inputY: 0,
+    cloakBreak: false,
+  };
+  emitVolley(state, player, player.angle, params, strikerWeaponReach(state));
+}
+
+/**
+ * 앵커 `onContactInvuln` **무적프레임 중 접촉 상쇄 직전**(배치7 F2a 선결) — M9 충각 기동.
+ *
+ * ## 규율 ① — 미투자 런은 이 함수의 첫 줄에서 반환한다
+ * 호출부(`world.ts`)는 무적 중 접촉이면 **투자 여부와 무관하게** 이 앵커를 부르고 곧장
+ * `return` 한다(= 플레이어는 피해를 받지 않는다, 종전 그대로). 그래서 "스킬 투자 게이트가
+ * 조기 반환 안쪽"이라는 설계서 요구는 이 함수의 `lv(...) < 1` 게이트만으로 이미 충족된다 —
+ * `world.ts` 의 반환 구조는 손 하나 대지 않았다(바이트 단위로 불변).
+ *
+ * ## 규율 ② — 재충돌 간격 30틱은 `target.timer` 에 **만료 절대 틱**으로 적는다
+ * `enemy` kind 는 `timer` 를 쓰는 코드가 0건이다(`hazard`·`boss`·`core`·`facilitySpawner`·
+ * `movingWall`·`player` 만 각자 다른 뜻으로 쓴다 — `src/sim/**` 전수 grep 근거). **카운트다운이
+ * 아니라 절대 틱**을 적는 것은 의도다: `enemy` 를 매 틱 순회하며 이 필드를 감산하는 코드가
+ * `world.ts` 어디에도 없으므로(있으면 그것이 곧 "미투자 런도 건드리는" 위반이다), 카운트다운
+ * 표현은 아무도 깎아 주지 않아 영영 안 풀린다. `state.tick`(전역 단조 증가)과 직접 비교하면
+ * 감산 코드가 통째로 필요 없다 — 쓰기·읽기가 이 함수 하나뿐이라 다른 축과 충돌할 여지도 없다.
+ * `blankEntity` 의 `timer` 기본값은 0 이라 첫 접촉은 항상 통과한다(`0 > state.tick` 은 거짓).
+ *
+ * ## 규율 ③ — 좀비 결함
+ * `e.hp -=` 만 하고 `dead` 를 안 세우면 처치·젬·전리품이 전부 소실된다(`status.ts` 111-112
+ * 가 정본). `guardian`·`core` 는 대상에서 아예 뺐으므로(대상 kind 술어가 `'enemy'` 단일값)
+ * 그 부활 분기를 건드릴 길이 없다.
+ */
+export function strikerContactInvuln(state: WorldState, player: Entity, target: Entity): void {
+  void player; // 충각은 접촉 상대(target)만 만진다 — 플레이어 쪽은 호출부가 이미 상쇄했다.
+  const m9 = lv(state, Sk.ramManeuver);
+  if (m9 < 1) return;
+  if (target.kind !== 'enemy' || target.dead) return;
+  if (target.timer > state.tick) return; // 재충돌 쿨 중.
+  const dmg = 10 + 3 * m9;
+  target.hp -= dmg;
+  if (target.hp <= 0) target.dead = true;
+  target.timer = state.tick + 30;
+}
+
+/**
+ * 앵커 `onActiveExpired` **생존 액티브가 이번 틱에 만료된 직후** — S9 만료 정지장.
+ *
+ * ## 대상 액티브는 `def.id` 로 가른다
+ * "생존 액티브(무적 버프)" 는 등급을 안 가리므로 `as_striker_survival_lo`·`_hi` 둘 다다.
+ * `def.id` 로 직접 비교하는 것은 이 기체의 액티브 종류가 여섯 고정이라 문자열 비교가 가장
+ * 명확하고, `treeIndex`/`tier` 인코딩을 다시 해석할 필요가 없어서다.
+ *
+ * ## 정지 축은 배치7 F1 선결(`status.ts`) — 저장 필드는 `life`
+ * `applyStasis`/`enemyStatusStopMult` 가 이미 서 있고(`STASIS_DURATION` 은 자리표시자), 이동
+ * 배율 산식(`world.ts` `stepEnemies`)에도 이미 곱해져 있다. 여기서는 **설계서 수치로
+ * 지속·반경을 확정**할 뿐이다 — 정지 = 45 + 5×Lv 틱 · 반경 = 160 + 12×Lv.
+ *
+ * ⚠️ **대상은 `kind === 'enemy'` 한정이다.** `stepEnemies` 자체가 `enemy` kind 만 이 배율을
+ * 읽으므로(그 함수의 필터 루프) guardian·boss·defenseBoss 에 걸어도 이동에 영향이 없지만,
+ * 그 kind 들의 `life` 필드가 다른 뜻으로 쓰일 수 있어(설계서 규율) 애초에 대상에서 뺀다.
+ */
+export function strikerActiveExpired(
+  state: WorldState,
+  player: Entity,
+  def: ActiveSkillDef,
+): void {
+  const s9 = lv(state, Sk.expiryStasis);
+  if (s9 < 1) return;
+  if (def.id !== 'as_striker_survival_lo' && def.id !== 'as_striker_survival_hi') return;
+  const ticks = 45 + 5 * s9;
+  const radius = 160 + 12 * s9;
+  const r2 = radius * radius;
+  for (const e of state.entities) {
+    if (e.kind !== 'enemy' || e.dead) continue;
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    if (dx * dx + dy * dy > r2) continue;
+    applyStasis(e, ticks);
+  }
 }
