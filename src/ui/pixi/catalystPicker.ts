@@ -61,7 +61,12 @@ import {
   RESONANCE_WEAK_COUNT,
   resolveResonance,
   tagCounts,
+  type ResonanceDef,
 } from '../../data/catalystResonance.js';
+import {
+  catalystConflicts,
+  type CatalystConflictReason,
+} from '../../data/catalystConflicts.js';
 import {
   catalystCapLine,
   catalystName,
@@ -82,6 +87,7 @@ import {
 import { planetById } from '../../../data/planets.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { t } from '../../i18n/index.js';
+import type { MessageKey } from '../../i18n/catalog.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { makeScrollArea } from './scrollArea.js';
@@ -200,6 +206,20 @@ const WARN_COLOR = 0xb9b3a6;
  */
 const WARN_VOID_COLOR = 0x9a94a8;
 const WARN_CONFLICT_COLOR = 0xffd45e;
+/**
+ * 축소의 결 → i18n 키. **전수 매핑**이라 `Record` 로 둔다 — 결을 늘리면 여기서 타입 에러가
+ * 나고(`tests/catalystConflicts.test.ts` 도 잡는다), 문구 없는 결이 조용히 새는 일이 없다.
+ */
+const CONFLICT_REASON_KEY: Record<CatalystConflictReason, MessageKey> = {
+  sharedField: 'catalyst.warn.reason.sharedField',
+  choice: 'catalyst.warn.reason.choice',
+  material: 'catalyst.warn.reason.material',
+  ground: 'catalyst.warn.reason.ground',
+  aim: 'catalyst.warn.reason.aim',
+  precondition: 'catalyst.warn.reason.precondition',
+  priority: 'catalyst.warn.reason.priority',
+  overlap: 'catalyst.warn.reason.overlap',
+};
 /** 태그 칩 바탕/글자. */
 const TAG_CHIP_FACE = 0x2a2440;
 const TAG_CHIP_TEXT = 0xcfc6ff;
@@ -869,7 +889,7 @@ export class CatalystPicker {
       colW,
       t('catalyst.warn.head'),
       WARN_COLOR,
-      this.warningRows(ids),
+      this.warningRows(ids, reso),
     );
   }
 
@@ -905,13 +925,20 @@ export class CatalystPicker {
    * 경고 2단(헌장 §축소 작동 규율).
    *
    *  - **회색** = 이 행성에서 구조적으로 무효(`def.voidOnModes`, 데이터가 미리 안다).
-   *  - **노랑** = 촉매 간 충돌로 축소 작동(런타임 판정).
+   *  - **노랑** = 촉매 간 충돌로 축소 작동(`catalystConflicts.ts` 가 판정 정본).
    *
-   * ⚠️ 노랑 판정 목록은 **아직 비어 있다** — 어떤 조합이 서로를 축소시키는지는 sim 배선 레인이
-   * 훅을 얹으면서 정한다. 여기 자리와 색만 만들어 두고, 그 레인이 판정을 채운다.
-   * ⚠️ 어느 쪽이든 **경고일 뿐**이다. sim 은 이 목록을 근거로 카드를 끄지 않는다.
+   * ⚠️ **둘은 섞이지 않는다.** 회색은 카드↔행성이고 노랑은 카드↔카드(또는 카드↔공명)다 —
+   * 한 카드가 이 행성에서 무효라는 것과 다른 카드가 그것을 깎는다는 것은 다른 사실이라 두 줄로
+   * 나온다. 회색이 노랑을 먹거나 그 반대가 되면 "왜 경고인가"가 한쪽으로 뭉개진다.
+   *
+   * ⚠️ 노랑은 **발동한 공명 하나**만 근거로 삼는다(`resolveResonance` 가 정본). 조건은 맞지만
+   * 우선순위에 밀려 안 뜬 공명까지 세면 없는 충돌을 경고하게 된다.
+   *
+   * ⚠️ 어느 쪽이든 **경고일 뿐**이다. sim 은 이 목록을 근거로 카드를 끄지 않는다 — 무효도
+   * 충돌도 런 안에서는 **축소된 형태로라도 작동한다**(헌장 §축소 작동 규율). 그래서 문구도
+   * "무효화됨"이 아니라 축소의 결이다.
    */
-  private warningRows(ids: readonly number[]): readonly PickerRow[] {
+  private warningRows(ids: readonly number[], reso: ResonanceDef | null): readonly PickerRow[] {
     const planet = this.opts?.planet;
     if (planet === undefined) return [];
     const rows: PickerRow[] = [];
@@ -926,7 +953,21 @@ export class CatalystPicker {
         });
       }
     }
-    // 노랑(촉매 간 충돌)은 배선 레인이 채운다 — 지금 채워 넣으면 근거 없는 경고가 된다.
+
+    // 노랑 — 지금 고른 조합(부분 선택 포함)에서 **실제로 발동하는** 충돌만.
+    for (const hit of catalystConflicts(ids, reso)) {
+      const names = hit.ids.map((id) => {
+        const def = catalystById(id);
+        return def === undefined ? String(id) : stripEmoji(catalystName(def));
+      });
+      // 카드↔공명이면 상대는 공명 이름이다(태그+단으로 식별된 것 = 지금 뜬 그 공명).
+      if (hit.kind === 'resonance' && reso !== null) names.push(stripEmoji(resonanceName(reso)));
+      rows.push({
+        label: names.join(' ↔ '),
+        value: t(CONFLICT_REASON_KEY[hit.reason]),
+        color: WARN_CONFLICT_COLOR,
+      });
+    }
     return rows;
   }
 

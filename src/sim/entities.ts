@@ -311,6 +311,22 @@ export function spawnHazard(
 }
 
 /**
+ * 이 해저드가 **지금 피해를 주는 상태인가**.
+ *
+ * ## 왜 `world.ts` 가 아니라 여기인가 (2026-08-08 이동)
+ * `src/sim/catalyst/**` 가 이 술어를 써야 하는데(촉매 해저드 → 적 피해 루프), 그 모듈들은
+ * `world.js` 를 **type-only** 로만 끌 수 있다(순환 금지). 판정을 베껴 적으면 이쪽이 바뀔 때
+ * 촉매 쪽이 조용히 갈리므로 — 이 함수가 애초에 `export` 였던 사유 그대로다 — **정의를 리프로
+ * 내리고** `world.ts` 가 재수출한다. 기존 소비자(밸런스 하네스의 피해 귀속 관측
+ * `src/bench/balance/cell.ts`)는 `world.js` 경로를 그대로 쓴다.
+ */
+export function hazardActive(h: Entity): boolean {
+  // Damaging once its telegraph (if any) is done and it has not expired. life<0
+  // marks a permanent terrain hazard (always active); life>0 a timed window.
+  return h.timer <= 0 && h.life !== 0;
+}
+
+/**
  * Spawn an experience gem dropped by a slain enemy. `xpValue` (enemy-dependent)
  * is stored in the `damage` field — gems never deal damage, so the slot is free
  * and is already folded into the state hash.

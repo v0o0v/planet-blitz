@@ -54,8 +54,12 @@ import {
   spawnDestructible,
   spawnEventObject,
   spawnLoot,
+  hazardActive,
 } from './entities.js';
 import { multFromCenti } from '../economy/planetPopularity.js';
+// 촉매 조준 제외(`id 36` 그림자). `catalyst/shared.ts` 는 `world.js` 를 type-only 로만 끄는
+// 리프라 이 방향 값 import 로 순환이 생기지 않는다.
+import { isCatalystShadow } from './catalyst/shared.js';
 import { resolveCatalystMods } from './catalystMods.js';
 import type { CatalystMods } from './catalystMods.js';
 import {
@@ -245,6 +249,13 @@ import {
   onDashPierceCatalyst,
   onResourceGrantedCatalyst,
   onBossDeathCatalyst,
+  onLootRollCatalyst,
+  onLootCollectedCatalyst,
+  onWaveAdvancedCatalyst,
+  onEnemyContactCatalyst,
+  onEnemyStepCatalyst,
+  onDestructibleDestroyedCatalyst,
+  stepCatalystHazards,
 } from './catalystHooks.js';
 // 정산 리더 재수출(`echoStabilizedOf` 선례) — W3(정산·main.ts)이 `from './world.js'` 로 소비한다.
 export { catalystSettlementOf } from './catalystHooks.js';
@@ -1943,7 +1954,16 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // updateWaves·stepSupply 가 포켓 좌표 주위에 메인 적을 스폰해 버리기 때문이다
   // (encounterDetour.ts `enterDetour` 주석이 정본).
   stepEncounter(state, player, input);
-  if (!designedRun) updateWaves(state, player);
+  if (!designedRun) {
+    // 촉매 앵커 — **세그먼트 전진 감지**. `waves.ts`(리프) 안에서 뚫으면 `skillHooks → skills/*`
+    // 사슬과 엮여 순환이 되므로, 호출부인 여기서 `updateWaves` 전후의 인덱스를 비교한다
+    // (사유 정본은 `onWaveAdvancedCatalyst` 주석). 무촉매 런에서 이 비교는 **순수 읽기**라
+    // 거동이 안 바뀌고, 변한 틱에만 훅이 불린다.
+    const prevSegment = state.wave.segmentIndex;
+    updateWaves(state, player);
+    const nextSegment = state.wave.segmentIndex;
+    if (nextSegment !== prevSegment) onWaveAdvancedCatalyst(state, prevSegment, nextSegment);
+  }
   stepEnemies(state, player);
   // 강제 스크롤(Lane4/5): 창 뒤로 흘러간 적을 정리한다(보스 제외). 컬 반경은 모드별로 고른다 —
   // 각 모드의 최대 스폰 거리보다 크다는 구조적 불변식이 상수 doc 에 못박혀 있다(Lane4 MED 교훈).
@@ -2896,8 +2916,13 @@ function stepEnemies(state: WorldState, player: Entity): void {
     // 복제). 전부 없으면/무촉매면 mult 1(불변). ⚠️ 정지 중이면 sm = 0 이 되고, 바로 다음 줄이
     // `def.speed * sm` 을 새 def 에 대입하므로 이 곱은 무의미하지 않다 — 실제로 speed 0(완전
     // 정지)을 만든다.
-    const sm =
-      eliteSpeedMult(e) * enemyStatusSlowMult(e) * enemyStatusStopMult(e) * state.catalystMods.enemySpeed;
+    // 촉매 앵커 — 접힌 배율을 받아 보정해 돌려준다. 무촉매 런은 인자를 그대로 돌려주므로
+    // `sm !== 1` 가드가 종전과 같은 값을 보고, def 복제조차 일어나지 않는다(비트 동일).
+    const sm = onEnemyStepCatalyst(
+      state,
+      e,
+      eliteSpeedMult(e) * enemyStatusSlowMult(e) * enemyStatusStopMult(e) * state.catalystMods.enemySpeed,
+    );
     if (sm !== 1) def = { ...def, speed: def.speed * sm };
     updateEnemy(state, e, def, player);
     if (singularityOn) applySingularityPull(e, player);
@@ -3527,6 +3552,10 @@ const losCands: { e: Entity; d: number }[] = [];
  * 코어 8000/8000·발생기 900/900 으로 무피해였다.
  */
 function isPlayerTargetable(e: Entity): boolean {
+  // 촉매 제외 — `id 36` 그림자는 **죽일 수 없고 조준되지 않는다**. 등재(`isCatalystObjective`)와
+  // **한 쌍**이고, 아래 아군탄 화이트리스트·`countEnemies` 쪽 제외와도 같이 움직인다.
+  // 무촉매 런은 `aux0` 의 shadow 비트가 전부 0 이라 항상 거짓이다(바이트 불변).
+  if (isCatalystShadow(e)) return false;
   // 발생기 보호막 국면의 코어는 **조준 대상에서 뺀다**(`timer === 1` = 실드 발생기가 살아
   // 있음, coreRoom.updateCoreShield 가 세우는 결정론 플래그). 이 국면의 코어는 매 틱 보호막이
   // 전량 재충전돼 피해가 0 이므로, 조준을 허용하면 언제나 코어가 최근접 표적으로 뽑혀 플레이어가
@@ -4057,17 +4086,10 @@ function stepHazards(state: WorldState): void {
   }
 }
 
-/**
- * 이 해저드가 **지금 피해를 주는 상태인가**.
- *
- * export 인 이유는 밸런스 하네스의 피해 귀속 관측(`src/bench/balance/cell.ts`)이 같은 술어를
- * 써야 하기 때문이다 — 판정을 베껴 적으면 이쪽이 바뀔 때 관측이 조용히 거짓말한다.
- */
-export function hazardActive(h: Entity): boolean {
-  // Damaging once its telegraph (if any) is done and it has not expired. life<0
-  // marks a permanent terrain hazard (always active); life>0 a timed window.
-  return h.timer <= 0 && h.life !== 0;
-}
+// `hazardActive` 의 **정의는 `entities.ts`(리프)로 내려갔다** — `src/sim/catalyst/**` 가 같은
+// 술어를 써야 하는데 그 모듈들은 `world.js` 를 type-only 로만 끌 수 있기 때문이다(사유 전문은
+// 그쪽 doc). export 경로는 그대로라 기존 소비자(`src/bench/balance/cell.ts`)는 안 바뀐다.
+export { hazardActive } from './entities.js';
 
 // ---------------------------------------------------------------------------
 // Collision resolution (spatial hash)
@@ -4107,6 +4129,11 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       grid.insert(e);
     }
   }
+
+  // 촉매 앵커 — **촉매 해저드 → 적 피해**의 per-tick 단계. 자리가 여기인 이유: 격자가 이번 틱
+  // 좌표로 **막 완성됐고** 아직 아무 hp 도 안 깎였다(아군탄 루프보다 앞). 계약 전문은
+  // `stepCatalystHazards` 주석이다. 무촉매 런은 함수 첫 줄에서 반환해 **루프 0회**다.
+  stepCatalystHazards(state);
 
   // Friendly bullets vs enemies / boss / supply raiders / destructibles.
   // 유니크 게이트(장착 시에만 분기): ① 과열 드럼(명중 스택), ② 분열 코어(명중 파편),
@@ -4171,6 +4198,9 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     hitParams.length = 0;
     grid.query(bMidX, bMidY, bQueryR, (t) => {
       if (t.dead) return;
+      // 촉매 제외 — 그림자는 아군탄에 **안 맞는다**(조준 술어 제외와 쌍). 격자 등록은 그대로
+      // 두었다: 등록을 빼면 접촉·픽업 판정까지 사라져 "안 보이는 적"이 아니라 "없는 적"이 된다.
+      if (isCatalystShadow(t)) return;
       if (
         t.kind !== 'enemy' &&
         t.kind !== 'boss' &&
@@ -4495,6 +4525,13 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       // 감속 지속에 태운다(`src/sim/invasion/facility.ts` `utilityHazardSlowTicks`).
       // 다른 모든 `HAZARD_SLOW` 생산자는 `aux0` 를 건드리지 않아 0 → 기본값 그대로다(비트 동일).
       state.playerSlowTicks = t.aux0 > 0 ? t.aux0 : PLAYER_SLOW_DURATION;
+    }
+    // 촉매 앵커 — **무적 조기 반환보다 앞**이다. `id 1 plunder`(강탈)는 대시 무적으로 파고들어
+    // 뜯는 것이 카드의 그림이라, 무적 뒤에 두면 그 플레이가 구조적으로 0회가 된다(사유 전문은
+    // `onEnemyContactCatalyst` 주석). 대상 kind 게이트는 바로 아래 `onContactInvuln` 과 **같은
+    // 넷**이다 — 적탄·해저드는 접촉이 아니다.
+    if (t.kind === 'enemy' || t.kind === 'boss' || t.kind === 'guardian' || t.kind === 'defenseBoss') {
+      onEnemyContactCatalyst(state, player, t);
     }
     if (invulnerable) {
       // 배치7 F2a — 앵커 신설 `onContactInvuln`(스트라이커 M9「충각 기동」선결). 무적이라
@@ -4847,6 +4884,11 @@ function collectGem(state: WorldState, gem: Entity): void {
 /** Collect a loot drop: record its seed + rarity + provenance for settlement. */
 function collectLoot(state: WorldState, loot: Entity): void {
   loot.dead = true;
+  // 촉매 앵커 — **`state.loot` 에 싣기 직전**. `true` 면 push 를 건너뛴다(`id 3` 현상금 표식 ·
+  // `id 15` 자원 결정의 필수 분기다 — 없으면 표식마다 가짜 장비가 생기고, 더 나쁘게는
+  // `catalystDropsFromRun` 이 드랍 시드마다 게이트를 굴려 **촉매까지 공짜로 늘어난다**.
+  // 사유 전문은 `onLootCollectedCatalyst` 주석). 무촉매 런은 항상 `false` 라 종전과 같다.
+  if (onLootCollectedCatalyst(state, loot)) return;
   state.loot.push({
     seed: loot.damage >>> 0, // drop seed stored in `damage`
     rarity: loot.enemyType, // rarity code stored in `enemyType`
@@ -4979,11 +5021,14 @@ function compact(state: WorldState): void {
             p0 === undefined
               ? state.catalystMods.rarity
               : onEliteLootRarity(state, p0, state.catalystMods.rarity);
-          const roll = rollEliteDrop(state.dropRng, stage, lootRarity, dropOdds);
+          // 촉매 앵커 — **이미 접힌 배율에 곱하는 자리**(재롤 금지 · 공통-B(c)). 무촉매 런은
+          // 인자를 그대로 돌려주므로 threshold·파생 시드가 비트 동일이다.
+          const lr = onLootRollCatalyst(state, lootRarity, state.catalystMods.drop, e.x, e.y, true);
+          const roll = rollEliteDrop(state.dropRng, stage, lr.rarity, dropOdds);
           lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
           // 촉매 드랍량 보상축: 배율 > 1 이면 같은 등급의 추가 루팅을 결정론적으로 파생한다
           // (dropRng 미소비 → 드랍 스트림 무영향). 무촉매면 빈 배열이라 무연산.
-          for (const bs of bonusLootSeeds(roll.seed, state.catalystMods.drop)) {
+          for (const bs of bonusLootSeeds(roll.seed, lr.count)) {
             lootDrops.push({ x: e.x, y: e.y, seed: bs, rarity: roll.rarityCode });
           }
         }
@@ -5015,8 +5060,11 @@ function compact(state: WorldState): void {
       onResourceGrantedCatalyst(state, whole, e.x, e.y);
       supplyDrops.push({ x: e.x, y: e.y });
     } else if (e.kind === 'destructible' && e.hp <= 0) {
+      // 촉매 앵커 — `true` 면 **기본 젬 드랍을 건너뛴다**(카드가 다른 것을 떨군다).
+      // 무촉매 런은 항상 `false` 라 아래 push 가 종전과 같다.
+      // ⚠️ 이 자리는 엔티티 순회 안이다 — 훅에서 스폰 금지(좌표를 모아 순회 밖에서 스폰해라).
       // Broken (vs. culled with hp > 0): drop a gem worth its stored XP value.
-      drops.push({ x: e.x, y: e.y, xp: e.damage });
+      if (!onDestructibleDestroyedCatalyst(state, e)) drops.push({ x: e.x, y: e.y, xp: e.damage });
     } else if (e.kind === 'core') {
       // 침공 승리(M4 plan C2): 코어 파괴 = 침공 성공. 보스와 달리 드랍은 없다(침공 보상은
       // 래더 스왑·복제 약탈로 서버가 처리 — Phase D). 승리 확정만 세운다.
@@ -5047,9 +5095,18 @@ function compact(state: WorldState): void {
         // Boss guaranteed rare+ drop (GDD §3, plan B3). 승리 tick이라 바닥 스폰→접촉 수거가
         // 불가능하므로 state.loot에 직접 기록해 정산에 포함시킨다(해시 포함, replay.ts).
         // 촉매 희귀도 배율을 드랍 롤에 곱하고(무촉매 1 → 불변), 드랍량 배율로 추가 루팅을 파생한다.
-        const roll = rollBossDrop(state.dropRng, stage, state.catalystMods.rarity, dropOdds);
+        // 촉매 앵커 — 엘리트 지점과 **대칭**이다(한쪽만 걸면 보스 드랍이 카드 설명과 갈린다).
+        const lr = onLootRollCatalyst(
+          state,
+          state.catalystMods.rarity,
+          state.catalystMods.drop,
+          e.x,
+          e.y,
+          false,
+        );
+        const roll = rollBossDrop(state.dropRng, stage, lr.rarity, dropOdds);
         state.loot.push({ seed: roll.seed >>> 0, rarity: roll.rarityCode, planet, stage });
-        for (const bs of bonusLootSeeds(roll.seed, state.catalystMods.drop)) {
+        for (const bs of bonusLootSeeds(roll.seed, lr.count)) {
           state.loot.push({ seed: bs >>> 0, rarity: roll.rarityCode, planet, stage });
         }
       }

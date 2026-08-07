@@ -50,15 +50,33 @@ import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
 // 대시 통과 판정의 기하. `collision.ts` 는 **순수 leaf**(런타임 import 0)라 값으로 들여와도
 // 순환이 구조적으로 생기지 않는다 — 판정을 여기 베껴 적으면 탄 쪽 선분 판정과 조용히 갈린다.
-import { sweptCircleOverlap } from './collision.js';
+import { sweptCircleOverlap, circlesOverlap } from './collision.js';
+import { readCatalystSlot, CATALYST_SLOT_COUNT } from './catalystSlots.js';
+// 그룹 모듈(`src/sim/catalyst/**`) — **카드 본체가 사는 곳**이다. 이 파일은 디스패치 면으로
+// 남고, 카드 45종은 그룹 파일에서 병렬로 채워진다(가른 사유는 `catalyst/shared.ts` 헤더).
+// ⚠️ 방향은 **여기 → 그룹**뿐이다. 그룹은 `world.js` 를 type-only 로만 끈다(순환 금지).
+import { carries } from './catalyst/shared.js';
+import { catalystHazardDamaging, isCatalystShadow } from './catalyst/shared.js';
+import { epiphanyOnPowerupOffer, epiphanyExtraStacks } from './catalyst/refine.js';
+import { masteryOnPowerupOffer, masteryExtraStacks } from './catalyst/growth.js';
 import {
-  ChainReactionSlot,
-  readCatalystSlot,
-  writeCatalystSlot,
-  CATALYST_SLOT_COUNT,
-} from './catalystSlots.js';
-// 카드 소지 판정의 유일 정본. `data/` 리프라 순환이 생기지 않는다.
-import { hasCatalyst } from '../data/catalysts.js';
+  CARD_CHAINREACTION,
+  chainReactionOnDamaged,
+  chainReactionOnTick,
+} from './catalyst/chain.js';
+import { dropsOnTick } from './catalyst/drops.js';
+import { refineOnTick } from './catalyst/refine.js';
+import { growthOnTick } from './catalyst/growth.js';
+import { resourceOnTick } from './catalyst/resource.js';
+import { chainOnTick } from './catalyst/chain.js';
+import { powerOnTick } from './catalyst/power.js';
+import { kargonOnTick } from './catalyst/kargon.js';
+import { berdanOnTick } from './catalyst/berdan.js';
+import { niflheimOnTick } from './catalyst/niflheim.js';
+import { arkeOnTick } from './catalyst/arke.js';
+import { toxarOnTick } from './catalyst/toxar.js';
+import { krasOnTick } from './catalyst/kras.js';
+import { resonanceOnTick } from './catalyst/resonance.js';
 // 앵커 ⑭(성장 축)가 **중첩 적용**에 쓴다. `powerups.ts` 는 `world.js`/`entities.js` 를
 // **type-only** 로만 끌고 나머지는 leaf 라 순환이 생기지 않는다.
 // ⚠️ `applyPowerup` 은 RNG 를 한 칸도 안 쓴다 — `powerupRng` 소비는 `drawPowerupChoices`
@@ -73,28 +91,12 @@ import type { DamageSourceMask } from './skillSlots.js';
 // 카드 소지 판정
 // ---------------------------------------------------------------------------
 
-/** `id 9 epiphany`(깨달음). 정본은 `src/data/catalysts.ts` 의 `slug: 'epiphany'`. */
-const CARD_EPIPHANY = 9;
-/** `id 14 mastery`(숙련). */
-const CARD_MASTERY = 14;
-/** `id 24 chainreaction`(연쇄반응). */
-const CARD_CHAINREACTION = 24;
-
-/**
- * 이 런에 촉매 `id` 가 실려 있는가.
- *
- * `state.catalystOn` 은 "촉매가 하나라도 있는가" 까지만 말한다. 카드별 분기는 반드시 이 술어를
- * 한 번 더 통과해야 한다 — 안 그러면 아무 촉매 한 장만 껴도 48종 전부의 효과가 켜진다.
- *
- * 순회 비용은 **최대 3**이다(헌장 §구조 계약: 슬롯 3장). 매 틱 도는 앵커 ⑨ 에서도 무시할 수
- * 있고, 그래서 파생 비트마스크를 `WorldState` 에 새로 만들지 않았다(새 칸을 만들면 §B 다).
- *
- * ⚠️ 정규화 전 배열을 그대로 본다 — 존재 여부만 쓰므로 중복 제거가 결과를 바꾸지 않는다.
- */
-function carries(state: WorldState, id: number): boolean {
-  const cats = state.config.catalysts;
-  return cats !== undefined && hasCatalyst(cats, id);
-}
+// 카드 id 상수는 **그룹 모듈이 소유한다**(`CARD_EPIPHANY` = `catalyst/refine.ts` …). 여기에
+// 다시 선언하면 정본이 둘이 된다 — 카드 레인이 그룹 파일만 보고 고치므로 이쪽이 조용히 낡는다.
+//
+// {@link carries} 도 `catalyst/shared.ts` 가 소유한다(전 그룹 공용). **여기서 재수출하지 않는다**
+// — 이 파일의 export 하나하나가 `tests/catalystAnchors.test.ts` 의 `vi.mock` 계측 대상이라,
+// 앵커가 아닌 술어를 export 하면 계측 목록이 오염된다.
 
 // ---------------------------------------------------------------------------
 // 기존 앵커 9지점에 대응하는 촉매 디스패치 (S0: 전 분기 비어 있음)
@@ -183,63 +185,6 @@ export function onPlayerDamagedCatalyst(
   void lethalSurvived;
   void sources;
   if (carries(state, CARD_CHAINREACTION)) chainReactionOnDamaged(state, player, dmg);
-}
-
-/**
- * `id 24 chainreaction` — **받은 피해를 가장 가까운 잡몹에게 전이하고, 전이한 만큼 최대 HP
- * 상한을 깎는다.** 복구는 {@link onTickCatalyst} 의 세그먼트 전환 감지가 한다.
- *
- * ## 왜 이 앵커에서 적을 직접 깎아도 격추가 정상 집계되는가
- * 이 앵커는 `stepPlayer` 안에서 불리고, 격추 집계·젬·엘리트 루팅의 **단일 수렴점**인
- * `compact()` 는 같은 틱의 **뒤**에서 돈다. 그래서 여기서 hp 를 0 이하로 만든 적은 이번 틱에
- * 그대로 처치로 잡힌다.
- *
- * ⚠️ 단 **`dead` 를 직접 세워야 한다.** `compact()` 의 첫 줄이 `if (!e.dead) { survivors.push;
- * continue; }` 라, hp 만 0 으로 만들고 마킹을 빠뜨리면 **처치도 젬도 전리품도 안 나오는
- * 좀비**가 된다(`activeTypes.ts` 의 `blastDamageAt` 이 정확히 그 형태다).
- *
- * ## 표적을 못 찾으면 대가도 없다
- * 화면에 잡몹이 하나도 없는 구간(보스 단독 등)에서는 전이도 상한 하락도 일어나지 않는다.
- * 헌장 §축소 작동 규율이 요구하는 것은 "무효 조합에서도 축소된 형태로 작동"이지 "표적이 없어도
- * 대가만 물린다"가 아니다 — 이득 없는 대가는 규칙 한 문장의 인과를 끊는다.
- *
- * ## RNG 미소비
- * 이 함수는 난수를 한 칸도 굴리지 않는다. 표적 선택은 `state.entities` **순회 순서 + 동률은
- * 먼저 만난 쪽**이라 결정론적이다.
- */
-function chainReactionOnDamaged(state: WorldState, player: Entity, dmg: number): void {
-  // 상한 하락이 정수여야 하므로(슬롯 값 규약 2) 전이량도 같은 정수로 맞춘다. 접촉 피해는
-  // 엘리트 배율 때문에 소수일 수 있다 — 여기서 한 번 접고 그 값 하나를 두 곳에 쓴다.
-  const transfer = Math.round(dmg);
-  if (transfer <= 0) return;
-  let target: Entity | undefined;
-  let bestD2 = 0;
-  for (const e of state.entities) {
-    if (e.dead || e.kind !== 'enemy') continue;
-    const dx = e.x - player.x;
-    const dy = e.y - player.y;
-    const d2 = dx * dx + dy * dy;
-    if (target === undefined || d2 < bestD2) {
-      target = e;
-      bestD2 = d2;
-    }
-  }
-  if (target === undefined) return;
-  target.hp -= transfer;
-  if (target.hp <= 0) target.dead = true;
-  // 대가 — 하한 1. 0 까지 허용하면 페널티 자체가 사망 원인이 되어 헌장 §페널티 3(되돌릴 수단이
-  // 규칙 안에 있어야 한다)이 무의미해진다. 실제로 깎인 양만 슬롯에 쌓아 복구가 되감기게 한다.
-  const cut = Math.min(transfer, player.maxHp - 1);
-  if (cut <= 0) return;
-  player.maxHp -= cut;
-  // 상한이 현재 hp 아래로 내려오면 현재 hp 도 따라 내려온다 — 이것이 화면에서 읽히는 대가다.
-  if (player.hp > player.maxHp) player.hp = player.maxHp;
-  const slots = state.catalystSlots;
-  writeCatalystSlot(
-    slots,
-    ChainReactionSlot.MaxHpCut,
-    readCatalystSlot(slots, ChainReactionSlot.MaxHpCut) + cut,
-  );
 }
 
 /** 이번 틱의 처치 증분. 스킬 디스패치 **뒤**. */
@@ -351,32 +296,24 @@ export function onDamageChainCatalyst(state: WorldState, player: Entity, dmg: nu
 export function onTickCatalyst(state: WorldState, player: Entity): void {
   if (!state.catalystOn) return;
   if (carries(state, CARD_CHAINREACTION)) chainReactionOnTick(state, player);
-}
-
-/**
- * `id 24 chainreaction` 의 **되돌릴 수단** — 세그먼트(카탈로그의 "웨이브")가 넘어가면 그 동안
- * 깎인 최대 HP 상한이 통째로 복구된다.
- *
- * 전환 감지를 `state.wave.segmentIndex` 의 **순수 파생**으로 한 이유: 이 값은 이미 해시에
- * 접히므로(`replay.ts`) 새 상태 없이 "언제 넘어갔는가"를 틱의 닫힌 함수로 쓸 수 있다. 헌장이
- * `침식` 강공명에서 이벤트 의존(리더 처치)을 같은 사유로 기각하고 이 필드로 바꿔 적었다.
- *
- * ⚠️ 현재 hp 는 **되돌리지 않는다.** 깎인 것은 상한이고, 복구는 상한을 되돌려 다시 회복할
- * 여지를 주는 것이지 공짜 회복이 아니다.
- */
-function chainReactionOnTick(state: WorldState, player: Entity): void {
-  const slots = state.catalystSlots;
-  const mark = state.wave.segmentIndex + 1; // +1 은 값 규약 1(0 = "없음") — 슬롯 doc 참조.
-  const seen = readCatalystSlot(slots, ChainReactionSlot.SegmentMark);
-  if (seen === mark) return;
-  if (seen !== 0) {
-    const cut = readCatalystSlot(slots, ChainReactionSlot.MaxHpCut);
-    if (cut > 0) {
-      player.maxHp += cut;
-      writeCatalystSlot(slots, ChainReactionSlot.MaxHpCut, 0);
-    }
-  }
-  writeCatalystSlot(slots, ChainReactionSlot.SegmentMark, mark);
+  // ── 그룹 매 틱 진입점 ─────────────────────────────────────────────────────
+  // **순서가 계약이다.** 그룹 12개를 id 오름차순(공용 → 특산 행성순)으로 부르고 공명을 마지막에
+  // 둔다 — 공명은 카드들의 집계 결과라 카드가 이번 틱에 만든 상태 위에 얹혀야 한다. 순서를
+  // 바꾸면 두 그룹이 같은 값을 만지는 런에서 결과가 조용히 갈린다.
+  // 지금은 전부 빈 함수라 무연산이고, 무촉매 런은 위 첫 줄에서 이미 빠져나갔다(바이트 불변).
+  dropsOnTick(state, player);
+  refineOnTick(state, player);
+  growthOnTick(state, player);
+  resourceOnTick(state, player);
+  chainOnTick(state, player);
+  powerOnTick(state, player);
+  kargonOnTick(state, player);
+  berdanOnTick(state, player);
+  niflheimOnTick(state, player);
+  arkeOnTick(state, player);
+  toxarOnTick(state, player);
+  krasOnTick(state, player);
+  resonanceOnTick(state, player);
 }
 
 // ---------------------------------------------------------------------------
@@ -464,16 +401,9 @@ export function onPowerupOfferCatalyst(state: WorldState, choices: readonly numb
   // ⚠️ 적용 순서는 **mastery → epiphany 고정**이다(둘 다 실린 런에서 결과가 갈리지 않게).
   //    mastery 가 전 칸을 첫 칸으로 채운 뒤 epiphany 가 1칸으로 접으므로, 남는 것은 첫 칸이다.
 
-  // id 14 mastery — 세 자리가 전부 같은 파워업이 된다(폭을 잃고 깊이를 얻는다).
-  // ⚠️ `GAMBLER_EXTRA_CHOICES` 로 4택이 된 런에서도 자리 수와 무관하게 전부 덮는다.
-  if (carries(state, CARD_MASTERY)) {
-    for (let i = 1; i < offers.length; i++) offers[i] = first;
-  }
-  // id 9 epiphany — 3택이 1택으로 접힌다(거부할 수 없다). 프리즈는 그대로라 픽 입력이
-  // 와야 런이 재개되고, `world.ts` 의 `idxOffered < length` 가드가 1칸만 허용한다.
-  if (carries(state, CARD_EPIPHANY)) {
-    offers.length = 1;
-  }
+  // 본체는 그룹 모듈이 소유한다(카드 소지 게이트도 그 안에 있다) — 거동은 옮기기 전과 같다.
+  masteryOnPowerupOffer(state, offers, first);
+  epiphanyOnPowerupOffer(state, offers);
 }
 
 /**
@@ -498,9 +428,9 @@ export function onPowerupPickedCatalyst(
 ): void {
   if (!state.catalystOn) return;
   void offeredIndex;
-  let extra = 0;
-  if (carries(state, CARD_MASTERY)) extra += 2; // 3중첩 = 기본 1 + 2
-  if (carries(state, CARD_EPIPHANY)) extra += 1; // 2중첩 = 기본 1 + 1
+  // 중첩 추가분은 그룹 모듈이 소유한다(mastery 3중첩 = 기본 1 + 2 · epiphany 2중첩 = 기본 1 + 1).
+  // 합산 순서는 옮기기 전과 같다 — 덧셈이라 값은 순서 무관이지만 계약을 문서와 일치시켜 둔다.
+  const extra = masteryExtraStacks(state) + epiphanyExtraStacks(state);
   for (let i = 0; i < extra; i++) applyPowerup(state, poolIndex);
 }
 
@@ -701,4 +631,196 @@ export function catalystSettlementOf(state: WorldState): readonly number[] | und
     out[i] = readCatalystSlot(state.catalystSlots, i);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// 신규 앵커 일곱 (배선 기반 레인) — **전 분기 비어 있음**
+// ---------------------------------------------------------------------------
+//
+// 전부 첫 줄이 `if (!state.catalystOn) return …;` 이고, 반환형이 있으면 **인자를 그대로**
+// 돌려준다. 그래서 무촉매 런은 비트 단위로 종전과 같다(`scripts/catalystByteInvariance.ts`).
+//
+// ⚠️ 카드별 효과는 이 파일이 아니라 **그룹 모듈**(`src/sim/catalyst/**`)에 넣고 여기서 부른다.
+
+/** {@link onLootRollCatalyst} 의 반환 — 전리품 **등급 배율**과 **개수 배율** 한 쌍. */
+export interface CatalystLootRoll {
+  /** 등급 롤에 곱하는 배율(`rollEliteDrop`/`rollBossDrop` 의 `rarityMult`). */
+  rarity: number;
+  /** 추가 루팅 파생 배율(`bonusLootSeeds` 의 배율). */
+  count: number;
+}
+
+/**
+ * 앵커 — **전리품 등급·개수 배율이 확정되는 자리**. 엘리트 드랍과 보스 확정 드랍 **두 지점
+ * 모두**에 걸려 있다(한쪽만 걸면 보스 드랍이 카드 설명과 갈린다).
+ *
+ * ## ⚠️ RNG 재롤 금지 (공통-B(c))
+ * 이 앵커는 **이미 뽑힌 결과에 곱하는 자리**다. 여기서 난수를 굴려 다시 뽑으면 같은 시드의
+ * 드랍 스트림이 통째로 밀려 웨이브·엘리트 시퀀스까지 갈린다. 실제로 호출 지점은
+ * `rollEliteDrop` **직전**이라 배율만 바꾸고, `rollEliteDrop` 의 RNG 소비는 배율과 무관하게
+ * 고정 횟수다(그 함수 본문이 근거).
+ *
+ * @param rarity 여기까지 접힌 등급 배율(촉매 축 × 스킬 축)
+ * @param count 여기까지 접힌 개수 배율(`state.catalystMods.drop`)
+ * @param elite `true` = 엘리트 드랍 · `false` = 보스 확정 드랍
+ * @returns 보정된 한 쌍. 무촉매 런은 **인자 그대로**다.
+ */
+export function onLootRollCatalyst(
+  state: WorldState,
+  rarity: number,
+  count: number,
+  x: number,
+  y: number,
+  elite: boolean,
+): CatalystLootRoll {
+  if (!state.catalystOn) return { rarity, count };
+  void x;
+  void y;
+  void elite;
+  // 미배선 — 카드 레인이 그룹 모듈(`catalyst/drops.ts`·`catalyst/refine.ts`)에 본체를 넣고
+  // 여기서 부른다. 호출부가 배율을 그대로 쓰므로 반환값이 뒤에서 삼켜지지 않는다.
+  return { rarity, count };
+}
+
+/**
+ * 앵커 — **바닥 전리품을 주웠고 `state.loot` 에 실리기 직전**. `true` 를 돌려주면 그 push 를
+ * 통째로 건너뛴다(전리품이 인벤으로 안 간다).
+ *
+ * ## ⭐ 왜 이 분기가 **필수**인가 (`id 3` 현상금 표식 · `id 15` 자원 결정)
+ * 두 카드는 바닥에 떨어지는 것을 **장비가 아닌 다른 것**으로 바꾼다. 그런데 이 sim 의
+ * 전리품 경로는 `state.loot` 한 곳으로 수렴하고, 정산이 그 배열을 그대로 아이템으로 만든다.
+ * 억제 분기가 없으면:
+ *  1. 표식 하나마다 **가짜 장비가 하나씩** 생긴다(카드 규칙에 없는 인벤 유입).
+ *  2. 더 나쁜 것 — `catalystDropsFromRun` 이 **드랍 시드마다 60% 게이트를 굴린다.** 즉
+ *     표식이 늘어난 만큼 **촉매까지 공짜로 늘어난다.** 촉매 유입은 경제 축이라 그대로
+ *     밸런스가 아니라 경제가 깨진다.
+ * 그래서 억제는 "있으면 좋은 것"이 아니라 두 카드의 **필수 선결**이다.
+ *
+ * ⚠️ 억제는 **push 생략이지 사후 취소가 아니다**(`onDeathRemnantSpawn` 과 같은 형태).
+ * `loot.dead = true` 는 호출부가 이미 세웠으므로 바닥 개체는 어느 쪽이든 사라진다.
+ *
+ * @returns `true` 면 `state.loot` 에 싣지 않는다. 무촉매 런은 항상 `false`.
+ */
+export function onLootCollectedCatalyst(state: WorldState, loot: Entity): boolean {
+  if (!state.catalystOn) return false;
+  void loot;
+  return false;
+}
+
+/**
+ * 앵커 — **세그먼트(카탈로그의 "웨이브")가 실제로 넘어간 틱에만** 불린다.
+ *
+ * ⚠️ **`waves.ts` 안에서 뚫지 마라.** 웨이브 전진은 `waves.ts`(리프) 안에서 일어나는데, 거기서
+ * 이 파일을 부르면 `skillHooks → skills/*` 사슬과 엮여 순환이 생긴다(이 파일 위쪽 §신규 앵커
+ * 주석이 그 사유를 이미 적어 뒀다). 그래서 호출부(`world.ts`)가 `updateWaves` **전후의
+ * `state.wave.segmentIndex` 를 비교**해 변한 틱에만 부른다 — 무촉매 런에서 그 비교는 순수
+ * 읽기라 거동이 안 바뀐다.
+ *
+ * @param prevSegment `updateWaves` **전**의 세그먼트 인덱스
+ * @param nextSegment `updateWaves` **후**의 세그먼트 인덱스(항상 `prevSegment` 와 다르다)
+ */
+export function onWaveAdvancedCatalyst(
+  state: WorldState,
+  prevSegment: number,
+  nextSegment: number,
+): void {
+  if (!state.catalystOn) return;
+  void prevSegment;
+  void nextSegment;
+}
+
+/**
+ * 앵커 — **접촉형 표적과 판정점이 겹친 틱**(적·보스·수호·방어보스).
+ *
+ * ## ⚠️ 무적 조기 반환보다 **앞**이다
+ * `id 1 plunder`(강탈)는 **무적 중에도 성립해야 한다** — 대시 무적으로 파고들어 뜯는 것이
+ * 카드의 그림이라, 무적 게이트 뒤에 두면 그 플레이가 구조적으로 0회가 된다. 그래서 호출부는
+ * `if (invulnerable)` **위**에 이 앵커를 둔다(`onContactInvuln` 이 무적 **안**에 있는 것과
+ * 대칭이다 — 저쪽은 "무적이라 상쇄된 그 지점"이 계약이고, 이쪽은 "무적과 무관한 접촉"이다).
+ *
+ * 대상 kind 게이트는 `onContactInvuln` 과 **같은 넷**을 따른다(적탄·해저드는 접촉이 아니다).
+ */
+export function onEnemyContactCatalyst(state: WorldState, player: Entity, target: Entity): void {
+  if (!state.catalystOn) return;
+  void player;
+  void target;
+}
+
+/**
+ * 앵커 — **적 한 마리의 이번 틱 이동 속도 배율**. 호출부가 접은 `sm` 을 받아 보정해 돌려준다.
+ *
+ * ⚠️ 반환값이 곧 `def.speed` 곱수다. 호출부는 `sm !== 1` 일 때만 def 를 복제하므로,
+ * **1 을 그대로 돌려주면 복제조차 일어나지 않아** 무촉매 런이 비트 동일이다.
+ *
+ * ⚠️ 여기서 `e` 에 쓰기를 하지 마라 — 이 앵커는 `stepEnemies` 순회 안이고, 상태를 세우면
+ * 같은 틱의 뒤 단계(격자·충돌)가 반쯤 갱신된 값을 본다. 표식이 필요하면 `catalystMarks` 의
+ * `aux0` 비트를 **전용 앵커에서** 세워라.
+ *
+ * @param sm 여기까지 접힌 배율(엘리트 가속 × 냉기 감속 × 정지 × 촉매 적 속도 페널티)
+ * @returns 보정된 배율. 무촉매 런은 **`sm` 그대로**.
+ */
+export function onEnemyStepCatalyst(state: WorldState, e: Entity, sm: number): number {
+  if (!state.catalystOn) return sm;
+  void e;
+  return sm;
+}
+
+/**
+ * 앵커 — **파괴물(`destructible`)이 부서진 사건**. `true` 를 돌려주면 **기본 젬 드랍을 건너뛴다**
+ * (카드가 젬 대신 다른 것을 떨군다).
+ *
+ * ⚠️ 이 호출은 `for (const e of state.entities)` 순회 **안**이다 — 훅에서 스폰 금지.
+ * 다른 것을 떨구려면 좌표를 모아 순회 밖에서 스폰해라(호출부의 `drops`/`lootDrops` 가 그 형태다).
+ *
+ * @returns `true` 면 그 파괴물의 기본 젬이 생기지 않는다. 무촉매 런은 항상 `false`.
+ */
+export function onDestructibleDestroyedCatalyst(state: WorldState, e: Entity): boolean {
+  if (!state.catalystOn) return false;
+  void e;
+  return false;
+}
+
+/**
+ * 앵커 — **촉매 해저드가 적에게 주는 per-tick 피해**. `stepWorld` 의 새 단계다.
+ *
+ * ## 왜 이 단계가 필요한가
+ * 현행 해저드 피해는 **플레이어 충돌 질의 콜백 안에만** 있다 — 즉 해저드는 적을 못 때린다.
+ * 촉매 여섯(`id 2`·`id 8`·`id 31`·`id 34`·`id 37`·`id 43`)이 "장판이 적을 녹인다"는 그림이라
+ * 이 단계 없이는 전부 반쪽이 된다.
+ *
+ * ## 삽입 자리 — 격자 삽입 루프 **직후**
+ * ①격자가 **이번 틱 좌표 기준으로 완성**돼 있고 ②아직 아무 hp 도 안 깎였다. 아군탄 루프보다
+ * 앞이라 "장판이 먼저 깎고 탄이 마무리"가 되며, 처치는 같은 틱의 `compact()` 가 잡는다.
+ *
+ * ## ⚠️ `dead` 를 **명시적으로** 세운다
+ * `compact()` 의 첫 줄이 `if (!e.dead) { survivors.push; continue; }` 라, hp 만 0 으로 만들고
+ * 마킹을 빠뜨리면 **처치도 젬도 전리품도 안 나오는 좀비**가 된다 — `activeTypes.ts` 의
+ * `blastDamage` 가 정확히 그 형태로 한 번 깨졌다.
+ *
+ * ## ⚠️ 무촉매 런은 **루프 0회**다
+ * 게이트가 함수 첫 줄이라 순회 자체가 시작되지 않는다(조건부 꼬리). 촉매 런에서도 촉매 해저드가
+ * 없으면 판별자에서 전부 걸러진다.
+ *
+ * ## 지속형만 때린다 — 단발(burst)은 카드 레인의 몫
+ * `phase === 1`(continuous)만 매 틱 때린다. 단발(`phase === 0`)을 여기서 때리면 활성 창 내내
+ * 매 틱 터지므로, 단발형이 필요한 카드는 "한 번만" 표식을 함께 세워야 한다.
+ */
+export function stepCatalystHazards(state: WorldState): void {
+  if (!state.catalystOn) return;
+  for (const h of state.entities) {
+    if (h.dead || h.phase !== 1) continue;
+    if (!catalystHazardDamaging(h)) continue;
+    const dmg = h.damage;
+    state.grid.query(h.x, h.y, h.radius, (t) => {
+      if (t.dead) return;
+      if (t.kind !== 'enemy' && t.kind !== 'boss') return;
+      // `id 36` 그림자는 **죽일 수 없다** — 조준 제외와 쌍이다(`catalyst/shared.ts`).
+      if (isCatalystShadow(t)) return;
+      // 격자는 broad-phase 라 정확 거리를 다시 잰다(`SpatialHash` 계약).
+      if (!circlesOverlap(h.x, h.y, h.radius, t.x, t.y, t.radius)) return;
+      t.hp -= dmg;
+      // ⚠️ 좀비 방지 — 위 §주의 참조.
+      if (t.hp <= 0) t.dead = true;
+    });
+  }
 }

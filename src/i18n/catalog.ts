@@ -411,6 +411,16 @@ export const EN = {
   'catalyst.warn.conflict': 'Reduced by another catalyst',
   'catalyst.warn.badgeVoid': 'VOID',
   'catalyst.warn.badgeConflict': 'CLASH',
+  // 축소의 결 — `src/data/catalystConflicts.ts` 의 `CatalystConflictReason` 과 1:1.
+  // ⚠️ "무효"가 아니라 **축소**로 쓴다(런 안에서는 축소된 채로라도 작동한다).
+  'catalyst.warn.reason.sharedField': 'Same axis pulled both ways',
+  'catalyst.warn.reason.choice': 'The choice itself is gone',
+  'catalyst.warn.reason.material': 'Competing for the same material',
+  'catalyst.warn.reason.ground': 'No ground left to hold',
+  'catalyst.warn.reason.aim': 'Auto-aim gets split',
+  'catalyst.warn.reason.precondition': 'Trigger condition broken',
+  'catalyst.warn.reason.priority': 'The other one resolves first',
+  'catalyst.warn.reason.overlap': 'Its gain is subsumed',
 
   // --- 픽커 슬롯·거부 사유(유니크 주입 — 같은 카드는 한 장뿐) ---
   'catalyst.picker.slotEmpty': 'Empty',
@@ -2861,6 +2871,16 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.warn.conflict': '다른 촉매가 축소시킴',
   'catalyst.warn.badgeVoid': '무효',
   'catalyst.warn.badgeConflict': '충돌',
+  // 축소의 결 — `src/data/catalystConflicts.ts` 의 `CatalystConflictReason` 과 1:1.
+  // ⚠️ "무효"가 아니라 **축소**로 쓴다(런 안에서는 축소된 채로라도 작동한다).
+  'catalyst.warn.reason.sharedField': '같은 축을 반대로 당깁니다',
+  'catalyst.warn.reason.choice': '고르는 행위가 사라집니다',
+  'catalyst.warn.reason.material': '같은 재료를 다툽니다',
+  'catalyst.warn.reason.ground': '머무를 자리가 없어집니다',
+  'catalyst.warn.reason.aim': '자동 조준이 나뉩니다',
+  'catalyst.warn.reason.precondition': '발동 조건이 깨집니다',
+  'catalyst.warn.reason.priority': '다른 쪽이 먼저 처리됩니다',
+  'catalyst.warn.reason.overlap': '이득이 겹쳐 묻힙니다',
 
   // --- 픽커 슬롯·거부 사유(유니크 주입 — 같은 카드는 한 장뿐) ---
   'catalyst.picker.slotEmpty': '빈 슬롯',

@@ -217,6 +217,9 @@ declare
   SLOT_CAP               constant int     := 3;
   MAX_RESOURCE_PER_STACK constant numeric := 0.15;
   -- ⚠️ 파생식 폐기(ADR-0052). SLOT_CAP 과 독립인 리터럴이다 — 파일 상단 배너 근거 참조.
+  -- ⚠️ **이 값은 이력이다 — 고치지 마라.** 이후 20260808060000 이 이 함수를 재정의하며 이 자리를
+  --    `public.catalyst_cap_resource_mult_max()`(현행 3.2) 호출로 바꿨다. 이 파일은 이미 원격에
+  --    적용됐을 수 있어 여기 리터럴을 올려도 원격 함수는 안 바뀐다. 상향은 그 함수에서 한다.
   CAP_RESOURCE_MULT_MAX  constant numeric := 2.2;
 
   -- ⚠️ 원본과의 **유일한** 차이: 수령자를 auth.uid() 가 아니라 파라미터에서 받는다.

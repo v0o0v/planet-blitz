@@ -42,8 +42,8 @@ import { GRANT_CURRENCY_CLIENT_SOURCES } from '../src/run/commissionServerConsta
 const MIGRATIONS_DIR = fileURLToPath(new URL('../supabase/migrations/', import.meta.url));
 const DAILY_FILE = '20260805000000_daily_reward.sql';
 const COMMISSION_FILE = '20260803000000_commission_ledger.sql';
-/** ADR-0052 선결 — `grant_currency_for` 의 **현행 유효 정의**가 사는 파일(SLOT_CAP 8→3). */
-const SLOT_CAP_FILE = '20260807000000_catalyst_slot_cap.sql';
+/** ADR-0052 — `grant_currency_for` 의 **현행 유효 정의**가 사는 파일. */
+const AXIS_MIRROR_FILE = '20260808060000_catalyst_axis_mirror_resonance.sql';
 
 function migrationsInOrder(): { file: string; sql: string }[] {
   return readdirSync(MIGRATIONS_DIR)
@@ -773,11 +773,12 @@ describe('grant_currency_for 개정 — 캡 상수 전집합이 값까지 보존
   ];
 
   it('개정본이 알려진 파일에 있다(= 유효 정의가 표류하지 않았다)', () => {
-    // ⚠️ 앵커가 한 번 이동했다. 일일 보상(20260805000000)이 마지막 재정의였으나 ADR-0052 가
-    //    SLOT_CAP 8→3 + CAP_RESOURCE_MULT_MAX 리터럴화를 위해 이 함수를 다시 덮었다.
-    //    이 단언의 목적은 "일일 보상이 재정의했다"가 아니라 **유효 정의가 아무도 모르게 다른
+    // ⚠️ 앵커가 두 번 이동했다. 일일 보상(20260805000000) → 20260807000000(SLOT_CAP 8→3 +
+    //    CAP_RESOURCE_MULT_MAX 리터럴화) → 20260808060000(그 리터럴을 단일 선언 함수
+    //    `catalyst_cap_resource_mult_max()` 호출로 바꾸며 재정의).
+    //    이 단언의 목적은 "어느 레인이 재정의했다"가 아니라 **유효 정의가 아무도 모르게 다른
     //    파일로 옮겨가지 않았다**는 드리프트 감지다. 아래 캡 상수 전집합 대조가 그 위에 선다.
-    expect(revised.file).toBe(SLOT_CAP_FILE);
+    expect(revised.file).toBe(AXIS_MIRROR_FILE);
   });
 
   for (const name of CARRIED) {

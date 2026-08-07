@@ -11,6 +11,8 @@
 
 import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
+// 촉매 그림자 제외(ADR-0052). `catalyst/shared.ts` 는 리프라 순환이 생기지 않는다.
+import { isCatalystShadow } from './catalyst/shared.js';
 import { blankEntity, addEntity } from './entities.js';
 import type { EnemyDef } from './patterns/types.js';
 import { ENEMY_BY_TYPE } from '../../data/enemies.js';
@@ -232,10 +234,16 @@ export function waveIntervalScale(state: WorldState): number {
   return state.config.planetMode === PLANET_MODE.shrink ? SHRINK_INTERVAL_SCALE : 1;
 }
 
-/** Count live enemies (excludes bullets/hazards/gems). */
+/**
+ * Count live enemies (excludes bullets/hazards/gems).
+ *
+ * ⚠️ 촉매 `id 36` 그림자는 **세지 않는다** — 죽일 수 없는 개체를 세면 "적을 다 잡았는가" 게이트가
+ * 영영 안 열린다. 조준 술어(`world.ts isPlayerTargetable`)·아군탄 화이트리스트 제외와 **한 쌍**이다.
+ * 무촉매 런은 shadow 비트가 전부 0 이라 항상 종전과 같은 수를 낸다(바이트 불변).
+ */
 export function countEnemies(state: WorldState): number {
   let n = 0;
-  for (const e of state.entities) if (e.kind === 'enemy') n++;
+  for (const e of state.entities) if (e.kind === 'enemy' && !isCatalystShadow(e)) n++;
   return n;
 }
 
