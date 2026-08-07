@@ -51,6 +51,23 @@ export interface PveSettleSummary {
    * 서버가 배율 1.0 으로 취급한다. 미지정 = 오프라인/구 클라 → 서버 기본(1.0) 경로.
    */
   epoch?: number;
+  /**
+   * 텔레메트리(ADR-0051 §결정) — 기체 타입 id(`data/ships` `SHIP_TYPES` 인덱스). `settle_pve_run`
+   * 은 `p_summary` 를 그대로 `pve_runs.summary` jsonb 에 적재하므로(20260802000000:132/144), 이
+   * 필드는 **서버 SQL 을 한 줄도 안 고치고** 원장에 실린다 — 일별 롤업(20260808050000)이
+   * `summary->>'shipType'` 로 읽어 기체별 밸런스를 가른다. 밸런싱 참고용 관측치이며 캡·지급
+   * 산정에는 관여하지 않는다(위조돼도 재화가 새지 않는다).
+   */
+  shipType: number;
+  /**
+   * 텔레메트리 — 런 종료 시점 조종사 레벨(`WorldState.level`). shipType 과 동일 규율(관측용,
+   * 지급 산정 무관, 서버 SQL 무수정으로 `summary` jsonb 를 통해 롤업까지 흐른다).
+   */
+  playerLevel: number;
+  /** 텔레메트리 — 이 런에서 번 총 XP(`WorldState.xpTotal`). 롤업 "평균 XP" 열의 원천. */
+  xpTotal: number;
+  /** 텔레메트리 — 이 런에서 주운 전리품 개수(`WorldState.loot.length`). 롤업 "평균 드랍 수" 열의 원천. */
+  dropCount: number;
 }
 
 /** `planet_popularity_current` 한 행 — 행성별 확정 배율(centi)과 그 스냅샷의 epoch. */

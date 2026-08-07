@@ -2144,6 +2144,14 @@ async function main(): Promise<void> {
               resources: creditsGained,
               minerals: 0,
               kills: w.kills,
+              // 텔레메트리(ADR-0051) — 기체·레벨·XP·드랍 수. `settle_pve_run` 이 p_summary 를
+              // 그대로 `pve_runs.summary` 에 적재하므로 이 네 필드는 서버 SQL 무수정으로
+              // 일별 롤업(20260808050000)까지 흐른다. shipType 미지정 런은 0(스트라이커) 취급
+              // (world.ts 의 조건부 폴드 규율과 동일선상).
+              shipType: w.config.shipType ?? 0,
+              playerLevel: w.level,
+              xpTotal: w.xpTotal,
+              dropCount: w.loot.length,
               // 촉매 소모 영수증 런 id 관통(ADR-0029): consume 성공 시 buildRunConfig 가
               // config.runId 로 스탬프한 값을 그대로 실어, 서버 settle_pve_run 이 이 id 로 pending
               // 영수증(자원 배율)을 조회해 캡을 상향한다. 무촉매 런은 undefined → 기존 base 경로.
