@@ -105,6 +105,9 @@ const FILE_SHIP: Readonly<Record<string, string>> = {
   'bubble.ts': 'bubble',
   'hatchling.ts': 'hatchling',
   'mallow.ts': 'mallow',
+  // SQ9 의 **탕감** 두 경로만 여기 산다 — 만료 앵커가 `status.ts` 안이고 `mallow.ts` 는
+  // 그 파일을 값으로 import 하므로 같은 파일에 두면 런타임 순환이 된다(그 파일 헤더가 근거).
+  'mallowStatus.ts': 'mallow',
   'phantom.ts': 'phantom',
   'phantomEntry.ts': 'phantom',
   'striker.ts': 'striker',

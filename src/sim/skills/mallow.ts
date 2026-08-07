@@ -84,7 +84,7 @@
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
 import type { VolleyParams } from '../skillHooks.js';
-import type { CushionSplitParams, ObjectiveKind, EnemyStatusKind } from '../skillHooks.js';
+import type { CushionSplitParams, ObjectiveKind } from '../skillHooks.js';
 import { blastDamage, clearEnemyBullets, fanStrike } from '../activeTypes.js';
 import { CUSHION_RECOVER_TICKS, CUSHION_TICK_CAP } from '../shipSignature.js';
 import { readSlot, writeSlot, MallowCarry, MallowStage } from '../skillSlots.js';
@@ -294,11 +294,6 @@ function echoBondPct(level: number): number {
 
 /** ME7 이 한 번에 열 수 있는 자석 버프 창의 상한(틱). 설계서 ME7 「레벨 스케일」의 600. */
 const ECHO_BOND_TICK_CAP = 600;
-
-/** SQ9 의 만료·사망 1회당 부채 탕감량 = 3 + floor(Lv/2) (2레벨 폭 정수 계단). */
-function interestBurnForgive(level: number): number {
-  return 3 + Math.floor(level / 2);
-}
 
 /**
  * SQ9 가 부여하는 화상의 **틱당 피해** = round(기본 화염 × (100 + 4×Lv) / 100).
@@ -1014,51 +1009,16 @@ export function mallowObjectiveResolved(
 }
 
 /**
- * 앵커 ㉚ **적 상태이상 만료** — SQ9 이자 소각의 **탕감 경로 ①**.
+ * ⚠️ **SQ9 의 탕감 두 경로(만료 · 사망)는 이 파일에 없다** — `skills/mallowStatus.ts` 다.
+ * 만료 앵커가 `status.ts` 안인데 이 파일은 SQ9 의 **부여**(`applyBurn`)와 ME6 의 냉기
+ * (`applySlow`) 때문에 `status.ts` 를 값으로 import 하므로, 탕감을 여기 두면
+ * `status.ts → chainHooks.ts → skills/mallow.ts → status.ts` 런타임 순환이 된다
+ * (`skillHooks.ts` 헤더가 금지 — 번들러 초기화 재배치 시 TDZ, **검증 EF 에서만 터진다**).
+ * 아크캐스터 CH2 가 `skills/arccasterChain.ts` 로 갈라진 것과 **동형**이다.
  *
- * 화상이 만료된 적 1기당 정확히 1회 부채가 소액 탕감된다. 냉기 만료는 소비처가 없다
- * (`kind` 를 보고 조기 반환한다 — "만료 전부" 로 열어 두면 냉기 어픽스 런에서 탕감이 두 배가
- * 되고, 그것은 이 스킬이 세는 사건이 아니다).
- *
- * ## ⚠️ 이 경로는 사망 경로({@link mallowEnemyDeath})와 **배타적**이다
- * 만료되면 화상이 없고, 화상 중에 죽으면 만료 틱이 오지 않는다 — `status.ts` 의 만료 통지가
- * hp≤0 판정보다 **앞**이라, 화상 피해로 죽는 틱에도 "만료" 로 한 번만 센다.
- *
- * ## ⚠️ 부여 여부를 되묻지 않는다
- * 어픽스 화염이 건 화상과 SQ9 이 건 화상은 같은 두 칸(`iframes`·`dashCooldown`)에 실려
- * **구분이 원리적으로 불가능하다**(`status.ts` 의 필드 재활용 규율). 화염 어픽스를 낀 런에서는
- * 탕감 발생률이 그만큼 는다 — 알려진 성질이고, 탕감량이 소액(3 + floor(Lv/2))이라 설계서가
- * 유계로 잡은 범위 안이다.
+ * 이 파일에 남는 SQ9 조각은 **부여 하나**다 — {@link mallowEnemyDamaged} 안의
+ * `applyBurn` 호출과 그 틱당 피해식 {@link interestBurnDamage}.
  */
-export function mallowEnemyStatusExpired(
-  state: WorldState,
-  player: Entity,
-  e: Entity,
-  kind: EnemyStatusKind,
-): void {
-  if (kind !== 'burn') return;
-  void e;
-  forgiveInterest(state, player);
-}
-
-/**
- * 앵커 ⑪ **잡몹 격추** — SQ9 이자 소각의 **탕감 경로 ②**(화상이 남은 채 죽은 적).
- * 호출부가 `burning` 게이트를 이미 걸었다.
- */
-export function mallowEnemyDeath(state: WorldState, player: Entity): void {
-  forgiveInterest(state, player);
-}
-
-/** SQ9 의 탕감 본체 — 두 경로가 **같은 함수**를 부른다(산식이 갈리면 경로가 두 스킬이 된다). */
-function forgiveInterest(state: WorldState, player: Entity): void {
-  const sq9 = lv(state, Sk.interestBurn);
-  if (sq9 < 1) return;
-  const debt = Math.trunc(player.aux0);
-  if (debt <= 0) return;
-  const cut = interestBurnForgive(sq9);
-  // `max(0, ·)` — 설계서 공통 고지 ③ 의 aux0 감산 규율.
-  player.aux0 = debt > cut ? debt - cut : 0;
-}
 
 // ---------------------------------------------------------------------------
 // 액티브 핸들러가 부르는 진입점 (`activeHandlers/mallow.ts`)

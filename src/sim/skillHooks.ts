@@ -142,9 +142,11 @@ import {
   mallowCushionSplit,
   mallowCushionRecoverBp,
   mallowObjectiveResolved,
-  mallowEnemyStatusExpired,
-  mallowEnemyDeath,
 } from './skills/mallow.js';
+// ⚠️ SQ9 의 **탕감** 두 경로만 별도 leaf 다 — 만료 앵커가 `status.ts` 안이라
+//    `skills/mallow.ts`(그 파일을 값으로 import 한다)에 두면 런타임 순환이 된다.
+//    사유 전문은 `chainHooks.ts`·`skills/mallowStatus.ts` 헤더.
+import { mallowEnemyDeath } from './skills/mallowStatus.js';
 import {
   phantomDashFired,
   phantomGemCollected,
@@ -2092,48 +2094,6 @@ export function onObjectiveResolved(
       // ME7「에코 채권」 — 부채 전액 소각 + 소각량 비례 자석 버프 창.
       mallowObjectiveResolved(state, player, kind);
       break;
-    default:
-      break;
-  }
-}
-
-/** 앵커 ㉚ 이 구분하는 만료 종류. */
-export type EnemyStatusKind = 'burn' | 'cold';
-
-/**
- * 앵커 ㉚ — **적의 원소 상태이상이 만료된 틱**(`status.ts` 의 `tickEnemyStatus` 안, 잔여 틱이
- * 0 에 닿은 그 지점).
- *
- * ## 왜 여기인가
- * 말로우 SQ9「이자 소각」은 *부여* 가 아니라 **만료**를 트리거로 삼는다(설계서 1R C5: 부여당
- * 탕감은 빔·발칸이 틱당 수십 회 부여를 일으켜 `aux0` 을 상시 0 으로 만들고 부채 술어 4종을
- * 사문화시켰다). 만료 판정은 감소 규칙과 같은 곳에서만 관측 가능하다 — 호출부에서 before/after
- * 를 다시 재면 만료 술어가 두 곳에 산다.
- *
- * ## ⚠️ `kind === 'enemy'` 게이트는 **훅 쪽**이 아니라 호출부가 이미 진다
- * `tickEnemyStatus` 자체가 enemy 에만 불린다(`world.ts` 의 순회 게이트). 보스 `iframes` 는
- * 화상 잔여가 아니라 **과열 취약 창**이라, 이 한정이 없으면 보스마다 오탕감이 난다.
- *
- * ## ⚠️ 상태이상을 여기서 다시 세우지 마라
- * 만료 지점이라 `iframes`/`ownerId` 가 이제 막 0 이 됐다. 여기서 다시 부여하면 만료가 영영
- * 오지 않는 루프가 되고, 그 상태는 해시에 접힌다.
- *
- * @param e 만료를 겪은 적. **읽기 전용으로 다뤄라** — 이 엔티티는 아직 `state.entities` 안이라
- *   쓰기가 반영되기는 하지만, 이 앵커의 계약은 관측이다
- */
-export function onEnemyStatusExpired(
-  state: WorldState,
-  e: Entity,
-  kind: EnemyStatusKind,
-): void {
-  if (!state.skillsOn) return;
-  switch (state.sigBit) {
-    case SIG_MALLOW_CUSHION: {
-      // SQ9「이자 소각」 — 화상 만료 1회당 부채 소액 탕감. 냉기 만료는 소비처가 없다.
-      const p = playerOf(state);
-      if (p !== undefined) mallowEnemyStatusExpired(state, p, e, kind);
-      break;
-    }
     default:
       break;
   }

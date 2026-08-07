@@ -209,7 +209,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('앵커 30개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 29개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
@@ -256,7 +256,8 @@ describe('계측 이음매', () => {
         'onCushionSplit', // ㉗ — 지연 전환 분기(CU1·CU2·CU5·CU6)
         'onCushionRecoverBp', // ㉘ — 정산 탕감률 확정(ME8)
         'onObjectiveResolved', // ㉙ — 에코 안정화·조우 완수 **두 지점**(ME7)
-        'onEnemyStatusExpired', // ㉚ — 적 화상 만료(SQ9 탕감 경로 ①)
+        // ⚠️ `onEnemyStatusExpired`(적 화상 만료 → SQ9)는 여기 **없다** — `chainHooks.ts`
+        //    에 산다. `status.ts` 가 부르는 앵커라 이 파일에 두면 런타임 순환이 된다.
       ].sort(),
     );
   });

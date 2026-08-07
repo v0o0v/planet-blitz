@@ -23,7 +23,11 @@
 
 import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
-import { onEnemyStatusExpired } from './skillHooks.js';
+// ⚠️ **`skillHooks.js` 가 아니다.** 그 파일은 `skills/*.ts` 를 값으로 import 하고 그중
+//    둘(아크캐스터·말로우)이 이 파일을 값으로 import 한다 — 여기서 `skillHooks` 를 당기면
+//    런타임 순환이 되고, 그 순환은 `skillHooks.ts` 헤더가 *"번들러가 초기화를 재배치하면
+//    TDZ — 클라에서 재현 안 되고 검증 EF 에서만 터진다"* 로 금지한 바로 그것이다.
+import { onEnemyStatusExpired } from './chainHooks.js';
 
 // --- 플레이어 감속(감속 지대) ----------------------------------------------
 /** 감속 지대 접촉 시 이동 속도 배율(< 1 = 느려짐). */
