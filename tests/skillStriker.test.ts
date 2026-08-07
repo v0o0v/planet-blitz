@@ -29,10 +29,17 @@ import {
   onVolleyParams,
   onEnemyDamaged,
   onEnemyDeath,
+  onPlayerMoveParams,
 } from '../src/sim/skillHooks.js';
-import type { VolleyParams } from '../src/sim/skillHooks.js';
+import type { VolleyParams, PlayerMoveParams } from '../src/sim/skillHooks.js';
 import { SIG_STRIKER_MARKSMAN, MARKSMAN_TRIGGER_AUX0 } from '../src/sim/shipSignature.js';
-import { StrikerCarry, readSlot, SKILL_SLOT_COUNT, DamageSource } from '../src/sim/skillSlots.js';
+import {
+  StrikerCarry,
+  StrikerStage,
+  readSlot,
+  SKILL_SLOT_COUNT,
+  DamageSource,
+} from '../src/sim/skillSlots.js';
 import { STRIKER_HANDLERS, STRIKER_SUSTAIN } from '../src/sim/activeHandlers/striker.js';
 import { COLD_DURATION } from '../src/sim/status.js';
 import { ALL_ACTIVES } from '../data/ships/actives/index.js';
@@ -58,6 +65,7 @@ const M1 = 20;
 const M3 = 22;
 const M5 = 24;
 const M6 = 25;
+const M10 = 29;
 
 /** 지정한 flat 인덱스에만 포인트를 넣은 30칸 투자 벡터. */
 function invest(points: ReadonlyArray<readonly [number, number]>): number[] {
@@ -1070,5 +1078,115 @@ describe('⑭ S6 유지 보강 (생존 액티브 sustain)', () => {
     // 긍정 짝: 같은 호출이 기존 효과(무적 프레임 재설정)는 여전히 만든다 — 훅 자체가
     // 안 불린 것을 "S6 미발동" 으로 착각하지 않기 위한 대조다.
     expect(off.iframes).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑯ M10 이중 추진 (앵커 ㉙ `onPlayerMoveParams`) — 배치 5
+// ---------------------------------------------------------------------------
+//
+// 설계서: 대시가 충전식 2회 · 2번째 충전 재충전 = `240 + 4000/(Lv+5)` 틱 · 소비 순서는
+// **기본 충전 우선**.
+//
+// 뮤테이션(2026-08-07):
+//  ① `strikerPlayerMoveParams` 의 임시 개방(`player.dashCooldown = 0`)을 지우면 §⑯ 의
+//     「2연 대시」 2건 + `stepWorld` 관통 1건이 빨개진다.
+//  ② 기본 충전 복원(`player.dashCooldown = rest`)을 지우면 「기본 충전 잔여 복원」이 빨개진다.
+//  ③ `onPlayerMoveParams` 의 `case SIG_STRIKER_MARKSMAN:` 를 지우면 §⑯ 전체가 빨개진다.
+
+describe('⑯ M10 이중 추진 (앵커 ㉙)', () => {
+  /** 앵커를 한 번 통과시킨다(`stepPlayer` 의 훅 지점과 같은 파라미터). */
+  function moveTick(w: WorldState): void {
+    const params: PlayerMoveParams = { speedMult: 1, slowTicks: w.playerSlowTicks };
+    onPlayerMoveParams(w, player(w), params);
+  }
+
+  it('미투자 런은 대시 쿨다운도 슬롯도 안 건드린다 (바이트 불변의 근거)', () => {
+    const w = mk([[M6, 20]]);
+    const p = player(w);
+    p.dashCooldown = 30;
+    moveTick(w);
+    expect(p.dashCooldown).toBe(30);
+    expect(readSlot(w.skillStage, StrikerStage.twinRecharge)).toBe(0);
+    expect(readSlot(w.skillStage, StrikerStage.twinHold)).toBe(0);
+  });
+
+  it('기본 충전이 쿨다운 중이면 2충전이 게이트를 연다', () => {
+    const w = mk([[M10, 1]]);
+    const p = player(w);
+    p.dashCooldown = 30;
+    moveTick(w);
+    expect(p.dashCooldown).toBe(0); // 같은 틱의 대시 게이트가 열린다
+    expect(readSlot(w.skillStage, StrikerStage.twinHold)).toBe(31); // 잔여 30 + 1
+  });
+
+  it('기본 충전이 이미 준비돼 있으면 2충전을 안 쓴다 (소비 순서 = 기본 우선)', () => {
+    const w = mk([[M10, 20]]);
+    const p = player(w);
+    p.dashCooldown = 0;
+    moveTick(w);
+    expect(readSlot(w.skillStage, StrikerStage.twinHold)).toBe(0);
+    expect(readSlot(w.skillStage, StrikerStage.twinRecharge)).toBe(0); // 충전 그대로 보유
+  });
+
+  it('2충전으로 대시가 나가면 기본 충전 잔여가 복원되고 재충전이 시작된다', () => {
+    const w = mk([[M10, 20]]);
+    const p = player(w);
+    p.dashCooldown = 30;
+    moveTick(w); // 임시 개방
+    p.dashCooldown = DEFAULT_CONFIG.dashCooldownTicks; // 대시 블록이 덮어쓴 상태
+    moveTick(w); // 다음 틱 — 대시가 나갔음을 확인하고 정산
+    expect(p.dashCooldown).toBe(29); // 30 에서 한 틱 흐른 값 — 만충이 아니다
+    // Lv20 재충전 = 240 + floor(4000/25) = 400. 감산은 다음 틱부터라 값이 그대로 선다.
+    expect(readSlot(w.skillStage, StrikerStage.twinRecharge)).toBe(400);
+    expect(readSlot(w.skillStage, StrikerStage.twinHold)).toBe(0);
+  });
+
+  it('재충전 중에는 다시 열지 않는다 (하한 짝 — 여는 쪽이 실제로 돌았다는 대조 포함)', () => {
+    const w = mk([[M10, 20]]);
+    const p = player(w);
+    p.dashCooldown = 30;
+    moveTick(w);
+    expect(p.dashCooldown).toBe(0); // 긍정 짝 — 첫 개방은 실제로 일어난다
+    p.dashCooldown = DEFAULT_CONFIG.dashCooldownTicks;
+    moveTick(w);
+    const restored = p.dashCooldown;
+    expect(restored).toBeGreaterThan(0);
+    moveTick(w);
+    expect(p.dashCooldown).toBe(restored); // 재충전 중이라 개방이 없다
+  });
+
+  it('재충전이 레벨에 단조 감소한다 (240 + 4000/(Lv+5))', () => {
+    function rechargeAt(level: number): number {
+      const w = mk([[M10, level]]);
+      const p = player(w);
+      p.dashCooldown = 30;
+      moveTick(w);
+      p.dashCooldown = DEFAULT_CONFIG.dashCooldownTicks;
+      moveTick(w);
+      return readSlot(w.skillStage, StrikerStage.twinRecharge);
+    }
+    const lo = rechargeAt(1);
+    const hi = rechargeAt(20);
+    expect(lo).toBe(906); // 240 + floor(4000/6)
+    expect(hi).toBe(400);
+    expect(hi).toBeLessThan(lo);
+  });
+
+  it('`stepPlayer` 가 앵커를 실제로 부른다 — 연속 두 틱 대시가 나간다', () => {
+    function secondDashVx(points: ReadonlyArray<readonly [number, number]>): number {
+      const w = mk(points);
+      const p = player(w);
+      const dashIn = { ...emptyInput(), moveX: 1, dash: true };
+      stepWorld(w, dashIn); // 1틱: 기본 충전으로 대시
+      const first = p.vx;
+      expect(first).toBeGreaterThan(DEFAULT_CONFIG.playerSpeed); // 하한 — 첫 대시는 양쪽 다 나간다
+      stepWorld(w, dashIn); // 2틱: 쿨다운이라 보통은 못 나간다
+      return p.vx;
+    }
+    // 하한 짝 — 미투자 런은 두 번째 틱에 대시 임펄스가 없다(정확히 이동 속도다).
+    expect(secondDashVx([[M6, 20]])).toBe(DEFAULT_CONFIG.playerSpeed);
+    // 투자 런은 2충전으로 연속 대시가 나간다.
+    expect(secondDashVx([[M10, 20]])).toBeGreaterThan(DEFAULT_CONFIG.playerSpeed);
   });
 });

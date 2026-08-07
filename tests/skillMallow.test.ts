@@ -90,6 +90,7 @@ const SQ9 = 8;
 const SQ10 = 9;
 const ME1 = 10;
 const ME2 = 11;
+const ME3 = 12;
 const ME4 = 13;
 const ME5 = 14;
 const ME6 = 15;
@@ -1416,6 +1417,110 @@ describe('⑬ 앵커 ㉗ 지연 전환 — CU1·CU2·CU5·CU6', () => {
     const params: CushionSplitParams = { deferred: 12 };
     onCushionSplit(w, p, 100, params, 5);
     expect(params.deferred).toBe(12);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑮ ME3 무통 주행 (앵커 ㉙ `onPlayerMoveParams`) — 배치 5
+// ---------------------------------------------------------------------------
+//
+// 설계서: 감속이 걸려 있어야 할 동안 감속 대신 N틱마다 `aux0 += 1` · N = `1 + floor(Lv/6)` ·
+// CU2 한도에 닿으면 대납 중단(감속이 원래대로 걸린다).
+//
+// 뮤테이션(2026-08-07): `mallowPlayerMoveParams` 의 `params.slowTicks = 0` 을 지우면 §⑮ 의
+// 「감속이 무효화된다」 2건과 `stepWorld` 관통 1건이 함께 빨개진다. `state.tick % N` 을
+// `% 1` 로 상수화하면 「Lv20 은 4틱당 1」이 빨개진다.
+
+describe('⑮ ME3 무통 주행 (앵커 ㉙)', () => {
+  function moveOnce(w: WorldState, slow: number): PlayerMoveParams {
+    w.playerSlowTicks = slow;
+    const params: PlayerMoveParams = { speedMult: 1, slowTicks: w.playerSlowTicks };
+    onPlayerMoveParams(w, player(w), params);
+    return params;
+  }
+
+  it('감속이 없으면 아무 일도 안 한다 (미투자 런 바이트 불변의 근거)', () => {
+    const w = mk([[ME3, 20]]);
+    const p = player(w);
+    const params = moveOnce(w, 0);
+    expect(params.slowTicks).toBe(0);
+    expect(params.speedMult).toBe(1);
+    expect(p.aux0).toBe(0);
+  });
+
+  it('하한 짝 — ME3 미투자 런은 감속이 그대로 살아남고 부채도 안 는다 (항진 방지)', () => {
+    const w = mk([[ME2, 20]]);
+    const p = player(w);
+    expect(moveOnce(w, 40).slowTicks).toBe(40); // 왕복 항등
+    expect(p.aux0).toBe(0);
+  });
+
+  it('투자하면 감속이 무효화되고 부채가 대신 쌓인다', () => {
+    const w = mk([[ME3, 1]]);
+    const p = player(w);
+    expect(moveOnce(w, 40).slowTicks).toBe(0);
+    expect(p.aux0).toBeGreaterThan(0); // 하한 — 양변 0 인 항진이 아니다
+  });
+
+  it('Lv1~5 는 매 틱 1, Lv20 은 4틱당 1 이다 (주기 N = 1 + floor(Lv/6))', () => {
+    function chargedOver(level: number, ticks: number): number {
+      const w = mk([[ME3, level]]);
+      const p = player(w);
+      for (let i = 0; i < ticks; i++) {
+        moveOnce(w, 40);
+        w.tick++;
+      }
+      return p.aux0;
+    }
+    expect(chargedOver(1, 12)).toBe(12);
+    expect(chargedOver(5, 12)).toBe(12);
+    // Lv6 → N=2, Lv20 → N=4. 12틱 창에서 `tick % N === 0` 인 틱 수 그대로다.
+    expect(chargedOver(6, 12)).toBe(6);
+    expect(chargedOver(20, 12)).toBe(3);
+    // 단조 — 레벨이 오를수록 같은 면역이 싸진다(설계서 "대납 단가 하락").
+    expect(chargedOver(20, 12)).toBeLessThan(chargedOver(1, 12));
+  });
+
+  it('CU2 한도에 닿으면 대납이 멈추고 감속이 원래대로 걸린다', () => {
+    const w = mk([
+      [ME3, 20],
+      [CU2, 20],
+    ]);
+    const p = player(w);
+    // Lv20 한도 = round(maxHp × round(25 + 30×20/32)%) = round(maxHp × 44%).
+    const ceiling = Math.round((p.maxHp * Math.round(25 + (30 * 20) / 32)) / 100);
+    // 긍정 짝 — 한도 **아래**에서는 대납이 실제로 돈다(부정 항목만 두면 뮤테이션에 안 걸린다).
+    p.aux0 = ceiling - 1;
+    expect(moveOnce(w, 40).slowTicks).toBe(0);
+    // 한도에 닿으면 멈춘다.
+    p.aux0 = ceiling;
+    expect(moveOnce(w, 40).slowTicks).toBe(40);
+    expect(p.aux0).toBe(ceiling); // 과금도 멈춘다
+  });
+
+  it('`stepPlayer` 가 앵커를 실제로 부른다 — 감속 지대에서 속도가 안 깎인다', () => {
+    function vxUnderSlow(points: ReadonlyArray<readonly [number, number]>): number {
+      const w = mk(points);
+      const p = player(w);
+      w.playerSlowTicks = 60;
+      stepWorld(w, { ...emptyInput(), moveX: 1 });
+      return p.vx;
+    }
+    // 하한 — 미투자 런은 감속 배율이 실제로 물린다(양변이 같은 항진이 아니다).
+    const slowed = vxUnderSlow([[ME2, 20]]);
+    expect(slowed).toBeLessThan(DEFAULT_CONFIG.playerSpeed);
+    // 투자 런은 감속을 대납해 만속이다. CU8 미투자라 배율 가산도 없어 정확히 같은 값이다.
+    expect(vxUnderSlow([[ME3, 20]])).toBe(DEFAULT_CONFIG.playerSpeed);
+  });
+
+  it('미투자 런의 해시가 불변이다 — 훅이 상태를 한 바이트도 안 건드린다', () => {
+    const a = mk();
+    const b = mk();
+    a.playerSlowTicks = 30;
+    b.playerSlowTicks = 30;
+    stepWorld(a, { ...emptyInput(), moveX: 1 });
+    stepWorld(b, { ...emptyInput(), moveX: 1 });
+    expect(hashWorld(a)).toBe(hashWorld(b));
   });
 });
 

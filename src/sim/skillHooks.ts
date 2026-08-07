@@ -142,6 +142,7 @@ import {
   strikerVolleyParams,
   strikerEnemyDamaged,
   strikerEnemyDeath,
+  strikerPlayerMoveParams,
 } from './skills/striker.js';
 import {
   arccasterGemCollected,
@@ -200,6 +201,7 @@ import {
   phantomEnemyDamaged,
   phantomCloakBreakReset,
   phantomVolleyParams,
+  phantomPlayerMoveParams,
 } from './skills/phantom.js';
 import {
   bubbleSignatureStep,
@@ -3079,12 +3081,21 @@ export function onPlayerMoveParams(
   switch (state.sigBit) {
     // ⚠️ `break;` 필수(앵커 ㉗ 주석과 같은 사유).
     case SIG_MALLOW_CUSHION:
-      // CU8 통증 마취 — 부채(`player.aux0`) 보유 중 이동 속도가 오른다.
+      // ME3 무통 주행(감속 → 부채 대납) · CU8 통증 마취(부채 보유 중 이속 상승).
       mallowPlayerMoveParams(state, player, params);
       break;
     case SIG_BUBBLE_FILM:
       // DR4 공막 경량화 — 막이 없는 동안(`aux0 === 0`) 감속 면역 + 이속 상승.
       bubblePlayerMoveParams(state, player, params);
+      break;
+    case SIG_PHANTOM_CLOAK:
+      // PH4 무흔 보행 — 은신 창 동안 이속 상승 + 이동 감속 면역.
+      phantomPlayerMoveParams(state, player, params);
+      break;
+    case SIG_STRIKER_MARKSMAN:
+      // M10 이중 추진 — `params` 가 아니라 `player.dashCooldown` 을 만진다. 이 앵커가
+      // **쿨다운 감산·대시 게이트보다 앞**이라는 사실 하나로 성립하는 배선이다(그 함수 doc).
+      strikerPlayerMoveParams(state, player, params);
       break;
     default:
       break;
