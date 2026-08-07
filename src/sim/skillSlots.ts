@@ -142,7 +142,7 @@ export function writeSlot(slots: number[], slot: number, value: number): void {
 //   해츨링     (SIG_HATCHLING_BROOD)  — HatchlingCarry / HatchlingStage
 //   말로우     (SIG_MALLOW_CUSHION)   — MallowCarry / MallowStage (S2 확장으로 각 1칸 — SQ8·SQ5)
 //   팬텀       (SIG_PHANTOM_CLOAK)    — PhantomCarry / PhantomStage
-//   버블       (SIG_BUBBLE_FILM)      — BubbleCarry / BubbleStage (**실배정 0칸**)
+//   버블       (SIG_BUBBLE_FILM)      — BubbleCarry(0칸) / BubbleStage(배치6 에서 1칸 — DR3)
 //
 // ⚠️ 이 색인은 **병렬 배선 머지에서 중복되기 쉽다** — 레인마다 자기 줄을 고치는데 git 이
 // 양쪽을 다 살리기 때문이다(실제로 브루저·아크캐스터가 2줄씩 중복된 채 들어왔다).
@@ -385,11 +385,13 @@ export const enum BubbleCarry {
    *
    * 배치 4(버블)가 배선한 9종은 슬롯을 **한 칸도 쓰지 않는다** — 전부 기존 필드(`aux0`·
    * `aux1`·`iframes`·`dashCooldown`·`playerSlowTicks`)와 `state.tick` 파생만 만진다.
-   * 설계서가 `구현: B`(신규 상태)로 표시한 버블 5종은 이 배치 밖이다:
-   *  · PO10(창 틱 + kills 스냅샷 2칸) — `aux0 ≤ FILM_ABSORB_FLAT` 불변식 개정이 선결
-   *  · DR2(효율 창 1칸) · FI6(흡수 누적 1칸) — 소비처가 막 흡수 지점이라 앵커가 없다
-   *  · DR3(전용 자석 버프 1칸) — 액티브 착지 훅이 없다
-   *  · FI7(벽 접촉 플래그) — 슬롯이 아니라 `state.wallContactTicks` 로 이미 있다
+   * 설계서가 `구현: B`(신규 상태)로 표시한 버블 5종의 현행(배치6 기준):
+   *  · PO10(창 틱 + kills 스냅샷 2칸) — `aux0 ≤ FILM_ABSORB_FLAT` 불변식 개정이 선결. 밖.
+   *  · DR2(효율 창 1칸) — 밖. **`Stage` 로 옮길 수 있으나 이 배치가 금지한 축**이다
+   *    (`skills/bubble.ts` 의 DR2 주석이 정본 — D 단계 골든 재동결과 한 커밋으로 묶는다).
+   *  · FI6(흡수 누적 1칸) — 밖. 사유는 슬롯이 아니라 *"불멸 막 지속 중"* 술어다.
+   *  · **DR3 — 배치6 이 {@link BubbleStage.blinkMagnet} 로 배선했다**(이월이 아니라 구간).
+   *  · FI7(벽 접촉 플래그) — 슬롯이 아니라 `state.wallContactTicks` 로 이미 있다. 배치6 배선.
    *
    * ⚠️ 실제 배정이 생기면 이 줄을 **지우고** 0번부터 다시 매겨라. 예약 번호를 미리 적지
    * 마라 — 미사용 슬롯이 영구 0 으로 남는 것이 이 파일 헤더가 폭을 8 로 좁힌 이유다.
@@ -542,8 +544,31 @@ export const enum PhantomStage {
   frozenClockUsed = 1,
 }
 
-/** **버블 구간 슬롯** — {@link BubbleCarry} 와 같은 사유로 실배정 0칸이다. */
+/**
+ * **버블 구간 슬롯** — 배치6 이 DR3 으로 **1칸을 처음 잡았다**(그래서 `unassigned`
+ * 자리표시자를 지웠다). {@link BubbleCarry} 는 여전히 실배정 0칸이다.
+ */
 export const enum BubbleStage {
-  /** 자리표시자 — 읽지도 쓰지도 않는다. 사유는 {@link BubbleCarry.unassigned}. */
-  unassigned = 0,
+  /**
+   * DR3「도약 자기장」 — **전용 자석 확장 버프의 잔여 틱**. 0 = 버프 없음(값 규약 1 —
+   * 0 이 자연 센티넬이라 미투자 런은 런 끝까지 0 이고 해시 폴드가 한 번도 안 돈다).
+   *
+   * ## ⚠️ 왜 신규 `WorldState` 필드가 아니라 이 칸인가 — **해시 꼬리를 안 건드린다**
+   * 배치5 버블 레인은 DR3 을 *"신규 `WorldState` 정수 + 해시 꼬리 폴드가 선결"* 로 판정하고
+   * 닫았는데, 그 판정이 놓친 갈래가 이 배열이다. `hashWorld` 의 스킬 슬롯 폴드는 **16칸이
+   * 전부 0 이면 통째로 건너뛴다**(`replay.ts` 의 `skillSlotAny`). 그래서 이 칸을 쓰는 것은
+   * *DR3 을 찍은 버블 런의 해시만* 갈리게 하고, 그 밖의 모든 런(골든 픽스처 포함)은 바이트가
+   * 그대로다. 신규 필드는 **항상 0 이어도** 꼬리 폴드에 들어가 전량을 갈아엎는다 — 그 차이가
+   * 이 스킬의 가부를 갈랐다.
+   *
+   * ## ⚠️ 배치5 가 기각한 세 대안은 지금도 기각이다
+   * `state.magnetBuffTicks` 재사용(설계서 명시 금지 — 희귀 기믹 픽업의 보상 칸) ·
+   * `state.activeBuff0/1` 재사용(`observable: 'buffTicks'` 계측 오염) · 쿨다운 역산(세운
+   * 최댓값이 어디에도 안 남는다). 사유 전문은 `skills/bubble.ts` 의 DR3 블록 주석이 정본이다.
+   *
+   * `Carry` 가 아니라 `Stage` 인 이유: 지속이 Lv20 에서도 210틱(3.5초)이라 의뢰 구간 길이
+   * 안에서 스스로 끝난다. 구간을 넘겨 살면 새 구간 첫 틱이 **지난 구간의 도약으로 켜진
+   * 자석**을 물려받는데, 그건 액티브 착지가 트리거라는 술어 자체와 어긋난다.
+   */
+  blinkMagnet = 0,
 }

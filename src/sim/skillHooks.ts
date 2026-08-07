@@ -214,6 +214,9 @@ import {
   bubbleSignatureStep,
   bubbleEnemyDamaged,
   bubbleFilmBurst,
+  bubbleFilmBurstPost,
+  bubbleObjectiveResolved,
+  bubblePickupRadius,
   bubbleVolleyParams,
   bubbleFilmAbsorbed,
   bubbleFilmEntry,
@@ -1572,23 +1575,20 @@ export function onFilmBurst(
   params: FilmBurstParams,
 ): void {
   if (!state.skillsOn) return;
-  // 아직 소비처가 없다(버블 FI7 이 얹힐 자리). 자기 `case` 가 쓰기 시작하면 이 줄을 지워라.
-  void params;
   switch (state.sigBit) {
     case SIG_BUBBLE_FILM: {
       // PO1 파열 탄두 · PO3 거품 산탄 파열 · PO7 정전 파열 · DR1 역류 수거 · DR6 파열 추진 ·
       // FI1 조기 응결 · FI5 파열 위상 · FI10 정화 파열.
       //
-      // ⚠️ **PO4·PO8·FI7 은 여기 없다 — 훅으로 닿지 않는다.**
-      //  · FI7(벽면 반향)은 밀어내기의 **반경·변위 그 자체**를 배율해야 한다. 훅은 그 산술
-      //    바깥이라 값을 건넬 길이 없다 — `resolveFilmBurst` 가 배율을 인자로 받는 형태여야
-      //    하고, 그건 훅이 아니라 함수 시그니처 변경이다.
-      //  · PO4(압착 충돌)는 밀어내기 목표 변위와 슬라이드 후 실제 좌표의 **차이**가 판정인데,
-      //    이 앵커는 밀어내기보다 **앞**이라 그 차이가 아직 존재하지 않는다(앞에 둔 사유는
-      //    호출 지점 주석 — 뒤로 옮기면 PO1·PO7 이 죽는다. 훅을 pre/post 둘로 쪼개야 한다).
-      //  · PO8(잔거품 기뢰)은 기뢰 엔티티 생성 규약(`isGimmick` 컬링 제외 + 전용 마커 동시
-      //    생존 상한 12)이 선결이다. 상한 없이 넣으면 파열 4회 창에 최대 36기가 서서 청크
-      //    예산(160)을 조용히 먹는다.
+      // ✅ **FI7(벽면 반향)은 배치6 에서 배선됐다.** 종전 사유(*"훅이 밀어내기 산술 바깥이라
+      //    값을 건넬 길이 없다"*)는 이 앵커가 {@link FilmBurstParams} 를 넘기면서 해소됐다 —
+      //    `radius`·`push` **둘 다** 같은 배율로 곱한다(반경만 키우면 "반경 안의 적을 반경
+      //    밖으로" 계약이 깨진다).
+      // ✅ **PO4(압착 충돌)는 여기가 아니라 `onFilmBurstPost` 다.** 밀어낸 **결과**가 판정이라
+      //    이 앵커로는 원리적으로 못 산다(이 훅을 뒤로 옮기면 PO1·PO7·DR1 이 죽는다).
+      // ⚠️ **PO8(잔거품 기뢰)은 아직 여기도 저기도 없다.** 스폰 지점은 `onFilmBurstPost` 로
+      //    열렸고, 남은 선결은 기뢰 개체 규약(동시 생존 상한 + 컬링 제외 + 접촉 피해)이다 —
+      //    사유 전문은 `skills/bubble.ts` 말미의 미배선 주석이 정본이다.
       // ✅ **DR1(역류 수거)은 배선됐다.** `collectGem` 이 `world.ts` 모듈-로컬이라 leaf 에서
       //    부를 수 없다는 종전 사유는 **지금도 참**이고(export 해도 규율 ① 위반, 여기로 올려도
       //    `world.ts → skillHooks.ts` 와 순환), 젬을 직접 지우면 콤보·XP·촉매 경로가 통째로
@@ -1601,7 +1601,7 @@ export function onFilmBurst(
       // (`filmBurst.ts` 의 종류 코드 2) 파열 훅을 태우면 안 된다 — 종류 코드 2 는 아직
       // 소비자가 없어 상수조차 선언돼 있지 않다.
       const p = playerOf(state);
-      if (p !== undefined) bubbleFilmBurst(state, p, x, y);
+      if (p !== undefined) bubbleFilmBurst(state, p, x, y, params);
       break;
     }
     default:
@@ -2402,6 +2402,11 @@ export function onObjectiveResolved(
     case SIG_MALLOW_CUSHION:
       // ME7「에코 채권」 — 부채 전액 소각 + 소각량 비례 자석 버프 창.
       mallowObjectiveResolved(state, player, kind);
+      break;
+    case SIG_BUBBLE_FILM:
+      // DR7「신호 표류」 후반부 — 완수 틱에 막이 즉시 만재된다. 전반부(활성 동안 재생 2배)는
+      // 앵커 ⑨ 에 있고, 두 반쪽의 술어가 각각 **활성**과 **완수**라 겹치지 않는다.
+      bubbleObjectiveResolved(state, player, kind);
       break;
     default:
       break;
@@ -3523,11 +3528,13 @@ export function onFilmBurstPost(
   pushed: readonly FilmBurstPushed[],
 ): void {
   if (!state.skillsOn) return;
-  void x;
-  void y;
-  void pushed;
   switch (state.sigBit) {
     // ⚠️ `break;` 필수.
+    case SIG_BUBBLE_FILM:
+      // PO4 압착 충돌 — 밀어낸 목표 변위 대비 **실제 전진량의 부족분**(= 벽이 먹은 몫)에
+      // 비례해 피해. 앵커 ⑮ 로는 원리적으로 못 하던 축이다.
+      bubbleFilmBurstPost(state, x, y, pushed);
+      break;
     default:
       break;
   }
@@ -3641,10 +3648,14 @@ export function onPickupRadius(
   params: PickupRadiusParams,
 ): void {
   if (!state.skillsOn) return;
-  void player;
-  void params;
   switch (state.sigBit) {
     // ⚠️ `break;` 필수.
+    case SIG_BUBBLE_FILM:
+      // DR8 원격 채집기 — 자석 반경에 비례해 접촉 반경을 넓힌다(상한은 훅이 스스로 건다).
+      // ⚠️ 이 한 칸이 젬·전리품·기믹·포탑 **전부**를 움직인다 — 설계 문면(기믹 3종)보다
+      // 넓다는 사실은 `skills/bubble.ts` 의 `bubblePickupRadius` doc 에 적혀 있다.
+      bubblePickupRadius(state, player, params);
+      break;
     default:
       break;
   }

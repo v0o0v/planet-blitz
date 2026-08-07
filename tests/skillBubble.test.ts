@@ -41,6 +41,9 @@ import {
   onSignatureStep,
   onEnemyDamaged,
   onFilmBurst,
+  onFilmBurstPost,
+  onObjectiveResolved,
+  onPickupRadius,
   onVolleyParams,
   onFilmAbsorbed,
   onFilmEntry,
@@ -53,6 +56,8 @@ import {
   type GemMagnetParams,
   type PlayerMoveParams,
   type FilmBurstParams,
+  type FilmBurstPushed,
+  type PickupRadiusParams,
 } from '../src/sim/skillHooks.js';
 import { resolveFilmBurst } from '../src/sim/filmBurst.js';
 import { BUBBLE_ACTIVES } from '../data/ships/actives/bubble.js';
@@ -67,7 +72,7 @@ import {
   filmAbsorbed,
   filmRemainingDamage,
 } from '../src/sim/shipSignature.js';
-import { readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
+import { BubbleStage, readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
 
 /** `data/ships/index.ts` 의 타입 id — `data/ships/bubble.ts` 의 `id: 6`. */
 const SHIP_BUBBLE = 6;
@@ -80,14 +85,18 @@ const SHIP_BUBBLE = 6;
 const PO1 = 0;
 const PO2 = 1;
 const PO3 = 2;
+const PO4 = 3;
 const PO5 = 4;
 const PO6 = 5;
 const PO7 = 6;
 const PO9 = 8;
 const DR1 = 10;
+const DR3 = 12;
 const DR4 = 13;
 const DR5 = 14;
 const DR6 = 15;
+const DR7 = 16;
+const DR8 = 17;
 const DR9 = 18;
 const DR10 = 19;
 const FI1 = 20;
@@ -95,6 +104,7 @@ const FI2 = 21;
 const FI3 = 22;
 const FI4 = 23;
 const FI5 = 24;
+const FI7 = 26;
 const FI8 = 27;
 const FI9 = 28;
 const FI10 = 29;
@@ -1518,5 +1528,432 @@ describe('⑬ DR4 공막 경량화 (앵커 ㉙)', () => {
     }
     expect(run([[FI2, 20]])).toBe(29); // 대조군 — 엔진이 1 깎는다
     expect(run([[DR4, 20]])).toBe(0); // DR4 — 훅이 0 으로 되쓰고 감산도 건너뛴다
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑬ FI7 벽면 반향 (앵커 ⑮ 의 `FilmBurstParams`) — 배치6
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션 실측
+// `bubbleFilmBurst` 의 FI7 블록(`params.radius`/`params.push` 곱셈)을 지우면 **양성 4항목이
+// 실패**한다(반경 확대 · 변위 확대 · 레벨 단조 · `resolveFilmBurst` 이음매). 부정 항목
+// ("벽에 안 닿으면 안 걸린다")은 원리적으로 안 걸리므로 긍정 짝을 같은 절에 뒀다.
+
+describe('⑬ FI7 벽면 반향 (앵커 ⑮)', () => {
+  it('벽 접촉 중이면 **반경과 변위가 둘 다** 커진다 (Lv1 = ×1.165)', () => {
+    const w = mk([[FI7, 1]]);
+    w.wallContactTicks = 3;
+    const p = burstParams();
+    onFilmBurst(w, player(w).x, player(w).y, p);
+    expect(p.radius).toBeCloseTo(FILM_BURST_RADIUS * 1.165, 6);
+    expect(p.push).toBeCloseTo(filmBurstPush() * 1.165, 6);
+    // 하한 짝 — 배선이 끊기면 양변이 초기값이 되어 "커졌다"가 항진으로 성립할 수 있다.
+    expect(p.radius).toBeGreaterThan(FILM_BURST_RADIUS);
+    expect(p.push).toBeGreaterThan(filmBurstPush());
+  });
+
+  it('**반경 < 변위** 부등식이 배율과 무관하게 보존된다 (같은 배율을 둘 다에 건다)', () => {
+    const base = burstParams();
+    const ratio0 = base.push / base.radius;
+    for (const level of [1, 10, 20]) {
+      const w = mk([[FI7, level]]);
+      w.wallContactTicks = 1;
+      const p = burstParams();
+      onFilmBurst(w, player(w).x, player(w).y, p);
+      expect(p.push / p.radius).toBeCloseTo(ratio0, 9);
+      expect(p.push).toBeGreaterThan(p.radius);
+    }
+  });
+
+  it('레벨이 오르면 배율도 오른다 (Lv20 > Lv1 > 기본)', () => {
+    function radiusOf(level: number): number {
+      const w = mk([[FI7, level]]);
+      w.wallContactTicks = 1;
+      const p = burstParams();
+      onFilmBurst(w, player(w).x, player(w).y, p);
+      return p.radius;
+    }
+    expect(radiusOf(1)).toBeGreaterThan(FILM_BURST_RADIUS);
+    expect(radiusOf(20)).toBeGreaterThan(radiusOf(1));
+  });
+
+  it('**벽에 안 닿았으면 한 칸도 안 건드린다** — 초기값과 비트 동일', () => {
+    const w = mk([[FI7, 20]]);
+    w.wallContactTicks = 0;
+    const p = burstParams();
+    onFilmBurst(w, player(w).x, player(w).y, p);
+    expect(p.radius).toBe(FILM_BURST_RADIUS);
+    expect(p.push).toBe(filmBurstPush());
+  });
+
+  it('**다른 스킬만 찍은 런**은 벽에 닿아 있어도 파라미터가 그대로다', () => {
+    const w = mk([[FI2, 20]]);
+    w.wallContactTicks = 60;
+    const p = burstParams();
+    onFilmBurst(w, player(w).x, player(w).y, p);
+    expect(p.radius).toBe(FILM_BURST_RADIUS);
+    expect(p.push).toBe(filmBurstPush());
+  });
+
+  it('이음매 — `resolveFilmBurst` 가 실제로 **더 멀리** 민다 (벽 접촉 런 vs 비접촉 런)', () => {
+    function pushedDistance(contact: number): number {
+      const w = mk([[FI7, 20]]);
+      w.wallContactTicks = contact;
+      const p = player(w);
+      const foe = addEnemy(w, p.x + 30, p.y, 500);
+      resolveFilmBurst(w, p.x, p.y);
+      return foe.x - (p.x + 30);
+    }
+    const off = pushedDistance(0);
+    const on = pushedDistance(5);
+    expect(off).toBeGreaterThan(0); // 하한 짝 — 배선이 끊겨 둘 다 0 이면 아래가 항진이 된다
+    expect(on).toBeGreaterThan(off);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑭ PO4 압착 충돌 (앵커 `onFilmBurstPost`) — 배치6
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션 실측
+// `bubbleFilmBurstPost` 의 `e.hp -= dmg` 를 지우면 **양성 4항목이 실패**한다(부족분 비례 피해 ·
+// 레벨 단조 · 좀비 방지 · 사망 마킹). `if (e.hp <= 0) e.dead = true` 만 지우면 좀비 방지
+// 항목 하나가 실패한다. 부정 항목("벽이 안 먹었으면 0")은 긍정 짝과 같은 절에 있다.
+
+describe('⑭ PO4 압착 충돌 (앵커 onFilmBurstPost)', () => {
+  /** 파열 중심 (0,0) · 밀기 전 (100,0) 인 적 하나. `advance` 만큼만 바깥으로 갔다고 둔다. */
+  function blockedOne(w: WorldState, hp: number, advance: number): [Entity, FilmBurstPushed[]] {
+    const e = addEnemy(w, 100 + advance, 0, hp);
+    return [e, [{ enemy: e, preX: 100, preY: 0 }]];
+  }
+
+  it('벽이 먹은 몫에 비례해 피해를 준다 (Lv1 = 부족분의 17%)', () => {
+    const w = mk([[PO4, 1]]);
+    const [e, pushed] = blockedOne(w, 500, filmBurstPush() - 100);
+    onFilmBurstPost(w, 0, 0, pushed);
+    expect(e.hp).toBe(500 - Math.round((100 * 1700) / 10000));
+    expect(e.hp).toBeLessThan(500); // 하한 짝
+  });
+
+  it('레벨이 오르면 피해가 는다 (Lv20 > Lv1 > 0)', () => {
+    function dealt(level: number): number {
+      const w = mk([[PO4, level]]);
+      const [e, pushed] = blockedOne(w, 5000, filmBurstPush() - 100);
+      onFilmBurstPost(w, 0, 0, pushed);
+      return 5000 - e.hp;
+    }
+    expect(dealt(1)).toBeGreaterThan(0);
+    expect(dealt(20)).toBeGreaterThan(dealt(1));
+  });
+
+  it('**목표만큼 갔으면 피해가 없다** — 벽이 없는 파열은 0 건이다', () => {
+    const w = mk([[PO4, 20]]);
+    const [e, pushed] = blockedOne(w, 500, filmBurstPush());
+    onFilmBurstPost(w, 0, 0, pushed);
+    expect(e.hp).toBe(500);
+  });
+
+  it('좀비 방지 — hp 가 0 이하가 되면 `dead` 를 **같이** 세운다', () => {
+    const w = mk([[PO4, 20]]);
+    const [e, pushed] = blockedOne(w, 3, filmBurstPush() - 200);
+    onFilmBurstPost(w, 0, 0, pushed);
+    expect(e.hp).toBeLessThanOrEqual(0);
+    expect(e.dead).toBe(true);
+  });
+
+  it('이미 죽은 적은 건너뛴다 (같은 틱의 다른 축이 먼저 죽였을 수 있다)', () => {
+    const w = mk([[PO4, 20]]);
+    const [e, pushed] = blockedOne(w, 500, filmBurstPush() - 200);
+    e.dead = true;
+    onFilmBurstPost(w, 0, 0, pushed);
+    expect(e.hp).toBe(500);
+  });
+
+  it('미투자 런·다른 스킬만 찍은 런은 아무것도 안 한다', () => {
+    for (const points of [[], [[FI2, 20]]] as ReadonlyArray<
+      ReadonlyArray<readonly [number, number]>
+    >) {
+      const w = mk(points);
+      const [e, pushed] = blockedOne(w, 500, filmBurstPush() - 200);
+      onFilmBurstPost(w, 0, 0, pushed);
+      expect(e.hp).toBe(500);
+    }
+  });
+
+  it('이음매 — 벽이 없는 `resolveFilmBurst` 는 **FI7 을 같이 찍어도** 피해가 정확히 0 이다', () => {
+    // ⚠️ 이 절이 PO4 의 핵심 회귀 방어다. 목표 변위를 사후에 되짚는 산술이 FI7 배율과
+    //    한 자리라도 어긋나면, 벽이 없는 파열에서도 부족분이 양수가 되어 **모든 파열이**
+    //    충돌 피해를 낸다. 벽 접촉을 켠 채로 재는 것이 그 어긋남을 드러내는 조건이다.
+    const w = mk([
+      [PO4, 20],
+      [FI7, 20],
+    ]);
+    w.wallContactTicks = 5;
+    const p = player(w);
+    const foe = addEnemy(w, p.x + 30, p.y, 500);
+    resolveFilmBurst(w, p.x, p.y);
+    expect(foe.x).toBeGreaterThan(p.x + 30); // 밀리기는 했다(하한 짝)
+    expect(foe.hp).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑮ DR8 원격 채집기 (앵커 `onPickupRadius`) — 배치6
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션 실측
+// `bubblePickupRadius` 의 `params.radius = ...` 를 지우면 **양성 4항목이 실패**한다
+// (비례 확장 · 자석 비례 · 레벨 단조 · 상한 도달). 부정 항목("미투자는 그대로")은 긍정 짝과
+// 같은 절이다.
+
+describe('⑮ DR8 원격 채집기 (앵커 onPickupRadius)', () => {
+  function pick(radius: number): PickupRadiusParams {
+    return { radius };
+  }
+
+  it('자석 반경에 비례해 접촉 반경이 넓어진다 (Lv1 = 자석의 11%)', () => {
+    const w = mk([[DR8, 1]]);
+    w.magnetRadius = 100;
+    const p = pick(20);
+    onPickupRadius(w, player(w), p);
+    expect(p.radius).toBeCloseTo(20 + 11, 6);
+    expect(p.radius).toBeGreaterThan(20); // 하한 짝
+  });
+
+  it('자석 반경이 크면 더 넓어진다 — **비례**가 실제로 자석을 읽는다', () => {
+    function radiusOf(magnet: number): number {
+      const w = mk([[DR8, 5]]);
+      w.magnetRadius = magnet;
+      const p = pick(20);
+      onPickupRadius(w, player(w), p);
+      return p.radius;
+    }
+    expect(radiusOf(50)).toBeGreaterThan(20);
+    expect(radiusOf(100)).toBeGreaterThan(radiusOf(50));
+  });
+
+  it('레벨이 오르면 몫이 는다 (Lv20 > Lv1 > 기본)', () => {
+    function radiusOf(level: number): number {
+      const w = mk([[DR8, level]]);
+      w.magnetRadius = 100;
+      const p = pick(20);
+      onPickupRadius(w, player(w), p);
+      return p.radius;
+    }
+    expect(radiusOf(1)).toBeGreaterThan(20);
+    expect(radiusOf(20)).toBeGreaterThan(radiusOf(1));
+  });
+
+  it('**상한이 있다** — 기본 접촉 반경의 4배를 넘지 않는다 (격자 질의 비용 방어)', () => {
+    const w = mk([[DR8, 20]]);
+    w.magnetRadius = 100_000;
+    const p = pick(20);
+    onPickupRadius(w, player(w), p);
+    expect(p.radius).toBe(80);
+  });
+
+  it('미투자 런·다른 스킬만 찍은 런은 반경이 그대로다', () => {
+    for (const points of [[], [[FI2, 20]]] as ReadonlyArray<
+      ReadonlyArray<readonly [number, number]>
+    >) {
+      const w = mk(points);
+      w.magnetRadius = 400;
+      const p = pick(20);
+      onPickupRadius(w, player(w), p);
+      expect(p.radius).toBe(20);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑯ DR7 신호 표류 (앵커 ⑨ 전반부 + 앵커 ㉙ 후반부) — 배치6
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션 실측
+// `signalDriftTick` 의 `player.aux1 += 1` 을 지우면 **양성 2항목**(에코 2배 · 조우 2배)이,
+// `bubbleObjectiveResolved` 의 `player.aux0 = FILM_ABSORB_FLAT` 를 지우면 **양성 1항목**
+// (완수 만재)이 실패한다. 부정 항목(완료는 활성이 아니다 · 막이 서 있으면 안 얹는다)은
+// 원리적으로 안 걸리므로 긍정 짝을 같은 절에 뒀다.
+
+describe('⑯ DR7 신호 표류 (앵커 ⑨ · ㉙)', () => {
+  /** `EchoRuntime`/`EncounterRuntime` 의 **상태 코드만** 세운다 — 술어가 읽는 칸이 그것뿐이다. */
+  function setEcho(w: WorldState, s: number): void {
+    w.echoRuntime = { state: s } as unknown as NonNullable<WorldState['echoRuntime']>;
+  }
+  function setEncounter(w: WorldState, s: number): void {
+    w.encounterRuntime = { state: s } as unknown as NonNullable<WorldState['encounterRuntime']>;
+  }
+
+  /** 앵커 ⑨ 한 번이 재생 타이머에 얹은 칸 수. 엔진의 `aux1++` 는 이 뒤라 여기 안 섞인다. */
+  function driftGain(
+    points: ReadonlyArray<readonly [number, number]>,
+    set: (w: WorldState) => void,
+  ): number {
+    const w = mk(points);
+    const p = player(w);
+    p.aux0 = 0;
+    p.aux1 = 0;
+    set(w);
+    onSignatureStep(w, p, emptyInput());
+    return p.aux1;
+  }
+
+  it('에코가 **활성**이면 재생 타이머가 한 칸 더 전진한다 (= 엔진과 합쳐 2배)', () => {
+    expect(driftGain([[DR7, 1]], (w) => setEcho(w, 1))).toBe(1);
+  });
+
+  it('조우가 **활성**(출현 1 · 진행 2)이면 같다', () => {
+    expect(driftGain([[DR7, 1]], (w) => setEncounter(w, 1))).toBe(1);
+    expect(driftGain([[DR7, 1]], (w) => setEncounter(w, 2))).toBe(1);
+  });
+
+  it('**완료·거부·대기는 활성이 아니다** — 한 칸도 안 얹는다 (긍정 짝은 위 두 절)', () => {
+    expect(driftGain([[DR7, 1]], (w) => setEcho(w, 0))).toBe(0);
+    expect(driftGain([[DR7, 1]], (w) => setEcho(w, 2))).toBe(0);
+    expect(driftGain([[DR7, 1]], (w) => setEncounter(w, 3))).toBe(0);
+    expect(driftGain([[DR7, 1]], (w) => setEncounter(w, 4))).toBe(0);
+    expect(driftGain([[DR7, 1]], () => undefined)).toBe(0);
+  });
+
+  it('**막이 서 있으면 안 얹는다** — 재생 타이머는 무막에서만 돈다는 엔진 계약', () => {
+    const w = mk([[DR7, 20]]);
+    const p = player(w);
+    p.aux0 = 10;
+    p.aux1 = 0;
+    setEcho(w, 1);
+    onSignatureStep(w, p, emptyInput());
+    expect(p.aux1).toBe(0);
+  });
+
+  it('미투자 런·다른 스킬만 찍은 런은 활성이어도 안 얹는다', () => {
+    expect(driftGain([], (w) => setEcho(w, 1))).toBe(0);
+    expect(driftGain([[FI2, 20]], (w) => setEcho(w, 1))).toBe(0);
+  });
+
+  it('완수 틱(앵커 ㉙)에 막이 **즉시 만재**되고 재생 타이머가 리셋된다 — 에코·조우 둘 다', () => {
+    for (const kind of ['echo', 'encounter'] as const) {
+      const w = mk([[DR7, 1]]);
+      const p = player(w);
+      p.aux0 = 0;
+      p.aux1 = 300;
+      onObjectiveResolved(w, p, kind);
+      expect(p.aux0).toBe(FILM_ABSORB_FLAT);
+      expect(p.aux1).toBe(0);
+    }
+  });
+
+  it('미투자 런·다른 스킬만 찍은 런은 완수해도 막이 안 선다', () => {
+    for (const points of [[], [[FI2, 20]]] as ReadonlyArray<
+      ReadonlyArray<readonly [number, number]>
+    >) {
+      const w = mk(points);
+      const p = player(w);
+      p.aux0 = 0;
+      p.aux1 = 300;
+      onObjectiveResolved(w, p, 'echo');
+      expect(p.aux0).toBe(0);
+      expect(p.aux1).toBe(300);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑰ DR3 도약 자기장 (앵커 ㉗ 세움 · ⑨ 감소 · ㉘ 소비) — 배치6 · 첫 슬롯 실배정
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션 실측
+// `bubbleActiveFired` 의 DR3 `writeSlot` 을 지우면 **양성 4항목**(슬롯 적립 · 매 틱 감소 ·
+// 창 중 반경 확대 · 레벨 단조)이, `blinkMagnetTick` 의 `writeSlot` 을 지우면 **양성 2항목**
+// (매 틱 감소 · 창 소진 복귀)이, `bubbleGemMagnetParams` 의 DR3 블록을 지우면 **양성 2항목**
+// (창 중 반경 확대 · 레벨 단조)이 실패한다. 부정 항목(pop 액티브는 안 세운다 · 창이 끝나면
+// 원래대로)은 긍정 짝과 같은 절이다.
+
+describe('⑰ DR3 도약 자기장 (앵커 ㉗ · ⑨ · ㉘)', () => {
+  const DR3_POP_LO = BUBBLE_ACTIVES[0];
+  const DR3_DRIFT_LO = BUBBLE_ACTIVES[2];
+  const DR3_RIGHT = { x: 1, y: 0 };
+
+  function fired(w: WorldState): ActiveFiredOrigin {
+    const p = player(w);
+    return { preX: p.x, preY: p.y, preAux0: 0, spawnWatermark: w.entities.length };
+  }
+
+  function magnetOf(radius: number): GemMagnetParams {
+    return { radius, broodRadius: 0 };
+  }
+
+  it('drift 액티브 착지가 슬롯에 창을 세운다 (Lv1 = 96틱 · Lv20 = 210틱)', () => {
+    for (const [level, want] of [
+      [1, 96],
+      [20, 210],
+    ] as const) {
+      const w = mk([[DR3, level]]);
+      onActiveFired(w, player(w), DR3_DRIFT_LO, DR3_RIGHT, 0, fired(w));
+      expect(readSlot(w.skillStage, BubbleStage.blinkMagnet)).toBe(want);
+    }
+  });
+
+  it('**pop 액티브는 세우지 않는다** — 계열 게이트 (긍정 짝은 위 절)', () => {
+    const w = mk([[DR3, 20]]);
+    onActiveFired(w, player(w), DR3_POP_LO, DR3_RIGHT, 0, fired(w));
+    expect(readSlot(w.skillStage, BubbleStage.blinkMagnet)).toBe(0);
+  });
+
+  it('앵커 ⑨ 가 창을 **매 틱 정확히 1** 깎는다', () => {
+    const w = mk([[DR3, 1]]);
+    const p = player(w);
+    p.aux0 = FILM_ABSORB_FLAT; // 다른 축(DR10·DR7)이 안 끼도록 막을 세워 둔다
+    onActiveFired(w, p, DR3_DRIFT_LO, DR3_RIGHT, 0, fired(w));
+    onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BubbleStage.blinkMagnet)).toBe(95);
+    onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BubbleStage.blinkMagnet)).toBe(94);
+  });
+
+  it('창이 서 있는 동안 자석 반경이 커진다 (Lv1 = ×1.33) · 창이 없으면 그대로', () => {
+    const w = mk([[DR3, 1]]);
+    const before = magnetOf(400);
+    onGemMagnetParams(w, player(w), before);
+    expect(before.radius).toBe(400); // 창 없음 — 부정 짝
+
+    onActiveFired(w, player(w), DR3_DRIFT_LO, DR3_RIGHT, 0, fired(w));
+    const during = magnetOf(400);
+    onGemMagnetParams(w, player(w), during);
+    expect(during.radius).toBeCloseTo(400 * 1.33, 6);
+    expect(during.radius).toBeGreaterThan(400); // 하한 짝
+  });
+
+  it('창이 0 으로 닳으면 반경이 원래대로 돌아온다', () => {
+    const w = mk([[DR3, 1]]);
+    const p = player(w);
+    p.aux0 = FILM_ABSORB_FLAT;
+    onActiveFired(w, p, DR3_DRIFT_LO, DR3_RIGHT, 0, fired(w));
+    for (let i = 0; i < 96; i++) onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BubbleStage.blinkMagnet)).toBe(0);
+    const after = magnetOf(400);
+    onGemMagnetParams(w, p, after);
+    expect(after.radius).toBe(400);
+  });
+
+  it('레벨이 오르면 배율도 커진다 (Lv20 > Lv1 > 기본)', () => {
+    function radiusOf(level: number): number {
+      const w = mk([[DR3, level]]);
+      onActiveFired(w, player(w), DR3_DRIFT_LO, DR3_RIGHT, 0, fired(w));
+      const m = magnetOf(400);
+      onGemMagnetParams(w, player(w), m);
+      return m.radius;
+    }
+    expect(radiusOf(1)).toBeGreaterThan(400);
+    expect(radiusOf(20)).toBeGreaterThan(radiusOf(1));
+  });
+
+  it('**DR3 을 안 찍은 런은 슬롯 16칸이 끝까지 0** — 해시 폴드가 한 번도 안 돈다', () => {
+    const w = mk([[DR9, 20]]);
+    onActiveFired(w, player(w), DR3_DRIFT_LO, DR3_RIGHT, 0, fired(w));
+    for (let i = 0; i < SKILL_SLOT_COUNT; i++) {
+      expect(readSlot(w.skillCarry, i)).toBe(0);
+      expect(readSlot(w.skillStage, i)).toBe(0);
+    }
   });
 });
