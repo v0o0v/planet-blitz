@@ -103,6 +103,7 @@ import {
   DEFAULT_CONFIG,
   echoStabilizedOf,
   catalystSettlementOf,
+  catalystContributionsOf,
   encounterShardOf,
   encounterTypeOf,
   runStoryMetrics,
@@ -118,6 +119,8 @@ import { RECORD_SHARDS } from '../data/lore/index.js';
 // import 하므로 프로덕션 번들에서 완전히 제거된다). 타입 import는 컴파일 시 소거됨.
 import type { Harness, HarnessScreen } from './harness/core.js';
 import { snapshotWorld } from './sim/snapshot.js';
+// 촉매 통지 → 소리·색 해석(ADR-0052 §귀속 규율). 순수 함수라 매핑을 테스트가 직접 못 박는다.
+import { catalystFxSound, catalystFxFlashesSlot, FX_SELF_HARM } from './render/catalystFx.js';
 import type { WorldSnapshot } from './sim/snapshot.js';
 import { ReplayRecorder, hashWorld } from './sim/replay.js';
 import { runBench } from './bench/bench.js';
@@ -1880,7 +1883,33 @@ async function main(): Promise<void> {
     }
     prevSnap = currSnap;
     currSnap = snapshotWorld(next);
+    // 촉매 귀속 3종의 배선 지점(ADR-0052 §귀속 규율). **여기가 유일한 자리**다 — 렌더 루프에서
+    // 읽으면 한 프레임에 sim 이 여러 틱 돈 경우 중간 틱의 통지가 통째로 사라지고(통지는 매 틱
+    // 비워진다), 0 틱인 프레임에서는 같은 통지를 두 번 소비한다. `stepOnce` 는 **틱당 정확히
+    // 한 번** 도는 유일한 경로라 두 결함이 구조적으로 없다.
+    drainCatalystFx(currSnap.catalystFx);
     harness?.observe(next);
+  }
+
+  /**
+   * 이번 틱의 촉매 통지를 **귀속 3종**으로 흘린다(헌장 §귀속 규율).
+   *
+   *  1. HUD 슬롯 번쩍임 — `hud.flashCatalystSlot(id)`. 이펙트가 무엇이든 어느 카드인지가
+   *     화면 한 곳에서 항상 읽힌다.
+   *  2. 전용 사운드 — 발동/자해가 갈린다(`catalystFxSound`). 나머지 종류는 무음이다.
+   *  3. 자기 피해 전용 색 — 자해 통지가 오면 다음 플레이어 피격 연출이 촉매 색으로 갈린다.
+   *
+   * 무촉매 런은 `events` 가 `undefined` 라 첫 줄에서 끝난다.
+   */
+  function drainCatalystFx(events: WorldSnapshot['catalystFx']): void {
+    if (events === undefined) return;
+    for (const ev of events) {
+      if (catalystFxFlashesSlot(ev.kind)) hud.flashCatalystSlot(ev.id);
+      const sound = catalystFxSound(ev.kind);
+      // ⚠️ 절차 합성 폴백이 걸리지 않는 이름만 온다(`render/catalystFx.ts` 매핑 주석).
+      if (sound !== null) audio.play(sound);
+      if (ev.kind === FX_SELF_HARM) entityRenderer.markCatalystSelfHarm();
+    }
   }
 
   /**
@@ -2114,6 +2143,9 @@ async function main(): Promise<void> {
         const dropLevelCap = activeShip(profile).level;
         // 촉매 정산 채널(ADR-0052). 순수 리더 — 무촉매 런은 undefined 다(아래 스프레드 참조).
         const catalystSettlement = catalystSettlementOf(w);
+        // 촉매별 기여 명세(헌장 §귀속 규율 2). 같은 규율의 두 번째 순수 리더 — 무촉매 런과
+        // 적립이 한 번도 없던 런은 undefined 다.
+        const catalystContributions = catalystContributionsOf(w);
         lastOutcome = settleRun(profile, {
           victory: w.victory,
           loot: w.loot,
@@ -2143,6 +2175,9 @@ async function main(): Promise<void> {
           // 만 내놓고, 무촉매 런은 `undefined` 라 스프레드가 필드를 아예 안 싣는다 → 무촉매 런의
           // 정산 입력은 종전과 바이트 동일하다. 값의 의미는 `catalystSlots.ts` 배정표 소유.
           ...(catalystSettlement !== undefined ? { catalystSettlement } : {}),
+          // 촉매별 기여 명세(헌장 §귀속 규율 2 — 발동 횟수 / 번 액수 / 놓친 액수). 위와 같은
+          // 스프레드 규율이라 무촉매 런의 정산 입력은 종전과 바이트 동일하다.
+          ...(catalystContributions !== undefined ? { catalystContributions } : {}),
         }, { serverDrops });
         // Completing the tutorial (win or lose) reveals the base and makes the run
         // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.

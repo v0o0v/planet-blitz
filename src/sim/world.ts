@@ -60,6 +60,10 @@ import { multFromCenti } from '../economy/planetPopularity.js';
 // 촉매 조준 제외(`id 36` 그림자). `catalyst/shared.ts` 는 `world.js` 를 type-only 로만 끄는
 // 리프라 이 방향 값 import 로 순환이 생기지 않는다.
 import { isCatalystShadow } from './catalyst/shared.js';
+// 촉매 연출·귀속 채널(ADR-0052 §가시성/§귀속). `catalyst/fx.ts` 는 `world.js` 를 **type-only**
+// 로만 끄는 리프라 값으로 들여와도 순환이 생기지 않는다.
+import { clearCatalystFx } from './catalyst/fx.js';
+import type { CatalystFxEvent, CatalystContribution } from './catalyst/fx.js';
 import { resolveCatalystMods } from './catalystMods.js';
 import type { CatalystMods } from './catalystMods.js';
 import {
@@ -259,6 +263,10 @@ import {
 } from './catalystHooks.js';
 // 정산 리더 재수출(`echoStabilizedOf` 선례) — W3(정산·main.ts)이 `from './world.js'` 로 소비한다.
 export { catalystSettlementOf } from './catalystHooks.js';
+// 연출·귀속 채널의 **읽기 면**만 재수출한다(W3=`main.ts` 소비). 통지·적립 API 는 sim 안쪽
+// 전용이라 여기서 열지 않는다 — 열면 렌더가 sim 상태의 두 번째 작성자가 된다.
+export { catalystContributionsOf } from './catalyst/fx.js';
+export type { CatalystContribution, CatalystFxEvent } from './catalyst/fx.js';
 
 /**
  * 앵커 ⑱ 이 쓰는 **재사용 레코드**. 명중 해소 루프는 틱당 최대 ~2,000회 돌아 발당 할당이
@@ -1368,6 +1376,34 @@ export interface WorldState {
    * 무촉매 런은 이 게이트에서 즉시 반환하므로 **바이트 단위로 종전과 같다.**
    */
   catalystOn: boolean;
+  /**
+   * 이번 **틱**의 촉매 연출 통지(ADR-0052 헌장 §가시성 규율). 규약 정본은
+   * {@link file://./catalyst/fx.ts} 헤더다 — 여기서는 이 필드가 왜 예외인지만 적는다.
+   *
+   * ## ⭐ `hashWorld` 에 접지 않는다 (sim 계약 밖)
+   * 순수 연출이라 접는 순간 "무슨 색으로 번쩍였나"가 결정론 계약에 들어간다. `catalystSlots`
+   * 와 정반대의 판단인데 근거가 갈린다 — 슬롯은 **sim 산술에 실제로 쓰이는** 값이고 이 채널은
+   * 어느 sim 산술에도 안 들어간다(그것이 강제되는지는 `tests/catalystFx.test.ts` §해시 불변이
+   * 기계로 잰다: 같은 시드에서 통지 유무가 해시를 안 바꾼다).
+   *
+   * ## `undefined` 가 기본이다
+   * 무촉매 런은 배열 할당조차 없다(`catalystSettlementOf` 가 `undefined` 를 돌려주는 선례).
+   * 매 틱 `stepWorld` 첫머리에서 길이를 0 으로 되돌린다 — 누적하면 스냅샷이 폭주한다.
+   *
+   * **`WORLD_FRESH` 다** — 틱 단위 사건 버퍼라 구간을 넘길 것이 없다.
+   */
+  catalystFx?: CatalystFxEvent[] | undefined;
+  /**
+   * 촉매별 **런 기여 장부**(발동 횟수 / 번 액수 / 놓친 액수 — 헌장 §귀속 규율 2).
+   * 적립 API 와 정산 리더는 {@link file://./catalyst/fx.ts} 가 소유한다.
+   *
+   * `catalystFx` 와 **같은 이유로 해시에 안 접힌다** — 이 값은 정산 화면의 명세일 뿐 어느 sim
+   * 산술에도 안 들어간다. 무촉매 런은 `undefined` 라 채널 자체가 없다.
+   *
+   * **`WORLD_FRESH` 다** — `catalystSlots` 와 같은 근거다(촉매가 실린 런에는 구간 전환이
+   * 존재하지 않는다. 위 `catalystSlots` 주석 참조).
+   */
+  catalystLedger?: CatalystContribution[] | undefined;
 }
 
 /**
@@ -1755,6 +1791,12 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // 불변식이 깨진다. 해시에는 접지 않는다(순수 파생 — replay.ts 의뢰 폴드 주석 참조).
   // 무의뢰 런은 필드 자체가 없어 무연산이다.
   if (state.commissionRuntime !== undefined) state.commissionRuntime.totalTicks++;
+
+  // 촉매 연출 통지는 **틱 단위 사건 스트림**이라 매 틱 비운다(누적하면 스냅샷이 폭주한다).
+  // 모든 조기 반환보다 **앞**이다 — 프리즈·detour 틱에서 안 비우면 직전 틱의 통지가 프리즈가
+  // 풀릴 때까지 스냅샷에 남아 HUD 가 같은 칸을 계속 번쩍인다. 무촉매 런은 필드가 `undefined`
+  // 라 이 호출이 첫 줄에서 끝난다(바이트 불변).
+  clearCatalystFx(state);
 
   // Run is over — the world is inert (settlement screen is showing).
   if (state.gameOver || state.victory) return;

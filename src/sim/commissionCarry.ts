@@ -226,6 +226,11 @@ export const WORLD_FRESH = [
   // `skillCarry` 의 참조 대입 주석을 먼저 읽어라 — `copyKeys` 는 배열을 **참조로** 넘긴다.
   'catalystSlots',
   'catalystOn',
+  // 연출 통지 버퍼(틱 단위 사건 스트림)와 귀속 장부(ADR-0052 §가시성/§귀속). 둘 다 바로 위와
+  // **같은 근거**로 FRESH 다 — 촉매가 실린 런에는 구간 전환이 존재하지 않는다. 통지 쪽은 그와
+  // 별개로 `stepWorld` 첫머리에서 매 틱 비워지므로 구간을 넘길 것 자체가 없다.
+  'catalystFx',
+  'catalystLedger',
 ] as const satisfies readonly (keyof WorldState)[];
 
 // ---------------------------------------------------------------------------

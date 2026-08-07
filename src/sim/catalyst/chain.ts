@@ -16,6 +16,10 @@
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
 import { ChainReactionSlot, readCatalystSlot, writeCatalystSlot } from '../catalystSlots.js';
+import type { DamageSourceMask } from '../skillSlots.js';
+import type { BulletExpiryReason } from '../skillHooks.js';
+import { CATALYST_LOOT_NEUTRAL } from './shared.js';
+import type { CatalystLootRoll } from './shared.js';
 
 /** id 20 — slug `resonance`. 정본은 `src/data/catalysts.ts`. */
 export const CARD_RESONANCE = 20;
@@ -134,4 +138,188 @@ export function chainReactionOnTick(state: WorldState, player: Entity): void {
     }
   }
   writeCatalystSlot(slots, ChainReactionSlot.SegmentMark, mark);
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 팬아웃 진입점 — **카드 레인은 `catalystHooks.ts` 를 한 줄도 고치지 않는다**
+// ---------------------------------------------------------------------------
+//
+// `catalystHooks.ts` 의 앵커 하나하나가 13개 그룹 모듈 전부에 **고정 순서로** 위임한다. 그래서
+// 카드 레인은 자기 그룹 파일의 함수 본체만 채우면 되고, 디스패처는 손대지 않는다 — 이것이
+// 병렬 레인의 마지막 충돌 지점을 없앤다.
+//
+// ## ⚠️ 지금은 전부 비어 있다 — **누락이 아니라 미배선이다**
+// 자기 몫이 없는 앵커는 빈 함수(또는 중립값 반환)로 남긴다. 지우지 마라 — 지우면 디스패처가
+// 깨지고 그 순간 이 파일이 다시 충돌 지점이 된다.
+//
+// ## ⚠️ 반환값이 있는 앵커의 **합성 규칙**(디스패처가 진다)
+//  - 배율형(`DamageChain`·`EnemyStep`·`LootRoll`) — 그룹 순서대로 **곱해서 누적**한다.
+//    중립은 `1`(전리품은 {@link CATALYST_LOOT_NEUTRAL}). 새 객체를 만들지 말고 그대로 돌려라.
+//  - 억제형(`BossDeath`·`LootCollected`·`DestructibleDestroyed`) — **하나라도 `true` 면 억제**.
+//    디스패처는 단락 없이 13개를 **전부** 부르고 OR 로 접는다(단락하면 뒤 그룹의 부수효과가 사라진다).
+//
+// ## ⚠️ 핫 경로 — 첫 줄은 반드시 **값싼 조기 반환**
+// `EnemyDamaged`·`EnemyStep`·`EnemyContact` 는 적마다 매 틱 돈다(× 13 그룹). 본체를 채울 때
+// 첫 줄을 `if (!carries(state, CARD_*)) return …;` 로 두어라. 캐시하겠다고 `WorldState` 에
+// 새 칸을 만들지 마라 — 헌장 §훅 예산이 그것을 §B 로 올린다.
+
+/** {@link import('../catalystHooks.js').onVolleyFiredCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnVolleyFired(state: WorldState, player: Entity): void {
+  void state;
+  void player;
+}
+
+/** {@link import('../catalystHooks.js').onDashFiredCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnDashFired(state: WorldState, player: Entity): void {
+  void state;
+  void player;
+}
+
+/** {@link import('../catalystHooks.js').onGemCollectedCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnGemCollected(state: WorldState, gem: Entity): void {
+  void state;
+  void gem;
+}
+
+/** {@link import('../catalystHooks.js').onPlayerDamagedCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnPlayerDamaged(state: WorldState, player: Entity, dmg: number, lethalSurvived: boolean, sources: DamageSourceMask): void {
+  void state;
+  void player;
+  void dmg;
+  void lethalSurvived;
+  void sources;
+}
+
+/** {@link import('../catalystHooks.js').onKillsDeltaCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnKillsDelta(state: WorldState, delta: number): void {
+  void state;
+  void delta;
+}
+
+/** {@link import('../catalystHooks.js').onBulletExpiredCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnBulletExpired(state: WorldState, bullet: Entity, reason: BulletExpiryReason): void {
+  void state;
+  void bullet;
+  void reason;
+}
+
+/** {@link import('../catalystHooks.js').onWallContactCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnWallContact(state: WorldState, player: Entity): void {
+  void state;
+  void player;
+}
+
+/** {@link import('../catalystHooks.js').onDamageChainCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnDamageChain(state: WorldState, player: Entity, dmg: number): number {
+  void state;
+  void player;
+  void dmg;
+  return 1;
+}
+
+/** {@link import('../catalystHooks.js').onEnemyDamagedCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnEnemyDamaged(state: WorldState, target: Entity, dmg: number, source: Entity | undefined): void {
+  void state;
+  void target;
+  void dmg;
+  void source;
+}
+
+/** {@link import('../catalystHooks.js').onEnemyDeathCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnEnemyDeath(state: WorldState, x: number, y: number, elite: boolean): void {
+  void state;
+  void x;
+  void y;
+  void elite;
+}
+
+/** {@link import('../catalystHooks.js').onLevelUpCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnLevelUp(state: WorldState, level: number): void {
+  void state;
+  void level;
+}
+
+/** {@link import('../catalystHooks.js').onPowerupOfferCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnPowerupOffer(state: WorldState, offers: number[]): void {
+  void state;
+  void offers;
+}
+
+/** {@link import('../catalystHooks.js').onPowerupPickedCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnPowerupPicked(state: WorldState, poolIndex: number, offeredIndex: number): void {
+  void state;
+  void poolIndex;
+  void offeredIndex;
+}
+
+/** {@link import('../catalystHooks.js').onDashPierceCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnDashPierce(state: WorldState, player: Entity, target: Entity): void {
+  void state;
+  void player;
+  void target;
+}
+
+/** {@link import('../catalystHooks.js').onResourceGrantedCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnResourceGranted(state: WorldState, amount: number, x: number, y: number): void {
+  void state;
+  void amount;
+  void x;
+  void y;
+}
+
+/** {@link import('../catalystHooks.js').onBossDeathCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnBossDeath(state: WorldState, x: number, y: number): boolean {
+  void state;
+  void x;
+  void y;
+  return false;
+}
+
+/** {@link import('../catalystHooks.js').onLootRollCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnLootRoll(state: WorldState, x: number, y: number, elite: boolean): CatalystLootRoll {
+  void state;
+  void x;
+  void y;
+  void elite;
+  return CATALYST_LOOT_NEUTRAL;
+}
+
+/** {@link import('../catalystHooks.js').onLootCollectedCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnLootCollected(state: WorldState, loot: Entity): boolean {
+  void state;
+  void loot;
+  return false;
+}
+
+/** {@link import('../catalystHooks.js').onWaveAdvancedCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnWaveAdvanced(state: WorldState, prevSegment: number, nextSegment: number): void {
+  void state;
+  void prevSegment;
+  void nextSegment;
+}
+
+/** {@link import('../catalystHooks.js').onEnemyContactCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnEnemyContact(state: WorldState, player: Entity, target: Entity): void {
+  void state;
+  void player;
+  void target;
+}
+
+/** {@link import('../catalystHooks.js').onEnemyStepCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnEnemyStep(state: WorldState, e: Entity): number {
+  void state;
+  void e;
+  return 1;
+}
+
+/** {@link import('../catalystHooks.js').onDestructibleDestroyedCatalyst} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnDestructibleDestroyed(state: WorldState, e: Entity): boolean {
+  void state;
+  void e;
+  return false;
+}
+
+/** {@link import('../catalystHooks.js').stepCatalystHazards} 의 chain 몫. **미배선**(위 §주석). */
+export function chainOnCatalystHazards(state: WorldState): void {
+  void state;
 }

@@ -11,6 +11,8 @@ import type { WorldState } from './world.js';
 import type { EntityKind } from './entities.js';
 import { eliteAffix } from './elite.js';
 import { markSnapshotValue } from './catalystMarks.js';
+import { catalystFxOf } from './catalyst/fx.js';
+import type { CatalystFxEvent } from './catalyst/fx.js';
 import { windowCenterX, windowCenterY } from './invasion/scroll.js';
 import { chaseVisionRadius, isShelterSecured } from './modes/chase.js';
 import { shrinkSafeRadius } from './modes/shrink.js';
@@ -163,6 +165,20 @@ export interface WorldSnapshot {
    * 같다 — 스냅샷 리터럴을 직접 만드는 테스트가 여럿이다.
    */
   contamination?: { cells: number; critical: number } | undefined;
+  /**
+   * 이번 틱의 **촉매 연출 통지**(ADR-0052 §가시성/§귀속). 규약 정본은 `src/sim/catalyst/fx.ts`.
+   *
+   * 왜 스냅샷에 싣는가: sim → 렌더로 **사건**을 내보내는 채널이 이 저장소에 아예 없었다.
+   * `EntitySnapshot` 은 상태의 사진이라 "방금 무슨 일이 일어났다"를 못 나른다. 헌장이 가시성·
+   * 귀속을 **채택의 전제조건**으로 못 박았으므로 이것은 연출 편의가 아니라 선결이다.
+   *
+   * ⚠️ **복사본이다.** sim 내부 버퍼는 다음 틱에 길이 0 으로 재사용되므로, 참조를 그대로
+   * 흘리면 보간 중인 이전 스냅샷의 내용이 조용히 사라진다.
+   *
+   * 무촉매 런과 사건이 없는 틱은 `undefined` 다(`contamination` 선례 — 선택 필드인 이유도
+   * 같다: 스냅샷 리터럴을 직접 만드는 테스트가 여럿이다). 렌더 전용이라 `hashWorld` 와 무관하다.
+   */
+  catalystFx?: readonly CatalystFxEvent[] | undefined;
   entities: EntitySnapshot[];
   beams: Beam[];
 }
@@ -252,7 +268,20 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
       state.config.planetMode === PLANET_MODE.contamination
         ? { cells: contaminationCellCount(state), critical: CONTAMINATION_CRITICAL_CELLS }
         : undefined,
+    // 촉매 연출 통지(ADR-0052). **행까지 새로 만든다** — sim 내부 버퍼는 다음 틱에 길이 0 으로
+    // 재사용되므로 참조를 흘리면 보간 중인 이전 스냅샷의 내용이 조용히 비워진다.
+    // 무촉매 런·사건 없는 틱은 `catalystFxOf` 가 `undefined` 라 여기서 무연산이다.
+    catalystFx: copyCatalystFx(state),
     entities,
     beams,
   };
+}
+
+/** {@link WorldSnapshot.catalystFx} 의 복사. 부재를 그대로 부재로 넘긴다. */
+function copyCatalystFx(state: WorldState): readonly CatalystFxEvent[] | undefined {
+  const fx = catalystFxOf(state);
+  if (fx === undefined) return undefined;
+  const out: CatalystFxEvent[] = [];
+  for (const e of fx) out.push({ id: e.id, kind: e.kind, x: e.x, y: e.y });
+  return out;
 }

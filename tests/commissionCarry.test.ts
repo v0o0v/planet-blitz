@@ -39,6 +39,11 @@ const WORLD_OPTIONAL_KEYS: readonly (keyof WorldState)[] = [
   'encounterRuntime',
   // 의뢰 런에만 존재한다(`config.commission` 이 있을 때만 `createWorld` 가 싣는다).
   'commissionRuntime',
+  // 촉매 연출 통지·귀속 장부(ADR-0052). **무촉매 런은 필드가 아예 없다** — 그것이 채널의
+  // 계약이다(`catalyst/fx.ts` §제약 3). 여기 없으면 위 「유령 키」 대조가 그 계약을 결함으로
+  // 오독한다.
+  'catalystFx',
+  'catalystLedger',
 ];
 
 function player(w: WorldState): Entity {
@@ -149,7 +154,7 @@ describe('① 전수 대조 — 분류 배열이 필드 전부를 덮는다', ()
     expect(unclassified, `미분류 엔티티 키: ${unclassified.join(', ')}`).toEqual([]);
   });
 
-  it('배열 길이 합이 실제 필드 수와 같다 (WorldState 78 · Entity 25)', () => {
+  it('배열 길이 합이 실제 필드 수와 같다 (WorldState 80 · Entity 25)', () => {
     // 숫자를 박아 두는 이유: 필드가 늘었는데 분류도 같이 늘면 위 대조는 통과하지만, 그때
     // **분류 판단이 실제로 있었는지**는 이 숫자가 바뀌는 것으로만 드러난다.
     // 61 → 62: `commissionRuntime` 신설(의뢰 구간 전환 코어 2단계). 62 → 64: `activeTune0/1`
@@ -172,7 +177,12 @@ describe('① 전수 대조 — 분류 배열이 필드 전부를 덮는다', ()
     // **둘 다 FRESH** 다. 스킬과 달리 이월/구간 2벌로 가르지 않은 근거는 헌장의 "침공·의뢰
     // 런에는 촉매가 들어가지 않는다" 이고(구간 전환이 존재하지 않으므로 이월/0리셋이 둘 다
     // 관측 불가한 무연산이다), 덕분에 `skillCarry` 가 밟고 있는 참조 대입 공유를 안 밟는다.
-    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(78);
+    // 78 → 80: 촉매 연출·귀속 채널(ADR-0052 §가시성/§귀속) 둘. `catalystFx`(틱 단위 통지
+    // 버퍼) · `catalystLedger`(촉매별 기여 장부) — **둘 다 FRESH** 이고 근거는 바로 위와 같다.
+    // ⚠️ 둘은 **`hashWorld` 에 접히지 않는 유일한 부류**다(순수 연출·정산 명세라 어느 sim
+    // 산술에도 안 들어간다). 그 불변식은 `tests/catalystFx.test.ts` §해시 불변이 잠근다 —
+    // 여기 분류는 "구간 전환에서 어떻게 다루나"만 정한다.
+    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(80);
     expect(ENTITY_CARRY.length + ENTITY_RESET_ZERO.length + ENTITY_FRESH.length).toBe(25);
   });
 });

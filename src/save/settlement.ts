@@ -116,6 +116,31 @@ export interface RunResult {
    * 정산이 칸에 이름을 붙이면 정본이 둘이 된다.
    */
   catalystSettlement?: readonly number[];
+  /**
+   * 촉매별 **기여 명세**(ADR-0052 헌장 §귀속 규율 2) — 발동 횟수 / 번 액수 / **조건 미달로
+   * 놓친 액수**. sim `catalystContributionsOf` 파생이고 무촉매 런은 `undefined` 라 필드가 아예
+   * 안 실린다(`catalystSettlement` 와 동일 규율).
+   *
+   * ## 왜 슬롯 한 벌로는 부족한가
+   * `catalystSettlement` 는 **슬롯 24칸의 최종값**이라 "어느 카드가 얼마를 벌었나"를 못 말한다.
+   * 헌장은 초판이 자원 적립 8종을 전부 "상승하는 금빛 숫자"로 만들어 **어느 촉매의 신호인지
+   * 알 수 없었던 것**을 결함으로 지목했고, 그 해소가 이 칸이다. 특히 `missed` 는 조건부 카드가
+   * "다음 판에 조건을 추구할" 이유를 만드는 유일한 표시다.
+   *
+   * ## ⚠️ 원시값만 — sim 의 타입을 여기 들이지 마라
+   * 구조를 **그 자리에 적는다**(`import` 하지 않는다). `catalystSettlement` 주석이 적은 것과
+   * 같은 이유다 — `tests/catalystFoundation.test.ts` 가 이 파일에 sim 월드 상태 타입 이름이
+   * 한 번도 안 나오는 것을 기계로 검사하고, 그 벽이 촉매 48종이 정산을 임의로 오염시키지
+   * 못하게 막는 유일한 경계다.
+   *
+   * 값의 **의미**(id 가 어느 카드인가)는 `src/data/catalysts.ts` 가 소유한다.
+   */
+  catalystContributions?: readonly {
+    id: number;
+    fired: number;
+    earned: number;
+    missed: number;
+  }[];
 }
 
 /** Summary of what a run added to the profile (for the result overlay). */
