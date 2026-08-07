@@ -165,6 +165,32 @@ function hullGrantHp(level: number): number {
 const HULL_XP_THRESHOLD = 400;
 
 /**
+ * F8 이 늘릴 수 있는 **과열 창 잔여 틱의 천장**.
+ *
+ * ## 왜 상한이 **필수**인가 — 없으면 창이 영영 안 닫힌다
+ * 과열 창은 틱당 정확히 1 씩 닳는다(`boss.ts:116` · `coreRoom.ts:630`). 스트라이커는 다탄
+ * 볼리라 보스 한 마리에 **매 틱 1발 이상 명중**이 정상 상태이고, 연장이 명중당 1 이상이면
+ * 그 감소분을 상시 상쇄한다. 결과는 "가끔 창이 길어진다"가 아니라 **피해 2배 창의 영구화** —
+ * 보스의 취약 창 설계(닫힌 구간이 있는 리듬) 자체를 무력화한다. 그래서 이것은 밸런스 손잡이가
+ * 아니라 **거동 상한**이고, 상한을 넘겨 이미 서 있는 창을 **깎지도 않는다**(아래 `<` 가드).
+ *
+ * ## ⚠️ 값이 300 인 것은 우연이 아니지만 **의미는 다르다**
+ * `boss.ts` 의 `BOSS_OVERHEAT_TICKS`(300) · `data/invasion/defenseBosses.ts` 의
+ * `DEFENSE_BOSS_OVERHEAT_TICKS`(300)와 같은 수지만, 저쪽은 **창을 여는 길이의 정의**이고
+ * 이쪽은 **연장이 도달할 수 있는 천장**이다. 즉 "F8 은 창을 처음 열렸을 때보다 길게 만들지
+ * 못한다" 가 이 상수의 뜻이다.
+ *  · **런타임 import 로 잇지 않는다.** `boss.ts` 는 `waves.ts`·`data/planets` 까지 끌고 오는
+ *    무거운 모듈이라 leaf 계약(헤더 ①)을 깬다. 그래서 버블 `PO2_SPEED_BASE`·해츨링
+ *    `NU2_SHELL_GEM_XP` 와 같은 **leaf-local 상수** 관용구를 쓴다.
+ *  · ⚠️ 저쪽 값이 바뀌면 이 값은 **따라가지 않는다** — 그것이 독립 상수의 대가이자 목적이다
+ *    (의미가 갈린 두 수가 우연히 같이 움직이는 것을 막는다).
+ *  · 침공 어픽스 `defOverheatResistPct` 가 창을 300 밑으로 줄인 판에서는 이 천장이 그 축소를
+ *    **되돌릴 수 있다**(줄어든 창을 최대 300 까지 도로 늘린다). 그건 F8 이 사는 자리 그대로다 —
+ *    어픽스는 창을 짧게 열 뿐이고, 늘리는 축을 금지하지는 않는다.
+ */
+const F8_OVERHEAT_CAP = 300;
+
+/**
  * F5 조준선 콘의 **반각 20°**(설계서 고정값 — 레벨로 안 변한다).
  *
  * `PI / 9` 로 적는 것은 도수 리터럴을 라디안으로 바꾸는 사본을 만들지 않으려는 것이다.
@@ -506,14 +532,20 @@ export function strikerEnemyDamaged(
   //    싣고(`coreRoom.ts:19,658`) 앵커 ⑩ doc 가 그 kind 도 여기 온다고 못 박았다.
   //  · ⚠️ **창이 이미 열려 있을 때만** 연장한다(`iframes > 0`). 닫힌 창을 여는 것은 "연장" 이
   //    아니라 개창이고, 그러면 재장전 타이머(`dashCooldown`)가 지키는 주기가 통째로 무의미해진다.
+  //  · ⚠️ **천장은 {@link F8_OVERHEAT_CAP} 이다.** 없으면 다탄 볼리가 틱당 감소 1 을 상시
+  //    상쇄해 창이 영영 안 닫힌다 — 그 상수 doc 가 근거다.
   const f8 = lv(state, Sk.overheatShatter);
   if (
     f8 >= 1 &&
     target.iframes > 0 &&
+    target.iframes < F8_OVERHEAT_CAP &&
     (target.kind === 'boss' || target.kind === 'defenseBoss')
   ) {
     // 명중당 1 + floor(Lv/8) 틱(Lv1 = 1 · Lv20 = 3). 정수 계단이라 F1·F6 과 같은 문법이다.
-    target.iframes += 1 + Math.floor(f8 / 8);
+    // ⚠️ `< F8_OVERHEAT_CAP` 게이트가 `Math.min` 과 **한 쌍**이다. 게이트 없이 `min` 만 쓰면
+    // 이미 천장 위에 서 있는 창(어픽스·미래 콘텐츠가 더 길게 열었을 때)을 F8 이 **깎는다** —
+    // 강화 스킬이 약화가 되는 부호 반전이다.
+    target.iframes = Math.min(target.iframes + 1 + Math.floor(f8 / 8), F8_OVERHEAT_CAP);
   }
 
   // 정조준탄 표식(앵커 ⑯ 의 `mark: 1`). 표식 없는 평상시 볼리는 아래로 한 줄도 안 내려간다.

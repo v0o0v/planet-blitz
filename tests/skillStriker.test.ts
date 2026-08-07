@@ -908,6 +908,51 @@ describe('⑫ F8 과열 파쇄 (앵커 ⑩)', () => {
   it('미투자면 과열 창이 그대로다', () => {
     expect(hitBoss([[F1, 1]], 'boss', 40)).toBe(0);
   });
+
+  // -------------------------------------------------------------------------
+  // 상한 — "창이 영영 안 닫힌다" 를 막는 축. 위 6건이 **긍정 짝**이다
+  // (연장이 0 이 되면 저기가 먼저 빨개지므로 아래 단언이 항진이 아니다).
+  // -------------------------------------------------------------------------
+
+  /** 효과 함수와 **독립**으로 적은 천장. 코드에서 import 하면 상한 단언이 항진이 된다. */
+  const CAP = 300;
+
+  it('천장(300)을 넘겨 늘리지 않는다 — 한 발로도 경계에서 멈춘다', () => {
+    const w = mk([[F8, 20]]); // 연장 폭 3
+    const t = blankEntity('boss');
+    t.hp = 9000;
+    t.iframes = CAP - 1;
+    onEnemyDamaged(w, t, 10, plainBullet());
+    expect(t.iframes).toBe(CAP);
+  });
+
+  it('⚠️ 이미 천장 위인 창을 **깎지 않는다** (강화가 약화로 뒤집히는 부호 반전 방지)', () => {
+    const w = mk([[F8, 20]]);
+    const t = blankEntity('boss');
+    t.hp = 9000;
+    t.iframes = CAP + 60; // 미래 콘텐츠·어픽스가 더 길게 연 창
+    onEnemyDamaged(w, t, 10, plainBullet());
+    expect(t.iframes).toBe(CAP + 60);
+  });
+
+  it('다탄 볼리를 연속 틱 먹여도 창이 천장을 안 넘고, 사격을 멈추면 **실제로 닫힌다**', () => {
+    const w = mk([[F8, 20]]); // 명중당 3틱 — 감소(틱당 1)를 크게 웃돈다
+    const t = blankEntity('boss');
+    t.hp = 900000;
+    t.iframes = 300; // 방금 열린 창
+    // ① 240틱 × 명중 4발/틱 — 보스 스텝의 감소(틱당 1)를 손으로 재현한다.
+    //    (`stepBoss` 를 부르지 않는 것은 이 테스트가 재려는 것이 F8 의 상한 산술이라서다.)
+    let peak = 0;
+    for (let tick = 0; tick < 240; tick++) {
+      for (let shot = 0; shot < 4; shot++) onEnemyDamaged(w, t, 10, plainBullet());
+      if (t.iframes > 0) t.iframes--; // 보스 스텝의 과열 감쇠
+      if (t.iframes > peak) peak = t.iframes;
+    }
+    expect(peak).toBeLessThanOrEqual(CAP);
+    // ② 사격을 멈추면 창은 천장 길이 안에 반드시 닫힌다 — "영구 유지 안 됨" 의 직접 증거.
+    for (let tick = 0; tick < CAP && t.iframes > 0; tick++) t.iframes--;
+    expect(t.iframes).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
