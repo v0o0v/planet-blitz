@@ -9,7 +9,13 @@
  * ---
  *
  * ## 배선 현황 — 배치 4 가 **6종**, S2 앵커 확장 레인이 **+8종**, S3 배선 레인이 **+1종(ME5)**,
- * W2 입력 배관 레인이 **+1종(SQ7)** = 지금 **16종**
+ * W2 입력 배관 레인이 **+1종(SQ7)**, 공유 앵커 레인이 **+2종(ME2·CU8)** = 지금 **18종**
+ *
+ * 공유 앵커 레인이 더한 둘은 **부채 술어 계열**이다 — 둘 다 `player.aux0`(적립된 지연 피해)를
+ * **읽기만** 하고 아무것도 안 쓴다(불변식 2 무접촉).
+ *  - **ME2「채무 자석」**(앵커 ㉘ `onGemMagnetParams`) — 앵커 ③ 이 수거 **뒤**라 반경에 못 닿던
+ *    자리다. `stepGems` 의 반경 확정 직후로 앵커가 서면서 풀렸다.
+ *  - **CU8「통증 마취」**(앵커 ㉙ `onPlayerMoveParams`) — `stepPlayer` 의 이동 배율 산출 직전.
  *
  * 말로우 30종의 설계는 시그니처 완충의 **두 분기**에 압도적으로 몰려 있었고, 배치 4 시점에는
  * 그 둘 다 앵커가 없었다. **S2 가 그중 하나(정산 분기)를 열었다.**
@@ -65,7 +71,7 @@
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
-import type { VolleyParams } from '../skillHooks.js';
+import type { GemMagnetParams, PlayerMoveParams, VolleyParams } from '../skillHooks.js';
 import { blastDamage, clearEnemyBullets } from '../activeTypes.js';
 import { CUSHION_RECOVER_TICKS, CUSHION_TICK_CAP } from '../shipSignature.js';
 import { readSlot, writeSlot, MallowCarry, MallowStage } from '../skillSlots.js';
@@ -94,6 +100,7 @@ const enum Sk {
   /** SQ7 관성 사출 */ momentumLaunch = 6,
   /** SQ8 흉터 포문 */ scarCannon = 7,
   /** ME1 조기 상환 */ earlyRepayment = 10,
+  /** ME2 채무 자석 */ debtMagnet = 11,
   /** ME4 반환 요법 */ rebateTherapy = 13,
   /** ME5 분할 상환 */ installmentPlan = 14,
   /** ME9 솜틀 요양 */ fluffConvalescence = 18,
@@ -101,6 +108,7 @@ const enum Sk {
   /** CU3 무통 정산 */ painlessSettlement = 22,
   /** CU4 반발 세척 */ recoilRinse = 23,
   /** CU7 아문 살갗 */ healedHide = 26,
+  /** CU8 통증 마취 */ painAnesthesia = 27,
   /** CU9 유예의 은총 */ graceOfSettlement = 28,
   /** CU10 영구 채무 자본화 */ perpetualCapitalization = 29,
 }
@@ -221,6 +229,66 @@ function capitalizationPct(level: number): number {
 // ---------------------------------------------------------------------------
 // 앵커별 진입점 — `skillHooks.ts` 의 `case SIG_MALLOW_CUSHION:` 이 부른다
 // ---------------------------------------------------------------------------
+
+/**
+ * 앵커 ㉘ **젬 자석 반경 확정 직후** — ME2 채무 자석.
+ *
+ * 설계서: *"부채가 클수록 자석 반경이 커진다"* · 확장 bp = `aux0 × (6 + 2×Lv)` ·
+ * 확장 상한 = `3000 + 4000×Lv/(Lv+12)` bp.
+ *
+ * ## 왜 앵커 ③ 이 아니었나 (반쪽 배선 회피의 기록)
+ * 앵커 ③(`onGemCollected`)은 **수거가 끝난 뒤**라 반경이 이미 소비된 시점이다. 그 자리에서
+ * 배율을 써도 아무도 읽지 않는다 — 앞 레인이 ME2 를 미배선으로 남긴 사유가 그것이고, 앵커 ③
+ * 의 `case` 주석이 지금도 그 기록을 담고 있다.
+ *
+ * ## ⚠️ 나눗셈은 투자 게이트 **안**이다
+ * 상한 공식에 나눗셈이 하나 있는데 `stepGems` 는 **매 틱** 도는 함수다. 미투자 런이 그 비용을
+ * 내지 않도록 `me2 < 1` 조기 반환이 먼저다(`skills/striker.ts` 헤더 규율 ③).
+ * 미투자·무부채 런은 `params.radius` 를 **한 바이트도** 건드리지 않는다 → 골든 해시 불변.
+ */
+export function mallowGemMagnetParams(
+  state: WorldState,
+  player: Entity,
+  params: GemMagnetParams,
+): void {
+  const me2 = lv(state, Sk.debtMagnet);
+  if (me2 < 1) return;
+  const debt = player.aux0;
+  if (debt <= 0) return;
+  const capBp = 3000 + (4000 * me2) / (me2 + 12);
+  const rawBp = debt * (6 + 2 * me2);
+  const bp = rawBp > capBp ? capBp : rawBp;
+  params.radius *= 1 + bp / 10000;
+}
+
+/**
+ * 앵커 ㉙ **이동 배율 산출 직전** — CU8 통증 마취.
+ *
+ * 설계서: *"부채 보유 중(aux0 > 0) 이동 속도가 오른다"* · 이속 bp = `400 + aux0 × (2 + 1×Lv)` ·
+ * 상한 = `1500 + 1500×Lv/(Lv+10)` bp.
+ *
+ * ## ⚠️ `aux0 > 0` 게이트가 **설계 술어의 일부**다
+ * 빼면 부채가 0 인 런도 flat 400bp(+4%)를 상시로 받는다. 그것은 *"빚이 아드레날린"* 이 아니라
+ * 기체 기본 이속 상향이고, `baseBp` 와 이중 정본이 된다.
+ *
+ * ## ⚠️ 대시에는 안 걸린다
+ * 호출부가 이 배율을 `mx * playerSpeed` 쪽에만 곱한다(`PlayerMoveParams.speedMult` doc).
+ * 설계서 「이동(1.1) — `slowMult`·`moduleSlow` 가 곱해지는 자리에 배율 1개 추가」 그대로다.
+ */
+export function mallowPlayerMoveParams(
+  state: WorldState,
+  player: Entity,
+  params: PlayerMoveParams,
+): void {
+  const debt = player.aux0;
+  if (debt <= 0) return;
+  const cu8 = lv(state, Sk.painAnesthesia);
+  if (cu8 < 1) return;
+  const capBp = 1500 + (1500 * cu8) / (cu8 + 10);
+  const rawBp = 400 + debt * (2 + cu8);
+  const bp = rawBp > capBp ? capBp : rawBp;
+  params.speedMult *= 1 + bp / 10000;
+}
 
 /**
  * 앵커 ③ **젬 수거** — ME1 조기 상환.

@@ -1,5 +1,12 @@
 /**
- * **210스킬 배선의 앵커 15개** — sim 이 스킬 훅을 부르는 **유일한 지점들**(ADR-0049 S0 + S1).
+ * **210스킬 배선의 앵커 29개** — sim 이 스킬 훅을 부르는 **유일한 지점들**(ADR-0049 S0~S3 + W2
+ * + 공유 앵커 레인).
+ *
+ * ⚠️ 이 첫 줄의 개수 표기는 **한동안 15 에 멈춰 있었다**(S2·S3·W2 가 ⑯~㉖ 을 더하는 동안 아무도
+ * 안 고쳤다). 앵커를 더하면 **여기부터 고쳐라** — 이 수가 레인 인계의 첫 좌표다.
+ * 내역: ①~⑨ 플레이어 축(S0) · ⑩⑪ 적 단위(S1) · ⑫⑬⑭ 성장(S1) · ⑮ 방막 파열(배치4) ·
+ * ⑯~㉒ 볼리 파라미터·막·완충(S2) · ㉓㉔ 해츨링 출격(S3-4) · ㉕ 정산액 확정 직전(S3) ·
+ * ㉖ 포탑 사격(W2) · **㉗㉘㉙ 공유 앵커 3종**(액티브 발동 · 젬 자석 · 플레이어 이동).
  *
  * S0 가 플레이어 축 9개를 세웠고, **S1 이 적 단위 축 2개(⑩ `onEnemyDamaged` · ⑪ `onEnemyDeath`)와
  * 성장 축 3개(⑫ `onLevelUp` · ⑬ `onPowerupOffer` · ⑭ `onPowerupPicked`)를 더했다.**
@@ -62,6 +69,9 @@ import type { Entity } from './entities.js';
 // 앵커 ④ 의 피해원 비트합. 정본이 `skillSlots.ts`(import 0 인 leaf)인 사유는 그 파일 주석 —
 // 스킬 모듈이 이 값을 **런타임에** 읽어야 하는데 여기 두면 순환이 생긴다.
 import type { DamageSourceMask } from './skillSlots.js';
+// 앵커 ㉗ 이 넘기는 액티브 정의. **타입 전용이다** — 값으로 당기면 이 leaf 가 레지스트리
+// (`data/ships/actives/index.ts`)를 런타임 의존하게 되어 leaf 규율이 깨진다.
+import type { ActiveSkillDef } from '../../data/ships/actives/types.js';
 import {
   onVolleyFiredCatalyst,
   onDashFiredCatalyst,
@@ -139,8 +149,11 @@ import {
   mallowCushionSettled,
   mallowVolleyParams,
   mallowSettleThreshold,
+  mallowGemMagnetParams,
+  mallowPlayerMoveParams,
 } from './skills/mallow.js';
 import {
+  phantomActiveFired,
   phantomDashFired,
   phantomGemCollected,
   phantomWallContact,
@@ -2315,6 +2328,232 @@ export function onTurretShotParams(
     // `tsc` 만이 잡았다.
     case SIG_HATCHLING_BROOD:
       hatchlingTurretShotParams(state, turret, params);
+      break;
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉗㉘㉙ (공유 앵커 레인) — **기체를 가로지르는 지점 셋**
+// ---------------------------------------------------------------------------
+//
+//   ㉗ onActiveFired        — 액티브 핸들러 호출 **직후**(`actives.ts` 의 `stepActives`).
+//   ㉘ onGemMagnetParams    — 젬 자석 반경이 확정된 직후(`world.ts` 의 `stepGems`).
+//   ㉙ onPlayerMoveParams   — 플레이어 이동 배율이 확정되기 직전(`world.ts` 의 `stepPlayer`).
+//
+// ## 왜 기체별 레인이 아니라 한 레인이 셋을 세웠는가
+// 셋 다 **7기체가 전부 지나가는 지점**이다. 기체별 레인이 각자 뚫으면 같은 지점에 시그니처가
+// 다른 훅이 여럿 서고, 그 충돌은 **`tsc` 만이 잡는다**(누적 실측: 의미 충돌 전건이 타입 오류로
+// 드러났고 테스트는 0건 잡았다). 자리를 먼저 하나로 세우고 소비처를 나중에 얹는 순서가
+// 그 재발을 구조적으로 막는다.
+//
+// ## ⚠️ 촉매 짝이 없다 — ⑮·⑰~㉖ 과 같다
+// 액티브 발동·자석 반경·이동 배율은 촉매 48종에 대응 카드가 없다. 빈 촉매 함수를 미리 두지 마라.
+
+/**
+ * 앵커 ㉗ 이 넘기는 **발동 직전의 스냅샷**. 훅이 읽기만 한다(가변 레코드가 아니다).
+ *
+ * ## 왜 이 넷인가 — 전부 **핸들러가 덮어쓰기 때문에** 사후 복원이 불가능한 값이다
+ * 앵커가 핸들러 **뒤**라 `player.x/y`·`player.aux0`·`state.entities` 는 이미 갱신돼 있다.
+ * 훅이 스스로 복원할 방법이 없으므로 호출부가 찍어서 넘긴다.
+ */
+export interface ActiveFiredOrigin {
+  /** 핸들러 호출 **전** `player.x` — *출발한 자리*. 버블 DR9·아크캐스터 BA6 이 요구한다. */
+  preX: number;
+  /** 핸들러 호출 **전** `player.y`. */
+  preY: number;
+  /**
+   * 핸들러 호출 **전** `player.aux0`. 아크캐스터 CH7 이 *"소모한 정지 시간"* 을 이 값과
+   * 지금 값의 **차분**으로만 알 수 있다(방전 액티브가 충전을 비운 뒤라 현재값은 0 이다).
+   */
+  preAux0: number;
+  /**
+   * 핸들러 호출 **전** `state.entities.length`. 이 인덱스 **이상**이 *그 발동이 낳은 개체*다 —
+   * 아크캐스터 CH10 이 "방전 액티브의 투사체"만 골라 표식을 찍는 데 쓴다.
+   *
+   * ⚠️ `state.entities` 는 `compact()` 전까지 **append-only** 라 이 워터마크가 유효하다.
+   * `compact()` 는 이 앵커와 같은 틱의 훨씬 뒤에 돈다 — 워터마크를 틱 경계 너머로 들고 가지 마라.
+   */
+  spawnWatermark: number;
+}
+
+/**
+ * 앵커 ㉗ — **액티브 핸들러가 자기 일을 끝낸 직후**(`stepActives` 의 `ACTIVE_HANDLERS[...]` 다음
+ * 줄 · 쿨다운 대입 **앞**).
+ *
+ * ## 이 지점에서만 살아 있는 것
+ *  - **착지 지점** = `player.x`/`player.y` 다. 앵커가 호출 **뒤**라 blink 계열 액티브의 이동이
+ *    이미 끝나 있고, 벽 슬라이드 보정(`slideCircleWalls`)까지 반영된 **최종 좌표**다. 그래서
+ *    착지 축 스킬(팬텀 PH2 · 버블 DR3 · 브루저 MO10 · 말로우 ME6)은 **인자를 하나도 더
+ *    요구하지 않는다** — 그 자리에서 `player` 를 그대로 쓰면 된다.
+ *  - **출발 지점**은 반대로 이미 사라졌다 → {@link ActiveFiredOrigin.preX}/`preY` 로 받는다.
+ *  - **쿨다운은 아직 안 세워졌다.** 이 앵커에서 `state.activeCd0/1` 을 만지면 호출부가 그
+ *    직후에 덮어쓴다. 쿨다운을 조작하려는 스킬은 여기가 자리가 아니다.
+ *
+ * ## ⚠️ 여기서는 **스폰이 안전하다** — 앵커 ㉖ 과 정반대다
+ * `stepActives` 는 `state.entities` 를 **순회하지 않는다**(슬롯 2칸 루프일 뿐이다). 그래서
+ * 아크캐스터 BA1(착지 원형 볼리)·BA6(출발 자리 포탑)처럼 **개체를 낳는 스킬을 여기서 바로
+ * 실행할 수 있다.** 앵커 ㉖(`onTurretShotParams`)은 `stepTurrets` 의 `state.entities` 순회
+ * **안**이라 스폰이 금지인데, 두 앵커를 같은 규율로 읽지 마라.
+ * (그 위에 `fanStrike`·`blink` 같은 액티브 헬퍼가 이미 이 지점에서 개체를 낳고 있다 —
+ *  핸들러 자신이 바로 앞 줄에서 하는 일이다.)
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.** 전 앵커 공통 계약이다(파일 헤더).
+ *  - ⚠️ **적 `hp` 를 깎으면 `t.dead` 를 같이 세워라.** `compact()` 의 1차 게이트가 `e.dead` 라
+ *    안 세우면 그 적은 좀비로 남아 처치·젬·전리품이 전부 사라진다(정본 `status.ts` 111-112).
+ *    단 `guardian`·`core` 는 부활 분기가 있어 마킹하면 안 된다.
+ *
+ * @param def 이번에 발동한 액티브의 정의. **계열 판별은 훅 책임이다** — `def.treeIndex`(축) ·
+ *   `def.tier`('lo'/'hi') · `def.kind` 가 그 손잡이다.
+ * @param dir 발동 방향(`resolveDirFallback` 을 이미 통과한 단위 벡터).
+ * @param slot 슬롯 인덱스(0/1). 버프 잔여 틱 칸을 고를 때 쓴다.
+ */
+export function onActiveFired(
+  state: WorldState,
+  player: Entity,
+  def: ActiveSkillDef,
+  dir: { x: number; y: number },
+  slot: number,
+  origin: ActiveFiredOrigin,
+): void {
+  if (!state.skillsOn) return;
+  // 아직 소비처가 없는 인자들. 자기 `case` 가 쓰기 시작하면 해당 줄을 지워라.
+  void dir;
+  void slot;
+  void origin;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라** — 병렬 배선
+    // 머지에서 두 `case` 가 `break;` 하나를 공유하는 fallthrough 가 누적 5건 나왔고 전부
+    // `tsc` 만이 잡았다.
+    case SIG_PHANTOM_CLOAK:
+      // PH2 위상 착지 — 위상 계열(`treeIndex === 1`) 액티브의 **착지 지점** 정화.
+      phantomActiveFired(state, player, def);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 ㉘ 이 넘기는 **이번 틱의 젬 자석 파라미터**. 훅이 제자리에서 고친다.
+ *
+ * ## 왜 인자 나열이 아니라 레코드인가
+ * `VolleyParams`·`TurretShotParams` 와 같은 사유다 — 이 지점을 기다리는 축이 7종이고 고치려는
+ * 칸이 서로 달라, 인자로 늘어놓으면 칸이 하나 늘 때마다 앵커 시그니처가 바뀐다.
+ */
+export interface GemMagnetParams {
+  /**
+   * 플레이어 자석 반경. 초기값은 `stepGems` 가 이미 계산한 값(자석 버프 배율까지 반영).
+   *
+   * ## ⚠️ 클램프에 안 삼켜진다 — 소비 경로를 끝까지 따라갔다
+   * `stepGems` 는 이 값을 제곱해(`r2`) 거리와 비교할 뿐이고, 그 비교 뒤의 흡인 속도는
+   * `MAGNET_SPEED` 상수라 반경과 무관하다. 경로에 `min`·`max` 가 하나도 없다.
+   */
+  radius: number;
+  /**
+   * 병아리(brood) 중심의 **추가** 흡인 반경. 초기값 0 = 추가 흡인 없음.
+   *
+   * ## ⚠️ 지금 소비처가 **없다** — 해츨링 NU1 이 얹힐 자리다
+   * "소비처 없는 칸을 미리 열지 마라"(앵커 ㉖ doc)의 예외다. 사유는 **필수 필드를 나중에
+   * 더하면 다른 레인의 픽스처가 `Partial` 스프레드로 깨지기 때문**이고, 그 사고는 배치1 에서
+   * 실제로 났다. 레코드 **필드 설계**는 소비처보다 먼저 확정하는 것이 싸다.
+   * ⚠️ 그러니 이 필드가 있다고 *"NU1 이 배선됐다"* 로 읽지 마라 — 지금은 `stepGems` 가
+   * 읽기만 하고 **아무 일도 하지 않는다**(값이 0 이라 산술도 없다).
+   */
+  broodRadius: number;
+}
+
+/**
+ * 앵커 ㉘ — **젬 자석 반경이 확정된 직후 · 흡인 루프가 돌기 직전**(`world.ts` 의 `stepGems`).
+ *
+ * ## 이 지점에서만 살아 있는 것
+ *  - **반경이 아직 제곱되기 전**이다. `r2` 계산 뒤로 미루면 훅이 제곱값을 고쳐야 하고 그러면
+ *    "반경 ×1.5" 같은 설계 문면이 훅마다 `×2.25` 로 번역돼 조용히 갈린다.
+ *  - 앵커 ③(`onGemCollected`)은 **수거가 끝난 뒤**라 반경이 무의미하다. 그래서 말로우 ME2 ·
+ *    브루저 MO2 가 그 자리에서 원리적으로 닿지 않았다(앵커 ③ 의 `case` 주석이 그 기록이다).
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.**
+ *  - ⚠️ **여기서 젬을 수거하지 마라.** 수거의 단일 수렴점은 `collectGem` 이고 앵커 ③ 이 그
+ *    자리다. 여기서 직접 걷어가면 콤보·XP 가 두 곳에서 갈린다.
+ */
+export function onGemMagnetParams(
+  state: WorldState,
+  player: Entity,
+  params: GemMagnetParams,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // ⚠️ `break;` 필수(앵커 ㉗ 주석과 같은 사유).
+    case SIG_MALLOW_CUSHION:
+      // ME2 채무 자석 — 부채(`player.aux0`)에 비례해 반경이 커진다.
+      mallowGemMagnetParams(state, player, params);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 ㉙ 이 넘기는 **이번 틱의 플레이어 이동 파라미터**. 훅이 제자리에서 고친다.
+ */
+export interface PlayerMoveParams {
+  /**
+   * 이동 속도에 **곱해지는** 배율. 초기값 1 — 미투자 런은 `v * 1 === v` 로 비트 동일이라
+   * 골든 해시가 바이트 불변이다.
+   *
+   * ⚠️ **대시 임펄스에는 안 걸린다.** 호출부가 이 배율을 `mx * playerSpeed` 쪽에만 곱하고
+   * 대시 가산(`dx * dashSpeed`)은 그 뒤에 별도로 더한다 — 감속 지대(`PLAYER_SLOW_MULT`)·
+   * 모듈 감속(`attackerSlowMult`)이 지켜 온 규율 그대로다. 대시 거리를 바꾸려는 스킬은
+   * 여기가 자리가 아니다.
+   */
+  speedMult: number;
+  /**
+   * 이번 틱 시작 시점의 `state.playerSlowTicks`. **훅이 고치면 호출부가 그대로 되쓴다.**
+   *
+   * ## ⚠️ 이 칸이 「감속 부여 지점에 손잡이가 없다」는 누적 결함의 해소다
+   * 직전 배치의 브루저 **MO4「장갑 활주」**(이동 감속 디버프가 걸리는 틱에 장갑 1개를 소모해
+   * 그 감속을 무효화한다)가 *"한 틱 늦다"* 로 남은 것이 정확히 이 자리가 없었기 때문이다 —
+   * 감속을 **부여하는** 지점(해저드 접촉·냉기)은 여럿이고 앵커가 하나도 없어서, 무효화가
+   * 부여 다음 틱에야 가능했다. 이 앵커는 감속이 **소비되기 직전**(배율 산출 앞)이라
+   * 부여 지점이 몇 개든 상관없이 그 틱 안에서 0 으로 되돌릴 수 있다.
+   *
+   * ⚠️ **MO4 를 이 커밋이 고치지 않았다.** 이 앵커가 그 문을 열었다는 기록일 뿐이고, 실제
+   * 배선(장갑 스택 1 소모 + `slowTicks = 0`)은 브루저 레인 몫이다. 얹을 때 **감소 순서**를
+   * 확인해라 — 호출부는 되쓴 값을 보고 배율을 정한 **뒤** 1 을 깎는다.
+   */
+  slowTicks: number;
+}
+
+/**
+ * 앵커 ㉙ — **이동 속도가 대입되기 직전**(`world.ts` 의 `stepPlayer` · 감속 배율 산출 **앞**).
+ *
+ * ## 이 지점에서만 살아 있는 것
+ *  - **감속 잔여 틱이 아직 안 깎였고 배율도 아직 안 정해졌다.** 그래서 감속을 무효화하는
+ *    스킬(브루저 MO4)과 속도를 올리는 스킬(말로우 CU8)이 **같은 틱 안에서** 성립한다.
+ *  - 앵커 ⑨(`onSignatureStep`)는 `stepShipSignature` 진입점이고 `stepPlayer` 와 다른 함수라
+ *    이 지역 변수들에 닿지 않는다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.**
+ *  - ⚠️ **`player.vx`/`vy` 를 직접 쓰지 마라.** 호출부가 이 훅 **직후에 통째로 대입**하므로
+ *    여기서 쓴 값은 그 자리에서 사라진다. 속도를 바꾸려면 반드시 `params.speedMult` 다.
+ *  - ⚠️ **매 틱 불린다.** 나눗셈·루프를 넣기 전에 비용을 생각해라(레벨 스케일의 나눗셈은
+ *    투자 게이트 **안**에 둔다 — `skills/striker.ts` 헤더 규율 ③).
+ */
+export function onPlayerMoveParams(
+  state: WorldState,
+  player: Entity,
+  params: PlayerMoveParams,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // ⚠️ `break;` 필수(앵커 ㉗ 주석과 같은 사유).
+    case SIG_MALLOW_CUSHION:
+      // CU8 통증 마취 — 부채(`player.aux0`) 보유 중 이동 속도가 오른다.
+      mallowPlayerMoveParams(state, player, params);
       break;
     default:
       break;

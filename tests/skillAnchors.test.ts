@@ -208,10 +208,16 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('앵커 26개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 29개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
+        // ⚠️ ㉗㉘㉙ 는 **기체를 가로지르는 공유 앵커 3종**이다. 기체별 레인이 각자 뚫으면 같은
+        // 지점에 시그니처가 다른 훅이 여럿 서고 그 충돌은 `tsc` 만이 잡으므로, 자리를 먼저
+        // 하나로 세우고 소비처를 나중에 얹었다.
+        'onActiveFired', // ㉗ — 액티브 핸들러 **직후**(쿨다운 대입 앞). 착지 지점이 여기 산다
+        'onGemMagnetParams', // ㉘ — 젬 자석 반경 확정 직후(제곱 전). 앵커 ③ 은 수거 뒤라 못 온다
+        'onPlayerMoveParams', // ㉙ — 이동 배율 산출 직전(감속 잔여 틱이 아직 안 깎인 지점)
         'onBroodLaunchParams', // S3-4 ㉓ — 해츨링 출격 판정 파라미터(임계 조기 반환보다 앞)
         'onBroodLaunched', // S3-4 ㉔ — 병아리 1기가 태어난 직후(기당 1회)
         'onBulletExpired',
