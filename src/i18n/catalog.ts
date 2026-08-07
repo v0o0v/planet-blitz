@@ -338,37 +338,86 @@ export const EN = {
   'catalyst.archive.labelPrice': 'Price',
   'catalyst.archive.labelOwned': 'Owned',
   'catalyst.archive.rowKind': 'Type',
-  'catalyst.archive.rewardPerStack': 'Reward (per stack)',
-  'catalyst.archive.penaltyPerStack': 'Penalty (per stack)',
-  'catalyst.archive.atCap': 'At {n} stacks',
-  'catalyst.archive.capValue': 'Reward {reward} · Penalty {penalty}',
+  'catalyst.archive.rowTags': 'Tags',
+  'catalyst.archive.rowCap': 'Settlement Cap',
   'catalyst.archive.notSold': 'Not sold',
 
-  // --- 촉매 전체 효과 집계(사용자 요청 2026-07-28) — 픽커 하단 요약 + 런 중 정보판 공용 ---
-  'catalyst.summary.title': 'Combined Effect',
-  'catalyst.summary.injected': 'Injected {n} · {kinds} kinds',
-  'catalyst.summary.none': 'Nothing injected — no penalty, no bonus.',
-  'catalyst.summary.penalty': 'Penalty',
-  'catalyst.summary.reward': 'Reward',
-  'catalyst.summary.emptyCol': '—',
-  // 페널티 축(값이 클수록 난이도 상승 — `PenaltyAxis` 6종).
-  'catalyst.pen.enemyHp': 'Enemy HP',
-  'catalyst.pen.enemyDamage': 'Enemy Damage',
-  'catalyst.pen.enemyCount': 'Enemy Count',
-  'catalyst.pen.enemySpeed': 'Enemy Speed',
-  'catalyst.pen.enemyBulletSpeed': 'Enemy Bullet Speed',
-  'catalyst.pen.playerHpDown': 'Ship HP Penalty',
-  // 보상 축(`RewardAxis` 5종 + power 세부 5스탯).
-  'catalyst.rew.drop': 'Drop Rate',
-  'catalyst.rew.rarity': 'Rarity',
-  'catalyst.rew.xp': 'XP',
-  'catalyst.rew.resource': 'Resources',
-  'catalyst.rew.catalystDrop': 'Catalyst Drops',
-  'catalyst.rew.power.damage': 'Damage',
-  'catalyst.rew.power.fireRate': 'Fire Rate',
-  'catalyst.rew.power.moveSpeed': 'Move Speed',
-  'catalyst.rew.power.maxHp': 'Max HP',
-  'catalyst.rew.power.skillAll': 'All Skills',
+  // --- 태그·상한(ADR-0052) — 픽커 카드 / 보관함 상세 / 런 중 정보판 공용 ---
+  // 태그 6종 고정. 같은 태그 2장 = 약공명 / 3장 = 강공명(`data/catalystResonance.ts`).
+  'catalyst.tag.ignite': 'Ignite',
+  'catalyst.tag.density': 'Density',
+  'catalyst.tag.precision': 'Precision',
+  'catalyst.tag.harvest': 'Harvest',
+  'catalyst.tag.gamble': 'Gamble',
+  'catalyst.tag.erosion': 'Erosion',
+  // 상한 축 5종(`CatalystCapAxis`). 구 보상축과 달리 **정산 유계**이지 발동 배율이 아니다.
+  'catalyst.cap.drop': 'Drops',
+  'catalyst.cap.resource': 'Resources',
+  'catalyst.cap.rarity': 'Rarity',
+  'catalyst.cap.xp': 'XP',
+  'catalyst.cap.catalystDrop': 'Catalyst Drops',
+  'catalyst.cap.line': '{axis} x{mult}',
+  'catalyst.cap.head': 'Cap',
+
+  // --- 공명(시스템 용어) — 한 런에 최대 하나만 발동한다 ---
+  'catalyst.resonance.head': 'Resonance',
+  'catalyst.resonance.none': 'No resonance yet',
+  'catalyst.resonance.need': '+{n} more',
+  'catalyst.tag.head': 'Tags',
+  'catalyst.resonance.tier.weak': 'Weak',
+  'catalyst.resonance.tier.strong': 'Strong',
+  'catalyst.resonance.ember.name': 'Ember',
+  'catalyst.resonance.ember.rule':
+    'A kill bursts and shoves nearby enemies back. Shoved enemies take less damage for 1s.',
+  'catalyst.resonance.reverberation.name': 'Reverberation',
+  'catalyst.resonance.reverberation.rule':
+    'Kills chain. The last link of the chain strikes you instead.',
+  'catalyst.resonance.attraction.name': 'Attraction',
+  'catalyst.resonance.attraction.rule':
+    'At 15+ enemies, like kinds pull together. Clustered enemies share armor and toughen.',
+  'catalyst.resonance.crossfire.name': 'Crossfire',
+  'catalyst.resonance.crossfire.rule':
+    'Enemy bullets hit enemies too. Your bullets stop at the first enemy.',
+  'catalyst.resonance.whetting.name': 'Whetting',
+  'catalyst.resonance.whetting.rule':
+    'Every 10s unhit, your next shot pierces. Right after, you fire slower for 3s.',
+  'catalyst.resonance.deflection.name': 'Deflection',
+  'catalyst.resonance.deflection.rule':
+    'Some enemy bullets ricochet into other enemies. Bullets that do not ricochet hit twice as hard.',
+  'catalyst.resonance.snare.name': 'Snare',
+  'catalyst.resonance.snare.rule':
+    'Enemies stepping on ground loot are held for 1s. You cannot collect it meanwhile.',
+  'catalyst.resonance.fruition.name': 'Fruition',
+  'catalyst.resonance.fruition.rule':
+    'An enemy dying on loot raises its grade. An enemy stepping on it lowers the grade.',
+  'catalyst.resonance.advance.name': 'Advance',
+  'catalyst.resonance.advance.rule':
+    'You get one loot up front at run start. Lose the run and you lose that too.',
+  'catalyst.resonance.settlement.name': 'Settlement',
+  'catalyst.resonance.settlement.rule':
+    'Your first loot is sealed. Kill the boss for top grade; lose and only that one is gone.',
+  'catalyst.resonance.abrasion.name': 'Abrasion',
+  'catalyst.resonance.abrasion.rule':
+    'Every 30s your move speed rises and your hitbox grows (restored on wave change).',
+  'catalyst.resonance.subsidence.name': 'Subsidence',
+  'catalyst.resonance.subsidence.rule':
+    'Every 30s the field crumbles inward — smaller arena, denser drops. Clearing a heavy fight restores half.',
+
+  // --- 픽커 경고 2단 — 회색 = 이 행성에서 무효(구조적) / 노랑 = 촉매 간 충돌(축소 작동) ---
+  // ⚠️ 헌장 §축소 작동 규율: 경고일 뿐이고 sim 이 그 카드를 끄는 근거가 아니다.
+  'catalyst.warn.head': 'Warnings',
+  'catalyst.warn.none': '—',
+  'catalyst.warn.voidOnPlanet': 'Void on this planet',
+  'catalyst.warn.conflict': 'Reduced by another catalyst',
+  'catalyst.warn.badgeVoid': 'VOID',
+  'catalyst.warn.badgeConflict': 'CLASH',
+
+  // --- 픽커 슬롯·거부 사유(유니크 주입 — 같은 카드는 한 장뿐) ---
+  'catalyst.picker.slotEmpty': 'Empty',
+  'catalyst.picker.blockDuplicate': 'Already injected',
+  'catalyst.picker.blockSignatureCap': 'Signature max {cap}',
+  'catalyst.picker.blockNoStock': 'None owned',
+  'catalyst.picker.injected': 'Injected',
 
   // --- 런 중 침공 정보판(우측 가운데, 사용자 요청 2026-07-28) ---
   'runinfo.title': 'Current Sortie',
@@ -378,101 +427,249 @@ export const EN = {
 
   // --- 촉매 카탈로그(catalyst.<slug>.name/desc — src/data/catalysts.ts 48종) ---
   'catalyst.abundance.name': 'Abundance',
-  'catalyst.abundance.desc': 'Penalty: more enemies / Reward: increased drops',
+  'catalyst.abundance.rule':
+    'Drops fall twice as often, but once five pile up on the ground, enemies speed up by that much.',
+  'catalyst.abundance.signal':
+    'Past five loot on the ground, a red current rises off the pile and enemy afterimages lengthen.',
   'catalyst.plunder.name': 'Plunder',
-  'catalyst.plunder.desc': 'Penalty: tougher enemies / Reward: increased drops',
+  'catalyst.plunder.rule':
+    'Elites and bosses drop nothing on death, but ramming one loots it all at once — and you take contact damage.',
+  'catalyst.plunder.signal':
+    'Plunderable enemies pulse with a gold outline; on plunder their body bursts and loot spills out.',
   'catalyst.harvest.name': 'Harvest',
-  'catalyst.harvest.desc': 'Penalty: enemies hit harder / Reward: increased drops',
+  'catalyst.harvest.rule':
+    'A harvest zone opens where an enemy dies, piercing your shots inside it, but standing on it slows you like a field.',
+  'catalyst.harvest.signal':
+    'A golden ring lights bullets as they pierce through it; standing on it wraps your ship in a harvest ring.',
   'catalyst.bounty.name': 'Bounty',
-  'catalyst.bounty.desc': 'Penalty: faster enemies / Reward: increased drops',
+  'catalyst.bounty.rule':
+    'Getting hit drops a bounty marker where you were struck; collect it for resources, but an enemy grabs it first.',
+  'catalyst.bounty.signal':
+    'A gold marker plants at the hit spot; if an enemy eats it, it swells red and the payout shifts to that enemy.',
   'catalyst.cornucopia.name': 'Cornucopia',
-  'catalyst.cornucopia.desc': 'Penalty: faster enemy bullets / Reward: increased drops',
+  'catalyst.cornucopia.rule':
+    'Leveling up detonates all ground loot to burn nearby enemies, but recovered loot drops one rarity tier.',
+  'catalyst.cornucopia.signal':
+    "On level-up all ground loot explodes at once, brightening the screen as it's pulled in a tier lower.",
   'catalyst.refinement.name': 'Refinement',
-  'catalyst.refinement.desc': 'Penalty: tougher enemies / Reward: better drop rarity',
+  'catalyst.refinement.rule':
+    'A refine option appears on level-up to fuse three same-rarity items into one higher tier, but losing the run loses the forge.',
+  'catalyst.refinement.signal':
+    'One level-up slot becomes a refine card; fusing triggers an upgrade flourish, with the forge shown on the HUD.',
   'catalyst.gilding.name': 'Gilding',
-  'catalyst.gilding.desc': 'Penalty: enemies hit harder / Reward: better drop rarity',
+  'catalyst.gilding.rule':
+    'Enemies gild over time and grow stronger, but killing one strips the gilding onto the nearest enemy.',
+  'catalyst.gilding.signal':
+    'Enemy surfaces shift copper to silver to gold by stage; on death the gilding flies off to a neighbor.',
   'catalyst.prospect.name': 'Appraisal',
-  'catalyst.prospect.desc': 'Penalty: more enemies / Reward: better drop rarity',
+  'catalyst.prospect.rule':
+    'Each wave marks one enemy as a lode-bearer, invincible while escorted, breakable only once escorts scatter.',
+  'catalyst.prospect.signal':
+    'The marked enemy wears a crystal shell; a shield shimmers while escorted and cracks open once they scatter.',
   'catalyst.alchemy.name': 'Alchemy',
-  'catalyst.alchemy.desc': 'Penalty: reduced ship HP / Reward: better drop rarity',
+  'catalyst.alchemy.rule':
+    'Three nearby common-rarity drops fuse into a magic one, but the fusion spot becomes a toxic field.',
+  'catalyst.alchemy.signal':
+    'Purple threads link three commons and pull into one point on fusion, spreading a purple field there.',
   'catalyst.epiphany.name': 'Epiphany',
-  'catalyst.epiphany.desc': 'Penalty: faster enemy bullets / Reward: better drop rarity',
+  'catalyst.epiphany.rule':
+    'Level-up becomes a single, unrejectable double-stacked pick — every unwanted one still banks XP.',
+  'catalyst.epiphany.signal':
+    'The pick screen folds into one gilded card as the other two slots turn to ash; there is no choice button.',
   'catalyst.insight.name': 'Insight',
-  'catalyst.insight.desc': 'Penalty: faster enemies / Reward: increased XP gain',
+  'catalyst.insight.rule':
+    'Enemy bullets show a warning line before firing, but XP triples only while you stand on that line.',
+  'catalyst.insight.signal':
+    'A red warning line is drawn before the shot; standing on it makes your ship glow white with a gem multiplier shown.',
   'catalyst.tutelage.name': 'Tutelage',
-  'catalyst.tutelage.desc': 'Penalty: tougher enemies / Reward: increased XP gain',
+  'catalyst.tutelage.rule':
+    'You start at level 5, but every level-up for the rest of this run is decided automatically, with no pick.',
+  'catalyst.tutelage.signal':
+    'Five level-up flourishes fire back to back at launch; after that, cards are drawn but never chosen.',
   'catalyst.ascension.name': 'Ascension',
-  'catalyst.ascension.desc': 'Penalty: enemies hit harder / Reward: increased XP gain',
+  'catalyst.ascension.rule':
+    'Each wave crossed cuts max HP by 10% and raises damage by 10%, but piercing an enemy with a dash restores 1 HP.',
+  'catalyst.ascension.signal':
+    "At each wave transition the HP bar's ceiling drops and the ship glows a shade brighter; recovery rewinds it.",
   'catalyst.enlightenment.name': 'Enlightenment',
-  'catalyst.enlightenment.desc': 'Penalty: more enemies / Reward: increased XP gain',
+  'catalyst.enlightenment.rule':
+    'The fewer enemies on screen, the bigger your bullets grow (up to 3x), but express spawns come in twice as fast.',
+  'catalyst.enlightenment.signal':
+    'Bullets visibly thicken and brighten as enemies thin out, then shrink back once the screen fills again.',
   'catalyst.mastery.name': 'Mastery',
-  'catalyst.mastery.desc': 'Penalty: reduced ship HP / Reward: increased XP gain',
+  'catalyst.mastery.rule':
+    'The level-up pick offers the same powerup three times over — take it for a triple stack, but the other two picks are gone.',
+  'catalyst.mastery.signal':
+    'All three cards show the identical art with a large stack count; loot drops beside you right after picking.',
   'catalyst.extraction.name': 'Extraction',
-  'catalyst.extraction.desc': 'Penalty: tougher enemies / Reward: increased resources',
+  'catalyst.extraction.rule':
+    "Supply-raid resources don't arrive at once — they ride on enemies, hardening into loot on a kill, but vanish if it leaves the screen.",
+  'catalyst.extraction.signal':
+    'At the raid, resources scatter onto enemies in a blue-white glow; a kill hardens them into a crystal on the ground.',
   'catalyst.foundry.name': 'Foundry',
-  'catalyst.foundry.desc': 'Penalty: more enemies / Reward: increased resources',
+  'catalyst.foundry.rule':
+    'Every third kill raises a turret, but while any stand, your own damage is split down by that many turrets.',
+  'catalyst.foundry.signal':
+    'Metal folds up into a turret on every third kill, and the HUD firepower gauge dips per turret standing.',
   'catalyst.greed.name': 'Greed',
-  'catalyst.greed.desc': 'Penalty: enemies hit harder / Reward: increased resources',
+  'catalyst.greed.rule':
+    "Resources don't arrive directly — they spawn as an enemy worth that much, paying triple on a kill but vanishing if it escapes.",
+  'catalyst.greed.signal':
+    "The ground splits open into a gold-tinted enemy the instant you'd earn it; it fades to gray if it leaves the screen.",
   'catalyst.mercantile.name': 'Mercantile',
-  'catalyst.mercantile.desc': 'Penalty: faster enemies / Reward: increased resources',
+  'catalyst.mercantile.rule':
+    "One level-up slot becomes a debt card, granting a double stack now but seizing that run's loot if the debt goes unpaid.",
+  'catalyst.mercantile.signal':
+    'One pick slot turns into a red IOU, and the HUD tallies a rising debt total with every one you take.',
   'catalyst.motherlode.name': 'Motherlode',
-  'catalyst.motherlode.desc': 'Penalty: reduced ship HP / Reward: increased resources',
-  'catalyst.resonance.name': 'Resonance',
-  'catalyst.resonance.desc': 'Penalty: tougher enemies / Reward: increased catalyst drops',
+  'catalyst.motherlode.rule':
+    'Enemies become ore veins — a kill leaves a chunk instead of resources, and breaking it locks your auto-aim onto it.',
+  'catalyst.motherlode.signal':
+    'A shining ore chunk is left behind on a kill, shedding fragments as it breaks with the aim line locked onto it.',
+  // ⚠️ id 20 의 **표시명만** 'Resonance' → 'Attunement'. 시스템 용어 Resonance(공명, 12종
+  // 태그 공명)와 카드 이름이 같은 말이면 픽커 하단 "Resonance" 챔버 안에 "Resonance" 카드가
+  // 서서 읽히지 않는다. `slug: 'resonance'`·`id: 20`·아이콘 파일명은 **그대로**다(서버 원장·
+  // 상점 가격 시드·자산이 그 앵커 위에 있다). 헌장 §"표시명은 바꿀 수 있다(slug 는 불변)".
+  'catalyst.resonance.name': 'Attunement',
+  'catalyst.resonance.rule':
+    'Three enemies of a kind clustered together attune and grow stronger, but killing one instantly kills the rest and drops all three shares of loot.',
+  'catalyst.resonance.signal':
+    'A pulsing beam links the attuned enemies together, and a resonant tone hums softly between them.',
   'catalyst.catalysis.name': 'Catalysis',
-  'catalyst.catalysis.desc': 'Penalty: faster enemy bullets / Reward: increased catalyst drops',
+  'catalyst.catalysis.rule':
+    "Catalyst drops don't go to your stash — they lodge as an unsettled crystal that breaks if an enemy steps on it, settling only on a win.",
+  'catalyst.catalysis.signal':
+    'A catalyst crystal pulses embedded in the ground, and cracks form and shatter it if an enemy nears.',
   'catalyst.cascade.name': 'Cascade',
-  'catalyst.cascade.desc': 'Penalty: more enemies / Reward: increased catalyst drops',
+  'catalyst.cascade.rule':
+    'Enemies explode on death, burning you too for half the damage, but a kill from that blast pays double loot.',
+  'catalyst.cascade.signal':
+    'A visible blast radius spreads on every kill, and self-damage tints the screen in a catalyst-only color.',
   'catalyst.seeding.name': 'Seeding',
-  'catalyst.seeding.desc': 'Penalty: enemies hit harder / Reward: increased catalyst drops',
+  'catalyst.seeding.rule':
+    'A seed is left where an enemy dies and grows into a loot tree after 15 seconds, but an enemy stepping on it first eats it and grows stronger.',
+  'catalyst.seeding.signal':
+    'The seed pulses on the ground as a sprout ring fills, then a tree rises and sheds fruit once it germinates.',
   'catalyst.chainreaction.name': 'Chain Reaction',
-  'catalyst.chainreaction.desc': 'Penalty: faster enemies / Reward: increased catalyst drops',
+  'catalyst.chainreaction.rule':
+    'Damage you take is transferred straight to the nearest enemy, but your max HP cap drops by that much for the rest of the wave.',
+  'catalyst.chainreaction.signal':
+    "A red chain lashes from your ship to an enemy on every hit, and the HP bar's ceiling sinks by the transfer amount.",
   'catalyst.overdrive.name': 'Overdrive',
-  'catalyst.overdrive.desc': 'Penalty: tougher enemies / Reward: boosted ship damage (run only)',
+  'catalyst.overdrive.rule':
+    'Firing heats your barrel, boosting damage up to 2x as it glows hotter, but crossing the threshold silences you for 3 seconds.',
+  'catalyst.overdrive.signal':
+    'The barrel glows red as the HUD heat gauge climbs, then vents steam and stalls once it crosses the threshold.',
   'catalyst.rapidcore.name': 'Rapid Core',
-  'catalyst.rapidcore.desc': 'Penalty: more enemies / Reward: boosted fire rate (run only)',
+  'catalyst.rapidcore.rule':
+    'Holding one heading builds damage up to 2x, but taking a hit resets it back to nothing.',
+  'catalyst.rapidcore.signal':
+    'The longer you hold a heading, the longer the trail and brighter the bullets, until a hit scatters it all.',
   'catalyst.afterburner.name': 'Afterburner',
-  'catalyst.afterburner.desc': 'Penalty: enemies hit harder / Reward: boosted move speed (run only)',
+  'catalyst.afterburner.rule':
+    'Dash cooldown vanishes, but each dash cuts max HP by 3 — piercing a kill with a dash returns those 3.',
+  'catalyst.afterburner.signal':
+    'Flame bursts from the thruster on every dash as the HP ceiling dips, then rewinds on a piercing kill.',
   'catalyst.bulwark.name': 'Bulwark',
-  'catalyst.bulwark.desc': 'Penalty: faster enemies / Reward: boosted max HP (run only)',
+  'catalyst.bulwark.rule':
+    'For 3 seconds after a hit, a 120-degree arc toward the hit blocks enemy bullets, but your own guns go silent in that arc too.',
+  'catalyst.bulwark.signal':
+    'A hex barrier unfolds on the hit side, shattering bullets, while the gun on that side visibly folds shut.',
   'catalyst.ascendant.name': 'Ascendant',
-  'catalyst.ascendant.desc': 'Penalty: reduced ship HP / Reward: all skills boosted (run only)',
+  'catalyst.ascendant.rule':
+    'Max HP is halved, but dash invincibility lasts twice as long, and any enemy passed through during it is frozen in place for 2 seconds.',
+  'catalyst.ascendant.signal':
+    'The ship turns translucent white as enemies passed through freeze solid with a binding ring at their feet.',
   'catalyst.kargon-swarmcall.name': 'Kargon Swarmcall',
-  'catalyst.kargon-swarmcall.desc': 'swarm intensified · Penalty: more enemies / Reward: increased drops',
+  'catalyst.kargon-swarmcall.rule':
+    "The kill quota per wave is halved, but each wave crossed adds a stacking bump to the next segment's enemy cap.",
+  'catalyst.kargon-swarmcall.signal':
+    "A stack gauge at the top fills one notch per wave crossed, and the next segment visibly thickens with enemies.",
   'catalyst.kargon-magma-vein.name': 'Kargon Magma Vein',
-  'catalyst.kargon-magma-vein.desc': 'Penalty: tougher enemies / Reward: increased resources',
+  'catalyst.kargon-magma-vein.rule':
+    'Lava rises along the path of your shots, burning enemies and you alike, but a kill on lava pays double loot.',
+  'catalyst.kargon-magma-vein.signal':
+    'Cracks split the ground into lava along your firing line, with self-damage tinted in the catalyst-only color.',
   'catalyst.kargon-lava-warden.name': 'Kargon Lava Warden',
-  'catalyst.kargon-lava-warden.desc': 'Penalty: enemies hit harder / Reward: better drop rarity',
+  'catalyst.kargon-lava-warden.rule':
+    'The boss wears a lava shell that softens the closer you get, but that same radius is its contact-damage zone.',
+  'catalyst.kargon-lava-warden.signal':
+    'The shell melts into red cracks as you approach, then seals shut with a hardening sound as you back off.',
   'catalyst.berdan-collapse.name': 'Berdan Collapse',
-  'catalyst.berdan-collapse.desc': 'zone shrink accelerated · Penalty: faster enemies / Reward: increased XP gain',
+  'catalyst.berdan-collapse.rule':
+    'The safe circle no longer follows you and jumps elsewhere every 15 seconds, but for 5 seconds after each jump every enemy inside the new circle dies instantly.',
+  'catalyst.berdan-collapse.signal':
+    'A warning ring marks the next spot 3 seconds ahead, then a white burst wipes out every enemy inside on the jump.',
   'catalyst.berdan-royal-jelly.name': 'Berdan Royal Jelly',
-  'catalyst.berdan-royal-jelly.desc': 'Penalty: more enemies / Reward: increased resources',
+  'catalyst.berdan-royal-jelly.rule':
+    'Jelly is left behind as the safe zone shrinks — enemies that eat it slow down and pay triple resources on death, but the rest speed up.',
+  'catalyst.berdan-royal-jelly.signal':
+    'A golden jelly trail lines the shrink edge; enemies that feed on it turn gold and sluggish while others flush red and quicken.',
   'catalyst.berdan-hive-queen.name': 'Berdan Hive Queen',
-  'catalyst.berdan-hive-queen.desc': 'Penalty: tougher enemies / Reward: increased drops',
+  'catalyst.berdan-hive-queen.rule':
+    'The boss sheds worker bees in proportion to damage taken, and each bee carries a share of its HP that drains when killed.',
+  'catalyst.berdan-hive-queen.signal':
+    "Bees burst from the boss's flank on every hit, and the boss HP bar visibly drops whenever one is killed.",
   'catalyst.niflheim-pursuit.name': 'Niflheim Pursuit',
-  'catalyst.niflheim-pursuit.desc': 'pursuit intensified · Penalty: faster enemies / Reward: increased catalyst drops',
+  'catalyst.niflheim-pursuit.rule':
+    "The predator leaves a shadow that retraces your path and kills on contact, but outrunning it doubles shelter-capture speed.",
+  'catalyst.niflheim-pursuit.signal':
+    "A translucent black silhouette retraces your exact path, with a faint trail left behind so you can read where it's coming from.",
   'catalyst.niflheim-rime-crystal.name': 'Niflheim Rime Crystal',
-  'catalyst.niflheim-rime-crystal.desc': 'Penalty: faster enemy bullets / Reward: increased resources',
+  'catalyst.niflheim-rime-crystal.rule':
+    'Ground you cross freezes, slowing enemies and dropping a crystal on a kill there, but the predator accelerates on ice instead.',
+  'catalyst.niflheim-rime-crystal.signal':
+    'A frost trail lines your path and enemies on it turn blue and sluggish, while the predator glides faster across it.',
   'catalyst.niflheim-flagship.name': 'Niflheim Flagship',
-  'catalyst.niflheim-flagship.desc': 'Penalty: tougher enemies / Reward: better drop rarity',
+  'catalyst.niflheim-flagship.rule':
+    'A flagship hovers over the predator, breaking shelters one by one, but standing at a broken one lets it repair over time.',
+  'catalyst.niflheim-flagship.signal':
+    'A flagship crosses overhead trailing bombardment fire, and a repair ring fills over each broken shelter.',
   'catalyst.arke-overclock.name': 'Arke Overclock',
-  'catalyst.arke-overclock.desc': 'race pace intensified · Penalty: faster enemies / Reward: increased XP gain',
+  'catalyst.arke-overclock.rule':
+    'Scroll speed doubles and crashing through walls breaks them for resources, but each crash drops your top speed a notch.',
+  'catalyst.arke-overclock.signal':
+    'Speed lines stretch along both edges, walls burst into resources on impact, and the HUD top-speed gauge rises and falls.',
   'catalyst.arke-ancient-core.name': 'Arke Ancient Core',
-  'catalyst.arke-ancient-core.desc': 'Penalty: tougher enemies / Reward: increased resources',
+  'catalyst.arke-ancient-core.rule':
+    'Absorbing an ancient core on the course pays a large resource haul, but its mass doubles your turn radius for 3 seconds.',
+  'catalyst.arke-ancient-core.signal':
+    'Absorbing a core drags your flight path heavy, and the widened turning arc is visibly slower to close.',
   'catalyst.arke-obelisk.name': 'Arke Obelisk',
-  'catalyst.arke-obelisk.desc': 'Penalty: enemies hit harder / Reward: increased drops',
+  'catalyst.arke-obelisk.rule':
+    'Three gates stand before the boss and weaken it per gate cleared, but each gate missed hands that power back to the boss.',
+  'catalyst.arke-obelisk.signal':
+    'Each gate raises a distinct light-grid with its condition marked, collapsing into a filled seal on a clear.',
   'catalyst.toxar-outbreak.name': 'Toxar Outbreak',
-  'catalyst.toxar-outbreak.desc': 'contamination spread accelerated · Penalty: reduced ship HP / Reward: increased drops',
+  'catalyst.toxar-outbreak.rule':
+    'Purging a node only clears half the contamination, but your shots feed on contamination to grow, doubling loot from kills on it.',
+  'catalyst.toxar-outbreak.signal':
+    'Purges leave a faint residue of contamination behind, and a contamination-area gauge sits on the HUD at all times.',
   'catalyst.toxar-blightspore.name': 'Toxar Blightspore',
-  'catalyst.toxar-blightspore.desc': 'Penalty: enemies hit harder / Reward: increased resources',
+  'catalyst.toxar-blightspore.rule':
+    'A kill leaves a spore cloud that doubles the speed of enemies inside, but a kill inside the cloud pays double loot.',
+  'catalyst.toxar-blightspore.signal':
+    'A purple cloud spreads on every kill, visibly quickening any enemy caught inside as spores cling to them.',
   'catalyst.toxar-blight-mother.name': 'Toxar Blight Mother',
-  'catalyst.toxar-blight-mother.desc': 'Penalty: tougher enemies / Reward: better drop rarity',
+  'catalyst.toxar-blight-mother.rule':
+    "The boss rises into a second form the instant it falls, tripling the reward if you finish it, but losing both if you don't.",
+  'catalyst.toxar-blight-mother.signal':
+    "The fallen body swells and bursts into a larger form as the reward display locks to 'pending' at the top.",
   'catalyst.kras-breach.name': 'Kras Breach',
-  'catalyst.kras-breach.desc': 'block barriers reinforced · Penalty: tougher enemies / Reward: increased catalyst drops',
+  'catalyst.kras-breach.rule':
+    'Blocks triple in toughness and stack in layers, but each layer broken leaves cover behind that blocks enemy fire.',
+  'catalyst.kras-breach.signal':
+    'Blocks take on a layered metallic look, peeling off one layer per hit as a catalyst icon flies out from inside.',
   'catalyst.kras-breachsteel.name': 'Kras Breachsteel',
-  'catalyst.kras-breachsteel.desc': 'Penalty: more enemies / Reward: increased resources',
+  'catalyst.kras-breachsteel.rule':
+    'Broken block fragments orbit behind you as a shield, but carrying them slows your ship down proportionally.',
+  'catalyst.kras-breachsteel.signal':
+    'Block fragments trail your ship in orbit, and enemy bullets shatter on contact with them.',
   'catalyst.kras-colossus.name': 'Kras Colossus',
-  'catalyst.kras-colossus.desc': 'Penalty: enemies hit harder / Reward: increased drops',
+  'catalyst.kras-colossus.rule':
+    "Remaining blocks are the boss's armor, so breaking them weakens it, but the scroll speeds up wherever a block was cleared.",
+  'catalyst.kras-colossus.signal':
+    'Beams link every block to the boss, and its armor peels off a layer with each block broken.',
 
   // --- 기지 허브 ---
   'base.title': 'Base',
@@ -2592,38 +2789,85 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.archive.labelPrice': '구매가',
   'catalyst.archive.labelOwned': '보유',
   'catalyst.archive.rowKind': '분류',
-  'catalyst.archive.rewardPerStack': '보상 (장당)',
-  'catalyst.archive.penaltyPerStack': '페널티 (장당)',
-  'catalyst.archive.atCap': '최대 {n}장 주입 시',
-  'catalyst.archive.capValue': '보상 {reward} · 페널티 {penalty}',
+  'catalyst.archive.rowTags': '태그',
+  'catalyst.archive.rowCap': '정산 상한',
   'catalyst.archive.notSold': '판매 안 함',
 
-  // --- 촉매 전체 효과 집계(사용자 요청 2026-07-28) ---
-  'catalyst.summary.title': '전체 효과',
-  'catalyst.summary.injected': '주입 {n}장 · {kinds}종',
-  'catalyst.summary.none': '주입한 촉매가 없습니다 — 페널티도 보상도 없습니다.',
-  'catalyst.summary.penalty': '페널티',
-  'catalyst.summary.reward': '보상',
-  'catalyst.summary.emptyCol': '—',
-  // 어휘는 촉매 개별 설명(`catalyst.<slug>.desc`)과 **같은 말**을 쓴다 — 같은 화면에서
-  // 셀은 "적 내구도", 요약은 "적 체력" 이면 다른 축으로 읽힌다.
-  'catalyst.pen.enemyHp': '적 내구도',
-  'catalyst.pen.enemyDamage': '적 공격력',
-  'catalyst.pen.enemyCount': '적 수',
-  'catalyst.pen.enemySpeed': '적 이동 속도',
-  'catalyst.pen.enemyBulletSpeed': '적 탄속',
-  'catalyst.pen.playerHpDown': '기체 체력 감소',
-  'catalyst.rew.drop': '드랍량',
-  'catalyst.rew.rarity': '드랍 희귀도',
-  'catalyst.rew.xp': '경험치',
-  'catalyst.rew.resource': '자원',
-  'catalyst.rew.catalystDrop': '촉매 드랍률',
-  'catalyst.rew.power.damage': '피해량',
-  // '연사'는 좁은 보상 칩 폭에 맞춘 의도적 축약이다('연사 속도'의 통일 대상 아님).
-  'catalyst.rew.power.fireRate': '연사',
-  'catalyst.rew.power.moveSpeed': '이동 속도',
-  'catalyst.rew.power.maxHp': '최대 체력',
-  'catalyst.rew.power.skillAll': '전 스킬',
+  // --- 태그·상한(ADR-0052) ---
+  // ⚠️ 태그 6종의 KO 는 **정본 고정**이다(설계 계약표). 여기서 바꾸면 픽커·공명·계약표가 갈린다.
+  // ⚠️ `harvest` 태그 '수확' 은 촉매 id 2 의 표시명 '수확' 과 글자가 같다 — 설계가 그렇게
+  //    정한 것이라 여기서 임의로 어느 한쪽을 바꾸지 않는다.
+  'catalyst.tag.ignite': '점화',
+  'catalyst.tag.density': '밀도',
+  'catalyst.tag.precision': '정밀',
+  'catalyst.tag.harvest': '수확',
+  'catalyst.tag.gamble': '도박',
+  'catalyst.tag.erosion': '침식',
+  // 상한 축 5종 — 정산 유계다. 어휘는 계약표(`impl-contract-table.md`)의 상한 축 열을 따른다.
+  'catalyst.cap.drop': '드랍',
+  'catalyst.cap.resource': '자원',
+  'catalyst.cap.rarity': '희귀도',
+  'catalyst.cap.xp': 'XP',
+  'catalyst.cap.catalystDrop': '촉매 드랍',
+  'catalyst.cap.line': '{axis} ×{mult}',
+  'catalyst.cap.head': '상한',
+
+  // --- 공명 — **시스템 용어**다. 촉매 id 20 의 표시명 '동조' 와 반드시 구분한다(설계 명시). ---
+  'catalyst.resonance.head': '공명',
+  'catalyst.resonance.none': '아직 공명 없음',
+  'catalyst.resonance.need': '{n}장 더',
+  'catalyst.tag.head': '태그',
+  'catalyst.resonance.tier.weak': '약공명',
+  'catalyst.resonance.tier.strong': '강공명',
+  'catalyst.resonance.ember.name': '불씨',
+  'catalyst.resonance.ember.rule':
+    '처치 시 파열이 주변 적을 밀어냅니다. 밀려난 적은 1초간 받는 피해가 줄어듭니다.',
+  'catalyst.resonance.reverberation.name': '되울림',
+  'catalyst.resonance.reverberation.rule': '처치가 연쇄합니다. 사슬의 마지막 하나는 당신을 칩니다.',
+  'catalyst.resonance.attraction.name': '인력',
+  'catalyst.resonance.attraction.rule':
+    '적이 15 이상이면 같은 종류끼리 끌립니다. 뭉친 적은 방어력을 나눠 단단해집니다.',
+  'catalyst.resonance.crossfire.name': '오폭',
+  'catalyst.resonance.crossfire.rule': '적의 탄이 적에게도 맞습니다. 당신의 탄은 첫 적에서 멎습니다.',
+  'catalyst.resonance.whetting.name': '벼름',
+  'catalyst.resonance.whetting.rule':
+    '무피격 10초마다 다음 한 발이 관통합니다. 그 직후 3초간 발사가 느려집니다.',
+  'catalyst.resonance.deflection.name': '반사',
+  'catalyst.resonance.deflection.rule':
+    '적탄 일부가 튕겨 다른 적을 맞힙니다. 안 튕긴 탄은 피해가 두 배입니다.',
+  'catalyst.resonance.snare.name': '덫',
+  'catalyst.resonance.snare.rule':
+    '바닥 전리품을 적이 밟으면 1초간 붙잡힙니다. 그동안 당신은 회수할 수 없습니다.',
+  'catalyst.resonance.fruition.name': '결실',
+  'catalyst.resonance.fruition.rule':
+    '전리품 위에서 죽은 적은 그 등급을 올립니다. 적이 밟으면 등급이 내려갑니다.',
+  'catalyst.resonance.advance.name': '선불',
+  'catalyst.resonance.advance.rule': '런 시작 시 전리품 하나를 미리 받습니다. 지면 그것도 잃습니다.',
+  'catalyst.resonance.settlement.name': '청산',
+  'catalyst.resonance.settlement.rule':
+    '첫 전리품이 봉인됩니다. 보스를 잡으면 최고 등급, 지면 그것만 사라집니다.',
+  'catalyst.resonance.abrasion.name': '마모',
+  'catalyst.resonance.abrasion.rule':
+    '30초마다 이동 속도가 오르고 피격 반경이 커집니다(편대 전환 시 복구).',
+  'catalyst.resonance.subsidence.name': '함몰',
+  'catalyst.resonance.subsidence.rule':
+    '30초마다 가장자리부터 무너져 전장이 좁아지고 드랍 밀도가 오릅니다. 격전을 통과하면 절반 복구됩니다.',
+
+  // --- 픽커 경고 2단 — 회색 = 이 행성에서 무효(구조적) / 노랑 = 촉매 간 충돌(축소 작동) ---
+  // ⚠️ 헌장 §축소 작동 규율: 경고일 뿐이고 sim 이 그 카드를 끄는 근거가 아니다.
+  'catalyst.warn.head': '경고',
+  'catalyst.warn.none': '—',
+  'catalyst.warn.voidOnPlanet': '이 행성에서 무효',
+  'catalyst.warn.conflict': '다른 촉매가 축소시킴',
+  'catalyst.warn.badgeVoid': '무효',
+  'catalyst.warn.badgeConflict': '충돌',
+
+  // --- 픽커 슬롯·거부 사유(유니크 주입 — 같은 카드는 한 장뿐) ---
+  'catalyst.picker.slotEmpty': '빈 슬롯',
+  'catalyst.picker.blockDuplicate': '이미 주입됨',
+  'catalyst.picker.blockSignatureCap': '특산 최대 {cap}장',
+  'catalyst.picker.blockNoStock': '보유 없음',
+  'catalyst.picker.injected': '주입됨',
 
   // --- 런 중 침공 정보판(우측 가운데, 사용자 요청 2026-07-28) ---
   'runinfo.title': '현재 출격',
@@ -2633,101 +2877,221 @@ export const KO: Record<MessageKey, string> = {
 
   // --- 촉매 카탈로그(catalyst.<slug>.name/desc — src/data/catalysts.ts 48종) ---
   'catalyst.abundance.name': '풍요',
-  'catalyst.abundance.desc': '페널티: 적 수 증가 / 보상: 드랍량 증가',
+  'catalyst.abundance.rule':
+    '전리품이 두 배로 떨어지지만, 바닥에 다섯 개 이상 쌓여 있는 동안에는 적들이 그 더미 크기만큼 빨라진다.',
+  'catalyst.abundance.signal': '바닥 전리품이 다섯을 넘으면 더미에서 붉은 기류가 피어오르고 적의 잔상이 길어진다.',
   'catalyst.plunder.name': '약탈',
-  'catalyst.plunder.desc': '페널티: 적 내구도 증가 / 보상: 드랍량 증가',
+  'catalyst.plunder.rule':
+    '엘리트와 보스는 죽어도 전리품을 안 뱉지만, 몸에 부딪히면 한 번에 전부 강탈한다 — 부딪히면 접촉 피해도 받는다.',
+  'catalyst.plunder.signal': '강탈 가능한 적은 금색 외곽선이 맥동하고, 강탈 순간 몸통이 터지며 전리품이 쏟아진다.',
   'catalyst.harvest.name': '수확',
-  'catalyst.harvest.desc': '페널티: 적 공격력 증가 / 보상: 드랍량 증가',
+  'catalyst.harvest.rule':
+    '적이 죽은 자리에 수확 지대가 열려 그 위에서 네 탄이 관통하지만, 지대를 밟으면 감속장판처럼 느려진다.',
+  'catalyst.harvest.signal': '황금빛 원형 장판 위로 탄이 밝아지며 적을 꿰뚫고, 밟는 동안 기체 발밑에 수확 링이 감긴다.',
   'catalyst.bounty.name': '현상금',
-  'catalyst.bounty.desc': '페널티: 적 이동 속도 증가 / 보상: 드랍량 증가',
+  'catalyst.bounty.rule':
+    '피격당하면 맞은 자리에 현상금 표식이 떨어져 주우면 자원을 회수하지만, 적이 먼저 밟으면 그 적이 강화된다.',
+  'catalyst.bounty.signal': '피격 지점에 금색 표식이 박히고, 적이 먹으면 붉게 부풀며 액수가 그 적에게 옮겨 붙는다.',
   'catalyst.cornucopia.name': '풍요의 뿔',
-  'catalyst.cornucopia.desc': '페널티: 적 탄속 증가 / 보상: 드랍량 증가',
+  'catalyst.cornucopia.rule':
+    '레벨업 시 바닥의 전리품이 전부 폭발해 주변 적을 태우지만, 회수되는 전리품은 등급이 한 단계 내려간다.',
+  'catalyst.cornucopia.signal':
+    '레벨업 순간 바닥 전리품이 일제히 폭발하며 화면이 밝아지고, 등급색이 한 칸씩 내려앉은 채 빨려 들어온다.',
   'catalyst.refinement.name': '정련',
-  'catalyst.refinement.desc': '페널티: 적 내구도 증가 / 보상: 드랍 희귀도 증가',
+  'catalyst.refinement.rule':
+    '레벨업 3택에 정련 선택지가 떠 같은 등급 셋을 한 단계 위로 합칠 수 있지만, 정련로에 든 것은 지면 전부 잃는다.',
+  'catalyst.refinement.signal':
+    '3택 한 칸이 정련로 카드로 바뀌고, 합성 순간 승격 연출이 터진다. HUD 에 정련로 잔량이 상시 표시된다.',
   'catalyst.gilding.name': '도금',
-  'catalyst.gilding.desc': '페널티: 적 공격력 증가 / 보상: 드랍 희귀도 증가',
+  'catalyst.gilding.rule':
+    '적은 살아 있는 시간에 비례해 도금되어 강해지지만, 처치하면 도금이 벗겨져 가장 가까운 적에게 옮겨 붙는다.',
+  'catalyst.gilding.signal': '적 표면이 단계마다 구리에서 은, 금으로 물들고, 처치 시 금박이 벗겨져 옆 적에게 날아가 붙는다.',
   'catalyst.prospect.name': '감정',
-  'catalyst.prospect.desc': '페널티: 적 수 증가 / 보상: 드랍 희귀도 증가',
+  'catalyst.prospect.rule':
+    '매 편대마다 적 하나가 광맥 보유자로 지목돼 호위에 둘러싸인 동안에는 무적이고, 호위가 흩어져야만 뚫린다.',
+  'catalyst.prospect.signal':
+    '지목된 적이 광맥 결정을 두르고, 호위가 붙어 있으면 보호막이 서리다가 흩어지면 결정이 드러난다.',
   'catalyst.alchemy.name': '연성',
-  'catalyst.alchemy.desc': '페널티: 기체 체력 감소 / 보상: 드랍 희귀도 증가',
+  'catalyst.alchemy.rule':
+    '노말 등급 전리품 셋이 가까이 있으면 서로 융합해 매직이 되지만, 융합한 자리는 유독 장판이 되어 태운다.',
+  'catalyst.alchemy.signal':
+    '노말 셋 사이에 보랏빛 선이 이어지다 한 점으로 빨려 들며 융합하고, 그 자리에 보라색 장판이 퍼진다.',
   'catalyst.epiphany.name': '계시',
-  'catalyst.epiphany.desc': '페널티: 적 탄속 증가 / 보상: 드랍 희귀도 증가',
+  'catalyst.epiphany.rule':
+    '레벨업 3택이 1택 2중첩으로 바뀌어 거부할 수 없지만, 원치 않는 것을 받을 때마다 경험치가 적립된다.',
+  'catalyst.epiphany.signal': '3택 화면이 단일 금테 카드로 접히며 나머지 두 자리가 재로 흩어지고, 선택 버튼이 없다.',
   'catalyst.insight.name': '통찰',
-  'catalyst.insight.desc': '페널티: 적 이동 속도 증가 / 보상: 경험치 획득 증가',
+  'catalyst.insight.rule':
+    '적탄이 발사되기 전 예고선으로 미리 보이지만, 그 예고선 위에 서 있는 동안만 경험치가 세 배로 들어온다.',
+  'catalyst.insight.signal': '발사 전 붉은 예고선이 그어지고, 그 위에 서면 기체가 백색으로 빛나며 젬 배율이 표시된다.',
   'catalyst.tutelage.name': '교습',
-  'catalyst.tutelage.desc': '페널티: 적 내구도 증가 / 보상: 경험치 획득 증가',
+  'catalyst.tutelage.rule':
+    '레벨 5에서 곧장 시작하지만, 이 런에서는 이후 모든 레벨업이 3택 없이 전부 자동으로 결정되어 버린다.',
+  'catalyst.tutelage.signal':
+    '출격 직후 레벨업 연출이 다섯 번 연달아 터지고, 이후 카드가 뽑히는 것을 보기만 할 뿐 고를 수 없다.',
   'catalyst.ascension.name': '승격',
-  'catalyst.ascension.desc': '페널티: 적 공격력 증가 / 보상: 경험치 획득 증가',
+  'catalyst.ascension.rule':
+    '웨이브를 넘길 때마다 최대 HP 가 10% 깎이고 공격력이 10% 오르지만, 대시로 적을 관통하면 깎인 HP 가 1 돌아온다.',
+  'catalyst.ascension.signal': '웨이브 전환마다 HP 바 상한선이 내려앉고 기체가 발광하며, 복구 시 상한선이 되감긴다.',
   'catalyst.enlightenment.name': '각성',
-  'catalyst.enlightenment.desc': '페널티: 적 수 증가 / 보상: 경험치 획득 증가',
+  'catalyst.enlightenment.rule':
+    '화면에 남은 적이 적을수록 네 탄이 최대 3배까지 커지지만, 대신 급행 소환 속도가 두 배로 빨라진다.',
+  'catalyst.enlightenment.signal': '적이 줄수록 탄이 눈에 띄게 굵어지고 밝아지며, 적이 다시 차면 탄이 도로 가늘어진다.',
   'catalyst.mastery.name': '숙련',
-  'catalyst.mastery.desc': '페널티: 기체 체력 감소 / 보상: 경험치 획득 증가',
+  'catalyst.mastery.rule':
+    '레벨업 3택에 같은 파워업이 셋 나와 고르면 3중첩으로 들어오지만, 사라진 두 선택지 대신 전리품이 하나 떨어질 뿐이다.',
+  'catalyst.mastery.signal': '세 카드가 완전히 같은 그림으로 뜨고 스택 수가 크게 표시되며, 선택 직후 전리품이 하나 떨어진다.',
   'catalyst.extraction.name': '채굴',
-  'catalyst.extraction.desc': '페널티: 적 내구도 증가 / 보상: 자원 획득 증가',
+  'catalyst.extraction.rule':
+    '보급 습격의 자원이 곧장 들어오지 않고 화면의 적들에게 실려, 죽이면 전리품으로 굳어 떨어지지만 화면 밖으로 나가면 사라진다.',
+  'catalyst.extraction.signal':
+    '보급 습격 순간 자원이 적들에게 달라붙어 청백색으로 빛나고, 처치하면 결정으로 굳어 바닥에 박힌다.',
   'catalyst.foundry.name': '제련소',
-  'catalyst.foundry.desc': '페널티: 적 수 증가 / 보상: 자원 획득 증가',
+  'catalyst.foundry.rule':
+    '적 셋을 처치할 때마다 포탑이 하나 서지만, 포탑이 서 있는 동안에는 네 공격력이 포탑 수만큼 나뉘어 줄어든다.',
+  'catalyst.foundry.signal': '처치 셋째마다 금속이 접히며 포탑이 솟고, HUD 화력 게이지가 포탑 수만큼 내려간다.',
   'catalyst.greed.name': '탐욕',
-  'catalyst.greed.desc': '페널티: 적 공격력 증가 / 보상: 자원 획득 증가',
+  'catalyst.greed.rule':
+    '자원이 곧장 들어오지 않고 그 값어치만큼 적이 되어 나타나 죽이면 세 배로 받지만, 못 죽이면 그대로 사라진다.',
+  'catalyst.greed.signal': '적립 순간 바닥이 갈라지며 금빛 적이 솟아오르고, 화면을 벗어나면 액수가 잿빛으로 꺼진다.',
   'catalyst.mercantile.name': '교역',
-  'catalyst.mercantile.desc': '페널티: 적 이동 속도 증가 / 보상: 자원 획득 증가',
+  'catalyst.mercantile.rule':
+    '레벨업 3택 한 칸이 빚 카드가 되어 지금 2중첩으로 받지만, 런 종료 시 못 갚은 만큼 그 런의 전리품이 압류된다.',
+  'catalyst.mercantile.signal': '3택 한 칸이 붉은 차용증으로 바뀌고, 받을 때마다 HUD 에 부채 총액이 쌓인다.',
   'catalyst.motherlode.name': '노다지',
-  'catalyst.motherlode.desc': '페널티: 기체 체력 감소 / 보상: 자원 획득 증가',
-  'catalyst.resonance.name': '공명',
-  'catalyst.resonance.desc': '페널티: 적 내구도 증가 / 보상: 촉매 드랍률 증가',
+  'catalyst.motherlode.rule':
+    '적이 광맥이 되어 처치하면 자원 대신 광석 덩어리를 남기고, 부숴야 자원이 되며 그동안 자동 조준이 그쪽에 묶인다.',
+  'catalyst.motherlode.signal': '처치 시 광석 덩어리가 남아 반짝이고, 부술 때 파편이 튀며 자동 조준선이 덩어리로 향한다.',
+  // ⚠️ 시스템 용어 '공명'(태그 공명 12종)과 구분한다 — 계약표가 `20 resonance (동조)` 로 못박았다.
+  'catalyst.resonance.name': '동조',
+  'catalyst.resonance.rule':
+    '같은 종류의 적 셋이 가까이 모이면 동조해 강해지지만, 그 상태에서 하나를 죽이면 나머지가 즉사하며 셋 몫의 전리품을 전부 뱉는다.',
+  'catalyst.resonance.signal': '동조 중인 적들 사이에 진동하는 광선이 이어지고, 동조음이 은은하게 울려 퍼진다.',
   'catalyst.catalysis.name': '촉매 반응',
-  'catalyst.catalysis.desc': '페널티: 적 탄속 증가 / 보상: 촉매 드랍률 증가',
+  'catalyst.catalysis.rule':
+    '촉매가 떨어지면 보유함으로 안 가고 그 자리에 미정착 결정으로 박혀, 적이 밟으면 부서지고 런을 이겨야 정착한다.',
+  'catalyst.catalysis.signal': '촉매 결정이 바닥에 박혀 은은히 맥동하고, 적이 다가가면 균열이 가며 부서진다.',
   'catalyst.cascade.name': '연쇄',
-  'catalyst.cascade.desc': '페널티: 적 수 증가 / 보상: 촉매 드랍률 증가',
+  'catalyst.cascade.rule':
+    '적이 죽을 때 폭발이 일어나 너도 그 절반만큼 태우지만, 그 폭발로 죽인 적은 전리품을 두 배 뱉는다.',
+  'catalyst.cascade.signal': '처치마다 반경이 보이는 폭발구가 퍼지고, 자기 피해 시 화면이 촉매 전용 색으로 물든다.',
   'catalyst.seeding.name': '파종',
-  'catalyst.seeding.desc': '페널티: 적 공격력 증가 / 보상: 촉매 드랍률 증가',
+  'catalyst.seeding.rule':
+    '처치한 적 자리에 씨앗이 남아 15초 뒤 전리품 나무로 자라지만, 그 전에 적이 밟으면 씨앗을 먹고 강화된다.',
+  'catalyst.seeding.signal': '씨앗이 바닥에서 맥동하며 발아 링이 차오르고, 발아하면 나무가 솟아 열매가 떨어진다.',
   'catalyst.chainreaction.name': '연쇄 반응',
-  'catalyst.chainreaction.desc': '페널티: 적 이동 속도 증가 / 보상: 촉매 드랍률 증가',
+  'catalyst.chainreaction.rule':
+    '네가 받은 피해가 그대로 가장 가까운 적에게 전이되지만, 전이한 만큼 그 웨이브 동안 최대 HP 상한이 내려간다.',
+  'catalyst.chainreaction.signal': '피격 순간 기체에서 붉은 사슬이 뻗어 적에게 꽂히고, HP 바 상한선이 전이량만큼 내려앉는다.',
   'catalyst.overdrive.name': '오버드라이브',
-  'catalyst.overdrive.desc': '페널티: 적 내구도 증가 / 보상: 기체 공격력 강화(런 한정)',
+  'catalyst.overdrive.rule':
+    '발사할수록 총열이 달아올라 뜨거울수록 피해가 최대 2배까지 오르지만, 임계를 넘기면 3초간 침묵한다.',
+  'catalyst.overdrive.signal': '총열이 붉게 달아오르고 HUD 열 게이지가 차오르며, 임계 초과 시 증기를 뿜으며 멎는다.',
   'catalyst.rapidcore.name': '속사 코어',
-  'catalyst.rapidcore.desc': '페널티: 적 수 증가 / 보상: 기체 연사 강화(런 한정)',
+  'catalyst.rapidcore.rule':
+    '같은 방향으로 계속 이동할수록 공격력이 최대 2배까지 오르지만, 피격당하면 그대로 초기화된다.',
+  'catalyst.rapidcore.signal': '방향 유지 시간이 길수록 기체 잔상이 길어지고 탄이 밝아지며, 피격 순간 잔상이 흩어진다.',
   'catalyst.afterburner.name': '애프터버너',
-  'catalyst.afterburner.desc': '페널티: 적 공격력 증가 / 보상: 기체 이동 속도 강화(런 한정)',
+  'catalyst.afterburner.rule':
+    '대시 쿨다운이 사라지지만 대시마다 최대 HP 가 3 깎이며, 대시로 적을 관통해 죽이면 3이 돌아온다.',
+  'catalyst.afterburner.signal': '대시마다 후미에서 불꽃이 뿜어지고 HP 바 상한선이 내려앉으며, 관통 처치 시 상한선이 되감긴다.',
   'catalyst.bulwark.name': '방벽',
-  'catalyst.bulwark.desc': '페널티: 적 이동 속도 증가 / 보상: 기체 최대 체력 강화(런 한정)',
+  'catalyst.bulwark.rule':
+    '피격 직후 3초간 맞은 방향 120도의 적탄이 소멸하지만, 그 3초 동안 그 방향으로는 네 탄도 안 나간다.',
+  'catalyst.bulwark.signal': '맞은 쪽에 육각 방벽이 펼쳐져 탄이 부서지고, 그 방향 총구가 접히는 것이 보인다.',
   'catalyst.ascendant.name': '초월',
-  'catalyst.ascendant.desc': '페널티: 기체 체력 감소 / 보상: 전 스킬 강화(런 한정)',
+  'catalyst.ascendant.rule':
+    '최대 HP 가 절반이 되지만, 대시 무적 시간이 두 배이고 그동안 통과한 적은 2초간 이동 불능이 된다.',
+  'catalyst.ascendant.signal': '기체가 반투명 백색으로 승화하고, 통과한 적이 얼어붙은 듯 멎으며 발밑에 결박 링이 그려진다.',
   'catalyst.kargon-swarmcall.name': '카르곤 군단 소집',
-  'catalyst.kargon-swarmcall.desc': '적 밀도 격화 · 페널티: 적 수 증가 / 보상: 드랍량 증가',
+  'catalyst.kargon-swarmcall.rule':
+    '웨이브 처치 할당이 절반이 되지만, 넘긴 웨이브 수만큼 다음 구간의 적 상한이 누진해서 오른다.',
+  'catalyst.kargon-swarmcall.signal':
+    '웨이브 전환마다 화면 상단의 누진 단계가 한 칸씩 차오르고, 다음 구간이 눈에 띄게 두껍게 밀려온다.',
   'catalyst.kargon-magma-vein.name': '카르곤 마그마 광맥',
-  'catalyst.kargon-magma-vein.desc': '페널티: 적 내구도 증가 / 보상: 자원 획득 증가',
+  'catalyst.kargon-magma-vein.rule':
+    '네가 쏜 탄이 지나간 자리에 용암이 솟아 적도 너도 태우지만, 용암 위에서 죽은 적은 전리품을 두 배 뱉는다.',
+  'catalyst.kargon-magma-vein.signal':
+    '사격 궤적을 따라 바닥에 균열이 갈라지며 용암이 올라오고, 자기 피해는 촉매 전용 색으로 보인다.',
   'catalyst.kargon-lava-warden.name': '카르곤 용암 관리자',
-  'catalyst.kargon-lava-warden.desc': '페널티: 적 공격력 증가 / 보상: 드랍 희귀도 증가',
+  'catalyst.kargon-lava-warden.rule':
+    '보스가 용암 갑주를 둘러 가까이 붙을수록 물러지지만, 그 반경 안은 보스의 접촉 피해권이다.',
+  'catalyst.kargon-lava-warden.signal': '접근하면 갑주가 녹아내리며 붉게 갈라지고, 물러나면 굳는 소리와 함께 다시 닫힌다.',
   'catalyst.berdan-collapse.name': '베르단 붕괴',
-  'catalyst.berdan-collapse.desc': '안전지대 수축 가속 · 페널티: 적 이동 속도 증가 / 보상: 경험치 획득 증가',
+  'catalyst.berdan-collapse.rule':
+    '안전 원이 따라오지 않고 15초마다 다른 곳으로 점프하지만, 점프 직후 5초간 새 원 안의 적이 전부 즉사한다.',
+  'catalyst.berdan-collapse.signal':
+    '점프 3초 전 다음 자리에 예고 링이 그려지고, 점프 순간 원 안의 적이 일제히 소멸하며 백색 파열이 터진다.',
   'catalyst.berdan-royal-jelly.name': '베르단 여왕 젤리',
-  'catalyst.berdan-royal-jelly.desc': '페널티: 적 수 증가 / 보상: 자원 획득 증가',
+  'catalyst.berdan-royal-jelly.rule':
+    '안전 원이 조여든 자리에 젤리가 남아 먹은 적은 느려지고 죽으면 자원을 세 배 뱉지만, 못 먹은 적은 더 빨라진다.',
+  'catalyst.berdan-royal-jelly.signal':
+    '수축 흔적을 따라 황금 젤리 띠가 깔리고, 먹은 적은 금빛으로 굼떠지며 못 먹은 적은 붉게 가속한다.',
   'catalyst.berdan-hive-queen.name': '베르단 군체 여왕',
-  'catalyst.berdan-hive-queen.desc': '페널티: 적 내구도 증가 / 보상: 드랍량 증가',
+  'catalyst.berdan-hive-queen.rule':
+    '보스가 피해를 입으면 그만큼 일벌을 토해내고, 일벌은 보스 HP 를 나눠 가져 죽이면 보스가 그만큼 약해진다.',
+  'catalyst.berdan-hive-queen.signal':
+    '보스가 맞을 때마다 옆구리에서 일벌이 사출되고, 일벌 처치 시 보스 HP 바가 눈에 띄게 줄어든다.',
   'catalyst.niflheim-pursuit.name': '니플헤임 추격',
-  'catalyst.niflheim-pursuit.desc': '추격 압박 격화 · 페널티: 적 이동 속도 증가 / 보상: 촉매 드랍률 증가',
+  'catalyst.niflheim-pursuit.rule':
+    '포식자가 네 그림자를 남겨 지나온 경로를 따라오며 닿으면 즉사지만, 그림자를 따돌린 대피소 확보는 두 배 빠르다.',
+  'catalyst.niflheim-pursuit.signal':
+    '반투명한 검은 기체가 내 궤적을 그대로 밟아 오고, 궤적선이 옅게 남아 있어 위치를 읽을 수 있다.',
   'catalyst.niflheim-rime-crystal.name': '니플헤임 서리 결정',
-  'catalyst.niflheim-rime-crystal.desc': '페널티: 적 탄속 증가 / 보상: 자원 획득 증가',
+  'catalyst.niflheim-rime-crystal.rule':
+    '지나간 자리가 얼어 적이 느려지고 그 위에서 죽으면 결정을 떨구지만, 포식자는 언 바닥에서 오히려 가속한다.',
+  'catalyst.niflheim-rime-crystal.signal':
+    '서리 궤적이 깔리고 그 위 적이 푸르게 굳으며, 포식자가 올라타면 미끄러지듯 가속한다.',
   'catalyst.niflheim-flagship.name': '니플헤임 유령 기함',
-  'catalyst.niflheim-flagship.desc': '페널티: 적 내구도 증가 / 보상: 드랍 희귀도 증가',
+  'catalyst.niflheim-flagship.rule':
+    '포식자 위로 기함이 떠 대피소를 하나씩 부수지만, 부서진 대피소는 그 자리에 서 있으면 시간이 지나 복구된다.',
+  'catalyst.niflheim-flagship.signal':
+    '상공을 가로지르는 기함과 포격 궤적이 보이고, 부서진 대피소에 복구 링이 차오른다.',
   'catalyst.arke-overclock.name': '아르케 오버클록',
-  'catalyst.arke-overclock.desc': '질주 속도 격화 · 페널티: 적 이동 속도 증가 / 보상: 경험치 획득 증가',
+  'catalyst.arke-overclock.rule':
+    '스크롤이 두 배 빨라지고 충돌한 벽은 부서지며 자원을 뱉지만, 부딪힐 때마다 최대 속도가 한 단계 내려간다.',
+  'catalyst.arke-overclock.signal':
+    '화면 양옆 속도선이 길어지고, 충돌 시 벽이 파열하며 자원이 튄다. HUD 최대속도 게이지가 오르내린다.',
   'catalyst.arke-ancient-core.name': '아르케 고대 코어',
-  'catalyst.arke-ancient-core.desc': '페널티: 적 내구도 증가 / 보상: 자원 획득 증가',
+  'catalyst.arke-ancient-core.rule':
+    '코스 위 고대 코어를 흡수하면 대량의 자원을 얻지만, 코어의 질량 때문에 3초간 선회 반경이 두 배가 된다.',
+  'catalyst.arke-ancient-core.signal':
+    '코어를 흡수하면 기체가 무겁게 늘어지는 궤적을 그리고, 선회가 넓어지는 것이 눈에 보인다.',
   'catalyst.arke-obelisk.name': '아르케 오벨리스크',
-  'catalyst.arke-obelisk.desc': '페널티: 적 공격력 증가 / 보상: 드랍량 증가',
+  'catalyst.arke-obelisk.rule':
+    '보스 앞에 관문 셋이 서서 통과한 수만큼 보스를 약화시키지만, 통과 못 한 관문은 그 힘을 보스에게 준다.',
+  'catalyst.arke-obelisk.signal':
+    '관문마다 다른 빛의 격자와 조건 표식이 서고, 통과하면 격자가 무너지며 인장이 채워진다.',
   'catalyst.toxar-outbreak.name': '톡사르 창궐',
-  'catalyst.toxar-outbreak.desc': '오염 확산 가속 · 페널티: 기체 체력 감소 / 보상: 드랍량 증가',
+  'catalyst.toxar-outbreak.rule':
+    '오염 노드를 부숴도 정화가 절반만 일어나지만, 오염 위에서는 네 탄이 오염을 먹고 커져 처치가 두 배 뱉는다.',
+  'catalyst.toxar-outbreak.signal':
+    '정화가 절반만 걷히며 잔류 오염이 옅게 남고, 오염 면적 게이지가 HUD 에 상시 뜬다.',
   'catalyst.toxar-blightspore.name': '톡사르 역병 포자',
-  'catalyst.toxar-blightspore.desc': '페널티: 적 공격력 증가 / 보상: 자원 획득 증가',
+  'catalyst.toxar-blightspore.rule':
+    '처치한 적이 포자 구름을 남겨 안의 적을 두 배 빠르게 하지만, 구름 안에서 죽으면 전리품을 두 배 뱉는다.',
+  'catalyst.toxar-blightspore.signal':
+    '처치마다 보랏빛 구름이 퍼지고, 구름에 들어간 적이 눈에 띄게 빨라지며 몸에 포자가 묻는다.',
   'catalyst.toxar-blight-mother.name': '톡사르 부패의 모체',
-  'catalyst.toxar-blight-mother.desc': '페널티: 적 내구도 증가 / 보상: 드랍 희귀도 증가',
+  'catalyst.toxar-blight-mother.rule':
+    '보스가 쓰러지면 즉시 두 번째 형태로 일어서 잡으면 보상이 세 배지만, 못 잡으면 첫 형태의 보상까지 사라진다.',
+  'catalyst.toxar-blight-mother.signal':
+    "쓰러진 시체가 부풀어 터지며 더 큰 형태가 일어서고, 화면 상단의 보상 표시가 '보류'로 잠긴다.",
   'catalyst.kras-breach.name': '크라스 돌파',
-  'catalyst.kras-breach.desc': '블록 방벽 강화 · 페널티: 적 내구도 증가 / 보상: 촉매 드랍률 증가',
+  'catalyst.kras-breach.rule':
+    '블록이 세 배 단단해지고 층이 겹쳐 쌓이지만, 부순 층이 그 자리에 엄폐물로 남아 적탄을 막아 준다.',
+  'catalyst.kras-breach.signal':
+    '블록이 다층 금속 질감으로 갈아입고, 파괴 시 층이 하나씩 벗겨지며 안에서 촉매 아이콘이 튀어나온다.',
   'catalyst.kras-breachsteel.name': '크라스 돌파 강철',
-  'catalyst.kras-breachsteel.desc': '페널티: 적 수 증가 / 보상: 자원 획득 증가',
+  'catalyst.kras-breachsteel.rule':
+    '부순 블록 조각이 최대 다섯 개까지 뒤를 따라다니며 방패가 되지만, 조각을 달고 있으면 그만큼 느려진다.',
+  'catalyst.kras-breachsteel.signal':
+    '기체 뒤로 블록 조각이 궤도를 돌며 따라오고, 적탄이 조각에 맞아 부서진다.',
   'catalyst.kras-colossus.name': '크라스 공성 콜로서스',
-  'catalyst.kras-colossus.desc': '페널티: 적 공격력 증가 / 보상: 드랍량 증가',
+  'catalyst.kras-colossus.rule':
+    '남은 블록이 곧 보스의 방어력이라 부술수록 약해지지만, 부순 자리로 스크롤이 더 빨리 밀려 올라온다.',
+  'catalyst.kras-colossus.signal':
+    '모든 블록에서 보스로 뻗는 광선이 이어지고, 블록이 부서질 때마다 보스 갑주가 한 겹 벗겨진다.',
 
   'base.title': '기지',
   'base.sub': '건물을 선택해 정비하거나, 출격해 행성을 침략하세요.',

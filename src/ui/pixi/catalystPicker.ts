@@ -46,23 +46,42 @@
 import { Container, Graphics, Sprite, Text, Texture, type FederatedPointerEvent } from 'pixi.js';
 import {
   CATALYSTS,
+  CATALYST_TAG_PRIORITY,
   catalystById,
   catalystIconFallbackKey,
   catalystIconKey,
+  catalystVoidOnMode,
+  normalizeCatalystArray,
+  SIGNATURE_CAP,
   SLOT_CAP,
   type CatalystDef,
 } from '../../data/catalysts.js';
-import { catalystSummary } from '../../data/catalystSummary.js';
-import { penaltyRow, rewardRow, type CatalystEffectRow } from '../catalystLabels.js';
+import {
+  RESONANCE_STRONG_COUNT,
+  RESONANCE_WEAK_COUNT,
+  resolveResonance,
+  tagCounts,
+} from '../../data/catalystResonance.js';
+import {
+  catalystCapLine,
+  catalystName,
+  catalystRule,
+  catalystTagLabel,
+  resonanceName,
+  resonanceRule,
+  resonanceTierLabel,
+} from '../catalystText.js';
 import {
   canInjectCatalyst,
+  catalystInjectBlock,
   catalystLocked,
   injectedCount,
   ownedCount,
+  type CatalystInjectBlock,
 } from '../../data/catalystInject.js';
 import { planetById } from '../../../data/planets.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
-import { t, type MessageKey } from '../../i18n/index.js';
+import { t } from '../../i18n/index.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { makeScrollArea } from './scrollArea.js';
@@ -156,14 +175,34 @@ const SUMMARY_ROWS_Y = 48;
 const SUMMARY_HEAD_H = 26;
 
 const COLS = 6;
-/** 셀 높이 = 아이콘/이름/종류 + **설명 3줄** + 보유 카운터 + 버튼 줄. */
-const CELL_H = 196;
+/** 셀 높이 = 아이콘/이름/종류·보유 + **규칙문 3줄** + 태그 칩 줄 + 상한 줄 + 상태 줄 + 버튼 줄. */
+const CELL_H = 244;
 const CELL_GAP = 12;
+/** 셀 안 고정 세로 격자 — 규칙문(66~120) → 태그 칩 → 상한 → 상태 → 버튼(CELL_H−44). */
+const TAG_ROW_Y = 124;
+const CAP_ROW_Y = 150;
+const STATUS_ROW_Y = 176;
+
+/** 헤더 슬롯 스트립 — **3칸 고정**(`SLOT_CAP`). 빈 칸도 그린다(헌장 §귀속 규율의 HUD 짝). */
+const SLOT_CELL_W = 132;
+const SLOT_CELL_GAP = 8;
 
 const BADGE = 0x8affc0;
-/** 페널티 열 색(적색 계열) · 보상 열 색(청록 계열). 요약 2열의 의미를 색으로도 가른다. */
-const PENALTY_COLOR = 0xff9a8a;
-const REWARD_COLOR = 0x8affc0;
+/** 공명 열 색(청록) · 경고 열 색(회색 기준). 하단 2열의 의미를 색으로도 가른다. */
+const RESONANCE_COLOR = 0x8affc0;
+const WARN_COLOR = 0xb9b3a6;
+/**
+ * 경고 2단의 색(헌장 §축소 작동 규율) — **회색 = 이 행성에서 무효**(구조적, `voidOnModes`) /
+ * **노랑 = 촉매 간 충돌**(축소 작동, 런타임 판정).
+ *
+ * ⚠️ 둘 다 **경고일 뿐**이다. sim 이 그 카드를 끄는 근거가 아니고, 런 안에서는 축소된 형태로라도
+ * 반드시 작동해야 한다.
+ */
+const WARN_VOID_COLOR = 0x9a94a8;
+const WARN_CONFLICT_COLOR = 0xffd45e;
+/** 태그 칩 바탕/글자. */
+const TAG_CHIP_FACE = 0x2a2440;
+const TAG_CHIP_TEXT = 0xcfc6ff;
 /** 석재 슬래브 위 **보조 텍스트색**(정제소 `SLAB_BODY_FILL` 복제 — 그 파일은 화면이다). */
 const SLAB_BODY_FILL = 0xe4dac7;
 /** 셀 판 바탕색·홈·반경 — 예비역 로스터 `rowPlate` → … → 성계 지도 경유 복제. */
@@ -171,15 +210,24 @@ const ROW_FACE = 0x3b3327;
 const ROW_GROOVE = 0x17130d;
 const ROW_RADIUS = 10;
 
-/** 보상축 → 셀 토큰 글리프(아이콘 PNG 부재 시 텍스트 폴백). ASCII 유지(캔버스 두부 방지). */
+/** 상한 축 → 셀 토큰 글리프(아이콘 PNG 부재 시 텍스트 폴백). ASCII 유지(캔버스 두부 방지). */
 const AXIS_GLYPH: Record<string, string> = {
   drop: 'D',
   rarity: 'R',
   xp: 'X',
   resource: '$',
   catalystDrop: 'C',
-  power: 'P',
 };
+
+/**
+ * 하단 챔버의 한 줄 — 라벨(왼쪽) + 값(오른쪽). `color` 는 **그 줄만** 열 기준색을 덮는다
+ * (경고 열에서 회색/노랑이 한 열 안에 섞여야 하기 때문이다).
+ */
+export interface PickerRow {
+  readonly label: string;
+  readonly value: string;
+  readonly color?: number;
+}
 
 /** 화면/패널 좌표 사각형. */
 export interface PickerRect {
@@ -207,6 +255,8 @@ export function catalystPickerLayout(): {
   readonly close: PickerRect;
   /** 헤더 둘째 줄 버튼들(패널 로컬, 왼쪽→오른쪽). */
   readonly headerButtons: readonly { readonly id: string; readonly rect: PickerRect }[];
+  /** 헤더 왼쪽 **3칸 고정** 슬롯 스트립(패널 로컬). 칸 수는 `SLOT_CAP` 이다. */
+  readonly slots: PickerRect & { readonly cells: number; readonly cellW: number };
   /** 그리드 스크롤 창(패널 로컬). */
   readonly grid: PickerRect & { readonly cols: number; readonly cellW: number; readonly cellH: number };
   /** 하단 요약 챔버(패널 로컬). */
@@ -226,6 +276,14 @@ export function catalystPickerLayout(): {
       { id: 'clear', rect: { x: clearX, y: btnY, w: CLEAR_W, h: BTN_ROW_H } },
       { id: 'confirm', rect: { x: confirmX, y: btnY, w: CONFIRM_W, h: BTN_ROW_H } },
     ],
+    slots: {
+      x: BOX.x,
+      y: btnY,
+      w: SLOT_CAP * SLOT_CELL_W + (SLOT_CAP - 1) * SLOT_CELL_GAP,
+      h: BTN_ROW_H,
+      cells: SLOT_CAP,
+      cellW: SLOT_CELL_W,
+    },
     grid: {
       x: BOX.x,
       y: gridY,
@@ -412,7 +470,8 @@ export class CatalystPicker {
   private chromeBuilt = false;
   private gridHost: Container | null = null;
   private summaryHost: Container | null = null;
-  private slotsNode: Text | null = null;
+  /** 헤더 왼쪽 3칸 슬롯 스트립의 내용물(칸은 주입마다 바뀌므로 크롬이 아니라 갱신 대상이다). */
+  private slotsHost: Container | null = null;
 
   constructor(stage: Container) {
     this.stage = stage;
@@ -545,7 +604,7 @@ export class CatalystPicker {
     this.panel = null;
     this.gridHost = null;
     this.summaryHost = null;
-    this.slotsNode = null;
+    this.slotsHost = null;
     for (const child of [...this.root.children]) {
       this.root.removeChild(child);
       child.destroy({ children: true });
@@ -609,22 +668,15 @@ export class CatalystPicker {
     close.container.position.set(layout.close.x, layout.close.y);
     host.addChild(close.container);
 
-    // 헤더 둘째 줄: 슬롯 카운터(좌) + [전체 해제]/[확정](우).
-    const slots = new Text({
-      resolution: 2,
-      text: t('catalyst.picker.slots', { n: this.working.length, cap: SLOT_CAP }),
-      style: {
-        fontFamily: UI_FONT,
-        fontSize: 22,
-        fontWeight: '800',
-        fill: this.working.length >= SLOT_CAP ? COLOR.gold : SLAB_BODY_FILL,
-        dropShadow: TEXT_SHADOW,
-      },
-    });
-    slots.anchor.set(0, 0.5);
-    slots.position.set(BOX.x, BOX.y + BTN_ROW_H / 2);
-    host.addChild(slots);
-    this.slotsNode = slots;
+    // 헤더 둘째 줄: **3칸 고정** 슬롯 스트립(좌) + [전체 해제]/[확정](우).
+    // 칸의 파낸 면은 상태와 무관하므로 크롬이고, 안에 들어가는 이름은 갱신 대상이다.
+    for (let i = 0; i < layout.slots.cells; i++) {
+      const cx = layout.slots.x + i * (layout.slots.cellW + SLOT_CELL_GAP);
+      host.addChild(recessedWell(cx, layout.slots.y, layout.slots.cellW, layout.slots.h));
+    }
+    const slotsHost = new Container();
+    host.addChild(slotsHost);
+    this.slotsHost = slotsHost;
 
     for (const b of layout.headerButtons) {
       const btn =
@@ -664,18 +716,51 @@ export class CatalystPicker {
 
   // --- 갱신 -----------------------------------------------------------------
 
-  /** 슬롯 수·셀·요약만 갈아끼운다. 암막·석재 패널·버튼 줄은 다시 굽지 않는다. */
+  /** 슬롯 스트립·셀·공명 챔버만 갈아끼운다. 암막·석재 패널·버튼 줄은 다시 굽지 않는다. */
   private refresh(): void {
     if (!this.chromeBuilt) return;
-    if (this.slotsNode !== null) {
-      this.slotsNode.text = t('catalyst.picker.slots', { n: this.working.length, cap: SLOT_CAP });
-      this.slotsNode.style.fill = this.working.length >= SLOT_CAP ? COLOR.gold : SLAB_BODY_FILL;
+    const layout = catalystPickerLayout();
+    const slotsHost = this.slotsHost;
+    if (slotsHost !== null) {
+      this.clearHost(slotsHost);
+      this.renderSlots(slotsHost, layout.slots);
     }
     this.renderGrid();
     const sh = this.summaryHost;
     if (sh !== null) {
       this.clearHost(sh);
-      this.renderSummary(sh, catalystPickerLayout().summary);
+      this.renderSummary(sh, layout.summary);
+    }
+  }
+
+  /**
+   * 헤더 왼쪽 **3칸 고정** 슬롯 스트립. 빈 칸도 그린다 — 몇 장을 더 넣을 수 있는지가 숫자가
+   * 아니라 자리로 읽혀야 하고(런 중 HUD 의 3칸 배치와 같은 형태), 그래야 픽커에서 본 배치가
+   * 런에서 그대로 이어진다(헌장 §귀속 규율 1).
+   */
+  private renderSlots(host: Container, rect: PickerRect & { cells: number; cellW: number }): void {
+    const ids = normalizeCatalystArray(this.working);
+    for (let i = 0; i < rect.cells; i++) {
+      const x = rect.x + i * (rect.cellW + SLOT_CELL_GAP);
+      const id = ids[i];
+      const def = id === undefined ? undefined : catalystById(id);
+      const label = new Text({
+        resolution: 2,
+        text: def === undefined ? t('catalyst.picker.slotEmpty') : stripEmoji(catalystName(def)),
+        style: {
+          fontFamily: UI_FONT,
+          fontSize: 17,
+          fontWeight: def === undefined ? '400' : '800',
+          fill: def === undefined ? COLOR.muted : COLOR.gold,
+          align: 'center',
+          wordWrap: true,
+          wordWrapWidth: rect.cellW - 12,
+          dropShadow: TEXT_SHADOW,
+        },
+      });
+      label.anchor.set(0.5);
+      label.position.set(x + rect.cellW / 2, rect.y + rect.h / 2);
+      host.addChild(label);
     }
   }
 
@@ -714,29 +799,29 @@ export class CatalystPicker {
   }
 
   /**
-   * 하단 **전체 효과 요약** — 지금 주입된 조합이 실제로 만드는 배율을 페널티/보상 2열로 접는다.
+   * 하단 **공명 상태 + 경고** 챔버 — 지금 조합이 무슨 공명을 세우고 있고, 무엇이 이 행성에서
+   * 무효인가.
    *
-   * 예전 이 자리에는 hover 한 촉매 **한 장**의 설명만 떴다. 그 문구는 각 셀 안으로 옮겼고
-   * (`makeCell`), 여기서는 조합 전체만 말한다 — 8장을 넣어도 총합을 알 수 없던 것이 이 화면의
-   * 실제 결함이었다.
+   * 예전 이 자리에는 **축별 배율 줄**(`페널티 적 내구도 +40%` …)이 있었다. ADR-0052 가 축
+   * 모델을 없애면서 그 줄은 표시할 값 자체가 사라졌다 — 대신 조합이 실제로 만드는 것은 하나뿐이다:
+   * **한 런에 최대 하나 발동하는 태그 공명**(`resolveResonance` 가 유일 정본).
    *
-   * 전환에서 바뀐 것은 **바탕뿐**이다: 나무 구분선 한 줄 → 파낸 챔버. 선은 "여기서 잘린다"만
-   * 말했지만 챔버는 그 자리가 **다른 종류의 정보**라는 것까지 말한다.
-   *
-   * 수치는 전부 `catalystSummary` → `catalystPenaltyMult`/`RewardMult`/`PowerMult` 를 거치므로
-   * **sim 에 곱해지는 값과 1:1** 이다(표시용 별도 산식 없음).
+   * ⚠️ 왼쪽 열은 "무엇이 발동했나"가 아니라 **"무엇이 몇 장 모자란가"** 다. 발동한 것 하나는
+   * 위 meta 줄이 이름·단·규칙문으로 말하고, 열은 거기까지 가는 길을 말한다 — 둘을 한 열에 섞으면
+   * 이미 선 것과 안 선 것이 같은 모양으로 읽힌다.
    */
   private renderSummary(host: Container, rect: PickerRect): void {
     // ⚠️ 파낸 면(챔버 바탕)은 **크롬**이라 여기서 그리지 않는다 — 여기서 또 그리면 주입 한 번에
     // 파낸 면이 한 장씩 쌓인다(host 를 비우긴 하지만 바탕이 갱신 대상이 될 이유가 없다).
-    const sum = catalystSummary(this.working);
+    const ids = normalizeCatalystArray(this.working);
+    const reso = resolveResonance(ids);
 
     const innerX = rect.x + SUMMARY_PAD;
     const top = rect.y + 14;
 
     const title = new Text({
       resolution: 2,
-      text: t('catalyst.summary.title'),
+      text: t('catalyst.resonance.head'),
       style: {
         fontFamily: UI_FONT,
         fontSize: 20,
@@ -751,15 +836,20 @@ export class CatalystPicker {
     const meta = new Text({
       resolution: 2,
       text:
-        sum.count > 0
-          ? t('catalyst.summary.injected', { n: sum.count, kinds: sum.kinds })
-          : t('catalyst.summary.none'),
-      style: { fontFamily: UI_FONT, fontSize: 17, fill: SLAB_BODY_FILL, dropShadow: TEXT_SHADOW },
+        reso === null
+          ? t('catalyst.resonance.none')
+          : `${resonanceName(reso)} (${resonanceTierLabel(reso.tier)}) — ${resonanceRule(reso)}`,
+      style: {
+        fontFamily: UI_FONT,
+        fontSize: 17,
+        fill: reso === null ? COLOR.muted : SLAB_BODY_FILL,
+        dropShadow: TEXT_SHADOW,
+      },
     });
     meta.position.set(innerX + title.width + 18, top + 3);
     host.addChild(meta);
 
-    // 2열: 왼쪽 페널티 · 오른쪽 보상. 열 폭은 챔버 안쪽을 정확히 반으로 나눈다.
+    // 2열: 왼쪽 태그 진행 · 오른쪽 경고. 열 폭은 챔버 안쪽을 정확히 반으로 나눈다.
     const innerW = rect.w - SUMMARY_PAD * 2;
     const colW = Math.floor((innerW - 24) / 2);
     const rowsY = rect.y + SUMMARY_ROWS_Y;
@@ -768,19 +858,76 @@ export class CatalystPicker {
       innerX,
       rowsY,
       colW,
-      t('catalyst.summary.penalty'),
-      PENALTY_COLOR,
-      sum.penalties.map(penaltyRow),
+      t('catalyst.tag.head'),
+      RESONANCE_COLOR,
+      this.tagProgressRows(ids),
     );
     this.renderEffectColumn(
       host,
       innerX + colW + 24,
       rowsY,
       colW,
-      t('catalyst.summary.reward'),
-      REWARD_COLOR,
-      sum.rewards.map(rewardRow),
+      t('catalyst.warn.head'),
+      WARN_COLOR,
+      this.warningRows(ids),
     );
+  }
+
+  /**
+   * 태그별 진행 — `점화 2/3 · 약공명` / `밀도 1/3 · 1장 더`. 주입에 없는 태그는 줄을 만들지
+   * 않는다(6종 전부를 항상 그리면 모자란 것이 눈에 안 띈다).
+   *
+   * 순서는 {@link CATALYST_TAG_PRIORITY} 고정 — 주입 순서로 뒤섞이면 한 장 넣고 뺄 때마다 읽는
+   * 자리가 바뀐다(구 요약 열이 축 순서를 고정했던 것과 같은 이유).
+   */
+  private tagProgressRows(ids: readonly number[]): readonly PickerRow[] {
+    const counts = tagCounts(ids);
+    const rows: PickerRow[] = [];
+    for (const tag of CATALYST_TAG_PRIORITY) {
+      const n = counts.get(tag) ?? 0;
+      if (n <= 0) continue;
+      const value =
+        n >= RESONANCE_STRONG_COUNT
+          ? t('catalyst.resonance.tier.strong')
+          : n >= RESONANCE_WEAK_COUNT
+            ? t('catalyst.resonance.tier.weak')
+            : t('catalyst.resonance.need', { n: RESONANCE_WEAK_COUNT - n });
+      rows.push({
+        label: `${catalystTagLabel(tag)}  ${n}/${RESONANCE_STRONG_COUNT}`,
+        value,
+        ...(n >= RESONANCE_WEAK_COUNT ? {} : { color: COLOR.muted }),
+      });
+    }
+    return rows;
+  }
+
+  /**
+   * 경고 2단(헌장 §축소 작동 규율).
+   *
+   *  - **회색** = 이 행성에서 구조적으로 무효(`def.voidOnModes`, 데이터가 미리 안다).
+   *  - **노랑** = 촉매 간 충돌로 축소 작동(런타임 판정).
+   *
+   * ⚠️ 노랑 판정 목록은 **아직 비어 있다** — 어떤 조합이 서로를 축소시키는지는 sim 배선 레인이
+   * 훅을 얹으면서 정한다. 여기 자리와 색만 만들어 두고, 그 레인이 판정을 채운다.
+   * ⚠️ 어느 쪽이든 **경고일 뿐**이다. sim 은 이 목록을 근거로 카드를 끄지 않는다.
+   */
+  private warningRows(ids: readonly number[]): readonly PickerRow[] {
+    const planet = this.opts?.planet;
+    if (planet === undefined) return [];
+    const rows: PickerRow[] = [];
+    for (const id of ids) {
+      const def = catalystById(id);
+      if (def === undefined) continue;
+      if (catalystVoidOnMode(def, planet)) {
+        rows.push({
+          label: stripEmoji(catalystName(def)),
+          value: t('catalyst.warn.voidOnPlanet'),
+          color: WARN_VOID_COLOR,
+        });
+      }
+    }
+    // 노랑(촉매 간 충돌)은 배선 레인이 채운다 — 지금 채워 넣으면 근거 없는 경고가 된다.
+    return rows;
   }
 
   /**
@@ -797,7 +944,7 @@ export class CatalystPicker {
     w: number,
     heading: string,
     color: number,
-    rows: readonly CatalystEffectRow[],
+    rows: readonly PickerRow[],
   ): void {
     const head = new Text({
       resolution: 2,
@@ -814,7 +961,7 @@ export class CatalystPicker {
     if (rows.length === 0) {
       const none = new Text({
         resolution: 2,
-        text: t('catalyst.summary.emptyCol'),
+        text: t('catalyst.warn.none'),
         style: { fontFamily: UI_FONT, fontSize: 17, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
       });
       none.position.set(x, y + SUMMARY_HEAD_H);
@@ -836,7 +983,14 @@ export class CatalystPicker {
       const value = new Text({
         resolution: 2,
         text: row.value,
-        style: { fontFamily: UI_FONT, fontSize: 17, fontWeight: '800', fill: color, dropShadow: TEXT_SHADOW },
+        style: {
+          fontFamily: UI_FONT,
+          fontSize: 17,
+          fontWeight: '800',
+          // 줄 색이 있으면 열 기준색을 덮는다 — 경고 열은 회색(무효)과 노랑(충돌)이 섞인다.
+          fill: row.color ?? color,
+          dropShadow: TEXT_SHADOW,
+        },
       });
       value.anchor.set(1, 0);
       value.position.set(x + w, y + SUMMARY_HEAD_H + i * SUMMARY_STEP);
@@ -851,6 +1005,40 @@ export class CatalystPicker {
       });
       more.position.set(x, y + SUMMARY_HEAD_H + shown * SUMMARY_STEP);
       host.addChild(more);
+    }
+  }
+
+  /**
+   * 셀 상태 한 줄 — 우선순위는 **회색 무효 경고 > 주입됨 > 거부 사유**.
+   *
+   * ⚠️ 무효 경고(`voidOnModes`)가 거부 사유보다 위인 이유: 이 행성에서 구조적으로 무효인 카드도
+   * **넣을 수는 있다**(헌장 §축소 작동 규율 — 무효화는 경고로만 존재하고 런 안에서는 축소된
+   * 형태로라도 작동한다). 그래서 "왜 회색인가"가 "왜 못 넣는가"보다 먼저 읽혀야 한다.
+   *
+   * `locked`(다른 행성 특산)는 여기서 다루지 않는다 — 그것은 셀 전체를 덮는 딤 + 사유가 이미 말한다.
+   */
+  private cellStatus(def: CatalystDef): { text: string; color: number } | null {
+    const planet = this.opts?.planet;
+    if (planet !== undefined && catalystVoidOnMode(def, planet)) {
+      return { text: `${t('catalyst.warn.badgeVoid')} · ${t('catalyst.warn.voidOnPlanet')}`, color: WARN_VOID_COLOR };
+    }
+    if (this.injectedCountOf(def.id) > 0) return { text: t('catalyst.picker.injected'), color: BADGE };
+    const block: CatalystInjectBlock =
+      this.opts === null
+        ? null
+        : catalystInjectBlock(def, this.working, this.opts.inventory, this.opts.planet);
+    switch (block) {
+      case 'noStock':
+        return { text: t('catalyst.picker.blockNoStock'), color: COLOR.muted };
+      case 'slotFull':
+        return { text: t('catalyst.picker.slotFull', { cap: SLOT_CAP }), color: COLOR.muted };
+      case 'signatureCap':
+        return { text: t('catalyst.picker.blockSignatureCap', { cap: SIGNATURE_CAP }), color: WARN_CONFLICT_COLOR };
+      case 'duplicate':
+        // 유니크 주입이라 이 사유는 위 '주입됨' 가지가 이미 먹는다(도달 불가지만 계약상 남긴다).
+        return { text: t('catalyst.picker.blockDuplicate'), color: COLOR.muted };
+      default:
+        return null;
     }
   }
 
@@ -881,7 +1069,7 @@ export class CatalystPicker {
       cell.addChild(token);
       const glyph = new Text({
         resolution: 2,
-        text: AXIS_GLYPH[def.reward.axis] ?? '?',
+        text: AXIS_GLYPH[def.cap.axis] ?? '?',
         style: { fontFamily: UI_FONT, fontSize: 24, fontWeight: '800', fill: SLAB_BODY_FILL },
       });
       glyph.anchor.set(0.5);
@@ -892,7 +1080,7 @@ export class CatalystPicker {
     // 이름.
     const name = new Text({
       resolution: 2,
-      text: t(`catalyst.${def.slug}.name` as MessageKey),
+      text: stripEmoji(catalystName(def)),
       style: {
         fontFamily: UI_FONT,
         fontSize: 18,
@@ -906,47 +1094,84 @@ export class CatalystPicker {
     name.position.set(iconX + iconSize + 8, iconY);
     cell.addChild(name);
 
-    // 종류 라벨.
+    // 종류 · 보유 한 줄. 주입은 유니크라 `×N` 스택 표기가 사라졌다 — 있고 없고뿐이다.
     const kind = new Text({
       resolution: 2,
-      text: t(def.kind === 'signature' ? 'catalyst.kind.signature' : 'catalyst.kind.common'),
-      style: { fontFamily: UI_FONT, fontSize: 13, fill: COLOR.muted, dropShadow: TEXT_SHADOW },
+      text: `${t(def.kind === 'signature' ? 'catalyst.kind.signature' : 'catalyst.kind.common')}   ·   ${t('catalyst.picker.owned', { n: owned })}`,
+      style: {
+        fontFamily: UI_FONT,
+        fontSize: 13,
+        fill: injected > 0 ? BADGE : COLOR.muted,
+        dropShadow: TEXT_SHADOW,
+      },
     });
     kind.position.set(iconX + iconSize + 8, iconY + 26);
     cell.addChild(kind);
 
-    // 설명(페널티/보상 방향). 예전에는 hover 해야 하단 스트립에 한 장씩 떴는데, 48종을 훑으려면
-    // 48번 hover 해야 했다 — 셀 안으로 옮겨 한눈에 비교되게 한다(사용자 요청 2026-07-28).
-    const desc = new Text({
+    // 규칙문 — **이 카드가 무엇을 하는가**. 구 모델의 "페널티 …/ 보상 …" 방향 문구가 있던 자리다.
+    // 양날이 한 문장 안에 있으므로 축을 두 줄로 가르지 않는다(ADR-0052 §유니크 양날 규칙).
+    const rule = new Text({
       resolution: 2,
-      text: stripEmoji(t(`catalyst.${def.slug}.desc` as MessageKey)),
+      text: stripEmoji(catalystRule(def)),
       style: {
         fontFamily: UI_FONT,
         fontSize: 14,
-        fill: COLOR.muted,
+        fill: SLAB_BODY_FILL,
         wordWrap: true,
         wordWrapWidth: w - 28,
         lineHeight: 18,
         dropShadow: TEXT_SHADOW,
       },
     });
-    desc.position.set(14, iconY + iconSize + 12);
-    cell.addChild(desc);
+    rule.position.set(14, iconY + iconSize + 10);
+    cell.addChild(rule);
 
-    // 보유/주입 카운터(하단).
-    const counter = new Text({
+    // 태그 칩 1~2개 — 공명의 재료다. 칩 폭은 글자에서 재고, 두 번째가 셀을 넘으면 그리지 않는다.
+    let chipX = 14;
+    for (const tag of def.tags) {
+      const label = new Text({
+        resolution: 2,
+        text: catalystTagLabel(tag),
+        style: { fontFamily: UI_FONT, fontSize: 13, fontWeight: '700', fill: TAG_CHIP_TEXT },
+      });
+      const chipW = Math.round(label.width) + 16;
+      if (chipX + chipW > w - 14) break;
+      const chip = new Graphics();
+      chip.roundRect(chipX, TAG_ROW_Y, chipW, 20, 6).fill({ color: TAG_CHIP_FACE });
+      cell.addChild(chip);
+      label.position.set(chipX + 8, TAG_ROW_Y + 3);
+      cell.addChild(label);
+      chipX += chipW + 6;
+    }
+
+    // 상한 — **정산 유계**다("이만큼 발동한다"가 아니다).
+    const cap = new Text({
       resolution: 2,
-      text: `${t('catalyst.picker.owned', { n: owned })}${injected > 0 ? `   ·   ×${injected}` : ''}`,
-      style: {
-        fontFamily: UI_FONT,
-        fontSize: 15,
-        fontWeight: injected > 0 ? '800' : '400',
-        fill: injected > 0 ? BADGE : COLOR.muted,
-        dropShadow: TEXT_SHADOW,
-      },
+      text: `${t('catalyst.cap.head')} ${catalystCapLine(def.cap)}`,
+      style: { fontFamily: UI_FONT, fontSize: 14, fontWeight: '700', fill: COLOR.gold, dropShadow: TEXT_SHADOW },
     });
-    counter.position.set(14, CELL_H - 68);
-    cell.addChild(counter);
+    cap.position.set(14, CAP_ROW_Y);
+    cell.addChild(cap);
+
+    // 상태 줄 — 회색 무효 경고(구조적) 또는 주입/거부 사유. 셋 다 없으면 줄 자체가 없다.
+    const status = this.cellStatus(def);
+    if (status !== null) {
+      const node = new Text({
+        resolution: 2,
+        text: status.text,
+        style: {
+          fontFamily: UI_FONT,
+          fontSize: 13,
+          fontWeight: '700',
+          fill: status.color,
+          wordWrap: true,
+          wordWrapWidth: w - 28,
+          dropShadow: TEXT_SHADOW,
+        },
+      });
+      node.position.set(14, STATUS_ROW_Y);
+      cell.addChild(node);
+    }
 
     if (locked) {
       // 특산 잠금: 딤 + 사유(출신 행성 전용).

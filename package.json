@@ -18,6 +18,7 @@
     "bench:curve": "vite-node bench/runCurve.ts",
     "bench:invasion": "vite-node bench/invasionBands.ts",
     "bench:commission": "vite-node bench/commissionBands.ts",
+    "cap:sweep": "vite-node scripts/catalystCapSweep.ts",
     "balance": "node scripts/balance/run.mjs",
     "balance:quick": "node scripts/balance/run.mjs --minutes=2",
     "balance:probe": "node scripts/balance/run.mjs --minutes=3",

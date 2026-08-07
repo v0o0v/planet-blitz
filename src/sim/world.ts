@@ -55,7 +55,6 @@ import {
   spawnEventObject,
   spawnLoot,
 } from './entities.js';
-import { catalystPowerMult } from '../data/catalysts.js';
 import { multFromCenti } from '../economy/planetPopularity.js';
 import { resolveCatalystMods } from './catalystMods.js';
 import type { CatalystMods } from './catalystMods.js';
@@ -240,7 +239,15 @@ import {
   onContactInvuln,
   onDeathRemnantSpawn,
 } from './skillHooks.js';
-import { onDamageChainCatalyst } from './catalystHooks.js';
+import {
+  onDamageChainCatalyst,
+  onDashSweptCatalyst,
+  onDashPierceCatalyst,
+  onResourceGrantedCatalyst,
+  onBossDeathCatalyst,
+} from './catalystHooks.js';
+// 정산 리더 재수출(`echoStabilizedOf` 선례) — W3(정산·main.ts)이 `from './world.js'` 로 소비한다.
+export { catalystSettlementOf } from './catalystHooks.js';
 
 /**
  * 앵커 ⑱ 이 쓰는 **재사용 레코드**. 명중 해소 루프는 틱당 최대 ~2,000회 돌아 발당 할당이
@@ -1478,32 +1485,19 @@ export function createWorld(
     magnetRadius = Math.round(magnetRadius * lo.magnetMult);
   }
 
-  // 촉매 파워 보상축(런 한정 스탯 강화, ADR-0029) — **적용 지점 1곳**. loadout 파생(위)과
-  // 이중 적용 금지: 여기서 별개 인자로 한 번만 곱한다(파워업 적용 지점과 같은 지위). 결과는
-  // weapon/cfg 에 반영돼 이미 해시에 접힌다(파워축은 별도 폴드 불필요). 무촉매면 전 배율 1 →
-  // 무연산이라 기존 골든이 바이트 불변이다.
-  //  · damage/moveSpeed/maxHp = 상향 곱, fireRate = 쿨다운 하향 나눗셈(연사 상승).
-  //  · skillAll("모든 스킬 +N" 계열)은 전용 런타임 스킬-효과 노브가 없어(스킬은 buildRunConfig
-  //    에서 loadout 에 이미 접힘) 네 전투 스탯의 **공동 인자**로 얹는다 — loadout 파생과는 별개
-  //    인자라 이중 적용이 아니다(완전한 스킬-효과 배선은 후속). 무주입이면 1 → 무연산.
-  // ⚠️ `preDerived` 는 이 촉매 파워 굽기도 함께 건너뛴다 — loadout 굽기와 **같은 블록**으로
-  // 취급해야 한다(계약 §4가 지정한 굽기 범위). 하나만 건너뛰면 촉매 런의 2구간부터
-  // 피해·연사·이속·HP 가 구간마다 다시 곱해진다.
-  const cats = preDerived ? undefined : cfg.catalysts;
-  if (cats !== undefined && cats.length > 0) {
-    const skillAll = catalystPowerMult(cats, 'skillAll');
-    const dmgMul = catalystPowerMult(cats, 'damage') * skillAll;
-    const fireMul = catalystPowerMult(cats, 'fireRate') * skillAll;
-    const moveMul = catalystPowerMult(cats, 'moveSpeed') * skillAll;
-    const hpMul = catalystPowerMult(cats, 'maxHp') * skillAll;
-    weapon.damage = Math.round(weapon.damage * dmgMul * 100) / 100;
-    weapon.fireCooldownQ = Math.max(FIRE_CD_MIN_Q, Math.round(weapon.fireCooldownQ / fireMul));
-    cfg.playerSpeed = Math.round(cfg.playerSpeed * moveMul);
-    // 파워 maxHp 상향 → 촉매 playerHpDown 페널티 하향 순으로 소비한다. playerHpDown ≥ 1 이라
-    // **나눗셈**이 페널티 방향(HP 감소)이다(부호 규약: 배율 클수록 페널티 큼). catalystMods 는
-    // cats 와 같은 배열에서 나오므로, cats 가 비었으면 이 블록에 오지 않고 playerHpDown 도 1 이다.
-    cfg.playerHp = Math.round((cfg.playerHp * hpMul) / catalystMods.playerHpDown);
-  }
+  // ⚠️ **촉매 파워 보상축 굽기는 ADR-0052 가 폐기했다** — 여기 있던 블록(`catalystPowerMult`
+  // 로 damage·fireRate·moveSpeed·maxHp 를 곱하고 `playerHpDown` 으로 HP 를 나누던 것)은
+  // 구 모델의 `reward.axis === 'power'` · `penalty.axis === 'playerHpDown'` 두 칸에 매달려
+  // 있었고, 그 격자가 통째로 사라졌다.
+  //
+  // 재작성된 48종에서 **출격 시점에 스탯을 굽는 카드는 하나뿐**이다(`id 29 ascendant` —
+  // 최대 HP 절반). 그것은 규칙이지 축이 아니므로 `catalystHooks.ts` 의 런 시작 분기가
+  // 소유한다. 여기에 되살리면 규칙과 굽기 두 곳이 같은 스탯을 만지게 된다.
+  //
+  // 이 삭제의 거동 효과: **무촉매 런은 바이트 불변**(전 배율이 1 이라 원래 무연산이었다).
+  // 촉매 런은 구 파워 보너스를 잃는데, 그것이 ADR-0052 가 의도한 것이다 — 파킹된 두 브랜치를
+  // 되살릴 때 "구 축 보너스 + 신 고유 효과" 이중 적용이 생기던 자리가 여기였다
+  // (`.omc/handoffs/s3-checklist.md` §촉매 48종 배선 §머지하면 이중 효과가 된다).
 
   const player = blankEntity('player');
   player.id = nextEntityId++;
@@ -2290,6 +2284,9 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
   // (신규 필드 없이 관리; 미장착 시 항상 0이라 거동 불변).
   if (player.targetY > 0) player.targetY--;
 
+  // 대시 통과 판정(촉매 선결 앵커)의 게이트. 이동·벽 슬라이드가 끝난 **뒤**라야 통과 선분의
+  // 끝점이 확정되므로, 여기서는 플래그만 세우고 통지는 함수 끝에서 한다.
+  let dashedThisTick = false;
   if (input.dash && player.dashCooldown === 0) {
     // 방향 폴백은 `resolveDirFallback` 이 정본이다 — 액티브 스킬(ADR-0041)이 **같은 규칙을
     // 재사용**한다(복제하면 두 규칙이 조용히 갈린다). 산술은 이전 인라인 코드와 동일하다.
@@ -2322,6 +2319,7 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     // 스트라이커 M2「추진 항적」이 이 값 하나 때문에 배치3~5 내내 막혀 있었다 — `player.vx/vy`
     // 는 이동 성분 합산 뒤라 방향 규칙의 **두 번째 사본**이 된다.
     onDashFired(state, player, dx, dy);
+    dashedThisTick = true;
   }
 
   // 벽 슬라이드의 "직전 좌표" — 속도 적분 **이전**. 강제 스크롤에서는 이 시점의 좌표가 이미
@@ -2421,6 +2419,18 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
   // 앵커 ⑦(S0) — 갱신 **직후**, 접촉이 참인 틱에만. 술어의 권위는 위 `slideCircleWalls` 이고
   // 훅에서 기하를 다시 재면 두 판정이 조용히 갈린다(위 블록 주석의 근거).
   if (wallContact) onWallContact(state, player);
+  // 촉매 선결 앵커 — **대시가 발동한 틱의 이동 선분**(`onDashSweptCatalyst` 주석이 계약 정본).
+  // 여기가 벽 슬라이드 **뒤**라 끝점이 실제로 간 자리다. 창 클램프는 stepWorld 쪽이라 아직
+  // 안 걸렸는데, 그 규칙은 detour 에서 아예 실행되지 않아 여기에 두는 편이 술어가 하나다.
+  // ⚠️ 순회·판정은 전부 훅 **안**(게이트 뒤)에 있다 — 여기서 미리 훑으면 무촉매 런에도 순회가
+  //    돌아 실행 순서가 갈릴 여지가 생긴다. 무촉매 런은 훅이 첫 줄에서 반환한다(바이트 불변).
+  // ⚠️ 통지(`onDashPierceCatalyst`)가 여기 있는 이유는 계측이다 — 훅 모듈 **안**에서 부르면
+  //    지역 바인딩을 타 `vi.mock` 계측을 지나친다(그 함수 주석에 실측 근거).
+  if (dashedThisTick) {
+    for (const t of onDashSweptCatalyst(state, player, preMoveX, preMoveY, player.x, player.y)) {
+      onDashPierceCatalyst(state, player, t);
+    }
+  }
   // ⚠️ 모드별 경계 규칙(창 클램프·압사·후방압박·수축 밖 판정)은 **여기 있지 않다**. 조우
   // detour(ADR-0033)가 stepPlayer 를 의존성 주입으로 재사용하는데, 포켓 방 안에서는 그 규칙이
   // 하나도 성립하지 않기 때문이다(포켓 좌표는 창 밖 12만 유닛). 그래서 stepWorld 의
@@ -4999,6 +5009,10 @@ function compact(state: WorldState): void {
       const whole = Math.floor(state.catalystResourceMilli / 1000);
       state.resources += whole;
       state.catalystResourceMilli -= whole * 1000;
+      // 촉매 선결 앵커 — **자원이 실제로 적립된 그 자리**(id 15·17·19 의 적립처가 여기다).
+      // ⚠️ `for (const e of state.entities)` 순회 안이라 훅에서 스폰 금지(엘리트 드랍 앵커와
+      //    같은 규율). 무촉매 런은 훅이 첫 줄에서 반환한다(바이트 불변).
+      onResourceGrantedCatalyst(state, whole, e.x, e.y);
       supplyDrops.push({ x: e.x, y: e.y });
     } else if (e.kind === 'destructible' && e.hp <= 0) {
       // Broken (vs. culled with hp > 0): drop a gem worth its stored XP value.
@@ -5013,21 +5027,31 @@ function compact(state: WorldState): void {
       if (state.config.invasion3 === undefined || state.invasion3?.phase === PHASE_L3) {
         state.victory = true;
       }
-    } else if (e.kind === 'boss' && state.config.invasion3 === undefined) {
-      // 3레이어 침공에서는 보스 격파가 승리 조건이 아니다(승리 = L3 코어 파괴). 방어 보스는
-      // 전용 kind 를 쓰는 것이 정본이지만, 'boss' 가 섞여 들어와도 런이 조기 종료되지 않도록
-      // 여기서 막는다. PvE·구 침공은 조건이 항상 참이라 거동·해시 불변.
-      // 의뢰 런은 여기서 3분기로 갈린다(계약 §5) — 중간 구간이면 승리가 아니라 **구간 종료**다.
-      // 무의뢰 런은 `endCommissionSegment` 가 `state.victory = true` 한 줄로 떨어진다(거동 불변).
-      endCommissionSegment(state, 'cleared');
-      bossKilled = true;
-      // Boss guaranteed rare+ drop (GDD §3, plan B3). 승리 tick이라 바닥 스폰→접촉 수거가
-      // 불가능하므로 state.loot에 직접 기록해 정산에 포함시킨다(해시 포함, replay.ts).
-      // 촉매 희귀도 배율을 드랍 롤에 곱하고(무촉매 1 → 불변), 드랍량 배율로 추가 루팅을 파생한다.
-      const roll = rollBossDrop(state.dropRng, stage, state.catalystMods.rarity, dropOdds);
-      state.loot.push({ seed: roll.seed >>> 0, rarity: roll.rarityCode, planet, stage });
-      for (const bs of bonusLootSeeds(roll.seed, state.catalystMods.drop)) {
-        state.loot.push({ seed: bs >>> 0, rarity: roll.rarityCode, planet, stage });
+    } else if (e.kind === 'boss') {
+      // 촉매 선결 앵커 — **승리 판정보다 앞**이다(계약 정본은 `onBossDeathCatalyst` 주석).
+      // `true` 를 돌려주면 아래 블록 전체(승리 확정·보스 드랍)를 건너뛴다 = id 44 가 승리를
+      // 가로챈다. 무촉매 런은 훅이 첫 줄에서 `false` 를 돌려주므로 아래 조건이 종전과 같다.
+      //
+      // ⚠️ 게이트를 `invasion3 === undefined` 밖으로 뺀 이유: 앵커는 **보스가 죽었다**는 사건을
+      //    덮어야 하고, 그 조건은 "이 격추가 승리인가"라는 **다른 술어**다. 3레이어 침공 보스도
+      //    통지는 받되 아래 승리 블록은 종전대로 안 탄다(중첩 조건이 그것을 그대로 보존한다).
+      const bossSuppressed = onBossDeathCatalyst(state, e.x, e.y);
+      if (!bossSuppressed && state.config.invasion3 === undefined) {
+        // 3레이어 침공에서는 보스 격파가 승리 조건이 아니다(승리 = L3 코어 파괴). 방어 보스는
+        // 전용 kind 를 쓰는 것이 정본이지만, 'boss' 가 섞여 들어와도 런이 조기 종료되지 않도록
+        // 여기서 막는다. PvE·구 침공은 조건이 항상 참이라 거동·해시 불변.
+        // 의뢰 런은 여기서 3분기로 갈린다(계약 §5) — 중간 구간이면 승리가 아니라 **구간 종료**다.
+        // 무의뢰 런은 `endCommissionSegment` 가 `state.victory = true` 한 줄로 떨어진다(거동 불변).
+        endCommissionSegment(state, 'cleared');
+        bossKilled = true;
+        // Boss guaranteed rare+ drop (GDD §3, plan B3). 승리 tick이라 바닥 스폰→접촉 수거가
+        // 불가능하므로 state.loot에 직접 기록해 정산에 포함시킨다(해시 포함, replay.ts).
+        // 촉매 희귀도 배율을 드랍 롤에 곱하고(무촉매 1 → 불변), 드랍량 배율로 추가 루팅을 파생한다.
+        const roll = rollBossDrop(state.dropRng, stage, state.catalystMods.rarity, dropOdds);
+        state.loot.push({ seed: roll.seed >>> 0, rarity: roll.rarityCode, planet, stage });
+        for (const bs of bonusLootSeeds(roll.seed, state.catalystMods.drop)) {
+          state.loot.push({ seed: bs >>> 0, rarity: roll.rarityCode, planet, stage });
+        }
       }
     }
   }

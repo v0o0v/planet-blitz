@@ -23,7 +23,7 @@ ADR-0014 로 이관된 Pixi 판(`pixi/`)이다. 실사용 화면 대부분은 Pi
 | `itemNames.ts` · `affixText.ts` · `itemCompare.ts` · `dropTip.ts` | 장비 표시 이름 단일 정본 / 어픽스 문자열 / 장착품 비교 / 정산 hover 상세 |
 | `equipIcons.ts` · `powerupIcons.ts` · `uiIcons.ts` | 아이콘 매핑(ADR-0015 **인스턴스가 아니라 속성 축**) 과 공용 픽셀아트 아이콘 |
 | `buildStatus.ts` · `powerupOverlay.ts` | 레벨업 3택 보조 로직(순수) / DOM 오버레이 |
-| `catalystLabels.ts` · `modulesView.ts` | 촉매 효과 라벨 / 코어 모듈 표시 헬퍼(순수) |
+| `catalystText.ts` · `modulesView.ts` | 촉매 규칙문·신호·태그·상한·공명 문자열 유도(순수) / 코어 모듈 표시 헬퍼 |
 | `encounterOverlay.ts` | 조우 프롬프트 — 조우 프레임워크의 **입력 배선 절반** |
 | `controlTower.ts` | (1170줄) 관제탑 로직(화면은 `pixi/controlTower.ts`) |
 | `replaySpectate.ts` · `stickerPicker.ts` | 침공 리플레이 관전 / 도발 스티커 선택 |

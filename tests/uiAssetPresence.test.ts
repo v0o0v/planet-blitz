@@ -46,17 +46,18 @@ const ASSETS = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'assets');
  *    2026-08-01). `baseMap.ts` 의 accent 색 사각 폴백으로 화면은 죽지 않는다.
  */
 const KNOWN_MISSING: readonly string[] = [
-  // ② 촉매 보상축 폴백 10장(설계상 비어 있음 — 개별 아트 48종이 정본).
+  // ② 촉매 상한축 폴백 5장(설계상 비어 있음 — 개별 아트 48종이 정본).
+  //
+  // ⚠️ ADR-0052 로 **10장 → 5장**이 됐다. 구 모델의 `power` 보상축(damage·fireRate·moveSpeed·
+  // maxHp·skillAll)이 통째로 사라지면서 `catalyst_axis_power_*` 5장이 **등재에서 빠졌다**
+  // (`catalystIconFallbackKey` 가 이제 `def.cap.axis` 로 유도하고, 상한축은 5종뿐이다).
+  // 그 5장은 원래도 **실물이 없던 부채**였으므로 지울 파일은 없다 — 부채 목록에서만 빠진다.
+  // 이 목록은 "등재됐는데 아트가 없는 것"만 담는 곳이라, 등재가 사라지면 여기서도 사라져야 한다.
   'catalyst_axis_drop.png',
   'catalyst_axis_rarity.png',
   'catalyst_axis_xp.png',
   'catalyst_axis_resource.png',
   'catalyst_axis_catalystDrop.png',
-  'catalyst_axis_power_damage.png',
-  'catalyst_axis_power_fireRate.png',
-  'catalyst_axis_power_moveSpeed.png',
-  'catalyst_axis_power_maxHp.png',
-  'catalyst_axis_power_skillAll.png',
   // ③ 지시 수신소 건물 아이콘(아트 미생성 — 승인 대기).
 ];
 

@@ -29,7 +29,7 @@
  * 데이터/파생 전용 모듈 — sim·render·ui 를 import 하지 않는다(catalysts.ts 만 참조).
  */
 
-import { CATALYSTS, catalystRewardMult } from './catalysts.js';
+import { CATALYSTS } from './catalysts.js';
 
 /** 촉매 드랍 1건(정산·서버 적립 입력). 같은 id 는 `catalystDropsFromRun` 이 qty 로 합친다. */
 export interface CatalystDrop {
@@ -51,8 +51,18 @@ export interface CatalystDropInput {
   readonly loot: readonly CatalystLootLike[];
   /** 런이 벌어진 행성 index(0..5) — 특산 촉매 풀 결정. */
   readonly planet: number;
-  /** 런에 주입된 촉매 배열 — `catalystDrop` 보상 배율(드랍 게이트 스케일) 산정. */
+  /** 런에 주입된 촉매 배열 — 특산 풀·귀속 표시가 쓴다. */
   readonly catalysts: readonly number[];
+  /**
+   * 런 **중에** 촉매 규칙이 실제로 만들어 낸 촉매 드랍 게이트 배율(≥1). 생략하면 1.
+   *
+   * ⚠️ **주입 목록에서 파생하지 마라.** ADR-0052 의 촉매 드랍축 4종(`id 21` 미정착 결정 ·
+   * `id 33` 즉사 보너스 · `id 38` 기함 잔해 · `id 45` 엄폐 뒤 블록)은 전부 **조건부**라, 카드를
+   * 꽂았다는 사실만으로는 배율이 서지 않는다. 구 모델은 `catalystRewardMult(ids,'catalystDrop')`
+   * 로 여기서 직접 파생했고 그것이 곧 무조건 배율이었다 — 헌장 §상한 근거 규율이 금지한 형태다.
+   * 값은 sim 이 규칙 발동을 실제로 세어 넘긴다(배선 레인). 그전까지는 1 이다.
+   */
+  readonly catalystDropMult?: number;
 }
 
 // --- 밸런스 상수 (출시 전 일괄 튜닝 패스 2026-07-27 에서 확정 — ADR-0035) -----------
@@ -123,8 +133,8 @@ export function catalystDropsFromRun(input: CatalystDropInput): CatalystDrop[] {
   const pool = catalystDropPool(input.planet);
   if (pool.length === 0 || input.loot.length === 0) return [];
 
-  // catalystDrop 보상 배율(≥1)로 base 확률을 스케일한 뒤 상한 클램프. 무주입이면 배율 1 → base.
-  const mult = catalystRewardMult(input.catalysts, 'catalystDrop');
+  // 규칙이 실제로 만든 배율(≥1)로 base 확률을 스케일한 뒤 상한 클램프. 미배선이면 1 → base.
+  const mult = Math.max(1, input.catalystDropMult ?? 1);
   const chanceCp = Math.min(MAX_DROP_CHANCE_CP, Math.round(BASE_DROP_CHANCE_CP * mult));
   if (chanceCp <= 0) return [];
 

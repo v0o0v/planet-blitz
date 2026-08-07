@@ -3,7 +3,7 @@
  *
  * 핵심 계약은 "정산 드랍 파생이 RNG 커서·sim 해시를 건드리지 않는다" 이다(결정론 동결).
  * 이 파일은 그 순수성을 세 축으로 못박는다: ① 결정론(같은 시드 → 같은 드랍), ② 입력 불변,
- * ③ catalystDrop 배율이 드랍 빈도를 스케일한다, ④ 특산은 출신 행성에서만, ⑤ 풀 가중치.
+ * ③ catalystDropMult 가 드랍 빈도를 스케일한다(주입 목록에서 파생하지 않는다), ④ 특산은 출신 행성에서만, ⑤ 풀 가중치.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -65,9 +65,9 @@ describe('catalystDropsFromRun — 순수성(RNG/해시 무영향)', () => {
   it('입력 배열을 변형하지 않는다(부작용 없음)', () => {
     const seeds = seedRange(50);
     const loots = loot(seeds);
-    const cats = [20, 20]; // catalystDrop 촉매(resonance) 2스택
+    const cats = [21, 45]; // catalystDrop 상한축 카드 2장
     const before = JSON.stringify({ loots, cats });
-    catalystDropsFromRun({ loot: loots, planet: 0, catalysts: cats });
+    catalystDropsFromRun({ loot: loots, planet: 5, catalysts: cats, catalystDropMult: 1.4 });
     expect(JSON.stringify({ loots, cats })).toBe(before);
   });
 
@@ -89,13 +89,48 @@ describe('catalystDropsFromRun — 순수성(RNG/해시 무영향)', () => {
     for (const d of out) expect(pool.has(d.id), String(d.id)).toBe(true);
   });
 
-  it('catalystDrop 보상 촉매를 부으면 드랍 총량이 늘어난다(배율이 게이트를 스케일)', () => {
+  it('catalystDropMult 가 게이트를 스케일한다 — 배율↑ → 드랍 총량↑', () => {
     const seeds = loot(seedRange(600));
-    const base = catalystDropsFromRun({ loot: seeds, planet: 0, catalysts: [] });
-    // resonance(id 20) = catalystDrop 축. 여러 스택으로 배율↑ → 게이트 확률↑ → 드랍↑.
-    const boosted = catalystDropsFromRun({ loot: seeds, planet: 0, catalysts: [20, 20, 20, 20] });
     const sum = (arr: { qty: number }[]): number => arr.reduce((n, d) => n + d.qty, 0);
+    const base = catalystDropsFromRun({ loot: seeds, planet: 0, catalysts: [] });
+    const boosted = catalystDropsFromRun({
+      loot: seeds,
+      planet: 0,
+      catalysts: [],
+      catalystDropMult: 1.5,
+    });
+    expect(sum(base)).toBeGreaterThan(0);
     expect(sum(boosted)).toBeGreaterThan(sum(base));
+  });
+
+  it('⚠️ 배율은 주입 목록에서 파생하지 않는다 — 촉매를 꽂기만 해서는 안 오른다', () => {
+    // ADR-0052: catalystDrop 상한축 4종(21·33·38·45)은 전부 **조건부** 보상이라, 카드를 꽂았다는
+    // 사실만으로 무조건 배율이 서면 헌장 §상한 근거 규율 위반이다. 구 모델은 여기서
+    // `catalystRewardMult(ids,'catalystDrop')` 로 직접 파생했고 그것이 곧 무조건 배율이었다.
+    const seeds = loot(seedRange(600));
+    const sum = (arr: { qty: number }[]): number => arr.reduce((n, d) => n + d.qty, 0);
+    const none = catalystDropsFromRun({ loot: seeds, planet: 5, catalysts: [] });
+    const injected = catalystDropsFromRun({ loot: seeds, planet: 5, catalysts: [21, 45] });
+    expect(sum(none)).toBeGreaterThan(0); // 하네스가 실제로 드랍을 냈는지 sanity
+    expect(injected).toEqual(none);
+    // 긍정 짝: 같은 주입이라도 sim 이 배율을 실제로 넘기면 그때는 오른다.
+    const wired = catalystDropsFromRun({
+      loot: seeds,
+      planet: 5,
+      catalysts: [21, 45],
+      catalystDropMult: 1.5,
+    });
+    expect(sum(wired)).toBeGreaterThan(sum(none));
+  });
+
+  it('배율 1 미만·미지정은 base 확률 그대로다(하향 클램프)', () => {
+    const seeds = loot(seedRange(300));
+    const plain = catalystDropsFromRun({ loot: seeds, planet: 0, catalysts: [] });
+    expect(catalystDropsFromRun({ loot: seeds, planet: 0, catalysts: [], catalystDropMult: 1 })) //
+      .toEqual(plain);
+    expect(
+      catalystDropsFromRun({ loot: seeds, planet: 0, catalysts: [], catalystDropMult: 0.1 }),
+    ).toEqual(plain);
   });
 
   it('무주입 런도 base 확률로 드랍은 난다(1단계 런 촉매 획득 경로)', () => {

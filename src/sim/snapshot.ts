@@ -10,6 +10,7 @@
 import type { WorldState } from './world.js';
 import type { EntityKind } from './entities.js';
 import { eliteAffix } from './elite.js';
+import { markSnapshotValue } from './catalystMarks.js';
 import { windowCenterX, windowCenterY } from './invasion/scroll.js';
 import { chaseVisionRadius, isShelterSecured } from './modes/chase.js';
 import { shrinkSafeRadius } from './modes/shrink.js';
@@ -94,6 +95,24 @@ export interface EntitySnapshot {
    * 부재는 false 로 다룬다. 스냅샷은 해시 대상이 아니라 sim 계약은 불변이다.
    */
   objectiveNode?: boolean;
+  /**
+   * 잡몹 전용(render-only): **`aux0` 의 촉매 비트 구역**(`src/sim/catalystMarks.ts` 가 인코딩
+   * 정본). 무촉매 런은 항상 0 이다.
+   *
+   * 왜 필요한가: 촉매 다섯 장의 신호가 **적의 외형**이다 — `id 6` 도금 색(구리→은→금) ·
+   * `id 17` 금빛 표식 · `id 20` 동조 광선 · `id 1` 강탈 외곽선 · `id 36` 그림자. 그런데
+   * `EntitySnapshot` 에 `aux0`/`aux1` 이 없어 **그 다섯의 신호가 렌더에 도달할 수단이 아예
+   * 없었다**(설계 감사표 §미해결 3). 가시성은 ADR-0052 에서 **채택의 전제조건**이므로 이것은
+   * 연출 편의가 아니라 선결 과제다.
+   *
+   * ⚠️ `aux0` 원값이 아니라 **촉매 구역만** 실린다. 같은 칸을 플레이어(장갑·클로크·커션)와
+   * 보스(추격 취약화 플래그)가 다른 뜻으로 쓰기 때문이다 — 원값을 흘리면 렌더가 보스의
+   * 취약화 플래그를 도금 단계로 오독한다.
+   *
+   * `permanent`·`spent` 와 같은 이유로 **선택 필드**다(테스트가 스냅샷 리터럴을 직접 만든다).
+   * 부재는 0 으로 다룬다. 스냅샷은 해시 대상이 아니라 sim 계약은 불변이다.
+   */
+  catalystMark?: number;
 }
 
 /** A support heal beam, for render only. */
@@ -211,6 +230,10 @@ export function snapshotWorld(state: WorldState): WorldSnapshot {
       // 오염 노드(톡사르). `destructible` 은 셋이 공유하는 kind 라 렌더가 스냅샷만으로는
       // 못 가른다 — `ownerId` 는 스냅샷에 없다. 여기서 한 번만 편다(`permanent`·`spent` 선례).
       objectiveNode: isContaminationNode(e),
+      // 촉매 비트 구역(ADR-0052). **잡몹만** — `aux0` 는 kind 마다 뜻이 달라서, 플레이어의
+      // 장갑·클로크·커션이나 보스의 추격 취약화 플래그를 여기 흘리면 렌더가 그것을 도금
+      // 단계로 오독한다(`catalystMarks.ts` 헤더). 무촉매 런은 0 이라 무연산이다.
+      catalystMark: e.kind === 'enemy' ? markSnapshotValue(e) : 0,
     });
     if (e.kind === 'enemy' && e.enemyType === SUPPORT_TYPE && e.phase === 1) {
       beams.push({ x1: e.x, y1: e.y, x2: e.targetX, y2: e.targetY });

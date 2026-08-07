@@ -36,11 +36,15 @@ import {
   catalystById,
   normalizeCatalystArray,
   isWithinSlotCap,
-  resourceMultOf,
+  isWithinSignatureCap,
   catalystBuyPrice,
   catalystSalvageValue,
   catalystIsPurchasable,
 } from '../data/catalysts.js';
+// ⚠️ **공명 포함본**을 쓴다. `catalysts.ts` 의 `resourceCapMult` 는 촉매 3장분만 세므로
+// 공명이 자원축인 조합에서 서버 영수증(`consume_catalysts`)과 값이 갈린다 — 하네스 모의는
+// 서버 미러라 그 갈림이 곧 거짓 그린이 된다.
+import { resourceCapMultWithResonance } from '../data/catalystResonance.js';
 
 /**
  * 하네스 모의가 참조하던 재화 리더. ADR-0042 로 분해 보상이 크레딧 → **촉매 잔재**로 바뀌어
@@ -136,31 +140,45 @@ export class HarnessCatalystGateway implements ServerGateway {
 
   /**
    * 출격 직전 소모. 서버 `consume_catalysts` 와 **같은 계약**으로 검증한다: 슬롯 상한 초과·미지
-   * id·특산-행성 불일치·보유량 부족이면 **throw**(서버 트랜잭션 롤백 = 아이템 미차감). 통과하면
-   * 원장을 차감하고 가짜 runId + 자원 배율을 낸다. `consumeFail` 이 켜져 있으면 무조건 throw.
+   * id·특산-행성 불일치·**중복**·**특산 초과**·보유량 부족이면 **throw**(서버 트랜잭션 롤백 =
+   * 아이템 미차감). 통과하면 원장을 차감하고 가짜 runId + 자원 배율을 낸다.
+   * `consumeFail` 이 켜져 있으면 무조건 throw.
+   *
+   * ## ⚠️ 중복은 **접지 말고 거부해야 한다** (ADR-0052 유니크 주입)
+   * `normalizeCatalystArray` 가 이제 중복을 **제거**하므로, 그 결과만 보면 `[15, 15]` 가
+   * 조용히 `[15]` 로 통과한다. 그런데 서버 게이트 (e)는 그것을 **거부**한다 — 즉 하네스가
+   * 서버보다 관대해져, 서버가 출격 시점에 튕길 로드아웃을 하네스에서는 성공으로 재게 된다.
+   * 이 저장소는 *"하네스 모의가 서버보다 관대해 거짓 그린을 만드는"* 형태를 이미 겪었다.
+   * 그래서 **정규화 전 원본 배열**로 중복을 판정한다.
    */
   async consumeCatalysts(catalystIds: number[], planet: number): Promise<CatalystConsumeResult> {
     if (this.consumeFail) throw new Error('harness: consume 강제 실패');
+    // ⚠️ 정규화 **전**에 중복을 본다(위 주석). 정규화는 중복을 지우므로 순서가 계약이다.
+    const seen = new Set<number>();
+    for (const id of catalystIds) {
+      if (seen.has(id)) throw new Error(`harness: 촉매 ${id} 중복 주입(유니크 주입 위반)`);
+      seen.add(id);
+    }
     const ids = normalizeCatalystArray(catalystIds);
     if (ids.length === 0) throw new Error('harness: 유효 촉매 없음');
     if (!isWithinSlotCap(ids)) throw new Error('harness: 슬롯 상한 초과');
-    // 필요 수량 집계 + 특산-행성 정합 검증(서버 2차 검증 미러).
-    const need = new Map<number, number>();
+    if (!isWithinSignatureCap(ids)) throw new Error('harness: 특산 최대 2장 초과');
+    // 특산-행성 정합 검증(서버 2차 검증 미러). 유니크 주입이라 수량은 언제나 1이다.
     for (const id of ids) {
       const def = catalystById(id);
       if (def === undefined) throw new Error(`harness: 미지 촉매 ${id}`);
       if (def.kind === 'signature' && def.planet !== planet) {
         throw new Error(`harness: 특산 촉매 ${id} 는 행성 ${def.planet} 전용`);
       }
-      need.set(id, (need.get(id) ?? 0) + 1);
+      if ((this.ledger.get(id) ?? 0) < 1) throw new Error(`harness: 촉매 ${id} 보유 부족`);
     }
-    for (const [id, n] of need) {
-      if ((this.ledger.get(id) ?? 0) < n) throw new Error(`harness: 촉매 ${id} 보유 부족`);
-    }
-    // 통과 — 원장 차감(서버 성공 트랜잭션 미러).
-    for (const [id, n] of need) this.decrement(id, n);
+    // 통과 — 원장 차감(서버 성공 트랜잭션 미러). 장당 1개다.
+    for (const id of ids) this.decrement(id, 1);
     this.runCounter += 1;
-    return { run_id: `harness-run-${this.runCounter}`, resource_mult: resourceMultOf(ids) };
+    return {
+      run_id: `harness-run-${this.runCounter}`,
+      resource_mult: resourceCapMultWithResonance(ids),
+    };
   }
 
   /** 드랍 적립 — 원장에 upsert 가산하고 갱신 수량을 낸다. */

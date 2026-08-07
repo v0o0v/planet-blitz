@@ -42,7 +42,7 @@ import { Radar } from './render/radar.js';
 import { UniqueCeremony } from './render/ceremony.js';
 import { InputController } from './input/controller.js';
 import { Hud, hudActives } from './ui/hud.js';
-import type { BossHudState, RunInfoState } from './ui/hud.js';
+import type { BossHudState, CatalystSlotState, RunInfoState } from './ui/hud.js';
 import { invasionHudState } from './ui/invasionProgress.js';
 import { runObjective, shelterArrivalMessage } from './ui/runObjective.js';
 import { chaseSheltersSecured, chaseShelterTotal } from './sim/modes/chase.js';
@@ -102,6 +102,7 @@ import {
   comboMultiplier,
   DEFAULT_CONFIG,
   echoStabilizedOf,
+  catalystSettlementOf,
   encounterShardOf,
   encounterTypeOf,
   runStoryMetrics,
@@ -184,9 +185,11 @@ import {
 } from './net/planetMultipliers.js';
 // 촉매 시스템(ADR-0029, Lane 4): 드랍 파생(순수) + 출격 폴백 모달.
 import { catalystDropsFromRun } from './data/catalystDrops.js';
-import { catalystSummary } from './data/catalystSummary.js';
+import { normalizeCatalystArray, catalystById, catalystIconKey } from './data/catalysts.js';
+import { resolveResonance } from './data/catalystResonance.js';
 import { planetById } from '../data/planets.js';
-import { penaltyRow, rewardRow } from './ui/catalystLabels.js';
+import { catalystName, resonanceName, resonanceTierLabel } from './ui/catalystText.js';
+import { uiAssetUrl } from './ui/pixi/uiTextures.js';
 import { CatalystSortieModal } from './ui/pixi/catalystSortieModal.js';
 // M4 침공(비동기 PvP) 제출: 미설정 시 submitInvasion 은 null(잠정 결과만 표시).
 import {
@@ -1812,21 +1815,42 @@ async function main(): Promise<void> {
   }
 
   /**
-   * 런 중 정보판 상태를 만든다(순수 조립 — i18n·라벨 유도만). 배율은 `catalystSummary` 가
-   * sim 과 같은 함수로 접으므로 화면 수치와 실제 적용 값이 어긋나지 않는다.
+   * 런 중 정보판 상태를 만든다(순수 조립 — i18n·라벨 유도만).
+   *
+   * 예전에는 여기서 축별 배율 줄을 접었다. ADR-0052 가 축 모델을 없애면서 접을 값이 사라졌고,
+   * 런 중에 실제로 알아야 하는 것은 둘로 줄었다 — **어느 카드 3장을 걸었나**(슬롯 스트립이
+   * 말한다) 와 **무슨 공명이 섰나**. 공명 판정은 `resolveResonance` 하나만 부른다(픽커·sim·EF 와
+   * 같은 정본 — 화면이 따로 세면 갈린다).
    */
   function runInfoFor(planet: number, stage: number, catalysts: readonly number[]): RunInfoState {
-    const sum = catalystSummary(catalysts);
+    const ids = normalizeCatalystArray(catalysts);
+    const reso = resolveResonance(ids);
     return {
       planetName: planetById(planet).name,
       stageLabel: t('runinfo.stage', { n: stage }),
       catalystLabel:
-        sum.count > 0 ? t('runinfo.catalysts', { n: sum.count }) : t('runinfo.noCatalysts'),
-      penaltyHead: t('catalyst.summary.penalty'),
-      rewardHead: t('catalyst.summary.reward'),
-      penalties: sum.penalties.map(penaltyRow),
-      rewards: sum.rewards.map(rewardRow),
+        ids.length > 0 ? t('runinfo.catalysts', { n: ids.length }) : t('runinfo.noCatalysts'),
+      resonanceHead: t('catalyst.resonance.head'),
+      resonanceLabel:
+        reso === null
+          ? t('catalyst.resonance.none')
+          : `${resonanceName(reso)} (${resonanceTierLabel(reso.tier)})`,
+      catalysts: catalystSlotsFor(ids),
     };
+  }
+
+  /**
+   * 런 중 **촉매 3칸 스트립**의 상태(헌장 §귀속 규율 1 — 발동할 때마다 그 칸이 번쩍인다).
+   * 칸 수는 항상 `SLOT_CAP` 이고 빈 칸도 자리를 지킨다 — 픽커에서 본 배치가 그대로 이어져야
+   * "몇 번째 칸이 번쩍였나"가 곧 "어느 카드인가"가 된다.
+   */
+  function catalystSlotsFor(catalysts: readonly number[]): readonly CatalystSlotState[] {
+    return normalizeCatalystArray(catalysts).flatMap((id) => {
+      const def = catalystById(id);
+      if (def === undefined) return [];
+      const url = uiAssetUrl(`${catalystIconKey(def)}.png`);
+      return [{ id, name: catalystName(def), ...(url === undefined ? {} : { iconUrl: url }) }];
+    });
   }
 
   /**
@@ -2088,6 +2112,8 @@ async function main(): Promise<void> {
         // 방금 레벨업한 런에서만 더 무거운 장비가 나오는 비대칭이 생긴다.
         // (`settleRun` 이 로컬 롤 경로에서 같은 이유로 같은 시점에 읽는다 — settlement.ts:153-156.)
         const dropLevelCap = activeShip(profile).level;
+        // 촉매 정산 채널(ADR-0052). 순수 리더 — 무촉매 런은 undefined 다(아래 스프레드 참조).
+        const catalystSettlement = catalystSettlementOf(w);
         lastOutcome = settleRun(profile, {
           victory: w.victory,
           loot: w.loot,
@@ -2113,6 +2139,10 @@ async function main(): Promise<void> {
           // 의뢰 런 표식(계약 §10 A-8) — 정산이 **최고 클리어 단계를 갱신하지 않게** 하는
           // 유일한 신호다. 술어 정본은 `config.commission`(런타임 파생 금지).
           commission: w.config.commission !== undefined,
+          // 촉매 정산 채널(ADR-0052 · id 5·18·21 의 선결). 순수 리더가 **원시 number[] 복사본**
+          // 만 내놓고, 무촉매 런은 `undefined` 라 스프레드가 필드를 아예 안 싣는다 → 무촉매 런의
+          // 정산 입력은 종전과 바이트 동일하다. 값의 의미는 `catalystSlots.ts` 배정표 소유.
+          ...(catalystSettlement !== undefined ? { catalystSettlement } : {}),
         }, { serverDrops });
         // Completing the tutorial (win or lose) reveals the base and makes the run
         // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.

@@ -100,6 +100,22 @@ export interface RunResult {
    * (ADR-0022)을 우회하는 경로가 열린다.
    */
   commission?: boolean;
+  /**
+   * 촉매 정산 채널(ADR-0052 · id 5·18·21 의 선결). sim `catalystSettlementOf` 파생 —
+   * **촉매 슬롯 한 벌의 최종값 복사본**이고, 무촉매 런은 `undefined` 라 필드가 아예 안 실린다.
+   *
+   * ## ⚠️ 원시값만 — 여기에 sim 의 월드 상태 타입을 들이지 마라
+   * 이 필드는 S0 의 증명 하나(*"`RunResult` 는 sim 의 월드 상태 타입을 import 조차 안 하는 닫힌
+   * 인터페이스"*)를 대체하며 뚫린 채널이다. 그 증명을 대신하는 새 불변식은
+   * `src/sim/catalystHooks.ts` 의 `catalystSettlementOf` 주석에 셋으로 적혀 있고
+   * `tests/catalystFoundation.test.ts` 가 기계로 검사한다 — 그중 하나가 **이 파일에 그 타입
+   * 이름이 한 번도 등장하지 않는다**이다(그래서 이 주석도 이름을 안 쓴다). 타입을 편하게
+   * 하려고 sim 타입을 들이면 그 테스트가 빨개진다.
+   *
+   * 값의 **의미**(어느 칸이 어느 카드인가)는 `src/sim/catalystSlots.ts` 의 배정표가 소유한다.
+   * 정산이 칸에 이름을 붙이면 정본이 둘이 된다.
+   */
+  catalystSettlement?: readonly number[];
 }
 
 /** Summary of what a run added to the profile (for the result overlay). */
