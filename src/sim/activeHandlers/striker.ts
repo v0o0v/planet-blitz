@@ -23,6 +23,7 @@ import {
   strikerFirepowerActive,
   strikerBlinkOrigin,
   strikerSurvivalSustain,
+  strikerVaultShot,
 } from '../skills/striker.js';
 
 /**
@@ -91,13 +92,18 @@ export const STRIKER_HANDLERS: ActiveHandlerTable = {
   as_striker_mobility_hi: (state, player, def, dir) => {
     // 2단 도약. 단마다 벽 슬라이드가 걸리므로 900 을 한 번에 미는 것보다 관통에 안전하다.
     //
-    // ⚠️ M8(도약 사격)은 여기 **없다** — "단 사이에 정조준 볼리 1회" 를 하려면 `autoAttack` 의
-    // 발사 경로를 불러야 하는데 그것은 `world.ts` 비공개이고, 이 파일이 leaf 라 런타임 import 가
-    // 계약 위반이다(`fanStrike` 로 흉내 내면 주무기 볼리와 다른 탄이 나가 설계가 갈린다).
+    // M8(도약 사격) — **배치7 F2b 가 뚫었다**(정정: 종전엔 "autoAttack 이 world 비공개라 leaf
+    // 가 못 부른다"였다). 발사부가 `emitVolley` leaf 로 추출되면서 `strikerVaultShot`
+    // (skills/striker.ts)이 그 경로를 직접 부른다 — `fanStrike` 로 흉내 내지 않는 것은 그러면
+    // 주무기와 다른 탄이 나가 설계가 갈리기 때문이다(그 함수 doc).
     const vaults = def.coeff.vaults ?? 1;
     // M1 은 **출발 지점 하나**라 루프 밖에서 한 번만 부른다(단마다 부르면 폭발이 도약 수만큼 난다).
     strikerBlinkOrigin(state, player);
-    for (let i = 0; i < vaults; i++) blink(state, player, def.coeff.distance ?? 0, dir);
+    for (let i = 0; i < vaults; i++) {
+      blink(state, player, def.coeff.distance ?? 0, dir);
+      // 「단 사이」 = 마지막 도약 전까지만(도약이 2단이면 1단 착지 직후 딱 한 번).
+      if (i < vaults - 1) strikerVaultShot(state, player);
+    }
   },
 };
 

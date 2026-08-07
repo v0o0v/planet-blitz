@@ -13,7 +13,7 @@
  *
  * ---
  *
- * ## ⚠️ 지금 배선된 것은 30종 중 27종이다
+ * ## ✅ 배치7 시점 30종 전부 배선됐다(아래는 그 진척의 기록)
  * 1차 배선이 11종(앵커 ②③④⑧⑨⑩⑪), S2 의 앵커 ⑯(볼리 파라미터)이 **BL3·BL6** 둘을,
  * S2.1 이 연 `VolleyParams.targetDist` 가 **BL2** 하나를, W2 가 앵커 ④ 의 `sources` 로 **BL8** 을
  * 열었다. W3 이 **MO4·FO4·FO8·FO9** 넷을 더 얹었다 — 넷 다 감쇠 분기를 **선점**(앵커 ⑨ 가 그
@@ -40,15 +40,20 @@
  *    실어 "접촉이었다"까지만 알려 주고 그 적의 참조가 없었다(BL8 이 같은 자리에서 적립 단위를
  *    "1회" 로 둔 이유가 그것이다). 반사 **대상**이 없으면 효과 본체가 성립하지 않는다.
  *
- * ## 여기 없는 하나 — **BL1 응전 사출**(앵커가 아니라 **설계**가 막는다)
- * *"실제로 HP 가 깎인 피격 틱에 조준 방향으로 반격 볼리"* 의 트리거 자체는 앵커 ④ 에서 완전히
- * 성립한다. 막는 것은 설계서가 적은 **내부 쿨 술어**다 — "60틱 내부 쿨은 `aux1 < 60` 판정으로
- * 대체 가능(신규 상태 0)" 이라고 적었으나, 장갑 적립(`aux1 = 0`)이 이 앵커보다 **앞**이라
- * (`world.ts` 4317-4320) 도달 시점의 `aux1` 은 **항상 0** 이다. 그 술어는 상시 스킵이거나 상시
- * 발동 중 하나가 되어 어느 쪽도 설계가 아니다. 제대로 하려면 전용 내부 쿨 슬롯 1칸이 필요한데
- * 그것은 칼날 축 B 예산(BL8 `temperCharges` · BL9 `cadenceHits` 로 **2/2 포화**)을 넘긴다 —
- * 예산을 늘리는 것은 배선 레인이 아니라 설계 개정의 일이라 통째로 미배선으로 둔다.
- * (같은 사유가 `skillHooks.ts` 의 앵커 ④ `case SIG_BRUISER_ARMOR` 주석에도 있다.)
+ * ## ✅ 배치7 — **BL1 응전 사출**이 닫혀 30/30 이 됐다
+ * *"실제로 HP 가 깎인 피격 틱에 조준 방향으로 반격 볼리"* 의 트리거 자체는 배치6 까지도 앵커
+ * ④ 에서 완전히 성립했다. 막던 것은 설계서가 적은 **내부 쿨 술어**였다 — "60틱 내부 쿨은
+ * `aux1 < 60` 판정으로 대체 가능(신규 상태 0)" 이라고 적었으나, 장갑 적립(`aux1 = 0`)이 이
+ * 앵커보다 **앞**이라(`world.ts` 4317-4320 동형 지점) 도달 시점의 `aux1` 은 **항상 0** 이다.
+ * 그 술어는 상시 스킵이거나 상시 발동 중 하나가 되어 어느 쪽도 설계가 아니었다.
+ *
+ * **배치7 F1**(`prerequisites.md` §0-A 개정 각주, 2026-08-07 사용자 승인)이 칼날 축(BL) 상태
+ * 예산을 2 → 3 으로 올리고 전용 칸 `BruiserStage.retortCooldown`(값 규약 0=발사 가능)을 신설해
+ * 이 벽을 없앴다. 발사는 배치7 F2b 가 뽑은 leaf `emitVolley`(`activeTypes.ts`)를 그대로 쓴다 —
+ * 이 함수가 `player.cooldown` 을 한 비트도 안 만지므로 "쿨다운 미소비" 계약이 leaf 계약과
+ * 그대로 정합한다. 조준 방향은 `player.angle`(조준각) — 이 앵커는 `VolleyParams.aimAngle` 이
+ * 실린 정상 발사 파이프라인 밖이라 `nearestTarget`(world.ts 소유)을 다시 부를 수 없고, 같은
+ * 폴백을 이미 쓴 선례가 있다(`skills/mallow.ts` SQ10 · `skills/bubble.ts` · `skills/arccaster.ts`).
  */
 
 import type { WorldState, InputFrame } from '../world.js';
@@ -62,10 +67,10 @@ import type {
   WallShockRequest,
 } from '../skillHooks.js';
 import type { ActiveSkillDef } from '../../../data/ships/actives/types.js';
-import { fanStrike, clearEnemyBullets } from '../activeTypes.js';
+import { fanStrike, clearEnemyBullets, emitVolley } from '../activeTypes.js';
 import { isElite } from '../elite.js';
 import { atan2, cos, sin } from '../math.js';
-import { FIRE_CD_Q } from '../constants.js';
+import { FIRE_CD_Q, WEAPON_TYPE_BEAM, WEAPON_TYPE_RAILGUN } from '../constants.js';
 import type { DamageSourceMask } from '../skillSlots.js';
 import {
   readSlot,
@@ -99,6 +104,7 @@ import { skillLv } from '../../items/skills.js';
 // 같지만, **그 일치는 우연이 아니라 데이터 확인의 결과**다.
 
 const enum Sk {
+  /** BL1 응전 사출 */ retortVolley = 0,
   /** BL2 백병 격발 */ pointBlank = 1,
   /** BL3 만재 중탄 */ fullPlateSlug = 2,
   /** BL4 과적 배출 */ overflowVent = 3,
@@ -188,6 +194,23 @@ function temperCap(level: number): number {
 function skidCooldownTicks(level: number): number {
   return Math.round(60 + 2400 / (level + 19));
 }
+
+/** BL1: 반격 볼리 피해 배율(bp) = 5000 + 200×Lv — Lv1 = 52%, Lv20 = 90%. */
+function retortVolleyDamageBp(level: number): number {
+  return 5000 + 200 * level;
+}
+
+/** BL1: 내부 쿨(틱, 고정) — 설계 문면 그대로. */
+const RETORT_COOLDOWN_TICKS = 60;
+
+/**
+ * BL1: 빔 아키타입의 세그먼트 상한을 재현한 값(`world.ts` `BEAM_MAX_SEGMENTS`=16 ×
+ * `BEAM_SEGMENT_SPACING`=90). `emitVolley` 는 `reach` 사전 클램프를 호출부 책임으로 두므로(그
+ * 함수 doc), 정상 발사 경로 밖에서 새 볼리를 짓는 이 스킬도 같은 상한을 재현해야 사거리를
+ * 크게 투자한 빔 브루저의 반격 볼리가 세그먼트 상한을 넘기지 않는다. `world.ts` 가 그 두 상수를
+ * 바꾸면 이 값도 같이 바뀌어야 한다(재발 주의 — private 상수라 import 로 공유할 수 없다).
+ */
+const RETORT_BEAM_MAX_REACH = 1440;
 
 /** FO2 정산 회복 비율(고정 60% — 잔여 40% 소멸, 완전 환급 금지). */
 const CLOT_SETTLE_BP = 6000;
@@ -499,6 +522,68 @@ export function bruiserPlayerDamaged(
     player.aux1 = 0;
     clearEnemyBullets(state, player, 150 + 10 * fo5);
   }
+
+  // --- BL1 응전 사출 -------------------------------------------------------
+  // 트리거는 **`dmg > 0`**(실제로 hp 가 깎였다) 하나뿐 — 막·무효화된 피격은 미발동이 설계
+  // 「연계」항의 일관 규칙이다. 내부 쿨(전용 칸 `BruiserStage.retortCooldown`, 값 규약
+  // 0=발사 가능)은 앵커 ⑨(`bruiserSignatureStep`)가 매 틱 먼저 깎아 둔다 — 이 블록은 그
+  // 결과만 읽고, 실제로 발사할 때만 60 으로 되채운다. 두 앵커의 순서(`stepShipSignature` →
+  // `resolveCollisions`, 이 파일 헤더 "앵커 ⑨" doc)가 같은 틱 안에서 "먼저 깎고 뒤에 판정"을
+  // 성립시킨다.
+  //
+  // ⚠️ **쿨다운 미소비가 이 스킬의 정체성이다** — `player.cooldown` 을 한 비트도 안 만진다.
+  const bl1 = lv(state, Sk.retortVolley);
+  if (bl1 >= 1 && dmg > 0) {
+    const cd = readSlot(state.skillStage, BruiserStage.retortCooldown);
+    if (cd <= 0) {
+      const w = state.weapon;
+      // 조준 방향은 `player.angle`(조준각) 폴백이다 — 이 앵커는 `VolleyParams.aimAngle` 이
+      // 실린 정상 발사 파이프라인(앵커 ①/⑯) 밖이라 `nearestTarget`(world.ts 소유) 을 다시 부를
+      // 수 없다. 표적이 없는 방향을 조준각이 가리키는 순간이 있고 그것이 정상 동작이다
+      // (`skills/mallow.ts` SQ10 이 같은 자리에서 같은 이유로 같은 폴백을 쓴다).
+      const reach =
+        w.weaponType === WEAPON_TYPE_BEAM
+          ? Math.min(w.range, RETORT_BEAM_MAX_REACH)
+          : w.range > 0
+            ? w.range
+            : 0;
+      const volley: VolleyParams = {
+        // 반격 볼리 피해 = 무기 기준 피해의 50% + 2%p/Lv. 과충전·정조준 등 발사 시점 배율은
+        // 정상 발사 파이프라인(앵커 ⑯)에서만 계산되고 여기서는 재현하지 않는다 — 이 볼리는
+        // "지금 장착한 무기 스탯 기준의 별도 카운터"이지 그 틱의 실제 발사를 복제한 것이 아니다.
+        damage: Math.round((w.damage * retortVolleyDamageBp(bl1)) / 10000),
+        pierce: w.pierce,
+        count: w.bulletCount,
+        speed: w.bulletSpeed,
+        radius: w.bulletRadius,
+        // 사거리 보정(`reachLife` 동형)은 하지 않는다 — `w.bulletLife` 그대로다. 이 스킬은 이미
+        // 자신을 때린 상대에게 되쏘는 반격이라 표적이 사거리 끝에 있는 경우가 드물고, 무투자
+        // 런과 달리 사거리 투자 런에서 탄이 최대 사거리에 살짝 못 미쳐 죽는 것은 이 반격
+        // 볼리의 부수 효과일 뿐 설계가 요구한 성질이 아니다(레인 보고서 — 알려진 단순화).
+        life: w.bulletLife,
+        spread: w.spread,
+        // 쿨다운 미소비 — `emitVolley` 는 이 필드를 한 비트도 안 읽는다(호출부 책임 계약).
+        cooldownQ: 0,
+        // 정조준·BL3·BL6 마크를 얹지 않는다 — 이 볼리는 정상 발사 파이프라인(앵커 ⑯)을
+        // 거치지 않아 그 마크들의 소비/적립 로직과 얽히지 않는다(설계 미명시, 레인 판단).
+        mark: 0,
+        leadDamageBonus: 0,
+        leadPierceBonus: 0,
+        recordSpawnDamage: false,
+        recordSpawnOrigin: false,
+        countUsed: w.weaponType !== WEAPON_TYPE_RAILGUN && w.weaponType !== WEAPON_TYPE_BEAM,
+        ballisticsUsed: w.weaponType !== WEAPON_TYPE_BEAM,
+        // 이 볼리는 표적을 다시 고르지 않는다(위 조준각 주석) — 읽기 전용 사실 필드라 0.
+        targetDist: 0,
+        aimAngle: player.angle,
+        inputX: 0,
+        inputY: 0,
+        cloakBreak: false,
+      };
+      emitVolley(state, player, player.angle, volley, reach);
+      writeSlot(state.skillStage, BruiserStage.retortCooldown, RETORT_COOLDOWN_TICKS);
+    }
+  }
 }
 
 /**
@@ -585,6 +670,17 @@ export function bruiserSignatureStep(
   const fo1 = lv(state, Sk.overPlating);
   if (fo1 >= 1) {
     state.armorMaxStacks = ARMOR_MAX_STACKS + overPlatingBonus(fo1);
+  }
+
+  // --- BL1 응전 사출(내부 쿨 감산) -----------------------------------------
+  // 이 앵커가 `stepShipSignature` **진입점**이라 매 틱 정확히 한 번 불린다 — `skidCooldown`
+  // (MO4)과 달리 `retortCooldown` 의 소비처(앵커 ④)는 매 틱 불리지 않으므로, 감산을 그 소비처
+  // 안에 두면 "피격이 없던 틱 동안은 쿨이 안 준다" 는 결함이 생긴다. 감산은 여기 한 곳,
+  // 판정·재충전은 앵커 ④(`bruiserPlayerDamaged`) 한 곳 — 역할이 갈린다.
+  const bl1Cd = lv(state, Sk.retortVolley);
+  if (bl1Cd >= 1) {
+    const cd = readSlot(state.skillStage, BruiserStage.retortCooldown);
+    if (cd > 0) writeSlot(state.skillStage, BruiserStage.retortCooldown, cd - 1);
   }
 
   // --- MO4 장갑 활주 — **이 앵커에서 `onPlayerMoveParams` 로 이사했다**(배치5) -----

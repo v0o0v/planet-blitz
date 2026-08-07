@@ -1,6 +1,12 @@
 /**
  * **210스킬 배선의 앵커** — sim 이 스킬 훅을 부르는 **유일한 지점들**(ADR-0049 S0~S3 + W2
- * + 배치4 앵커 레인 + 배치5 벽 축). 이 파일에 **41개**, `chainHooks.ts` 에 **2개** = 모두 **43개**다.
+ * + 배치4 앵커 레인 + 배치5 벽 축 + 배치7 F2a·F2b). 이 파일에 **51개**, `chainHooks.ts` 에
+ * **2개** = 모두 **53개**다(`onAutoAimTarget`·`onTurretTargetPick`·`onEnemyBulletMoved` 가
+ * 배치7 F2b 몫, `onContactInvuln`·`onDeathRemnantSpawn` 이 배치7 F2a 몫).
+ *
+ * ⚠️ **이 수를 손으로 세지 마라 — 두 병렬 레인이 각자 틀린 수를 적었다**(F2b 는 46, F2a 는
+ * 48 이라 적었고 둘 다 자기 레인 몫만 더한 값이었다). 기계가 검사하는 정본은
+ * `tests/skillAnchors.test.ts` 의 **export 전수 표**이고, 그 표와 어긋나면 테스트가 빨개진다.
  *
  * ## ⛔⛔ 동그라미 번호(①②③…)는 **㉖ 에서 끝났다 — 새 앵커에 번호를 붙이지 마라**
  * 배치4 에서 **네 레인이 병렬로 앵커 9개를 세웠고, ㉗㉘ 가 세 갈래로 중복됐다**:
@@ -130,6 +136,9 @@ import {
   hatchlingTurretExpired,
   hatchlingPlayerDamaged,
   hatchlingGemMagnetParams,
+  hatchlingAutoAimTarget,
+  hatchlingTurretTargetPick,
+  hatchlingEnemyBulletMoved,
 } from './skills/hatchling.js';
 import {
   strikerDashFired,
@@ -146,6 +155,8 @@ import {
   strikerBulletHitParams,
   strikerGemPull,
   strikerObjectiveResolved,
+  strikerContactInvuln,
+  strikerActiveExpired,
 } from './skills/striker.js';
 import {
   arccasterGemCollected,
@@ -216,6 +227,7 @@ import {
   phantomObjectiveResolved,
   phantomEnemyDeath,
   phantomPlayerWallSlide,
+  phantomDeathRemnantSpawn,
 } from './skills/phantom.js';
 import {
   bubbleSignatureStep,
@@ -378,7 +390,9 @@ function dispatchDashSkill(
       // NU5 알 굴리기 — 부화 스냅샷 1 전진(액티브 `advanceHatch` 와 같은 문법).
       // ⚠️ 같은 스킬의 나머지 절반(대시 경로 젬 수거)은 `collectGem` 이 `world.ts` 비공개라
       //    미배선이고, 그래서 **레벨 스케일이 통째로 없다** — 효과 함수 주석이 근거.
-      hatchlingDashFired(state, player);
+      // NU3 업어 나르기 — 배치7 F1 이 실은 `dirX`/`dirY`(단위 벡터)의 소비처. 대시 경로 위
+      //    병아리를 방향 × 고정 거리로 산출한 가상 도착점 주위로 옮긴다(효과 함수 doc 참조).
+      hatchlingDashFired(state, player, dirX, dirY);
       break;
     case SIG_PHANTOM_CLOAK:
       // PH1 잔상 이탈 — 대시가 무피격 스트릭을 전진시킨다(`advanceCloak` 경유).
@@ -507,6 +521,9 @@ function playerOf(state: WorldState): Entity | undefined {
  * @param srcX 피격원 좌표 x — **선택 인자다**(아래 사유). 생략 = "이번 피격의 피격원 좌표를
  *   모른다".
  * @param srcY 피격원 좌표 y — {@link srcX} 와 한 벌.
+ * @param srcId 피격원 id(배치7 F2a, 팬텀 AS7「원한 청산」선결) — **선택 인자**, `srcX`/`srcY`
+ *   와 같은 사유(아래 문단). 적탄이면 그 탄의 `ownerId`(발사자, 스탬프 없으면 `undefined`),
+ *   몸통 접촉이면 접촉 적 자신의 id다. 해저드 피격은 `undefined`.
  *
  * ## ⚠️ 왜 좌표만 **선택** 인자인가 — `sources` 와 규율이 다르다
  * `sources` 는 필수다: 사유를 빠뜨린 호출부가 조용히 오분류되기 때문이다. 좌표는 반대로
@@ -527,8 +544,9 @@ export function onPlayerDamaged(
   srcX?: number,
   srcY?: number,
   contact?: Entity,
+  srcId?: number,
 ): void {
-  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived, sources, srcX, srcY, contact);
+  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived, sources, srcX, srcY, contact, srcId);
   onPlayerDamagedCatalyst(state, player, dmg, lethalSurvived, sources);
 }
 
@@ -541,8 +559,12 @@ function dispatchPlayerDamagedSkill(
   srcX?: number,
   srcY?: number,
   contact?: Entity,
+  srcId?: number,
 ): void {
   if (!state.skillsOn) return;
+  // 배치7 F2a — **피격원 id**(팬텀 AS7「원한 청산」선결). 아직 소비처가 없다 — AS7 배선은
+  // `skills/phantom.ts`(배선 레인 소유) 몫이다. 소비처가 생기면 이 줄을 지워라.
+  void srcId;
   // 배치6 — **몸통 접촉 상대 적**(브루저 FO3「반동 갑주」). `sources` 비트는 *접촉이 있었다*
   // 까지만 말하고 `srcX`/`srcY` 는 좌표뿐이라, "그 접촉 적에게" 를 좌표로 되찾으면 접촉 판정의
   // 두 번째 사본이 된다. 후행 선택 인자인 것은 `srcX`/`srcY` 와 같은 사유다.
@@ -563,20 +585,17 @@ function dispatchPlayerDamagedSkill(
       break;
     case SIG_BRUISER_ARMOR:
       // BL4 과적 배출 · FO2 응혈 적립 · FO5 불괴 연쇄 · **BL8 격돌 담금질(적립처)** ·
-      // **FO9② 사투 본능(적립 2스택)**.
-      // BL8 만 `sources` 를 본다 — 나머지 셋은 피해원과 무관하다(종전 인자만 쓴다).
+      // **FO9② 사투 본능(적립 2스택)** · **BL1 응전 사출**.
+      // BL8 만 `sources` 를 본다 — 나머지는 피해원과 무관하다(종전 인자만 쓴다).
       // 브루저는 스트라이커와 달리 **둘 다 필요하다** — FO2 는 적립량이 `dmg` 에 비례하고,
       // FO5 는 `lethalSurvived` 가 트리거 자체다(사슬 안에서 계산된 값을 그대로 넘긴다).
       //
-      // ⚠️ BL1(응전 사출)은 여기 없다 — **설계서의 내부 쿨 술어가 이 지점에서 성립하지 않는다.**
-      // 설계는 "내부 쿨 60틱은 `aux1` < 60 판정으로 대체 가능(신규 상태 0)" 이라고 적었으나,
-      // 장갑 적립이 이 앵커보다 **앞**이라(world.ts 4317-4320) 여기 도달한 시점의 `aux1` 은
-      // **항상 0** 이다. 그 술어를 그대로 쓰면 쿨이 영영 안 풀리거나(< 60 이면 스킵) 매 피격
-      // 발동(≥ 60 이면 스킵)이 되어 어느 쪽이든 설계와 다르다. 슬롯 1칸이 필요하고, 그것은
-      // 칼날 축 B 예산(BL8 `temperCharges` · BL9 `cadenceHits` 로 2/2 포화)을 넘기므로 설계로
-      // 되돌아가야 한다. **배치6 이 이 문면을 다시 읽고 판단을 유지했다** — 배치6 이 더한
-      // `contact` 는 "누구에게 반격하는가" 가 아니라 "누구를 반사하는가" 라 BL1 의 벽(내부 쿨)과
-      // 무관하다. 같은 사유가 `skills/bruiser.ts` 헤더에도 있다.
+      // ✅ **배치7 — BL1(응전 사출)이 여기서 닫혔다.** 종전에 막던 사유(설계서 처방 "`aux1` <
+      // 60" 은 장갑 적립이 이 앵커보다 앞이라 도달 시점의 `aux1` 이 항상 0 이라 성립하지
+      // 않는다)는 근거로 남긴다 — 배치7 F1 이 칼날 축 B 예산을 2 → 3 으로 올리고 전용 칸
+      // `BruiserStage.retortCooldown` 을 신설해 해소했다(2026-08-07 사용자 승인,
+      // `prerequisites.md` §0-A 개정 각주). 감산은 앵커 ⑨(`bruiserSignatureStep`, 매 틱 1회)가
+      // 하고, 이 앵커는 판정·발사·재충전만 한다 — 역할 분리는 효과 함수 주석.
       //
       // ⚠️ **FO3(반동 갑주)는 배치6 부터 여기 있다** — 후행 선택 인자 `contact` 가 그 자리다.
       bruiserPlayerDamaged(state, player, dmg, lethalSurvived, sources, contact);
@@ -592,9 +611,10 @@ function dispatchPlayerDamagedSkill(
       mallowPlayerDamaged(state, player, dmg);
       break;
     case SIG_PHANTOM_CLOAK:
-      // DI4 반발 위상 · DI5 최후 위상. `lethalSurvived` 를 넘기지 않는 것은 의도다 — 팬텀
-      // 30종 중 치명 생존 술어를 쓰는 스킬이 0종이다(DI5 의 트리거는 30% 임계 통과이지
-      // "죽을 뻔했다"가 아니다). `dmg` 는 DI5 가 피격 **전** hp 를 복원하는 데 쓴다.
+      // DI4 반발 위상 · AS7 원한 청산(표적 갱신) · DI5 최후 위상. `lethalSurvived` 를 넘기지
+      // 않는 것은 의도다 — 팬텀 30종 중 치명 생존 술어를 쓰는 스킬이 0종이다(DI5 의 트리거는
+      // 30% 임계 통과이지 "죽을 뻔했다"가 아니다). `dmg` 는 DI5 가 피격 **전** hp 를 복원하는
+      // 데 쓴다.
       //
       // ⚠️ DI1(위상 정산)·PH10(발각 즉응)은 여기 없다 — **이 앵커가 팬텀 피격 리셋보다
       // 뒤이기 때문이다.** `world.ts` 는 hp 차감 직후 `player.aux0 = 0` +
@@ -603,7 +623,8 @@ function dispatchPlayerDamagedSkill(
       // 상시 미발동이 된다. 설계서 공통 구현 고지 ④ 가 요구한 순서(DI1 → PH10 → 리셋 → DI5)
       // 중 **DI5 만** 이 자리에서 성립한다.
       // → 나머지 둘은 S2 가 리셋 **직전**에 뚫은 앵커 ㉑(`onCloakBreakReset`)에 산다.
-      phantomPlayerDamaged(state, player, dmg);
+      // ✅ **AS7 은 배치7 F2a 가 이 앵커에 실은 `srcId` 를 그대로 넘긴다**(팬텀 AS7 선결).
+      phantomPlayerDamaged(state, player, dmg, srcId);
       break;
     case SIG_HATCHLING_BROOD:
       // SH2 위기 산개 — 병아리 전원이 **피격원 쪽으로** 산개 돌진하며 경로 위 적탄을 소거한다.
@@ -640,6 +661,10 @@ function dispatchKillsDeltaSkill(state: WorldState, delta: number): void {
       if (p !== undefined) strikerKillsDelta(state, p, delta);
       break;
     }
+    // ⚠️ **버블은 여기 case 가 없다 — 필요가 없다.** PO10「연쇄 압력」의 처치 집계는
+    // `state.kills` 자체를 창 시작·종료 시점에 두 번 읽는 **차분**으로 재므로(`chainWindowTick`
+    // doc 이 정본) 이 앵커의 델타를 따로 누적할 이유가 없다 — 같은 값을 두 경로로 재는 것을
+    // 피했다.
     // ⚠️ **아크캐스터는 여기 case 가 없다 — 반쪽 배선을 피한 결과다.** BA7「연발 축전기」가
     // 이 앵커로 처치 6기를 셀 수는 있지만, 그 카운터가 **적용되는 자리**(다음 볼리의 탄수)는
     // 앵커 ① 뒤의 발사부라 지금 닿지 않는다. 카운터만 돌리면 슬롯 2칸이 영구히 아무것도 안 하는
@@ -1050,9 +1075,14 @@ function dispatchSignatureStepSkill(
       break;
     case SIG_BRUISER_ARMOR:
       // FO1 상한 확장 · MO4 장갑 활주 · **FO4·FO8·FO9① 감쇠 판정 선점** · FO2 만재 상승 엣지
-      // 정산 · FO7 기준선 · MO6 압쇄장 주기.
+      // 정산 · FO7 기준선 · MO6 압쇄장 주기 · **BL1 응전 사출(내부 쿨 감산)**.
       // 이 앵커가 `stepShipSignature` **진입점**이라 브루저 감쇠 분기(바로 아래)와 이번 틱
       // `resolveCollisions` 양쪽이 FO1 의 새 상한을 본다.
+      //
+      // ⚠️ BL1 의 감산이 여기 있는 이유는 MO4(`skidCooldown`)와 다르다 — MO4 의 소비처
+      // (`onPlayerMoveParams`)는 매 틱 불려 감산을 자기 안에 둘 수 있지만, BL1 의 소비처(앵커
+      // ④)는 피격이 있는 틱에만 불린다. 감산을 매 틱 도는 이 앵커에 따로 두지 않으면 "피격이
+      // 없던 동안은 쿨이 안 준다"는 결함이 생긴다.
       //
       // ⚠️ **FO4·FO8·FO9① 이 여기 온 근거는 「사후 관측이 아니라 선점」이다.** 종전에 이 셋을
       // 막던 사유(*"스택 감소를 사후 관측해 흉내 내면 액티브의 스택 소각과 구분이 안 된다"*)는
@@ -3014,6 +3044,26 @@ export interface TurretCadenceParams {
    * 매 틱 발사가 된다(BD5 가 `0` 클램프로 피한 것과 같은 함정의 반대편이다).
    */
   cooldownTicks: number;
+  /**
+   * 이 포탑이 **이번 틱에 사격 자체를 정지**하는가(해츨링 SH4「품기 진형」선결, 배치7 F2b).
+   * 기본값 `false` — 미투자·미소비 런은 이 필드가 항상 거짓이라 `stepTurrets` 가 아래
+   * 분기를 절대 타지 않고 비트 동일이다.
+   *
+   * ⚠️ **선택 필드다.** 필수로 만들면 이 레코드를 손으로 짓는 기존 픽스처
+   * (`tests/skillHatchling.test.ts` 의 `cadence()` 등)가 깨진다(`VolleyParams.recordSpawnOrigin`
+   * 의 "선택 필드다" 규율과 같은 사유). 훅이 안 채우면 `undefined` 라 `if (params.suppressed)` 가
+   * 자연히 거짓이다 — 명시적으로 `false` 를 넣을 필요가 없다.
+   *
+   * ## 소비 경로 — `cooldownTicks` 보다 강하다(먼저 검사한다)
+   * `stepTurrets` 는 이 값이 참이면 **쿨다운 감산도 격발도 둘 다 건너뛴다**(쿨다운 보존).
+   *
+   * ## ⚠️ 왜 감산까지 막는가 — "정지" 가 리듬 자체를 멈추는 것이지 공짜로 흘려보내는 게 아니다
+   * 감산만 허용하고 격발만 막으면, 정지가 오래 걸릴수록 쿨다운이 0 밑으로 계속 감산되어
+   * **해제되는 순간 그 포탑이 즉시(그리고 어쩌면 여러 발 밀려) 쏜다** — "진형이 풀리자마자
+   * 일제 사격" 이 되어 SH4 의 설계 의도(사격을 죽이는 대신 몸으로 막는다)와 정반대로 읽힌다.
+   * 쿨다운을 그 자리에 묶어 두면 해제 직후 리듬이 정지 **전과 정확히 같은 지점**에서 이어진다.
+   */
+  suppressed?: boolean;
 }
 
 /**
@@ -3257,6 +3307,155 @@ export function onTurretExpired(state: WorldState, turret: Entity): void {
 }
 
 // ---------------------------------------------------------------------------
+// 배치7 F2b 셋 — **표적 공유 · 탄받이** (해츨링 BD4 · SH8 선결)
+// ---------------------------------------------------------------------------
+//
+//   onAutoAimTarget    — 플레이어 자동조준이 표적을 확정한 직후(`world.ts` 의 `autoAttack`).
+//   onTurretTargetPick — 포탑 1기가 `nearestTarget` 을 부르기 **앞**(`world.ts` 의 `fireTurretShot`).
+//   onEnemyBulletMoved — 적탄이 이번 틱 위치 적분을 끝낸 직후(`world.ts` 의 적탄 이동 루프).
+//
+// ⛔ **동그라미 번호를 붙이지 않는다** — ㉖ 에서 끝났다(파일 헤더). 정본은 함수 이름이다.
+//
+// ## 왜 셋을 한데 묶었는가
+// BD4「표적 공유」는 *플레이어가 고른 표적을 병아리도 우선 쏜다* 이고, 그러려면 (a) 플레이어
+// 표적을 **기록할 자리**와 (b) 포탑이 그 기록을 **읽을 자리**가 둘 다 있어야 한다 — 한쪽만
+// 열면 반쪽 배선이다. SH8「탄받이 깃털」은 이 표적 공유와 무관하지만 같은 배치의 같은 포탑
+// 계열(병아리) 선결이라 옆에 둔다.
+//
+// ## ⚠️ 촉매 짝이 없다 — ⑮·⑰~㉔·㉖㉗ 과 같다.
+
+/**
+ * 앵커 — **플레이어 자동조준이 이번 틱 표적을 확정한 직후**(`world.ts` 의 `autoAttack`,
+ * `nearestTarget` 호출 바로 뒤 · 사거리 밖이라 표적이 없으면 이 앵커에 도달하지 않는다).
+ * 해츨링 BD4「표적 공유」선결.
+ *
+ * ## 왜 필요한가 — 포탑 사격 시점에는 이 정보가 이미 없다
+ * 병아리(포탑)의 사격 시점(`fireTurretShot`)은 `autoAttack` 과 **다른 함수·다른 틱 단계**다.
+ * `autoAttack` 의 표적은 그 함수의 지역 변수(`const target`)라 함수가 끝나면 사라진다. BD4 가
+ * "병아리도 플레이어가 고른 표적을 우선 쏜다" 를 표현하려면 그 표적을 **어딘가에 기록**해
+ * 다음 틱(또는 같은 틱의 뒤 단계) 포탑 사격까지 살려 둬야 한다.
+ *
+ * ## ⚠️ 기록 자체는 이 앵커의 일이 아니다 — 배선 레인의 몫이다
+ * 이 함수는 자리만 연다(전 분기가 비어 있다). 슬롯 쓰기(`writeSlot`)로 표적 id 를 기록하는
+ * 것은 `case SIG_HATCHLING_BROOD` 가 생길 때 그 안에서 한다 — "미리 열어 둔 자리가 배선이
+ * 있다는 착각을 만든다"(앵커 ⑮ 주석)와 같은 사유로, 지금은 훅 본문을 비워 둔다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라**(공통 계약).
+ *  - ⚠️ **`target`을 죽이거나 좌표를 바꾸지 마라.** 이 앵커는 관측 전용이다 — 이 표적은 이번
+ *    틱 플레이어 발사가 이미 겨눈 그 개체이므로, 여기서 건드리면 `autoAttack` 의 나머지 로직
+ *    (아직 안 끝났다 — 이 앵커는 발사 파이프라인 **중간**이다)까지 갈린다.
+ *
+ * @param target 이번 틱 자동조준이 확정한 표적.
+ */
+export function onAutoAimTarget(state: WorldState, player: Entity, target: Entity): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    case SIG_HATCHLING_BROOD:
+      // BD4 표적 공유(기록 절반) — 이번 틱 자동조준 표적을 슬롯에 적는다.
+      hatchlingAutoAimTarget(state, player, target);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 `onTurretTargetPick` 이 넘기는 **우선 표적 지정**. 훅이 제자리에서 고친다.
+ *
+ * ## 왜 레코드인가 — 값이 아니라 "지정했는가/안 했는가" 자체가 신호다
+ * `targetId` 가 0(엔티티 id 는 1부터 시작 — `world.ts` `nextEntityId = 1`)이면 *지정 없음*
+ * 이고, `fireTurretShot` 은 종전대로 `nearestTarget` 을 부른다. 인자 나열이 아니라 레코드로
+ * 연 이유는 `TurretShotParams`·`TurretCadenceParams` 와 같다 — 소비처가 늘 때 칸만 더한다.
+ */
+export interface TurretTargetPick {
+  /**
+   * 이 포탑이 **우선** 쏠 표적의 엔티티 id. `0` = 지정 없음(폴백: `nearestTarget`).
+   *
+   * ## ⚠️ 무효 표적(죽었거나 사거리 밖) 폴백 규약 — **종전 경로로 돌아간다**
+   * `fireTurretShot` 은 이 id 로 엔티티를 찾아 ①`dead` 이거나 ②포탑 사거리(`TURRET_RANGE`)
+   * 밖이면 **이 지정을 버리고** `nearestTarget` 을 그대로 부른다. 무효 지정을 그대로 밀어붙여
+   * "사거리 밖 표적을 향해 허공 발사" 나 "죽은 표적을 향해 무발사" 를 만들지 않기 위해서다 —
+   * BD4 의 취지는 *"우선순위 힌트"* 이지 *"조회를 대체"* 가 아니다. 폴백이 없으면 플레이어가
+   * 방금 표적을 바꾼 틱에 병아리가 허공에 대고 쏘는 정지 사격이 생긴다.
+   */
+  targetId: number;
+}
+
+/**
+ * 앵커 `onTurretTargetPick` — **포탑 1기가 `nearestTarget` 을 부르기 직전**(`fireTurretShot`).
+ * 해츨링 BD4「표적 공유」선결.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라**(㉖ 과 같은 계약 — `fireTurretShot` 은 RNG 미소비가 계약이다).
+ *  - ⚠️ **엔티티를 낳지 마라.** 이 지점은 `stepTurrets` 의 `state.entities` **순회 안**이다
+ *    (㉖ 과 같은 규율).
+ *
+ * @param turret 이 발을 쏘는 포탑 개체. **소환물 종류 판별은 훅 책임이다**(`ownerId`).
+ */
+export function onTurretTargetPick(
+  state: WorldState,
+  turret: Entity,
+  pick: TurretTargetPick,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    case SIG_HATCHLING_BROOD:
+      // BD4 표적 공유(우선순위 절반) — 공유 표적이 유효하면 이 포탑에 지정한다.
+      hatchlingTurretTargetPick(state, turret, pick);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 `onEnemyBulletMoved` — **적탄이 이번 틱 위치 적분(과 수명 감산)을 끝낸 직후**
+ * (`world.ts` 의 적탄·아군탄 공용 이동 루프, `kind === 'enemyBullet'` 만). 해츨링 SH8「탄받이
+ * 깃털」선결(설계서 구현안 A — 적탄 이동 판정에 근접 검사, 틱당 O(적탄×생존 병아리 ≤5)).
+ *
+ * ## 왜 필요한가 — 적탄↔병아리 충돌 경로가 코드에 0건이었다
+ * 적탄이 실제로 소비되는 지점은 플레이어 탐침(`grid.query` 안의 `if (t.kind === 'enemyBullet')`)
+ * **한 곳뿐**이고 그것은 플레이어 반경 판정이다. 병아리(`kind: 'turretPickup'` +
+ * `ownerId === BROOD_MARK`)를 향한 적탄 판정은 어디에도 없었다(`collision.ts`·`bullets.ts` grep
+ * 0건). 이 앵커가 그 판정 지점을 연다 — **직접 `dead=true`** 로 소거하는 형태다.
+ *
+ * ## 반환값 — `true` 면 이 앵커가 그 탄을 **소거한다**
+ * 반환은 `boolean`이다(이 파일의 다른 앵커 대부분과 다르다 — {@link survivedLethalBlow} 처럼
+ * "판정 결과"가 곧 사건이라 레코드보다 반환값이 자연스럽다). 호출부가 `true` 를 받으면 그
+ * 자리에서 `e.dead = true` 를 세우고 이번 틱 나머지 처리(벽 스윕 등)를 건너뛴다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **훅이 없는 런은 비트 동일이어야 한다.** 전 분기가 `false` 를 반환하므로(빈 스위치의
+ *    기본 반환), 미투자·미소비 런은 이 앵커가 매 적탄마다 불려도 결과가 전부 무시된다.
+ *  - ⚠️ **RNG 를 소비하지 마라**(공통 계약).
+ *  - ⚠️ **엔티티를 낳지 마라.** 이 지점은 적탄·아군탄 공용 루프의 `state.entities`
+ *    **순회 안**이다 — `spawnBullet` 의 말미 append 조차 안전하지 않다(이 루프는 `bulletSplits`
+ *    처럼 지연 스폰 버퍼를 따로 쓴다, 호출부 주석 참조).
+ *  - ⚠️ **`life` 를 병아리 판별에 재활용하지 마라.** F1 레인이 적(`enemy`/`boss` kind) 정지
+ *    상태이상에 `life` 를 재활용할 예정이다 — 병아리는 `kind: 'turretPickup'` 이라 칸이 겹치지
+ *    않지만, 다음 레인이 헷갈리지 않도록 여기 명시한다.
+ *
+ * @param bullet 이번 틱 위치가 이미 갱신된 적탄. 좌표는 **이번 틱의 최종 위치**다.
+ */
+export function onEnemyBulletMoved(state: WorldState, bullet: Entity): boolean {
+  if (!state.skillsOn) return false;
+  let consumed = false;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    case SIG_HATCHLING_BROOD:
+      // SH8 탄받이 깃털 — 병아리에 닿은 적탄을 소거하고 그 병아리의 수명을 깎는다.
+      consumed = hatchlingEnemyBulletMoved(state, bullet);
+      break;
+    default:
+      break;
+  }
+  return consumed;
+}
+
+// ---------------------------------------------------------------------------
 // 벽 축 앵커 3개 (배치5) — **아군탄·적탄이 벽에 겹친 순간**(`world.ts` 의 `stepProjectiles`)
 // ---------------------------------------------------------------------------
 //
@@ -3496,6 +3695,11 @@ export function onActiveExpired(
       // 이미 끝났고, 훅은 그 폭발의 반경(`def.coeff.blastRadius`)을 그대로 재사용한다.
       bruiserActiveExpired(state, player, def);
       break;
+    case SIG_STRIKER_MARKSMAN:
+      // S9 만료 정지장 — 생존 액티브(`as_striker_survival_lo/hi`)가 끝나는 이 틱에 반경 안
+      // 잡몹의 이동을 정지시킨다(`status.ts` 의 `applyStasis`, 배치7 F1 선결).
+      strikerActiveExpired(state, player, def);
+      break;
     default:
       break;
   }
@@ -3558,8 +3762,10 @@ export interface FilmBurstParams {
  *
  * ## ⭐ 여기서는 **스폰이 안전하다**
  * 밀어내기 루프(`for (const e of state.entities)`)가 이미 끝난 지점이다. 버블 PO8「잔거품
- * 기뢰」가 여기서 가능하다 — 단 그 스킬의 선결은 앵커가 아니라 **동시 생존 상한 규약**이다
- * (상한 없이 넣으면 파열 4회 창에 최대 36기가 서서 청크 예산 160 을 조용히 먹는다).
+ * 기뢰」가 배치7 에서 이 자리에 배선됐다(`bubbleFilmBurstPost` → `bubbleResidueMines`,
+ * `skills/bubble.ts`) — 동시 생존 상한(12)은 앵커가 아니라 그 함수 전용 `ownerId` 마커로
+ * 세고, `world.ts` 는 편집하지 않았다(기뢰가 `kind==='bullet'`이라 `isGimmick` 컬링·접촉
+ * 피해 둘 다 기존 아군탄 경로를 그대로 탄다).
  *
  * ## 무엇을 하면 안 되는가
  *  - ⚠️ **RNG 를 소비하지 마라.**
@@ -3766,4 +3972,63 @@ export function onPlayerWallSlide(
     default:
       break;
   }
+}
+
+// ---------------------------------------------------------------------------
+// 배치7 F2a 신설 앵커 둘 — 이름이 정본이다(파일 헤더 규율. 동그라미 번호는 ㉖ 에서 끝났다).
+// ---------------------------------------------------------------------------
+
+/**
+ * 앵커 신설 — **접촉 무적 게이트**(`resolveCollisions` 의 `if (invulnerable) return;` 직전,
+ * `world.ts` ~4558). 스트라이커 M9「충각 기동」선결(배치7 F2a).
+ *
+ * 무적(`player.iframes > 0`) 중에는 접촉 피해가 이 지점에서 통째로 상쇄되는데, 그 판정이
+ * 서기 **직전**이라 접촉 상대 `target` 이 아직 스코프에 살아 있다 — M9 이 "누구에게
+ * 충각했는가" 를 알 수 있는 유일한 자리다(`striker.ts` 헤더의 "닿지 않는" 목록이 지목한 벽).
+ *
+ * ⚠️ **호출부가 kind 를 이미 걸렀다.** 「충각」은 몸통 대 몸통 부딪힘이지 탄·장판을 맞는 것이
+ * 아니므로, 호출부(`world.ts`)는 접촉형 넷(enemy/boss/guardian/defenseBoss)일 때만 이 앵커를
+ * 부른다 — 적탄·해저드 분기에서는 부르지 않는다. 이 함수 안에서 `target.kind` 를 다시 걸러도
+ * 안전하지만(방어적 이중 게이트), 판별 자체는 호출부 책임이다.
+ *
+ * **소비처 — M9 충각 기동**(배선 레인, `skills/striker.ts`). 미투자·타 기체 런은 `state.skillsOn`·
+ * `sigBit` 게이트가 그대로 막아 비트 동일이다.
+ */
+export function onContactInvuln(state: WorldState, player: Entity, target: Entity): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    case SIG_STRIKER_MARKSMAN:
+      // M9 충각 기동 — 무적프레임 중 접촉이 상쇄되는 이 자리에서 역전해 접촉 상대를 다치게 한다.
+      strikerContactInvuln(state, player, target);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 신설 — **엘리트 사망 잔재 스폰 억제**(`splitElites.push(e)` 직전, `world.ts` ~5034).
+ * 팬텀 AS6「무성 격살」선결(배치7 F2a).
+ *
+ * 정본 스폰은 `spawnEliteDeathFx`(elite.ts)이고 실제 호출은 수집 뒤(`world.ts` ~5101)다 —
+ * 이 앵커는 그보다 **앞**, 수집 자체를 걸러 "이번 죽음은 잔재를 남기지 않는다" 를 결정한다.
+ * **사후 삭제가 아니라 스폰 억제다** — 사후에 지우면 파편이 한 틱 살아 이미 피해를 준 뒤이므로
+ * 값이 다르다(`skills/phantom.ts` 헤더의 AS6 미배선 사유 문단이 근거).
+ *
+ * @returns `true` 면 이번 엘리트의 사망 잔재 스폰을 **건너뛴다**(호출부가 `push` 자체를 안
+ *   한다). 훅이 없거나 `false` 를 돌려주면 종전과 완전히 같다(비트 동일).
+ *
+ * 아직 소비처가 없다 — `case` 가 없어 항상 `false`. AS6 가 배선되는 레인은
+ * `skills/phantom.ts`(배선 레인 소유)에 case 를 더해라 — 이 앵커는 자리만 연다.
+ */
+export function onDeathRemnantSpawn(state: WorldState, elite: Entity): boolean {
+  if (!state.skillsOn) return false;
+  switch (state.sigBit) {
+    case SIG_PHANTOM_CLOAK:
+      // AS6 무성 격살 — 은신 창 동안 처치한 적은 사망 잔재를 남기지 않는다.
+      return phantomDeathRemnantSpawn(state, elite);
+    default:
+      break;
+  }
+  return false;
 }

@@ -23,7 +23,34 @@
  *
  * ---
  *
- * ## ⚠️ 지금 배선된 것은 30종 중 **27종**이다 (배치5 까지 22, 배치6 이 +5)
+ * ## ✅ 30 종 전부 배선 완료 (팬텀 최종)
+ * 리드가 `skillSlots.ts` 잠금을 풀고 `PhantomCarry.voidCovenantApplied`(0=미물림·1=물림)를
+ * 커밋 `7d3a91e` 로 세웠다 — 이 레인의 "슬롯이 없다" 보고는 **틀렸다**: 진짜 원인은 이 레인의
+ * 프롬프트가 `skillSlots.ts` 편집을 금지했던 것이지 칸 자체가 없던 것이 아니었다(`PhantomCarry`
+ * 는 그때도 0·1 두 칸만 썼고 2~7 은 비어 있었다). DI10 배선:
+ *  - **이득**(해제 첫 타 배율 +500bp + 250bp/Lv) — AS8 과 같은 비율 변환으로 앵커 ⑯
+ *    (`phantomVolleyParams`, `params.cloakBreak`)에서 닿는다(이 레인이 이미 실증했던 형태).
+ *  - **대가**(최대 HP 고정 −8%, 레벨 무관) — 앵커 ⑨(`phantomSignatureStep`)에서
+ *    `PhantomCarry.voidCovenantApplied` 게이트로 **런당 정확히 1회**만 물린다. ⚠️ DI8 의
+ *    "진입마다 가산"과 규율이 **정반대**다 — 베끼면 게이트가 사라져 복리로 HP 가 녹는다.
+ *  - **침공**: 이득은 `params.cloakBreak` 상시 거짓으로 자동 no-op, 대가는 `invasion3` 을
+ *    명시적으로 게이트해 대칭 차단한다(헌장 제3 기준, 설계서 ④ 표).
+ *
+ * ## 배치7 F2a 선결 위에서 이 레인이 더한 셋 — 27 → **30**
+ *  - **AS6「무성 격살」** — 인계 문서·설계서 둘 다 틀렸었다: 설계서가 적은 정본 함수명
+ *    `explodeElite` 는 존재하지 않고 정본은 {@link spawnEliteDeathFx}(`elite.ts:119`)이며,
+ *    막던 벽("스폰이 앵커 ⑪ 보다 앞이라 못 한다")도 틀렸다 — 실제 스폰은 앵커 ⑪(처치 통지)
+ *    보다 **뒤**다. 배치7 F2a 가 그 스폰 **앞**에 스폰 억제 앵커
+ *    `onDeathRemnantSpawn(state, elite): boolean`(사후 삭제가 아니라 스폰 자체를 건너뛴다)을
+ *    열어 닿았다({@link phantomDeathRemnantSpawn}). 은신 술어는 읽기만 한다(`cloak.ts`
+ *    `playerCloaked`) — 사망 원인 귀속은 불요(설계서 그대로).
+ *  - **AS7「원한 청산」** — 막던 벽("마지막으로 나를 공격한 적을 이름 붙일 수단이 없다")도
+ *    배치7 F2a 가 앵커 ④(`onPlayerDamaged`)에 `srcId`(적탄이면 발사자 `ownerId`, 접촉이면
+ *    접촉 적 자신의 id)를 실어 날려 풀었다. 표적 저장 칸(`PhantomStage.grudgeTargetId`)도
+ *    F2a 가 이미 열어 뒀다. 증폭·해제는 앵커 ⑩(`phantomEnemyDamaged`)에 산다 — AS4·AS5 와
+ *    같은 "추가 피해" 형태이고, 그 표적이 이 히트로 죽으면 표식을 지운다.
+ *
+ * ## (앞 단계) 지금까지 배선된 것은 30종 중 27종이었다 (배치5 까지 22, 배치6 이 +5)
  *
  * 배치6 이 더한 다섯과 그것을 연 자리:
  *  - **DI9「유령 선체」** — 신설 앵커 `onPlayerWallSlide`(선체↔벽 겹침 해소 **직전**). 배치4~5 가
@@ -42,17 +69,8 @@
  *  - **AS1「이중 각인」** — 앵커 ⑯ + 예약 슬롯. 소진 값이 아니라 *"직전 볼리가 첫 타였는가"* 만
  *    있으면 되고, 그것은 `params.cloakBreak` 를 다음 볼리까지 나르면 된다.
  *
- * ## 남은 3종과 사유 (배치6 이 조사하고 **일부러 안 넣었다**)
- *  - **AS6「무성 격살」** — 사망 잔재를 만드는 곳(`elite.ts` `explodeElite` · `world.ts`
- *    BK_SPLIT 분열)이 앵커 ⑪ 보다 **앞**이다. 사후에 파편을 지우는 것은 스폰 억제와 값이
- *    다르다(한 틱 살아 피해를 준다). 스폰 **전** 앵커가 필요하다.
- *  - **AS7「원한 청산」** — *"마지막으로 나를 공격한 적"* 을 **이름 붙일 수단이 없다.** 앵커 ④ 는
- *    원거리 피격에서 좌표(`srcX`/`srcY`)만 주고, 접촉 적(`contact`)은 몸통 접촉에만 온다.
- *    좌표 최근접으로 되찾으면 피격원 술어의 두 번째 사본이 되고, 표식을 적 `aux` 에 실으면
- *    다른 축(거동 파라미터·현상금 점화)과 칸을 다툰다.
- *  - **DI10「공허 계약」** — 대가(최대 HP 추가 삭감)의 자리가 스탯 파생(`skillDerived`/
- *    `createWorld`)이고 앵커가 아니다. 이득(배율 영구 가산)만 넣으면 **순수 상향**이라
- *    반쪽 배선이다.
+ * (AS6·AS7·DI10 은 위 "30 종 전부 배선 완료" / "배치7 F2a 선결 위에서 이 레인이 더한 셋" 절이
+ * 정본이다 — 배치6 당시의 판정은 낡았다.)
  *
  * 공유 앵커 레인이 더한 하나는 **PH2「위상 착지」**({@link phantomActiveFired}) — 앵커 ㉗
  * (`onActiveFired`, 액티브 핸들러 **직후**)이 열었다. 막고 있던 것은 "착지 지점을 아는 자리가
@@ -136,6 +154,8 @@ const enum Sk {
   /** AS3 처형 재장전 */ executionReload = 2,
   /** AS4 급소 해부 */ vitalDissection = 3,
   /** AS5 배후 격살 */ backstab = 4,
+  /** AS6 무성 격살 */ silentKill = 5,
+  /** AS7 원한 청산 */ grudgeSettlement = 6,
   /** AS8 처형인의 적공 */ executionerTally = 7,
   /** AS9 절멸 선고 */ annihilationVerdict = 8,
   /** AS10 유령 탄도 */ ghostTrajectory = 9,
@@ -155,6 +175,7 @@ const enum Sk {
   /** DI5 최후 위상 */ lastPhase = 24,
   /** DI6 차폐 잠행 */ coverStalk = 25,
   /** DI9 유령 선체 */ ghostHull = 28,
+  /** DI10 공허 계약 */ voidCovenant = 29,
 }
 
 /**
@@ -285,6 +306,25 @@ function tallyBpPerStack(level: number): number {
 function lastPhaseCooldownTicks(level: number): number {
   return 3600 - Math.floor((3600 * level) / (level + 30));
 }
+
+/**
+ * AS7 증폭 bp = 2000 + 6000×Lv/(Lv+12) (Lv1 ≈ 2462bp·24.6% · Lv20 ≈ 4727bp·47.3%,
+ * 점근 8000bp·80% — 연속 체감, 설계서 원문 그대로).
+ */
+function grudgeAmplifyBp(level: number): number {
+  return 2000 + Math.floor((6000 * level) / (level + 12));
+}
+
+/**
+ * DI10 해제 첫 타 배율 **영구 가산** bp = 500 + 250×Lv (Lv1 = 750 · Lv20 = 5500 →
+ * 원배율 25000 + 5500 = 30500bp = 3.05배). 선형 — 20 초과 자연 연장.
+ */
+function voidCovenantAddBp(level: number): number {
+  return 500 + 250 * level;
+}
+
+/** DI10 대가 — 최대 HP 고정 −8%(레벨 무관, bp). */
+const VOID_COVENANT_HP_CUT_BP = 800;
 
 /**
  * DI3 감소 bp = 6000×s/(s+2000), s = aux0×(4+Lv).
@@ -447,7 +487,8 @@ export function phantomDamageChain(state: WorldState, player: Entity, dmg: numbe
 }
 
 /**
- * 앵커 ④ **선체 hp 가 깎인 피격의 후속** — DI4 반발 위상 · DI5 최후 위상.
+ * 앵커 ④ **선체 hp 가 깎인 피격의 후속** — DI4 반발 위상 · AS7 원한 청산(표적 갱신) ·
+ * DI5 최후 위상.
  *
  * ## ⚠️ DI1·PH10 은 여기 없다 — **앵커 ㉑ 으로 옮겨 갔다**(S2)
  * 설계서 공통 구현 고지 ④ 는 순서를 **DI1(리셋 전 aux0 읽기) → PH10(창 술어) → 리셋 →
@@ -455,11 +496,20 @@ export function phantomDamageChain(state: WorldState, player: Entity, dmg: numbe
  * `setBreakToken(…, 0)`) **뒤**에 있다. 즉 여기 도달한 시점의 `aux0` 은 **항상 0** 이라
  * DI1 의 반경 보정(aux0/2)은 영영 0 이 되고 PH10 의 "창 중 피격" 술어는 영영 거짓이다.
  * S2 가 리셋 **직전**에 앵커 ㉑ 을 뚫었고, 그 둘은 {@link phantomCloakBreakReset} 에 산다.
- * (DI5 만 "리셋 **이후**"가 설계 순서라 여기서 정확히 성립한다 — 그래서 여기 남는다.)
+ * (DI5 만 "리셋 **이후**"가 설계 순서라 여기서 정확히 성립한다 — 그래서 여기 남는다. AS7 은
+ * 리셋과 무관해 순서 제약이 없다.)
  *
  * @param dmg 실제로 hp 에서 차감된 피해 — DI5 의 임계 통과 판정이 피격 **전** hp 를 복원하는 데 쓴다
+ * @param srcId 피격원 id(배치7 F2a 선결) — 적탄이면 발사자 `ownerId`, 접촉이면 접촉 적
+ *   자신의 id, 해저드면 `undefined`. AS7 이 이 값을 원한 표적으로 저장한다(`undefined` 면
+ *   갱신하지 않는다 — "모른다"를 "표적 없음"으로 오독하지 않는다).
  */
-export function phantomPlayerDamaged(state: WorldState, player: Entity, dmg: number): void {
+export function phantomPlayerDamaged(
+  state: WorldState,
+  player: Entity,
+  dmg: number,
+  srcId?: number,
+): void {
   // ① DI4 반발 위상 — 주변 적을 좌표 직접 변위로 밀어낸다(`resolveFilmBurst` 동형).
   const di4 = lv(state, Sk.repulsePhase);
   if (di4 >= 1) {
@@ -497,7 +547,23 @@ export function phantomPlayerDamaged(state: WorldState, player: Entity, dmg: num
     }
   }
 
-  // ② DI5 최후 위상 — HP 가 30% 아래로 **떨어지는 그 틱**에 즉시 은신 진입(내부 쿨다운 있음).
+  // ② AS7 원한 청산 — 이번 피격원이 새 원한 표적이 된다.
+  //
+  // ⚠️ **침공에서도 여기는 돈다** — DI5 처럼 함수 전체를 침공에서 막지 않는다. 설계서 ④ 표가
+  // AS7 을 "구조물(facility 포함) 표적 제외, formation 적·guardian 허용" 으로 판정했고, 그
+  // 제외는 이미 `srcId` 를 **만드는 쪽**(world.ts 의 수집 루프 · `invasion/*.ts` 의
+  // `spawnEnemyBullet` 호출부)에 구조적으로 들어 있다: 침공 코어·포탑·시설 탄은 `ownerId` 를
+  // 안 찍어 `srcId` 가 항상 `undefined` 다(`grudgeGate.ts`·`entities.ts` 의 게이트 계약).
+  // 그래서 여기서 `invasion3` 을 다시 보면 formation 적·guardian 의 정당한 원거리 피격까지
+  // 함께 막는 **과잉 차단**이 된다 — 표 판정과 코드가 갈린다.
+  // ⚠️ 표적 처치 시 해제는 여기가 아니라 앵커 ⑩({@link phantomEnemyDamaged})에 있다 —
+  // "표적이 죽었는가" 는 명중 결과이지 피격 사건이 아니다.
+  const as7 = lv(state, Sk.grudgeSettlement);
+  if (as7 >= 1 && srcId !== undefined) {
+    writeSlot(state.skillStage, PhantomStage.grudgeTargetId, srcId);
+  }
+
+  // ③ DI5 최후 위상 — HP 가 30% 아래로 **떨어지는 그 틱**에 즉시 은신 진입(내부 쿨다운 있음).
   //
   // ⚠️ 침공 게이트를 **트리거 자체에** 병기한다(설계서 ④ 표 DI5). `advanceCloak` 이 침공에서
   //    no-op 이라 이득은 이미 막혀 있지만, 게이트가 없으면 쿨다운 카운터만 런 내내 돌며
@@ -641,6 +707,44 @@ export function phantomSignatureStep(state: WorldState, player: Entity): void {
     const next = player.dashCooldown - (1 + Math.floor(ph9 / 10));
     player.dashCooldown = next > 0 ? next : 0;
   }
+
+  // ⑦ DI10 공허 계약(대가 절반) — 최대 HP **−8% 고정**(레벨 무관)을 **런당 정확히 1회** 물린다.
+  // 이득 절반(해제 첫 타 배율 영구 가산)은 {@link phantomVolleyParams} 에 있다.
+  //
+  // ## 왜 여기(앵커 ⑨)이고, 왜 `PhantomCarry.voidCovenantApplied` 게이트가 필수인가
+  // 이 앵커는 `state.skillsOn && sigBit === SIG_PHANTOM_CLOAK` 이기만 하면 **매 틱 정확히
+  // 한 번** 불린다(함수 doc) — 그래서 DI10 투자 런은 반드시 첫 틱에 이 블록에 닿는다. 문제는
+  // "닿는다"가 아니라 "그 다음도 계속 닿는다" 는 것 — 게이트가 없으면 매 틱 −8%가 복리로
+  // 깎여 몇 초 만에 HP 가 0에 수렴한다. `Carry` 슬롯(구간을 넘겨 산다)에 "이미 물렸는가"를
+  // 적어 두는 것이 유일하게 안전한 형태다 — `Stage`(구간마다 0)를 썼다면 의뢰 다구간 런에서
+  // 구간이 바뀔 때마다 대가가 다시 물려 **HP 가 계단식으로 녹는다**(`skillSlots.ts` 의
+  // `voidCovenantApplied` doc 이 정본 사유).
+  //
+  // ⚠️ **DI8 을 선례로 베끼지 마라(파일 헤더·설계서의 명시적 경고)** — DI8
+  // (`phantomEntry.ts`)은 진입 에지마다 `player.maxHp +=` 를 가산해 "매번" 적용되는 것이
+  // 계약이다. DI10 은 같은 `maxHp` 필드를 만지지만 "런당 정확히 1회"가 계약이라 규율이
+  // 정반대다 — 게이트 없는 대입은 두 스킬을 조용히 같은 형태로 만든다.
+  //
+  // ⚠️ 침공 게이트 — 헌장 제3 기준(설계서 ④ 표 DI10): "이득이 구조적으로 차단되면 대가도
+  //    대칭 차단한다". 이득(위 `phantomVolleyParams`)은 `params.cloakBreak` 가 침공에서
+  //    상시 거짓이라(소진 지점의 `invasion3` 게이트) 이미 무연산이다 — 대가만 침공에서 살면
+  //    "공짜로 HP 를 깎이기만 하는" 순손해가 된다. 그래서 여기 명시적으로 막는다.
+  const di10 = lv(state, Sk.voidCovenant);
+  if (
+    di10 >= 1 &&
+    state.config.invasion3 === undefined &&
+    readSlot(state.skillCarry, PhantomCarry.voidCovenantApplied) === 0
+  ) {
+    writeSlot(state.skillCarry, PhantomCarry.voidCovenantApplied, 1);
+    // 반올림은 게이트 **안**이다(규율 ③).
+    const cut = Math.round((player.maxHp * VOID_COVENANT_HP_CUT_BP) / 10000);
+    const reduced = player.maxHp - cut;
+    player.maxHp = reduced > 0 ? reduced : 1;
+    // hp 가 새 상한을 넘으면 눌러 담는다(대가 적용 시점은 통상 hp === maxHp 인 런 시작
+    // 직후라 실질적으로는 항상 무연산이지만, 방어적으로 유계를 지킨다 — DI2 의 회복 클램프와
+    // 같은 형태).
+    if (player.hp > player.maxHp) player.hp = player.maxHp;
+  }
 }
 
 /**
@@ -721,8 +825,44 @@ export function phantomPlayerWallSlide(
 }
 
 /**
+ * 앵커 신설 `onDeathRemnantSpawn` **엘리트 사망 잔재 스폰 억제 판정**
+ * (`splitElites.push(e)` 직전, `world.ts` ~4987) — AS6 무성 격살 **1종**.
+ *
+ * 설계 문면: *"은신 창 동안 처치한 적은 죽음의 잔재를 남기지 않는다"*. 정본 스폰 함수는
+ * {@link spawnEliteDeathFx}(`elite.ts:119`, 인계 문서가 적은 `explodeElite` 는 존재하지 않는
+ * 이름이다)이고, 실제 호출은 이 앵커보다 **뒤**다(`world.ts` ~5101) — 이 앵커는 그 앞에서
+ * "이번 죽음은 잔재를 남기지 않는다"를 결정해 `push` 자체를 건너뛴다. **사후 삭제가 아니라
+ * 스폰 억제다** — 사후 삭제는 파편이 한 틱 살아 이미 피해를 준 뒤이므로 값이 다르다.
+ *
+ * ## 은신 술어는 읽기만 한다 — 사망 원인 귀속 불요
+ * `playerCloaked(state, player)` 하나로 충분하다(`cloak.ts:62`). 설계서가 요구한 범위는 "은신
+ * 창 **동안** 처치"이지 "은신이 그 처치를 도왔는가"가 아니라서, 무엇이 이 엘리트를 죽였는지는
+ * 안 본다 — 은신 중이면 전부(AS6 doc "사망 원인 귀속 불요").
+ *
+ * ## ⚠️ BK_SPLIT(적탄 퓨즈 만료 분열)은 여기 없다 — 무관하다
+ * 그건 **적탄이 수명을 다해 분열하는 것**이지 적(엘리트)의 사망이 아니다. 이 앵커는 `elite`
+ * 인자를 받는 엘리트 사망 경로 전용이라 애초에 그 경로에 닿지 않는다(설계서 AS6 의 명시적
+ * 제외).
+ *
+ * ## `state.entities[0]` 로 플레이어를 얻는다
+ * 이 앵커는 `elite` 만 받고 `player` 를 받지 않는다(다른 5기체가 공유하는 앵커라 시그니처
+ * 하나만의 사정으로 인자를 늘리지 않는다 — `skillSlots.ts` 값 규약 4 와 같은 절제). `playerOf`
+ * 와 같은 형태로 index 0 을 직접 읽는다 — 플레이어가 이미 죽어 배열에서 빠졌으면(동틱 동시
+ * 사망의 극단 사례) 안전하게 `false` 다(그 틱은 어차피 런이 끝난다).
+ *
+ * ⚠️ **미투자 런은 `elite` 를 한 바이트도 안 건드린다** → 골든 해시 불변(반환값만 본다).
+ */
+export function phantomDeathRemnantSpawn(state: WorldState, elite: Entity): boolean {
+  void elite;
+  if (lv(state, Sk.silentKill) < 1) return false;
+  const p = state.entities[0];
+  if (p === undefined) return false;
+  return playerCloaked(state, p);
+}
+
+/**
  * 앵커 ⑩ **적성 표적이 아군탄에 맞아 피해가 확정된 직후** — AS3 처형 재장전(회수 절반) ·
- * AS4 급소 해부 · AS5 배후 격살.
+ * AS4 급소 해부 · AS5 배후 격살 · AS7 원한 청산(증폭·해제).
  *
  * ## 두 스킬 다 "증폭"이 아니라 **추가 피해**로 구현된다
  * 설계서는 둘을 "명중 피해 증폭"으로 적었지만 이 앵커는 차감·격추 판정이 **이미 끝난** 자리다.
@@ -815,7 +955,38 @@ export function phantomEnemyDamaged(
     }
   }
 
-  // ③ AS9 절멸 선고 — **해제 첫 타(강화탄)가 명중한 지점**에서 폭발.
+  // ③ AS7 원한 청산 — **원한 표적**에게 주는 피해가 증폭되고, 이 히트가 그 표적을 죽이면
+  //    표식을 해제한다(표적 처치 시 해제 — 설계서 본체 그대로).
+  //
+  // ## 왜 AS4·AS5 와 같은 "추가 피해" 형태인가
+  // 설계서는 "주는 피해가 증폭된다" 라고 적었지만 이 앵커는 차감·격추 판정이 **이미 끝난**
+  // 자리다(AS4·AS5 doc 문단이 정본). 그래서 증폭분을 추가 피해로 얹는다 — 총 피해량은 같다.
+  //
+  // ## 해제 판정을 **AS4·AS5 뒤**에 두는 이유
+  // AS4·AS5 의 추가 피해가 이 히트에서 표적을 이미 죽였을 수 있다(둘 다 `!target.dead` 게이트가
+  // 없다 — 죽은 표적에 더 깎아도 무해하다는 것이 그 두 스킬의 계약). 그 죽음도 "표적 처치"이므로
+  // AS7 자신의 증폭이 죽이지 않았더라도 해제해야 한다 — 그래서 해제 판정은 AS7 의 증폭을 적용한
+  // **뒤**, `target.dead` 를 한 번만 읽어 확인한다(AS4·AS5·AS7 셋의 기여가 전부 반영된 값).
+  const as7 = lv(state, Sk.grudgeSettlement);
+  if (as7 >= 1) {
+    const targetId = readSlot(state.skillStage, PhantomStage.grudgeTargetId);
+    if (targetId !== 0 && target.id === targetId) {
+      const extra = Math.round((dmg * grudgeAmplifyBp(as7)) / 10000);
+      if (extra > 0) {
+        target.hp -= extra;
+        // 좀비 방지 — 위 AS4·AS5 와 같은 두 줄·같은 대상 범위다.
+        if (target.hp <= 0 && (target.kind === 'enemy' || target.kind === 'boss')) {
+          target.dead = true;
+        }
+      }
+      // 표적 처치 시 해제 — AS4·AS5·위 증폭 전부의 결과를 반영한 `target.dead` 를 한 번 읽는다.
+      if (target.dead) {
+        writeSlot(state.skillStage, PhantomStage.grudgeTargetId, 0);
+      }
+    }
+  }
+
+  // ④ AS9 절멸 선고 — **해제 첫 타(강화탄)가 명중한 지점**에서 폭발.
   //    반경 100 + 10×Lv · 폭발 피해 = 그 첫 타 실피해의 25% + 1.5%p/Lv.
   //
   // ## 트리거는 AS3 과 같은 표식이고 그것이 의도다
@@ -996,6 +1167,26 @@ export function phantomVolleyParams(
       params.damage = Math.round((params.damage * (CLOAK_BREAK_BP + add)) / CLOAK_BREAK_BP);
       writeSlot(state.skillCarry, PhantomCarry.executionerStacks, 0);
     }
+  }
+
+  // --- DI10 공허 계약(이득 절반) ---------------------------------------------
+  // 해제 첫 타 배율에 **영구 가산**(+500bp + 250bp/Lv) — 대가(최대 HP −8%)는
+  // {@link phantomSignatureStep} 이 런당 정확히 1회로 물린다.
+  //
+  // ## 왜 AS8 과 같은 비율 변환으로 닿는가
+  // 이 앵커에 도달한 `params.damage` 는 `world.ts` 소진 지점이 이미
+  // `× CLOAK_BREAK_BP/10000` 을 먹인 값이다(AS8 문단과 같은 사실). 그래서 원하는 총 배율
+  // `(CLOAK_BREAK_BP + add)` 는 **현재 값에 `(CLOAK_BREAK_BP + add)/CLOAK_BREAK_BP` 를
+  // 곱하면** 정확히 나온다 — DI10 은 가산이 **레벨에서만** 나오고 소진 스택 같은 별도 상태가
+  // 없어 AS8 보다도 단순하다.
+  // ⚠️ AS8 과 **독립적으로** 곱한다(같은 슬롯을 다투지 않는다) — 스택 소모(AS8)와 영구 가산
+  // (DI10)은 서로 다른 원천이라 함께 투자하면 두 배율이 곱으로 겹친다(설계에 상호 배제 규정
+  // 없음 — 두 축을 동시에 태우는 것 자체가 이 스킬들의 존재 이유다).
+  const di10 = lv(state, Sk.voidCovenant);
+  if (di10 >= 1 && params.cloakBreak) {
+    const add = voidCovenantAddBp(di10);
+    // 반올림은 게이트 **안**이다(규율 ③).
+    params.damage = Math.round((params.damage * (CLOAK_BREAK_BP + add)) / CLOAK_BREAK_BP);
   }
 
   // --- AS1 이중 각인 --------------------------------------------------------

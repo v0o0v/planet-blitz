@@ -8,11 +8,24 @@
  *
  * ---
  *
- * ## ⚠️ 배선된 것은 30종 중 **27종**이다 (배치6 이 PO4·DR3·DR7·DR8·FI7 + 통합에서 DR2)
+ * ## ✅ 배선된 것은 30종 중 **30종 전부**다 (배치7 이 PO10·FI6·PO8 을 추가 — 배선 완료)
  * 배치6 이 연 앵커 셋(`onFilmBurstPost` · `onPickupRadius` · 앵커 ⑮ 의 `FilmBurstParams`)과
- * 신설 leaf `objectiveState.ts`, 그리고 **`BubbleStage` 첫 실배정 1칸**이 그 다섯을 열었다.
- * 남은 **셋은 PO8·PO10·FI6** 이고, 사유는 이 파일 **말미의 미배선 주석**이 정본이다
- * (넷 다 `Sk` enum 에 멤버가 없다 — 「없다」의 근거는 grep 이다).
+ * 신설 leaf `objectiveState.ts`, 그리고 **`BubbleStage` 첫 실배정 1칸**이 그 다섯(PO4·DR3·DR7·
+ * DR8·FI7 + 통합에서 DR2)을 열었다. 배치7 은 그 위에 「배치7 예약 슬롯」(`skillSlots.ts` S0
+ * 배정표의 `offeringPool`·`chainWindow`·`chainKillsSnap`)을 얹어 PO10·FI6 을 배선했고, 마지막
+ * 으로 PO8「잔거품 기뢰」가 붙어 30종이 채워졌다:
+ *  · **PO10** 은 예약된 두 칸(`chainWindow`·`chainKillsSnap` — `state.kills` 차분 방식)
+ *    위에, 재생 완료와 보강 적용 사이의 한 틱 시차를 메우는 `chainPendingBoost`(예약표 밖 —
+ *    이 레인이 실측으로 추가) 1칸을 더했다. 상한을 넘는 것도 안전하다 — 「`aux0 ≤ FLAT`
+ *    불변식」은 코드가 아니라 산문 주석이었다(`chainBoostPulse` doc 이 실측 정본).
+ *  · **FI6** 은 예약된 `offeringPool` 1칸만으로 끝났다 — "불멸 막 판별"에 표식 슬롯이 아예
+ *    필요 없었다(`bubbleFilmOfferingActive` doc 이 정본: 로드아웃 + 기존 버프 틱 필드
+ *    조합만으로 판별된다). 인계 체크리스트가 이 표식을 별도 슬롯으로 예약해 뒀던 것은
+ *    **불필요한 예약**이었던 셈이다.
+ *  · **PO8** 은 슬롯이 **아예 필요 없었다** — `WorldState`/`BubbleStage` 변경 0건. 인계
+ *    문서가 세운 "선결 셋(전용 마커·컬링 제외·접촉 피해, `world.ts` 편집 필요)" 중 마커
+ *    하나만 실제로 필요했고, 그 마커도 `ownerId` 위에 이 파일 전용 상수 하나로 끝났다 —
+ *    사유 전문은 이 파일 말미의 (구)미배선 주석과 {@link bubbleResidueMines} 가 정본이다.
  *
  * ⚠️ 배치5 가 DR3 을 *"신규 `WorldState` 정수가 선결"* 로 닫은 판정은 **틀렸다** — 슬롯 배열은
  * 전부 0 이면 폴드가 통째로 안 돈다. 근거는 `bubbleActiveFired` 의 DR3 블록 주석이 정본이다.
@@ -59,6 +72,10 @@
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
+// PO8「잔거품 기뢰」 전용 — `entities.ts` 는 world/patterns/waves 를 import 하지 않는 leaf 라
+// (그 파일 헤더가 근거) 런타임 import 해도 순환이 되지 않는다. 스트라이커·브루저 레인의
+// 같은 패턴을 그대로 따른다(`skills/striker.ts`·`skills/bruiser.ts` 의 `spawnBullet` import).
+import { spawnBullet } from '../entities.js';
 import type {
   ActiveFiredOrigin,
   FilmBurstParams,
@@ -73,7 +90,7 @@ import type { ActiveSkillDef } from '../../../data/ships/actives/types.js';
 import { clearEnemyBullets, fanStrike, powerCentiOf, scaleCenti } from '../activeTypes.js';
 import { applyChain } from '../status.js';
 import { slideCircleWalls } from '../los.js';
-import { length } from '../math.js';
+import { length, cos, sin, TWO_PI } from '../math.js';
 import { DT } from '../constants.js';
 import {
   FILM_ABSORB_FLAT,
@@ -89,6 +106,9 @@ import {
 import { objectiveActiveOf } from '../objectiveState.js';
 import { BubbleStage, readSlot, writeSlot } from '../skillSlots.js';
 import { skillLv } from '../../items/skills.js';
+// FI6「헌막 의식」의 "지금 선 막이 불멸 막인가" 판별용 — 순수 데이터 레지스트리 조회라
+// leaf 규율을 깨지 않는다(`actives.ts` 가 이미 같은 함수를 같은 목적으로 쓴다).
+import { activeByWireId } from '../../../data/ships/actives/index.js';
 
 // ---------------------------------------------------------------------------
 // flat 인덱스 — `data/ships/bubble.ts` 의 축 순서가 정본
@@ -109,7 +129,9 @@ const enum Sk {
   /** PO5 만재 투과 */ fullFilmPierce = 4,
   /** PO6 격발 재응결 */ fireRecondense = 5,
   /** PO7 정전 파열 */ staticBurst = 6,
+  /** PO8 잔거품 기뢰 */ residueMines = 7,
   /** PO9 고압 격발 조율 */ popTuning = 8,
+  /** PO10 연쇄 압력 */ chainPressure = 9,
   /** DR1 역류 수거 */ reverseCurrent = 10,
   /** DR2 표면장력 세례 */ surfaceTensionBath = 11,
   /** DR3 도약 자기장 */ blinkMagnetize = 12,
@@ -125,6 +147,7 @@ const enum Sk {
   /** FI3 반사 응막 */ reflectiveFilm = 22,
   /** FI4 압력 배출 */ pressureVent = 23,
   /** FI5 파열 위상 */ burstPhase = 24,
+  /** FI6 헌막 의식 */ filmOffering = 25,
   /** FI7 벽면 반향 */ wallEcho = 26,
   /** FI8 발수 코팅 */ hydrophobicCoat = 27,
   /** FI9 최후의 거품 */ lastBubble = 28,
@@ -196,6 +219,45 @@ const PO4_BLOCKED_EPS = 1;
  * 크게 벌어지므로, 비례식만 두면 상한이 사실상 없다.
  */
 const DR8_RADIUS_CAP_MULT = 4;
+
+/**
+ * PO10「연쇄 압력」의 처치 집계 창(sim 틱). 설계서가 **"90틱 고정"** 으로 못 박았다(레벨 무관).
+ */
+const CHAIN_WINDOW_TICKS = 90;
+
+/**
+ * PO8「잔거품 기뢰」— 기뢰장 동형(`world.ts` 보조무기 `SUB_TYPE_MINE` 과 같은 스폰 형태:
+ * `kind='bullet'`·속도 0·유한 수명·관통예산 = 총피해 상한) 상수.
+ *
+ * 설계서(`bubble.md` [PO8])가 수치로 못 박은 것은 기뢰 **수 공식**(4 + ⌊Lv/4⌋)·**피해**
+ * (10 + 2×Lv)·**수명**(120틱)·**관통예산**(3) 넷뿐이다. 링 배치 반경과 개별 기뢰의 접촉
+ * 반경은 설계 문서에 수치가 없어 이 레인이 정했다(⚠️ 가정치 — 보고 대상):
+ *  · 링 반경은 `FILM_BURST_RADIUS`(파열 반경)와 같게 잡았다 — "파열 지점 둘레"라는 문면이
+ *    파열이 실제로 적을 밀어내는 경계와 같은 원주를 가리킨다고 읽었다.
+ *  · 접촉 반경은 `world.ts` `SUB_MINE_RADIUS`(64)와 같은 자릿수를 쓰되, 한 파열에 최대
+ *    9기(Lv20)가 동시에 서는 것을 감안해 56 으로 살짝 줄였다(과도한 겹침 방지).
+ */
+const PO8_RING_RADIUS = FILM_BURST_RADIUS;
+const PO8_MINE_RADIUS = 56;
+const PO8_MINE_LIFE = 120;
+const PO8_MINE_PIERCE = 3;
+
+/**
+ * PO8 기뢰 전용 `ownerId` 마커 — 동시 생존 상한을 세는 유일한 수단(해츨링 `BROOD_MARK`
+ * 선례와 같은 형태, `world.ts`/`shipSignature.ts` 는 건드리지 않고 이 파일 안에서만 쓴다 —
+ * 마커 소비처가 전부 `kind==='bullet'` 판정이라 `isGimmick`(world.ts) 등록이 필요 없다).
+ * `MISSILE_MARK`(0x3155110)·`SPLIT_FRAGMENT_MARK`(0xf12a6)·`HIVE_MICRO_MARK`(0x81ce77) —
+ * 'bullet' kind 에 이미 쓰이는 세 센티널과 값이 겹치지 않는다.
+ */
+const PO8_MINE_MARK = 0xb0f0a3;
+
+/**
+ * 동시 생존 상한(설계서 R2-8 실측). 파열 소스 둘(피격 파열·강제 파열)이 어긋나게 맞물리면
+ * 기뢰 수명(120틱) 창 안에 이론 최대 4파열 × Lv20 9기 = 36개가 설 수 있다 — 상한 없이 넣으면
+ * 청크 활성 예산(`MAX_ACTIVE_GIMMICKS`, world.ts)과 무관하게(기뢰는 `isGimmick` 대상이 아니다)
+ * `state.bulletCap` 을 조용히 먹는다. 초과분은 스폰을 생략할 뿐 RNG 는 소비하지 않는다.
+ */
+const PO8_LIVE_CAP = 12;
 
 /**
  * 이 런에서 그 스킬의 **실효 레벨**(투자 + 축 어픽스). 미투자면 0 이다(`skillLv` 정본 1).
@@ -270,6 +332,15 @@ export function bubbleSignatureStep(state: WorldState, player: Entity): void {
   // ── DR10 견인 펄스 — **막이 서는 그 틱 한 번**. FI2 와 술어가 정반대(막 없음)라 아래
   //    조기 반환보다 **앞**에 둔다. 둘을 한 게이트로 묶으면 어느 한쪽이 반드시 안 돈다.
   bareHullCurrentPulse(state, player);
+
+  // ── PO10 연쇄 압력 — 처치 집계 창의 잔여 틱을 **매 틱 정확히 한 번** 깎는다. DR3·DR2 와
+  //    같은 사유로 앵커 ⑨ 다(창을 여는 앵커 `onFilmBurstPost` 는 파열이 있는 틱에만 불려
+  //    창이 안 줄어든다).
+  chainWindowTick(state);
+
+  // ── PO10 연쇄 압력(소비 절반) — 보류된 보강분을 **재생 완료 다음 틱**에 aux0 에 얹는다.
+  //    자리는 `chainBoostPulse` doc 이 정본이다.
+  chainBoostPulse(state, player);
 
   const fi2 = lv(state, Sk.durabilityRecondense);
   if (fi2 < 1) return;
@@ -425,6 +496,86 @@ function bareHullCurrentPulse(state: WorldState, player: Entity): void {
     if (dx * dx + dy * dy > r2) continue;
     pullGemToward(player, e, step);
   }
+}
+
+/**
+ * **PO10 연쇄 압력(감소 절반)** — 처치 집계 창의 잔여 틱을 1 깎는다.
+ *
+ * ⚠️ 미투자 런은 슬롯이 0 이라 `readSlot` 한 번으로 끝난다 — `writeSlot` 을 호출하지 않으므로
+ * 배열이 끝까지 손대지지 않는다(DR3·DR2 와 같은 규율).
+ *
+ * 창이 이번 틱에 **0 으로 떨어지면** 그 순간이 "창 닫힘" 이다 — 창이 열린 시점의
+ * {@link BubbleStage.chainKillsSnap}(`state.kills` 스냅샷)과 지금의 `state.kills` 차이가
+ * 창 안에서 실제로 늘어난 처치 수다. 그 값을 보강분으로 환산해
+ * {@link BubbleStage.chainPendingBoost} 에 더하고, 스냅샷은 0 으로 되돌린다. 레벨은 열려
+ * 있던 순간의 투자만 본다(창 진행 중 레벨이 바뀌는 경로는 이 게임에 없다).
+ *
+ * ## 왜 처치를 앵커 `onKillsDelta` 로 따로 집계하지 않는가 — `state.kills` 가 이미 그 값이다
+ * `state.kills` 는 `kind === 'enemy' && hp <= 0` 게이트로만 오르는 단조 누적값이다
+ * (`skillHooks.ts` 의 `onKillsDelta` doc — "state.kills++ 와 완전히 같은 술어"). 창이 여는
+ * 시점과 닫는 시점의 두 값을 빼는 것만으로 그 구간의 처치 수가 나오므로, 처치 사건마다
+ * 별도 누적 훅을 새로 여는 것은 같은 값을 두 번째 경로로 재는 것이다 — 침공 구조물이
+ * `enemy` kind 밖이라 이 값에 안 잡히는 것도 그 게이트 덕분에 자동으로 정합하다(설계서
+ * ④ 표가 요구한 "구현 레인 확인": kind 술어를 추가할 필요가 없다).
+ */
+function chainWindowTick(state: WorldState): void {
+  const left = readSlot(state.skillStage, BubbleStage.chainWindow);
+  if (left <= 0) return;
+  const next = left - 1;
+  writeSlot(state.skillStage, BubbleStage.chainWindow, next);
+  if (next > 0) return;
+  const po10 = lv(state, Sk.chainPressure);
+  const snap = readSlot(state.skillStage, BubbleStage.chainKillsSnap);
+  writeSlot(state.skillStage, BubbleStage.chainKillsSnap, 0);
+  if (po10 < 1) return;
+  const kills = state.kills - snap;
+  if (kills <= 0) return;
+  // 처치당 2 + floor(Lv/2), 회당 상한 20 + 3×Lv(설계서 ② 표). 반올림은 게이트 안 — 여기 값은
+  // 이미 정수 곱셈뿐이라 반올림이 필요 없다.
+  const perKill = 2 + Math.floor(po10 / 2);
+  const cap = 20 + 3 * po10;
+  const gain = Math.min(cap, kills * perKill);
+  if (gain <= 0) return;
+  // ⚠️ **가산**이다 — 다음 재생 전에 파열이 두 번(예: 강제 파열 후 대기 중 또 강제 파열) 일면
+  // 두 창의 보강분이 같은 다음 막을 향해 함께 쌓인다. 설계서는 이 중복 파열 경로를 명시하지
+  // 않았지만, "다음 막" 이 단수라고 해서 그 사이 창이 두 번 열릴 수 없다는 뜻은 아니다 —
+  // 회당 상한은 지키면서 누적은 허용하는 쪽이 "파열-청소 습관에 보상" 이라는 설계 의도에
+  // 더 가깝다(가정 — 밸런스 패스 대상, defer-balance-tuning).
+  const prevPending = readSlot(state.skillStage, BubbleStage.chainPendingBoost);
+  writeSlot(state.skillStage, BubbleStage.chainPendingBoost, prevPending + gain);
+}
+
+/**
+ * **PO10 연쇄 압력(적용 절반)** — 보류된 보강분을 다음 막에 얹는다.
+ *
+ * ## ⚠️ 왜 "재생 다음 틱" 인가 — `chainPendingBoost` doc 의 실측을 그대로 코드로 옮긴다
+ * `world.ts` 의 `SIG_BUBBLE_FILM` 분기는 앵커 ⑨(이 함수가 불리는 자리) **뒤**에 돌고,
+ * `player.aux0 === 0` 일 때 `player.aux0 = FILM_ABSORB_FLAT` 을 **대입**(가산이 아니다)한다.
+ * 그래서 재생이 실제로 일어나는 틱에 여기서 aux0 을 올려도 소용없다 — 뒤이어 곧바로 지워진다.
+ * 재생이 일어난 **다음 틱**은 `aux0 === FILM_ABSORB_FLAT` 이 되어 그 대입 분기 자체가 안 돌고
+ * (`if (player.aux0 === 0)` 가 거짓), 그래서 이 틱에 더한 값이 지워지지 않는다.
+ *
+ * ## 술어가 왜 `aux0 === FLAT && aux1 === 0` 인가 — "막 방금 재생됨" 의 유일한 관측 가능 신호
+ * 자연 재생은 `aux0 = FLAT` 과 `aux1 = 0` 을 **같은 틱에 함께** 대입한다(`world.ts` 그 분기).
+ * 액티브(`film_lo`/`film_hi`)도 `aux0` 을 만재로 대입하지만 `aux1` 은 건드리지 않으므로, 그
+ * 순간 `aux1` 이 우연히 0 이 아닌 한(예: 막 없이 오래 버틴 뒤 액티브를 쓴 경우는 `aux1` 이
+ * 이미 커져 있다) 이 술어에 걸리지 않는다. `aux1` 이 우연히 0 인 채 액티브를 쓰는 좁은 경로
+ * (예: 강제 파열 직후 0 틱 안에 다른 막 액티브를 즉시 씀)에서는 보강분이 "다음 막" 을 향해
+ * 그 막에 얹히는데, 그것도 설계 문면의 "다음 막" 범위 안이다 — 자연 재생만으로 한정하지
+ * 않았다(가정 — 이 좁은 경로는 실전에서 사실상 발생하지 않는다).
+ *
+ * ## 상한은 `FILM_ABSORB_FLAT × 2` — PO10 이 그 불변식의 유일한 예외(설계서 ⑥절 3)
+ * `aux0 ≤ FILM_ABSORB_FLAT` 은 강제하는 코드가 없는 **산문 주석**이다(`world.ts` 그 분기
+ * 주석 실측) — 그래서 이 스킬만 그 범위를 넘겨도 골든 재동결이 선결이 아니다. 다만 무한정
+ * 넘기면 u32 폴드 안전성 논거가 흔들리므로, 설계서가 못 박은 상한을 여기서 직접 건다.
+ */
+function chainBoostPulse(state: WorldState, player: Entity): void {
+  const pending = readSlot(state.skillStage, BubbleStage.chainPendingBoost);
+  if (pending <= 0) return;
+  if (player.aux0 !== FILM_ABSORB_FLAT || player.aux1 !== 0) return;
+  writeSlot(state.skillStage, BubbleStage.chainPendingBoost, 0);
+  const boosted = player.aux0 + pending;
+  player.aux0 = boosted > FILM_ABSORB_FLAT * 2 ? FILM_ABSORB_FLAT * 2 : boosted;
 }
 
 // ---------------------------------------------------------------------------
@@ -682,10 +833,12 @@ function filmBurstPushOf(state: WorldState): number {
  * 배열에 없다** — 여기서 다시 거를 필요가 없고, 거른다고 적으면 없는 경로를 방어하는 죽은
  * 코드가 된다. 다만 **같은 틱의 다른 축이 먼저 죽였을 수 있어** `dead` 는 확인한다.
  *
- * ## ⚠️ PO8「잔거품 기뢰」는 여기 없다 — 스폰이 안전한데도 안 넣었다
- * 이 지점은 순회 밖이라 엔티티 생성이 안전하고, 그것이 PO8 의 종전 차단 사유였다. 남은
- * 선결은 **동시 생존 상한 규약**이고 그것은 앵커가 아니다 — 사유 전문은 이 파일 말미의
- * 미배선 주석이 정본이다.
+ * ## ✅ PO8「잔거품 기뢰」는 배치7 에서 이 훅 안에 배선됐다
+ * 종전 차단 사유(*"동시 생존 상한 규약이 없다"*)는 실측으로 틀렸음이 드러났다 — 해츨링
+ * `BROOD_MARK` 가 이미 「전용 마커 + 동시 생존 상한 카운트 + `isGimmick` 컬링 제외」 3단
+ * 규약의 선례였고, PO8 은 그중 컬링 제외조차 필요 없다(기뢰가 `kind==='bullet'` 이라
+ * `isGimmick` 판정 대상 자체가 아니다 — world.ts 미편집). 접촉 피해도 신설이 아니라
+ * `resolveCollisions` 의 범용 아군탄↔적 경로 재사용이다(정본은 {@link bubbleResidueMines}).
  */
 export function bubbleFilmBurstPost(
   state: WorldState,
@@ -693,6 +846,23 @@ export function bubbleFilmBurstPost(
   y: number,
   pushed: readonly FilmBurstPushed[],
 ): void {
+  // ── PO10 연쇄 압력(개창 절반) — 파열마다 90틱 처치 집계 창을 **연다**(대입 — 가산 아님).
+  //    PO4 와 달리 `pushed` 가 비어 있어도(반경 안에 밀 적이 없어도) 창은 연다 — 설계서 문면이
+  //    "파열 후" 이지 "밀어낸 적이 있으면" 이 아니다. 강제 파열(pop_lo)·만료 파열(film_hi)도
+  //    같은 `resolveFilmBurst` 를 지나 이 훅에 닿으므로 세 파열 경로 전부가 창을 연다.
+  const po10 = lv(state, Sk.chainPressure);
+  if (po10 >= 1) {
+    writeSlot(state.skillStage, BubbleStage.chainWindow, CHAIN_WINDOW_TICKS);
+    writeSlot(state.skillStage, BubbleStage.chainKillsSnap, state.kills);
+  }
+
+  // ── PO8 잔거품 기뢰 — 파열마다 기뢰 링을 남긴다. PO10 과 같은 술어(`pushed` 무관 — 설계서
+  //    문면이 "파열 틱에" 이지 "밀 적이 있으면" 이 아니다)라 PO4 의 이른 반환보다 앞에 둔다.
+  const po8 = lv(state, Sk.residueMines);
+  if (po8 >= 1) {
+    bubbleResidueMines(state, x, y, po8);
+  }
+
   const po4 = lv(state, Sk.crushImpact);
   if (po4 < 1) return;
   if (pushed.length === 0) return;
@@ -718,6 +888,59 @@ export function bubbleFilmBurstPost(
     // ⚠️ `compact` 의 1차 게이트는 `e.dead` 다 — 여기서 안 세우면 압착으로만 죽은 적이
     //    좀비로 남아 처치·젬·전리품이 통째로 사라진다(PO1 블록과 같은 형태).
     if (e.hp <= 0) e.dead = true;
+  }
+}
+
+/**
+ * **PO8 잔거품 기뢰** — 파열 지점 둘레에 정지 거품 기뢰 링을 남긴다(`bubbleFilmBurstPost`
+ * 전용 헬퍼 · 앵커 `onFilmBurstPost` 는 밀어내기 루프 **밖**이라 스폰이 안전하다).
+ *
+ * ## ⚠️ 「`bullet` kind 재사용은 접촉 판정이 자동으로 안 붙는다」는 추정은 틀렸다 — 실측 정정
+ * 인계 문서가 이 스킬을 미배선으로 닫으며 남긴 추정 사유였다. 실측(`tests/subWeapon.test.ts`
+ * `'2 기뢰장 — 위에 있는 적에게 피해를 준다'`)이 정확히 이 형태(`kind='bullet'`·속도 0)가
+ * `resolveCollisions` 의 아군탄↔적 스윕 판정(world.ts)을 그대로 통과해 접촉마다 피해를 주는
+ * 것을 이미 증명하고 있었다 — 그 판정은 탄의 **자기 이동 경로**(`bPrevX = b.x - b.vx*DT`)로
+ * 선분을 만드는데, 속도 0 이면 그 선분이 점으로 퇴화해 **그 틱의 정적 원-원 겹침 판정**과
+ * 같아진다. 그래서 접촉 피해·좀비 방지(`t.hp -= dealt; if (t.hp<=0) t.dead=true;`,
+ * world.ts 4270-4271 부근)는 **신설이 아니라 재사용**이다 — 이 함수는 스폰만 하고 적 `hp` 를
+ * 전혀 만지지 않는다(좀비 방지 규율이 이 함수에는 적용될 자리 자체가 없다).
+ *
+ * ## 배치 — RNG 0 · 결정론
+ * 파열 중심 둘레에 `mineCount`개를 오름차순 등각(`i · 2π / mineCount`, i = 0..)으로 놓는다.
+ * 난수를 쓰지 않으므로 같은 시드·같은 파열 횟수는 항상 같은 배치가 된다(웨이브 구성·드랍
+ * 시퀀스 불변).
+ *
+ * ## 동시 생존 상한 — {@link PO8_LIVE_CAP}
+ * `PO8_MINE_MARK` 로 표식한 살아있는 기뢰 수를 세어 상한을 넘기지 않는다. 이미 상한이면
+ * **스폰을 통째로 생략**한다(부분 배치 없음 — 링이 이지러지지 않는다). 상한 도달 여부와
+ * 무관하게 RNG 를 쓰지 않으므로 생략해도 이후 시드 소비에 영향이 없다.
+ */
+function bubbleResidueMines(state: WorldState, x: number, y: number, po8: number): void {
+  let live = 0;
+  for (const e of state.entities) {
+    if (!e.dead && e.kind === 'bullet' && e.ownerId === PO8_MINE_MARK) live++;
+  }
+  if (live >= PO8_LIVE_CAP) return;
+  // 기뢰 수 = 4 + ⌊Lv/4⌋(설계서 ② 레벨 스케일). 피해 = 10 + 2×Lv.
+  const mineCount = 4 + Math.floor(po8 / 4);
+  const dmg = 10 + 2 * po8;
+  for (let i = 0; i < mineCount && live < PO8_LIVE_CAP; i++) {
+    const ang = (TWO_PI * i) / mineCount;
+    const mine = spawnBullet(
+      state,
+      x + cos(ang) * PO8_RING_RADIUS,
+      y + sin(ang) * PO8_RING_RADIUS,
+      ang,
+      0, // 속도 0 — 기뢰장 동형(정지 발사체).
+      dmg,
+      PO8_MINE_PIERCE,
+      PO8_MINE_RADIUS,
+      PO8_MINE_LIFE,
+      0,
+      0,
+    );
+    mine.ownerId = PO8_MINE_MARK; // 동시 생존 상한 카운트 전용 마커.
+    live++;
   }
 }
 
@@ -916,6 +1139,70 @@ export function bubbleFilmAbsorbed(
       }
     }
   }
+
+  // ── FI6 헌막 의식(누적 절반) — 지금 선 막이 불멸 막(`as_bubble_film_hi`)일 때만 흡수량을
+  //    쌓는다. 판별은 표식 슬롯이 아니라 {@link bubbleFilmOfferingActive} 다(그 함수 doc 이
+  //    "왜 표식이 필요 없는가"의 정본) — `film_lo`·재생 막은 그 판별에 자연히 걸리지 않는다.
+  const fi6 = lv(state, Sk.filmOffering);
+  if (fi6 >= 1 && bubbleFilmOfferingActive(state)) {
+    const pool = readSlot(state.skillStage, BubbleStage.offeringPool);
+    writeSlot(state.skillStage, BubbleStage.offeringPool, pool + absorbed);
+  }
+}
+
+/**
+ * **FI6 헌막 의식 — "지금 선 막이 불멸 막(`as_bubble_film_hi`)인가"의 판별.**
+ *
+ * ## 왜 표식 슬롯이 필요 없는가 — 로드아웃이 이미 정적으로 안다
+ * 어느 액티브 슬롯(0/1)에 `as_bubble_film_hi` 가 장착됐는지는 `state.config.activeSlots` 로
+ * 런 시작부터 고정이다(`actives.ts` 의 `defForSlot` 과 같은 조회 — 그 함수를 그대로 베끼지
+ * 않고 같은 산술을 여기 leaf 안에 둔 이유는 `actives.ts` 가 이 파일을 런타임 import 하므로
+ * 반대 방향은 순환이기 때문이다). 그 슬롯의 버프 잔여 틱(`state.activeBuff0`/`activeBuff1` —
+ * 둘 다 액티브 엔진이 이미 갖고 있는 기존 필드, `activeTypes.ts` `setBuffTicks` 가 세운다)이
+ * 양수인 동안만 "불멸 막이 지금 서 있다"가 참이다.
+ *
+ * `film_lo`는 `def.id` 자체가 다르므로 이 판별에 걸리지 않고, 재생 막(엔진 자동 복원,
+ * `world.ts` 의 `SIG_BUBBLE_FILM` 분기)은 애초에 `activeBuff0/1` 을 건드리지 않으므로(그
+ * 분기가 만지는 것은 `aux0`/`aux1` 뿐이다) 마찬가지로 걸리지 않는다 — 세 경로가 같은 `aux0`
+ * 대입을 쓰는데도 상태 슬롯 신설 없이 구분되는 이유가 이것이다.
+ */
+function bubbleFilmOfferingActive(state: WorldState): boolean {
+  const slots = state.config.activeSlots;
+  if (slots === undefined) return false;
+  for (let slot = 0; slot < slots.length; slot++) {
+    const def = activeByWireId(slots[slot] ?? -1);
+    if (def === undefined || def.id !== 'as_bubble_film_hi') continue;
+    if (def.shipTypeId !== (state.config.shipType ?? 0)) continue;
+    const buffTicks = slot === 0 ? state.activeBuff0 : state.activeBuff1;
+    if (buffTicks > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * **FI6 헌막 의식(소비 절반)** — 불멸 막 만료 파열이 이 함수를 불러 누적을 가산 피해로
+ * 바꾸고 풀을 **0 으로 소비**한다(설계서: "만료 소비 후 0").
+ *
+ * ## 왜 `activeHandlers/bubble.ts` 가 이 값을 부르는가 — 소비처가 그 파일에 있다
+ * 만료 파열의 폭발 피해(`blastDamage`)는 `BUBBLE_EXPIRE.as_bubble_film_hi`(액티브 만료 훅
+ * 자체, `filmBurst.ts` 의 파열 훅 `onFilmBurst` 가 아니다)가 부른다 — 그 자리는 leaf 규율상
+ * `skills/*.ts` 를 값으로 당길 수 없는 `world.ts`/`filmBurst.ts` 가 아니라 **활성 스킬
+ * 핸들러 파일**이라, 스트라이커·말로우·해츨링 액티브 핸들러가 이미 하는 대로
+ * (`activeHandlers/*.ts` 가 `skills/*.ts` 를 값으로 import 하는 기존 선례) 이 함수를 노출해
+ * 부르게 한다. `skills/bubble.ts` → `activeHandlers/bubble.ts` 역방향 import 가 없으므로
+ * 순환이 아니다.
+ *
+ * ⚠️ 미투자 런은 pool 을 세운 적이 없으므로(누적 절반이 투자 게이트 안에서만 쓴다) 여기서도
+ * **먼저 반환**해 슬롯을 건드리지 않는다.
+ */
+export function bubbleFilmOfferingConsume(state: WorldState): number {
+  const fi6 = lv(state, Sk.filmOffering);
+  if (fi6 < 1) return 0;
+  const pool = readSlot(state.skillStage, BubbleStage.offeringPool);
+  writeSlot(state.skillStage, BubbleStage.offeringPool, 0);
+  if (pool <= 0) return 0;
+  // 40% + 4%p/Lv(설계서 ②). 반올림은 게이트 안.
+  return Math.round((pool * (4000 + 400 * fi6)) / 10000);
 }
 
 // ---------------------------------------------------------------------------
@@ -1077,6 +1364,23 @@ export function bubbleActiveFired(
           { pierce: 1 },
         );
       }
+    }
+  }
+
+  // ── FI6 헌막 의식(재장전 절반) — `as_bubble_film_hi`(불멸 막) 새 캐스트가 이전 누적을
+  //    **지운다**. film 축(2번 트리) `hi` 티어라 이 결이다.
+  //
+  //    ## 표식이 없다 — 판별은 {@link bubbleFilmOfferingActive} 가 로드아웃 + 버프 틱으로 한다
+  //    이전 배치가 여기 표식 슬롯을 세우는 형태로 갔었으나, `state.config.activeSlots` +
+  //    `state.activeBuff0/1`(둘 다 액티브 엔진의 기존 필드)만으로 "지금 선 막이 불멸 막인가"
+  //    가 이미 판별 가능해 표식이 불필요했다(그 함수 doc 이 정본) — 그래서 이 자리에 남은
+  //    일은 **재장전**뿐이다: 설계서 "지속 중 흡수한 총량" 은 이번 캐스트의 지속 구간을
+  //    뜻하므로, 만료로 이미 소비된 뒤라 정상 경로에서는 pool 이 0 이지만 방어적으로 새
+  //    캐스트 시점에 다시 0 을 대입한다(호출 순서가 바뀌어도 누적이 이월되지 않게).
+  if (def.treeIndex === 2 && def.tier === 'hi') {
+    const fi6 = lv(state, Sk.filmOffering);
+    if (fi6 >= 1) {
+      writeSlot(state.skillStage, BubbleStage.offeringPool, 0);
     }
   }
 
@@ -1269,50 +1573,40 @@ export function bubblePlayerMoveParams(
 }
 
 // ---------------------------------------------------------------------------
-// 미배선 4종 — **왜 못 넣었는지**가 여기 있다 (배치6 조사 결과)
+// 미배선 1종 — **왜 못 넣었는지**가 여기 있다 (배치7 갱신 — PO10·FI6·PO8 은 배선 완료로 이관)
 // ---------------------------------------------------------------------------
 //
-// ⚠️ 이 넷은 `Sk` enum 에 멤버를 **아예 만들지 않았다.** 「유령 선언」(선언만 있고 아무도 안
+// ⚠️ 이 하나는 `Sk` enum 에 멤버를 **아예 만들지 않았다.** 「유령 선언」(선언만 있고 아무도 안
 // 읽는 상수)을 남기면 계측이 배선으로 오인한다 — 「없다」의 근거는 `src/sim/**` 전체 grep 이다.
 //
-// ## PO8「잔거품 기뢰」 — 앵커는 열렸다. 막는 것은 **동시 생존 상한 규약**이다
-// 종전 차단 사유(*"파열 훅이 엔티티 순회 안이라 스폰이 위험하다"*)는 배치6 의
-// `onFilmBurstPost` 가 해소했다 — 그 지점은 밀어내기 루프 **밖**이라 생성이 안전하고,
-// {@link bubbleFilmBurstPost} 가 이미 그 자리에 서 있다. 남은 선결은 셋이고 전부 이 레인의
-// 열람·수정 범위 밖이다:
-//  ① **동시 생존 상한.** 상한 없이 넣으면 파열 4회 창에 최대 36기가 서서 청크 예산(160)을
-//     조용히 먹는다(앵커 doc 의 실측). 상한을 세우려면 "이 기뢰가 내 것인가" 를 세는
-//     **전용 마커**가 필요한데, 재사용 가능한 칸(`aux0`·`ownerId`)은 기뢰가 놓일 개체 종류마다
-//     의미가 이미 배정돼 있다.
-//  ② **컬링 제외.** 정지 기물은 `isGimmick` 계열의 컬링 예외에 들어가야 화면 밖에서 안 지워진다
-//     — 그 술어는 `world.ts` 소유이고 이 배치는 그 파일 편집을 금지한다.
-//  ③ **접촉 피해 경로.** 정지 기뢰가 적에게 피해를 주는 판정도 `world.ts` 의 충돌 해소에 있다.
-// `fanStrike` 로 **속도 0 인 아군탄**을 뿌리는 우회는 기각했다 — 탄은 수명·관통·컬링 규칙이
-// 기뢰와 다르고, 그 차이를 흉내 내려면 결국 위 셋을 탄 쪽에 다시 만들어야 한다.
-// ⇒ **기뢰 개체 규약을 세우는 레인이 얹어라.** 앵커는 더 필요 없다.
+// ✅ **PO10「연쇄 압력」은 배치7 에서 배선됐다** — 인계 문서가 "골든 재동결과 같은 커밋이어야
+// 한다"고 닫았던 「엔진 불변식」은 리드 실측으로 **산문 주석일 뿐 강제 코드가 없다**는 것이
+// 드러났다(`world.ts` 그 분기 주석). 배치7 예약 슬롯 `BubbleStage.chainWindow`·
+// `chainKillsSnap`(`state.kills` 스냅샷 차분) 위에, "재생 다음 틱까지 보강분을 들고 있어야
+// 한다"는 실측 결과 예약표 밖의 `chainPendingBoost` 1칸을 더 얹었다(그 필요성은
+// `skillSlots.ts` 의 그 칸 doc 이 정본). 사유 전문은 `chainWindowTick`·`chainBoostPulse`
+// 블록 주석이 정본이다.
 //
-// ## PO10「연쇄 압력」 — 앵커도 슬롯도 있는데 **엔진 불변식**이 막는다
-// 문면이 *"다음 막의 내구가 **보강**된다"* 다. 그 보강은 `aux0` 이 `FILM_ABSORB_FLAT` 을 넘는
-// 것을 뜻하는데, `aux0 ≤ FILM_ABSORB_FLAT` 은 `world.ts` 가 못 박은 **엔진 불변식**이고 u32
-// 폴드 안전성·FI2 상한 술어·FI9 만재 클램프가 전부 그 위에 서 있다(설계서 ⑥절 3 이 PO10 을
-// 그 불변식의 **유일한 예외**로 지정했다 = 불변식 개정이 선결이라는 뜻이다). 상한 안에서만
-// 보강하는 축소 해석은 **무연산에 가깝다** — 막은 어차피 만재로 선다.
-// 부수적으로 필요한 것 둘(창 잔여 틱 · 창 시작 시 `state.kills` 스냅샷)은 `BubbleStage` 2칸으로
-// 지금 당장 가능하고, 처치 계수도 앵커 `onKillsDelta` 가 이미 있다 — 즉 **막는 것은 상태가
-// 아니라 불변식 하나뿐**이다. 그 개정은 골든 재동결과 같은 커밋이어야 한다.
+// ✅ **FI6「헌막 의식」도 배치7 에서 배선됐다** — 막는 것은 앵커가 아니라 "불멸 막 지속 중"
+// 판별이었고, `BubbleStage.offeringActive`(신설 표식 1칸)로 풀었다. `as_bubble_film_hi` 발동
+// (`bubbleActiveFired`)이 세우고 만료(`bubbleFilmOfferingConsume`)가 지운다. 사유 전문은 그
+// 두 함수와 `bubbleFilmAbsorbed` FI6 블록 주석이 정본이다.
 //
-// ## FI6「헌막 의식」 — 막는 것은 앵커가 아니라 **「불멸 막 지속 중」 술어**다
-// 문면이 *"**불멸 막** 지속 중 흡수한 총량이 **만료 파열**의 폭발 피해에 가산된다"* 라 축이 둘이다:
-//  ① **누적** — 앵커 ⑱(`onFilmAbsorbed`)이 흡수량을 이미 넘긴다. 다만 그 지점에서 *"지금 선
-//     막이 불멸 막인가"* 를 판별할 술어가 없다. `as_bubble_film_hi` 는 `aux0` 을 만재로
-//     대입할 뿐이라, 재생으로 선 막과 액티브가 세운 막이 상태로 **구분되지 않는다**.
-//     구분하려면 액티브 발동 시 표식을 세워야 하고 그 표식은 슬롯 1칸이다(가능).
-//  ② **만료 파열 식별** — 배치6 의 `onActiveExpired` 가 *"방금 만료됐다"* 를 주므로 여기까지는
-//     닿는다. 그런데 파열은 그 훅이 아니라 `consumeFilmBurstRequests` 가 **나중에** 소비하고,
-//     앵커 ⑮ 는 파열의 종류를 여전히 구분하지 못한다. 만료 표식을 슬롯에 세워 ⑮ 에서 소비하는
-//     형태가 성립하지만, 그러면 **①②를 합쳐 슬롯 2칸 + 앵커 3개**를 한 스킬이 쓴다.
-// ⇒ 성립은 하지만 이 레인이 확인한 범위 안에서 "불멸 막" 판별의 정본(액티브 레지스트리의 어느
-//    필드를 볼 것인가)이 확정되지 않아, **반쪽으로 넣지 않고 사유를 적는다.**
+// ✅ **PO8「잔거품 기뢰」도 배치7 에서 배선됐다** — 인계 문서가 세운 「선결 셋」(전용 마커·
+// `isGimmick` 컬링 제외·접촉 피해 경로 신설, 전부 `world.ts` 편집 필요로 닫혀 있었다) 중
+// **둘은 애초에 필요가 없었다**는 것이 실측으로 드러났다. 기뢰를 `world.ts` 의 보조무기
+// `SUB_TYPE_MINE` 과 같은 형태(`kind='bullet'`·속도 0)로 스폰하면:
+//  · **컬링 제외 불필요** — `isGimmick`(world.ts)이 훑는 kind 목록에 `'bullet'` 은 아예 없다.
+//    기뢰가 그 판정 대상 자체가 아니라 "제외"할 것이 없다.
+//  · **접촉 피해 신설 불필요** — `resolveCollisions` 의 아군탄↔적 스윕 판정이 이미 속도 0
+//    탄을 지원한다. `tests/subWeapon.test.ts` 의 `'2 기뢰장 — 위에 있는 적에게 피해를
+//    준다'`가 그 실측 증거다 — SUB_TYPE_MINE 이 지금도 이 경로로 피해를 준다.
+//  · **전용 마커만 실제로 필요했다** — 동시 생존 상한(12, 설계서 R2-8)을 세는 유일한 수단
+//    이라 `PO8_MINE_MARK`(이 파일 전용, `world.ts`/`shipSignature.ts` 미편집)를 신설했다.
+// 종전에 기각됐던 *"`fanStrike` 로 속도 0 탄을 뿌리면 탄의 수명·관통·컬링 규칙이 기뢰와
+// 달라 위 셋을 다시 만들어야 한다"* 는 판단도 다시 보면 **다르지 않다** — SUB_TYPE_MINE 이
+// 이미 `spawnBullet` 그 자체이므로 "기뢰 규칙"과 "탄 규칙"이 애초에 같은 규칙이었다.
+// 정본은 {@link bubbleResidueMines} 주석.
 //
 // ## DR2「표면장력 세례」 — 이 배치가 **명시적으로 금지**한 축이다
 // 신규 `WorldState` 정수 + 해시 꼬리 폴드가 필요하고, 그것은 D 단계 골든 재동결과 같은 커밋에

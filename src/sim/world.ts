@@ -28,7 +28,16 @@ import {
   FIRE_CD_MIN_Q,
   COMBO_WINDOW_TICKS,
   OVERCHARGE_TICK_CAP,
+  WEAPON_TYPE_RAILGUN,
+  WEAPON_TYPE_MISSILE,
+  WEAPON_TYPE_BEAM,
+  MISSILE_MARK,
+  BEAM_SEGMENT_SPACING,
 } from './constants.js';
+// ⚠️ `emitVolley` 의 import 는 **여기가 아니라 `actives.js` 바로 다음**에 있다(아래 참조).
+//    배치7 병렬 머지에서 이 자리에 낡은 사본이 한 벌 더 들어와 `tsc` 가 중복 식별자로
+//    잡았다 — 지운 쪽이 그 사본이다. 자리를 옮기지 마라: 그 배치에는 초기화 순서 근거가
+//    달려 있다(위로 올리면 검증 EF 에서만 터지는 TDZ 부류가 된다).
 import type { PlanetMode } from './planetMode.js';
 // 타입 전용 import 다 — `verbatimModuleSyntax` 로 런타임에 완전히 지워지므로 sim → run 런타임
 // 의존이 생기지 않는다(Deno 검증 경로가 `src/sim` 을 소스 그대로 import 하는 계약에 무영향).
@@ -90,7 +99,6 @@ import {
   UQ_RELIC_AMP,
   UQ_HIVE_SWARM,
   UQ_CONVERGE_PRISM,
-  UQ_TWIN_STAR,
   UQ_GAMBLER_CHIP,
   HIVE_MICRO_COUNT,
   HIVE_MICRO_SPEED,
@@ -99,7 +107,6 @@ import {
   HIVE_MICRO_DAMAGE_FRAC,
   HIVE_MICRO_MARK,
   PRISM_DAMAGE_AMP,
-  TWIN_STAR_DAMAGE_MULT,
   GAMBLER_EXTRA_CHOICES,
   SINGULARITY_RADIUS,
   SINGULARITY_PULL_SPEED,
@@ -182,6 +189,7 @@ import type {
   GemPullParams,
   PickupRadiusParams,
   WallSlideParams,
+  TurretTargetPick,
 } from './skillHooks.js';
 import {
   survivedLethalBlow,
@@ -226,6 +234,11 @@ import {
   onGemPull,
   onPickupRadius,
   onPlayerWallSlide,
+  onAutoAimTarget,
+  onTurretTargetPick,
+  onEnemyBulletMoved,
+  onContactInvuln,
+  onDeathRemnantSpawn,
 } from './skillHooks.js';
 import { onDamageChainCatalyst } from './catalystHooks.js';
 
@@ -274,6 +287,7 @@ import {
   tickEnemyStatus,
   applyChain,
   enemyStatusSlowMult,
+  enemyStatusStopMult,
   PLAYER_SLOW_MULT,
   PLAYER_SLOW_DURATION,
   FIRE_DURATION,
@@ -391,6 +405,15 @@ import { stepDetour } from './encounterDetour.js';
 // 액티브 스킬 발동 엔진(ADR-0041). 단방향: world.ts → actives.ts(그쪽은 world.ts 를 **타입으로만**
 // import 하므로 순환이 아니다).
 import { stepActives } from './actives.js';
+// 배치7 F2b — 발사부 leaf(`emitVolley`, W2b 선결). `world.ts` 는 이미 위 `actives.js` 를 통해
+// `activeTypes.js` 에 간접 의존하고 있었다 — `autoAttack` 이 볼리를 직접 그 leaf 로 넘기려면
+// 여기서도 명시적으로 불러야 한다. **일부러 이 자리(기존 `actives.js` 바로 다음)에 둔다** —
+// 이 edge 를 파일 맨 위로 옮기면 `activeTypes.ts` 의 값 import(`data/ships/actives/index.js`
+// 등)가 world.ts 자체 모듈 평가보다 훨씬 앞서 시작돼, 클라에서는 재현되지 않고 검증 EF 에서만
+// 터지는 TDZ 부류의 초기화 순서 문제를 만들 수 있다(CLAUDE.md 의 순환 경고와 같은 위험군).
+// `activeTypes.ts` 는 `WorldState` 를 **타입으로만** 당기므로(그 파일 헤더 근거) 순환 자체는
+// 아니지만, "순환이 아니다" 가 "초기화 순서가 안전하다" 를 뜻하지는 않는다.
+import { emitVolley } from './activeTypes.js';
 // 정산·관측이 소비하는 순수 리더 재수출(echoStabilizedOf 선례).
 export { encounterCompletedOf, encounterTypeOf, encounterShardOf } from './encounter.js';
 
@@ -2858,9 +2881,13 @@ function stepEnemies(state: WorldState, player: Entity): void {
     applyEliteRegen(e);
     let def = enemyDefFor(e);
     if (def === undefined) continue;
-    // 가속하는 elite(×1.6) × 냉기 감속(<1) × 촉매 적 속도 페널티(≥1)를 곱해 이동 속도를
-    // 조정한다(공유 데이터 행은 절대 변형하지 않고 def를 복제). 전부 없으면/무촉매면 mult 1(불변).
-    const sm = eliteSpeedMult(e) * enemyStatusSlowMult(e) * state.catalystMods.enemySpeed;
+    // 가속하는 elite(×1.6) × 냉기 감속(<1) × 정지(0 또는 1, 스트라이커 S9 선결) × 촉매 적
+    // 속도 페널티(≥1)를 곱해 이동 속도를 조정한다(공유 데이터 행은 절대 변형하지 않고 def를
+    // 복제). 전부 없으면/무촉매면 mult 1(불변). ⚠️ 정지 중이면 sm = 0 이 되고, 바로 다음 줄이
+    // `def.speed * sm` 을 새 def 에 대입하므로 이 곱은 무의미하지 않다 — 실제로 speed 0(완전
+    // 정지)을 만든다.
+    const sm =
+      eliteSpeedMult(e) * enemyStatusSlowMult(e) * enemyStatusStopMult(e) * state.catalystMods.enemySpeed;
     if (sm !== 1) def = { ...def, speed: def.speed * sm };
     updateEnemy(state, e, def, player);
     if (singularityOn) applySingularityPull(e, player);
@@ -2972,27 +2999,14 @@ function stepBountyEscape(state: WorldState): void {
 // Player auto-attack (vulcan): target nearest enemy/boss, fire a fanned volley.
 // ---------------------------------------------------------------------------
 
-/** Weapon archetype codes (shared with src/items/loadout.ts). */
-const WEAPON_TYPE_SPREAD = 1;
-const WEAPON_TYPE_RAILGUN = 2;
-const WEAPON_TYPE_MISSILE = 3;
-const WEAPON_TYPE_BEAM = 4;
-
-/**
- * Homing-missile marker on a friendly bullet's `ownerId` (already hashed). A
- * bullet carrying it re-steers toward the nearest target each tick in
- * stepProjectiles, clamped to MISSILE_TURN_RATE (limited turn — OQ-M3-4). Chosen
- * distinct from SPLIT_FRAGMENT_MARK / DRONE_MARK so the marks never alias. */
-const MISSILE_MARK = 0x3155110;
+// ⚠️ 무기 아키타입 코드·`MISSILE_MARK`·빔 세그먼트 상수 3종은 `constants.ts` 로 옮겼다
+// (배치7 F2b) — `activeTypes.ts` 의 `emitVolley` 가 leaf 에서 같은 값을 읽어야 아키타입 판정이
+// 두 사본으로 갈리지 않는다. 값은 이 파일 상단 import 를 통해 그대로 들어온다(값 복제 금지 원칙,
+// `constants.ts` 의 `COMBO_WINDOW_TICKS` 선례와 같다).
 /** Max radians a missile turns toward its target per tick (evadable, GDD §10). */
 const MISSILE_TURN_RATE = 0.09;
 /** Beam segment count cap and spacing (매틱 짧은 수명 세그먼트 판정 — OQ-M3-3). */
 const BEAM_MAX_SEGMENTS = 16;
-const BEAM_SEGMENT_SPACING = 90;
-/** Beam segment radius (tiles the line with slight overlap for a continuous hit). */
-const BEAM_SEGMENT_RADIUS = 52;
-/** Beam segment lifetime (ticks): a brief static hit line, re-laid each fire. */
-const BEAM_SEGMENT_LIFE = 2;
 /**
  * 빔이 세그먼트로 **물리적으로 덮을 수 있는** 최대 거리. 세그먼트 개수 상한이 곧 사거리
  * 상한이므로 두 값을 따로 두지 않고 여기서 파생시킨다 — 예전에는 조준 상한(`w.range`)과
@@ -3043,6 +3057,10 @@ function autoAttack(state: WorldState, player: Entity, input: InputFrame): void 
   const reach = weaponReach(w);
   const target = nearestTarget(state, player, reach);
   if (target === undefined) return;
+  // 앵커 `onAutoAimTarget`(배치7 F2b) — 자동조준이 이번 틱 표적을 확정한 직후. 해츨링
+  // BD4「표적 공유」선결(포탑이 이 표적을 우선 쏘려면 어딘가에 기록돼야 한다 — 기록은
+  // 배선 레인의 몫이고 이 앵커는 자리만 연다).
+  onAutoAimTarget(state, player, target);
   const bulletLife = reachLife(w, reach);
 
   // ① 과열 드럼: 연속 명중 스택(player.phase)만큼 발사 쿨다운 단축. 미장착 시
@@ -3205,149 +3223,17 @@ function autoAttack(state: WorldState, player: Entity, input: InputFrame): void 
   onVolleyParams(state, player, volley);
 
   const baseAngle = volley.aimAngle;
-  // Firing archetypes off `weaponType` (M2 B2 + M3 C1):
-  //   2 = 레일건: one shot straight at the target (pierce/speed do the work).
-  //   3 = 미사일: `bulletCount` homing missiles — slow, hard, limited turn.
-  //   4 = 빔: a line of short-life static segments covering the aim (매틱 판정).
-  //   0/1 = 발칸 / 스프레드: fanned volley (differ only by loadout baseline).
-  if (w.weaponType === WEAPON_TYPE_RAILGUN) {
-    const b = spawnBullet(
-      state,
-      player.x,
-      player.y,
-      baseAngle,
-      volley.speed,
-      // 레일건의 유일한 한 발이 곧 **선두탄**이다(증분 0 이면 종전 값 그대로).
-      volley.damage + volley.leadDamageBonus,
-      volley.pierce + volley.leadPierceBonus,
-      volley.radius,
-      volley.life,
-      cos(baseAngle),
-      sin(baseAngle),
-    );
-    // 볼리 표식(설계서 §1 의 정조준탄 마커가 값 1 을 쓴다) — `ownerId` 는 MISSILE_MARK 등과
-    // 슬롯이 겹쳐 배제하고 `aux0` 를 대신 쓴다(전수 확인: 'bullet' kind 는 어디서도 aux0 를
-    // 읽지 않는다, shipSignature.ts 헤더의 "이미 해시되는 필드 재활용" 규율).
-    // 값의 출처는 앵커 ⑯ 의 `volley.mark` 한 곳뿐이다.
-    if (volley.mark !== 0) b.aux0 = volley.mark;
-    // 발사 시점 확정 피해를 `aux1` 에 새긴다 — **탄이 태어난 뒤**라 아키타입이 실제로 실은
-    // 값(`b.damage`)이다. 비행 중 갱신(CH6 이월·CH8 증폭)보다 앞이라 재증폭이 안 섞인다.
-    if (volley.recordSpawnDamage) b.aux1 = Math.round(b.damage);
-    // 발사 시점 잔여 수명 각인(CH5). `targetX` 는 **아군탄에서만** 비어 있는 칸이다 —
-    // 적탄에서는 거동 파라미터 A 다(`bullets.ts` 의 `applyBehavior`). `spawnBullet` 은
-    // 아군탄 전용 팩토리라 이 대입이 적탄에 닿을 경로가 구조적으로 없다.
-    if (volley.recordSpawnOrigin === true) b.targetX = b.life;
-    player.cooldown += volley.cooldownQ;
-    return;
-  }
-
-  if (w.weaponType === WEAPON_TYPE_MISSILE) {
-    const n = volley.count < 1 ? 1 : volley.count;
-    const start = n > 1 ? baseAngle - volley.spread / 2 : baseAngle;
-    const stepA = n > 1 ? volley.spread / (n - 1) : 0;
-    for (let i = 0; i < n; i++) {
-      const ang = start + stepA * i;
-      const m = spawnBullet(
-        state,
-        player.x,
-        player.y,
-        ang,
-        volley.speed,
-        // 선두 = 부채 시작단(`i === 0`). 증분 0 이면 종전 값 그대로다.
-        i === 0 ? volley.damage + volley.leadDamageBonus : volley.damage,
-        i === 0 ? volley.pierce + volley.leadPierceBonus : volley.pierce,
-        volley.radius,
-        volley.life,
-        cos(ang),
-        sin(ang),
-      );
-      m.ownerId = MISSILE_MARK; // 유도 마커: stepProjectiles가 매 틱 제한 선회.
-      // 볼리 표식은 `ownerId` 가 아니라 `aux0` 라 유도 마커와 슬롯이 겹치지 않는다.
-      if (volley.mark !== 0) m.aux0 = volley.mark;
-      if (volley.recordSpawnDamage) m.aux1 = Math.round(m.damage);
-      // CH5 발사 시점 잔여 수명(위 레일건 분기와 같은 규율). ⚠️ 유도 마커는 `ownerId` 라
-      // `targetX` 와 칸이 겹치지 않는다.
-      if (volley.recordSpawnOrigin === true) m.targetX = m.life;
-    }
-    player.cooldown += volley.cooldownQ;
-    return;
-  }
-
-  if (w.weaponType === WEAPON_TYPE_BEAM) {
-    // 타격선은 **조준한 거리와 정확히 같은 만큼** 깐다(`reach`). 상한 클램프가 따로 없는
-    // 이유는 `weaponReach` 가 이미 BEAM_MAX_REACH(= 상한 개수 × 간격)로 잘라 주기 때문이다
-    // — `floor(BEAM_MAX_REACH / BEAM_SEGMENT_SPACING) === BEAM_MAX_SEGMENTS` 로 정의상 일치한다.
-    // (예전 `w.range > 0 ? w.range : BEAM_DEFAULT_RANGE` 폴백은 도달 불가능한 죽은 분기였다:
-    //  빔은 `applyWeaponTypeBase` 가 사거리를 무조건 더해 `range` 가 항상 0 초과였다.)
-    let segs = Math.floor(reach / BEAM_SEGMENT_SPACING);
-    if (segs < 1) segs = 1;
-    const ca = cos(baseAngle);
-    const sa = sin(baseAngle);
-    for (let i = 1; i <= segs; i++) {
-      const dist = i * BEAM_SEGMENT_SPACING;
-      // Static segment (speed 0): a brief hit point along the beam line. High
-      // pierce so it damages every enemy overlapping it; short life re-laid each
-      // fire so a fast cadence reads as a continuous line.
-      // 관통은 이미 9999(사실상 무제한)라 정조준 +1 을 더해도 관측 가능한 차이가 없다 —
-      // 그래서 리터럴을 그대로 둔다(피해 강화·마커는 다른 무기 타입과 동일하게 받는다).
-      // ⚠️ 같은 이유로 이 분기는 앵커 ⑯ 의 `pierce`·`speed`·`radius`·`life`·`count`·`spread`
-      // 를 **읽지 않는다** — 정지·전용 반경/수명·무제한 관통은 무기 스탯이 아니라 "빔 선분은
-      // 겹친 적을 전부 때린다" 는 아키타입 정의다. 그 사실은 `VolleyParams` 주석의 표에 있다.
-      const seg = spawnBullet(
-        state,
-        player.x + ca * dist,
-        player.y + sa * dist,
-        baseAngle,
-        0,
-        // 빔의 선두 = 플레이어에 **가장 가까운** 세그먼트(`i === 1` — 루프가 1 부터 돈다).
-        // 관통은 리터럴 9999 라 `leadPierceBonus` 가 무연산이다(아키타입 정의, 필드 주석 참조).
-        i === 1 ? volley.damage + volley.leadDamageBonus : volley.damage,
-        9999,
-        BEAM_SEGMENT_RADIUS,
-        BEAM_SEGMENT_LIFE,
-        ca,
-        sa,
-      );
-      if (volley.mark !== 0) seg.aux0 = volley.mark;
-      if (volley.recordSpawnDamage) seg.aux1 = Math.round(seg.damage);
-    }
-    player.cooldown += volley.cooldownQ;
-    return;
-  }
-
-  // ⑦ 쌍둥이 항성: 부채꼴 발사체 2배 + 발당 피해 ×TWIN_STAR_DAMAGE_MULT. 미장착 시
-  //    n·dmg 그대로(거동 불변). 스프레드(weaponType 1) 파생 유니크이므로 스프레드
-  //    무기에서만 발화(리뷰 MED-1 이중 게이트 — roll.ts 페어링과 정합). 발칸 등 타
-  //    무기에 롤될 수 없고, 설령 실려도 no-op.
-  const twinOn = hasUnique(mask, UQ_TWIN_STAR) && w.weaponType === WEAPON_TYPE_SPREAD;
-  const n = twinOn ? volley.count * 2 : volley.count;
-  const dmg = twinOn ? volley.damage * TWIN_STAR_DAMAGE_MULT : volley.damage;
-  const start = n > 1 ? baseAngle - volley.spread / 2 : baseAngle;
-  const stepA = n > 1 ? volley.spread / (n - 1) : 0;
-  for (let i = 0; i < n; i++) {
-    const ang = start + stepA * i;
-    const b = spawnBullet(
-      state,
-      player.x,
-      player.y,
-      ang,
-      volley.speed,
-      // 선두 = 부채 시작단(`i === 0`). 쌍둥이 항성 배율은 `dmg` 에만 실린다 — 유니크 배율이
-      // 스킬 보너스까지 증폭하지 않는다(필드 주석의 계약).
-      i === 0 ? dmg + volley.leadDamageBonus : dmg,
-      i === 0 ? volley.pierce + volley.leadPierceBonus : volley.pierce,
-      volley.radius,
-      volley.life,
-      cos(ang),
-      sin(ang),
-    );
-    if (volley.mark !== 0) b.aux0 = volley.mark;
-    // 쌍둥이 항성 배율(`dmg`)이 **이미 실린 뒤**라, `volley.damage` 를 훅에서 저장했으면
-    // 빠졌을 배율이 여기서는 그대로 들어간다(그 필드 주석이 근거).
-    if (volley.recordSpawnDamage) b.aux1 = Math.round(b.damage);
-    // CH5 발사 시점 잔여 수명(위 분기들과 같은 규율).
-    if (volley.recordSpawnOrigin === true) b.targetX = b.life;
-  }
+  // 배치7 F2b — 아키타입 분기(레일건·미사일·빔·발칸/스프레드 + 쌍둥이 항성 유니크)는
+  // `emitVolley`(`activeTypes.ts`)로 뽑았다. 자세한 표(아키타입별로 읽는 필드)는 그 함수 doc.
+  //
+  // ⚠️ **쿨다운은 여기 남긴다 — `emitVolley` 는 `player.cooldown` 을 한 비트도 안 만진다.**
+  // 스트라이커 F10「연장 탄창」·M8「도약 사격」은 정확히 "쿨다운을 소비하지 않는 추가 볼리"
+  // 라서, 발사 leaf 가 쿨다운을 스스로 적립하면 그 계약이 원리적으로 성립하지 않는다. 이
+  // autoAttack(정상 발사 경로)만 매번 `cooldownQ` 를 적립한다.
+  // ⚠️ 순서는 원본과 **비트 동일**하다 — 원본은 아키타입 분기 넷이 상호 배타이고 각자 말미에서
+  // "탄을 다 낸 뒤 → 쿨다운 적립 → return" 을 했다. 넷을 하나로 모아도 emitVolley 호출(=발사)이
+  // 먼저이고 그 직후 한 번만 적립하므로 관측 순서가 갈리지 않는다.
+  emitVolley(state, player, baseAngle, volley, reach);
   player.cooldown += volley.cooldownQ;
 }
 
@@ -3757,6 +3643,10 @@ function stepTurrets(state: WorldState, _player: Entity): void {
     // 거동·해시는 비트 동일이다. 포탑 개체(`t`)를 넘기므로 훅이 병아리·센트리를 스스로 가른다.
     const cadence: TurretCadenceParams = { cooldownTicks: TURRET_FIRE_COOLDOWN };
     onTurretCadence(state, t, cadence);
+    // 배치7 F2b — `suppressed` 가 참이면 이번 틱은 감산도 격발도 **둘 다** 건너뛴다(쿨다운
+    // 보존). 해츨링 SH4「품기 진형」선결(그 필드의 doc 에 감산까지 막는 근거가 있다). 필드가
+    // 없거나(다른 기체) 거짓이면 이 분기는 절대 안 타 비트 동일이다.
+    if (cadence.suppressed === true) continue;
     if (t.cooldown > 0) {
       t.cooldown--;
       continue;
@@ -3798,7 +3688,28 @@ function stepTurrets(state: WorldState, _player: Entity): void {
  * @returns 실제로 쐈으면 `true`. 사거리 안에 LOS 가 통하는 표적이 없으면 `false`(무발사).
  */
 function fireTurretShot(state: WorldState, t: Entity): boolean {
-  const target = nearestTarget(state, t, TURRET_RANGE);
+  // 앵커 `onTurretTargetPick`(배치7 F2b) — `nearestTarget` 을 부르기 **앞**. 해츨링
+  // BD4「표적 공유」선결(포탑이 플레이어 자동조준 표적을 우선 쏜다). 기본값 0(지정 없음)이라
+  // 미투자·미소비 런은 아래 스캔을 한 번도 안 돌고 곧장 `nearestTarget` 으로 떨어져 비트
+  // 동일이다.
+  const pick: TurretTargetPick = { targetId: 0 };
+  onTurretTargetPick(state, t, pick);
+  let target: Entity | undefined;
+  if (pick.targetId !== 0) {
+    // 무효(죽었거나 사거리 밖 · 조준 불가) 폴백 — `TurretTargetPick.targetId` doc 의 규약대로
+    // **종전 경로(`nearestTarget`)로 되돌아간다**. 지정을 그대로 밀어붙이면 사거리 밖 표적을
+    // 향한 허공 발사나 죽은 표적을 향한 무발사가 생긴다.
+    for (const e of state.entities) {
+      if (e.id !== pick.targetId) continue;
+      if (e.dead || !isPlayerTargetable(e)) break;
+      const dx = e.x - t.x;
+      const dy = e.y - t.y;
+      if (dx * dx + dy * dy > TURRET_RANGE * TURRET_RANGE) break;
+      target = e;
+      break;
+    }
+  }
+  if (target === undefined) target = nearestTarget(state, t, TURRET_RANGE);
   if (target === undefined) return false;
   const ang = atan2(target.y - t.y, target.x - t.x);
   // 앵커 ㉖ — **표적이 확정된 뒤**다(그 자리인 사유는 훅 doc). 초기값이 현행 상수와 정확히
@@ -3912,6 +3823,15 @@ function stepProjectiles(state: WorldState, player: Entity): void {
     e.x += e.vx * DT * m;
     e.y += e.vy * DT * m;
     if (e.life > 0) e.life--;
+    // 앵커 `onEnemyBulletMoved`(배치7 F2b) — 적탄이 이번 틱 위치 적분을 끝낸 직후. 해츨링
+    // SH8「탄받이 깃털」선결(구현안 A — 적탄 이동 판정에 근접 검사). `e.kind === 'enemyBullet'`
+    // 로만 좁힌다 — 아군탄(`'bullet'`)에는 적용되지 않는 앵커다. 훅이 `true` 를 돌려주면 이
+    // 자리에서 즉시 소거하고(`e.dead = true`) 이번 틱 나머지 처리(컬링·벽 스윕)를 건너뛴다.
+    // 미투자·미소비 런은 전 분기가 `false` 라 이 분기를 절대 안 타 비트 동일이다.
+    if (e.kind === 'enemyBullet' && onEnemyBulletMoved(state, e)) {
+      e.dead = true;
+      continue;
+    }
     const dx = e.x - cullX;
     const dy = e.y - cullY;
     if (e.life === 0 || dx * dx + dy * dy > cullR2) {
@@ -4495,6 +4415,17 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   let contactSrc: Entity | undefined;
   let srcX: number | undefined;
   let srcY: number | undefined;
+  // 배치7 F2a — 앵커 ④ 의 **피격원 id**(팬텀 AS7「원한 청산」선결). `srcX`/`srcY`·`contactSrc`
+  // 와 **정확히 같은 규율**이다 — `max` 를 갱신한 그 분기에서만 함께 대입/리셋한다. 배치6 이
+  // 바로 이 자리에서 리셋을 빠뜨려 HIGH 결함(좌표는 탄인데 개체는 적)을 냈다 — 같은 함정을
+  // 되풀이하지 않으려고 **dmg 를 갱신하는 세 분기 전부**가 이 변수를 명시적으로 쓴다(적탄·
+  // 접촉은 값을, 해저드는 `undefined` 리셋을).
+  //  · 적탄 분기 — 그 탄의 `ownerId`(발사자). 스탬프가 없으면(게이트 꺼짐 런) 0 이고, 0 은
+  //    "발사자 미상"이라 `undefined` 로 정규화한다(엔티티 id 는 1부터 시작해 0 이 유효한 적
+  //    id 가 될 수 없다 — entities.ts `createWorld` 의 `nextEntityId = 1`).
+  //  · 접촉 분기 — 그 접촉 적 자신의 id(`contactSrc.id` 와 항상 같은 개체).
+  //  · 해저드 분기 — 해저드는 "누가 쐈는가" 개념이 없어(스포너 id 는 이미 다른 용도) `undefined`.
+  let srcId: number | undefined;
   const invulnerable = player.iframes > 0;
   const px = player.x;
   const py = player.y;
@@ -4555,7 +4486,16 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       // 다른 모든 `HAZARD_SLOW` 생산자는 `aux0` 를 건드리지 않아 0 → 기본값 그대로다(비트 동일).
       state.playerSlowTicks = t.aux0 > 0 ? t.aux0 : PLAYER_SLOW_DURATION;
     }
-    if (invulnerable) return;
+    if (invulnerable) {
+      // 배치7 F2a — 앵커 신설 `onContactInvuln`(스트라이커 M9「충각 기동」선결). 무적이라
+      // 접촉 피해가 여기서 상쇄되는 그 지점 · 접촉 상대 `t` 가 아직 스코프에 살아 있는 마지막
+      // 자리다. 「충각」은 몸통 대 몸통이지 탄·장판이 아니므로 접촉형 넷(enemy/boss/guardian/
+      // defenseBoss)일 때만 부른다 — 적탄·해저드는 이 게이트를 타지 않는다.
+      if (t.kind === 'enemy' || t.kind === 'boss' || t.kind === 'guardian' || t.kind === 'defenseBoss') {
+        onContactInvuln(state, player, t);
+      }
+      return;
+    }
     if (t.kind === 'enemyBullet') {
       if (t.damage > 0) dmgSources |= DamageSource.bullet;
       // 버블 FI8「발수 코팅」 — **max 를 갱신한 그 항목의 출처**를 함께 기록한다(설계서 FI8
@@ -4571,6 +4511,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         //    리셋하지 않을 때 `srcX/srcY` 는 탄인데 `contactSrc` 는 여전히 그 적을 가리켜
         //    좌표와 개체가 **서로 다른 대상**이 된다(FO3 가 적탄 피격에서도 발동한다).
         contactSrc = undefined;
+        // 배치7 F2a — srcX/srcY 와 같은 규율(위 선언부 주석 참조). 0 은 "발사자 미상".
+        srcId = t.ownerId !== 0 ? t.ownerId : undefined;
       }
       t.dead = true;
       // 'prop'(L3 기물)은 여기 넣지 않는다 — 기물의 damage 는 탄·장판 피해라 접촉 피해로
@@ -4596,6 +4538,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         // 규율이다: `max` 를 갱신한 그 분기에서만 함께 대입한다. 좌표만으로 적을 되찾으면
         // 접촉 판정의 두 번째 사본이 되고, 같은 좌표에 여럿이 겹친 틱에 조용히 갈린다.
         contactSrc = t;
+        // 배치7 F2a — srcX/srcY 와 같은 규율. 접촉 적 자신의 id(contactSrc 와 항상 같은 개체).
+        srcId = t.id;
       }
     } else if (t.kind === 'hazard' && hazardActive(t)) {
       if (t.damage > 0) dmgSources |= DamageSource.hazard;
@@ -4608,6 +4552,9 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         srcY = t.y;
         // ⚠️ 적탄 분기와 같은 사유의 리셋 — 해저드가 접촉을 덮으면 접촉 개체는 무효다.
         contactSrc = undefined;
+        // 배치7 F2a — 해저드는 "누가 쐈는가" 개념이 없다(위 선언부 주석). 명시적으로 리셋해야
+        // 접촉/적탄이 먼저 `max` 를 이긴 뒤 해저드가 덮었을 때 낡은 srcId 가 남지 않는다.
+        srcId = undefined;
       }
     }
     // Supply raiders never harm the player (they do not attack).
@@ -4848,7 +4795,9 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // `srcX`/`srcY` 는 `max` 를 이긴 그 접촉원의 좌표다(`dmgFromHazard` 와 같은 규율) —
     // 승자가 없으면 `undefined` 이고 그것이 "모른다" 의 유일한 표현이다(0,0 을 쓰지 않는 사유는
     // 선언부 주석). 선택 인자라 촉매 짝·기존 픽스처는 인자가 안 늘었다.
-    onPlayerDamaged(state, player, dmg, lethalSurvived, dmgSources, srcX, srcY, contactSrc);
+    // 배치7 F2a — `srcId` 는 `srcX`/`srcY` 와 같은 규율(선언부 주석 참조). 선택 인자라 촉매
+    // 짝·기존 픽스처는 인자가 안 늘었다.
+    onPlayerDamaged(state, player, dmg, lethalSurvived, dmgSources, srcX, srcY, contactSrc, srcId);
   }
 }
 
@@ -5031,7 +4980,12 @@ function compact(state: WorldState): void {
         // 분열하는·폭발성의 엘리트는 사망 시 방사 폭발을 남긴다(spawnEliteDeathFx).
         // 드랍 게이트와 무관 — 어픽스 연출은 전리품 축이 아니다.
         const ea = eliteAffix(e);
-        if (ea === ELITE_SPLIT || ea === ELITE_VOLATILE) splitElites.push(e);
+        if (ea === ELITE_SPLIT || ea === ELITE_VOLATILE) {
+          // 배치7 F2a — 앵커 신설 `onDeathRemnantSpawn`(팬텀 AS6「무성 격살」선결). `true` 를
+          // 돌려주면 여기서 `push` 자체를 건너뛰어 5101행의 `spawnEliteDeathFx` 가 이 개체를
+          // 못 본다 — 스폰 억제이지 사후 삭제가 아니다. 훅이 없거나 `false` 면 종전과 동일하다.
+          if (!onDeathRemnantSpawn(state, e)) splitElites.push(e);
+        }
       }
     } else if (e.kind === 'supply' && e.hp <= 0) {
       // Shot down (vs. escaped with hp > 0): grant the raid reward. 촉매 자원 보상축(≥1)을

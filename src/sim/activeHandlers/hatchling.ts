@@ -24,7 +24,11 @@ import { blink, fanStrike, powerCentiOf, scaleCenti, setBuffTicks } from '../act
 import type { ActiveExpireTable, ActiveHandlerTable, ActiveSustainTable } from '../activeTypes.js';
 // 30스킬 본체는 `skills/hatchling.ts` 소유다 — 핸들러는 **부르기만** 한다(선례:
 // `activeHandlers/striker.ts`). 투자 게이트도 그 안에 있어 미투자 런은 비트 동일이다.
-import { hatchlingBroodActive, hatchlingNurtureActive } from '../skills/hatchling.js';
+import {
+  hatchlingBroodActive,
+  hatchlingNurtureActive,
+  hatchlingShelterSustain,
+} from '../skills/hatchling.js';
 
 /**
  * 부화 스냅샷(`aux0`)을 `by` 만큼 **과거로** 민다 = 다음 부화를 그만큼 앞당긴다.
@@ -96,9 +100,14 @@ export const HATCHLING_SUSTAIN: ActiveSustainTable = {
     // 슬롯이 넘어오지 않아 잔여 틱 필드를 특정할 수 없고, `state.tick` 은 결정론적 정수다.
     const period = def.coeff.period ?? 30;
     if (period > 0 && state.tick % period === 0) advanceHatch(player, 1);
+    // SH4 품기 진형 — 두 shelter 액티브 **둘 다** 이 스킬의 "지속 중"이다(설계 SH4 본문:
+    // "shelter 액티브 지속 중"). 사격 정지 절반은 `onTurretCadence` 가 `state.activeBuff0/1`
+    // 을 직접 읽어 판정하므로 여기서 별도 표식을 세울 필요가 없다 — 밀착(좌표)만 담당한다.
+    hatchlingShelterSustain(state, player);
   },
-  as_hatchling_shelter_hi: (_state, player) => {
+  as_hatchling_shelter_hi: (state, player) => {
     player.aux0 = 0;
+    hatchlingShelterSustain(state, player);
   },
 };
 

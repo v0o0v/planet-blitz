@@ -62,6 +62,8 @@ import {
 } from '../src/sim/skillHooks.js';
 import { resolveFilmBurst } from '../src/sim/filmBurst.js';
 import { BUBBLE_ACTIVES } from '../data/ships/actives/bubble.js';
+import { wireIdOf } from '../data/ships/actives/index.js';
+import { BUBBLE_EXPIRE } from '../src/sim/activeHandlers/bubble.js';
 import { DT } from '../src/sim/constants.js';
 import {
   SIG_BUBBLE_FILM,
@@ -90,7 +92,9 @@ const PO4 = 3;
 const PO5 = 4;
 const PO6 = 5;
 const PO7 = 6;
+const PO8 = 7;
 const PO9 = 8;
+const PO10 = 9;
 const DR1 = 10;
 const DR2 = 11;
 const DR3 = 12;
@@ -106,6 +110,7 @@ const FI2 = 21;
 const FI3 = 22;
 const FI4 = 23;
 const FI5 = 24;
+const FI6 = 25;
 const FI7 = 26;
 const FI8 = 27;
 const FI9 = 28;
@@ -2061,5 +2066,349 @@ describe('DR2 표면장력 세례', () => {
     for (let i = 0; i < 30; i++) onSignatureStep(w, p, emptyInput());
     expect(w.skillStage.every((v) => v === 0)).toBe(true);
     expect(w.skillCarry.every((v) => v === 0)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑱ FI6 헌막 의식 (판별 = 로드아웃+버프 틱 · 앵커 ⑱ 누적 · BUBBLE_EXPIRE 소비) — 배치7
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션 실측 (2026-08-08)
+// `bubbleFilmOfferingActive` 의 `def.id !== 'as_bubble_film_hi'` 비교를 항상 참으로 바꾸면
+// (= 판별이 무너지면) "음성 대조 — film_lo 는 누적하지 않는다"가 실패한다. `bubbleFilmAbsorbed`
+// 의 FI6 블록을 지우면 "누적" · "만료가 가산한다" 둘이 실패한다(pool 이 끝까지 0).
+// `bubbleFilmOfferingConsume` 의 반환을 `0` 으로 고정하면 "누적이 많을수록 폭발이 크다" 가
+// 실패한다(두 값이 base 로 같아진다).
+
+describe('⑱ FI6 헌막 의식 (판별·누적·BUBBLE_EXPIRE 소비)', () => {
+  const FILM_HI = BUBBLE_ACTIVES[5];
+
+  /** 슬롯 0 에 `id` 를 장착하고, 그 슬롯의 버프가 `ticks` 만큼 남은 것으로 흉내낸다. */
+  function equip(w: WorldState, id: string, ticks: number): void {
+    w.config.activeSlots = [wireIdOf(id), -1];
+    w.activeBuff0 = ticks;
+  }
+
+  it('불멸 막(film_hi) 장착 + 버프 활성 상태에서 흡수(앵커 ⑱)가 누적된다', () => {
+    const w = mk([[FI6, 1]]);
+    const p = player(w);
+    equip(w, 'as_bubble_film_hi', 300);
+    onFilmAbsorbed(w, p, 30, 0);
+    onFilmAbsorbed(w, p, 20, 0);
+    expect(readSlot(w.skillStage, BubbleStage.offeringPool)).toBe(50);
+  });
+
+  it('음성 대조 — film_lo 를 장착·활성해도 누적되지 않는다 (긍정 짝은 위 절)', () => {
+    const w = mk([[FI6, 20]]);
+    const p = player(w);
+    equip(w, 'as_bubble_film_lo', 180);
+    onFilmAbsorbed(w, p, 30, 0);
+    expect(readSlot(w.skillStage, BubbleStage.offeringPool)).toBe(0);
+  });
+
+  it('음성 대조 — film_hi 를 장착했어도 버프가 꺼져 있으면(재생 막과 같은 상태) 누적되지 않는다', () => {
+    const w = mk([[FI6, 20]]);
+    const p = player(w);
+    equip(w, 'as_bubble_film_hi', 0); // 장착은 했지만 지금은 발동 중이 아니다(예: 재생 막)
+    onFilmAbsorbed(w, p, 30, 0);
+    expect(readSlot(w.skillStage, BubbleStage.offeringPool)).toBe(0);
+  });
+
+  it('음성 대조 — 아무 액티브도 장착 안 한 런(로드아웃 미설정)은 누적되지 않는다', () => {
+    const w = mk([[FI6, 20]]);
+    const p = player(w);
+    onFilmAbsorbed(w, p, 30, 0); // config.activeSlots 가 undefined
+    expect(readSlot(w.skillStage, BubbleStage.offeringPool)).toBe(0);
+  });
+
+  it('만료가 누적을 가산 피해로 바꾼다 (하한 짝: 흡수 0 이면 가산 0)', () => {
+    function blastDealt(pool: number): number {
+      const w = mk([[FI6, 1]]);
+      const p = player(w);
+      if (pool > 0) {
+        equip(w, 'as_bubble_film_hi', 300);
+        onFilmAbsorbed(w, p, pool, 0);
+      }
+      const foe = addEnemy(w, p.x + 50, p.y, 10_000_000);
+      BUBBLE_EXPIRE.as_bubble_film_hi!(w, p, FILM_HI);
+      return 10_000_000 - foe.hp;
+    }
+    const zero = blastDealt(0);
+    const withPool = blastDealt(100);
+    expect(zero).toBeGreaterThan(0); // base blastDamage 자체는 존재한다
+    expect(withPool).toBeGreaterThan(zero); // 하한 짝 — 누적이 있으면 더 크다
+  });
+
+  it('레벨이 오르면 가산율이 는다 (Lv20 > Lv1 > base)', () => {
+    function blastDealt(level: number): number {
+      const w = mk(level > 0 ? [[FI6, level]] : []);
+      const p = player(w);
+      equip(w, 'as_bubble_film_hi', 300);
+      onFilmAbsorbed(w, p, 100, 0);
+      const foe = addEnemy(w, p.x + 50, p.y, 10_000_000);
+      BUBBLE_EXPIRE.as_bubble_film_hi!(w, p, FILM_HI);
+      return 10_000_000 - foe.hp;
+    }
+    const base = blastDealt(0);
+    expect(blastDealt(1)).toBeGreaterThan(base);
+    expect(blastDealt(20)).toBeGreaterThan(blastDealt(1));
+  });
+
+  it('만료 소비 후 0 — 풀이 되돌아간다', () => {
+    const w = mk([[FI6, 5]]);
+    const p = player(w);
+    equip(w, 'as_bubble_film_hi', 300);
+    onFilmAbsorbed(w, p, 40, 0);
+    addEnemy(w, p.x + 50, p.y, 10_000_000);
+    BUBBLE_EXPIRE.as_bubble_film_hi!(w, p, FILM_HI);
+    expect(readSlot(w.skillStage, BubbleStage.offeringPool)).toBe(0);
+  });
+
+  it('미투자 런은 슬롯을 안 건드린다', () => {
+    const w = mk();
+    const p = player(w);
+    equip(w, 'as_bubble_film_hi', 300);
+    onFilmAbsorbed(w, p, 40, 0);
+    expect(readSlot(w.skillStage, BubbleStage.offeringPool)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑲ PO10 연쇄 압력 (앵커 onFilmBurstPost 개창 · `state.kills` 차분 · ⑨ 적용) — 배치7
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션 실측 (2026-08-08)
+// `bubbleFilmBurstPost` 의 PO10 `writeSlot(chainWindow, ...)` 을 지우면 창이 안 열려 이 절
+// 전체가 실패한다. `chainWindowTick` 의 `state.kills - snap` 차분·환산·가산 블록을 지우면
+// "처치가 보강분을 쌓는다"·"상한이 물린다" 가 실패한다(항상 0). `chainBoostPulse` 의
+// `player.aux0 = boosted` 대입을 지우면 "다음 틱에 얹힌다"·"상한 FLAT×2 가 물린다" 가
+// 실패한다(aux0 이 FLAT 그대로).
+
+describe('⑲ PO10 연쇄 압력 (앵커 onFilmBurstPost · state.kills 차분 · ⑨)', () => {
+  it('파열이 90틱 고정 창을 연다 (레벨 무관)', () => {
+    for (const level of [1, 20]) {
+      const w = mk([[PO10, level]]);
+      onFilmBurstPost(w, 0, 0, []);
+      expect(readSlot(w.skillStage, BubbleStage.chainWindow)).toBe(90);
+    }
+  });
+
+  it('창을 열 때 `state.kills` 를 스냅샷한다', () => {
+    const w = mk([[PO10, 1]]);
+    w.kills = 7;
+    onFilmBurstPost(w, 0, 0, []);
+    expect(readSlot(w.skillStage, BubbleStage.chainKillsSnap)).toBe(7);
+  });
+
+  it('창이 처치 없이 닫히면 보강 0 (하한 짝)', () => {
+    const w = mk([[PO10, 20]]);
+    const p = player(w);
+    onFilmBurstPost(w, 0, 0, []);
+    for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BubbleStage.chainWindow)).toBe(0);
+    expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(0);
+  });
+
+  it('창 안에서 `state.kills` 가 늘면 보강분을 쌓는다 (처치당 2 + floor(Lv/2))', () => {
+    const w = mk([[PO10, 1]]);
+    const p = player(w);
+    onFilmBurstPost(w, 0, 0, []);
+    w.kills += 3; // 실제 엔진에서는 compact() 가 올린다 — 여기서는 값만 흉내낸다
+    for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
+    // Lv1: 처치당 2 + floor(1/2) = 2 → 3 × 2 = 6.
+    expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(6);
+  });
+
+  it('회당 보강 상한이 실제로 물린다 (20 + 3×Lv)', () => {
+    const w = mk([[PO10, 1]]);
+    const p = player(w);
+    onFilmBurstPost(w, 0, 0, []);
+    w.kills += 50; // 처치당 2 → 100, 상한 23 이어야 잘린다
+    for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(23);
+  });
+
+  it('창이 닫힌 뒤 처치는(다음 창 전까지) 더 이상 반영되지 않는다 — 음성 대조', () => {
+    const w = mk([[PO10, 1]]);
+    const p = player(w);
+    onFilmBurstPost(w, 0, 0, []);
+    for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(0);
+    w.kills += 10; // 창이 이미 닫힌 뒤의 처치 — 스냅샷도 0 으로 비었다
+    onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(0);
+  });
+
+  it('보강분은 재생이 일어난 **다음 틱**에 aux0 에 얹힌다', () => {
+    const w = mk([[PO10, 1]]);
+    const p = player(w);
+    onFilmBurstPost(w, 0, 0, []);
+    w.kills += 3; // Lv1: 처치당 2 → 보강 6 예정
+    for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(6);
+    // 재생이 실제로 일어나는 그 틱을 흉내낸다(world.ts 의 SIG_BUBBLE_FILM 분기와 같은 대입).
+    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux1 = 0;
+    // ⚠️ 이 틱에는 아직 안 얹힌다 — world.ts 의 대입이 앵커 ⑨ **뒤**라, 실제 엔진이라면
+    //    이 시점의 aux0 을 곧이어 FLAT 으로 덮어쓴다. 여기서는 이미 FLAT 인 채로 두고
+    //    "다음 틱" 만 관측한다(그 대입 자체는 world.ts 소유라 이 테스트가 재현할 필요가 없다).
+    onSignatureStep(w, p, emptyInput());
+    expect(p.aux0).toBe(FILM_ABSORB_FLAT + 6);
+    expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(0); // 소비 후 0
+  });
+
+  it('상한은 FILM_ABSORB_FLAT × 2 — 두 창의 보강을 합쳐도 그 값을 넘지 않는다', () => {
+    const w = mk([[PO10, 20]]);
+    const p = player(w);
+    // 창 하나당 상한 20+60=80 — 두 번 채워 160 을 만들어 FLAT(60)+160=220 이 120 으로
+    // 잘리는지 본다.
+    onFilmBurstPost(w, 0, 0, []);
+    w.kills += 10; // 처치당 12 → 120, 상한 80
+    for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(80);
+    onFilmBurstPost(w, 0, 0, []); // 아직 재생 전 — 두 번째 창을 연다(스냅샷을 다시 찍는다)
+    w.kills += 10;
+    for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(160);
+    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux1 = 0;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.aux0).toBe(FILM_ABSORB_FLAT * 2);
+  });
+
+  it('미투자 런은 슬롯을 안 건드린다', () => {
+    const w = mk();
+    w.kills = 3;
+    onFilmBurstPost(w, 0, 0, []);
+    expect(readSlot(w.skillStage, BubbleStage.chainWindow)).toBe(0);
+    expect(readSlot(w.skillStage, BubbleStage.chainKillsSnap)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑳ PO8 잔거품 기뢰 (앵커 onFilmBurstPost · 기뢰장 동형 스폰) — 배치7 · 210/210 마지막 종
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션 실측 (2026-08-07)
+//  ① `bubbleFilmBurstPost` 의 `if (po8 >= 1) bubbleResidueMines(...)` 호출을 지우면 §ⓐ·§ⓑ
+//     전체가 실패한다(스폰 자체가 안 일어난다).
+//  ② `bubbleResidueMines` 의 `mine.ownerId = PO8_MINE_MARK` 대입을 지우면 §ⓑ 상한 절만
+//     실패한다 — `live` 카운트가 항상 0 이 되어 상한이 걸리지 않고 파열마다 무한정 쌓인다.
+//  ③ `spawnBullet` 호출의 damage 인자(`dmg`)를 0 으로 바꾸면 §ⓒ 의 접촉 피해 절이 실패한다.
+// PO8 은 접촉 피해·좀비 방지 코드를 **신설하지 않는다** — `resolveCollisions`(world.ts)의
+// 범용 아군탄↔적 경로를 재사용하므로, §ⓒ 는 "그 재사용이 실제로 배선됐는가"를 잰다(효과
+// 산술이 아니라 이음매가 검증 대상 — 이 파일 머리말의 방침과 같다).
+
+describe('⑳ PO8 잔거품 기뢰 (앵커 onFilmBurstPost · 기뢰장 동형)', () => {
+  describe('ⓐ 스폰 — 개체 수 델타', () => {
+    it('파열마다 mineCount 만큼 기뢰가 생긴다 (Lv1 = 4 + ⌊1/4⌋ = 4기)', () => {
+      const w = mk([[PO8, 1]]);
+      expect(countBullets(w)).toBe(0);
+      resolveFilmBurst(w, 0, 0);
+      expect(countBullets(w)).toBe(4);
+    });
+
+    it('레벨이 오르면 기뢰 수도 는다 (Lv20 = 4 + ⌊20/4⌋ = 9기)', () => {
+      const w = mk([[PO8, 20]]);
+      resolveFilmBurst(w, 0, 0);
+      expect(countBullets(w)).toBe(9);
+    });
+
+    it('미투자 런은 기뢰가 하나도 생기지 않는다 (음성 대조)', () => {
+      const w = mk();
+      resolveFilmBurst(w, 0, 0);
+      expect(countBullets(w)).toBe(0);
+    });
+
+    it('다른 스킬만 찍은 런도 기뢰가 생기지 않는다', () => {
+      const w = mk([[PO7, 20]]);
+      resolveFilmBurst(w, 0, 0);
+      expect(countBullets(w)).toBe(0);
+    });
+
+    it('기뢰는 속도 0 — 정지 발사체다(기뢰장 동형)', () => {
+      const w = mk([[PO8, 1]]);
+      resolveFilmBurst(w, 0, 0);
+      const mines = w.entities.filter((e) => e.kind === 'bullet');
+      expect(mines.length).toBe(4);
+      for (const m of mines) {
+        expect(m.vx).toBe(0);
+        expect(m.vy).toBe(0);
+      }
+    });
+  });
+
+  describe('ⓑ 동시 생존 상한(12) — 하한 짝 포함', () => {
+    it('상한 미만에서는 파열마다 실제로 늘어난다 (하한 짝)', () => {
+      const w = mk([[PO8, 1]]); // Lv1 = 4기/파열
+      resolveFilmBurst(w, 0, 0);
+      expect(countBullets(w)).toBe(4);
+      resolveFilmBurst(w, 1000, 0);
+      expect(countBullets(w)).toBe(8);
+    });
+
+    it('상한(12)을 넘기지 않는다', () => {
+      const w = mk([[PO8, 20]]); // Lv20 = 9기/파열
+      resolveFilmBurst(w, 0, 0);
+      expect(countBullets(w)).toBe(9);
+      resolveFilmBurst(w, 1000, 0); // 9 + 9 = 18 이지만 상한에서 자른다
+      expect(countBullets(w)).toBe(12);
+      resolveFilmBurst(w, 2000, 0); // 이미 상한 — 스폰 전부 생략(부분 배치 없음)
+      expect(countBullets(w)).toBe(12);
+    });
+  });
+
+  describe('ⓒ 접촉 피해 — 전체 stepWorld 파이프라인(엔진 경로 재사용 실증)', () => {
+    /**
+     * `enemyType` 을 지정하지 않은(-1 그대로) 적은 `enemyDefFor` 가 `undefined` 를 돌려줘
+     * `stepEnemies` 가 이동·발사를 건너뛴다(world.ts `if (def === undefined) continue;`) —
+     * 그래서 `stepWorld` 를 여러 틱 돌려도 제자리에 남아 접촉 판정만 순수하게 잰다.
+     */
+    it('기뢰가 실제로 적에게 피해를 주고 죽으면 dead 를 세운다(좀비 방지) — 처치 집계도 는다', () => {
+      const w = mk([[PO8, 1]]);
+      const p = player(w);
+      // 파열 중심을 플레이어 사거리(BASE_WEAPON_RANGE=1650) 밖 · 투사체 컬 반경
+      // (`PROJECTILE_CULL_RADIUS` ≈ 3304, world.ts) 안에 둔다 — 계측기 함정 둘: ①가까우면
+      // 플레이어 자동사격이 같은 틱에 끼어들어 "기뢰가 죽였다"는 사인이 흐려지고, ②너무 멀면
+      // 갓 태어난 기뢰가 스폰 직후 첫 `stepProjectiles`의 컬 판정에 걸려 즉사한다(실측 — 최초
+      // 시도는 +5000 이라 기뢰가 hp 를 한 번도 못 깎고 죽었다).
+      const bx = p.x + 2000;
+      const by = p.y;
+      resolveFilmBurst(w, bx, by);
+      const mine = w.entities.find((e) => e.kind === 'bullet' && !e.dead);
+      if (mine === undefined) throw new Error('mine missing');
+      const foe = addEnemy(w, mine.x, mine.y, 30);
+      const kills0 = w.kills;
+      for (let i = 0; i < 10 && !foe.dead; i++) stepWorld(w, emptyInput());
+      expect(foe.dead).toBe(true); // 좀비 방지 — hp<=0 인데 dead 가 안 서는 사고가 없다
+      expect(foe.hp).toBeLessThanOrEqual(0);
+      expect(w.kills).toBe(kills0 + 1); // 처치 집계도 실제로 늘었다(compact 의 단일 수렴점)
+    });
+
+    it('기뢰 접촉 반경 밖의 적은 맞지 않는다 (하한 짝)', () => {
+      const w = mk([[PO8, 1]]);
+      const p = player(w);
+      const bx = p.x + 2000;
+      const by = p.y;
+      resolveFilmBurst(w, bx, by);
+      const mine = w.entities.find((e) => e.kind === 'bullet' && !e.dead);
+      if (mine === undefined) throw new Error('mine missing');
+      // 기뢰 접촉 반경(56)보다 훨씬 밖 · 플레이어 사거리(1650)도 밖.
+      const foe = addEnemy(w, mine.x + 500, mine.y, 30);
+      const hp0 = foe.hp;
+      for (let i = 0; i < 10; i++) stepWorld(w, emptyInput());
+      expect(foe.hp).toBe(hp0);
+      expect(foe.dead).toBe(false);
+    });
+
+    it('미투자 런은 기뢰가 없어 적이 멀쩡하다', () => {
+      const w = mk();
+      const p = player(w);
+      resolveFilmBurst(w, p.x + 2000, p.y);
+      const foe = addEnemy(w, p.x + 2000, p.y, 30);
+      const hp0 = foe.hp;
+      for (let i = 0; i < 10; i++) stepWorld(w, emptyInput());
+      expect(foe.hp).toBe(hp0);
+    });
   });
 });

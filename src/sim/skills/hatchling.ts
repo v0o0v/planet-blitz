@@ -8,8 +8,27 @@
  *
  * ---
  *
- * ## ⚠️ 배선 현황 — **30종 중 25종**
- * (배치 5 의 9종 + W레인 7종 + W2 레인의 BD10 + **S3-해츨링 레인의 8종**)
+ * ## ⚠️ 배선 현황 — **30종 중 29종**
+ * (배치 5 의 9종 + W레인 7종 + W2 레인의 BD10 + S3-해츨링 레인의 8종 +
+ * **배치7(2026-08-07) 의 BD4·NU3·SH4·SH8 4종**)
+ *
+ * ## ✅ 배치7 이 얹은 4종과 그 자리 — 아래 「아직 미배선인 4종」이 이 넷이었다
+ * 배치7 F1/F2a/F2b 가 새 앵커 다섯(`onAutoAimTarget`·`onTurretTargetPick`·
+ * `onEnemyBulletMoved` 셋과 `TurretCadenceParams.suppressed` 필드 · 그 외 F1 정지 축)을 세워
+ * 아래 4묶음이 "모델 부재"라 적은 선결을 전부 깔았다. 이 레인은 그 위에 leaf 만 얹었다.
+ *  - **BD4 표적 공유** — {@link hatchlingAutoAimTarget}(기록) · {@link hatchlingTurretTargetPick}
+ *    (우선순위) · {@link hatchlingTurretShotParams} 의 증폭 블록(명중 30틱 창). 셋 다
+ *    {@link sharedTargetFor} 술어를 공유한다 — 자세한 근사·한계는 그 함수 doc.
+ *  - **SH8 탄받이 깃털** — {@link hatchlingEnemyBulletMoved}(앵커 `onEnemyBulletMoved`). life
+ *    는 반드시 1 에서 클램프한다(그 함수 doc — 0 을 건너뛰면 자연 만료 판정을 영영 못 만난다).
+ *  - **SH4 품기 진형** — 사격 정지는 {@link hatchlingTurretCadence} 의 `suppressed` 블록
+ *    (`state.activeBuff0/1` 직접 읽기, 아크캐스터 BR3 선례), 밀착은
+ *    {@link hatchlingShelterSustain}(두 shelter 액티브의 SUSTAIN 훅에서 호출). ⚠️ 설계의
+ *    "소거 반경" 수치를 **밀착 반경**으로 재해석했다(탄 소거는 이 배치에서 SH8 전용으로
+ *    못 박혔다) — 설계-코드 괴리, {@link hatchlingShelterSustain} doc 에 정직 표기.
+ *  - **NU3 업어 나르기** — {@link hatchlingPiggyback}(앵커 `onDashFired`, `dirX`/`dirY` 소비).
+ *    도착 좌표는 "방향 × 이번 틱 대시 임펄스의 1차 변위"로 추정한다(물리량 기반 근사 —
+ *    임의 상수가 아니다). 자세한 사유는 그 함수 doc.
  *
  * ## ✅ S3-해츨링(2026-08-07)이 얹은 8종과 그 자리
  * 앵커 **㉗ `onTurretCadence`**(포탑 리듬) · **㉘ `onTurretExpired`**(자연 만료) 둘을 새로
@@ -27,7 +46,10 @@
  * 그 필드는 배치4 가 칸만 열어 두고 `stepGems` 가 읽지도 않던 자리였다. 이 레인이 `stepGems`
  * 에 병아리 중심 추가 흡인 경로를 세워 소비처를 만들었다({@link hatchlingGemMagnetParams}).
  *
- * ## ⚠️ 아직 미배선인 4종과 사유(전부 **구조**이지 누락이 아니다)
+ * ## ⚠️ (배치6 시점 기록 — 배치7 이 넷 전부를 해소했다) 당시 미배선 4종과 사유
+ * ✅ **배치7(2026-08-07)이 새 앵커 셋 + `suppressed` 필드로 아래 넷을 전부 열었다** — 위
+ * 「배치7 이 얹은 4종」절이 실제 배선 지점이다. 아래 문단은 *왜 그때는 앵커가 아니라 모델
+ * 부재였는가*의 기록으로 남긴다(그 판단은 배치7 이전 시점 기준으로 지금도 참이다).
  * **배치6(2026-08-07)이 넷 전부를 grep 으로 재확인했고 판정은 그대로다.** 배치6 이 연 앵커
  * 다섯(`onActiveExpired`·`onFilmBurstPost`·`onGemPull`·`onPickupRadius`·`onPlayerWallSlide`)과
  * 앵커 ②·④ 의 새 인자는 아래 넷 중 **어느 것도 건드리지 않는다** — 사유가 앵커 부재가 아니라
@@ -124,8 +146,9 @@ import type {
   TurretShotParams,
   TurretCadenceParams,
   GemMagnetParams,
+  TurretTargetPick,
 } from '../skillHooks.js';
-import { isActiveTurret, TURRET_LIFE_TICKS } from '../events.js';
+import { isActiveTurret, TURRET_LIFE_TICKS, TURRET_RANGE } from '../events.js';
 import { blastDamage, clearEnemyBullets, fanStrike } from '../activeTypes.js';
 import { spawnBreakableWall, spawnEventObject, spawnGem } from '../entities.js';
 import { slideCircleWalls } from '../los.js';
@@ -150,6 +173,7 @@ const enum Sk {
   /** BD1 조기 부화 */ earlyHatch = 0,
   /** BD2 쌍둥이 부화 */ twinHatch = 1,
   /** BD3 작별 격발 */ farewellVolley = 2,
+  /** BD4 표적 공유 */ targetShare = 3,
   /** BD5 격발 공명 */ volleyResonance = 4,
   /** BD6 부화 충격파 */ hatchShockwave = 5,
   /** BD7 노병 병아리 */ veteranChick = 6,
@@ -158,6 +182,7 @@ const enum Sk {
   /** BD10 여왕 사출 */ matriarchLaunch = 9,
   /** NU1 모이 물어오기 */ gemFetch = 10,
   /** NU2 알껍질 영양 */ eggshellNutrients = 11,
+  /** NU3 업어 나르기 */ piggyback = 12,
   /** NU4 둥지 소집 */ nestRecall = 13,
   /** NU5 알 굴리기 */ eggRoll = 14,
   /** NU6 온기 나눔 */ sharedWarmth = 15,
@@ -168,9 +193,11 @@ const enum Sk {
   /** SH1 호위 희생 */ escortSacrifice = 20,
   /** SH2 위기 산개 */ crisisScatter = 21,
   /** SH3 만석 둥지 온기 */ fullNestWarmth = 22,
+  /** SH4 품기 진형 */ broodingFormation = 23,
   /** SH5 경계 지저귐 */ alarmChirp = 24,
   /** SH6 알막 */ eggMembrane = 25,
   /** SH7 회생 부화 */ rebirthHatch = 26,
+  /** SH8 탄받이 깃털 */ featherBulwark = 27,
   /** SH9 이소 둥지 */ fledgeNest = 28,
   /** SH10 확장 둥지 */ expandedNest = 29,
 }
@@ -318,6 +345,64 @@ export function hatchlingVolleyFired(state: WorldState, player: Entity): void {
 }
 
 // ---------------------------------------------------------------------------
+// 앵커 `onAutoAimTarget` (배치7 F2b) — 자동조준이 이번 틱 표적을 확정한 직후
+// ---------------------------------------------------------------------------
+
+/**
+ * **BD4 표적 공유(기록 절반)** — 플레이어 자동조준이 이번 틱 확정한 표적을
+ * {@link HatchlingStage.shareTargetId} 에 적는다(+1 인코딩 — 그 슬롯 doc 이 정본).
+ *
+ * ## 세 조각이 한 벌이다
+ * ①이 함수가 "누가 표적인가"를 적고, ②{@link hatchlingTurretTargetPick}(앵커
+ * `onTurretTargetPick`)가 병아리를 그 표적에 우선 겨누고, ③{@link hatchlingTurretShotParams}
+ * (앵커 ㉖)가 명중 증폭을 싣는다. 셋 다 같은 {@link sharedTargetFor} 술어를 공유한다.
+ *
+ * 매 틱 다시 적는다 — "지금 조준 중"이라는 뜻이라 표적이 바뀌면 그대로 따라간다. 이전 표적이
+ * 아직 살아 있어도 새 표적으로 덮어쓴다(자동조준 자체가 "현재" 표적만 안다).
+ */
+export function hatchlingAutoAimTarget(state: WorldState, player: Entity, target: Entity): void {
+  void player;
+  const bd4 = lv(state, Sk.targetShare);
+  if (bd4 < 1) return;
+  writeSlot(state.skillStage, HatchlingStage.shareTargetId, target.id + 1);
+}
+
+/**
+ * **BD4 공유 표적 조회** — {@link HatchlingStage.shareTargetId} 를 디코드해, 그 개체가 아직
+ * 살아 있고 **이 포탑 기준** 사거리(`TURRET_RANGE`) 안이면 돌려준다. 그렇지 않으면
+ * `undefined`(표적 없음과 같은 취급 — 호출부가 기존 경로로 폴백한다).
+ *
+ * ## 두 훅이 이 함수를 각자 부른다 — 값을 옮기는 채널이 없다
+ * `onTurretTargetPick` 은 `(state, turret, pick)` 만 받고 `onTurretShotParams` 는
+ * `(state, turret, params)` 만 받는다 — 어느 쪽도 상대가 방금 무엇을 판정했는지 모른다.
+ * `world.ts` 를 건드려 값을 실어 나르는 칸을 새로 뚫을 수 없으므로(소유권 밖), 앵커 ㉓ 의
+ * `willLaunch` 미러(그 함수 doc)와 같은 사유로 **같은 술어를 두 지점에서 각자 계산**한다 —
+ * 둘 다 이 함수 하나만 부르므로 두 곳에 따로 적는 함정(이 파일이 반복 경계하는 그것)은 없다.
+ *
+ * ## ⚠️ 알려진 근사 — `isPlayerTargetable` 의 코어 실드 예외는 재현하지 않는다
+ * `world.ts` 의 `fireTurretShot` 폴백은 `dead` 와 `isPlayerTargetable`(비공개 — 발생기 보호막
+ * 국면의 코어를 조준에서 뺀다) 둘 다 본다. 이 함수는 `dead`·사거리만 본다 — `isPlayerTargetable`
+ * 은 `world.ts` 비공개라 leaf 가 복제하면 "같은 술어 두 곳" 함정이 재현된다. 갭은 좁다:
+ * 오직 *"공유 표적이 하필 그 순간 발생기 보호막 국면의 코어"* 일 때만 이 함수가 `true` 를
+ * 돌려주고 `world.ts` 는 그 지정을 버린다 — 표적 픽(BD4 우선순위 절반)만 헛돌고, 증폭 여부는
+ * 그 폴백을 다시 타지 않으므로(아래 참조) 실제 명중 없이 증폭이 계산되는 사고는 없다.
+ */
+function sharedTargetFor(state: WorldState, turret: Entity): Entity | undefined {
+  const raw = readSlot(state.skillStage, HatchlingStage.shareTargetId);
+  if (raw === 0) return undefined;
+  const id = raw - 1;
+  for (const e of state.entities) {
+    if (e.id !== id) continue;
+    if (e.dead) return undefined;
+    const dx = e.x - turret.x;
+    const dy = e.y - turret.y;
+    if (dx * dx + dy * dy > TURRET_RANGE * TURRET_RANGE) return undefined;
+    return e;
+  }
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
 // 앵커 ② — 대시가 실제로 발동한 지점
 // ---------------------------------------------------------------------------
 
@@ -333,12 +418,91 @@ export function hatchlingVolleyFired(state: WorldState, player: Entity): void {
  * `world.ts` 비공개라 leaf 에서 닿지 않는다. 그래서 **레벨 스케일이 통째로 미배선**이다 —
  * 지금 NU5 는 1레벨이든 20레벨이든 효과가 같다. 이건 결함이 아니라 이 배치의 한계이고,
  * 젬 축을 배선하는 레인이 폭 공식을 여기 대신 그 지점에 세운다.
+ *
+ * ## NU3 업어 나르기 — **같은 앵커, `dirX`/`dirY` 가 선결이다**
+ * 배치6 이 이 앵커에 대시 방향(단위 벡터)을 더했다. NU3 은 그 값을 받아 아래에서 처리한다
+ * (자세한 설계-공학 노트는 {@link hatchlingPiggyback} doc).
  */
-export function hatchlingDashFired(state: WorldState, player: Entity): void {
+export function hatchlingDashFired(
+  state: WorldState,
+  player: Entity,
+  dirX?: number,
+  dirY?: number,
+): void {
   const nu5 = lv(state, Sk.eggRoll);
-  if (nu5 < 1) return;
-  const next = Math.trunc(player.aux0) - 1;
-  player.aux0 = next > 0 ? next : 0;
+  if (nu5 >= 1) {
+    const next = Math.trunc(player.aux0) - 1;
+    player.aux0 = next > 0 ? next : 0;
+  }
+  hatchlingPiggyback(state, player, dirX, dirY);
+}
+
+/**
+ * **NU3 업어 나르기** — 대시 경로 위 병아리를 업어서 대시 도착 지점 주위로 함께 옮긴다.
+ *
+ * ## ⚠️ 「도착 지점」은 존재하지 않는다 — **방향 × 고정 거리**로 산출한다
+ * 대시는 임펄스형이다(`world.ts` 의 `player.vx += dx * config.dashSpeed`) — 이 앵커가 도는
+ * 시점(대시 발동 블록 안, 위치 적분 **전**)엔 `player.x`/`y` 가 아직 대시 이전 좌표다. 실제
+ * 도착 좌표는 벽 슬라이드까지 섞인 미래값이라 leaf 가 정확히 재현할 수 없다(설계 NU3 구현란
+ * 「도착 지점 고정」이 요구하는 바로 그 타협). 그래서 **이번 틱 대시 임펄스가 만드는 1차
+ * 변위**(`config.dashSpeed * DT` — 벽이 없다면 실제로 이만큼 움직인다)를 고정 거리로 삼는다.
+ * 이 값은 임의 상수가 아니라 **이 틱에 실제로 실리는 물리량**이라 "왜 이 숫자인가"에 근거가
+ * 있다(이 파일 BD3 의 "임의 방향 금지" 규율과 같은 정신).
+ *
+ * ## 업기 판정 — 대시 시작→가상 도착점 **선분** 기준 반폭
+ * 반폭 = 90 + 8×Lv. 실제 이동 경로(벽에 막히면 더 짧다)와 가상 선분의 차이는 반폭 안에
+ * 흡수되는 수준이다(NU4 재배치 반경 90과 같은 자릿수).
+ *
+ * ## 옮기는 자리 — NU4 재배치 팔각(재사용)
+ * 새 오프셋 표를 만들지 않는다. NU4 가 이미 "플레이어(또는 도착 지점) 주위 8자리"를
+ * 검증된 형태로 갖고 있고, 여기 필요한 것도 정확히 같은 모양(중심 주위 산개 슬롯)이다.
+ *
+ * ## RNG 미소비 · 신규 상태 0
+ * 선분-점 거리 판정은 순수 산술이고, 슬롯 배정은 배열 순회 순서(tie-break)로 결정된다.
+ */
+function hatchlingPiggyback(
+  state: WorldState,
+  player: Entity,
+  dirX: number | undefined,
+  dirY: number | undefined,
+): void {
+  const nu3 = lv(state, Sk.piggyback);
+  if (nu3 < 1) return;
+  if (dirX === undefined || dirY === undefined) return;
+
+  const travel = state.config.dashSpeed * DT;
+  const ax = player.x + dirX * travel;
+  const ay = player.y + dirY * travel;
+  const halfWidth = 90 + 8 * nu3;
+  const half2 = halfWidth * halfWidth;
+
+  const abx = ax - player.x;
+  const aby = ay - player.y;
+  const ab2 = abx * abx + aby * aby;
+
+  let i = 0;
+  for (const e of state.entities) {
+    if (!isChick(e)) continue;
+    // 선분-점 최근접 거리(제곱) — t 를 [0,1] 로 clamp.
+    let t = ab2 > 0 ? ((e.x - player.x) * abx + (e.y - player.y) * aby) / ab2 : 0;
+    if (t < 0) t = 0;
+    else if (t > 1) t = 1;
+    const cx = player.x + abx * t;
+    const cy = player.y + aby * t;
+    const dx = e.x - cx;
+    const dy = e.y - cy;
+    if (dx * dx + dy * dy > half2) continue;
+    const k = i % 8;
+    const slid = slideCircleWalls(
+      ax + (NU4_RECALL_OX[k] ?? 0),
+      ay + (NU4_RECALL_OY[k] ?? 0),
+      e.radius,
+      state.activeWalls,
+    );
+    e.x = slid.x;
+    e.y = slid.y;
+    i++;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -652,10 +816,23 @@ export function hatchlingEnemyDamaged(
   source: Entity | undefined,
 ): void {
   const sh5 = lv(state, Sk.alarmChirp);
-  if (sh5 < 1) return;
-  if (source === undefined || source.ownerId !== BROOD_MARK) return;
-  if (target.kind !== 'enemy' || target.dead) return;
-  applySlow(target, COLD_DURATION + 6 * sh5);
+  if (sh5 >= 1 && source !== undefined && source.ownerId === BROOD_MARK) {
+    if (target.kind === 'enemy' && !target.dead) {
+      applySlow(target, COLD_DURATION + 6 * sh5);
+    }
+  }
+
+  // ── BD4 표적 공유(기록 절반) — **플레이어 자신의 탄**이 공유 표적에 명중한 틱을 적는다.
+  //    "플레이어 탄" = 병아리 탄이 아닌 모든 아군탄(`source.ownerId !== BROOD_MARK`)이다 —
+  //    설계 BD4 본문의 이분법이 "병아리 vs 그 외 전부"이기 때문이다(SH5 와 정확히 반대 게이트).
+  //    `target.kind` 를 좁히지 않는다 — 설계 연계가 "엘리트·보스" 도 명시한다.
+  const bd4 = lv(state, Sk.targetShare);
+  if (bd4 >= 1 && source !== undefined && source.ownerId !== BROOD_MARK) {
+    const shareTargetId = readSlot(state.skillStage, HatchlingStage.shareTargetId);
+    if (shareTargetId !== 0 && target.id === shareTargetId - 1) {
+      writeSlot(state.skillStage, HatchlingStage.shareHitTick, state.tick);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -926,12 +1103,48 @@ export function hatchlingTurretShotParams(
     turret.aux0 = shots + 1;
   }
 
+  // ── BD4 표적 공유(증폭 절반) — 이 병아리가 **지금** 공유 표적을 쏘고 있고(같은 술어를
+  //    {@link hatchlingTurretTargetPick} 이 독립적으로 다시 계산한다 — {@link sharedTargetFor}
+  //    doc 참조), 플레이어 탄이 그 표적에 명중한 지 30틱 이내면 이번 발이 증폭된다.
+  //    `shareHitTick > 0` 은 "아직 명중 없음"(0) 을 걸러낸다 — 안 걸면 런 시작 수십 틱
+  //    동안 명중이 없어도 `tick − 0 <= 30` 이 거짓양성으로 성립한다(슬롯 doc 의 캐비앗).
+  const bd4 = lv(state, Sk.targetShare);
+  if (bd4 >= 1) {
+    const hitTick = readSlot(state.skillStage, HatchlingStage.shareHitTick);
+    if (hitTick > 0 && state.tick - hitTick <= 30) {
+      if (sharedTargetFor(state, turret) !== undefined) {
+        params.damage *= 1 + (0.15 + 0.02 * bd4);
+      }
+    }
+  }
+
   // ── BD10 여왕 사출(탄 피해 축).
   const bd10 = lv(state, Sk.matriarchLaunch);
   if (bd10 < 1) return;
   const deficit = broodDeficit(state);
   if (deficit <= 0) return; // SH10 동시 투자로 결손을 되산 런 — 설계상 강화 0.
   params.damage *= 1 + deficit * (0.3 + 0.03 * bd10);
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 `onTurretTargetPick` (배치7 F2b) — `nearestTarget` 을 부르기 앞
+// ---------------------------------------------------------------------------
+
+/**
+ * **BD4 표적 공유(우선순위 절반)** — 공유 표적이 있고 사거리 안이면 그 표적을 지정한다.
+ * 무효(죽음·사거리 밖·미존재)면 `pick.targetId` 를 손대지 않아 `fireTurretShot` 이 종전
+ * `nearestTarget` 경로로 폴백한다(앵커 doc 의 규약).
+ */
+export function hatchlingTurretTargetPick(
+  state: WorldState,
+  turret: Entity,
+  pick: TurretTargetPick,
+): void {
+  if (turret.ownerId !== BROOD_MARK) return;
+  const bd4 = lv(state, Sk.targetShare);
+  if (bd4 < 1) return;
+  const target = sharedTargetFor(state, turret);
+  if (target !== undefined) pick.targetId = target.id;
 }
 
 // ---------------------------------------------------------------------------
@@ -967,6 +1180,25 @@ export function hatchlingTurretCadence(
   params: TurretCadenceParams,
 ): void {
   if (turret.ownerId !== BROOD_MARK) return;
+
+  // ── SH4 품기 진형 — shelter 액티브(buff 2종) 지속 중 사격 정지. `params.suppressed` doc 의
+  //    규약대로 참이면 감산·격발 둘 다 건너뛰어 쿨다운을 그 자리에 묶는다(해제 즉시 밀린
+  //    일제사격 방지). 밀착(좌표 대입)은 SUSTAIN 훅({@link hatchlingShelterSustain})의 몫이라
+  //    여기서는 좌표를 만지지 않는다 — SH8 과 달리 **탄 소거도 하지 않는다**(설계 SH4 doc:
+  //    "SH8 과 같은 축처럼 보이지만 다른 스킬" — 섞으면 두 스킬의 관측량이 갈린다).
+  //
+  //    ## "shelter 지속 중"을 어떻게 아는가 — `activeBuff0/1` 직접 읽기(아크캐스터 BR3 선례)
+  //    이 함수는 `player` 를 받지 않는다(앵커 시그니처). 해츨링의 `player.aux1` 은 "미사용"이
+  //    전역 계약이라(`activeHandlers/hatchling.ts` 헤더) 여기 전달용으로 재활용할 수 없다.
+  //    `state.activeBuff0`/`activeBuff1` 은 `kind='buff'` 핸들러만 채우는 공개 필드이고, 이
+  //    기체에서 그 kind 는 shelter_lo/hi **둘뿐**이다(brood 는 직격, nurture 는 blink) — 그래서
+  //    "둘 중 하나가 0 보다 크다" 가 "shelter 버프가 지금 지속 중이다"와 정확히 같다
+  //    (`skills/arccaster.ts` BR3 · `skills/mallow.ts` CU5 가 이미 쓰는 그 패턴 그대로).
+  const sh4 = lv(state, Sk.broodingFormation);
+  if (sh4 >= 1 && (state.activeBuff0 > 0 || state.activeBuff1 > 0)) {
+    params.suppressed = true;
+    return;
+  }
 
   let cut = 0;
 
@@ -1033,6 +1265,47 @@ export function hatchlingTurretExpired(state: WorldState, turret: Entity): void 
       8 + 2 * sh9,
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 `onEnemyBulletMoved` (배치7 F2b) — 적탄이 이번 틱 위치 적분을 끝낸 직후
+// ---------------------------------------------------------------------------
+
+/**
+ * **SH8 탄받이 깃털** — 적탄이 병아리 판정 반경에 닿으면 소거하고, 그 병아리의 수명을 깎는다.
+ * SH4「품기 진형」과 다른 축이다 — SH4 는 배치·사격 정지, SH8 은 상시 탄막 필터(수명 소모).
+ *
+ * ## life 클램프 — **반드시 1 에서 멈춘다**(0 을 건너뛰지 않는다)
+ * `stepTurrets` 의 자연 만료는 `life === 0` 을 **정확히** 만나야 발동한다. 여기서 `life` 를
+ * 그대로 감산해 음수로 넘기면 다음 틱 감산이 −1, −2… 로 계속 내려가며 `=== 0` 을 영영 못
+ * 만나 **불사**가 된다(설계 SH8 1R MINOR 경고 그대로). `max(1, life − k)` 로 1 에 멈추면
+ * 다음 틱의 자연 `life--` 가 그 자리에서 정확히 0 을 만나 정상 만료한다 — SH8 로 앞당겨진
+ * 만료도 "자연 만료"(사유 코드 0)로 잡혀 BD3·NU9·SH9 가 그대로 돈다(설계 SH8 본문 명시).
+ *
+ * ## 근접 검사 — 원-원 겹침(반경 합)
+ * 병아리 판정 반경(`e.radius`) + 적탄 반경(`bullet.radius`)의 합보다 가까우면 접촉이다.
+ * 동시에 여러 병아리가 후보여도 **배열 순서로 첫 접촉 1기만** 삼킨다(이 파일의 tie-break
+ * 관용구 — `firstChick`·NU7 최근접 젬과 같은 결정론 규율).
+ *
+ * ## RNG 미소비 · 엔티티 미생성 · 신규 상태 0
+ * 거리 제곱 비교뿐이다. 이 앵커는 적탄 이동 루프의 순회 안이라 스폰이 금지돼 있고, 이
+ * 스킬은 애초에 아무것도 낳지 않는다.
+ */
+export function hatchlingEnemyBulletMoved(state: WorldState, bullet: Entity): boolean {
+  const sh8 = lv(state, Sk.featherBulwark);
+  if (sh8 < 1) return false;
+  const dec = Math.max(1, 12 - Math.floor(sh8 / 2));
+  for (const e of state.entities) {
+    if (!isChick(e)) continue;
+    const dx = e.x - bullet.x;
+    const dy = e.y - bullet.y;
+    const rr = e.radius + bullet.radius;
+    if (dx * dx + dy * dy > rr * rr) continue;
+    const next = e.life - dec;
+    e.life = next > 1 ? next : 1;
+    return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1170,6 +1443,47 @@ export function hatchlingNurtureActive(state: WorldState, player: Entity): void 
   // 창 = 90 + 6×Lv 틱. 살아 있는 병아리가 0기여도 세운다 — 창 동안 새로 출격한 병아리도
   // 혜택을 받는 것이 "연사 창" 의 정의이고, 슬롯 쓰기는 투자 게이트 안이라 규약 3 을 지킨다.
   writeSlot(state.skillStage, HatchlingStage.nestRecallTicks, 90 + 6 * nu4);
+}
+
+/** SH4 밀착 슬롯 — NU4 재배치 팔각(반지름 90)을 그대로 재사용한다(같은 모양의 필요). */
+const SH4_UNIT_OX = [1, -1, 0, 0, 0.7071, -0.7071, 0.7071, -0.7071] as const;
+const SH4_UNIT_OY = [0, 0, 1, -1, 0.7071, 0.7071, -0.7071, -0.7071] as const;
+
+/**
+ * **SH4 품기 진형(밀착 절반)** — shelter 액티브(buff 2종) 지속 중 병아리 전원을 플레이어
+ * 주위 고정 슬롯에 **매 틱** 대입한다. 사격 정지 절반은 {@link hatchlingTurretCadence}
+ * (앵커 ㉗)에 있다 — 이 함수는 좌표만 만진다.
+ *
+ * ## 호출 지점 — 두 shelter 액티브의 SUSTAIN 훅
+ * `activeHandlers/hatchling.ts` 의 `HATCHLING_SUSTAIN.as_hatchling_shelter_lo`/`_hi` 가
+ * 매 틱 이 함수를 부른다(설계 SH4 구현란: "SUSTAIN 훅에서 좌표 매 틱 대입"). `stepTurrets`
+ * 에는 이동 코드가 한 줄도 없어 좌표를 직접 쓰는 것이 이 스킬의 유일하게 정합한 자리다.
+ *
+ * ## 반경 — 설계의 "소거 반경" 을 **밀착 반경**으로 재해석한다(설계-코드 괴리, 정직 표기)
+ * 설계 SH4 는 "병아리 1기당 소거 반경 = 60 + 5×Lv"라고 적었지만, 이 배치의 앵커 배당은
+ * **탄 소거를 SH8 전용으로 못 박았다**(배치7 F2b `onEnemyBulletMoved` doc — "SH4 는 배치·
+ * 사격 정지, 탄 소거는 SH8"). 그래서 SH4 자신은 탄을 지우지 않고, 같은 숫자를 **밀착
+ * 슬롯의 반경**(플레이어로부터 병아리까지 거리)에 대신 싣는다 — 레벨이 진형의 조밀도를
+ * 결정한다는 점에서 "1기당 반경"이라는 설계 의도의 자연스러운 대응이다.
+ *
+ * ## RNG 미소비 · 신규 상태 0
+ * 팔각 오프셋은 고정 표(단위 벡터 × 반경)이고 슬롯 배정은 배열 순회 순서다.
+ */
+export function hatchlingShelterSustain(state: WorldState, player: Entity): void {
+  const sh4 = lv(state, Sk.broodingFormation);
+  if (sh4 < 1) return;
+  const radius = 60 + 5 * sh4;
+  let i = 0;
+  for (const e of state.entities) {
+    if (!isChick(e)) continue;
+    const k = i % 8;
+    const tx = player.x + (SH4_UNIT_OX[k] ?? 0) * radius;
+    const ty = player.y + (SH4_UNIT_OY[k] ?? 0) * radius;
+    const slid = slideCircleWalls(tx, ty, e.radius, state.activeWalls);
+    e.x = slid.x;
+    e.y = slid.y;
+    i++;
+  }
 }
 
 // ---------------------------------------------------------------------------
