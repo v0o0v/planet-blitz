@@ -13,6 +13,9 @@
  *  ③ **앵커 ㉑ 배선 제거**(S2 레인, 2026-08-07) — `onCloakBreakReset` 의 `case SIG_PHANTOM_CLOAK:`
  *     호출을 지우면 §⑪ 의 3건이 실패한다(DI1 반경 · PH10 환급 · stepWorld 관통).
  *  ④ **앵커 ⑯ 배선 제거** — `onVolleyParams` 의 호출을 지우면 §⑫ 의 2건이 실패한다.
+ *  ⑤ **배치6 5종**(2026-08-07) — DI9·PH9·PH5·AS8·AS1. 뮤테이션 목록과 **실측 적색 건수**는
+ *     각 절(㉒~㉖) 머리 주석에 적었다. 그중 하나(`!stalledThisTick`)는 **적색이 되지 않는다**는
+ *     사실까지 그대로 남겼다 — 안 걸리는 가드를 걸린다고 적는 것이 가장 나쁜 형태다.
  * 초록인데 아무것도 안 재는 테스트가 아니다.
  */
 
@@ -46,9 +49,13 @@ import {
   onVolleyParams,
   onPlayerMoveParams,
   onWallHit,
+  onPlayerWallSlide,
+  onObjectiveResolved,
+  onEnemyDeath,
   type VolleyParams,
   type PlayerMoveParams,
   type WallHitParams,
+  type WallSlideParams,
 } from '../src/sim/skillHooks.js';
 import {
   SIG_PHANTOM_CLOAK,
@@ -71,7 +78,12 @@ const SHIP_PHANTOM = 3;
  * flat 인덱스 — **정본은 `data/ships/phantom.ts` 의 `trees` 배열**이다:
  * `[assassin(offense), phase(utility), disrupt(defense)]` → AS 0..9 · PH 10..19 · DI 20..29.
  */
+const AS1 = 0;
 const AS2 = 1;
+const AS8 = 7;
+const PH5 = 14;
+const PH9 = 18;
+const DI9 = 28;
 const AS3 = 2;
 const AS4 = 3;
 const AS5 = 4;
@@ -1628,5 +1640,472 @@ describe('㉑ AS10 유령 탄도 (앵커 ⑯ 표식 + `onWallHit`)', () => {
       onWallHit(w, p, ghostBullet(v.mark), wall(), hit);
       expect(hit.passThrough).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ㉒ 배치6 — DI9 유령 선체 (신설 앵커 `onPlayerWallSlide`)
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션 (실행함, 2026-08-07)
+//  - `phantomPlayerWallSlide` 의 `params.passThrough = true` 제거 → 3건 적색
+//  - `onPlayerWallSlide` 의 `case SIG_PHANTOM_CLOAK` 제거 → 3건 적색
+//
+// ⚠️ 부정 항목("무적이 아니면 안 통과한다")은 뮤테이션에 원리적으로 안 걸린다 —
+//    같은 `it` 안에 **긍정 짝**을 나란히 뒀다.
+
+describe('㉒ DI9 유령 선체 (앵커 `onPlayerWallSlide`)', () => {
+  function ws(): WallSlideParams {
+    return { passThrough: false };
+  }
+
+  it('피격 무적 동안에만 통과한다 (긍정 + 음성 짝)', () => {
+    const w = mk([[DI9, 1]]);
+    const p = player(w);
+
+    // 무적 아님 → 통과 안 함.
+    p.iframes = 0;
+    const cold = ws();
+    onPlayerWallSlide(w, p, cold);
+    expect(cold.passThrough).toBe(false);
+
+    // 같은 런·같은 훅인데 무적이면 통과한다 — 위 음성이 항진이 아니라는 물증.
+    p.iframes = 30;
+    const hot = ws();
+    onPlayerWallSlide(w, p, hot);
+    expect(hot.passThrough).toBe(true);
+  });
+
+  it('미투자 런은 무적이어도 `params` 를 한 바이트도 안 건드린다 (긍정 짝 포함)', () => {
+    const off = mk();
+    const q = player(off);
+    q.iframes = 30;
+    const a = ws();
+    onPlayerWallSlide(off, q, a);
+    expect(a.passThrough).toBe(false);
+
+    const on = mk([[DI9, 1]]);
+    const p = player(on);
+    p.iframes = 30;
+    const b = ws();
+    onPlayerWallSlide(on, p, b);
+    expect(b.passThrough).toBe(true);
+  });
+
+  it('레벨 계단이 없다 — Lv1 과 Lv20 이 같다 (설계 문면이 이진이다)', () => {
+    for (const level of [1, 20]) {
+      const w = mk([[DI9, level]]);
+      const p = player(w);
+      p.iframes = 1;
+      const v = ws();
+      onPlayerWallSlide(w, p, v);
+      expect(v.passThrough).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ㉓ 배치6 — PH9 메아리 잠행 (앵커 ㉙ + 앵커 ⑨ · `objectiveActiveOf`)
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션 (실행함, 2026-08-07)
+//  - `phantomObjectiveResolved` 의 `advanceCloak` 제거 → 2건 적색
+//  - 앵커 ⑨ 안 PH9 블록의 `player.dashCooldown` 감산 제거 → 3건 적색
+//  - `onObjectiveResolved` 의 `case SIG_PHANTOM_CLOAK` 제거 → 2건 적색
+
+describe('㉓ PH9 메아리 잠행 (앵커 ㉙ · 앵커 ⑨)', () => {
+  /** 조우 런타임을 활성 상태로 세운다. `objectiveActiveOf` 는 `state` 값만 본다. */
+  function setEncounter(w: WorldState, s: number): void {
+    (w as unknown as { encounterRuntime?: { state: number } }).encounterRuntime = { state: s };
+  }
+
+  it('목표 완수가 즉시 은신에 진입시킨다 (미투자면 불변)', () => {
+    const off = mk();
+    const q = player(off);
+    q.aux0 = 0;
+    onObjectiveResolved(off, q, 'echo');
+    expect(q.aux0).toBe(0);
+
+    const on = mk([[PH9, 1]]);
+    const p = player(on);
+    p.aux0 = 0;
+    onObjectiveResolved(on, p, 'echo');
+    expect(p.aux0).toBe(CLOAK_UNHIT_TICKS);
+  });
+
+  it('진입은 통과 에지를 정상 발화한다 — DI8 이 그 물증이다 (음성 짝 포함)', () => {
+    // DI8 은 **은신 진입 에지에서만** 최대 HP 를 올린다. 그것이 오르면 `advanceCloak` 이
+    // 임계를 건너뛰지 않고 `fireCloakEntry` 를 태웠다는 뜻이다.
+    const w = mk([
+      [PH9, 1],
+      [DI8, 10],
+    ]);
+    const p = player(w);
+    p.aux0 = 0;
+    const before = p.maxHp;
+    onObjectiveResolved(w, p, 'encounter');
+    expect(p.maxHp).toBeGreaterThan(before);
+
+    // 음성 짝 — PH9 미투자면 같은 완수에도 진입이 없어 DI8 도 안 돈다.
+    const off = mk([[DI8, 10]]);
+    const q = player(off);
+    q.aux0 = 0;
+    const b2 = q.maxHp;
+    onObjectiveResolved(off, q, 'encounter');
+    expect(q.maxHp).toBe(b2);
+  });
+
+  it('조우가 활성인 동안에만 대시 쿨다운이 빨리 식는다 (긍정 + 음성 짝)', () => {
+    const w = mk([[PH9, 1]]);
+    const p = player(w);
+
+    // 비활성 — 이 앵커는 대시 쿨다운을 한 틱도 안 건드린다.
+    p.dashCooldown = 100;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.dashCooldown).toBe(100);
+
+    // 활성 — 틱당 1 + floor(Lv/10) = 1 추가 감소.
+    setEncounter(w, 2);
+    onSignatureStep(w, p, emptyInput());
+    expect(p.dashCooldown).toBe(99);
+  });
+
+  it('가속량이 레벨에 단조 증가한다 (하한 짝: 미투자 런은 0 이다)', () => {
+    const off = mk();
+    const q = player(off);
+    q.dashCooldown = 100;
+    setEncounter(off, 1);
+    onSignatureStep(off, q, emptyInput());
+    // ⚠️ 하한 짝이 없으면 "양변이 0 이라 성립" 하는 항진이 된다.
+    expect(100 - q.dashCooldown).toBe(0);
+
+    let prev = 0;
+    for (const level of [1, 10, 20]) {
+      const w = mk([[PH9, level]]);
+      const p = player(w);
+      p.dashCooldown = 100;
+      setEncounter(w, 1);
+      onSignatureStep(w, p, emptyInput());
+      const drop = 100 - p.dashCooldown;
+      expect(drop).toBeGreaterThan(0);
+      expect(drop).toBeGreaterThanOrEqual(prev);
+      prev = drop;
+    }
+    // Lv20 = 1 + floor(20/10) = 3.
+    expect(prev).toBe(3);
+  });
+
+  it('쿨다운이 0 아래로 내려가지 않는다', () => {
+    const w = mk([[PH9, 20]]);
+    const p = player(w);
+    p.dashCooldown = 1;
+    setEncounter(w, 2);
+    onSignatureStep(w, p, emptyInput());
+    expect(p.dashCooldown).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ㉔ 배치6 — PH5 연장 위상 (앵커 ⑨ · 창 마지막 틱 정지)
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션 (실행함, 2026-08-07)
+//  - `player.aux0 = a - 1` 제거 → 3건 적색
+//
+// ⚠️ **`!stalledThisTick` 만 지우는 뮤테이션은 적색이 되지 않는다 — 실측했다.** PH6 이 먼저
+//    `aux0` 을 한 칸 내려서 PH5 의 `a === 마지막 틱` 이 그 틱에 이미 거짓이기 때문이다. 즉
+//    겹침을 실제로 막는 것은 **순서**이고 그 플래그는 두 겹째다(효과 함수 주석에 같은 사실을
+//    적어 뒀다). 아래 「PH6 과 같은 틱에 겹치지 않는다」는 그 **불변식**을 잠그는 것이지
+//    플래그의 존재를 잠그는 것이 아니다 — 순서가 뒤집히면 그때 이 케이스가 적색이 된다.
+
+describe('㉔ PH5 연장 위상 (앵커 ⑨)', () => {
+  const LAST = CLOAK_UNHIT_TICKS + CLOAK_HOLD_TICKS - 1;
+
+  /**
+   * 창 마지막 틱부터 굴린다 — 앵커 ⑨ 뒤에 world 의 `aux0++` 가 온다는 순서를 그대로 흉내
+   * 낸다. 창이 끝나기까지(= `aux0` 이 임계를 넘기까지) 걸린 틱 수를 돌려준다.
+   */
+  function ticksToExit(w: WorldState, p: Entity, limit: number): number {
+    p.aux0 = LAST;
+    for (let i = 1; i <= limit; i++) {
+      onSignatureStep(w, p, emptyInput());
+      p.aux0 = Math.trunc(p.aux0) + 1; // world 의 적립
+      if (Math.trunc(p.aux0) >= CLOAK_UNHIT_TICKS + CLOAK_HOLD_TICKS) return i;
+    }
+    return limit + 1;
+  }
+
+  it('창이 예산만큼 정확히 늘어난다 (하한 짝: 미투자 런은 1틱에 끝난다)', () => {
+    const off = mk();
+    // ⚠️ 하한 짝 — 배선이 끊기면 아래 비교의 양변이 같아져 항진이 된다.
+    expect(ticksToExit(off, player(off), 400)).toBe(1);
+
+    // Lv1 예산 = floor(120 × 1 / 20) = 6 → 마지막 틱을 6번 더 붙잡는다.
+    const lv1 = mk([[PH5, 1]]);
+    expect(ticksToExit(lv1, player(lv1), 400)).toBe(7);
+
+    // Lv20 예산 = floor(120 × 20 / 20) = 120 → 창이 정확히 두 배가 된다.
+    const lv20 = mk([[PH5, 20]]);
+    expect(ticksToExit(lv20, player(lv20), 400)).toBe(121);
+  });
+
+  it('예산은 창당이다 — 진입 에지가 리셋한다', () => {
+    const w = mk([[PH5, 1]]);
+    const p = player(w);
+    expect(ticksToExit(w, p, 400)).toBe(7);
+    expect(readSlot(w.skillStage, PhantomStage.extendedHoldUsed)).toBe(6);
+
+    // 다음 창 진입(자연 적립 통과 에지)이 예산을 되돌린다.
+    p.aux0 = CLOAK_UNHIT_TICKS - 1;
+    stepWorld(w, emptyInput());
+    expect(readSlot(w.skillStage, PhantomStage.extendedHoldUsed)).toBe(0);
+    expect(ticksToExit(w, p, 400)).toBe(7);
+  });
+
+  it('창 **중간** 틱은 붙잡지 않는다 — DI2 주기 중복을 원천 차단한다 (긍정 짝 포함)', () => {
+    const w = mk([[PH5, 20]]);
+    const p = player(w);
+    // 창 한복판(300) — 여기서 붙잡으면 DI2 의 `(a − 240) % 60` 이 여러 번 참이 된다.
+    p.aux0 = 300;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.aux0).toBe(300);
+    // 긍정 짝 — 같은 런·같은 훅인데 마지막 틱에서는 붙잡는다.
+    p.aux0 = LAST;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.aux0).toBe(LAST - 1);
+  });
+
+  it('PH6 과 같은 틱에 겹치지 않는다 — 순변화가 −1 이 되지 않는다', () => {
+    const w = mk([
+      [PH5, 20],
+      [PH6, 20],
+    ]);
+    const p = player(w);
+    p.aux0 = LAST;
+    writeSlot(w.skillStage, PhantomStage.frozenClockPending, 1);
+    onSignatureStep(w, p, emptyInput());
+    // 둘 다 걸렸다면 357 이 된다. 하나만 산다.
+    expect(p.aux0).toBe(LAST - 1);
+    expect(
+      readSlot(w.skillStage, PhantomStage.frozenClockUsed) +
+        readSlot(w.skillStage, PhantomStage.extendedHoldUsed),
+    ).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ㉕ 배치6 — AS8 처형인의 적공 (앵커 ⑪ 적립 + 앵커 ⑯ 소비)
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션 (실행함, 2026-08-07)
+//  - `phantomEnemyDeath` 의 `writeSlot` 제거 → 4건 적색
+//  - 소비부의 `params.damage = …` 제거 → 2건 적색
+//  - `onEnemyDeath` 의 `case SIG_PHANTOM_CLOAK` 제거 → 4건 적색
+
+describe('㉕ AS8 처형인의 적공 (앵커 ⑪ · 앵커 ⑯)', () => {
+  function vp8(over: Partial<VolleyParams> = {}): VolleyParams {
+    return {
+      damage: 250,
+      pierce: 0,
+      count: 3,
+      speed: 100,
+      radius: 4,
+      life: 60,
+      spread: 0.5,
+      cooldownQ: 12,
+      mark: 0,
+      countUsed: true,
+      ballisticsUsed: true,
+      targetDist: 200,
+      aimAngle: 0,
+      inputX: 0,
+      inputY: 0,
+      cloakBreak: false,
+      leadDamageBonus: 0,
+      leadPierceBonus: 0,
+      recordSpawnDamage: false,
+      ...over,
+    };
+  }
+
+  function kill(w: WorldState, n: number): void {
+    for (let i = 0; i < n; i++) onEnemyDeath(w, 0, 0, false, false);
+  }
+
+  it('처치가 스택으로 쌓인다 (미투자면 슬롯이 0 그대로다)', () => {
+    const off = mk();
+    kill(off, 3);
+    expect(readSlot(off.skillCarry, PhantomCarry.executionerStacks)).toBe(0);
+
+    const on = mk([[AS8, 1]]);
+    kill(on, 3);
+    expect(readSlot(on.skillCarry, PhantomCarry.executionerStacks)).toBe(3);
+  });
+
+  it('스택에 상한이 있다 — 장기 런에서 한 발이 무한히 커지지 않는다', () => {
+    const w = mk([[AS8, 20]]);
+    kill(w, 50);
+    expect(readSlot(w.skillCarry, PhantomCarry.executionerStacks)).toBe(20);
+  });
+
+  it('해제 첫 타 볼리에서만 가산되고 그 자리에서 비워진다 (긍정 + 음성 짝)', () => {
+    const w = mk([[AS8, 10]]);
+    const p = player(w);
+    kill(w, 3);
+
+    // 음성 — 평범한 볼리는 스택이 있어도 한 바이트도 안 바뀐다.
+    const plain = vp8({ cloakBreak: false });
+    onVolleyParams(w, p, plain);
+    expect(plain.damage).toBe(250);
+    expect(readSlot(w.skillCarry, PhantomCarry.executionerStacks)).toBe(3);
+
+    // 긍정 — 해제 첫 타 볼리는 가산되고 스택이 0 이 된다.
+    // 스택당 100 + 25×10 = 350bp · 3스택 = 1050bp → 250 × 26050/25000 = 260.5 → 261.
+    const breakShot = vp8({ cloakBreak: true });
+    onVolleyParams(w, p, breakShot);
+    expect(breakShot.damage).toBe(261);
+    expect(readSlot(w.skillCarry, PhantomCarry.executionerStacks)).toBe(0);
+
+    // 비운 뒤 곧바로 또 첫 타가 와도 가산이 없다(같은 스택을 두 번 안 쓴다).
+    const again = vp8({ cloakBreak: true });
+    onVolleyParams(w, p, again);
+    expect(again.damage).toBe(250);
+  });
+
+  it('가산이 스택 수와 레벨에 단조 증가한다 (하한 짝: 0스택은 0 이다)', () => {
+    const zero = mk([[AS8, 10]]);
+    const pz = player(zero);
+    const v0 = vp8({ cloakBreak: true });
+    onVolleyParams(zero, pz, v0);
+    // ⚠️ 하한 짝 — 배선이 끊기면 아래 단조 비교가 전부 0 대 0 으로 성립한다.
+    expect(v0.damage - 250).toBe(0);
+
+    let prev = 0;
+    for (const [level, stacks] of [
+      [1, 1],
+      [10, 3],
+      [20, 10],
+    ] as const) {
+      const w = mk([[AS8, level]]);
+      const p = player(w);
+      kill(w, stacks);
+      const v = vp8({ cloakBreak: true });
+      onVolleyParams(w, p, v);
+      const gain = v.damage - 250;
+      expect(gain).toBeGreaterThan(0);
+      expect(gain).toBeGreaterThan(prev);
+      prev = gain;
+    }
+  });
+
+  it('침공에서는 스택이 한 칸도 안 쌓인다 — 해시에 접히는 유령 상태를 막는다', () => {
+    const w = mk([[AS8, 20]]);
+    (w.config as { invasion3?: unknown }).invasion3 = { seed: 1 };
+    kill(w, 5);
+    expect(readSlot(w.skillCarry, PhantomCarry.executionerStacks)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ㉖ 배치6 — AS1 이중 각인 (앵커 ⑯ + 예약 슬롯)
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션 (실행함, 2026-08-07)
+//  - 소비부의 `params.damage = …` 제거 → 4건 적색
+
+describe('㉖ AS1 이중 각인 (앵커 ⑯)', () => {
+  function vp1(over: Partial<VolleyParams> = {}): VolleyParams {
+    return {
+      damage: 100,
+      pierce: 0,
+      count: 3,
+      speed: 100,
+      radius: 4,
+      life: 60,
+      spread: 0.5,
+      cooldownQ: 12,
+      mark: 0,
+      countUsed: true,
+      ballisticsUsed: true,
+      targetDist: 200,
+      aimAngle: 0,
+      inputX: 0,
+      inputY: 0,
+      cloakBreak: false,
+      leadDamageBonus: 0,
+      leadPierceBonus: 0,
+      recordSpawnDamage: false,
+      ...over,
+    };
+  }
+
+  it('해제 첫 타 **다음** 볼리 한 발에만 후속 배율이 실린다 (긍정 + 음성 짝)', () => {
+    const w = mk([[AS1, 20]]);
+    const p = player(w);
+
+    // ① 첫 타 자체는 안 건드린다(원배율은 world 소진 지점이 이미 먹였다).
+    const first = vp1({ cloakBreak: true });
+    onVolleyParams(w, p, first);
+    expect(first.damage).toBe(100);
+    expect(readSlot(w.skillStage, PhantomStage.twinMarkPending)).toBe(1);
+
+    // ② 다음 볼리 — Lv20 후속 배율 bp = 16070 → 100 × 1.607 = 160.7 → 161.
+    const second = vp1();
+    onVolleyParams(w, p, second);
+    expect(second.damage).toBe(161);
+    expect(readSlot(w.skillStage, PhantomStage.twinMarkPending)).toBe(0);
+
+    // ③ 그 다음은 평타다 — "한 발 더" 가 두 발이 되지 않는다(음성 짝).
+    const third = vp1();
+    onVolleyParams(w, p, third);
+    expect(third.damage).toBe(100);
+  });
+
+  it('미투자 런은 예약도 배율도 없다 (긍정 짝 포함)', () => {
+    const off = mk();
+    const q = player(off);
+    onVolleyParams(off, q, vp1({ cloakBreak: true }));
+    expect(readSlot(off.skillStage, PhantomStage.twinMarkPending)).toBe(0);
+    const a = vp1();
+    onVolleyParams(off, q, a);
+    expect(a.damage).toBe(100);
+
+    const on = mk([[AS1, 20]]);
+    const p = player(on);
+    onVolleyParams(on, p, vp1({ cloakBreak: true }));
+    const b = vp1();
+    onVolleyParams(on, p, b);
+    expect(b.damage).toBe(161);
+  });
+
+  it('후속 배율이 레벨에 단조 증가하고 **원배율(2.5배)보다 작다**', () => {
+    let prev = 0;
+    for (const level of [1, 10, 20]) {
+      const w = mk([[AS1, level]]);
+      const p = player(w);
+      onVolleyParams(w, p, vp1({ cloakBreak: true }));
+      const v = vp1();
+      onVolleyParams(w, p, v);
+      expect(v.damage).toBeGreaterThan(prev);
+      // AS3(재장전 = 원배율)과 값이 같아지면 두 스킬이 하나가 된다 — 그 경계를 잠근다.
+      expect(v.damage).toBeLessThan(250);
+      prev = v.damage;
+    }
+    // Lv1 = 84(평타보다 작다 — 설계 문면 그대로다) · Lv20 = 161.
+    expect(prev).toBe(161);
+  });
+
+  it('다음 볼리가 또 해제 첫 타면 얹지 않고 예약만 다시 세운다 (AS3 재장전 연쇄)', () => {
+    const w = mk([[AS1, 20]]);
+    const p = player(w);
+    onVolleyParams(w, p, vp1({ cloakBreak: true }));
+    const chained = vp1({ cloakBreak: true });
+    onVolleyParams(w, p, chained);
+    expect(chained.damage).toBe(100);
+    expect(readSlot(w.skillStage, PhantomStage.twinMarkPending)).toBe(1);
+    // 연쇄가 끝난 뒤의 한 발이 후속 배율을 받는다.
+    const tail = vp1();
+    onVolleyParams(w, p, tail);
+    expect(tail.damage).toBe(161);
   });
 });

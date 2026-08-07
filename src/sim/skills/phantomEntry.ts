@@ -44,6 +44,7 @@ import { skillLv } from '../../items/skills.js';
 // (스트라이커는 [offense, defense, utility], 아크캐스터는 [offense, utility, defense] 로 셋이 다 달랐다).
 
 const enum Sk {
+  /** PH5 연장 위상 */ extendedPhase = 14,
   /** PH6 정지된 시계 */ frozenClock = 15,
   /** PH7 진입 섬광 */ entryFlash = 16,
   /** DI7 소실 냉파 */ vanishingChill = 26,
@@ -132,5 +133,18 @@ export function phantomCloakEntry(state: WorldState, player: Entity): void {
     if (readSlot(state.skillStage, PhantomStage.frozenClockPending) !== 0) {
       writeSlot(state.skillStage, PhantomStage.frozenClockPending, 0);
     }
+  }
+
+  // ⑤ PH5 연장 위상 — **창당 연장 예산 리셋**(효과 본체는 `skills/phantom.ts`).
+  //
+  //    자리와 사유가 위 PH6 과 같다: 되감기 지점(`world.ts` 의 `aux0 = 0`)이 앵커가 아니고,
+  //    되감기와 다음 진입 사이는 창 밖이라 소비가 원리적으로 일어나지 않는다(연장은 창의
+  //    마지막 틱에서만 산다). 그래서 진입 에지 리셋이 "창당" 을 정확히 성립시킨다.
+  //
+  //    ⚠️ 게이트 안쪽 쓰기다(규율 ②) — 미투자 런은 슬롯이 0 인 채로 남아야 "전 슬롯 0 이면
+  //    무폴드" 가 성립한다.
+  const ph5 = lv(state, Sk.extendedPhase);
+  if (ph5 >= 1 && readSlot(state.skillStage, PhantomStage.extendedHoldUsed) !== 0) {
+    writeSlot(state.skillStage, PhantomStage.extendedHoldUsed, 0);
   }
 }

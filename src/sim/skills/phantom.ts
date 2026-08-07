@@ -23,7 +23,36 @@
  *
  * ---
  *
- * ## ⚠️ 지금 배선된 것은 30종 중 **20종**이다 (S3 이 16 → 19, 공유 앵커 레인이 +1 = 20)
+ * ## ⚠️ 지금 배선된 것은 30종 중 **27종**이다 (배치5 까지 22, 배치6 이 +5)
+ *
+ * 배치6 이 더한 다섯과 그것을 연 자리:
+ *  - **DI9「유령 선체」** — 신설 앵커 `onPlayerWallSlide`(선체↔벽 겹침 해소 **직전**). 배치4~5 가
+ *    이 스킬을 벽 파괴 축(`onWallHit`)에 묶어 뒀던 것이 오류였고, 배치5 팬텀 레인의 grep 정정이
+ *    이 앵커로 착지했다({@link phantomPlayerWallSlide}).
+ *  - **PH9「메아리 잠행」** — 신설 leaf `objectiveState.ts` 의 `objectiveActiveOf`(지속 절반) +
+ *    기존 앵커 ㉙ `onObjectiveResolved`(진입 절반). 막고 있던 것은 *"에코·조우 활성을 읽는
+ *    자리가 없다"* 였고, 그 술어를 값으로 당기면 런타임 순환이라 leaf 가 필요했다.
+ *  - **PH5「연장 위상」** — 앵커 ⑨. 설계가 지정한 길(유지 창을 config 파생으로 승격)은
+ *    `world.ts`·`cloak.ts` 의 임계 시그니처를 함께 고쳐야 해 이 레인 밖이었는데, **창의
+ *    마지막 틱에서 시계를 붙잡으면** 임계를 옮기지 않고 같은 값이 나온다(PH6 과 같은 결의
+ *    등가 교환). 붙잡는 자리를 마지막 틱으로 고정한 사유는 {@link phantomSignatureStep} 안에 있다.
+ *  - **AS8「처형인의 적공」** — 앵커 ⑪ 적립 + 앵커 ⑯ 소비. 아래 "가장 큰 덩어리" 문단이
+ *    AS1·AS8·DI10 셋을 소진 지점에 묶어 뒀는데, **AS8 은 가산 축이라 배율 값을 몰라도 닿는다**:
+ *    앵커 ⑯ 의 `params.damage` 는 이미 배율이 먹은 값이라 비율 하나로 가산이 표현된다.
+ *  - **AS1「이중 각인」** — 앵커 ⑯ + 예약 슬롯. 소진 값이 아니라 *"직전 볼리가 첫 타였는가"* 만
+ *    있으면 되고, 그것은 `params.cloakBreak` 를 다음 볼리까지 나르면 된다.
+ *
+ * ## 남은 3종과 사유 (배치6 이 조사하고 **일부러 안 넣었다**)
+ *  - **AS6「무성 격살」** — 사망 잔재를 만드는 곳(`elite.ts` `explodeElite` · `world.ts`
+ *    BK_SPLIT 분열)이 앵커 ⑪ 보다 **앞**이다. 사후에 파편을 지우는 것은 스폰 억제와 값이
+ *    다르다(한 틱 살아 피해를 준다). 스폰 **전** 앵커가 필요하다.
+ *  - **AS7「원한 청산」** — *"마지막으로 나를 공격한 적"* 을 **이름 붙일 수단이 없다.** 앵커 ④ 는
+ *    원거리 피격에서 좌표(`srcX`/`srcY`)만 주고, 접촉 적(`contact`)은 몸통 접촉에만 온다.
+ *    좌표 최근접으로 되찾으면 피격원 술어의 두 번째 사본이 되고, 표식을 적 `aux` 에 실으면
+ *    다른 축(거동 파라미터·현상금 점화)과 칸을 다툰다.
+ *  - **DI10「공허 계약」** — 대가(최대 HP 추가 삭감)의 자리가 스탯 파생(`skillDerived`/
+ *    `createWorld`)이고 앵커가 아니다. 이득(배율 영구 가산)만 넣으면 **순수 상향**이라
+ *    반쪽 배선이다.
  *
  * 공유 앵커 레인이 더한 하나는 **PH2「위상 착지」**({@link phantomActiveFired}) — 앵커 ㉗
  * (`onActiveFired`, 액티브 핸들러 **직후**)이 열었다. 막고 있던 것은 "착지 지점을 아는 자리가
@@ -64,7 +93,16 @@ import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
 // ⚠️ **타입 전용이다.** `skillHooks.ts` 는 이 파일을 런타임 import 하므로 값으로 당기면 곧바로
 // 순환이다 — `import type` 은 컴파일에서 지워져 그래프에 간선을 만들지 않는다.
-import type { PlayerMoveParams, VolleyParams, WallHitParams } from '../skillHooks.js';
+import type {
+  PlayerMoveParams,
+  VolleyParams,
+  WallHitParams,
+  WallSlideParams,
+} from '../skillHooks.js';
+// 에코·조우의 「활성」 술어. ⚠️ `echo.ts`/`encounter.ts` 를 값으로 당기면 그 둘이
+// `skillHooks.ts` 를 값으로 당기므로 곧바로 런타임 순환이다 — 이 leaf 가 그 사유로 존재한다
+// (그 파일 헤더가 정본).
+import { objectiveActiveOf } from '../objectiveState.js';
 // PH2 의 계열 게이트가 읽는 액티브 정의. 타입 전용(위 사유와 같다).
 import type { ActiveSkillDef } from '../../../data/ships/actives/types.js';
 import { advanceCloak, playerCloaked, setBreakToken } from '../cloak.js';
@@ -73,7 +111,12 @@ import { COLD_DURATION, applySlow } from '../status.js';
 import { slideCircleWalls } from '../los.js';
 import { length } from '../math.js';
 import { readSlot, writeSlot, PhantomCarry, PhantomStage } from '../skillSlots.js';
-import { CLOAK_HOLD_TICKS, CLOAK_UNHIT_TICKS, cloakWindowActive } from '../shipSignature.js';
+import {
+  CLOAK_BREAK_BP,
+  CLOAK_HOLD_TICKS,
+  CLOAK_UNHIT_TICKS,
+  cloakWindowActive,
+} from '../shipSignature.js';
 import { skillLv } from '../../items/skills.js';
 
 // ---------------------------------------------------------------------------
@@ -88,18 +131,22 @@ import { skillLv } from '../../items/skills.js';
 // 순서와 우연히 맞아도 정본은 언제나 `trees` 배열이다.
 
 const enum Sk {
+  /** AS1 이중 각인 */ twinMark = 0,
   /** AS2 은막 침투 */ cloakPierce = 1,
   /** AS3 처형 재장전 */ executionReload = 2,
   /** AS4 급소 해부 */ vitalDissection = 3,
   /** AS5 배후 격살 */ backstab = 4,
+  /** AS8 처형인의 적공 */ executionerTally = 7,
   /** AS9 절멸 선고 */ annihilationVerdict = 8,
   /** AS10 유령 탄도 */ ghostTrajectory = 9,
   /** PH1 잔상 이탈 */ afterimageExit = 10,
   /** PH2 위상 착지 */ phaseLanding = 11,
   /** PH3 그림자 장부 */ shadowLedger = 12,
   /** PH4 무흔 보행 */ tracelessStride = 13,
+  /** PH5 연장 위상 */ extendedPhase = 14,
   /** PH6 정지된 시계 */ frozenClock = 15,
   /** PH8 흔적 흡수 */ traceSiphon = 17,
+  /** PH9 메아리 잠행 */ echoStalk = 18,
   /** PH10 발각 즉응 */ blownCoverReflex = 19,
   /** DI1 위상 정산 */ phaseLiquidation = 20,
   /** DI2 은둔 재생 */ cloakedMending = 21,
@@ -107,6 +154,7 @@ const enum Sk {
   /** DI4 반발 위상 */ repulsePhase = 23,
   /** DI5 최후 위상 */ lastPhase = 24,
   /** DI6 차폐 잠행 */ coverStalk = 25,
+  /** DI9 유령 선체 */ ghostHull = 28,
 }
 
 /**
@@ -183,6 +231,54 @@ function frozenClockBudget(level: number): number {
   const raw = 12 + Math.floor((24 * level) / 10);
   const cap = Math.floor(CLOAK_HOLD_TICKS / 2);
   return raw < cap ? raw : cap;
+}
+
+/**
+ * PH5 창당 연장 예산 = `floor(CLOAK_HOLD_TICKS × Lv / 20)` 틱 (Lv1 = 6 · Lv10 = 60 · Lv20 = 120).
+ *
+ * ⚠️ **밸런스 각주다** — 설계 문면(`data/ships/phantom.ts` PH5)은 *"은신 유지 시간이 길어진다"*
+ * 까지만 말하고 계단을 비워 뒀다(DI4 의 {@link REPULSE_RADIUS} 와 같은 자리 — 출시 전 일괄
+ * 패스 대상). 여기 함수 하나로 모아 둔 것은 그때 고칠 자리를 하나로 만들기 위해서다.
+ *
+ * 기준을 `CLOAK_HOLD_TICKS` 파생으로 적은 것은 유계 때문이다: Lv20 에서 정확히 창 1개분(+100%)
+ * 이고 그 이상 자라지 않는다. 상수 리터럴로 적으면 HOLD 가 바뀌는 날 비율이 조용히 갈린다.
+ */
+function extendedHoldBudget(level: number): number {
+  return Math.floor((CLOAK_HOLD_TICKS * level) / 20);
+}
+
+/**
+ * AS1 후속 배율 bp = `CLOAK_BREAK_BP × (0.3 + 0.6×Lv/(Lv+15))` — **총 배율**이다(가산이 아니다).
+ *
+ * 이 파일 헤더가 못 박은 값 그대로다: *"설계서 AS1 의 후속 배율은
+ * `25000 × (0.3 + 0.6×Lv/(Lv+15))` bp(Lv1 ≈ 0.85배 · Lv20 ≈ 1.6배)로 **원배율보다 작다**"*.
+ * 「배」로 적힌 그 수치가 총 배율이라는 뜻이고, 그래서 AS3(재장전 = 원배율 2.5배)과 값이
+ * 갈린다 — 가산으로 읽으면 Lv15 부터 2.5배를 넘어 그 구분이 무너진다.
+ *
+ * ⚠️ **Lv1·Lv2 에서는 1.0 미만이다**(Lv1 = 0.84배 · Lv2 = 0.93배 · Lv3 = 정확히 1.00배).
+ * 즉 저레벨 후속타는 평타보다 약하다. 설계 문면대로 적은 값이고 여기서 하한을 발명하지
+ * 않는다 — 임의의 `max(10000, ·)` 는 설계에 없는 계단을 하나 더 만든다. 레인 보고서에 그대로
+ * 올린다.
+ *
+ * 나눗셈을 정수 bp 로 두 번에 나눠 적는 것은 결정론 때문이다(f64 상수 `0.3`·`0.6` 을 곱하면
+ * Lv 에 따라 `floor` 가 갈릴 수 있다 — {@link frozenClockBudget} 과 같은 사유).
+ */
+function twinMarkBp(level: number): number {
+  const f = 3000 + Math.floor((6000 * level) / (level + 15));
+  return Math.floor((CLOAK_BREAK_BP * f) / 10000);
+}
+
+/**
+ * AS8 스택 상한 · 스택당 가산 bp.
+ *
+ * ⚠️ **둘 다 밸런스 각주다** — 설계 문면(`data/ships/phantom.ts` AS8)은 *"처치가 스택으로
+ * 쌓여 다음 은신 해제 첫 타 배율에 가산된다"* 로 **기구만** 정하고 수치를 비웠다.
+ * Lv20·만스택에서 `20 × (100 + 25×20) = 12000`bp = **+1.2배**라, 원배율 2.5배와 합쳐 3.7배로
+ * 유계다(무한 성장이 아니다). 상한이 없으면 장기 런에서 한 발이 임의로 커진다.
+ */
+const TALLY_STACK_CAP = 20;
+function tallyBpPerStack(level: number): number {
+  return 100 + 25 * level;
 }
 
 /** DI5 내부 쿨다운 = 3600 − 3600×Lv/(Lv+30) 틱 (Lv1 ≈ 3484, Lv20 = 2160, 점근 0·도달 없음). */
@@ -484,6 +580,7 @@ export function phantomSignatureStep(state: WorldState, player: Entity): void {
   //  ⓒ 예산 재확인 — 예약 시점과 집행 시점 사이에 다른 대시가 끼어 예산을 다 쓸 수 있다.
   // 예약은 조건 성립 여부와 무관하게 **소비한다**(대시 1회 = 예약 1회이지 "언젠가 반드시 정지"가
   // 아니다). 안 지우면 창 밖에서 걸린 예약이 다음 창의 첫 틱을 공짜로 얼린다.
+  let stalledThisTick = false;
   const ph6 = lv(state, Sk.frozenClock);
   if (ph6 >= 1 && readSlot(state.skillStage, PhantomStage.frozenClockPending) !== 0) {
     writeSlot(state.skillStage, PhantomStage.frozenClockPending, 0);
@@ -492,8 +589,135 @@ export function phantomSignatureStep(state: WorldState, player: Entity): void {
     if (used < frozenClockBudget(ph6) && a > CLOAK_UNHIT_TICKS && cloakWindowActive(a)) {
       player.aux0 = a - 1;
       writeSlot(state.skillStage, PhantomStage.frozenClockUsed, used + 1);
+      stalledThisTick = true;
     }
   }
+
+  // ⑤ PH5 연장 위상 — **창의 마지막 틱에서만** 시계를 붙잡아 유지 시간을 늘린다.
+  //
+  // ## 왜 「HOLD 상수를 키운다」가 아니라 여기인가
+  // 창 종료 판정의 정본은 `world.ts` 의 `cloakExitCrossed(prevUnhit, aux0)` 이고, 그 임계는
+  // `CLOAK_UNHIT_TICKS + CLOAK_HOLD_TICKS` **상수**다(`cloak.ts`). 레벨을 임계에 태우려면
+  // 함수 시그니처와 그 호출부(`world.ts`)를 함께 고쳐야 하는데 그 파일은 이 레인 밖이다.
+  // 그래서 임계를 옮기는 대신 **임계에 닿는 시점을 늦춘다** — PH6 이 쓴 것과 같은 형태의
+  // 등가 교환이고, 창당 연장 총량은 예산과 정확히 같다.
+  //
+  // ## ⚠️ 붙잡는 자리가 **마지막 틱(359)** 인 것이 핵심이다
+  // 창 아무 데서나 붙잡아도 총 길이는 같지만, 중간에서 붙잡으면 `aux0` 이 같은 값에 머무는
+  // 동안 **주기 판정이 그 값에서 여러 번 참**이 된다 — DI2 의 `(a − 240) % 60 === 0` 이 정확히
+  // 그것이라 회복이 예산만큼 중복된다. 마지막 틱은 `(359 − 240) % 60 = 59` 라 그 판정이
+  // 구조적으로 거짓이고, 팬텀 30종 중 `aux0` 값 자체를 주기로 읽는 다른 스킬은 없다.
+  //  ⓐ `a === 마지막 틱` — 이 등호는 안전하다. 자연 적립이 +1 이고 이 앵커가 적립 **직전**이라
+  //    359 를 건너뛸 수 없다(주입 스킬은 전부 `advanceCloak` 경유이고 그것은 창 안 no-op 이다).
+  //  ⓑ PH6 과 **같은 틱에 겹치지 않는다**. 겹치면 순변화가 −1 이 되어 시계가 뒤로 간다 —
+  //    창 밖으로 나가지는 않지만(357 ≫ 240) 두 예산이 한 틱에 이중 소비된다.
+  //    ⚠️ `stalledThisTick` 는 **두 겹째**다. 첫 겹은 **순서**다: PH6 이 먼저 `aux0` 을 한 칸
+  //    내리므로 아래 `a === 마지막 틱` 이 그 틱에 이미 거짓이 된다. 그래서 이 플래그만
+  //    단독으로 지우는 뮤테이션은 **적색이 되지 않는다**(실측). 지우지 않고 두는 것은 훗날
+  //    두 블록의 순서가 뒤집혔을 때 남는 유일한 방벽이기 때문이다.
+  //  ⓒ 예산은 진입 에지에서 리셋된다(`phantomCloakEntry`) — PH6 과 같은 자리·같은 사유.
+  const ph5 = lv(state, Sk.extendedPhase);
+  if (ph5 >= 1 && !stalledThisTick) {
+    const a = Math.trunc(player.aux0);
+    const used = readSlot(state.skillStage, PhantomStage.extendedHoldUsed);
+    if (a === CLOAK_UNHIT_TICKS + CLOAK_HOLD_TICKS - 1 && used < extendedHoldBudget(ph5)) {
+      player.aux0 = a - 1;
+      writeSlot(state.skillStage, PhantomStage.extendedHoldUsed, used + 1);
+    }
+  }
+
+  // ⑥ PH9 메아리 잠행(후반부) — **에코·조우가 활성인 동안** 대시 쿨다운이 빨리 식는다.
+  //
+  // 술어는 `objectiveState.ts` 의 `objectiveActiveOf` 하나다(같은 문장을 두 번 적지 않는다 —
+  // 그 파일 헤더가 정본). 진입 절반은 앵커 ㉙ 의 {@link phantomObjectiveResolved} 다.
+  //
+  // ⚠️ **가속량은 밸런스 각주다** — 설계 문면은 "감소한다" 까지만 말한다. 틱당 추가 감소
+  //    `1 + floor(Lv/10)` 은 활성 창 동안 냉각이 2~3배가 된다는 뜻이고, 창 자체가 유한한
+  //    이벤트라 상시 이득이 아니다.
+  // ⚠️ 침공에서는 에코·조우 런타임이 없어 술어가 항상 거짓이다 — 여기에 `invasion3` 을 겹쳐
+  //    걸지 않는 이유이고, 겹쳐 걸면 술어가 둘이 된다.
+  const ph9 = lv(state, Sk.echoStalk);
+  if (ph9 >= 1 && player.dashCooldown > 0 && objectiveActiveOf(state)) {
+    const next = player.dashCooldown - (1 + Math.floor(ph9 / 10));
+    player.dashCooldown = next > 0 ? next : 0;
+  }
+}
+
+/**
+ * 앵커 ㉙ **런 목표가 완수된 틱** — PH9 메아리 잠행(진입 절반).
+ *
+ * 설계 문면: *"에코 안정화를 완수하면 **즉시 은신에 진입**하고, 조우 활성 동안 대시 쿨다운이
+ * 감소한다"*. 진입은 {@link advanceCloak} 경유가 유일한 경로다 — 스트릭을 임계까지 밀어
+ * 통과 에지에서 진입 훅(PH7·DI7·DI8)이 정상 발화한다. DI5「최후 위상」이 같은 형태를 쓴다.
+ *
+ * ## ⚠️ `kind` 로 가르지 않는다
+ * 이 앵커의 doc 이 *"두 지점 다 걸어야 한다 — 한쪽만 걸면 반쪽이다"* 를 명시했고, 완수라는
+ * 사건 자체가 트리거라 에코/조우를 가를 근거가 효과 쪽에 없다. 다만 `data/ships/phantom.ts`
+ * 의 한 줄 요약은 진입을 「에코」에, 지속을 「조우」에 각각 묶어 적고 있다 — 그 문면과 이
+ * 코드의 차이는 레인 보고서에 올린다(여기서 임의로 좁히면 조우 무대에서 진입이 통째로 죽는다).
+ *
+ * ## 왜 레벨 스케일이 없는가
+ * "즉시 진입" 은 이진이다(창은 이미 `CLOAK_HOLD_TICKS` 로 유계고, 늘리는 축은 PH5 다).
+ * 없는 계단을 만들면 밸런스 축이 하나 늘고 설계와 갈린다 — AS10 과 같은 판단이다.
+ *
+ * ⚠️ 침공 no-op 은 `advanceCloak` 에 내장돼 있다(그 함수 규칙 1).
+ */
+export function phantomObjectiveResolved(state: WorldState, player: Entity): void {
+  const ph9 = lv(state, Sk.echoStalk);
+  if (ph9 < 1) return;
+  advanceCloak(state, player, CLOAK_UNHIT_TICKS);
+}
+
+/**
+ * 앵커 ⑪ **잡몹 격추 통지** — AS8 처형인의 적공(적립 절반).
+ *
+ * 처치 1건당 스택 +1, 상한 {@link TALLY_STACK_CAP}. 소비는 앵커 ⑯ 의
+ * {@link phantomVolleyParams} 이고 소비 시 0 으로 되돌린다.
+ *
+ * ## ⚠️ 보스 격파는 여기 오지 않는다
+ * `compact` 의 보스/코어 분기는 `state.kills` 를 올리지 않아 이 앵커를 부르지 않는다(앵커 doc).
+ * 설계 문면이 "처치" 라 잡몹 격추와 정확히 겹치므로 넓혀 약속하지 않는다.
+ *
+ * ## ⚠️ 침공 게이트를 트리거에 병기한다
+ * 침공에서는 소비 지점(`params.cloakBreak`)이 구조적으로 항상 거짓이라 이득은 이미 막혀 있다.
+ * 그래도 여기서 막지 않으면 **스택 카운터만 런 내내 자라며** `skillCarry` 폴드에 실려 침공
+ * 해시를 바꾼다 — DI5 가 같은 사유로 같은 게이트를 트리거에 병기했다.
+ */
+export function phantomEnemyDeath(state: WorldState): void {
+  if (state.config.invasion3 !== undefined) return;
+  const as8 = lv(state, Sk.executionerTally);
+  if (as8 < 1) return;
+  const cur = readSlot(state.skillCarry, PhantomCarry.executionerStacks);
+  if (cur >= TALLY_STACK_CAP) return;
+  writeSlot(state.skillCarry, PhantomCarry.executionerStacks, cur + 1);
+}
+
+/**
+ * 벽 축 앵커 `onPlayerWallSlide` **선체↔벽 겹침 해소 직전** — DI9 유령 선체 **1종**.
+ *
+ * 설계 문면: *"**피격 무적** 동안 선체가 벽을 통과한다"*. 술어는 `player.iframes > 0` 하나다 —
+ * 피격 무적 창의 정본 상태이고, 앵커 doc 이 요구한 *"짧고 스스로 끝나는 술어"* 가 정확히
+ * 그것이다(매 틱 감소해 반드시 0 이 된다). 상시 켜지는 축을 이 칸에 얹지 않는다.
+ *
+ * ## ⚠️ 이것은 벽 파괴 축(`onWallHit`)이 **아니다** — 배치5 가 grep 으로 확정했다
+ * 탄↔벽은 `sweptCircleOverlapsWall` 로 **탄을 죽이고**, 이쪽은 `player.radius` 로 **원을
+ * 밀어낸다** — 함수도 술어도 겹치지 않는다. 그 정정의 착지점이 이 앵커이고, 근거는
+ * {@link phantomCloakBreakReset} 의 PH10 문단과 `WallSlideParams.passThrough` 의 doc 이다.
+ *
+ * ## 왜 레벨 스케일이 없는가
+ * 문면이 이진이다("통과한다"). 창 길이는 `config.hitIframes` 와 PH10 의 가산이 정하는 값이고,
+ * 여기서 그것을 다시 늘리면 PH10 과 축이 겹친다.
+ *
+ * ## ⚠️ 미투자·무적 아님이면 `params` 를 한 바이트도 안 건드린다 → 골든 해시 불변.
+ */
+export function phantomPlayerWallSlide(
+  state: WorldState,
+  player: Entity,
+  params: WallSlideParams,
+): void {
+  if (lv(state, Sk.ghostHull) < 1) return;
+  if (player.iframes <= 0) return;
+  params.passThrough = true;
 }
 
 /**
@@ -747,6 +971,54 @@ export function phantomVolleyParams(
     //    구분할 상태가 없고, 레벨 스케일 항이 "신규 상태 0" 으로 못 박혀 있다). 그래서 이
     //    보너스는 강화탄 **전부**에 실린다 — 구분하려고 새 슬롯을 잡으면 설계와 갈린다.
     params.pierce += Math.floor(as3 / 5);
+  }
+
+  // --- AS8 처형인의 적공(소비 절반) -----------------------------------------
+  // 쌓아 둔 처치 스택을 **이번 해제 첫 타의 배율에 가산**하고 그 자리에서 비운다.
+  //
+  // ## 왜 「배율 값」을 몰라도 되는가 — **비율로 얹는다**
+  // 이 앵커에 도달한 `params.damage` 는 `world.ts` 소진 지점이 이미 `× CLOAK_BREAK_BP/10000`
+  // 을 먹인 값이다(그 분기가 `cloakBreak` 를 세운 바로 그 자리다). 그래서 원하는 총 배율
+  // `(CLOAK_BREAK_BP + add)` 는 **현재 값에 `(CLOAK_BREAK_BP + add)/CLOAK_BREAK_BP` 를 곱하면**
+  // 정확히 나온다 — 기저 피해(`w.damage`)를 되짚을 필요가 없다. 이 파일 헤더가 *"남은 넷은
+  // 배율 값이나 소진 직전 상태를 요구해 그 칸으로는 닿지 않는다"* 고 적었는데, AS8 은 **가산**
+  // 축이라 비율 변환 하나로 닿는다(값을 아는 것과 비율을 얹는 것은 다른 요구다).
+  // ⚠️ 이 비율 형태는 `CLOAK_BREAK_BP` 가 **0 이 아님**에 의존한다. 상수이고 25000 이다.
+  //
+  // ⚠️ 스택이 0 이면 `params` 를 한 바이트도 안 건드린다(반올림조차 태우지 않는다) → 미투자·
+  //    무스택 런 골든 불변.
+  const as8 = lv(state, Sk.executionerTally);
+  if (as8 >= 1 && params.cloakBreak) {
+    const stacks = readSlot(state.skillCarry, PhantomCarry.executionerStacks);
+    if (stacks > 0) {
+      // 반올림은 게이트 **안**이다(규율 ③).
+      const add = stacks * tallyBpPerStack(as8);
+      params.damage = Math.round((params.damage * (CLOAK_BREAK_BP + add)) / CLOAK_BREAK_BP);
+      writeSlot(state.skillCarry, PhantomCarry.executionerStacks, 0);
+    }
+  }
+
+  // --- AS1 이중 각인 --------------------------------------------------------
+  // 해제 첫 타 **다음 볼리**에 후속 배율({@link twinMarkBp})을 총 배율로 싣는다.
+  //
+  // ## ⚠️ `setBreakToken` 재장전으로 대체하지 마라 (이 파일 헤더의 경고가 정본)
+  // 토큰은 0/1 이진이라 다시 세우면 후속 타가 **원배율(2.5배)** 을 받는데, AS1 의 후속 배율은
+  // 그보다 작다 — 그 대체는 AS3(재장전 = 원배율)과 값이 같아져 두 스킬이 하나가 된다.
+  // 그래서 토큰을 건드리지 않고 **예약 슬롯**으로 다음 볼리 하나만 집는다.
+  //
+  // ## 다음 볼리가 또 해제 첫 타면 AS1 은 **얹지 않는다**
+  // AS3(처형 재장전)이 토큰을 되세운 경우가 그것이다. 그 볼리는 이미 원배율(2.5배)을 받고
+  // 있어 더 작은 후속 배율을 곱하면 오히려 깎인다 — 대신 예약을 **다시** 세워 "첫 타 뒤 한
+  // 발" 이라는 문면을 유지한다(연쇄가 이어질 뿐 두 배율이 겹치지 않는다).
+  const as1 = lv(state, Sk.twinMark);
+  if (as1 >= 1) {
+    if (params.cloakBreak) {
+      writeSlot(state.skillStage, PhantomStage.twinMarkPending, 1);
+    } else if (readSlot(state.skillStage, PhantomStage.twinMarkPending) !== 0) {
+      writeSlot(state.skillStage, PhantomStage.twinMarkPending, 0);
+      // 반올림은 게이트 **안**이다(규율 ③).
+      params.damage = Math.round((params.damage * twinMarkBp(as1)) / 10000);
+    }
   }
 
   // --- AS10 유령 탄도(표식만) -----------------------------------------------

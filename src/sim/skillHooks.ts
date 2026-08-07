@@ -213,6 +213,9 @@ import {
   phantomVolleyParams,
   phantomPlayerMoveParams,
   phantomWallHit,
+  phantomObjectiveResolved,
+  phantomEnemyDeath,
+  phantomPlayerWallSlide,
 } from './skills/phantom.js';
 import {
   bubbleSignatureStep,
@@ -1405,12 +1408,20 @@ function dispatchEnemyDeathSkill(
       if (p !== undefined) bruiserEnemyDeath(state, p, elite);
       break;
     }
-    // ⚠️ **팬텀은 여기 case 가 없다 — 필요한 것이 사건이 아니라 지점이기 때문이다.**
-    // AS6「무성 격살」은 "은신 창 중 처치한 적이 죽음의 잔재를 남기지 않는다" 인데, 그 잔재를
-    // 만드는 곳은 `elite.ts` 의 `explodeElite` 와 `world.ts` 의 BK_SPLIT 분열이고 둘 다 이
-    // 앵커보다 **앞**에서 이미 실행됐다. 여기서 뒤늦게 알아 봐야 파편은 이미 태어났다.
-    // AS9(절멸 선고)는 격추가 아니라 **해제 첫 타의 명중 지점**이 트리거라 축이 다르다 —
-    // 그래서 여기가 아니라 **앵커 ⑩** 에 배선됐다(S3).
+    case SIG_PHANTOM_CLOAK:
+      // AS8「처형인의 적공」(적립 절반) — 처치 1건당 스택 +1(상한 있음). 소비는 앵커 ⑯ 에서
+      // "다음 해제 첫 타" 볼리가 한다. 좌표·엘리트 여부·화상은 안 본다(설계 문면이 처치 수
+      // 하나다) — 그래서 인자를 넘기지 않는다.
+      //
+      // ⚠️ **AS6「무성 격살」은 여기 배선할 수 없다 — 필요한 것이 사건이 아니라 지점이다.**
+      // "은신 창 중 처치한 적이 죽음의 잔재를 남기지 않는다" 인데, 그 잔재를 만드는 곳은
+      // `elite.ts` 의 `explodeElite` 와 `world.ts` 의 BK_SPLIT 분열이고 둘 다 이 앵커보다
+      // **앞**에서 이미 실행됐다. 여기서 뒤늦게 알아 봐야 파편은 이미 태어났고, 사후에
+      // 지우는 것은 스폰 억제와 값이 다르다(파편이 한 틱 살아 피해를 준다).
+      // AS9(절멸 선고)는 격추가 아니라 **해제 첫 타의 명중 지점**이 트리거라 축이 다르다 —
+      // 그래서 여기가 아니라 **앵커 ⑩** 에 배선됐다(S3).
+      phantomEnemyDeath(state);
+      break;
     default:
       break;
   }
@@ -2419,6 +2430,12 @@ export function onObjectiveResolved(
     case SIG_STRIKER_MARKSMAN:
       // M7「신호 추적」 뒤 절반 — 대시 쿨다운 전액 환급. 앞 절반(활성 중 반감)은 앵커 ② 다.
       strikerObjectiveResolved(state, player, kind);
+      break;
+    case SIG_PHANTOM_CLOAK:
+      // PH9「메아리 잠행」(진입 절반) — 완수 즉시 은신 진입. 지속 절반(조우 활성 중 대시
+      // 쿨다운 가속)은 앵커 ⑨ 안이고 술어는 `objectiveState.ts` 의 `objectiveActiveOf` 다.
+      // ⚠️ `kind` 로 가르지 않는다 — 이 앵커 doc 의 "두 지점 다 걸어야 한다" 가 근거다.
+      phantomObjectiveResolved(state, player);
       break;
     default:
       break;
@@ -3718,9 +3735,13 @@ export function onPlayerWallSlide(
   params: WallSlideParams,
 ): void {
   if (!state.skillsOn) return;
-  void player;
-  void params;
   switch (state.sigBit) {
+    case SIG_PHANTOM_CLOAK:
+      // DI9「유령 선체」 — 피격 무적(`player.iframes > 0`) 동안 겹침 해소를 건너뛴다.
+      // 배치4~5 가 이 스킬을 벽 파괴 축(`onWallHit`)으로 잘못 묶어 뒀던 것의 착지점이다 —
+      // 사유 전문은 `WallSlideParams.passThrough` 의 doc 과 효과 함수 주석에 있다.
+      phantomPlayerWallSlide(state, player, params);
+      break;
     // ⚠️ `break;` 필수.
     default:
       break;
