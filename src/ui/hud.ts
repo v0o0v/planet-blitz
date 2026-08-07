@@ -56,6 +56,11 @@ export interface HudState {
   timeSec: number;
   combo: number;
   multiplier: number;
+  /**
+   * 런 전체 회수 개수(PR#366 서버 권위 드랍). `WorldState.loot.length` 를 호출부가 그대로
+   * 넘긴다 — push 전용 배열이라 절대 줄지 않는다. 콤보와 같은 관용구로 0 이면 감춘다.
+   */
+  lootCount: number;
   /** Present only during the boss fight. */
   boss?: BossHudState | undefined;
   /** A supply raider is currently on screen. */
@@ -243,6 +248,7 @@ const STYLE = `
 #pb-hud .pb-bartext { position:relative; z-index:1; text-align:center; line-height:16px; font-size:11px; font-weight:600; text-shadow:0 1px 2px #000; }
 #pb-hud .pb-topline { display:flex; justify-content:space-between; font-size:13px; font-weight:700; margin-bottom:6px; text-shadow:0 1px 3px #000; }
 #pb-hud .pb-combo { color:#ffd24c; }
+#pb-hud .pb-loot { color:#8fd8ff; margin-left:8px; }
 #pb-supply { position:absolute; top:300px; left:50%; transform:translateX(-50%); background:rgba(255,180,40,.14); border:1px solid #ffcc44; color:#ffd98a; padding:6px 18px; border-radius:20px; font:700 15px 'Segoe UI',sans-serif; letter-spacing:1px; pointer-events:none; text-shadow:0 1px 2px #000; }
 #pb-boss { position:absolute; top:20px; left:50%; transform:translateX(-50%); width:640px; max-width:80vw; font-family:'Segoe UI',sans-serif; color:#fff; pointer-events:none; text-align:center; }
 #pb-boss .pb-bossname { font-size:14px; font-weight:800; letter-spacing:2px; text-shadow:0 1px 3px #000; margin-bottom:4px; }
@@ -335,6 +341,7 @@ export class Hud {
   private readonly hpBar: ReturnType<typeof bar>;
   private readonly xpBar: ReturnType<typeof bar>;
   private readonly comboEl: HTMLElement;
+  private readonly lootEl: HTMLElement;
   private readonly timeEl: HTMLElement;
   private readonly supplyBanner: HTMLElement;
   private readonly bossRoot: HTMLElement;
@@ -421,8 +428,11 @@ export class Hud {
     this.timeEl = document.createElement('span');
     this.comboEl = document.createElement('span');
     this.comboEl.className = 'pb-combo';
+    this.lootEl = document.createElement('span');
+    this.lootEl.className = 'pb-loot';
     this.topline.appendChild(this.timeEl);
     this.topline.appendChild(this.comboEl);
+    this.topline.appendChild(this.lootEl);
     this.hpBar = bar('HP', 'hp');
     this.xpBar = bar('LV', 'xp');
     this.root.appendChild(this.topline);
@@ -856,6 +866,7 @@ export class Hud {
     this.timeEl.textContent = `⏱ ${m}:${sec.toString().padStart(2, '0')}`;
     this.comboEl.textContent =
       s.combo > 0 ? t('hud.combo', { mult: s.multiplier.toFixed(2), combo: s.combo }) : '';
+    this.lootEl.textContent = s.lootCount > 0 ? t('hud.lootCount', { n: s.lootCount }) : '';
 
     this.supplyBanner.style.display = s.supplyActive ? 'block' : 'none';
 
