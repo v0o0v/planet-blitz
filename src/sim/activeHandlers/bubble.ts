@@ -31,6 +31,11 @@ import {
   setBuffTicks,
 } from '../activeTypes.js';
 import type { ActiveExpireTable, ActiveHandlerTable, ActiveSustainTable } from '../activeTypes.js';
+// FI6「헌막 의식」의 가산 피해 계산 — leaf 규율상 여기서는 **값**을 부르는 게 맞다(스트라이커·
+// 말로우·해츨링 액티브 핸들러가 이미 `../skills/*.js` 를 값으로 당기는 선례와 같은 형태다).
+// `skills/bubble.ts` 는 이 파일을 되당기지 않으므로(그 파일 import 목록에 이 경로가 없다)
+// 순환이 아니다.
+import { bubbleFilmOfferingConsume } from '../skills/bubble.js';
 
 /** 재생 타이머(`aux1`)를 주기 상한 안에서 앞당긴다. */
 function advanceRecharge(player: Entity, by: number): void {
@@ -117,7 +122,12 @@ export const BUBBLE_SUSTAIN: ActiveSustainTable = {
 export const BUBBLE_EXPIRE: ActiveExpireTable = {
   as_bubble_film_hi: (state, player, def) => {
     const centi = powerCentiOf(state, def);
-    blastDamage(state, player, FILM_BURST_RADIUS, scaleCenti(def.coeff.blastDamage ?? 0, centi));
+    const base = scaleCenti(def.coeff.blastDamage ?? 0, centi);
+    // FI6 헌막 의식 — 지속 중 흡수 누적을 가산 피해로 바꿔 소비한다(0 으로 되돌아간다).
+    // 미투자 런은 `bubbleFilmOfferingConsume` 이 즉시 0 을 돌려주므로 이 줄 추가가 종전
+    // 파열 피해와 비트 동일하다.
+    const offering = bubbleFilmOfferingConsume(state);
+    blastDamage(state, player, FILM_BURST_RADIUS, base + offering);
     requestFilmBurst(state, player.x, player.y);
     player.aux0 = 0;
     player.aux1 = 0;

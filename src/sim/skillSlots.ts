@@ -703,6 +703,13 @@ export const enum BubbleStage {
    * `Carry` 가 아니라 `Stage` 인 이유: 이 누적은 *이번 막 한 장*의 이력이라 구간을 넘겨
    * 살 이유가 없다 — 새 구간 첫 막이 지난 구간 막의 흡수량을 물려받으면 막 하나의 성능이
    * 부풀어 설계서의 "막 1장당" 전제가 깨진다.
+   *
+   * ⚠️ **배선 레인 실측(배치7)**: "지금 선 막이 불멸 막(`as_bubble_film_hi`)인가"의 판별에
+   * 표식 슬롯은 **필요 없었다** — `state.config.activeSlots` 로 두 액티브 슬롯 중 어느 것이
+   * `as_bubble_film_hi` 인지는 로드아웃 시점에 이미 정적으로 정해져 있고, 그 슬롯의
+   * `state.activeBuff0`/`activeBuff1`(둘 다 기존 필드)이 양수인 동안만 "불멸 막이 서 있다"가
+   * 참이다 — `film_lo`·재생 막은 이 조합에 걸리지 않는다(다른 `def.id`거나 애초에 버프 슬롯을
+   * 안 쓴다). 정본은 `skills/bubble.ts` 의 `bubbleFilmOfferingActive` 함수 주석.
    */
   offeringPool = 2,
   /**
@@ -721,4 +728,18 @@ export const enum BubbleStage {
    * 이유가 없다.
    */
   chainKillsSnap = 4,
+  /**
+   * PO10 — **다음 막이 설 때 `aux0` 에 얹을 보류 보강분**.
+   *
+   * ⚠️ **배선 레인이 추가한 칸(배치7 예약표 밖)** — 이 배정표는 3칸(`offeringPool`·
+   * `chainWindow`·`chainKillsSnap`)만 예약했지만, 실측 결과 PO10 은 **4번째 칸 없이 성립하지
+   * 않는다**: `world.ts` 의 `player.aux0 = FILM_ABSORB_FLAT` 대입(`SIG_BUBBLE_FILM` 분기)이
+   * 앵커 ⑨(이 칸을 읽는 `bubbleSignatureStep`) **뒤**에 실행되므로, 창이 닫히는 시점(재생
+   * 완료보다 항상 먼저 온다 — 창 상한 150틱 < 재생 최소 간격 262틱)에 곧바로 `aux0` 에 더해도
+   * world.ts 가 곧이어 `FILM_ABSORB_FLAT` 으로 **덮어써 지운다.** 그래서 보강분을 여기 잠시
+   * 보류해 두고, 재생이 일어난 **다음 틱**(`aux0 === FILM_ABSORB_FLAT && aux1 === 0` 이 그
+   * 신호 — 그 틱은 대입 분기 자체가 `aux0 !== 0` 이라 안 돈다)에 얹는다. 정본은
+   * `skills/bubble.ts` 의 `chainBoostPulse` 함수 주석.
+   */
+  chainPendingBoost = 5,
 }
