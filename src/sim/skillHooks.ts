@@ -143,6 +143,9 @@ import {
   strikerEnemyDamaged,
   strikerEnemyDeath,
   strikerPlayerMoveParams,
+  strikerBulletHitParams,
+  strikerGemPull,
+  strikerObjectiveResolved,
 } from './skills/striker.js';
 import {
   arccasterGemCollected,
@@ -349,15 +352,12 @@ function dispatchDashSkill(
   // 둔 것은 기존 호출부·픽스처를 안 깨기 위해서다(`srcX`/`srcY` 선례). ⚠️ 그래서 **단위
   // 테스트가 안 넘기면 `undefined`** 다 — 이 값을 쓰는 스킬의 테스트는 반드시 넘겨라.
   // 소비처가 생기지 않은 `case` 는 이 인자를 안 본다.
-  void dirX;
-  void dirY;
   switch (state.sigBit) {
     case SIG_STRIKER_MARKSMAN:
-      // M5 벽차기(무적프레임) · **M6 활공 정화**(적탄 소거 + 반경 안 잡몹 냉기).
-      // ⚠️ M2(추진 항적)는 여기 없다 — 술어 "대시 방향" 의 정본이 `resolveDirFallback(mx, my,
-      // angle)` 인데 그 `mx/my` 는 `stepPlayer` 지역 변수이고 이 앵커는 `input` 을 받지 않는다.
-      // `player.vx/vy` 는 이미 이동 성분이 합산된 뒤라 방향 규칙의 두 번째 사본이 된다.
-      strikerDashFired(state, player);
+      // M5 벽차기(무적프레임) · **M6 활공 정화**(적탄 소거 + 반경 안 잡몹 냉기) ·
+      // **M2 추진 항적**(대시 방향 정지 탄 열 — 배치6 이 실은 `dirX`/`dirY` 의 첫 소비처) ·
+      // **M7 신호 추적**(에코·조우 활성 중 쿨다운 반감).
+      strikerDashFired(state, player, dirX, dirY);
       break;
     // ⚠️ **아크캐스터는 여기 case 가 없다 — 설계에 대시 결속 스킬이 한 종도 없기 때문이다.**
     // 이 기체의 이동 결속은 전부 blink 액티브(BA1·BA4·BA6)이고 그것은 액티브 핸들러의 자리다.
@@ -795,7 +795,8 @@ export function onDamageChain(
   switch (state.sigBit) {
     // 각 `case` 는 **① 감소 → ② 흡수** 순서로 처리하고, 정수화는 자기 게이트 안에서 한다.
     case SIG_STRIKER_MARKSMAN:
-      return strikerDamageChain(state, player, dmg); // ① S4 감소 → ② S8 흡수
+      // ① S4 엄폐 교리(벽 접촉) → **S5 극지 적응**(해저드 출처) 감소 → ② S8 흡수.
+      return strikerDamageChain(state, player, dmg, sources);
     case SIG_ARC_OVERCHARGE:
       // ① BR3·BR5·**BA8**(해저드 출처) 감소 → ② BR4 흡수. 순서는 이 앵커 주석 그대로다.
       return arccasterDamageChain(state, player, dmg, sources);
@@ -886,6 +887,12 @@ export function onBulletHitParams(
       // CH5 전위차 저격 — 발사 시점 수명(앵커 ⑯ 의 `recordSpawnOrigin`) 대비 비행 비율로
       // 「멀리 비행한 뒤 명중」을 판정해 피해 증폭 + 관통 가산.
       arccasterBulletHitParams(state, bullet, target, params);
+      break;
+    case SIG_STRIKER_MARKSMAN:
+      // **F7 표적 고정**(같은 표적 연속 명중 스택 증폭) · **S7 최후 처형**(빈사 중 정조준탄이
+      // 임계 이하 잡몹을 정상 격추 경로로 죽인다). 둘 다 앵커 ⑩ 이 아니라 **여기**가 자리다 —
+      // ⑩ 은 `t.hp -= dealt` 뒤라 이번 일격의 피해를 못 바꾼다.
+      strikerBulletHitParams(state, bullet, target, params);
       break;
     default:
       break;
@@ -2403,6 +2410,10 @@ export function onObjectiveResolved(
       // ME7「에코 채권」 — 부채 전액 소각 + 소각량 비례 자석 버프 창.
       mallowObjectiveResolved(state, player, kind);
       break;
+    case SIG_STRIKER_MARKSMAN:
+      // M7「신호 추적」 뒤 절반 — 대시 쿨다운 전액 환급. 앞 절반(활성 중 반감)은 앵커 ② 다.
+      strikerObjectiveResolved(state, player, kind);
+      break;
     default:
       break;
   }
@@ -3591,11 +3602,12 @@ export function onGemPull(
   params: GemPullParams,
 ): void {
   if (!state.skillsOn) return;
-  void player;
-  void gem;
-  void params;
   switch (state.sigBit) {
     // ⚠️ `break;` 필수.
+    case SIG_STRIKER_MARKSMAN:
+      // M4「슬립스트림」 — 진행 방향 **전방**의 젬만 확장 반경으로 흡인한다(비등방).
+      strikerGemPull(state, player, gem, params);
+      break;
     default:
       break;
   }

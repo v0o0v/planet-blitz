@@ -29,7 +29,29 @@
  *
  * ---
  *
- * ## ⚠️ 이 파일이 배선한 것은 30종 중 19종이다
+ * ## ⚠️ 배치6 현재 — 30종 중 **26종**이 배선됐다
+ * 배치6 이 여섯을 더했다: **M4**(신설 앵커 `onGemPull` — 젬 1개마다의 비등방 판정) ·
+ * **M2**(앵커 ② 가 이제 **대시 방향**을 넘긴다) · **M7**(신설 leaf `objectiveState.ts` 의
+ * 활성 술어 + 앵커 ㉙) · **F7**·**S7**(앵커 **⑱** — 배치1 이 「⑩ 의 금지에 걸린다」로 접었던
+ * 둘인데, ⑱ 은 같은 명중을 **차감 전**에 본다. 자리를 잘못 보고 있었던 것이지 벽이 아니었다) ·
+ * **S5**(앵커 ㉙ 의 `slowTicks` + 감쇠 사슬의 해저드 출처 비트 — 두 절반이 다른 앵커에 산다).
+ *
+ * ### 배치6 이 조사하고 **넣지 않은 넷** — 사유는 아래 표 그대로 산다
+ *  · **F10 연장 탄창** · **M8 도약 사격**: 여전히 **볼리를 더 낳아야** 한다. 배치6 앵커 다섯
+ *    (`onActiveExpired`·`onFilmBurstPost`·`onGemPull`·`onPickupRadius`·`onPlayerWallSlide`)에
+ *    발사부는 없다 — `autoAttack` 의 아키타입 분기가 여전히 `world.ts` 비공개다.
+ *  · **M9 충각 기동**: 무적프레임 중 접촉 해소가 통째로 건너뛰어지는 벽 그대로다.
+ *  · **S9 만료 정지장**: 앵커(`onActiveExpired`)는 배치6 이 열었지만 **「적 이동 정지」를 실을
+ *    축이 코드에 없다.** `src/sim/**` 전수 grep 재확인: 적 이동 배율의 정본은
+ *    `stepEnemies` 의 `eliteSpeedMult(e) * enemyStatusSlowMult(e) * catalystMods.enemySpeed`
+ *    한 줄이고, 그중 상태이상 항은 `enemyStatusSlowMult` = `ownerId > 0 ? COLD_SLOW_MULT : 1`
+ *    이라 **0 을 표현할 수 없는 불리언 게이트**다(`status.ts`). `stun|freeze|frozen|stasis` 는
+ *    레벨업 월드 프리즈·보스 페이즈 연출·팬텀 PH6 「정지된 시계」(플레이어 축)뿐이고 적 이동
+ *    정지는 한 건도 없다. 감속(`applySlow`)으로 대신하는 것은 **다른 스킬**이라 기각했다 —
+ *    앵커는 필요조건이었을 뿐이고 선결은 `status.ts` 의 **새 상태이상 축 신설**이다.
+ *
+ * ## (사료) 배치5 시점의 판정 — 아래는 그때의 기록이다
+ * ### ⚠️ 이 파일이 배선한 것은 30종 중 19종이다
  * 1차 배선(S1 이전)이 9종, **S2 레인이 6종을 더했고**(F2·F3·F6·F9·M1·S3 + S8 의 콤보 창 절반),
  * **S3 레인이 F5 를 더했다**(S3-1 이 앵커 ⑯ 에 실은 `aimAngle` 을 술어로 읽는다).
  * **배선 레인이 3종을 더했다** — F8(앵커 ⑩ · 보스 `iframes` 가 과열 창이라는 인코딩을 읽는다) ·
@@ -98,9 +120,24 @@
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
-import type { VolleyParams } from '../skillHooks.js';
+import type {
+  VolleyParams,
+  PlayerMoveParams,
+  BulletHitParams,
+  GemPullParams,
+  ObjectiveKind,
+} from '../skillHooks.js';
 import { blastDamage, clearEnemyBullets } from '../activeTypes.js';
-import type { PlayerMoveParams } from '../skillHooks.js';
+import { spawnBullet } from '../entities.js';
+// 「에코·조우가 활성인가」의 단일 정본. ⚠️ `echo.ts`·`encounter.ts` 를 값으로 당기면 런타임
+// 순환이다(그 파일들이 앵커 때문에 `skillHooks.ts` 를 값으로 본다) — 헤더 규율 ① · 이 leaf 의
+// 파일 doc 가 근거다.
+import { objectiveActiveOf } from '../objectiveState.js';
+// 자석 버프 배율. `events.ts` 는 import 가 **type-only 두 줄뿐**인 leaf 라 값으로 당겨도
+// 순환이 생기지 않는다(`world.ts` 도 같은 상수를 여기서 읽는다 — 두 번째 사본이 아니다).
+import { MAGNET_BUFF_MULT } from '../events.js';
+import type { DamageSourceMask } from '../skillSlots.js';
+import { DamageSource, hasDamageSource } from '../skillSlots.js';
 import { readSlot, writeSlot, StrikerCarry, StrikerStage } from '../skillSlots.js';
 import { MARKSMAN_TRIGGER_AUX0 } from '../shipSignature.js';
 import { COMBO_WINDOW_TICKS } from '../constants.js';
@@ -124,19 +161,25 @@ const enum Sk {
   /** F4 파편 격발 */ shatterRound = 3,
   /** F5 조준선 관통 */ sightlinePierce = 4,
   /** F6 소이 정조준 */ incendiaryMark = 5,
+  /** F7 표적 고정 */ targetLock = 6,
   /** F8 과열 파쇄 */ overheatShatter = 7,
   /** F9 제압 사격 */ suppressShot = 8,
   /** S1 응전 조준 */ retaliationSight = 10,
   /** S2 반사 도금 */ reactivePlating = 11,
   /** S3 전리 응급 */ fieldTriage = 12,
   /** S4 엄폐 교리 */ coverDoctrine = 13,
+  /** S5 극지 적응 */ hazardAdapt = 14,
   /** S6 유지 보강 */ sustainField = 15,
+  /** S7 최후 처형 */ lastRites = 16,
   /** S8 콤보 차폐 */ comboShield = 17,
   /** S10 선체 증축 */ hullAccretion = 19,
   /** M1 관성 방출 */ inertiaBurst = 20,
+  /** M2 추진 항적 */ thrustWake = 21,
   /** M3 수집 항로 */ gemRoute = 22,
+  /** M4 슬립스트림 */ slipstream = 23,
   /** M5 벽차기 */ wallKick = 24,
   /** M6 활공 정화 */ dashPurge = 25,
+  /** M7 신호 추적 */ signalChaser = 26,
   /** M10 이중 추진 */ twinThruster = 29,
 }
 
@@ -247,7 +290,12 @@ const SIGHTLINE_CONE_HALF = PI / 9;
  *    하는데, 그 필드가 놀고 있는 것은 잡몹뿐이다(`status.ts` 헤더의 필드 재활용 규율).
  *    보스·수호 기체에 걸면 그 기체들이 실제로 쓰는 값을 덮어쓴다.
  */
-export function strikerDashFired(state: WorldState, player: Entity): void {
+export function strikerDashFired(
+  state: WorldState,
+  player: Entity,
+  dirX?: number,
+  dirY?: number,
+): void {
   const m5 = lv(state, Sk.wallKick);
   if (m5 >= 1 && state.wallContactTicks > 0) {
     player.iframes += 2 + Math.floor(m5 / 4);
@@ -266,6 +314,153 @@ export function strikerDashFired(state: WorldState, player: Entity): void {
       applySlow(e, COLD_DURATION);
     }
   }
+  // ── M2 추진 항적 — 대시 방향으로 **정지 발사체 열**을 깐다.
+  //
+  // ## 배치6 이 푼 것은 「방향」 한 칸이다
+  // 이 스킬은 배치1~5 내내 *"술어가 대시 방향인데 그 정본이 `resolveDirFallback(mx, my, angle)`
+  // 이고 `mx/my` 는 `stepPlayer` 지역 변수"* 라는 사유로 막혀 있었다. 배치6 이 그 **정본을
+  // 통과한 단위 벡터**를 앵커 ② 의 후행 인자로 실었다 — 그래서 여기서 방향 규칙의 두 번째
+  // 사본을 만들지 않는다(`player.vx/vy` 를 정규화하는 대안이 정확히 그 사본이었다).
+  //
+  // ⚠️ **인자가 없으면 아무것도 안 깐다.** 후행 선택 인자라 옛 호출부·픽스처는 `undefined` 를
+  // 준다(앵커 doc 의 경고). 그때 `player.angle` 로 폴백하는 대안은 기각했다 — 조준각은 대시
+  // 방향이 아니고, 폴백을 두면 "방향 인자가 끊겼다" 가 조용한 오작동으로 바뀐다.
+  const m2 = lv(state, Sk.thrustWake);
+  if (m2 >= 1 && dirX !== undefined && dirY !== undefined) {
+    layThrustWake(state, player, m2, dirX, dirY);
+  }
+  // ── M7 신호 추적(앞 절반) — 에코·조우가 활성인 동안 대시 쿨다운이 **반감**된다.
+  //
+  // 이 앵커는 대시 블록 안 · `dashCooldown` **대입 뒤**라(브루저 MO8 이 같은 순서에 의존한다)
+  // 여기서 반으로 접으면 그것이 곧 "이번 대시의 쿨다운이 절반" 이다. 매 틱 감산을 2 로 만드는
+  // 대안(앵커 ㉙)은 기각했다 — M10 이 같은 훅에서 `dashCooldown` 을 0 으로 눌러 두므로 두
+  // 스킬이 같은 필드를 같은 틱에 반대 방향으로 만지게 된다.
+  //
+  // ⚠️ **레벨 손잡이가 없다.** 설계 문면이 「반감」·「전액 환급」이라 벌릴 축이 원리적으로
+  // 없다(S6 과 같은 사유). 레벨로 벌리려면 설계 문면부터 고쳐야 한다.
+  const m7 = lv(state, Sk.signalChaser);
+  if (m7 >= 1 && objectiveActiveOf(state)) {
+    player.dashCooldown = Math.floor(player.dashCooldown / 2);
+  }
+}
+
+/**
+ * M2 의 본체 — 출발점 앞쪽으로 **정지 탄** 을 일정 간격으로 깐다.
+ *
+ * ## ⭐ 여기서 스폰이 안전한 이유
+ * 앵커 ② 는 `stepPlayer` 의 대시 블록 안이고, 그 위 잔상 소거 루프(`UQ_AFTERIMAGE`)는 이미
+ * 닫혀 있다 — 즉 `state.entities` 순회 **밖**이다. 브루저 BL7 이 앵커 ㉗ 에서 스폰하는 것과
+ * 같은 근거이고, 탄 상한(`state.bulletCap`)을 훅이 스스로 지키는 규율도 그대로 베꼈다.
+ *
+ * ## ⚠️ 속도 0 이 「정지」의 전부다
+ * `spawnBullet` 은 `vx = vcos * speed` 로 속도를 만든다. `speed = 0` 이면 방향 인자와 무관하게
+ * 정지고, `angle` 은 렌더·넉백 방향(F9)에만 쓰인다. 그래서 `angle` 에는 **대시 방향의 각**이
+ * 아니라 `player.angle`(조준각)을 넣지 않고 — 넣으면 항적이 조준 쪽으로 밀어내 문면과 갈린다 —
+ * 대시 방향을 그대로 실어 주려 하지만, 이 leaf 에는 `atan2` 가 없다(`math.ts` 는 `sin`·`cos`·
+ * `wrapAngle` 만 낸다). 그래서 **`player.angle` 을 그대로 쓴다**: 정지 탄이라 이동에 영향이
+ * 없고, F9 넉백 방향이 조준 쪽이 되는 것은 「제압 사격은 조준선으로 민다」와 어긋나지 않는다.
+ */
+function layThrustWake(
+  state: WorldState,
+  player: Entity,
+  level: number,
+  dirX: number,
+  dirY: number,
+): void {
+  // 개수 2 + floor(Lv/4) (Lv1 = 2 · Lv20 = 7) · 간격 56 · 수명 60 + 4×Lv 틱.
+  const count = 2 + Math.floor(level / 4);
+  const damage = 10 + 3 * level;
+  const life = 60 + 4 * level;
+  // 탄 상한 — 살아 있는 아군탄을 세고 그 자리에서 멈춘다(초과분은 버린다 · BL7 선례).
+  let live = 0;
+  for (const e of state.entities) {
+    if (e.kind === 'bullet' && !e.dead) live++;
+  }
+  for (let i = 0; i < count; i++) {
+    if (live >= state.bulletCap) break;
+    const step = 56 * (i + 1);
+    spawnBullet(
+      state,
+      player.x + dirX * step,
+      player.y + dirY * step,
+      player.angle,
+      0, // 속도 0 = 정지
+      damage,
+      0,
+      state.weapon.bulletRadius,
+      life,
+      0,
+      0,
+    );
+    live++;
+  }
+}
+
+/**
+ * 앵커 ㉙ **목표 완수 틱** — M7 신호 추적(뒤 절반).
+ *
+ * 설계 문면은 *"안정화 완수 시 전액 환급"* 이라 글자대로는 **에코**만인데, 앞 절반의 술어는
+ * {@link objectiveActiveOf} 로 **에코·조우 둘 다**이다. 한쪽만 걸면 "조우가 활성인 동안 반감은
+ * 받는데 완수해도 환급은 없다" 가 되어 같은 스킬 안에서 두 술어가 갈린다 — 앵커 doc 가
+ * *"두 지점 다 걸어야 한다"* 로 못 박은 것과 같은 실패다. 그래서 **둘 다** 환급한다.
+ * ⚠️ 이것은 설계 문면보다 **넓다**(보고 대상 — 문서를 여기서 고치지 않는다).
+ */
+export function strikerObjectiveResolved(
+  state: WorldState,
+  player: Entity,
+  kind: ObjectiveKind,
+): void {
+  // 산출을 목표 종류로 가르지 않는다 — 위 doc 의 판정 그대로다.
+  void kind;
+  const m7 = lv(state, Sk.signalChaser);
+  if (m7 < 1) return;
+  player.dashCooldown = 0;
+}
+
+/**
+ * 앵커 `onGemPull` **젬 1개의 흡인 판정 직후** — M4 슬립스트림.
+ *
+ * ## ⚠️ 이 훅은 **매 틱 × 젬 개수**만큼 불린다
+ * 그래서 게이트가 첫 줄이고, 나눗셈은 **전방 판정을 통과한 젬**에만 닿는다(가장 안쪽). 후반
+ * 런에서 젬 수백 개가 동시에 살아 있다는 앵커 doc 의 경고가 이 배치의 근거다.
+ *
+ * ## 비등방 — 「서 있으면 원형, 달리면 앞으로」
+ * 설계 문면이 *"자석장이 **이동 방향으로 길어져** 진행 방향 전방의 흡인 반경이 확장된다"* 다.
+ * 배치5 가 앵커 ㉘(스칼라 반경 하나)으로는 **등방 확장**밖에 못 해 뒤쪽까지 넓어진다고 보고한
+ * 그 자리이고, 이 앵커가 젬 **1개**를 넘기면서 방위 판정이 가능해졌다.
+ *  · **전방 판정은 반평면**이다(내적 > 0). 콘으로 좁히려면 `|v|`·`|d|` 로 정규화해야 하는데
+ *    제곱근 두 번이 이 훅의 예산 밖이다 — 반평면이면 곱셈 두 번이고, 결과 도형은 「앞쪽만
+ *    늘어난 반타원+반원」이라 문면의 비등방을 그대로 만족한다.
+ *  · ⚠️ **부호.** `params.dx/dy` 는 호출부가 `player - gem` 으로 잡아 **젬에서 플레이어를
+ *    향한다**(그 필드 doc). 「플레이어 앞의 젬」은 그 반대 벡터라 `-dx`/`-dy` 와 내적한다.
+ *  · **정지 중에는 무연산**이다(`vx=vy=0` → 내적 0). 그것이 문면의 "서 있으면 원형" 이다.
+ *
+ * ## ⚠️ 기준 반경을 여기서 **다시 정의하지 않는다**
+ * 확장은 실효 자석 반경의 **배율**이다. 실효 반경은 `state.magnetRadius` 와 자석 버프 창
+ * (`magnetBuffTicks`) 두 필드로 정해지고(정본 `world.ts` 의 `stepGems` 첫 줄), 여기서 읽는
+ * 것은 그 **같은 두 필드**다. 버프를 무시하고 `magnetRadius` 만 쓰면 버프 창 동안 확장 반경이
+ * 실효 반경보다 **작아져** M4 가 조용히 꺼진다(S6·자석 방사기가 그 창을 상시로 만든다).
+ */
+export function strikerGemPull(
+  state: WorldState,
+  player: Entity,
+  gem: Entity,
+  params: GemPullParams,
+): void {
+  const m4 = lv(state, Sk.slipstream);
+  if (m4 < 1) return;
+  // 이미 흡인 대상이면 넓힐 것이 없다(확장은 **추가**이지 억제가 아니다).
+  if (params.pull) return;
+  void gem;
+  const vx = player.vx;
+  const vy = player.vy;
+  // 전방 판정 — 「플레이어 → 젬」은 `-dx`/`-dy` 다(위 doc 의 부호 경고).
+  const dot = -params.dx * vx - params.dy * vy;
+  if (dot <= 0) return;
+  const base = state.magnetBuffTicks > 0 ? state.magnetRadius * MAGNET_BUFF_MULT : state.magnetRadius;
+  // 전방 확장 = 실효 반경 × (130% + 2%p/Lv) (Lv1 = 1.32배 · Lv20 = 1.70배).
+  const ext = (base * (13000 + 200 * m4)) / 10000;
+  if (params.d2 <= ext * ext) params.pull = true;
 }
 
 /**
@@ -344,7 +539,12 @@ export function strikerBulletExpired(state: WorldState, bullet: Entity): void {
  * 의 E5 가 이미 엔진 상태로 세웠다. 이 사슬은 `stepPlayer` **뒤**(충돌 해소)라 여기서 읽는
  * 값은 **이번 틱** 갱신분이고, 그것이 설계서의 "벽에 접촉 중일 때 피격되면" 그대로다.
  */
-export function strikerDamageChain(state: WorldState, player: Entity, dmg: number): number {
+export function strikerDamageChain(
+  state: WorldState,
+  player: Entity,
+  dmg: number,
+  sources: DamageSourceMask,
+): number {
   void player;
   let out = dmg;
   // ① 감소 — S4. 산술 형태는 브루저 장갑과 동형(정수 bp · 단일 나눗셈 · 반올림 1회)이라
@@ -352,6 +552,20 @@ export function strikerDamageChain(state: WorldState, player: Entity, dmg: numbe
   const s4 = lv(state, Sk.coverDoctrine);
   if (s4 >= 1 && state.wallContactTicks > 0) {
     out -= Math.round((out * (1000 + 100 * s4)) / 10000);
+  }
+  // ①-b 감소 — **S5 극지 적응(뒤 절반)**: 용암 피해 경감.
+  //
+  // 출처는 앵커 ④·⑧ 이 나르는 비트합이고, 해저드 비트를 세우는 자리는 `world.ts` 의
+  // `kind === 'hazard' && hazardActive(t)` **한 곳뿐**이다(아크캐스터 BA8 과 같은 술어).
+  //
+  // ⚠️ **설계 문면보다 넓다 — 고치지 않고 적어 둔다.** 설계는 「용암 피해」인데 이 비트는
+  // 해저드 장판 **전체**(용암·박격 장판)를 뜻한다. 좁히려면 호출부가 `enemyType`(HAZARD_LAVA)
+  // 까지 실어야 하고, 그건 이 레인 밖의 앵커 확장이다. 넓힌 쪽으로 배선한 것은 반대(용암만
+  // 골라내려고 여기서 해저드 종류를 다시 판정)가 **술어의 두 번째 사본**이 되기 때문이다.
+  const s5 = lv(state, Sk.hazardAdapt);
+  if (s5 >= 1 && hasDamageSource(sources, DamageSource.hazard)) {
+    // 경감 15% + 1.5%p/Lv (Lv1 = 16.5% · Lv20 = 45%). S4 와 동형 산술이다.
+    out -= Math.round((out * (1500 + 150 * s5)) / 10000);
   }
   // ② 흡수 — S8. **콤보 스택을 실제로 소모한다**(XP 배율과의 트레이드가 이 스킬의 본체다).
   const s8 = lv(state, Sk.comboShield);
@@ -444,9 +658,28 @@ export function strikerPlayerMoveParams(
   player: Entity,
   params: PlayerMoveParams,
 ): void {
-  // 이 스킬은 이동 배율이 아니라 대시 충전을 만진다 — `params` 를 읽지도 쓰지도 않는다.
-  // (앵커 계약상 인자는 받아야 하므로 무연산 참조로 명시한다.)
-  void params;
+  // ── S5 극지 적응(앞 절반) — **감속 장판이 가속 장판으로 역전된다.**
+  //
+  // `params.slowTicks` 는 이번 틱 시작 시점의 `state.playerSlowTicks` 이고 훅이 고치면 호출부가
+  // 그대로 되쓴다. 그 필드를 **세우는 자리는 `world.ts` 에 정확히 한 곳**(활성 `HAZARD_SLOW`
+  // 장판 접촉)뿐이라, 여기서 `slowTicks > 0` 은 곧 "감속 장판을 밟고 있다" 와 같은 뜻이다 —
+  // 술어를 다시 적지 않고도 문면의 「감속 장판」에 정확히 걸린다.
+  //  · **역전이 한 훅 안에서 성립한다.** 이 앵커는 감속 배율 산출 **앞**이라 잔여를 0 으로
+  //    되돌리면 `PLAYER_SLOW_MULT` 가 이번 틱에 안 걸리고, 같은 자리에서 `speedMult` 를 올려
+  //    「가속」을 얹는다. 다음 틱으로 미루면 감속이 한 틱 새어 들어간다.
+  //  · ⚠️ **잔여를 0 으로 만드는 것이 필수**다. 배율만 올리고 잔여를 두면 `PLAYER_SLOW_MULT`
+  //    (0.5)와 곱해져 순감이 되어, 강화 스킬이 약화가 되는 부호 반전이 된다.
+  //  · S6(유지 보강)이 `state.playerSlowTicks = 0` 을 하는 것과 **자리가 다르다** — 저쪽은
+  //    액티브 지속 틱이고 여기는 매 틱이다. 둘이 겹치는 틱은 멱등이라 관측 차이가 없다.
+  const s5 = lv(state, Sk.hazardAdapt);
+  if (s5 >= 1 && params.slowTicks > 0) {
+    params.slowTicks = 0;
+    // 가속 +15% + 1.5%p/Lv (Lv1 = 16.5% · Lv20 = 45%). 감쇠 사슬의 경감과 같은 계수를 쓰는
+    // 것은 의도다 — 손잡이를 둘로 늘리지 않는다(설계가 한 문장으로 두 효과를 묶었다).
+    params.speedMult = (params.speedMult * (11500 + 150 * s5)) / 10000;
+  }
+
+  // ── M10 이중 추진 — 이동 배율이 아니라 대시 충전을 만진다(`params` 를 읽지도 쓰지도 않는다).
   const m10 = lv(state, Sk.twinThruster);
   if (m10 < 1) return;
   const stage = state.skillStage;
@@ -581,6 +814,83 @@ export function strikerVolleyParams(
     const next = state.comboTimer + half;
     state.comboTimer = next > COMBO_WINDOW_TICKS ? COMBO_WINDOW_TICKS : next;
   }
+}
+
+/** F7 락온 스택 상한. 문면에 상한이 없어 여기서 정한다 — 없으면 한 표적에 무한 증폭이 된다. */
+const F7_STACK_CAP = 10;
+
+/**
+ * 앵커 ⑱ **아군탄 명중의 피해가 확정되기 직전** — **F7 표적 고정** · **S7 최후 처형**.
+ *
+ * ## ⭐ 배치6 이 푼 것이 아니다 — **자리를 잘못 보고 있었다**
+ * 두 스킬은 배치1 이후 줄곧 *"앵커 ⑩ 의 금지 사항(차감·격추 판정 **뒤**)에 걸린다"* 로 미배선
+ * 이었는데, 그 판정은 **⑩ 에 대해서만 옳다**. 앵커 ⑱ 은 같은 명중을 ⑩ **보다 먼저** 보고
+ * `t.hp -= dealt` 앞이라, 둘이 요구하는 「차감 전」이 정확히 여기다. 아크캐스터 CH5 가 같은
+ * 사유로 ⑱ 에 살고 있었다.
+ *
+ * ## F7 표적 고정 — 스택은 `Stage` 슬롯 2칸
+ * 술어가 *"같은 표적을 **연속** 명중"* 이라 「직전 표적이 누구였나」가 필요하다. 좌표로
+ * 되찾으면 같은 자리에 겹친 두 적이 조용히 하나로 접히므로 **`Entity.id`** 를 쓴다(+1 인코딩은
+ * 슬롯 doc 이 근거).
+ *  · **첫 명중은 증폭 0** 이다 — 쌓인 결과가 증폭이라는 문면 그대로. 표적이 바뀌면 0 리셋.
+ *  · ⚠️ **상한 {@link F7_STACK_CAP} 이 필수**다. 보스처럼 오래 사는 표적에 다탄 볼리를 붓는
+ *    것이 스트라이커의 정상 상태라, 상한이 없으면 「연속 명중 보너스」가 아니라 **초 단위로
+ *    발산하는 배율**이 된다.
+ *
+ * ## S7 최후 처형 — `params.damage` 를 올려 **정상 격추 경로로 죽인다**
+ * 문면은 *"HP 30% 이하인 동안 정조준탄이 잔여 HP 임계 이하의 적을 즉시 처치"* 다.
+ *  · ⭐ **좀비가 원리적으로 생기지 않는다.** 여기서 `target.hp` 를 직접 만지지 않고 이번
+ *    명중 피해를 표적 잔여 hp 까지 끌어올리기만 하므로, `hp` 차감도 `dead` 마킹도 부활 분기
+ *    (`guardian` 재부팅 · 코어 리바이브)도 전부 호출부의 기존 경로가 그대로 한다. 「적 hp 를
+ *    깎으면 dead 를 같이 세워라」 규율의 **가장 안전한 만족 형태**다.
+ *  · **`kind === 'enemy'` 한정.** 보스·수호 기체·코어에 처형을 걸면 페이즈·부활 설계가 통째로
+ *    무의미해진다(F9 가 구조물을 안 미는 것과 같은 규율).
+ *  · ⚠️ **알려진 한계 — 침공 방어전에서는 덜 죽일 수 있다.** 이 훅 **뒤**에 코어 모듈의
+ *    `defenseDmgMult`(방어체 피해 감소)가 곱해지므로, 그 배율이 1 미만인 판에서는 끌어올린
+ *    피해가 잔여 hp 에 못 미쳐 표적이 hp>0 으로 산다. 그때도 **좀비는 아니다**(그냥 안 죽는다).
+ *    여기서 여유분을 곱해 우회하면 그 배율을 스킬이 무효화하는 다른 축이 된다.
+ *  · **플레이어는 `state.entities[0]`** 이다 — 이 앵커가 인자로 안 주고, 그 관례는 앵커 ⑲
+ *    doc 이 못 박고 있다.
+ */
+export function strikerBulletHitParams(
+  state: WorldState,
+  bullet: Entity,
+  target: Entity,
+  params: BulletHitParams,
+): void {
+  // ── F7 표적 고정.
+  const f7 = lv(state, Sk.targetLock);
+  if (f7 >= 1) {
+    const stage = state.skillStage;
+    const prev = readSlot(stage, StrikerStage.lockTarget);
+    const cur = target.id + 1;
+    let stack = prev === cur ? readSlot(stage, StrikerStage.lockStack) + 1 : 0;
+    if (stack > F7_STACK_CAP) stack = F7_STACK_CAP;
+    writeSlot(stage, StrikerStage.lockTarget, cur);
+    writeSlot(stage, StrikerStage.lockStack, stack);
+    if (stack > 0) {
+      // 스택당 피해 +3% + 0.5%p/Lv (Lv1 = 3.5%/스택 · Lv20 = 13%/스택 · 상한 10스택).
+      // 산술 형태는 F2·F5 와 동형(정수 bp · 나눗셈 1회 · 반올림 1회).
+      params.damage += Math.round((params.damage * stack * (300 + 50 * f7)) / 10000);
+    }
+  }
+
+  // ── S7 최후 처형.
+  const s7 = lv(state, Sk.lastRites);
+  if (s7 < 1) return;
+  // 정조준탄 표식(앵커 ⑯ 의 `mark: 1` 이 탄 `aux0` 에 실린 값 — 앵커 ⑩ 과 같은 술어다).
+  if (bullet.aux0 !== 1) return;
+  if (target.kind !== 'enemy' || target.dead) return;
+  const player = state.entities[0];
+  if (player === undefined) return;
+  // 「HP 30% 이하」 — 비율 비교를 나눗셈 없이 쓴다(`hp * 10 <= maxHp * 3`).
+  if (player.hp * 10 > player.maxHp * 3) return;
+  // 처형 임계 = 표적 최대 HP 의 5% + 0.5%p/Lv (Lv1 = 5.5% · Lv20 = 15%).
+  const cut = (target.maxHp * (500 + 50 * s7)) / 10000;
+  if (target.hp > cut) return;
+  // 이번 명중을 **정확히 잔여 hp 만큼**으로 끌어올린다. 이미 그만큼 아프면 손대지 않는다
+  // (내리면 F7·정조준 증폭을 스킬이 되돌리는 부호 반전이 된다).
+  if (params.damage < target.hp) params.damage = target.hp;
 }
 
 /**
