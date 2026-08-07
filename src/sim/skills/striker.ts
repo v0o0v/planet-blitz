@@ -29,12 +29,53 @@
  *
  * ---
  *
- * ## ⚠️ 이 파일이 배선한 것은 30종 중 16종이다
+ * ## ⚠️ 이 파일이 배선한 것은 30종 중 19종이다
  * 1차 배선(S1 이전)이 9종, **S2 레인이 6종을 더했고**(F2·F3·F6·F9·M1·S3 + S8 의 콤보 창 절반),
  * **S3 레인이 F5 를 더했다**(S3-1 이 앵커 ⑯ 에 실은 `aimAngle` 을 술어로 읽는다).
- * 나머지 14종은 **현행 앵커가 닿지 않는 지점**(표적 방위·볼리 추가 생성·해저드 적용부·접촉
- * 처리·자석장 등 `world.ts` 내부)을 요구한다. 사유는 아래 각 진입점 주석과 레인 보고서에 있다.
- * 여기 없는 스킬은 "구현했는데 안 불린다"가 아니라 **아직 코드가 없다** — 반쪽 배선과 구분하라.
+ * **배선 레인이 3종을 더했다** — F8(앵커 ⑩ · 보스 `iframes` 가 과열 창이라는 인코딩을 읽는다) ·
+ * S6(액티브 sustain 표 · 기존 자석 버프 게이트와 감속 게이트를 빌린다) · M6(앵커 ② · 소거와
+ * 냉기를 반경 하나로 낸다).
+ * 나머지 11종은 **현행 앵커가 닿지 않는 지점**(볼리 추가 생성·해저드 적용부·접촉 처리·자석장·
+ * 대시 방향·정지장 등 `world.ts` 내부)을 요구한다. 사유는 아래 각 진입점 주석과 레인 보고서에
+ * 있다. 여기 없는 스킬은 "구현했는데 안 불린다"가 아니라 **아직 코드가 없다** — 반쪽 배선과
+ * 구분하라.
+ *
+ * ### 미배선 11종의 사유 — 한눈 표(전문은 각 진입점 주석)
+ *  · **F7 표적 고정** · **S7 최후 처형**: 앵커 ⑩ 의 금지 사항(차감·격추 판정 **뒤**) —
+ *    {@link strikerEnemyDamaged} doc.
+ *  · **F10 연장 탄창** · **M8 도약 사격**: 볼리를 **더 낳아야** 한다. 앵커 ⑯ 은 이번 한 벌의
+ *    파라미터만 주고, 발사 자체는 `autoAttack`(world.ts 비공개) 소유다.
+ *  · **M2 추진 항적**: 술어가 **"대시 방향"** 인데 그 정본은 `resolveDirFallback(mx, my, angle)`
+ *    이고(world.ts:2224), 인자인 정규화 이동 입력 `mx/my` 는 `stepPlayer` 의 지역 변수다.
+ *    앵커 ②(`onDashFired(state, player)`)는 `input` 을 받지 않아 그 값이 없다. 도달 시점의
+ *    `player.vx/vy` 는 **이동 성분이 이미 합산**된 뒤라(2226-2227) 정규화해도 대시 방향과
+ *    다르고, 그걸 쓰면 방향 규칙의 두 번째 사본이 생긴다. **앵커 확장이 아니라 input 배관이
+ *    선결**이다(말로우 SQ7 과 같은 벽).
+ *  · **M9 충각 기동**: 술어가 **무적프레임 중**인데, 그때는 `resolveCollisions` 가
+ *    `invulnerable`(`world.ts:4308`)로 접촉 피해를 통째로 건너뛰어 앵커 ④·⑧ 이 **아예 안 불린다**.
+ *    설령 불려도 앵커 ⑧ 은 `(state, player, dmg)` 뿐이라 **누가 닿았는지**를 모른다 — 접촉
+ *    해소 분기 자체가 그 스킬의 자리다.
+ *  · **M4 슬립스트림** · **S5 극지 적응** · **S9 만료 정지장** · **M7 신호 추적** ·
+ *    **M10 이중 추진**: 아래 「닿지 않는 다섯」 주석 참조.
+ *
+ * ### 닿지 않는 다섯 — grep 근거
+ *  · **M4 슬립스트림**: 자석 흡인은 `world.ts:3895-3897` 의 원형 반경 한 줄이 전부다. "이동
+ *    방향으로 길어진다" 는 그 기하 자체를 타원으로 바꿔야 하는데 앵커가 없다.
+ *  · **S5 극지 적응**: 해저드 적용부(`world.ts:4361` 부근 · `HAZARD_SLOW`/`HAZARD_LAVA` 분기)가
+ *    감속·용암 피해를 결정한다. "역전" 은 그 분기를 고쳐야 하고 훅이 없다.
+ *  · **S9 만료 정지장**: **"이동 정지" 를 실을 필드가 없다.** `src/sim/status.ts` 의 적 상태이상은
+ *    화염·냉기·전격 셋뿐이고 이동을 만지는 것은 `applySlow`(배율 `COLD_SLOW_MULT` 0.55) 하나다.
+ *    `stun|freeze|frozen` 을 `src/sim/**` 전체로 grep 하면 25건이 나오지만 **적 이동 정지는
+ *    한 건도 없다** — 전부 레벨업 월드 프리즈(`world.ts:995`·`autopilot.ts`)와 보스 페이즈 전이
+ *    연출(`boss.ts:79`)이다. 적 속도를 0 으로 대입해도 다음 틱 행동 함수가 다시 계산해 덮으므로
+ *    관측되지 않는다 — 새 상태이상 축의 신설이 선결이다.
+ *  · **M7 신호 추적**: 술어 "에코·조우가 **활성**" 의 리더가 없다. `echo.ts`·`encounter.ts` 가
+ *    export 하는 것은 `echoStabilizedOf`(`state === 2`) · `encounterCompletedOf`(`state === 3`)
+ *    **종료 판정뿐**이라, 활성 판정을 기체 모듈에 적으면 상태기계 코드의 두 번째 사본이 된다.
+ *    정본 파일에 활성 리더를 세우는 것이 선결이고 그건 이 레인 밖이다.
+ *  · **M10 이중 추진**: 대시는 `dashCooldown === 0` **단일 게이트**다(`world.ts:2222`).
+ *    "충전식 2회 + 별도 재충전" 은 그 게이트를 충전 카운터로 바꿔야 하는데, 앵커 ② 는 게이트가
+ *    이미 통과된 **뒤**라 두 번째 충전을 만들 수 없다.
  */
 
 import type { WorldState } from '../world.js';
@@ -44,7 +85,7 @@ import { blastDamage, clearEnemyBullets } from '../activeTypes.js';
 import { readSlot, writeSlot, StrikerCarry } from '../skillSlots.js';
 import { MARKSMAN_TRIGGER_AUX0 } from '../shipSignature.js';
 import { COMBO_WINDOW_TICKS } from '../constants.js';
-import { applyBurn, FIRE_DURATION } from '../status.js';
+import { applyBurn, applySlow, COLD_DURATION, FIRE_DURATION } from '../status.js';
 import { sin, cos, wrapAngle, PI } from '../math.js';
 import { skillLv } from '../../items/skills.js';
 
@@ -64,16 +105,19 @@ const enum Sk {
   /** F4 파편 격발 */ shatterRound = 3,
   /** F5 조준선 관통 */ sightlinePierce = 4,
   /** F6 소이 정조준 */ incendiaryMark = 5,
+  /** F8 과열 파쇄 */ overheatShatter = 7,
   /** F9 제압 사격 */ suppressShot = 8,
   /** S1 응전 조준 */ retaliationSight = 10,
   /** S2 반사 도금 */ reactivePlating = 11,
   /** S3 전리 응급 */ fieldTriage = 12,
   /** S4 엄폐 교리 */ coverDoctrine = 13,
+  /** S6 유지 보강 */ sustainField = 15,
   /** S8 콤보 차폐 */ comboShield = 17,
   /** S10 선체 증축 */ hullAccretion = 19,
   /** M1 관성 방출 */ inertiaBurst = 20,
   /** M3 수집 항로 */ gemRoute = 22,
   /** M5 벽차기 */ wallKick = 24,
+  /** M6 활공 정화 */ dashPurge = 25,
 }
 
 /**
@@ -121,6 +165,32 @@ function hullGrantHp(level: number): number {
 const HULL_XP_THRESHOLD = 400;
 
 /**
+ * F8 이 늘릴 수 있는 **과열 창 잔여 틱의 천장**.
+ *
+ * ## 왜 상한이 **필수**인가 — 없으면 창이 영영 안 닫힌다
+ * 과열 창은 틱당 정확히 1 씩 닳는다(`boss.ts:116` · `coreRoom.ts:630`). 스트라이커는 다탄
+ * 볼리라 보스 한 마리에 **매 틱 1발 이상 명중**이 정상 상태이고, 연장이 명중당 1 이상이면
+ * 그 감소분을 상시 상쇄한다. 결과는 "가끔 창이 길어진다"가 아니라 **피해 2배 창의 영구화** —
+ * 보스의 취약 창 설계(닫힌 구간이 있는 리듬) 자체를 무력화한다. 그래서 이것은 밸런스 손잡이가
+ * 아니라 **거동 상한**이고, 상한을 넘겨 이미 서 있는 창을 **깎지도 않는다**(아래 `<` 가드).
+ *
+ * ## ⚠️ 값이 300 인 것은 우연이 아니지만 **의미는 다르다**
+ * `boss.ts` 의 `BOSS_OVERHEAT_TICKS`(300) · `data/invasion/defenseBosses.ts` 의
+ * `DEFENSE_BOSS_OVERHEAT_TICKS`(300)와 같은 수지만, 저쪽은 **창을 여는 길이의 정의**이고
+ * 이쪽은 **연장이 도달할 수 있는 천장**이다. 즉 "F8 은 창을 처음 열렸을 때보다 길게 만들지
+ * 못한다" 가 이 상수의 뜻이다.
+ *  · **런타임 import 로 잇지 않는다.** `boss.ts` 는 `waves.ts`·`data/planets` 까지 끌고 오는
+ *    무거운 모듈이라 leaf 계약(헤더 ①)을 깬다. 그래서 버블 `PO2_SPEED_BASE`·해츨링
+ *    `NU2_SHELL_GEM_XP` 와 같은 **leaf-local 상수** 관용구를 쓴다.
+ *  · ⚠️ 저쪽 값이 바뀌면 이 값은 **따라가지 않는다** — 그것이 독립 상수의 대가이자 목적이다
+ *    (의미가 갈린 두 수가 우연히 같이 움직이는 것을 막는다).
+ *  · 침공 어픽스 `defOverheatResistPct` 가 창을 300 밑으로 줄인 판에서는 이 천장이 그 축소를
+ *    **되돌릴 수 있다**(줄어든 창을 최대 300 까지 도로 늘린다). 그건 F8 이 사는 자리 그대로다 —
+ *    어픽스는 창을 짧게 열 뿐이고, 늘리는 축을 금지하지는 않는다.
+ */
+const F8_OVERHEAT_CAP = 300;
+
+/**
  * F5 조준선 콘의 **반각 20°**(설계서 고정값 — 레벨로 안 변한다).
  *
  * `PI / 9` 로 적는 것은 도수 리터럴을 라디안으로 바꾸는 사본을 만들지 않으려는 것이다.
@@ -132,7 +202,7 @@ const SIGHTLINE_CONE_HALF = PI / 9;
 // ---------------------------------------------------------------------------
 
 /**
- * 앵커 ② **대시 발동** — M5 벽차기(무적프레임 부분).
+ * 앵커 ② **대시 발동** — M5 벽차기(무적프레임 부분) · **M6 활공 정화**.
  *
  * 술어 "직전 틱 벽 접촉"은 {@link WorldState.wallContactTicks} 를 그대로 읽는다. 대시 분기는
  * 벽 슬라이드보다 **앞**(world.ts 2185 < 2297)이라 이 지점의 값은 아직 **이전 틱의 갱신분**이고,
@@ -143,11 +213,38 @@ const SIGHTLINE_CONE_HALF = PI / 9;
  * ⚠️ **거리 강화(+15% + 1.5%p/Lv)는 여기서 못 한다.** 대시 임펄스는 `player.vx/vy` 에 이미
  * 합산돼 들어와 이 지점에서 대시 성분만 분리할 수 없다 — 그 절반은 `world.ts` 의 대시 분기가
  * 소유해야 한다(미배선).
+ *
+ * ## M6 활공 정화 — 반경 하나로 두 효과를 낸다
+ * 설계서 문면이 *"대시에 잔상 소거를 **자체 부여**하고 소거 반경 안 적에게 냉기를 건다"* 라,
+ * 소거 반경과 냉기 반경이 **같은 한 값**이어야 한다(두 손잡이로 쪼개면 문면과 갈린다).
+ *  · "잔상 소거" 는 유니크 `UQ_AFTERIMAGE`(`world.ts:2237-2247`)의 대시 적탄 소거를 가리키고,
+ *    이 스킬은 그것을 **미보유 런에도** 준다. 유니크 보유 런에서는 같은 틱에 두 번 소거가
+ *    도는데, 소거는 `dead = true` 멱등이라 이중 발화가 관측되지 않는다.
+ *  · 냉기는 원소 어픽스 정본(`status.ts` 의 {@link applySlow} · {@link COLD_DURATION})을
+ *    그대로 빌린다. 지속을 레벨로 늘리지 않는 것은 의도다 — 감속 강도가 `COLD_SLOW_MULT`
+ *    상수 하나로 고정된 **불리언 게이트**라(그 함수 doc), 레벨 손잡이는 반경 하나로 둔다.
+ *  · ⚠️ **`kind === 'enemy'` 한정이다.** `applySlow` 는 `ownerId` 를 냉기 잔여 틱으로 재활용
+ *    하는데, 그 필드가 놀고 있는 것은 잡몹뿐이다(`status.ts` 헤더의 필드 재활용 규율).
+ *    보스·수호 기체에 걸면 그 기체들이 실제로 쓰는 값을 덮어쓴다.
  */
 export function strikerDashFired(state: WorldState, player: Entity): void {
   const m5 = lv(state, Sk.wallKick);
   if (m5 >= 1 && state.wallContactTicks > 0) {
     player.iframes += 2 + Math.floor(m5 / 4);
+  }
+  // ── M6 활공 정화 — 반경 150 + 10×Lv.
+  const m6 = lv(state, Sk.dashPurge);
+  if (m6 >= 1) {
+    const radius = 150 + 10 * m6;
+    clearEnemyBullets(state, player, radius);
+    const r2 = radius * radius;
+    for (const e of state.entities) {
+      if (e.kind !== 'enemy' || e.dead) continue;
+      const dx = e.x - player.x;
+      const dy = e.y - player.y;
+      if (dx * dx + dy * dy > r2) continue;
+      applySlow(e, COLD_DURATION);
+    }
   }
 }
 
@@ -383,9 +480,11 @@ export function strikerVolleyParams(
 }
 
 /**
- * 앵커 ⑩ **아군탄이 적성 표적을 맞혀 피해가 확정된 직후** — F6 소이 정조준 · F9 제압 사격.
+ * 앵커 ⑩ **아군탄이 적성 표적을 맞혀 피해가 확정된 직후** — **F8 과열 파쇄** · F6 소이 정조준 ·
+ * F9 제압 사격.
  *
- * 둘 다 트리거가 **정조준탄 명중**이다. 표식은 앵커 ⑯ 이 `params.mark = 1` 로 찍어 탄의
+ * ⚠️ **F8 만 정조준 표식을 요구하지 않는다**(설계서 문면이 "명중할 때마다" 다) — 그래서 표식
+ * 게이트 **앞**에 있다. 뒤 둘은 트리거가 **정조준탄 명중**이다. 표식은 앵커 ⑯ 이 `params.mark = 1` 로 찍어 탄의
  * `aux0` 에 실은 값이고(`world.ts` 의 아키타입 분기 네 곳에 흩어져 있던 대입을 S2 가 흡수했다),
  * 이 앵커가 넘기는 `source` 가 바로 그 탄이다.
  *
@@ -419,7 +518,37 @@ export function strikerEnemyDamaged(
   target: Entity,
   source: Entity | undefined,
 ): void {
-  // 정조준탄 표식(앵커 ⑯ 의 `mark: 1`). 표식 없는 평상시 볼리는 여기서 한 줄도 안 탄다.
+  // ── F8 과열 파쇄 — **정조준 표식보다 앞이다.** 설계서 F8 은 *"보스 과열 창 동안 명중할
+  // 때마다"* 이고 정조준을 요구하지 않는다. 아래 표식 게이트 뒤로 내리면 트리거가 조용히
+  // 좁아진다(정조준 볼리에서만 발동 = 설계서와 다른 스킬이 된다).
+  //
+  // 과열 창의 인코딩은 `iframes` 다 — 보스는 그 필드를 무적이 아니라 **피해 2배 취약 창**으로
+  // 쓰고(`boss.ts:10` · `entities.ts:425` · `coreRoom.ts:19`), 매 틱 1 씩 닳는다
+  // (`boss.ts:116` · `coreRoom.ts:630`). 그래서 "잔여 틱 연장" 은 그 값을 더하는 것 그대로다.
+  //  · **잡몹(`enemy`)은 제외**다. 그 kind 에서 `iframes` 는 F6 이 싣는 **화상 잔여 틱**이라
+  //    (`status.ts` 필드 재활용 규율) 여기서 더하면 화상이 늘어난다 — F6 이 보스를 피하는 것과
+  //    정확히 대칭인 회피다.
+  //  · **`defenseBoss`(침공 코어룸 보스)도 대상이다.** 같은 필드에 같은 뜻으로 과열 창을
+  //    싣고(`coreRoom.ts:19,658`) 앵커 ⑩ doc 가 그 kind 도 여기 온다고 못 박았다.
+  //  · ⚠️ **창이 이미 열려 있을 때만** 연장한다(`iframes > 0`). 닫힌 창을 여는 것은 "연장" 이
+  //    아니라 개창이고, 그러면 재장전 타이머(`dashCooldown`)가 지키는 주기가 통째로 무의미해진다.
+  //  · ⚠️ **천장은 {@link F8_OVERHEAT_CAP} 이다.** 없으면 다탄 볼리가 틱당 감소 1 을 상시
+  //    상쇄해 창이 영영 안 닫힌다 — 그 상수 doc 가 근거다.
+  const f8 = lv(state, Sk.overheatShatter);
+  if (
+    f8 >= 1 &&
+    target.iframes > 0 &&
+    target.iframes < F8_OVERHEAT_CAP &&
+    (target.kind === 'boss' || target.kind === 'defenseBoss')
+  ) {
+    // 명중당 1 + floor(Lv/8) 틱(Lv1 = 1 · Lv20 = 3). 정수 계단이라 F1·F6 과 같은 문법이다.
+    // ⚠️ `< F8_OVERHEAT_CAP` 게이트가 `Math.min` 과 **한 쌍**이다. 게이트 없이 `min` 만 쓰면
+    // 이미 천장 위에 서 있는 창(어픽스·미래 콘텐츠가 더 길게 열었을 때)을 F8 이 **깎는다** —
+    // 강화 스킬이 약화가 되는 부호 반전이다.
+    target.iframes = Math.min(target.iframes + 1 + Math.floor(f8 / 8), F8_OVERHEAT_CAP);
+  }
+
+  // 정조준탄 표식(앵커 ⑯ 의 `mark: 1`). 표식 없는 평상시 볼리는 아래로 한 줄도 안 내려간다.
   if (source === undefined || source.aux0 !== 1) return;
 
   // ── F6 소이 정조준 — **`kind === 'enemy'` 한정.** 보스에 화상을 걸면 `applyBurn` 이 쓰는
@@ -498,6 +627,42 @@ export function strikerFirepowerActive(state: WorldState, player: Entity): numbe
   if (player.cooldown > 0) player.cooldown = 0;
   // fanStrike 탄 추가 배율 +10% + 2%p/Lv.
   return 1000 + 200 * f3;
+}
+
+/**
+ * **액티브 핸들러 — 생존(buff) 지속 틱**(`STRIKER_SUSTAIN`, 매 틱). S6 유지 보강.
+ *
+ * 설계서 S6 은 *"생존 액티브 지속 중 자석 반경이 커지고 이동 감속에 면역이 된다"* 다. 발동
+ * 틱이 아니라 **지속 틱**이 트리거라 `STRIKER_HANDLERS` 가 아니라 sustain 표에 건다 —
+ * 발동 틱에 한 번 세우는 형태로 바꾸면 버프가 끝난 뒤에도 효과가 남는다(같은 파일의
+ * `refreshIframes` 주석이 그 실패를 이미 적어 뒀다).
+ *
+ * ## ① 자석 반경 — `magnetBuffTicks` 를 매 틱 되세운다
+ * 자석 실효 반경은 `state.magnetBuffTicks > 0 ? magnetRadius × MAGNET_BUFF_MULT : magnetRadius`
+ * 한 줄이 정본이다(`world.ts:3897`). `magnetRadius` 를 직접 키우면 **되돌릴 자리가 없어**
+ * (만료 훅이 있는 것은 `survival_hi` 뿐이고, 사망·구간 전환에서 원복이 유실된다) 영구 증가가
+ * 되므로, 이미 있는 **일시 배율 게이트**를 빌린다.
+ *  · ⚠️ **2 를 세운다(1 이 아니다).** 감소(`world.ts:3895`)가 이 훅(`stepActives`, 1833)보다
+ *    **뒤**라, 1 을 세우면 같은 틱에 0 으로 내려가 바로 다음 줄의 반경 판정이 거짓이 된다.
+ *    2 면 버프가 끝난 뒤 최대 2틱만 남고 스스로 사라진다 — 원복 코드가 필요 없다.
+ *  · 자석 방사기 버프(`triggerMagnetEmitter`, 600틱)를 **줄이지 않는다**(`< 2` 일 때만 쓴다).
+ *  · ⚠️ **레벨 손잡이가 없다.** 이 게이트가 불리언이고 배율은 `MAGNET_BUFF_MULT` 상수 하나라
+ *    레벨로 벌릴 축이 원리적으로 없다. 반경을 레벨 비례로 키우려면 `world.ts:3897` 이 스킬
+ *    파생 배율을 읽어야 하고, 그건 이 레인 밖이다(설계-코드 어긋남이 아니라 **미도달**이다).
+ *
+ * ## ② 이동 감속 면역 — 잔여 틱을 0 으로 민다
+ * 플레이어 감속은 `state.playerSlowTicks > 0` 불리언 게이트 하나다(`world.ts:2207`). 이 훅은
+ * `stepPlayer` 의 그 판정보다 **앞**이고 감속을 세우는 지점(해저드 접촉, `world.ts:4361`)보다는
+ * **뒤**라, 직전 틱에 밟은 감속이 이번 틱 이동에 실리기 전에 지워진다 = 설계서의 "면역".
+ * 접촉 그 틱은 애초에 감속이 안 실린다(세우는 지점이 `stepPlayer` 뒤다).
+ */
+export function strikerSurvivalSustain(state: WorldState, player: Entity): void {
+  if (!state.skillsOn) return;
+  void player;
+  const s6 = lv(state, Sk.sustainField);
+  if (s6 < 1) return;
+  if (state.magnetBuffTicks < 2) state.magnetBuffTicks = 2;
+  state.playerSlowTicks = 0;
 }
 
 /**

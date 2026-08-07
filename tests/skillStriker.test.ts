@@ -33,7 +33,8 @@ import {
 import type { VolleyParams } from '../src/sim/skillHooks.js';
 import { SIG_STRIKER_MARKSMAN, MARKSMAN_TRIGGER_AUX0 } from '../src/sim/shipSignature.js';
 import { StrikerCarry, readSlot, SKILL_SLOT_COUNT, DamageSource } from '../src/sim/skillSlots.js';
-import { STRIKER_HANDLERS } from '../src/sim/activeHandlers/striker.js';
+import { STRIKER_HANDLERS, STRIKER_SUSTAIN } from '../src/sim/activeHandlers/striker.js';
+import { COLD_DURATION } from '../src/sim/status.js';
 import { ALL_ACTIVES } from '../data/ships/actives/index.js';
 import type { ActiveSkillDef } from '../data/ships/actives/types.js';
 
@@ -44,16 +45,19 @@ const F3 = 2;
 const F4 = 3;
 const F5 = 4;
 const F6 = 5;
+const F8 = 7;
 const F9 = 8;
 const S1 = 10;
 const S2 = 11;
 const S3 = 12;
 const S4 = 13;
+const S6 = 15;
 const S8 = 17;
 const S10 = 19;
 const M1 = 20;
 const M3 = 22;
 const M5 = 24;
+const M6 = 25;
 
 /** 지정한 flat 인덱스에만 포인트를 넣은 30칸 투자 벡터. */
 function invest(points: ReadonlyArray<readonly [number, number]>): number[] {
@@ -842,5 +846,229 @@ describe('⑪ M1 관성 방출 (기동 액티브)', () => {
 
   it('미투자면 도약만 하고 출발 지점에 아무 일도 없다', () => {
     expect(blinkOnce([[F1, 1]])).toEqual({ near: 500, far: 500, cleared: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑫ F8 과열 파쇄 — 앵커 ⑩(명중). 보스 `iframes` = 과열 창 잔여 틱
+// ---------------------------------------------------------------------------
+
+describe('⑫ F8 과열 파쇄 (앵커 ⑩)', () => {
+  /** 표식 **없는** 평상시 탄. F8 은 정조준을 요구하지 않는다(설계서 문면). */
+  function plainBullet(): Entity {
+    const b = blankEntity('bullet');
+    b.aux0 = 0;
+    b.angle = 0;
+    return b;
+  }
+
+  function hitBoss(
+    points: ReadonlyArray<readonly [number, number]>,
+    kind: 'boss' | 'defenseBoss',
+    window: number,
+  ): number {
+    const w = mk(points);
+    const t = blankEntity(kind);
+    t.hp = 9000;
+    t.iframes = window;
+    onEnemyDamaged(w, t, 10, plainBullet());
+    return t.iframes - window;
+  }
+
+  it('과열 창이 열린 보스를 명중하면 잔여 틱이 1 + floor(Lv/8) 만큼 늘어난다', () => {
+    expect(hitBoss([[F8, 8]], 'boss', 40)).toBe(2);
+  });
+
+  it('레벨이 오르면 연장 폭이 커진다 — **하한 짝**(끊기면 양변이 0 이 되는 항진 방지)', () => {
+    const lo = hitBoss([[F8, 1]], 'boss', 40);
+    const hi = hitBoss([[F8, 16]], 'boss', 40);
+    expect(lo).toBeGreaterThanOrEqual(1); // 긍정 하한
+    expect(hi).toBeGreaterThan(lo); // 단조
+  });
+
+  it('침공 코어룸 보스(defenseBoss)도 같은 인코딩이라 함께 연장된다', () => {
+    expect(hitBoss([[F8, 8]], 'defenseBoss', 40)).toBe(2);
+  });
+
+  it('⚠️ 닫힌 창은 열지 않는다 — 연장이지 개창이 아니다', () => {
+    expect(hitBoss([[F8, 8]], 'boss', 0)).toBe(0);
+  });
+
+  it('⚠️ 잡몹의 `iframes` 는 화상 잔여라 절대 건드리지 않는다 (F6 과 대칭)', () => {
+    const w = mk([[F8, 20]]);
+    const t = blankEntity('enemy');
+    t.hp = 300;
+    t.iframes = 30; // 화상 남은 틱
+    t.dashCooldown = 4; // 틱당 화상 피해
+    onEnemyDamaged(w, t, 10, plainBullet());
+    expect(t.iframes).toBe(30);
+    expect(t.dashCooldown).toBe(4);
+  });
+
+  it('미투자면 과열 창이 그대로다', () => {
+    expect(hitBoss([[F1, 1]], 'boss', 40)).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // 상한 — "창이 영영 안 닫힌다" 를 막는 축. 위 6건이 **긍정 짝**이다
+  // (연장이 0 이 되면 저기가 먼저 빨개지므로 아래 단언이 항진이 아니다).
+  // -------------------------------------------------------------------------
+
+  /** 효과 함수와 **독립**으로 적은 천장. 코드에서 import 하면 상한 단언이 항진이 된다. */
+  const CAP = 300;
+
+  it('천장(300)을 넘겨 늘리지 않는다 — 한 발로도 경계에서 멈춘다', () => {
+    const w = mk([[F8, 20]]); // 연장 폭 3
+    const t = blankEntity('boss');
+    t.hp = 9000;
+    t.iframes = CAP - 1;
+    onEnemyDamaged(w, t, 10, plainBullet());
+    expect(t.iframes).toBe(CAP);
+  });
+
+  it('⚠️ 이미 천장 위인 창을 **깎지 않는다** (강화가 약화로 뒤집히는 부호 반전 방지)', () => {
+    const w = mk([[F8, 20]]);
+    const t = blankEntity('boss');
+    t.hp = 9000;
+    t.iframes = CAP + 60; // 미래 콘텐츠·어픽스가 더 길게 연 창
+    onEnemyDamaged(w, t, 10, plainBullet());
+    expect(t.iframes).toBe(CAP + 60);
+  });
+
+  it('다탄 볼리를 연속 틱 먹여도 창이 천장을 안 넘고, 사격을 멈추면 **실제로 닫힌다**', () => {
+    const w = mk([[F8, 20]]); // 명중당 3틱 — 감소(틱당 1)를 크게 웃돈다
+    const t = blankEntity('boss');
+    t.hp = 900000;
+    t.iframes = 300; // 방금 열린 창
+    // ① 240틱 × 명중 4발/틱 — 보스 스텝의 감소(틱당 1)를 손으로 재현한다.
+    //    (`stepBoss` 를 부르지 않는 것은 이 테스트가 재려는 것이 F8 의 상한 산술이라서다.)
+    let peak = 0;
+    for (let tick = 0; tick < 240; tick++) {
+      for (let shot = 0; shot < 4; shot++) onEnemyDamaged(w, t, 10, plainBullet());
+      if (t.iframes > 0) t.iframes--; // 보스 스텝의 과열 감쇠
+      if (t.iframes > peak) peak = t.iframes;
+    }
+    expect(peak).toBeLessThanOrEqual(CAP);
+    // ② 사격을 멈추면 창은 천장 길이 안에 반드시 닫힌다 — "영구 유지 안 됨" 의 직접 증거.
+    for (let tick = 0; tick < CAP && t.iframes > 0; tick++) t.iframes--;
+    expect(t.iframes).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑬ M6 활공 정화 — 앵커 ②(대시 발동)
+// ---------------------------------------------------------------------------
+
+describe('⑬ M6 활공 정화 (앵커 ②)', () => {
+  /**
+   * ⚠️ 적은 반경 **바깥 끝 근처**에 둔다. 플레이어 코앞에 두면 이 훅이 아니라 자동사격이
+   * 결과를 만들 수 있다(레인 규약 4). 여기서는 `stepWorld` 를 돌리지 않아 자동사격이 아예
+   * 없지만, 반경 경계를 재는 것이 이 테스트의 목적이라 안팎 한 쌍으로 둔다.
+   */
+  function dash(points: ReadonlyArray<readonly [number, number]>) {
+    const w = mk(points);
+    const p = player(w);
+    const inner = blankEntity('enemy'); // Lv5 반경 200 안쪽
+    inner.hp = 500;
+    inner.x = p.x + 190;
+    inner.y = p.y;
+    const outer = blankEntity('enemy'); // 바깥
+    outer.hp = 500;
+    outer.x = p.x + 260;
+    outer.y = p.y;
+    const bossIn = blankEntity('boss'); // 반경 안이지만 냉기 대상 아님
+    bossIn.hp = 9000;
+    bossIn.x = p.x + 100;
+    bossIn.y = p.y;
+    const shotIn = blankEntity('enemyBullet');
+    shotIn.x = p.x + 190;
+    shotIn.y = p.y;
+    const shotOut = blankEntity('enemyBullet');
+    shotOut.x = p.x + 260;
+    shotOut.y = p.y;
+    w.entities.push(inner, outer, bossIn, shotIn, shotOut);
+    onDashFired(w, p);
+    return {
+      innerChill: inner.ownerId,
+      outerChill: outer.ownerId,
+      bossChill: bossIn.ownerId,
+      innerCleared: shotIn.dead,
+      outerCleared: shotOut.dead,
+    };
+  }
+
+  it('반경(150 + 10×Lv) 안 잡몹에 냉기를 걸고 안쪽 적탄만 소거한다', () => {
+    expect(dash([[M6, 5]])).toEqual({
+      innerChill: COLD_DURATION,
+      outerChill: 0,
+      bossChill: 0, // 보스는 `ownerId` 를 다른 뜻으로 쓴다 — 덮으면 안 된다
+      innerCleared: true,
+      outerCleared: false,
+    });
+  });
+
+  it('반경이 레벨로 넓어진다 — 하한 짝(저레벨은 못 닿고 고레벨은 닿는다)', () => {
+    // Lv1 반경 160 < 190 ≤ Lv5 반경 200.
+    expect(dash([[M6, 1]]).innerChill).toBe(0);
+    expect(dash([[M6, 5]]).innerChill).toBe(COLD_DURATION);
+  });
+
+  it('미투자면 냉기도 소거도 없다', () => {
+    expect(dash([[M5, 1]])).toEqual({
+      innerChill: 0,
+      outerChill: 0,
+      bossChill: 0,
+      innerCleared: false,
+      outerCleared: false,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑭ S6 유지 보강 — 생존 액티브 **지속 틱**(sustain 표)
+// ---------------------------------------------------------------------------
+
+describe('⑭ S6 유지 보강 (생존 액티브 sustain)', () => {
+  function sustain(
+    points: ReadonlyArray<readonly [number, number]>,
+    id: 'as_striker_survival_lo' | 'as_striker_survival_hi',
+    seed: { slow: number; magnet: number },
+  ) {
+    const w = mk(points);
+    const p = player(w);
+    w.playerSlowTicks = seed.slow;
+    w.magnetBuffTicks = seed.magnet;
+    const hook = STRIKER_SUSTAIN[id];
+    if (hook === undefined) throw new Error(`sustain missing: ${id}`);
+    hook(w, p, activeDef(id));
+    return { slow: w.playerSlowTicks, magnet: w.magnetBuffTicks, iframes: p.iframes };
+  }
+
+  it('지속 틱마다 감속 잔여를 지우고 자석 배율 게이트를 세운다', () => {
+    // ⚠️ 2 인 것이 계약이다 — 감소(world.ts:3895)가 이 훅보다 뒤라 1 이면 같은 틱에 꺼진다.
+    expect(sustain([[S6, 3]], 'as_striker_survival_lo', { slow: 90, magnet: 0 })).toMatchObject({
+      slow: 0,
+      magnet: 2,
+    });
+  });
+
+  it('상위 등급 액티브에도 걸려 있다', () => {
+    expect(sustain([[S6, 3]], 'as_striker_survival_hi', { slow: 90, magnet: 0 })).toMatchObject({
+      slow: 0,
+      magnet: 2,
+    });
+  });
+
+  it('자석 방사기 버프(600틱)를 **줄이지 않는다**', () => {
+    expect(sustain([[S6, 3]], 'as_striker_survival_lo', { slow: 0, magnet: 600 }).magnet).toBe(600);
+  });
+
+  it('미투자면 감속도 자석도 그대로다 — 무적 유지(기존 sustain)는 그대로 돈다', () => {
+    const off = sustain([[S4, 3]], 'as_striker_survival_lo', { slow: 90, magnet: 0 });
+    expect(off.slow).toBe(90);
+    expect(off.magnet).toBe(0);
+    // 긍정 짝: 같은 호출이 기존 효과(무적 프레임 재설정)는 여전히 만든다 — 훅 자체가
+    // 안 불린 것을 "S6 미발동" 으로 착각하지 않기 위한 대조다.
+    expect(off.iframes).toBeGreaterThan(0);
   });
 });

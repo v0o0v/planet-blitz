@@ -275,6 +275,10 @@ function dispatchDashSkill(state: WorldState, player: Entity): void {
   if (!state.skillsOn) return;
   switch (state.sigBit) {
     case SIG_STRIKER_MARKSMAN:
+      // M5 벽차기(무적프레임) · **M6 활공 정화**(적탄 소거 + 반경 안 잡몹 냉기).
+      // ⚠️ M2(추진 항적)는 여기 없다 — 술어 "대시 방향" 의 정본이 `resolveDirFallback(mx, my,
+      // angle)` 인데 그 `mx/my` 는 `stepPlayer` 지역 변수이고 이 앵커는 `input` 을 받지 않는다.
+      // `player.vx/vy` 는 이미 이동 성분이 합산된 뒤라 방향 규칙의 두 번째 사본이 된다.
       strikerDashFired(state, player);
       break;
     // ⚠️ **아크캐스터는 여기 case 가 없다 — 설계에 대시 결속 스킬이 한 종도 없기 때문이다.**
@@ -892,8 +896,10 @@ function dispatchEnemyDamagedSkill(
   void dmg;
   switch (state.sigBit) {
     case SIG_STRIKER_MARKSMAN:
-      // F6 소이 정조준 · F9 제압 사격. 둘 다 트리거가 **정조준탄 명중**이라 앵커 ⑯ 이 찍은
-      // 표식(`params.mark = 1` → 탄 `aux0`)을 `source` 에서 읽는다.
+      // F6 소이 정조준 · F9 제압 사격 · **F8 과열 파쇄**. 앞 둘은 트리거가 **정조준탄 명중**이라
+      // 앵커 ⑯ 이 찍은 표식(`params.mark = 1` → 탄 `aux0`)을 `source` 에서 읽는다. F8 만
+      // 표식과 무관하다 — 설계서가 "보스 과열 창 동안 명중할 때마다" 로 적었고, 그래서 효과
+      // 함수에서 표식 게이트 **앞**에 있다(보스 `iframes` = 과열 창 잔여 틱).
       //
       // ⚠️ F7(표적 고정)·S7(최후 처형)은 여기 **없다** — 이 앵커의 금지 사항에 정면으로 걸린다
       // (F7 은 차감 **뒤**라 이번 일격에 안 실리고, S7 은 doc 가 "처형 축은 이 앵커가 아니다"
