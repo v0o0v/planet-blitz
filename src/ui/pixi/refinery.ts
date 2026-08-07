@@ -82,7 +82,7 @@
 
 import { Container, Graphics, Sprite, Text, Texture, Ticker } from 'pixi.js';
 import { RARITY_CODE, SLOT_KINDS, type Item } from '../../items/types.js';
-import { AFFIXES, AFFIX_BY_ID } from '../../../data/affixes.js';
+import { AFFIX_BY_ID } from '../../../data/affixes.js';
 import { affixLines, affixTitleLine, affixDescLine } from '../affixText.js';
 import { itemDisplayName, slotLabel } from '../itemNames.js';
 import {
@@ -90,8 +90,10 @@ import {
   fasten as fastenAffix,
   rollChain,
   isComplete,
+  rerollableCount,
   type ChainState,
 } from '../../items/refiningChain.js';
+import { isSkillAffix, refinePoolFor } from '../../items/affixPool.js';
 import { saveProfile, type KeyValueStore, type Profile } from '../../save/profile.js';
 import { spendCurrencyOnServer } from '../../net/index.js';
 import { t, type MessageKey } from '../../i18n/index.js';
@@ -823,9 +825,16 @@ export class RefineryScreen {
 
   // --- 선택 / 노 출력 / 고착 / 굴림 ---------------------------------------
 
-  /** 어픽스가 하나라도 있는 인벤토리 장비(굴릴 가치가 있는 것만). */
+  /**
+   * 재굴림 가능 어픽스가 하나라도 있는 인벤토리 장비(굴릴 가치가 있는 것만).
+   *
+   * `rerollableCount() > 0` — 어픽스가 전부 스킬 어픽스(암묵 고착)인 아이템은 굴릴 것이 없다.
+   * ⚠️ 현행 규칙에서는 이 상태에 **도달 불가**하다(스킬 어픽스 최대 1개 + rare·unique 어픽스
+   * 3~6 → rerollable ≥ 2, magic·normal 은 스킬 어픽스 자체가 0개) — 손으로 빚은 Item·향후
+   * 규칙 완화에 대비한 방어 코드다. 도달 불가능한 이 분기 자체를 지우지는 마라.
+   */
   private rerollable(): Item[] {
-    return this.profile.inventory.filter((it) => it.affixes.length > 0);
+    return this.profile.inventory.filter((it) => rerollableCount(it) > 0);
   }
 
   private selected(): Item | undefined {
@@ -851,7 +860,8 @@ export class RefineryScreen {
   private currentRisk(): number {
     const item = this.selected();
     if (item === undefined) return 0;
-    return meltRisk(this.chain?.fastened.length ?? 0, item.affixes.length, this.heat);
+    // 분모는 rerollableCount() — 판정(rollChain)과 같은 분모를 써야 한다(refiningChain.ts 참조).
+    return meltRisk(this.chain?.fastened.length ?? 0, rerollableCount(item), this.heat);
   }
 
   private fastenedCount(): number {
@@ -1053,14 +1063,24 @@ export class RefineryScreen {
     }, 70);
   }
 
-  /** 슬롯머신 프레임: 고착되지 않은 어픽스 행 문구를 무작위 어픽스 이름으로 덮어쓴다. */
+  /**
+   * 슬롯머신 프레임: 고착되지 않은 어픽스 행 문구를 무작위 어픽스 이름으로 덮어쓴다.
+   *
+   * 릴은 **정련 풀**(`refinePoolFor(item.slot)`, base-24 중 그 슬롯에서 나오는 것만)에서
+   * 돈다 — 전역 24종에서 돌리면 이 슬롯에서 나올 수 없는 어픽스가 흘러가 거짓 기대를 만든다.
+   * 결과 확정 **이후**의 연출이라 `Math.random` 자체는 결정론과 무관하다(ADR-0040).
+   */
   private renderSpinFrame(): void {
+    const item = this.selected();
+    if (item === undefined) return;
+    const pool = refinePoolFor(item.slot);
+    if (pool.length === 0) return;
     for (const label of this.spinTexts) {
       if (label === null || label === undefined || label.destroyed) continue;
-      const def = AFFIXES[(Math.random() * AFFIXES.length) | 0];
-      if (def === undefined) continue;
+      const entry = pool[(Math.random() * pool.length) | 0];
+      if (entry === undefined) continue;
       label.scale.x = 1;
-      label.text = `${def.name} (${def.stat} +?)`;
+      label.text = `${entry.def.name} (${entry.def.stat} +?)`;
     }
   }
 
@@ -1688,15 +1708,21 @@ export class RefineryScreen {
   /** 어픽스 한 행: 석재 행 판 + 제목 줄 + 설명 줄 + 고착 버튼(또는 고착됨 표식). */
   private makeAffixRow(item: Item, index: number, h: number): Container {
     const chain = this.chain;
+    const roll = item.affixes[index];
+    const def = roll === undefined ? undefined : AFFIX_BY_ID.get(roll.id);
+    // 스킬 어픽스는 정련에서 암묵 고착이다(§3) — 고착 버튼이 아예 뜨지 않고 "고착됨 · 정련
+    // 불가"만 보인다. `chain.fastened` 에는 절대 들어가지 않는다(사용자가 누를 방법이 없다).
+    const isSkillAffixRow = def !== undefined && isSkillAffix(def);
     const isFastened = chain !== null && chain.fastened.indexOf(index) >= 0;
-    const canFasten = chain !== null && chain.canFasten && !isFastened && !this.spinning;
+    const isLocked = isFastened || isSkillAffixRow;
+    const canFasten = chain !== null && chain.canFasten && !isLocked && !this.spinning;
     const row = new Container();
     const w = AFFIX_ROW_W;
 
     const plate = rowPlate(w, h);
     row.addChild(plate.view);
     plate.setSelected(isFastened);
-    if (!isFastened && this.fastenedCount() > 0) {
+    if (!isLocked && this.fastenedCount() > 0) {
       // 고착된 행이 눈에 띄도록 나머지는 한 톤 낮춘다.
       row.alpha = 0.82;
     }
@@ -1707,7 +1733,6 @@ export class RefineryScreen {
     // 오른쪽 끝 요소(고착 버튼 또는 고착됨 표식)가 시작하는 x.
     const rightX = isFastened ? w - 20 - iconSize : w - 20 - btnW;
 
-    const roll = item.affixes[index];
     const label = new Text({
       resolution: 2,
       text: this.affixText(item, index),
@@ -1715,7 +1740,7 @@ export class RefineryScreen {
         fontFamily: UI_FONT,
         fontSize: 20,
         fontWeight: '700',
-        fill: this.spinning && !isFastened ? COLOR.muted : isFastened ? COLOR.gold : COLOR.cream,
+        fill: this.spinning && !isLocked ? COLOR.muted : isLocked ? COLOR.gold : COLOR.cream,
         dropShadow: TEXT_SHADOW,
       },
     });
@@ -1729,7 +1754,7 @@ export class RefineryScreen {
       /* 캔버스 없는 환경(node 테스트)에서는 측정이 던진다 — 축소는 순수 장식이라 건너뛴다. */
     }
     row.addChild(label);
-    this.spinTexts[index] = isFastened ? null : label;
+    this.spinTexts[index] = isLocked ? null : label;
 
     // 설명 줄 — 지금까지 hover 툴팁에만 있던 정보다. 1140px 폭에 64px 이상 높이면 그냥 들어간다.
     if (roll !== undefined) {
@@ -1770,6 +1795,27 @@ export class RefineryScreen {
       lock.position.set(rightX + iconSize / 2, h / 2);
       lock.eventMode = 'none';
       row.addChild(lock);
+    } else if (isSkillAffixRow) {
+      // 스킬 어픽스는 정련이 건드리지 못한다(§3 — roll.ts 가 암묵 고착으로 유지한다).
+      // 버튼처럼 눌러도 될 것처럼 보이면 안 되므로 여기도 버튼이 아니라 표식이다.
+      const locked = new Text({
+        resolution: 2,
+        text: stripEmoji(t('refine.skillAffix.locked')),
+        style: {
+          fontFamily: UI_FONT,
+          fontSize: 15,
+          fontWeight: '700',
+          fill: COLOR.muted,
+          align: 'right',
+          wordWrap: true,
+          wordWrapWidth: btnW,
+          dropShadow: TEXT_SHADOW,
+        },
+      });
+      locked.anchor.set(1, 0.5);
+      locked.position.set(rightX + btnW, h / 2);
+      locked.eventMode = 'none';
+      row.addChild(locked);
     } else {
       const btn = this.chromeButton({
         tone: 'blue',
@@ -1785,20 +1831,23 @@ export class RefineryScreen {
       if (!canFasten) btn.setEnabled(false);
     }
 
-    // 퇴화 범위 어픽스(min === max)는 강불로 굴려도 값이 안 변한다 — 그게 정상임을 알린다.
+    // hover 경고 둘 — 퇴화 범위(min === max, 강불이 값을 못 바꾼다)와 슬롯 밖 어픽스(정련
+    // 풀에 없어 굴리면 되돌릴 수 없이 사라진다). 이미 고착됐거나 스킬 어픽스면 슬롯 밖 경고는
+    // 의미가 없다(정련이 건드리지 못하므로 안전하다).
     // ⚠️ hover 판정은 **행 Container** 에 건다(바탕 Graphics 에만 걸면 위에 얹힌 텍스트가
     //    이벤트를 삼킨다 — 실측 결함).
-    if (this.isDegenerate(item, index)) {
+    const isOffSlot =
+      !isLocked &&
+      def !== undefined &&
+      !refinePoolFor(item.slot).some((e) => e.def.id === def.id);
+    const tipLines: string[] = [];
+    if (this.isDegenerate(item, index)) tipLines.push(t('refine.chain.noBand'));
+    if (isOffSlot) tipLines.push(t('refine.offSlotWarn'));
+    if (tipLines.length > 0) {
       row.eventMode = 'static';
       row.cursor = 'help';
       row.on('pointerover', (e) =>
-        this.showTipLines(
-          this.affixText(item, index),
-          item,
-          [t('refine.chain.noBand')],
-          e.global.x,
-          e.global.y,
-        ),
+        this.showTipLines(this.affixText(item, index), item, tipLines, e.global.x, e.global.y),
       );
       row.on('pointermove', (e) => this.moveTip(e.global.x, e.global.y));
       row.on('pointerout', () => this.tooltip.hide());
@@ -1845,9 +1894,11 @@ export class RefineryScreen {
 
     const fastened = new Text({
       resolution: 2,
-      text: t('refine.chain.fastenedCount', {
+      // 분모는 rerollableCount() — `n / count` 로 두면 스킬 어픽스가 낀 장비에서 영영 안
+      // 차는 막대를 보게 된다(설계서 §3).
+      text: t('refine.fastenCounter', {
         n: this.fastenedCount(),
-        total: item.affixes.length,
+        d: rerollableCount(item),
       }),
       style: {
         fontFamily: UI_FONT,

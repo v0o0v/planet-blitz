@@ -115,6 +115,14 @@ export const SKILL_ICON_NAMES = [
   'skill_capstone_firepower.png',
   'skill_capstone_survival.png',
   'skill_capstone_mobility.png',
+  // ADR-0049 스킬 어픽스의 **축 아이콘 3종**(affixes.md ①-11). 위 스탯 아이콘과 달리
+  // **affinity 속성 자체**를 그린다 — ADR-0015 의 "인스턴스가 아니라 속성이 축". 기체별 트리
+  // 아이콘을 재사용하면 안 된다(7기체의 축 표기 이름이 전부 달라 어픽스가 기체에 묶여 보인다).
+  // ⚠️ 나머지 스킬 아이콘은 64×64 인데 이 셋만 **170×170** 이다(사용자 지시 2026-08-07 —
+  // 고해상도). 스프라이트 배율을 손으로 맞춘 자리가 있으면 이 셋에서 어긋난다.
+  'skill_axis_offense.png',
+  'skill_axis_defense.png',
+  'skill_axis_utility.png',
 ] as const;
 
 /**

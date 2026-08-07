@@ -190,6 +190,14 @@ export const EN = {
   'stat.xpPct.desc': 'You gain {n}% more XP.',
   'stat.mineralFindPct.name': 'Mineral Find',
   'stat.mineralFindPct.desc': 'Runs yield {n}% more minerals.',
+  // ADR-0049 스킬 어픽스 3종(축 단위 +N 레벨). "already-invested" 문구는 정본 1을 드러내는
+  // 유일한 자리다 — 투자 0인 스킬에는 가산되지 않는다(빼지 마라).
+  'stat.skillLvOffense.name': 'Offense Skills',
+  'stat.skillLvOffense.desc': 'Already-invested offense skills gain {n} level(s).',
+  'stat.skillLvDefense.name': 'Defense Skills',
+  'stat.skillLvDefense.desc': 'Already-invested defense skills gain {n} level(s).',
+  'stat.skillLvUtility.name': 'Utility Skills',
+  'stat.skillLvUtility.desc': 'Already-invested utility skills gain {n} level(s).',
 
   // --- 필드 아군·이익 오브젝트 이름표(스프라이트 아래 표시) ---
   'ent.turret.pickup': 'Turret Kit',
@@ -713,6 +721,10 @@ export const EN = {
   'lab.err.noCredits': 'Not enough credits (need {n}).',
   'lab.respecDone': 'Reset the skill tree and refunded the points.',
   'lab.respecBtn': 'Respec ({n} credits)',
+  // 리스펙이 장비의 스킬 축 어픽스도 함께 무효화한다는 고지(정본 1 — 설계 ①-10). 진입점은
+  // 아직 못 찾았다(보고 참조) — 배선 전까지는 키만 존재.
+  'lab.respec.affixNotice':
+    'Refunding your points also turns off any gear skill-level bonuses (they come back once you re-invest).',
 
   // 연구소 도움말(사용자 요청 2026-08-05). 문단 구분은 **홑 개행**이다 — 빈 줄은 Pixi 라벨이
   // 거치는 stripEmoji 가 접어 화면에 도달하지 못한다(`helpModal.ts` 모듈 주석 ①).
@@ -844,6 +856,9 @@ export const EN = {
   'hangar.desc.element.cold': 'Slows enemies on hit.',
   'hangar.desc.element.lightning': 'Chains damage to nearby enemies.',
   'hangar.desc.lineage': 'Account-wide boost to your active ship.',
+  // 스킬 축 어픽스 툴팁 고지(정본 1 — 설계 ①-10). 그 축에 투자가 0이면 회색으로 값을 보여
+  // 주되 왜 무효과인지를 이 문구로 설명한다(값을 숨기지 않는다).
+  'hangar.affix.noInvest': '(no investment - inactive)',
   'hangar.act.swapShip': 'Change Ship',
   'hangar.act.guardians': 'Guardians',
   'hangar.act.lineage': 'Lineage',
@@ -1298,6 +1313,10 @@ export const EN = {
     'A failed roll melts. Melting releases every fastened affix and returns the process to where it stood before you began — but the item is untouched. Its grade, its affix count, and its existence are never at risk. What melts is your progress, not your gear.\nThe exact failure chance is shown as a number before you commit to a roll, so a melt is always a risk you accepted rather than one you were surprised by.',
   'refine.sort.slot': 'Slot',
   'refine.sort.affixes': 'Affixes',
+  // 레인 2(정제소 스킬 어픽스 배선)가 쓰는 키 — 카탈로그는 이 레인이 관리한다.
+  'refine.skillAffix.locked': 'Fastened - cannot refine',
+  'refine.fastenCounter': 'Fastened {n} / {d}',
+  'refine.offSlotWarn': 'This affix will not roll again in this slot - fasten it to keep it',
 
   // --- 관제탑 ---
   'ctl.title': 'Control Tower',
@@ -2429,6 +2448,12 @@ export const KO: Record<MessageKey, string> = {
   'stat.xpPct.desc': '획득 경험치가 {n}% 증가합니다.',
   'stat.mineralFindPct.name': '광물 획득',
   'stat.mineralFindPct.desc': '런에서 얻는 광물이 {n}% 증가합니다.',
+  'stat.skillLvOffense.name': '공격 계열 스킬',
+  'stat.skillLvOffense.desc': '이미 투자한 공격 계열 스킬이 모두 {n} 레벨 오릅니다.',
+  'stat.skillLvDefense.name': '방어 계열 스킬',
+  'stat.skillLvDefense.desc': '이미 투자한 방어 계열 스킬이 모두 {n} 레벨 오릅니다.',
+  'stat.skillLvUtility.name': '유틸 계열 스킬',
+  'stat.skillLvUtility.desc': '이미 투자한 유틸 계열 스킬이 모두 {n} 레벨 오릅니다.',
 
   'ent.turret.pickup': '포탑 키트',
   'ent.turret.active': '아군 포탑',
@@ -2919,6 +2944,8 @@ export const KO: Record<MessageKey, string> = {
   'lab.err.noCredits': '크레딧이 부족합니다 (필요 {n}).',
   'lab.respecDone': '스킬 트리를 초기화하고 포인트를 환급했습니다.',
   'lab.respecBtn': '리스펙 ({n} 크레딧)',
+  'lab.respec.affixNotice':
+    '포인트를 되돌리면 장비의 계열 스킬 레벨 보너스도 함께 꺼집니다 (스킬에 다시 투자하면 되살아납니다).',
 
   // 연구소 도움말(사용자 요청 2026-08-05). 용어는 KO 선언부 정본표를 따른다 —
   // `스킬 트리`(화면 제목 `lab.title`·기지 건물 설명이 띄어 쓴다. 붙여 쓴 `스킬트리` 금지)·
@@ -3051,6 +3078,7 @@ export const KO: Record<MessageKey, string> = {
   'hangar.desc.element.cold': '명중 시 적을 감속시킵니다.',
   'hangar.desc.element.lightning': '명중 시 인접 적에게 연쇄 피해를 줍니다.',
   'hangar.desc.lineage': '현역 기체를 강화하는 계정 단위 보너스입니다.',
+  'hangar.affix.noInvest': '(투자 없음 — 미적용)',
   'hangar.act.swapShip': '기체 교체',
   'hangar.act.guardians': '예비역',
   'hangar.act.lineage': '계보',
@@ -3498,6 +3526,9 @@ export const KO: Record<MessageKey, string> = {
     '굴리기에 실패하면 용해입니다. 고착이 전부 풀려 공정을 시작하기 직전 상태로 돌아갑니다. 다만 장비는 아무 손상도 입지 않습니다. 등급도, 어픽스 개수도, 장비의 존재 자체도 위험에 놓이지 않습니다. 녹는 것은 지금까지의 진행이지 장비가 아닙니다.\n실패 확률은 굴리기 전에 숫자로 보여 드립니다. 용해는 예고 없이 당하는 일이 아니라 알고 감수한 위험입니다.',
   'refine.sort.slot': '슬롯순',
   'refine.sort.affixes': '어픽스순',
+  'refine.skillAffix.locked': '고착됨 · 정련 불가',
+  'refine.fastenCounter': '고착 {n} / {d}',
+  'refine.offSlotWarn': '이 어픽스는 이 슬롯에서 다시 나오지 않습니다 — 지키려면 고착하세요',
 
   'ctl.title': '관제탑',
   'ctl.sub': '상위 랭커를 정찰하고 침공하세요.',

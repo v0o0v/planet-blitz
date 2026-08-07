@@ -14,7 +14,13 @@ export interface TooltipContent {
   title: string;
   titleColor: number;
   subtitle: string;
-  lines: string[];
+  /**
+   * 원소가 순수 문자열이면 기본색(`0xc9d3ea`), `{ text, color }` 면 그 색을 쓴다(사용자 요청
+   * 2026-08-07 — 격납고 스킬 축 어픽스가 투자 0인 축을 회색으로 보여줘야 한다,
+   * `src/ui/affixText.ts` 의 `affixLinesForHangar`). 기존 호출부는 전부 `string[]` 을 넘기므로
+   * 이 확장은 그쪽에 영향이 없다(배열 공변으로 그대로 대입된다).
+   */
+  lines: readonly (string | { text: string; color?: number })[];
   /** 요구 레벨 줄(부제 다음). 미달이면 빨강, 충족이면 무채색(ADR-0030 AC9). 없으면 생략. */
   reqLine?: { text: string; color: number } | undefined;
   /** 장착 장비 비교 줄(없으면 생략). */
@@ -71,7 +77,9 @@ export class PixiTooltip {
       maxW = Math.max(maxW, makeLine(content.reqLine.text, 14, content.reqLine.color, '700'));
     }
     for (const line of content.lines) {
-      maxW = Math.max(maxW, makeLine(line, 15, 0xc9d3ea, '400'));
+      const text = typeof line === 'string' ? line : line.text;
+      const color = typeof line === 'string' ? 0xc9d3ea : (line.color ?? 0xc9d3ea);
+      maxW = Math.max(maxW, makeLine(text, 15, color, '400'));
     }
     if (content.compare !== undefined) {
       y += 4;

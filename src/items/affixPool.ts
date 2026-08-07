@@ -82,6 +82,15 @@ export function isSkillAffix(d: AffixDef): boolean {
   return SKILL_AFFIX_IDS.has(d.id);
 }
 
+/**
+ * id 로 판정하는 형태. 굴려진 어픽스(`AffixRoll` — `{id, stat, value}`)는 `AffixDef` 가
+ * 아니라 def 를 되찾지 않고는 {@link isSkillAffix} 를 못 쓴다. 저장된 아이템을 훑는
+ * 자리(정련 상태기계·UI 행)는 전부 이쪽을 쓴다.
+ */
+export function isSkillAffixId(id: string): boolean {
+  return SKILL_AFFIX_IDS.has(id);
+}
+
 /** 같은 축의 형제 스킬 어픽스 id(+1 ↔ +2). 스킬 어픽스가 아니면 `undefined`. */
 export function skillAffixSibling(id: string): string | undefined {
   return SKILL_AFFIX_SIBLINGS.get(id);
