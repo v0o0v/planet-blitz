@@ -269,6 +269,7 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
     'PH1@10', 'PH2@11', 'PH3@12', 'PH4@13', 'PH5@14', 'PH6@15', 'PH7@16', 'PH8@17', 'PH9@18',
     'PH10@19',
     'DI1@20', 'DI2@21', 'DI3@22', 'DI4@23', 'DI5@24', 'DI6@25', 'DI7@26', 'DI8@27', 'DI9@28',
+    'DI10@29',
   ],
   striker: [
     'F1@0', 'F2@1', 'F3@2', 'F4@3', 'F5@4', 'F6@5', 'F7@6', 'F8@7', 'F9@8', 'F10@9',
