@@ -52,6 +52,7 @@ import {
   type ActiveFiredOrigin,
   type GemMagnetParams,
   type PlayerMoveParams,
+  type FilmBurstParams,
 } from '../src/sim/skillHooks.js';
 import { resolveFilmBurst } from '../src/sim/filmBurst.js';
 import { BUBBLE_ACTIVES } from '../data/ships/actives/bubble.js';
@@ -60,6 +61,7 @@ import {
   SIG_BUBBLE_FILM,
   FILM_ABSORB_FLAT,
   FILM_BURST_RADIUS,
+  filmBurstPush,
   FILM_PERIOD_TICKS,
   FILM_EFFICIENCY_BASE_BP,
   filmAbsorbed,
@@ -152,6 +154,15 @@ function countBullets(state: WorldState): number {
   return n;
 }
 
+
+/**
+ * 앵커 ⑮ 가 배치6 부터 요구하는 **밀어내기 파라미터**의 기본 픽스처(버블 FI7 이 고칠 칸).
+ * 초기값은 호출부(`resolveFilmBurst`)와 같아야 한다 — 다르면 훅이 재는 배율의 기준이 갈린다.
+ */
+function burstParams(): FilmBurstParams {
+  return { radius: FILM_BURST_RADIUS, push: filmBurstPush() };
+}
+
 // ---------------------------------------------------------------------------
 // ⓪ 전제 — 이 테스트가 버블을 자극하고 있는가
 // ---------------------------------------------------------------------------
@@ -218,7 +229,7 @@ describe('① 투자 0 런 불변', () => {
     const foe = addEnemy(w, p.x + 40, p.y, 500);
     const shot = addEnemyBullet(w, p.x + 20, p.y);
     const before = countBullets(w);
-    onFilmBurst(w, p.x, p.y);
+    onFilmBurst(w, p.x, p.y, burstParams());
     expect(p.aux1).toBe(77); // FI1 미투자
     expect(p.iframes).toBe(0); // FI5 미투자
     expect(p.dashCooldown).toBe(40); // DR6 미투자
@@ -341,7 +352,7 @@ describe('④ 파열 훅 (앵커 ⑮)', () => {
     const far = addEnemy(w, cx + FILM_BURST_RADIUS + 50, cy, 500);
     const boss: Entity = { ...blankEntity('boss'), x: cx, y: cy, hp: 999, maxHp: 999 };
     w.entities.push(boss);
-    onFilmBurst(w, cx, cy);
+    onFilmBurst(w, cx, cy, burstParams());
     expect(near.hp).toBe(500 - (18 + 4 * 3));
     expect(far.hp).toBe(500);
     expect(boss.hp).toBe(999); // 보스 제외 — `blastDamage` 를 재사용하지 않은 이유
@@ -351,7 +362,7 @@ describe('④ 파열 훅 (앵커 ⑮)', () => {
     const w = mk([[PO3, 9]]);
     const p = player(w);
     const before = countBullets(w);
-    onFilmBurst(w, p.x, p.y);
+    onFilmBurst(w, p.x, p.y, burstParams());
     expect(countBullets(w) - before).toBe(6 + 3);
   });
 
@@ -359,7 +370,7 @@ describe('④ 파열 훅 (앵커 ⑮)', () => {
     const w = mk([[PO7, 4]]);
     const p = player(w);
     const foe = addEnemy(w, p.x + 30, p.y, 500);
-    onFilmBurst(w, p.x, p.y);
+    onFilmBurst(w, p.x, p.y, burstParams());
     expect(foe.hp).toBe(500 - (12 + 3 * 4));
   });
 
@@ -374,7 +385,7 @@ describe('④ 파열 훅 (앵커 ⑮)', () => {
     const inside = addGem(w, cx + radius - 30, cy);
     const outside = addGem(w, cx + radius + 30, cy);
     const outX = outside.x;
-    onFilmBurst(w, cx, cy);
+    onFilmBurst(w, cx, cy, burstParams());
     expect(inside.x).toBe(p.x);
     expect(inside.y).toBe(p.y);
     expect(inside.vx).toBe(0); // 잔여 자석 속도 소거
@@ -389,7 +400,7 @@ describe('④ 파열 훅 (앵커 ⑮)', () => {
       const cx = p.x + 2000;
       const cy = p.y + 2000;
       const gem = addGem(w, cx + d, cy);
-      onFilmBurst(w, cx, cy);
+      onFilmBurst(w, cx, cy, burstParams());
       return gem.x === p.x && gem.y === p.y;
     }
     const mid = FILM_BURST_RADIUS * 2; // 440 — Lv1(237.6) 밖 · Lv20(572) 안
@@ -404,7 +415,7 @@ describe('④ 파열 훅 (앵커 ⑮)', () => {
     const w = mk([[DR6, 5]]); // 다른 스킬만 찍어 `skillsOn` 은 참으로 만든다
     const p = player(w);
     const gem = addGem(w, p.x + 100, p.y + 100);
-    onFilmBurst(w, p.x, p.y);
+    onFilmBurst(w, p.x, p.y, burstParams());
     expect(gem.x).toBe(p.x + 100);
     expect(gem.y).toBe(p.y + 100);
   });
@@ -413,10 +424,10 @@ describe('④ 파열 훅 (앵커 ⑮)', () => {
     const w = mk([[DR6, 2]]);
     const p = player(w);
     p.dashCooldown = 100;
-    onFilmBurst(w, p.x, p.y);
+    onFilmBurst(w, p.x, p.y, burstParams());
     expect(p.dashCooldown).toBe(100 - 40);
     p.dashCooldown = 5;
-    onFilmBurst(w, p.x, p.y);
+    onFilmBurst(w, p.x, p.y, burstParams());
     expect(p.dashCooldown).toBe(0); // 음수면 `dashCooldown === 0` 게이트가 영영 안 걸린다
   });
 
@@ -424,12 +435,12 @@ describe('④ 파열 훅 (앵커 ⑮)', () => {
     const w1 = mk([[FI1, 1]]);
     const p1 = player(w1);
     p1.aux1 = 999; // `film_lo` SUSTAIN 이 선지불해 둔 값을 흉내 낸다 — 대입이 이것을 지운다
-    onFilmBurst(w1, p1.x, p1.y);
+    onFilmBurst(w1, p1.x, p1.y, burstParams());
     expect(p1.aux1).toBe(16); // round(300×1/19)
 
     const w20 = mk([[FI1, 20]]);
     const p20 = player(w20);
-    onFilmBurst(w20, p20.x, p20.y);
+    onFilmBurst(w20, p20.x, p20.y, burstParams());
     expect(p20.aux1).toBe(158); // round(300×20/38) — 420 미만이라 즉시 재생 불가
   });
 
@@ -438,11 +449,11 @@ describe('④ 파열 훅 (앵커 ⑮)', () => {
     const p = player(w);
     const want = w.config.hitIframes + 6 + 2 * 5;
     p.iframes = 0;
-    onFilmBurst(w, p.x, p.y);
+    onFilmBurst(w, p.x, p.y, burstParams());
     expect(p.iframes).toBe(want);
     // 이미 더 긴 무적이면 깎지 않는다(가산이었다면 여기서 want 만큼 늘어난다).
     p.iframes = want + 100;
-    onFilmBurst(w, p.x, p.y);
+    onFilmBurst(w, p.x, p.y, burstParams());
     expect(p.iframes).toBe(want + 100);
   });
 
@@ -453,7 +464,7 @@ describe('④ 파열 훅 (앵커 ⑮)', () => {
     const inside = addEnemyBullet(w, p.x + radius - 10, p.y);
     const outside = addEnemyBullet(w, p.x + radius + 50, p.y);
     w.playerSlowTicks = 60;
-    onFilmBurst(w, p.x, p.y);
+    onFilmBurst(w, p.x, p.y, burstParams());
     expect(inside.dead).toBe(true);
     expect(outside.dead).toBe(false);
     expect(w.playerSlowTicks).toBe(0);
@@ -1005,7 +1016,7 @@ describe('PO1 사망 마킹 (좀비 결함)', () => {
     const cy = p.y + AWAY;
     const e = addEnemy(w, cx + 10, cy, 500);
     expect(Math.hypot(e.x - cx, e.y - cy)).toBeLessThanOrEqual(FILM_BURST_RADIUS);
-    onFilmBurst(w, cx, cy);
+    onFilmBurst(w, cx, cy, burstParams());
     expect(e.hp).toBe(500 - (18 + 4 * 10));
     expect(e.hp).toBeGreaterThan(0); // 이 케이스는 죽이지 않는다
   });
@@ -1017,7 +1028,7 @@ describe('PO1 사망 마킹 (좀비 결함)', () => {
     const cy = p.y + AWAY;
     const e = addEnemy(w, cx + 10, cy, 10);
     expect(e.dead).toBe(false);
-    onFilmBurst(w, cx, cy);
+    onFilmBurst(w, cx, cy, burstParams());
     expect(e.hp).toBeLessThanOrEqual(0); // 실제로 죽을 만큼 맞았다 (하한)
     expect(e.dead).toBe(true);
   });
@@ -1032,7 +1043,7 @@ describe('PO1 사망 마킹 (좀비 결함)', () => {
     const gx = e.x;
     const gy = e.y;
     const killsBefore = w.kills;
-    onFilmBurst(w, cx, cy);
+    onFilmBurst(w, cx, cy, burstParams());
     expect(e.hp).toBeLessThanOrEqual(0);
     stepWorld(w, emptyInput());
     // 엔티티 동일성으로 본다 — 같은 틱에 다른 적이 죽어도 이 단언은 안 흔들린다.
@@ -1051,7 +1062,7 @@ describe('PO1 사망 마킹 (좀비 결함)', () => {
     const cy = p.y + AWAY;
     const e = addEnemy(w, cx + 10, cy, 500);
     const killsBefore = w.kills;
-    onFilmBurst(w, cx, cy);
+    onFilmBurst(w, cx, cy, burstParams());
     expect(e.hp).toBe(500 - 58); // 실제로 맞았다 (하한)
     expect(e.dead).toBe(false);
     stepWorld(w, emptyInput());
@@ -1067,7 +1078,7 @@ describe('PO1 사망 마킹 (좀비 결함)', () => {
     const far = addEnemy(w, cx + FILM_BURST_RADIUS + 50, cy, 10);
     const boss: Entity = { ...blankEntity('boss'), x: cx, y: cy, hp: 10, maxHp: 10 };
     w.entities.push(boss);
-    onFilmBurst(w, cx, cy);
+    onFilmBurst(w, cx, cy, burstParams());
     expect(far.hp).toBe(10);
     expect(far.dead).toBe(false);
     expect(boss.hp).toBe(10); // 보스 제외 — `blastDamage` 를 재사용하지 않은 이유
@@ -1080,7 +1091,7 @@ describe('PO1 사망 마킹 (좀비 결함)', () => {
     const cx = p.x + AWAY;
     const cy = p.y + AWAY;
     const e = addEnemy(w, cx + 10, cy, 10);
-    onFilmBurst(w, cx, cy);
+    onFilmBurst(w, cx, cy, burstParams());
     expect(e.hp).toBe(10);
     expect(e.dead).toBe(false);
   });

@@ -179,6 +179,9 @@ import type {
   CushionSplitParams,
   WallHitParams,
   WallShockRequest,
+  GemPullParams,
+  PickupRadiusParams,
+  WallSlideParams,
 } from './skillHooks.js';
 import {
   survivedLethalBlow,
@@ -220,6 +223,9 @@ import {
   onWallHit,
   onWallDestroyed,
   onWallShockResolve,
+  onGemPull,
+  onPickupRadius,
+  onPlayerWallSlide,
 } from './skillHooks.js';
 import { onDamageChainCatalyst } from './catalystHooks.js';
 
@@ -2289,7 +2295,10 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
     }
     // 앵커 ②(S0) — 대시가 **실제로 발동한** 이 블록 안이다. 쿨다운·입력 게이트 밖에 두면
     // "대시를 시도했다"가 아니라 매 틱이 되어 술어 자체가 달라진다.
-    onDashFired(state, player);
+    // 배치6 — **대시 방향**(`resolveDirFallback` 정본을 통과한 단위 벡터)을 함께 싣는다.
+    // 스트라이커 M2「추진 항적」이 이 값 하나 때문에 배치3~5 내내 막혀 있었다 — `player.vx/vy`
+    // 는 이동 성분 합산 뒤라 방향 규칙의 **두 번째 사본**이 된다.
+    onDashFired(state, player, dx, dy);
   }
 
   // 벽 슬라이드의 "직전 좌표" — 속도 적분 **이전**. 강제 스크롤에서는 이 시점의 좌표가 이미
@@ -2307,7 +2316,13 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
   // 관통을 막는다(근거·실측은 `slideCircleWalls` 주석). 창이 없으면 `undefined` 를 넘겨 기존
   // 최소 침투 경로가 그대로 돈다 — 뱀서류·수축·추격·오염은 해시 바이트 불변.
   let wallContact = false;
-  if (state.activeWalls.length > 0) {
+  // 배치6 앵커 — 선체↔벽 겹침 해소 **직전**(팬텀 DI9「유령 선체」). 탄↔벽 앵커(`onWallHit`)와
+  // 함수도 술어도 겹치지 않는다 — 저쪽은 탄을 죽이고 이쪽은 `player.radius` 로 원을 밀어낸다.
+  // 미투자 런은 훅이 첫 줄에서 반환해 `passThrough === false` 이므로 아래 블록이 종전과
+  // 비트 동일하게 돈다(해시 불변).
+  const slideParams: WallSlideParams = { passThrough: false };
+  onPlayerWallSlide(state, player, slideParams);
+  if (state.activeWalls.length > 0 && !slideParams.passThrough) {
     const slid = slideCircleWalls(
       player.x,
       player.y,
@@ -4036,7 +4051,13 @@ function stepGems(state: WorldState, player: Entity): void {
         }
       }
     }
-    if (pull) {
+    // 배치6 앵커 — 젬 **1개**의 흡인 판정 직후 · 속도 대입 직전. 앵커 ㉘ 은 루프 밖에서
+    // 스칼라 반경 하나만 넘겨 *젬마다 다른* 판정(스트라이커 M4 비등방 · 브루저 MO2 출처)이
+    // 원리적으로 못 살았다. 미투자 런은 훅이 첫 줄에서 반환하므로 `gp.pull === pull` 이고
+    // 아래 분기가 종전과 비트 동일하다(해시 불변).
+    const gp: GemPullParams = { pull, dx, dy, d2 };
+    onGemPull(state, player, e, gp);
+    if (gp.pull) {
       const d = length(dx, dy);
       e.vx = (dx / d) * MAGNET_SPEED;
       e.vy = (dy / d) * MAGNET_SPEED;
@@ -4457,12 +4478,20 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   // 합류시키므로 여기서 안 잡으면 앵커 시점에 *"어디서 맞았는가"* 를 복원할 방법이 없다.
   // ⚠️ `0` 초기화를 쓰지 않는다 — 0,0 은 월드 원점이라 *"모른다"* 와 구분되지 않고, 방향
   //    벡터가 조용히 뒤집힌다. `undefined` 가 "모른다" 이고 앵커도 선택 인자로 받는다.
+  // 배치6 — 앵커 ④ 의 **접촉 상대 적**(브루저 FO3). 접촉이 아닌 피격(적탄·해저드)에서는
+  // `undefined` 로 남는다 — 그 구분이 곧 FO3 의 게이트다.
+  let contactSrc: Entity | undefined;
   let srcX: number | undefined;
   let srcY: number | undefined;
   const invulnerable = player.iframes > 0;
   const px = player.x;
   const py = player.y;
-  const pickR = player.radius; // 관대한 픽업 반경
+  // 배치6 앵커 — 픽업 접촉 반경 확정 직후 · 격자 질의 직전(버블 DR8「원격 채집기」).
+  // 자석 반경(앵커 ㉘)과 **다른 축**이다: 저쪽은 젬을 끌어오고 이쪽은 닿았는가를 판정한다.
+  // 미투자 런은 훅이 첫 줄에서 반환하므로 `pickR === player.radius` 로 비트 동일(해시 불변).
+  const pick: PickupRadiusParams = { radius: player.radius }; // 관대한 픽업 반경
+  onPickupRadius(state, player, pick);
+  const pickR = pick.radius;
   const hitR = PLAYER_HIT_RADIUS; // 좁은 피격 판정점
   grid.query(px, py, pickR, (t) => {
     if (t.dead) return;
@@ -4547,6 +4576,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         dmgFromHazard = false;
         srcX = t.x;
         srcY = t.y;
+        // 배치6 — **접촉 상대 그 개체**(브루저 FO3「반동 갑주」). `srcX`/`srcY` 와 정확히 같은
+        // 규율이다: `max` 를 갱신한 그 분기에서만 함께 대입한다. 좌표만으로 적을 되찾으면
+        // 접촉 판정의 두 번째 사본이 되고, 같은 좌표에 여럿이 겹친 틱에 조용히 갈린다.
+        contactSrc = t;
       }
     } else if (t.kind === 'hazard' && hazardActive(t)) {
       if (t.damage > 0) dmgSources |= DamageSource.hazard;
@@ -4797,7 +4830,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // `srcX`/`srcY` 는 `max` 를 이긴 그 접촉원의 좌표다(`dmgFromHazard` 와 같은 규율) —
     // 승자가 없으면 `undefined` 이고 그것이 "모른다" 의 유일한 표현이다(0,0 을 쓰지 않는 사유는
     // 선언부 주석). 선택 인자라 촉매 짝·기존 픽스처는 인자가 안 늘었다.
-    onPlayerDamaged(state, player, dmg, lethalSurvived, dmgSources, srcX, srcY);
+    onPlayerDamaged(state, player, dmg, lethalSurvived, dmgSources, srcX, srcY, contactSrc);
   }
 }
 

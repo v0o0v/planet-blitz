@@ -224,7 +224,7 @@ describe('계측 이음매', () => {
   //    배치4 에서 네 레인이 병렬로 앵커를 세우며 ㉗㉘ 가 **세 갈래로 중복**됐고(공유·해츨링·말로우)
   //    git 은 그 충돌을 전혀 몰랐다. 그래서 ㉖ 이후로는 번호를 붙이지 않는다
   //    (사유 전문은 `src/sim/skillHooks.ts` 헤더). 새 앵커는 **여기에 이름을 추가**해라.
-  it('앵커 41개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 46개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
@@ -299,6 +299,13 @@ describe('계측 이음매', () => {
         'onWallHit', // 탄↔벽 겹침 확정 직후 · `w.hp` 감산 앞 (브루저 BL7 · 팬텀 AS10)
         'onWallDestroyed', // `wall.dead = true` 직후 (브루저 MO7)
         'onWallShockResolve', // 투사체 루프 밖 — 지연 스폰 (브루저 BL7 충격파)
+        // ⚠️ 배치6 다섯. 전부 **배치5 가 「막는 자리」로 지목한 최대 부류**를 연다 —
+        // 소비처를 설계 문면으로 확인한 뒤에만 열었다(사유 전문은 `skillHooks.ts`).
+        'onActiveExpired', // 액티브 버프가 0 이 된 그 한 틱 (브루저 FO10 · 스트라이커 S9)
+        'onFilmBurstPost', // 파열 밀어내기 루프 **뒤** — ⑮ 는 앞이라 PO4 가 못 살았다
+        'onGemPull', // 젬 1개의 흡인 판정 (㉘ 은 루프 밖·스칼라라 비등방이 불가했다)
+        'onPickupRadius', // 픽업 접촉 반경 — 자석 반경(㉘)과 **다른 축** (버블 DR8)
+        'onPlayerWallSlide', // 선체↔벽 겹침 해소 직전 (팬텀 DI9 — 탄↔벽 축이 아니었다)
         // ⚠️ `onEnemyStatusExpired`(적 화상 만료 → SQ9)는 여기 **없다** — `chainHooks.ts`
         //    에 산다. `status.ts` 가 부르는 앵커라 이 파일에 두면 런타임 순환이 된다.
       ].sort(),

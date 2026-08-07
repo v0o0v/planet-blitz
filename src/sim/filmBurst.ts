@@ -34,7 +34,8 @@ import type { WorldState } from './world.js';
 import { FILM_BURST_RADIUS, filmBurstPush } from './shipSignature.js';
 import { slideCircleWalls } from './los.js';
 import { length } from './math.js';
-import { onFilmBurst } from './skillHooks.js';
+import { onFilmBurst, onFilmBurstPost } from './skillHooks.js';
+import type { FilmBurstParams, FilmBurstPushed } from './skillHooks.js';
 
 /** 요청 없음. 슬롯의 정상 상태이며, 소비 직후 항상 이 값으로 되돌아간다. */
 export const FILM_BURST_REQ_NONE = 0;
@@ -144,9 +145,18 @@ export function resolveFilmBurst(state: WorldState, x: number, y: number): void 
   // 둘뿐). **`skills/bubble.ts` 가 이 모듈을 import 하는 순간 순환이 된다 — 하지 마라.**
   //
   // 미투자 런은 훅 첫 줄(`skillsOn`)에서 즉시 반환하므로 바이트 단위로 종전과 같다.
-  onFilmBurst(state, x, y);
-  const push = filmBurstPush();
-  const r2 = FILM_BURST_RADIUS * FILM_BURST_RADIUS;
+  //
+  // 배치6 — 앵커 ⑮ 가 **밀어내기 파라미터를 넘긴다**(버블 FI7「벽면 반향」). 종전에는 값을
+  // 건네받지 못해 산술 바깥이었고, 그것이 이 함수 주석이 적어 둔 FI7 미배선 사유 그 자체다.
+  // 미투자 런은 훅이 첫 줄에서 반환하므로 `params` 가 초기값 그대로이고 아래 두 상수 대입이
+  // 종전과 비트 동일하다(해시 불변).
+  const params: FilmBurstParams = { radius: FILM_BURST_RADIUS, push: filmBurstPush() };
+  onFilmBurst(state, x, y, params);
+  const push = params.push;
+  const r2 = params.radius * params.radius;
+  // 배치6 — PO4「압착 충돌」이 읽을 **밀어내기 전 좌표**. 투자 런에서만 모은다(미투자는
+  // 배열이 끝까지 비어 있어 비용 0 · 아래 post 훅도 첫 줄에서 반환).
+  const pushed: FilmBurstPushed[] = [];
   for (const e of state.entities) {
     if (e.dead || e.kind !== 'enemy') continue;
     const dx = e.x - x;
@@ -158,6 +168,7 @@ export function resolveFilmBurst(state: WorldState, x: number, y: number): void 
     const d = length(dx, dy);
     // 중심과 정확히 겹친 적은 밀 방향이 정의되지 않는다 — 임의 방향을 만들지 않고 둔다.
     if (d <= 1) continue;
+    if (state.skillsOn) pushed.push({ enemy: e, preX: e.x, preY: e.y });
     e.x += (dx / d) * push;
     e.y += (dy / d) * push;
     if (state.activeWalls.length > 0) {
@@ -166,4 +177,7 @@ export function resolveFilmBurst(state: WorldState, x: number, y: number): void 
       e.y = slid.y;
     }
   }
+  // 배치6 앵커 — 밀어내기 루프가 **끝난 뒤**. 여기서만 "목표 변위 대비 실제로 얼마나
+  // 움직였는가"(= 벽이 먹은 몫)가 존재한다. 순회 밖이라 스폰도 안전하다(PO8 자리).
+  onFilmBurstPost(state, x, y, pushed);
 }

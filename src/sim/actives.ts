@@ -39,7 +39,7 @@ import { MALLOW_HANDLERS, MALLOW_SUSTAIN, MALLOW_EXPIRE } from './activeHandlers
 import { BUBBLE_HANDLERS, BUBBLE_SUSTAIN, BUBBLE_EXPIRE } from './activeHandlers/bubble.js';
 // 앵커 ㉗. `skillHooks.ts` 는 leaf(전 import 가 type-only 이거나 `skills/*`)라 순환이 없다 —
 // `world.ts` 는 이 파일을 런타임 import 하지만 `skillHooks.ts` 는 `world.ts` 를 타입으로만 쓴다.
-import { onActiveFired } from './skillHooks.js';
+import { onActiveFired, onActiveExpired } from './skillHooks.js';
 
 export type { ActiveHandler, ActiveSustain, ActiveExpire } from './activeTypes.js';
 
@@ -164,7 +164,14 @@ export function stepActives(
     const def = defForSlot(state, slot);
     if (def !== undefined) {
       if (after > 0) ACTIVE_SUSTAIN[def.id]?.(state, player, def);
-      else if (before > 0) ACTIVE_EXPIRE[def.id]?.(state, player, def);
+      else if (before > 0) {
+        ACTIVE_EXPIRE[def.id]?.(state, player, def);
+        // 배치6 앵커 — **버프가 양수에서 0 으로 떨어진 그 한 틱**에만 불린다. 브루저 FO10
+        // (강화 액티브 고티어의 만료 폭발)·스트라이커 S9(생존 액티브 만료 정지장)가
+        // 배치3~5 내내 "만료를 보는 자리가 없다"로 막혀 있던 것의 착지점이다.
+        // 미투자 런은 훅 첫 줄에서 반환하므로 산술이 하나도 늘지 않는다(해시 불변).
+        onActiveExpired(state, player, def, slot);
+      }
     }
   }
 
