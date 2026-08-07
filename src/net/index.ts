@@ -452,6 +452,55 @@ export async function consumeCatalystsOnServer(
   }
 }
 
+/**
+ * `rollRefineOnServer` 결과.
+ *  - `unconfigured`: 미설정/구버전 → 호출부가 **종전 로컬 굴림**으로 강등한다(오프라인 보존).
+ *  - `ok`: 차감 확정 + 서버 굴림 값. 이 값으로 `rollChain` 을 **한 번만** 돌린다.
+ *  - `rejected`: 잔액 부족(미차감) — 굴리지 않는다.
+ *  - `failed`: 온라인인데 판정을 못 받았다(네트워크·오류). **굴리지 않는다** — 여기서 로컬
+ *    굴림으로 강등하면 "차감됐는지 모르는 채 굴리는" 경로가 생겨 공짜 굴림의 문이 다시 열린다.
+ */
+export type RollRefineOutcome =
+  | { status: 'unconfigured' }
+  | { status: 'ok'; seed: number; riskRoll: number; creditsLeft: number; mineralsLeft: number }
+  | { status: 'rejected'; creditsLeft: number; mineralsLeft: number }
+  | { status: 'failed' };
+
+/**
+ * 정련 굴림(ADR-0050 §3 단계 1 둘째 축) — 광물 차감과 굴림 값을 **한 트랜잭션**에서 받는다.
+ *
+ * 클라가 시드를 고르면 대가를 한 번만 치르고 원하는 어픽스가 나올 때까지 로컬에서 굴릴 수
+ * 있다(`rollChain` 은 난수를 주입받는 순수 함수다). 그 문을 닫는 것이 이 함수의 전부다.
+ * 절대 throw 하지 않는다.
+ */
+export async function rollRefineOnServer(
+  cost: number,
+  deps: NetDeps = {},
+): Promise<RollRefineOutcome> {
+  const gateway = await resolveGateway(deps);
+  if (gateway === null || gateway.rollRefine === undefined) return { status: 'unconfigured' };
+  try {
+    await gateway.getUserId();
+    const res = await gateway.rollRefine(cost);
+    if (!res.ok || res.seed === null || res.risk_roll === null) {
+      return {
+        status: 'rejected',
+        creditsLeft: res.credits_left,
+        mineralsLeft: res.minerals_left,
+      };
+    }
+    return {
+      status: 'ok',
+      seed: res.seed >>> 0,
+      riskRoll: res.risk_roll,
+      creditsLeft: res.credits_left,
+      mineralsLeft: res.minerals_left,
+    };
+  } catch {
+    return { status: 'failed' };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 아이템 서버 원장(ADR-0050 §3 단계 1) — 런 등록 · 드랍 발급 · 배송
 // ---------------------------------------------------------------------------
