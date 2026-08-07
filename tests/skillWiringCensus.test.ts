@@ -241,10 +241,11 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
     'BR1@20', 'BR2@21', 'BR3@22', 'BR4@23', 'BR5@24', 'BR6@25', 'BR7@26', 'BR8@27', 'BR9@28', 'BR10@29',
   ],
   bruiser: [
-    'BL2@1', 'BL3@2', 'BL4@3', 'BL5@4', 'BL6@5', 'BL7@6', 'BL8@7', 'BL9@8', 'BL10@9',
+    'BL1@0', 'BL2@1', 'BL3@2', 'BL4@3', 'BL5@4', 'BL6@5', 'BL7@6', 'BL8@7', 'BL9@8', 'BL10@9',
     'MO1@10', 'MO2@11', 'MO3@12', 'MO4@13', 'MO5@14', 'MO6@15', 'MO7@16', 'MO8@17', 'MO9@18', 'MO10@19',
     // 배치6 이 FO3@22(앵커 ④ 의 `contact`) · FO10@29(신설 앵커 `onActiveExpired`)를 더했다.
-    // 남은 미배선은 BL1 하나이고 사유는 앵커가 아니라 **설계 예산**이다(`skills/bruiser.ts` 헤더).
+    // 배치7 이 BL1@0(앵커 ④ 발사·재충전 + 앵커 ⑨ 내부 쿨 감산, 전용 칸 `BruiserStage.
+    // retortCooldown` 신설 — 칼날 축 B 예산 2→3 개정)을 더해 **30/30 완배선**이 됐다.
     'FO1@20', 'FO2@21', 'FO3@22', 'FO4@23', 'FO5@24', 'FO6@25', 'FO7@26', 'FO8@27', 'FO9@28', 'FO10@29',
   ],
   bubble: [

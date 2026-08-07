@@ -350,6 +350,19 @@ export const enum BruiserStage {
    * `momentumDirCode` doc 에 있다.
    */
   momentumDir = 5,
+  /**
+   * BL1「응전 사출」 — **반격 볼리의 내부 쿨다운 잔여 틱**. 0 = 발사 가능(값 규약 1).
+   *
+   * ⚠️ **칼날 축(BL) 상태 예산 2→3 개정으로 신설된 칸이다**(이 레인, 2026-08-07 사용자
+   * 승인 — 사유는 `prerequisites.md` §0-A 개정 각주). 설계서 처방(`aux1 < 60` 내부 쿨)이
+   * 성립하지 않는다: `aux1` 은 엔진 소유의 장갑 감쇠 타이머라 피격 시점에 이미 0 으로
+   * 리셋돼 있어 술어가 항상 참이다 — 즉 그 술어로는 쿨다운이 원리적으로 걸리지 않는다.
+   * 그래서 전용 칸이 불가피했다.
+   *
+   * `Carry` 가 아니라 `Stage` 인 이유는 `skidCooldown` 과 같다 — 반격 쿨다운은 짧아
+   * 의뢰 구간 경계에서 초기화돼도 억제가 새지 않는다.
+   */
+  retortCooldown = 6,
 }
 
 /**
@@ -512,6 +525,24 @@ export const enum HatchlingStage {
    * 안에 두면 병아리 **기당** 한 번씩 깎여 창이 대수에 반비례해 짧아진다.
    */
   nestRecallTicks = 4,
+  /**
+   * BD4「표적 공유 증폭」 — **플레이어 자동조준이 이번에 고른 표적의 `Entity.id` + 1**.
+   * `0` = 표적 없음. ⚠️ **+1 이 인코딩의 전부다**(`StrikerStage.lockTarget` 과 같은 관용구 —
+   * 플레이어가 `state.entities[0]` 이라 id 0 이 날값으로 "표적 없음"과 구분 안 된다).
+   *
+   * `Carry` 가 아니라 `Stage` 인 이유: 표적은 *지금 조준 중인 대상*이라 구간을 넘겨 살
+   * 이유가 없다(`StrikerStage.lockTarget` 과 동일 사유) — 새 구간 첫 판정이 이전 구간에서
+   * 죽은 개체의 id 를 물려받는 사고를 막는다.
+   */
+  shareTargetId = 5,
+  /**
+   * BD4 — **플레이어 탄이 {@link shareTargetId} 표적에 마지막으로 명중한 `state.tick`**.
+   * 0 = 아직 명중 없음(런 시작 `tick` 이 0 이 아니게 시작할 수 있으므로 엄밀한 센티넬은
+   * 아니나, `shareTargetId` 가 0(표적 없음)일 때는 이 칸을 읽지 않는 것이 계약이다).
+   *
+   * `shareTargetId` 와 생명주기가 같아 `Stage` 다.
+   */
+  shareHitTick = 6,
 }
 
 /**
@@ -594,6 +625,16 @@ export const enum PhantomStage {
    * 새 구간 첫 발이 이유 없이 후속 배율을 받는다.
    */
   twinMarkPending = 3,
+  /**
+   * AS7「원한」의 **원한 표적 `Entity.id`**. 0 = 표적 없음(값 규약 1 — 엔티티 id 는 1부터라
+   * 자연 센티넬).
+   *
+   * `Carry` 가 아니라 `Stage` 인 이유: 원한 표적은 *이번 은신 사이클이 고른 대상*이라
+   * `lockTarget`(`StrikerStage`)과 같은 결이다 — 구간을 넘겨 살면 새 구간 첫 표적 판정이
+   * 이전 구간에서 이미 죽었을 개체의 id 를 우연히 물려받을 수 있다(id 는 구간마다 0 부터
+   * 다시 세지 않는다는 보장이 없다).
+   */
+  grudgeTargetId = 4,
 }
 
 /**
@@ -639,46 +680,50 @@ export const enum BubbleStage {
    */
   tensionWindow = 1,
   /**
-   * FI6「헌막 의식」 — **불멸 막(`as_bubble_film_hi`) 지속 중 흡수 누적**. 0 = 없음(값 규약 1).
+   * FI6「불멸의 막」의 **막 지속 중 흡수 누적**. 막이 활성인 동안 실제로 막아낸 피해량을
+   * 이 칸에 더하고, 막이 꺼지면(자연 만료·조기 소비 불문) 0 으로 비운다. 0 = 막 비활성
+   * 또는 흡수 없음(값 규약 1).
    *
-   * ⚠️ 이 두 칸(`offeringPool`·`offeringActive`)은 배치7 배선 레인이 새로 잡았다 — 인계
-   * 체크리스트가 "이미 있다"로 적었던 것은 **틀렸다**(`src/sim/**` 전체 grep 으로 실측, 이
-   * 레인 전까지 `BubbleStage` 는 `blinkMagnet`·`tensionWindow` 둘뿐이었다). 사유 전문은
-   * `skills/bubble.ts` 의 FI6 블록 주석이 정본이다.
+   * `Carry` 가 아니라 `Stage` 인 이유: 이 누적은 *이번 막 한 장*의 이력이라 구간을 넘겨
+   * 살 이유가 없다 — 새 구간 첫 막이 지난 구간 막의 흡수량을 물려받으면 막 하나의 성능이
+   * 부풀어 설계서의 "막 1장당" 전제가 깨진다.
+   *
+   * ⚠️ **배선 레인 실측(배치7)**: "지금 선 막이 불멸 막(`as_bubble_film_hi`)인가"의 판별에
+   * 표식 슬롯은 **필요 없었다** — `state.config.activeSlots` 로 두 액티브 슬롯 중 어느 것이
+   * `as_bubble_film_hi` 인지는 로드아웃 시점에 이미 정적으로 정해져 있고, 그 슬롯의
+   * `state.activeBuff0`/`activeBuff1`(둘 다 기존 필드)이 양수인 동안만 "불멸 막이 서 있다"가
+   * 참이다 — `film_lo`·재생 막은 이 조합에 걸리지 않는다(다른 `def.id`거나 애초에 버프 슬롯을
+   * 안 쓴다). 정본은 `skills/bubble.ts` 의 `bubbleFilmOfferingActive` 함수 주석.
    */
   offeringPool = 2,
   /**
-   * FI6「헌막 의식」 — **지금 선 막이 불멸 막인가**의 표식(0/1, 값 규약 1).
+   * PO10「연쇄 파열」의 **창 잔여 틱**. 0 = 창 없음(값 규약 1).
    *
-   * `as_bubble_film_lo`·재생 막(엔진 자동 복원)은 `aux0` 을 만재로 대입할 뿐 이 표식을 세우지
-   * 않는다 — 세 경로가 같은 `aux0` 대입을 쓰는데도 **표식으로만** 불멸 막을 구분한다는 것이
-   * 이 스킬의 핵심 난점이었다(설계서 미배선 사유가 정확히 이것). `as_bubble_film_hi` 발동
-   * (`bubbleActiveFired`)이 세우고, 그 만료(`bubbleFilmOfferingConsume`)가 지운다.
+   * `Carry` 가 아니라 `Stage` 인 이유: 창은 발동 시점의 순간 버프라 초 단위로 스스로
+   * 끝나고, 구간을 넘겨 살면 새 구간 첫 틱이 지난 구간에서 연 창을 물려받는다.
    */
-  offeringActive = 3,
+  chainWindow = 3,
   /**
-   * PO10「연쇄 압력」 — 파열 후 처치 집계 창의 **잔여 틱**(90틱 고정). 0 = 창 닫힘(값 규약 1).
+   * PO10 — **창 시작 시점의 `state.kills` 스냅샷**. 창이 열리는 순간의 처치 수를 찍어 두고,
+   * 창이 끝날 때 `state.kills − chainKillsSnap` 으로 창 안에서 실제로 늘어난 처치 수를
+   * 판정한다. 0 = 아직 관측 없음(런 시작 `kills` 가 0 이라 자연 센티넬 — 값 규약 1).
    *
-   * ⚠️ 이 세 칸(`chainWindow`·`chainKillCount`·`chainPendingBoost`)도 배치7 신설이다 — 사유는
-   * `offeringPool` doc 과 같다(인계 문서의 "이미 있다"가 틀렸다).
+   * `chainWindow` 과 생명주기가 같아 `Stage` 다 — 창 하나의 스냅샷이 다음 구간까지 살아남을
+   * 이유가 없다.
    */
-  chainWindow = 4,
+  chainKillsSnap = 4,
   /**
-   * PO10「연쇄 압력」 — 이번 창에서 앵커 ⑤(`onKillsDelta`)가 집계한 **처치 수**. 창이 닫히는
-   * 순간(`chainWindow` 가 0 으로 떨어지는 그 틱) 보강분으로 환산돼 `chainPendingBoost` 에
-   * 더해지고 이 칸은 0 으로 되돌아간다.
-   */
-  chainKillCount = 5,
-  /**
-   * PO10「연쇄 압력」 — 다음 막이 설 때 `aux0` 에 얹을 **보류 보강분**.
+   * PO10 — **다음 막이 설 때 `aux0` 에 얹을 보류 보강분**.
    *
-   * ## ⚠️ 왜 즉시 `aux0` 에 얹지 않고 한 틱 미루는가
-   * `world.ts` 의 `player.aux0 = FILM_ABSORB_FLAT` 대입(`SIG_BUBBLE_FILM` 분기)은 앵커 ⑨
-   * (`bubbleSignatureStep`, 이 칸을 읽는 자리) **뒤**에 실행된다. 그래서 재생이 실제로 일어나는
-   * 바로 그 틱에 여기서 `aux0` 을 미리 올려도 world.ts 가 곧이어 `FILM_ABSORB_FLAT` 으로
-   * **덮어써 지운다.** 재생이 일어난 **다음 틱**에는 `aux0 === FILM_ABSORB_FLAT` 이라 그 대입
-   * 분기(`if (player.aux0 === 0)`) 자체가 안 돌아 이 칸의 가산이 지워지지 않는다 — 그래서
-   * "재생 다음 틱" 이 유일한 안전한 소비 시점이다(`chainBoostPulse` doc 이 정본).
+   * ⚠️ **배선 레인이 추가한 칸(배치7 예약표 밖)** — 이 배정표는 3칸(`offeringPool`·
+   * `chainWindow`·`chainKillsSnap`)만 예약했지만, 실측 결과 PO10 은 **4번째 칸 없이 성립하지
+   * 않는다**: `world.ts` 의 `player.aux0 = FILM_ABSORB_FLAT` 대입(`SIG_BUBBLE_FILM` 분기)이
+   * 앵커 ⑨(이 칸을 읽는 `bubbleSignatureStep`) **뒤**에 실행되므로, 창이 닫히는 시점(재생
+   * 완료보다 항상 먼저 온다 — 창 상한 150틱 < 재생 최소 간격 262틱)에 곧바로 `aux0` 에 더해도
+   * world.ts 가 곧이어 `FILM_ABSORB_FLAT` 으로 **덮어써 지운다.** 그래서 보강분을 여기 잠시
+   * 보류해 두고, 재생이 일어난 **다음 틱**(`aux0 === FILM_ABSORB_FLAT && aux1 === 0` 이 그
+   * 신호 — 그 틱은 대입 분기 자체가 `aux0 !== 0` 이라 안 돈다)에 얹는다. 정본은
+   * `skills/bubble.ts` 의 `chainBoostPulse` 함수 주석.
    */
-  chainPendingBoost = 6,
+  chainPendingBoost = 5,
 }

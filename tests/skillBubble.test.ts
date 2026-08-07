@@ -52,7 +52,6 @@ import {
   onActiveFired,
   onGemMagnetParams,
   onPlayerMoveParams,
-  onKillsDelta,
   type VolleyParams,
   type ActiveFiredOrigin,
   type GemMagnetParams,
@@ -63,6 +62,7 @@ import {
 } from '../src/sim/skillHooks.js';
 import { resolveFilmBurst } from '../src/sim/filmBurst.js';
 import { BUBBLE_ACTIVES } from '../data/ships/actives/bubble.js';
+import { wireIdOf } from '../data/ships/actives/index.js';
 import { BUBBLE_EXPIRE } from '../src/sim/activeHandlers/bubble.js';
 import { DT } from '../src/sim/constants.js';
 import {
@@ -2069,50 +2069,54 @@ describe('DR2 표면장력 세례', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ⑱ FI6 헌막 의식 (앵커 ㉗ 표식 · ⑱ 누적 · BUBBLE_EXPIRE 소비) — 배치7
+// ⑱ FI6 헌막 의식 (판별 = 로드아웃+버프 틱 · 앵커 ⑱ 누적 · BUBBLE_EXPIRE 소비) — 배치7
 // ---------------------------------------------------------------------------
 //
 // ## 뮤테이션 실측 (2026-08-08)
-// `bubbleActiveFired` 의 FI6 `writeSlot(offeringActive, 1)` 을 지우면 이 절 전체(표식·누적·
-// 가산 피해)가 실패한다. `bubbleFilmAbsorbed` 의 FI6 블록을 지우면 "누적" · "만료가 가산한다"
-// 둘이 실패한다(pool 이 끝까지 0). `bubbleFilmOfferingConsume` 의 반환을 `0` 으로 고정하면
-// "누적이 많을수록 폭발이 크다" 가 실패한다(두 값이 base 로 같아진다).
+// `bubbleFilmOfferingActive` 의 `def.id !== 'as_bubble_film_hi'` 비교를 항상 참으로 바꾸면
+// (= 판별이 무너지면) "음성 대조 — film_lo 는 누적하지 않는다"가 실패한다. `bubbleFilmAbsorbed`
+// 의 FI6 블록을 지우면 "누적" · "만료가 가산한다" 둘이 실패한다(pool 이 끝까지 0).
+// `bubbleFilmOfferingConsume` 의 반환을 `0` 으로 고정하면 "누적이 많을수록 폭발이 크다" 가
+// 실패한다(두 값이 base 로 같아진다).
 
-describe('⑱ FI6 헌막 의식 (앵커 ㉗ · ⑱ · BUBBLE_EXPIRE)', () => {
-  const FILM_LO = BUBBLE_ACTIVES[4];
+describe('⑱ FI6 헌막 의식 (판별·누적·BUBBLE_EXPIRE 소비)', () => {
   const FILM_HI = BUBBLE_ACTIVES[5];
-  const RIGHT = { x: 1, y: 0 };
 
-  function fired(w: WorldState): ActiveFiredOrigin {
-    const p = player(w);
-    return { preX: p.x, preY: p.y, preAux0: 0, spawnWatermark: w.entities.length };
+  /** 슬롯 0 에 `id` 를 장착하고, 그 슬롯의 버프가 `ticks` 만큼 남은 것으로 흉내낸다. */
+  function equip(w: WorldState, id: string, ticks: number): void {
+    w.config.activeSlots = [wireIdOf(id), -1];
+    w.activeBuff0 = ticks;
   }
 
-  it('불멸 막(film_hi) 발동이 표식을 세운다', () => {
-    const w = mk([[FI6, 1]]);
-    onActiveFired(w, player(w), FILM_HI, RIGHT, 0, fired(w));
-    expect(readSlot(w.skillStage, BubbleStage.offeringActive)).toBe(1);
-  });
-
-  it('음성 대조 — film_lo 는 표식을 세우지 않는다 (긍정 짝은 위 절)', () => {
-    const w = mk([[FI6, 20]]);
-    onActiveFired(w, player(w), FILM_LO, RIGHT, 0, fired(w));
-    expect(readSlot(w.skillStage, BubbleStage.offeringActive)).toBe(0);
-  });
-
-  it('표식이 선 동안 흡수(앵커 ⑱)가 누적된다', () => {
+  it('불멸 막(film_hi) 장착 + 버프 활성 상태에서 흡수(앵커 ⑱)가 누적된다', () => {
     const w = mk([[FI6, 1]]);
     const p = player(w);
-    onActiveFired(w, p, FILM_HI, RIGHT, 0, fired(w));
+    equip(w, 'as_bubble_film_hi', 300);
     onFilmAbsorbed(w, p, 30, 0);
     onFilmAbsorbed(w, p, 20, 0);
     expect(readSlot(w.skillStage, BubbleStage.offeringPool)).toBe(50);
   });
 
-  it('음성 대조 — 표식이 없으면(film_lo·재생 막과 같은 상태) 누적되지 않는다', () => {
+  it('음성 대조 — film_lo 를 장착·활성해도 누적되지 않는다 (긍정 짝은 위 절)', () => {
     const w = mk([[FI6, 20]]);
     const p = player(w);
-    onFilmAbsorbed(w, p, 30, 0); // 표식을 세운 적 없음 — film_lo·재생 막과 동치 상태
+    equip(w, 'as_bubble_film_lo', 180);
+    onFilmAbsorbed(w, p, 30, 0);
+    expect(readSlot(w.skillStage, BubbleStage.offeringPool)).toBe(0);
+  });
+
+  it('음성 대조 — film_hi 를 장착했어도 버프가 꺼져 있으면(재생 막과 같은 상태) 누적되지 않는다', () => {
+    const w = mk([[FI6, 20]]);
+    const p = player(w);
+    equip(w, 'as_bubble_film_hi', 0); // 장착은 했지만 지금은 발동 중이 아니다(예: 재생 막)
+    onFilmAbsorbed(w, p, 30, 0);
+    expect(readSlot(w.skillStage, BubbleStage.offeringPool)).toBe(0);
+  });
+
+  it('음성 대조 — 아무 액티브도 장착 안 한 런(로드아웃 미설정)은 누적되지 않는다', () => {
+    const w = mk([[FI6, 20]]);
+    const p = player(w);
+    onFilmAbsorbed(w, p, 30, 0); // config.activeSlots 가 undefined
     expect(readSlot(w.skillStage, BubbleStage.offeringPool)).toBe(0);
   });
 
@@ -2120,10 +2124,12 @@ describe('⑱ FI6 헌막 의식 (앵커 ㉗ · ⑱ · BUBBLE_EXPIRE)', () => {
     function blastDealt(pool: number): number {
       const w = mk([[FI6, 1]]);
       const p = player(w);
-      onActiveFired(w, p, FILM_HI, RIGHT, 0, fired(w));
-      if (pool > 0) onFilmAbsorbed(w, p, pool, 0);
+      if (pool > 0) {
+        equip(w, 'as_bubble_film_hi', 300);
+        onFilmAbsorbed(w, p, pool, 0);
+      }
       const foe = addEnemy(w, p.x + 50, p.y, 10_000_000);
-      BUBBLE_EXPIRE.as_bubble_film_hi(w, p, FILM_HI);
+      BUBBLE_EXPIRE.as_bubble_film_hi!(w, p, FILM_HI);
       return 10_000_000 - foe.hp;
     }
     const zero = blastDealt(0);
@@ -2134,12 +2140,12 @@ describe('⑱ FI6 헌막 의식 (앵커 ㉗ · ⑱ · BUBBLE_EXPIRE)', () => {
 
   it('레벨이 오르면 가산율이 는다 (Lv20 > Lv1 > base)', () => {
     function blastDealt(level: number): number {
-      const w = mk([[FI6, level]]);
+      const w = mk(level > 0 ? [[FI6, level]] : []);
       const p = player(w);
-      onActiveFired(w, p, FILM_HI, RIGHT, 0, fired(w));
+      equip(w, 'as_bubble_film_hi', 300);
       onFilmAbsorbed(w, p, 100, 0);
       const foe = addEnemy(w, p.x + 50, p.y, 10_000_000);
-      BUBBLE_EXPIRE.as_bubble_film_hi(w, p, FILM_HI);
+      BUBBLE_EXPIRE.as_bubble_film_hi!(w, p, FILM_HI);
       return 10_000_000 - foe.hp;
     }
     const base = blastDealt(0);
@@ -2147,39 +2153,37 @@ describe('⑱ FI6 헌막 의식 (앵커 ㉗ · ⑱ · BUBBLE_EXPIRE)', () => {
     expect(blastDealt(20)).toBeGreaterThan(blastDealt(1));
   });
 
-  it('만료 소비 후 0 — 표식·풀 둘 다 되돌아간다', () => {
+  it('만료 소비 후 0 — 풀이 되돌아간다', () => {
     const w = mk([[FI6, 5]]);
     const p = player(w);
-    onActiveFired(w, p, FILM_HI, RIGHT, 0, fired(w));
+    equip(w, 'as_bubble_film_hi', 300);
     onFilmAbsorbed(w, p, 40, 0);
     addEnemy(w, p.x + 50, p.y, 10_000_000);
-    BUBBLE_EXPIRE.as_bubble_film_hi(w, p, FILM_HI);
+    BUBBLE_EXPIRE.as_bubble_film_hi!(w, p, FILM_HI);
     expect(readSlot(w.skillStage, BubbleStage.offeringPool)).toBe(0);
-    expect(readSlot(w.skillStage, BubbleStage.offeringActive)).toBe(0);
   });
 
   it('미투자 런은 슬롯을 안 건드린다', () => {
     const w = mk();
     const p = player(w);
-    onActiveFired(w, p, FILM_HI, RIGHT, 0, fired(w));
+    equip(w, 'as_bubble_film_hi', 300);
     onFilmAbsorbed(w, p, 40, 0);
-    expect(readSlot(w.skillStage, BubbleStage.offeringActive)).toBe(0);
     expect(readSlot(w.skillStage, BubbleStage.offeringPool)).toBe(0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// ⑲ PO10 연쇄 압력 (앵커 onFilmBurstPost 개창 · ⑤ 집계 · ⑨ 적용) — 배치7
+// ⑲ PO10 연쇄 압력 (앵커 onFilmBurstPost 개창 · `state.kills` 차분 · ⑨ 적용) — 배치7
 // ---------------------------------------------------------------------------
 //
 // ## 뮤테이션 실측 (2026-08-08)
 // `bubbleFilmBurstPost` 의 PO10 `writeSlot(chainWindow, ...)` 을 지우면 창이 안 열려 이 절
-// 전체가 실패한다. `bubbleKillsDelta` 의 가산을 지우면 "처치가 보강분을 쌓는다"·"상한이
-// 물린다" 가 실패한다(항상 0). `chainWindowTick` 의 환산·가산 블록을 지우면 같은 두 항목이
-// 실패한다. `chainBoostPulse` 의 `player.aux0 = boosted` 대입을 지우면 "다음 틱에 얹힌다"·
-// "상한 FLAT×2 가 물린다" 가 실패한다(aux0 이 FLAT 그대로).
+// 전체가 실패한다. `chainWindowTick` 의 `state.kills - snap` 차분·환산·가산 블록을 지우면
+// "처치가 보강분을 쌓는다"·"상한이 물린다" 가 실패한다(항상 0). `chainBoostPulse` 의
+// `player.aux0 = boosted` 대입을 지우면 "다음 틱에 얹힌다"·"상한 FLAT×2 가 물린다" 가
+// 실패한다(aux0 이 FLAT 그대로).
 
-describe('⑲ PO10 연쇄 압력 (앵커 onFilmBurstPost · ⑤ · ⑨)', () => {
+describe('⑲ PO10 연쇄 압력 (앵커 onFilmBurstPost · state.kills 차분 · ⑨)', () => {
   it('파열이 90틱 고정 창을 연다 (레벨 무관)', () => {
     for (const level of [1, 20]) {
       const w = mk([[PO10, level]]);
@@ -2188,13 +2192,11 @@ describe('⑲ PO10 연쇄 압력 (앵커 onFilmBurstPost · ⑤ · ⑨)', () => 
     }
   });
 
-  it('창이 열려 있는 동안만 처치를 집계한다 — 창이 닫혀 있으면 집계하지 않는다(음성 대조)', () => {
+  it('창을 열 때 `state.kills` 를 스냅샷한다', () => {
     const w = mk([[PO10, 1]]);
-    onKillsDelta(w, 5); // 창을 아직 안 열었다
-    expect(readSlot(w.skillStage, BubbleStage.chainKillCount)).toBe(0);
+    w.kills = 7;
     onFilmBurstPost(w, 0, 0, []);
-    onKillsDelta(w, 5); // 이제는 집계된다(긍정 짝)
-    expect(readSlot(w.skillStage, BubbleStage.chainKillCount)).toBe(5);
+    expect(readSlot(w.skillStage, BubbleStage.chainKillsSnap)).toBe(7);
   });
 
   it('창이 처치 없이 닫히면 보강 0 (하한 짝)', () => {
@@ -2206,29 +2208,41 @@ describe('⑲ PO10 연쇄 압력 (앵커 onFilmBurstPost · ⑤ · ⑨)', () => 
     expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(0);
   });
 
-  it('창 안 처치가 보강분을 쌓는다 (처치당 2 + floor(Lv/2))', () => {
+  it('창 안에서 `state.kills` 가 늘면 보강분을 쌓는다 (처치당 2 + floor(Lv/2))', () => {
     const w = mk([[PO10, 1]]);
     const p = player(w);
     onFilmBurstPost(w, 0, 0, []);
-    onKillsDelta(w, 3);
+    w.kills += 3; // 실제 엔진에서는 compact() 가 올린다 — 여기서는 값만 흉내낸다
     for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
-    expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(3 * 2);
+    // Lv1: 처치당 2 + floor(1/2) = 2 → 3 × 2 = 6.
+    expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(6);
   });
 
   it('회당 보강 상한이 실제로 물린다 (20 + 3×Lv)', () => {
     const w = mk([[PO10, 1]]);
     const p = player(w);
     onFilmBurstPost(w, 0, 0, []);
-    onKillsDelta(w, 50); // 처치당 2 → 100, 상한 23 이어야 잘린다
+    w.kills += 50; // 처치당 2 → 100, 상한 23 이어야 잘린다
     for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
     expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(23);
+  });
+
+  it('창이 닫힌 뒤 처치는(다음 창 전까지) 더 이상 반영되지 않는다 — 음성 대조', () => {
+    const w = mk([[PO10, 1]]);
+    const p = player(w);
+    onFilmBurstPost(w, 0, 0, []);
+    for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(0);
+    w.kills += 10; // 창이 이미 닫힌 뒤의 처치 — 스냅샷도 0 으로 비었다
+    onSignatureStep(w, p, emptyInput());
+    expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(0);
   });
 
   it('보강분은 재생이 일어난 **다음 틱**에 aux0 에 얹힌다', () => {
     const w = mk([[PO10, 1]]);
     const p = player(w);
     onFilmBurstPost(w, 0, 0, []);
-    onKillsDelta(w, 3); // Lv1: 처치당 2 + floor(1/2) = 2 → 보강 6 예정
+    w.kills += 3; // Lv1: 처치당 2 → 보강 6 예정
     for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
     expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(6);
     // 재생이 실제로 일어나는 그 틱을 흉내낸다(world.ts 의 SIG_BUBBLE_FILM 분기와 같은 대입).
@@ -2248,11 +2262,11 @@ describe('⑲ PO10 연쇄 압력 (앵커 onFilmBurstPost · ⑤ · ⑨)', () => 
     // 창 하나당 상한 20+60=80 — 두 번 채워 160 을 만들어 FLAT(60)+160=220 이 120 으로
     // 잘리는지 본다.
     onFilmBurstPost(w, 0, 0, []);
-    onKillsDelta(w, 10); // 처치당 12 → 120, 상한 80
+    w.kills += 10; // 처치당 12 → 120, 상한 80
     for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
     expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(80);
-    onFilmBurstPost(w, 0, 0, []); // 아직 재생 전 — 두 번째 창을 연다
-    onKillsDelta(w, 10);
+    onFilmBurstPost(w, 0, 0, []); // 아직 재생 전 — 두 번째 창을 연다(스냅샷을 다시 찍는다)
+    w.kills += 10;
     for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
     expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(160);
     p.aux0 = FILM_ABSORB_FLAT;
@@ -2261,22 +2275,11 @@ describe('⑲ PO10 연쇄 압력 (앵커 onFilmBurstPost · ⑤ · ⑨)', () => 
     expect(p.aux0).toBe(FILM_ABSORB_FLAT * 2);
   });
 
-  it('처치 대상은 이미 `enemy` kind 한정이다(`onKillsDelta`) — 별도 술어가 필요 없다', () => {
-    // 이 앵커의 델타 자체가 `kind === 'enemy' && hp <= 0` 게이트와 같은 술어라(skillHooks.ts
-    // onKillsDelta doc), 침공 구조물은 여기 닿기 전에 이미 걸러진다. 이 테스트는 그 계약을
-    // 재확인하는 것이 아니라(그건 skillHooks.ts 의 앵커 doc·다른 침공 테스트의 몫이다),
-    // 창이 그 델타를 있는 그대로 받는지만 잰다.
-    const w = mk([[PO10, 1]]);
-    onFilmBurstPost(w, 0, 0, []);
-    onKillsDelta(w, 1);
-    expect(readSlot(w.skillStage, BubbleStage.chainKillCount)).toBe(1);
-  });
-
   it('미투자 런은 슬롯을 안 건드린다', () => {
     const w = mk();
+    w.kills = 3;
     onFilmBurstPost(w, 0, 0, []);
-    onKillsDelta(w, 5);
     expect(readSlot(w.skillStage, BubbleStage.chainWindow)).toBe(0);
-    expect(readSlot(w.skillStage, BubbleStage.chainKillCount)).toBe(0);
+    expect(readSlot(w.skillStage, BubbleStage.chainKillsSnap)).toBe(0);
   });
 });

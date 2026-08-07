@@ -75,6 +75,14 @@ const hoisted = vi.hoisted(() => ({
    * 같은 사유다.
    */
   damageSources: [] as number[],
+  /** 배치7 F2b `onAutoAimTarget` 이 받은 표적 좌표 — 자동조준이 실제로 표적을 실어 오는가. */
+  autoAimTargets: [] as { x: number; y: number }[],
+  /**
+   * 배치7 F2b `onTurretTargetPick` 을 **실제로 고치는 가짜 훅**. 호출 횟수만으로는 무효 표적
+   * 폴백(`TurretTargetPick.targetId` doc)이 실제로 동작하는지 못 잰다 — 앵커 ⑰ 이 `min` 에
+   * 삼켜져 무효였던 전례와 같은 사각지대다.
+   */
+  turretPick: null as null | ((p: { targetId: number }) => void),
   /**
    * 앵커 ⑧ 이 받은 **피해원 비트합**(선택 인자). ④ 와 따로 재는 이유는 **호출부가 다르기**
    * 때문이다 — ④ 는 hp 차감 뒤, ⑧ 은 감쇠 사슬 안이고, 둘 중 한쪽만 넘겨도 다른 쪽 계측은
@@ -82,6 +90,17 @@ const hoisted = vi.hoisted(() => ({
    * `world.ts` 가 인자를 빠뜨리면(기본 0) 스킬이 조용히 영구 미발동이 된다.
    */
   chainSources: [] as (number | undefined)[],
+  /**
+   * 앵커 ④ 가 받은 **피격원 id**(배치7 F2a, 선택 인자). `damageSources`/`chainSources` 와
+   * 같은 사유로 따로 잰다 — "값이 실제로 실려 오는가"는 호출 횟수만으로는 안 보인다.
+   */
+  srcIds: [] as (number | undefined)[],
+  /**
+   * 신설 `onContactInvuln` 이 받은 접촉 상대의 `kind` 기록(배치7 F2a). 호출 횟수만으로는
+   * "적탄·해저드에서도 불렸는가" 를 못 재고, 호출부가 kind 게이트를 빠뜨리면 그 오발동은
+   * 흔적을 안 남긴다.
+   */
+  contactInvulnKinds: [] as string[],
 }));
 
 vi.mock('../src/sim/skillHooks.js', async (orig) => {
@@ -125,8 +144,17 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
         const q = args[2] as { damage: number };
         hoisted.turretShots.push({ ownerId: t.ownerId, damage: q.damage });
       }
+      if (name === 'onAutoAimTarget') {
+        const t = args[2] as { x: number; y: number };
+        hoisted.autoAimTargets.push({ x: t.x, y: t.y });
+      }
       if (name === 'onPlayerDamaged') {
         hoisted.damageSources.push(args[4] as number);
+        hoisted.srcIds.push(args[8] as number | undefined);
+      }
+      if (name === 'onContactInvuln') {
+        const t = args[2] as { kind: string };
+        hoisted.contactInvulnKinds.push(t.kind);
       }
       if (name === 'onDamageChain') {
         hoisted.chainSources.push(args[3] as number | undefined);
@@ -140,6 +168,9 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
       // 진짜 훅이 돈 **뒤**에 레코드를 고친다 — 배선 레인의 효과 함수와 같은 자리다.
       if (name === 'onBroodLaunchParams' && hoisted.broodPatch !== null) {
         hoisted.broodPatch(args[2] as Record<string, number>);
+      }
+      if (name === 'onTurretTargetPick' && hoisted.turretPick !== null) {
+        hoisted.turretPick(args[2] as { targetId: number });
       }
       const m = hoisted.mutate[name];
       return m === undefined ? out : m(out, args);
@@ -160,7 +191,8 @@ const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP, BROOD_MARK,
   await import(
   '../src/sim/shipSignature.js'
 );
-const { isActiveTurret, TURRET_LIFE_TICKS } = await import('../src/sim/events.js');
+const { isActiveTurret, TURRET_LIFE_TICKS, TURRET_BULLET_DAMAGE, TURRET_BULLET_RADIUS } =
+  await import('../src/sim/events.js');
 const { DRONE_MARK } = await import('../src/sim/uniques.js');
 const { DamageSource } = await import('../src/sim/skillSlots.js');
 type WorldState = import('../src/sim/world.js').WorldState;
@@ -213,6 +245,10 @@ beforeEach(() => {
   hoisted.turretShots = [];
   hoisted.damageSources = [];
   hoisted.chainSources = [];
+  hoisted.autoAimTargets = [];
+  hoisted.turretPick = null;
+  hoisted.srcIds = [];
+  hoisted.contactInvulnKinds = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -224,7 +260,7 @@ describe('계측 이음매', () => {
   //    배치4 에서 네 레인이 병렬로 앵커를 세우며 ㉗㉘ 가 **세 갈래로 중복**됐고(공유·해츨링·말로우)
   //    git 은 그 충돌을 전혀 몰랐다. 그래서 ㉖ 이후로는 번호를 붙이지 않는다
   //    (사유 전문은 `src/sim/skillHooks.ts` 헤더). 새 앵커는 **여기에 이름을 추가**해라.
-  it('앵커 46개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 49개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
@@ -308,6 +344,17 @@ describe('계측 이음매', () => {
         'onPlayerWallSlide', // 선체↔벽 겹침 해소 직전 (팬텀 DI9 — 탄↔벽 축이 아니었다)
         // ⚠️ `onEnemyStatusExpired`(적 화상 만료 → SQ9)는 여기 **없다** — `chainHooks.ts`
         //    에 산다. `status.ts` 가 부르는 앵커라 이 파일에 두면 런타임 순환이 된다.
+        // ⚠️ 배치7 F2a 신설 둘. 스트라이커 M9·팬텀 AS6 선결 — 둘 다 아직 `case` 가 없다
+        // (배선은 각 스킬 레인 몫). 이름이 정본이라 여기 등록한다(파일 헤더 규율).
+        'onContactInvuln', // 접촉 무적 게이트 — `if (invulnerable) return;` 직전
+        'onDeathRemnantSpawn', // 엘리트 사망 잔재 스폰 억제 — `splitElites.push` 직전
+        // ⚠️ 배치7 F2b 신설 셋(해츨링 BD4「표적 공유」· SH8「탄받이 깃털」· 스트라이커
+        //    F10·M8 선결). 전부 전 분기가 비어 있다(자리만 연다) — 배선은 각 스킬 레인 몫.
+        //    이 레지스트리는 `skillHooks.js` 의 export 전수를 잠그므로, 같은 배치의 다른
+        //    레인이 앵커를 열면 이 파일도 같이 갱신해야 한다.
+        'onAutoAimTarget', // 자동조준이 이번 틱 표적을 확정한 직후(`autoAttack`)
+        'onTurretTargetPick', // 포탑이 `nearestTarget` 을 부르기 앞(`fireTurretShot`)
+        'onEnemyBulletMoved', // 적탄이 이번 틱 위치 적분을 끝낸 직후(적탄 이동 루프)
       ].sort(),
     );
   });
@@ -507,6 +554,70 @@ describe('앵커 ④⑧ onPlayerDamaged · onDamageChain — 피격', () => {
       stepWorld(s, idle);
       expect(hoisted.damageSources).toHaveLength(1);
       expect(hoisted.damageSources[0]).toBe(DamageSource.bullet);
+    });
+  });
+
+  // ── 배치7 F2a — 앵커 ④ 의 srcId(팬텀 AS7「원한 청산」선결) ──────────────────
+  describe('앵커 ④ 의 srcId', () => {
+    it('몸통 접촉이면 접촉 적 자신의 id 다', () => {
+      const s = skilled(0xc703);
+      const e = plantEnemy(s, 0, 0, 7);
+      stepWorld(s, idle);
+      expect(hoisted.srcIds).toHaveLength(1);
+      expect(hoisted.srcIds[0]).toBe(e.id);
+    });
+
+    it('적탄이면 그 탄의 ownerId 다(스탬프가 있을 때) — 0 이면 undefined 로 정규화된다', () => {
+      const s = skilled(0xc703);
+      const eb = blankEntity('enemyBullet');
+      eb.radius = 6;
+      eb.damage = 7;
+      eb.ownerId = 555; // 발사자 id 가 이미 실려 있다고 가정(스탬프 게이트는 별도 단위 테스트)
+      addEntity(s, eb);
+      stepWorld(s, idle);
+      expect(hoisted.srcIds).toHaveLength(1);
+      expect(hoisted.srcIds[0]).toBe(555);
+    });
+
+    it('적탄의 ownerId 가 0(미상)이면 undefined 다', () => {
+      const s = skilled(0xc703);
+      const eb = blankEntity('enemyBullet');
+      eb.radius = 6;
+      eb.damage = 7; // ownerId 기본값 0 그대로
+      addEntity(s, eb);
+      stepWorld(s, idle);
+      expect(hoisted.srcIds).toHaveLength(1);
+      expect(hoisted.srcIds[0]).toBeUndefined();
+    });
+
+    it('해저드 피격이면 undefined 다', () => {
+      const s = skilled(0xc703);
+      const h = blankEntity('hazard');
+      h.radius = 40;
+      h.damage = 7;
+      h.timer = 0;
+      h.life = -1;
+      addEntity(s, h);
+      stepWorld(s, idle);
+      expect(hoisted.srcIds).toHaveLength(1);
+      expect(hoisted.srcIds[0]).toBeUndefined();
+    });
+
+    it('⭐ 리셋 규율 — 적탄(약함)이 먼저 실려도 접촉(강함)이 max 를 이기면 srcId 는 접촉 쪽이다', () => {
+      // 배치6 이 이 자리(그때는 contactSrc)에서 리셋을 빠뜨려 HIGH 결함을 냈다 — 좌표는 나중
+      // 승자인데 개체는 먼저 실린 것을 가리키는 형태. srcId 도 같은 함정을 못 밟는지 잰다.
+      const s = skilled(0xc703);
+      const eb = blankEntity('enemyBullet');
+      eb.x = 0;
+      eb.y = 0;
+      eb.radius = 6;
+      eb.damage = 1; // 접촉보다 약하다
+      eb.ownerId = 111;
+      addEntity(s, eb);
+      const e = plantEnemy(s, 0, 0, 50); // 접촉이 max 를 이긴다
+      stepWorld(s, idle);
+      expect(hoisted.srcIds).toHaveLength(1);
+      expect(hoisted.srcIds[0]).toBe(e.id);
     });
   });
 
@@ -1537,6 +1648,133 @@ describe('앵커 ㉖ onTurretShotParams — 포탑탄 1발의 파라미터', () 
   });
 });
 
+/** **포탑탄만** 센다(원본 판정은 `tests/turretFireExtraction.test.ts` 의 `isTurretBullet`). */
+const isTurretBullet = (e: Entity): boolean =>
+  e.kind === 'bullet' && !e.dead && e.damage === TURRET_BULLET_DAMAGE && e.radius === TURRET_BULLET_RADIUS;
+
+describe('배치7 F2b onAutoAimTarget — 자동조준 표적 확정 직후', () => {
+  it('사거리 안 표적이 있으면 그 좌표로 불린다', () => {
+    const s = skilled(0xc001);
+    const e = plantEnemy(s, 400, 0);
+    stepWorld(s, idle);
+    expect(hoisted.autoAimTargets.length).toBe(1);
+    expect(hoisted.autoAimTargets[0]).toEqual({ x: e.x, y: e.y });
+  });
+
+  it('음성 대조: 쿨다운이 안 찼으면 표적이 있어도 0 이다 (앵커 ① 과 같은 술어·같은 함정)', () => {
+    // "표적이 없는 틱"으로 재면 웨이브 디렉터가 사거리 안에 적을 낳는 시드에서 조용히
+    // 뒤집힌다(앵커 ① `onVolleyFired` 의 음성 대조 주석과 같은 함정) — 그래서 쿨다운 게이트로
+    // 잡는다. `onAutoAimTarget` 은 표적 확정 **뒤 · 쿨다운 재확인 전**이 아니라 애초에 쿨다운이
+    // 안 찬 틱은 `autoAttack` 이 조기 반환해 이 앵커 자체에 도달하지 않는다.
+    const s = skilled(0xc002);
+    plantEnemy(s, 400, 0);
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.cooldown = 999;
+    stepWorld(s, idle);
+    expect(hoisted.autoAimTargets.length).toBe(0);
+  });
+});
+
+describe('배치7 F2b onTurretTargetPick — 포탑 표적 지정', () => {
+  it('표적 유무와 무관하게 격발 리듬마다 불린다 — onTurretShotParams 와 다르다(음성 대조)', () => {
+    const s = hatchRun(0xc010);
+    const p = s.entities[0]!;
+    plantTurret(s, BROOD_MARK, p.x + 400_000, p.y + 400_000); // 사거리 밖 — 표적 없음
+    stepWorld(s, idle);
+    expect(count('onTurretTargetPick')).toBeGreaterThanOrEqual(1);
+    expect(hoisted.turretShots.length).toBe(0); // 대조: 실제 격발(⑯)은 없다
+  });
+
+  it('⭐ 유효한 강제 지정 — 최근접이 아닌 그 표적을 실제로 쏜다', () => {
+    const s = hatchRun(0xc011);
+    const p = s.entities[0]!;
+    const t = plantTurret(s, BROOD_MARK, p.x + 120, p.y);
+    plantEnemy(s, t.x + 100, t.y); // 최근접(강제 지정 대상이 아니다)
+    const far = plantEnemy(s, t.x + 500, t.y + 10); // 사거리 안이지만 더 멀다
+    hoisted.turretPick = (pick) => {
+      pick.targetId = far.id;
+    };
+    stepWorld(s, idle);
+    const shots = s.entities.filter(isTurretBullet);
+    expect(shots.length, '강제 지정이 있는데도 포탑이 한 발도 안 쐈다').toBeGreaterThanOrEqual(1);
+    const expected = Math.atan2(far.y - t.y, far.x - t.x);
+    const actual = Math.atan2(shots[0]!.vy, shots[0]!.vx);
+    expect(Math.abs(actual - expected)).toBeLessThan(1e-3);
+  });
+
+  it('무효 지정(존재하지 않는 id)이면 종전 nearestTarget 으로 폴백한다', () => {
+    const s = hatchRun(0xc012);
+    const p = s.entities[0]!;
+    const t = plantTurret(s, BROOD_MARK, p.x + 120, p.y);
+    const near = plantEnemy(s, t.x + 100, t.y);
+    hoisted.turretPick = (pick) => {
+      pick.targetId = 999_999; // 존재하지 않는 id
+    };
+    stepWorld(s, idle);
+    const shots = s.entities.filter(isTurretBullet);
+    expect(shots.length, '무효 지정이 격발 자체를 막았다').toBeGreaterThanOrEqual(1);
+    const expected = Math.atan2(near.y - t.y, near.x - t.x);
+    const actual = Math.atan2(shots[0]!.vy, shots[0]!.vx);
+    expect(Math.abs(actual - expected)).toBeLessThan(1e-3);
+  });
+});
+
+describe('배치7 F2b onTurretCadence.suppressed — 포탑 사격 정지', () => {
+  it('⭐ 참으로 바꾸면 쿨다운이 도는데도 격발이 완전히 멈춘다(뮤테이션)', () => {
+    const s = hatchRun(0xc020);
+    const p = s.entities[0]!;
+    const t = plantTurret(s, BROOD_MARK, p.x + 120, p.y);
+    plantEnemy(s, t.x + 200, t.y);
+    hoisted.mutate['onTurretCadence'] = (_ret, args) => {
+      (args[2] as { suppressed: boolean }).suppressed = true;
+      return _ret;
+    };
+    const cooldownBefore = t.cooldown;
+    for (let i = 0; i < 5; i++) stepWorld(s, idle);
+    expect(hoisted.turretShots.length, '정지 중인데도 격발했다').toBe(0);
+    expect(t.cooldown, '정지 중에도 쿨다운이 감산됐다').toBe(cooldownBefore);
+  });
+});
+
+describe('배치7 F2b onEnemyBulletMoved — 적탄 이동 판정 직후', () => {
+  it('적탄이 있으면 매 틱 불린다', () => {
+    const s = skilled(0xc030);
+    const eb = blankEntity('enemyBullet');
+    eb.radius = 6;
+    eb.vx = 100;
+    eb.vy = 0;
+    eb.life = 60;
+    addEntity(s, eb);
+    stepWorld(s, idle);
+    expect(count('onEnemyBulletMoved')).toBeGreaterThanOrEqual(1);
+  });
+
+  it('음성 대조: 적탄이 없으면 0 이다(아군탄만 있어도 불리지 않는다)', () => {
+    const s = skilled(0xc031);
+    const b = blankEntity('bullet');
+    b.radius = 6;
+    b.vx = 100;
+    b.life = 60;
+    addEntity(s, b);
+    stepWorld(s, idle);
+    expect(count('onEnemyBulletMoved')).toBe(0);
+  });
+
+  it('⭐ `true` 를 돌려주면 그 적탄이 그 자리에서 실제로 소거된다(뮤테이션)', () => {
+    const s = skilled(0xc032);
+    const eb = blankEntity('enemyBullet');
+    eb.radius = 6;
+    eb.vx = 100;
+    eb.vy = 0;
+    eb.life = 60;
+    addEntity(s, eb);
+    hoisted.mutate['onEnemyBulletMoved'] = () => true;
+    stepWorld(s, idle);
+    expect(eb.dead, '훅이 true 를 돌려줬는데도 탄이 안 죽었다').toBe(true);
+  });
+});
+
 describe('S1 앵커는 거동을 바꾸지 않는다', () => {
   it('앵커가 도는 240틱 런 두 개가 같은 해시다', () => {
     // 240틱을 돌려 오토어택이 웨이브 적을 실제로 때리고 죽이게 한다 — "앵커가 한 번도 안 불린
@@ -1701,5 +1939,112 @@ describe('배치6 onActiveExpired — 액티브 버프가 0 이 된 그 한 틱'
     expect(count('onActiveExpired')).toBe(1);
     stepActives(s, p, idle, { x: 1, y: 0 }); // 이미 0 — 다시 불리면 만료가 매 틱이 된다
     expect(count('onActiveExpired')).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 배치7 F2a 신설 둘 — 스트라이커 M9·팬텀 AS6 선결(둘 다 아직 소비처 없음)
+// ---------------------------------------------------------------------------
+
+describe('배치7 F2a onContactInvuln — 접촉 무적 게이트', () => {
+  it('무적 중 몸통 접촉이면 불리고, 접촉 상대의 kind 가 실린다', () => {
+    const s = skilled(0xc701);
+    plantEnemy(s, 0, 0, 7); // 플레이어에 겹친 적
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.iframes = 10; // 무적 — 접촉 피해가 상쇄되는 그 상태
+    stepWorld(s, idle);
+    expect(count('onContactInvuln')).toBe(1);
+    expect(hoisted.contactInvulnKinds).toEqual(['enemy']);
+  });
+
+  it('음성 대조 ①: 무적이 아니면 같은 접촉에도 0 이다', () => {
+    const s = skilled(0xc701);
+    plantEnemy(s, 0, 0, 7);
+    // p.iframes 기본값 0 — 무적이 아니다.
+    stepWorld(s, idle);
+    expect(count('onContactInvuln')).toBe(0);
+  });
+
+  it('음성 대조 ②: 무적 중이어도 적탄만 있으면 0 이다 — 「충각」은 몸통 대 몸통이지 탄이 아니다', () => {
+    const s = skilled(0xc701);
+    const eb = blankEntity('enemyBullet');
+    eb.radius = 6;
+    eb.damage = 7;
+    addEntity(s, eb); // 원점 — 플레이어에 겹침
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.iframes = 10;
+    stepWorld(s, idle);
+    expect(count('onContactInvuln')).toBe(0);
+  });
+
+  it('음성 대조 ③: 무적 중이어도 해저드만 있으면 0 이다', () => {
+    const s = skilled(0xc701);
+    const h = blankEntity('hazard');
+    h.radius = 40;
+    h.damage = 7;
+    h.timer = 0;
+    h.life = -1; // 상시 활성
+    addEntity(s, h);
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.iframes = 10;
+    stepWorld(s, idle);
+    expect(count('onContactInvuln')).toBe(0);
+  });
+});
+
+describe('배치7 F2a onDeathRemnantSpawn — 사망 잔재 스폰 억제', () => {
+  /** `pierce = affixCode + 1` (elite.ts `eliteAffix`). ELITE_SPLIT = 0 → pierce 1. */
+  function plantSplitElite(s: WorldState, x: number, y: number): Entity {
+    const e = plantEnemy(s, x, y);
+    e.pierce = 1; // ELITE_SPLIT
+    e.hp = 0;
+    e.dead = true;
+    return e;
+  }
+
+  it('분열하는 엘리트 사망에 불린다', () => {
+    const s = skilled(0xc702);
+    plantSplitElite(s, 600, 600);
+    stepWorld(s, idle);
+    expect(count('onDeathRemnantSpawn')).toBe(1);
+  });
+
+  it('음성 대조 ①: 분열/폭발성이 아닌 엘리트 사망은 0 이다', () => {
+    const s = skilled(0xc702);
+    const e = plantEnemy(s, 600, 600);
+    e.pierce = 5; // ELITE_REGEN(4)+1 — 엘리트이지만 분열/폭발성이 아니다
+    e.hp = 0;
+    e.dead = true;
+    stepWorld(s, idle);
+    expect(count('onDeathRemnantSpawn')).toBe(0);
+  });
+
+  it('음성 대조 ②: 비-엘리트 사망은 0 이다', () => {
+    const s = skilled(0xc702);
+    const e = plantEnemy(s, 600, 600);
+    e.hp = 0;
+    e.dead = true; // pierce = 0(기본) — isElite 가 거짓
+    stepWorld(s, idle);
+    expect(count('onDeathRemnantSpawn')).toBe(0);
+  });
+
+  it('⭐ 반환값 뮤테이션 — true 를 돌려주면 잔재 스폰이 실제로 억제된다(스폰 억제 ≠ 사후 삭제)', () => {
+    // 기준선: 훅이 없으면(false) 분열 파편 8발이 실제로 스폰돼 enemyBulletCount 가 늘어난다.
+    const baseline = skilled(0xc702);
+    const beforeBase = baseline.enemyBulletCount;
+    plantSplitElite(baseline, 600, 600);
+    stepWorld(baseline, idle);
+    expect(baseline.enemyBulletCount).toBeGreaterThan(beforeBase);
+
+    // 억제: 같은 상황에서 훅이 true 를 돌려주면 splitElites 수집 자체가 스킵돼 파편이 0 이다.
+    hoisted.mutate['onDeathRemnantSpawn'] = () => true;
+    const s = skilled(0xc702);
+    const before = s.enemyBulletCount;
+    plantSplitElite(s, 600, 600);
+    stepWorld(s, idle);
+    expect(s.enemyBulletCount).toBe(before);
   });
 });
