@@ -52,6 +52,7 @@ import {
   onPlayerWallSlide,
   onObjectiveResolved,
   onEnemyDeath,
+  onDeathRemnantSpawn,
   type VolleyParams,
   type PlayerMoveParams,
   type WallHitParams,
@@ -87,6 +88,8 @@ const DI9 = 28;
 const AS3 = 2;
 const AS4 = 3;
 const AS5 = 4;
+const AS6 = 5;
+const AS7 = 6;
 const AS9 = 8;
 const AS10 = 9;
 const PH1 = 10;
@@ -2107,5 +2110,163 @@ describe('㉖ AS1 이중 각인 (앵커 ⑯)', () => {
     const tail = vp1();
     onVolleyParams(w, p, tail);
     expect(tail.damage).toBe(161);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ㉗ AS6 무성 격살 (앵커 신설 `onDeathRemnantSpawn`, 배치7 F2a 선결)
+// ---------------------------------------------------------------------------
+//
+// ⚠️ AS6 은 **부정 항목**이다("잔재가 안 생긴다") — 원리적으로 뮤테이션 실증에 안 걸린다
+// (효과 본체를 지워도 "여전히 안 생긴다" 는 관측이 안 갈린다). 그래서 **긍정 짝**
+// ("은신 중이 아니면 잔재가 생긴다" = 훅이 `false` 를 돌려준다)을 반드시 옆에 둔다 — 이 절이
+// 재는 것은 정확히 그 술어 하나다. `elite` 인자는 함수가 아예 읽지 않으므로(설계서 "사망
+// 원인 귀속 불요") 아무 엔티티나 넘겨도 무방하다.
+
+describe('㉗ AS6 무성 격살 (앵커 `onDeathRemnantSpawn`)', () => {
+  const elite = (): Entity => ({ ...blankEntity('enemy'), pierce: 1 }); // ELITE_SPLIT+1 마커
+
+  it('은신 창 안이면 사망 잔재 스폰을 억제한다', () => {
+    const w = mk([[AS6, 1]]);
+    player(w).aux0 = 300; // 은신 창 안(240..359)
+    expect(onDeathRemnantSpawn(w, elite())).toBe(true);
+  });
+
+  it('은신 중이 아니면 억제하지 않는다 (긍정 짝 — 부정 항목 뮤테이션의 대체)', () => {
+    const w = mk([[AS6, 1]]);
+    player(w).aux0 = 100; // 창 밖(적립 중)
+    expect(onDeathRemnantSpawn(w, elite())).toBe(false);
+  });
+
+  it('미투자 런은 은신 중이어도 억제하지 않는다 (음성 대조)', () => {
+    const w = mk();
+    player(w).aux0 = 300;
+    expect(onDeathRemnantSpawn(w, elite())).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ㉘ AS7 원한 청산 (앵커 ④ 표적 갱신 + 앵커 ⑩ 증폭·해제, 배치7 F2a 선결)
+// ---------------------------------------------------------------------------
+
+describe('㉘ AS7 원한 청산 (앵커 ④ + 앵커 ⑩)', () => {
+  it('피격원 id 가 원한 표적으로 저장된다 (미투자 불변)', () => {
+    const off = mk();
+    onPlayerDamaged(
+      off,
+      player(off),
+      5,
+      false,
+      DamageSource.bullet,
+      undefined,
+      undefined,
+      undefined,
+      777,
+    );
+    expect(readSlot(off.skillStage, PhantomStage.grudgeTargetId)).toBe(0);
+
+    const on = mk([[AS7, 10]]);
+    onPlayerDamaged(
+      on,
+      player(on),
+      5,
+      false,
+      DamageSource.bullet,
+      undefined,
+      undefined,
+      undefined,
+      777,
+    );
+    expect(readSlot(on.skillStage, PhantomStage.grudgeTargetId)).toBe(777);
+  });
+
+  it('피격원 id 를 모르면(해저드 등) 기존 표적을 갱신하지 않는다', () => {
+    const w = mk([[AS7, 10]]);
+    writeSlot(w.skillStage, PhantomStage.grudgeTargetId, 5);
+    onPlayerDamaged(w, player(w), 5, false, DamageSource.hazard);
+    expect(readSlot(w.skillStage, PhantomStage.grudgeTargetId)).toBe(5);
+  });
+
+  it('원한 표적에게 주는 피해만 증폭된다 (다른 적은 불변)', () => {
+    const w = mk([[AS7, 10]]);
+    const p = player(w);
+    writeSlot(w.skillStage, PhantomStage.grudgeTargetId, 501);
+    const t = addEnemy(w, p.x, p.y + 600, 1000);
+    t.id = 501;
+    // bp = 2000 + floor(6000×10/22) = 4727. extra = round(20×4727/10000) = 9.
+    onEnemyDamaged(w, t, 20, undefined);
+    expect(t.hp).toBe(991);
+
+    const other = addEnemy(w, p.x, p.y + 600, 1000);
+    other.id = 999;
+    onEnemyDamaged(w, other, 20, undefined);
+    expect(other.hp).toBe(1000);
+  });
+
+  it('미투자 런은 표적으로 저장돼 있어도 증폭이 없다 (음성 대조)', () => {
+    const w = mk([[AS2, 10]]);
+    const p = player(w);
+    writeSlot(w.skillStage, PhantomStage.grudgeTargetId, 501);
+    const t = addEnemy(w, p.x, p.y + 600, 1000);
+    t.id = 501;
+    onEnemyDamaged(w, t, 20, undefined);
+    expect(t.hp).toBe(1000);
+  });
+
+  it('표적을 처치하면 해제된다 — 이후 같은 id 를 재사용해도 다시 증폭하지 않는다', () => {
+    const w = mk([[AS7, 10]]);
+    const p = player(w);
+    writeSlot(w.skillStage, PhantomStage.grudgeTargetId, 42);
+    const t = addEnemy(w, p.x, p.y + 600, 9); // 증폭분(9)에 정확히 죽는다
+    t.id = 42;
+    onEnemyDamaged(w, t, 20, undefined);
+    expect(t.hp).toBeLessThanOrEqual(0);
+    expect(t.dead).toBe(true);
+    expect(readSlot(w.skillStage, PhantomStage.grudgeTargetId)).toBe(0);
+
+    const t2 = addEnemy(w, p.x, p.y + 600, 1000);
+    t2.id = 42; // id 재사용 — 해제됐으니 더 이상 표적이 아니다
+    onEnemyDamaged(w, t2, 20, undefined);
+    expect(t2.hp).toBe(1000);
+  });
+
+  it('표적이 살아남으면 해제되지 않는다 (과잉 해제 금지)', () => {
+    const w = mk([[AS7, 10]]);
+    const p = player(w);
+    writeSlot(w.skillStage, PhantomStage.grudgeTargetId, 42);
+    const t = addEnemy(w, p.x, p.y + 600, 10); // 증폭분(9)보다 크다 — 견딘다
+    t.id = 42;
+    onEnemyDamaged(w, t, 20, undefined);
+    expect(t.dead).toBe(false);
+    expect(readSlot(w.skillStage, PhantomStage.grudgeTargetId)).toBe(42);
+  });
+
+  it('원거리 피격(적탄)으로도 발사자 id 가 원한 표적으로 잡힌다 (stepWorld)', () => {
+    const w = mk([[AS7, 10]]);
+    const p = player(w);
+    const bullet: Entity = {
+      ...blankEntity('enemyBullet'),
+      x: p.x,
+      y: p.y,
+      radius: 4,
+      damage: 5,
+      life: 60,
+      hp: 1,
+      maxHp: 1,
+      ownerId: 321,
+    };
+    w.entities.push(bullet);
+    stepWorld(w, emptyInput());
+    expect(readSlot(w.skillStage, PhantomStage.grudgeTargetId)).toBe(321);
+  });
+
+  it('접촉 피해도 접촉 적 자신의 id 가 원한 표적으로 잡힌다 (stepWorld)', () => {
+    const w = mk([[AS7, 10]]);
+    const p = player(w);
+    const e = addEnemy(w, p.x, p.y, 10);
+    e.id = 654;
+    e.damage = 5;
+    stepWorld(w, emptyInput());
+    expect(readSlot(w.skillStage, PhantomStage.grudgeTargetId)).toBe(654);
   });
 });
