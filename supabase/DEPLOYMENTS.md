@@ -50,9 +50,11 @@
 
 </details>
 
-## ⚠️ 미적용 마이그레이션 — 아이템 서버 원장 레인 (2026-08-07)
+## ✅ 적용 완료 — 아이템 서버 원장 레인 마이그레이션 6건 (2026-08-08)
 
-**아래 3건이 리포에 있고 원격에 아직 안 올라갔다.** ADR-0050 §3 단계 1·2 의 서버측이다.
+**ADR-0050 §3 단계 1·2 의 서버측이 전부 원격에 올라갔다.** 적용 스크립트는
+`scripts/apply-item-ledger-migrations.ps1`(재실행 안전 — 전부 create-or-replace ·
+`if not exists` · `on conflict do nothing`).
 
 | 마이그레이션 | 내용 | PR |
 |---|---|---|
@@ -60,34 +62,57 @@
 | `20260808010000_item_grants_ledger` | `server_secrets` · `item_grants` · `drop_odds_mirror` · `grant_run_drops` · `mark_item_grant_applied` | #363 |
 | `20260808020000_invasion_rate_cap` | 축 A 침공 빈도 캡(20/h) | #364 |
 | `20260808030000_refine_server_roll` | `roll_refine` — 정련 차감+굴림을 한 트랜잭션으로 | #367 |
-| `20260808050000_telemetry_rollup` | 텔레메트리 일별 롤업(`telemetry_daily_planet_stage`·`telemetry_daily_ship_level`) + `rollup_telemetry_daily` + 400일 GC(ADR-0051 §결정 3) | #372 |
+| `20260808040000_save_item_seal` | `profiles.save` 아이템 **증가분 봉인** + `items`·`ships` RLS 축소 | #371 |
+| `20260808050000_telemetry_rollup` | 일별 롤업 큐브 둘 + `rollup_telemetry_daily` + 400일 GC(ADR-0051) | #372 |
 
-⚠️ **클라가 이제 이 RPC 들을 부른다**(PR #366·#367). 앞 표에 적힌 *"지금 적용해도 동작
-변화가 없다"* 는 **낡았다** — 적용 순서가 생겼다:
+**적용 순서는 파일명 순서였고 그것이 계약이다** — `20260808010000` 이 `20260808000000` 의
+`started_at` 에 의존한다(뒤집으면 `grant_run_drops` 가 없는 컬럼을 참조한다).
 
-> **마이그레이션 먼저, 클라 배포는 그 뒤.**
+⭐ **EF 는 여섯 다 무관하다** — 순수 SQL 이라 `verify-*`·`daily-reward` 재배포가 필요 없었다.
 
-구 서버 + 신 클라면 `begin_pve_run`·`grant_run_drops` 가 `42883`(함수 없음)으로 실패하는데,
-드랍 축은 그 실패를 **로컬 롤로 강등**해 흡수하므로 무해하다. 그러나 **정련은 다르다** —
-`roll_refine` 이 없으면 `rollRefineOnServer` 가 `failed` 를 내고 클라가 **굴리지 않고 멈춘다**
-(공짜 굴림을 막으려 일부러 강등하지 않는 경로다). 즉 **정련이 통째로 먹통이 된다.**
+### 사후 검증 (스크립트가 매 실행마다 다시 잰다)
 
-⭐ **EF 는 셋 다 무관하다** — 순수 SQL 이라 `verify-*`·`daily-reward` 재배포가 필요 없다.
+`postgres` 롤로 도는 검증이라 **객체가 실재하고 ACL 이 맞다**까지만 증명한다 — *"가드가
+무는가"* 는 증명하지 않는다(그건 authenticated 롤이 필요하다). 7절 전부 통과:
 
-### 적용 순서와 시점
+- 객체 14종 존재(`started_at`·`begin_pve_run`·`server_secrets`·`item_grants`·
+  `drop_odds_mirror`·`grant_run_drops`·`mark_item_grant_applied`·`roll_refine`·
+  `seal_save_items`·`save_item_ids`·`item_id_ledgered`·큐브 2·`rollup_telemetry_daily`)
+- ⭐ **봉인이 두 가드 본문에 실제로 배선됨** — 함수가 존재하는 것만으로는 아무것도 아니다.
+  가드가 안 부르면 봉인은 죽은 코드이고 세이브 위조 경로가 그대로 열려 있다.
+  `guard_profiles_client_write` 가 `seal_save_items(old.id, old.save, new.save)` 를,
+  `guard_profiles_client_insert` 가 `seal_save_items(new.id, …)` 를 부르는지 본다.
+- ⭐ **그 가드를 실은 트리거 둘이 여전히 붙어 있음** — 아무것에도 안 붙은 완벽한 함수 본문은
+  봉인이 없는 것과 같다.
+- `items`·`ships` 에 `FOR ALL` 정책 0개 + `*_select_own` 1개씩(읽기까지 막히면 안 된다)
+- `item_grants` 에 클라 쓰기 정책 0개 · `server_secrets` 에 정책 0개(완전 비공개)
+- `server_secrets` 1행 · 32바이트 이상(값은 **출력하지 않는다**)
+- 텔레메트리 cron 2건 등록
 
-세 파일은 **파일명 순서대로** 적용하면 된다(`20260808010000` 이 `20260808000000` 의
-`started_at` 에 의존한다 — 순서를 뒤집으면 `grant_run_drops` 가 없는 컬럼을 참조한다).
+### ⚠️ 이 배포에서 밟은 함정 — pgcrypto 는 `extensions` 스키마다
 
-⚠️ **지금 적용해도 동작 변화가 없다** — 클라가 `begin_pve_run`·`grant_run_drops` 를 아직
-부르지 않는다(단계 1 의 클라 배선 PR 이 미착수). 반면 **축 A·D 캡은 적용 즉시 효력이 생긴다**:
-- 축 D(60런/h)는 `begin_pve_run` 을 거친 런만 세므로 **배선 전에는 아무도 안 걸린다.**
-- 축 A(20침공/h)는 **트리거라 적용 즉시 산다.** 정직한 플레이는 닿지 않는 값이지만,
-  이것만은 배선과 무관하게 발효된다는 점을 알고 적용해라.
+첫 시도가 `ERROR: 42883: function public.gen_random_bytes(integer) does not exist` 로 터졌다.
+`20260808010000`·`20260808030000` 이 pgcrypto 함수를 `public.` 으로 한정하고 있었다(PR #374 로
+교정). Supabase 는 pgcrypto 를 **`extensions`** 에 심으므로 `create extension if not exists
+pgcrypto;` 는 **조용한 no-op** 이고 `public.` 한정은 영영 안 맞는다. `gen_random_uuid` 만
+반대로 `pg_catalog` 에도 있어 **한정 없이** 써야 `set search_path = ''` 아래서도 풀린다.
 
-⛔ **`server_secrets` 시드는 `on conflict do nothing` 이다** — 재적용해도 비밀이 안 바뀐다.
-바뀌면 이미 발급된 `item_grants` 행의 시드를 재확정할 수 없어 **아이템이 통째로 달라진다.**
-원격에 한 번 올라간 뒤에는 그 행을 절대 지우지 마라.
+⭐⭐ **그 결함이 두 PR 을 통과해 머지된 이유가 이 리포의 구조적 사각이다** — SQL 계약 테스트는
+전부 마이그레이션을 **텍스트로 읽어** 단언하고 **실행하지 않는다.** `pnpm verify` 가 전량
+초록인 채로 **적용 불가능한 마이그레이션 둘**이 쌓여 있었다. 부류 자체는
+`tests/migrationExtensionSchema.test.ts` 가 막지만, **진짜 안전망은 여전히 적용 스크립트의
+사후 검증절**이다. 새 마이그레이션을 쓰면 그 절을 같이 늘려라.
+
+(적용은 요청 단위 트랜잭션이라 실패분은 통째로 롤백된다 — 원격이 반쯤 적용된 상태로 남지 않는다.)
+
+⛔ **`server_secrets` 시드 행을 절대 지우지 마라** — `on conflict do nothing` 이라 재적용은
+안전하지만, 비밀이 바뀌면 이미 발급된 `item_grants` 행의 시드를 재확정할 수 없어
+**아이템이 통째로 달라진다.**
+
+### 진단용 조회
+
+`scripts/query-remote.ps1 -Sql "<한 문장>"` 이 같은 PAT·같은 UTF-8 바이트 경로로 읽기 질의를
+돌린다. 원격 실태를 확인하려고 일회용 apply 스크립트를 새로 쓰지 마라.
 
 ## 현재 상태 (2026-08-07 실측)
 
