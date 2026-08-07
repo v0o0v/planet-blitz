@@ -169,6 +169,12 @@ import {
   bruiserEnemyDamaged,
   bruiserEnemyDeath,
   bruiserVolleyParams,
+  bruiserActiveFired,
+  bruiserGemMagnetParams,
+  bruiserPlayerMoveParams,
+  bruiserWallHit,
+  bruiserWallShockResolve,
+  bruiserWallDestroyed,
 } from './skills/bruiser.js';
 import {
   mallowGemCollected,
@@ -2875,6 +2881,11 @@ export function onActiveFired(
       // BA1 재배치 일제사 · BA4 소거 항로 · BA6 분신 포좌(점멸 = barrage).
       arccasterActiveFired(state, player, def, dir, origin);
       break;
+    case SIG_BRUISER_ARMOR:
+      // BL5 충각 절단 · MO5 견인 돌진 · MO10 착탄 충격(전부 기동 액티브의 **경로/도착**) ·
+      // BL10 소각 여열(칼날 액티브의 **스택 순감소분**). `origin` 의 셋을 다 쓴다.
+      bruiserActiveFired(state, player, def, origin);
+      break;
     default:
       break;
   }
@@ -3020,6 +3031,10 @@ export function onGemMagnetParams(
       // NU1 모이 물어오기 — `broodRadius` 의 **첫 소비처**(소비 경로는 `stepGems`).
       hatchlingGemMagnetParams(state, params);
       break;
+    case SIG_BRUISER_ARMOR:
+      // MO2 파쇄 수확 — 근접 임계 안은 자석 반경과 **무관하게** 끌리도록 하한을 세운다.
+      bruiserGemMagnetParams(state, player, params);
+      break;
     default:
       break;
   }
@@ -3096,6 +3111,11 @@ export function onPlayerMoveParams(
       // M10 이중 추진 — `params` 가 아니라 `player.dashCooldown` 을 만진다. 이 앵커가
       // **쿨다운 감산·대시 게이트보다 앞**이라는 사실 하나로 성립하는 배선이다(그 함수 doc).
       strikerPlayerMoveParams(state, player, params);
+      break;
+    case SIG_BRUISER_ARMOR:
+      // MO4 장갑 활주(`slowTicks = 0` — 이 앵커가 그 "0틱 무효화" 를 성립시켰다) ·
+      // MO3 둔중 관성(`speedMult` 램프).
+      bruiserPlayerMoveParams(state, player, params);
       break;
     default:
       break;
@@ -3259,13 +3279,12 @@ export function onWallHit(
   params: WallHitParams,
 ): void {
   if (!state.skillsOn) return;
-  // 아직 소비처가 없는 인자들. 자기 `case` 가 쓰기 시작하면 해당 줄을 지워라.
-  void player;
-  void bullet;
-  void wall;
-  void params;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    case SIG_BRUISER_ARMOR:
+      // BL7 파성퇴 — 아군탄 × 파괴가능 벽을 **일격 파괴**하고 충격파 요청을 적는다.
+      bruiserWallHit(state, player, bullet, wall, params);
+      break;
     default:
       break;
   }
@@ -3288,10 +3307,13 @@ export function onWallHit(
  */
 export function onWallDestroyed(state: WorldState, player: Entity, wall: Entity): void {
   if (!state.skillsOn) return;
-  void player;
-  void wall;
   switch (state.sigBit) {
     // ⚠️ `break;` 필수.
+    case SIG_BRUISER_ARMOR:
+      // MO7 잔해 회수 — 대시 쿨다운 환급 + 장갑 1스택 적립.
+      // ⚠️ destructible 절반은 이 앵커로 안 풀린다(사유는 `bruiserWallDestroyed` 의 doc).
+      bruiserWallDestroyed(state, player, wall);
+      break;
     default:
       break;
   }
@@ -3317,10 +3339,12 @@ export function onWallShockResolve(
   req: WallShockRequest,
 ): void {
   if (!state.skillsOn) return;
-  void player;
-  void req;
   switch (state.sigBit) {
     // ⚠️ `break;` 필수.
+    case SIG_BRUISER_ARMOR:
+      // BL7 파성퇴의 **전방 충격파** — 여기서만 스폰이 안전하다. 탄 상한은 훅이 스스로 지킨다.
+      bruiserWallShockResolve(state, player, req);
+      break;
     default:
       break;
   }
