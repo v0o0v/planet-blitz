@@ -45,8 +45,19 @@ import {
   onEnemyDamaged,
   onEnemyDeath,
   onVolleyParams,
+  onActiveFired,
+  onGemMagnetParams,
+  onPlayerMoveParams,
+  onWallHit,
+  onWallDestroyed,
+  onWallShockResolve,
   type VolleyParams,
+  type GemMagnetParams,
+  type PlayerMoveParams,
+  type WallHitParams,
 } from '../src/sim/skillHooks.js';
+import { BRUISER_ACTIVES } from '../data/ships/actives/bruiser.js';
+import type { ActiveSkillDef } from '../data/ships/actives/types.js';
 import {
   SIG_BRUISER_ARMOR,
   ARMOR_MAX_STACKS,
@@ -72,14 +83,22 @@ const SHIP_BRUISER = 1;
 const BL2 = 1;
 const BL3 = 2;
 const BL4 = 3;
+const BL5 = 4;
 const BL6 = 5;
+const BL7 = 6;
 const BL8 = 7;
 const BL9 = 8;
+const BL10 = 9;
 const MO1 = 10;
+const MO2 = 11;
+const MO3 = 12;
 const MO4 = 13;
+const MO5 = 14;
 const MO6 = 15;
+const MO7 = 16;
 const MO8 = 17;
 const MO9 = 18;
+const MO10 = 19;
 const FO1 = 20;
 const FO2 = 21;
 const FO4 = 23;
@@ -1279,22 +1298,31 @@ describe('⑯-좀비 BL9 강타 사망 마킹', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ⑰ 앵커 ⑨ — MO4 장갑 활주 (W3)
+// ⑰ 앵커 `onPlayerMoveParams` — MO4 장갑 활주 (배치5 가 앵커 ⑨ 에서 **이사**시켰다)
 // ---------------------------------------------------------------------------
 
 /**
- * 무효화의 관측점은 **`state.playerSlowTicks` 가 0 이 되는 것**이다 — 그 값이 `stepPlayer` 의
- * `slowMult` 게이트 그 자체다(이동 배율을 여기서 다시 재면 술어가 두 벌이 된다).
+ * 무효화의 관측점은 **`params.slowTicks` 가 0 이 되는 것**이다 — 호출부는 이 되쓴 값으로
+ * 배율을 정한 **뒤** 1 을 깎으므로(`stepPlayer` 2244-2250), 0 이면 그 틱의 배율이 1 이다.
+ *
+ * ## ⚠️ 앵커가 바뀌었다 — "한 틱 늦는다" 가 사라진 것이 이 이사의 전부다
+ * 종전 자리(앵커 ⑨ = `stepShipSignature`)는 이동 배율을 **읽는** 자리보다 뒤라, 감속이
+ * 다음 틱 이동에 정확히 한 번 실린 뒤에야 지워졌다. §⑰-c 가 그 차이를 `stepWorld` 관통으로
+ * 직접 잰다 — 앵커를 되돌리면 그 케이스가 빨개진다.
  */
-describe('⑰ MO4 장갑 활주 (앵커 ⑨)', () => {
+describe('⑰ MO4 장갑 활주 (앵커 onPlayerMoveParams)', () => {
+  function move(state: WorldState, slowTicks: number): PlayerMoveParams {
+    const params: PlayerMoveParams = { speedMult: 1, slowTicks };
+    onPlayerMoveParams(state, player(state), params);
+    return params;
+  }
+
   it('감속이 걸려 있으면 스택 1개를 태워 지우고 전용 쿨을 건다', () => {
     const w = mk([[MO4, 1]]);
     const p = player(w);
     p.aux0 = 3;
-    w.playerSlowTicks = 30;
-    onSignatureStep(w, p, emptyInput());
+    expect(move(w, 30).slowTicks).toBe(0);
     expect(p.aux0).toBe(2);
-    expect(w.playerSlowTicks).toBe(0);
     // 쿨 = round(60 + 2400/(1+19)) = 180.
     expect(readSlot(w.skillStage, BruiserStage.skidCooldown)).toBe(180);
   });
@@ -1303,33 +1331,50 @@ describe('⑰ MO4 장갑 활주 (앵커 ⑨)', () => {
     const w = mk([[MO4, 1]]);
     const p = player(w);
     p.aux0 = 3;
-    w.playerSlowTicks = 30;
-    onSignatureStep(w, p, emptyInput()); // 1회 소모
+    move(w, 30); // 1회 소모
     for (let i = 0; i < 8; i++) {
-      w.playerSlowTicks = 30; // 장판이 매 틱 재부여한다
-      onSignatureStep(w, p, emptyInput());
-      expect(w.playerSlowTicks).toBe(30); // 쿨 중이라 무효화가 안 돈다
+      // 장판이 매 틱 감속을 재부여한다 — 쿨 중이라 무효화가 안 돈다.
+      expect(move(w, 30).slowTicks).toBe(30);
     }
     expect(p.aux0).toBe(2); // 8틱에 8스택이 증발하지 않았다
     expect(readSlot(w.skillStage, BruiserStage.skidCooldown)).toBe(180 - 8);
   });
 
+  it('⑰-c 0틱 무효화 — 감속이 부여된 **그 틱**의 이동이 온전하다 (stepWorld 관통)', () => {
+    // 같은 시드·같은 입력으로 두 런을 굴리고, 감속만 넣어 이동 거리를 비교한다.
+    // 앵커가 `stepPlayer` **안**이라 그 틱의 `slowMult` 가 1 이 되어야 한다.
+    function runOneTick(points: ReadonlyArray<readonly [number, number]>, slow: number): number {
+      const w = mk(points);
+      const p = player(w);
+      p.aux0 = 5;
+      w.playerSlowTicks = slow;
+      const x0 = p.x;
+      const input = { ...emptyInput(), moveX: 1, moveY: 0 };
+      stepWorld(w, input);
+      return player(w).x - x0;
+    }
+    // 기준: 감속 없음(투자 무관 — 아래 둘의 상한이다).
+    const free = runOneTick([[MO9, 5]], 0);
+    expect(free).toBeGreaterThan(0); // ⚠️ 하한 짝 — 배선이 끊겨 양변이 0 이 되는 항진을 막는다
+    // 미투자 + 감속: 그 틱부터 느려진다.
+    const slowed = runOneTick([[MO9, 5]], 30);
+    expect(slowed).toBeLessThan(free);
+    // MO4 투자 + 감속: 그 틱이 **감속 없음과 같다**(0틱 무효화).
+    const skid = runOneTick([[MO4, 5]], 30);
+    expect(skid).toBeCloseTo(free, 6);
+    expect(skid).toBeGreaterThan(slowed);
+  });
+
   it('스택이 0 이면 무효화도 쿨도 없다 (긍정 짝: 1 이면 돈다)', () => {
     const empty = mk([[MO4, 5]]);
-    const pe = player(empty);
-    pe.aux0 = 0;
-    empty.playerSlowTicks = 30;
-    onSignatureStep(empty, pe, emptyInput());
-    expect(empty.playerSlowTicks).toBe(30);
+    player(empty).aux0 = 0;
+    expect(move(empty, 30).slowTicks).toBe(30);
     expect(readSlot(empty.skillStage, BruiserStage.skidCooldown)).toBe(0);
 
     const has = mk([[MO4, 5]]);
-    const ph = player(has);
-    ph.aux0 = 1;
-    has.playerSlowTicks = 30;
-    onSignatureStep(has, ph, emptyInput());
-    expect(has.playerSlowTicks).toBe(0);
-    expect(ph.aux0).toBe(0);
+    player(has).aux0 = 1;
+    expect(move(has, 30).slowTicks).toBe(0);
+    expect(player(has).aux0).toBe(0);
   });
 
   it('쿨 길이가 레벨 파생이다 — Lv1 = 180, Lv20 = 122', () => {
@@ -1338,10 +1383,8 @@ describe('⑰ MO4 장갑 활주 (앵커 ⑨)', () => {
       [20, 122],
     ] as const) {
       const w = mk([[MO4, level]]);
-      const p = player(w);
-      p.aux0 = 2;
-      w.playerSlowTicks = 10;
-      onSignatureStep(w, p, emptyInput());
+      player(w).aux0 = 2;
+      move(w, 10);
       expect(readSlot(w.skillStage, BruiserStage.skidCooldown)).toBe(ticks);
     }
   });
@@ -1350,11 +1393,20 @@ describe('⑰ MO4 장갑 활주 (앵커 ⑨)', () => {
     const w = mk([[MO9, 5]]);
     const p = player(w);
     p.aux0 = 3;
-    w.playerSlowTicks = 30;
-    onSignatureStep(w, p, emptyInput());
-    expect(w.playerSlowTicks).toBe(30);
+    expect(move(w, 30).slowTicks).toBe(30);
     expect(p.aux0).toBe(3);
     expect(readSlot(w.skillStage, BruiserStage.skidCooldown)).toBe(0);
+  });
+
+  it('앵커 ⑨ 에는 더 이상 없다 — 이사가 실제로 일어났다', () => {
+    const w = mk([[MO4, 5]]);
+    const p = player(w);
+    p.aux0 = 3;
+    w.playerSlowTicks = 30;
+    onSignatureStep(w, p, emptyInput());
+    // 옛 자리로 되돌리면 이 두 줄이 빨개진다.
+    expect(w.playerSlowTicks).toBe(30);
+    expect(p.aux0).toBe(3);
   });
 });
 
@@ -1642,5 +1694,523 @@ describe('⑳ FO9 사투 본능', () => {
     expect(onDamageChain(w, p, 1000)).toBe(1000); // 감소 없음
     onSignatureStep(w, p, emptyInput());
     expect(p.aux1).toBe(DUE); // 감쇠 정지 없음
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 배치5 — 액티브 축 · 자석 축 · 이동 축 · 벽 축
+// ---------------------------------------------------------------------------
+
+/** 레지스트리에서 정의 하나를 id 로 집어 온다(픽스처를 손으로 적으면 정본이 두 벌이 된다). */
+function activeDef(id: string): ActiveSkillDef {
+  const d = BRUISER_ACTIVES.find((a) => a.id === id);
+  if (d === undefined) throw new Error(`active not found: ${id}`);
+  return d;
+}
+const MORPH_LO = activeDef('as_bruiser_morph_lo'); // 기동 lo
+const MORPH_HI = activeDef('as_bruiser_morph_hi'); // 기동 hi
+const BLADE_LO = activeDef('as_bruiser_blade_lo'); // 칼날 lo
+const FORTIFY_LO = activeDef('as_bruiser_fortify_lo'); // 강화 lo (음성 대조군)
+
+const DIR = { x: 1, y: 0 };
+
+/**
+ * 앵커 `onActiveFired` 자극 — 핸들러가 좌표를 옮겨 놓은 **뒤**의 상태를 흉내 낸다.
+ * 그래야 `origin.preX/preY` 와 지금 `player.x/y` 의 관계가 런타임과 같다(경로 = 출발→도착).
+ */
+function fireActive(state: WorldState, def: ActiveSkillDef, landX: number, landY: number): void {
+  const p = player(state);
+  const origin = { preX: p.x, preY: p.y, preAux0: p.aux0, spawnWatermark: state.entities.length };
+  p.x = landX;
+  p.y = landY;
+  onActiveFired(state, p, def, DIR, 0, origin);
+}
+
+describe('㉑ BL5 충각 절단 (앵커 onActiveFired)', () => {
+  it('돌진 경로 위의 적이 베인다 — 경로 밖은 안 베인다 (긍정/부정 짝)', () => {
+    const w = mk([[BL5, 1]]);
+    const p = player(w);
+    p.x = 0;
+    p.y = 0;
+    // 폭 = 60 + 4×1 = 64. 경로는 (0,0)→(600,0).
+    const on = addEnemy(w, 300, 10, 1000); // 경로 한가운데, 폭 안
+    const off = addEnemy(w, 300, 400, 1000); // 경로에서 멀다
+    const behind = addEnemy(w, -300, 0, 1000); // 출발 지점 **뒤** — 선분 밖이다
+    fireActive(w, MORPH_LO, 600, 0);
+    expect(on.hp).toBe(1000 - (20 + 6)); // 피해 20 + 6×Lv
+    expect(off.hp).toBe(1000);
+    expect(behind.hp).toBe(1000);
+  });
+
+  it('레벨이 오르면 피해와 폭이 함께 커진다 (하한 짝 포함)', () => {
+    function cut(level: number, y: number): number {
+      const w = mk([[BL5, level]]);
+      const p = player(w);
+      p.x = 0;
+      p.y = 0;
+      const e = addEnemy(w, 300, y, 100000);
+      fireActive(w, MORPH_LO, 600, 0);
+      return 100000 - e.hp;
+    }
+    // 피해 단조 — 하한 짝(0 이면 배선이 끊긴 것이다).
+    const lo = cut(1, 0);
+    const hi = cut(10, 0);
+    expect(lo).toBeGreaterThan(0);
+    expect(hi).toBeGreaterThan(lo);
+    // 폭 단조 — Lv1 폭 64 밖(y=90)은 안 맞고 Lv10 폭 100 안이라 맞는다.
+    expect(cut(1, 90)).toBe(0);
+    expect(cut(10, 90)).toBeGreaterThan(0);
+  });
+
+  it('칼날·강화 액티브에는 안 걸린다 — "기동 액티브" 술어가 실제로 좁힌다', () => {
+    for (const def of [BLADE_LO, FORTIFY_LO]) {
+      const w = mk([[BL5, 5]]);
+      const p = player(w);
+      p.x = 0;
+      p.y = 0;
+      const e = addEnemy(w, 300, 0, 1000);
+      fireActive(w, def, 600, 0);
+      expect(e.hp).toBe(1000);
+    }
+    // 긍정 짝 — 기동 액티브면 같은 배치에서 벤다.
+    const w = mk([[BL5, 5]]);
+    const p = player(w);
+    p.x = 0;
+    p.y = 0;
+    const e = addEnemy(w, 300, 0, 1000);
+    fireActive(w, MORPH_LO, 600, 0);
+    expect(e.hp).toBeLessThan(1000);
+  });
+
+  it('좀비 결함 — 절단으로 hp 가 0 이하가 된 적은 `dead` 가 선다', () => {
+    const w = mk([[BL5, 20]]);
+    const p = player(w);
+    p.x = 0;
+    p.y = 0;
+    const e = addEnemy(w, 300, 0, 5); // 한 방에 죽는다
+    fireActive(w, MORPH_LO, 600, 0);
+    expect(e.hp).toBeLessThanOrEqual(0);
+    expect(e.dead).toBe(true);
+  });
+
+  it('미투자 런은 한 대도 안 때린다', () => {
+    const w = mk([[MO9, 5]]);
+    const p = player(w);
+    p.x = 0;
+    p.y = 0;
+    const e = addEnemy(w, 300, 0, 1000);
+    fireActive(w, MORPH_LO, 600, 0);
+    expect(e.hp).toBe(1000);
+  });
+});
+
+describe('㉒ MO5 견인 돌진 (앵커 onActiveFired)', () => {
+  function addGem(state: WorldState, x: number, y: number): Entity {
+    const g: Entity = { ...blankEntity('gem'), x, y, radius: 8 };
+    state.entities.push(g);
+    return g;
+  }
+
+  it('경로 회랑 안의 젬이 도착 지점으로 끌려온다 — 밖은 그대로 (긍정/부정 짝)', () => {
+    const w = mk([[MO5, 1]]);
+    const p = player(w);
+    p.x = 0;
+    p.y = 0;
+    const on = addGem(w, 300, 20); // 폭 80 + 6 = 86 안
+    const off = addGem(w, 300, 500);
+    fireActive(w, MORPH_LO, 600, 0);
+    expect(on.x).toBe(600);
+    expect(on.y).toBe(0);
+    expect(off.x).toBe(300);
+    expect(off.y).toBe(500);
+  });
+
+  it('배치된 기믹(자석 발생기)은 안 옮긴다 — 스테이지 가구가 따라오면 안 된다', () => {
+    const w = mk([[MO5, 20]]);
+    const p = player(w);
+    p.x = 0;
+    p.y = 0;
+    const gimmick: Entity = { ...blankEntity('magnetEmitter'), x: 300, y: 0, radius: 20 };
+    w.entities.push(gimmick);
+    const gem = addGem(w, 300, 0); // 긍정 짝 — 같은 자리의 젬은 옮겨진다
+    fireActive(w, MORPH_LO, 600, 0);
+    expect(gimmick.x).toBe(300);
+    expect(gem.x).toBe(600);
+  });
+
+  it('미투자 런은 한 개도 안 옮긴다', () => {
+    const w = mk([[MO9, 5]]);
+    const p = player(w);
+    p.x = 0;
+    p.y = 0;
+    const g = addGem(w, 300, 0);
+    fireActive(w, MORPH_LO, 600, 0);
+    expect(g.x).toBe(300);
+  });
+});
+
+describe('㉓ MO10 착탄 충격 (앵커 onActiveFired)', () => {
+  it('고티어 도착에만 반응한다 — 저티어는 무연산 (긍정/부정 짝)', () => {
+    function shock(def: ActiveSkillDef): { pushed: number; bulletDead: boolean } {
+      const w = mk([[MO10, 1]]);
+      const p = player(w);
+      p.x = 0;
+      p.y = 0;
+      const e = addEnemy(w, 100, 0, 1000);
+      const b: Entity = { ...blankEntity('enemyBullet'), x: 100, y: 0, radius: 4 };
+      w.entities.push(b);
+      fireActive(w, def, 0, 0); // 제자리 도착(경로 길이 0) — 반경 판정만 남는다
+      return { pushed: e.x - 100, bulletDead: b.dead };
+    }
+    const hi = shock(MORPH_HI);
+    expect(hi.pushed).toBeGreaterThan(0); // 반경 140 + 10 안이라 밀린다
+    expect(hi.bulletDead).toBe(true);
+    const lo = shock(MORPH_LO);
+    expect(lo.pushed).toBe(0);
+    expect(lo.bulletDead).toBe(false);
+  });
+
+  it('밀어내기만 하고 피해는 안 준다 — 문면이 그렇다', () => {
+    const w = mk([[MO10, 20]]);
+    const p = player(w);
+    p.x = 0;
+    p.y = 0;
+    const e = addEnemy(w, 100, 0, 1000);
+    fireActive(w, MORPH_HI, 0, 0);
+    expect(e.hp).toBe(1000);
+    expect(e.dead).toBe(false);
+    expect(e.x).toBeGreaterThan(100);
+  });
+
+  it('미투자 런은 적탄을 안 지운다', () => {
+    const w = mk([[MO9, 5]]);
+    const p = player(w);
+    p.x = 0;
+    p.y = 0;
+    const b: Entity = { ...blankEntity('enemyBullet'), x: 50, y: 0, radius: 4 };
+    w.entities.push(b);
+    fireActive(w, MORPH_HI, 0, 0);
+    expect(b.dead).toBe(false);
+  });
+});
+
+describe('㉔ BL10 소각 여열 (앵커 onActiveFired)', () => {
+  it('칼날 액티브가 태운 스택 수에 **비례해** 쿨다운을 환급한다 (하한 짝 포함)', () => {
+    function refund(stacks: number): number {
+      const w = mk([[BL10, 1]]);
+      const p = player(w);
+      p.cooldown = 100000; // 환급이 0 클램프에 삼켜지지 않게 넉넉히 둔다
+      const origin = { preX: p.x, preY: p.y, preAux0: stacks, spawnWatermark: 0 };
+      p.aux0 = 0; // 칼날 핸들러가 전량 소각한 결과
+      onActiveFired(w, p, BLADE_LO, DIR, 0, origin);
+      return 100000 - p.cooldown;
+    }
+    const one = refund(1);
+    const four = refund(4);
+    expect(one).toBeGreaterThan(0); // ⚠️ 하한 짝 — 배선이 끊기면 양변이 0 이 되어 비례가 항진이다
+    expect(four).toBe(one * 4);
+  });
+
+  it('레벨이 오르면 스택당 환급이 커진다', () => {
+    function refund(level: number): number {
+      const w = mk([[BL10, level]]);
+      const p = player(w);
+      p.cooldown = 100000;
+      const origin = { preX: p.x, preY: p.y, preAux0: 3, spawnWatermark: 0 };
+      p.aux0 = 0;
+      onActiveFired(w, p, BLADE_LO, DIR, 0, origin);
+      return 100000 - p.cooldown;
+    }
+    expect(refund(20)).toBeGreaterThan(refund(1));
+  });
+
+  it('기동·강화 액티브에는 안 걸린다', () => {
+    for (const def of [MORPH_LO, FORTIFY_LO]) {
+      const w = mk([[BL10, 20]]);
+      const p = player(w);
+      p.cooldown = 100000;
+      const origin = { preX: p.x, preY: p.y, preAux0: 8, spawnWatermark: 0 };
+      p.aux0 = 0;
+      onActiveFired(w, p, def, DIR, 0, origin);
+      expect(p.cooldown).toBe(100000);
+    }
+  });
+
+  it('스택이 안 줄면 환급이 없다 — 순감소분이 술어다 (긍정 짝: 줄면 환급이 있다)', () => {
+    const w = mk([[BL10, 20]]);
+    const p = player(w);
+    p.cooldown = 100000;
+    p.aux0 = 5;
+    onActiveFired(w, p, BLADE_LO, DIR, 0, { preX: p.x, preY: p.y, preAux0: 5, spawnWatermark: 0 });
+    expect(p.cooldown).toBe(100000);
+
+    const w2 = mk([[BL10, 20]]);
+    const p2 = player(w2);
+    p2.cooldown = 100000;
+    p2.aux0 = 0;
+    onActiveFired(w2, p2, BLADE_LO, DIR, 0, {
+      preX: p2.x,
+      preY: p2.y,
+      preAux0: 5,
+      spawnWatermark: 0,
+    });
+    expect(p2.cooldown).toBeLessThan(100000);
+  });
+
+  it('음수 carry 로 내려가지 않는다 — 0 에서 멈춘다', () => {
+    const w = mk([[BL10, 20]]);
+    const p = player(w);
+    p.cooldown = 10;
+    p.aux0 = 0;
+    onActiveFired(w, p, BLADE_LO, DIR, 0, { preX: p.x, preY: p.y, preAux0: 8, spawnWatermark: 0 });
+    expect(p.cooldown).toBe(0);
+  });
+});
+
+describe('㉕ MO2 파쇄 수확 (앵커 onGemMagnetParams)', () => {
+  function magnet(state: WorldState, radius: number): GemMagnetParams {
+    const params: GemMagnetParams = { radius, broodRadius: 0 };
+    onGemMagnetParams(state, player(state), params);
+    return params;
+  }
+
+  it('자석 반경이 근접 임계보다 좁아도 하한까지 넓힌다 (미투자 짝)', () => {
+    const w = mk([[MO2, 1]]);
+    expect(magnet(w, 50).radius).toBe(350 + 10); // POINT_BLANK_RANGE + 10×Lv
+    const none = mk([[MO9, 5]]);
+    expect(magnet(none, 50).radius).toBe(50);
+  });
+
+  it('이미 더 넓으면 **줄이지 않는다** — 자석 파워업 런이 스킬 때문에 좁아지면 안 된다', () => {
+    const w = mk([[MO2, 20]]);
+    expect(magnet(w, 5000).radius).toBe(5000);
+  });
+
+  it('레벨이 오르면 하한이 커진다 (하한 짝 포함)', () => {
+    const one = magnet(mk([[MO2, 1]]), 0).radius;
+    const twenty = magnet(mk([[MO2, 20]]), 0).radius;
+    expect(one).toBeGreaterThan(0);
+    expect(twenty).toBeGreaterThan(one);
+  });
+
+  it('`broodRadius` 는 건드리지 않는다 — 해츨링 소관이다', () => {
+    expect(magnet(mk([[MO2, 20]]), 0).broodRadius).toBe(0);
+  });
+});
+
+describe('㉖ MO3 둔중 관성 (앵커 ⑨ 카운터 → onPlayerMoveParams 배율)', () => {
+  /** 주어진 입력 열을 앵커 ⑨ 로 흘린 뒤 그 시점의 이동 배율을 잰다. */
+  function ramp(level: number, seq: ReadonlyArray<readonly [number, number]>): number {
+    const w = mk([[MO3, level]]);
+    const p = player(w);
+    for (const [mx, my] of seq) {
+      onSignatureStep(w, p, { ...emptyInput(), moveX: mx, moveY: my });
+    }
+    const params: PlayerMoveParams = { speedMult: 1, slowTicks: 0 };
+    onPlayerMoveParams(w, p, params);
+    return params.speedMult;
+  }
+  /** 같은 방향 `n` 틱. */
+  function straight(n: number): Array<readonly [number, number]> {
+    const out: Array<readonly [number, number]> = [];
+    for (let i = 0; i < n; i++) out.push([1, 0]);
+    return out;
+  }
+
+  it('같은 방향 지속이 길수록 배율이 오른다 (하한 짝 포함)', () => {
+    const short = ramp(1, straight(10));
+    const long = ramp(1, straight(60));
+    expect(short).toBeGreaterThan(1); // ⚠️ 하한 짝 — 끊기면 양변이 1 이라 단조가 항진이다
+    expect(long).toBeGreaterThan(short);
+  });
+
+  it('상한(120틱)에서 멈춘다 — 그 위로는 안 오른다', () => {
+    expect(ramp(5, straight(400))).toBeCloseTo(ramp(5, straight(120)), 9);
+  });
+
+  it('레벨이 오르면 같은 지속에서 배율이 크다', () => {
+    expect(ramp(20, straight(120))).toBeGreaterThan(ramp(1, straight(120)));
+  });
+
+  it('정지하면 리셋된다 (긍정 짝: 정지 없이 이어가면 유지된다)', () => {
+    expect(ramp(5, [...straight(60), [0, 0]])).toBe(1);
+    expect(ramp(5, straight(61))).toBeGreaterThan(1);
+  });
+
+  it('방향 급전환은 1틱으로 되감는다 — 0 이 아니라 1 이다', () => {
+    const after = ramp(5, [...straight(60), [-1, 0]]);
+    expect(after).toBeGreaterThan(1); // 1틱분은 남는다(0 리셋이 아니다)
+    expect(after).toBeLessThan(ramp(5, straight(61))); // 지속했을 때보다 훨씬 작다
+  });
+
+  it('미투자 런은 배율이 1 그대로다', () => {
+    const w = mk([[MO9, 5]]);
+    const p = player(w);
+    for (let i = 0; i < 200; i++) onSignatureStep(w, p, { ...emptyInput(), moveX: 1, moveY: 0 });
+    const params: PlayerMoveParams = { speedMult: 1, slowTicks: 0 };
+    onPlayerMoveParams(w, p, params);
+    expect(params.speedMult).toBe(1);
+  });
+});
+
+describe('㉗ BL7 파성퇴 (앵커 onWallHit · onWallShockResolve)', () => {
+  function mkWall(state: WorldState, hp: number): Entity {
+    const wall: Entity = { ...blankEntity('wall'), x: 200, y: 0, radius: 60, targetX: 60, hp };
+    state.entities.push(wall);
+    return wall;
+  }
+  function mkBullet(state: WorldState): Entity {
+    const b: Entity = {
+      ...blankEntity('bullet'),
+      x: 200,
+      y: 0,
+      vx: 900,
+      vy: 0,
+      damage: 3,
+      radius: 4,
+    };
+    state.entities.push(b);
+    return b;
+  }
+  function hit(state: WorldState, bullet: Entity, wall: Entity): WallHitParams {
+    const params: WallHitParams = { damage: bullet.damage, passThrough: false, shockAt: null };
+    onWallHit(state, player(state), bullet, wall, params);
+    return params;
+  }
+
+  it('파괴가능 벽을 **일격**으로 부술 만큼 피해를 올린다 (미투자 짝)', () => {
+    const w = mk([[BL7, 1]]);
+    const wall = mkWall(w, 500);
+    const params = hit(w, mkBullet(w), wall);
+    expect(params.damage).toBe(500); // 남은 hp 를 정확히 실어 0 으로 만든다
+    expect(params.shockAt).not.toBeNull();
+
+    const none = mk([[MO9, 5]]);
+    const wall2 = mkWall(none, 500);
+    const p2 = hit(none, mkBullet(none), wall2);
+    expect(p2.damage).toBe(3); // 탄 피해 그대로
+    expect(p2.shockAt).toBeNull();
+  });
+
+  it('이미 더 아픈 탄의 피해를 **깎지 않는다**', () => {
+    const w = mk([[BL7, 20]]);
+    const wall = mkWall(w, 10);
+    const b = mkBullet(w);
+    b.damage = 999;
+    expect(hit(w, b, wall).damage).toBe(999);
+  });
+
+  it('적탄·불파괴 벽에서는 무연산이다 (긍정 짝: 아군탄 × 파괴가능이면 돈다)', () => {
+    // 적탄
+    const a = mk([[BL7, 20]]);
+    const wallA = mkWall(a, 500);
+    const eb: Entity = { ...blankEntity('enemyBullet'), x: 200, y: 0, vx: 300, damage: 3 };
+    a.entities.push(eb);
+    expect(hit(a, eb, wallA).shockAt).toBeNull();
+    // 불파괴 벽(hp = 0)
+    const b = mk([[BL7, 20]]);
+    const wallB = mkWall(b, 0);
+    expect(hit(b, mkBullet(b), wallB).shockAt).toBeNull();
+    // 긍정 짝
+    const c = mk([[BL7, 20]]);
+    expect(hit(c, mkBullet(c), mkWall(c, 500)).shockAt).not.toBeNull();
+  });
+
+  it('`wall.dead` 를 직접 세우지 않는다 — 세우면 MO7 이 조용히 죽는다', () => {
+    const w = mk([[BL7, 20]]);
+    const wall = mkWall(w, 500);
+    hit(w, mkBullet(w), wall);
+    expect(wall.dead).toBe(false);
+  });
+
+  it('충격파가 요청 지점에서 **전방으로** 탄을 낳는다 (미투자 짝)', () => {
+    const w = mk([[BL7, 1]]);
+    expect(countBullets(w)).toBe(0);
+    onWallShockResolve(w, player(w), { x: 200, y: 0, dirX: 900, dirY: 0 });
+    const spawned = w.entities.filter((e) => e.kind === 'bullet' && !e.dead);
+    expect(spawned.length).toBe(3 + 1); // 3 + ceil(1/4) = 4
+    for (const b of spawned) {
+      expect(b.x).toBe(200);
+      expect(b.vx).toBeGreaterThan(0); // 진행 방향(+X) 부채꼴이라 전부 전방이다
+    }
+
+    const none = mk([[MO9, 5]]);
+    onWallShockResolve(none, player(none), { x: 200, y: 0, dirX: 900, dirY: 0 });
+    expect(countBullets(none)).toBe(0);
+  });
+
+  it('탄 상한을 훅이 스스로 지킨다', () => {
+    const w = mk([[BL7, 20]]);
+    w.bulletCap = 2;
+    onWallShockResolve(w, player(w), { x: 200, y: 0, dirX: 900, dirY: 0 });
+    expect(countBullets(w)).toBe(2);
+  });
+
+  it('발수가 레벨과 함께 는다 (하한 짝 포함)', () => {
+    function shots(level: number): number {
+      const w = mk([[BL7, level]]);
+      onWallShockResolve(w, player(w), { x: 0, y: 0, dirX: 1, dirY: 0 });
+      return countBullets(w);
+    }
+    const one = shots(1);
+    expect(one).toBeGreaterThan(0);
+    expect(shots(20)).toBeGreaterThan(one);
+  });
+});
+
+describe('㉘ MO7 잔해 회수 (앵커 onWallDestroyed)', () => {
+  function destroy(state: WorldState): void {
+    const wall: Entity = { ...blankEntity('wall'), x: 200, y: 0, radius: 60, hp: 0, dead: true };
+    state.entities.push(wall);
+    onWallDestroyed(state, player(state), wall);
+  }
+
+  it('대시 쿨다운을 환급하고 장갑을 1스택 적립한다 (미투자 짝)', () => {
+    const w = mk([[MO7, 1]]);
+    const p = player(w);
+    p.dashCooldown = 100;
+    p.aux0 = 2;
+    p.aux1 = 50;
+    destroy(w);
+    expect(p.dashCooldown).toBe(100 - (10 + 2)); // 10 + 2×Lv
+    expect(p.aux0).toBe(3);
+    expect(p.aux1).toBe(0); // 적립 짝 — 감쇠 타이머도 리셋한다
+
+    const none = mk([[MO9, 5]]);
+    const pn = player(none);
+    pn.dashCooldown = 100;
+    pn.aux0 = 2;
+    pn.aux1 = 50;
+    destroy(none);
+    expect(pn.dashCooldown).toBe(100);
+    expect(pn.aux0).toBe(2);
+    expect(pn.aux1).toBe(50);
+  });
+
+  it('환급이 레벨과 함께 는다 (하한 짝 포함)', () => {
+    function back(level: number): number {
+      const w = mk([[MO7, level]]);
+      player(w).dashCooldown = 1000;
+      destroy(w);
+      return 1000 - player(w).dashCooldown;
+    }
+    const one = back(1);
+    expect(one).toBeGreaterThan(0);
+    expect(back(20)).toBeGreaterThan(one);
+  });
+
+  it('쿨다운이 음수로 새지 않는다', () => {
+    const w = mk([[MO7, 20]]);
+    player(w).dashCooldown = 3;
+    destroy(w);
+    expect(player(w).dashCooldown).toBe(0);
+  });
+
+  it('장갑 상한을 넘기지 않는다', () => {
+    const w = mk([[MO7, 20]]);
+    const p = player(w);
+    p.aux0 = w.armorMaxStacks;
+    destroy(w);
+    expect(p.aux0).toBe(w.armorMaxStacks);
   });
 });

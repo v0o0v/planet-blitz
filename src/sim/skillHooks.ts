@@ -165,6 +165,12 @@ import {
   bruiserEnemyDamaged,
   bruiserEnemyDeath,
   bruiserVolleyParams,
+  bruiserActiveFired,
+  bruiserGemMagnetParams,
+  bruiserPlayerMoveParams,
+  bruiserWallHit,
+  bruiserWallShockResolve,
+  bruiserWallDestroyed,
 } from './skills/bruiser.js';
 import {
   mallowGemCollected,
@@ -2850,7 +2856,6 @@ export function onActiveFired(
   // 아직 소비처가 없는 인자들. 자기 `case` 가 쓰기 시작하면 해당 줄을 지워라.
   void dir;
   void slot;
-  void origin;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라** — 병렬 배선
     // 머지에서 두 `case` 가 `break;` 하나를 공유하는 fallthrough 가 누적 5건 나왔고 전부
@@ -2858,6 +2863,11 @@ export function onActiveFired(
     case SIG_PHANTOM_CLOAK:
       // PH2 위상 착지 — 위상 계열(`treeIndex === 1`) 액티브의 **착지 지점** 정화.
       phantomActiveFired(state, player, def);
+      break;
+    case SIG_BRUISER_ARMOR:
+      // BL5 충각 절단 · MO5 견인 돌진 · MO10 착탄 충격(전부 기동 액티브의 **경로/도착**) ·
+      // BL10 소각 여열(칼날 액티브의 **스택 순감소분**). `origin` 의 셋을 다 쓴다.
+      bruiserActiveFired(state, player, def, origin);
       break;
     default:
       break;
@@ -2992,6 +3002,10 @@ export function onGemMagnetParams(
       // ME2 채무 자석 — 부채(`player.aux0`)에 비례해 반경이 커진다.
       mallowGemMagnetParams(state, player, params);
       break;
+    case SIG_BRUISER_ARMOR:
+      // MO2 파쇄 수확 — 근접 임계 안은 자석 반경과 **무관하게** 끌리도록 하한을 세운다.
+      bruiserGemMagnetParams(state, player, params);
+      break;
     default:
       break;
   }
@@ -3055,6 +3069,11 @@ export function onPlayerMoveParams(
     case SIG_MALLOW_CUSHION:
       // CU8 통증 마취 — 부채(`player.aux0`) 보유 중 이동 속도가 오른다.
       mallowPlayerMoveParams(state, player, params);
+      break;
+    case SIG_BRUISER_ARMOR:
+      // MO4 장갑 활주(`slowTicks = 0` — 이 앵커가 그 "0틱 무효화" 를 성립시켰다) ·
+      // MO3 둔중 관성(`speedMult` 램프).
+      bruiserPlayerMoveParams(state, player, params);
       break;
     default:
       break;
@@ -3218,13 +3237,12 @@ export function onWallHit(
   params: WallHitParams,
 ): void {
   if (!state.skillsOn) return;
-  // 아직 소비처가 없는 인자들. 자기 `case` 가 쓰기 시작하면 해당 줄을 지워라.
-  void player;
-  void bullet;
-  void wall;
-  void params;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    case SIG_BRUISER_ARMOR:
+      // BL7 파성퇴 — 아군탄 × 파괴가능 벽을 **일격 파괴**하고 충격파 요청을 적는다.
+      bruiserWallHit(state, player, bullet, wall, params);
+      break;
     default:
       break;
   }
@@ -3247,10 +3265,13 @@ export function onWallHit(
  */
 export function onWallDestroyed(state: WorldState, player: Entity, wall: Entity): void {
   if (!state.skillsOn) return;
-  void player;
-  void wall;
   switch (state.sigBit) {
     // ⚠️ `break;` 필수.
+    case SIG_BRUISER_ARMOR:
+      // MO7 잔해 회수 — 대시 쿨다운 환급 + 장갑 1스택 적립.
+      // ⚠️ destructible 절반은 이 앵커로 안 풀린다(사유는 `bruiserWallDestroyed` 의 doc).
+      bruiserWallDestroyed(state, player, wall);
+      break;
     default:
       break;
   }
@@ -3276,10 +3297,12 @@ export function onWallShockResolve(
   req: WallShockRequest,
 ): void {
   if (!state.skillsOn) return;
-  void player;
-  void req;
   switch (state.sigBit) {
     // ⚠️ `break;` 필수.
+    case SIG_BRUISER_ARMOR:
+      // BL7 파성퇴의 **전방 충격파** — 여기서만 스폰이 안전하다. 탄 상한은 훅이 스스로 지킨다.
+      bruiserWallShockResolve(state, player, req);
+      break;
     default:
       break;
   }
