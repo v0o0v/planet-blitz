@@ -241,22 +241,6 @@ function distSqToSegment(
   return dx * dx + dy * dy;
 }
 
-/**
- * MO3 이 쓰는 **구간 슬롯 2칸**(경과 틱 · 직전 이동 방향 코드).
- *
- * ## ⚠️ `BruiserStage` 에 아직 없다 — 이 레인의 파일 계약 때문이다
- * 정본 자리는 `src/sim/skillSlots.ts` 의 `BruiserStage` 인데 그 파일이 이 레인의 편집 목록
- * **밖**이다(병렬 레인이 같은 파일을 만져 머지가 깨지는 것을 막는 계약). `BruiserStage` 는
- * 0..3 을 쓰고 배열 폭은 `SKILL_SLOT_COUNT = 8` 이라 4·5 는 **비어 있다** — 슬롯 배열은
- * 기체별이 아니라 한 벌이지만 한 런에 기체는 하나뿐이라 다른 기체와 충돌하지 않는다.
- * **리드는 이 두 상수를 `BruiserStage.momentumTicks`/`momentumDir` 로 승격해라.**
- *
- * `Stage`(구간)인 이유: 관성은 저금이 아니라 *지금 달리고 있는 상태*다. 새 구간은 정지에서
- * 시작하는 것이 옳다(`cadenceHits` 와 같은 사유).
- */
-const STAGE_MOMENTUM_TICKS = 4;
-/** MO3 — 직전 틱의 **양자화 이동 방향 코드**(1..9, 5 = 정지). 0 = 아직 관측 없음. */
-const STAGE_MOMENTUM_DIR = 5;
 
 /**
  * MO3 — 이동 방향을 **부호 3×3 격자**로 양자화한 코드(1..9). 5 가 정지다.
@@ -541,17 +525,17 @@ export function bruiserSignatureStep(
     if (code === MOMENTUM_STILL_CODE) {
       // 정지 = 즉시 리셋. 방향 칸도 함께 비워, 재출발 첫 틱이 "같은 방향 지속" 으로 이어지지
       // 않게 한다(비우지 않으면 잠깐 멈췄다 같은 방향으로 가는 것이 무료가 된다).
-      writeSlot(state.skillStage, STAGE_MOMENTUM_TICKS, 0);
-      writeSlot(state.skillStage, STAGE_MOMENTUM_DIR, 0);
-    } else if (readSlot(state.skillStage, STAGE_MOMENTUM_DIR) === code) {
-      const t = readSlot(state.skillStage, STAGE_MOMENTUM_TICKS);
+      writeSlot(state.skillStage, BruiserStage.momentumTicks, 0);
+      writeSlot(state.skillStage, BruiserStage.momentumDir, 0);
+    } else if (readSlot(state.skillStage, BruiserStage.momentumDir) === code) {
+      const t = readSlot(state.skillStage, BruiserStage.momentumTicks);
       // 상한에서 멈춘다 — 무한 증가는 u32 폴드에서 의미가 없고 배율도 어차피 상한이다.
-      if (t < MOMENTUM_FULL_TICKS) writeSlot(state.skillStage, STAGE_MOMENTUM_TICKS, t + 1);
+      if (t < MOMENTUM_FULL_TICKS) writeSlot(state.skillStage, BruiserStage.momentumTicks, t + 1);
     } else {
       // 방향 급전환 = 리셋. 이번 틱부터 1 로 다시 센다(0 이 아니라 1 — 이미 그 방향으로 한 틱
       // 움직였다).
-      writeSlot(state.skillStage, STAGE_MOMENTUM_DIR, code);
-      writeSlot(state.skillStage, STAGE_MOMENTUM_TICKS, 1);
+      writeSlot(state.skillStage, BruiserStage.momentumDir, code);
+      writeSlot(state.skillStage, BruiserStage.momentumTicks, 1);
     }
   }
 
@@ -1079,7 +1063,7 @@ export function bruiserPlayerMoveParams(
   // 카운터는 앵커 ⑨ 가 **입력**으로 굴린다(그 자리의 주석이 근거). 여기서는 읽어서 배율만 낸다.
   const mo3 = lv(state, Sk.heavyMomentum);
   if (mo3 >= 1) {
-    let t = readSlot(state.skillStage, STAGE_MOMENTUM_TICKS);
+    let t = readSlot(state.skillStage, BruiserStage.momentumTicks);
     if (t > 0) {
       if (t > MOMENTUM_FULL_TICKS) t = MOMENTUM_FULL_TICKS;
       // 최대 가산 10% + 3%p/Lv, 지속 틱에 **선형 비례**. 나눗셈이 게이트 안이다(규율 ③).

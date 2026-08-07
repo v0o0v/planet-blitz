@@ -315,6 +315,21 @@ export const enum BruiserStage {
    * 정확히 반대 근거다).
    */
   skidCooldown = 3,
+  /**
+   * MO3 — **연속으로 같은 방향으로 달린 틱 수**. 방향이 바뀌거나 정지하면 0 으로 되돌아간다.
+   *
+   * `Carry` 가 아니라 `Stage` 인 이유: 관성은 저금이 아니라 *지금 달리고 있는 상태*라
+   * 새 구간은 정지에서 시작하는 것이 옳다(`cadenceHits` 와 같은 사유).
+   */
+  momentumTicks = 4,
+  /**
+   * MO3 — **직전 틱의 양자화 이동 방향 코드**(1..9 · 5 = 정지). 0 = 아직 관측 없음
+   * (값 규약 1 — 코드 0 은 `momentumDirCode` 가 낼 수 없는 값이라 자연 센티넬이다).
+   *
+   * 방향을 각도가 아니라 부호 3×3 격자로 양자화하는 이유는 `skills/bruiser.ts` 의
+   * `momentumDirCode` doc 에 있다.
+   */
+  momentumDir = 5,
 }
 
 /**

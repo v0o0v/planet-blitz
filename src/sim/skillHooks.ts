@@ -208,6 +208,7 @@ import {
   phantomCloakBreakReset,
   phantomVolleyParams,
   phantomPlayerMoveParams,
+  phantomWallHit,
 } from './skills/phantom.js';
 import {
   bubbleSignatureStep,
@@ -3284,6 +3285,11 @@ export function onWallHit(
     case SIG_BRUISER_ARMOR:
       // BL7 파성퇴 — 아군탄 × 파괴가능 벽을 **일격 파괴**하고 충격파 요청을 적는다.
       bruiserWallHit(state, player, bullet, wall, params);
+      break;
+    case SIG_PHANTOM_CLOAK:
+      // AS10 유령 탄도 — 은신 창 중에 태어난 탄(`aux0` 표식)이 벽에서 안 죽는다.
+      // 술어가 `player` 도 `wall` 도 아니라 **탄의 표식**이라 인자를 둘만 쓴다.
+      phantomWallHit(state, bullet, params);
       break;
     default:
       break;

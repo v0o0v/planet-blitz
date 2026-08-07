@@ -262,7 +262,7 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
     'CU1@20', 'CU2@21', 'CU3@22', 'CU4@23', 'CU5@24', 'CU6@25', 'CU7@26', 'CU8@27', 'CU9@28', 'CU10@29',
   ],
   phantom: [
-    'AS2@1', 'AS3@2', 'AS4@3', 'AS5@4', 'AS9@8',
+    'AS2@1', 'AS3@2', 'AS4@3', 'AS5@4', 'AS9@8', 'AS10@9',
     'PH1@10', 'PH2@11', 'PH3@12', 'PH4@13', 'PH6@15', 'PH7@16', 'PH8@17', 'PH10@19',
     'DI1@20', 'DI2@21', 'DI3@22', 'DI4@23', 'DI5@24', 'DI6@25', 'DI7@26', 'DI8@27',
   ],
@@ -274,7 +274,7 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** 골든 합계. 기체별 표와 따로 적어, 한쪽만 고치면 아래 자기검증이 잡는다. */
-const GOLDEN_TOTAL = 152;
+const GOLDEN_TOTAL = 176;
 
 /** 늘고 준 것을 사람이 읽을 수 있게 찍는다 — 숫자만 틀렸다고 하면 원인을 못 찾는다. */
 function diffMsg(ship: string, actual: readonly string[], golden: readonly string[]): string {
