@@ -19,7 +19,8 @@ import { deriveSkillAffixLv } from '../src/items/loadout.js';
 import { createWorld, DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { WorldConfig } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
-import { EQUIP_SLOTS } from '../src/items/types.js';
+import { EQUIP_SLOTS, SKILL_AFFIX_LV_MAX } from '../src/items/types.js';
+import { skillLv } from '../src/items/skills.js';
 import type { Item, SlotKind, StatKey } from '../src/items/types.js';
 
 function item(id: string, slot: SlotKind, affixes: { stat: StatKey; value: number }[]): Item {
@@ -143,5 +144,47 @@ describe('hashWorld — skillAffixLv 꼬리 폴드 (조건부 · all-or-nothing)
       createWorld(7, { ...DEFAULT_CONFIG, skillInvest: invest, skillAffixLv: [1, 0, 0] }),
     );
     expect(withAffix).not.toBe(withoutAffix);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 신뢰 경계 — `skillAffixLv` 는 리플레이 config 로 들어오는 **외부 입력**이다
+//
+// 파생 쪽 `clampSkillAffixLv`(loadout.ts)는 **클라의 파생 시점**에만 걸린다. 손으로 고친
+// config 는 그 경로를 아예 안 지나므로, 2026-08-07 이전에는 `[9999, …]` 이 sim 에 그대로
+// 들어가 스킬 레벨이 무제한으로 올랐다. ADR-0050 으로 서버 재실행 대조까지 사라져 뒷단도
+// 없다. 그래서 클램프를 **읽는 쪽**(신뢰 경계 안)으로 옮겼다.
+//
+// ⚠️ 사용자 판정(2026-08-07): 의뢰 봉인은 **하지 않는다** — 승패 주장 자체를 서버가 믿는
+//    상태라 이 한 축만 봉인해도 실효 방어가 거의 안 는다. 무제한만 막는다.
+// ---------------------------------------------------------------------------
+
+describe('skillLv — 가산분은 신뢰 경계 안에서 잘린다', () => {
+  it('위조된 거대값이 축당 상한으로 잘린다', () => {
+    const invest = [5];
+    // 상한 없이 더하면 5 + 9999. 잘리면 5 + 4.
+    expect(skillLv(invest, 0, [9999, 9999, 9999])).toBe(5 + SKILL_AFFIX_LV_MAX);
+  });
+
+  it('상한 이하 값은 그대로 실린다 (클램프가 과녁을 벗어나지 않았다)', () => {
+    const invest = [5];
+    expect(skillLv(invest, 0, [1, 0, 0])).toBe(6);
+    expect(skillLv(invest, 0, [SKILL_AFFIX_LV_MAX, 0, 0])).toBe(5 + SKILL_AFFIX_LV_MAX);
+  });
+
+  it('⭐ 결과는 여전히 20 에서 안 잘린다 — 실효 상한 24 가 설계다', () => {
+    // 이 단언이 깨지는 형태가 정확히 "가산분 클램프와 결과 클램프를 뭉친" 잘못이다.
+    expect(skillLv([20], 0, [SKILL_AFFIX_LV_MAX, 0, 0])).toBe(24);
+  });
+
+  it('미해금(투자 0)은 여전히 어픽스로 안 켜진다 (정본 1 — 클램프가 이걸 안 건드렸다)', () => {
+    expect(skillLv([0], 0, [9999, 9999, 9999])).toBe(0);
+  });
+
+  it('⚠️ 정상 런에는 무연산이다 — 그것이 해시 불변의 근거다', () => {
+    // 파생값은 구조상 0~4 이므로 클램프가 값을 바꿀 일이 없다. 바뀌면 골든이 갈린다.
+    for (let v = 0; v <= SKILL_AFFIX_LV_MAX; v++) {
+      expect(skillLv([3], 0, [v, 0, 0])).toBe(3 + v);
+    }
   });
 });

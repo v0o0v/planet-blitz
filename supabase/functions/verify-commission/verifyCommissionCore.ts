@@ -142,6 +142,12 @@ export function evaluateCommissionGates(
 
   // 게이트 3: 로드아웃 위조 — 출격 시점 봉인(loadout_sealed)과 제출 config.loadout 이 달라지면
   // 거부한다. 대조가 닫는 것은 "출격 후 편집"뿐이고 출격 전 위조는 열려 있다(ADR-0044, ADR-0028).
+  //
+  // ⚠️ **`config.skillAffixLv` 는 이 대조에 안 들어간다 — 일부러 그렇다**(사용자 판정
+  // 2026-08-07). 봉인 payload 가 `LoadoutConfig` 뿐이라 대조할 원본이 없고, 봉인을 늘리지
+  // 않기로 했다. 사유는 `commissionSealedLoadout`(src/run/runConfig.ts) JSDoc 에 있다 —
+  // 요지는 **승패 주장 자체를 서버가 믿는 상태**라 이 축만 막아도 실효 방어가 안 는다는 것.
+  // 무제한 위조는 sim 쪽 `skillLv()` 의 가산분 클램프가 막는다.
   const submittedLoadout = cfg !== null ? cfg.loadout : undefined;
   if (!deepEqual(submittedLoadout, server.loadoutSealed)) {
     return reject('commission-loadout-mismatch');

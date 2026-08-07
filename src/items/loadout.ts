@@ -12,6 +12,7 @@
  */
 
 import type { Item, StatKey } from './types.js';
+import { SKILL_AFFIX_LV_MAX as SKILL_AFFIX_LV_MAX_CANON } from './types.js';
 import type { LoadoutConfig } from '../sim/world.js';
 import { UNIQUE_REGISTRY } from './uniques.js';
 import { normalizeLineageBonus } from '../../data/guardian.js';
@@ -183,7 +184,9 @@ function zeroSums(): Record<StatKey, number> {
 
 /** `skillAffixLv` 축당 상한 — 슬롯 배치가 만드는 구조적 상한(offense/defense/utility 각
  *  2슬롯 × 슬롯당 최대 +2, affixes.md ①-3). 이 상한을 넘는 손상 세이브도 잘린다. */
-const SKILL_AFFIX_LV_MAX = 4;
+// 정본은 `types.ts`(leaf) — 소비 쪽(`skills.ts`)도 같은 값을 봐야 하는데 그쪽이 이 파일을
+// import 하면 sim 이 로드아웃 모듈을 통째로 당긴다(순환·TDZ). 그래서 상수만 leaf 에 둔다.
+const SKILL_AFFIX_LV_MAX = SKILL_AFFIX_LV_MAX_CANON;
 
 function clampSkillAffixLv(v: number): number {
   const n = Math.trunc(v);
