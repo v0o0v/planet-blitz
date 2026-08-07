@@ -274,6 +274,7 @@ import {
   tickEnemyStatus,
   applyChain,
   enemyStatusSlowMult,
+  enemyStatusStopMult,
   PLAYER_SLOW_MULT,
   PLAYER_SLOW_DURATION,
   FIRE_DURATION,
@@ -2858,9 +2859,13 @@ function stepEnemies(state: WorldState, player: Entity): void {
     applyEliteRegen(e);
     let def = enemyDefFor(e);
     if (def === undefined) continue;
-    // 가속하는 elite(×1.6) × 냉기 감속(<1) × 촉매 적 속도 페널티(≥1)를 곱해 이동 속도를
-    // 조정한다(공유 데이터 행은 절대 변형하지 않고 def를 복제). 전부 없으면/무촉매면 mult 1(불변).
-    const sm = eliteSpeedMult(e) * enemyStatusSlowMult(e) * state.catalystMods.enemySpeed;
+    // 가속하는 elite(×1.6) × 냉기 감속(<1) × 정지(0 또는 1, 스트라이커 S9 선결) × 촉매 적
+    // 속도 페널티(≥1)를 곱해 이동 속도를 조정한다(공유 데이터 행은 절대 변형하지 않고 def를
+    // 복제). 전부 없으면/무촉매면 mult 1(불변). ⚠️ 정지 중이면 sm = 0 이 되고, 바로 다음 줄이
+    // `def.speed * sm` 을 새 def 에 대입하므로 이 곱은 무의미하지 않다 — 실제로 speed 0(완전
+    // 정지)을 만든다.
+    const sm =
+      eliteSpeedMult(e) * enemyStatusSlowMult(e) * enemyStatusStopMult(e) * state.catalystMods.enemySpeed;
     if (sm !== 1) def = { ...def, speed: def.speed * sm };
     updateEnemy(state, e, def, player);
     if (singularityOn) applySingularityPull(e, player);

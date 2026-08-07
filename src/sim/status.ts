@@ -54,6 +54,14 @@ export const CHAIN_RADIUS = 260;
 /** 한 번의 명중이 연쇄로 때리는 최대 인접 적 수. */
 export const CHAIN_MAX_TARGETS = 3;
 
+// --- 정지(스트라이커 S9 선결) -------------------------------------------------
+/**
+ * 정지 상태이상 기본 지속(틱). ⚠️ **자리표시자 값이다** — 실제 설계 수치는
+ * `src/sim/skills/striker.ts` 의 S9 배선 레인이 정해 이 상수를 덮는다. 이 레인(배치7 F1)은
+ * 저장 축(`applyStasis`/`enemyStatusStopMult`)만 세우고 밸런스 수치는 결정하지 않는다.
+ */
+export const STASIS_DURATION = 90;
+
 /**
  * 적에게 화염 지속피해를 부여(갱신 시 더 강한 값으로 유지). iframes = 남은 틱,
  * dashCooldown = 틱당 피해. 값은 정수(해시 u32).
@@ -79,6 +87,28 @@ export function applySlow(e: Entity, ticks: number): void {
 /** 냉기 감속 중인 적의 이동 속도 배율(그 외 1). */
 export function enemyStatusSlowMult(e: Entity): number {
   return e.ownerId > 0 ? COLD_SLOW_MULT : 1;
+}
+
+/**
+ * 적에게 정지를 부여(더 긴 지속으로 갱신). **저장 필드는 `life`** — 적('enemy')은 `life`를
+ * 읽거나 쓰는 코드가 0건이고(writer 는 탄·해저드·보급·포탑·설비뿐), `hashWorld`가 이미
+ * 무조건 폴드하는 칸이라 해시 레이아웃도 불변이다.
+ *
+ * ⚠️ `blankEntity` 의 `life` 기본값은 **`-1`**(0 이 아니다) — 그래서 `ticks > e.life` 비교면
+ * 충분하다. 이 함수는 그 음수 기본값을 자연히 이긴다(별도 하한 처리가 필요 없다).
+ */
+export function applyStasis(e: Entity, ticks: number): void {
+  if (ticks > e.life) e.life = ticks;
+}
+
+/**
+ * 정지 중인 적의 이동 속도 배율(0 = 정지, 그 외 1). `e.life > 0` 형태로 판정해야 한다 —
+ * `blankEntity` 기본값이 `-1`이라 `>= 0`으로 쓰면 정지를 건 적이 없는데도 걸린 것으로
+ * 오판하지는 않지만, `0`(정지 해제 직후) 과 `-1`(정지를 건 적 없음)을 굳이 구분할 필요가
+ * 없으므로 `> 0` 하나로 통일한다.
+ */
+export function enemyStatusStopMult(e: Entity): number {
+  return e.life > 0 ? 0 : 1;
 }
 
 /**
@@ -111,6 +141,11 @@ export function tickEnemyStatus(state: WorldState, e: Entity): void {
     e.ownerId--;
     if (e.ownerId === 0) onEnemyStatusExpired(state, e, 'cold');
   }
+  // 정지(S9 선결) — 저장 필드가 `life`인 것은 탄 전용 소모 필드를 겸용한 것이라, 여기서
+  // `life === 0`은 **정지 해제**를 뜻하지 수명 만료가 아니다. ⚠️ 탄 루프(`life === 0 → dead`,
+  // world.ts 3900행대)와 의미가 정반대이므로 여기서는 절대 `e.dead`를 세우지 마라 — 세우면
+  // 정지가 풀리는 모든 적이 그 틱에 죽는 대참사가 된다.
+  if (e.life > 0) e.life--;
 }
 
 /**
