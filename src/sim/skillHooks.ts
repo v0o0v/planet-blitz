@@ -232,6 +232,7 @@ import {
   bubbleGemCollected,
   bubbleGemMagnetParams,
   bubblePlayerMoveParams,
+  bubbleKillsDelta,
 } from './skills/bubble.js';
 
 // ---------------------------------------------------------------------------
@@ -640,6 +641,12 @@ function dispatchKillsDeltaSkill(state: WorldState, delta: number): void {
       if (p !== undefined) strikerKillsDelta(state, p, delta);
       break;
     }
+    case SIG_BUBBLE_FILM:
+      // PO10 연쇄 압력 — 파열 후 창이 열려 있는 동안 처치 수를 누적한다. 대상 kind 술어가
+      // 왜 필요 없는지는 `bubbleKillsDelta` doc 이 정본이다(이 앵커의 델타 자체가 이미
+      // `enemy` 한정 — `state.kills++` 와 같은 술어).
+      bubbleKillsDelta(state, delta);
+      break;
     // ⚠️ **아크캐스터는 여기 case 가 없다 — 반쪽 배선을 피한 결과다.** BA7「연발 축전기」가
     // 이 앵커로 처치 6기를 셀 수는 있지만, 그 카운터가 **적용되는 자리**(다음 볼리의 탄수)는
     // 앵커 ① 뒤의 발사부라 지금 닿지 않는다. 카운터만 돌리면 슬롯 2칸이 영구히 아무것도 안 하는

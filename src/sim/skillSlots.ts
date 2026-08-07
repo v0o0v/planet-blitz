@@ -638,4 +638,47 @@ export const enum BubbleStage {
    * 넘겨 살면 새 구간 첫 틱이 지난 구간의 수거로 켜진 효율을 물려받는다.
    */
   tensionWindow = 1,
+  /**
+   * FI6「헌막 의식」 — **불멸 막(`as_bubble_film_hi`) 지속 중 흡수 누적**. 0 = 없음(값 규약 1).
+   *
+   * ⚠️ 이 두 칸(`offeringPool`·`offeringActive`)은 배치7 배선 레인이 새로 잡았다 — 인계
+   * 체크리스트가 "이미 있다"로 적었던 것은 **틀렸다**(`src/sim/**` 전체 grep 으로 실측, 이
+   * 레인 전까지 `BubbleStage` 는 `blinkMagnet`·`tensionWindow` 둘뿐이었다). 사유 전문은
+   * `skills/bubble.ts` 의 FI6 블록 주석이 정본이다.
+   */
+  offeringPool = 2,
+  /**
+   * FI6「헌막 의식」 — **지금 선 막이 불멸 막인가**의 표식(0/1, 값 규약 1).
+   *
+   * `as_bubble_film_lo`·재생 막(엔진 자동 복원)은 `aux0` 을 만재로 대입할 뿐 이 표식을 세우지
+   * 않는다 — 세 경로가 같은 `aux0` 대입을 쓰는데도 **표식으로만** 불멸 막을 구분한다는 것이
+   * 이 스킬의 핵심 난점이었다(설계서 미배선 사유가 정확히 이것). `as_bubble_film_hi` 발동
+   * (`bubbleActiveFired`)이 세우고, 그 만료(`bubbleFilmOfferingConsume`)가 지운다.
+   */
+  offeringActive = 3,
+  /**
+   * PO10「연쇄 압력」 — 파열 후 처치 집계 창의 **잔여 틱**(90틱 고정). 0 = 창 닫힘(값 규약 1).
+   *
+   * ⚠️ 이 세 칸(`chainWindow`·`chainKillCount`·`chainPendingBoost`)도 배치7 신설이다 — 사유는
+   * `offeringPool` doc 과 같다(인계 문서의 "이미 있다"가 틀렸다).
+   */
+  chainWindow = 4,
+  /**
+   * PO10「연쇄 압력」 — 이번 창에서 앵커 ⑤(`onKillsDelta`)가 집계한 **처치 수**. 창이 닫히는
+   * 순간(`chainWindow` 가 0 으로 떨어지는 그 틱) 보강분으로 환산돼 `chainPendingBoost` 에
+   * 더해지고 이 칸은 0 으로 되돌아간다.
+   */
+  chainKillCount = 5,
+  /**
+   * PO10「연쇄 압력」 — 다음 막이 설 때 `aux0` 에 얹을 **보류 보강분**.
+   *
+   * ## ⚠️ 왜 즉시 `aux0` 에 얹지 않고 한 틱 미루는가
+   * `world.ts` 의 `player.aux0 = FILM_ABSORB_FLAT` 대입(`SIG_BUBBLE_FILM` 분기)은 앵커 ⑨
+   * (`bubbleSignatureStep`, 이 칸을 읽는 자리) **뒤**에 실행된다. 그래서 재생이 실제로 일어나는
+   * 바로 그 틱에 여기서 `aux0` 을 미리 올려도 world.ts 가 곧이어 `FILM_ABSORB_FLAT` 으로
+   * **덮어써 지운다.** 재생이 일어난 **다음 틱**에는 `aux0 === FILM_ABSORB_FLAT` 이라 그 대입
+   * 분기(`if (player.aux0 === 0)`) 자체가 안 돌아 이 칸의 가산이 지워지지 않는다 — 그래서
+   * "재생 다음 틱" 이 유일한 안전한 소비 시점이다(`chainBoostPulse` doc 이 정본).
+   */
+  chainPendingBoost = 6,
 }
