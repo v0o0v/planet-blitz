@@ -161,7 +161,7 @@ import { cloakEntryCrossed, cloakExitCrossed, fireCloakEntry, setBreakToken } fr
 import { shipTypeDef, DEFAULT_SHIP_TYPE } from '../../data/ships/index.js';
 import { hasAnyInvestment } from '../items/skills.js';
 import { createSkillSlots, DamageSource } from './skillSlots.js';
-// 210스킬 앵커 31개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
+// 210스킬 앵커 33개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
 // (⑮ `onFilmBurst` 는 `filmBurst.ts` 가, ㉗ `onActiveFired` 는 `actives.ts` 가 부르므로 여기
 //  없다. `onChainParams` 는 `status.ts` 소유이고 **`skillHooks.ts` 가 아니라 `chainHooks.ts`**
 //  에 산다 — status→skillHooks→skills/arccaster→status 런타임 순환을 피하려고 뗀 것이다.)
@@ -172,6 +172,7 @@ import type {
   GemMagnetParams,
   PlayerMoveParams,
   BulletHitParams,
+  TurretCadenceParams,
 } from './skillHooks.js';
 import {
   survivedLethalBlow,
@@ -206,6 +207,8 @@ import {
   onEliteLootRarity,
   onOverchargeAccrual,
   onComboDecay,
+  onTurretCadence,
+  onTurretExpired,
 } from './skillHooks.js';
 import { onDamageChainCatalyst } from './catalystHooks.js';
 
@@ -3704,15 +3707,25 @@ function stepTurrets(state: WorldState, _player: Entity): void {
     if (t.life > 0) t.life--;
     if (t.life === 0) {
       t.dead = true;
+      // 앵커 ㉘ — **자연 만료로 죽은 직후.** 좌표가 아직 살아 있는 유일한 지점이다
+      // (`compact()` 뒤로 미루면 *"그 자리에"* 를 요구하는 세 스킬이 원리적으로 못 산다).
+      // 강제 소멸(SH1·SH7)은 여기 오지 않는다 — 그쪽은 `dead` 를 스스로 세우고 위 `t.dead`
+      // 게이트에 걸린다. 「자연 만료만」이 조건인 축(SH9)이 그 사실에 의존한다.
+      onTurretExpired(state, t);
       continue;
     }
+    // 앵커 ㉗ — **쿨다운 감산보다 앞.** 뒤에 두면 쿨다운 0 인 틱에만 불려 간격 조작이 한 주기
+    // 늦는다(사유 전문은 훅 doc). 초기값이 현행 상수와 정확히 같으므로 미투자 런·타 기체 런의
+    // 거동·해시는 비트 동일이다. 포탑 개체(`t`)를 넘기므로 훅이 병아리·센트리를 스스로 가른다.
+    const cadence: TurretCadenceParams = { cooldownTicks: TURRET_FIRE_COOLDOWN };
+    onTurretCadence(state, t, cadence);
     if (t.cooldown > 0) {
       t.cooldown--;
       continue;
     }
     // 쿨다운은 **쏜 경우에만** 리셋한다 — 표적이 없어 못 쏜 틱에 리셋하면 사거리 밖에서
     // 대기하는 동안 쿨다운이 계속 되감겨 표적이 들어오는 순간의 첫 발이 늦어진다.
-    if (fireTurretShot(state, t)) t.cooldown = TURRET_FIRE_COOLDOWN;
+    if (fireTurretShot(state, t)) t.cooldown = cadence.cooldownTicks;
   }
 }
 
@@ -4371,6 +4384,13 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   //    피해인가"를 물으므로 비트합으로는 답이 안 나오고(적탄이 더 아파도 해저드 비트가 서
   //    있다), BL8 은 "접촉 기여가 있었는가"를 물으므로 승자만으로는 답이 안 나온다.
   let dmgFromHazard = false;
+  // 앵커 ④ 의 **피격원 좌표**(해츨링 SH2 위기 산개). `dmgFromHazard` 와 **정확히 같은 규율**
+  // 이다 — `max` 를 갱신한 그 분기에서만 함께 대입한다. 이 loop 는 여러 접촉원을 `max` 로
+  // 합류시키므로 여기서 안 잡으면 앵커 시점에 *"어디서 맞았는가"* 를 복원할 방법이 없다.
+  // ⚠️ `0` 초기화를 쓰지 않는다 — 0,0 은 월드 원점이라 *"모른다"* 와 구분되지 않고, 방향
+  //    벡터가 조용히 뒤집힌다. `undefined` 가 "모른다" 이고 앵커도 선택 인자로 받는다.
+  let srcX: number | undefined;
+  let srcY: number | undefined;
   const invulnerable = player.iframes > 0;
   const px = player.x;
   const py = player.y;
@@ -4436,6 +4456,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       if (t.damage > dmg) {
         dmg = t.damage;
         dmgFromHazard = false;
+        srcX = t.x;
+        srcY = t.y;
       }
       t.dead = true;
       // 'prop'(L3 기물)은 여기 넣지 않는다 — 기물의 damage 는 탄·장판 피해라 접촉 피해로
@@ -4455,6 +4477,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       if (t.damage > dmg) {
         dmg = t.damage;
         dmgFromHazard = false;
+        srcX = t.x;
+        srcY = t.y;
       }
     } else if (t.kind === 'hazard' && hazardActive(t)) {
       if (t.damage > 0) dmgSources |= DamageSource.hazard;
@@ -4463,6 +4487,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       if (t.damage > dmg) {
         dmg = t.damage;
         dmgFromHazard = true;
+        srcX = t.x;
+        srcY = t.y;
       }
     }
     // Supply raiders never harm the player (they do not attack).
@@ -4687,7 +4713,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // 반환하므로 여기 오지 않는다. 기존 시그니처·유니크 후속이 전부 반영된 뒤에 두어, 스킬이
     // 이번 피격의 **최종 상태**를 본다. `lethalSurvived` 는 위에서 한 번 계산한 값을 넘긴다.
     // `dmgSources` 는 수집 루프가 세운 **기여 비트합**이다 — `max` 가 고른 하나가 아니다.
-    onPlayerDamaged(state, player, dmg, lethalSurvived, dmgSources);
+    // `srcX`/`srcY` 는 `max` 를 이긴 그 접촉원의 좌표다(`dmgFromHazard` 와 같은 규율) —
+    // 승자가 없으면 `undefined` 이고 그것이 "모른다" 의 유일한 표현이다(0,0 을 쓰지 않는 사유는
+    // 선언부 주석). 선택 인자라 촉매 짝·기존 픽스처는 인자가 안 늘었다.
+    onPlayerDamaged(state, player, dmg, lethalSurvived, dmgSources, srcX, srcY);
   }
 }
 

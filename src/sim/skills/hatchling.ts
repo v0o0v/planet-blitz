@@ -8,7 +8,38 @@
  *
  * ---
  *
- * ## ⚠️ 배선 현황 — **30종 중 17종**(배치 5 의 9종 + W레인 7종 + W2 레인의 BD10)
+ * ## ⚠️ 배선 현황 — **30종 중 25종**
+ * (배치 5 의 9종 + W레인 7종 + W2 레인의 BD10 + **S3-해츨링 레인의 8종**)
+ *
+ * ## ✅ S3-해츨링(2026-08-07)이 얹은 8종과 그 자리
+ * 앵커 **㉗ `onTurretCadence`**(포탑 리듬) · **㉘ `onTurretExpired`**(자연 만료) 둘을 새로
+ * 세우고, 앵커 **④ `onPlayerDamaged`** 에 선택 인자 `srcX`/`srcY` 를 더했다.
+ *  - **BD3 · NU9** — 앵커 ㉘ + {@link killChick}. 소멸 경로 **셋 전부**에서 돈다(아래 3묶음
+ *    이 "반쪽이라 안 넣는다" 고 적은 조건이 여기서 해소됐다).
+ *  - **SH9** — 앵커 ㉘, 자연 만료 전용(`aux1 === 0` 이 그 사유 코드의 **첫 독자**다).
+ *  - **BD9 · NU4(연사 창)** — 앵커 ㉗.
+ *  - **BD7** — 앵커 ㉖ 에 개체 누적(`t.aux0`)으로 얹었다.
+ *  - **BD8 · NU4(재배치)** — 액티브 핸들러. `stepActives` 가 `stepTurrets` 보다 앞이라
+ *    `cooldown = 0` 만으로 같은 틱 격발이 된다(`fireTurretShot` export 불필요 — 모듈 순환 회피).
+ *  - **SH2** — 앵커 ④ 의 새 좌표 두 칸.
+ *
+ * ## ⚠️ 아직 미배선인 5종과 사유(전부 **구조**이지 누락이 아니다)
+ *  - **NU1** — 소비처가 `onGemMagnetParams`(다른 레인이 동시 신설 중)라 이 레인 밖.
+ *  - **NU3** — 대시 **도착 좌표가 존재하지 않는다**(`world.ts` 의 대시는 속도 임펄스만 싣는다).
+ *    앵커로 안 풀리고 대시 모델이 경로 종점을 산출해야 한다.
+ *  - **SH8** — 적탄↔병아리 충돌 경로가 코드에 **0건**이다(`collision.ts`·`bullets.ts` 에 포탑
+ *    대상 판정 grep 0건). 앵커가 아니라 새 충돌 루프 신설이다.
+ *  - **SH4** — 위 SH8 과 같은 벽이 반대급부("적탄을 몸으로 막는다")를 막는다. 대가
+ *    ("사격 정지")만 넣으면 **순손해 스킬**이라 넣지 않았다(BD10 이 탄 피해 축 없이 상한만
+ *    깎였을 때와 같은 형태 — 그때도 통째로 미배선이 정답이었다).
+ *  - **BD4** — 「플레이어의 자동 조준 표적」이 `world.ts` 의 볼리 경로 **지역 변수**이고
+ *    어디에도 저장되지 않는다. leaf 훅이 그것을 주려면 ①`nearestTarget`(LOS 레이 + 목표
+ *    가중치)을 통째로 옮겨 적거나 ②`WorldState` 에 표적 이월 칸을 신설해야 하는데, ①은 이
+ *    저장소의 대표 결함(같은 술어 두 곳)이고 ②는 앵커가 아니라 **모델 변경**이다. 증폭 축이
+ *    앵커 ⑩ 이 아니라 ㉖ 이어야 하는 것은 맞다(⑩ 은 `hp` 차감·격추 판정 **뒤**라 증폭분이
+ *    격추로 이어지지 못한다) — 다만 그 ㉖ 에 `target` 을 실으려면 위 둘 중 하나가 먼저다.
+ *
+ * ## ⚠️ (배치 5 시점 기록) 30종 중 17종
  * W레인이 앵커 ㉓·㉔ 로 **BD1·BD2·SH10·NU10·BD6·NU2·NU7** 7종을 얹었고, **W2 레인이 앵커 ㉖
  * (`onTurretShotParams`, 포탑 사격 지점)을 새로 세워 BD10 을 3축 전부 배선했다** — 상한 −1(㉓의
  * {@link broodMaxDrones}) · 수명 가산(㉔) · 탄 피해 배율(㉖). 아래 4묶음은 **배치 5 시점의
@@ -65,10 +96,10 @@ import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
 // ⚠️ **타입 전용 import 다**(erasable) — `skillHooks.ts` 가 이 파일을 런타임 import 하므로
 // 값으로 끌어오면 순환이 된다. `BroodParams` 는 앵커 ㉓ 의 계약 그 자체라 사본을 만들지 않는다.
-import type { BroodParams, TurretShotParams } from '../skillHooks.js';
+import type { BroodParams, TurretShotParams, TurretCadenceParams } from '../skillHooks.js';
 import { isActiveTurret, TURRET_LIFE_TICKS } from '../events.js';
-import { blastDamage, clearEnemyBullets } from '../activeTypes.js';
-import { spawnGem } from '../entities.js';
+import { blastDamage, clearEnemyBullets, fanStrike } from '../activeTypes.js';
+import { spawnBreakableWall, spawnEventObject, spawnGem } from '../entities.js';
 import { slideCircleWalls } from '../los.js';
 import { applySlow, COLD_DURATION } from '../status.js';
 import { readSlot, writeSlot, HatchlingStage } from '../skillSlots.js';
@@ -90,20 +121,28 @@ import { skillLv } from '../../items/skills.js';
 const enum Sk {
   /** BD1 조기 부화 */ earlyHatch = 0,
   /** BD2 쌍둥이 부화 */ twinHatch = 1,
+  /** BD3 작별 격발 */ farewellVolley = 2,
   /** BD5 격발 공명 */ volleyResonance = 4,
   /** BD6 부화 충격파 */ hatchShockwave = 5,
+  /** BD7 노병 병아리 */ veteranChick = 6,
+  /** BD8 브루드 강습 */ broodAssault = 7,
+  /** BD9 과밀 본능 */ overcrowdInstinct = 8,
   /** BD10 여왕 사출 */ matriarchLaunch = 9,
   /** NU2 알껍질 영양 */ eggshellNutrients = 11,
+  /** NU4 둥지 소집 */ nestRecall = 13,
   /** NU5 알 굴리기 */ eggRoll = 14,
   /** NU6 온기 나눔 */ sharedWarmth = 15,
   /** NU7 원정 부화 */ expeditionHatch = 16,
   /** NU8 이주 본능 */ migrationInstinct = 17,
+  /** NU9 둥지 표식 */ nestBeacon = 18,
   /** NU10 알 저금 */ eggBank = 19,
   /** SH1 호위 희생 */ escortSacrifice = 20,
+  /** SH2 위기 산개 */ crisisScatter = 21,
   /** SH3 만석 둥지 온기 */ fullNestWarmth = 22,
   /** SH5 경계 지저귐 */ alarmChirp = 24,
   /** SH6 알막 */ eggMembrane = 25,
   /** SH7 회생 부화 */ rebirthHatch = 26,
+  /** SH9 이소 둥지 */ fledgeNest = 28,
   /** SH10 확장 둥지 */ expandedNest = 29,
 }
 
@@ -295,7 +334,7 @@ export function hatchlingDamageChain(state: WorldState, player: Entity, dmg: num
   if (sh1 >= 1 && out > 0) {
     const victim = firstChick(state);
     if (victim !== undefined) {
-      killChick(victim);
+      killChick(state, victim);
       out -= sacrificeAbsorb(sh1);
       if (out < 0) out = 0;
     }
@@ -306,9 +345,12 @@ export function hatchlingDamageChain(state: WorldState, player: Entity, dmg: num
   const sh7 = lv(state, Sk.rebirthHatch);
   if (sh7 >= 1 && out > 0 && player.hp > 0 && out >= player.hp) {
     let n = 0;
+    // ⚠️ `state.entities` 순회 중 {@link killChick} 이 `chickDespawned` 로 탄·표식을 배열
+    //    말미에 append 한다. `for…of` 가 그 새 원소까지 보지만 `isChick` 이 거짓이라
+    //    무연산이고(탄·magnetEmitter 는 활성 포탑이 아니다), 삭제·정렬은 하지 않는다.
     for (const e of state.entities) {
       if (!isChick(e)) continue;
-      killChick(e);
+      killChick(state, e);
       n++;
     }
     if (n > 0) {
@@ -337,19 +379,110 @@ function firstChick(state: WorldState): Entity | undefined {
 /**
  * 병아리 **강제 소멸** — SH1·SH7 공용.
  *
- * `aux1 = 1`(사유 = 희생)은 설계 ②말미 「소멸 경로 전수 표」의 계약이다. **지금 이 값을 읽는
- * 쪽은 없다**(SH9 이소 둥지가 유일한 독자이고 그건 `stepTurrets` 의 자연 만료 분기 소관이라
- * 이 배치에서 미배선 — 헤더 사유 3묶음). 그럼에도 지금 쓰는 이유는, 독자가 붙는 레인이
+ * `aux1 = 1`(사유 = 희생)은 설계 ②말미 「소멸 경로 전수 표」의 계약이다.
+ * ✅ **2026-08-07(S3-해츨링)이 그 독자를 세웠다** — 앵커 ㉘ 의 {@link hatchlingTurretExpired}
+ * 안 SH9 게이트가 `aux1 === 0`(자연 만료)을 읽는다. 아래 종전 문단은 *왜 독자보다 먼저
+ * 썼는가* 의 기록으로 남긴다(그 판단이 옳았음을 이 레인이 확인했다).
+ *
+ * (배치 5 시점 기록) 지금 이 값을 읽는 쪽은 없다. 그럼에도 쓰는 이유는, 독자가 붙는 레인이
  * **자연 만료(0)와 희생(1)을 사후에 구분할 방법이 없기 때문**이다 — 소멸 시점에 안 남기면
  * 그 정보는 영영 복원되지 않는다. `turretPickup` 의 `aux1` 점유는 grep 0건이고(편대 인코딩은
  * `kind === 'enemy'` 한정) 이미 해시되는 필드라 레이아웃은 불변이다.
  *
+ * ## ⚠️ 소멸 부수효과는 {@link chickDespawned} 한 곳이다
+ * BD3·NU9 는 설계 ②말미 「소멸 경로 전수 표」가 **모든** 소멸 경로에서 발화할 것을 요구한다.
+ * 병아리 소멸 경로는 셋(SH1 희생 · SH7 회생 · 자연 만료)이고, 앞 둘이 이 함수, 셋째가 앵커
+ * ㉘ 이다. 두 곳이 **같은 헬퍼**를 부르므로 한쪽만 고쳐 반쪽이 되는 형태가 구조적으로 없다.
+ *
  * ⚠️ **`phase` 를 건드리지 마라** — 병아리의 `phase` 는 미사용 필드가 아니라 **생사 스위치**다
  * (`isActiveTurret` · 스크롤 앵커 판정 · 렌더가 전부 `phase === 1` 을 읽는다).
  */
-function killChick(e: Entity): void {
+function killChick(state: WorldState, e: Entity): void {
   e.dead = true;
   e.aux1 = 1;
+  chickDespawned(state, e);
+}
+
+// ---------------------------------------------------------------------------
+// 소멸 부수효과 — **세 경로 공통**(SH1·SH7 = `killChick` · 자연 만료 = 앵커 ㉘)
+// ---------------------------------------------------------------------------
+
+/** NU9 표식의 접촉 트리거 반경. `chunks.ts` 의 `EVENT_TRIGGER_RADIUS`(=70) 지역 사본이다 —
+ *  그 파일을 런타임 import 하면 지형 생성기가 스킬 leaf 에 딸려 들어온다(`BROOD_MAX_DRONES`
+ *  와 같은 선례·같은 대가: 값이 바뀌면 두 곳을 함께 고쳐야 한다). */
+const NU9_BEACON_RADIUS = 70;
+
+/** SH9 둥지벽 반폭·반높이. 병아리 반경(44)보다 **작게** 둔다 — 크게 잡으면 출격 자리
+ *  (플레이어 ±60)에 벽이 서서 스크롤 모드에서 플레이어를 가둘 수 있다. */
+const SH9_NEST_WALL_HALF = 26;
+
+/**
+ * **BD3 작별 격발 · NU9 둥지 표식** — 병아리가 **어떤 사유로든** 소멸한 그 자리의 부수효과.
+ *
+ * ## ⚠️ 「전수」가 조건이라 여기 있다
+ * 설계 ②말미 「소멸 경로 전수 표」는 이 둘이 세 경로 **전부**에서 돌 것을 요구한다. 배치 5 가
+ * 두 스킬을 통째로 미배선으로 남긴 사유가 정확히 그것이었다("세 경로 중 둘만 돌면 반쪽이고
+ * 그 반쪽이 곧 화면과 규칙이 갈린다"). 앵커 ㉘ 이 셋째를 열었으므로 이제 성립한다.
+ *
+ * ## RNG 미소비
+ * `fanStrike`(고정 각도 계단) · `spawnEventObject`(순수 생성) 어느 것도 난수를 뽑지 않는다.
+ * 조준 방향도 거리 제곱 비교 + 엔티티 배열 순서 tie-break 다(NU7 최근접 젬과 같은 규율).
+ */
+function chickDespawned(state: WorldState, chick: Entity): void {
+  // ── BD3 작별 격발 — 최근접 적대 표적 쪽으로 부채꼴 한 벌.
+  //    ⚠️ **표적이 없으면 쏘지 않는다.** 고정 방향으로 대신 쏘는 안을 버린 이유는, 그 방향이
+  //    설계 근거가 없는 임의값이라 훗날 "왜 오른쪽인가" 를 아무도 답할 수 없기 때문이다.
+  //    빈 방에서는 맞을 대상 자체가 없으므로 관측 손실도 없다.
+  const bd3 = lv(state, Sk.farewellVolley);
+  if (bd3 >= 1) {
+    const dir = nearestHostileDir(state, chick);
+    if (dir !== undefined) {
+      // 탄 수 = 3 + floor(Lv/4), 발당 피해 = 6 + 2×Lv, 폭 50°.
+      fanStrike(state, chick, 3 + Math.floor(bd3 / 4), 6 + 2 * bd3, 50, dir);
+    }
+  }
+
+  // ── NU9 둥지 표식 — 그 자리에 자석 표식(`magnetEmitter`)을 남긴다. 소비처는 신설이 아니라
+  //    **이미 있는 접촉 처리**다(`world.ts` 의 픽업 루프가 `triggerMagnetEmitter` 를 부른다) —
+  //    그래서 이 스킬은 앵커 하나로 끝난다.
+  //    ⚠️ 레벨은 **개수가 아니라 반경**에 실린다: 표식을 여러 개 겹쳐 두면 접촉 1회에 한 개만
+  //    소비되고 나머지가 자리에 남아 "쌓이는 표식" 이 된다.
+  const nu9 = lv(state, Sk.nestBeacon);
+  if (nu9 >= 1) {
+    spawnEventObject(state, 'magnetEmitter', chick.x, chick.y, NU9_BEACON_RADIUS + 4 * nu9);
+  }
+}
+
+/**
+ * 최근접 **적대 표적** 방향(정규화하지 않은 델타 — `fanStrike` 가 `atan2` 로만 읽는다).
+ * 없으면 `undefined`.
+ *
+ * ⚠️ `world.ts` 의 `nearestTarget` 을 옮겨 적은 것이 **아니다** — 그쪽은 LOS 레이·목표
+ * 오브젝트 가중치까지 보는 조준 정본이고, 여기 필요한 것은 "작별탄을 어느 쪽으로 뿌리는가"
+ * 하나다. 두 술어가 같아야 할 이유가 없고, 같게 적으면 조준 정본이 바뀔 때마다 이 파일이
+ * 조용히 갈린다. 동률은 **엔티티 배열 순서**로 앞선 것이 이긴다(NU7 과 같은 tie-break).
+ */
+function nearestHostileDir(state: WorldState, from: Entity): { x: number; y: number } | undefined {
+  let bestDx = 0;
+  let bestDy = 0;
+  let best2 = 0;
+  let found = false;
+  for (const e of state.entities) {
+    if (e.dead) continue;
+    if (e.kind !== 'enemy' && e.kind !== 'boss' && e.kind !== 'guardian' && e.kind !== 'defenseBoss')
+      continue;
+    const dx = e.x - from.x;
+    const dy = e.y - from.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 === 0) continue; // 완전 겹침은 방향이 없다(atan2(0,0) 은 0 으로 흘러 임의값이 된다).
+    if (!found || d2 < best2) {
+      found = true;
+      best2 = d2;
+      bestDx = dx;
+      bestDy = dy;
+    }
+  }
+  return found ? { x: bestDx, y: bestDy } : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -389,6 +522,17 @@ export function hatchlingSignatureStep(state: WorldState, player: Entity): void 
       if (player.iframes < iframes) player.iframes = iframes;
     }
     writeSlot(state.skillStage, HatchlingStage.launchAux0Seen, cur);
+  }
+
+  // ── NU4 둥지 소집(연사 창 감산) — 창을 세우는 곳은 액티브 핸들러이고 여기는 **시계**다.
+  //    ⚠️ 이 자리(앵커 ⑨)여야 하는 이유: 감산을 앵커 ㉗(포탑 루프) 안에 두면 병아리 **기당**
+  //    한 번씩 깎여 창 길이가 살아 있는 대수에 반비례한다. ⑨ 는 틱당 정확히 1회다.
+  //    ⚠️ 아래 세 스킬의 조기 반환보다 **앞**이어야 한다 — 뒤에 두면 SH3·NU6·NU8 을 하나도
+  //    안 찍은 런에서 창이 영영 안 닫혀 연사가 상시가 된다.
+  const nu4 = lv(state, Sk.nestRecall);
+  if (nu4 >= 1) {
+    const left = readSlot(state.skillStage, HatchlingStage.nestRecallTicks);
+    if (left > 0) writeSlot(state.skillStage, HatchlingStage.nestRecallTicks, left - 1);
   }
 
   // 아래 셋은 전부 병아리 순회가 필요하다 — 투자한 것이 하나도 없으면 순회 자체를 건너뛴다.
@@ -697,7 +841,25 @@ export function hatchlingBroodLaunched(state: WorldState, player: Entity, chick:
 // ---------------------------------------------------------------------------
 
 /**
- * **BD10 여왕 사출(탄 피해 축)** — 결손 1기당 피해 `+30% + 3%p/Lv`.
+ * BD7 누적 강화의 **상한 발사 횟수**. 병아리 수명 600틱 ÷ 기본 쿨다운 10틱 = 최대 60발이라
+ * 상한 40 은 *"수명 후반부는 만렙"* 이라는 뜻이다(무한 성장이 아니다). 상한을 두는 이유는
+ * NU6(수명 감소 절반)·BD10(수명 가산)이 붙은 런에서 한 개체의 발사 수가 두 배 이상으로
+ * 늘어나 곱이 발산하기 때문이다.
+ */
+const BD7_SHOT_CAP = 40;
+
+/**
+ * **BD10 여왕 사출(탄 피해 축) · BD7 노병 병아리(누적 강화 축).**
+ *
+ * ## BD7 이 왜 `t.aux0` 인가
+ * *"그 병아리 **개체**의 탄이 점점 강해진다"* 라 카운터가 **개체당**이어야 한다. 개체 필드
+ * 중 `phase`(생사 스위치) · `life`(수명) · `cooldown`(리듬)은 이미 임자가 있고, `aux1` 은
+ * {@link killChick} 의 소멸 사유 코드다. 남은 칸이 `aux0` 하나이고, `turretPickup` 의 `aux0`
+ * 점유는 `src/sim/**` grep 0건이다(해저드의 `aux0` 감속 틱은 `kind === 'hazard'` 한정).
+ * ⚠️ **비음 정수만 넣어라** — `aux0` 은 `hashEntity` 의 u32 폴드 대상이라 소수를 넣으면
+ * 소수부가 조용히 잘려 클라와 서버 재실행이 갈린다. 여기 담는 값은 발사 횟수(정수)다.
+ *
+ * ## BD10 여왕 사출 — 결손 1기당 피해 `+30% + 3%p/Lv`.
  *
  * ## ⚠️ 포탑은 해츨링 전용이 아니다 — 게이트가 **두 겹**이다
  * `stepTurrets` 는 병아리(`BROOD_MARK`)뿐 아니라 **액티브 센트리·자율 드론 베이
@@ -723,9 +885,260 @@ export function hatchlingTurretShotParams(
 ): void {
   // 병아리 탄만 정예화한다(센트리·드론 베이 회귀 방지 — 위 doc).
   if (turret.ownerId !== BROOD_MARK) return;
+
+  // ── BD7 노병 병아리 — 이 개체의 **직전까지 발사 횟수**에 비례해 강해지고, 그 뒤 1 적립한다.
+  //    첫 발은 배율 1(횟수 0)이라 종전 값 그대로다 — 순서를 뒤집어 먼저 적립하면 첫 발부터
+  //    강해져 "거듭할수록" 이라는 설계 문면과 갈린다.
+  const bd7 = lv(state, Sk.veteranChick);
+  if (bd7 >= 1) {
+    const shots = Math.trunc(turret.aux0);
+    const n = shots < BD7_SHOT_CAP ? shots : BD7_SHOT_CAP;
+    params.damage *= 1 + n * (0.02 + 0.002 * bd7);
+    turret.aux0 = shots + 1;
+  }
+
+  // ── BD10 여왕 사출(탄 피해 축).
   const bd10 = lv(state, Sk.matriarchLaunch);
   if (bd10 < 1) return;
   const deficit = broodDeficit(state);
   if (deficit <= 0) return; // SH10 동시 투자로 결손을 되산 런 — 설계상 강화 0.
   params.damage *= 1 + deficit * (0.3 + 0.03 * bd10);
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉗ — 포탑 1기의 이번 틱 사격 리듬(`stepTurrets`, 쿨다운 감산보다 앞)
+// ---------------------------------------------------------------------------
+
+/**
+ * **BD9 과밀 본능 · NU4 둥지 소집(연사 창 축).**
+ *
+ * ## ⚠️ 게이트가 두 겹이다(㉖ 과 같은 규율)
+ * 첫 줄의 `ownerId === BROOD_MARK` 를 지우면 해츨링 런의 **센트리·드론 베이 연사까지** 빨라져
+ * 다른 소환물의 거동이 갈린다. 바깥 게이트(기체 = 해츨링)는 `skillHooks.ts` 가 이미 걸었다.
+ *
+ * ## ⚠️ 하한 1 이 계약이다
+ * `stepTurrets` 는 `if (cooldown > 0) cooldown--` 뒤 `0` 이면 발사한다. 0 을 대입하면
+ * **매 틱 발사**가 되어 감산이 아니라 리듬 붕괴다(BD5 의 0 클램프와 같은 함정의 반대편).
+ *
+ * ## ⚠️ 설계-코드 노트 — BD9 의 술어를 「만석」으로 유도했다(문서를 고치지 않았다)
+ * 설계 BD9 문면은 *"상한이 만석이라 출격이 **보류 중**인 동안"* 이다. 「보류 중」을 글자대로
+ * 재려면 `state.kills − player.aux0 >= threshold` 가 필요한데, 그 `threshold` 는 앵커 ㉓ 이
+ * BD1·SH10·NU10 을 얹어 확정하는 값이고 이 훅에는 `player` 조차 오지 않는다. 여기서 다시
+ * 계산하면 **같은 술어를 두 곳에 적는** 이 저장소의 대표 결함이 그대로 재현된다(㉓ 의
+ * `willLaunch` 미러 주석이 같은 위험을 이미 경고한다). 그래서 world 가 실제로 보류를 만드는
+ * 조건 하나(`live >= maxDrones` — `world.ts` 의 상한 조기 반환)만 읽는다. 차이는 *"만석인데
+ * 쌓인 처치가 없는 구간"* 에서도 BD9 가 걸린다는 것뿐이고, 만석 자체가 병아리를 못 내보내는
+ * 상태라 설계 의도(과밀 스트레스)와 어긋나지 않는다. **레인 보고서에 올렸다.**
+ *
+ * `countChicks` 는 BD9 투자 런에서만 돈다(포탑 1기당 1회) — 미투자 런에 상시 비용이 없다.
+ */
+export function hatchlingTurretCadence(
+  state: WorldState,
+  turret: Entity,
+  params: TurretCadenceParams,
+): void {
+  if (turret.ownerId !== BROOD_MARK) return;
+
+  let cut = 0;
+
+  // ── BD9 과밀 본능 — 만석인 동안 간격 −(2 + floor(Lv/4)) 틱.
+  const bd9 = lv(state, Sk.overcrowdInstinct);
+  if (bd9 >= 1 && countChicks(state) >= broodMaxDrones(state)) {
+    cut += 2 + Math.floor(bd9 / 4);
+  }
+
+  // ── NU4 둥지 소집(연사 창) — 창이 열려 있는 동안 간격 −(3 + floor(Lv/5)) 틱.
+  //    창 잔여 틱을 세우는 곳은 액티브 핸들러({@link hatchlingNurtureActive}), 깎는 곳은
+  //    앵커 ⑨ 다. 여기는 **읽기만** 한다 — 포탑 기당 깎으면 대수에 반비례해 짧아진다.
+  const nu4 = lv(state, Sk.nestRecall);
+  if (nu4 >= 1 && readSlot(state.skillStage, HatchlingStage.nestRecallTicks) > 0) {
+    cut += 3 + Math.floor(nu4 / 5);
+  }
+
+  if (cut <= 0) return;
+  const next = params.cooldownTicks - cut;
+  params.cooldownTicks = next > 1 ? next : 1;
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉘ — 포탑이 수명으로 소멸한 직후(`stepTurrets` 의 `life === 0` 분기)
+// ---------------------------------------------------------------------------
+
+/**
+ * **BD3 작별 격발 · NU9 둥지 표식(전수 경로의 셋째) · SH9 이소 둥지(자연 만료 전용).**
+ *
+ * ## ⭐ 이 훅이 「소멸 경로 전수」를 닫는다
+ * BD3·NU9 의 본체는 {@link chickDespawned} 이고, SH1·SH7 의 강제 소멸도 {@link killChick} 을
+ * 통해 **같은 함수**를 부른다. 그래서 이 두 스킬은 세 경로 전부에서 정확히 한 번씩 돈다 —
+ * 배치 5 헤더 사유 3묶음이 "반쪽이라 안 넣는다" 고 적은 그 조건이 여기서 해소된다.
+ *
+ * ## SH9 만 자연 만료 전용인 이유 — **설계 문면 그대로**
+ * SH9 는 *"수명이 자연히 다한 병아리는"* 이라고 못 박았다. 앵커 ㉘ 자체가 이미 자연 만료
+ * 전용이지만(강제 소멸은 `dead` 를 스스로 세워 이 분기에 오지 않는다), `aux1 === 0` 을 한 겹
+ * 더 본다: **`aux1` 사유 코드의 첫 독자**가 이 줄이고, 훗날 다른 소멸 경로가 이 앵커로
+ * 흘러들어도 SH9 이 조용히 오발동하지 않는다.
+ *
+ * ## SH9 가 남기는 것은 `destructible` 이 아니라 **파괴가능 벽**이다
+ * `destructible` 은 *"이동은 통과"* 하는 보상 오브젝트라(entities.ts 의 kind 주석) 엄폐가
+ * 되지 않는다 — 그것으로 배선하면 방어 축 스킬이 XP 상자가 된다. `spawnBreakableWall`
+ * (hp > 0)은 **양 진영 탄을 멈추고**(stepProjectiles 의 벽 스윕) 아군탄으로 부술 수 있어
+ * 설계 문면("파괴 가능한 낮은 HP 둥지벽")과 축(shelter = 엄폐)에 둘 다 맞는다.
+ * ⚠️ **침공 3레이어에서는 부술 수 없다** — 그 모드만 `wallIndex` 빠른 경로가 벽 피해를
+ *    적용하지 않기 때문이다(`world.ts` 의 그 분기 주석이 정본). 막는 기능은 그대로다.
+ */
+export function hatchlingTurretExpired(state: WorldState, turret: Entity): void {
+  // 병아리만이다 — 센트리·드론 베이도 이 분기로 소멸한다(회귀 방지, ㉖·㉗ 과 같은 게이트).
+  if (turret.ownerId !== BROOD_MARK) return;
+
+  chickDespawned(state, turret);
+
+  // ── SH9 이소 둥지 — 자연 만료(사유 코드 0)에만, 그 자리에 낮은 HP 둥지벽.
+  const sh9 = lv(state, Sk.fledgeNest);
+  if (sh9 >= 1 && turret.aux1 === 0) {
+    spawnBreakableWall(
+      state,
+      turret.x,
+      turret.y,
+      SH9_NEST_WALL_HALF,
+      SH9_NEST_WALL_HALF,
+      8 + 2 * sh9,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ④ — 실제로 선체 hp 가 깎인 피격의 후속
+// ---------------------------------------------------------------------------
+
+/**
+ * **SH2 위기 산개** — 병아리 전원이 피격원 쪽으로 산개 돌진하며 경로 위 적탄을 소거한다.
+ *
+ * ## 이 스킬이 배치 5 에서 미배선이던 사유와 그 해소
+ * 헤더 사유 4묶음이 *"앵커 ④ 가 피격원 엔티티·접근 벡터를 넘기지 않는다"* 고 적었다. 이
+ * 레인이 앵커 ④ 에 **선택 인자 `srcX`/`srcY`** 를 더해 그것을 열었다(필수로 더하면 7기체
+ * 호출부와 타 레인 픽스처가 전부 깨진다 — 그 판단 근거는 앵커 doc).
+ *
+ * ## ⚠️ 좌표가 없으면 발동하지 않는다
+ * `undefined` 는 *"모른다"* 다. 0,0 으로 대체하면 월드 원점 방향으로 전원이 돌진해 설계와
+ * 무관한 거동이 된다 — 방향 없는 산개는 설계가 정의한 적이 없다.
+ *
+ * ## 「경로 위 적탄 소거」의 정직한 범위
+ * 소거는 **도착 지점 반경**에서 한 번 돈다(경로 전체 스윕이 아니다). 스윕은 탄-벽
+ * 처리에만 있는 `sweptCircle*` 계열이 필요하고 그것은 leaf 밖이다 — 돌진 거리가 반경의
+ * 1.5배 안쪽이라 실제 경로와 도착 원의 차이는 병아리 1기 폭 수준이다.
+ *
+ * ## RNG 미소비
+ * `slideCircleWalls`·`clearEnemyBullets` 둘 다 난수를 뽑지 않고, 산개 부호는 **엔티티 배열
+ * 순서의 홀짝**이라 결정론이 자명하다.
+ */
+export function hatchlingPlayerDamaged(
+  state: WorldState,
+  player: Entity,
+  srcX?: number,
+  srcY?: number,
+): void {
+  const sh2 = lv(state, Sk.crisisScatter);
+  if (sh2 < 1) return;
+  if (srcX === undefined || srcY === undefined) return;
+
+  const rx = srcX - player.x;
+  const ry = srcY - player.y;
+  const d = Math.sqrt(rx * rx + ry * ry);
+  if (d === 0) return; // 정확히 겹친 피격원 — 접근 벡터가 없다.
+  const ux = rx / d;
+  const uy = ry / d;
+
+  const dash = 90 + 6 * sh2;
+  const clearR = 70 + 4 * sh2;
+  const spread = dash / 2;
+
+  let i = 0;
+  for (const e of state.entities) {
+    if (!isChick(e)) continue;
+    // 접근 벡터 방향으로 돌진하되 수직으로 ± 벌린다 = 「산개」. 부호는 배열 순서 홀짝.
+    const side = i % 2 === 0 ? 1 : -1;
+    const tx = e.x + ux * dash - uy * side * spread;
+    const ty = e.y + uy * dash + ux * side * spread;
+    const slid = slideCircleWalls(tx, ty, e.radius, state.activeWalls);
+    e.x = slid.x;
+    e.y = slid.y;
+    clearEnemyBullets(state, e, clearR);
+    i++;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 액티브 핸들러 진입점 — 앵커 밖(`activeHandlers/hatchling.ts` 가 부른다)
+// ---------------------------------------------------------------------------
+//
+// ⚠️ **leaf 규율은 깨지지 않는다.** 이 파일은 여전히 `world.ts` 를 런타임 import 하지 않고,
+// 반대로 `activeHandlers/*.ts` 가 이 파일을 import 한다(선례: `activeHandlers/striker.ts`).
+//
+// ⚠️ **왜 `fireTurretShot` 을 export 하지 않았는가**(정찰 지시 ④ 에 대한 답)
+// `world.ts` 가 그 함수를 내주면 핸들러 → `world.ts` 런타임 import 가 생기고, 이미 있는
+// `world.ts` → `actives.ts` → `activeHandlers/*.ts` 와 합쳐져 **모듈 순환**이 된다(현재
+// `src/sim/**` 에 world 를 런타임 import 하는 파일은 0 개다 — grep 확인). 그럴 필요도 없다:
+// `stepActives`(world.ts:1833)가 `stepTurrets`(1917)보다 **앞**이라, 발동 틱에 `cooldown = 0`
+// 만 써 두면 **같은 틱의** 포탑 루프가 그 병아리를 곧바로 쏘게 한다. 관측 결과가 동일하고
+// 순환이 없다.
+
+/**
+ * **BD8 브루드 강습** — brood 액티브 발동 틱에 살아 있는 병아리 전원이 쿨다운을 무시하고
+ * 즉시 일제 사격한다.
+ *
+ * 구현은 `cooldown = 0` 한 줄이다(위 「왜 export 하지 않았는가」). 소비처는 `stepTurrets` 의
+ * `if (t.cooldown > 0) { t.cooldown--; continue; }` 이고 그 분기는 **이미 있다** — 새 코드가
+ * 필요한 축이 아니라 순서가 이미 맞아 있던 축이다.
+ */
+export function hatchlingBroodActive(state: WorldState): void {
+  const bd8 = lv(state, Sk.broodAssault);
+  if (bd8 < 1) return;
+  for (const e of state.entities) {
+    if (!isChick(e)) continue;
+    e.cooldown = 0;
+  }
+}
+
+/** NU4 재배치 오프셋 — 반지름 90 의 정팔각 근사(정수 리터럴이라 삼각함수·난수 0). */
+const NU4_RECALL_OX = [90, -90, 0, 0, 64, -64, 64, -64] as const;
+const NU4_RECALL_OY = [0, 0, 90, -90, 64, 64, -64, -64] as const;
+
+/**
+ * **NU4 둥지 소집** — nurture 액티브 발동 시 병아리 전원이 **도착 지점** 주위로 재배치되고
+ * 잠깐 연사 창을 얻는다.
+ *
+ * ## ⚠️ 반드시 `blink` **뒤**에 불러라
+ * nurture 액티브 2종은 `blink(state, player, …)` 로 플레이어를 먼저 옮긴다. 그 **뒤**의
+ * `player.x`/`player.y` 가 곧 설계가 말한 "도착 지점" 이다 — 앞에서 부르면 출발 지점에
+ * 모이므로 스킬이 정반대로 작동한다.
+ *
+ * ## 연사 창은 세 지점이 한 벌이다
+ * 여기서 세우고({@link HatchlingStage.nestRecallTicks}), 앵커 ⑨ 가 틱당 1 씩 깎고, 앵커 ㉗ 이
+ * 0 보다 큰 동안 간격을 깎는다. 셋 다 같은 틱 안에서 발동 → 감산 → 소비 순서라(world.ts
+ * 1833 → 1874 → 1917) 세운 그 틱부터 창이 열린다.
+ *
+ * 발동 틱의 즉시 1발은 BD8 과 같은 형태(`cooldown = 0`)다 — 창만 세우면 이미 쿨다운을 물고
+ * 있던 병아리가 첫 발까지 최대 10틱을 기다려 "소집" 이라는 체감이 사라진다.
+ */
+export function hatchlingNurtureActive(state: WorldState, player: Entity): void {
+  const nu4 = lv(state, Sk.nestRecall);
+  if (nu4 < 1) return;
+  let i = 0;
+  for (const e of state.entities) {
+    if (!isChick(e)) continue;
+    const k = i % 8;
+    const slid = slideCircleWalls(
+      player.x + (NU4_RECALL_OX[k] ?? 0),
+      player.y + (NU4_RECALL_OY[k] ?? 0),
+      e.radius,
+      state.activeWalls,
+    );
+    e.x = slid.x;
+    e.y = slid.y;
+    e.cooldown = 0;
+    i++;
+  }
+  // 창 = 90 + 6×Lv 틱. 살아 있는 병아리가 0기여도 세운다 — 창 동안 새로 출격한 병아리도
+  // 혜택을 받는 것이 "연사 창" 의 정의이고, 슬롯 쓰기는 투자 게이트 안이라 규약 3 을 지킨다.
+  writeSlot(state.skillStage, HatchlingStage.nestRecallTicks, 90 + 6 * nu4);
 }

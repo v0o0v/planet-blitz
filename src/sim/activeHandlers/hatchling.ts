@@ -22,6 +22,9 @@ import { HATCH_BASE_KILLS, HATCH_MAX_KILLS, HATCH_STEP_KILLS } from '../shipSign
 import type { Entity } from '../entities.js';
 import { blink, fanStrike, powerCentiOf, scaleCenti, setBuffTicks } from '../activeTypes.js';
 import type { ActiveExpireTable, ActiveHandlerTable, ActiveSustainTable } from '../activeTypes.js';
+// 30스킬 본체는 `skills/hatchling.ts` 소유다 — 핸들러는 **부르기만** 한다(선례:
+// `activeHandlers/striker.ts`). 투자 게이트도 그 안에 있어 미투자 런은 비트 동일이다.
+import { hatchlingBroodActive, hatchlingNurtureActive } from '../skills/hatchling.js';
 
 /**
  * 부화 스냅샷(`aux0`)을 `by` 만큼 **과거로** 민다 = 다음 부화를 그만큼 앞당긴다.
@@ -46,6 +49,8 @@ export const HATCHLING_HANDLERS: ActiveHandlerTable = {
     );
     // 요구치 상한 한 벌 분량만큼 스냅샷을 과거로 — 다음 부화가 크게 앞당겨진다.
     advanceHatch(player, HATCH_MAX_KILLS);
+    // BD8 브루드 강습 — 살아 있는 병아리 전원 즉시 격발(같은 틱의 `stepTurrets` 가 쏜다).
+    hatchlingBroodActive(state);
   },
   as_hatchling_brood_hi: (state, player, def, dir) => {
     // 반대 방향 거래 — 스냅샷을 현재 누적으로 당겨 부화 진행도를 **소각**하고 지금 탄막을 산다.
@@ -60,14 +65,18 @@ export const HATCHLING_HANDLERS: ActiveHandlerTable = {
       dir,
       { pierce: 1 },
     );
+    hatchlingBroodActive(state);
   },
   as_hatchling_nurture_lo: (state, player, def, dir) => {
     blink(state, player, def.coeff.distance ?? 0, dir);
     advanceHatch(player, HATCH_STEP_KILLS);
+    // NU4 둥지 소집 — **반드시 `blink` 뒤**다(설계의 "도착 지점" = 이동 후 좌표).
+    hatchlingNurtureActive(state, player);
   },
   as_hatchling_nurture_hi: (state, player, def, dir) => {
     blink(state, player, def.coeff.distance ?? 0, dir);
     advanceHatch(player, HATCH_BASE_KILLS);
+    hatchlingNurtureActive(state, player);
   },
   as_hatchling_shelter_lo: (state, player, def, _dir, slot) => {
     setBuffTicks(state, slot, def.coeff.ticks ?? 0);

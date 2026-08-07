@@ -33,8 +33,19 @@ import {
   onBroodLaunchParams,
   onBroodLaunched,
   onTurretShotParams,
+  onTurretCadence,
+  onTurretExpired,
+  onPlayerDamaged,
 } from '../src/sim/skillHooks.js';
-import type { BroodParams, TurretShotParams } from '../src/sim/skillHooks.js';
+import type {
+  BroodParams,
+  TurretShotParams,
+  TurretCadenceParams,
+} from '../src/sim/skillHooks.js';
+import { HATCHLING_HANDLERS } from '../src/sim/activeHandlers/hatchling.js';
+import { ALL_ACTIVES } from '../data/ships/actives/index.js';
+import type { ActiveSkillDef } from '../data/ships/actives/types.js';
+import { DamageSource } from '../src/sim/skillSlots.js';
 import { DRONE_MARK } from '../src/sim/uniques.js';
 import { SIG_HATCHLING_BROOD, BROOD_MARK } from '../src/sim/shipSignature.js';
 import { readSlot, SKILL_SLOT_COUNT, HatchlingStage } from '../src/sim/skillSlots.js';
@@ -54,6 +65,14 @@ const NU2 = 11;
 const NU7 = 16;
 const NU10 = 19;
 const SH1 = 20;
+const BD3 = 2;
+const BD7 = 6;
+const BD8 = 7;
+const BD9 = 8;
+const NU4 = 13;
+const NU9 = 18;
+const SH2 = 21;
+const SH9 = 28;
 const SH3 = 22;
 const SH5 = 24;
 const SH6 = 25;
@@ -916,5 +935,459 @@ describe('⑩ BD10 여왕 사출 — 3축', () => {
     expect(base.shots).toBeGreaterThan(0); // 하한 — 포탑이 실제로 쐈다
     expect(base.drop).toBeGreaterThan(0); // 하한 — 적 hp 가 실제로 줄었다
     expect(boosted.drop).toBeGreaterThan(base.drop); // 본 단언
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S3-해츨링(2026-08-07) — 앵커 ㉗ ㉘ · 앵커 ④ 좌표 확장으로 얹은 8종
+// ---------------------------------------------------------------------------
+
+/** 액티브 정의 정본 조회(핸들러 테이블은 id 키다). */
+function activeDef(id: string): ActiveSkillDef {
+  const def = ALL_ACTIVES.find((d) => d.id === id);
+  if (def === undefined) throw new Error(`active def missing: ${id}`);
+  return def;
+}
+
+function handlerOf(id: string) {
+  const h = HATCHLING_HANDLERS[id];
+  if (h === undefined) throw new Error(`handler missing: ${id}`);
+  return h;
+}
+
+function countKind(state: WorldState, kind: string): number {
+  let n = 0;
+  for (const e of state.entities) {
+    if (e.kind === kind && !e.dead) n++;
+  }
+  return n;
+}
+
+function cadence(): TurretCadenceParams {
+  return { cooldownTicks: 10 };
+}
+
+describe('⑫ 앵커 ㉘ — BD3 작별 격발 · NU9 둥지 표식 · SH9 이소 둥지', () => {
+  it('BD3 — 자연 만료한 병아리가 최근접 적 쪽으로 부채꼴을 남긴다', () => {
+    const w = mk([[BD3, 4]]);
+    const c = chick(w, 200, 0);
+    enemyNear(w, 600, 0);
+    expect(countKind(w, 'bullet')).toBe(0); // 하한 — 시작 시 아군탄 0
+    onTurretExpired(w, c);
+    expect(countKind(w, 'bullet')).toBe(4); // 3 + floor(4/4)
+  });
+
+  it('BD3 — 표적이 없으면 0 발(부정) · 있으면 양수(긍정 짝)', () => {
+    const empty = mk([[BD3, 1]]);
+    onTurretExpired(empty, chick(empty, 200, 0));
+    expect(countKind(empty, 'bullet')).toBe(0);
+
+    const armed = mk([[BD3, 1]]);
+    const c = chick(armed, 200, 0);
+    enemyNear(armed, 600, 0);
+    onTurretExpired(armed, c);
+    expect(countKind(armed, 'bullet')).toBeGreaterThan(0);
+  });
+
+  it('센트리·드론 베이(DRONE_MARK)의 만료는 세 스킬 어느 것도 발화시키지 않는다', () => {
+    const w = mk([
+      [BD3, 4],
+      [NU9, 4],
+      [SH9, 4],
+    ]);
+    enemyNear(w, 600, 0);
+    const sentry = turretOf(w, DRONE_MARK);
+    onTurretExpired(w, sentry);
+    expect(countKind(w, 'bullet')).toBe(0);
+    expect(countKind(w, 'magnetEmitter')).toBe(0);
+    expect(countKind(w, 'wall')).toBe(0);
+
+    // 긍정 짝 — 같은 런에서 병아리는 셋 다 발화한다(훅이 죽어서 0 인 게 아니다).
+    onTurretExpired(w, chick(w, 200, 0));
+    expect(countKind(w, 'bullet')).toBeGreaterThan(0);
+    expect(countKind(w, 'magnetEmitter')).toBe(1);
+    expect(countKind(w, 'wall')).toBe(1);
+  });
+
+  it('BD3·NU9 는 **SH1 희생 소멸에서도** 돈다 — 「소멸 경로 전수」', () => {
+    const w = mk([
+      [SH1, 1],
+      [BD3, 4],
+      [NU9, 1],
+    ]);
+    const c = chick(w, 200, 0);
+    enemyNear(w, 600, 0);
+    onDamageChain(w, player(w), 5);
+    expect(c.dead).toBe(true); // 하한 — 희생이 실제로 일어났다
+    expect(countKind(w, 'bullet')).toBe(4);
+    expect(countKind(w, 'magnetEmitter')).toBe(1);
+  });
+
+  it('NU9 — 표식이 **그 자리에** 서고 반경이 레벨과 함께 커진다', () => {
+    const lo = mk([[NU9, 1]]);
+    const c = chick(lo, 300, -100);
+    onTurretExpired(lo, c);
+    const m = lo.entities.find((e) => e.kind === 'magnetEmitter');
+    if (m === undefined) throw new Error('표식이 안 섰다');
+    expect(m.x).toBe(c.x);
+    expect(m.y).toBe(c.y);
+
+    const hi = mk([[NU9, 10]]);
+    onTurretExpired(hi, chick(hi, 300, -100));
+    const m2 = hi.entities.find((e) => e.kind === 'magnetEmitter');
+    if (m2 === undefined) throw new Error('표식이 안 섰다');
+    expect(m2.radius).toBeGreaterThan(m.radius); // 단조 짝
+  });
+
+  it('SH9 — 자연 만료(aux1 = 0)만 둥지벽을 남긴다 · 희생(aux1 = 1)은 안 남긴다', () => {
+    const nat = mk([[SH9, 2]]);
+    onTurretExpired(nat, chick(nat, 300, 0));
+    const walls = nat.entities.filter((e) => e.kind === 'wall' && !e.dead);
+    expect(walls).toHaveLength(1);
+    expect(walls[0]?.hp).toBe(12); // 8 + 2×2 — 파괴 가능(hp > 0)이라야 부술 수 있다
+
+    const forced = mk([[SH9, 2]]);
+    const c = chick(forced, 300, 0);
+    c.aux1 = 1; // `killChick` 이 적는 희생 사유 코드
+    onTurretExpired(forced, c);
+    expect(countKind(forced, 'wall')).toBe(0);
+  });
+});
+
+describe('⑬ 앵커 ㉗ — BD9 과밀 본능', () => {
+  it('BD9 — 만석 동안만 간격이 준다(부정·긍정 짝)', () => {
+    const w = mk([[BD9, 8]]);
+    const one = chick(w, 100, 0);
+    const a = cadence();
+    onTurretCadence(w, one, a);
+    expect(a.cooldownTicks).toBe(10); // 부정 — 1기라 만석이 아니다
+
+    chick(w, 100, 60);
+    chick(w, 100, 120);
+    chick(w, 100, 180); // 4기 = 실효 상한
+    const b = cadence();
+    onTurretCadence(w, one, b);
+    expect(b.cooldownTicks).toBe(6); // 10 − (2 + floor(8/4))
+    expect(b.cooldownTicks).toBeLessThan(a.cooldownTicks); // 단조 짝
+  });
+
+  it('BD9 — SH10 을 함께 찍으면 상한이 5 라 4기로는 만석이 아니다', () => {
+    const w = mk([
+      [BD9, 8],
+      [SH10, 1],
+    ]);
+    const t = chick(w, 100, 0);
+    chick(w, 100, 60);
+    chick(w, 100, 120);
+    chick(w, 100, 180);
+    const a = cadence();
+    onTurretCadence(w, t, a);
+    expect(a.cooldownTicks).toBe(10); // 4기 < 5
+
+    chick(w, 100, 240); // 5기 = 만석
+    const b = cadence();
+    onTurretCadence(w, t, b);
+    expect(b.cooldownTicks).toBeLessThan(10); // 긍정 짝
+  });
+
+  it('센트리는 만석이어도 안 빨라진다(㉗ 의 소환물 게이트)', () => {
+    const w = mk([[BD9, 8]]);
+    chick(w, 100, 0);
+    chick(w, 100, 60);
+    chick(w, 100, 120);
+    chick(w, 100, 180);
+    const sentry = turretOf(w, DRONE_MARK);
+    const s = cadence();
+    onTurretCadence(w, sentry, s);
+    expect(s.cooldownTicks).toBe(10);
+
+    const brood = cadence(); // 같은 런의 긍정 짝
+    onTurretCadence(w, chick(w, 100, 240), brood);
+    expect(brood.cooldownTicks).toBeLessThan(10);
+  });
+
+  it('㉗ 하한 1 — 최대 감산에서도 0 이하로 안 내려간다', () => {
+    const w = mk([
+      [BD9, 20],
+      [NU4, 20],
+    ]);
+    const t = chick(w, 100, 0);
+    chick(w, 100, 60);
+    chick(w, 100, 120);
+    chick(w, 100, 180);
+    handlerOf('as_hatchling_nurture_lo')(
+      w,
+      player(w),
+      activeDef('as_hatchling_nurture_lo'),
+      { x: 1, y: 0 },
+      0,
+    );
+    const a = cadence(); // 감산 합 = (2+5) + (3+4) = 14 > 10
+    onTurretCadence(w, t, a);
+    expect(a.cooldownTicks).toBe(1);
+  });
+});
+
+describe('⑭ NU4 둥지 소집 — 재배치 + 연사 창', () => {
+  it('nurture 액티브가 병아리를 **도착 지점** 주위로 모으고 즉시 격발시킨다', () => {
+    const w = mk([[NU4, 5]]);
+    const c = chick(w, 900, 900);
+    c.cooldown = 9;
+    const p = player(w);
+    const before = Math.hypot(c.x - p.x, c.y - p.y);
+    expect(before).toBeGreaterThan(400); // 하한 — 실제로 멀리 있었다
+    handlerOf('as_hatchling_nurture_lo')(
+      w,
+      p,
+      activeDef('as_hatchling_nurture_lo'),
+      { x: 1, y: 0 },
+      0,
+    );
+    const after = Math.hypot(c.x - p.x, c.y - p.y);
+    expect(after).toBeLessThan(before);
+    expect(after).toBeLessThanOrEqual(91); // 재배치 반지름 90
+    expect(c.cooldown).toBe(0);
+    expect(readSlot(w.skillStage, HatchlingStage.nestRecallTicks)).toBe(120); // 90 + 6×5
+  });
+
+  it('연사 창 — ⑨ 가 깎고 ㉗ 이 소비하며, 창이 닫히면 간격이 돌아온다', () => {
+    const w = mk([[NU4, 5]]);
+    const c = chick(w, 100, 0);
+
+    const off = cadence();
+    onTurretCadence(w, c, off);
+    expect(off.cooldownTicks).toBe(10); // 부정 — 창이 아직 없다
+
+    handlerOf('as_hatchling_nurture_lo')(
+      w,
+      player(w),
+      activeDef('as_hatchling_nurture_lo'),
+      { x: 1, y: 0 },
+      0,
+    );
+    const on = cadence();
+    onTurretCadence(w, c, on);
+    expect(on.cooldownTicks).toBe(6); // 10 − (3 + floor(5/5))
+
+    for (let i = 0; i < 120; i++) onSignatureStep(w, player(w), emptyInput());
+    expect(readSlot(w.skillStage, HatchlingStage.nestRecallTicks)).toBe(0);
+    const closed = cadence();
+    onTurretCadence(w, c, closed);
+    expect(closed.cooldownTicks).toBe(10);
+  });
+});
+
+describe('⑮ BD7 노병 병아리 — 개체별 누적 강화(앵커 ㉖)', () => {
+  it('첫 발은 종전 값이고 그 뒤로 단조 증가한다', () => {
+    const w = mk([[BD7, 10]]);
+    const t = turretOf(w, BROOD_MARK);
+    const first = shotParams();
+    onTurretShotParams(w, t, first);
+    expect(first.damage).toBe(10);
+    const second = shotParams();
+    onTurretShotParams(w, t, second);
+    expect(second.damage).toBeGreaterThan(first.damage);
+    const third = shotParams();
+    onTurretShotParams(w, t, third);
+    expect(third.damage).toBeGreaterThan(second.damage);
+    expect(t.aux0).toBe(3); // 개체 카운터가 실제로 정수로 적립됐다
+  });
+
+  it('**개체별**이다 — 다른 병아리는 자기 카운터로 시작한다', () => {
+    const w = mk([[BD7, 10]]);
+    const veteran = turretOf(w, BROOD_MARK);
+    for (let i = 0; i < 5; i++) onTurretShotParams(w, veteran, shotParams());
+    const rookie = chick(w, 100, 60);
+
+    const vp = shotParams();
+    onTurretShotParams(w, veteran, vp);
+    const rp = shotParams();
+    onTurretShotParams(w, rookie, rp);
+    expect(rp.damage).toBe(10);
+    expect(vp.damage).toBeGreaterThan(rp.damage);
+  });
+
+  it('센트리 탄은 안 강해진다(㉖ 의 소환물 게이트 회귀 방지)', () => {
+    const w = mk([[BD7, 10]]);
+    const sentry = turretOf(w, DRONE_MARK);
+    for (let i = 0; i < 5; i++) onTurretShotParams(w, sentry, shotParams());
+    const s = shotParams();
+    onTurretShotParams(w, sentry, s);
+    expect(s.damage).toBe(10);
+    expect(sentry.aux0).toBe(0);
+
+    const brood = turretOf(w, BROOD_MARK); // 같은 런의 긍정 짝
+    onTurretShotParams(w, brood, shotParams());
+    const b = shotParams();
+    onTurretShotParams(w, brood, b);
+    expect(b.damage).toBeGreaterThan(10);
+  });
+
+  it('상한 40발 — 그 뒤로는 배율이 더 안 커진다', () => {
+    const w = mk([[BD7, 10]]);
+    const t = turretOf(w, BROOD_MARK);
+    for (let i = 0; i < 40; i++) onTurretShotParams(w, t, shotParams());
+    const at40 = shotParams();
+    onTurretShotParams(w, t, at40);
+    for (let i = 0; i < 10; i++) onTurretShotParams(w, t, shotParams());
+    const at50 = shotParams();
+    onTurretShotParams(w, t, at50);
+    expect(at40.damage).toBeGreaterThan(10); // 하한 — 실제로 강해져 있다
+    expect(at50.damage).toBe(at40.damage);
+  });
+});
+
+describe('⑯ BD8 브루드 강습 — brood 액티브 발동 틱 일제 사격', () => {
+  it('살아 있는 병아리 전원의 쿨다운이 0 이 되고 센트리는 그대로다', () => {
+    const w = mk([[BD8, 1]]);
+    const a = chick(w, 100, 0);
+    a.cooldown = 7;
+    const b = chick(w, 100, 60);
+    b.cooldown = 4;
+    const sentry = turretOf(w, DRONE_MARK);
+    sentry.cooldown = 6;
+    handlerOf('as_hatchling_brood_lo')(
+      w,
+      player(w),
+      activeDef('as_hatchling_brood_lo'),
+      { x: 1, y: 0 },
+      0,
+    );
+    expect(a.cooldown).toBe(0);
+    expect(b.cooldown).toBe(0);
+    expect(sentry.cooldown).toBe(6);
+  });
+
+  it('미투자 런은 쿨다운을 한 칸도 안 건드린다(부정 짝)', () => {
+    const w = mk([[BD5, 1]]);
+    const c = chick(w, 100, 0);
+    c.cooldown = 7;
+    handlerOf('as_hatchling_brood_hi')(
+      w,
+      player(w),
+      activeDef('as_hatchling_brood_hi'),
+      { x: 1, y: 0 },
+      0,
+    );
+    expect(c.cooldown).toBe(7);
+  });
+});
+
+describe('⑰ SH2 위기 산개 — 앵커 ④ 의 피격원 좌표', () => {
+  function scatterCase(withCoords: boolean) {
+    const w = mk([[SH2, 5]]);
+    const p = player(w);
+    const c = chick(w, 0, 0);
+    const shot = blankEntity('enemyBullet');
+    shot.id = 60000 + w.entities.length;
+    shot.x = c.x + 120;
+    shot.y = c.y + 30;
+    w.entities.push(shot);
+    const beforeX = c.x;
+    if (withCoords) {
+      onPlayerDamaged(w, p, 10, false, DamageSource.bullet, p.x + 500, p.y);
+    } else {
+      onPlayerDamaged(w, p, 10, false, DamageSource.bullet);
+    }
+    return { movedX: c.x - beforeX, shotDead: shot.dead };
+  }
+
+  it('좌표가 오면 피격원 쪽으로 산개하고 도착 반경의 적탄이 소거된다', () => {
+    const on = scatterCase(true);
+    expect(on.movedX).toBeGreaterThan(0);
+    expect(on.shotDead).toBe(true);
+  });
+
+  it('좌표가 없으면(선택 인자 생략) 아무 일도 없다 — 부정 짝', () => {
+    const off = scatterCase(false);
+    expect(off.movedX).toBe(0);
+    expect(off.shotDead).toBe(false);
+  });
+
+  it('미투자 런은 좌표가 와도 안 움직인다', () => {
+    const w = mk([[BD5, 1]]);
+    const p = player(w);
+    const c = chick(w, 0, 0);
+    const before = c.x;
+    onPlayerDamaged(w, p, 10, false, DamageSource.bullet, p.x + 500, p.y);
+    expect(c.x).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑱ world 쪽 호출부 통합 — **앵커를 부르는 그 줄**이 살아 있는가
+// ---------------------------------------------------------------------------
+//
+// 위 블록들은 훅을 직접 자극하므로 `world.ts` 의 호출 한 줄을 지워도 안 빨개진다. 이 저장소의
+// 지배적 실패가 정확히 그 형태("고쳐 놨는데 아무도 안 부른다")라, 세 신설 지점은 `stepWorld`
+// 를 통과시켜 한 번 더 잠근다.
+
+describe('⑱ world 호출부 통합', () => {
+  it('㉘ — 수명이 실제로 다한 병아리가 `stepWorld` 안에서 둥지벽·표식을 남긴다', () => {
+    const w = mk([
+      [SH9, 2],
+      [NU9, 1],
+    ]);
+    const c = chick(w, 300, 0);
+    c.life = 1; // 이번 틱에 만료한다
+    // ⚠️ **전체 개수를 세면 안 된다** — 같은 틱에 `activateChunks` 가 절차 지형의 벽·자석
+    //    기물을 깔아 단언이 통째로 항진이 된다(이 함정에 실제로 걸렸다: 호출 한 줄을 지운
+    //    뮤테이션이 초록이었다). 그래서 **이 스킬만 만드는 값**으로 거른다:
+    //    둥지벽은 `hp > 0`(절차 벽은 전부 hp 0 = 불파괴) · 표식은 반경 74(기본 기물은 70).
+    const nestWalls = (s: WorldState) =>
+      s.entities.filter((e) => e.kind === 'wall' && !e.dead && e.hp > 0).length;
+    const beacons = (s: WorldState) =>
+      s.entities.filter((e) => e.kind === 'magnetEmitter' && !e.dead && e.radius === 74).length;
+    expect(nestWalls(w)).toBe(0); // 하한 — 시작 시 없다
+    expect(beacons(w)).toBe(0);
+    stepWorld(w, emptyInput());
+    expect(c.dead).toBe(true);
+    expect(nestWalls(w)).toBe(1);
+    expect(beacons(w)).toBe(1);
+  });
+
+  it('㉗ — 만석 BD9 런이 같은 틱 수에 **실제로 더 많이** 쏜다', () => {
+    function shotsOver(points: ReadonlyArray<readonly [number, number]>): number {
+      const w = mk(points);
+      for (let i = 0; i < 4; i++) {
+        const c = chick(w, 600, i * 30);
+        c.cooldown = 0;
+      }
+      const target = enemyNear(w, 1000, 0);
+      target.hp = 1_000_000;
+      target.maxHp = 1_000_000;
+      target.radius = 40;
+      let shots = 0;
+      for (let i = 0; i < 40; i++) {
+        stepWorld(w, emptyInput());
+        for (const e of w.entities) {
+          if (e.kind === 'bullet' && e.ownerId === BROOD_MARK && !e.dead) shots++;
+        }
+      }
+      return shots;
+    }
+    const base = shotsOver([[NU8, 1]]); // BD9 무투자 대조
+    const fast = shotsOver([[BD9, 8]]);
+    expect(base).toBeGreaterThan(0); // 하한 — 대조군도 실제로 쐈다(양변 0 항진 방지)
+    expect(fast).toBeGreaterThan(base);
+  });
+
+  it('④ — 적탄에 실제로 맞은 틱에 좌표가 실려 SH2 가 산개한다', () => {
+    const w = mk([[SH2, 5]]);
+    const p = player(w);
+    p.iframes = 0;
+    const c = chick(w, 0, 0);
+    const before = c.x;
+    const shot = blankEntity('enemyBullet');
+    shot.id = 61000 + w.entities.length;
+    shot.x = p.x + 18;
+    shot.y = p.y;
+    shot.radius = 24;
+    shot.damage = 5;
+    shot.life = 60;
+    w.entities.push(shot);
+    stepWorld(w, emptyInput());
+    expect(w.hitsTaken).toBeGreaterThan(0); // 하한 — 실제로 맞았다
+    expect(c.x).toBeGreaterThan(before); // 피격원(+x) 쪽으로 산개했다
   });
 });
