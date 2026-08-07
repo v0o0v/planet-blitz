@@ -73,16 +73,35 @@
  *    export 하는 것은 `echoStabilizedOf`(`state === 2`) · `encounterCompletedOf`(`state === 3`)
  *    **종료 판정뿐**이라, 활성 판정을 기체 모듈에 적으면 상태기계 코드의 두 번째 사본이 된다.
  *    정본 파일에 활성 리더를 세우는 것이 선결이고 그건 이 레인 밖이다.
- *  · **M10 이중 추진**: 대시는 `dashCooldown === 0` **단일 게이트**다(`world.ts:2222`).
- *    "충전식 2회 + 별도 재충전" 은 그 게이트를 충전 카운터로 바꿔야 하는데, 앵커 ② 는 게이트가
- *    이미 통과된 **뒤**라 두 번째 충전을 만들 수 없다.
+ *  · **M10 이중 추진**: ✅ **배선됐다**(배치 5 · 앵커 ㉙ {@link strikerPlayerMoveParams}).
+ *    막고 있던 사유는 지우지 않고 정정만 적는다 — *"앵커 ② 는 게이트가 이미 통과된 뒤라 두
+ *    번째 충전을 만들 수 없다"* 는 **앵커 ② 에 대해서는 지금도 옳다**. 풀린 것은 앵커 ㉙ 이
+ *    `stepPlayer` 의 **쿨다운 감산보다도 앞**에 서면서다: 그 자리에서 `dashCooldown` 을 0 으로
+ *    눌러 두면 같은 틱의 게이트(`dashCooldown === 0`)가 열린다. 게이트 자체를 고칠 필요가
+ *    없었던 것이고, 이것이 "앵커가 게이트 앞이냐 뒤냐" 하나로 갈린 사례다.
+ *
+ * ### 배치 5 가 확인만 하고 **넣지 않은 둘** — 사유는 위 표 그대로 산다
+ *  · **M2 추진 항적**: `onPlayerMoveParams` 로도 안 풀린다. 이 앵커는 `mx`/`my` 를 **넘기지
+ *    않고**(`PlayerMoveParams` 는 `speedMult`·`slowTicks` 둘뿐), 게다가 `player.angle =
+ *    input.aim` 이 이 훅 **다음 줄**이라 폴백 인자마저 이번 틱 값이 아니다. 더 근본적으로
+ *    이 훅은 대시 게이트 **앞**이라 "대시가 발동한 틱" 자체를 모른다 — 술어의 두 항(방향 ·
+ *    발동 틱)이 서로 다른 앵커에 흩어져 있다. **input 배관이 선결**이라는 위 판정 불변.
+ *  · **M4 슬립스트림**: `onGemMagnetParams` 로도 안 풀린다. 설계서 구현란이 요구하는 것은
+ *    *"젬→플레이어 벡터와 `player.vx/vy` 의 내적이 양수면"* 이라는 **젬마다의 방향 판정**인데,
+ *    앵커 ㉘ 은 `stepGems` 의 **흡인 루프 밖**에서 틱당 딱 한 번 불리고 넘기는 것도 스칼라
+ *    `radius` 하나다(`world.ts` 의 `onGemMagnetParams(state, player, magnet)` → 다음 줄
+ *    `const r2 = magnet.radius * magnet.radius` → 그 **뒤에** `for (const e of state.entities)`).
+ *    스칼라를 키우면 등방 확장이라 *"서 있으면 원형이고 달리면 앞으로 뻗는다"* 의 **뒤쪽 절반
+ *    까지 함께 넓어진다** — 설계서가 "비등방" 을 본체 문장에 못 박았으므로 그것은 근사가 아니라
+ *    다른 스킬이다. 루프 **안**의 앵커(젬 1개를 넘기는 자리)가 선결이다.
  */
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
 import type { VolleyParams } from '../skillHooks.js';
 import { blastDamage, clearEnemyBullets } from '../activeTypes.js';
-import { readSlot, writeSlot, StrikerCarry } from '../skillSlots.js';
+import type { PlayerMoveParams } from '../skillHooks.js';
+import { readSlot, writeSlot, StrikerCarry, StrikerStage } from '../skillSlots.js';
 import { MARKSMAN_TRIGGER_AUX0 } from '../shipSignature.js';
 import { COMBO_WINDOW_TICKS } from '../constants.js';
 import { applyBurn, applySlow, COLD_DURATION, FIRE_DURATION } from '../status.js';
@@ -118,6 +137,7 @@ const enum Sk {
   /** M3 수집 항로 */ gemRoute = 22,
   /** M5 벽차기 */ wallKick = 24,
   /** M6 활공 정화 */ dashPurge = 25,
+  /** M10 이중 추진 */ twinThruster = 29,
 }
 
 /**
@@ -376,6 +396,90 @@ export function strikerSignatureStep(state: WorldState, player: Entity): void {
     }
   }
   writeSlot(state.skillCarry, StrikerCarry.hullXpPool, pool);
+}
+
+/** M10 2번째 충전의 재충전 = `240 + floor(4000/(Lv+5))` 틱 (Lv1 = 906 · Lv20 = 400 · 점근 240). */
+function twinRechargeTicks(level: number): number {
+  return 240 + Math.floor(4000 / (level + 5));
+}
+
+/**
+ * 앵커 ㉙ **이동 배율 산출 직전 · 대시 쿨다운 감산보다도 앞** — M10 이중 추진 **1종**.
+ *
+ * 설계서: *"대시가 충전식 2회가 된다 — 두 번째 충전은 별도의 느린 재충전을 따른다"* ·
+ * 재충전 = `240 + 4000/(Lv+5)` 틱 · 구현란 *"소비 순서는 기본 충전 우선"*.
+ *
+ * ## ⭐ 이 스킬이 여기서 도는 이유 — 게이트를 고치지 않고 **게이트 앞에 서는 것**으로 풀린다
+ * 대시 발동 조건은 `input.dash && player.dashCooldown === 0` 하나뿐이고 그 줄은 `world.ts`
+ * 소유다. 이 앵커는 그 줄보다 **두 단계 앞**이다(훅 → `if (dashCooldown > 0) dashCooldown--`
+ * → 게이트). 그래서 여기서 `dashCooldown` 을 0 으로 눌러 두면 **같은 틱에** 게이트가 열린다 —
+ * 「충전 카운터로 게이트를 바꿔야 한다」던 배치 1 의 판정이 필요 없었던 이유다.
+ *
+ * ## ⚠️ 「대시가 실제로 나갔는가」는 **다음 틱에** 안다
+ * 이 훅은 게이트 앞이라 `input` 을 못 보고, 앵커 ②(`onDashFired`)는 `dashCooldown` 이 이미
+ * 만충으로 덮인 뒤라 **기본 충전과 2충전 중 무엇이 쓰였는지 구분할 신호가 없다**. 그래서
+ * 판정을 한 틱 미룬다: 임시 개방 중(`twinHold > 0`)에는 이 훅이 `dashCooldown` 을 0 으로
+ * 잡고 있으므로, 다음 틱 진입 시 그 값이 **양수로 올라와 있다면 그 사이에 대시 블록이 돈
+ * 것**이다. `dashCooldown` 을 양수로 **올리는** 코드는 대시 블록 둘(기본·위상 장갑)뿐이고
+ * 나머지 소비자는 전부 감산이다(`skills/bruiser.ts`·`skills/bubble.ts` 의 `Math.max(0, …)` ·
+ * 팬텀 PH10 의 `= 0`) — 그래서 이 부호 판정에 거짓 양성이 없다.
+ *
+ * ## ⚠️ 기본 충전 잔여는 **버리지 않고 되돌려 준다**
+ * 2충전으로 나간 대시는 기본 충전을 쓰지 않았다. 개방 시점의 잔여를 `twinHold` 에 넣어 두고,
+ * 대시가 확인되면 대시 블록이 덮어 쓴 만충값을 그 잔여로 **되돌린다**. 이 복원이 없으면
+ * "2연 대시 = 기본 충전도 함께 소진" 이 되어 설계서의 「기본 충전 우선」 이 사실상 「둘 다
+ * 소모」로 바뀐다.
+ *
+ * ## ⚠️ 알려진 부수 특성 — 보류 창 동안의 **대시 환급이 삼켜진다**
+ * M3(수집 항로)는 `dashCooldown` 을 감산으로 환급하는데, 보류 중에는 그 값이 0 이라 감산이
+ * 무연산이고 보류분(`twinHold`)은 줄지 않는다. 환급을 보류분에 얹으면 M3 의 산술이 두 곳이
+ * 되므로 넣지 않았다 — 손해는 보류 창(기본 충전 잔여) 안으로 유계다.
+ *
+ * ## ⚠️ 미투자 런은 첫 줄에서 반환한다
+ * `state.skillStage` 를 **한 번도 안 만지므로** 슬롯 폴드가 돌지 않고 `dashCooldown` 도
+ * 그대로다 → 골든 해시 바이트 불변.
+ */
+export function strikerPlayerMoveParams(
+  state: WorldState,
+  player: Entity,
+  params: PlayerMoveParams,
+): void {
+  // 이 스킬은 이동 배율이 아니라 대시 충전을 만진다 — `params` 를 읽지도 쓰지도 않는다.
+  // (앵커 계약상 인자는 받아야 하므로 무연산 참조로 명시한다.)
+  void params;
+  const m10 = lv(state, Sk.twinThruster);
+  if (m10 < 1) return;
+  const stage = state.skillStage;
+  let recharge = readSlot(stage, StrikerStage.twinRecharge);
+  let hold = readSlot(stage, StrikerStage.twinHold);
+
+  // 재충전 감산이 **먼저**다 — 아래 정산이 새로 세운 재충전을 같은 틱에 1 깎으면 실효 길이가
+  // 설계 수치보다 1 짧아진다(그 오차가 테스트에 잡혔다).
+  if (recharge > 0) recharge -= 1;
+
+  if (hold > 0) {
+    if (player.dashCooldown > 0) {
+      // 대시가 나갔다 → 2충전 소비. 보류해 둔 기본 충전 잔여를 복원한다.
+      // `hold` 는 `잔여 + 1` 이고 개방된 틱에 기본 충전도 1 흘렀어야 하므로 `hold - 2` 다.
+      const rest = hold - 2;
+      player.dashCooldown = rest > 0 ? rest : 0;
+      recharge = twinRechargeTicks(m10);
+      hold = 0;
+    } else {
+      // 아직 안 썼다 → 보류 중인 기본 충전만 1틱 흘린다. 1 까지 내려오면(= 잔여 0)
+      // 기본 충전이 스스로 회복된 것이라 보류를 푼다(이 아래에서 다시 열 이유가 없다).
+      hold -= 1;
+      if (hold <= 1) hold = 0;
+    }
+  }
+  // 「기본 충전 우선」 — 기본이 이미 준비돼 있으면(`dashCooldown === 0`) 아무것도 하지 않는다.
+  // 그 틱의 대시는 기본 충전이 가져가고, 2충전은 다음 틱에 이 분기로 열린다.
+  if (recharge === 0 && hold === 0 && player.dashCooldown > 0) {
+    hold = player.dashCooldown + 1;
+    player.dashCooldown = 0;
+  }
+  writeSlot(stage, StrikerStage.twinRecharge, recharge);
+  writeSlot(stage, StrikerStage.twinHold, hold);
 }
 
 // ---------------------------------------------------------------------------

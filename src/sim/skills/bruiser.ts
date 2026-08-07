@@ -13,22 +13,44 @@
  *
  * ---
  *
- * ## ⚠️ 지금 배선된 것은 30종 중 19종이다
+ * ## ⚠️ 지금 배선된 것은 30종 중 27종이다
  * 1차 배선이 11종(앵커 ②③④⑧⑨⑩⑪), S2 의 앵커 ⑯(볼리 파라미터)이 **BL3·BL6** 둘을,
  * S2.1 이 연 `VolleyParams.targetDist` 가 **BL2** 하나를, W2 가 앵커 ④ 의 `sources` 로 **BL8** 을
- * 열었다. 이 레인(브루저 배선 W3)이 **MO4·FO4·FO8·FO9** 넷을 더 얹었다 — 넷 다 감쇠 분기를
- * **선점**(앵커 ⑨ 가 그 분기보다 앞이라는 순서를 쓴다)해서 닫았다. 나머지 11종은 아직 앵커가
- * 없는 지점(액티브 핸들러·접촉 피격 판별 루프·젬 스폰·벽 파괴 집계·이동 배율)을
- * 요구한다. 여기 없는 스킬은 "구현했는데 안
- * 불린다"가 아니라 **아직 코드가 없다** — 반쪽 배선과 구분하라. 사유는 레인 보고서에 있다.
+ * 열었다. W3 이 **MO4·FO4·FO8·FO9** 넷을 더 얹었다 — 넷 다 감쇠 분기를 **선점**(앵커 ⑨ 가 그
+ * 분기보다 앞이라는 순서를 쓴다)해서 닫았다.
+ *
+ * **배치5(브루저 레인)가 아홉을 더 얹었다** — `onActiveFired` 로 **BL5·BL10·MO5·MO10**,
+ * `onGemMagnetParams` 로 **MO2**, `onPlayerMoveParams` 로 **MO3**, 벽 축 3앵커로 **BL7·MO7** —
+ * 여덟이다(19 → 27). 아홉째로 다룬 **MO4** 는 새 배선이 아니라 앵커 ⑨ 에서
+ * `onPlayerMoveParams` 로 **이사**한 것이라 종수가 늘지 않는다.
+ *
+ * ## 여기 없는 둘 — **아직 코드가 없다**(반쪽 배선이 아니다)
+ *  - **FO10 파열 소각장**: 술어가 *"강화 액티브 고티어의 **만료** 폭발"* 인데 만료 지점
+ *    (`actives.ts` 의 `ACTIVE_EXPIRE[def.id]`)에 앵커가 **하나도 없다**. `onActiveFired` 는
+ *    **발동** 직후라 만료를 원리적으로 못 본다 — 발동 틱에 표식을 적어 둬도 그 표식을 읽을
+ *    소비처(만료 훅)가 `activeHandlers/bruiser.ts` 에 있고 이 레인의 파일 밖이다. 소비처 없는
+ *    표식만 적는 것이 이 저장소가 금지한 반쪽 배선이라 넣지 않았다. `onActiveExpired` 앵커가
+ *    서면 그 자리에서 닫힌다(`skillHooks.ts` 전수 grep 으로 부재를 확인했다).
+ *  - **FO3 반동 갑주**: 접촉 **상대 적**을 넘겨주는 앵커가 없다. 앵커 ④ 는 `sources` 비트합만
+ *    실어 "접촉이었다"까지만 알려 주고 그 적의 참조가 없다(BL8 이 같은 자리에서 적립 단위를
+ *    "1회" 로 둔 이유가 그것이다). 반사 **대상**이 없으면 효과 본체가 성립하지 않는다.
  */
 
 import type { WorldState, InputFrame } from '../world.js';
 import type { Entity } from '../entities.js';
-import type { VolleyParams } from '../skillHooks.js';
+import { spawnBullet } from '../entities.js';
+import type {
+  VolleyParams,
+  GemMagnetParams,
+  PlayerMoveParams,
+  WallHitParams,
+  WallShockRequest,
+} from '../skillHooks.js';
+import type { ActiveSkillDef } from '../../../data/ships/actives/types.js';
 import { fanStrike, clearEnemyBullets } from '../activeTypes.js';
 import { isElite } from '../elite.js';
-import { cos, sin } from '../math.js';
+import { atan2, cos, sin } from '../math.js';
+import { FIRE_CD_Q } from '../constants.js';
 import type { DamageSourceMask } from '../skillSlots.js';
 import {
   readSlot,
@@ -59,14 +81,22 @@ const enum Sk {
   /** BL2 백병 격발 */ pointBlank = 1,
   /** BL3 만재 중탄 */ fullPlateSlug = 2,
   /** BL4 과적 배출 */ overflowVent = 3,
+  /** BL5 충각 절단 */ ramCleave = 4,
   /** BL6 중량 탄자 */ massSlug = 5,
+  /** BL7 파성퇴 */ wallBreaker = 6,
   /** BL8 격돌 담금질 */ impactTemper = 7,
   /** BL9 중압 리듬 */ crushCadence = 8,
+  /** BL10 소각 여열 */ burnOffHeat = 9,
   /** MO1 충각 적재 */ dashLoading = 10,
+  /** MO2 파쇄 수확 */ wreckHarvest = 11,
+  /** MO3 둔중 관성 */ heavyMomentum = 12,
   /** MO4 장갑 활주 */ armorSkid = 13,
+  /** MO5 견인 돌진 */ haulBlink = 14,
   /** MO6 압쇄장 */ crushField = 15,
+  /** MO7 잔해 회수 */ debrisReclaim = 16,
   /** MO8 벽 되튐 */ wallRebound = 17,
   /** MO9 수확 고정 */ harvestClamp = 18,
+  /** MO10 착탄 충격 */ arrivalShock = 19,
   /** FO1 과적 장갑 */ overPlating = 20,
   /** FO2 응혈 장갑 */ clotPlating = 21,
   /** FO4 부동 역적립 */ unmovedAccretion = 23,
@@ -166,6 +196,77 @@ function inLastStand(player: Entity): boolean {
  * 멀리서도 붙은 것으로 친다" 로 뒤집힌다.
  */
 const POINT_BLANK_RANGE = 350;
+
+// ---------------------------------------------------------------------------
+// 배치5 — 액티브 계열 판별 · 벽 축 · 이동 축의 상수와 헬퍼
+// ---------------------------------------------------------------------------
+
+/**
+ * **기동 액티브**(BL5·MO5·MO10 의 술어)의 정본 판별.
+ *
+ * 축은 `treeIndex === 1`(morph)이고 그 축의 두 정의가 둘 다 `kind === 'dash'` 다
+ * (`data/ships/actives/bruiser.ts`). 둘을 **함께** 보는 이유는 장래에 morph 축에 dash 가 아닌
+ * 정의가 들어와도 "돌진 경로" 라는 술어가 조용히 넓어지지 않게 하기 위함이다 — 경로 축
+ * 스킬(BL5·MO5)은 출발·도착 두 점이 **다르다**는 전제 위에 서 있다.
+ */
+function isDashActive(def: ActiveSkillDef): boolean {
+  return def.treeIndex === 1 && def.kind === 'dash';
+}
+
+/**
+ * 점 `(px,py)` 와 선분 `(ax,ay)-(bx,by)` 사이 **거리의 제곱**. 돌진 경로 판정(BL5·MO5)의 부품.
+ *
+ * ⚠️ 제곱근을 뽑지 않는다 — 비교 상대도 제곱이라 부동소수 왕복이 한 번 준다. 선분 길이가 0
+ * (제자리 발동 · 벽에 막혀 한 칸도 못 간 돌진)이면 `t` 를 0 으로 눌러 **점 대 점**이 된다.
+ */
+function distSqToSegment(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const ex = bx - ax;
+  const ey = by - ay;
+  const len2 = ex * ex + ey * ey;
+  let t = 0;
+  if (len2 > 0) {
+    t = ((px - ax) * ex + (py - ay) * ey) / len2;
+    if (t < 0) t = 0;
+    else if (t > 1) t = 1;
+  }
+  const dx = px - (ax + ex * t);
+  const dy = py - (ay + ey * t);
+  return dx * dx + dy * dy;
+}
+
+
+/**
+ * MO3 — 이동 방향을 **부호 3×3 격자**로 양자화한 코드(1..9). 5 가 정지다.
+ *
+ * 원시 벡터를 그대로 비교하면 아날로그 스틱의 미세 떨림이 매 틱 "방향 전환" 이 되어 관성이
+ * 영영 안 쌓인다. 반대로 각도 임계로 하면 임계 근처에서 판정이 틱마다 뒤집힌다 — 부호
+ * 격자는 둘 다 없고 **정수 비교 하나**로 끝난다(설계 문면의 *"방향 급전환"* 은 이 격자가
+ * 바뀌는 것으로 읽는다. 대각↔직선 전환도 리셋이라 문면보다 약간 엄격하다).
+ */
+function momentumDirCode(mx: number, my: number): number {
+  const sx = mx > 0 ? 1 : mx < 0 ? -1 : 0;
+  const sy = my > 0 ? 1 : my < 0 ? -1 : 0;
+  return (sx + 1) * 3 + (sy + 1) + 1;
+}
+
+/** MO3 — 관성이 최대에 도달하는 지속 틱(고정). 이 값에서 아래 보너스가 온전히 실린다. */
+const MOMENTUM_FULL_TICKS = 120;
+/** MO3 — 코드 5 = `momentumDirCode(0, 0)`. 정지 리셋 술어의 정본(매직넘버 금지). */
+const MOMENTUM_STILL_CODE = 5;
+
+/** BL10 — 소각한 스택 1개당 주무기 쿨다운 환급(틱)의 **레벨 스케일**: 2 + 0.2×Lv 틱. */
+function burnOffRefundQ(level: number): number {
+  // Q 고정소수점(1틱 = `FIRE_CD_Q`)이라 소수 틱을 정수로 적을 수 있다. 반올림은 게이트
+  // **안**에서만 도는 이 함수 자체에 있다(규율 ③).
+  return 2 * FIRE_CD_Q + Math.round((FIRE_CD_Q * 2 * level) / 10);
+}
 
 // ---------------------------------------------------------------------------
 // 탄 표식 — 앵커 ⑯ 이 찍고 앵커 ⑩ 이 읽는다(`VolleyParams.mark` → 탄 `aux0`)
@@ -400,28 +501,41 @@ export function bruiserSignatureStep(
     state.armorMaxStacks = ARMOR_MAX_STACKS + overPlatingBonus(fo1);
   }
 
-  // --- MO4 장갑 활주 -------------------------------------------------------
-  // 감속이 걸려 있으면 장갑 1스택을 태워 무효화하고 전용 내부 쿨을 건다.
+  // --- MO4 장갑 활주 — **이 앵커에서 `onPlayerMoveParams` 로 이사했다**(배치5) -----
+  // 종전 배선은 여기서 `state.playerSlowTicks` 를 직접 0 으로 눌렀고, 그 자리의 알려진 결함이
+  // *"한 틱 늦는다"* 였다 — 감속을 **세우는** 자리(`resolveCollisions`)가 이 앵커 뒤이고 감속을
+  // **읽는** 자리(`stepPlayer`)가 이 앵커 앞이라, 부여된 감속이 다음 틱 이동에 정확히 한 번
+  // 실린 뒤에야 지워졌다. 배치5 의 `onPlayerMoveParams` 가 **감속이 소비되기 직전**에 서므로
+  // 부여 지점이 몇 개든 그 틱 안에서 0 으로 되돌릴 수 있다 → 본체는 `bruiserPlayerMoveParams`.
+
+  // --- MO3 둔중 관성(카운터 갱신) ------------------------------------------
+  // 효과(이속 배율)는 `bruiserPlayerMoveParams` 가 낸다. **카운터를 여기서 도는 이유**는
+  // 술어가 *입력 방향*이기 때문이다 — `onPlayerMoveParams` 는 `input` 을 받지 않고, 그 자리의
+  // `player.vx/vy` 는 감속·모듈 배율·대시 임펄스가 섞인 **직전 틱 결과**라 "같은 방향으로
+  // 이동을 지속했는가" 의 술어로 쓰면 대시 한 번에 방향이 흔들린다. 정지 판정을 입력으로
+  // 하는 것은 FO4 가 이미 세운 이 파일의 규율이다(설계서 1.5 계약).
   //
-  // ⚠️ **전용 쿨이 구조 필수다**(설계서 MO4). 감속 장판 적용부는 매 틱 감속을 재부여하므로,
-  //    쿨이 없으면 장판 위 8틱에 8스택이 증발한다.
-  // ⚠️ **한 틱 늦는다 — 알려진 성질이다.** 감속을 세우는 자리(`resolveCollisions`)는 이 앵커
-  //    **뒤**이고, 이동 배율을 읽는 자리(`stepPlayer`)는 이 앵커 **앞**이다. 그래서 부여된
-  //    감속은 다음 틱 이동에 정확히 한 번 실린 뒤 여기서 지워진다. "0틱 무효화" 를 만들려면
-  //    부여 지점 또는 `stepPlayer` 안에 손잡이가 필요하고 그것은 이 레인 밖이다.
-  // ⚠️ 무적 중에도 돈다 — 감속 부여가 무적 가드보다 위라(설계서 MO4) 무적 중에도 감속이
-  //    걸리고, 그러면 이 스킬의 소모·쿨도 같이 도는 것이 설계 명시다.
-  // ⚠️ 자리는 FO2 정산 **앞**이다. FO2 가 틱 말미 스냅샷(`prevArmorStacks`)을 세우므로, 소모를
-  //    그 뒤에 두면 스냅샷이 한 틱 낡아 만재 엣지 판정이 갈린다.
-  const mo4 = lv(state, Sk.armorSkid);
-  if (mo4 >= 1) {
-    const cd = readSlot(state.skillStage, BruiserStage.skidCooldown);
-    if (cd > 0) {
-      writeSlot(state.skillStage, BruiserStage.skidCooldown, cd - 1);
-    } else if (state.playerSlowTicks > 0 && player.aux0 > 0) {
-      player.aux0 -= 1;
-      state.playerSlowTicks = 0;
-      writeSlot(state.skillStage, BruiserStage.skidCooldown, skidCooldownTicks(mo4));
+  // ⚠️ **효과가 한 틱 늦는다 — 구조에서 오는 성질이다.** `world.ts` 실측 순서가
+  //    `stepPlayer`(이 스킬의 소비처) → `stepShipSignature`(이 카운터)라, 틱 N 에 여기서 센
+  //    지속 틱은 틱 N+1 의 이동에 실린다. 램프가 120틱에 걸쳐 오르는 스킬이라 1틱 지연은
+  //    관측되지 않는다(대신 **리셋도 1틱 늦다** — 급전환 직후 한 틱은 옛 배율로 움직인다).
+  const mo3 = lv(state, Sk.heavyMomentum);
+  if (mo3 >= 1) {
+    const code = momentumDirCode(input.moveX, input.moveY);
+    if (code === MOMENTUM_STILL_CODE) {
+      // 정지 = 즉시 리셋. 방향 칸도 함께 비워, 재출발 첫 틱이 "같은 방향 지속" 으로 이어지지
+      // 않게 한다(비우지 않으면 잠깐 멈췄다 같은 방향으로 가는 것이 무료가 된다).
+      writeSlot(state.skillStage, BruiserStage.momentumTicks, 0);
+      writeSlot(state.skillStage, BruiserStage.momentumDir, 0);
+    } else if (readSlot(state.skillStage, BruiserStage.momentumDir) === code) {
+      const t = readSlot(state.skillStage, BruiserStage.momentumTicks);
+      // 상한에서 멈춘다 — 무한 증가는 u32 폴드에서 의미가 없고 배율도 어차피 상한이다.
+      if (t < MOMENTUM_FULL_TICKS) writeSlot(state.skillStage, BruiserStage.momentumTicks, t + 1);
+    } else {
+      // 방향 급전환 = 리셋. 이번 틱부터 1 로 다시 센다(0 이 아니라 1 — 이미 그 방향으로 한 틱
+      // 움직였다).
+      writeSlot(state.skillStage, BruiserStage.momentumDir, code);
+      writeSlot(state.skillStage, BruiserStage.momentumTicks, 1);
     }
   }
 
@@ -768,4 +882,311 @@ export function bruiserVolleyParams(
     params.life *= 2;
     params.mark |= MARK_MASS_SLUG;
   }
+}
+
+/**
+ * 앵커 `onActiveFired` **액티브 핸들러 직후** — BL5 충각 절단 · MO5 견인 돌진 ·
+ * MO10 착탄 충격 · BL10 소각 여열.
+ *
+ * ## 이 앵커가 열어 준 것
+ *  - **착지 지점** = `player.x/y`(핸들러가 이미 옮겼다) · **출발 지점** = `origin.preX/preY`.
+ *    그 둘을 잇는 선분이 BL5·MO5 가 요구한 *"돌진 경로"* 의 정본이다. 경로를 여기서 다시
+ *    계산할 방법은 없다 — `blink` 이 벽 슬라이드까지 태워 최종 좌표를 확정하므로
+ *    `dir × distance` 로 재구성하면 벽에 막힌 돌진에서 **실제로 지나가지 않은 자리**를 벤다.
+ *  - **소각 전 스택** = `origin.preAux0`. BL10 이 재야 할 "소각한 스택 수" 는 이 값과 지금
+ *    `player.aux0` 의 **차분**으로만 알 수 있다(칼날 핸들러가 0 으로 비워 놓은 뒤다).
+ *
+ * ## ⭐ 스폰이 안전한 지점이다
+ * `stepActives` 는 `state.entities` 를 순회하지 않는다(슬롯 2칸 루프뿐). 지금 이 함수는 개체를
+ * 낳지 않지만(넷 다 기존 개체를 때리거나 옮긴다) 그 제약 때문에 좁힌 것이 아니다.
+ *
+ * ⚠️ `slot` 은 이 기체에서 소비처가 없다 — 버프 잔여 틱 칸을 고르는 스킬이 브루저에 없다.
+ */
+export function bruiserActiveFired(
+  state: WorldState,
+  player: Entity,
+  def: ActiveSkillDef,
+  origin: { preX: number; preY: number; preAux0: number },
+): void {
+  const dash = isDashActive(def);
+
+  // --- BL5 충각 절단 -------------------------------------------------------
+  // 돌진 경로(선분)에서 일정 폭 안에 든 적을 벤다.
+  const bl5 = lv(state, Sk.ramCleave);
+  if (bl5 >= 1 && dash) {
+    // 절단 폭 60 + 4×Lv · 절단 피해 20 + 6×Lv. 둘 다 게이트 안의 양적 계단이다.
+    const width = 60 + 4 * bl5;
+    const w2 = width * width;
+    const dealt = 20 + 6 * bl5;
+    for (const e of state.entities) {
+      if (e.dead) continue;
+      // 대상 범위(enemy+boss)는 `blastDamageAt`·BL3·BL9 와 같게 맞춘다 — 같은 사실이 두 벌이
+      // 되지 않게. guardian·core 는 **일부러 뺐다**(`world.ts` 의 부활 분기를 건너뛰고 죽인다).
+      if (e.kind !== 'enemy' && e.kind !== 'boss') continue;
+      if (distSqToSegment(e.x, e.y, origin.preX, origin.preY, player.x, player.y) > w2) continue;
+      e.hp -= dealt;
+      // ⚠️ 좀비 결함 — `compact()` 의 1차 게이트가 `e.dead` 다(정본 `status.ts` 111-112).
+      //    여기서 안 세우면 절단으로만 죽은 적이 계속 움직이고 처치·젬·전리품이 전부 유실된다.
+      if (e.hp <= 0) e.dead = true;
+    }
+  }
+
+  // --- MO5 견인 돌진 -------------------------------------------------------
+  // 경로 회랑 안의 젬·드랍을 **도착 지점으로 옮긴다**(수거가 아니다 — 수거의 단일 수렴점은
+  // `collectGem` 이고 여기서 걷어가면 콤보·XP 가 두 곳에서 갈린다).
+  const mo5 = lv(state, Sk.haulBlink);
+  if (mo5 >= 1 && dash) {
+    const width = 80 + 6 * mo5;
+    const w2 = width * width;
+    for (const e of state.entities) {
+      if (e.dead) continue;
+      // ⚠️ **`gem`·`loot` 둘뿐이다.** `magnetEmitter`·`turretPickup`·`bombDevice` 는 문면상
+      //    "픽업" 으로 읽히지만 **배치된 기믹**이라 좌표를 옮기면 스테이지 가구가 통째로
+      //    따라온다(청크 컬링·기물 배치가 좌표에 매여 있다). 떨어진 드랍 둘만 옮긴다.
+      if (e.kind !== 'gem' && e.kind !== 'loot') continue;
+      if (distSqToSegment(e.x, e.y, origin.preX, origin.preY, player.x, player.y) > w2) continue;
+      e.x = player.x;
+      e.y = player.y;
+      // 속도를 비운다 — `stepGems` 가 매 틱 자석 속도를 다시 세우지만, 비우지 않으면 이번 틱
+      // 잔여 속도가 옮긴 좌표를 그 자리에서 밀어낸다(`loot` 는 `stepGems` 대상도 아니다).
+      e.vx = 0;
+      e.vy = 0;
+    }
+  }
+
+  // --- MO10 착탄 충격 ------------------------------------------------------
+  // 기동 액티브 **고티어** 도착 틱에만 발동한다. 피해가 없는 것이 문면이다(밀어내기 + 소거).
+  const mo10 = lv(state, Sk.arrivalShock);
+  if (mo10 >= 1 && dash && def.tier === 'hi') {
+    const radius = 140 + 10 * mo10;
+    const r2 = radius * radius;
+    const push = 20 + 2 * mo10;
+    for (const e of state.entities) {
+      if (e.dead || e.kind !== 'enemy') continue;
+      const dx = e.x - player.x;
+      const dy = e.y - player.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > r2 || d2 <= 0) continue;
+      // 넉백 규율(7.1) — 속도 대입이 아니라 **좌표 직접 변위**다(MO6·BL6 과 같은 형태).
+      const d = Math.sqrt(d2);
+      e.x += (dx / d) * push;
+      e.y += (dy / d) * push;
+    }
+    clearEnemyBullets(state, player, radius);
+  }
+
+  // --- BL10 소각 여열 ------------------------------------------------------
+  // 칼날 축(`treeIndex === 0`) 액티브가 스택을 태운 만큼 주무기 쿨다운을 환급한다.
+  //
+  // ⚠️ **설계와 어긋나는 지점(레인 보고서에 적었다).** 문면은 *"소각한 스택 1개당"* 인데 이
+  //    앵커가 관측할 수 있는 것은 **순감소분**(`preAux0 − 지금`)뿐이다. `blade_lo` 는 쌓인
+  //    스택을 그대로 태우므로 순감소분 = 소각분으로 정확히 일치하지만, `blade_hi` 는 *먼저
+  //    만재로 채운 뒤 전량을 태우는* 2단이라 실제 소각분이 `armorMaxStacks` 인데 순감소분은
+  //    `preAux0` 다 — **스택이 비어 있을 때 쏜 고티어는 환급이 0 이 된다.** 정확히 하려면
+  //    핸들러가 소각량을 실어 보내야 하고(`activeHandlers/bruiser.ts`) 그것은 이 레인 밖이다.
+  //    핸들러 내부(고티어는 만재로 채운다)를 여기서 다시 적는 대안은 같은 사실의 두 번째
+  //    사본이라 택하지 않았다.
+  const bl10 = lv(state, Sk.burnOffHeat);
+  if (bl10 >= 1 && def.treeIndex === 0) {
+    const burned = origin.preAux0 - player.aux0;
+    if (burned > 0) {
+      player.cooldown -= burned * burnOffRefundQ(bl10);
+      // ⚠️ **0 에서 멈춘다.** `player.cooldown` 은 음수 잔여분을 `(−FIRE_CD_Q, 0]` 로 유계하게
+      //    들고 다니는 carry 다(`world.ts` 발사부 주석). 그 아래로 내리면 소수 주기 재현
+      //    장치가 깨져 이후 연사가 통째로 어긋난다. 0 = "지금 쏠 수 있다" 로 이미 최대다.
+      if (player.cooldown < 0) player.cooldown = 0;
+    }
+  }
+}
+
+/**
+ * 앵커 `onGemMagnetParams` **자석 반경 확정 직후·제곱 전** — MO2 파쇄 수확.
+ *
+ * ## ⚠️ 설계와 어긋나는 지점(레인 보고서에 적었다)
+ * 문면은 *"근접 임계 이내에서 **처치한 적이 떨군** 젬"* 이라 젬 **개체별** 술어인데, 이 앵커가
+ * 고칠 수 있는 것은 이번 틱의 **반경 하나**뿐이다(`GemMagnetParams` 에 젬 목록이 없고, 젬에는
+ * "누가 떨궜는가" 를 담는 칸도 없다). 그래서 배선은 *"근접 임계 안의 젬은 자석 반경이 얼마든
+ * 반드시 끌려온다"* 는 **하한 보장**으로 옮겼다 — 문면의 *"자석 반경과 무관하게"* 는 그대로
+ * 성립하고, 대신 그 반경 안에 **다른 사유로 놓인 젬까지** 함께 끌린다(한 칸 넓다).
+ */
+export function bruiserGemMagnetParams(
+  state: WorldState,
+  player: Entity,
+  params: GemMagnetParams,
+): void {
+  void player;
+  const mo2 = lv(state, Sk.wreckHarvest);
+  if (mo2 < 1) return;
+  // 하한 = 근접 임계(BL2 와 **같은 상수**를 읽는다 — 이 기체의 "근접" 은 한 벌이다) + 10×Lv.
+  // ⚠️ **덮어쓰지 않고 올리기만 한다.** 자석 파워업·자석 버프로 이미 더 넓은 런에서 반경을
+  //    이 값으로 대입하면 스킬을 찍는 순간 자석이 **줄어든다**.
+  const floor = POINT_BLANK_RANGE + 10 * mo2;
+  if (params.radius < floor) params.radius = floor;
+  // `broodRadius` 는 해츨링 소관이다 — 건드리지 않는다.
+}
+
+/**
+ * 앵커 `onPlayerMoveParams` **이동 배율 산출 직전** — MO3 둔중 관성 · MO4 장갑 활주.
+ *
+ * ## ⭐ MO4 의 "0틱 무효화" 가 여기서 성립한다
+ * 종전 자리(앵커 ⑨ = `stepShipSignature`)는 감속을 **읽는** 자리보다 뒤라 무효화가 항상 한 틱
+ * 늦었다. 이 앵커는 감속이 **소비되기 직전**이라 부여 지점이 몇 개든 그 틱 안에서 0 이 된다.
+ * 호출부는 되쓴 `slowTicks` 로 배율을 정한 **뒤** 1 을 깎으므로, 0 을 쓰면 배율이 1 이고
+ * 감소도 돌지 않는다(음수로 새지 않는다).
+ *
+ * ⚠️ **매 틱 불린다.** 나눗셈은 전부 투자 게이트 **안**이다(`skills/striker.ts` 규율 ③).
+ */
+export function bruiserPlayerMoveParams(
+  state: WorldState,
+  player: Entity,
+  params: PlayerMoveParams,
+): void {
+  // --- MO4 장갑 활주 -------------------------------------------------------
+  // ⚠️ **전용 내부 쿨이 구조 필수다**(설계서 MO4). 감속 장판 적용부는 **매 틱 감속을
+  //    재부여**하므로, 쿨이 없으면 장판 위 8틱에 8스택이 증발한다. `playerSlowTicks` 잔여로
+  //    겸용하는 대안은 자기모순이다 — 무효화에 성공하면 잔여가 0 이라 쿨 판정의 근거가 사라진다.
+  // ⚠️ 무적 중에도 돈다 — 감속 부여가 무적 가드보다 위라(설계서 MO4) 무적 중에도 감속이
+  //    걸리고, 그러면 이 스킬의 소모·쿨도 같이 도는 것이 설계 명시다.
+  const mo4 = lv(state, Sk.armorSkid);
+  if (mo4 >= 1) {
+    const cd = readSlot(state.skillStage, BruiserStage.skidCooldown);
+    if (cd > 0) {
+      writeSlot(state.skillStage, BruiserStage.skidCooldown, cd - 1);
+    } else if (params.slowTicks > 0 && player.aux0 > 0) {
+      player.aux0 -= 1;
+      params.slowTicks = 0;
+      writeSlot(state.skillStage, BruiserStage.skidCooldown, skidCooldownTicks(mo4));
+    }
+  }
+
+  // --- MO3 둔중 관성 -------------------------------------------------------
+  // 카운터는 앵커 ⑨ 가 **입력**으로 굴린다(그 자리의 주석이 근거). 여기서는 읽어서 배율만 낸다.
+  const mo3 = lv(state, Sk.heavyMomentum);
+  if (mo3 >= 1) {
+    let t = readSlot(state.skillStage, BruiserStage.momentumTicks);
+    if (t > 0) {
+      if (t > MOMENTUM_FULL_TICKS) t = MOMENTUM_FULL_TICKS;
+      // 최대 가산 10% + 3%p/Lv, 지속 틱에 **선형 비례**. 나눗셈이 게이트 안이다(규율 ③).
+      // 반올림하지 않는다 — `speedMult` 는 배율(실수)이고, 여기서 정수화하면 램프가 계단이 된다.
+      params.speedMult += (t / MOMENTUM_FULL_TICKS) * ((1000 + 300 * mo3) / 10000);
+    }
+  }
+}
+
+/**
+ * 벽 축 앵커 ① `onWallHit` **겹침 확정 직후 · `w.hp` 감산 앞** — BL7 파성퇴.
+ *
+ * ## 왜 감산 **앞**이어야 하는가
+ * *"일격 파괴"* 는 이번 히트의 **피해를 바꾸는 것**으로만 표현된다. 감산 뒤로 가면 `wall.hp` 가
+ * 이미 깎여 "한 방에 부순다" 를 적을 자리가 없다. `params.damage` 는 호출부에서 `min`·`max`
+ * 없이 그대로 `w.hp -= …` 로 소비되므로(`WallHitParams.damage` doc 이 경로를 짚었다) `wall.hp`
+ * 를 그대로 실으면 정확히 0 이 되어 파괴가 확정되고, 그 직후 `onWallDestroyed`(MO7)가 돈다.
+ *
+ * ⚠️ **`wall.dead` 를 직접 세우지 마라** — 세우면 호출부의 `w.hp <= 0` 분기를 우회해
+ * `onWallDestroyed` 가 안 불리고 MO7 이 조용히 죽는다(앵커 doc 의 명시 금지).
+ * ⚠️ **순회 안이라 스폰이 금지다.** 충격파는 `params.shockAt` 에 **요청만** 적고 루프 뒤
+ * `onWallShockResolve` 에서 낳는다.
+ */
+export function bruiserWallHit(
+  state: WorldState,
+  player: Entity,
+  bullet: Entity,
+  wall: Entity,
+  params: WallHitParams,
+): void {
+  void player;
+  const bl7 = lv(state, Sk.wallBreaker);
+  if (bl7 < 1) return;
+  // 게이트는 **훅 책임**이다(앵커 헤더) — 이 앵커는 적탄·불파괴 벽에서도 불린다.
+  //  · `kind === 'bullet'` : 아군탄만. 적탄에서 `damage` 를 만져도 호출부가 소비하지 않는다.
+  //  · `wall.hp > 0` : 파괴가능 벽만(`isBreakableWall` 의 술어. 그 함수는 `modes/blockBreak.ts`
+  //    소유라 이 leaf 에서 값으로 import 하면 계층이 무너진다 — 앵커 doc 이 "`hp > 0`" 을 훅의
+  //    판별 근거로 명시했다).
+  if (bullet.kind !== 'bullet' || wall.hp <= 0) return;
+  // 일격 파괴 — 남은 hp 를 그대로 실어 정확히 0 으로 만든다. `Math.max` 로 올리기만 한다:
+  // 이미 그 이상 때리는 탄(고피해 볼리)의 피해를 **깎지 않기** 위해서다.
+  if (params.damage < wall.hp) params.damage = wall.hp;
+  // 충격파 요청 — 좌표는 벽에 닿은 지점(탄의 이번 틱 종말 좌표), 방향은 탄의 진행 방향이다.
+  // ⚠️ 요청은 **덮어쓴다**. 한 탄이 한 벽에 겹치는 사건마다 한 건이라 여기서 쌓을 것이 없고,
+  //    `shockAt` 은 호출부가 히트마다 새로 만드는 레코드다.
+  params.shockAt = { x: bullet.x, y: bullet.y, dirX: bullet.vx, dirY: bullet.vy };
+}
+
+/**
+ * 벽 축 앵커 ③ `onWallShockResolve` **투사체 루프 밖** — BL7 파성퇴의 전방 충격파.
+ *
+ * ⭐ 여기서는 스폰이 안전하다(`stepProjectiles` 의 `state.entities` 순회가 끝난 지점).
+ * ⚠️ **탄 상한은 훅이 스스로 지킨다** — 호출부는 여기서 세지 않는다(앵커 doc). 바로 옆
+ * `bulletSplits` 가 `countKind` 로 지키는 것과 같은 규율이고, `countKind` 가 `world.ts` 사유라
+ * 여기서 같은 것을 센다(값 복제가 아니라 같은 배열의 같은 술어다).
+ */
+export function bruiserWallShockResolve(
+  state: WorldState,
+  player: Entity,
+  req: WallShockRequest,
+): void {
+  void player;
+  const bl7 = lv(state, Sk.wallBreaker);
+  if (bl7 < 1) return;
+  // 방향 정규화는 **훅 몫**이다(`WallShockRequest.dirX` doc — 단위 벡터가 아니다). 길이 0 은
+  // 물리적으로 불가능하지만(정지한 탄은 벽에 겹치지 않는다) `atan2(0,0)` 을 피해 조기 반환한다.
+  if (req.dirX === 0 && req.dirY === 0) return;
+  // 발수 3 + ceil(Lv/4) · 각도폭 70도 · 피해 12 + 4×Lv. 전부 게이트 안의 양적 계단이다.
+  const count = 3 + Math.ceil(bl7 / 4);
+  const dealt = 12 + 4 * bl7;
+  const base = atan2(req.dirY, req.dirX);
+  const spread = (70 * Math.PI) / 180;
+  const step = count > 1 ? spread / (count - 1) : 0;
+  const start = base - spread / 2;
+  // 탄 상한 — 살아 있는 아군탄 수를 세고 그 자리에서 멈춘다(초과분은 버린다).
+  let live = 0;
+  for (const e of state.entities) {
+    if (e.kind === 'bullet' && !e.dead) live++;
+  }
+  for (let i = 0; i < count; i++) {
+    if (live >= state.bulletCap) break;
+    const a = start + step * i;
+    // 삼각함수는 `math.ts` 의 결정론 구현이다(`Math.cos` 금지 — 플랫폼 trig 는 해시를 가른다).
+    spawnBullet(
+      state,
+      req.x,
+      req.y,
+      a,
+      state.weapon.bulletSpeed,
+      dealt,
+      0,
+      state.weapon.bulletRadius,
+      state.weapon.bulletLife,
+      cos(a),
+      sin(a),
+    );
+    live++;
+  }
+}
+
+/**
+ * 벽 축 앵커 ② `onWallDestroyed` **`wall.dead = true` 직후** — MO7 잔해 회수.
+ *
+ * ## ⚠️ destructible 절반은 **못 넣었다** — 앵커가 그 경로를 안 지나간다
+ * 문면은 *"파괴가능 벽·**destructible** 이 부서질 때"* 인데 이 앵커는 **탄에 의한 벽 파괴
+ * 전용**이다(앵커 doc 이 명시). `destructible`(보상 오브젝트)의 파괴는 `compact()` 의 드랍
+ * 분기를 타고 이 자리로 오지 않으며, 그 분기에는 스킬 앵커가 하나도 없다(`skillHooks.ts`
+ * 전수 grep 으로 확인). 그쪽에 앵커가 서면 이 함수를 그 자리에서도 부르면 된다 — 지금
+ * **표식만 적어 두는 반쪽 배선은 하지 않았다**(소비처가 없으면 카운터는 거짓말이다).
+ */
+export function bruiserWallDestroyed(state: WorldState, player: Entity, wall: Entity): void {
+  void wall;
+  const mo7 = lv(state, Sk.debrisReclaim);
+  if (mo7 < 1) return;
+  // 대시 쿨다운 환급 10 + 2×Lv 틱. 0 에서 멈춘다(음수 쿨다운은 `stepPlayer` 의 `> 0` 감소
+  // 분기를 영영 안 타 "대시가 준비됐다" 판정이 `=== 0` 인 자리에서 조용히 거짓이 된다).
+  if (player.dashCooldown > 0) {
+    const back = 10 + 2 * mo7;
+    player.dashCooldown = player.dashCooldown > back ? player.dashCooldown - back : 0;
+  }
+  // "자원이 소량 적립" — 이 기체의 자원은 장갑 스택이다. 적립 짝으로 감쇠 타이머도 리셋한다
+  // (엔진 적립부·MO1 이 하는 일과 같은 짝. 빠뜨리면 "적립했는데 타이머는 안 리셋" 이라는
+  //  엔진에 없는 상태가 생긴다).
+  player.aux0 = clampArmorStacks(player.aux0 + 1, state.armorMaxStacks);
+  player.aux1 = 0;
 }

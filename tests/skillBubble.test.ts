@@ -45,9 +45,17 @@ import {
   onFilmAbsorbed,
   onFilmEntry,
   onFilmEfficiency,
+  onActiveFired,
+  onGemMagnetParams,
+  onPlayerMoveParams,
   type VolleyParams,
+  type ActiveFiredOrigin,
+  type GemMagnetParams,
+  type PlayerMoveParams,
 } from '../src/sim/skillHooks.js';
 import { resolveFilmBurst } from '../src/sim/filmBurst.js';
+import { BUBBLE_ACTIVES } from '../data/ships/actives/bubble.js';
+import { DT } from '../src/sim/constants.js';
 import {
   SIG_BUBBLE_FILM,
   FILM_ABSORB_FLAT,
@@ -73,8 +81,13 @@ const PO3 = 2;
 const PO5 = 4;
 const PO6 = 5;
 const PO7 = 6;
+const PO9 = 8;
 const DR1 = 10;
+const DR4 = 13;
+const DR5 = 14;
 const DR6 = 15;
+const DR9 = 18;
+const DR10 = 19;
 const FI1 = 20;
 const FI2 = 21;
 const FI3 = 22;
@@ -1070,5 +1083,429 @@ describe('PO1 사망 마킹 (좀비 결함)', () => {
     onFilmBurst(w, cx, cy);
     expect(e.hp).toBe(10);
     expect(e.dead).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑩ 액티브 발동 직후 (앵커 ㉗) — PO9 고압 격발 조율 · DR9 이탈 잔파동
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션으로 계측기를 검사했다 (2026-08-07 · 배치5)
+// 앵커 ㉗ 의 `case SIG_BUBBLE_FILM:` 본문 호출(`bubbleActiveFired`)을 지우면 **양성 6항목이
+// 실패**한다(PO9 Lv1 추가탄 · PO9 Lv 단조 · DR9 밀어내기 · DR9 적탄 소거 · DR9 막 보정 반경 ·
+// DR9 계열 게이트의 긍정 짝). 부정 항목("안 쏜다"·"파열이 아니다")은 원리적으로 안 걸리므로
+// 전부 긍정 짝을 같은 절에 뒀다.
+
+describe('⑩ 액티브 발동 직후 (앵커 ㉗)', () => {
+  const POP_LO = BUBBLE_ACTIVES[0];
+  const POP_HI = BUBBLE_ACTIVES[1];
+  const DRIFT_LO = BUBBLE_ACTIVES[2];
+  const RIGHT = { x: 1, y: 0 };
+
+  /** 핸들러가 이미 돈 뒤의 스냅샷. `preAux0` = 핸들러가 비우기 전의 막 내구. */
+  function origin(w: WorldState, preAux0: number, preX: number, preY: number): ActiveFiredOrigin {
+    return { preX, preY, preAux0, spawnWatermark: w.entities.length };
+  }
+
+  it('PO9 — `pop_hi` 발동 뒤 환산 초과분만큼 탄이 **더** 난다 (Lv1 에서도 0 이 아니다)', () => {
+    const w = mk([[PO9, 1]]);
+    const p = player(w);
+    const before = countBullets(w);
+    // 만재(60) ÷ 분모(4) = 15발이 이미 나갔다는 전제. Lv1 = +5% → round(0.75) = 1발.
+    onActiveFired(w, p, POP_HI, RIGHT, 0, origin(w, FILM_ABSORB_FLAT, p.x, p.y));
+    expect(countBullets(w) - before).toBe(1);
+  });
+
+  it('PO9 — 레벨이 오르면 추가 탄수가 **엄격히** 는다 (하한부터 못 박는다)', () => {
+    const lo = mk([[PO9, 1]]);
+    const pl = player(lo);
+    const b0 = countBullets(lo);
+    onActiveFired(lo, pl, POP_HI, RIGHT, 0, origin(lo, FILM_ABSORB_FLAT, pl.x, pl.y));
+    const dLo = countBullets(lo) - b0;
+
+    const hi = mk([[PO9, 20]]);
+    const ph = player(hi);
+    const b1 = countBullets(hi);
+    onActiveFired(hi, ph, POP_HI, RIGHT, 0, origin(hi, FILM_ABSORB_FLAT, ph.x, ph.y));
+    const dHi = countBullets(hi) - b1;
+
+    // ⚠️ 하한이 없으면 배선이 끊겨 둘 다 0 일 때 단조식이 성립한다(§⑦ FI4 가 실제로 밟았다).
+    expect(dLo).toBeGreaterThan(0);
+    expect(dHi).toBeGreaterThan(dLo);
+    expect(dHi).toBe(4); // round(15 × 24%) — 총 8 + 15 + 4 = 27발
+  });
+
+  it('PO9 — 소모한 내구가 0 이면 추가분도 0 이다 (`preAux0` 을 실제로 읽는다)', () => {
+    const w = mk([[PO9, 20]]);
+    const p = player(w);
+    const before = countBullets(w);
+    onActiveFired(w, p, POP_HI, RIGHT, 0, origin(w, 0, p.x, p.y));
+    expect(countBullets(w)).toBe(before);
+  });
+
+  it('PO9 — `pop_lo`·drift 계열에는 안 걸린다 (같은 런에서 `pop_hi` 는 걸린다)', () => {
+    const w = mk([[PO9, 20]]);
+    const p = player(w);
+    const b0 = countBullets(w);
+    onActiveFired(w, p, POP_LO, RIGHT, 0, origin(w, FILM_ABSORB_FLAT, p.x, p.y));
+    onActiveFired(w, p, DRIFT_LO, RIGHT, 0, origin(w, FILM_ABSORB_FLAT, p.x, p.y));
+    expect(countBullets(w)).toBe(b0); // 두 계열 다 무연산
+    onActiveFired(w, p, POP_HI, RIGHT, 0, origin(w, FILM_ABSORB_FLAT, p.x, p.y));
+    expect(countBullets(w)).toBeGreaterThan(b0); // 긍정 짝 — 게이트가 통째로 죽은 게 아니다
+  });
+
+  it('DR9 — **출발 지점**(착지점이 아니다) 둘레의 적을 밀고 적탄을 지운다', () => {
+    const w = mk([[DR9, 1]]);
+    const p = player(w);
+    // 도약이 끝나 `player` 는 이미 착지점이다. 출발 지점은 300 떨어져 있다.
+    const sx = p.x + 300;
+    const sy = p.y;
+    const foe = addEnemy(w, sx + 50, sy, 500); // 출발 지점 반경 108 안
+    const shot = addEnemyBullet(w, sx + 40, sy);
+    const near = addEnemy(w, p.x + 50, p.y, 500); // 착지점 둘레 — 잔파동 밖이어야 한다
+    const nearX0 = near.x;
+    onActiveFired(w, p, DRIFT_LO, RIGHT, 0, origin(w, 0, sx, sy));
+    expect(foe.x).toBeCloseTo(sx + 50 + 90, 6); // 변위 90, 중심에서 바깥으로
+    expect(shot.dead).toBe(true);
+    expect(near.x).toBe(nearX0); // 기준점이 `player` 였다면 여기가 깨진다
+  });
+
+  it('DR9 — 막이 서 있으면 반경이 1.5배다 (무막 대조군과 짝)', () => {
+    // 반경 base = 108. 130 은 무막이면 밖, 막이 서 있으면(×1.5 = 162) 안이다.
+    const bare = mk([[DR9, 1]]);
+    const pb = player(bare);
+    pb.aux0 = 0;
+    const sxb = pb.x + 400;
+    const fb = addEnemy(bare, sxb + 130, pb.y, 500);
+    onActiveFired(bare, pb, DRIFT_LO, RIGHT, 0, origin(bare, 0, sxb, pb.y));
+    expect(fb.x).toBe(sxb + 130); // 무막 = 안 밀린다
+
+    const filmed = mk([[DR9, 1]]);
+    const pf = player(filmed);
+    pf.aux0 = FILM_ABSORB_FLAT;
+    const sxf = pf.x + 400;
+    const ff = addEnemy(filmed, sxf + 130, pf.y, 500);
+    onActiveFired(filmed, pf, DRIFT_LO, RIGHT, 0, origin(filmed, 0, sxf, pf.y));
+    expect(ff.x).toBeCloseTo(sxf + 130 + 90, 6); // 막 있음 = 밀린다
+  });
+
+  it('DR9 — **파열이 아니다**: `aux0`·`aux1` 이 한 점도 안 변한다 (미는 것은 긍정 짝이 증명)', () => {
+    const w = mk([[DR9, 20]]);
+    const p = player(w);
+    p.aux0 = 33;
+    p.aux1 = 77;
+    const sx = p.x + 400;
+    const foe = addEnemy(w, sx + 20, p.y, 500);
+    onActiveFired(w, p, DRIFT_LO, RIGHT, 0, origin(w, 33, sx, p.y));
+    expect(foe.x).toBeGreaterThan(sx + 20); // 긍정 짝 — 훅이 실제로 돌았다
+    expect(p.aux0).toBe(33);
+    expect(p.aux1).toBe(77);
+  });
+
+  it('DR9 — pop 계열 액티브로는 잔파동이 안 난다 (drift 로는 난다)', () => {
+    const w = mk([[DR9, 20]]);
+    const p = player(w);
+    const sx = p.x + 400;
+    const a = addEnemy(w, sx + 20, p.y, 500);
+    onActiveFired(w, p, POP_LO, RIGHT, 0, origin(w, 0, sx, p.y));
+    expect(a.x).toBe(sx + 20);
+    onActiveFired(w, p, DRIFT_LO, RIGHT, 0, origin(w, 0, sx, p.y));
+    expect(a.x).toBeGreaterThan(sx + 20);
+  });
+
+  it('**다른 스킬만 찍은 런**에서는 ㉗ 이 아무것도 안 한다', () => {
+    const w = mk([[FI2, 20]]);
+    const p = player(w);
+    const sx = p.x + 400;
+    const foe = addEnemy(w, sx + 20, p.y, 500);
+    const shot = addEnemyBullet(w, sx + 20, p.y);
+    const b0 = countBullets(w);
+    onActiveFired(w, p, POP_HI, RIGHT, 0, origin(w, FILM_ABSORB_FLAT, sx, p.y));
+    onActiveFired(w, p, DRIFT_LO, RIGHT, 0, origin(w, FILM_ABSORB_FLAT, sx, p.y));
+    expect(countBullets(w)).toBe(b0);
+    expect(foe.x).toBe(sx + 20);
+    expect(shot.dead).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑪ 젬 자석 파라미터 (앵커 ㉘) — DR5 무지개 공명 · DR10 공막 유속(흡인)
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션으로 계측기를 검사했다 (2026-08-07 · 배치5)
+// 앵커 ㉘ 의 `case SIG_BUBBLE_FILM:` 본문 호출을 지우면 **양성 5항목이 실패**한다
+// (DR5 반경 확대 · DR5 레벨 단조 · DR5 상한의 긍정 짝 · DR10 변위 · DR10 과다 변위 스냅).
+
+describe('⑪ 젬 자석 파라미터 (앵커 ㉘)', () => {
+  function magnet(radius: number): GemMagnetParams {
+    return { radius, broodRadius: 0 };
+  }
+
+  it('DR5 — 콤보 스택에 비례해 반경이 커진다 (하한부터 못 박는다)', () => {
+    const w = mk([[DR5, 20]]);
+    w.combo = 10;
+    const m = magnet(400);
+    onGemMagnetParams(w, player(w), m);
+    // 스택당 1.5% + 0.15%p/Lv → Lv20 = 4.5%/스택 · 10스택 = +45%.
+    expect(m.radius).toBeGreaterThan(400); // 하한 — 배선이 끊기면 여기가 먼저 깨진다
+    expect(m.radius).toBeCloseTo(580, 6);
+  });
+
+  it('DR5 — 콤보 0 이면 무연산이고, 콤보가 붙으면 커진다 (부정·긍정 짝)', () => {
+    const w = mk([[DR5, 20]]);
+    w.combo = 0;
+    const zero = magnet(400);
+    onGemMagnetParams(w, player(w), zero);
+    expect(zero.radius).toBe(400);
+    w.combo = 4;
+    const some = magnet(400);
+    onGemMagnetParams(w, player(w), some);
+    expect(some.radius).toBeGreaterThan(400);
+  });
+
+  it('DR5 — 콤보 상한 10 을 넘겨도 더 안 커진다 (상한이 실제로 걸린다)', () => {
+    const w = mk([[DR5, 20]]);
+    w.combo = 10;
+    const cap = magnet(400);
+    onGemMagnetParams(w, player(w), cap);
+    w.combo = 999;
+    const over = magnet(400);
+    onGemMagnetParams(w, player(w), over);
+    expect(cap.radius).toBeGreaterThan(400); // 긍정 짝
+    expect(over.radius).toBe(cap.radius);
+  });
+
+  it('DR10 — 막이 없는 동안 젬이 **추가로** 당겨진다 (막이 서 있으면 안 당겨진다)', () => {
+    const w = mk([[DR10, 1]]);
+    const p = player(w);
+    const g = addGem(w, p.x + 200, p.y);
+    g.vx = -1000; // 지난 틱 흡인 속도(엔진이 실어 둔 값) — 크기만 쓴다
+    g.vy = 0;
+    p.aux0 = 0;
+    onGemMagnetParams(w, p, magnet(400));
+    const step = (1000 * DT * (2000 + 300 * 1)) / 10000;
+    expect(g.x).toBeCloseTo(p.x + 200 - step, 6);
+    expect(step).toBeGreaterThan(0); // 하한 — DT·bp 가 0 이면 위 단언이 항진이다
+
+    const filmed = mk([[DR10, 1]]);
+    const pf = player(filmed);
+    const gf = addGem(filmed, pf.x + 200, pf.y);
+    gf.vx = -1000;
+    pf.aux0 = FILM_ABSORB_FLAT;
+    onGemMagnetParams(filmed, pf, magnet(400));
+    expect(gf.x).toBe(pf.x + 200);
+  });
+
+  it('DR10 — 반경 밖 젬은 안 건드린다 (반경 안 젬은 건드린다)', () => {
+    const w = mk([[DR10, 20]]);
+    const p = player(w);
+    const far = addGem(w, p.x + 500, p.y);
+    far.vx = -1000;
+    const near = addGem(w, p.x + 100, p.y);
+    near.vx = -1000;
+    p.aux0 = 0;
+    onGemMagnetParams(w, p, magnet(400));
+    expect(far.x).toBe(p.x + 500);
+    expect(near.x).toBeLessThan(p.x + 100);
+  });
+
+  it('DR10 — 남은 거리보다 큰 변위는 플레이어 좌표로 **스냅**한다 (지나치지 않는다)', () => {
+    const w = mk([[DR10, 20]]);
+    const p = player(w);
+    const g = addGem(w, p.x + 5, p.y);
+    g.vx = -100000; // 남은 거리(5)를 훨씬 넘는 한 틱 변위
+    p.aux0 = 0;
+    onGemMagnetParams(w, p, magnet(400));
+    expect(g.x).toBe(p.x);
+    expect(g.y).toBe(p.y);
+    expect(g.vx).toBe(0); // 잔여 속도도 지운다(DR1 과 같은 규율)
+  });
+
+  it('`broodRadius` 는 한 칸도 안 건드린다 (해츨링 NU1 의 자리다)', () => {
+    const w = mk([[DR5, 20], [DR10, 20]]);
+    w.combo = 10;
+    const m = magnet(400);
+    onGemMagnetParams(w, player(w), m);
+    expect(m.broodRadius).toBe(0);
+  });
+
+  it('**다른 스킬만 찍은 런**에서는 ㉘ 이 아무것도 안 한다', () => {
+    const w = mk([[FI2, 20]]);
+    const p = player(w);
+    w.combo = 10;
+    const g = addGem(w, p.x + 100, p.y);
+    g.vx = -1000;
+    p.aux0 = 0;
+    const m = magnet(400);
+    onGemMagnetParams(w, p, m);
+    expect(m.radius).toBe(400);
+    expect(g.x).toBe(p.x + 100);
+  });
+
+  it('이음매 — `stepWorld` 한 틱이 DR5 로 넓힌 반경을 실제로 쓴다', () => {
+    // 기본 반경 밖 · DR5(Lv20 · 10스택 = +45%) 안쪽에 젬을 둔다.
+    function run(points: ReadonlyArray<readonly [number, number]>): number {
+      const w = createWorld(4242, { ...bubbleConfig(), skillInvest: invest(points) });
+      const p = player(w);
+      w.combo = 10;
+      const g = addGem(w, p.x + w.magnetRadius * 1.2, p.y);
+      const x0 = g.x;
+      stepWorld(w, emptyInput());
+      return g.x - x0;
+    }
+    // 대조군: 자석 축이 아닌 스킬만 찍은 런 — 젬은 반경 밖이라 속도 0 · 좌표 불변.
+    expect(run([[FI2, 20]])).toBe(0);
+    // DR5 를 찍으면 같은 자리의 젬이 흡인된다(플레이어 쪽 = -x 방향).
+    expect(run([[DR5, 20]])).toBeLessThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑫ 재생 완료 틱의 견인 펄스 (앵커 ⑨) — DR10 나머지 절반
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 앵커 ⑨ 는 `stepShipSignature` 의 **기체 분기보다 앞**이라, 이 훅이 도는 시점에는 아직
+// `aux1++` 도 `aux0 = FLAT` 도 일어나지 않았다. 그래서 술어가 "막이 섰다" 가 아니라
+// **"이 틱에 선다"**(`aux0 === 0 && filmReady(aux1 + 1)`)다.
+
+describe('⑫ DR10 견인 펄스 (앵커 ⑨)', () => {
+  it('재생이 완료되는 그 틱에 자석 2배 반경의 젬을 한 번 끌어당긴다', () => {
+    const w = mk([[DR10, 1]]);
+    const p = player(w);
+    p.aux0 = 0;
+    p.aux1 = FILM_PERIOD_TICKS - 1; // 다음 증가로 막이 선다
+    const g = addGem(w, p.x + 300, p.y);
+    onSignatureStep(w, p, emptyInput());
+    expect(g.x).toBeCloseTo(p.x + 300 - 66, 6); // 변위 = 60 + 6×1
+  });
+
+  it('완료 **직전** 틱에는 안 걸린다 (완료 틱의 긍정 짝과 같은 런)', () => {
+    const w = mk([[DR10, 20]]);
+    const p = player(w);
+    p.aux0 = 0;
+    p.aux1 = FILM_PERIOD_TICKS - 2;
+    const g = addGem(w, p.x + 300, p.y);
+    onSignatureStep(w, p, emptyInput());
+    expect(g.x).toBe(p.x + 300);
+    // 한 틱 더 진행한 상태를 만들면 같은 젬이 끌린다.
+    p.aux1 = FILM_PERIOD_TICKS - 1;
+    onSignatureStep(w, p, emptyInput());
+    expect(g.x).toBeCloseTo(p.x + 300 - 180, 6); // 60 + 6×20
+  });
+
+  it('막이 서 있는 동안(재생이 안 도는 동안)에는 안 걸린다', () => {
+    const w = mk([[DR10, 20]]);
+    const p = player(w);
+    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux1 = FILM_PERIOD_TICKS - 1;
+    const g = addGem(w, p.x + 300, p.y);
+    onSignatureStep(w, p, emptyInput());
+    expect(g.x).toBe(p.x + 300);
+  });
+
+  it('자석 2배 반경 밖 젬은 안 걸린다 (안쪽 젬은 걸린다)', () => {
+    const w = mk([[DR10, 20]]);
+    const p = player(w);
+    p.aux0 = 0;
+    p.aux1 = FILM_PERIOD_TICKS - 1;
+    const inside = addGem(w, p.x + w.magnetRadius, p.y);
+    const outside = addGem(w, p.x + w.magnetRadius * 2 + 50, p.y);
+    onSignatureStep(w, p, emptyInput());
+    expect(inside.x).toBeLessThan(p.x + w.magnetRadius);
+    expect(outside.x).toBe(p.x + w.magnetRadius * 2 + 50);
+  });
+
+  it('FI2 와 서로를 가리지 않는다 — 술어가 정반대인데 한 함수에 산다', () => {
+    // FI2(막 있음·만재 아님)만 찍은 런에서 DR10 펄스가 돌면 안 되고, 그 반대도 같다.
+    const w = mk([[FI2, 20], [DR10, 20]]);
+    const p = player(w);
+    // ① 막 있음 — FI2 는 돌고 DR10 펄스는 안 돈다.
+    p.aux0 = 10;
+    p.aux1 = FILM_PERIOD_TICKS - 1;
+    w.tick = 0; // Lv20 주기 = 6 + floor(72/22) = 9 → tick 0 은 주기 틱
+    const g1 = addGem(w, p.x + 200, p.y);
+    onSignatureStep(w, p, emptyInput());
+    expect(p.aux0).toBe(11); // FI2 가 돌았다
+    expect(g1.x).toBe(p.x + 200); // DR10 펄스는 안 돌았다
+    // ② 막 없음 — DR10 펄스는 돌고 FI2 는 안 돈다.
+    p.aux0 = 0;
+    const g2 = addGem(w, p.x + 200, p.y);
+    onSignatureStep(w, p, emptyInput());
+    expect(p.aux0).toBe(0); // FI2 는 0 인 막을 되살리지 않는다
+    expect(g2.x).toBeLessThan(p.x + 200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑬ 플레이어 이동 파라미터 (앵커 ㉙) — DR4 공막 경량화
+// ---------------------------------------------------------------------------
+//
+// ## 뮤테이션으로 계측기를 검사했다 (2026-08-07 · 배치5)
+// 앵커 ㉙ 의 `case SIG_BUBBLE_FILM:` 본문 호출을 지우면 **양성 3항목이 실패**한다
+// (감속 면역 · 이속 배율 · `stepWorld` 이음매).
+
+describe('⑬ DR4 공막 경량화 (앵커 ㉙)', () => {
+  function move(slowTicks: number): PlayerMoveParams {
+    return { speedMult: 1, slowTicks };
+  }
+
+  it('막이 없는 동안 감속 잔여 틱이 0 이 되고 이속 배율이 오른다', () => {
+    const w = mk([[DR4, 20]]);
+    const p = player(w);
+    p.aux0 = 0;
+    const m = move(30);
+    onPlayerMoveParams(w, p, m);
+    expect(m.slowTicks).toBe(0);
+    expect(m.speedMult).toBeGreaterThan(1); // 하한
+    expect(m.speedMult).toBeCloseTo(1.2, 6); // 4% + 0.8%p×20 = +20%
+  });
+
+  it('막이 서 있으면 둘 다 그대로다 (무막 긍정 짝과 같은 런)', () => {
+    const w = mk([[DR4, 20]]);
+    const p = player(w);
+    p.aux0 = FILM_ABSORB_FLAT;
+    const m = move(30);
+    onPlayerMoveParams(w, p, m);
+    expect(m.slowTicks).toBe(30);
+    expect(m.speedMult).toBe(1);
+    p.aux0 = 0;
+    const bare = move(30);
+    onPlayerMoveParams(w, p, bare);
+    expect(bare.slowTicks).toBe(0);
+    expect(bare.speedMult).toBeGreaterThan(1);
+  });
+
+  it('레벨이 오르면 배율이 엄격히 는다', () => {
+    const lo = mk([[DR4, 1]]);
+    player(lo).aux0 = 0;
+    const a = move(0);
+    onPlayerMoveParams(lo, player(lo), a);
+    const hi = mk([[DR4, 20]]);
+    player(hi).aux0 = 0;
+    const b = move(0);
+    onPlayerMoveParams(hi, player(hi), b);
+    expect(a.speedMult).toBeGreaterThan(1);
+    expect(b.speedMult).toBeGreaterThan(a.speedMult);
+  });
+
+  it('**다른 스킬만 찍은 런**에서는 ㉙ 이 아무것도 안 한다', () => {
+    const w = mk([[FI2, 20]]);
+    player(w).aux0 = 0;
+    const m = move(30);
+    onPlayerMoveParams(w, player(w), m);
+    expect(m.slowTicks).toBe(30);
+    expect(m.speedMult).toBe(1);
+  });
+
+  it('이음매 — `stepWorld` 한 틱이 감속 잔여 틱을 실제로 0 으로 되쓴다', () => {
+    function run(points: ReadonlyArray<readonly [number, number]>): number {
+      const w = createWorld(99, { ...bubbleConfig(), skillInvest: invest(points) });
+      player(w).aux0 = 0;
+      w.playerSlowTicks = 30;
+      stepWorld(w, emptyInput());
+      return w.playerSlowTicks;
+    }
+    expect(run([[FI2, 20]])).toBe(29); // 대조군 — 엔진이 1 깎는다
+    expect(run([[DR4, 20]])).toBe(0); // DR4 — 훅이 0 으로 되쓰고 감산도 건너뛴다
   });
 });

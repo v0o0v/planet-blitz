@@ -64,7 +64,7 @@ import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
 // ⚠️ **타입 전용이다.** `skillHooks.ts` 는 이 파일을 런타임 import 하므로 값으로 당기면 곧바로
 // 순환이다 — `import type` 은 컴파일에서 지워져 그래프에 간선을 만들지 않는다.
-import type { VolleyParams } from '../skillHooks.js';
+import type { PlayerMoveParams, VolleyParams, WallHitParams } from '../skillHooks.js';
 // PH2 의 계열 게이트가 읽는 액티브 정의. 타입 전용(위 사유와 같다).
 import type { ActiveSkillDef } from '../../../data/ships/actives/types.js';
 import { advanceCloak, playerCloaked, setBreakToken } from '../cloak.js';
@@ -93,9 +93,11 @@ const enum Sk {
   /** AS4 급소 해부 */ vitalDissection = 3,
   /** AS5 배후 격살 */ backstab = 4,
   /** AS9 절멸 선고 */ annihilationVerdict = 8,
+  /** AS10 유령 탄도 */ ghostTrajectory = 9,
   /** PH1 잔상 이탈 */ afterimageExit = 10,
   /** PH2 위상 착지 */ phaseLanding = 11,
   /** PH3 그림자 장부 */ shadowLedger = 12,
+  /** PH4 무흔 보행 */ tracelessStride = 13,
   /** PH6 정지된 시계 */ frozenClock = 15,
   /** PH8 흔적 흡수 */ traceSiphon = 17,
   /** PH10 발각 즉응 */ blownCoverReflex = 19,
@@ -133,6 +135,19 @@ function lv(state: WorldState, flat: Sk): number {
  * 쓰므로(설계서 AS10 "AS3 의 `aux0` 마커와 칸 분리") 이 비트와 다투지 않는다.
  */
 const MARK_CLOAK_BREAK = 2;
+
+/**
+ * AS10 유령탄 표식 — 앵커 ⑯(`phantomVolleyParams`)이 `VolleyParams.mark` 로 찍고
+ * 벽 축 앵커 `onWallHit`(`phantomWallHit`)이 탄 `aux0` 에서 읽는다.
+ *
+ * ## ⚠️ 왜 `aux1` 이 아니라 `aux0` 의 **다른 비트**인가
+ * 위 doc 이 *"AS10 이 훗날 배선되면 탄 `aux1` 을 쓴다"* 고 적어 두었지만, 그 사이 `aux1` 을
+ * **아크캐스터 CH3 의 발사 시점 피해 각인**(`VolleyParams.recordSpawnDamage`)이 점유했다.
+ * 설계서가 요구한 것은 *"AS3 의 마커와 **칸 분리**"* = **같은 탄에 둘이 공존할 것**이고,
+ * 비트 플래그면 그 요구가 그대로 성립한다(AS9 의 `aux0 & MARK_CLOAK_BREAK` 는 비트 검사라
+ * 이 비트가 켜져도 판정이 안 갈린다). 값 `1` 은 스트라이커 정조준, `2` 는 AS3 이 점유했다.
+ */
+const MARK_GHOST_SHOT = 4;
 
 /**
  * PH2 의 계열 게이트 — 「위상(phase)」축의 인덱스. 정본은 `data/ships/phantom.ts` 의
@@ -669,6 +684,15 @@ export function phantomCloakBreakReset(
     // `player.iframes` 는 이 시점에 이미 `config.hitIframes` 로 세워져 있다(world 의 피격
     // 블록이 앞에 있다) — 그래서 대입이 아니라 **가산**이다. DI9(유령 선체)가 배선되면 같은
     // 필드를 만지므로 순서 고정(DI9 → PH10)이 설계서 구현 고지 ④ 의 요구다.
+    //
+    // ⚠️ **DI9 는 벽 파괴 축(탄↔벽)이 아니다 — 배치 5 가 grep 으로 확정했다.** 문면은
+    // *"피격 무적 동안 **선체**가 벽을 통과한다"* 이고, 선체↔벽 판정의 정본은 `stepPlayer`
+    // 안의 `slideCircleWalls`(`world.ts:2306`·`2351` — 이동 후 겹침 해소)와
+    // `modes/blockBreak.ts:195` 의 `isPinnedByWall` 이다. 탄↔벽 경로(`w.hp -= e.damage`,
+    // `world.ts:3931`)와는 **함수도 술어도 겹치지 않는다** — 전자는 `player.radius` 로 원을
+    // 밀어내고 후자는 `sweptCircleOverlapsWall` 로 탄을 죽인다. 따라서 AS10 이 기다리는
+    // 탄↔벽 앵커가 서더라도 DI9 는 거기서 돌지 않는다. DI9 의 자리는 `slideCircleWalls`
+    // 호출을 **건너뛰는** 분기이고 그건 이 레인의 편집 범위 밖(`world.ts`)이다.
     player.iframes += 1 + Math.floor(ph10 / 4);
   }
 }
@@ -676,11 +700,16 @@ export function phantomCloakBreakReset(
 /**
  * 앵커 ⑯ **볼리 파라미터 확정 직후 · 탄 생성 직전** — AS2 은막 침투 · AS3 처형 재장전(발사 절반).
  *
- * ## AS10 만 여기 없다 (AS3 은 배선됐다)
- *  - **AS10 유령 탄도**: 창 중 발사탄에 `mark` 를 찍는 것 자체는 여기서 된다. 그런데 그 표식을
- *    **읽는 자리가 없다** — 설계서가 지정한 소비처 셋(`world.ts` 의 차단 판정 · 파괴가능 벽
- *    피해 · 표적 선택의 `segmentBlocked`)이 전부 앵커가 아니다. 표식만 찍으면 해시에 실리는
- *    무연산이 되므로 넣지 않는다(반쪽 배선 금지 — AS8 이 빠진 사유와 같다).
+ * ## AS10 도 이제 여기 있다 — **표식만** 여기고 효과는 벽 축 앵커다
+ *  - **AS10 유령 탄도**: ✅ **배선됐다**(배치5). 오래 막고 있던 것은 *"`mark` 를 찍을 수는 있으나
+ *    **읽는 자리가 없다**"* 였다 — 설계서가 지정한 소비처 셋(`world.ts` 의 차단 판정 · 파괴가능
+ *    벽 피해 · 표적 선택의 `segmentBlocked`)이 전부 앵커가 아니었다. 배치5 가 그중 첫째·둘째를
+ *    한 지점(`onWallHit`, `w.hp` 감산 **앞**)으로 열어 표식의 독자가 생겼다. 여기서는 표식만
+ *    찍고 효과 본체는 {@link phantomWallHit} 이다.
+ *    ⚠️ **셋째(`segmentBlocked` 표적 선택)는 아직 아니다** — 자동 조준이 벽 너머 적을 후보에서
+ *    빼는 판정(`world.ts` 의 `segmentBlocked`)에는 앵커가 없다. 즉 유령탄은 벽을 **통과하지만**
+ *    조준은 여전히 벽 너머를 안 고른다. 문면("탄이 벽을 통과한다")은 지키되 체감 범위는 그만큼
+ *    좁다 — 이건 반쪽 배선이 아니라 **효과가 닿는 경계**이고, 넓히려면 조준 축에 앵커가 필요하다.
  *  - **AS3 처형 재장전**: ✅ **배선됐다**(S2.1 이 연 `VolleyParams.cloakBreak` 를 쓴다).
  *    막고 있던 사유는 근거로 남긴다 — 트리거가 "해제 첫 타(**강화탄**)로 처치" 인데, 이 앵커는
  *    `aux1` 소진 **뒤**라 이번 볼리가 그 강화탄인지 알 신호가 없었다(소진 분기는 표식을 남기지
@@ -720,6 +749,16 @@ export function phantomVolleyParams(
     params.pierce += Math.floor(as3 / 5);
   }
 
+  // --- AS10 유령 탄도(표식만) -----------------------------------------------
+  // 창 술어는 정본 하나(`playerCloaked`) — 침공 차단·기체 게이트가 그 안에 있다.
+  // ⚠️ 레벨 스케일이 **없다**(설계 문면이 이진이다: "은신 창 동안 발사한 탄이 벽을 통과한다").
+  //    없는 계단을 여기서 만들면 밸런스 축이 하나 늘고 설계와 갈린다.
+  const as10 = lv(state, Sk.ghostTrajectory);
+  if (as10 >= 1 && playerCloaked(state, player)) {
+    // `|=` 로 얹는다 — AS3 의 강화탄 표식과 **같은 탄에 공존**해야 한다(비트 분리의 요구).
+    params.mark |= MARK_GHOST_SHOT;
+  }
+
   // --- AS2 은막 침투 --------------------------------------------------------
   // 은신 창 동안 발사한 탄에 관통 +1 · 탄속 +6% + 1.5%p/Lv.
   const as2 = lv(state, Sk.cloakPierce);
@@ -730,4 +769,67 @@ export function phantomVolleyParams(
   // 탄속은 정수 bp · 나눗셈 1회. `speed` 는 소수일 수 있어 `Math.round` 를 걸지 않는다 —
   // 반올림하면 스킬 없는 런과 같은 값이어야 할 이유가 없는 자리에서 정수화가 새로 생긴다.
   params.speed = (params.speed * (10600 + 150 * as2)) / 10000;
+}
+
+/**
+ * 앵커 ㉙ **이동 배율 산출 직전 · 감속 배율이 정해지기 전** — PH4 무흔 보행 **1종**.
+ *
+ * 설계서: *"은신 창 동안 이동 속도 상승 + 이동 감속(플레이어 슬로우·감속 장판) 면역"* ·
+ * 이속 +8% + 1%p/Lv · 구현란 *"속도 곱셈 자리에서 `playerCloaked` 시 slowMult 강제 1 + 배율
+ * 1곱"* 그대로다. 팬텀 30종 중 **이속 계열은 이 하나뿐**이다(설계서 M-1 정리).
+ *
+ * ## ⚠️ 창 술어는 `playerCloaked` 다 — 여기서는 그것이 옳다
+ * PH10 이 `cloakWindowActive(streak)` 를 쓴 것은 그 앵커가 **리셋 분기 안**이라 `player.aux0`
+ * 이 곧 지워질 값이어서였다(그 함수 주석이 근거). 이 앵커는 `stepPlayer` 안이고 aux0 이 이번
+ * 틱의 정상값이라 정본 술어를 쓴다 — 침공 차단(`invasion3`)과 기체 게이트가 그 함수 안에
+ * 있어서 여기에 겹쳐 걸 필요도 없다(설계서 침공 판정표 "PH4 = 자동 no-op").
+ *
+ * ## ⚠️ 대시에는 안 걸린다
+ * 호출부가 `speedMult` 를 `mx * playerSpeed` 쪽에만 곱한다(`PlayerMoveParams.speedMult` doc).
+ * 설계서 3.3 「대시 임펄스 미적용」 규율 그대로이고, 말로우 CU8 과 같은 자리다.
+ *
+ * ## ⚠️ 미투자·비은신 런은 `params` 를 **한 바이트도** 안 건드린다 → 골든 해시 불변.
+ */
+export function phantomPlayerMoveParams(
+  state: WorldState,
+  player: Entity,
+  params: PlayerMoveParams,
+): void {
+  const ph4 = lv(state, Sk.tracelessStride);
+  if (ph4 < 1) return;
+  if (!playerCloaked(state, player)) return;
+  // 면역이 먼저다 — 호출부는 되쓴 값으로 `PLAYER_SLOW_MULT` 적용 여부를 정한다.
+  params.slowTicks = 0;
+  // 이속 bp = 800 + 100×Lv (Lv1 = +9% · Lv20 = +28%). 정수 bp 라 나눗셈 1회다.
+  params.speedMult *= (10800 + 100 * ph4) / 10000;
+}
+
+/**
+ * 벽 축 앵커 `onWallHit` **탄↔벽 겹침 확정 직후 · `wall.hp` 감산 앞** — AS10 유령 탄도 **1종**.
+ *
+ * 설계서: *"은신 창 동안 발사한 탄이 벽을 통과한다(파괴가능 벽은 **피해를 주고** 통과한다)"*.
+ *
+ * ## ⚠️ 술어가 「지금 은신 중인가」가 **아니다** — 「그 탄이 창 중에 태어났는가」다
+ * 그래서 여기서 `playerCloaked` 를 다시 부르면 **틀린다**: 창이 끝난 뒤에도 이미 날아가고 있는
+ * 유령탄은 계속 통과해야 하고(문면이 "발사한 탄"이다), 반대로 창 중에 벽에 닿은 *창 밖 발사탄*
+ * 은 통과하면 안 된다. 그 구분을 나르는 것이 발사 시점 표식 {@link MARK_GHOST_SHOT} 하나다.
+ *
+ * ## ⚠️ 통과는 **소멸만** 막는다 — 피해 산술은 한 줄도 안 건드린다
+ * 호출부가 감산을 먼저 하고 `passThrough` 를 **그 뒤에** 본다(그 앵커 doc). 그래서 파괴가능
+ * 벽은 자동으로 "피해를 주고 통과"가 되고, 불파괴 벽은 그냥 통과다 — 둘 다 문면 그대로다.
+ * ⚠️ 한 틱에 여러 벽을 지나면 **벽마다 피해가 한 번씩** 들어간다(스윕이 계속되므로). 관통
+ * (`pierce`)과는 다른 축이라 관통을 소모하지도, 관통에 의존하지도 않는다.
+ *
+ * ## ⚠️ 적탄에는 안 걸린다
+ * 표식은 `VolleyParams` 경로(= `spawnBullet`, 아군탄 전용 팩토리)에서만 찍히므로 적탄의
+ * `aux0` 에는 구조적으로 이 비트가 없다. 그래도 `kind` 를 첫 줄에서 다시 확인한다 — 적탄의
+ * `aux0` 는 다른 축(거동 파라미터)이 쓰는 칸이라 값이 우연히 겹칠 수 있다.
+ *
+ * ## ⚠️ 미투자 런은 `params` 를 한 바이트도 안 건드린다 → 골든 해시 불변.
+ */
+export function phantomWallHit(state: WorldState, bullet: Entity, params: WallHitParams): void {
+  if (lv(state, Sk.ghostTrajectory) < 1) return;
+  if (bullet.kind !== 'bullet') return;
+  if ((bullet.aux0 & MARK_GHOST_SHOT) === 0) return;
+  params.passThrough = true;
 }

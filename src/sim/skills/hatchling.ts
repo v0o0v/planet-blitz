@@ -23,8 +23,11 @@
  *    `cooldown = 0` 만으로 같은 틱 격발이 된다(`fireTurretShot` export 불필요 — 모듈 순환 회피).
  *  - **SH2** — 앵커 ④ 의 새 좌표 두 칸.
  *
- * ## ⚠️ 아직 미배선인 5종과 사유(전부 **구조**이지 누락이 아니다)
- *  - **NU1** — 소비처가 `onGemMagnetParams`(다른 레인이 동시 신설 중)라 이 레인 밖.
+ * ## 배치5 가 **NU1** 을 더했다 — 앵커 ㉘ `onGemMagnetParams` 의 `broodRadius` **첫 소비처**다
+ * 그 필드는 배치4 가 칸만 열어 두고 `stepGems` 가 읽지도 않던 자리였다. 이 레인이 `stepGems`
+ * 에 병아리 중심 추가 흡인 경로를 세워 소비처를 만들었다({@link hatchlingGemMagnetParams}).
+ *
+ * ## ⚠️ 아직 미배선인 4종과 사유(전부 **구조**이지 누락이 아니다)
  *  - **NU3** — 대시 **도착 좌표가 존재하지 않는다**(`world.ts` 의 대시는 속도 임펄스만 싣는다).
  *    앵커로 안 풀리고 대시 모델이 경로 종점을 산출해야 한다.
  *  - **SH8** — 적탄↔병아리 충돌 경로가 코드에 **0건**이다(`collision.ts`·`bullets.ts` 에 포탑
@@ -96,7 +99,12 @@ import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
 // ⚠️ **타입 전용 import 다**(erasable) — `skillHooks.ts` 가 이 파일을 런타임 import 하므로
 // 값으로 끌어오면 순환이 된다. `BroodParams` 는 앵커 ㉓ 의 계약 그 자체라 사본을 만들지 않는다.
-import type { BroodParams, TurretShotParams, TurretCadenceParams } from '../skillHooks.js';
+import type {
+  BroodParams,
+  TurretShotParams,
+  TurretCadenceParams,
+  GemMagnetParams,
+} from '../skillHooks.js';
 import { isActiveTurret, TURRET_LIFE_TICKS } from '../events.js';
 import { blastDamage, clearEnemyBullets, fanStrike } from '../activeTypes.js';
 import { spawnBreakableWall, spawnEventObject, spawnGem } from '../entities.js';
@@ -128,6 +136,7 @@ const enum Sk {
   /** BD8 브루드 강습 */ broodAssault = 7,
   /** BD9 과밀 본능 */ overcrowdInstinct = 8,
   /** BD10 여왕 사출 */ matriarchLaunch = 9,
+  /** NU1 모이 물어오기 */ gemFetch = 10,
   /** NU2 알껍질 영양 */ eggshellNutrients = 11,
   /** NU4 둥지 소집 */ nestRecall = 13,
   /** NU5 알 굴리기 */ eggRoll = 14,
@@ -1141,4 +1150,34 @@ export function hatchlingNurtureActive(state: WorldState, player: Entity): void 
   // 창 = 90 + 6×Lv 틱. 살아 있는 병아리가 0기여도 세운다 — 창 동안 새로 출격한 병아리도
   // 혜택을 받는 것이 "연사 창" 의 정의이고, 슬롯 쓰기는 투자 게이트 안이라 규약 3 을 지킨다.
   writeSlot(state.skillStage, HatchlingStage.nestRecallTicks, 90 + 6 * nu4);
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉘ — 젬 자석 반경 확정 직후(제곱 **전** · `world.ts` 의 `stepGems`)
+// ---------------------------------------------------------------------------
+
+/**
+ * **NU1 모이 물어오기** — 「병아리 주변에도 자석장이 서서 근처 젬을 **플레이어에게** 끌어온다」.
+ *
+ * 반경 = 100 + 10×Lv (Lv1 = 110, Lv20 = 300). 플레이어 자석(`params.radius`)과 **별개 칸**이라
+ * 서로 곱해지지 않는다 — 설계 문면이 "병아리 주변에**도**"라고 더하기로 적었기 때문이다.
+ *
+ * ## ⚠️ 이 함수는 `broodRadius` 의 **첫 소비처**다
+ * 배치4 는 필드만 열어 뒀고 `stepGems` 가 값을 읽지도 않았다. 실제 흡인 경로는 이 커밋이
+ * `world.ts` 의 `stepGems` 에 세웠고, 그 분기는 통째로 `if (magnet.broodRadius > 0)` 안에
+ * 있다 — **미투자 런(=0)은 종전과 비트 동일**이라 골든 해시가 안 흔들린다.
+ *
+ * ## ⚠️ 여기서 젬을 수거하지 않는다
+ * 앵커 ㉘ doc 의 계약이다. 이 스킬이 하는 일은 **속도를 주는 것**뿐이고, 수거는 젬이
+ * 플레이어에 닿았을 때 `collectGem`(앵커 ③)이 단독으로 한다.
+ *
+ * ## ⚠️ 살아 있는 병아리가 0기여도 값을 세운다
+ * 대수 판정을 여기서 하지 않는 이유는 `stepGems` 가 어차피 자기 루프에서 병아리를 훑기
+ * 때문이다. 여기서 미리 세면 같은 3중 술어가 두 곳에 생겨 갈린다(`isChick` 주석의 규율).
+ * 0기면 `stepGems` 의 수집 결과가 비어 흡인이 안 걸린다 — 결과는 같고 정본은 하나다.
+ */
+export function hatchlingGemMagnetParams(state: WorldState, params: GemMagnetParams): void {
+  const nu1 = lv(state, Sk.gemFetch);
+  if (nu1 < 1) return;
+  params.broodRadius = 100 + 10 * nu1;
 }

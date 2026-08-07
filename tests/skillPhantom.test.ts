@@ -44,7 +44,11 @@ import {
   onEnemyDamaged,
   onCloakBreakReset,
   onVolleyParams,
+  onPlayerMoveParams,
+  onWallHit,
   type VolleyParams,
+  type PlayerMoveParams,
+  type WallHitParams,
 } from '../src/sim/skillHooks.js';
 import {
   SIG_PHANTOM_CLOAK,
@@ -72,9 +76,11 @@ const AS3 = 2;
 const AS4 = 3;
 const AS5 = 4;
 const AS9 = 8;
+const AS10 = 9;
 const PH1 = 10;
 const PH2 = 11;
 const PH3 = 12;
+const PH4 = 13;
 const PH6 = 15;
 const PH10 = 19;
 const DI1 = 20;
@@ -1374,5 +1380,253 @@ describe('⑳ PH2 위상 착지 (앵커 ㉗)', () => {
     // 발동 자체는 일어났다(버프 틱이 섰다) — 그런데 적탄은 살아 있다.
     expect(w.activeBuff0).toBeGreaterThan(0);
     expect(b.dead).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑬ PH4 무흔 보행 (앵커 ㉙ `onPlayerMoveParams`) — 배치 5
+// ---------------------------------------------------------------------------
+//
+// 설계서: 은신 창 동안 이속 +8% + 1%p/Lv (bp) + 이동 감속 면역.
+//
+// 뮤테이션(2026-08-07): `phantomPlayerMoveParams` 의 `params.slowTicks = 0` 을 지우면 감속
+// 면역 2건이, `params.speedMult *= …` 를 지우면 이속 3건이, `onPlayerMoveParams` 의
+// `case SIG_PHANTOM_CLOAK:` 를 지우면 §⑬ 전체가 빨개진다.
+
+describe('⑬ PH4 무흔 보행 (앵커 ㉙)', () => {
+  function moveParams(w: WorldState, slow = 0): PlayerMoveParams {
+    const params: PlayerMoveParams = { speedMult: 1, slowTicks: slow };
+    onPlayerMoveParams(w, player(w), params);
+    return params;
+  }
+
+  it('창 밖이면 아무 일도 안 한다 (미투자 런 바이트 불변의 근거)', () => {
+    const w = mk([[PH4, 20]]);
+    player(w).aux0 = CLOAK_UNHIT_TICKS - 1; // 적립 중 · 창 전
+    const params = moveParams(w, 30);
+    expect(params.speedMult).toBe(1);
+    expect(params.slowTicks).toBe(30); // 왕복 항등
+  });
+
+  it('창이 닫힌 뒤(HOLD 만료)에도 안 걸린다 — 창 술어가 상한을 본다', () => {
+    const w = mk([[PH4, 20]]);
+    player(w).aux0 = CLOAK_UNHIT_TICKS + CLOAK_HOLD_TICKS;
+    expect(moveParams(w, 30).speedMult).toBe(1);
+  });
+
+  it('하한 짝 — PH4 미투자 런은 창 안이어도 배율 1 · 감속 그대로다 (항진 방지)', () => {
+    const w = mk([[PH6, 20]]);
+    player(w).aux0 = CLOAK_UNHIT_TICKS + 10;
+    const params = moveParams(w, 30);
+    expect(params.speedMult).toBe(1);
+    expect(params.slowTicks).toBe(30);
+  });
+
+  it('창 안이면 이속이 오르고 이동 감속이 사라진다', () => {
+    const w = mk([[PH4, 1]]);
+    player(w).aux0 = CLOAK_UNHIT_TICKS + 10;
+    const params = moveParams(w, 30);
+    expect(params.speedMult).toBeGreaterThan(1); // 하한 — 양변 1 인 항진이 아니다
+    expect(params.speedMult).toBeCloseTo(1.09, 9); // 800 + 100×1 bp
+    expect(params.slowTicks).toBe(0);
+  });
+
+  it('레벨에 단조 증가한다 (bp = 800 + 100×Lv)', () => {
+    function multAt(level: number): number {
+      const w = mk([[PH4, level]]);
+      player(w).aux0 = CLOAK_UNHIT_TICKS + 10;
+      return moveParams(w).speedMult;
+    }
+    const lo = multAt(1);
+    const hi = multAt(20);
+    expect(lo).toBeGreaterThan(1);
+    expect(hi).toBeGreaterThan(lo);
+    expect(hi).toBeCloseTo(1.28, 9);
+  });
+
+  it('`stepPlayer` 가 앵커를 실제로 부른다 — 감속 지대에서 창 안이면 만속이다', () => {
+    function vxUnderSlow(points: ReadonlyArray<readonly [number, number]>): number {
+      const w = mk(points);
+      const p = player(w);
+      p.aux0 = CLOAK_UNHIT_TICKS + 10;
+      w.playerSlowTicks = 60;
+      stepWorld(w, { ...emptyInput(), moveX: 1 });
+      return p.vx;
+    }
+    // 하한 — PH4 미투자 런은 감속 배율이 실제로 물린다.
+    const slowed = vxUnderSlow([[PH6, 20]]);
+    expect(slowed).toBeLessThan(DEFAULT_CONFIG.playerSpeed);
+    // 투자 런은 감속 면역 + 이속 배율이라 만속보다도 빠르다.
+    expect(vxUnderSlow([[PH4, 20]])).toBeGreaterThan(DEFAULT_CONFIG.playerSpeed);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ㉑ AS10 유령 탄도 (앵커 ⑯ 표식 + 벽 축 앵커 `onWallHit`)
+// ---------------------------------------------------------------------------
+//
+// 뮤테이션(2026-08-07, 배치5) — 실제로 돌려 적색을 확인했다:
+//  - `phantomVolleyParams` 의 `params.mark |= MARK_GHOST_SHOT` 제거 → 5건 적색
+//  - `phantomWallHit` 의 `params.passThrough = true` 제거 → 4건 적색
+//  - `phantomWallHit` 의 `bullet.kind !== 'bullet'` 조기 반환 제거 → 1건 적색
+//  - `onWallHit` 의 `case SIG_PHANTOM_CLOAK` 제거 → 5건 적색
+//
+// ⚠️ 부정 항목("창 밖 발사탄은 안 통과한다")은 뮤테이션에 원리적으로 안 걸린다 —
+//    같은 `it` 안에 **긍정 짝**(창 안 발사탄은 통과한다)을 나란히 뒀다.
+
+describe('㉑ AS10 유령 탄도 (앵커 ⑯ 표식 + `onWallHit`)', () => {
+  /** AS3 표식이 값 2, AS10 이 값 4. 둘은 같은 탄에 공존해야 한다. */
+  const GHOST_BIT = 4;
+
+  function vp(over: Partial<VolleyParams> = {}): VolleyParams {
+    return {
+      damage: 10,
+      pierce: 0,
+      count: 3,
+      speed: 100,
+      radius: 4,
+      life: 60,
+      spread: 0.5,
+      cooldownQ: 12,
+      mark: 0,
+      countUsed: true,
+      ballisticsUsed: true,
+      targetDist: 200,
+      aimAngle: 0,
+      inputX: 0,
+      inputY: 0,
+      cloakBreak: false,
+      leadDamageBonus: 0,
+      leadPierceBonus: 0,
+      recordSpawnDamage: false,
+      ...over,
+    };
+  }
+
+  function wh(over: Partial<WallHitParams> = {}): WallHitParams {
+    return { damage: 7, passThrough: false, shockAt: null, ...over };
+  }
+
+  /** 유령 표식을 단 아군탄. `aux0` 이 표식 칸이다. */
+  function ghostBullet(mark: number): Entity {
+    return { ...blankEntity('bullet'), aux0: mark, damage: 7 };
+  }
+
+  /** 파괴가능 벽(hp > 0). AS10 은 벽 종류를 안 보지만 문면의 주 대상이다. */
+  function wall(): Entity {
+    return { ...blankEntity('wall'), hp: 50, maxHp: 50, radius: 20 };
+  }
+
+  it('은신 창 안 발사탄만 표식을 얻고, 그 표식을 단 탄만 벽을 통과한다 (긍정 + 음성 짝)', () => {
+    const w = mk([[AS10, 1]]);
+    const p = player(w);
+
+    // 창 **안** 발사 → 표식이 붙는다.
+    p.aux0 = 300;
+    const inside = vp();
+    onVolleyParams(w, p, inside);
+    expect(inside.mark & GHOST_BIT).toBe(GHOST_BIT);
+
+    // 창 **밖** 발사 → 표식이 안 붙는다(음성).
+    p.aux0 = 0;
+    const outside = vp();
+    onVolleyParams(w, p, outside);
+    expect(outside.mark & GHOST_BIT).toBe(0);
+
+    // 표식 있는 탄은 통과(긍정).
+    const hitIn = wh();
+    onWallHit(w, p, ghostBullet(inside.mark), wall(), hitIn);
+    expect(hitIn.passThrough).toBe(true);
+
+    // 표식 없는 탄은 안 통과(음성 짝 — 위 긍정과 같은 런에 있다).
+    const hitOut = wh();
+    onWallHit(w, p, ghostBullet(outside.mark), wall(), hitOut);
+    expect(hitOut.passThrough).toBe(false);
+  });
+
+  it('미투자 런은 표식도 통과도 없다 (앵커가 실제 게이트인가)', () => {
+    const w = mk();
+    const p = player(w);
+    p.aux0 = 300;
+    const v = vp();
+    onVolleyParams(w, p, v);
+    expect(v.mark).toBe(0);
+
+    // 표식이 손으로 켜져 있어도 투자 0 이면 통과하지 않는다.
+    const hit = wh();
+    onWallHit(w, p, ghostBullet(GHOST_BIT), wall(), hit);
+    expect(hit.passThrough).toBe(false);
+  });
+
+  it('창이 끝난 뒤에도 그 탄은 계속 통과한다 — 술어는 「발사 시점」이지 「지금 은신」이 아니다', () => {
+    const w = mk([[AS10, 1]]);
+    const p = player(w);
+
+    p.aux0 = 300;
+    const v = vp();
+    onVolleyParams(w, p, v);
+    const marked = ghostBullet(v.mark);
+
+    // 창 종료. 이미 날아가는 탄은 표식을 그대로 들고 있다.
+    p.aux0 = 0;
+    const hit = wh();
+    onWallHit(w, p, marked, wall(), hit);
+    expect(hit.passThrough).toBe(true);
+  });
+
+  it('통과는 소멸만 막는다 — `damage` 도 `shockAt` 도 한 바이트 안 건드린다', () => {
+    const w = mk([[AS10, 20]]);
+    const p = player(w);
+    const hit = wh({ damage: 7 });
+    onWallHit(w, p, ghostBullet(GHOST_BIT), wall(), hit);
+    expect(hit.passThrough).toBe(true);
+    // 문면 "파괴가능 벽은 **피해를 주고** 통과한다" — 감산은 호출부가 이 값으로 이미 한다.
+    expect(hit.damage).toBe(7);
+    expect(hit.shockAt).toBeNull();
+  });
+
+  it('적탄에는 안 걸린다 — `aux0` 비트가 우연히 겹쳐도 통과하지 않는다', () => {
+    const w = mk([[AS10, 10]]);
+    const p = player(w);
+    const enemyShot: Entity = { ...blankEntity('enemyBullet'), aux0: GHOST_BIT, damage: 7 };
+    const hit = wh();
+    onWallHit(w, p, enemyShot, wall(), hit);
+    expect(hit.passThrough).toBe(false);
+
+    // 긍정 짝 — 같은 표식을 단 **아군탄**은 통과한다(위 음성이 항진이 아님의 물증).
+    const friendly = wh();
+    onWallHit(w, p, ghostBullet(GHOST_BIT), wall(), friendly);
+    expect(friendly.passThrough).toBe(true);
+  });
+
+  it('AS3 강화탄 표식과 **공존**한다 (비트 분리의 요구)', () => {
+    const w = mk([
+      [AS3, 10],
+      [AS10, 1],
+    ]);
+    const p = player(w);
+    p.aux0 = 300;
+    const v = vp({ cloakBreak: true });
+    onVolleyParams(w, p, v);
+    expect(v.mark & 2).toBe(2); // AS3
+    expect(v.mark & GHOST_BIT).toBe(GHOST_BIT); // AS10
+    // 두 표식이 같이 실린 탄도 통과한다.
+    const hit = wh();
+    onWallHit(w, p, ghostBullet(v.mark), wall(), hit);
+    expect(hit.passThrough).toBe(true);
+  });
+
+  it('레벨 계단이 없다 — Lv1 과 Lv20 이 같다 (설계 문면이 이진이다)', () => {
+    for (const level of [1, 20]) {
+      const w = mk([[AS10, level]]);
+      const p = player(w);
+      p.aux0 = 300;
+      const v = vp();
+      onVolleyParams(w, p, v);
+      expect(v.mark & GHOST_BIT).toBe(GHOST_BIT);
+      const hit = wh();
+      onWallHit(w, p, ghostBullet(v.mark), wall(), hit);
+      expect(hit.passThrough).toBe(true);
+    }
   });
 });

@@ -1,6 +1,6 @@
 /**
  * **210스킬 배선의 앵커** — sim 이 스킬 훅을 부르는 **유일한 지점들**(ADR-0049 S0~S3 + W2
- * + 배치4 앵커 레인). 이 파일에 **38개**, `chainHooks.ts` 에 **2개** = 모두 **40개**다.
+ * + 배치4 앵커 레인 + 배치5 벽 축). 이 파일에 **41개**, `chainHooks.ts` 에 **2개** = 모두 **43개**다.
  *
  * ## ⛔⛔ 동그라미 번호(①②③…)는 **㉖ 에서 끝났다 — 새 앵커에 번호를 붙이지 마라**
  * 배치4 에서 **네 레인이 병렬로 앵커 9개를 세웠고, ㉗㉘ 가 세 갈래로 중복됐다**:
@@ -129,6 +129,7 @@ import {
   hatchlingTurretCadence,
   hatchlingTurretExpired,
   hatchlingPlayerDamaged,
+  hatchlingGemMagnetParams,
 } from './skills/hatchling.js';
 import {
   strikerDashFired,
@@ -141,6 +142,7 @@ import {
   strikerVolleyParams,
   strikerEnemyDamaged,
   strikerEnemyDeath,
+  strikerPlayerMoveParams,
 } from './skills/striker.js';
 import {
   arccasterGemCollected,
@@ -155,6 +157,8 @@ import {
   arccasterEliteLootRarity,
   arccasterOverchargeAccrual,
   arccasterComboDecay,
+  arccasterActiveFired,
+  arccasterGemMagnetParams,
 } from './skills/arccaster.js';
 import {
   bruiserDashFired,
@@ -165,6 +169,12 @@ import {
   bruiserEnemyDamaged,
   bruiserEnemyDeath,
   bruiserVolleyParams,
+  bruiserActiveFired,
+  bruiserGemMagnetParams,
+  bruiserPlayerMoveParams,
+  bruiserWallHit,
+  bruiserWallShockResolve,
+  bruiserWallDestroyed,
 } from './skills/bruiser.js';
 import {
   mallowGemCollected,
@@ -197,6 +207,8 @@ import {
   phantomEnemyDamaged,
   phantomCloakBreakReset,
   phantomVolleyParams,
+  phantomPlayerMoveParams,
+  phantomWallHit,
 } from './skills/phantom.js';
 import {
   bubbleSignatureStep,
@@ -206,6 +218,9 @@ import {
   bubbleFilmAbsorbed,
   bubbleFilmEntry,
   bubbleFilmEfficiency,
+  bubbleActiveFired,
+  bubbleGemMagnetParams,
+  bubblePlayerMoveParams,
 } from './skills/bubble.js';
 
 // ---------------------------------------------------------------------------
@@ -2848,9 +2863,8 @@ export function onActiveFired(
 ): void {
   if (!state.skillsOn) return;
   // 아직 소비처가 없는 인자들. 자기 `case` 가 쓰기 시작하면 해당 줄을 지워라.
-  void dir;
+  // (`dir`·`origin` 은 버블 PO9·DR9 와 아크캐스터 BA1·BA6·CH7·CH10 이 쓰기 시작해 지웠다.)
   void slot;
-  void origin;
   switch (state.sigBit) {
     // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라** — 병렬 배선
     // 머지에서 두 `case` 가 `break;` 하나를 공유하는 fallthrough 가 누적 5건 나왔고 전부
@@ -2858,6 +2872,20 @@ export function onActiveFired(
     case SIG_PHANTOM_CLOAK:
       // PH2 위상 착지 — 위상 계열(`treeIndex === 1`) 액티브의 **착지 지점** 정화.
       phantomActiveFired(state, player, def);
+      break;
+    case SIG_BUBBLE_FILM:
+      // PO9 고압 격발 조율(pop 계열 환산 효율) · DR9 이탈 잔파동(drift 계열 **출발 지점**).
+      bubbleActiveFired(state, player, def, dir, origin);
+      break;
+    case SIG_ARC_OVERCHARGE:
+      // CH7 잔류 방전 · CH10 주입 전격(둘 다 방전 = chain hi) ·
+      // BA1 재배치 일제사 · BA4 소거 항로 · BA6 분신 포좌(점멸 = barrage).
+      arccasterActiveFired(state, player, def, dir, origin);
+      break;
+    case SIG_BRUISER_ARMOR:
+      // BL5 충각 절단 · MO5 견인 돌진 · MO10 착탄 충격(전부 기동 액티브의 **경로/도착**) ·
+      // BL10 소각 여열(칼날 액티브의 **스택 순감소분**). `origin` 의 셋을 다 쓴다.
+      bruiserActiveFired(state, player, def, origin);
       break;
     default:
       break;
@@ -2992,6 +3020,22 @@ export function onGemMagnetParams(
       // ME2 채무 자석 — 부채(`player.aux0`)에 비례해 반경이 커진다.
       mallowGemMagnetParams(state, player, params);
       break;
+    case SIG_BUBBLE_FILM:
+      // DR5 무지개 공명(콤보 → 반경) · DR10 공막 유속(무막 흡인 가속).
+      bubbleGemMagnetParams(state, player, params);
+      break;
+    case SIG_ARC_OVERCHARGE:
+      // BA2 정지 흡인장 — 정지 시간(`player.aux0`)에 비례해 반경이 커진다.
+      arccasterGemMagnetParams(state, player, params);
+      break;
+    case SIG_HATCHLING_BROOD:
+      // NU1 모이 물어오기 — `broodRadius` 의 **첫 소비처**(소비 경로는 `stepGems`).
+      hatchlingGemMagnetParams(state, params);
+      break;
+    case SIG_BRUISER_ARMOR:
+      // MO2 파쇄 수확 — 근접 임계 안은 자석 반경과 **무관하게** 끌리도록 하한을 세운다.
+      bruiserGemMagnetParams(state, player, params);
+      break;
     default:
       break;
   }
@@ -3053,8 +3097,26 @@ export function onPlayerMoveParams(
   switch (state.sigBit) {
     // ⚠️ `break;` 필수(앵커 ㉗ 주석과 같은 사유).
     case SIG_MALLOW_CUSHION:
-      // CU8 통증 마취 — 부채(`player.aux0`) 보유 중 이동 속도가 오른다.
+      // ME3 무통 주행(감속 → 부채 대납) · CU8 통증 마취(부채 보유 중 이속 상승).
       mallowPlayerMoveParams(state, player, params);
+      break;
+    case SIG_BUBBLE_FILM:
+      // DR4 공막 경량화 — 막이 없는 동안(`aux0 === 0`) 감속 면역 + 이속 상승.
+      bubblePlayerMoveParams(state, player, params);
+      break;
+    case SIG_PHANTOM_CLOAK:
+      // PH4 무흔 보행 — 은신 창 동안 이속 상승 + 이동 감속 면역.
+      phantomPlayerMoveParams(state, player, params);
+      break;
+    case SIG_STRIKER_MARKSMAN:
+      // M10 이중 추진 — `params` 가 아니라 `player.dashCooldown` 을 만진다. 이 앵커가
+      // **쿨다운 감산·대시 게이트보다 앞**이라는 사실 하나로 성립하는 배선이다(그 함수 doc).
+      strikerPlayerMoveParams(state, player, params);
+      break;
+    case SIG_BRUISER_ARMOR:
+      // MO4 장갑 활주(`slowTicks = 0` — 이 앵커가 그 "0틱 무효화" 를 성립시켰다) ·
+      // MO3 둔중 관성(`speedMult` 램프).
+      bruiserPlayerMoveParams(state, player, params);
       break;
     default:
       break;
@@ -3108,6 +3170,186 @@ export function onTurretExpired(state: WorldState, turret: Entity): void {
     // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
     case SIG_HATCHLING_BROOD:
       hatchlingTurretExpired(state, turret);
+      break;
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 벽 축 앵커 3개 (배치5) — **아군탄·적탄이 벽에 겹친 순간**(`world.ts` 의 `stepProjectiles`)
+// ---------------------------------------------------------------------------
+//
+//   onWallHit          — 겹침 확정 직후 · `w.hp -= e.damage` **앞**. 브루저 BL7 · 팬텀 AS10.
+//   onWallDestroyed    — `w.dead = true` 직후. 브루저 MO7.
+//   onWallShockResolve — 투사체 루프 **밖**(스폰 안전). 브루저 BL7 의 충격파.
+//
+// ## ⚠️ 왜 세 자리인가 — 하나로는 원리적으로 안 된다
+// 세 스킬이 요구하는 순간이 서로 다르다:
+//  - BL7「파성퇴」는 **감산 앞**이어야 한다(일격 파괴 = 이번 히트의 피해를 바꾼다). 감산 뒤에
+//    두면 `w.hp` 가 이미 깎여 "일격" 을 표현할 방법이 없다.
+//  - MO7「잔해 회수」는 **파괴가 확정된 뒤**여야 한다(환급의 술어가 "부서졌는가" 다).
+//  - BL7 의 충격파는 **루프 밖**이어야 한다 — 위 둘은 `for (const e of state.entities)` 순회
+//    **안**이라 개체를 낳으면 안 된다(앵커 ㉖ 과 같은 규율). 그래서 훅은 `WallHitParams.shockAt`
+//    에 요청만 적고, 호출부가 루프 뒤에 모아서 `onWallShockResolve` 로 되돌려준다. 같은 파일의
+//    `bulletSplits`(BK_SPLIT 자탄)가 이미 쓰고 있는 지연 스폰 형태 그대로다.
+//
+// ## ⚠️ 게이트가 훅 안이다 — 앵커는 탄 종류·벽 종류로 미리 거르지 않는다
+// `onWallHit` 은 **아군탄·적탄 · 파괴가능·불파괴 벽 전부**에서 불린다. AS10「유령 탄도」의
+// 문면이 *"탄이 벽을 통과한다(파괴가능 벽은 피해를 주고 통과한다)"* 라 불파괴 벽에서도
+// 통과해야 하기 때문이다. 반대로 `params.damage` 는 **아군탄 × 파괴가능 벽**에서만 소비된다
+// (호출부의 기존 분기 그대로) — 적탄에서 이 칸을 만져도 아무 일도 일어나지 않는다.
+//
+// ## ⚠️ 촉매 짝이 없다 — ⑮·⑰~㉔·㉖·㉗ 과 같다.
+
+/**
+ * `WallHitParams.shockAt` 이 실어 보내는 **지연 스폰 요청**. 훅이 채우고, 투사체 루프가 끝난 뒤
+ * `onWallShockResolve` 로 같은 훅에게 되돌아온다.
+ *
+ * ## ⚠️ 이 레코드는 **좌표와 방향만** 나른다 — 볼리의 모양은 훅 몫이다
+ * 발수·각도폭·피해를 여기 적으면 `world.ts` 가 스킬 밸런스를 알게 되고, 그러면 수치가
+ * `skills/bruiser.ts` 와 두 곳으로 갈린다(설계서가 반복 지적한 "같은 술어의 두 번째 사본").
+ */
+export interface WallShockRequest {
+  /** 벽에 닿은 지점(= 탄의 이번 틱 종말 좌표). */
+  x: number;
+  y: number;
+  /** 탄의 진행 방향(단위 벡터 아님 — 훅이 정규화해라). "전방" 의 정본이다. */
+  dirX: number;
+  dirY: number;
+}
+
+/**
+ * 앵커 `onWallHit` 이 넘기는 **이번 벽 겹침의 파라미터**. 훅이 제자리에서 고친다.
+ */
+export interface WallHitParams {
+  /**
+   * 이 탄이 벽에 줄 피해. 초기값은 `e.damage`.
+   *
+   * ## ⚠️ 클램프에 안 삼켜진다 — 소비 경로를 짚었다
+   * 호출부는 `w.hp -= <이 값>` 뒤 `if (w.hp <= 0) w.dead = true` 뿐이고 `min`·`max` 가 없다.
+   * BL7 의 "일격 파괴" 는 이 칸에 `w.hp` 이상을 넣는 것으로 성립한다.
+   * ⚠️ **아군탄(`kind === 'bullet'`) × 파괴가능 벽에서만 소비된다.**
+   */
+  damage: number;
+  /**
+   * true 면 **탄이 이 벽에서 죽지 않고** 스윕이 다음 벽으로 계속된다. 초기값 false.
+   *
+   * ## ⚠️ 피해는 그대로 들어간다 — "통과" 는 소멸만 막는다
+   * AS10 의 문면이 *"파괴가능 벽은 피해를 주고 통과한다"* 라 감산 분기보다 **뒤**에서 갈린다.
+   * ⚠️ 같은 틱에 여러 벽을 통과하면 **각 벽마다 피해가 한 번씩** 들어간다(스윕이 계속되므로).
+   * 관통(`pierce`)과는 다른 축이다 — `pierce` 는 적 명중 카운터고 벽 스윕은 그것을 안 본다.
+   */
+  passThrough: boolean;
+  /**
+   * 투사체 루프가 끝난 뒤 훅에게 되돌려 줄 스폰 요청. 초기값 null = 요청 없음.
+   *
+   * ## ⚠️ 지금 소비처가 **하나뿐이다**(브루저 BL7) — 그래도 미리 연 이유
+   * "소비처 없는 칸을 미리 열지 마라"(앵커 ㉖ doc)의 예외다. `GemMagnetParams.broodRadius` 와
+   * 같은 사유 — **필수 필드를 나중에 더하면 다른 레인의 픽스처가 `Partial` 스프레드로 깨진다**
+   * (배치1 에서 실제로 났다). 이 레코드는 팬텀 AS10 레인도 동시에 만지므로 필드 설계를 먼저
+   * 확정하는 것이 싸다.
+   */
+  shockAt: WallShockRequest | null;
+}
+
+/**
+ * 벽 축 앵커 ①/③ — **탄과 벽의 겹침이 확정된 직후 · `w.hp` 감산 앞**.
+ *
+ * ## 이 지점에서만 살아 있는 것
+ *  - **벽이 아직 안 깎였다.** `wall.hp` 가 이번 히트 **전** 값이라 "일격 파괴"(BL7)가 성립한다.
+ *  - **탄이 아직 안 죽었다.** `bullet.dead` 는 이 훅 뒤에 세워지므로 `passThrough` 로 되돌릴 수
+ *    있다. 훅이 나간 뒤에는 `compact()` 를 기다릴 뿐 되살릴 자리가 없다.
+ *  - `bullet.x`/`y` 는 **이번 틱 적분이 끝난 좌표**이고 `bullet.vx`/`vy` 가 진행 방향이다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라**(전 앵커 공통 계약 — 파일 헤더).
+ *  - ⚠️ **엔티티를 낳지 마라.** 이 지점은 `state.entities` **순회 안**이다. 스폰이 필요하면
+ *    `params.shockAt` 에 적어라 — 루프 뒤 `onWallShockResolve` 로 돌아온다.
+ *  - ⚠️ **`wall.dead` 를 직접 세우지 마라.** 파괴 판정은 호출부의 `w.hp <= 0` 이고, 여기서
+ *    미리 세우면 `onWallDestroyed` 가 안 불려 MO7 이 조용히 죽는다. 파괴하려면 `damage` 다.
+ *
+ * @param bullet 벽에 겹친 투사체. **아군탄/적탄 판별은 훅 책임이다**(`kind`).
+ * @param wall 겹친 벽. **파괴가능 여부 판별은 훅 책임이다**(`hp > 0`).
+ */
+export function onWallHit(
+  state: WorldState,
+  player: Entity,
+  bullet: Entity,
+  wall: Entity,
+  params: WallHitParams,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    case SIG_BRUISER_ARMOR:
+      // BL7 파성퇴 — 아군탄 × 파괴가능 벽을 **일격 파괴**하고 충격파 요청을 적는다.
+      bruiserWallHit(state, player, bullet, wall, params);
+      break;
+    case SIG_PHANTOM_CLOAK:
+      // AS10 유령 탄도 — 은신 창 중에 태어난 탄(`aux0` 표식)이 벽에서 안 죽는다.
+      // 술어가 `player` 도 `wall` 도 아니라 **탄의 표식**이라 인자를 둘만 쓴다.
+      phantomWallHit(state, bullet, params);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 벽 축 앵커 ② — **벽이 파괴된 직후**(`wall.dead = true` 다음 줄 · 탄 소멸 판정 앞).
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.**
+ *  - ⚠️ **엔티티를 낳지 마라**(순회 안 — `onWallHit` 과 같다).
+ *  - ⚠️ **`wall.dead` 를 되돌리지 마라.** 되살리면 이 앵커가 다음 히트에서 또 불린다.
+ *
+ * ## ⚠️ 이 앵커는 **탄에 의한 파괴 전용**이다
+ * `destructible`(보상 오브젝트)의 파괴는 여기 오지 않는다 — 그쪽은 `compact()` 의 드랍 분기를
+ * 탄다. MO7 의 문면이 *"파괴가능 벽·destructible"* 둘 다이므로 **destructible 쪽 절반은 이
+ * 앵커로 안 풀린다** — 얹는 레인은 그 절반을 못 넣는 사유를 주석으로 남겨라.
+ *
+ * @param wall 방금 파괴된 벽.
+ */
+export function onWallDestroyed(state: WorldState, player: Entity, wall: Entity): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // ⚠️ `break;` 필수.
+    case SIG_BRUISER_ARMOR:
+      // MO7 잔해 회수 — 대시 쿨다운 환급 + 장갑 1스택 적립.
+      // ⚠️ destructible 절반은 이 앵커로 안 풀린다(사유는 `bruiserWallDestroyed` 의 doc).
+      bruiserWallDestroyed(state, player, wall);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 벽 축 앵커 ③ — **투사체 루프가 끝난 뒤**, `onWallHit` 이 적어 보낸 요청 1건마다.
+ *
+ * ## ⭐ 여기서는 **스폰이 안전하다**
+ * `stepProjectiles` 의 `for (const e of state.entities)` 가 이미 끝난 지점이다(같은 함수의
+ * `bulletSplits` 방사와 나란히 선다). 요청은 **적어 넣은 순서대로** 소비되므로 결정론이 산다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.**
+ *  - ⚠️ **탄 상한(`state.bulletCap`)을 훅이 존중해라.** 호출부는 여기서 세지 않는다 —
+ *    바로 옆 `bulletSplits` 가 `countKind` 로 스스로 지키는 것과 같은 규율이다.
+ *
+ * @param req `onWallHit` 이 적은 좌표·방향.
+ */
+export function onWallShockResolve(
+  state: WorldState,
+  player: Entity,
+  req: WallShockRequest,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // ⚠️ `break;` 필수.
+    case SIG_BRUISER_ARMOR:
+      // BL7 파성퇴의 **전방 충격파** — 여기서만 스폰이 안전하다. 탄 상한은 훅이 스스로 지킨다.
+      bruiserWallShockResolve(state, player, req);
       break;
     default:
       break;
