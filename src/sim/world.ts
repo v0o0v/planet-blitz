@@ -163,7 +163,12 @@ import { hasAnyInvestment } from '../items/skills.js';
 import { createSkillSlots, DamageSource } from './skillSlots.js';
 // 210스킬 앵커 25개 + 공유 술어. **leaf 모듈이라 순환이 없다**(그 파일 헤더의 근거).
 // (⑮ `onFilmBurst` 는 `filmBurst.ts` 가 부르므로 여기 없다 — 총 26개 중 25개가 이 파일 소유다.)
-import type { VolleyParams, BroodParams, TurretShotParams } from './skillHooks.js';
+import type {
+  VolleyParams,
+  BroodParams,
+  TurretShotParams,
+  BulletHitParams,
+} from './skillHooks.js';
 import {
   survivedLethalBlow,
   onVolleyFired,
@@ -191,8 +196,20 @@ import {
   onBroodLaunchParams,
   onBroodLaunched,
   onTurretShotParams,
+  onBulletHitParams,
+  onEliteLootRarity,
+  onOverchargeAccrual,
+  onComboDecay,
 } from './skillHooks.js';
 import { onDamageChainCatalyst } from './catalystHooks.js';
+
+/**
+ * 앵커 ⑱ 이 쓰는 **재사용 레코드**. 명중 해소 루프는 틱당 최대 ~2,000회 돌아 발당 할당이
+ * GC 부담이므로 `hitTargets`/`hitParams` 병렬 버퍼와 같은 규율로 하나만 들고 재사용한다.
+ * 재진입 위험 없음 — 앵커 ⑱ 은 명중 해소 안에서 자신을 다시 부르는 경로가 없다.
+ * 두 필드 모두 **매 호출 대입 후 사용**하므로 이전 명중의 잔값이 새지 않는다.
+ */
+const BULLET_HIT_SCRATCH: BulletHitParams = { damage: 0, pierce: 0 };
 import { createCatalystSlots } from './catalystSlots.js';
 import { SpatialHash, circlesOverlap, sweptCircleHitT } from './collision.js';
 import { updateEnemy } from './patterns/index.js';
@@ -1933,7 +1950,7 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
     updateChaseShelters(state);
     updateChasePredator(state);
   }
-  updateCombo(state);
+  updateCombo(state, player);
   checkLevelUp(state);
   checkGameOver(state, player);
   // 3레이어: 페이즈 전이(soft 예산·주파 완료)를 compact 이후에 판정해 이번 틱에 죽은 적까지
@@ -2437,8 +2454,17 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
     // 정지 판정은 **입력**으로 한다 — 속도는 감속 장판·코어 모듈 배율이 섞여 "멈춰 있는데
     // 이동 중"으로 읽힐 여지가 있다. 입력은 리플레이가 그대로 재생하므로 재현이 자명하다.
     const still = input.moveX === 0 && input.moveY === 0 && !input.dash;
-    if (!still) player.aux0 = 0;
-    else if (player.aux0 < OVERCHARGE_TICK_CAP) player.aux0++;
+    // 앵커 ⑳(S3) — 적립 분기 그 자체. 미투자 런은 `{ still, delta: still ? 1 : 0 }` 이 그대로
+    // 돌아오고, 아래 클램프가 종전 `if (aux0 < CAP) aux0++` 와 **비트 동일**이다
+    // (`min(aux0+1, CAP)` — aux0 은 CAP 를 넘길 수 없으므로 두 식의 상이 같다).
+    // 앵커 ⑨ 로는 왜 안 되는지(진입점이라 이 분기보다 앞이다)는 그 훅 주석에 있다.
+    const acc = onOverchargeAccrual(state, player, still);
+    if (!acc.still) player.aux0 = 0;
+    else {
+      const next = player.aux0 + acc.delta;
+      player.aux0 =
+        next < 0 ? 0 : next > OVERCHARGE_TICK_CAP ? OVERCHARGE_TICK_CAP : next;
+    }
     // ⚠️ 함수 끝이라 의미는 없지만 **명시적으로** 반환한다 — 뒤에 분기를 append 하는 순간
     // 아크캐스터 런이 다음 시그니처 분기로 흘러들어간다(한 런에 시그니처는 최대 하나).
     return;
@@ -3092,6 +3118,10 @@ function autoAttack(state: WorldState, player: Entity, input: InputFrame): void 
     leadPierceBonus: 0,
     // 발사 시점 피해를 탄 `aux1` 에 새길 것인가(기본 false = 한 칸도 안 쓴다).
     recordSpawnDamage: false,
+    // 발사 시점 잔여 수명을 탄 `targetX` 에 새길 것인가(기본 false = 한 칸도 안 쓴다).
+    // ⚠️ **빔 분기에는 이 대입이 없다** — 세그먼트는 비행하지 않아 "얼마나 날았나"가 정의되지
+    //    않는다(필드 주석의 no-op 근거).
+    recordSpawnOrigin: false,
     // 아키타입 분기가 `count`·`spread` 를 실제로 읽는가 — 판정 정본은 아래 분기 하나뿐이고
     // 훅은 결과만 읽는다(필드 주석에 사유). 레일건은 1발 고정, 빔은 세그먼트 수가 사거리에서
     // 나오므로 둘 다 `count` 를 안 본다.
@@ -3151,6 +3181,10 @@ function autoAttack(state: WorldState, player: Entity, input: InputFrame): void 
     // 발사 시점 확정 피해를 `aux1` 에 새긴다 — **탄이 태어난 뒤**라 아키타입이 실제로 실은
     // 값(`b.damage`)이다. 비행 중 갱신(CH6 이월·CH8 증폭)보다 앞이라 재증폭이 안 섞인다.
     if (volley.recordSpawnDamage) b.aux1 = Math.round(b.damage);
+    // 발사 시점 잔여 수명 각인(CH5). `targetX` 는 **아군탄에서만** 비어 있는 칸이다 —
+    // 적탄에서는 거동 파라미터 A 다(`bullets.ts` 의 `applyBehavior`). `spawnBullet` 은
+    // 아군탄 전용 팩토리라 이 대입이 적탄에 닿을 경로가 구조적으로 없다.
+    if (volley.recordSpawnOrigin === true) b.targetX = b.life;
     player.cooldown += volley.cooldownQ;
     return;
   }
@@ -3179,6 +3213,9 @@ function autoAttack(state: WorldState, player: Entity, input: InputFrame): void 
       // 볼리 표식은 `ownerId` 가 아니라 `aux0` 라 유도 마커와 슬롯이 겹치지 않는다.
       if (volley.mark !== 0) m.aux0 = volley.mark;
       if (volley.recordSpawnDamage) m.aux1 = Math.round(m.damage);
+      // CH5 발사 시점 잔여 수명(위 레일건 분기와 같은 규율). ⚠️ 유도 마커는 `ownerId` 라
+      // `targetX` 와 칸이 겹치지 않는다.
+      if (volley.recordSpawnOrigin === true) m.targetX = m.life;
     }
     player.cooldown += volley.cooldownQ;
     return;
@@ -3256,6 +3293,8 @@ function autoAttack(state: WorldState, player: Entity, input: InputFrame): void 
     // 쌍둥이 항성 배율(`dmg`)이 **이미 실린 뒤**라, `volley.damage` 를 훅에서 저장했으면
     // 빠졌을 배율이 여기서는 그대로 들어간다(그 필드 주석이 근거).
     if (volley.recordSpawnDamage) b.aux1 = Math.round(b.damage);
+    // CH5 발사 시점 잔여 수명(위 분기들과 같은 규율).
+    if (volley.recordSpawnOrigin === true) b.targetX = b.life;
   }
   player.cooldown += volley.cooldownQ;
 }
@@ -4141,6 +4180,18 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       const prismAmp = prismOn ? 1 + b.phase * PRISM_DAMAGE_AMP : 1;
       // 보호막의 엘리트: 받는 피해 절반(그 외 1).
       let dealt = b.damage * mult * gyroAmp * prismAmp * eliteDamageTakenMult(t);
+      // 앵커 ⑱(S3) — **`dealt` 가 표적 hp 에 닿기 전.** 앵커 ⑩ 은 `t.hp -= dealt` 뒤라 이번
+      // 명중의 피해를 못 바꾼다(그 훅 주석이 근거). 미투자 런은 `state.skillsOn` 이 거짓이라
+      // 이 블록에 진입조차 하지 않고, 스킬 런에서도 훅이 값을 안 만지면 되쓰기가 항등이다.
+      // 레코드는 모듈 스코프 재사용본이다 — 명중당 최대 ~2,000회라 발당 할당은 GC 부담이고,
+      // 이 훅은 재진입하지 않는다(`applyChain` 처럼 자신을 다시 부르는 경로가 없다).
+      if (state.skillsOn) {
+        BULLET_HIT_SCRATCH.damage = dealt;
+        BULLET_HIT_SCRATCH.pierce = b.pierce;
+        onBulletHitParams(state, b, t, BULLET_HIT_SCRATCH);
+        dealt = BULLET_HIT_SCRATCH.damage;
+        b.pierce = BULLET_HIT_SCRATCH.pierce;
+      }
       // 코어 모듈 정적 카운터/지구전(피해 감소): **방어체**가 받는 피해를 배율로 낮춘다(실드
       // 흡수 이전 적용). 미장착·미발동이면 defenseDmgMult=1 이라 `dealt*1===dealt`(거동·해시
       // 불변). moduleRuntime 은 침공에만 존재하므로 여기서 'enemy'(편대원·소환 드론)를 포함해도
@@ -4435,7 +4486,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // (엘리트 배율)까지 바뀐다. S0 는 훅이 인자를 그대로 돌려주므로 비트 동일이다.
     const preMitigationDmg = dmg;
     const hpBeforeChain = player.hp;
-    dmg = onDamageChain(state, player, dmg);
+    // `dmgSources` 는 위 수집 루프가 세운 **기여 비트합**이다(선택 인자 — 사유는 훅 주석).
+    dmg = onDamageChain(state, player, dmg, dmgSources);
     // 브루저 시그니처 — 장갑 스택 피해 감소(설계서 §3·§4). 이후 시그니처들이 감소된 피해를 보고
     // 판정하도록 앞에 둔다. 미보유면 armorOn=false 로 한 줄도 실행되지 않는다.
     // ⚠️ 산술은 shipSignature.ts 의 `armorReducedDamage` 와 동형(합산 bp · 단일 나눗셈)이되
@@ -4781,7 +4833,15 @@ function compact(state: WorldState): void {
         // 배율과 무관하게 1회 고정이라 드랍 스트림이 밀리지 않는다.
         if (rollEliteDropGate(state.dropRng, stageParams(stage).eliteCount, state.planetMult)) {
           // 촉매 희귀도 보상축을 드랍 롤에 곱한다(무촉매 rarity===1 → 등급 threshold 불변).
-          const roll = rollEliteDrop(state.dropRng, stage, state.catalystMods.rarity, dropOdds);
+          // 앵커 ⑲(S3) — 그 배율에 스킬 축을 한 겹 더 얹는다(아크캐스터 CH9). 미투자 런은
+          // 인자를 그대로 돌려주므로 threshold 가 비트 동일이다. `rollEliteDrop` 의 RNG 소비는
+          // 배율과 무관하게 2회 고정이라 드랍 스트림이 밀리지 않는다(그 함수 본문이 근거).
+          // ⚠️ 이 자리는 `for (const e of state.entities)` 순회 안이다 — 훅에서 스폰 금지.
+          const lootRarity =
+            p0 === undefined
+              ? state.catalystMods.rarity
+              : onEliteLootRarity(state, p0, state.catalystMods.rarity);
+          const roll = rollEliteDrop(state.dropRng, stage, lootRarity, dropOdds);
           lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
           // 촉매 드랍량 보상축: 배율 > 1 이면 같은 등급의 추가 루팅을 결정론적으로 파생한다
           // (dropRng 미소비 → 드랍 스트림 무영향). 무촉매면 빈 배열이라 무연산.
@@ -4882,8 +4942,11 @@ function compact(state: WorldState): void {
 // Progression bookkeeping
 // ---------------------------------------------------------------------------
 
-function updateCombo(state: WorldState): void {
+function updateCombo(state: WorldState, player: Entity): void {
   if (state.comboTimer > 0) {
+    // 앵커 ㉑(S3) — 이번 틱 감소를 건너뛸 것인가(아크캐스터 BA5). 미투자·타 기체는 항상
+    // `false` 라 아래 두 줄이 종전과 비트 동일이다.
+    if (onComboDecay(state, player)) return;
     state.comboTimer--;
     if (state.comboTimer === 0) state.combo = 0;
   }

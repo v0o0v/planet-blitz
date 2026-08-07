@@ -118,6 +118,10 @@ import {
   arccasterEnemyDeath,
   arccasterVolleyParams,
   arccasterBulletExpiredLife,
+  arccasterBulletHitParams,
+  arccasterEliteLootRarity,
+  arccasterOverchargeAccrual,
+  arccasterComboDecay,
 } from './skills/arccaster.js';
 import {
   bruiserDashFired,
@@ -657,18 +661,36 @@ function dispatchWallContactSkill(state: WorldState, player: Entity): void {
  * 여기서 촉매를 부르면 `survivedLethalBlow` 의 "경감 전 피해"가 촉매를 못 보게 되어 브루저
  * FO5 · 아크캐스터 BR10 의 의미가 조용히 뒤집힌다.
  *
+ * ## ⚠️ `sources` 는 **선택 인자**다 — 7기체 공유 앵커라 필수로 만들지 않았다
+ * 아크캐스터 BA8「절연 포좌」의 절반(*"용암 피해가 경감된다"*)이 **출처를 못 봐서** 막혀
+ * 있었다: 이 앵커의 인자는 `state`·`player`·`dmg` 뿐이라 "이 피해가 해저드에서 왔는가"를
+ * 복원할 방법이 하나도 없다(같은 틱에 적탄·접촉이 섞이면 `dmg` 는 그중 `max` 하나다).
+ * 수집 루프가 이미 세워 둔 `dmgSources` 비트합을 그대로 넘긴다 — 새 상태 0칸이다.
+ *
+ * **선택으로 둔 이유**: 필수로 바꾸면 이 앵커를 직접 부르는 테스트·픽스처가 전부 깨지고,
+ * 파급이 7기체 전체로 번진다. 기본값 `0`(피해원 미상)은 `hasDamageSource(0, …) === false` 라
+ * 출처 술어가 전부 거짓이 되어 **기존 다섯 기체의 산술이 한 점도 안 바뀐다.**
+ * ⚠️ 기본값에 의존하는 새 스킬을 만들지 마라 — `0` 은 "출처 없음"이 아니라 "안 넘겨줬다"다.
+ *
  * @param dmg 무대 배율·피격 배수·**촉매 피해원 배율**까지 반영된 사슬 진입 피해
+ * @param sources 이번 피격에 **기여한 피해원 비트합**(`world.ts` 수집 루프의 `dmgSources`).
+ *   `max` 가 고른 하나가 아니라 기여한 종류 전부다.
  * @returns 스킬 감소·흡수를 거친 피해. S0 는 인자를 그대로 돌려준다(비트 동일).
  */
-export function onDamageChain(state: WorldState, player: Entity, dmg: number): number {
+export function onDamageChain(
+  state: WorldState,
+  player: Entity,
+  dmg: number,
+  sources: DamageSourceMask = 0,
+): number {
   if (!state.skillsOn) return dmg;
   switch (state.sigBit) {
     // 각 `case` 는 **① 감소 → ② 흡수** 순서로 처리하고, 정수화는 자기 게이트 안에서 한다.
     case SIG_STRIKER_MARKSMAN:
       return strikerDamageChain(state, player, dmg); // ① S4 감소 → ② S8 흡수
     case SIG_ARC_OVERCHARGE:
-      // ① BR3·BR5 감소 → ② BR4 흡수. 순서는 이 앵커 주석이 못 박은 그대로다.
-      return arccasterDamageChain(state, player, dmg);
+      // ① BR3·BR5·**BA8**(해저드 출처) 감소 → ② BR4 흡수. 순서는 이 앵커 주석 그대로다.
+      return arccasterDamageChain(state, player, dmg, sources);
     case SIG_BRUISER_ARMOR:
       // ① 감소: FO6 하중 전이(경감 + 대시 쿨 전이) → **FO9③ 사투 본능(빈사 중 스택당 추가
       // 감소)**. 흡수 칸을 쓰는 브루저 스킬은 없다.
@@ -707,6 +729,158 @@ export function onDamageChain(state: WorldState, player: Entity, dmg: number): n
       break;
   }
   return dmg;
+}
+
+/** 이번 명중 한 번의 가변 파라미터. 앵커 ⑱ 이 넘기고, 호출부가 그대로 반영한다. */
+export interface BulletHitParams {
+  /**
+   * 이번 명중으로 표적 hp 에서 **차감될 피해**. 무기 피해에 과열 2배·자이로/프리즘 증폭·
+   * 엘리트 피해감소가 **이미 곱해진 값**이다 — 다시 곱하지 마라.
+   */
+  damage: number;
+  /**
+   * 가해 탄의 **잔여 관통 예산**(`bullet.pierce`). 호출부가 이 값을 탄에 되쓴 뒤 관통 처리
+   * (자이로 무한 · 프리즘 소비 · 그 외 1 소비)를 한다. 즉 여기서 +1 하면 이번 명중의 소비가
+   * 상쇄된다 — **명중마다 더하면 탄이 관통으로 영영 안 죽는다.**
+   */
+  pierce: number;
+}
+
+/**
+ * 앵커 ⑱ — **아군탄 명중의 피해가 확정되기 직전**(`resolveCollisions`).
+ *
+ * ## ⚠️ 앵커 ⑩ 과 무엇이 다른가 — ⑩ 은 **늦다**
+ * ⑩ `onEnemyDamaged` 는 `t.hp -= dealt` 와 격추/부활 판정이 **끝난 뒤**다. 그 자리에서는
+ * 이번 명중의 피해를 더 이상 못 바꾼다(이미 깎였다). *"이 명중이 얼마나 아픈가"* 를 고치는
+ * 스킬(아크캐스터 CH5 전위차 저격)은 그래서 ⑩ 으로 배선할 수 없었다. 둘은 같은 명중에
+ * ⑱ → ⑩ 순으로 연달아 불린다.
+ *
+ * ## 무엇이 보장되는가
+ *  - `bullet.kind === 'bullet'`(아군탄)만 여기 온다 — 호출부 루프의 첫 줄 게이트가 근거다.
+ *    적탄(`'enemyBullet'`)은 이 경로에 **닿지 않는다**.
+ *  - `target` 은 아직 이번 피해를 안 받았다. `target.hp` 는 명중 **전** 값이다.
+ *  - 관통 차감 **전**이다(`b.pierce--` 는 이 뒤).
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **호출부는 `for (const b of state.entities)` 순회 안이다 — 훅에서 스폰하지 마라.**
+ *  - ⚠️ `target.hp` 를 직접 깎지 마라. 깎으면 아래 격추 판정과 이중 차감이 된다.
+ *  - **RNG 를 소비하지 마라**(공통 계약).
+ */
+export function onBulletHitParams(
+  state: WorldState,
+  bullet: Entity,
+  target: Entity,
+  params: BulletHitParams,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    case SIG_ARC_OVERCHARGE:
+      // CH5 전위차 저격 — 발사 시점 수명(앵커 ⑯ 의 `recordSpawnOrigin`) 대비 비행 비율로
+      // 「멀리 비행한 뒤 명중」을 판정해 피해 증폭 + 관통 가산.
+      arccasterBulletHitParams(state, bullet, target, params);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 ⑲ — **엘리트 전리품 등급 롤 직전**(`compact` 의 드랍 게이트 통과 후).
+ *
+ * 넘어오는 값은 촉매 희귀도 보상축(`state.catalystMods.rarity`)이고, 반환값이 그대로
+ * `rollEliteDrop` 의 `rarityMult` 가 된다. 무촉매·미투자면 `1` 이 그대로 통과해 등급
+ * threshold 가 종전과 같다(**바이트 불변**).
+ *
+ * ## ⚠️ 여기서 RNG 를 소비하지 마라 — 드랍 스트림이 통째로 밀린다
+ * `rollEliteDrop` 의 소비는 `nextFloat` + `nextU32` **정확히 2회 고정**이고 `rarityMult` 와
+ * 무관하다(그 함수 본문이 근거). 배율만 바뀌므로 시드별 드랍 **횟수**는 안 밀리고 **등급**만
+ * 움직인다 — 이 앵커가 안전한 이유가 그것이다.
+ *
+ * ⚠️ **호출부는 `for (const e of state.entities)` 순회 안이다 — 훅에서 스폰하지 마라.**
+ *
+ * @param player 플레이어 엔티티(`state.entities[0]`). 술어용이며 쓰지 마라.
+ * @param rarityMult 촉매 희귀도 배율(무촉매 = 1).
+ */
+export function onEliteLootRarity(
+  state: WorldState,
+  player: Entity,
+  rarityMult: number,
+): number {
+  if (!state.skillsOn) return rarityMult;
+  switch (state.sigBit) {
+    case SIG_ARC_OVERCHARGE:
+      // CH9 낙뢰 인양 — 과충전 중 처치한 엘리트의 등급 롤에 상향 배율.
+      return arccasterEliteLootRarity(state, player, rarityMult);
+    default:
+      break;
+  }
+  return rarityMult;
+}
+
+/** 앵커 ⑳ 의 결과. 호출부가 이 두 값만 보고 `aux0` 을 갱신한다. */
+export interface OverchargeAccrual {
+  /**
+   * 이번 틱을 **정지로 볼 것인가.** 거짓이면 호출부가 `aux0 = 0`(즉시 리셋)이다. 참이면
+   * 아래 {@link delta} 를 더하고 `[0, OVERCHARGE_TICK_CAP]` 로 클램프한다.
+   *
+   * ⚠️ 기본값은 **입력 기반 정지 술어 그대로**다(`moveX === 0 && moveY === 0 && !dash`).
+   * 이동 중인데 참으로 뒤집는 스킬(BA9)은 반드시 `delta` 를 0 이하로 함께 줘야 한다 —
+   * 안 그러면 "이동하면서 적립"이 되어 시그니처가 뒤집힌다.
+   */
+  still: boolean;
+  /** `still` 일 때 `aux0` 에 더할 양. 기본 1(정지) / 0(이동). 음수면 감쇠다. */
+  delta: number;
+}
+
+/**
+ * 앵커 ⑳ — **과충전 적립 분기**(`stepShipSignature` 의 아크캐스터 가지).
+ *
+ * ## ⚠️ 앵커 ⑨ 로는 왜 안 되는가
+ * ⑨ `onSignatureStep` 은 `stepShipSignature` **진입점**이라 기체 분기보다 **앞**이다. 거기서는
+ * 이번 틱의 정지 판정(`input`)이 아직 안 났고, `aux0` 갱신을 가로챌 수도 없다 — 훅이 끝난
+ * 뒤에 분기가 `aux0 = 0` 으로 덮어쓴다. 「이동해도 즉시 리셋되지 않는다」(BA9)와
+ * 「적립이 2배가 된다」(BA8)는 **그 대입 자체**를 바꿔야 해서 새 앵커가 필요했다.
+ *
+ * ⚠️ 호출부가 아크캐스터 분기 안이라 다른 기체는 애초에 지나가지 않지만, 기체 게이트는
+ * 그래도 훅 안에 둔다(호출부가 옮겨져도 다른 기체 거동이 안 갈리게).
+ */
+export function onOverchargeAccrual(
+  state: WorldState,
+  player: Entity,
+  still: boolean,
+): OverchargeAccrual {
+  const out: OverchargeAccrual = { still, delta: still ? 1 : 0 };
+  if (!state.skillsOn) return out;
+  switch (state.sigBit) {
+    case SIG_ARC_OVERCHARGE:
+      // BA8 절연 포좌(적립 2배) · BA9 이동 포격 술식(즉시 리셋 → 서서히 감쇠).
+      arccasterOverchargeAccrual(state, player, out);
+      break;
+    default:
+      break;
+  }
+  return out;
+}
+
+/**
+ * 앵커 ㉑ — **콤보 유지 시계가 1 줄어들기 직전**(`updateCombo`).
+ *
+ * @returns `true` 면 이번 틱 감소를 **건너뛴다**(시계가 그대로 멈춘다). S0·타 기체는 항상
+ *   `false` 라 종전과 비트 동일이다.
+ *
+ * ⚠️ 「절반 속도」류 스킬은 여기서 **틱 모듈러**로 구현해야 한다 — 시계 값 자체를 되돌리면
+ * 같은 틱의 젬 수거가 세운 창(`comboTimer` 대입)과 갈린다.
+ */
+export function onComboDecay(state: WorldState, player: Entity): boolean {
+  if (!state.skillsOn) return false;
+  switch (state.sigBit) {
+    case SIG_ARC_OVERCHARGE:
+      // BA5 정전 콤보 감속 — 과충전 중 감소 주기를 늘린다.
+      return arccasterComboDecay(state, player);
+    default:
+      break;
+  }
+  return false;
 }
 
 /**
@@ -1556,6 +1730,33 @@ export interface VolleyParams {
    * (CH1·CH8 표식 + CH3 기준 피해). 'bullet' kind 는 `aux1` 을 어디서도 읽지 않는다(전수 확인).
    */
   recordSpawnDamage: boolean;
+  /**
+   * 이번 볼리로 태어나는 모든 탄의 `targetX` 에 **발사 시점 잔여 수명**(`life`)을 새길
+   * 것인가. `false`/미지정이면 한 칸도 안 쓴다(`targetX` 는 0 그대로 → 리플레이 바이트 불변).
+   *
+   * ## ⚠️ 「발사 좌표」가 아니라 「발사 시점 수명」을 새긴다 — 자기 표식이 되기 때문이다
+   * 아크캐스터 CH5「전위차 저격」이 요구한 것은 *"멀리 비행한 뒤 명중했는가"* 인데, 탄에는
+   * 비행거리도 발사 좌표도 실린 칸이 없었다. 좌표 두 칸(`targetX`/`targetY`)을 쓰는 안이
+   * 먼저 나왔지만 **「각인됐는가」를 구분할 표식이 없다** — 좌표 `(0,0)` 과 "안 새김"이 같은
+   * 값이라, CH4 부채탄·분열 파편·보조무기처럼 이 경로를 안 지나는 탄이 *원점에서 발사된 탄*
+   * 으로 오독된다. 잔여 수명은 스폰 시 **항상 양수**라 `targetX > 0` 자체가 표식이 되고,
+   * 비행 비율 `(life0 − life) / life0` 은 무기별 사거리에 자동으로 정규화된다(월드 유닛
+   * 임계값을 상수로 박지 않아도 된다).
+   *
+   * ## ⚠️ 이 칸은 **아군탄에서만** 비어 있다 — 적탄에 새기지 마라
+   * `targetX`/`targetY` 는 적탄에서 거동 파라미터 A/B(가속도·선회율·각가속도)이고
+   * (`bullets.ts` 의 `applyBehavior`), 보스에서는 나선 기준각이다(`boss.ts`). 이 플래그의
+   * 소비처는 `autoAttack` 의 아키타입 분기뿐이고 거기서 태어나는 것은 `spawnBullet`
+   * (**아군탄 전용 팩토리**)의 산물이라 구조적으로 닿지 않는다. 읽는 쪽(앵커 ⑱)도
+   * `bullet.kind === 'bullet'` 을 **첫 줄에서** 다시 확인한다.
+   *
+   * ⚠️ **빔은 no-op 이다** — 세그먼트는 제자리에 놓이고 비행하지 않으므로 "얼마나 날았나"가
+   * 정의되지 않는다. 각인하면 *시간이 지났을 뿐인* 정지 세그먼트가 「멀리 비행」으로 세어진다.
+   * BA10 이 빔을 no-op 으로 둔 것과 같은 사상이다(아키타입 정의이지 미배선이 아니다).
+   *
+   * ⚠️ **선택 필드다.** 필수로 만들면 7기체 픽스처가 `Partial` 스프레드로 깨진다(배치 1 실측).
+   */
+  recordSpawnOrigin?: boolean;
 }
 
 /**

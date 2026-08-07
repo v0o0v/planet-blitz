@@ -101,6 +101,9 @@ export function stripComments(src: string): string {
  */
 const FILE_SHIP: Readonly<Record<string, string>> = {
   'arccaster.ts': 'arccaster',
+  // CH2 만 여기 산다 — `applyChain` 앵커가 `status.ts` 에 있고, `arccaster.ts` 는 그 파일을
+  // 값으로 import 하므로 같은 파일에 두면 런타임 순환이 된다(그 파일 헤더가 근거).
+  'arccasterChain.ts': 'arccaster',
   'bruiser.ts': 'bruiser',
   'bubble.ts': 'bubble',
   'hatchling.ts': 'hatchling',
@@ -225,8 +228,8 @@ function census(): { perShip: Map<string, string[]>; unread: string[] } {
  */
 const GOLDEN: Readonly<Record<string, readonly string[]>> = {
   arccaster: [
-    'CH1@0', 'CH3@2', 'CH4@3', 'CH6@5', 'CH8@7',
-    'BA3@12', 'BA7@16', 'BA10@19',
+    'CH1@0', 'CH2@1', 'CH3@2', 'CH4@3', 'CH5@4', 'CH6@5', 'CH8@7', 'CH9@8',
+    'BA3@12', 'BA5@14', 'BA7@16', 'BA8@17', 'BA9@18', 'BA10@19',
     'BR1@20', 'BR2@21', 'BR3@22', 'BR4@23', 'BR5@24', 'BR6@25', 'BR7@26', 'BR8@27', 'BR9@28', 'BR10@29',
   ],
   bruiser: [
@@ -262,7 +265,7 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** 골든 합계. 기체별 표와 따로 적어, 한쪽만 고치면 아래 자기검증이 잡는다. */
-const GOLDEN_TOTAL = 125;
+const GOLDEN_TOTAL = 131;
 
 /** 늘고 준 것을 사람이 읽을 수 있게 찍는다 — 숫자만 틀렸다고 하면 원인을 못 찾는다. */
 function diffMsg(ship: string, actual: readonly string[], golden: readonly string[]): string {
