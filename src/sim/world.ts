@@ -34,6 +34,10 @@ import {
   MISSILE_MARK,
   BEAM_SEGMENT_SPACING,
 } from './constants.js';
+// ⚠️ `emitVolley` 의 import 는 **여기가 아니라 `actives.js` 바로 다음**에 있다(아래 참조).
+//    배치7 병렬 머지에서 이 자리에 낡은 사본이 한 벌 더 들어와 `tsc` 가 중복 식별자로
+//    잡았다 — 지운 쪽이 그 사본이다. 자리를 옮기지 마라: 그 배치에는 초기화 순서 근거가
+//    달려 있다(위로 올리면 검증 EF 에서만 터지는 TDZ 부류가 된다).
 import type { PlanetMode } from './planetMode.js';
 // 타입 전용 import 다 — `verbatimModuleSyntax` 로 런타임에 완전히 지워지므로 sim → run 런타임
 // 의존이 생기지 않는다(Deno 검증 경로가 `src/sim` 을 소스 그대로 import 하는 계약에 무영향).
@@ -233,6 +237,8 @@ import {
   onAutoAimTarget,
   onTurretTargetPick,
   onEnemyBulletMoved,
+  onContactInvuln,
+  onDeathRemnantSpawn,
 } from './skillHooks.js';
 import { onDamageChainCatalyst } from './catalystHooks.js';
 
@@ -4409,6 +4415,17 @@ function resolveCollisions(state: WorldState, player: Entity): void {
   let contactSrc: Entity | undefined;
   let srcX: number | undefined;
   let srcY: number | undefined;
+  // 배치7 F2a — 앵커 ④ 의 **피격원 id**(팬텀 AS7「원한 청산」선결). `srcX`/`srcY`·`contactSrc`
+  // 와 **정확히 같은 규율**이다 — `max` 를 갱신한 그 분기에서만 함께 대입/리셋한다. 배치6 이
+  // 바로 이 자리에서 리셋을 빠뜨려 HIGH 결함(좌표는 탄인데 개체는 적)을 냈다 — 같은 함정을
+  // 되풀이하지 않으려고 **dmg 를 갱신하는 세 분기 전부**가 이 변수를 명시적으로 쓴다(적탄·
+  // 접촉은 값을, 해저드는 `undefined` 리셋을).
+  //  · 적탄 분기 — 그 탄의 `ownerId`(발사자). 스탬프가 없으면(게이트 꺼짐 런) 0 이고, 0 은
+  //    "발사자 미상"이라 `undefined` 로 정규화한다(엔티티 id 는 1부터 시작해 0 이 유효한 적
+  //    id 가 될 수 없다 — entities.ts `createWorld` 의 `nextEntityId = 1`).
+  //  · 접촉 분기 — 그 접촉 적 자신의 id(`contactSrc.id` 와 항상 같은 개체).
+  //  · 해저드 분기 — 해저드는 "누가 쐈는가" 개념이 없어(스포너 id 는 이미 다른 용도) `undefined`.
+  let srcId: number | undefined;
   const invulnerable = player.iframes > 0;
   const px = player.x;
   const py = player.y;
@@ -4469,7 +4486,16 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       // 다른 모든 `HAZARD_SLOW` 생산자는 `aux0` 를 건드리지 않아 0 → 기본값 그대로다(비트 동일).
       state.playerSlowTicks = t.aux0 > 0 ? t.aux0 : PLAYER_SLOW_DURATION;
     }
-    if (invulnerable) return;
+    if (invulnerable) {
+      // 배치7 F2a — 앵커 신설 `onContactInvuln`(스트라이커 M9「충각 기동」선결). 무적이라
+      // 접촉 피해가 여기서 상쇄되는 그 지점 · 접촉 상대 `t` 가 아직 스코프에 살아 있는 마지막
+      // 자리다. 「충각」은 몸통 대 몸통이지 탄·장판이 아니므로 접촉형 넷(enemy/boss/guardian/
+      // defenseBoss)일 때만 부른다 — 적탄·해저드는 이 게이트를 타지 않는다.
+      if (t.kind === 'enemy' || t.kind === 'boss' || t.kind === 'guardian' || t.kind === 'defenseBoss') {
+        onContactInvuln(state, player, t);
+      }
+      return;
+    }
     if (t.kind === 'enemyBullet') {
       if (t.damage > 0) dmgSources |= DamageSource.bullet;
       // 버블 FI8「발수 코팅」 — **max 를 갱신한 그 항목의 출처**를 함께 기록한다(설계서 FI8
@@ -4485,6 +4511,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         //    리셋하지 않을 때 `srcX/srcY` 는 탄인데 `contactSrc` 는 여전히 그 적을 가리켜
         //    좌표와 개체가 **서로 다른 대상**이 된다(FO3 가 적탄 피격에서도 발동한다).
         contactSrc = undefined;
+        // 배치7 F2a — srcX/srcY 와 같은 규율(위 선언부 주석 참조). 0 은 "발사자 미상".
+        srcId = t.ownerId !== 0 ? t.ownerId : undefined;
       }
       t.dead = true;
       // 'prop'(L3 기물)은 여기 넣지 않는다 — 기물의 damage 는 탄·장판 피해라 접촉 피해로
@@ -4510,6 +4538,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         // 규율이다: `max` 를 갱신한 그 분기에서만 함께 대입한다. 좌표만으로 적을 되찾으면
         // 접촉 판정의 두 번째 사본이 되고, 같은 좌표에 여럿이 겹친 틱에 조용히 갈린다.
         contactSrc = t;
+        // 배치7 F2a — srcX/srcY 와 같은 규율. 접촉 적 자신의 id(contactSrc 와 항상 같은 개체).
+        srcId = t.id;
       }
     } else if (t.kind === 'hazard' && hazardActive(t)) {
       if (t.damage > 0) dmgSources |= DamageSource.hazard;
@@ -4522,6 +4552,9 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         srcY = t.y;
         // ⚠️ 적탄 분기와 같은 사유의 리셋 — 해저드가 접촉을 덮으면 접촉 개체는 무효다.
         contactSrc = undefined;
+        // 배치7 F2a — 해저드는 "누가 쐈는가" 개념이 없다(위 선언부 주석). 명시적으로 리셋해야
+        // 접촉/적탄이 먼저 `max` 를 이긴 뒤 해저드가 덮었을 때 낡은 srcId 가 남지 않는다.
+        srcId = undefined;
       }
     }
     // Supply raiders never harm the player (they do not attack).
@@ -4762,7 +4795,9 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     // `srcX`/`srcY` 는 `max` 를 이긴 그 접촉원의 좌표다(`dmgFromHazard` 와 같은 규율) —
     // 승자가 없으면 `undefined` 이고 그것이 "모른다" 의 유일한 표현이다(0,0 을 쓰지 않는 사유는
     // 선언부 주석). 선택 인자라 촉매 짝·기존 픽스처는 인자가 안 늘었다.
-    onPlayerDamaged(state, player, dmg, lethalSurvived, dmgSources, srcX, srcY, contactSrc);
+    // 배치7 F2a — `srcId` 는 `srcX`/`srcY` 와 같은 규율(선언부 주석 참조). 선택 인자라 촉매
+    // 짝·기존 픽스처는 인자가 안 늘었다.
+    onPlayerDamaged(state, player, dmg, lethalSurvived, dmgSources, srcX, srcY, contactSrc, srcId);
   }
 }
 
@@ -4945,7 +4980,12 @@ function compact(state: WorldState): void {
         // 분열하는·폭발성의 엘리트는 사망 시 방사 폭발을 남긴다(spawnEliteDeathFx).
         // 드랍 게이트와 무관 — 어픽스 연출은 전리품 축이 아니다.
         const ea = eliteAffix(e);
-        if (ea === ELITE_SPLIT || ea === ELITE_VOLATILE) splitElites.push(e);
+        if (ea === ELITE_SPLIT || ea === ELITE_VOLATILE) {
+          // 배치7 F2a — 앵커 신설 `onDeathRemnantSpawn`(팬텀 AS6「무성 격살」선결). `true` 를
+          // 돌려주면 여기서 `push` 자체를 건너뛰어 5101행의 `spawnEliteDeathFx` 가 이 개체를
+          // 못 본다 — 스폰 억제이지 사후 삭제가 아니다. 훅이 없거나 `false` 면 종전과 동일하다.
+          if (!onDeathRemnantSpawn(state, e)) splitElites.push(e);
+        }
       }
     } else if (e.kind === 'supply' && e.hp <= 0) {
       // Shot down (vs. escaped with hp > 0): grant the raid reward. 촉매 자원 보상축(≥1)을

@@ -1,7 +1,12 @@
 /**
  * **210스킬 배선의 앵커** — sim 이 스킬 훅을 부르는 **유일한 지점들**(ADR-0049 S0~S3 + W2
- * + 배치4 앵커 레인 + 배치5 벽 축 + 배치7 F2b). 이 파일에 **44개**, `chainHooks.ts` 에 **2개**
- * = 모두 **46개**다(`onAutoAimTarget`·`onTurretTargetPick`·`onEnemyBulletMoved` 가 배치7 F2b 몫).
+ * + 배치4 앵커 레인 + 배치5 벽 축 + 배치7 F2a·F2b). 이 파일에 **51개**, `chainHooks.ts` 에
+ * **2개** = 모두 **53개**다(`onAutoAimTarget`·`onTurretTargetPick`·`onEnemyBulletMoved` 가
+ * 배치7 F2b 몫, `onContactInvuln`·`onDeathRemnantSpawn` 이 배치7 F2a 몫).
+ *
+ * ⚠️ **이 수를 손으로 세지 마라 — 두 병렬 레인이 각자 틀린 수를 적었다**(F2b 는 46, F2a 는
+ * 48 이라 적었고 둘 다 자기 레인 몫만 더한 값이었다). 기계가 검사하는 정본은
+ * `tests/skillAnchors.test.ts` 의 **export 전수 표**이고, 그 표와 어긋나면 테스트가 빨개진다.
  *
  * ## ⛔⛔ 동그라미 번호(①②③…)는 **㉖ 에서 끝났다 — 새 앵커에 번호를 붙이지 마라**
  * 배치4 에서 **네 레인이 병렬로 앵커 9개를 세웠고, ㉗㉘ 가 세 갈래로 중복됐다**:
@@ -508,6 +513,9 @@ function playerOf(state: WorldState): Entity | undefined {
  * @param srcX 피격원 좌표 x — **선택 인자다**(아래 사유). 생략 = "이번 피격의 피격원 좌표를
  *   모른다".
  * @param srcY 피격원 좌표 y — {@link srcX} 와 한 벌.
+ * @param srcId 피격원 id(배치7 F2a, 팬텀 AS7「원한 청산」선결) — **선택 인자**, `srcX`/`srcY`
+ *   와 같은 사유(아래 문단). 적탄이면 그 탄의 `ownerId`(발사자, 스탬프 없으면 `undefined`),
+ *   몸통 접촉이면 접촉 적 자신의 id다. 해저드 피격은 `undefined`.
  *
  * ## ⚠️ 왜 좌표만 **선택** 인자인가 — `sources` 와 규율이 다르다
  * `sources` 는 필수다: 사유를 빠뜨린 호출부가 조용히 오분류되기 때문이다. 좌표는 반대로
@@ -528,8 +536,9 @@ export function onPlayerDamaged(
   srcX?: number,
   srcY?: number,
   contact?: Entity,
+  srcId?: number,
 ): void {
-  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived, sources, srcX, srcY, contact);
+  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived, sources, srcX, srcY, contact, srcId);
   onPlayerDamagedCatalyst(state, player, dmg, lethalSurvived, sources);
 }
 
@@ -542,8 +551,12 @@ function dispatchPlayerDamagedSkill(
   srcX?: number,
   srcY?: number,
   contact?: Entity,
+  srcId?: number,
 ): void {
   if (!state.skillsOn) return;
+  // 배치7 F2a — **피격원 id**(팬텀 AS7「원한 청산」선결). 아직 소비처가 없다 — AS7 배선은
+  // `skills/phantom.ts`(배선 레인 소유) 몫이다. 소비처가 생기면 이 줄을 지워라.
+  void srcId;
   // 배치6 — **몸통 접촉 상대 적**(브루저 FO3「반동 갑주」). `sources` 비트는 *접촉이 있었다*
   // 까지만 말하고 `srcX`/`srcY` 는 좌표뿐이라, "그 접촉 적에게" 를 좌표로 되찾으면 접촉 판정의
   // 두 번째 사본이 된다. 후행 선택 인자인 것은 `srcX`/`srcY` 와 같은 사유다.
@@ -3929,4 +3942,61 @@ export function onPlayerWallSlide(
     default:
       break;
   }
+}
+
+// ---------------------------------------------------------------------------
+// 배치7 F2a 신설 앵커 둘 — 이름이 정본이다(파일 헤더 규율. 동그라미 번호는 ㉖ 에서 끝났다).
+// ---------------------------------------------------------------------------
+
+/**
+ * 앵커 신설 — **접촉 무적 게이트**(`resolveCollisions` 의 `if (invulnerable) return;` 직전,
+ * `world.ts` ~4558). 스트라이커 M9「충각 기동」선결(배치7 F2a).
+ *
+ * 무적(`player.iframes > 0`) 중에는 접촉 피해가 이 지점에서 통째로 상쇄되는데, 그 판정이
+ * 서기 **직전**이라 접촉 상대 `target` 이 아직 스코프에 살아 있다 — M9 이 "누구에게
+ * 충각했는가" 를 알 수 있는 유일한 자리다(`striker.ts` 헤더의 "닿지 않는" 목록이 지목한 벽).
+ *
+ * ⚠️ **호출부가 kind 를 이미 걸렀다.** 「충각」은 몸통 대 몸통 부딪힘이지 탄·장판을 맞는 것이
+ * 아니므로, 호출부(`world.ts`)는 접촉형 넷(enemy/boss/guardian/defenseBoss)일 때만 이 앵커를
+ * 부른다 — 적탄·해저드 분기에서는 부르지 않는다. 이 함수 안에서 `target.kind` 를 다시 걸러도
+ * 안전하지만(방어적 이중 게이트), 판별 자체는 호출부 책임이다.
+ *
+ * 아직 소비처가 없다 — `case` 가 없어 항상 무연산(비트 동일)이다. M9 가 배선되는 레인은
+ * `skills/striker.ts`(배선 레인 소유)에 case 를 더해라 — 이 앵커는 자리만 연다.
+ */
+export function onContactInvuln(state: WorldState, player: Entity, target: Entity): void {
+  if (!state.skillsOn) return;
+  void player;
+  void target;
+  switch (state.sigBit) {
+    // ⚠️ **스트라이커 case 는 아직 없다** — M9 배선은 `skills/striker.ts` 소유(이 레인 밖).
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 신설 — **엘리트 사망 잔재 스폰 억제**(`splitElites.push(e)` 직전, `world.ts` ~5034).
+ * 팬텀 AS6「무성 격살」선결(배치7 F2a).
+ *
+ * 정본 스폰은 `spawnEliteDeathFx`(elite.ts)이고 실제 호출은 수집 뒤(`world.ts` ~5101)다 —
+ * 이 앵커는 그보다 **앞**, 수집 자체를 걸러 "이번 죽음은 잔재를 남기지 않는다" 를 결정한다.
+ * **사후 삭제가 아니라 스폰 억제다** — 사후에 지우면 파편이 한 틱 살아 이미 피해를 준 뒤이므로
+ * 값이 다르다(`skills/phantom.ts` 헤더의 AS6 미배선 사유 문단이 근거).
+ *
+ * @returns `true` 면 이번 엘리트의 사망 잔재 스폰을 **건너뛴다**(호출부가 `push` 자체를 안
+ *   한다). 훅이 없거나 `false` 를 돌려주면 종전과 완전히 같다(비트 동일).
+ *
+ * 아직 소비처가 없다 — `case` 가 없어 항상 `false`. AS6 가 배선되는 레인은
+ * `skills/phantom.ts`(배선 레인 소유)에 case 를 더해라 — 이 앵커는 자리만 연다.
+ */
+export function onDeathRemnantSpawn(state: WorldState, elite: Entity): boolean {
+  if (!state.skillsOn) return false;
+  void elite;
+  switch (state.sigBit) {
+    // ⚠️ **팬텀 case 는 아직 없다** — AS6 배선은 `skills/phantom.ts` 소유(이 레인 밖).
+    default:
+      break;
+  }
+  return false;
 }

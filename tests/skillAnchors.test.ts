@@ -90,6 +90,17 @@ const hoisted = vi.hoisted(() => ({
    * `world.ts` 가 인자를 빠뜨리면(기본 0) 스킬이 조용히 영구 미발동이 된다.
    */
   chainSources: [] as (number | undefined)[],
+  /**
+   * 앵커 ④ 가 받은 **피격원 id**(배치7 F2a, 선택 인자). `damageSources`/`chainSources` 와
+   * 같은 사유로 따로 잰다 — "값이 실제로 실려 오는가"는 호출 횟수만으로는 안 보인다.
+   */
+  srcIds: [] as (number | undefined)[],
+  /**
+   * 신설 `onContactInvuln` 이 받은 접촉 상대의 `kind` 기록(배치7 F2a). 호출 횟수만으로는
+   * "적탄·해저드에서도 불렸는가" 를 못 재고, 호출부가 kind 게이트를 빠뜨리면 그 오발동은
+   * 흔적을 안 남긴다.
+   */
+  contactInvulnKinds: [] as string[],
 }));
 
 vi.mock('../src/sim/skillHooks.js', async (orig) => {
@@ -139,6 +150,11 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
       }
       if (name === 'onPlayerDamaged') {
         hoisted.damageSources.push(args[4] as number);
+        hoisted.srcIds.push(args[8] as number | undefined);
+      }
+      if (name === 'onContactInvuln') {
+        const t = args[2] as { kind: string };
+        hoisted.contactInvulnKinds.push(t.kind);
       }
       if (name === 'onDamageChain') {
         hoisted.chainSources.push(args[3] as number | undefined);
@@ -231,6 +247,8 @@ beforeEach(() => {
   hoisted.chainSources = [];
   hoisted.autoAimTargets = [];
   hoisted.turretPick = null;
+  hoisted.srcIds = [];
+  hoisted.contactInvulnKinds = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -326,8 +344,14 @@ describe('계측 이음매', () => {
         'onPlayerWallSlide', // 선체↔벽 겹침 해소 직전 (팬텀 DI9 — 탄↔벽 축이 아니었다)
         // ⚠️ `onEnemyStatusExpired`(적 화상 만료 → SQ9)는 여기 **없다** — `chainHooks.ts`
         //    에 산다. `status.ts` 가 부르는 앵커라 이 파일에 두면 런타임 순환이 된다.
-        // ⚠️ 배치7 F2b 셋(해츨링 BD4「표적 공유」· SH8「탄받이 깃털」선결). 전부 전 분기가
-        //    비어 있다(자리만 연다) — 배선은 다음 레인의 몫이다.
+        // ⚠️ 배치7 F2a 신설 둘. 스트라이커 M9·팬텀 AS6 선결 — 둘 다 아직 `case` 가 없다
+        // (배선은 각 스킬 레인 몫). 이름이 정본이라 여기 등록한다(파일 헤더 규율).
+        'onContactInvuln', // 접촉 무적 게이트 — `if (invulnerable) return;` 직전
+        'onDeathRemnantSpawn', // 엘리트 사망 잔재 스폰 억제 — `splitElites.push` 직전
+        // ⚠️ 배치7 F2b 신설 셋(해츨링 BD4「표적 공유」· SH8「탄받이 깃털」· 스트라이커
+        //    F10·M8 선결). 전부 전 분기가 비어 있다(자리만 연다) — 배선은 각 스킬 레인 몫.
+        //    이 레지스트리는 `skillHooks.js` 의 export 전수를 잠그므로, 같은 배치의 다른
+        //    레인이 앵커를 열면 이 파일도 같이 갱신해야 한다.
         'onAutoAimTarget', // 자동조준이 이번 틱 표적을 확정한 직후(`autoAttack`)
         'onTurretTargetPick', // 포탑이 `nearestTarget` 을 부르기 앞(`fireTurretShot`)
         'onEnemyBulletMoved', // 적탄이 이번 틱 위치 적분을 끝낸 직후(적탄 이동 루프)
@@ -530,6 +554,70 @@ describe('앵커 ④⑧ onPlayerDamaged · onDamageChain — 피격', () => {
       stepWorld(s, idle);
       expect(hoisted.damageSources).toHaveLength(1);
       expect(hoisted.damageSources[0]).toBe(DamageSource.bullet);
+    });
+  });
+
+  // ── 배치7 F2a — 앵커 ④ 의 srcId(팬텀 AS7「원한 청산」선결) ──────────────────
+  describe('앵커 ④ 의 srcId', () => {
+    it('몸통 접촉이면 접촉 적 자신의 id 다', () => {
+      const s = skilled(0xc703);
+      const e = plantEnemy(s, 0, 0, 7);
+      stepWorld(s, idle);
+      expect(hoisted.srcIds).toHaveLength(1);
+      expect(hoisted.srcIds[0]).toBe(e.id);
+    });
+
+    it('적탄이면 그 탄의 ownerId 다(스탬프가 있을 때) — 0 이면 undefined 로 정규화된다', () => {
+      const s = skilled(0xc703);
+      const eb = blankEntity('enemyBullet');
+      eb.radius = 6;
+      eb.damage = 7;
+      eb.ownerId = 555; // 발사자 id 가 이미 실려 있다고 가정(스탬프 게이트는 별도 단위 테스트)
+      addEntity(s, eb);
+      stepWorld(s, idle);
+      expect(hoisted.srcIds).toHaveLength(1);
+      expect(hoisted.srcIds[0]).toBe(555);
+    });
+
+    it('적탄의 ownerId 가 0(미상)이면 undefined 다', () => {
+      const s = skilled(0xc703);
+      const eb = blankEntity('enemyBullet');
+      eb.radius = 6;
+      eb.damage = 7; // ownerId 기본값 0 그대로
+      addEntity(s, eb);
+      stepWorld(s, idle);
+      expect(hoisted.srcIds).toHaveLength(1);
+      expect(hoisted.srcIds[0]).toBeUndefined();
+    });
+
+    it('해저드 피격이면 undefined 다', () => {
+      const s = skilled(0xc703);
+      const h = blankEntity('hazard');
+      h.radius = 40;
+      h.damage = 7;
+      h.timer = 0;
+      h.life = -1;
+      addEntity(s, h);
+      stepWorld(s, idle);
+      expect(hoisted.srcIds).toHaveLength(1);
+      expect(hoisted.srcIds[0]).toBeUndefined();
+    });
+
+    it('⭐ 리셋 규율 — 적탄(약함)이 먼저 실려도 접촉(강함)이 max 를 이기면 srcId 는 접촉 쪽이다', () => {
+      // 배치6 이 이 자리(그때는 contactSrc)에서 리셋을 빠뜨려 HIGH 결함을 냈다 — 좌표는 나중
+      // 승자인데 개체는 먼저 실린 것을 가리키는 형태. srcId 도 같은 함정을 못 밟는지 잰다.
+      const s = skilled(0xc703);
+      const eb = blankEntity('enemyBullet');
+      eb.x = 0;
+      eb.y = 0;
+      eb.radius = 6;
+      eb.damage = 1; // 접촉보다 약하다
+      eb.ownerId = 111;
+      addEntity(s, eb);
+      const e = plantEnemy(s, 0, 0, 50); // 접촉이 max 를 이긴다
+      stepWorld(s, idle);
+      expect(hoisted.srcIds).toHaveLength(1);
+      expect(hoisted.srcIds[0]).toBe(e.id);
     });
   });
 
@@ -1851,5 +1939,112 @@ describe('배치6 onActiveExpired — 액티브 버프가 0 이 된 그 한 틱'
     expect(count('onActiveExpired')).toBe(1);
     stepActives(s, p, idle, { x: 1, y: 0 }); // 이미 0 — 다시 불리면 만료가 매 틱이 된다
     expect(count('onActiveExpired')).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 배치7 F2a 신설 둘 — 스트라이커 M9·팬텀 AS6 선결(둘 다 아직 소비처 없음)
+// ---------------------------------------------------------------------------
+
+describe('배치7 F2a onContactInvuln — 접촉 무적 게이트', () => {
+  it('무적 중 몸통 접촉이면 불리고, 접촉 상대의 kind 가 실린다', () => {
+    const s = skilled(0xc701);
+    plantEnemy(s, 0, 0, 7); // 플레이어에 겹친 적
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.iframes = 10; // 무적 — 접촉 피해가 상쇄되는 그 상태
+    stepWorld(s, idle);
+    expect(count('onContactInvuln')).toBe(1);
+    expect(hoisted.contactInvulnKinds).toEqual(['enemy']);
+  });
+
+  it('음성 대조 ①: 무적이 아니면 같은 접촉에도 0 이다', () => {
+    const s = skilled(0xc701);
+    plantEnemy(s, 0, 0, 7);
+    // p.iframes 기본값 0 — 무적이 아니다.
+    stepWorld(s, idle);
+    expect(count('onContactInvuln')).toBe(0);
+  });
+
+  it('음성 대조 ②: 무적 중이어도 적탄만 있으면 0 이다 — 「충각」은 몸통 대 몸통이지 탄이 아니다', () => {
+    const s = skilled(0xc701);
+    const eb = blankEntity('enemyBullet');
+    eb.radius = 6;
+    eb.damage = 7;
+    addEntity(s, eb); // 원점 — 플레이어에 겹침
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.iframes = 10;
+    stepWorld(s, idle);
+    expect(count('onContactInvuln')).toBe(0);
+  });
+
+  it('음성 대조 ③: 무적 중이어도 해저드만 있으면 0 이다', () => {
+    const s = skilled(0xc701);
+    const h = blankEntity('hazard');
+    h.radius = 40;
+    h.damage = 7;
+    h.timer = 0;
+    h.life = -1; // 상시 활성
+    addEntity(s, h);
+    const p = s.entities[0];
+    if (p === undefined) throw new Error('플레이어가 0번에 없다');
+    p.iframes = 10;
+    stepWorld(s, idle);
+    expect(count('onContactInvuln')).toBe(0);
+  });
+});
+
+describe('배치7 F2a onDeathRemnantSpawn — 사망 잔재 스폰 억제', () => {
+  /** `pierce = affixCode + 1` (elite.ts `eliteAffix`). ELITE_SPLIT = 0 → pierce 1. */
+  function plantSplitElite(s: WorldState, x: number, y: number): Entity {
+    const e = plantEnemy(s, x, y);
+    e.pierce = 1; // ELITE_SPLIT
+    e.hp = 0;
+    e.dead = true;
+    return e;
+  }
+
+  it('분열하는 엘리트 사망에 불린다', () => {
+    const s = skilled(0xc702);
+    plantSplitElite(s, 600, 600);
+    stepWorld(s, idle);
+    expect(count('onDeathRemnantSpawn')).toBe(1);
+  });
+
+  it('음성 대조 ①: 분열/폭발성이 아닌 엘리트 사망은 0 이다', () => {
+    const s = skilled(0xc702);
+    const e = plantEnemy(s, 600, 600);
+    e.pierce = 5; // ELITE_REGEN(4)+1 — 엘리트이지만 분열/폭발성이 아니다
+    e.hp = 0;
+    e.dead = true;
+    stepWorld(s, idle);
+    expect(count('onDeathRemnantSpawn')).toBe(0);
+  });
+
+  it('음성 대조 ②: 비-엘리트 사망은 0 이다', () => {
+    const s = skilled(0xc702);
+    const e = plantEnemy(s, 600, 600);
+    e.hp = 0;
+    e.dead = true; // pierce = 0(기본) — isElite 가 거짓
+    stepWorld(s, idle);
+    expect(count('onDeathRemnantSpawn')).toBe(0);
+  });
+
+  it('⭐ 반환값 뮤테이션 — true 를 돌려주면 잔재 스폰이 실제로 억제된다(스폰 억제 ≠ 사후 삭제)', () => {
+    // 기준선: 훅이 없으면(false) 분열 파편 8발이 실제로 스폰돼 enemyBulletCount 가 늘어난다.
+    const baseline = skilled(0xc702);
+    const beforeBase = baseline.enemyBulletCount;
+    plantSplitElite(baseline, 600, 600);
+    stepWorld(baseline, idle);
+    expect(baseline.enemyBulletCount).toBeGreaterThan(beforeBase);
+
+    // 억제: 같은 상황에서 훅이 true 를 돌려주면 splitElites 수집 자체가 스킵돼 파편이 0 이다.
+    hoisted.mutate['onDeathRemnantSpawn'] = () => true;
+    const s = skilled(0xc702);
+    const before = s.enemyBulletCount;
+    plantSplitElite(s, 600, 600);
+    stepWorld(s, idle);
+    expect(s.enemyBulletCount).toBe(before);
   });
 });
