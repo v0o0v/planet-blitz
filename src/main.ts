@@ -149,7 +149,14 @@ import {
   type DailyRewardNetDeps,
   fetchCommissionGrantsOnline,
   markCommissionGrantAppliedOnline,
+  beginPveRunOnServer,
+  grantRunDropsOnServer,
+  fetchPendingItemGrantsOnServer,
+  markItemGrantAppliedOnServer,
 } from './net/index.js';
+// 서버 드랍 배송(원장 → 세이브) — ADR-0050 §3 단계 1. 발급은 서버가 하고 배송은 클라만 할 수
+// 있다(`items` 테이블에 클라가 한 줄도 안 쓴다 — itemGrantDelivery.ts 머리 참조).
+import { deliverItemGrants } from './run/itemGrantDelivery.js';
 // 의뢰 확정 지급물 배송(발급 원장 → 세이브). 발급은 서버가 하고 배송은 클라만 할 수 있다 —
 // `items` 는 클라 rw 미러라 서버가 심을 자리가 없다(commissionGrantDelivery.ts 머리 참조).
 import { deliverCommissionGrants } from './run/commissionGrantDelivery.js';
@@ -664,6 +671,27 @@ async function main(): Promise<void> {
    * AC3). 각 런 진입점이 `setScreen('run')` 직전에 세운다(정식 침공·하네스 침공=invasion, PvE=pve).
    */
   let currentRunKind: 'pve' | 'invasion' = 'pve';
+
+  /**
+   * 이번 PvE 런의 **드랍 원장 런 id**(ADR-0050 §3 단계 1). `begin_pve_run` 이 발급하며 서버가
+   * 그때 `started_at` 을 찍는다 — 그 시각이 드랍 개수 캡의 분모다(클라가 못 만지는 유일한 시계).
+   *
+   * ⚠️ `WorldConfig.runId` 와 **다른 것이다.** 그쪽은 촉매 소모 영수증 id 이고
+   * (`run/runConfig.ts:63-66`) `settle_pve_run` 이 그 id 로 영수증을 조회해 자원 배율을 연다.
+   * 여기에 드랍 런 id 를 넣으면 영수증이 없는 행을 조회하게 되어 **촉매 배율이 조용히 죽는다.**
+   * 그래서 촉매 런은 pve_runs 행을 둘 갖는다(begin 행 · consume 행) — 의도된 설계다
+   * (`20260808000000_pve_run_registration.sql` §consume_catalysts 를 고치지 않는다).
+   *
+   * `null` = 미설정·오프라인·캡 초과 → 정산이 **로컬 롤**로 강등한다(오프라인 플레이 보존).
+   * sim 은 이 값을 읽지 않는다 — 순수 메타라 `WorldConfig` 에 넣지 않고 런 상태로만 든다.
+   */
+  let dropRunId: string | null = null;
+
+  /**
+   * 드랍 런 등록의 세대 토큰. `startRun` 이 올린다 — 늦게 도착한 `begin_pve_run` 응답이
+   * **다음 런의 id 를 덮어쓰는 것**을 막는 유일한 장치다(그러면 그 런의 드랍이 지난 런에 적힌다).
+   */
+  let dropRunToken = 0;
 
   /** 화면 안 판정용 뷰 반폭(월드 단위). entityRenderer 가 월드↔디자인px 를 1:1 로 그려(줌 없음). */
   const VIEW_HALF_WIDTH = DESIGN_WIDTH / 2;
@@ -1552,9 +1580,26 @@ async function main(): Promise<void> {
     const cats = sel.catalysts ?? [];
     if (cats.length === 0) {
       startRun(seed, sel);
+      registerDropRun(sel.planet);
       return;
     }
     void consumeAndLaunch(seed, sel, cats);
+  }
+
+  /**
+   * 런 시작을 서버 원장에 등록한다(ADR-0050 §3 단계 1). **출격을 막지 않는다** —
+   * `startRun` **뒤에** fire-and-forget 으로 부르므로 "출격이 서버를 기다리지 않는다"는
+   * 기존 계약(무촉매 오프라인 런 보존)이 그대로다. 런은 분 단위라 정산 전에 도착한다.
+   *
+   * ⚠️ 늦게 온 응답이 **다음 런의 id 를 덮어쓰면** 그 런의 드랍이 지난 런에 적힌다. 토큰으로
+   * 세대를 확인해 막는다 — `startRun` 이 토큰을 올리므로 런이 바뀌면 옛 응답은 버려진다.
+   */
+  function registerDropRun(planet: number): void {
+    const token = dropRunToken;
+    void beginPveRunOnServer(planet).then((res) => {
+      if (token !== dropRunToken) return; // 이미 다음 런이 시작됐다 — 이 응답은 남의 것이다.
+      dropRunId = res.status === 'ok' ? res.runId : null;
+    });
   }
 
   /**
@@ -1575,6 +1620,9 @@ async function main(): Promise<void> {
       // 출격하면 **고르지도 않은 촉매가 한 번 더 소모된다**.
       planetSelect.clearInjectedCatalysts();
       startRun(seed, { ...sel, catalysts: cats, runId: outcome.runId });
+      // 촉매 런도 드랍 원장은 **별도 행**에 등록한다 — `outcome.runId` 는 촉매 영수증 id 라
+      // 드랍 키로 쓰면 `settle_pve_run` 의 영수증 조회와 충돌한다(위 `dropRunId` 주석).
+      registerDropRun(sel.planet);
       return;
     }
     // unconfigured(영구 오프라인)·failed(거부/일시 오프라인) 모두 2선택 모달로 처리한다.
@@ -1590,6 +1638,7 @@ async function main(): Promise<void> {
           stage: sel.stage,
           ...(sel.maxSegments !== undefined ? { maxSegments: sel.maxSegments } : {}),
         });
+        registerDropRun(sel.planet);
       },
       onCancel: () => openStarMap(),
     });
@@ -1602,6 +1651,9 @@ async function main(): Promise<void> {
       stage: TUTORIAL_STAGE,
       maxSegments: TUTORIAL_MAX_SEGMENTS,
     });
+    // 튜토리얼도 실제로 아이템을 주는 PvE 런이라 드랍 원장에 등록한다. 빼면 그 전리품만
+    // 원장 밖에서 생겨, 뒤따르는 `save` 증가분 봉인(단계 1 후속)이 그것을 위조로 보고 되돌린다.
+    registerDropRun(TUTORIAL_PLANET);
     tutorialActive = true; // startRun cleared it; mark this run as the tutorial.
     ftue.markCombat();
     tutorialOverlay.show();
@@ -1610,6 +1662,10 @@ async function main(): Promise<void> {
   /** Assemble the run config from the selection + active loadout, then start. */
   function startRun(seed: number, sel: LaunchSelection): void {
     pendingRunSeed = null; // 이번 시드 소진 — 다음 성계 지도는 새 시드를 굴린다
+    // 새 런: 드랍 원장 등록을 초기화하고 세대를 올린다. 토큰을 올려야 지난 런의 늦은
+    // `begin_pve_run` 응답이 이 런의 id 로 들어앉지 않는다(ADR-0050 §3 단계 1).
+    dropRunId = null;
+    dropRunToken++;
     tutorialActive = false; // normal run unless startTutorial re-flags it
     invasionTarget = null; // PvE 런: 침공 컨텍스트 해제(endRun 이 정산 경로로 분기)
     harnessInvasionRun = false;
@@ -1836,6 +1892,69 @@ async function main(): Promise<void> {
   }
 
   /**
+   * 서버 드랍 배송 1회분(`applied_at IS NULL` 인 원장 행 → 세이브) — ADR-0050 §3 단계 1.
+   *
+   * 의뢰 배송(`runCommissionGrantDelivery`)과 **같은 형상**이다. 두 배송이 같은 순서 계약
+   * (저장 → push → 재-pull 확인 → 표시)을 쓰므로 규율이 한 벌이다.
+   *
+   * 절대 throw 하지 않는다. 오프라인·미설정이면 완전 no-op 이다.
+   */
+  async function runItemGrantDelivery(): Promise<void> {
+    const report = await deliverItemGrants(profile, {
+      fetchGrants: () => fetchPendingItemGrantsOnServer(),
+      saveProfile: (p) => saveProfile(p),
+      pushProfile: (p) => pushProfileToServer(p),
+      // 재-pull. `pullServerProfileInto` 는 서버가 더 진행됐으면 **로컬을 갈아 끼운다** —
+      // 그때 방금 심은 아이템이 사라지고, 그것을 배송 루틴이 존재 확인 실패로 잡아 표시를
+      // 미룬다. 여기서 그 함수를 쓰는 이유가 바로 그 사건을 재현하는 것이다.
+      repullProfile: async (p) => ((await pullServerProfileInto(p)) === 'unavailable' ? null : p),
+      markApplied: (grantId) => markItemGrantAppliedOnServer(grantId),
+    });
+    if (report.delivered > 0) saveProfile(profile);
+    if (report.held > 0) {
+      console.warn(
+        `[drops] 전리품 ${report.held}건이 인벤·창고 만석으로 보류됐다 — 자리를 비우면 다음 부팅에 들어온다`,
+      );
+    }
+    if (report.unresolved > 0) {
+      console.warn(`[drops] 원장 ${report.unresolved}건을 해석하지 못했다(등급·시드 형식 위반)`);
+    }
+  }
+
+  /**
+   * 런 드랍 발급 → 배송(ADR-0050 §3 단계 1 「개수만 계약」).
+   *
+   * ## 왜 발급 응답을 바로 쓰지 않고 원장을 다시 읽는가
+   * `grant_run_drops` 는 발급 결과를 반환값에 담아 준다. 그런데 그 응답을 받기 전에 앱이 죽으면
+   * **원장에는 행이 있고 세이브에는 없다.** 그래서 발급 후 `fetchPendingItemGrants` 로 다시 읽어
+   * 배송한다 — 정산 직후 경로와 부팅 재개 경로가 **같은 함수**를 타므로 둘이 갈릴 여지가 없다
+   * (의뢰 배송이 세운 규율과 같다). 비용은 조회 1회이고, 얻는 것은 유실 0 이다.
+   *
+   * 절대 throw 하지 않는다.
+   */
+  async function deliverRunDrops(
+    runId: string,
+    lootCount: number,
+    src: { planet: number; stage: number; levelCap: number },
+  ): Promise<void> {
+    const res = await grantRunDropsOnServer(
+      runId,
+      lootCount,
+      src.planet,
+      src.stage,
+      src.levelCap,
+    );
+    if (res.status === 'ok' && res.clamped) {
+      // 캡이 깎았다. 정직한 플레이는 여기 닿지 않는다 — 닿았다면 캡 상수를 실측으로 다시 볼 신호다.
+      console.warn(
+        `[drops] 개연성 캡이 전리품 주장을 깎았다: 주장 ${res.claimed} → 지급 ${res.granted}`,
+      );
+    }
+    // 발급이 실패했어도 배송은 시도한다 — 지난 런의 미배송 행이 남아 있을 수 있다.
+    await runItemGrantDelivery();
+  }
+
+  /**
    * 끝난 의뢰 런의 리플레이를 `verify-commission` 에 제출하고, 판정을 정산 화면에 반영한다
    * (의뢰서 시스템 Phase E · 서버 계약 §7·§5-4).
    *
@@ -1946,6 +2065,17 @@ async function main(): Promise<void> {
       // XP 를 계정에 넣지 않고 PvE 런 기록(recordPveRun)도 올리지 않는다. 침공 제출 경로는
       // invasionTarget 이 null 이라 애초에 타지 않는다(ADR-0008 오염 런 격리와 동일 규율).
       if (!w.tainted && !harnessInvasionRun) {
+        // ⭐ 서버 권위 드랍(ADR-0050 §3 단계 1) — 이 런이 원장에 등록됐으면 전리품을 **여기서
+        // 굴리지 않는다.** 클라는 아래에서 주운 **개수만** 주장하고, 서버가 자기 시드로 굴려
+        // 원장에 적은 것을 배송 경로가 받아 온다(「개수만 계약」).
+        // `dropRunId === null`(미설정·오프라인·캡 초과)이면 종전 로컬 롤로 강등한다 —
+        // 그것이 게임이 로그인 없이도 플레이되는 근거다.
+        const serverDrops = dropRunId !== null;
+        // ⚠️ **XP 적립 전에** 읽는다. 전리품은 런 도중에 떨어진 것이라 기준 레벨은 런을 시작할
+        // 때의 레벨이어야 한다 — 적립 후에 읽으면 이 런에서 오른 레벨만큼 상한이 함께 올라가,
+        // 방금 레벨업한 런에서만 더 무거운 장비가 나오는 비대칭이 생긴다.
+        // (`settleRun` 이 로컬 롤 경로에서 같은 이유로 같은 시점에 읽는다 — settlement.ts:153-156.)
+        const dropLevelCap = activeShip(profile).level;
         lastOutcome = settleRun(profile, {
           victory: w.victory,
           loot: w.loot,
@@ -1971,7 +2101,7 @@ async function main(): Promise<void> {
           // 의뢰 런 표식(계약 §10 A-8) — 정산이 **최고 클리어 단계를 갱신하지 않게** 하는
           // 유일한 신호다. 술어 정본은 `config.commission`(런타임 파생 금지).
           commission: w.config.commission !== undefined,
-        });
+        }, { serverDrops });
         // Completing the tutorial (win or lose) reveals the base and makes the run
         // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.
         if (tutorialActive) profile.tutorialDone = true;
@@ -2052,6 +2182,18 @@ async function main(): Promise<void> {
         // ADR-0026: 리플레이 업로드(recordPveRun/pve_runs)는 폐기했다 — 재화가 서버 권위라
         // 사후 샘플링 재검증이 불필요해졌다(ReplayRecorder 는 침공 제출용으로만 살아있다).
         void recordPveRunResult(profile);
+        // ⭐ 서버 드랍 발급 + 배송(ADR-0050 §3 단계 1). 클라는 **주운 개수만** 주장하고
+        // 서버가 개연성 캡으로 깎은 뒤 자기 시드로 굴린다. `recordPveRunResult` **뒤**여야
+        // 한다 — 배송이 자기 순서 계약(저장 → push → 재-pull → 표시)을 도는 동안 그 앞의
+        // push 가 끼어들면 재-pull 확인이 흔들린다.
+        // 실패해도 원장 행은 서버에 남으므로 **다음 부팅의 배송 재개**가 줍는다.
+        if (serverDrops && dropRunId !== null) {
+          void deliverRunDrops(dropRunId, w.loot.length, {
+            planet: w.config.planet ?? 0,
+            stage: w.config.stage ?? 1,
+            levelCap: dropLevelCap,
+          });
+        }
       }
     }
     tutorialOverlay.hide();
@@ -2256,6 +2398,10 @@ async function main(): Promise<void> {
       // 미배송 확정 지급물 회수 — 제출 직후에 앱이 죽었거나 오프라인이었던 런의 물건이
       // 여기서 들어온다(유실 0). 원장이 정본이라 중복 배송은 구조적으로 없다.
       void runCommissionGrantDelivery();
+      // 서버 드랍 원장도 같은 이유로 부팅에서 재개한다(ADR-0050 §3 단계 1) — 정산 직후에
+      // 앱이 죽었거나 오프라인이었던 런의 전리품이 여기서 들어온다. 발급은 이미 서버에
+      // 적혀 있으므로 배송만 다시 돌면 되고, `hasItemId` 로 멱등이라 중복이 없다.
+      void runItemGrantDelivery();
       // 일일 보상 배송함도 같은 이유로 부팅에서 재시도한다 — 세이브 반영 뒤 `mark_applied`
       // 전에 죽으면 그 행은 `applied_at IS NULL` 로 남고, 반영이 `hasItemId` 로 멱등이라
       // 다시 반영해도 아이템이 늘지 않는다(유실 0 · 중복 0).

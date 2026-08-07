@@ -143,6 +143,46 @@ export interface SpendCurrencyResult {
   minerals_left: number;
 }
 
+/**
+ * `begin_pve_run` 반환(ADR-0050 §3 단계 1). 런 시작을 서버에 등록해 **서버가 `started_at` 을
+ * 찍게** 한다 — 그 시각이 드랍 개수 캡·축 D 캡의 분모다(클라가 못 만지는 유일한 시계).
+ *
+ * `throttled=true` 면 `run_id` 가 null 이다(시간당 런 상한 초과). 그때도 런은 정상 진행하되
+ * **서버 드랍을 못 받는다** — 예외가 아니라 값으로 표현하는 이유는, 던지면 오프라인·네트워크
+ * 실패와 구분이 안 되는 실패 경로가 하나 더 생기기 때문이다.
+ */
+export interface BeginPveRunResult {
+  run_id: string | null;
+  throttled: boolean;
+  runs_last_hour: number;
+}
+
+/**
+ * 아이템 원장 1행(`item_grants`). **서버가 굴린 결과**이고 클라는 이것을 받아 `rollItem` 으로
+ * 아이템을 재확정할 뿐이다 — 무엇이 나올지 미리 알 수 없다(ADR-0050 §3 단계 1).
+ *
+ * payload 가 아니라 3필드인 이유는 저장 예산이다(payload 통째면 무료 티어 500MB 초과).
+ * `rollItem` 이 순수하므로 이 셋이면 바이트 동일하게 재확정된다.
+ */
+export interface ItemGrantRow {
+  grantId: string;
+  dropIndex: number;
+  dropSeed: number;
+  rarity: string;
+  source: { planet?: number; stage?: number; levelCap?: number };
+  /** 배송 완료 시각. null 이면 아직 세이브에 안 심었다(다음 부팅이 재시도한다). */
+  appliedAtMs: number | null;
+}
+
+/** `grant_run_drops` 반환. `clamped=true` 면 개연성 캡이 주장 개수를 깎았다. */
+export interface GrantRunDropsResult {
+  granted: number;
+  claimed: number;
+  clamped: boolean;
+  throttled: boolean;
+  grants: ItemGrantRow[];
+}
+
 /** 프로필 이관 오케스트레이션이 의존하는 서버 IO(테스트에서 fake 로 주입). */
 export interface ServerGateway {
   /** 익명 세션을 보장하고 로그인 uid 를 반환한다. 실패 시 throw. */
@@ -184,6 +224,33 @@ export interface ServerGateway {
    */
   consumeCatalysts?(catalystIds: number[], planet: number): Promise<CatalystConsumeResult>;
   /**
+   * 런 시작 등록(ADR-0050 §3 단계 1) — 서버 `begin_pve_run` RPC. 서버가 `started_at` 을 찍어
+   * 드랍 개수 캡의 분모를 만든다. 구버전 게이트웨이면 `undefined` — 호출부가 로컬 롤로 강등한다.
+   */
+  beginPveRun?(planet: number): Promise<BeginPveRunResult>;
+  /**
+   * 런 드랍 발급(ADR-0050 §3 단계 1) — 서버 `grant_run_drops` RPC. 클라는 **주운 개수만**
+   * 주장하고 서버가 개연성 캡으로 깎은 뒤 자기 시드로 그 수만큼 굴려 원장에 적는다.
+   * 같은 런에 두 번 부르면 두 번째는 `already-granted` 로 0건이다(멱등). 구버전이면 undefined.
+   */
+  grantRunDrops?(
+    runId: string,
+    claimed: number,
+    planet: number,
+    stage: number,
+    levelCap: number,
+  ): Promise<GrantRunDropsResult>;
+  /**
+   * 미배송 아이템 원장 조회(`applied_at is null`). 배송이 중간에 끊겨도 다음 부팅이 이걸로
+   * 재개한다 — `commission_grants`·`daily_reward_claims` 와 같은 배송함 규율. 구버전이면 undefined.
+   */
+  fetchPendingItemGrants?(): Promise<ItemGrantRow[]>;
+  /**
+   * 배송 확인 — 서버 `mark_item_grant_applied` RPC. 수령자는 서버가 `auth.uid()` 로 고정하므로
+   * 인자로 받지 않는다. 0행 갱신도 오류가 아니라 멱등 성공이다. 구버전이면 undefined.
+   */
+  markItemGrantApplied?(grantId: string): Promise<void>;
+  /**
    * 촉매 드랍 적립(ADR-0029) — 서버 `grant_catalyst` RPC. 엘리트·보스 런 드랍으로 얻은 촉매를
    * 본인 보유 원장에 upsert 적립하고 갱신 수량을 낸다. 미지 id 는 서버가 거부(예외). 구버전이면 undefined.
    */
@@ -224,6 +291,51 @@ function num(v: unknown, fallback = 0): number {
     if (Number.isFinite(n)) return n;
   }
   return fallback;
+}
+
+/**
+ * `source` jsonb → 좁은 레코드. 서버는 `jsonb_strip_nulls` 로 비운 키를 아예 안 싣기 때문에
+ * 세 필드가 전부 optional 이다(exactOptionalPropertyTypes 규율상 있을 때만 싣는다).
+ */
+function grantSource(v: unknown): ItemGrantRow['source'] {
+  const r = asRec(v);
+  return {
+    ...(r.planet !== undefined ? { planet: num(r.planet) } : {}),
+    ...(r.stage !== undefined ? { stage: num(r.stage) } : {}),
+    ...(r.levelCap !== undefined ? { levelCap: num(r.levelCap) } : {}),
+  };
+}
+
+/**
+ * `grant_run_drops` 가 방금 낸 행. 이 경로에는 `source` 가 안 실린다 — 호출부가 그 값을 인자로
+ * 넘겼으므로 되돌려 받을 이유가 없다(응답 크기 절약). 그래서 넘긴 값을 그대로 되쓴다.
+ */
+function grantRowFromRpc(
+  r: Record<string, unknown>,
+  src: { planet: number; stage: number; levelCap: number },
+): ItemGrantRow {
+  return {
+    grantId: typeof r.grantId === 'string' ? r.grantId : '',
+    dropIndex: num(r.dropIndex),
+    dropSeed: num(r.dropSeed),
+    rarity: typeof r.rarity === 'string' ? r.rarity : 'normal',
+    source: src,
+    // 방금 발급된 행은 정의상 미배송이다.
+    appliedAtMs: null,
+  };
+}
+
+/** `item_grants` 테이블 직조회 행(재개 경로). 이쪽은 `source` 가 원장에 적혀 있다. */
+function grantRowFromTable(r: Record<string, unknown>): ItemGrantRow {
+  const applied = r.applied_at;
+  return {
+    grantId: typeof r.grant_id === 'string' ? r.grant_id : '',
+    dropIndex: num(r.drop_index),
+    dropSeed: num(r.drop_seed),
+    rarity: typeof r.rarity === 'string' ? r.rarity : 'normal',
+    source: grantSource(r.source),
+    appliedAtMs: typeof applied === 'string' ? Date.parse(applied) : null,
+  };
 }
 
 /** Supabase 로 구현한 실 게이트웨이. */
@@ -375,6 +487,61 @@ export class SupabaseGateway implements ServerGateway {
     const runId = typeof r.run_id === 'string' ? r.run_id : '';
     if (runId === '') throw new Error('consume_catalysts: run_id 미발급');
     return { run_id: runId, resource_mult: num(r.resource_mult, 1) };
+  }
+
+  async beginPveRun(planet: number): Promise<BeginPveRunResult> {
+    const { data, error } = await this.client.rpc('begin_pve_run', { p_planet: planet });
+    if (error !== null) throw error;
+    const r = asRec(data);
+    // run_id 부재는 예외가 아니다 — 캡(throttled)·무인증·프로필 부재를 서버가 값으로 낸다.
+    return {
+      run_id: typeof r.run_id === 'string' && r.run_id !== '' ? r.run_id : null,
+      throttled: r.throttled === true,
+      runs_last_hour: num(r.runs_last_hour),
+    };
+  }
+
+  async grantRunDrops(
+    runId: string,
+    claimed: number,
+    planet: number,
+    stage: number,
+    levelCap: number,
+  ): Promise<GrantRunDropsResult> {
+    const { data, error } = await this.client.rpc('grant_run_drops', {
+      p_run_id: runId,
+      p_claimed: claimed,
+      p_planet: planet,
+      p_stage: stage,
+      p_level_cap: levelCap,
+    });
+    if (error !== null) throw error;
+    const r = asRec(data);
+    const rows = Array.isArray(r.grants) ? r.grants : [];
+    return {
+      granted: num(r.granted),
+      claimed: num(r.claimed, claimed),
+      clamped: r.clamped === true,
+      throttled: r.throttled === true,
+      grants: rows.map((row) => grantRowFromRpc(asRec(row), { planet, stage, levelCap })),
+    };
+  }
+
+  async fetchPendingItemGrants(): Promise<ItemGrantRow[]> {
+    const uid = await requireUserId(this.client);
+    const { data, error } = await this.client
+      .from('item_grants')
+      .select('grant_id, drop_index, drop_seed, rarity, source, applied_at')
+      .eq('profile_id', uid)
+      .is('applied_at', null)
+      .order('drop_index', { ascending: true });
+    if (error !== null) throw error;
+    return (data ?? []).map((row) => grantRowFromTable(asRec(row)));
+  }
+
+  async markItemGrantApplied(grantId: string): Promise<void> {
+    const { error } = await this.client.rpc('mark_item_grant_applied', { p_grant_id: grantId });
+    if (error !== null) throw error;
   }
 
   async grantCatalyst(catalystId: number, qty: number): Promise<CatalystGrantResult> {

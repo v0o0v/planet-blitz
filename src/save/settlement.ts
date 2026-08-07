@@ -139,11 +139,30 @@ export interface SettlementOutcome {
   commission: boolean;
 }
 
+/** {@link settleRun} 의 모드 스위치. */
+export interface SettleRunOptions {
+  /**
+   * `true` 면 **전리품을 여기서 굴리지 않는다**(ADR-0050 §3 단계 1 서버 권위 모드).
+   *
+   * 서버가 `hash(server_run_secret, run_id, drop_index)` 로 자기 시드를 만들어 굴리고
+   * 원장(`item_grants`)에 적으며, 클라는 배송 경로로 받는다. 그래서 이 모드의
+   * `itemsGained` 는 **항상 빈 배열**이다 — 정산 화면의 "회수 N점"은 `RunResult.loot` 의
+   * 개수로 표시하고, 실제 아이템은 배송이 끝난 뒤 인벤에 나타난다(「개수만 계약」).
+   *
+   * 미지정(false) = 종전 로컬 롤. 미설정(오프라인 단일플레이)이 그 경로로 돈다.
+   */
+  readonly serverDrops?: boolean;
+}
+
 /**
  * Apply a finished run to the profile in place, returning a summary. Pure w.r.t.
  * RNG — item confirmation is fully determined by the drop seeds.
  */
-export function settleRun(profile: Profile, result: RunResult): SettlementOutcome {
+export function settleRun(
+  profile: Profile,
+  result: RunResult,
+  opts: SettleRunOptions = {},
+): SettlementOutcome {
   // 1. Confirm every collected drop into a concrete item.
   //
   //    `levelCap` = **이 런을 돈 기체의 레벨**(사용자 지시 2026-08-05 — "현재 기체가 장착할 수
@@ -156,18 +175,27 @@ export function settleRun(profile: Profile, result: RunResult): SettlementOutcom
   //    ⚠️ 순서 의존이므로 3단계(`grantXp`)를 이 위로 옮기지 마라.
   const runShipLevel = activeShip(profile).level;
   const itemsGained: Item[] = [];
-  for (const rec of result.loot) {
-    const rarity = RARITY_BY_CODE[rec.rarity] ?? 'normal';
-    itemsGained.push(
-      rollItem(rec.seed, rarity, {
-        planet: rec.planet,
-        stage: rec.stage,
-        levelCap: runShipLevel,
-      }),
-    );
+  // ⭐ 서버 권위 모드(ADR-0050 §3 단계 1)에서는 **여기서 굴리지 않는다.** 클라는 주운 개수만
+  //    주장하고 서버가 자기 시드로 굴려 원장에 적으며, 아이템은 배송 경로
+  //    (`src/run/itemGrantDelivery.ts`)로 들어온다 — 그래서 `itemsGained` 가 빈 채로 남는다.
+  //    ⚠️ 그렇다고 이 루프를 지우면 안 된다. 미설정(오프라인 단일플레이)은 여전히 이 경로로
+  //    돌고, 그것이 게임이 로그인 없이도 플레이되는 근거다(`isNetConfigured()` false).
+  if (!opts.serverDrops) {
+    for (const rec of result.loot) {
+      const rarity = RARITY_BY_CODE[rec.rarity] ?? 'normal';
+      itemsGained.push(
+        rollItem(rec.seed, rarity, {
+          planet: rec.planet,
+          stage: rec.stage,
+          levelCap: runShipLevel,
+        }),
+      );
+    }
   }
 
   // 2. Place items: inventory first, then stash, then overflow.
+  //    서버 권위 모드면 `itemsGained` 가 비어 있어 이 루프가 0회 돈다 — 자리 판정(만석 보류)은
+  //    배송 모듈이 같은 규칙으로 다시 한다.
   const stashCap = stashCapacity(profile.stashExpansions);
   let overflow = 0;
   for (const it of itemsGained) {
