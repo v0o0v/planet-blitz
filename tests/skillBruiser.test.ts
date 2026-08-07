@@ -13,6 +13,14 @@
  *  ② **배선 이음매 치환** — 앵커 ⑨(`dispatchSignatureStepSkill`)의 `case SIG_BRUISER_ARMOR:`
  *     를 지우면 §⑦ FO1 · §⑧ FO2 정산 · §⑨ MO6 이 함께 실패한다.
  * 초록인데 아무것도 안 재는 테스트가 아니다.
+ *
+ * ## 뮤테이션 추가 확인 — W3 이 얹은 4종 (2026-08-07)
+ *  ③ **MO4** — `state.playerSlowTicks = 0` 한 줄을 지우면 §⑰ 두 건이 실패한다.
+ *  ④ **FO4** — 반전 분기 게이트를 `false &&` 로 막으면 §⑱ 두 건(앵커 직접·`stepWorld` 관통)과
+ *     §⑲ 의 축 내 긴장 1건이 함께 실패한다.
+ *  ⑤ **FO8** — 회복량 `3 + fo8` 을 0 으로 바꾸면 §⑲ 네 건이 실패한다.
+ *  ⑥ **FO9** — 세 지점(적립·감쇠 정지·사슬 감소)의 게이트를 동시에 막으면 §⑳ 의 ①②③ 이
+ *     **각각** 실패한다(다섯 건) — 세 지점이 서로 다른 앵커에 실제로 붙어 있다는 뜻이다.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -39,7 +47,11 @@ import {
   onVolleyParams,
   type VolleyParams,
 } from '../src/sim/skillHooks.js';
-import { SIG_BRUISER_ARMOR, ARMOR_MAX_STACKS } from '../src/sim/shipSignature.js';
+import {
+  SIG_BRUISER_ARMOR,
+  ARMOR_MAX_STACKS,
+  ARMOR_DECAY_TICKS,
+} from '../src/sim/shipSignature.js';
 import {
   BruiserCarry,
   BruiserStage,
@@ -64,14 +76,18 @@ const BL6 = 5;
 const BL8 = 7;
 const BL9 = 8;
 const MO1 = 10;
+const MO4 = 13;
 const MO6 = 15;
 const MO8 = 17;
 const MO9 = 18;
 const FO1 = 20;
 const FO2 = 21;
+const FO4 = 23;
 const FO5 = 24;
 const FO6 = 25;
 const FO7 = 26;
+const FO8 = 27;
+const FO9 = 28;
 
 function invest(points: ReadonlyArray<readonly [number, number]>): number[] {
   const v = new Array<number>(30).fill(0);
@@ -1259,5 +1275,372 @@ describe('⑯-좀비 BL9 강타 사망 마킹', () => {
     stepWorld(w, emptyInput());
     expect(w.entities.includes(t)).toBe(true);
     expect(w.kills).toBe(killsBefore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑰ 앵커 ⑨ — MO4 장갑 활주 (W3)
+// ---------------------------------------------------------------------------
+
+/**
+ * 무효화의 관측점은 **`state.playerSlowTicks` 가 0 이 되는 것**이다 — 그 값이 `stepPlayer` 의
+ * `slowMult` 게이트 그 자체다(이동 배율을 여기서 다시 재면 술어가 두 벌이 된다).
+ */
+describe('⑰ MO4 장갑 활주 (앵커 ⑨)', () => {
+  it('감속이 걸려 있으면 스택 1개를 태워 지우고 전용 쿨을 건다', () => {
+    const w = mk([[MO4, 1]]);
+    const p = player(w);
+    p.aux0 = 3;
+    w.playerSlowTicks = 30;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.aux0).toBe(2);
+    expect(w.playerSlowTicks).toBe(0);
+    // 쿨 = round(60 + 2400/(1+19)) = 180.
+    expect(readSlot(w.skillStage, BruiserStage.skidCooldown)).toBe(180);
+  });
+
+  it('쿨 중에는 다시 안 먹고 쿨만 1씩 준다 — 장판이 매 틱 재부여해도 스택이 안 증발한다', () => {
+    const w = mk([[MO4, 1]]);
+    const p = player(w);
+    p.aux0 = 3;
+    w.playerSlowTicks = 30;
+    onSignatureStep(w, p, emptyInput()); // 1회 소모
+    for (let i = 0; i < 8; i++) {
+      w.playerSlowTicks = 30; // 장판이 매 틱 재부여한다
+      onSignatureStep(w, p, emptyInput());
+      expect(w.playerSlowTicks).toBe(30); // 쿨 중이라 무효화가 안 돈다
+    }
+    expect(p.aux0).toBe(2); // 8틱에 8스택이 증발하지 않았다
+    expect(readSlot(w.skillStage, BruiserStage.skidCooldown)).toBe(180 - 8);
+  });
+
+  it('스택이 0 이면 무효화도 쿨도 없다 (긍정 짝: 1 이면 돈다)', () => {
+    const empty = mk([[MO4, 5]]);
+    const pe = player(empty);
+    pe.aux0 = 0;
+    empty.playerSlowTicks = 30;
+    onSignatureStep(empty, pe, emptyInput());
+    expect(empty.playerSlowTicks).toBe(30);
+    expect(readSlot(empty.skillStage, BruiserStage.skidCooldown)).toBe(0);
+
+    const has = mk([[MO4, 5]]);
+    const ph = player(has);
+    ph.aux0 = 1;
+    has.playerSlowTicks = 30;
+    onSignatureStep(has, ph, emptyInput());
+    expect(has.playerSlowTicks).toBe(0);
+    expect(ph.aux0).toBe(0);
+  });
+
+  it('쿨 길이가 레벨 파생이다 — Lv1 = 180, Lv20 = 122', () => {
+    for (const [level, ticks] of [
+      [1, 180],
+      [20, 122],
+    ] as const) {
+      const w = mk([[MO4, level]]);
+      const p = player(w);
+      p.aux0 = 2;
+      w.playerSlowTicks = 10;
+      onSignatureStep(w, p, emptyInput());
+      expect(readSlot(w.skillStage, BruiserStage.skidCooldown)).toBe(ticks);
+    }
+  });
+
+  it('미투자 런은 감속을 지우지도 스택을 태우지도 않는다', () => {
+    const w = mk([[MO9, 5]]);
+    const p = player(w);
+    p.aux0 = 3;
+    w.playerSlowTicks = 30;
+    onSignatureStep(w, p, emptyInput());
+    expect(w.playerSlowTicks).toBe(30);
+    expect(p.aux0).toBe(3);
+    expect(readSlot(w.skillStage, BruiserStage.skidCooldown)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑱ 앵커 ⑨ — FO4 부동 역적립 (W3)
+// ---------------------------------------------------------------------------
+
+/**
+ * 이 앵커는 `world.ts` 의 감쇠 분기 **바로 앞**이다. 술어는 분기와 같은
+ * `aux1 + 1 >= ARMOR_DECAY_TICKS` 이고, `aux1 = 0` 으로 되돌리면 분기의 `aux1++` 가 1 을 만들어
+ * 소멸이 성사되지 않는다. **아래 `stepWorld` 짝이 그 이음매를 실제로 통과시킨다.**
+ */
+describe('⑱ FO4 부동 역적립 (앵커 ⑨)', () => {
+  const DUE = ARMOR_DECAY_TICKS - 1;
+
+  it('정지 중 감쇠 성사 틱은 소멸 대신 적립이다 (부호 반전)', () => {
+    const w = mk([[FO4, 1]]);
+    const p = player(w);
+    p.aux0 = 2;
+    p.aux1 = DUE;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.aux0).toBe(3);
+    expect(p.aux1).toBe(0);
+  });
+
+  it('감쇠 성사 틱이 아니면 아무 일도 없다 (하한 짝 — 항진 방지)', () => {
+    const w = mk([[FO4, 20]]);
+    const p = player(w);
+    p.aux0 = 2;
+    p.aux1 = DUE - 1;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.aux0).toBe(2);
+    expect(p.aux1).toBe(DUE - 1);
+  });
+
+  it('이동 입력이 있으면 반전하지 않는다 — 정지 술어가 실제 게이트다 (음성 짝)', () => {
+    const w = mk([[FO4, 20]]);
+    const p = player(w);
+    p.aux0 = 2;
+    p.aux1 = DUE;
+    onSignatureStep(w, p, { ...emptyInput(), moveX: 1 });
+    expect(p.aux0).toBe(2);
+    expect(p.aux1).toBe(DUE); // 엔진 분기가 그대로 가져간다
+  });
+
+  it('대시 입력도 정지가 아니다', () => {
+    const w = mk([[FO4, 20]]);
+    const p = player(w);
+    p.aux0 = 2;
+    p.aux1 = DUE;
+    onSignatureStep(w, p, { ...emptyInput(), dash: true });
+    expect(p.aux0).toBe(2);
+  });
+
+  it('적립은 이 런의 유효 상한을 넘지 않는다', () => {
+    const w = mk([
+      [FO4, 5],
+      [FO1, 20],
+    ]);
+    const p = player(w);
+    onSignatureStep(w, p, emptyInput()); // FO1 이 상한을 세운다
+    p.aux0 = w.armorMaxStacks;
+    p.aux1 = DUE;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.aux0).toBe(w.armorMaxStacks);
+  });
+
+  it('⭐ 실제 엔진 경로가 앵커를 관통한다 — 같은 셋업이 투자 유무로 +1 vs −1 로 갈린다', () => {
+    const on = mk([[FO4, 5]]);
+    const pOn = player(on);
+    pOn.aux0 = 2;
+    pOn.aux1 = DUE;
+    stepWorld(on, emptyInput());
+    expect(pOn.aux0).toBe(3);
+    expect(pOn.aux1).toBe(1); // 우리가 0 으로 되돌린 뒤 분기의 aux1++ 가 1 을 만들었다
+
+    const off = mk([[MO9, 5]]);
+    const pOff = player(off);
+    pOff.aux0 = 2;
+    pOff.aux1 = DUE;
+    stepWorld(off, emptyInput());
+    expect(pOff.aux0).toBe(1); // 종전 감쇠 그대로
+    expect(pOff.aux1).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑲ 앵커 ⑨ — FO8 탈피 재생 (W3)
+// ---------------------------------------------------------------------------
+
+describe('⑲ FO8 탈피 재생 (앵커 ⑨)', () => {
+  const DUE = ARMOR_DECAY_TICKS - 1;
+
+  function fo8World(level: number): { w: WorldState; p: Entity } {
+    const w = mk([[FO8, level]]);
+    const p = player(w);
+    p.maxHp = 1000;
+    p.hp = 500;
+    p.aux0 = 3;
+    p.aux1 = DUE;
+    return { w, p };
+  }
+
+  it('감쇠 성사 틱에 소멸 스택 1개가 (3 + Lv) 회복으로 전환된다', () => {
+    const { w, p } = fo8World(10);
+    onSignatureStep(w, p, emptyInput());
+    expect(p.hp).toBe(500 + 13);
+  });
+
+  it('레벨이 오르면 회복도 오른다 — Lv1 = 4, Lv20 = 23', () => {
+    const lo = fo8World(1);
+    onSignatureStep(lo.w, lo.p, emptyInput());
+    expect(lo.p.hp).toBe(504);
+    const hi = fo8World(20);
+    onSignatureStep(hi.w, hi.p, emptyInput());
+    expect(hi.p.hp).toBe(523);
+  });
+
+  it('감쇠 성사 틱이 아니거나 스택이 0 이면 회복이 없다 (음성 짝)', () => {
+    const notDue = fo8World(10);
+    notDue.p.aux1 = DUE - 1;
+    onSignatureStep(notDue.w, notDue.p, emptyInput());
+    expect(notDue.p.hp).toBe(500);
+
+    const noStack = fo8World(10);
+    noStack.p.aux0 = 0;
+    onSignatureStep(noStack.w, noStack.p, emptyInput());
+    expect(noStack.p.hp).toBe(500);
+  });
+
+  it('회복은 최대 HP 를 넘지 않는다', () => {
+    const { w, p } = fo8World(20);
+    p.hp = 995;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.hp).toBe(1000);
+  });
+
+  it('축 내 긴장 — FO4 가 정지에서 반전시키면 회복이 없고, 이동하면 회복된다 (양·음성 짝)', () => {
+    const still = mk([
+      [FO4, 5],
+      [FO8, 10],
+    ]);
+    const ps = player(still);
+    ps.maxHp = 1000;
+    ps.hp = 500;
+    ps.aux0 = 3;
+    ps.aux1 = DUE;
+    onSignatureStep(still, ps, emptyInput());
+    expect(ps.aux0).toBe(4); // 반전이 이겼다
+    expect(ps.hp).toBe(500); // 소멸이 없으니 회복도 없다
+
+    const moving = mk([
+      [FO4, 5],
+      [FO8, 10],
+    ]);
+    const pm = player(moving);
+    pm.maxHp = 1000;
+    pm.hp = 500;
+    pm.aux0 = 3;
+    pm.aux1 = DUE;
+    onSignatureStep(moving, pm, { ...emptyInput(), moveY: -1 });
+    expect(pm.aux0).toBe(3); // 반전 안 함 — 엔진 분기가 가져간다
+    expect(pm.hp).toBe(513);
+  });
+
+  it('미투자 런은 감쇠 성사 틱에도 회복하지 않는다', () => {
+    const w = mk([[MO9, 5]]);
+    const p = player(w);
+    p.maxHp = 1000;
+    p.hp = 500;
+    p.aux0 = 3;
+    p.aux1 = DUE;
+    onSignatureStep(w, p, emptyInput());
+    expect(p.hp).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑳ FO9 사투 본능 — 세 지점 (앵커 ⑨① · 앵커 ④② · 앵커 ⑧③)
+// ---------------------------------------------------------------------------
+
+describe('⑳ FO9 사투 본능', () => {
+  const DUE = ARMOR_DECAY_TICKS - 1;
+
+  /** 빈사(기본 HP 20%)로 세팅된 런. 임계는 30% **이하**다. */
+  function lastStand(level: number, hpBp = 2000): { w: WorldState; p: Entity } {
+    const w = mk([[FO9, level]]);
+    const p = player(w);
+    p.maxHp = 1000;
+    p.hp = (1000 * hpBp) / 10000;
+    return { w, p };
+  }
+
+  it('① 빈사 중에는 감쇠 성사 틱에도 스택이 안 준다 (임계 밖이면 준다 — 짝)', () => {
+    const low = lastStand(1);
+    low.p.aux0 = 3;
+    low.p.aux1 = DUE;
+    stepWorld(low.w, emptyInput());
+    expect(low.p.aux0).toBe(3);
+    expect(low.p.aux1).toBe(1); // 우리가 되돌린 뒤 분기의 aux1++
+
+    const high = lastStand(1, 8000); // HP 80% — 임계 밖
+    high.p.aux0 = 3;
+    high.p.aux1 = DUE;
+    stepWorld(high.w, emptyInput());
+    expect(high.p.aux0).toBe(2); // 종전 감쇠 그대로
+    expect(high.p.aux1).toBe(0);
+  });
+
+  it('① 임계는 30% **이하** 포함이고 그 위는 밖이다', () => {
+    const at = lastStand(1, 3000);
+    at.p.aux0 = 3;
+    at.p.aux1 = DUE;
+    onSignatureStep(at.w, at.p, emptyInput());
+    expect(at.p.aux1).toBe(0); // 정지시켰다
+
+    const over = lastStand(1, 3001);
+    over.p.aux0 = 3;
+    over.p.aux1 = DUE;
+    onSignatureStep(over.w, over.p, emptyInput());
+    expect(over.p.aux1).toBe(DUE); // 안 건드렸다 — 엔진이 가져간다
+  });
+
+  it('② 빈사 피격은 적립이 2스택이 된다 (임계 밖이면 엔진의 1스택 그대로)', () => {
+    // 앵커 ④ 는 엔진 적립(+1) **뒤**라, 여기서 관측되는 것은 "한 개 더" 다.
+    const low = lastStand(1);
+    low.p.aux0 = 2;
+    low.p.aux1 = 7;
+    onPlayerDamaged(low.w, low.p, 50, false, DamageSource.bullet);
+    expect(low.p.aux0).toBe(3);
+    expect(low.p.aux1).toBe(0);
+
+    const high = lastStand(1, 8000);
+    high.p.aux0 = 2;
+    high.p.aux1 = 7;
+    onPlayerDamaged(high.w, high.p, 50, false, DamageSource.bullet);
+    expect(high.p.aux0).toBe(2);
+    expect(high.p.aux1).toBe(7);
+  });
+
+  it('② 추가 적립도 유효 상한을 넘지 않는다', () => {
+    const { w, p } = lastStand(20);
+    p.aux0 = w.armorMaxStacks;
+    onPlayerDamaged(w, p, 50, false, DamageSource.bullet);
+    expect(p.aux0).toBe(w.armorMaxStacks);
+  });
+
+  it('③ 빈사 중 감쇠 사슬이 스택에 비례해 더 깎는다 (스택 0 이면 안 깎는다 — 하한 짝)', () => {
+    const full = lastStand(20);
+    full.p.aux0 = 8;
+    // round(1000 × 8 × (20 + 5×20) / 10000) = 96.
+    expect(onDamageChain(full.w, full.p, 1000)).toBe(1000 - 96);
+
+    const bare = lastStand(20);
+    bare.p.aux0 = 0;
+    expect(onDamageChain(bare.w, bare.p, 1000)).toBe(1000);
+  });
+
+  it('③ 임계 밖에서는 한 칸도 안 깎는다 (음성 짝)', () => {
+    const high = lastStand(20, 8000);
+    high.p.aux0 = 8;
+    expect(onDamageChain(high.w, high.p, 1000)).toBe(1000);
+  });
+
+  it('③ 레벨이 오르면 감소도 커진다 — 단조 + 하한', () => {
+    const lo = lastStand(1);
+    lo.p.aux0 = 8;
+    const hi = lastStand(20);
+    hi.p.aux0 = 8;
+    const outLo = onDamageChain(lo.w, lo.p, 1000);
+    const outHi = onDamageChain(hi.w, hi.p, 1000);
+    expect(outLo).toBeLessThan(1000); // 하한 — 양변이 1000 이 되는 항진 차단
+    expect(outHi).toBeLessThan(outLo);
+  });
+
+  it('미투자 런은 세 지점 어디에서도 안 돈다', () => {
+    const w = mk([[MO9, 5]]);
+    const p = player(w);
+    p.maxHp = 1000;
+    p.hp = 100;
+    p.aux0 = 3;
+    p.aux1 = DUE;
+    onPlayerDamaged(w, p, 50, false, DamageSource.bullet);
+    expect(p.aux0).toBe(3); // 적립 없음
+    expect(onDamageChain(w, p, 1000)).toBe(1000); // 감소 없음
+    onSignatureStep(w, p, emptyInput());
+    expect(p.aux1).toBe(DUE); // 감쇠 정지 없음
   });
 });

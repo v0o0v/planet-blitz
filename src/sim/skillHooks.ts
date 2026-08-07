@@ -443,7 +443,8 @@ function dispatchPlayerDamagedSkill(
       arccasterPlayerDamaged(state, player, dmg, lethalSurvived);
       break;
     case SIG_BRUISER_ARMOR:
-      // BL4 과적 배출 · FO2 응혈 적립 · FO5 불괴 연쇄 · **BL8 격돌 담금질(적립처)**.
+      // BL4 과적 배출 · FO2 응혈 적립 · FO5 불괴 연쇄 · **BL8 격돌 담금질(적립처)** ·
+      // **FO9② 사투 본능(적립 2스택)**.
       // BL8 만 `sources` 를 본다 — 나머지 셋은 피해원과 무관하다(종전 인자만 쓴다).
       // 브루저는 스트라이커와 달리 **둘 다 필요하다** — FO2 는 적립량이 `dmg` 에 비례하고,
       // FO5 는 `lethalSurvived` 가 트리거 자체다(사슬 안에서 계산된 값을 그대로 넘긴다).
@@ -669,7 +670,8 @@ export function onDamageChain(state: WorldState, player: Entity, dmg: number): n
       // ① BR3·BR5 감소 → ② BR4 흡수. 순서는 이 앵커 주석이 못 박은 그대로다.
       return arccasterDamageChain(state, player, dmg);
     case SIG_BRUISER_ARMOR:
-      // FO6 하중 전이(경감 + 대시 쿨 전이). 흡수 칸을 쓰는 브루저 스킬은 없다.
+      // ① 감소: FO6 하중 전이(경감 + 대시 쿨 전이) → **FO9③ 사투 본능(빈사 중 스택당 추가
+      // 감소)**. 흡수 칸을 쓰는 브루저 스킬은 없다.
       // ⚠️ 설계서는 이 스킬의 자리를 "브루저 장갑 **뒤**" 로 지정했는데 이 앵커는 장갑 **앞**
       // 이다 — 사슬에 뚫린 유일한 스킬 자리라 여기 말고 둘 곳이 없다(효과 함수 주석에 근거).
       return bruiserDamageChain(state, player, dmg);
@@ -738,15 +740,21 @@ function dispatchSignatureStepSkill(
       arccasterSignatureStep(state, player);
       break;
     case SIG_BRUISER_ARMOR:
-      // FO1 상한 확장 · FO2 만재 상승 엣지 정산 · FO7 기준선 · MO6 압쇄장 주기.
+      // FO1 상한 확장 · MO4 장갑 활주 · **FO4·FO8·FO9① 감쇠 판정 선점** · FO2 만재 상승 엣지
+      // 정산 · FO7 기준선 · MO6 압쇄장 주기.
       // 이 앵커가 `stepShipSignature` **진입점**이라 브루저 감쇠 분기(바로 아래)와 이번 틱
       // `resolveCollisions` 양쪽이 FO1 의 새 상한을 본다.
       //
-      // ⚠️ FO4(부동 역적립)·FO8(탈피 재생)·FO9(사투 본능)은 여기 없다 — 셋 다 **감쇠 분기
-      // 그 자리**(소멸이 일어나는 `aux1 >= 180` 안쪽)를 고쳐야 하는데 그 분기는 이 앵커
-      // **뒤**의 `world.ts` 코드다. 앵커에서 스택 감소를 사후 관측해 흉내 내면 액티브의 스택
-      // 소각(blade_lo/hi)과 구분이 안 돼 조용히 오발동한다.
-      bruiserSignatureStep(state, player);
+      // ⚠️ **FO4·FO8·FO9① 이 여기 온 근거는 「사후 관측이 아니라 선점」이다.** 종전에 이 셋을
+      // 막던 사유(*"스택 감소를 사후 관측해 흉내 내면 액티브의 스택 소각과 구분이 안 된다"*)는
+      // 근거로 남긴다 — 그 경고는 **감소를 관측하는 형태**에만 유효하다. 이 배선은 감소를 한 번도
+      // 보지 않고, 분기가 쓰는 것과 같은 술어(`aux1 + 1 >= ARMOR_DECAY_TICKS`)로 이번 틱의
+      // 성사 여부를 **미리** 판정한다. 액티브의 소각(blade_lo/hi)은 `aux1` 을 안 건드리므로
+      // 원리적으로 이 술어에 안 걸린다. 근거 전문은 효과 함수 주석.
+      //
+      // `input` 을 넘기는 것은 FO4 하나 때문이다 — 정지 판정은 속도가 아니라 **입력**이라고
+      // 설계서 1.5 계약이 못 박았고, 아크캐스터 시그니처가 같은 술어를 쓴다.
+      bruiserSignatureStep(state, player, input);
       break;
     case SIG_HATCHLING_BROOD:
       // SH6 알막 · SH3 만석 둥지 온기 · NU6 온기 나눔 · NU8 이주 본능.
