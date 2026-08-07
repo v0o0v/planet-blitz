@@ -8,13 +8,15 @@
  *
  * ---
  *
- * ## ⚠️ 배선된 것은 30종 중 **21종**이다 (종전 16종 + 배치5 버블 레인의 5종)
- * 배치5(공유 앵커 ㉗㉘㉙)가 **PO9·DR4·DR5·DR9·DR10** 다섯을 더했다. 그 레인이 열려고 했으나
- * **닫힌 채로 남은 셋**은 DR2·DR3·DR8 이고, 사유는 서로 다르므로 각각의 자리에 적어 두었다:
- *  · **DR2·DR3** — 신규 `WorldState` 정수(효율 창 잔여 틱 / 전용 자석 버프 틱). 항상 0 인
- *    필드라도 해시 꼬리 폴드에 들어가는 순간 지금 초록인 골든이 전부 갈린다.
- *  · **DR8** — 기믹 **접촉** 반경은 `resolveCollisions` 의 지역 변수라 앵커 ㉘ 이 안 쥔다.
- * (아래 3묶음 서술은 배치4 시점의 기록이라 그 시점 문면 그대로 둔다 — 위 세 줄이 현행이다.)
+ * ## ⚠️ 배선된 것은 30종 중 **27종**이다 (배치6 이 PO4·DR3·DR7·DR8·FI7 + 통합에서 DR2)
+ * 배치6 이 연 앵커 셋(`onFilmBurstPost` · `onPickupRadius` · 앵커 ⑮ 의 `FilmBurstParams`)과
+ * 신설 leaf `objectiveState.ts`, 그리고 **`BubbleStage` 첫 실배정 1칸**이 그 다섯을 열었다.
+ * 남은 **셋은 PO8·PO10·FI6** 이고, 사유는 이 파일 **말미의 미배선 주석**이 정본이다
+ * (넷 다 `Sk` enum 에 멤버가 없다 — 「없다」의 근거는 grep 이다).
+ *
+ * ⚠️ 배치5 가 DR3 을 *"신규 `WorldState` 정수가 선결"* 로 닫은 판정은 **틀렸다** — 슬롯 배열은
+ * 전부 0 이면 폴드가 통째로 안 돈다. 근거는 `bubbleActiveFired` 의 DR3 블록 주석이 정본이다.
+ * (아래 3묶음 서술은 배치4 시점의 기록이라 그 시점 문면 그대로 둔다 — 위가 현행이다.)
  *
  * ## (배치4 시점 기록) 배선된 것은 30종 중 **16종**이었다
  * S2 가 앵커 ⑯(`onVolleyParams`)·⑰·⑱(`onFilmAbsorbed`)을 열어 **PO2·PO5(⑯) · FI3·FI4(⑱)**
@@ -32,7 +34,7 @@
  *     분리가 순수 함수 시그니처 변경(= 골든)이라 배선 레인 밖이었다. **그 사유는 해소됐다** —
  *     순수 함수 개정 레인이 두 함수에 효율 인자를 넣었고 ⑰ 이 효율(bp)을 돌려주게 바뀌었다.
  *     ✅ **FI8 은 배선됐다**(`bubbleFilmEfficiency` — 피해원 복원 불가라는 별도 사유는 수집
- *     루프가 출처를 함께 실어 보내면서 해소됐다). **DR2 는 아직 밖이다** — 남은 사유는 효율이
+ *     루프가 출처를 함께 실어 보내면서 해소됐다). ~~DR2 는 아직 밖이다~~ → **DR2 도 배선됐다**(배치6 통합 — 슬롯이 「신규 상태」의 정본 자리다). 종전 사유는 효율이
  *     아니라 **술어**다(막 있음 + 젬 수거로 열리는 60틱 창 = 신규 WorldState 정수 1개).
  *     FI9 는 호출부 게이트(`aux0 > 0`)가 *막 없음*을 배제해 애초에 이 앵커에 도달하지 않는다 —
  *     **그 사유는 그대로이고**, S3-5 가 게이트 앞에 앵커 ㉒ 를 열어 자리를 따로 만들었다.
@@ -48,18 +50,22 @@
  *
  * 여기 없는 스킬은 "구현했는데 안 불린다"가 아니라 **아직 코드가 없다**.
  *
- * ## ⚠️ 슬롯을 **한 칸도 잡지 않았다**
- * 배선한 16종이 전부 기존 필드(`aux0`·`aux1`·`iframes`·`dashCooldown`·`playerSlowTicks`·
- * 엔티티 좌표)와 `state.tick`·볼리 파라미터 파생만 쓴다. 설계서가 `구현: B` 로 표시한 버블 5종(PO10·DR2·
- * DR3·FI6·FI7)은 전부 위 사유 중 하나에 걸려 아직 밖이다 — 그래서 `BubbleCarry`/`BubbleStage` 는
- * 자리표시자뿐이고, `hashWorld` 의 스킬 슬롯 폴드는 버블 런에서도 한 번도 돌지 않는다.
+ * ## ⚠️ 슬롯은 **DR3 의 1칸뿐**이다 (배치6 · `BubbleStage.blinkMagnet`)
+ * 나머지 25종은 전부 기존 필드(`aux0`·`aux1`·`iframes`·`dashCooldown`·`playerSlowTicks`·
+ * 엔티티 좌표)와 `state.tick`·`state.wallContactTicks`·파라미터 레코드 파생만 쓴다.
+ * `BubbleCarry` 는 여전히 실배정 0칸이다. ⇒ **DR3 을 안 찍은 런은 16칸이 끝까지 0** 이라
+ * `hashWorld` 의 스킬 슬롯 폴드가 한 번도 안 돈다(골든 픽스처 바이트 불변의 근거).
  */
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
 import type {
   ActiveFiredOrigin,
+  FilmBurstParams,
+  FilmBurstPushed,
   GemMagnetParams,
+  ObjectiveKind,
+  PickupRadiusParams,
   PlayerMoveParams,
   VolleyParams,
 } from '../skillHooks.js';
@@ -74,8 +80,14 @@ import {
   FILM_BURST_RADIUS,
   FILM_PERIOD_TICKS,
   FILM_EFFICIENCY_BASE_BP,
+  filmBurstPush,
   filmReady,
 } from '../shipSignature.js';
+// ⚠️ 에코·조우는 **반드시 이 leaf 를 거친다.** `echo.ts`/`encounter.ts` 는 앵커 때문에
+// `skillHooks.ts` 를 값으로 당기므로 여기서 그것들을 import 하면 런타임 순환이고, 그 순환은
+// 클라에서 재현이 안 되고 검증 EF 에서만 TDZ 로 터진다(`objectiveState.ts` 헤더가 정본).
+import { objectiveActiveOf } from '../objectiveState.js';
+import { BubbleStage, readSlot, writeSlot } from '../skillSlots.js';
 import { skillLv } from '../../items/skills.js';
 
 // ---------------------------------------------------------------------------
@@ -93,14 +105,19 @@ const enum Sk {
   /** PO1 파열 탄두 */ burstWarhead = 0,
   /** PO2 압력 전환 사출 */ pressureTransfer = 1,
   /** PO3 거품 산탄 파열 */ burstScatter = 2,
+  /** PO4 압착 충돌 */ crushImpact = 3,
   /** PO5 만재 투과 */ fullFilmPierce = 4,
   /** PO6 격발 재응결 */ fireRecondense = 5,
   /** PO7 정전 파열 */ staticBurst = 6,
   /** PO9 고압 격발 조율 */ popTuning = 8,
   /** DR1 역류 수거 */ reverseCurrent = 10,
+  /** DR2 표면장력 세례 */ surfaceTensionBath = 11,
+  /** DR3 도약 자기장 */ blinkMagnetize = 12,
   /** DR4 공막 경량화 */ bareHullTrim = 13,
   /** DR5 무지개 공명 */ prismResonance = 14,
   /** DR6 파열 추진 */ burstPropulsion = 15,
+  /** DR7 신호 표류 */ signalDrift = 16,
+  /** DR8 원격 채집기 */ remoteForager = 17,
   /** DR9 이탈 잔파동 */ departureRipple = 18,
   /** DR10 공막 유속 */ bareHullCurrent = 19,
   /** FI1 조기 응결 */ earlyCondense = 20,
@@ -108,6 +125,7 @@ const enum Sk {
   /** FI3 반사 응막 */ reflectiveFilm = 22,
   /** FI4 압력 배출 */ pressureVent = 23,
   /** FI5 파열 위상 */ burstPhase = 24,
+  /** FI7 벽면 반향 */ wallEcho = 26,
   /** FI8 발수 코팅 */ hydrophobicCoat = 27,
   /** FI9 최후의 거품 */ lastBubble = 28,
   /** FI10 정화 파열 */ purgeBurst = 29,
@@ -159,6 +177,25 @@ const DR5_COMBO_CAP = 10;
  * 밸런스 패스가 이 값을 끌고 가면 안 된다).
  */
 const DR9_RIPPLE_PUSH = 90;
+
+/**
+ * PO4 가 "벽이 먹었다" 로 인정하는 **최소 변위 부족분**(sim 좌표).
+ *
+ * ⚠️ 0 으로 두면 안 된다 — 밀어내기와 `slideCircleWalls` 둘 다 f64 나눗셈을 거치므로 벽이
+ * 전혀 없는 무대에서도 실제 변위가 목표와 마지막 자리에서 갈릴 수 있고, 그러면 **벽 없는
+ * 파열이 전부 충돌 피해를 낸다.** 반대로 크게 잡으면 얕은 접촉이 통째로 빠진다. 1 유닛은
+ * 적 반경(20)의 5%라 "스쳤다" 와 "막혔다" 사이에 여유가 있다.
+ */
+const PO4_BLOCKED_EPS = 1;
+
+/**
+ * DR8 이 픽업 접촉 반경을 부풀릴 수 있는 **상한 배율**.
+ *
+ * 앵커 `onPickupRadius` doc 이 *"격자 질의 반경이므로 크게 키우면 질의 비용이 는다 — 배율에
+ * 상한을 훅이 스스로 걸어라"* 라고 명시했다. 자석 반경은 픽업 버프·DR5 콤보 배율로 후반에
+ * 크게 벌어지므로, 비례식만 두면 상한이 사실상 없다.
+ */
+const DR8_RADIUS_CAP_MULT = 4;
 
 /**
  * 이 런에서 그 스킬의 **실효 레벨**(투자 + 축 어픽스). 미투자면 0 이다(`skillLv` 정본 1).
@@ -215,6 +252,21 @@ function recondensePeriodTicks(level: number): number {
  * 0 이 되는 순간만 터진다"는 시그니처 계약이 그대로다.
  */
 export function bubbleSignatureStep(state: WorldState, player: Entity): void {
+  // ── DR3 도약 자기장 — 버프 잔여 틱을 **매 틱 정확히 한 번** 깎는다. 앵커 ⑨ 는 그 보장을
+  //    주는 유일한 지점이다(자석 앵커 ㉘ 에서 깎으면 젬이 0개인 틱에도 도는지 여부가
+  //    `stepGems` 내부 사정에 묶인다).
+  blinkMagnetTick(state);
+
+  // ── DR2 표면장력 세례 — 효율 창 잔여 틱을 **매 틱 정확히 한 번** 깎는다. DR3 과 같은
+  //    사유로 앵커 ⑨ 다(효율 앵커 ⑰ 는 *피격이 있는 틱에만* 불려 창이 안 줄어든다).
+  tensionBathTick(state);
+
+  // ── DR7 신호 표류(전반부) — 에코·조우가 활성인 동안 재생 타이머가 **2배**로 돈다.
+  //    ⚠️ 아래 DR10 펄스보다 **앞**이어야 한다: 그 펄스는 엔진이 곧 할 일을
+  //    `filmReady(aux1 + 1)` 로 한 틱 앞서 예측하는데, 여기서 aux1 을 올린 **뒤**의 값이
+  //    엔진이 실제로 볼 값이다. 순서를 뒤집으면 DR7 이 붙은 런에서 펄스가 한 틱 어긋난다.
+  signalDriftTick(state, player);
+
   // ── DR10 견인 펄스 — **막이 서는 그 틱 한 번**. FI2 와 술어가 정반대(막 없음)라 아래
   //    조기 반환보다 **앞**에 둔다. 둘을 한 게이트로 묶으면 어느 한쪽이 반드시 안 돈다.
   bareHullCurrentPulse(state, player);
@@ -223,6 +275,98 @@ export function bubbleSignatureStep(state: WorldState, player: Entity): void {
   if (fi2 < 1) return;
   if (player.aux0 <= 0 || player.aux0 >= FILM_ABSORB_FLAT) return;
   if (state.tick % recondensePeriodTicks(fi2) === 0) player.aux0 += 1;
+}
+
+/**
+ * **DR3 도약 자기장(감소 절반)** — 버프 잔여 틱을 1 깎는다.
+ *
+ * ⚠️ 미투자 런은 슬롯이 0 이라 `readSlot` 한 번으로 끝난다 — `writeSlot` 을 호출하지 않으므로
+ * 배열이 끝까지 손대지지 않고, 그래서 `hashWorld` 의 스킬 슬롯 폴드가 한 번도 안 돈다
+ * (`BubbleStage.blinkMagnet` doc 이 정본). 조건 없이 `writeSlot(…, 0)` 을 하는 형태로 바꾸면
+ * 값은 같지만 **의도가 흐려진다** — 0 을 쓰는 경로가 생기면 "안 건드린다" 를 grep 으로 못 센다.
+ */
+function blinkMagnetTick(state: WorldState): void {
+  const left = readSlot(state.skillStage, BubbleStage.blinkMagnet);
+  if (left <= 0) return;
+  writeSlot(state.skillStage, BubbleStage.blinkMagnet, left - 1);
+}
+
+/**
+ * **DR2 표면장력 세례 — 창 지속 틱.** ⚠️ 밸런스 각주(설계에 수치가 없다): 기본 60틱 + 3틱/Lv.
+ * 문면의 *"짧은 창"* 만 있고 계단이 없어 이 배치가 정했다 — 출시 전 일괄 패스 대상이다.
+ */
+function tensionWindowTicks(lvl: number): number {
+  return 60 + 3 * lvl;
+}
+
+/**
+ * **DR2 표면장력 세례 — 창 효율 가산(bp).** ⚠️ 밸런스 각주: +20% + 2%p/Lv.
+ *
+ * ⚠️ **FI8 과 곱으로 겹친다** — 설계서 R3-2 가 *"DR2 는 전 출처·유한 창, FI8 은 단일
+ * 출처·상시"* 라 곱 중첩을 의도했다(앵커 ⑰ 의 case 주석이 그 인용의 정본).
+ */
+function tensionBonusBp(lvl: number): number {
+  return 10000 + 2000 + 200 * lvl;
+}
+
+/**
+ * **DR2 표면장력 세례(감소 절반)** — 창 잔여 틱을 1 깎는다.
+ *
+ * ⚠️ 미투자 런은 슬롯이 0 이라 `readSlot` 한 번으로 끝나고 `writeSlot` 을 호출하지 않는다 —
+ * 배열이 끝까지 안 건드려져 `hashWorld` 의 슬롯 폴드가 한 번도 안 돈다(DR3 과 같은 규율).
+ */
+function tensionBathTick(state: WorldState): void {
+  const left = readSlot(state.skillStage, BubbleStage.tensionWindow);
+  if (left <= 0) return;
+  writeSlot(state.skillStage, BubbleStage.tensionWindow, left - 1);
+}
+
+/**
+ * 앵커 ③ **젬 수거 직후** — DR2 표면장력 세례(적립 절반) **1종**.
+ *
+ * 설계서: *"막이 서 있는 동안 젬을 수거하면 짧은 창 동안 막의 흡수 효율이 오른다"*.
+ *
+ * ## ⚠️ 술어는 **수거 시점에 막이 서 있었는가**다
+ * `player.aux0 > 0` 이 그 정본이다(막 내구). 막이 없는 동안의 수거는 창을 열지 않는다 —
+ * 문면이 *"막이 서 있는 동안"* 이고, 그 게이트를 빼면 무막 런이 파열 직후 첫 피격마다
+ * 효율을 공짜로 얻는다.
+ *
+ * ## ⚠️ 창은 **갱신(대입)이지 누적(가산)이 아니다**
+ * 젬이 초당 수십 개 들어오는 후반 런에서 가산이면 창이 사실상 영구가 된다 — *"짧은 창"* 이라는
+ * 문면이 곧 상한이라, 매 수거가 잔여를 최대치로 **되돌린다**.
+ */
+export function bubbleGemCollected(state: WorldState, player: Entity): void {
+  const dr2 = lv(state, Sk.surfaceTensionBath);
+  if (dr2 < 1) return;
+  if (player.aux0 <= 0) return;
+  writeSlot(state.skillStage, BubbleStage.tensionWindow, tensionWindowTicks(dr2));
+}
+
+/**
+ * **DR7 신호 표류(전반부)** — 에코·조우가 **활성인 동안** 재생 타이머가 2배로 돈다.
+ *
+ * 엔진은 이 앵커 **뒤**에 `if (aux0 === 0) aux1++` 를 한 번 돌린다(`world.ts` 의 버블
+ * 시그니처 블록). 여기서 같은 게이트로 1 을 더 얹으면 그 틱의 총 전진이 2 가 된다 — 배율을
+ * 엔진 쪽에 넣으려면 시그니처 함수를 고쳐야 하고 그건 골든이다.
+ *
+ * ## ⚠️ 술어는 `objectiveState.ts` 의 합류 술어 하나뿐이다
+ * "에코 또는 조우" 를 여기서 다시 OR 하면 같은 술어의 두 번째 사본이 된다(그 파일 헤더가
+ * 반복 지적한 재발 패턴). **완료(에코 2 · 조우 3)는 활성이 아니다** — 후반부(즉시 만재)가
+ * 완수 앵커 ㉙ 에 따로 있어, 겹치면 완수 보상이 두 번 나간다.
+ *
+ * ## ⚠️ 레벨은 지속·배율이 아니라 **문턱**을 움직이지 않는다 — 2배는 고정이다
+ * 설계 문면(`data/ships/bubble.ts`)이 *"재생 타이머가 2배로 돈다"* 로 못 박았고 레벨 스케일을
+ * 적지 않았다. 레벨은 후반부(즉시 만재)의 조건에도 안 붙는다 — 그래서 이 스킬은 **Lv1 에서
+ * 전량 켜진다**. 임의로 레벨 계단을 만들지 않았다(설계와 코드가 갈릴 자리다).
+ */
+function signalDriftTick(state: WorldState, player: Entity): void {
+  const dr7 = lv(state, Sk.signalDrift);
+  if (dr7 < 1) return;
+  // 재생 타이머는 **막이 없을 때만** 돈다(엔진 게이트와 같은 술어). 막이 서 있는 동안
+  // 얹으면 `aux1` 이 0 이어야 한다는 계약이 깨진다.
+  if (player.aux0 !== 0) return;
+  if (!objectiveActiveOf(state)) return;
+  player.aux1 += 1;
 }
 
 /**
@@ -345,7 +489,27 @@ export function bubbleEnemyDamaged(state: WorldState, player: Entity, target: En
  * **`enemy` 한정(구조물·보스 제외)** 을 명시했으므로 대상 집합이 다르다. 재사용하면 침공
  * 판정표의 근거("대상 전부 `enemy` 한정")가 코드와 갈린다.
  */
-export function bubbleFilmBurst(state: WorldState, player: Entity, x: number, y: number): void {
+export function bubbleFilmBurst(
+  state: WorldState,
+  player: Entity,
+  x: number,
+  y: number,
+  params: FilmBurstParams,
+): void {
+  // ── FI7 벽면 반향 — **가장 먼저**다. 아래 PO1·DR1 이 `FILM_BURST_RADIUS` 상수를 그대로
+  //    쓰는 것과 달리 이 배율은 **밀어내기 반경·변위**에만 걸린다(설계 문면이 "밀어내기
+  //    반경과 변위" 로 두 칸만 지목한다). 앞에 두는 것은 순서 의존 때문이 아니라, 이 함수에서
+  //    유일하게 `params` 를 만지는 블록임을 읽는 사람이 바로 보게 하려는 것이다.
+  const echoBp = wallEchoBp(state);
+  if (echoBp !== 10000) {
+    // ⚠️ **둘 다** 곱한다. 반경만 키우면 "반경 안의 적을 반경 밖으로" 라는 밀어내기 계약이
+    //    조용히 깨진다(기본값 변위 260 > 반경 220 이 그 계약이다 — `FilmBurstParams.push` doc).
+    //    같은 배율을 쓰므로 부등식이 배율과 무관하게 보존된다.
+    // ⚠️ `params.radius` 는 **제곱 전**이다. "×1.5" 를 `×2.25` 로 번역하지 마라.
+    params.radius = (params.radius * echoBp) / 10000;
+    params.push = (params.push * echoBp) / 10000;
+  }
+
   // ── PO1 파열 탄두 — 파열 중심 반경 안 `enemy` 에게 즉발 18 + 4×Lv.
   const po1 = lv(state, Sk.burstWarhead);
   if (po1 >= 1) {
@@ -458,6 +622,176 @@ export function bubbleFilmBurst(state: WorldState, player: Entity, x: number, y:
     clearEnemyBullets(state, player, FILM_BURST_RADIUS + 15 * fi10);
     state.playerSlowTicks = 0;
   }
+}
+
+/**
+ * **FI7 벽면 반향**의 배율(bp). 미투자·벽 비접촉이면 **정확히 10000** 을 돌려준다 —
+ * 호출부가 그 값을 보고 곱셈 자체를 건너뛰므로 종전 거동과 비트 동일하다.
+ *
+ * ## ⚠️ 이 함수가 FI7 의 **단일 정본**이다 — 산술을 베끼지 마라
+ * 배율이 필요한 자리가 둘이다: 파열 훅(앵커 ⑮ · 값을 실제로 고치는 쪽)과 PO4 의 사후 판정
+ * (앵커 `onFilmBurstPost` · *목표 변위가 얼마였는지* 되짚는 쪽). 두 앵커는 `resolveFilmBurst`
+ * 안에서 **같은 틱·같은 `state`** 로 연이어 불리고 그 사이에 `wallContactTicks` 가 갱신되는
+ * 경로가 없다(그 갱신은 `stepPlayer` 다) — 그래서 이 함수는 두 번 불려도 같은 값을 준다.
+ * 배율을 한쪽에 인라인으로 적으면 밸런스 패스가 한쪽만 고쳐 **PO4 가 벽 없는 파열에도 피해를
+ * 내기 시작한다**(목표 변위를 낮게 잡으면 부족분이 항상 양수가 된다).
+ *
+ * 술어는 `state.wallContactTicks` 다 — 같은 술어를 쓰는 다섯 스킬(M5·S4·MO8·FI7·ME9)이
+ * 전부 이 필드를 읽는다. 슬롯에 사본을 만들지 않는다.
+ */
+function wallEchoBp(state: WorldState): number {
+  const fi7 = lv(state, Sk.wallEcho);
+  if (fi7 < 1) return 10000;
+  if (state.wallContactTicks <= 0) return 10000;
+  // +15% + 1.5%p/Lv (Lv1 = 1.165배 · Lv20 = 1.45배). 반경·변위에 **같은 배율**을 건다.
+  return 11500 + 150 * fi7;
+}
+
+/** 이번 파열의 **실효 목표 변위**. FI7 배율까지 {@link wallEchoBp} 를 거쳐 되짚는다. */
+function filmBurstPushOf(state: WorldState): number {
+  const base = filmBurstPush();
+  const bp = wallEchoBp(state);
+  // ⚠️ 호출부(`resolveFilmBurst`)가 `params.push` 를 `filmBurstPush()` 로 초기화한 뒤
+  //    {@link bubbleFilmBurst} 가 **이것과 글자 그대로 같은 식**으로 곱한다. 식이 같아야
+  //    f64 결과가 비트 동일하고, 그래야 아래 부족분이 벽 없는 파열에서 정확히 0 이 된다.
+  return bp === 10000 ? base : (base * bp) / 10000;
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 `onFilmBurstPost` — 밀어내기 루프가 **끝난 뒤**(배치6 신설)
+// ---------------------------------------------------------------------------
+
+/**
+ * **PO4 압착 충돌** — 파열에 밀린 적이 **벽에 막힌 만큼** 충돌 피해를 받는다.
+ *
+ * ## 왜 앵커 ⑮ 로는 원리적으로 못 했는가
+ * ⑮ 는 밀어내기 **앞**이라 "벽이 얼마나 먹었는가" 가 아직 존재하지 않는다. 그렇다고 ⑮ 를
+ * 뒤로 옮기면 반경 술어로 대상을 고르는 PO1·PO7·DR1 이 전부 조용히 0건이 된다(변위 260 >
+ * 반경 220). 배치6 이 훅을 pre/post 로 쪼갠 것이 그 해소이고, `resolveFilmBurst` 주석이
+ * *"하나로 합치려 하면 둘 중 하나가 반드시 틀린다"* 고 예고한 자리다.
+ *
+ * ## 「막혔다」를 어떻게 재는가 — **반경 방향 전진량**이다
+ * 방해가 없으면 적은 파열 중심에서 바깥으로 정확히 `push` 만큼 간다. `slideCircleWalls` 가
+ * 되밀면 그 전진량이 줄고, **줄어든 몫이 곧 벽이 먹은 몫**이다. 그래서 밀기 전 좌표에서 잰
+ * 반경 방향 단위벡터에 실제 변위를 투영해 목표와 뺀다 — 변위의 *크기*만 비교하면 벽이
+ * 옆으로 미끄러뜨린 경우(크기는 비슷한데 방향이 꺾인 경우)를 놓친다.
+ *
+ * ## ⚠️ 좀비 방지 · 마킹 금지 대상
+ * `hp` 를 깎으면 `dead` 를 같이 세운다(정본 `status.ts`). `pushed` 는 호출부가 `kind ===
+ * 'enemy'` 로만 모으므로 `guardian`·`core`(부활 분기가 있어 마킹 금지)는 **원리적으로 이
+ * 배열에 없다** — 여기서 다시 거를 필요가 없고, 거른다고 적으면 없는 경로를 방어하는 죽은
+ * 코드가 된다. 다만 **같은 틱의 다른 축이 먼저 죽였을 수 있어** `dead` 는 확인한다.
+ *
+ * ## ⚠️ PO8「잔거품 기뢰」는 여기 없다 — 스폰이 안전한데도 안 넣었다
+ * 이 지점은 순회 밖이라 엔티티 생성이 안전하고, 그것이 PO8 의 종전 차단 사유였다. 남은
+ * 선결은 **동시 생존 상한 규약**이고 그것은 앵커가 아니다 — 사유 전문은 이 파일 말미의
+ * 미배선 주석이 정본이다.
+ */
+export function bubbleFilmBurstPost(
+  state: WorldState,
+  x: number,
+  y: number,
+  pushed: readonly FilmBurstPushed[],
+): void {
+  const po4 = lv(state, Sk.crushImpact);
+  if (po4 < 1) return;
+  if (pushed.length === 0) return;
+  // 이번 파열이 실제로 쓴 목표 변위(FI7 포함). 반올림·나눗셈은 전부 게이트 안이다.
+  const target = filmBurstPushOf(state);
+  for (const p of pushed) {
+    const e = p.enemy;
+    if (e.dead) continue;
+    const rx = p.preX - x;
+    const ry = p.preY - y;
+    const d0 = length(rx, ry);
+    // 호출부가 `d <= 1` 인 적을 애초에 밀지 않으므로 정상 경로에서는 도달하지 않는다.
+    // 방향이 정의되지 않는 입력에 임의 값을 만들지 않기 위해 같은 술어를 그대로 둔다.
+    if (d0 <= 1) continue;
+    // 반경 방향 전진량 = 실제 변위를 바깥 방향 단위벡터에 투영한 값.
+    const advance = ((e.x - p.preX) * rx + (e.y - p.preY) * ry) / d0;
+    const blocked = target - advance;
+    if (blocked <= PO4_BLOCKED_EPS) continue;
+    // 벽이 먹은 몫의 15% + 2%p/Lv 가 피해. 부족분은 좌표축(f64)이고 피해는 정수로 자른다.
+    const dmg = Math.round((blocked * (1500 + 200 * po4)) / 10000);
+    if (dmg <= 0) continue;
+    e.hp -= dmg;
+    // ⚠️ `compact` 의 1차 게이트는 `e.dead` 다 — 여기서 안 세우면 압착으로만 죽은 적이
+    //    좀비로 남아 처치·젬·전리품이 통째로 사라진다(PO1 블록과 같은 형태).
+    if (e.hp <= 0) e.dead = true;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 `onPickupRadius` — 픽업 접촉 반경 확정 직후(배치6 신설)
+// ---------------------------------------------------------------------------
+
+/**
+ * **DR8 원격 채집기** — 픽업 **접촉** 반경이 자석 반경에 비례해 늘어난다.
+ *
+ * ## 왜 앵커 ㉘ 으로는 못 했는가
+ * 자석(`stepGems`)은 젬을 *끌어오고*, 이 반경은 *닿았는가*를 판정한다. 기믹 픽업의 접촉
+ * 판정은 `resolveCollisions` 의 지역 변수(`pickR`)라 ㉘ 에서 `params.radius` 를 아무리 키워도
+ * 한 픽셀도 안 움직였다(배치5 버블 레인이 실측으로 확정한 차단 사유). 배치6 이 그 지역 변수
+ * 자리에 앵커를 열었다.
+ *
+ * ## ⚠️ 설계 문면과 **범위가 다르다** — 고치지 않고 적어 둔다
+ * 설계 문면은 *"**기믹 픽업 3종**의 접촉 반경"* 인데, 호출부는 이 한 반경으로 젬 수거·전리품
+ * 수거·기믹 픽업·포탑 활성화를 **전부** 판정한다(앵커 doc 이 명시). 종류별로 나누려면 호출부가
+ * 종류를 넘겨야 하고, 앵커 doc 이 *"소비처가 생길 때 쪼개라 · 칸을 미리 열지 마라"* 로 그 확장을
+ * 뒤로 미뤘다. 그래서 지금 DR8 은 **기믹 3종을 포함해 픽업 전반**을 넓힌다 — 설계보다 넓다.
+ * (설계 문서는 고치지 않았다 — 규약: 어긋남은 보고한다.)
+ *
+ * ## ⚠️ 상한이 필수다
+ * 반경을 키우면 격자 질의 비용이 함께 는다(앵커 doc). 자석 반경은 픽업 버프·DR5 콤보 배율로
+ * 후반에 크게 벌어지므로 비례식만 두면 상한이 사실상 없다 —
+ * {@link DR8_RADIUS_CAP_MULT} 로 기본 접촉 반경의 4배에서 자른다.
+ * 반경은 **음수가 될 수 없다**(가산만 하고 감산이 없다) — 앵커 doc 의 진행 불가 경로 없음.
+ */
+export function bubblePickupRadius(
+  state: WorldState,
+  player: Entity,
+  params: PickupRadiusParams,
+): void {
+  void player;
+  const dr8 = lv(state, Sk.remoteForager);
+  if (dr8 < 1) return;
+  // 자석 반경의 10% + 1%p/Lv 를 더한다. 배율은 정수 bp · 나눗셈 1회(ADR-0005) ·
+  // 반올림 없이 f64 로 남긴다(반경은 좌표축이다).
+  const bonus = (state.magnetRadius * (1000 + 100 * dr8)) / 10000;
+  const cap = params.radius * DR8_RADIUS_CAP_MULT;
+  const want = params.radius + bonus;
+  params.radius = want < cap ? want : cap;
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉙ — 런 목표(에코 안정화 · 조우 완수)가 완수된 틱
+// ---------------------------------------------------------------------------
+
+/**
+ * **DR7 신호 표류(후반부)** — 완수 시 막이 **즉시 만재**된다.
+ *
+ * ## ⚠️ 두 지점 다 건다 — 한쪽만 걸면 반쪽이다
+ * 설계 문면은 *"안정화 완수 시"* 라 에코 어휘로 적혀 있지만, 전반부의 술어가 *"에코·조우가
+ * 활성인 동안"* 으로 **한 벌**이다. 완수만 에코로 좁히면 조우로 활성 창을 얻은 런은 전반부만
+ * 받고 후반부를 영영 못 받는다 — 앵커 ㉙ doc 이 말로우 ME7 을 두고 경고한 그 형태다.
+ * 그래서 `kind` 로 가르지 않는다. (설계 문서는 고치지 않았다 — 규약: 어긋남은 보고한다.)
+ *
+ * ## ⚠️ `aux1 = 0` 을 함께 한다 — 엔진의 재생 완료와 같은 형태다
+ * 엔진은 막이 설 때 `aux0 = FILM_ABSORB_FLAT; aux1 = 0` 을 한 쌍으로 한다(`world.ts` 버블
+ * 블록). 여기서 `aux0` 만 세우면 재생 타이머가 막이 서 있는 동안에도 값을 들고 있게 되어,
+ * *"막이 서 있는 동안 aux1 은 항상 0"* 이라는 계약(PO6·FI9 가 그 위에 서 있다)이 깨진다.
+ * 이미 만재인 막에도 대입은 무해하다(같은 값) — 별도 술어를 두지 않는다.
+ */
+export function bubbleObjectiveResolved(
+  state: WorldState,
+  player: Entity,
+  kind: ObjectiveKind,
+): void {
+  void kind;
+  const dr7 = lv(state, Sk.signalDrift);
+  if (dr7 < 1) return;
+  player.aux0 = FILM_ABSORB_FLAT;
+  player.aux1 = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -663,11 +997,21 @@ export function bubbleFilmEfficiency(
 ): number {
   void player;
   void dmg;
-  if (!fromHazard) return FILM_EFFICIENCY_BASE_BP;
-  const fi8 = lv(state, Sk.hydrophobicCoat);
-  if (fi8 < 1) return FILM_EFFICIENCY_BASE_BP;
-  // 200% + 10%p/Lv — 정수 산술만(나눗셈 0회). 레벨은 `skillLv` 가 정수로 준다.
-  return 20000 + 1000 * fi8;
+  // ── FI8 발수 코팅 — **해저드 피해 한정** 상시 효율.
+  let eff = FILM_EFFICIENCY_BASE_BP;
+  if (fromHazard) {
+    const fi8 = lv(state, Sk.hydrophobicCoat);
+    // 200% + 10%p/Lv — 정수 산술만(나눗셈 0회). 레벨은 `skillLv` 가 정수로 준다.
+    if (fi8 >= 1) eff = 20000 + 1000 * fi8;
+  }
+  // ── DR2 표면장력 세례 — **전 출처** · 유한 창. FI8 과 **곱**으로 겹친다(설계서 R3-2).
+  //    ⚠️ 창 잔여 틱을 여기서 깎지 마라 — 이 앵커는 *피격이 있는 틱에만* 불려 창이 사실상
+  //    "피격 N회" 가 된다. 감소는 앵커 ⑨ 의 `tensionBathTick` 이 유일한 자리다.
+  const dr2 = lv(state, Sk.surfaceTensionBath);
+  if (dr2 >= 1 && readSlot(state.skillStage, BubbleStage.tensionWindow) > 0) {
+    eff = Math.round((eff * tensionBonusBp(dr2)) / 10000);
+  }
+  return eff;
 }
 
 // ---------------------------------------------------------------------------
@@ -781,18 +1125,30 @@ export function bubbleActiveFired(
     }
   }
 
-  // ## ⚠️ DR3「도약 자기장」은 여기 없다 — 전용 `WorldState` 정수가 선결이다
-  // 설계서 DR3 은 「구현: B」이고 요구 상태가 명시적이다: *전용* 자석 버프 잔여 틱 1칸
-  // (`blinkMagnetTicks`). 대체 수단을 셋 다 짚었고 셋 다 막혔다:
-  //  ① `state.magnetBuffTicks` 재사용 — **설계서가 명시적으로 금지**한다(희귀 기믹 픽업의 ×3
-  //     보상 칸이라, 도약마다 세우면 그 픽업이 무의미해진다).
-  //  ② `state.activeBuff0/1` 재사용 — drift 액티브는 `kind: 'dash'` 라 이 칸을 안 쓰지만,
-  //     그 칸은 `observable: 'buffTicks'` 의 계측 대상이다. 대시 액티브가 버프 틱을 세우기
-  //     시작하면 배선 전수 단언이 관측량과 어긋난다(= 계측기를 스킬이 오염시킨다).
-  //  ③ 액티브 쿨다운의 경과분으로 역산 — 세운 쿨다운 최댓값이 어디에도 남지 않는다(남는 것은
-  //     잔여뿐이라 쿨다운 감소 모드가 붙는 순간 경과 계산이 조용히 틀린다).
-  // ⇒ 남은 길은 신규 `WorldState` 필드 + 해시 꼬리 폴드뿐인데, **항상 0 인 필드라도 폴드에
-  //    들어가는 순간 지금 초록인 골든이 전부 갈린다.** 이 배치의 금지 사항이라 손대지 않았다.
+  // ── DR3 도약 자기장 — drift 액티브(blink) **착지 틱**에 전용 자석 확장 버프를 세운다.
+  //    지속 = 90 + 6×Lv 틱(Lv1 = 96 · Lv20 = 210). 소비는 앵커 ㉘ 의
+  //    {@link bubbleGemMagnetParams}, 감소는 앵커 ⑨ 의 `blinkMagnetTick` 이다.
+  //
+  //    ## ⚠️ 배치5 의 "막혔다" 판정을 뒤집은 근거 — **슬롯 배열은 해시 꼬리가 아니다**
+  //    종전 사유는 *"전용 자석 버프 잔여 틱 = 신규 `WorldState` 정수 = 해시 꼬리 폴드"* 였고,
+  //    그래서 "항상 0 인 필드라도 지금 초록인 골든이 전부 갈린다" 로 닫혔다. 그 판정이 놓친
+  //    것이 `state.skillStage` 다 — `hashWorld` 는 16칸이 **전부 0 이면 폴드를 통째로
+  //    건너뛴다**(`replay.ts` 의 `skillSlotAny`). 즉 이 칸을 쓰면 **DR3 을 찍은 버블 런의
+  //    해시만** 갈리고 골든 픽스처를 포함한 그 밖의 모든 런은 바이트가 그대로다.
+  //    (배치5 가 기각한 세 대안 — `magnetBuffTicks` 재사용 · `activeBuff0/1` 재사용 ·
+  //    쿨다운 역산 — 은 지금도 기각이다. 사유 전문은 {@link BubbleStage.blinkMagnet} doc.)
+  //
+  //    ## ⚠️ 착지 **틱**이다 — 앵커 ㉗ 이 핸들러 뒤라 그 자리가 정확히 착지다
+  //    `player.x/y` 는 이미 착지점이고(DR9 가 `origin.preX/preY` 를 쓰는 것과 같은 사실),
+  //    이 스킬은 좌표를 안 보므로 그 차이에 걸리지 않는다.
+  if (def.treeIndex === 1) {
+    const dr3 = lv(state, Sk.blinkMagnetize);
+    if (dr3 >= 1) {
+      // 갱신은 **대입**이다(가산 아님). 가산이면 쿨다운이 짧은 무대에서 도약을 연달아 써
+      // 창이 무한히 길어진다 — 설계의 억제(액티브 쿨다운)를 우회한다.
+      writeSlot(state.skillStage, BubbleStage.blinkMagnet, 90 + 6 * dr3);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -833,6 +1189,18 @@ export function bubbleGemMagnetParams(
       // 배율은 정수 bp · 나눗셈 1회(ADR-0005). 반경은 좌표축이라 f64 로 남긴다.
       params.radius = (params.radius * (10000 + stacks * (150 + 15 * dr5))) / 10000;
     }
+  }
+
+  // ── DR3 도약 자기장(소비 절반) — 버프 창 동안 자석 반경 +30% + 3%p/Lv.
+  //    ⚠️ 반경 축이므로 **DR5 다음 · DR10 앞**이다(이 함수 헤더의 순서 계약: 반경 = DR5·DR3,
+  //    이동 = DR10). DR10 은 "반경 안의 젬" 을 대상으로 하므로 반경 축이 전부 끝난 뒤여야
+  //    그 대상 집합이 이 틱의 최종 반경과 같아진다.
+  //    ⚠️ 잔여 틱을 여기서 **깎지 않는다** — 감소의 단일 수렴점은 앵커 ⑨(`blinkMagnetTick`)다.
+  //    여기서 깎으면 젬이 0개인 틱에 이 훅이 도는지 여부가 `stepGems` 내부 사정에 묶인다.
+  const dr3 = lv(state, Sk.blinkMagnetize);
+  if (dr3 >= 1 && readSlot(state.skillStage, BubbleStage.blinkMagnet) > 0) {
+    // 배율은 정수 bp · 나눗셈 1회(ADR-0005). 반경은 좌표축이라 f64 로 남긴다.
+    params.radius = (params.radius * (13000 + 300 * dr3)) / 10000;
   }
 
   // ── DR10 공막 유속(흡인 절반) — 막이 없는 동안 젬이 **한 틱에 더 멀리** 끌려온다.
@@ -899,3 +1267,55 @@ export function bubblePlayerMoveParams(
   // 이속 +4% + 0.8%p/Lv. 배율은 정수 bp · 나눗셈 1회(ADR-0005) · 반올림은 게이트 안.
   params.speedMult = (params.speedMult * (10400 + 80 * dr4)) / 10000;
 }
+
+// ---------------------------------------------------------------------------
+// 미배선 4종 — **왜 못 넣었는지**가 여기 있다 (배치6 조사 결과)
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 이 넷은 `Sk` enum 에 멤버를 **아예 만들지 않았다.** 「유령 선언」(선언만 있고 아무도 안
+// 읽는 상수)을 남기면 계측이 배선으로 오인한다 — 「없다」의 근거는 `src/sim/**` 전체 grep 이다.
+//
+// ## PO8「잔거품 기뢰」 — 앵커는 열렸다. 막는 것은 **동시 생존 상한 규약**이다
+// 종전 차단 사유(*"파열 훅이 엔티티 순회 안이라 스폰이 위험하다"*)는 배치6 의
+// `onFilmBurstPost` 가 해소했다 — 그 지점은 밀어내기 루프 **밖**이라 생성이 안전하고,
+// {@link bubbleFilmBurstPost} 가 이미 그 자리에 서 있다. 남은 선결은 셋이고 전부 이 레인의
+// 열람·수정 범위 밖이다:
+//  ① **동시 생존 상한.** 상한 없이 넣으면 파열 4회 창에 최대 36기가 서서 청크 예산(160)을
+//     조용히 먹는다(앵커 doc 의 실측). 상한을 세우려면 "이 기뢰가 내 것인가" 를 세는
+//     **전용 마커**가 필요한데, 재사용 가능한 칸(`aux0`·`ownerId`)은 기뢰가 놓일 개체 종류마다
+//     의미가 이미 배정돼 있다.
+//  ② **컬링 제외.** 정지 기물은 `isGimmick` 계열의 컬링 예외에 들어가야 화면 밖에서 안 지워진다
+//     — 그 술어는 `world.ts` 소유이고 이 배치는 그 파일 편집을 금지한다.
+//  ③ **접촉 피해 경로.** 정지 기뢰가 적에게 피해를 주는 판정도 `world.ts` 의 충돌 해소에 있다.
+// `fanStrike` 로 **속도 0 인 아군탄**을 뿌리는 우회는 기각했다 — 탄은 수명·관통·컬링 규칙이
+// 기뢰와 다르고, 그 차이를 흉내 내려면 결국 위 셋을 탄 쪽에 다시 만들어야 한다.
+// ⇒ **기뢰 개체 규약을 세우는 레인이 얹어라.** 앵커는 더 필요 없다.
+//
+// ## PO10「연쇄 압력」 — 앵커도 슬롯도 있는데 **엔진 불변식**이 막는다
+// 문면이 *"다음 막의 내구가 **보강**된다"* 다. 그 보강은 `aux0` 이 `FILM_ABSORB_FLAT` 을 넘는
+// 것을 뜻하는데, `aux0 ≤ FILM_ABSORB_FLAT` 은 `world.ts` 가 못 박은 **엔진 불변식**이고 u32
+// 폴드 안전성·FI2 상한 술어·FI9 만재 클램프가 전부 그 위에 서 있다(설계서 ⑥절 3 이 PO10 을
+// 그 불변식의 **유일한 예외**로 지정했다 = 불변식 개정이 선결이라는 뜻이다). 상한 안에서만
+// 보강하는 축소 해석은 **무연산에 가깝다** — 막은 어차피 만재로 선다.
+// 부수적으로 필요한 것 둘(창 잔여 틱 · 창 시작 시 `state.kills` 스냅샷)은 `BubbleStage` 2칸으로
+// 지금 당장 가능하고, 처치 계수도 앵커 `onKillsDelta` 가 이미 있다 — 즉 **막는 것은 상태가
+// 아니라 불변식 하나뿐**이다. 그 개정은 골든 재동결과 같은 커밋이어야 한다.
+//
+// ## FI6「헌막 의식」 — 막는 것은 앵커가 아니라 **「불멸 막 지속 중」 술어**다
+// 문면이 *"**불멸 막** 지속 중 흡수한 총량이 **만료 파열**의 폭발 피해에 가산된다"* 라 축이 둘이다:
+//  ① **누적** — 앵커 ⑱(`onFilmAbsorbed`)이 흡수량을 이미 넘긴다. 다만 그 지점에서 *"지금 선
+//     막이 불멸 막인가"* 를 판별할 술어가 없다. `as_bubble_film_hi` 는 `aux0` 을 만재로
+//     대입할 뿐이라, 재생으로 선 막과 액티브가 세운 막이 상태로 **구분되지 않는다**.
+//     구분하려면 액티브 발동 시 표식을 세워야 하고 그 표식은 슬롯 1칸이다(가능).
+//  ② **만료 파열 식별** — 배치6 의 `onActiveExpired` 가 *"방금 만료됐다"* 를 주므로 여기까지는
+//     닿는다. 그런데 파열은 그 훅이 아니라 `consumeFilmBurstRequests` 가 **나중에** 소비하고,
+//     앵커 ⑮ 는 파열의 종류를 여전히 구분하지 못한다. 만료 표식을 슬롯에 세워 ⑮ 에서 소비하는
+//     형태가 성립하지만, 그러면 **①②를 합쳐 슬롯 2칸 + 앵커 3개**를 한 스킬이 쓴다.
+// ⇒ 성립은 하지만 이 레인이 확인한 범위 안에서 "불멸 막" 판별의 정본(액티브 레지스트리의 어느
+//    필드를 볼 것인가)이 확정되지 않아, **반쪽으로 넣지 않고 사유를 적는다.**
+//
+// ## DR2「표면장력 세례」 — 이 배치가 **명시적으로 금지**한 축이다
+// 신규 `WorldState` 정수 + 해시 꼬리 폴드가 필요하고, 그것은 D 단계 골든 재동결과 같은 커밋에
+// 묶기로 확정됐다. (⚠️ DR3 과 달리 `BubbleStage` 로 대신할 수 없다고 단정하지 마라 — 술어가
+// "막 있음 + 젬 수거로 열리는 창" 이라 구조는 DR3 과 같다. 손대지 않은 것은 **지시**이지
+// 불가능 판정이 아니다.)

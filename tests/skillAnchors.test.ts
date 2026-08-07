@@ -224,7 +224,7 @@ describe('계측 이음매', () => {
   //    배치4 에서 네 레인이 병렬로 앵커를 세우며 ㉗㉘ 가 **세 갈래로 중복**됐고(공유·해츨링·말로우)
   //    git 은 그 충돌을 전혀 몰랐다. 그래서 ㉖ 이후로는 번호를 붙이지 않는다
   //    (사유 전문은 `src/sim/skillHooks.ts` 헤더). 새 앵커는 **여기에 이름을 추가**해라.
-  it('앵커 41개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 46개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
@@ -299,6 +299,13 @@ describe('계측 이음매', () => {
         'onWallHit', // 탄↔벽 겹침 확정 직후 · `w.hp` 감산 앞 (브루저 BL7 · 팬텀 AS10)
         'onWallDestroyed', // `wall.dead = true` 직후 (브루저 MO7)
         'onWallShockResolve', // 투사체 루프 밖 — 지연 스폰 (브루저 BL7 충격파)
+        // ⚠️ 배치6 다섯. 전부 **배치5 가 「막는 자리」로 지목한 최대 부류**를 연다 —
+        // 소비처를 설계 문면으로 확인한 뒤에만 열었다(사유 전문은 `skillHooks.ts`).
+        'onActiveExpired', // 액티브 버프가 0 이 된 그 한 틱 (브루저 FO10 · 스트라이커 S9)
+        'onFilmBurstPost', // 파열 밀어내기 루프 **뒤** — ⑮ 는 앞이라 PO4 가 못 살았다
+        'onGemPull', // 젬 1개의 흡인 판정 (㉘ 은 루프 밖·스칼라라 비등방이 불가했다)
+        'onPickupRadius', // 픽업 접촉 반경 — 자석 반경(㉘)과 **다른 축** (버블 DR8)
+        'onPlayerWallSlide', // 선체↔벽 겹침 해소 직전 (팬텀 DI9 — 탄↔벽 축이 아니었다)
         // ⚠️ `onEnemyStatusExpired`(적 화상 만료 → SQ9)는 여기 **없다** — `chainHooks.ts`
         //    에 산다. `status.ts` 가 부르는 앵커라 이 파일에 두면 런타임 순환이 된다.
       ].sort(),
@@ -1550,5 +1557,149 @@ describe('S1 앵커는 거동을 바꾸지 않는다', () => {
     // 절대 판정은 골든 픽스처(`pnpm test:sim`)가 진다 — 리드가 돌린다.
     // 이 커밋이 낼 수 있는 나머지 근거는 **전 분기가 비어 있다**는 구조적 사실이다.
     expect(true).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 배치6 앵커 5개 — **호출부가 실제로 부르는가**
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 이 절이 없으면 `skillAnchors.test.ts` 는 배치6 앵커에 대해 **export 이름 목록만** 검사한다.
+// 그러면 배선 레인이 호출부를 옮기거나 지워도 스위트가 초록이고, 그 미발동은 화면에도
+// 테스트에도 흔적을 남기지 않는다 — 이 저장소의 지배적 실패 모드 그 자체다.
+// (적대적 리뷰가 배치6 앵커 커밋에서 이 공백을 MED 로 지적했고 그 자리에서 메웠다.)
+//
+// 세는 것은 **호출 횟수**뿐이다. 효과는 배선 레인의 몫이다(파일 헤더 규율).
+
+describe('배치6 onPickupRadius — 픽업 접촉 반경', () => {
+  it('매 틱 정확히 한 번 불린다', () => {
+    const s = skilled(0xb601);
+    stepWorld(s, idle);
+    expect(count('onPickupRadius')).toBe(1);
+    stepWorld(s, idle);
+    expect(count('onPickupRadius')).toBe(2);
+  });
+});
+
+describe('배치6 onGemPull — 젬 1개의 흡인 판정', () => {
+  it('살아 있는 젬마다 한 번씩 불린다', () => {
+    const s = skilled(0xb602);
+    const p = s.entities[0]!;
+    spawnGem(s, p.x + 30, p.y, 1);
+    spawnGem(s, p.x - 30, p.y, 1);
+    stepWorld(s, idle);
+    // 같은 틱에 수거돼 사라질 수 있으므로 **하한**으로 잠근다 — 재는 것은 "젬마다 불린다" 다.
+    expect(count('onGemPull')).toBeGreaterThanOrEqual(2);
+  });
+
+  it('음성 대조 ①: 젬이 하나도 없는 틱에는 0 이다', () => {
+    const s = skilled(0xb603);
+    stepWorld(s, idle);
+    expect(count('onGemPull')).toBe(0);
+  });
+
+  it('음성 대조 ②: 미투자 런은 젬이 있어도 0 이다 — 호출부가 `skillsOn` 게이트 안이다', () => {
+    // ⚠️ 이 앵커만 호출부가 게이트 **안**이다(젬 × 틱마다 도는 최다 호출 지점이라 레코드
+    //    할당까지 아끼기 위해서다 — 그 사유는 `world.ts` 호출부 주석). 다른 앵커의 계측이
+    //    "게이트와 무관하게 성립한다" 는 이 파일 `skilled()` doc 의 문장은 여기에 해당하지 않는다.
+    const s = createWorld(0xb604, { ...DEFAULT_CONFIG });
+    const p = s.entities[0]!;
+    spawnGem(s, p.x + 30, p.y, 1);
+    stepWorld(s, idle);
+    expect(count('onGemPull')).toBe(0);
+  });
+});
+
+describe('배치6 onPlayerWallSlide — 선체↔벽 겹침 해소 직전', () => {
+  it('벽이 있는 런에서 매 틱 불린다', () => {
+    const s = skilled(0xb605);
+    const p = s.entities[0]!;
+    spawnWall(s, p.x + 400, p.y, 40, 40);
+    s.activeWalls = s.entities.filter((e) => e.kind === 'wall');
+    stepWorld(s, idle);
+    expect(count('onPlayerWallSlide')).toBe(1);
+  });
+
+  it('틱당 정확히 1회다 — 벽 개수만큼 불리지 않는다', () => {
+    // ⚠️ **벽이 0개인 런은 이 픽스처로 구성할 수 없다** — 청크 활성화가 매 틱 `activeWalls` 를
+    //    다시 채우므로 손으로 비워도 `stepPlayer` 전에 복원된다(실측: 행성 6종 전부 16~28개).
+    //    그래서 여기서는 「벽 가드 안이다」를 음성 대조로 못 잠근다. 대신 잠그는 것은 **호출이
+    //    벽 개수에 비례하지 않는다**는 것이고, 가드 자체는 호출부 주석이 근거다.
+    //    ⛔ 이 한계를 지우고 "0 이어야 한다" 로 바꾸지 마라 — 그 단언은 통과할 수 없다.
+    const s = skilled(0xb606);
+    stepWorld(s, idle);
+    expect(s.activeWalls.length).toBeGreaterThan(1); // 전제: 벽이 여럿인 런이다
+    expect(count('onPlayerWallSlide')).toBe(1);
+    stepWorld(s, idle);
+    expect(count('onPlayerWallSlide')).toBe(2);
+  });
+});
+
+describe('배치6 onFilmBurstPost — 파열 밀어내기 뒤', () => {
+  it('파열 1회마다 pre(⑮) 와 post 가 한 번씩, **그 순서로** 불린다', async () => {
+    const { resolveFilmBurst } = await import('../src/sim/filmBurst.js');
+    const s = skilled(0xb607);
+    const p = s.entities[0]!;
+    resolveFilmBurst(s, p.x, p.y);
+    expect(count('onFilmBurst')).toBe(1);
+    expect(count('onFilmBurstPost')).toBe(1);
+    // ⚠️ 순서가 계약이다 — pre 는 밀어내기 앞(반경 술어), post 는 뒤(밀린 결과)라
+    //    뒤집히면 PO1·PO7·DR1 과 PO4 중 한쪽이 반드시 틀린다(`resolveFilmBurst` 주석).
+    const pre = hoisted.order.lastIndexOf('onFilmBurst');
+    const post = hoisted.order.lastIndexOf('onFilmBurstPost');
+    expect(pre).toBeGreaterThanOrEqual(0);
+    expect(post).toBeGreaterThan(pre);
+  });
+
+  it('음성 대조: 파열이 없는 틱에는 0 이다', () => {
+    const s = skilled(0xb608);
+    stepWorld(s, idle);
+    expect(count('onFilmBurstPost')).toBe(0);
+  });
+});
+
+describe('배치6 onActiveExpired — 액티브 버프가 0 이 된 그 한 틱', () => {
+  /** 스트라이커(shipType 0)의 **만료 핸들러가 있는** 생존 고티어 액티브. */
+  const EXPIRE_ACTIVE = 'as_striker_survival_hi';
+
+  async function withActive(seed: number): Promise<WorldState> {
+    const { wireIdOf } = await import('../data/ships/actives/index.js');
+    const invest = new Array<number>(60).fill(0);
+    invest[0] = 1;
+    return createWorld(seed, {
+      ...DEFAULT_CONFIG,
+      skillInvest: invest,
+      shipType: 0,
+      activeSlots: [wireIdOf(EXPIRE_ACTIVE), -1],
+    });
+  }
+
+  it('버프가 양수 → 0 으로 떨어진 틱에 한 번 불린다', async () => {
+    const { stepActives } = await import('../src/sim/actives.js');
+    const s = await withActive(0xb609);
+    const p = s.entities[0]!;
+    s.activeBuff0 = 1;
+    stepActives(s, p, idle, { x: 1, y: 0 });
+    expect(count('onActiveExpired')).toBe(1);
+  });
+
+  it('음성 대조 ①: 버프가 아직 남아 있는 틱에는 0 이다 (SUSTAIN 쪽이다)', async () => {
+    const { stepActives } = await import('../src/sim/actives.js');
+    const s = await withActive(0xb60a);
+    const p = s.entities[0]!;
+    s.activeBuff0 = 5;
+    stepActives(s, p, idle, { x: 1, y: 0 });
+    expect(count('onActiveExpired')).toBe(0);
+  });
+
+  it('음성 대조 ②: 이미 0 인 틱에는 다시 안 불린다 (만료는 에지다)', async () => {
+    const { stepActives } = await import('../src/sim/actives.js');
+    const s = await withActive(0xb60b);
+    const p = s.entities[0]!;
+    s.activeBuff0 = 1;
+    stepActives(s, p, idle, { x: 1, y: 0 }); // 여기서 1 → 0 (만료)
+    expect(count('onActiveExpired')).toBe(1);
+    stepActives(s, p, idle, { x: 1, y: 0 }); // 이미 0 — 다시 불리면 만료가 매 틱이 된다
+    expect(count('onActiveExpired')).toBe(1);
   });
 });

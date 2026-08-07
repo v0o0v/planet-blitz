@@ -30,8 +30,16 @@ import {
   onEnemyDamaged,
   onEnemyDeath,
   onPlayerMoveParams,
+  onBulletHitParams,
+  onGemPull,
+  onObjectiveResolved,
 } from '../src/sim/skillHooks.js';
-import type { VolleyParams, PlayerMoveParams } from '../src/sim/skillHooks.js';
+import type {
+  VolleyParams,
+  PlayerMoveParams,
+  BulletHitParams,
+  GemPullParams,
+} from '../src/sim/skillHooks.js';
 import { SIG_STRIKER_MARKSMAN, MARKSMAN_TRIGGER_AUX0 } from '../src/sim/shipSignature.js';
 import {
   StrikerCarry,
@@ -52,19 +60,25 @@ const F3 = 2;
 const F4 = 3;
 const F5 = 4;
 const F6 = 5;
+const F7 = 6;
 const F8 = 7;
 const F9 = 8;
 const S1 = 10;
 const S2 = 11;
 const S3 = 12;
 const S4 = 13;
+const S5 = 14;
 const S6 = 15;
+const S7 = 16;
 const S8 = 17;
 const S10 = 19;
 const M1 = 20;
+const M2 = 21;
 const M3 = 22;
+const M4 = 23;
 const M5 = 24;
 const M6 = 25;
+const M7 = 26;
 const M10 = 29;
 
 /** 지정한 flat 인덱스에만 포인트를 넣은 30칸 투자 벡터. */
@@ -1188,5 +1202,344 @@ describe('⑯ M10 이중 추진 (앵커 ㉙)', () => {
     expect(secondDashVx([[M6, 20]])).toBe(DEFAULT_CONFIG.playerSpeed);
     // 투자 런은 2충전으로 연속 대시가 나간다.
     expect(secondDashVx([[M10, 20]])).toBeGreaterThan(DEFAULT_CONFIG.playerSpeed);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑰ 배치6 — F7 · S7(앵커 ⑱) · S5(앵커 ㉙ + 감쇠 사슬) · M2 · M7(앵커 ②) · M4(`onGemPull`)
+// ---------------------------------------------------------------------------
+//
+// 뮤테이션(2026-08-07 · 아래는 전부 실제로 부수고 빨간 것을 확인했다):
+//  ① `strikerBulletHitParams` 의 F7 증폭 한 줄(`params.damage += …`)을 지우면 §⑰-F7 이 빨개진다.
+//  ② `onBulletHitParams` 의 `case SIG_STRIKER_MARKSMAN:` 를 지우면 §⑰-F7·§⑰-S7 전체가 빨개진다.
+//  ③ S7 의 `params.damage = target.hp` 를 지우면 「처형된다」가 빨개진다.
+//  ④ `strikerPlayerMoveParams` 의 `params.slowTicks = 0` 을 지우면 §⑰-S5 의 「역전」이 빨개진다.
+//  ⑤ `strikerDamageChain` 의 S5 감소 블록을 지우면 §⑰-S5 의 「해저드 경감」이 빨개진다.
+//  ⑥ `layThrustWake` 의 `spawnBullet` 호출을 지우면 §⑰-M2 전체가 빨개진다.
+//  ⑦ `strikerGemPull` 의 `params.pull = true` 를 지우면 §⑰-M4 의 「전방 확장」이 빨개진다.
+//  ⑧ `strikerObjectiveResolved` 의 `player.dashCooldown = 0` 을 지우면 §⑰-M7 「환급」이 빨개진다.
+
+/** 앵커 ⑱ 을 한 번 통과시키고 확정된 피해를 돌려준다. */
+function hit(w: WorldState, bullet: Entity, target: Entity, damage: number): number {
+  const params: BulletHitParams = { damage, pierce: 0 };
+  onBulletHitParams(w, bullet, target, params);
+  return params.damage;
+}
+
+/** 잡몹 하나를 월드에 넣고 돌려준다(id 는 `addEntity` 가 준다). */
+function spawnEnemy(w: WorldState, hp: number, maxHp: number): Entity {
+  const e = blankEntity('enemy');
+  e.hp = hp;
+  e.maxHp = maxHp;
+  return addEntity(w, e);
+}
+
+/** 정조준 표식(`aux0 === 1`)을 단 아군탄. */
+function markBullet(marked: boolean): Entity {
+  const b = blankEntity('bullet');
+  b.aux0 = marked ? 1 : 0;
+  return b;
+}
+
+describe('⑰-F7 표적 고정 (앵커 ⑱)', () => {
+  it('같은 표적을 연속으로 때리면 증폭이 단조 증가한다 (하한 짝 포함)', () => {
+    const w = mk([[F7, 20]]); // 스택당 bp = 300 + 1000 = 1300 (13%)
+    const t = spawnEnemy(w, 1000, 1000);
+    const b = markBullet(false);
+    // 첫 명중은 증폭 0 — 「쌓인 결과가 증폭」이라는 문면 그대로다.
+    expect(hit(w, b, t, 100)).toBe(100);
+    const second = hit(w, b, t, 100);
+    const third = hit(w, b, t, 100);
+    // 하한 짝 — 배선이 끊기면 둘 다 100 이 되어 아래 부등식이 항진이 된다.
+    expect(second).toBeGreaterThan(100);
+    expect(second).toBe(113); // 1스택 × 13%
+    expect(third).toBe(126); // 2스택 × 13%
+    expect(third).toBeGreaterThan(second);
+  });
+
+  it('표적이 바뀌면 스택이 0 으로 리셋된다', () => {
+    const w = mk([[F7, 20]]);
+    const a = spawnEnemy(w, 1000, 1000);
+    const c = spawnEnemy(w, 1000, 1000);
+    const b = markBullet(false);
+    hit(w, b, a, 100);
+    hit(w, b, a, 100);
+    expect(readSlot(w.skillStage, StrikerStage.lockStack)).toBe(1);
+    // 다른 표적 — 첫 명중이라 증폭 0
+    expect(hit(w, b, c, 100)).toBe(100);
+    expect(readSlot(w.skillStage, StrikerStage.lockStack)).toBe(0);
+    expect(readSlot(w.skillStage, StrikerStage.lockTarget)).toBe(c.id + 1);
+  });
+
+  it('스택 상한 10 에서 멈춘다 (부정 항목의 긍정 짝 — 10 까지는 실제로 오른다)', () => {
+    const w = mk([[F7, 20]]);
+    const t = spawnEnemy(w, 100000, 100000);
+    const b = markBullet(false);
+    for (let i = 0; i < 12; i++) hit(w, b, t, 100);
+    expect(readSlot(w.skillStage, StrikerStage.lockStack)).toBe(10);
+    // 긍정 짝 — 상한 자체가 실제 값(10스택 × 13% = 130% 증폭)이다.
+    expect(hit(w, b, t, 100)).toBe(230);
+  });
+
+  it('미투자면 슬롯도 피해도 안 움직인다', () => {
+    const w = mk([[F1, 1]]);
+    const t = spawnEnemy(w, 1000, 1000);
+    const b = markBullet(false);
+    expect(hit(w, b, t, 100)).toBe(100);
+    expect(hit(w, b, t, 100)).toBe(100);
+    expect(readSlot(w.skillStage, StrikerStage.lockStack)).toBe(0);
+    expect(readSlot(w.skillStage, StrikerStage.lockTarget)).toBe(0);
+  });
+});
+
+describe('⑰-S7 최후 처형 (앵커 ⑱)', () => {
+  /** 빈사(HP 비율)로 만든 뒤 표적을 한 대 때려 **확정된 피해**를 돌려준다. */
+  function execute(
+    level: number,
+    opts: { playerHpPct: number; targetHp: number; marked: boolean; boss?: boolean },
+  ): number {
+    const w = mk([[S7, level]]);
+    const p = player(w);
+    p.hp = (p.maxHp * opts.playerHpPct) / 100;
+    const t = blankEntity(opts.boss === true ? 'boss' : 'enemy');
+    t.hp = opts.targetHp;
+    t.maxHp = 1000;
+    addEntity(w, t);
+    return hit(w, markBullet(opts.marked), t, 1);
+  }
+
+  it('빈사 + 정조준탄 + 임계 이하면 잔여 HP 만큼으로 끌어올려 처형한다', () => {
+    // Lv20 임계 = 1000 × 15% = 150.
+    expect(execute(20, { playerHpPct: 20, targetHp: 140, marked: true })).toBe(140);
+  });
+
+  it('임계를 넘으면 무연산이다 (하한 짝 — 경계 안은 실제로 처형된다)', () => {
+    expect(execute(20, { playerHpPct: 20, targetHp: 160, marked: true })).toBe(1);
+    expect(execute(20, { playerHpPct: 20, targetHp: 150, marked: true })).toBe(150);
+  });
+
+  it('HP 30% 초과 · 무표식 탄 · 보스는 대상이 아니다 (긍정 짝 포함)', () => {
+    expect(execute(20, { playerHpPct: 40, targetHp: 100, marked: true })).toBe(1);
+    expect(execute(20, { playerHpPct: 20, targetHp: 100, marked: false })).toBe(1);
+    expect(execute(20, { playerHpPct: 20, targetHp: 100, marked: true, boss: true })).toBe(1);
+    // 긍정 짝 — 셋을 다 만족하면 실제로 처형된다.
+    expect(execute(20, { playerHpPct: 20, targetHp: 100, marked: true })).toBe(100);
+  });
+
+  it('좀비를 만들지 않는다 — 훅은 `hp` 도 `dead` 도 안 만진다', () => {
+    const w = mk([[S7, 20]]);
+    const p = player(w);
+    p.hp = p.maxHp * 0.2;
+    const t = spawnEnemy(w, 100, 1000);
+    hit(w, markBullet(true), t, 1);
+    expect(t.hp).toBe(100); // 차감은 호출부 몫이다
+    expect(t.dead).toBe(false);
+  });
+
+  it('임계가 레벨에 단조 증가한다', () => {
+    // Lv1 임계 55 < 60 → 미발동 · Lv20 임계 150 ≥ 60 → 처형
+    expect(execute(1, { playerHpPct: 20, targetHp: 60, marked: true })).toBe(1);
+    expect(execute(20, { playerHpPct: 20, targetHp: 60, marked: true })).toBe(60);
+  });
+});
+
+describe('⑰-S5 극지 적응 (앵커 ㉙ · 감쇠 사슬)', () => {
+  function moveOnce(w: WorldState, slowTicks: number): PlayerMoveParams {
+    const params: PlayerMoveParams = { speedMult: 1, slowTicks };
+    onPlayerMoveParams(w, player(w), params);
+    return params;
+  }
+
+  it('감속 잔여가 0 으로 지워지고 배율이 1 위로 올라간다 (역전)', () => {
+    const w = mk([[S5, 20]]); // bp 11500 + 3000 = 14500 → ×1.45
+    const out = moveOnce(w, 30);
+    expect(out.slowTicks).toBe(0);
+    expect(out.speedMult).toBeCloseTo(1.45, 10);
+    expect(out.speedMult).toBeGreaterThan(1); // 하한 짝
+  });
+
+  it('감속 중이 아니면 무연산이다 (긍정 짝을 옆에 둔다)', () => {
+    const w = mk([[S5, 20]]);
+    expect(moveOnce(w, 0).speedMult).toBe(1);
+    expect(moveOnce(w, 1).speedMult).toBeGreaterThan(1);
+  });
+
+  it('미투자면 감속이 그대로 산다', () => {
+    const w = mk([[F1, 1]]);
+    const out = moveOnce(w, 30);
+    expect(out.slowTicks).toBe(30);
+    expect(out.speedMult).toBe(1);
+  });
+
+  it('해저드 출처 피해만 경감된다 — 접촉·적탄은 그대로다', () => {
+    const w = mk([[S5, 20]]); // 15% + 30% = 45%
+    const p = player(w);
+    expect(onDamageChain(w, p, 100, DamageSource.hazard)).toBe(55);
+    expect(onDamageChain(w, p, 100, DamageSource.contact)).toBe(100);
+    expect(onDamageChain(w, p, 100, DamageSource.bullet)).toBe(100);
+  });
+
+  it('경감이 레벨에 단조 증가한다 (하한 짝 — 미투자는 100 이다)', () => {
+    function at(points: ReadonlyArray<readonly [number, number]>): number {
+      const w = mk(points);
+      return onDamageChain(w, player(w), 100, DamageSource.hazard);
+    }
+    expect(at([[F1, 1]])).toBe(100);
+    expect(at([[S5, 1]])).toBe(83); // 16.5% → round(16.5) = 17 깎임
+    expect(at([[S5, 20]])).toBe(55);
+    expect(at([[S5, 20]])).toBeLessThan(at([[S5, 1]]));
+  });
+});
+
+describe('⑰-M2 추진 항적 (앵커 ②)', () => {
+  function wake(w: WorldState): Entity[] {
+    return w.entities.filter((e) => e.kind === 'bullet' && !e.dead && e.vx === 0 && e.vy === 0);
+  }
+
+  it('대시 방향으로 정지 탄 열을 깐다 (개수 = 2 + floor(Lv/4))', () => {
+    const w = mk([[M2, 20]]);
+    const p = player(w);
+    const px = p.x;
+    const py = p.y;
+    onDashFired(w, p, 1, 0);
+    const laid = wake(w);
+    expect(laid).toHaveLength(7);
+    // 좌표가 대시 방향으로 늘어선다 — 방향 인자를 실제로 읽었다는 증거다.
+    expect(laid.map((e) => e.x - px)).toEqual([56, 112, 168, 224, 280, 336, 392]);
+    expect(laid.every((e) => e.y === py)).toBe(true);
+  });
+
+  it('방향 인자가 없으면 한 발도 안 깐다 (긍정 짝 — 주면 깐다)', () => {
+    const off = mk([[M2, 20]]);
+    onDashFired(off, player(off));
+    expect(wake(off)).toHaveLength(0);
+    const on = mk([[M2, 20]]);
+    onDashFired(on, player(on), 0, 1);
+    expect(wake(on)).toHaveLength(7);
+  });
+
+  it('미투자면 아무것도 안 깐다 · 개수가 레벨에 단조 증가한다', () => {
+    const none = mk([[F1, 1]]);
+    onDashFired(none, player(none), 1, 0);
+    expect(wake(none)).toHaveLength(0);
+    const lo = mk([[M2, 1]]);
+    onDashFired(lo, player(lo), 1, 0);
+    const hi = mk([[M2, 20]]);
+    onDashFired(hi, player(hi), 1, 0);
+    expect(wake(lo)).toHaveLength(2);
+    expect(wake(hi).length).toBeGreaterThan(wake(lo).length);
+  });
+});
+
+describe('⑰-M4 슬립스트림 (`onGemPull`)', () => {
+  /** 젬 하나를 놓고 앵커를 통과시킨 뒤 흡인 여부를 돌려준다. */
+  function pulled(w: WorldState, offX: number, offY: number): boolean {
+    const p = player(w);
+    const gem = blankEntity('gem');
+    gem.x = p.x + offX;
+    gem.y = p.y + offY;
+    addEntity(w, gem);
+    const dx = p.x - gem.x;
+    const dy = p.y - gem.y;
+    const params: GemPullParams = { pull: false, dx, dy, d2: dx * dx + dy * dy };
+    onGemPull(w, p, gem, params);
+    return params.pull;
+  }
+
+  it('진행 방향 **전방**의 젬만 확장 반경으로 흡인된다 (비등방)', () => {
+    const w = mk([[M4, 20]]); // 실효 반경 420 × 1.70 = 714
+    const p = player(w);
+    p.vx = 100;
+    p.vy = 0;
+    expect(pulled(w, 500, 0)).toBe(true); // 전방 500 — 기본 420 밖인데 확장 안
+    expect(pulled(w, -500, 0)).toBe(false); // 후방은 확장 없음
+    expect(pulled(w, 800, 0)).toBe(false); // 전방이어도 확장 반경 밖
+  });
+
+  it('정지 중이면 원형 그대로다 (긍정 짝 — 움직이면 켜진다)', () => {
+    const w = mk([[M4, 20]]);
+    const p = player(w);
+    p.vx = 0;
+    p.vy = 0;
+    expect(pulled(w, 500, 0)).toBe(false);
+    p.vx = 100;
+    expect(pulled(w, 500, 0)).toBe(true);
+  });
+
+  it('이미 흡인 대상이면 되돌리지 않는다', () => {
+    const w = mk([[M4, 20]]);
+    const p = player(w);
+    p.vx = -100; // 후방 판정이 될 방향
+    const gem = blankEntity('gem');
+    gem.x = p.x + 100;
+    gem.y = p.y;
+    addEntity(w, gem);
+    const params: GemPullParams = { pull: true, dx: -100, dy: 0, d2: 10000 };
+    onGemPull(w, p, gem, params);
+    expect(params.pull).toBe(true);
+  });
+
+  it('미투자면 판정이 그대로다 · 확장이 레벨에 단조 증가한다', () => {
+    const none = mk([[F1, 1]]);
+    player(none).vx = 100;
+    expect(pulled(none, 500, 0)).toBe(false);
+    // Lv1 = 420×1.32 = 554.4 · Lv20 = 420×1.70 = 714
+    const lo = mk([[M4, 1]]);
+    player(lo).vx = 100;
+    const hi = mk([[M4, 20]]);
+    player(hi).vx = 100;
+    expect(pulled(lo, 600, 0)).toBe(false);
+    expect(pulled(hi, 600, 0)).toBe(true);
+  });
+
+  it('자석 버프 창에서도 꺼지지 않는다 (실효 반경 기준으로 확장한다)', () => {
+    const w = mk([[M4, 20]]);
+    const p = player(w);
+    p.vx = 100;
+    w.magnetBuffTicks = 5; // 실효 420×3 = 1260 → 확장 2142
+    expect(pulled(w, 2000, 0)).toBe(true);
+    expect(pulled(w, 2500, 0)).toBe(false);
+  });
+});
+
+describe('⑰-M7 신호 추적 (앵커 ② · ㉙ 목표 완수)', () => {
+  it('에코가 활성이면 대시 쿨다운이 반감된다 (하한 짝 — 비활성은 그대로다)', () => {
+    const off = mk([[M7, 20]]);
+    player(off).dashCooldown = 100;
+    onDashFired(off, player(off), 1, 0);
+    expect(player(off).dashCooldown).toBe(100);
+
+    const on = mk([[M7, 20]]);
+    on.echoRuntime = { state: 1, spawnTick: 3, dwell: 0, entityId: 0 };
+    player(on).dashCooldown = 100;
+    onDashFired(on, player(on), 1, 0);
+    expect(player(on).dashCooldown).toBe(50);
+  });
+
+  it('안정화 완료(state 2)는 활성이 아니다 — 완수 리더와 겹치지 않는다', () => {
+    const w = mk([[M7, 20]]);
+    w.echoRuntime = { state: 2, spawnTick: 3, dwell: 0, entityId: 0 };
+    player(w).dashCooldown = 100;
+    onDashFired(w, player(w), 1, 0);
+    expect(player(w).dashCooldown).toBe(100);
+  });
+
+  it('목표 완수 틱에 전액 환급된다 (에코·조우 둘 다)', () => {
+    for (const kind of ['echo', 'encounter'] as const) {
+      const w = mk([[M7, 20]]);
+      player(w).dashCooldown = 100;
+      onObjectiveResolved(w, player(w), kind);
+      expect(player(w).dashCooldown).toBe(0);
+    }
+  });
+
+  it('미투자면 환급도 반감도 없다', () => {
+    const w = mk([[F1, 1]]);
+    w.echoRuntime = { state: 1, spawnTick: 3, dwell: 0, entityId: 0 };
+    player(w).dashCooldown = 100;
+    onDashFired(w, player(w), 1, 0);
+    expect(player(w).dashCooldown).toBe(100);
+    onObjectiveResolved(w, player(w), 'echo');
+    expect(player(w).dashCooldown).toBe(100);
   });
 });

@@ -143,6 +143,9 @@ import {
   strikerEnemyDamaged,
   strikerEnemyDeath,
   strikerPlayerMoveParams,
+  strikerBulletHitParams,
+  strikerGemPull,
+  strikerObjectiveResolved,
 } from './skills/striker.js';
 import {
   arccasterGemCollected,
@@ -170,6 +173,7 @@ import {
   bruiserEnemyDeath,
   bruiserVolleyParams,
   bruiserActiveFired,
+  bruiserActiveExpired,
   bruiserGemMagnetParams,
   bruiserPlayerMoveParams,
   bruiserWallHit,
@@ -209,16 +213,23 @@ import {
   phantomVolleyParams,
   phantomPlayerMoveParams,
   phantomWallHit,
+  phantomObjectiveResolved,
+  phantomEnemyDeath,
+  phantomPlayerWallSlide,
 } from './skills/phantom.js';
 import {
   bubbleSignatureStep,
   bubbleEnemyDamaged,
   bubbleFilmBurst,
+  bubbleFilmBurstPost,
+  bubbleObjectiveResolved,
+  bubblePickupRadius,
   bubbleVolleyParams,
   bubbleFilmAbsorbed,
   bubbleFilmEntry,
   bubbleFilmEfficiency,
   bubbleActiveFired,
+  bubbleGemCollected,
   bubbleGemMagnetParams,
   bubblePlayerMoveParams,
 } from './skills/bubble.js';
@@ -328,20 +339,33 @@ function dispatchVolleySkill(state: WorldState, player: Entity): void {
 }
 
 /** 앵커 ② — **대시가 실제로 발동한 지점**(`input.dash && dashCooldown === 0` 안쪽). */
-export function onDashFired(state: WorldState, player: Entity): void {
-  dispatchDashSkill(state, player);
+export function onDashFired(
+  state: WorldState,
+  player: Entity,
+  dirX?: number,
+  dirY?: number,
+): void {
+  dispatchDashSkill(state, player, dirX, dirY);
   onDashFiredCatalyst(state, player);
 }
 
-function dispatchDashSkill(state: WorldState, player: Entity): void {
+function dispatchDashSkill(
+  state: WorldState,
+  player: Entity,
+  dirX?: number,
+  dirY?: number,
+): void {
   if (!state.skillsOn) return;
+  // 배치6 — **대시 방향**(`resolveDirFallback` 을 이미 통과한 단위 벡터). 후행 선택 인자로
+  // 둔 것은 기존 호출부·픽스처를 안 깨기 위해서다(`srcX`/`srcY` 선례). ⚠️ 그래서 **단위
+  // 테스트가 안 넘기면 `undefined`** 다 — 이 값을 쓰는 스킬의 테스트는 반드시 넘겨라.
+  // 소비처가 생기지 않은 `case` 는 이 인자를 안 본다.
   switch (state.sigBit) {
     case SIG_STRIKER_MARKSMAN:
-      // M5 벽차기(무적프레임) · **M6 활공 정화**(적탄 소거 + 반경 안 잡몹 냉기).
-      // ⚠️ M2(추진 항적)는 여기 없다 — 술어 "대시 방향" 의 정본이 `resolveDirFallback(mx, my,
-      // angle)` 인데 그 `mx/my` 는 `stepPlayer` 지역 변수이고 이 앵커는 `input` 을 받지 않는다.
-      // `player.vx/vy` 는 이미 이동 성분이 합산된 뒤라 방향 규칙의 두 번째 사본이 된다.
-      strikerDashFired(state, player);
+      // M5 벽차기(무적프레임) · **M6 활공 정화**(적탄 소거 + 반경 안 잡몹 냉기) ·
+      // **M2 추진 항적**(대시 방향 정지 탄 열 — 배치6 이 실은 `dirX`/`dirY` 의 첫 소비처) ·
+      // **M7 신호 추적**(에코·조우 활성 중 쿨다운 반감).
+      strikerDashFired(state, player, dirX, dirY);
       break;
     // ⚠️ **아크캐스터는 여기 case 가 없다 — 설계에 대시 결속 스킬이 한 종도 없기 때문이다.**
     // 이 기체의 이동 결속은 전부 blink 액티브(BA1·BA4·BA6)이고 그것은 액티브 핸들러의 자리다.
@@ -439,12 +463,19 @@ function dispatchGemSkill(state: WorldState, gem: Entity): void {
       if (p !== undefined) phantomGemCollected(state, p);
       break;
     }
-    // ⚠️ **버블은 여기 case 가 없다 — 트리거는 맞는데 소비처가 없다.** DR2「표면장력 세례」는
-    // 이 앵커에서 "막이 서 있는 동안 수거" 를 정확히 재고 창 슬롯을 세울 수 있지만, 그 창이
-    // 소비되는 자리는 **막 흡수 산술**(`world.ts:4249-4256`)이고 거기엔 앵커가 없다(앵커 ⑧ 은
-    // 브루저 장갑보다 앞이라 막이 아직 한 점도 닳지 않았다). 창만 돌리면 슬롯 1칸이 영구히
-    // 아무것도 안 하는 상태로 해시에 접힌다 — 통째로 미배선으로 뒀다.
-    // ⚠️ DR1「역류 수거」도 여기가 아니다 — 그쪽은 **파열 틱에** 젬을 끌어오는 스킬이고,
+    case SIG_BUBBLE_FILM: {
+      // DR2「표면장력 세례」(적립 절반) — 막이 서 있는 동안의 수거가 효율 창을 연다.
+      // 소비는 앵커 ⑰(`onFilmEfficiency`), 감소는 앵커 ⑨ 다.
+      //
+      // ⚠️ **종전 주석의 판정("소비처가 없다")은 틀렸다 — 정정해 둔다.** 그 문장은 소비처를
+      // `world.ts` 의 막 흡수 산술로 지목했는데, 그 산술은 **효율 bp 를 인자로 받는다**
+      // (`shipSignature.ts` 의 `absorbFilm`)이고 그 인자를 정하는 자리가 바로 앵커 ⑰ 이다.
+      // FI8 이 같은 앵커에서 이미 돌고 있었다는 것이 반증이다.
+      const p = playerOf(state);
+      if (p !== undefined) bubbleGemCollected(state, p);
+      break;
+    }
+    // ⚠️ DR1「역류 수거」는 여기가 아니다 — 그쪽은 **파열 틱에** 젬을 끌어오는 스킬이고,
     // 수거 자체는 `collectGem`(world.ts 소유)이라 leaf 에서 부를 수 없다.
     default:
       break;
@@ -495,8 +526,9 @@ export function onPlayerDamaged(
   sources: DamageSourceMask,
   srcX?: number,
   srcY?: number,
+  contact?: Entity,
 ): void {
-  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived, sources, srcX, srcY);
+  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived, sources, srcX, srcY, contact);
   onPlayerDamagedCatalyst(state, player, dmg, lethalSurvived, sources);
 }
 
@@ -508,8 +540,16 @@ function dispatchPlayerDamagedSkill(
   sources: DamageSourceMask,
   srcX?: number,
   srcY?: number,
+  contact?: Entity,
 ): void {
   if (!state.skillsOn) return;
+  // 배치6 — **몸통 접촉 상대 적**(브루저 FO3「반동 갑주」). `sources` 비트는 *접촉이 있었다*
+  // 까지만 말하고 `srcX`/`srcY` 는 좌표뿐이라, "그 접촉 적에게" 를 좌표로 되찾으면 접촉 판정의
+  // 두 번째 사본이 된다. 후행 선택 인자인 것은 `srcX`/`srcY` 와 같은 사유다.
+  // ⚠️ 접촉이 아닌 피격(적탄·해저드)에서는 `undefined` 다 — 훅이 반드시 확인해라.
+  // ⚠️ **이 적은 `dmg` 의 `max` 를 이긴 그 한 항목**이다(`srcX`/`srcY` 와 같은 규율). 같은 틱에
+  //    여러 적이 닿았어도 하나만 온다.
+  // ✅ 첫 소비처는 `case SIG_BRUISER_ARMOR`(FO3)다 — 그래서 `void contact;` 를 지웠다.
   switch (state.sigBit) {
     case SIG_STRIKER_MARKSMAN:
       // S1 응전 조준 · S2 반사 도금. 둘 다 피해량과 무관하고 "hp 가 실제로 깎였다" 만 본다 —
@@ -533,8 +573,13 @@ function dispatchPlayerDamagedSkill(
       // 장갑 적립이 이 앵커보다 **앞**이라(world.ts 4317-4320) 여기 도달한 시점의 `aux1` 은
       // **항상 0** 이다. 그 술어를 그대로 쓰면 쿨이 영영 안 풀리거나(< 60 이면 스킵) 매 피격
       // 발동(≥ 60 이면 스킵)이 되어 어느 쪽이든 설계와 다르다. 슬롯 1칸이 필요하고, 그것은
-      // 칼날 축 B 예산(BL8·BL9 로 2/2 포화)을 넘기므로 설계로 되돌아가야 한다.
-      bruiserPlayerDamaged(state, player, dmg, lethalSurvived, sources);
+      // 칼날 축 B 예산(BL8 `temperCharges` · BL9 `cadenceHits` 로 2/2 포화)을 넘기므로 설계로
+      // 되돌아가야 한다. **배치6 이 이 문면을 다시 읽고 판단을 유지했다** — 배치6 이 더한
+      // `contact` 는 "누구에게 반격하는가" 가 아니라 "누구를 반사하는가" 라 BL1 의 벽(내부 쿨)과
+      // 무관하다. 같은 사유가 `skills/bruiser.ts` 헤더에도 있다.
+      //
+      // ⚠️ **FO3(반동 갑주)는 배치6 부터 여기 있다** — 후행 선택 인자 `contact` 가 그 자리다.
+      bruiserPlayerDamaged(state, player, dmg, lethalSurvived, sources, contact);
       break;
     case SIG_MALLOW_CUSHION:
       // SQ3 몸통 반발(즉시분 비례 반격) · CU4 반발 세척(부채 보유 중 적탄 소거).
@@ -770,7 +815,8 @@ export function onDamageChain(
   switch (state.sigBit) {
     // 각 `case` 는 **① 감소 → ② 흡수** 순서로 처리하고, 정수화는 자기 게이트 안에서 한다.
     case SIG_STRIKER_MARKSMAN:
-      return strikerDamageChain(state, player, dmg); // ① S4 감소 → ② S8 흡수
+      // ① S4 엄폐 교리(벽 접촉) → **S5 극지 적응**(해저드 출처) 감소 → ② S8 흡수.
+      return strikerDamageChain(state, player, dmg, sources);
     case SIG_ARC_OVERCHARGE:
       // ① BR3·BR5·**BA8**(해저드 출처) 감소 → ② BR4 흡수. 순서는 이 앵커 주석 그대로다.
       return arccasterDamageChain(state, player, dmg, sources);
@@ -861,6 +907,12 @@ export function onBulletHitParams(
       // CH5 전위차 저격 — 발사 시점 수명(앵커 ⑯ 의 `recordSpawnOrigin`) 대비 비행 비율로
       // 「멀리 비행한 뒤 명중」을 판정해 피해 증폭 + 관통 가산.
       arccasterBulletHitParams(state, bullet, target, params);
+      break;
+    case SIG_STRIKER_MARKSMAN:
+      // **F7 표적 고정**(같은 표적 연속 명중 스택 증폭) · **S7 최후 처형**(빈사 중 정조준탄이
+      // 임계 이하 잡몹을 정상 격추 경로로 죽인다). 둘 다 앵커 ⑩ 이 아니라 **여기**가 자리다 —
+      // ⑩ 은 `t.hp -= dealt` 뒤라 이번 일격의 피해를 못 바꾼다.
+      strikerBulletHitParams(state, bullet, target, params);
       break;
     default:
       break;
@@ -1367,12 +1419,20 @@ function dispatchEnemyDeathSkill(
       if (p !== undefined) bruiserEnemyDeath(state, p, elite);
       break;
     }
-    // ⚠️ **팬텀은 여기 case 가 없다 — 필요한 것이 사건이 아니라 지점이기 때문이다.**
-    // AS6「무성 격살」은 "은신 창 중 처치한 적이 죽음의 잔재를 남기지 않는다" 인데, 그 잔재를
-    // 만드는 곳은 `elite.ts` 의 `explodeElite` 와 `world.ts` 의 BK_SPLIT 분열이고 둘 다 이
-    // 앵커보다 **앞**에서 이미 실행됐다. 여기서 뒤늦게 알아 봐야 파편은 이미 태어났다.
-    // AS9(절멸 선고)는 격추가 아니라 **해제 첫 타의 명중 지점**이 트리거라 축이 다르다 —
-    // 그래서 여기가 아니라 **앵커 ⑩** 에 배선됐다(S3).
+    case SIG_PHANTOM_CLOAK:
+      // AS8「처형인의 적공」(적립 절반) — 처치 1건당 스택 +1(상한 있음). 소비는 앵커 ⑯ 에서
+      // "다음 해제 첫 타" 볼리가 한다. 좌표·엘리트 여부·화상은 안 본다(설계 문면이 처치 수
+      // 하나다) — 그래서 인자를 넘기지 않는다.
+      //
+      // ⚠️ **AS6「무성 격살」은 여기 배선할 수 없다 — 필요한 것이 사건이 아니라 지점이다.**
+      // "은신 창 중 처치한 적이 죽음의 잔재를 남기지 않는다" 인데, 그 잔재를 만드는 곳은
+      // `elite.ts` 의 `explodeElite` 와 `world.ts` 의 BK_SPLIT 분열이고 둘 다 이 앵커보다
+      // **앞**에서 이미 실행됐다. 여기서 뒤늦게 알아 봐야 파편은 이미 태어났고, 사후에
+      // 지우는 것은 스폰 억제와 값이 다르다(파편이 한 틱 살아 피해를 준다).
+      // AS9(절멸 선고)는 격추가 아니라 **해제 첫 타의 명중 지점**이 트리거라 축이 다르다 —
+      // 그래서 여기가 아니라 **앵커 ⑩** 에 배선됐다(S3).
+      phantomEnemyDeath(state);
+      break;
     default:
       break;
   }
@@ -1540,23 +1600,27 @@ function dispatchPowerupPickedSkill(
  * @param x 파열 중심 x
  * @param y 파열 중심 y
  */
-export function onFilmBurst(state: WorldState, x: number, y: number): void {
+export function onFilmBurst(
+  state: WorldState,
+  x: number,
+  y: number,
+  params: FilmBurstParams,
+): void {
   if (!state.skillsOn) return;
   switch (state.sigBit) {
     case SIG_BUBBLE_FILM: {
       // PO1 파열 탄두 · PO3 거품 산탄 파열 · PO7 정전 파열 · DR1 역류 수거 · DR6 파열 추진 ·
       // FI1 조기 응결 · FI5 파열 위상 · FI10 정화 파열.
       //
-      // ⚠️ **PO4·PO8·FI7 은 여기 없다 — 훅으로 닿지 않는다.**
-      //  · FI7(벽면 반향)은 밀어내기의 **반경·변위 그 자체**를 배율해야 한다. 훅은 그 산술
-      //    바깥이라 값을 건넬 길이 없다 — `resolveFilmBurst` 가 배율을 인자로 받는 형태여야
-      //    하고, 그건 훅이 아니라 함수 시그니처 변경이다.
-      //  · PO4(압착 충돌)는 밀어내기 목표 변위와 슬라이드 후 실제 좌표의 **차이**가 판정인데,
-      //    이 앵커는 밀어내기보다 **앞**이라 그 차이가 아직 존재하지 않는다(앞에 둔 사유는
-      //    호출 지점 주석 — 뒤로 옮기면 PO1·PO7 이 죽는다. 훅을 pre/post 둘로 쪼개야 한다).
-      //  · PO8(잔거품 기뢰)은 기뢰 엔티티 생성 규약(`isGimmick` 컬링 제외 + 전용 마커 동시
-      //    생존 상한 12)이 선결이다. 상한 없이 넣으면 파열 4회 창에 최대 36기가 서서 청크
-      //    예산(160)을 조용히 먹는다.
+      // ✅ **FI7(벽면 반향)은 배치6 에서 배선됐다.** 종전 사유(*"훅이 밀어내기 산술 바깥이라
+      //    값을 건넬 길이 없다"*)는 이 앵커가 {@link FilmBurstParams} 를 넘기면서 해소됐다 —
+      //    `radius`·`push` **둘 다** 같은 배율로 곱한다(반경만 키우면 "반경 안의 적을 반경
+      //    밖으로" 계약이 깨진다).
+      // ✅ **PO4(압착 충돌)는 여기가 아니라 `onFilmBurstPost` 다.** 밀어낸 **결과**가 판정이라
+      //    이 앵커로는 원리적으로 못 산다(이 훅을 뒤로 옮기면 PO1·PO7·DR1 이 죽는다).
+      // ⚠️ **PO8(잔거품 기뢰)은 아직 여기도 저기도 없다.** 스폰 지점은 `onFilmBurstPost` 로
+      //    열렸고, 남은 선결은 기뢰 개체 규약(동시 생존 상한 + 컬링 제외 + 접촉 피해)이다 —
+      //    사유 전문은 `skills/bubble.ts` 말미의 미배선 주석이 정본이다.
       // ✅ **DR1(역류 수거)은 배선됐다.** `collectGem` 이 `world.ts` 모듈-로컬이라 leaf 에서
       //    부를 수 없다는 종전 사유는 **지금도 참**이고(export 해도 규율 ① 위반, 여기로 올려도
       //    `world.ts → skillHooks.ts` 와 순환), 젬을 직접 지우면 콤보·XP·촉매 경로가 통째로
@@ -1569,7 +1633,7 @@ export function onFilmBurst(state: WorldState, x: number, y: number): void {
       // (`filmBurst.ts` 의 종류 코드 2) 파열 훅을 태우면 안 된다 — 종류 코드 2 는 아직
       // 소비자가 없어 상수조차 선언돼 있지 않다.
       const p = playerOf(state);
-      if (p !== undefined) bubbleFilmBurst(state, p, x, y);
+      if (p !== undefined) bubbleFilmBurst(state, p, x, y, params);
       break;
     }
     default:
@@ -2124,14 +2188,15 @@ export function onFilmEfficiency(
       //    출처 플래그 배열이 아니라 지역 변수 2개). 인자가 없었으면 "해저드에서만" 이
       //    "언제나" 가 되어 설계와 정반대가 됐을 것이다.
       //
-      // ⚠️ **DR2「표면장력 세례」는 여전히 미배선이다 — 다만 사유가 바뀌었다.**
-      //    종전 사유("효율 축은 이 앵커로 표현되지 않는다")는 **해소됐다**. 남은 사유는 하나뿐:
-      //    DR2 는 *막이 서 있는 동안 젬을 수거하면 60틱 창이 열린다* 라는 술어이고, 그 창은
-      //    설계서가 「구현: B」로 못 박은 **신규 WorldState 정수 1개**를 요구한다(잔여 틱).
-      //    이 레인은 순수 함수·앵커 개정이 본무라 신규 해시 필드를 함께 들이지 않았다 —
-      //    필드만 만들고 감소·수거 배선 중 하나라도 빠지면 슬롯이 영구히 해시에만 접히는
-      //    반쪽 배선이 된다. **그 필드가 서는 날 이 case 에 곱연산으로 얹으면 된다**(설계서
-      //    R3-2: DR2 는 전 출처·유한 창, FI8 은 단일 출처·상시 — 곱 중첩이 의도된 설계다).
+      // ✅ **DR2「표면장력 세례」도 여기서 돈다**(배치6 통합). FI8 과 **곱**으로 겹친다 —
+      //    설계서 R3-2 가 *"DR2 는 전 출처·유한 창, FI8 은 단일 출처·상시"* 라 곱 중첩이
+      //    의도된 설계다.
+      //    ⚠️ **이 스킬은 두 번 잘못 닫혔다.** 배치5 는 *"신규 WorldState 정수 + 해시 꼬리
+      //    폴드가 선결"*, 배치6 버블 레인은 *"설계서가 「구현: B」로 못 박은 신규 WorldState
+      //    정수 1개를 요구한다"* 로 닫았다. 둘 다 「신규 상태가 필요하다」를 「해시가 갈린다」와
+      //    같은 말로 읽었는데, 신규 상태의 정본 자리는 `skillSlots.ts` 의 슬롯 배열이고 그
+      //    폴드는 16칸이 전부 0 이면 통째로 안 돈다(`replay.ts` 의 `skillSlotAny`).
+      //    같은 배치의 DR3 이 그것을 실증한 뒤에도 이 case 의 사유만 갱신되지 않았다.
       //
       // ⚠️ **FI9「최후의 거품」은 여전히 여기 못 온다.** 호출부 게이트가 `player.aux0 > 0`
       //    이라 *막이 없는* 치명 피격에서는 이 훅이 **불리지 않는다.** 그 자리는 앵커 ㉒
@@ -2370,6 +2435,21 @@ export function onObjectiveResolved(
     case SIG_MALLOW_CUSHION:
       // ME7「에코 채권」 — 부채 전액 소각 + 소각량 비례 자석 버프 창.
       mallowObjectiveResolved(state, player, kind);
+      break;
+    case SIG_STRIKER_MARKSMAN:
+      // M7「신호 추적」 뒤 절반 — 대시 쿨다운 전액 환급. 앞 절반(활성 중 반감)은 앵커 ② 다.
+      strikerObjectiveResolved(state, player, kind);
+      break;
+    case SIG_PHANTOM_CLOAK:
+      // PH9「메아리 잠행」(진입 절반) — 완수 즉시 은신 진입. 지속 절반(조우 활성 중 대시
+      // 쿨다운 가속)은 앵커 ⑨ 안이고 술어는 `objectiveState.ts` 의 `objectiveActiveOf` 다.
+      // ⚠️ `kind` 로 가르지 않는다 — 이 앵커 doc 의 "두 지점 다 걸어야 한다" 가 근거다.
+      phantomObjectiveResolved(state, player);
+      break;
+    case SIG_BUBBLE_FILM:
+      // DR7「신호 표류」 후반부 — 완수 틱에 막이 즉시 만재된다. 전반부(활성 동안 재생 2배)는
+      // 앵커 ⑨ 에 있고, 두 반쪽의 술어가 각각 **활성**과 **완수**라 겹치지 않는다.
+      bubbleObjectiveResolved(state, player, kind);
       break;
     default:
       break;
@@ -3351,6 +3431,338 @@ export function onWallShockResolve(
       // BL7 파성퇴의 **전방 충격파** — 여기서만 스폰이 안전하다. 탄 상한은 훅이 스스로 지킨다.
       bruiserWallShockResolve(state, player, req);
       break;
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 배치6 앵커 5개 — 배치5 가 「막는 자리」로 지목한 부류를 연다
+// ---------------------------------------------------------------------------
+//
+//   onActiveExpired    — 액티브 버프가 만료된 직후(`actives.ts` 의 `ACTIVE_EXPIRE` 다음 줄).
+//   onFilmBurstPost    — 방막 파열의 밀어내기 루프가 **끝난 뒤**(`filmBurst.ts`).
+//   onGemPull          — 젬 1개의 흡인 판정 직전(`world.ts` 의 `stepGems` 루프 **안**).
+//   onPickupRadius     — 픽업 접촉 반경이 정해진 직후(`world.ts` 의 `resolveCollisions`).
+//   onPlayerWallSlide  — 플레이어↔벽 겹침 해소 **직전**(`world.ts` 의 `stepPlayer`).
+//
+// 배치5 종료 시점에 남은 34종의 사유를 부류로 묶으면 위 다섯이 최대 부류였다. 각각 소비처를
+// **문면으로 확인한 뒤** 열었다 — 브루저 FO10 · 버블 PO4·FI7·DR8 · 스트라이커 M4 · 팬텀 DI9.
+//
+// ## ⚠️ 촉매 짝이 없다 — ⑮·⑰~㉔·㉖·㉗ 과 같다.
+
+/**
+ * 앵커 `onActiveExpired` — **액티브 버프가 이번 틱에 0 이 된 직후**(`stepActives` 의
+ * `ACTIVE_EXPIRE[def.id]?.(...)` 다음 줄).
+ *
+ * ## 이 지점에서만 살아 있는 것
+ *  - **「끝났다」는 사건 그 자체.** `onActiveFired` 는 **발동** 직후라 만료를 원리적으로 못
+ *    본다 — 브루저 FO10「파열 소각장」(강화 액티브 **고티어의 만료 폭발**)과 스트라이커
+ *    S9「만료 정지장」(생존 액티브가 **끝나는 틱**)이 정확히 그 이유로 배치3~5 내내 막혔다.
+ *  - `buffTicks` 는 이미 0 이다. "얼마나 남았나"가 아니라 "방금 끝났다"만 참이다.
+ *
+ * ## ⚠️ **틱당 슬롯마다 최대 1회**다 — 매 틱이 아니다
+ * 호출부가 `if (after > 0) SUSTAIN else if (before > 0) EXPIRE` 라, 이 앵커는 **버프가
+ * 양수에서 0 으로 떨어진 그 한 틱**에만 불린다. 버프를 안 쓰는 액티브(즉발형)는 여기 안 온다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.**
+ *  - ⚠️ **`state.activeCd0/1` 을 만지지 마라.** 쿨다운 감소는 이 루프보다 **앞**에서 이미
+ *    끝났고, 여기서 고치면 다음 틱 감소와 겹쳐 한 틱이 조용히 사라진다.
+ *  - ⚠️ **적 `hp` 를 깎으면 `dead` 를 같이 세워라**(정본 `status.ts` 111-112). `guardian`·`core`
+ *    는 부활 분기가 있어 마킹 금지. 화상만 얹는 축은 해당 없다.
+ *  - ⭐ **스폰은 안전하다** — `stepActives` 는 슬롯 2칸 루프일 뿐 `state.entities` 를 순회하지
+ *    않는다(`onActiveFired` 와 같은 근거).
+ *
+ * @param def 방금 만료된 액티브의 정의. **계열·티어 판별은 훅 책임이다**(`def.treeIndex` ·
+ *   `def.tier` · `def.kind`). FO10 의 문면이 "강화 액티브 **고티어**" 라 `tier` 가 그 손잡이다.
+ * @param slot 슬롯 인덱스(0/1).
+ */
+export function onActiveExpired(
+  state: WorldState,
+  player: Entity,
+  def: ActiveSkillDef,
+  slot: number,
+): void {
+  if (!state.skillsOn) return;
+  // 아직 소비처가 없는 인자들. 자기 `case` 가 쓰기 시작하면 해당 줄을 지워라.
+  // (`player`·`def` 는 배치6 의 브루저 FO10 이 첫 소비처라 지웠다.)
+  void slot;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 13건 전례).
+    case SIG_BRUISER_ARMOR:
+      // FO10 파열 소각장 — 강화 액티브 **고티어**(`treeIndex 2` · `tier 'hi'` · `kind 'buff'`)의
+      // 만료 폭발에 적탄 소거와 화상을 얹는다. 폭발 본체(`ACTIVE_EXPIRE`)는 **바로 앞 줄**에서
+      // 이미 끝났고, 훅은 그 폭발의 반경(`def.coeff.blastRadius`)을 그대로 재사용한다.
+      bruiserActiveExpired(state, player, def);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 방막 파열로 **밀려난 적 1기**의 밀어내기 전/후 좌표. `onFilmBurstPost` 가 배열로 받는다.
+ *
+ * ## ⚠️ 왜 「전」 좌표를 따로 나르는가 — 벽이 먹은 변위가 판정이기 때문이다
+ * 버블 PO4「압착 충돌」의 문면이 "파열에 밀린 적이 **벽에 막히면** 충돌 피해" 다. 밀어내기
+ * 목표 변위는 상수(`filmBurstPush()`)지만 `slideCircleWalls` 가 벽에서 되밀어내므로, **실제로
+ * 이동한 거리가 목표보다 짧으면 그만큼 벽이 먹은 것**이다. 그 차이는 밀어낸 **뒤**에만
+ * 존재하고(앵커 ⑮ 는 앞이라 아직 없다), 전 좌표를 안 실으면 사후에 복원할 방법이 없다.
+ */
+export interface FilmBurstPushed {
+  /** 밀려난 적. ⚠️ `dead` 를 확인하고 써라 — 같은 틱의 다른 축이 먼저 죽였을 수 있다. */
+  enemy: Entity;
+  /** 밀어내기 **전** 좌표. */
+  preX: number;
+  preY: number;
+}
+
+/**
+ * 앵커 ⑮ 가 넘기는 **이번 파열의 밀어내기 파라미터**. 훅이 제자리에서 고친다.
+ *
+ * ## ⚠️ 이 레코드가 FI7 을 연다
+ * 버블 FI7「벽면 반향」의 문면이 "벽에 접촉 중 일어난 파열은 밀어내기 **반경과 변위**가
+ * 강화된다" 인데, 앵커 ⑮ 는 값을 건네받지 못해 산술 바깥에 있었다(그 함수 주석이 그 사유를
+ * 적고 있다). 그 두 칸이 여기 있다.
+ */
+export interface FilmBurstParams {
+  /**
+   * 밀어내기가 닿는 반경. 초기값은 `FILM_BURST_RADIUS`.
+   *
+   * ## ⚠️ 제곱 전이다 — "×1.5" 를 `×2.25` 로 번역하지 마라
+   * 호출부가 이 값을 제곱해(`r2`) 거리와 비교한다. 앵커 ㉘(`GemMagnetParams.radius`)과 같은
+   * 규율이고, 같은 이유로 클램프가 하나도 없다.
+   */
+  radius: number;
+  /**
+   * 밀어내기 변위(월드 유닛). 초기값은 `filmBurstPush()`.
+   *
+   * ⚠️ **반경과 변위의 부등식이 설계 계약이다** — 기본값은 변위 260 > 반경 220 이고, 그것이
+   * "반경 안의 적을 반경 밖으로" 를 성립시킨다(`resolveFilmBurst` 주석). 반경만 키우고
+   * 변위를 그대로 두면 **적이 반경 안에 남아** 그 계약이 조용히 깨진다 — FI7 이 둘 다
+   * 강화하는 문면인 것이 우연이 아니다.
+   */
+  push: number;
+}
+
+/**
+ * 앵커 `onFilmBurstPost` — **방막 파열의 밀어내기 루프가 끝난 뒤**(`resolveFilmBurst` 말미).
+ *
+ * ## ⚠️ 앵커 ⑮ 와 **둘 다 필요하다** — 하나로 못 합친다
+ * ⑮ 는 밀어내기 **앞**이어야 한다: 반경 안의 적을 반경 밖으로 밀어내므로, 뒤에 두면 반경
+ * 술어로 대상을 고르는 스킬(PO1·PO7·DR1)이 **전부 조용히 0건**이 된다(실측 — 배선 레인이
+ * 훅을 뒤에 뒀다가 PO1 이 아무 피해도 안 주는 것을 테스트가 잡았다). 반대로 PO4 는 밀어낸
+ * **결과**가 판정이라 앞에서는 원리적으로 못 산다. `resolveFilmBurst` 주석이 "그 스킬이 오면
+ * 훅을 둘로 쪼개라(pre/post). 하나로 합치려 하면 둘 중 하나가 반드시 틀린다" 고 예고했다.
+ *
+ * ## ⭐ 여기서는 **스폰이 안전하다**
+ * 밀어내기 루프(`for (const e of state.entities)`)가 이미 끝난 지점이다. 버블 PO8「잔거품
+ * 기뢰」가 여기서 가능하다 — 단 그 스킬의 선결은 앵커가 아니라 **동시 생존 상한 규약**이다
+ * (상한 없이 넣으면 파열 4회 창에 최대 36기가 서서 청크 예산 160 을 조용히 먹는다).
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.**
+ *  - ⚠️ **적 `hp` 를 깎으면 `dead` 를 같이 세워라**(PO4 가 정확히 이 경우다 — 정본
+ *    `status.ts` 111-112). `guardian`·`core` 는 마킹 금지.
+ *
+ * @param pushed 이번 파열이 실제로 민 적들. **밀린 적이 하나도 없으면 빈 배열**이다.
+ *   ⚠️ 미투자 런에서는 호출부가 수집조차 하지 않아 **항상 빈 배열**이다(비용 0).
+ */
+export function onFilmBurstPost(
+  state: WorldState,
+  x: number,
+  y: number,
+  pushed: readonly FilmBurstPushed[],
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // ⚠️ `break;` 필수.
+    case SIG_BUBBLE_FILM:
+      // PO4 압착 충돌 — 밀어낸 목표 변위 대비 **실제 전진량의 부족분**(= 벽이 먹은 몫)에
+      // 비례해 피해. 앵커 ⑮ 로는 원리적으로 못 하던 축이다.
+      bubbleFilmBurstPost(state, x, y, pushed);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 `onGemPull` 이 넘기는 **젬 1개의 이번 틱 흡인 판정**. 훅이 제자리에서 고친다.
+ */
+export interface GemPullParams {
+  /**
+   * 이 젬을 끌어당길 것인가. 초기값은 호출부가 이미 정한 값(플레이어 자석 반경 + 병아리
+   * 반경 판정의 결과).
+   *
+   * ## ⚠️ 이 칸이 앵커 ㉘ 로는 못 하던 것을 연다
+   * `onGemMagnetParams`(㉘)는 흡인 루프 **밖**에서 틱당 한 번 · **스칼라 반경 하나만** 넘긴다.
+   * 그래서 *젬마다 다른* 판정을 요구하는 축이 원리적으로 못 살았다 — 스트라이커 M4
+   * 「슬립스트림」의 문면이 "자석장이 **이동 방향으로 길어져** 진행 방향 전방의 흡인 반경이
+   * 확장된다" 라 **비등방**(젬의 방위에 따라 반경이 다르다)이고, 브루저 MO2 는 "처치한 적이
+   * 떨군" 이라 **젬 개체별 출처**가 술어다.
+   *
+   * ⚠️ **`false` 로 되돌리는 것도 허용된다**(억제 축). 다만 지금 소비처가 없다 —
+   * 되돌리는 스킬을 얹을 때 이 문장을 지워라.
+   */
+  pull: boolean;
+  /**
+   * 플레이어 → 젬 벡터(정규화 **안 된** 원시 차분). **읽기 전용 사실**이라 훅이 고쳐도
+   * 호출부가 안 본다 — 방위 판정(M4)의 입력으로만 쓴다.
+   *
+   * ⚠️ 부호에 주의해라: 호출부가 `dx = player.x - gem.x` 로 잡으므로 이 벡터는 **젬에서
+   * 플레이어를 향한다.** "진행 방향 전방의 젬" 을 재려면 `-dx`/`-dy` 와 이동 방향을 내적해라.
+   */
+  dx: number;
+  dy: number;
+  /** `dx*dx + dy*dy`. 호출부가 이미 계산했으므로 훅이 다시 제곱하지 마라. */
+  d2: number;
+}
+
+/**
+ * 앵커 `onGemPull` — **젬 1개의 흡인 여부가 정해진 직후 · 속도 대입 직전**
+ * (`world.ts` 의 `stepGems` 루프 **안**).
+ *
+ * ## ⚠️ **매 틱 × 젬 개수만큼** 불린다 — 이 파일에서 가장 뜨거운 앵커다
+ * 훅 첫 줄은 반드시 조기 반환이어야 하고, 투자 게이트 **밖**에 나눗셈·루프를 두지 마라
+ * (`skills/striker.ts` 헤더 규율 ③). 젬은 후반 런에서 수백 개가 동시에 살아 있다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.**
+ *  - ⚠️ **여기서 젬을 수거하지 마라.** 수거의 단일 수렴점은 `collectGem`(앵커 ③)이다.
+ *    여기서 걷어가면 콤보·XP·촉매가 두 곳에서 갈린다(앵커 ㉘ 과 같은 계약).
+ *  - ⚠️ **`gem.vx`/`vy` 를 직접 쓰지 마라.** 호출부가 이 훅 **직후에 통째로 대입**한다 —
+ *    속도를 바꾸려면 `params.pull` 이고, 흡인 **속도**는 `MAGNET_SPEED` 상수라 이 앵커의
+ *    손잡이가 아니다(버블 DR10 이 그 한계를 우회한 방식은 그 스킬 주석 참조).
+ *  - ⚠️ **엔티티를 낳지 마라.** 이 지점은 `state.entities` **순회 안**이다.
+ *
+ * @param gem 이번 젬. **출처 표식 판별은 훅 책임이다**(`aux0`·`ownerId`).
+ */
+export function onGemPull(
+  state: WorldState,
+  player: Entity,
+  gem: Entity,
+  params: GemPullParams,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // ⚠️ `break;` 필수.
+    case SIG_STRIKER_MARKSMAN:
+      // M4「슬립스트림」 — 진행 방향 **전방**의 젬만 확장 반경으로 흡인한다(비등방).
+      strikerGemPull(state, player, gem, params);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 `onPickupRadius` 가 넘기는 **이번 틱의 픽업 접촉 반경**. 훅이 제자리에서 고친다.
+ */
+export interface PickupRadiusParams {
+  /**
+   * 픽업 접촉 반경. 초기값은 `player.radius`(호출부 주석의 "관대한 픽업 반경").
+   *
+   * ## ⚠️ 이 반경은 **자석 반경과 다른 축**이다 — 앵커 ㉘ 으로는 못 닿는다
+   * 자석(`stepGems`)은 젬을 *끌어오고*, 이 반경은 *닿았는가*를 판정한다. 버블 DR8
+   * 「원격 채집기」의 문면이 "**기믹 픽업 3종**의 접촉 반경이 자석 반경에 비례해 확장된다"
+   * 인데, 기믹 픽업의 접촉 판정은 `resolveCollisions` 의 지역 변수라 `stepGems` 가 쥐지 못했다
+   * (배치5 버블 레인이 실측으로 확정한 차단 사유가 정확히 이것이다).
+   *
+   * ## ⚠️ 이 한 칸이 **젬·전리품·기믹 전부**를 움직인다
+   * 호출부는 같은 반경으로 젬 수거·전리품 수거·기믹 픽업·포탑 활성화를 전부 판정한다.
+   * DR8 의 문면은 *기믹 3종만* 이지만 이 앵커의 손잡이는 하나뿐이다 — 종류별로 나누려면
+   * 호출부가 종류를 넘겨야 하고, 그건 **소비처가 생길 때** 쪼개라(칸을 미리 열지 마라).
+   * 얹는 레인은 이 차이를 **주석에 남겨라**.
+   */
+  radius: number;
+}
+
+/**
+ * 앵커 `onPickupRadius` — **픽업 접촉 반경이 정해진 직후 · 격자 질의 직전**
+ * (`world.ts` 의 `resolveCollisions`).
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.**
+ *  - ⚠️ **여기서 픽업을 처리하지 마라.** 수거·활성화의 정본은 바로 아래 격자 질의다.
+ *  - ⚠️ **반경을 음수로 만들지 마라.** 호출부는 클램프하지 않고 `circlesOverlap` 에 그대로
+ *    넘긴다 — 음수면 어떤 픽업에도 안 닿아 런이 진행 불가가 된다.
+ *  - ⚠️ 매 틱 1회다(젬마다가 아니다). 격자 질의 반경이므로 **크게 키우면 질의 비용이 는다** —
+ *    배율에 상한을 훅이 스스로 걸어라.
+ */
+export function onPickupRadius(
+  state: WorldState,
+  player: Entity,
+  params: PickupRadiusParams,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // ⚠️ `break;` 필수.
+    case SIG_BUBBLE_FILM:
+      // DR8 원격 채집기 — 자석 반경에 비례해 접촉 반경을 넓힌다(상한은 훅이 스스로 건다).
+      // ⚠️ 이 한 칸이 젬·전리품·기믹·포탑 **전부**를 움직인다 — 설계 문면(기믹 3종)보다
+      // 넓다는 사실은 `skills/bubble.ts` 의 `bubblePickupRadius` doc 에 적혀 있다.
+      bubblePickupRadius(state, player, params);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 `onPlayerWallSlide` 가 넘기는 **이번 틱의 선체↔벽 겹침 해소 파라미터**.
+ */
+export interface WallSlideParams {
+  /**
+   * `true` 면 이번 틱의 겹침 해소(`slideCircleWalls`)를 **건너뛴다** — 선체가 벽을 통과한다.
+   * 초기값 `false`.
+   *
+   * ## ⚠️ 이 칸이 DI9 의 자리다 — 벽 축 앵커(`onWallHit`)가 **아니었다**
+   * 배치4 인계와 배치5 프롬프트가 팬텀 DI9「유령 선체」를 브루저 BL7·MO7 · 팬텀 AS10 과 같은
+   * 「벽 파괴」 축에 묶어 뒀는데 **틀렸다**. 문면이 "피격 무적 동안 **선체**가 벽을 통과한다"
+   * 라 탄↔벽이 아니라 선체↔벽이고, 두 경로는 함수도 술어도 겹치지 않는다:
+   * 전자는 `sweptCircleOverlapsWall` 로 **탄을 죽이고**, 이쪽은 `player.radius` 로 **원을
+   * 밀어낸다**. 배치5 팬텀 레인이 grep 으로 확정했고 이 앵커가 그 정정의 착지점이다.
+   *
+   * ## ⚠️ 통과는 **끼임을 못 푼다** — 켜고 끄는 순간을 훅이 책임져라
+   * 겹침 해소를 건너뛰면 선체가 벽 **안**에 머물 수 있다. 그 상태에서 창이 닫혀 통과가
+   * 꺼지면 다음 틱의 해소가 **최소 침투 방향**으로 뱉으므로 어느 면으로 나올지 훅이 정할 수
+   * 없다. 강제 스크롤(창) 모드에서는 그 방향이 창 앞쪽일 수 있고, 그러면 관통 방지 규칙
+   * (`los.ts` 규칙 2)이 의도한 보정과 반대로 움직인다.
+   * ⚠️ 그래서 **무적 창처럼 짧고 스스로 끝나는 술어에만** 쓰고, 상시 켜는 축을 여기 얹지 마라.
+   */
+  passThrough: boolean;
+}
+
+/**
+ * 앵커 `onPlayerWallSlide` — **선체↔벽 겹침 해소 직전**(`world.ts` 의 `stepPlayer` ·
+ * `slideCircleWalls` 호출 **앞**).
+ *
+ * ## 이 지점에서만 살아 있는 것
+ *  - **좌표가 아직 안 밀렸다.** 해소 뒤로 미루면 이미 밀려난 좌표라 "통과" 를 표현할 수 없다.
+ *  - 벽 접촉 판정(`wallContactTicks`)은 이 **뒤**다 — 통과 중에는 접촉이 안 서므로, 접촉을
+ *    술어로 쓰는 다섯 스킬(M5·S4·MO8·FI7·ME9)이 그 창 동안 자연히 꺼진다. 의도된 상호작용이다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.**
+ *  - ⚠️ **`player.x`/`y` 를 직접 쓰지 마라.** 통과 여부는 `params.passThrough` 다.
+ *  - ⚠️ **매 틱 불린다**(벽이 하나라도 있는 모드에서). 투자 게이트를 첫 줄에 둬라.
+ */
+export function onPlayerWallSlide(
+  state: WorldState,
+  player: Entity,
+  params: WallSlideParams,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    case SIG_PHANTOM_CLOAK:
+      // DI9「유령 선체」 — 피격 무적(`player.iframes > 0`) 동안 겹침 해소를 건너뛴다.
+      // 배치4~5 가 이 스킬을 벽 파괴 축(`onWallHit`)으로 잘못 묶어 뒀던 것의 착지점이다 —
+      // 사유 전문은 `WallSlideParams.passThrough` 의 doc 과 효과 함수 주석에 있다.
+      phantomPlayerWallSlide(state, player, params);
+      break;
+    // ⚠️ `break;` 필수.
     default:
       break;
   }
