@@ -177,6 +177,8 @@ import type {
   BulletHitParams,
   TurretCadenceParams,
   CushionSplitParams,
+  WallHitParams,
+  WallShockRequest,
 } from './skillHooks.js';
 import {
   survivedLethalBlow,
@@ -215,6 +217,9 @@ import {
   onComboDecay,
   onTurretCadence,
   onTurretExpired,
+  onWallHit,
+  onWallDestroyed,
+  onWallShockResolve,
 } from './skillHooks.js';
 import { onDamageChainCatalyst } from './catalystHooks.js';
 
@@ -3866,6 +3871,10 @@ function stepProjectiles(state: WorldState, player: Entity): void {
   // 적탄 거동(탄막 다양성 Lane 1): BK_SPLIT 만료 시 방사할 자탄을 모아 루프 뒤 스폰
   // (엔티티 배열 순회 중 push 회피). 거동 없는 적탄(enemyType === BK_NONE)은 no-op.
   const bulletSplits: BulletSplit[] = [];
+  // 벽 축 앵커(배치5) — 훅이 벽 겹침 지점에서 적어 보낸 지연 스폰 요청. 루프 **뒤**에
+  // `onWallShockResolve` 로 되돌려준다(순회 중 스폰 금지). 미투자 런은 훅이 첫 줄에서
+  // 반환하므로 항상 비어 있고, 아래 소비 분기가 통째로 건너뛰어진다(해시 불변).
+  const wallShocks: WallShockRequest[] = [];
   for (const e of state.entities) {
     if (e.kind !== 'bullet' && e.kind !== 'enemyBullet') continue;
     // 유도 미사일(제한 선회, OQ-M3-4): 위치 적분 전에 최근접 적으로 각도를 소폭 튼다.
@@ -3927,15 +3936,29 @@ function stepProjectiles(state: WorldState, player: Entity): void {
         // isBreakableWall=false → 탄만 소멸(기존 거동·해시 완전 불변). 파괴된 벽은 **의도적으로
         // 젬을 안 준다**(destructible 은 보상 오브젝트라 젬을 주지만, 코스 벽은 통과 장애물이라
         // 무보상 — compact 에 wall 드랍 분기가 없는 것이 이 설계다).
+        // 벽 축 앵커(배치5) — **감산 앞 · 탄 소멸 앞.** 미투자 런은 훅이 첫 줄에서 반환하므로
+        // `hit.damage === e.damage` · `passThrough === false` · `shockAt === null` 이라
+        // 아래 세 줄이 종전과 비트 동일하다(해시 불변).
+        const hit: WallHitParams = { damage: e.damage, passThrough: false, shockAt: null };
+        onWallHit(state, player, e, w, hit);
+        if (hit.shockAt !== null) wallShocks.push(hit.shockAt);
         if (e.kind === 'bullet' && isBreakableWall(w)) {
-          w.hp -= e.damage;
-          if (w.hp <= 0) w.dead = true;
+          w.hp -= hit.damage;
+          if (w.hp <= 0) {
+            w.dead = true;
+            onWallDestroyed(state, player, w);
+          }
         }
+        // 통과(팬텀 AS10)는 **소멸만** 막는다 — 위 감산은 이미 끝났고 스윕은 다음 벽으로 간다.
+        if (hit.passThrough) continue;
         e.dead = true;
         break;
       }
     }
   }
+  // 벽 충격파 해소(배치5) — 순회 **밖**이라 스폰이 안전하다. 적어 넣은 순서대로 소비해
+  // 결정론을 지킨다(바로 아래 `bulletSplits` 와 같은 규율).
+  for (const req of wallShocks) onWallShockResolve(state, player, req);
   // BK_SPLIT 자탄 방사(퓨즈 만료 위치에서 균등 각도로). 자탄은 거동 없는 순수 직진탄
   // (enemyType 기본 -1)이라 재분열하지 않는다. 세그먼트 탄 상한(bulletCap)을 존중해
   // 폭주를 막는다 — 상한 도달 시 남은 자탄은 버린다(결정론: 배열 순서 고정 소비).

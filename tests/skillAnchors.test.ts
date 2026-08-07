@@ -224,7 +224,7 @@ describe('계측 이음매', () => {
   //    배치4 에서 네 레인이 병렬로 앵커를 세우며 ㉗㉘ 가 **세 갈래로 중복**됐고(공유·해츨링·말로우)
   //    git 은 그 충돌을 전혀 몰랐다. 그래서 ㉖ 이후로는 번호를 붙이지 않는다
   //    (사유 전문은 `src/sim/skillHooks.ts` 헤더). 새 앵커는 **여기에 이름을 추가**해라.
-  it('앵커 38개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 41개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
@@ -294,6 +294,11 @@ describe('계측 이음매', () => {
         'onCushionSplit', // ㉗ — 지연 전환 분기(CU1·CU2·CU5·CU6)
         'onCushionRecoverBp', // ㉘ — 정산 탕감률 확정(ME8)
         'onObjectiveResolved', // ㉙ — 에코 안정화·조우 완수 **두 지점**(ME7)
+        // ⚠️ 벽 축 셋(배치5). 세 자리인 것이 계약이다 — BL7 은 감산 **앞**, MO7 은 파괴 **뒤**,
+        // BL7 의 충격파는 투사체 순회 **밖**이라야 스폰이 안전하다(사유는 `skillHooks.ts`).
+        'onWallHit', // 탄↔벽 겹침 확정 직후 · `w.hp` 감산 앞 (브루저 BL7 · 팬텀 AS10)
+        'onWallDestroyed', // `wall.dead = true` 직후 (브루저 MO7)
+        'onWallShockResolve', // 투사체 루프 밖 — 지연 스폰 (브루저 BL7 충격파)
         // ⚠️ `onEnemyStatusExpired`(적 화상 만료 → SQ9)는 여기 **없다** — `chainHooks.ts`
         //    에 산다. `status.ts` 가 부르는 앵커라 이 파일에 두면 런타임 순환이 된다.
       ].sort(),
