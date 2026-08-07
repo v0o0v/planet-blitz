@@ -2318,11 +2318,17 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
   let wallContact = false;
   // 배치6 앵커 — 선체↔벽 겹침 해소 **직전**(팬텀 DI9「유령 선체」). 탄↔벽 앵커(`onWallHit`)와
   // 함수도 술어도 겹치지 않는다 — 저쪽은 탄을 죽이고 이쪽은 `player.radius` 로 원을 밀어낸다.
+  // ⚠️ **벽 가드 안**이다: 벽이 0개인 모드(뱀서류·수축·추격)에서는 통과할 벽 자체가 없어
+  //    훅을 불러도 할 일이 없고, 밖에 두면 그 모드에서 매 틱 무의미한 호출이 된다.
   // 미투자 런은 훅이 첫 줄에서 반환해 `passThrough === false` 이므로 아래 블록이 종전과
   // 비트 동일하게 돈다(해시 불변).
-  const slideParams: WallSlideParams = { passThrough: false };
-  onPlayerWallSlide(state, player, slideParams);
-  if (state.activeWalls.length > 0 && !slideParams.passThrough) {
+  let slidePassThrough = false;
+  if (state.activeWalls.length > 0) {
+    const slideParams: WallSlideParams = { passThrough: false };
+    onPlayerWallSlide(state, player, slideParams);
+    slidePassThrough = slideParams.passThrough;
+  }
+  if (state.activeWalls.length > 0 && !slidePassThrough) {
     const slid = slideCircleWalls(
       player.x,
       player.y,
@@ -4053,11 +4059,17 @@ function stepGems(state: WorldState, player: Entity): void {
     }
     // 배치6 앵커 — 젬 **1개**의 흡인 판정 직후 · 속도 대입 직전. 앵커 ㉘ 은 루프 밖에서
     // 스칼라 반경 하나만 넘겨 *젬마다 다른* 판정(스트라이커 M4 비등방 · 브루저 MO2 출처)이
-    // 원리적으로 못 살았다. 미투자 런은 훅이 첫 줄에서 반환하므로 `gp.pull === pull` 이고
-    // 아래 분기가 종전과 비트 동일하다(해시 불변).
-    const gp: GemPullParams = { pull, dx, dy, d2 };
-    onGemPull(state, player, e, gp);
-    if (gp.pull) {
+    // 원리적으로 못 살았다.
+    // ⚠️ **레코드 할당까지 `skillsOn` 게이트 안**이다 — 이 앵커는 젬 × 틱마다 돌아 이 파일에서
+    //    가장 뜨겁고, 미투자 런에서 매 틱 수백 개를 할당하면 그 자체가 GC 압력이다(같은 커밋의
+    //    `filmBurst.ts` 가 `pushed` 수집을 게이트한 것과 같은 규율). 미투자 런은 `pull` 이
+    //    그대로 쓰여 종전과 비트 동일하다(해시 불변).
+    if (state.skillsOn) {
+      const gp: GemPullParams = { pull, dx, dy, d2 };
+      onGemPull(state, player, e, gp);
+      pull = gp.pull;
+    }
+    if (pull) {
       const d = length(dx, dy);
       e.vx = (dx / d) * MAGNET_SPEED;
       e.vy = (dy / d) * MAGNET_SPEED;
@@ -4555,6 +4567,10 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         dmgFromHazard = false;
         srcX = t.x;
         srcY = t.y;
+        // ⚠️ **리셋이 필수다.** 접촉이 먼저 `max` 를 이긴 뒤 이 탄이 그것을 덮으면,
+        //    리셋하지 않을 때 `srcX/srcY` 는 탄인데 `contactSrc` 는 여전히 그 적을 가리켜
+        //    좌표와 개체가 **서로 다른 대상**이 된다(FO3 가 적탄 피격에서도 발동한다).
+        contactSrc = undefined;
       }
       t.dead = true;
       // 'prop'(L3 기물)은 여기 넣지 않는다 — 기물의 damage 는 탄·장판 피해라 접촉 피해로
@@ -4590,6 +4606,8 @@ function resolveCollisions(state: WorldState, player: Entity): void {
         dmgFromHazard = true;
         srcX = t.x;
         srcY = t.y;
+        // ⚠️ 적탄 분기와 같은 사유의 리셋 — 해저드가 접촉을 덮으면 접촉 개체는 무효다.
+        contactSrc = undefined;
       }
     }
     // Supply raiders never harm the player (they do not attack).
