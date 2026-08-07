@@ -1,6 +1,8 @@
 # S3 체크리스트 — 다음 세션의 재개 지점
 
-**현재 main: 배치7 머지 대기** · **배선 210 / 210 (계측으로 확정) ✅** · **앵커 53개**
+**현재 main: `fc2d61c`**(배치7 배선 = PR #353 머지 완료) · **배선 210 / 210 ✅** · **앵커 53개**
+⭐ **`pnpm verify` 전량 초록** — 330/330 파일 · 7891/7891 · `pnpm test:sim` **57/57**.
+**사전 적색 2건이 해소돼 이 리포는 처음으로 게이트가 전부 초록이다**(재동결 PR 은 그 뒤).
 
 | 기체 | 배선 | 배치7 이 닫은 것 |
 |---|---|---|
@@ -58,35 +60,44 @@ world 사설에서 빼내 액티브 핸들러가 부를 수 있게 했다. M8 �
 
 ## 🎯 다음 할 일 (2026-08-07 배치7 종료 시점 — **배선 완주**)
 
-### 1순위 — D 단계 골든 재동결 ⛔ **순서가 있다**
-배치7 이 배선을 210 에 닿게 했으므로 착수 조건이 충족됐다(2026-08-07 사용자 승인).
+### ✅ D 단계 골든 재동결 — **끝났다 (2026-08-07)**
 
-⚠️ **`pilotFrameFreeze` 를 먼저 재동결해야 한다.** 그 파일 주석이 정본이다 — *"그 출력 위에
-벤치·회귀 골든 전부가 산다"*(`tests/fixtures/striker-prem8.json` · `encounter-baseline.json` ·
-`scripts/deno-verify/fixtures.json` · `bench/**`). 오토파일럿 입력 열이 바뀐 채로 하위 골든을
-먼저 뜨면 그 골든들이 **다음 재동결 때 또 갈린다.**
+⭐⭐ **`pnpm verify` 가 전량 초록이다 — 330/330 파일 · 7891/7891 테스트 · exit 0.**
+`pnpm test:sim` 도 **57/57**(재동결 전 33 failed). **사전 적색 2건이 둘 다 해소됐다.**
 
-재생성 경로(실측):
+**순서가 계약이었다.** `pilotFrameFreeze` 를 먼저 재동결하고 그 뒤에 하위 셋을 떴다 — 그 파일
+주석이 *"그 출력 위에 벤치·회귀 골든 전부가 산다"* 라, 입력 열이 갈린 채로 하위를 먼저 뜨면
+다음 재동결 때 또 갈린다.
+
+재생성 경로(다음 재동결 때 그대로 쓸 수 있다):
 | 골든 | 경로 |
 |---|---|
+| `tests/fixtures/striker-prem8.json` | `RECORD_STRIKER_BASELINE=1 npx vite-node scripts/recordStrikerBaseline.ts` |
+| `tests/fixtures/encounter-baseline.json` | `RECORD_ENCOUNTER_BASELINE=1 npx vite-node scripts/recordEncounterBaseline.ts` |
 | `scripts/deno-verify/fixtures.json` | `REGEN_DENO_FIXTURES=1 npx vitest run --config vite.sim.config.ts tests/denoFixture.test.ts` |
-| `tests/fixtures/striker-prem8.json` | `scripts/recordStrikerBaseline.ts` |
-| `tests/fixtures/encounter-baseline.json` | `scripts/recordEncounterBaseline.ts` |
-| `pilotFrameFreeze` · `shipSignaturePhantom` | 파일 안 상수 — **증인 시드 재선정**(아래) |
+| `pilotFrameFreeze` · `shipSignaturePhantom` | 파일 안 상수(인라인 표 · `TRAJ_SEED`) |
 
 ⚠️ **`denoFixture.test.ts` 는 기본 vitest 설정에서 수집되지 않는다** — sim 레인 전용이라
-`--config vite.sim.config.ts` 없이 돌리면 *"No test files found"* 로 조용히 끝난다(배치7 리드가
-이 함정을 실제로 밟았다).
+`--config vite.sim.config.ts` 없이 돌리면 *"No test files found"* 로 **조용히** 끝난다(배치7
+리드가 이 함정을 실제로 밟았다).
 
-⛔ **사전 적색 2건은 「단언을 낮추기」가 아니라 「증인 시드 재선정」이다.** `shipSignaturePhantom`
-은 *"은신에 실제로 진입하고 해제 첫 타가 실제로 소진된다"* 를 재는데, `d7445a4`(PR#329) 이후
-피격이 2배가 되어 그 시드의 스크립트 파일럿이 은신 창에 못 닿는다. **닿는 시드를 찾아라** —
-단언을 약화하면 그 축이 통째로 안 재진다.
+⚠️ **골든 재생성은 검증이 아니다.** 근거는 재생성 **전에** 통과시킨 불변식이어야 한다. 배치7 이
+세운 그 근거는 §「배치7 이 확정한 것」의 픽스처 대조다(기반 커밋 diff 0줄 · 13 시나리오 중
+브루저 2개만 · 무투자 런 불변 · 초록→빨강 0건 · 레인별 뮤테이션 실증).
 
-⚠️ **골든 재생성은 검증이 아니다.** 근거는 재생성 **전에** 통과시킨 불변식이어야 한다.
-배치7 이 남긴 그 근거는 아래 §「배치7 이 확정한 것」의 픽스처 대조다.
+#### ⛔⛔ `shipSignaturePhantom` — **임계를 4 → 3 으로 낮췄다. 다시 조사하지 마라**
+종전 처방(**증인 시드 재선정**)이 **실측에서 성립하지 않았다**:
+- 시드 **1..1200 전수 스캔**에서 `cloakEnters >= 4` 통과 시드가 **0개**. 최댓값이 **3** 이고
+  그마저 seed 238·763 둘뿐이며 대부분 1~2 다.
+- 관측 창을 **3600 → 5400 → 7200 틱**으로 늘려도 seed 238 은 **계속 3** — 상한이 구조적이다.
 
-### 그 뒤 — 어픽스 재편 → ADR-0050 §1 → 배포 3단계 → 개연성 캡 → 밸런스 일괄
+⇒ 시드로도 창으로도 4 에 닿을 수 없어 **2026-08-07 사용자 승인**으로 임계만 3 으로 낮췄다.
+⭐ **질적 주장은 한 줄도 안 죽었다** — `breakShots >= 3` 은 **안 낮췄고**(그쪽은 지금도 통과한다),
+대조군 3건(`toBe(0)`)도 그대로다. 깨진 것은 진입 횟수 하나였고 차이는 **1** 이었다.
+⚠️ **여유가 0 이다.** 다음 sim 변경에 또 깨지면 **임계를 또 낮추지 말고 재는 방식 자체를 다시
+설계해라**(사유·대안은 그 테스트 파일 주석에 적어 뒀다).
+
+### 1순위 (다음 세션) — 어픽스 재편 → ADR-0050 §1 → 배포 3단계 → 개연성 캡 → 밸런스 일괄
 밸런스 각주가 여러 레인에 쌓여 있다(§「미결(사용자 판단)」). 배치7 이 더한 것:
 - **PO8 링 배치 반경·기뢰 접촉 반경이 설계서에 없다** — 코드가 임의로 정했다(링 =
   `FILM_BURST_RADIUS` 220 · 접촉 반경 56). **어긋남이 아니라 미결이다.**
@@ -433,7 +444,12 @@ fallthrough 함정이 **3레인 머지에서 3번 전부** 재현됐다(누적 8
 
 </details>
 
-### ⛔⛔ 사전 적색 2건 — **네 것이 아니고, 다시 조사하지도 마라** (2026-08-08 종결)
+### ✅ 사전 적색 2건 — **2026-08-07 배치7 에서 둘 다 해소됐다** (아래는 근거로만 남긴다)
+
+> ⛔ **이 절을 읽고 다시 조사하지 마라.** `pilotFrameFreeze` 는 재동결됐고
+> `shipSignaturePhantom` 은 임계를 3 으로 낮춰 초록이다. **현행 정본은 위 §「✅ D 단계 골든
+> 재동결」**이고, 아래는 *왜 그 둘이 빨갰는가*의 근거다. 최소 네 세션이 이 근인을 각자 다시
+> 조사했으므로 표지를 여기 남긴다.
 
 `pnpm verify` 의 실패 **2건**(`pilotFrameFreeze` · `shipSignaturePhantom`)은 **뿌리가 같고**
 **둘 다 판정이 끝났다.** ⚠️ **최소 네 세션이 각자 다시 조사했다** — 결론은 이미
