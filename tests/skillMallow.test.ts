@@ -46,17 +46,27 @@ import {
   onVolleyParams,
   onGemMagnetParams,
   onPlayerMoveParams,
+  onCushionSplit,
+  onCushionRecoverBp,
+  onObjectiveResolved,
+  onEnemyDeath,
   type VolleyParams,
   type GemMagnetParams,
   type PlayerMoveParams,
+  type CushionSplitParams,
 } from '../src/sim/skillHooks.js';
 import {
   SIG_MALLOW_CUSHION,
   CUSHION_RECOVER_TICKS,
+  CUSHION_RECOVER_BP,
   CUSHION_TICK_CAP,
   cushionSettled,
   cushionRecovered,
+  cushionDeferredDamage,
 } from '../src/sim/shipSignature.js';
+import { tickEnemyStatus, FIRE_DURATION, COLD_DURATION } from '../src/sim/status.js';
+import { MALLOW_HANDLERS, MALLOW_EXPIRE } from '../src/sim/activeHandlers/mallow.js';
+import { activeById, wireIdOf } from '../data/ships/actives/index.js';
 import { readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
 import { DamageSource } from '../src/sim/skillSlots.js';
 
@@ -73,16 +83,26 @@ const SQ2 = 1;
 const SQ3 = 2;
 const SQ4 = 3;
 const SQ5 = 4;
+const SQ6 = 5;
 const SQ7 = 6;
 const SQ8 = 7;
+const SQ9 = 8;
+const SQ10 = 9;
 const ME1 = 10;
 const ME2 = 11;
 const ME4 = 13;
 const ME5 = 14;
+const ME6 = 15;
+const ME7 = 16;
+const ME8 = 17;
 const ME9 = 18;
 const ME10 = 19;
+const CU1 = 20;
+const CU2 = 21;
 const CU3 = 22;
 const CU4 = 23;
+const CU5 = 24;
+const CU6 = 25;
 const CU7 = 26;
 const CU8 = 27;
 const CU9 = 28;
@@ -91,6 +111,9 @@ const CU10 = 29;
 /** 슬롯 번호 — 정본은 `src/sim/skillSlots.ts` 의 `MallowCarry`/`MallowStage` 다. */
 const SLOT_SCAR = 0; // MallowCarry.scarApplied — SQ8 누적 선체행
 const SLOT_LOAD = 0; // MallowStage.forgivenessLoad — SQ5 장전 잔량
+const SLOT_BANKRUPT_USED = 1; // MallowCarry.bankruptcyUsed — CU6 런당 소진 표식
+const SLOT_BANKRUPT_IFRAMES = 1; // MallowStage.bankruptcyIframes — CU6 무적 요구
+const SLOT_MATURITY = 2; // MallowStage.maturityDue — SQ10 만기 표식
 
 function invest(points: ReadonlyArray<readonly [number, number]>): number[] {
   const v = new Array<number>(30).fill(0);
@@ -800,20 +823,20 @@ describe('⑩ 앵커 ⑲ ME9 솜틀 요양', () => {
 
   it('⚠️ 되살아남 증명 — 순수 함수가 임계 인자를 실제로 따른다 (종전에는 삼켰다)', () => {
     // ME9 Lv20 의 실효 임계 129. 종전에는 이 두 줄이 0 이었다 — 그것이 미배선의 근거였다.
-    expect(cushionSettled(100, 129, 129)).toBeGreaterThan(0);
-    expect(cushionRecovered(100, 129, 129)).toBeGreaterThan(0);
+    expect(cushionSettled(100, 129, 129, CUSHION_RECOVER_BP)).toBeGreaterThan(0);
+    expect(cushionRecovered(100, 129, 129, CUSHION_RECOVER_BP)).toBeGreaterThan(0);
     // 긍정 짝의 **하한**: 정산이 실제로 일어났음을 절대값으로 못 박는다(항진 방지).
-    expect(cushionRecovered(100, 129, 129)).toBe(60);
-    expect(cushionSettled(100, 129, 129)).toBe(40);
+    expect(cushionRecovered(100, 129, 129, CUSHION_RECOVER_BP)).toBe(60);
+    expect(cushionSettled(100, 129, 129, CUSHION_RECOVER_BP)).toBe(40);
     // 음성 짝 — 기본 임계를 넘기면 129틱은 여전히 미달이라 0 이다(게이트가 살아 있다).
-    expect(cushionSettled(100, 129, CUSHION_RECOVER_TICKS)).toBe(0);
-    expect(cushionRecovered(100, 129, CUSHION_RECOVER_TICKS)).toBe(0);
+    expect(cushionSettled(100, 129, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP)).toBe(0);
+    expect(cushionRecovered(100, 129, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP)).toBe(0);
   });
 
   it('항등 — 기본 임계를 넘기면 종전 결과와 정확히 같다 (미투자 비트 불변의 뿌리)', () => {
-    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS)).toBe(600);
-    expect(cushionSettled(1000, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS)).toBe(400);
-    expect(cushionSettled(1000, CUSHION_RECOVER_TICKS - 1, CUSHION_RECOVER_TICKS)).toBe(0);
+    expect(cushionRecovered(1000, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP)).toBe(600);
+    expect(cushionSettled(1000, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP)).toBe(400);
+    expect(cushionSettled(1000, CUSHION_RECOVER_TICKS - 1, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP)).toBe(0);
   });
 
   it('음성 — ME9 미투자면 벽에 붙어 있어도 기본 임계 그대로다', () => {
@@ -888,28 +911,33 @@ describe('⑪ 앵커 ㉕ ME5 분할 상환', () => {
     const w = mk([[ME5, 20]]);
     const p = player(w);
     p.aux0 = 0; // 정산이 이미 리셋했다 — ㉕ 의 계약이 그 시점이다
-    // Lv20 탕감 bp = 6000×20/40 = 3000. defer = floor(100/2) = 50,
-    // 탕감 = floor(50 × 3000/10000) = 15, 이월 = 35, 선체행 = 50.
-    expect(onCushionSettleDue(w, p, 100, 0)).toBe(50);
-    expect(p.aux0).toBe(35);
+    // ⚠️ **여백 합성**(ME8 레인이 앵커 ㉘ 을 열면서 정본 공식이 실제로 성립하게 됐다):
+    //    갱신값 = 현재율 + (10000 − 현재율) × r / 10000 이고 「현재율」은 이 정산에 실제로 쓰인
+    //    탕감률이다. ME8 미투자면 그것은 0 이 아니라 **기본 6000** 이다 — 종전 기대값(이월 35)은
+    //    현재율 0 을 전제한 축약이었고, 이 레인이 그 전제를 없앴다.
+    // Lv20 r = 6000×20/40 = 3000 → eff = 6000 + floor(4000×3000/10000) = 7200.
+    // defer = floor(100/2) = 50, 탕감 = floor(50 × 7200/10000) = 36, 이월 = 14, 선체행 = 50.
+    expect(onCushionSettleDue(w, p, 100, 0, CUSHION_RECOVER_BP)).toBe(50);
+    expect(p.aux0).toBe(14);
   });
 
   it('레벨이 낮으면 탕감이 거의 없다 — 분할 폭은 그대로다 (두 축이 갈린다)', () => {
     const w = mk([[ME5, 1]]);
     const p = player(w);
     p.aux0 = 0;
-    // Lv1 탕감 bp = 6000/21 ≈ 285.7 → floor(50 × 285.7/10000) = 1.
-    expect(onCushionSettleDue(w, p, 100, 0)).toBe(50);
-    expect(p.aux0).toBe(49);
+    // Lv1 r = 6000/21 ≈ 285.7 → eff = 6000 + floor(4000×285.7/10000) = 6114.
+    // 탕감 = floor(50 × 6114/10000) = 30, 이월 = 20. 분할 폭(50)은 레벨과 무관하다.
+    expect(onCushionSettleDue(w, p, 100, 0, CUSHION_RECOVER_BP)).toBe(50);
+    expect(p.aux0).toBe(20);
   });
 
   it('`due <= 1` 은 무연산이다 — 1 을 반으로 계속 나누면 영영 안 비는 풀이 된다', () => {
     const w = mk([[ME5, 20]]);
     const p = player(w);
     p.aux0 = 0;
-    expect(onCushionSettleDue(w, p, 1, 0)).toBe(1);
+    expect(onCushionSettleDue(w, p, 1, 0, CUSHION_RECOVER_BP)).toBe(1);
     expect(p.aux0).toBe(0);
-    expect(onCushionSettleDue(w, p, 0, 0)).toBe(0);
+    expect(onCushionSettleDue(w, p, 0, 0, CUSHION_RECOVER_BP)).toBe(0);
     expect(p.aux0).toBe(0);
   });
 
@@ -922,7 +950,7 @@ describe('⑪ 앵커 ㉕ ME5 분할 상환', () => {
     let rounds = 0;
     while (due > 1) {
       p.aux0 = 0; // 매 정산의 리셋을 흉내 낸다
-      const hull = onCushionSettleDue(w, p, due, 0);
+      const hull = onCushionSettleDue(w, p, due, 0, CUSHION_RECOVER_BP);
       const carry = p.aux0;
       // ⚠️ 항진 방지 — 분할이 **실제로 일어났다**를 먼저 잠근다. 배선이 끊기면 `carry` 가 0 이
       //    되어 루프가 첫 회전에서 끝나고 아래 총합 단언이 공짜로 성립한다.
@@ -953,22 +981,22 @@ describe('⑪ 앵커 ㉕ ME5 분할 상환', () => {
     p.aux0 = 0;
     p.aux1 = 0;
     const due = 500;
-    // ㉕ — defer 250, 탕감 75, 이월 175, 선체행 250.
-    const hull = onCushionSettleDue(w, p, due, 0);
+    // ㉕ — defer 250, 탕감 180(eff 7200), 이월 70, 선체행 250.
+    const hull = onCushionSettleDue(w, p, due, 0, CUSHION_RECOVER_BP);
     expect(hull).toBe(250);
-    expect(p.aux0).toBe(175);
+    expect(p.aux0).toBe(70);
     const room = Math.floor(p.hp) - 1;
     const applied = hull > room ? room : hull;
     // ⑳ — CU3 상한 180. 이월분 = 250 − 180 = 70 이 **가산**된다.
     onCushionSettled(w, p, hull, 0, applied > 0 ? applied : 0);
-    expect(p.aux0).toBe(245); // 175 + 70
-    // 두 겹이 아니라는 증거: 이월 245 + 탕감 75 + 실제 선체행 180 = 500 = due 정확히.
-    expect(245 + 75 + 180).toBe(due);
+    expect(p.aux0).toBe(140); // 70(ME5) + 70(CU3)
+    // 두 겹이 아니라는 증거: 이월 140 + 탕감 180 + 실제 선체행 180 = 500 = due 정확히.
+    expect(140 + 180 + 180).toBe(due);
   });
 
   it('엔진 경로 — 정산 틱의 hp 감소분과 완충 잔량이 **함께** 달라진다', () => {
     // 전제: 정산이 실제로 일어난다(항진 방지). 풀 100·임계 도달 시 탕감 60 · 선체행 40.
-    expect(cushionSettled(100, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS)).toBe(40);
+    expect(cushionSettled(100, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP)).toBe(40);
 
     const base = mk([[ME1, 20]]); // ME5 미투자 대조군
     const bp = player(base);
@@ -985,16 +1013,16 @@ describe('⑪ 앵커 ㉕ ME5 분할 상환', () => {
     p.aux1 = CUSHION_RECOVER_TICKS - 1;
     const hp0 = p.hp;
     stepWorld(w, emptyInput());
-    // 선체행 40 → 분할 20(탕감 6, 이월 14). 두 축이 **함께** 움직인다.
+    // 선체행 40 → 분할 20(defer 20 · 탕감 14 · 이월 6). 두 축이 **함께** 움직인다.
     expect(hp0 - p.hp).toBe(20);
-    expect(p.aux0).toBe(14);
+    expect(p.aux0).toBe(6);
   });
 
   it('음성 — ME5 미투자 런의 ㉕ 는 `due` 를 그대로 돌려주고 `aux0` 을 안 만진다', () => {
     const w = mk([[CU3, 20]]);
     const p = player(w);
     p.aux0 = 0;
-    expect(onCushionSettleDue(w, p, 500, 30)).toBe(500);
+    expect(onCushionSettleDue(w, p, 500, 30, CUSHION_RECOVER_BP)).toBe(500);
     expect(p.aux0).toBe(0);
   });
 
@@ -1255,6 +1283,143 @@ describe('⑬ ME2 채무 자석 (앵커 ㉘)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// ⑮ 앵커 ㉗ — 지연 전환 분기: CU1·CU2·CU5·CU6
+// ---------------------------------------------------------------------------
+
+/** ㉗ 을 통과시킨 뒤의 **지연분**. 초기값은 `world.ts` 와 같은 `cushionDeferredDamage(dmg)` 다. */
+function splitDeferred(w: WorldState, dmg: number, hp = 1000): number {
+  const p = player(w);
+  const params: CushionSplitParams = { deferred: cushionDeferredDamage(dmg) };
+  onCushionSplit(w, p, dmg, params, hp);
+  return params.deferred;
+}
+
+describe('⑬ 앵커 ㉗ 지연 전환 — CU1·CU2·CU5·CU6', () => {
+  it('기본 분리는 CUSHION_DEFER_BP 그대로다 (미투자 대조군 — 하한 짝)', () => {
+    expect(cushionDeferredDamage(100)).toBe(35);
+    expect(splitDeferred(mk(), 100)).toBe(35);
+  });
+
+  it('CU1 — 임계 초과 대형 피해는 초과분 전액이 지연분이 된다', () => {
+    const w = mk([[CU1, 20]]);
+    // Lv20 임계 = round(40 − 25×20/30) = 23. dmg 100 → 초과 77 > 기본 35.
+    expect(splitDeferred(w, 100)).toBe(77);
+    // 하한 짝 — 미투자 대조군이 실제로 더 작다(양변이 같은 값이 되는 항진 방지).
+    expect(splitDeferred(mk(), 100)).toBeLessThan(77);
+  });
+
+  it('CU1 — 임계 미만의 작은 피격은 한 칸도 안 바꾼다 (게이트가 실재한다)', () => {
+    const w = mk([[CU1, 20]]);
+    expect(splitDeferred(w, 20)).toBe(cushionDeferredDamage(20));
+  });
+
+  it('CU2 — 한도 여유만큼만 미뤄지고 나머지는 즉시분에 남는다', () => {
+    const w = mk([[CU2, 20]]);
+    const p = player(w);
+    p.maxHp = 1000;
+    // Lv20 한도 = 1000 × round(25 + 30×20/32)% = 440.
+    p.aux0 = 430; // 여유 10
+    expect(splitDeferred(w, 100)).toBe(10);
+    // 하한 짝 — 부채가 없으면 한도가 안 문다(항진 방지).
+    p.aux0 = 0;
+    expect(splitDeferred(w, 100)).toBe(35);
+  });
+
+  it('CU2 — 한도를 이미 넘긴 부채(CU6 직후)에서는 전액 즉시분이다', () => {
+    const w = mk([[CU2, 20]]);
+    const p = player(w);
+    p.maxHp = 1000;
+    p.aux0 = 600; // 한도 440 위
+    expect(splitDeferred(w, 100)).toBe(0);
+  });
+
+  it('CU5 — 방어 액티브(cushion_lo) 버프 창 동안만 지연 비율이 오른다', () => {
+    const w = mk([[CU5, 20]]);
+    w.config.activeSlots = [wireIdOf('as_mallow_cushion_lo'), -1];
+    // 버프가 꺼져 있으면 기본값이다 — 이 짝이 없으면 아래 단언이 "항상 오른다"와 구별되지 않는다.
+    w.activeBuff0 = 0;
+    expect(splitDeferred(w, 100)).toBe(35);
+    w.activeBuff0 = 120;
+    // Lv20 bp = 6000 + 3500×20/32 = 8187.5 → round(100 × 8187.5/10000) = 82.
+    expect(splitDeferred(w, 100)).toBe(82);
+  });
+
+  it('CU5 — 다른 계열 액티브의 버프로는 안 켜진다 (술어가 "방어 액티브" 한정이다)', () => {
+    const w = mk([[CU5, 20]]);
+    w.config.activeSlots = [wireIdOf('as_mallow_mend_lo'), -1];
+    w.activeBuff0 = 120;
+    expect(splitDeferred(w, 100)).toBe(35);
+  });
+
+  it('CU6 — 치명 피격 1회를 전액 지연으로 돌려 살아남고, 런당 1회로 소진된다', () => {
+    const w = mk([[CU6, 20]]);
+    // hp 30 · 피해 100 → 기본 즉시분 65 가 hp 를 다 가져간다(치명).
+    expect(splitDeferred(w, 100, 30)).toBe(100);
+    expect(readSlot(w.skillCarry, SLOT_BANKRUPT_USED)).toBe(1);
+    // 요구 무적 = 30 + 3×20 = 90 이 슬롯에 남는다(집행은 앵커 ④).
+    expect(readSlot(w.skillStage, SLOT_BANKRUPT_IFRAMES)).toBe(90);
+    // 두 번째 치명 피격은 안 살린다.
+    expect(splitDeferred(w, 100, 30)).toBe(35);
+  });
+
+  it('CU6 — 치명이 아닌 피격에서는 발동하지 않는다 (표식도 안 선다)', () => {
+    const w = mk([[CU6, 20]]);
+    expect(splitDeferred(w, 100, 1000)).toBe(35);
+    expect(readSlot(w.skillCarry, SLOT_BANKRUPT_USED)).toBe(0);
+  });
+
+  it('CU6 무적은 앵커 ④ 에서 `hitIframes` 를 이긴다 (짧으면 통째로 무효인 자리)', () => {
+    const w = mk([[CU6, 20]]);
+    const p = player(w);
+    splitDeferred(w, 100, 30);
+    // `world.ts` 가 ㉗ 뒤에 하는 대입을 흉내 낸다 — 이 값이 이기면 스킬이 조용히 죽는다.
+    p.iframes = w.config.hitIframes;
+    onPlayerDamaged(w, p, 0, false, DamageSource.contact);
+    expect(p.iframes).toBe(90);
+    // 요구는 소비 즉시 지워진다 — 안 지우면 다음 피격마다 90 이 다시 서서 상시 장무적이 된다.
+    expect(readSlot(w.skillStage, SLOT_BANKRUPT_IFRAMES)).toBe(0);
+    p.iframes = w.config.hitIframes;
+    onPlayerDamaged(w, p, 0, false, DamageSource.contact);
+    expect(p.iframes).toBe(w.config.hitIframes);
+  });
+
+  it('⚠️ 엔진 경로 — `stepWorld` 의 피격이 실제로 ㉗ 을 부른다 (호출부 증명)', () => {
+    // ⚠️ 이 절의 나머지는 앵커를 **직접** 부른다 — 그것만으로는 `world.ts` 가 훅을 부르는지를
+    //    한 건도 못 잰다(뮤테이션으로 확인했다: 호출부를 지워도 0건 실패였다). 이 테스트가
+    //    그 이음매를 잡는다.
+    const shot = (pts: ReadonlyArray<readonly [number, number]>) => {
+      const w = mk(pts);
+      const p = player(w);
+      p.iframes = 0;
+      const b = addEnemyBullet(w, p.x, p.y);
+      b.damage = 100;
+      const hp0 = p.hp;
+      stepWorld(w, emptyInput());
+      return { w, p, taken: hp0 - p.hp };
+    };
+    const base = shot([[ME1, 20]]); // CU1 미투자 대조군
+    const wired = shot([[CU1, 20]]);
+    // 하한 짝 — 양쪽 다 실제로 맞았다(안 맞으면 아래 비교가 0 대 0 항진이 된다).
+    expect(base.w.hitsTaken).toBe(1);
+    expect(wired.w.hitsTaken).toBe(1);
+    expect(base.taken).toBeGreaterThan(0);
+    // 합 보존: 즉시분 + 지연분 = 원래 피해. 양쪽 다 성립한다.
+    expect(base.taken + base.p.aux0).toBe(wired.taken + wired.p.aux0);
+    // CU1 이 실제로 더 많이 미뤘고 그만큼 지금 덜 아프다.
+    expect(wired.p.aux0).toBeGreaterThan(base.p.aux0);
+    expect(wired.taken).toBeLessThan(base.taken);
+  });
+
+  it('음성 — 미투자 런은 ㉗ 에서 `deferred` 를 한 칸도 안 만진다', () => {
+    const w = mk([[SQ1, 20]]);
+    const p = player(w);
+    const params: CushionSplitParams = { deferred: 12 };
+    onCushionSplit(w, p, 100, params, 5);
+    expect(params.deferred).toBe(12);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ⑭ CU8 통증 마취 (앵커 ㉙ `onPlayerMoveParams`)
 // ---------------------------------------------------------------------------
 //
@@ -1316,5 +1481,355 @@ describe('⑭ CU8 통증 마취 (앵커 ㉙)', () => {
     expect(vxAfterTick([[CU8, 20]], 0)).toBe(base);
     // 부채가 있으면 빨라진다.
     expect(vxAfterTick([[CU8, 20]], 500)).toBeGreaterThan(base);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑯ 앵커 ㉘ — ME8 리듬 탕감
+// ---------------------------------------------------------------------------
+
+describe('⑯ 앵커 ㉘ ME8 리듬 탕감', () => {
+  it('콤보 스택이 쌓일수록 탕감률이 오른다 (하한 짝 포함)', () => {
+    const w = mk([[ME8, 20]]);
+    const p = player(w);
+    w.combo = 0;
+    expect(onCushionRecoverBp(w, p, CUSHION_RECOVER_BP)).toBe(CUSHION_RECOVER_BP);
+    w.combo = 5;
+    const at5 = onCushionRecoverBp(w, p, CUSHION_RECOVER_BP);
+    w.combo = 10;
+    const at10 = onCushionRecoverBp(w, p, CUSHION_RECOVER_BP);
+    // 하한 짝 — 배선이 끊기면 셋 다 6000 이 되어 단조 단언이 항진이 된다.
+    expect(at5).toBeGreaterThan(CUSHION_RECOVER_BP);
+    expect(at10).toBeGreaterThan(at5);
+    // 10스택 Lv20 = 6000 + 3500×200/320 = 8187.5 → 8188.
+    expect(at10).toBe(8188);
+  });
+
+  it('⚠️ 상한 — 어떤 스택·레벨에서도 10000 에 닿지 않는다 (부호 반전 방지)', () => {
+    const w = mk([[ME8, 99]]);
+    const p = player(w);
+    w.combo = 100_000;
+    const bp = onCushionRecoverBp(w, p, CUSHION_RECOVER_BP);
+    expect(bp).toBeLessThan(10000);
+    // 그 bp 로도 정산액이 음수가 되지 않는다(= 맞는 것이 이득이 되는 구간이 없다).
+    expect(
+      cushionSettled(1000, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS, bp),
+    ).toBeGreaterThan(0);
+  });
+
+  it('엔진 경로 — 콤보를 쥔 정산은 선체행이 실제로 줄고 탕감이 늘어난다', () => {
+    const base = mk([[ME1, 20]]); // ME8 미투자 대조군
+    const bp0 = player(base);
+    bp0.aux0 = 1000;
+    bp0.aux1 = CUSHION_RECOVER_TICKS - 1;
+    const baseHp = bp0.hp;
+    stepWorld(base, emptyInput());
+    const baseTaken = baseHp - bp0.hp;
+
+    const w = mk([[ME8, 20]]);
+    const p = player(w);
+    p.aux0 = 1000;
+    p.aux1 = CUSHION_RECOVER_TICKS - 1;
+    w.combo = 10;
+    const hp0 = p.hp;
+    stepWorld(w, emptyInput());
+    const taken = hp0 - p.hp;
+    // 하한 짝 — 대조군이 실제로 맞았다(정산 자체가 안 일어나 양변이 0 이 되는 항진 방지).
+    expect(baseTaken).toBeGreaterThan(0);
+    expect(taken).toBeLessThan(baseTaken);
+    // 사연 관측(비-해시)도 함께 커진다.
+    expect(w.cushionHealed).toBeGreaterThan(base.cushionHealed);
+  });
+
+  it('음성 — ME8 미투자 런은 콤보가 만층이어도 기본 탕감률이다', () => {
+    const w = mk([[ME1, 20]]);
+    w.combo = 20;
+    expect(onCushionRecoverBp(w, player(w), CUSHION_RECOVER_BP)).toBe(CUSHION_RECOVER_BP);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑮ 앵커 ㉙ — ME7 에코 채권
+// ---------------------------------------------------------------------------
+
+describe('⑮ 앵커 ㉙ ME7 에코 채권', () => {
+  it('부채가 전액 소각되고 소각량 비례 자석 버프 창이 열린다', () => {
+    const w = mk([[ME7, 20]]);
+    const p = player(w);
+    p.aux0 = 100;
+    w.magnetBuffTicks = 0;
+    onObjectiveResolved(w, p, 'echo');
+    expect(p.aux0).toBe(0);
+    // Lv20 전환율 = 60 + 40×20/30 ≈ 86.67% → floor(100 × 86.67/100) = 86.
+    expect(w.magnetBuffTicks).toBe(86);
+  });
+
+  it('조우 완수 지점도 **같은 값**을 낸다 (두 지점이 한 벌이다)', () => {
+    const w = mk([[ME7, 20]]);
+    const p = player(w);
+    p.aux0 = 100;
+    w.magnetBuffTicks = 0;
+    onObjectiveResolved(w, p, 'encounter');
+    expect(p.aux0).toBe(0);
+    expect(w.magnetBuffTicks).toBe(86);
+  });
+
+  it('버프 창에는 상한이 있다 (600틱)', () => {
+    const w = mk([[ME7, 20]]);
+    const p = player(w);
+    p.aux0 = 100_000;
+    onObjectiveResolved(w, p, 'echo');
+    expect(w.magnetBuffTicks).toBe(600);
+  });
+
+  it('음성 — 미투자 런은 부채도 자석도 안 만진다', () => {
+    const w = mk([[ME1, 20]]);
+    const p = player(w);
+    p.aux0 = 100;
+    w.magnetBuffTicks = 0;
+    onObjectiveResolved(w, p, 'echo');
+    expect(p.aux0).toBe(100);
+    expect(w.magnetBuffTicks).toBe(0);
+  });
+
+  it('부채가 0 이면 버프도 안 연다 (공짜 창이 생기지 않는다)', () => {
+    const w = mk([[ME7, 20]]);
+    const p = player(w);
+    p.aux0 = 0;
+    w.magnetBuffTicks = 0;
+    onObjectiveResolved(w, p, 'echo');
+    expect(w.magnetBuffTicks).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑯ 앵커 ㉚ + ⑪ — SQ9 이자 소각
+// ---------------------------------------------------------------------------
+
+describe('⑯ SQ9 이자 소각 — 부여(⑩) · 만료(㉚) · 사망(⑪)', () => {
+  it('부채 보유 중 명중한 적에게 화상이 붙는다', () => {
+    const w = mk([[SQ9, 20]]);
+    const p = player(w);
+    p.aux0 = 100;
+    const e = addEnemy(w, 400, 0, 1000);
+    onEnemyDamaged(w, e, 10, undefined);
+    expect(e.iframes).toBe(FIRE_DURATION);
+    // 틱당 피해 = round(2 × (100 + 4×20)/100) = 4.
+    expect(e.dashCooldown).toBe(4);
+  });
+
+  it('부채가 없으면 화상이 안 붙는다 (부채 게이트가 실재한다)', () => {
+    const w = mk([[SQ9, 20]]);
+    const p = player(w);
+    p.aux0 = 0;
+    const e = addEnemy(w, 400, 0, 1000);
+    onEnemyDamaged(w, e, 10, undefined);
+    expect(e.iframes).toBe(0);
+  });
+
+  it('화상이 만료되면 부채가 소액 탕감된다 (엔진 경로 — `tickEnemyStatus`)', () => {
+    const w = mk([[SQ9, 20]]);
+    const p = player(w);
+    p.aux0 = 100;
+    const e = addEnemy(w, 400, 0, 1000);
+    e.iframes = 1; // 이번 틱에 만료된다
+    tickEnemyStatus(w, e);
+    expect(e.iframes).toBe(0);
+    // 탕감 = 3 + floor(20/2) = 13.
+    expect(p.aux0).toBe(87);
+  });
+
+  it('만료가 안 온 틱에는 한 톨도 안 깎인다 (만료 트리거가 실재한다)', () => {
+    const w = mk([[SQ9, 20]]);
+    const p = player(w);
+    p.aux0 = 100;
+    const e = addEnemy(w, 400, 0, 1000);
+    e.iframes = 5;
+    tickEnemyStatus(w, e);
+    expect(p.aux0).toBe(100);
+  });
+
+  it('냉기 만료로는 탕감되지 않는다 (세는 사건이 화상 하나다)', () => {
+    const w = mk([[SQ9, 20]]);
+    const p = player(w);
+    p.aux0 = 100;
+    const e = addEnemy(w, 400, 0, 1000);
+    e.ownerId = 1;
+    tickEnemyStatus(w, e);
+    expect(e.ownerId).toBe(0);
+    expect(p.aux0).toBe(100);
+  });
+
+  it('화상이 남은 채 죽은 적도 1회 탕감한다 (앵커 ⑪ 의 두 번째 경로)', () => {
+    const w = mk([[SQ9, 20]]);
+    const p = player(w);
+    p.aux0 = 100;
+    onEnemyDeath(w, 0, 0, false, true);
+    expect(p.aux0).toBe(87);
+    // 화상 없이 죽은 적은 안 센다 — `burning` 게이트가 실재한다.
+    onEnemyDeath(w, 0, 0, false, false);
+    expect(p.aux0).toBe(87);
+  });
+
+  it('탕감은 0 아래로 안 내려간다 (aux0 감산 규율)', () => {
+    const w = mk([[SQ9, 20]]);
+    const p = player(w);
+    p.aux0 = 5;
+    onEnemyDeath(w, 0, 0, false, true);
+    expect(p.aux0).toBe(0);
+  });
+
+  it('음성 — 미투자 런은 부여도 탕감도 없다', () => {
+    const w = mk([[SQ1, 20]]);
+    const p = player(w);
+    p.aux0 = 100;
+    const e = addEnemy(w, 400, 0, 1000);
+    onEnemyDamaged(w, e, 10, undefined);
+    expect(e.iframes).toBe(0);
+    onEnemyDeath(w, 0, 0, false, true);
+    expect(p.aux0).toBe(100);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑰ 앵커 ⑳ — SQ10 만기 일제
+// ---------------------------------------------------------------------------
+
+/** 이 월드의 살아 있는 아군탄 수. `fanStrike` 의 관측량이다. */
+function bulletCount(w: WorldState): number {
+  let n = 0;
+  for (const e of w.entities) if (e.kind === 'bullet' && !e.dead) n++;
+  return n;
+}
+
+function expireCushionHi(w: WorldState): void {
+  const def = activeById('as_mallow_cushion_hi');
+  if (def === undefined) throw new Error('as_mallow_cushion_hi missing');
+  const fn = MALLOW_EXPIRE['as_mallow_cushion_hi'];
+  if (fn === undefined) throw new Error('expire hook missing');
+  fn(w, player(w), def);
+}
+
+describe('⑰ 앵커 ⑳ SQ10 만기 일제', () => {
+  it('cushion_hi 만기 정산에서만 탄막이 나간다', () => {
+    const w = mk([[SQ10, 20]]);
+    const p = player(w);
+    // 일반 정산 — 표식이 없으므로 한 발도 안 나간다(트리거가 만기 전용이라는 증거).
+    const before = bulletCount(w);
+    onCushionSettled(w, p, 100, 0, 100);
+    expect(bulletCount(w)).toBe(before);
+    // 만기 표식이 서면 나간다.
+    expireCushionHi(w);
+    expect(readSlot(w.skillStage, SLOT_MATURITY)).toBe(1);
+    onCushionSettled(w, p, 100, 0, 100);
+    // 탄수 = 6 + ceil(100 / (30 − 20×20/35)) = 6 + ceil(100/18.571) = 12.
+    expect(bulletCount(w) - before).toBe(12);
+  });
+
+  it('표식은 1회만 쓰인다 — 다음 정산은 일반 정산이다', () => {
+    const w = mk([[SQ10, 20]]);
+    const p = player(w);
+    expireCushionHi(w);
+    onCushionSettled(w, p, 100, 0, 100);
+    const after = bulletCount(w);
+    expect(readSlot(w.skillStage, SLOT_MATURITY)).toBe(0);
+    onCushionSettled(w, p, 100, 0, 100);
+    expect(bulletCount(w)).toBe(after);
+  });
+
+  it('탄수가 정산액에 비례한다 (하한 짝 포함)', () => {
+    const small = mk([[SQ10, 20]]);
+    expireCushionHi(small);
+    onCushionSettled(small, player(small), 20, 0, 20);
+    const big = mk([[SQ10, 20]]);
+    expireCushionHi(big);
+    onCushionSettled(big, player(big), 400, 0, 400);
+    expect(bulletCount(small)).toBeGreaterThan(0); // 하한 짝
+    expect(bulletCount(big)).toBeGreaterThan(bulletCount(small));
+  });
+
+  it('음성 — 미투자 런은 표식조차 안 세운다 (`skillStage` 가 0 을 유지한다)', () => {
+    const w = mk([[SQ1, 20]]);
+    expireCushionHi(w);
+    expect(readSlot(w.skillStage, SLOT_MATURITY)).toBe(0);
+    const before = bulletCount(w);
+    onCushionSettled(w, player(w), 100, 0, 100);
+    expect(bulletCount(w)).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑱ 액티브 핸들러 — SQ6 즉석 환전 · ME6 잔상 세척
+// ---------------------------------------------------------------------------
+
+function fireActive(w: WorldState, id: string): void {
+  const def = activeById(id);
+  if (def === undefined) throw new Error(`${id} missing`);
+  const fn = MALLOW_HANDLERS[id];
+  if (fn === undefined) throw new Error(`${id} handler missing`);
+  fn(w, player(w), def, { x: 1, y: 0 }, 0);
+}
+
+describe('⑱ 액티브 — SQ6 즉석 환전 · ME6 잔상 세척', () => {
+  it('SQ6 — 같은 부채로 탄이 더 많이 나가고 관통이 실린다', () => {
+    const base = mk([[SQ1, 20]]);
+    player(base).aux0 = 100;
+    fireActive(base, 'as_mallow_squish_lo');
+    const w = mk([[SQ6, 20]]);
+    player(w).aux0 = 100;
+    fireActive(w, 'as_mallow_squish_lo');
+    // 하한 짝 — 대조군도 실제로 쐈다(양변이 0 이 되는 항진 방지).
+    expect(bulletCount(base)).toBeGreaterThan(0);
+    expect(bulletCount(w)).toBeGreaterThan(bulletCount(base));
+    for (const e of w.entities) if (e.kind === 'bullet') expect(e.pierce).toBe(1);
+    for (const e of base.entities) if (e.kind === 'bullet') expect(e.pierce).toBe(0);
+  });
+
+  it('SQ6 — 탄당 피해도 함께 오른다', () => {
+    const base = mk([[SQ1, 20]]);
+    player(base).aux0 = 100;
+    fireActive(base, 'as_mallow_squish_lo');
+    const w = mk([[SQ6, 20]]);
+    player(w).aux0 = 100;
+    fireActive(w, 'as_mallow_squish_lo');
+    const dmgOf = (s: WorldState): number => {
+      for (const e of s.entities) if (e.kind === 'bullet') return e.damage;
+      throw new Error('탄이 없다');
+    };
+    expect(dmgOf(base)).toBeGreaterThan(0);
+    expect(dmgOf(w)).toBeGreaterThan(dmgOf(base));
+  });
+
+  it('ME6 — 블링크 **도착 지점**의 적탄이 지워지고 적에게 냉기가 붙는다', () => {
+    const def = activeById('as_mallow_mend_lo');
+    if (def === undefined) throw new Error('as_mallow_mend_lo missing');
+    const dist = def.coeff.distance ?? 0;
+    const w = mk([[ME6, 20]]);
+    w.activeWalls = []; // 슬라이드가 도착 좌표를 흔들지 않게 한다
+    const p = player(w);
+    const dx = p.x;
+    const dy = p.y;
+    const near = addEnemyBullet(w, dx + dist + 10, dy);
+    // 출발 지점 — 반경(140 + 10×20 = 340) 밖에 둔다. 여기가 지워지면 반쪽 배선이다.
+    const far = addEnemyBullet(w, dx - 2000, dy);
+    const foe = addEnemy(w, dx + dist - 10, dy, 1000);
+    fireActive(w, 'as_mallow_mend_lo');
+    expect(near.dead).toBe(true);
+    expect(far.dead).toBe(false);
+    expect(foe.ownerId).toBe(COLD_DURATION);
+  });
+
+  it('음성 — ME6 미투자 런의 블링크는 적탄도 적도 안 만진다', () => {
+    const def = activeById('as_mallow_mend_lo');
+    if (def === undefined) throw new Error('as_mallow_mend_lo missing');
+    const dist = def.coeff.distance ?? 0;
+    const w = mk([[ME1, 20]]);
+    w.activeWalls = [];
+    const p = player(w);
+    const b = addEnemyBullet(w, p.x + dist + 10, p.y);
+    const foe = addEnemy(w, p.x + dist - 10, p.y, 1000);
+    fireActive(w, 'as_mallow_mend_lo');
+    expect(b.dead).toBe(false);
+    expect(foe.ownerId).toBe(0);
   });
 });

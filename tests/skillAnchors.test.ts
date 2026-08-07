@@ -156,7 +156,8 @@ const { blankEntity, addEntity, spawnBullet, spawnGem, spawnWall } = await impor
 );
 const { DT } = await import('../src/sim/constants.js');
 const { hashWorld } = await import('../src/sim/replay.js');
-const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS, BROOD_MARK, cushionSettled } = await import(
+const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP, BROOD_MARK, cushionSettled } =
+  await import(
   '../src/sim/shipSignature.js'
 );
 const { isActiveTurret, TURRET_LIFE_TICKS } = await import('../src/sim/events.js');
@@ -219,7 +220,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('앵커 35개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  it('앵커 38개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
@@ -283,6 +284,14 @@ describe('계측 이음매', () => {
         'onVolleyParams', // S2 ⑯ — 발사부(전 기체 최다 미배선 사유)
         'onWallContact',
         'survivedLethalBlow',
+        // ⚠️ 말로우 앵커 레인(2026-08-07)이 넷을 더했다 — 넷 다 **말로우 30종 중 지점이
+        // 앵커 밖이라 통째로 미배선이던 것**을 연다. ㉖ 이 W2 의 포탑탄에 이미 쓰여 있어
+        // 번호는 ㉗ 부터다.
+        'onCushionSplit', // ㉗ — 지연 전환 분기(CU1·CU2·CU5·CU6)
+        'onCushionRecoverBp', // ㉘ — 정산 탕감률 확정(ME8)
+        'onObjectiveResolved', // ㉙ — 에코 안정화·조우 완수 **두 지점**(ME7)
+        // ⚠️ `onEnemyStatusExpired`(적 화상 만료 → SQ9)는 여기 **없다** — `chainHooks.ts`
+        //    에 산다. `status.ts` 가 부르는 앵커라 이 파일에 두면 런타임 순환이 된다.
       ].sort(),
     );
   });
@@ -1183,7 +1192,7 @@ function armSettlement(state: WorldState, debt = 100): { p: Entity; due: number 
   if (p === undefined) throw new Error('플레이어가 0번에 없다');
   p.aux0 = debt;
   p.aux1 = CUSHION_RECOVER_TICKS - 1; // 이번 틱에 임계를 채운다
-  return { p, due: cushionSettled(debt, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS) };
+  return { p, due: cushionSettled(debt, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP) };
 }
 
 describe('앵커 ㉕ onCushionSettleDue — 정산액 확정 직전(hp 차감 전)', () => {

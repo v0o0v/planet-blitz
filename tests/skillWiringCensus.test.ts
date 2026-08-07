@@ -108,6 +108,9 @@ const FILE_SHIP: Readonly<Record<string, string>> = {
   'bubble.ts': 'bubble',
   'hatchling.ts': 'hatchling',
   'mallow.ts': 'mallow',
+  // SQ9 의 **탕감** 두 경로만 여기 산다 — 만료 앵커가 `status.ts` 안이고 `mallow.ts` 는
+  // 그 파일을 값으로 import 하므로 같은 파일에 두면 런타임 순환이 된다(그 파일 헤더가 근거).
+  'mallowStatus.ts': 'mallow',
   'phantom.ts': 'phantom',
   'phantomEntry.ts': 'phantom',
   'striker.ts': 'striker',
@@ -253,9 +256,9 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
     'SH1@20', 'SH2@21', 'SH3@22', 'SH5@24', 'SH6@25', 'SH7@26', 'SH9@28', 'SH10@29',
   ],
   mallow: [
-    'SQ1@0', 'SQ2@1', 'SQ3@2', 'SQ4@3', 'SQ5@4', 'SQ7@6', 'SQ8@7',
-    'ME1@10', 'ME2@11', 'ME4@13', 'ME5@14', 'ME9@18', 'ME10@19',
-    'CU3@22', 'CU4@23', 'CU7@26', 'CU8@27', 'CU9@28', 'CU10@29',
+    'SQ1@0', 'SQ2@1', 'SQ3@2', 'SQ4@3', 'SQ5@4', 'SQ6@5', 'SQ7@6', 'SQ8@7', 'SQ9@8', 'SQ10@9',
+    'ME1@10', 'ME2@11', 'ME4@13', 'ME5@14', 'ME6@15', 'ME7@16', 'ME8@17', 'ME9@18', 'ME10@19',
+    'CU1@20', 'CU2@21', 'CU3@22', 'CU4@23', 'CU5@24', 'CU6@25', 'CU7@26', 'CU8@27', 'CU9@28', 'CU10@29',
   ],
   phantom: [
     'AS2@1', 'AS3@2', 'AS4@3', 'AS5@4', 'AS9@8',
@@ -270,7 +273,7 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** 골든 합계. 기체별 표와 따로 적어, 한쪽만 고치면 아래 자기검증이 잡는다. */
-const GOLDEN_TOTAL = 142;
+const GOLDEN_TOTAL = 152;
 
 /** 늘고 준 것을 사람이 읽을 수 있게 찍는다 — 숫자만 틀렸다고 하면 원인을 못 찾는다. */
 function diffMsg(ship: string, actual: readonly string[], golden: readonly string[]): string {

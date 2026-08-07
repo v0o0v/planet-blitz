@@ -43,6 +43,7 @@ import type { WorldState, InputFrame } from './world.js';
 import type { EncounterRuntime } from './encounter.js';
 import type { Entity } from './entities.js';
 import { blankEntity, addEntity, spawnBullet, spawnLoot } from './entities.js';
+import { onObjectiveResolved } from './skillHooks.js';
 import { DT, FIRE_CD_Q } from './constants.js';
 import { atan2, cos, sin, length } from './math.js';
 import {
@@ -217,6 +218,11 @@ function exitDetour(state: WorldState, player: Entity, rt: EncounterRuntime): vo
   player.vy = 0;
   rt.inDetour = 0;
   rt.state = 3;
+  // 앵커 ㉙ — **목표 완수 틱**(조우 완수). `echo.ts` 의 에코 안정화 지점과 **한 벌**이다.
+  // 자리는 방 청소·좌표 복원이 **끝난 뒤**다: 훅이 보는 `state.entities` 가 메인 월드여야
+  // 하고(detour 소유 엔티티가 남아 있으면 반경 판정류가 유령을 본다), 플레이어 좌표도
+  // 복원 후 값이어야 한다.
+  onObjectiveResolved(state, player, 'encounter');
 }
 
 /** 방 안 적 이동 — 플레이어 직선 추적(고정 속도). 메인 stepEnemies 는 전혀 돌지 않는다. */

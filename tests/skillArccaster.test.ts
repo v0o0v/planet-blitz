@@ -639,12 +639,12 @@ describe('앵커 ⑯ — 발사부 4종', () => {
   it('BA7: 처치 6기가 모여야 다음 볼리 한 번에만 탄수가 실린다', () => {
     const w = mk([[BA7, 1]]);
     const p = player(w);
-    for (let i = 0; i < 5; i++) onEnemyDeath(w, 0, 0, false);
+    for (let i = 0; i < 5; i++) onEnemyDeath(w, 0, 0, false, false);
     const early = volley();
     onVolleyParams(w, p, early);
     expect(early.count).toBe(4); // 5기로는 장전되지 않는다
 
-    onEnemyDeath(w, 0, 0, false); // 6기째
+    onEnemyDeath(w, 0, 0, false, false); // 6기째
     const loaded = volley();
     onVolleyParams(w, p, loaded);
     expect(loaded.count).toBe(6); // 2 + floor(1/5)
@@ -656,13 +656,13 @@ describe('앵커 ⑯ — 발사부 4종', () => {
 
   it('BA7 충전은 6 에서 멈춘다 (초과 처치는 이월하지 않는다)', () => {
     const w = mk([[BA7, 1]]);
-    for (let i = 0; i < 20; i++) onEnemyDeath(w, 0, 0, false);
+    for (let i = 0; i < 20; i++) onEnemyDeath(w, 0, 0, false, false);
     expect(readSlot(w.skillStage, 2)).toBe(6);
   });
 
   it('BA7 미투자 런은 처치가 쌓여도 슬롯이 0 이다 (무폴드 계약)', () => {
     const w = mk([[CH1, 1]]);
-    for (let i = 0; i < 20; i++) onEnemyDeath(w, 0, 0, false);
+    for (let i = 0; i < 20; i++) onEnemyDeath(w, 0, 0, false, false);
     expect(readSlot(w.skillStage, 2)).toBe(0);
   });
 

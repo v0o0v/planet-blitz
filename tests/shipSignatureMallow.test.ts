@@ -41,15 +41,15 @@ import { zeroSkillInvest } from '../data/ships/index.js';
 
 describe('말로우 완충 — 정산 몫(cushionSettled) 경계 골든', () => {
   it('임계 179 / 180 / 181 에서 갈린다 (정산 자체가 임계 게이트)', () => {
-    expect(cushionSettled(1000, CUSHION_RECOVER_TICKS - 1, CUSHION_RECOVER_TICKS)).toBe(0);
-    expect(cushionSettled(1000, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS)).toBe(400);
-    expect(cushionSettled(1000, CUSHION_RECOVER_TICKS + 1, CUSHION_RECOVER_TICKS)).toBe(400);
+    expect(cushionSettled(1000, CUSHION_RECOVER_TICKS - 1, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP)).toBe(0);
+    expect(cushionSettled(1000, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP)).toBe(400);
+    expect(cushionSettled(1000, CUSHION_RECOVER_TICKS + 1, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP)).toBe(400);
   });
 
   it('회복분 + 정산분 = 적립분 (미룬 피해는 회복된 만큼만 사라진다)', () => {
     for (let v = 0; v <= 400; v++) {
-      const rec = cushionRecovered(v, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS);
-      const due = cushionSettled(v, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS);
+      const rec = cushionRecovered(v, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP);
+      const due = cushionSettled(v, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP);
       expect(rec + due, `deferred=${v}`).toBe(v);
       expect(Number.isInteger(due), `deferred=${v}`).toBe(true);
       expect(due).toBeGreaterThanOrEqual(0);
@@ -57,9 +57,9 @@ describe('말로우 완충 — 정산 몫(cushionSettled) 경계 골든', () => 
   });
 
   it('비정상 입력에서 0 이고 소수 입력도 정수로 나온다', () => {
-    expect(cushionSettled(0, 999, CUSHION_RECOVER_TICKS)).toBe(0);
-    expect(cushionSettled(-40, 999, CUSHION_RECOVER_TICKS)).toBe(0);
-    expect(Number.isInteger(cushionSettled(77.4, 180.9, CUSHION_RECOVER_TICKS))).toBe(true);
+    expect(cushionSettled(0, 999, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP)).toBe(0);
+    expect(cushionSettled(-40, 999, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP)).toBe(0);
+    expect(Number.isInteger(cushionSettled(77.4, 180.9, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP))).toBe(true);
   });
 
   it('한 피격의 순 경감이 설계 수치(35% × 60%)와 맞는다', () => {
@@ -68,7 +68,7 @@ describe('말로우 완충 — 정산 몫(cushionSettled) 경계 골든', () => 
     const damage = 1000;
     const deferred = cushionDeferredDamage(damage); // 350
     const immediate = damage - deferred; // 650
-    const due = cushionSettled(deferred, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS); // 140
+    const due = cushionSettled(deferred, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP); // 140
     expect(immediate + due).toBe(790); // 21% 경감
   });
 });

@@ -158,7 +158,14 @@ import {
   mallowSettleThreshold,
   mallowGemMagnetParams,
   mallowPlayerMoveParams,
+  mallowCushionSplit,
+  mallowCushionRecoverBp,
+  mallowObjectiveResolved,
 } from './skills/mallow.js';
+// ⚠️ SQ9 의 **탕감** 두 경로만 별도 leaf 다 — 만료 앵커가 `status.ts` 안이라
+//    `skills/mallow.ts`(그 파일을 값으로 import 한다)에 두면 런타임 순환이 된다.
+//    사유 전문은 `chainHooks.ts`·`skills/mallowStatus.ts` 헤더.
+import { mallowEnemyDeath } from './skills/mallowStatus.js';
 import {
   phantomActiveFired,
   phantomDashFired,
@@ -1243,12 +1250,31 @@ function dispatchEnemyDamagedSkill(
  * `compact` 의 보스/코어 분기는 `state.kills` 를 올리지 않는다(승리 판정·전리품 축이다).
  * 그 사건이 필요하면 별도 앵커를 뚫어라 — 여기에 끼워 넣으면 처치 수와 호출 수의 항등이 깨진다.
  *
+ * ## ⚠️ `burning` 이 **엔티티가 아니라 캡처된 사실**인 이유
+ * 말로우 SQ9「이자 소각」은 *화상이 남은 채 죽은 적* 하나당 1회 부채를 탕감한다. 그 판정에
+ * 죽은 엔티티가 필요해 보이지만, **여기서 시체를 넘기는 것은 위 「무엇을 하면 안 되는가」가
+ * 금지한 형태다** — 시체는 이미 `state.entities` 밖이라 거기 쓴 값은 아무 데도 반영되지 않고,
+ * 조용한 무연산을 만드는 여지가 된다. 이 doc 이 그 대신 지시한 길이 *"좌표 밖 정보가
+ * 필요해지면 캡처 지점(`compact` 의 루프)에서 인자를 늘려라"* 이고, 그대로 했다.
+ *
+ * ⚠️ **인자 추가는 기존 호출부를 전부 깬다**(다른 기체 테스트 포함). 기본값을 두지 않은 것은
+ * 이 저장소의 규율이다 — 기본값을 두면 옛 호출부가 조용히 옛 거동으로 흐른다.
+ *
  * @param x 격추 좌표 x (`compact` 루프 안에서 캡처)
  * @param y 격추 좌표 y
  * @param elite 그 적이 엘리트였는가
+ * @param burning **화상이 남은 채 죽었는가**(`iframes > 0` 을 격추 시점에 캡처한 값).
+ *   `kind === 'enemy'` 한정은 캡처 지점의 게이트가 이미 진다 — 보스 `iframes` 는 화상 잔여가
+ *   아니라 과열 취약 창이라 한정을 빠뜨리면 오탕감이 난다(설계서 SQ9 3R-7)
  */
-export function onEnemyDeath(state: WorldState, x: number, y: number, elite: boolean): void {
-  dispatchEnemyDeathSkill(state, x, y, elite);
+export function onEnemyDeath(
+  state: WorldState,
+  x: number,
+  y: number,
+  elite: boolean,
+  burning: boolean,
+): void {
+  dispatchEnemyDeathSkill(state, x, y, elite, burning);
   onEnemyDeathCatalyst(state, x, y, elite);
 }
 
@@ -1257,11 +1283,22 @@ function dispatchEnemyDeathSkill(
   x: number,
   y: number,
   elite: boolean,
+  burning: boolean,
 ): void {
   if (!state.skillsOn) return;
   void x;
   void y;
   switch (state.sigBit) {
+    case SIG_MALLOW_CUSHION: {
+      // SQ9「이자 소각」의 **두 번째 탕감 경로** — 화상이 남은 채 죽은 적. 만료 경로(앵커 ㉚)와
+      // 배타다: 만료되면 화상이 없고, 화상 중에 죽으면 만료 틱이 오지 않는다. 그래서 적 1기당
+      // 화상 1사이클에 정확히 1회다(설계서 SQ9 구현 항).
+      //
+      // 플레이어는 `compact()` 뒤라 사라져 있을 수 있다(같은 틱에 함께 죽은 경우).
+      const p = playerOf(state);
+      if (p !== undefined && burning) mallowEnemyDeath(state, p);
+      break;
+    }
     // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다.
     case SIG_STRIKER_MARKSMAN: {
       // S3 전리 응급 — 엘리트 격파 시 선체 회복. `elite` 는 전리품 게이트가 굴린 그 판정과
@@ -2172,6 +2209,139 @@ export function onCushionThreshold(
 }
 
 /**
+ * 앵커 ㉘ — **정산의 탕감률이 확정되는 자리**(임계 비교 직후 · 정산액 계산 직전).
+ * 이번 정산에 쓸 탕감률(bp)을 돌려준다.
+ *
+ * ## 왜 앵커가 하나 더 필요했는가 — ⑲ 과 **같은 형태의 선결**이었다
+ * 말로우 ME8「리듬 탕감」은 *정산의 탕감 비율을 콤보 스택으로 올리는* 스킬인데, 탕감률
+ * `CUSHION_RECOVER_BP` 가 `shipSignature.ts` 의 `cushionRecovered` **안**에 상수로 갇혀
+ * 있었다. 그래서 ⑳ 으로도 ㉕ 으로도 닿지 못했다:
+ *  - ⑳ 은 hp 차감·hp−1 클램프가 끝난 뒤라, 사후 환급으로 흉내 내면 **클램프가 소멸시킨
+ *    초과분이 복원되지 않아** "탕감을 늘려 덜 깎인" 것과 "깎고 나서 되돌린" 것이 갈린다.
+ *  - ㉕ 은 hp 차감 전이지만 `due`(정산액)가 **이미 그 상수로 계산돼** 들어온다.
+ * ME9 가 임계에서 겪은 것과 같은 구조이고, 같은 방식으로 푼다 — 순수 함수 둘이 탕감률을
+ * **필수 인자**로 받도록 개정하고, 이 앵커의 반환값을 `world.ts` 가 그대로 넘긴다.
+ *
+ * ## ⚠️ 상한은 이 앵커의 계약이다
+ * 반환값이 10000 이상이면 `cushionSettled` 가 **음수**가 되어 정산이 hp 를 늘린다(맞는 것이
+ * 이득이 되는 부호 반전). 설계 정본의 ME8 점근이 9500 이라 구조적으로 닿지 않지만, 어픽스
+ * 연장이 붙는 축이라 case 쪽에서 상한을 건다.
+ *
+ * @param base `CUSHION_RECOVER_BP`. 미투자 런은 그대로 돌려받는다(비트 동일)
+ * @returns 이번 정산에 쓸 탕감률(bp). **0 이상 10000 미만**이어야 한다
+ */
+export function onCushionRecoverBp(state: WorldState, player: Entity, base: number): number {
+  if (!state.skillsOn) return base;
+  void player;
+  switch (state.sigBit) {
+    case SIG_MALLOW_CUSHION:
+      // ME8「리듬 탕감」 — `state.combo` 를 읽어 여백 비례로 올린다. 미투자·콤보 0 이면
+      // `base` 그대로다(비트 동일).
+      return mallowCushionRecoverBp(state, base);
+    default:
+      break;
+  }
+  return base;
+}
+
+/** 앵커 ㉗ 이 넘기는 **가변** 레코드. 훅이 이 칸을 고치면 그 값이 그대로 지연분이 된다. */
+export interface CushionSplitParams {
+  /**
+   * 이번 피격에서 **지연분으로 뗄 양**(정수). `world.ts` 가 `cushionDeferredDamage(dmg)` 로
+   * 초기화해 넣고, 훅이 돌아온 뒤 `[0, dmg]` 로 클램프해 읽는다.
+   *
+   * ⚠️ **`CUSHION_DEFER_BP` 를 여기서 갈아 끼우는 것이 이 칸의 용도다.** 비율을 바꾸는
+   * 스킬(CU5)은 `dmg` 와 자기 bp 로 **다시 계산해 대입**하고, 절대량으로 개입하는
+   * 스킬(CU1 초과분 이관 · CU2 한도 · CU6 전액 전환)은 그대로 대입한다. 비율 칸과 절대량
+   * 칸을 **둘 다** 두지 않은 것은 의도다 — 두 손잡이가 같은 값을 가리키면 어느 쪽이 이겼는지
+   * 가 호출 순서에 숨고, 이 저장소가 반복해서 대가를 치른 형태가 정확히 그것이다.
+   */
+  deferred: number;
+}
+
+/**
+ * 앵커 ㉗ — **완충 지연 전환 분기**(`cushionOn` 게이트 안 · `dmg` 정수화 직후 ·
+ * 즉시분이 확정되기 직전). 이 피격에서 얼마를 미룰지를 훅이 다시 쓸 수 있다.
+ *
+ * ## 왜 앵커 ⑧ 이나 ④ 로는 안 됐는가
+ * ⑧(감쇠 사슬)은 이 분기보다 **앞**이라 "지연분을 얼마나 뗄지" 에 닿지 않고, ④(피격 후속)는
+ * 적립이 이미 끝난 **뒤**다. 지연 전환 분기를 요구하는 말로우 4종(CU1·CU2·CU5·CU6)이 통째로
+ * 미배선이었던 이유가 이것이고, 이 앵커가 그 넷의 자리다.
+ *
+ * ## 무엇이 보장되는가
+ *  - `dmg` 는 **정수화 뒤**다(`Math.round`). `aux0` 은 u32 로 해시되므로 소수를 적립하면
+ *    클라와 서버 재실행이 갈린다 — 훅이 돌려주는 값도 정수여야 하고, 호출부가 `trunc` 한다.
+ *  - `player.hp` 는 **아직 안 깎였다**. `hp` 인자는 그 값이고, 치명 판정(CU6)은
+ *    `dmg − params.deferred >= hp` 로 세운다.
+ *  - `player.aux0` 은 **이번 피격분이 아직 안 실린** 값이다(적립은 hp 차감 뒤 분기다).
+ *    CU2 의 한도 여유 계산이 그 사실 위에 선다.
+ *
+ * ## ⚠️ 호출부가 `[0, dmg]` 로 클램프한다
+ * 음수는 즉시분을 늘려 "미룰수록 더 아픈" 부호 반전이 되고, `dmg` 초과는 즉시분을 음수로
+ * 만들어 피격이 회복이 된다. 훅 쪽 규율에만 맡기지 않는다.
+ *
+ * @param dmg 이번 피격의 **정수화된** 총 피해(사슬을 다 통과한 뒤)
+ * @param params 가변 레코드 — {@link CushionSplitParams}
+ * @param hp 차감 **전** 플레이어 hp(치명 판정용)
+ */
+export function onCushionSplit(
+  state: WorldState,
+  player: Entity,
+  dmg: number,
+  params: CushionSplitParams,
+  hp: number,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    case SIG_MALLOW_CUSHION:
+      // CU5 전량 유예 태세(비율 치환) → CU1 과부하 흡수(초과분 이관) → CU2 부채 한도(상한) →
+      // CU6 파산 보호(치명 시 전액). 순서는 설계 정본이 못 박았다 — CU6 은 한도 게이트
+      // **뒤**라 한도를 넘겨 적립될 수 있고, 그것이 "목숨을 빚으로 산" 대가다.
+      mallowCushionSplit(state, player, dmg, params, hp);
+      break;
+    default:
+      break;
+  }
+}
+
+/** 앵커 ㉙ 이 구분하는 목표 종류. 완수 지점이 둘이라 어느 쪽인지 훅이 알 수 있어야 한다. */
+export type ObjectiveKind = 'echo' | 'encounter';
+
+/**
+ * 앵커 ㉙ — **런 목표가 완수된 틱**. 지금은 두 지점이다:
+ * `echo.ts` 의 에코 안정화 성공(`rt.state = 2`) · `encounterDetour.ts` 의 조우 완수
+ * (`rt.state = 3`).
+ *
+ * ## ⚠️ **두 지점 다 걸어야 한다** — 한쪽만 걸면 반쪽이다
+ * 말로우 ME7「에코 채권」의 술어가 설계 정본에서 *"에코 안정화·조우 완수"* 로 **한 벌**이다.
+ * 한 지점만 걸면 "구현했는데 절반만 도는" 형태가 되고, 그 절반은 무대에 따라 아예 안 나온다
+ * (에코는 희귀 이벤트, 조우는 다른 축의 방이다).
+ *
+ * ## 무엇이 보장되는가
+ *  - 두 지점 모두 **정리가 끝난 뒤**다: 에코는 `echo.dead = true` 뒤, 조우는 방 소유 엔티티
+ *    제거·플레이어 좌표 복원 뒤다. 훅이 보는 `state.entities` 는 메인 월드다.
+ *  - `EncounterRuntime`·`EchoRuntime` 에 필드를 **추가하지 마라**(설계서 ME7 연계 항이 명시).
+ *    존재 술어와 이 앵커의 인자만으로 성립하는 스킬만 여기 온다.
+ *
+ * @param kind 어느 목표였는가 — 산출을 갈라야 하는 스킬을 위한 칸(지금 소비처는 없다)
+ */
+export function onObjectiveResolved(
+  state: WorldState,
+  player: Entity,
+  kind: ObjectiveKind,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    case SIG_MALLOW_CUSHION:
+      // ME7「에코 채권」 — 부채 전액 소각 + 소각량 비례 자석 버프 창.
+      mallowObjectiveResolved(state, player, kind);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
  * 앵커 ㉕(S3) — **정산액이 확정되기 직전**. `due`(= `cushionSettled`)가 hp 로 들어가기 **전**,
  * hp−1 클램프보다도 **앞**이다. 이번 정산에서 **선체로 보낼 몫**을 돌려준다.
  *
@@ -2201,8 +2371,12 @@ export function onCushionThreshold(
  * 하한 클램프는 걸지 않는다 — `min` 을 하나 더 두면 키우는 방향이 통째로 죽는다(앵커 ⑰ 이
  * `min(d,s)` 때문에 원리적으로 무효가 된 전례가 이 저장소에 있다).
  *
- * @param due `cushionSettled(aux0, aux1)` — 회복분을 뗀 뒤 선체로 갈 예정인 지연 피해
- * @param recovered `cushionRecovered(aux0, aux1)` — 무피격 보상으로 사라진 몫
+ * @param due `cushionSettled(aux0, aux1, settleAt, recoverBp)` — 회복분을 뗀 뒤 선체로 갈 예정인
+ *   지연 피해
+ * @param recovered `cushionRecovered(aux0, aux1, settleAt, recoverBp)` — 무피격 보상으로 사라진 몫
+ * @param recoverBp 이 정산에 **실제로 쓰인** 탕감률(앵커 ㉘ 의 반환값). ME5 의 이월분 탕감률이
+ *   설계 정본에서 *여백 합성*(갱신값 = 현재율 + (10000 − 현재율) × r / 10000)이고 그 「현재율」이
+ *   바로 이 값이다 — 안 넘기면 ME5 가 ME8 과 무관하게 굴러 조용히 갈린다
  * @returns 이번 정산에서 **선체로 보낼 몫**. 비음이어야 한다(음수는 hp 를 늘리지 않고 버려진다)
  */
 export function onCushionSettleDue(
@@ -2210,6 +2384,7 @@ export function onCushionSettleDue(
   player: Entity,
   due: number,
   recovered: number,
+  recoverBp: number,
 ): number {
   if (!state.skillsOn) return due;
   void recovered;
@@ -2218,7 +2393,11 @@ export function onCushionSettleDue(
       // ME5「분할 상환」 **1종** — 이번 정산의 절반만 선체로 보내고 나머지를 `aux0` 으로 미룬다
       // (이월분은 탕감률만큼 줄어든다). 설계 정본의 순서에서 **분할**이 여기다.
       // 미투자 런은 `due` 를 그대로 돌려주므로 비트 동일이다.
-      return mallowCushionSettleDue(state, player, due);
+      return mallowCushionSettleDue(state, player, due, recoverBp);
+    // ⚠️ **아래 주석은 낡았다 — 지우지 않고 갱신한다.** ME9 는 순수 함수 개정 레인이 임계를
+    // 인자로 빼면서 **앵커 ⑲** 에서 돌고, ME8 은 이 레인이 탕감률을 인자로 빼면서
+    // **앵커 ㉘({@link onCushionRecoverBp})** 에서 돈다. 즉 "여기로 못 온다" 는 지금도 참이지만
+    // 사유가 *"막혀 있다"* 에서 *"자리가 다르다"* 로 바뀌었다. 종전 관측 원문:
     // ⚠️ ME8「리듬 탕감」·ME9「솜틀 요양」은 **여전히 여기로도 못 온다.** 둘은 탕감률
     // (`CUSHION_RECOVER_BP`)·임계(`CUSHION_RECOVER_TICKS`)가 `shipSignature.ts` 의 순수 함수
     // `cushionRecovered`·`cushionSettled` **안에** 있어, 이 앵커에 도달한 시점에는 이미 그

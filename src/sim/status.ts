@@ -23,9 +23,13 @@
 
 import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
-// 앵커 ⑰ — 연쇄 파라미터. **`skillHooks.ts` 가 아니라 `chainHooks.ts` 인 사유는 그 파일
-// 헤더**다(이 파일 → skillHooks → skills/arccaster → 이 파일 순환을 끊기 위해 앵커를 뗐다).
-import { onChainParams } from './chainHooks.js';
+// ⚠️ **`skillHooks.js` 가 아니다.** 그 파일은 `skills/*.ts` 를 값으로 import 하고 그중
+//    둘(아크캐스터·말로우)이 이 파일을 값으로 import 한다 — 여기서 `skillHooks` 를 당기면
+//    런타임 순환이 되고, 그 순환은 `skillHooks.ts` 헤더가 *"번들러가 초기화를 재배치하면
+//    TDZ — 클라에서 재현 안 되고 검증 EF 에서만 터진다"* 로 금지한 바로 그것이다.
+//    ⭐ 배치4 에서 **두 레인이 이 순환에 독립적으로 부딪혔다** — 그래서 이 파일이 부르는
+//    앵커는 전부 `chainHooks.ts` 에 산다.
+import { onChainParams, onEnemyStatusExpired } from './chainHooks.js';
 import type { ChainParams } from './chainHooks.js';
 
 // --- 플레이어 감속(감속 지대) ----------------------------------------------
@@ -80,15 +84,33 @@ export function enemyStatusSlowMult(e: Entity): number {
 /**
  * 적의 원소 상태이상을 1틱 진행: 화염 지속피해 적용 + 타이머 감소. 화염으로 HP가
  * 0 이하가 되면 dead로 표시(compact가 처치·드랍 처리). enemy에만 호출한다.
+ *
+ * ## ⚠️ `state` 를 받는 이유 — 앵커 ㉚ 의 자리가 여기밖에 없다
+ * 말로우 SQ9「이자 소각」은 *화상이 **만료**되는 순간*(부여 순간이 아니다) 부채를 소액
+ * 탕감한다. 만료 판정(`iframes` 가 이번 틱에 0 에 닿았는가)은 감소 규칙과 같은 곳에서만
+ * 관측 가능하고, 호출부(`world.ts`)에서 before/after 를 다시 재면 **만료 술어가 두 곳에
+ * 살게 된다**(이 저장소가 반복해서 대가를 치른 형태다). 그래서 훅을 여기 둔다.
+ *
+ * 갱신 규칙("더 강한 값 유지")·만료 규칙(틱 0 소멸)은 **한 줄도 바꾸지 않았다** — 만료
+ * 지점에 관측 훅 하나를 얹었을 뿐이다(설계서 SQ9 「재발 패턴 ① 판정」이 요구한 형태).
  */
-export function tickEnemyStatus(e: Entity): void {
+export function tickEnemyStatus(state: WorldState, e: Entity): void {
   if (e.iframes > 0) {
     e.hp -= e.dashCooldown;
     e.iframes--;
-    if (e.iframes === 0) e.dashCooldown = 0;
+    if (e.iframes === 0) {
+      e.dashCooldown = 0;
+      // 앵커 ㉚ — **화상이 이번 틱에 만료된 그 지점.** hp≤0 판정보다 앞이라, 같은 틱에
+      // 화상 피해로 죽은 적도 "만료" 로 한 번만 통지된다(사망 경로 ②와 배타 — 죽는 순간
+      // `iframes` 가 이미 0 이라 `compact` 의 화상 잔존 게이트에 걸리지 않는다).
+      onEnemyStatusExpired(state, e, 'burn');
+    }
     if (e.hp <= 0) e.dead = true;
   }
-  if (e.ownerId > 0) e.ownerId--;
+  if (e.ownerId > 0) {
+    e.ownerId--;
+    if (e.ownerId === 0) onEnemyStatusExpired(state, e, 'cold');
+  }
 }
 
 /**
