@@ -14,116 +14,64 @@ import { stickerByIndex } from '../../../data/stickers.js';
 import { PLANETS as PLANET_CONTENT } from '../../../data/planets/index.js';
 import { ENEMY_ASSET_FILES, BOSS_ASSET_FILES } from '../../render/textures.js';
 import { CATALYST_ICON_NAMES } from '../../data/catalysts.js';
-import { SHIP_TYPES, DEFAULT_SHIP_TYPE, shipTypeDef } from '../../../data/ships/index.js';
+import {
+  SHIP_TYPES,
+  DEFAULT_SHIP_TYPE,
+  shipTypeDef,
+  flattenShipNodes,
+} from '../../../data/ships/index.js';
+import type { ShipSkillDef } from '../../../data/ships/types.js';
 import { ACTIVES_BY_SHIP } from '../../../data/ships/actives/index.js';
 import { activeSkillIconName } from '../../../data/ships/actives/types.js';
+import { allPowerupIconKeys } from '../powerupIcons.js';
 
 /**
- * 연구소 스킬 노드 아이콘 62종 = 스탯 × 티어대 59 + 계열 캡스톤 3
- * (`.omc/plans/icon-manifest.json` 의 skill-stat · skill-capstone 축).
+ * 연구소 스킬 아이콘 = **스킬 1종당 1장, 210장**(ADR-0049 flat 재편 · 2026-08-08).
  *
- * **Lane 10 — 티어대 3구간 → 5구간.** `skillIconBand` 이 스킬 tier 0~4 를 저·중·상·최상·초월
- * 5밴드로 1:1 접는다(ADR-0022 §7-R #6 단계 앵커). 12스탯 × 5밴드지만 전 SHIP_TYPES 를 통틀어
- * `rangeFlat` 만 tier 0(low) 수요가 없어 4밴드라 59다(= 5×11 + 4).
+ * ## 왜 축 3장에서 210장으로 늘렸는가
+ * ADR-0049 직후 이 목록은 **축(affinity) 3장**뿐이었다 — 스킬이 메커닉으로 바뀌며
+ * `stat`+`tier` 가 사라져 유도할 축이 affinity 밖에 안 남았기 때문이다. 그 결과 연구소
+ * 전체 목록에서 **210행이 전부 같은 그림 3장**을 돌려 썼고, 게다가 그 3장이 어두운 원판
+ * 위 작은 문양이라 48px 상자에서 문양이 ~15px 로 줄어 **깨진 아이콘처럼** 보였다.
+ * 2026-08-08 사용자 신고("스킬에 아이콘이 다 비어있다")의 실체가 이것이다 — 로더도
+ * 텍스처도 정상이었고, 결함은 아트 축 자체에 있었다.
  *
- * ✅ **아트 부채 28장 해소(2026-07-28).** Lane 10 이 티어대를 3구간 → 5구간으로 넓히면서 새로
- * 갈라진 `lowmid`(tier 1)·`midhigh`(tier 3) 24장과, 그 전부터 비어 있던 4장
- * (`bullet_count_low`·`bullet_speed_pct_high`·`range_flat_mid`·`range_flat_high`, M8-L9 부채)이
- * 오랫동안 **등재만 되고 PNG 가 없는** 상태였다. 로더는 이름으로만 찾고 없으면 조용히 null 을
- * 돌려주며 렌더가 그 null 을 예외 없이 삼키므로, 결함은 연구소 화면의 **빈 셀**로만 드러났다
- * (사용자 신고로 발견 — 테스트도 타입체커도 못 잡았다). 28장을 PixelLab 로 생성해 채웠고,
- * 재발은 `tests/uiAssetPresence.test.ts` 가 **등재 = 실물 존재**를 강제해 막는다.
+ * ## 축은 이제 **스킬 인스턴스**다(ADR-0015 예외 편입)
+ * 액티브 42종(`ACTIVE_ICON_NAMES`)이 이미 밟은 길이다 — 스킬마다 메커닉이 질적으로
+ * 다르면 "속성이 축"이라는 원칙이 오히려 정보를 지운다. 파일명 정본은
+ * {@link skillNodeIconName} 하나뿐이고, 목록은 **레지스트리 파생**이라 저작이 바뀌면
+ * 자동으로 따라온다(손으로 나열하면 조용히 어긋나고, 그 어긋남은 "번들에는 있는데
+ * 화면에 안 뜬다"로만 드러난다 — 2026-07-28 28장 부채의 재발 형태).
  *
- * 5밴드 확장은 **기존 아트를 tier 0/2/4(=low/mid/high 슬러그)에 그대로 보존**했다 — tier 0/2/4
- * 노드의 그림은 바뀌지 않았다. `tests/skillIcons.test.ts` 가 목록 ↔ 노드 수요를 전 SHIP_TYPES 에
- * 대해 대조하므로, 신규 기체가 새 (스탯, 티어대) 조합을 만들면 즉시 깨진다.
- *
- * `assets/skill_range_flat_low.png` 는 디스크에 남아 있으나 tier 1 이 `lowmid` 로 이동하며
- * 어느 노드도 이 슬러그를 부르지 않는 **사문서 아트**가 됐다(무해 — 로더가 이름으로만 찾는다).
- *
- * 축이 (스탯, 티어대)라 **같은 스탯·같은 밴드의 노드는 같은 그림을 공유한다** — "예리한"과
- * "잔혹한"이 한 장을 쓰는 것은 결함이 아니라 결정의 내용이고, 구별은 노드 이름과 포인트 수치가
- * 한다. 63노드에 63장을 만들지 않기 위한 선택이다(ADR-0015 아이콘 축).
- *
- * 목록을 리터럴로 두는 이유: {@link skillIconName} 이 노드에서 유도한 이름이 이 목록에
- * 실재하는지를 테스트가 대조해, 티어대 경계나 스탯 구성이 바뀌면 즉시 깨지게 하기 위함이다.
+ * ## 축 아이콘 3장은 남는다 — 폴백이다
+ * `skill_axis_{offense,defense,utility}.png` 는 지우지 않는다. 개별 아트가 아직 안 온
+ * 스킬을 계열색 빈 상자가 아니라 **축 그림**으로 받는 사다리 두 번째 칸이다
+ * (`researchLab.ts` 의 `skillAxisIconName`). 셋 다 170×170 이고, 신규 210장도 같다.
  */
-export const SKILL_ICON_NAMES = [
-  // 각 스탯 5구간(저·중·상·최상·초월 = low·lowmid·mid·midhigh·high). low/mid/high 는
-  // 기존 아트 보존(tier 0/2/4), lowmid/midhigh 는 2026-07-28 에 채운 신규 밴드 아트.
-  'skill_damage_pct_low.png',
-  'skill_damage_pct_lowmid.png',
-  'skill_damage_pct_mid.png',
-  'skill_damage_pct_midhigh.png',
-  'skill_damage_pct_high.png',
-  'skill_fire_rate_pct_low.png',
-  'skill_fire_rate_pct_lowmid.png',
-  'skill_fire_rate_pct_mid.png',
-  'skill_fire_rate_pct_midhigh.png',
-  'skill_fire_rate_pct_high.png',
-  'skill_bullet_count_low.png',
-  'skill_bullet_count_lowmid.png',
-  'skill_bullet_count_mid.png',
-  'skill_bullet_count_midhigh.png',
-  'skill_bullet_count_high.png',
-  'skill_bullet_speed_pct_low.png',
-  'skill_bullet_speed_pct_lowmid.png',
-  'skill_bullet_speed_pct_mid.png',
-  'skill_bullet_speed_pct_midhigh.png',
-  'skill_bullet_speed_pct_high.png',
-  'skill_pierce_low.png',
-  'skill_pierce_lowmid.png',
-  'skill_pierce_mid.png',
-  'skill_pierce_midhigh.png',
-  'skill_pierce_high.png',
-  // 사거리는 저 밴드 없음 — rangeFlat 노드가 어느 기체에서도 tier 0 에 없다(4구간).
-  'skill_range_flat_lowmid.png',
-  'skill_range_flat_mid.png',
-  'skill_range_flat_midhigh.png',
-  'skill_range_flat_high.png',
-  'skill_max_hp_flat_low.png',
-  'skill_max_hp_flat_lowmid.png',
-  'skill_max_hp_flat_mid.png',
-  'skill_max_hp_flat_midhigh.png',
-  'skill_max_hp_flat_high.png',
-  'skill_max_hp_pct_low.png',
-  'skill_max_hp_pct_lowmid.png',
-  'skill_max_hp_pct_mid.png',
-  'skill_max_hp_pct_midhigh.png',
-  'skill_max_hp_pct_high.png',
-  'skill_dash_cd_pct_low.png',
-  'skill_dash_cd_pct_lowmid.png',
-  'skill_dash_cd_pct_mid.png',
-  'skill_dash_cd_pct_midhigh.png',
-  'skill_dash_cd_pct_high.png',
-  'skill_move_speed_pct_low.png',
-  'skill_move_speed_pct_lowmid.png',
-  'skill_move_speed_pct_mid.png',
-  'skill_move_speed_pct_midhigh.png',
-  'skill_move_speed_pct_high.png',
-  'skill_magnet_pct_low.png',
-  'skill_magnet_pct_lowmid.png',
-  'skill_magnet_pct_mid.png',
-  'skill_magnet_pct_midhigh.png',
-  'skill_magnet_pct_high.png',
-  'skill_xp_pct_low.png',
-  'skill_xp_pct_lowmid.png',
-  'skill_xp_pct_mid.png',
-  'skill_xp_pct_midhigh.png',
-  'skill_xp_pct_high.png',
-  // 캡스톤 3종은 `perPoint: 0` 인 질적 노드라 스탯 아이콘을 붙이면 거짓말이 된다 — 개별 아트.
-  'skill_capstone_firepower.png',
-  'skill_capstone_survival.png',
-  'skill_capstone_mobility.png',
-  // ADR-0049 스킬 어픽스의 **축 아이콘 3종**(affixes.md ①-11). 위 스탯 아이콘과 달리
-  // **affinity 속성 자체**를 그린다 — ADR-0015 의 "인스턴스가 아니라 속성이 축". 기체별 트리
-  // 아이콘을 재사용하면 안 된다(7기체의 축 표기 이름이 전부 달라 어픽스가 기체에 묶여 보인다).
-  // ⚠️ 나머지 스킬 아이콘은 64×64 인데 이 셋만 **170×170** 이다(사용자 지시 2026-08-07 —
-  // 고해상도). 스프라이트 배율을 손으로 맞춘 자리가 있으면 이 셋에서 어긋난다.
+export const SKILL_ICON_NAMES: readonly string[] = [
+  // 축 폴백 3장(개별 아트 미도착 슬롯이 받는다).
   'skill_axis_offense.png',
   'skill_axis_defense.png',
   'skill_axis_utility.png',
-] as const;
+  // 스킬 인스턴스 210장 — 레지스트리 파생.
+  ...SHIP_TYPES.flatMap((def) => flattenShipNodes(def).map(skillNodeIconName)),
+];
+
+/**
+ * 스킬 → 아이콘 basename. **파일명 규약의 단일 정본**이다.
+ *
+ * `ShipSkillDef.id` 는 이미 전역 유니크한 `<기체>-<스킬>` en-slug 라 그대로 축으로 쓴다 —
+ * 기체 slug 와 스킬 slug 를 여기서 다시 조립하면 `id` 조립 규칙(`data/ships/types.ts`)과
+ * 두 벌이 되어 조용히 갈린다. 하이픈만 언더바로 바꾼다(다른 자산 파일명 관례).
+ */
+export function skillNodeIconName(node: ShipSkillDef): string {
+  return `skill_${node.id.replace(/-/g, '_')}.png`;
+}
+
+/** 개별 아트가 없는 스킬이 받는 축 폴백 basename. */
+export function skillAxisIconName(node: ShipSkillDef): string {
+  return `skill_axis_${node.axis}.png`;
+}
 
 /**
  * 스트라이커(타입 0)의 격납고 쇼케이스 파일명. **개명하지 않는다** — M8 이전부터 있던 자산이고,
@@ -193,6 +141,21 @@ export const RECON_ASSET_NAMES: readonly string[] = [
       (n): n is string => n !== undefined,
     ),
   ]),
+];
+
+/**
+ * 파워업 카드의 **바탕 스탯 아트** basename(중복 없음) — `powerupIcons.ts` 레지스트리 파생.
+ *
+ * 이 아트는 구 스킬 스탯 아이콘(`skill_<stat>_<band>.png`)이다. 2026-08-08 에 스킬 아이콘이
+ * 인스턴스 단위 210장으로 갈리며 {@link SKILL_ICON_NAMES} 에서 빠졌지만, 파워업 24종은
+ * 여전히 이 그림을 가리키므로 여기서 따로 등재한다 — 손으로 나열하면 24종 저작이 바뀔 때
+ * 조용히 어긋나고, 그 어긋남은 "카드에 그림이 안 뜬다"로만 드러난다(2026-07-27 선례).
+ *
+ * ⚠️ 무기 **배지**(`badgeKey` = `equip_main_*`)는 여기 넣지 않는다 — 장비 아이콘으로 이미
+ * 등재돼 있어 중복이 된다(`UI_ASSET_NAMES` 중복 금지 계약).
+ */
+export const POWERUP_ASSET_NAMES: readonly string[] = [
+  ...new Set(Object.values(allPowerupIconKeys()).map((k) => `${k.statKey}.png`)),
 ];
 
 /** 로드 대상 UI 자산 basename (assets/ 아래, 확장자 포함). */
@@ -299,7 +262,7 @@ export const UI_ASSET_NAMES: readonly string[] = [
   'equip_unique_greed_heart.png',
   'equip_unique_gambler_chip.png',
   'equip_unique_relic_amplifier.png',
-  // 연구소 스킬 노드 아이콘 62종 — 규칙은 {@link skillIconName}, 목록은 {@link SKILL_ICON_NAMES}.
+  // 연구소 스킬 아이콘 213종(축 폴백 3 + 스킬 인스턴스 210) — 규칙은 {@link skillNodeIconName}.
   ...SKILL_ICON_NAMES,
   // 촉매 아이콘(개별 48 + 보상축 폴백 10) — 목록은 `data/catalysts.ts` 레지스트리 파생.
   // 픽커·재고 보관소·정산 획득 목록이 같은 키로 읽는다.
@@ -308,11 +271,11 @@ export const UI_ASSET_NAMES: readonly string[] = [
   // 손으로 등재한다 — 촉매 한 장이 아니라 "분해하고 남은 것"이라 `CATALYST_ICON_NAMES` 의
   // slug 축에 낄 자리가 없다. 상점·분해·재화 표시가 같은 키로 읽는다.
   'catalyst_residue.png',
-  // 파워업 전용 재사용 아트(스킬 노드는 부르지 않는다 — 그래서 SKILL_ICON_NAMES 에 넣으면
-  // "죽은 아트 금지" 계약(tests/skillIcons)이 깨진다). `skill_range_flat_low.png` 는 tier 1 이
-  // lowmid 로 옮겨가며 사문서가 된 실물 아트인데, 파워업 '집속 렌즈'(beam-focuser)가 이걸 되쓴다 —
-  // 유니온에 있던 `skill_range_flat_lowmid` 는 PNG 가 없어 카드에 그림이 안 떴다(2026-07-27).
-  'skill_range_flat_low.png',
+  // 파워업 카드 아이콘 — **구 스탯 아트(`skill_<stat>_<band>.png`)를 되쓴다.** 2026-08-08 에
+  // 스킬 아이콘이 인스턴스 단위 210장으로 갈리며 그 62종이 SKILL_ICON_NAMES 에서 빠졌는데,
+  // 파워업 24종은 여전히 그 그림을 가리킨다 — 그래서 여기서 **파워업 레지스트리 파생**으로
+  // 따로 등재한다(손으로 나열하면 24종 저작이 바뀔 때 조용히 어긋난다).
+  ...POWERUP_ASSET_NAMES,
   // 성계 지도 전장 정찰 로스터의 적·보스 스프라이트 — 목록 정본은 {@link RECON_ASSET_NAMES}.
   ...RECON_ASSET_NAMES,
   // 액티브 스킬 아이콘 42장(ADR-0041 — ADR-0015 의 "인스턴스 단위 아이콘 예외"에 편입).
@@ -321,16 +284,16 @@ export const UI_ASSET_NAMES: readonly string[] = [
   ...ACTIVE_ICON_NAMES,
 ];
 
-/** StatKey(camelCase) → 파일명 조각(snake_case). `maxHpFlat` → `max_hp_flat`. */
 /**
  * ⚠️ **(ADR-0049) 구 스킬 노드 아이콘 규칙은 여기서 삭제됐다.**
  * `statSlug`/`skillIconBand`/`SkillIconBand`/`skillIconName` 은 `SkillNode.stat`+`tier` 에서
  * 아이콘 이름을 유도했는데, flat 재편으로 그 두 필드가 사라져 **호출부가 0** 이 됐다.
- * 신규 규칙은 축(affinity)만 읽는 `skillNodeIconName`(`src/ui/pixi/researchLab.ts`)이다.
+ * 신규 규칙은 위 {@link skillNodeIconName}(스킬 인스턴스 단위) 하나다.
  *
- * ⚠️ **{@link SKILL_ICON_NAMES} 의 62종은 이제 아무도 부르지 않는다.** 상수와 PNG 를 함께
- * 걷어내는 것은 아트 결정이라 이 레인에서 하지 않았다 — 지금은 프리로드 목록에만 남아 있다.
- * 신규 축 아이콘 3종(`skill_axis_{offense,defense,utility}.png`)이 생길 때 같이 정리하라.
+ * 구 62종 리터럴도 2026-08-08 에 걷어냈다 — 210장 개별 아트가 들어오며 "축 3장 공유"의
+ * 근거가 사라졌고, 남겨 두면 아무도 안 부르는 이름을 프리로드가 계속 긁는다. 실물 PNG
+ * (`assets/skill_<stat>_<band>.png`)는 남아 있다: 로더가 **이름으로만** 찾으므로 무해하고,
+ * 파워업 카드가 그 중 `skill_range_flat_low.png` 한 장을 아직 되쓴다(아래 등재).
  */
 
 /**

@@ -105,7 +105,12 @@ import {
 import { spendCurrencyOnServer } from '../../net/index.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { COLOR, UI_FONT, TEXT_SHADOW, iconContrastRingBands } from './theme.js';
-import { loadUiTextures, type UiTextures } from './uiTextures.js';
+import {
+  loadUiTextures,
+  skillAxisIconName,
+  skillNodeIconName,
+  type UiTextures,
+} from './uiTextures.js';
 import { PixiButton } from './button.js';
 import { PixiTooltip } from './tooltip.js';
 import { rectGridPositions } from './slotGrid.js';
@@ -508,19 +513,15 @@ export function clampScroll(v: number, totalH: number, viewH: number): number {
 }
 
 /**
- * 스킬 노드 → 아이콘 파일명(ADR-0049).
+ * 스킬 노드 → 아이콘 텍스처(개별 아트 → 축 폴백 → null).
  *
- * 구 `skillIconName`(`uiTextures.ts`)은 `SkillNode.stat`+`tier` 에서 유도했다 — 스킬이
- * 메커닉으로 바뀌며 그 두 필드가 통째로 사라져 재사용할 수 없다. 지금 데이터에서 유도
- * 가능한 유일한 시각 축은 **축(affinity)** 뿐이라 축당 공유 아이콘 하나로 접는다.
- *
- * `uiTextures.ts` 의 `SKILL_ICON_NAMES`/`UI_ASSET_NAMES` 레지스트리에는 이 이름이 아직
- * 등재돼 있지 않다(그 파일은 이 레인의 담당 밖 — `makeSkillIcon` 이 미등록 텍스처를 계열색
- * placeholder 로 이미 우아하게 대체하므로 화면은 죽지 않는다). 없는 스탯 데이터를 추측해
- * 예전처럼 스탯별 아이콘을 고르지 않는다.
+ * 파일명 규약의 정본은 `uiTextures.ts` 의 {@link skillNodeIconName} 하나다(스킬 인스턴스
+ * 단위 210장). 여기 사다리가 있는 이유는 **아트가 코드보다 늦게 오기 때문**이다 — 개별
+ * 아트가 아직 없는 스킬은 계열색 빈 상자가 아니라 축 그림(`skill_axis_*`)을 받는다.
+ * 셋 다 없으면 `makeSkillIcon` 이 계열색 placeholder 로 마감한다.
  */
-export function skillNodeIconName(node: ShipSkillDef): string {
-  return `skill_axis_${node.axis}.png`;
+function skillNodeTexture(ui: UiTextures, node: ShipSkillDef): Texture | null | undefined {
+  return ui[skillNodeIconName(node)] ?? ui[skillAxisIconName(node)];
 }
 
 // --- 행 판 조명 램프(모듈 1회 굽기) ------------------------------------------
@@ -1468,7 +1469,7 @@ export class ResearchLabScreen {
     plate.setSelected(maxed);
 
     const iconBoxY = Math.round((INV_H - INV_ICON) / 2);
-    row.addChild(makeSkillIcon(this.ui[skillNodeIconName(node)], 7, iconBoxY, INV_ICON, accent, maxed));
+    row.addChild(makeSkillIcon(skillNodeTexture(this.ui, node), 7, iconBoxY, INV_ICON, accent, maxed));
 
     const pts = new Text({
       resolution: 2,
@@ -1714,7 +1715,7 @@ export class ResearchLabScreen {
     plate.setSelected(cur > 0);
 
     const iconBoxY = Math.round((POP_ROW_H - POP_ICON) / 2);
-    row.addChild(makeSkillIcon(this.ui[skillNodeIconName(node)], 12, iconBoxY, POP_ICON, accent, maxed));
+    row.addChild(makeSkillIcon(skillNodeTexture(this.ui, node), 12, iconBoxY, POP_ICON, accent, maxed));
 
     const pts = new Text({
       resolution: 2,
