@@ -162,6 +162,7 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
       for (let i = 0; i < atk.count; i++) {
         if (state.enemyBulletCount >= state.bulletCap) break;
         const ang = (i * TWO_PI) / atk.count;
+        // ownerId = 보스 자신(배치7 F2a — AS7 원한 표적 선결).
         const b = spawnEnemyBullet(
           state,
           boss.x,
@@ -172,6 +173,7 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
           atk.damage,
           atk.bulletRadius,
           atk.bulletLife,
+          boss.id,
         );
         // 시그니처: 가속 직진.
         applyBehavior(b, accelBehavior(atk.speed, BOSS_RING_ACCEL));
@@ -185,6 +187,7 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
       for (let i = 0; i < atk.count; i++) {
         if (state.enemyBulletCount >= state.bulletCap) break;
         const ang = base + (i * TWO_PI) / atk.count;
+        // ownerId = 보스 자신(배치7 F2a — AS7 원한 표적 선결).
         const b = spawnEnemyBullet(
           state,
           boss.x,
@@ -195,6 +198,7 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
           atk.damage,
           atk.bulletRadius,
           atk.bulletLife,
+          boss.id,
         );
         // 시그니처: 분열 산탄(퓨즈 뒤 자탄 방사). 밀도를 보스에 집중.
         applyBehavior(
@@ -253,6 +257,7 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
       for (let i = 0; i < n; i++) {
         if (state.enemyBulletCount >= state.bulletCap) break;
         const ang = start + stepA * i;
+        // ownerId = 보스 자신(배치7 F2a — AS7 원한 표적 선결).
         const b = spawnEnemyBullet(
           state,
           boss.x,
@@ -263,6 +268,7 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
           atk.damage,
           atk.bulletRadius,
           atk.bulletLife,
+          boss.id,
         );
         // 시그니처: 유도 호밍(락 만료 후 직진 — 회피 가능한 조준 창격).
         applyBehavior(b, homingBehavior(atk.speed, BOSS_HOMING_LOCK, BOSS_HOMING_TURN));
@@ -278,6 +284,7 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
       // 수직 열: 플레이어 위쪽에서 아래로.
       for (let i = 1; i <= atk.lines; i++) {
         if (state.enemyBulletCount >= state.bulletCap) break;
+        // ownerId = 보스 자신(배치7 F2a — AS7 원한 표적 선결).
         spawnEnemyBullet(
           state,
           player.x - span / 2 + step * i,
@@ -288,12 +295,14 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
           atk.damage,
           atk.bulletRadius,
           atk.bulletLife,
+          boss.id,
         );
         state.enemyBulletCount++;
       }
       // 수평 행: 플레이어 왼쪽에서 오른쪽으로.
       for (let i = 1; i <= atk.lines; i++) {
         if (state.enemyBulletCount >= state.bulletCap) break;
+        // ownerId = 보스 자신(배치7 F2a — AS7 원한 표적 선결).
         spawnEnemyBullet(
           state,
           player.x - span / 2,
@@ -304,6 +313,7 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
           atk.damage,
           atk.bulletRadius,
           atk.bulletLife,
+          boss.id,
         );
         state.enemyBulletCount++;
       }
@@ -341,6 +351,7 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
         for (let i = 0; i < n; i++) {
           if (state.enemyBulletCount >= state.bulletCap) break;
           const ang = start + stepA * i;
+          // ownerId = 보스 자신(배치7 F2a — AS7 원한 표적 선결).
           spawnEnemyBullet(
             state,
             boss.x,
@@ -351,6 +362,7 @@ function executeAttack(state: WorldState, boss: Entity, player: Entity, atk: Bos
             atk.damage,
             atk.bulletRadius,
             atk.bulletLife,
+            boss.id,
           );
           state.enemyBulletCount++;
         }

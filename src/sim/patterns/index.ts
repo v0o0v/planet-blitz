@@ -203,6 +203,7 @@ function runAttack(state: WorldState, e: Entity, def: EnemyDef, player: Entity):
       for (let i = 0; i < sub; i++) {
         if (state.enemyBulletCount >= state.bulletCap) break;
         const ang = (i * TWO_PI) / sub;
+        // ownerId = 이 견제탄을 쏜 사수형 자신(배치7 F2a — AS7 원한 표적 선결).
         const shard = spawnEnemyBullet(
           state,
           e.x,
@@ -213,6 +214,7 @@ function runAttack(state: WorldState, e: Entity, def: EnemyDef, player: Entity):
           shardDamage,
           5,
           70,
+          e.id,
         );
         // 사수형 시그니처: 가속 직진(조준 견제탄).
         applyBehavior(shard, accelBehavior(shardSpeed, GUNNER_SHARD_ACCEL));
@@ -275,6 +277,7 @@ function sprayFragments(
     // Respect the segment's simultaneous enemy-bullet cap (perf + fairness).
     if (state.enemyBulletCount >= state.bulletCap) break;
     const ang = (i * TWO_PI) / count;
+    // ownerId = 이 파편 부채를 쏜 개체 자신(배치7 F2a — AS7 원한 표적 선결).
     const frag = spawnEnemyBullet(
       state,
       e.x,
@@ -285,6 +288,7 @@ function sprayFragments(
       atk.damage,
       atk.bulletRadius,
       atk.bulletLife,
+      e.id,
     );
     // 돌격형 시그니처: 곡사(파편이 완만히 휨). 발사 수는 그대로 — 밀도 절제.
     applyBehavior(frag, curveBehavior(atk.speed, CHARGER_FRAGMENT_CURVE_W));

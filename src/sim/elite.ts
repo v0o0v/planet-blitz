@@ -141,7 +141,9 @@ export function spawnEliteDeathFx(state: WorldState, e: Entity): void {
   for (let i = 0; i < n; i++) {
     if (state.enemyBulletCount >= state.bulletCap) break;
     const ang = (i * TWO_PI) / n;
-    spawnEnemyBullet(state, e.x, e.y, cos(ang) * speed, sin(ang) * speed, ang, damage, radius, life);
+    // ownerId = 이 파편을 뿌린 엘리트 자신(배치7 F2a — AS7 원한 표적 선결). 게이트가 닫혀
+    // 있으면 스탬프 자체가 스킵된다(entities.ts 의 spawnEnemyBullet 참조).
+    spawnEnemyBullet(state, e.x, e.y, cos(ang) * speed, sin(ang) * speed, ang, damage, radius, life, e.id);
     state.enemyBulletCount++;
   }
 }

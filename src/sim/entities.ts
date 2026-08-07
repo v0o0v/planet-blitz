@@ -11,6 +11,10 @@
  * both the world loop and the pattern engine can depend on it without cycles.
  */
 
+// 배치7 F2a — 원한 표적 게이트(AS7 선결). `grudgeGate.ts` 는 world/patterns/waves 를 import
+// 하지 않는 leaf 라 위 "leaf" 계약을 깨지 않는다(그 파일 헤더가 근거).
+import { grudgeTargetActive, type GrudgeGateState } from './grudgeGate.js';
+
 export type EntityKind =
   | 'player'
   | 'enemy'
@@ -245,9 +249,18 @@ export function spawnBullet(
   return addEntity(sink, b);
 }
 
-/** Spawn a hostile bullet with an explicit velocity. */
+/**
+ * Spawn a hostile bullet with an explicit velocity.
+ *
+ * @param ownerId 선택 인자 — 발사자 id(배치7 F2a, 팬텀 AS7「원한 청산」선결). **기본
+ *   `undefined` 이면 스탬프 자체를 건너뛴다**(`b.ownerId` 는 `blankEntity` 의 0 그대로) —
+ *   그래서 호출부를 갱신하지 않은 기존 자리(침공 3파일 등)는 손끝 하나 안 댄 것과 완전히
+ *   같다. 값을 넘겨도 {@link grudgeTargetActive} 게이트가 닫혀 있으면 여전히 스탬프하지
+ *   않는다 — `hashEntity` 가 `ownerId` 를 무조건 접으므로(조건부 폴드가 아니다) 게이트를
+ *   함수 안 한 곳에 모아 무투자·타 기체 런의 해시를 비트 단위로 지킨다(그 파일 헤더 근거).
+ */
 export function spawnEnemyBullet(
-  sink: EntitySink,
+  sink: EntitySink & GrudgeGateState,
   x: number,
   y: number,
   vx: number,
@@ -256,6 +269,7 @@ export function spawnEnemyBullet(
   damage: number,
   radius: number,
   life: number,
+  ownerId?: number,
 ): Entity {
   const b = blankEntity('enemyBullet');
   b.x = x;
@@ -266,6 +280,7 @@ export function spawnEnemyBullet(
   b.radius = radius;
   b.damage = damage;
   b.life = life;
+  if (ownerId !== undefined && grudgeTargetActive(sink)) b.ownerId = ownerId;
   return addEntity(sink, b);
 }
 
