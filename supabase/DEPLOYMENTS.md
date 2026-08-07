@@ -59,6 +59,17 @@
 | `20260808000000_pve_run_registration` | `pve_runs.started_at` · `begin_pve_run` · 축 D 캡(60/h) | #362 |
 | `20260808010000_item_grants_ledger` | `server_secrets` · `item_grants` · `drop_odds_mirror` · `grant_run_drops` · `mark_item_grant_applied` | #363 |
 | `20260808020000_invasion_rate_cap` | 축 A 침공 빈도 캡(20/h) | #364 |
+| `20260808030000_refine_server_roll` | `roll_refine` — 정련 차감+굴림을 한 트랜잭션으로 | #367 |
+
+⚠️ **클라가 이제 이 RPC 들을 부른다**(PR #366·#367). 앞 표에 적힌 *"지금 적용해도 동작
+변화가 없다"* 는 **낡았다** — 적용 순서가 생겼다:
+
+> **마이그레이션 먼저, 클라 배포는 그 뒤.**
+
+구 서버 + 신 클라면 `begin_pve_run`·`grant_run_drops` 가 `42883`(함수 없음)으로 실패하는데,
+드랍 축은 그 실패를 **로컬 롤로 강등**해 흡수하므로 무해하다. 그러나 **정련은 다르다** —
+`roll_refine` 이 없으면 `rollRefineOnServer` 가 `failed` 를 내고 클라가 **굴리지 않고 멈춘다**
+(공짜 굴림을 막으려 일부러 강등하지 않는 경로다). 즉 **정련이 통째로 먹통이 된다.**
 
 ⭐ **EF 는 셋 다 무관하다** — 순수 SQL 이라 `verify-*`·`daily-reward` 재배포가 필요 없다.
 
