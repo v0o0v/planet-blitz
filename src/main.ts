@@ -187,7 +187,7 @@ import {
   multCentiFor,
 } from './net/planetMultipliers.js';
 // 촉매 시스템(ADR-0029, Lane 4): 드랍 파생(순수) + 출격 폴백 모달.
-import { catalystDropsFromRun } from './data/catalystDrops.js';
+import { catalystDropsFromRun, catalystDropMultFromContributions } from './data/catalystDrops.js';
 import { normalizeCatalystArray, catalystById, catalystIconKey } from './data/catalysts.js';
 import { resolveResonance } from './data/catalystResonance.js';
 import { planetById } from '../data/planets.js';
@@ -2258,6 +2258,14 @@ async function main(): Promise<void> {
           loot: w.loot,
           planet: w.config.planet ?? 0,
           catalysts: w.config.catalysts ?? [],
+          // 촉매 드랍축 4종(id 21·33·38·45)의 배율. ⚠️ **주입 목록이 아니라 귀속 원장**에서
+          // 나온다 — 카드를 꽂았다는 사실만으로 서는 배율은 헌장 §상한 근거 규율이 금지한
+          // 무조건 배율이고, 구 모델이 정확히 그 실수를 했다(인계 §5-3).
+          // 무촉매 런은 `catalystContributions` 가 undefined 라 **필드를 아예 안 싣는다** →
+          // 입력 객체 형상까지 종전과 동일하다(드랍 결과는 물론 비트 동일).
+          ...(catalystContributions !== undefined
+            ? { catalystDropMult: catalystDropMultFromContributions(catalystContributions) }
+            : {}),
         });
         catalystDropTotal = catalystDrops.reduce((n, d) => n + d.qty, 0);
         catalystDropList = catalystDrops;
@@ -2273,7 +2281,13 @@ async function main(): Promise<void> {
         // push 가 끼어들면 재-pull 확인이 흔들린다.
         // 실패해도 원장 행은 서버에 남으므로 **다음 부팅의 배송 재개**가 줍는다.
         if (serverDrops && dropRunId !== null) {
-          void deliverRunDrops(dropRunId, w.loot.length, {
+          // `id 18 mercantile` 압류를 **서버 권위 경로에도 실제로 적용**한다. 이 모드에서
+          // settleRun 은 전리품을 굴리지 않으므로(itemsGained 가 빈 배열) 정산이 뺄 아이템이
+          // 없다 — 압류가 일어나는 유일한 자리가 여기, 클라가 주장하는 **개수**다.
+          // 이걸 안 깎으면 결과 화면은 "N점 압류"라고 적는데 서버는 전량을 배송한다(이 리포가
+          // 반복해 대가를 치른 「화면과 실제가 조용히 갈리는 두 자리」).
+          const seized = lastOutcome?.catalystDebt?.seized ?? 0;
+          void deliverRunDrops(dropRunId, Math.max(0, w.loot.length - seized), {
             planet: w.config.planet ?? 0,
             stage: w.config.stage ?? 1,
             levelCap: dropLevelCap,
@@ -2316,6 +2330,14 @@ async function main(): Promise<void> {
                 // 내역이 있으면 정산이 개별 아이콘 칩으로 편다(사용자 요청 2026-07-28).
                 ...(catalystDropTotal > 0
                   ? { catalystDrops: catalystDropTotal, catalystDropList }
+                  : {}),
+                // `id 18 mercantile` — 상환분과 압류분을 **갈라서** 넘긴다(ADR-0052 명세 `신호:`).
+                // 부채가 없으면 `catalystDebt` 자체가 없어 두 칸 다 안 실린다.
+                ...(o.catalystDebt !== undefined && o.catalystDebt.repaid > 0
+                  ? { debtRepaid: o.catalystDebt.repaid }
+                  : {}),
+                ...(o.catalystDebt !== undefined && o.catalystDebt.seized > 0
+                  ? { debtSeized: o.catalystDebt.seized }
                   : {}),
                 // M5 C2: 획득 전투력 합계 + 등급별 장비 칩 목록(정산 완성판).
                 combatPower: totalCombatPower(o.itemsGained),

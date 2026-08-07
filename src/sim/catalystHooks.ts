@@ -102,6 +102,9 @@ import { applyPowerup } from './powerups.js';
 // 앵커 ⑥ 의 소멸 사유. **type-only 라 순환이 되지 않는다**(`skillHooks.ts` 가 이 파일을
 // 값으로 import 하므로 값 import 는 순환이다) — 컴파일에서 지워진다.
 import type { BulletExpiryReason } from './skillHooks.js';
+// 앵커 «주무기 피해 배율» 의 인자 타입. **type-only 라 순환이 되지 않는다**(위 `BulletExpiryReason`
+// 과 같은 사유 — `skillHooks.ts` 가 이 파일을 값으로 끌므로 값 import 는 순환이다).
+import type { VolleyParams } from './skillHooks.js';
 import type { DamageSourceMask } from './skillSlots.js';
 
 // ---------------------------------------------------------------------------
@@ -151,6 +154,62 @@ export function onVolleyFiredCatalyst(state: WorldState, player: Entity): void {
   gToxar.toxarOnVolleyFired(state, player);
   gKras.krasOnVolleyFired(state, player);
   gResonance.resonanceOnVolleyFired(state, player);
+}
+
+/**
+ * 앵커 — **주무기 볼리 파라미터가 확정된 직후 · 탄이 태어나기 직전.** 스킬 앵커
+ * `onVolleyParams`(⑯) **바로 뒤**에 선다.
+ *
+ * ## ⭐ 이 앵커가 여는 것 — "플레이어가 **주는** 피해"
+ * 촉매 24앵커에는 **플레이어가 주는 피해에 배율을 거는 자리가 하나도 없었다**(실측). 실제로
+ * 두 카드가 그 부재에 걸려 있었다:
+ *  - `id 16 foundry` — 대가(*"포탑 수만큼 공격력이 나뉜다"*)를 걸 자리가 없어 **카드 전체가
+ *    멈춰 있었다.** 이득만 얹으면 대가 없는 순수 상향이라 헌장 §페널티 규율 위반이다.
+ *  - `id 25 overdrive` — 임시로 `onEnemyDamagedCatalyst` 에서 **추가 피해**로 얹혀 있었다.
+ *    그 자리는 `dead` 가 이미 선 뒤라 **관통·과잉피해 의미가 실제 무기 강화와 다르다**
+ *    (관통탄이 두 번째 적에게 주는 피해에는 안 실리고, 과잉피해가 시체에 낭비된다).
+ *    여기로 옮긴 것이 정본이다.
+ *
+ * ## ⚠️ 이 레코드에서만 읽는다 (호출부 계약)
+ * 호출부 주석이 못 박은 것: *"아래 아키타입 분기는 이 레코드에서만 읽는다. `w.bulletCount`
+ * 처럼 무기 원본을 직접 읽는 자리가 하나라도 남으면 훅이 그 필드를 고쳐도 조용히 무연산이
+ * 된다."* 그래서 여기서 `volley.damage` 를 고치면 실제 탄에 그대로 실린다.
+ *
+ * ⚠️ **아키타입마다 읽는 필드가 다르다** — 빔은 `damage`·`mark`·`cooldownQ` **뿐**이다
+ * (`skillHooks.ts` 의 앵커 ⑯ doc). `count`·`spread` 를 고치는 카드는 그 사실을 함께 봐야 한다.
+ * `damage` 는 **전 아키타입이 읽으므로** 피해 배율은 어느 무기에서도 안 새는 축이다.
+ *
+ * ## ⚠️ 배율은 **곱해서 누적**하되 각 그룹은 원값을 본다
+ * `onDamageChainCatalyst` 와 같은 규율이다 — 중간값을 넘기면 앞 그룹의 배율이 뒤 그룹의 판정
+ * 기준을 바꾼다. 다만 이 앵커는 **레코드를 가변으로 넘기는** 형태(스킬 앵커와 같은 계약)라
+ * 그룹이 직접 `volley.damage` 를 고친다. 그래서 순서가 계약이고, 팬아웃 순서는 다른 앵커와
+ * **동일**(공용 → 특산 행성순 → 공명)하다.
+ *
+ * ⚠️ **RNG 미소비.** 이 지점은 `emitVolley` 앞이라 난수를 굴리면 탄 확산·드랍 스트림이 통째로
+ * 밀린다. 배율은 슬롯·포탑 수 같은 **이미 정해진 상태의 순수 파생**이어야 한다.
+ */
+export function onVolleyParamsCatalyst(
+  state: WorldState,
+  player: Entity,
+  volley: VolleyParams,
+): void {
+  if (!state.catalystOn) return;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  // 무촉매 런은 위 첫 줄에서 이미 반환했고, 전 그룹이 레코드를 안 건드리는 지금은 호출부가
+  // 넘긴 값이 그대로 남는다(바이트 불변).
+  gDrops.dropsOnVolleyParams(state, player, volley);
+  gRefine.refineOnVolleyParams(state, player, volley);
+  gGrowth.growthOnVolleyParams(state, player, volley);
+  gResource.resourceOnVolleyParams(state, player, volley);
+  gChain.chainOnVolleyParams(state, player, volley);
+  gPower.powerOnVolleyParams(state, player, volley);
+  gKargon.kargonOnVolleyParams(state, player, volley);
+  gBerdan.berdanOnVolleyParams(state, player, volley);
+  gNiflheim.niflheimOnVolleyParams(state, player, volley);
+  gArke.arkeOnVolleyParams(state, player, volley);
+  gToxar.toxarOnVolleyParams(state, player, volley);
+  gKras.krasOnVolleyParams(state, player, volley);
+  gResonance.resonanceOnVolleyParams(state, player, volley);
 }
 
 /**
@@ -1091,6 +1150,100 @@ export function onDestructibleDestroyedCatalyst(state: WorldState, e: Entity): b
   if (gKras.krasOnDestructibleDestroyed(state, e)) suppress = true;
   if (gResonance.resonanceOnDestructibleDestroyed(state, e)) suppress = true;
   return suppress;
+}
+
+/**
+ * 앵커 — **적성 표적이 지금 얼마나 단단한가**(아군탄 명중 피해에 곱하는 배율).
+ *
+ * ## ⭐ 왜 승격했는가 — 두 그룹이 **같은 산식 자리를 다투고 있었다**
+ * 종전에는 `world.ts` 가 `catalyst/kargon.ts` 와 `catalyst/resonance.ts` 를 **직접 import** 해
+ * 피해 산식 안에서 나란히 곱했다:
+ * ```
+ * dealt = b.damage × mult × gyroAmp × prismAmp × eliteDamageTakenMult(t)
+ *       × kargonLavaArmorMult(state, t, px, py)   ← id 32 보스 갑주
+ *       × emberDamageTakenMult(t)                 ← 점화 약공명 '불씨'
+ * ```
+ * 문제가 셋이었다:
+ *  1. **팬아웃 계약이 깨진다** — *"카드 레인은 자기 그룹 모듈만 만진다"* 인데 같은 자리를 쓰는
+ *     새 카드가 나올 때마다 `world.ts` 를 또 고쳐야 했다.
+ *  2. **합성 순서가 소스 줄 순서에 암묵적으로 걸려 있었다.** 둘 다 배율이라 곱셈 교환법칙으로
+ *     값은 같지만, 조건부 배율(*"이 표적이 X 이면"*)이 하나라도 들어오면 순서가 의미를 가른다.
+ *     여기로 모으면 순서가 **명시된 계약**이 된다(팬아웃 순서 = 다른 앵커와 동일).
+ *  3. **무촉매 게이트가 흩어져 있었다** — 가장 위험한 축이다. `kargonLavaArmorMult` 는 첫 줄이
+ *     `state.catalystOn` 이지만 `emberDamageTakenMult` 는 **게이트가 아예 없고** 마크 읽기에만
+ *     의존했다(무촉매 런은 비트가 0 이라 우연히 맞았다). 이제 게이트가 **이 앵커 첫 줄 하나**다.
+ *
+ * ## ⚠️ 자리를 옮기지 마라 — 앵커 ⑩ 은 이 배율을 못 대신한다
+ * `onEnemyDamagedCatalyst` 는 `t.hp -= dealt` **뒤**라 이번 명중을 못 바꾸고, 거기서 hp 를
+ * 되돌리면 이미 `dead` 가 선 적을 되살려 **좀비**가 된다.
+ *
+ * ## ⚠️ 각 그룹은 **원값이 아니라 표적만** 본다 — 중간값을 안 넘긴다
+ * `onDamageChainCatalyst` 와 같은 규율이다(앞 그룹의 배율이 뒤 그룹의 판정 기준을 바꾸면 안 된다).
+ *
+ * @param px 플레이어 x — `id 32` 가 *"가까이 붙을수록 물러진다"* 를 재는 데 쓴다.
+ * @param py 동상 y
+ * @returns 곱할 배율. 무촉매 런은 **정확히 `1`**(IEEE754 에서 `x*1 === x` 라 비트 동일).
+ */
+export function onEnemyDamageTakenMultCatalyst(
+  state: WorldState,
+  target: Entity,
+  px: number,
+  py: number,
+): number {
+  if (!state.catalystOn) return 1;
+  // ── 그룹 팬아웃 · **배율은 고정 순서대로 곱해서 누적**한다(순서가 계약이다) ──
+  let m = 1;
+  m *= gDrops.dropsOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gRefine.refineOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gGrowth.growthOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gResource.resourceOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gChain.chainOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gPower.powerOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gKargon.kargonOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gBerdan.berdanOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gNiflheim.niflheimOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gArke.arkeOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gToxar.toxarOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gKras.krasOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gResonance.resonanceOnEnemyDamageTakenMult(state, target, px, py);
+  return m;
+}
+
+/**
+ * 앵커 — **부술 수 있는 벽(`kind === 'wall'`)이 아군탄에 부서진 사건**.
+ *
+ * ## ⭐ 왜 이 앵커가 따로 필요한가 — 24앵커에 벽 파괴 지점이 **없다**
+ * {@link onDestructibleDestroyedCatalyst} 는 `compact()` 안의 **`destructible` kind** 분기라
+ * 벽이 **원리적으로 도달하지 않는다**(`compact` 의 else-if 사슬에 `wall` 분기가 아예 없다).
+ * 그렇다고 다음 틱의 `onTick` 으로 미룰 수도 없다 — 같은 틱의 `compact()` 가 시체를 걷어 가
+ * (`state.entities = survivors`) **좌표조차 복원할 수 없다.** 이 사건은 여기서만 잡힌다.
+ *
+ * ## 승격 사유
+ * 종전에는 `world.ts` 가 `krasOnWallDestroyed` 를 직접 import 했다. 그 자체는 게이트가
+ * 제대로 서 있었지만(첫 줄 `state.catalystOn`), **기다리는 소비자가 이미 있다** —
+ * `id 39 arke-overclock` 의 *"벽이 부서지며 자원"* 조각이 이 지점을 요구한다고
+ * {@link onWallContactCatalyst} 주석에 기록돼 있다. 그 카드가 배선될 때 `world.ts` 를 또
+ * 고치게 두지 않으려고 지금 팬아웃으로 연다.
+ *
+ * ⚠️ 이 호출은 아군탄↔벽 스윕 **순회 안**이다 — 훅에서 스폰 금지. 좌표만 모아 순회 밖에서 낳아라.
+ * ⚠️ `id 45` 가 직후에 `dead` 를 되돌려 hp 0 엄폐물로 남긴다. 여기서 `wall.dead` 를 믿지 마라.
+ */
+export function onWallDestroyedCatalyst(state: WorldState, wall: Entity): void {
+  if (!state.catalystOn) return;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnWallDestroyed(state, wall);
+  gRefine.refineOnWallDestroyed(state, wall);
+  gGrowth.growthOnWallDestroyed(state, wall);
+  gResource.resourceOnWallDestroyed(state, wall);
+  gChain.chainOnWallDestroyed(state, wall);
+  gPower.powerOnWallDestroyed(state, wall);
+  gKargon.kargonOnWallDestroyed(state, wall);
+  gBerdan.berdanOnWallDestroyed(state, wall);
+  gNiflheim.niflheimOnWallDestroyed(state, wall);
+  gArke.arkeOnWallDestroyed(state, wall);
+  gToxar.toxarOnWallDestroyed(state, wall);
+  gKras.krasOnWallDestroyed(state, wall);
+  gResonance.resonanceOnWallDestroyed(state, wall);
 }
 
 /**

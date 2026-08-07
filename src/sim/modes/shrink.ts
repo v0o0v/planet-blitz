@@ -19,6 +19,15 @@
  * → hashWorld 는 `shrinkRuntime !== undefined` 게이트로 shrink 런에만 정수 2필드를 append-only
  *   꼬리에 접는다 → 뱀서류·침공·블록격파·레이싱·추격·오염 바이트 불변.
  *
+ * ## 안전 원의 **중심은 인자다**(기본 `(0,0)` — 종전 하드코딩 원점)
+ * `id 33 berdan-collapse`(촉매 특산)가 *"안전 원이 15초마다 다른 곳으로 점프한다"* 라 중심이
+ * 런타임에 움직인다. 원점은 이 파일 둘(`shrinkOutOfBounds`·`shrinkRingCleared`)과 `waves.ts`
+ * 스폰 링 · `world.ts` 보스 소환 좌표, **넷에 하드코딩**돼 있었다 — 넷을 같이 안 옮기면 원과
+ * 게이트가 갈려 *"원점 근처 적이 사라질 때마다 세그먼트가 자동 전진"* 한다.
+ * ⚠️ **기본 인자가 `(0,0)` 이라 무촉매 런은 산술이 비트 동일이다**
+ * (`scripts/catalystByteInvariance.ts` 가 그것을 잠근다). 촉매를 이 모듈이 import 하지 않는
+ * 것도 계약이다 — 간선 방향은 **촉매가 모드를 읽는 쪽**이다(`catalyst/shared.ts` §id 33).
+ *
  * ## 결정론(ADR-0005)
  * RNG·Date.now·전역을 쓰지 않는다. 반경·유예·감소량 전부 **정수 필수**(hashU32 로 접힘 —
  * 소수부 유실). 감소는 정수 뺄셈뿐(부동소수 금지). 배치 RNG 없음 — 적은 웨이브 디렉터 기존
@@ -208,11 +217,13 @@ export function shrinkSpawnRadius(state: WorldState): number {
  * 누적이 없다. shrinkRuntime 미존재면 즉시 return(수축 아님 → 무피해). 하드 클램프는 걸지
  * 않는다(밖으로 나갈 수는 있고 피해만 받는 배틀로얄식 압박).
  */
-export function shrinkOutOfBounds(state: WorldState, player: Entity): void {
+export function shrinkOutOfBounds(state: WorldState, player: Entity, cx = 0, cy = 0): void {
   const rt = state.shrinkRuntime;
   if (rt === undefined) return;
   const safeR = rt.safeRadius;
-  if (player.x * player.x + player.y * player.y <= safeR * safeR) return; // 안 = 무피해
+  const px = player.x - cx;
+  const py = player.y - cy;
+  if (px * px + py * py <= safeR * safeR) return; // 안 = 무피해
   if (player.iframes > 0) return;
   player.hp -= SHRINK_OUT_OF_BOUNDS_DAMAGE;
   if (player.hp < 0) player.hp = 0;
@@ -229,14 +240,16 @@ export function shrinkOutOfBounds(state: WorldState, player: Entity): void {
  * enemy/boss 를 함께 세지만 shrink 는 enemy 만 — 보스 세그먼트 도달·처치는 stepBoss/compact
  * 공통 경로가 관리한다(세그먼트 전진 게이트는 `!seg.boss` 라 보스 세그먼트에는 애초 안 걸린다).
  */
-export function shrinkRingCleared(state: WorldState): boolean {
+export function shrinkRingCleared(state: WorldState, cx = 0, cy = 0): boolean {
   const rt = state.shrinkRuntime;
   if (rt === undefined) return false;
   const safeR = rt.safeRadius;
   const r2 = safeR * safeR;
   for (const e of state.entities) {
     if (e.dead || e.kind !== 'enemy') continue;
-    if (e.x * e.x + e.y * e.y <= r2) return false;
+    const dx = e.x - cx;
+    const dy = e.y - cy;
+    if (dx * dx + dy * dy <= r2) return false;
   }
   return true;
 }

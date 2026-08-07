@@ -13,6 +13,16 @@ import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
 // 촉매 그림자 제외(ADR-0052). `catalyst/shared.ts` 는 리프라 순환이 생기지 않는다.
 import { isCatalystShadow } from './catalyst/shared.js';
+// `id 33 berdan-collapse` — 안전 원의 중심과 즉사 창 게이트 잠금. 미소지 런은 각각 `0`·`false`
+// 라 아래 두 자리가 **종전과 비트 동일**이다. 간선 방향(모드→촉매 읽기)의 사유는 그쪽 §주석.
+import {
+  berdanSafeCenterX,
+  berdanSafeCenterY,
+  berdanCollapseLocked,
+} from './catalyst/shared.js';
+// `id 13 enlightenment` 의 급행 램프 배율. **이 방향만 성립한다** — `catalyst/growth.ts` 가
+// `waves.js` 를 값으로 끌면 순환이라, 그쪽은 적 수를 직접 센다(그 파일 §주석에 근거).
+import { enlightenmentRushStepMult } from './catalyst/growth.js';
 import { blankEntity, addEntity } from './entities.js';
 import type { EnemyDef } from './patterns/types.js';
 import { ENEMY_BY_TYPE } from '../../data/enemies.js';
@@ -326,7 +336,11 @@ export function updateWaves(state: WorldState, player: Entity): void {
   // 전진 게이트는 리더 처치인데, 리더를 못 잡는 동안 압박이 누적돼야 "약하면 길어지다 사망"
   // 이라는 창발적 캡(ADR-0011)이 격전에도 성립한다. 램프를 끄면 화력이 부족한 빌드가 리더를
   // 못 잡은 채 무한히 머무는 정체 구간이 생긴다.
-  const rushSteps = seg.boss ? 0 : Math.floor(w.segmentElapsed / RUSH_RAMP_TICKS);
+  // 촉매 `id 13 enlightenment` 의 **대가** — 급행 소환이 두 배다. 미소지 런은 배율이 정확히
+  // 1 이라 곱셈이 무연산(바이트 불변)이고, `carries` 순회 비용은 최대 3 이다.
+  const rushSteps = seg.boss
+    ? 0
+    : Math.floor(w.segmentElapsed / RUSH_RAMP_TICKS) * enlightenmentRushStepMult(state);
   const rushEnemyBonus = Math.min(rushSteps * RUSH_ENEMY_STEP, RUSH_ENEMY_MAX);
   // 촉매 적 수 페널티 × 침략 단계 밀도↑: raise the onscreen enemy cap. 단계 밀도는
   // 데이터 주도(STAGE_MILESTONES.densityMult) — 밴드0/1(단계1..20)은 1(거동 불변), 밴드2(21+)는 ×1.5.
@@ -421,7 +435,11 @@ export function updateWaves(state: WorldState, player: Entity): void {
       // 마지막 일반 세그먼트 통과 → 보스 세그먼트 → 아레나 중심 보스(stepBoss 공통 경로). 전진
       // 시 유예 리셋(아래 if(cleared) 블록)이 반경을 잠시 홀드해 수축 사이클을 이력 의존으로
       // 만든다(shrinkRuntime 신규 필드 정당성). planetMode 게이트라 뱀서류·침공 거동 불변.
-      cleared = shrinkRingCleared(state);
+      // ⚠️ `id 33` 은 즉사 창마다 원을 **비운다** — 잠금이 없으면 15초마다 세그먼트가 자동
+      // 전진한다(중심을 인자화해도 남는 결함이다. 사유 전문은 `catalyst/berdan.ts` §id 33).
+      cleared =
+        !berdanCollapseLocked(state) &&
+        shrinkRingCleared(state, berdanSafeCenterX(state), berdanSafeCenterY(state));
     } else cleared = state.kills - w.segmentBaseKills >= w.segmentKillGoal;
     if (cleared) {
       w.segmentIndex++;
@@ -660,9 +678,14 @@ function formationPositions(
   if (mode === PLANET_MODE.shrink) {
     const start = rng.range(-PI, PI);
     const r = shrinkSpawnRadius(state);
+    // 중심은 `id 33` 이 실렸을 때만 원점에서 벗어난다(미소지면 `0` → 종전 산술과 비트 동일).
+    // 스폰이 **새 원 안**이어야 링 전멸 게이트가 성립한다 — 반경만 옮기고 중심을 안 옮기면
+    // 적이 원 밖에 서서 게이트가 항상 참이 된다.
+    const cx = berdanSafeCenterX(state);
+    const cy = berdanSafeCenterY(state);
     for (let i = 0; i < count; i++) {
       const ang = start + (i * TWO_PI) / count;
-      out.push({ x: cos(ang) * r, y: sin(ang) * r });
+      out.push({ x: cx + cos(ang) * r, y: cy + sin(ang) * r });
     }
     return out;
   }

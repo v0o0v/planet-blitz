@@ -131,29 +131,57 @@ export function isBreakableWall(e: Entity): boolean {
  * (±GAP_HALF_W)를 남긴 좌·우 AABB 벽 세그먼트로 이뤄진다. 틈새 중심은 고정 지그재그
  * (RNG 미사용)라 같은 코스가 항상 동일 배치다 — 시드·해시 스트림에 영향이 없다.
  */
-export function placeBlockBreakWalls(sink: EntitySink): void {
+export function placeBlockBreakWalls(sink: EntitySink, hpMult = 1): void {
   const rows = Math.floor(blockBreakCourseLength() / BLOCKBREAK_ROW_SPACING);
   for (let i = 0; i < rows; i++) {
     const y = -(i + 1) * BLOCKBREAK_ROW_SPACING;
     // 지그재그 틈새 중심(고정 패턴): 행마다 좌·우로 번갈아 벌린다. TODO(밸런스).
     const gapCenterX = (i % 2 === 0 ? 1 : -1) * (COURSE_HALF_W * 0.35);
-    placeWallRow(sink, y, gapCenterX);
+    placeWallRow(sink, y, gapCenterX, hpMult);
   }
 }
 
-/** 한 행에 틈새(gapCenterX ± GAP_HALF_W)를 남긴 좌·우 벽 세그먼트를 배치한다. */
-function placeWallRow(sink: EntitySink, y: number, gapCenterX: number): void {
+/**
+ * 이 코스가 배치하는 파괴가능 벽의 **총 개수**(순수 파생 — 엔티티를 안 본다).
+ *
+ * 행마다 좌·우 두 세그먼트가 서고, 틈새 중심 `±0.35 × COURSE_HALF_W` 와
+ * `BLOCKBREAK_GAP_HALF_W` 조합에서는 두 세그먼트가 **항상** 생략 조건 밖이다. 그래도 상수가
+ * 바뀌면 갈리므로 배치와 같은 식을 여기 한 번 더 적지 않고 **배치 조건을 그대로 센다.**
+ *
+ * `id 47 kras-colossus` 가 *"부순 비율"* 의 분모로 쓴다 — 런 시작 시점의 수를 어딘가에 적어
+ * 두지 않아도 되게 하는 것이 목적이다(촉매 슬롯 예산이 0 이다).
+ */
+export function blockBreakWallCount(): number {
+  const rows = Math.floor(blockBreakCourseLength() / BLOCKBREAK_ROW_SPACING);
+  let n = 0;
+  for (let i = 0; i < rows; i++) {
+    const gapCenterX = (i % 2 === 0 ? 1 : -1) * (COURSE_HALF_W * 0.35);
+    if (gapCenterX - BLOCKBREAK_GAP_HALF_W > -COURSE_HALF_W) n++;
+    if (gapCenterX + BLOCKBREAK_GAP_HALF_W < COURSE_HALF_W) n++;
+  }
+  return n;
+}
+
+/**
+ * 한 행에 틈새(gapCenterX ± GAP_HALF_W)를 남긴 좌·우 벽 세그먼트를 배치한다.
+ *
+ * `hpMult` 는 `id 45 kras-breach`(블록이 세 배 단단해진다)가 쓰는 **배치 시점** 배수다. 기본 1
+ * 이면 `Math.round(hp * 1) === hp` 라 종전과 바이트 동일이고, 촉매를 안 실은 런은 호출부가
+ * 1 을 넘긴다.
+ */
+function placeWallRow(sink: EntitySink, y: number, gapCenterX: number, hpMult = 1): void {
   const gapLeft = gapCenterX - BLOCKBREAK_GAP_HALF_W;
   const gapRight = gapCenterX + BLOCKBREAK_GAP_HALF_W;
+  const hp = Math.round(BLOCKBREAK_WALL_HP * hpMult);
   // 좌측 세그먼트: [-COURSE_HALF_W, gapLeft] (틈새가 좌벽에 닿으면 생략).
   if (gapLeft > -COURSE_HALF_W) {
     const halfW = (gapLeft + COURSE_HALF_W) / 2;
-    spawnBreakableWall(sink, -COURSE_HALF_W + halfW, y, halfW, BLOCKBREAK_WALL_HALF_H, BLOCKBREAK_WALL_HP);
+    spawnBreakableWall(sink, -COURSE_HALF_W + halfW, y, halfW, BLOCKBREAK_WALL_HALF_H, hp);
   }
   // 우측 세그먼트: [gapRight, COURSE_HALF_W] (틈새가 우벽에 닿으면 생략).
   if (gapRight < COURSE_HALF_W) {
     const halfW = (COURSE_HALF_W - gapRight) / 2;
-    spawnBreakableWall(sink, gapRight + halfW, y, halfW, BLOCKBREAK_WALL_HALF_H, BLOCKBREAK_WALL_HP);
+    spawnBreakableWall(sink, gapRight + halfW, y, halfW, BLOCKBREAK_WALL_HALF_H, hp);
   }
 }
 
