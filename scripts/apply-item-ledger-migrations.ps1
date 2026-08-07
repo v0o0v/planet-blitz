@@ -207,10 +207,10 @@ if ([int]$led.grants_write -ne 0) { Write-Host "[FAIL] item_grants has a client 
 if ([int]$led.secrets_any  -ne 0) { Write-Host "[FAIL] server_secrets is reachable by a client policy - offline seed search reopens"; $bad++ }
 
 # 6. The server secret seeded exactly once and is non-empty. Do NOT print it.
-$sec2 = Invoke-Sql "select count(*) as n, coalesce(bool_and(length(value) > 0), false)::text as filled from public.server_secrets;"
-Write-Host ("[OK] server_secrets: rows={0} all_non_empty={1}" -f $sec2.n, $sec2.filled)
+$sec2 = Invoke-Sql "select count(*) as n, coalesce(bool_and(octet_length(secret) >= 32), false)::text as filled from public.server_secrets;"
+Write-Host ("[OK] server_secrets: rows={0} all_ge_32_bytes={1}" -f $sec2.n, $sec2.filled)
 if ([int]$sec2.n -lt 1)      { Write-Host "[FAIL] server_secrets is empty - grant_run_drops cannot derive seeds"; $bad++ }
-if ($sec2.filled -ne 'true') { Write-Host "[FAIL] a server_secrets row has an empty value"; $bad++ }
+if ($sec2.filled -ne 'true') { Write-Host "[FAIL] a server_secrets row is shorter than 32 bytes"; $bad++ }
 
 # 7. cron jobs registered.
 $cron = Invoke-Sql "select count(*) as n from cron.job where command like '%rollup_telemetry_daily%' or command like '%telemetry_daily_%';"
