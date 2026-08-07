@@ -654,7 +654,7 @@ describe('⑫ FO7 전리 개장 (앵커 ⑪)', () => {
 
     p.aux0 = 8;
     const before = p.maxHp;
-    onEnemyDeath(w, 100, 100, true);
+    onEnemyDeath(w, 100, 100, true, false);
     // per = round(1 + 6×10/24) = round(3.5) = 4 → 8스택 × 4 = 32.
     expect(p.maxHp).toBe(before + 32);
     expect(readSlot(w.skillCarry, BruiserCarry.trophyGranted)).toBe(32);
@@ -667,7 +667,7 @@ describe('⑫ FO7 전리 개장 (앵커 ⑪)', () => {
     onSignatureStep(w, p, emptyInput());
     p.aux0 = 3;
     const before = p.maxHp;
-    onEnemyDeath(w, 100, 100, false);
+    onEnemyDeath(w, 100, 100, false, false);
     expect(p.maxHp).toBe(before);
     expect(p.aux0).toBe(3);
   });
@@ -681,7 +681,7 @@ describe('⑫ FO7 전리 개장 (앵커 ⑪)', () => {
     writeSlot(w.skillCarry, BruiserCarry.trophyGranted, cap - 5);
     p.aux0 = 8;
     const before = p.maxHp;
-    onEnemyDeath(w, 0, 0, true);
+    onEnemyDeath(w, 0, 0, true, false);
     expect(p.maxHp).toBe(before + 5); // 32 를 요구했지만 남은 여유는 5 뿐
     expect(readSlot(w.skillCarry, BruiserCarry.trophyGranted)).toBe(cap);
   });
@@ -692,7 +692,7 @@ describe('⑫ FO7 전리 개장 (앵커 ⑪)', () => {
     p.aux0 = 2;
     const before = p.maxHp;
     onSignatureStep(w, p, emptyInput());
-    onEnemyDeath(w, 0, 0, true);
+    onEnemyDeath(w, 0, 0, true, false);
     expect(p.maxHp).toBe(before);
     expect(p.aux0).toBe(2);
     expect(readSlot(w.skillCarry, BruiserCarry.trophyBaseHp)).toBe(0);

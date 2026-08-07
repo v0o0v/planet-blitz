@@ -22,9 +22,14 @@ import {
   stepWorld,
   emptyInput,
   DEFAULT_CONFIG,
+  SPECIAL_ACTIVE_SLOT1,
+  type InputFrame,
   type WorldConfig,
   type WorldState,
 } from '../src/sim/world.js';
+import { stepActives } from '../src/sim/actives.js';
+import { wireIdOf } from '../data/ships/actives/index.js';
+import { COLD_DURATION } from '../src/sim/status.js';
 import type { Entity } from '../src/sim/entities.js';
 import { blankEntity } from '../src/sim/entities.js';
 import { hashWorld } from '../src/sim/replay.js';
@@ -68,6 +73,7 @@ const AS4 = 3;
 const AS5 = 4;
 const AS9 = 8;
 const PH1 = 10;
+const PH2 = 11;
 const PH3 = 12;
 const PH6 = 15;
 const PH10 = 19;
@@ -1247,5 +1253,126 @@ describe('⑲ PH6 정지된 시계 (앵커 ② + ⑨)', () => {
     expect(run([[PH1, 1]])).toBe(302);
     // 투자 런은 한 틱이 멈춰 1 만 는다.
     expect(run([[PH6, 10]])).toBe(301);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑳ PH2 위상 착지 (앵커 ㉗ `onActiveFired`)
+// ---------------------------------------------------------------------------
+//
+// 설계서: 위상 액티브(blink) **착지 지점** 주변 적탄 소거 + 냉기. 반경 = 140 + 10×Lv.
+//
+// ## 왜 `stepWorld` 가 아니라 `stepActives` 를 직접 부르는가
+// 앵커 ㉗ 은 `stepActives` **안**에 있으므로 이 함수를 부르는 것이 곧 앵커를 통과하는 것이다.
+// `stepWorld` 를 쓰면 같은 틱의 자동사격이 배치한 적탄·적을 **수정 전에도** 치워 버려
+// (≈30px/tick) 계측이 무의미해진다 — 그래서 발사부가 안 도는 이 경로를 골랐다.
+//
+// ## ⚠️ 벽을 비운다
+// `blink` 는 `state.activeWalls` 가 비어 있지 않으면 `slideCircleWalls` 로 착지점을 보정한다.
+// 착지점을 **예측 가능한 좌표**로 고정해야 "출발 옆은 살고 착지 옆은 죽는다" 를 잴 수 있으므로
+// 청크 벽을 비우고 시작한다.
+
+describe('⑳ PH2 위상 착지 (앵커 ㉗)', () => {
+  /** 위상 저티어(blink 600) 를 슬롯 0 에 실은 팬텀 런. */
+  function phaseWorld(points: ReadonlyArray<readonly [number, number]>): WorldState {
+    const w = createWorld(1234, {
+      ...phantomConfig(),
+      skillInvest: invest(points),
+      activeSlots: [wireIdOf('as_phantom_phase_lo'), -1],
+    });
+    w.activeWalls.length = 0;
+    return w;
+  }
+
+  /** 발동 방향 +x 고정. 착지점 = 발동 전 `player.x + BLINK_DISTANCE`. */
+  const DIR = { x: 1, y: 0 };
+  /** `data/ships/actives/phantom.ts` 의 `as_phantom_phase_lo.coeff.distance`. */
+  const BLINK_DISTANCE = 600;
+  const FIRE: InputFrame = { ...emptyInput(), special: SPECIAL_ACTIVE_SLOT1 };
+
+  function addEnemyBullet(state: WorldState, x: number, y: number): Entity {
+    const b: Entity = { ...blankEntity('enemyBullet'), x, y, radius: 6 };
+    state.entities.push(b);
+    return b;
+  }
+
+  /**
+   * 착지점 기준 오프셋 배치 → 1회 발동. 반환은 [적탄, 적] 쌍의 배열.
+   * 오프셋은 전부 **+y** 라 blink 축(+x)과 직교한다 — 이동 경로에 놓이지 않는다.
+   */
+  function fireWith(
+    w: WorldState,
+    offsets: readonly number[],
+  ): { bullets: Entity[]; enemies: Entity[]; landingX: number } {
+    const p = player(w);
+    const landingX = p.x + BLINK_DISTANCE;
+    const bullets: Entity[] = [];
+    const enemies: Entity[] = [];
+    for (const d of offsets) {
+      bullets.push(addEnemyBullet(w, landingX, p.y + d));
+      enemies.push(addEnemy(w, landingX, p.y + d, 1000));
+    }
+    stepActives(w, p, FIRE, DIR);
+    return { bullets, enemies, landingX };
+  }
+
+  it('Lv1(반경 150) — 착지점 100 안쪽 적탄은 소거되고 300 바깥 적탄은 남는다', () => {
+    const w = phaseWorld([[PH2, 1]]);
+    const { bullets } = fireWith(w, [100, 300]);
+    expect(bullets[0]?.dead).toBe(true);
+    expect(bullets[1]?.dead).toBe(false);
+  });
+
+  it('Lv1 — 반경 안 잡몹에만 냉기가 걸린다 (`ownerId` = 남은 감속 틱)', () => {
+    const w = phaseWorld([[PH2, 1]]);
+    const { enemies } = fireWith(w, [100, 300]);
+    expect(enemies[0]?.ownerId).toBe(COLD_DURATION);
+    expect(enemies[1]?.ownerId).toBe(0);
+    // ⚠️ 좀비 방지 — PH2 는 hp 를 깎지 않으므로 `dead` 를 세우지 않는 것이 옳다.
+    expect(enemies[0]?.hp).toBe(1000);
+    expect(enemies[0]?.dead).toBe(false);
+  });
+
+  it('하한 — PH2 미투자 런에서는 같은 배치의 적탄이 **둘 다 산다** (항진 방지)', () => {
+    // 이 짝이 없으면 "소거됐다" 단언은 배선이 끊겨도 참일 수 있는 형태로 남는다.
+    const w = phaseWorld([[PH1, 1]]);
+    const { bullets, enemies } = fireWith(w, [100, 300]);
+    expect(bullets[0]?.dead).toBe(false);
+    expect(bullets[1]?.dead).toBe(false);
+    expect(enemies[0]?.ownerId).toBe(0);
+  });
+
+  it('반경 단조 — Lv20(340)은 Lv1(150)이 못 닿던 300 지점을 소거한다', () => {
+    const lo = phaseWorld([[PH2, 1]]);
+    expect(fireWith(lo, [300]).bullets[0]?.dead).toBe(false);
+    const hi = phaseWorld([[PH2, 20]]);
+    expect(fireWith(hi, [300]).bullets[0]?.dead).toBe(true);
+  });
+
+  it('기준점은 **착지 지점**이다 — 출발 자리 옆 적탄은 Lv20 에서도 산다', () => {
+    // blink 600 > Lv20 반경 340 이라, 출발 기준이었다면 이 탄이 죽는다. 앵커가 핸들러
+    // **뒤**에 있다는 사실 자체를 재는 단언이다.
+    const w = phaseWorld([[PH2, 20]]);
+    const p = player(w);
+    const atStart = addEnemyBullet(w, p.x + 20, p.y);
+    const atLanding = addEnemyBullet(w, p.x + BLINK_DISTANCE, p.y + 20);
+    stepActives(w, p, FIRE, DIR);
+    expect(atStart.dead).toBe(false);
+    expect(atLanding.dead).toBe(true);
+  });
+
+  it('계열 게이트 — 위상(treeIndex 1) 이 아닌 액티브는 정화를 일으키지 않는다', () => {
+    const w = createWorld(1234, {
+      ...phantomConfig(),
+      skillInvest: invest([[PH2, 20]]),
+      activeSlots: [wireIdOf('as_phantom_disrupt_lo'), -1],
+    });
+    w.activeWalls.length = 0;
+    const p = player(w);
+    const b = addEnemyBullet(w, p.x + 20, p.y);
+    stepActives(w, p, FIRE, DIR);
+    // 발동 자체는 일어났다(버프 틱이 섰다) — 그런데 적탄은 살아 있다.
+    expect(w.activeBuff0).toBeGreaterThan(0);
+    expect(b.dead).toBe(false);
   });
 });

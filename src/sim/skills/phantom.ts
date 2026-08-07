@@ -23,7 +23,11 @@
  *
  * ---
  *
- * ## ⚠️ 지금 배선된 것은 30종 중 **19종**이다 (S3 이 16 → 19)
+ * ## ⚠️ 지금 배선된 것은 30종 중 **20종**이다 (S3 이 16 → 19, 공유 앵커 레인이 +1 = 20)
+ *
+ * 공유 앵커 레인이 더한 하나는 **PH2「위상 착지」**({@link phantomActiveFired}) — 앵커 ㉗
+ * (`onActiveFired`, 액티브 핸들러 **직후**)이 열었다. 막고 있던 것은 "착지 지점을 아는 자리가
+ * 없다" 였는데, 앵커가 호출 뒤라 `player.x/y` 가 이미 착지점이라는 사실 하나로 풀렸다.
  * S3 이 더한 셋은 전부 **기존 앵커만으로** 섰다:
  *  - **AS9「절멸 선고」**(앵커 ⑩) — AS3 이 이미 나르던 강화탄 표식({@link MARK_CLOAK_BREAK})을
  *    같은 자리에서 읽어 명중 지점 폭발을 낸다. 막고 있던 것은 "소진 지점이 앵커가 아니다" 였는데,
@@ -61,8 +65,11 @@ import type { Entity } from '../entities.js';
 // ⚠️ **타입 전용이다.** `skillHooks.ts` 는 이 파일을 런타임 import 하므로 값으로 당기면 곧바로
 // 순환이다 — `import type` 은 컴파일에서 지워져 그래프에 간선을 만들지 않는다.
 import type { VolleyParams } from '../skillHooks.js';
+// PH2 의 계열 게이트가 읽는 액티브 정의. 타입 전용(위 사유와 같다).
+import type { ActiveSkillDef } from '../../../data/ships/actives/types.js';
 import { advanceCloak, playerCloaked, setBreakToken } from '../cloak.js';
 import { clearEnemyBullets } from '../activeTypes.js';
+import { COLD_DURATION, applySlow } from '../status.js';
 import { slideCircleWalls } from '../los.js';
 import { length } from '../math.js';
 import { readSlot, writeSlot, PhantomCarry, PhantomStage } from '../skillSlots.js';
@@ -87,6 +94,7 @@ const enum Sk {
   /** AS5 배후 격살 */ backstab = 4,
   /** AS9 절멸 선고 */ annihilationVerdict = 8,
   /** PH1 잔상 이탈 */ afterimageExit = 10,
+  /** PH2 위상 착지 */ phaseLanding = 11,
   /** PH3 그림자 장부 */ shadowLedger = 12,
   /** PH6 정지된 시계 */ frozenClock = 15,
   /** PH8 흔적 흡수 */ traceSiphon = 17,
@@ -125,6 +133,13 @@ function lv(state: WorldState, flat: Sk): number {
  * 쓰므로(설계서 AS10 "AS3 의 `aux0` 마커와 칸 분리") 이 비트와 다투지 않는다.
  */
 const MARK_CLOAK_BREAK = 2;
+
+/**
+ * PH2 의 계열 게이트 — 「위상(phase)」축의 인덱스. 정본은 `data/ships/phantom.ts` 의
+ * `trees: [assassin(offense), phase(utility), disrupt(defense)]` 배열이다.
+ * ⚠️ 축 순서를 바꾸면 여기도 함께 밀린다(그 파일이 "재배치 금지"를 명시한 이유 중 하나).
+ */
+const PHASE_TREE_INDEX = 1;
 
 /**
  * DI2 회복 주기. 설계서 고정값(창 안 60틱마다) — 진입 틱 공짜 회복을 없애려고 `aux0 > 240` 을
@@ -211,6 +226,45 @@ export function phantomDashFired(state: WorldState, player: Entity): void {
   if (!playerCloaked(state, player)) return;
   if (readSlot(state.skillStage, PhantomStage.frozenClockUsed) >= frozenClockBudget(ph6)) return;
   writeSlot(state.skillStage, PhantomStage.frozenClockPending, 1);
+}
+
+/**
+ * 앵커 ㉗ **액티브 발동 직후** — PH2 위상 착지.
+ *
+ * 설계서: *"위상 액티브(blink) **착지 지점** 주변 적탄을 소거하고 냉기를 건다"* ·
+ * 소거 반경 = 140 + 10×Lv.
+ *
+ * ## 왜 좌표 인자가 없는가
+ * 앵커 ㉗ 은 핸들러 호출 **뒤**라 `player.x`/`player.y` 가 **이미 착지점**이다(벽 슬라이드
+ * 보정까지 반영된 최종 좌표 — `activeTypes.blink` 가 `slideCircleWalls` 로 끝난다). 그래서
+ * `clearEnemyBullets(state, player, r)` 의 기존 시그니처(플레이어 중심)를 그대로 쓴다.
+ * ⚠️ 출발 지점이 필요한 스킬은 반대로 `ActiveFiredOrigin.preX/preY` 를 써야 한다.
+ *
+ * ## 계열 게이트 — `treeIndex === 1`
+ * 「위상 액티브」는 phase 축(`data/ships/phantom.ts` 의 `trees[1]`)의 두 종
+ * (`as_phantom_phase_lo`/`_hi`)이다. 둘 다 `kind: 'dash'` = blink 라 착지가 존재한다.
+ * ⚠️ **id 문자열로 판정하지 마라** — 축 인덱스가 정본이고, id 는 레지스트리 파일의 표기다.
+ * ⚠️ **`kind === 'dash'` 로도 판정하지 마라** — 다른 축이 훗날 dash 계열을 얻으면 조용히 샌다.
+ *
+ * ## 냉기는 잡몹 한정이다
+ * 스트라이커 M6(활공 정화)이 확립한 형태 그대로다 — `kind === 'enemy'` 만 건다. 보스·가디언에
+ * 거는 것은 냉기 자체의 적용 범위를 바꾸는 일이라 이 레인 밖이다.
+ * 적 `hp` 를 깎지 않으므로 좀비 결함(`dead` 미마킹)이 원리적으로 없다.
+ */
+export function phantomActiveFired(state: WorldState, player: Entity, def: ActiveSkillDef): void {
+  if (def.treeIndex !== PHASE_TREE_INDEX) return;
+  const ph2 = lv(state, Sk.phaseLanding);
+  if (ph2 < 1) return;
+  const radius = 140 + 10 * ph2;
+  clearEnemyBullets(state, player, radius);
+  const r2 = radius * radius;
+  for (const e of state.entities) {
+    if (e.kind !== 'enemy' || e.dead) continue;
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    if (dx * dx + dy * dy > r2) continue;
+    applySlow(e, COLD_DURATION);
+  }
 }
 
 /**

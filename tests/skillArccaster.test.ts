@@ -30,8 +30,14 @@ import {
   onEnemyDeath,
   onVolleyParams,
   onBulletExpired,
+  onBulletHitParams,
+  onEliteLootRarity,
+  onOverchargeAccrual,
+  onComboDecay,
 } from '../src/sim/skillHooks.js';
-import type { VolleyParams } from '../src/sim/skillHooks.js';
+import type { VolleyParams, BulletHitParams } from '../src/sim/skillHooks.js';
+import { onChainParams } from '../src/sim/chainHooks.js';
+import { applyChain, CHAIN_RADIUS, CHAIN_MAX_TARGETS } from '../src/sim/status.js';
 import { DamageSource } from '../src/sim/skillSlots.js';
 import { SIG_ARC_OVERCHARGE } from '../src/sim/shipSignature.js';
 import { readSlot, SKILL_SLOT_COUNT } from '../src/sim/skillSlots.js';
@@ -39,12 +45,18 @@ import { FIRE_CD_Q } from '../src/sim/constants.js';
 
 /** flat 인덱스 — `data/ships/arccaster.ts` 축 순서(CH 0..9 · BA 10..19 · BR 20..29). */
 const CH1 = 0;
+const CH2 = 1;
 const CH3 = 2;
 const CH4 = 3;
+const CH5 = 4;
 const CH6 = 5;
 const CH8 = 7;
+const CH9 = 8;
 const BA3 = 12;
+const BA5 = 14;
 const BA7 = 16;
+const BA8 = 17;
+const BA9 = 18;
 const BA10 = 19;
 const BR1 = 20;
 const BR2 = 21;
@@ -627,12 +639,12 @@ describe('앵커 ⑯ — 발사부 4종', () => {
   it('BA7: 처치 6기가 모여야 다음 볼리 한 번에만 탄수가 실린다', () => {
     const w = mk([[BA7, 1]]);
     const p = player(w);
-    for (let i = 0; i < 5; i++) onEnemyDeath(w, 0, 0, false);
+    for (let i = 0; i < 5; i++) onEnemyDeath(w, 0, 0, false, false);
     const early = volley();
     onVolleyParams(w, p, early);
     expect(early.count).toBe(4); // 5기로는 장전되지 않는다
 
-    onEnemyDeath(w, 0, 0, false); // 6기째
+    onEnemyDeath(w, 0, 0, false, false); // 6기째
     const loaded = volley();
     onVolleyParams(w, p, loaded);
     expect(loaded.count).toBe(6); // 2 + floor(1/5)
@@ -644,13 +656,13 @@ describe('앵커 ⑯ — 발사부 4종', () => {
 
   it('BA7 충전은 6 에서 멈춘다 (초과 처치는 이월하지 않는다)', () => {
     const w = mk([[BA7, 1]]);
-    for (let i = 0; i < 20; i++) onEnemyDeath(w, 0, 0, false);
+    for (let i = 0; i < 20; i++) onEnemyDeath(w, 0, 0, false, false);
     expect(readSlot(w.skillStage, 2)).toBe(6);
   });
 
   it('BA7 미투자 런은 처치가 쌓여도 슬롯이 0 이다 (무폴드 계약)', () => {
     const w = mk([[CH1, 1]]);
-    for (let i = 0; i < 20; i++) onEnemyDeath(w, 0, 0, false);
+    for (let i = 0; i < 20; i++) onEnemyDeath(w, 0, 0, false, false);
     expect(readSlot(w.skillStage, 2)).toBe(0);
   });
 
@@ -891,5 +903,408 @@ describe('⑥ CH3 종말점 방전', () => {
     expect(w.entities.filter((e) => e.kind === 'bullet' && !e.dead && e.aux1 === 200)).toHaveLength(
       0,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑰ 앵커 ⑰ 연쇄 파라미터 — CH2 연쇄 확장 회로
+// ---------------------------------------------------------------------------
+
+/** `applyChain` 의 원점으로 쓸 적. 원점은 자기 자신을 때리지 않는다(`id` 로 거른다). */
+function chainOrigin(state: WorldState): Entity {
+  return enemyNear(state, 0, 0, 1000);
+}
+
+describe('앵커 ⑰ — CH2 연쇄 확장 회로', () => {
+  it('미투자 런은 상수 그대로다 (반경·대상 수 불변)', () => {
+    const w = mk();
+    const seed = { radius: CHAIN_RADIUS, maxTargets: CHAIN_MAX_TARGETS };
+    onChainParams(w, seed);
+    expect(seed).toEqual({ radius: CHAIN_RADIUS, maxTargets: CHAIN_MAX_TARGETS });
+  });
+
+  it('도약 반경이 늘어난다 — 기본 반경 **밖**의 적이 맞는다', () => {
+    // ⚠️ 반경 260 **바깥 끝**(270)에 둔다. 안쪽에 두면 CH2 없이도 맞아 수정 전에 통과한다.
+    const off = mk([[BR1, 1]]); // CH2 아닌 다른 스킬만 투자한 대조군
+    const oOff = chainOrigin(off);
+    const tOff = enemyNear(off, 270, 0, 1000);
+    applyChain(off, oOff, 10);
+    expect(tOff.hp, '기본 반경 밖인데 맞았다 — 거리 설정이 틀렸다').toBe(1000);
+
+    const on = mk([[CH2, 1]]); // 반경 260 + 26 = 286
+    const oOn = chainOrigin(on);
+    const tOn = enemyNear(on, 270, 0, 1000);
+    applyChain(on, oOn, 10);
+    expect(tOn.hp).toBe(990);
+  });
+
+  it('도약 대상 수가 늘어난다 (3 → 4)', () => {
+    const hit = (state: WorldState): number => {
+      const o = chainOrigin(state);
+      const ts = [50, 60, 70, 80].map((dx) => enemyNear(state, dx, 0, 1000));
+      applyChain(state, o, 10);
+      return ts.filter((e) => e.hp < 1000).length;
+    };
+    expect(hit(mk([[BR1, 1]]))).toBe(3);
+    expect(hit(mk([[CH2, 1]]))).toBe(4);
+  });
+
+  it('CH2 는 **모든 출처**를 덮는다 — BR2 피뢰 접지 경유 연쇄도 넓어진다', () => {
+    // 앵커 ④(피격 후속)가 부르는 BR2 연쇄가 같은 `applyChain` 을 지난다.
+    const off = mk([[BR2, 1]]);
+    const tOff = enemyNear(off, 270, 0, 1000);
+    onPlayerDamaged(off, player(off), 10, false, DamageSource.contact);
+    expect(tOff.hp).toBe(1000);
+
+    const on = mk([
+      [BR2, 1],
+      [CH2, 1],
+    ]);
+    const tOn = enemyNear(on, 270, 0, 1000);
+    onPlayerDamaged(on, player(on), 10, false, DamageSource.contact);
+    expect(tOn.hp).toBe(1000 - 19); // BR2 = 15 + 4×1
+  });
+
+  it('연쇄로 hp 가 0 이하가 된 적은 `dead` 가 선다 (좀비 방지 · 확장 반경에서도)', () => {
+    const w = mk([[CH2, 1]]);
+    const o = chainOrigin(w);
+    const t = enemyNear(w, 270, 0, 5);
+    applyChain(w, o, 10);
+    expect(t.hp).toBeLessThanOrEqual(0);
+    expect(t.dead, 'dead 를 안 세우면 compact 가 처치·젬·전리품을 통째로 버린다').toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑱ 앵커 ⑱ 명중 파라미터 — CH5 전위차 저격
+// ---------------------------------------------------------------------------
+
+/** 앵커 ⑱ 이 받는 레코드 한 벌. */
+function hitParams(damage = 100, pierce = 1): BulletHitParams {
+  return { damage, pierce };
+}
+
+/** 발사 시점 수명 `life0` 을 새긴 아군탄. 현재 잔여 수명은 `life`. */
+function flownBullet(life0: number, life: number): Entity {
+  const b = blankEntity('bullet');
+  b.targetX = life0;
+  b.life = life;
+  return b;
+}
+
+describe('앵커 ⑱ — CH5 전위차 저격', () => {
+  it('⑯ 에서 각인 플래그가 선다 (과충전과 무관)', () => {
+    const w = mk([[CH5, 1]]);
+    const p = player(w);
+    p.aux0 = 0; // 과충전이 아니어도 CH5 는 각인한다
+    const v = volley();
+    onVolleyParams(w, p, v);
+    expect(v.recordSpawnOrigin).toBe(true);
+
+    const off = mk([[BR1, 1]]);
+    const v2 = volley();
+    onVolleyParams(off, player(off), v2);
+    expect(v2.recordSpawnOrigin).toBeFalsy();
+  });
+
+  it('⭐ **아군탄 게이트** — 적탄은 이 경로에 닿지 않는다 (부정)', () => {
+    const w = mk([[CH5, 1]]);
+    const target = enemyNear(w, 400, 0, 1000);
+    // 적탄의 `targetX` 는 거동 파라미터 A(가속도/선회율)다. 게이트가 없으면 이 값이
+    // "발사 시점 수명" 으로 오독돼 적탄 거동이 조용히 갈린다.
+    const eb = blankEntity('enemyBullet');
+    eb.targetX = 300; // BK_ACCEL 가속도
+    eb.targetY = 0.02; // BK_CURVE 각가속도
+    eb.life = 10;
+    const params = hitParams();
+    onBulletHitParams(w, eb, target, params);
+    expect(params, '적탄이 CH5 경로를 탔다 — 아군탄 게이트가 없다').toEqual(hitParams());
+    expect(eb.targetX, '적탄의 거동 파라미터 A 가 훼손됐다').toBe(300);
+    expect(eb.targetY, '적탄의 거동 파라미터 B 가 훼손됐다').toBe(0.02);
+  });
+
+  it('⭐ **긍정 짝** — 같은 조건의 아군탄은 증폭된다', () => {
+    const w = mk([[CH5, 1]]);
+    const target = enemyNear(w, 400, 0, 1000);
+    const b = flownBullet(300, 10); // 비행 비율 (300−10)/300 ≈ 97%
+    const params = hitParams();
+    onBulletHitParams(w, b, target, params);
+    expect(params.damage).toBe(100 + 28); // 2500 + 250×1 bp = 27.5% → round = 28
+    expect(params.pierce).toBe(1 + 1);
+  });
+
+  it('비행 비율 50% 미만이면 무연산이다 (임계 양쪽)', () => {
+    const w = mk([[CH5, 1]]);
+    const target = enemyNear(w, 400, 0, 1000);
+    const near = hitParams();
+    onBulletHitParams(w, flownBullet(100, 51), target, near); // 49% — 미달
+    expect(near).toEqual(hitParams());
+    const far = hitParams();
+    onBulletHitParams(w, flownBullet(100, 50), target, far); // 정확히 50% — 성립
+    expect(far.damage).toBe(128);
+  });
+
+  it('각인되지 않은 탄(`targetX === 0`)은 무연산이다 — 자기 표식 게이트', () => {
+    // CH4 부채탄·분열 파편·보조무기·빔 세그먼트가 여기 해당한다.
+    const w = mk([[CH5, 1]]);
+    const target = enemyNear(w, 400, 0, 1000);
+    const b = blankEntity('bullet');
+    b.life = 1;
+    const params = hitParams();
+    onBulletHitParams(w, b, target, params);
+    expect(params).toEqual(hitParams());
+  });
+
+  it('관통 가산은 **탄당 1회**다 (피해 증폭은 매 명중)', () => {
+    const w = mk([[CH5, 1]]);
+    const target = enemyNear(w, 400, 0, 1000);
+    const b = flownBullet(300, 10);
+    const first = hitParams();
+    onBulletHitParams(w, b, target, first);
+    expect(first.pierce).toBe(2);
+    const second = hitParams();
+    onBulletHitParams(w, b, target, second);
+    expect(second.pierce, '명중마다 관통을 주면 탄이 영영 안 죽는다').toBe(1);
+    expect(second.damage, '피해 증폭은 매 명중에 실린다').toBe(128);
+  });
+
+  it('미투자 런은 한 칸도 안 바뀐다', () => {
+    const w = mk([[BR1, 1]]);
+    const target = enemyNear(w, 400, 0, 1000);
+    const params = hitParams();
+    onBulletHitParams(w, flownBullet(300, 10), target, params);
+    expect(params).toEqual(hitParams());
+  });
+
+  it('배선 통과 ①: 발사된 탄에 발사 시점 수명이 실제로 새겨진다 (world.ts 각인부)', () => {
+    const fired = (points: ReadonlyArray<readonly [number, number]>): Entity[] => {
+      const w = mk(points);
+      enemyNear(w, 200, 0, 100000); // 자동 조준 표적 — 없으면 발사 자체가 안 난다
+      stepWorld(w, emptyInput());
+      return w.entities.filter((e) => e.kind === 'bullet');
+    };
+    const on = fired([[CH5, 1]]);
+    expect(on.length, '탄이 한 발도 안 났다 — 아래 단언이 빈 배열 항진이 된다').toBeGreaterThan(0);
+    for (const b of on) expect(b.targetX).toBeGreaterThan(0);
+
+    const off = fired([[BR1, 1]]);
+    expect(off.length).toBeGreaterThan(0);
+    for (const b of off) expect(b.targetX, '미투자 런이 칸을 썼다 — 리플레이 바이트가 갈린다').toBe(0);
+  });
+
+  it('배선 통과 ②: 멀리 날아온 탄이 실제로 더 아프다 (world.ts 명중 호출부)', () => {
+    const run = (points: ReadonlyArray<readonly [number, number]>): number => {
+      const w = mk(points);
+      const p = player(w);
+      // ⚠️ 플레이어 **코앞이 아니라** 700u 밖에 둔다 — 코앞이면 자동사격 탄이 같은 틱에
+      // 마무리해 수정 전에도 통과한다. 이 틱의 자동사격 탄은 30u 밖에 못 가 여기 못 닿는다.
+      const e = enemyNear(w, 700, 0, 100000);
+      e.radius = 30;
+      // 발사 시점 수명 120 · 현재 60 → 이번 틱 적분 후 59 → 비행 61/120 ≈ 51% (임계 통과)
+      const b = spawnBullet(w, p.x + 680, p.y, 0, 1800, 200, 0, 5, 60, 1, 0);
+      b.targetX = 120;
+      stepWorld(w, emptyInput());
+      return e.hp;
+    };
+    const off = run([[BR1, 1]]);
+    expect(off, '명중 자체가 없었다 — 아래 비교는 항진이다').toBeLessThan(100000);
+    expect(run([[CH5, 1]])).toBeLessThan(off);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑲ 앵커 ⑲ 전리품 등급 — CH9 낙뢰 인양
+// ---------------------------------------------------------------------------
+
+describe('앵커 ⑲ — CH9 낙뢰 인양', () => {
+  it('과충전 중에만 희귀도 배율이 실린다', () => {
+    const w = mk([[CH9, 1]]);
+    const p = player(w);
+    p.aux0 = 0;
+    expect(onEliteLootRarity(w, p, 1)).toBe(1);
+    p.aux0 = 200; // 과충전(≥90)
+    expect(onEliteLootRarity(w, p, 1)).toBeCloseTo(1.075, 10);
+  });
+
+  it('촉매 배율 위에 **곱**으로 얹힌다 (하한 짝 — 미투자는 항등)', () => {
+    const on = mk([[CH9, 1]]);
+    const pOn = player(on);
+    pOn.aux0 = 200;
+    expect(onEliteLootRarity(on, pOn, 2)).toBeCloseTo(2.15, 10);
+
+    const off = mk([[BR1, 1]]);
+    const pOff = player(off);
+    pOff.aux0 = 200;
+    expect(onEliteLootRarity(off, pOff, 2)).toBe(2);
+  });
+
+  it('레벨이 오르면 배율이 **단조 증가**한다 (하한 짝 포함)', () => {
+    const at = (level: number): number => {
+      const w = mk([[CH9, level]]);
+      const p = player(w);
+      p.aux0 = 200;
+      return onEliteLootRarity(w, p, 1);
+    };
+    const lo = at(1);
+    const hi = at(20);
+    expect(lo, '양변이 1 이면 항진이다 — 하한을 함께 잠근다').toBeGreaterThan(1);
+    expect(hi).toBeGreaterThan(lo);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑳ 앵커 ⑳ 과충전 적립 — BA8 앞 절반 · BA9
+// ---------------------------------------------------------------------------
+
+describe('앵커 ⑳ — BA8 적립 2배 · BA9 이동 감쇠', () => {
+  it('기본값은 종전 거동 그대로다 (정지 +1 · 이동 리셋)', () => {
+    const w = mk([[BR1, 1]]);
+    const p = player(w);
+    expect(onOverchargeAccrual(w, p, true)).toEqual({ still: true, delta: 1 });
+    expect(onOverchargeAccrual(w, p, false)).toEqual({ still: false, delta: 0 });
+  });
+
+  it('BA8: 감속 장판 근사(`playerSlowTicks > 0`) + 정지에서만 적립이 2배다', () => {
+    const w = mk([[BA8, 1]]);
+    const p = player(w);
+    w.playerSlowTicks = 0;
+    expect(onOverchargeAccrual(w, p, true).delta).toBe(1);
+    w.playerSlowTicks = 30;
+    expect(onOverchargeAccrual(w, p, true).delta).toBe(2);
+  });
+
+  it('⚠️ BA8 은 **이동 중에는** 안 실린다 (BA9 가 `still` 을 뒤집어도)', () => {
+    // 순서가 뒤바뀌면 "이동하면서 과충전이 쌓인다" 가 되어 시그니처가 통째로 뒤집힌다.
+    const w = mk([
+      [BA8, 1],
+      [BA9, 1],
+    ]);
+    const p = player(w);
+    w.playerSlowTicks = 30;
+    const acc = onOverchargeAccrual(w, p, false);
+    expect(acc.still).toBe(true); // BA9 가 리셋 분기를 우회시켰다
+    expect(acc.delta).toBeLessThanOrEqual(0); // 그래도 적립은 없다
+  });
+
+  it('BA9: 이동 틱이 리셋 대신 감쇠가 된다 (Lv1 = 2틱당 −1)', () => {
+    const w = mk([[BA9, 1]]);
+    const p = player(w);
+    let minus = 0;
+    for (let t = 0; t < 10; t++) {
+      w.tick = t;
+      const acc = onOverchargeAccrual(w, p, false);
+      expect(acc.still).toBe(true);
+      expect(acc.delta).toBeLessThanOrEqual(0);
+      if (acc.delta < 0) minus++;
+    }
+    expect(minus, '10틱에 5번 줄어야 적립 속도의 절반이다').toBe(5);
+  });
+
+  it('BA9 배선 통과: 이동해도 `aux0` 이 0 으로 떨어지지 않는다 (스텝 경유)', () => {
+    const move = { ...emptyInput(), moveX: 1 };
+    const off = mk([[BR1, 1]]);
+    const pOff = player(off);
+    pOff.aux0 = 100;
+    stepWorld(off, move);
+    expect(pOff.aux0, '대조군: BA9 없으면 즉시 리셋이다').toBe(0);
+
+    const on = mk([[BA9, 1]]);
+    const pOn = player(on);
+    pOn.aux0 = 100;
+    stepWorld(on, move);
+    expect(pOn.aux0).toBeGreaterThanOrEqual(99);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ㉑ 앵커 ㉑ 콤보 감소 — BA5 정전 콤보 감속
+// ---------------------------------------------------------------------------
+
+describe('앵커 ㉑ — BA5 정전 콤보 감속', () => {
+  it('과충전 중에만 감소를 건너뛴다', () => {
+    const w = mk([[BA5, 1]]);
+    const p = player(w);
+    w.tick = 1; // 건너뛰는 쪽 틱
+    p.aux0 = 0;
+    expect(onComboDecay(w, p), '과충전이 아닌데 멈췄다').toBe(false);
+    p.aux0 = 200;
+    expect(onComboDecay(w, p)).toBe(true);
+  });
+
+  it('Lv1 은 정확히 **절반 속도**다 (10틱에 5회만 감소)', () => {
+    const w = mk([[BA5, 1]]);
+    const p = player(w);
+    p.aux0 = 200;
+    let decays = 0;
+    for (let t = 0; t < 10; t++) {
+      w.tick = t;
+      if (!onComboDecay(w, p)) decays++;
+    }
+    expect(decays).toBe(5);
+  });
+
+  it('레벨이 오르면 감소 횟수가 **줄어든다** (하한 짝 — 미투자는 전부 감소)', () => {
+    const decays = (points: ReadonlyArray<readonly [number, number]>): number => {
+      const w = mk(points);
+      const p = player(w);
+      p.aux0 = 200;
+      let n = 0;
+      for (let t = 0; t < 28; t++) {
+        w.tick = t;
+        if (!onComboDecay(w, p)) n++;
+      }
+      return n;
+    };
+    expect(decays([[BR1, 1]]), '미투자 런은 28틱 전부 감소해야 한다').toBe(28);
+    expect(decays([[BA5, 1]])).toBe(14);
+    expect(decays([[BA5, 20]])).toBe(4); // period = 2 + 5 = 7
+  });
+
+  it('배선 통과: 콤보 시계가 실제로 천천히 준다 (스텝 경유)', () => {
+    const run = (points: ReadonlyArray<readonly [number, number]>): number => {
+      const w = mk(points);
+      const p = player(w);
+      p.aux0 = 300; // 과충전 유지(무입력이라 매 틱 +1)
+      w.combo = 5;
+      w.comboTimer = 100;
+      for (let i = 0; i < 20; i++) stepWorld(w, emptyInput());
+      return w.comboTimer;
+    };
+    const off = run([[BR1, 1]]);
+    const on = run([[BA5, 1]]);
+    expect(off, '대조군이 20틱 전부 줄지 않았다 — 계측기가 고장났다').toBe(80);
+    expect(on).toBe(90);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑧′ 앵커 ⑧ 인자 확장 — BA8 뒤 절반(해저드 출처 경감)
+// ---------------------------------------------------------------------------
+
+describe('앵커 ⑧ 확장 — BA8 절연 포좌(해저드 경감)', () => {
+  it('해저드 출처일 때만 경감된다', () => {
+    const w = mk([[BA8, 1]]);
+    const p = player(w);
+    expect(onDamageChain(w, p, 100, DamageSource.hazard)).toBe(100 - 17); // 1500 + 150 bp
+    expect(onDamageChain(w, p, 100, DamageSource.contact)).toBe(100);
+    expect(onDamageChain(w, p, 100, DamageSource.bullet)).toBe(100);
+  });
+
+  it('비트합이라 해저드가 **섞여만 있어도** 걸린다', () => {
+    const w = mk([[BA8, 1]]);
+    const p = player(w);
+    expect(onDamageChain(w, p, 100, DamageSource.hazard | DamageSource.bullet)).toBe(83);
+  });
+
+  it('인자를 안 넘기면(기본 0) 걸리지 않는다 — 다섯 기체 산술 불변의 근거', () => {
+    const w = mk([[BA8, 1]]);
+    const p = player(w);
+    expect(onDamageChain(w, p, 100)).toBe(100);
+  });
+
+  it('미투자 런은 해저드 출처여도 항등이다 (하한 짝)', () => {
+    const w = mk([[BR1, 1]]);
+    const p = player(w);
+    expect(onDamageChain(w, p, 100, DamageSource.hazard)).toBe(100);
   });
 });

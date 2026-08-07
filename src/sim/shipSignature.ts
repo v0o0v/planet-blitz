@@ -335,14 +335,30 @@ function cushionThresholdOf(settleAt: number): number {
  * 인자에 **기본값을 두지 않는** 것이 규율이다 — 기본값을 두면 옛 호출부가 조용히 옛 거동으로
  * 흘러 개정이 무연산이 된다(`BulletExpiryReason` 선례). `tsc` 가 누락을 잡게 둔다.
  *
+ * ## ⚠️ **탕감률도 인자다** — 같은 사유의 두 번째 개정(말로우 ME8「리듬 탕감」)
+ * 종전에는 `CUSHION_RECOVER_BP` 를 이 함수가 자기 안에서 읽었다. ME8 은 *정산의 탕감 비율을
+ * 콤보 스택으로 올리는* 스킬인데, 그 상수가 여기 갇혀 있는 한 **어떤 앵커에서도 손댈 수
+ * 없었다** — 앵커 ⑳ 은 hp 차감이 끝난 뒤라 사후 환급으로 흉내 내면 hp−1 클램프가 소멸시킨
+ * 초과분이 복원되지 않아 값이 갈리고, 앵커 ㉕ 에 닿은 시점엔 이미 이 상수로 계산이 끝나
+ * 있다. 임계(`settleAt`)와 **정확히 같은 형태의 선결**이었고 같은 방식으로 푼다.
+ * 기본값을 두지 않는 것도 같은 규율이다.
+ *
  * @param settleAt 이번 틱의 **실효** 정산 임계. 기본값은 {@link CUSHION_RECOVER_TICKS} 이고,
  *   그 값을 넘기면 종전과 **비트 동일**이다.
+ * @param recoverBp 이번 정산의 **실효** 탕감률(bp). {@link CUSHION_RECOVER_BP} 를 넘기면
+ *   종전과 **비트 동일**이다. 10000 이상을 넘기면 정산분이 음수가 되므로 호출부(앵커 ㉘)가
+ *   상한을 진다 — 설계 정본의 ME8 점근이 9500 이라 구조적으로 닿지 않는다.
  */
-export function cushionRecovered(deferred: number, unhitTicks: number, settleAt: number): number {
+export function cushionRecovered(
+  deferred: number,
+  unhitTicks: number,
+  settleAt: number,
+  recoverBp: number,
+): number {
   const v = Math.trunc(deferred);
   if (v <= 0) return 0;
   if (Math.trunc(unhitTicks) < cushionThresholdOf(settleAt)) return 0;
-  return Math.round((v * CUSHION_RECOVER_BP) / 10000);
+  return Math.round((v * recoverBp) / 10000);
 }
 
 /**
@@ -364,12 +380,19 @@ export function cushionRecovered(deferred: number, unhitTicks: number, settleAt:
  *
  * @param settleAt 이번 틱의 **실효** 정산 임계. {@link CUSHION_RECOVER_TICKS} 를 넘기면 종전과
  *   **비트 동일**이다.
+ * @param recoverBp 이번 정산의 **실효** 탕감률(bp). {@link cushionRecovered} 와 **같은 값**을
+ *   넘겨야 "회복분 + 정산분 = 적립분" 합 보존이 성립한다(임계와 같은 규율)
  */
-export function cushionSettled(deferred: number, unhitTicks: number, settleAt: number): number {
+export function cushionSettled(
+  deferred: number,
+  unhitTicks: number,
+  settleAt: number,
+  recoverBp: number,
+): number {
   const v = Math.trunc(deferred);
   if (v <= 0) return 0;
   if (Math.trunc(unhitTicks) < cushionThresholdOf(settleAt)) return 0;
-  return v - cushionRecovered(v, unhitTicks, settleAt);
+  return v - cushionRecovered(v, unhitTicks, settleAt, recoverBp);
 }
 
 // --- ⑥ 버블: 방막(주기적 흡수 + 파열 밀어내기) --------------------------------

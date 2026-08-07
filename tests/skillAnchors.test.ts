@@ -75,6 +75,13 @@ const hoisted = vi.hoisted(() => ({
    * 같은 사유다.
    */
   damageSources: [] as number[],
+  /**
+   * 앵커 ⑧ 이 받은 **피해원 비트합**(선택 인자). ④ 와 따로 재는 이유는 **호출부가 다르기**
+   * 때문이다 — ④ 는 hp 차감 뒤, ⑧ 은 감쇠 사슬 안이고, 둘 중 한쪽만 넘겨도 다른 쪽 계측은
+   * 초록이다. 아크캐스터 BA8「절연 포좌」의 해저드 경감이 **정확히 이 인자로만** 성립하므로,
+   * `world.ts` 가 인자를 빠뜨리면(기본 0) 스킬이 조용히 영구 미발동이 된다.
+   */
+  chainSources: [] as (number | undefined)[],
 }));
 
 vi.mock('../src/sim/skillHooks.js', async (orig) => {
@@ -121,6 +128,9 @@ vi.mock('../src/sim/skillHooks.js', async (orig) => {
       if (name === 'onPlayerDamaged') {
         hoisted.damageSources.push(args[4] as number);
       }
+      if (name === 'onDamageChain') {
+        hoisted.chainSources.push(args[3] as number | undefined);
+      }
       if (name === 'onBulletExpired') {
         const b = args[1] as { x: number; y: number };
         hoisted.expiries.push({ x: b.x, y: b.y, reason: args[2] as string });
@@ -146,7 +156,8 @@ const { blankEntity, addEntity, spawnBullet, spawnGem, spawnWall } = await impor
 );
 const { DT } = await import('../src/sim/constants.js');
 const { hashWorld } = await import('../src/sim/replay.js');
-const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS, BROOD_MARK, cushionSettled } = await import(
+const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP, BROOD_MARK, cushionSettled } =
+  await import(
   '../src/sim/shipSignature.js'
 );
 const { isActiveTurret, TURRET_LIFE_TICKS } = await import('../src/sim/events.js');
@@ -201,6 +212,7 @@ beforeEach(() => {
   hoisted.expiries = [];
   hoisted.turretShots = [];
   hoisted.damageSources = [];
+  hoisted.chainSources = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -208,13 +220,33 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('계측 이음매', () => {
-  it('앵커 26개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
+  // ⛔ 이 표가 **앵커의 기계 검사 레지스트리**다 — 동그라미 번호가 아니라 **이름**이 정본이다.
+  //    배치4 에서 네 레인이 병렬로 앵커를 세우며 ㉗㉘ 가 **세 갈래로 중복**됐고(공유·해츨링·말로우)
+  //    git 은 그 충돌을 전혀 몰랐다. 그래서 ㉖ 이후로는 번호를 붙이지 않는다
+  //    (사유 전문은 `src/sim/skillHooks.ts` 헤더). 새 앵커는 **여기에 이름을 추가**해라.
+  it('앵커 38개 + 공유 술어가 전부 export 돼 있다 (이름이 바뀌면 계측이 조용히 0 이 된다)', async () => {
     const mod = await import('../src/sim/skillHooks.js');
     expect(Object.keys(mod).sort()).toEqual(
       [
+        // ⚠️ ㉗㉘㉙ 는 **기체를 가로지르는 공유 앵커 3종**이다. 기체별 레인이 각자 뚫으면 같은
+        // 지점에 시그니처가 다른 훅이 여럿 서고 그 충돌은 `tsc` 만이 잡으므로, 자리를 먼저
+        // 하나로 세우고 소비처를 나중에 얹었다.
+        'onActiveFired', // ㉗ — 액티브 핸들러 **직후**(쿨다운 대입 앞). 착지 지점이 여기 산다
+        'onGemMagnetParams', // ㉘ — 젬 자석 반경 확정 직후(제곱 전). 앵커 ③ 은 수거 뒤라 못 온다
+        'onPlayerMoveParams', // ㉙ — 이동 배율 산출 직전(감속 잔여 틱이 아직 안 깎인 지점)
         'onBroodLaunchParams', // S3-4 ㉓ — 해츨링 출격 판정 파라미터(임계 조기 반환보다 앞)
         'onBroodLaunched', // S3-4 ㉔ — 병아리 1기가 태어난 직후(기당 1회)
         'onBulletExpired',
+        // ⚠️ S3-아크캐스터 넷. **다섯 번째인 ⑰ `onChainParams` 는 이 목록에 없다** —
+        // `status.ts` 가 부르는데 그 파일을 `skills/arccaster.ts` 가 값으로 import 하므로
+        // 여기 두면 런타임 순환이다. 그래서 `src/sim/chainHooks.ts` 로 뗐다(그 파일 헤더 참조).
+        // ⑱ 은 ⑩ 과 **자리가 다르다** — ⑩ 은 `t.hp -= dealt` 뒤라
+        // 이번 명중의 피해를 못 바꾼다. ⑳ 도 ⑨ 와 다르다 — ⑨ 는 `stepShipSignature`
+        // 진입점이라 기체 분기(과충전 적립 대입)보다 앞이다.
+        'onBulletHitParams', // S3 ⑱ — 아군탄 명중 피해 확정 직전
+        'onComboDecay', // S3 ㉑ — 콤보 유지 시계 감소 직전
+        'onEliteLootRarity', // S3 ⑲ — 엘리트 등급 롤 직전(RNG 소비 불변)
+        'onOverchargeAccrual', // S3 ⑳ — 과충전 적립 분기 그 자체
         // ⚠️ S2 여섯은 **미배선 141종이 몰려 있던 지점 넷**을 연다. 넷인데 여섯인 것은 막 흡수와
         // 정산이 각각 "산술에 개입" 과 "사건을 관측" 으로 갈리기 때문이다 — 한 지점에 하나만
         // 두면 앵커 ⑮ 가 실제로 밟은 함정(관측 대상이 그 지점에 이미 없다)을 되풀이한다.
@@ -245,10 +277,25 @@ describe('계측 이음매', () => {
         // ⚠️ ㉖ 은 **포탑 루프**다 — 병아리·센트리·드론 베이가 한 함수를 공유하므로 앵커는
         // 셋 모두에서 불리고, 소환물 종류 판별은 **훅 안**에서 한다(`ownerId`).
         'onTurretShotParams', // W2 ㉖ — 포탑탄 1발의 파라미터(표적 확정 뒤 · spawnBullet 앞)
+        // ⚠️ ㉗ ㉘ 도 같은 포탑 루프다(㉖ 과 같은 게이트 규율 — 소환물 판별은 훅 안).
+        // ㉗ 이 **쿨다운 감산보다 앞**인 것이 계약이다: 뒤에 두면 쿨다운 0 인 틱에만 불려
+        // 간격 조작이 한 주기 늦는다.
+        'onTurretCadence', // S3-해츨링 ㉗ — 포탑 1기의 이번 틱 사격 리듬
+        // ㉘ 은 `t.dead = true` **직후**다. 루프 밖으로 미루면 `compact()` 가 개체를 회수해
+        // 좌표가 남지 않는다 — "그 자리에" 를 요구하는 세 스킬이 원리적으로 못 산다.
+        'onTurretExpired', // S3-해츨링 ㉘ — 포탑이 수명으로 소멸한 직후
         'onVolleyFired',
         'onVolleyParams', // S2 ⑯ — 발사부(전 기체 최다 미배선 사유)
         'onWallContact',
         'survivedLethalBlow',
+        // ⚠️ 말로우 앵커 레인(2026-08-07)이 넷을 더했다 — 넷 다 **말로우 30종 중 지점이
+        // 앵커 밖이라 통째로 미배선이던 것**을 연다. ㉖ 이 W2 의 포탑탄에 이미 쓰여 있어
+        // 번호는 ㉗ 부터다.
+        'onCushionSplit', // ㉗ — 지연 전환 분기(CU1·CU2·CU5·CU6)
+        'onCushionRecoverBp', // ㉘ — 정산 탕감률 확정(ME8)
+        'onObjectiveResolved', // ㉙ — 에코 안정화·조우 완수 **두 지점**(ME7)
+        // ⚠️ `onEnemyStatusExpired`(적 화상 만료 → SQ9)는 여기 **없다** — `chainHooks.ts`
+        //    에 산다. `status.ts` 가 부르는 앵커라 이 파일에 두면 런타임 순환이 된다.
       ].sort(),
     );
   });
@@ -367,6 +414,18 @@ describe('앵커 ④⑧ onPlayerDamaged · onDamageChain — 피격', () => {
     stepWorld(s, idle);
     expect(count('onDamageChain')).toBe(0);
     expect(count('onPlayerDamaged')).toBe(0);
+  });
+
+  it('⑧ 도 피해원 비트합을 받는다 — **인자를 빠뜨리면 BA8 이 영구 미발동이다**', () => {
+    const s = skilled(0x9006);
+    plantEnemy(s, 0, 0, 7);
+    stepWorld(s, idle);
+    // 하한 짝을 먼저 — 피격이 없으면 아래 비트 단언은 빈 배열에 대한 항진이다.
+    expect(hoisted.chainSources).toHaveLength(1);
+    expect(
+      hoisted.chainSources[0],
+      '`world.ts` 가 `dmgSources` 를 안 넘겼다 — 기본 0 이면 출처 술어가 전부 거짓이 된다',
+    ).toBe(DamageSource.contact);
   });
 
   // ── 피해원 분류(W2) — 호출부마다 하나씩 잠근다 ──────────────────────────
@@ -1137,7 +1196,7 @@ function armSettlement(state: WorldState, debt = 100): { p: Entity; due: number 
   if (p === undefined) throw new Error('플레이어가 0번에 없다');
   p.aux0 = debt;
   p.aux1 = CUSHION_RECOVER_TICKS - 1; // 이번 틱에 임계를 채운다
-  return { p, due: cushionSettled(debt, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS) };
+  return { p, due: cushionSettled(debt, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP) };
 }
 
 describe('앵커 ㉕ onCushionSettleDue — 정산액 확정 직전(hp 차감 전)', () => {

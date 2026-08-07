@@ -1,5 +1,32 @@
 /**
- * **210스킬 배선의 앵커 15개** — sim 이 스킬 훅을 부르는 **유일한 지점들**(ADR-0049 S0 + S1).
+ * **210스킬 배선의 앵커** — sim 이 스킬 훅을 부르는 **유일한 지점들**(ADR-0049 S0~S3 + W2
+ * + 배치4 앵커 레인). 이 파일에 **38개**, `chainHooks.ts` 에 **2개** = 모두 **40개**다.
+ *
+ * ## ⛔⛔ 동그라미 번호(①②③…)는 **㉖ 에서 끝났다 — 새 앵커에 번호를 붙이지 마라**
+ * 배치4 에서 **네 레인이 병렬로 앵커 9개를 세웠고, ㉗㉘ 가 세 갈래로 중복됐다**:
+ * 공유 레인의 `onActiveFired`/`onGemMagnetParams` · 해츨링의 `onTurretCadence`/`onTurretExpired` ·
+ * 말로우의 `onCushionSplit`/`onCushionRecoverBp` 가 전부 자기를 ㉗ 또는 ㉘ 라 부른다.
+ * **git 은 이 충돌을 전혀 모른다**(다른 파일·다른 줄이라 자동 병합된다).
+ *
+ * 리드가 머지하며 재배번하는 규약으로 두 배치를 버텼지만, 레인이 늘수록 비용이 커지고
+ * **번호는 기계가 검사하지 않는다.** 그래서 여기서 끊는다:
+ *
+ *  - **앵커의 정본 이름은 함수 이름이다.** 문서·인계·프롬프트에서 `onActiveFired` 처럼 **이름으로**
+ *    불러라. 「㉗」 이라고만 적으면 지금은 셋 중 어느 것인지 알 수 없다.
+ *  - **기계가 검사하는 레지스트리는 `tests/skillAnchors.test.ts` 의 export 전수 표**다.
+ *    앵커를 더하면 거기에 이름을 추가해라 — 안 하면 그 테스트가 빨개진다.
+ *  - 기존 ①~㉖ 의 번호는 **이력이므로 그대로 둔다.** 그 범위는 중복이 없다.
+ *  - ⚠️ 배치4 가 붙인 ㉗ 이후 번호는 **파일 안에서 신뢰하지 마라** — 그 doc 이 붙어 있는
+ *    **함수 이름**이 정본이다.
+ *
+ * 내역(번호가 유효한 범위): ①~⑨ 플레이어 축(S0) · ⑩⑪ 적 단위(S1) · ⑫⑬⑭ 성장(S1) ·
+ * ⑮ 방막 파열 · ⑯~㉒ 볼리 파라미터·막·완충(S2) · ㉓㉔ 해츨링 출격(S3-4) ·
+ * ㉕ 정산액 확정 직전(S3) · ㉖ 포탑 사격(W2).
+ * 배치4 가 더한 9개(이름으로만 부른다): `onActiveFired` · `onGemMagnetParams` ·
+ * `onPlayerMoveParams` · `onBulletHitParams` · `onEliteLootRarity` · `onOverchargeAccrual` ·
+ * `onComboDecay` · `onTurretCadence` · `onTurretExpired` · `onCushionSplit` ·
+ * `onCushionRecoverBp` · `onObjectiveResolved`, 그리고 `chainHooks.ts` 의 `onChainParams` ·
+ * `onEnemyStatusExpired`.
  *
  * S0 가 플레이어 축 9개를 세웠고, **S1 이 적 단위 축 2개(⑩ `onEnemyDamaged` · ⑪ `onEnemyDeath`)와
  * 성장 축 3개(⑫ `onLevelUp` · ⑬ `onPowerupOffer` · ⑭ `onPowerupPicked`)를 더했다.**
@@ -62,6 +89,9 @@ import type { Entity } from './entities.js';
 // 앵커 ④ 의 피해원 비트합. 정본이 `skillSlots.ts`(import 0 인 leaf)인 사유는 그 파일 주석 —
 // 스킬 모듈이 이 값을 **런타임에** 읽어야 하는데 여기 두면 순환이 생긴다.
 import type { DamageSourceMask } from './skillSlots.js';
+// 앵커 ㉗ 이 넘기는 액티브 정의. **타입 전용이다** — 값으로 당기면 이 leaf 가 레지스트리
+// (`data/ships/actives/index.ts`)를 런타임 의존하게 되어 leaf 규율이 깨진다.
+import type { ActiveSkillDef } from '../../data/ships/actives/types.js';
 import {
   onVolleyFiredCatalyst,
   onDashFiredCatalyst,
@@ -96,6 +126,9 @@ import {
   hatchlingBroodLaunchParams,
   hatchlingBroodLaunched,
   hatchlingTurretShotParams,
+  hatchlingTurretCadence,
+  hatchlingTurretExpired,
+  hatchlingPlayerDamaged,
 } from './skills/hatchling.js';
 import {
   strikerDashFired,
@@ -118,6 +151,10 @@ import {
   arccasterEnemyDeath,
   arccasterVolleyParams,
   arccasterBulletExpiredLife,
+  arccasterBulletHitParams,
+  arccasterEliteLootRarity,
+  arccasterOverchargeAccrual,
+  arccasterComboDecay,
 } from './skills/arccaster.js';
 import {
   bruiserDashFired,
@@ -139,8 +176,18 @@ import {
   mallowCushionSettled,
   mallowVolleyParams,
   mallowSettleThreshold,
+  mallowGemMagnetParams,
+  mallowPlayerMoveParams,
+  mallowCushionSplit,
+  mallowCushionRecoverBp,
+  mallowObjectiveResolved,
 } from './skills/mallow.js';
+// ⚠️ SQ9 의 **탕감** 두 경로만 별도 leaf 다 — 만료 앵커가 `status.ts` 안이라
+//    `skills/mallow.ts`(그 파일을 값으로 import 한다)에 두면 런타임 순환이 된다.
+//    사유 전문은 `chainHooks.ts`·`skills/mallowStatus.ts` 헤더.
+import { mallowEnemyDeath } from './skills/mallowStatus.js';
 import {
+  phantomActiveFired,
   phantomDashFired,
   phantomGemCollected,
   phantomWallContact,
@@ -411,6 +458,19 @@ function playerOf(state: WorldState): Entity | undefined {
  * @param sources {@link DamageSource} 비트합. **기본값 없는 필수 인자다** — 기본값을 두면 새
  *   호출부가 사유를 빠뜨린 채 기존 사유로 흘러들어 조용히 오분류된다(앵커 ⑥
  *   {@link BulletExpiryReason} 와 같은 규율).
+ * @param srcX 피격원 좌표 x — **선택 인자다**(아래 사유). 생략 = "이번 피격의 피격원 좌표를
+ *   모른다".
+ * @param srcY 피격원 좌표 y — {@link srcX} 와 한 벌.
+ *
+ * ## ⚠️ 왜 좌표만 **선택** 인자인가 — `sources` 와 규율이 다르다
+ * `sources` 는 필수다: 사유를 빠뜨린 호출부가 조용히 오분류되기 때문이다. 좌표는 반대로
+ * **원리적으로 없을 수 있는 값**이다 — 수집 루프의 `max` 승자가 없는 경로(향후 코드 경로 ·
+ * 단위 테스트가 앵커를 직접 부르는 경로)에서 0,0 을 넘기면 그것이 *"월드 원점에서 맞았다"* 로
+ * 읽혀 방향 벡터가 조용히 뒤집힌다. 그래서 `undefined` 를 **모른다는 뜻으로만** 쓰고,
+ * 소비처(해츨링 SH2)는 두 값이 다 있을 때만 발동한다.
+ * ⚠️ 이 앵커는 **7기체가 공유한다.** 필수 인자로 더하면 기존 호출부·타 레인 픽스처가 전부
+ * 깨진다(배치 1 에서 실제로 났고 `tsc` 만이 잡았다) — 선택 인자라 파급은 **호출부 1곳**
+ * (`world.ts` 의 유일한 실호출)뿐이고 촉매 짝(`onPlayerDamagedCatalyst`)은 인자가 안 늘었다.
  */
 export function onPlayerDamaged(
   state: WorldState,
@@ -418,8 +478,10 @@ export function onPlayerDamaged(
   dmg: number,
   lethalSurvived: boolean,
   sources: DamageSourceMask,
+  srcX?: number,
+  srcY?: number,
 ): void {
-  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived, sources);
+  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived, sources, srcX, srcY);
   onPlayerDamagedCatalyst(state, player, dmg, lethalSurvived, sources);
 }
 
@@ -429,6 +491,8 @@ function dispatchPlayerDamagedSkill(
   dmg: number,
   lethalSurvived: boolean,
   sources: DamageSourceMask,
+  srcX?: number,
+  srcY?: number,
 ): void {
   if (!state.skillsOn) return;
   switch (state.sigBit) {
@@ -480,6 +544,14 @@ function dispatchPlayerDamagedSkill(
       // 중 **DI5 만** 이 자리에서 성립한다.
       // → 나머지 둘은 S2 가 리셋 **직전**에 뚫은 앵커 ㉑(`onCloakBreakReset`)에 산다.
       phantomPlayerDamaged(state, player, dmg);
+      break;
+    case SIG_HATCHLING_BROOD:
+      // SH2 위기 산개 — 병아리 전원이 **피격원 쪽으로** 산개 돌진하며 경로 위 적탄을 소거한다.
+      // 이 기체가 이 앵커에 좌표 두 칸을 연 유일한 사유이고, 좌표가 없으면(`undefined`)
+      // 훅이 스스로 조기 반환한다 — 방향이 없는 산개는 설계가 정의하지 않았다.
+      // ⚠️ SH1(호위 희생)·SH7(회생 부화)은 여기가 아니라 앵커 ⑧ 이다 — 그 둘은 hp 가 깎이기
+      //    **전**에 피해를 흡수해야 하고 이 앵커는 차감 뒤다.
+      hatchlingPlayerDamaged(state, player, srcX, srcY);
       break;
     default:
       break;
@@ -657,18 +729,36 @@ function dispatchWallContactSkill(state: WorldState, player: Entity): void {
  * 여기서 촉매를 부르면 `survivedLethalBlow` 의 "경감 전 피해"가 촉매를 못 보게 되어 브루저
  * FO5 · 아크캐스터 BR10 의 의미가 조용히 뒤집힌다.
  *
+ * ## ⚠️ `sources` 는 **선택 인자**다 — 7기체 공유 앵커라 필수로 만들지 않았다
+ * 아크캐스터 BA8「절연 포좌」의 절반(*"용암 피해가 경감된다"*)이 **출처를 못 봐서** 막혀
+ * 있었다: 이 앵커의 인자는 `state`·`player`·`dmg` 뿐이라 "이 피해가 해저드에서 왔는가"를
+ * 복원할 방법이 하나도 없다(같은 틱에 적탄·접촉이 섞이면 `dmg` 는 그중 `max` 하나다).
+ * 수집 루프가 이미 세워 둔 `dmgSources` 비트합을 그대로 넘긴다 — 새 상태 0칸이다.
+ *
+ * **선택으로 둔 이유**: 필수로 바꾸면 이 앵커를 직접 부르는 테스트·픽스처가 전부 깨지고,
+ * 파급이 7기체 전체로 번진다. 기본값 `0`(피해원 미상)은 `hasDamageSource(0, …) === false` 라
+ * 출처 술어가 전부 거짓이 되어 **기존 다섯 기체의 산술이 한 점도 안 바뀐다.**
+ * ⚠️ 기본값에 의존하는 새 스킬을 만들지 마라 — `0` 은 "출처 없음"이 아니라 "안 넘겨줬다"다.
+ *
  * @param dmg 무대 배율·피격 배수·**촉매 피해원 배율**까지 반영된 사슬 진입 피해
+ * @param sources 이번 피격에 **기여한 피해원 비트합**(`world.ts` 수집 루프의 `dmgSources`).
+ *   `max` 가 고른 하나가 아니라 기여한 종류 전부다.
  * @returns 스킬 감소·흡수를 거친 피해. S0 는 인자를 그대로 돌려준다(비트 동일).
  */
-export function onDamageChain(state: WorldState, player: Entity, dmg: number): number {
+export function onDamageChain(
+  state: WorldState,
+  player: Entity,
+  dmg: number,
+  sources: DamageSourceMask = 0,
+): number {
   if (!state.skillsOn) return dmg;
   switch (state.sigBit) {
     // 각 `case` 는 **① 감소 → ② 흡수** 순서로 처리하고, 정수화는 자기 게이트 안에서 한다.
     case SIG_STRIKER_MARKSMAN:
       return strikerDamageChain(state, player, dmg); // ① S4 감소 → ② S8 흡수
     case SIG_ARC_OVERCHARGE:
-      // ① BR3·BR5 감소 → ② BR4 흡수. 순서는 이 앵커 주석이 못 박은 그대로다.
-      return arccasterDamageChain(state, player, dmg);
+      // ① BR3·BR5·**BA8**(해저드 출처) 감소 → ② BR4 흡수. 순서는 이 앵커 주석 그대로다.
+      return arccasterDamageChain(state, player, dmg, sources);
     case SIG_BRUISER_ARMOR:
       // ① 감소: FO6 하중 전이(경감 + 대시 쿨 전이) → **FO9③ 사투 본능(빈사 중 스택당 추가
       // 감소)**. 흡수 칸을 쓰는 브루저 스킬은 없다.
@@ -707,6 +797,158 @@ export function onDamageChain(state: WorldState, player: Entity, dmg: number): n
       break;
   }
   return dmg;
+}
+
+/** 이번 명중 한 번의 가변 파라미터. 앵커 ⑱ 이 넘기고, 호출부가 그대로 반영한다. */
+export interface BulletHitParams {
+  /**
+   * 이번 명중으로 표적 hp 에서 **차감될 피해**. 무기 피해에 과열 2배·자이로/프리즘 증폭·
+   * 엘리트 피해감소가 **이미 곱해진 값**이다 — 다시 곱하지 마라.
+   */
+  damage: number;
+  /**
+   * 가해 탄의 **잔여 관통 예산**(`bullet.pierce`). 호출부가 이 값을 탄에 되쓴 뒤 관통 처리
+   * (자이로 무한 · 프리즘 소비 · 그 외 1 소비)를 한다. 즉 여기서 +1 하면 이번 명중의 소비가
+   * 상쇄된다 — **명중마다 더하면 탄이 관통으로 영영 안 죽는다.**
+   */
+  pierce: number;
+}
+
+/**
+ * 앵커 ⑱ — **아군탄 명중의 피해가 확정되기 직전**(`resolveCollisions`).
+ *
+ * ## ⚠️ 앵커 ⑩ 과 무엇이 다른가 — ⑩ 은 **늦다**
+ * ⑩ `onEnemyDamaged` 는 `t.hp -= dealt` 와 격추/부활 판정이 **끝난 뒤**다. 그 자리에서는
+ * 이번 명중의 피해를 더 이상 못 바꾼다(이미 깎였다). *"이 명중이 얼마나 아픈가"* 를 고치는
+ * 스킬(아크캐스터 CH5 전위차 저격)은 그래서 ⑩ 으로 배선할 수 없었다. 둘은 같은 명중에
+ * ⑱ → ⑩ 순으로 연달아 불린다.
+ *
+ * ## 무엇이 보장되는가
+ *  - `bullet.kind === 'bullet'`(아군탄)만 여기 온다 — 호출부 루프의 첫 줄 게이트가 근거다.
+ *    적탄(`'enemyBullet'`)은 이 경로에 **닿지 않는다**.
+ *  - `target` 은 아직 이번 피해를 안 받았다. `target.hp` 는 명중 **전** 값이다.
+ *  - 관통 차감 **전**이다(`b.pierce--` 는 이 뒤).
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **호출부는 `for (const b of state.entities)` 순회 안이다 — 훅에서 스폰하지 마라.**
+ *  - ⚠️ `target.hp` 를 직접 깎지 마라. 깎으면 아래 격추 판정과 이중 차감이 된다.
+ *  - **RNG 를 소비하지 마라**(공통 계약).
+ */
+export function onBulletHitParams(
+  state: WorldState,
+  bullet: Entity,
+  target: Entity,
+  params: BulletHitParams,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    case SIG_ARC_OVERCHARGE:
+      // CH5 전위차 저격 — 발사 시점 수명(앵커 ⑯ 의 `recordSpawnOrigin`) 대비 비행 비율로
+      // 「멀리 비행한 뒤 명중」을 판정해 피해 증폭 + 관통 가산.
+      arccasterBulletHitParams(state, bullet, target, params);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 ⑲ — **엘리트 전리품 등급 롤 직전**(`compact` 의 드랍 게이트 통과 후).
+ *
+ * 넘어오는 값은 촉매 희귀도 보상축(`state.catalystMods.rarity`)이고, 반환값이 그대로
+ * `rollEliteDrop` 의 `rarityMult` 가 된다. 무촉매·미투자면 `1` 이 그대로 통과해 등급
+ * threshold 가 종전과 같다(**바이트 불변**).
+ *
+ * ## ⚠️ 여기서 RNG 를 소비하지 마라 — 드랍 스트림이 통째로 밀린다
+ * `rollEliteDrop` 의 소비는 `nextFloat` + `nextU32` **정확히 2회 고정**이고 `rarityMult` 와
+ * 무관하다(그 함수 본문이 근거). 배율만 바뀌므로 시드별 드랍 **횟수**는 안 밀리고 **등급**만
+ * 움직인다 — 이 앵커가 안전한 이유가 그것이다.
+ *
+ * ⚠️ **호출부는 `for (const e of state.entities)` 순회 안이다 — 훅에서 스폰하지 마라.**
+ *
+ * @param player 플레이어 엔티티(`state.entities[0]`). 술어용이며 쓰지 마라.
+ * @param rarityMult 촉매 희귀도 배율(무촉매 = 1).
+ */
+export function onEliteLootRarity(
+  state: WorldState,
+  player: Entity,
+  rarityMult: number,
+): number {
+  if (!state.skillsOn) return rarityMult;
+  switch (state.sigBit) {
+    case SIG_ARC_OVERCHARGE:
+      // CH9 낙뢰 인양 — 과충전 중 처치한 엘리트의 등급 롤에 상향 배율.
+      return arccasterEliteLootRarity(state, player, rarityMult);
+    default:
+      break;
+  }
+  return rarityMult;
+}
+
+/** 앵커 ⑳ 의 결과. 호출부가 이 두 값만 보고 `aux0` 을 갱신한다. */
+export interface OverchargeAccrual {
+  /**
+   * 이번 틱을 **정지로 볼 것인가.** 거짓이면 호출부가 `aux0 = 0`(즉시 리셋)이다. 참이면
+   * 아래 {@link delta} 를 더하고 `[0, OVERCHARGE_TICK_CAP]` 로 클램프한다.
+   *
+   * ⚠️ 기본값은 **입력 기반 정지 술어 그대로**다(`moveX === 0 && moveY === 0 && !dash`).
+   * 이동 중인데 참으로 뒤집는 스킬(BA9)은 반드시 `delta` 를 0 이하로 함께 줘야 한다 —
+   * 안 그러면 "이동하면서 적립"이 되어 시그니처가 뒤집힌다.
+   */
+  still: boolean;
+  /** `still` 일 때 `aux0` 에 더할 양. 기본 1(정지) / 0(이동). 음수면 감쇠다. */
+  delta: number;
+}
+
+/**
+ * 앵커 ⑳ — **과충전 적립 분기**(`stepShipSignature` 의 아크캐스터 가지).
+ *
+ * ## ⚠️ 앵커 ⑨ 로는 왜 안 되는가
+ * ⑨ `onSignatureStep` 은 `stepShipSignature` **진입점**이라 기체 분기보다 **앞**이다. 거기서는
+ * 이번 틱의 정지 판정(`input`)이 아직 안 났고, `aux0` 갱신을 가로챌 수도 없다 — 훅이 끝난
+ * 뒤에 분기가 `aux0 = 0` 으로 덮어쓴다. 「이동해도 즉시 리셋되지 않는다」(BA9)와
+ * 「적립이 2배가 된다」(BA8)는 **그 대입 자체**를 바꿔야 해서 새 앵커가 필요했다.
+ *
+ * ⚠️ 호출부가 아크캐스터 분기 안이라 다른 기체는 애초에 지나가지 않지만, 기체 게이트는
+ * 그래도 훅 안에 둔다(호출부가 옮겨져도 다른 기체 거동이 안 갈리게).
+ */
+export function onOverchargeAccrual(
+  state: WorldState,
+  player: Entity,
+  still: boolean,
+): OverchargeAccrual {
+  const out: OverchargeAccrual = { still, delta: still ? 1 : 0 };
+  if (!state.skillsOn) return out;
+  switch (state.sigBit) {
+    case SIG_ARC_OVERCHARGE:
+      // BA8 절연 포좌(적립 2배) · BA9 이동 포격 술식(즉시 리셋 → 서서히 감쇠).
+      arccasterOverchargeAccrual(state, player, out);
+      break;
+    default:
+      break;
+  }
+  return out;
+}
+
+/**
+ * 앵커 ㉑ — **콤보 유지 시계가 1 줄어들기 직전**(`updateCombo`).
+ *
+ * @returns `true` 면 이번 틱 감소를 **건너뛴다**(시계가 그대로 멈춘다). S0·타 기체는 항상
+ *   `false` 라 종전과 비트 동일이다.
+ *
+ * ⚠️ 「절반 속도」류 스킬은 여기서 **틱 모듈러**로 구현해야 한다 — 시계 값 자체를 되돌리면
+ * 같은 틱의 젬 수거가 세운 창(`comboTimer` 대입)과 갈린다.
+ */
+export function onComboDecay(state: WorldState, player: Entity): boolean {
+  if (!state.skillsOn) return false;
+  switch (state.sigBit) {
+    case SIG_ARC_OVERCHARGE:
+      // BA5 정전 콤보 감속 — 과충전 중 감소 주기를 늘린다.
+      return arccasterComboDecay(state, player);
+    default:
+      break;
+  }
+  return false;
 }
 
 /**
@@ -1028,12 +1270,31 @@ function dispatchEnemyDamagedSkill(
  * `compact` 의 보스/코어 분기는 `state.kills` 를 올리지 않는다(승리 판정·전리품 축이다).
  * 그 사건이 필요하면 별도 앵커를 뚫어라 — 여기에 끼워 넣으면 처치 수와 호출 수의 항등이 깨진다.
  *
+ * ## ⚠️ `burning` 이 **엔티티가 아니라 캡처된 사실**인 이유
+ * 말로우 SQ9「이자 소각」은 *화상이 남은 채 죽은 적* 하나당 1회 부채를 탕감한다. 그 판정에
+ * 죽은 엔티티가 필요해 보이지만, **여기서 시체를 넘기는 것은 위 「무엇을 하면 안 되는가」가
+ * 금지한 형태다** — 시체는 이미 `state.entities` 밖이라 거기 쓴 값은 아무 데도 반영되지 않고,
+ * 조용한 무연산을 만드는 여지가 된다. 이 doc 이 그 대신 지시한 길이 *"좌표 밖 정보가
+ * 필요해지면 캡처 지점(`compact` 의 루프)에서 인자를 늘려라"* 이고, 그대로 했다.
+ *
+ * ⚠️ **인자 추가는 기존 호출부를 전부 깬다**(다른 기체 테스트 포함). 기본값을 두지 않은 것은
+ * 이 저장소의 규율이다 — 기본값을 두면 옛 호출부가 조용히 옛 거동으로 흐른다.
+ *
  * @param x 격추 좌표 x (`compact` 루프 안에서 캡처)
  * @param y 격추 좌표 y
  * @param elite 그 적이 엘리트였는가
+ * @param burning **화상이 남은 채 죽었는가**(`iframes > 0` 을 격추 시점에 캡처한 값).
+ *   `kind === 'enemy'` 한정은 캡처 지점의 게이트가 이미 진다 — 보스 `iframes` 는 화상 잔여가
+ *   아니라 과열 취약 창이라 한정을 빠뜨리면 오탕감이 난다(설계서 SQ9 3R-7)
  */
-export function onEnemyDeath(state: WorldState, x: number, y: number, elite: boolean): void {
-  dispatchEnemyDeathSkill(state, x, y, elite);
+export function onEnemyDeath(
+  state: WorldState,
+  x: number,
+  y: number,
+  elite: boolean,
+  burning: boolean,
+): void {
+  dispatchEnemyDeathSkill(state, x, y, elite, burning);
   onEnemyDeathCatalyst(state, x, y, elite);
 }
 
@@ -1042,11 +1303,22 @@ function dispatchEnemyDeathSkill(
   x: number,
   y: number,
   elite: boolean,
+  burning: boolean,
 ): void {
   if (!state.skillsOn) return;
   void x;
   void y;
   switch (state.sigBit) {
+    case SIG_MALLOW_CUSHION: {
+      // SQ9「이자 소각」의 **두 번째 탕감 경로** — 화상이 남은 채 죽은 적. 만료 경로(앵커 ㉚)와
+      // 배타다: 만료되면 화상이 없고, 화상 중에 죽으면 만료 틱이 오지 않는다. 그래서 적 1기당
+      // 화상 1사이클에 정확히 1회다(설계서 SQ9 구현 항).
+      //
+      // 플레이어는 `compact()` 뒤라 사라져 있을 수 있다(같은 틱에 함께 죽은 경우).
+      const p = playerOf(state);
+      if (p !== undefined && burning) mallowEnemyDeath(state, p);
+      break;
+    }
     // 레인은 자기 `case SIG_*:` 한 줄을 여기에 넣는다.
     case SIG_STRIKER_MARKSMAN: {
       // S3 전리 응급 — 엘리트 격파 시 선체 회복. `elite` 는 전리품 게이트가 굴린 그 판정과
@@ -1556,6 +1828,33 @@ export interface VolleyParams {
    * (CH1·CH8 표식 + CH3 기준 피해). 'bullet' kind 는 `aux1` 을 어디서도 읽지 않는다(전수 확인).
    */
   recordSpawnDamage: boolean;
+  /**
+   * 이번 볼리로 태어나는 모든 탄의 `targetX` 에 **발사 시점 잔여 수명**(`life`)을 새길
+   * 것인가. `false`/미지정이면 한 칸도 안 쓴다(`targetX` 는 0 그대로 → 리플레이 바이트 불변).
+   *
+   * ## ⚠️ 「발사 좌표」가 아니라 「발사 시점 수명」을 새긴다 — 자기 표식이 되기 때문이다
+   * 아크캐스터 CH5「전위차 저격」이 요구한 것은 *"멀리 비행한 뒤 명중했는가"* 인데, 탄에는
+   * 비행거리도 발사 좌표도 실린 칸이 없었다. 좌표 두 칸(`targetX`/`targetY`)을 쓰는 안이
+   * 먼저 나왔지만 **「각인됐는가」를 구분할 표식이 없다** — 좌표 `(0,0)` 과 "안 새김"이 같은
+   * 값이라, CH4 부채탄·분열 파편·보조무기처럼 이 경로를 안 지나는 탄이 *원점에서 발사된 탄*
+   * 으로 오독된다. 잔여 수명은 스폰 시 **항상 양수**라 `targetX > 0` 자체가 표식이 되고,
+   * 비행 비율 `(life0 − life) / life0` 은 무기별 사거리에 자동으로 정규화된다(월드 유닛
+   * 임계값을 상수로 박지 않아도 된다).
+   *
+   * ## ⚠️ 이 칸은 **아군탄에서만** 비어 있다 — 적탄에 새기지 마라
+   * `targetX`/`targetY` 는 적탄에서 거동 파라미터 A/B(가속도·선회율·각가속도)이고
+   * (`bullets.ts` 의 `applyBehavior`), 보스에서는 나선 기준각이다(`boss.ts`). 이 플래그의
+   * 소비처는 `autoAttack` 의 아키타입 분기뿐이고 거기서 태어나는 것은 `spawnBullet`
+   * (**아군탄 전용 팩토리**)의 산물이라 구조적으로 닿지 않는다. 읽는 쪽(앵커 ⑱)도
+   * `bullet.kind === 'bullet'` 을 **첫 줄에서** 다시 확인한다.
+   *
+   * ⚠️ **빔은 no-op 이다** — 세그먼트는 제자리에 놓이고 비행하지 않으므로 "얼마나 날았나"가
+   * 정의되지 않는다. 각인하면 *시간이 지났을 뿐인* 정지 세그먼트가 「멀리 비행」으로 세어진다.
+   * BA10 이 빔을 no-op 으로 둔 것과 같은 사상이다(아키타입 정의이지 미배선이 아니다).
+   *
+   * ⚠️ **선택 필드다.** 필수로 만들면 7기체 픽스처가 `Partial` 스프레드로 깨진다(배치 1 실측).
+   */
+  recordSpawnOrigin?: boolean;
 }
 
 /**
@@ -1930,6 +2229,139 @@ export function onCushionThreshold(
 }
 
 /**
+ * 앵커 ㉘ — **정산의 탕감률이 확정되는 자리**(임계 비교 직후 · 정산액 계산 직전).
+ * 이번 정산에 쓸 탕감률(bp)을 돌려준다.
+ *
+ * ## 왜 앵커가 하나 더 필요했는가 — ⑲ 과 **같은 형태의 선결**이었다
+ * 말로우 ME8「리듬 탕감」은 *정산의 탕감 비율을 콤보 스택으로 올리는* 스킬인데, 탕감률
+ * `CUSHION_RECOVER_BP` 가 `shipSignature.ts` 의 `cushionRecovered` **안**에 상수로 갇혀
+ * 있었다. 그래서 ⑳ 으로도 ㉕ 으로도 닿지 못했다:
+ *  - ⑳ 은 hp 차감·hp−1 클램프가 끝난 뒤라, 사후 환급으로 흉내 내면 **클램프가 소멸시킨
+ *    초과분이 복원되지 않아** "탕감을 늘려 덜 깎인" 것과 "깎고 나서 되돌린" 것이 갈린다.
+ *  - ㉕ 은 hp 차감 전이지만 `due`(정산액)가 **이미 그 상수로 계산돼** 들어온다.
+ * ME9 가 임계에서 겪은 것과 같은 구조이고, 같은 방식으로 푼다 — 순수 함수 둘이 탕감률을
+ * **필수 인자**로 받도록 개정하고, 이 앵커의 반환값을 `world.ts` 가 그대로 넘긴다.
+ *
+ * ## ⚠️ 상한은 이 앵커의 계약이다
+ * 반환값이 10000 이상이면 `cushionSettled` 가 **음수**가 되어 정산이 hp 를 늘린다(맞는 것이
+ * 이득이 되는 부호 반전). 설계 정본의 ME8 점근이 9500 이라 구조적으로 닿지 않지만, 어픽스
+ * 연장이 붙는 축이라 case 쪽에서 상한을 건다.
+ *
+ * @param base `CUSHION_RECOVER_BP`. 미투자 런은 그대로 돌려받는다(비트 동일)
+ * @returns 이번 정산에 쓸 탕감률(bp). **0 이상 10000 미만**이어야 한다
+ */
+export function onCushionRecoverBp(state: WorldState, player: Entity, base: number): number {
+  if (!state.skillsOn) return base;
+  void player;
+  switch (state.sigBit) {
+    case SIG_MALLOW_CUSHION:
+      // ME8「리듬 탕감」 — `state.combo` 를 읽어 여백 비례로 올린다. 미투자·콤보 0 이면
+      // `base` 그대로다(비트 동일).
+      return mallowCushionRecoverBp(state, base);
+    default:
+      break;
+  }
+  return base;
+}
+
+/** 앵커 ㉗ 이 넘기는 **가변** 레코드. 훅이 이 칸을 고치면 그 값이 그대로 지연분이 된다. */
+export interface CushionSplitParams {
+  /**
+   * 이번 피격에서 **지연분으로 뗄 양**(정수). `world.ts` 가 `cushionDeferredDamage(dmg)` 로
+   * 초기화해 넣고, 훅이 돌아온 뒤 `[0, dmg]` 로 클램프해 읽는다.
+   *
+   * ⚠️ **`CUSHION_DEFER_BP` 를 여기서 갈아 끼우는 것이 이 칸의 용도다.** 비율을 바꾸는
+   * 스킬(CU5)은 `dmg` 와 자기 bp 로 **다시 계산해 대입**하고, 절대량으로 개입하는
+   * 스킬(CU1 초과분 이관 · CU2 한도 · CU6 전액 전환)은 그대로 대입한다. 비율 칸과 절대량
+   * 칸을 **둘 다** 두지 않은 것은 의도다 — 두 손잡이가 같은 값을 가리키면 어느 쪽이 이겼는지
+   * 가 호출 순서에 숨고, 이 저장소가 반복해서 대가를 치른 형태가 정확히 그것이다.
+   */
+  deferred: number;
+}
+
+/**
+ * 앵커 ㉗ — **완충 지연 전환 분기**(`cushionOn` 게이트 안 · `dmg` 정수화 직후 ·
+ * 즉시분이 확정되기 직전). 이 피격에서 얼마를 미룰지를 훅이 다시 쓸 수 있다.
+ *
+ * ## 왜 앵커 ⑧ 이나 ④ 로는 안 됐는가
+ * ⑧(감쇠 사슬)은 이 분기보다 **앞**이라 "지연분을 얼마나 뗄지" 에 닿지 않고, ④(피격 후속)는
+ * 적립이 이미 끝난 **뒤**다. 지연 전환 분기를 요구하는 말로우 4종(CU1·CU2·CU5·CU6)이 통째로
+ * 미배선이었던 이유가 이것이고, 이 앵커가 그 넷의 자리다.
+ *
+ * ## 무엇이 보장되는가
+ *  - `dmg` 는 **정수화 뒤**다(`Math.round`). `aux0` 은 u32 로 해시되므로 소수를 적립하면
+ *    클라와 서버 재실행이 갈린다 — 훅이 돌려주는 값도 정수여야 하고, 호출부가 `trunc` 한다.
+ *  - `player.hp` 는 **아직 안 깎였다**. `hp` 인자는 그 값이고, 치명 판정(CU6)은
+ *    `dmg − params.deferred >= hp` 로 세운다.
+ *  - `player.aux0` 은 **이번 피격분이 아직 안 실린** 값이다(적립은 hp 차감 뒤 분기다).
+ *    CU2 의 한도 여유 계산이 그 사실 위에 선다.
+ *
+ * ## ⚠️ 호출부가 `[0, dmg]` 로 클램프한다
+ * 음수는 즉시분을 늘려 "미룰수록 더 아픈" 부호 반전이 되고, `dmg` 초과는 즉시분을 음수로
+ * 만들어 피격이 회복이 된다. 훅 쪽 규율에만 맡기지 않는다.
+ *
+ * @param dmg 이번 피격의 **정수화된** 총 피해(사슬을 다 통과한 뒤)
+ * @param params 가변 레코드 — {@link CushionSplitParams}
+ * @param hp 차감 **전** 플레이어 hp(치명 판정용)
+ */
+export function onCushionSplit(
+  state: WorldState,
+  player: Entity,
+  dmg: number,
+  params: CushionSplitParams,
+  hp: number,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    case SIG_MALLOW_CUSHION:
+      // CU5 전량 유예 태세(비율 치환) → CU1 과부하 흡수(초과분 이관) → CU2 부채 한도(상한) →
+      // CU6 파산 보호(치명 시 전액). 순서는 설계 정본이 못 박았다 — CU6 은 한도 게이트
+      // **뒤**라 한도를 넘겨 적립될 수 있고, 그것이 "목숨을 빚으로 산" 대가다.
+      mallowCushionSplit(state, player, dmg, params, hp);
+      break;
+    default:
+      break;
+  }
+}
+
+/** 앵커 ㉙ 이 구분하는 목표 종류. 완수 지점이 둘이라 어느 쪽인지 훅이 알 수 있어야 한다. */
+export type ObjectiveKind = 'echo' | 'encounter';
+
+/**
+ * 앵커 ㉙ — **런 목표가 완수된 틱**. 지금은 두 지점이다:
+ * `echo.ts` 의 에코 안정화 성공(`rt.state = 2`) · `encounterDetour.ts` 의 조우 완수
+ * (`rt.state = 3`).
+ *
+ * ## ⚠️ **두 지점 다 걸어야 한다** — 한쪽만 걸면 반쪽이다
+ * 말로우 ME7「에코 채권」의 술어가 설계 정본에서 *"에코 안정화·조우 완수"* 로 **한 벌**이다.
+ * 한 지점만 걸면 "구현했는데 절반만 도는" 형태가 되고, 그 절반은 무대에 따라 아예 안 나온다
+ * (에코는 희귀 이벤트, 조우는 다른 축의 방이다).
+ *
+ * ## 무엇이 보장되는가
+ *  - 두 지점 모두 **정리가 끝난 뒤**다: 에코는 `echo.dead = true` 뒤, 조우는 방 소유 엔티티
+ *    제거·플레이어 좌표 복원 뒤다. 훅이 보는 `state.entities` 는 메인 월드다.
+ *  - `EncounterRuntime`·`EchoRuntime` 에 필드를 **추가하지 마라**(설계서 ME7 연계 항이 명시).
+ *    존재 술어와 이 앵커의 인자만으로 성립하는 스킬만 여기 온다.
+ *
+ * @param kind 어느 목표였는가 — 산출을 갈라야 하는 스킬을 위한 칸(지금 소비처는 없다)
+ */
+export function onObjectiveResolved(
+  state: WorldState,
+  player: Entity,
+  kind: ObjectiveKind,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    case SIG_MALLOW_CUSHION:
+      // ME7「에코 채권」 — 부채 전액 소각 + 소각량 비례 자석 버프 창.
+      mallowObjectiveResolved(state, player, kind);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
  * 앵커 ㉕(S3) — **정산액이 확정되기 직전**. `due`(= `cushionSettled`)가 hp 로 들어가기 **전**,
  * hp−1 클램프보다도 **앞**이다. 이번 정산에서 **선체로 보낼 몫**을 돌려준다.
  *
@@ -1959,8 +2391,12 @@ export function onCushionThreshold(
  * 하한 클램프는 걸지 않는다 — `min` 을 하나 더 두면 키우는 방향이 통째로 죽는다(앵커 ⑰ 이
  * `min(d,s)` 때문에 원리적으로 무효가 된 전례가 이 저장소에 있다).
  *
- * @param due `cushionSettled(aux0, aux1)` — 회복분을 뗀 뒤 선체로 갈 예정인 지연 피해
- * @param recovered `cushionRecovered(aux0, aux1)` — 무피격 보상으로 사라진 몫
+ * @param due `cushionSettled(aux0, aux1, settleAt, recoverBp)` — 회복분을 뗀 뒤 선체로 갈 예정인
+ *   지연 피해
+ * @param recovered `cushionRecovered(aux0, aux1, settleAt, recoverBp)` — 무피격 보상으로 사라진 몫
+ * @param recoverBp 이 정산에 **실제로 쓰인** 탕감률(앵커 ㉘ 의 반환값). ME5 의 이월분 탕감률이
+ *   설계 정본에서 *여백 합성*(갱신값 = 현재율 + (10000 − 현재율) × r / 10000)이고 그 「현재율」이
+ *   바로 이 값이다 — 안 넘기면 ME5 가 ME8 과 무관하게 굴러 조용히 갈린다
  * @returns 이번 정산에서 **선체로 보낼 몫**. 비음이어야 한다(음수는 hp 를 늘리지 않고 버려진다)
  */
 export function onCushionSettleDue(
@@ -1968,6 +2404,7 @@ export function onCushionSettleDue(
   player: Entity,
   due: number,
   recovered: number,
+  recoverBp: number,
 ): number {
   if (!state.skillsOn) return due;
   void recovered;
@@ -1976,7 +2413,11 @@ export function onCushionSettleDue(
       // ME5「분할 상환」 **1종** — 이번 정산의 절반만 선체로 보내고 나머지를 `aux0` 으로 미룬다
       // (이월분은 탕감률만큼 줄어든다). 설계 정본의 순서에서 **분할**이 여기다.
       // 미투자 런은 `due` 를 그대로 돌려주므로 비트 동일이다.
-      return mallowCushionSettleDue(state, player, due);
+      return mallowCushionSettleDue(state, player, due, recoverBp);
+    // ⚠️ **아래 주석은 낡았다 — 지우지 않고 갱신한다.** ME9 는 순수 함수 개정 레인이 임계를
+    // 인자로 빼면서 **앵커 ⑲** 에서 돌고, ME8 은 이 레인이 탕감률을 인자로 빼면서
+    // **앵커 ㉘({@link onCushionRecoverBp})** 에서 돈다. 즉 "여기로 못 온다" 는 지금도 참이지만
+    // 사유가 *"막혀 있다"* 에서 *"자리가 다르다"* 로 바뀌었다. 종전 관측 원문:
     // ⚠️ ME8「리듬 탕감」·ME9「솜틀 요양」은 **여전히 여기로도 못 온다.** 둘은 탕감률
     // (`CUSHION_RECOVER_BP`)·임계(`CUSHION_RECOVER_TICKS`)가 `shipSignature.ts` 의 순수 함수
     // `cushionRecovered`·`cushionSettled` **안에** 있어, 이 앵커에 도달한 시점에는 이미 그
@@ -2315,6 +2756,358 @@ export function onTurretShotParams(
     // `tsc` 만이 잡았다.
     case SIG_HATCHLING_BROOD:
       hatchlingTurretShotParams(state, turret, params);
+      break;
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉗㉘㉙ (공유 앵커 레인) — **기체를 가로지르는 지점 셋**
+// ---------------------------------------------------------------------------
+//
+//   ㉗ onActiveFired        — 액티브 핸들러 호출 **직후**(`actives.ts` 의 `stepActives`).
+//   ㉘ onGemMagnetParams    — 젬 자석 반경이 확정된 직후(`world.ts` 의 `stepGems`).
+//   ㉙ onPlayerMoveParams   — 플레이어 이동 배율이 확정되기 직전(`world.ts` 의 `stepPlayer`).
+//
+// ## 왜 기체별 레인이 아니라 한 레인이 셋을 세웠는가
+// 셋 다 **7기체가 전부 지나가는 지점**이다. 기체별 레인이 각자 뚫으면 같은 지점에 시그니처가
+// 다른 훅이 여럿 서고, 그 충돌은 **`tsc` 만이 잡는다**(누적 실측: 의미 충돌 전건이 타입 오류로
+// 드러났고 테스트는 0건 잡았다). 자리를 먼저 하나로 세우고 소비처를 나중에 얹는 순서가
+// 그 재발을 구조적으로 막는다.
+//
+// ## ⚠️ 촉매 짝이 없다 — ⑮·⑰~㉖ 과 같다
+// 액티브 발동·자석 반경·이동 배율은 촉매 48종에 대응 카드가 없다. 빈 촉매 함수를 미리 두지 마라.
+
+/**
+ * 앵커 ㉗ 이 넘기는 **발동 직전의 스냅샷**. 훅이 읽기만 한다(가변 레코드가 아니다).
+ *
+ * ## 왜 이 넷인가 — 전부 **핸들러가 덮어쓰기 때문에** 사후 복원이 불가능한 값이다
+ * 앵커가 핸들러 **뒤**라 `player.x/y`·`player.aux0`·`state.entities` 는 이미 갱신돼 있다.
+ * 훅이 스스로 복원할 방법이 없으므로 호출부가 찍어서 넘긴다.
+ */
+export interface ActiveFiredOrigin {
+  /** 핸들러 호출 **전** `player.x` — *출발한 자리*. 버블 DR9·아크캐스터 BA6 이 요구한다. */
+  preX: number;
+  /** 핸들러 호출 **전** `player.y`. */
+  preY: number;
+  /**
+   * 핸들러 호출 **전** `player.aux0`. 아크캐스터 CH7 이 *"소모한 정지 시간"* 을 이 값과
+   * 지금 값의 **차분**으로만 알 수 있다(방전 액티브가 충전을 비운 뒤라 현재값은 0 이다).
+   */
+  preAux0: number;
+  /**
+   * 핸들러 호출 **전** `state.entities.length`. 이 인덱스 **이상**이 *그 발동이 낳은 개체*다 —
+   * 아크캐스터 CH10 이 "방전 액티브의 투사체"만 골라 표식을 찍는 데 쓴다.
+   *
+   * ⚠️ `state.entities` 는 `compact()` 전까지 **append-only** 라 이 워터마크가 유효하다.
+   * `compact()` 는 이 앵커와 같은 틱의 훨씬 뒤에 돈다 — 워터마크를 틱 경계 너머로 들고 가지 마라.
+   */
+  spawnWatermark: number;
+}
+
+/**
+ * 앵커 ㉗ — **액티브 핸들러가 자기 일을 끝낸 직후**(`stepActives` 의 `ACTIVE_HANDLERS[...]` 다음
+ * 줄 · 쿨다운 대입 **앞**).
+ *
+ * ## 이 지점에서만 살아 있는 것
+ *  - **착지 지점** = `player.x`/`player.y` 다. 앵커가 호출 **뒤**라 blink 계열 액티브의 이동이
+ *    이미 끝나 있고, 벽 슬라이드 보정(`slideCircleWalls`)까지 반영된 **최종 좌표**다. 그래서
+ *    착지 축 스킬(팬텀 PH2 · 버블 DR3 · 브루저 MO10 · 말로우 ME6)은 **인자를 하나도 더
+ *    요구하지 않는다** — 그 자리에서 `player` 를 그대로 쓰면 된다.
+ *  - **출발 지점**은 반대로 이미 사라졌다 → {@link ActiveFiredOrigin.preX}/`preY` 로 받는다.
+ *  - **쿨다운은 아직 안 세워졌다.** 이 앵커에서 `state.activeCd0/1` 을 만지면 호출부가 그
+ *    직후에 덮어쓴다. 쿨다운을 조작하려는 스킬은 여기가 자리가 아니다.
+ *
+ * ## ⚠️ 여기서는 **스폰이 안전하다** — 앵커 ㉖ 과 정반대다
+ * `stepActives` 는 `state.entities` 를 **순회하지 않는다**(슬롯 2칸 루프일 뿐이다). 그래서
+ * 아크캐스터 BA1(착지 원형 볼리)·BA6(출발 자리 포탑)처럼 **개체를 낳는 스킬을 여기서 바로
+ * 실행할 수 있다.** 앵커 ㉖(`onTurretShotParams`)은 `stepTurrets` 의 `state.entities` 순회
+ * **안**이라 스폰이 금지인데, 두 앵커를 같은 규율로 읽지 마라.
+ * (그 위에 `fanStrike`·`blink` 같은 액티브 헬퍼가 이미 이 지점에서 개체를 낳고 있다 —
+ *  핸들러 자신이 바로 앞 줄에서 하는 일이다.)
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.** 전 앵커 공통 계약이다(파일 헤더).
+ *  - ⚠️ **적 `hp` 를 깎으면 `t.dead` 를 같이 세워라.** `compact()` 의 1차 게이트가 `e.dead` 라
+ *    안 세우면 그 적은 좀비로 남아 처치·젬·전리품이 전부 사라진다(정본 `status.ts` 111-112).
+ *    단 `guardian`·`core` 는 부활 분기가 있어 마킹하면 안 된다.
+ *
+ * @param def 이번에 발동한 액티브의 정의. **계열 판별은 훅 책임이다** — `def.treeIndex`(축) ·
+ *   `def.tier`('lo'/'hi') · `def.kind` 가 그 손잡이다.
+ * @param dir 발동 방향(`resolveDirFallback` 을 이미 통과한 단위 벡터).
+ * @param slot 슬롯 인덱스(0/1). 버프 잔여 틱 칸을 고를 때 쓴다.
+ */
+export function onActiveFired(
+  state: WorldState,
+  player: Entity,
+  def: ActiveSkillDef,
+  dir: { x: number; y: number },
+  slot: number,
+  origin: ActiveFiredOrigin,
+): void {
+  if (!state.skillsOn) return;
+  // 아직 소비처가 없는 인자들. 자기 `case` 가 쓰기 시작하면 해당 줄을 지워라.
+  void dir;
+  void slot;
+  void origin;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라** — 병렬 배선
+    // 머지에서 두 `case` 가 `break;` 하나를 공유하는 fallthrough 가 누적 5건 나왔고 전부
+    // `tsc` 만이 잡았다.
+    case SIG_PHANTOM_CLOAK:
+      // PH2 위상 착지 — 위상 계열(`treeIndex === 1`) 액티브의 **착지 지점** 정화.
+      phantomActiveFired(state, player, def);
+      break;
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉞ (S3-해츨링) — **포탑 1기의 사격 리듬**(`world.ts` 의 `stepTurrets` 루프 안)
+// ---------------------------------------------------------------------------
+//
+//   ㉞ onTurretCadence — 쿨다운 감산 **앞**. 해츨링 BD9(과밀 본능) · NU4(둥지 소집 연사 창).
+//
+// ## ⚠️ 왜 쿨다운 감산보다 **앞**인가 — 뒤에 두면 BD8 이 원리적으로 못 산다
+// 루프 본문은 `if (cooldown > 0) { cooldown--; continue; }` 라, 앵커를 그 뒤에 두면
+// **쿨다운이 0 인 틱에만** 불린다. 그러면 이 앵커로는 "쿨다운을 무시하고 지금 쏜다"(BD8) 를
+// 표현할 방법이 없고, 간격 단축(BD9·NU4)도 *다음* 발부터만 걸려 한 주기 늦다. 앞에 두는
+// 대가는 병아리 1기당 매 틱 훅 1회인데, 훅 첫 줄이 `ownerId !== BROOD_MARK` 조기 반환이라
+// 센트리·드론 베이 런에서는 비교 한 번이다.
+//
+// ## ⚠️ 포탑은 해츨링 전용이 아니다 — 게이트는 **훅 안**이다(㉖ 과 같은 규율)
+// `stepTurrets` 는 병아리(`BROOD_MARK`) · 액티브 센트리 · 자율 드론 베이(`DRONE_MARK`)를 한
+// 루프로 돈다. 앵커에서 소환물 종류로 미리 거르지 않는다 — 훗날 센트리를 만지는 축이 다시
+// 막힌다.
+//
+// ## ⚠️ 촉매 짝이 없다 — ⑮·⑰~㉔·㉖ 과 같다.
+
+/**
+ * 앵커 ㉗ 이 넘기는 **이 포탑의 이번 틱 사격 리듬**. 훅이 제자리에서 고친다.
+ *
+ * ## ⚠️ 칸이 하나뿐인 이유 — **증명한 칸만 연다**
+ * 정찰이 지목한 `suppressFire`(SH4「품기 진형」의 사격 정지)는 **열지 않았다.** SH4 의
+ * 반대급부인 *"적탄을 몸으로 막는다"* 는 적탄↔병아리 충돌 경로가 코드에 0건이라(`collision.ts`
+ * ·`bullets.ts` 에 포탑 대상 판정 grep 0건) 이 레인에서 성립하지 않고, 정지만 넣으면 SH4 가
+ * **순손해 스킬**이 된다 — BD10 이 탄 피해 축 없이 상한만 깎였을 때와 같은 형태다. 칸만 미리
+ * 열어 두면 *"배선이 있다"* 는 착각이 남으므로(앵커 ⑮ 주석) 소비처가 생기는 레인이 열어라.
+ */
+export interface TurretCadenceParams {
+  /**
+   * 이 포탑이 **이번에 쏘고 나서** 세울 쿨다운 틱. 초기값은 `events.ts` 의
+   * `TURRET_FIRE_COOLDOWN`(=10).
+   *
+   * ## ⚠️ 클램프에 안 삼켜진다 — 소비 경로를 짚었다
+   * `stepTurrets` 는 `if (fireTurretShot(...)) t.cooldown = <이 값>` 으로 **그대로** 대입하고,
+   * 다음 틱부터 `if (cooldown > 0) cooldown--` 로 순수 감산한다. `min`·`max` 가 하나도 없다.
+   * ⚠️ **훅이 하한을 스스로 걸어라** — 0 이나 음수를 넣으면 `cooldown > 0` 이 영원히 거짓이라
+   * 매 틱 발사가 된다(BD5 가 `0` 클램프로 피한 것과 같은 함정의 반대편이다).
+   */
+  cooldownTicks: number;
+}
+
+/**
+ * 앵커 ㉗ — **포탑 1기의 이번 틱 리듬이 정해지기 직전**(쿨다운 감산보다 앞).
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라**(㉖ 과 같은 계약 — `stepTurrets` 는 매 틱 전 포탑을 돈다).
+ *  - ⚠️ **엔티티를 낳지 마라.** 이 지점은 `state.entities` **순회 안**이다.
+ *  - ⚠️ **`turret.cooldown` 을 여기서 직접 만지지 마라.** 바로 다음 줄이 그 값을 읽어 감산
+ *    여부를 정한다 — 여기서 0 으로 밀면 "이 앵커가 정한 리듬" 과 실제 리듬이 갈린다.
+ *    즉시 격발이 필요한 축(BD8·NU4)은 **액티브 핸들러**가 발동 틱에 `cooldown = 0` 을 쓴다
+ *    (`stepActives` 가 `stepTurrets` 보다 앞이라 같은 틱에 나간다).
+ *
+ * @param turret 이 포탑 개체. **소환물 종류 판별은 훅 책임이다**(`ownerId`).
+ */
+export function onTurretCadence(
+  state: WorldState,
+  turret: Entity,
+  params: TurretCadenceParams,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    case SIG_HATCHLING_BROOD:
+      hatchlingTurretCadence(state, turret, params);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 ㉘ 이 넘기는 **이번 틱의 젬 자석 파라미터**. 훅이 제자리에서 고친다.
+ *
+ * ## 왜 인자 나열이 아니라 레코드인가
+ * `VolleyParams`·`TurretShotParams` 와 같은 사유다 — 이 지점을 기다리는 축이 7종이고 고치려는
+ * 칸이 서로 달라, 인자로 늘어놓으면 칸이 하나 늘 때마다 앵커 시그니처가 바뀐다.
+ */
+export interface GemMagnetParams {
+  /**
+   * 플레이어 자석 반경. 초기값은 `stepGems` 가 이미 계산한 값(자석 버프 배율까지 반영).
+   *
+   * ## ⚠️ 클램프에 안 삼켜진다 — 소비 경로를 끝까지 따라갔다
+   * `stepGems` 는 이 값을 제곱해(`r2`) 거리와 비교할 뿐이고, 그 비교 뒤의 흡인 속도는
+   * `MAGNET_SPEED` 상수라 반경과 무관하다. 경로에 `min`·`max` 가 하나도 없다.
+   */
+  radius: number;
+  /**
+   * 병아리(brood) 중심의 **추가** 흡인 반경. 초기값 0 = 추가 흡인 없음.
+   *
+   * ## ⚠️ 지금 소비처가 **없다** — 해츨링 NU1 이 얹힐 자리다
+   * "소비처 없는 칸을 미리 열지 마라"(앵커 ㉖ doc)의 예외다. 사유는 **필수 필드를 나중에
+   * 더하면 다른 레인의 픽스처가 `Partial` 스프레드로 깨지기 때문**이고, 그 사고는 배치1 에서
+   * 실제로 났다. 레코드 **필드 설계**는 소비처보다 먼저 확정하는 것이 싸다.
+   * ⚠️ 그러니 이 필드가 있다고 *"NU1 이 배선됐다"* 로 읽지 마라 — 지금은 `stepGems` 가
+   * 읽기만 하고 **아무 일도 하지 않는다**(값이 0 이라 산술도 없다).
+   */
+  broodRadius: number;
+}
+
+/**
+ * 앵커 ㉘ — **젬 자석 반경이 확정된 직후 · 흡인 루프가 돌기 직전**(`world.ts` 의 `stepGems`).
+ *
+ * ## 이 지점에서만 살아 있는 것
+ *  - **반경이 아직 제곱되기 전**이다. `r2` 계산 뒤로 미루면 훅이 제곱값을 고쳐야 하고 그러면
+ *    "반경 ×1.5" 같은 설계 문면이 훅마다 `×2.25` 로 번역돼 조용히 갈린다.
+ *  - 앵커 ③(`onGemCollected`)은 **수거가 끝난 뒤**라 반경이 무의미하다. 그래서 말로우 ME2 ·
+ *    브루저 MO2 가 그 자리에서 원리적으로 닿지 않았다(앵커 ③ 의 `case` 주석이 그 기록이다).
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.**
+ *  - ⚠️ **여기서 젬을 수거하지 마라.** 수거의 단일 수렴점은 `collectGem` 이고 앵커 ③ 이 그
+ *    자리다. 여기서 직접 걷어가면 콤보·XP 가 두 곳에서 갈린다.
+ */
+export function onGemMagnetParams(
+  state: WorldState,
+  player: Entity,
+  params: GemMagnetParams,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // ⚠️ `break;` 필수(앵커 ㉗ 주석과 같은 사유).
+    case SIG_MALLOW_CUSHION:
+      // ME2 채무 자석 — 부채(`player.aux0`)에 비례해 반경이 커진다.
+      mallowGemMagnetParams(state, player, params);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * 앵커 ㉙ 이 넘기는 **이번 틱의 플레이어 이동 파라미터**. 훅이 제자리에서 고친다.
+ */
+export interface PlayerMoveParams {
+  /**
+   * 이동 속도에 **곱해지는** 배율. 초기값 1 — 미투자 런은 `v * 1 === v` 로 비트 동일이라
+   * 골든 해시가 바이트 불변이다.
+   *
+   * ⚠️ **대시 임펄스에는 안 걸린다.** 호출부가 이 배율을 `mx * playerSpeed` 쪽에만 곱하고
+   * 대시 가산(`dx * dashSpeed`)은 그 뒤에 별도로 더한다 — 감속 지대(`PLAYER_SLOW_MULT`)·
+   * 모듈 감속(`attackerSlowMult`)이 지켜 온 규율 그대로다. 대시 거리를 바꾸려는 스킬은
+   * 여기가 자리가 아니다.
+   */
+  speedMult: number;
+  /**
+   * 이번 틱 시작 시점의 `state.playerSlowTicks`. **훅이 고치면 호출부가 그대로 되쓴다.**
+   *
+   * ## ⚠️ 이 칸이 「감속 부여 지점에 손잡이가 없다」는 누적 결함의 해소다
+   * 직전 배치의 브루저 **MO4「장갑 활주」**(이동 감속 디버프가 걸리는 틱에 장갑 1개를 소모해
+   * 그 감속을 무효화한다)가 *"한 틱 늦다"* 로 남은 것이 정확히 이 자리가 없었기 때문이다 —
+   * 감속을 **부여하는** 지점(해저드 접촉·냉기)은 여럿이고 앵커가 하나도 없어서, 무효화가
+   * 부여 다음 틱에야 가능했다. 이 앵커는 감속이 **소비되기 직전**(배율 산출 앞)이라
+   * 부여 지점이 몇 개든 상관없이 그 틱 안에서 0 으로 되돌릴 수 있다.
+   *
+   * ⚠️ **MO4 를 이 커밋이 고치지 않았다.** 이 앵커가 그 문을 열었다는 기록일 뿐이고, 실제
+   * 배선(장갑 스택 1 소모 + `slowTicks = 0`)은 브루저 레인 몫이다. 얹을 때 **감소 순서**를
+   * 확인해라 — 호출부는 되쓴 값을 보고 배율을 정한 **뒤** 1 을 깎는다.
+   */
+  slowTicks: number;
+}
+
+/**
+ * 앵커 ㉙ — **이동 속도가 대입되기 직전**(`world.ts` 의 `stepPlayer` · 감속 배율 산출 **앞**).
+ *
+ * ## 이 지점에서만 살아 있는 것
+ *  - **감속 잔여 틱이 아직 안 깎였고 배율도 아직 안 정해졌다.** 그래서 감속을 무효화하는
+ *    스킬(브루저 MO4)과 속도를 올리는 스킬(말로우 CU8)이 **같은 틱 안에서** 성립한다.
+ *  - 앵커 ⑨(`onSignatureStep`)는 `stepShipSignature` 진입점이고 `stepPlayer` 와 다른 함수라
+ *    이 지역 변수들에 닿지 않는다.
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라.**
+ *  - ⚠️ **`player.vx`/`vy` 를 직접 쓰지 마라.** 호출부가 이 훅 **직후에 통째로 대입**하므로
+ *    여기서 쓴 값은 그 자리에서 사라진다. 속도를 바꾸려면 반드시 `params.speedMult` 다.
+ *  - ⚠️ **매 틱 불린다.** 나눗셈·루프를 넣기 전에 비용을 생각해라(레벨 스케일의 나눗셈은
+ *    투자 게이트 **안**에 둔다 — `skills/striker.ts` 헤더 규율 ③).
+ */
+export function onPlayerMoveParams(
+  state: WorldState,
+  player: Entity,
+  params: PlayerMoveParams,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // ⚠️ `break;` 필수(앵커 ㉗ 주석과 같은 사유).
+    case SIG_MALLOW_CUSHION:
+      // CU8 통증 마취 — 부채(`player.aux0`) 보유 중 이동 속도가 오른다.
+      mallowPlayerMoveParams(state, player, params);
+      break;
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉟ (S3-해츨링) — **포탑이 수명으로 소멸한 직후**(`stepTurrets` 의 `life === 0` 분기)
+// ---------------------------------------------------------------------------
+//
+//   ㉟ onTurretExpired — `t.dead = true` 직후. 해츨링 BD3(작별 격발) · NU9(둥지 표식) ·
+//                        SH9(이소 둥지).
+//
+// ## ⭐ 이 앵커가 특별한 이유 — **「소멸 경로 전수」가 이것 하나로 닫힌다**
+// 설계 ②말미의 「소멸 경로 전수 표」는 BD3·NU9 가 **모든** 소멸 경로에서 발화할 것을
+// 요구한다. 병아리의 소멸 경로는 셋뿐이고 나머지 둘(SH1 호위 희생 · SH7 회생 부화)은
+// **이미 `skills/hatchling.ts` 의 `killChick` 안**이다 — 그 함수가 `aux1 = 1`(사유 = 희생)을
+// 적어 두었고, 그 값의 독자가 없다는 것이 배치 5 헤더 사유 3묶음이 미배선 이유로 든 바로 그
+// 반쪽이었다. 이 앵커가 셋째(자연 만료) 경로를 열어 **BD3·NU9 가 세 경로 전부에서** 돌고,
+// 동시에 `aux1` 의 첫 독자(SH9)가 생긴다.
+//
+// ## ⚠️ 왜 `t.dead = true` **직후**인가
+// 앞에 두면 훅이 "소멸했다" 를 아직 모르고(수명 0 은 다음 줄이 판정한다), 루프 밖으로 미루면
+// `compact()` 가 이미 개체를 회수해 **좌표가 남지 않는다** — 세 스킬이 전부 *"그 자리에"* 를
+// 요구하므로 좌표 유실은 곧 미배선이다.
+//
+// ## ⚠️ 이 앵커는 자연 만료 **전용**이다
+// SH1·SH7 의 강제 소멸은 여기 오지 않는다(그쪽은 `dead` 를 스스로 세우고 이 루프는 다음
+// 틱에 `t.dead` 로 걸러 낸다). 「자연 만료만」이 조건인 축(SH9)이 그 사실에 의존하고,
+// 「전수」가 조건인 축(BD3·NU9)은 훅 쪽에서 `killChick` 과 **같은 헬퍼**를 부른다.
+//
+// ## ⚠️ 촉매 짝이 없다 — ⑮·⑰~㉔·㉖·㉗ 과 같다.
+
+/**
+ * 앵커 ㉘ — **포탑 1기가 수명을 다해 죽은 직후**(`t.dead = true` 직후 · `continue` 앞).
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라**(㉖·㉗ 과 같은 계약).
+ *  - ⚠️ **`turret.dead` 를 되돌리지 마라.** 수명 만료는 world 의 판정이고, 되살리면
+ *    `TURRET_LIFE_TICKS` 계약과 상한 계수가 통째로 갈린다.
+ *  - ⚠️ 엔티티 생성은 **허용된다** — 이 루프가 이미 `fireTurretShot` → `spawnBullet` 으로
+ *    배열 말미에 append 하고 있고, 새로 붙는 개체는 `isActiveTurret` 이 거짓이라 같은 틱의
+ *    남은 순회가 그것을 건너뛴다(`for…of` 가 새 원소를 보더라도 무연산이다). 순회 **중간**을
+ *    바꾸는 조작(정렬·삭제)만 금지다.
+ *
+ * @param turret 방금 소멸한 포탑 개체. **소환물 종류 판별은 훅 책임이다**(`ownerId`).
+ */
+export function onTurretExpired(state: WorldState, turret: Entity): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    case SIG_HATCHLING_BROOD:
+      hatchlingTurretExpired(state, turret);
       break;
     default:
       break;

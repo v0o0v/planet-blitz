@@ -19,6 +19,7 @@
 import { CUSHION_RECOVER_TICKS, CUSHION_TICK_CAP } from '../shipSignature.js';
 import type { Entity } from '../entities.js';
 import { blink, fanStrike, powerCentiOf, scaleCenti, setBuffTicks } from '../activeTypes.js';
+import { mallowBlinkRinse, mallowInstantExchange, mallowMaturityArm } from '../skills/mallow.js';
 import type { ActiveExpireTable, ActiveHandlerTable, ActiveSustainTable } from '../activeTypes.js';
 
 /**
@@ -36,17 +37,20 @@ export const MALLOW_HANDLERS: ActiveHandlerTable = {
   as_mallow_squish_lo: (state, player, def, dir) => {
     // 미룬 피해를 **되돌려 쏜다** — 적립분이 클수록 탄이 많아지고, 쏜 뒤 부채는 청산된다.
     const deferred = Math.max(0, Math.trunc(player.aux0));
-    const per = def.coeff.perDeferred ?? 1;
+    // SQ6「즉석 환전」 — 미투자면 `undefined` 라 아래 세 줄이 전부 무연산이다(비트 동일).
+    // 핸들러가 `skills/*.ts` 를 직접 import 하는 선례는 `activeHandlers/striker.ts` 다.
+    const sq6 = mallowInstantExchange(state);
+    // ⚠️ `min` 이다 — 환산 "개선" 이므로 레지스트리 값보다 나쁜 방향으로는 못 간다.
+    const base = def.coeff.perDeferred ?? 1;
+    const per = sq6 !== undefined && sq6.per < base ? sq6.per : base;
     const count = (def.coeff.base ?? 0) + (per > 0 ? Math.floor(deferred / per) : 0);
     const centi = powerCentiOf(state, def);
-    fanStrike(
-      state,
-      player,
-      count,
-      scaleCenti(def.coeff.damage ?? 0, centi),
-      def.coeff.spreadDeg ?? 0,
-      dir,
-    );
+    let dmg = scaleCenti(def.coeff.damage ?? 0, centi);
+    // 반올림은 게이트 **안**이다(규율 ③). HP 회수는 없다 — 설계 2R S1.
+    if (sq6 !== undefined) dmg += Math.round((dmg * sq6.damageBp) / 10000);
+    fanStrike(state, player, count, dmg, def.coeff.spreadDeg ?? 0, dir, {
+      pierce: sq6?.pierce ?? 0,
+    });
     player.aux0 = 0;
   },
   as_mallow_squish_hi: (state, player, def, dir) => {
@@ -66,11 +70,16 @@ export const MALLOW_HANDLERS: ActiveHandlerTable = {
   },
   as_mallow_mend_lo: (state, player, def, dir) => {
     blink(state, player, def.coeff.distance ?? 0, dir);
+    // ME6「잔상 세척」 — **`blink()` 직후**여야 한다. 설계 문언이 **도착 지점** 이라,
+    // 앞에 두면 출발 지점을 턴다(조용한 반쪽 배선). 미투자면 무연산이다.
+    mallowBlinkRinse(state, player);
     // 정산 임계를 주입한다 — 다음 시그니처 틱에서 풀이 통째로 정산·회복된다.
     player.aux1 = CUSHION_RECOVER_TICKS;
   },
   as_mallow_mend_hi: (state, player, def, dir) => {
     blink(state, player, def.coeff.distance ?? 0, dir);
+    // ME6 — mend_lo 와 동일(설계서가 `mend_lo/hi` 를 한 벌로 묶었다).
+    mallowBlinkRinse(state, player);
     // 정산 **전에** 부채를 깎는다 — 그만큼 선체로 들어올 몫 자체가 줄어든다.
     const div = def.coeff.debtDiv ?? 1;
     if (div > 0) player.aux0 = Math.floor(Math.max(0, Math.trunc(player.aux0)) / div);
@@ -100,7 +109,10 @@ export const MALLOW_SUSTAIN: ActiveSustainTable = {
 
 /** 만료 틱 훅 — 유예가 끝나는 순간 미뤄둔 분을 한 번에 정산한다. */
 export const MALLOW_EXPIRE: ActiveExpireTable = {
-  as_mallow_cushion_hi: (_state, player) => {
+  as_mallow_cushion_hi: (state, player) => {
     player.aux1 = CUSHION_RECOVER_TICKS;
+    // SQ10「만기 일제」 — 이 정산이 **만기**라는 표식만 남긴다. 탄막 자체는 정산액이
+    // 확정된 뒤(앵커 ⑳)에서 난다 — 여기서는 아직 정산이 안 일어나 비례할 값이 없다.
+    mallowMaturityArm(state);
   },
 };

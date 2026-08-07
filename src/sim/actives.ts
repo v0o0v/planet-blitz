@@ -37,6 +37,9 @@ import { PHANTOM_HANDLERS, PHANTOM_SUSTAIN, PHANTOM_EXPIRE } from './activeHandl
 import { HATCHLING_HANDLERS, HATCHLING_SUSTAIN, HATCHLING_EXPIRE } from './activeHandlers/hatchling.js';
 import { MALLOW_HANDLERS, MALLOW_SUSTAIN, MALLOW_EXPIRE } from './activeHandlers/mallow.js';
 import { BUBBLE_HANDLERS, BUBBLE_SUSTAIN, BUBBLE_EXPIRE } from './activeHandlers/bubble.js';
+// 앵커 ㉗. `skillHooks.ts` 는 leaf(전 import 가 type-only 이거나 `skills/*`)라 순환이 없다 —
+// `world.ts` 는 이 파일을 런타임 import 하지만 `skillHooks.ts` 는 `world.ts` 를 타입으로만 쓴다.
+import { onActiveFired } from './skillHooks.js';
 
 export type { ActiveHandler, ActiveSustain, ActiveExpire } from './activeTypes.js';
 
@@ -175,7 +178,16 @@ export function stepActives(
     if (cooldownOf(state, slot) > 0) continue;
     const def = defForSlot(state, slot);
     if (def === undefined) continue;
+    // 앵커 ㉗ 이 요구하는 **발동 직전 스냅샷**. 핸들러가 좌표·`aux0`·엔티티 배열을 덮어쓰므로
+    // 여기서 찍지 않으면 사후 복원이 원리적으로 불가능하다(`ActiveFiredOrigin` doc).
+    const preX = player.x;
+    const preY = player.y;
+    const preAux0 = player.aux0;
+    const spawnWatermark = state.entities.length;
     ACTIVE_HANDLERS[def.id]?.(state, player, def, dir, slot);
+    // 앵커 ㉗(공유 앵커 레인) — 핸들러 **직후 · 쿨다운 대입 앞**. 이 시점의 `player.x/y` 가
+    // blink 계열의 **착지 지점**이라 착지 축 스킬은 인자를 더 요구하지 않는다.
+    onActiveFired(state, player, def, dir, slot, { preX, preY, preAux0, spawnWatermark });
     // E7: 실효 쿨다운은 계열 투자 + 조율 포인트(파워업 24/25, `WorldState.activeTune0/1`)의
     // 합에서 파생한다. `slot` 이 이미 루프 변수라 wire 역탐색 없이 직접 고른다.
     const tune = slot === 0 ? state.activeTune0 : state.activeTune1;

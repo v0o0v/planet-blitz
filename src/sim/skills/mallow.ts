@@ -9,7 +9,33 @@
  * ---
  *
  * ## 배선 현황 — 배치 4 가 **6종**, S2 앵커 확장 레인이 **+8종**, S3 배선 레인이 **+1종(ME5)**,
- * W2 입력 배관 레인이 **+1종(SQ7)** = 지금 **16종**
+ * W2 입력 배관 레인이 **+1종(SQ7)**, 공유 앵커 레인이 **+2종(ME2·CU8)**,
+ * **말로우 앵커 레인이 +10종** = 지금 **29종 / 30**
+ *
+ * 공유 앵커 레인이 더한 둘은 **부채 술어 계열**이다 — 둘 다 `player.aux0`(적립된 지연 피해)를
+ * **읽기만** 하고 아무것도 안 쓴다(불변식 2 무접촉).
+ *  - **ME2「채무 자석」**(앵커 ㉘ `onGemMagnetParams`) — 앵커 ③ 이 수거 **뒤**라 반경에 못 닿던
+ *    자리다. `stepGems` 의 반경 확정 직후로 앵커가 서면서 풀렸다.
+ *  - **CU8「통증 마취」**(앵커 ㉙ `onPlayerMoveParams`) — `stepPlayer` 의 이동 배율 산출 직전.
+ *
+ * ### 말로우 앵커 레인이 연 것 (2026-08-07)
+ *  - **앵커 ㉗ `onCushionSplit`**(지연 전환 분기 안 · 즉시분 확정 직전) — 아래 「지연 전환
+ *    분기」가 *"여전히 앵커가 없다"* 고 적던 자리다. **CU1·CU2·CU5·CU6 4종**이 여기서 돈다.
+ *  - **앵커 ㉘ `onCushionRecoverBp`**(탕감률 확정) — 순수 함수 `cushionRecovered`·
+ *    `cushionSettled` 를 **탕감률 필수 인자**로 개정해 열었다(ME9 가 임계에서 겪은 것과 같은
+ *    선결). **ME8** 이 돈다. ⚠️ 이 개정으로 **ME5 의 「현재율」 합성이 실제로 성립**하게 됐고
+ *    ({@link mallowCushionSettleDue}), 그래서 **ME8 미투자 런에서도 ME5 의 이월 탕감이 바뀐다**
+ *    — 종전 축약(현재율 0)이 전제하던 조건이 사라졌기 때문이다.
+ *  - **앵커 ㉙ `onObjectiveResolved`**(에코 안정화 · 조우 완수 **두 지점**) — **ME7**.
+ *  - **앵커 ㉚ `onEnemyStatusExpired`**(화상 만료) + **앵커 ⑪ 에 `burning` 인자 추가**
+ *    (화상이 남은 채 죽은 적) — **SQ9**. 탕감 트리거 2경로가 둘 다 앵커 밖이었다.
+ *  - 앵커 없이: **SQ10**(기존 앵커 ⑳ + cushion_hi EXPIRE 가 남기는 만기 표식) ·
+ *    **SQ6·ME6**(액티브 핸들러가 이 모듈을 직접 부른다 — `activeHandlers/striker.ts` 선례).
+ *
+ * **남은 셋은 `lane/shared-anchors` 소유다** — CU8(`onPlayerMoveParams`) · ME2
+ * (`onGemMagnetParams`) · ME3(`onActiveFired`/감속 소비부). 이 레인이 만들면 정의가 갈리고
+ * `git` 은 그것을 못 잡는다(의미 충돌은 전부 `tsc` 만 잡았다).
+ * → **CU8·ME2 는 그 레인이 실제로 배선해 착지했다**(위). 남은 것은 **ME3** 하나다.
  *
  * 말로우 30종의 설계는 시그니처 완충의 **두 분기**에 압도적으로 몰려 있었고, 배치 4 시점에는
  * 그 둘 다 앵커가 없었다. **S2 가 그중 하나(정산 분기)를 열었다.**
@@ -65,12 +91,15 @@
 
 import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
-import type { VolleyParams } from '../skillHooks.js';
-import { blastDamage, clearEnemyBullets } from '../activeTypes.js';
+import type { GemMagnetParams, PlayerMoveParams, VolleyParams } from '../skillHooks.js';
+import type { CushionSplitParams, ObjectiveKind } from '../skillHooks.js';
+import { blastDamage, clearEnemyBullets, fanStrike } from '../activeTypes.js';
 import { CUSHION_RECOVER_TICKS, CUSHION_TICK_CAP } from '../shipSignature.js';
 import { readSlot, writeSlot, MallowCarry, MallowStage } from '../skillSlots.js';
+import { applyBurn, applySlow, FIRE_DURATION, COLD_DURATION } from '../status.js';
 import { skillLv } from '../../items/skills.js';
 import { cos, sin, length } from '../math.js';
+import { activeByWireId } from '../../../data/ships/actives/index.js';
 
 // ---------------------------------------------------------------------------
 // flat 인덱스 — `data/ships/mallow.ts` 의 축 순서가 정본
@@ -91,16 +120,28 @@ const enum Sk {
   /** SQ3 몸통 반발 */ bodyRecoil = 2,
   /** SQ4 압인 탄두 */ debtStamp = 3,
   /** SQ5 탕감 장전 */ forgivenessLoader = 4,
+  /** SQ6 즉석 환전 */ instantExchange = 5,
   /** SQ7 관성 사출 */ momentumLaunch = 6,
   /** SQ8 흉터 포문 */ scarCannon = 7,
+  /** SQ9 이자 소각 */ interestBurn = 8,
+  /** SQ10 만기 일제 */ maturityVolley = 9,
   /** ME1 조기 상환 */ earlyRepayment = 10,
+  /** ME2 채무 자석 */ debtMagnet = 11,
   /** ME4 반환 요법 */ rebateTherapy = 13,
   /** ME5 분할 상환 */ installmentPlan = 14,
+  /** ME6 잔상 세척 */ afterimageRinse = 15,
+  /** ME7 에코 채권 */ echoBond = 16,
+  /** ME8 리듬 탕감 */ rhythmForgiveness = 17,
   /** ME9 솜틀 요양 */ fluffConvalescence = 18,
   /** ME10 성장 환전 */ growthConversion = 19,
+  /** CU1 과부하 흡수 */ overloadAbsorb = 20,
+  /** CU2 부채 한도 */ debtCeiling = 21,
   /** CU3 무통 정산 */ painlessSettlement = 22,
   /** CU4 반발 세척 */ recoilRinse = 23,
+  /** CU5 전량 유예 태세 */ fullDeferralStance = 24,
+  /** CU6 파산 보호 */ bankruptcyProtection = 25,
   /** CU7 아문 살갗 */ healedHide = 26,
+  /** CU8 통증 마취 */ painAnesthesia = 27,
   /** CU9 유예의 은총 */ graceOfSettlement = 28,
   /** CU10 영구 채무 자본화 */ perpetualCapitalization = 29,
 }
@@ -218,9 +259,149 @@ function capitalizationPct(level: number): number {
   return Math.round(4 + (16 * level) / (level + 16));
 }
 
+/**
+ * CU1 의 **대형 피해 임계**(절대 피해량) = round(40 − 25×Lv/(Lv+10)).
+ * Lv1 ≈ 38 · Lv20 ≈ 23 · 점근 15 — 레벨이 오르면 더 작은 피해도 "대형" 으로 취급된다.
+ *
+ * ⚠️ **maxHp 비율이 아니라 절대값이다**(설계 정본 그대로). 비율로 바꾸면 계보·장비로 기본 HP 를
+ * 부풀리는 이 기체의 성장축에서 임계가 함께 부풀어 스킬이 레벨과 무관하게 죽는다.
+ */
+function overloadThreshold(level: number): number {
+  return Math.round(40 - (25 * level) / (level + 10));
+}
+
+/** CU2 의 부채 한도 비율(%) = round(25 + 30×Lv/(Lv+12)). Lv1 ≈ 27 · Lv20 ≈ 44 · 점근 55. */
+function debtCeilingPct(level: number): number {
+  return Math.round(25 + (30 * level) / (level + 12));
+}
+
+/**
+ * CU5 의 **지속 중 지연율** bp = 6000 + 3500×Lv/(Lv+12). Lv1 ≈ 6269 · Lv20 ≈ 8188 ·
+ * **점근 9500 < 10000** — 즉시분이 0 이 되는 특이점이 없다(설계서 "즉시분 0 금지").
+ */
+function fullDeferralBp(level: number): number {
+  return 6000 + (3500 * level) / (level + 12);
+}
+
+/**
+ * CU6 발동 시 세울 무적 틱 = 30 + 3×Lv.
+ *
+ * ⚠️ 실제 적용은 `max(hitIframes, 이 값)` 이다(설계서 3R-6). 기본 `hitIframes` 가 40 이라
+ * 하한을 안 걸면 **Lv1~3 의 무적이 통상 피격 무적보다 짧아 효과가 통째로 무효**가 된다 —
+ * 화면상 조용한 미발현이다. `max` 는 소비처({@link mallowPlayerDamaged})가 진다.
+ */
+function bankruptcyIframeTicks(level: number): number {
+  return 30 + 3 * level;
+}
+
+/**
+ * ME7 의 **소각액→자석 버프 틱** 전환율(%) = 60 + 40×Lv/(Lv+10).
+ * Lv1 ≈ 63.6 · Lv20 ≈ 86.7 · 점근 100 — floor 로 접어 잔여를 버린다(신규 캐리 0).
+ */
+function echoBondPct(level: number): number {
+  return 60 + (40 * level) / (level + 10);
+}
+
+/** ME7 이 한 번에 열 수 있는 자석 버프 창의 상한(틱). 설계서 ME7 「레벨 스케일」의 600. */
+const ECHO_BOND_TICK_CAP = 600;
+
+/**
+ * SQ9 가 부여하는 화상의 **틱당 피해** = round(기본 화염 × (100 + 4×Lv) / 100).
+ *
+ * ⚠️ 설계서는 *"기본 화염 기준 틱당 피해 +4%p/Lv"* 라고만 적고 「기본 화염」의 수치를 정의하지
+ * 않았다. 이 저장소에서 그 이름이 가리키는 유일한 값은 원소 프리픽스 `flaming` 의 굴림
+ * 범위(`data/affixes.ts` 의 `fireDmg` min 2 · max 5)이고, **하한 2** 를 기준으로 잡았다 —
+ * 스킬이 어픽스 최상 굴림보다 세지 않게 하는 보수적 선택이다(Lv20 에서 4 로 max 5 미만).
+ * 설계서가 수치를 명시하면 그 값이 정본이다.
+ */
+const SQ9_BURN_BASE = 2;
+function interestBurnDamage(level: number): number {
+  return Math.round((SQ9_BURN_BASE * (100 + 4 * level)) / 100);
+}
+
+/**
+ * SQ10 의 **정산액당 탄수 제수** = 30 − 20×Lv/(Lv+15). Lv1 = 28.75 · Lv20 ≈ 18.6 ·
+ * 점근 10 — 레벨이 오를수록 같은 정산액에서 탄이 조밀해진다.
+ */
+function maturityDivisor(level: number): number {
+  return 30 - (20 * level) / (level + 15);
+}
+
+/**
+ * ME8 의 **실효 탕감률** bp = base + 3500 × (스택×Lv) / (스택×Lv + 120).
+ * 10스택 Lv20 = 6000 + 3500×200/320 ≈ 8188 · **점근 base + 3500 = 9500 < 10000** —
+ * 어떤 스택·레벨·어픽스 연장에서도 전액 탕감(부호 반전)에 닿지 않는다(설계서 불변식 3).
+ *
+ * ⚠️ `base` 는 앵커 ㉘ 이 넘겨 주는 {@link CUSHION_RECOVER_BP} 다 — 상수를 복제하지 않는다.
+ */
+function rhythmForgivenessBp(base: number, stacks: number, level: number): number {
+  const sl = stacks * level;
+  return base + (3500 * sl) / (sl + 120);
+}
+
 // ---------------------------------------------------------------------------
 // 앵커별 진입점 — `skillHooks.ts` 의 `case SIG_MALLOW_CUSHION:` 이 부른다
 // ---------------------------------------------------------------------------
+
+/**
+ * 앵커 ㉘ **젬 자석 반경 확정 직후** — ME2 채무 자석.
+ *
+ * 설계서: *"부채가 클수록 자석 반경이 커진다"* · 확장 bp = `aux0 × (6 + 2×Lv)` ·
+ * 확장 상한 = `3000 + 4000×Lv/(Lv+12)` bp.
+ *
+ * ## 왜 앵커 ③ 이 아니었나 (반쪽 배선 회피의 기록)
+ * 앵커 ③(`onGemCollected`)은 **수거가 끝난 뒤**라 반경이 이미 소비된 시점이다. 그 자리에서
+ * 배율을 써도 아무도 읽지 않는다 — 앞 레인이 ME2 를 미배선으로 남긴 사유가 그것이고, 앵커 ③
+ * 의 `case` 주석이 지금도 그 기록을 담고 있다.
+ *
+ * ## ⚠️ 나눗셈은 투자 게이트 **안**이다
+ * 상한 공식에 나눗셈이 하나 있는데 `stepGems` 는 **매 틱** 도는 함수다. 미투자 런이 그 비용을
+ * 내지 않도록 `me2 < 1` 조기 반환이 먼저다(`skills/striker.ts` 헤더 규율 ③).
+ * 미투자·무부채 런은 `params.radius` 를 **한 바이트도** 건드리지 않는다 → 골든 해시 불변.
+ */
+export function mallowGemMagnetParams(
+  state: WorldState,
+  player: Entity,
+  params: GemMagnetParams,
+): void {
+  const me2 = lv(state, Sk.debtMagnet);
+  if (me2 < 1) return;
+  const debt = player.aux0;
+  if (debt <= 0) return;
+  const capBp = 3000 + (4000 * me2) / (me2 + 12);
+  const rawBp = debt * (6 + 2 * me2);
+  const bp = rawBp > capBp ? capBp : rawBp;
+  params.radius *= 1 + bp / 10000;
+}
+
+/**
+ * 앵커 ㉙ **이동 배율 산출 직전** — CU8 통증 마취.
+ *
+ * 설계서: *"부채 보유 중(aux0 > 0) 이동 속도가 오른다"* · 이속 bp = `400 + aux0 × (2 + 1×Lv)` ·
+ * 상한 = `1500 + 1500×Lv/(Lv+10)` bp.
+ *
+ * ## ⚠️ `aux0 > 0` 게이트가 **설계 술어의 일부**다
+ * 빼면 부채가 0 인 런도 flat 400bp(+4%)를 상시로 받는다. 그것은 *"빚이 아드레날린"* 이 아니라
+ * 기체 기본 이속 상향이고, `baseBp` 와 이중 정본이 된다.
+ *
+ * ## ⚠️ 대시에는 안 걸린다
+ * 호출부가 이 배율을 `mx * playerSpeed` 쪽에만 곱한다(`PlayerMoveParams.speedMult` doc).
+ * 설계서 「이동(1.1) — `slowMult`·`moduleSlow` 가 곱해지는 자리에 배율 1개 추가」 그대로다.
+ */
+export function mallowPlayerMoveParams(
+  state: WorldState,
+  player: Entity,
+  params: PlayerMoveParams,
+): void {
+  const debt = player.aux0;
+  if (debt <= 0) return;
+  const cu8 = lv(state, Sk.painAnesthesia);
+  if (cu8 < 1) return;
+  const capBp = 1500 + (1500 * cu8) / (cu8 + 10);
+  const rawBp = 400 + debt * (2 + cu8);
+  const bp = rawBp > capBp ? capBp : rawBp;
+  params.speedMult *= 1 + bp / 10000;
+}
 
 /**
  * 앵커 ③ **젬 수거** — ME1 조기 상환.
@@ -253,6 +434,18 @@ export function mallowGemCollected(state: WorldState, player: Entity): void {
  *   비례한다 — 설계서의 "이번 피격의 즉시분" 그대로다.
  */
 export function mallowPlayerDamaged(state: WorldState, player: Entity, dmg: number): void {
+  // --- CU6 파산 보호의 **무적 집행** — 요구는 앵커 ㉗ 이 슬롯에 남겼다 ----------
+  //
+  // ⚠️ 이 자리인 이유: ㉗ 바로 뒤에서 `world.ts` 가 `player.iframes = hitIframes` 를 **대입**
+  // 하므로 거기서 세운 값은 예외 없이 덮인다. 이 앵커는 그 대입 **뒤**라 `max` 가 성립한다.
+  // ⚠️ `max` 형태인 것이 스킬의 성립 조건 그 자체다(설계서 3R-6) — 기본 `hitIframes` 가 40 이라
+  // 하한을 안 걸면 Lv1~3(33~39틱)의 무적이 통상 피격 무적보다 짧아 **효과가 통째로 무효**가
+  // 된다. 요구는 소비 즉시 지운다(안 지우면 다음 피격에도 계속 서서 상시 장무적이 된다).
+  const want = readSlot(state.skillStage, MallowStage.bankruptcyIframes);
+  if (want > 0) {
+    if (player.iframes < want) player.iframes = want;
+    writeSlot(state.skillStage, MallowStage.bankruptcyIframes, 0);
+  }
   // --- SQ3 몸통 반발 — 최근접 적 1기에게 즉시분 비례 반격 ---------------------
   const sq3 = lv(state, Sk.bodyRecoil);
   if (sq3 >= 1 && dmg > 0) {
@@ -370,10 +563,26 @@ export function mallowEnemyDamaged(
   target: Entity,
   source: Entity | undefined,
 ): void {
-  const sq4 = lv(state, Sk.debtStamp);
-  if (sq4 < 1) return;
+  // 두 스킬 다 **부채 보유 중 · `kind === 'enemy'`** 라는 같은 관문을 지난다.
   if (Math.trunc(player.aux0) <= 0) return;
   if (target.dead || target.kind !== 'enemy') return;
+  // --- SQ9 이자 소각 — 부채 보유 중 명중한 적에게 화상을 부여한다 -----------------
+  //
+  // ⚠️ **부여에서는 탕감하지 않는다.** 1판의 "부여당 탕감" 은 빔(pierce 9999 재도포)·발칸
+  // 연사가 틱당 수십 회 부여를 일으켜 `aux0` 을 상시 0 으로 만들고 **부채 술어 4종
+  // (SQ1·SQ4·ME2·CU8)을 통째로 사문화**시키는 결함이었다(설계 1R C5). 탕감은 만료(앵커 ㉚)와
+  // 사망(앵커 ⑪) 두 경로에서만 일어나고, 그 둘은 적 1기당 화상 1사이클에 정확히 1회다.
+  //
+  // ⚠️ `applyBurn` 은 "더 강한 값 유지" 갱신이라(status.ts) 어픽스 화염과 겹쳐도 두 벌이
+  // 되지 않는다 — 갱신 규칙을 여기서 흉내 내지 않고 정본 leaf 를 그대로 부른다.
+  const sq9 = lv(state, Sk.interestBurn);
+  if (sq9 >= 1) {
+    const dot = interestBurnDamage(sq9);
+    if (dot > 0) applyBurn(target, dot, FIRE_DURATION);
+  }
+  // --- SQ4 압인 탄두 — 명중한 적을 좌표 직접 변위로 밀어낸다 ---------------------
+  const sq4 = lv(state, Sk.debtStamp);
+  if (sq4 < 1) return;
   if (source === undefined) return;
   const vx = source.vx;
   const vy = source.vy;
@@ -459,6 +668,7 @@ export function mallowCushionSettleDue(
   state: WorldState,
   player: Entity,
   due: number,
+  recoverBp: number,
 ): number {
   const me5 = lv(state, Sk.installmentPlan);
   if (me5 < 1) return due;
@@ -466,8 +676,18 @@ export function mallowCushionSettleDue(
   // 1 을 계속 반으로 나누면 영영 안 비는 풀이 되고 그 풀은 해시에 접힌다(SQ5 와 같은 규율).
   const defer = Math.floor(due / 2);
   if (defer < 1) return due;
+  // ⚠️ **여백 합성**이다 — 설계 정본의 일반형 *갱신값 = 현재율 + (10000 − 현재율) × r / 10000*
+  //    그대로이고, 「현재율」은 이 정산에 **실제로 쓰인 탕감률**(= ME8 이 올려 둔 값)이다.
+  //    종전에는 `installmentForgiveBp(me5)` 를 그대로 썼고 그 주석이 "ME8 미배선이라 현재율은
+  //    항상 0" 이라 적었는데, 설계서의 b 는 **절대 탕감률**(ME8 점근 9500, 기본 6000)이다.
+  //    이 레인이 ME8 을 열면서 그 축약이 성립하지 않게 됐다 — 안 고치면 ME5 가 ME8 과 무관하게
+  //    굴러 조용히 갈린다. ⚠️ 그래서 **ME8 미투자 런에서도 값이 바뀐다**(b = 6000 이 기본).
+  // 합산 상한: b < 10000 이면 갱신값 = 10000 − (10000−b)(10000−r)/10000 < 10000 이므로
+  // 별도 clamp 가 필요 없다(설계서 불변식 3 증명). `min` 을 덧대면 그 증명이 죽은 코드가 된다.
+  const b = recoverBp;
+  const eff = b + Math.floor(((10000 - b) * installmentForgiveBp(me5)) / 10000);
   // 반올림은 이 게이트 **안**이다(규율 ③). 탕감분은 사라지고 나머지만 이월된다.
-  const forgiven = Math.floor((defer * installmentForgiveBp(me5)) / 10000);
+  const forgiven = Math.floor((defer * eff) / 10000);
   const carry = defer - forgiven;
   if (carry > 0) player.aux0 += carry;
   return due - defer;
@@ -566,6 +786,26 @@ export function mallowCushionSettled(
     const grace = 20 + 4 * cu9;
     // `max` 형태다 — 통상 피격 무적이 더 길게 남아 있으면 그것을 **깎으면 안 된다**.
     if (player.iframes < grace) player.iframes = grace;
+  }
+  // --- SQ10 만기 일제 — **cushion_hi 만기 정산 전용** 방향성 관통 탄막 ----------
+  //
+  // ⚠️ 표식은 **투자 여부와 무관하게 소비**한다 — 미투자 런에서는 애초에 안 세워지고(규율 ②),
+  // 세워진 런에서 소비를 게이트 안에 두면 "정산액 0 인 만기" 에 표식이 살아남아 **다음
+  // 일반 정산**이 만기로 오인된다. 트리거가 "만기 전용" 인 것이 SQ2(전 정산)와의 분화 3축 중
+  // 하나라, 그 오인은 스킬 둘을 같은 것으로 만든다.
+  const matured = readSlot(state.skillStage, MallowStage.maturityDue) > 0;
+  if (matured) writeSlot(state.skillStage, MallowStage.maturityDue, 0);
+  const sq10 = lv(state, Sk.maturityVolley);
+  if (sq10 >= 1 && matured && settled > 0) {
+    // 탄수 = 6 + ceil(정산액 / (30 − 20×Lv/(Lv+15))). 반올림·나눗셈은 이 게이트 안이다.
+    const count = 6 + Math.ceil(settled / maturityDivisor(sq10));
+    // ⚠️ 방향은 `player.angle`(조준각) 폴백이다. 설계서 3R-9 가 명시한 알려진 성질 —
+    // 자동 조준이 실제 발사각을 정하는 sim 이라 **정지 상태 만기에서는 탄막이 허공으로 나갈 수
+    // 있고 그것이 정상 동작**이다(액티브 `activeDirOf` 폴백 정본을 여기 복제하지 않는다).
+    const dir = { x: cos(player.angle), y: sin(player.angle) };
+    // 부채꼴 45° · pierce 2 — 설계서 「구현」 항(2R M1)이 「레벨 스케일」의 "관통 1 고정" 을
+    // 뒤집은 값이다. 좁은 각 + 관통 예산 상향이 본체 문언("방향성 관통")을 실현한다.
+    fanStrike(state, player, count, 12 + 2 * sq10, 45, dir, { pierce: 2 });
   }
   // --- CU10 영구 채무 자본화 — 갚아 본 빚이 몸집이 된다 ------------------------
   const cu10 = lv(state, Sk.perpetualCapitalization);
@@ -677,4 +917,248 @@ export function mallowVolleyParams(
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// 지연 전환 분기(앵커 ㉗) — CU1·CU2·CU5·CU6
+// ---------------------------------------------------------------------------
+
+/**
+ * 방어 액티브 **cushion_lo(카운터 가속)** 의 버프 창이 지금 열려 있는가 — CU5 의 술어.
+ *
+ * ## ⚠️ `actives.ts` 의 `buffTicksOf`/`defForSlot` 은 **모듈 사설**이라 쓸 수 없다
+ * 그래서 같은 사실을 공개 경로로 다시 세운다: 잔여 틱은 `WorldState` 의 평평 정수
+ * (`activeBuff0`/`activeBuff1`)이고 — 아크캐스터 BR3 가 이미 같은 칸을 직접 읽는 선례다 —
+ * 슬롯→정의는 `activeByWireId`(`data/ships/actives/index.ts`)로 푼다.
+ *
+ * ⚠️ **"아무 버프나" 가 아니라 `as_mallow_cushion_lo` 한정**이다. BR3 처럼
+ * `activeBuff0 > 0 || activeBuff1 > 0` 로 쓰면 mend_lo/hi(블링크)·squish 계열까지 CU5 를
+ * 켜서 설계 문언("방어 액티브 지속 중")과 갈린다. cushion_hi(전량 유예)도 대상이 아니다 —
+ * 그쪽은 `aux1` 을 0 으로 눌러 정산 자체를 막는 별개 축이다.
+ *
+ * ⚠️ 기체 게이트는 호출부(`case SIG_MALLOW_CUSHION`)가 이미 걸었고, `def.id` 자체가 말로우
+ * 고유라 손상 세이브가 다른 기체 스킬을 실어도 여기 걸리지 않는다.
+ */
+function counterStanceOn(state: WorldState): boolean {
+  const slots = state.config.activeSlots;
+  if (slots === undefined) return false;
+  for (let slot = 0; slot < slots.length; slot++) {
+    const ticks = slot === 0 ? state.activeBuff0 : state.activeBuff1;
+    if (ticks <= 0) continue;
+    const def = activeByWireId(slots[slot] ?? -1);
+    if (def !== undefined && def.id === 'as_mallow_cushion_lo') return true;
+  }
+  return false;
+}
+
+/**
+ * 앵커 ㉗ **지연 전환 분리 직후 · 즉시분 확정 직전** — CU1 과부하 흡수 · CU2 부채 한도 ·
+ * CU5 전량 유예 태세 · CU6 파산 보호 **4종**.
+ *
+ * ## 적용 순서는 설계 정본이 못 박았다 — CU5 → CU1 → CU2 → CU6
+ *  1. **CU5**(비율 치환) — 기본 `CUSHION_DEFER_BP` 대신 높은 bp 로 **다시 계산**한다.
+ *     비율 칸을 따로 두지 않고 `params.deferred` 하나만 쓰는 이유는 앵커 doc 에 있다.
+ *  2. **CU1**(초과분 이관) — 절대량이다. 임계 초과분이 지금 값보다 크면 그것으로 올린다.
+ *     `max` 인 것이 요점이다: CU5 가 이미 더 많이 미뤄 뒀으면 CU1 이 **깎으면 안 된다**.
+ *  3. **CU2**(한도) — 여기까지의 결과에 상한을 건다. 한도는 `maxHp` 비율이고 여유는
+ *     `한도 − 현재 부채` 다(이번 피격분은 아직 `aux0` 에 안 실렸다 — 적립은 hp 차감 뒤다).
+ *  4. **CU6**(치명 시 전액) — **한도 게이트 뒤**다. 그래서 한도를 넘겨 적립될 수 있고,
+ *     그것이 설계서가 명시한 대가다("목숨을 빚으로 산 직후는 장부가 가득 차 새로 미룰 수
+ *     없고, 정산으로 `aux0` 이 한도 아래로 내려오면 완충이 복구된다"). 순서를 뒤집어 CU2 를
+ *     마지막에 두면 파산 보호가 한도에 잘려 **살리지 못한다** — 스킬이 통째로 무효가 된다.
+ *
+ * ## ⚠️ CU6 의 무적은 여기서 못 세운다
+ * 이 훅 바로 뒤에 `world.ts` 가 `player.iframes = state.config.hitIframes` 를 **대입**한다.
+ * 여기서 세운 값은 예외 없이 덮이므로, 요구 틱만 슬롯에 남기고 앵커 ④ 에서 `max` 로 집행한다
+ * ({@link MallowStage.bankruptcyIframes}).
+ *
+ * @param dmg 정수화된 총 피해 · @param hp 차감 **전** hp
+ */
+export function mallowCushionSplit(
+  state: WorldState,
+  player: Entity,
+  dmg: number,
+  params: CushionSplitParams,
+  hp: number,
+): void {
+  let deferred = params.deferred;
+  // --- CU5 전량 유예 태세 — 버프 창 동안은 거의 다 미룬다 -----------------------
+  const cu5 = lv(state, Sk.fullDeferralStance);
+  if (cu5 >= 1 && counterStanceOn(state)) {
+    // 반올림은 이 게이트 **안**이다(규율 ③). 기본 bp 와 같은 형태의 단일 나눗셈이라
+    // `cushionDeferredDamage` 와 산술이 정확히 동형이다.
+    const raised = Math.round((dmg * fullDeferralBp(cu5)) / 10000);
+    if (raised > deferred) deferred = raised;
+  }
+  // --- CU1 과부하 흡수 — 임계 초과분 전액을 지연분으로 -------------------------
+  const cu1 = lv(state, Sk.overloadAbsorb);
+  if (cu1 >= 1) {
+    const thr = overloadThreshold(cu1);
+    if (dmg > thr) {
+      const over = dmg - thr;
+      if (over > deferred) deferred = over;
+    }
+  }
+  // --- CU2 부채 한도 — 한도를 넘겨 미뤄질 몫은 처음부터 즉시분 -----------------
+  const cu2 = lv(state, Sk.debtCeiling);
+  if (cu2 >= 1) {
+    const ceiling = Math.round((player.maxHp * debtCeilingPct(cu2)) / 100);
+    const room = ceiling - Math.trunc(player.aux0);
+    // 여유가 음수(CU6 이 한도 위에 눌러앉은 상태)면 **전액 즉시분**이다 — 완충이 일시적으로
+    // 꺼지는 그 구간이 설계서가 명시한 파산 보호의 대가다.
+    if (deferred > room) deferred = room > 0 ? room : 0;
+  }
+  // --- CU6 파산 보호 — 런당 1회, 치명 피격의 전액을 부채로 ---------------------
+  const cu6 = lv(state, Sk.bankruptcyProtection);
+  if (cu6 >= 1 && readSlot(state.skillCarry, MallowCarry.bankruptcyUsed) === 0) {
+    // 치명 판정 = "즉시분이 지금 hp 를 다 가져간다". `hp` 는 차감 **전** 값이라 이 술어가
+    // 곧 "이 피격으로 죽는다" 이고, 판정 자리가 생존 캡스톤과 같되 **이쪽이 먼저**다
+    // (부채로 살리는 쪽이 우선 — 캡스톤 소진을 아낀다).
+    if (dmg - deferred >= hp) {
+      deferred = dmg;
+      writeSlot(state.skillCarry, MallowCarry.bankruptcyUsed, 1);
+      writeSlot(state.skillStage, MallowStage.bankruptcyIframes, bankruptcyIframeTicks(cu6));
+    }
+  }
+  params.deferred = deferred;
+}
+
+/**
+ * 앵커 ㉘ **정산 탕감률 확정** — ME8 리듬 탕감 **1종**.
+ *
+ * 젬 콤보 스택(`state.combo`)이 유지되는 동안 정산의 탕감 비율이 오른다 — 수집 리듬이 이자율을
+ * 깎는다. 콤보는 읽기만 하고 **소모하지 않는다**(스트라이커 S8 의 "콤보 소모" 축과 갈린다).
+ *
+ * ## ⚠️ 상한은 여기서 진다
+ * 반환값이 10000 이상이면 `cushionSettled` 가 음수가 되어 정산이 hp 를 **늘린다**(맞는 것이
+ * 이득이 되는 부호 반전). 공식의 점근이 `base + 3500` = 9500 이라 구조적으로 닿지 않지만,
+ * 어픽스 연장이 붙는 축이라 구조로 막는다 — 앵커 ㉘ 의 계약이 "0 이상 10000 미만" 이다.
+ *
+ * ⚠️ **미투자·콤보 0 인 런은 `base` 를 그대로 돌려준다** — 나눗셈도 돌지 않아 비트 동일이다.
+ */
+export function mallowCushionRecoverBp(state: WorldState, base: number): number {
+  const me8 = lv(state, Sk.rhythmForgiveness);
+  if (me8 < 1) return base;
+  const stacks = Math.trunc(state.combo);
+  if (stacks <= 0) return base;
+  const bp = Math.round(rhythmForgivenessBp(base, stacks, me8));
+  if (bp <= base) return base;
+  return bp < 9999 ? bp : 9999;
+}
+
+/**
+ * 앵커 ㉙ **목표 완수 틱**(에코 안정화 · 조우 완수) — ME7 에코 채권 **1종**.
+ *
+ * 부채가 **전액 소각**되고, 소각량에 비례한 자석 버프 창(`state.magnetBuffTicks`)이 열린다.
+ *
+ * ## ⚠️ 산출이 자석 버프인 것은 **런 폐쇄성** 때문이다
+ * 설계 3R M1 이 2·3판의 자원(`state.resources`) 산출을 폐기했다 — `save/settlement.ts` 가 런
+ * 종료 시 `resources` 를 `creditsGained` 로 **1:1 전환**하므로, ME10 이 명문으로 경계한
+ * "피격이 계정 성장 재화가 되는 구멍" 과 같은 구조가 된다. `magnetBuffTicks` 는 기존 해시
+ * 필드이고 **런 종료와 함께 소멸**해 계정 경제에 한 톨도 닿지 않는다.
+ *
+ * ## ⚠️ `kind` 로 산출을 가르지 않는다
+ * 설계서가 두 지점을 **한 벌**로 묶었다("에코 안정화·조우 완수"). 인자는 나중 스킬을 위한
+ * 칸이고, 여기서 가르면 같은 스킬이 무대에 따라 다른 값을 내는 축이 하나 더 생긴다.
+ */
+export function mallowObjectiveResolved(
+  state: WorldState,
+  player: Entity,
+  kind: ObjectiveKind,
+): void {
+  void kind;
+  const me7 = lv(state, Sk.echoBond);
+  if (me7 < 1) return;
+  const burned = Math.trunc(player.aux0);
+  if (burned <= 0) return;
+  player.aux0 = 0;
+  // floor 단일 나눗셈 — 잔여는 버린다(신규 캐리 0. ME10 과 같은 규율).
+  let ticks = Math.floor((burned * echoBondPct(me7)) / 100);
+  if (ticks > ECHO_BOND_TICK_CAP) ticks = ECHO_BOND_TICK_CAP;
+  if (ticks > 0) state.magnetBuffTicks += ticks;
+}
+
+/**
+ * ⚠️ **SQ9 의 탕감 두 경로(만료 · 사망)는 이 파일에 없다** — `skills/mallowStatus.ts` 다.
+ * 만료 앵커가 `status.ts` 안인데 이 파일은 SQ9 의 **부여**(`applyBurn`)와 ME6 의 냉기
+ * (`applySlow`) 때문에 `status.ts` 를 값으로 import 하므로, 탕감을 여기 두면
+ * `status.ts → chainHooks.ts → skills/mallow.ts → status.ts` 런타임 순환이 된다
+ * (`skillHooks.ts` 헤더가 금지 — 번들러 초기화 재배치 시 TDZ, **검증 EF 에서만 터진다**).
+ * 아크캐스터 CH2 가 `skills/arccasterChain.ts` 로 갈라진 것과 **동형**이다.
+ *
+ * 이 파일에 남는 SQ9 조각은 **부여 하나**다 — {@link mallowEnemyDamaged} 안의
+ * `applyBurn` 호출과 그 틱당 피해식 {@link interestBurnDamage}.
+ */
+
+// ---------------------------------------------------------------------------
+// 액티브 핸들러가 부르는 진입점 (`activeHandlers/mallow.ts`)
+// ---------------------------------------------------------------------------
+
+/** SQ6 이 액티브 squish_lo 에 싣는 개선분. `undefined` = 미투자(핸들러가 종전 그대로 돈다). */
+export interface InstantExchange {
+  /** 개선된 `perDeferred`(부채 몇 당 탄 1발). 호출부가 원래 값과 `min` 을 취한다. */
+  per: number;
+  /** 청산 탄에 실리는 관통(고정 +1). */
+  pierce: number;
+  /** 탄당 피해 증폭 bp = 1000 + 200×Lv (설계서 "+10% + 2%p/Lv"). */
+  damageBp: number;
+}
+
+/**
+ * SQ6 즉석 환전 — 공격 액티브 `as_mallow_squish_lo`(부채→탄막 청산) 발동 시의 개선분.
+ *
+ * ⚠️ **HP 회수는 없다**(설계 2R S1: 청산은 선체행 0 인 부채 소멸 경로라 HP 산출 금지 —
+ * 산출이 화력 축으로 옮겨졌다). 여기서 HP 를 주면 수지 불변식 1 의 경로 판정이 깨진다.
+ *
+ * ⚠️ 반올림은 이 함수 **안**이다(규율 ③). 미투자면 `undefined` 라 핸들러가 한 칸도 안 만진다.
+ */
+export function mallowInstantExchange(state: WorldState): InstantExchange | undefined {
+  const sq6 = lv(state, Sk.instantExchange);
+  if (sq6 < 1) return undefined;
+  return {
+    per: Math.round(10 - (6 * sq6) / (sq6 + 8)),
+    pierce: 1,
+    damageBp: 1000 + 200 * sq6,
+  };
+}
+
+/**
+ * ME6 잔상 세척 — 이동 액티브(블링크)의 **도착 지점**에 적탄 소거 + 냉기 부여.
+ *
+ * 반경 = 140 + 10×Lv. 호출부(`activeHandlers/mallow.ts`)가 `blink()` **직후**에 부르므로
+ * `player.x/y` 가 이미 도착 좌표다 — 출발 좌표를 따로 넘기지 않는 이유가 그것이고, 순서를
+ * 뒤집으면 스킬이 조용히 출발 지점을 턴다.
+ *
+ * ⚠️ 냉기는 `applySlow`(정본 leaf)를 그대로 부른다 — 지속(`COLD_DURATION`)·배율은 전역 상수
+ * 하나가 정본이고, 여기서 복제하지 않는다. 대상은 `kind === 'enemy'` 한정이다(보스·구조물의
+ * `ownerId` 는 다른 의미로 점유돼 있다 — `invasion/facility.ts`·`modes/midClash.ts` 주석).
+ */
+export function mallowBlinkRinse(state: WorldState, player: Entity): void {
+  const me6 = lv(state, Sk.afterimageRinse);
+  if (me6 < 1) return;
+  const r = 140 + 10 * me6;
+  clearEnemyBullets(state, player, r);
+  const r2 = r * r;
+  for (const e of state.entities) {
+    if (e.dead || e.kind !== 'enemy') continue;
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    if (dx * dx + dy * dy > r2) continue;
+    applySlow(e, COLD_DURATION);
+  }
+}
+
+/**
+ * SQ10 이 소비할 **만기 표식**을 세운다 — 방어 액티브 `as_mallow_cushion_hi`(전량 유예)의
+ * EXPIRE 훅이 부른다.
+ *
+ * ⚠️ **투자 게이트를 세우는 쪽에 건다**(규율 ②: 모든 쓰기는 투자 게이트 안쪽). 미투자여도
+ * 표식을 세우면 SQ10 을 안 찍은 런의 `skillStage` 가 0 에서 벗어나 **조건부 꼬리 폴드가
+ * 켜지고 골든 바이트가 갈린다** — 스킬이 하나도 안 도는 런에서 해시가 움직이는 것은 이
+ * 저장소가 금지한 형태다. 대가는 "만기 직후 틱에 SQ10 을 찍으면 그 한 번을 놓친다" 뿐이고,
+ * 그 창은 다음 만기에 닫힌다.
+ */
+export function mallowMaturityArm(state: WorldState): void {
+  if (lv(state, Sk.maturityVolley) < 1) return;
+  writeSlot(state.skillStage, MallowStage.maturityDue, 1);
 }

@@ -8,7 +8,24 @@
  *
  * ---
  *
- * ## ⚠️ 배선된 것은 30종 중 **18종**이다 (1차 13종 + S2 앵커 ⑯ 으로 4종 + S3 앵커 ⑥ 으로 1종)
+ * ## ⚠️ 배선된 것은 30종 중 **24종**이다 (S3 아크캐스터 레인이 6종을 더했다)
+ * 그 레인이 앵커 **다섯**을 새로 세우고 기존 앵커 하나의 인자를 넓혀 CH2·CH5·CH9·BA5·BA8·BA9
+ * 를 열었다:
+ *  · ⑰ `onChainParams`(`status.ts` 의 `applyChain` 진입) → **CH2**. 효과 본체만
+ *    `skills/arccasterChain.ts` 에 따로 산다 — 이 파일이 `status.ts` 를 값으로 import 하므로
+ *    같은 파일에 두면 런타임 순환이다(그 파일 헤더가 근거).
+ *  · ⑱ `onBulletHitParams`(명중 피해 확정 **직전**) → **CH5**. 앵커 ⑩ 은 hp 차감 뒤라 늦다.
+ *  · ⑲ `onEliteLootRarity`(`rollEliteDrop` 직전) → **CH9**.
+ *  · ⑳ `onOverchargeAccrual`(과충전 적립 분기) → **BA8 앞 절반 · BA9**.
+ *  · ㉑ `onComboDecay`(`updateCombo`) → **BA5**.
+ *  · ⑧ `onDamageChain` 에 `sources`(피해원 비트합) **선택 인자** 추가 → **BA8 뒤 절반**.
+ *
+ * ## 남은 6종은 여전히 앵커가 안 닿는다
+ * 액티브 핸들러(CH10·BA1·BA4·BA6·CH7) · `stepGems` 반경(BA2). 앞의 다섯은 `onActiveFired`,
+ * BA2 는 `onGemMagnetParams` 를 요구하고 **둘 다 다른 레인이 세우는 중**이다. 여기 없는
+ * 스킬은 "구현했는데 안 불린다"가 아니라 **아직 코드가 없다**.
+ *
+ * ## (이전 판) 배선 18종의 경위 (1차 13종 + S2 앵커 ⑯ 으로 4종 + S3 앵커 ⑥ 으로 1종)
  * S2 가 연 앵커 ⑯(`onVolleyParams` — 볼리 파라미터 확정 직후)이 「발사부 앵커 부재」로 막혀
  * 있던 다섯 중 **넷**(CH1·CH8·BA7·BA10)을 열었고, S3-2 가 앵커 ⑥ 에 **수명 만료 사유**를
  * 뚫어 **CH3** 을 열었다(⑯ 이 기준 피해를 새기고 ⑥ 이 터뜨리는 2단 배선). 남은 12종은 여전히
@@ -28,10 +45,20 @@ import type { WorldState } from '../world.js';
 import type { Entity } from '../entities.js';
 // 앵커 ⑯ 의 레코드 타입. **type-only 라 런타임 import 0건 규율을 깨지 않는다**(컴파일에서
 // 지워진다) — `skillHooks.ts` 가 이 파일을 값으로 import 하므로 값 import 는 순환이 된다.
-import type { VolleyParams } from '../skillHooks.js';
+import type { VolleyParams, BulletHitParams, OverchargeAccrual } from '../skillHooks.js';
+// 피해원 비트합의 정본은 `skillSlots.ts`(import 0 인 leaf)다 — 스킬 모듈이 **런타임에** 읽어야
+// 하는데 `skillHooks.ts` 에 두면 순환이 되기 때문이다(그 파일 주석이 근거).
+import type { DamageSourceMask } from '../skillSlots.js';
 import { blastDamageAt, clearEnemyBullets, fanStrike } from '../activeTypes.js';
 import { applyChain } from '../status.js';
-import { readSlot, writeSlot, ArccasterCarry, ArccasterStage } from '../skillSlots.js';
+import {
+  readSlot,
+  writeSlot,
+  ArccasterCarry,
+  ArccasterStage,
+  DamageSource,
+  hasDamageSource,
+} from '../skillSlots.js';
 import {
   overchargeBp,
   OVERCHARGE_STILL_TICKS,
@@ -57,10 +84,15 @@ const enum Sk {
   /** CH1 유도 낙뢰 */ guidedArc = 0,
   /** CH3 종말점 방전 */ endpointBurst = 2,
   /** CH4 진입 뇌격 */ entryLance = 3,
+  /** CH5 전위차 저격 */ potentialSnipe = 4,
   /** CH6 과잉 전하 이월 */ overkillCarry = 5,
   /** CH8 접지 관통로 */ groundedPierce = 7,
+  /** CH9 낙뢰 인양 */ boltSalvage = 8,
   /** BA3 정지 관측 사격 */ stillSpotter = 12,
+  /** BA5 정전 콤보 감속 */ staticCombo = 14,
   /** BA7 연발 축전기 */ killCapacitor = 16,
+  /** BA8 절연 포좌 */ insulatedMount = 17,
+  /** BA9 이동 포격 술식 */ marchFire = 18,
   /** BA10 일제 사격 통제 */ salvoDoctrine = 19,
   /** BR1 정전 척력장 */ staticRepulsor = 20,
   /** BR2 피뢰 접지 */ lightningRod = 21,
@@ -238,13 +270,21 @@ export function arccasterPlayerDamaged(
 // ---------------------------------------------------------------------------
 
 /**
- * **① 감소(BR3 위상 결합 · BR5 접지 케이블) → ② 흡수(BR4 잉여 전하 방벽).**
+ * **① 감소(BR3 위상 결합 · BR5 접지 케이블 · BA8 절연 포좌) → ② 흡수(BR4 잉여 전하 방벽).**
  *
  * 순서는 앵커 주석이 못 박은 그대로다(흡수가 먼저면 감소가 이미 깎아 낼 피해까지 흡수 자원이
  * 태워진다). 정수화는 전부 **게이트 안**이다 — 접촉 피해에는 엘리트 배율이 섞여 소수가 될 수
  * 있고, 반올림이 게이트 밖으로 나가면 스킬 없는 런의 소수 피해까지 바뀐다.
+ *
+ * @param sources 이번 피격에 기여한 피해원 비트합(앵커 ⑧ 의 선택 인자). BA8 의 「용암 피해
+ *   경감」이 **정확히 이 값의 부재로** 막혀 있었다.
  */
-export function arccasterDamageChain(state: WorldState, player: Entity, dmg: number): number {
+export function arccasterDamageChain(
+  state: WorldState,
+  player: Entity,
+  dmg: number,
+  sources: DamageSourceMask,
+): number {
   let out = dmg;
 
   // ① 감소 A — BR3: 방벽 액티브(buff) 지속 중. 15% + 1%p/Lv.
@@ -257,6 +297,20 @@ export function arccasterDamageChain(state: WorldState, player: Entity, dmg: num
   const br5 = lv(state, Sk.groundTether);
   if (br5 >= 1 && state.wallContactTicks > 0 && player.aux0 > 0) {
     out -= Math.round((out * (1200 + 120 * br5)) / 10000);
+  }
+  // ① 감소 C — BA8「절연 포좌」의 **뒤 절반**: 해저드(용암·박격 장판) 출처 피해 경감.
+  //    15% + 1.5%p/Lv. 앞 절반(감속 장판 위 적립 2배)은 앵커 ⑳ 에 있다.
+  //
+  //    ⚠️ **정지·감속 장판 술어를 여기서 다시 걸지 않는다.** 설계 문면은 "감속 장판 위에서
+  //    정지하면 … 용암 피해가 경감된다" 지만, 그 술어를 이 자리에 그대로 옮기면 스킬이
+  //    **사실상 발동하지 않는다**: 용암을 밟은 틱에는 `playerSlowTicks` 가 서지 않을 수 있고
+  //    (용암은 `HAZARD_SLOW` 가 아니다), 감속 장판 위에 서 있는 동안 오는 피해는 대개
+  //    그 장판 자신의 피해다. 두 절반의 술어를 갈라 **앞 절반만** 접촉 근사를 지고, 뒤 절반은
+  //    출처(`DamageSource.hazard`)만 본다 — 「절연」이라는 이름이 가리키는 쪽이 그것이다.
+  //    설계-코드 어긋남으로 보고했고 문서는 고치지 않았다.
+  const ba8 = lv(state, Sk.insulatedMount);
+  if (ba8 >= 1 && hasDamageSource(sources, DamageSource.hazard)) {
+    out -= Math.round((out * (1500 + 150 * ba8)) / 10000);
   }
   // ② 흡수 — BR4: 적립분이 HP 보다 먼저 소모된다. 적립은 앵커 ⑨ 가 한다.
   const br4 = lv(state, Sk.surplusShield);
@@ -430,6 +484,13 @@ export function arccasterVolleyParams(
   if (oc && ch3 >= 1) {
     params.recordSpawnDamage = true;
   }
+  // ── CH5 — **발사 시점 잔여 수명**을 탄 `targetX` 에 새긴다. 소비는 앵커 ⑱(명중 직전).
+  //    과충전 술어와 무관하다(설계 문면이 과충전을 요구하지 않는다). 각인 칸이 `aux0`·`aux1`
+  //    과 갈린 사유는 `VolleyParams.recordSpawnOrigin` 주석에 있다.
+  const ch5 = lv(state, Sk.potentialSnipe);
+  if (ch5 >= 1) {
+    params.recordSpawnOrigin = true;
+  }
 
   if (!params.countUsed) return;
 
@@ -546,4 +607,163 @@ export function arccasterEnemyDamaged(
   // 이월 비율 = 40% + 3%p/Lv (Lv20 = 100%). 반올림은 게이트 안이다.
   const carried = Math.round((overkill * (4000 + 300 * ch6)) / 10000);
   if (carried > 0) source.damage += carried;
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ⑱ — 아군탄 명중의 피해 확정 **직전**
+// ---------------------------------------------------------------------------
+
+/** CH5 가 「멀리 비행」으로 인정하는 최소 비행 비율(발사 시점 수명 대비 백분율). */
+const SNIPE_FLIGHT_PCT = 50;
+
+/**
+ * **CH5 전위차 저격** — *"멀리 비행한 뒤 명중한 탄은 피해가 증폭되고 관통이 늘어난다"*.
+ *
+ * ## ⚠️ 아군탄 게이트가 **이 함수의 첫 줄**이다 — 없으면 적탄 거동이 조용히 갈린다
+ * 이 스킬이 읽는 `targetX` 는 **적탄에서 거동 파라미터 A**(가속도·선회율·각가속도)이고
+ * (`bullets.ts` 의 `applyBehavior`), 보스에서는 나선 기준각이다(`boss.ts`). 아군탄
+ * (`kind === 'bullet'`)에 한해서만 비어 있다. 호출부(`resolveCollisions`)의 루프가 이미
+ * `b.kind !== 'bullet'` 을 걸지만, 술어를 한 곳에만 두면 앵커가 옮겨질 때 조용히 풀린다 —
+ * **여기서 다시 건다.** `tests/skillArccaster.test.ts` 의 §⑱ 에 부정/긍정 짝이 있다.
+ *
+ * ## 「멀리」의 정의 — 월드 유닛이 아니라 **자기 사거리의 비율**이다
+ * `targetX` 에는 앵커 ⑯ 이 **발사 시점 잔여 수명**을 새겼다(`recordSpawnOrigin`). 비행 비율은
+ * `(life0 − life) / life0` 이고, 이 값은 무기 아키타입·탄속·수명이 달라도 그대로 뜻이
+ * 통한다(레일건과 발칸에 같은 유닛 임계값을 박으면 한쪽은 항상 참, 다른 쪽은 항상 거짓이 된다).
+ * `life0 <= 0` 은 **각인되지 않은 탄**이다 — CH4 부채탄·분열 파편·보조무기·빔 세그먼트가
+ * 거기 해당하고, 기본값 0 이 그대로 게이트가 된다(수명은 스폰 시 항상 양수라 자기 표식이다).
+ *
+ * ## 관통 가산은 **탄당 1회**다
+ * 호출부가 이 훅 직후 관통을 1 소비하므로, 명중마다 +1 하면 소비가 상쇄되어 탄이 관통으로
+ * 영영 안 죽는다(수명이 남는 한 무한 관통). 소진 표식은 `targetY` — 이 탄에서 비어 있는
+ * 나머지 한 칸이고, `targetX` 와 한 벌로 아군탄에서만 자유롭다.
+ *
+ * 대상은 `enemy`·`boss` 한정이다(설계서 ④ 표 — CH1·CH8 과 같은 규율).
+ * `target.hp` 를 직접 만지지 않으므로 좀비 결함(`dead` 미표시)이 원리적으로 없다.
+ */
+export function arccasterBulletHitParams(
+  state: WorldState,
+  bullet: Entity,
+  target: Entity,
+  params: BulletHitParams,
+): void {
+  if (bullet.kind !== 'bullet') return; // ← 아군탄 게이트. 위 doc 이 근거다.
+  const ch5 = lv(state, Sk.potentialSnipe);
+  if (ch5 < 1) return;
+  const life0 = bullet.targetX;
+  if (life0 <= 0) return;
+  const flown = life0 - bullet.life;
+  if (flown * 100 < life0 * SNIPE_FLIGHT_PCT) return;
+  if (target.kind !== 'enemy' && target.kind !== 'boss') return;
+  // 피해 증폭 = 25% + 2.5%p/Lv (Lv20 = +75%). 반올림은 게이트 안이다.
+  const amp = Math.round((params.damage * (2500 + 250 * ch5)) / 10000);
+  if (amp > 0) params.damage += amp;
+  if (bullet.targetY === 0) {
+    bullet.targetY = 1;
+    params.pierce += 1 + Math.floor(ch5 / 8);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ⑲ — 엘리트 전리품 등급 롤 직전
+// ---------------------------------------------------------------------------
+
+/**
+ * **CH9 낙뢰 인양** — *"과충전 중 처치한 엘리트의 전리품 희귀도에 상향 배율이 실린다"*.
+ *
+ * 배율 = ×(1 + 5% + 2.5%p/Lv) (Lv1 ×1.075 · Lv20 ×1.55). 촉매 희귀도 배율 위에 **곱으로**
+ * 얹힌다(상한 없음 — 촉매 축과 같은 규율).
+ *
+ * ⚠️ **RNG 를 한 칸도 소비하지 않는다.** `rollEliteDrop` 의 소비는 배율과 무관하게 2회
+ * 고정이라 드랍 **횟수**는 안 밀리고 **등급**만 움직인다(그 함수 본문이 근거).
+ *
+ * ⭐ 과충전 술어는 이 파일의 {@link overcharged} 를 쓴다. `world.ts` 의 `ocKill`
+ * (같은 함수 안, 사연 관측용 비-해시 카운터)과 **같은 식**(`overchargeBp(aux0) > 0`)이고,
+ * 그쪽은 `sigBit` 게이트를 직접 들고 있는 반면 여기는 앵커의 `switch` 가 이미 걸었다.
+ * 새 술어를 만들지 않았다 — 두 곳이 갈릴 여지가 없도록 식이 하나다.
+ */
+export function arccasterEliteLootRarity(
+  state: WorldState,
+  player: Entity,
+  rarityMult: number,
+): number {
+  const ch9 = lv(state, Sk.boltSalvage);
+  if (ch9 < 1) return rarityMult;
+  if (!overcharged(player)) return rarityMult;
+  return (rarityMult * (10500 + 250 * ch9)) / 10000;
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ⑳ — 과충전 적립 분기
+// ---------------------------------------------------------------------------
+
+/**
+ * **BA8 절연 포좌(앞 절반) · BA9 이동 포격 술식.**
+ *
+ * ## BA8 — 「감속 장판 **위에서** 정지」는 근사다 (보고 항목)
+ * sim 은 감속 장판 접촉을 **지속 상태로 남기지 않는다**. 접촉 틱에 `state.playerSlowTicks` 를
+ * 90(또는 설비 지정 값)으로 세울 뿐이라(`world.ts` 의 `HAZARD_SLOW` 분기) *"지금 위에 있다"*
+ * 와 *"최근 1.5초 안에 밟았다"* 가 **구분 불가**다. 문면대로 하려면 접촉 플래그를 새로
+ * 세워야 하는데, 그것은 해시 필드 추가 + 매 틱 갱신 지점 신설이라 이 레인의 폭을 넘는다.
+ *
+ * **근사로 갔다.** 근거 셋:
+ *  1. **선례가 있다** — 브루저가 같은 술어를 `playerSlowTicks > 0` 으로 근사했다
+ *     (`skills/bruiser.ts:421`). 같은 sim 에서 같은 개념을 두 방식으로 재면 그쪽이 더 나쁘다.
+ *  2. **오차 방향이 안전하다** — 근사는 "밟고 나온 직후 1.5초"를 과대 인정할 뿐, 밟고 있는데
+ *     미발동하는 **누락**은 없다. 정지 게이트(`still`)가 함께 걸려 있어 그 창 동안 플레이어는
+ *     멈춰 있어야 한다.
+ *  3. 대안(미배선)은 스킬 1종을 통째로 버리는 것이라 손실이 더 크다.
+ *
+ * ## BA9 — 「즉시 리셋되지 않고 서서히 감쇠」
+ * 이동 틱에 `still` 을 **참으로 뒤집고** 음수 델타를 실어 리셋 분기를 우회한다. 감쇠 주기는
+ * `2 + floor(Lv/2)` 틱마다 −1(Lv1 = 2틱당 1 → 적립 속도의 절반, Lv20 = 12틱당 1).
+ * `aux0` 하한 클램프는 호출부에 있다.
+ *
+ * ⚠️ **BA8 을 BA9 보다 먼저 본다.** BA9 가 `still` 을 뒤집은 뒤에 BA8 을 보면 *이동 중인데
+ * 감속 장판 근사가 참인* 틱에 적립 +2 가 실려 "이동하면서 과충전이 쌓인다" 가 된다 —
+ * 시그니처가 통째로 뒤집히는 회귀다. 그래서 BA8 은 **원래의 정지 판정**만 본다.
+ */
+export function arccasterOverchargeAccrual(
+  state: WorldState,
+  player: Entity,
+  out: OverchargeAccrual,
+): void {
+  void player;
+  // ── BA8 앞 절반 — 진짜 정지 + 감속 장판 근사에서만 적립 2배.
+  const ba8 = lv(state, Sk.insulatedMount);
+  if (ba8 >= 1 && out.still && state.playerSlowTicks > 0) {
+    out.delta = 2;
+  }
+  // ── BA9 — 이동 틱의 즉시 리셋을 감쇠로 바꾼다. **BA8 판정 뒤**여야 한다(위 경고).
+  if (!out.still) {
+    const ba9 = lv(state, Sk.marchFire);
+    if (ba9 >= 1) {
+      out.still = true;
+      out.delta = state.tick % (2 + Math.floor(ba9 / 2)) === 0 ? -1 : 0;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉑ — 콤보 유지 시계 감소 직전
+// ---------------------------------------------------------------------------
+
+/**
+ * **BA5 정전 콤보 감속** — *"과충전 중에는 콤보 유지 시계가 절반 속도로 줄어든다"*.
+ *
+ * 「절반 속도」를 **틱 모듈러**로 구현한다: 감소는 `state.tick % period === 0` 인 틱에만
+ * 일어나고 나머지 틱은 건너뛴다. `period = 2 + floor(Lv/4)` 라 Lv1 이 정확히 문면의 절반이고
+ * (2틱에 1 감소), Lv20 은 1/7 속도다.
+ *
+ * ⚠️ 주기를 `aux0 % n` 으로 잡지 마라 — `aux0` 은 600 에서 고정되므로 만충 상태에서 영구히
+ * 침묵한다(BR1 이 같은 함정을 밟았고 설계서 1R 심각 1 이 그것이다). 주기의 정본은
+ * **`state.tick`** 이다.
+ *
+ * ⚠️ 시계 값을 되돌리지(`comboTimer++`) 않는다 — 같은 틱의 젬 수거가 세운 창과 갈린다.
+ */
+export function arccasterComboDecay(state: WorldState, player: Entity): boolean {
+  const ba5 = lv(state, Sk.staticCombo);
+  if (ba5 < 1) return false;
+  if (!overcharged(player)) return false;
+  return state.tick % (2 + Math.floor(ba5 / 4)) !== 0;
 }
