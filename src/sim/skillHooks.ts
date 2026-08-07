@@ -222,6 +222,7 @@ import {
   phantomObjectiveResolved,
   phantomEnemyDeath,
   phantomPlayerWallSlide,
+  phantomDeathRemnantSpawn,
 } from './skills/phantom.js';
 import {
   bubbleSignatureStep,
@@ -603,9 +604,10 @@ function dispatchPlayerDamagedSkill(
       mallowPlayerDamaged(state, player, dmg);
       break;
     case SIG_PHANTOM_CLOAK:
-      // DI4 반발 위상 · DI5 최후 위상. `lethalSurvived` 를 넘기지 않는 것은 의도다 — 팬텀
-      // 30종 중 치명 생존 술어를 쓰는 스킬이 0종이다(DI5 의 트리거는 30% 임계 통과이지
-      // "죽을 뻔했다"가 아니다). `dmg` 는 DI5 가 피격 **전** hp 를 복원하는 데 쓴다.
+      // DI4 반발 위상 · AS7 원한 청산(표적 갱신) · DI5 최후 위상. `lethalSurvived` 를 넘기지
+      // 않는 것은 의도다 — 팬텀 30종 중 치명 생존 술어를 쓰는 스킬이 0종이다(DI5 의 트리거는
+      // 30% 임계 통과이지 "죽을 뻔했다"가 아니다). `dmg` 는 DI5 가 피격 **전** hp 를 복원하는
+      // 데 쓴다.
       //
       // ⚠️ DI1(위상 정산)·PH10(발각 즉응)은 여기 없다 — **이 앵커가 팬텀 피격 리셋보다
       // 뒤이기 때문이다.** `world.ts` 는 hp 차감 직후 `player.aux0 = 0` +
@@ -614,7 +616,8 @@ function dispatchPlayerDamagedSkill(
       // 상시 미발동이 된다. 설계서 공통 구현 고지 ④ 가 요구한 순서(DI1 → PH10 → 리셋 → DI5)
       // 중 **DI5 만** 이 자리에서 성립한다.
       // → 나머지 둘은 S2 가 리셋 **직전**에 뚫은 앵커 ㉑(`onCloakBreakReset`)에 산다.
-      phantomPlayerDamaged(state, player, dmg);
+      // ✅ **AS7 은 배치7 F2a 가 이 앵커에 실은 `srcId` 를 그대로 넘긴다**(팬텀 AS7 선결).
+      phantomPlayerDamaged(state, player, dmg, srcId);
       break;
     case SIG_HATCHLING_BROOD:
       // SH2 위기 산개 — 병아리 전원이 **피격원 쪽으로** 산개 돌진하며 경로 위 적탄을 소거한다.
@@ -3994,9 +3997,10 @@ export function onContactInvuln(state: WorldState, player: Entity, target: Entit
  */
 export function onDeathRemnantSpawn(state: WorldState, elite: Entity): boolean {
   if (!state.skillsOn) return false;
-  void elite;
   switch (state.sigBit) {
-    // ⚠️ **팬텀 case 는 아직 없다** — AS6 배선은 `skills/phantom.ts` 소유(이 레인 밖).
+    case SIG_PHANTOM_CLOAK:
+      // AS6 무성 격살 — 은신 창 동안 처치한 적은 사망 잔재를 남기지 않는다.
+      return phantomDeathRemnantSpawn(state, elite);
     default:
       break;
   }
