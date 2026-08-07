@@ -398,9 +398,9 @@ export interface PendingCommissionSubmission {
   config: WorldConfig;
   inputs: readonly InputFrame[];
   /**
-   * ⚠️ **`hashStream` 을 저장하지 않는다.** 결정론이라 `buildCommissionClaim` 이 언제든 다시
-   * 계산할 수 있는데, 45,000틱이면 그 배열만 ~0.5MB 라 localStorage 쿼터(통상 5MB)를 잡아먹는다.
-   * 재해싱 비용보다 쿼터가 비싸다 — 큐가 못 들어가면 확정 지급물이 통째로 증발한다.
+   * `hashStream` 은 애초에 여기 담기지 않는다 — `buildCommissionClaim` 이 그 필드를 만들지
+   * 않는다(ADR-0050, 서버가 재실행 대조를 하지 않으므로 제출 payload 에서 뺐다). 저장 폭이
+   * 좁은 것은 부수 효과일 뿐 이 필드가 사라진 근거는 아니다.
    */
   claim: { finalHash: number; outcome: { victory: boolean; gameOver: boolean } };
 }

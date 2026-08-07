@@ -796,7 +796,6 @@ export class ControlTowerScreen {
   private art: HangarTextures = {};
 
   private onInvade: ControlTowerCallbacks['onInvade'] | null = null;
-  private onSpectate: ControlTowerCallbacks['onSpectate'] | null = null;
   private onSticker: ControlTowerCallbacks['onSticker'] | null = null;
   private onBack: (() => void) | null = null;
 
@@ -902,7 +901,6 @@ export class ControlTowerScreen {
   show(profile: Profile, cb: ControlTowerCallbacks, opts: ControlTowerShowOpts = {}): void {
     this.profile = profile;
     this.onInvade = cb.onInvade;
-    this.onSpectate = cb.onSpectate;
     this.onSticker = cb.onSticker;
     this.onBack = cb.onBack;
     this.opts = opts;
@@ -948,7 +946,6 @@ export class ControlTowerScreen {
     this.pendingSortie = null;
     this.profile = null;
     this.onInvade = null;
-    this.onSpectate = null;
     this.onSticker = null;
     this.onBack = null;
     this.restoreRunHud();
@@ -2583,18 +2580,9 @@ export class ControlTowerScreen {
         }),
       );
     }
-    if (inv.invasionId.length > 0) {
-      buttons.push(
-        this.chromeButton({
-          tone: 'blue',
-          width: btnW,
-          height: btnH,
-          fontSize: 18,
-          label: t('ctl.notif.spectate'),
-          onClick: () => this.onSpectate?.(inv.invasionId, inv.attackerName),
-        }),
-      );
-    }
+    // ⛔ 「관전」 버튼은 ADR-0050 §결정 1 로 사라졌다 — 서버가 침공 리플레이를 보관하지
+    //    않으므로 재생할 원본이 없다. ADR §결과가 명시적으로 감수한 손실이다. 되살리려면
+    //    리플레이 보관부터 되살려야 한다(버튼만 다시 붙이면 no-op 이다).
     const btnArea = buttons.length > 0 ? buttons.length * btnW + (buttons.length - 1) * 10 + 28 : 14;
     const textW = Math.max(120, w - 14 - btnArea);
 
@@ -2854,8 +2842,6 @@ export class ControlTowerScreen {
     const oppX = 290;
     const resX = Math.round(box.w * 0.6);
     const statX = Math.round(box.w * 0.72);
-    const specW = 110;
-    const specH = 36;
     this.tableHeader(panel, listTop, [
       { label: t('ctl.hist.col.when'), x: 0, anchor: 0 },
       { label: t('ctl.hist.col.side'), x: sideX, anchor: 0 },
@@ -2912,19 +2898,8 @@ export class ControlTowerScreen {
       status.position.set(box.x + statX, y + 11);
       panel.container.addChild(status);
 
-      // 리플레이는 공격·방어 양쪽 참가자가 읽을 수 있다(RLS) — 어느 행이든 다시 볼 수 있다.
-      if (e.invasionId.length > 0) {
-        const spec = this.chromeButton({
-          tone: 'blue',
-          width: specW,
-          height: specH,
-          fontSize: 16,
-          label: t('ctl.notif.spectate'),
-          onClick: () => this.onSpectate?.(e.invasionId, this.nameOf(e.opponentId)),
-        });
-        spec.container.position.set(box.right - specW, y + (HIST_ROW_H - 4 - specH) / 2);
-        panel.container.addChild(spec.container);
-      }
+      // ⛔ 전적 행의 「관전」 버튼도 ADR-0050 §결정 1 로 사라졌다. RLS 상 양쪽 참가자가
+      //    읽을 수 있던 것은 **리플레이가 저장될 때**의 이야기이고, 이제 저장되지 않는다.
     });
 
     this.pager(panel, page, pageCount, (nextPage) => {

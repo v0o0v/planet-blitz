@@ -112,12 +112,24 @@ export interface VerifyCommissionResult {
   mineralsLeft?: number;
 }
 
-/** `verify-commission` 에 실을 제출(리플레이 + config). */
+/** `verify-commission` 에 실을 제출. */
 export interface CommissionRunSubmission {
   seed: number;
   config: unknown;
   inputs: unknown;
   claim: unknown;
+  /**
+   * 런 중에 번 크레딧·광물(클라 **주장**). ADR-0050 으로 서버 재실행이 사라지면서 이 값의
+   * 권위 소스가 없어졌다 — 그래서 **주장하고 서버가 깎는다**(사용자 결정 2026-08-07).
+   *
+   * ⚠️ **이 값을 믿는 것이 아니다.** `settle_commission` 이 `least(주장, v_plaus_run)` 으로
+   * 깎고, 그 캡의 분모인 틱 수는 `verify-commission` 게이트 1 이 서버측 `replayBudgetTicks`
+   * 이하로 이미 묶어 둔다. 즉 부풀려도 서버가 정한 천장 위로는 못 간다.
+   *
+   * 0 으로 죽이지 않은 이유는 ADR-0050 §4 다 — 목표는 차단이 아니라 **유계**이고, 0 은 위조가
+   * 아니라 정직한 수익까지 차단해 일반 PvE 런과 규칙을 갈라 놓는다.
+   */
+  runCredits?: number;
 }
 
 /** 의뢰서 서버 IO(테스트에서 fake 로 주입). */
@@ -295,6 +307,9 @@ export class SupabaseCommissionGateway implements CommissionGateway {
         config: submission.config,
         inputs: submission.inputs,
         claim: submission.claim,
+        // 광물은 **보내지 않는다** — 재실행 시절에도 `p_run_minerals` 는 항상 0 이었다
+        // (`WorldState` 에 결정론적 minerals 필드가 없다). EF 가 부재를 0 으로 읽는다.
+        run_credits: submission.runCredits ?? 0,
       },
     });
     if (error !== null) {

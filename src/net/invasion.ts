@@ -209,8 +209,10 @@ export interface InvasionVerdict {
 }
 
 /**
- * 클라이언트가 제출하는 잠정 결과(증거). 서버가 리플레이를 재실행해 이 값과 대조한다.
- * `hashStream` 은 틱별 `hashWorld` 값(uint32) — 조작 시 서버 재실행과 불일치해 거부된다.
+ * 클라이언트가 제출하는 잠정 결과(주장). **서버는 더 이상 리플레이를 재실행해 대조하지
+ * 않는다**(ADR-0050) — `verify-invasion` 은 이 주장을 그대로 신뢰해 래더 스왑·복제 약탈을
+ * service_role 로 적용할 뿐이다. "결과만 위조"의 방어는 지금 이 축에는 없다 — ADR-0050
+ * §3 단계 1·2(서버 권위 아이템 원장·개연성 캡 확장)가 그 자리를 대신 짓는다.
  */
 export interface ClientResult {
   /** 클라이언트가 주장하는 공격자 승리(코어 파괴) 여부. */
@@ -219,10 +221,8 @@ export interface ClientResult {
   coreDestroyed: boolean;
   /** 리플레이 총 틱 수(= inputs 길이). */
   finalTick: number;
-  /** 최종 상태 해시(uint32). */
+  /** 최종 상태 해시(uint32) — 결정론 계측용(밸런스 A/B·회귀 감지). 서버 대조에는 안 쓰인다. */
   finalHash: number;
-  /** 틱별 상태 해시 스트림(uint32 배열, 길이 === finalTick). */
-  hashStream: number[];
 }
 
 /**
@@ -255,9 +255,11 @@ export interface InvasionSnapshot {
    * T0 고정 **코어 모듈 권위**(M7b · ADR-0018 — 구 M6 `card` 계승). 방어자가 장착한 코어 모듈
    * 인스턴스(최대 {@link MODULE_EQUIP_SLOTS})와 공격자 매치업을 서버가 고정한다. 존재하면
    * 침공 런 config 의 `invasion3.modules` 로 실어 정적 카운터·동적 트리거·유니크가 방어전에
-   * 반영된다(공격자 클라이언트도 이 고정본으로 재현해야 hashStream 이 EF 재실행과 일치).
+   * 반영된다. **서버는 이 재현을 더 이상 재실행 대조하지 않는다(ADR-0050)** — 공격자가 이
+   * 값을 위조해도 잡아내는 축은 지금 없다(§3 단계 1·2 가 나중에 짓는다). 고정본을 계속 넘기는
+   * 것은 정직한 클라의 거동을 서버 스냅샷과 일치시켜 두기 위함일 뿐이다.
    *
-   * 모듈 미장착·구버전 서버면 `null` → 거동·해시 완전 불변(조건부 접기).
+   * 모듈 미장착·구버전 서버면 `null` → 거동 완전 불변(조건부 접기).
    */
   modules?: InvasionModulesAuthority | null;
 }
@@ -645,8 +647,9 @@ export async function submitInvasion(
 // ---------------------------------------------------------------------------
 
 /**
- * 리플레이를 재실행해 제출용 {@link ClientResult}(해시 스트림 포함)를 만든다. 결정론이라
- * 같은 리플레이면 항상 같은 값이 나오고, 서버 재실행이 이 값을 그대로 대조한다(ADR-0005).
+ * 리플레이를 재실행해 제출용 {@link ClientResult} 를 만든다. 결정론이라 같은 리플레이면
+ * 항상 같은 값이 나온다 — 다만 **서버는 이 값을 재실행해 대조하지 않는다(ADR-0050)**,
+ * `verify-invasion` 은 이 주장을 그대로 신뢰해 판정한다.
  */
 export function buildClientResult(replay: Replay): ClientResult {
   const res = runReplay(replay);
@@ -656,7 +659,6 @@ export function buildClientResult(replay: Replay): ClientResult {
     coreDestroyed: won, // 침공 승리 == 코어 파괴(패배 = 시간초과/격추)
     finalTick: replay.inputs.length,
     finalHash: res.finalHash,
-    hashStream: res.hashes,
   };
 }
 
@@ -667,8 +669,9 @@ export function buildClientResult(replay: Replay): ClientResult {
 /**
  * DB `defenses.maintenance`(numeric(5,2), 0~100) → sim `InvasionConfig.maintenance`
  * (정수 centi-percent, 0..10000). **공식은 `Math.round(dbMaintenance * 100)` 고정** —
- * 서버 EF(verify-invasion)가 동일 공식으로 재실행 config 를 구성하므로, 여기가 어긋나면
- * 정직한 런이 hashStream 발산으로 오거부된다(리드 계약 2026-07-17).
+ * `verify-invasion` 은 더 이상 sim 을 재실행하지 않으므로(ADR-0050) 이 공식이 서버와
+ * 어긋나도 제출이 오거부되지는 않는다. 그래도 고정하는 이유는 결정론 계측(밸런스 A/B)이
+ * 같은 정비도 입력에 항상 같은 sim 결과를 전제하기 때문이다.
  *
  * 미지정/비유한(NaN/Infinity)은 `undefined` 를 돌려 config 필드를 아예 싣지 않는다 —
  * sim `normalizeMaintenance` 가 undefined 를 완전 정비(10000)로 정규화하므로 기존 침공

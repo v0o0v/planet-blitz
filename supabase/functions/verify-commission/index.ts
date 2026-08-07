@@ -1,13 +1,16 @@
 /**
- * verify-commission Edge Function 진입점 (의뢰서 서버 축, 서버 계약 rev3 §7).
+ * verify-commission Edge Function 진입점 (의뢰서 서버 축 · **ADR-0050 재실행 삭제 · 레인 B**).
  *
- * 의뢰 런 리플레이 전수 재실행 검증 + 통과 시 확정 지급(`settle_commission`) 원자 처리의
- * 서버측 배선이다. 순수 게이트 판정(1~6)은 `verifyCommissionCore.ts`(플랫폼 전역 무참조)에
- * 있어 vitest 로 검증되고, 이 파일은 HTTP·Auth·DB I/O + 게이트 0/0b~0d/6b/7/8/9 만 맡는다
- * (`verify-invasion/index.ts` 와 같은 구조 — 호출자 클라이언트로 신원 확인, service 클라이언트로 RPC).
+ * ⚠️ **재실행 검증(게이트 7 `verifyRun`)과 리플레이 압축 보존은 삭제됐다.** 이 파일은 더 이상
+ * `verify-run/verifyCore.ts` 를 import 하지 않고 `src/sim` 을 싣지 않는다(ADR-0050 §1). 순수
+ * 게이트 판정(1~5)은 `verifyCommissionCore.ts`(플랫폼 전역 무참조)에 있고, 이 파일은 HTTP·
+ * Auth·DB I/O + 게이트 0/0b~0d/6b/8/9 만 맡는다.
  *
- * ⚠️ **`supabase/functions/verify-run/verifyCore.ts` 는 한 글자도 고치지 않는다** — `verifyRun`
- * 을 무수정 import 만 한다(하드 게이트).
+ * 게이트 1~5(입력 길이·촉매 금지·로드아웃 대조·미인가 유니크·payload 대조)를 전부 통과하면
+ * **재실행 없이 확정 지급**한다 — 확정 보상(`payload.rewards`)만 지급하고, 예전에 재실행
+ * `finalState.resources` 에서 뽑던 런 파생 보너스는 **재실행이 없어 산출할 수 없으므로 0 으로
+ * 고정한다**(런 파생분을 부풀리는 방향으로 값을 지어내지 않는 보수적 선택 — settle_commission
+ * 의 개연성 캡 자체는 SQL 본문 미변경으로 그대로 남아 있다, `20260803000000_commission_ledger.sql:891-920`).
  *
  * 요청: POST { run_id: string, seed, config, inputs, claim }  (verify_jwt=true, 호출자 = 제출자 본인)
  * 응답(계약 §7-4, 고정 shape — 거부도 HTTP 200): { status, accepted, reason?, grants?,
@@ -16,9 +19,7 @@
 
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { verifyRun } from '../verify-run/verifyCore.ts';
-import type { VerifyResult } from '../verify-run/verifyCore.ts';
-import { evaluateCommissionGates, extractRunResources } from './verifyCommissionCore.ts';
+import { evaluateCommissionGates } from './verifyCommissionCore.ts';
 import type { CommissionServerContext } from './verifyCommissionCore.ts';
 import type { CommissionPayload } from '../../../src/run/commission.ts';
 import {
@@ -27,13 +28,6 @@ import {
   COMMISSION_EXCLUSIVE_UNIQUE_BITS,
   COMMISSION_EXCLUSIVE_UNIQUE_ID_BITS,
 } from '../../../src/run/commissionServerConstants.ts';
-
-/**
- * 재실행 벽시계 소프트 예산(ms) — **관측 임계이지 중단 장치가 아니다**(계약 §7-4,
- * `verify-invasion/index.ts:47` 동형). 의뢰는 다구간이라 침공보다 길 수 있어 침공값(20,000)의
- * 2 배로 잡는다. ⚠️ **미확인(계약 §13-④)** — PC 실측 게이트가 실값을 확정해야 한다.
- */
-const SOFT_RERUN_BUDGET_MS = 40_000;
 
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -50,19 +44,6 @@ function respond(
   httpStatus = 200,
 ): Response {
   return json({ status, accepted, ...extra }, httpStatus);
-}
-
-/** gzip 압축 base64 인코딩(verify-invasion/index.ts 의 gzipToBase64 와 동일 — Deno 표준만 사용). */
-async function gzipToBase64(text: string): Promise<string> {
-  const input = new TextEncoder().encode(text);
-  const compressed = new Response(input).body!.pipeThrough(new CompressionStream('gzip'));
-  const buf = new Uint8Array(await new Response(compressed).arrayBuffer());
-  let bin = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < buf.length; i += CHUNK) {
-    bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
-  }
-  return btoa(bin);
 }
 
 function asRecord(v: unknown): Record<string, unknown> {
@@ -144,9 +125,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   // 게이트 0d(**소유자 검사가 먼저다** — 계약 §7-1 게이트 표의 순서를 이 자리에서 정정한다):
   // 제출자 = 행의 profile_id 본인만. 예전에는 0b(멱등 반환)가 앞이라, 인증된 아무 사용자가 남의
-  // `run_id` 를 알면 그 런의 `verified_result`(finalHash·틱수·승패·지급액)를 읽었다. run_id 가
-  // uuid v4 라 추측 불가이므로 실제 착취성은 낮지만, **소유자 검사보다 앞서는 반환 경로를 두면
-  // 안 된다**는 규율이 더 싸다.
+  // `run_id` 를 알면 그 런의 `verified_result`(승패·지급액)를 읽었다. run_id 가 uuid v4 라 추측
+  // 불가이므로 실제 착취성은 낮지만, **소유자 검사보다 앞서는 반환 경로를 두면 안 된다**는
+  // 규율이 더 싸다.
   if (run.profile_id !== callerId) {
     return respond('rejected', false, { reason: 'commission-run-not-owner' }, 403);
   }
@@ -191,16 +172,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .eq('profile_id', callerId)
       .eq('kind', 'unique');
     if (Array.isArray(grantRows)) {
-      // ⚠️ **`bit` 와 `uniqueId` 를 둘 다 읽는다.** 초판은 `item_payload.bit` 만 봤는데
-      //    `settle_commission` 이 실제로 쓰는 것은 `{"uniqueId": ...}` 다
-      //    (20260803000000:872) — **쓰는 이름과 읽는 이름이 어긋나 있었다.**
-      //    오늘은 `COMMISSION_EXCLUSIVE_UNIQUE_BITS` 가 비어 게이트가 구조적으로 아무것도
-      //    안 보므로 무해하지만, 카탈로그가 채워지는 날 이 조회가 항상 빈 집합을 돌려주어
-      //    **정직하게 발급받은 플레이어가 `commission-unauthorized-unique` 로 오거부된다.**
-      //    고치는 자리로 SQL 이 아니라 EF 를 고른 근거: `settle_commission` 재정의를 피한다
-      //    (낡은 본문 복제가 프로덕션을 100% 깨뜨린 전례 — 20260802000000:4-15).
-      //    `uniqueId` → `bit` 접기는 `COMMISSION_EXCLUSIVE_UNIQUE_ID_BITS` 가 맡는다(그쪽
-      //    주석에 UNIQUE_REGISTRY 를 직접 못 읽는 이유가 있다).
+      // ⚠️ **`bit` 와 `uniqueId` 를 둘 다 읽는다** — `settle_commission` 이 실제로 쓰는 것은
+      //    `{"uniqueId": ...}` 다(구 verifyCommissionCore.ts 주석과 동일 근거).
       const bits: number[] = [];
       for (const r of grantRows) {
         const p = asRecord((r as { item_payload?: unknown }).item_payload);
@@ -228,14 +201,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
     claim: body.claim,
   };
 
-  // 게이트 1~6(순수 판정 — verifyCommissionCore.ts).
+  // 게이트 1~5(순수 판정 — verifyCommissionCore.ts). 재실행 없이 이 판정이 확정 지급의
+  // 유일한 관문이다(ADR-0050) — 구조 검사에 이미 있는 캡·정합성 검사는 전부 통과해야 한다.
   const gateResult = evaluateCommissionGates(rawSubmission, context);
   if (!gateResult.ok) {
+    // 값싼 거부: 런 상태를 건드리지 않는다(재시도 가능 — 예: 로드아웃을 바로잡고 재호출).
     return respond('rejected', false, { reason: gateResult.reason });
   }
 
-  // 게이트 6b: EF 재실행 시도 카운터를 **별도 트랜잭션**으로 증가(계약 §5-7·§7-1). 값싼 거부
-  // (게이트 0~6)에는 시도를 소모시키지 않고, CPU 를 쓰는 게이트 7 직전에만 센다.
+  // 게이트 6b: 재검증/재확정 시도 카운터를 **별도 트랜잭션**으로 증가(계약 §5-7·§7-1). 값싼
+  // 거부(게이트 0~5)에는 시도를 소모시키지 않고, 확정 직전에만 센다(중복 제출 방지 캡 유지).
   const { data: attemptsData, error: attemptsErr } = await service.rpc(
     'bump_commission_verify_attempts',
     { p_run_id: runId },
@@ -248,76 +223,41 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return respond('rejected', false, { reason: 'commission-too-many-attempts' });
   }
 
-  // 게이트 7: verify-run 의 verifyRun 을 **무수정 import** 로 재사용(하드 게이트).
-  const startedAt = Date.now();
-  let verdict: VerifyResult;
-  try {
-    verdict = verifyRun(gateResult.submission);
-  } catch (e) {
-    console.error(`verify-commission 재실행 예외 (run=${runId}):`, e);
-    verdict = { verdict: 'reject', reason: 'replay-threw' };
-  }
-  const elapsed = Date.now() - startedAt;
-  if (elapsed > SOFT_RERUN_BUDGET_MS) {
-    console.warn(`verify-commission 재실행 벽시계 초과: ${elapsed}ms (run=${runId})`);
-  }
-
-  const verifiedResult = verdict.computed ?? null;
-
-  // 압축 보존(best-effort, ADR-0026 동형) — 확정 뒤에 호출한다. 실패해도 확정 결과를 무효화
-  // 하지 않는다(48h TTL cron 이 백스톱). 원본 리플레이는 EF 요청 본문에만 존재한다(계약 §3-3).
-  const archiveReplay = async (): Promise<void> => {
-    try {
-      const replayJson = JSON.stringify({
-        seed: rawSubmission.seed,
-        config: rawSubmission.config,
-        inputs: rawSubmission.inputs,
-      });
-      const gz = await gzipToBase64(replayJson);
-      const { error: gzErr } = await service.rpc('store_commission_replay_gz', {
-        p_run_id: runId,
-        p_gz: gz,
-      });
-      if (gzErr !== null) {
-        console.error(`store_commission_replay_gz 실패 (run=${runId}):`, gzErr.message);
-      }
-    } catch (e) {
-      console.error(`의뢰 리플레이 압축 저장 예외 (run=${runId}):`, e);
-    }
+  // 게이트 8: 확정 지급.
+  //
+  // ## 런 파생 자원을 왜 0 으로 죽이지 않는가 (사용자 결정 2026-08-07)
+  // 예전엔 재실행 `finalState.resources` 에서 뽑았다(계약 §8). 재실행이 사라졌으니 **클라가
+  // 주장하고 서버가 깎는다** — ADR-0050 §4 의 목표가 *"차단이 아니라 위조 이득을 정직한
+  // 최상위 플레이어 수준으로 **유계**"* 이기 때문이다. 0 으로 고정하면 위조뿐 아니라 **정직한
+  // 수익까지 차단**해 일반 PvE 런과 규칙이 갈린다.
+  //
+  // ⭐ **캡이 실제로 유계인 근거**: `settle_commission` 이
+  // `least(greatest(0, p_run_credits), v_plaus_run)` 으로 깎고(SQL 본문 미변경),
+  // `v_plaus_run = PLAUSIBILITY_CREDITS_PER_TICK × v_ver_ticks × (1 + v_max_stage)` 다.
+  // 그 분모인 틱 수는 **게이트 1 이 `inputs.length > server.payload.replayBudgetTicks` 를 이미
+  // 거부**하므로 여기 도달한 시점에 **서버가 정한 상한 이하**다. 즉 클라는 틱을 부풀려 캡을
+  // 키울 수 없다 — 캡의 분모가 클라 통제 밖이라는 것이 이 설계의 전부다.
+  // ⚠️ 게이트 1 을 완화하거나 `replayBudgetTicks` 를 클라 값에서 파생시키면 **이 캡이 즉시
+  // 무의미해진다.** 둘은 한 몸이다.
+  const ticks = Array.isArray(body.inputs) ? (body.inputs as unknown[]).length : 0;
+  const verifiedResult = { source: 'client-claim-capped', ticks };
+  // 음수·NaN·Infinity 방어. 상한은 SQL 이 쥔다 — 여기서 또 깎으면 두 벌이 갈린다.
+  const claimNum = (v: unknown): number => {
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
   };
-
-  if (verdict.verdict === 'reject') {
-    // 게이트 8: 실패 런 확정(보상 0).
-    const { error: settleErr } = await service.rpc('settle_commission', {
-      p_run_id: runId,
-      p_verdict: 'reject',
-      p_verified_result: verifiedResult,
-      p_run_credits: 0,
-      p_run_minerals: 0,
-    });
-    if (settleErr !== null) {
-      return respond('rejected', false, { reason: 'commission-settle-failed' }, 500);
-    }
-    await archiveReplay();
-    return respond('rejected', false, { reason: verdict.reason });
-  }
-
-  // 게이트 8: 확정 지급. `p_run_credits` 는 재실행 finalState.resources(검증된 값)에서 뽑는다
-  // — verifyRun 은 이 값을 안 돌려주므로 같은 결정론적 replay 를 한 번 더 돈다
-  // (extractRunResources 문서 참조). `p_run_minerals` 는 0 으로 고정한다(⚠️ 가정 — 코어 파일
-  // 문서 참조: WorldState 에 결정론적 minerals 필드가 없다).
-  const { resources: runCredits } = extractRunResources(gateResult.submission);
+  const runCredits = claimNum(body.run_credits);
+  const runMinerals = claimNum(body.run_minerals);
   const { data: settleData, error: settleErr } = await service.rpc('settle_commission', {
     p_run_id: runId,
     p_verdict: 'accept',
     p_verified_result: verifiedResult,
     p_run_credits: runCredits,
-    p_run_minerals: 0,
+    p_run_minerals: runMinerals,
   });
   if (settleErr !== null) {
     return respond('rejected', false, { reason: 'commission-settle-failed' }, 500);
   }
-  await archiveReplay();
 
   const s = asRecord(settleData);
   return respond('verified', true, {

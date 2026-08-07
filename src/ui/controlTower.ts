@@ -486,7 +486,6 @@ export interface ControlTowerCallbacks {
    */
   onInvade: (target: InvasionTarget, layout: InvasionLayers, pilotGuardianId?: string | null) => void;
   /** 리플레이 관전 진입 — invasionId 로 리플레이를 로드해 재생한다(F3). */
-  onSpectate: (invasionId: string, attackerName: string) => void;
   /** 방어 성공한 침공에 도발 스티커 달기(F2 방어자 몫) — 스티커 선택 UI 를 연다. */
   onSticker: (invasionId: string, attackerName: string) => void;
   /** 기지로 돌아가기. */
@@ -511,7 +510,6 @@ export interface ControlTowerShowOpts {
 export class ControlTower {
   private readonly root: HTMLElement;
   private onInvade: ControlTowerCallbacks['onInvade'] | null = null;
-  private onSpectate: ControlTowerCallbacks['onSpectate'] | null = null;
   private onSticker: ControlTowerCallbacks['onSticker'] | null = null;
   private onBack: (() => void) | null = null;
 
@@ -550,7 +548,6 @@ export class ControlTower {
 
   show(_profile: Profile, cb: ControlTowerCallbacks, opts: ControlTowerShowOpts = {}): void {
     this.onInvade = cb.onInvade;
-    this.onSpectate = cb.onSpectate;
     this.onSticker = cb.onSticker;
     this.onBack = cb.onBack;
     this.opts = opts;
@@ -573,7 +570,6 @@ export class ControlTower {
   hide(): void {
     this.root.style.display = 'none';
     this.onInvade = null;
-    this.onSpectate = null;
     this.onSticker = null;
     this.onBack = null;
   }
@@ -960,18 +956,10 @@ export class ControlTower {
         });
         row.appendChild(taunt);
       }
-      // 관전(F3): 침공당한 리플레이 재생. invasionId 가 있어야 로드 가능.
-      if (inv.invasionId.length > 0) {
-        const spec = document.createElement('button');
-        spec.className = 'pb-spec-btn';
-        spec.textContent = t('ctl.notif.spectate');
-        spec.title = t('ctl.notif.spectateTitle');
-        spec.addEventListener('click', () => {
-          const cb = this.onSpectate;
-          cb?.(inv.invasionId, inv.attackerName);
-        });
-        row.appendChild(spec);
-      }
+      // ⛔ **「관전」 버튼은 ADR-0050 §결정 1 로 사라졌다.** 침공 리플레이는 서버가
+      //    보관하지 않으므로 재생할 원본 자체가 없다. ADR §결과가 명시적으로 감수한 손실이다:
+      //    *"침공 관전이 사라진다. 방어자는 자신이 어떻게 졌는지 볼 수 없다."*
+      //    ⚠️ 되살리려면 리플레이 보관부터 되살려야 한다 — 버튼만 다시 붙이면 no-op 이다.
       panel.appendChild(row);
     }
     return panel;

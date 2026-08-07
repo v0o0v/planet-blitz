@@ -7,12 +7,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createWorld, stepWorld, emptyInput, packPowerupPick, DEFAULT_CONFIG } from '../src/sim/world.js';
-import type { InputFrame, WorldConfig } from '../src/sim/world.js';
-import { runReplay } from '../src/sim/replay.js';
+// ⚠️ sim import 가 여기서 사라진 것은 우연이 아니다 — ADR-0050 이 EF 에서 재실행을 걷어내
+//    `verifyCommissionCore` 가 sim 을 아예 안 싣게 됐고, 그 짝 테스트도 sim 을 부를 이유가
+//    없어졌다. **다시 끌어오려면 재실행이 돌아온다는 뜻이니 ADR 부터 다시 열어라.**
+import { emptyInput } from '../src/sim/world.js';
 import {
   evaluateCommissionGates,
-  extractRunResources,
   deepEqual,
 } from '../supabase/functions/verify-commission/verifyCommissionCore.js';
 import type { CommissionServerContext } from '../supabase/functions/verify-commission/verifyCommissionCore.js';
@@ -207,7 +207,7 @@ describe('게이트 4 — 미인가 의뢰 전용 유니크(commission-unauthori
   });
 });
 
-describe('게이트 5·6 — payload 대조(진단) + 서버 권위 덮어쓰기(commission-payload-mismatch)', () => {
+describe('게이트 5 — payload 대조(commission-payload-mismatch)', () => {
   it('제출 config.commission 이 서버 payload 와 다르면 진단 사유로 거부된다', () => {
     const server = baseContext();
     const tampered: CommissionRunConfig = { ...commissionConfigFromPayload(server.payload), grade: 4 };
@@ -216,193 +216,14 @@ describe('게이트 5·6 — payload 대조(진단) + 서버 권위 덮어쓰기
     expect(result).toEqual({ ok: false, reason: 'commission-payload-mismatch' });
   });
 
-  it('일치하면 게이트 6 이 서버 payload 파생값으로 config.commission 을 덮어쓴 제출을 낸다', () => {
+  it('일치하면 통과한다 (게이트 5 는 진단 대조다 — 덮어쓰기는 게이트 6 과 함께 사라졌다)', () => {
     const server = baseContext();
-    const sub = baseSubmission(server);
-    const result = evaluateCommissionGates(sub, server);
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('unreachable');
-    const overridden = (result.submission.config as { commission?: CommissionRunConfig }).commission;
-    expect(overridden).toEqual({
-      commissionId: server.payload.commissionId,
-      order: server.payload.order,
-      grade: server.payload.grade,
-      segments: server.payload.segments,
-      replayBudgetTicks: server.payload.replayBudgetTicks,
-      segmentIndex: 0,
-    });
-  });
-
-  it('뮤테이션: 게이트 5 를 지워도 게이트 6 의 덮어쓰기 자체는 항상 서버 값을 쓴다(강제는 6 이 진다, §7-2)', () => {
-    // 제출이 5 에서 걸리는 tampered 값이어도, 만약 5 를 우회해 6 까지 온다고 가정하면 결과는
-    // 항상 서버 값이지 제출값이 아니다 — 이 성질을 직접 확인한다(위조 config 가 살아남지 않음).
-    const server = baseContext();
-    const sub = baseSubmission(server);
-    const result = evaluateCommissionGates(sub, server);
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('unreachable');
-    const overridden = (result.submission.config as { commission?: CommissionRunConfig }).commission;
-    expect(overridden?.grade).toBe(server.payload.grade); // 제출이 아니라 서버 payload 의 값.
+    const result = evaluateCommissionGates(baseSubmission(server), server);
+    expect(result).toEqual({ ok: true });
   });
 });
 
-describe('extractRunResources — 재실행 finalState.resources 추출(계약 §8)', () => {
-  /** 짧은 내구 런(레벨업 팝업 회피)을 만들어 finalState.resources 를 재본다. */
-  function driveInputs(seed: number, config: WorldConfig, ticks: number): InputFrame[] {
-    const state = createWorld(seed, config);
-    const inputs: InputFrame[] = [];
-    for (let t = 0; t < ticks; t++) {
-      const frame: InputFrame = state.pendingLevelUp
-        ? { ...emptyInput(), special: packPowerupPick(0) }
-        : { moveX: Math.sin(t * 0.1), moveY: Math.cos(t * 0.1), aim: 0, dash: false, special: 0 };
-      inputs.push(frame);
-      stepWorld(state, frame);
-      if (state.gameOver || state.victory) break;
-    }
-    return inputs;
-  }
-
-  it('runReplay 를 다시 돌려 finalState.resources 와 같은 값을 낸다(같은 입력 → 같은 결과)', () => {
-    const config: WorldConfig = { ...DEFAULT_CONFIG, playerHp: 1_000_000_000 };
-    const inputs = driveInputs(7, config, 120);
-    const expected = runReplay({ seed: 7, config, inputs }).finalState.resources;
-    const { resources } = extractRunResources({ seed: 7, config, inputs });
-    expect(resources).toBe(expected);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 게이트 6 — allowlist 재조립 (보안 검토 CRITICAL 회귀 게이트)
-// ---------------------------------------------------------------------------
-
-describe('게이트 6 — 제출 config 를 **정화**한다 (덮어쓰기만 하면 재실행이 증거가 아니다)', () => {
-  // ⚠️ 결함 형상: `{...cfg, commission: expected}`. 그러면 서버 권위가 commission 블록 하나뿐이고
-  //    나머지 WorldConfig 전체가 제출자 것으로 남는다. 재실행이 제출자 config 로 돌고 해시는
-  //    제출자가 같은 config 로 계산한 claim 과 일치하므로 **게이트 7 은 원리적으로 발산하지
-  //    않는다** — 즉 "재실행이 강제한다"가 거짓이 된다.
-  //
-  // ⚠️ 이 블록의 단언이 통과하면서도 참일 수 있는 나쁜 상태: 게이트 6 이 **아예 도달하지 않는
-  //    것**(앞 게이트가 거부). 그래서 매 케이스에서 `res.ok === true` 를 먼저 확인한다.
-
-  /** 위험 필드를 잔뜩 실은 제출. 전부 정직한 클라가 의뢰 런에 넣지 않는 값이다. */
-  function hostileSubmission(server: CommissionServerContext) {
-    return baseSubmission(server, {
-      config: {
-        loadout: server.loadoutSealed,
-        commission: commissionConfigFromPayload(server.payload),
-        // ⓐ 코어 스탯 위조 → 무손실 완주 → 확정 지급물 취득
-        playerHp: 1e9,
-        playerSpeed: 1e6,
-        dashSpeed: 1e6,
-        hitIframes: 1e9,
-        dashIframes: 1e9,
-        dashCooldownTicks: 0,
-        arenaWidth: 1e6,
-        arenaHeight: 1e6,
-        // ⓑ 자원 배율 → finalState.resources 무제한(그 산술에 상한 캡이 없다)
-        planetMultCenti: 1_000_000,
-        planetMultEpoch: 99,
-        // ⓒ 1구간 무대 위조 — stageOverride 는 2구간 전환에만 적용된다
-        planet: 5,
-        stage: 99,
-        planetMode: 3,
-        // ⓓ 구간 단축 → 일반 세그먼트를 건너뛰고 즉시 보스
-        maxSegments: 0,
-        // 그 외 의뢰에 실릴 수 없는 축
-        invasion3: { anything: true },
-        pilot: { typeId: 3 },
-      },
-    });
-  }
-
-  it('코어 스탯 9종이 DEFAULT_CONFIG 로 되돌아간다 (제출값이 한 개도 살아남지 않는다)', () => {
-    const server = baseContext();
-    const res = evaluateCommissionGates(hostileSubmission(server), server);
-    expect(res.ok, '게이트 6 에 도달하지 못했다 — 이 테스트가 무의미하다').toBe(true);
-    if (!res.ok) return;
-    const c = res.submission.config as unknown as Record<string, unknown>;
-    // 독립 전사본 — DEFAULT_CONFIG 를 순회하면 그 객체에서 키가 빠질 때 단언도 함께 사라진다.
-    const CORE = [
-      'arenaWidth',
-      'arenaHeight',
-      'playerSpeed',
-      'dashSpeed',
-      'dashCooldownTicks',
-      'dashIframes',
-      'hitIframes',
-      'playerHp',
-    ] as const;
-    for (const k of CORE) {
-      expect(c[k], `${k} 가 제출값으로 남았다`).toBe(
-        (DEFAULT_CONFIG as unknown as Record<string, unknown>)[k],
-      );
-    }
-    // 전사본이 실제 필드 집합과 어긋나면(예: 새 코어 상수 추가) 여기서 걸린다.
-    expect(Object.keys(DEFAULT_CONFIG).sort()).toEqual([...CORE].sort());
-  });
-
-  it('무대는 **payload 의 1구간**에서 파생된다 (제출 planet/stage 를 믿지 않는다)', () => {
-    const server = baseContext();
-    const res = evaluateCommissionGates(hostileSubmission(server), server);
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    const c = res.submission.config as unknown as Record<string, unknown>;
-    expect(c.planet).toBe(server.payload.segments[0]?.planet);
-    expect(c.stage).toBe(server.payload.segments[0]?.stage);
-    // 제출값(5/99)이 아니라는 것을 명시적으로 — 우연히 같은 값이면 위 단언이 항진이다.
-    expect(c.planet).not.toBe(5);
-    expect(c.stage).not.toBe(99);
-  });
-
-  it('의뢰에 실릴 수 없는 축은 **키 자체가 사라진다**', () => {
-    const server = baseContext();
-    const res = evaluateCommissionGates(hostileSubmission(server), server);
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    const c = res.submission.config as unknown as Record<string, unknown>;
-    for (const k of ['planetMultCenti', 'planetMultEpoch', 'invasion3', 'pilot', 'catalysts']) {
-      expect(k in c, `${k} 가 살아남았다`).toBe(false);
-    }
-  });
-
-  it('maxSegments 는 서버 상수로 고정된다 (제출 0 이 통하면 보스로 즉시 점프한다)', () => {
-    const server = baseContext();
-    const res = evaluateCommissionGates(hostileSubmission(server), server);
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    const c = res.submission.config as unknown as Record<string, unknown>;
-    expect(c.maxSegments).toBe(COMMISSION_WAVE_SEGMENTS_PER_SEGMENT);
-  });
-
-  it('대조군: 정직한 제출은 재조립 후에도 자기 축을 그대로 유지한다', () => {
-    // ⚠️ 위 네 단언만 있으면 "게이트 6 이 전부 지워 버린다"도 통과한다. 정직한 축(로드아웃·
-    //    기체·스킬 투자)이 살아남는지 함께 잰다 — 안 살아남으면 정직한 런이 전부 거부된다.
-    const server = baseContext();
-    const honest = baseSubmission(server, {
-      config: {
-        loadout: server.loadoutSealed,
-        commission: commissionConfigFromPayload(server.payload),
-        shipType: 2,
-        skillInvest: [1, 2, 3],
-        runId: 'abc',
-      },
-    });
-    const res = evaluateCommissionGates(honest, server);
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    const c = res.submission.config as unknown as Record<string, unknown>;
-    expect(c.shipType).toBe(2);
-    expect(c.skillInvest).toEqual([1, 2, 3]);
-    expect(c.runId).toBe('abc');
-    expect(c.loadout).toEqual(server.loadoutSealed);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// maxSegments 클라·서버 대칭 (리뷰 MAJOR-1 회귀 게이트)
-// ---------------------------------------------------------------------------
-
-describe('maxSegments 는 클라(`buildRunConfig`)와 서버(게이트 6)가 **주문별로 같은 값**을 낸다', () => {
+describe('maxSegments — 클라(`buildRunConfig`)가 주문별로 옳은 값을 낸다', () => {
   // ⚠️ **주문 목록을 `COMMISSION_ORDERS` 순회로 쓰지 마라.** 목록을 순회하면 거기서 항목이
   //    빠질 때 대조도 함께 사라져 원리적으로 눈이 먼다. 독립 전사본으로 4개를 열거한다.
   const ORDERS = ['chain', 'constraint', 'bounty', 'elite'] as const;
@@ -436,17 +257,11 @@ describe('maxSegments 는 클라(`buildRunConfig`)와 서버(게이트 6)가 **�
         stage: payload.segments[0]?.stage ?? 1,
         commission,
       });
-      // 서버 — 게이트 6 의 allowlist 재조립.
-      const server = baseContext({ payload });
-      const res = evaluateCommissionGates(baseSubmission(server), server);
-      expect(res.ok, '게이트 6 에 도달하지 못했다 — 이 대조가 무의미하다').toBe(true);
-      if (!res.ok) return;
-      const serverMax = (res.submission.config as unknown as Record<string, unknown>).maxSegments;
-
+      // ⚠️ **서버 절반은 사라졌다** — 게이트 6(서버측 allowlist 재조립)이 재실행 입력을
+      //    만들던 것이라 ADR-0050 과 함께 지워졌다. 그래서 이 블록은 이제 **대칭이 아니라 클라
+      //    단독 축**을 잰다. 지우지 않고 남긴 이유는 주문별 구간 수가 여전히 클라 조립의
+      //    계약이기 때문이다 — 서버가 안 본다고 틀려도 되는 값이 아니다.
       expect(clientCfg.maxSegments, `클라 ${order}`).toBe(EXPECTED[order]);
-      expect(serverMax, `서버 ${order}`).toBe(EXPECTED[order]);
-      // 대칭 자체를 한 번 더 — 위 둘이 같은 상수를 참조해도 배선이 갈리면 여기서 잡힌다.
-      expect(serverMax, `${order}: 클라·서버 maxSegments 가 갈렸다`).toBe(clientCfg.maxSegments);
     });
   }
 

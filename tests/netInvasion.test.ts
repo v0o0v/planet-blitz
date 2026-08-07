@@ -5,7 +5,7 @@
  *   1. no-op 모드(config=null): 공개 함수가 null 을 돌려주고 SDK/네트워크를 만지지 않음.
  *   2. fake 게이트웨이 주입: 타깃/순위표 조회, 침공 제출 플로우(uid→insert→invoke)와
  *      쿨다운 미러 기록.
- *   3. buildClientResult: 결정론 · 해시 스트림 길이 · 승패 파생.
+ *   3. buildClientResult: 결정론(finalHash) · 승패 파생. hashStream 은 ADR-0050 로 제거됐다.
  *   4. 재도전 쿨다운 순수 함수(읽기/기록/남은시간/가능여부).
  */
 
@@ -32,6 +32,7 @@ import {
 import { DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { WorldConfig } from '../src/sim/world.js';
 import type { Replay } from '../src/sim/replay.js';
+import { runReplay } from '../src/sim/replay.js';
 import { emptyInput } from '../src/sim/world.js';
 import type { InputFrame } from '../src/sim/world.js';
 import type { KeyValueStore } from '../src/save/profile.js';
@@ -266,13 +267,13 @@ describe('net/invasionGateway — normalizeVerdict(attackerWon null 보존)', ()
 // buildClientResult
 // ---------------------------------------------------------------------------
 
-describe('net/invasion — buildClientResult(결정론·해시 스트림)', () => {
-  it('해시 스트림 길이 === 틱 수, finalTick 일치, attackerWon===coreDestroyed', () => {
+describe('net/invasion — buildClientResult(결정론 — ADR-0050 이후 hashStream 없음)', () => {
+  it('finalTick 일치, finalHash === 직접 재실행 finalHash, attackerWon===coreDestroyed', () => {
     const replay = idleReplay(120, SAMPLE_LAYERS);
     const cr = buildClientResult(replay);
-    expect(cr.hashStream).toHaveLength(120);
+    const direct = runReplay(replay);
     expect(cr.finalTick).toBe(120);
-    expect(cr.finalHash).toBe(cr.hashStream[cr.hashStream.length - 1]);
+    expect(cr.finalHash).toBe(direct.finalHash);
     expect(cr.coreDestroyed).toBe(cr.attackerWon);
   });
 

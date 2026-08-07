@@ -1494,15 +1494,18 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     }
 
     /**
-     * 리플레이 섹션(침공 탭). 방금 돌린 침공을 **관전 재생**으로 되돌려 보고, 결정론 재현을
+     * 리플레이 섹션(침공 탭). 방금 돌린 침공을 **로컬 재생**으로 되돌려 보고, 결정론 재현을
      * 해시로 확인하고, JSON 으로 주고받는다.
      *
-     * 재생은 정식 관전(F3)과 **같은 경로**(main.ts `beginSpectate`)를 탄다 — 재생 루프를
-     * 하네스가 따로 갖지 않아야 "하네스에서는 되는데 실제 관전은 깨지는" 갈림이 안 생긴다.
-     * 관전 월드는 진입 즉시 오염되어 정산·제출 대상에서 빠진다(ADR-0008).
+     * ⚠️ **서버 침공 관전(상대 리플레이를 서버에서 받아 보는 기능)은 ADR-0050 으로 폐지됐다.**
+     * 이 섹션이 쓰는 것은 그 남은 렌더 경로(main.ts `beginSpectate`/`SpectateOverlay`)뿐이고,
+     * 재생 대상은 항상 **자기 자신의** 방금 런(라이브 또는 마지막으로 끝난 것)이다 — 서버에서
+     * 리플레이를 받아 오지 않는다. 재생 월드는 진입 즉시 오염되어 정산·제출 대상에서 빠진다
+     * (ADR-0008).
      *
-     * 해시 검증(`verifyReplay`)은 sim 정본 `runReplay` 를 그대로 쓰므로, 여기서 나온 최종
-     * 해시는 서버 재실행(verify-invasion)이 보는 값과 같은 축이다.
+     * 해시 검증(`verifyReplay`)은 sim 정본 `runReplay` 를 그대로 쓰므로 재현 결정론은 여전히
+     * 못박지만, **서버는 이 값을 재실행해 대조하지 않는다**(ADR-0050) — `verify-invasion` 은
+     * 클라 주장을 그대로 신뢰한다.
      */
     function appendReplaySection(s: HTMLElement): void {
       s.appendChild(subLabel('리플레이 (관전 재생 · 결정론 검증)'));
