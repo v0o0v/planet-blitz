@@ -60,6 +60,7 @@
 | `20260808010000_item_grants_ledger` | `server_secrets` · `item_grants` · `drop_odds_mirror` · `grant_run_drops` · `mark_item_grant_applied` | #363 |
 | `20260808020000_invasion_rate_cap` | 축 A 침공 빈도 캡(20/h) | #364 |
 | `20260808030000_refine_server_roll` | `roll_refine` — 정련 차감+굴림을 한 트랜잭션으로 | #367 |
+| `20260808050000_telemetry_rollup` | 텔레메트리 일별 롤업(`telemetry_daily_planet_stage`·`telemetry_daily_ship_level`) + `rollup_telemetry_daily` + 400일 GC(ADR-0051 §결정 3) | #372 |
 
 ⚠️ **클라가 이제 이 RPC 들을 부른다**(PR #366·#367). 앞 표에 적힌 *"지금 적용해도 동작
 변화가 없다"* 는 **낡았다** — 적용 순서가 생겼다:
