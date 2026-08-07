@@ -240,9 +240,9 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
     'FI1@20', 'FI2@21', 'FI3@22', 'FI4@23', 'FI5@24', 'FI8@27', 'FI9@28', 'FI10@29',
   ],
   hatchling: [
-    'BD1@0', 'BD2@1', 'BD5@4', 'BD6@5', 'BD10@9',
-    'NU2@11', 'NU5@14', 'NU6@15', 'NU7@16', 'NU8@17', 'NU10@19',
-    'SH1@20', 'SH3@22', 'SH5@24', 'SH6@25', 'SH7@26', 'SH10@29',
+    'BD1@0', 'BD2@1', 'BD3@2', 'BD5@4', 'BD6@5', 'BD7@6', 'BD8@7', 'BD9@8', 'BD10@9',
+    'NU2@11', 'NU4@13', 'NU5@14', 'NU6@15', 'NU7@16', 'NU8@17', 'NU9@18', 'NU10@19',
+    'SH1@20', 'SH2@21', 'SH3@22', 'SH5@24', 'SH6@25', 'SH7@26', 'SH9@28', 'SH10@29',
   ],
   mallow: [
     'SQ1@0', 'SQ2@1', 'SQ3@2', 'SQ4@3', 'SQ5@4', 'SQ7@6', 'SQ8@7',
@@ -262,7 +262,7 @@ const GOLDEN: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** 골든 합계. 기체별 표와 따로 적어, 한쪽만 고치면 아래 자기검증이 잡는다. */
-const GOLDEN_TOTAL = 125;
+const GOLDEN_TOTAL = 133;
 
 /** 늘고 준 것을 사람이 읽을 수 있게 찍는다 — 숫자만 틀렸다고 하면 원인을 못 찾는다. */
 function diffMsg(ship: string, actual: readonly string[], golden: readonly string[]): string {

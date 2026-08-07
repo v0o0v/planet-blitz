@@ -96,6 +96,9 @@ import {
   hatchlingBroodLaunchParams,
   hatchlingBroodLaunched,
   hatchlingTurretShotParams,
+  hatchlingTurretCadence,
+  hatchlingTurretExpired,
+  hatchlingPlayerDamaged,
 } from './skills/hatchling.js';
 import {
   strikerDashFired,
@@ -411,6 +414,19 @@ function playerOf(state: WorldState): Entity | undefined {
  * @param sources {@link DamageSource} 비트합. **기본값 없는 필수 인자다** — 기본값을 두면 새
  *   호출부가 사유를 빠뜨린 채 기존 사유로 흘러들어 조용히 오분류된다(앵커 ⑥
  *   {@link BulletExpiryReason} 와 같은 규율).
+ * @param srcX 피격원 좌표 x — **선택 인자다**(아래 사유). 생략 = "이번 피격의 피격원 좌표를
+ *   모른다".
+ * @param srcY 피격원 좌표 y — {@link srcX} 와 한 벌.
+ *
+ * ## ⚠️ 왜 좌표만 **선택** 인자인가 — `sources` 와 규율이 다르다
+ * `sources` 는 필수다: 사유를 빠뜨린 호출부가 조용히 오분류되기 때문이다. 좌표는 반대로
+ * **원리적으로 없을 수 있는 값**이다 — 수집 루프의 `max` 승자가 없는 경로(향후 코드 경로 ·
+ * 단위 테스트가 앵커를 직접 부르는 경로)에서 0,0 을 넘기면 그것이 *"월드 원점에서 맞았다"* 로
+ * 읽혀 방향 벡터가 조용히 뒤집힌다. 그래서 `undefined` 를 **모른다는 뜻으로만** 쓰고,
+ * 소비처(해츨링 SH2)는 두 값이 다 있을 때만 발동한다.
+ * ⚠️ 이 앵커는 **7기체가 공유한다.** 필수 인자로 더하면 기존 호출부·타 레인 픽스처가 전부
+ * 깨진다(배치 1 에서 실제로 났고 `tsc` 만이 잡았다) — 선택 인자라 파급은 **호출부 1곳**
+ * (`world.ts` 의 유일한 실호출)뿐이고 촉매 짝(`onPlayerDamagedCatalyst`)은 인자가 안 늘었다.
  */
 export function onPlayerDamaged(
   state: WorldState,
@@ -418,8 +434,10 @@ export function onPlayerDamaged(
   dmg: number,
   lethalSurvived: boolean,
   sources: DamageSourceMask,
+  srcX?: number,
+  srcY?: number,
 ): void {
-  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived, sources);
+  dispatchPlayerDamagedSkill(state, player, dmg, lethalSurvived, sources, srcX, srcY);
   onPlayerDamagedCatalyst(state, player, dmg, lethalSurvived, sources);
 }
 
@@ -429,6 +447,8 @@ function dispatchPlayerDamagedSkill(
   dmg: number,
   lethalSurvived: boolean,
   sources: DamageSourceMask,
+  srcX?: number,
+  srcY?: number,
 ): void {
   if (!state.skillsOn) return;
   switch (state.sigBit) {
@@ -480,6 +500,14 @@ function dispatchPlayerDamagedSkill(
       // 중 **DI5 만** 이 자리에서 성립한다.
       // → 나머지 둘은 S2 가 리셋 **직전**에 뚫은 앵커 ㉑(`onCloakBreakReset`)에 산다.
       phantomPlayerDamaged(state, player, dmg);
+      break;
+    case SIG_HATCHLING_BROOD:
+      // SH2 위기 산개 — 병아리 전원이 **피격원 쪽으로** 산개 돌진하며 경로 위 적탄을 소거한다.
+      // 이 기체가 이 앵커에 좌표 두 칸을 연 유일한 사유이고, 좌표가 없으면(`undefined`)
+      // 훅이 스스로 조기 반환한다 — 방향이 없는 산개는 설계가 정의하지 않았다.
+      // ⚠️ SH1(호위 희생)·SH7(회생 부화)은 여기가 아니라 앵커 ⑧ 이다 — 그 둘은 hp 가 깎이기
+      //    **전**에 피해를 흡수해야 하고 이 앵커는 차감 뒤다.
+      hatchlingPlayerDamaged(state, player, srcX, srcY);
       break;
     default:
       break;
@@ -2315,6 +2343,132 @@ export function onTurretShotParams(
     // `tsc` 만이 잡았다.
     case SIG_HATCHLING_BROOD:
       hatchlingTurretShotParams(state, turret, params);
+      break;
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉗ (S3-해츨링) — **포탑 1기의 사격 리듬**(`world.ts` 의 `stepTurrets` 루프 안)
+// ---------------------------------------------------------------------------
+//
+//   ㉗ onTurretCadence — 쿨다운 감산 **앞**. 해츨링 BD9(과밀 본능) · NU4(둥지 소집 연사 창).
+//
+// ## ⚠️ 왜 쿨다운 감산보다 **앞**인가 — 뒤에 두면 BD8 이 원리적으로 못 산다
+// 루프 본문은 `if (cooldown > 0) { cooldown--; continue; }` 라, 앵커를 그 뒤에 두면
+// **쿨다운이 0 인 틱에만** 불린다. 그러면 이 앵커로는 "쿨다운을 무시하고 지금 쏜다"(BD8) 를
+// 표현할 방법이 없고, 간격 단축(BD9·NU4)도 *다음* 발부터만 걸려 한 주기 늦다. 앞에 두는
+// 대가는 병아리 1기당 매 틱 훅 1회인데, 훅 첫 줄이 `ownerId !== BROOD_MARK` 조기 반환이라
+// 센트리·드론 베이 런에서는 비교 한 번이다.
+//
+// ## ⚠️ 포탑은 해츨링 전용이 아니다 — 게이트는 **훅 안**이다(㉖ 과 같은 규율)
+// `stepTurrets` 는 병아리(`BROOD_MARK`) · 액티브 센트리 · 자율 드론 베이(`DRONE_MARK`)를 한
+// 루프로 돈다. 앵커에서 소환물 종류로 미리 거르지 않는다 — 훗날 센트리를 만지는 축이 다시
+// 막힌다.
+//
+// ## ⚠️ 촉매 짝이 없다 — ⑮·⑰~㉔·㉖ 과 같다.
+
+/**
+ * 앵커 ㉗ 이 넘기는 **이 포탑의 이번 틱 사격 리듬**. 훅이 제자리에서 고친다.
+ *
+ * ## ⚠️ 칸이 하나뿐인 이유 — **증명한 칸만 연다**
+ * 정찰이 지목한 `suppressFire`(SH4「품기 진형」의 사격 정지)는 **열지 않았다.** SH4 의
+ * 반대급부인 *"적탄을 몸으로 막는다"* 는 적탄↔병아리 충돌 경로가 코드에 0건이라(`collision.ts`
+ * ·`bullets.ts` 에 포탑 대상 판정 grep 0건) 이 레인에서 성립하지 않고, 정지만 넣으면 SH4 가
+ * **순손해 스킬**이 된다 — BD10 이 탄 피해 축 없이 상한만 깎였을 때와 같은 형태다. 칸만 미리
+ * 열어 두면 *"배선이 있다"* 는 착각이 남으므로(앵커 ⑮ 주석) 소비처가 생기는 레인이 열어라.
+ */
+export interface TurretCadenceParams {
+  /**
+   * 이 포탑이 **이번에 쏘고 나서** 세울 쿨다운 틱. 초기값은 `events.ts` 의
+   * `TURRET_FIRE_COOLDOWN`(=10).
+   *
+   * ## ⚠️ 클램프에 안 삼켜진다 — 소비 경로를 짚었다
+   * `stepTurrets` 는 `if (fireTurretShot(...)) t.cooldown = <이 값>` 으로 **그대로** 대입하고,
+   * 다음 틱부터 `if (cooldown > 0) cooldown--` 로 순수 감산한다. `min`·`max` 가 하나도 없다.
+   * ⚠️ **훅이 하한을 스스로 걸어라** — 0 이나 음수를 넣으면 `cooldown > 0` 이 영원히 거짓이라
+   * 매 틱 발사가 된다(BD5 가 `0` 클램프로 피한 것과 같은 함정의 반대편이다).
+   */
+  cooldownTicks: number;
+}
+
+/**
+ * 앵커 ㉗ — **포탑 1기의 이번 틱 리듬이 정해지기 직전**(쿨다운 감산보다 앞).
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라**(㉖ 과 같은 계약 — `stepTurrets` 는 매 틱 전 포탑을 돈다).
+ *  - ⚠️ **엔티티를 낳지 마라.** 이 지점은 `state.entities` **순회 안**이다.
+ *  - ⚠️ **`turret.cooldown` 을 여기서 직접 만지지 마라.** 바로 다음 줄이 그 값을 읽어 감산
+ *    여부를 정한다 — 여기서 0 으로 밀면 "이 앵커가 정한 리듬" 과 실제 리듬이 갈린다.
+ *    즉시 격발이 필요한 축(BD8·NU4)은 **액티브 핸들러**가 발동 틱에 `cooldown = 0` 을 쓴다
+ *    (`stepActives` 가 `stepTurrets` 보다 앞이라 같은 틱에 나간다).
+ *
+ * @param turret 이 포탑 개체. **소환물 종류 판별은 훅 책임이다**(`ownerId`).
+ */
+export function onTurretCadence(
+  state: WorldState,
+  turret: Entity,
+  params: TurretCadenceParams,
+): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    case SIG_HATCHLING_BROOD:
+      hatchlingTurretCadence(state, turret, params);
+      break;
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 앵커 ㉘ (S3-해츨링) — **포탑이 수명으로 소멸한 직후**(`stepTurrets` 의 `life === 0` 분기)
+// ---------------------------------------------------------------------------
+//
+//   ㉘ onTurretExpired — `t.dead = true` 직후. 해츨링 BD3(작별 격발) · NU9(둥지 표식) ·
+//                        SH9(이소 둥지).
+//
+// ## ⭐ 이 앵커가 특별한 이유 — **「소멸 경로 전수」가 이것 하나로 닫힌다**
+// 설계 ②말미의 「소멸 경로 전수 표」는 BD3·NU9 가 **모든** 소멸 경로에서 발화할 것을
+// 요구한다. 병아리의 소멸 경로는 셋뿐이고 나머지 둘(SH1 호위 희생 · SH7 회생 부화)은
+// **이미 `skills/hatchling.ts` 의 `killChick` 안**이다 — 그 함수가 `aux1 = 1`(사유 = 희생)을
+// 적어 두었고, 그 값의 독자가 없다는 것이 배치 5 헤더 사유 3묶음이 미배선 이유로 든 바로 그
+// 반쪽이었다. 이 앵커가 셋째(자연 만료) 경로를 열어 **BD3·NU9 가 세 경로 전부에서** 돌고,
+// 동시에 `aux1` 의 첫 독자(SH9)가 생긴다.
+//
+// ## ⚠️ 왜 `t.dead = true` **직후**인가
+// 앞에 두면 훅이 "소멸했다" 를 아직 모르고(수명 0 은 다음 줄이 판정한다), 루프 밖으로 미루면
+// `compact()` 가 이미 개체를 회수해 **좌표가 남지 않는다** — 세 스킬이 전부 *"그 자리에"* 를
+// 요구하므로 좌표 유실은 곧 미배선이다.
+//
+// ## ⚠️ 이 앵커는 자연 만료 **전용**이다
+// SH1·SH7 의 강제 소멸은 여기 오지 않는다(그쪽은 `dead` 를 스스로 세우고 이 루프는 다음
+// 틱에 `t.dead` 로 걸러 낸다). 「자연 만료만」이 조건인 축(SH9)이 그 사실에 의존하고,
+// 「전수」가 조건인 축(BD3·NU9)은 훅 쪽에서 `killChick` 과 **같은 헬퍼**를 부른다.
+//
+// ## ⚠️ 촉매 짝이 없다 — ⑮·⑰~㉔·㉖·㉗ 과 같다.
+
+/**
+ * 앵커 ㉘ — **포탑 1기가 수명을 다해 죽은 직후**(`t.dead = true` 직후 · `continue` 앞).
+ *
+ * ## 무엇을 하면 안 되는가
+ *  - ⚠️ **RNG 를 소비하지 마라**(㉖·㉗ 과 같은 계약).
+ *  - ⚠️ **`turret.dead` 를 되돌리지 마라.** 수명 만료는 world 의 판정이고, 되살리면
+ *    `TURRET_LIFE_TICKS` 계약과 상한 계수가 통째로 갈린다.
+ *  - ⚠️ 엔티티 생성은 **허용된다** — 이 루프가 이미 `fireTurretShot` → `spawnBullet` 으로
+ *    배열 말미에 append 하고 있고, 새로 붙는 개체는 `isActiveTurret` 이 거짓이라 같은 틱의
+ *    남은 순회가 그것을 건너뛴다(`for…of` 가 새 원소를 보더라도 무연산이다). 순회 **중간**을
+ *    바꾸는 조작(정렬·삭제)만 금지다.
+ *
+ * @param turret 방금 소멸한 포탑 개체. **소환물 종류 판별은 훅 책임이다**(`ownerId`).
+ */
+export function onTurretExpired(state: WorldState, turret: Entity): void {
+  if (!state.skillsOn) return;
+  switch (state.sigBit) {
+    // 배선 레인은 자기 `case` 를 여기에 넣는다. **`break;` 를 반드시 붙여라**(누적 5건 전례).
+    case SIG_HATCHLING_BROOD:
+      hatchlingTurretExpired(state, turret);
       break;
     default:
       break;
