@@ -18,7 +18,7 @@ import { DT, HAZARD_LINE_SPAN } from '../constants.js';
 import { slideCircleWalls } from '../los.js';
 import { stageParams } from '../../../data/waves.js';
 // 밀도 패스 계수(2026-08-08 사용자 결정) — 사유·짝 관계는 그 모듈 헤더가 정본이다.
-import { ENEMY_DAMAGE_MULT, scaledFireCooldown } from '../enemyScale.js';
+import { enemyDamageScale, scaledFireCooldown } from '../enemyScale.js';
 import { applyBehavior, curveBehavior, accelBehavior } from '../bullets.js';
 
 /**
@@ -211,7 +211,7 @@ function runAttack(state: WorldState, e: Entity, def: EnemyDef, player: Entity):
         def.attack.radius,
         def.attack.windup,
         8, // short burst window
-        def.attack.damage * ENEMY_DAMAGE_MULT,
+        def.attack.damage * enemyDamageScale(state.config),
         false,
         e.id,
       );
@@ -219,7 +219,7 @@ function runAttack(state: WorldState, e: Entity, def: EnemyDef, player: Entity):
       // 밴드0/1(단계1..20)은 subBullets 0이라 no-op(거동 불변).
       const sub = stageParams(state.config.stage ?? 1).subBullets;
       const shardSpeed = 460;
-      const shardDamage = Math.max(4, Math.round(def.attack.damage * 0.5 * ENEMY_DAMAGE_MULT));
+      const shardDamage = Math.max(4, Math.round(def.attack.damage * 0.5 * enemyDamageScale(state.config)));
       for (let i = 0; i < sub; i++) {
         if (state.enemyBulletCount >= state.bulletCap) break;
         const ang = (i * TWO_PI) / sub;
@@ -257,7 +257,7 @@ function runAttack(state: WorldState, e: Entity, def: EnemyDef, player: Entity):
           a.radius,
           a.windup,
           a.activeTicks,
-          a.damage * ENEMY_DAMAGE_MULT,
+          a.damage * enemyDamageScale(state.config),
           true,
           e.id,
         );
@@ -305,7 +305,7 @@ function sprayFragments(
       cos(ang) * atk.speed,
       sin(ang) * atk.speed,
       ang,
-      atk.damage * ENEMY_DAMAGE_MULT,
+      atk.damage * enemyDamageScale(state.config),
       atk.bulletRadius,
       atk.bulletLife,
       e.id,
