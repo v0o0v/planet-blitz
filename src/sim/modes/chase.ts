@@ -30,7 +30,7 @@ import type { Entity } from '../entities.js';
 import { spawnBoss, spawnShelter } from '../entities.js';
 import type { WorldState } from '../world.js';
 import { PLANET_MODE, type PlanetMode } from '../planetMode.js';
-import { BOSS_HP_MULT } from '../enemyScale.js';
+import { BOSS_HP_MULT, bossStageHpMult } from '../enemyScale.js';
 import { planetContent } from '../../../data/planets/index.js';
 import { SEGMENTS, stageHpMult, objectiveLowStageRelief } from '../../../data/waves.js';
 import { cos, sin, atan2, clamp, TWO_PI } from '../math.js';
@@ -352,7 +352,9 @@ export function placeChaseCourse(state: WorldState): void {
     state,
     0,
     -CHASE_PREDATOR_SPAWN_OFFSET,
-    Math.round(bossDef.hp * BOSS_HP_MULT),
+    // bossStageHpMult: `world.ts` 의 보스 스폰과 **같은 배수 조합**이어야 한다(아래 §BOSS_HP_MULT
+    // 주석의 "한쪽만 걸면 무대에 따라 HP 가 달라진다" 가 단계 곡선에도 그대로 적용된다).
+    Math.round(bossDef.hp * BOSS_HP_MULT * bossStageHpMult(state.config.stage ?? 1)),
     bossDef.radius,
   );
   predator.damage = bossDef.contactDamage;

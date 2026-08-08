@@ -192,7 +192,7 @@ import {
   filmRemainingDamage,
 } from './shipSignature.js';
 // 밀도 패스 계수(2026-08-08 사용자 결정) — 사유는 그 모듈 헤더가 정본이다.
-import { BOSS_HP_MULT, ENEMY_XP_MULT } from './enemyScale.js';
+import { BOSS_HP_MULT, ENEMY_XP_MULT, bossStageHpMult } from './enemyScale.js';
 // 파열 후처리(E3) — world 와 액티브 핸들러가 **같은 함수**를 부르도록 leaf 로 내렸다.
 import {
   FILM_BURST_REQ_NONE,
@@ -3156,7 +3156,12 @@ function stepBoss(state: WorldState, player: Entity): void {
     else bossY -= VIEW_HEIGHT * 0.55; // 블록격파 top(−Y)·뱀서류 기존
     // 촉매 적 HP·접촉 피해 페널티는 보스에도 적용한다(잡몹과 같은 규율). 무촉매면 ×1(불변).
     // BOSS_HP_MULT: 보스 HP 상향(2026-08-08 사용자 결정 — `enemyScale.ts` 의 그 상수 주석이 정본).
-    const bossHp = Math.round(bossDef.hp * state.catalystMods.enemyHp * BOSS_HP_MULT);
+    // bossStageHpMult: 보스도 단계를 따라 두꺼워진다(같은 날 2차 신고 — "10·20단계에서 3초 만에
+    // 죽는다"). 잡몹의 `stageHpMult` 와 **다른 곡선**이고 사유는 그쪽 함수 주석이 정본이다.
+    // 단계 1 은 정확히 ×1 이라 **기존 골든 무대는 비트 동일**이다.
+    const bossHp = Math.round(
+      bossDef.hp * state.catalystMods.enemyHp * BOSS_HP_MULT * bossStageHpMult(state.config.stage ?? 1),
+    );
     const boss = spawnBoss(state, bossX, bossY, bossHp, bossDef.radius);
     boss.damage = bossDef.contactDamage * state.catalystMods.enemyDamage;
     // `enemyType` 은 렌더의 보스 모델·스프라이트 선택자다. 의뢰 보스는 행성 인덱스 공간
