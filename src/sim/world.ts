@@ -2904,7 +2904,7 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
  * 동시 생존 대수가 4(병아리) + 1(베이) + 1(센트리) = 6 으로, 프레임·조준 부하 관점에서도
  * 여전히 유계다.
  */
-const BROOD_MAX_DRONES = 4;
+export const BROOD_MAX_DRONES = 4;
 
 /** 병아리 드론 반경. 드론 베이·센트리 선례와 같은 값(같은 스프라이트 슬롯을 쓴다). */
 const BROOD_DRONE_RADIUS = 44;

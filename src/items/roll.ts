@@ -30,17 +30,39 @@ const SUB_WEAPON_VARIANTS = 5;
 
 /**
  * Affix count for a rarity, drawn from `rng` (plan A1/A3):
- *   - normal: 0
- *   - magic : 1..2
+ *   - normal: 1
+ *   - magic : 2..3
  *   - rare  : 3..6
  *   - unique: 3..6 fixed-rolled affixes plus the unique's own effect.
+ *
+ * ## `normal` 이 0 이 아닌 이유 (사용자 결정, 2026-08-08)
+ *
+ * 구값은 `normal: 0` 이었다. 그러면 **입으나 마나인 등급**이 된다 — 8칸이 전부 차 있는데
+ * 전투력이 맨몸과 한 톨도 다르지 않고(무기 폴백도 발칸으로 같다), 화면상으로만 장비가
+ * 있는 가장 헷갈리는 형태다. 스타터 킷이 `normal` 대신 `magic` 을 쓸 수밖에 없었던 것도
+ * 정확히 이 결함 때문이었다(`src/items/starterKit.ts` §등급이 magic 인 이유).
+ *
+ * 최저 등급도 **어픽스 1개는 준다**로 바꿔 그 구멍을 메운다. `magic` 은 최저 등급과 겹치지
+ * 않도록 2\~3 으로 올린다(구 1\~2 는 하한이 `normal` 과 같아 등급 서열이 흐릿했다).
+ * `rare`·`unique` 는 그대로다 — 상위 서열은 이미 분리돼 있다.
+ *
+ * ## RNG 스트림 모양
+ *
+ * `normal` 은 리터럴 반환이라 여전히 `nextU32` 를 **0회** 소비하고, `magic` 의 `int(2,3)` 은
+ * 구 `int(1,2)` 와 똑같이 **1회** 소비한다 — 즉 이 함수가 소비하는 draw 수는 불변이다.
+ * 다만 개수가 늘면 `rollAffixes` 가 그만큼 더 소비하므로 **같은 시드가 다른 아이템을 낸다**
+ * (아이템마다 `SeededRng` 가 새로 생기므로 그 밀림은 해당 아이템 안에 갇힌다 —
+ * 드랍 시퀀스·웨이브·해시로 새지 않는다).
+ *
+ * ⚠️ 어픽스 **롤 값**(min/max)은 여기서 건드리지 않는다 — ADR-0037 이 불가침으로 못박은
+ * 축은 그쪽이다. 이 변경은 **개수** 축이다.
  */
 function affixCountFor(rarity: Rarity, rng: SeededRng): number {
   switch (rarity) {
     case 'normal':
-      return 0;
+      return 1;
     case 'magic':
-      return rng.int(1, 2);
+      return rng.int(2, 3);
     case 'rare':
       return rng.int(3, 6);
     case 'unique':
