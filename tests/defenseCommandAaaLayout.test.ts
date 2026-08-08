@@ -352,7 +352,7 @@ describe('목록 — 빈 자리 금지(행이 남는 세로를 나눠 갖는다)
   });
 
   it('상한을 넘겨 늘리지 않는다(1행짜리에서 거대한 행이 나오는 것을 막는다)', () => {
-    const hs = fillRowHeights([76], gap, DEFENSE_BOXES.right.h, DEFENSE_BOXES.bpRowMaxH);
+    const hs = fillRowHeights([DEFENSE_BOXES.bpRowH], gap, DEFENSE_BOXES.right.h, DEFENSE_BOXES.bpRowMaxH);
     expect(hs[0]).toBe(DEFENSE_BOXES.bpRowMaxH);
   });
 
@@ -397,7 +397,11 @@ describe('목록 — 빈 자리 금지(행이 남는 세로를 나눠 갖는다)
     // 설계도 3장이 684px 중 436px 을 남겼다 — 상한을 걸면 여전히 남으므로 그 자리에
     // **이름을 준다**(파낸 챔버 + 어디서 얻는지). 잔여가 챔버 하한을 넘어야 그 처방이 돈다.
     const avail = DEFENSE_BOXES.right.h;
-    const hs = fillRowHeights([76, 76, 76], gap, avail, DEFENSE_BOXES.bpRowMaxH);
+    // ⚠️ 자연 높이는 **상수에서** 온다. 예전에는 `76` 리터럴이라 행이 3단(이름·비용·설명)으로
+    // 커진 2026-08-08 이후에도 이 테스트만 옛 값을 재고 있었다 — 실제와 갈리는 대조는 없느니만
+    // 못하다.
+    const nat = DEFENSE_BOXES.bpRowH;
+    const hs = fillRowHeights([nat, nat, nat], gap, avail, DEFENSE_BOXES.bpRowMaxH);
     const total = hs.reduce((a, b) => a + b, 0) + gap * (hs.length - 1);
     expect(avail - total - gap).toBeGreaterThanOrEqual(DEFENSE_BOXES.tailWellMinH);
   });
