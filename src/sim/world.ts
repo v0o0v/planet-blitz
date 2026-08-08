@@ -664,6 +664,21 @@ export function xpToNextInvasion(level: number): number {
 }
 
 /**
+ * 이 런의 **다음 레벨까지 필요한 런 풀 XP** — 커브 분기를 한 곳에 모은 정본.
+ *
+ * `checkLevelUp` 과 **HUD XP 바가 같은 함수를 써야 한다.** 커브를 가른 2026-07-27 당시
+ * 판정부만 분기시키고 HUD(`main.ts` 의 `xpNeed`)는 `xpToNext` 고정으로 남아, 침공 런에서
+ * **분모가 11배 부풀어 표시**됐다(레벨 1 에서 실제 16 인데 바에는 `/76`). 눈에는 "바가 20%
+ * 밖에 안 찼는데 레벨업이 터진다"로 보였고, 레벨 0 구간만 두 커브가 우연히 10 으로 같아
+ * 발견이 늦었다. 술어를 두 곳에 적었던 것이 원인이므로 **분기는 이 함수 하나뿐이다.**
+ */
+export function xpToNextForRun(state: WorldState): number {
+  return state.config.invasion3 === undefined
+    ? xpToNext(state.level)
+    : xpToNextInvasion(state.level);
+}
+
+/**
  * **메타 풀** 단계 배율 — 젬 1회 수집이 기체 레벨(영구)에 넣는 값의 배수(ADR-0036).
  *
  * 런 풀은 단계 무관 고정이고, 메타 풀만 침략 단계에 비례한다. 이렇게 해야 "고단계일수록
@@ -5425,12 +5440,9 @@ function updateCombo(state: WorldState, player: Entity): void {
 function checkLevelUp(state: WorldState): void {
   if (state.pendingLevelUp) return;
   // 런 풀 커브는 런 구조에 따라 갈린다(2026-07-27) — PvE 는 처치 볼륨 240 기준 `10+66L`,
-  // 침공(3레이어 단판)은 `10+6L`. 판정은 `stepWorld` 의 `designedRun` 과 **같은 술어**를 쓴다
-  // (`invasion3` 유무). 근거는 `xpToNextInvasion` 주석.
-  const need =
-    state.config.invasion3 === undefined
-      ? xpToNext(state.level)
-      : xpToNextInvasion(state.level);
+  // 침공(3레이어 단판)은 `10+6L`. 분기는 `xpToNextForRun` 하나에만 있고(HUD 도 같은 함수를
+  // 쓴다 — 그 주석의 분모 불일치 결함), 술어는 `stepWorld` 의 `designedRun` 과 같다.
+  const need = xpToNextForRun(state);
   if (state.xp < need) return;
   state.xp -= need;
   state.level++;

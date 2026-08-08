@@ -7,6 +7,8 @@
  * 경로가 아니라 검증에 쓰지 않는다.
  */
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import {
   createWorld,
@@ -14,8 +16,12 @@ import {
   emptyInput,
   stageMetaXpMult,
   xpToNext,
+  xpToNextInvasion,
+  xpToNextForRun,
   DEFAULT_CONFIG,
 } from '../src/sim/world.js';
+import { emptyInvasionLayers } from '../src/sim/invasion/normalize.js';
+import { INVASION_TOTAL_TICKS } from '../src/sim/invasion/constants.js';
 import { spawnGem } from '../src/sim/entities.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { defaultProfile, activeShip } from '../src/save/profile.js';
@@ -226,5 +232,74 @@ describe('정규 경로 통합 — sim 이 낸 메타 XP 가 정산까지 흐른
     // 둘 다 부족 ≤ 3 이라 무감쇠 → 순수 단계 비례만 남는다.
     expect(activeShip(a).xp).toBe(s1.xpTotal);
     expect(activeShip(b).xp).toBe(s1.xpTotal * 4);
+  });
+});
+
+/**
+ * ## HUD XP 바 분모 == 실제 레벨업 임계 (침공 분모 불일치 회귀)
+ *
+ * 커브를 PvE/침공으로 가른 2026-07-27 레인이 **판정부만** 분기시키고 HUD 는 `xpToNext` 고정으로
+ * 남겼다. 침공 런에서 분모가 11배 부풀어(레벨 1 에서 실제 16 인데 바에는 `/76`) "바가 20% 밖에
+ * 안 찼는데 레벨업이 터진다"로 보였다. **레벨 0 은 두 커브가 우연히 둘 다 10** 이라 첫 레벨업만
+ * 보고는 알 수 없었던 것이 발견을 늦춘 원인이다 — 그래서 아래 단언은 레벨 0 을 넘겨서 잰다.
+ *
+ * 술어를 두 곳에 적은 것이 원인이므로 불변식도 두 층이다: ①분기 함수가 sim 의 실제 임계와
+ * 같은가(정규 경로) ②`main.ts` 가 그 함수를 쓰는가(배선 — 이 저장소 반복 결함 "단위는 그린인데
+ * 배선이 없다").
+ */
+describe('xpToNextForRun — HUD 분모와 판정 임계가 한 함수다', () => {
+  const invasionWorld = () =>
+    createWorld(1, {
+      ...DEFAULT_CONFIG,
+      invasion3: { layers: emptyInvasionLayers(), timeLimitTicks: INVASION_TOTAL_TICKS },
+    });
+
+  it('런 종류별로 각 커브를 낸다(침공은 PvE 보다 완만)', () => {
+    const pve = createWorld(1);
+    const inv = invasionWorld();
+    for (const level of [0, 1, 5, 12]) {
+      pve.level = level;
+      inv.level = level;
+      expect(xpToNextForRun(pve), `PvE Lv${level}`).toBe(xpToNext(level));
+      expect(xpToNextForRun(inv), `침공 Lv${level}`).toBe(xpToNextInvasion(level));
+    }
+    // 레벨 0 만 두 커브가 같다 — 이 우연이 결함을 가렸으므로 명시적으로 못 박는다.
+    pve.level = 0;
+    inv.level = 0;
+    expect(xpToNextForRun(pve)).toBe(xpToNextForRun(inv));
+  });
+
+  it('정규 sim 경로에서 딱 이 값에 레벨이 오른다 — 침공 Lv1→2 (분모 불일치 지점)', () => {
+    // 레벨 0 을 지나쳐 **두 커브가 갈리는 구간**에서 잰다. 여기서 `xpToNext`(76)를 분모로 쓰면
+    // 바가 21% 인 채로 레벨업이 나는 것이 옛 거동이다.
+    for (const level of [1, 4]) {
+      const before = invasionWorld();
+      before.level = level;
+      const need = xpToNextForRun(before);
+      expect(need).toBeLessThan(xpToNext(level)); // 갈리는 구간임을 확인
+
+      // need - 1 로는 오르지 않는다.
+      before.xp = need - 1;
+      stepWorld(before, emptyInput());
+      expect(before.level, `Lv${level} need-1`).toBe(level);
+      expect(before.pendingLevelUp).toBe(false);
+
+      // need 로는 오르고, 소비된 XP 가 정확히 need 다(바가 꽉 찬 순간 = 레벨업).
+      const at = invasionWorld();
+      at.level = level;
+      at.xp = need;
+      stepWorld(at, emptyInput());
+      expect(at.level, `Lv${level} need`).toBe(level + 1);
+      expect(at.pendingLevelUp).toBe(true);
+      expect(at.xp).toBe(0);
+    }
+  });
+
+  it('배선 — main.ts 의 xpNeed 가 xpToNextForRun 을 쓴다(xpToNext 직접 호출 없음)', () => {
+    const main = readFileSync(fileURLToPath(new URL('../src/main.ts', import.meta.url)), 'utf8');
+    expect(main).toMatch(/xpNeed:\s*xpToNextForRun\(/);
+    // 주석 안 언급(결함 경고문)은 남겨도 되므로 **코드 호출**만 본다.
+    const code = main.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(code).not.toMatch(/\bxpToNext\(/);
   });
 });

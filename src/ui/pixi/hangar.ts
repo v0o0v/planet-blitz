@@ -751,6 +751,9 @@ export class HangarScreen {
       this.equippedItems(),
       shipBonusBp(this.profile.lineage),
       ship.typeId,
+      // 조종사 레벨 성장(§R51). 위 ⚠️ 가 경고한 «화면과 런이 갈린다» 의 새 사례가 되지 않도록
+      // 런(`buildRunConfig`)과 같은 인자를 넘긴다 — 안 넘기면 Lv100 격납고가 Lv1 수치를 보인다.
+      ship.level,
     );
   }
 

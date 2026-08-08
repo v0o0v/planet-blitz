@@ -22,6 +22,11 @@ triggers:
   - malformed-invasion-id
   - src/sim 변경 후 서버 반영
   - 침공 해시 불일치 거부
+  - supabase MCP 인증 필요
+  - MCP 미인증 배포
+  - 적용 스크립트 검증
+  - PROBE_FAILED
+  - 음성 대조군
 ---
 
 # Planet Blitz Supabase 원격 배포 (PAT 전용)
@@ -54,6 +59,22 @@ triggers:
   실패한다(라이브 래더 검증이 망가질 수 있어 위험).
 
 ## Recognition Pattern
+
+### ⛔ 먼저 — **"supabase MCP 미인증" 리마인더를 배포 불가로 읽지 마라** (2026-08-08 실측)
+
+세션 시작 리마인더가 `supabase-planet-blitz` MCP 미인증을 알리면 **"원격 마이그레이션 적용
+불가"라고 결론 내리기 쉽다.** 실제로 그렇게 두 번 보고했고 사용자가 *"그전에는 했었어"* 라고
+지적해 바로잡았다.
+
+**MCP 는 이 리포의 배포 경로가 아니다.** 절차 정본은 `scripts/apply-*-migration.ps1` 이고
+**선례가 15건 커밋돼 있다**(`ls scripts/ | grep apply-`). DPAPI 토큰 + Management API 직접
+호출이라 MCP 인증과 **무관**하다. 즉 이 스킬 전체가 그 사실의 정본인데, MCP 하나만 보고
+불가라고 결론 내면 스킬을 찾을 이유 자체를 잃는다.
+
+⚠️ **판단 순서**: "배포 불가" 라고 쓰기 전에 `ls scripts/ | grep apply-` 를 먼저 돌려라.
+선례가 있으면 경로가 있다.
+
+### 그 외 인식 신호
 
 - Planet Blitz(`qxgbxwyccbxokdgwxcuw`) 서버측을 배포해야 함.
 - `spb`(PAT 래퍼, `$PROFILE` 정의, `~/.supabase-pb.token` DPAPI)는 있는데 DB 비밀번호는 없음.
@@ -234,6 +255,54 @@ spb functions download <slug> --project-ref qxgbxwyccbxokdgwxcuw
    아니라 우리 코드가 실행됐다는 확증은 이 대조까지 해야 성립한다.
 
 부팅 실패라면 여기서 500 계열이 나온다. 그때는 3단계 치환이 빠졌는지, 번들이 스테일인지 본다.
+
+### ⭐ 적용 스크립트의 **검증기 자신을 먼저 통과시켜라**
+
+이 리포가 이 함정을 **두 번 다른 형태로** 밟았다. 통과할 수 없는 검증기는 없는 것보다 나쁘다 —
+다음 레인에게 빨간 줄을 무시하도록 가르친다.
+
+1. **프로세스형(2026-08-08, 촉매)**: 게이트를 `ilike '%duplicate%'` 로 찾았다. 이 리포는 **전면
+   한글 주석**이라 그 게이트는 `-- (e) 중복 거부` 이고 코드는 `count(distinct cid) <> v_len` —
+   영단어 `duplicate` 가 등장할 수 없어 **멀쩡한 게이트에 매번 `[FAIL]`** 을 냈다.
+   → **SQL 식별자·리터럴만 매칭하라.** 영문 상수명(`SIGNATURE_CAP`)이 살아남은 것은 우연이다.
+
+2. **데이터형(2026-08-08, 의뢰서)**: `'roll'` 라벨 수용을 insert 프로브로 재려다 `profile_id` 에
+   null 을 넣어 **NOT NULL 위반**으로 죽었다. **마이그레이션은 이미 적용된 뒤였고 실패한 것은
+   검증기다** — 로그만 보면 "마이그레이션이 깨졌다"로 읽힌다.
+   → FK·NOT NULL 이 있는 테이블에 프로브를 넣을 때는 **실재 행에서 id 를 빌려라**
+   (`select id from public.profiles limit 1`), 없으면 `[SKIP]` 하고 그 사실을 찍어라.
+
+**프로브에는 반드시 음성 대조군을 붙여라.** `'roll'` insert 통과만 재면 제약이 **아예 없는**
+테이블에서도 통과한다. 미등록 라벨이 `check_violation` 으로 거부되는지 함께 재야 성립한다.
+프로브는 `raise exception 'PROBE_OK_ROLLBACK'` 로 롤백시키고, 끝에 잔여 행 0 을 확인한다.
+
+### ⭐ 값이 아니라 **본문 오프셋 순서**를 재라
+
+게이트·상한·지평 같은 것들은 **순서가 계약**인데 값 대조로는 안 잡힌다. 원격
+`pg_get_functiondef` 에 `strpos` 를 걸어 순서를 단언하라.
+
+```sql
+select strpos(pg_get_functiondef(p.oid), 'skip_reason = ''stock''') as at_stock,
+       strpos(pg_get_functiondef(p.oid), 'skip_reason = ''roll''')  as at_roll,
+       strpos(pg_get_functiondef(p.oid), 'v_roll := random()')      as at_grade
+  from pg_proc p where p.proname = '<fn>' and p.pronamespace = 'public'::regnamespace;
+-- 실측: stock=4108 < roll=4556 < grade=5213  → 순서 계약 성립
+```
+
+같은 이유로 **권한은 `has_function_privilege` 로** 재라 — 특히 `'public'`. `create or replace`
+가 ACL 을 보존하므로 `revoke` 누락은 **증상이 0** 이고 이 관측만이 물증이다.
+
+### 전제 조건에 "이미 적용됐나"를 넣어라 — 재적용이 첫 적용을 확증한다
+
+```
+1차: already_gated=False  → 적용 → 검증기가 죽음
+2차: already_gated=True   → 이 전이가 1차 적용 성립의 물증
+```
+
+### pg_cron 이 꺼져 있을 수 있다
+
+`cron.schedule` 이 실패하면 그 앞 문장들은 이미 커밋돼 있다(Management API 는 문장 단위).
+캡·함수를 미적용으로 남기지 말고 **스케줄만 뺀 채 재시도**하고 `[TODO]` 를 찍어라.
 
 ### 배포 후 남는 것
 서버 권위는 즉시 라이브지만, 재화 earn/spend RPC 호출은 **머지된 새 클라에만** 있다 —
