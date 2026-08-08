@@ -110,6 +110,8 @@ class FakeCurrencyGateway implements ServerGateway {
 function summary(over: Partial<PveSettleSummary> = {}): PveSettleSummary {
   return {
     victory: true,
+    // 승리 픽스처이므로 보스 격파도 참이다(서버 자격은 둘의 논리곱).
+    bossKilled: true,
     planet: 0,
     stage: 1,
     finalTick: 600,

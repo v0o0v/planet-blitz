@@ -106,6 +106,7 @@ import {
   catalystSettlementOf,
   catalystContributionsOf,
   catalystLootMultOf,
+  bossKilledOf,
   encounterShardOf,
   encounterTypeOf,
   runStoryMetrics,
@@ -2226,6 +2227,11 @@ async function main(): Promise<void> {
           void settlePveRunCurrency(profile, {
             summary: {
               victory: w.victory,
+              // 의뢰서 발령 자격의 두 번째 주장(서버 2단계 `victory and bossKilled`).
+              // ⚠️ 이 줄이 **없어서** 발령률이 0% 였다 — 서버가 읽는 키를 클라가 한 번도 안
+              // 보냈고, NULL 이 `claimed_victory not null` 을 위반해 앵커까지 지워졌다(무증상).
+              // 술어 정본은 sim 리더다(`bossKilledOf` — 여기서 다시 조립하면 정본이 둘이 된다).
+              bossKilled: bossKilledOf(w),
               planet: w.config.planet ?? 0,
               stage: w.config.stage ?? 1,
               finalTick: w.tick,
