@@ -107,6 +107,7 @@ const FILE_SHIP: Readonly<Record<string, string>> = {
   // 앵커가 한 칸도 없는 **레벨 스케일 전용** 모듈(`strikerScaling.ts` 항목과 같은 사유).
   'arccasterScaling.ts': 'arccaster',
   'bruiser.ts': 'bruiser',
+  'bruiserScaling.ts': 'bruiser',
   'bubble.ts': 'bubble',
   'hatchling.ts': 'hatchling',
   'mallow.ts': 'mallow',

@@ -52,6 +52,9 @@ const FLAT_SKILLS = new Set([
   'striker-sustain-field',
   'striker-signal-chaser',
   'arccaster-echo-mount',
+  'bruiser-dash-loading',
+  'bruiser-unmoved-accretion',
+  'bruiser-crush-cadence',
 ]);
 
 // ===========================================================================

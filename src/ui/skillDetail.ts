@@ -34,6 +34,7 @@
 import type { SkillDetail } from './skillDetail/format.js';
 import { STRIKER_SKILL_DETAIL } from './skillDetail/striker.js';
 import { ARCCASTER_SKILL_DETAIL } from './skillDetail/arccaster.js';
+import { BRUISER_SKILL_DETAIL } from './skillDetail/bruiser.js';
 
 export type { SkillDetail };
 
@@ -50,6 +51,7 @@ export const SKILL_DETAIL_BY_SHIP: Readonly<
 > = {
   striker: STRIKER_SKILL_DETAIL,
   arccaster: ARCCASTER_SKILL_DETAIL,
+  bruiser: BRUISER_SKILL_DETAIL,
 };
 
 /**

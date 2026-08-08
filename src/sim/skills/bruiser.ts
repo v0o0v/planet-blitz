@@ -103,6 +103,52 @@ import { skillLv } from '../../items/skills.js';
 // 설계서가 blade→morph→fortify 순으로 서술하는 것과 데이터가 일치하므로 flat 은 서술 순서와
 // 같지만, **그 일치는 우연이 아니라 데이터 확인의 결과**다.
 
+import {
+  POINT_BLANK_RANGE,
+  CRUSH_FIELD_PERIOD,
+  CRUSH_FIELD_PUSH,
+  CLOT_SETTLE_BP,
+  TROPHY_RUN_CAP_BP,
+  LOAD_TRANSFER_DASH_TICKS,
+  MOMENTUM_FULL_TICKS,
+  retortVolleyDamageBp,
+  pointBlankDamageBp,
+  fullPlateBlastBp,
+  fullPlateBlastRadius,
+  overflowVentCount,
+  overflowVentDamage,
+  ramCleaveWidth,
+  ramCleaveDamage,
+  massSlugPush,
+  massSlugDamageBp,
+  wallBreakerCount,
+  wallBreakerDamage,
+  temperCap,
+  temperLeadBonusBp,
+  cadencePeriod,
+  burnOffRefundQ,
+  wreckHarvestRange,
+  heavyMomentumMaxBp,
+  skidCooldownTicks,
+  haulBlinkWidth,
+  crushFieldRadius,
+  crushFieldDamage,
+  debrisReclaimRefund,
+  reboundRefundBp,
+  harvestClampRewind,
+  arrivalShockRadius,
+  arrivalShockPush,
+  overPlatingBonus,
+  clotPlatingBp,
+  recoilReflectBp,
+  unbreakableChainRadius,
+  loadTransferCutBp,
+  trophyHpPerStack,
+  moltRegenHeal,
+  lastStandPerStackBp,
+  cremationBurnPerTick,
+} from './bruiserScaling.js';
+
 const enum Sk {
   /** BL1 응전 사출 */ retortVolley = 0,
   /** BL2 백병 격발 */ pointBlank = 1,
@@ -158,19 +204,10 @@ function lv(state: WorldState, flat: Sk): number {
 // 호출 빈도가 낮은 이벤트 경로이거나 상수 확정 1회다).
 
 /** FO1: round(1 + 3×Lv/(Lv+12)) — Lv1 = +1, Lv20 ≈ +3, 점근 +4. */
-function overPlatingBonus(level: number): number {
-  return Math.round(1 + (3 * level) / (level + 12));
-}
 
 /** FO7: round(1 + 6×Lv/(Lv+14)) HP/스택 — Lv1 = 1, Lv20 ≈ 5, 점근 7. */
-function trophyHpPerStack(level: number): number {
-  return Math.round(1 + (6 * level) / (level + 14));
-}
 
 /** MO8: 환급 비율 bp = 3000 + round(2000×Lv/(Lv+10)) — Lv20 ≈ 4333bp, 점근 5000bp. */
-function reboundRefundBp(level: number): number {
-  return 3000 + Math.round((2000 * level) / (level + 10));
-}
 
 /**
  * BL9: **N = max(1, round(48/(4+스택)))** — 스택 0 = 12, 만재 8 = 4.
@@ -180,25 +217,12 @@ function reboundRefundBp(level: number): number {
  * 지금의 FO1 확장(점근 +4)으로는 스택 ≤ 12 라 도달하지 않지만, 장래에 다른 상한 확장이
  * 생기면 조용히 무너지는 자리라 배선에 하한을 포함한다(설계서 R-2).
  */
-function cadencePeriod(stacks: number): number {
-  const n = Math.round(48 / (4 + stacks));
-  return n >= 1 ? n : 1;
-}
 
 /** BL8: 적립 상한 = round(1 + 5×Lv/(Lv+10)) — Lv1 = 1, Lv20 ≈ 4, 점근 6. */
-function temperCap(level: number): number {
-  return Math.round(1 + (5 * level) / (level + 10));
-}
 
 /** MO4: 전용 내부 쿨 = round(60 + 2400/(Lv+19)) 틱 — Lv1 = 180, Lv20 = 122, 점근 60. */
-function skidCooldownTicks(level: number): number {
-  return Math.round(60 + 2400 / (level + 19));
-}
 
 /** BL1: 반격 볼리 피해 배율(bp) = 5000 + 200×Lv — Lv1 = 52%, Lv20 = 90%. */
-function retortVolleyDamageBp(level: number): number {
-  return 5000 + 200 * level;
-}
 
 /** BL1: 내부 쿨(틱, 고정) — 설계 문면 그대로. */
 const RETORT_COOLDOWN_TICKS = 60;
@@ -213,15 +237,10 @@ const RETORT_COOLDOWN_TICKS = 60;
 const RETORT_BEAM_MAX_REACH = 1440;
 
 /** FO2 정산 회복 비율(고정 60% — 잔여 40% 소멸, 완전 환급 금지). */
-const CLOT_SETTLE_BP = 6000;
 /** FO6 전이 대가 — 경감이 발동한 피격당 대시 쿨다운 가산(틱, 고정). */
-const LOAD_TRANSFER_DASH_TICKS = 20;
 /** MO6 압쇄장 주기(틱, 고정). */
-const CRUSH_FIELD_PERIOD = 30;
 /** MO6 압쇄장이 적을 밀어내는 1회 변위(sim 좌표, 고정 — "소량 밀림"). */
-const CRUSH_FIELD_PUSH = 6;
 /** FO7 런당 누적 가산 상한 = 런 시작 최대 HP 의 이 비율(bp). */
-const TROPHY_RUN_CAP_BP = 5000;
 
 /**
  * FO9 「빈사」 술어의 임계 — 현재 HP 가 최대 HP 의 이 비율(bp) **이하**.
@@ -241,7 +260,6 @@ function inLastStand(player: Entity): boolean {
  * 피해 배율만 키운다. 임계를 레벨 스케일로 바꾸면 "붙을수록 강해진다" 가 "레벨이 높을수록
  * 멀리서도 붙은 것으로 친다" 로 뒤집힌다.
  */
-const POINT_BLANK_RANGE = 350;
 
 // ---------------------------------------------------------------------------
 // 배치5 — 액티브 계열 판별 · 벽 축 · 이동 축의 상수와 헬퍼
@@ -280,14 +298,8 @@ function isFortifyHiActive(def: ActiveSkillDef): boolean {
  * 부작용으로 **장갑 투자가 늘수록 반사도 준다** — FO2 의 적립이 같은 기준을 쓰는 것과 같은
  * 결이고, 설계 문면("반사 피해")이 기준을 지정하지 않아 여기서 고른 것이다(레인 보고서).
  */
-function recoilReflectBp(level: number): number {
-  return 2000 + 200 * level;
-}
 
 /** FO10 — 화상 틱당 피해: `2 + Lv`. Lv1 = 3 · Lv20 = 22. 지속은 `FIRE_DURATION` 공용값. */
-function cremationBurnPerTick(level: number): number {
-  return 2 + level;
-}
 
 /**
  * 점 `(px,py)` 와 선분 `(ax,ay)-(bx,by)` 사이 **거리의 제곱**. 돌진 경로 판정(BL5·MO5)의 부품.
@@ -333,16 +345,10 @@ function momentumDirCode(mx: number, my: number): number {
 }
 
 /** MO3 — 관성이 최대에 도달하는 지속 틱(고정). 이 값에서 아래 보너스가 온전히 실린다. */
-const MOMENTUM_FULL_TICKS = 120;
 /** MO3 — 코드 5 = `momentumDirCode(0, 0)`. 정지 리셋 술어의 정본(매직넘버 금지). */
 const MOMENTUM_STILL_CODE = 5;
 
 /** BL10 — 소각한 스택 1개당 주무기 쿨다운 환급(틱)의 **레벨 스케일**: 2 + 0.2×Lv 틱. */
-function burnOffRefundQ(level: number): number {
-  // Q 고정소수점(1틱 = `FIRE_CD_Q`)이라 소수 틱을 정수로 적을 수 있다. 반올림은 게이트
-  // **안**에서만 도는 이 함수 자체에 있다(규율 ③).
-  return 2 * FIRE_CD_Q + Math.round((FIRE_CD_Q * 2 * level) / 10);
-}
 
 // ---------------------------------------------------------------------------
 // 탄 표식 — 앵커 ⑯ 이 찍고 앵커 ⑩ 이 읽는다(`VolleyParams.mark` → 탄 `aux0`)
@@ -398,7 +404,7 @@ export function bruiserDashFired(state: WorldState, player: Entity): void {
 export function bruiserGemCollected(state: WorldState, player: Entity): void {
   const mo9 = lv(state, Sk.harvestClamp);
   if (mo9 < 1) return;
-  player.aux1 = Math.max(0, player.aux1 - (6 + 2 * mo9));
+  player.aux1 = Math.max(0, player.aux1 - harvestClampRewind(mo9));
 }
 
 /**
@@ -450,8 +456,8 @@ export function bruiserPlayerDamaged(
   const bl4 = lv(state, Sk.overflowVent);
   if (bl4 >= 1 && player.aux0 >= state.armorMaxStacks) {
     // 파편 수 = 4 + ceil(Lv/3) · 파편 피해 8 + 2×Lv. 둘 다 게이트 안의 양적 계단이다.
-    const count = 4 + Math.ceil(bl4 / 3);
-    const dealt = 8 + 2 * bl4;
+    const count = overflowVentCount(bl4);
+    const dealt = overflowVentDamage(bl4);
     // "전방" = +X. 이 게임의 전진 축이고(무대 앵커 +X), 플레이어 엔티티에는 유지되는 조준
     // 벡터가 없어 여기서 자동 조준을 다시 풀 수 없다(`nearestTarget` 은 world.ts 소유).
     fanStrike(state, player, count, dealt, 60, { x: 1, y: 0 });
@@ -462,7 +468,7 @@ export function bruiserPlayerDamaged(
   // 적립 기준은 **사슬을 전부 통과한 실제 감소분**(`dmg`)이라, 장갑 투자가 늘수록 적립도 준다.
   const fo2 = lv(state, Sk.clotPlating);
   if (fo2 >= 1 && dmg > 0) {
-    const add = Math.round((dmg * (2000 + 100 * fo2)) / 10000);
+    const add = Math.round((dmg * clotPlatingBp(fo2)) / 10000);
     if (add > 0) {
       writeSlot(
         state.skillCarry,
@@ -520,7 +526,7 @@ export function bruiserPlayerDamaged(
     player.targetX = 1;
     player.aux0 = state.armorMaxStacks;
     player.aux1 = 0;
-    clearEnemyBullets(state, player, 150 + 10 * fo5);
+    clearEnemyBullets(state, player, unbreakableChainRadius(fo5));
   }
 
   // --- BL1 응전 사출 -------------------------------------------------------
@@ -601,7 +607,7 @@ export function bruiserDamageChain(state: WorldState, player: Entity, dmg: numbe
   if (fo6 >= 1 && out > 0) {
     // 경감 8% + 0.8%p/Lv. 반올림은 이 게이트 **안**이다(규율 ③ — 접촉 피해에는 엘리트 배율이
     // 섞여 소수가 될 수 있고, 반올림이 밖으로 나가면 스킬 없는 런의 해시가 통째로 갈린다).
-    const cut = Math.round((out * (800 + 80 * fo6)) / 10000);
+    const cut = Math.round((out * loadTransferCutBp(fo6)) / 10000);
     if (cut > 0) {
       out -= cut;
       if (out < 0) out = 0;
@@ -624,7 +630,7 @@ export function bruiserDamageChain(state: WorldState, player: Entity, dmg: numbe
     const stacks = clampArmorStacks(player.aux0, state.armorMaxStacks);
     if (stacks > 0) {
       // 반올림은 이 게이트 **안**이다(규율 ③).
-      const cut = Math.round((out * stacks * (20 + 5 * fo9)) / 10000);
+      const cut = Math.round((out * stacks * lastStandPerStackBp(fo9)) / 10000);
       if (cut > 0) {
         out -= cut;
         if (out < 0) out = 0;
@@ -750,7 +756,7 @@ export function bruiserSignatureStep(
       } else if (fo8 >= 1 && player.aux0 > 0) {
         // FO8 — 이번 틱에 **실제로 소멸할** 스택 1개를 회복으로 환산한다(3 + 1×Lv HP).
         // 소멸 자체는 막지 않는다 — 분기가 그대로 1스택을 가져간다.
-        const heal = 3 + fo8;
+        const heal = moltRegenHeal(fo8);
         player.hp = Math.min(player.maxHp, player.hp + heal);
       }
     }
@@ -795,8 +801,8 @@ export function bruiserSignatureStep(
   // 스택이 1개 이상인 동안 주기적으로 근접 반경 내 적을 갈아낸다.
   const mo6 = lv(state, Sk.crushField);
   if (mo6 >= 1 && player.aux0 > 0 && state.tick % CRUSH_FIELD_PERIOD === 0) {
-    const radius = 120 + 8 * mo6;
-    const dealt = 4 + mo6;
+    const radius = crushFieldRadius(mo6);
+    const dealt = crushFieldDamage(mo6);
     const r2 = radius * radius;
     // ⚠️ `blastDamage` 를 쓰지 않는 이유: 그 헬퍼는 `enemy`+`boss` 를 함께 때리는데 설계서는
     //    **enemy kind 한정**(보스·코어·포탑·guardian·defenseBoss·facility·prop 제외)을 명시했다.
@@ -853,9 +859,9 @@ export function bruiserEnemyDamaged(
   const bl3 = lv(state, Sk.fullPlateSlug);
   if (bl3 >= 1 && source !== undefined && (source.aux0 & MARK_FULL_PLATE) !== 0) {
     // 폭발 반경 50 + 5×Lv · 폭발 피해 = 탄 피해의 25% + 1.5%p/Lv. 반올림은 게이트 안이다.
-    const blast = Math.round((source.damage * (2500 + 150 * bl3)) / 10000);
+    const blast = Math.round((source.damage * fullPlateBlastBp(bl3)) / 10000);
     if (blast > 0) {
-      const radius = 50 + 5 * bl3;
+      const radius = fullPlateBlastRadius(bl3);
       const r2 = radius * radius;
       // ⚠️ `blastDamage` 를 못 쓴다 — 그 헬퍼는 **플레이어**를 중심으로 삼는데 설계서는 "명중
       //    지점" 을 명시했다. 대상 범위(enemy+boss)는 그 헬퍼와 같게 맞춘다.
@@ -884,7 +890,7 @@ export function bruiserEnemyDamaged(
   if (bl6 >= 1 && source !== undefined && (source.aux0 & MARK_MASS_SLUG) !== 0) {
     // 변위 16 + 2×Lv, 보스·엘리트는 반감. 넉백 규율(7.1) — 속도 대입이 아니라 **좌표 직접
     // 변위**다(적 이동 컴포넌트가 매 틱 속도를 덮어써 속도에 실으면 해시만 갈린다).
-    let push = 16 + 2 * bl6;
+    let push = massSlugPush(bl6);
     if (target.kind === 'boss' || isElite(target)) push *= 0.5;
     // 방향은 **탄의 진행 방향**이다. 플레이어 기준으로 잡으면 관통탄이 뒤쪽 표적을 플레이어
     // 쪽으로 당겨 "밀어낸다" 가 부호 반전된다.
@@ -1010,7 +1016,7 @@ export function bruiserVolleyParams(
     params.pierce += 1;
     // 피해 +8% + 1.5%p/Lv. 산술은 BL6·정조준 배율과 동형(정수 bp · 단일 나눗셈 · 반올림 1회)
     // 이고 반올림은 게이트 **안**이다(규율 ③) — 미투자 런은 이 블록을 한 줄도 안 지난다.
-    params.damage += Math.round((params.damage * (800 + 150 * bl2)) / 10000);
+    params.damage += Math.round((params.damage * pointBlankDamageBp(bl2)) / 10000);
   }
 
   // --- BL3 만재 중탄 -------------------------------------------------------
@@ -1035,7 +1041,7 @@ export function bruiserVolleyParams(
       // 피해 +60% + 3%p/Lv. 산술은 BL2·BL6 과 동형(정수 bp · 단일 나눗셈 · 반올림 1회)이고
       // 반올림은 게이트 **안**이다(규율 ③). 기준은 `params.damage` — 이 앵커가 다른 스킬의
       // 증폭을 이미 실어 둔 값이라 그 위에 얹힌다.
-      params.leadDamageBonus += Math.round((params.damage * (6000 + 300 * bl8)) / 10000);
+      params.leadDamageBonus += Math.round((params.damage * temperLeadBonusBp(bl8)) / 10000);
       // 관통 +1 은 1레벨에서 온전(BL2 와 같은 규율).
       params.leadPierceBonus += 1;
     }
@@ -1055,7 +1061,7 @@ export function bruiserVolleyParams(
   if (bl6 >= 1 && params.ballisticsUsed) {
     // 피해 +20% + 2%p/Lv. 산술은 스트라이커 정조준 배율과 동형(정수 bp · 단일 나눗셈 ·
     // 반올림 1회)이고, 반올림은 게이트 **안**이다(규율 ③).
-    params.damage += Math.round((params.damage * (2000 + 200 * bl6)) / 10000);
+    params.damage += Math.round((params.damage * massSlugDamageBp(bl6)) / 10000);
     // 탄속 ×0.5 · 수명 ×2. **곱만 정확히 상쇄되므로 도달 거리(속도×수명)가 비트 단위로
     // 불변**이다 — 사거리 계약(3.1 `weaponReach` = `reachLife` 동일값)이 요구하는 것이 정확히
     // 그것이라 `reach` 를 다시 구할 필요가 없다(구할 수도 없다 — params 에 없다).
@@ -1097,9 +1103,9 @@ export function bruiserActiveFired(
   const bl5 = lv(state, Sk.ramCleave);
   if (bl5 >= 1 && dash) {
     // 절단 폭 60 + 4×Lv · 절단 피해 20 + 6×Lv. 둘 다 게이트 안의 양적 계단이다.
-    const width = 60 + 4 * bl5;
+    const width = ramCleaveWidth(bl5);
     const w2 = width * width;
-    const dealt = 20 + 6 * bl5;
+    const dealt = ramCleaveDamage(bl5);
     for (const e of state.entities) {
       if (e.dead) continue;
       // 대상 범위(enemy+boss)는 `blastDamageAt`·BL3·BL9 와 같게 맞춘다 — 같은 사실이 두 벌이
@@ -1118,7 +1124,7 @@ export function bruiserActiveFired(
   // `collectGem` 이고 여기서 걷어가면 콤보·XP 가 두 곳에서 갈린다).
   const mo5 = lv(state, Sk.haulBlink);
   if (mo5 >= 1 && dash) {
-    const width = 80 + 6 * mo5;
+    const width = haulBlinkWidth(mo5);
     const w2 = width * width;
     for (const e of state.entities) {
       if (e.dead) continue;
@@ -1140,9 +1146,9 @@ export function bruiserActiveFired(
   // 기동 액티브 **고티어** 도착 틱에만 발동한다. 피해가 없는 것이 문면이다(밀어내기 + 소거).
   const mo10 = lv(state, Sk.arrivalShock);
   if (mo10 >= 1 && dash && def.tier === 'hi') {
-    const radius = 140 + 10 * mo10;
+    const radius = arrivalShockRadius(mo10);
     const r2 = radius * radius;
-    const push = 20 + 2 * mo10;
+    const push = arrivalShockPush(mo10);
     for (const e of state.entities) {
       if (e.dead || e.kind !== 'enemy') continue;
       const dx = e.x - player.x;
@@ -1172,7 +1178,7 @@ export function bruiserActiveFired(
   if (bl10 >= 1 && def.treeIndex === 0) {
     const burned = origin.preAux0 - player.aux0;
     if (burned > 0) {
-      player.cooldown -= burned * burnOffRefundQ(bl10);
+      player.cooldown -= burned * burnOffRefundQ(bl10, FIRE_CD_Q);
       // ⚠️ **0 에서 멈춘다.** `player.cooldown` 은 음수 잔여분을 `(−FIRE_CD_Q, 0]` 로 유계하게
       //    들고 다니는 carry 다(`world.ts` 발사부 주석). 그 아래로 내리면 소수 주기 재현
       //    장치가 깨져 이후 연사가 통째로 어긋난다. 0 = "지금 쏠 수 있다" 로 이미 최대다.
@@ -1247,7 +1253,7 @@ export function bruiserGemMagnetParams(
   // 하한 = 근접 임계(BL2 와 **같은 상수**를 읽는다 — 이 기체의 "근접" 은 한 벌이다) + 10×Lv.
   // ⚠️ **덮어쓰지 않고 올리기만 한다.** 자석 파워업·자석 버프로 이미 더 넓은 런에서 반경을
   //    이 값으로 대입하면 스킬을 찍는 순간 자석이 **줄어든다**.
-  const floor = POINT_BLANK_RANGE + 10 * mo2;
+  const floor = wreckHarvestRange(mo2);
   if (params.radius < floor) params.radius = floor;
   // `broodRadius` 는 해츨링 소관이다 — 건드리지 않는다.
 }
@@ -1295,7 +1301,7 @@ export function bruiserPlayerMoveParams(
       if (t > MOMENTUM_FULL_TICKS) t = MOMENTUM_FULL_TICKS;
       // 최대 가산 10% + 3%p/Lv, 지속 틱에 **선형 비례**. 나눗셈이 게이트 안이다(규율 ③).
       // 반올림하지 않는다 — `speedMult` 는 배율(실수)이고, 여기서 정수화하면 램프가 계단이 된다.
-      params.speedMult += (t / MOMENTUM_FULL_TICKS) * ((1000 + 300 * mo3) / 10000);
+      params.speedMult += (t / MOMENTUM_FULL_TICKS) * (heavyMomentumMaxBp(mo3) / 10000);
     }
   }
 }
@@ -1359,8 +1365,8 @@ export function bruiserWallShockResolve(
   // 물리적으로 불가능하지만(정지한 탄은 벽에 겹치지 않는다) `atan2(0,0)` 을 피해 조기 반환한다.
   if (req.dirX === 0 && req.dirY === 0) return;
   // 발수 3 + ceil(Lv/4) · 각도폭 70도 · 피해 12 + 4×Lv. 전부 게이트 안의 양적 계단이다.
-  const count = 3 + Math.ceil(bl7 / 4);
-  const dealt = 12 + 4 * bl7;
+  const count = wallBreakerCount(bl7);
+  const dealt = wallBreakerDamage(bl7);
   const base = atan2(req.dirY, req.dirX);
   const spread = (70 * Math.PI) / 180;
   const step = count > 1 ? spread / (count - 1) : 0;
@@ -1408,7 +1414,7 @@ export function bruiserWallDestroyed(state: WorldState, player: Entity, wall: En
   // 대시 쿨다운 환급 10 + 2×Lv 틱. 0 에서 멈춘다(음수 쿨다운은 `stepPlayer` 의 `> 0` 감소
   // 분기를 영영 안 타 "대시가 준비됐다" 판정이 `=== 0` 인 자리에서 조용히 거짓이 된다).
   if (player.dashCooldown > 0) {
-    const back = 10 + 2 * mo7;
+    const back = debrisReclaimRefund(mo7);
     player.dashCooldown = player.dashCooldown > back ? player.dashCooldown - back : 0;
   }
   // "자원이 소량 적립" — 이 기체의 자원은 장갑 스택이다. 적립 짝으로 감쇠 타이머도 리셋한다
